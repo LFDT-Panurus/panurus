@@ -38,7 +38,7 @@ type UnspentTokensIterator = driver.UnspentTokensIterator
 //
 //go:generate counterfeiter -o mock/otv.go -fake-name OwnerTokenVault . OwnerTokenVault
 type OwnerTokenVault interface {
-	UnspentTokensIteratorBy(ctx context.Context, id string, tokenType token.Type) (UnspentTokensIterator, error)
+	UnspentTokensIteratorBy(ctx context.Context, id string, tokenType token.Type, limit int) (UnspentTokensIterator, error)
 	Balance(ctx context.Context, id string, tokenType token.Type) (*big.Int, error)
 }
 
@@ -429,7 +429,7 @@ func (w *LongTermOwnerWallet) GetSigner(ctx context.Context, identity Identity) 
 // ListTokens returns all unspent tokens for the wallet matching the
 // provided listing options.
 func (w *LongTermOwnerWallet) ListTokens(ctx context.Context, opts *driver.ListTokensOptions) (*token.UnspentTokens, error) {
-	it, err := w.TokenVault.UnspentTokensIteratorBy(ctx, w.WalletID, opts.TokenType)
+	it, err := w.TokenVault.UnspentTokensIteratorBy(ctx, w.WalletID, opts.TokenType, 0)
 	if err != nil {
 		return nil, errors.Wrap(err, "token selection failed")
 	}
@@ -456,7 +456,7 @@ func (w *LongTermOwnerWallet) Balance(ctx context.Context, opts *driver.ListToke
 // ListTokensIterator returns an iterator to scan unspent tokens instead of
 // materializing them in memory.
 func (w *LongTermOwnerWallet) ListTokensIterator(ctx context.Context, opts *driver.ListTokensOptions) (driver.UnspentTokensIterator, error) {
-	it, err := w.TokenVault.UnspentTokensIteratorBy(ctx, w.WalletID, opts.TokenType)
+	it, err := w.TokenVault.UnspentTokensIteratorBy(ctx, w.WalletID, opts.TokenType, 0)
 	if err != nil {
 		return nil, errors.Wrap(err, "token selection failed")
 	}

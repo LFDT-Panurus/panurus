@@ -97,12 +97,13 @@ type TokenVault struct {
 		result1 []byte
 		result2 error
 	}
-	UnspentTokensIteratorByStub        func(context.Context, string, token.Type) (driver.UnspentTokensIterator, error)
+	UnspentTokensIteratorByStub        func(context.Context, string, token.Type, int) (driver.UnspentTokensIterator, error)
 	unspentTokensIteratorByMutex       sync.RWMutex
 	unspentTokensIteratorByArgsForCall []struct {
 		arg1 context.Context
 		arg2 string
 		arg3 token.Type
+		arg4 int
 	}
 	unspentTokensIteratorByReturns struct {
 		result1 driver.UnspentTokensIterator
@@ -519,20 +520,21 @@ func (fake *TokenVault) PublicParamsReturnsOnCall(i int, result1 []byte, result2
 	}{result1, result2}
 }
 
-func (fake *TokenVault) UnspentTokensIteratorBy(arg1 context.Context, arg2 string, arg3 token.Type) (driver.UnspentTokensIterator, error) {
+func (fake *TokenVault) UnspentTokensIteratorBy(arg1 context.Context, arg2 string, arg3 token.Type, arg4 int) (driver.UnspentTokensIterator, error) {
 	fake.unspentTokensIteratorByMutex.Lock()
 	ret, specificReturn := fake.unspentTokensIteratorByReturnsOnCall[len(fake.unspentTokensIteratorByArgsForCall)]
 	fake.unspentTokensIteratorByArgsForCall = append(fake.unspentTokensIteratorByArgsForCall, struct {
 		arg1 context.Context
 		arg2 string
 		arg3 token.Type
-	}{arg1, arg2, arg3})
+		arg4 int
+	}{arg1, arg2, arg3, arg4})
 	stub := fake.UnspentTokensIteratorByStub
 	fakeReturns := fake.unspentTokensIteratorByReturns
-	fake.recordInvocation("UnspentTokensIteratorBy", []interface{}{arg1, arg2, arg3})
+	fake.recordInvocation("UnspentTokensIteratorBy", []interface{}{arg1, arg2, arg3, arg4})
 	fake.unspentTokensIteratorByMutex.Unlock()
 	if stub != nil {
-		return stub(arg1, arg2, arg3)
+		return stub(arg1, arg2, arg3, arg4)
 	}
 	if specificReturn {
 		return ret.result1, ret.result2
@@ -546,17 +548,17 @@ func (fake *TokenVault) UnspentTokensIteratorByCallCount() int {
 	return len(fake.unspentTokensIteratorByArgsForCall)
 }
 
-func (fake *TokenVault) UnspentTokensIteratorByCalls(stub func(context.Context, string, token.Type) (driver.UnspentTokensIterator, error)) {
+func (fake *TokenVault) UnspentTokensIteratorByCalls(stub func(context.Context, string, token.Type, int) (driver.UnspentTokensIterator, error)) {
 	fake.unspentTokensIteratorByMutex.Lock()
 	defer fake.unspentTokensIteratorByMutex.Unlock()
 	fake.UnspentTokensIteratorByStub = stub
 }
 
-func (fake *TokenVault) UnspentTokensIteratorByArgsForCall(i int) (context.Context, string, token.Type) {
+func (fake *TokenVault) UnspentTokensIteratorByArgsForCall(i int) (context.Context, string, token.Type, int) {
 	fake.unspentTokensIteratorByMutex.RLock()
 	defer fake.unspentTokensIteratorByMutex.RUnlock()
 	argsForCall := fake.unspentTokensIteratorByArgsForCall[i]
-	return argsForCall.arg1, argsForCall.arg2, argsForCall.arg3
+	return argsForCall.arg1, argsForCall.arg2, argsForCall.arg3, argsForCall.arg4
 }
 
 func (fake *TokenVault) UnspentTokensIteratorByReturns(result1 driver.UnspentTokensIterator, result2 error) {
