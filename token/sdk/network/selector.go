@@ -22,6 +22,7 @@ type LockerProvider struct {
 	ttxStoreServiceManager db.StoreServiceManager[*ttxdb.StoreService]
 	sleepTimeout           time.Duration
 	validTxEvictionTimeout time.Duration
+	maxLocksPerTx          int // Resource limit: max locks per transaction
 }
 
 // NewLockerProvider creates a new locker provider with the given configuration.
@@ -30,10 +31,21 @@ func NewLockerProvider(
 	sleepTimeout time.Duration,
 	validTxEvictionTimeout time.Duration,
 ) *LockerProvider {
+	return NewLockerProviderWithLimits(ttxStoreServiceManager, sleepTimeout, validTxEvictionTimeout, 0)
+}
+
+// NewLockerProviderWithLimits creates a new locker provider with resource limits.
+func NewLockerProviderWithLimits(
+	ttxStoreServiceManager db.StoreServiceManager[*ttxdb.StoreService],
+	sleepTimeout time.Duration,
+	validTxEvictionTimeout time.Duration,
+	maxLocksPerTx int,
+) *LockerProvider {
 	return &LockerProvider{
 		ttxStoreServiceManager: ttxStoreServiceManager,
 		sleepTimeout:           sleepTimeout,
 		validTxEvictionTimeout: validTxEvictionTimeout,
+		maxLocksPerTx:          maxLocksPerTx,
 	}
 }
 
@@ -48,5 +60,5 @@ func (s *LockerProvider) New(network, channel, namespace string) (selector.Locke
 		return nil, err
 	}
 
-	return inmemory.NewLocker(db, s.sleepTimeout, s.validTxEvictionTimeout), nil
+	return inmemory.NewLockerWithLimits(db, s.sleepTimeout, s.validTxEvictionTimeout, s.maxLocksPerTx), nil
 }

@@ -40,7 +40,7 @@ type TokenLocker interface {
 //
 //go:generate counterfeiter -o mocks/token_fetcher.go -fake-name FakeTokenFetcher . TokenFetcher
 type TokenFetcher interface {
-	UnspentTokensIteratorBy(ctx context.Context, walletID string, currency token2.Type) (Iterator[*token2.UnspentTokenInWallet], error)
+	UnspentTokensIteratorBy(ctx context.Context, walletID string, currency token2.Type, limit int) (Iterator[*token2.UnspentTokenInWallet], error)
 }
 
 // FetcherProvider interface for providing fetcher instances.

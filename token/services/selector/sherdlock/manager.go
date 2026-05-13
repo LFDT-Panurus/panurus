@@ -25,6 +25,34 @@ const (
 
 var ErrTimeout = errors.New("timeout occurred")
 
+// txScopedState is implemented by Lockers that keep replica-local
+// per-transaction bookkeeping alongside the shared lock store — currently
+// boundedLocker's per-transaction lock counters. Because the state is local, it
+// cannot be reclaimed by the shared Cleanup path (which only one replica runs);
+// Manager drives its lifecycle explicitly instead.
+type txScopedState interface {
+	// ForgetTx drops the state for a transaction that is done with selection.
+	ForgetTx(txID transaction.ID)
+	// EvictStaleTxState drops state whose transaction has been idle longer
+	// than olderThan, as a backstop for selectors that are never closed.
+	EvictStaleTxState(olderThan time.Duration)
+}
+
+// Config holds all configuration parameters for the Manager
+type Config struct {
+	Fetcher                TokenFetcher
+	Locker                 Locker
+	Precision              uint64
+	Backoff                time.Duration
+	MaxRetriesAfterBackOff int
+	LeaseExpiry            time.Duration
+	LeaseCleanupTickPeriod time.Duration
+	MaxTokensPerSelection  int
+	MaxLockAttempts        int
+	SelectionTimeout       time.Duration
+	Metrics                *Metrics
+}
+
 type Manager struct {
 	selectorCache          lazy2.Provider[transaction.ID, TokenSelectorUnlocker]
 	locker                 Locker
@@ -36,29 +64,20 @@ type Manager struct {
 	stopOnce               sync.Once
 }
 
-func NewManager(
-	fetcher TokenFetcher,
-	locker Locker,
-	precision uint64,
-	backoff time.Duration,
-	maxRetriesAfterBackOff int,
-	leaseExpiry time.Duration,
-	leaseCleanupTickPeriod time.Duration,
-	m *Metrics,
-) *Manager {
+func NewManager(cfg *Config) *Manager {
 	ctx, cancel := context.WithCancel(context.Background())
 	mgr := &Manager{
-		locker:                 locker,
-		leaseExpiry:            leaseExpiry,
-		leaseCleanupTickPeriod: leaseCleanupTickPeriod,
-		metrics:                m,
+		locker:                 cfg.Locker,
+		leaseExpiry:            cfg.LeaseExpiry,
+		leaseCleanupTickPeriod: cfg.LeaseCleanupTickPeriod,
+		metrics:                cfg.Metrics,
 		cancel:                 cancel,
 		cleanerDone:            make(chan struct{}),
 		selectorCache: lazy2.NewProvider(func(txID transaction.ID) (TokenSelectorUnlocker, error) {
-			return NewSherdSelector(txID, fetcher, locker, precision, backoff, maxRetriesAfterBackOff, m), nil
+			return NewSherdSelector(txID, cfg.Fetcher, cfg.Locker, cfg.Precision, cfg.Backoff, cfg.MaxRetriesAfterBackOff, cfg.MaxTokensPerSelection, cfg.MaxLockAttempts, cfg.SelectionTimeout, cfg.Metrics), nil
 		}),
 	}
-	if leaseCleanupTickPeriod > 0 && leaseExpiry > 0 {
+	if cfg.LeaseCleanupTickPeriod > 0 && cfg.LeaseExpiry > 0 {
 		go mgr.cleaner(ctx)
 	} else {
 		close(mgr.cleanerDone)
@@ -76,6 +95,13 @@ func (m *Manager) Unlock(ctx context.Context, id transaction.ID) error {
 }
 
 func (m *Manager) Close(id transaction.ID) error {
+	// Release replica-local per-transaction bookkeeping. The locks themselves
+	// must stay: after a successful selection the transaction still needs them,
+	// and they are released by Unlock/UnlockByTxID or by lease expiry.
+	if s, ok := m.locker.(txScopedState); ok {
+		s.ForgetTx(id)
+	}
+
 	if c, ok := m.selectorCache.Delete(id); ok {
 		return c.Close()
 	}
@@ -103,6 +129,13 @@ func (m *Manager) cleaner(ctx context.Context) {
 // runCleanupTick acquires cleanup leadership for this tick so only one
 // replica runs Cleanup at a time; other replicas skip the tick. See #1798.
 func (m *Manager) runCleanupTick(ctx context.Context) {
+	// Evict stale replica-local state first, unconditionally: it belongs to
+	// this process, so gating it behind cleanup leadership would let it grow
+	// without bound on every replica that never wins the lease.
+	if s, ok := m.locker.(txScopedState); ok {
+		s.EvictStaleTxState(m.leaseExpiry)
+	}
+
 	leadership, acquired, err := m.locker.AcquireCleanupLeadership(ctx)
 	if err != nil {
 		logger.Errorf("failed to acquire cleanup leadership: [%s]", err)
