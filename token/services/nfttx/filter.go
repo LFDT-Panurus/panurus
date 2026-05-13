@@ -24,7 +24,7 @@ type Filter interface {
 
 type QueryService interface {
 	UnspentTokensIterator(ctx context.Context) (*token.UnspentTokensIterator, error)
-	UnspentTokensIteratorBy(ctx context.Context, id string, tokenType token2.Type) (driver.UnspentTokensIterator, error)
+	UnspentTokensIteratorBy(ctx context.Context, id string, tokenType token2.Type, limit int) (driver.UnspentTokensIterator, error)
 	GetTokens(ctx context.Context, inputs ...*token2.ID) ([]*token2.Token, error)
 }
 
@@ -62,7 +62,7 @@ func (s *filter) selectByFilter(ctx context.Context, filter Filter, q string) ([
 		return nil, nil, errors.Wrap(err, "failed to convert quantity")
 	}
 
-	unspentTokens, err := s.queryService.UnspentTokensIteratorBy(ctx, s.wallet, "")
+	unspentTokens, err := s.queryService.UnspentTokensIteratorBy(ctx, s.wallet, "", 0)
 	if err != nil {
 		return nil, nil, errors.Wrap(err, "token selection failed")
 	}

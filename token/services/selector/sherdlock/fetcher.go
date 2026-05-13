@@ -103,9 +103,10 @@ func NewMixedFetcher(tokenDB TokenDB, m *Metrics, cacheSize int64, freshnessInte
 }
 
 // UnspentTokensIteratorBy returns an iterator for unspent tokens, trying cached results first, falling back to database query.
-func (f *mixedFetcher) UnspentTokensIteratorBy(ctx context.Context, walletID string, currency token2.Type) (Iterator[*token2.UnspentTokenInWallet], error) {
+// The limit parameter is ignored by sherdlock as it uses its own token limiting mechanism.
+func (f *mixedFetcher) UnspentTokensIteratorBy(ctx context.Context, walletID string, currency token2.Type, limit int) (Iterator[*token2.UnspentTokenInWallet], error) {
 	logger.DebugfContext(ctx, "call unspent tokens iterator")
-	it, err := f.eagerFetcher.UnspentTokensIteratorBy(ctx, walletID, currency)
+	it, err := f.eagerFetcher.UnspentTokensIteratorBy(ctx, walletID, currency, limit)
 	logger.DebugfContext(ctx, "fetched eager iterator")
 	if err == nil {
 		if peeked, hasNext, peekErr := peekIterator(it); peekErr == nil && hasNext {
@@ -119,7 +120,7 @@ func (f *mixedFetcher) UnspentTokensIteratorBy(ctx context.Context, walletID str
 
 	f.m.UnspentTokensInvocations.With(fetcherTypeLabel, lazy).Add(1)
 
-	return f.lazyFetcher.UnspentTokensIteratorBy(ctx, walletID, currency)
+	return f.lazyFetcher.UnspentTokensIteratorBy(ctx, walletID, currency, limit)
 }
 
 // peekedIterator replays an already-consumed first item before delegating
@@ -177,7 +178,8 @@ func NewLazyFetcher(tokenDB TokenDB) *lazyFetcher {
 }
 
 // UnspentTokensIteratorBy queries the database directly for unspent tokens.
-func (f *lazyFetcher) UnspentTokensIteratorBy(ctx context.Context, walletID string, currency token2.Type) (Iterator[*token2.UnspentTokenInWallet], error) {
+// The limit parameter is ignored by sherdlock as it uses its own token limiting mechanism.
+func (f *lazyFetcher) UnspentTokensIteratorBy(ctx context.Context, walletID string, currency token2.Type, limit int) (Iterator[*token2.UnspentTokenInWallet], error) {
 	logger.DebugfContext(ctx, "Query the DB for new tokens")
 	it, err := f.tokenDB.SpendableTokensIteratorBy(ctx, walletID, currency)
 	if err != nil {
@@ -375,8 +377,10 @@ func (f *cachedFetcher) updateCache(ctx context.Context, tokensByKey map[string]
 }
 
 // UnspentTokensIteratorBy returns cached unspent tokens, triggering a refresh if the cache is stale or overused.
-func (f *cachedFetcher) UnspentTokensIteratorBy(ctx context.Context, walletID string, currency token2.Type) (Iterator[*token2.UnspentTokenInWallet], error) {
+// The limit parameter is ignored by sherdlock as it uses its own token limiting mechanism.
+func (f *cachedFetcher) UnspentTokensIteratorBy(ctx context.Context, walletID string, currency token2.Type, limit int) (Iterator[*token2.UnspentTokenInWallet], error) {
 	defer f.queriesResponded.Add(1)
+
 	if f.isCacheOverused() {
 		logger.DebugfContext(ctx, "Overused data. Soft refresh (in the background)...")
 		go f.update(ctx)

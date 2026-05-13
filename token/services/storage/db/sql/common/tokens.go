@@ -183,7 +183,33 @@ func (db *TokenStore) IsMine(ctx context.Context, txID string, index uint64) (bo
 
 // UnspentTokensIterator returns an iterator over all unspent tokens
 func (db *TokenStore) UnspentTokensIterator(ctx context.Context) (tdriver.UnspentTokensIterator, error) {
-	return db.UnspentTokensIteratorBy(ctx, "", "")
+	return db.UnspentTokensIteratorBy(ctx, "", "", 0)
+}
+
+// unspentTokenFields is the projection both UNION ALL branches of
+// UnspentTokensIteratorBy select, in the exact order
+// dedupedTokenRowsIterator.Next scans them. UNION ALL requires both branches to
+// project the same columns in the same order, so the list lives in one place;
+// keep it in sync with the Scan call in dedupedTokenRowsIterator.Next.
+//
+// The two trailing columns are not surfaced on token.UnspentToken: amount is
+// selected so the UNION result can be ordered numerically (ORDER BY amount
+// DESC), and ownership.wallet_id is read for the dedup key only, so that a
+// (token, ownership) pair appearing in both branches — when walletID matches
+// both tokens.owner_wallet_id and ownership.wallet_id of the same row — is
+// emitted once. Pre-PR semantics yield one row per matching (token, ownership)
+// pair, including duplicates per token when multiple ownership rows match
+// (e.g. shared-ownership tokens).
+//
+// Adding a column here without extending that Scan makes every row fail with
+// "expected N destination arguments in Scan".
+func unspentTokenFields(tokenTable, ownershipTable common3.Table) []common3.Field {
+	return []common3.Field{
+		tokenTable.Field("tx_id"), tokenTable.Field("idx"),
+		common3.FieldName("owner_raw"), common3.FieldName("token_type"), common3.FieldName("quantity"),
+		tokenTable.Field("amount"),
+		ownershipTable.Field("wallet_id"),
+	}
 }
 
 // UnspentTokensIteratorBy returns an iterator of unspent tokens owned by the
@@ -208,15 +234,27 @@ func (db *TokenStore) UnspentTokensIterator(ctx context.Context) (tdriver.Unspen
 // connection from the pool, which avoids the deadlock that would arise if
 // two concurrent QueryContexts each tried to acquire a second connection.
 // PostgreSQL 9.6+ may also execute the branches in parallel via parallel
-// append. UNION ALL is used (not UNION) to skip the per-row sort/hash
-// dedup pass; duplicates between the two branches (and within branch 1 when
-// a token has multiple ownership rows) are filtered at the iterator layer.
+// append. On the unlimited path UNION ALL is used (not UNION) to skip the
+// per-row sort/hash dedup pass; duplicates between the two branches (and
+// within branch 1 when a token has multiple ownership rows) are filtered at
+// the iterator layer. The limited path must use UNION instead, so that LIMIT
+// counts distinct rows — see buildUnspentTokensIteratorByQuery.
 // buildUnspentTokensIteratorByQuery builds the SQL query and args for
 // UnspentTokensIteratorBy without executing it. Extracted so benchmarks can
 // compare executing this exact query dynamically (query built and run fresh
 // each call, the production path) against running it via a statement
 // prepared once ahead of time, using identical SQL in both cases.
-func buildUnspentTokensIteratorByQuery(db *TokenStore, walletID string, tokenType token.Type) (string, []any) {
+//
+// A limit > 0 appends ORDER BY amount DESC LIMIT <param> to the whole compound
+// SELECT and switches the set operator from UNION ALL to UNION, so that the
+// limit counts *distinct* rows. Leaving UNION ALL here would make the limit
+// count pre-dedup rows: a directly-owned token matches both branches, so
+// dedupedTokenRowsIterator would collapse them and surface only about half of
+// the requested rows, which the selector reads as "no more tokens available".
+// The limit placeholder is written through the shared builder so it is emitted
+// in the same dialect ($N) as every other parameter; a literal "?" here is a
+// syntax error on PostgreSQL.
+func buildUnspentTokensIteratorByQuery(db *TokenStore, walletID string, tokenType token.Type, limit int) (string, []any) {
 	tokenTable := q.Table(db.table.Tokens)
 	ownershipTable := q.Table(db.table.Ownership)
 	joinCond := cond.And(
@@ -237,19 +275,8 @@ func buildUnspentTokensIteratorByQuery(db *TokenStore, walletID string, tokenTyp
 	if len(tokenType) > 0 {
 		branch1Conds = append(branch1Conds, cond.Eq("token_type", tokenType))
 	}
-	// Both branches select ownership.wallet_id as the trailing column. It
-	// isn't part of the iterator output but is used as the dedup key so a
-	// (token, ownership) pair appearing in both branches (when walletID
-	// matches both tokens.owner_wallet_id and ownership.wallet_id of the
-	// same row) is emitted once. Pre-PR semantics yield one row per
-	// matching (token, ownership) pair, including duplicates per token
-	// when multiple ownership rows match (e.g. shared-ownership tokens).
 	branch1 := q.Select().
-		Fields(
-			tokenTable.Field("tx_id"), tokenTable.Field("idx"),
-			common3.FieldName("owner_raw"), common3.FieldName("token_type"), common3.FieldName("quantity"),
-			ownershipTable.Field("wallet_id"),
-		).
+		Fields(unspentTokenFields(tokenTable, ownershipTable)...).
 		From(tokenTable.Join(ownershipTable, joinCond)).
 		Where(cond.And(branch1Conds...))
 
@@ -266,11 +293,7 @@ func buildUnspentTokensIteratorByQuery(db *TokenStore, walletID string, tokenTyp
 		branch2Conds = append(branch2Conds, cond.Eq("token_type", tokenType))
 	}
 	branch2 := q.Select().
-		Fields(
-			tokenTable.Field("tx_id"), tokenTable.Field("idx"),
-			common3.FieldName("owner_raw"), common3.FieldName("token_type"), common3.FieldName("quantity"),
-			ownershipTable.Field("wallet_id"),
-		).
+		Fields(unspentTokenFields(tokenTable, ownershipTable)...).
 		From(tokenTable.Join(ownershipTable, joinCond)).
 		Where(cond.And(branch2Conds...))
 
@@ -278,12 +301,22 @@ func buildUnspentTokensIteratorByQuery(db *TokenStore, walletID string, tokenTyp
 	// the placeholder counter (`$1`, `$2`, ...) keeps incrementing across
 	// branches; each branch's args are appended in order. SQLite rejects
 	// parenthesised SELECT operands around UNION, so emit unwrapped form
-	// (PostgreSQL accepts both). Neither branch has ORDER BY / LIMIT, so
-	// dropping the parens does not change binding.
+	// (PostgreSQL accepts both). ORDER BY and LIMIT are applied to the
+	// entire UNION result set.
 	sb := common3.NewBuilder()
 	branch1.FormatTo(db.ci, sb)
-	sb.WriteString(" UNION ALL ")
+	if limit > 0 {
+		sb.WriteString(" UNION ")
+	} else {
+		sb.WriteString(" UNION ALL ")
+	}
 	branch2.FormatTo(db.ci, sb)
+	if limit > 0 {
+		// Order by amount descending: largest tokens first so the selector
+		// reaches the target amount with the fewest rows.
+		sb.WriteString(" ORDER BY amount DESC LIMIT ")
+		sb.WriteParam(limit)
+	}
 
 	return sb.Build()
 }
@@ -311,11 +344,31 @@ func (db *TokenStore) PreparedStmtCount() int {
 	return db.unspentTokensStmts.Count()
 }
 
-func (db *TokenStore) UnspentTokensIteratorBy(ctx context.Context, walletID string, tokenType token.Type) (tdriver.UnspentTokensIterator, error) {
+func (db *TokenStore) UnspentTokensIteratorBy(ctx context.Context, walletID string, tokenType token.Type, limit int) (tdriver.UnspentTokensIterator, error) {
+	// When a limit is requested the query changes (ORDER BY + LIMIT), so we
+	// cannot reuse a no-limit prepared statement. Fall back to a plain
+	// QueryContext so the prepared-statement cache is never poisoned with a
+	// limit-specific statement that would be returned for a future no-limit
+	// call of the same argument shape.
+	if limit > 0 {
+		query, args := buildUnspentTokensIteratorByQuery(db, walletID, tokenType, limit)
+		logging.Debug(logger, query, args)
+		//nolint:rowserrcheck // rows.Err is checked by dedupedTokenRowsIterator.Next, which owns rows from here on
+		rows, err := db.readDB.QueryContext(ctx, query, args...)
+		if err != nil {
+			return nil, errors.Wrapf(err, "error querying unspent tokens for wallet [%s] type [%s]", walletID, tokenType)
+		}
+
+		return &dedupedTokenRowsIterator{
+			rows: rows,
+			seen: make(map[string]struct{}),
+		}, nil
+	}
+
 	key := unspentTokensStmtKey(walletID, tokenType)
 	//nolint:rowserrcheck // rows.Err is checked by dedupedTokenRowsIterator.Next, which owns rows from here on
 	rows, err := db.unspentTokensStmts.Execute(ctx, db.readDB, key, func() (string, []any, error) {
-		query, args := buildUnspentTokensIteratorByQuery(db, walletID, tokenType)
+		query, args := buildUnspentTokensIteratorByQuery(db, walletID, tokenType, 0)
 
 		return query, args, nil
 	})
@@ -337,11 +390,12 @@ func (db *TokenStore) UnspentTokensIteratorBy(ctx context.Context, walletID stri
 // ownership) pairs (e.g. shared-ownership tokens with multiple wallets in
 // the ownership table) are preserved — they have different keys.
 //
-// The trailing wallet_id column is read for the dedup key only and is not
-// surfaced on token.UnspentToken. ownership.wallet_id can be NULL when the
-// LEFT JOIN finds no matching ownership row (a tokens row with
-// owner_wallet_id set but no entry in the ownership table — StoreToken
-// allows that when owners is empty), so it is scanned as sql.NullString.
+// The amount column is used for ORDER BY (numeric sorting) but not surfaced
+// in the output. The trailing wallet_id column is read for the dedup key only
+// and is not surfaced on token.UnspentToken. ownership.wallet_id can be NULL
+// when the LEFT JOIN finds no matching ownership row (a tokens row with
+// owner_wallet_id set but no entry in the ownership table — StoreToken allows
+// that when owners is empty), so it is scanned as sql.NullString.
 type dedupedTokenRowsIterator struct {
 	rows *sql.Rows
 	seen map[string]struct{}
@@ -355,7 +409,8 @@ func (it *dedupedTokenRowsIterator) Next() (*token.UnspentToken, error) {
 	for it.rows.Next() {
 		var t token.UnspentToken
 		var ownerID sql.NullString
-		if err := it.rows.Scan(&t.Id.TxId, &t.Id.Index, &t.Owner, &t.Type, &t.Quantity, &ownerID); err != nil {
+		var amount string // amount field for ORDER BY, not used in output
+		if err := it.rows.Scan(&t.Id.TxId, &t.Id.Index, &t.Owner, &t.Type, &t.Quantity, &amount, &ownerID); err != nil {
 			return nil, err
 		}
 		// "\x00" prefix on a Valid wallet_id can never collide with the
@@ -518,7 +573,7 @@ func (db *TokenStore) balance(ctx context.Context, opts driver.QueryTokenDetails
 // ListUnspentTokensBy returns the list of unspent tokens, filtered by owner and token type
 func (db *TokenStore) ListUnspentTokensBy(ctx context.Context, walletID string, typ token.Type) (*token.UnspentTokens, error) {
 	logger.DebugfContext(ctx, "list unspent token by [%s,%s]", walletID, typ)
-	it, err := db.UnspentTokensIteratorBy(ctx, walletID, typ)
+	it, err := db.UnspentTokensIteratorBy(ctx, walletID, typ, 0)
 	if err != nil {
 		return nil, err
 	}
