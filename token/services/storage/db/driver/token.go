@@ -197,8 +197,9 @@ type TokenStore interface {
 	UnspentTokensIterator(ctx context.Context) (driver.UnspentTokensIterator, error)
 	// UnspentLedgerTokensIteratorBy returns an iterator over all unspent ledger tokens
 	UnspentLedgerTokensIteratorBy(ctx context.Context) (driver.LedgerTokensIterator, error)
-	// UnspentTokensIteratorBy returns an iterator over all tokens owned by the passed wallet identifier and of a given type
-	UnspentTokensIteratorBy(ctx context.Context, walletID string, tokenType token.Type) (driver.UnspentTokensIterator, error)
+	// UnspentTokensIteratorBy returns an iterator over all tokens owned by the passed wallet identifier and of a given type.
+	// If limit is greater than zero, at most limit tokens are returned. A non-positive value means no explicit limit.
+	UnspentTokensIteratorBy(ctx context.Context, walletID string, tokenType token.Type, limit int) (driver.UnspentTokensIterator, error)
 	// SpendableTokensIteratorBy returns an iterator over all tokens owned solely by the passed wallet identifier and of a given type
 	SpendableTokensIteratorBy(ctx context.Context, walletID string, typ token.Type) (driver.SpendableTokensIterator, error)
 	// UnsupportedTokensIteratorBy returns the minimum information for upgrade about the tokens that are not supported
@@ -228,7 +229,7 @@ type TokenStore interface {
 	// Position in the ListUnspentTokens family:
 	//
 	//	UnspentTokensIterator(ctx)                       → iterator (all)
-	//	UnspentTokensIteratorBy(ctx, walletID, typ)      → iterator (one wallet)
+	//	UnspentTokensIteratorBy(ctx, walletID, typ, limit) → iterator (one wallet)
 	//	ListUnspentTokens(ctx)                           → *UnspentTokens (all)
 	//	ListUnspentTokensBy(ctx, walletID, typ)          → *UnspentTokens (one wallet)
 	//	ListUnspentTokensByWallets(ctx, walletIDs, typ)  → map[walletID]*UnspentTokens (batch)

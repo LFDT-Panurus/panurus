@@ -12,6 +12,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/LFDT-Panurus/panurus/token/services/selector/sherdlock"
 	"github.com/LFDT-Panurus/panurus/token/services/selector/sherdlock/mocks"
@@ -32,7 +33,7 @@ func TestSelectorClosesDisplacedIterators(t *testing.T) {
 
 	var mu sync.Mutex
 	var iterators []*mocks.FakeIterator[*token2.UnspentTokenInWallet]
-	mockFetcher.UnspentTokensIteratorByStub = func(_ context.Context, _ string, _ token2.Type) (sherdlock.Iterator[*token2.UnspentTokenInWallet], error) {
+	mockFetcher.UnspentTokensIteratorByStub = func(_ context.Context, _ string, _ token2.Type, _ int) (sherdlock.Iterator[*token2.UnspentTokenInWallet], error) {
 		it := &mocks.FakeIterator[*token2.UnspentTokenInWallet]{}
 		// One token, always locked by someone else, then exhausted: this drives a
 		// refresh of the cache on every pass through the loop.
@@ -53,7 +54,7 @@ func TestSelectorClosesDisplacedIterators(t *testing.T) {
 	// immediate retries and gives up with SufficientButLockedFunds.
 	mockLocker.TryLockReturns(false, nil)
 
-	s := sherdlock.NewSelector(sherdlock.Logger(), mockFetcher, mockLocker, 64, metrics)
+	s := sherdlock.NewSelector(sherdlock.Logger(), mockFetcher, mockLocker, 64, 10000, 50000, 30*time.Second, metrics)
 	_, _, err := s.Select(t.Context(), &unitTestMockOwnerFilter{id: "alice"}, "50", "ABC")
 	require.Error(t, err)
 
@@ -80,7 +81,7 @@ func TestSelectorCloseDuringRetryIsRaceFree(t *testing.T) {
 	mockLocker := &mocks.FakeTokenLocker{}
 
 	var created atomic.Int64
-	mockFetcher.UnspentTokensIteratorByStub = func(_ context.Context, _ string, _ token2.Type) (sherdlock.Iterator[*token2.UnspentTokenInWallet], error) {
+	mockFetcher.UnspentTokensIteratorByStub = func(_ context.Context, _ string, _ token2.Type, _ int) (sherdlock.Iterator[*token2.UnspentTokenInWallet], error) {
 		created.Add(1)
 		it := &mocks.FakeIterator[*token2.UnspentTokenInWallet]{}
 		it.NextReturnsOnCall(0, &token2.UnspentTokenInWallet{
@@ -94,7 +95,7 @@ func TestSelectorCloseDuringRetryIsRaceFree(t *testing.T) {
 	}
 	mockLocker.TryLockReturns(false, nil)
 
-	s := sherdlock.NewSelector(sherdlock.Logger(), mockFetcher, mockLocker, 64, metrics)
+	s := sherdlock.NewSelector(sherdlock.Logger(), mockFetcher, mockLocker, 64, 10000, 50000, 30*time.Second, metrics)
 
 	var wg sync.WaitGroup
 	wg.Add(2)

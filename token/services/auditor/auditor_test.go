@@ -1154,9 +1154,34 @@ func TestService_AcquireLocksWithRetry_ExponentialBackoff(t *testing.T) {
 
 		return nil
 	})
-	svc := newTestServiceWithMockLocker(t, mockLocker)
 
-	_, _, err := svc.Audit(context.Background(), &auditmock.Transaction{
+	// Use zero jitter so backoff is deterministic and the ordering check is reliable.
+	noJitterConfig := &auditor.LockConfig{
+		MaxRetries:        10,
+		InitialBackoff:    10 * time.Millisecond,
+		MaxBackoff:        5 * time.Second,
+		BackoffMultiplier: 2.0,
+		JitterFactor:      0,
+	}
+	fakeStore := newFakeStore()
+	storeService, err := auditdb.NewStoreService(fakeStore, auditdb.WithLocker(mockLocker))
+	require.NoError(t, err)
+	// Audit resolves the TMS through the provider, so it cannot be nil here.
+	tmsProv := &depmock.TokenManagementServiceProvider{}
+	tmsProv.TokenManagementServiceReturns(tmsWithExtensions{newTestManagementService(t)}, nil)
+	svc := auditor.NewService(
+		token.TMSID{},
+		nil, // networkProvider
+		storeService,
+		nil, // tokenDB
+		tmsProv,
+		nil, // finalityTracer
+		nil, // metricsProvider
+		nil, // checkService
+		noJitterConfig,
+	)
+
+	_, _, err = svc.Audit(context.Background(), &auditmock.Transaction{
 		IDStub: func() string { return "tx-lock-backoff" },
 		RequestStub: func() *token.Request {
 			return token.NewRequest(newTestManagementService(t), token.RequestAnchor("tx-lock-backoff"))
@@ -1165,6 +1190,14 @@ func TestService_AcquireLocksWithRetry_ExponentialBackoff(t *testing.T) {
 
 	require.NoError(t, err)
 	require.Len(t, callTimes, 4, "Should have 4 attempts")
+
+	// Verify backoff is increasing. With zero jitter, delay2 should be exactly 2x delay1.
+	// We use a loose check (1.3x) to tolerate OS scheduling noise.
+	if len(callTimes) >= 3 {
+		delay1 := callTimes[1].Sub(callTimes[0])
+		delay2 := callTimes[2].Sub(callTimes[1])
+		assert.Greater(t, delay2, delay1*13/10, "Backoff should increase exponentially")
+	}
 }
 
 func TestService_AcquireLocksWithRetry_MultipleEnrollmentIDs(t *testing.T) {

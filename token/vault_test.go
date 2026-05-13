@@ -369,7 +369,7 @@ func TestQueryEngine_UnspentTokensIteratorBy(t *testing.T) {
 	mockQE.UnspentTokensIteratorByReturns(mockIterator, nil)
 
 	queryEngine := NewQueryEngine(logging.MustGetLogger(), mockQE, 3, time.Second)
-	iterator, err := queryEngine.UnspentTokensIteratorBy(t.Context(), "wallet1", "USD")
+	iterator, err := queryEngine.UnspentTokensIteratorBy(t.Context(), "wallet1", "USD", 0)
 
 	require.NoError(t, err)
 	assert.NotNil(t, iterator)
@@ -383,7 +383,7 @@ func TestQueryEngine_UnspentTokensIteratorBy_Error(t *testing.T) {
 	mockQE.UnspentTokensIteratorByReturns(nil, expectedErr)
 
 	queryEngine := NewQueryEngine(logging.MustGetLogger(), mockQE, 3, time.Second)
-	iterator, err := queryEngine.UnspentTokensIteratorBy(t.Context(), "wallet1", "USD")
+	iterator, err := queryEngine.UnspentTokensIteratorBy(t.Context(), "wallet1", "USD", 0)
 
 	require.Error(t, err)
 	assert.Nil(t, iterator)

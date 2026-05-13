@@ -81,7 +81,8 @@ type QueryEngine interface {
 	// UnspentLedgerTokensIteratorBy returns an iterator to traverse all unspent ledger tokens.
 	UnspentLedgerTokensIteratorBy(ctx context.Context) (LedgerTokensIterator, error)
 	// UnspentTokensIteratorBy returns an iterator over unspent tokens owned by a specific wallet and optionally filtered by token type.
-	UnspentTokensIteratorBy(ctx context.Context, walletID string, tokenType token.Type) (UnspentTokensIterator, error)
+	// If limit > 0, the database query will be constrained to return at most limit tokens for performance and security.
+	UnspentTokensIteratorBy(ctx context.Context, walletID string, tokenType token.Type, limit int) (UnspentTokensIterator, error)
 	// ListUnspentTokens returns a comprehensive list of all unspent tokens.
 	ListUnspentTokens(ctx context.Context) (*token.UnspentTokens, error)
 	// ListAuditTokens returns the audited token data for the specified token IDs.
@@ -131,7 +132,7 @@ type TokenVault interface {
 	IsPending(ctx context.Context, id *token.ID) (bool, error)
 	GetTokenOutputsAndMeta(ctx context.Context, ids []*token.ID) ([][]byte, [][]byte, []token.Format, error)
 	GetTokenOutputs(ctx context.Context, ids []*token.ID, callback QueryCallbackFunc) error
-	UnspentTokensIteratorBy(ctx context.Context, id string, tokenType token.Type) (UnspentTokensIterator, error)
+	UnspentTokensIteratorBy(ctx context.Context, id string, tokenType token.Type, limit int) (UnspentTokensIterator, error)
 	ListHistoryIssuedTokens(ctx context.Context) (*token.IssuedTokens, error)
 	PublicParams(ctx context.Context) ([]byte, error)
 	Balance(ctx context.Context, id string, tokenType token.Type) (*big.Int, error)

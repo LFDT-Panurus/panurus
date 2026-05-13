@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/LFDT-Panurus/panurus/token"
 	"github.com/LFDT-Panurus/panurus/token/services/logging"
 	"github.com/LFDT-Panurus/panurus/token/services/selector/simple"
 	"github.com/LFDT-Panurus/panurus/token/services/storage/ttxdb"
@@ -58,6 +59,12 @@ func (l lockEntry) String() string {
 type shard struct {
 	mu     sync.RWMutex
 	locked map[token2.ID]*lockEntry
+	// txLocks tracks the number of tokens locked per transaction ID.
+	// It is kept in sync with locked: incremented on every new lock write,
+	// decremented (and the key deleted when it reaches zero) on every delete.
+	// This gives O(1) per-transaction lock counting instead of a full scan.
+	// Guarded by mu.
+	txLocks map[string]int
 	// pruned reports whether this shard has been removed from the registry.
 	// A caller that obtained the shard before it was pruned must not write to
 	// it: the entry would be invisible to every other operation. Guarded by mu.
@@ -65,7 +72,24 @@ type shard struct {
 }
 
 func newShard() *shard {
-	return &shard{locked: map[token2.ID]*lockEntry{}}
+	return &shard{
+		locked:  map[token2.ID]*lockEntry{},
+		txLocks: map[string]int{},
+	}
+}
+
+// deleteLocked removes id from s.locked and decrements the txLocks counter for
+// the entry's transaction. The caller must hold s.mu (write lock).
+func (s *shard) deleteLocked(id token2.ID) {
+	e, ok := s.locked[id]
+	if !ok {
+		return
+	}
+	delete(s.locked, id)
+	s.txLocks[e.TxID]--
+	if s.txLocks[e.TxID] == 0 {
+		delete(s.txLocks, e.TxID)
+	}
 }
 
 type locker struct {
@@ -77,9 +101,14 @@ type locker struct {
 	cancel                 context.CancelFunc
 	scanDone               chan struct{}
 	stopOnce               sync.Once
+	maxLocksPerTx          int // Resource limit: max locks per transaction
 }
 
 func NewLocker(ttxdb TXStatusProvider, timeout time.Duration, validTxEvictionTimeout time.Duration) simple.Locker {
+	return NewLockerWithLimits(ttxdb, timeout, validTxEvictionTimeout, 0)
+}
+
+func NewLockerWithLimits(ttxdb TXStatusProvider, timeout time.Duration, validTxEvictionTimeout time.Duration, maxLocksPerTx int) simple.Locker {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	r := &locker{
@@ -89,6 +118,7 @@ func NewLocker(ttxdb TXStatusProvider, timeout time.Duration, validTxEvictionTim
 		validTxEvictionTimeout: validTxEvictionTimeout,
 		cancel:                 cancel,
 		scanDone:               make(chan struct{}),
+		maxLocksPerTx:          maxLocksPerTx,
 	}
 	r.start(ctx)
 
@@ -208,6 +238,25 @@ func (d *locker) lockInShard(ctx context.Context, s *shard, owner string, id *to
 	if s.pruned {
 		return "", errShardPruned
 	}
+
+	// Check lock count limit for this transaction (if configured). A single
+	// selection locks tokens for one owner, so all of a transaction's locks
+	// live in this owner's shard and counting within it is per-transaction.
+	if d.maxLocksPerTx > 0 {
+		if txLockCount := s.txLocks[txID]; txLockCount >= d.maxLocksPerTx {
+			// Wrap SelectorRateLimited so the selector aborts immediately.
+			// Without the sentinel the selector reads this as "some other
+			// process holds the token", counts the quantity as potentially
+			// available and keeps retrying, so a transaction that hit its own
+			// ceiling burns the whole retry budget and then reports
+			// SelectorSufficientButLockedFunds — which callers retry forever.
+			return "", errors.WithMessagef(token.SelectorRateLimited,
+				"lock limit exceeded: transaction %s already holds %d locks (max: %d)",
+				txID, txLockCount, d.maxLocksPerTx,
+			)
+		}
+	}
+
 	e, ok := s.locked[k]
 	if ok {
 		// Read before the refresh below clobbers it: the re-validation compares against
@@ -258,6 +307,7 @@ func (d *locker) lockInShard(ctx context.Context, s *shard, owner string, id *to
 	logger.DebugfContext(ctx, "locking [%s] for [%s] by owner [%s]", id, txID, owner)
 	now := time.Now()
 	s.locked[k] = &lockEntry{TxID: txID, Identity: owner, Created: now, LastAccess: now}
+	s.txLocks[txID]++
 
 	return "", nil
 }
@@ -281,7 +331,7 @@ func (d *locker) UnlockIDs(ctx context.Context, owner string, ids ...*token2.ID)
 			continue
 		}
 		logger.DebugfContext(ctx, "unlocking [%s] hold by [%s]", id, entry)
-		delete(s.locked, k)
+		s.deleteLocked(k)
 	}
 
 	d.pruneEmptyShard(owner, s)
@@ -324,7 +374,7 @@ func (d *locker) UnlockByTxID(ctx context.Context, txID string) {
 		for id, entry := range s.locked {
 			if entry.TxID == txID {
 				logger.DebugfContext(ctx, "unlocking [%s] hold by [%s]", id, entry)
-				delete(s.locked, id)
+				s.deleteLocked(id)
 			}
 		}
 		d.pruneEmptyShard(owner, s)
@@ -452,7 +502,7 @@ func (d *locker) scan(ctx context.Context) {
 				// transaction, or a plain Lock may have refreshed its last
 				// access time; either way the entry must be kept.
 				if e, ok := s.locked[entry.id]; ok && e.TxID == entry.txID && e.LastAccess.Equal(entry.lastAccess) {
-					delete(s.locked, entry.id)
+					s.deleteLocked(entry.id)
 				}
 			}
 			d.pruneEmptyShard(owner, s)
