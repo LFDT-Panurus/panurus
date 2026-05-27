@@ -70,3 +70,11 @@ func TestLock(t *testing.T) {
 func TestUnlockByTxID(t *testing.T) {
 	common3.TestUnlockByTxID(t, mockTokenLockStore)
 }
+
+func TestLockContextCancelled(t *testing.T) {
+	common3.TestLockContextCancelled(t, mockTokenLockStore)
+}
+
+func TestUnlockByTxIDContextCancelled(t *testing.T) {
+	common3.TestUnlockByTxIDContextCancelled(t, mockTokenLockStore)
+}

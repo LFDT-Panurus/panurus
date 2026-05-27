@@ -356,6 +356,7 @@ func (db *TransactionStore) AddTransactionEndorsementAck(ctx context.Context, tx
 		Format()
 
 	logging.Debug(logger, query, txID, fmt.Sprintf("(%d bytes)", len(endorser)), fmt.Sprintf("(%d bytes)", len(sigma)), now)
+
 	if _, err = db.writeDB.ExecContext(ctx, query, args...); err != nil {
 		return ttxDBError(err)
 	}
@@ -559,6 +560,7 @@ func (w *TransactionStoreTransaction) AddTransaction(ctx context.Context, rs ...
 		Rows(rows).
 		Format()
 	logging.Debug(logger, query, args)
+
 	_, err := w.txn.ExecContext(ctx, query, args...)
 
 	return ttxDBError(err)
@@ -589,6 +591,7 @@ func (w *TransactionStoreTransaction) AddTokenRequest(ctx context.Context, txID 
 		Row(txID, tr, dbdriver.Pending, "", ja, jp, ppHash, time.Now().UTC()).
 		Format()
 	logging.Debug(logger, query, txID, fmt.Sprintf("(%d bytes)", len(tr)), len(applicationMetadata), len(publicMetadata), len(ppHash))
+
 	_, err = w.txn.ExecContext(ctx, query, args...)
 
 	return ttxDBError(err)
@@ -623,6 +626,7 @@ func (w *TransactionStoreTransaction) AddMovement(ctx context.Context, rs ...dbd
 		Rows(rows).
 		Format()
 	logging.Debug(logger, query, args)
+
 	_, err := w.txn.ExecContext(ctx, query, args...)
 
 	return ttxDBError(err)

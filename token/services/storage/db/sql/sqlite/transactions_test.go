@@ -73,3 +73,27 @@ func TestAWAddTokenRequest(t *testing.T) {
 func TestAWAddMovement(t *testing.T) {
 	common2.TestAWAddMovement(t, mockTransactionsStore)
 }
+
+func TestGetStatusContextCancelled(t *testing.T) {
+	common2.TestGetStatusContextCancelled(t, mockTransactionsStore)
+}
+
+func TestAddTransactionEndorsementAckContextCancelled(t *testing.T) {
+	common2.TestAddTransactionEndorsementAckContextCancelled(t, mockTransactionsStore)
+}
+
+func TestSetStatusContextCancelled(t *testing.T) {
+	common2.TestSetStatusContextCancelled(t, mockTransactionsStore)
+}
+
+func TestAWAddTransactionContextCancelled(t *testing.T) {
+	common2.TestAWAddTransactionContextCancelled(t, mockTransactionsStore)
+}
+
+func TestAWAddTokenRequestContextCancelled(t *testing.T) {
+	common2.TestAWAddTokenRequestContextCancelled(t, mockTransactionsStore)
+}
+
+func TestAWAddMovementContextCancelled(t *testing.T) {
+	common2.TestAWAddMovementContextCancelled(t, mockTransactionsStore)
+}

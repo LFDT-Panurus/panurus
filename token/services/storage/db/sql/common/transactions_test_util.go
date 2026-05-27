@@ -7,6 +7,7 @@ SPDX-License-Identifier: Apache-2.0
 package common
 
 import (
+	"context"
 	"database/sql"
 	driver2 "database/sql/driver"
 	"math/big"
@@ -18,6 +19,7 @@ import (
 	"github.com/LFDT-Panurus/panurus/token/services/storage/db/driver"
 	"github.com/LFDT-Panurus/panurus/token/services/storage/db/sql/query/pagination"
 	"github.com/LFDT-Panurus/panurus/token/token"
+	fscerrors "github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/common/utils/collections/iterators"
 	"github.com/onsi/gomega"
 )
@@ -350,4 +352,163 @@ func TestAWAddMovement(t *testing.T, store transactionsStoreConstructor) {
 	gomega.Expect(aw.Commit()).To(gomega.Succeed())
 
 	gomega.Expect(mockDB.ExpectationsWereMet()).To(gomega.Succeed())
+}
+
+// TestGetStatusContextCancelled verifies that a cancelled context is propagated from
+// QueryContext back to the caller of GetStatus as a context error.
+func TestGetStatusContextCancelled(t *testing.T, store transactionsStoreConstructor) {
+	gomega.RegisterTestingT(t)
+	db, mockDB, err := sqlmock.New()
+	gomega.Expect(err).ToNot(gomega.HaveOccurred())
+
+	// The mock delays the query by 1 s; the context expires after 10 ms.
+	mockDB.
+		ExpectQuery("SELECT status, status_message FROM REQUESTS WHERE tx_id = \\$1").
+		WithArgs("1234").
+		WillDelayFor(time.Second).
+		WillReturnRows(mockDB.NewRows([]string{"status", "status_message"}))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+
+	_, _, err = store(db).GetStatus(ctx, "1234")
+
+	gomega.Expect(fscerrors.Is(err, sqlmock.ErrCancelled)).To(gomega.BeTrue(),
+		"expected cancellation error, got: %v", err)
+}
+
+// TestAddTransactionEndorsementAckContextCancelled verifies that a cancelled context
+// is propagated from ExecContext back to the caller of AddTransactionEndorsementAck.
+func TestAddTransactionEndorsementAckContextCancelled(t *testing.T, store transactionsStoreConstructor) {
+	gomega.RegisterTestingT(t)
+	db, mockDB, err := sqlmock.New()
+	gomega.Expect(err).ToNot(gomega.HaveOccurred())
+
+	mockDB.
+		ExpectExec("INSERT INTO TRANSACTION_ENDORSE_ACK").
+		WillDelayFor(time.Second).
+		WillReturnResult(sqlmock.NewResult(1, 1))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+
+	err = store(db).AddTransactionEndorsementAck(ctx, "txid", token2.Identity([]byte("endorser")), []byte("sigma"))
+
+	gomega.Expect(fscerrors.Is(err, sqlmock.ErrCancelled)).To(gomega.BeTrue(),
+		"expected cancellation error, got: %v", err)
+}
+
+// TestSetStatusContextCancelled verifies that a cancelled context is propagated from
+// ExecContext back to the caller of SetStatus as a context error.
+func TestSetStatusContextCancelled(t *testing.T, store transactionsStoreConstructor) {
+	gomega.RegisterTestingT(t)
+	db, mockDB, err := sqlmock.New()
+	gomega.Expect(err).ToNot(gomega.HaveOccurred())
+
+	mockDB.
+		ExpectExec("UPDATE REQUESTS SET status = \\$1, status_message = \\$2 WHERE tx_id = \\$3").
+		WithArgs(driver.Confirmed, "message", "txid").
+		WillDelayFor(time.Second).
+		WillReturnResult(sqlmock.NewResult(1, 1))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+
+	err = store(db).SetStatus(ctx, "txid", driver.Confirmed, "message")
+
+	gomega.Expect(fscerrors.Is(err, sqlmock.ErrCancelled)).To(gomega.BeTrue(),
+		"expected cancellation error, got: %v", err)
+}
+
+// TestAWAddTransactionContextCancelled verifies that a cancelled context is propagated
+// from ExecContext through AddTransaction inside a TransactionStoreTransaction.
+func TestAWAddTransactionContextCancelled(t *testing.T, store transactionsStoreConstructor) {
+	gomega.RegisterTestingT(t)
+	db, mockDB, err := sqlmock.New()
+	gomega.Expect(err).ToNot(gomega.HaveOccurred())
+
+	input := driver.TransactionRecord{
+		TxID:         "txid",
+		ActionType:   driver.Transfer,
+		SenderEID:    "sender",
+		RecipientEID: "recipient",
+		TokenType:    "USD",
+		Amount:       big.NewInt(10),
+		Timestamp:    time.Now(),
+	}
+
+	mockDB.ExpectBegin()
+	mockDB.
+		ExpectExec("INSERT INTO TRANSACTIONS").
+		WillDelayFor(time.Second).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+
+	aw, err := store(db).NewTransactionStoreTransaction()
+	gomega.Expect(err).ToNot(gomega.HaveOccurred())
+
+	err = aw.AddTransaction(ctx, input)
+
+	gomega.Expect(fscerrors.Is(err, sqlmock.ErrCancelled)).To(gomega.BeTrue(),
+		"expected cancellation error, got: %v", err)
+}
+
+// TestAWAddTokenRequestContextCancelled verifies that a cancelled context is propagated
+// from ExecContext through AddTokenRequest inside a TransactionStoreTransaction.
+func TestAWAddTokenRequestContextCancelled(t *testing.T, store transactionsStoreConstructor) {
+	gomega.RegisterTestingT(t)
+	db, mockDB, err := sqlmock.New()
+	gomega.Expect(err).ToNot(gomega.HaveOccurred())
+
+	mockDB.ExpectBegin()
+	mockDB.
+		ExpectExec("INSERT INTO REQUESTS").
+		WillDelayFor(time.Second).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+
+	aw, err := store(db).NewTransactionStoreTransaction()
+	gomega.Expect(err).ToNot(gomega.HaveOccurred())
+
+	err = aw.AddTokenRequest(ctx, "txid", []byte("tr"), nil, nil, []byte("pphash"))
+
+	gomega.Expect(fscerrors.Is(err, sqlmock.ErrCancelled)).To(gomega.BeTrue(),
+		"expected cancellation error, got: %v", err)
+}
+
+// TestAWAddMovementContextCancelled verifies that a cancelled context is propagated
+// from ExecContext through AddMovement inside a TransactionStoreTransaction.
+func TestAWAddMovementContextCancelled(t *testing.T, store transactionsStoreConstructor) {
+	gomega.RegisterTestingT(t)
+	db, mockDB, err := sqlmock.New()
+	gomega.Expect(err).ToNot(gomega.HaveOccurred())
+
+	input := driver.MovementRecord{
+		TxID:         "txid",
+		EnrollmentID: "EID",
+		TokenType:    "USD",
+		Amount:       big.NewInt(10),
+		Status:       driver.Pending,
+	}
+
+	mockDB.ExpectBegin()
+	mockDB.
+		ExpectExec("INSERT INTO MOVEMENTS").
+		WillDelayFor(time.Second).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+
+	aw, err := store(db).NewTransactionStoreTransaction()
+	gomega.Expect(err).ToNot(gomega.HaveOccurred())
+
+	err = aw.AddMovement(ctx, input)
+
+	gomega.Expect(fscerrors.Is(err, sqlmock.ErrCancelled)).To(gomega.BeTrue(),
+		"expected cancellation error, got: %v", err)
 }

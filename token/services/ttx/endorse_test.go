@@ -7,6 +7,7 @@ SPDX-License-Identifier: Apache-2.0
 package ttx_test
 
 import (
+	"context"
 	"encoding/json"
 	"reflect"
 	"testing"
@@ -25,8 +26,15 @@ import (
 )
 
 type TestEndorseViewContextInput struct {
-	IssuerIdentity    token.Identity
-	AnotherReceivedTx bool
+	IssuerIdentity token.Identity
+	// CancelledContext replaces the test context with one that is already cancelled,
+	// so that any blocking session.Receive call returns ErrContextDone immediately
+	// without having to wait for the hardcoded per-phase deadline (e.g. 1 minute).
+	CancelledContext bool
+	// SigRequestOnly puts the signature-request message in the channel but not the
+	// endorsed-transaction message.  Used to simulate the case where the initiator
+	// goes silent after the responder has already signed.
+	SigRequestOnly bool
 }
 
 type TestEndorseViewContext struct {
@@ -128,31 +136,58 @@ func newTestEndorseViewContext(t *testing.T, input *TestEndorseViewContextInput)
 		}
 	}
 
+	baseCtx := t.Context()
+	if input.CancelledContext {
+		var cancel context.CancelFunc
+		baseCtx, cancel = context.WithCancel(baseCtx)
+		cancel() // immediately cancelled
+	}
+
 	ctx := &mock2.Context{}
 	ctx.SessionReturns(session)
-	ctx.ContextReturns(t.Context())
+	ctx.ContextReturns(baseCtx)
 	ctx.GetServiceStub = getService
 	tx, err := ttx.NewTransaction(ctx, []byte("a_signer"))
 	require.NoError(t, err)
 
 	ctx = &mock2.Context{}
 	ctx.SessionReturns(session)
-	ctx.ContextReturns(t.Context())
+	ctx.ContextReturns(baseCtx)
 	ctx.GetServiceStub = getService
 
 	txRaw, err := tx.Bytes()
 	require.NoError(t, err)
 
-	// first the signature request
-	signatureRequest := &ttx.SignatureRequest{
-		Signer: input.IssuerIdentity,
+	// Whether to queue messages in the channel depends on the scenario being tested:
+	//
+	//  CancelledContext=true,  SigRequestOnly=false:
+	//    → no messages queued; both phase-1 and phase-2 receives unblock immediately
+	//      via ctx.Done() (tests phase-1 timeout / context-cancellation).
+	//
+	//  CancelledContext=true,  SigRequestOnly=true:
+	//    → only the sig-request is queued so phase-1 reads from the buffer without
+	//      blocking; phase-2 finds an empty channel + done context
+	//      (tests phase-2 timeout / context-cancellation).
+	//
+	//  CancelledContext=false, SigRequestOnly=false  (default "success" path):
+	//    → both messages queued.
+	//
+	//  CancelledContext=false, SigRequestOnly=true:
+	//    → only sig-request queued; phase-2 blocks until timer fires (not useful in
+	//      unit tests, reserved for live testing).
+	if !input.CancelledContext || input.SigRequestOnly {
+		signatureRequest := &ttx.SignatureRequest{
+			Signer: input.IssuerIdentity,
+		}
+		ch <- &view.Message{
+			Payload: mustEnvelopeBytes(t, ttx.TypeSignatureRequest, signatureRequest),
+		}
 	}
-	ch <- &view.Message{
-		Payload: mustEnvelopeBytes(t, ttx.TypeSignatureRequest, signatureRequest),
-	}
-	// then the transaction
-	ch <- &view.Message{
-		Payload: mustEnvelopeBytes(t, ttx.TypeTransaction, &ttx.TransactionPayload{Raw: txRaw}),
+	if !input.CancelledContext && !input.SigRequestOnly {
+		// then the transaction
+		ch <- &view.Message{
+			Payload: mustEnvelopeBytes(t, ttx.TypeTransaction, &ttx.TransactionPayload{Raw: txRaw}),
+		}
 	}
 
 	ctx.RunViewStub = func(v view.View, option ...view.RunViewOption) (any, error) {
@@ -261,6 +296,32 @@ func TestEndorseView(t *testing.T) {
 				assert.Equal(t, 0, ctx.session.SendWithContextCallCount())
 			},
 		},
+		// --- Timeout / context-cancellation tests ---
+		//
+		// Each of the two blocking receive points inside EndorseView is guarded by
+		// a session.S select that also watches ctx.Done().  By passing an already-
+		// cancelled context the tests run instantly instead of waiting the hardcoded
+		// 1-minute / 4-minute per-phase deadlines.
+		{
+			// Phase 1: waiting for the signature request from the initiator.
+			// The channel is empty and the context is cancelled → ErrContextDone.
+			name: "context cancelled while waiting for signature request",
+			prepare: func() *TestEndorseViewContext {
+				c := newTestEndorseViewContext(t, &TestEndorseViewContextInput{
+					CancelledContext: true,
+				})
+
+				return c
+			},
+			expectError: true,
+			// The error is wrapped as "failed reading signature request: ctx done …"
+			// and joined with ErrHandlingSignatureRequests.
+			expectErr: ttx.ErrHandlingSignatureRequests,
+			verify: func(ctx *TestEndorseViewContext, _ any) {
+				// No signature was sent back because the receive failed before signing.
+				assert.Equal(t, 0, ctx.session.SendWithContextCallCount())
+			},
+		},
 	}
 
 	for _, tc := range testCases {
@@ -284,4 +345,53 @@ func TestEndorseView(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestEndorseView_EndorsedTxContextCancellation verifies phase 2 of EndorseView:
+// after the responder has signed and sent back the signature, the initiator goes
+// silent (never distributes the endorsed transaction).  A context that is
+// cancelled while the view is blocking on the second receive must unblock the
+// view and return an error.
+//
+// Implementation note: EndorseView.receiveTransaction calls ReceiveTransaction
+// which ultimately calls session.S.ReceiveRawWithTimeout.  That helper's select
+// simultaneously watches the message channel and ctx.Done(), so cancelling the
+// context is sufficient to surface the error without waiting for the 4-minute
+// hardcoded deadline.
+//
+// We cancel the context from a separate goroutine, after the sig-request
+// message has been consumed from the buffered channel, to avoid the non-
+// deterministic select race that would arise if ctx.Done() were already closed
+// when the first receive executes.
+func TestEndorseView_EndorsedTxContextCancellation(t *testing.T) {
+	// Build the context with a live (non-cancelled) base context; SigRequestOnly
+	// ensures only the signature-request message is placed in the channel.
+	testCtx := newTestEndorseViewContext(t, &TestEndorseViewContextInput{
+		SigRequestOnly: true,
+	})
+
+	// Replace the view context's context.Context() with one we can cancel.
+	cancelCtx, cancel := context.WithCancel(t.Context())
+
+	// Cancel after the first send (the token signature) has been recorded on the
+	// mock session.  We watch the call count from a goroutine and cancel as soon
+	// as phase 1 completes; phase 2 will then find a done context.
+	go func() {
+		for testCtx.session.SendWithContextCallCount() == 0 {
+			// busy-spin with a yield so the main goroutine can progress
+			// (in practice this exits after microseconds)
+		}
+		cancel()
+	}()
+
+	testCtx.ctx.ContextReturns(cancelCtx)
+
+	v := ttx.NewEndorseView(testCtx.tx)
+	_, err := v.Call(testCtx.ctx)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed receiving transaction",
+		"error should indicate failure during endorsed-tx receive phase")
+	// Phase 1 signature was sent before the context was cancelled.
+	assert.GreaterOrEqual(t, testCtx.session.SendWithContextCallCount(), 1,
+		"token signature must have been sent before context cancellation")
 }

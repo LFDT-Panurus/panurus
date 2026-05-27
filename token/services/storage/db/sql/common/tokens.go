@@ -137,6 +137,7 @@ func (db *TokenStore) DeleteTokens(ctx context.Context, deletedBy string, ids ..
 		Where(HasTokens("tx_id", "idx", ids...)).
 		Format(db.ci)
 	logging.Debug(logger, query, args)
+
 	if _, err := db.writeDB.ExecContext(ctx, query, args...); err != nil {
 		return errors.Wrapf(err, "error setting tokens to deleted [%v]", ids)
 	}
@@ -1530,6 +1531,7 @@ func (t *TokenTransaction) Delete(ctx context.Context, tokenID token.ID, deleted
 		Format(t.ci)
 
 	logging.Debug(logger, query, args)
+
 	if _, err := t.tx.ExecContext(ctx, query, args...); err != nil {
 		return errors.Wrapf(err, "error setting token to deleted [%s]", tokenID.TxId)
 	}
@@ -1549,6 +1551,7 @@ func (t *TokenTransaction) StoreToken(ctx context.Context, tr driver.TokenRecord
 		OnConflictDoNothing().
 		Format()
 	logging.Debug(logger, query, args)
+
 	if _, err := t.tx.ExecContext(ctx, query, args...); err != nil {
 		logger.Errorf("error storing token [%s] in table [%s] [%s]: [%s][%s]", tr.TxID, t.table.Tokens, query, err, string(debug.Stack()))
 
