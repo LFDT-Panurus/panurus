@@ -114,6 +114,32 @@ func (s *Service) RegisterRecipientIdentity(ctx context.Context, data *tdriver.R
 
 	s.Logger.DebugfContext(ctx, "register recipient identity [%s] with audit info [%s]", data.Identity, utils.Hashable(data.AuditInfo))
 
+	// Step 1: Validate basic structure (nil checks, empty checks)
+	if err := validateBasicStructure(data); err != nil {
+		return errors.Wrap(err, "basic structure validation failed")
+	}
+
+	// Step 2: Validate JSON structure
+	if err := validateJSONStructure(data.AuditInfo); err != nil {
+		return errors.Wrap(err, "JSON structure validation failed")
+	}
+
+	// Step 3: Validate enrollment ID format
+	if err := s.validateEnrollmentID(ctx, data); err != nil {
+		return errors.Wrap(err, "enrollment ID validation failed")
+	}
+
+	// Step 4: Validate revocation handle format
+	if err := s.validateRevocationHandle(ctx, data); err != nil {
+		return errors.Wrap(err, "revocation handle validation failed")
+	}
+
+	// Step 5: Validate audit info structure (type-specific)
+	if err := s.validateAuditInfoStructure(ctx, data); err != nil {
+		return errors.Wrap(err, "audit info structure validation failed")
+	}
+
+	// Step 6: Match identity against audit info (cryptographic binding)
 	if err := s.Deserializer.MatchIdentity(ctx, data.Identity, data.AuditInfo); err != nil {
 		return errors.Wrapf(err, "failed to match identity to audit information for [%s]:[%s]", data.Identity, utils.Hashable(data.AuditInfo))
 	}

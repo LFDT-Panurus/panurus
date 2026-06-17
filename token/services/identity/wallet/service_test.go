@@ -13,6 +13,7 @@ import (
 
 	"github.com/LFDT-Panurus/panurus/token/driver"
 	dmock "github.com/LFDT-Panurus/panurus/token/driver/mock"
+	"github.com/LFDT-Panurus/panurus/token/services/identity"
 	idriver "github.com/LFDT-Panurus/panurus/token/services/identity/driver"
 	"github.com/LFDT-Panurus/panurus/token/services/identity/wallet"
 	wmock "github.com/LFDT-Panurus/panurus/token/services/identity/wallet/mock"
@@ -84,35 +85,45 @@ func TestRegisterRecipientIdentityFailuresAndSuccess(t *testing.T) {
 	d := &dmock.Deserializer{}
 	regSvc := wallet.NewService(&logging.MockLogger{}, ip, d, nil)
 
+	// Create a properly typed identity
+	typedID, err := identity.WrapWithType(driver.X509IdentityType, []byte("raw-identity"))
+	require.NoError(t, err)
+
 	// nil data
-	err := regSvc.RegisterRecipientIdentity(ctx, nil)
+	err = regSvc.RegisterRecipientIdentity(ctx, nil)
 	require.Error(t, err)
 
 	// RegisterRecipientIdentity fails
+	mockVerifier := &dmock.Verifier{}
+	mockVerifier.VerifyReturns(nil)
+	d.GetOwnerVerifierReturns(mockVerifier, nil)
+	d.MatchIdentityReturns(nil)
+	ip.GetEnrollmentIDReturns("alice", nil)
+	ip.GetRevocationHandlerReturns("rh", nil)
 	ip.RegisterRecipientIdentityReturns(errors.New("rri"))
-	err = regSvc.RegisterRecipientIdentity(ctx, &driver.RecipientData{Identity: driver.Identity("id")})
+	err = regSvc.RegisterRecipientIdentity(ctx, &driver.RecipientData{Identity: typedID, AuditInfo: []byte(`{"EID":"alice","RH":"rh"}`)})
 	require.Error(t, err)
 	ip.RegisterRecipientIdentityReturns(nil)
 
 	// MatchIdentity fails
 	d.MatchIdentityReturns(errors.New("mismatch"))
-	err = regSvc.RegisterRecipientIdentity(ctx, &driver.RecipientData{Identity: driver.Identity("id"), AuditInfo: []byte("ai")})
+	err = regSvc.RegisterRecipientIdentity(ctx, &driver.RecipientData{Identity: typedID, AuditInfo: []byte(`{"EID":"alice","RH":"rh"}`)})
 	require.Error(t, err)
 	d.MatchIdentityReturns(nil)
 
 	// RegisterRecipientData fails
 	ip.RegisterRecipientDataReturns(errors.New("rrd"))
-	err = regSvc.RegisterRecipientIdentity(ctx, &driver.RecipientData{Identity: driver.Identity("id"), AuditInfo: []byte("ai")})
+	err = regSvc.RegisterRecipientIdentity(ctx, &driver.RecipientData{Identity: typedID, AuditInfo: []byte(`{"EID":"alice","RH":"rh"}`)})
 	require.Error(t, err)
 	ip.RegisterRecipientDataReturns(nil)
 
 	// success
 	ip.RegisterRecipientIdentityCalls(func(context.Context, driver.Identity) error { return nil })
 	d.MatchIdentityCalls(func(context.Context, driver.Identity, []byte) error { return nil })
-	d.GetOwnerVerifierCalls(func(context.Context, driver.Identity) (driver.Verifier, error) { return &dmock.Verifier{}, nil })
+	d.GetOwnerVerifierCalls(func(context.Context, driver.Identity) (driver.Verifier, error) { return mockVerifier, nil })
 	ip.RegisterRecipientDataCalls(func(context.Context, *driver.RecipientData) error { return nil })
 
-	err = regSvc.RegisterRecipientIdentity(ctx, &driver.RecipientData{Identity: driver.Identity("id"), AuditInfo: []byte("ai")})
+	err = regSvc.RegisterRecipientIdentity(ctx, &driver.RecipientData{Identity: typedID, AuditInfo: []byte(`{"EID":"alice","RH":"rh"}`)})
 	require.NoError(t, err)
 }
 
@@ -128,12 +139,22 @@ func (r *ipWithRollback) RollbackPartialRecipientRegistration(ctx context.Contex
 
 func TestRegisterRecipientIdentity_MatchIdentityFailureSkipsIdentityProvider(t *testing.T) {
 	ctx := t.Context()
+
+	// Create a properly typed identity
+	typedID, err := identity.WrapWithType(driver.X509IdentityType, []byte("raw-identity"))
+	require.NoError(t, err)
+
 	ip := &dmock.IdentityProvider{}
+	ip.GetEnrollmentIDReturns("alice", nil)
+	ip.GetRevocationHandlerReturns("rh", nil)
 	d := &dmock.Deserializer{}
+	mockVerifier := &dmock.Verifier{}
+	mockVerifier.VerifyReturns(nil)
+	d.GetOwnerVerifierReturns(mockVerifier, nil)
 	d.MatchIdentityReturns(errors.New("mismatch"))
 	regSvc := wallet.NewService(&logging.MockLogger{}, ip, d, nil)
 
-	err := regSvc.RegisterRecipientIdentity(ctx, &driver.RecipientData{Identity: driver.Identity("id"), AuditInfo: []byte("ai")})
+	err = regSvc.RegisterRecipientIdentity(ctx, &driver.RecipientData{Identity: typedID, AuditInfo: []byte(`{"EID":"alice","RH":"rh"}`)})
 	require.Error(t, err)
 	require.Zero(t, ip.RegisterRecipientIdentityCallCount())
 	require.Equal(t, 1, d.MatchIdentityCallCount())
@@ -141,14 +162,25 @@ func TestRegisterRecipientIdentity_MatchIdentityFailureSkipsIdentityProvider(t *
 
 func TestRegisterRecipientIdentity_RollbackWhenRegisterRecipientDataFails(t *testing.T) {
 	ctx := t.Context()
+
+	// Create a properly typed identity
+	typedID, err := identity.WrapWithType(driver.X509IdentityType, []byte("raw-identity"))
+	require.NoError(t, err)
+
 	base := &dmock.IdentityProvider{}
+	base.GetEnrollmentIDReturns("alice", nil)
+	base.GetRevocationHandlerReturns("rh", nil)
 	base.RegisterRecipientIdentityReturns(nil)
 	base.RegisterRecipientDataReturns(errors.New("rrd"))
 	ip := &ipWithRollback{IdentityProvider: base}
 	d := &dmock.Deserializer{}
+	mockVerifier := &dmock.Verifier{}
+	mockVerifier.VerifyReturns(nil)
+	d.GetOwnerVerifierReturns(mockVerifier, nil)
+	d.MatchIdentityReturns(nil)
 	regSvc := wallet.NewService(&logging.MockLogger{}, ip, d, nil)
 
-	err := regSvc.RegisterRecipientIdentity(ctx, &driver.RecipientData{Identity: driver.Identity("id"), AuditInfo: []byte("ai")})
+	err = regSvc.RegisterRecipientIdentity(ctx, &driver.RecipientData{Identity: typedID, AuditInfo: []byte(`{"EID":"alice","RH":"rh"}`)})
 	require.Error(t, err)
 	require.Equal(t, 1, ip.rollbackCalls)
 }
