@@ -514,12 +514,51 @@ func (s *RespondRequestRecipientIdentityView) Call(context view.Context) (any, e
 	var recipientIdentity view.Identity
 	isEcho := false
 	if recipientRequest.RecipientData != nil {
-		recipientData = recipientRequest.RecipientData
-		recipientIdentity = recipientData.Identity
-		if !w.Contains(context.Context(), recipientIdentity) {
-			return nil, errors.Errorf("cannot find identity [%s] in wallet [%s:%s]", recipientIdentity, wallet, recipientRequest.TMSID)
+		// Echo path: requester supplied an identity, verify strict ownership
+		suppliedIdentity := recipientRequest.RecipientData.Identity
+
+		// Step 1: Verify the identity exists in the wallet
+		if !w.Contains(context.Context(), suppliedIdentity) {
+			return nil, errors.Errorf("cannot find identity [%s] in wallet [%s:%s]", suppliedIdentity, wallet, recipientRequest.TMSID)
 		}
+
+		// Step 2: Verify we possess the private key by attempting to retrieve the signer
+		// This proves ownership, not just visibility
+		if !w.Remote() {
+			_, err = w.GetSigner(context.Context(), suppliedIdentity)
+			if err != nil {
+				return nil, errors.Wrapf(err, "cannot prove ownership of identity [%s]: failed to retrieve signer", suppliedIdentity)
+			}
+		}
+
+		// Step 3: Never return requester-supplied data directly
+		// Fetch authentic audit info and metadata from our own wallet's identity provider
+		auditInfo, err := w.GetAuditInfo(context.Context(), suppliedIdentity)
+		if err != nil {
+			return nil, errors.Wrapf(err, "failed to retrieve audit info for identity [%s]", suppliedIdentity)
+		}
+
+		tokenMetadata, err := w.GetTokenMetadata(suppliedIdentity)
+		if err != nil {
+			return nil, errors.Wrapf(err, "failed to retrieve token metadata for identity [%s]", suppliedIdentity)
+		}
+
+		tokenMetadataAuditInfo, err := w.GetTokenMetadataAuditInfo(suppliedIdentity)
+		if err != nil {
+			return nil, errors.Wrapf(err, "failed to retrieve token metadata audit info for identity [%s]", suppliedIdentity)
+		}
+
+		// Step 4: Reconstruct RecipientData with verified fields from trusted sources
+		recipientData = &RecipientData{
+			Identity:               suppliedIdentity,
+			AuditInfo:              auditInfo,
+			TokenMetadata:          tokenMetadata,
+			TokenMetadataAuditInfo: tokenMetadataAuditInfo,
+		}
+		recipientIdentity = suppliedIdentity
 		isEcho = true
+
+		logger.DebugfContext(context.Context(), "echo path: verified ownership and reconstructed recipient data for identity [%s]", suppliedIdentity)
 	} else {
 		logger.DebugfContext(context.Context(), "generate_identity")
 		recipientData, err = w.GetRecipientData(context.Context())
