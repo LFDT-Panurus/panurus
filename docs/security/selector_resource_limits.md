@@ -230,5 +230,4 @@ func TestQuotaEnforcement(t *testing.T) {
 ## References
 
 - [Token Selector Service Documentation](../services/selector.md)
-- [Security Best Practices](../SECURITY.md)
 - [Configuration Guide](../configuration.md)
