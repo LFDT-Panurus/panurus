@@ -17,6 +17,13 @@ import (
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 )
 
+var (
+	// ErrQuotaExceeded is returned when an identity exceeds their lock quota
+	ErrQuotaExceeded = errors.New("lock quota exceeded for identity")
+	// ErrRateLimitExceeded is returned when a caller exceeds their rate limit
+	ErrRateLimitExceeded = errors.New("rate limit exceeded")
+)
+
 type QueryService interface {
 	UnspentTokensIterator(ctx context.Context) (*token.UnspentTokensIterator, error)
 	UnspentTokensIteratorBy(ctx context.Context, id string, tokenType token2.Type) (driver.UnspentTokensIterator, error)

@@ -77,10 +77,37 @@ type locker struct {
 	cancel                 context.CancelFunc
 	scanDone               chan struct{}
 	stopOnce               sync.Once
+	rateLimiter            *RateLimiter
+	maxLocksPerIdentity    int
+}
+
+// LockerConfig holds configuration for the locker
+type LockerConfig struct {
+	MaxLocksPerIdentity int     // Maximum locks any identity can hold (0 = unlimited)
+	RateLimit           float64 // Lock requests per second per identity (0 = unlimited)
+	RateLimitBurst      float64 // Burst capacity for rate limiter
+}
+
+// DefaultLockerConfig returns sensible defaults
+func DefaultLockerConfig() LockerConfig {
+	return LockerConfig{
+		MaxLocksPerIdentity: 1000,
+		RateLimit:           10.0,
+		RateLimitBurst:      20.0,
+	}
 }
 
 func NewLocker(ttxdb TXStatusProvider, timeout time.Duration, validTxEvictionTimeout time.Duration) simple.Locker {
+	return NewLockerWithConfig(ttxdb, timeout, validTxEvictionTimeout, LockerConfig{})
+}
+
+func NewLockerWithConfig(ttxdb TXStatusProvider, timeout time.Duration, validTxEvictionTimeout time.Duration, config LockerConfig) simple.Locker {
 	ctx, cancel := context.WithCancel(context.Background())
+
+	var rateLimiter *RateLimiter
+	if config.RateLimit > 0 {
+		rateLimiter = NewRateLimiter(config.RateLimit, config.RateLimitBurst)
+	}
 
 	r := &locker{
 		ttxdb:                  ttxdb,
@@ -89,6 +116,8 @@ func NewLocker(ttxdb TXStatusProvider, timeout time.Duration, validTxEvictionTim
 		validTxEvictionTimeout: validTxEvictionTimeout,
 		cancel:                 cancel,
 		scanDone:               make(chan struct{}),
+		rateLimiter:            rateLimiter,
+		maxLocksPerIdentity:    config.MaxLocksPerIdentity,
 	}
 	r.start(ctx)
 
@@ -137,6 +166,15 @@ func (d *locker) Stop() error {
 // tokens are selected for; each owner has an independent shard so that locking
 // for one owner never blocks another.
 func (d *locker) Lock(ctx context.Context, owner string, id *token2.ID, txID string, reclaim bool) (string, error) {
+	// Apply rate limiting if configured and owner provided
+	if d.rateLimiter != nil && owner != "" {
+		if err := d.rateLimiter.Allow(owner); err != nil {
+			logger.DebugfContext(ctx, "rate limit exceeded for identity [%s]: %v", owner, err)
+
+			return "", errors.Wrapf(simple.ErrRateLimitExceeded, "identity %s", owner)
+		}
+	}
+
 	for {
 		// The shard may be pruned between getOrCreateShard and the moment we
 		// get its write lock; in that case retry on a freshly registered one.
@@ -199,6 +237,16 @@ func (d *locker) lockInShard(ctx context.Context, s *shard, owner string, id *to
 			}
 
 			return e.TxID, AlreadyLockedError
+		}
+	}
+
+	// Check quota if configured and owner provided
+	if d.maxLocksPerIdentity > 0 && owner != "" {
+		currentCount := len(s.locked)
+		if currentCount >= d.maxLocksPerIdentity {
+			logger.DebugfContext(ctx, "quota exceeded for identity [%s]: %d/%d locks", owner, currentCount, d.maxLocksPerIdentity)
+
+			return "", errors.Wrapf(simple.ErrQuotaExceeded, "identity %s has %d locks (max %d)", owner, currentCount, d.maxLocksPerIdentity)
 		}
 	}
 
