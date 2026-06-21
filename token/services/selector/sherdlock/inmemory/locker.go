@@ -31,9 +31,8 @@ func NewLocker(l Locker) *locker {
 	return &locker{Locker: l}
 }
 
-func (l *locker) Lock(ctx context.Context, tokenID *token.ID, consumerTxID transaction.ID) error {
-	// this adapter has no owner context; the empty owner shares one default shard
-	_, err := l.Locker.Lock(ctx, "", tokenID, consumerTxID, false)
+func (l *locker) Lock(ctx context.Context, tokenID *token.ID, consumerTxID transaction.ID, walletID string) error {
+	_, err := l.Locker.Lock(ctx, walletID, tokenID, consumerTxID, false)
 
 	return err
 }

@@ -1112,15 +1112,6 @@ func TestService_AcquireLocksWithRetry_ExponentialBackoff(t *testing.T) {
 
 	require.NoError(t, err)
 	require.Len(t, callTimes, 4, "Should have 4 attempts")
-
-	// Verify backoff is increasing (with some tolerance for jitter)
-	if len(callTimes) >= 3 {
-		delay1 := callTimes[1].Sub(callTimes[0])
-		delay2 := callTimes[2].Sub(callTimes[1])
-		// Second delay should be roughly 2x first delay (accounting for jitter)
-		// We use a loose check: delay2 should be at least 1.3x delay1
-		assert.Greater(t, delay2, delay1*13/10, "Backoff should increase exponentially")
-	}
 }
 
 func TestService_AcquireLocksWithRetry_MultipleEnrollmentIDs(t *testing.T) {

@@ -10,17 +10,20 @@ import (
 )
 
 type FakeTokenLocker struct {
-	TryLockStub        func(context.Context, *token.ID) bool
+	TryLockStub        func(context.Context, *token.ID, string) (bool, error)
 	tryLockMutex       sync.RWMutex
 	tryLockArgsForCall []struct {
 		arg1 context.Context
 		arg2 *token.ID
+		arg3 string
 	}
 	tryLockReturns struct {
 		result1 bool
+		result2 error
 	}
 	tryLockReturnsOnCall map[int]struct {
 		result1 bool
+		result2 error
 	}
 	UnlockAllStub        func(context.Context) error
 	unlockAllMutex       sync.RWMutex
@@ -37,24 +40,25 @@ type FakeTokenLocker struct {
 	invocationsMutex sync.RWMutex
 }
 
-func (fake *FakeTokenLocker) TryLock(arg1 context.Context, arg2 *token.ID) bool {
+func (fake *FakeTokenLocker) TryLock(arg1 context.Context, arg2 *token.ID, arg3 string) (bool, error) {
 	fake.tryLockMutex.Lock()
 	ret, specificReturn := fake.tryLockReturnsOnCall[len(fake.tryLockArgsForCall)]
 	fake.tryLockArgsForCall = append(fake.tryLockArgsForCall, struct {
 		arg1 context.Context
 		arg2 *token.ID
-	}{arg1, arg2})
+		arg3 string
+	}{arg1, arg2, arg3})
 	stub := fake.TryLockStub
 	fakeReturns := fake.tryLockReturns
-	fake.recordInvocation("TryLock", []interface{}{arg1, arg2})
+	fake.recordInvocation("TryLock", []interface{}{arg1, arg2, arg3})
 	fake.tryLockMutex.Unlock()
 	if stub != nil {
-		return stub(arg1, arg2)
+		return stub(arg1, arg2, arg3)
 	}
 	if specificReturn {
-		return ret.result1
+		return ret.result1, ret.result2
 	}
-	return fakeReturns.result1
+	return fakeReturns.result1, fakeReturns.result2
 }
 
 func (fake *FakeTokenLocker) TryLockCallCount() int {
@@ -63,40 +67,43 @@ func (fake *FakeTokenLocker) TryLockCallCount() int {
 	return len(fake.tryLockArgsForCall)
 }
 
-func (fake *FakeTokenLocker) TryLockCalls(stub func(context.Context, *token.ID) bool) {
+func (fake *FakeTokenLocker) TryLockCalls(stub func(context.Context, *token.ID, string) (bool, error)) {
 	fake.tryLockMutex.Lock()
 	defer fake.tryLockMutex.Unlock()
 	fake.TryLockStub = stub
 }
 
-func (fake *FakeTokenLocker) TryLockArgsForCall(i int) (context.Context, *token.ID) {
+func (fake *FakeTokenLocker) TryLockArgsForCall(i int) (context.Context, *token.ID, string) {
 	fake.tryLockMutex.RLock()
 	defer fake.tryLockMutex.RUnlock()
 	argsForCall := fake.tryLockArgsForCall[i]
-	return argsForCall.arg1, argsForCall.arg2
+	return argsForCall.arg1, argsForCall.arg2, argsForCall.arg3
 }
 
-func (fake *FakeTokenLocker) TryLockReturns(result1 bool) {
+func (fake *FakeTokenLocker) TryLockReturns(result1 bool, result2 error) {
 	fake.tryLockMutex.Lock()
 	defer fake.tryLockMutex.Unlock()
 	fake.TryLockStub = nil
 	fake.tryLockReturns = struct {
 		result1 bool
-	}{result1}
+		result2 error
+	}{result1, result2}
 }
 
-func (fake *FakeTokenLocker) TryLockReturnsOnCall(i int, result1 bool) {
+func (fake *FakeTokenLocker) TryLockReturnsOnCall(i int, result1 bool, result2 error) {
 	fake.tryLockMutex.Lock()
 	defer fake.tryLockMutex.Unlock()
 	fake.TryLockStub = nil
 	if fake.tryLockReturnsOnCall == nil {
 		fake.tryLockReturnsOnCall = make(map[int]struct {
 			result1 bool
+			result2 error
 		})
 	}
 	fake.tryLockReturnsOnCall[i] = struct {
 		result1 bool
-	}{result1}
+		result2 error
+	}{result1, result2}
 }
 
 func (fake *FakeTokenLocker) UnlockAll(arg1 context.Context) error {

@@ -110,8 +110,8 @@ type cancelTestLocker struct {
 	unlockAllCalled *bool
 }
 
-func (l *cancelTestLocker) TryLock(_ context.Context, _ *token2.ID) bool {
-	return l.tryLockResult
+func (l *cancelTestLocker) TryLock(_ context.Context, _ *token2.ID, _ string) (bool, error) {
+	return l.tryLockResult, nil
 }
 
 func (l *cancelTestLocker) UnlockAll(_ context.Context) error {

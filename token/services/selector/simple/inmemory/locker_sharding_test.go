@@ -45,12 +45,12 @@ func TestLockDifferentOwnersDoNotBlock(t *testing.T) {
 	// scanner never holds a shard lock during lookups, so a blocked
 	// scanner is harmless, and releaseAll (close, not a single send)
 	// wakes every blocked lookup regardless of how many there are.
-	mock.getStatusHook = func(txID string) {
+	mock.setGetStatusHook(func(txID string) {
 		if txID == "tx-a1" {
 			enteredOnce.Do(func() { close(entered) })
 			<-release
 		}
-	}
+	})
 	d := quietLocker(t, mock)
 
 	tokenA := &token.ID{TxId: "tok-a", Index: 0}

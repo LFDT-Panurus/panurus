@@ -687,7 +687,7 @@ type mockLocker struct {
 	cleanupFunc        func(ctx context.Context, leaseExpiry time.Duration) error
 }
 
-func (m *mockLocker) Lock(ctx context.Context, tokenID *token2.ID, consumerTxID transaction.ID) error {
+func (m *mockLocker) Lock(ctx context.Context, tokenID *token2.ID, consumerTxID transaction.ID, walletID string) error {
 	if m.lockFunc != nil {
 		return m.lockFunc(ctx, tokenID, consumerTxID)
 	}

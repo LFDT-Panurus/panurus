@@ -69,7 +69,7 @@ func BenchmarkLockerContentionWithSlowReclaim(b *testing.B) {
 	for _, owners := range []int{1, workers} {
 		b.Run(fmt.Sprintf("workers=%d/owners=%d", workers, owners), func(b *testing.B) {
 			mock := newMockTXStatusProvider()
-			mock.getStatusHook = func(string) { time.Sleep(statusDelay) }
+			mock.setGetStatusHook(func(string) { time.Sleep(statusDelay) })
 			d := NewLocker(mock, 10*time.Minute, time.Minute).(*locker)
 			b.Cleanup(func() { _ = d.Stop() })
 
