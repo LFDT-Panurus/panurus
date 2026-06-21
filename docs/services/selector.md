@@ -64,6 +64,36 @@ To prevent double-spending *before* the transaction is committed to the ledger, 
 2.  **Concurrency Control**: If another concurrent process has already locked that token, the insertion fails, and the selector picks a different token.
 3.  **Lock Release**: Locks are released either when the transaction reaches finality (success/failure) or when a timeout occurs, ensuring that tokens do not remain permanently inaccessible due to crashed or abandoned transactions.
 
+### In-Memory Locker Internals
+
+The `simple` driver keeps its locks in memory (`token/services/selector/simple/inmemory`)
+instead of the `TokenLocks` table. Its state is sharded per owner (the wallet the tokens
+are selected for): every owner has its own `shard`, holding that owner's locked tokens
+behind its own mutex, and the shards themselves live in a registry map behind a second
+mutex. Two owners therefore never serialize against each other, not even while a lock
+attempt is waiting on a transaction-status lookup.
+
+Two invariants keep the two mutex levels safe:
+
+*   **Lock order is shard first, registry second.** The only place that takes the
+    registry lock while holding a shard lock is the pruning of an empty shard, which must
+    observe the shard as empty while holding it. Every operation that needs to walk all
+    shards (`IsLocked`, `UnlockByTxID`, the background collector, the locked-token count)
+    therefore snapshots the registry, releases the registry lock, and only then takes the
+    individual shard locks. Taking the two in the opposite order deadlocks the locker.
+*   **A pruned shard is never written to.** When a shard becomes empty it is removed from
+    the registry and marked as pruned. A `Lock` that had already obtained that shard
+    re-checks the mark under the shard lock and retries on the freshly registered shard,
+    so a lock can never end up in a shard no other operation can reach. Pruning also
+    removes the registry entry only if it still points at that exact shard, so a stale
+    empty shard cannot evict a newer shard holding live locks.
+
+The background collector (the goroutine that frees locks of finalized transactions) copies
+a shard's entries, releases the shard lock, and only then looks the transaction statuses
+up, so a slow status provider never blocks locking or unlocking. Because the shard is
+unlocked in between, each entry is re-validated before removal — same transaction ID and
+same last-access time — and entries that were reclaimed or re-accessed meanwhile are kept.
+
 ## Token Fetcher and Cache
 
 The selector uses a **Token Fetcher** to retrieve available tokens from the database. The fetcher uses a **Ristretto LRU cache** to improve performance by caching token queries (keyed by wallet+currency).

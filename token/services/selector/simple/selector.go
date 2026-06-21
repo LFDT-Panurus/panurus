@@ -24,11 +24,14 @@ type QueryService interface {
 }
 
 type Locker interface {
-	// Lock locks the given token of the given owner for the given transaction.
-	// The owner scopes the lock state: locks of different owners never contend.
+	// Lock locks the token id for the consumer transaction txID on behalf of the given
+	// owner (the wallet the tokens are selected for, ownerFilter.ID()).
+	// owner lets a Locker implementation apply per-wallet policies such as rate limiting.
+	// To deny a lock for policy reasons, return an error wrapping token.SelectorRateLimited:
+	// the selector then aborts immediately instead of retrying.
 	Lock(ctx context.Context, owner string, id *token2.ID, txID string, reclaim bool) (string, error)
-	// UnlockIDs unlocks the passed IDS of the given owner. It returns the list of tokens that were not locked
-	// in the first place among those passed.
+	// UnlockIDs unlocks the passed IDs for the given owner. It returns the list of tokens
+	// that were not locked in the first place among those passed.
 	UnlockIDs(ctx context.Context, owner string, ids ...*token2.ID) []*token2.ID
 	UnlockByTxID(ctx context.Context, txID string)
 	IsLocked(id *token2.ID) bool
@@ -116,8 +119,16 @@ func (s *selector) selectByID(ctx context.Context, ownerFilter token.OwnerFilter
 				return nil, nil, errors.Wrap(err, "failed to convert quantity")
 			}
 
-			// lock the token
+			// lock the token on behalf of the selecting wallet
 			if _, lockErr := s.locker.Lock(ctx, id, &t.Id, s.txID, reclaim); lockErr != nil {
+				// A rate-limit denial from the Locker is a hard stop: abort instead of retrying.
+				if errors.Is(lockErr, token.SelectorRateLimited) {
+					s.locker.UnlockIDs(ctx, id, toBeSpent...)
+					s.locker.UnlockIDs(ctx, id, toBeCertified...)
+
+					return nil, nil, lockErr
+				}
+
 				var addErr error
 				potentialSumWithLocked, addErr = potentialSumWithLocked.Add(q)
 				if addErr != nil {

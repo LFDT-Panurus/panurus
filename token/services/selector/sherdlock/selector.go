@@ -192,7 +192,11 @@ func (s *Selector) selectInternal(ctx context.Context, owner token.OwnerFilter, 
 
 			immediateRetries++
 			tokensLockedByOthersExist = false
-		} else if locked := s.locker.TryLock(ctx, &t.Id); !locked {
+		} else if locked, lockErr := s.locker.TryLock(ctx, &t.Id, owner.ID()); !locked {
+			// A rate-limit denial from the locker is a hard stop: abort instead of retrying.
+			if errors.Is(lockErr, token.SelectorRateLimited) {
+				return nil, nil, immediateRetries, lockErr
+			}
 			s.logger.DebugfContext(ctx, "Tried to lock token [%v], but it was already locked by another process", t)
 			tokensLockedByOthersExist = true
 		} else {
@@ -248,13 +252,13 @@ type locker struct {
 	txID transaction.ID
 }
 
-func (l *locker) TryLock(ctx context.Context, tokenID *token2.ID) bool {
-	err := l.Lock(ctx, tokenID, l.txID)
+func (l *locker) TryLock(ctx context.Context, tokenID *token2.ID, walletID string) (bool, error) {
+	err := l.Lock(ctx, tokenID, l.txID, walletID)
 	if err != nil {
 		logger.DebugfContext(ctx, "failed to lock [%v] for [%s]: [%s]", tokenID, l.txID, err)
 	}
 
-	return err == nil
+	return err == nil, err
 }
 
 func (l *locker) UnlockAll(ctx context.Context) error {

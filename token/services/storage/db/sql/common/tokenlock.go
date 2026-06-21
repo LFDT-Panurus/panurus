@@ -63,7 +63,10 @@ func (db *TokenLockStore) CreateSchema() error {
 	return common.InitSchema(db.WriteDB, []string{db.GetSchema()}...)
 }
 
-func (db *TokenLockStore) Lock(ctx context.Context, tokenID *token.ID, consumerTxID transaction.ID) error {
+// Lock locks the token for consumerTxID. walletID identifies the wallet the tokens are
+// selected for; this SQL-backed store does not apply per-wallet rate limiting and so
+// ignores it. A custom TokenLockStore may use walletID to throttle per wallet.
+func (db *TokenLockStore) Lock(ctx context.Context, tokenID *token.ID, consumerTxID transaction.ID, walletID string) error {
 	query, args := q.InsertInto(db.Table.TokenLocks).
 		Fields("consumer_tx_id", "tx_id", "idx", "created_at").
 		Row(consumerTxID, tokenID.TxId, tokenID.Index, time.Now().UTC()).

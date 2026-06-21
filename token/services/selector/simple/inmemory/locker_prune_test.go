@@ -15,6 +15,7 @@ import (
 
 	"github.com/LFDT-Panurus/panurus/token/services/storage/ttxdb"
 	"github.com/LFDT-Panurus/panurus/token/token"
+	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	"github.com/stretchr/testify/require"
 )
 
@@ -103,4 +104,122 @@ func TestPruningDoesNotLoseConcurrentLocks(t *testing.T) {
 		})
 	}
 	wg.Wait()
+}
+
+// TestLockSurvivesConcurrentShardPruning pins down the stale-shard-reference
+// window deterministically: a Lock that fetched a shard just before the
+// scanner pruned it must not write into that unreachable shard, and the public
+// entry point must transparently retry on a freshly registered one.
+func TestLockSurvivesConcurrentShardPruning(t *testing.T) {
+	mock := newMockTXStatusProvider()
+	d := quietLocker(t, mock)
+	tokenA := &token.ID{TxId: "tok-a", Index: 0}
+
+	// Reproduce what a racing Lock sees: a shard reference obtained from the
+	// registry that has been pruned out of it in the meantime.
+	stale := d.getOrCreateShard("alice")
+	stale.mu.Lock()
+	d.pruneEmptyShard("alice", stale)
+	stale.mu.Unlock()
+	require.True(t, stale.pruned, "pruning must mark the shard")
+	require.False(t, d.hasShard("alice"))
+
+	// Locking through the stale reference must be refused, not silently lost.
+	mock.setStatus("tx-1", ttxdb.Pending)
+	_, err := d.lockInShard(context.Background(), stale, "alice", tokenA, "tx-1", false)
+	require.ErrorIs(t, err, errShardPruned)
+	require.Empty(t, stale.locked, "no entry may be written to a pruned shard")
+
+	// Lock retries on a fresh shard, so the lock is visible to everyone.
+	_, err = d.Lock(context.Background(), "alice", tokenA, "tx-1", false)
+	require.NoError(t, err)
+	require.True(t, d.hasShard("alice"))
+	require.True(t, d.IsLocked(tokenA))
+	require.Empty(t, stale.locked, "the pruned shard must stay empty")
+	require.Empty(t, d.UnlockIDs(context.Background(), "alice", tokenA))
+}
+
+// TestPruningEmptyShardKeepsNewerShard verifies that pruning a stale empty
+// shard does not evict a newer shard registered for the same owner, which
+// would orphan that shard's live locks.
+func TestPruningEmptyShardKeepsNewerShard(t *testing.T) {
+	mock := newMockTXStatusProvider()
+	d := quietLocker(t, mock)
+	tokenA := &token.ID{TxId: "tok-a", Index: 0}
+
+	stale := d.getOrCreateShard("alice")
+	stale.mu.Lock()
+	d.pruneEmptyShard("alice", stale)
+	stale.mu.Unlock()
+
+	mock.setStatus("tx-1", ttxdb.Pending)
+	_, err := d.Lock(context.Background(), "alice", tokenA, "tx-1", false)
+	require.NoError(t, err)
+
+	// A late prune of the stale shard must leave alice's live shard registered.
+	stale.mu.Lock()
+	d.pruneEmptyShard("alice", stale)
+	stale.mu.Unlock()
+
+	require.True(t, d.hasShard("alice"), "the live shard must stay registered")
+	require.True(t, d.IsLocked(tokenA))
+}
+
+// TestLockedCountDoesNotDeadlockWithPruning is the regression test for the
+// lock-order inversion between the registry mutex and a shard mutex: the
+// scanner's lockedCount used to hold shardsMu while taking a shard lock, while
+// pruneEmptyShard takes shardsMu with a shard lock already held. Under load
+// the two orders deadlock and every locker operation stalls forever.
+func TestLockedCountDoesNotDeadlockWithPruning(t *testing.T) {
+	mock := newMockTXStatusProvider()
+	// aggressive cadence so the scanner's lockedCount overlaps the prunes
+	// triggered by the workers' unlocks
+	d := NewLocker(mock, time.Millisecond, time.Minute).(*locker)
+	t.Cleanup(func() { _ = d.Stop() })
+
+	const workers = 4
+	const iterations = 300
+	// Workers report through a channel rather than t: the test may return on
+	// the timeout below while they are still running.
+	errCh := make(chan error, workers)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		var wg sync.WaitGroup
+		for w := range workers {
+			owner := fmt.Sprintf("owner-%d", w)
+			wg.Go(func() {
+				ctx := context.Background()
+				for i := range iterations {
+					id := &token.ID{TxId: fmt.Sprintf("tok-%s-%d", owner, i), Index: 0}
+					txID := fmt.Sprintf("tx-%s-%d", owner, i)
+					mock.setStatus(txID, ttxdb.Pending)
+					if _, err := d.Lock(ctx, owner, id, txID, false); err != nil {
+						errCh <- errors.Wrapf(err, "lock of [%s] failed", id)
+
+						return
+					}
+					// racing the scanner's own lockedCount from the caller side
+					_ = d.lockedCount()
+					if notFound := d.UnlockIDs(ctx, owner, id); len(notFound) != 0 {
+						errCh <- errors.Errorf("unlock missed %v", notFound)
+
+						return
+					}
+				}
+			})
+		}
+		wg.Wait()
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(30 * time.Second):
+		t.Fatal("lockedCount and shard pruning deadlocked: registry and shard mutexes are taken in inconsistent order")
+	}
+	close(errCh)
+	for err := range errCh {
+		t.Error(err)
+	}
+	require.Zero(t, d.lockedCount())
 }
