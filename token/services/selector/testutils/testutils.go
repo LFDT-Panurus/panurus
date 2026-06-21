@@ -173,6 +173,10 @@ func (n *NoLock) Lock(ctx context.Context, owner string, id *token2.ID, txID str
 	return "", nil
 }
 
+func (n *NoLock) LockWithIdentity(ctx context.Context, owner string, id *token2.ID, txID string, identity string, reclaim bool) (string, error) {
+	return "", nil
+}
+
 func (n *NoLock) UnlockIDs(ctx context.Context, owner string, ids ...*token2.ID) []*token2.ID {
 	return ids
 }

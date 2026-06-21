@@ -22,6 +22,9 @@ const (
 	defaultFetcherCacheSize       = 0 // 0 means use fetcher default
 	defaultFetcherCacheRefresh    = 0 // 0 means use fetcher default
 	defaultFetcherCacheMaxQueries = 0 // 0 means use fetcher default
+	defaultMaxLocksPerIdentity    = 1000
+	defaultRateLimit              = 10.0 // requests per second
+	defaultRateLimitBurst         = 20.0 // burst capacity
 )
 
 //go:generate counterfeiter -o mock/config_service.go -fake-name ConfigService . configService
@@ -38,6 +41,9 @@ type Config struct {
 	FetcherCacheSize       int64         `yaml:"fetcherCacheSize,omitempty"`
 	FetcherCacheRefresh    time.Duration `yaml:"fetcherCacheRefresh,omitempty"`
 	FetcherCacheMaxQueries int           `yaml:"fetcherCacheMaxQueries,omitempty"`
+	MaxLocksPerIdentity    int           `yaml:"maxLocksPerIdentity,omitempty"`
+	RateLimit              float64       `yaml:"rateLimit,omitempty"`
+	RateLimitBurst         float64       `yaml:"rateLimitBurst,omitempty"`
 }
 
 // New returns a SelectorConfig with the values from the token.selector key
@@ -99,6 +105,30 @@ func (c *Config) GetFetcherCacheSize() int64 {
 func (c *Config) GetFetcherCacheRefresh() time.Duration {
 	// Return 0 if not set, which will trigger use of fetcher default
 	return c.FetcherCacheRefresh
+}
+
+func (c *Config) GetMaxLocksPerIdentity() int {
+	if c.MaxLocksPerIdentity > 0 {
+		return c.MaxLocksPerIdentity
+	}
+
+	return defaultMaxLocksPerIdentity
+}
+
+func (c *Config) GetRateLimit() float64 {
+	if c.RateLimit > 0 {
+		return c.RateLimit
+	}
+
+	return defaultRateLimit
+}
+
+func (c *Config) GetRateLimitBurst() float64 {
+	if c.RateLimitBurst > 0 {
+		return c.RateLimitBurst
+	}
+
+	return defaultRateLimitBurst
 }
 
 func (c *Config) GetFetcherCacheMaxQueries() int {

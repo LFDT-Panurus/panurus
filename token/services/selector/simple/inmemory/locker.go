@@ -40,12 +40,13 @@ type TXStatusProvider interface {
 
 type lockEntry struct {
 	TxID       string
+	Identity   string
 	Created    time.Time
 	LastAccess time.Time
 }
 
 func (l lockEntry) String() string {
-	return fmt.Sprintf("[[%s] since [%s], last access [%s]]", l.TxID, l.Created, l.LastAccess)
+	return fmt.Sprintf("[[%s][%s] since [%s], last access [%s]]", l.TxID, l.Identity, l.Created, l.LastAccess)
 }
 
 // shard holds the lock state for the tokens of a single owner. A token has
@@ -64,22 +65,57 @@ type locker struct {
 	ttxdb                  TXStatusProvider
 	shardsMu               sync.RWMutex
 	shards                 map[string]*shard
+	// identityLockCount tracks the number of currently held locks per identity,
+	// guarded by identityMu independently of the per-owner shards.
+	identityMu          sync.Mutex
+	identityLockCount   map[string]int
 	sleepTimeout           time.Duration
 	validTxEvictionTimeout time.Duration
 	cancel                 context.CancelFunc
 	scanDone               chan struct{}
 	stopOnce               sync.Once
+	rateLimiter            *RateLimiter
+	maxLocksPerIdentity    int
+}
+
+// LockerConfig holds configuration for the locker
+type LockerConfig struct {
+	MaxLocksPerIdentity int     // Maximum locks any identity can hold (0 = unlimited)
+	RateLimit           float64 // Lock requests per second per identity (0 = unlimited)
+	RateLimitBurst      float64 // Burst capacity for rate limiter
+}
+
+// DefaultLockerConfig returns sensible defaults
+func DefaultLockerConfig() LockerConfig {
+	return LockerConfig{
+		MaxLocksPerIdentity: 1000,
+		RateLimit:           10.0,
+		RateLimitBurst:      20.0,
+	}
 }
 
 func NewLocker(ttxdb TXStatusProvider, timeout time.Duration, validTxEvictionTimeout time.Duration) simple.Locker {
+	return NewLockerWithConfig(ttxdb, timeout, validTxEvictionTimeout, DefaultLockerConfig())
+}
+
+func NewLockerWithConfig(ttxdb TXStatusProvider, timeout time.Duration, validTxEvictionTimeout time.Duration, config LockerConfig) simple.Locker {
 	ctx, cancel := context.WithCancel(context.Background())
+
+	var rateLimiter *RateLimiter
+	if config.RateLimit > 0 {
+		rateLimiter = NewRateLimiter(config.RateLimit, config.RateLimitBurst)
+	}
+
 	r := &locker{
 		ttxdb:                  ttxdb,
 		sleepTimeout:           timeout,
 		shards:                 map[string]*shard{},
+		identityLockCount:      map[string]int{},
 		validTxEvictionTimeout: validTxEvictionTimeout,
 		cancel:                 cancel,
 		scanDone:               make(chan struct{}),
+		rateLimiter:            rateLimiter,
+		maxLocksPerIdentity:    config.MaxLocksPerIdentity,
 	}
 	r.start(ctx)
 
@@ -103,10 +139,10 @@ func (d *locker) Stop() error {
 	return err
 }
 
-// shard returns the shard for the given owner, creating it on first use.
+// getShard returns the shard for the given owner, creating it on first use.
 // The empty owner is a valid key: callers without owner context share one
 // default shard, which degrades to the pre-sharding single-map behavior.
-func (d *locker) shard(owner string) *shard {
+func (d *locker) getShard(owner string) *shard {
 	d.shardsMu.RLock()
 	s, ok := d.shards[owner]
 	d.shardsMu.RUnlock()
@@ -130,7 +166,7 @@ func (d *locker) shard(owner string) *shard {
 // retried, so callers never operate on a shard that left the registry.
 func (d *locker) lockShard(owner string) *shard {
 	for {
-		s := d.shard(owner)
+		s := d.getShard(owner)
 		s.mu.Lock()
 		if !s.dead {
 			return s
@@ -149,10 +185,28 @@ func (d *locker) allShards() map[string]*shard {
 	return shards
 }
 
+// Lock locks the given token of the given owner for the given transaction.
 func (d *locker) Lock(ctx context.Context, owner string, id *token2.ID, txID string, reclaim bool) (string, error) {
+	return d.LockWithIdentity(ctx, owner, id, txID, "", reclaim)
+}
+
+// LockWithIdentity locks a token for the given owner, optionally enforcing per-identity
+// quota and rate limits when identity is non-empty.
+func (d *locker) LockWithIdentity(ctx context.Context, owner string, id *token2.ID, txID string, identity string, reclaim bool) (string, error) {
 	k := *id
+
+	// Apply rate limiting if configured and identity provided
+	if d.rateLimiter != nil && identity != "" {
+		if err := d.rateLimiter.Allow(identity); err != nil {
+			logger.DebugfContext(ctx, "rate limit exceeded for identity [%s]: %v", identity, err)
+
+			return "", errors.Wrapf(simple.ErrRateLimitExceeded, "identity %s", identity)
+		}
+	}
+
 	s := d.lockShard(owner)
 	defer s.mu.Unlock()
+
 	e, ok := s.locked[k]
 	if ok {
 		e.LastAccess = time.Now()
@@ -160,7 +214,7 @@ func (d *locker) Lock(ctx context.Context, owner string, id *token2.ID, txID str
 		if reclaim {
 			// Second chance
 			logger.DebugfContext(ctx, "[%s] already locked by [%s], try to reclaim...", id, e)
-			reclaimed, status := d.reclaim(ctx, s, id, e.TxID)
+			reclaimed, status := d.reclaim(ctx, s, id, e.TxID, e.Identity)
 			if !reclaimed {
 				logger.DebugfContext(ctx, "[%s] already locked by [%s], reclaim failed, tx status [%s]", id, e, ttxdb.TxStatusMessage[status])
 				if logger.IsEnabledFor(zapcore.DebugLevel) {
@@ -179,9 +233,29 @@ func (d *locker) Lock(ctx context.Context, owner string, id *token2.ID, txID str
 			return e.TxID, AlreadyLockedError
 		}
 	}
-	logger.DebugfContext(ctx, "locking [%s] for [%s]", id, txID)
+
+	// Check quota if configured and identity provided
+	if d.maxLocksPerIdentity > 0 && identity != "" {
+		d.identityMu.Lock()
+		currentCount := d.identityLockCount[identity]
+		d.identityMu.Unlock()
+		if currentCount >= d.maxLocksPerIdentity {
+			logger.DebugfContext(ctx, "quota exceeded for identity [%s]: %d/%d locks", identity, currentCount, d.maxLocksPerIdentity)
+
+			return "", errors.Wrapf(simple.ErrQuotaExceeded, "identity %s has %d locks (max %d)", identity, currentCount, d.maxLocksPerIdentity)
+		}
+	}
+
+	logger.DebugfContext(ctx, "locking [%s] for [%s] by identity [%s]", id, txID, identity)
 	now := time.Now()
-	s.locked[k] = &lockEntry{TxID: txID, Created: now, LastAccess: now}
+	s.locked[k] = &lockEntry{TxID: txID, Identity: identity, Created: now, LastAccess: now}
+
+	// Update identity lock count
+	if identity != "" {
+		d.identityMu.Lock()
+		d.identityLockCount[identity]++
+		d.identityMu.Unlock()
+	}
 
 	return "", nil
 }
@@ -199,12 +273,22 @@ func (d *locker) UnlockIDs(ctx context.Context, owner string, ids ...*token2.ID)
 		entry, ok := s.locked[k]
 		if !ok {
 			notFound = append(notFound, &k)
-			logger.Warnf("unlocking [%s] hold by no one, skipping [%s]", id, entry)
+			logger.Warnf("unlocking [%s] hold by no one, skipping", id)
 
 			continue
 		}
 		logger.DebugfContext(ctx, "unlocking [%s] hold by [%s]", id, entry)
 		delete(s.locked, k)
+
+		// Decrement identity lock count
+		if entry.Identity != "" {
+			d.identityMu.Lock()
+			d.identityLockCount[entry.Identity]--
+			if d.identityLockCount[entry.Identity] <= 0 {
+				delete(d.identityLockCount, entry.Identity)
+			}
+			d.identityMu.Unlock()
+		}
 	}
 
 	return notFound
@@ -220,6 +304,16 @@ func (d *locker) UnlockByTxID(ctx context.Context, txID string) {
 			if entry.TxID == txID {
 				logger.DebugfContext(ctx, "unlocking [%s] hold by [%s]", id, entry)
 				delete(s.locked, id)
+
+				// Decrement identity lock count
+				if entry.Identity != "" {
+					d.identityMu.Lock()
+					d.identityLockCount[entry.Identity]--
+					if d.identityLockCount[entry.Identity] <= 0 {
+						delete(d.identityLockCount, entry.Identity)
+					}
+					d.identityMu.Unlock()
+				}
 			}
 		}
 		s.mu.Unlock()
@@ -241,7 +335,7 @@ func (d *locker) IsLocked(id *token2.ID) bool {
 }
 
 // reclaim must be called while holding the shard's mutex.
-func (d *locker) reclaim(ctx context.Context, s *shard, id *token2.ID, txID string) (bool, int) {
+func (d *locker) reclaim(ctx context.Context, s *shard, id *token2.ID, txID string, identity string) (bool, int) {
 	status, _, err := d.ttxdb.GetStatus(ctx, txID)
 	if err != nil {
 		return false, status
@@ -249,6 +343,16 @@ func (d *locker) reclaim(ctx context.Context, s *shard, id *token2.ID, txID stri
 	switch status {
 	case ttxdb.Deleted:
 		delete(s.locked, *id)
+
+		// Decrement identity lock count
+		if identity != "" {
+			d.identityMu.Lock()
+			d.identityLockCount[identity]--
+			if d.identityLockCount[identity] <= 0 {
+				delete(d.identityLockCount, identity)
+			}
+			d.identityMu.Unlock()
+		}
 
 		return true, status
 	default:
@@ -372,6 +476,16 @@ func (d *locker) scanShards(ctx context.Context) {
 				continue
 			}
 			delete(s.locked, r.id)
+
+			// Decrement identity lock count
+			if entry.Identity != "" {
+				d.identityMu.Lock()
+				d.identityLockCount[entry.Identity]--
+				if d.identityLockCount[entry.Identity] <= 0 {
+					delete(d.identityLockCount, entry.Identity)
+				}
+				d.identityMu.Unlock()
+			}
 		}
 		s.mu.Unlock()
 
