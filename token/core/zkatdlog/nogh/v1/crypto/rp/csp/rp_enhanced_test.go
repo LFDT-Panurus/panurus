@@ -264,13 +264,13 @@ func TestInterpolateCorrectness(t *testing.T) {
 
 			n := uint64(3)
 
-			// Create random polynomial values at {0, 1, 2, 3}
+			// Create random polynomial values at {0, 1, ..., n}
 			vals := make([]*math.Zr, n+1)
 			for i := range vals {
 				vals[i] = curve.NewRandomZr(rand)
 			}
 
-			// Interpolate to get values at {0, 1, 2, 3, 4, 5, 6}
+			// Interpolate to get values at {0, 1, ..., 2n}
 			extended, err := interpolate(n, vals, curve)
 			require.NoError(t, err)
 			require.Len(t, extended, 2*int(n)+1)
