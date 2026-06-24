@@ -136,47 +136,11 @@ func computeNumeratorsBinaryTree[T any, E math2.GnarkFr[T]](cMinusJE []E, m int)
 	}
 	
 	// Phase 2: Top-down - compute exclude products
-	// Start with root's children (skip root since its exclude product is 1)
-	left := leftChild(0)
-	right := rightChild(0)
+	// Root's exclude product is 1 (no leaves to exclude)
+	excludeE[0].SetOne()
 	
-	// Initialize root's children
-	if right < treeSize {
-		// Both children exist
-		var leftVal, rightVal E
-		if isLeaf(left) {
-			leftVal = getLeafValue(left)
-		} else {
-			leftVal = treeE[left]
-		}
-		if isLeaf(right) {
-			rightVal = getLeafValue(right)
-		} else {
-			rightVal = treeE[right]
-		}
-		// Left child excludes right subtree (parent's exclude=1, so just right subtree)
-		if isLeaf(left) {
-			numers[left-leafStart] = *rightVal
-		} else {
-			exclude[left] = *rightVal
-		}
-		// Right child excludes left subtree (parent's exclude=1, so just left subtree)
-		if isLeaf(right) {
-			numers[right-leafStart] = *leftVal
-		} else {
-			exclude[right] = *leftVal
-		}
-	} else if left < treeSize {
-		// Only left child exists (exclude product is 1)
-		if isLeaf(left) {
-			numersE[left-leafStart].SetOne()
-		} else {
-			excludeE[left].SetOne()
-		}
-	}
-	
-	// Process remaining nodes from level 1 down to leaves
-	for i := 1; i < leafStart; i++ {
+	// Process from root down to leaves
+	for i := 0; i < leafStart; i++ {
 		left := leftChild(i)
 		right := rightChild(i)
 		
