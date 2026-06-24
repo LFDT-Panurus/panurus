@@ -64,6 +64,7 @@ func sibling(i int) int {
 //
 // Optimization: Leaves are not stored in the tree array; they are accessed
 // directly from cMinusJE when needed. Only internal nodes are allocated.
+// Exclude values for leaves are written directly to the output numers array.
 func computeNumeratorsBinaryTree[T any, E math2.GnarkFr[T]](cMinusJE []E, m int) []E {
 	treeSize := binaryTreeSize(m)
 	leafStart := treeSize - m
@@ -86,10 +87,17 @@ func computeNumeratorsBinaryTree[T any, E math2.GnarkFr[T]](cMinusJE []E, m int)
 		treeE[i] = E(&tree[i])
 	}
 	
-	// Exclude array needs space for both internal nodes and leaves
-	// because we compute exclude values for leaves in phase 2
-	exclude := make([]T, treeSize)
-	excludeE := make([]E, treeSize)
+	// Allocate output numerators array (for leaves)
+	numers := make([]T, m)
+	numersE := make([]E, m)
+	for i := range numers {
+		numersE[i] = E(&numers[i])
+	}
+	
+	// Exclude array only needs space for internal nodes
+	// Leaf exclude values are written directly to numers
+	exclude := make([]T, leafStart)
+	excludeE := make([]E, leafStart)
 	for i := range exclude {
 		excludeE[i] = E(&exclude[i])
 	}
@@ -128,11 +136,47 @@ func computeNumeratorsBinaryTree[T any, E math2.GnarkFr[T]](cMinusJE []E, m int)
 	}
 	
 	// Phase 2: Top-down - compute exclude products
-	// Root's exclude product is 1 (no leaves to exclude)
-	excludeE[0].SetOne()
+	// Start with root's children (skip root since its exclude product is 1)
+	left := leftChild(0)
+	right := rightChild(0)
 	
-	// Process from root down to leaves
-	for i := 0; i < leafStart; i++ {
+	// Initialize root's children
+	if right < treeSize {
+		// Both children exist
+		var leftVal, rightVal E
+		if isLeaf(left) {
+			leftVal = getLeafValue(left)
+		} else {
+			leftVal = treeE[left]
+		}
+		if isLeaf(right) {
+			rightVal = getLeafValue(right)
+		} else {
+			rightVal = treeE[right]
+		}
+		// Left child excludes right subtree (parent's exclude=1, so just right subtree)
+		if isLeaf(left) {
+			numers[left-leafStart] = *rightVal
+		} else {
+			exclude[left] = *rightVal
+		}
+		// Right child excludes left subtree (parent's exclude=1, so just left subtree)
+		if isLeaf(right) {
+			numers[right-leafStart] = *leftVal
+		} else {
+			exclude[right] = *leftVal
+		}
+	} else if left < treeSize {
+		// Only left child exists (exclude product is 1)
+		if isLeaf(left) {
+			numersE[left-leafStart].SetOne()
+		} else {
+			excludeE[left].SetOne()
+		}
+	}
+	
+	// Process remaining nodes from level 1 down to leaves
+	for i := 1; i < leafStart; i++ {
 		left := leftChild(i)
 		right := rightChild(i)
 		
@@ -150,21 +194,25 @@ func computeNumeratorsBinaryTree[T any, E math2.GnarkFr[T]](cMinusJE []E, m int)
 				rightVal = treeE[right]
 			}
 			// Left child excludes: parent's exclude × right subtree
-			excludeE[left].Mul(excludeE[i], rightVal)
+			if isLeaf(left) {
+				numersE[left-leafStart].Mul(excludeE[i], rightVal)
+			} else {
+				excludeE[left].Mul(excludeE[i], rightVal)
+			}
 			// Right child excludes: parent's exclude × left subtree
-			excludeE[right].Mul(excludeE[i], leftVal)
+			if isLeaf(right) {
+				numersE[right-leafStart].Mul(excludeE[i], leftVal)
+			} else {
+				excludeE[right].Mul(excludeE[i], leftVal)
+			}
 		} else if left < treeSize {
 			// Only left child exists
-			exclude[left] = exclude[i]
+			if isLeaf(left) {
+				numers[left-leafStart] = exclude[i]
+			} else {
+				exclude[left] = exclude[i]
+			}
 		}
-	}
-	
-	// Extract numerators from leaf exclude values
-	numers := make([]T, m)
-	numersE := make([]E, m)
-	for i := 0; i < m; i++ {
-		numersE[i] = E(&numers[i])
-		numers[i] = exclude[leafStart+i]
 	}
 	
 	return numersE
