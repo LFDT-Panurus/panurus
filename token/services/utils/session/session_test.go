@@ -154,8 +154,7 @@ func TestReceiveWithTimeout_TooLargeRejectedBeforeUnmarshal(t *testing.T) {
 
 	var result string
 	err := sess.ReceiveWithTimeout(&result, 1*time.Second)
-	require.Error(t, err)
-	assert.ErrorIs(t, err, utilsession.ErrMessageTooLarge)
+	require.ErrorIs(t, err, utilsession.ErrMessageTooLarge)
 	assert.Equal(t, 0, m.UnmarshalCallCount(), "payload must be rejected before deserialization")
 }
 
