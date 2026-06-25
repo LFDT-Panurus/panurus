@@ -292,6 +292,32 @@ func TestReceiveTypedWithTimeout_TypeMismatch(t *testing.T) {
 	require.ErrorIs(t, err, jsession.ErrTypeMismatch)
 }
 
+func TestReceiveTypedWithTimeout_TooLarge(t *testing.T) {
+	body, _ := json.Marshal(map[string]string{"name": "bob"})
+	raw, _ := json.Marshal(jsession.Envelope{
+		Version: jsession.CurrentVersion,
+		Type:    testTypeB,
+		Body:    body,
+	})
+
+	mockSession := &mock.Session{}
+	ch := make(chan *view.Message, 1)
+	ch <- &view.Message{Payload: raw, Status: int32(view.OK)}
+	mockSession.ReceiveReturns(ch)
+	mockSession.InfoReturns(view.SessionInfo{ID: "test"})
+
+	// Configure a limit below the envelope size so it is rejected before unwrap.
+	s := utilsession.New(mockSession, t.Context(), jsession.JSONMarshaller{}, utilsession.WithMaxRecvMessageSize(len(raw)-1))
+
+	var dst struct {
+		Name string `json:"name"`
+	}
+	err := jsession.ReceiveTypedWithTimeout(s, testTypeB, &dst, 1*time.Second)
+	require.Error(t, err)
+	require.ErrorIs(t, err, utilsession.ErrMessageTooLarge)
+	assert.Empty(t, dst.Name, "body must not be deserialized when rejected for size")
+}
+
 func TestReceiveTypedWithTimeout_Timeout(t *testing.T) {
 	mockSession := &mock.Session{}
 	ch := make(chan *view.Message)

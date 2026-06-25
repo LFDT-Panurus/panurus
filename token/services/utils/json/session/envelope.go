@@ -169,6 +169,11 @@ func ReceiveTypedWithTimeout(s *session.S, expectedType string, dst any, d time.
 func ReceiveTypedWithTimeoutAndMetrics(s *session.S, expectedType string, dst any, d time.Duration, m *EnvelopeMetrics) error {
 	raw, err := s.ReceiveRawWithTimeout(d)
 	if err != nil {
+		// Count oversized-payload rejections; other transport errors are left as-is.
+		if errors.Is(err, session.ErrMessageTooLarge) {
+			m.observeError("too_large")
+		}
+
 		return err
 	}
 

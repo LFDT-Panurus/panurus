@@ -19,6 +19,14 @@ import (
 
 const DefaultReceiveTimeout = 10 * time.Second
 
+// DefaultMaxRecvMessageSize is the default upper bound, in bytes, on the size
+// of a single inbound message accepted by a session. It is generous enough for
+// legitimate token transactions (matching common gRPC/Fabric maximums) while
+// still bounding the memory a remote party can force the receiver to allocate
+// before any deserialization happens. Override per session with
+// WithMaxRecvMessageSize.
+const DefaultMaxRecvMessageSize = 100 * 1024 * 1024 // 100 MiB
+
 // ErrTimeout is returned when a session receive operation times out.
 var ErrTimeout = errors.New("session timeout")
 
@@ -27,6 +35,11 @@ var ErrNilMessage = errors.New("received message is nil")
 
 // ErrContextDone is returned when the context is done.
 var ErrContextDone = errors.New("context done")
+
+// ErrMessageTooLarge is returned when an inbound message exceeds the session's
+// configured maximum size. The oversized payload is rejected before it is
+// deserialized or otherwise processed.
+var ErrMessageTooLarge = errors.New("received message exceeds maximum allowed size")
 
 var logger = logging.MustGetLogger()
 
@@ -39,15 +52,31 @@ type Marshaller interface {
 }
 
 type S struct {
-	s          Session
-	ctx        context.Context
-	marshaller Marshaller
+	s           Session
+	ctx         context.Context
+	marshaller  Marshaller
+	maxRecvSize int
 }
 
-func New(s Session, ctx context.Context, m Marshaller) *S {
+// Option customizes a session created with New.
+type Option func(*S)
+
+// WithMaxRecvMessageSize sets the maximum size, in bytes, of a single inbound
+// message. Messages larger than this are rejected with ErrMessageTooLarge
+// before any deserialization. A value <= 0 disables the limit.
+func WithMaxRecvMessageSize(maxBytes int) Option {
+	return func(s *S) { s.maxRecvSize = maxBytes }
+}
+
+func New(s Session, ctx context.Context, m Marshaller, opts ...Option) *S {
 	logger.DebugfContext(ctx, "Open session to [%s]", logging.Eval(s.Info))
 
-	return &S{s: s, ctx: ctx, marshaller: m}
+	sess := &S{s: s, ctx: ctx, marshaller: m, maxRecvSize: DefaultMaxRecvMessageSize}
+	for _, opt := range opts {
+		opt(sess)
+	}
+
+	return sess
 }
 
 func (j *S) Receive(state any) error {
@@ -89,6 +118,13 @@ func (j *S) ReceiveRawWithTimeout(d time.Duration) ([]byte, error) {
 			logger.ErrorfContext(j.ctx, "Received error message")
 
 			return nil, errors.Errorf("received error from remote [%s]", string(msg.Payload))
+		}
+		// Reject oversized payloads before any deserialization so a remote party
+		// cannot force the receiver to allocate unbounded memory.
+		if j.maxRecvSize > 0 && len(msg.Payload) > j.maxRecvSize {
+			logger.ErrorfContext(j.ctx, "received message of size [%d] exceeds maximum [%d] on session [%s]", len(msg.Payload), j.maxRecvSize, j.Info().ID)
+
+			return nil, errors.Join(errors.Errorf("message size [%d] exceeds maximum [%d]", len(msg.Payload), j.maxRecvSize), ErrMessageTooLarge)
 		}
 		logger.DebugfContext(j.ctx, "session, received message [%s]", logging.SHA256Base64(msg.Payload))
 
