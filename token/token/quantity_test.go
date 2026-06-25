@@ -405,6 +405,81 @@ func TestUInt64Quantity_Clone(t *testing.T) {
 	assert.Equal(t, "100", clone.Decimal())
 }
 
+// Package-level sinks prevent the compiler from optimizing away the
+// benchmarked, side-effect-free calls (dead-code elimination).
+var (
+	benchResult token.Quantity
+	benchErr    error
+	benchCmp    int
+)
+
+func BenchmarkBigQuantity_Add(b *testing.B) {
+	q := token.NewZeroQuantity(128)
+	one := token.NewOneQuantity(128)
+	b.ResetTimer()
+	for b.Loop() {
+		benchResult, benchErr = q.Add(one)
+	}
+	require.NoError(b, benchErr)
+}
+
+func BenchmarkBigQuantity_Sub(b *testing.B) {
+	q, err := token.ToQuantity("1000000000", 128)
+	require.NoError(b, err)
+	one := token.NewOneQuantity(128)
+	b.ResetTimer()
+	for b.Loop() {
+		benchResult, benchErr = q.Sub(one)
+	}
+	require.NoError(b, benchErr)
+}
+
+func BenchmarkBigQuantity_Cmp(b *testing.B) {
+	q := token.NewZeroQuantity(128)
+	one := token.NewOneQuantity(128)
+	b.ResetTimer()
+	for b.Loop() {
+		benchCmp = q.Cmp(one)
+	}
+}
+
+func BenchmarkUInt64Quantity_Add(b *testing.B) {
+	q := token.NewZeroQuantity(64)
+	one := token.NewOneQuantity(64)
+	b.ResetTimer()
+	for b.Loop() {
+		benchResult, benchErr = q.Add(one)
+	}
+	require.NoError(b, benchErr)
+}
+
+func BenchmarkUInt64Quantity_Sub(b *testing.B) {
+	q, err := token.ToQuantity("1000000000", 64)
+	require.NoError(b, err)
+	one := token.NewOneQuantity(64)
+	b.ResetTimer()
+	for b.Loop() {
+		benchResult, benchErr = q.Sub(one)
+	}
+	require.NoError(b, benchErr)
+}
+
+func BenchmarkUInt64Quantity_Cmp(b *testing.B) {
+	q := token.NewZeroQuantity(64)
+	one := token.NewOneQuantity(64)
+	b.ResetTimer()
+	for b.Loop() {
+		benchCmp = q.Cmp(one)
+	}
+}
+
+func BenchmarkToQuantity(b *testing.B) {
+	for b.Loop() {
+		benchResult, benchErr = token.ToQuantity("0x1234567890abcdef", 64)
+	}
+	require.NoError(b, benchErr)
+}
+
 func ToHex(q uint64) string {
 	return "0x" + strconv.FormatUint(q, 16)
 }
