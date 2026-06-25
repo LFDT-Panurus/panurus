@@ -169,9 +169,10 @@ func ReceiveTypedWithTimeout(s *session.S, expectedType string, dst any, d time.
 func ReceiveTypedWithTimeoutAndMetrics(s *session.S, expectedType string, dst any, d time.Duration, m *EnvelopeMetrics) error {
 	raw, err := s.ReceiveRawWithTimeout(d)
 	if err != nil {
-		// Surface transport-layer rejections (e.g. oversized messages dropped
-		// before deserialization) in the envelope error metrics.
-		m.observeError(classifyError(err))
+		// Count oversized-payload rejections; other transport errors are left as-is.
+		if errors.Is(err, session.ErrMessageTooLarge) {
+			m.observeError("too_large")
+		}
 
 		return err
 	}
@@ -254,8 +255,6 @@ func (t *TypedSession) ReceiveTypedWithTimeout(expectedType string, dst any, d t
 
 func classifyError(err error) string {
 	switch {
-	case errors.Is(err, session.ErrMessageTooLarge):
-		return "too_large"
 	case errors.Is(err, ErrMissingVersion):
 		return "missing_version"
 	case errors.Is(err, ErrVersionMismatch):
