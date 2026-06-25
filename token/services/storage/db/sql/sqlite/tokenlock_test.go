@@ -45,9 +45,22 @@ func TestIsStale(t *testing.T) {
 		"FROM TokenLocks AS tl " +
 		"LEFT JOIN Requests AS tr " +
 		"ON tl.tx_id = tr.tx_id " +
-		"WHERE (tr.status = $1) OR (tl.created_at < datetime('now', '-5 seconds'))" +
+		"WHERE ((tr.status) IN (($1), ($2))) OR (tl.created_at < datetime('now', '-5 seconds'))" +
 		")"))
-	Expect(args).To(ConsistOf(driver.Deleted))
+	Expect(args).To(ConsistOf(driver.Deleted, driver.Orphan))
+}
+
+func TestIsStaleOrphan(t *testing.T) {
+	RegisterTestingT(t)
+
+	query, args := q.DeleteFrom("TokenLocks").
+		Where(IsStale("TokenLocks", "Requests", 10*time.Second)).
+		Format(NewConditionInterpreter())
+
+	// Verify the query includes both Deleted (3) and Orphan (4) statuses using IN syntax
+	Expect(query).To(ContainSubstring("(tr.status) IN"))
+	Expect(query).To(ContainSubstring("datetime('now', '-10 seconds')"))
+	Expect(args).To(ConsistOf(driver.Deleted, driver.Orphan))
 }
 
 func TestLock(t *testing.T) {

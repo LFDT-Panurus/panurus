@@ -107,7 +107,7 @@ func (db *TokenLockStore) Close() error {
 
 func IsExpiredToken(tokenRequests, tokenLocks common3.Table, leaseExpiry time.Duration) cond.Condition {
 	return cond.Or(
-		cond.FieldIn(tokenRequests.Field("status"), driver.Deleted),
+		cond.FieldIn(tokenRequests.Field("status"), driver.Deleted, driver.Orphan),
 		cond.OlderThan(tokenLocks.Field("created_at"), leaseExpiry),
 	)
 }

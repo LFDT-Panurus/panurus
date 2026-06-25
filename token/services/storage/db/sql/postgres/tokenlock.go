@@ -67,19 +67,24 @@ func (db *TokenLockStore) Cleanup(ctx context.Context, leaseExpiry time.Duration
 	if err := db.logStaleLocks(ctx, leaseExpiry); err != nil {
 		db.Logger.Warnf("Could not log stale locks: %v", err)
 	}
-	tokenLocks, _ := q.Table(db.Table.TokenLocks), q.Table(db.Table.Requests)
+	tokenLocks, tokenRequests := q.Table(db.Table.TokenLocks), q.Table(db.Table.Requests)
 
-	query, args := common3.NewBuilder().
-		WriteString("DELETE FROM ").
-		WriteConditionSerializable(tokenLocks, db.ci).
-		WriteString(" WHERE ").
-		WriteConditionSerializable(cond.OlderThan(tokenLocks.Field("created_at"), leaseExpiry), db.ci).
-		WriteString(" OR ").
-		WriteString(
-			fmt.Sprintf("EXISTS (SELECT 1 FROM %s WHERE %s.tx_id = %s.consumer_tx_id AND %s.status IN (%d))",
-				db.Table.Requests, db.Table.Requests, db.Table.TokenLocks, db.Table.Requests, driver.Deleted,
-			)). // TODO: Implement EXIST condition
-		Build()
+	existsDeletedOrOrphan := cond.Exists(
+		q.Select().
+			Fields(common3.FieldName("1")).
+			From(tokenRequests).
+			Where(cond.And(
+				cond.Cmp(tokenRequests.Field("tx_id"), "=", tokenLocks.Field("consumer_tx_id")),
+				cond.FieldIn(tokenRequests.Field("status"), driver.Deleted, driver.Orphan),
+			)),
+	)
+
+	query, args := q.DeleteFrom(db.Table.TokenLocks).
+		Where(cond.Or(
+			cond.OlderThan(tokenLocks.Field("created_at"), leaseExpiry),
+			existsDeletedOrOrphan,
+		)).
+		Format(db.ci)
 
 	db.Logger.Debug(query)
 	_, err := db.WriteDB.ExecContext(ctx, query, args...)
