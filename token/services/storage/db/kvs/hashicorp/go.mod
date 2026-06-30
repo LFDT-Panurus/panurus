@@ -11,15 +11,15 @@ replace (
 require (
 	github.com/LFDT-Panurus/panurus v0.4.1-0.20250528165839-032fb9265504
 	github.com/hashicorp/vault/api v1.23.0
-	github.com/hyperledger-labs/fabric-smart-client v0.13.0
-	github.com/hyperledger-labs/fabric-smart-client/integration v0.0.0-20260618115140-04366ada95c8
+	github.com/hyperledger-labs/fabric-smart-client v0.13.1-0.20260630083752-d97d0c5b6232
+	github.com/hyperledger-labs/fabric-smart-client/integration v0.13.1-0.20260630083752-d97d0c5b6232
 	github.com/moby/moby/api v1.55.0
 	github.com/moby/moby/client v0.5.0
 	github.com/stretchr/testify v1.11.1
 )
 
 require (
-	github.com/IBM/mathlib v0.1.0 // indirect
+	github.com/IBM/mathlib v0.2.0 // indirect
 	github.com/Masterminds/squirrel v1.5.4 // indirect
 	github.com/Microsoft/go-winio v0.6.2 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
@@ -59,7 +59,7 @@ require (
 	github.com/hashicorp/go-sockaddr v1.0.7 // indirect
 	github.com/hashicorp/hcl v1.0.1-vault-7 // indirect
 	github.com/hyperledger/fabric-amcl v0.0.0-20230602173724-9e02669dceb2 // indirect
-	github.com/hyperledger/fabric-lib-go v1.1.4 // indirect
+	github.com/hyperledger/fabric-lib-go v1.1.5-0.20260607181445-fc4b05c5d38f // indirect
 	github.com/kilic/bls12-381 v0.1.0 // indirect
 	github.com/knadh/koanf/maps v0.1.2 // indirect
 	github.com/knadh/koanf/parsers/yaml v1.1.0 // indirect

@@ -2,11 +2,12 @@ module github.com/LFDT-Panurus/panurus
 
 go 1.26.3
 
+replace github.com/hyperledger/fabric-x-common => github.com/adecaro/fabric-x-common v0.0.0-20260630082112-2edc33881189
+
 require (
 	github.com/DATA-DOG/go-sqlmock v1.5.2
-	github.com/IBM/idemix v0.0.2
-	github.com/IBM/idemix/bccsp/types v0.0.0-20260501050258-bb91d87b1252
-	github.com/IBM/mathlib v0.1.0
+	github.com/IBM/idemix v0.1.0
+	github.com/IBM/mathlib v0.2.0
 	github.com/consensys/gnark-crypto v0.20.1
 	github.com/dgraph-io/badger/v4 v4.9.2
 	github.com/dgraph-io/ristretto/v2 v2.4.0
@@ -14,11 +15,11 @@ require (
 	github.com/go-viper/mapstructure/v2 v2.5.0
 	github.com/google/pprof v0.0.0-20260604005048-7023385849c0
 	github.com/hashicorp/go-uuid v1.0.3
-	github.com/hyperledger-labs/fabric-smart-client v0.13.0
+	github.com/hyperledger-labs/fabric-smart-client v0.13.1-0.20260630083752-d97d0c5b6232
 	github.com/hyperledger/fabric-chaincode-go/v2 v2.3.0
-	github.com/hyperledger/fabric-lib-go v1.1.4
+	github.com/hyperledger/fabric-lib-go v1.1.5-0.20260607181445-fc4b05c5d38f
 	github.com/hyperledger/fabric-protos-go-apiv2 v0.3.7
-	github.com/hyperledger/fabric-x-common v0.2.4
+	github.com/hyperledger/fabric-x-common v0.2.6
 	github.com/jackc/pgx/v5 v5.10.0
 	github.com/jackc/pgxlisten v0.0.0-20250802141604-12b92425684c
 	github.com/onsi/ginkgo/v2 v2.32.0
@@ -38,8 +39,6 @@ require (
 )
 
 require (
-	github.com/IBM/idemix/bccsp/schemes/aries v0.0.0-20260501050258-bb91d87b1252 // indirect
-	github.com/IBM/idemix/bccsp/schemes/weak-bb v0.0.0-20260501050258-bb91d87b1252 // indirect
 	github.com/Masterminds/semver/v3 v3.5.0 // indirect
 	github.com/Masterminds/squirrel v1.5.4 // indirect
 	github.com/Microsoft/go-winio v0.6.2 // indirect
@@ -67,13 +66,11 @@ require (
 	github.com/go-task/slim-sprig/v3 v3.0.0 // indirect
 	github.com/goccy/go-yaml v1.19.2 // indirect
 	github.com/gogo/protobuf v1.3.2 // indirect
-	github.com/golang/protobuf v1.5.4 // indirect
 	github.com/google/flatbuffers v25.2.10+incompatible // indirect
 	github.com/google/go-cmp v0.7.0 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/gorilla/websocket v1.5.3 // indirect
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.29.0 // indirect
-	github.com/hyperledger/aries-bbs-go v0.0.0-20240528091251-e950615f2e45 // indirect
 	github.com/hyperledger/fabric-amcl v0.0.0-20230602173724-9e02669dceb2 // indirect
 	github.com/jackc/pgpassfile v1.0.0 // indirect
 	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect
@@ -94,7 +91,6 @@ require (
 	github.com/mattn/go-isatty v0.0.22 // indirect
 	github.com/miekg/pkcs11 v1.1.2 // indirect
 	github.com/mitchellh/copystructure v1.2.0 // indirect
-	github.com/mitchellh/mapstructure v1.5.0 // indirect
 	github.com/mitchellh/reflectwalk v1.0.2 // indirect
 	github.com/moby/docker-image-spec v1.3.1 // indirect
 	github.com/moby/moby/api v1.54.2 // indirect

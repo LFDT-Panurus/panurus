@@ -14,7 +14,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/IBM/idemix"
+	idemix "github.com/IBM/idemix/msp"
 	mathlib "github.com/IBM/mathlib"
 	"github.com/LFDT-Panurus/panurus/integration/nwo/token/generators"
 	"github.com/LFDT-Panurus/panurus/integration/nwo/token/generators/commands"

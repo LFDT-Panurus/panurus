@@ -15,8 +15,8 @@ import (
 	"sync"
 	"testing"
 
-	idemix2 "github.com/IBM/idemix"
 	"github.com/IBM/idemix/bccsp/types"
+	idemixmsp "github.com/IBM/idemix/msp"
 	math "github.com/IBM/mathlib"
 	"github.com/LFDT-Panurus/panurus/token"
 	"github.com/LFDT-Panurus/panurus/token/services/identity"
@@ -465,7 +465,7 @@ func TestIdentityFromFabricCA(t *testing.T) {
 	kvs, err := kvs2.NewInMemory()
 	require.NoError(t, err)
 	require.NoError(t, registry.RegisterService(kvs))
-	ipkBytes, err := crypto.ReadFile(filepath.Join("./testdata/fp256bn_amcl/charlie.ExtraId2", idemix2.IdemixConfigFileIssuerPublicKey))
+	ipkBytes, err := crypto.ReadFile(filepath.Join("./testdata/fp256bn_amcl/charlie.ExtraId2", idemixmsp.IdemixConfigFileIssuerPublicKey))
 	require.NoError(t, err)
 	config, err := crypto.NewConfigWithIPK(ipkBytes, "./testdata/fp256bn_amcl/charlie.ExtraId2", true)
 	require.NoError(t, err)
@@ -546,7 +546,7 @@ func TestIdentityFromFabricCAWithEidRhNymPolicy(t *testing.T) {
 	kvs, err := kvs2.NewInMemory()
 	require.NoError(t, err)
 	require.NoError(t, registry.RegisterService(kvs))
-	ipkBytes, err := crypto.ReadFile(filepath.Join("./testdata/fp256bn_amcl/charlie.ExtraId2", idemix2.IdemixConfigFileIssuerPublicKey))
+	ipkBytes, err := crypto.ReadFile(filepath.Join("./testdata/fp256bn_amcl/charlie.ExtraId2", idemixmsp.IdemixConfigFileIssuerPublicKey))
 	require.NoError(t, err)
 	config, err := crypto.NewConfigWithIPK(ipkBytes, "./testdata/fp256bn_amcl/charlie.ExtraId2", true)
 	require.NoError(t, err)

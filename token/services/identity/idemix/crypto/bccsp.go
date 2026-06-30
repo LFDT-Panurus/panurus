@@ -9,6 +9,9 @@ package crypto
 import (
 	idemix "github.com/IBM/idemix/bccsp"
 	"github.com/IBM/idemix/bccsp/keystore"
+
+	//lint:ignore SA1019 the deprecation will be undone
+	//nolint:staticcheck
 	idemix3 "github.com/IBM/idemix/bccsp/schemes/dlog/crypto"
 	"github.com/IBM/idemix/bccsp/schemes/dlog/crypto/translator/amcl"
 	bccsp "github.com/IBM/idemix/bccsp/types"
