@@ -43,6 +43,7 @@ func (s *sliceIterator) Next() (*token2.UnspentToken, error) {
 	}
 	t := s.tokens[s.pos]
 	s.pos++
+
 	return t, nil
 }
 
@@ -64,6 +65,7 @@ func (m *mockQueryService) GetTokens(_ context.Context, _ ...*token2.ID) ([]*tok
 	if m.getTokensError != nil {
 		return nil, m.getTokensError
 	}
+
 	return nil, nil
 }
 
@@ -87,6 +89,7 @@ func (r *recordingLocker) LockWithIdentity(_ context.Context, id *token2.ID, _ s
 	if idx >= r.lockFailAfter {
 		return "", r.lockErr
 	}
+
 	return "locked", nil
 }
 
@@ -243,7 +246,7 @@ func TestSelectByID_InsufficientFunds(t *testing.T) {
 	require.ErrorIs(t, err, token.SelectorInsufficientFunds)
 
 	// The token must have been unlocked once per retry attempt (2 retries × 1 token)
-	assert.Equal(t, 2, len(locker.unlocked), "token must be unlocked after each retry")
+	assert.Len(t, locker.unlocked, 2, "token must be unlocked after each retry")
 }
 
 // TestSelectByID_HappyPath: enough tokens exist and locking succeeds.

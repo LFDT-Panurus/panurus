@@ -352,7 +352,7 @@ func TestRateLimiter_Parallel(t *testing.T) {
 		wg.Wait()
 
 		assert.LessOrEqual(t, allowed, burst, "must not exceed burst even under race")
-		assert.Greater(t, allowed, 0, "at least one request must be allowed")
+		assert.Positive(t, allowed, "at least one request must be allowed")
 	})
 
 	t.Run("parallel eviction and Allow do not race", func(t *testing.T) {
