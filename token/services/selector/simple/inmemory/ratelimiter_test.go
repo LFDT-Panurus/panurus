@@ -7,6 +7,7 @@ SPDX-License-Identifier: Apache-2.0
 package inmemory
 
 import (
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -249,6 +250,140 @@ func TestTokenBucket_Allow(t *testing.T) {
 		}
 
 		assert.Equal(t, 5, allowed, "should cap at max tokens")
+	})
+}
+
+func TestRateLimiter_Parallel(t *testing.T) {
+	// TestRateLimiter_Parallel verifies correct behaviour under high concurrency.
+
+	t.Run("single identity: allowed count equals burst size", func(t *testing.T) {
+		// With burst=50 and many more goroutines than burst, exactly 50 requests
+		// must be allowed and the rest denied — no more, no less.
+		const burst = 50
+		rl := NewRateLimiter(float64(burst), float64(burst), 0, 0)
+		defer rl.Stop()
+
+		const goroutines = 20
+		const requestsEach = 10 // total 200 attempts > 50 burst
+
+		var (
+			wg      sync.WaitGroup
+			mu      sync.Mutex
+			allowed int
+		)
+		for range goroutines {
+			wg.Go(func() {
+				for range requestsEach {
+					if rl.Allow("shared-identity") == nil {
+						mu.Lock()
+						allowed++
+						mu.Unlock()
+					}
+				}
+			})
+		}
+		wg.Wait()
+
+		assert.Equal(t, burst, allowed, "exactly burst requests should be allowed")
+	})
+
+	t.Run("multiple identities: each gets independent burst", func(t *testing.T) {
+		// N identities, each hammered by its own goroutine.
+		// Every identity must allow exactly its burst and deny the rest.
+		const (
+			burst      = 5
+			identities = 20
+			attempts   = 15 // > burst per identity
+		)
+		rl := NewRateLimiter(float64(burst), float64(burst), 0, 0)
+		defer rl.Stop()
+
+		type result struct{ allowed, denied int }
+		results := make([]result, identities)
+
+		var wg sync.WaitGroup
+		for i := range identities {
+			wg.Go(func() {
+				id := fmt.Sprintf("wallet-%d", i)
+				for range attempts {
+					if rl.Allow(id) == nil {
+						results[i].allowed++
+					} else {
+						results[i].denied++
+					}
+				}
+			})
+		}
+		wg.Wait()
+
+		for i, r := range results {
+			assert.Equal(t, burst, r.allowed, "identity %d: allowed should equal burst", i)
+			assert.Equal(t, attempts-burst, r.denied, "identity %d: denied should equal attempts-burst", i)
+		}
+	})
+
+	t.Run("concurrent bucket creation races on new identities", func(t *testing.T) {
+		// Many goroutines all call Allow() on the SAME previously-unseen identity
+		// at exactly the same moment, exercising the double-checked-locking path.
+		// The result must still honour the burst cap — no panics, no races.
+		const burst = 10
+		rl := NewRateLimiter(float64(burst), float64(burst), 0, 0)
+		defer rl.Stop()
+
+		const goroutines = 50
+		var (
+			wg      sync.WaitGroup
+			mu      sync.Mutex
+			allowed int
+		)
+		// Use a barrier so all goroutines fire simultaneously.
+		start := make(chan struct{})
+		for range goroutines {
+			wg.Go(func() {
+				<-start
+				if rl.Allow("brand-new") == nil {
+					mu.Lock()
+					allowed++
+					mu.Unlock()
+				}
+			})
+		}
+		close(start)
+		wg.Wait()
+
+		assert.LessOrEqual(t, allowed, burst, "must not exceed burst even under race")
+		assert.Greater(t, allowed, 0, "at least one request must be allowed")
+	})
+
+	t.Run("parallel eviction and Allow do not race", func(t *testing.T) {
+		// Run Allow() and the idle-eviction sweep simultaneously to ensure
+		// there are no data races (best detected with -race).
+		ttl := 50 * time.Millisecond
+		rl := NewRateLimiter(1000, 1000, ttl, 10*time.Millisecond)
+		defer rl.Stop()
+
+		var wg sync.WaitGroup
+		stop := make(chan struct{})
+
+		// Writer goroutines: continuously create and use buckets.
+		for i := range 10 {
+			wg.Go(func() {
+				id := fmt.Sprintf("evict-wallet-%d", i)
+				for {
+					select {
+					case <-stop:
+						return
+					default:
+						_ = rl.Allow(id)
+					}
+				}
+			})
+		}
+
+		// Let it run long enough for several eviction sweeps.
+		time.Sleep(200 * time.Millisecond)
+		close(stop)
+		wg.Wait()
 	})
 }
 
