@@ -172,6 +172,28 @@ func TestSelectByID_ToQuantityError(t *testing.T) {
 	require.Len(t, unlocked, 1, "the one successfully-locked token must be unlocked")
 }
 
+// TestSelectByID_QuotaExceeded: token 0 is locked successfully, then token 1
+// causes Lock to return ErrQuotaExceeded (which wraps token.SelectorRateLimited).
+// Token 0 must be unlocked, and the error must be returned directly (no retry).
+func TestSelectByID_QuotaExceeded(t *testing.T) {
+	locker := &recordingLocker{
+		lockFailAfter: 1, // first lock succeeds, second fails
+		lockErr:       errors.Wrapf(token.SelectorRateLimited, "identity wallet1 has 1 locks (max 1)"),
+	}
+	qs := &mockQueryService{tokens: makeTokens(3, "USD", -1)}
+	sel := newSelector(locker, qs, 5) // 5 retries — must NOT retry on quota error
+
+	_, _, err := sel.Select(context.Background(), &ownerFilter{id: "wallet1"}, "0x3", "USD")
+	require.ErrorIs(t, err, token.SelectorRateLimited)
+
+	// token 0 was locked and must have been unlocked exactly once
+	unlocked := locker.totalUnlocked()
+	require.Len(t, unlocked, 1, "the one successfully-locked token must be unlocked")
+
+	// selector must not retry: Lock called exactly 2 times (success + failure)
+	assert.Equal(t, 2, locker.calls, "should not retry after quota exceeded")
+}
+
 // TestSelectByID_RateLimited: tokens 0 & 1 are locked successfully, then token 2
 // causes the Locker to return an error wrapping token.SelectorRateLimited.
 // The already-locked tokens must be unlocked, and the error must be returned
