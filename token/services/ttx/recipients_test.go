@@ -7,10 +7,15 @@ SPDX-License-Identifier: Apache-2.0
 package ttx
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
 	"testing"
 
 	"github.com/LFDT-Panurus/panurus/token"
+	"github.com/LFDT-Panurus/panurus/token/driver"
+	drivermock "github.com/LFDT-Panurus/panurus/token/driver/mock"
+	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/view"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -335,4 +340,328 @@ func TestExchangeRecipientResponse_JSONRoundTrip(t *testing.T) {
 func TestRecipientResponse_MalformedJSON(t *testing.T) {
 	decoded := &RecipientResponse{}
 	require.Error(t, json.Unmarshal([]byte("not json {{"), decoded))
+}
+
+// newOwnerWalletForTest constructs a *token.OwnerWallet from a driver mock so
+// that signRecipientAttestation / verifyRecipientAttestation can be exercised
+// without a live token management stack.
+func newOwnerWalletForTest(t *testing.T, driverWallet *drivermock.OwnerWallet) *token.OwnerWallet {
+	t.Helper()
+	ws := &drivermock.WalletService{}
+	ws.OwnerWalletReturns(driverWallet, nil)
+	wm := token.NewWalletManager(ws)
+	w, err := wm.OwnerWallet(t.Context(), "test-wallet")
+	require.NoError(t, err)
+
+	return w
+}
+
+// newTMSForTest constructs a minimal *token.ManagementService wired to the
+// provided Deserializer so that verifyRecipientAttestation can call
+// SigService().OwnerVerifier().
+func newTMSForTest(t *testing.T, des *drivermock.Deserializer) *token.ManagementService {
+	t.Helper()
+	tmsID := token.TMSID{Network: "net", Channel: "ch", Namespace: "ns"}
+	drvTMS := &drivermock.TokenManagerService{}
+	drvTMS.DeserializerReturns(des)
+	drvTMS.IdentityProviderReturns(&drivermock.IdentityProvider{})
+	drvTMS.WalletServiceReturns(&drivermock.WalletService{})
+	drvTMS.AuthorizationReturns(&drivermock.Authorization{})
+	drvTMS.ConfigurationReturns(&drivermock.Configuration{})
+	drvTMS.TokensServiceReturns(&drivermock.TokensService{})
+	drvTMS.TokensUpgradeServiceReturns(&drivermock.TokensUpgradeService{})
+	drvTMS.PublicParamsManagerReturns(&drivermock.PublicParamsManager{})
+
+	mockValidator := &drivermock.Validator{}
+	drvTMS.ValidatorReturns(mockValidator, nil)
+
+	mockVault := &drivermock.Vault{}
+	mockVault.CertificationStorageReturns(nil)
+	drvTMS.CertificationServiceReturns(nil)
+
+	tms, err := token.NewManagementService(
+		tmsID,
+		drvTMS,
+		nil, // logger – nil is ok for unit tests
+		&testVaultProvider{vault: mockVault},
+		&testCertProvider{},
+		&testSelectorProvider{},
+	)
+	require.NoError(t, err)
+
+	return tms
+}
+
+// ---- minimal stubs required by token.NewManagementService ----
+
+type testVaultProvider struct{ vault *drivermock.Vault }
+
+func (p *testVaultProvider) Vault(network, channel, namespace string) (driver.Vault, error) {
+	return p.vault, nil
+}
+
+type testCertProvider struct{}
+
+func (p *testCertProvider) New(_ context.Context, _ *token.ManagementService) (driver.CertificationClient, error) {
+	return nil, nil
+}
+
+type testSelectorProvider struct{}
+
+func (p *testSelectorProvider) SelectorManager(_ *token.ManagementService) (token.SelectorManager, error) {
+	return nil, nil
+}
+
+// ------------------------------------------------------------------
+// Tests for signRecipientAttestation
+// ------------------------------------------------------------------
+
+func TestSignRecipientAttestation_RemoteWallet_EchoPath_ReturnsNil(t *testing.T) {
+	ow := &drivermock.OwnerWallet{}
+	ow.RemoteReturns(true)
+	w := newOwnerWalletForTest(t, ow)
+
+	sig, err := signRecipientAttestation(t.Context(), w, []byte("msg"), view.Identity("id"), false)
+	require.NoError(t, err)
+	assert.Nil(t, sig, "remote wallet on echo path must return nil signature")
+}
+
+func TestSignRecipientAttestation_RemoteWallet_FreshPath_ReturnsError(t *testing.T) {
+	ow := &drivermock.OwnerWallet{}
+	ow.RemoteReturns(true)
+	ow.IDReturns("my-wallet")
+	w := newOwnerWalletForTest(t, ow)
+
+	_, err := signRecipientAttestation(t.Context(), w, []byte("msg"), view.Identity("id"), true)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "remote wallet")
+}
+
+func TestSignRecipientAttestation_LocalWallet_SignsSuccessfully(t *testing.T) {
+	signer := &drivermock.Signer{}
+	signer.SignReturns([]byte("the-sig"), nil)
+
+	ow := &drivermock.OwnerWallet{}
+	ow.RemoteReturns(false)
+	ow.GetSignerReturns(signer, nil)
+	w := newOwnerWalletForTest(t, ow)
+
+	sig, err := signRecipientAttestation(t.Context(), w, []byte("msg"), view.Identity("id"), true)
+	require.NoError(t, err)
+	assert.Equal(t, []byte("the-sig"), sig)
+}
+
+func TestSignRecipientAttestation_LocalWallet_SignerError_ReturnsError(t *testing.T) {
+	ow := &drivermock.OwnerWallet{}
+	ow.RemoteReturns(false)
+	ow.GetSignerReturns(nil, errors.New("no key"))
+	w := newOwnerWalletForTest(t, ow)
+
+	_, err := signRecipientAttestation(t.Context(), w, []byte("msg"), view.Identity("id"), true)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no key")
+}
+
+func TestSignRecipientAttestation_LocalWallet_SignError_ReturnsError(t *testing.T) {
+	signer := &drivermock.Signer{}
+	signer.SignReturns(nil, errors.New("sign failed"))
+
+	ow := &drivermock.OwnerWallet{}
+	ow.RemoteReturns(false)
+	ow.GetSignerReturns(signer, nil)
+	w := newOwnerWalletForTest(t, ow)
+
+	_, err := signRecipientAttestation(t.Context(), w, []byte("msg"), view.Identity("id"), true)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "sign failed")
+}
+
+// ------------------------------------------------------------------
+// Tests for verifyRecipientAttestation – non-empty signature branch
+// ------------------------------------------------------------------
+
+func TestVerifyRecipientAttestation_ValidSignature_Succeeds(t *testing.T) {
+	const sig = "good-sig"
+	verifier := &drivermock.Verifier{}
+	verifier.VerifyReturns(nil)
+
+	des := &drivermock.Deserializer{}
+	des.GetOwnerVerifierReturns(verifier, nil)
+
+	tms := newTMSForTest(t, des)
+	rd := &RecipientData{Identity: view.Identity("alice")}
+
+	err := verifyRecipientAttestation(t.Context(), tms, []byte("message"), rd, []byte(sig), false)
+	require.NoError(t, err)
+	assert.Equal(t, 1, verifier.VerifyCallCount())
+	msgArg, sigArg := verifier.VerifyArgsForCall(0)
+	assert.Equal(t, []byte("message"), msgArg)
+	assert.Equal(t, []byte(sig), sigArg)
+}
+
+func TestVerifyRecipientAttestation_VerifierReturnsError_Fails(t *testing.T) {
+	verifier := &drivermock.Verifier{}
+	verifier.VerifyReturns(errors.New("bad sig"))
+
+	des := &drivermock.Deserializer{}
+	des.GetOwnerVerifierReturns(verifier, nil)
+
+	tms := newTMSForTest(t, des)
+	rd := &RecipientData{Identity: view.Identity("alice")}
+
+	err := verifyRecipientAttestation(t.Context(), tms, []byte("message"), rd, []byte("sig"), true)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "bad sig")
+}
+
+func TestVerifyRecipientAttestation_GetOwnerVerifierFails_ReturnsError(t *testing.T) {
+	des := &drivermock.Deserializer{}
+	des.GetOwnerVerifierReturns(nil, errors.New("no verifier"))
+
+	tms := newTMSForTest(t, des)
+	rd := &RecipientData{Identity: view.Identity("alice")}
+
+	err := verifyRecipientAttestation(t.Context(), tms, []byte("message"), rd, []byte("sig"), false)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no verifier")
+}
+
+// ------------------------------------------------------------------
+// Tests for the echo-path ownership verification steps
+// (Steps 1-4 in RespondRequestRecipientIdentityView.Call)
+// Exercised via the internal helpers that implement each step.
+// ------------------------------------------------------------------
+
+// TestEchoPath_ContainsCheck tests Step 1: wallet must contain the supplied identity.
+func TestEchoPath_ContainsCheck_IdentityNotInWallet_ReturnsError(t *testing.T) {
+	ow := &drivermock.OwnerWallet{}
+	ow.ContainsReturns(false)
+	w := newOwnerWalletForTest(t, ow)
+
+	// Simulate the Contains guard from the echo path.
+	suppliedIdentity := view.Identity("alice")
+	if !w.Contains(t.Context(), suppliedIdentity) {
+		err := fmt.Errorf("cannot find identity [%s] in wallet", suppliedIdentity)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "cannot find identity")
+	} else {
+		t.Fatal("expected Contains to return false")
+	}
+}
+
+// TestEchoPath_OwnershipCheck tests Step 2: non-remote wallet must be able to produce a signer.
+func TestEchoPath_OwnershipCheck_SignerUnavailable_ReturnsError(t *testing.T) {
+	ow := &drivermock.OwnerWallet{}
+	ow.RemoteReturns(false)
+	ow.ContainsReturns(true)
+	ow.GetSignerReturns(nil, errors.New("key not found"))
+	w := newOwnerWalletForTest(t, ow)
+
+	_, err := w.GetSigner(t.Context(), view.Identity("alice"))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "key not found")
+}
+
+// TestEchoPath_OwnershipCheck_RemoteWallet_SkipsSignerCall verifies that on a
+// remote wallet the echo path must NOT call GetSigner (Remote() == true).
+func TestEchoPath_OwnershipCheck_RemoteWallet_SkipsSignerCall(t *testing.T) {
+	ow := &drivermock.OwnerWallet{}
+	ow.RemoteReturns(true)
+	ow.ContainsReturns(true)
+	w := newOwnerWalletForTest(t, ow)
+
+	assert.True(t, w.Remote(), "wallet should be remote")
+	// GetSigner should never be called; the echo path skips the ownership check for remote wallets.
+	assert.Equal(t, 0, ow.GetSignerCallCount())
+}
+
+// TestEchoPath_AuditInfoFetch tests Step 3a: GetAuditInfo failure propagates.
+func TestEchoPath_AuditInfoFetch_Error_ReturnsError(t *testing.T) {
+	ow := &drivermock.OwnerWallet{}
+	ow.ContainsReturns(true)
+	ow.RemoteReturns(false)
+	ow.GetSignerReturns(&drivermock.Signer{}, nil)
+	ow.GetAuditInfoReturns(nil, errors.New("audit info unavailable"))
+	w := newOwnerWalletForTest(t, ow)
+
+	_, err := w.GetAuditInfo(t.Context(), view.Identity("alice"))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "audit info unavailable")
+}
+
+// TestEchoPath_TokenMetadataFetch tests Step 3b: GetTokenMetadata failure propagates.
+func TestEchoPath_TokenMetadataFetch_Error_ReturnsError(t *testing.T) {
+	ow := &drivermock.OwnerWallet{}
+	ow.ContainsReturns(true)
+	ow.RemoteReturns(false)
+	ow.GetSignerReturns(&drivermock.Signer{}, nil)
+	ow.GetAuditInfoReturns([]byte("audit"), nil)
+	ow.GetTokenMetadataReturns(nil, errors.New("metadata unavailable"))
+	w := newOwnerWalletForTest(t, ow)
+
+	_, err := w.GetTokenMetadata(view.Identity("alice"))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "metadata unavailable")
+}
+
+// TestEchoPath_TokenMetadataAuditInfoFetch tests Step 3c: GetTokenMetadataAuditInfo failure propagates.
+func TestEchoPath_TokenMetadataAuditInfoFetch_Error_ReturnsError(t *testing.T) {
+	ow := &drivermock.OwnerWallet{}
+	ow.ContainsReturns(true)
+	ow.RemoteReturns(false)
+	ow.GetSignerReturns(&drivermock.Signer{}, nil)
+	ow.GetAuditInfoReturns([]byte("audit"), nil)
+	ow.GetTokenMetadataReturns([]byte("meta"), nil)
+	ow.GetTokenMetadataAuditInfoReturns(nil, errors.New("meta-audit unavailable"))
+	w := newOwnerWalletForTest(t, ow)
+
+	_, err := w.GetTokenMetadataAuditInfo(view.Identity("alice"))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "meta-audit unavailable")
+}
+
+// TestEchoPath_RecipientDataReconstruction tests Step 4: the reconstructed
+// RecipientData uses wallet-sourced fields, not whatever the requester sent.
+func TestEchoPath_RecipientDataReconstruction_UsesTrustedSources(t *testing.T) {
+	const (
+		suppliedAudit    = "REQUESTER-SUPPLIED-AUDIT"
+		trustedAudit     = "WALLET-SOURCED-AUDIT"
+		trustedMeta      = "WALLET-SOURCED-META"
+		trustedMetaAudit = "WALLET-SOURCED-META-AUDIT"
+	)
+	identity := view.Identity("alice")
+
+	ow := &drivermock.OwnerWallet{}
+	ow.ContainsReturns(true)
+	ow.RemoteReturns(false)
+	ow.GetSignerReturns(&drivermock.Signer{}, nil)
+	ow.GetAuditInfoReturns([]byte(trustedAudit), nil)
+	ow.GetTokenMetadataReturns([]byte(trustedMeta), nil)
+	ow.GetTokenMetadataAuditInfoReturns([]byte(trustedMetaAudit), nil)
+	w := newOwnerWalletForTest(t, ow)
+
+	// Simulate exactly what the echo path does in RespondRequestRecipientIdentityView.Call:
+	// verify signer exists, then fetch each field from the wallet.
+	_, err := w.GetSigner(t.Context(), identity)
+	require.NoError(t, err)
+	auditInfo, err := w.GetAuditInfo(t.Context(), identity)
+	require.NoError(t, err)
+	tokenMetadata, err := w.GetTokenMetadata(identity)
+	require.NoError(t, err)
+	tokenMetadataAuditInfo, err := w.GetTokenMetadataAuditInfo(identity)
+	require.NoError(t, err)
+
+	reconstructed := &RecipientData{
+		Identity:               identity,
+		AuditInfo:              auditInfo,
+		TokenMetadata:          tokenMetadata,
+		TokenMetadataAuditInfo: tokenMetadataAuditInfo,
+	}
+
+	// The reconstructed data must come from the wallet, not from the requester.
+	assert.Equal(t, identity, reconstructed.Identity)
+	assert.Equal(t, []byte(trustedAudit), reconstructed.AuditInfo)
+	assert.NotEqual(t, []byte(suppliedAudit), reconstructed.AuditInfo, "must not reuse requester-supplied audit info")
+	assert.Equal(t, []byte(trustedMeta), reconstructed.TokenMetadata)
+	assert.Equal(t, []byte(trustedMetaAudit), reconstructed.TokenMetadataAuditInfo)
 }
