@@ -80,9 +80,10 @@ type locker struct {
 
 // LockerConfig holds configuration for the locker
 type LockerConfig struct {
-	MaxLocksPerIdentity int     // Maximum locks any identity can hold (0 = unlimited)
-	RateLimit           float64 // Lock requests per second per identity (0 = unlimited)
-	RateLimitBurst      float64 // Burst capacity for rate limiter
+	MaxLocksPerIdentity int           // Maximum locks any identity can hold (0 = unlimited)
+	RateLimit           float64       // Lock requests per second per identity (0 = unlimited)
+	RateLimitBurst      float64       // Burst capacity for rate limiter
+	RateLimitIdleTTL    time.Duration // How long a rate-limit bucket may be idle before eviction (0 = no eviction)
 }
 
 // DefaultLockerConfig returns sensible defaults
@@ -91,6 +92,7 @@ func DefaultLockerConfig() LockerConfig {
 		MaxLocksPerIdentity: 1000,
 		RateLimit:           10.0,
 		RateLimitBurst:      20.0,
+		RateLimitIdleTTL:    10 * time.Minute,
 	}
 }
 
@@ -103,7 +105,7 @@ func NewLockerWithConfig(ttxdb TXStatusProvider, timeout time.Duration, validTxE
 
 	var rateLimiter *RateLimiter
 	if config.RateLimit > 0 {
-		rateLimiter = NewRateLimiter(config.RateLimit, config.RateLimitBurst)
+		rateLimiter = NewRateLimiter(config.RateLimit, config.RateLimitBurst, config.RateLimitIdleTTL, 0)
 	}
 
 	r := &locker{
@@ -133,6 +135,9 @@ func (d *locker) Stop() error {
 		case <-time.After(stopTimeout):
 			err = ErrTimeout
 			logger.Warnf("scan goroutine did not stop within timeout")
+		}
+		if d.rateLimiter != nil {
+			d.rateLimiter.Stop()
 		}
 	})
 

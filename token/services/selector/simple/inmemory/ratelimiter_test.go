@@ -18,7 +18,7 @@ import (
 
 func TestRateLimiter_Allow(t *testing.T) {
 	t.Run("allows requests within rate limit", func(t *testing.T) {
-		rl := NewRateLimiter(10, 10) // 10 req/sec, burst of 10
+		rl := NewRateLimiter(10, 10, 0, 0) // 10 req/sec, burst of 10
 		identity := "wallet1"
 
 		// Should allow up to burst size immediately
@@ -33,7 +33,7 @@ func TestRateLimiter_Allow(t *testing.T) {
 	})
 
 	t.Run("refills tokens over time", func(t *testing.T) {
-		rl := NewRateLimiter(10, 10) // 10 req/sec
+		rl := NewRateLimiter(10, 10, 0, 0) // 10 req/sec
 		identity := "wallet1"
 
 		// Exhaust the bucket
@@ -54,7 +54,7 @@ func TestRateLimiter_Allow(t *testing.T) {
 	})
 
 	t.Run("isolates different identities", func(t *testing.T) {
-		rl := NewRateLimiter(5, 5)
+		rl := NewRateLimiter(5, 5, 0, 0)
 		identity1 := "wallet1"
 		identity2 := "wallet2"
 
@@ -76,14 +76,14 @@ func TestRateLimiter_Allow(t *testing.T) {
 	})
 
 	t.Run("rejects empty identity", func(t *testing.T) {
-		rl := NewRateLimiter(10, 10)
+		rl := NewRateLimiter(10, 10, 0, 0)
 		err := rl.Allow("")
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "identity cannot be empty")
 	})
 
 	t.Run("handles concurrent requests", func(t *testing.T) {
-		rl := NewRateLimiter(100, 100)
+		rl := NewRateLimiter(100, 100, 0, 0)
 		identity := "wallet1"
 		numGoroutines := 10
 		requestsPerGoroutine := 15
@@ -118,7 +118,7 @@ func TestRateLimiter_Allow(t *testing.T) {
 
 func TestRateLimiter_Reset(t *testing.T) {
 	t.Run("resets specific identity", func(t *testing.T) {
-		rl := NewRateLimiter(5, 5)
+		rl := NewRateLimiter(5, 5, 0, 0)
 		identity := "wallet1"
 
 		// Exhaust quota
@@ -141,7 +141,7 @@ func TestRateLimiter_Reset(t *testing.T) {
 	})
 
 	t.Run("resets all identities", func(t *testing.T) {
-		rl := NewRateLimiter(5, 5)
+		rl := NewRateLimiter(5, 5, 0, 0)
 		identity1 := "wallet1"
 		identity2 := "wallet2"
 
@@ -166,7 +166,7 @@ func TestRateLimiter_Reset(t *testing.T) {
 
 func TestRateLimiter_GetStats(t *testing.T) {
 	t.Run("returns stats for existing identity", func(t *testing.T) {
-		rl := NewRateLimiter(10, 10)
+		rl := NewRateLimiter(10, 10, 0, 0)
 		identity := "wallet1"
 
 		// Make some requests
@@ -180,13 +180,13 @@ func TestRateLimiter_GetStats(t *testing.T) {
 	})
 
 	t.Run("returns false for non-existent identity", func(t *testing.T) {
-		rl := NewRateLimiter(10, 10)
+		rl := NewRateLimiter(10, 10, 0, 0)
 		_, exists := rl.GetStats("nonexistent")
 		assert.False(t, exists)
 	})
 
 	t.Run("shows refill over time", func(t *testing.T) {
-		rl := NewRateLimiter(10, 10)
+		rl := NewRateLimiter(10, 10, 0, 0)
 		identity := "wallet1"
 
 		// Exhaust bucket
@@ -254,12 +254,79 @@ func TestTokenBucket_Allow(t *testing.T) {
 
 func TestNewRateLimiter_BurstValidation(t *testing.T) {
 	t.Run("adjusts burst to match rate if too small", func(t *testing.T) {
-		rl := NewRateLimiter(10, 5) // burst < rate
+		rl := NewRateLimiter(10, 5, 0, 0) // burst < rate
 		assert.InDelta(t, 10.0, rl.maxTokens, 0.01, "burst should be adjusted to match rate")
 	})
 
 	t.Run("keeps burst if larger than rate", func(t *testing.T) {
-		rl := NewRateLimiter(10, 20)
+		rl := NewRateLimiter(10, 20, 0, 0)
 		assert.InDelta(t, 20.0, rl.maxTokens, 0.01, "burst should remain as specified")
+	})
+}
+
+func TestRateLimiter_IdleEviction(t *testing.T) {
+	t.Run("evicts idle bucket after TTL", func(t *testing.T) {
+		ttl := 100 * time.Millisecond
+		rl := NewRateLimiter(10, 10, ttl, 20*time.Millisecond)
+		defer rl.Stop()
+
+		identity := "wallet1"
+		require.NoError(t, rl.Allow(identity))
+
+		// Bucket must exist immediately after use
+		_, exists := rl.GetStats(identity)
+		assert.True(t, exists)
+
+		// Wait longer than TTL + one cleanup interval
+		time.Sleep(200 * time.Millisecond)
+
+		// Bucket should have been evicted
+		_, exists = rl.GetStats(identity)
+		assert.False(t, exists, "idle bucket should be evicted after TTL")
+	})
+
+	t.Run("keeps active bucket alive", func(t *testing.T) {
+		ttl := 100 * time.Millisecond
+		rl := NewRateLimiter(100, 100, ttl, 20*time.Millisecond)
+		defer rl.Stop()
+
+		identity := "wallet1"
+
+		// Keep touching the bucket every 30ms for 180ms — never idle for 100ms
+		for range 6 {
+			require.NoError(t, rl.Allow(identity))
+			time.Sleep(30 * time.Millisecond)
+		}
+
+		_, exists := rl.GetStats(identity)
+		assert.True(t, exists, "active bucket should not be evicted")
+	})
+
+	t.Run("no eviction when idleTTL is zero", func(t *testing.T) {
+		rl := NewRateLimiter(10, 10, 0, 0)
+		defer rl.Stop()
+
+		identity := "wallet1"
+		require.NoError(t, rl.Allow(identity))
+
+		time.Sleep(50 * time.Millisecond)
+
+		_, exists := rl.GetStats(identity)
+		assert.True(t, exists, "bucket should persist when eviction is disabled")
+	})
+
+	t.Run("Stop waits for goroutine", func(t *testing.T) {
+		rl := NewRateLimiter(10, 10, 500*time.Millisecond, 100*time.Millisecond)
+		// Stop must return promptly and not block
+		done := make(chan struct{})
+		go func() {
+			rl.Stop()
+			close(done)
+		}()
+		select {
+		case <-done:
+		case <-time.After(2 * time.Second):
+			t.Fatal("Stop() did not return within timeout")
+		}
 	})
 }

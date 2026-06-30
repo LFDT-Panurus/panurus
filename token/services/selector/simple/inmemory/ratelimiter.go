@@ -7,6 +7,7 @@ SPDX-License-Identifier: Apache-2.0
 package inmemory
 
 import (
+	"context"
 	"sync"
 	"time"
 
@@ -20,16 +21,19 @@ type tokenBucket struct {
 	maxTokens      float64
 	refillRate     float64 // tokens per second
 	lastRefillTime time.Time
+	lastSeen       time.Time // updated on every allow() call; used for idle eviction
 	mu             sync.Mutex
 }
 
 // newTokenBucket creates a new token bucket with the specified capacity and refill rate
 func newTokenBucket(maxTokens float64, refillRate float64) *tokenBucket {
+	now := time.Now()
 	return &tokenBucket{
 		tokens:         maxTokens,
 		maxTokens:      maxTokens,
 		refillRate:     refillRate,
-		lastRefillTime: time.Now(),
+		lastRefillTime: now,
+		lastSeen:       now,
 	}
 }
 
@@ -47,6 +51,7 @@ func (tb *tokenBucket) allow() bool {
 		tb.tokens = tb.maxTokens
 	}
 	tb.lastRefillTime = now
+	tb.lastSeen = now
 
 	// Check if we have tokens available
 	if tb.tokens >= 1.0 {
@@ -58,31 +63,63 @@ func (tb *tokenBucket) allow() bool {
 	return false
 }
 
-// RateLimiter manages rate limits for multiple identities
+// RateLimiter manages rate limits for multiple identities.
+// Idle buckets (those not accessed for longer than idleTTL) are evicted
+// by a background goroutine that runs every cleanupInterval.
 type RateLimiter struct {
-	buckets    map[string]*tokenBucket
-	mu         sync.RWMutex
-	maxTokens  float64 // burst capacity
-	refillRate float64 // tokens per second
+	buckets         map[string]*tokenBucket
+	mu              sync.RWMutex
+	maxTokens       float64 // burst capacity
+	refillRate      float64 // tokens per second
+	idleTTL         time.Duration
+	cleanupInterval time.Duration
+	cancel          context.CancelFunc
+	cleanupDone     chan struct{}
 }
 
-// NewRateLimiter creates a new rate limiter with the specified parameters
-// requestsPerSecond: average number of requests allowed per second per identity
-// burstSize: maximum burst of requests allowed (should be >= requestsPerSecond)
-func NewRateLimiter(requestsPerSecond float64, burstSize float64) *RateLimiter {
+// NewRateLimiter creates a new rate limiter with the specified parameters.
+// requestsPerSecond: average number of requests allowed per second per identity.
+// burstSize: maximum burst of requests allowed (should be >= requestsPerSecond).
+// idleTTL: how long a bucket may be idle before it is evicted (0 = no eviction).
+// cleanupInterval: how often the eviction sweep runs (0 = defaults to idleTTL/2).
+func NewRateLimiter(requestsPerSecond float64, burstSize float64, idleTTL time.Duration, cleanupInterval time.Duration) *RateLimiter {
 	if burstSize < requestsPerSecond {
 		burstSize = requestsPerSecond
 	}
-
-	return &RateLimiter{
-		buckets:    make(map[string]*tokenBucket),
-		maxTokens:  burstSize,
-		refillRate: requestsPerSecond,
+	if idleTTL > 0 && cleanupInterval <= 0 {
+		cleanupInterval = idleTTL / 2
 	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	rl := &RateLimiter{
+		buckets:         make(map[string]*tokenBucket),
+		maxTokens:       burstSize,
+		refillRate:      requestsPerSecond,
+		idleTTL:         idleTTL,
+		cleanupInterval: cleanupInterval,
+		cancel:          cancel,
+		cleanupDone:     make(chan struct{}),
+	}
+
+	if idleTTL > 0 {
+		go rl.sweepLoop(ctx)
+	} else {
+		// No sweeping needed; signal done immediately so Stop() returns fast.
+		close(rl.cleanupDone)
+	}
+
+	return rl
 }
 
-// Allow checks if a request from the given identity should be allowed
-// Returns true if allowed, false if rate limit exceeded
+// Stop stops the background cleanup goroutine and waits for it to exit.
+func (rl *RateLimiter) Stop() {
+	rl.cancel()
+	<-rl.cleanupDone
+}
+
+// Allow checks if a request from the given identity should be allowed.
+// Returns nil if allowed, ErrRateLimitExceeded if the rate limit is exceeded.
 func (rl *RateLimiter) Allow(identity string) error {
 	if identity == "" {
 		return errors.New("identity cannot be empty")
@@ -113,22 +150,22 @@ func (rl *RateLimiter) Allow(identity string) error {
 	return nil
 }
 
-// Reset removes the rate limit state for a specific identity
-// Useful for testing or administrative operations
+// Reset removes the rate limit state for a specific identity.
+// Useful for testing or administrative operations.
 func (rl *RateLimiter) Reset(identity string) {
 	rl.mu.Lock()
 	defer rl.mu.Unlock()
 	delete(rl.buckets, identity)
 }
 
-// ResetAll clears all rate limit state
+// ResetAll clears all rate limit state.
 func (rl *RateLimiter) ResetAll() {
 	rl.mu.Lock()
 	defer rl.mu.Unlock()
 	rl.buckets = make(map[string]*tokenBucket)
 }
 
-// GetStats returns current statistics for an identity (for monitoring/debugging)
+// GetStats returns current statistics for an identity (for monitoring/debugging).
 func (rl *RateLimiter) GetStats(identity string) (availableTokens float64, exists bool) {
 	rl.mu.RLock()
 	bucket, exists := rl.buckets[identity]
@@ -150,4 +187,54 @@ func (rl *RateLimiter) GetStats(identity string) (availableTokens float64, exist
 	}
 
 	return tokens, true
+}
+
+// sweepLoop runs periodically and evicts buckets that have been idle for longer than idleTTL.
+func (rl *RateLimiter) sweepLoop(ctx context.Context) {
+	defer close(rl.cleanupDone)
+	ticker := time.NewTicker(rl.cleanupInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			rl.evictIdle()
+		}
+	}
+}
+
+// evictIdle removes all buckets whose lastSeen is older than idleTTL.
+func (rl *RateLimiter) evictIdle() {
+	cutoff := time.Now().Add(-rl.idleTTL)
+
+	// Collect candidates under read lock to minimise write-lock contention.
+	rl.mu.RLock()
+	var stale []string
+	for id, bucket := range rl.buckets {
+		bucket.mu.Lock()
+		if bucket.lastSeen.Before(cutoff) {
+			stale = append(stale, id)
+		}
+		bucket.mu.Unlock()
+	}
+	rl.mu.RUnlock()
+
+	if len(stale) == 0 {
+		return
+	}
+
+	rl.mu.Lock()
+	for _, id := range stale {
+		// Re-check under write lock: the bucket may have been accessed between
+		// the RLock scan and acquiring the write lock.
+		if b, ok := rl.buckets[id]; ok {
+			b.mu.Lock()
+			if b.lastSeen.Before(cutoff) {
+				delete(rl.buckets, id)
+			}
+			b.mu.Unlock()
+		}
+	}
+	rl.mu.Unlock()
 }
