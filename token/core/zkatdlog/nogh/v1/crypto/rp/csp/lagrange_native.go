@@ -179,7 +179,7 @@ func computeNumeratorsOriginal[T any, E math2.GnarkFr[T]](cMinusJE []E, m int) [
 			numersE[i].Mul(numersE[i], cMinusJE[j])
 		}
 	}
-	
+
 	return numersE
 }
 
