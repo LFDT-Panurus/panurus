@@ -34,24 +34,6 @@ func rightChild(i int) int {
 	return 2*i + 2
 }
 
-// parent returns the index of the parent of node i in the tree array.
-func parent(i int) int {
-	return (i - 1) / 2
-}
-
-// sibling returns the index of the sibling of node i in the tree array.
-func sibling(i int) int {
-	if i == 0 {
-		return -1 // root has no sibling
-	}
-	p := parent(i)
-	left := leftChild(p)
-	if i == left {
-		return rightChild(p)
-	}
-	return left
-}
-
 // computeNumeratorsBinaryTree computes the numerators for Lagrange interpolation
 // using a binary tree approach. For each leaf i, it computes the product of all
 // (c-j) for j != i.
@@ -140,7 +122,7 @@ func computeNumeratorsBinaryTree[T any, E math2.GnarkFr[T]](cMinusJE []E, m int)
 	excludeE[0].SetOne()
 
 	// Process from root down to leaves
-	for i := 0; i < leafStart; i++ {
+	for i := range leafStart {
 		left := leftChild(i)
 		right := rightChild(i)
 
@@ -197,6 +179,7 @@ func computeNumeratorsOriginal[T any, E math2.GnarkFr[T]](cMinusJE []E, m int) [
 			numersE[i].Mul(numersE[i], cMinusJE[j])
 		}
 	}
+	
 	return numersE
 }
 
