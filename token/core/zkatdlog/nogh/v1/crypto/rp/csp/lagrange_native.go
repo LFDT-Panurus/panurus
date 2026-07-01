@@ -68,17 +68,17 @@ func sibling(i int) int {
 func computeNumeratorsBinaryTree[T any, E math2.GnarkFr[T]](cMinusJE []E, m int) []E {
 	treeSize := binaryTreeSize(m)
 	leafStart := treeSize - m
-	
+
 	// Helper to check if index is a leaf
 	isLeaf := func(i int) bool {
 		return i >= leafStart
 	}
-	
+
 	// Helper to get leaf value from cMinusJE
 	getLeafValue := func(i int) E {
 		return cMinusJE[i-leafStart]
 	}
-	
+
 	// Allocate tree arrays (only for internal nodes, not leaves)
 	// Internal nodes are at indices [0, leafStart)
 	tree := make([]T, leafStart)
@@ -86,14 +86,14 @@ func computeNumeratorsBinaryTree[T any, E math2.GnarkFr[T]](cMinusJE []E, m int)
 	for i := range tree {
 		treeE[i] = E(&tree[i])
 	}
-	
+
 	// Allocate output numerators array (for leaves)
 	numers := make([]T, m)
 	numersE := make([]E, m)
 	for i := range numers {
 		numersE[i] = E(&numers[i])
 	}
-	
+
 	// Exclude array only needs space for internal nodes
 	// Leaf exclude values are written directly to numers
 	exclude := make([]T, leafStart)
@@ -101,13 +101,13 @@ func computeNumeratorsBinaryTree[T any, E math2.GnarkFr[T]](cMinusJE []E, m int)
 	for i := range exclude {
 		excludeE[i] = E(&exclude[i])
 	}
-	
+
 	// Phase 1: Bottom-up - compute subtree products
 	// Process from last internal node down to root
 	for i := leafStart - 1; i >= 0; i-- {
 		left := leftChild(i)
 		right := rightChild(i)
-		
+
 		if right < treeSize {
 			// Both children exist
 			var leftVal, rightVal E
@@ -134,16 +134,16 @@ func computeNumeratorsBinaryTree[T any, E math2.GnarkFr[T]](cMinusJE []E, m int)
 			treeE[i].SetOne()
 		}
 	}
-	
+
 	// Phase 2: Top-down - compute exclude products
 	// Root's exclude product is 1 (no leaves to exclude)
 	excludeE[0].SetOne()
-	
+
 	// Process from root down to leaves
 	for i := 0; i < leafStart; i++ {
 		left := leftChild(i)
 		right := rightChild(i)
-		
+
 		if right < treeSize {
 			// Both children exist
 			var leftVal, rightVal E
@@ -178,7 +178,7 @@ func computeNumeratorsBinaryTree[T any, E math2.GnarkFr[T]](cMinusJE []E, m int)
 			}
 		}
 	}
-	
+
 	return numersE
 }
 
