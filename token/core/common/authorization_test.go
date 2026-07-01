@@ -41,6 +41,32 @@ func TestWalletBasedAuthorization(t *testing.T) {
 		assert.False(t, auth.AmIAnAuditor())
 	})
 
+	t.Run("IsMine_PureAuditor_SkipsOwnerLookup", func(t *testing.T) {
+		ws.AuditorWalletReturns(&mock.AuditorWallet{}, nil)
+		ws.OwnerWalletIDsReturns(nil, nil)
+		auth := NewTMSAuthorization(logger, pp, ws)
+
+		before := ws.OwnerWalletCallCount()
+		walletID, ids, mine := auth.IsMine(context.Background(), &token2.Token{Owner: driver.Identity("owner-id")})
+		assert.False(t, mine)
+		assert.Empty(t, walletID)
+		assert.Nil(t, ids)
+		assert.Equal(t, before, ws.OwnerWalletCallCount(), "pure auditor must not perform the owner lookup")
+	})
+
+	t.Run("IsMine_AuditorWithOwnerWallets_StillResolves", func(t *testing.T) {
+		ws.AuditorWalletReturns(&mock.AuditorWallet{}, nil)
+		ws.OwnerWalletIDsReturns([]string{"some-owner-wallet"}, nil)
+		wallet := &mock.OwnerWallet{}
+		wallet.IDReturns("wallet-id")
+		ws.OwnerWalletReturns(wallet, nil)
+		auth := NewTMSAuthorization(logger, pp, ws)
+
+		walletID, _, mine := auth.IsMine(context.Background(), &token2.Token{Owner: driver.Identity("owner-id")})
+		assert.True(t, mine)
+		assert.Equal(t, "wallet-id", walletID)
+	})
+
 	auth := &WalletBasedAuthorization{
 		Logger:           logger,
 		PublicParameters: pp,

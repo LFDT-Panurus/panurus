@@ -38,8 +38,10 @@ type WalletBasedAuthorization struct {
 	amIAnAuditor     bool
 }
 
-// NewTMSAuthorization returns a new WalletBasedAuthorization for the passed public parameters and wallet service.
-func NewTMSAuthorization(logger logging.Logger, publicParameters driver.PublicParameters, walletService driver.WalletService) *WalletBasedAuthorization {
+// NewTMSAuthorization returns an Authorization for the passed public parameters and wallet service.
+// A node that holds an auditor wallet and no owner wallets can never own a token, so its
+// authorization is wrapped to skip the always-missing owner lookup on the audit hot path.
+func NewTMSAuthorization(logger logging.Logger, publicParameters driver.PublicParameters, walletService driver.WalletService) Authorization {
 	amIAnAuditor := false
 	var errs []error
 	for _, identity := range publicParameters.Auditors() {
@@ -53,7 +55,27 @@ func NewTMSAuthorization(logger logging.Logger, publicParameters driver.PublicPa
 	}
 	logger.Debugf("am I an auditor? [%v], with errs [%v]", amIAnAuditor, errs)
 
-	return &WalletBasedAuthorization{Logger: logger, PublicParameters: publicParameters, WalletService: walletService, amIAnAuditor: amIAnAuditor}
+	auth := &WalletBasedAuthorization{Logger: logger, PublicParameters: publicParameters, WalletService: walletService, amIAnAuditor: amIAnAuditor}
+
+	if amIAnAuditor {
+		if ids, err := walletService.OwnerWalletIDs(context.Background()); err == nil && len(ids) == 0 {
+			return pureAuditorAuthorization{auth}
+		}
+	}
+
+	return auth
+}
+
+// pureAuditorAuthorization decorates an Authorization for a node that holds an auditor
+// wallet and no owner wallets: it can never own a token, so IsMine is short-circuited
+// and the owner lookup is skipped. All other checks delegate to the wrapped Authorization.
+type pureAuditorAuthorization struct {
+	Authorization
+}
+
+// IsMine always reports the token as not owned, since the node holds no owner wallets.
+func (pureAuditorAuthorization) IsMine(context.Context, *token2.Token) (string, []string, bool) {
+	return "", nil, false
 }
 
 // IsMine returns true if the passed token is owned by an owner wallet.
