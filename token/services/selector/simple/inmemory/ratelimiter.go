@@ -28,6 +28,7 @@ type tokenBucket struct {
 // newTokenBucket creates a new token bucket with the specified capacity and refill rate
 func newTokenBucket(maxTokens float64, refillRate float64) *tokenBucket {
 	now := time.Now()
+	
 	return &tokenBucket{
 		tokens:         maxTokens,
 		maxTokens:      maxTokens,
