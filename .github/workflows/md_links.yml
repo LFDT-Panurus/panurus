@@ -2,7 +2,7 @@ name: Check Markdown links
 
 on:
   push:
-    branches: [ main ]
+    branches: [ main, feature/zkat-snark-driver ]
   pull_request:
     branches: [ main ]
 
