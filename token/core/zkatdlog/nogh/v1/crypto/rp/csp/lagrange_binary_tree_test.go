@@ -35,7 +35,7 @@ func buildCMinusJBN254(c int64, m int) []*bn254fr.Element {
 		e.SetInt64(c - int64(j)) // #nosec G115
 		elems[j] = e
 	}
-	
+
 	return elems
 }
 
