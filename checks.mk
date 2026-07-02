@@ -1,5 +1,5 @@
 .PHONY: checks
-checks: licensecheck gofmt goimports govet gofix misspell ineffassign staticcheck protos-lint buf-format
+checks: licensecheck gofmt goimports govet gofix misspell ineffassign staticcheck protos-lint buf-format tidy-check
 
 .PHONY: licensecheck
 licensecheck:
@@ -128,3 +128,21 @@ protos-lint:
 buf-format:
 	@echo "Checking protobuf formatting..."
 	@buf format -d --exit-code
+
+.PHONY: tidy-check
+# check that go modules are tidy (run 'make tidy' to fix)
+tidy-check:
+	@echo "Checking Go modules are tidy..."
+	@for dir in $(TIDY_GO_MODULES); do \
+		echo "  Checking module: $$dir"; \
+		(cd $$dir && go mod tidy) || exit 1; \
+	done
+	@if git diff --name-only | grep -qE '(go\.mod|go\.sum)'; then \
+		echo ""; \
+		echo "The following go.mod/go.sum files are not tidy:"; \
+		git diff --name-only | grep -E '(go\.mod|go\.sum)'; \
+		echo ""; \
+		echo "Run 'make tidy' to fix this."; \
+		exit 1; \
+	fi
+	@echo "✓ All Go modules are tidy."
