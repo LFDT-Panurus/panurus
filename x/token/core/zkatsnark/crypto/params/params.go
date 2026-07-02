@@ -1,8 +1,14 @@
+/*
+Copyright IBM Corp. All Rights Reserved.
+
+SPDX-License-Identifier: Apache-2.0
+*/
+
 package params
 
 import (
-    "github.com/consensys/gnark-crypto/ecc"
-    "github.com/consensys/gnark-crypto/ecc/bls12-381/twistededwards"
+	"github.com/consensys/gnark-crypto/ecc"
+	"github.com/consensys/gnark-crypto/ecc/bls12-381/twistededwards"
 )
 
 // CurveID is the default outer pairing curve.
@@ -24,7 +30,7 @@ type PointAffine = twistededwards.PointAffine
 type CircuitType string
 
 const (
-    CircuitSpend     CircuitType = "spend"
-    CircuitOutput    CircuitType = "output"
-    CircuitMigration CircuitType = "migration"
+	CircuitSpend     CircuitType = "spend"
+	CircuitOutput    CircuitType = "output"
+	CircuitMigration CircuitType = "migration"
 )

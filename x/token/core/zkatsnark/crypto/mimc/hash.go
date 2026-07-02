@@ -1,9 +1,16 @@
+/*
+Copyright IBM Corp. All Rights Reserved.
+
+SPDX-License-Identifier: Apache-2.0
+*/
+
 package mimc
 
 import (
-    "fmt"
-    "github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
-    gmimc "github.com/consensys/gnark-crypto/ecc/bls12-381/fr/mimc"
+	"fmt"
+
+	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
+	gmimc "github.com/consensys/gnark-crypto/ecc/bls12-381/fr/mimc"
 )
 
 // ErrInvalidInputCount is returned when the number of inputs is outside [1, MaxInputs].
@@ -22,9 +29,9 @@ const MaxInputs = 3
 // If it fails, every proof in the driver fails to verify.
 func Hash(inputs ...fr.Element) (fr.Element, error) {
 	n := len(inputs)
-    if n == 0 || n > MaxInputs {
-        return fr.Element{}, fmt.Errorf("%w: got %d", ErrInvalidInputCount, n)
-    }
+	if n == 0 || n > MaxInputs {
+		return fr.Element{}, fmt.Errorf("%w: got %d", ErrInvalidInputCount, n)
+	}
 
 	// hasher is the default mimc hash implementation for BLS12-381 provided by gnark-crypto
 	// WriteElement is used to add the inputs to the hasher
@@ -38,5 +45,6 @@ func Hash(inputs ...fr.Element) (fr.Element, error) {
 	// commitment is the final hash of the inputs which is used to represent the token commitments
 	// for the driver
 	commitment := hasher.SumElement()
+
 	return commitment, nil
 }
