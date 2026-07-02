@@ -93,6 +93,20 @@ func TestVersionedWithdrawalRequestRoundTrip(t *testing.T) {
 	roundTripTTXMessage(t, TypeWithdrawalRequest, original, &WithdrawalRequest{})
 }
 
+func TestVersionedWithdrawalChallengeRoundTrip(t *testing.T) {
+	original := &WithdrawalChallenge{
+		Nonce: []byte("withdrawal-nonce-32bytes-pad-xxxx"),
+	}
+	roundTripTTXMessage(t, TypeWithdrawalChallenge, original, &WithdrawalChallenge{})
+}
+
+func TestVersionedWithdrawalResponseRoundTrip(t *testing.T) {
+	original := &WithdrawalResponse{
+		Signature: []byte("attestation-sig"),
+	}
+	roundTripTTXMessage(t, TypeWithdrawalResponse, original, &WithdrawalResponse{})
+}
+
 func TestVersionedUpgradeAgreementRoundTrip(t *testing.T) {
 	original := &UpgradeTokensAgreement{
 		Challenge: []byte("challenge"),

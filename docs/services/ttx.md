@@ -11,28 +11,24 @@ The lifecycle of a token transaction typically involves the following stages, co
 ```mermaid
 sequenceDiagram
     autonumber
-    participant Initiator
-    participant Recipient
-    participant Auditor
-    participant Network as Network Service
-    participant Ledger as DLT / Ledger
 
     box darkgreen Panurus Stack
         participant Initiator
         participant Recipient
         participant Auditor
-        participant Network
+        participant Network as Network Service
     end
+    participant Ledger as DLT / Ledger
 
     Note over Initiator: 1. Request Identities (with nonce/signature attestation)
     Initiator->>+Recipient: RequestRecipientIdentityView (includes Nonce)
     Recipient-->>-Initiator: RecipientResponse (Identity + Audit Info + Signature)
 
     Note over Initiator: 2. Assemble Request
-    Initiator->>+Initiator: Issue / Transfer / Redeem operations
+    Initiator->>Initiator: Issue / Transfer / Redeem operations
 
     Note over Initiator: 3. Collect Endorsements
-    Initiator->>+Initiator: Sign locally
+    Initiator->>Initiator: Sign locally
     Initiator->>+Recipient: Request Signatures (for spent tokens)
     Recipient-->>-Initiator: Signature
     Initiator->>+Auditor: AuditApproveView
@@ -41,13 +37,13 @@ sequenceDiagram
     Network-->>-Initiator: Endorsed Envelope
 
     Note over Initiator: 4. Distribution & Ordering
-    Initiator->>+Recipient: Distribute Transaction Metadata
+    Initiator->>Recipient: Distribute Transaction Metadata
     Initiator->>+Network: Broadcast Transaction
     Network->>+Ledger: Submit to Orderer
+    Ledger-->>-Network: Transaction Committed
 
     Note over Initiator: 5. Finality Tracking
     Initiator->>+Network: Listen for Finality
-    Ledger-->>-Network: Transaction Committed
     Network-->>-Initiator: Notify Finality
 ```
 
@@ -290,7 +286,7 @@ The message-type discriminators live with the service that uses them — the ttx
 | `TypeRecipientRequest` / `TypeRecipientResponse` | `recipient_req` / `recipient_resp` | `recipients.go` request flow |
 | `TypeExchangeRecipientRequest` / `TypeExchangeRecipientResp` | `exchange_req` / `exchange_resp` | `recipients.go` exchange flow |
 | `TypeMultisigRecipientData` / `TypePolicyRecipientData` | `multisig_data` / `policy_data` | recipient follow-ups for multisig / policy identities |
-| `TypeWithdrawalRequest` | `withdrawal_req` | `withdrawal.go` |
+| `TypeWithdrawalRequest` / `TypeWithdrawalChallenge` / `TypeWithdrawalResponse` | `withdrawal_req` / `withdrawal_challenge` / `withdrawal_resp` | `withdrawal.go` |
 | `TypeUpgradeAgreement` / `TypeUpgradeRequest` | `upgrade_agree` / `upgrade_req` | `upgrade.go` |
 | `TypeSpendRequest` / `TypeSpendResponse` | `spend_req` / `spend_resp` | `multisig/spend.go`, `boolpolicy/spend.go` |
 | `TypeSignatureRequest` / `TypeSignature` | `sig_req` / `signature` | `collectendorsements.go`, `endorse.go`, `accept.go`, `auditor.go` |
@@ -317,7 +313,7 @@ All satisfy `errors.Is`. `VersionCompatibility` / `IsCompatible(local, remote)` 
 
 ## Withdrawal Flow
 
-The withdrawal protocol (`withdrawal.go`) lets a wallet ask an issuer to mint tokens to a freshly generated recipient identity. Single-shot: the initiator sends a `WithdrawalRequest`; the issuer registers the recipient identity and returns the session for the subsequent issuance flow.
+The withdrawal protocol (`withdrawal.go`) lets a wallet ask an issuer to mint tokens to a freshly generated recipient identity. It uses a **three-message challenge-response** so that freshness is controlled by the issuer — the issuer samples the nonce, which prevents an attacker from pre-computing a valid `(nonce, signature)` pair and replaying it across sessions.
 
 ```mermaid
 sequenceDiagram
@@ -325,12 +321,36 @@ sequenceDiagram
     participant I as Initiator (RequestWithdrawalView)
     participant Iss as Issuer (ReceiveWithdrawalRequestView)
 
-    I->>I: Resolve recipient identity (caller-supplied or wallet-generated)
-    I->>Iss: Envelope{t:"withdrawal_req", b:WithdrawalRequest{TMSID, RecipientData, TokenType, Amount, NotAnonymous}}
-    Iss->>Iss: RegisterRecipientIdentity(request.RecipientData)
-    Iss->>Iss: endpoint.Bind(caller -> RecipientData.Identity)
-    Note over I,Iss: Session returned to caller for the issuance/endorsement flow
+    rect rgba(230, 230, 250, 0.35)
+        Note over I,Iss: Phase 1 - Request
+        I->>I: Resolve recipient identity (caller-supplied or wallet-generated)
+        I->>Iss: Envelope{t:"withdrawal_req", b:WithdrawalRequest{TMSID, RecipientData, TokenType, Amount, NotAnonymous}}
+    end
+
+    rect rgba(255, 245, 238, 0.5)
+        Note over Iss: Phase 2 - Challenge
+        Iss->>Iss: nonce = GetRandomNonce()
+        Iss-->>I: Envelope{t:"withdrawal_challenge", b:WithdrawalChallenge{Nonce}}
+    end
+
+    rect rgba(240, 255, 240, 0.45)
+        Note over I: Phase 3 - Response
+        I->>I: msg = asn1(TMSID + nil walletID + RecipientData.Identity + nonce + session id + context id)
+        I->>I: sig = Sign(msg)
+        I->>Iss: Envelope{t:"withdrawal_resp", b:WithdrawalResponse{Signature: sig}}
+    end
+
+    rect rgba(245, 245, 245, 0.55)
+        Note over Iss: Phase 4 - Verification and registration
+        Iss->>Iss: msg = asn1(same fields, using issuer-held nonce)
+        Iss->>Iss: verifier.Verify(msg, resp.Signature)
+        Iss->>Iss: RegisterRecipientIdentity(request.RecipientData)
+        Iss->>Iss: endpoint.Bind(caller -> RecipientData.Identity)
+        Note over I,Iss: Session returned to caller for the issuance/endorsement flow
+    end
 ```
+
+The attestation message is the same DER-encoded (`encoding/asn1`) structure used by the recipient-identity protocols, with `walletID` fixed to `nil` — the issuer does not need to know the requester's wallet identifier.
 
 ## Token Upgrade Flow
 
@@ -409,7 +429,7 @@ sequenceDiagram
     I->>R: Envelope{t:"transaction", b:TransactionPayload{Raw}}
     I->>R: Envelope{t:"actions", b:Actions}
     I->>R: Envelope{t:"action_transfer", b:ActionTransfer}
-    R->>R: Receive transaction, actions, action; assemble
+    R->>R: Receive transaction, actions, action — assemble
     R-->>I: Envelope{t:"tx_resp", b:TransactionPayload{Raw}}
 ```
 
