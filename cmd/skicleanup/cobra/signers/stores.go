@@ -10,15 +10,14 @@ import (
 	"database/sql"
 	"fmt"
 
+	sqlcommon "github.com/LFDT-Panurus/panurus/token/services/storage/db/sql/common"
+	"github.com/LFDT-Panurus/panurus/token/services/storage/db/sql/postgres"
+	"github.com/LFDT-Panurus/panurus/token/services/storage/db/sql/sqlite"
 	scommon "github.com/hyperledger-labs/fabric-smart-client/platform/view/services/storage/driver/common"
 	fscPostgres "github.com/hyperledger-labs/fabric-smart-client/platform/view/services/storage/driver/sql/postgres"
 	fscSqlite "github.com/hyperledger-labs/fabric-smart-client/platform/view/services/storage/driver/sql/sqlite"
 	_ "github.com/jackc/pgx/v5/stdlib"
 	_ "modernc.org/sqlite"
-
-	sqlcommon "github.com/LFDT-Panurus/panurus/token/services/storage/db/sql/common"
-	"github.com/LFDT-Panurus/panurus/token/services/storage/db/sql/postgres"
-	"github.com/LFDT-Panurus/panurus/token/services/storage/db/sql/sqlite"
 )
 
 // Stores groups the two stores needed by the signers command.

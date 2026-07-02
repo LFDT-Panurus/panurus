@@ -48,6 +48,10 @@ type command struct {
 func (c *command) run(cmd *cobra.Command, _ []string) error {
 	cmd.SilenceUsage = true
 
+	if c.batchSize <= 0 {
+		return errors.New("--batch-size must be greater than 0")
+	}
+
 	cfg, err := LoadConfig(c.configPath)
 	if err != nil {
 		return errors.Wrap(err, "failed to load config")
