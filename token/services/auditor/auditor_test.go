@@ -1086,13 +1086,16 @@ func TestService_AcquireLocksWithRetry_ContextCancelled_DuringBackoff(t *testing
 }
 
 func TestService_AcquireLocksWithRetry_ExponentialBackoff(t *testing.T) {
-	// Track call times to verify exponential backoff
-	var callTimes []time.Time
+	// Verify that the auditor wires up retry logic: the locker is called the expected
+	// number of times (3 failures + 1 success). The exponential-backoff math itself is
+	// tested in token/services/utils/retry_test.go; checking wall-clock intervals here
+	// would be inherently flaky on loaded CI machines.
+	attempts := 0
 	var mu sync.Mutex
 	mockLocker := newMockAuditLocker(func(ctx context.Context, anchor string, eIDs ...string) error {
 		mu.Lock()
-		callTimes = append(callTimes, time.Now())
-		count := len(callTimes)
+		attempts++
+		count := attempts
 		mu.Unlock()
 
 		if count < 4 {
@@ -1111,16 +1114,7 @@ func TestService_AcquireLocksWithRetry_ExponentialBackoff(t *testing.T) {
 	})
 
 	require.NoError(t, err)
-	require.Len(t, callTimes, 4, "Should have 4 attempts")
-
-	// Verify backoff is increasing (with some tolerance for jitter)
-	if len(callTimes) >= 3 {
-		delay1 := callTimes[1].Sub(callTimes[0])
-		delay2 := callTimes[2].Sub(callTimes[1])
-		// Second delay should be roughly 2x first delay (accounting for jitter)
-		// We use a loose check: delay2 should be at least 1.3x delay1
-		assert.Greater(t, delay2, delay1*13/10, "Backoff should increase exponentially")
-	}
+	assert.Equal(t, 4, attempts, "Should have 4 attempts (3 failures + 1 success)")
 }
 
 func TestService_AcquireLocksWithRetry_MultipleEnrollmentIDs(t *testing.T) {
