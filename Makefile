@@ -42,7 +42,8 @@ TOP = .
 include $(TOP)/checks.mk
 
 # Define all Go module directories
-GO_MODULES := . integration token/services/storage/db/kvs/hashicorp cmd/artifactgen cmd/tokengen cmd/token_validation_service cmd/profiler cmd/skicleanup cmd/tokendiag cmd/node x/token/services/network/evm
+#GO_MODULES := . integration token/services/storage/db/kvs/hashicorp cmd/artifactgen cmd/tokengen cmd/token_validation_service cmd/profiler cmd/skicleanup cmd/tokendiag cmd/node x/token/services/network/evm
+GO_MODULES := x/token/core/zkatsnark
 TIDY_GO_MODULES := $(GO_MODULES) tools
 
 # include fabricx target
