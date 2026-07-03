@@ -72,9 +72,9 @@ jobs:
       - name: Install Testing Docker Images
         run: make testing-docker-images
 
-      - name: Unit Tests with Coverage
+      - name: Run ${{ matrix.tests }} with Coverage
         run: |
-          make unit-tests
+          make ${{ matrix.tests }}
           ./ci/scripts/filter-coverage.sh profile.cov profile.cov
 
       - name: Send coverage to Coveralls
@@ -85,9 +85,6 @@ jobs:
           flag-name: utest-${{ matrix.tests }}
           parallel: true
           fail-on-error: false
-
-      - name: Run ${{ matrix.tests }}
-        run: make ${{ matrix.tests }}
 
   itest:
     needs: checks

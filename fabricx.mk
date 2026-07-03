@@ -16,4 +16,4 @@ integration-tests-fabricx-dlog-t1:
 
 .PHONY: integration-tests-fabricx-dlog
 integration-tests-fabricx-dlog:
-	cd ./integration/token/fungible/dlogx; export FAB_BINS=$(FAB_BINS); ginkgo $(GINKGO_TEST_OPTS) --label-filter="$(TEST_FILTER)" .
+	cd ./integration/token/fungible/dlogx; export FAB_BINS=$(FAB_BINS); ginkgo $(GINKGO_TEST_OPTS) --label-filter="$(TEST_FILTER)" . $(GINKGO_COVER_ARGS)

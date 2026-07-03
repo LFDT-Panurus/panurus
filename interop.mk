@@ -24,7 +24,7 @@ integration-tests-interop-dlog-t6:
 
 .PHONY: integration-tests-interop-dlog
 integration-tests-interop-dlog:
-	cd ./integration/token/interop/dlog; export FAB_BINS=$(FAB_BINS); ginkgo $(GINKGO_TEST_OPTS) --label-filter="$(TEST_FILTER)" .
+	cd ./integration/token/interop/dlog; export FAB_BINS=$(FAB_BINS); ginkgo $(GINKGO_TEST_OPTS) --label-filter="$(TEST_FILTER)" . $(GINKGO_COVER_ARGS)
 
 
 .PHONY: integration-tests-interop-fabtoken-t1
@@ -53,4 +53,4 @@ integration-tests-interop-fabtoken-t6:
 
 .PHONY: integration-tests-interop-fabtoken
 integration-tests-interop-fabtoken:
-	cd ./integration/token/interop/fabtoken; export FAB_BINS=$(FAB_BINS); ginkgo $(GINKGO_TEST_OPTS) --label-filter="$(TEST_FILTER)" .
+	cd ./integration/token/interop/fabtoken; export FAB_BINS=$(FAB_BINS); ginkgo $(GINKGO_TEST_OPTS) --label-filter="$(TEST_FILTER)" . $(GINKGO_COVER_ARGS)
