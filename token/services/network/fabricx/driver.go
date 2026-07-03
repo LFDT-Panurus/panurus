@@ -99,6 +99,7 @@ func NewDriver(
 			queryServiceProvider,
 			finalityProvider,
 			q,
+			finality2.NewConfig(configService),
 		),
 		llmProvider: lookup2.NewCronNSListenerManagerProvider(
 			queryServiceProvider,
