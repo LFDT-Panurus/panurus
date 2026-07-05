@@ -385,6 +385,36 @@ func (db *IdentityStore) GetSignerInfo(ctx context.Context, identity []byte) ([]
 	return common.QueryUniqueContext[[]byte](ctx, db.readDB, query, args...)
 }
 
+// IterateSigners returns a page of SignerEntry values from the Signers table, ordered by
+// identity_hash, starting at the given offset and returning at most limit entries.
+func (db *IdentityStore) IterateSigners(ctx context.Context, offset, limit int) ([]idriver.SignerEntry, error) {
+	query, args := q.Select().
+		FieldsByName("identity_hash", "identity").
+		From(q.Table(db.table.Signers)).
+		OrderBy(q.Asc(common3.FieldName("identity_hash"))).
+		Limit(limit).
+		Offset(offset).
+		Format(db.ci)
+	logging.Debug(logger, query, args)
+
+	rows, err := db.readDB.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, errors.Wrapf(err, "error querying signers")
+	}
+	defer Close(rows)
+
+	var entries []idriver.SignerEntry
+	for rows.Next() {
+		var e idriver.SignerEntry
+		if err := rows.Scan(&e.IdentityHash, &e.Identity); err != nil {
+			return nil, errors.Wrapf(err, "error scanning signer entry")
+		}
+		entries = append(entries, e)
+	}
+
+	return entries, rows.Err()
+}
+
 func (db *IdentityStore) RegisterIdentityDescriptor(ctx context.Context, descriptor *idriver.IdentityDescriptor, alias tdriver.Identity) error {
 	// store
 	logger.DebugfContext(ctx, "register identity descriptor...")

@@ -839,6 +839,28 @@ func (db *TokenStore) GetTokens(ctx context.Context, inputs ...*token.ID) ([]*to
 	return tokens, nil
 }
 
+// HasTokenForIdentity returns true if any token in the Tokens table has the given owner identity
+// and owner type, regardless of whether the token has been spent or not.
+func (db *TokenStore) HasTokenForIdentity(ctx context.Context, ownerIdentity []byte, ownerType string) (bool, error) {
+	query, args := q.Select().
+		FieldsByName("tx_id").
+		From(q.Table(db.table.Tokens)).
+		Where(cond.And(
+			cond.Eq("owner_identity", ownerIdentity),
+			cond.Eq("owner_type", ownerType),
+		)).
+		Limit(1).
+		Format(db.ci)
+	logging.Debug(logger, query, args)
+
+	txID, err := common.QueryUniqueContext[string](ctx, db.readDB, query, args...)
+	if err != nil {
+		return false, errors.Wrapf(err, "error querying token by identity")
+	}
+
+	return len(txID) > 0, nil
+}
+
 // QueryTokenDetails returns details about owned tokens, regardless if they have been spent or not.
 // Filters work cumulatively and may be left empty. If a token is owned by two enrollmentIDs and there
 // is no filter on enrollmentID, the token will be returned twice (once for each owner).

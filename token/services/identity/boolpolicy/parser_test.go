@@ -7,6 +7,7 @@ SPDX-License-Identifier: Apache-2.0
 package boolpolicy
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -259,4 +260,59 @@ func TestErrorMissingOperand(t *testing.T) {
 func TestErrorUnexpectedCharacter(t *testing.T) {
 	_, err := Parse("$0 & $1")
 	assert.Error(t, err)
+}
+
+// ---------------------------------------------------------------------------
+// Security: resource-exhaustion guards
+// ---------------------------------------------------------------------------
+
+func TestErrorInputTooLong(t *testing.T) {
+	// Build a string that is exactly one byte over the limit.
+	// Its content is irrelevant; we just need length > maxPolicyLen.
+	long := make([]byte, maxPolicyLen+1)
+	for i := range long {
+		long[i] = 'x'
+	}
+	_, err := Parse(string(long))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "exceeds maximum length")
+}
+
+func TestErrorNestingTooDeep(t *testing.T) {
+	// Build a policy with maxParseDepth+1 open parentheses, e.g.
+	// "(((... $0 ...)))" — one level deeper than the allowed limit.
+	depth := maxParseDepth + 1
+	policy := ""
+	var policySb285 strings.Builder
+	for range depth {
+		policySb285.WriteString("(")
+	}
+	policy += policySb285.String()
+	policy += "$0"
+	var policySb289 strings.Builder
+	for range depth {
+		policySb289.WriteString(")")
+	}
+	policy += policySb289.String()
+	_, err := Parse(policy)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "exceeds maximum nesting depth")
+}
+
+func TestNestingAtLimitIsAllowed(t *testing.T) {
+	// A policy nested exactly at maxParseDepth must succeed.
+	policy := ""
+	var policySb300 strings.Builder
+	for range maxParseDepth {
+		policySb300.WriteString("(")
+	}
+	policy += policySb300.String()
+	policy += "$0"
+	var policySb304 strings.Builder
+	for range maxParseDepth {
+		policySb304.WriteString(")")
+	}
+	policy += policySb304.String()
+	_, err := Parse(policy)
+	require.NoError(t, err)
 }

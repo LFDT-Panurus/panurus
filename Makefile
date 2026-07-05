@@ -20,7 +20,7 @@ TOP = .
 include $(TOP)/checks.mk
 
 # Define all Go module directories
-GO_MODULES := . integration token/services/storage/db/kvs/hashicorp cmd/artifactgen cmd/tokengen cmd/token_validation_service cmd/profiler
+GO_MODULES := . integration token/services/storage/db/kvs/hashicorp cmd/artifactgen cmd/tokengen cmd/token_validation_service cmd/profiler cmd/skicleanup
 TIDY_GO_MODULES := $(GO_MODULES) tools
 
 # include fabricx target
@@ -172,6 +172,11 @@ tokengen:
 # install artifactgen tool (must build without cgo; see #1445)
 artifactgen:
 	@cd ./cmd/artifactgen/; CGO_ENABLED=0 go install github.com/LFDT-Panurus/panurus/cmd/artifactgen
+
+.PHONY: skicleanup
+# install skicleanup tool (must build without cgo; see #1445)
+skicleanup:
+	@cd ./cmd/skicleanup/; CGO_ENABLED=0 go install github.com/LFDT-Panurus/panurus/cmd/skicleanup
 
 .PHONY: traceinspector
 # install traceinspector tool

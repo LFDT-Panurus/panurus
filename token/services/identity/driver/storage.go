@@ -67,6 +67,14 @@ type StorageProvider interface {
 // contract defined in the collections/iterators package.
 type IdentityConfigurationIterator = iterators.Iterator[*IdentityConfiguration]
 
+// SignerEntry holds a single row from the Signers table.
+type SignerEntry struct {
+	// IdentityHash is the primary key of the Signers row (hex-encoded hash of the identity).
+	IdentityHash string
+	// Identity is the raw serialised identity bytes.
+	Identity []byte
+}
+
 // WalletID models the wallet id type
 type WalletID = string
 
@@ -169,6 +177,11 @@ type IdentityStoreService interface {
 	GetSignerInfo(ctx context.Context, id []byte) ([]byte, error)
 	// RegisterIdentityDescriptor registers a descriptor for an identity and associates it with an alias
 	RegisterIdentityDescriptor(ctx context.Context, descriptor *IdentityDescriptor, alias driver.Identity) error
+	// IterateSigners returns a page of SignerEntry values from the Signers table ordered by
+	// identity_hash, starting at the given offset and returning at most limit entries.
+	// Use offset=0 for the first page and increment by limit on each subsequent call.
+	// When the returned slice has fewer entries than limit, iteration is complete.
+	IterateSigners(ctx context.Context, offset, limit int) ([]SignerEntry, error)
 	// Close closes the store
 	Close() error
 }

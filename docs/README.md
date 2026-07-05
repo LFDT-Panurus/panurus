@@ -13,6 +13,16 @@ Welcome to Panurus documentation.
 *   [**Upgradability**](upgradability.md): How to upgrade tokens, drivers, and storage.
 *   [**Public Parameters Lifecycle**](public_parameters.md): How public parameters are generated, published, and updated across the network.
 
+## Command-Line Tools
+
+Panurus ships several standalone CLI tools, each living in its own Go module under `cmd/`.
+
+| Tool | Description |
+|------|-------------|
+| [**tokengen**](../cmd/tokengen/README.md) | Generates public parameters, token chaincode packages, and other cryptographic artifacts. Used to pre-configure development and test environments. |
+| [**artifactgen**](../cmd/artifactgen/README.md) | Topology-driven artifact generation (previously part of `tokengen`). Kept separate to avoid pulling in the `integration/nwo` test framework. |
+| [**skicleanup**](../cmd/skicleanup/README.md) | Diagnostic tool that lists orphaned signer entries and their derived SKIs. Connects directly to an existing Panurus database (SQLite or PostgreSQL). |
+
 ## Development
 
 If you are developing *using* Panurus or contributing *to* Panurus, check out the [Development](development/development.md) section.
