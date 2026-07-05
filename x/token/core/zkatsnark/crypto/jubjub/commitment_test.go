@@ -10,7 +10,6 @@ import (
     "testing"
 
     "github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
-	"github.com/consensys/gnark-crypto/ecc/bls12-381/twistededwards"
 	"github.com/consensys/gnark/frontend"
     "github.com/consensys/gnark/frontend/cs/r1cs"
     "github.com/consensys/gnark-crypto/ecc"
@@ -44,12 +43,12 @@ func TestValueCommitHomomorphism(t *testing.T) {
 	var rcvSum fr.Element
 	rcvSum.Add(&rcv1, &rcv2)
 
-	cv1, _ := jubjub.ValueCommit(100, rcv1)
-	cv2, _ := jubjub.ValueCommit(100, rcv2)
-	cv3, _ := jubjub.ValueCommit(200, rcvSum)
+	cv1, _ := jubjub.ValueCommit(uint64(100), rcv1)
+	cv2, _ := jubjub.ValueCommit(uint64(100), rcv2)
+	cv3, _ := jubjub.ValueCommit(uint64(200), rcvSum)
 	
-	var sum twistededwards.PointAffine
-	sum.Add(&cv1, &cv2)
+    sum := cv1
+	sum.Add(&sum, &cv2)
 
 	require.Equal(t, sum.X.Bytes(), cv3.X.Bytes())
 	require.Equal(t, sum.Y.Bytes(), cv3.Y.Bytes())
