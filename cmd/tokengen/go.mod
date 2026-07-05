@@ -13,11 +13,11 @@ replace (
 )
 
 require (
-	github.com/IBM/idemix v0.1.0
+	github.com/IBM/idemix v0.1.1
 	github.com/IBM/mathlib v0.2.0
 	github.com/LFDT-Panurus/panurus v0.10.1
 	github.com/LFDT-Panurus/panurus/integration v0.0.0
-	github.com/hyperledger-labs/fabric-smart-client v0.13.1-0.20260630083752-d97d0c5b6232
+	github.com/hyperledger-labs/fabric-smart-client v0.14.0
 	github.com/hyperledger-labs/fabric-smart-client/integration v0.13.1-0.20260630083752-d97d0c5b6232
 	github.com/onsi/gomega v1.42.1
 	github.com/spf13/cobra v1.10.2

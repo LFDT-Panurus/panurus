@@ -10,7 +10,7 @@ replace (
 
 require (
 	github.com/LFDT-Panurus/panurus v0.0.0
-	github.com/hyperledger-labs/fabric-smart-client v0.13.1-0.20260630083752-d97d0c5b6232
+	github.com/hyperledger-labs/fabric-smart-client v0.14.0
 	github.com/hyperledger-labs/fabric-smart-client/integration v0.13.1-0.20260630083752-d97d0c5b6232
 	github.com/stretchr/testify v1.11.1
 	google.golang.org/grpc v1.81.1
@@ -20,7 +20,7 @@ require (
 	filippo.io/bigmod v0.1.1-0.20260103110540-f8a47775ebe5 // indirect
 	filippo.io/keygen v0.0.0-20260114151900-8e2790ea4c5b // indirect
 	github.com/DATA-DOG/go-sqlmock v1.5.2 // indirect
-	github.com/IBM/idemix v0.1.0 // indirect
+	github.com/IBM/idemix v0.1.1 // indirect
 	github.com/IBM/mathlib v0.2.0 // indirect
 	github.com/Masterminds/semver/v3 v3.5.0 // indirect
 	github.com/Masterminds/squirrel v1.5.4 // indirect

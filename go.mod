@@ -6,7 +6,7 @@ replace github.com/hyperledger/fabric-x-common => github.com/adecaro/fabric-x-co
 
 require (
 	github.com/DATA-DOG/go-sqlmock v1.5.2
-	github.com/IBM/idemix v0.1.0
+	github.com/IBM/idemix v0.1.1
 	github.com/IBM/mathlib v0.2.0
 	github.com/consensys/gnark-crypto v0.20.1
 	github.com/dgraph-io/badger/v4 v4.9.2
@@ -15,11 +15,11 @@ require (
 	github.com/go-viper/mapstructure/v2 v2.5.0
 	github.com/google/pprof v0.0.0-20260604005048-7023385849c0
 	github.com/hashicorp/go-uuid v1.0.3
-	github.com/hyperledger-labs/fabric-smart-client v0.13.1-0.20260630083752-d97d0c5b6232
+	github.com/hyperledger-labs/fabric-smart-client v0.14.0
 	github.com/hyperledger/fabric-chaincode-go/v2 v2.3.0
 	github.com/hyperledger/fabric-lib-go v1.1.5-0.20260607181445-fc4b05c5d38f
 	github.com/hyperledger/fabric-protos-go-apiv2 v0.3.7
-	github.com/hyperledger/fabric-x-common v0.2.6
+	github.com/hyperledger/fabric-x-common v0.2.7
 	github.com/jackc/pgx/v5 v5.10.0
 	github.com/jackc/pgxlisten v0.0.0-20250802141604-12b92425684c
 	github.com/onsi/ginkgo/v2 v2.32.0
