@@ -71,7 +71,7 @@ var _ = Describe("EndToEnd", func() {
 func newTestSuite(commType fsc.P2PCommunicationType, mask int, factor int, tokenSelector string, names ...string) (*integration.TestSuite, *token2.ReplicaSelector) {
 	opts, selector := token2.NewReplicationOptions(factor, names...)
 	ts := integration.NewTestSuite(func() (*integration.Infrastructure, error) {
-		i, err := integration.New(StartPortDlog(), "", topology.Topology(common.Opts{
+		i, err := integration.New(StartPortDlog(), "./testdata", topology.Topology(common.Opts{
 			Backend:  fabricx.PlatformName, // select fabricx platform for NWO
 			CommType: commType,
 			DefaultTMSOpts: common.TMSOpts{
@@ -89,6 +89,8 @@ func newTestSuite(commType fsc.P2PCommunicationType, mask int, factor int, token
 			FSCLogSpec:          "info",
 			TokenSelector:       tokenSelector,
 		})...)
+		i.DeleteOnStart = true
+		i.DeleteOnStop = false
 		i.RegisterPlatformFactory(fabricx.NewPlatformFactory())
 		i.RegisterPlatformFactory(token.NewPlatformFactory(i))
 		i.Generate()

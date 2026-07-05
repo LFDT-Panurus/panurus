@@ -61,6 +61,95 @@ Manages the cryptographic identities and logical wallet groupings used by the no
 ### Generic Store
 *   **KeyStore**: A secure, generic key-value store used for persisting various cryptographic materials and small sensitive states. The keystore uses identifiers that are expected to be the hexadecimal representation of the key's Subject Key Identifier (SKI). This convention is relied upon by other packages, particularly for operations like keystore cleanup where SKIs are derived from owner identities to locate and manage keys.
 
+## Table Name Customisation
+
+Each SQL table name is derived from a canonical **short code** (e.g. `id_signers`) that
+is wrapped by the FSC formatter with the configured `TablePrefix` and `TableNameParams`.
+Two independent options let you control how the final name is composed:
+
+| Option | Config key | Default |
+|---|---|---|
+| Override individual short codes | `token.storage.tableNames` | _(none)_ |
+| Skip the FSC-generated prefix entirely | `token.storage.skipPrefix` | `false` |
+
+### Overriding short codes (`tableNames`)
+
+You can replace any short code globally (for all TMS instances on the node) via the
+`token.storage.tableNames` key. The override value replaces the short code *before*
+the FSC formatter runs, so the final table name still has the FSC-generated prefix and
+params applied around it.
+
+**Unknown keys** are warned about in the log and silently ignored — they do not cause an error.
+
+```yaml
+token:
+  storage:
+    tableNames:
+      id_signers: identity_signers   # was: fsc_id_signers_<prefix>_<params>
+      tokens: my_tokens              # was: fsc_tokens_<prefix>_<params>
+```
+
+### Skipping the prefix (`skipPrefix`)
+
+When set to `true`, the FSC-generated prefix is omitted from **all** table names.
+This is useful when connecting to an existing database whose tables were created without
+a prefix, or when the target database already enforces schema-level isolation.
+
+Default: `false`.
+
+```yaml
+token:
+  storage:
+    skipPrefix: true
+```
+
+With `skipPrefix: true` the name pattern changes from `fsc_<short_code>_<params>` to
+`<params>_<short_code>`. Short-code overrides from `tableNames` are still respected.
+
+> **Caution:** Enabling `skipPrefix` on a node that previously ran with the default prefix
+> will cause the node to look for tables under different names. Ensure the underlying
+> tables already exist under the unprefixed names before enabling this flag.
+
+Both options can be combined:
+
+```yaml
+token:
+  storage:
+    skipPrefix: true
+    tableNames:
+      tokens: my_tokens   # final name: <params>_my_tokens  (no prefix)
+```
+
+### Short Code Reference
+
+The table below lists every short code, the `TableNames` struct field it controls,
+and the default table name pattern it produces (before any override is applied).
+
+| Short Code | `TableNames` field | Default pattern |
+|---|---|---|
+| `movements` | `Movements` | `fsc_movements_<prefix>_<params>` |
+| `txs` | `Transactions` | `fsc_txs_<prefix>_<params>` |
+| `tx_ends` | `TransactionEndorseAck` | `fsc_tx_ends_<prefix>_<params>` |
+| `requests` | `Requests` | `fsc_requests_<prefix>_<params>` |
+| `req_vals` | `Validations` | `fsc_req_vals_<prefix>_<params>` |
+| `tokens` | `Tokens` | `fsc_tokens_<prefix>_<params>` |
+| `tkn_own` | `Ownership` | `fsc_tkn_own_<prefix>_<params>` |
+| `tkn_crts` | `Certifications` | `fsc_tkn_crts_<prefix>_<params>` |
+| `tkn_locks` | `TokenLocks` | `fsc_tkn_locks_<prefix>_<params>` |
+| `public_params` | `PublicParams` | `fsc_public_params_<prefix>_<params>` |
+| `wallets` | `Wallets` | `fsc_wallets_<prefix>_<params>` |
+| `id_cfgs` | `IdentityConfigurations` | `fsc_id_cfgs_<prefix>_<params>` |
+| `id_info` | `IdentityInfo` | `fsc_id_info_<prefix>_<params>` |
+| `id_signers` | `Signers` | `fsc_id_signers_<prefix>_<params>` |
+| `key_store` | `KeyStore` | `fsc_key_store_<prefix>_<params>` |
+| `eid_leases` | `EIDLeases` | `fsc_eid_leases_<prefix>_<params>` |
+| `tkn_ski_cleanups` | `TokenSKICleanups` | `fsc_tkn_ski_cleanups_<prefix>_<params>` |
+
+> **Note:** When no `TablePrefix` is configured (empty string) and no `TableNameParams` are
+> present, the pattern simplifies to `fsc_<short_code>` (e.g. `fsc_id_signers`).
+
+---
+
 ## Internal Databases
 
 Panurus partitions its data into several specialized databases to maintain a clean separation of concerns.

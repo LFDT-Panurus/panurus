@@ -278,6 +278,12 @@ func (s *IdentityStore) Close() error {
 	return nil
 }
 
+// IterateSigners is not supported by the KVS-backed identity store.
+// It returns ErrNotSupported, consistent with other unsupported operations on this store.
+func (s *IdentityStore) IterateSigners(_ context.Context, _, _ int) ([]idriver.SignerEntry, error) {
+	return nil, storage.ErrNotSupported
+}
+
 type IdentityConfigurationsIterator struct {
 	kvs.Iterator
 }

@@ -96,6 +96,14 @@ token:
         # interval is the polling interval for one-time lookups. Defaults to 2s.
         interval: 2s
         
+  # optional global SQL table name overrides (applied to all TMS instances).
+  # The value replaces the short code; the FSC-generated prefix and params still wrap it.
+  # Unknown keys are warned and ignored. Omit the section to keep all default names.
+  storage:
+    tableNames:
+      # id_signers: identity_signers
+      # tokens: my_tokens
+
   tms:
     mytms: # unique name of this token management system
       network: default # the name of the network this TMS refers to (Fabric, etc.)
@@ -495,6 +503,75 @@ Default values:
    - Increase `workerCount` to 8-16 to improve parallel processing
    - Decrease `scanInterval` to 2-3s for faster recovery detection
 
+
+### Optional: token.storage.tableNames
+
+Globally overrides individual SQL table short codes for all TMS instances on the node.
+The override value replaces the short code *before* the FSC formatter runs, so the
+FSC-generated prefix and params are still applied around it. Unknown keys are warned
+and ignored.
+
+If not specified (or the section is omitted entirely), all tables use their default names.
+
+```yaml
+token:
+  storage:
+    tableNames:
+      id_signers: identity_signers   # replaces the "id_signers" short code
+      tokens: my_tokens              # replaces the "tokens" short code
+```
+
+All 17 configurable short codes and their defaults:
+
+| Short code | Default table name pattern |
+|---|---|
+| `movements` | `fsc_movements_<prefix>_<params>` |
+| `txs` | `fsc_txs_<prefix>_<params>` |
+| `tx_ends` | `fsc_tx_ends_<prefix>_<params>` |
+| `requests` | `fsc_requests_<prefix>_<params>` |
+| `req_vals` | `fsc_req_vals_<prefix>_<params>` |
+| `tokens` | `fsc_tokens_<prefix>_<params>` |
+| `tkn_own` | `fsc_tkn_own_<prefix>_<params>` |
+| `tkn_crts` | `fsc_tkn_crts_<prefix>_<params>` |
+| `tkn_locks` | `fsc_tkn_locks_<prefix>_<params>` |
+| `public_params` | `fsc_public_params_<prefix>_<params>` |
+| `wallets` | `fsc_wallets_<prefix>_<params>` |
+| `id_cfgs` | `fsc_id_cfgs_<prefix>_<params>` |
+| `id_info` | `fsc_id_info_<prefix>_<params>` |
+| `id_signers` | `fsc_id_signers_<prefix>_<params>` |
+| `key_store` | `fsc_key_store_<prefix>_<params>` |
+| `eid_leases` | `fsc_eid_leases_<prefix>_<params>` |
+| `tkn_ski_cleanups` | `fsc_tkn_ski_cleanups_<prefix>_<params>` |
+
+> **Note:** When no `TablePrefix` is configured and no `TableNameParams` are present, the
+> pattern simplifies to `fsc_<short_code>` (e.g. `fsc_id_signers`).
+
+---
+
+### Optional: token.storage.skipPrefix
+
+When set to `true`, the FSC-generated prefix is omitted from **all** SQL table names.
+This is useful when connecting to an existing database whose tables were created without
+a prefix, or when the target database already enforces schema-level isolation and a
+prefix would be redundant.
+
+Default: `false` (prefix is applied as normal).
+
+```yaml
+token:
+  storage:
+    skipPrefix: true
+```
+
+With `skipPrefix: true` the table name pattern changes from `fsc_<short_code>_<params>`
+to `<params>_<short_code>` (params still apply when provided; short-code overrides from
+`tableNames` are also still respected).
+
+> **Caution:** Enabling `skipPrefix` on a node that previously used the default prefix
+> will cause the node to look for tables under different names. Make sure the underlying
+> tables already exist under the unprefixed names before enabling this flag.
+
+---
 
 ### Optional: token.tms.<name>.services.storage.cleanup
 
