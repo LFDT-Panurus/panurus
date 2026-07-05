@@ -18,8 +18,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/hyperledger-labs/fabric-token-sdk/x/token/core/zkatsnark/circuit/gadgets"
-	"github.com/hyperledger-labs/fabric-token-sdk/x/token/core/zkatsnark/crypto/mimc"
+	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/circuit/gadgets"
+	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/crypto/mimc"
 )
 
 // TestHashDeterminism verifies that two calls with identical inputs produce
