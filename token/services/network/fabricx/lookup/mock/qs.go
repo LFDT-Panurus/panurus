@@ -62,6 +62,19 @@ type QueryService struct {
 		result1 int32
 		result2 error
 	}
+	GetTransactionStatusesStub        func([]string) (map[string]int32, error)
+	getTransactionStatusesMutex       sync.RWMutex
+	getTransactionStatusesArgsForCall []struct {
+		arg1 []string
+	}
+	getTransactionStatusesReturns struct {
+		result1 map[string]int32
+		result2 error
+	}
+	getTransactionStatusesReturnsOnCall map[int]struct {
+		result1 map[string]int32
+		result2 error
+	}
 	invocations      map[string][][]interface{}
 	invocationsMutex sync.RWMutex
 }
@@ -311,6 +324,75 @@ func (fake *QueryService) GetTransactionStatusReturnsOnCall(i int, result1 int32
 	}
 	fake.getTransactionStatusReturnsOnCall[i] = struct {
 		result1 int32
+		result2 error
+	}{result1, result2}
+}
+
+func (fake *QueryService) GetTransactionStatuses(arg1 []string) (map[string]int32, error) {
+	var arg1Copy []string
+	if arg1 != nil {
+		arg1Copy = make([]string, len(arg1))
+		copy(arg1Copy, arg1)
+	}
+	fake.getTransactionStatusesMutex.Lock()
+	ret, specificReturn := fake.getTransactionStatusesReturnsOnCall[len(fake.getTransactionStatusesArgsForCall)]
+	fake.getTransactionStatusesArgsForCall = append(fake.getTransactionStatusesArgsForCall, struct {
+		arg1 []string
+	}{arg1Copy})
+	stub := fake.GetTransactionStatusesStub
+	fakeReturns := fake.getTransactionStatusesReturns
+	fake.recordInvocation("GetTransactionStatuses", []interface{}{arg1Copy})
+	fake.getTransactionStatusesMutex.Unlock()
+	if stub != nil {
+		return stub(arg1)
+	}
+	if specificReturn {
+		return ret.result1, ret.result2
+	}
+	return fakeReturns.result1, fakeReturns.result2
+}
+
+func (fake *QueryService) GetTransactionStatusesCallCount() int {
+	fake.getTransactionStatusesMutex.RLock()
+	defer fake.getTransactionStatusesMutex.RUnlock()
+	return len(fake.getTransactionStatusesArgsForCall)
+}
+
+func (fake *QueryService) GetTransactionStatusesCalls(stub func([]string) (map[string]int32, error)) {
+	fake.getTransactionStatusesMutex.Lock()
+	defer fake.getTransactionStatusesMutex.Unlock()
+	fake.GetTransactionStatusesStub = stub
+}
+
+func (fake *QueryService) GetTransactionStatusesArgsForCall(i int) []string {
+	fake.getTransactionStatusesMutex.RLock()
+	defer fake.getTransactionStatusesMutex.RUnlock()
+	argsForCall := fake.getTransactionStatusesArgsForCall[i]
+	return argsForCall.arg1
+}
+
+func (fake *QueryService) GetTransactionStatusesReturns(result1 map[string]int32, result2 error) {
+	fake.getTransactionStatusesMutex.Lock()
+	defer fake.getTransactionStatusesMutex.Unlock()
+	fake.GetTransactionStatusesStub = nil
+	fake.getTransactionStatusesReturns = struct {
+		result1 map[string]int32
+		result2 error
+	}{result1, result2}
+}
+
+func (fake *QueryService) GetTransactionStatusesReturnsOnCall(i int, result1 map[string]int32, result2 error) {
+	fake.getTransactionStatusesMutex.Lock()
+	defer fake.getTransactionStatusesMutex.Unlock()
+	fake.GetTransactionStatusesStub = nil
+	if fake.getTransactionStatusesReturnsOnCall == nil {
+		fake.getTransactionStatusesReturnsOnCall = make(map[int]struct {
+			result1 map[string]int32
+			result2 error
+		})
+	}
+	fake.getTransactionStatusesReturnsOnCall[i] = struct {
+		result1 map[string]int32
 		result2 error
 	}{result1, result2}
 }

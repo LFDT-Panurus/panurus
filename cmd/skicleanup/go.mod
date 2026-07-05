@@ -6,7 +6,7 @@ replace github.com/LFDT-Panurus/panurus => ./../../
 
 require (
 	github.com/LFDT-Panurus/panurus v0.10.1
-	github.com/hyperledger-labs/fabric-smart-client v0.13.0
+	github.com/hyperledger-labs/fabric-smart-client v0.14.0
 	github.com/jackc/pgx/v5 v5.10.0
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/viper v1.21.0
@@ -15,11 +15,8 @@ require (
 
 require (
 	github.com/DATA-DOG/go-sqlmock v1.5.2 // indirect
-	github.com/IBM/idemix v0.0.2 // indirect
-	github.com/IBM/idemix/bccsp/schemes/aries v0.0.0-20260501050258-bb91d87b1252 // indirect
-	github.com/IBM/idemix/bccsp/schemes/weak-bb v0.0.0-20260501050258-bb91d87b1252 // indirect
-	github.com/IBM/idemix/bccsp/types v0.0.0-20260501050258-bb91d87b1252 // indirect
-	github.com/IBM/mathlib v0.1.0 // indirect
+	github.com/IBM/idemix v0.1.1 // indirect
+	github.com/IBM/mathlib v0.2.0 // indirect
 	github.com/Masterminds/squirrel v1.5.4 // indirect
 	github.com/Microsoft/go-winio v0.6.2 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
@@ -45,14 +42,12 @@ require (
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/go-viper/mapstructure/v2 v2.5.0 // indirect
 	github.com/gogo/protobuf v1.3.2 // indirect
-	github.com/golang/protobuf v1.5.4 // indirect
 	github.com/google/go-cmp v0.7.0 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.29.0 // indirect
 	github.com/hashicorp/go-uuid v1.0.3 // indirect
-	github.com/hyperledger/aries-bbs-go v0.0.0-20240528091251-e950615f2e45 // indirect
 	github.com/hyperledger/fabric-amcl v0.0.0-20230602173724-9e02669dceb2 // indirect
-	github.com/hyperledger/fabric-lib-go v1.1.4 // indirect
+	github.com/hyperledger/fabric-lib-go v1.1.5-0.20260607181445-fc4b05c5d38f // indirect
 	github.com/hyperledger/fabric-protos-go-apiv2 v0.3.7 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/jackc/pgpassfile v1.0.0 // indirect
