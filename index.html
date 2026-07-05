@@ -429,6 +429,15 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#command-line-tools" class="md-nav__link">
+    <span class="md-ellipsis">
+      Command-Line Tools
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#development" class="md-nav__link">
     <span class="md-ellipsis">
       Development
@@ -1986,6 +1995,15 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#command-line-tools" class="md-nav__link">
+    <span class="md-ellipsis">
+      Command-Line Tools
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#development" class="md-nav__link">
     <span class="md-ellipsis">
       Development
@@ -2043,6 +2061,30 @@
 <li><a href="upgradability/"><strong>Upgradability</strong></a>: How to upgrade tokens, drivers, and storage.</li>
 <li><a href="public_parameters/"><strong>Public Parameters Lifecycle</strong></a>: How public parameters are generated, published, and updated across the network.</li>
 </ul>
+<h2 id="command-line-tools">Command-Line Tools<a class="headerlink" href="#command-line-tools" title="Permanent link">&para;</a></h2>
+<p>Panurus ships several standalone CLI tools, each living in its own Go module under <code>cmd/</code>.</p>
+<table>
+<thead>
+<tr>
+<th>Tool</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="../cmd/tokengen/README.md"><strong>tokengen</strong></a></td>
+<td>Generates public parameters, token chaincode packages, and other cryptographic artifacts. Used to pre-configure development and test environments.</td>
+</tr>
+<tr>
+<td><a href="../cmd/artifactgen/README.md"><strong>artifactgen</strong></a></td>
+<td>Topology-driven artifact generation (previously part of <code>tokengen</code>). Kept separate to avoid pulling in the <code>integration/nwo</code> test framework.</td>
+</tr>
+<tr>
+<td><a href="../cmd/skicleanup/README.md"><strong>skicleanup</strong></a></td>
+<td>Diagnostic tool that lists orphaned signer entries and their derived SKIs. Connects directly to an existing Panurus database (SQLite or PostgreSQL).</td>
+</tr>
+</tbody>
+</table>
 <h2 id="development">Development<a class="headerlink" href="#development" title="Permanent link">&para;</a></h2>
 <p>If you are developing <em>using</em> Panurus or contributing <em>to</em> Panurus, check out the <a href="development/development/">Development</a> section.</p>
 <ul>

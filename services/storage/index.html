@@ -1530,6 +1530,48 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#table-name-customisation" class="md-nav__link">
+    <span class="md-ellipsis">
+      Table Name Customisation
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Table Name Customisation">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#overriding-short-codes-tablenames" class="md-nav__link">
+    <span class="md-ellipsis">
+      Overriding short codes (tableNames)
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#skipping-the-prefix-skipprefix" class="md-nav__link">
+    <span class="md-ellipsis">
+      Skipping the prefix (skipPrefix)
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#short-code-reference" class="md-nav__link">
+    <span class="md-ellipsis">
+      Short Code Reference
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#internal-databases" class="md-nav__link">
     <span class="md-ellipsis">
       Internal Databases
@@ -2303,6 +2345,48 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#table-name-customisation" class="md-nav__link">
+    <span class="md-ellipsis">
+      Table Name Customisation
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Table Name Customisation">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#overriding-short-codes-tablenames" class="md-nav__link">
+    <span class="md-ellipsis">
+      Overriding short codes (tableNames)
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#skipping-the-prefix-skipprefix" class="md-nav__link">
+    <span class="md-ellipsis">
+      Skipping the prefix (skipPrefix)
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#short-code-reference" class="md-nav__link">
+    <span class="md-ellipsis">
+      Short Code Reference
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#internal-databases" class="md-nav__link">
     <span class="md-ellipsis">
       Internal Databases
@@ -2572,6 +2656,170 @@
 <ul>
 <li><strong>KeyStore</strong>: A secure, generic key-value store used for persisting various cryptographic materials and small sensitive states. The keystore uses identifiers that are expected to be the hexadecimal representation of the key's Subject Key Identifier (SKI). This convention is relied upon by other packages, particularly for operations like keystore cleanup where SKIs are derived from owner identities to locate and manage keys.</li>
 </ul>
+<h2 id="table-name-customisation">Table Name Customisation<a class="headerlink" href="#table-name-customisation" title="Permanent link">&para;</a></h2>
+<p>Each SQL table name is derived from a canonical <strong>short code</strong> (e.g. <code>id_signers</code>) that
+is wrapped by the FSC formatter with the configured <code>TablePrefix</code> and <code>TableNameParams</code>.
+Two independent options let you control how the final name is composed:</p>
+<table>
+<thead>
+<tr>
+<th>Option</th>
+<th>Config key</th>
+<th>Default</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Override individual short codes</td>
+<td><code>token.storage.tableNames</code></td>
+<td><em>(none)</em></td>
+</tr>
+<tr>
+<td>Skip the FSC-generated prefix entirely</td>
+<td><code>token.storage.skipPrefix</code></td>
+<td><code>false</code></td>
+</tr>
+</tbody>
+</table>
+<h3 id="overriding-short-codes-tablenames">Overriding short codes (<code>tableNames</code>)<a class="headerlink" href="#overriding-short-codes-tablenames" title="Permanent link">&para;</a></h3>
+<p>You can replace any short code globally (for all TMS instances on the node) via the
+<code>token.storage.tableNames</code> key. The override value replaces the short code <em>before</em>
+the FSC formatter runs, so the final table name still has the FSC-generated prefix and
+params applied around it.</p>
+<p><strong>Unknown keys</strong> are warned about in the log and silently ignored — they do not cause an error.</p>
+<div class="language-yaml highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nt">token</span><span class="p">:</span>
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="w">  </span><span class="nt">storage</span><span class="p">:</span>
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="w">    </span><span class="nt">tableNames</span><span class="p">:</span>
+</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="w">      </span><span class="nt">id_signers</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">identity_signers</span><span class="w">   </span><span class="c1"># was: fsc_id_signers_&lt;prefix&gt;_&lt;params&gt;</span>
+</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="w">      </span><span class="nt">tokens</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">my_tokens</span><span class="w">              </span><span class="c1"># was: fsc_tokens_&lt;prefix&gt;_&lt;params&gt;</span>
+</span></code></pre></div>
+<h3 id="skipping-the-prefix-skipprefix">Skipping the prefix (<code>skipPrefix</code>)<a class="headerlink" href="#skipping-the-prefix-skipprefix" title="Permanent link">&para;</a></h3>
+<p>When set to <code>true</code>, the FSC-generated prefix is omitted from <strong>all</strong> table names.
+This is useful when connecting to an existing database whose tables were created without
+a prefix, or when the target database already enforces schema-level isolation.</p>
+<p>Default: <code>false</code>.</p>
+<div class="language-yaml highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="nt">token</span><span class="p">:</span>
+</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">  </span><span class="nt">storage</span><span class="p">:</span>
+</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="w">    </span><span class="nt">skipPrefix</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
+</span></code></pre></div>
+<p>With <code>skipPrefix: true</code> the name pattern changes from <code>fsc_&lt;short_code&gt;_&lt;params&gt;</code> to
+<code>&lt;params&gt;_&lt;short_code&gt;</code>. Short-code overrides from <code>tableNames</code> are still respected.</p>
+<blockquote>
+<p><strong>Caution:</strong> Enabling <code>skipPrefix</code> on a node that previously ran with the default prefix
+will cause the node to look for tables under different names. Ensure the underlying
+tables already exist under the unprefixed names before enabling this flag.</p>
+</blockquote>
+<p>Both options can be combined:</p>
+<div class="language-yaml highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="nt">token</span><span class="p">:</span>
+</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="w">  </span><span class="nt">storage</span><span class="p">:</span>
+</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="w">    </span><span class="nt">skipPrefix</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
+</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="w">    </span><span class="nt">tableNames</span><span class="p">:</span>
+</span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="w">      </span><span class="nt">tokens</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">my_tokens</span><span class="w">   </span><span class="c1"># final name: &lt;params&gt;_my_tokens  (no prefix)</span>
+</span></code></pre></div>
+<h3 id="short-code-reference">Short Code Reference<a class="headerlink" href="#short-code-reference" title="Permanent link">&para;</a></h3>
+<p>The table below lists every short code, the <code>TableNames</code> struct field it controls,
+and the default table name pattern it produces (before any override is applied).</p>
+<table>
+<thead>
+<tr>
+<th>Short Code</th>
+<th><code>TableNames</code> field</th>
+<th>Default pattern</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>movements</code></td>
+<td><code>Movements</code></td>
+<td><code>fsc_movements_&lt;prefix&gt;_&lt;params&gt;</code></td>
+</tr>
+<tr>
+<td><code>txs</code></td>
+<td><code>Transactions</code></td>
+<td><code>fsc_txs_&lt;prefix&gt;_&lt;params&gt;</code></td>
+</tr>
+<tr>
+<td><code>tx_ends</code></td>
+<td><code>TransactionEndorseAck</code></td>
+<td><code>fsc_tx_ends_&lt;prefix&gt;_&lt;params&gt;</code></td>
+</tr>
+<tr>
+<td><code>requests</code></td>
+<td><code>Requests</code></td>
+<td><code>fsc_requests_&lt;prefix&gt;_&lt;params&gt;</code></td>
+</tr>
+<tr>
+<td><code>req_vals</code></td>
+<td><code>Validations</code></td>
+<td><code>fsc_req_vals_&lt;prefix&gt;_&lt;params&gt;</code></td>
+</tr>
+<tr>
+<td><code>tokens</code></td>
+<td><code>Tokens</code></td>
+<td><code>fsc_tokens_&lt;prefix&gt;_&lt;params&gt;</code></td>
+</tr>
+<tr>
+<td><code>tkn_own</code></td>
+<td><code>Ownership</code></td>
+<td><code>fsc_tkn_own_&lt;prefix&gt;_&lt;params&gt;</code></td>
+</tr>
+<tr>
+<td><code>tkn_crts</code></td>
+<td><code>Certifications</code></td>
+<td><code>fsc_tkn_crts_&lt;prefix&gt;_&lt;params&gt;</code></td>
+</tr>
+<tr>
+<td><code>tkn_locks</code></td>
+<td><code>TokenLocks</code></td>
+<td><code>fsc_tkn_locks_&lt;prefix&gt;_&lt;params&gt;</code></td>
+</tr>
+<tr>
+<td><code>public_params</code></td>
+<td><code>PublicParams</code></td>
+<td><code>fsc_public_params_&lt;prefix&gt;_&lt;params&gt;</code></td>
+</tr>
+<tr>
+<td><code>wallets</code></td>
+<td><code>Wallets</code></td>
+<td><code>fsc_wallets_&lt;prefix&gt;_&lt;params&gt;</code></td>
+</tr>
+<tr>
+<td><code>id_cfgs</code></td>
+<td><code>IdentityConfigurations</code></td>
+<td><code>fsc_id_cfgs_&lt;prefix&gt;_&lt;params&gt;</code></td>
+</tr>
+<tr>
+<td><code>id_info</code></td>
+<td><code>IdentityInfo</code></td>
+<td><code>fsc_id_info_&lt;prefix&gt;_&lt;params&gt;</code></td>
+</tr>
+<tr>
+<td><code>id_signers</code></td>
+<td><code>Signers</code></td>
+<td><code>fsc_id_signers_&lt;prefix&gt;_&lt;params&gt;</code></td>
+</tr>
+<tr>
+<td><code>key_store</code></td>
+<td><code>KeyStore</code></td>
+<td><code>fsc_key_store_&lt;prefix&gt;_&lt;params&gt;</code></td>
+</tr>
+<tr>
+<td><code>eid_leases</code></td>
+<td><code>EIDLeases</code></td>
+<td><code>fsc_eid_leases_&lt;prefix&gt;_&lt;params&gt;</code></td>
+</tr>
+<tr>
+<td><code>tkn_ski_cleanups</code></td>
+<td><code>TokenSKICleanups</code></td>
+<td><code>fsc_tkn_ski_cleanups_&lt;prefix&gt;_&lt;params&gt;</code></td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p><strong>Note:</strong> When no <code>TablePrefix</code> is configured (empty string) and no <code>TableNameParams</code> are
+present, the pattern simplifies to <code>fsc_&lt;short_code&gt;</code> (e.g. <code>fsc_id_signers</code>).</p>
+</blockquote>
+<hr />
 <h2 id="internal-databases">Internal Databases<a class="headerlink" href="#internal-databases" title="Permanent link">&para;</a></h2>
 <p>Panurus partitions its data into several specialized databases to maintain a clean separation of concerns.</p>
 <h3 id="transaction-store-ttxdb">Transaction Store (TTXDB)<a class="headerlink" href="#transaction-store-ttxdb" title="Permanent link">&para;</a></h3>
