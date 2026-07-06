@@ -48,3 +48,9 @@ func BenchmarkTokenStore(b *testing.B) {
 	defer cleanup()
 	sqlcommon.RunTokenStoreBenchmarks(b, store)
 }
+
+func BenchmarkTokenStorePreparedComparison(b *testing.B) {
+	store, cleanup := openBenchTokenStore(b)
+	defer cleanup()
+	sqlcommon.RunUnspentTokensIteratorByPreparedComparison(b, store)
+}

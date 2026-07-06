@@ -190,7 +190,12 @@ func (db *TokenStore) UnspentTokensIterator(ctx context.Context) (tdriver.Unspen
 // append. UNION ALL is used (not UNION) to skip the per-row sort/hash
 // dedup pass; duplicates between the two branches (and within branch 1 when
 // a token has multiple ownership rows) are filtered at the iterator layer.
-func (db *TokenStore) UnspentTokensIteratorBy(ctx context.Context, walletID string, tokenType token.Type) (tdriver.UnspentTokensIterator, error) {
+// buildUnspentTokensIteratorByQuery builds the SQL query and args for
+// UnspentTokensIteratorBy without executing it. Extracted so benchmarks can
+// compare executing this exact query dynamically (query built and run fresh
+// each call, the production path) against running it via a statement
+// prepared once ahead of time, using identical SQL in both cases.
+func buildUnspentTokensIteratorByQuery(db *TokenStore, walletID string, tokenType token.Type) (string, []any) {
 	tokenTable := q.Table(db.table.Tokens)
 	ownershipTable := q.Table(db.table.Ownership)
 	joinCond := cond.And(
@@ -258,7 +263,12 @@ func (db *TokenStore) UnspentTokensIteratorBy(ctx context.Context, walletID stri
 	branch1.FormatTo(db.ci, sb)
 	sb.WriteString(" UNION ALL ")
 	branch2.FormatTo(db.ci, sb)
-	query, args := sb.Build()
+
+	return sb.Build()
+}
+
+func (db *TokenStore) UnspentTokensIteratorBy(ctx context.Context, walletID string, tokenType token.Type) (tdriver.UnspentTokensIterator, error) {
+	query, args := buildUnspentTokensIteratorByQuery(db, walletID, tokenType)
 
 	logging.Debug(logger, query, args)
 	rows, err := db.readDB.QueryContext(ctx, query, args...)
