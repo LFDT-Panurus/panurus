@@ -166,6 +166,21 @@ func TestVerifier_Verify_InvalidMultisigBytes(t *testing.T) {
 	assert.Equal(t, 0, verifier1.VerifyCallCount())
 }
 
+// Verify returns an error immediately when the Verifier has no sub-verifiers,
+// even if the raw signature encodes an empty MultiSignature{} (the "anyone-can-spend"
+// exploit path patched in sig.go).
+func TestVerifier_Verify_ZeroVerifiers(t *testing.T) {
+	emptyMultiSig := &MultiSignature{Signatures: [][]byte{}}
+	emptyBytes, err := emptyMultiSig.Bytes()
+	require.NoError(t, err)
+
+	verifier := &Verifier{Verifiers: []driver.Verifier{}}
+
+	err = verifier.Verify([]byte("any message"), emptyBytes)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "multisig verifier has no members")
+}
+
 // Create a raw multi-sig of one sig  and fail to verify it with a multi-verifier
 // with two verifiers
 func TestVerifier_Verify_SignatureCountMismatch(t *testing.T) {

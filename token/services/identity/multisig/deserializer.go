@@ -115,6 +115,9 @@ func (d *TypedIdentityDeserializer) DeserializeVerifier(ctx context.Context, typ
 	if err != nil {
 		return nil, errors.New("failed to unmarshal multisig identity")
 	}
+	if len(multisigIdentity.Identities) == 0 {
+		return nil, errors.New("multisig identity has no members")
+	}
 	verifier := &Verifier{}
 	verifier.Verifiers = make([]driver.Verifier, len(multisigIdentity.Identities))
 	for k, i := range multisigIdentity.Identities {

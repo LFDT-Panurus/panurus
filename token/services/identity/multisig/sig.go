@@ -59,6 +59,9 @@ type Verifier struct {
 }
 
 func (v *Verifier) Verify(msg, raw []byte) error {
+	if len(v.Verifiers) == 0 {
+		return errors.New("multisig verifier has no members")
+	}
 	sig := &MultiSignature{}
 	err := sig.FromBytes(raw)
 	if err != nil {

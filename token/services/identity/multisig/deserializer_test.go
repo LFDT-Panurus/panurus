@@ -46,6 +46,27 @@ func TestDeserializeVerifier_Success(t *testing.T) {
 	assert.Equal(t, 1, verifierDES.DeserializeVerifierCallCount())
 }
 
+// DeserializeVerifier must reject a zero-identity MultiIdentity at the trust boundary.
+// This is the attacker path: directly asn1.Marshal a MultiIdentity{Identities: []}
+// and wrap it in a TypedIdentity{Type: Multisig}, bypassing the WrapIdentities guard.
+func TestDeserializeVerifier_EmptyIdentities(t *testing.T) {
+	verifierDES := &mock.VerifierDES{}
+	deserializer := NewTypedIdentityDeserializer(verifierDES, nil)
+
+	// Attacker serializes MultiIdentity{Identities: []} directly
+	emptyID := &MultiIdentity{Identities: []token.Identity{}}
+	emptyRaw, err := emptyID.Bytes()
+	require.NoError(t, err)
+
+	verifier, err := deserializer.DeserializeVerifier(context.Background(), Multisig, emptyRaw)
+	require.Error(t, err)
+	assert.Nil(t, verifier)
+	assert.Contains(t, err.Error(), "multisig identity has no members")
+
+	// No sub-verifier deserialization should have been attempted
+	assert.Equal(t, 0, verifierDES.DeserializeVerifierCallCount())
+}
+
 // Create an invalid raw multi-id and fail to deserialize a verifier from it
 func TestDeserializeVerifier_InvalidMultisigIdentity(t *testing.T) {
 	verifierDES := &mock.VerifierDES{}
