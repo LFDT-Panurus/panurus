@@ -13,7 +13,7 @@ require (
 	github.com/IBM/mathlib v0.2.0
 	github.com/LFDT-Panurus/panurus v0.0.0
 	github.com/gin-gonic/gin v1.12.0
-	github.com/hyperledger-labs/fabric-smart-client v0.14.1-0.20260706113858-4b5e9a8346bd
+	github.com/hyperledger-labs/fabric-smart-client v0.14.1-0.20260706120100-3054f879e409
 	github.com/hyperledger-labs/fabric-smart-client/integration v0.13.1-0.20260630083752-d97d0c5b6232
 	github.com/hyperledger/fabric-lib-go v1.1.5-0.20260607181445-fc4b05c5d38f
 	github.com/onsi/ginkgo/v2 v2.32.0
@@ -254,8 +254,8 @@ require (
 	google.golang.org/protobuf v1.36.11 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 	lukechampine.com/blake3 v1.4.1 // indirect
-	modernc.org/libc v1.72.3 // indirect
+	modernc.org/libc v1.73.4 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect
-	modernc.org/sqlite v1.51.0 // indirect
+	modernc.org/sqlite v1.53.0 // indirect
 )

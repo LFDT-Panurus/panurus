@@ -3,7 +3,7 @@ FABRIC_VERSION ?= 3.1.4
 FABRIC_CA_VERSION ?= 1.5.7
 FABRIC_TWO_DIGIT_VERSION = $(shell echo $(FABRIC_VERSION) | cut -d '.' -f 1,2)
 
-FABRIC_X_TOOLS_VERSION ?= v0.0.17
+FABRIC_X_TOOLS_VERSION ?= v1.0.0
 FABRIC_X_COMMITTER_VERSION ?= 1.0.0
 
 # need to install fabric binaries outside of panuru's  tree for now (due to chaincode packaging issues)

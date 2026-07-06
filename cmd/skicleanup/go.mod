@@ -6,11 +6,11 @@ replace github.com/LFDT-Panurus/panurus => ./../../
 
 require (
 	github.com/LFDT-Panurus/panurus v0.10.1
-	github.com/hyperledger-labs/fabric-smart-client v0.14.1-0.20260706113858-4b5e9a8346bd
+	github.com/hyperledger-labs/fabric-smart-client v0.14.1-0.20260706120100-3054f879e409
 	github.com/jackc/pgx/v5 v5.10.0
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/viper v1.21.0
-	modernc.org/sqlite v1.51.0
+	modernc.org/sqlite v1.53.0
 )
 
 require (
@@ -121,7 +121,7 @@ require (
 	google.golang.org/grpc v1.81.1 // indirect
 	google.golang.org/protobuf v1.36.11 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
-	modernc.org/libc v1.72.3 // indirect
+	modernc.org/libc v1.73.4 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect
 )
