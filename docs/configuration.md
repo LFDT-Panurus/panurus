@@ -74,12 +74,23 @@ token:
     # Only applicable for fabricx networks
     # notification: The manager is notified about finality events via a notification service (e.g. for FabricX).
     #   When a new notification arrives, an event is added to a queue for asynchronous processing.
-    #   When a client subscribes to the manager for a specific transaction, we perform an immediate query to check its status.
+    #   When a client subscribes to the manager for a specific transaction, the transaction joins a pending set
+    #   that the shared poller sweeps with batched status queries (see poller below).
     notification:
       # workers is the number of goroutines that process events in parallel. Defaults to 10.
       workers: 10
       # queueSize is the size of the event buffer. Defaults to 1000.
       queueSize: 1000
+    # Only applicable for fabricx networks
+    # poller: resolves the status of pending transactions with periodic batched committer queries.
+    poller:
+      # interval is how often the poller sweeps the pending set. Defaults to 1s.
+      interval: 1s
+      # batchSize is the maximum number of txIDs in one committer status query. Defaults to 2000.
+      batchSize: 2000
+      # pendingTTL is how long a tx stays pending before its slot is reclaimed.
+      # It should exceed the longest caller finality timeout. Defaults to 10m.
+      pendingTTL: 10m
   
   # fabricx configuration for FabricX-specific settings
   fabricx:
@@ -426,6 +437,9 @@ Default values:
 - delivery.listenerTimeout: 10s
 - notification.workers: 10
 - notification.queueSize: 1000
+- poller.interval: 1s
+- poller.batchSize: 2000
+- poller.pendingTTL: 10m
 
 ---
 

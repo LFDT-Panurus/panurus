@@ -542,6 +542,13 @@ func TestNSFinalityListener_OnStatus_EnqueueError(t *testing.T) {
 	assert.Equal(t, 1, mockQueue.EnqueueBlockingCallCount())
 }
 
+// testPollerConfig polls fast so tests don't wait on the default interval.
+type testPollerConfig struct{}
+
+func (testPollerConfig) PollInterval() time.Duration { return 10 * time.Millisecond }
+func (testPollerConfig) PollBatchSize() int          { return finality.DefaultPollBatchSize }
+func (testPollerConfig) PendingTTL() time.Duration   { return time.Minute }
+
 func TestNSListenerManager_AddFinalityListener(t *testing.T) {
 	txID := "tx123"
 	namespace := "token-namespace"
@@ -552,33 +559,42 @@ func TestNSListenerManager_AddFinalityListener(t *testing.T) {
 	mockKT := &mock.KeyTranslator{}
 	mockListener := &mock.Listener{}
 
-	var enqueuedEvent queue.Event
+	mockQS.GetTransactionStatusReturns(int32(committerpb.Status_COMMITTED), nil)
+	mockKT.CreateTokenRequestKeyReturns("key", nil)
+	mockQS.GetStatesReturns(map[cdriver.Namespace]map[cdriver.PKey]cdriver.VaultValue{
+		namespace: {"key": {Raw: []byte("hash")}},
+	}, nil)
+
+	events := make(chan queue.Event, 1)
 	mockQueue.EnqueueCalls(func(event queue.Event) error {
-		enqueuedEvent = event
+		events <- event
 
 		return nil
 	})
 
-	manager := finality.NewNSListenerManager(mockLM, mockQueue, mockQS, mockKT)
+	manager := finality.NewNSListenerManager(mockLM, mockQueue, mockQS, mockKT, testPollerConfig{})
 
 	err := manager.AddFinalityListener(namespace, txID, mockListener)
 	require.NoError(t, err)
 
-	// Verify TxCheck was enqueued
-	assert.Equal(t, 1, mockQueue.EnqueueCallCount())
-	require.NotNil(t, enqueuedEvent)
-	txCheck, ok := enqueuedEvent.(*finality.TxCheck)
-	require.True(t, ok)
-	assert.Equal(t, txID, txCheck.TxID)
-	assert.Equal(t, namespace, txCheck.Namespace)
+	// The shared poller resolves the pending tx and enqueues a notification event.
+	var event queue.Event
+	select {
+	case event = <-events:
+	case <-time.After(5 * time.Second):
+		t.Fatal("poller did not resolve the pending tx")
+	}
 
-	// Verify listener was added to underlying manager
-	assert.Equal(t, 1, mockLM.AddFinalityListenerCallCount())
-	callTxID, _ := mockLM.AddFinalityListenerArgsForCall(0)
-	assert.Equal(t, txID, callTxID)
+	require.NoError(t, event.Process(t.Context()))
+
+	require.Equal(t, 1, mockListener.OnStatusCallCount())
+	_, gotTxID, gotStatus, _, gotHash := mockListener.OnStatusArgsForCall(0)
+	assert.Equal(t, txID, gotTxID)
+	assert.Equal(t, fdriver.Valid, gotStatus)
+	assert.Equal(t, []byte("hash"), gotHash)
 }
 
-func TestNSListenerManager_AddFinalityListener_EnqueueError(t *testing.T) {
+func TestNSListenerManager_EnqueueErrorRetriesNextSweep(t *testing.T) {
 	txID := "tx123"
 	namespace := "token-namespace"
 
@@ -588,16 +604,117 @@ func TestNSListenerManager_AddFinalityListener_EnqueueError(t *testing.T) {
 	mockKT := &mock.KeyTranslator{}
 	mockListener := &mock.Listener{}
 
+	mockQS.GetTransactionStatusReturns(int32(committerpb.Status_COMMITTED), nil)
+	mockKT.CreateTokenRequestKeyReturns("key", nil)
+	mockQS.GetStatesReturns(map[cdriver.Namespace]map[cdriver.PKey]cdriver.VaultValue{
+		namespace: {"key": {Raw: []byte("hash")}},
+	}, nil)
 	mockQueue.EnqueueReturns(errors.New("queue full"))
 
-	manager := finality.NewNSListenerManager(mockLM, mockQueue, mockQS, mockKT)
+	manager := finality.NewNSListenerManager(mockLM, mockQueue, mockQS, mockKT, testPollerConfig{})
 
+	// Registration itself does not fail; the tx stays pending and each sweep
+	// retries the enqueue.
 	err := manager.AddFinalityListener(namespace, txID, mockListener)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "queue full")
+	require.NoError(t, err)
 
-	// Should not add listener to underlying manager if enqueue fails
-	assert.Equal(t, 0, mockLM.AddFinalityListenerCallCount())
+	require.Eventually(t, func() bool {
+		return mockQueue.EnqueueCallCount() >= 2
+	}, 5*time.Second, 10*time.Millisecond)
+
+	assert.Equal(t, 0, mockListener.OnStatusCallCount())
+}
+
+func TestNSListenerManager_MultipleListenersSameTx(t *testing.T) {
+	txID := "tx123"
+	namespace := "token-namespace"
+
+	mockLM := &mock.ListenerManager{}
+	mockQueue := &mock.Queue{}
+	mockQS := &mock.QueryService{}
+	mockKT := &mock.KeyTranslator{}
+	listener1 := &mock.Listener{}
+	listener2 := &mock.Listener{}
+
+	mockQS.GetTransactionStatusReturns(int32(committerpb.Status_COMMITTED), nil)
+	mockKT.CreateTokenRequestKeyReturns("key", nil)
+	mockQS.GetStatesReturns(map[cdriver.Namespace]map[cdriver.PKey]cdriver.VaultValue{
+		namespace: {"key": {Raw: []byte("hash")}},
+	}, nil)
+
+	events := make(chan queue.Event, 4)
+	mockQueue.EnqueueCalls(func(event queue.Event) error {
+		events <- event
+
+		return nil
+	})
+
+	manager := finality.NewNSListenerManager(mockLM, mockQueue, mockQS, mockKT, testPollerConfig{})
+
+	require.NoError(t, manager.AddFinalityListener(namespace, txID, listener1))
+	require.NoError(t, manager.AddFinalityListener(namespace, txID, listener2))
+
+	// Both waiters are notified, regardless of how many sweeps it takes.
+	deadline := time.After(5 * time.Second)
+	for listener1.OnStatusCallCount() == 0 || listener2.OnStatusCallCount() == 0 {
+		select {
+		case event := <-events:
+			require.NoError(t, event.Process(t.Context()))
+		case <-deadline:
+			t.Fatal("not all listeners were notified")
+		}
+	}
+
+	assert.Equal(t, 1, listener1.OnStatusCallCount())
+	assert.Equal(t, 1, listener2.OnStatusCallCount())
+}
+
+func TestNSListenerManager_FallbackSkipsFailingTx(t *testing.T) {
+	namespace := "token-namespace"
+
+	mockLM := &mock.ListenerManager{}
+	mockQueue := &mock.Queue{}
+	mockQS := &mock.QueryService{}
+	mockKT := &mock.KeyTranslator{}
+	listenerA := &mock.Listener{}
+	listenerB := &mock.Listener{}
+
+	// txA is not yet committed and errors on the per-tx query; txB is committed.
+	mockQS.GetTransactionStatusCalls(func(txID string) (int32, error) {
+		if txID == "txA" {
+			return 0, errors.New("transaction not found")
+		}
+
+		return int32(committerpb.Status_COMMITTED), nil
+	})
+	mockKT.CreateTokenRequestKeyReturns("key", nil)
+	mockQS.GetStatesReturns(map[cdriver.Namespace]map[cdriver.PKey]cdriver.VaultValue{
+		namespace: {"key": {Raw: []byte("hash")}},
+	}, nil)
+
+	events := make(chan queue.Event, 4)
+	mockQueue.EnqueueCalls(func(event queue.Event) error {
+		events <- event
+
+		return nil
+	})
+
+	manager := finality.NewNSListenerManager(mockLM, mockQueue, mockQS, mockKT, testPollerConfig{})
+
+	require.NoError(t, manager.AddFinalityListener(namespace, "txA", listenerA))
+	require.NoError(t, manager.AddFinalityListener(namespace, "txB", listenerB))
+
+	var event queue.Event
+	select {
+	case event = <-events:
+	case <-time.After(5 * time.Second):
+		t.Fatal("poller did not resolve txB")
+	}
+
+	require.NoError(t, event.Process(t.Context()))
+
+	assert.Equal(t, 1, listenerB.OnStatusCallCount())
+	assert.Equal(t, 0, listenerA.OnStatusCallCount())
 }
 
 func TestNSListenerManagerProvider_NewManager(t *testing.T) {
@@ -613,7 +730,7 @@ func TestNSListenerManagerProvider_NewManager(t *testing.T) {
 	mockQSP.GetReturns(mockQS, nil)
 
 	mockQueue := &mock.Queue{}
-	provider := finality.NewNotificationServiceBased(mockQSP, mockLMP, mockQueue)
+	provider := finality.NewNotificationServiceBased(mockQSP, mockLMP, mockQueue, testPollerConfig{})
 	require.NotNil(t, provider)
 
 	manager, err := provider.NewManager(network, channel)
@@ -641,7 +758,7 @@ func TestNSListenerManagerProvider_NewManager_ListenerManagerError(t *testing.T)
 	mockLMP.NewManagerReturns(nil, errors.New("listener manager creation failed"))
 
 	mockQueue := &mock.Queue{}
-	provider := finality.NewNotificationServiceBased(mockQSP, mockLMP, mockQueue)
+	provider := finality.NewNotificationServiceBased(mockQSP, mockLMP, mockQueue, testPollerConfig{})
 
 	manager, err := provider.NewManager(network, channel)
 	require.Error(t, err)
@@ -662,7 +779,7 @@ func TestNSListenerManagerProvider_NewManager_QueryServiceError(t *testing.T) {
 	mockQSP.GetReturns(nil, errors.New("query service retrieval failed"))
 
 	mockQueue := &mock.Queue{}
-	provider := finality.NewNotificationServiceBased(mockQSP, mockLMP, mockQueue)
+	provider := finality.NewNotificationServiceBased(mockQSP, mockLMP, mockQueue, testPollerConfig{})
 
 	manager, err := provider.NewManager(network, channel)
 	require.Error(t, err)
@@ -671,48 +788,62 @@ func TestNSListenerManagerProvider_NewManager_QueryServiceError(t *testing.T) {
 	assert.Contains(t, err.Error(), "query service retrieval failed")
 }
 
-func TestOnlyOnceListener_SingleCall(t *testing.T) {
-	ctx := t.Context()
+// resolveThroughPoller registers a listener and returns the notification event
+// the shared poller enqueues once the tx resolves.
+func resolveThroughPoller(t *testing.T, mockListener *mock.Listener) queue.Event {
+	t.Helper()
 	txID := "tx123"
+	namespace := "token-namespace"
 
-	mockListener := &mock.Listener{}
-
-	// Create OnlyOnceListener through NSListenerManager to test the wrapper
 	mockLM := &mock.ListenerManager{}
 	mockQueue := &mock.Queue{}
 	mockQS := &mock.QueryService{}
 	mockKT := &mock.KeyTranslator{}
 
-	mockQueue.EnqueueReturns(nil)
-	mockQueue.EnqueueBlockingCalls(func(ctx context.Context, event queue.Event) error {
-		return event.Process(ctx)
-	})
+	mockQS.GetTransactionStatusReturns(int32(committerpb.Status_COMMITTED), nil)
 	mockKT.CreateTokenRequestKeyReturns("key", nil)
-	mockQS.GetStateReturns(&cdriver.VaultValue{Raw: []byte("hash")}, nil)
+	mockQS.GetStatesReturns(map[cdriver.Namespace]map[cdriver.PKey]cdriver.VaultValue{
+		namespace: {"key": {Raw: []byte("hash")}},
+	}, nil)
 
-	manager := finality.NewNSListenerManager(mockLM, mockQueue, mockQS, mockKT)
+	events := make(chan queue.Event, 1)
+	mockQueue.EnqueueCalls(func(event queue.Event) error {
+		events <- event
 
-	err := manager.AddFinalityListener("namespace", txID, mockListener)
-	require.NoError(t, err)
+		return nil
+	})
 
-	// Get the wrapped listener that was added
-	assert.Equal(t, 1, mockLM.AddFinalityListenerCallCount())
-	_, wrappedListener := mockLM.AddFinalityListenerArgsForCall(0)
+	manager := finality.NewNSListenerManager(mockLM, mockQueue, mockQS, mockKT, testPollerConfig{})
 
-	// Call OnStatus multiple times
-	wrappedListener.OnStatus(ctx, txID, fdriver.Valid, "")
-	wrappedListener.OnStatus(ctx, txID, fdriver.Valid, "")
-	wrappedListener.OnStatus(ctx, txID, fdriver.Valid, "")
+	require.NoError(t, manager.AddFinalityListener(namespace, txID, mockListener))
 
-	// The underlying listener should only be called once
-	// Note: We can't directly test this because the OnlyOnceListener is created internally
-	// and the mock queue will process events asynchronously
-	// This test verifies the integration works without panicking
+	select {
+	case event := <-events:
+		return event
+	case <-time.After(5 * time.Second):
+		t.Fatal("poller did not resolve the pending tx")
+
+		return nil
+	}
+}
+
+func TestOnlyOnceListener_SingleCall(t *testing.T) {
+	ctx := t.Context()
+	mockListener := &mock.Listener{}
+
+	event := resolveThroughPoller(t, mockListener)
+
+	// Process the same notification event multiple times: the OnlyOnceListener
+	// wrapper must notify the underlying listener exactly once.
+	require.NoError(t, event.Process(ctx))
+	require.NoError(t, event.Process(ctx))
+	require.NoError(t, event.Process(ctx))
+
+	assert.Equal(t, 1, mockListener.OnStatusCallCount())
 }
 
 func TestOnlyOnceListener_Concurrent(t *testing.T) {
 	ctx := t.Context()
-	txID := "tx123"
 
 	mockListener := &mock.Listener{}
 	callCount := 0
@@ -724,31 +855,13 @@ func TestOnlyOnceListener_Concurrent(t *testing.T) {
 		mu.Unlock()
 	})
 
-	mockLM := &mock.ListenerManager{}
-	mockQueue := &mock.Queue{}
-	mockQS := &mock.QueryService{}
-	mockKT := &mock.KeyTranslator{}
+	event := resolveThroughPoller(t, mockListener)
 
-	mockQueue.EnqueueReturns(nil)
-	mockQueue.EnqueueBlockingCalls(func(ctx context.Context, event queue.Event) error {
-		return event.Process(ctx)
-	})
-	mockKT.CreateTokenRequestKeyReturns("key", nil)
-	mockQS.GetStateReturns(&cdriver.VaultValue{Raw: []byte("hash")}, nil)
-
-	manager := finality.NewNSListenerManager(mockLM, mockQueue, mockQS, mockKT)
-
-	err := manager.AddFinalityListener("namespace", txID, mockListener)
-	require.NoError(t, err)
-
-	assert.Equal(t, 1, mockLM.AddFinalityListenerCallCount())
-	_, wrappedListener := mockLM.AddFinalityListenerArgsForCall(0)
-
-	// Call OnStatus concurrently
+	// Process the notification event concurrently
 	var wg sync.WaitGroup
 	for range 10 {
 		wg.Go(func() {
-			wrappedListener.OnStatus(ctx, txID, fdriver.Valid, "")
+			_ = event.Process(ctx)
 		})
 	}
 	wg.Wait()

@@ -9,6 +9,7 @@ package finality
 import (
 	"context"
 	"fmt"
+	"slices"
 	"sync"
 	"time"
 
@@ -300,13 +301,29 @@ func (l *NSFinalityListener) OnStatus(ctx context.Context, txID cdriver.TxID, st
 	}
 }
 
-// NSListenerManager is a listener manager that handles finality notifications
-// and initial transaction state checks.
+// NSListenerManager resolves transaction finality with a single shared poller
+// that batches committer status queries across all pending transactions.
 type NSListenerManager struct {
-	lm            finalityx.ListenerManager
+	lm            finalityx.ListenerManager // unused by the poller; retained for wiring
 	queue         Queue
 	queryService  QueryService
 	keyTranslator KeyTranslator
+
+	pollInterval time.Duration
+	batchSize    int
+	pendingTTL   time.Duration
+
+	mu        sync.Mutex
+	pending   map[string][]*pendingTx
+	startOnce sync.Once
+}
+
+// pendingTx is a finality waiter tracked by the shared poller; a tx can have
+// several waiters.
+type pendingTx struct {
+	namespace    string
+	listener     Listener
+	registeredAt time.Time
 }
 
 // NewNSListenerManager creates a new NSListenerManager wrapping an underlying
@@ -316,30 +333,251 @@ func NewNSListenerManager(
 	queue Queue,
 	qs QueryService,
 	keyTranslator KeyTranslator,
+	cfg ConfigGetter,
 ) *NSListenerManager {
-	return &NSListenerManager{lm: lm, queue: queue, queryService: qs, keyTranslator: keyTranslator}
+	return &NSListenerManager{
+		lm:            lm,
+		queue:         queue,
+		queryService:  qs,
+		keyTranslator: keyTranslator,
+		pollInterval:  cfg.PollInterval(),
+		batchSize:     cfg.PollBatchSize(),
+		pendingTTL:    cfg.PendingTTL(),
+		pending:       make(map[string][]*pendingTx),
+	}
 }
 
-// AddFinalityListener adds a listener for the specified transaction ID.
-// It first enqueues a TxCheck to verify the transaction's current state on the
-// ledger and then registers an NSFinalityListener with the underlying manager
-// to catch future status updates. It uses an OnlyOnceListener to ensure
-// the callback is triggered exactly once.
+// AddFinalityListener registers a listener for the given transaction. The tx
+// joins a pending set that the shared poller sweeps in batches; the listener
+// fires exactly once.
 func (n *NSListenerManager) AddFinalityListener(namespace string, txID string, listener Listener) error {
 	logger.Debugf("AddFinalityListener [%s]", txID)
 	l := &OnlyOnceListener{listener: listener}
 
-	if err := n.queue.Enqueue(&TxCheck{
-		QueryService:  n.queryService,
-		KeyTranslator: n.keyTranslator,
-		Listener:      l,
-		TxID:          txID,
-		Namespace:     namespace,
-	}); err != nil {
-		return err
+	n.mu.Lock()
+	n.pending[txID] = append(n.pending[txID], &pendingTx{namespace: namespace, listener: l, registeredAt: time.Now()})
+	n.mu.Unlock()
+
+	n.startOnce.Do(func() { go n.pollLoop(context.Background()) })
+
+	return nil
+}
+
+// batchStatusQuerier is implemented by query services that resolve many
+// transaction statuses in a single round-trip.
+type batchStatusQuerier interface {
+	GetTransactionStatuses(txIDs []string) (map[string]int32, error)
+}
+
+// pollLoop sweeps the pending set every pollInterval until ctx is canceled.
+func (n *NSListenerManager) pollLoop(ctx context.Context) {
+	ticker := time.NewTicker(n.pollInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			n.pollOnce(ctx)
+		}
+	}
+}
+
+// pollOnce snapshots the pending txIDs (reclaiming stale slots), queries their
+// status in batches, and resolves the terminal ones.
+func (n *NSListenerManager) pollOnce(ctx context.Context) {
+	now := time.Now()
+	n.mu.Lock()
+	ids := make([]string, 0, len(n.pending))
+	for txID, waiters := range n.pending {
+		kept := waiters[:0]
+		for _, w := range waiters {
+			if now.Sub(w.registeredAt) > n.pendingTTL {
+				// reclaim the slot; the caller's own finality timeout settles the waiter
+				continue
+			}
+			kept = append(kept, w)
+		}
+		if len(kept) == 0 {
+			delete(n.pending, txID)
+
+			continue
+		}
+		n.pending[txID] = kept
+		ids = append(ids, txID)
+	}
+	n.mu.Unlock()
+	if len(ids) == 0 {
+		return
 	}
 
-	return n.lm.AddFinalityListener(txID, NewNSFinalityListener(namespace, l, n.queue, n.queryService, n.keyTranslator))
+	for _, chunk := range chunkTxIDs(ids, n.batchSize) {
+		statuses, err := n.getStatuses(chunk)
+		if err != nil {
+			logger.Warnf("finality poller: status query for %d txs failed: %v", len(chunk), err)
+
+			continue
+		}
+		n.resolveBatch(ctx, statuses)
+	}
+}
+
+// getStatuses resolves many statuses in one round-trip when the query service
+// supports it, otherwise one call per tx. In the per-tx path a failing query
+// only skips that tx: a not-yet-committed tx returns an error, and it must not
+// fail the whole chunk.
+func (n *NSListenerManager) getStatuses(txIDs []string) (map[string]int32, error) {
+	if bq, ok := n.queryService.(batchStatusQuerier); ok {
+		return bq.GetTransactionStatuses(txIDs)
+	}
+	out := make(map[string]int32, len(txIDs))
+	for _, txID := range txIDs {
+		s, err := n.queryService.GetTransactionStatus(txID)
+		if err != nil {
+			logger.Debugf("finality poller: status for [%s]: %v", txID, err)
+
+			continue
+		}
+		out[txID] = s
+	}
+
+	return out, nil
+}
+
+// resolveBatch batch-fetches the token-request hash for the valid terminal txs
+// and hands each off to the worker pool for notification. Non-terminal txs stay
+// pending for the next sweep.
+func (n *NSListenerManager) resolveBatch(ctx context.Context, statuses map[string]int32) {
+	type terminalTx struct {
+		txID    string
+		status  fdriver.ValidationCode
+		waiters []*pendingTx
+	}
+
+	var terminals []terminalTx
+	n.mu.Lock()
+	for txID, raw := range statuses {
+		waiters, ok := n.pending[txID]
+		if !ok {
+			continue
+		}
+		status := fabricXFSCStatus(raw)
+		if status == fdriver.Unknown || status == fdriver.Busy {
+			continue
+		}
+		terminals = append(terminals, terminalTx{txID: txID, status: status, waiters: slices.Clone(waiters)})
+	}
+	n.mu.Unlock()
+	if len(terminals) == 0 {
+		return
+	}
+
+	hashQuery := map[cdriver.Namespace][]cdriver.PKey{}
+	keyToTx := make(map[string]string, len(terminals))
+	for _, t := range terminals {
+		if t.status != fdriver.Valid {
+			continue
+		}
+		key, err := n.keyTranslator.CreateTokenRequestKey(t.txID)
+		if err != nil {
+			logger.Warnf("finality poller: token request key for [%s]: %v", t.txID, err)
+
+			continue
+		}
+		hashQuery[t.waiters[0].namespace] = append(hashQuery[t.waiters[0].namespace], key)
+		keyToTx[key] = t.txID
+	}
+
+	hashes := make(map[string][]byte, len(keyToTx))
+	if len(hashQuery) > 0 {
+		states, err := n.queryService.GetStates(hashQuery)
+		if err != nil {
+			// Keep terminals pending and retry next sweep rather than notify without a hash.
+			logger.Warnf("finality poller: token-request-hash batch query failed: %v", err)
+
+			return
+		}
+		for _, byKey := range states {
+			for key, v := range byKey {
+				if txID, ok := keyToTx[key]; ok {
+					hashes[txID] = v.Raw
+				}
+			}
+		}
+	}
+
+	for _, t := range terminals {
+		var hash []byte
+		if t.status == fdriver.Valid {
+			hash = hashes[t.txID]
+		}
+		listeners := make([]Listener, len(t.waiters))
+		for i, w := range t.waiters {
+			listeners[i] = w.listener
+		}
+		ev := &resolveEvent{listeners: listeners, txID: t.txID, status: t.status, tokenRequestHash: hash}
+		if err := n.queue.Enqueue(ev); err != nil {
+			// Queue full: leave pending so the next sweep retries.
+			logger.Warnf("finality poller: enqueue resolve for [%s] failed: %v", t.txID, err)
+
+			continue
+		}
+		resolved := make(map[*pendingTx]struct{}, len(t.waiters))
+		for _, w := range t.waiters {
+			resolved[w] = struct{}{}
+		}
+		n.mu.Lock()
+		// remove only the snapshotted waiters; keep any registered since
+		if cur, ok := n.pending[t.txID]; ok {
+			kept := cur[:0]
+			for _, w := range cur {
+				if _, done := resolved[w]; !done {
+					kept = append(kept, w)
+				}
+			}
+			if len(kept) == 0 {
+				delete(n.pending, t.txID)
+			} else {
+				n.pending[t.txID] = kept
+			}
+		}
+		n.mu.Unlock()
+	}
+}
+
+// resolveEvent notifies listeners of a pre-resolved terminal status; it does
+// no network I/O.
+type resolveEvent struct {
+	listeners        []Listener
+	txID             string
+	status           fdriver.ValidationCode
+	tokenRequestHash []byte
+}
+
+func (e *resolveEvent) Process(ctx context.Context) error {
+	for _, l := range e.listeners {
+		l.OnStatus(ctx, e.txID, e.status, "", e.tokenRequestHash)
+	}
+
+	return nil
+}
+
+func (e *resolveEvent) String() string {
+	return fmt.Sprintf("resolveEvent[%s]", e.txID)
+}
+
+// chunkTxIDs splits ids into slices of at most size elements.
+func chunkTxIDs(ids []string, size int) [][]string {
+	if size <= 0 {
+		return [][]string{ids}
+	}
+	chunks := make([][]string, 0, (len(ids)+size-1)/size)
+	for i := 0; i < len(ids); i += size {
+		end := min(i+size, len(ids))
+		chunks = append(chunks, ids[i:end])
+	}
+
+	return chunks
 }
 
 // NSListenerManagerProvider is a provider for creating NSListenerManager instances.
@@ -347,6 +585,7 @@ type NSListenerManagerProvider struct {
 	QueryServiceProvider    QueryServiceProvider
 	ListenerManagerProvider ListenerManagerProvider
 	queue                   Queue
+	cfg                     ConfigGetter
 }
 
 // NewNotificationServiceBased creates a provider for NSListenerManager
@@ -355,11 +594,13 @@ func NewNotificationServiceBased(
 	queryServiceProvider QueryServiceProvider,
 	listenerManagerProvider ListenerManagerProvider,
 	queue Queue,
+	cfg ConfigGetter,
 ) finality.ListenerManagerProvider {
 	return &NSListenerManagerProvider{
 		QueryServiceProvider:    queryServiceProvider,
 		ListenerManagerProvider: listenerManagerProvider,
 		queue:                   queue,
+		cfg:                     cfg,
 	}
 }
 
@@ -376,7 +617,7 @@ func (n *NSListenerManagerProvider) NewManager(network, channel string) (finalit
 		return nil, errors.Wrapf(err, "failed getting query service")
 	}
 
-	return NewNSListenerManager(finalityManager, n.queue, qs, &keys.Translator{}), nil
+	return NewNSListenerManager(finalityManager, n.queue, qs, &keys.Translator{}, n.cfg), nil
 }
 
 // OnlyOnceListener ensures that the wrapped finality listener is notified
