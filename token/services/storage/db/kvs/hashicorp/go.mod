@@ -11,7 +11,7 @@ replace (
 require (
 	github.com/LFDT-Panurus/panurus v0.4.1-0.20250528165839-032fb9265504
 	github.com/hashicorp/vault/api v1.23.0
-	github.com/hyperledger-labs/fabric-smart-client v0.14.1-0.20260706081232-c0b840593f80
+	github.com/hyperledger-labs/fabric-smart-client v0.14.1-0.20260706081610-542bb1bb2350
 	github.com/hyperledger-labs/fabric-smart-client/integration v0.13.1-0.20260630083752-d97d0c5b6232
 	github.com/moby/moby/api v1.55.0
 	github.com/moby/moby/client v0.5.0
