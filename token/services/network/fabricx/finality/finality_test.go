@@ -560,6 +560,9 @@ func TestNSListenerManager_AddFinalityListener(t *testing.T) {
 	mockListener := &mock.Listener{}
 
 	mockQS.GetTransactionStatusReturns(int32(committerpb.Status_COMMITTED), nil)
+	mockQS.GetTransactionStatusesReturns(map[string]int32{
+		txID: int32(committerpb.Status_COMMITTED),
+	}, nil)
 	mockKT.CreateTokenRequestKeyReturns("key", nil)
 	mockQS.GetStatesReturns(map[cdriver.Namespace]map[cdriver.PKey]cdriver.VaultValue{
 		namespace: {"key": {Raw: []byte("hash")}},
@@ -605,6 +608,9 @@ func TestNSListenerManager_EnqueueErrorRetriesNextSweep(t *testing.T) {
 	mockListener := &mock.Listener{}
 
 	mockQS.GetTransactionStatusReturns(int32(committerpb.Status_COMMITTED), nil)
+	mockQS.GetTransactionStatusesReturns(map[string]int32{
+		txID: int32(committerpb.Status_COMMITTED),
+	}, nil)
 	mockKT.CreateTokenRequestKeyReturns("key", nil)
 	mockQS.GetStatesReturns(map[cdriver.Namespace]map[cdriver.PKey]cdriver.VaultValue{
 		namespace: {"key": {Raw: []byte("hash")}},
@@ -637,6 +643,9 @@ func TestNSListenerManager_MultipleListenersSameTx(t *testing.T) {
 	listener2 := &mock.Listener{}
 
 	mockQS.GetTransactionStatusReturns(int32(committerpb.Status_COMMITTED), nil)
+	mockQS.GetTransactionStatusesReturns(map[string]int32{
+		txID: int32(committerpb.Status_COMMITTED),
+	}, nil)
 	mockKT.CreateTokenRequestKeyReturns("key", nil)
 	mockQS.GetStatesReturns(map[cdriver.Namespace]map[cdriver.PKey]cdriver.VaultValue{
 		namespace: {"key": {Raw: []byte("hash")}},
@@ -687,6 +696,9 @@ func TestNSListenerManager_FallbackSkipsFailingTx(t *testing.T) {
 
 		return int32(committerpb.Status_COMMITTED), nil
 	})
+	mockQS.GetTransactionStatusesReturns(map[string]int32{
+		"txB": int32(committerpb.Status_COMMITTED),
+	}, nil)
 	mockKT.CreateTokenRequestKeyReturns("key", nil)
 	mockQS.GetStatesReturns(map[cdriver.Namespace]map[cdriver.PKey]cdriver.VaultValue{
 		namespace: {"key": {Raw: []byte("hash")}},
@@ -801,6 +813,9 @@ func resolveThroughPoller(t *testing.T, mockListener *mock.Listener) queue.Event
 	mockKT := &mock.KeyTranslator{}
 
 	mockQS.GetTransactionStatusReturns(int32(committerpb.Status_COMMITTED), nil)
+	mockQS.GetTransactionStatusesReturns(map[string]int32{
+		txID: int32(committerpb.Status_COMMITTED),
+	}, nil)
 	mockKT.CreateTokenRequestKeyReturns("key", nil)
 	mockQS.GetStatesReturns(map[cdriver.Namespace]map[cdriver.PKey]cdriver.VaultValue{
 		namespace: {"key": {Raw: []byte("hash")}},
