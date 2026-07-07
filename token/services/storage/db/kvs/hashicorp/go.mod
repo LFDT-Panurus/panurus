@@ -12,7 +12,7 @@ require (
 	github.com/LFDT-Panurus/panurus v0.4.1-0.20250528165839-032fb9265504
 	github.com/hashicorp/vault/api v1.23.0
 	github.com/hyperledger-labs/fabric-smart-client v0.14.1-0.20260707140709-6b102e43ab60
-	github.com/hyperledger-labs/fabric-smart-client/integration v0.13.1-0.20260630083752-d97d0c5b6232
+	github.com/hyperledger-labs/fabric-smart-client/integration v0.14.1-0.20260707140709-6b102e43ab60
 	github.com/moby/moby/api v1.55.0
 	github.com/moby/moby/client v0.5.0
 	github.com/stretchr/testify v1.11.1
