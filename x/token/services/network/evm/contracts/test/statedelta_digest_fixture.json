@@ -1,0 +1,40 @@
+{
+  "_comment": "Golden EIP-712 fixture produced by the Go eip712 package (Phase 1.4). The Solidity TokenState hashStruct/digest MUST reproduce the expected values in Phase 2. Keep in sync with x/token/services/network/evm/eip712/eip712_test.go.",
+  "domain": {
+    "name": "Panurus",
+    "version": "1",
+    "chainId": 1,
+    "verifyingContract": "0x1234567890123456789012345678901234567890"
+  },
+  "stateDelta": {
+    "anchor": "0x1111111111111111111111111111111111111111111111111111111111111111",
+    "spentRefs": [
+      "0x2121212121212121212121212121212121212121212121212121212121212121",
+      "0x2222222222222222222222222222222222222222222222222222222222222222"
+    ],
+    "outputs": [
+      {
+        "tokenID": "0x3131313131313131313131313131313131313131313131313131313131313131",
+        "snMarker": "0x3232323232323232323232323232323232323232323232323232323232323232",
+        "tokenData": "0x6f75742d30"
+      }
+    ],
+    "metadataKeys": [
+      "0x4141414141414141414141414141414141414141414141414141414141414141"
+    ],
+    "metadataVals": [
+      "0x6d6574612d30"
+    ],
+    "tokenRequestHash": "0x5151515151515151515151515151515151515151515151515151515151515151",
+    "publicParamsHash": "0x6161616161616161616161616161616161616161616161616161616161616161",
+    "publicParamsVersion": 3,
+    "isSetup": false,
+    "setupParameters": "0x"
+  },
+  "expected": {
+    "outputTokenTypeHash": "0x9ce134f0b91dfef3fdcab70824f54671fc844cbc57c8310ae4e027e6935afc2b",
+    "stateDeltaTypeHash": "0x09fd59eaff1424386ce5076c92a3e0c3556cce1c4c25a62c3331876f58a8e41f",
+    "domainSeparator": "0xc36531b9deae2efb80b130be2e33982d0d4bf31bf64f5a5b94c65fce64f9b5f7",
+    "digest": "0xc9326b72636896424aabe0039efef420df6cd18811b82db3237260110f39b64d"
+  }
+}
