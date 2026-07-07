@@ -53,6 +53,7 @@ func RunUnspentTokensIteratorByPreparedComparison(b *testing.B, store *TokenStor
 						break
 					}
 				}
+
 				return nil
 			},
 		)
@@ -91,6 +92,7 @@ func RunUnspentTokensIteratorByPreparedComparison(b *testing.B, store *TokenStor
 						break
 					}
 				}
+
 				return nil
 			},
 		)
