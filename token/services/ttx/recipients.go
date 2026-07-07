@@ -531,30 +531,9 @@ func (s *RespondRequestRecipientIdentityView) Call(context view.Context) (any, e
 			}
 		}
 
-		// Step 3: Never return requester-supplied data directly
-		// Fetch authentic audit info and metadata from our own wallet's identity provider
-		auditInfo, err := w.GetAuditInfo(context.Context(), suppliedIdentity)
-		if err != nil {
-			return nil, errors.Wrapf(err, "failed to retrieve audit info for identity [%s]", suppliedIdentity)
-		}
-
-		tokenMetadata, err := w.GetTokenMetadata(suppliedIdentity)
-		if err != nil {
-			return nil, errors.Wrapf(err, "failed to retrieve token metadata for identity [%s]", suppliedIdentity)
-		}
-
-		tokenMetadataAuditInfo, err := w.GetTokenMetadataAuditInfo(suppliedIdentity)
-		if err != nil {
-			return nil, errors.Wrapf(err, "failed to retrieve token metadata audit info for identity [%s]", suppliedIdentity)
-		}
-
-		// Step 4: Reconstruct RecipientData with verified fields from trusted sources
-		recipientData = &RecipientData{
-			Identity:               suppliedIdentity,
-			AuditInfo:              auditInfo,
-			TokenMetadata:          tokenMetadata,
-			TokenMetadataAuditInfo: tokenMetadataAuditInfo,
-		}
+		// Step 3: Never return any recipient data to the caller on the echo path.
+		// The caller supplied the identity; returning audit info or metadata would let
+		// an attacker extract sensitive wallet data by simply knowing an identity.
 		recipientIdentity = suppliedIdentity
 		isEcho = true
 
