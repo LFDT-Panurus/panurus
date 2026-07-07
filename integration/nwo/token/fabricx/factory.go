@@ -14,7 +14,8 @@ import (
 	"github.com/LFDT-Panurus/panurus/integration/token/fungible/views/fabricx/tmsdeploy"
 	"github.com/hyperledger-labs/fabric-smart-client/integration/nwo/api"
 	common2 "github.com/hyperledger-labs/fabric-smart-client/integration/nwo/common"
-	"github.com/hyperledger-labs/fabric-smart-client/integration/nwo/fabric/topology"
+	fabrictopology "github.com/hyperledger-labs/fabric-smart-client/integration/nwo/fabric/topology"
+	"github.com/hyperledger-labs/fabric-smart-client/integration/nwo/fabricx"
 	"github.com/onsi/gomega"
 )
 
@@ -28,7 +29,12 @@ type Backend struct {
 
 func (b *Backend) PrepareNamespace(tms *tokentopology.TMS) {
 	switch n := tms.BackendTopology.(type) {
-	case *topology.Topology:
+	case *fabrictopology.Topology:
+		orgs := fabric.GetOrgs(tms)
+		gomega.Expect(orgs).ToNot(gomega.BeEmpty(), "missing orgs for tms [%s:%s:%s:%s:%s]", tms.Network, tms.Channel, tms.Namespace, tms.Driver, tms.Alias)
+
+		n.AddNamespaceWithUnanimity(tms.Namespace, orgs...)
+	case *fabricx.Topology:
 		orgs := fabric.GetOrgs(tms)
 		gomega.Expect(orgs).ToNot(gomega.BeEmpty(), "missing orgs for tms [%s:%s:%s:%s:%s]", tms.Network, tms.Channel, tms.Namespace, tms.Driver, tms.Alias)
 
