@@ -3,8 +3,8 @@ FABRIC_VERSION ?= 3.1.4
 FABRIC_CA_VERSION ?= 1.5.7
 FABRIC_TWO_DIGIT_VERSION = $(shell echo $(FABRIC_VERSION) | cut -d '.' -f 1,2)
 
-FABRIC_X_TOOLS_VERSION ?= v0.0.17
-FABRIC_X_COMMITTER_VERSION ?= 1.0.0
+FABRIC_X_TOOLS_VERSION ?= v1.0.0
+FABRIC_X_COMMITTER_VERSION ?= 1.0.3
 
 # need to install fabric binaries outside of panuru's  tree for now (due to chaincode packaging issues)
 FABRIC_BINARY_BASE=$(PWD)/../fabric
@@ -287,3 +287,33 @@ protos-format: ## Run buf format to fix protobuf files
 protos:
 	@echo "Generating protobuf files..."
 	@buf generate
+
+.PHONY: update-dep
+update-dep:
+	@test -n "$(DEP)" || (echo "usage: make update-dep DEP=module/path VER=vX.Y.Z" && exit 1)
+	@test -n "$(VER)" || (echo "usage: make update-dep DEP=module/path VER=vX.Y.Z" && exit 1)
+	@find . -name go.mod -not -path '*/vendor/*' -exec bash -ec '\
+		for mod do \
+			dir=$$(dirname "$$mod"); \
+			cd "$$dir" || exit 1; \
+			if go list -m all | grep -q "^$(DEP) "; then \
+				echo "==> $$(pwd)"; \
+				go get "$(DEP)@$(VER)" || exit 1; \
+			fi; \
+			cd - >/dev/null || exit 1; \
+		done \
+	' bash {} +
+	@$(MAKE) tidy
+
+.PHONY: list-dep-modules
+list-dep-modules:
+	@test -n "$(DEP)" || (echo "usage: make list-dep-modules DEP=module/path" && exit 1)
+	@find . -name go.mod -not -path '*/vendor/*' | while read -r mod; do \
+		dir=$$(dirname "$$mod"); \
+		( \
+			cd "$$dir" || exit 1; \
+			if go list -m all | grep -q "^$(DEP) "; then \
+				echo "$$dir"; \
+			fi; \
+		); \
+	done

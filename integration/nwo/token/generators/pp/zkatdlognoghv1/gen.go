@@ -12,7 +12,7 @@ import (
 	"path/filepath"
 	"strconv"
 
-	msp "github.com/IBM/idemix"
+	"github.com/IBM/idemix/msp"
 	math3 "github.com/IBM/mathlib"
 	"github.com/LFDT-Panurus/panurus/integration/nwo/token/generators/crypto/zkatdlognoghv1"
 	"github.com/LFDT-Panurus/panurus/integration/nwo/token/topology"

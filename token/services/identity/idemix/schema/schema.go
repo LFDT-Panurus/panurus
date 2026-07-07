@@ -9,8 +9,8 @@ package schema
 import (
 	"fmt"
 
-	msp "github.com/IBM/idemix"
 	bccsp "github.com/IBM/idemix/bccsp/types"
+	"github.com/IBM/idemix/msp"
 )
 
 // How to create counterfeiters in case the corresponding code changes

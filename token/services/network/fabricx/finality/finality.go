@@ -54,6 +54,7 @@ type QueryService interface {
 	GetStates(map[cdriver.Namespace][]cdriver.PKey) (map[cdriver.Namespace]map[cdriver.PKey]cdriver.VaultValue, error)
 	// GetTransactionStatus returns the status of the given transaction
 	GetTransactionStatus(txID string) (int32, error)
+	GetTransactionStatuses(txIDs []string) (map[string]int32, error)
 	GetConfigTransaction() (*queryservice.ConfigTransactionInfo, error)
 }
 

@@ -31,7 +31,7 @@ import (
 	"github.com/hyperledger-labs/fabric-smart-client/integration"
 	"github.com/hyperledger-labs/fabric-smart-client/integration/nwo/common"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
-	"github.com/hyperledger-labs/fabric-smart-client/platform/common/services/logging"
+	fsclogging "github.com/hyperledger-labs/fabric-smart-client/platform/common/services/logging"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/common/utils/assert"
 	"github.com/onsi/gomega"
 )
@@ -981,9 +981,9 @@ func TestRevokeIdentity(network *integration.Infrastructure, auditorId string, s
 	rId := GetRevocationHandle(network, bob)
 	RevokeIdentity(network, auditor, rId)
 	// try to issue to bob
-	IssueCash(network, "", "USD", 22, bob, auditor, true, issuer, logging.SHA256Base64([]byte(rId)).String()+" Identity is in revoked state")
+	IssueCash(network, "", "USD", 22, bob, auditor, true, issuer, fsclogging.SHA256Base64([]byte(rId)).String()+" Identity is in revoked state")
 	// try to transfer to bob
-	TransferCash(network, alice, "", "USD", 22, bob, auditor, logging.SHA256Base64([]byte(rId)).String()+" Identity is in revoked state")
+	TransferCash(network, alice, "", "USD", 22, bob, auditor, fsclogging.SHA256Base64([]byte(rId)).String()+" Identity is in revoked state")
 	CheckBalanceAndHolding(network, alice, "", "USD", 110, auditor)
 	CheckBalanceAndHolding(network, bob, "", "USD", 0, auditor)
 	CheckBalanceAndHolding(network, bob, "bob.id1", "USD", 0, auditor)

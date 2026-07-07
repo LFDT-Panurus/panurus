@@ -11,7 +11,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/IBM/idemix"
+	idemixmsp "github.com/IBM/idemix/msp"
 	"github.com/LFDT-Panurus/panurus/token/core/common/encoding/json"
 	"github.com/LFDT-Panurus/panurus/token/services/identity/idemix/crypto/protos-go/config"
 	"github.com/LFDT-Panurus/panurus/token/services/utils"
@@ -72,7 +72,7 @@ func ReadFile(file string) ([]byte, error) {
 // NewConfig creates a new Idemix configuration by reading the issuer public key
 // and signer configuration from the specified directory.
 func NewConfig(dir string) (*Config, error) {
-	ipkBytes, err := ReadFile(filepath.Join(dir, idemix.IdemixConfigDirMsp, idemix.IdemixConfigFileIssuerPublicKey))
+	ipkBytes, err := ReadFile(filepath.Join(dir, idemixmsp.IdemixConfigDirMsp, idemixmsp.IdemixConfigFileIssuerPublicKey))
 	if err != nil {
 		return nil, errors.Wrapf(err, "failed to read issuer public key file")
 	}
@@ -113,11 +113,11 @@ func newConfigWithIPK(issuerPublicKey []byte, dir string, ignoreVerifyOnlyWallet
 
 // NewIdemixConfig returns the configuration for Idemix
 func NewIdemixConfig(issuerPublicKey []byte, dir string, ignoreVerifyOnlyWallet bool) (*Config, error) {
-	signerConfigPath := filepath.Join(dir, idemix.IdemixConfigDirUser, idemix.IdemixConfigFileSigner)
+	signerConfigPath := filepath.Join(dir, idemixmsp.IdemixConfigDirUser, idemixmsp.IdemixConfigFileSigner)
 	if ignoreVerifyOnlyWallet {
 		logger.Debugf("check the existence of SignerConfigFull")
 		// check if `SignerConfigFull` exists, if yes, use that file
-		path := filepath.Join(dir, idemix.IdemixConfigDirUser, SignerConfigFull)
+		path := filepath.Join(dir, idemixmsp.IdemixConfigDirUser, SignerConfigFull)
 		_, err := os.Stat(path)
 		if err == nil {
 			logger.Debugf("SignerConfigFull found, use it")
