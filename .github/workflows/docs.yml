@@ -4,6 +4,8 @@ on:
   push:
     branches:
       - main
+      - feature/evm-network-driver
+      - feature/zkat-snark-driver
     paths:
       - 'docs/**'
       - 'mkdocs.yml'
@@ -12,6 +14,8 @@ on:
   pull_request:
     branches:
       - main
+      - feature/evm-network-driver
+      - feature/zkat-snark-driver
     paths:
       - 'docs/**'
       - 'mkdocs.yml'
