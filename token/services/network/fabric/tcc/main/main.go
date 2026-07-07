@@ -14,8 +14,8 @@ import (
 	"github.com/LFDT-Panurus/panurus/token/core"
 	fabtoken "github.com/LFDT-Panurus/panurus/token/core/fabtoken/v1/driver"
 	dlog "github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/driver"
+	"github.com/LFDT-Panurus/panurus/token/services/logging"
 	"github.com/LFDT-Panurus/panurus/token/services/network/fabric/tcc"
-	"github.com/hyperledger-labs/fabric-smart-client/platform/common/services/logging"
 	"github.com/hyperledger/fabric-chaincode-go/v2/shim"
 )
 

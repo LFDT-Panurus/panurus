@@ -7,7 +7,7 @@ SPDX-License-Identifier: Apache-2.0
 package logging
 
 import (
-	"github.com/hyperledger-labs/fabric-smart-client/platform/common/services/logging"
+	"github.com/LFDT-Panurus/panurus/token/services/logging"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/common/utils"
 )
 
@@ -19,5 +19,5 @@ func MustGetLogger(params ...string) Logger {
 }
 
 func GetLogger(params ...string) (Logger, error) {
-	return logging.GetLoggerWithReplacements(map[string]string{"github.com.LFDT-Panurus.panurus.integration": "panurus"}, params)
+	return logging.GetLogger(params...)
 }

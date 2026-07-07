@@ -2,8 +2,6 @@ module github.com/LFDT-Panurus/panurus
 
 go 1.26.3
 
-replace github.com/hyperledger/fabric-x-common => github.com/adecaro/fabric-x-common v0.0.0-20260630082112-2edc33881189
-
 require (
 	github.com/DATA-DOG/go-sqlmock v1.5.2
 	github.com/IBM/idemix v0.1.1
@@ -15,7 +13,7 @@ require (
 	github.com/go-viper/mapstructure/v2 v2.5.0
 	github.com/google/pprof v0.0.0-20260604005048-7023385849c0
 	github.com/hashicorp/go-uuid v1.0.3
-	github.com/hyperledger-labs/fabric-smart-client v0.14.1-0.20260706120100-3054f879e409
+	github.com/hyperledger-labs/fabric-smart-client v0.14.1-0.20260707140709-6b102e43ab60
 	github.com/hyperledger/fabric-chaincode-go/v2 v2.3.0
 	github.com/hyperledger/fabric-lib-go v1.1.5-0.20260607181445-fc4b05c5d38f
 	github.com/hyperledger/fabric-protos-go-apiv2 v0.3.7

@@ -13,8 +13,8 @@ require (
 	github.com/IBM/mathlib v0.2.0
 	github.com/LFDT-Panurus/panurus v0.0.0
 	github.com/gin-gonic/gin v1.12.0
-	github.com/hyperledger-labs/fabric-smart-client v0.14.1-0.20260706120100-3054f879e409
-	github.com/hyperledger-labs/fabric-smart-client/integration v0.13.1-0.20260630083752-d97d0c5b6232
+	github.com/hyperledger-labs/fabric-smart-client v0.14.1-0.20260707140709-6b102e43ab60
+	github.com/hyperledger-labs/fabric-smart-client/integration v0.14.1-0.20260707140709-6b102e43ab60
 	github.com/hyperledger/fabric-lib-go v1.1.5-0.20260607181445-fc4b05c5d38f
 	github.com/onsi/ginkgo/v2 v2.32.0
 	github.com/onsi/gomega v1.42.1
