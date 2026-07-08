@@ -329,6 +329,7 @@ func TestAll(network *integration.Infrastructure, auditorId string, onRestart On
 	CheckAcceptedTransactions(network, alice, "", AliceAcceptedTransactions[:2], nil, nil, nil)
 	CheckAcceptedTransactions(network, alice, "", AliceAcceptedTransactions[:2], &t0, &t3, nil)
 	CheckAcceptedTransactions(network, alice, "", AliceAcceptedTransactions[1:2], &t2, &t3, nil)
+	CheckIssuerBalance(network, issuer, "", "USD", 120, 0, 120)
 
 	h := ListIssuerHistory(network, "", "USD", issuer)
 	gomega.Expect(h.Count()).To(gomega.BeNumerically(">", 0))
@@ -439,6 +440,7 @@ func TestAll(network *integration.Infrastructure, auditorId string, onRestart On
 	CheckAcceptedTransactions(network, bob, "", BobAcceptedTransactions[5:6], nil, nil, nil, ttxdb.Redeem)
 	CheckAcceptedTransactions(network, bob, "", BobAcceptedTransactions[5:6], nil, nil, []ttxdb.TxStatus{ttxdb.Confirmed}, ttxdb.Redeem)
 	CheckAuditedTransactions(network, auditor, AuditedTransactions[7:9], &t9, &t10)
+	CheckIssuerBalance(network, issuer, "", "USD", 120, 11, 109)
 
 	t11 := time.Now()
 	IssueCash(network, "", "USD", 10, bob, auditor, true, issuer)
