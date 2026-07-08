@@ -145,6 +145,18 @@ func (t *testIssuerWallet) HistoryTokens(ctx context.Context, opts *driver.ListT
 	return nil, errors.New("not implemented")
 }
 
+func (t *testIssuerWallet) IssuedBalance(ctx context.Context, opts *driver.IssuerBalanceOptions) (*big.Int, error) {
+	return nil, errors.New("not implemented")
+}
+
+func (t *testIssuerWallet) RedeemedBalance(ctx context.Context, opts *driver.IssuerBalanceOptions) (*big.Int, error) {
+	return nil, errors.New("not implemented")
+}
+
+func (t *testIssuerWallet) Balance(ctx context.Context, opts *driver.IssuerBalanceOptions) (*big.Int, error) {
+	return nil, errors.New("not implemented")
+}
+
 // testIdentityProvider is a minimal mock IdentityProvider for testing
 type testIdentityProvider struct {
 	ownerSigner driver.SigningIdentity

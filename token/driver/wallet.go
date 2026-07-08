@@ -9,6 +9,7 @@ package driver
 import (
 	"context"
 	"math/big"
+	"time"
 
 	"github.com/LFDT-Panurus/panurus/token/token"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/view"
@@ -139,6 +140,17 @@ type OwnerWallet interface {
 	Remote() bool
 }
 
+// IssuerBalanceOptions contains options that can be used to compute issuer balances
+// (issued and redeemed sums).
+type IssuerBalanceOptions struct {
+	// TokenType optionally restricts the sum to a single token type. An empty type means all types.
+	TokenType token.Type
+	// From, when set, restricts the sum to tokens recorded at or after this time.
+	From *time.Time
+	// To, when set, restricts the sum to tokens recorded at or before this time.
+	To *time.Time
+}
+
 // IssuerWallet models the wallet of an issuer
 //
 //go:generate counterfeiter -o mock/iw.go -fake-name IssuerWallet . IssuerWallet
@@ -151,6 +163,22 @@ type IssuerWallet interface {
 
 	// HistoryTokens returns the list of tokens issued by this wallet filtered using the passed options.
 	HistoryTokens(ctx context.Context, opts *ListTokensOptions) (*token.IssuedTokens, error)
+
+	// IssuedBalance returns the sum of the quantities of the tokens issued by this wallet,
+	// filtered using the passed options.
+	// The result is returned as a *big.Int to support arbitrary precision and prevent overflow.
+	IssuedBalance(ctx context.Context, opts *IssuerBalanceOptions) (*big.Int, error)
+
+	// RedeemedBalance returns the sum of the quantities of the tokens redeemed against this issuer,
+	// filtered using the passed options. A redeemed token is an empty-owner output in a transfer
+	// action signed by the issuer.
+	// The result is returned as a *big.Int to support arbitrary precision and prevent overflow.
+	RedeemedBalance(ctx context.Context, opts *IssuerBalanceOptions) (*big.Int, error)
+
+	// Balance returns the net issued supply of this wallet: IssuedBalance minus RedeemedBalance,
+	// filtered using the passed options.
+	// The result is returned as a *big.Int to support arbitrary precision and prevent overflow.
+	Balance(ctx context.Context, opts *IssuerBalanceOptions) (*big.Int, error)
 }
 
 // AuditorWallet models the wallet of an auditor

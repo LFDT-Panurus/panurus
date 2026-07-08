@@ -426,9 +426,40 @@ func (t *Service) Parse(
 
 	// parse the outputs
 	for _, output := range os.Outputs() {
-		// if this is a redeem, then skip
+		// if this is a redeem (empty owner), store it only if it was redeemed against
+		// an issuer known to this node; otherwise skip it.
 		if len(output.Token.Owner) == 0 {
 			logger.DebugfContext(ctx, "output [%s:%d] is a redeem", requestAnchor, output.Index)
+
+			issuer := output.Issuer
+			redeemedMine := !issuer.IsNone() && auth.Issued(ctx, issuer, &output.Token)
+			if !redeemedMine {
+				logger.DebugfContext(ctx, "transaction [%s], discarding redeem, issuer is not mine", requestAnchor)
+
+				continue
+			}
+
+			tta := TokenToAppend{
+				TxID:                  string(requestAnchor),
+				Index:                 output.Index,
+				Tok:                   &output.Token,
+				TokenOnLedger:         output.LedgerOutput,
+				TokenOnLedgerFormat:   output.LedgerOutputFormat,
+				TokenOnLedgerMetadata: output.LedgerOutputMetadata,
+				OwnerType:             "",
+				OwnerIdentity:         []byte{},
+				OwnerWalletID:         "",
+				Owners:                nil,
+				Issuer:                issuer,
+				Precision:             precision,
+				Flags: Flags{
+					Mine:     false,
+					Auditor:  auditorFlag,
+					Issuer:   true,
+					Redeemed: true,
+				},
+			}
+			toAppend = append(toAppend, tta)
 
 			continue
 		}

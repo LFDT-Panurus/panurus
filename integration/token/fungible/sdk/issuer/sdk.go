@@ -39,6 +39,7 @@ func (p *SDK) Install() error {
 			registry.RegisterFactory("balance", &views.BalanceViewFactory{}),
 			registry.RegisterFactory("historyIssuedToken", &views.ListIssuedTokensViewFactory{}),
 			registry.RegisterFactory("issuedTokenQuery", &views.ListIssuedTokensViewFactory{}),
+			registry.RegisterFactory("issuerBalance", &views.IssuerBalanceViewFactory{}),
 			registry.RegisterFactory("GetEnrollmentID", &views.GetEnrollmentIDViewFactory{}),
 			registry.RegisterFactory("acceptedTransactionHistory", &views.ListAcceptedTransactionsViewFactory{}),
 			registry.RegisterFactory("transactionInfo", &views.TransactionInfoViewFactory{}),

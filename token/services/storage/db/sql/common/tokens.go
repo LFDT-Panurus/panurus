@@ -616,12 +616,68 @@ func (db *TokenStore) ListAuditTokens(ctx context.Context, ids ...*token.ID) ([]
 	return tokens, nil
 }
 
+// IssuedBalance returns the sum of the amounts of the tokens issued by this node,
+// filtered by the passed options. Redeemed tokens are excluded.
+// The result is returned as a *big.Int to support arbitrary precision and prevent overflow.
+func (db *TokenStore) IssuedBalance(ctx context.Context, opts tdriver.IssuerBalanceQuery) (*big.Int, error) {
+	return db.issuerBalance(ctx, false, opts)
+}
+
+// RedeemedBalance returns the sum of the amounts of the tokens redeemed against an issuer
+// known to this node, filtered by the passed options.
+// The result is returned as a *big.Int to support arbitrary precision and prevent overflow.
+func (db *TokenStore) RedeemedBalance(ctx context.Context, opts tdriver.IssuerBalanceQuery) (*big.Int, error) {
+	return db.issuerBalance(ctx, true, opts)
+}
+
+// issuerBalance computes the SUM(amount) over the tokens issued by this node (issuer = true),
+// selecting redeemed or non-redeemed tokens according to the redeemed flag and applying the
+// optional token type and time-range filters.
+func (db *TokenStore) issuerBalance(ctx context.Context, redeemed bool, opts tdriver.IssuerBalanceQuery) (*big.Int, error) {
+	tokenTable := q.Table(db.table.Tokens)
+	conditions := []cond.Condition{
+		cond.Eq("issuer", true),
+		cond.Eq("redeemed", redeemed),
+		cond.Eq("is_deleted", false),
+	}
+	if len(opts.TokenType) != 0 {
+		conditions = append(conditions, cond.Eq("token_type", opts.TokenType))
+	}
+	if opts.From != nil {
+		conditions = append(conditions, cond.Gte("stored_at", *opts.From))
+	}
+	if opts.To != nil {
+		conditions = append(conditions, cond.Lte("stored_at", *opts.To))
+	}
+
+	query, args := q.Select().FieldsByName("SUM(amount)").
+		From(tokenTable).
+		Where(cond.And(conditions...)).
+		Format(db.ci)
+
+	logging.Debug(logger, query, args)
+	var sum BigInt
+	err := db.readDB.QueryRowContext(ctx, query, args...).Scan(&sum)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return big.NewInt(0), nil
+		}
+
+		return nil, err
+	}
+	if sum.Int == nil {
+		return big.NewInt(0), nil
+	}
+
+	return sum.Int, nil
+}
+
 // ListHistoryIssuedTokens returns the list of issued tokens
 func (db *TokenStore) ListHistoryIssuedTokens(ctx context.Context) (*token.IssuedTokens, error) {
 	query, args := q.Select().
 		FieldsByName("tx_id", "idx", "owner_raw", "token_type", "quantity", "issuer_raw").
 		From(q.Table(db.table.Tokens)).
-		Where(cond.Eq("issuer", true)).
+		Where(cond.And(cond.Eq("issuer", true), cond.Eq("redeemed", false))).
 		Format(db.ci)
 
 	logging.Debug(logger, query)
@@ -1265,6 +1321,7 @@ func (db *TokenStore) GetSchema() string {
 			owner BOOL NOT NULL DEFAULT false,
 			auditor BOOL NOT NULL DEFAULT false,
 			issuer BOOL NOT NULL DEFAULT false,
+			redeemed BOOL NOT NULL DEFAULT false,
 			spendable BOOL NOT NULL DEFAULT true,
 			PRIMARY KEY (tx_id, idx)
 		);
@@ -1483,8 +1540,8 @@ func (t *TokenTransaction) StoreToken(ctx context.Context, tr driver.TokenRecord
 
 	// Store token
 	query, args := q.InsertInto(t.table.Tokens).
-		Fields("tx_id", "idx", "issuer_raw", "owner_raw", "owner_type", "owner_identity", "owner_wallet_id", "ledger", "ledger_type", "ledger_metadata", "token_type", "quantity", "amount", "stored_at", "owner", "auditor", "issuer").
-		Row(tr.TxID, tr.Index, tr.IssuerRaw, tr.OwnerRaw, tr.OwnerType, tr.OwnerIdentity, tr.OwnerWalletID, tr.Ledger, tr.LedgerFormat, tr.LedgerMetadata, tr.Type, tr.Quantity, tr.Amount, time.Now().UTC(), tr.Owner, tr.Auditor, tr.Issuer).
+		Fields("tx_id", "idx", "issuer_raw", "owner_raw", "owner_type", "owner_identity", "owner_wallet_id", "ledger", "ledger_type", "ledger_metadata", "token_type", "quantity", "amount", "stored_at", "owner", "auditor", "issuer", "redeemed").
+		Row(tr.TxID, tr.Index, tr.IssuerRaw, tr.OwnerRaw, tr.OwnerType, tr.OwnerIdentity, tr.OwnerWalletID, tr.Ledger, tr.LedgerFormat, tr.LedgerMetadata, tr.Type, tr.Quantity, tr.Amount, time.Now().UTC(), tr.Owner, tr.Auditor, tr.Issuer, tr.Redeemed).
 		OnConflictDoNothing().
 		Format()
 	logging.Debug(logger, query, args)

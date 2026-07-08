@@ -155,6 +155,37 @@ func TestIssuerWallet(t *testing.T) {
 		_, err = w.HistoryTokens(t.Context(), &driver.ListTokensOptions{})
 		require.Error(t, err)
 	})
+
+	t.Run("Balances", func(t *testing.T) {
+		w, tv, _ := setup()
+
+		tv.IssuedBalanceReturns(big.NewInt(100), nil)
+		tv.RedeemedBalanceReturns(big.NewInt(30), nil)
+
+		issued, err := w.IssuedBalance(t.Context(), &driver.IssuerBalanceOptions{})
+		require.NoError(t, err)
+		assert.Equal(t, int64(100), issued.Int64())
+
+		redeemed, err := w.RedeemedBalance(t.Context(), &driver.IssuerBalanceOptions{TokenType: "T1"})
+		require.NoError(t, err)
+		assert.Equal(t, int64(30), redeemed.Int64())
+
+		// net balance = issued - redeemed = 70
+		net, err := w.Balance(t.Context(), &driver.IssuerBalanceOptions{})
+		require.NoError(t, err)
+		assert.Equal(t, int64(70), net.Int64())
+
+		// options are forwarded to the vault query
+		_, err = w.IssuedBalance(t.Context(), &driver.IssuerBalanceOptions{TokenType: "T2"})
+		require.NoError(t, err)
+		_, gotOpts := tv.IssuedBalanceArgsForCall(tv.IssuedBalanceCallCount() - 1)
+		assert.Equal(t, token.Type("T2"), gotOpts.TokenType)
+
+		// error propagation
+		tv.IssuedBalanceReturns(nil, errors.New("vault error"))
+		_, err = w.Balance(t.Context(), &driver.IssuerBalanceOptions{})
+		require.Error(t, err)
+	})
 }
 
 func TestLongTermOwnerWallet(t *testing.T) {

@@ -9,6 +9,7 @@ package driver
 import (
 	"context"
 	"math/big"
+	"time"
 
 	"github.com/LFDT-Panurus/panurus/token/token"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/common/utils/collections/iterators"
@@ -103,6 +104,25 @@ type QueryEngine interface {
 	// Balance calculates the total value of unspent tokens of a specific type owned by a wallet.
 	// The result is returned as a *big.Int to support arbitrary precision and prevent overflow.
 	Balance(ctx context.Context, id string, tokenType token.Type) (*big.Int, error)
+	// IssuedBalance returns the sum of the quantities of the tokens issued by this node,
+	// filtered by the passed options. The result is returned as a *big.Int to support
+	// arbitrary precision and prevent overflow.
+	IssuedBalance(ctx context.Context, opts IssuerBalanceQuery) (*big.Int, error)
+	// RedeemedBalance returns the sum of the quantities of the tokens redeemed against
+	// an issuer known to this node, filtered by the passed options. The result is
+	// returned as a *big.Int to support arbitrary precision and prevent overflow.
+	RedeemedBalance(ctx context.Context, opts IssuerBalanceQuery) (*big.Int, error)
+}
+
+// IssuerBalanceQuery defines the filtering options for computing issuer balances
+// (issued and redeemed sums) over the token store.
+type IssuerBalanceQuery struct {
+	// TokenType optionally restricts the sum to a single token type. An empty type means all types.
+	TokenType token.Type
+	// From, when set, restricts the sum to tokens stored at or after this time.
+	From *time.Time
+	// To, when set, restricts the sum to tokens stored at or before this time.
+	To *time.Time
 }
 
 //go:generate counterfeiter -o mock/token_vault.go -fake-name TokenVault . TokenVault

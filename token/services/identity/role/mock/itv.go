@@ -3,13 +3,29 @@ package mock
 
 import (
 	"context"
+	"math/big"
 	"sync"
 
+	"github.com/LFDT-Panurus/panurus/token/driver"
 	"github.com/LFDT-Panurus/panurus/token/services/identity/role"
 	"github.com/LFDT-Panurus/panurus/token/token"
 )
 
 type IssuerTokenVault struct {
+	IssuedBalanceStub        func(context.Context, driver.IssuerBalanceQuery) (*big.Int, error)
+	issuedBalanceMutex       sync.RWMutex
+	issuedBalanceArgsForCall []struct {
+		arg1 context.Context
+		arg2 driver.IssuerBalanceQuery
+	}
+	issuedBalanceReturns struct {
+		result1 *big.Int
+		result2 error
+	}
+	issuedBalanceReturnsOnCall map[int]struct {
+		result1 *big.Int
+		result2 error
+	}
 	ListHistoryIssuedTokensStub        func(context.Context) (*token.IssuedTokens, error)
 	listHistoryIssuedTokensMutex       sync.RWMutex
 	listHistoryIssuedTokensArgsForCall []struct {
@@ -23,8 +39,87 @@ type IssuerTokenVault struct {
 		result1 *token.IssuedTokens
 		result2 error
 	}
+	RedeemedBalanceStub        func(context.Context, driver.IssuerBalanceQuery) (*big.Int, error)
+	redeemedBalanceMutex       sync.RWMutex
+	redeemedBalanceArgsForCall []struct {
+		arg1 context.Context
+		arg2 driver.IssuerBalanceQuery
+	}
+	redeemedBalanceReturns struct {
+		result1 *big.Int
+		result2 error
+	}
+	redeemedBalanceReturnsOnCall map[int]struct {
+		result1 *big.Int
+		result2 error
+	}
 	invocations      map[string][][]interface{}
 	invocationsMutex sync.RWMutex
+}
+
+func (fake *IssuerTokenVault) IssuedBalance(arg1 context.Context, arg2 driver.IssuerBalanceQuery) (*big.Int, error) {
+	fake.issuedBalanceMutex.Lock()
+	ret, specificReturn := fake.issuedBalanceReturnsOnCall[len(fake.issuedBalanceArgsForCall)]
+	fake.issuedBalanceArgsForCall = append(fake.issuedBalanceArgsForCall, struct {
+		arg1 context.Context
+		arg2 driver.IssuerBalanceQuery
+	}{arg1, arg2})
+	stub := fake.IssuedBalanceStub
+	fakeReturns := fake.issuedBalanceReturns
+	fake.recordInvocation("IssuedBalance", []interface{}{arg1, arg2})
+	fake.issuedBalanceMutex.Unlock()
+	if stub != nil {
+		return stub(arg1, arg2)
+	}
+	if specificReturn {
+		return ret.result1, ret.result2
+	}
+	return fakeReturns.result1, fakeReturns.result2
+}
+
+func (fake *IssuerTokenVault) IssuedBalanceCallCount() int {
+	fake.issuedBalanceMutex.RLock()
+	defer fake.issuedBalanceMutex.RUnlock()
+	return len(fake.issuedBalanceArgsForCall)
+}
+
+func (fake *IssuerTokenVault) IssuedBalanceCalls(stub func(context.Context, driver.IssuerBalanceQuery) (*big.Int, error)) {
+	fake.issuedBalanceMutex.Lock()
+	defer fake.issuedBalanceMutex.Unlock()
+	fake.IssuedBalanceStub = stub
+}
+
+func (fake *IssuerTokenVault) IssuedBalanceArgsForCall(i int) (context.Context, driver.IssuerBalanceQuery) {
+	fake.issuedBalanceMutex.RLock()
+	defer fake.issuedBalanceMutex.RUnlock()
+	argsForCall := fake.issuedBalanceArgsForCall[i]
+	return argsForCall.arg1, argsForCall.arg2
+}
+
+func (fake *IssuerTokenVault) IssuedBalanceReturns(result1 *big.Int, result2 error) {
+	fake.issuedBalanceMutex.Lock()
+	defer fake.issuedBalanceMutex.Unlock()
+	fake.IssuedBalanceStub = nil
+	fake.issuedBalanceReturns = struct {
+		result1 *big.Int
+		result2 error
+	}{result1, result2}
+}
+
+func (fake *IssuerTokenVault) IssuedBalanceReturnsOnCall(i int, result1 *big.Int, result2 error) {
+	fake.issuedBalanceMutex.Lock()
+	defer fake.issuedBalanceMutex.Unlock()
+	fake.IssuedBalanceStub = nil
+	if fake.issuedBalanceReturnsOnCall == nil {
+		fake.issuedBalanceReturnsOnCall = make(map[int]struct {
+			result1 *big.Int
+			result2 error
+		})
+	}
+	fake.issuedBalanceReturnsOnCall[i] = struct {
+		result1 *big.Int
+		result2 error
+	}{result1, result2}
 }
 
 func (fake *IssuerTokenVault) ListHistoryIssuedTokens(arg1 context.Context) (*token.IssuedTokens, error) {
@@ -87,6 +182,71 @@ func (fake *IssuerTokenVault) ListHistoryIssuedTokensReturnsOnCall(i int, result
 	}
 	fake.listHistoryIssuedTokensReturnsOnCall[i] = struct {
 		result1 *token.IssuedTokens
+		result2 error
+	}{result1, result2}
+}
+
+func (fake *IssuerTokenVault) RedeemedBalance(arg1 context.Context, arg2 driver.IssuerBalanceQuery) (*big.Int, error) {
+	fake.redeemedBalanceMutex.Lock()
+	ret, specificReturn := fake.redeemedBalanceReturnsOnCall[len(fake.redeemedBalanceArgsForCall)]
+	fake.redeemedBalanceArgsForCall = append(fake.redeemedBalanceArgsForCall, struct {
+		arg1 context.Context
+		arg2 driver.IssuerBalanceQuery
+	}{arg1, arg2})
+	stub := fake.RedeemedBalanceStub
+	fakeReturns := fake.redeemedBalanceReturns
+	fake.recordInvocation("RedeemedBalance", []interface{}{arg1, arg2})
+	fake.redeemedBalanceMutex.Unlock()
+	if stub != nil {
+		return stub(arg1, arg2)
+	}
+	if specificReturn {
+		return ret.result1, ret.result2
+	}
+	return fakeReturns.result1, fakeReturns.result2
+}
+
+func (fake *IssuerTokenVault) RedeemedBalanceCallCount() int {
+	fake.redeemedBalanceMutex.RLock()
+	defer fake.redeemedBalanceMutex.RUnlock()
+	return len(fake.redeemedBalanceArgsForCall)
+}
+
+func (fake *IssuerTokenVault) RedeemedBalanceCalls(stub func(context.Context, driver.IssuerBalanceQuery) (*big.Int, error)) {
+	fake.redeemedBalanceMutex.Lock()
+	defer fake.redeemedBalanceMutex.Unlock()
+	fake.RedeemedBalanceStub = stub
+}
+
+func (fake *IssuerTokenVault) RedeemedBalanceArgsForCall(i int) (context.Context, driver.IssuerBalanceQuery) {
+	fake.redeemedBalanceMutex.RLock()
+	defer fake.redeemedBalanceMutex.RUnlock()
+	argsForCall := fake.redeemedBalanceArgsForCall[i]
+	return argsForCall.arg1, argsForCall.arg2
+}
+
+func (fake *IssuerTokenVault) RedeemedBalanceReturns(result1 *big.Int, result2 error) {
+	fake.redeemedBalanceMutex.Lock()
+	defer fake.redeemedBalanceMutex.Unlock()
+	fake.RedeemedBalanceStub = nil
+	fake.redeemedBalanceReturns = struct {
+		result1 *big.Int
+		result2 error
+	}{result1, result2}
+}
+
+func (fake *IssuerTokenVault) RedeemedBalanceReturnsOnCall(i int, result1 *big.Int, result2 error) {
+	fake.redeemedBalanceMutex.Lock()
+	defer fake.redeemedBalanceMutex.Unlock()
+	fake.RedeemedBalanceStub = nil
+	if fake.redeemedBalanceReturnsOnCall == nil {
+		fake.redeemedBalanceReturnsOnCall = make(map[int]struct {
+			result1 *big.Int
+			result2 error
+		})
+	}
+	fake.redeemedBalanceReturnsOnCall[i] = struct {
+		result1 *big.Int
 		result2 error
 	}{result1, result2}
 }

@@ -55,6 +55,8 @@ type TokenRecord struct {
 	Auditor bool
 	// Issuer issued to mark this token as issued by this node
 	Issuer bool
+	// Redeemed is used to mark this token as a redeem (empty owner) attributed to an issuer identity of this node
+	Redeemed bool
 }
 
 // TokenDetails provides details about an owned (spent or unspent) token
@@ -254,6 +256,13 @@ type TokenStore interface {
 	// Balance returns the sum of the amounts of the tokens with type and EID equal to those passed as arguments.
 	// The result is returned as a *big.Int to support arbitrary precision and prevent overflow.
 	Balance(ctx context.Context, ownerEID string, typ token.Type) (*big.Int, error)
+	// IssuedBalance returns the sum of the amounts of the tokens issued by this node, filtered by the passed options.
+	// The result is returned as a *big.Int to support arbitrary precision and prevent overflow.
+	IssuedBalance(ctx context.Context, opts driver.IssuerBalanceQuery) (*big.Int, error)
+	// RedeemedBalance returns the sum of the amounts of the tokens redeemed against an issuer known to this node,
+	// filtered by the passed options.
+	// The result is returned as a *big.Int to support arbitrary precision and prevent overflow.
+	RedeemedBalance(ctx context.Context, opts driver.IssuerBalanceQuery) (*big.Int, error)
 	// SetSupportedTokenFormats sets the supported token formats
 	SetSupportedTokenFormats(formats []token.Format) error
 	// Notifier returns a TokenNotifier for this store to subscribe to token changes.

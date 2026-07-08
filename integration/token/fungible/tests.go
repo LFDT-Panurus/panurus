@@ -446,6 +446,12 @@ func TestAll(network *integration.Infrastructure, auditorId string, onRestart On
 	CheckAuditedTransactions(network, auditor, AuditedTransactions[:10], &t0, &t12)
 	CheckSpending(network, bob, "", "USD", auditor, 11)
 
+	// Check the issuer's issued/redeemed/net balances for the default "" issuer wallet.
+	// So far the "" wallet has issued USD: 110 (to alice) + 10 (withdraw) + 10 (to bob) = 130,
+	// and 11 USD have been redeemed against this issuer (bob's redeem above),
+	// hence the net outstanding issued supply is 130 - 11 = 119.
+	CheckIssuerBalance(network, issuer, "", "USD", 130, 11, 119)
+
 	// test multi action transfer...
 	t13 := time.Now()
 	IssueCash(network, "", "LIRA", 3, alice, auditor, true, issuer)

@@ -14,20 +14,20 @@ type Validator struct {
 	setMinProtocolVersionArgsForCall []struct {
 		arg1 uint32
 	}
-	UnmarshalActionsStub        func([]byte) ([]interface{}, error)
+	UnmarshalActionsStub        func([]byte) ([]any, error)
 	unmarshalActionsMutex       sync.RWMutex
 	unmarshalActionsArgsForCall []struct {
 		arg1 []byte
 	}
 	unmarshalActionsReturns struct {
-		result1 []interface{}
+		result1 []any
 		result2 error
 	}
 	unmarshalActionsReturnsOnCall map[int]struct {
-		result1 []interface{}
+		result1 []any
 		result2 error
 	}
-	VerifyTokenRequestFromRawStub        func(context.Context, driver.GetStateFnc, driver.TokenRequestAnchor, []byte) ([]interface{}, driver.ValidationAttributes, error)
+	VerifyTokenRequestFromRawStub        func(context.Context, driver.GetStateFnc, driver.TokenRequestAnchor, []byte) ([]any, driver.ValidationAttributes, error)
 	verifyTokenRequestFromRawMutex       sync.RWMutex
 	verifyTokenRequestFromRawArgsForCall []struct {
 		arg1 context.Context
@@ -36,12 +36,12 @@ type Validator struct {
 		arg4 []byte
 	}
 	verifyTokenRequestFromRawReturns struct {
-		result1 []interface{}
+		result1 []any
 		result2 driver.ValidationAttributes
 		result3 error
 	}
 	verifyTokenRequestFromRawReturnsOnCall map[int]struct {
-		result1 []interface{}
+		result1 []any
 		result2 driver.ValidationAttributes
 		result3 error
 	}
@@ -81,7 +81,7 @@ func (fake *Validator) SetMinProtocolVersionArgsForCall(i int) uint32 {
 	return argsForCall.arg1
 }
 
-func (fake *Validator) UnmarshalActions(arg1 []byte) ([]interface{}, error) {
+func (fake *Validator) UnmarshalActions(arg1 []byte) ([]any, error) {
 	var arg1Copy []byte
 	if arg1 != nil {
 		arg1Copy = make([]byte, len(arg1))
@@ -111,7 +111,7 @@ func (fake *Validator) UnmarshalActionsCallCount() int {
 	return len(fake.unmarshalActionsArgsForCall)
 }
 
-func (fake *Validator) UnmarshalActionsCalls(stub func([]byte) ([]interface{}, error)) {
+func (fake *Validator) UnmarshalActionsCalls(stub func([]byte) ([]any, error)) {
 	fake.unmarshalActionsMutex.Lock()
 	defer fake.unmarshalActionsMutex.Unlock()
 	fake.UnmarshalActionsStub = stub
@@ -124,33 +124,33 @@ func (fake *Validator) UnmarshalActionsArgsForCall(i int) []byte {
 	return argsForCall.arg1
 }
 
-func (fake *Validator) UnmarshalActionsReturns(result1 []interface{}, result2 error) {
+func (fake *Validator) UnmarshalActionsReturns(result1 []any, result2 error) {
 	fake.unmarshalActionsMutex.Lock()
 	defer fake.unmarshalActionsMutex.Unlock()
 	fake.UnmarshalActionsStub = nil
 	fake.unmarshalActionsReturns = struct {
-		result1 []interface{}
+		result1 []any
 		result2 error
 	}{result1, result2}
 }
 
-func (fake *Validator) UnmarshalActionsReturnsOnCall(i int, result1 []interface{}, result2 error) {
+func (fake *Validator) UnmarshalActionsReturnsOnCall(i int, result1 []any, result2 error) {
 	fake.unmarshalActionsMutex.Lock()
 	defer fake.unmarshalActionsMutex.Unlock()
 	fake.UnmarshalActionsStub = nil
 	if fake.unmarshalActionsReturnsOnCall == nil {
 		fake.unmarshalActionsReturnsOnCall = make(map[int]struct {
-			result1 []interface{}
+			result1 []any
 			result2 error
 		})
 	}
 	fake.unmarshalActionsReturnsOnCall[i] = struct {
-		result1 []interface{}
+		result1 []any
 		result2 error
 	}{result1, result2}
 }
 
-func (fake *Validator) VerifyTokenRequestFromRaw(arg1 context.Context, arg2 driver.GetStateFnc, arg3 driver.TokenRequestAnchor, arg4 []byte) ([]interface{}, driver.ValidationAttributes, error) {
+func (fake *Validator) VerifyTokenRequestFromRaw(arg1 context.Context, arg2 driver.GetStateFnc, arg3 driver.TokenRequestAnchor, arg4 []byte) ([]any, driver.ValidationAttributes, error) {
 	var arg4Copy []byte
 	if arg4 != nil {
 		arg4Copy = make([]byte, len(arg4))
@@ -183,7 +183,7 @@ func (fake *Validator) VerifyTokenRequestFromRawCallCount() int {
 	return len(fake.verifyTokenRequestFromRawArgsForCall)
 }
 
-func (fake *Validator) VerifyTokenRequestFromRawCalls(stub func(context.Context, driver.GetStateFnc, driver.TokenRequestAnchor, []byte) ([]interface{}, driver.ValidationAttributes, error)) {
+func (fake *Validator) VerifyTokenRequestFromRawCalls(stub func(context.Context, driver.GetStateFnc, driver.TokenRequestAnchor, []byte) ([]any, driver.ValidationAttributes, error)) {
 	fake.verifyTokenRequestFromRawMutex.Lock()
 	defer fake.verifyTokenRequestFromRawMutex.Unlock()
 	fake.VerifyTokenRequestFromRawStub = stub
@@ -196,30 +196,30 @@ func (fake *Validator) VerifyTokenRequestFromRawArgsForCall(i int) (context.Cont
 	return argsForCall.arg1, argsForCall.arg2, argsForCall.arg3, argsForCall.arg4
 }
 
-func (fake *Validator) VerifyTokenRequestFromRawReturns(result1 []interface{}, result2 driver.ValidationAttributes, result3 error) {
+func (fake *Validator) VerifyTokenRequestFromRawReturns(result1 []any, result2 driver.ValidationAttributes, result3 error) {
 	fake.verifyTokenRequestFromRawMutex.Lock()
 	defer fake.verifyTokenRequestFromRawMutex.Unlock()
 	fake.VerifyTokenRequestFromRawStub = nil
 	fake.verifyTokenRequestFromRawReturns = struct {
-		result1 []interface{}
+		result1 []any
 		result2 driver.ValidationAttributes
 		result3 error
 	}{result1, result2, result3}
 }
 
-func (fake *Validator) VerifyTokenRequestFromRawReturnsOnCall(i int, result1 []interface{}, result2 driver.ValidationAttributes, result3 error) {
+func (fake *Validator) VerifyTokenRequestFromRawReturnsOnCall(i int, result1 []any, result2 driver.ValidationAttributes, result3 error) {
 	fake.verifyTokenRequestFromRawMutex.Lock()
 	defer fake.verifyTokenRequestFromRawMutex.Unlock()
 	fake.VerifyTokenRequestFromRawStub = nil
 	if fake.verifyTokenRequestFromRawReturnsOnCall == nil {
 		fake.verifyTokenRequestFromRawReturnsOnCall = make(map[int]struct {
-			result1 []interface{}
+			result1 []any
 			result2 driver.ValidationAttributes
 			result3 error
 		})
 	}
 	fake.verifyTokenRequestFromRawReturnsOnCall[i] = struct {
-		result1 []interface{}
+		result1 []any
 		result2 driver.ValidationAttributes
 		result3 error
 	}{result1, result2, result3}

@@ -31,6 +31,8 @@ type Flags struct {
 	Auditor bool
 	// Issuer is true if I issued this token.
 	Issuer bool
+	// Redeemed is true if this token is a redeem (empty owner) attributed to one of my issuer identities.
+	Redeemed bool
 }
 
 // DBStorage provides a high-level wrapper over TokenDB for managing token persistence.
@@ -181,13 +183,24 @@ func (t *DBTransaction) AppendToken(ctx context.Context, tta TokenToAppend) erro
 		return errors.Wrapf(err, "cannot covert [%s] with precision [%d]", tta.Tok.Quantity, tta.Precision)
 	}
 
+	// The owner_raw and owner_identity columns are NOT NULL. A redeem token carries an
+	// empty owner, so ensure these are non-nil to avoid violating the constraint.
+	ownerRaw := tta.Tok.Owner
+	if ownerRaw == nil {
+		ownerRaw = []byte{}
+	}
+	ownerIdentity := tta.OwnerIdentity
+	if ownerIdentity == nil {
+		ownerIdentity = []byte{}
+	}
+
 	err = t.Tx.StoreToken(ctx, tokendb.TokenRecord{
 		TxID:           tta.TxID,
 		Index:          tta.Index,
 		IssuerRaw:      tta.Issuer,
-		OwnerRaw:       tta.Tok.Owner,
+		OwnerRaw:       ownerRaw,
 		OwnerType:      tta.OwnerType,
-		OwnerIdentity:  tta.OwnerIdentity,
+		OwnerIdentity:  ownerIdentity,
 		OwnerWalletID:  tta.OwnerWalletID,
 		Ledger:         tta.TokenOnLedger,
 		LedgerFormat:   tta.TokenOnLedgerFormat,
@@ -198,6 +211,7 @@ func (t *DBTransaction) AppendToken(ctx context.Context, tta TokenToAppend) erro
 		Owner:          tta.Flags.Mine,
 		Auditor:        tta.Flags.Auditor,
 		Issuer:         tta.Flags.Issuer,
+		Redeemed:       tta.Flags.Redeemed,
 	}, tta.Owners)
 	if err != nil && !errors.HasCause(err, driver.UniqueKeyViolation) {
 		return errors.Wrapf(err, "cannot store token in db")

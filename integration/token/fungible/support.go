@@ -419,6 +419,28 @@ func ListIssuerHistoryForTMSID(network *integration.Infrastructure, wallet strin
 	return issuedTokens
 }
 
+// CheckIssuerBalance verifies the issued, redeemed, and net balances of the given issuer
+// wallet and token type on the issuer node.
+func CheckIssuerBalance(network *integration.Infrastructure, issuer *token3.NodeReference, wallet string, typ token.Type, expectedIssued, expectedRedeemed, expectedNet uint64) {
+	CheckIssuerBalanceForTMSID(network, issuer, wallet, typ, expectedIssued, expectedRedeemed, expectedNet, nil)
+}
+
+func CheckIssuerBalanceForTMSID(network *integration.Infrastructure, issuer *token3.NodeReference, wallet string, typ token.Type, expectedIssued, expectedRedeemed, expectedNet uint64, tmsId *token2.TMSID) {
+	res, err := network.Client(issuer.ReplicaName()).CallView("issuerBalance", common.JSONMarshall(&views.IssuerBalanceQuery{
+		Wallet:    wallet,
+		TokenType: typ,
+		TMSID:     tmsId,
+	}))
+	gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+	balance := &views.IssuerBalance{}
+	common.JSONUnmarshal(res.([]byte), balance)
+
+	gomega.Expect(balance.Issued).To(gomega.BeEquivalentTo(strconv.FormatUint(expectedIssued, 10)), "issued balance mismatch for [%s:%s]: got [%s], expected [%d]", wallet, typ, balance.Issued, expectedIssued)
+	gomega.Expect(balance.Redeemed).To(gomega.BeEquivalentTo(strconv.FormatUint(expectedRedeemed, 10)), "redeemed balance mismatch for [%s:%s]: got [%s], expected [%d]", wallet, typ, balance.Redeemed, expectedRedeemed)
+	gomega.Expect(balance.Net).To(gomega.BeEquivalentTo(strconv.FormatUint(expectedNet, 10)), "net balance mismatch for [%s:%s]: got [%s], expected [%d]", wallet, typ, balance.Net, expectedNet)
+}
+
 func ListUnspentTokens(network *integration.Infrastructure, id *token3.NodeReference, wallet string, typ token.Type) *token.UnspentTokens {
 	return ListUnspentTokensForTMSID(network, id, wallet, typ, nil)
 }

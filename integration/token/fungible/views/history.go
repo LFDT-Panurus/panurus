@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/LFDT-Panurus/panurus/token"
+	"github.com/LFDT-Panurus/panurus/token/driver"
 	"github.com/LFDT-Panurus/panurus/token/services/storage/db/sql/query/pagination"
 	"github.com/LFDT-Panurus/panurus/token/services/storage/ttxdb"
 	"github.com/LFDT-Panurus/panurus/token/services/ttx"
@@ -51,6 +52,68 @@ type ListIssuedTokensViewFactory struct{}
 func (i *ListIssuedTokensViewFactory) NewView(in []byte) (view.View, error) {
 	f := &ListIssuedTokensView{ListIssuedTokens: &ListIssuedTokens{}}
 	if err := json.Unmarshal(in, f.ListIssuedTokens); err != nil {
+		return nil, errors.Wrapf(err, "failed unmarshalling input")
+	}
+
+	return f, nil
+}
+
+// IssuerBalanceQuery contains the input to query the issued/redeemed/net balances of an issuer wallet.
+type IssuerBalanceQuery struct {
+	// Wallet is the issuer wallet whose balances are computed
+	Wallet string
+	// TokenType is the token type to select
+	TokenType token2.Type
+	// The TMS to pick in case of multiple TMSIDs
+	TMSID *token.TMSID
+}
+
+// IssuerBalance is the result of an IssuerBalanceQuery. Values are decimal strings.
+type IssuerBalance struct {
+	// Issued is the gross sum of the quantities issued by the wallet.
+	Issued string
+	// Redeemed is the gross sum of the quantities redeemed against the wallet's issuer.
+	Redeemed string
+	// Net is the net issued supply: Issued minus Redeemed.
+	Net string
+}
+
+type IssuerBalanceView struct {
+	*IssuerBalanceQuery
+}
+
+func (p *IssuerBalanceView) Call(context view.Context) (any, error) {
+	wallet := ttx.GetIssuerWallet(context, p.Wallet, ServiceOpts(p.TMSID)...)
+	if wallet == nil {
+		return nil, errors.Errorf("wallet [%s] not found", p.Wallet)
+	}
+
+	opts := &driver.IssuerBalanceOptions{TokenType: p.TokenType}
+	issued, err := wallet.IssuedBalance(context.Context(), opts)
+	if err != nil {
+		return nil, errors.Wrapf(err, "failed getting issued balance")
+	}
+	redeemed, err := wallet.RedeemedBalance(context.Context(), opts)
+	if err != nil {
+		return nil, errors.Wrapf(err, "failed getting redeemed balance")
+	}
+	net, err := wallet.Balance(context.Context(), opts)
+	if err != nil {
+		return nil, errors.Wrapf(err, "failed getting net balance")
+	}
+
+	return IssuerBalance{
+		Issued:   issued.String(),
+		Redeemed: redeemed.String(),
+		Net:      net.String(),
+	}, nil
+}
+
+type IssuerBalanceViewFactory struct{}
+
+func (i *IssuerBalanceViewFactory) NewView(in []byte) (view.View, error) {
+	f := &IssuerBalanceView{IssuerBalanceQuery: &IssuerBalanceQuery{}}
+	if err := json.Unmarshal(in, f.IssuerBalanceQuery); err != nil {
 		return nil, errors.Wrapf(err, "failed unmarshalling input")
 	}
 

@@ -766,6 +766,12 @@ func (r *Request) extractTransferOutputs(ctx context.Context, i int, counter uin
 		if err != nil {
 			return nil, 0, errors.Wrapf(err, "failed getting transfer action output in the clear [%d,%d]", i, j)
 		}
+		// For a redeem output (empty owner), the per-output metadata does not carry the
+		// issuer identity: it is only available at the transfer action level. Recover it
+		// so that downstream processing can attribute the redeem to its issuer.
+		if len(tok.Owner) == 0 && issuer.IsNone() {
+			issuer = transferAction.GetIssuer()
+		}
 		if len(recipients) == 0 {
 			// Add an empty recipient
 			recipients = append(recipients, Identity{})

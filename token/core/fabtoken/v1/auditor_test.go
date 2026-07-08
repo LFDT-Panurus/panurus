@@ -281,6 +281,14 @@ func (m *mockQueryEngine) Balance(ctx context.Context, id string, tokenType toke
 	return nil, nil
 }
 
+func (m *mockQueryEngine) IssuedBalance(ctx context.Context, opts driver.IssuerBalanceQuery) (*big.Int, error) {
+	return nil, nil
+}
+
+func (m *mockQueryEngine) RedeemedBalance(ctx context.Context, opts driver.IssuerBalanceQuery) (*big.Int, error) {
+	return nil, nil
+}
+
 func (m *mockQueryEngine) GetStatus(ctx context.Context, txID string) (int, string, error) {
 	return 0, "", nil
 }

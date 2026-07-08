@@ -117,6 +117,10 @@ func (w *AuditorWallet) GetSigner(ctx context.Context, identity Identity) (Signe
 //go:generate counterfeiter -o mock/itv.go -fake-name IssuerTokenVault . IssuerTokenVault
 type IssuerTokenVault interface {
 	ListHistoryIssuedTokens(context.Context) (*token.IssuedTokens, error)
+	// IssuedBalance returns the sum of the amounts of the tokens issued by this node, filtered by the passed options.
+	IssuedBalance(ctx context.Context, opts driver.IssuerBalanceQuery) (*big.Int, error)
+	// RedeemedBalance returns the sum of the amounts of the tokens redeemed against an issuer known to this node.
+	RedeemedBalance(ctx context.Context, opts driver.IssuerBalanceQuery) (*big.Int, error)
 }
 
 // IssuerWallet represents a wallet that manages a single issuer identity.
@@ -212,6 +216,61 @@ func (w *IssuerWallet) HistoryTokens(ctx context.Context, opts *driver.ListToken
 	w.Logger.DebugfContext(ctx, "issuer wallet [%s]: history tokens done, found [%d] issued tokens", w.ID(), len(unspentTokens.Tokens))
 
 	return unspentTokens, nil
+}
+
+// IssuedBalance returns the sum of the quantities of the tokens issued by this wallet,
+// filtered by the passed options. The result is returned as a *big.Int to support arbitrary
+// precision and prevent overflow.
+func (w *IssuerWallet) IssuedBalance(ctx context.Context, opts *driver.IssuerBalanceOptions) (*big.Int, error) {
+	balance, err := w.TokenVault.IssuedBalance(ctx, issuerBalanceQuery(opts))
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to compute issued balance")
+	}
+
+	return balance, nil
+}
+
+// RedeemedBalance returns the sum of the quantities of the tokens redeemed against this
+// issuer, filtered by the passed options. A redeemed token is an empty-owner output in a
+// transfer action signed by the issuer. The result is returned as a *big.Int to support
+// arbitrary precision and prevent overflow.
+func (w *IssuerWallet) RedeemedBalance(ctx context.Context, opts *driver.IssuerBalanceOptions) (*big.Int, error) {
+	balance, err := w.TokenVault.RedeemedBalance(ctx, issuerBalanceQuery(opts))
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to compute redeemed balance")
+	}
+
+	return balance, nil
+}
+
+// Balance returns the net issued supply of this wallet: IssuedBalance minus RedeemedBalance,
+// filtered by the passed options. The result is returned as a *big.Int to support arbitrary
+// precision and prevent overflow.
+func (w *IssuerWallet) Balance(ctx context.Context, opts *driver.IssuerBalanceOptions) (*big.Int, error) {
+	issued, err := w.IssuedBalance(ctx, opts)
+	if err != nil {
+		return nil, err
+	}
+	redeemed, err := w.RedeemedBalance(ctx, opts)
+	if err != nil {
+		return nil, err
+	}
+
+	return new(big.Int).Sub(issued, redeemed), nil
+}
+
+// issuerBalanceQuery converts the public IssuerBalanceOptions into the driver-level
+// IssuerBalanceQuery used by the token vault. A nil opts yields an empty query (all tokens).
+func issuerBalanceQuery(opts *driver.IssuerBalanceOptions) driver.IssuerBalanceQuery {
+	if opts == nil {
+		return driver.IssuerBalanceQuery{}
+	}
+
+	return driver.IssuerBalanceQuery{
+		TokenType: opts.TokenType,
+		From:      opts.From,
+		To:        opts.To,
+	}
 }
 
 // CertifierWallet represents a wallet bounded to a single certifier

@@ -70,6 +70,7 @@ var tokensCases = []struct {
 	{"GetTokenMetadata", TGetTokenInfos},
 	{"ListAuditTokens", TListAuditTokens},
 	{"ListIssuedTokens", TListIssuedTokens},
+	{"IssuerBalance", TIssuerBalance},
 	{"DeleteMultiple", TDeleteMultiple},
 	{"PublicParams", TPublicParams},
 	{"Certification", TCertification},
@@ -526,6 +527,95 @@ func TListIssuedTokens(t *testing.T, db TestTokenDB) {
 		assert.NotNil(t, token.Owner, "expected owner to not be nil")
 		assert.NotEmpty(t, token.Owner, "expected owner raw to not be empty")
 	}
+}
+
+// TIssuerBalance verifies that IssuedBalance and RedeemedBalance sum the amounts of the
+// issued and redeemed tokens respectively, honoring the token type filter, and that a
+// redeemed token (empty owner) can be stored and is excluded from the issued balance.
+func TIssuerBalance(t *testing.T, db TestTokenDB) {
+	t.Helper()
+	ctx := t.Context()
+
+	// two issued tokens of type ABC (amounts 10 and 20) and one of type DEF (amount 5)
+	issued := []struct {
+		txID   string
+		idx    uint64
+		typ    token.Type
+		amount uint64
+	}{
+		{"txi1", 0, ABC, 10},
+		{"txi2", 0, ABC, 20},
+		{"txi3", 0, "DEF", 5},
+	}
+	for _, i := range issued {
+		require.NoError(t, db.StoreToken(ctx, driver2.TokenRecord{
+			TxID:           i.txID,
+			Index:          i.idx,
+			OwnerRaw:       []byte{1, 2},
+			OwnerType:      "idemix",
+			OwnerIdentity:  []byte{},
+			OwnerWalletID:  "idemix",
+			IssuerRaw:      []byte{11, 12},
+			Ledger:         []byte("ledger"),
+			LedgerMetadata: []byte{},
+			Quantity:       fmt.Sprintf("0x%02x", i.amount),
+			Type:           i.typ,
+			Amount:         i.amount,
+			Owner:          false,
+			Auditor:        false,
+			Issuer:         true,
+			Redeemed:       false,
+		}, nil))
+	}
+
+	// two redeemed tokens of type ABC (amounts 3 and 4): empty owner, issuer=true, redeemed=true
+	redeemed := []struct {
+		txID   string
+		amount uint64
+	}{
+		{"txr1", 3},
+		{"txr2", 4},
+	}
+	for _, r := range redeemed {
+		require.NoError(t, db.StoreToken(ctx, driver2.TokenRecord{
+			TxID:           r.txID,
+			Index:          0,
+			OwnerRaw:       []byte{},
+			OwnerType:      "",
+			OwnerIdentity:  []byte{},
+			OwnerWalletID:  "",
+			IssuerRaw:      []byte{11, 12},
+			Ledger:         []byte("ledger"),
+			LedgerMetadata: []byte{},
+			Quantity:       fmt.Sprintf("0x%02x", r.amount),
+			Type:           ABC,
+			Amount:         r.amount,
+			Owner:          false,
+			Auditor:        false,
+			Issuer:         true,
+			Redeemed:       true,
+		}, nil))
+	}
+
+	// issued balance across all types = 10 + 20 + 5 = 35
+	issuedBalance, err := db.IssuedBalance(ctx, tdriver.IssuerBalanceQuery{})
+	require.NoError(t, err)
+	assert.Equal(t, int64(35), issuedBalance.Int64())
+
+	// issued balance for ABC = 10 + 20 = 30
+	issuedABC, err := db.IssuedBalance(ctx, tdriver.IssuerBalanceQuery{TokenType: ABC})
+	require.NoError(t, err)
+	assert.Equal(t, int64(30), issuedABC.Int64())
+
+	// redeemed balance across all types = 3 + 4 = 7
+	redeemedBalance, err := db.RedeemedBalance(ctx, tdriver.IssuerBalanceQuery{})
+	require.NoError(t, err)
+	assert.Equal(t, int64(7), redeemedBalance.Int64())
+
+	// redeemed balance for DEF = 0 (no redeems of that type)
+	redeemedDEF, err := db.RedeemedBalance(ctx, tdriver.IssuerBalanceQuery{TokenType: "DEF"})
+	require.NoError(t, err)
+	assert.Equal(t, int64(0), redeemedDEF.Int64())
 }
 
 // GetTokenMetadata retrieves the token information for the passed ids.
