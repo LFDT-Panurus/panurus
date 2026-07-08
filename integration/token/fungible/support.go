@@ -144,7 +144,7 @@ func issueCashForTMSID(
 	if len(expectedErrorMsgs) == 0 {
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		txID := common.JSONUnmarshalString(txIDBoxed)
-		for _, n := range []*token3.NodeReference{receiver, auditor} {
+		for _, n := range []*token3.NodeReference{receiver, auditor, issuer} {
 			common2.CheckFinality(network, n, txID, tmsId, false)
 		}
 		// Perform this check only if there is a fabric network

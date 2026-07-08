@@ -316,6 +316,7 @@ func TestAll(network *integration.Infrastructure, auditorId string, onRestart On
 	CheckAcceptedTransactions(network, alice, "", AliceAcceptedTransactions[:1], nil, nil, []ttxdb.TxStatus{ttxdb.Confirmed}, ttxdb.Issue)
 	CheckAcceptedTransactions(network, alice, "", AliceAcceptedTransactions[:1], nil, nil, nil)
 	CheckAcceptedTransactions(network, alice, "", AliceAcceptedTransactions[:1], &t0, &t1, nil)
+	CheckIssuerBalance(network, issuer, "", "USD", 110, 0, 110)
 
 	t2 := time.Now()
 	Withdraw(network, nil, false, alice, "", "USD", 10, auditor, issuer)
