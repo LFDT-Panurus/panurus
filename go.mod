@@ -4,8 +4,8 @@ go 1.26.3
 
 require (
 	github.com/DATA-DOG/go-sqlmock v1.5.2
-	github.com/IBM/idemix v0.1.1
-	github.com/IBM/mathlib v0.2.0
+	github.com/IBM/idemix v0.1.2-0.20260708054707-cc900f24a95b
+	github.com/IBM/mathlib v0.2.1-0.20260708043658-e8f8fcd199a4
 	github.com/consensys/gnark-crypto v0.20.1
 	github.com/dgraph-io/badger/v4 v4.9.2
 	github.com/dgraph-io/ristretto/v2 v2.4.0
@@ -74,7 +74,6 @@ require (
 	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect
 	github.com/jackc/puddle/v2 v2.2.2 // indirect
 	github.com/jonboulle/clockwork v0.5.0 // indirect
-	github.com/kilic/bls12-381 v0.1.0 // indirect
 	github.com/klauspost/compress v1.18.0 // indirect
 	github.com/knadh/koanf/maps v0.1.2 // indirect
 	github.com/knadh/koanf/parsers/yaml v1.1.0 // indirect

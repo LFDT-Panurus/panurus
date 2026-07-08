@@ -15,8 +15,8 @@ require (
 
 require (
 	github.com/DATA-DOG/go-sqlmock v1.5.2 // indirect
-	github.com/IBM/idemix v0.1.1 // indirect
-	github.com/IBM/mathlib v0.2.0 // indirect
+	github.com/IBM/idemix v0.1.2-0.20260708054707-cc900f24a95b // indirect
+	github.com/IBM/mathlib v0.2.1-0.20260708043658-e8f8fcd199a4 // indirect
 	github.com/Masterminds/squirrel v1.5.4 // indirect
 	github.com/Microsoft/go-winio v0.6.2 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
@@ -54,7 +54,6 @@ require (
 	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect
 	github.com/jackc/pgxlisten v0.0.0-20250802141604-12b92425684c // indirect
 	github.com/jackc/puddle/v2 v2.2.2 // indirect
-	github.com/kilic/bls12-381 v0.1.0 // indirect
 	github.com/knadh/koanf/maps v0.1.2 // indirect
 	github.com/knadh/koanf/parsers/yaml v1.1.0 // indirect
 	github.com/knadh/koanf/providers/env/v2 v2.0.0 // indirect

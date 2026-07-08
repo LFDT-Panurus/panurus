@@ -13,8 +13,8 @@ replace (
 )
 
 require (
-	github.com/IBM/idemix v0.1.1
-	github.com/IBM/mathlib v0.2.0
+	github.com/IBM/idemix v0.1.2-0.20260708054707-cc900f24a95b
+	github.com/IBM/mathlib v0.2.1-0.20260708043658-e8f8fcd199a4
 	github.com/LFDT-Panurus/panurus v0.10.1
 	github.com/LFDT-Panurus/panurus/integration v0.0.0
 	github.com/hyperledger-labs/fabric-smart-client v0.14.1
@@ -69,7 +69,6 @@ require (
 	github.com/jackc/pgx/v5 v5.10.0 // indirect
 	github.com/jackc/pgxlisten v0.0.0-20250802141604-12b92425684c // indirect
 	github.com/jackc/puddle/v2 v2.2.2 // indirect
-	github.com/kilic/bls12-381 v0.1.0 // indirect
 	github.com/knadh/koanf/maps v0.1.2 // indirect
 	github.com/knadh/koanf/parsers/yaml v1.1.0 // indirect
 	github.com/knadh/koanf/providers/env/v2 v2.0.0 // indirect
