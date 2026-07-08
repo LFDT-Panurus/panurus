@@ -616,6 +616,14 @@ func TIssuerBalance(t *testing.T, db TestTokenDB) {
 	redeemedDEF, err := db.RedeemedBalance(ctx, tdriver.IssuerBalanceQuery{TokenType: "DEF"})
 	require.NoError(t, err)
 	assert.Equal(t, int64(0), redeemedDEF.Int64())
+
+	// Simulate a node that is both issuer and auditor: when a token is spent (transferred/redeemed),
+	// DeleteTokens marks the issuer's record is_deleted=true. IssuedBalance must still count it —
+	// issued balance is a permanent historical sum, not an unspent balance.
+	require.NoError(t, db.DeleteTokens(ctx, "spender", &token.ID{TxId: "txi1", Index: 0}))
+	issuedAfterDelete, err := db.IssuedBalance(ctx, tdriver.IssuerBalanceQuery{TokenType: ABC})
+	require.NoError(t, err)
+	assert.Equal(t, int64(30), issuedAfterDelete.Int64(), "issued balance must not drop when an issued token is spent")
 }
 
 // GetTokenMetadata retrieves the token information for the passed ids.

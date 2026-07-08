@@ -633,12 +633,16 @@ func (db *TokenStore) RedeemedBalance(ctx context.Context, opts tdriver.IssuerBa
 // issuerBalance computes the SUM(amount) over the tokens issued by this node (issuer = true),
 // selecting redeemed or non-redeemed tokens according to the redeemed flag and applying the
 // optional token type and time-range filters.
+// Note: is_deleted is intentionally not filtered here. Issued tokens are a permanent historical
+// record — tokens that were subsequently spent (transferred or redeemed) still count toward the
+// gross issued balance. Filtering by is_deleted would cause the count to drop when the issuer
+// node also acts as the auditor, because DeleteTokens marks issuer-flagged rows deleted when
+// their corresponding inputs are spent.
 func (db *TokenStore) issuerBalance(ctx context.Context, redeemed bool, opts tdriver.IssuerBalanceQuery) (*big.Int, error) {
 	tokenTable := q.Table(db.table.Tokens)
 	conditions := []cond.Condition{
 		cond.Eq("issuer", true),
 		cond.Eq("redeemed", redeemed),
-		cond.Eq("is_deleted", false),
 	}
 	if len(opts.TokenType) != 0 {
 		conditions = append(conditions, cond.Eq("token_type", opts.TokenType))
