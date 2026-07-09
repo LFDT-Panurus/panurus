@@ -14,6 +14,19 @@ FAB_BINS ?= $(FABRIC_BINARY_BASE)/bin
 GINKGO_TEST_OPTS ?=
 GINKGO_TEST_OPTS += --keep-going -cover
 
+# Coverage scope for integration tests.
+#
+# Integration tests run cover-instrumented FSC node binaries whose generated main
+# package lives in the `integration` module (see integration/go.mod). `go build -cover`
+# defaults -coverpkg to "packages in the main Go module", so without an explicit
+# -coverpkg the main-module (`token/...`) packages are NOT instrumented and their
+# end-to-end coverage is lost from the report. FSC's builder forwards the environment
+# to `go build`, so exporting GOFLAGS with a targeted -coverpkg restores it.
+COVERPKG ?= github.com/LFDT-Panurus/panurus/...
+ifdef GOCOVERDIR
+export GOFLAGS := -coverpkg=$(COVERPKG)
+endif
+
 TOP = .
 
 # include the checks target
