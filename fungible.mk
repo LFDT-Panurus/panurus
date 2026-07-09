@@ -56,11 +56,11 @@ integration-tests-dlog-fabric-t13:
 
 .PHONY: integration-tests-dlog-fabric
 integration-tests-dlog-fabric:
-	cd ./integration/token/fungible/dlog; export FAB_BINS=$(FAB_BINS); ginkgo $(GINKGO_TEST_OPTS) --label-filter="$(TEST_FILTER)" . $(GINKGO_COVER_ARGS)
+	cd ./integration/token/fungible/dlog; export FAB_BINS=$(FAB_BINS); ginkgo $(GINKGO_TEST_OPTS) --label-filter="$(TEST_FILTER)" .
 
 .PHONY: integration-tests-fabtoken-dlog-fabric
 integration-tests-fabtoken-dlog-fabric:
-	cd ./integration/token/fungible/mixed; export FAB_BINS=$(FAB_BINS); ginkgo $(GINKGO_TEST_OPTS) . $(GINKGO_COVER_ARGS)
+	cd ./integration/token/fungible/mixed; export FAB_BINS=$(FAB_BINS); ginkgo $(GINKGO_TEST_OPTS) .
 
 .PHONY: integration-tests-dloghsm-fabric-t1
 integration-tests-dloghsm-fabric-t1:
@@ -75,7 +75,7 @@ integration-tests-dloghsm-fabric: install-softhsm
 	@echo "Setup SoftHSM"
 	@./ci/scripts/setup_softhsm.sh
 	@echo "Start Integration Test"
-	cd ./integration/token/fungible/dloghsm; export FAB_BINS=$(FAB_BINS); ginkgo $(GINKGO_TEST_OPTS) --tags pkcs11 --label-filter="$(TEST_FILTER)" . $(GINKGO_COVER_ARGS)
+	cd ./integration/token/fungible/dloghsm; export FAB_BINS=$(FAB_BINS); ginkgo $(GINKGO_TEST_OPTS) --tags pkcs11 --label-filter="$(TEST_FILTER)" .
 
 .PHONY: integration-tests-fabtoken-fabric-t1
 integration-tests-fabtoken-fabric-t1:
@@ -99,7 +99,7 @@ integration-tests-fabtoken-fabric-t5:
 
 .PHONY: integration-tests-fabtoken-fabric
 integration-tests-fabtoken-fabric:
-	cd ./integration/token/fungible/fabtoken; export FAB_BINS=$(FAB_BINS); ginkgo $(GINKGO_TEST_OPTS) --tags pkcs11 --label-filter="$(TEST_FILTER)" . $(GINKGO_COVER_ARGS)
+	cd ./integration/token/fungible/fabtoken; export FAB_BINS=$(FAB_BINS); ginkgo $(GINKGO_TEST_OPTS) --tags pkcs11 --label-filter="$(TEST_FILTER)" .
 
 .PHONY: integration-tests-update-t1
 integration-tests-update-t1:
@@ -115,7 +115,7 @@ integration-tests-update-t3:
 
 .PHONY: integration-tests-update
 integration-tests-update:
-	cd ./integration/token/fungible/update; export FAB_BINS=$(FAB_BINS); ginkgo $(GINKGO_TEST_OPTS) --label-filter="$(TEST_FILTER)" . $(GINKGO_COVER_ARGS)
+	cd ./integration/token/fungible/update; export FAB_BINS=$(FAB_BINS); ginkgo $(GINKGO_TEST_OPTS) --label-filter="$(TEST_FILTER)" .
 
 .PHONY: integration-tests-dlogstress-t1
 integration-tests-dlogstress-t1:
@@ -127,4 +127,4 @@ integration-tests-dlogstress-t2:
 
 .PHONY: integration-tests-dlogstress
 integration-tests-dlogstress:
-	cd ./integration/token/fungible/dlogstress; export FAB_BINS=$(FAB_BINS); ginkgo $(GINKGO_TEST_OPTS) --label-filter="$(TEST_FILTER)" . $(GINKGO_COVER_ARGS)
+	cd ./integration/token/fungible/dlogstress; export FAB_BINS=$(FAB_BINS); ginkgo $(GINKGO_TEST_OPTS) --label-filter="$(TEST_FILTER)" .

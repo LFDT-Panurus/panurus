@@ -12,17 +12,7 @@ FAB_BINS ?= $(FABRIC_BINARY_BASE)/bin
 
 # integration test options
 GINKGO_TEST_OPTS ?=
-# Instrument the root module so coverage is attributed to its packages.
-GINKGO_TEST_OPTS += --keep-going -cover -coverpkg=github.com/LFDT-Panurus/panurus/...
-
-# Forward GOCOVERDIR to the compiled test binaries as -test.gocoverdir. Setting
-# the GOCOVERDIR environment variable alone has no effect on `go test`/ginkgo
-# binaries — only this flag makes them emit binary coverage data into the dir
-# that CI later runs `go tool covdata textfmt` over. Must come after the package
-# spec (ginkgo forwards everything past `--` to the test binary), and expands to
-# nothing when GOCOVERDIR is unset (e.g. local runs). GOCOVERDIR must be absolute
-# because the recipes cd into the suite directory before invoking ginkgo.
-GINKGO_COVER_ARGS := $(if $(GOCOVERDIR),-- -test.gocoverdir=$(GOCOVERDIR))
+GINKGO_TEST_OPTS += --keep-going -cover
 
 TOP = .
 
@@ -67,13 +57,13 @@ unit-tests:
 .PHONY: unit-tests-race
 # run unit tests with race detection
 unit-tests-race:
-	@export GORACE=history_size=7; go test -race -coverpkg=./... -coverprofile=profile.cov $(shell go list ./... | grep -v '/integration/'  | grep -v 'regression')
+	@export GORACE=history_size=7; go test -race -cover $(shell go list ./... | grep -v '/integration/'  | grep -v 'regression')
 	cd integration/nwo/; go test -cover ./...
 
 .PHONY: unit-tests-regression
 # run regression unit tests
 unit-tests-regression:
-	@go test -race -timeout 0 -coverpkg=./... -coverprofile=profile.cov $(shell go list ./... | grep -v '/integration/' | grep 'regression')
+	@go test -race -timeout 0 -cover $(shell go list ./... | grep -v '/integration/' | grep 'regression')
 
 .PHONY: install-softhsm
 # install softhsm for testing
@@ -111,22 +101,22 @@ monitoring-docker-images:
 .PHONY: integration-tests-nft-dlog
 # run nft integration tests with idemix
 integration-tests-nft-dlog:
-	cd ./integration/token/nft/dlog; export FAB_BINS=$(FAB_BINS); ginkgo $(GINKGO_TEST_OPTS) . $(GINKGO_COVER_ARGS)
+	cd ./integration/token/nft/dlog; export FAB_BINS=$(FAB_BINS); ginkgo $(GINKGO_TEST_OPTS) .
 
 .PHONY: integration-tests-nft-fabtoken
 # run nft integration tests with fabtoken
 integration-tests-nft-fabtoken:
-	cd ./integration/token/nft/fabtoken; export FAB_BINS=$(FAB_BINS); ginkgo $(GINKGO_TEST_OPTS) . $(GINKGO_COVER_ARGS)
+	cd ./integration/token/nft/fabtoken; export FAB_BINS=$(FAB_BINS); ginkgo $(GINKGO_TEST_OPTS) .
 
 .PHONY: integration-tests-dvp-fabtoken
 # run dvp integration tests with fabtoken
 integration-tests-dvp-fabtoken:
-	cd ./integration/token/dvp/fabtoken; export FAB_BINS=$(FAB_BINS); ginkgo $(GINKGO_TEST_OPTS) . $(GINKGO_COVER_ARGS)
+	cd ./integration/token/dvp/fabtoken; export FAB_BINS=$(FAB_BINS); ginkgo $(GINKGO_TEST_OPTS) .
 
 .PHONY: integration-tests-dvp-dlog
 # run dvp integration tests with idemix
 integration-tests-dvp-dlog:
-	cd ./integration/token/dvp/dlog; export FAB_BINS=$(FAB_BINS); ginkgo $(GINKGO_TEST_OPTS) . $(GINKGO_COVER_ARGS)
+	cd ./integration/token/dvp/dlog; export FAB_BINS=$(FAB_BINS); ginkgo $(GINKGO_TEST_OPTS) .
 
 
 .PHONY: tidy
