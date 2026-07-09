@@ -13,9 +13,10 @@ Implement an Approach-2 EVM network driver (`token/services/network/driver.Netwo
 gateway-`isPending` finality, on branch `feature/evm-network-driver`. Correctness parity with FabricX,
 validated by NWO integration tests.
 
-## Timeline: ~8 weeks — REAL driver against fabric-x-evm (not an anvil demo)
+## Timeline: ~8 weeks — REAL driver against Besu (not an anvil demo)
 
-Acceptance backend = fabric-x-evm (anvil/forge = inner loop only). Target 6 wks, ceiling ~8 with buffer.
+Acceptance backend = **Besu** (Angelo, 2026-07-08; anvil/forge = inner loop only). fabric-x-evm + gateway
+isPending = stretch, only if time remains. Target 6 wks, ceiling ~8 with buffer.
 
 - [x] Week 1 — Freeze foundation + registered skeleton (4 sub-phases; detail in the plan) — FROZEN:
   - [x] 1.1 Scaffolding + deps + crypto primitives (keccak/sha256, local Address/Hash, no go-ethereum) — build+tests green
@@ -25,9 +26,9 @@ Acceptance backend = fabric-x-evm (anvil/forge = inner loop only). Target 6 wks,
 - [ ] Week 2 — Smart contracts (forge); Go↔Solidity signature vector gate
 - [ ] Week 3 — StateDelta translator + EIP-712 secp256k1 signer
 - [ ] Week 4 — Endorsement (responder/initiator/provider/registry)
-- [ ] Week 5 — Driver + 19 network methods + JSON-RPC client + DI + receipt-finality baseline
-- [ ] Week 6 — fabric-x-evm NWO bootstrap + fabtoken END-TO-END on fabric-x-evm
-- [ ] Week 7 — gateway isPending finality + endorsed PP-update + zkatdlog END-TO-END
+- [ ] Week 5 — Driver + 16 network methods + JSON-RPC client + DI + receipt-finality baseline
+- [ ] Week 6 — Besu NWO bootstrap + admin runbook + fabtoken END-TO-END on Besu
+- [ ] Week 7 — endorsed PP-update + zkatdlog END-TO-END + recipient anchor→finality (stretch: fabric-x-evm + isPending)
 - [ ] Week 8 — hardening + full integration matrix + metrics + buffer
 
 Deferred (additive future scope, not demo cuts): EIP-1167 clones, ERC-4337, graph-hiding driver. Status
@@ -35,6 +36,10 @@ legend: `[ ] Pending`, `[x] Done`, `[~] In progress`, `[!] Blocked`. Update the 
 tasks complete; flip a week here to `[x]` when its gate is met.
 
 ## Notes & Decisions
+
+- **Working rules R1–R6** (no undocumented decisions; freeze discipline; prove-don't-assume; one source of
+  truth for cross-impl values; deviations = design-doc edits; fail-fast on signed payloads) are binding for
+  every phase — defined in the detailed plan §0.2b, each traced to a real defect hit on this project.
 
 - All design decisions resolved in design §15 (grounded in the existing codebase). Non-blocking confirmations
   for Angelo listed in design §16 — defaults are in place; these do not block Phases 1–2.

@@ -47,7 +47,8 @@ later section assumes this; §14 builds the threat model around it.
 | Governance | deployer only **seeds** the initial PP + endorser set; **once the quorum is set it owns everything** (PP updates, endorser-set changes, `setEndorsementVerifier`) *(Angelo)* |
 | Endorser identity | bound to both an FSC `view.Identity` (routing) and an Ethereum address (`ecrecover`) |
 | Signing | each endorser independently recomputes the delta+digest and signs; **never** blind-signs |
-| Finality | gateway `TransactionByHash().isPending` + FabricX event queue + `OnlyOnceListener`, read at `finalized` |
+| Backend | **Besu** (acceptance; Angelo 2026-07-08) — standard EVM node; fabric-x-evm is a stretch if time remains |
+| Finality | receipt + `eth_getTransactionByHash` polling (primary, any node) + FabricX event queue + `OnlyOnceListener`, read at `finalized` where exposed; gateway `isPending` lifecycle is the fabric-x-evm stretch layer |
 | Crypto lib | permissive: `x/crypto/sha3` + `decred/secp256k1`; **go-ethereum must not be linked, even transitively** *(Angelo: license is a hard blocker)* |
 | Gas | `eth_estimateGas` × multiplier (EIP-1559 fees); `fixed` only as override |
 
@@ -177,33 +178,39 @@ steer). See §3.6.
 
 ```solidity
 interface IEndorsementVerifier {
-    // structHash = EIP-712 hashStruct(StateDelta), recomputed by TokenState from the typed delta.
-    function verify(bytes32 structHash, bytes[] calldata signatures) external view returns (bool);
-
-    function addEndorser(address endorser) external;     // deployer/governance
-    function removeEndorser(address endorser) external;  // deployer/governance
-    function setThreshold(uint256 threshold) external;   // deployer/governance
+    // digest = keccak256(0x1901 || domainSeparator || hashStruct(StateDelta)); TokenState computes it (it
+    // owns the domain, whose verifyingContract = address(this)) and passes the final digest — see note below.
+    function verify(bytes32 digest, bytes[] calldata signatures) external view returns (bool);
 
     function isEndorser(address a) external view returns (bool);
     function getEndorsers() external view returns (address[] memory);
     function getThreshold() external view returns (uint256);
-
-    event EndorserAdded(address indexed endorser);
-    event EndorserRemoved(address indexed endorser);
-    event ThresholdChanged(uint256 oldT, uint256 newT);
 }
 ```
 
-`verify` rules, in order:
-1. Recover each signer over `digest = keccak256(0x1901 ‖ domainSeparator ‖ structHash)` with `ecrecover`.
-2. Reject malformed signatures: require 65-byte `{r,s,v}`, `v ∈ {27,28}`, and **low-s** (`s ≤ secp256k1n/2`)
-   to block malleability (EIP-2 style).
+`verify` rules, in order (implemented in `contracts/src/EndorsementVerifier.sol`, PR 2a):
+1. `signatures.length ≥ threshold`, else `InsufficientEndorsements`.
+2. Recover each signer over the passed `digest` with `ecrecover`; reject malformed signatures: require
+   65-byte `{r,s,v}`, `v ∈ {27,28}`, and **low-s** (`s ≤ secp256k1n/2`) to block malleability (EIP-2 style).
 3. Each recovered address must be a current endorser and **unique within the call** (so N signatures from one
    endorser are not counted N times — raised by @arner).
-4. `validCount ≥ threshold`.
+4. **Strict semantics: every provided signature must be valid** — the contract does not scan for "at least
+   threshold valid among possibly-invalid ones." The initiator assembles the bundle and must only include
+   signatures it verified; a partially-invalid bundle is evidence of a broken or malicious initiator, and
+   accepting it would mask faults (it also removes any gas incentive to pad the call with junk). Failures
+   revert with a typed reason (per §13) rather than returning false.
 
-`domainSeparator` binds `chainId` and `verifyingContract = TokenState`, so signatures cannot be replayed
-across chains or contracts.
+**Implementation deviations (PR 2a, 2026-07-08):**
+- `verify` takes the **final `digest`**, not `structHash`. The digest binds `domainSeparator`, which includes
+  `verifyingContract = TokenState`. TokenState is a per-TMS EIP-1167 clone, so it — not a shared/decoupled
+  verifier — computes the digest (via `EIP712.digest`); a verifier taking `structHash` would need to know each
+  clone's address, a needless coupling and a chicken-and-egg at deploy. `domainSeparator` still binds `chainId`
+  + `verifyingContract`, so signatures cannot be replayed across chains or contracts.
+- **No `addEndorser`/`removeEndorser`/`setThreshold` in v1.** The deployer seeds the set + threshold at
+  construction (immutable thereafter). Per §15.3 the quorum owns governance post-bootstrap, but runtime
+  endorser-set mutation is a quorum-gated feature deferred beyond v1 — none of the v1 acceptance flows
+  (issue/transfer/redeem/PP-update) mutate the endorser set. Add the mutators + their events when governance
+  lands.
 
 ### 3.3 TokenState — interface
 
@@ -462,7 +469,11 @@ Counter handling and ordering per §4.4.
 - `FetchPublicParameters(ns)` → `eth_call getPublicParameters` (opaque bytes, both drivers).
 - `QueryTokens(ctx, ns, IDs)` → per ID, `getToken(keys.ComputeTokenID(anchor, index))`.
 - `AreTokensSpent(ctx, ns, IDs, meta)` → graph-hiding (`len(meta)!=0`): `isSerialUsed(keys.SpentRefForSerial(sn))`;
-  graph-revealing: `isSpent(keys.ComputeTokenID(anchor, index))`.
+  graph-revealing: resolve through the **content-bound marker** (the spent flag is keyed by `snMarker`, not
+  `tokenID`), per §3.4 — either a contract `tokenID → spent` mapping populated at output creation, or the
+  driver's `getToken(ComputeTokenID)` → recompute `OutputSNMarker(anchor, index, content)` → `snSpent[marker]`.
+  (Query-surface decision pinned in the plan's Week 2.) A bare `isSpent(keys.ComputeTokenID(...))` is
+  **insufficient** — it ignores content and cannot see the marker-keyed spent flag.
 - `GetTransactionStatus(ctx, ns, anchor)` → resolve via indexed `StateCommitted` log by `anchor` → eth tx →
   finality (§7) → `getTokenRequestHash(anchor)`. Returns `(status, tokenRequestHash, message, err)`.
 - `LookupTransferMetadataKey(ns, key, timeout)` → poll `getTransferMetadata(CreateTransferActionMetadataKey(key))`
@@ -535,19 +546,25 @@ type EndorseResponse struct { Signature []byte; EndorserAddress string; Err stri
 
 ## 7. Finality
 
-Align with the fabric-x-evm gateway; do not build a second tx-state system.
+**Backend note (Angelo, 2026-07-08):** the acceptance backend is **Besu**, a standard EVM node; fabric-x-evm
+is a stretch. So the **primary** finality path is receipt + standard tx-status polling (works on any node), and
+the fabric-x gateway-specific lifecycle (`isPending` semantics, superseded-tx) is an efficiency layer added
+only for the fabric-x-evm stretch. Do not build a second tx-state system either way.
 
 ### 7.1 Signal and lifecycle
 
-Primary signal: `TransactionByHash(ethTxHash).isPending`. Lifecycle (gateway):
-`pending → in-progress → committed | failed | superseded`.
+Primary signal (Besu / any standard node): poll the **receipt** together with
+`eth_getTransactionByHash(ethTxHash).blockNumber`. Resolution:
+- tx known, `blockNumber == null` → still pending, keep polling.
+- `blockNumber` set → fetch receipt: status 1 ⇒ `Valid`, status 0 ⇒ `Invalid`.
+- tx unknown (never seen / evicted) → `dropped` (treat as `Invalid` after timeout).
 
-`isPending == false` is necessary but **not** sufficient. Resolution:
-- `isPending == true` → still pending, keep polling.
-- `isPending == false` and `blockNumber` set → fetch receipt: status 1 ⇒ `Valid`, status 0 ⇒ `Invalid`.
-- `isPending == false` and no `blockNumber` → `dropped` (treat as `Invalid` after timeout).
-- **superseded** (replacement tx, fabric-x-evm#62): the old hash gets a synthetic status-0 receipt; resolve to
-  it rather than time out.
+The `EVMClient.IsPending(txHash) (pending, found, err)` method already abstracts this: on Besu it is backed by
+`eth_getTransactionByHash` (`found=false` ⇒ dropped, `blockNumber==nil` ⇒ pending); on the fabric-x-evm
+stretch it is backed by the gateway, which additionally exposes the `pending → in-progress → committed |
+failed | superseded` lifecycle and the **superseded** case (replacement tx, fabric-x-evm#62: the old hash gets
+a synthetic status-0 receipt — resolve to it rather than time out). The superseded handling is fabric-x-only
+and not required for the Besu acceptance path.
 
 ### 7.2 Confirmation depth
 
@@ -560,8 +577,9 @@ PoW-era heuristic — @alexandrosfilios.)
 - **Reuse directly**: the FabricX finality **event queue** (`fabricx/finality/queue`) for async delivery +
   retry/backpressure, and `OnlyOnceListener` for exactly-once notification — both backend-agnostic.
 - **Replace**: `NSListenerManager` / `TxCheck` / `ListenerEvent` (tied to the FabricX committer + queryservice)
-  → an EVM manager whose ticks come from gateway `isPending`/receipt polling and whose status check is the
-  §7.1 resolver, enriching `Valid` results with `getTokenRequestHash(anchor)`.
+  → an EVM manager whose ticks come from receipt + tx-status polling (gateway `isPending` on the fabric-x-evm
+  stretch) and whose status check is the §7.1 resolver, enriching `Valid` results with
+  `getTokenRequestHash(anchor)`.
 
 ### 7.4 Recipient resolution (anchor → finality from chain alone)
 
@@ -758,6 +776,12 @@ Items 1, 3, 6, 9 were confirmed by Angelo on 2026-07-02 (DM); the rest are groun
 8. **Gas via `eth_estimateGas` × multiplier**, EIP-1559 fees from node suggestion; `fixed` only as override.
    ERC-4337 deferred to v2.
 9. **Endorser identity** bound to both an FSC `view.Identity` (routing) and an Ethereum address (`ecrecover`).
+10. **Module isolation** *(Angelo, Week-1 review: "everything stays under `x/token/services/network/evm` …
+    create a go module … the rest of the token-sdk does not depend on this new network driver")*. The driver is
+    its own Go module under `x/token/services/network/evm`; the core token-sdk must never import it. The lean
+    module also must not import `token/sdk/dig` (it drags core's fabric+idemix graph in and cannot be
+    version-reconciled), so the `evmdlog` SDK composition of the driver with a token driver is an
+    integration-module concern (plan Week 6 / rule R7).
 
 ## 16. Still to confirm with Angelo (non-blocking)
 
