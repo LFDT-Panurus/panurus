@@ -104,3 +104,19 @@ func (f *HoldingsFilter) Sum() *big.Int {
 
 	return sum
 }
+
+// SumByEnrollmentID returns the sum of the loaded records grouped by enrollment id.
+// Enrollment ids with no records are absent from the returned map.
+func (f *HoldingsFilter) SumByEnrollmentID() map[string]*big.Int {
+	sums := make(map[string]*big.Int)
+	for _, record := range f.records {
+		sum, ok := sums[record.EnrollmentID]
+		if !ok {
+			sum = big.NewInt(0)
+			sums[record.EnrollmentID] = sum
+		}
+		sum.Add(sum, record.Amount)
+	}
+
+	return sums
+}
