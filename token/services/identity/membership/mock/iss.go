@@ -38,6 +38,21 @@ type IdentityStoreService struct {
 		result1 bool
 		result2 error
 	}
+	ConfigurationsByIDStub        func(context.Context, string, string) ([]driver.IdentityConfiguration, error)
+	configurationsByIDMutex       sync.RWMutex
+	configurationsByIDArgsForCall []struct {
+		arg1 context.Context
+		arg2 string
+		arg3 string
+	}
+	configurationsByIDReturns struct {
+		result1 []driver.IdentityConfiguration
+		result2 error
+	}
+	configurationsByIDReturnsOnCall map[int]struct {
+		result1 []driver.IdentityConfiguration
+		result2 error
+	}
 	GetConfigurationStub        func(context.Context, string, string, string) (*driver.IdentityConfiguration, error)
 	getConfigurationMutex       sync.RWMutex
 	getConfigurationArgsForCall []struct {
@@ -209,6 +224,72 @@ func (fake *IdentityStoreService) ConfigurationExistsReturnsOnCall(i int, result
 	}
 	fake.configurationExistsReturnsOnCall[i] = struct {
 		result1 bool
+		result2 error
+	}{result1, result2}
+}
+
+func (fake *IdentityStoreService) ConfigurationsByID(arg1 context.Context, arg2 string, arg3 string) ([]driver.IdentityConfiguration, error) {
+	fake.configurationsByIDMutex.Lock()
+	ret, specificReturn := fake.configurationsByIDReturnsOnCall[len(fake.configurationsByIDArgsForCall)]
+	fake.configurationsByIDArgsForCall = append(fake.configurationsByIDArgsForCall, struct {
+		arg1 context.Context
+		arg2 string
+		arg3 string
+	}{arg1, arg2, arg3})
+	stub := fake.ConfigurationsByIDStub
+	fakeReturns := fake.configurationsByIDReturns
+	fake.recordInvocation("ConfigurationsByID", []interface{}{arg1, arg2, arg3})
+	fake.configurationsByIDMutex.Unlock()
+	if stub != nil {
+		return stub(arg1, arg2, arg3)
+	}
+	if specificReturn {
+		return ret.result1, ret.result2
+	}
+	return fakeReturns.result1, fakeReturns.result2
+}
+
+func (fake *IdentityStoreService) ConfigurationsByIDCallCount() int {
+	fake.configurationsByIDMutex.RLock()
+	defer fake.configurationsByIDMutex.RUnlock()
+	return len(fake.configurationsByIDArgsForCall)
+}
+
+func (fake *IdentityStoreService) ConfigurationsByIDCalls(stub func(context.Context, string, string) ([]driver.IdentityConfiguration, error)) {
+	fake.configurationsByIDMutex.Lock()
+	defer fake.configurationsByIDMutex.Unlock()
+	fake.ConfigurationsByIDStub = stub
+}
+
+func (fake *IdentityStoreService) ConfigurationsByIDArgsForCall(i int) (context.Context, string, string) {
+	fake.configurationsByIDMutex.RLock()
+	defer fake.configurationsByIDMutex.RUnlock()
+	argsForCall := fake.configurationsByIDArgsForCall[i]
+	return argsForCall.arg1, argsForCall.arg2, argsForCall.arg3
+}
+
+func (fake *IdentityStoreService) ConfigurationsByIDReturns(result1 []driver.IdentityConfiguration, result2 error) {
+	fake.configurationsByIDMutex.Lock()
+	defer fake.configurationsByIDMutex.Unlock()
+	fake.ConfigurationsByIDStub = nil
+	fake.configurationsByIDReturns = struct {
+		result1 []driver.IdentityConfiguration
+		result2 error
+	}{result1, result2}
+}
+
+func (fake *IdentityStoreService) ConfigurationsByIDReturnsOnCall(i int, result1 []driver.IdentityConfiguration, result2 error) {
+	fake.configurationsByIDMutex.Lock()
+	defer fake.configurationsByIDMutex.Unlock()
+	fake.ConfigurationsByIDStub = nil
+	if fake.configurationsByIDReturnsOnCall == nil {
+		fake.configurationsByIDReturnsOnCall = make(map[int]struct {
+			result1 []driver.IdentityConfiguration
+			result2 error
+		})
+	}
+	fake.configurationsByIDReturnsOnCall[i] = struct {
+		result1 []driver.IdentityConfiguration
 		result2 error
 	}{result1, result2}
 }

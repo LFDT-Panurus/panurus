@@ -48,6 +48,21 @@ type IdentityStoreService struct {
 		result1 bool
 		result2 error
 	}
+	ConfigurationsByIDStub        func(context.Context, string, string) ([]driver.IdentityConfiguration, error)
+	configurationsByIDMutex       sync.RWMutex
+	configurationsByIDArgsForCall []struct {
+		arg1 context.Context
+		arg2 string
+		arg3 string
+	}
+	configurationsByIDReturns struct {
+		result1 []driver.IdentityConfiguration
+		result2 error
+	}
+	configurationsByIDReturnsOnCall map[int]struct {
+		result1 []driver.IdentityConfiguration
+		result2 error
+	}
 	GetAuditInfoStub        func(context.Context, []byte) ([]byte, error)
 	getAuditInfoMutex       sync.RWMutex
 	getAuditInfoArgsForCall []struct {
@@ -121,6 +136,21 @@ type IdentityStoreService struct {
 		result1 []byte
 		result2 []byte
 		result3 error
+	}
+	IterateSignersStub        func(context.Context, int, int) ([]driver.SignerEntry, error)
+	iterateSignersMutex       sync.RWMutex
+	iterateSignersArgsForCall []struct {
+		arg1 context.Context
+		arg2 int
+		arg3 int
+	}
+	iterateSignersReturns struct {
+		result1 []driver.SignerEntry
+		result2 error
+	}
+	iterateSignersReturnsOnCall map[int]struct {
+		result1 []driver.SignerEntry
+		result2 error
 	}
 	IteratorConfigurationsStub        func(context.Context, string) (driver.IdentityConfigurationIterator, error)
 	iteratorConfigurationsMutex       sync.RWMutex
@@ -202,21 +232,6 @@ type IdentityStoreService struct {
 	}
 	storeSignerInfoReturnsOnCall map[int]struct {
 		result1 error
-	}
-	IterateSignersStub        func(context.Context, int, int) ([]driver.SignerEntry, error)
-	iterateSignersMutex       sync.RWMutex
-	iterateSignersArgsForCall []struct {
-		arg1 context.Context
-		arg2 int
-		arg3 int
-	}
-	iterateSignersReturns struct {
-		result1 []driver.SignerEntry
-		result2 error
-	}
-	iterateSignersReturnsOnCall map[int]struct {
-		result1 []driver.SignerEntry
-		result2 error
 	}
 	invocations      map[string][][]interface{}
 	invocationsMutex sync.RWMutex
@@ -400,6 +415,72 @@ func (fake *IdentityStoreService) ConfigurationExistsReturnsOnCall(i int, result
 	}
 	fake.configurationExistsReturnsOnCall[i] = struct {
 		result1 bool
+		result2 error
+	}{result1, result2}
+}
+
+func (fake *IdentityStoreService) ConfigurationsByID(arg1 context.Context, arg2 string, arg3 string) ([]driver.IdentityConfiguration, error) {
+	fake.configurationsByIDMutex.Lock()
+	ret, specificReturn := fake.configurationsByIDReturnsOnCall[len(fake.configurationsByIDArgsForCall)]
+	fake.configurationsByIDArgsForCall = append(fake.configurationsByIDArgsForCall, struct {
+		arg1 context.Context
+		arg2 string
+		arg3 string
+	}{arg1, arg2, arg3})
+	stub := fake.ConfigurationsByIDStub
+	fakeReturns := fake.configurationsByIDReturns
+	fake.recordInvocation("ConfigurationsByID", []interface{}{arg1, arg2, arg3})
+	fake.configurationsByIDMutex.Unlock()
+	if stub != nil {
+		return stub(arg1, arg2, arg3)
+	}
+	if specificReturn {
+		return ret.result1, ret.result2
+	}
+	return fakeReturns.result1, fakeReturns.result2
+}
+
+func (fake *IdentityStoreService) ConfigurationsByIDCallCount() int {
+	fake.configurationsByIDMutex.RLock()
+	defer fake.configurationsByIDMutex.RUnlock()
+	return len(fake.configurationsByIDArgsForCall)
+}
+
+func (fake *IdentityStoreService) ConfigurationsByIDCalls(stub func(context.Context, string, string) ([]driver.IdentityConfiguration, error)) {
+	fake.configurationsByIDMutex.Lock()
+	defer fake.configurationsByIDMutex.Unlock()
+	fake.ConfigurationsByIDStub = stub
+}
+
+func (fake *IdentityStoreService) ConfigurationsByIDArgsForCall(i int) (context.Context, string, string) {
+	fake.configurationsByIDMutex.RLock()
+	defer fake.configurationsByIDMutex.RUnlock()
+	argsForCall := fake.configurationsByIDArgsForCall[i]
+	return argsForCall.arg1, argsForCall.arg2, argsForCall.arg3
+}
+
+func (fake *IdentityStoreService) ConfigurationsByIDReturns(result1 []driver.IdentityConfiguration, result2 error) {
+	fake.configurationsByIDMutex.Lock()
+	defer fake.configurationsByIDMutex.Unlock()
+	fake.ConfigurationsByIDStub = nil
+	fake.configurationsByIDReturns = struct {
+		result1 []driver.IdentityConfiguration
+		result2 error
+	}{result1, result2}
+}
+
+func (fake *IdentityStoreService) ConfigurationsByIDReturnsOnCall(i int, result1 []driver.IdentityConfiguration, result2 error) {
+	fake.configurationsByIDMutex.Lock()
+	defer fake.configurationsByIDMutex.Unlock()
+	fake.ConfigurationsByIDStub = nil
+	if fake.configurationsByIDReturnsOnCall == nil {
+		fake.configurationsByIDReturnsOnCall = make(map[int]struct {
+			result1 []driver.IdentityConfiguration
+			result2 error
+		})
+	}
+	fake.configurationsByIDReturnsOnCall[i] = struct {
+		result1 []driver.IdentityConfiguration
 		result2 error
 	}{result1, result2}
 }
@@ -747,6 +828,72 @@ func (fake *IdentityStoreService) GetTokenInfoReturnsOnCall(i int, result1 []byt
 		result2 []byte
 		result3 error
 	}{result1, result2, result3}
+}
+
+func (fake *IdentityStoreService) IterateSigners(arg1 context.Context, arg2 int, arg3 int) ([]driver.SignerEntry, error) {
+	fake.iterateSignersMutex.Lock()
+	ret, specificReturn := fake.iterateSignersReturnsOnCall[len(fake.iterateSignersArgsForCall)]
+	fake.iterateSignersArgsForCall = append(fake.iterateSignersArgsForCall, struct {
+		arg1 context.Context
+		arg2 int
+		arg3 int
+	}{arg1, arg2, arg3})
+	stub := fake.IterateSignersStub
+	fakeReturns := fake.iterateSignersReturns
+	fake.recordInvocation("IterateSigners", []interface{}{arg1, arg2, arg3})
+	fake.iterateSignersMutex.Unlock()
+	if stub != nil {
+		return stub(arg1, arg2, arg3)
+	}
+	if specificReturn {
+		return ret.result1, ret.result2
+	}
+	return fakeReturns.result1, fakeReturns.result2
+}
+
+func (fake *IdentityStoreService) IterateSignersCallCount() int {
+	fake.iterateSignersMutex.RLock()
+	defer fake.iterateSignersMutex.RUnlock()
+	return len(fake.iterateSignersArgsForCall)
+}
+
+func (fake *IdentityStoreService) IterateSignersCalls(stub func(context.Context, int, int) ([]driver.SignerEntry, error)) {
+	fake.iterateSignersMutex.Lock()
+	defer fake.iterateSignersMutex.Unlock()
+	fake.IterateSignersStub = stub
+}
+
+func (fake *IdentityStoreService) IterateSignersArgsForCall(i int) (context.Context, int, int) {
+	fake.iterateSignersMutex.RLock()
+	defer fake.iterateSignersMutex.RUnlock()
+	argsForCall := fake.iterateSignersArgsForCall[i]
+	return argsForCall.arg1, argsForCall.arg2, argsForCall.arg3
+}
+
+func (fake *IdentityStoreService) IterateSignersReturns(result1 []driver.SignerEntry, result2 error) {
+	fake.iterateSignersMutex.Lock()
+	defer fake.iterateSignersMutex.Unlock()
+	fake.IterateSignersStub = nil
+	fake.iterateSignersReturns = struct {
+		result1 []driver.SignerEntry
+		result2 error
+	}{result1, result2}
+}
+
+func (fake *IdentityStoreService) IterateSignersReturnsOnCall(i int, result1 []driver.SignerEntry, result2 error) {
+	fake.iterateSignersMutex.Lock()
+	defer fake.iterateSignersMutex.Unlock()
+	fake.IterateSignersStub = nil
+	if fake.iterateSignersReturnsOnCall == nil {
+		fake.iterateSignersReturnsOnCall = make(map[int]struct {
+			result1 []driver.SignerEntry
+			result2 error
+		})
+	}
+	fake.iterateSignersReturnsOnCall[i] = struct {
+		result1 []driver.SignerEntry
+		result2 error
+	}{result1, result2}
 }
 
 func (fake *IdentityStoreService) IteratorConfigurations(arg1 context.Context, arg2 string) (driver.IdentityConfigurationIterator, error) {
@@ -1154,72 +1301,6 @@ func (fake *IdentityStoreService) StoreSignerInfoReturnsOnCall(i int, result1 er
 	fake.storeSignerInfoReturnsOnCall[i] = struct {
 		result1 error
 	}{result1}
-}
-
-func (fake *IdentityStoreService) IterateSigners(arg1 context.Context, arg2 int, arg3 int) ([]driver.SignerEntry, error) {
-	fake.iterateSignersMutex.Lock()
-	ret, specificReturn := fake.iterateSignersReturnsOnCall[len(fake.iterateSignersArgsForCall)]
-	fake.iterateSignersArgsForCall = append(fake.iterateSignersArgsForCall, struct {
-		arg1 context.Context
-		arg2 int
-		arg3 int
-	}{arg1, arg2, arg3})
-	stub := fake.IterateSignersStub
-	fakeReturns := fake.iterateSignersReturns
-	fake.recordInvocation("IterateSigners", []interface{}{arg1, arg2, arg3})
-	fake.iterateSignersMutex.Unlock()
-	if stub != nil {
-		return stub(arg1, arg2, arg3)
-	}
-	if specificReturn {
-		return ret.result1, ret.result2
-	}
-	return fakeReturns.result1, fakeReturns.result2
-}
-
-func (fake *IdentityStoreService) IterateSignersCallCount() int {
-	fake.iterateSignersMutex.RLock()
-	defer fake.iterateSignersMutex.RUnlock()
-	return len(fake.iterateSignersArgsForCall)
-}
-
-func (fake *IdentityStoreService) IterateSignersCalls(stub func(context.Context, int, int) ([]driver.SignerEntry, error)) {
-	fake.iterateSignersMutex.Lock()
-	defer fake.iterateSignersMutex.Unlock()
-	fake.IterateSignersStub = stub
-}
-
-func (fake *IdentityStoreService) IterateSignersArgsForCall(i int) (context.Context, int, int) {
-	fake.iterateSignersMutex.RLock()
-	defer fake.iterateSignersMutex.RUnlock()
-	argsForCall := fake.iterateSignersArgsForCall[i]
-	return argsForCall.arg1, argsForCall.arg2, argsForCall.arg3
-}
-
-func (fake *IdentityStoreService) IterateSignersReturns(result1 []driver.SignerEntry, result2 error) {
-	fake.iterateSignersMutex.Lock()
-	defer fake.iterateSignersMutex.Unlock()
-	fake.IterateSignersStub = nil
-	fake.iterateSignersReturns = struct {
-		result1 []driver.SignerEntry
-		result2 error
-	}{result1, result2}
-}
-
-func (fake *IdentityStoreService) IterateSignersReturnsOnCall(i int, result1 []driver.SignerEntry, result2 error) {
-	fake.iterateSignersMutex.Lock()
-	defer fake.iterateSignersMutex.Unlock()
-	fake.IterateSignersStub = nil
-	if fake.iterateSignersReturnsOnCall == nil {
-		fake.iterateSignersReturnsOnCall = make(map[int]struct {
-			result1 []driver.SignerEntry
-			result2 error
-		})
-	}
-	fake.iterateSignersReturnsOnCall[i] = struct {
-		result1 []driver.SignerEntry
-		result2 error
-	}{result1, result2}
 }
 
 func (fake *IdentityStoreService) Invocations() map[string][][]interface{} {

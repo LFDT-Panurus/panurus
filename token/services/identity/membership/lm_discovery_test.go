@@ -7,7 +7,6 @@ SPDX-License-Identifier: Apache-2.0
 package membership_test
 
 import (
-	"context"
 	"slices"
 	"sync"
 	"testing"
@@ -79,10 +78,7 @@ func TestLocalMembership_Discovery(t *testing.T) {
 
 	// Mock DB update
 	newConfig := idriver.IdentityConfiguration{ID: "new", URL: "/tmp/new", Type: "testType"}
-	iter := &mock.IdentityConfigurationIterator{}
-	iter.NextReturnsOnCall(0, &newConfig, nil)
-	iter.NextReturnsOnCall(1, nil, nil)
-	iss.IteratorConfigurationsReturns(iter, nil)
+	iss.ConfigurationsByIDReturns([]idriver.IdentityConfiguration{newConfig}, nil)
 
 	// Discovery via GetIdentityInfo
 	info, err := lm.GetIdentityInfo(ctx, "new", nil)
@@ -91,6 +87,10 @@ func TestLocalMembership_Discovery(t *testing.T) {
 
 	ids, _ = lm.IDs()
 	assert.Contains(t, ids, "new")
+
+	// discovered through a point query, without a second full scan
+	assert.Equal(t, 1, iss.ConfigurationsByIDCallCount())
+	assert.Equal(t, 1, iss.IteratorConfigurationsCallCount())
 }
 
 func TestLocalMembership_DefaultOverride(t *testing.T) {
@@ -141,10 +141,7 @@ func TestLocalMembership_DefaultOverride(t *testing.T) {
 
 	// Discovery of a new identity (it was previously default: true, but now we don't support it)
 	newConfig := idriver.IdentityConfiguration{ID: "id2", URL: "/tmp/id2", Type: "testType"}
-	iter := &mock.IdentityConfigurationIterator{}
-	iter.NextReturnsOnCall(0, &newConfig, nil)
-	iter.NextReturnsOnCall(1, nil, nil)
-	iss.IteratorConfigurationsReturns(iter, nil)
+	iss.ConfigurationsByIDReturns([]idriver.IdentityConfiguration{newConfig}, nil)
 
 	_, err = lm.GetIdentityInfo(ctx, "id2", nil)
 	require.NoError(t, err)
@@ -187,16 +184,9 @@ func TestLocalMembership_DoubleCheckedLocking(t *testing.T) {
 
 	newConfig := idriver.IdentityConfiguration{ID: "new", URL: "/tmp/new", Type: "testType"}
 
-	// We want to ensure that refresh happens only once even if multiple goroutines call it
-	var refreshCount int
-	iss.IteratorConfigurationsStub = func(ctx context.Context, typ string) (membership.IdentityConfigurationIterator, error) {
-		refreshCount++
-		iter := &mock.IdentityConfigurationIterator{}
-		iter.NextReturnsOnCall(0, &newConfig, nil)
-		iter.NextReturnsOnCall(1, nil, nil)
-
-		return iter, nil
-	}
+	// We want to ensure that the configuration is registered only once even if
+	// multiple goroutines discover it concurrently
+	iss.ConfigurationsByIDReturns([]idriver.IdentityConfiguration{newConfig}, nil)
 
 	var wg sync.WaitGroup
 	for range 10 {
@@ -206,7 +196,9 @@ func TestLocalMembership_DoubleCheckedLocking(t *testing.T) {
 	}
 	wg.Wait()
 
-	assert.Equal(t, 1, refreshCount)
+	assert.Equal(t, 1, kmp.GetCallCount())
+	// no full rescan beyond the initial Load
+	assert.Equal(t, 1, iss.IteratorConfigurationsCallCount())
 }
 
 func TestLocalMembership_Notifier(t *testing.T) {

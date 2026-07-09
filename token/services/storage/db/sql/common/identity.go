@@ -209,6 +209,32 @@ func (db *IdentityStore) GetConfiguration(ctx context.Context, id, typ, url stri
 	return c, nil
 }
 
+// ConfigurationsByID returns all configurations with the given id and type, regardless of their url.
+func (db *IdentityStore) ConfigurationsByID(ctx context.Context, id, configurationType string) ([]driver.IdentityConfiguration, error) {
+	query, args := q.Select().
+		FieldsByName("id", "type", "url", "conf", "raw").
+		From(q.Table(db.table.IdentityConfigurations)).
+		Where(cond.And(cond.Eq("id", id), cond.Eq("type", configurationType))).
+		Format(db.ci)
+	logging.Debug(logger, query, args)
+	rows, err := db.readDB.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	var res []driver.IdentityConfiguration
+	for rows.Next() {
+		var c driver.IdentityConfiguration
+		if err := rows.Scan(&c.ID, &c.Type, &c.URL, &c.Config, &c.Raw); err != nil {
+			return nil, err
+		}
+		res = append(res, c)
+	}
+
+	return res, rows.Err()
+}
+
 // IteratorConfigurations returns an iterator to all configurations of the given type.
 func (db *IdentityStore) IteratorConfigurations(ctx context.Context, configurationType string) (idriver.IdentityConfigurationIterator, error) {
 	query, args := q.Select().

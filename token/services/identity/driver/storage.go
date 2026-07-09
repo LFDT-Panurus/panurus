@@ -155,6 +155,8 @@ type IdentityStoreService interface {
 	// GetConfiguration returns the configuration with the given id, type, and url.
 	// It returns nil if the configuration does not exist.
 	GetConfiguration(ctx context.Context, id, typ, url string) (*IdentityConfiguration, error)
+	// ConfigurationsByID returns all configurations with the given id and type, regardless of their url.
+	ConfigurationsByID(ctx context.Context, id, configurationType string) ([]IdentityConfiguration, error)
 	// ConfigurationExists returns true if a configuration with the given id and type exists.
 	ConfigurationExists(ctx context.Context, id, typ, url string) (bool, error)
 	// IteratorConfigurations returns an iterator to all configurations stored

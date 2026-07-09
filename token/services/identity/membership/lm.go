@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"slices"
 	"sync"
+	"unicode/utf8"
 
 	"github.com/LFDT-Panurus/panurus/token"
 	tdriver "github.com/LFDT-Panurus/panurus/token/driver"
@@ -76,6 +77,8 @@ type IdentityStoreService interface {
 	AddConfiguration(ctx context.Context, wp idriver.IdentityConfiguration) error
 	// GetConfiguration returns the configuration with the given id and type.
 	GetConfiguration(ctx context.Context, id, typ, url string) (*idriver.IdentityConfiguration, error)
+	// ConfigurationsByID returns all configurations with the given id and type, regardless of their url.
+	ConfigurationsByID(ctx context.Context, id, configurationType string) ([]idriver.IdentityConfiguration, error)
 	// ConfigurationExists returns true if a configuration with the given id,
 	// type and URL already exists in the store.
 	ConfigurationExists(ctx context.Context, id, typ, url string) (bool, error)
@@ -735,31 +738,49 @@ func (l *LocalMembership) addLocalIdentity(ctx context.Context, config *Identity
 	return nil
 }
 
+// refreshAndGet resolves a label that missed the in-memory maps against the
+// identity store. The store is point-queried for that label only: a hit means
+// the configuration was registered by another node sharing the store (load
+// just that one), a miss means the label is genuinely unknown and returns
+// without ever taking the write lock.
 func (l *LocalMembership) refreshAndGet(ctx context.Context, label string) *LocalIdentity {
-	l.localIdentitiesMutex.Lock()
-	defer l.localIdentitiesMutex.Unlock()
-
-	// Double check
-	identities, ok := l.localIdentitiesByName[label]
-	if ok {
-		return identities[0].Identity
-	}
-	mapped, ok := l.localIdentitiesByIdentity[label]
-	if ok {
-		return mapped
+	// Double check: the identity may have been registered while the caller
+	// released the read lock.
+	l.localIdentitiesMutex.RLock()
+	res := l.lookup(label)
+	l.localIdentitiesMutex.RUnlock()
+	if res != nil {
+		return res
 	}
 
-	l.logger.DebugfContext(ctx, "refresh and get local identity for label [%s]", utils.Hashable(label))
-	storedIdentityConfigurations, err := l.storedIdentityConfigurations(ctx)
-	if err != nil {
-		l.logger.ErrorfContext(ctx, "failed to load stored identity configurations: %s", err)
-
+	// Configuration ids are stored in text columns, a label that is not valid
+	// UTF-8 cannot match any stored configuration.
+	if !utf8.ValidString(label) {
 		return nil
 	}
 
-	for _, identityConfiguration := range storedIdentityConfigurations {
-		key := l.configKey(&identityConfiguration)
-		if _, ok := l.localIdentitiesByConfig[key]; ok {
+	l.logger.DebugfContext(ctx, "refresh and get local identity for label [%s]", utils.Hashable(label))
+	configurations, err := l.identityDB.ConfigurationsByID(ctx, label, l.IdentityType)
+	if err != nil {
+		l.logger.ErrorfContext(ctx, "failed to load stored identity configurations for [%s]: %s", utils.Hashable(label), err)
+
+		return nil
+	}
+	if len(configurations) == 0 {
+		return nil
+	}
+
+	l.localIdentitiesMutex.Lock()
+	defer l.localIdentitiesMutex.Unlock()
+
+	// double check under the write lock: another goroutine may have registered
+	// the same configuration meanwhile
+	if res := l.lookup(label); res != nil {
+		return res
+	}
+
+	for _, identityConfiguration := range configurations {
+		if _, ok := l.localIdentitiesByConfig[l.configKey(&identityConfiguration)]; ok {
 			continue
 		}
 
@@ -769,13 +790,16 @@ func (l *LocalMembership) refreshAndGet(ctx context.Context, label string) *Loca
 		}
 	}
 
-	// check again
-	identities, ok = l.localIdentitiesByName[label]
-	if ok {
+	return l.lookup(label)
+}
+
+// lookup returns the local identity bound to label, or nil. The caller must
+// hold localIdentitiesMutex.
+func (l *LocalMembership) lookup(label string) *LocalIdentity {
+	if identities, ok := l.localIdentitiesByName[label]; ok {
 		return identities[0].Identity
 	}
-	mapped, ok = l.localIdentitiesByIdentity[label]
-	if ok {
+	if mapped, ok := l.localIdentitiesByIdentity[label]; ok {
 		return mapped
 	}
 

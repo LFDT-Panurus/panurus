@@ -105,6 +105,32 @@ func (s *IdentityStore) IteratorConfigurations(ctx context.Context, configuratio
 	return &IdentityConfigurationsIterator{Iterator: it}, nil
 }
 
+// ConfigurationsByID returns all configurations with the given id and type, regardless of their url.
+// The composite key encodes id and url together, so this implementation scans the type and filters by id.
+func (s *IdentityStore) ConfigurationsByID(ctx context.Context, id, configurationType string) ([]storage.IdentityConfiguration, error) {
+	it, err := s.IteratorConfigurations(ctx, configurationType)
+	if err != nil {
+		return nil, err
+	}
+	defer it.Close()
+
+	var res []storage.IdentityConfiguration
+	for {
+		c, err := it.Next()
+		if err != nil {
+			return nil, err
+		}
+		if c == nil {
+			break
+		}
+		if c.ID == id {
+			res = append(res, *c)
+		}
+	}
+
+	return res, nil
+}
+
 func (s *IdentityStore) ConfigurationExists(ctx context.Context, id, configurationType, url string) (bool, error) {
 	k, err := kvs.CreateCompositeKey(
 		IdentityDBPrefix,
