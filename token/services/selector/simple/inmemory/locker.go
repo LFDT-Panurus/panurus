@@ -77,8 +77,7 @@ type locker struct {
 	cancel                 context.CancelFunc
 	scanDone               chan struct{}
 	stopOnce               sync.Once
-	rateLimiter            *RateLimiter
-	maxLocksPerIdentity    int
+	enforcer               *Locker
 }
 
 // LockerConfig holds configuration for the locker
@@ -104,11 +103,6 @@ func NewLocker(ttxdb TXStatusProvider, timeout time.Duration, validTxEvictionTim
 func NewLockerWithConfig(ttxdb TXStatusProvider, timeout time.Duration, validTxEvictionTimeout time.Duration, config LockerConfig) simple.Locker {
 	ctx, cancel := context.WithCancel(context.Background())
 
-	var rateLimiter *RateLimiter
-	if config.RateLimit > 0 {
-		rateLimiter = NewRateLimiter(config.RateLimit, config.RateLimitBurst)
-	}
-
 	r := &locker{
 		ttxdb:                  ttxdb,
 		shards:                 map[string]*shard{},
@@ -116,8 +110,7 @@ func NewLockerWithConfig(ttxdb TXStatusProvider, timeout time.Duration, validTxE
 		validTxEvictionTimeout: validTxEvictionTimeout,
 		cancel:                 cancel,
 		scanDone:               make(chan struct{}),
-		rateLimiter:            rateLimiter,
-		maxLocksPerIdentity:    config.MaxLocksPerIdentity,
+		enforcer:               NewEnforcer(config),
 	}
 	r.start(ctx)
 
@@ -157,6 +150,9 @@ func (d *locker) Stop() error {
 			err = ErrTimeout
 			logger.Warnf("scan goroutine did not stop within timeout")
 		}
+		if d.enforcer != nil {
+			d.enforcer.Stop()
+		}
 	})
 
 	return err
@@ -166,13 +162,11 @@ func (d *locker) Stop() error {
 // tokens are selected for; each owner has an independent shard so that locking
 // for one owner never blocks another.
 func (d *locker) Lock(ctx context.Context, owner string, id *token2.ID, txID string, reclaim bool) (string, error) {
-	// Apply rate limiting if configured and owner provided
-	if d.rateLimiter != nil && owner != "" {
-		if err := d.rateLimiter.Allow(owner); err != nil {
-			logger.DebugfContext(ctx, "rate limit exceeded for identity [%s]: %v", owner, err)
+	// Rate limiting can be checked before acquiring the write lock.
+	if err := d.enforcer.CheckRateLimit(owner); err != nil {
+		logger.DebugfContext(ctx, "rate limit exceeded for identity [%s]: %v", owner, err)
 
-			return "", errors.Wrapf(simple.ErrRateLimitExceeded, "identity %s", owner)
-		}
+		return "", err
 	}
 
 	for {
@@ -240,19 +234,17 @@ func (d *locker) lockInShard(ctx context.Context, s *shard, owner string, id *to
 		}
 	}
 
-	// Check quota if configured and owner provided
-	if d.maxLocksPerIdentity > 0 && owner != "" {
-		currentCount := len(s.locked)
-		if currentCount >= d.maxLocksPerIdentity {
-			logger.DebugfContext(ctx, "quota exceeded for identity [%s]: %d/%d locks", owner, currentCount, d.maxLocksPerIdentity)
+	// Quota check must be inside the write lock so the check and TrackLock are atomic.
+	if err := d.enforcer.CheckQuota(owner); err != nil {
+		logger.DebugfContext(ctx, "quota exceeded for identity [%s]: %v", owner, err)
 
-			return "", errors.Wrapf(simple.ErrQuotaExceeded, "identity %s has %d locks (max %d)", owner, currentCount, d.maxLocksPerIdentity)
-		}
+		return "", err
 	}
 
 	logger.DebugfContext(ctx, "locking [%s] for [%s] by owner [%s]", id, txID, owner)
 	now := time.Now()
 	s.locked[k] = &lockEntry{TxID: txID, Identity: owner, Created: now, LastAccess: now}
+	d.enforcer.TrackLock(owner)
 
 	return "", nil
 }
@@ -277,6 +269,7 @@ func (d *locker) UnlockIDs(ctx context.Context, owner string, ids ...*token2.ID)
 		}
 		logger.DebugfContext(ctx, "unlocking [%s] hold by [%s]", id, entry)
 		delete(s.locked, k)
+		d.enforcer.TrackUnlock(entry.Identity)
 	}
 
 	d.pruneEmptyShard(owner, s)
@@ -320,6 +313,7 @@ func (d *locker) UnlockByTxID(ctx context.Context, txID string) {
 			if entry.TxID == txID {
 				logger.DebugfContext(ctx, "unlocking [%s] hold by [%s]", id, entry)
 				delete(s.locked, id)
+				d.enforcer.TrackUnlock(entry.Identity)
 			}
 		}
 		d.pruneEmptyShard(owner, s)
@@ -358,7 +352,9 @@ func (d *locker) reclaim(ctx context.Context, s *shard, id *token2.ID, txID stri
 	}
 	switch status {
 	case ttxdb.Deleted:
+		identity := s.locked[*id].Identity
 		delete(s.locked, *id)
+		d.enforcer.TrackUnlock(identity)
 
 		return true, status
 	default:
@@ -466,6 +462,7 @@ func (d *locker) scan(ctx context.Context) {
 				// access time; either way the entry must be kept.
 				if e, ok := s.locked[entry.id]; ok && e.TxID == entry.txID && e.LastAccess.Equal(entry.lastAccess) {
 					delete(s.locked, entry.id)
+					d.enforcer.TrackUnlock(e.Identity)
 				}
 			}
 			d.pruneEmptyShard(owner, s)
