@@ -770,6 +770,9 @@ func (r *Request) extractTransferOutputs(ctx context.Context, i int, counter uin
 			// Add an empty recipient
 			recipients = append(recipients, Identity{})
 		}
+		if len(issuer) == 0 && output.IsRedeem() {
+			issuer = transferAction.GetIssuer()
+		}
 
 		q, err := token.ToQuantity(tok.Quantity, precision)
 		if err != nil {
