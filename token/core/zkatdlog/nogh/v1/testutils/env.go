@@ -98,7 +98,7 @@ func NewEnv(benchCase *benchmark2.Case, configurations *benchmark.SetupConfigura
 	if err != nil {
 		return nil, err
 	}
-	auditor = audit.NewAuditor(logging.MustGetLogger(), &noop.Tracer{}, deserializer, pp.PedersenGenerators, c, 64)
+	auditor = audit.NewAuditor(logging.MustGetLogger(), &noop.Tracer{}, deserializer, pp.PedersenGenerators, c, 64, pp.IssuerIDs)
 
 	engine = validator.New(
 		logging.MustGetLogger(),

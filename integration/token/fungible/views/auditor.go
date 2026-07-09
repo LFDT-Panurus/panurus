@@ -154,6 +154,21 @@ func (a *AuditView) Call(context view.Context) (any, error) {
 
 	kvsInstance := GetKVS(context)
 
+	// R5: identify redeemed outputs and the issuer that approved each of them, and reject any
+	// redeem whose approving issuer is not on the auditor's allow-list.
+	for _, redeem := range outputs.ByRedeem().Outputs() {
+		if redeem.Issuer.IsNone() {
+			return nil, errors.Errorf("redeemed output [%s:%d] has no approving issuer", tx.ID(), redeem.Index)
+		}
+		issuerKey := utils.Hashable(redeem.Issuer).String()
+		fmt.Printf("Redeem: [%s:%d] type [%s] quantity [%s] approved by issuer [%s]\n", tx.ID(), redeem.Index, redeem.Type, redeem.Quantity, issuerKey)
+
+		k := kvs.CreateCompositeKeyOrPanic("authorizedRedeemIssuers", []string{issuerKey})
+		if !kvsInstance.Exists(context.Context(), k) {
+			return nil, errors.Errorf("redeem [%s:%d] approved by issuer [%s] which is not on the authorized issuers list", tx.ID(), redeem.Index, issuerKey)
+		}
+	}
+
 	for _, rID := range inputs.RevocationHandles() {
 		rh := utils.Hashable(rID).String()
 		// logger.Infof("input RH [%s]", rh)
@@ -179,6 +194,37 @@ func (a *AuditView) Call(context view.Context) (any, error) {
 	logger.Debugf("AuditView: Approve...done [%s]", tx.ID())
 
 	return res, err
+}
+
+// AuthorizeRedeemIssuer adds the passed issuer identity to the auditor's allow-list of issuers
+// that are authorized to approve redeem operations.
+type AuthorizeRedeemIssuer struct {
+	// Issuer is the identity of the issuer to authorize, in its raw serialized form.
+	Issuer []byte
+}
+
+type AuthorizeRedeemIssuerView struct {
+	*AuthorizeRedeemIssuer
+}
+
+func (a *AuthorizeRedeemIssuerView) Call(context view.Context) (any, error) {
+	issuerKey := utils.Hashable(a.Issuer).String()
+	logger.Infof("authorize redeem issuer [%s]", issuerKey)
+	kvsInstance := GetKVS(context)
+	k := kvs.CreateCompositeKeyOrPanic("authorizedRedeemIssuers", []string{issuerKey})
+	assert.NoError(kvsInstance.Put(context.Context(), k, issuerKey), "failed to put authorized redeem issuer")
+
+	return nil, nil
+}
+
+type AuthorizeRedeemIssuerViewFactory struct{}
+
+func (a *AuthorizeRedeemIssuerViewFactory) NewView(in []byte) (view.View, error) {
+	f := &AuthorizeRedeemIssuerView{AuthorizeRedeemIssuer: &AuthorizeRedeemIssuer{}}
+	err := json.Unmarshal(in, f.AuthorizeRedeemIssuer)
+	assert.NoError(err, "failed unmarshalling input")
+
+	return f, nil
 }
 
 type RegisterAuditor struct {

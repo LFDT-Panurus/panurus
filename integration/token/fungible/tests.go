@@ -431,6 +431,7 @@ func TestAll(network *integration.Infrastructure, auditorId string, onRestart On
 	gomega.Expect(ut.Sum(64).ToBigInt().Cmp(big.NewInt(111))).To(gomega.BeEquivalentTo(0), "got [%d], expected 111", ut.Sum(64).ToBigInt())
 	gomega.Expect(ut.ByType("USD").Count()).To(gomega.BeEquivalentTo(ut.Count()))
 
+	AuthorizeRedeemIssuer(network, auditor, GetIssuerIdentity(tms, issuer.Id()))
 	RedeemCashForTMSID(network, bob, "", "USD", 11, auditor, issuer, defaultTMSID)
 	t10 := time.Now()
 	CheckAcceptedTransactions(network, bob, "", BobAcceptedTransactions[:6], nil, nil, nil)
@@ -1020,6 +1021,7 @@ func TestMixed(network *integration.Infrastructure, onRestart OnRestartFunc, sel
 	TransferCashForTMSID(network, alice, "", "USD", 20, bob, auditor1, dlogId)
 	TransferCashForTMSID(network, alice, "", "USD", 30, bob, auditor2, fabTokenId)
 
+	AuthorizeRedeemIssuer(network, auditor1, GetIssuerIdentity(GetTMSByTMSID(network, *dlogId), issuer1.Id()))
 	RedeemCashForTMSID(network, bob, "", "USD", 11, auditor1, issuer1, dlogId)
 	CheckSpendingForTMSID(network, bob, "", "USD", auditor1, 11, dlogId)
 
@@ -1615,6 +1617,13 @@ func TestRedeem(network *integration.Infrastructure, sel *token3.ReplicaSelector
 	CheckBalance(network, issuer, "", "USD", 110)
 	CheckHolding(network, issuer, "", "USD", 110, auditor)
 
+	// The auditor has not authorized this issuer to approve redeems yet: the redeem must be rejected.
+	RedeemCashForTMSID(network, issuer, "", "USD", 10, auditor, issuer, defaultTMSID, "not on the authorized issuers list")
+	CheckBalance(network, issuer, "", "USD", 110)
+	CheckHolding(network, issuer, "", "USD", 110, auditor)
+
+	// Once the auditor authorizes the issuer, the redeem it approves succeeds.
+	AuthorizeRedeemIssuer(network, auditor, GetIssuerIdentity(tms, issuer.Id()))
 	RedeemCashForTMSID(network, issuer, "", "USD", 10, auditor, issuer, defaultTMSID)
 	CheckBalance(network, issuer, "", "USD", 100)
 	CheckHolding(network, issuer, "", "USD", 100, auditor)

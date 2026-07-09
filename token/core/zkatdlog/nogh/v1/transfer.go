@@ -258,6 +258,8 @@ func (s *TransferService) Transfer(ctx context.Context, anchor driver.TokenReque
 	}
 
 	// 8. If this is a redeem, select an issuer who can authorize it.
+	// Issuer identities are not private in this driver (no audit info is generated for them),
+	// so only the plain identity is carried in the metadata.
 	if isRedeem {
 		issuer, err := common.SelectIssuerForRedeem(pp.Issuers(), opts)
 		if err != nil {

@@ -127,11 +127,12 @@ func (a *ActionDeserializer) DeserializeActions(tr *driver.TokenRequest) ([]*iss
 type Auditor = common.Auditor[*v1.PublicParams, *issue.Action, *transfer.Action, driver.Deserializer]
 
 // NewAuditor creates a new Auditor for zkatdlog validation.
-func NewAuditor(logger logging.Logger, tracer trace.Tracer, infoMatcher InfoMatcher, pp []*math.G1, c *math.Curve, precision uint64) *Auditor {
+func NewAuditor(logger logging.Logger, tracer trace.Tracer, infoMatcher InfoMatcher, pp []*math.G1, c *math.Curve, precision uint64, issuers []driver.Identity) *Auditor {
 	// Create public params wrapper - we don't need to set all fields, just what's needed
 	publicParams := &v1.PublicParams{
 		PedersenGenerators: pp,
 		QuantityPrecision:  precision,
+		IssuerIDs:          issuers,
 	}
 
 	issueValidators := []ValidateIssueAuditFunc{
@@ -164,9 +165,9 @@ type AuditorWrapper struct {
 }
 
 // NewAuditorWrapper creates a wrapper around the auditor with helper methods.
-func NewAuditorWrapper(logger logging.Logger, tracer trace.Tracer, infoMatcher InfoMatcher, pp []*math.G1, c *math.Curve, precision uint64) *AuditorWrapper {
+func NewAuditorWrapper(logger logging.Logger, tracer trace.Tracer, infoMatcher InfoMatcher, pp []*math.G1, c *math.Curve, precision uint64, issuers []driver.Identity) *AuditorWrapper {
 	return &AuditorWrapper{
-		Auditor:        NewAuditor(logger, tracer, infoMatcher, pp, c, precision),
+		Auditor:        NewAuditor(logger, tracer, infoMatcher, pp, c, precision, issuers),
 		InfoMatcher:    infoMatcher,
 		PedersenParams: pp,
 		Curve:          c,
@@ -274,8 +275,32 @@ func TransferAuditValidate(infoMatcher InfoMatcher, pedersenParams []*math.G1, c
 			return errors.Wrapf(err, "token type validation failed for transfer action")
 		}
 
+		// For redeems, validate that the issuer who approved the redeem is one of the issuers
+		// listed in the public parameters. The issuer is optional: when the public parameters do
+		// not list any issuer, redeems can be approved without a signing issuer, and there is
+		// nothing to validate here. Issuer identities are not private in this driver, so there is
+		// no audit info to inspect: identity membership in the public parameters' issuer list is
+		// sufficient.
+		if action.IsRedeem() && !metadata.Issuer.Identity.IsNone() {
+			if err := validateRedeemIssuer(auditCtx.PP.Issuers(), metadata.Issuer.Identity); err != nil {
+				return err
+			}
+		}
+
 		return nil
 	}
+}
+
+// validateRedeemIssuer checks that the issuer who approved a redeem is one of the issuers
+// listed in the public parameters.
+func validateRedeemIssuer(issuers []driver.Identity, issuer driver.Identity) error {
+	for _, i := range issuers {
+		if i.Equal(issuer) {
+			return nil
+		}
+	}
+
+	return errors.Errorf("issuer [%s] is not a recognized issuer", issuer)
 }
 
 // validateIssueInputs validates issue action inputs against metadata.

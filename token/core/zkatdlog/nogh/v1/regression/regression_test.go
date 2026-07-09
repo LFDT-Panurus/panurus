@@ -216,6 +216,7 @@ func createAuditor(pp tcc.PublicParameters) *audit.Auditor {
 		v1pp.PedersenGenerators,
 		c,
 		64,
+		v1pp.IssuerIDs,
 	)
 }
 

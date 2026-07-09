@@ -141,6 +141,37 @@ func TestOutputStream_ByType(t *testing.T) {
 	assert.Equal(t, []*Output{output1, output3}, filtered.Outputs())
 }
 
+func TestOutput_IsRedeem(t *testing.T) {
+	assert.True(t, (&Output{Owner: Identity{}}).IsRedeem())
+	assert.False(t, (&Output{Owner: Identity("owner1")}).IsRedeem())
+}
+
+func TestOutputStream_ByRedeem(t *testing.T) {
+	output1 := &Output{Owner: Identity("owner1")}
+	output2 := &Output{Owner: Identity{}}
+	output3 := &Output{Owner: Identity("owner2")}
+	stream := NewOutputStream([]*Output{output1, output2, output3}, 0)
+
+	filtered := stream.ByRedeem()
+
+	assert.Equal(t, 1, filtered.Count())
+	assert.Equal(t, []*Output{output2}, filtered.Outputs())
+}
+
+func TestOutputStream_Issuers(t *testing.T) {
+	issuer1 := Identity("issuer1")
+	issuer2 := Identity("issuer2")
+	output1 := &Output{Issuer: issuer1}
+	output2 := &Output{Issuer: issuer2}
+	output3 := &Output{Issuer: issuer1}
+	output4 := &Output{Issuer: Identity{}}
+	stream := NewOutputStream([]*Output{output1, output2, output3, output4}, 0)
+
+	issuers := stream.Issuers()
+
+	assert.ElementsMatch(t, []Identity{issuer1, issuer2}, issuers)
+}
+
 func TestOutputStream_EnrollmentIDs(t *testing.T) {
 	output1 := &Output{EnrollmentID: "enroll1"}
 	output2 := &Output{EnrollmentID: "enroll2"}

@@ -45,6 +45,7 @@ func (p *SDK) Install() error {
 			registry.RegisterFactory("ListVaultUnspentTokens", &views.ListVaultUnspentTokensViewFactory{}),
 			registry.RegisterFactory("CheckIfExistsInVault", &views.CheckIfExistsInVaultViewFactory{}),
 			registry.RegisterFactory("RevokeUser", &views.RevokeUserViewFactory{}),
+			registry.RegisterFactory("AuthorizeRedeemIssuer", &views.AuthorizeRedeemIssuerViewFactory{}),
 			registry.RegisterFactory("DoesWalletExist", &views.DoesWalletExistViewFactory{}),
 			registry.RegisterFactory("TxFinality", &views1.TxFinalityViewFactory{}),
 			registry.RegisterFactory("GetPublicParams", &views.GetPublicParamsViewFactory{}),

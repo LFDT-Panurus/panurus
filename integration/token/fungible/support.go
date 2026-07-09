@@ -912,7 +912,7 @@ func TransferCashWithSelector(network *integration.Infrastructure, sender *token
 	}
 }
 
-func RedeemCashForTMSID(network *integration.Infrastructure, id *token3.NodeReference, wallet string, typ token.Type, amount uint64, auditor *token3.NodeReference, issuer *token3.NodeReference, tmsID *token2.TMSID) {
+func RedeemCashForTMSID(network *integration.Infrastructure, id *token3.NodeReference, wallet string, typ token.Type, amount uint64, auditor *token3.NodeReference, issuer *token3.NodeReference, tmsID *token2.TMSID, expectedErrorMsgs ...string) {
 	issuerName := ""
 	var issuerPublicParamsPublicKey view.Identity = nil
 	if issuer != nil && tmsID != nil {
@@ -930,8 +930,28 @@ func RedeemCashForTMSID(network *integration.Infrastructure, id *token3.NodeRefe
 		Amount:                      amount,
 		TMSID:                       tmsID,
 	}))
+	if len(expectedErrorMsgs) == 0 {
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		common2.CheckFinality(network, auditor, common.JSONUnmarshalString(txID), tmsID, false)
+		common2.CheckFinality(network, issuer, common.JSONUnmarshalString(txID), tmsID, false)
+
+		return
+	}
+
+	gomega.Expect(err).To(gomega.HaveOccurred())
+	for _, msg := range expectedErrorMsgs {
+		gomega.Expect(err.Error()).To(gomega.ContainSubstring(msg), "err [%s] should contain [%s]", err.Error(), msg)
+	}
+	time.Sleep(5 * time.Second)
+}
+
+// AuthorizeRedeemIssuer adds the passed issuer identity to the auditor's allow-list of issuers
+// authorized to approve redeem operations.
+func AuthorizeRedeemIssuer(network *integration.Infrastructure, auditor *token3.NodeReference, issuerIdentity []byte) {
+	_, err := network.Client(auditor.ReplicaName()).CallView("AuthorizeRedeemIssuer", common.JSONMarshall(&views.AuthorizeRedeemIssuer{
+		Issuer: issuerIdentity,
+	}))
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
-	common2.CheckFinality(network, auditor, common.JSONUnmarshalString(txID), tmsID, false)
 }
 
 func RedeemCashByIDs(network *integration.Infrastructure, networkName string, id *token3.NodeReference, wallet string, ids []*token.ID, amount uint64, auditor *token3.NodeReference, issuer *token3.NodeReference) {

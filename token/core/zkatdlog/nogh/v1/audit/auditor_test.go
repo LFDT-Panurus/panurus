@@ -122,6 +122,38 @@ func TestAuditor(t *testing.T) {
 		err = auditor.Check(t.Context(), &driver.TokenRequest{Actions: []*driver.TypedAction{{Type: request.ActionType_ACTION_TYPE_ISSUE, Raw: raw}}}, &driver.TokenRequestMetadata{Actions: []*driver.ActionMetadataEntry{{ActionID: 0, IssueMetadata: metadata}}}, "1", map[string]*token3.Token{})
 		require.NoError(t, err)
 	})
+
+	// audit a redeem with a valid issuer tests that a redeem transfer approved by an issuer listed
+	// in the public parameters is accepted.
+	t.Run("audit a redeem with a valid issuer", func(t *testing.T) {
+		issuerID, _ := getIdemixInfo(t, "./testdata/bls12_381_bbs/idemix")
+		_, pp, auditor := setupAuditorTest(t, issuerID)
+		transfer, metadata, inputs := createRedeemTransfer(t, pp, issuerID)
+		raw, err := transfer.Serialize()
+		require.NoError(t, err)
+
+		auditTokens := buildAuditTokensFromInputs(t, metadata, inputs)
+
+		err = auditor.Check(t.Context(), &driver.TokenRequest{Actions: []*driver.TypedAction{{Type: request.ActionType_ACTION_TYPE_TRANSFER, Raw: raw}}}, &driver.TokenRequestMetadata{Actions: []*driver.ActionMetadataEntry{{ActionID: 0, TransferMetadata: metadata}}}, "1", auditTokens)
+		require.NoError(t, err)
+	})
+
+	// audit a redeem with an unrecognized issuer tests that a redeem transfer is rejected when the
+	// approving issuer is not one of the issuers listed in the public parameters.
+	t.Run("audit a redeem with an unrecognized issuer", func(t *testing.T) {
+		issuerID, _ := getIdemixInfo(t, "./testdata/bls12_381_bbs/idemix")
+		// setupAuditorTest is called without listing issuerID as an authorized issuer.
+		_, pp, auditor := setupAuditorTest(t)
+		transfer, metadata, inputs := createRedeemTransfer(t, pp, issuerID)
+		raw, err := transfer.Serialize()
+		require.NoError(t, err)
+
+		auditTokens := buildAuditTokensFromInputs(t, metadata, inputs)
+
+		err = auditor.Check(t.Context(), &driver.TokenRequest{Actions: []*driver.TypedAction{{Type: request.ActionType_ACTION_TYPE_TRANSFER, Raw: raw}}}, &driver.TokenRequestMetadata{Actions: []*driver.ActionMetadataEntry{{ActionID: 0, TransferMetadata: metadata}}}, "1", auditTokens)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "is not a recognized issuer")
+	})
 }
 
 // TestAuditor_Errors tests error handling for various Auditor methods, ensuring that the auditor
@@ -524,13 +556,14 @@ func TestAuditor_StructuralValidation(t *testing.T) {
 func TestAuditor_TransferInputValidation(t *testing.T) {
 }
 
-func setupAuditorTest(t *testing.T) (*mock.SigningIdentity, *v1.PublicParams, *audit.AuditorWrapper) {
+func setupAuditorTest(t *testing.T, issuers ...driver.Identity) (*mock.SigningIdentity, *v1.PublicParams, *audit.AuditorWrapper) {
 	t.Helper()
 	fakeSigningIdentity := &mock.SigningIdentity{}
 	ipk, err := os.ReadFile("./testdata/bls12_381_bbs/idemix/msp/IssuerPublicKey")
 	require.NoError(t, err)
 	pp, err := v1.Setup(32, ipk, math.BLS12_381_BBS_GURVY)
 	require.NoError(t, err)
+	pp.IssuerIDs = issuers
 
 	deserializer, err := zkatdlog.NewDeserializer(pp)
 	require.NoError(t, err)
@@ -541,6 +574,7 @@ func setupAuditorTest(t *testing.T) (*mock.SigningIdentity, *v1.PublicParams, *a
 		pp.PedersenGenerators,
 		math.Curves[pp.Curve],
 		64,
+		issuers,
 	)
 	fakeSigningIdentity.SignReturns([]byte("auditor-signature"), nil)
 
@@ -587,6 +621,54 @@ func createTransfer(t *testing.T, pp *v1.PublicParams) (*transfer.Action, *drive
 	tokns[0] = append(tokns[0], inputs...)
 
 	return transfer, metadata, tokns
+}
+
+// createRedeemTransfer creates a transfer action with a single redeemed (nil-owner) output,
+// approved by the passed issuer identity. Issuer identities are not private in this driver, so no
+// audit info is recorded for the issuer in the metadata.
+func createRedeemTransfer(t *testing.T, pp *v1.PublicParams, issuerID driver.Identity) (*transfer.Action, *driver.TransferMetadata, [][]*token.Token) {
+	t.Helper()
+	id, auditInfoRaw := getIdemixInfo(t, "./testdata/bls12_381_bbs/idemix")
+	inputs, tokenInfos := createInputs(t, pp, id)
+
+	fakeSigner := &mock.SigningIdentity{}
+	sender, err := transfer.NewSender([]driver.Signer{fakeSigner, fakeSigner}, inputs, []*token3.ID{{TxId: "0"}, {TxId: "1"}}, tokenInfos, pp)
+	require.NoError(t, err)
+	transferAction, meta, err := sender.GenerateZKTransfer(t.Context(), []uint64{60}, [][]byte{nil})
+	require.NoError(t, err)
+	transferAction.Issuer = issuerID
+
+	tokenIDs := []*token3.ID{{TxId: "0"}, {TxId: "1"}}
+
+	metadata := &driver.TransferMetadata{
+		Issuer: driver.AuditableIdentity{Identity: issuerID},
+	}
+	for i := range len(transferAction.Inputs) {
+		metadata.Inputs = append(metadata.Inputs, &driver.TransferInputMetadata{
+			TokenID: tokenIDs[i],
+			Senders: []*driver.AuditableIdentity{
+				{
+					Identity:  transferAction.Inputs[i].Token.Owner,
+					AuditInfo: auditInfoRaw,
+				},
+			},
+		})
+	}
+
+	for i := range len(transferAction.Outputs) {
+		marshalledMeta, err := meta[i].Serialize()
+		require.NoError(t, err)
+		metadata.Outputs = append(metadata.Outputs, &driver.TransferOutputMetadata{
+			OutputMetadata:  marshalledMeta,
+			OutputAuditInfo: nil,
+			Receivers:       nil,
+		})
+	}
+
+	tokns := make([][]*token.Token, 1)
+	tokns[0] = append(tokns[0], inputs...)
+
+	return transferAction, metadata, tokns
 }
 
 func createTransferWithBogusOutput(t *testing.T, pp *v1.PublicParams) (*transfer.Action, *driver.TransferMetadata, [][]*token.Token) {
