@@ -9,8 +9,8 @@ replace (
 )
 
 require (
-	github.com/IBM/idemix v0.1.2-0.20260708054707-cc900f24a95b
-	github.com/IBM/mathlib v0.2.1-0.20260708043658-e8f8fcd199a4
+	github.com/IBM/idemix v0.2.0
+	github.com/IBM/mathlib v0.3.0
 	github.com/LFDT-Panurus/panurus v0.0.0
 	github.com/gin-gonic/gin v1.12.0
 	github.com/hyperledger-labs/fabric-smart-client v0.14.1
