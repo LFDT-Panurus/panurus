@@ -7,6 +7,7 @@ SPDX-License-Identifier: Apache-2.0
 package membership_test
 
 import (
+	"context"
 	"slices"
 	"sync"
 	"testing"
@@ -271,6 +272,84 @@ func TestLocalMembership_Notifier(t *testing.T) {
 	// Wait for background processing (though handleConfig is called synchronously in the callback in my implementation,
 	// but the callback itself is called from the notifier which might be background).
 	// In my lm.go, the callback is executed by the notifier loop.
+
+	assert.Eventually(t, func() bool {
+		ids, _ := lm.IDs()
+
+		return slices.Contains(ids, "new")
+	}, 2*time.Second, 100*time.Millisecond)
+}
+
+func TestLocalMembership_NotificationReadsStoreOutsideLock(t *testing.T) {
+	ctx := t.Context()
+
+	ip := &mock.IdentityProvider{}
+	des := &mock.SignerDeserializerManager{}
+	iss := &mock.IdentityStoreService{}
+	iss.ConfigurationExistsReturns(false, nil)
+	iss.AddConfigurationReturns(nil)
+
+	notifier := &mock.IdentityConfigurationNotifier{}
+	iss.NotifierReturns(notifier, nil)
+
+	km := &mock.KeyManager{}
+	km.EnrollmentIDReturns("e1")
+	km.IdentityReturns(&idriver.IdentityDescriptor{Identity: []byte("id1")}, nil)
+	km.IdentityTypeReturns(identity.Type(99))
+
+	kmp := &mock.KeyManagerProvider{}
+	kmp.GetReturns(km, nil)
+
+	lm := membership.NewLocalMembership(
+		logging.MustGetLogger("test"),
+		&mock.Config{},
+		[]byte("netid"),
+		des,
+		iss,
+		"testType",
+		false,
+		ip,
+		kmp,
+	)
+
+	iss.IteratorConfigurationsReturns(&mock.IdentityConfigurationIterator{}, nil)
+
+	var mu sync.Mutex
+	var subCallback func(idriver.Operation, idriver.IdentityConfigurationRecord)
+	notifier.SubscribeStub = func(callback func(idriver.Operation, idriver.IdentityConfigurationRecord)) error {
+		mu.Lock()
+		defer mu.Unlock()
+		subCallback = callback
+
+		return nil
+	}
+
+	require.NoError(t, lm.Load(ctx, nil, nil))
+
+	assert.Eventually(t, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+
+		return subCallback != nil
+	}, 2*time.Second, 100*time.Millisecond)
+
+	newConfig := idriver.IdentityConfiguration{ID: "new", URL: "/tmp/new", Type: "testType"}
+	iss.GetConfigurationStub = func(context.Context, string, string, string) (*idriver.IdentityConfiguration, error) {
+		// re-enter a read path: this deadlocks if the notification handler
+		// held the write lock across the store read
+		_, _ = lm.IDs()
+
+		return &newConfig, nil
+	}
+
+	mu.Lock()
+	callback := subCallback
+	mu.Unlock()
+	callback(idriver.Insert, idriver.IdentityConfigurationRecord{
+		ID:   "new",
+		Type: "testType",
+		URL:  "/tmp/new",
+	})
 
 	assert.Eventually(t, func() bool {
 		ids, _ := lm.IDs()

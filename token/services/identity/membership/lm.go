@@ -452,10 +452,9 @@ func (l *LocalMembership) subscribeNotifier() error {
 	return nil
 }
 
+// handleConfig registers the store configuration a change notification points
+// at. The store read runs outside the write lock.
 func (l *LocalMembership) handleConfig(id, typ, url string) {
-	l.localIdentitiesMutex.Lock()
-	defer l.localIdentitiesMutex.Unlock()
-
 	l.logger.Debugf("handle config for [%s:%s:%s]", id, typ, url)
 	config, err := l.identityDB.GetConfiguration(context.Background(), id, typ, url)
 	if err != nil {
@@ -468,6 +467,9 @@ func (l *LocalMembership) handleConfig(id, typ, url string) {
 
 		return
 	}
+
+	l.localIdentitiesMutex.Lock()
+	defer l.localIdentitiesMutex.Unlock()
 
 	key := l.configKey(config)
 	if _, ok := l.localIdentitiesByConfig[key]; ok {
