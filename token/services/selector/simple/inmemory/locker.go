@@ -65,17 +65,12 @@ type locker struct {
 	ttxdb                  TXStatusProvider
 	shardsMu               sync.RWMutex
 	shards                 map[string]*shard
-	// identityLockCount tracks the number of currently held locks per identity,
-	// guarded by identityMu independently of the per-owner shards.
-	identityMu          sync.Mutex
-	identityLockCount   map[string]int
 	sleepTimeout           time.Duration
 	validTxEvictionTimeout time.Duration
 	cancel                 context.CancelFunc
 	scanDone               chan struct{}
 	stopOnce               sync.Once
-	rateLimiter            *RateLimiter
-	maxLocksPerIdentity    int
+	enforcer               *Locker
 }
 
 // LockerConfig holds configuration for the locker
@@ -103,21 +98,14 @@ func NewLocker(ttxdb TXStatusProvider, timeout time.Duration, validTxEvictionTim
 func NewLockerWithConfig(ttxdb TXStatusProvider, timeout time.Duration, validTxEvictionTimeout time.Duration, config LockerConfig) simple.Locker {
 	ctx, cancel := context.WithCancel(context.Background())
 
-	var rateLimiter *RateLimiter
-	if config.RateLimit > 0 {
-		rateLimiter = NewRateLimiter(config.RateLimit, config.RateLimitBurst, config.RateLimitIdleTTL, 0)
-	}
-
 	r := &locker{
 		ttxdb:                  ttxdb,
 		sleepTimeout:           timeout,
 		shards:                 map[string]*shard{},
-		identityLockCount:      map[string]int{},
 		validTxEvictionTimeout: validTxEvictionTimeout,
 		cancel:                 cancel,
 		scanDone:               make(chan struct{}),
-		rateLimiter:            rateLimiter,
-		maxLocksPerIdentity:    config.MaxLocksPerIdentity,
+		enforcer:               NewEnforcer(config),
 	}
 	r.start(ctx)
 
@@ -136,8 +124,8 @@ func (d *locker) Stop() error {
 			err = ErrTimeout
 			logger.Warnf("scan goroutine did not stop within timeout")
 		}
-		if d.rateLimiter != nil {
-			d.rateLimiter.Stop()
+		if d.enforcer != nil {
+			d.enforcer.Stop()
 		}
 	})
 
@@ -200,13 +188,11 @@ func (d *locker) Lock(ctx context.Context, owner string, id *token2.ID, txID str
 func (d *locker) LockWithIdentity(ctx context.Context, owner string, id *token2.ID, txID string, identity string, reclaim bool) (string, error) {
 	k := *id
 
-	// Apply rate limiting if configured and identity provided
-	if d.rateLimiter != nil && identity != "" {
-		if err := d.rateLimiter.Allow(identity); err != nil {
-			logger.DebugfContext(ctx, "rate limit exceeded for identity [%s]: %v", identity, err)
+	// Rate limiting can be checked before acquiring the write lock.
+	if err := d.enforcer.CheckRateLimit(identity); err != nil {
+		logger.DebugfContext(ctx, "rate limit exceeded for identity [%s]: %v", identity, err)
 
-			return "", errors.Wrapf(simple.ErrRateLimitExceeded, "identity %s", identity)
-		}
+		return "", err
 	}
 
 	s := d.lockShard(owner)
@@ -239,28 +225,17 @@ func (d *locker) LockWithIdentity(ctx context.Context, owner string, id *token2.
 		}
 	}
 
-	// Check quota if configured and identity provided
-	if d.maxLocksPerIdentity > 0 && identity != "" {
-		d.identityMu.Lock()
-		currentCount := d.identityLockCount[identity]
-		d.identityMu.Unlock()
-		if currentCount >= d.maxLocksPerIdentity {
-			logger.DebugfContext(ctx, "quota exceeded for identity [%s]: %d/%d locks", identity, currentCount, d.maxLocksPerIdentity)
+	// Quota check must be inside the write lock so the check and TrackLock are atomic.
+	if err := d.enforcer.CheckQuota(identity); err != nil {
+		logger.DebugfContext(ctx, "quota exceeded for identity [%s]: %v", identity, err)
 
-			return "", errors.Wrapf(simple.ErrQuotaExceeded, "identity %s has %d locks (max %d)", identity, currentCount, d.maxLocksPerIdentity)
-		}
+		return "", err
 	}
 
 	logger.DebugfContext(ctx, "locking [%s] for [%s] by identity [%s]", id, txID, identity)
 	now := time.Now()
 	s.locked[k] = &lockEntry{TxID: txID, Identity: identity, Created: now, LastAccess: now}
-
-	// Update identity lock count
-	if identity != "" {
-		d.identityMu.Lock()
-		d.identityLockCount[identity]++
-		d.identityMu.Unlock()
-	}
+	d.enforcer.TrackLock(identity)
 
 	return "", nil
 }
@@ -284,16 +259,7 @@ func (d *locker) UnlockIDs(ctx context.Context, owner string, ids ...*token2.ID)
 		}
 		logger.DebugfContext(ctx, "unlocking [%s] hold by [%s]", id, entry)
 		delete(s.locked, k)
-
-		// Decrement identity lock count
-		if entry.Identity != "" {
-			d.identityMu.Lock()
-			d.identityLockCount[entry.Identity]--
-			if d.identityLockCount[entry.Identity] <= 0 {
-				delete(d.identityLockCount, entry.Identity)
-			}
-			d.identityMu.Unlock()
-		}
+		d.enforcer.TrackUnlock(entry.Identity)
 	}
 
 	return notFound
@@ -309,16 +275,7 @@ func (d *locker) UnlockByTxID(ctx context.Context, txID string) {
 			if entry.TxID == txID {
 				logger.DebugfContext(ctx, "unlocking [%s] hold by [%s]", id, entry)
 				delete(s.locked, id)
-
-				// Decrement identity lock count
-				if entry.Identity != "" {
-					d.identityMu.Lock()
-					d.identityLockCount[entry.Identity]--
-					if d.identityLockCount[entry.Identity] <= 0 {
-						delete(d.identityLockCount, entry.Identity)
-					}
-					d.identityMu.Unlock()
-				}
+				d.enforcer.TrackUnlock(entry.Identity)
 			}
 		}
 		s.mu.Unlock()
@@ -348,16 +305,7 @@ func (d *locker) reclaim(ctx context.Context, s *shard, id *token2.ID, txID stri
 	switch status {
 	case ttxdb.Deleted:
 		delete(s.locked, *id)
-
-		// Decrement identity lock count
-		if identity != "" {
-			d.identityMu.Lock()
-			d.identityLockCount[identity]--
-			if d.identityLockCount[identity] <= 0 {
-				delete(d.identityLockCount, identity)
-			}
-			d.identityMu.Unlock()
-		}
+		d.enforcer.TrackUnlock(identity)
 
 		return true, status
 	default:
@@ -430,6 +378,7 @@ func (d *locker) scanShards(ctx context.Context) {
 	type removeEntry struct {
 		id        token2.ID
 		txID      string
+		identity  string
 		confirmed bool
 	}
 
@@ -481,16 +430,7 @@ func (d *locker) scanShards(ctx context.Context) {
 				continue
 			}
 			delete(s.locked, r.id)
-
-			// Decrement identity lock count
-			if entry.Identity != "" {
-				d.identityMu.Lock()
-				d.identityLockCount[entry.Identity]--
-				if d.identityLockCount[entry.Identity] <= 0 {
-					delete(d.identityLockCount, entry.Identity)
-				}
-				d.identityMu.Unlock()
-			}
+			d.enforcer.TrackUnlock(entry.Identity)
 		}
 		s.mu.Unlock()
 
