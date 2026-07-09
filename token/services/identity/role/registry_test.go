@@ -16,11 +16,15 @@ import (
 
 	"github.com/LFDT-Panurus/panurus/token/driver"
 	mock2 "github.com/LFDT-Panurus/panurus/token/driver/mock"
+	"github.com/LFDT-Panurus/panurus/token/services/identity"
 	idriver "github.com/LFDT-Panurus/panurus/token/services/identity/driver"
 	imock "github.com/LFDT-Panurus/panurus/token/services/identity/driver/mock"
+	"github.com/LFDT-Panurus/panurus/token/services/identity/membership"
+	mmock "github.com/LFDT-Panurus/panurus/token/services/identity/membership/mock"
 	"github.com/LFDT-Panurus/panurus/token/services/identity/role"
 	"github.com/LFDT-Panurus/panurus/token/services/identity/role/mock"
 	"github.com/LFDT-Panurus/panurus/token/services/logging"
+	"github.com/LFDT-Panurus/panurus/token/services/storage"
 	"github.com/stretchr/testify/require"
 )
 
@@ -262,4 +266,76 @@ func TestLookup_WithUnknownType_Error(t *testing.T) {
 	r.MapToIdentityReturns(nil, "", errors.New("fail"))
 	_, _, _, err := reg.Lookup(t.Context(), struct{ X int }{1})
 	require.Error(t, err)
+}
+
+// TestLookup_ByIdentityBytesResolvesViaSharedStores pins the cross-replica
+// resolution chain for a lookup by raw identity bytes: the wallet store maps
+// the identity to its wallet id, and the identity store point query loads that
+// configuration by name — no full store scan and no reliance on notifications.
+func TestLookup_ByIdentityBytesResolvesViaSharedStores(t *testing.T) {
+	ctx := t.Context()
+
+	// identity store: empty at Load, later holds "alice" registered by another
+	// replica; the point query answers by exact id+type only
+	iss := &mmock.IdentityStoreService{}
+	iss.NotifierReturns(nil, storage.ErrNotSupported)
+	iss.IteratorConfigurationsReturns(&mmock.IdentityConfigurationIterator{}, nil)
+	aliceConfig := idriver.IdentityConfiguration{ID: "alice", URL: "/tmp/alice", Type: "testType"}
+	iss.ConfigurationsByIDStub = func(_ context.Context, id, typ string) ([]idriver.IdentityConfiguration, error) {
+		if id == "alice" && typ == "testType" {
+			return []idriver.IdentityConfiguration{aliceConfig}, nil
+		}
+
+		return nil, nil
+	}
+
+	km := &mmock.KeyManager{}
+	km.EnrollmentIDReturns("e1")
+	km.AnonymousReturns(false)
+	km.IdentityReturns(&idriver.IdentityDescriptor{Identity: []byte("alice-long-term-id"), AuditInfo: []byte("ai")}, nil)
+	km.IdentityTypeReturns(identity.Type(99))
+	kmp := &mmock.KeyManagerProvider{}
+	kmp.GetReturns(km, nil)
+
+	ip := &mmock.IdentityProvider{}
+	ip.BindReturns(nil)
+
+	lm := membership.NewLocalMembership(
+		logging.MustGetLogger("role_test"),
+		&mmock.Config{},
+		[]byte("netid"),
+		&mmock.SignerDeserializerManager{},
+		iss,
+		"testType",
+		false,
+		ip,
+		kmp,
+	)
+	require.NoError(t, lm.Load(ctx, nil, nil))
+
+	r := role.NewRole(logging.MustGetLogger("role_test"), idriver.OwnerRole, "network", []byte("node-id"), lm)
+
+	// wallet store: holds the identity->wallet binding written by the replica
+	// that created the wallet
+	walletStore := &imock.WalletStoreService{}
+	walletStore.GetWalletIDReturns("alice", nil)
+
+	reg := role.NewRegistry(logging.MustGetLogger("role_test"), r, walletStore, &mock.WalletFactory{})
+
+	// raw identity bytes, unknown to this process and not valid UTF-8
+	rawIdentity := []byte{0xff, 0xfe, 0x01, 0x02}
+	wallet, idInfo, wID, err := reg.Lookup(ctx, rawIdentity)
+	require.NoError(t, err)
+	require.Nil(t, wallet)
+	require.NotNil(t, idInfo)
+	require.Equal(t, "alice", wID)
+	require.Equal(t, "alice", idInfo.ID())
+
+	// the configuration is now loaded locally
+	ids, err := lm.IDs()
+	require.NoError(t, err)
+	require.Contains(t, ids, "alice")
+
+	// resolved through the point query, without a second full scan
+	require.Equal(t, 1, iss.IteratorConfigurationsCallCount())
 }
