@@ -7,6 +7,8 @@ SPDX-License-Identifier: Apache-2.0
 package statedelta
 
 import (
+	"bytes"
+
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 )
 
@@ -66,9 +68,22 @@ type StateDelta struct {
 
 // Validate checks the structural invariants a well-formed StateDelta must satisfy. The translator
 // and endorsers use it to fail fast rather than emit or sign a malformed delta.
+//
+// Beyond shape checks, it enforces two invariants that protect the signing path:
+//   - SetupParameters is present iff IsSetup. The field is covered by the EIP-712 digest, so a
+//     non-setup delta smuggling setup bytes would be signed by endorsers while the contract ignores
+//     it — refuse it instead.
+//   - MetadataKeys are strictly ascending (the frozen §4.4 canonicalization). Unsorted keys mean the
+//     emitting translator is broken (endorsers would produce different bytes and signatures would
+//     not assemble); duplicate keys would make the on-chain write order ambiguous.
 func (d *StateDelta) Validate() error {
 	if len(d.MetadataKeys) != len(d.MetadataVals) {
 		return errors.Errorf("metadata keys/values length mismatch: %d != %d", len(d.MetadataKeys), len(d.MetadataVals))
+	}
+	for i := 1; i < len(d.MetadataKeys); i++ {
+		if bytes.Compare(d.MetadataKeys[i-1][:], d.MetadataKeys[i][:]) >= 0 {
+			return errors.Errorf("metadata keys must be strictly ascending (canonical order), violated at index %d", i)
+		}
 	}
 	if d.IsSetup {
 		if len(d.SpentRefs) != 0 || len(d.Outputs) != 0 {
@@ -77,6 +92,8 @@ func (d *StateDelta) Validate() error {
 		if len(d.SetupParameters) == 0 {
 			return errors.Errorf("setup delta must carry the new public parameters")
 		}
+	} else if len(d.SetupParameters) != 0 {
+		return errors.Errorf("non-setup delta must not carry setup parameters")
 	}
 
 	return nil
