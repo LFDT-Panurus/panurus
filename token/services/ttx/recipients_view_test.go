@@ -64,12 +64,14 @@ func (c *viewTestCtx) GetSessionByID(string, view.Identity) (view.Session, error
 	if c.mainSess != nil {
 		return c.mainSess, nil
 	}
+
 	return nil, errors.New("no session")
 }
 func (c *viewTestCtx) GetService(v any) (any, error) {
 	if c.getService != nil {
 		return c.getService(v)
 	}
+
 	return nil, errors.Errorf("viewTestCtx: no service provider for %T", v)
 }
 func (c *viewTestCtx) GetSession(caller view.View, party view.Identity, boundTo ...view.View) (view.Session, error) {
@@ -79,6 +81,7 @@ func (c *viewTestCtx) GetSession(caller view.View, party view.Identity, boundTo 
 	if c.mainSess != nil {
 		return c.mainSess, nil
 	}
+
 	return nil, errors.Errorf("viewTestCtx: no session for %s", party)
 }
 func (c *viewTestCtx) RunView(v view.View, opts ...view.RunViewOption) (any, error) {
@@ -296,9 +299,9 @@ func TestRequestMultisigIdentity_AllLocal(t *testing.T) {
 	tmsID := token.TMSID{Network: "net", Channel: "ch", Namespace: "ns"}
 
 	aliceOW := &drivermock.OwnerWallet{}
-	aliceOW.GetRecipientIdentityReturns(driver.Identity(alice), nil)
+	aliceOW.GetRecipientIdentityReturns(alice, nil)
 	bobOW := &drivermock.OwnerWallet{}
-	bobOW.GetRecipientIdentityReturns(driver.Identity(bob), nil)
+	bobOW.GetRecipientIdentityReturns(bob, nil)
 
 	drvWs := &drivermock.WalletService{}
 	drvWs.OwnerWalletStub = func(_ context.Context, id driver.WalletLookupID) (driver.OwnerWallet, error) {
@@ -379,9 +382,9 @@ func TestRequestPolicyIdentity_OptionsPropagated(t *testing.T) {
 	tmsID := token.TMSID{Network: "net-x", Channel: "ch-x", Namespace: "ns-x"}
 
 	aliceOW := &drivermock.OwnerWallet{}
-	aliceOW.GetRecipientIdentityReturns(driver.Identity(alice), nil)
+	aliceOW.GetRecipientIdentityReturns(alice, nil)
 	bobOW := &drivermock.OwnerWallet{}
-	bobOW.GetRecipientIdentityReturns(driver.Identity(bob), nil)
+	bobOW.GetRecipientIdentityReturns(bob, nil)
 
 	drvWs := &drivermock.WalletService{}
 	drvWs.OwnerWalletStub = func(_ context.Context, id driver.WalletLookupID) (driver.OwnerWallet, error) {
@@ -501,8 +504,8 @@ func TestAggregateAndDistribute_GetAuditInfoError(t *testing.T) {
 	f := &RequestRecipientIdentityView{
 		TMSID: tmsID,
 		Recipients: Recipients{
-			{Identity: view.Identity(alice)},
-			{Identity: view.Identity(bob)},
+			{Identity: alice},
+			{Identity: bob},
 		},
 	}
 
