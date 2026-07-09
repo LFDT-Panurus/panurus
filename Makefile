@@ -12,7 +12,24 @@ FAB_BINS ?= $(FABRIC_BINARY_BASE)/bin
 
 # integration test options
 GINKGO_TEST_OPTS ?=
-GINKGO_TEST_OPTS += --keep-going -cover
+GINKGO_TEST_OPTS += --keep-going
+
+# Integration-test coverage.
+#
+# The integration suites live in their own Go module (github.com/LFDT-Panurus/panurus/integration)
+# and drive the FTS nodes in-process, so the code we care about is the root module, which is an
+# *external dependency* of that build. A bare `-cover` therefore credits nothing in the root
+# module, and setting the GOCOVERDIR env var does not help: `go test`/ginkgo only emit coverage
+# data when told where to via a flag, not via the environment. So we must (a) name the root
+# packages with --coverpkg and (b) ask ginkgo to write a text coverprofile explicitly.
+#
+# Gated on COVERAGE_DIR (set by CI to an absolute path) so local integration runs stay fast and
+# uninstrumented. Scoped to token/... rather than the whole module to bound instrumentation cost.
+ifdef COVERAGE_DIR
+GINKGO_TEST_OPTS += --cover --covermode=atomic \
+	--coverpkg=github.com/LFDT-Panurus/panurus/token/... \
+	--output-dir=$(COVERAGE_DIR) --coverprofile=coverage.profile
+endif
 
 TOP = .
 
@@ -46,12 +63,16 @@ download-fabric:
 	./ci/scripts/download_fabric.sh $(FABRIC_BINARY_BASE) $(FABRIC_VERSION) $(FABRIC_CA_VERSION)
 
 GO_TEST_PARAMS ?= -coverpkg=./... -coverprofile=profile.cov
-GO_PACKAGES = $(shell go list ./... | grep -v '/integration/' | grep -v 'regression' | grep -v 'mock' |  grep -v 'protos-go' |  grep -v 'testutils'; go list ./integration/nwo/...)
+# NWO lives in the integration module, so it can no longer be listed from the root module
+# (`go list ./integration/nwo/...` errors here). Its tests are run separately below, inside
+# the integration module.
+GO_PACKAGES = $(shell go list ./... | grep -v '/integration/' | grep -v 'regression' | grep -v 'mock' |  grep -v 'protos-go' |  grep -v 'testutils')
 
 .PHONY: unit-tests
 # run standard unit tests
 unit-tests:
 	@go test $(GO_TEST_PARAMS) $(GO_PACKAGES)
+	cd integration; go test -cover ./nwo/...
 	cd token/services/storage/db/kvs/hashicorp/; go test -cover ./...
 
 .PHONY: unit-tests-race

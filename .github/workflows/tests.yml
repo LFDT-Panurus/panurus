@@ -166,9 +166,15 @@ jobs:
 
         run: |
           mkdir -p covdata
-          GOCOVERDIR=$(realpath covdata) make integration-tests-${{ matrix.tests }}
-          go tool covdata textfmt -i=covdata -o coverage.profile
-          ./ci/scripts/filter-coverage.sh coverage.profile coverage.profile
+          # ginkgo writes a text coverprofile (scoped to the root module's token/... packages
+          # via --coverpkg) into $COVERAGE_DIR; see GINKGO_TEST_OPTS in the Makefile.
+          COVERAGE_DIR=$(realpath covdata) make integration-tests-${{ matrix.tests }}
+          # Guard: a missing/empty profile means coverage collection silently broke again.
+          if [ ! -s covdata/coverage.profile ]; then
+            echo "::error::integration coverage profile is empty for ${{ matrix.tests }} — coverage collection is broken"
+            exit 1
+          fi
+          ./ci/scripts/filter-coverage.sh covdata/coverage.profile coverage.profile
 
       - name: Send coverage to Coveralls
         uses: coverallsapp/github-action@v2
