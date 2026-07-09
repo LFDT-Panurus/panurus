@@ -243,3 +243,65 @@ func getRecipientWalletID(opts *token.ServiceOptions) string {
 
 	return wBoxed.(string)
 }
+
+// WalletSelector lets the responder to a RecipientRequest choose which wallet to use
+// to answer the request. defaultWallet is the wallet that would be used absent a
+// selector (the responder's configured wallet, or the request's WalletID as fallback).
+// Returning defaultWallet unchanged preserves the default behavior.
+type WalletSelector func(request *RecipientRequest, defaultWallet string) (string, error)
+
+// ExchangeWalletSelector is the WalletSelector equivalent for ExchangeRecipientRequest.
+type ExchangeWalletSelector func(request *ExchangeRecipientRequest, defaultWallet string) (string, error)
+
+// WithWalletSelector sets a callback used by the responder to a RecipientRequest to
+// choose which wallet to use, overriding the default wallet resolution.
+func WithWalletSelector(selector WalletSelector) token.ServiceOption {
+	return func(options *token.ServiceOptions) error {
+		if selector == nil {
+			return nil
+		}
+		if options.Params == nil {
+			options.Params = map[string]any{}
+		}
+		options.Params["WalletSelector"] = selector
+
+		return nil
+	}
+}
+
+// getWalletSelector extracts the WalletSelector from service options, if set.
+func getWalletSelector(opts *token.ServiceOptions) WalletSelector {
+	sBoxed, ok := opts.Params["WalletSelector"]
+	if !ok {
+		return nil
+	}
+
+	return sBoxed.(WalletSelector)
+}
+
+// WithExchangeWalletSelector sets a callback used by the responder to an
+// ExchangeRecipientRequest to choose which wallet to use, overriding the default wallet
+// resolution.
+func WithExchangeWalletSelector(selector ExchangeWalletSelector) token.ServiceOption {
+	return func(options *token.ServiceOptions) error {
+		if selector == nil {
+			return nil
+		}
+		if options.Params == nil {
+			options.Params = map[string]any{}
+		}
+		options.Params["ExchangeWalletSelector"] = selector
+
+		return nil
+	}
+}
+
+// getExchangeWalletSelector extracts the ExchangeWalletSelector from service options, if set.
+func getExchangeWalletSelector(opts *token.ServiceOptions) ExchangeWalletSelector {
+	sBoxed, ok := opts.Params["ExchangeWalletSelector"]
+	if !ok {
+		return nil
+	}
+
+	return sBoxed.(ExchangeWalletSelector)
+}
