@@ -354,19 +354,6 @@ func (db *IdentityStore) GetExistingSignerInfo(ctx context.Context, ids ...tdriv
 	}
 
 	idHashes = notFound
-	notFound = make([]string, 0)
-	for _, idHash := range idHashes {
-		if v, ok := db.signerInfoCache.Get(idHash); !ok {
-			notFound = append(notFound, idHash)
-		} else if v {
-			result = append(result, idHash)
-		}
-	}
-	if len(notFound) == 0 {
-		return result, nil
-	}
-
-	idHashes = notFound
 
 	query, args := q.Select().
 		FieldsByName("identity_hash").

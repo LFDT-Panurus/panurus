@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	tdriver "github.com/LFDT-Panurus/panurus/token/driver"
 	"github.com/LFDT-Panurus/panurus/token/driver/mock"
 	idriver "github.com/LFDT-Panurus/panurus/token/services/identity/driver"
 	"github.com/LFDT-Panurus/panurus/token/services/logging"
@@ -62,6 +63,7 @@ var IdentityCases = []struct {
 	{"Configurations", TConfigurations},
 	{"GetConfiguration", TGetConfiguration},
 	{"SignerInfoConcurrent", TSignerInfoConcurrent},
+	{"GetExistingSignerInfo", TGetExistingSignerInfo},
 	{"RegisterIdentityDescriptor", TRegisterIdentityDescriptor},
 }
 
@@ -214,6 +216,31 @@ func tSignerInfo(t *testing.T, db driver.IdentityStore, index int) {
 	exists, err = db.SignerInfoExists(ctx, bob)
 	assert.NoError(t, err, "failed to check signer info existence for [%s]", bob)
 	assert.False(t, exists)
+}
+
+// TGetExistingSignerInfo checks that GetExistingSignerInfo returns the hashes
+// of exactly the identities for which signer info was stored, when queried with
+// a mix of known and unknown identities.
+func TGetExistingSignerInfo(t *testing.T, db driver.IdentityStore) {
+	t.Helper()
+	ctx := t.Context()
+	alice := tdriver.Identity("alice")
+	bob := tdriver.Identity("bob")
+	carol := tdriver.Identity("carol")
+	signerInfo := []byte("signer_info")
+
+	require.NoError(t, db.StoreSignerInfo(ctx, alice, signerInfo))
+	require.NoError(t, db.StoreSignerInfo(ctx, carol, signerInfo))
+
+	// bob was never stored, so it must be reported as missing.
+	existing, err := db.GetExistingSignerInfo(ctx, alice, bob, carol)
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []string{alice.UniqueID(), carol.UniqueID()}, existing)
+
+	// Querying only the unknown identity returns nothing.
+	existing, err = db.GetExistingSignerInfo(ctx, bob)
+	require.NoError(t, err)
+	assert.Empty(t, existing)
 }
 
 func TRegisterIdentityDescriptor(t *testing.T, db driver.IdentityStore) {
