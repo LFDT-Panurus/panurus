@@ -16,7 +16,6 @@ import (
 	"github.com/LFDT-Panurus/panurus/token/services/storage/db/dbtest"
 	dbdriver "github.com/LFDT-Panurus/panurus/token/services/storage/db/driver"
 	"github.com/LFDT-Panurus/panurus/token/services/storage/db/sql/postgres"
-	"github.com/LFDT-Panurus/panurus/token/services/utils/types/transaction"
 	token2 "github.com/LFDT-Panurus/panurus/token/token"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/services/metrics/disabled"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/services/storage/driver/common"
@@ -83,7 +82,7 @@ func BenchmarkSherdlockPostgresContention(b *testing.B) {
 // does inside the real selection loop.
 func runOneSelection(b *testing.B, fetcher TokenFetcher, lockDB Locker, localCache *localLockCache, leaseExpiry time.Duration) error {
 	b.Helper()
-	txID := transaction.ID(newBenchTxID())
+	txID := newBenchTxID()
 	sel := NewSherdSelector(txID, fetcher, lockDB, localCache, leaseExpiry, testutilsPrecision, time.Millisecond, 20, NewMetrics(&disabled.Provider{}))
 	defer func() { _ = sel.UnlockAll(context.Background()) }()
 
