@@ -6,9 +6,9 @@ SPDX-License-Identifier: Apache-2.0
 package gadgets
 
 import (
-    "github.com/consensys/gnark/frontend"
-    "github.com/consensys/gnark/std/algebra/native/twistededwards"
 	twistededwards2 "github.com/consensys/gnark-crypto/ecc/twistededwards"
+	"github.com/consensys/gnark/frontend"
+	"github.com/consensys/gnark/std/algebra/native/twistededwards"
 )
 
 // ValueCommitCircuit computes cv = v·V + rcv·R in-circuit over Jubjub
@@ -27,7 +27,7 @@ func ValueCommitCircuit(
 	rcv frontend.Variable,
 	genV twistededwards.Point,
 	genR twistededwards.Point,
-) (twistededwards.Point, error){
+) (twistededwards.Point, error) {
 	curve, err := twistededwards.NewEdCurve(api, twistededwards2.BLS12_381)
 	if err != nil {
 		return twistededwards.Point{}, err
