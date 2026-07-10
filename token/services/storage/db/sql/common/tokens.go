@@ -1339,6 +1339,7 @@ func (db *TokenStore) GetSchema() string {
 		);
 		CREATE INDEX IF NOT EXISTS idx_status_%s ON %s ( status );
 		CREATE INDEX IF NOT EXISTS idx_recovery_claim_%s ON %s ( status, recovery_claim_expires_at, stored_at ) WHERE status = 1;
+		CREATE INDEX IF NOT EXISTS idx_recovery_expiry_%s ON %s ( recovery_claim_expires_at ) WHERE recovery_claim_expires_at IS NOT NULL;
 
 		-- Tokens
 		CREATE TABLE IF NOT EXISTS %s (
@@ -1367,8 +1368,10 @@ func (db *TokenStore) GetSchema() string {
 			PRIMARY KEY (tx_id, idx)
 		);
 		CREATE INDEX IF NOT EXISTS idx_spent_%s ON %s ( is_deleted, owner );
+		CREATE INDEX IF NOT EXISTS idx_ski_cleanup_%s ON %s ( is_deleted, spent_at );
 		CREATE INDEX IF NOT EXISTS idx_owner_wallet_id_%s ON %s ( owner_wallet_id );
 		CREATE INDEX IF NOT EXISTS idx_owner_wallet_part_%s ON %s ( owner_wallet_id, token_type ) WHERE is_deleted = false AND owner = true;
+		CREATE INDEX IF NOT EXISTS idx_issued_%s ON %s ( redeemed, token_type ) WHERE issuer = true;
 
 		-- Ownership
 		CREATE TABLE IF NOT EXISTS %s (
@@ -1408,8 +1411,10 @@ func (db *TokenStore) GetSchema() string {
 		);
 		CREATE INDEX IF NOT EXISTS idx_cleaned_at_%s ON %s ( cleaned_at );
 		`,
-		db.table.Requests, db.table.Requests, db.table.Requests, db.table.Requests, db.table.Requests,
+		db.table.Requests, db.table.Requests, db.table.Requests, db.table.Requests, db.table.Requests, db.table.Requests, db.table.Requests,
 		db.table.Tokens,
+		db.table.Tokens, db.table.Tokens,
+		db.table.Tokens, db.table.Tokens,
 		db.table.Tokens, db.table.Tokens,
 		db.table.Tokens, db.table.Tokens,
 		db.table.Tokens, db.table.Tokens,
