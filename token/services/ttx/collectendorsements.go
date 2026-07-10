@@ -101,6 +101,10 @@ func (c *CollectEndorsementsView) Call(context view.Context) (any, error) {
 	// Ensure Done() is called on all external wallets regardless of errors
 	defer c.CleanupExternalWallets(context, externalWallets)
 
+	// Close all endorsement sessions on every return path. Leaking the auditor
+	// session on an error path keeps its audit-DB enrollment-ID lock held.
+	defer c.cleanupSessions(context.Context())
+
 	// 1. First collect signatures on the token request
 	issueSigmas, err := c.requestSignaturesOnIssues(context, externalWallets)
 	if err != nil {
@@ -142,14 +146,7 @@ func (c *CollectEndorsementsView) Call(context view.Context) (any, error) {
 		return nil, errors.WithMessagef(err, "failed distributing tx")
 	}
 
-	// Cleanup audit
-	logger.DebugfContext(context.Context(), "Cleanup audit")
-	if err := c.cleanupAudit(context); err != nil {
-		logger.ErrorfContext(context.Context(), "failed cleaning up audit: %s", err)
-
-		return nil, errors.WithMessagef(err, "failed cleaning up audit")
-	}
-
+	// Sessions are closed by the deferred cleanupSessions call.
 	logger.DebugfContext(context.Context(), "CollectEndorsementsView done.")
 
 	labels := []string{
@@ -451,18 +448,18 @@ func (c *CollectEndorsementsView) requestAudit(context view.Context) ([]view.Ide
 	return nil, nil
 }
 
-// cleanupAudit closes the auditor session if one was opened during the audit process.
-// This should be called after the transaction has been fully endorsed and distributed.
-func (c *CollectEndorsementsView) cleanupAudit(context view.Context) error {
-	if !c.tx.Opts.Auditor.IsNone() {
-		session, err := c.getSession(context, c.tx.Opts.Auditor)
-		if err != nil {
-			return errors.Wrap(err, "failed getting auditor's session")
+// cleanupSessions closes and removes every session opened while collecting
+// endorsements (e.g. the auditor session). Deleting entries as they are closed
+// makes it idempotent, so the deferred call is safe to run on any return path.
+func (c *CollectEndorsementsView) cleanupSessions(ctx context.Context) {
+	for key, session := range c.sessions {
+		delete(c.sessions, key)
+		if session == nil {
+			continue
 		}
+		logger.DebugfContext(ctx, "closing endorsement session [%s]", key)
 		session.Close()
 	}
-
-	return nil
 }
 
 // distributeTxToParties distributes the endorsed transaction to all parties in the distribution list.
