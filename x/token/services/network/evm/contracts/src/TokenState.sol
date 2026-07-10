@@ -69,6 +69,12 @@ contract TokenState {
     event StateCommitted(bytes32 indexed anchor, bool success, string message);
     event PublicParametersUpdated(bytes32 indexed paramsHash, uint64 version);
 
+    /// @dev Locks the shared implementation so only EIP-1167 clones (which have their own fresh storage)
+    ///      can be initialized. The implementation contract itself can never be initialized or used.
+    constructor() {
+        initialized = true;
+    }
+
     /// @notice Seeds this clone: verifier, deployer, public parameters at version 0, and the graphHiding
     ///         mode. Can be called once. Public parameters thereafter change only through an endorsed
     ///         setup delta (§3.5).
@@ -99,6 +105,12 @@ contract TokenState {
         bytes32 digest = EIP712.digest(domainSeparator, EIP712.hashStruct(delta));
         if (!IEndorsementVerifier(endorsementVerifier).verify(digest, signatures)) revert InvalidSignatures();
 
+        // Both delta types assert the current public params they were validated against. This also orders
+        // setup deltas: once one bumps the version, another validated against the old version is stale.
+        if (delta.publicParamsVersion != publicParamsVersion || delta.publicParamsHash != publicParamsHash) {
+            revert StalePublicParams(publicParamsVersion, publicParamsHash);
+        }
+
         if (delta.isSetup) {
             _applySetup(delta);
         } else {
@@ -114,11 +126,9 @@ contract TokenState {
     /// @dev Issue/transfer: PP must be current; spend/existence per graphHiding; then apply.
     function _applyTransfer(StateDelta calldata delta) private {
         // A non-setup delta must not carry setup parameters (they are digest-covered; endorsers signed
-        // them, so silently ignoring them would be a bug — R6).
+        // them, so silently ignoring them would be a bug, per rule R6). The public-params check is done
+        // by the caller for both delta kinds.
         if (delta.setupParameters.length != 0) revert MalformedTransferDelta();
-        if (delta.publicParamsVersion != publicParamsVersion || delta.publicParamsHash != publicParamsHash) {
-            revert StalePublicParams(publicParamsVersion, publicParamsHash);
-        }
 
         bytes32[] calldata refs = delta.spentRefs;
         if (graphHiding) {

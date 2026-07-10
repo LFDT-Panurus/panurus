@@ -195,13 +195,16 @@ one-list model; his one-line ack on the input-identity read is the only outstand
     TokenState (a per-TMS clone) owns the domain separator (binds `verifyingContract=address(this)`), so it
     computes the digest; a shared/decoupled verifier cannot. Avoids a verifier↔TokenState address
     chicken-and-egg. Design §3.2 updated to match.
-- **PR 2b — TokenState + deploy + integration** (the state machine on the proven crypto):
-  - Phase A: `TokenState.sol` storage §3.1 + `applyStateDelta` §3.4 (computes `hashStruct`+digest via the
-    PR-2a library, calls `verifier.verify(digest, sigs)`) + core tests (Go-signed delta verifies on-chain;
-    double-spend; forged-content spend rejected by `snMarker`).
-  - Phase B: PP/setup lifecycle (SHA-256 precompile `0x02`, version bump first=0/then+1), queries (with the
-    §5.3 `isSpent` query-surface decision — recommend option (a): `tokenID → spent` map), events, deploy
-    script + `stale-PP`/`PP-update` integration tests.
+- **PR 2b — TokenState + deploy** (the state machine on the proven crypto) — ✅ DONE, 39/39 forge tests:
+  - [x] Phase A: `TokenState.sol` storage §3.1 + `applyStateDelta` §3.4 (computes `hashStruct`+digest via the
+    PR-2a library, calls `verifier.verify(digest, sigs)`) + 11 core tests: issue/spend, double-spend,
+    **forged-content spend rejected by `snMarker`**, tampered-delta fails verification, stale-PP, replay,
+    insufficient sigs, init guards. (Endorsers are simulated with forge `vm.sign`; the Go↔Solidity *signer*
+    cross-check is Week 3, the NWO end-to-end is Week 6.)
+  - [x] Phase B: PP/setup lifecycle (setup delta bumps version 0→1→…, `PublicParametersUpdated`, stale
+    ordering), queries with the §5.3 option-(a) `tokenID → marker` map (`isSpent`/`areTokensSpent` single
+    call), graph-hiding serial path, metadata; `Clones.sol` (EIP-1167) + `script/Deploy.s.sol` (verifier +
+    impl + initialized clone; **dry-run deploys end-to-end**) + implementation-lock hardening.
 
 Frozen contract from Week 1 (do not deviate): the Solidity `StateDelta`/`OutputToken` structs must use the
 **exact field names, types and order** of the EIP-712 type in `eip712/hashstruct.go` — note

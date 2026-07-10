@@ -6,6 +6,7 @@ import {TokenState} from "../src/TokenState.sol";
 import {EndorsementVerifier} from "../src/EndorsementVerifier.sol";
 import {EIP712} from "../src/EIP712.sol";
 import {StateDelta, OutputToken} from "../src/StateDelta.sol";
+import {Clones} from "../src/Clones.sol";
 
 /// @title TokenState core tests (Week 2, PR 2b Phase A)
 /// @notice Exercises applyStateDelta end to end with real endorser signatures (forge vm.sign over the
@@ -14,6 +15,7 @@ import {StateDelta, OutputToken} from "../src/StateDelta.sol";
 ///         setup-delta guard. The Go<->Solidity signer cross-check comes in Week 3; here endorsers are
 ///         simulated with vm.sign, which is enough to prove the on-chain check-list.
 contract TokenStateTest is Test {
+    TokenState private impl;
     TokenState private ts;
     EndorsementVerifier private verifier;
 
@@ -29,7 +31,8 @@ contract TokenStateTest is Test {
         verifier = new EndorsementVerifier(endorsers, 2);
 
         pp0 = "pp-v0";
-        ts = new TokenState();
+        impl = new TokenState();
+        ts = TokenState(Clones.clone(address(impl))); // per-TMS clone, as in production
         ts.initialize(address(verifier), address(this), pp0, false); // graph-revealing
     }
 
@@ -72,14 +75,33 @@ contract TokenStateTest is Test {
     }
 
     function _digest(StateDelta memory d) internal view returns (bytes32) {
-        return EIP712.digest(EIP712.domainSeparator(block.chainid, address(ts)), EIP712.hashStruct(d));
+        return _digestFor(ts, d);
+    }
+
+    /// @dev The digest is bound to the contract address (domain separator), so signing must target the
+    ///      specific TokenState the delta will be applied to.
+    function _digestFor(TokenState t, StateDelta memory d) internal view returns (bytes32) {
+        return EIP712.digest(EIP712.domainSeparator(block.chainid, address(t)), EIP712.hashStruct(d));
     }
 
     function _sign(StateDelta memory d) internal view returns (bytes[] memory sigs) {
-        bytes32 digest = _digest(d);
+        return _signFor(ts, d);
+    }
+
+    function _signFor(TokenState t, StateDelta memory d) internal view returns (bytes[] memory sigs) {
+        bytes32 digest = _digestFor(t, d);
         sigs = new bytes[](2);
         sigs[0] = _one(keyA, digest);
         sigs[1] = _one(keyB, digest);
+    }
+
+    function _setup(bytes32 anchor, bytes memory newPP) internal view returns (StateDelta memory d) {
+        d.anchor = anchor;
+        d.isSetup = true;
+        d.setupParameters = newPP;
+        d.tokenRequestHash = keccak256(abi.encodePacked("setup", anchor));
+        d.publicParamsHash = sha256(pp0); // asserts the current params being replaced
+        d.publicParamsVersion = 0;
     }
 
     function _one(uint256 key, bytes32 digest) internal pure returns (bytes memory) {
@@ -192,6 +214,104 @@ contract TokenStateTest is Test {
         ts.applyStateDelta(d, _sign(d));
     }
 
+    // --- public-parameters update (endorsed setup) -------------------------------------------------
+
+    function test_Setup_UpdatesPublicParams() public {
+        StateDelta memory d = _setup(keccak256("setup-1"), "pp-v1");
+        assertTrue(ts.applyStateDelta(d, _sign(d)));
+
+        assertEq(ts.getPublicParamsVersion(), 1);
+        assertEq(ts.getPublicParameters(), bytes("pp-v1"));
+        assertEq(ts.getPublicParamsHash(), sha256(bytes("pp-v1")));
+    }
+
+    function test_Setup_ThenOldVersionTransferIsStale() public {
+        StateDelta memory setup = _setup(keccak256("setup-1"), "pp-v1");
+        ts.applyStateDelta(setup, _sign(setup));
+
+        // a transfer validated against v0 is now stale
+        StateDelta memory old = _issue(keccak256("issue-old"), "tok");
+        vm.expectPartialRevert(TokenState.StalePublicParams.selector);
+        ts.applyStateDelta(old, _sign(old));
+
+        // the same transfer validated against v1 applies
+        StateDelta memory cur = _issue(keccak256("issue-cur"), "tok");
+        cur.publicParamsHash = sha256(bytes("pp-v1"));
+        cur.publicParamsVersion = 1;
+        assertTrue(ts.applyStateDelta(cur, _sign(cur)));
+    }
+
+    function test_Setup_StaleSecondSetupReverts() public {
+        StateDelta memory s1 = _setup(keccak256("setup-1"), "pp-v1");
+        ts.applyStateDelta(s1, _sign(s1));
+
+        // a second setup still validated against v0 is out of order and rejected
+        StateDelta memory s2 = _setup(keccak256("setup-2"), "pp-v2");
+        vm.expectPartialRevert(TokenState.StalePublicParams.selector);
+        ts.applyStateDelta(s2, _sign(s2));
+    }
+
+    // --- queries -----------------------------------------------------------------------------------
+
+    function test_Metadata_Stored() public {
+        StateDelta memory d = _issue(keccak256("issue-meta"), "tok-A");
+        d.metadataKeys = new bytes32[](1);
+        d.metadataKeys[0] = keccak256("k1");
+        d.metadataVals = new bytes[](1);
+        d.metadataVals[0] = "v1";
+        ts.applyStateDelta(d, _sign(d));
+
+        assertEq(ts.getTransferMetadata(keccak256("k1")), bytes("v1"));
+    }
+
+    function test_AreTokensSpent_Batch() public {
+        bytes32 a1 = keccak256("issue-1");
+        StateDelta memory i1 = _issue(a1, "tok-A");
+        ts.applyStateDelta(i1, _sign(i1));
+
+        bytes32 a2 = keccak256("issue-2");
+        StateDelta memory i2 = _issue(a2, "tok-B");
+        ts.applyStateDelta(i2, _sign(i2));
+
+        // spend the first token only
+        StateDelta memory spend = _spend(keccak256("t1"), _marker(a1, 0, "tok-A"), "tok-C");
+        ts.applyStateDelta(spend, _sign(spend));
+
+        bytes32[] memory ids = new bytes32[](2);
+        ids[0] = _tokenID(a1, 0);
+        ids[1] = _tokenID(a2, 0);
+        bool[] memory spent = ts.areTokensSpent(ids);
+        assertTrue(spent[0]);
+        assertFalse(spent[1]);
+    }
+
+    function test_GraphHiding_SpendBySerial() public {
+        TokenState gh = TokenState(Clones.clone(address(impl)));
+        gh.initialize(address(verifier), address(this), pp0, true);
+
+        bytes32 serial = keccak256("serial-1");
+        StateDelta memory d;
+        d.anchor = keccak256("gh-1");
+        d.spentRefs = new bytes32[](1);
+        d.spentRefs[0] = serial;
+        d.tokenRequestHash = keccak256("req");
+        d.publicParamsHash = sha256(pp0);
+        d.publicParamsVersion = 0;
+        gh.applyStateDelta(d, _signFor(gh, d));
+        assertTrue(gh.isSerialUsed(serial));
+
+        // reusing the same serial is a double spend
+        StateDelta memory d2;
+        d2.anchor = keccak256("gh-2");
+        d2.spentRefs = new bytes32[](1);
+        d2.spentRefs[0] = serial;
+        d2.tokenRequestHash = keccak256("req");
+        d2.publicParamsHash = sha256(pp0);
+        d2.publicParamsVersion = 0;
+        vm.expectPartialRevert(TokenState.DoubleSpend.selector);
+        gh.applyStateDelta(d2, _signFor(gh, d2));
+    }
+
     // --- lifecycle guards --------------------------------------------------------------------------
 
     function test_DoubleInitialize_Reverts() public {
@@ -199,8 +319,14 @@ contract TokenStateTest is Test {
         ts.initialize(address(verifier), address(this), pp0, false);
     }
 
+    function test_ImplementationIsLocked() public {
+        // the shared implementation is locked in its constructor; only clones can be initialized
+        vm.expectRevert(TokenState.AlreadyInitialized.selector);
+        impl.initialize(address(verifier), address(this), pp0, false);
+    }
+
     function test_Uninitialized_Reverts() public {
-        TokenState fresh = new TokenState();
+        TokenState fresh = TokenState(Clones.clone(address(impl)));
         StateDelta memory d = _issue(keccak256("x"), "tok-A");
         vm.expectRevert(TokenState.NotInitialized.selector);
         fresh.applyStateDelta(d, _sign(d));
