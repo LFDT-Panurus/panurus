@@ -1421,8 +1421,10 @@ func Withdraw(network *integration.Infrastructure, wpm *WalletManagerProvider, w
 	if len(expectedErrorMsgs) == 0 {
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
-		txIDBoxed, err = stream.Result()
-		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		if wpm != nil {
+			txIDBoxed, err = stream.Result()
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		}
 		txID := common.JSONUnmarshalString(txIDBoxed)
 		common2.CheckFinality(network, user, txID, nil, false)
 		common2.CheckFinality(network, auditor, txID, nil, false)
