@@ -330,3 +330,8 @@ type TokenLockStore interface {
 }
 
 var ErrTokenDoesNotExist = errors.New("token does not exist")
+
+// ErrTokenLockConflict is returned by TokenLockStore.Lock when the token is
+// already locked (by this or another consumer transaction), as opposed to a
+// transient/unexpected error.
+var ErrTokenLockConflict = errors.New("token already locked")

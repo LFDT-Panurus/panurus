@@ -42,6 +42,11 @@ graph LR
 - **Apply Selection Strategy**: Selector picks optimal tokens (e.g., smallest-first to minimize transaction size)
 - **Acquire Temporary Lock**: Selector locks each selected token in storage to prevent concurrent selection
 
+## Available Implementations
+
+- Simple
+- Sherdlock (Default)
+
 ## Key Components
 
 ### Selector Manager
@@ -108,3 +113,23 @@ The fetcher cache improves performance by caching token queries:
 - **fetcherCacheMaxQueries**: Maximum number of queries before forcing a cache refresh. Set to 0 to use the fetcher's default limit.
 
 **Example**: With `fetcherCacheSize: 1000`, `fetcherCacheRefresh: 30s`, and `fetcherCacheMaxQueries: 100`, the cache stores up to 1000 query results, refreshes data every 30 seconds, and forces a refresh after 100 queries.
+
+## Benchmarking
+
+Mock-locker benchmarks (`token/services/selector/benchmark_test.go`):
+
+```sh
+go test -v -run=XXX -bench=BenchmarkSelectorSingle . -benchmem
+go test -v -run=XXX -bench=BenchmarkSelectorParallel . -cpu=4,8,16,32,64,128,256,512 -benchmem
+
+go test -ginkgo.v -ginkgo.trace .
+```
+
+A real-Postgres contention benchmark also exists
+(`token/services/selector/sherdlock/postgres_bench_test.go`), comparing the
+`sherdlock` locker with and without the process-local lock cache against a
+testcontainers-backed Postgres instance:
+
+```sh
+go test -run=XXX -bench=BenchmarkSherdlockPostgresContention ./token/services/selector/sherdlock/...
+```

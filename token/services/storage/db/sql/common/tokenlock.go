@@ -19,6 +19,8 @@ import (
 	"github.com/LFDT-Panurus/panurus/token/services/storage/db/sql/query/cond"
 	"github.com/LFDT-Panurus/panurus/token/services/utils/types/transaction"
 	"github.com/LFDT-Panurus/panurus/token/token"
+	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
+	fscdriver "github.com/hyperledger-labs/fabric-smart-client/platform/view/services/storage/driver"
 	common2 "github.com/hyperledger-labs/fabric-smart-client/platform/view/services/storage/driver/common"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/services/storage/driver/sql/common"
 )
@@ -30,24 +32,26 @@ type tokenLockTables struct {
 }
 
 type TokenLockStore struct {
-	ReadDB  *sql.DB
-	WriteDB *sql.DB
-	Table   tokenLockTables
-	Logger  logging.Logger
-	ci      common3.CondInterpreter
+	ReadDB       *sql.DB
+	WriteDB      *sql.DB
+	Table        tokenLockTables
+	Logger       logging.Logger
+	ci           common3.CondInterpreter
+	errorWrapper fscdriver.SQLErrorWrapper
 }
 
-func newTokenLockStore(readDB, writeDB *sql.DB, tables tokenLockTables, ci common3.CondInterpreter) *TokenLockStore {
+func newTokenLockStore(readDB, writeDB *sql.DB, tables tokenLockTables, ci common3.CondInterpreter, errorWrapper fscdriver.SQLErrorWrapper) *TokenLockStore {
 	return &TokenLockStore{
-		ReadDB:  readDB,
-		WriteDB: writeDB,
-		Table:   tables,
-		Logger:  logger,
-		ci:      ci,
+		ReadDB:       readDB,
+		WriteDB:      writeDB,
+		Table:        tables,
+		Logger:       logger,
+		ci:           ci,
+		errorWrapper: errorWrapper,
 	}
 }
 
-func NewTokenLockStore(readDB, writeDB *sql.DB, tables TableNames, ci common3.CondInterpreter) (*TokenLockStore, error) {
+func NewTokenLockStore(readDB, writeDB *sql.DB, tables TableNames, ci common3.CondInterpreter, errorWrapper fscdriver.SQLErrorWrapper) (*TokenLockStore, error) {
 	return newTokenLockStore(
 		readDB,
 		writeDB,
@@ -56,7 +60,8 @@ func NewTokenLockStore(readDB, writeDB *sql.DB, tables TableNames, ci common3.Co
 			Tokens:     tables.Tokens,
 			Requests:   tables.Requests,
 		},
-		ci), nil
+		ci,
+		errorWrapper), nil
 }
 
 func (db *TokenLockStore) CreateSchema() error {
@@ -70,6 +75,9 @@ func (db *TokenLockStore) Lock(ctx context.Context, tokenID *token.ID, consumerT
 		Format()
 	logging.Debug(logger, query, tokenID, consumerTxID)
 	_, err := db.WriteDB.ExecContext(ctx, query, args...)
+	if err != nil && errors.HasCause(db.errorWrapper.WrapError(err), fscdriver.UniqueKeyViolation) {
+		return errors.Wrapf(driver.ErrTokenLockConflict, "token [%v] already locked", tokenID)
+	}
 
 	return err
 }

@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/LFDT-Panurus/panurus/token"
 	"github.com/LFDT-Panurus/panurus/token/services/selector/sherdlock"
@@ -53,6 +54,7 @@ func BenchmarkSelectorSingle(b *testing.B) {
 	settings := []Setting{
 		{name: "sherdlock", clients: 1, tokens: testutils.NumTokensPerWallet, selectorProvider: NewSherdSelector, lockProvider: NewNoLocker},
 		{name: "sherdlock+lock", clients: 1, tokens: testutils.NumTokensPerWallet, selectorProvider: NewSherdSelector, lockProvider: NewLocker},
+		{name: "sherdlock+localcache", clients: 1, tokens: testutils.NumTokensPerWallet, selectorProvider: NewSherdSelectorWithLocalCache, lockProvider: NewLocker},
 		{name: "selector+nolock", clients: 1, tokens: testutils.NumTokensPerWallet, selectorProvider: NewSelector, lockProvider: NewNoLocker},
 		{name: "selector+lock", clients: 1, tokens: testutils.NumTokensPerWallet, selectorProvider: NewSelector, lockProvider: NewLocker},
 	}
@@ -88,6 +90,8 @@ func BenchmarkSelectorParallel(b *testing.B) {
 		{name: "sherdlock+lock", clients: 1, tokens: testutils.NumTokensPerWallet, selectorProvider: NewSherdSelector, lockProvider: NewLocker},
 		{name: "sherdlock+lock+parallelism", clients: 10, tokens: 10 * testutils.NumTokensPerWallet, selectorProvider: NewSherdSelector, lockProvider: NewLocker},
 		{name: "sherdlock+lock+contention", clients: 8, tokens: testutils.NumTokensPerWallet / 1000, selectorProvider: NewSherdSelector, lockProvider: NewLocker},
+		{name: "sherdlock+localcache+parallelism", clients: 10, tokens: 10 * testutils.NumTokensPerWallet, selectorProvider: NewSherdSelectorWithLocalCache, lockProvider: NewLocker},
+		{name: "sherdlock+localcache+contention", clients: 8, tokens: testutils.NumTokensPerWallet / 1000, selectorProvider: NewSherdSelectorWithLocalCache, lockProvider: NewLocker},
 		{name: "selector+nolock", clients: 1, tokens: testutils.NumTokensPerWallet, selectorProvider: NewSelector, lockProvider: NewNoLocker},
 		{name: "selector+lock", clients: 1, tokens: testutils.NumTokensPerWallet, selectorProvider: NewSelector, lockProvider: NewLocker},
 	}
@@ -177,7 +181,14 @@ func NewSelector(qs *testutils.MockQueryService, walletIDByRawIdentity WalletIDB
 
 func NewSherdSelector(qs *testutils.MockQueryService, _ WalletIDByRawIdentityFunc, lock selector.Locker) (ExtendedSelector, CleanupFunction) {
 	return &extendedSelector{
-		Selector: sherdlock.NewSherdSelector(testutils.TxID, sherdlock.NewLazyFetcher(qs), inmemory2.NewLocker(lock), testutils.TokenQuantityPrecision, sherdlock.NoBackoff, testutils.SelectorNumRetries, sherdlock.NewMetrics(&disabled.Provider{})),
+		Selector: sherdlock.NewSherdSelector(testutils.TxID, sherdlock.NewLazyFetcher(qs), inmemory2.NewLocker(lock), nil, 0, testutils.TokenQuantityPrecision, sherdlock.NoBackoff, testutils.SelectorNumRetries, sherdlock.NewMetrics(&disabled.Provider{})),
+		Lock:     nil,
+	}, nil
+}
+
+func NewSherdSelectorWithLocalCache(qs *testutils.MockQueryService, _ WalletIDByRawIdentityFunc, lock selector.Locker) (ExtendedSelector, CleanupFunction) {
+	return &extendedSelector{
+		Selector: sherdlock.NewSherdSelector(testutils.TxID, sherdlock.NewLazyFetcher(qs), inmemory2.NewLocker(lock), sherdlock.NewLocalLockCache(), time.Minute, testutils.TokenQuantityPrecision, sherdlock.NoBackoff, testutils.SelectorNumRetries, sherdlock.NewMetrics(&disabled.Provider{})),
 		Lock:     nil,
 	}, nil
 }

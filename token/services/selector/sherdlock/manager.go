@@ -28,6 +28,7 @@ var ErrTimeout = errors.New("timeout occurred")
 type Manager struct {
 	selectorCache          lazy2.Provider[transaction.ID, TokenSelectorUnlocker]
 	locker                 Locker
+	localCache             *localLockCache
 	leaseExpiry            time.Duration
 	leaseCleanupTickPeriod time.Duration
 	metrics                *Metrics
@@ -47,15 +48,17 @@ func NewManager(
 	m *Metrics,
 ) *Manager {
 	ctx, cancel := context.WithCancel(context.Background())
+	localCache := newLocalLockCache()
 	mgr := &Manager{
 		locker:                 locker,
+		localCache:             localCache,
 		leaseExpiry:            leaseExpiry,
 		leaseCleanupTickPeriod: leaseCleanupTickPeriod,
 		metrics:                m,
 		cancel:                 cancel,
 		cleanerDone:            make(chan struct{}),
 		selectorCache: lazy2.NewProvider(func(txID transaction.ID) (TokenSelectorUnlocker, error) {
-			return NewSherdSelector(txID, fetcher, locker, precision, backoff, maxRetriesAfterBackOff, m), nil
+			return NewSherdSelector(txID, fetcher, locker, localCache, leaseExpiry, precision, backoff, maxRetriesAfterBackOff, m), nil
 		}),
 	}
 	if leaseCleanupTickPeriod > 0 && leaseExpiry > 0 {
@@ -95,6 +98,7 @@ func (m *Manager) cleaner(ctx context.Context) {
 			if err := m.locker.Cleanup(ctx, m.leaseExpiry); err != nil {
 				logger.Errorf("failed to release token locks: [%s]", err)
 			}
+			m.localCache.sweepExpired(m.leaseExpiry)
 		case <-ctx.Done():
 			logger.Debugf("cleaner stopping")
 

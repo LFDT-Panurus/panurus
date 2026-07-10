@@ -15,6 +15,7 @@ import (
 	"github.com/hyperledger-labs/fabric-smart-client/platform/common/utils/collections/iterators"
 	common2 "github.com/hyperledger-labs/fabric-smart-client/platform/view/services/storage/driver/common"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/services/storage/driver/sql/common"
+	fscPostgres "github.com/hyperledger-labs/fabric-smart-client/platform/view/services/storage/driver/sql/postgres"
 
 	"github.com/LFDT-Panurus/panurus/token/services/storage/db/driver"
 	common5 "github.com/LFDT-Panurus/panurus/token/services/storage/db/sql/common"
@@ -49,7 +50,7 @@ func (s *TokenLockStore) CreateSchema() error {
 // NewTokenLockStore returns a new TokenLockStore for the given RWDB and table names.
 func NewTokenLockStore(dbs *common2.RWDB, tableNames common5.TableNames) (*TokenLockStore, error) {
 	ci := NewConditionInterpreter()
-	tldb, err := common5.NewTokenLockStore(dbs.ReadDB, dbs.WriteDB, tableNames, ci)
+	tldb, err := common5.NewTokenLockStore(dbs.ReadDB, dbs.WriteDB, tableNames, ci, &fscPostgres.ErrorMapper{})
 	if err != nil {
 		return nil, err
 	}

@@ -15,6 +15,7 @@ import (
 
 	"github.com/LFDT-Panurus/panurus/token"
 	"github.com/LFDT-Panurus/panurus/token/services/logging"
+	dbdriver "github.com/LFDT-Panurus/panurus/token/services/storage/db/driver"
 	"github.com/LFDT-Panurus/panurus/token/services/utils/types/transaction"
 	token2 "github.com/LFDT-Panurus/panurus/token/token"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
@@ -243,27 +244,55 @@ func tokenKey(walletID string, typ token2.Type) string {
 	return fmt.Sprintf("%s.%s", walletID, typ)
 }
 
+// locker adapts the manager-level Locker to the per-selection TokenLocker
+// interface, binding every call to this selector's own transaction ID. It
+// also consults/populates the manager-wide localLockCache, so a candidate
+// token this process has already seen fail (or succeed) within the lease
+// window skips the DB round trip entirely.
 type locker struct {
 	Locker
-	txID transaction.ID
+	txID        transaction.ID
+	localCache  *localLockCache
+	leaseExpiry time.Duration
 }
 
 func (l *locker) TryLock(ctx context.Context, tokenID *token2.ID) bool {
+	if l.localCache != nil {
+		if owner, fresh := l.localCache.lockedBy(*tokenID, l.leaseExpiry); fresh {
+			// A fresh entry - whether it records our own earlier successful
+			// lock or a different consumer's - means the underlying INSERT
+			// would fail with a primary-key violation exactly as it does
+			// today when relocking an already-owned or contended token.
+			// Mirror that outcome (report "not newly locked") without the
+			// DB round trip.
+			logger.DebugfContext(ctx, "skipping DB lock attempt for [%v]: locally known to be locked (owner [%s])", tokenID, owner)
+
+			return false
+		}
+	}
+
 	err := l.Lock(ctx, tokenID, l.txID)
 	if err != nil {
 		logger.DebugfContext(ctx, "failed to lock [%v] for [%s]: [%s]", tokenID, l.txID, err)
+	}
+	if l.localCache != nil && (err == nil || errors.HasCause(err, dbdriver.ErrTokenLockConflict)) {
+		l.localCache.record(*tokenID, l.txID)
 	}
 
 	return err == nil
 }
 
 func (l *locker) UnlockAll(ctx context.Context) error {
+	if l.localCache != nil {
+		l.localCache.releaseOwned(l.txID)
+	}
+
 	return l.UnlockByTxID(ctx, l.txID)
 }
 
-func NewSherdSelector(txID transaction.ID, fetcher TokenFetcher, lockDB Locker, precision uint64, backoff time.Duration, maxRetriesAfterBackoff int, m *Metrics) TokenSelectorUnlocker {
+func NewSherdSelector(txID transaction.ID, fetcher TokenFetcher, lockDB Locker, localCache *localLockCache, leaseExpiry time.Duration, precision uint64, backoff time.Duration, maxRetriesAfterBackoff int, m *Metrics) TokenSelectorUnlocker {
 	logger := logger.Named("selector-" + txID)
-	locker := &locker{txID: txID, Locker: lockDB}
+	locker := &locker{txID: txID, Locker: lockDB, localCache: localCache, leaseExpiry: leaseExpiry}
 	if backoff < 0 {
 		return NewSelector(logger, fetcher, locker, precision, m)
 	} else {

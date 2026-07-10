@@ -136,6 +136,10 @@ func (q *MockQueryService) SpendableTokensIteratorBy(ctx context.Context, wallet
 	}
 
 	return collections.Map[*token2.UnspentToken, *token2.UnspentTokenInWallet](it, func(ut *token2.UnspentToken) (*token2.UnspentTokenInWallet, error) {
+		if ut == nil {
+			return nil, nil
+		}
+
 		return &token2.UnspentTokenInWallet{
 			Id:       ut.Id,
 			WalletID: string(ut.Owner),
