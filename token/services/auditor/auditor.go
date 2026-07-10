@@ -8,6 +8,8 @@ package auditor
 
 import (
 	"context"
+	"slices"
+	"sync"
 	"time"
 
 	"github.com/LFDT-Panurus/panurus/token"
@@ -83,6 +85,18 @@ type Service struct {
 	metrics         *Metrics
 	checkService    CheckService
 	lockConfig      *LockConfig
+
+	// auditRecords caches, per request anchor, a snapshot of the audit record
+	// computed by Audit for reuse by Append; entries are dropped by Release.
+	recordsMu    sync.Mutex
+	auditRecords map[token.RequestAnchor]auditRecordEntry
+}
+
+// auditRecordEntry pairs a cached audit record with the request it was
+// computed from.
+type auditRecordEntry struct {
+	request *token.Request
+	record  *token.AuditRecord
 }
 
 // NewService creates a new auditor Service with the provided dependencies.
@@ -124,6 +138,8 @@ func (a *Service) Validate(ctx context.Context, request *token.Request) error {
 // Audit extracts the list of inputs and outputs from the passed transaction.
 // In addition, the Audit locks the enrollment named ids with retry logic and exponential backoff
 // to prevent livelock conditions.
+// A snapshot of the computed audit record is cached so that Append can reuse
+// it; the returned streams stay independent of the cached snapshot.
 // The caller MUST call Release() to unlock these enrollment IDs after processing.
 //
 // IMPORTANT: The defer Release() statement MUST be placed immediately after checking
@@ -161,6 +177,7 @@ func (a *Service) Audit(ctx context.Context, tx Transaction) (*token.InputStream
 	}
 
 	logger.DebugfContext(ctx, "audit transaction [%s], acquire locks done", tx.ID())
+	a.stashAuditRecord(request, snapshotAuditRecord(request, record))
 	a.metrics.AuditDuration.Observe(time.Since(start).Seconds())
 
 	return record.Inputs, record.Outputs, nil
@@ -192,7 +209,8 @@ func (a *Service) acquireLocksWithRetry(ctx context.Context, anchor string, eids
 	return nil
 }
 
-// Append adds the passed transaction to the auditor database.
+// Append adds the passed transaction to the auditor database, reusing the
+// audit record computed by Audit, when available.
 // It also releases the locks acquired by Audit.
 func (a *Service) Append(ctx context.Context, tx Transaction) error {
 	start := time.Now()
@@ -204,7 +222,9 @@ func (a *Service) Append(ctx context.Context, tx Transaction) error {
 		return err
 	}
 	// append request to audit db
-	if err := a.auditDB.Append(ctx, newRequestWrapper(tx.Request(), tms)); err != nil {
+	wrapper := newRequestWrapper(tx.Request(), tms)
+	wrapper.cached = a.cachedAuditRecord(tx.Request())
+	if err := a.auditDB.Append(ctx, wrapper); err != nil {
 		a.metrics.AppendErrors.Add(1)
 
 		return errors.WithMessagef(err, "failed appending request %s", tx.ID())
@@ -234,10 +254,92 @@ func (a *Service) Append(ctx context.Context, tx Transaction) error {
 	return nil
 }
 
-// Release releases the lock acquired of the passed transaction.
+// Release releases the lock acquired of the passed transaction and drops the
+// audit record cached for it.
 func (a *Service) Release(ctx context.Context, tx Transaction) {
 	a.metrics.ReleasesTotal.Add(1)
-	a.auditDB.ReleaseLocks(ctx, string(tx.Request().Anchor))
+	anchor := tx.Request().Anchor
+	a.dropAuditRecord(anchor)
+	a.auditDB.ReleaseLocks(ctx, string(anchor))
+}
+
+// snapshotAuditRecord deep-copies record so that the cached copy and the
+// streams returned by Audit share no mutable memory.
+func snapshotAuditRecord(request *token.Request, record *token.AuditRecord) *token.AuditRecord {
+	inputs := record.Inputs.Inputs()
+	inputsCopy := make([]*token.Input, len(inputs))
+	for i, in := range inputs {
+		cp := *in
+		if in.Id != nil {
+			id := *in.Id
+			cp.Id = &id
+		}
+		cp.Owner = slices.Clone(in.Owner)
+		cp.OwnerAuditInfo = slices.Clone(in.OwnerAuditInfo)
+		if in.Quantity != nil {
+			cp.Quantity = in.Quantity.Clone()
+		}
+		inputsCopy[i] = &cp
+	}
+	outputs := record.Outputs.Outputs()
+	outputsCopy := make([]*token.Output, len(outputs))
+	for i, out := range outputs {
+		cp := *out
+		cp.Token.Owner = slices.Clone(out.Token.Owner)
+		cp.Owner = slices.Clone(out.Owner)
+		cp.OwnerAuditInfo = slices.Clone(out.OwnerAuditInfo)
+		if out.Quantity != nil {
+			cp.Quantity = out.Quantity.Clone()
+		}
+		cp.LedgerOutput = slices.Clone(out.LedgerOutput)
+		cp.LedgerOutputMetadata = slices.Clone(out.LedgerOutputMetadata)
+		cp.Issuer = slices.Clone(out.Issuer)
+		outputsCopy[i] = &cp
+	}
+	var attributes map[string][]byte
+	if record.Attributes != nil {
+		attributes = make(map[string][]byte, len(record.Attributes))
+		for k, v := range record.Attributes {
+			attributes[k] = slices.Clone(v)
+		}
+	}
+	precision := record.Outputs.Precision
+
+	return &token.AuditRecord{
+		Anchor:     record.Anchor,
+		Inputs:     token.NewInputStream(request.TokenService.Vault().NewQueryEngine(), inputsCopy, precision),
+		Outputs:    token.NewOutputStream(outputsCopy, precision),
+		Attributes: attributes,
+	}
+}
+
+func (a *Service) stashAuditRecord(request *token.Request, record *token.AuditRecord) {
+	a.recordsMu.Lock()
+	defer a.recordsMu.Unlock()
+	if a.auditRecords == nil {
+		a.auditRecords = map[token.RequestAnchor]auditRecordEntry{}
+	}
+	a.auditRecords[request.Anchor] = auditRecordEntry{request: request, record: record}
+}
+
+// cachedAuditRecord returns the audit record cached for the passed request,
+// or nil if none is cached or the cached one was computed from a different
+// request with the same anchor.
+func (a *Service) cachedAuditRecord(request *token.Request) *token.AuditRecord {
+	a.recordsMu.Lock()
+	defer a.recordsMu.Unlock()
+	entry, ok := a.auditRecords[request.Anchor]
+	if !ok || entry.request != request {
+		return nil
+	}
+
+	return entry.record
+}
+
+func (a *Service) dropAuditRecord(anchor token.RequestAnchor) {
+	a.recordsMu.Lock()
+	defer a.recordsMu.Unlock()
+	delete(a.auditRecords, anchor)
 }
 
 // SetStatus sets the status of the audit records with the passed transaction id to the passed status
@@ -264,6 +366,9 @@ func (a *Service) Check(ctx context.Context) ([]string, error) {
 type requestWrapper struct {
 	r   *token.Request
 	tms dep.TokenManagementService
+	// cached, when set, is a snapshot of the audit record computed by Audit
+	// for this request; AuditRecord reuses it instead of recomputing it.
+	cached *token.AuditRecord
 }
 
 // newRequestWrapper creates a new requestWrapper that wraps a token request with its associated
@@ -290,10 +395,16 @@ func (r *requestWrapper) PublicParamsHash() token.PPHash { return r.r.PublicPara
 
 // AuditRecord retrieves the audit record for the wrapped token request and completes any
 // inputs with missing enrollment IDs by querying the token vault.
+// The gap filling always runs, also on a cached record, because it depends on
+// the current vault state.
 func (r *requestWrapper) AuditRecord(ctx context.Context) (*token.AuditRecord, error) {
-	record, err := r.r.AuditRecord(ctx)
-	if err != nil {
-		return nil, err
+	record := r.cached
+	if record == nil {
+		var err error
+		record, err = r.r.AuditRecord(ctx)
+		if err != nil {
+			return nil, err
+		}
 	}
 	if err := r.completeInputsWithEmptyEID(ctx, record); err != nil {
 		return nil, errors.WithMessagef(err, "failed filling gaps for request [%s]", r.r.Anchor)
