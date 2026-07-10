@@ -318,7 +318,7 @@ func TestAll(network *integration.Infrastructure, auditorId string, onRestart On
 	CheckAcceptedTransactions(network, alice, "", AliceAcceptedTransactions[:1], &t0, &t1, nil)
 
 	t2 := time.Now()
-	Withdraw(network, nil, alice, "", "USD", 10, auditor, issuer)
+	Withdraw(network, nil, false, alice, "", "USD", 10, auditor, issuer)
 	t3 := time.Now()
 	CheckBalanceAndHolding(network, alice, "", "USD", 120, auditor)
 	CheckBalanceAndHolding(network, alice, "alice", "USD", 120, auditor)
@@ -1078,7 +1078,7 @@ func TestRemoteOwnerWalletWithWMP(network *integration.Infrastructure, wmp *Wall
 	SetKVSEntry(network, issuer, "auditor", auditor.Id())
 	CheckPublicParams(network, issuer, auditor, alice, bob, charlie, manager)
 
-	Withdraw(network, wmp, alice, "alice_remote", "USD", 10, auditor, issuer)
+	Withdraw(network, wmp, websSocket, alice, "alice_remote", "USD", 10, auditor, issuer)
 	CheckBalanceAndHolding(network, alice, "alice_remote", "USD", 10, auditor)
 
 	TransferCashFromExternalWallet(network, wmp, websSocket, alice, "alice_remote", "USD", 7, bob, auditor)

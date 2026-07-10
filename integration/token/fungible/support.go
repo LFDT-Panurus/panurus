@@ -1387,22 +1387,43 @@ func SetSpendableFlag(network *integration.Infrastructure, user *token3.NodeRefe
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 }
 
-func Withdraw(network *integration.Infrastructure, wpm *WalletManagerProvider, user *token3.NodeReference, wallet string, typ token.Type, amount uint64, auditor *token3.NodeReference, issuer *token3.NodeReference, expectedErrorMsgs ...string) string {
+func Withdraw(network *integration.Infrastructure, wpm *WalletManagerProvider, webSocket bool, user *token3.NodeReference, wallet string, typ token.Type, amount uint64, auditor *token3.NodeReference, issuer *token3.NodeReference, expectedErrorMsgs ...string) string {
 	var recipientData *token2.RecipientData
 	if wpm != nil {
 		recipientData = wpm.RecipientData(user.Id(), wallet)
 	}
-	txid, err := network.Client(user.ReplicaName()).CallView("withdrawal", common.JSONMarshall(&views.Withdrawal{
+	input := common.JSONMarshall(&views.Withdrawal{
 		Wallet:        wallet,
 		TokenType:     typ,
 		Amount:        amount,
 		Issuer:        issuer.Id(),
 		RecipientData: recipientData,
-	}))
+	})
+	var stream Stream
+	var txIDBoxed any
+	var err error
+	if wpm != nil {
+		if webSocket {
+			stream, err = network.WebClient(user.ReplicaName()).StreamCallView("withdrawal", input)
+		} else {
+			stream, err = network.Client(user.ReplicaName()).StreamCallView("withdrawal", input)
+		}
+	} else {
+		txIDBoxed, err = network.Client(user.ReplicaName()).CallView("withdrawal", input)
+	}
+
+	// Here we handle the sign requests
+	if wpm != nil {
+		client := ttx.NewStreamExternalWalletSignerClient(wpm.SignerProvider(user.Id(), wallet), stream, 1)
+		gomega.Expect(client.Respond()).NotTo(gomega.HaveOccurred())
+	}
 
 	if len(expectedErrorMsgs) == 0 {
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
-		txID := common.JSONUnmarshalString(txid)
+
+		txIDBoxed, err = stream.Result()
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		txID := common.JSONUnmarshalString(txIDBoxed)
 		common2.CheckFinality(network, user, txID, nil, false)
 		common2.CheckFinality(network, auditor, txID, nil, false)
 		common2.CheckFinality(network, issuer, txID, nil, false)
@@ -1410,6 +1431,7 @@ func Withdraw(network *integration.Infrastructure, wpm *WalletManagerProvider, u
 		return txID
 	}
 
+	gomega.Expect(txIDBoxed).To(gomega.BeEmpty())
 	gomega.Expect(err).To(gomega.HaveOccurred())
 	for _, msg := range expectedErrorMsgs {
 		gomega.Expect(err.Error()).To(gomega.ContainSubstring(msg), "err [%s] should contain [%s]", err.Error(), msg)
