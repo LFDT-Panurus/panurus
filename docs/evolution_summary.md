@@ -114,6 +114,7 @@ The developer-facing Token API has been refined for better usability, consistenc
 -   **New `TokensService`:** A high-level service for advanced token operations, including de-obfuscation and support for the new in-place upgrade challenge/proof protocol.
 -   **Robust TMS Management:** The `ManagementService` now performs more thorough eager initialization of its sub-services and supports dynamic cache clearing via the `Update` mechanism, facilitating seamless public parameter rotations.
 -   **Enhanced Querying:** The `Vault` and `QueryEngine` have been expanded with new methods like `GetTokenOutputs` and `WhoDeletedTokens`, providing deeper insights into the token lifecycle on the ledger.
+-   **Issuer Wallet Balances:** `IssuerWallet` now exposes `IssuedBalance`, `RedeemedBalance`, and net `Balance`, filterable by token type and time range. Redeem outputs (empty owner) are attributed to the signing issuer and persisted with a `Redeemed` flag in the `TokenDB`, so the issuer node can track its outstanding issued supply.
 -   **Protobuf Backed Requests:** The high-level `Request` structures now leverage versioned Protobuf messages internally, ensuring that transaction blueprints created by one node version can be understood by others.
 -   **Improved Error Handling:** Wallet methods (`IssuerWallet`, `AuditorWallet`, `CertifierWallet`, `OwnerWallet`) now return errors instead of panicking, enabling better error handling and recovery.
 -   **Clone Support:** Added `Clone()` methods for safe copying of critical data structures.

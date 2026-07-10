@@ -222,6 +222,13 @@ If a new version of Panurus adds a column (e.g., `ledger_metadata` or `spent_at`
 2.  **Vault Re-scan**: For non-critical nodes or during development, you can simply delete the local database file (e.g., `vault.db`). Panurus's `Vault` service can re-sync its state by scanning the ledger, though this may take time depending on the ledger size.
 3.  **Check Release Notes**: Always check Panurus release notes for "Database Schema Changes" which will list any required manual `ALTER` statements.
 
+> [!WARNING]
+> **Breaking change**: the `Tokens` table (`fsc_tokens`) gained a new `redeemed BOOL NOT NULL DEFAULT false` column, and all `INSERT`/`SELECT` statements against this table were updated accordingly (see `IssuedBalance`/`RedeemedBalance` in [Issuer Wallet](tokenapi.md#wallet-manager)). Existing deployments **must** apply this migration before upgrading, otherwise the SDK's `INSERT INTO fsc_tokens (..., redeemed)` statements will fail against the old schema:
+> ```sql
+> ALTER TABLE fsc_tokens ADD COLUMN IF NOT EXISTS redeemed BOOL NOT NULL DEFAULT false;
+> ```
+> Any node that also stores tokens locally (e.g. an issuer that is also an owner or auditor) needs this migration applied to its `TokenDB` before upgrading.
+
 ---
 
 ## Serialization and Protocol Stability

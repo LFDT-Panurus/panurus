@@ -86,6 +86,7 @@ package "Token Store (TokenDB)" {
         owner : BOOL <<NOT NULL, DEFAULT false>>
         auditor : BOOL <<NOT NULL, DEFAULT false>>
         issuer : BOOL <<NOT NULL, DEFAULT false>>
+        redeemed : BOOL <<NOT NULL, DEFAULT false>>
         spendable : BOOL <<NOT NULL, DEFAULT true>>
     }
 

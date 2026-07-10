@@ -49,7 +49,7 @@ The [PublicParametersManager](../token/publicparams.go) holds the cryptographic 
 The [WalletManager](../token/wallet.go) manages the digital identities used to interact with tokens. It categorizes identities into specialized roles:
 
 *   **Owner Wallet**: Manages identities that can receive, hold, and transfer tokens. It provides methods to list unspent tokens and check balances.
-*   **Issuer Wallet**: Manages identities authorized to mint new tokens.
+*   **Issuer Wallet**: Manages identities authorized to mint new tokens. Besides listing historical issued tokens (`ListIssuedTokens`), it exposes `IssuedBalance`, `RedeemedBalance`, and `Balance` (net issued supply = issued minus redeemed), each filterable by token type and time range via `driver.IssuerBalanceOptions`. A redeem is attributed to an issuer wallet when its output has an empty owner and the transfer action was signed by that issuer.
 *   **Auditor Wallet**: Manages identities capable of viewing and verifying private transaction details without being a participant.
 *   **Certifier Wallet**: Used in specific drivers to provide an additional layer of transaction validation or "certification".
 

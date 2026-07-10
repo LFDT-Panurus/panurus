@@ -314,6 +314,27 @@ if err != nil {
 }
 ```
 
+### Issuer Balance ([`history.go`](../integration/token/fungible/views/history.go))
+An issuer wallet can report its gross issued balance, its gross redeemed balance (tokens redeemed against that issuer), and its net outstanding issued supply.
+```go
+wallet := ttx.GetIssuerWallet(context, issuerWalletID)
+
+opts := &driver.IssuerBalanceOptions{TokenType: tokenType} // optionally add From/To to restrict by time range
+
+issued, err := wallet.IssuedBalance(context.Context(), opts)
+if err != nil {
+    return nil, err
+}
+redeemed, err := wallet.RedeemedBalance(context.Context(), opts)
+if err != nil {
+    return nil, err
+}
+net, err := wallet.Balance(context.Context(), opts) // == issued - redeemed
+if err != nil {
+    return nil, err
+}
+```
+
 ---
 
 ## 7. Special Patterns

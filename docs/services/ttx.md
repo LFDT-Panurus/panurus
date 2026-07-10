@@ -458,6 +458,8 @@ Redeem supports an enhanced flow where an issuer signature is required as part o
 3. Optionally pass `ttx.WithIssuerPublicParamsPublicKey(...)` to pin which issuer public-parameters signing key must authorize the redeem.
 4. Run `CollectEndorsementsView` to collect owner, auditor (if configured), and issuer signatures.
 
+On commit, a redeem output (empty owner) is attributed to the issuer that signed the transfer action. The issuer node stores the redeem as its own record (flagged `Redeemed`) so it counts toward that issuer wallet's `RedeemedBalance` and net `Balance`; redeems that cannot be attributed to a locally-known issuer are discarded rather than stored. See [Issuer Balance](../token_sdk_usage.md#issuer-balance-historygo).
+
 ## Collecting Endorsements
 
 The `CollectEndorsementsView` is responsible for gathering all signatures required to make a transaction valid:

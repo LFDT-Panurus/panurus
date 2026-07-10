@@ -44,6 +44,9 @@ This store serves as the authoritative registry for all tokens (UTXOs) known to 
 
 *   **Tokens**: The core UTXO registry. Stores token identifiers, amounts, types, ownership info, and ledger-specific state.
     *   **Amount Storage**: Token amounts are stored as `NUMERIC(78, 0)` in the database, supporting arbitrary precision integers up to 78 digits. This enables representation of token amounts that exceed the uint64 maximum value (2^64-1 ≈ 1.8×10^19). Panurus uses Go's `*big.Int` type throughout the codebase to handle these large values, with automatic conversion between database NUMERIC values and in-memory big.Int representations.
+    *   **Flags**: Each row carries boolean flags marking the token's relationship to this node: `owner` (mine), `auditor` (I audited it), `issuer` (I issued it), and `redeemed` (an empty-owner output attributed to one of my issuer identities). The `issuer`+`redeemed` combination backs the `IssuedBalance`/`RedeemedBalance` queries exposed by `IssuerWallet`; issued rows are never filtered by `is_deleted` since they are a permanent historical record.
+        > [!WARNING]
+        > **Breaking schema change**: `redeemed` is a new `NOT NULL` column on the `Tokens` table. It is created automatically by `CREATE TABLE IF NOT EXISTS` on fresh installs, but existing databases require a manual `ALTER TABLE ... ADD COLUMN IF NOT EXISTS redeemed BOOL NOT NULL DEFAULT false` migration before upgrading — see [Storage DB Schema Upgradability](../upgradability.md#storage-db-schema-upgradability).
 *   **TokenOwners**: A mapping table linking specific tokens to wallet identifiers for fast lookups.
 *   **PublicParameters**: A cache for the network's cryptographic public parameters and their hashes.
 *   **TokenCertifications**: Stores third-party certifications for tokens, often required by privacy-preserving drivers.
