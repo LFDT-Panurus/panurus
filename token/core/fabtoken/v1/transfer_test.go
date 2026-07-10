@@ -416,7 +416,11 @@ func TestTransferService(t *testing.T) {
 		assert.Contains(t, err.Error(), "number of outputs")
 	})
 
-	t.Run("VerifyTransfer missing receiver metadata", func(t *testing.T) {
+	t.Run("VerifyTransfer absent receiver metadata is skipped", func(t *testing.T) {
+		// A TokenRequest received over the wire may have had its metadata filtered by
+		// enrollment ID (Metadata.FilterBy) before reaching us: outputs we are not a
+		// receiver of legitimately carry nil/empty metadata. VerifyTransfer must tolerate
+		// this rather than treat it as a validation failure.
 		ppm := &mockPublicParamsManager{PublicParamsManager: &mock.PublicParamsManager{}}
 		ws := &mock.WalletService{}
 		tl := &MockTokenLoader{}
@@ -436,12 +440,11 @@ func TestTransferService(t *testing.T) {
 			},
 		}
 		outputMetadata := []*driver.TransferOutputMetadata{
-			{},
+			nil,
 		}
 
 		err := s.VerifyTransfer(ctx, action, outputMetadata)
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "missing receivers metadata")
+		require.NoError(t, err)
 	})
 
 	t.Run("VerifyTransfer audit info mismatch", func(t *testing.T) {

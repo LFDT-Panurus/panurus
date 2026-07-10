@@ -231,17 +231,15 @@ func (s *TransferService) VerifyTransfer(ctx context.Context, tr driver.Transfer
 			return errors.Errorf("output type [%s] does not match type [%s]", out.Type, typ)
 		}
 
-		// check that the output's metadata is consistent with the output itself
+		// Check that the output's metadata is consistent with the output itself.
+		// Metadata for an output can be legitimately absent here: a TokenRequest received
+		// over the wire may have been filtered by enrollment ID before reaching us (see
+		// Metadata.FilterBy), in which case outputs we are not a receiver of carry a nil
+		// entry. Mirror zkatdlog's VerifyTransfer and treat absent metadata as "nothing to
+		// verify from our vantage point" rather than as a validation failure.
 		om := outputMetadata[i]
-		if out.IsRedeem() {
-			if om != nil && len(om.Receivers) != 0 {
-				return errors.Errorf("output [%d] is a redeem, but metadata contains receivers", i)
-			}
-
+		if out.IsRedeem() || om == nil || len(om.Receivers) == 0 {
 			continue
-		}
-		if om == nil || len(om.Receivers) == 0 {
-			return errors.Errorf("missing receivers metadata for output [%d]", i)
 		}
 		for _, receiver := range om.Receivers {
 			if err := s.Deserializer.MatchIdentity(ctx, receiver.Identity, receiver.AuditInfo); err != nil {

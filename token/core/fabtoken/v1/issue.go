@@ -136,9 +136,14 @@ func (s *IssueService) VerifyIssue(ctx context.Context, ia driver.IssueAction, m
 			return errors.Errorf("output [%d] has zero quantity", i)
 		}
 
+		// Metadata for an output can be legitimately absent here: a TokenRequest received
+		// over the wire may have been filtered by enrollment ID before reaching us (see
+		// Metadata.FilterBy), in which case outputs we are not a receiver of carry a nil
+		// entry. Treat absent metadata as "nothing to verify from our vantage point" rather
+		// than as a validation failure, mirroring the analogous check in VerifyTransfer.
 		om := metadata[i] // #nosec G602 -- lengths already checked equal above
 		if om == nil || len(om.OutputMetadata) == 0 {
-			return errors.Errorf("missing metadata for output [%d]", i)
+			continue
 		}
 		outputMetadata := &v1.OutputMetadata{}
 		if err := outputMetadata.Deserialize(om.OutputMetadata); err != nil {

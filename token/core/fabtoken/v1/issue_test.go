@@ -237,6 +237,27 @@ func TestVerifyIssue(t *testing.T) {
 		assert.Contains(t, err.Error(), "zero quantity")
 	})
 
+	t.Run("absent output metadata is skipped", func(t *testing.T) {
+		// A TokenRequest received over the wire may have had its metadata filtered by
+		// enrollment ID (Metadata.FilterBy) before reaching us: outputs we are not a
+		// receiver of legitimately carry nil metadata. VerifyIssue must tolerate this
+		// rather than treat it as a validation failure.
+		ppm := &mock.PublicParamsManager{}
+		pp := &mock.PublicParameters{}
+		pp.PrecisionReturns(64)
+		ppm.PublicParametersReturns(pp)
+		service := NewIssueService(ppm, nil, &mock.Deserializer{})
+
+		action := &actions.IssueAction{
+			Issuer:  issuer,
+			Outputs: []*actions.Output{{Owner: []byte("owner1"), Type: "ABC", Quantity: "10"}},
+		}
+		metadata := []*driver.IssueOutputMetadata{nil}
+
+		err := service.VerifyIssue(ctx, action, metadata)
+		require.NoError(t, err)
+	})
+
 	t.Run("issuer mismatch", func(t *testing.T) {
 		ppm := &mock.PublicParamsManager{}
 		pp := &mock.PublicParameters{}
