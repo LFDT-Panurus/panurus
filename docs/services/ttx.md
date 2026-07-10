@@ -365,10 +365,10 @@ sequenceDiagram
     I->>Iss: Envelope{t:"upgrade_agree", b:UpgradeTokensAgreement{}}
     Iss->>Iss: NewUpgradeChallenge, set TMSID
     Iss-->>I: Envelope{t:"upgrade_agree", b:UpgradeTokensAgreement{Challenge, TMSID}}
-    I->>I: GenUpgradeProof(challenge, tokens); resolve recipient identity
+    I->>I: GenUpgradeProof(challenge, tokens), then resolve recipient identity
     I->>Iss: Envelope{t:"upgrade_req", b:UpgradeTokensRequest{ID, TMSID, RecipientData, Tokens, Proof}}
     Iss->>Iss: Verify request.ID == challenge, verify TMS matches
-    Note over I,Iss: Responder continues with issuance; session returned to caller
+    Note over I,Iss: Responder continues with issuance, session returned to caller
 ```
 
 The responder checks `request.ID` byte-for-byte against the challenge it issued, so a stale or substituted request is rejected before any proof verification.
@@ -429,7 +429,7 @@ sequenceDiagram
     I->>R: Envelope{t:"transaction", b:TransactionPayload{Raw}}
     I->>R: Envelope{t:"actions", b:Actions}
     I->>R: Envelope{t:"action_transfer", b:ActionTransfer}
-    R->>R: Receive transaction, actions, action — assemble
+    R->>R: Receive transaction, actions, action, then assemble
     R-->>I: Envelope{t:"tx_resp", b:TransactionPayload{Raw}}
 ```
 
