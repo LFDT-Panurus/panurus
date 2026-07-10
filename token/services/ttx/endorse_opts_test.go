@@ -11,6 +11,7 @@ package ttx_test
 import (
 	"testing"
 
+	"github.com/LFDT-Panurus/panurus/token"
 	"github.com/LFDT-Panurus/panurus/token/services/ttx"
 	"github.com/LFDT-Panurus/panurus/token/services/ttx/dep/mock"
 	"github.com/stretchr/testify/assert"
@@ -259,4 +260,53 @@ func TestWithExternalWalletSigner_NilSigner(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, opts.ExternalWalletSigners)
 	assert.Nil(t, opts.ExternalWalletSigners[walletID])
+}
+
+// TestCompileCollectEndorsementsOpts_WithServiceOptions verifies compatibility with token.ServiceOption.
+func TestCompileCollectEndorsementsOpts_WithServiceOptions(t *testing.T) {
+	opts, err := ttx.CompileCollectEndorsementsOpts(
+		token.WithNetwork("test-network"),
+		token.WithChannel("test-channel"),
+		token.WithNamespace("test-namespace"),
+		ttx.WithSkipAuditing(),
+	)
+
+	require.NoError(t, err)
+	assert.True(t, opts.SkipAuditing)
+	// ServiceOptions fields are not stored in EndorsementsOpts, but should not cause errors
+}
+
+// TestWithPolicySigners verifies the WithPolicySigners option.
+func TestWithPolicySigners(t *testing.T) {
+	signer1 := token.Identity("signer1")
+	signer2 := token.Identity("signer2")
+
+	opts, err := ttx.CompileCollectEndorsementsOpts(
+		ttx.WithPolicySigners(signer1, signer2),
+	)
+
+	require.NoError(t, err)
+	require.NotNil(t, opts.PolicySigners)
+	assert.Len(t, opts.PolicySigners, 2)
+	assert.Equal(t, signer1, opts.PolicySigners[0])
+	assert.Equal(t, signer2, opts.PolicySigners[1])
+}
+
+// TestWithPolicySigners_Multiple verifies multiple calls append signers.
+func TestWithPolicySigners_Multiple(t *testing.T) {
+	signer1 := token.Identity("signer1")
+	signer2 := token.Identity("signer2")
+	signer3 := token.Identity("signer3")
+
+	opts, err := ttx.CompileCollectEndorsementsOpts(
+		ttx.WithPolicySigners(signer1),
+		ttx.WithPolicySigners(signer2, signer3),
+	)
+
+	require.NoError(t, err)
+	require.NotNil(t, opts.PolicySigners)
+	assert.Len(t, opts.PolicySigners, 3)
+	assert.Equal(t, signer1, opts.PolicySigners[0])
+	assert.Equal(t, signer2, opts.PolicySigners[1])
+	assert.Equal(t, signer3, opts.PolicySigners[2])
 }

@@ -159,7 +159,7 @@ func (r *PolicySpendView) Call(context view.Context) (any, error) {
 	assert.NoError(err, "failed to create policy transaction")
 	assert.NoError(bptx.Wrap(tx).Spend(spendWallet, matched.At(0), recipient), "failed adding spend")
 
-	var collectOpts []ttx.EndorsementsOpt
+	var collectOpts []token2.ServiceOption
 	if len(r.Signers) > 0 {
 		collectOpts = append(collectOpts, ttx.WithPolicySigners(r.Signers...))
 	}

@@ -46,37 +46,80 @@ type WithdrawalResponse struct {
 // RequestWithdrawalView is the initiator view to request an issuer the issuance of tokens.
 // The view prepares an instance of WithdrawalRequest and send it to the issuer.
 type RequestWithdrawalView struct {
-	Issuer       view.Identity
-	TokenType    token2.Type
-	Amount       uint64
-	TMSID        token.TMSID
-	Wallet       string
-	NotAnonymous bool
-
-	RecipientData *RecipientData
+	Issuer         view.Identity
+	TokenType      token2.Type
+	Amount         uint64
+	TMSID          token.TMSID
+	ExternalWallet bool
+	Wallet         string
+	NotAnonymous   bool
+	RecipientData  *RecipientData
+	Signers        map[string]ExternalWalletSigner
 }
 
-func NewRequestWithdrawalView(issuer view.Identity, tokenType token2.Type, amount uint64, notAnonymous bool) *RequestWithdrawalView {
-	return &RequestWithdrawalView{Issuer: issuer, TokenType: tokenType, Amount: amount, NotAnonymous: notAnonymous}
+func NewRequestWithdrawalView(issuer view.Identity, tokenType token2.Type, amount uint64, notAnonymous bool, wallet string, tmsID token.TMSID, recipientData *RecipientData, signers map[string]ExternalWalletSigner) *RequestWithdrawalView {
+	return &RequestWithdrawalView{
+		Issuer:        issuer,
+		TokenType:     tokenType,
+		Amount:        amount,
+		NotAnonymous:  notAnonymous,
+		Wallet:        wallet,
+		TMSID:         tmsID,
+		RecipientData: recipientData,
+		Signers:       signers,
+	}
 }
 
 // RequestWithdrawal runs RequestWithdrawalView with the passed arguments.
 // The view will generate a recipient identity and pass it to the issuer.
-func RequestWithdrawal(context view.Context, issuer view.Identity, wallet string, tokenType token2.Type, amount uint64, notAnonymous bool, opts ...token.ServiceOption) (view.Identity, view.Session, error) {
-	return RequestWithdrawalForRecipient(context, issuer, wallet, tokenType, amount, notAnonymous, nil, opts...)
+func RequestWithdrawal(
+	ctx view.Context,
+	issuer view.Identity,
+	wallet string,
+	tokenType token2.Type,
+	amount uint64,
+	notAnonymous bool,
+	opts ...token.ServiceOption,
+) (view.Identity, view.Session, error) {
+	return RequestWithdrawalForRecipient(ctx, issuer, wallet, tokenType, amount, notAnonymous, nil, opts...)
 }
 
 // RequestWithdrawalForRecipient runs RequestWithdrawalView with the passed arguments.
 // The view will send the passed recipient data to the issuer.
-func RequestWithdrawalForRecipient(context view.Context, issuer view.Identity, wallet string, tokenType token2.Type, amount uint64, notAnonymous bool, recipientData *RecipientData, opts ...token.ServiceOption) (view.Identity, view.Session, error) {
+func RequestWithdrawalForRecipient(
+	ctx view.Context,
+	issuer view.Identity,
+	wallet string,
+	tokenType token2.Type,
+	amount uint64,
+	notAnonymous bool,
+	recipientData *RecipientData,
+	opts ...token.ServiceOption,
+) (view.Identity, view.Session, error) {
 	options, err := CompileServiceOptions(opts...)
 	if err != nil {
 		return nil, nil, errors.WithMessagef(err, "failed to compile options")
 	}
-	resultBoxed, err := context.RunView(NewRequestWithdrawalView(issuer, tokenType, amount, notAnonymous).WithWallet(wallet).WithTMSID(options.TMSID()).WithRecipientData(recipientData))
+	endorsementOpts, err := CompileCollectEndorsementsOpts(opts...)
+	if err != nil {
+		return nil, nil, errors.WithMessagef(err, "failed to compile collect endorsement options")
+	}
+
+	resultBoxed, err := ctx.RunView(
+		NewRequestWithdrawalView(
+			issuer,
+			tokenType,
+			amount,
+			notAnonymous,
+			wallet,
+			options.TMSID(),
+			recipientData,
+			endorsementOpts.ExternalWalletSigners,
+		))
 	if err != nil {
 		return nil, nil, err
 	}
+
 	result := resultBoxed.([]any)
 	ir := result[0].(*WithdrawalRequest)
 
@@ -129,7 +172,16 @@ func (r *RequestWithdrawalView) Call(context view.Context) (any, error) {
 	if err != nil {
 		return nil, errors.Wrapf(err, "failed to build attestation message")
 	}
-	sig, err := signRecipientAttestation(context.Context(), w, message, recipientData.Identity, true)
+	var sig []byte
+	if r.ExternalWallet {
+		signer, ok := r.Signers[r.Wallet]
+		if !ok {
+			return nil, errors.Errorf("no signer for wallet [%s]", r.Wallet)
+		}
+		sig, err = signer.Sign(recipientData.Identity, message)
+	} else {
+		sig, err = signRecipientAttestation(context.Context(), w, message, recipientData.Identity, true)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -142,31 +194,20 @@ func (r *RequestWithdrawalView) Call(context view.Context) (any, error) {
 	return []any{wr, s.Session()}, nil
 }
 
-// WithWallet sets the wallet to use to retrieve a recipient identity if it has not been passed already
-func (r *RequestWithdrawalView) WithWallet(wallet string) *RequestWithdrawalView {
-	r.Wallet = wallet
-
-	return r
-}
-
-// WithTMSID sets the TMS ID to be used
-func (r *RequestWithdrawalView) WithTMSID(id token.TMSID) *RequestWithdrawalView {
-	r.TMSID = id
-
-	return r
-}
-
-// WithRecipientData sets the recipient data to use
-func (r *RequestWithdrawalView) WithRecipientData(data *RecipientData) *RequestWithdrawalView {
-	r.RecipientData = data
-
-	return r
-}
-
-// getRecipientIdentity resolves the TMS ID, recipient data, and the owner
-// wallet for the requester. The wallet is returned so the caller can sign the
-// key-ownership attestation.
 func (r *RequestWithdrawalView) getRecipientIdentity(context view.Context) (*token.TMSID, *RecipientData, *token.OwnerWallet, error) {
+	if r.RecipientData != nil {
+		tms, err := token.GetManagementService(context, token.WithTMSID(r.TMSID))
+		if err != nil {
+			return nil, nil, nil, errors.Wrapf(err, "tms not found for [%s]", r.TMSID)
+		}
+
+		// TODO: check that RecipientData is registered
+
+		r.ExternalWallet = true
+
+		return new(tms.ID()), r.RecipientData, nil, nil
+	}
+
 	w := GetWallet(
 		context,
 		r.Wallet,
@@ -179,9 +220,7 @@ func (r *RequestWithdrawalView) getRecipientIdentity(context view.Context) (*tok
 	}
 
 	if r.RecipientData != nil {
-		tmsID := w.TMS().ID()
-
-		return &tmsID, r.RecipientData, w, nil
+		return new(w.TMS().ID()), r.RecipientData, w, nil
 	}
 
 	recipientData, err := w.GetRecipientData(context.Context())
@@ -191,9 +230,7 @@ func (r *RequestWithdrawalView) getRecipientIdentity(context view.Context) (*tok
 		return nil, nil, nil, errors.Wrapf(err, "failed to get recipient data")
 	}
 
-	tmsID := w.TMS().ID()
-
-	return &tmsID, recipientData, w, nil
+	return new(w.TMS().ID()), recipientData, w, nil
 }
 
 // ReceiveWithdrawalRequestView this is the view used by the issuer to receive a withdrawal request

@@ -8,6 +8,17 @@ package ttx
 
 import "github.com/LFDT-Panurus/panurus/token"
 
+// Parameter keys for endorsement options stored in ServiceOptions.Params
+const (
+	ParamSkipAuditing                     = "SkipAuditing"
+	ParamSkipAuditorSignatureVerification = "SkipAuditorSignatureVerification"
+	ParamSkipApproval                     = "SkipApproval"
+	ParamSkipDistributeEnv                = "SkipDistributeEnv"
+	ParamExternalWalletSigners            = "ExternalWalletSigners"
+	ParamPolicySigners                    = "PolicySigners"
+	ParamApprovalMetadata                 = "ApprovalMetadata"
+)
+
 // EndorsementsOpts is used to configure the CollectEndorsementsView
 type EndorsementsOpts struct {
 	// SkipAuditing set it to true to skip the auditing phase
@@ -38,52 +49,87 @@ func (o *EndorsementsOpts) ExternalWalletSigner(id string) ExternalWalletSigner 
 	return o.ExternalWalletSigners[id]
 }
 
-// EndorsementsOpt is a function that configures a EndorsementsOpts
-type EndorsementsOpt func(*EndorsementsOpts) error
+// CompileCollectEndorsementsOpts compiles the given list of ServiceOption and returns EndorsementsOpts.
+// It extracts endorsement-specific options from the ServiceOptions.Params map.
+func CompileCollectEndorsementsOpts(opts ...token.ServiceOption) (*EndorsementsOpts, error) {
+	serviceOpts, err := token.CompileServiceOptions(opts...)
+	if err != nil {
+		return nil, err
+	}
 
-// CompileCollectEndorsementsOpts compiles the given list of ServiceOption
-func CompileCollectEndorsementsOpts(opts ...EndorsementsOpt) (*EndorsementsOpts, error) {
-	txOptions := &EndorsementsOpts{}
-	for _, opt := range opts {
-		if err := opt(txOptions); err != nil {
-			return nil, err
+	endorseOpts := &EndorsementsOpts{}
+
+	// Extract endorsement-specific options from Params
+	if serviceOpts.Params != nil {
+		if v, ok := serviceOpts.Params[ParamSkipAuditing].(bool); ok {
+			endorseOpts.SkipAuditing = v
+		}
+		if v, ok := serviceOpts.Params[ParamSkipAuditorSignatureVerification].(bool); ok {
+			endorseOpts.SkipAuditorSignatureVerification = v
+		}
+		if v, ok := serviceOpts.Params[ParamSkipApproval].(bool); ok {
+			endorseOpts.SkipApproval = v
+		}
+		if v, ok := serviceOpts.Params[ParamSkipDistributeEnv].(bool); ok {
+			endorseOpts.SkipDistributeEnv = v
+		}
+		if v, ok := serviceOpts.Params[ParamExternalWalletSigners].(map[string]ExternalWalletSigner); ok {
+			endorseOpts.ExternalWalletSigners = v
+		}
+		if v, ok := serviceOpts.Params[ParamPolicySigners].([]token.Identity); ok {
+			endorseOpts.PolicySigners = v
+		}
+		if v, ok := serviceOpts.Params[ParamApprovalMetadata].(map[string][]byte); ok {
+			endorseOpts.ApprovalMetadata = v
 		}
 	}
 
-	return txOptions, nil
+	return endorseOpts, nil
 }
 
 // WithSkipAuditing to skip auditing
-func WithSkipAuditing() EndorsementsOpt {
-	return func(o *EndorsementsOpts) error {
-		o.SkipAuditing = true
+func WithSkipAuditing() token.ServiceOption {
+	return func(o *token.ServiceOptions) error {
+		if o.Params == nil {
+			o.Params = make(map[string]any)
+		}
+		o.Params[ParamSkipAuditing] = true
 
 		return nil
 	}
 }
 
 // WithSkipAuditorSignatureVerification to skip auditor signature verification
-func WithSkipAuditorSignatureVerification() EndorsementsOpt {
-	return func(o *EndorsementsOpts) error {
-		o.SkipAuditorSignatureVerification = true
+func WithSkipAuditorSignatureVerification() token.ServiceOption {
+	return func(o *token.ServiceOptions) error {
+		if o.Params == nil {
+			o.Params = make(map[string]any)
+		}
+		o.Params[ParamSkipAuditorSignatureVerification] = true
 
 		return nil
 	}
 }
 
 // WithSkipApproval to skip approval
-func WithSkipApproval() EndorsementsOpt {
-	return func(o *EndorsementsOpts) error {
-		o.SkipApproval = true
+func WithSkipApproval() token.ServiceOption {
+	return func(o *token.ServiceOptions) error {
+		if o.Params == nil {
+			o.Params = make(map[string]any)
+		}
+		o.Params[ParamSkipApproval] = true
 
 		return nil
 	}
 }
 
 // WithSkipDistributeEnv to skip approval
-func WithSkipDistributeEnv() EndorsementsOpt {
-	return func(o *EndorsementsOpts) error {
-		o.SkipDistributeEnv = true
+func WithSkipDistributeEnv() token.ServiceOption {
+	return func(o *token.ServiceOptions) error {
+		if o.Params == nil {
+			o.Params = make(map[string]any)
+		}
+		o.Params[ParamSkipDistributeEnv] = true
 
 		return nil
 	}
@@ -92,20 +138,29 @@ func WithSkipDistributeEnv() EndorsementsOpt {
 // WithPolicySigners restricts signature collection for PolicyIdentity owners to
 // the given component identities.  Unlisted components produce nil slots in the
 // PolicySignature, satisfying OR branches without contacting the other parties.
-func WithPolicySigners(signers ...token.Identity) EndorsementsOpt {
-	return func(o *EndorsementsOpts) error {
-		o.PolicySigners = append(o.PolicySigners, signers...)
+func WithPolicySigners(signers ...token.Identity) token.ServiceOption {
+	return func(o *token.ServiceOptions) error {
+		if o.Params == nil {
+			o.Params = make(map[string]any)
+		}
+		existing, _ := o.Params[ParamPolicySigners].([]token.Identity)
+		o.Params[ParamPolicySigners] = append(existing, signers...)
 
 		return nil
 	}
 }
 
-func WithExternalWalletSigner(walletID string, ews ExternalWalletSigner) EndorsementsOpt {
-	return func(o *EndorsementsOpts) error {
-		if o.ExternalWalletSigners == nil {
-			o.ExternalWalletSigners = map[string]ExternalWalletSigner{}
+func WithExternalWalletSigner(walletID string, ews ExternalWalletSigner) token.ServiceOption {
+	return func(o *token.ServiceOptions) error {
+		if o.Params == nil {
+			o.Params = make(map[string]any)
 		}
-		o.ExternalWalletSigners[walletID] = ews
+		signers, ok := o.Params[ParamExternalWalletSigners].(map[string]ExternalWalletSigner)
+		if !ok {
+			signers = make(map[string]ExternalWalletSigner)
+			o.Params[ParamExternalWalletSigners] = signers
+		}
+		signers[walletID] = ews
 
 		return nil
 	}
@@ -114,9 +169,12 @@ func WithExternalWalletSigner(walletID string, ews ExternalWalletSigner) Endorse
 // WithApprovalMetadata attaches application-level metadata to be forwarded to the approver.
 // Each key-value pair is delivered to the approver backend in a driver-specific way
 // (e.g. transient data for Fabric FSC endorsement, extra transient entries for chaincode).
-func WithApprovalMetadata(metadata map[string][]byte) EndorsementsOpt {
-	return func(o *EndorsementsOpts) error {
-		o.ApprovalMetadata = metadata
+func WithApprovalMetadata(metadata map[string][]byte) token.ServiceOption {
+	return func(o *token.ServiceOptions) error {
+		if o.Params == nil {
+			o.Params = make(map[string]any)
+		}
+		o.Params[ParamApprovalMetadata] = metadata
 
 		return nil
 	}

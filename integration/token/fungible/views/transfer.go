@@ -183,7 +183,7 @@ func (t *TransferView) Call(context view.Context) (txID any, err error) {
 	// Depending on the token driver implementation, the recipient's signature might or might not be needed to make
 	// the token transaction valid.
 
-	var endorserOpts []ttx.EndorsementsOpt
+	var endorserOpts []token2.ServiceOption
 	if senderWallet.Remote() {
 		// if the sender wallet is remote, then the signatures that the wallet must generate are prepared externally to this FSC node.
 		// Here, we assume that the view has been called using GRPC stream
@@ -641,7 +641,7 @@ func (t *MaliciousTransferView) Call(context view.Context) (txID any, err error)
 	// Depending on the token driver implementation, the recipient's signature might or might not be needed to make
 	// the token transaction valid.
 
-	var endorserOpts []ttx.EndorsementsOpt
+	var endorserOpts []token2.ServiceOption
 	if senderWallet.Remote() {
 		// if the sender wallet is remote, then the signatures that the wallet must generate are prepared externally to this FSC node.
 		// Here, we assume that the view has been called using GRPC stream

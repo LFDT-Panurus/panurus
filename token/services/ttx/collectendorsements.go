@@ -75,7 +75,7 @@ type CollectEndorsementsView struct {
 // 3. Before completing, all recipients receive the approved transaction.
 // Depending on the token driver implementation, the recipient's signature might or might not be needed to make
 // the token transaction valid.
-func NewCollectEndorsementsView(tx *Transaction, opts ...EndorsementsOpt) *CollectEndorsementsView {
+func NewCollectEndorsementsView(tx *Transaction, opts ...token.ServiceOption) *CollectEndorsementsView {
 	options, err := CompileCollectEndorsementsOpts(opts...)
 	if err != nil {
 		panic(err)

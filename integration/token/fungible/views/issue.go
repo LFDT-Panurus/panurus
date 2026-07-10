@@ -124,7 +124,7 @@ func (p *IssueCashView) Call(context view.Context) (any, error) {
 	// Before completing, all recipients receive the approved transaction.
 	// Depending on the token driver implementation, the recipient's signature might or might not be needed to make
 	// the token transaction valid.
-	var eOpts []ttx.EndorsementsOpt
+	var eOpts []token.ServiceOption
 	if p.SkipAuditorSignatureVerification {
 		eOpts = append(eOpts, ttx.WithSkipAuditorSignatureVerification())
 	}
