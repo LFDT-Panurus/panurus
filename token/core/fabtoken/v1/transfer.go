@@ -184,7 +184,77 @@ func (s *TransferService) Transfer(ctx context.Context, anchor driver.TokenReque
 
 // VerifyTransfer checks the outputs in the TransferAction against the passed tokenInfos
 func (s *TransferService) VerifyTransfer(ctx context.Context, tr driver.TransferAction, outputMetadata []*driver.TransferOutputMetadata) error {
-	// TODO:
+	if tr == nil {
+		return errors.Errorf("nil transfer action")
+	}
+	action, ok := tr.(*actions.TransferAction)
+	if !ok {
+		return errors.Errorf("expected *actions.TransferAction, got [%T]", tr)
+	}
+	if err := action.Validate(); err != nil {
+		return errors.Wrap(err, "invalid action")
+	}
+	if len(action.Outputs) != len(outputMetadata) {
+		return errors.Errorf("number of outputs [%d] does not match number of metadata entries [%d]", len(action.Outputs), len(outputMetadata))
+	}
+
+	precision := s.PublicParametersManager.PublicParameters().Precision()
+
+	// check that the sum of the inputs is equal to the sum of the outputs, and that
+	// all inputs and outputs share the same token type
+	typ := action.Inputs[0].Input.Type
+	inputSum := token.NewZeroQuantity(precision)
+	for _, in := range action.Inputs {
+		q, err := token.ToQuantity(in.Input.Quantity, precision)
+		if err != nil {
+			return errors.Wrapf(err, "failed parsing input quantity [%s]", in.Input.Quantity)
+		}
+		inputSum, err = inputSum.Add(q)
+		if err != nil {
+			return errors.Wrapf(err, "failed adding input quantity [%s]", in.Input.Quantity)
+		}
+		if in.Input.Type != typ {
+			return errors.Errorf("input type [%s] does not match type [%s]", in.Input.Type, typ)
+		}
+	}
+	outputSum := token.NewZeroQuantity(precision)
+	for i, out := range action.Outputs {
+		q, err := token.ToQuantity(out.Quantity, precision)
+		if err != nil {
+			return errors.Wrapf(err, "failed parsing output quantity [%s]", out.Quantity)
+		}
+		outputSum, err = outputSum.Add(q)
+		if err != nil {
+			return errors.Wrapf(err, "failed adding output quantity [%s]", out.Quantity)
+		}
+		if out.Type != typ {
+			return errors.Errorf("output type [%s] does not match type [%s]", out.Type, typ)
+		}
+
+		// Check that the output's metadata is consistent with the output itself.
+		// Metadata for an output can be legitimately absent here: a TokenRequest received
+		// over the wire may have been filtered by enrollment ID before reaching us (see
+		// Metadata.FilterBy), in which case outputs we are not a receiver of carry a nil
+		// entry. Mirror zkatdlog's VerifyTransfer and treat absent metadata as "nothing to
+		// verify from our vantage point" rather than as a validation failure.
+		om := outputMetadata[i]
+		if out.IsRedeem() || om == nil || len(om.Receivers) == 0 {
+			continue
+		}
+		for _, receiver := range om.Receivers {
+			if err := s.Deserializer.MatchIdentity(ctx, receiver.Identity, receiver.AuditInfo); err != nil {
+				return errors.Wrapf(err, "failed matching audit info for receiver of output [%d]", i)
+			}
+		}
+	}
+	if inputSum.Cmp(outputSum) != 0 {
+		return errors.Errorf("input sum [%v] does not match output sum [%v]", inputSum, outputSum)
+	}
+
+	if action.IsRedeem() && len(action.GetIssuer()) == 0 {
+		return errors.Errorf("transfer action redeems tokens but does not carry an issuer identity")
+	}
+
 	return nil
 }
 

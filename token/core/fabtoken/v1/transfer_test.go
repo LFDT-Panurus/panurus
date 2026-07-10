@@ -263,14 +263,217 @@ func TestTransferService(t *testing.T) {
 		assert.Contains(t, err.Error(), "failed to select issuer for redeem")
 	})
 
-	t.Run("VerifyTransfer", func(t *testing.T) {
+	t.Run("VerifyTransfer nil action", func(t *testing.T) {
 		ppm := &mockPublicParamsManager{PublicParamsManager: &mock.PublicParamsManager{}}
 		ws := &mock.WalletService{}
 		tl := &MockTokenLoader{}
 		des := &mock.Deserializer{}
 		s := v1.NewTransferService(logger, ppm, ws, tl, des)
 		err := s.VerifyTransfer(ctx, nil, nil)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "nil transfer action")
+	})
+
+	t.Run("VerifyTransfer success", func(t *testing.T) {
+		ppm := &mockPublicParamsManager{PublicParamsManager: &mock.PublicParamsManager{}}
+		ws := &mock.WalletService{}
+		tl := &MockTokenLoader{}
+		des := &mock.Deserializer{}
+		s := v1.NewTransferService(logger, ppm, ws, tl, des)
+		ppm.PublicParametersReturns(&setup.PublicParams{QuantityPrecision: 64})
+		des.MatchIdentityReturns(nil)
+
+		action := &actions.TransferAction{
+			Inputs: []*actions.TransferActionInput{
+				{
+					ID:    &token.ID{TxId: "tx1", Index: 0},
+					Input: &actions.Output{Owner: []byte("owner1"), Type: "type1", Quantity: "10"},
+				},
+			},
+			Outputs: []*actions.Output{
+				{Owner: []byte("owner2"), Type: "type1", Quantity: "10"},
+			},
+		}
+		outputMetadata := []*driver.TransferOutputMetadata{
+			{
+				Receivers: []*driver.AuditableIdentity{
+					{Identity: []byte("owner2"), AuditInfo: []byte("audit2")},
+				},
+			},
+		}
+
+		err := s.VerifyTransfer(ctx, action, outputMetadata)
 		require.NoError(t, err)
+	})
+
+	t.Run("VerifyTransfer redeem success", func(t *testing.T) {
+		ppm := &mockPublicParamsManager{PublicParamsManager: &mock.PublicParamsManager{}}
+		ws := &mock.WalletService{}
+		tl := &MockTokenLoader{}
+		des := &mock.Deserializer{}
+		s := v1.NewTransferService(logger, ppm, ws, tl, des)
+		ppm.PublicParametersReturns(&setup.PublicParams{QuantityPrecision: 64})
+
+		action := &actions.TransferAction{
+			Inputs: []*actions.TransferActionInput{
+				{
+					ID:    &token.ID{TxId: "tx1", Index: 0},
+					Input: &actions.Output{Owner: []byte("owner1"), Type: "type1", Quantity: "10"},
+				},
+			},
+			Outputs: []*actions.Output{
+				{Owner: nil, Type: "type1", Quantity: "10"},
+			},
+			Issuer: []byte("issuer1"),
+		}
+		outputMetadata := []*driver.TransferOutputMetadata{
+			{},
+		}
+
+		err := s.VerifyTransfer(ctx, action, outputMetadata)
+		require.NoError(t, err)
+	})
+
+	t.Run("VerifyTransfer unbalanced", func(t *testing.T) {
+		ppm := &mockPublicParamsManager{PublicParamsManager: &mock.PublicParamsManager{}}
+		ws := &mock.WalletService{}
+		tl := &MockTokenLoader{}
+		des := &mock.Deserializer{}
+		s := v1.NewTransferService(logger, ppm, ws, tl, des)
+		ppm.PublicParametersReturns(&setup.PublicParams{QuantityPrecision: 64})
+		des.MatchIdentityReturns(nil)
+
+		action := &actions.TransferAction{
+			Inputs: []*actions.TransferActionInput{
+				{
+					ID:    &token.ID{TxId: "tx1", Index: 0},
+					Input: &actions.Output{Owner: []byte("owner1"), Type: "type1", Quantity: "10"},
+				},
+			},
+			Outputs: []*actions.Output{
+				{Owner: []byte("owner2"), Type: "type1", Quantity: "5"},
+			},
+		}
+		outputMetadata := []*driver.TransferOutputMetadata{
+			{Receivers: []*driver.AuditableIdentity{{Identity: []byte("owner2"), AuditInfo: []byte("audit2")}}},
+		}
+
+		err := s.VerifyTransfer(ctx, action, outputMetadata)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "does not match output sum")
+	})
+
+	t.Run("VerifyTransfer type mismatch", func(t *testing.T) {
+		ppm := &mockPublicParamsManager{PublicParamsManager: &mock.PublicParamsManager{}}
+		ws := &mock.WalletService{}
+		tl := &MockTokenLoader{}
+		des := &mock.Deserializer{}
+		s := v1.NewTransferService(logger, ppm, ws, tl, des)
+		ppm.PublicParametersReturns(&setup.PublicParams{QuantityPrecision: 64})
+		des.MatchIdentityReturns(nil)
+
+		action := &actions.TransferAction{
+			Inputs: []*actions.TransferActionInput{
+				{
+					ID:    &token.ID{TxId: "tx1", Index: 0},
+					Input: &actions.Output{Owner: []byte("owner1"), Type: "type1", Quantity: "10"},
+				},
+			},
+			Outputs: []*actions.Output{
+				{Owner: []byte("owner2"), Type: "type2", Quantity: "10"},
+			},
+		}
+		outputMetadata := []*driver.TransferOutputMetadata{
+			{Receivers: []*driver.AuditableIdentity{{Identity: []byte("owner2"), AuditInfo: []byte("audit2")}}},
+		}
+
+		err := s.VerifyTransfer(ctx, action, outputMetadata)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "does not match type")
+	})
+
+	t.Run("VerifyTransfer metadata count mismatch", func(t *testing.T) {
+		ppm := &mockPublicParamsManager{PublicParamsManager: &mock.PublicParamsManager{}}
+		ws := &mock.WalletService{}
+		tl := &MockTokenLoader{}
+		des := &mock.Deserializer{}
+		s := v1.NewTransferService(logger, ppm, ws, tl, des)
+
+		action := &actions.TransferAction{
+			Inputs: []*actions.TransferActionInput{
+				{
+					ID:    &token.ID{TxId: "tx1", Index: 0},
+					Input: &actions.Output{Owner: []byte("owner1"), Type: "type1", Quantity: "10"},
+				},
+			},
+			Outputs: []*actions.Output{
+				{Owner: []byte("owner2"), Type: "type1", Quantity: "10"},
+			},
+		}
+
+		err := s.VerifyTransfer(ctx, action, nil)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "number of outputs")
+	})
+
+	t.Run("VerifyTransfer absent receiver metadata is skipped", func(t *testing.T) {
+		// A TokenRequest received over the wire may have had its metadata filtered by
+		// enrollment ID (Metadata.FilterBy) before reaching us: outputs we are not a
+		// receiver of legitimately carry nil/empty metadata. VerifyTransfer must tolerate
+		// this rather than treat it as a validation failure.
+		ppm := &mockPublicParamsManager{PublicParamsManager: &mock.PublicParamsManager{}}
+		ws := &mock.WalletService{}
+		tl := &MockTokenLoader{}
+		des := &mock.Deserializer{}
+		s := v1.NewTransferService(logger, ppm, ws, tl, des)
+		ppm.PublicParametersReturns(&setup.PublicParams{QuantityPrecision: 64})
+
+		action := &actions.TransferAction{
+			Inputs: []*actions.TransferActionInput{
+				{
+					ID:    &token.ID{TxId: "tx1", Index: 0},
+					Input: &actions.Output{Owner: []byte("owner1"), Type: "type1", Quantity: "10"},
+				},
+			},
+			Outputs: []*actions.Output{
+				{Owner: []byte("owner2"), Type: "type1", Quantity: "10"},
+			},
+		}
+		outputMetadata := []*driver.TransferOutputMetadata{
+			nil,
+		}
+
+		err := s.VerifyTransfer(ctx, action, outputMetadata)
+		require.NoError(t, err)
+	})
+
+	t.Run("VerifyTransfer audit info mismatch", func(t *testing.T) {
+		ppm := &mockPublicParamsManager{PublicParamsManager: &mock.PublicParamsManager{}}
+		ws := &mock.WalletService{}
+		tl := &MockTokenLoader{}
+		des := &mock.Deserializer{}
+		s := v1.NewTransferService(logger, ppm, ws, tl, des)
+		ppm.PublicParametersReturns(&setup.PublicParams{QuantityPrecision: 64})
+		des.MatchIdentityReturns(errors.New("audit info mismatch"))
+
+		action := &actions.TransferAction{
+			Inputs: []*actions.TransferActionInput{
+				{
+					ID:    &token.ID{TxId: "tx1", Index: 0},
+					Input: &actions.Output{Owner: []byte("owner1"), Type: "type1", Quantity: "10"},
+				},
+			},
+			Outputs: []*actions.Output{
+				{Owner: []byte("owner2"), Type: "type1", Quantity: "10"},
+			},
+		}
+		outputMetadata := []*driver.TransferOutputMetadata{
+			{Receivers: []*driver.AuditableIdentity{{Identity: []byte("owner2"), AuditInfo: []byte("bad-audit")}}},
+		}
+
+		err := s.VerifyTransfer(ctx, action, outputMetadata)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "failed matching audit info")
 	})
 
 	t.Run("DeserializeTransferAction", func(t *testing.T) {

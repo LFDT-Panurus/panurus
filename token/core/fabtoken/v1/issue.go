@@ -111,7 +111,58 @@ func (s *IssueService) Issue(ctx context.Context, issuerIdentity driver.Identity
 
 // VerifyIssue checks if the outputs of an IssueAction match the passed tokenInfos
 func (s *IssueService) VerifyIssue(ctx context.Context, ia driver.IssueAction, metadata []*driver.IssueOutputMetadata) error {
-	// TODO:
+	if ia == nil {
+		return errors.Errorf("nil issue action")
+	}
+	action, ok := ia.(*v1.IssueAction)
+	if !ok {
+		return errors.Errorf("expected *actions.IssueAction, got [%T]", ia)
+	}
+	if err := action.Validate(); err != nil {
+		return errors.Wrap(err, "invalid action")
+	}
+	if len(action.Outputs) != len(metadata) {
+		return errors.Errorf("number of outputs [%d] does not match number of metadata entries [%d]", len(action.Outputs), len(metadata))
+	}
+
+	precision := s.PublicParamsManager.PublicParameters().Precision()
+	zero := token2.NewZeroQuantity(precision)
+	for i, out := range action.Outputs {
+		q, err := token2.ToQuantity(out.Quantity, precision)
+		if err != nil {
+			return errors.Wrapf(err, "failed parsing output quantity [%s]", out.Quantity)
+		}
+		if q.Cmp(zero) == 0 {
+			return errors.Errorf("output [%d] has zero quantity", i)
+		}
+
+		// Metadata for an output can be legitimately absent here: a TokenRequest received
+		// over the wire may have been filtered by enrollment ID before reaching us (see
+		// Metadata.FilterBy), in which case outputs we are not a receiver of carry a nil
+		// entry. Treat absent metadata as "nothing to verify from our vantage point" rather
+		// than as a validation failure, mirroring the analogous check in VerifyTransfer.
+		om := metadata[i] // #nosec G602 -- lengths already checked equal above
+		if om == nil || len(om.OutputMetadata) == 0 {
+			continue
+		}
+		outputMetadata := &v1.OutputMetadata{}
+		if err := outputMetadata.Deserialize(om.OutputMetadata); err != nil {
+			return errors.Wrapf(err, "failed unmarshalling metadata for output [%d]", i)
+		}
+		if !driver.Identity(outputMetadata.Issuer).Equal(action.Issuer) {
+			return errors.Errorf("issuer in metadata for output [%d] does not match issuer in action", i)
+		}
+
+		if len(om.Receivers) == 0 {
+			return errors.Errorf("missing receivers metadata for output [%d]", i)
+		}
+		for _, receiver := range om.Receivers {
+			if err := s.Deserializer.MatchIdentity(ctx, receiver.Identity, receiver.AuditInfo); err != nil {
+				return errors.Wrapf(err, "failed matching audit info for receiver of output [%d]", i)
+			}
+		}
+	}
+
 	return nil
 }
 
