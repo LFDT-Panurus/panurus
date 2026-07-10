@@ -69,7 +69,8 @@ func (db *EndorserStore) GetSchema() string {
 			status_message TEXT NOT NULL,
 			stored_at TIMESTAMP NOT NULL
 		);
-	`, db.table)
+		CREATE INDEX IF NOT EXISTS idx_status_storedat_%s ON %s ( status, stored_at );
+	`, db.table, db.table, db.table)
 }
 
 // CreateSchema creates the database schema for the endorser store

@@ -95,9 +95,12 @@ func (db *TokenLockStore) GetSchema() string {
 			created_at TIMESTAMP NOT NULL,
 			PRIMARY KEY(tx_id, idx),
 			FOREIGN KEY (tx_id, idx) REFERENCES %s
-		);`,
+		);
+		CREATE INDEX IF NOT EXISTS idx_consumer_tx_id_%s ON %s ( consumer_tx_id );`,
 		db.Table.TokenLocks,
 		db.Table.Tokens,
+		db.Table.TokenLocks,
+		db.Table.TokenLocks,
 	)
 }
 

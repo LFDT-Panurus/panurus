@@ -448,6 +448,7 @@ func (db *TransactionStore) GetSchema() string {
 		);
 		CREATE INDEX IF NOT EXISTS idx_status_%s ON %s ( status );
 		CREATE INDEX IF NOT EXISTS idx_recovery_claim_%s ON %s ( status, recovery_claim_expires_at, stored_at ) WHERE status = 1;
+		CREATE INDEX IF NOT EXISTS idx_recovery_expiry_%s ON %s ( recovery_claim_expires_at ) WHERE recovery_claim_expires_at IS NOT NULL;
 
 		-- transactions
 		CREATE TABLE IF NOT EXISTS %s (
@@ -487,7 +488,7 @@ func (db *TransactionStore) GetSchema() string {
 		);
 		CREATE INDEX IF NOT EXISTS idx_tx_id_%s ON %s ( tx_id );
 		`,
-		db.table.Requests, db.table.Requests, db.table.Requests, db.table.Requests, db.table.Requests,
+		db.table.Requests, db.table.Requests, db.table.Requests, db.table.Requests, db.table.Requests, db.table.Requests, db.table.Requests,
 		db.table.Transactions, db.table.Requests, db.table.Transactions, db.table.Transactions, db.table.Transactions, db.table.Transactions, db.table.Transactions, db.table.Transactions, db.table.Transactions, db.table.Transactions,
 		db.table.Movements, db.table.Requests, db.table.Movements, db.table.Movements, db.table.Movements, db.table.Movements,
 		db.table.TransactionEndorseAck, db.table.TransactionEndorseAck, db.table.TransactionEndorseAck,
