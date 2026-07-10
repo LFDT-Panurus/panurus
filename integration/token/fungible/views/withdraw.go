@@ -62,6 +62,10 @@ func (i *WithdrawalInitiatorView) Call(context view.Context) (any, error) {
 		// Indeed, a signature is needed to prove to the issuer that the caller owns the recipient data
 		stream := view4.GetStream(context)
 		// Then request withdrawal
+		externalWalletSignerServer := ttx.NewStreamExternalWalletSignerServer(stream)
+		defer func() {
+			assert.NoError(externalWalletSignerServer.Done())
+		}()
 		id, session, err = ttx.RequestWithdrawalForRecipient(
 			context,
 			view.Identity(i.Issuer),
@@ -71,7 +75,7 @@ func (i *WithdrawalInitiatorView) Call(context view.Context) (any, error) {
 			i.NotAnonymous,
 			i.RecipientData,
 			token.WithTMSID(i.TMSID),
-			ttx.WithExternalWalletSigner(i.Wallet, ttx.NewStreamExternalWalletSignerServer(stream)),
+			ttx.WithExternalWalletSigner(i.Wallet, externalWalletSignerServer),
 		)
 	} else {
 		id, session, err = ttx.RequestWithdrawal(context, view.Identity(i.Issuer), i.Wallet, i.TokenType, i.Amount, i.NotAnonymous, token.WithTMSID(i.TMSID))
