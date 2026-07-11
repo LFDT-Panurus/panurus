@@ -158,9 +158,13 @@ contract TokenState {
     }
 
     /// @dev Endorsed public-parameters update: stores the new PP, bumps the version, emits. Setup deltas
-    ///      carry no spends/outputs (§3.5); reject a malformed one rather than silently ignore.
+    ///      carry only the new params (no spends, outputs, or metadata, per §3.5). Every field is
+    ///      digest-covered, so a malformed setup delta is rejected rather than partially ignored (R6).
     function _applySetup(StateDelta calldata delta) private {
-        if (delta.spentRefs.length != 0 || delta.outputs.length != 0 || delta.setupParameters.length == 0) {
+        if (
+            delta.spentRefs.length != 0 || delta.outputs.length != 0 || delta.metadataKeys.length != 0
+                || delta.setupParameters.length == 0
+        ) {
             revert MalformedSetupDelta();
         }
         publicParameters = delta.setupParameters;
@@ -171,6 +175,7 @@ contract TokenState {
 
     // --- queries -----------------------------------------------------------------------------------
 
+    /// @notice The serialized token bytes stored at tokenID, or empty if none.
     function getToken(bytes32 tokenID) external view returns (bytes memory) {
         return tokens[tokenID];
     }
@@ -180,6 +185,7 @@ contract TokenState {
         return snSpent[tokenMarker[tokenID]];
     }
 
+    /// @notice Graph-revealing spent status for a batch of token ids, aligned with the input.
     function areTokensSpent(bytes32[] calldata tokenIDs) external view returns (bool[] memory out) {
         out = new bool[](tokenIDs.length);
         for (uint256 i = 0; i < tokenIDs.length; i++) {
@@ -187,26 +193,32 @@ contract TokenState {
         }
     }
 
+    /// @notice Graph-hiding: whether a serial number has been recorded (spent).
     function isSerialUsed(bytes32 serial) external view returns (bool) {
         return serialUsed[serial];
     }
 
+    /// @notice The current public parameters.
     function getPublicParameters() external view returns (bytes memory) {
         return publicParameters;
     }
 
+    /// @notice The current public-parameters version (0 at initialize, then incremented per update).
     function getPublicParamsVersion() external view returns (uint64) {
         return publicParamsVersion;
     }
 
+    /// @notice SHA-256 of the current public parameters.
     function getPublicParamsHash() external view returns (bytes32) {
         return publicParamsHash;
     }
 
+    /// @notice The stored transfer metadata value for a key, or empty if none.
     function getTransferMetadata(bytes32 key) external view returns (bytes memory) {
         return transferMetadata[key];
     }
 
+    /// @notice The SHA-256 token-request hash recorded for an anchor, or zero if not processed.
     function getTokenRequestHash(bytes32 anchor) external view returns (bytes32) {
         return tokenRequestHashes[anchor];
     }

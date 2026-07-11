@@ -214,6 +214,16 @@ contract TokenStateTest is Test {
         ts.applyStateDelta(d, _sign(d));
     }
 
+    function test_SetupDeltaCarryingMetadata_Reverts() public {
+        StateDelta memory d = _setup(keccak256("bad-setup-meta"), "pp-v1");
+        d.metadataKeys = new bytes32[](1);
+        d.metadataKeys[0] = keccak256("k1");
+        d.metadataVals = new bytes[](1);
+        d.metadataVals[0] = "v1";
+        vm.expectPartialRevert(TokenState.MalformedSetupDelta.selector);
+        ts.applyStateDelta(d, _sign(d));
+    }
+
     // --- public-parameters update (endorsed setup) -------------------------------------------------
 
     function test_Setup_UpdatesPublicParams() public {
