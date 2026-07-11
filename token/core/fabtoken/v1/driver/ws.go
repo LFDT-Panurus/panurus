@@ -50,7 +50,9 @@ func (d BaseWalletServiceFactory) newWalletService(
 	if err != nil {
 		return nil, errors.Wrapf(err, "failed to open keystore for tms [%s]", tmsID)
 	}
+	signerRouter := identity.NewSignerRouter()
 	identityProvider := identity.NewProvider(logger.Named("identity"), identityDB, deserializerManager, binder, NewEIDRHDeserializer())
+	identityProvider.SetSignerRouter(signerRouter)
 	identityConfig, err := config.NewIdentityConfig(tmsConfig)
 	if err != nil {
 		return nil, errors.WithMessagef(err, "failed to create identity config")
@@ -68,6 +70,7 @@ func (d BaseWalletServiceFactory) newWalletService(
 		storageProvider,
 		deserializerManager,
 	)
+	roleFactory.SetSignerRouter(signerRouter)
 	newRole, err := roleFactory.NewRole(identity.OwnerRole, false, nil, x509.NewKeyManagerProvider(identityConfig, keyStore, ignoreRemote))
 	if err != nil {
 		return nil, errors.WithMessagef(err, "failed to create owner role")
@@ -95,6 +98,7 @@ func (d BaseWalletServiceFactory) newWalletService(
 	if err != nil {
 		return nil, errors.Wrapf(err, "failed to get identity storage provider")
 	}
+	signerRouter.SetConfIDResolver(walletDB)
 	deserializer := NewDeserializer()
 	ws := wallet.NewService(
 		logger,

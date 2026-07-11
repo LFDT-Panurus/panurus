@@ -9,6 +9,7 @@ The endorser database stores validation records that track token requests valida
 - Token request data
 - Validation metadata
 - Public parameters hash
+- Status and status message
 - Timestamp
 
 ## Architecture
@@ -116,30 +117,23 @@ status, message, err := store.GetStatus(ctx, txID)
 
 ## Database Schema
 
-The endorserdb uses two tables:
+The endorserdb uses a single, self-contained table:
 
 ### VALIDATIONS Table
 Stores validation records created during endorsement:
 - `tx_id`: Transaction identifier (primary key)
-- `request`: Token request data
-- `metadata`: Validation metadata (JSON)
-- `pp_hash`: Public parameters hash
-- `stored_at`: Timestamp
+- `request`: Token request data (NOT NULL)
+- `metadata`: Validation metadata (NOT NULL)
+- `pp_hash`: Public parameters hash (NOT NULL)
+- `status`: Validation status (NOT NULL)
+- `status_message`: Status message (NOT NULL)
+- `stored_at`: Timestamp (NOT NULL)
 
-### REQUESTS Table
-Stores token request status (shared with ttxdb):
-- `tx_id`: Transaction identifier (primary key)
-- `request`: Token request data
-- `status`: Transaction status
-- `status_message`: Status message
-- `application_metadata`: Application metadata (JSON)
-- `public_metadata`: Public metadata (JSON)
-- `pp_hash`: Public parameters hash
-- `stored_at`: Timestamp
+There is no foreign key to the Requests table — a validation record can be created and have its status tracked entirely independently of any TTXDB/AuditDB Requests row for the same `tx_id`.
 
 ## Relationship with TTXDB
 
-The endorserdb was created by extracting validation-related functionality from the Token Transaction Database (ttxdb). While both services share the same physical database and some tables (like REQUESTS), they provide separate interfaces:
+The endorserdb was created by extracting validation-related functionality from the Token Transaction Database (ttxdb). Both services share the same physical database, but each owns its own table (ttxdb owns Requests/Transactions/Movements/Endorsements, endorserdb owns Validations) and interface:
 
 - **ttxdb**: Manages token transactions, movements, and token requests
 - **endorserdb**: Manages validation records and their status

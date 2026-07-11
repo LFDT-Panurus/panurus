@@ -177,3 +177,43 @@ func TestParallelBenchmarkIdemixDeserializeSigner(t *testing.T) {
 	)
 	r.Print()
 }
+
+// TestParallelBenchmarkIdemixDeserializeSignerNoProbe benchmarks probe-free signer
+// deserialization (DeserializeSignerNoProbe), the routed conf_id-pinned path, against
+// TestParallelBenchmarkIdemixDeserializeSigner above, which benchmarks the probing path
+// (DeserializeSigner) that the fallback linear scan still relies on.
+func TestParallelBenchmarkIdemixDeserializeSignerNoProbe(t *testing.T) {
+	keyManager, cleanup := setupKeyManager(t, "./testdata/bls12_381_bbs_gurvy/idemix", math.BLS12_381_BBS_GURVY)
+	defer cleanup()
+
+	workers, err := benchmark2.Workers(runtime.NumCPU())
+	require.NoError(t, err)
+
+	n := benchmark2.SetupSamples()
+	if n == 0 {
+		n = 128
+	}
+	ids := make([][]byte, 0, n)
+	for range n {
+		id, err := keyManager.Identity(t.Context(), nil)
+		require.NoError(t, err)
+		ids = append(ids, id.Identity)
+	}
+
+	r := benchmark2.RunBenchmark(
+		benchmark2.NewConfig(
+			workers[0],
+			benchmark2.Duration(),
+			3*time.Second,
+		),
+		func() []byte {
+			return ids[rand.Intn(len(ids))]
+		},
+		func(s []byte) error {
+			_, err := keyManager.DeserializeSignerNoProbe(t.Context(), s)
+
+			return err
+		},
+	)
+	r.Print()
+}

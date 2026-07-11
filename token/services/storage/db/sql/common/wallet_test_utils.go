@@ -106,14 +106,15 @@ func TestStoreIdentity(t *testing.T, store walletStoreConstructor) {
 	eID := "5678"
 	walletID := driver.WalletID("my wallet")
 	roleID := 5
+	confID := "conf-1"
 
 	mockDB.ExpectExec("INSERT INTO WALLETS "+
-		"\\(identity_hash, meta, wallet_id, role_id, created_at, enrollment_id\\) "+
-		"VALUES \\(\\$1, \\$2, \\$3, \\$4, \\$5, \\$6\\) ON CONFLICT DO NOTHING").
-		WithArgs(tokenID.UniqueID(), []uint8(nil), walletID, roleID, sqlmock.AnyArg(), eID).
+		"\\(identity_hash, meta, wallet_id, role_id, created_at, enrollment_id, conf_id\\) "+
+		"VALUES \\(\\$1, \\$2, \\$3, \\$4, \\$5, \\$6, \\$7\\) ON CONFLICT DO NOTHING").
+		WithArgs(tokenID.UniqueID(), []uint8(nil), walletID, roleID, sqlmock.AnyArg(), eID, confID).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 
-	err = store(db).StoreIdentity(t.Context(), tokenID, eID, walletID, roleID, nil)
+	err = store(db).StoreIdentity(t.Context(), tokenID, eID, walletID, roleID, nil, confID)
 
 	gomega.Expect(mockDB.ExpectationsWereMet()).To(gomega.Succeed())
 	gomega.Expect(err).ToNot(gomega.HaveOccurred())
@@ -128,26 +129,27 @@ func TestStoreIdentityIdempotent(t *testing.T, store walletStoreConstructor) {
 	eID := "5678"
 	walletID := driver.WalletID("my wallet")
 	roleID := 5
+	confID := "conf-1"
 
 	insertQuery := "INSERT INTO WALLETS " +
-		"\\(identity_hash, meta, wallet_id, role_id, created_at, enrollment_id\\) " +
-		"VALUES \\(\\$1, \\$2, \\$3, \\$4, \\$5, \\$6\\) ON CONFLICT DO NOTHING"
+		"\\(identity_hash, meta, wallet_id, role_id, created_at, enrollment_id, conf_id\\) " +
+		"VALUES \\(\\$1, \\$2, \\$3, \\$4, \\$5, \\$6, \\$7\\) ON CONFLICT DO NOTHING"
 
 	// First call: row inserted (1 row affected)
 	mockDB.ExpectExec(insertQuery).
-		WithArgs(tokenID.UniqueID(), []uint8(nil), walletID, roleID, sqlmock.AnyArg(), eID).
+		WithArgs(tokenID.UniqueID(), []uint8(nil), walletID, roleID, sqlmock.AnyArg(), eID, confID).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 
 	// Second call: conflict, 0 rows affected — must still return nil
 	mockDB.ExpectExec(insertQuery).
-		WithArgs(tokenID.UniqueID(), []uint8(nil), walletID, roleID, sqlmock.AnyArg(), eID).
+		WithArgs(tokenID.UniqueID(), []uint8(nil), walletID, roleID, sqlmock.AnyArg(), eID, confID).
 		WillReturnResult(sqlmock.NewResult(0, 0))
 
 	s := store(db)
-	err = s.StoreIdentity(t.Context(), tokenID, eID, walletID, roleID, nil)
+	err = s.StoreIdentity(t.Context(), tokenID, eID, walletID, roleID, nil, confID)
 	gomega.Expect(err).ToNot(gomega.HaveOccurred())
 
-	err = s.StoreIdentity(t.Context(), tokenID, eID, walletID, roleID, nil)
+	err = s.StoreIdentity(t.Context(), tokenID, eID, walletID, roleID, nil, confID)
 	gomega.Expect(err).ToNot(gomega.HaveOccurred())
 
 	gomega.Expect(mockDB.ExpectationsWereMet()).To(gomega.Succeed())

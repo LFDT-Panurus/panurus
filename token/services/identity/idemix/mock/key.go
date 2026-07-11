@@ -340,16 +340,6 @@ func (fake *Key) SymmetricReturnsOnCall(i int, result1 bool) {
 func (fake *Key) Invocations() map[string][][]interface{} {
 	fake.invocationsMutex.RLock()
 	defer fake.invocationsMutex.RUnlock()
-	fake.bytesMutex.RLock()
-	defer fake.bytesMutex.RUnlock()
-	fake.privateMutex.RLock()
-	defer fake.privateMutex.RUnlock()
-	fake.publicKeyMutex.RLock()
-	defer fake.publicKeyMutex.RUnlock()
-	fake.sKIMutex.RLock()
-	defer fake.sKIMutex.RUnlock()
-	fake.symmetricMutex.RLock()
-	defer fake.symmetricMutex.RUnlock()
 	copiedInvocations := map[string][][]interface{}{}
 	for key, value := range fake.invocations {
 		copiedInvocations[key] = value

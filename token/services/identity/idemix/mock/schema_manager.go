@@ -184,10 +184,6 @@ func (fake *SchemaManager) RhNymAuditOptsReturnsOnCall(i int, result1 *types.RhN
 func (fake *SchemaManager) Invocations() map[string][][]interface{} {
 	fake.invocationsMutex.RLock()
 	defer fake.invocationsMutex.RUnlock()
-	fake.eidNymAuditOptsMutex.RLock()
-	defer fake.eidNymAuditOptsMutex.RUnlock()
-	fake.rhNymAuditOptsMutex.RLock()
-	defer fake.rhNymAuditOptsMutex.RUnlock()
 	copiedInvocations := map[string][][]interface{}{}
 	for key, value := range fake.invocations {
 		copiedInvocations[key] = value

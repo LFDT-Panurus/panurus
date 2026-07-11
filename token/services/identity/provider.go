@@ -84,6 +84,7 @@ type Provider struct {
 	enrollmentIDUnmarshaler EnrollmentIDUnmarshaler
 	storage                 Storage
 	deserializer            Deserializer
+	signerRouter            *SignerRouter
 
 	signers cache[*SignerEntry]
 }
@@ -104,6 +105,13 @@ func NewProvider(
 		storage:                 storage,
 		signers:                 secondcache.NewTyped[*SignerEntry](50),
 	}
+}
+
+// SetSignerRouter sets the router consulted for conf_id-pinned signer resolution before falling
+// back to the linear-scan deserializer. Passing nil disables routing (the default), leaving
+// GetSigner's fallback behavior unchanged.
+func (p *Provider) SetSignerRouter(router *SignerRouter) {
+	p.signerRouter = router
 }
 
 // RegisterRecipientData stores the passed recipient data in the configured storage.
@@ -278,6 +286,15 @@ func (p *Provider) getSignerAndCache(ctx context.Context, identity driver.Identi
 
 	p.Logger.DebugfContext(ctx, "signer for [%s] not found, attempting to deserialize", idHash)
 
+	// conf_id-pinned routing: skip the linear-scan deserializer's cryptographic probe when the
+	// identity's conf_id already pins it to exactly one KeyManager. Any miss (no route, wrong
+	// bytes, KeyManager error) falls straight through to the fallback below, unchanged.
+	if p.signerRouter != nil {
+		if signer, ok := p.signerRouter.Resolve(ctx, identity); ok {
+			return p.cacheAndPersistSigner(ctx, identity, idHash, signer, shouldCache)
+		}
+	}
+
 	// check that we have a deserializer
 	if p.deserializer == nil {
 		return nil, false, errors.Errorf("cannot find signer for [%s], no deserializer set", identity)
@@ -308,7 +325,16 @@ func (p *Provider) getSignerAndCache(ctx context.Context, identity driver.Identi
 		}
 	}
 
-	// Cache the signer for the current idHash
+	return p.cacheAndPersistSigner(ctx, identity, idHash, signer, shouldCache)
+}
+
+// cacheAndPersistSigner caches signer under idHash when shouldCache is set and records that a
+// signer now exists for identity in storage. The stored blob is nil: it's a presence marker for
+// AreMe/IsMe, not the reconstruction material itself (that lives in the KeyManager's own
+// SignerInfo, gated separately - see idemixnym.KeyManager.signerInfo). StoreSignerInfo
+// implementations MUST NOT overwrite an existing row, so an earlier RegisterIdentityDescriptor
+// call with real signer info is never clobbered by this presence-only write.
+func (p *Provider) cacheAndPersistSigner(ctx context.Context, identity driver.Identity, idHash string, signer driver.Signer, shouldCache bool) (driver.Signer, bool, error) {
 	if shouldCache {
 		entry := &SignerEntry{Signer: signer}
 		if p.Logger.IsEnabledFor(zapcore.DebugLevel) {
@@ -317,7 +343,6 @@ func (p *Provider) getSignerAndCache(ctx context.Context, identity driver.Identi
 		p.signers.Add(idHash, entry)
 	}
 
-	// Persist signer info for the current identity
 	if err := p.storage.StoreSignerInfo(ctx, identity, nil); err != nil {
 		return nil, false, errors.Wrap(err, "failed to store entry in Storage for the passed signer")
 	}

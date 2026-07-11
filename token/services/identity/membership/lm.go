@@ -180,6 +180,12 @@ type LocalMembership struct {
 	IdentityType           string
 	IdentityProvider       IdentityProvider
 
+	// signerRouter, when set, is populated with a confID->KeyManager entry for every local
+	// identity loaded, so Provider.getSignerAndCache can dispatch to the pinned KeyManager
+	// instead of scanning every KeyManager registered under the identity's type. Optional: nil
+	// leaves deserializerManager-based dispatch as the only path, unchanged.
+	signerRouter *identity.SignerRouter
+
 	localIdentitiesMutex      sync.RWMutex
 	localIdentities           []*LocalIdentity
 	cachedDefaultIdentifier   string
@@ -189,6 +195,13 @@ type LocalMembership struct {
 	targetIdentities          []view.Identity // optional list of identities to prefer
 	anonymous                 bool            // when true, only anonymous identities are considered selectable by default
 	closeOnce                 sync.Once
+}
+
+// SetSignerRouter sets the router that local identities self-register with as they are loaded.
+// Must be called before Load for identities loaded during that call to be registered; identities
+// loaded via refreshAndGet after this call are always registered.
+func (l *LocalMembership) SetSignerRouter(router *identity.SignerRouter) {
+	l.signerRouter = router
 }
 
 // NewLocalMembership creates a new LocalMembership instance.
@@ -595,6 +608,11 @@ func (l *LocalMembership) registerLocalIdentity(ctx context.Context, identityCon
 // LocalMembership identity indices; concurrent use relies on the
 // KeyManagerProvider contract.
 func (l *LocalMembership) resolveKeyManager(ctx context.Context, identityConfig *IdentityConfiguration) (KeyManager, int, error) {
+	// Enforce type up-front so that any UniqueID() computed from this config (e.g. by
+	// addLocalIdentity below, before this config is persisted via AddConfiguration)
+	// matches the value that will eventually be persisted for this configuration.
+	identityConfig.Type = l.IdentityType
+
 	var errs []error
 	var keyManager KeyManager
 	var priority int
@@ -654,8 +672,6 @@ func (l *LocalMembership) commitLocalIdentity(ctx context.Context, identityConfi
 
 	if exists, _ := l.identityDB.ConfigurationExists(ctx, identityConfig.ID, l.IdentityType, identityConfig.URL); !exists {
 		l.logger.DebugfContext(ctx, "does the configuration already exists for [%s]? no, add it", identityConfig.ID)
-		// enforce type
-		identityConfig.Type = l.IdentityType
 		if err := l.identityDB.AddConfiguration(ctx, *identityConfig); err != nil {
 			return err
 		}
@@ -762,12 +778,13 @@ func (l *LocalMembership) addLocalIdentity(ctx context.Context, config *Identity
 
 	eID := keyManager.EnrollmentID()
 	localIdentity := &LocalIdentity{
-		Name:         name,
-		Default:      defaultID,
-		EnrollmentID: eID,
-		Anonymous:    keyManager.Anonymous(),
-		GetIdentity:  getIdentity,
-		Remote:       keyManager.IsRemote(),
+		Name:            name,
+		Default:         defaultID,
+		EnrollmentID:    eID,
+		Anonymous:       keyManager.Anonymous(),
+		GetIdentity:     getIdentity,
+		Remote:          keyManager.IsRemote(),
+		ConfigurationID: config.UniqueID(),
 	}
 	l.logger.Debugf("new local identity for [%s:%s] - [%v]", name, eID, localIdentity)
 
@@ -799,6 +816,13 @@ func (l *LocalMembership) addLocalIdentity(ctx context.Context, config *Identity
 
 	// deserializer
 	l.deserializerManager.AddTypedSignerDeserializer(keyManager.IdentityType(), &TypedSignerDeserializer{KeyManager: keyManager})
+
+	// conf_id-pinned routing: register this KeyManager as the sole owner of its conf_id, so
+	// Provider can dispatch straight to it instead of scanning every KeyManager registered
+	// under the identity's type.
+	if l.signerRouter != nil {
+		l.signerRouter.Register(config.UniqueID(), keyManager)
+	}
 
 	// if the keyManager is not anonymous
 	if !keyManager.Anonymous() {

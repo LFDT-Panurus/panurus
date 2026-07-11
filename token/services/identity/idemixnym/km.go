@@ -47,13 +47,9 @@ func (k *KeyManager) DeserializeVerifier(ctx context.Context, raw []byte) (tdriv
 }
 
 func (k *KeyManager) DeserializeSigner(ctx context.Context, raw []byte) (tdriver.Signer, error) {
-	signerInfoRaw, err := k.identityStoreService.GetSignerInfo(ctx, raw)
+	auditInfo, err := k.signerInfo(ctx, raw)
 	if err != nil {
-		return nil, errors.Wrapf(err, "failed to retrieve signer info")
-	}
-	auditInfo := &nym.AuditInfo{}
-	if err := json.Unmarshal(signerInfoRaw, auditInfo); err != nil {
-		return nil, errors.Wrapf(err, "failed to deserialize audit info")
+		return nil, err
 	}
 
 	signer, err := k.backend.DeserializeSigner(ctx, auditInfo.IdemixSignature)
@@ -65,6 +61,44 @@ func (k *KeyManager) DeserializeSigner(ctx context.Context, raw []byte) (tdriver
 		Creator: auditInfo.IdemixSignature,
 		Signer:  signer,
 	}, nil
+}
+
+// DeserializeSignerNoProbe reconstructs a signer from the given raw bytes without running the
+// backend's sign+verify probe. It still requires a matching Signers row (GetSignerInfo) for this
+// nym, so it stays fail-closed against identities never registered locally; the probe it skips is
+// the one that would otherwise distinguish this key manager from a wrong one, so callers MUST only
+// invoke this once conf_id-based routing has already pinned this exact key manager.
+func (k *KeyManager) DeserializeSignerNoProbe(ctx context.Context, raw []byte) (tdriver.Signer, error) {
+	auditInfo, err := k.signerInfo(ctx, raw)
+	if err != nil {
+		return nil, err
+	}
+
+	signer, err := k.backend.DeserializeSignerNoProbe(ctx, auditInfo.IdemixSignature)
+	if err != nil {
+		return nil, errors.Wrap(err, "cannot deserializer signer, cannot create signer")
+	}
+
+	return &nym.Signer{
+		Creator: auditInfo.IdemixSignature,
+		Signer:  signer,
+	}, nil
+}
+
+func (k *KeyManager) signerInfo(ctx context.Context, raw []byte) (*nym.AuditInfo, error) {
+	signerInfoRaw, err := k.identityStoreService.GetSignerInfo(ctx, raw)
+	if err != nil {
+		return nil, errors.Wrapf(err, "failed to retrieve signer info")
+	}
+	if len(signerInfoRaw) == 0 {
+		return nil, errors.Errorf("no signer info found for identity [%s]", tdriver.Identity(raw).UniqueID())
+	}
+	auditInfo := &nym.AuditInfo{}
+	if err := json.Unmarshal(signerInfoRaw, auditInfo); err != nil {
+		return nil, errors.Wrapf(err, "failed to deserialize audit info")
+	}
+
+	return auditInfo, nil
 }
 
 func (k *KeyManager) EnrollmentID() string {

@@ -25,7 +25,8 @@ import (
 )
 
 type walletTables struct {
-	Wallets string
+	Wallets                string
+	IdentityConfigurations string
 }
 
 type WalletStore struct {
@@ -45,7 +46,10 @@ func newWalletStore(readDB, writeDB *sql.DB, tables walletTables, ci common3.Con
 }
 
 func NewWalletStore(readDB, writeDB *sql.DB, tables TableNames, ci common3.CondInterpreter) (*WalletStore, error) {
-	return newWalletStore(readDB, writeDB, walletTables{Wallets: tables.Wallets}, ci), nil
+	return newWalletStore(readDB, writeDB, walletTables{
+		Wallets:                tables.Wallets,
+		IdentityConfigurations: tables.IdentityConfigurations,
+	}, ci), nil
 }
 
 func (db *WalletStore) CreateSchema() error {
@@ -86,10 +90,10 @@ func (db *WalletStore) GetWalletIDs(ctx context.Context, roleID int) ([]driver.W
 	return iterators.ReadAllValues(it)
 }
 
-func (db *WalletStore) StoreIdentity(ctx context.Context, identity token.Identity, eID string, wID driver.WalletID, roleID int, meta []byte) error {
+func (db *WalletStore) StoreIdentity(ctx context.Context, identity token.Identity, eID string, wID driver.WalletID, roleID int, meta []byte, confID string) error {
 	query, args := q.InsertInto(db.table.Wallets).
-		Fields("identity_hash", "meta", "wallet_id", "role_id", "created_at", "enrollment_id").
-		Row(identity.UniqueID(), meta, wID, roleID, time.Now().UTC(), eID).
+		Fields("identity_hash", "meta", "wallet_id", "role_id", "created_at", "enrollment_id", "conf_id").
+		Row(identity.UniqueID(), meta, wID, roleID, time.Now().UTC(), eID, confID).
 		OnConflictDoNothing().
 		Format()
 	logging.Debug(logger, query)
@@ -101,6 +105,23 @@ func (db *WalletStore) StoreIdentity(ctx context.Context, identity token.Identit
 	logger.DebugfContext(ctx, "stored wallet [%v] for identity [%s]", wID, identity)
 
 	return nil
+}
+
+func (db *WalletStore) GetConfID(ctx context.Context, identity token.Identity) (string, error) {
+	idHash := identity.UniqueID()
+	query, args := q.Select().
+		FieldsByName("conf_id").
+		From(q.Table(db.table.Wallets)).
+		Where(cond.Eq("identity_hash", idHash)).
+		Format(db.ci)
+
+	result, err := common.QueryUniqueContext[string](ctx, db.readDB, query, args...)
+	if err != nil {
+		return "", errors.Wrapf(err, "failed getting conf id for identity [%v]", idHash)
+	}
+	logger.DebugfContext(ctx, "found conf id for identity [%v]: %v", idHash, result)
+
+	return result, nil
 }
 
 func (db *WalletStore) LoadMeta(ctx context.Context, identity token.Identity, wID driver.WalletID, roleID int) ([]byte, error) {
@@ -143,14 +164,18 @@ func (db *WalletStore) GetSchema() string {
 			wallet_id TEXT NOT NULL,
 			meta BYTEA,
             role_id INT NOT NULL,
-			enrollment_id TEXT NOT NULL,	
+			enrollment_id TEXT NOT NULL,
 			created_at TIMESTAMP,
-			PRIMARY KEY(identity_hash, wallet_id, role_id)
+			conf_id TEXT NOT NULL,
+			PRIMARY KEY(identity_hash, wallet_id, role_id),
+			FOREIGN KEY(conf_id) REFERENCES %s(conf_id)
 		);
 		CREATE INDEX IF NOT EXISTS idx_identity_hash_and_role%s ON %s ( identity_hash, role_id );
-		CREATE INDEX IF NOT EXISTS idx_role_id_%s ON %s ( role_id )
+		CREATE INDEX IF NOT EXISTS idx_role_id_%s ON %s ( role_id );
+		CREATE INDEX IF NOT EXISTS idx_conf_id_%s ON %s ( conf_id )
 		`,
-		db.table.Wallets,
+		db.table.Wallets, db.table.IdentityConfigurations,
+		db.table.Wallets, db.table.Wallets,
 		db.table.Wallets, db.table.Wallets,
 		db.table.Wallets, db.table.Wallets,
 	)

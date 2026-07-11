@@ -584,7 +584,7 @@ func (w *AnonymousOwnerWallet) RegisterRecipient(ctx context.Context, data *driv
 		return errors.Wrapf(err, "failed registering audit info for owner [%s]", data.Identity)
 	}
 	// bind to enrollment id and wallet id
-	if err := w.IdentitySupport.BindIdentity(ctx, data.Identity, w.EnrollmentID(), w.WalletID, nil); err != nil {
+	if err := w.IdentitySupport.BindIdentity(ctx, data.Identity, w.EnrollmentID(), w.WalletID, nil, w.OwnerIdentityInfo.ConfigurationID()); err != nil {
 		return errors.WithMessagef(err, "failed storing recipient identity in wallet [%s]", w.WalletID)
 	}
 
@@ -601,7 +601,7 @@ func (w *AnonymousOwnerWallet) getRecipientIdentity(ctx context.Context) (*drive
 	}
 
 	// Register the pseudonym
-	if err := w.IdentitySupport.BindIdentity(ctx, pseudonym, w.OwnerIdentityInfo.EnrollmentID(), w.WalletID, nil); err != nil {
+	if err := w.IdentitySupport.BindIdentity(ctx, pseudonym, w.OwnerIdentityInfo.EnrollmentID(), w.WalletID, nil, w.OwnerIdentityInfo.ConfigurationID()); err != nil {
 		return nil, errors.WithMessagef(err, "failed storing recipient identity in wallet [%s]", w.ID())
 	}
 

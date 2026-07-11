@@ -223,6 +223,88 @@ func testDeserializeSigner(t *testing.T, configPath string, curveID math.CurveID
 	require.NoError(t, err)
 }
 
+// countingCSP decorates a real bccsp.BCCSP and counts calls to Sign, so tests can prove that a
+// code path never generates the backend's sign+verify probe signature.
+type countingCSP struct {
+	types.BCCSP
+	signCount int
+}
+
+func (c *countingCSP) Sign(k types.Key, digest []byte, opts types.SignerOpts) ([]byte, error) {
+	c.signCount++
+
+	return c.BCCSP.Sign(k, digest, opts)
+}
+
+// TestDeserializeSignerNoProbe proves that DeserializeSignerNoProbe keeps the GetSignerInfo gate
+// (fail-closed against identities never registered locally) but skips the backend's sign+verify
+// probe that DeserializeSigner relies on.
+func TestDeserializeSignerNoProbe(t *testing.T) {
+	testDeserializeSignerNoProbe(t, "../idemix/testdata/bls12_381_bbs_gurvy/idemix", math.BLS12_381_BBS_GURVY)
+	testDeserializeSignerNoProbe(t, "../idemix/testdata/bls12_381_bbs/idemix", math.BLS12_381_BBS_GURVY)
+}
+
+func testDeserializeSignerNoProbe(t *testing.T, configPath string, curveID math.CurveID) {
+	t.Helper()
+	// prepare
+	kvs, err := kvs2.NewInMemory()
+	require.NoError(t, err)
+	config, err := crypto.NewConfig(configPath)
+	require.NoError(t, err)
+	keyStore, err := crypto.NewKeyStore(curveID, kvs2.Keystore(kvs))
+	require.NoError(t, err)
+	realCsp, err := crypto.NewBCCSP(keyStore, curveID)
+	require.NoError(t, err)
+	csp := &countingCSP{BCCSP: realCsp}
+
+	// create backend key manager
+	backendKM, err := idemix.NewKeyManager(config, types.EidNymRhNym, csp)
+	require.NoError(t, err)
+
+	// create mock identity store service
+	identityStoreService := &mock.IdentityStoreService{}
+
+	// create idemixnym key manager
+	keyManager := NewKeyManager(backendKM, identityStoreService)
+	require.NotNil(t, keyManager)
+
+	// get an identity
+	identityDescriptor, err := keyManager.Identity(t.Context(), nil)
+	require.NoError(t, err)
+
+	// test the fail-closed gate: no signer info registered yet
+	identityStoreService.GetSignerInfoReturns(nil, nil)
+	_, err = keyManager.DeserializeSignerNoProbe(t.Context(), identityDescriptor.Identity)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no signer info found")
+
+	// setup mock to return the signer info
+	identityStoreService.GetSignerInfoReturns(identityDescriptor.SignerInfo, nil)
+
+	signCountBeforeReconstruction := csp.signCount
+
+	// deserialize signer without the probe
+	signer, err := keyManager.DeserializeSignerNoProbe(t.Context(), identityDescriptor.Identity)
+	require.NoError(t, err)
+	assert.NotNil(t, signer)
+	assert.Equal(t, 2, identityStoreService.GetSignerInfoCallCount())
+	assert.Equal(t, signCountBeforeReconstruction, csp.signCount, "no-probe reconstruction must not call Sign")
+
+	// the reconstructed signer is fully usable: it can sign and its signature verifies
+	msg := []byte("test message")
+	sigma, err := signer.Sign(msg)
+	require.NoError(t, err)
+	verifier, err := keyManager.DeserializeVerifier(t.Context(), identityDescriptor.Identity)
+	require.NoError(t, err)
+	require.NoError(t, verifier.Verify(msg, sigma))
+
+	// contrast: the probing variant does call Sign at least once
+	signCountBeforeProbe := csp.signCount
+	_, err = keyManager.DeserializeSigner(t.Context(), identityDescriptor.Identity)
+	require.NoError(t, err)
+	assert.Greater(t, csp.signCount, signCountBeforeProbe, "probing reconstruction must call Sign")
+}
+
 func TestKeyManagerErrorPaths(t *testing.T) {
 	testKeyManagerErrorPaths(t, "../idemix/testdata/bls12_381_bbs_gurvy/idemix", math.BLS12_381_BBS_GURVY)
 	testKeyManagerErrorPaths(t, "../idemix/testdata/bls12_381_bbs/idemix", math.BLS12_381_BBS_GURVY)

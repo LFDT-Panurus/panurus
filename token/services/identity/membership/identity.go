@@ -25,6 +25,9 @@ type LocalIdentity struct {
 	Anonymous    bool
 	GetIdentity  GetIdentityFunc
 	Remote       bool
+	// ConfigurationID is the unique identifier of the IdentityConfiguration this
+	// identity was loaded from (see driver.IdentityConfiguration.UniqueID).
+	ConfigurationID string
 }
 
 func (i *LocalIdentity) String() string {
@@ -67,4 +70,8 @@ func (i *IdentityInfo) Remote() bool {
 
 func (i *IdentityInfo) Anonymous() bool {
 	return i.localIdentity.Anonymous
+}
+
+func (i *IdentityInfo) ConfigurationID() string {
+	return i.localIdentity.ConfigurationID
 }

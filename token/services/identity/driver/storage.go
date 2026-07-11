@@ -87,12 +87,18 @@ type WalletStoreService interface {
 	GetWalletID(ctx context.Context, identity token.Identity, roleID int) (WalletID, error)
 	// GetWalletIDs fetches all walletID's that have been stored so far without duplicates
 	GetWalletIDs(ctx context.Context, roleID int) ([]WalletID, error)
-	// StoreIdentity binds an identity to a walletID and its metadata
-	StoreIdentity(ctx context.Context, identity token.Identity, eID string, wID WalletID, roleID int, meta []byte) error
+	// StoreIdentity binds an identity to a walletID and its metadata, linking it to the
+	// identity configuration (by its unique id, see driver.IdentityConfiguration.UniqueID)
+	// that originated it.
+	StoreIdentity(ctx context.Context, identity token.Identity, eID string, wID WalletID, roleID int, meta []byte, confID string) error
 	// IdentityExists checks whether an identity-wallet binding has already been stored
 	IdentityExists(ctx context.Context, identity token.Identity, wID WalletID, roleID int) bool
 	// LoadMeta returns the metadata stored for a specific identity
 	LoadMeta(ctx context.Context, identity token.Identity, wID WalletID, roleID int) ([]byte, error)
+	// GetConfID returns the identity configuration id (see driver.IdentityConfiguration.UniqueID)
+	// that this identity was bound with, regardless of role. Returns an empty string and no error
+	// if the identity has no stored binding.
+	GetConfID(ctx context.Context, identity token.Identity) (string, error)
 	// Close closes the store
 	Close() error
 }

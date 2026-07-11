@@ -177,15 +177,17 @@ func (r *Registry) RegisterWallet(ctx context.Context, id string, w driver.Walle
 }
 
 // BindIdentity binds the passed identity to the passed wallet identifier.
-// Additional metadata can be bound to the identity.
-func (r *Registry) BindIdentity(ctx context.Context, identity driver.Identity, eID string, wID idriver.WalletID, meta any) error {
+// Additional metadata can be bound to the identity. confID is the unique identifier
+// of the IdentityConfiguration that originated the identity being bound
+// (see driver.IdentityConfiguration.UniqueID).
+func (r *Registry) BindIdentity(ctx context.Context, identity driver.Identity, eID string, wID idriver.WalletID, meta any, confID string) error {
 	r.Logger.DebugfContext(ctx, "put recipient identity [%s]->[%s]", identity, wID)
 	metaEncoded, err := json.Marshal(meta)
 	if err != nil {
 		return errors.Wrapf(err, "failed to marshal metadata")
 	}
 
-	return r.Storage.StoreIdentity(ctx, identity, eID, wID, int(r.Role.ID()), metaEncoded)
+	return r.Storage.StoreIdentity(ctx, identity, eID, wID, int(r.Role.ID()), metaEncoded, confID)
 }
 
 // ContainsIdentity returns true if the passed identity belongs to the passed wallet,

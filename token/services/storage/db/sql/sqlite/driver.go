@@ -64,8 +64,8 @@ func NewDriverWithDbProvider(config driver3.Config, dbProvider fscSqlite.DbProvi
 	}
 
 	d.TokenLock = newProviderWithKeyMapper(dbProvider, NewTokenLockStore, tableNamesConfig)
-	d.Wallet = newProviderWithKeyMapper(dbProvider, NewWalletStore, tableNamesConfig)
 	d.Identity = newIdentityStoreProvider(dbProvider, tableNamesConfig)
+	d.Wallet = newWalletStoreProvider(d, dbProvider, tableNamesConfig)
 	d.Token = newProviderWithKeyMapper(dbProvider, NewTokenStore, tableNamesConfig)
 	d.AuditTx = newProviderWithKeyMapper(dbProvider, NewAuditTransactionStore, tableNamesConfig)
 	d.OwnerTx = newProviderWithKeyMapper(dbProvider, NewTransactionStore, tableNamesConfig)
@@ -106,6 +106,48 @@ func newIdentityStoreProvider(dbProvider fscSqlite.DbProvider, tableNamesConfig 
 			&fscSqlite.ErrorMapper{},
 			nil,
 		)
+		if err != nil {
+			return nil, err
+		}
+		if !o.SkipCreateTable {
+			if err := p.CreateSchema(); err != nil {
+				return nil, err
+			}
+		}
+
+		return p, nil
+	})
+}
+
+// newWalletStoreProvider returns a lazy provider for WalletStore. Wallets carries a hard
+// FOREIGN KEY to IdentityConfigurations (conf_id), so its schema must be created after the
+// Identity store's — lazy providers otherwise offer no ordering guarantee across stores.
+func newWalletStoreProvider(d *Driver, dbProvider fscSqlite.DbProvider, tableNamesConfig common2.TableNamesConfig) lazy.Provider[fscSqlite.Config, *WalletStore] {
+	return lazy.NewProviderWithKeyMapper(key, func(o fscSqlite.Config) (*WalletStore, error) {
+		// Ensure IdentityConfigurations exists before creating Wallets' schema.
+		if _, err := d.Identity.Get(o); err != nil {
+			return nil, err
+		}
+
+		opts := fscSqlite.Opts{
+			DataSource:      o.DataSource,
+			SkipPragmas:     o.SkipPragmas,
+			MaxOpenConns:    o.MaxOpenConns,
+			MaxIdleConns:    *o.MaxIdleConns,
+			MaxIdleTime:     *o.MaxIdleTime,
+			TablePrefix:     o.TablePrefix,
+			TableNameParams: o.TableNameParams,
+			Tracing:         o.Tracing,
+		}
+		dbs, err := dbProvider.Get(opts)
+		if err != nil {
+			return nil, err
+		}
+		tableNames, err := common2.GetTableNamesWithOverrides(o.TablePrefix, tableNamesConfig, o.TableNameParams...)
+		if err != nil {
+			return nil, err
+		}
+		p, err := NewWalletStore(dbs, tableNames)
 		if err != nil {
 			return nil, err
 		}

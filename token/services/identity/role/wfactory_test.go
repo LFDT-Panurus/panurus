@@ -78,7 +78,7 @@ func TestDefaultFactory(t *testing.T) {
 
 		// Verify bindings
 		assert.Equal(t, 1, reg.BindIdentityCallCount())
-		_, _, eid, wid, _ := reg.BindIdentityArgsForCall(0)
+		_, _, eid, wid, _, _ := reg.BindIdentityArgsForCall(0)
 		assert.Equal(t, info.EnrollmentID(), eid)
 		assert.Equal(t, id, wid)
 	})
@@ -177,6 +177,7 @@ type mockIdentityInfo struct {
 	eid       string
 	anonymous bool
 	remote    bool
+	confID    string
 	err       error
 }
 
@@ -210,4 +211,8 @@ func (f *mockIdentityInfo) Anonymous() bool {
 
 func (f *mockIdentityInfo) Remote() bool {
 	return f.remote
+}
+
+func (f *mockIdentityInfo) ConfigurationID() string {
+	return f.confID
 }

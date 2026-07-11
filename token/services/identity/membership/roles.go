@@ -10,6 +10,7 @@ import (
 	"context"
 
 	"github.com/LFDT-Panurus/panurus/token"
+	"github.com/LFDT-Panurus/panurus/token/services/identity"
 	"github.com/LFDT-Panurus/panurus/token/services/identity/driver"
 	role2 "github.com/LFDT-Panurus/panurus/token/services/identity/role"
 	"github.com/LFDT-Panurus/panurus/token/services/logging"
@@ -38,6 +39,10 @@ type RoleFactory struct {
 	IdentityProvider       IdentityProvider
 	StorageProvider        StorageProvider
 	DeserializerManager    SignerDeserializerManager
+	// SignerRouter, when set, is passed to every LocalMembership created by NewRole so loaded
+	// KeyManagers self-register by conf_id. Optional: nil disables conf_id-pinned routing for
+	// roles built by this factory.
+	SignerRouter *identity.SignerRouter
 }
 
 // NewRoleFactory creates a new RoleFactory
@@ -63,6 +68,12 @@ func NewRoleFactory(
 	}
 }
 
+// SetSignerRouter sets the router that roles created by subsequent NewRole calls register their
+// KeyManagers with by conf_id.
+func (f *RoleFactory) SetSignerRouter(router *identity.SignerRouter) {
+	f.SignerRouter = router
+}
+
 func (f *RoleFactory) NewRole(role driver.IdentityRoleType, defaultAnon bool, targets []driver.Identity, kmps ...KeyManagerProvider) (driver.Role, error) {
 	identityDB, err := f.StorageProvider.IdentityStore(f.TMSID)
 	if err != nil {
@@ -79,6 +90,9 @@ func (f *RoleFactory) NewRole(role driver.IdentityRoleType, defaultAnon bool, ta
 		f.IdentityProvider,
 		kmps...,
 	)
+	if f.SignerRouter != nil {
+		lm.SetSignerRouter(f.SignerRouter)
+	}
 	identities, err := f.Config.IdentitiesForRole(role)
 	if err != nil {
 		return nil, errors.Wrapf(err, "failed to get identities for role [%d]", role)

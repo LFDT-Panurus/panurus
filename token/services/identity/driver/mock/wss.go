@@ -20,6 +20,20 @@ type WalletStoreService struct {
 	closeReturnsOnCall map[int]struct {
 		result1 error
 	}
+	GetConfIDStub        func(context.Context, token.Identity) (string, error)
+	getConfIDMutex       sync.RWMutex
+	getConfIDArgsForCall []struct {
+		arg1 context.Context
+		arg2 token.Identity
+	}
+	getConfIDReturns struct {
+		result1 string
+		result2 error
+	}
+	getConfIDReturnsOnCall map[int]struct {
+		result1 string
+		result2 error
+	}
 	GetWalletIDStub        func(context.Context, token.Identity, int) (driver.WalletID, error)
 	getWalletIDMutex       sync.RWMutex
 	getWalletIDArgsForCall []struct {
@@ -79,7 +93,7 @@ type WalletStoreService struct {
 		result1 []byte
 		result2 error
 	}
-	StoreIdentityStub        func(context.Context, token.Identity, string, driver.WalletID, int, []byte) error
+	StoreIdentityStub        func(context.Context, token.Identity, string, driver.WalletID, int, []byte, string) error
 	storeIdentityMutex       sync.RWMutex
 	storeIdentityArgsForCall []struct {
 		arg1 context.Context
@@ -88,6 +102,7 @@ type WalletStoreService struct {
 		arg4 driver.WalletID
 		arg5 int
 		arg6 []byte
+		arg7 string
 	}
 	storeIdentityReturns struct {
 		result1 error
@@ -150,6 +165,71 @@ func (fake *WalletStoreService) CloseReturnsOnCall(i int, result1 error) {
 	fake.closeReturnsOnCall[i] = struct {
 		result1 error
 	}{result1}
+}
+
+func (fake *WalletStoreService) GetConfID(arg1 context.Context, arg2 token.Identity) (string, error) {
+	fake.getConfIDMutex.Lock()
+	ret, specificReturn := fake.getConfIDReturnsOnCall[len(fake.getConfIDArgsForCall)]
+	fake.getConfIDArgsForCall = append(fake.getConfIDArgsForCall, struct {
+		arg1 context.Context
+		arg2 token.Identity
+	}{arg1, arg2})
+	stub := fake.GetConfIDStub
+	fakeReturns := fake.getConfIDReturns
+	fake.recordInvocation("GetConfID", []interface{}{arg1, arg2})
+	fake.getConfIDMutex.Unlock()
+	if stub != nil {
+		return stub(arg1, arg2)
+	}
+	if specificReturn {
+		return ret.result1, ret.result2
+	}
+	return fakeReturns.result1, fakeReturns.result2
+}
+
+func (fake *WalletStoreService) GetConfIDCallCount() int {
+	fake.getConfIDMutex.RLock()
+	defer fake.getConfIDMutex.RUnlock()
+	return len(fake.getConfIDArgsForCall)
+}
+
+func (fake *WalletStoreService) GetConfIDCalls(stub func(context.Context, token.Identity) (string, error)) {
+	fake.getConfIDMutex.Lock()
+	defer fake.getConfIDMutex.Unlock()
+	fake.GetConfIDStub = stub
+}
+
+func (fake *WalletStoreService) GetConfIDArgsForCall(i int) (context.Context, token.Identity) {
+	fake.getConfIDMutex.RLock()
+	defer fake.getConfIDMutex.RUnlock()
+	argsForCall := fake.getConfIDArgsForCall[i]
+	return argsForCall.arg1, argsForCall.arg2
+}
+
+func (fake *WalletStoreService) GetConfIDReturns(result1 string, result2 error) {
+	fake.getConfIDMutex.Lock()
+	defer fake.getConfIDMutex.Unlock()
+	fake.GetConfIDStub = nil
+	fake.getConfIDReturns = struct {
+		result1 string
+		result2 error
+	}{result1, result2}
+}
+
+func (fake *WalletStoreService) GetConfIDReturnsOnCall(i int, result1 string, result2 error) {
+	fake.getConfIDMutex.Lock()
+	defer fake.getConfIDMutex.Unlock()
+	fake.GetConfIDStub = nil
+	if fake.getConfIDReturnsOnCall == nil {
+		fake.getConfIDReturnsOnCall = make(map[int]struct {
+			result1 string
+			result2 error
+		})
+	}
+	fake.getConfIDReturnsOnCall[i] = struct {
+		result1 string
+		result2 error
+	}{result1, result2}
 }
 
 func (fake *WalletStoreService) GetWalletID(arg1 context.Context, arg2 token.Identity, arg3 int) (driver.WalletID, error) {
@@ -414,7 +494,7 @@ func (fake *WalletStoreService) LoadMetaReturnsOnCall(i int, result1 []byte, res
 	}{result1, result2}
 }
 
-func (fake *WalletStoreService) StoreIdentity(arg1 context.Context, arg2 token.Identity, arg3 string, arg4 driver.WalletID, arg5 int, arg6 []byte) error {
+func (fake *WalletStoreService) StoreIdentity(arg1 context.Context, arg2 token.Identity, arg3 string, arg4 driver.WalletID, arg5 int, arg6 []byte, arg7 string) error {
 	var arg6Copy []byte
 	if arg6 != nil {
 		arg6Copy = make([]byte, len(arg6))
@@ -429,13 +509,14 @@ func (fake *WalletStoreService) StoreIdentity(arg1 context.Context, arg2 token.I
 		arg4 driver.WalletID
 		arg5 int
 		arg6 []byte
-	}{arg1, arg2, arg3, arg4, arg5, arg6Copy})
+		arg7 string
+	}{arg1, arg2, arg3, arg4, arg5, arg6Copy, arg7})
 	stub := fake.StoreIdentityStub
 	fakeReturns := fake.storeIdentityReturns
-	fake.recordInvocation("StoreIdentity", []interface{}{arg1, arg2, arg3, arg4, arg5, arg6Copy})
+	fake.recordInvocation("StoreIdentity", []interface{}{arg1, arg2, arg3, arg4, arg5, arg6Copy, arg7})
 	fake.storeIdentityMutex.Unlock()
 	if stub != nil {
-		return stub(arg1, arg2, arg3, arg4, arg5, arg6)
+		return stub(arg1, arg2, arg3, arg4, arg5, arg6, arg7)
 	}
 	if specificReturn {
 		return ret.result1
@@ -449,17 +530,17 @@ func (fake *WalletStoreService) StoreIdentityCallCount() int {
 	return len(fake.storeIdentityArgsForCall)
 }
 
-func (fake *WalletStoreService) StoreIdentityCalls(stub func(context.Context, token.Identity, string, driver.WalletID, int, []byte) error) {
+func (fake *WalletStoreService) StoreIdentityCalls(stub func(context.Context, token.Identity, string, driver.WalletID, int, []byte, string) error) {
 	fake.storeIdentityMutex.Lock()
 	defer fake.storeIdentityMutex.Unlock()
 	fake.StoreIdentityStub = stub
 }
 
-func (fake *WalletStoreService) StoreIdentityArgsForCall(i int) (context.Context, token.Identity, string, driver.WalletID, int, []byte) {
+func (fake *WalletStoreService) StoreIdentityArgsForCall(i int) (context.Context, token.Identity, string, driver.WalletID, int, []byte, string) {
 	fake.storeIdentityMutex.RLock()
 	defer fake.storeIdentityMutex.RUnlock()
 	argsForCall := fake.storeIdentityArgsForCall[i]
-	return argsForCall.arg1, argsForCall.arg2, argsForCall.arg3, argsForCall.arg4, argsForCall.arg5, argsForCall.arg6
+	return argsForCall.arg1, argsForCall.arg2, argsForCall.arg3, argsForCall.arg4, argsForCall.arg5, argsForCall.arg6, argsForCall.arg7
 }
 
 func (fake *WalletStoreService) StoreIdentityReturns(result1 error) {

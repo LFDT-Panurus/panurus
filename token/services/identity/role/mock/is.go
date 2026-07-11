@@ -11,7 +11,7 @@ import (
 )
 
 type IdentitySupport struct {
-	BindIdentityStub        func(context.Context, driver.Identity, string, drivera.WalletID, any) error
+	BindIdentityStub        func(context.Context, driver.Identity, string, drivera.WalletID, any, string) error
 	bindIdentityMutex       sync.RWMutex
 	bindIdentityArgsForCall []struct {
 		arg1 context.Context
@@ -19,6 +19,7 @@ type IdentitySupport struct {
 		arg3 string
 		arg4 drivera.WalletID
 		arg5 any
+		arg6 string
 	}
 	bindIdentityReturns struct {
 		result1 error
@@ -43,7 +44,7 @@ type IdentitySupport struct {
 	invocationsMutex sync.RWMutex
 }
 
-func (fake *IdentitySupport) BindIdentity(arg1 context.Context, arg2 driver.Identity, arg3 string, arg4 drivera.WalletID, arg5 any) error {
+func (fake *IdentitySupport) BindIdentity(arg1 context.Context, arg2 driver.Identity, arg3 string, arg4 drivera.WalletID, arg5 any, arg6 string) error {
 	fake.bindIdentityMutex.Lock()
 	ret, specificReturn := fake.bindIdentityReturnsOnCall[len(fake.bindIdentityArgsForCall)]
 	fake.bindIdentityArgsForCall = append(fake.bindIdentityArgsForCall, struct {
@@ -52,13 +53,14 @@ func (fake *IdentitySupport) BindIdentity(arg1 context.Context, arg2 driver.Iden
 		arg3 string
 		arg4 drivera.WalletID
 		arg5 any
-	}{arg1, arg2, arg3, arg4, arg5})
+		arg6 string
+	}{arg1, arg2, arg3, arg4, arg5, arg6})
 	stub := fake.BindIdentityStub
 	fakeReturns := fake.bindIdentityReturns
-	fake.recordInvocation("BindIdentity", []interface{}{arg1, arg2, arg3, arg4, arg5})
+	fake.recordInvocation("BindIdentity", []interface{}{arg1, arg2, arg3, arg4, arg5, arg6})
 	fake.bindIdentityMutex.Unlock()
 	if stub != nil {
-		return stub(arg1, arg2, arg3, arg4, arg5)
+		return stub(arg1, arg2, arg3, arg4, arg5, arg6)
 	}
 	if specificReturn {
 		return ret.result1
@@ -72,17 +74,17 @@ func (fake *IdentitySupport) BindIdentityCallCount() int {
 	return len(fake.bindIdentityArgsForCall)
 }
 
-func (fake *IdentitySupport) BindIdentityCalls(stub func(context.Context, driver.Identity, string, drivera.WalletID, any) error) {
+func (fake *IdentitySupport) BindIdentityCalls(stub func(context.Context, driver.Identity, string, drivera.WalletID, any, string) error) {
 	fake.bindIdentityMutex.Lock()
 	defer fake.bindIdentityMutex.Unlock()
 	fake.BindIdentityStub = stub
 }
 
-func (fake *IdentitySupport) BindIdentityArgsForCall(i int) (context.Context, driver.Identity, string, drivera.WalletID, any) {
+func (fake *IdentitySupport) BindIdentityArgsForCall(i int) (context.Context, driver.Identity, string, drivera.WalletID, any, string) {
 	fake.bindIdentityMutex.RLock()
 	defer fake.bindIdentityMutex.RUnlock()
 	argsForCall := fake.bindIdentityArgsForCall[i]
-	return argsForCall.arg1, argsForCall.arg2, argsForCall.arg3, argsForCall.arg4, argsForCall.arg5
+	return argsForCall.arg1, argsForCall.arg2, argsForCall.arg3, argsForCall.arg4, argsForCall.arg5, argsForCall.arg6
 }
 
 func (fake *IdentitySupport) BindIdentityReturns(result1 error) {

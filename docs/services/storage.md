@@ -28,16 +28,15 @@ The [`ttxdb/auditdb`](./storage/ttxdb.md) manages the token request lifecycle an
 The following tables track the lifecycle of token requests from assembly to finality. 
 `AuditDB` uses the same schema but is isolated for compliance reporting.
 
-*   **Requests**: Tracks high-level token request state. Contains marshaled requests, current status (Pending, Confirmed, Deleted, Orphan), and application/public metadata.
+*   **Requests**: Tracks high-level token request state. Contains marshaled requests, current status (Pending, Confirmed, Deleted, Orphan), application/public metadata, and the `recovery_claimed_by`/`recovery_claim_expires_at` lease columns used by the Transaction Recovery Service to atomically claim batches of pending transactions.
 *   **Transactions**: Records individual actions (Issue, Transfer, Redeem) within a request, including sender/recipient IDs and amounts (stored as `NUMERIC(78, 0)`).
 *   **Movements**: Aggregates net value changes per enrollment ID (amounts stored as `NUMERIC(78, 0)`). Used to efficiently calculate balances and history.
 *   **Endorsements**: Collects digital signatures from participants and auditors required for transaction finality.
 
 ### Endorser Store (EndorserDB)
-The [`endorserdb`](./storage/endorserdb.md) manages validation records created during the token request endorsement process. It shares the physical database with TTXDB but provides a separate interface for validation-specific operations.
+The [`endorserdb`](./storage/endorserdb.md) manages validation records created during the token request endorsement process. It shares the physical database with TTXDB but owns its own, self-contained table — it does not write to the Requests table.
 
-*   **Validations**: Stores cryptographic validation metadata produced during the request verification phase. The Validations table is self-contained and stores the token request data directly (along with pp_hash) for efficient retrieval. When a validation record is created (typically by endorser nodes), it atomically creates entries in both the Requests table (for foreign key integrity and status tracking) and the Validations table (with embedded token request for direct access), ensuring that non-owner nodes can properly track and recover transactions.
-*   **Requests** (shared): The endorserdb uses the Requests table to track validation status. While the table is shared with TTXDB, the endorserdb interface provides methods specifically for managing validation-related status updates.
+*   **Validations**: Stores cryptographic validation metadata produced during the request verification phase. The table is self-contained: it stores the token request data, metadata, and pp_hash directly (along with its own `status`/`status_message` columns), so a validation record can be created and its status tracked without any foreign key into the Requests table. This lets non-owner (endorser) nodes track and recover transactions independently of the TTXDB/AuditDB Requests row for the same `tx_id`.
 
 ### Token Store (TokenDB)
 This store serves as the authoritative registry for all tokens (UTXOs) known to the node.
@@ -166,10 +165,9 @@ The `ttxdb` serves as the central repository for the lifecycle of token requests
 
 ### Endorser Store (EndorserDB)
 The `endorserdb` manages validation records for token requests during the endorsement process. It is used by the **Endorsement Service** to:
-*   **Validations**: Store validation metadata and token requests validated by endorser nodes.
-*   **Requests** (shared): Track the status of validated token requests.
+*   **Validations**: Store validation metadata, token requests, and their own status validated by endorser nodes, in a single self-contained table.
 
-The endorserdb shares the same physical database as ttxdb but provides a separate, focused interface for validation-specific operations, improving modularity and separation of concerns.
+The endorserdb shares the same physical database as ttxdb but owns its own table and interface for validation-specific operations, improving modularity and separation of concerns.
 
 ### Token Store (TokenDB)
 The `tokendb` is the registry for the current state of all tokens (UTXOs) known to the node. It is used by the **Selector Service** and **Vault Service** to:

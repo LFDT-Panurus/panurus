@@ -60,6 +60,9 @@ type IdentityInfo interface {
 	Get(ctx context.Context) (Identity, []byte, error)
 	// Anonymous is true if this identity supports anonymity
 	Anonymous() bool
+	// ConfigurationID returns the unique identifier of the IdentityConfiguration this
+	// identity was loaded from (see tdriver.IdentityConfiguration.UniqueID).
+	ConfigurationID() string
 }
 
 type (

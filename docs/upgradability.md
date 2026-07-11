@@ -229,6 +229,63 @@ If a new version of Panurus adds a column (e.g., `ledger_metadata` or `spent_at`
 > ```
 > Any node that also stores tokens locally (e.g. an issuer that is also an owner or auditor) needs this migration applied to its `TokenDB` before upgrading.
 
+### Database Schema Changes: `Wallets` / `IdentityConfigurations` linkage
+
+Panurus links every `Wallets` row to the `IdentityConfigurations` row it originated
+from via a `conf_id` column: `IdentityConfigurations.conf_id` is a deterministic hash
+of `(id, type, url)` (see `IdentityConfiguration.UniqueID()`), declared `UNIQUE NOT
+NULL`, and `Wallets.conf_id` is a hard `FOREIGN KEY` reference to it, also `NOT NULL`.
+
+Because Panurus only ever runs `CREATE TABLE IF NOT EXISTS`, existing databases
+created before this change will not get these columns automatically. Before starting
+an updated SDK against an existing database, migrate manually:
+
+```sql
+-- 1. Add the column to IdentityConfigurations first (FK target).
+ALTER TABLE fsc_identity_configurations ADD COLUMN IF NOT EXISTS conf_id TEXT;
+-- Backfill: conf_id = base64(sha256(id || '@' || type || '@' || url)), matching
+-- IdentityConfiguration.UniqueID(). Run this from application code (or a one-off
+-- script using the same hash function) rather than in pure SQL.
+ALTER TABLE fsc_identity_configurations ALTER COLUMN conf_id SET NOT NULL;
+ALTER TABLE fsc_identity_configurations ADD CONSTRAINT uq_identity_configurations_conf_id UNIQUE (conf_id);
+
+-- 2. Add the column to Wallets and backfill it from the matching configuration
+--    (join on however the wallet's owning configuration is known, e.g. wallet_id/id).
+ALTER TABLE fsc_wallets ADD COLUMN IF NOT EXISTS conf_id TEXT;
+-- Backfill fsc_wallets.conf_id from fsc_identity_configurations.conf_id here.
+ALTER TABLE fsc_wallets ALTER COLUMN conf_id SET NOT NULL;
+ALTER TABLE fsc_wallets ADD CONSTRAINT fk_wallets_conf_id
+    FOREIGN KEY (conf_id) REFERENCES fsc_identity_configurations (conf_id);
+```
+
+On SQLite, use the `ALTER TABLE ... ADD COLUMN` form (SQLite cannot add a `NOT NULL`
+column without a default or a FK constraint in one statement) — add the columns
+nullable, backfill, then rebuild the table (`CREATE TABLE ... AS SELECT` + rename) to
+add the `NOT NULL` and `FOREIGN KEY` constraints, since SQLite does not support adding
+constraints via `ALTER TABLE` after the fact.
+
+### Database Schema Changes: `Requests` recovery-claim columns
+
+The [Transaction Recovery Service](services/storage/recovery.md) added two nullable
+columns to the `Requests` table (`fsc_requests`), used to lease pending transactions
+to a claiming instance: `recovery_claimed_by TEXT` and `recovery_claim_expires_at
+TIMESTAMP`, plus a partial index on `(status, recovery_claim_expires_at, stored_at)
+WHERE status = 1`. Since both columns are nullable, this is a non-breaking change —
+existing rows are simply treated as unclaimed — but `CREATE TABLE IF NOT EXISTS` still
+will not add them to a pre-existing table, so recovery will fail to claim transactions
+until the columns exist. Migrate manually before upgrading:
+
+```sql
+ALTER TABLE fsc_requests ADD COLUMN IF NOT EXISTS recovery_claimed_by TEXT;
+ALTER TABLE fsc_requests ADD COLUMN IF NOT EXISTS recovery_claim_expires_at TIMESTAMP;
+CREATE INDEX IF NOT EXISTS idx_recovery_claim_fsc_requests
+    ON fsc_requests (status, recovery_claim_expires_at, stored_at) WHERE status = 1;
+```
+
+This table is shared by `TTXDB`, `AuditDB`, and `TokenDB` (each defines the same
+`CREATE TABLE IF NOT EXISTS` for `Requests`), so the migration only needs to run once
+against the physical table they share.
+
 ---
 
 ## Serialization and Protocol Stability

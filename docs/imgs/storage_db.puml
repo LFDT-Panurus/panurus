@@ -8,21 +8,24 @@ package "Transaction & Audit Store (TTXDB / AuditDB)" {
     entity "Requests" as requests {
         * tx_id : TEXT <<PK, NOT NULL>>
         --
-        request : BYTEA
-        status : INT
-        status_message : TEXT
-        application_metadata : JSONB
-        public_metadata : JSONB
-        pp_hash : BYTEA
+        request : BYTEA <<NOT NULL>>
+        status : INT <<NOT NULL>>
+        status_message : TEXT <<NOT NULL>>
+        application_metadata : JSONB <<NOT NULL>>
+        public_metadata : JSONB <<NOT NULL>>
+        pp_hash : BYTEA <<NOT NULL>>
+        recovery_claimed_by : TEXT
+        recovery_claim_expires_at : TIMESTAMP
+        stored_at : TIMESTAMP <<NOT NULL>>
     }
 
     entity "Transactions" as txs {
         * id : CHAR(36) <<PK>>
         --
         tx_id : TEXT <<FK, NOT NULL>>
-        action_type : INT
-        sender_eid : TEXT
-        recipient_eid : TEXT
+        action_type : INT <<NOT NULL>>
+        sender_eid : TEXT <<NOT NULL>>
+        recipient_eid : TEXT <<NOT NULL>>
         token_type : TEXT <<NOT NULL>>
         amount : NUMERIC(78,0) <<NOT NULL>>
         stored_at : TIMESTAMP <<NOT NULL>>
@@ -32,7 +35,7 @@ package "Transaction & Audit Store (TTXDB / AuditDB)" {
         * id : CHAR(36) <<PK>>
         --
         tx_id : TEXT <<FK, NOT NULL>>
-        enrollment_id : TEXT
+        enrollment_id : TEXT <<NOT NULL>>
         token_type : TEXT <<NOT NULL>>
         amount : NUMERIC(78,0) <<NOT NULL>>
         stored_at : TIMESTAMP <<NOT NULL>>
@@ -41,10 +44,10 @@ package "Transaction & Audit Store (TTXDB / AuditDB)" {
     entity "Endorsements" as tx_ends {
         * id : CHAR(36) <<PK>>
         --
-        tx_id : TEXT
-        endorser : BYTEA
-        sigma : BYTEA
-        stored_at : TIMESTAMP
+        tx_id : TEXT <<NOT NULL>>
+        endorser : BYTEA <<NOT NULL>>
+        sigma : BYTEA <<NOT NULL>>
+        stored_at : TIMESTAMP <<NOT NULL>>
     }
 
     txs }o--|| requests : "tx_id"
@@ -56,11 +59,19 @@ package "Endorser Store (EndorserDB)" {
     entity "Validations" as req_vals {
         * tx_id : TEXT <<PK, NOT NULL>>
         --
-        request : BYTEA
-        metadata : BYTEA
-        pp_hash : BYTEA
+        request : BYTEA <<NOT NULL>>
+        metadata : BYTEA <<NOT NULL>>
+        pp_hash : BYTEA <<NOT NULL>>
+        status : INT <<NOT NULL>>
+        status_message : TEXT <<NOT NULL>>
         stored_at : TIMESTAMP <<NOT NULL>>
     }
+
+    note right of req_vals
+      Self-contained: no FK to Requests.
+      Endorser nodes track validation
+      status directly on this table.
+    end note
 }
 
 package "Token Store (TokenDB)" {
@@ -112,11 +123,11 @@ package "Token Store (TokenDB)" {
     }
 
     entity "TokenLocks" as tkn_locks {
-        * tx_id : TEXT <<PK, NOT NULL>>
-        * idx : INT <<PK, NOT NULL>>
+        * tx_id : TEXT <<PK, NOT NULL, FK>>
+        * idx : INT <<PK, NOT NULL, FK>>
         --
-        consumer_tx_id : TEXT
-        created_at : TIMESTAMP
+        consumer_tx_id : TEXT <<NOT NULL>>
+        created_at : TIMESTAMP <<NOT NULL>>
     }
 
     entity "TokenSKICleanups" as tkn_ski_cleanups {
@@ -129,7 +140,7 @@ package "Token Store (TokenDB)" {
 
     tkn_own }o--|| tokens : "(tx_id, idx)"
     tkn_crts }o--|| tokens : "(tx_id, idx)"
-    tkn_locks |o--o| tokens : "(tx_id, idx)"
+    tkn_locks }o--|| tokens : "(tx_id, idx)"
     tkn_ski_cleanups }o--|| tokens : "(tx_id, idx)"
 }
 
@@ -140,8 +151,9 @@ package "Wallet & Identity Store (WalletDB / IdentityDB)" {
         * role_id : INT <<PK, NOT NULL>>
         --
         meta : BYTEA
-        enrollment_id : TEXT
+        enrollment_id : TEXT <<NOT NULL>>
         created_at : TIMESTAMP
+        conf_id : TEXT <<FK, NOT NULL>>
     }
 
     entity "IdentityConfigurations" as id_cfgs {
@@ -151,13 +163,14 @@ package "Wallet & Identity Store (WalletDB / IdentityDB)" {
         --
         conf : BYTEA
         raw : BYTEA
+        conf_id : TEXT <<UNIQUE, NOT NULL>>
     }
 
     entity "IdentityInfo" as id_info {
         * identity_hash : TEXT <<PK, NOT NULL>>
         --
-        identity : BYTEA
-        identity_audit_info : BYTEA
+        identity : BYTEA <<NOT NULL>>
+        identity_audit_info : BYTEA <<NOT NULL>>
         token_metadata : BYTEA
         token_metadata_audit_info : BYTEA
     }
@@ -165,22 +178,23 @@ package "Wallet & Identity Store (WalletDB / IdentityDB)" {
     entity "IdentitySigners" as id_signers {
         * identity_hash : TEXT <<PK, NOT NULL>>
         --
-        identity : BYTEA
+        identity : BYTEA <<NOT NULL>>
         info : BYTEA
     }
 
-    wallets }o--|| id_info : "identity_hash"
-    wallets }o--|| id_signers : "identity_hash"
+    wallets }o..o{ id_info : "identity_hash (no FK constraint)"
+    wallets }o..o{ id_signers : "identity_hash (no FK constraint)"
+    wallets }o--|| id_cfgs : "conf_id"
 }
 
 entity "KeyStore" as key_store {
     * key : TEXT <<PK, NOT NULL>>
     --
-    val : BYTEA
+    val : BYTEA <<NOT NULL>>
 }
 
 ' Relationships between packages
-tkn_own }o--|| wallets : "wallet_id"
-tokens }o--|| wallets : "owner_wallet_id"
+tkn_own }o..o{ wallets : "wallet_id (no FK constraint)"
+tokens }o..o{ wallets : "owner_wallet_id (no FK constraint)"
 
 @enduml

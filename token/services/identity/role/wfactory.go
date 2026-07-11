@@ -34,7 +34,7 @@ type WalletsConfiguration interface {
 
 //go:generate counterfeiter -o mock/is.go -fake-name IdentitySupport . IdentitySupport
 type IdentitySupport interface {
-	BindIdentity(ctx context.Context, identity driver.Identity, eID string, wID idriver.WalletID, meta any) error
+	BindIdentity(ctx context.Context, identity driver.Identity, eID string, wID idriver.WalletID, meta any, confID string) error
 	ContainsIdentity(ctx context.Context, i driver.Identity, id string) bool
 }
 
@@ -118,7 +118,7 @@ func (w *DefaultFactory) NewWallet(ctx context.Context, id idriver.WalletID, rol
 		}
 
 		newWallet := NewIssuerWallet(w.Logger, w.TokenVault, id, idInfoIdentity, signer)
-		if err := wr.BindIdentity(ctx, idInfoIdentity, info.EnrollmentID(), id, nil); err != nil {
+		if err := wr.BindIdentity(ctx, idInfoIdentity, info.EnrollmentID(), id, nil, info.ConfigurationID()); err != nil {
 			return nil, errors.WithMessagef(err, "programming error, failed to register recipient identity [%s]", id)
 		}
 		w.Logger.DebugfContext(ctx, "created issuer wallet [%s]", id)
@@ -136,7 +136,7 @@ func (w *DefaultFactory) NewWallet(ctx context.Context, id idriver.WalletID, rol
 		}
 
 		newWallet := NewAuditorWallet(id, idInfoIdentity, signer)
-		if err := wr.BindIdentity(ctx, idInfoIdentity, info.EnrollmentID(), id, nil); err != nil {
+		if err := wr.BindIdentity(ctx, idInfoIdentity, info.EnrollmentID(), id, nil, info.ConfigurationID()); err != nil {
 			return nil, errors.WithMessagef(err, "programming error, failed to register recipient identity [%s]", id)
 		}
 		w.Logger.DebugfContext(ctx, "created auditor wallet [%s]", id)

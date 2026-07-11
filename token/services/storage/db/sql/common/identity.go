@@ -174,8 +174,8 @@ func (db *IdentityStore) CreateSchema() error {
 // It also enqueues an event to the notifier if available.
 func (db *IdentityStore) AddConfiguration(ctx context.Context, wp driver.IdentityConfiguration) error {
 	query, args := q.InsertInto(db.table.IdentityConfigurations).
-		Fields("id", "type", "url", "conf", "raw").
-		Row(wp.ID, wp.Type, wp.URL, wp.Config, wp.Raw).
+		Fields("id", "type", "url", "conf", "raw", "conf_id").
+		Row(wp.ID, wp.Type, wp.URL, wp.Config, wp.Raw, wp.UniqueID()).
 		Format()
 	logging.Debug(logger, query, args)
 
@@ -528,11 +528,13 @@ func (db *IdentityStore) GetSchema() string {
 		-- IdentityConfigurations
 		CREATE TABLE IF NOT EXISTS %s (
 			id TEXT NOT NULL,
-            type TEXT NOT NULL,  
+            type TEXT NOT NULL,
 			url TEXT NOT NULL,
 			conf BYTEA,
 			raw BYTEA,
-			PRIMARY KEY(id, type, url)
+			conf_id TEXT NOT NULL,
+			PRIMARY KEY(id, type, url),
+			UNIQUE(conf_id)
 		);
 		CREATE INDEX IF NOT EXISTS idx_ic_type_%s ON %s ( type );
 

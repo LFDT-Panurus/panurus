@@ -225,6 +225,12 @@ func (s *IdentityStore) StoreSignerInfo(ctx context.Context, id tdriver.Identity
 	if err != nil {
 		return errors.Wrap(err, "failed to create composite key to store entry in kvs")
 	}
+	if s.kvs.Exists(ctx, k) {
+		// Already stored, possibly with a real (non-nil) blob written by
+		// RegisterIdentityDescriptor. Do not clobber it with a later, possibly nil, write -
+		// mirrors the SQL backend's insert-once/ignore-conflict semantics.
+		return nil
+	}
 	err = s.kvs.Put(ctx, k, info)
 	if err != nil {
 		return errors.Wrap(err, "failed to store entry in kvs for the passed signer")

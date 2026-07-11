@@ -347,6 +347,12 @@ func (p *KeyManager) DeserializeSigner(ctx context.Context, raw []byte) (tdriver
 	return p.DeserializeSigningIdentity(ctx, raw)
 }
 
+// DeserializeSignerNoProbe deserializes a signer from the given raw bytes without running the
+// sign+verify probe. See DeserializeSigningIdentityNoProbe for the fail-closed contract.
+func (p *KeyManager) DeserializeSignerNoProbe(ctx context.Context, raw []byte) (tdriver.Signer, error) {
+	return p.DeserializeSigningIdentityNoProbe(ctx, raw)
+}
+
 // Info returns a string that includes the given identity.
 // If AuditInfo is also provided then the id is cryptographically verified against it
 // and the Enrollment ID (EID) is extracted from the audit info and is printed as well.
@@ -391,23 +397,16 @@ func (p *KeyManager) IdentityType() idriver.IdentityType {
 	return IdentityType
 }
 
-// DeserializeSigningIdentity deserializes a signing identity from the given raw bytes
+// DeserializeSigningIdentity deserializes a signing identity from the given raw bytes.
+// Because a nym is single-use and shared under the same identity type across every issuer's
+// KeyManager, the only way to verify that the resulting signing identity actually corresponds to
+// this specific key manager is to generate a signature and verify it.
 func (p *KeyManager) DeserializeSigningIdentity(ctx context.Context, raw []byte) (tdriver.SigningIdentity, error) {
-	id, err := p.Deserialize(ctx, raw)
+	si, err := p.deserializeSigningIdentity(ctx, raw)
 	if err != nil {
 		return nil, err
 	}
 
-	si := &crypto.SigningIdentity{
-		CSP:          p.Csp,
-		Identity:     id.Identity,
-		UserKeySKI:   p.userKeySKI,
-		NymKeySKI:    id.NymPublicKey.SKI(),
-		EnrollmentId: p.conf.Signer.EnrollmentId,
-	}
-
-	// the only way to verify if this signing identity correspond to this key manager
-	// is to generate a signature and verify it.
 	msg := []byte("hello world!!!")
 	sigma, err := si.Sign(msg)
 	if err != nil {
@@ -418,4 +417,33 @@ func (p *KeyManager) DeserializeSigningIdentity(ctx context.Context, raw []byte)
 	}
 
 	return si, nil
+}
+
+// DeserializeSigningIdentityNoProbe reconstructs a signing identity from the given raw bytes
+// without running the sign+verify probe that DeserializeSigningIdentity relies on.
+// Callers MUST only use this when they already know, by another means (e.g. conf_id-based
+// routing), that raw was produced by this exact key manager: skipping the probe means a
+// mismatched key manager would silently produce a signer that yields invalid signatures.
+// Returns an error if this key manager holds no local user key (remote/verify-only wallet).
+func (p *KeyManager) DeserializeSigningIdentityNoProbe(ctx context.Context, raw []byte) (tdriver.SigningIdentity, error) {
+	if p.IsRemote() {
+		return nil, errors.Errorf("no local user key for this key manager, cannot reconstruct signing identity without a probe")
+	}
+
+	return p.deserializeSigningIdentity(ctx, raw)
+}
+
+func (p *KeyManager) deserializeSigningIdentity(ctx context.Context, raw []byte) (*crypto.SigningIdentity, error) {
+	id, err := p.Deserialize(ctx, raw)
+	if err != nil {
+		return nil, err
+	}
+
+	return &crypto.SigningIdentity{
+		CSP:          p.Csp,
+		Identity:     id.Identity,
+		UserKeySKI:   p.userKeySKI,
+		NymKeySKI:    id.NymPublicKey.SKI(),
+		EnrollmentId: p.conf.Signer.EnrollmentId,
+	}, nil
 }

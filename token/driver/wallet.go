@@ -11,6 +11,7 @@ import (
 	"math/big"
 	"time"
 
+	"github.com/LFDT-Panurus/panurus/token/services/utils"
 	"github.com/LFDT-Panurus/panurus/token/token"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/view"
 )
@@ -216,6 +217,14 @@ type IdentityConfiguration struct {
 	Config []byte
 	// Raw contains the raw identity material if already loaded.
 	Raw []byte
+}
+
+// UniqueID returns a stable identifier for this identity configuration, derived
+// deterministically from its (ID, Type, URL) tuple. It is used to link records that
+// originate from this configuration (e.g. wallet entries) back to it, without requiring
+// a database round-trip to compute.
+func (c IdentityConfiguration) UniqueID() string {
+	return utils.Hashable(c.ID + "@" + c.Type + "@" + c.URL).String()
 }
 
 // WalletLookupID defines the type of identifiers that can be used to retrieve a given wallet.

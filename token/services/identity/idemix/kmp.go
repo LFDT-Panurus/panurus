@@ -169,3 +169,16 @@ type WrappedKeyManager struct {
 func (k *WrappedKeyManager) Identity(ctx context.Context, auditInfo []byte) (*idriver.IdentityDescriptor, error) {
 	return k.getIdentityFunc(ctx, auditInfo)
 }
+
+// DeserializeSignerNoProbe forwards to the wrapped KeyManager if it supports probe-free
+// reconstruction. Embedding the membership.KeyManager interface does not promote methods outside
+// that interface, so this explicit forward is required for the wrapped concrete type's
+// DeserializeSignerNoProbe (e.g. idemix/idemixnym KeyManager) to be reachable through the wrapper.
+func (k *WrappedKeyManager) DeserializeSignerNoProbe(ctx context.Context, raw []byte) (driver.Signer, error) {
+	pf, ok := k.KeyManager.(idriver.ProbeFreeSignerDeserializer)
+	if !ok {
+		return nil, errors.Errorf("wrapped key manager does not support probe-free signer deserialization")
+	}
+
+	return pf.DeserializeSignerNoProbe(ctx, raw)
+}

@@ -55,7 +55,9 @@ func (d *BaseWalletServiceFactory) NewWalletService(
 	if err != nil {
 		return nil, errors.Wrapf(err, "failed to open keystore for tms [%s]", tmsID)
 	}
+	signerRouter := identity.NewSignerRouter()
 	identityProvider := identity.NewProvider(logger.Named("identity"), identityDB, deserializerManager, binder, NewEIDRHDeserializer())
+	identityProvider.SetSignerRouter(signerRouter)
 	identityConfig, err := config.NewIdentityConfig(tmsConfig)
 	if err != nil {
 		return nil, errors.WithMessagef(err, "failed to create identity config")
@@ -72,6 +74,7 @@ func (d *BaseWalletServiceFactory) NewWalletService(
 		storageProvider,
 		deserializerManager,
 	)
+	roleFactory.SetSignerRouter(signerRouter)
 	// owner role
 	// we have one key manager for fabtoken and one for each idemix issuer public key
 	kmps := make([]membership.KeyManagerProvider, 0, len(pp.IdemixIssuerPublicKeys)+1)
@@ -121,6 +124,7 @@ func (d *BaseWalletServiceFactory) NewWalletService(
 	if err != nil {
 		return nil, errors.Wrapf(err, "failed to get identity storage provider")
 	}
+	signerRouter.SetConfIDResolver(walletDB)
 	deserializer, err := NewDeserializer(pp)
 	if err != nil {
 		return nil, errors.Wrapf(err, "failed to instantiate the deserializer")

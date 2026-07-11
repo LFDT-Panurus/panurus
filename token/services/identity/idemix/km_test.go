@@ -872,3 +872,102 @@ func TestIdentityWithDifferentAuditInfo(t *testing.T) {
 	require.NoError(t, verifier1.Verify(msg, sig1))
 	require.NoError(t, verifier2.Verify(msg, sig2))
 }
+
+// countingCSP decorates a real bccsp.BCCSP and counts calls to Sign, so tests can prove that a
+// code path never generates a signature (the sign+verify probe DeserializeSigningIdentity relies
+// on, and DeserializeSigningIdentityNoProbe must not run).
+type countingCSP struct {
+	types.BCCSP
+	signCount int
+}
+
+func (c *countingCSP) Sign(k types.Key, digest []byte, opts types.SignerOpts) ([]byte, error) {
+	c.signCount++
+
+	return c.BCCSP.Sign(k, digest, opts)
+}
+
+// TestKeyManager_DeserializeSigningIdentityNoProbe proves that DeserializeSigningIdentityNoProbe
+// reconstructs a valid, usable signing identity without generating the extra probe signature that
+// DeserializeSigningIdentity relies on to distinguish the right key manager from a wrong one.
+func TestKeyManager_DeserializeSigningIdentityNoProbe(t *testing.T) {
+	testKeyManager_DeserializeSigningIdentityNoProbe(t, "./testdata/bls12_381_bbs_gurvy/idemix", math.BLS12_381_BBS_GURVY)
+	testKeyManager_DeserializeSigningIdentityNoProbe(t, "./testdata/bls12_381_bbs/idemix", math.BLS12_381_BBS_GURVY)
+}
+
+func testKeyManager_DeserializeSigningIdentityNoProbe(t *testing.T, configPath string, curveID math.CurveID) {
+	t.Helper()
+	kvs, err := kvs2.NewInMemory()
+	require.NoError(t, err)
+	config, err := crypto.NewConfig(configPath)
+	require.NoError(t, err)
+	keyStore, err := crypto.NewKeyStore(curveID, kvs2.Keystore(kvs))
+	require.NoError(t, err)
+	realCsp, err := crypto.NewBCCSP(keyStore, curveID)
+	require.NoError(t, err)
+	csp := &countingCSP{BCCSP: realCsp}
+
+	keyManager, err := NewKeyManager(config, types.EidNymRhNym, csp)
+	require.NoError(t, err)
+
+	identityDescriptor, err := keyManager.Identity(t.Context(), nil)
+	require.NoError(t, err)
+	id := identityDescriptor.Identity
+
+	signCountBeforeReconstruction := csp.signCount
+
+	si, err := keyManager.DeserializeSigningIdentityNoProbe(t.Context(), id)
+	require.NoError(t, err)
+	require.NotNil(t, si)
+	assert.Equal(t, signCountBeforeReconstruction, csp.signCount, "no-probe reconstruction must not call Sign")
+
+	// the reconstructed signing identity is fully usable: it can sign and its own signature verifies
+	verifier, err := keyManager.DeserializeVerifier(t.Context(), id)
+	require.NoError(t, err)
+	msg := []byte("hello world!!!")
+	sigma, err := si.Sign(msg)
+	require.NoError(t, err)
+	require.NoError(t, verifier.Verify(msg, sigma))
+
+	// contrast: the probing variant does call Sign at least once
+	signCountBeforeProbe := csp.signCount
+	_, err = keyManager.DeserializeSigningIdentity(t.Context(), id)
+	require.NoError(t, err)
+	assert.Greater(t, csp.signCount, signCountBeforeProbe, "probing reconstruction must call Sign")
+}
+
+// TestKeyManager_DeserializeSigningIdentityNoProbeRemote proves that
+// DeserializeSigningIdentityNoProbe fails closed for a remote (verify-only) key manager instead of
+// returning a broken signer.
+func TestKeyManager_DeserializeSigningIdentityNoProbeRemote(t *testing.T) {
+	testKeyManager_DeserializeSigningIdentityNoProbeRemote(t, "./testdata/bls12_381_bbs_gurvy/idemix", math.BLS12_381_BBS_GURVY)
+}
+
+func testKeyManager_DeserializeSigningIdentityNoProbeRemote(t *testing.T, configPath string, curveID math.CurveID) {
+	t.Helper()
+	kvs, err := kvs2.NewInMemory()
+	require.NoError(t, err)
+	config, err := crypto.NewConfig(configPath)
+	require.NoError(t, err)
+	keyStore, err := crypto.NewKeyStore(curveID, kvs2.Keystore(kvs))
+	require.NoError(t, err)
+	cryptoProvider, err := crypto.NewBCCSP(keyStore, curveID)
+	require.NoError(t, err)
+
+	// build a local key manager first to obtain a valid serialized identity to try to reconstruct
+	localKM, err := NewKeyManager(config, types.EidNymRhNym, cryptoProvider)
+	require.NoError(t, err)
+	identityDescriptor, err := localKM.Identity(t.Context(), nil)
+	require.NoError(t, err)
+
+	// now strip the secret key material to simulate a remote/verify-only wallet
+	config.Signer.Sk = nil
+	config.Signer.Cred = nil
+	config.Signer.Ski = nil
+	remoteKM, err := NewKeyManager(config, types.EidNymRhNym, cryptoProvider)
+	require.NoError(t, err)
+	assert.True(t, remoteKM.IsRemote())
+
+	_, err = remoteKM.DeserializeSigningIdentityNoProbe(t.Context(), identityDescriptor.Identity)
+	require.Error(t, err)
+}

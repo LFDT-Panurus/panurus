@@ -121,7 +121,7 @@ func TestBindIdentityAndContainsAndMetadataAndGetWalletID(t *testing.T) {
 	ctx := t.Context()
 
 	storage.StoreIdentityReturns(nil)
-	require.NoError(t, reg.BindIdentity(ctx, []byte("id"), "e", "w", map[string]string{"a": "b"}))
+	require.NoError(t, reg.BindIdentity(ctx, []byte("id"), "e", "w", map[string]string{"a": "b"}, "conf-1"))
 	// ContainsIdentity delegates
 	storage.IdentityExistsReturns(true)
 	require.True(t, reg.ContainsIdentity(ctx, []byte("id"), "w"))

@@ -40,6 +40,25 @@ type TypedVerifierDeserializer interface {
 	GetAuditInfoMatcher(ctx context.Context, owner tdriver.Identity, auditInfo []byte) (tdriver.Matcher, error)
 }
 
+// SignerDeserializer is the minimal capability a KeyManager must expose to be
+// registered with a signer router for conf_id-based routing: reconstructing a
+// Signer from raw identity bytes.
+type SignerDeserializer interface {
+	// DeserializeSigner deserializes the provided raw bytes into a tdriver.Signer.
+	DeserializeSigner(ctx context.Context, raw []byte) (tdriver.Signer, error)
+}
+
+// ProbeFreeSignerDeserializer reconstructs a Signer from raw identity bytes without running any
+// cryptographic probe to confirm that the raw bytes belong to this deserializer. Callers MUST only
+// use it once they already know, by another means, that the signer belongs to this exact
+// deserializer (e.g. conf_id-based routing) - otherwise a mismatched deserializer could silently
+// produce a signer that yields invalid signatures.
+type ProbeFreeSignerDeserializer interface {
+	// DeserializeSignerNoProbe deserializes the provided raw bytes into a tdriver.Signer without
+	// verifying that the raw bytes actually belong to this deserializer.
+	DeserializeSignerNoProbe(ctx context.Context, raw []byte) (tdriver.Signer, error)
+}
+
 // AuditInfo represents the audit-related information for an identity.
 // It exposes the enrollment id and the revocation handle necessary for audit
 // and revocation operations.

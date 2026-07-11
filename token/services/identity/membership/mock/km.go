@@ -6,7 +6,6 @@ import (
 	"sync"
 
 	"github.com/LFDT-Panurus/panurus/token/driver"
-	"github.com/LFDT-Panurus/panurus/token/services/identity"
 	drivera "github.com/LFDT-Panurus/panurus/token/services/identity/driver"
 	"github.com/LFDT-Panurus/panurus/token/services/identity/membership"
 )
@@ -74,15 +73,15 @@ type KeyManager struct {
 		result1 *drivera.IdentityDescriptor
 		result2 error
 	}
-	IdentityTypeStub        func() identity.Type
+	IdentityTypeStub        func() drivera.IdentityType
 	identityTypeMutex       sync.RWMutex
 	identityTypeArgsForCall []struct {
 	}
 	identityTypeReturns struct {
-		result1 identity.Type
+		result1 drivera.IdentityType
 	}
 	identityTypeReturnsOnCall map[int]struct {
-		result1 identity.Type
+		result1 drivera.IdentityType
 	}
 	IsRemoteStub        func() bool
 	isRemoteMutex       sync.RWMutex
@@ -438,32 +437,32 @@ func (fake *KeyManager) IdentityTypeCallCount() int {
 	return len(fake.identityTypeArgsForCall)
 }
 
-func (fake *KeyManager) IdentityTypeCalls(stub func() identity.Type) {
+func (fake *KeyManager) IdentityTypeCalls(stub func() drivera.IdentityType) {
 	fake.identityTypeMutex.Lock()
 	defer fake.identityTypeMutex.Unlock()
 	fake.IdentityTypeStub = stub
 }
 
-func (fake *KeyManager) IdentityTypeReturns(result1 identity.Type) {
+func (fake *KeyManager) IdentityTypeReturns(result1 drivera.IdentityType) {
 	fake.identityTypeMutex.Lock()
 	defer fake.identityTypeMutex.Unlock()
 	fake.IdentityTypeStub = nil
 	fake.identityTypeReturns = struct {
-		result1 identity.Type
+		result1 drivera.IdentityType
 	}{result1}
 }
 
-func (fake *KeyManager) IdentityTypeReturnsOnCall(i int, result1 identity.Type) {
+func (fake *KeyManager) IdentityTypeReturnsOnCall(i int, result1 drivera.IdentityType) {
 	fake.identityTypeMutex.Lock()
 	defer fake.identityTypeMutex.Unlock()
 	fake.IdentityTypeStub = nil
 	if fake.identityTypeReturnsOnCall == nil {
 		fake.identityTypeReturnsOnCall = make(map[int]struct {
-			result1 identity.Type
+			result1 drivera.IdentityType
 		})
 	}
 	fake.identityTypeReturnsOnCall[i] = struct {
-		result1 identity.Type
+		result1 drivera.IdentityType
 	}{result1}
 }
 
