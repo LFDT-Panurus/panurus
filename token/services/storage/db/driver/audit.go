@@ -28,6 +28,13 @@ type AuditTransactionStore interface {
 	// It returns an error if the transaction is not found
 	GetStatus(ctx context.Context, txID string) (TxStatus, string, error)
 
+	// GetStatuses returns the status of the given transaction ids, in a
+	// single query. The returned map contains an entry only for tx ids that
+	// were present in storage — callers should treat a missing key
+	// identically to GetStatus returning Unknown. An empty or nil txIDs
+	// slice returns an empty map without touching the database.
+	GetStatuses(ctx context.Context, txIDs []string) (map[string]TxStatus, error)
+
 	// QueryTransactions returns a list of transactions that match the passed params
 	QueryTransactions(ctx context.Context, params QueryTransactionsParams, pagination driver.Pagination) (*driver.PageIterator[*TransactionRecord], error)
 

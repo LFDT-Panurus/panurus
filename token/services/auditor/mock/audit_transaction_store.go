@@ -66,6 +66,20 @@ type AuditTransactionStore struct {
 		result2 string
 		result3 error
 	}
+	GetStatusesStub        func(context.Context, []string) (map[string]driver.TxStatus, error)
+	getStatusesMutex       sync.RWMutex
+	getStatusesArgsForCall []struct {
+		arg1 context.Context
+		arg2 []string
+	}
+	getStatusesReturns struct {
+		result1 map[string]driver.TxStatus
+		result2 error
+	}
+	getStatusesReturnsOnCall map[int]struct {
+		result1 map[string]driver.TxStatus
+		result2 error
+	}
 	GetTokenRequestStub        func(context.Context, string) ([]byte, error)
 	getTokenRequestMutex       sync.RWMutex
 	getTokenRequestArgsForCall []struct {
@@ -158,20 +172,6 @@ type AuditTransactionStore struct {
 	}
 	queryTransactionsReturnsOnCall map[int]struct {
 		result1 *drivera.PageIterator[*driver.TransactionRecord]
-		result2 error
-	}
-	QueryValidationsStub        func(context.Context, driver.QueryValidationRecordsParams) (driver.ValidationRecordsIterator, error)
-	queryValidationsMutex       sync.RWMutex
-	queryValidationsArgsForCall []struct {
-		arg1 context.Context
-		arg2 driver.QueryValidationRecordsParams
-	}
-	queryValidationsReturns struct {
-		result1 driver.ValidationRecordsIterator
-		result2 error
-	}
-	queryValidationsReturnsOnCall map[int]struct {
-		result1 driver.ValidationRecordsIterator
 		result2 error
 	}
 	ReleaseRecoveryClaimStub        func(context.Context, string, string, string) error
@@ -458,6 +458,76 @@ func (fake *AuditTransactionStore) GetStatusReturnsOnCall(i int, result1 driver.
 		result2 string
 		result3 error
 	}{result1, result2, result3}
+}
+
+func (fake *AuditTransactionStore) GetStatuses(arg1 context.Context, arg2 []string) (map[string]driver.TxStatus, error) {
+	var arg2Copy []string
+	if arg2 != nil {
+		arg2Copy = make([]string, len(arg2))
+		copy(arg2Copy, arg2)
+	}
+	fake.getStatusesMutex.Lock()
+	ret, specificReturn := fake.getStatusesReturnsOnCall[len(fake.getStatusesArgsForCall)]
+	fake.getStatusesArgsForCall = append(fake.getStatusesArgsForCall, struct {
+		arg1 context.Context
+		arg2 []string
+	}{arg1, arg2Copy})
+	stub := fake.GetStatusesStub
+	fakeReturns := fake.getStatusesReturns
+	fake.recordInvocation("GetStatuses", []interface{}{arg1, arg2Copy})
+	fake.getStatusesMutex.Unlock()
+	if stub != nil {
+		return stub(arg1, arg2)
+	}
+	if specificReturn {
+		return ret.result1, ret.result2
+	}
+	return fakeReturns.result1, fakeReturns.result2
+}
+
+func (fake *AuditTransactionStore) GetStatusesCallCount() int {
+	fake.getStatusesMutex.RLock()
+	defer fake.getStatusesMutex.RUnlock()
+	return len(fake.getStatusesArgsForCall)
+}
+
+func (fake *AuditTransactionStore) GetStatusesCalls(stub func(context.Context, []string) (map[string]driver.TxStatus, error)) {
+	fake.getStatusesMutex.Lock()
+	defer fake.getStatusesMutex.Unlock()
+	fake.GetStatusesStub = stub
+}
+
+func (fake *AuditTransactionStore) GetStatusesArgsForCall(i int) (context.Context, []string) {
+	fake.getStatusesMutex.RLock()
+	defer fake.getStatusesMutex.RUnlock()
+	argsForCall := fake.getStatusesArgsForCall[i]
+	return argsForCall.arg1, argsForCall.arg2
+}
+
+func (fake *AuditTransactionStore) GetStatusesReturns(result1 map[string]driver.TxStatus, result2 error) {
+	fake.getStatusesMutex.Lock()
+	defer fake.getStatusesMutex.Unlock()
+	fake.GetStatusesStub = nil
+	fake.getStatusesReturns = struct {
+		result1 map[string]driver.TxStatus
+		result2 error
+	}{result1, result2}
+}
+
+func (fake *AuditTransactionStore) GetStatusesReturnsOnCall(i int, result1 map[string]driver.TxStatus, result2 error) {
+	fake.getStatusesMutex.Lock()
+	defer fake.getStatusesMutex.Unlock()
+	fake.GetStatusesStub = nil
+	if fake.getStatusesReturnsOnCall == nil {
+		fake.getStatusesReturnsOnCall = make(map[int]struct {
+			result1 map[string]driver.TxStatus
+			result2 error
+		})
+	}
+	fake.getStatusesReturnsOnCall[i] = struct {
+		result1 map[string]driver.TxStatus
+		result2 error
+	}{result1, result2}
 }
 
 func (fake *AuditTransactionStore) GetTokenRequest(arg1 context.Context, arg2 string) ([]byte, error) {
@@ -904,71 +974,6 @@ func (fake *AuditTransactionStore) QueryTransactionsReturnsOnCall(i int, result1
 	}
 	fake.queryTransactionsReturnsOnCall[i] = struct {
 		result1 *drivera.PageIterator[*driver.TransactionRecord]
-		result2 error
-	}{result1, result2}
-}
-
-func (fake *AuditTransactionStore) QueryValidations(arg1 context.Context, arg2 driver.QueryValidationRecordsParams) (driver.ValidationRecordsIterator, error) {
-	fake.queryValidationsMutex.Lock()
-	ret, specificReturn := fake.queryValidationsReturnsOnCall[len(fake.queryValidationsArgsForCall)]
-	fake.queryValidationsArgsForCall = append(fake.queryValidationsArgsForCall, struct {
-		arg1 context.Context
-		arg2 driver.QueryValidationRecordsParams
-	}{arg1, arg2})
-	stub := fake.QueryValidationsStub
-	fakeReturns := fake.queryValidationsReturns
-	fake.recordInvocation("QueryValidations", []interface{}{arg1, arg2})
-	fake.queryValidationsMutex.Unlock()
-	if stub != nil {
-		return stub(arg1, arg2)
-	}
-	if specificReturn {
-		return ret.result1, ret.result2
-	}
-	return fakeReturns.result1, fakeReturns.result2
-}
-
-func (fake *AuditTransactionStore) QueryValidationsCallCount() int {
-	fake.queryValidationsMutex.RLock()
-	defer fake.queryValidationsMutex.RUnlock()
-	return len(fake.queryValidationsArgsForCall)
-}
-
-func (fake *AuditTransactionStore) QueryValidationsCalls(stub func(context.Context, driver.QueryValidationRecordsParams) (driver.ValidationRecordsIterator, error)) {
-	fake.queryValidationsMutex.Lock()
-	defer fake.queryValidationsMutex.Unlock()
-	fake.QueryValidationsStub = stub
-}
-
-func (fake *AuditTransactionStore) QueryValidationsArgsForCall(i int) (context.Context, driver.QueryValidationRecordsParams) {
-	fake.queryValidationsMutex.RLock()
-	defer fake.queryValidationsMutex.RUnlock()
-	argsForCall := fake.queryValidationsArgsForCall[i]
-	return argsForCall.arg1, argsForCall.arg2
-}
-
-func (fake *AuditTransactionStore) QueryValidationsReturns(result1 driver.ValidationRecordsIterator, result2 error) {
-	fake.queryValidationsMutex.Lock()
-	defer fake.queryValidationsMutex.Unlock()
-	fake.QueryValidationsStub = nil
-	fake.queryValidationsReturns = struct {
-		result1 driver.ValidationRecordsIterator
-		result2 error
-	}{result1, result2}
-}
-
-func (fake *AuditTransactionStore) QueryValidationsReturnsOnCall(i int, result1 driver.ValidationRecordsIterator, result2 error) {
-	fake.queryValidationsMutex.Lock()
-	defer fake.queryValidationsMutex.Unlock()
-	fake.QueryValidationsStub = nil
-	if fake.queryValidationsReturnsOnCall == nil {
-		fake.queryValidationsReturnsOnCall = make(map[int]struct {
-			result1 driver.ValidationRecordsIterator
-			result2 error
-		})
-	}
-	fake.queryValidationsReturnsOnCall[i] = struct {
-		result1 driver.ValidationRecordsIterator
 		result2 error
 	}{result1, result2}
 }

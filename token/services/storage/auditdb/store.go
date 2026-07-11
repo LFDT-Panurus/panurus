@@ -313,6 +313,13 @@ func (d *StoreService) GetStatus(ctx context.Context, txID string) (TxStatus, st
 	return status, message, nil
 }
 
+// GetStatuses returns the status of the given transaction ids in a single
+// query. See driver.AuditTransactionStore.GetStatuses for details about
+// missing-key semantics.
+func (d *StoreService) GetStatuses(ctx context.Context, txIDs []string) (map[string]TxStatus, error) {
+	return d.db.GetStatuses(ctx, txIDs)
+}
+
 // GetTokenRequest returns the token request bound to the passed transaction id, if available.
 func (d *StoreService) GetTokenRequest(ctx context.Context, txID string) ([]byte, error) {
 	return d.db.GetTokenRequest(ctx, txID)

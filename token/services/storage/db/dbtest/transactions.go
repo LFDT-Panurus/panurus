@@ -143,6 +143,22 @@ func TStatus(t *testing.T, db driver3.TokenTransactionStore) {
 	require.NoError(t, err, "error getting movements")
 	assert.Len(t, mvs, 1)
 	assert.Equal(t, driver3.Confirmed, mvs[0].Status, "movement status should be confirmed")
+
+	// Batch GetStatuses: present and missing tx ids.
+	statuses, err := db.GetStatuses(ctx, []string{"tx1", "missing"})
+	require.NoError(t, err)
+	assert.Len(t, statuses, 1, "missing tx ids must not occupy a map entry")
+	assert.Equal(t, driver3.Confirmed, statuses["tx1"])
+	_, ok := statuses["missing"]
+	assert.False(t, ok)
+
+	empty, err := db.GetStatuses(ctx, nil)
+	require.NoError(t, err)
+	assert.Empty(t, empty, "nil input must return an empty map without querying")
+
+	empty, err = db.GetStatuses(ctx, []string{})
+	require.NoError(t, err)
+	assert.Empty(t, empty, "empty-slice input must return an empty map without querying")
 }
 
 func TStoresTimestamp(t *testing.T, db driver3.TokenTransactionStore) {

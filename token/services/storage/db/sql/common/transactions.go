@@ -269,6 +269,40 @@ func (db *TransactionStore) GetStatus(ctx context.Context, txID string) (dbdrive
 	return status, statusMessage, nil
 }
 
+// GetStatuses fetches the status for the given tx ids in a single SELECT.
+// Missing tx ids are absent from the returned map — callers should treat a
+// missing key identically to GetStatus returning Unknown. Empty input
+// returns an empty map without querying.
+func (db *TransactionStore) GetStatuses(ctx context.Context, txIDs []string) (map[string]dbdriver.TxStatus, error) {
+	if len(txIDs) == 0 {
+		return map[string]dbdriver.TxStatus{}, nil
+	}
+	query, args := q.Select().
+		FieldsByName("tx_id", "status").
+		From(q.Table(db.table.Requests)).
+		Where(cond.In("tx_id", txIDs...)).
+		Format(db.ci)
+
+	logging.Debug(logger, query, args)
+	rows, err := db.readDB.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer Close(rows)
+
+	result := make(map[string]dbdriver.TxStatus, len(txIDs))
+	for rows.Next() {
+		var txID string
+		var status dbdriver.TxStatus
+		if err := rows.Scan(&txID, &status); err != nil {
+			return nil, err
+		}
+		result[txID] = status
+	}
+
+	return result, rows.Err()
+}
+
 func (db *TransactionStore) Notifier() (dbdriver.TransactionNotifier, error) {
 	if db.notifier == nil {
 		return nil, storage.ErrNotSupported
