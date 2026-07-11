@@ -56,7 +56,7 @@ contract EIP712Test is Test {
     }
 
     /// @dev The fixture setup delta (mirrors the `setupDelta` object in the JSON): the PP-update shape,
-    ///      with empty dynamic arrays — pins the empty-array encodings the transfer vector cannot.
+    ///      with empty dynamic arrays, pinning the empty-array encodings the transfer vector cannot.
     function _fixtureSetupDelta() internal pure returns (StateDelta memory d) {
         d.anchor = 0x7777777777777777777777777777777777777777777777777777777777777777;
         d.spentRefs = new bytes32[](0);

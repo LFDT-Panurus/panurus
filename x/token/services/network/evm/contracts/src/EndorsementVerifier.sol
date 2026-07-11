@@ -3,7 +3,7 @@ pragma solidity 0.8.24;
 
 /// @title EndorsementVerifier
 /// @notice Holds the authorized endorser set + threshold and verifies a quorum of EIP-712 endorser
-///         signatures over a precomputed digest. This contract performs NO token validation — under the
+///         signatures over a precomputed digest. This contract performs NO token validation. Under the
 ///         Approach-2 trust model, correctness is established off-chain by the endorser quorum; the chain
 ///         only checks that a threshold of authorized, distinct endorsers signed the exact digest.
 ///
@@ -17,7 +17,7 @@ pragma solidity 0.8.24;
 ///         Governance: the deployer seeds the initial endorser set + threshold at construction. Per
 ///         design §15.3 the quorum owns everything post-bootstrap; runtime endorser-set / threshold
 ///         changes are a quorum-gated governance feature deferred beyond v1 (none of the v1 acceptance
-///         flows — issue/transfer/redeem/PP-update — mutate the endorser set), so the set is immutable
+///         flows, issue/transfer/redeem/PP-update, mutate the endorser set), so the set is immutable
 ///         after construction for now.
 contract EndorsementVerifier {
     /// @dev secp256k1 group-order / 2. Signatures with `s` above this are malleable (EIP-2) and rejected.
@@ -58,9 +58,9 @@ contract EndorsementVerifier {
 
     /// @notice Reverts unless `signatures` contains at least `threshold` signatures AND every provided
     ///         signature is a valid signature over `digest` from a distinct current endorser (strict
-    ///         semantics, design §3.2: the contract does not scan for "threshold valid among garbage" —
-    ///         the initiator curates the bundle, and a partially-invalid one signals a broken or
-    ///         malicious initiator). Returns true on success (never false — failures revert with a typed
+    ///         semantics, design §3.2: the contract does not scan for "threshold valid among garbage".
+    ///         The initiator curates the bundle, and a partially-invalid one signals a broken or
+    ///         malicious initiator). Returns true on success (never false; failures revert with a typed
     ///         reason so callers/receipts get a precise cause per the §13 error taxonomy).
     /// @param digest the EIP-712 signing digest (computed by TokenState from the typed StateDelta).
     /// @param signatures 65-byte {r,s,v} signatures; low-s and v in {27,28} enforced.

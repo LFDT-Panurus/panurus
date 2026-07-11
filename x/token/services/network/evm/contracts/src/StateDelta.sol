@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 pragma solidity 0.8.24;
 
-/// @title EVM network-driver state-transition types (FROZEN — Week 1)
+/// @title EVM network-driver state-transition types (FROZEN, Week 1)
 /// @notice These structs are the on-chain mirror of the Go types in
 ///         `x/token/services/network/evm/statedelta` and the EIP-712 type in `.../eip712`. The field
 ///         names, types, and ORDER must match byte-for-byte: the EIP-712 `hashStruct` (see EIP712.sol)
