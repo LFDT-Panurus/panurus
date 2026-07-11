@@ -68,6 +68,12 @@ func(c *OutputCircuit) Define(api frontend.API) error {
     // The bit decomposition implicitly constrains 0 <= v < 2^maxBits.
     // api.AssertIsDifferent(v, 0) additionally enforces v != 0.
     // Combined: 1 <= v < 2^maxBits.
+
+	// Why this approach is better than other approaches:
+	// ToBinary(v, maxBits) directly converts the value into bits and enforces that each bit is either 0 or 1
+	// while also constraining the value to be the sum of the individual bits multiplied by 2^i.
+	// An alternative such as AssertIsLessOrEqual(v, 2^maxBits-1) is a general purpose comparator, and even after converting
+	// the value to bits, it has to kepp running the comparison checks, bit by bit, which can require extra machinery.
 	_ = api.ToBinary(c.Value, maxBits)
     api.AssertIsDifferent(c.Value, 0)
 
