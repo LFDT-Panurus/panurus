@@ -47,11 +47,10 @@ func naiveNumeratorsBN254(input []*bn254fr.Element, m int) []*bn254fr.Element {
 // blsNumeratorsBinaryTree writes input into the pooled leaves, runs the binary
 // tree algorithm, and returns the numerators. Test-only helper.
 func blsNumeratorsBinaryTree(input []*bls12381fr.Element, m int) []*bls12381fr.Element {
-	treeSize := binaryTreeSize(m)
-	leafStart := treeSize - m
-	pooled := getTreeArrays[bls12381fr.Element](leafStart, m)
+	leafStart := m - 1
+	pooled := getTreeArrays[bls12381fr.Element](m)
 	for j := range m {
-		pooled.leaves[j] = *input[j]
+		pooled.slab[leafStart+j] = *input[j]
 	}
 	result := computeNumeratorsBinaryTree[bls12381fr.Element, *bls12381fr.Element](m, pooled)
 	putTreeArrays(pooled)
@@ -60,11 +59,10 @@ func blsNumeratorsBinaryTree(input []*bls12381fr.Element, m int) []*bls12381fr.E
 
 // bn254NumeratorsBinaryTree is the BN254 counterpart of blsNumeratorsBinaryTree.
 func bn254NumeratorsBinaryTree(input []*bn254fr.Element, m int) []*bn254fr.Element {
-	treeSize := binaryTreeSize(m)
-	leafStart := treeSize - m
-	pooled := getTreeArrays[bn254fr.Element](leafStart, m)
+	leafStart := m - 1
+	pooled := getTreeArrays[bn254fr.Element](m)
 	for j := range m {
-		pooled.leaves[j] = *input[j]
+		pooled.slab[leafStart+j] = *input[j]
 	}
 	result := computeNumeratorsBinaryTree[bn254fr.Element, *bn254fr.Element](m, pooled)
 	putTreeArrays(pooled)

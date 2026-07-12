@@ -63,44 +63,38 @@ var (
 	bn254TreePool = newTreeArrayPool[bn254fr.Element]()
 )
 
-// treeArrays is a view into a single contiguous slab that holds all four
-// working regions needed by the binary-tree numerator algorithm:
+// treeArrays is a single contiguous slab used by the binary-tree numerator algorithm.
 //
-//	slab = [ tree (leafStart) | leaves (m) | numers (m) | exclude (leafStart) ]
-//	       |<---- internal nodes --->|<-- leaf values -->|<-- output -->|<-- top-down scratch -->|
+// Layout:
 //
-// "leaves" stores the c-j values written by the caller before invoking
-// computeNumeratorsBinaryTree, avoiding a separate cMinusJ allocation.
-// One slab means one pool lookup, one GC-tracked object, and contiguous memory.
+//	slab = [ tree+leaves (treeSize) | exclude+numers (treeSize) ]
+//	         slab[0:treeSize]             slab[treeSize:2*treeSize]
+//
+// Within the first half: slab[0:leafStart] are internal-node products (tree),
+// slab[leafStart:treeSize] are the c-j input values (leaves).
+// Within the second half: slab[treeSize:treeSize+leafStart] are exclude products,
+// slab[treeSize+leafStart:] are the output numerators.
+//
+// Callers index slab directly using leafStart and treeSize, which they already
+// hold — no sub-slice fields needed.
 type treeArrays[T any] struct {
-	slab    []T // backing allocation returned to pool on put
-	tree    []T // slab[0 : leafStart]            — bottom-up subtree products
-	leaves  []T // slab[leafStart : leafStart+m]  — c-j input values (written by caller)
-	numers  []T // slab[leafStart+m : leafStart+2m]  — output numerators
-	exclude []T // slab[leafStart+2m : 2*leafStart+2m] — top-down exclude products
-	pool    *treeArrayPool[T]
+	slab []T // backing allocation returned to pool on put
+	pool *treeArrayPool[T]
 }
 
-// getTreeArrays retrieves a pooled slab for any supported element type T and
-// carves it into the four working regions.
-// leafStart is the number of internal nodes; m is the number of leaves.
-func getTreeArrays[T any](leafStart, m int) *treeArrays[T] {
-	total := 2*m + 2*leafStart
+// getTreeArrays retrieves a pooled slab of length 2*treeSize for type T.
+// m is the number of leaves; leafStart = m-1 is derived internally.
+func getTreeArrays[T any](m int) *treeArrays[T] {
+	treeSize := 2*m - 1
+	total := 2 * treeSize
 	pool := getTypedPool[T]()
 	slab := pool.getPool(total).Get().([]T)
 	if len(slab) != total {
 		slab = make([]T, total)
 	}
-	treeEnd := leafStart
-	leavesEnd := treeEnd + m
-	numersEnd := leavesEnd + m
 	return &treeArrays[T]{
-		slab:    slab,
-		tree:    slab[0:treeEnd],
-		leaves:  slab[treeEnd:leavesEnd],
-		numers:  slab[leavesEnd:numersEnd],
-		exclude: slab[numersEnd:total],
-		pool:    pool,
+		slab: slab,
+		pool: pool,
 	}
 }
 

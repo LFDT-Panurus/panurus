@@ -16,48 +16,40 @@ import (
 
 func TestTreeArrayPoolBLS(t *testing.T) {
 	// Test basic get/put operations
-	leafStart := 64
 	m := 65
+	treeSize := 2*m - 1
 
-	arrays := getTreeArrays[bls12381fr.Element](leafStart, m)
+	arrays := getTreeArrays[bls12381fr.Element](m)
 	require.NotNil(t, arrays)
-	require.Equal(t, leafStart, len(arrays.tree))
-	require.Equal(t, m, len(arrays.numers))
-	require.Equal(t, leafStart, len(arrays.exclude))
+	require.Equal(t, 2*treeSize, len(arrays.slab))
 
 	// Return to pool
 	putTreeArrays(arrays)
 
 	// Get again - should reuse from pool
-	arrays2 := getTreeArrays[bls12381fr.Element](leafStart, m)
+	arrays2 := getTreeArrays[bls12381fr.Element](m)
 	require.NotNil(t, arrays2)
-	require.Equal(t, leafStart, len(arrays2.tree))
-	require.Equal(t, m, len(arrays2.numers))
-	require.Equal(t, leafStart, len(arrays2.exclude))
+	require.Equal(t, 2*treeSize, len(arrays2.slab))
 
 	putTreeArrays(arrays2)
 }
 
 func TestTreeArrayPoolBN254(t *testing.T) {
 	// Test basic get/put operations
-	leafStart := 128
 	m := 129
+	treeSize := 2*m - 1
 
-	arrays := getTreeArrays[bn254fr.Element](leafStart, m)
+	arrays := getTreeArrays[bn254fr.Element](m)
 	require.NotNil(t, arrays)
-	require.Equal(t, leafStart, len(arrays.tree))
-	require.Equal(t, m, len(arrays.numers))
-	require.Equal(t, leafStart, len(arrays.exclude))
+	require.Equal(t, 2*treeSize, len(arrays.slab))
 
 	// Return to pool
 	putTreeArrays(arrays)
 
 	// Get again - should reuse from pool
-	arrays2 := getTreeArrays[bn254fr.Element](leafStart, m)
+	arrays2 := getTreeArrays[bn254fr.Element](m)
 	require.NotNil(t, arrays2)
-	require.Equal(t, leafStart, len(arrays2.tree))
-	require.Equal(t, m, len(arrays2.numers))
-	require.Equal(t, leafStart, len(arrays2.exclude))
+	require.Equal(t, 2*treeSize, len(arrays2.slab))
 
 	putTreeArrays(arrays2)
 }
@@ -66,17 +58,23 @@ func TestTreeArrayPoolConcurrent(t *testing.T) {
 	// Test concurrent access to pool
 	const goroutines = 10
 	const iterations = 100
+	const m = 65
+	const leafStart = m - 1
+	const treeSize = 2*m - 1
 
 	done := make(chan bool, goroutines)
 
 	for i := 0; i < goroutines; i++ {
 		go func() {
 			for j := 0; j < iterations; j++ {
-				arrays := getTreeArrays[bls12381fr.Element](64, 65)
-				// Simulate some work
-				arrays.tree[0].SetOne()
-				arrays.numers[0].SetZero()
-				arrays.exclude[0].SetOne()
+				arrays := getTreeArrays[bls12381fr.Element](m)
+				// Simulate some work using direct slab offsets.
+				// slab[0]          → tree[0]
+				// slab[treeSize]   → exclude[0]
+				// slab[treeSize+leafStart] → numers[0]
+				arrays.slab[0].SetOne()
+				arrays.slab[treeSize].SetZero()
+				arrays.slab[treeSize+leafStart].SetOne()
 				putTreeArrays(arrays)
 			}
 			done <- true
@@ -91,36 +89,27 @@ func TestTreeArrayPoolConcurrent(t *testing.T) {
 
 func TestTreeArrayPoolDifferentSizes(t *testing.T) {
 	// Test that different sizes use different pools
-	sizes := []struct {
-		leafStart int
-		m         int
-	}{
-		{32, 33},
-		{64, 65},
-		{128, 129},
-		{256, 257},
-	}
+	ms := []int{33, 65, 129, 257}
 
-	for _, size := range sizes {
-		arrays := getTreeArrays[bls12381fr.Element](size.leafStart, size.m)
-		require.Equal(t, size.leafStart, len(arrays.tree))
-		require.Equal(t, size.m, len(arrays.numers))
-		require.Equal(t, size.leafStart, len(arrays.exclude))
+	for _, m := range ms {
+		treeSize := 2*m - 1
+		arrays := getTreeArrays[bls12381fr.Element](m)
+		require.Equal(t, 2*treeSize, len(arrays.slab))
 		putTreeArrays(arrays)
 	}
 }
 
 // BenchmarkTreeArrayPoolBLS benchmarks the pool performance for BLS12-381
 func BenchmarkTreeArrayPoolBLS(b *testing.B) {
-	leafStart := 64
-	m := 65
+	const m = 65
+	const leafStart = m - 1
 
 	b.Run("with_pool", func(b *testing.B) {
 		b.ReportAllocs()
 		for i := 0; i < b.N; i++ {
-			arrays := getTreeArrays[bls12381fr.Element](leafStart, m)
-			// Simulate some work
-			arrays.tree[0].SetOne()
+			arrays := getTreeArrays[bls12381fr.Element](m)
+			// Simulate some work: touch tree[0] at slab[0].
+			arrays.slab[0].SetOne()
 			putTreeArrays(arrays)
 		}
 	})
@@ -141,15 +130,15 @@ func BenchmarkTreeArrayPoolBLS(b *testing.B) {
 
 // BenchmarkTreeArrayPoolBN254 benchmarks the pool performance for BN254
 func BenchmarkTreeArrayPoolBN254(b *testing.B) {
-	leafStart := 128
-	m := 129
+	const m = 129
+	const leafStart = m - 1
 
 	b.Run("with_pool", func(b *testing.B) {
 		b.ReportAllocs()
 		for i := 0; i < b.N; i++ {
-			arrays := getTreeArrays[bn254fr.Element](leafStart, m)
-			// Simulate some work
-			arrays.tree[0].SetOne()
+			arrays := getTreeArrays[bn254fr.Element](m)
+			// Simulate some work: touch tree[0] at slab[0].
+			arrays.slab[0].SetOne()
 			putTreeArrays(arrays)
 		}
 	})
