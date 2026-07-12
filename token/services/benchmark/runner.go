@@ -12,7 +12,6 @@ import (
 	"math"
 	"os"
 	"runtime"
-	"runtime/debug"
 	"slices"
 	"strings"
 	"sync"
@@ -63,7 +62,6 @@ type Result struct {
 	IQR           time.Duration // Interquartile Range (P75 - P25)
 	Jitter        time.Duration // Avg change between consecutive latencies
 	CoeffVar      float64       // Coefficient of Variation (StdDev / Mean)
-	CoeffDisp     float64       // Coefficient of Dispersion (IQR / P50), robust to GC-induced outliers
 
 	// Stability & Time Series
 	Timeline []TimePoint
@@ -241,14 +239,6 @@ func RunBenchmark[T any](
 		time.Sleep(cfg.WarmupDuration)
 	}
 
-	// Flush any heap pressure built up during warmup so we start with a clean
-	// heap.  Then disable the GC for the duration of the recording window so
-	// that stop-the-world pauses cannot inflate per-operation latency
-	// measurements.  GC is re-enabled (with its original percentage) as soon
-	// as the recording window closes.
-	runtime.GC()
-	prevGCPercent := debug.SetGCPercent(-1)
-
 	var memBefore, memAfter runtime.MemStats
 	runtime.ReadMemStats(&memBefore)
 
@@ -306,9 +296,6 @@ func RunBenchmark[T any](
 	time.Sleep(cfg.Duration)
 
 	running.Store(false)
-	// Re-enable GC before waiting for workers so that the heap built up during
-	// the recording window can be collected while workers drain.
-	debug.SetGCPercent(prevGCPercent)
 	endWg.Wait()
 	cancel()
 
@@ -440,11 +427,6 @@ func analyzeResults(
 		coeffVar = float64(stdDev) / float64(avgLatency)
 	}
 
-	coeffDisp := 0.0
-	if p50 > 0 {
-		coeffDisp = float64(iqr) / float64(p50)
-	}
-
 	// GC Stats
 	numGC := mEnd.NumGC - mStart.NumGC
 	pauseNs := mEnd.PauseTotalNs - mStart.PauseTotalNs
@@ -472,7 +454,6 @@ func analyzeResults(
 		IQR:               iqr,
 		Jitter:            jitter,
 		CoeffVar:          coeffVar,
-		CoeffDisp:         coeffDisp,
 		BytesPerOp:        memBytes,
 		AllocsPerOp:       memAllocs,
 		AllocRateMBPS:     allocRate,
@@ -591,16 +572,6 @@ func (r Result) printMainMetrics(w *tabwriter.Writer) (cvPct float64, tailRatio 
 		cvStatus = "(Acceptable 5-10%)"
 	}
 	writef(w, " CV\t%.2f%%\t%s\n", cvPct, cvStatus)
-
-	// CoD (IQR/P50): robust stability indicator not affected by GC spike outliers.
-	codPct := r.CoeffDisp * 100
-	codStatus := ColorGreen + "Robust-Stable (<30%)" + ColorReset
-	if codPct > 60.0 {
-		codStatus = ColorRed + "Robust-Unstable (>60%)" + ColorReset
-	} else if codPct > 30.0 {
-		codStatus = ColorYellow + "Moderate (30-60%)" + ColorReset
-	}
-	writef(w, " CoD (IQR/P50)\t%.2f%%\t%s\n", codPct, codStatus)
 	writeLine(w, "")
 
 	return cvPct, tailRatio
