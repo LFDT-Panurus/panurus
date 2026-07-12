@@ -274,6 +274,28 @@ contract TokenStateTest is Test {
         assertEq(ts.getTransferMetadata(keccak256("k1")), bytes("v1"));
     }
 
+    function test_Metadata_ReusedKey_Reverts() public {
+        // Metadata keys are write-once (Fabric StateMustNotExist parity): a second delta writing the
+        // same key must fail the whole transaction, never overwrite the first value.
+        StateDelta memory d1 = _issue(keccak256("issue-m1"), "tok-A");
+        d1.metadataKeys = new bytes32[](1);
+        d1.metadataKeys[0] = keccak256("claim-key");
+        d1.metadataVals = new bytes[](1);
+        d1.metadataVals[0] = "v1";
+        ts.applyStateDelta(d1, _sign(d1));
+
+        StateDelta memory d2 = _issue(keccak256("issue-m2"), "tok-B");
+        d2.metadataKeys = new bytes32[](1);
+        d2.metadataKeys[0] = keccak256("claim-key");
+        d2.metadataVals = new bytes[](1);
+        d2.metadataVals[0] = "v2";
+        vm.expectPartialRevert(TokenState.MetadataKeyOccupied.selector);
+        ts.applyStateDelta(d2, _sign(d2));
+
+        // and the original value is untouched
+        assertEq(ts.getTransferMetadata(keccak256("claim-key")), bytes("v1"));
+    }
+
     function test_AreTokensSpent_Batch() public {
         bytes32 a1 = keccak256("issue-1");
         StateDelta memory i1 = _issue(a1, "tok-A");

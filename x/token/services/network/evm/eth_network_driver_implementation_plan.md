@@ -195,7 +195,9 @@ one-list model; his one-line ack on the input-identity read is the only outstand
     TokenState (a per-TMS clone) owns the domain separator (binds `verifyingContract=address(this)`), so it
     computes the digest; a shared/decoupled verifier cannot. Avoids a verifier↔TokenState address
     chicken-and-egg. Design §3.2 updated to match.
-- **PR 2b — TokenState + deploy** (the state machine on the proven crypto) — ✅ DONE, 39/39 forge tests:
+- **PR 2b — TokenState + deploy** (the state machine on the proven crypto) — ✅ DONE, 41/41 forge tests
+  (incl. the 2026-07-11 pre-Week-3 fix: metadata keys are **write-once** on-chain, `MetadataKeyOccupied` —
+  Fabric `StateMustNotExist` parity the §3.4 check-list had missed):
   - [x] Phase A: `TokenState.sol` storage §3.1 + `applyStateDelta` §3.4 (computes `hashStruct`+digest via the
     PR-2a library, calls `verifier.verify(digest, sigs)`) + 11 core tests: issue/spend, double-spend,
     **forged-content spend rejected by `snMarker`**, tampered-delta fails verification, stale-PP, replay,
@@ -274,8 +276,15 @@ on-chain; a forged-content spend (real `tokenID`, different `tokenData`) is reje
       `TokenRequestHash` = `crypto.SHA256(request)`, `PublicParamsHash` = `crypto.SHA256(pp)`.
 - [ ] Exact counter (issue `+= len(outputs)`, transfer `+= NumOutputs()`, redeem skipped) + canonical
       ordering (sort metadata by key) so all endorsers emit byte-identical deltas; call `delta.Validate()`.
+      (Counter rules verified against `translator.go:359/421` on 2026-07-11. Also verified: the responder
+      template drives exactly `Write(action)` → `AddPublicParamsDependency()` → `CommitTokenRequest(raw,
+      true)`, `fsc/responder.go:277-285` — keep the §5.2 surface identical.)
 - [ ] `eip712/signer.go`: secp256k1 sign/verify (`decred/secp256k1`), 65-byte `{r,s,v}`, low-s, address
       derivation `keccak256(pubkey)[12:]`; add `decred/dcrd/dcrec/secp256k1/v4` to `go.mod` here (first use).
+      **Byte-format traps (design §8, 2026-07-11):** decred `SignCompact` returns `{v,r,s}` (recovery byte
+      FIRST) — reorder to `{r,s,v}`; sign with `compressed=false` so `v ∈ {27,28}`; address input is the
+      64-byte uncompressed pubkey WITHOUT the `0x04` prefix (strip `SerializeUncompressed()[0]`); assert
+      low-s even though dcrd is canonical, so a library change cannot reintroduce malleability.
 - [ ] Unit tests: translator determinism (shuffled metadata → identical bytes), key parity with `keys`, signer
       round-trip/recovery vectors (sign digest → recover expected address), and the **content-binding
       round-trip** — a token created as an output at `(anchor, index)` yields, when later spent as an input, a

@@ -40,6 +40,11 @@ contract TokenState {
     mapping(bytes32 => bool) private processedAnchor;
     /// @dev metadataKey => value.
     mapping(bytes32 => bytes) private transferMetadata;
+    /// @dev occupancy marker for metadata keys: Fabric's translator enforces StateMustNotExist on every
+    ///      metadata key (a reused key is a validation failure, never an overwrite), and with no MVCC the
+    ///      contract must re-check it here. A separate bool map (not value length) so empty values are
+    ///      handled correctly.
+    mapping(bytes32 => bool) private metadataExists;
 
     // --- configuration -----------------------------------------------------------------------------
 
@@ -63,6 +68,7 @@ contract TokenState {
     error InputMissingOrSpent(bytes32 ref);
     error DoubleSpend(bytes32 ref);
     error MetadataLengthMismatch();
+    error MetadataKeyOccupied(bytes32 key);
     error MalformedSetupDelta();
     error MalformedTransferDelta();
 
@@ -153,7 +159,12 @@ contract TokenState {
         }
 
         for (uint256 i = 0; i < delta.metadataKeys.length; i++) {
-            transferMetadata[delta.metadataKeys[i]] = delta.metadataVals[i];
+            bytes32 k = delta.metadataKeys[i];
+            // Metadata keys are write-once (Fabric parity: StateMustNotExist). A reused key, e.g. an
+            // htlc claim key seen twice, must fail the transaction, never overwrite.
+            if (metadataExists[k]) revert MetadataKeyOccupied(k);
+            metadataExists[k] = true;
+            transferMetadata[k] = delta.metadataVals[i];
         }
     }
 

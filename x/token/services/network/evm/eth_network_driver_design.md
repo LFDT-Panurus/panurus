@@ -254,11 +254,15 @@ no read-set, so `applyStateDelta` performs these checks itself, in this order, r
      && !snSpent[ref])` — else `InputMissingOrSpent`. Existence of the marker proves the spent token has the
      exact bytes recorded at creation, so forged content is rejected.
    - if `graphHiding`: for each `ref`, `require(!serialUsed[ref])` — else `DoubleSpend`.
-5. Apply (all-or-nothing): for each `ref` set `snSpent[ref]=true` (graph-revealing) or `serialUsed[ref]=true`
+5. Metadata keys are **write-once**: `require(!metadataExists[k])` for each — else `MetadataKeyOccupied`.
+   (Verified 2026-07-11: the Fabric translator enforces `StateMustNotExist` on every issue/transfer metadata
+   key, `translator.go:351/413` — a reused key, e.g. an htlc claim key seen twice, is a validation failure,
+   never an overwrite. With no MVCC the contract must re-check it, same as the spent/existence checks.)
+6. Apply (all-or-nothing): for each `ref` set `snSpent[ref]=true` (graph-revealing) or `serialUsed[ref]=true`
    (graph-hiding); for each output store `tokens[out.tokenID]=out.tokenData` and record `snExists[out.snMarker]=true`;
-   `transferMetadata[k]=v` for metadata; `tokenRequestHash[anchor]=delta.tokenRequestHash`;
+   `metadataExists[k]=true` + `transferMetadata[k]=v` for metadata; `tokenRequestHash[anchor]=delta.tokenRequestHash`;
    `processedAnchor[anchor]=true`.
-6. `emit StateCommitted(anchor, true, "")`.
+7. `emit StateCommitted(anchor, true, "")`.
 
 `AreTokensSpent(txid, index)` for graph-revealing resolves the token content via `getToken(ComputeTokenID(...))`,
 recomputes `OutputSNMarker(anchor, index, content)`, and returns `snSpent[marker]`.
@@ -626,8 +630,18 @@ timeout is the recipient's only failure signal and must be configured accordingl
 - **Endorser identity**: secp256k1; Ethereum address = `keccak256(pubkey)[12:]`; registered in
   EndorsementVerifier; bound to an FSC `view.Identity` (§6.1). secp256k1 signing is wired in the driver;
   integrating it into FSC's signer/identity services is real work, not assumed trivial.
+  **Address-derivation precision (byte-format traps, 2026-07-11):** the hash input is the 64-byte
+  uncompressed public key `X ‖ Y` **without** the leading `0x04` byte —
+  `SerializeUncompressed()` returns 65 bytes starting with `0x04`, so strip it before hashing; hashing all 65
+  bytes yields a wrong (but plausible-looking) address. Take bytes `[12:32]` of the keccak digest.
 - **Signer** (`evm/eip712`): produces 65-byte `{r,s,v}`, `v ∈ {27,28}`, low-s normalized; uses
   `decred/secp256k1` + `x/crypto/sha3` (no go-ethereum).
+  **Wire-format precision:** decred's `ecdsa.SignCompact` returns 65 bytes with the recovery byte FIRST
+  (`27+recid`, `+4` if compressed — always sign with `compressed=false` so v stays in `{27,28}`), i.e.
+  `{v,r,s}`; the Ethereum/contract wire format is `{r,s,v}` with v LAST, so the signer must reorder.
+  dcrd signatures are canonical (low-s) by construction, but the signer asserts low-s anyway so a library
+  change cannot silently reintroduce malleable signatures. Round-trip test: sign → on-chain-style `ecrecover`
+  recovery → expected address.
 - **Submitter / NonceManager**: per submitter address; explicit `initialized bool` (never use `nonce == 0` as
   "uninitialized"); tracks in-flight nonces; `RecoverNonce` re-syncs from `PendingNonceAt` and is wired into
   the retry path. A submitter shared across processes needs external coordination (`PendingNonceAt` does not
@@ -749,7 +763,7 @@ Typed sentinel errors with `errors.Is` classification (using `fabric-smart-clien
 | Error | Class | Recovery |
 |------|-------|----------|
 | `ErrInsufficientEndorsements`, `ErrInvalidSignature` | permanent | reject |
-| `ErrDoubleSpend`, `ErrInputMissingOrSpent`, `ErrStalePublicParams` | permanent | reject (re-derive request) |
+| `ErrDoubleSpend`, `ErrInputMissingOrSpent`, `ErrStalePublicParams`, `ErrMetadataKeyOccupied` | permanent | reject (re-derive request) |
 | `ErrNetworkUnavailable`, `ErrNonceConflict` | transient | backoff retry (nonce: re-sync then retry) |
 | `ErrTransactionReverted` | permanent | map to `Invalid` via receipt |
 | `ErrFinalityTimeout` | transient | continue polling within timeout |
