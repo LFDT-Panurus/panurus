@@ -88,6 +88,7 @@ func (c *viewTestCtx) RunView(v view.View, opts ...view.RunViewOption) (any, err
 	if c.runView != nil {
 		return c.runView(v, opts...)
 	}
+
 	return v.Call(c)
 }
 
@@ -120,6 +121,7 @@ func buildViewTestDrvTMS(
 	m.PublicParamsManagerReturns(&drivermock.PublicParamsManager{})
 	m.ValidatorReturns(&drivermock.Validator{}, nil)
 	m.CertificationServiceReturns(nil)
+
 	return m
 }
 
@@ -160,6 +162,7 @@ func buildViewTestTMS(
 			if rt, ok := v.(reflect.Type); ok && rt.String() == "*endpoint.Service" {
 				return &endpoint.Service{}, nil
 			}
+
 			return nil, errors.Errorf("buildViewTestTMS: unsupported service type %T (%v)", v, v)
 		},
 	}
@@ -183,7 +186,7 @@ func TestCall_SingleRecipient_LocalWallet_FreshPath(t *testing.T) {
 	tmsID := token.TMSID{Network: "net", Channel: "ch", Namespace: "ns"}
 
 	ow := &drivermock.OwnerWallet{}
-	ow.GetRecipientIdentityReturns(driver.Identity(aliceID), nil)
+	ow.GetRecipientIdentityReturns(aliceID, nil)
 
 	drvWs := &drivermock.WalletService{}
 	drvWs.OwnerWalletReturns(ow, nil)
@@ -311,6 +314,7 @@ func TestRequestMultisigIdentity_AllLocal(t *testing.T) {
 		case "bob-ms":
 			return bobOW, nil
 		}
+
 		return nil, errors.Errorf("wallet not found: %v", id)
 	}
 	drvWs.RegisterRecipientIdentityReturns(nil)
@@ -340,9 +344,9 @@ func TestRequestPolicyIdentity_AllLocal(t *testing.T) {
 	tmsID := token.TMSID{Network: "net", Channel: "ch", Namespace: "ns"}
 
 	aliceOW := &drivermock.OwnerWallet{}
-	aliceOW.GetRecipientIdentityReturns(driver.Identity(alice), nil)
+	aliceOW.GetRecipientIdentityReturns(alice, nil)
 	bobOW := &drivermock.OwnerWallet{}
-	bobOW.GetRecipientIdentityReturns(driver.Identity(bob), nil)
+	bobOW.GetRecipientIdentityReturns(bob, nil)
 
 	drvWs := &drivermock.WalletService{}
 	drvWs.OwnerWalletStub = func(_ context.Context, id driver.WalletLookupID) (driver.OwnerWallet, error) {
@@ -352,6 +356,7 @@ func TestRequestPolicyIdentity_AllLocal(t *testing.T) {
 		case "bob-pol2":
 			return bobOW, nil
 		}
+
 		return nil, errors.Errorf("wallet not found: %v", id)
 	}
 	drvWs.RegisterRecipientIdentityReturns(nil)
@@ -394,6 +399,7 @@ func TestRequestPolicyIdentity_OptionsPropagated(t *testing.T) {
 		case "bob-propopt":
 			return bobOW, nil
 		}
+
 		return nil, errors.Errorf("wallet not found: %v", id)
 	}
 	drvWs.RegisterRecipientIdentityReturns(nil)
@@ -441,8 +447,8 @@ func TestAggregateAndDistribute_AllLocal(t *testing.T) {
 	f := &RequestRecipientIdentityView{
 		TMSID: tmsID,
 		Recipients: Recipients{
-			{Identity: view.Identity(alice)},
-			{Identity: view.Identity(bob)},
+			{Identity: alice},
+			{Identity: bob},
 		},
 	}
 
@@ -477,8 +483,8 @@ func TestAggregateAndDistribute_RegistrationError(t *testing.T) {
 	f := &RequestRecipientIdentityView{
 		TMSID: tmsID,
 		Recipients: Recipients{
-			{Identity: view.Identity(alice)},
-			{Identity: view.Identity(bob)},
+			{Identity: alice},
+			{Identity: bob},
 		},
 	}
 
@@ -542,8 +548,8 @@ func TestAggregateAndDistribute_RemoteParticipant_SendsEnvelope(t *testing.T) {
 	f := &RequestRecipientIdentityView{
 		TMSID: tmsID,
 		Recipients: Recipients{
-			{Identity: view.Identity(alice)},
-			{Identity: view.Identity(bob)},
+			{Identity: alice},
+			{Identity: bob},
 		},
 	}
 
@@ -567,7 +573,7 @@ func TestAggregateAndDistribute_RemoteParticipant_SendsEnvelope(t *testing.T) {
 	assert.True(t, ok)
 	assert.Len(t, ids, 2)
 	assert.NotNil(t, receivedMRD.RecipientData, "bob should have received the multisig recipient data")
-	assert.Equal(t, multisigID, token.Identity(receivedMRD.RecipientData.Identity))
+	assert.Equal(t, multisigID, receivedMRD.RecipientData.Identity)
 }
 
 // ---------------------------------------------------------------------------
@@ -596,8 +602,8 @@ func TestAggregateAndDistributePolicy_AllLocal(t *testing.T) {
 		TMSID:  tmsID,
 		Policy: pol,
 		Recipients: Recipients{
-			{Identity: view.Identity(alice)},
-			{Identity: view.Identity(bob)},
+			{Identity: alice},
+			{Identity: bob},
 		},
 	}
 
@@ -633,8 +639,8 @@ func TestAggregateAndDistributePolicy_RegistrationError(t *testing.T) {
 		TMSID:  tmsID,
 		Policy: "$0 AND $1",
 		Recipients: Recipients{
-			{Identity: view.Identity(alice)},
-			{Identity: view.Identity(bob)},
+			{Identity: alice},
+			{Identity: bob},
 		},
 	}
 
@@ -661,8 +667,8 @@ func TestAggregateAndDistributePolicy_GetAuditInfoError(t *testing.T) {
 		TMSID:  tmsID,
 		Policy: "$0 OR $1",
 		Recipients: Recipients{
-			{Identity: view.Identity(alice)},
-			{Identity: view.Identity(bob)},
+			{Identity: alice},
+			{Identity: bob},
 		},
 	}
 
@@ -700,8 +706,8 @@ func TestAggregateAndDistributePolicy_RemoteParticipant_SendsEnvelope(t *testing
 		TMSID:  tmsID,
 		Policy: pol,
 		Recipients: Recipients{
-			{Identity: view.Identity(alice)},
-			{Identity: view.Identity(bob)},
+			{Identity: alice},
+			{Identity: bob},
 		},
 	}
 
@@ -766,11 +772,13 @@ func TestCallWithRecipientData_FreshPath(t *testing.T) {
 		msg := <-sess.Receive()
 		if msg == nil {
 			respErr <- errors.New("responder: nil message")
+
 			return
 		}
 		var req RecipientRequest
 		if e := jsession.UnwrapBody(msg.Payload, TypeRecipientRequest, &req); e != nil {
 			respErr <- e
+
 			return
 		}
 		// Produce a dummy signature (verifier is set to always accept).
@@ -784,11 +792,13 @@ func TestCallWithRecipientData_FreshPath(t *testing.T) {
 		env, e := jsession.WrapEnvelope(resp, TypeRecipientResponse)
 		if e != nil {
 			respErr <- e
+
 			return
 		}
 		raw, e := json.Marshal(env)
 		if e != nil {
 			respErr <- e
+
 			return
 		}
 		respErr <- sess.Send(raw)
@@ -838,6 +848,7 @@ func TestCallWithRecipientData_EchoPath(t *testing.T) {
 		msg := <-sess.Receive()
 		if msg == nil {
 			respErr <- errors.New("nil message")
+
 			return
 		}
 		resp := &RecipientResponse{
@@ -847,11 +858,13 @@ func TestCallWithRecipientData_EchoPath(t *testing.T) {
 		env, e := jsession.WrapEnvelope(resp, TypeRecipientResponse)
 		if e != nil {
 			respErr <- e
+
 			return
 		}
 		raw, e := json.Marshal(env)
 		if e != nil {
 			respErr <- e
+
 			return
 		}
 		respErr <- sess.Send(raw)
@@ -897,17 +910,20 @@ func TestCallWithRecipientData_MissingResponseData(t *testing.T) {
 		msg := <-sess.Receive()
 		if msg == nil {
 			respErr <- errors.New("nil message")
+
 			return
 		}
 		resp := &RecipientResponse{RecipientData: nil, Signature: nil}
 		env, e := jsession.WrapEnvelope(resp, TypeRecipientResponse)
 		if e != nil {
 			respErr <- e
+
 			return
 		}
 		raw, e := json.Marshal(env)
 		if e != nil {
 			respErr <- e
+
 			return
 		}
 		respErr <- sess.Send(raw)
@@ -952,6 +968,7 @@ func TestCallWithRecipientData_InvalidAttestation(t *testing.T) {
 		msg := <-sess.Receive()
 		if msg == nil {
 			respErr <- errors.New("nil message")
+
 			return
 		}
 		resp := &RecipientResponse{
@@ -961,11 +978,13 @@ func TestCallWithRecipientData_InvalidAttestation(t *testing.T) {
 		env, e := jsession.WrapEnvelope(resp, TypeRecipientResponse)
 		if e != nil {
 			respErr <- e
+
 			return
 		}
 		raw, e := json.Marshal(env)
 		if e != nil {
 			respErr <- e
+
 			return
 		}
 		respErr <- sess.Send(raw)
