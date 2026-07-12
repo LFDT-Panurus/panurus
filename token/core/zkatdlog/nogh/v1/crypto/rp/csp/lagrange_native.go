@@ -47,7 +47,7 @@ func rightChild(i int) int {
 // Optimization: Leaves are not stored in the tree array; they are accessed
 // directly from cMinusJE when needed. Only internal nodes are allocated.
 // Exclude values for leaves are written directly to the output numers array.
-func computeNumeratorsBinaryTree[T any, E math2.GnarkFr[T]](cMinusJE []E, m int) []E {
+func computeNumeratorsBinaryTree[T any, E math2.GnarkFr[T]](cMinusJE []E, m int, pooled *treeArrays[T]) []E {
 	treeSize := binaryTreeSize(m)
 	leafStart := treeSize - m
 
@@ -61,24 +61,20 @@ func computeNumeratorsBinaryTree[T any, E math2.GnarkFr[T]](cMinusJE []E, m int)
 		return cMinusJE[i-leafStart]
 	}
 
-	// Allocate tree arrays (only for internal nodes, not leaves)
-	// Internal nodes are at indices [0, leafStart)
-	tree := make([]T, leafStart)
+	// Use pooled backing arrays; build pointer slices locally (cheap).
+	tree := pooled.tree
 	treeE := make([]E, leafStart)
 	for i := range tree {
 		treeE[i] = E(&tree[i])
 	}
 
-	// Allocate output numerators array (for leaves)
-	numers := make([]T, m)
+	numers := pooled.numers
 	numersE := make([]E, m)
 	for i := range numers {
 		numersE[i] = E(&numers[i])
 	}
 
-	// Exclude array only needs space for internal nodes
-	// Leaf exclude values are written directly to numers
-	exclude := make([]T, leafStart)
+	exclude := pooled.exclude
 	excludeE := make([]E, leafStart)
 	for i := range exclude {
 		excludeE[i] = E(&exclude[i])
@@ -210,7 +206,11 @@ func getLagrangeMultipliersNative[T any, E math2.GnarkFr[T]](n uint64, c *mathli
 	// Denominators come from the cache — no O(n²) recomputation.
 	var numersE []E
 	if UseBinaryTreeNumerator {
-		numersE = computeNumeratorsBinaryTree[T, E](cMinusJE, m)
+		treeSize := binaryTreeSize(m)
+		leafStart := treeSize - m
+		pooled := getTreeArrays[T](leafStart, m)
+		numersE = computeNumeratorsBinaryTree[T, E](cMinusJE, m, pooled)
+		putTreeArrays(pooled)
 	} else {
 		numersE = computeNumeratorsOriginal[T, E](cMinusJE, m)
 	}
@@ -253,7 +253,11 @@ func getLagrangeMultipliersPartialNative[T any, E math2.GnarkFr[T]](n uint64, c 
 	// Compute numerators for all points, then extract relevant ones
 	var allNumersE []E
 	if UseBinaryTreeNumerator {
-		allNumersE = computeNumeratorsBinaryTree[T, E](cMinusJE, total)
+		treeSize := binaryTreeSize(total)
+		leafStart := treeSize - total
+		pooled := getTreeArrays[T](leafStart, total)
+		allNumersE = computeNumeratorsBinaryTree[T, E](cMinusJE, total, pooled)
+		putTreeArrays(pooled)
 	} else {
 		allNumersE = computeNumeratorsOriginal[T, E](cMinusJE, total)
 	}

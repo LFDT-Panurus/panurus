@@ -15,6 +15,27 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// blsPooled returns pooled arrays for a BLS binary-tree call and releases them
+// after the call. It is a test-only helper to avoid repeating pool bookkeeping.
+func blsNumeratorsBinaryTree(input []*bls12381fr.Element, m int) []*bls12381fr.Element {
+	treeSize := binaryTreeSize(m)
+	leafStart := treeSize - m
+	pooled := getTreeArrays[bls12381fr.Element](leafStart, m)
+	result := computeNumeratorsBinaryTree[bls12381fr.Element, *bls12381fr.Element](input, m, pooled)
+	putTreeArrays(pooled)
+	return result
+}
+
+// bn254NumeratorsBinaryTree is the BN254 counterpart of blsNumeratorsBinaryTree.
+func bn254NumeratorsBinaryTree(input []*bn254fr.Element, m int) []*bn254fr.Element {
+	treeSize := binaryTreeSize(m)
+	leafStart := treeSize - m
+	pooled := getTreeArrays[bn254fr.Element](leafStart, m)
+	result := computeNumeratorsBinaryTree[bn254fr.Element, *bn254fr.Element](input, m, pooled)
+	putTreeArrays(pooled)
+	return result
+}
+
 // buildCMinusJ builds a cMinusJE slice for a given integer c over m elements:
 // cMinusJE[j] = c - j  for j = 0..m-1.
 func buildCMinusJBLS(c int64, m int) []*bls12381fr.Element {
@@ -69,7 +90,7 @@ func TestComputeNumeratorsBinaryTreeVsOriginalBLS(t *testing.T) {
 				t.Logf("m=%d c=%d", m, c)
 				input := buildCMinusJBLS(c, m)
 
-				got := computeNumeratorsBinaryTree[bls12381fr.Element, *bls12381fr.Element](input, m)
+				got := blsNumeratorsBinaryTree(input, m)
 				want := computeNumeratorsOriginal[bls12381fr.Element, *bls12381fr.Element](input, m)
 
 				require.Len(t, got, m, "result length must equal m")
@@ -94,7 +115,7 @@ func TestComputeNumeratorsBinaryTreeVsOriginalBN254(t *testing.T) {
 				t.Logf("m=%d c=%d", m, c)
 				input := buildCMinusJBN254(c, m)
 
-				got := computeNumeratorsBinaryTree[bn254fr.Element, *bn254fr.Element](input, m)
+				got := bn254NumeratorsBinaryTree(input, m)
 				want := computeNumeratorsOriginal[bn254fr.Element, *bn254fr.Element](input, m)
 
 				require.Len(t, got, m, "result length must equal m")
@@ -117,7 +138,7 @@ func TestComputeNumeratorsBinaryTreeTwoElements(t *testing.T) {
 	// c=10, m=2
 	input := buildCMinusJBLS(10, 2)
 
-	got := computeNumeratorsBinaryTree[bls12381fr.Element, *bls12381fr.Element](input, 2)
+	got := blsNumeratorsBinaryTree(input, 2)
 	require.Len(t, got, 2)
 
 	var nine, ten bls12381fr.Element
@@ -139,7 +160,7 @@ func TestComputeNumeratorsBinaryTreeTwoElements(t *testing.T) {
 func TestComputeNumeratorsBinaryTreeThreeElements(t *testing.T) {
 	input := buildCMinusJBLS(10, 3)
 
-	got := computeNumeratorsBinaryTree[bls12381fr.Element, *bls12381fr.Element](input, 3)
+	got := blsNumeratorsBinaryTree(input, 3)
 	require.Len(t, got, 3)
 
 	expected := []int64{72, 80, 90}
@@ -161,7 +182,7 @@ func TestComputeNumeratorsBinaryTreeThreeElements(t *testing.T) {
 func TestComputeNumeratorsBinaryTreeFourElements(t *testing.T) {
 	input := buildCMinusJBLS(10, 4)
 
-	got := computeNumeratorsBinaryTree[bls12381fr.Element, *bls12381fr.Element](input, 4)
+	got := blsNumeratorsBinaryTree(input, 4)
 	require.Len(t, got, 4)
 
 	expected := []int64{504, 560, 630, 720}
@@ -178,7 +199,7 @@ func TestComputeNumeratorsBinaryTreeFourElements(t *testing.T) {
 func TestComputeNumeratorsBinaryTreeOutputLength(t *testing.T) {
 	for _, m := range []int{2, 3, 4, 5, 6, 7, 8, 15, 16, 17} {
 		input := buildCMinusJBLS(1000, m)
-		got := computeNumeratorsBinaryTree[bls12381fr.Element, *bls12381fr.Element](input, m)
+		got := blsNumeratorsBinaryTree(input, m)
 		assert.Len(t, got, m, "expected output length == m for m=%d", m)
 	}
 }
@@ -193,7 +214,7 @@ func TestComputeNumeratorsBinaryTreeAllDifferent(t *testing.T) {
 	c := int64(1000) // far from 0..4 so all values are distinct
 
 	input := buildCMinusJBLS(c, m)
-	got := computeNumeratorsBinaryTree[bls12381fr.Element, *bls12381fr.Element](input, m)
+	got := blsNumeratorsBinaryTree(input, m)
 	require.Len(t, got, m)
 
 	// Verify no two numerators are equal
@@ -220,7 +241,7 @@ func TestComputeNumeratorsBinaryTreeDoesNotMutateInput(t *testing.T) {
 		snapshot[i] = *e
 	}
 
-	_ = computeNumeratorsBinaryTree[bls12381fr.Element, *bls12381fr.Element](input, m)
+	_ = blsNumeratorsBinaryTree(input, m)
 
 	// verify input is unchanged
 	for i, e := range input {
@@ -237,7 +258,7 @@ func TestComputeNumeratorsBinaryTreeLargePerfectTree(t *testing.T) {
 
 	t.Run("BLS12381", func(t *testing.T) {
 		input := buildCMinusJBLS(c, m)
-		got := computeNumeratorsBinaryTree[bls12381fr.Element, *bls12381fr.Element](input, m)
+		got := blsNumeratorsBinaryTree(input, m)
 		want := computeNumeratorsOriginal[bls12381fr.Element, *bls12381fr.Element](input, m)
 		require.Len(t, got, m)
 		for i := range m {
@@ -247,7 +268,7 @@ func TestComputeNumeratorsBinaryTreeLargePerfectTree(t *testing.T) {
 
 	t.Run("BN254", func(t *testing.T) {
 		input := buildCMinusJBN254(c, m)
-		got := computeNumeratorsBinaryTree[bn254fr.Element, *bn254fr.Element](input, m)
+		got := bn254NumeratorsBinaryTree(input, m)
 		want := computeNumeratorsOriginal[bn254fr.Element, *bn254fr.Element](input, m)
 		require.Len(t, got, m)
 		for i := range m {
@@ -263,7 +284,7 @@ func TestComputeNumeratorsBinaryTreeLargeImperfectTree(t *testing.T) {
 	c := int64(10000)
 
 	input := buildCMinusJBLS(c, m)
-	got := computeNumeratorsBinaryTree[bls12381fr.Element, *bls12381fr.Element](input, m)
+	got := blsNumeratorsBinaryTree(input, m)
 	want := computeNumeratorsOriginal[bls12381fr.Element, *bls12381fr.Element](input, m)
 
 	require.Len(t, got, m)
