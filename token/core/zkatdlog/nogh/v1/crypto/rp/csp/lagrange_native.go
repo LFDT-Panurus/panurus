@@ -144,7 +144,6 @@ func getLagrangeMultipliersNative[T any, E math2.GnarkFr[T]](n uint64, c *mathli
 	}
 
 	numersE := computeNumeratorsBinaryTree[T, E](m, pooled)
-	putTreeArrays(pooled)
 
 	result := make([]*mathlib.Zr, m)
 	for i := range m {
@@ -152,6 +151,7 @@ func getLagrangeMultipliersNative[T any, E math2.GnarkFr[T]](n uint64, c *mathli
 		E(&prod).Mul(numersE[i], denomInvs[i])
 		result[i] = math2.NativeToZr[T, E](E(&prod), curve)
 	}
+	putTreeArrays(pooled)
 
 	return result, nil
 }
@@ -184,7 +184,6 @@ func getLagrangeMultipliersPartialNative[T any, E math2.GnarkFr[T]](n uint64, c 
 	}
 
 	allNumersE := computeNumeratorsBinaryTree[T, E](total, pooled)
-	putTreeArrays(pooled)
 
 	// Extract numerators for relevant indices
 	numers := make([]T, len(relevant))
@@ -193,6 +192,7 @@ func getLagrangeMultipliersPartialNative[T any, E math2.GnarkFr[T]](n uint64, c 
 		numersE[k] = E(&numers[k])
 		numers[k] = *allNumersE[i]
 	}
+	putTreeArrays(pooled)
 
 	result := make([]*mathlib.Zr, len(relevant))
 	for k := range relevant {
