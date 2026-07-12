@@ -63,37 +63,43 @@ var (
 	bn254TreePool = newTreeArrayPool[bn254fr.Element]()
 )
 
-// treeArrays is a view into a single contiguous slab that holds all three
-// working regions needed by computeNumeratorsBinaryTree:
+// treeArrays is a view into a single contiguous slab that holds all four
+// working regions needed by the binary-tree numerator algorithm:
 //
-//	slab = [ tree (leafStart) | numers (m) | exclude (leafStart) ]
+//	slab = [ tree (leafStart) | leaves (m) | numers (m) | exclude (leafStart) ]
+//	       |<---- internal nodes --->|<-- leaf values -->|<-- output -->|<-- top-down scratch -->|
 //
-// Using one slab instead of three separate allocations means a single pool
-// lookup, a single GC-tracked object, and contiguous memory for better cache
-// utilisation.
+// "leaves" stores the c-j values written by the caller before invoking
+// computeNumeratorsBinaryTree, avoiding a separate cMinusJ allocation.
+// One slab means one pool lookup, one GC-tracked object, and contiguous memory.
 type treeArrays[T any] struct {
 	slab    []T // backing allocation returned to pool on put
-	tree    []T // slab[0 : leafStart]
-	numers  []T // slab[leafStart : leafStart+m]
-	exclude []T // slab[leafStart+m : leafStart+m+leafStart]
+	tree    []T // slab[0 : leafStart]            — bottom-up subtree products
+	leaves  []T // slab[leafStart : leafStart+m]  — c-j input values (written by caller)
+	numers  []T // slab[leafStart+m : leafStart+2m]  — output numerators
+	exclude []T // slab[leafStart+2m : 2*leafStart+2m] — top-down exclude products
 	pool    *treeArrayPool[T]
 }
 
 // getTreeArrays retrieves a pooled slab for any supported element type T and
-// carves it into the three working regions.
+// carves it into the four working regions.
 // leafStart is the number of internal nodes; m is the number of leaves.
 func getTreeArrays[T any](leafStart, m int) *treeArrays[T] {
-	total := m + 2*leafStart
+	total := 2*m + 2*leafStart
 	pool := getTypedPool[T]()
 	slab := pool.getPool(total).Get().([]T)
 	if len(slab) != total {
 		slab = make([]T, total)
 	}
+	treeEnd := leafStart
+	leavesEnd := treeEnd + m
+	numersEnd := leavesEnd + m
 	return &treeArrays[T]{
 		slab:    slab,
-		tree:    slab[0:leafStart],
-		numers:  slab[leafStart : leafStart+m],
-		exclude: slab[leafStart+m : total],
+		tree:    slab[0:treeEnd],
+		leaves:  slab[treeEnd:leavesEnd],
+		numers:  slab[leavesEnd:numersEnd],
+		exclude: slab[numersEnd:total],
 		pool:    pool,
 	}
 }

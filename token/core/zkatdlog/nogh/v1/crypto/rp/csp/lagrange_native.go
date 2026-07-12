@@ -13,11 +13,6 @@ import (
 	bn254fr "github.com/consensys/gnark-crypto/ecc/bn254/fr"
 )
 
-// UseBinaryTreeNumerator controls which numerator computation method to use.
-// true: use binary tree optimization (new method)
-// false: use product-then-divide method (original method)
-var UseBinaryTreeNumerator = true
-
 // binaryTreeSize returns the size of a binary tree array for n leaves.
 // A binary tree with n leaves has 2n-1 total nodes.
 func binaryTreeSize(n int) int {
@@ -38,34 +33,26 @@ func rightChild(i int) int {
 // using a binary tree approach. For each leaf i, it computes the product of all
 // (c-j) for j != i.
 //
-// Algorithm:
-// 1. Build a binary tree where leaf i holds (c-i)
-// 2. Bottom-up: compute product of all leaves in each subtree
-// 3. Top-down: compute product of all leaves except those in subtree
-// 4. At leaves, we have the desired numerators
+// The caller pre-writes the c-j values into pooled.leaves before calling this
+// function. pooled.tree and pooled.leaves are contiguous in the slab, so a
+// single fullE pointer array of length treeSize covers the entire tree with no
+// leaf/internal distinction needed at read time.
 //
-// Optimization: Leaves are not stored in the tree array; they are accessed
-// directly from cMinusJE when needed. Only internal nodes are allocated.
-// Exclude values for leaves are written directly to the output numers array.
-func computeNumeratorsBinaryTree[T any, E math2.GnarkFr[T]](cMinusJE []E, m int, pooled *treeArrays[T]) []E {
+// Algorithm:
+// 1. Build fullE[0..treeSize-1]: pointers into tree (internal) then leaves.
+// 2. Bottom-up: for each internal node, multiply its two children's values.
+// 3. Top-down: propagate exclude products; write leaf results to numersE.
+func computeNumeratorsBinaryTree[T any, E math2.GnarkFr[T]](m int, pooled *treeArrays[T]) []E {
 	treeSize := binaryTreeSize(m)
 	leafStart := treeSize - m
 
-	// Helper to check if index is a leaf
-	isLeaf := func(i int) bool {
-		return i >= leafStart
-	}
-
-	// Helper to get leaf value from cMinusJE
-	getLeafValue := func(i int) E {
-		return cMinusJE[i-leafStart]
-	}
-
-	// Use pooled backing arrays; build pointer slices locally (cheap).
-	tree := pooled.tree
-	treeE := make([]E, leafStart)
-	for i := range tree {
-		treeE[i] = E(&tree[i])
+	// fullE spans the entire tree: internal nodes then leaves, all in slab order.
+	// slab = [ tree (leafStart) | leaves (m) | ... ] so slab[0:treeSize] is exactly
+	// the full node array.
+	fullSlab := pooled.slab[0:treeSize]
+	fullE := make([]E, treeSize)
+	for i := range fullE {
+		fullE[i] = E(&fullSlab[i])
 	}
 
 	numers := pooled.numers
@@ -80,99 +67,50 @@ func computeNumeratorsBinaryTree[T any, E math2.GnarkFr[T]](cMinusJE []E, m int,
 		excludeE[i] = E(&exclude[i])
 	}
 
-	// Phase 1: Bottom-up - compute subtree products
-	// Process from last internal node down to root
+	// Phase 1: Bottom-up — compute subtree products for internal nodes.
 	for i := leafStart - 1; i >= 0; i-- {
 		left := leftChild(i)
 		right := rightChild(i)
 
 		if right < treeSize {
-			// Both children exist
-			var leftVal, rightVal E
-			if isLeaf(left) {
-				leftVal = getLeafValue(left)
-			} else {
-				leftVal = treeE[left]
-			}
-			if isLeaf(right) {
-				rightVal = getLeafValue(right)
-			} else {
-				rightVal = treeE[right]
-			}
-			treeE[i].Mul(leftVal, rightVal)
+			// Both children exist: node = left × right.
+			fullE[i].Mul(fullE[left], fullE[right])
 		} else if left < treeSize {
-			// Only left child exists (can happen in non-perfect binary tree)
-			if isLeaf(left) {
-				tree[i] = *getLeafValue(left)
-			} else {
-				tree[i] = tree[left]
-			}
-		} else {
-			// This shouldn't happen in a properly constructed tree
-			treeE[i].SetOne()
+			// Only left child (imperfect tree): propagate value up.
+			fullSlab[i] = fullSlab[left]
 		}
+		// right >= treeSize && left >= treeSize cannot happen in a valid tree.
 	}
 
-	// Phase 2: Top-down - compute exclude products
-	// Root's exclude product is 1 (no leaves to exclude)
+	// Phase 2: Top-down — compute exclude products and write leaf numerators.
+	// Root's exclude is 1 (nothing excluded above it).
 	excludeE[0].SetOne()
 
-	// Process from root down to leaves
 	for i := range leafStart {
 		left := leftChild(i)
 		right := rightChild(i)
 
 		if right < treeSize {
-			// Both children exist
-			var leftVal, rightVal E
-			if isLeaf(left) {
-				leftVal = getLeafValue(left)
+			// Both children exist.
+			// Left child's exclude = parent exclude × right subtree product.
+			// Right child's exclude = parent exclude × left subtree product.
+			if left >= leafStart {
+				numersE[left-leafStart].Mul(excludeE[i], fullE[right])
 			} else {
-				leftVal = treeE[left]
+				excludeE[left].Mul(excludeE[i], fullE[right])
 			}
-			if isLeaf(right) {
-				rightVal = getLeafValue(right)
+			if right >= leafStart {
+				numersE[right-leafStart].Mul(excludeE[i], fullE[left])
 			} else {
-				rightVal = treeE[right]
-			}
-			// Left child excludes: parent's exclude × right subtree
-			if isLeaf(left) {
-				numersE[left-leafStart].Mul(excludeE[i], rightVal)
-			} else {
-				excludeE[left].Mul(excludeE[i], rightVal)
-			}
-			// Right child excludes: parent's exclude × left subtree
-			if isLeaf(right) {
-				numersE[right-leafStart].Mul(excludeE[i], leftVal)
-			} else {
-				excludeE[right].Mul(excludeE[i], leftVal)
+				excludeE[right].Mul(excludeE[i], fullE[left])
 			}
 		} else if left < treeSize {
-			// Only left child exists
-			if isLeaf(left) {
+			// Only left child: pass exclude down unchanged.
+			if left >= leafStart {
 				numers[left-leafStart] = exclude[i]
 			} else {
 				exclude[left] = exclude[i]
 			}
-		}
-	}
-
-	return numersE
-}
-
-// computeNumeratorsOriginal computes the numerators using the original method:
-// compute full product, then divide out each element.
-func computeNumeratorsOriginal[T any, E math2.GnarkFr[T]](cMinusJE []E, m int) []E {
-	numers := make([]T, m)
-	numersE := make([]E, m)
-	for i := range numers {
-		numersE[i] = E(&numers[i])
-		numersE[i].SetOne()
-		for j := range m {
-			if j == i {
-				continue
-			}
-			numersE[i].Mul(numersE[i], cMinusJE[j])
 		}
 	}
 
@@ -189,31 +127,24 @@ func computeNumeratorsOriginal[T any, E math2.GnarkFr[T]](cMinusJE []E, m int) [
 func getLagrangeMultipliersNative[T any, E math2.GnarkFr[T]](n uint64, c *mathlib.Zr, curve *mathlib.Curve, denomInvs []E) ([]*mathlib.Zr, error) {
 	m := int(n) + 1 // #nosec G115
 
-	// Convert c once.
-	cE := math2.NativeFromZr[T, E](c)
-
-	// cMinusJ[j] = c - j  for j = 0..n
-	cMinusJ := make([]T, m)
-	cMinusJE := make([]E, m)
-	for j := range m {
-		cMinusJE[j] = E(&cMinusJ[j])
-		var jE T
-		E(&jE).SetInt64(int64(j))
-		cMinusJE[j].Sub(cE, E(&jE))
-	}
-
 	// Compute numerator for each Lagrange basis polynomial L_i(c).
 	// Denominators come from the cache — no O(n²) recomputation.
-	var numersE []E
-	if UseBinaryTreeNumerator {
-		treeSize := binaryTreeSize(m)
-		leafStart := treeSize - m
-		pooled := getTreeArrays[T](leafStart, m)
-		numersE = computeNumeratorsBinaryTree[T, E](cMinusJE, m, pooled)
-		putTreeArrays(pooled)
-	} else {
-		numersE = computeNumeratorsOriginal[T, E](cMinusJE, m)
+	treeSize := binaryTreeSize(m)
+	leafStart := treeSize - m
+	pooled := getTreeArrays[T](leafStart, m)
+
+	// Write c-j directly into the leaves region of the pooled slab.
+	// fullE inside computeNumeratorsBinaryTree will address these via slab[0:treeSize].
+	cE := math2.NativeFromZr[T, E](c)
+	for j := range m {
+		lE := E(&pooled.leaves[j])
+		var jE T
+		E(&jE).SetInt64(int64(j))
+		lE.Sub(cE, E(&jE))
 	}
+
+	numersE := computeNumeratorsBinaryTree[T, E](m, pooled)
+	putTreeArrays(pooled)
 
 	result := make([]*mathlib.Zr, m)
 	for i := range m {
@@ -231,16 +162,18 @@ func getLagrangeMultipliersNative[T any, E math2.GnarkFr[T]](n uint64, c *mathli
 func getLagrangeMultipliersPartialNative[T any, E math2.GnarkFr[T]](n uint64, c *mathlib.Zr, curve *mathlib.Curve, denomInvs []E) ([]*mathlib.Zr, error) {
 	total := 2*int(n) + 1 // #nosec G115 // all evaluation points: 0..2n
 
-	cE := math2.NativeFromZr[T, E](c)
+	// Compute numerators for all points, then extract relevant ones
+	treeSize := binaryTreeSize(total)
+	leafStart := treeSize - total
+	pooled := getTreeArrays[T](leafStart, total)
 
-	// cMinusJ[j] = c - j  for j = 0..2n
-	cMinusJ := make([]T, total)
-	cMinusJE := make([]E, total)
+	// Write c-j directly into the leaves region of the pooled slab.
+	cE := math2.NativeFromZr[T, E](c)
 	for j := range total {
-		cMinusJE[j] = E(&cMinusJ[j])
+		lE := E(&pooled.leaves[j])
 		var jE T
 		E(&jE).SetInt64(int64(j))
-		cMinusJE[j].Sub(cE, E(&jE))
+		lE.Sub(cE, E(&jE))
 	}
 
 	// Relevant indices in the full point set: {0, n+1, n+2, ..., 2n}
@@ -250,17 +183,8 @@ func getLagrangeMultipliersPartialNative[T any, E math2.GnarkFr[T]](n uint64, c 
 		relevant[k] = int(n) + k // #nosec G115
 	}
 
-	// Compute numerators for all points, then extract relevant ones
-	var allNumersE []E
-	if UseBinaryTreeNumerator {
-		treeSize := binaryTreeSize(total)
-		leafStart := treeSize - total
-		pooled := getTreeArrays[T](leafStart, total)
-		allNumersE = computeNumeratorsBinaryTree[T, E](cMinusJE, total, pooled)
-		putTreeArrays(pooled)
-	} else {
-		allNumersE = computeNumeratorsOriginal[T, E](cMinusJE, total)
-	}
+	allNumersE := computeNumeratorsBinaryTree[T, E](total, pooled)
+	putTreeArrays(pooled)
 
 	// Extract numerators for relevant indices
 	numers := make([]T, len(relevant))

@@ -15,13 +15,45 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// blsPooled returns pooled arrays for a BLS binary-tree call and releases them
-// after the call. It is a test-only helper to avoid repeating pool bookkeeping.
+// naiveNumeratorsBLS computes ∏_{j≠i} input[j] for each i using a straightforward
+// O(n²) loop. Used as a reference oracle in tests.
+func naiveNumeratorsBLS(input []*bls12381fr.Element, m int) []*bls12381fr.Element {
+	out := make([]*bls12381fr.Element, m)
+	for i := range m {
+		out[i] = new(bls12381fr.Element).SetOne()
+		for j := range m {
+			if j != i {
+				out[i].Mul(out[i], input[j])
+			}
+		}
+	}
+	return out
+}
+
+// naiveNumeratorsBN254 is the BN254 counterpart of naiveNumeratorsBLS.
+func naiveNumeratorsBN254(input []*bn254fr.Element, m int) []*bn254fr.Element {
+	out := make([]*bn254fr.Element, m)
+	for i := range m {
+		out[i] = new(bn254fr.Element).SetOne()
+		for j := range m {
+			if j != i {
+				out[i].Mul(out[i], input[j])
+			}
+		}
+	}
+	return out
+}
+
+// blsNumeratorsBinaryTree writes input into the pooled leaves, runs the binary
+// tree algorithm, and returns the numerators. Test-only helper.
 func blsNumeratorsBinaryTree(input []*bls12381fr.Element, m int) []*bls12381fr.Element {
 	treeSize := binaryTreeSize(m)
 	leafStart := treeSize - m
 	pooled := getTreeArrays[bls12381fr.Element](leafStart, m)
-	result := computeNumeratorsBinaryTree[bls12381fr.Element, *bls12381fr.Element](input, m, pooled)
+	for j := range m {
+		pooled.leaves[j] = *input[j]
+	}
+	result := computeNumeratorsBinaryTree[bls12381fr.Element, *bls12381fr.Element](m, pooled)
 	putTreeArrays(pooled)
 	return result
 }
@@ -31,7 +63,10 @@ func bn254NumeratorsBinaryTree(input []*bn254fr.Element, m int) []*bn254fr.Eleme
 	treeSize := binaryTreeSize(m)
 	leafStart := treeSize - m
 	pooled := getTreeArrays[bn254fr.Element](leafStart, m)
-	result := computeNumeratorsBinaryTree[bn254fr.Element, *bn254fr.Element](input, m, pooled)
+	for j := range m {
+		pooled.leaves[j] = *input[j]
+	}
+	result := computeNumeratorsBinaryTree[bn254fr.Element, *bn254fr.Element](m, pooled)
 	putTreeArrays(pooled)
 	return result
 }
@@ -67,7 +102,7 @@ func equalsBLS(a, b *bls12381fr.Element) bool { return a.Equal(b) }
 func equalsBN254(a, b *bn254fr.Element) bool { return a.Equal(b) }
 
 // TestComputeNumeratorsBinaryTreeVsOriginalBLS verifies that the binary-tree
-// implementation produces the same numerators as the original O(n²) method for
+// implementation produces the same numerators as a naive O(n²) reference for
 // the BLS12-381 field, across a range of m values that exercise different tree
 // shapes (perfect and imperfect binary trees).
 //
@@ -77,7 +112,7 @@ func equalsBN254(a, b *bn254fr.Element) bool { return a.Equal(b) }
 //
 // Given cMinusJE[j] = c-j for various (c, m) pairs,
 // When computeNumeratorsBinaryTree is called,
-// Then each numers[i] must equal ∏_{j≠i} cMinusJE[j], matching computeNumeratorsOriginal.
+// Then each numers[i] must equal ∏_{j≠i} cMinusJE[j].
 func TestComputeNumeratorsBinaryTreeVsOriginalBLS(t *testing.T) {
 	// m values: 2 (root-is-parent-of-two-leaves), 3 (first non-power-of-2),
 	// 4 (perfect), 5 and 7 (imperfect), 8 (perfect), 13 (imperfect).
@@ -91,7 +126,7 @@ func TestComputeNumeratorsBinaryTreeVsOriginalBLS(t *testing.T) {
 				input := buildCMinusJBLS(c, m)
 
 				got := blsNumeratorsBinaryTree(input, m)
-				want := computeNumeratorsOriginal[bls12381fr.Element, *bls12381fr.Element](input, m)
+					want := naiveNumeratorsBLS(input, m)
 
 				require.Len(t, got, m, "result length must equal m")
 				for i := range m {
@@ -103,8 +138,8 @@ func TestComputeNumeratorsBinaryTreeVsOriginalBLS(t *testing.T) {
 	}
 }
 
-// TestComputeNumeratorsBinaryTreeVsOriginalBN254 is the BN254 counterpart of
-// TestComputeNumeratorsBinaryTreeVsOriginalBLS.
+// TestComputeNumeratorsBinaryTreeVsOriginalBN254 verifies the binary-tree
+// implementation against the naive reference for BN254.
 func TestComputeNumeratorsBinaryTreeVsOriginalBN254(t *testing.T) {
 	mValues := []int{2, 3, 4, 5, 7, 8, 13}
 	cValues := []int64{100, 7, 42}
@@ -116,7 +151,7 @@ func TestComputeNumeratorsBinaryTreeVsOriginalBN254(t *testing.T) {
 				input := buildCMinusJBN254(c, m)
 
 				got := bn254NumeratorsBinaryTree(input, m)
-				want := computeNumeratorsOriginal[bn254fr.Element, *bn254fr.Element](input, m)
+					want := naiveNumeratorsBN254(input, m)
 
 				require.Len(t, got, m, "result length must equal m")
 				for i := range m {
@@ -259,7 +294,7 @@ func TestComputeNumeratorsBinaryTreeLargePerfectTree(t *testing.T) {
 	t.Run("BLS12381", func(t *testing.T) {
 		input := buildCMinusJBLS(c, m)
 		got := blsNumeratorsBinaryTree(input, m)
-		want := computeNumeratorsOriginal[bls12381fr.Element, *bls12381fr.Element](input, m)
+		want := naiveNumeratorsBLS(input, m)
 		require.Len(t, got, m)
 		for i := range m {
 			assert.True(t, equalsBLS(got[i], want[i]), "m=%d i=%d: mismatch", m, i)
@@ -269,7 +304,7 @@ func TestComputeNumeratorsBinaryTreeLargePerfectTree(t *testing.T) {
 	t.Run("BN254", func(t *testing.T) {
 		input := buildCMinusJBN254(c, m)
 		got := bn254NumeratorsBinaryTree(input, m)
-		want := computeNumeratorsOriginal[bn254fr.Element, *bn254fr.Element](input, m)
+		want := naiveNumeratorsBN254(input, m)
 		require.Len(t, got, m)
 		for i := range m {
 			assert.True(t, equalsBN254(got[i], want[i]), "m=%d i=%d: mismatch", m, i)
@@ -285,7 +320,7 @@ func TestComputeNumeratorsBinaryTreeLargeImperfectTree(t *testing.T) {
 
 	input := buildCMinusJBLS(c, m)
 	got := blsNumeratorsBinaryTree(input, m)
-	want := computeNumeratorsOriginal[bls12381fr.Element, *bls12381fr.Element](input, m)
+	want := naiveNumeratorsBLS(input, m)
 
 	require.Len(t, got, m)
 	for i := range m {
