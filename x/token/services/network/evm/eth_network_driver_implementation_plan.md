@@ -310,9 +310,17 @@ Gate: 2-of-N endorsement (mocked FSC sessions) assembles a tx whose sigs verify 
       decodable by `keys.AnchorFromTxID` (round-trip test); `NonceManager` (init flag+recovery); `ledger.go`,
       `envelope.go`. `AreTokensSpent` (graph-revealing) resolves through the **content-bound marker** per the
       Week-2 query-surface decision (§5.3), not `isSpent(ComputeTokenID)` — see the Week-2 note.
+      **`ComputeTxID` is MUTATING (verified vs FSC 2026-07-11, see design §5.3):** when `id.Nonce` is empty it
+      must generate a fresh random nonce (FSC uses 24 bytes) and write it back into `id` before hashing —
+      that is the contract the fabric driver and FSC implement and the ttx layer depends on. Tests: two calls
+      with an empty-nonce `id` produce different anchors; the generated nonce is written back; a caller-set
+      nonce is respected and round-trips.
 - [ ] `finality/manager.go` **baseline**: receipt polling at `finalized`; reuse `OnlyOnceListener` + event
       queue; `StateCommitted` indexed-log resolution (recipient-side); wire `AddFinalityListener`/
-      `GetTransactionStatus` + `getTokenRequestHash`.
+      `GetTransactionStatus` + `getTokenRequestHash`. **Status mapping (verified vs `driver/vault.go`
+      2026-07-11):** return the SDK's `driver.ValidationCode` values — `Valid=1`, `Invalid=2`, `Busy=3`,
+      `Unknown=4` (0 is not a code). Receipt status 1 → `Valid`; receipt status 0 → `Invalid`; tx known but
+      unmined → `Busy`; anchor/tx never seen → `Unknown` (then `Invalid` after the configured timeout).
 - [ ] `driver.go` `NewDriver(...)` finalized DI (model `fabric/driver.go:119`); SDK module provides EVM services.
 
 Gate: with the real client against anvil, issue→transfer round-trips RequestApproval→Broadcast→finality; the
@@ -333,6 +341,10 @@ container resolves the real driver.
 - [ ] **Admin deployment runbook** (Angelo, Wk6 deliverable): enumerated bootstrap steps — deploy verifier +
       TokenState clone, seed PP v0, register endorser set + threshold + `graphHiding`. This doc becomes the
       spec the forge/NWO deploy scripts automate.
+- [ ] **Deploy hardening (2026-07-11 review, design §3.8):** close the clone→`initialize` front-running
+      window — add a small factory contract that clones and initializes the TokenState in ONE transaction;
+      until it lands, `Deploy.s.sol` must read back and assert the post-initialize state (verifier address,
+      PP hash, `graphHiding`) before recording the clone address.
 - [ ] `Makefile` target `integration-tests-evm`.
 - [ ] `integration/token/evm/evm_test.go` (Ginkgo) — **fabtoken on Besu**, reusing the existing fungible
       `dlog` test bodies retargeted at the EVM topology: issue, transfer, double-spend reject, sub-threshold

@@ -317,8 +317,17 @@ function computeTokenID(bytes32 anchor, uint256 index) internal pure returns (by
 
 Per-TMS full-bytecode deployment is costly. Decision (§15.4): deploy one shared `TokenState` implementation +
 one `EndorsementVerifier`, then create a per-TMS `TokenState` via **EIP-1167 minimal proxy (clone)** with an
-`initialize(verifier, deployer, pp0, endorsers, threshold)` initializer. Minimal clones are cheap and do
-**not** introduce upgradeability (which stays out of scope). NWO/forge scripts perform deployment.
+`initialize(verifier, deployer, pp0, graphHiding)` initializer. Minimal clones are cheap and do
+**not** introduce upgradeability (which stays out of scope). The shared implementation locks itself in its
+constructor so only clones can ever be initialized (PR 2b). NWO/forge scripts perform deployment.
+
+**Initializer front-running (2026-07-11 review):** clone creation and `initialize` are separate transactions
+in the current deploy script, so on a shared/public chain an attacker could initialize the clone first with
+their own verifier and endorser set (nothing binds `initialize` to the deployer). On the permissioned Besu
+target this is a low, but nonzero, risk. Production hardening (plan Week 6, deploy hardening): a small factory
+contract whose `create(...)` clones AND initializes in one transaction, making the window impossible; until
+then the deploy script must verify post-initialize state (verifier address, PP hash, graphHiding) before
+recording the clone address as the TMS contract.
 
 ### 3.9 Transaction model / batching
 
@@ -462,6 +471,14 @@ Counter handling and ordering per §4.4.
   version keeper synced; return `[]token.ServiceOption{WithNetwork, WithChannel(""), WithNamespace}`.
 - `ComputeTxID(id)` → `hex(SHA-256(lenPrefix(id.Nonce) ‖ id.Creator))` = `TokenRequestAnchor`. Length-safe
   (no raw append), independent of chainID/contract and of the eth tx hash.
+  **Mutating contract (verified against FSC 2026-07-11, critical):** callers pass `id` with an EMPTY nonce
+  and rely on the driver to fill it. FSC's `transaction.ComputeTxID` generates a random 24-byte nonce when
+  `id.Nonce` is empty and writes it back into the caller's struct, and the Fabric driver copies the
+  nonce/creator back too (`fabric/network.go:350`). The EVM driver must do the same: if `id.Nonce` is empty,
+  generate a fresh cryptographically random nonce and assign it to `id.Nonce` before hashing. A pure/read-only
+  implementation would derive the SAME anchor for every transaction of a creator, and the second transaction
+  ever submitted would revert with `AnchorAlreadyProcessed` (the driver deadlocks in production while passing
+  single-transaction demos).
 - `NewEnvelope()` → empty `*Envelope`.
 - `Broadcast(ctx, blob)` → assert `*Envelope`; `client.SendRawTransaction(rawTx)`; record eth tx hash;
   `finality.Track(anchor, ethTxHash)`.
@@ -559,6 +576,13 @@ Primary signal (Besu / any standard node): poll the **receipt** together with
 - `blockNumber` set → fetch receipt: status 1 ⇒ `Valid`, status 0 ⇒ `Invalid`.
 - tx unknown (never seen / evicted) → `dropped` (treat as `Invalid` after timeout).
 
+**Mapping to SDK status codes (verified vs `network/driver/vault.go`, 2026-07-11):** the SDK's
+`driver.ValidationCode` values are `Valid=1`, `Invalid=2`, `Busy=3`, `Unknown=4` — zero is NOT a valid code.
+`GetTransactionStatus` and the finality listeners must return: receipt status 1 → `driver.Valid`; receipt
+status 0 → `driver.Invalid`; tx known but unmined → `driver.Busy`; anchor/tx never seen → `driver.Unknown`
+(escalating to `driver.Invalid` only after the configured finality timeout). Do not conflate the EVM
+receipt-status integers (1/0) with the SDK codes.
+
 The `EVMClient.IsPending(txHash) (pending, found, err)` method already abstracts this: on Besu it is backed by
 `eth_getTransactionByHash` (`found=false` ⇒ dropped, `blockNumber==nil` ⇒ pending); on the fabric-x-evm
 stretch it is backed by the gateway, which additionally exposes the `pending → in-progress → committed |
@@ -587,6 +611,13 @@ A recipient who only saw the token request knows the `anchor`, not the eth tx ha
 on the initiator's cache: search logs for `StateCommitted(bytes32 indexed anchor, …)` on the configured
 TokenState clone → extract the eth tx hash from the log → receipt/finality → `getTokenRequestHash(anchor)`.
 `AddFinalityListener(ns, anchor, listener)` notifies immediately if already final, else once on transition.
+
+**Asymmetry (2026-07-11 review): a recipient can never observe `Invalid` from chain data alone.** A failed
+`applyStateDelta` REVERTS, so no `StateCommitted` log is ever emitted for that anchor — log scanning by anchor
+only ever discovers success. For an anchor-only listener, `Invalid` is therefore reachable exclusively via the
+finality timeout (or via the initiator sharing the eth tx hash out of band, which the design deliberately does
+not rely on). Recipient-side listeners must treat "no `StateCommitted` log by the timeout" as `Invalid`; the
+timeout is the recipient's only failure signal and must be configured accordingly (§10 `finality.timeout`).
 
 ---
 
