@@ -177,18 +177,20 @@ func getLagrangeMultipliersPartialNative[T any, E math2.GnarkFr[T]](n uint64, c 
 	}
 
 	// Relevant indices in the full point set: {0, n+1, n+2, ..., 2n}
-	relevant := make([]int, int(n)+1) // #nosec G115
-	relevant[0] = 0
-	for k := 1; k <= int(n); k++ { // #nosec G115
-		relevant[k] = int(n) + k // #nosec G115
-	}
-
+	// relevant[0]=0, relevant[k]=n+k for k>=1 — computed inline, no allocation needed.
 	allNumersE := computeNumeratorsBinaryTree[T, E](total, pooled)
 
-	result := make([]*mathlib.Zr, len(relevant))
-	for k, i := range relevant {
+	result := make([]*mathlib.Zr, int(n)+1) // #nosec G115
+
+	// k=0: relevant index is 0
+	var prod0 T
+	E(&prod0).Mul(allNumersE[0], denomInvs[0])
+	result[0] = math2.NativeToZr[T, E](E(&prod0), curve)
+
+	// k=1..n: relevant index is n+k
+	for k := 1; k <= int(n); k++ { // #nosec G115
 		var prod T
-		E(&prod).Mul(allNumersE[i], denomInvs[k])
+		E(&prod).Mul(allNumersE[int(n)+k], denomInvs[k]) // #nosec G115
 		result[k] = math2.NativeToZr[T, E](E(&prod), curve)
 	}
 	putTreeArrays(pooled)
