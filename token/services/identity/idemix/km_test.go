@@ -136,7 +136,7 @@ func testIdentityWithEidRhNymPolicy(t *testing.T, configPath string, curveID mat
 	require.NoError(t, err)
 	require.NoError(t, registry.RegisterService(kvs))
 	storage := kvs2.NewIdentityStore(kvs, token.TMSID{Network: "pineapple"})
-	identityProvider := identity.NewProvider(logging.MustGetLogger(), storage, deserializer.NewTypedSignerDeserializerMultiplex(), nil, nil)
+	identityProvider := identity.NewProvider(logging.MustGetLogger(), storage, deserializer.NewTypedSignerDeserializerMultiplex(), nil, nil, nil)
 	config, err := crypto.NewConfig(configPath)
 	require.NoError(t, err)
 	tracker := kvs2.NewTrackedMemoryFrom(kvs)

@@ -7,6 +7,7 @@ SPDX-License-Identifier: Apache-2.0
 package identity_test
 
 import (
+	"context"
 	"errors"
 	"testing"
 
@@ -25,7 +26,7 @@ func TestProvider_RegisterRecipientData(t *testing.T) {
 	nbs := &idmock.NetworkBinderService{}
 	eidu := &idmock.EnrollmentIDUnmarshaler{}
 
-	p := identity.NewProvider(logging.MustGetLogger(), storage, des, nbs, eidu)
+	p := identity.NewProvider(logging.MustGetLogger(), storage, des, nbs, eidu, nil)
 
 	data := &driver.RecipientData{
 		Identity:               driver.Identity("an_id"),
@@ -53,7 +54,7 @@ func TestProvider_RegisterSigner_And_IsMe(t *testing.T) {
 	nbs := &idmock.NetworkBinderService{}
 	eidu := &idmock.EnrollmentIDUnmarshaler{}
 
-	p := identity.NewProvider(logging.MustGetLogger(), storage, des, nbs, eidu)
+	p := identity.NewProvider(logging.MustGetLogger(), storage, des, nbs, eidu, nil)
 
 	id := driver.Identity("signer_id")
 	signer := &drvmock.Signer{}
@@ -79,7 +80,7 @@ func TestProvider_GetSigner_Deserializable(t *testing.T) {
 	nbs := &idmock.NetworkBinderService{}
 	eidu := &idmock.EnrollmentIDUnmarshaler{}
 
-	p := identity.NewProvider(logging.MustGetLogger(), storage, des, nbs, eidu)
+	p := identity.NewProvider(logging.MustGetLogger(), storage, des, nbs, eidu, nil)
 
 	id := driver.Identity("an_identity")
 	expected := &drvmock.Signer{}
@@ -102,7 +103,7 @@ func TestProvider_GetSigner_TypedIdentityFallback(t *testing.T) {
 	nbs := &idmock.NetworkBinderService{}
 	eidu := &idmock.EnrollmentIDUnmarshaler{}
 
-	p := identity.NewProvider(logging.MustGetLogger(), storage, des, nbs, eidu)
+	p := identity.NewProvider(logging.MustGetLogger(), storage, des, nbs, eidu, nil)
 
 	// create a typed identity wrapping an inner identity
 	inner := driver.Identity("inner")
@@ -131,7 +132,7 @@ func TestProvider_Bind(t *testing.T) {
 	nbs := &idmock.NetworkBinderService{}
 	eidu := &idmock.EnrollmentIDUnmarshaler{}
 
-	p := identity.NewProvider(logging.MustGetLogger(), storage, des, nbs, eidu)
+	p := identity.NewProvider(logging.MustGetLogger(), storage, des, nbs, eidu, nil)
 
 	longTerm := driver.Identity("lt")
 	e1 := driver.Identity("e1")
@@ -152,7 +153,7 @@ func TestProvider_EnrollmentIDHelpers(t *testing.T) {
 	nbs := &idmock.NetworkBinderService{}
 	eidu := &idmock.EnrollmentIDUnmarshaler{}
 
-	p := identity.NewProvider(logging.MustGetLogger(), storage, des, nbs, eidu)
+	p := identity.NewProvider(logging.MustGetLogger(), storage, des, nbs, eidu, nil)
 
 	id := driver.Identity("who")
 	audit := []byte("audit")
@@ -180,7 +181,7 @@ func TestProvider_RollbackPartialRecipientRegistration(t *testing.T) {
 	nbs := &idmock.NetworkBinderService{}
 	eidu := &idmock.EnrollmentIDUnmarshaler{}
 
-	p := identity.NewProvider(logging.MustGetLogger(), storage, des, nbs, eidu)
+	p := identity.NewProvider(logging.MustGetLogger(), storage, des, nbs, eidu, nil)
 
 	id := driver.Identity("recipient_id")
 	require.NoError(t, p.RegisterRecipientIdentity(t.Context(), id))
@@ -195,7 +196,7 @@ func TestProvider_GetAuditInfo(t *testing.T) {
 	nbs := &idmock.NetworkBinderService{}
 	eidu := &idmock.EnrollmentIDUnmarshaler{}
 
-	p := identity.NewProvider(logging.MustGetLogger(), storage, des, nbs, eidu)
+	p := identity.NewProvider(logging.MustGetLogger(), storage, des, nbs, eidu, nil)
 
 	id := driver.Identity("who")
 	audit := []byte("audit-data")
@@ -205,4 +206,96 @@ func TestProvider_GetAuditInfo(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, audit, ai)
 	require.Equal(t, 1, storage.GetAuditInfoCallCount())
+}
+
+// fakeSignerDeserializer is a minimal idriver.SignerDeserializer for router registration in
+// TestProvider_GetSigner_Metrics's "routed" case; it does not implement ProbeFreeSignerDeserializer,
+// so SignerRouter.Resolve exercises its ordinary (non-probe-free) branch.
+type fakeSignerDeserializer struct {
+	signer driver.Signer
+}
+
+func (f fakeSignerDeserializer) DeserializeSigner(_ context.Context, _ []byte) (driver.Signer, error) {
+	return f.signer, nil
+}
+
+// TestProvider_GetSigner_Metrics proves GetSigner reports SignerResolutions/GetSignerDuration
+// under the correct "outcome"/"path" label for each of the three ways a signer can be obtained:
+// a cache hit, a SignerRouter-routed hit, and the fallback deserializer.
+func TestProvider_GetSigner_Metrics(t *testing.T) {
+	t.Run("fallback", func(t *testing.T) {
+		storage := &idmock.Storage{}
+		des := &idmock.Deserializer{}
+		nbs := &idmock.NetworkBinderService{}
+		eidu := &idmock.EnrollmentIDUnmarshaler{}
+		provider := newFakeMetricsProvider()
+
+		p := identity.NewProvider(logging.MustGetLogger(), storage, des, nbs, eidu, identity.NewMetrics(provider))
+
+		expected := &drvmock.Signer{}
+		des.DeserializeSignerReturns(expected, nil)
+		storage.StoreSignerInfoReturns(nil)
+
+		s, err := p.GetSigner(t.Context(), driver.Identity("an_identity"))
+		require.NoError(t, err)
+		assert.Equal(t, expected, s)
+
+		assert.Equal(t, 1, provider.counterAddCount("identity_signer_resolutions_total", "outcome", "fallback"))
+		assert.Equal(t, 1, provider.histogramObserveCount("identity_get_signer_duration_seconds", "path", "fallback"))
+	})
+
+	t.Run("cache", func(t *testing.T) {
+		storage := &idmock.Storage{}
+		des := &idmock.Deserializer{}
+		nbs := &idmock.NetworkBinderService{}
+		eidu := &idmock.EnrollmentIDUnmarshaler{}
+		provider := newFakeMetricsProvider()
+
+		p := identity.NewProvider(logging.MustGetLogger(), storage, des, nbs, eidu, identity.NewMetrics(provider))
+
+		expected := &drvmock.Signer{}
+		des.DeserializeSignerReturns(expected, nil)
+		storage.StoreSignerInfoReturns(nil)
+
+		id := driver.Identity("an_identity")
+		_, err := p.GetSigner(t.Context(), id)
+		require.NoError(t, err)
+
+		s, err := p.GetSigner(t.Context(), id)
+		require.NoError(t, err)
+		assert.Equal(t, expected, s)
+
+		assert.Equal(t, 1, provider.counterAddCount("identity_signer_resolutions_total", "outcome", "cache"))
+		assert.Equal(t, 1, provider.histogramObserveCount("identity_get_signer_duration_seconds", "path", "cache"))
+	})
+
+	t.Run("routed", func(t *testing.T) {
+		storage := &idmock.Storage{}
+		des := &idmock.Deserializer{}
+		nbs := &idmock.NetworkBinderService{}
+		eidu := &idmock.EnrollmentIDUnmarshaler{}
+		provider := newFakeMetricsProvider()
+
+		identityMetrics := identity.NewMetrics(provider)
+		p := identity.NewProvider(logging.MustGetLogger(), storage, des, nbs, eidu, identityMetrics)
+
+		expected := &drvmock.Signer{}
+		router := identity.NewSignerRouter(identityMetrics)
+		router.Register("conf-id-1", fakeSignerDeserializer{signer: expected})
+		resolver := &idmock.ConfIDResolver{}
+		resolver.GetConfIDReturns("conf-id-1", nil)
+		router.SetConfIDResolver(resolver)
+		p.SetSignerRouter(router)
+
+		wrapped, err := identity.WrapWithType(driver.IdemixIdentityType, []byte("raw"))
+		require.NoError(t, err)
+		storage.StoreSignerInfoReturns(nil)
+
+		s, err := p.GetSigner(t.Context(), wrapped)
+		require.NoError(t, err)
+		assert.Equal(t, expected, s)
+
+		assert.Equal(t, 1, provider.counterAddCount("identity_signer_resolutions_total", "outcome", "routed"))
+		assert.Equal(t, 1, provider.histogramObserveCount("identity_get_signer_duration_seconds", "path", "routed"))
+	})
 }

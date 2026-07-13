@@ -126,6 +126,7 @@ func (d *Driver) NewTokenService(tmsID driver.TMSID, publicParams []byte) (drive
 
 	networkLocalMembership := n.LocalMembership()
 	qe := vault.QueryEngine()
+	metricsProvider := metrics.NewTMSProvider(tmsConfig.ID(), d.metricsProvider)
 	ws, err := d.newWalletService(
 		tmsConfig,
 		d.endpointService,
@@ -136,6 +137,7 @@ func (d *Driver) NewTokenService(tmsID driver.TMSID, publicParams []byte) (drive
 		networkLocalMembership.DefaultIdentity(),
 		publicParamsManager.PublicParams(),
 		false,
+		metricsProvider,
 	)
 	if err != nil {
 		return nil, errors.Wrapf(err, "failed to initiliaze wallet service for [%s:%s]", tmsID.Network, tmsID.Namespace)
@@ -161,7 +163,6 @@ func (d *Driver) NewTokenService(tmsID driver.TMSID, publicParams []byte) (drive
 		nil,
 		nil,
 	)
-	metricsProvider := metrics.NewTMSProvider(tmsConfig.ID(), d.metricsProvider)
 	service, err := v1.NewService(
 		logger,
 		ws,

@@ -35,12 +35,18 @@ type SignerRouter struct {
 	mu             sync.RWMutex
 	byConfID       map[string]idriver.SignerDeserializer
 	confIDResolver ConfIDResolver
+	metrics        *Metrics
 }
 
 // NewSignerRouter returns an empty SignerRouter. It resolves nothing until KeyManagers are
-// registered via Register and a resolver is set via SetConfIDResolver.
-func NewSignerRouter() *SignerRouter {
-	return &SignerRouter{byConfID: map[string]idriver.SignerDeserializer{}}
+// registered via Register and a resolver is set via SetConfIDResolver. m may be nil, in which
+// case the router's metrics are a noop.
+func NewSignerRouter(m *Metrics) *SignerRouter {
+	if m == nil {
+		m = NewMetrics(nil)
+	}
+
+	return &SignerRouter{byConfID: map[string]idriver.SignerDeserializer{}, metrics: m}
 }
 
 // SetConfIDResolver sets the resolver used to map an identity to its conf_id. Callers typically
@@ -58,6 +64,7 @@ func (r *SignerRouter) Register(confID string, deserializer idriver.SignerDeseri
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.byConfID[confID] = deserializer
+	r.metrics.SignerRouterRegistrations.Add(1)
 }
 
 // Resolve attempts to reconstruct a Signer for id via conf_id-based routing. ok is false, with a
@@ -67,6 +74,7 @@ func (r *SignerRouter) Register(confID string, deserializer idriver.SignerDeseri
 func (r *SignerRouter) Resolve(ctx context.Context, id driver.Identity) (driver.Signer, bool) {
 	r.mu.RLock()
 	resolver := r.confIDResolver
+	m := r.metrics
 	r.mu.RUnlock()
 	if resolver == nil {
 		return nil, false
@@ -95,6 +103,8 @@ func (r *SignerRouter) Resolve(ctx context.Context, id driver.Identity) (driver.
 	if probeFree, ok := deserializer.(idriver.ProbeFreeSignerDeserializer); ok {
 		signer, err := probeFree.DeserializeSignerNoProbe(ctx, typed.Identity)
 		if err != nil {
+			m.NoProbeErrors.Add(1)
+
 			return nil, false
 		}
 

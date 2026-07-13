@@ -73,7 +73,7 @@ func TestSignerRouter_ResolvesOnlyPinnedKeyManager(t *testing.T) {
 	const confID1 = "conf-id-1"
 	const confID2 = "conf-id-2"
 
-	router := identity.NewSignerRouter()
+	router := identity.NewSignerRouter(nil)
 	router.Register(confID1, km1)
 	router.Register(confID2, km2)
 
@@ -126,7 +126,7 @@ func TestSignerRouter_FallsBackCleanlyOnMiss(t *testing.T) {
 	km1, _, id1 := newIssuerKeyManager(t, "./idemix/testdata/bls12_381_bbs_gurvy/idemix")
 
 	t.Run("no resolver set", func(t *testing.T) {
-		router := identity.NewSignerRouter()
+		router := identity.NewSignerRouter(nil)
 		router.Register("conf-id-1", km1)
 
 		signer, ok := router.Resolve(t.Context(), id1)
@@ -135,7 +135,7 @@ func TestSignerRouter_FallsBackCleanlyOnMiss(t *testing.T) {
 	})
 
 	t.Run("conf_id miss", func(t *testing.T) {
-		router := identity.NewSignerRouter()
+		router := identity.NewSignerRouter(nil)
 		router.Register("conf-id-1", km1)
 
 		resolver := &idmock.ConfIDResolver{}
@@ -148,7 +148,7 @@ func TestSignerRouter_FallsBackCleanlyOnMiss(t *testing.T) {
 	})
 
 	t.Run("conf_id resolved but no KeyManager registered for it", func(t *testing.T) {
-		router := identity.NewSignerRouter()
+		router := identity.NewSignerRouter(nil)
 		router.Register("conf-id-1", km1)
 
 		resolver := &idmock.ConfIDResolver{}
@@ -161,7 +161,7 @@ func TestSignerRouter_FallsBackCleanlyOnMiss(t *testing.T) {
 	})
 
 	t.Run("resolver error", func(t *testing.T) {
-		router := identity.NewSignerRouter()
+		router := identity.NewSignerRouter(nil)
 		router.Register("conf-id-1", km1)
 
 		resolver := &idmock.ConfIDResolver{}
@@ -171,6 +171,51 @@ func TestSignerRouter_FallsBackCleanlyOnMiss(t *testing.T) {
 		signer, ok := router.Resolve(t.Context(), id1)
 		assert.False(t, ok)
 		assert.Nil(t, signer)
+	})
+}
+
+// erroringProbeFreeDeserializer is a SignerDeserializer/ProbeFreeSignerDeserializer whose
+// probe-free path always fails, so tests can drive SignerRouter.Resolve into its NoProbeErrors
+// branch without a real KeyManager.
+type erroringProbeFreeDeserializer struct{}
+
+func (erroringProbeFreeDeserializer) DeserializeSigner(_ context.Context, _ []byte) (driver.Signer, error) {
+	return nil, assert.AnError
+}
+
+func (erroringProbeFreeDeserializer) DeserializeSignerNoProbe(_ context.Context, _ []byte) (driver.Signer, error) {
+	return nil, assert.AnError
+}
+
+// TestSignerRouter_Metrics proves that Register reports registrations, and that a failing
+// probe-free deserialization is counted as a NoProbeError rather than silently swallowed.
+func TestSignerRouter_Metrics(t *testing.T) {
+	t.Run("Register increments SignerRouterRegistrations", func(t *testing.T) {
+		provider := newFakeMetricsProvider()
+		router := identity.NewSignerRouter(identity.NewMetrics(provider))
+
+		router.Register("conf-id-1", erroringProbeFreeDeserializer{})
+		router.Register("conf-id-2", erroringProbeFreeDeserializer{})
+
+		assert.Equal(t, 2, provider.counterAddCount("identity_signer_router_registrations_total"))
+	})
+
+	t.Run("failing probe-free deserialize increments NoProbeErrors", func(t *testing.T) {
+		provider := newFakeMetricsProvider()
+		router := identity.NewSignerRouter(identity.NewMetrics(provider))
+		router.Register("conf-id-1", erroringProbeFreeDeserializer{})
+
+		wrapped, err := identity.WrapWithType(idemix.IdentityType, []byte("raw"))
+		require.NoError(t, err)
+
+		resolver := &idmock.ConfIDResolver{}
+		resolver.GetConfIDReturns("conf-id-1", nil)
+		router.SetConfIDResolver(resolver)
+
+		signer, ok := router.Resolve(t.Context(), wrapped)
+		assert.False(t, ok)
+		assert.Nil(t, signer)
+		assert.Equal(t, 1, provider.counterAddCount("identity_signer_router_no_probe_errors_total"))
 	})
 }
 

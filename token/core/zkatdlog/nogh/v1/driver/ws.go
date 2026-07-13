@@ -55,8 +55,9 @@ func (d *BaseWalletServiceFactory) NewWalletService(
 	if err != nil {
 		return nil, errors.Wrapf(err, "failed to open keystore for tms [%s]", tmsID)
 	}
-	signerRouter := identity.NewSignerRouter()
-	identityProvider := identity.NewProvider(logger.Named("identity"), identityDB, deserializerManager, binder, NewEIDRHDeserializer())
+	identityMetrics := identity.NewMetrics(metricsProvider)
+	signerRouter := identity.NewSignerRouter(identityMetrics)
+	identityProvider := identity.NewProvider(logger.Named("identity"), identityDB, deserializerManager, binder, NewEIDRHDeserializer(), identityMetrics)
 	identityProvider.SetSignerRouter(signerRouter)
 	identityConfig, err := config.NewIdentityConfig(tmsConfig)
 	if err != nil {
