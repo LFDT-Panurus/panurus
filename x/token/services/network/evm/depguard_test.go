@@ -28,7 +28,7 @@ func TestNoGoEthereumDependency(t *testing.T) {
 	if err != nil {
 		t.Skipf("skipping: could not run 'go list -deps' (%v): %s", err, out)
 	}
-	for _, dep := range strings.Split(string(out), "\n") {
+	for dep := range strings.SplitSeq(string(out), "\n") {
 		require.NotContains(t, dep, forbiddenDependency,
 			"go-ethereum must not be linked (license blocker); found it in the build graph")
 	}
