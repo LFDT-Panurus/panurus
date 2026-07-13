@@ -27,10 +27,10 @@ func rightChild(i int) int {
 // using a binary tree approach. For each leaf i, it computes the product of all
 // (c-j) for j != i.
 //
-// The caller pre-writes the c-j values into pooled.leaves before calling this
-// function. pooled.tree and pooled.leaves are contiguous in the slab, so a
-// single fullE pointer array of length treeSize covers the entire tree with no
-// leaf/internal distinction needed at read time.
+// It first writes c-j for j in [0,m) into the leaves region of pooled.slab
+// (slab[leafStart:treeSize]). pooled.tree and pooled.leaves are contiguous in
+// the slab, so a single fullE pointer array of length treeSize covers the
+// entire tree with no leaf/internal distinction needed at read time.
 //
 // The slab layout is:
 //
@@ -43,14 +43,24 @@ func rightChild(i int) int {
 // either region with a plain index — no branch on whether a child is a leaf.
 //
 // Algorithm:
+//  0. Initialise leaves: slab[leafStart+j] = c - j, for j in [0,m).
 //  1. Build fullE[0..treeSize-1]: pointers into slab[0:treeSize] (tree+leaves).
 //  2. Build concatE[0..treeSize-1]: pointers into slab[treeSize:] (exclude+numers).
 //  3. Bottom-up: for each internal node, multiply its two children's values.
 //  4. Top-down: propagate exclude products; concatE[child] receives the result
 //     directly — if child < leafStart it lands in exclude, otherwise in numers.
-func computeNumeratorsBinaryTree[T any, E math2.GnarkFr[T]](m int, pooled *treeArrays[T]) []E {
+func computeNumeratorsBinaryTree[T any, E math2.GnarkFr[T]](m int, c *mathlib.Zr, pooled *treeArrays[T]) []E {
 	leafStart := m - 1
 	treeSize := 2*m - 1
+
+	// Initialise leaves: slab[leafStart+j] = c - j, for j in [0,m).
+	cE := math2.NativeFromZr[T, E](c)
+	for j := range m {
+		lE := E(&pooled.slab[leafStart+j])
+		var jE T
+		E(&jE).SetInt64(int64(j))
+		lE.Sub(cE, E(&jE))
+	}
 
 	// fullE: pointers into slab[0:treeSize] — the bottom-up tree (internal + leaves).
 	fullE := make([]E, treeSize)
@@ -120,19 +130,8 @@ func getLagrangeMultipliersNative[T any, E math2.GnarkFr[T]](n uint64, c *mathli
 
 	// Compute numerator for each Lagrange basis polynomial L_i(c).
 	// Denominators come from the cache — no O(n²) recomputation.
-	leafStart := m - 1
 	pooled := getTreeArrays[T](m)
-
-	// Write c-j directly into the leaves region of the pooled slab (slab[leafStart:treeSize]).
-	cE := math2.NativeFromZr[T, E](c)
-	for j := range m {
-		lE := E(&pooled.slab[leafStart+j])
-		var jE T
-		E(&jE).SetInt64(int64(j))
-		lE.Sub(cE, E(&jE))
-	}
-
-	numersE := computeNumeratorsBinaryTree[T, E](m, pooled)
+	numersE := computeNumeratorsBinaryTree[T, E](m, c, pooled)
 
 	result := make([]*mathlib.Zr, m)
 	for i := range m {
@@ -151,22 +150,11 @@ func getLagrangeMultipliersNative[T any, E math2.GnarkFr[T]](n uint64, c *mathli
 func getLagrangeMultipliersPartialNative[T any, E math2.GnarkFr[T]](n uint64, c *mathlib.Zr, curve *mathlib.Curve, denomInvs []E) ([]*mathlib.Zr, error) {
 	total := 2*int(n) + 1 // #nosec G115 // all evaluation points: 0..2n
 
-	// Compute numerators for all points, then extract relevant ones
-	leafStart := total - 1
-	pooled := getTreeArrays[T](total)
-
-	// Write c-j directly into the leaves region of the pooled slab (slab[leafStart:treeSize]).
-	cE := math2.NativeFromZr[T, E](c)
-	for j := range total {
-		lE := E(&pooled.slab[leafStart+j])
-		var jE T
-		E(&jE).SetInt64(int64(j))
-		lE.Sub(cE, E(&jE))
-	}
-
+	// Compute numerators for all points, then extract relevant ones.
 	// Relevant indices in the full point set: {0, n+1, n+2, ..., 2n}
 	// relevant[0]=0, relevant[k]=n+k for k>=1 — computed inline, no allocation needed.
-	allNumersE := computeNumeratorsBinaryTree[T, E](total, pooled)
+	pooled := getTreeArrays[T](total)
+	allNumersE := computeNumeratorsBinaryTree[T, E](total, c, pooled)
 
 	result := make([]*mathlib.Zr, int(n)+1) // #nosec G115
 
