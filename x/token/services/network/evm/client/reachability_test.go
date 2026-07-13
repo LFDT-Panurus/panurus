@@ -30,7 +30,7 @@ func TestAnvilReachability(t *testing.T) {
 	}
 
 	const port = 8547
-	cmd := exec.Command(anvilBin, "--port", fmt.Sprintf("%d", port), "--silent")
+	cmd := exec.Command(anvilBin, "--port", strconv.Itoa(port), "--silent")
 	require.NoError(t, cmd.Start())
 	t.Cleanup(func() { _ = cmd.Process.Kill() })
 
