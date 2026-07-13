@@ -31,18 +31,18 @@ func TestLagrangeNumeratorsVariousSizes(t *testing.T) {
 			cZr := curve.NewRandomZr(rand)
 
 			// Compute numerators using binary tree method
-			binaryTreeResult, ok, err := nativeLagrangeMultipliers(uint64(m-1), cZr, curve)
+			binaryTreeResult, ok, err := nativeLagrangeMultipliers(uint64(m-1), cZr, curve) // #nosec G115
 			require.NoError(t, err)
 			require.True(t, ok)
 			require.Len(t, binaryTreeResult, m)
 
 			// Compute numerators using fallback method
-			fallbackResult, err := getLagrangeMultipliers(uint64(m-1), cZr, curve)
+			fallbackResult, err := getLagrangeMultipliers(uint64(m-1), cZr, curve) // #nosec G115
 			require.NoError(t, err)
 			require.Len(t, fallbackResult, m)
 
 			// Verify they match
-			for i := 0; i < m; i++ {
+			for i := range m {
 				require.True(t, binaryTreeResult[i].Equals(fallbackResult[i]),
 					"Mismatch at index %d for m=%d", i, m)
 			}

@@ -49,11 +49,14 @@ func (p *treeArrayPool[T]) getPool(size int) *sync.Pool {
 	}
 
 	pool = &sync.Pool{
-		New: func() interface{} {
-			return make([]T, size)
+		New: func() any {
+			s := make([]T, size)
+
+			return &s
 		},
 	}
 	p.pools[size] = pool
+
 	return pool
 }
 
@@ -88,10 +91,14 @@ func getTreeArrays[T any](m int) *treeArrays[T] {
 	treeSize := 2*m - 1
 	total := 2 * treeSize
 	pool := getTypedPool[T]()
-	slab := pool.getPool(total).Get().([]T)
-	if len(slab) != total {
+	raw := pool.getPool(total).Get()
+	var slab []T
+	if sp, ok := raw.(*[]T); ok && len(*sp) == total {
+		slab = *sp
+	} else {
 		slab = make([]T, total)
 	}
+
 	return &treeArrays[T]{
 		slab: slab,
 		pool: pool,
@@ -104,7 +111,7 @@ func putTreeArrays[T any](ta *treeArrays[T]) {
 		return
 	}
 	pool := ta.pool.getPool(len(ta.slab))
-	pool.Put(ta.slab)
+	pool.Put(&ta.slab)
 }
 
 // typedPools is a registry mapping element-type name to an untyped pool wrapper.
@@ -121,6 +128,7 @@ func getTypedPool[T any]() *treeArrayPool[T] {
 	if !ok {
 		panic("csp: no treeArrayPool registered for type " + key)
 	}
+
 	return p.(*treeArrayPool[T])
 }
 

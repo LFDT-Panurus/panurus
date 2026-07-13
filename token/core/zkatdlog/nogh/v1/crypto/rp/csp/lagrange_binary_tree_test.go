@@ -27,6 +27,7 @@ func naiveNumeratorsBLS(input []*bls12381fr.Element, m int) []*bls12381fr.Elemen
 			}
 		}
 	}
+
 	return out
 }
 
@@ -41,6 +42,7 @@ func naiveNumeratorsBN254(input []*bn254fr.Element, m int) []*bn254fr.Element {
 			}
 		}
 	}
+
 	return out
 }
 
@@ -54,6 +56,7 @@ func blsNumeratorsBinaryTree(input []*bls12381fr.Element, m int) []*bls12381fr.E
 	}
 	result := computeNumeratorsBinaryTree[bls12381fr.Element, *bls12381fr.Element](m, pooled)
 	putTreeArrays(pooled)
+
 	return result
 }
 
@@ -66,6 +69,7 @@ func bn254NumeratorsBinaryTree(input []*bn254fr.Element, m int) []*bn254fr.Eleme
 	}
 	result := computeNumeratorsBinaryTree[bn254fr.Element, *bn254fr.Element](m, pooled)
 	putTreeArrays(pooled)
+
 	return result
 }
 

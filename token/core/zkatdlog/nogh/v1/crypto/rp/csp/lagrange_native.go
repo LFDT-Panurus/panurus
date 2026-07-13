@@ -13,12 +13,6 @@ import (
 	bn254fr "github.com/consensys/gnark-crypto/ecc/bn254/fr"
 )
 
-// binaryTreeSize returns the size of a binary tree array for n leaves.
-// A binary tree with n leaves has 2n-1 total nodes.
-func binaryTreeSize(n int) int {
-	return 2*n - 1
-}
-
 // leftChild returns the index of the left child of node i in the tree array.
 func leftChild(i int) int {
 	return 2*i + 1
@@ -110,6 +104,7 @@ func computeNumeratorsBinaryTree[T any, E math2.GnarkFr[T]](m int, pooled *treeA
 
 	// numers is the leaf half of concatE (concatE[leafStart:treeSize]).
 	numersE := concatE[leafStart:]
+
 	return numersE
 }
 

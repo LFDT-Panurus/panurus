@@ -21,7 +21,7 @@ func TestTreeArrayPoolBLS(t *testing.T) {
 
 	arrays := getTreeArrays[bls12381fr.Element](m)
 	require.NotNil(t, arrays)
-	require.Equal(t, 2*treeSize, len(arrays.slab))
+	require.Len(t, arrays.slab, 2*treeSize)
 
 	// Return to pool
 	putTreeArrays(arrays)
@@ -29,7 +29,7 @@ func TestTreeArrayPoolBLS(t *testing.T) {
 	// Get again - should reuse from pool
 	arrays2 := getTreeArrays[bls12381fr.Element](m)
 	require.NotNil(t, arrays2)
-	require.Equal(t, 2*treeSize, len(arrays2.slab))
+	require.Len(t, arrays2.slab, 2*treeSize)
 
 	putTreeArrays(arrays2)
 }
@@ -41,7 +41,7 @@ func TestTreeArrayPoolBN254(t *testing.T) {
 
 	arrays := getTreeArrays[bn254fr.Element](m)
 	require.NotNil(t, arrays)
-	require.Equal(t, 2*treeSize, len(arrays.slab))
+	require.Len(t, arrays.slab, 2*treeSize)
 
 	// Return to pool
 	putTreeArrays(arrays)
@@ -49,7 +49,7 @@ func TestTreeArrayPoolBN254(t *testing.T) {
 	// Get again - should reuse from pool
 	arrays2 := getTreeArrays[bn254fr.Element](m)
 	require.NotNil(t, arrays2)
-	require.Equal(t, 2*treeSize, len(arrays2.slab))
+	require.Len(t, arrays2.slab, 2*treeSize)
 
 	putTreeArrays(arrays2)
 }
@@ -64,9 +64,9 @@ func TestTreeArrayPoolConcurrent(t *testing.T) {
 
 	done := make(chan bool, goroutines)
 
-	for i := 0; i < goroutines; i++ {
+	for range goroutines {
 		go func() {
-			for j := 0; j < iterations; j++ {
+			for range iterations {
 				arrays := getTreeArrays[bls12381fr.Element](m)
 				// Simulate some work using direct slab offsets.
 				// slab[0]          → tree[0]
@@ -82,7 +82,7 @@ func TestTreeArrayPoolConcurrent(t *testing.T) {
 	}
 
 	// Wait for all goroutines
-	for i := 0; i < goroutines; i++ {
+	for range goroutines {
 		<-done
 	}
 }
@@ -94,7 +94,7 @@ func TestTreeArrayPoolDifferentSizes(t *testing.T) {
 	for _, m := range ms {
 		treeSize := 2*m - 1
 		arrays := getTreeArrays[bls12381fr.Element](m)
-		require.Equal(t, 2*treeSize, len(arrays.slab))
+		require.Len(t, arrays.slab, 2*treeSize)
 		putTreeArrays(arrays)
 	}
 }
@@ -106,7 +106,7 @@ func BenchmarkTreeArrayPoolBLS(b *testing.B) {
 
 	b.Run("with_pool", func(b *testing.B) {
 		b.ReportAllocs()
-		for i := 0; i < b.N; i++ {
+		for range b.N {
 			arrays := getTreeArrays[bls12381fr.Element](m)
 			// Simulate some work: touch tree[0] at slab[0].
 			arrays.slab[0].SetOne()
@@ -116,7 +116,7 @@ func BenchmarkTreeArrayPoolBLS(b *testing.B) {
 
 	b.Run("without_pool", func(b *testing.B) {
 		b.ReportAllocs()
-		for i := 0; i < b.N; i++ {
+		for range b.N {
 			tree := make([]bls12381fr.Element, leafStart)
 			numers := make([]bls12381fr.Element, m)
 			exclude := make([]bls12381fr.Element, leafStart)
@@ -135,7 +135,7 @@ func BenchmarkTreeArrayPoolBN254(b *testing.B) {
 
 	b.Run("with_pool", func(b *testing.B) {
 		b.ReportAllocs()
-		for i := 0; i < b.N; i++ {
+		for range b.N {
 			arrays := getTreeArrays[bn254fr.Element](m)
 			// Simulate some work: touch tree[0] at slab[0].
 			arrays.slab[0].SetOne()
@@ -145,7 +145,7 @@ func BenchmarkTreeArrayPoolBN254(b *testing.B) {
 
 	b.Run("without_pool", func(b *testing.B) {
 		b.ReportAllocs()
-		for i := 0; i < b.N; i++ {
+		for range b.N {
 			tree := make([]bn254fr.Element, leafStart)
 			numers := make([]bn254fr.Element, m)
 			exclude := make([]bn254fr.Element, leafStart)
