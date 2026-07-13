@@ -15,7 +15,6 @@ Panurus provides a collection of APIs and services that streamline development f
 # Useful Links
  
 - [`Documentation`](docs/README.md): The entry point for Panurus documentation.
-- [`Code Wiki`](https://codewiki.google/github.com/LFDT-Panurus/panurus): AI-powered documentation, architecture overviews, and interactive exploration of Panurus codebase.
 - [`Development`](docs/development/development.md): All about the development guidelines.
 - [`Contributing`](CONTRIBUTING.md): How to contribute to the project.
 - [`Fabric Samples`](https://github.com/hyperledger/fabric-samples/tree/main/token-sdk) Panurus sample application is the
