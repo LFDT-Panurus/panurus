@@ -30,7 +30,7 @@ func TestDriverNewRouting(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, n)
 	assert.Equal(t, "evm-net", n.Name())
-	assert.Equal(t, "", n.Channel())
+	assert.Empty(t, n.Channel())
 
 	// A non-EVM network must error so the provider falls through to the next driver.
 	_, err = d.New("fabric-net", "")
