@@ -86,7 +86,7 @@ func computeNumeratorsBinaryTree[T any, E math2.GnarkFr[T]](m int, c *mathlib.Zr
 			fullE[i].Mul(fullE[left], fullE[right])
 		} else if left < treeSize {
 			// Only left child (imperfect tree): propagate value up.
-			pooled.slab[i] = pooled.slab[left]
+			*fullE[i] = *fullE[left]
 		}
 		// right >= treeSize && left >= treeSize cannot happen in a valid tree.
 	}
@@ -108,7 +108,7 @@ func computeNumeratorsBinaryTree[T any, E math2.GnarkFr[T]](m int, c *mathlib.Zr
 			concatE[right].Mul(concatE[i], fullE[left])
 		} else if left < treeSize {
 			// Only left child: pass exclude down unchanged.
-			pooled.slab[treeSize+left] = pooled.slab[treeSize+i]
+			*concatE[left] = *concatE[i]
 		}
 	}
 
