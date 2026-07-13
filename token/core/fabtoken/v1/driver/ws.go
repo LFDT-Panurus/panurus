@@ -101,6 +101,7 @@ func (d BaseWalletServiceFactory) newWalletService(
 		identityProvider,
 		deserializer,
 		wallet.Convert(roles.Registries(logger, walletDB, role.NewDefaultFactory(logger, identityProvider, qe, identityConfig, deserializer, &disabled.Provider{}))),
+		identityConfig.OperationTimeout(),
 	)
 
 	return ws, nil

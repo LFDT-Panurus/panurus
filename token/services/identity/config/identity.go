@@ -7,6 +7,8 @@ SPDX-License-Identifier: Apache-2.0
 package config
 
 import (
+	"time"
+
 	"github.com/LFDT-Panurus/panurus/token/services/identity/driver"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 )
@@ -16,12 +18,18 @@ type Config interface {
 	UnmarshalKey(key string, rawVal any) error
 }
 
+// Wallets holds the wallet-related section of the token management system configuration.
 type Wallets struct {
 	DefaultCacheSize int                         `yaml:"defaultCacheSize,omitempty"`
 	Certifiers       []driver.ConfiguredIdentity `yaml:"certifiers,omitempty"`
 	Owners           []driver.ConfiguredIdentity `yaml:"owners,omitempty"`
 	Issuers          []driver.ConfiguredIdentity `yaml:"issuers,omitempty"`
 	Auditors         []driver.ConfiguredIdentity `yaml:"auditors,omitempty"`
+	// OperationTimeout is the maximum duration allowed for a single wallet
+	// service operation (registry lookup, identity provider call, etc.).
+	// A zero value disables the service-boundary timeout.
+	// Example YAML: operationTimeout: 5s
+	OperationTimeout time.Duration `yaml:"operationTimeout,omitempty"`
 }
 
 type IdentityConfig struct {
@@ -54,6 +62,12 @@ func (i *IdentityConfig) CacheSizeForOwnerID(id string) int {
 
 func (i *IdentityConfig) DefaultCacheSize() int {
 	return i.Wallets.DefaultCacheSize
+}
+
+// OperationTimeout returns the configured per-operation timeout for wallet service calls.
+// A zero value means no service-boundary timeout is applied.
+func (i *IdentityConfig) OperationTimeout() time.Duration {
+	return i.Wallets.OperationTimeout
 }
 
 func (i *IdentityConfig) TranslatePath(path string) string {

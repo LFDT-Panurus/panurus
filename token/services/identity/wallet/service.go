@@ -8,6 +8,7 @@ package wallet
 
 import (
 	"context"
+	"time"
 
 	tdriver "github.com/LFDT-Panurus/panurus/token/driver"
 	"github.com/LFDT-Panurus/panurus/token/services/identity"
@@ -46,56 +47,103 @@ type RoleRegistry interface {
 // Service exposes wallet-related helper operations used by the token management layer.
 // It delegates identity operations to the configured IdentityProvider and uses
 // registries for role-specific wallet lookups and registrations.
+//
+// Every dispatching method enforces a per-operation timeout by wrapping the
+// caller-supplied context with context.WithTimeout(ctx, OperationTimeout) before
+// the call is forwarded to the registry or identity provider.  A zero
+// OperationTimeout disables the extra wrapping and the caller's deadline is used
+// as-is.
 type Service struct {
 	Logger           logging.Logger
 	IdentityProvider tdriver.IdentityProvider
 	Deserializer     tdriver.Deserializer
 	RoleRegistries   RoleRegistries
+	// OperationTimeout is the maximum duration allowed for a single wallet
+	// operation (registry lookup, identity provider call, etc.).  When
+	// positive, every dispatching method wraps the caller context with an
+	// additional context.WithTimeout before forwarding the call.  A zero or
+	// negative value disables the extra timeout – the caller's deadline alone
+	// governs cancellation.
+	OperationTimeout time.Duration
 }
 
 // NewService creates a new wallet Service.
+// operationTimeout sets the per-operation deadline enforced at the service
+// boundary.  Pass 0 to rely solely on the caller-supplied context deadline.
 func NewService(
 	logger logging.Logger,
 	identityProvider tdriver.IdentityProvider,
 	deserializer tdriver.Deserializer,
 	roleRegistries RoleRegistries,
+	operationTimeout time.Duration,
 ) *Service {
 	return &Service{
 		Logger:           logger,
 		IdentityProvider: identityProvider,
 		Deserializer:     deserializer,
 		RoleRegistries:   roleRegistries,
+		OperationTimeout: operationTimeout,
 	}
+}
+
+// withDeadline wraps ctx with a per-operation timeout when OperationTimeout > 0.
+// The returned CancelFunc must always be called (defer it).  When OperationTimeout
+// is zero the original ctx and a no-op cancel are returned so callers need not
+// branch.
+func (s *Service) withDeadline(ctx context.Context) (context.Context, context.CancelFunc) {
+	if s.OperationTimeout > 0 {
+		return context.WithTimeout(ctx, s.OperationTimeout)
+	}
+
+	return ctx, func() {}
 }
 
 // RegisterOwnerIdentity registers a long-term owner identity using the owner registry.
 func (s *Service) RegisterOwnerIdentity(ctx context.Context, config tdriver.IdentityConfiguration) error {
-	return s.RoleRegistries[idriver.OwnerRole].RegisterIdentity(ctx, config)
+	dctx, cancel := s.withDeadline(ctx)
+	defer cancel()
+
+	return s.RoleRegistries[idriver.OwnerRole].RegisterIdentity(dctx, config)
 }
 
 // RegisterIssuerIdentity registers a long-term issuer identity using the issuer registry.
 func (s *Service) RegisterIssuerIdentity(ctx context.Context, config tdriver.IdentityConfiguration) error {
-	return s.RoleRegistries[idriver.IssuerRole].RegisterIdentity(ctx, config)
+	dctx, cancel := s.withDeadline(ctx)
+	defer cancel()
+
+	return s.RoleRegistries[idriver.IssuerRole].RegisterIdentity(dctx, config)
 }
 
 // GetAuditInfo retrieves audit information for the given identity using the configured IdentityProvider.
 func (s *Service) GetAuditInfo(ctx context.Context, id tdriver.Identity) ([]byte, error) {
-	return s.IdentityProvider.GetAuditInfo(ctx, id)
+	dctx, cancel := s.withDeadline(ctx)
+	defer cancel()
+
+	return s.IdentityProvider.GetAuditInfo(dctx, id)
 }
 
 // GetEnrollmentID extracts the enrollment id from the passed audit information using the IdentityProvider.
 func (s *Service) GetEnrollmentID(ctx context.Context, identity tdriver.Identity, auditInfo []byte) (string, error) {
-	return s.IdentityProvider.GetEnrollmentID(ctx, identity, auditInfo)
+	dctx, cancel := s.withDeadline(ctx)
+	defer cancel()
+
+	return s.IdentityProvider.GetEnrollmentID(dctx, identity, auditInfo)
 }
 
 // GetRevocationHandle extracts the revocation handle from the passed audit information using the IdentityProvider.
 func (s *Service) GetRevocationHandle(ctx context.Context, identity tdriver.Identity, auditInfo []byte) (string, error) {
-	return s.IdentityProvider.GetRevocationHandler(ctx, identity, auditInfo)
+	dctx, cancel := s.withDeadline(ctx)
+	defer cancel()
+
+	return s.IdentityProvider.GetRevocationHandler(dctx, identity, auditInfo)
 }
 
 // GetEIDAndRH returns both enrollment ID and revocation handle from audit info via the IdentityProvider.
 func (s *Service) GetEIDAndRH(ctx context.Context, identity tdriver.Identity, auditInfo []byte) (string, string, error) {
-	return s.IdentityProvider.GetEIDAndRH(ctx, identity, auditInfo)
+	dctx, cancel := s.withDeadline(ctx)
+	defer cancel()
+
+	return s.IdentityProvider.GetEIDAndRH(dctx, identity, auditInfo)
 }
 
 // RegisterRecipientIdentity registers the passed identity as a third-party recipient identity.
@@ -107,24 +155,31 @@ func (s *Service) GetEIDAndRH(ctx context.Context, identity tdriver.Identity, au
 //
 // If RegisterRecipientData fails after RegisterRecipientIdentity succeeds, the IdentityProvider
 // may implement identity.RecipientRegistrationRollback so partial registration can be undone.
+//
+// The entire multi-step registration runs under a single service-boundary deadline derived from
+// the caller's context and OperationTimeout, so that a slow database write or crypto operation
+// cannot hold a lock beyond the configured limit.
 func (s *Service) RegisterRecipientIdentity(ctx context.Context, data *tdriver.RecipientData) error {
 	if data == nil {
 		return errors.Wrapf(ErrNilRecipientData, "invalid recipient data")
 	}
 
-	s.Logger.DebugfContext(ctx, "register recipient identity [%s] with audit info [%s]", data.Identity, utils.Hashable(data.AuditInfo))
+	dctx, cancel := s.withDeadline(ctx)
+	defer cancel()
 
-	if err := s.Deserializer.MatchIdentity(ctx, data.Identity, data.AuditInfo); err != nil {
+	s.Logger.DebugfContext(dctx, "register recipient identity [%s] with audit info [%s]", data.Identity, utils.Hashable(data.AuditInfo))
+
+	if err := s.Deserializer.MatchIdentity(dctx, data.Identity, data.AuditInfo); err != nil {
 		return errors.Wrapf(err, "failed to match identity to audit information for [%s]:[%s]", data.Identity, utils.Hashable(data.AuditInfo))
 	}
 
-	if err := s.IdentityProvider.RegisterRecipientIdentity(ctx, data.Identity); err != nil {
+	if err := s.IdentityProvider.RegisterRecipientIdentity(dctx, data.Identity); err != nil {
 		return errors.Wrapf(err, "failed to register recipient identity")
 	}
 
-	if err := s.IdentityProvider.RegisterRecipientData(ctx, data); err != nil {
+	if err := s.IdentityProvider.RegisterRecipientData(dctx, data); err != nil {
 		if rb, ok := s.IdentityProvider.(identity.RecipientRegistrationRollback); ok {
-			rb.RollbackPartialRecipientRegistration(ctx, data.Identity)
+			rb.RollbackPartialRecipientRegistration(dctx, data.Identity)
 		}
 
 		return errors.Wrapf(err, "failed registering audit info for owner [%s]", data.Identity)
@@ -135,6 +190,7 @@ func (s *Service) RegisterRecipientIdentity(ctx context.Context, data *tdriver.R
 
 // Wallet returns a wallet bound to the passed identity. It tries to resolve an owner wallet first
 // and then an issuer wallet. It returns nil if no wallet is found.
+// Each sub-call (OwnerWallet, IssuerWallet) applies its own service-boundary deadline.
 func (s *Service) Wallet(ctx context.Context, identity tdriver.Identity) tdriver.Wallet {
 	w, _ := s.OwnerWallet(ctx, identity)
 	if w != nil {
@@ -150,12 +206,18 @@ func (s *Service) Wallet(ctx context.Context, identity tdriver.Identity) tdriver
 
 // OwnerWalletIDs returns the list of owner wallet identifiers from the owner registry.
 func (s *Service) OwnerWalletIDs(ctx context.Context) ([]string, error) {
-	return s.RoleRegistries[idriver.OwnerRole].WalletIDs(ctx)
+	dctx, cancel := s.withDeadline(ctx)
+	defer cancel()
+
+	return s.RoleRegistries[idriver.OwnerRole].WalletIDs(dctx)
 }
 
 // OwnerWallet returns the OwnerWallet instance bound to the passed lookup id.
 func (s *Service) OwnerWallet(ctx context.Context, id tdriver.WalletLookupID) (tdriver.OwnerWallet, error) {
-	w, err := s.RoleRegistries[idriver.OwnerRole].WalletByID(ctx, idriver.OwnerRole, id)
+	dctx, cancel := s.withDeadline(ctx)
+	defer cancel()
+
+	w, err := s.RoleRegistries[idriver.OwnerRole].WalletByID(dctx, idriver.OwnerRole, id)
 	if err != nil {
 		return nil, err
 	}
@@ -165,7 +227,10 @@ func (s *Service) OwnerWallet(ctx context.Context, id tdriver.WalletLookupID) (t
 
 // IssuerWallet returns the IssuerWallet instance bound to the passed lookup id.
 func (s *Service) IssuerWallet(ctx context.Context, id tdriver.WalletLookupID) (tdriver.IssuerWallet, error) {
-	w, err := s.RoleRegistries[idriver.IssuerRole].WalletByID(ctx, idriver.IssuerRole, id)
+	dctx, cancel := s.withDeadline(ctx)
+	defer cancel()
+
+	w, err := s.RoleRegistries[idriver.IssuerRole].WalletByID(dctx, idriver.IssuerRole, id)
 	if err != nil {
 		return nil, err
 	}
@@ -175,7 +240,10 @@ func (s *Service) IssuerWallet(ctx context.Context, id tdriver.WalletLookupID) (
 
 // AuditorWallet returns the AuditorWallet instance bound to the passed lookup id.
 func (s *Service) AuditorWallet(ctx context.Context, id tdriver.WalletLookupID) (tdriver.AuditorWallet, error) {
-	w, err := s.RoleRegistries[idriver.AuditorRole].WalletByID(ctx, idriver.AuditorRole, id)
+	dctx, cancel := s.withDeadline(ctx)
+	defer cancel()
+
+	w, err := s.RoleRegistries[idriver.AuditorRole].WalletByID(dctx, idriver.AuditorRole, id)
 	if err != nil {
 		return nil, err
 	}
@@ -185,7 +253,10 @@ func (s *Service) AuditorWallet(ctx context.Context, id tdriver.WalletLookupID) 
 
 // CertifierWallet returns the CertifierWallet instance bound to the passed lookup id.
 func (s *Service) CertifierWallet(ctx context.Context, id tdriver.WalletLookupID) (tdriver.CertifierWallet, error) {
-	w, err := s.RoleRegistries[idriver.CertifierRole].WalletByID(ctx, idriver.CertifierRole, id)
+	dctx, cancel := s.withDeadline(ctx)
+	defer cancel()
+
+	w, err := s.RoleRegistries[idriver.CertifierRole].WalletByID(dctx, idriver.CertifierRole, id)
 	if err != nil {
 		return nil, err
 	}

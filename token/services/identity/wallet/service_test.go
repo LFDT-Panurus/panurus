@@ -26,7 +26,7 @@ func TestNewServiceFields(t *testing.T) {
 	d := &dmock.Deserializer{}
 	r := wallet.RoleRegistries{}
 	logger := &logging.MockLogger{}
-	s := wallet.NewService(logger, ip, d, r)
+	s := wallet.NewService(logger, ip, d, r, 0)
 	require.NotNil(t, s)
 	require.Equal(t, ip, s.IdentityProvider)
 	require.Equal(t, d, s.Deserializer)
@@ -42,14 +42,14 @@ func TestRegisterIdentityDelegation(t *testing.T) {
 
 		return nil
 	})
-	s := wallet.NewService(&logging.MockLogger{}, &dmock.IdentityProvider{}, &dmock.Deserializer{}, map[idriver.IdentityRoleType]wallet.RoleRegistry{idriver.OwnerRole: reg, idriver.IssuerRole: reg})
+	s := wallet.NewService(&logging.MockLogger{}, &dmock.IdentityProvider{}, &dmock.Deserializer{}, map[idriver.IdentityRoleType]wallet.RoleRegistry{idriver.OwnerRole: reg, idriver.IssuerRole: reg}, 0)
 	require.NoError(t, s.RegisterOwnerIdentity(ctx, driver.IdentityConfiguration{}))
 	require.True(t, called)
 
 	// test error propagation
 	errReg := &wmock.RoleRegistry{}
 	errReg.RegisterIdentityReturns(errors.New("boom"))
-	s2 := wallet.NewService(&logging.MockLogger{}, &dmock.IdentityProvider{}, &dmock.Deserializer{}, map[idriver.IdentityRoleType]wallet.RoleRegistry{idriver.OwnerRole: errReg})
+	s2 := wallet.NewService(&logging.MockLogger{}, &dmock.IdentityProvider{}, &dmock.Deserializer{}, map[idriver.IdentityRoleType]wallet.RoleRegistry{idriver.OwnerRole: errReg}, 0)
 	reqErr := s2.RegisterOwnerIdentity(ctx, driver.IdentityConfiguration{})
 	require.Error(t, reqErr)
 }
@@ -62,7 +62,7 @@ func TestGettersForwarding(t *testing.T) {
 	ip.GetRevocationHandlerReturnsOnCall(0, "rh", nil)
 	ip.GetEIDAndRHReturnsOnCall(0, "eid2", "rh2", nil)
 
-	s := wallet.NewService(&logging.MockLogger{}, ip, &dmock.Deserializer{}, nil)
+	s := wallet.NewService(&logging.MockLogger{}, ip, &dmock.Deserializer{}, nil, 0)
 	a, err := s.GetAuditInfo(ctx, driver.Identity("id"))
 	require.NoError(t, err)
 	require.Equal(t, []byte("ai"), a)
@@ -82,7 +82,7 @@ func TestRegisterRecipientIdentityFailuresAndSuccess(t *testing.T) {
 	ctx := t.Context()
 	ip := &dmock.IdentityProvider{}
 	d := &dmock.Deserializer{}
-	regSvc := wallet.NewService(&logging.MockLogger{}, ip, d, nil)
+	regSvc := wallet.NewService(&logging.MockLogger{}, ip, d, nil, 0)
 
 	// nil data
 	err := regSvc.RegisterRecipientIdentity(ctx, nil)
@@ -131,7 +131,7 @@ func TestRegisterRecipientIdentity_MatchIdentityFailureSkipsIdentityProvider(t *
 	ip := &dmock.IdentityProvider{}
 	d := &dmock.Deserializer{}
 	d.MatchIdentityReturns(errors.New("mismatch"))
-	regSvc := wallet.NewService(&logging.MockLogger{}, ip, d, nil)
+	regSvc := wallet.NewService(&logging.MockLogger{}, ip, d, nil, 0)
 
 	err := regSvc.RegisterRecipientIdentity(ctx, &driver.RecipientData{Identity: driver.Identity("id"), AuditInfo: []byte("ai")})
 	require.Error(t, err)
@@ -146,7 +146,7 @@ func TestRegisterRecipientIdentity_RollbackWhenRegisterRecipientDataFails(t *tes
 	base.RegisterRecipientDataReturns(errors.New("rrd"))
 	ip := &ipWithRollback{IdentityProvider: base}
 	d := &dmock.Deserializer{}
-	regSvc := wallet.NewService(&logging.MockLogger{}, ip, d, nil)
+	regSvc := wallet.NewService(&logging.MockLogger{}, ip, d, nil, 0)
 
 	err := regSvc.RegisterRecipientIdentity(ctx, &driver.RecipientData{Identity: driver.Identity("id"), AuditInfo: []byte("ai")})
 	require.Error(t, err)
@@ -169,6 +169,7 @@ func TestWalletAndLookupFunctions(t *testing.T) {
 			idriver.AuditorRole:   auditorReg,
 			idriver.CertifierRole: certifierReg,
 		},
+		0,
 	)
 
 	// OwnerWalletIDs
@@ -213,7 +214,7 @@ func TestWalletAndLookupFunctions(t *testing.T) {
 }
 
 func TestSpendIDsAndConvert(t *testing.T) {
-	s := wallet.NewService(&logging.MockLogger{}, &dmock.IdentityProvider{}, &dmock.Deserializer{}, nil)
+	s := wallet.NewService(&logging.MockLogger{}, &dmock.IdentityProvider{}, &dmock.Deserializer{}, nil, 0)
 	// SpendIDs empty
 	res, err := s.SpendIDs()
 	require.NoError(t, err)
@@ -233,4 +234,55 @@ func TestSpendIDsAndConvert(t *testing.T) {
 	require.True(t, ok)
 	// ensure input not mutated
 	require.NotNil(t, in)
+}
+
+// TestOperationTimeout_CancelledContext verifies that an already-cancelled
+// caller context is propagated as an error through the service boundary.
+func TestOperationTimeout_CancelledContext(t *testing.T) {
+	// Build a context that is already cancelled.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	// The registry mock blocks indefinitely, but the cancelled context should
+	// unblock the call via the deadline wrapper.
+	reg := &wmock.RoleRegistry{}
+	reg.WalletByIDCalls(func(ctx context.Context, _ idriver.IdentityRoleType, _ driver.WalletLookupID) (driver.Wallet, error) {
+		<-ctx.Done() // unblocked when ctx is cancelled / timed out
+		return nil, ctx.Err()
+	})
+
+	svc := wallet.NewService(
+		&logging.MockLogger{},
+		&dmock.IdentityProvider{},
+		&dmock.Deserializer{},
+		map[idriver.IdentityRoleType]wallet.RoleRegistry{idriver.OwnerRole: reg},
+		0, // no extra timeout; rely on the already-cancelled ctx
+	)
+
+	_, err := svc.OwnerWallet(ctx, driver.Identity("id"))
+	require.Error(t, err)
+}
+
+// TestOperationTimeout_EnforcedDeadline verifies that when OperationTimeout is
+// set the service cancels a slow operation that exceeds the deadline, even when
+// the caller's context has no deadline of its own.
+func TestOperationTimeout_EnforcedDeadline(t *testing.T) {
+	// The registry call will block until its context is cancelled.
+	reg := &wmock.RoleRegistry{}
+	reg.WalletByIDCalls(func(ctx context.Context, _ idriver.IdentityRoleType, _ driver.WalletLookupID) (driver.Wallet, error) {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	})
+
+	svc := wallet.NewService(
+		&logging.MockLogger{},
+		&dmock.IdentityProvider{},
+		&dmock.Deserializer{},
+		map[idriver.IdentityRoleType]wallet.RoleRegistry{idriver.OwnerRole: reg},
+		1, // 1 nanosecond — expires immediately
+	)
+
+	_, err := svc.OwnerWallet(context.Background(), driver.Identity("id"))
+	require.Error(t, err)
+	require.ErrorIs(t, err, context.DeadlineExceeded)
 }
