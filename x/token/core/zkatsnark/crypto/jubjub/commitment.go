@@ -7,7 +7,7 @@ SPDX-License-Identifier: Apache-2.0
 package jubjub
 
 import (
-	"fmt"
+	"errors"
 	"math/big"
 
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
