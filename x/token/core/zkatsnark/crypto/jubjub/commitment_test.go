@@ -23,7 +23,8 @@ import (
 
 func TestValueCommitDeterminism(t *testing.T) {
 	var rcv fr.Element
-	rcv.SetRandom()
+	_, err := rcv.SetRandom()
+	require.NoError(t, err)
 
 	cv1, _ := jubjub.ValueCommit(100, rcv)
 	cv2, _ := jubjub.ValueCommit(100, rcv)
@@ -37,9 +38,13 @@ func TestValueCommitDeterminism(t *testing.T) {
 // If this test fails, the conservation proof is unsound.
 func TestValueCommitHomomorphism(t *testing.T) {
 	var rcv1 fr.Element
-	rcv1.SetRandom()
+	_, err := rcv1.SetRandom()
+	require.NoError(t, err)
+
 	var rcv2 fr.Element
-	rcv2.SetRandom()
+	_, err = rcv2.SetRandom()
+	require.NoError(t, err)
+
 	var rcvSum fr.Element
 	rcvSum.Add(&rcv1, &rcv2)
 
@@ -56,8 +61,10 @@ func TestValueCommitHomomorphism(t *testing.T) {
 
 func TestValueCommitDistinct(t *testing.T) {
 	var rcv1, rcv2 fr.Element
-	rcv1.SetRandom()
-	rcv2.SetRandom()
+	_, err := rcv1.SetRandom()
+	require.NoError(t, err)
+	_, err = rcv2.SetRandom()
+	require.NoError(t, err)
 
 	cv1, _ := jubjub.ValueCommit(100, rcv1)
 	cv2, _ := jubjub.ValueCommit(100, rcv2)
@@ -70,7 +77,8 @@ func TestValueCommitDistinct(t *testing.T) {
 func TestValueCommitOnCurve(t *testing.T) {
 	for i := range 20 {
 		var rcv fr.Element
-		rcv.SetRandom()
+		_, err := rcv.SetRandom()
+		require.NoError(t, err)
 		cv, _ := jubjub.ValueCommit(uint64(i+1), rcv)
 		require.True(t, cv.IsOnCurve())
 	}
@@ -84,7 +92,8 @@ func TestValueCommitSumEmpty(t *testing.T) {
 
 func TestNegatePoint(t *testing.T) {
 	var rcv fr.Element
-	rcv.SetRandom()
+	_, err := rcv.SetRandom()
+	require.NoError(t, err)
 	cv, _ := jubjub.ValueCommit(42, rcv)
 	neg := jubjub.NegatePoint(cv)
 	require.True(t, neg.IsOnCurve())
@@ -129,7 +138,8 @@ func TestValueCommitCrossConsistency(t *testing.T) {
 
 	for trial := range 20 {
 		var rcv fr.Element
-		rcv.SetRandom()
+		_, err = rcv.SetRandom()
+		require.NoError(t, err)
 		v := uint64(trial*137 + 1)
 
 		cvNative, err := jubjub.ValueCommit(v, rcv)

@@ -9,6 +9,7 @@ package jubjub
 import (
 	"crypto/rand"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"math/big"
 

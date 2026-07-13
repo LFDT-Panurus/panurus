@@ -8,6 +8,7 @@ package jubjub
 
 import (
 	"crypto/sha256"
+	"encoding/binary"
 
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/twistededwards"
@@ -46,9 +47,7 @@ func mustHashToCurve(seed string) twistededwards.PointAffine {
 		h := sha256.New()
 		h.Write([]byte(seed))
 		var cb [8]byte
-		for i := range 8 {
-			cb[7-i] = byte(counter >> (i * 8))
-		}
+		binary.BigEndian.PutUint64(cb[:], counter)
 		h.Write(cb[:])
 		digest := h.Sum(nil)
 
