@@ -19,7 +19,8 @@ import (
 
 func TestSchnorrSignVerify(t *testing.T) {
 	var sk fr.Element
-	sk.SetRandom()
+	_, err := sk.SetRandom()
+	require.NoError(t, err)
 	pk := jubjub.DerivePublicKey(sk, jubjub.G)
 	msg := []byte("test message")
 
@@ -32,28 +33,32 @@ func TestSchnorrSignVerify(t *testing.T) {
 
 func TestSchnorrWrongMessage(t *testing.T) {
 	var sk fr.Element
-	sk.SetRandom()
+	_, err := sk.SetRandom()
+	require.NoError(t, err)
 	pk := jubjub.DerivePublicKey(sk, jubjub.G)
 
 	sig, _ := jubjub.Sign(sk, []byte("original"), jubjub.G)
-	err := jubjub.Verify(pk, []byte("tampered"), sig, jubjub.G)
+	err = jubjub.Verify(pk, []byte("tampered"), sig, jubjub.G)
 	require.ErrorIs(t, err, jubjub.ErrInvalidSignature)
 }
 
 func TestSchnorrWrongPublicKey(t *testing.T) {
 	var sk1, sk2 fr.Element
-	sk1.SetRandom()
-	sk2.SetRandom()
+	_, err := sk1.SetRandom()
+	require.NoError(t, err)
+	_, err = sk2.SetRandom()
+	require.NoError(t, err)
 	pk2 := jubjub.DerivePublicKey(sk2, jubjub.G)
 
 	sig, _ := jubjub.Sign(sk1, []byte("msg"), jubjub.G)
-	err := jubjub.Verify(pk2, []byte("msg"), sig, jubjub.G)
+	err = jubjub.Verify(pk2, []byte("msg"), sig, jubjub.G)
 	require.ErrorIs(t, err, jubjub.ErrInvalidSignature)
 }
 
 func TestSchnorrNonceUniqueness(t *testing.T) {
 	var sk fr.Element
-	sk.SetRandom()
+	_, err := sk.SetRandom()
+	require.NoError(t, err)
 
 	sig1, _ := jubjub.Sign(sk, []byte("same message"), jubjub.G)
 	sig2, _ := jubjub.Sign(sk, []byte("same message"), jubjub.G)
@@ -67,10 +72,14 @@ func TestSchnorrNonceUniqueness(t *testing.T) {
 // This is exactly the sequence the TransferAction prover and validator follow.
 func TestSchnorrBindingSig(t *testing.T) {
 	var rcv1, rcv2, rcv3, rcv4 fr.Element
-	rcv1.SetRandom()
-	rcv2.SetRandom()
-	rcv3.SetRandom()
-	rcv4.SetRandom()
+	_, err := rcv1.SetRandom()
+	require.NoError(t, err)
+	_, err = rcv2.SetRandom()
+	require.NoError(t, err)
+	_, err = rcv3.SetRandom()
+	require.NoError(t, err)
+	_, err = rcv4.SetRandom()
+	require.NoError(t, err)
 
 	// bsk = rcv1 + rcv2 - rcv3 - rcv4
 	// Replace the fr.Element Add/Sub block with this:
