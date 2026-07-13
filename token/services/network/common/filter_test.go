@@ -58,7 +58,7 @@ func TestAcceptTxInDBsFilter_PropagatesTtxError(t *testing.T) {
 	f := newTestFilter(&fakeStatusFetcher{err: wantErr}, auditFetch)
 
 	_, err := f.Accept("tx1", nil)
-	assert.ErrorIs(t, err, wantErr)
+	require.ErrorIs(t, err, wantErr)
 	assert.Equal(t, 0, auditFetch.callCount(), "should not fall through to audit when the ttx lookup errors")
 }
 
@@ -87,7 +87,7 @@ func TestAcceptTxInDBsFilter_ConcurrentAcceptsAreBounded(t *testing.T) {
 		go func(i int, id string) {
 			defer wg.Done()
 			ok, err := f.Accept(id, nil)
-			require.NoError(t, err)
+			assert.NoError(t, err)
 			results[i] = ok
 		}(i, id)
 	}

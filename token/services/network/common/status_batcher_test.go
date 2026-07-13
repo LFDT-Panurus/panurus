@@ -85,7 +85,7 @@ func TestStatusBatcher_CoalescesConcurrentLookups(t *testing.T) {
 		go func(i int, id string) {
 			defer wg.Done()
 			s, err := b.Get(id)
-			require.NoError(t, err)
+			assert.NoError(t, err)
 			results[i] = s
 		}(i, id)
 	}
@@ -106,7 +106,7 @@ func TestStatusBatcher_DuplicateTxIDInSameBatch(t *testing.T) {
 		go func(i int) {
 			defer wg.Done()
 			s, err := b.Get("tx1")
-			require.NoError(t, err)
+			assert.NoError(t, err)
 			results[i] = s
 		}(i)
 	}
