@@ -1183,8 +1183,10 @@ func (db *TokenStore) GetCertifications(ctx context.Context, ids []*token.ID) ([
 	return certifications, nil
 }
 
-// GetDeletedTokensPendingSKICleanup returns deleted tokens older than the specified duration
+// GetDeletedTokensPendingSKICleanup returns deleted, owned tokens older than the specified duration
 // that haven't had their SKI keys cleaned up yet (no record in token_ski_cleanups table).
+// Only tokens owned by this node are considered, since this node only holds the secret keys
+// for tokens it owns, not for tokens it merely audited or issued.
 func (db *TokenStore) GetDeletedTokensPendingSKICleanup(ctx context.Context, olderThan time.Duration, limit int) ([]driver.DeletedToken, error) {
 	cutoffTime := time.Now().UTC().Add(-olderThan)
 
@@ -1210,6 +1212,7 @@ func (db *TokenStore) GetDeletedTokensPendingSKICleanup(ctx context.Context, old
 		))).
 		Where(cond.And(
 			cond.CmpVal(tokenTable.Field("is_deleted"), "=", true),
+			cond.CmpVal(tokenTable.Field("owner"), "=", true),
 			cond.CmpVal(tokenTable.Field("spent_at"), "<", cutoffTime),
 			cond.IsNil(cleanupTable.Field("tx_id")),
 		)).

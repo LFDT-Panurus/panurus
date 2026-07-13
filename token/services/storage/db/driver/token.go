@@ -269,7 +269,8 @@ type TokenStore interface {
 	Notifier() (TokenNotifier, error)
 	// GetDeletedTokensPendingSKICleanup returns deleted tokens older than the specified duration that haven't had their SKI keys cleaned yet.
 	// This is used by the keystore cleanup service to identify tokens whose cryptographic keys can be safely removed.
-	// Only tokens without a record in the token_ski_cleanups table are returned.
+	// Only tokens without a record in the token_ski_cleanups table are returned, and only tokens owned by this node,
+	// since this node only holds the secret keys for tokens it owns, not for tokens it merely audited or issued.
 	GetDeletedTokensPendingSKICleanup(ctx context.Context, olderThan time.Duration, limit int) ([]DeletedToken, error)
 	// MarkTokenCleaned marks a token as having its cryptographic keys cleaned up.
 	// This prevents the cleanup service from processing the same token multiple times.

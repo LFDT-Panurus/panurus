@@ -1546,4 +1546,45 @@ func TGetDeletedTokensPendingSKICleanup(t *testing.T, db TestTokenDB) {
 
 		assert.Equal(t, 3, count, "should return all indices for the same transaction")
 	})
+
+	// Test 12: Non-owned tokens (auditor-only, issuer-only) must be excluded,
+	// since this node never holds the secret keys for tokens it does not own.
+	t.Run("ExcludeNonOwnedTokens", func(t *testing.T) {
+		createAndDeleteNonOwnedToken := func(txID string, index uint64, ownerType string, auditor, issuer bool) {
+			tr := driver2.TokenRecord{
+				TxID:           txID,
+				Index:          index,
+				OwnerRaw:       []byte{1, 2, 3},
+				OwnerType:      ownerType,
+				OwnerIdentity:  fmt.Appendf(nil, "owner_%s_%d", txID, index),
+				Ledger:         []byte("ledger"),
+				LedgerMetadata: []byte{},
+				Quantity:       "0x01",
+				Type:           ABC,
+				Amount:         1,
+				Owner:          false,
+				Auditor:        auditor,
+				Issuer:         issuer,
+			}
+			require.NoError(t, db.StoreToken(ctx, tr, nil))
+			require.NoError(t, db.DeleteTokens(ctx, "deleter_tx", &token.ID{TxId: txID, Index: index}))
+		}
+
+		createAndDeleteNonOwnedToken("auditor_only", 0, "idemix", true, false)
+		createAndDeleteNonOwnedToken("issuer_only", 0, "idemix", false, true)
+		createAndDeleteToken("owned_control", 0, "idemix")
+
+		tokens, err := db.GetDeletedTokensPendingSKICleanup(ctx, 0, 100)
+		require.NoError(t, err, "query should not error")
+
+		foundOwnedControl := false
+		for _, tok := range tokens {
+			assert.NotEqual(t, "auditor_only", tok.TxID, "auditor-only token should not be returned")
+			assert.NotEqual(t, "issuer_only", tok.TxID, "issuer-only token should not be returned")
+			if tok.TxID == "owned_control" {
+				foundOwnedControl = true
+			}
+		}
+		assert.True(t, foundOwnedControl, "owned token should still be returned")
+	})
 }
