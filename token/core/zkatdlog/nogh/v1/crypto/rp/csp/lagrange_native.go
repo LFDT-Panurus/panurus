@@ -49,11 +49,11 @@ func rightChild(i int) int {
 // either region with a plain index — no branch on whether a child is a leaf.
 //
 // Algorithm:
-// 1. Build fullE[0..treeSize-1]: pointers into slab[0:treeSize] (tree+leaves).
-// 2. Build concatE[0..treeSize-1]: pointers into slab[treeSize:] (exclude+numers).
-// 3. Bottom-up: for each internal node, multiply its two children's values.
-// 4. Top-down: propagate exclude products; concatE[child] receives the result
-//    directly — if child < leafStart it lands in exclude, otherwise in numers.
+//  1. Build fullE[0..treeSize-1]: pointers into slab[0:treeSize] (tree+leaves).
+//  2. Build concatE[0..treeSize-1]: pointers into slab[treeSize:] (exclude+numers).
+//  3. Bottom-up: for each internal node, multiply its two children's values.
+//  4. Top-down: propagate exclude products; concatE[child] receives the result
+//     directly — if child < leafStart it lands in exclude, otherwise in numers.
 func computeNumeratorsBinaryTree[T any, E math2.GnarkFr[T]](m int, pooled *treeArrays[T]) []E {
 	leafStart := m - 1
 	treeSize := 2*m - 1

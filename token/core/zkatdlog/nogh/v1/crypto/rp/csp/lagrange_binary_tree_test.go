@@ -124,7 +124,7 @@ func TestComputeNumeratorsBinaryTreeVsOriginalBLS(t *testing.T) {
 				input := buildCMinusJBLS(c, m)
 
 				got := blsNumeratorsBinaryTree(input, m)
-					want := naiveNumeratorsBLS(input, m)
+				want := naiveNumeratorsBLS(input, m)
 
 				require.Len(t, got, m, "result length must equal m")
 				for i := range m {
@@ -149,7 +149,7 @@ func TestComputeNumeratorsBinaryTreeVsOriginalBN254(t *testing.T) {
 				input := buildCMinusJBN254(c, m)
 
 				got := bn254NumeratorsBinaryTree(input, m)
-					want := naiveNumeratorsBN254(input, m)
+				want := naiveNumeratorsBN254(input, m)
 
 				require.Len(t, got, m, "result length must equal m")
 				for i := range m {
