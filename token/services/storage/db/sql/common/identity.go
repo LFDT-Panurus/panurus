@@ -535,7 +535,6 @@ func (db *IdentityStore) GetSchema() string {
 			PRIMARY KEY(id, type, url)
 		);
 		CREATE INDEX IF NOT EXISTS idx_ic_type_%s ON %s ( type );
-		CREATE INDEX IF NOT EXISTS idx_ic_id_type_%s ON %s ( id, type, url );
 
 		-- IdentityInfo
 		CREATE TABLE IF NOT EXISTS %s (
@@ -545,7 +544,6 @@ func (db *IdentityStore) GetSchema() string {
 			token_metadata BYTEA,
 			token_metadata_audit_info BYTEA
 		);
-		CREATE INDEX IF NOT EXISTS idx_audits_%s ON %s ( identity_hash );
 
 		-- Signers
 		CREATE TABLE IF NOT EXISTS %s (
@@ -553,15 +551,11 @@ func (db *IdentityStore) GetSchema() string {
 			identity BYTEA NOT NULL,
 			info BYTEA
 		);
-		CREATE INDEX IF NOT EXISTS idx_signers_%s ON %s ( identity_hash );
 		`,
 		db.table.IdentityConfigurations,
 		db.table.IdentityConfigurations, db.table.IdentityConfigurations,
-		db.table.IdentityConfigurations, db.table.IdentityConfigurations,
 		db.table.IdentityInfo,
-		db.table.IdentityInfo, db.table.IdentityInfo,
 		db.table.Signers,
-		db.table.Signers, db.table.Signers,
 	)
 }
 

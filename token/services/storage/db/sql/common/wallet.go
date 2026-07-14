@@ -147,14 +147,10 @@ func (db *WalletStore) GetSchema() string {
 			created_at TIMESTAMP,
 			PRIMARY KEY(identity_hash, wallet_id, role_id)
 		);
-		CREATE INDEX IF NOT EXISTS idx_identity_hash_%s ON %s ( identity_hash );
-		CREATE INDEX IF NOT EXISTS idx_identity_hash_and_wallet_and_role%s ON %s ( identity_hash, wallet_id, role_id );
 		CREATE INDEX IF NOT EXISTS idx_identity_hash_and_role%s ON %s ( identity_hash, role_id );
 		CREATE INDEX IF NOT EXISTS idx_role_id_%s ON %s ( role_id )
 		`,
 		db.table.Wallets,
-		db.table.Wallets, db.table.Wallets,
-		db.table.Wallets, db.table.Wallets,
 		db.table.Wallets, db.table.Wallets,
 		db.table.Wallets, db.table.Wallets,
 	)
