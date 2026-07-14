@@ -101,7 +101,7 @@ func generateSelfSignedCert(t *testing.T, tempDir string) (string, string) {
 	return certPath, keyPath
 }
 
-func TestRegisterTLSConnection(t *testing.T) {
+func TestRegisterTLSConnection(t *testing.T) { //nolint:paralleltest
 	tempDir := t.TempDir()
 	certPath, keyPath := generateSelfSignedCert(t, tempDir)
 
@@ -220,14 +220,14 @@ func TestRegisterTLSConnection(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
+		t.Run(tt.name, func(t *testing.T) { //nolint:paralleltest
 			connConfig, err := createTLSConnConfig(tt.dataSource, tt.tlsCfg)
 			tt.verify(t, connConfig, err)
 		})
 	}
 }
 
-func TestTLSConfigProvider(t *testing.T) {
+func TestTLSConfigProvider(t *testing.T) { //nolint:paralleltest
 	tempDir := t.TempDir()
 	certPath, _ := generateSelfSignedCert(t, tempDir)
 
@@ -245,7 +245,7 @@ func TestTLSConfigProvider(t *testing.T) {
 		},
 	}
 
-	t.Run("Persistence specific TLS config", func(t *testing.T) {
+	t.Run("Persistence specific TLS config", func(t *testing.T) { //nolint:paralleltest
 		baseOpts := &fscPostgres.Config{
 			DataSource: "host=localhost port=5432 dbname=test",
 		}
@@ -261,7 +261,7 @@ func TestTLSConfigProvider(t *testing.T) {
 		stdlib.UnregisterConnConfig(opts.DataSource)
 	})
 
-	t.Run("Fallback to default TLS config", func(t *testing.T) {
+	t.Run("Fallback to default TLS config", func(t *testing.T) { //nolint:paralleltest
 		baseOpts := &fscPostgres.Config{
 			DataSource: "host=localhost port=5432 dbname=test",
 		}
