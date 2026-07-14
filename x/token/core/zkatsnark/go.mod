@@ -6,6 +6,7 @@ require (
 	github.com/LFDT-Panurus/panurus v0.14.2
 	github.com/consensys/gnark v0.15.0
 	github.com/consensys/gnark-crypto v0.20.1
+	github.com/hyperledger-labs/fabric-smart-client v0.14.2
 	github.com/stretchr/testify v1.11.1
 )
 
@@ -28,7 +29,6 @@ require (
 	github.com/google/pprof v0.0.0-20260709232956-b9395ee17fa0 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.29.0 // indirect
-	github.com/hyperledger-labs/fabric-smart-client v0.14.2 // indirect
 	github.com/hyperledger/fabric-amcl v0.0.0-20230602173724-9e02669dceb2 // indirect
 	github.com/hyperledger/fabric-lib-go v1.1.5-0.20260607181445-fc4b05c5d38f // indirect
 	github.com/kr/pretty v0.3.1 // indirect
