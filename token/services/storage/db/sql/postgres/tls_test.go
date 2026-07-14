@@ -84,14 +84,14 @@ func generateSelfSignedCert(t *testing.T, tempDir string) (string, string) {
 	certPath := filepath.Join(tempDir, "cert.pem")
 	certOut, err := os.Create(certPath)
 	require.NoError(t, err)
-	defer certOut.Close()
+	defer func() { _ = certOut.Close() }()
 	err = pem.Encode(certOut, &pem.Block{Type: "CERTIFICATE", Bytes: derBytes})
 	require.NoError(t, err)
 
 	keyPath := filepath.Join(tempDir, "key.pem")
 	keyOut, err := os.OpenFile(keyPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
 	require.NoError(t, err)
-	defer keyOut.Close()
+	defer func() { _ = keyOut.Close() }()
 
 	privBytes, err := x509.MarshalPKCS8PrivateKey(privateKey)
 	require.NoError(t, err)
@@ -125,7 +125,7 @@ func TestRegisterTLSConnection(t *testing.T) { //nolint:paralleltest
 		},
 		{
 			name:       "SSLMode require",
-			dataSource: "postgres://postgres:password@localhost:5432/test",
+			dataSource: "postgres://postgres:password@localhost:5432/test", //nolint:gosec // mock data
 			tlsCfg: TLSConfig{
 				SSLMode: "require",
 			},
