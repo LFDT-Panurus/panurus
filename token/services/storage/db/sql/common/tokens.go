@@ -52,24 +52,24 @@ type TokenStore struct {
 	sttMutex              sync.RWMutex
 	supportedTokenFormats []token.Format
 
-	// preparedStmts caches prepared statements for UnspentTokensIteratorBy,
+	// unspentTokensStmts caches prepared statements for UnspentTokensIteratorBy,
 	// keyed by argument shape (walletID present/absent, tokenType
-	// present/absent). The SQL is identical for all calls of the same shape,
-	// so each shape is prepared once and reused (see #1183).
-	preparedMutex sync.RWMutex
-	preparedStmts map[string]*sql.Stmt
+	// present/absent). See #1183.
+	unspentTokensStmts *preparedStmtHolder[string]
 }
 
 func newTokenStore(readDB, writeDB *sql.DB, tables tokenTables, ci common3.CondInterpreter, notifier driver.TokenNotifier, cleanupLeaderFactory func(context.Context, *sql.DB, int64) (driver.CleanupLeadership, bool, error)) *TokenStore {
-	return &TokenStore{
+	ts := &TokenStore{
 		readDB:               readDB,
 		writeDB:              writeDB,
 		table:                tables,
 		ci:                   ci,
 		notifier:             notifier,
 		cleanupLeaderFactory: cleanupLeaderFactory,
-		preparedStmts:        make(map[string]*sql.Stmt),
 	}
+	ts.unspentTokensStmts = newPreparedStmtHolder[string]()
+
+	return ts
 }
 
 func NewTokenStoreWithNotifier(readDB, writeDB *sql.DB, tables TableNames, ci common3.CondInterpreter, notifier driver.TokenNotifier) (*TokenStore, error) {
@@ -292,55 +292,25 @@ func unspentTokensStmtKey(walletID string, tokenType token.Type) string {
 	return string(key[:])
 }
 
-// getOrPrepareUnspentTokensStmt returns a prepared statement for the given
-// argument shape, preparing and caching it on first use. The query args are
-// returned alongside since buildUnspentTokensIteratorByQuery computes both.
-func (db *TokenStore) getOrPrepareUnspentTokensStmt(ctx context.Context, walletID string, tokenType token.Type) (*sql.Stmt, []any, error) {
-	query, args := buildUnspentTokensIteratorByQuery(db, walletID, tokenType)
-	key := unspentTokensStmtKey(walletID, tokenType)
-
-	db.preparedMutex.RLock()
-	stmt, ok := db.preparedStmts[key]
-	db.preparedMutex.RUnlock()
-	if ok {
-		return stmt, args, nil
-	}
-
-	db.preparedMutex.Lock()
-	defer db.preparedMutex.Unlock()
-	// re-check: another goroutine may have prepared it while we waited
-	if stmt, ok := db.preparedStmts[key]; ok {
-		return stmt, args, nil
-	}
-	stmt, err := db.readDB.PrepareContext(ctx, query)
-	if err != nil {
-		return nil, nil, err
-	}
-	db.preparedStmts[key] = stmt
-
-	return stmt, args, nil
-}
-
-// PreparedStmtCount returns the number of cached prepared statements. It is
-// intended for tests verifying statement reuse across argument shapes.
+// PreparedStmtCount returns the number of cached prepared statements for
+// UnspentTokensIteratorBy. Intended for tests verifying statement reuse
+// across argument shapes.
 func (db *TokenStore) PreparedStmtCount() int {
-	db.preparedMutex.RLock()
-	defer db.preparedMutex.RUnlock()
-
-	return len(db.preparedStmts)
+	return db.unspentTokensStmts.count()
 }
 
 func (db *TokenStore) UnspentTokensIteratorBy(ctx context.Context, walletID string, tokenType token.Type) (tdriver.UnspentTokensIterator, error) {
-	stmt, args, err := db.getOrPrepareUnspentTokensStmt(ctx, walletID, tokenType)
+	key := unspentTokensStmtKey(walletID, tokenType)
+	rows, err := db.unspentTokensStmts.execute(ctx, db.readDB, key, func() (string, []any, error) {
+		query, args := buildUnspentTokensIteratorByQuery(db, walletID, tokenType)
+
+		return query, args, nil
+	})
 	if err == nil {
-		rows, qErr := stmt.QueryContext(ctx, args...)
-		if qErr == nil {
-			return &dedupedTokenRowsIterator{
-				rows: rows,
-				seen: make(map[string]struct{}),
-			}, nil
-		}
-		err = qErr
+		return &dedupedTokenRowsIterator{
+			rows: rows,
+			seen: make(map[string]struct{}),
+		}, nil
 	}
 
 	// Fall back to the dynamic path if preparing or executing the prepared
@@ -349,7 +319,7 @@ func (db *TokenStore) UnspentTokensIteratorBy(ctx context.Context, walletID stri
 	logging.Debug(logger, "prepared statement path failed, falling back to dynamic query", err)
 	query, args := buildUnspentTokensIteratorByQuery(db, walletID, tokenType)
 	logging.Debug(logger, query, args)
-	rows, err := db.readDB.QueryContext(ctx, query, args...)
+	rows, err = db.readDB.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, errors.Wrapf(err, "error querying unspent tokens for wallet [%s] type [%s]", walletID, tokenType)
 	}
@@ -1465,12 +1435,7 @@ func (db *TokenStore) GetSchema() string {
 }
 
 func (db *TokenStore) Close() error {
-	db.preparedMutex.Lock()
-	for _, stmt := range db.preparedStmts {
-		_ = stmt.Close()
-	}
-	db.preparedStmts = nil
-	db.preparedMutex.Unlock()
+	_ = db.unspentTokensStmts.close()
 
 	return common2.Close(db.readDB, db.writeDB)
 }
