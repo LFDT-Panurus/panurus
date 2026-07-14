@@ -39,6 +39,7 @@ type Driver struct {
 	AuditTx   lazy.Provider[fscPostgres.Config, *AuditTransactionStore]
 	OwnerTx   lazy.Provider[fscPostgres.Config, *TransactionStore]
 	KeyStore  lazy.Provider[fscPostgres.Config, *KeystoreStore]
+	Endorser  lazy.Provider[fscPostgres.Config, *EndorserStore]
 }
 
 // NewNamedDriver returns a NamedDriver for Postgres.
@@ -67,6 +68,7 @@ func NewDriverWithDbProvider(config driver3.Config, dbProvider fscPostgres.DbPro
 	d.AuditTx = newProviderWithKeyMapper(dbProvider, NewAuditTransactionStore, "audittx")
 	d.OwnerTx = newTransactionStoreProvider(dbProvider)
 	d.KeyStore = newProviderWithKeyMapper(dbProvider, NewKeystoreStore, "keystore")
+	d.Endorser = newProviderWithKeyMapper(dbProvider, NewEndorserStore, "endorser")
 
 	return d
 }
@@ -276,6 +278,17 @@ func (d *Driver) NewOwnerTransaction(name driver2.PersistenceName, params ...str
 
 	return d.OwnerTx.Get(*opts)
 }
+
+// NewEndorser returns a new EndorserStore.
+func (d *Driver) NewEndorser(name driver2.PersistenceName, params ...string) (driver3.EndorserStore, error) {
+	opts, err := d.cp.GetOpts(name, params...)
+	if err != nil {
+		return nil, err
+	}
+
+	return d.Endorser.Get(*opts)
+}
+
 
 // newProviderWithKeyMapper returns a lazy provider for a DB object using a common constructor.
 func newProviderWithKeyMapper[V common.DBObject](dbProvider fscPostgres.DbProvider, constructor common3.PersistenceConstructor[V], storeType string) lazy.Provider[fscPostgres.Config, V] {
