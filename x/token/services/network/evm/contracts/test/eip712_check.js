@@ -67,6 +67,13 @@ const got = {
   digest: enc.hash(domain, types, value),
 };
 
+// Second vector: the setup (PP-update) delta — empty dynamic arrays, non-empty setupParameters.
+// Pins the empty-array and setup-path encodings, which the transfer-shaped vector cannot cover.
+if (fx.setupDelta) {
+  got.setupHashStruct = enc.from(types).hash(fx.setupDelta);
+  got.setupDigest = enc.hash(domain, types, fx.setupDelta);
+}
+
 let ok = true;
 for (const k of Object.keys(fx.expected)) {
   const match = got[k].toLowerCase() === fx.expected[k].toLowerCase();

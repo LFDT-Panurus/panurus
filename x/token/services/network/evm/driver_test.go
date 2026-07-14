@@ -34,7 +34,7 @@ func TestDriverNewRouting(t *testing.T) {
 
 	// A non-EVM network must error so the provider falls through to the next driver.
 	_, err = d.New("fabric-net", "")
-	assert.Error(t, err)
+	require.Error(t, err)
 
 	// The right network name but a mismatched channel must also fall through.
 	_, err = d.New("evm-net", "other-channel")
@@ -49,7 +49,7 @@ func TestNetworkStubNotImplemented(t *testing.T) {
 
 	assert.NotNil(t, n.NewEnvelope())
 	err := n.Broadcast(t.Context(), &Envelope{})
-	assert.ErrorIs(t, err, errNotImplemented)
+	require.ErrorIs(t, err, errNotImplemented)
 	_, err = n.Ledger()
 	assert.ErrorIs(t, err, errNotImplemented)
 }

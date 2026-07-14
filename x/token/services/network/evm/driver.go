@@ -60,6 +60,8 @@ type configNetworkResolver struct {
 	cs *config.Service
 }
 
+// IsEVMNetwork reports whether any configured TMS for the given network/channel declares the EVM
+// network service block.
 func (r *configNetworkResolver) IsEVMNetwork(network, channel string) bool {
 	configs, err := r.cs.Configurations()
 	if err != nil {

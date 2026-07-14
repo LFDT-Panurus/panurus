@@ -69,9 +69,38 @@ func TestGoldenDigest(t *testing.T) {
 	assert.Equal(t, "c9326b72636896424aabe0039efef420df6cd18811b82db3237260110f39b64d", hex.EncodeToString(dig[:]))
 }
 
+// fixtureSetupDelta is the second cross-impl vector: a setup (PP-update) delta with empty dynamic
+// arrays and non-empty setupParameters, the other shape endorsers will ever sign in production
+// (Week 7). It pins the empty-array and setup-path encodings, which the transfer-shaped fixture
+// cannot cover. Keep in sync with contracts/test/statedelta_digest_fixture.json (setupDelta).
+func fixtureSetupDelta() *statedelta.StateDelta {
+	return &statedelta.StateDelta{
+		Anchor:              b32(0x77),
+		TokenRequestHash:    b32(0x88),
+		PublicParamsHash:    b32(0x99),
+		PublicParamsVersion: 4,
+		IsSetup:             true,
+		SetupParameters:     []byte("pp-v4"),
+	}
+}
+
+// TestGoldenSetupDigest locks the setup-delta digest (independently reproduced by ethers v6 on
+// 2026-07-08; the Solidity side must reproduce it too).
+func TestGoldenSetupDigest(t *testing.T) {
+	delta := fixtureSetupDelta()
+	require.NoError(t, delta.Validate())
+
+	hs := HashStruct(delta)
+	assert.Equal(t, "aef849354e919674c879039b642d9c01720e23c7e971f403a79aa330580d08dc", hex.EncodeToString(hs[:]))
+
+	dig := Digest(fixtureDomain(t), delta)
+	assert.Equal(t, "dca9a011c43cf475b62f274c4b970ba2755982cad95a09198332cb211ac50a76", hex.EncodeToString(dig[:]))
+}
+
 func TestDigestDeterministic(t *testing.T) {
 	d := fixtureDomain(t)
-	assert.Equal(t, Digest(d, fixtureDelta()), Digest(d, fixtureDelta()))
+	first, second := Digest(d, fixtureDelta()), Digest(d, fixtureDelta())
+	assert.Equal(t, first, second)
 }
 
 // TestDigestSensitivity guards that the digest actually covers each field: mutating any of them must
@@ -92,6 +121,9 @@ func TestDigestSensitivity(t *testing.T) {
 		"ppHash":       func(s *statedelta.StateDelta) { s.PublicParamsHash = b32(0x62) },
 		"ppVersion":    func(s *statedelta.StateDelta) { s.PublicParamsVersion = 4 },
 		"isSetup":      func(s *statedelta.StateDelta) { s.IsSetup = true },
+		// setupParameters is digest-covered independently of isSetup: if HashStruct ever dropped the
+		// field, isSetup's bool word would not catch it (found in the 2026-07-08 review).
+		"setupParameters": func(s *statedelta.StateDelta) { s.SetupParameters = []byte("x") },
 	}
 	for name, mutate := range mutations {
 		t.Run(name, func(t *testing.T) {
