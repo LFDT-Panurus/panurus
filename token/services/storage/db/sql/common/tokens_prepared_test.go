@@ -25,3 +25,8 @@ func TestUnspentTokensStmtKey(t *testing.T) {
 		unspentTokensStmtKey("walletB", tokentype.Type("SILVER")),
 	)
 }
+
+func TestTokenStore_PreparedStmtCount_NoDB(t *testing.T) {
+	store := &TokenStore{unspentTokensStmts: newPreparedStmtHolder[string]()}
+	require.Equal(t, 0, store.PreparedStmtCount())
+}
