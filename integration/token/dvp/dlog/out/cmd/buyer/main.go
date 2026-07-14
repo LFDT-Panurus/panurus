@@ -10,11 +10,11 @@ import (
 	fscnode "github.com/hyperledger-labs/fabric-smart-client/node"
 
 	viewregistry "github.com/hyperledger-labs/fabric-smart-client/platform/view/services/view"
-	fdlog "github.com/hyperledger-labs/fabric-token-sdk/integration/token/common/sdk/fdlog"
-	views1 "github.com/hyperledger-labs/fabric-token-sdk/integration/token/common/views"
-	views "github.com/hyperledger-labs/fabric-token-sdk/integration/token/dvp/views"
-	cash "github.com/hyperledger-labs/fabric-token-sdk/integration/token/dvp/views/cash"
-	house "github.com/hyperledger-labs/fabric-token-sdk/integration/token/dvp/views/house"
+	fdlog "github.com/LFDT-Panurus/panurus/integration/token/common/sdk/fdlog"
+	views1 "github.com/LFDT-Panurus/panurus/integration/token/common/views"
+	views "github.com/LFDT-Panurus/panurus/integration/token/dvp/views"
+	cash "github.com/LFDT-Panurus/panurus/integration/token/dvp/views/cash"
+	house "github.com/LFDT-Panurus/panurus/integration/token/dvp/views/house"
 )
 
 func main() {
