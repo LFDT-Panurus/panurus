@@ -43,4 +43,34 @@ func TestStateDeltaValidate(t *testing.T) {
 		d := &StateDelta{IsSetup: true, SetupParameters: []byte("pp"), Outputs: []OutputToken{{}}}
 		assert.Error(t, d.Validate())
 	})
+
+	t.Run("non-setup delta smuggling setup parameters", func(t *testing.T) {
+		// SetupParameters is digest-covered: endorsers would sign bytes the contract ignores.
+		d := &StateDelta{SpentRefs: [][32]byte{{0x01}}, SetupParameters: []byte("pp")}
+		assert.Error(t, d.Validate())
+	})
+
+	t.Run("metadata keys sorted ascending is valid", func(t *testing.T) {
+		d := &StateDelta{
+			MetadataKeys: [][32]byte{{0x01}, {0x02}, {0x03}},
+			MetadataVals: [][]byte{[]byte("a"), []byte("b"), []byte("c")},
+		}
+		require.NoError(t, d.Validate())
+	})
+
+	t.Run("metadata keys unsorted", func(t *testing.T) {
+		d := &StateDelta{
+			MetadataKeys: [][32]byte{{0x02}, {0x01}},
+			MetadataVals: [][]byte{[]byte("a"), []byte("b")},
+		}
+		assert.Error(t, d.Validate())
+	})
+
+	t.Run("metadata keys duplicated", func(t *testing.T) {
+		d := &StateDelta{
+			MetadataKeys: [][32]byte{{0x01}, {0x01}},
+			MetadataVals: [][]byte{[]byte("a"), []byte("b")},
+		}
+		assert.Error(t, d.Validate())
+	})
 }
