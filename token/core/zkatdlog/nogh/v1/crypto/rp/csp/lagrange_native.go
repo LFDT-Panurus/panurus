@@ -38,85 +38,101 @@ func rightChild(i int) int {
 //	       |<---------- treeSize ---------->|<---------- treeSize ----------->|
 //
 // slab[treeSize:] mirrors the tree shape: internal-node slots hold exclude
-// values and leaf slots hold numerator outputs. A single concatE pointer array
+// values and leaf slots hold numerator outputs. A single excludeE pointer array
 // of length treeSize covering slab[treeSize:] lets the top-down pass write to
 // either region with a plain index — no branch on whether a child is a leaf.
 //
 // Algorithm:
 //  0. Initialise leaves: slab[leafStart+j] = c - j, for j in [0,m).
 //  1. Build fullE[0..treeSize-1]: pointers into slab[0:treeSize] (tree+leaves).
-//  2. Build concatE[0..treeSize-1]: pointers into slab[treeSize:] (exclude+numers).
+//  2. Build excludeE[0..treeSize-1]: pointers into slab[treeSize:] (exclude+numers).
 //  3. Bottom-up: for each internal node, multiply its two children's values.
-//  4. Top-down: propagate exclude products; concatE[child] receives the result
+//  4. Top-down: propagate exclude products; excludeE[child] receives the result
 //     directly — if child < leafStart it lands in exclude, otherwise in numers.
 func computeNumeratorsBinaryTree[T any, E math2.GnarkFr[T]](m int, c *mathlib.Zr, pooled *treeArrays[T]) []E {
 	leafStart := m - 1
 	treeSize := 2*m - 1
 
-	// Initialise leaves: slab[leafStart+j] = c - j, for j in [0,m).
-	cE := math2.NativeFromZr[T, E](c)
-	for j := range m {
-		lE := E(&pooled.slab[leafStart+j])
-		var jE T
-		E(&jE).SetInt64(int64(j))
-		lE.Sub(cE, E(&jE))
-	}
-
 	// fullE: pointers into slab[0:treeSize] — the bottom-up tree (internal + leaves).
 	fullE := make([]E, treeSize)
-	for i := range fullE {
+	// excludeE: pointers into slab[treeSize:2*treeSize] — mirrors the tree shape.
+	excludeE := make([]E, treeSize)
+	for i := range treeSize {
 		fullE[i] = E(&pooled.slab[i])
+		excludeE[i] = E(&pooled.slab[treeSize+i])
 	}
 
-	// concatE: pointers into slab[treeSize:2*treeSize] — mirrors the tree shape.
-	// concatE[i] for i < leafStart  → exclude[i]
-	// concatE[i] for i >= leafStart → numers[i-leafStart]
-	concatE := make([]E, treeSize)
-	for i := range concatE {
-		concatE[i] = E(&pooled.slab[treeSize+i])
+	m2 := m/2
+	cE := math2.NativeFromZr[T, E](c)
+	var jE T
+
+	if m & 1 == 1 {
+		E(&jE).SetInt64(int64(m2))
+		fullE[leafStart].Sub(cE, E(&jE))
 	}
+	for i := range m2 {
+		E(&jE).SetInt64(int64(i))
+		fullE[leafStart + 2*i + (m&1)].Sub(cE, E(&jE))
+		E(&jE).SetInt64(int64(m-1-i))
+		fullE[leafStart + 2*i + 1 + (m&1)].Sub(cE, E(&jE))
+	}
+
+
+	// start of the inner nodes whose both children are leaves
+	leafPairsStart := leafStart - m2
 
 	// Phase 1: Bottom-up — compute subtree products for internal nodes.
-	for i := leafStart - 1; i >= 0; i-- {
+	var ccmT, cMinusMm1T T
+	ccmE := E(&ccmT)
+	E(&jE).SetInt64(int64(m - 1))
+	E(&cMinusMm1T).Sub(cE, E(&jE))
+	ccmE.Mul(cE, E(&cMinusMm1T))
+
+	for i := leafStart - 1; i >= leafPairsStart; i-- {
+		j := i - leafPairsStart
+		E(&jE).SetInt64(int64(j*(m-1-j)))
+		fullE[i].Add(ccmE, E(&jE))
+	}
+
+	for i := leafPairsStart - 1; i >= 0; i-- {
 		left := leftChild(i)
 		right := rightChild(i)
 
-		if right < treeSize {
-			// Both children exist: node = left × right.
-			fullE[i].Mul(fullE[left], fullE[right])
-		} else if left < treeSize {
-			// Only left child (imperfect tree): propagate value up.
-			*fullE[i] = *fullE[left]
-		}
-		// right >= treeSize && left >= treeSize cannot happen in a valid tree.
+		// Both children exist: node = left × right.
+		fullE[i].Mul(fullE[left], fullE[right])
 	}
 
 	// Phase 2: Top-down — compute exclude products and write leaf numerators.
 	// Root's exclude is 1 (nothing excluded above it).
-	concatE[0].SetOne()
+	excludeE[0].SetOne()
 
 	for i := range leafStart {
 		left := leftChild(i)
 		right := rightChild(i)
 
-		if right < treeSize {
-			// Both children exist.
-			// Left child's exclude = parent exclude × right subtree product.
-			// Right child's exclude = parent exclude × left subtree product.
-			// concatE[child] lands in exclude if child < leafStart, numers otherwise.
-			concatE[left].Mul(concatE[i], fullE[right])
-			concatE[right].Mul(concatE[i], fullE[left])
-		} else if left < treeSize {
-			// Only left child: pass exclude down unchanged.
-			*concatE[left] = *concatE[i]
-		}
+		// Both children exist.
+		// Left child's exclude = parent exclude × right subtree product.
+		// Right child's exclude = parent exclude × left subtree product.
+		// excludeE[child] lands in exclude if child < leafStart, numers otherwise.
+		excludeE[left].Mul(excludeE[i], fullE[right])
+		excludeE[right].Mul(excludeE[i], fullE[left])
 	}
 
-	// numers is the leaf half of concatE (concatE[leafStart:treeSize]).
-	numersE := concatE[leafStart:]
+	numersE := make([]E, m)
+	if m & 1 == 1 {
+		numersE[m2] = E(&pooled.slab[treeSize + leafStart])
+	}
+	for i := range m2 {
+		numersE[i] = E(&pooled.slab[treeSize + leafStart + 2*i + (m&1)])
+		numersE[m-1-i] = E(&pooled.slab[treeSize + leafStart + 2*i + 1 + (m&1)])
+	}
 
 	return numersE
 }
+
+
+
+
 
 // getLagrangeMultipliersNative is the native fr.Element implementation of
 // getLagrangeMultipliers. Conversions between mathlib.Zr and fr.Element occur

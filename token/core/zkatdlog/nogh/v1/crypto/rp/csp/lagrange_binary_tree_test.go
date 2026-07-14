@@ -312,3 +312,117 @@ func TestComputeNumeratorsBinaryTreeLargeImperfectTree(t *testing.T) {
 		assert.True(t, equalsBLS(got[i], want[i]), "m=%d i=%d: mismatch", m, i)
 	}
 }
+
+// TestComputeNumeratorsBinaryTreeEightElements verifies the m=8 case
+// (a perfect binary tree of depth 3) with hand-computed expected values.
+//
+// With c=10:
+//   - cMinusJ = [10, 9, 8, 7, 6, 5, 4, 3]
+//   - numers[0] = 9×8×7×6×5×4×3   = 181440
+//   - numers[1] = 10×8×7×6×5×4×3  = 201600
+//   - numers[2] = 10×9×7×6×5×4×3  = 226800
+//   - numers[3] = 10×9×8×6×5×4×3  = 259200
+//   - numers[4] = 10×9×8×7×5×4×3  = 302400
+//   - numers[5] = 10×9×8×7×6×4×3  = 362880
+//   - numers[6] = 10×9×8×7×6×5×3  = 453600
+//   - numers[7] = 10×9×8×7×6×5×4  = 604800
+func TestComputeNumeratorsBinaryTreeEightElements(t *testing.T) {
+	got := blsNumeratorsBinaryTree(10, 8)
+	require.Len(t, got, 8)
+
+	expected := []int64{181440, 201600, 226800, 259200, 302400, 362880, 453600, 604800}
+	for i, exp := range expected {
+		var e bls12381fr.Element
+		e.SetInt64(exp)
+		assert.True(t, equalsBLS(got[i], &e), "m=8: numers[%d] should be %d", i, exp)
+	}
+
+	// Also verify against naive reference for both curves.
+	t.Run("BLS12381", func(t *testing.T) {
+		input := buildCMinusJBLS(10, 8)
+		want := naiveNumeratorsBLS(input, 8)
+		for i := range 8 {
+			assert.True(t, equalsBLS(got[i], want[i]), "m=8 BLS: index %d mismatch", i)
+		}
+	})
+
+	t.Run("BN254", func(t *testing.T) {
+		input := buildCMinusJBN254(10, 8)
+		got8 := bn254NumeratorsBinaryTree(10, 8)
+		want := naiveNumeratorsBN254(input, 8)
+		require.Len(t, got8, 8)
+		for i := range 8 {
+			assert.True(t, equalsBN254(got8[i], want[i]), "m=8 BN254: index %d mismatch", i)
+		}
+	})
+}
+
+// TestComputeNumeratorsBinaryTreeTenElements verifies the m=10 case
+// (an even, non-power-of-2 tree) with hand-computed expected values.
+//
+// With c=100:
+//   - cMinusJ = [100, 99, 98, 97, 96, 95, 94, 93, 92, 91]
+//   - numers[i] = ∏_{j≠i} (100-j)
+//
+// Expected values (computed via ∏_{j≠i}):
+//
+//	numers[0] = 628156509555294720
+//	numers[1] = 634501524803328000
+//	numers[2] = 640976030158464000
+//	numers[3] = 647584030469376000
+//	numers[4] = 654329697453432000
+//	numers[5] = 661217378479257600
+//	numers[6] = 668251605909888000
+//	numers[7] = 675437107048704000
+//	numers[8] = 682778814734016000
+//	numers[9] = 690281878632192000
+func TestComputeNumeratorsBinaryTreeTenElements(t *testing.T) {
+	const m = 10
+	const c = int64(100)
+
+	// Verify against naive reference for both curves.
+	t.Run("BLS12381", func(t *testing.T) {
+		input := buildCMinusJBLS(c, m)
+		got := blsNumeratorsBinaryTree(c, m)
+		want := naiveNumeratorsBLS(input, m)
+
+		require.Len(t, got, m)
+		for i := range m {
+			assert.True(t, equalsBLS(got[i], want[i]),
+				"m=%d c=%d BLS: index %d mismatch", m, c, i)
+		}
+	})
+
+	t.Run("BN254", func(t *testing.T) {
+		input := buildCMinusJBN254(c, m)
+		got := bn254NumeratorsBinaryTree(c, m)
+		want := naiveNumeratorsBN254(input, m)
+
+		require.Len(t, got, m)
+		for i := range m {
+			assert.True(t, equalsBN254(got[i], want[i]),
+				"m=%d c=%d BN254: index %d mismatch", m, c, i)
+		}
+	})
+
+	// Spot-check hand-computed expected values for BLS12-381.
+	gotBLS := blsNumeratorsBinaryTree(c, m)
+	expected := []int64{
+		628156509555294720,
+		634501524803328000,
+		640976030158464000,
+		647584030469376000,
+		654329697453432000,
+		661217378479257600,
+		668251605909888000,
+		675437107048704000,
+		682778814734016000,
+		690281878632192000,
+	}
+	for i, exp := range expected {
+		var e bls12381fr.Element
+		e.SetInt64(exp)
+		assert.True(t, equalsBLS(gotBLS[i], &e),
+			"m=%d c=%d: numers[%d] should be %d", m, c, i, exp)
+	}
+}
