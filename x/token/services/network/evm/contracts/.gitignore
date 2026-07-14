@@ -1,0 +1,13 @@
+# Foundry build + cache artifacts
+out/
+cache/
+broadcast/
+
+# forge-std is vendored as a git submodule under lib/ (see .gitmodules + foundry.lock),
+# so lib/ is intentionally NOT ignored. Fetch it on a fresh clone with:
+#   git submodule update --init --recursive
+
+# Local Node deps for the ethers cross-check (eip712_check.js)
+node_modules/
+package.json
+package-lock.json
