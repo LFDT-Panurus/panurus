@@ -6,9 +6,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/selector/sherdlock"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/utils/types/transaction"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/token"
+	"github.com/LFDT-Panurus/panurus/token/services/selector/sherdlock"
+	"github.com/LFDT-Panurus/panurus/token/services/utils/types/transaction"
+	"github.com/LFDT-Panurus/panurus/token/token"
 )
 
 type FakeLocker struct {

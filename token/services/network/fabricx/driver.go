@@ -9,6 +9,27 @@ package fabricx
 import (
 	"slices"
 
+	"github.com/LFDT-Panurus/panurus/token"
+	"github.com/LFDT-Panurus/panurus/token/core/common/metrics"
+	"github.com/LFDT-Panurus/panurus/token/services/config"
+	"github.com/LFDT-Panurus/panurus/token/services/network/common"
+	"github.com/LFDT-Panurus/panurus/token/services/network/common/rws/keys"
+	"github.com/LFDT-Panurus/panurus/token/services/network/common/rws/translator"
+	"github.com/LFDT-Panurus/panurus/token/services/network/driver"
+	"github.com/LFDT-Panurus/panurus/token/services/network/fabric"
+	"github.com/LFDT-Panurus/panurus/token/services/network/fabric/finality"
+	"github.com/LFDT-Panurus/panurus/token/services/network/fabric/lookup"
+	"github.com/LFDT-Panurus/panurus/token/services/network/fabricx/endorsement"
+	finality2 "github.com/LFDT-Panurus/panurus/token/services/network/fabricx/finality"
+	"github.com/LFDT-Panurus/panurus/token/services/network/fabricx/finality/queue"
+	lookup2 "github.com/LFDT-Panurus/panurus/token/services/network/fabricx/lookup"
+	pp2 "github.com/LFDT-Panurus/panurus/token/services/network/fabricx/pp"
+	"github.com/LFDT-Panurus/panurus/token/services/network/fabricx/qe"
+	"github.com/LFDT-Panurus/panurus/token/services/storage/auditdb"
+	"github.com/LFDT-Panurus/panurus/token/services/storage/endorserdb"
+	"github.com/LFDT-Panurus/panurus/token/services/storage/services/cleanup"
+	"github.com/LFDT-Panurus/panurus/token/services/storage/ttxdb"
+	"github.com/LFDT-Panurus/panurus/token/services/tokens"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	cdriver "github.com/hyperledger-labs/fabric-smart-client/platform/common/driver"
 	fabric2 "github.com/hyperledger-labs/fabric-smart-client/platform/fabric"
@@ -16,26 +37,6 @@ import (
 	"github.com/hyperledger-labs/fabric-smart-client/platform/fabricx/core/committer/queryservice"
 	finalityx "github.com/hyperledger-labs/fabric-smart-client/platform/fabricx/core/finality"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/services/view"
-	"github.com/hyperledger-labs/fabric-token-sdk/token"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/core/common/metrics"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/config"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/network/common"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/network/common/rws/keys"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/network/common/rws/translator"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/network/driver"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/network/fabric"
-	endorsement2 "github.com/hyperledger-labs/fabric-token-sdk/token/services/network/fabric/endorsement"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/network/fabric/finality"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/network/fabric/lookup"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/network/fabricx/endorsement"
-	finality2 "github.com/hyperledger-labs/fabric-token-sdk/token/services/network/fabricx/finality"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/network/fabricx/finality/queue"
-	lookup2 "github.com/hyperledger-labs/fabric-token-sdk/token/services/network/fabricx/lookup"
-	pp2 "github.com/hyperledger-labs/fabric-token-sdk/token/services/network/fabricx/pp"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/network/fabricx/qe"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/auditdb"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/ttxdb"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/tokens"
 	"go.opentelemetry.io/otel/trace"
 )
 
@@ -57,6 +58,8 @@ func NewDriver(
 	qsProvider queryservice.Provider,
 	ttxStoreServiceManager ttxdb.StoreServiceManager,
 	auditStoreServiceManager auditdb.StoreServiceManager,
+	cleanupServiceManager cleanup.ServiceManager,
+	endorserStoreServiceManager endorserdb.StoreServiceManager,
 	queryServiceProvider queryservice.Provider,
 	finalityProvider *finalityx.Provider,
 	metricsProvider metrics.Provider,
@@ -80,6 +83,7 @@ func NewDriver(
 	d := &Driver{
 		ttxStoreServiceManager:     ttxStoreServiceManager,
 		auditStoreServiceManager:   auditStoreServiceManager,
+		cleanupServiceManager:      cleanupServiceManager,
 		fnsProvider:                fnsProvider,
 		tokensManager:              tokensManager,
 		configService:              configs,
@@ -95,6 +99,7 @@ func NewDriver(
 			queryServiceProvider,
 			finalityProvider,
 			q,
+			finality2.NewConfig(configService),
 		),
 		llmProvider: lookup2.NewCronNSListenerManagerProvider(
 			queryServiceProvider,
@@ -108,7 +113,7 @@ func NewDriver(
 			kt,
 			vkp,
 			tmsProvider,
-			endorsement2.NewStorageProvider(ttxStoreServiceManager),
+			endorserStoreServiceManager,
 			fnsProvider,
 		),
 		setupListenerProvider: lookup2.NewSetupListenerProvider(
@@ -127,6 +132,7 @@ func NewDriver(
 type Driver struct {
 	ttxStoreServiceManager     ttxdb.StoreServiceManager
 	auditStoreServiceManager   auditdb.StoreServiceManager
+	cleanupServiceManager      cleanup.ServiceManager
 	fnsProvider                *fabric2.NetworkServiceProvider
 	tokensManager              *tokens.ServiceManager
 	configService              *config.Service
@@ -189,6 +195,7 @@ func (d *Driver) New(network, channel string) (driver.Network, error) {
 	return NewNetwork(
 		d.ttxStoreServiceManager,
 		d.auditStoreServiceManager,
+		d.cleanupServiceManager,
 		fns,
 		ch,
 		d.configService,

@@ -7,11 +7,11 @@ SPDX-License-Identifier: Apache-2.0
 package identity
 
 import (
-	"github.com/hyperledger-labs/fabric-token-sdk/token"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/identity/driver"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/identitydb"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/keystoredb"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/walletdb"
+	"github.com/LFDT-Panurus/panurus/token"
+	"github.com/LFDT-Panurus/panurus/token/services/identity/driver"
+	"github.com/LFDT-Panurus/panurus/token/services/storage/identitydb"
+	"github.com/LFDT-Panurus/panurus/token/services/storage/keystoredb"
+	"github.com/LFDT-Panurus/panurus/token/services/storage/walletdb"
 )
 
 // IdentityStoreServiceManager manages identity store services for different TMS instances.

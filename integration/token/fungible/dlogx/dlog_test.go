@@ -9,20 +9,20 @@ package dlogx
 import (
 	"time"
 
+	integration2 "github.com/LFDT-Panurus/panurus/integration"
+	"github.com/LFDT-Panurus/panurus/integration/nwo/token"
+	"github.com/LFDT-Panurus/panurus/integration/nwo/token/generators/crypto/zkatdlognoghv1"
+	token2 "github.com/LFDT-Panurus/panurus/integration/token"
+	"github.com/LFDT-Panurus/panurus/integration/token/common"
+	"github.com/LFDT-Panurus/panurus/integration/token/common/sdk/fxdlog"
+	"github.com/LFDT-Panurus/panurus/integration/token/fungible"
+	"github.com/LFDT-Panurus/panurus/integration/token/fungible/topology"
+	"github.com/LFDT-Panurus/panurus/integration/token/fungible/views/fabricx/tmsdeploy"
 	"github.com/hyperledger-labs/fabric-smart-client/integration"
 	common2 "github.com/hyperledger-labs/fabric-smart-client/integration/nwo/common"
 	"github.com/hyperledger-labs/fabric-smart-client/integration/nwo/fabricx"
 	"github.com/hyperledger-labs/fabric-smart-client/integration/nwo/fsc"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/node"
-	integration2 "github.com/hyperledger-labs/fabric-token-sdk/integration"
-	"github.com/hyperledger-labs/fabric-token-sdk/integration/nwo/token"
-	"github.com/hyperledger-labs/fabric-token-sdk/integration/nwo/token/generators/crypto/zkatdlognoghv1"
-	token2 "github.com/hyperledger-labs/fabric-token-sdk/integration/token"
-	"github.com/hyperledger-labs/fabric-token-sdk/integration/token/common"
-	"github.com/hyperledger-labs/fabric-token-sdk/integration/token/common/sdk/fxdlog"
-	"github.com/hyperledger-labs/fabric-token-sdk/integration/token/fungible"
-	"github.com/hyperledger-labs/fabric-token-sdk/integration/token/fungible/topology"
-	"github.com/hyperledger-labs/fabric-token-sdk/integration/token/fungible/views/fabricx/tmsdeploy"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 )
@@ -71,7 +71,7 @@ var _ = Describe("EndToEnd", func() {
 func newTestSuite(commType fsc.P2PCommunicationType, mask int, factor int, tokenSelector string, names ...string) (*integration.TestSuite, *token2.ReplicaSelector) {
 	opts, selector := token2.NewReplicationOptions(factor, names...)
 	ts := integration.NewTestSuite(func() (*integration.Infrastructure, error) {
-		i, err := integration.New(StartPortDlog(), "", topology.Topology(common.Opts{
+		i, err := integration.New(StartPortDlog(), "./testdata", topology.Topology(common.Opts{
 			Backend:  fabricx.PlatformName, // select fabricx platform for NWO
 			CommType: commType,
 			DefaultTMSOpts: common.TMSOpts{
@@ -89,6 +89,11 @@ func newTestSuite(commType fsc.P2PCommunicationType, mask int, factor int, token
 			FSCLogSpec:          "info",
 			TokenSelector:       tokenSelector,
 		})...)
+		i.DeleteOnStart = true
+		i.DeleteOnStop = false
+		if integration.WithRaceDetection {
+			i.EnableRaceDetector()
+		}
 		i.RegisterPlatformFactory(fabricx.NewPlatformFactory())
 		i.RegisterPlatformFactory(token.NewPlatformFactory(i))
 		i.Generate()

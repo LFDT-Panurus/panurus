@@ -1,0 +1,198 @@
+/*
+   Copyright IBM Corp. All Rights Reserved.
+
+   SPDX-License-Identifier: Apache-2.0
+*/
+
+syntax = "proto3";
+
+package fabric_token_sdk.token.driver.v1;
+
+import "common.proto";
+
+option go_package = "github.com/LFDT-Panurus/panurus/token/driver/protos-go/v1/request";
+
+// Enum representing different types of token actions
+enum ActionType {
+  // Unspecified action type - used to detect uninitialized values
+  // This value should never be used in production and will be rejected during validation
+  ACTION_TYPE_UNSPECIFIED = 0;
+  // Token issuance action type
+  ACTION_TYPE_ISSUE = 1;
+  // Token transfer action type
+  ACTION_TYPE_TRANSFER = 2;
+}
+
+// AuditableIdentity represents an identity with its audit info
+// AuditableIdentity pairs an identity with its audit information,
+// allowing auditors to verify and track token operations.
+message AuditableIdentity {
+  // identity is the serialized identity of the entity
+  fabric_token_sdk.token.driver.v1.Identity identity = 1;
+  // audit_info contains encrypted or encoded information for auditors
+  bytes audit_info = 2;
+}
+
+// TransferInputMetadata describes an input token being spent in a transfer.
+message TransferInputMetadata {
+  // token_id uniquely identifies the token being transferred
+  fabric_token_sdk.token.driver.v1.TokenID token_id = 1;
+  // senders are the identities spending this token, with their audit information
+  repeated AuditableIdentity senders = 2;
+}
+
+// OutputMetadata describes a newly created token output.
+message OutputMetadata {
+  // metadata contains driver-specific output metadata
+  bytes metadata = 1;
+  // audit_info contains encrypted information about the output owner for auditors
+  bytes audit_info = 2;
+  // receivers are the identities receiving this token, with their audit information
+  repeated AuditableIdentity receivers = 3;
+}
+
+// TransferMetadata contains metadata for a transfer action that spends
+// existing tokens and creates new tokens.
+message TransferMetadata {
+  // inputs describe the tokens being spent
+  repeated TransferInputMetadata inputs = 1;
+  // outputs describe the newly created tokens
+  repeated OutputMetadata outputs = 2;
+  // issuer is the identity that signs the transfer in redeem scenarios, with audit information
+  AuditableIdentity issuer = 3;
+  // extra_signers are additional identities that must sign this transfer, with their audit information
+  repeated AuditableIdentity extra_signers = 4;
+}
+
+// IssueInputMetadata describes a token being redeemed during issuance.
+message IssueInputMetadata {
+  // token_id uniquely identifies the token being consumed by the issuance
+  fabric_token_sdk.token.driver.v1.TokenID token_id = 1;
+}
+
+// IssueMetadata contains metadata for an issuance action where new tokens are created.
+message IssueMetadata {
+  // issuer is the identity creating the tokens, with audit information
+  AuditableIdentity issuer = 1;
+  // inputs describe tokens being redeemed (if any) during issuance
+  repeated IssueInputMetadata inputs = 2;
+  // outputs describe the newly issued tokens
+  repeated OutputMetadata outputs = 3;
+  // extra_signers are additional identities that must sign this issuance, with their audit information
+  repeated AuditableIdentity extra_signers = 4;
+}
+
+// HashedMetadata contains only the hash of hidden metadata.
+// This allows metadata to be concealed while still being verifiable.
+message HashedMetadata {
+  // hash is the cryptographic hash of the hidden metadata
+  bytes hash = 1;
+}
+
+// ActionMetadata is a union type containing metadata for either an issue or transfer action.
+message ActionMetadata {
+  // action_id is the index of the corresponding action in the token request action list
+  uint32 action_id = 1;
+  // metadata contains either issue, transfer, or hashed metadata
+  oneof metadata {
+    // issue_metadata contains metadata for an issuance action
+    IssueMetadata issue_metadata = 2;
+    // transfer_metadata contains metadata for a transfer action
+    TransferMetadata transfer_metadata = 3;
+    // hashed_metadata contains only the hash of hidden metadata
+    HashedMetadata hashed_metadata = 4;
+  }
+}
+
+// TokenRequestMetadata contains metadata for a complete token request with multiple actions.
+message TokenRequestMetadata {
+  // version is the protocol version of this metadata format
+  uint32 version = 1;
+  // metadata is the list of action metadata (issue/transfer) in this request
+  repeated ActionMetadata metadata = 2;
+  // application_metadata stores arbitrary application-specific data.
+  // Keys should follow reverse-DNS naming (e.g., "com.example.myapp.field") to avoid collisions.
+  map<string, bytes> application_metadata = 3;
+}
+
+// TypedAction represents a single token operation (issue or transfer) with its serialized data.
+message TypedAction {
+  // type specifies whether this is an issue or transfer action
+  ActionType type = 1;
+  // raw contains the serialized action data (driver-specific format)
+  bytes raw = 2;
+}
+
+// HashedAction contains only the hash of a hidden action.
+// This allows actions to be concealed while still being verifiable.
+message HashedAction {
+  // hash is the cryptographic hash of the hidden action
+  bytes hash = 1;
+}
+
+// Action is a union type that can contain either a typed action or a hashed action.
+message Action {
+  // action contains either a typed action or a hashed action
+  oneof action {
+    // typed_action contains the full action details (type and raw data)
+    TypedAction typed_action = 1;
+    // hashed_action contains only the hash of a hidden action
+    HashedAction hashed_action = 2;
+  }
+}
+
+// Signature represents a cryptographic signature over token request data.
+message Signature {
+  // raw contains the serialized signature bytes
+  bytes raw = 1;
+}
+
+// ActionSignature pairs a signature with the action it authorizes.
+message ActionSignature {
+  // action_id is the index of the action in the token request action list
+  uint32 action_id = 1;
+  // signature is the cryptographic signature authorizing the referenced action
+  Signature signature = 2;
+}
+
+// AuditorSignature pairs an auditor's identity with their signature.
+message AuditorSignature {
+  // identity is the serialized identity of the auditor who signed
+  fabric_token_sdk.token.driver.v1.Identity identity = 1;
+  // signature is the auditor's cryptographic signature
+  Signature signature = 2;
+}
+
+// RequestSignature is a union type for all signatures attached to a token request.
+message RequestSignature {
+  // signature contains exactly one supported token-request signature variant.
+  oneof signature {
+    // action_signature is a signature bound to a specific action in the request
+    ActionSignature action_signature = 1;
+    // auditor_signature is a signature produced by an auditor for the request
+    AuditorSignature auditor_signature = 2;
+  }
+}
+
+// TokenRequest represents a complete token request with actions and signatures.
+message TokenRequest {
+  // version is the protocol version of this request format
+  uint32 version = 1;
+  // actions are the token operations (issue/transfer) to perform
+  repeated Action actions = 2;
+  // signatures are the cryptographic signatures attached to this request
+  repeated RequestSignature signatures = 3;
+}
+
+// TokenRequestWithMetadata pairs a token request with its metadata.
+// This is the complete structure used for token operations.
+message TokenRequestWithMetadata {
+  // version is the protocol version of this structure
+  uint32 version = 1;
+  // anchor is a unique identifier linking this request to a specific context
+  string anchor = 2;
+  // request contains the actual token operations and signatures
+  TokenRequest request = 3;
+  // metadata contains additional information about the request
+  TokenRequestMetadata metadata = 4;
+}

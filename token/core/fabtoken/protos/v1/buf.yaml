@@ -1,0 +1,4 @@
+version: v2
+name: buf.build/LFDT-Panurus/panurus-fabtoken
+deps:
+  - token/driver/protos/v1

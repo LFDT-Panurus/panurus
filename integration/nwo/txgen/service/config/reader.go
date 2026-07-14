@@ -12,9 +12,9 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/hyperledger-labs/fabric-token-sdk/integration/nwo/txgen/model"
-	"github.com/hyperledger-labs/fabric-token-sdk/integration/nwo/txgen/model/api"
-	c "github.com/hyperledger-labs/fabric-token-sdk/integration/nwo/txgen/model/constants"
+	"github.com/LFDT-Panurus/panurus/integration/nwo/txgen/model"
+	"github.com/LFDT-Panurus/panurus/integration/nwo/txgen/model/api"
+	c "github.com/LFDT-Panurus/panurus/integration/nwo/txgen/model/constants"
 	"github.com/spf13/viper"
 )
 

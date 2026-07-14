@@ -1,6 +1,6 @@
 # Token Transaction (TTX) Service
 
-The **Token Transaction (TTX) Service** is the primary orchestration component of the Fabric Token SDK. it provides a high-level API and a set of [Fabric Smart Client (FSC)](https://github.com/hyperledger-labs/fabric-smart-client) Views to help developers assemble, sign, and commit token transactions in a backend-agnostic manner.
+The **Token Transaction (TTX) Service** is the primary orchestration component of Panurus. it provides a high-level API and a set of [Fabric Smart Client (FSC)](https://github.com/hyperledger-labs/fabric-smart-client) Views to help developers assemble, sign, and commit token transactions in a backend-agnostic manner.
 
 The TTX service is designed with a **dependency injection pattern** (located in `token/services/ttx/dep`), which decouples the transaction orchestration logic from the underlying infrastructure providers like the Network Service, TMS Provider, and Storage Service.
 
@@ -11,28 +11,24 @@ The lifecycle of a token transaction typically involves the following stages, co
 ```mermaid
 sequenceDiagram
     autonumber
-    participant Initiator
-    participant Recipient
-    participant Auditor
-    participant Network as Network Service
-    participant Ledger as DLT / Ledger
 
-    box darkgreen Token SDK Stack
+    box darkgreen Panurus Stack
         participant Initiator
         participant Recipient
         participant Auditor
-        participant Network
+        participant Network as Network Service
     end
+    participant Ledger as DLT / Ledger
 
     Note over Initiator: 1. Request Identities (with nonce/signature attestation)
     Initiator->>+Recipient: RequestRecipientIdentityView (includes Nonce)
     Recipient-->>-Initiator: RecipientResponse (Identity + Audit Info + Signature)
 
     Note over Initiator: 2. Assemble Request
-    Initiator->>+Initiator: Issue / Transfer / Redeem operations
+    Initiator->>Initiator: Issue / Transfer / Redeem operations
 
     Note over Initiator: 3. Collect Endorsements
-    Initiator->>+Initiator: Sign locally
+    Initiator->>Initiator: Sign locally
     Initiator->>+Recipient: Request Signatures (for spent tokens)
     Recipient-->>-Initiator: Signature
     Initiator->>+Auditor: AuditApproveView
@@ -41,13 +37,13 @@ sequenceDiagram
     Network-->>-Initiator: Endorsed Envelope
 
     Note over Initiator: 4. Distribution & Ordering
-    Initiator->>+Recipient: Distribute Transaction Metadata
+    Initiator->>Recipient: Distribute Transaction Metadata
     Initiator->>+Network: Broadcast Transaction
     Network->>+Ledger: Submit to Orderer
+    Ledger-->>-Network: Transaction Committed
 
     Note over Initiator: 5. Finality Tracking
     Initiator->>+Network: Listen for Finality
-    Ledger-->>-Network: Transaction Committed
     Network-->>-Initiator: Notify Finality
 ```
 
@@ -188,7 +184,7 @@ recipient, err := bptx.RequestRecipientIdentity(ctx, "$0 OR $1",
 )
 ```
 
-Each co-owner's node responds with its component identity; the SDK assembles the `PolicyIdentity` envelope automatically.
+Each co-owner's node responds with its component identity; Panurus assembles the `PolicyIdentity` envelope automatically.
 
 #### Policy Expression Syntax
 
@@ -290,7 +286,7 @@ The message-type discriminators live with the service that uses them — the ttx
 | `TypeRecipientRequest` / `TypeRecipientResponse` | `recipient_req` / `recipient_resp` | `recipients.go` request flow |
 | `TypeExchangeRecipientRequest` / `TypeExchangeRecipientResp` | `exchange_req` / `exchange_resp` | `recipients.go` exchange flow |
 | `TypeMultisigRecipientData` / `TypePolicyRecipientData` | `multisig_data` / `policy_data` | recipient follow-ups for multisig / policy identities |
-| `TypeWithdrawalRequest` | `withdrawal_req` | `withdrawal.go` |
+| `TypeWithdrawalRequest` / `TypeWithdrawalChallenge` / `TypeWithdrawalResponse` | `withdrawal_req` / `withdrawal_challenge` / `withdrawal_resp` | `withdrawal.go` |
 | `TypeUpgradeAgreement` / `TypeUpgradeRequest` | `upgrade_agree` / `upgrade_req` | `upgrade.go` |
 | `TypeSpendRequest` / `TypeSpendResponse` | `spend_req` / `spend_resp` | `multisig/spend.go`, `boolpolicy/spend.go` |
 | `TypeSignatureRequest` / `TypeSignature` | `sig_req` / `signature` | `collectendorsements.go`, `endorse.go`, `accept.go`, `auditor.go` |
@@ -317,7 +313,7 @@ All satisfy `errors.Is`. `VersionCompatibility` / `IsCompatible(local, remote)` 
 
 ## Withdrawal Flow
 
-The withdrawal protocol (`withdrawal.go`) lets a wallet ask an issuer to mint tokens to a freshly generated recipient identity. Single-shot: the initiator sends a `WithdrawalRequest`; the issuer registers the recipient identity and returns the session for the subsequent issuance flow.
+The withdrawal protocol (`withdrawal.go`) lets a wallet ask an issuer to mint tokens to a freshly generated recipient identity. It uses a **three-message challenge-response** so that freshness is controlled by the issuer — the issuer samples the nonce, which prevents an attacker from pre-computing a valid `(nonce, signature)` pair and replaying it across sessions.
 
 ```mermaid
 sequenceDiagram
@@ -325,12 +321,36 @@ sequenceDiagram
     participant I as Initiator (RequestWithdrawalView)
     participant Iss as Issuer (ReceiveWithdrawalRequestView)
 
-    I->>I: Resolve recipient identity (caller-supplied or wallet-generated)
-    I->>Iss: Envelope{t:"withdrawal_req", b:WithdrawalRequest{TMSID, RecipientData, TokenType, Amount, NotAnonymous}}
-    Iss->>Iss: RegisterRecipientIdentity(request.RecipientData)
-    Iss->>Iss: endpoint.Bind(caller -> RecipientData.Identity)
-    Note over I,Iss: Session returned to caller for the issuance/endorsement flow
+    rect rgba(230, 230, 250, 0.35)
+        Note over I,Iss: Phase 1 - Request
+        I->>I: Resolve recipient identity (caller-supplied or wallet-generated)
+        I->>Iss: Envelope{t:"withdrawal_req", b:WithdrawalRequest{TMSID, RecipientData, TokenType, Amount, NotAnonymous}}
+    end
+
+    rect rgba(255, 245, 238, 0.5)
+        Note over Iss: Phase 2 - Challenge
+        Iss->>Iss: nonce = GetRandomNonce()
+        Iss-->>I: Envelope{t:"withdrawal_challenge", b:WithdrawalChallenge{Nonce}}
+    end
+
+    rect rgba(240, 255, 240, 0.45)
+        Note over I: Phase 3 - Response
+        I->>I: msg = asn1(TMSID + nil walletID + RecipientData.Identity + nonce + session id + context id)
+        I->>I: sig = Sign(msg)
+        I->>Iss: Envelope{t:"withdrawal_resp", b:WithdrawalResponse{Signature: sig}}
+    end
+
+    rect rgba(245, 245, 245, 0.55)
+        Note over Iss: Phase 4 - Verification and registration
+        Iss->>Iss: msg = asn1(same fields, using issuer-held nonce)
+        Iss->>Iss: verifier.Verify(msg, resp.Signature)
+        Iss->>Iss: RegisterRecipientIdentity(request.RecipientData)
+        Iss->>Iss: endpoint.Bind(caller -> RecipientData.Identity)
+        Note over I,Iss: Session returned to caller for the issuance/endorsement flow
+    end
 ```
+
+The attestation message is the same DER-encoded (`encoding/asn1`) structure used by the recipient-identity protocols, with `walletID` fixed to `nil` — the issuer does not need to know the requester's wallet identifier.
 
 ## Token Upgrade Flow
 
@@ -345,10 +365,10 @@ sequenceDiagram
     I->>Iss: Envelope{t:"upgrade_agree", b:UpgradeTokensAgreement{}}
     Iss->>Iss: NewUpgradeChallenge, set TMSID
     Iss-->>I: Envelope{t:"upgrade_agree", b:UpgradeTokensAgreement{Challenge, TMSID}}
-    I->>I: GenUpgradeProof(challenge, tokens); resolve recipient identity
+    I->>I: GenUpgradeProof(challenge, tokens), then resolve recipient identity
     I->>Iss: Envelope{t:"upgrade_req", b:UpgradeTokensRequest{ID, TMSID, RecipientData, Tokens, Proof}}
     Iss->>Iss: Verify request.ID == challenge, verify TMS matches
-    Note over I,Iss: Responder continues with issuance; session returned to caller
+    Note over I,Iss: Responder continues with issuance, session returned to caller
 ```
 
 The responder checks `request.ID` byte-for-byte against the challenge it issued, so a stale or substituted request is rejected before any proof verification.
@@ -409,7 +429,7 @@ sequenceDiagram
     I->>R: Envelope{t:"transaction", b:TransactionPayload{Raw}}
     I->>R: Envelope{t:"actions", b:Actions}
     I->>R: Envelope{t:"action_transfer", b:ActionTransfer}
-    R->>R: Receive transaction, actions, action; assemble
+    R->>R: Receive transaction, actions, action, then assemble
     R-->>I: Envelope{t:"tx_resp", b:TransactionPayload{Raw}}
 ```
 
@@ -438,6 +458,8 @@ Redeem supports an enhanced flow where an issuer signature is required as part o
 3. Optionally pass `ttx.WithIssuerPublicParamsPublicKey(...)` to pin which issuer public-parameters signing key must authorize the redeem.
 4. Run `CollectEndorsementsView` to collect owner, auditor (if configured), and issuer signatures.
 
+On commit, a redeem output (empty owner) is attributed to the issuer that signed the transfer action. The issuer node stores the redeem as its own record (flagged `Redeemed`) so it counts toward that issuer wallet's `RedeemedBalance` and net `Balance`; redeems that cannot be attributed to a locally-known issuer are discarded rather than stored. See [Issuer Balance](../token_sdk_usage.md#issuer-balance-historygo).
+
 ## Collecting Endorsements
 
 The `CollectEndorsementsView` is responsible for gathering all signatures required to make a transaction valid:
@@ -452,11 +474,11 @@ Once fully endorsed, the transaction metadata is distributed to all recipients s
 
 ## Finality and Discovery
 
-The `FinalityView` allows applications to wait for a transaction to be committed to the ledger. Internally, the SDK's **Network Service** listens for ledger events. When a transaction reaches finality, the Network Service notifies the SDK, which then updates the local `Transactions DB` and `Tokens DB` to reflect the new state.
+The `FinalityView` allows applications to wait for a transaction to be committed to the ledger. Internally, Panurus's **Network Service** listens for ledger events. When a transaction reaches finality, the Network Service notifies Panurus, which then updates the local `Transactions DB` and `Tokens DB` to reflect the new state.
 
 ### Transaction Recovery
 
-The SDK includes an automatic recovery mechanism to handle pending transactions that may have lost their finality listeners due to node restarts, network interruptions, or other failures. 
+Panurus includes an automatic recovery mechanism to handle pending transactions that may have lost their finality listeners due to node restarts, network interruptions, or other failures. 
 The recovery service is part of the **Storage Service** and is instantiated by the **Network Service** to recover transactions from either `TTXDB` (for regular transactions) or `AuditDB` (for auditor nodes).
 
 For detailed information about the recovery mechanism, see:

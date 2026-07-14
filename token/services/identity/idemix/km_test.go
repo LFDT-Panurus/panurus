@@ -15,25 +15,25 @@ import (
 	"sync"
 	"testing"
 
-	idemix2 "github.com/IBM/idemix"
 	"github.com/IBM/idemix/bccsp/types"
+	idemixmsp "github.com/IBM/idemix/msp"
 	math "github.com/IBM/mathlib"
+	"github.com/LFDT-Panurus/panurus/token"
+	"github.com/LFDT-Panurus/panurus/token/services/identity"
+	"github.com/LFDT-Panurus/panurus/token/services/identity/deserializer"
+	"github.com/LFDT-Panurus/panurus/token/services/identity/idemix/crypto"
+	"github.com/LFDT-Panurus/panurus/token/services/identity/idemix/schema"
+	"github.com/LFDT-Panurus/panurus/token/services/logging"
+	kvs2 "github.com/LFDT-Panurus/panurus/token/services/storage/db/kvs"
+	"github.com/LFDT-Panurus/panurus/token/services/utils"
 	_ "github.com/hyperledger-labs/fabric-smart-client/platform/view/services/storage/driver/memory"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/services/view"
-	"github.com/hyperledger-labs/fabric-token-sdk/token"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/identity"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/identity/deserializer"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/identity/idemix/crypto"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/identity/idemix/schema"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/logging"
-	kvs2 "github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/db/kvs"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/utils"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 func TestNewKeyManager(t *testing.T) {
-	testNewKeyManager(t, "./testdata/fp256bn_amcl/idemix", math.FP256BN_AMCL)
+	testNewKeyManager(t, "./testdata/bls12_381_bbs_gurvy/idemix", math.BLS12_381_BBS_GURVY)
 	testNewKeyManager(t, "./testdata/bls12_381_bbs/idemix", math.BLS12_381_BBS_GURVY)
 }
 
@@ -124,7 +124,7 @@ func testNewKeyManager(t *testing.T, configPath string, curveID math.CurveID) {
 }
 
 func TestIdentityWithEidRhNymPolicy(t *testing.T) {
-	testIdentityWithEidRhNymPolicy(t, "./testdata/fp256bn_amcl/idemix", math.FP256BN_AMCL)
+	testIdentityWithEidRhNymPolicy(t, "./testdata/bls12_381_bbs_gurvy/idemix", math.BLS12_381_BBS_GURVY)
 	testIdentityWithEidRhNymPolicy(t, "./testdata/bls12_381_bbs/idemix", math.BLS12_381_BBS_GURVY)
 }
 
@@ -166,6 +166,10 @@ func testIdentityWithEidRhNymPolicy(t *testing.T, configPath string, curveID mat
 	info, err := keyManager.Info(t.Context(), id, audit)
 	require.NoError(t, err)
 	assert.True(t, strings.HasPrefix(info, "Idemix: [alice]"))
+	// check SKI
+	idSKI, err := crypto.SKIFromIdentity(id)
+	require.NoError(t, err)
+	require.Equal(t, identityDescriptor.Signer.(*crypto.SigningIdentity).NymPublicKey.SKI(), idSKI)
 
 	// get another identity and compare the info
 	identityDescriptor2, err := keyManager.Identity(t.Context(), audit)
@@ -178,6 +182,10 @@ func testIdentityWithEidRhNymPolicy(t *testing.T, configPath string, curveID mat
 	require.NoError(t, err)
 	assert.True(t, strings.HasPrefix(info2, "Idemix: [alice]"))
 	assert.Equal(t, audit, audit2)
+	// check SKI
+	idSKI, err = crypto.SKIFromIdentity(id2)
+	require.NoError(t, err)
+	require.Equal(t, identityDescriptor2.Signer.(*crypto.SigningIdentity).NymPublicKey.SKI(), idSKI)
 
 	// deserialize the audit information
 	auditInfo, err := keyManager.DeserializeAuditInfo(t.Context(), audit)
@@ -228,7 +236,7 @@ func testIdentityWithEidRhNymPolicy(t *testing.T, configPath string, curveID mat
 }
 
 func TestIdentityStandard(t *testing.T) {
-	testIdentityStandard(t, "./testdata/fp256bn_amcl/idemix", math.FP256BN_AMCL)
+	testIdentityStandard(t, "./testdata/bls12_381_bbs_gurvy/idemix", math.BLS12_381_BBS_GURVY)
 	testIdentityStandard(t, "./testdata/bls12_381_bbs/idemix", math.BLS12_381_BBS_GURVY)
 }
 
@@ -257,6 +265,10 @@ func testIdentityStandard(t *testing.T, configPath string, curveID math.CurveID)
 	audit := identityDescriptor.AuditInfo
 	assert.NotNil(t, id)
 	assert.Nil(t, audit)
+	// check SKI
+	idSKI, err := crypto.SKIFromIdentity(id)
+	require.NoError(t, err)
+	require.Equal(t, identityDescriptor.Signer.(*crypto.SigningIdentity).NymPublicKey.SKI(), idSKI)
 
 	signer, err := p.DeserializeSigner(t.Context(), id)
 	require.NoError(t, err)
@@ -313,7 +325,7 @@ func testIdentityStandard(t *testing.T, configPath string, curveID math.CurveID)
 }
 
 func TestAuditWithEidRhNymPolicy(t *testing.T) {
-	testAuditWithEidRhNymPolicy(t, "./testdata/fp256bn_amcl/idemix", math.FP256BN_AMCL)
+	testAuditWithEidRhNymPolicy(t, "./testdata/bls12_381_bbs_gurvy/idemix", math.BLS12_381_BBS_GURVY)
 	testAuditWithEidRhNymPolicy(t, "./testdata/bls12_381_bbs/idemix", math.BLS12_381_BBS_GURVY)
 }
 
@@ -351,12 +363,21 @@ func testAuditWithEidRhNymPolicy(t *testing.T, configPath string, curveID math.C
 	audit := identityDescriptor.AuditInfo
 	assert.NotNil(t, id)
 	assert.NotNil(t, audit)
+	// check SKI
+	idSKI, err := crypto.SKIFromIdentity(id)
+	require.NoError(t, err)
+	require.Equal(t, identityDescriptor.Signer.(*crypto.SigningIdentity).NymPublicKey.SKI(), idSKI)
+
 	identityDescriptor2, err := p2.Identity(t.Context(), nil)
 	require.NoError(t, err)
 	id2 := identityDescriptor2.Identity
 	audit2 := identityDescriptor2.AuditInfo
 	assert.NotNil(t, id2)
 	assert.NotNil(t, audit2)
+	// check SKI
+	idSKI, err = crypto.SKIFromIdentity(id2)
+	require.NoError(t, err)
+	require.Equal(t, identityDescriptor2.Signer.(*crypto.SigningIdentity).NymPublicKey.SKI(), idSKI)
 
 	auditInfo, err := p.DeserializeAuditInfo(t.Context(), audit)
 	require.NoError(t, err)
@@ -371,7 +392,7 @@ func testAuditWithEidRhNymPolicy(t *testing.T, configPath string, curveID math.C
 }
 
 func TestKeyManager_DeserializeSigner(t *testing.T) {
-	testKeyManager_DeserializeSigner(t, "./testdata/fp256bn_amcl/idemix", math.FP256BN_AMCL)
+	testKeyManager_DeserializeSigner(t, "./testdata/bls12_381_bbs_gurvy/idemix", math.BLS12_381_BBS_GURVY)
 	testKeyManager_DeserializeSigner(t, "./testdata/bls12_381_bbs/idemix", math.BLS12_381_BBS_GURVY)
 }
 
@@ -438,12 +459,13 @@ func testKeyManager_DeserializeSigner(t *testing.T, configPath string, curveID m
 }
 
 func TestIdentityFromFabricCA(t *testing.T) {
+	// TODO: regenerate these keys with the gurvy curve
 	registry := view.NewServiceProvider()
 
 	kvs, err := kvs2.NewInMemory()
 	require.NoError(t, err)
 	require.NoError(t, registry.RegisterService(kvs))
-	ipkBytes, err := crypto.ReadFile(filepath.Join("./testdata/fp256bn_amcl/charlie.ExtraId2", idemix2.IdemixConfigFileIssuerPublicKey))
+	ipkBytes, err := crypto.ReadFile(filepath.Join("./testdata/fp256bn_amcl/charlie.ExtraId2", idemixmsp.IdemixConfigFileIssuerPublicKey))
 	require.NoError(t, err)
 	config, err := crypto.NewConfigWithIPK(ipkBytes, "./testdata/fp256bn_amcl/charlie.ExtraId2", true)
 	require.NoError(t, err)
@@ -518,12 +540,13 @@ func TestIdentityFromFabricCA(t *testing.T) {
 }
 
 func TestIdentityFromFabricCAWithEidRhNymPolicy(t *testing.T) {
+	// TODO: regenerate these keys with the gurvy curve
 	registry := view.NewServiceProvider()
 
 	kvs, err := kvs2.NewInMemory()
 	require.NoError(t, err)
 	require.NoError(t, registry.RegisterService(kvs))
-	ipkBytes, err := crypto.ReadFile(filepath.Join("./testdata/fp256bn_amcl/charlie.ExtraId2", idemix2.IdemixConfigFileIssuerPublicKey))
+	ipkBytes, err := crypto.ReadFile(filepath.Join("./testdata/fp256bn_amcl/charlie.ExtraId2", idemixmsp.IdemixConfigFileIssuerPublicKey))
 	require.NoError(t, err)
 	config, err := crypto.NewConfigWithIPK(ipkBytes, "./testdata/fp256bn_amcl/charlie.ExtraId2", true)
 	require.NoError(t, err)
@@ -592,8 +615,8 @@ func TestIdentityFromFabricCAWithEidRhNymPolicy(t *testing.T) {
 }
 
 func TestKeyManagerForRace(t *testing.T) {
-	t.Run("FP256BN_AMCL", func(t *testing.T) {
-		keyManager, cleanup := setupKeyManager(t, "./testdata/fp256bn_amcl/idemix", math.FP256BN_AMCL)
+	t.Run("BLS12_381_BBS_GURVY", func(t *testing.T) {
+		keyManager, cleanup := setupKeyManager(t, "./testdata/bls12_381_bbs_gurvy/idemix", math.BLS12_381_BBS_GURVY)
 		defer cleanup()
 		runIdentityConcurrently(t, t.Context(), keyManager)
 	})
@@ -669,7 +692,7 @@ func runIdentityConcurrently(t require.TestingT, ctx context.Context, keyManager
 
 // TestKeyManagerErrorPaths tests various error paths in km.go
 func TestKeyManagerErrorPaths(t *testing.T) {
-	testKeyManagerErrorPaths(t, "./testdata/fp256bn_amcl/idemix", math.FP256BN_AMCL)
+	testKeyManagerErrorPaths(t, "./testdata/bls12_381_bbs_gurvy/idemix", math.BLS12_381_BBS_GURVY)
 	testKeyManagerErrorPaths(t, "./testdata/bls12_381_bbs/idemix", math.BLS12_381_BBS_GURVY)
 }
 
@@ -730,7 +753,7 @@ func testKeyManagerErrorPaths(t *testing.T, configPath string, curveID math.Curv
 // TestKeyManagerInfoErrorCases tests error cases in Info method
 // that returns a string documenting the given identity and possibly the Enrollment ID (EID)
 func TestKeyManagerInfoErrorCases(t *testing.T) {
-	testKeyManagerInfoErrorCases(t, "./testdata/fp256bn_amcl/idemix", math.FP256BN_AMCL)
+	testKeyManagerInfoErrorCases(t, "./testdata/bls12_381_bbs_gurvy/idemix", math.BLS12_381_BBS_GURVY)
 	testKeyManagerInfoErrorCases(t, "./testdata/bls12_381_bbs/idemix", math.BLS12_381_BBS_GURVY)
 }
 
@@ -787,11 +810,11 @@ func testKeyManagerInfoErrorCases(t *testing.T, configPath string, curveID math.
 func TestDeserializeSigningIdentityErrorPath(t *testing.T) {
 	backend, err := kvs2.NewInMemory()
 	require.NoError(t, err)
-	config, err := crypto.NewConfig("./testdata/fp256bn_amcl/idemix")
+	config, err := crypto.NewConfig("./testdata/bls12_381_bbs_gurvy/idemix")
 	require.NoError(t, err)
-	keyStore, err := crypto.NewKeyStore(math.FP256BN_AMCL, kvs2.Keystore(backend))
+	keyStore, err := crypto.NewKeyStore(math.BLS12_381_BBS_GURVY, kvs2.Keystore(backend))
 	require.NoError(t, err)
-	cryptoProvider, err := crypto.NewBCCSP(keyStore, math.FP256BN_AMCL)
+	cryptoProvider, err := crypto.NewBCCSP(keyStore, math.BLS12_381_BBS_GURVY)
 	require.NoError(t, err)
 
 	keyManager, err := NewKeyManager(config, types.EidNymRhNym, cryptoProvider)
@@ -807,11 +830,11 @@ func TestDeserializeSigningIdentityErrorPath(t *testing.T) {
 func TestIdentityWithDifferentAuditInfo(t *testing.T) {
 	backend, err := kvs2.NewInMemory()
 	require.NoError(t, err)
-	config, err := crypto.NewConfig("./testdata/fp256bn_amcl/idemix")
+	config, err := crypto.NewConfig("./testdata/bls12_381_bbs_gurvy/idemix")
 	require.NoError(t, err)
-	keyStore, err := crypto.NewKeyStore(math.FP256BN_AMCL, kvs2.Keystore(backend))
+	keyStore, err := crypto.NewKeyStore(math.BLS12_381_BBS_GURVY, kvs2.Keystore(backend))
 	require.NoError(t, err)
-	cryptoProvider, err := crypto.NewBCCSP(keyStore, math.FP256BN_AMCL)
+	cryptoProvider, err := crypto.NewBCCSP(keyStore, math.BLS12_381_BBS_GURVY)
 	require.NoError(t, err)
 
 	keyManager, err := NewKeyManager(config, types.EidNymRhNym, cryptoProvider)

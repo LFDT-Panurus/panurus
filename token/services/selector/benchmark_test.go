@@ -14,14 +14,14 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/LFDT-Panurus/panurus/token"
+	"github.com/LFDT-Panurus/panurus/token/services/selector/sherdlock"
+	inmemory2 "github.com/LFDT-Panurus/panurus/token/services/selector/sherdlock/inmemory"
+	selector "github.com/LFDT-Panurus/panurus/token/services/selector/simple"
+	"github.com/LFDT-Panurus/panurus/token/services/selector/simple/inmemory"
+	"github.com/LFDT-Panurus/panurus/token/services/selector/testutils"
+	token2 "github.com/LFDT-Panurus/panurus/token/token"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/services/metrics/disabled"
-	"github.com/hyperledger-labs/fabric-token-sdk/token"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/selector/sherdlock"
-	inmemory2 "github.com/hyperledger-labs/fabric-token-sdk/token/services/selector/sherdlock/inmemory"
-	selector "github.com/hyperledger-labs/fabric-token-sdk/token/services/selector/simple"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/selector/simple/inmemory"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/selector/testutils"
-	token2 "github.com/hyperledger-labs/fabric-token-sdk/token/token"
 )
 
 type WalletIDByRawIdentityFunc func(rawIdentity []byte) string

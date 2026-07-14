@@ -10,10 +10,10 @@ import (
 	"encoding/json"
 	"time"
 
+	"github.com/LFDT-Panurus/panurus/token/services/ttx"
+	jsession "github.com/LFDT-Panurus/panurus/token/services/utils/json/session"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/view"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/ttx"
-	jsession "github.com/hyperledger-labs/fabric-token-sdk/token/services/utils/json/session"
 )
 
 // NewCollectEndorsementsView returns an instance of the ttx collectEndorsementsView struct

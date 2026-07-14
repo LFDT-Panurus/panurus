@@ -14,12 +14,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hyperledger-labs/fabric-token-sdk/token/driver"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/driver/mock"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/identity/marshal"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/interop/encoding"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/interop/htlc"
-	token3 "github.com/hyperledger-labs/fabric-token-sdk/token/token"
+	"github.com/LFDT-Panurus/panurus/token/driver"
+	"github.com/LFDT-Panurus/panurus/token/driver/mock"
+	"github.com/LFDT-Panurus/panurus/token/services/identity/marshal"
+	"github.com/LFDT-Panurus/panurus/token/services/interop/encoding"
+	"github.com/LFDT-Panurus/panurus/token/services/interop/htlc"
+	token3 "github.com/LFDT-Panurus/panurus/token/token"
 	"github.com/stretchr/testify/require"
 )
 

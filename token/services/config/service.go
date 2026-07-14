@@ -7,12 +7,12 @@ SPDX-License-Identifier: Apache-2.0
 package config
 
 import (
+	"github.com/LFDT-Panurus/panurus/token/driver"
+	"github.com/LFDT-Panurus/panurus/token/services/logging"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/common/utils/collections"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/common/utils/lazy"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/services/config"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/driver"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/logging"
 )
 
 var logger = logging.MustGetLogger()
@@ -41,7 +41,7 @@ type Provider interface {
 	ProvideFromRaw(raw []byte) (*config.Provider, error)
 }
 
-// Service model the configuration service for the token sdk
+// Service model the configuration service for Panurus
 type Service struct {
 	cp Provider
 
@@ -98,10 +98,10 @@ func (m *Service) LookupNamespace(network, channel string) (string, error) {
 		return hits[0].Namespace, nil
 	}
 	if len(hits) == 0 {
-		return "", errors.Errorf("no token-sdk configuration for network [%s], channel [%s]", network, channel)
+		return "", errors.Errorf("no configuration for network [%s], channel [%s]", network, channel)
 	}
 
-	return "", errors.Errorf("multiple token-sdk configurations for network [%s], channel [%s]", network, channel)
+	return "", errors.Errorf("multiple configurations for network [%s], channel [%s]", network, channel)
 }
 
 // ConfigurationFor returns a configuration for the given network, channel, and namespace.
@@ -118,7 +118,7 @@ func (m *Service) ConfigurationFor(network, channel, namespace string) (*Configu
 		}
 	}
 
-	return nil, errors.Wrapf(ErrConfigurationNotFound, "no token-sdk configuration for network [%s], channel [%s], namespace [%s]", network, channel, namespace)
+	return nil, errors.Wrapf(ErrConfigurationNotFound, "no configuration for network [%s], channel [%s], namespace [%s]", network, channel, namespace)
 }
 
 // Configurations returns all configuration configurations.
@@ -204,32 +204,26 @@ type loader struct {
 
 func (m *loader) load() (map[string]*Configuration, error) {
 	// load
-	var boxedConfig map[any]any
+	var boxedConfig map[string]any
 	if err := m.cp.UnmarshalKey(TMSPath, &boxedConfig); err != nil {
-		logger.Debugf("cannot unmarshal token-sdk configurations from [%s], try empty map: [%v]", TMSPath, err)
-		boxedConfig = map[any]any{}
+		logger.Debugf("cannot unmarshal configurations from [%s], try empty map: [%v]", TMSPath, err)
+		boxedConfig = map[string]any{}
 	}
 	if boxedConfig == nil {
-		logger.Debugf("token-sdk configurations from [%s] is nil, return empty map", TMSPath)
+		logger.Debugf("configurations from [%s] is nil, return empty map", TMSPath)
 
 		return map[string]*Configuration{}, nil
 	}
 
 	tmsConfigs := map[string]*Configuration{}
-	for k := range boxedConfig {
-		id, ok := k.(string)
-		if !ok {
-			logger.Warnf("token.tms key [%v] is not a string, skipping", k)
-
-			continue
-		}
+	for id := range boxedConfig {
 		tmsID := driver.TMSID{}
 		if err := m.cp.UnmarshalKey(config.Join(TMSPath, id), &tmsID); err != nil {
-			return nil, errors.WithMessagef(err, "cannot load token-sdk tms configuration for [%s]", id)
+			return nil, errors.WithMessagef(err, "cannot load tms configuration for [%s]", id)
 		}
 		tmsConfigs[id] = NewConfiguration(m.cp, id, tmsID)
 		if err := tmsConfigs[id].Validate(); err != nil {
-			return nil, errors.WithMessagef(err, "cannot load token-sdk configuration for [%s]", id)
+			return nil, errors.WithMessagef(err, "cannot load configuration for [%s]", id)
 		}
 	}
 

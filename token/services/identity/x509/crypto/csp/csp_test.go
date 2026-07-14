@@ -21,7 +21,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/db/kvs"
+	"github.com/LFDT-Panurus/panurus/token/services/storage/db/kvs"
 	"github.com/hyperledger/fabric-lib-go/bccsp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -29,7 +29,7 @@ import (
 
 // The test file tests the csp package that provides a Cryptographic Service Provider (CSP)
 // wrapper around Hyperledger Fabric's BCCSP (Blockchain Cryptographic Service Provider) library,
-// specifically tailored for X.509-based identity management in the Fabric Token SDK.
+// specifically tailored for X.509-based identity management in Panurus.
 
 // Test creating a new csp
 func TestNewCSP(t *testing.T) {

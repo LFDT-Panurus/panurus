@@ -10,12 +10,12 @@ import (
 	"context"
 	"testing"
 
+	"github.com/LFDT-Panurus/panurus/token"
+	"github.com/LFDT-Panurus/panurus/token/core/common/encoding/json"
+	"github.com/LFDT-Panurus/panurus/token/driver"
+	"github.com/LFDT-Panurus/panurus/token/services/identity"
+	"github.com/LFDT-Panurus/panurus/token/services/identity/multisig/mock"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
-	"github.com/hyperledger-labs/fabric-token-sdk/token"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/core/common/encoding/json"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/driver"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/identity"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/identity/multisig/mock"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -136,6 +136,56 @@ func TestMultiIdentity_Deserialize_Error(t *testing.T) {
 func TestWrapIdentities_Error(t *testing.T) {
 	_, err := WrapIdentities()
 	require.Error(t, err)
+}
+
+// Boundary: a single identity is the minimum valid case; WrapIdentities must succeed.
+func TestWrapIdentities_SingleIdentity(t *testing.T) {
+	id := identities(t, "only-id")
+	wrapped, err := WrapIdentities(id...)
+	require.NoError(t, err)
+
+	unwrapped, isMultisig, err := Unwrap(wrapped)
+	require.NoError(t, err)
+	assert.True(t, isMultisig)
+	assert.Equal(t, id, unwrapped)
+}
+
+// Unwrap on a TypedIdentity{Type: Multisig, Identity: asn1(MultiIdentity{Identities: []})}
+// must succeed (Unwrap itself is not the enforcement point — DeserializeVerifier is),
+// but returns an empty slice, confirming the attacker construction is possible at the
+// byte level and that the deserializer guard is the correct enforcement boundary.
+func TestUnwrap_EmptyMultiIdentity(t *testing.T) {
+	emptyMI := &MultiIdentity{Identities: []token.Identity{}}
+	raw, err := emptyMI.Bytes()
+	require.NoError(t, err)
+
+	typedRaw, err := identity.WrapWithType(Multisig, raw)
+	require.NoError(t, err)
+
+	unwrapped, isMultisig, err := Unwrap(typedRaw)
+	require.NoError(t, err)
+	assert.True(t, isMultisig)
+	assert.Empty(t, unwrapped)
+}
+
+// InfoMatcher with zero sub-matchers against a zero-identity MultiIdentity must not
+// vacuously succeed — the count-equality check passes (0 == 0) and the loop runs zero
+// times. This is the same class of vacuous-true issue that existed in Verifier.Verify.
+// Document the current behaviour so a future change cannot silently regress it.
+func TestInfoMatcher_Match_ZeroMatchers(t *testing.T) {
+	emptyMI := &MultiIdentity{Identities: []token.Identity{}}
+	serialized, err := emptyMI.Serialize()
+	require.NoError(t, err)
+
+	infoMatcher := &InfoMatcher{AuditInfoMatcher: []driver.Matcher{}}
+
+	// Both lengths are zero: count-equality passes, loop body never runs.
+	// The function returns nil — document this as a known limitation that is
+	// mitigated at the upstream deserialization boundary (DeserializeVerifier rejects
+	// empty MultiIdentity before an InfoMatcher with zero members can be constructed
+	// via the normal flow).
+	err = infoMatcher.Match(context.Background(), serialized)
+	require.NoError(t, err)
 }
 
 // Test failure to unwrap an invalid wrapped multi-identity

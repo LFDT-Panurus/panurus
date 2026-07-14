@@ -7,10 +7,10 @@ SPDX-License-Identifier: Apache-2.0
 package memory
 
 import (
+	driver3 "github.com/LFDT-Panurus/panurus/token/services/storage/db/driver"
+	sqlite2 "github.com/LFDT-Panurus/panurus/token/services/storage/db/sql/sqlite"
 	driver2 "github.com/hyperledger-labs/fabric-smart-client/platform/view/services/storage/driver"
 	mem "github.com/hyperledger-labs/fabric-smart-client/platform/view/services/storage/driver/memory"
-	driver3 "github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/db/driver"
-	sqlite2 "github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/db/sql/sqlite"
 )
 
 type Driver sqlite2.Driver
@@ -52,4 +52,8 @@ func (d *Driver) NewAuditTransaction(_ driver2.PersistenceName, params ...string
 
 func (d *Driver) NewOwnerTransaction(_ driver2.PersistenceName, params ...string) (driver3.TokenTransactionStore, error) {
 	return ((*sqlite2.Driver)(d)).OwnerTx.Get(mem.Op.GetConfig(params...))
+}
+
+func (d *Driver) NewEndorser(_ driver2.PersistenceName, params ...string) (driver3.EndorserStore, error) {
+	return ((*sqlite2.Driver)(d)).Endorser.Get(mem.Op.GetConfig(params...))
 }

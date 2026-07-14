@@ -11,15 +11,22 @@ import (
 	"testing"
 
 	math "github.com/IBM/mathlib"
-	math2 "github.com/hyperledger-labs/fabric-token-sdk/token/core/zkatdlog/nogh/v1/crypto/math"
+	math2 "github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/crypto/math"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-// TestCSPWithZeroWitness verifies behavior when witness contains zero elements.
-// Given a CSP instance with an all-zero witness,
-// When a proof is generated and verified,
-// Then the verification should succeed (zero is a valid value).
+// TestCSPWithZeroWitness documents the behavior when the CSP witness is all-zeros.
+//
+// An all-zero witness causes every cross-commitment Left[i] = MSM(gen_L, wit_R) and
+// Right[i] = MSM(gen_R, wit_L) to equal the point at infinity, because scalar
+// multiplication by zero always yields the identity element.  Since the verifier now
+// rejects identity elements in Left/Right (fix for HIGH finding: CSP folding accepts
+// Left/Right at infinity, weakening range-proof soundness), proofs produced from an
+// all-zero witness are invalid and verification must fail.
+//
+// This is not a regression: in the range proof the CSP witness encodes bit-polynomial
+// coefficients mixed with random blinding terms and is never legitimately all-zero.
 func TestCSPWithZeroWitness(t *testing.T) {
 	curves := []math.CurveID{math.BN254, math.BLS12_381_BBS_GURVY}
 	for _, curveID := range curves {
@@ -37,14 +44,14 @@ func TestCSPWithZeroWitness(t *testing.T) {
 
 			for i := range n {
 				generators[i] = curve.HashToG1([]byte{byte(i)})
-				witness[i] = curve.NewZrFromInt(0) // All zeros
+				witness[i] = curve.NewZrFromInt(0) // All zeros → Left/Right will be identity
 				linearForm[i] = curve.NewRandomZr(rand)
 			}
 
 			com := curve.MultiScalarMul(generators, witness)
 			value := math2.InnerProduct(linearForm, witness, curve)
 
-			prover := &prover{
+			p := &prover{
 				Commitment:     com,
 				Generators:     generators,
 				LinearForm:     linearForm,
@@ -53,12 +60,12 @@ func TestCSPWithZeroWitness(t *testing.T) {
 				Curve:          curve,
 				witness:        witness,
 			}
-			prover.WithTranscriptHeader([]byte("transcript-header"))
+			p.WithTranscriptHeader([]byte("transcript-header"))
 
-			proof, err := prover.Prove()
+			proof, err := p.Prove()
 			require.NoError(t, err)
 
-			verifier := &verifier{
+			v := &verifier{
 				Commitment:     com,
 				Generators:     generators,
 				LinearForm:     linearForm,
@@ -66,10 +73,13 @@ func TestCSPWithZeroWitness(t *testing.T) {
 				NumberOfRounds: rounds,
 				Curve:          curve,
 			}
-			verifier.WithTranscriptHeader([]byte("transcript-header"))
+			v.WithTranscriptHeader([]byte("transcript-header"))
 
-			err = verifier.Verify(proof)
-			require.NoError(t, err)
+			// All-zero witness ⇒ Left[i] and Right[i] are the identity element.
+			// The verifier must reject such proofs to close the soundness gap.
+			err = v.Verify(proof)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "proof.Left validation failed")
 		})
 	}
 }
@@ -429,10 +439,14 @@ func TestCSPVerifierRejectsWrongNumberOfRounds(t *testing.T) {
 	}
 }
 
-// TestCSPWithIdentityGenerator verifies behavior when a generator is the identity element.
-// Given a CSP instance where one generator is the identity element (G1 infinity),
-// When a proof is generated and verified,
-// Then the verification should succeed (identity is a valid point).
+// TestCSPWithIdentityGenerator documents that a generator equal to the identity element
+// is now rejected at the prover input-validation stage.
+//
+// An identity generator means the corresponding witness component contributes nothing to
+// the commitment (scalar·identity = identity for any scalar), making the commitment
+// scheme unsound: two different witnesses produce the same commitment.  The prover must
+// refuse such inputs, and does so since validateG1Slice now calls math.CheckElements
+// which rejects points at infinity.
 func TestCSPWithIdentityGenerator(t *testing.T) {
 	curves := []math.CurveID{math.BN254, math.BLS12_381_BBS_GURVY}
 	for _, curveID := range curves {
@@ -450,8 +464,7 @@ func TestCSPWithIdentityGenerator(t *testing.T) {
 
 			for i := range n {
 				if i == 0 {
-					// Use identity element for first generator
-					generators[i] = curve.NewG1()
+					generators[i] = curve.NewG1() // identity element — invalid generator
 				} else {
 					generators[i] = curve.HashToG1([]byte{byte(i)})
 				}
@@ -462,7 +475,7 @@ func TestCSPWithIdentityGenerator(t *testing.T) {
 			com := curve.MultiScalarMul(generators, witness)
 			value := math2.InnerProduct(linearForm, witness, curve)
 
-			prover := &prover{
+			p := &prover{
 				Commitment:     com,
 				Generators:     generators,
 				LinearForm:     linearForm,
@@ -471,23 +484,12 @@ func TestCSPWithIdentityGenerator(t *testing.T) {
 				Curve:          curve,
 				witness:        witness,
 			}
-			prover.WithTranscriptHeader([]byte("transcript-header"))
+			p.WithTranscriptHeader([]byte("transcript-header"))
 
-			proof, err := prover.Prove()
-			require.NoError(t, err)
-
-			verifier := &verifier{
-				Commitment:     com,
-				Generators:     generators,
-				LinearForm:     linearForm,
-				Value:          value,
-				NumberOfRounds: rounds,
-				Curve:          curve,
-			}
-			verifier.WithTranscriptHeader([]byte("transcript-header"))
-
-			err = verifier.Verify(proof)
-			require.NoError(t, err)
+			// Identity generator must be rejected by the prover before any proof is made.
+			_, err = p.Prove()
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "generators validation failed")
 		})
 	}
 }

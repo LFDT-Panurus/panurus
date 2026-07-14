@@ -1,6 +1,6 @@
 # Benchmark Service
 
-The **Benchmark Service** provides performance benchmarking capabilities for the Token SDK. It allows developers and operators to measure the performance of various token operations under different configurations and workloads.
+The **Benchmark Service** provides performance benchmarking capabilities for Panurus. It allows developers and operators to measure the performance of various token operations under different configurations and workloads.
 
 ## Features
 
@@ -26,7 +26,7 @@ The service includes:
 
 The Benchmark Service is typically used by developers and performance engineers to:
 1.  Establish performance baselines for token operations
-2.  Identify performance bottlenecks in the SDK
+2.  Identify performance bottlenecks in Panurus
 3.  Validate performance improvements during development
 4.  Size infrastructure for production deployments
 5.  Compare performance across different configurations or SDK versions

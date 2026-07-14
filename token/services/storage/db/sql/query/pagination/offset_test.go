@@ -11,9 +11,9 @@ import (
 
 	. "github.com/onsi/gomega"
 
+	q "github.com/LFDT-Panurus/panurus/token/services/storage/db/sql/query"
+	"github.com/LFDT-Panurus/panurus/token/services/storage/db/sql/query/pagination"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/common/utils"
-	q "github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/db/sql/query"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/db/sql/query/pagination"
 )
 
 func TestOffsetSimple(t *testing.T) { //nolint:paralleltest

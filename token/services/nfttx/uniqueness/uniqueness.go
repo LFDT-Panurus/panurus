@@ -1,6 +1,5 @@
 /*
 Copyright IBM Corp. All Rights Reserved.
-
 SPDX-License-Identifier: Apache-2.0
 */
 
@@ -14,11 +13,12 @@ import (
 	"sync"
 
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
-	"github.com/hyperledger-labs/fabric-smart-client/platform/view/services/storage/kvs"
-	"github.com/hyperledger-labs/fabric-token-sdk/token"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/nfttx/marshaller"
+
+	"github.com/LFDT-Panurus/panurus/token"
+	"github.com/LFDT-Panurus/panurus/token/services/nfttx/marshaller"
 )
 
+// KVS is the interface for the key-value store backend used by the uniqueness service.
 type KVS interface {
 	Exists(ctx context.Context, k string) bool
 	Get(ctx context.Context, k string, v any) error
@@ -34,19 +34,22 @@ type Service struct {
 	kvs   KVS
 }
 
+// NewService creates a new uniqueness service with the given KVS backend.
+func NewService(kvs KVS) *Service {
+	return &Service{kvs: kvs}
+}
+
 // ComputeID computes the unique ID of the given object.
-func (s *Service) ComputeID(state any) (string, error) {
+func (s *Service) ComputeID(ctx context.Context, state any) (string, error) {
 	if state == nil {
 		return "", errors.New("state is nil")
 	}
-
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
-
-	k := "github.com/hyperledger-labs/fabric-token-sdk/token/services/nfttx/uniqueness/key"
+	k := "github.com/LFDT-Panurus/panurus/token/services/nfttx/uniqueness/key"
 	var key []byte
-	if s.kvs.Exists(context.Background(), k) {
-		if err := s.kvs.Get(context.Background(), k, &key); err != nil {
+	if s.kvs.Exists(ctx, k) {
+		if err := s.kvs.Get(ctx, k, &key); err != nil {
 			return "", errors.WithMessagef(err, "failed to get key %s", k)
 		}
 	} else {
@@ -60,16 +63,14 @@ func (s *Service) ComputeID(state any) (string, error) {
 		if n != size {
 			return "", errors.New("error getting random bytes")
 		}
-		if err := s.kvs.Put(context.Background(), k, key); err != nil {
+		if err := s.kvs.Put(ctx, k, key); err != nil {
 			return "", errors.WithMessagef(err, "failed to put key %s", k)
 		}
 	}
-
 	raw, err := marshaller.Marshal(state)
 	if err != nil {
 		return "", errors.Wrapf(err, "failed to marshal state")
 	}
-
 	hash := sha256.New()
 	n, err := hash.Write(raw)
 	if n != len(raw) {
@@ -85,10 +86,10 @@ func (s *Service) ComputeID(state any) (string, error) {
 
 // GetService returns the uniqueness service.
 func GetService(sp token.ServiceProvider) *Service {
-	kvss, err := sp.GetService(&kvs.KVS{})
+	s, err := sp.GetService(&Service{})
 	if err != nil {
 		panic(err)
 	}
 
-	return &Service{kvs: kvss.(*kvs.KVS)}
+	return s.(*Service)
 }

@@ -11,13 +11,13 @@ import (
 	"sync"
 	"time"
 
+	"github.com/LFDT-Panurus/panurus/token"
+	"github.com/LFDT-Panurus/panurus/token/services/certifier/driver"
+	"github.com/LFDT-Panurus/panurus/token/services/network/fabric/tcc"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/services/events"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/services/metrics"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/view"
-	"github.com/hyperledger-labs/fabric-token-sdk/token"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/certifier/driver"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/network/fabric/tcc"
 )
 
 const (

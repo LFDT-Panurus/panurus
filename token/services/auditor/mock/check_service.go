@@ -5,7 +5,7 @@ import (
 	"context"
 	"sync"
 
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/auditor"
+	"github.com/LFDT-Panurus/panurus/token/services/auditor"
 )
 
 type CheckService struct {

@@ -5,7 +5,7 @@ import (
 	"context"
 	"sync"
 
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/ttx"
+	"github.com/LFDT-Panurus/panurus/token/services/ttx"
 )
 
 type Storage struct {

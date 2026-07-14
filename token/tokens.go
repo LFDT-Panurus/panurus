@@ -9,8 +9,8 @@ package token
 import (
 	"context"
 
-	"github.com/hyperledger-labs/fabric-token-sdk/token/driver"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/token"
+	"github.com/LFDT-Panurus/panurus/token/driver"
+	"github.com/LFDT-Panurus/panurus/token/token"
 )
 
 // TokensService models the token service

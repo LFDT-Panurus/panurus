@@ -8,7 +8,7 @@ SPDX-License-Identifier: Apache-2.0
 // ToProtosSlice and FromProtosSlice handle batch conversions with nil handling.
 package protos
 
-import "github.com/hyperledger-labs/fabric-token-sdk/token/services/utils"
+import "github.com/LFDT-Panurus/panurus/token/services/utils"
 
 type ProtoSource[T any] interface {
 	ToProtos() (*T, error)

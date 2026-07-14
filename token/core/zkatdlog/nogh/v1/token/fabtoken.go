@@ -7,9 +7,9 @@ SPDX-License-Identifier: Apache-2.0
 package token
 
 import (
+	"github.com/LFDT-Panurus/panurus/token/core/fabtoken/v1/actions"
+	"github.com/LFDT-Panurus/panurus/token/token"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/core/fabtoken/v1/actions"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/token"
 )
 
 // ParseFabtokenToken unmarshals a raw fabtoken output and converts its quantity to a uint64 value

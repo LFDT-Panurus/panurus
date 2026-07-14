@@ -7,9 +7,9 @@ SPDX-License-Identifier: Apache-2.0
 package house
 
 import (
+	"github.com/LFDT-Panurus/panurus/token/services/nfttx"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/common/utils/assert"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/view"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/nfttx"
 )
 
 type AcceptHouseView struct{}

@@ -8,14 +8,15 @@ package zkatdlognoghv1
 
 import (
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 
+	"github.com/LFDT-Panurus/panurus/cmd/tokengen/cobra/pp/common"
+	"github.com/LFDT-Panurus/panurus/integration/nwo/token/generators/crypto/zkatdlognoghv1"
+	v1 "github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/setup"
+	"github.com/LFDT-Panurus/panurus/token/driver"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
-	"github.com/hyperledger-labs/fabric-token-sdk/cmd/tokengen/cobra/pp/common"
-	"github.com/hyperledger-labs/fabric-token-sdk/integration/nwo/token/generators/crypto/zkatdlognoghv1"
-	v1 "github.com/hyperledger-labs/fabric-token-sdk/token/core/zkatdlog/nogh/v1/setup"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/driver"
 	"github.com/spf13/cobra"
 )
 
@@ -33,7 +34,7 @@ type UpdateArgs struct {
 	// Auditors is the list of auditor MSP directories containing the corresponding auditor certificate
 	Auditors []string
 	// Version allows the caller of tokengen to override the version number put in the public params
-	Version uint
+	Version uint32
 }
 
 // UpdateCmd returns the Cobra Command for updating public parameters.
@@ -44,7 +45,7 @@ func UpdateCmd() *cobra.Command {
 	flags.StringVarP(&OutputDir, "output", "o", ".", "output folder")
 	flags.StringSliceVarP(&Auditors, "auditors", "a", nil, "list of auditor MSP directories containing the corresponding auditor certificate")
 	flags.StringSliceVarP(&Issuers, "issuers", "s", nil, "list of issuer MSP directories containing the corresponding issuer certificate")
-	flags.UintVarP(&Version, "version", "v", 0, "allows the caller of tokengen to override the version number put in the public params")
+	flags.Uint32VarP(&Version, "version", "v", 0, "allows the caller of tokengen to override the version number put in the public params")
 	flags.StringArrayVarP(&Extras, "extra", "x", []string{}, "extra data in key=value format, where is the path to a file containing the data to load and store in the key")
 
 	return cmd
@@ -119,9 +120,7 @@ func Update(args *UpdateArgs) error {
 	if err != nil {
 		return errors.Wrap(err, "failed loading extras")
 	}
-	for k, v := range extraData {
-		pp.ExtraData[k] = v
-	}
+	maps.Copy(pp.ExtraData, extraData)
 
 	// Store Public Params
 	raw, err := pp.Serialize()

@@ -31,12 +31,12 @@ func NewLocalBidirectionalChannel(ctx context.Context, caller string, contextID 
 	rl := make(chan *view.Message, 10)
 
 	info := view.SessionInfo{
-		ID:           base64.StdEncoding.EncodeToString(ID),
-		Caller:       nil,
-		CallerViewID: "",
-		Endpoint:     endpoint,
-		EndpointPKID: pkid,
-		Closed:       false,
+		ID:             base64.StdEncoding.EncodeToString(ID),
+		Caller:         nil,
+		CallerViewID:   "",
+		RemoteEndpoint: endpoint,
+		RemotePKID:     pkid,
+		Closed:         false,
 	}
 
 	return &LocalBidirectionalChannel{
@@ -112,8 +112,8 @@ func (s *localSession) send(ctx context.Context, payload []byte, status int32) e
 		SessionID:    s.info.ID,
 		ContextID:    s.contextID,
 		Caller:       s.caller,
-		FromEndpoint: s.info.Endpoint,
-		FromPKID:     s.info.EndpointPKID,
+		FromEndpoint: s.info.RemoteEndpoint,
+		FromPKID:     s.info.RemotePKID,
 		Status:       status,
 		Payload:      payload,
 		Ctx:          ctx,

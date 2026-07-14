@@ -9,7 +9,7 @@ package driver
 import (
 	"bytes"
 
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/utils"
+	"github.com/LFDT-Panurus/panurus/token/services/utils"
 )
 
 type (

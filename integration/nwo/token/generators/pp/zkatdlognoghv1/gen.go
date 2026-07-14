@@ -12,17 +12,17 @@ import (
 	"path/filepath"
 	"strconv"
 
-	msp "github.com/IBM/idemix"
+	"github.com/IBM/idemix/msp"
 	math3 "github.com/IBM/mathlib"
+	"github.com/LFDT-Panurus/panurus/integration/nwo/token/generators/crypto/zkatdlognoghv1"
+	"github.com/LFDT-Panurus/panurus/integration/nwo/token/topology"
+	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/setup"
+	"github.com/LFDT-Panurus/panurus/token/driver"
+	"github.com/LFDT-Panurus/panurus/token/services/identity"
+	"github.com/LFDT-Panurus/panurus/token/services/identity/x509"
+	"github.com/LFDT-Panurus/panurus/token/services/storage/db/kvs"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/common/utils/collections"
-	"github.com/hyperledger-labs/fabric-token-sdk/integration/nwo/token/generators/crypto/zkatdlognoghv1"
-	"github.com/hyperledger-labs/fabric-token-sdk/integration/nwo/token/topology"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/core/zkatdlog/nogh/v1/setup"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/driver"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/identity"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/identity/x509"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/db/kvs"
 )
 
 const DefaultDriverVersion = setup.ProtocolV1

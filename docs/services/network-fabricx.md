@@ -8,7 +8,7 @@ Unlike traditional Fabric, FabricX uses FSC nodes as endorsers instead of relyin
 
 ```mermaid
 graph TB
-    subgraph "Application Node running FSC/FTS stack"
+    subgraph "Application Node running FSC/Panurus stack"
         App[Application/TTX]
         NetI[FabricX Network Service]
     end
@@ -403,7 +403,7 @@ fsc:
       driver: fabricx
       # Fabric network connection details
       
-# Token SDK Configuration
+# Panurus Configuration
 token:
   enabled: true
    # Finality Configuration

@@ -8,16 +8,28 @@ SPDX-License-Identifier: Apache-2.0
 package token
 
 import (
+	"context"
 	"testing"
 
+	"github.com/LFDT-Panurus/panurus/token/driver"
+	driver2 "github.com/LFDT-Panurus/panurus/token/driver/mock"
+	"github.com/LFDT-Panurus/panurus/token/driver/protos-go/v1/request"
+	"github.com/LFDT-Panurus/panurus/token/services/logging"
+	"github.com/LFDT-Panurus/panurus/token/token"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/driver"
-	driver2 "github.com/hyperledger-labs/fabric-token-sdk/token/driver/mock"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/logging"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/token"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+type dummySelector struct{}
+
+func (d dummySelector) Select(ctx context.Context, ownerFilter OwnerFilter, q string, tokenType token.Type) ([]*token.ID, token.Quantity, error) {
+	panic("implement me")
+}
+
+func (d dummySelector) Close() error {
+	panic("implement me")
+}
 
 // TestRequestSerialization verifies that a Request can be serialized to bytes and
 // deserialized back without data loss. Tests both full serialization (Bytes/FromBytes)
@@ -25,16 +37,23 @@ import (
 func TestRequestSerialization(t *testing.T) {
 	r := NewRequest(nil, "hello world")
 	r.Actions = &driver.TokenRequest{
-		Issues: [][]byte{
-			[]byte("issue1"),
-			[]byte("issue2"),
+		Actions: []*driver.TypedAction{
+			{Type: request.ActionType_ACTION_TYPE_ISSUE, Raw: []byte("issue1")},
+			{Type: request.ActionType_ACTION_TYPE_ISSUE, Raw: []byte("issue2")},
+			{Type: request.ActionType_ACTION_TYPE_TRANSFER, Raw: []byte("transfer1")},
 		},
-		Transfers:  [][]byte{[]byte("transfer1")},
-		Signatures: [][]byte{[]byte("signature1")},
-		AuditorSignatures: []*driver.AuditorSignature{
+		Signatures: []*driver.RequestSignature{
 			{
-				Identity:  Identity("auditor1"),
-				Signature: []byte("signature1"),
+				Action: &driver.ActionSignature{
+					ActionID:  0,
+					Signature: []byte("signature1"),
+				},
+			},
+			{
+				Auditor: &driver.AuditorSignature{
+					Identity:  Identity("auditor1"),
+					Signature: []byte("signature1"),
+				},
 			},
 		},
 	}
@@ -230,9 +249,7 @@ func TestCompileTransferOptions(t *testing.T) {
 	})
 
 	t.Run("with token selector", func(t *testing.T) {
-		mockSelector := &SelectorMock{}
-		mockSelector.SelectReturns(nil, token.NewZeroQuantity(64), nil)
-		mockSelector.CloseReturns(nil)
+		mockSelector := &dummySelector{}
 		opts, err := CompileTransferOptions(
 			WithTokenSelector(mockSelector),
 		)
@@ -318,13 +335,15 @@ func TestRequest_AddAuditorSignature(t *testing.T) {
 
 	r.AddAuditorSignature(identity, signature)
 
-	require.Len(t, r.Actions.AuditorSignatures, 1)
-	assert.Equal(t, identity, r.Actions.AuditorSignatures[0].Identity)
-	assert.Equal(t, signature, r.Actions.AuditorSignatures[0].Signature)
+	require.Len(t, r.Actions.Signatures, 1)
+	require.NotNil(t, r.Actions.Signatures[0].Auditor)
+	assert.Equal(t, identity, r.Actions.Signatures[0].Auditor.Identity)
+	assert.Equal(t, signature, r.Actions.Signatures[0].Auditor.Signature)
 
 	// Add another
 	r.AddAuditorSignature(Identity("auditor2"), []byte("sig2"))
-	require.Len(t, r.Actions.AuditorSignatures, 2)
+	require.Len(t, r.Actions.Signatures, 2)
+	require.NotNil(t, r.Actions.Signatures[1].Auditor)
 }
 
 // TestRequest_AllApplicationMetadata tests AllApplicationMetadata
@@ -349,7 +368,9 @@ func TestRequest_MarshalToSign(t *testing.T) {
 	r := &Request{
 		Anchor: "test-anchor",
 		Actions: &driver.TokenRequest{
-			Issues: [][]byte{[]byte("issue1")},
+			Actions: []*driver.TypedAction{
+				{Type: request.ActionType_ACTION_TYPE_ISSUE, Raw: []byte("issue1")},
+			},
 		},
 	}
 
@@ -364,7 +385,9 @@ func TestRequest_RequestToBytes(t *testing.T) {
 	r := &Request{
 		Anchor: "test-anchor",
 		Actions: &driver.TokenRequest{
-			Issues: [][]byte{[]byte("issue1")},
+			Actions: []*driver.TypedAction{
+				{Type: request.ActionType_ACTION_TYPE_ISSUE, Raw: []byte("issue1")},
+			},
 		},
 	}
 
@@ -378,7 +401,7 @@ func TestRequest_RequestToBytes(t *testing.T) {
 func TestRequest_Issues_Empty(t *testing.T) {
 	r := &Request{
 		Metadata: &driver.TokenRequestMetadata{
-			Issues: []*driver.IssueMetadata{},
+			Actions: []*driver.ActionMetadataEntry{},
 		},
 	}
 
@@ -390,7 +413,7 @@ func TestRequest_Issues_Empty(t *testing.T) {
 func TestRequest_Transfers_Empty(t *testing.T) {
 	r := &Request{
 		Metadata: &driver.TokenRequestMetadata{
-			Transfers: []*driver.TransferMetadata{},
+			Actions: []*driver.ActionMetadataEntry{},
 		},
 	}
 
@@ -402,7 +425,7 @@ func TestRequest_Transfers_Empty(t *testing.T) {
 func TestRequest_TransferSigners_Empty(t *testing.T) {
 	r := &Request{
 		Metadata: &driver.TokenRequestMetadata{
-			Transfers: []*driver.TransferMetadata{},
+			Actions: []*driver.ActionMetadataEntry{},
 		},
 	}
 
@@ -414,7 +437,7 @@ func TestRequest_TransferSigners_Empty(t *testing.T) {
 func TestRequest_IssueSigners_Empty(t *testing.T) {
 	r := &Request{
 		Metadata: &driver.TokenRequestMetadata{
-			Issues: []*driver.IssueMetadata{},
+			Actions: []*driver.ActionMetadataEntry{},
 		},
 	}
 
@@ -428,7 +451,9 @@ func TestNewRequestFromBytes(t *testing.T) {
 		// Create a request and serialize it
 		original := NewRequest(nil, "test-anchor")
 		original.Actions = &driver.TokenRequest{
-			Issues: [][]byte{[]byte("issue1")},
+			Actions: []*driver.TypedAction{
+				{Type: request.ActionType_ACTION_TYPE_ISSUE, Raw: []byte("issue1")},
+			},
 		}
 
 		actionsBytes, err := original.Actions.Bytes()
@@ -449,7 +474,9 @@ func TestNewRequestFromBytes(t *testing.T) {
 	t.Run("empty metadata", func(t *testing.T) {
 		original := NewRequest(nil, "test-anchor")
 		original.Actions = &driver.TokenRequest{
-			Issues: [][]byte{[]byte("issue1")},
+			Actions: []*driver.TypedAction{
+				{Type: request.ActionType_ACTION_TYPE_ISSUE, Raw: []byte("issue1")},
+			},
 		}
 
 		actionsBytes, err := original.Actions.Bytes()
@@ -471,7 +498,9 @@ func TestNewRequestFromBytes(t *testing.T) {
 	t.Run("invalid metadata", func(t *testing.T) {
 		original := NewRequest(nil, "test-anchor")
 		original.Actions = &driver.TokenRequest{
-			Issues: [][]byte{[]byte("issue1")},
+			Actions: []*driver.TypedAction{
+				{Type: request.ActionType_ACTION_TYPE_ISSUE, Raw: []byte("issue1")},
+			},
 		}
 
 		actionsBytes, err := original.Actions.Bytes()
@@ -489,7 +518,9 @@ func TestNewFullRequestFromBytes(t *testing.T) {
 		// Create and serialize a full request
 		original := NewRequest(nil, "test-anchor")
 		original.Actions = &driver.TokenRequest{
-			Issues: [][]byte{[]byte("issue1")},
+			Actions: []*driver.TypedAction{
+				{Type: request.ActionType_ACTION_TYPE_ISSUE, Raw: []byte("issue1")},
+			},
 		}
 
 		fullBytes, err := original.Bytes()
@@ -683,28 +714,36 @@ func TestRequest_Outputs(t *testing.T) {
 func TestRequest_Issues(t *testing.T) {
 	r := &Request{
 		Metadata: &driver.TokenRequestMetadata{
-			Issues: []*driver.IssueMetadata{
+			Actions: []*driver.ActionMetadataEntry{
 				{
-					Issuer: driver.AuditableIdentity{
-						Identity: Identity("issuer1"),
-					},
-					Outputs: []*driver.IssueOutputMetadata{
-						{
-							Receivers: []*driver.AuditableIdentity{
-								{Identity: Identity("recipient1")},
+					ActionID: 0,
+					IssueMetadata: &driver.IssueMetadata{
+						Issuer: driver.AuditableIdentity{
+							Identity: Identity("issuer1"),
+						},
+						Outputs: []*driver.IssueOutputMetadata{
+							{
+								Receivers: []*driver.AuditableIdentity{
+									{Identity: Identity("recipient1")},
+								},
 							},
 						},
+						ExtraSigners: []driver.AuditableIdentity{
+							{Identity: Identity("signer1")},
+						},
 					},
-					ExtraSigners: []Identity{Identity("signer1")},
 				},
 				{
-					Issuer: driver.AuditableIdentity{
-						Identity: Identity("issuer2"),
-					},
-					Outputs: []*driver.IssueOutputMetadata{
-						{
-							Receivers: []*driver.AuditableIdentity{
-								{Identity: Identity("recipient2")},
+					ActionID: 1,
+					IssueMetadata: &driver.IssueMetadata{
+						Issuer: driver.AuditableIdentity{
+							Identity: Identity("issuer2"),
+						},
+						Outputs: []*driver.IssueOutputMetadata{
+							{
+								Receivers: []*driver.AuditableIdentity{
+									{Identity: Identity("recipient2")},
+								},
 							},
 						},
 					},
@@ -730,24 +769,31 @@ func TestRequest_Issues(t *testing.T) {
 func TestRequest_Transfers(t *testing.T) {
 	r := &Request{
 		Metadata: &driver.TokenRequestMetadata{
-			Transfers: []*driver.TransferMetadata{
+			Actions: []*driver.ActionMetadataEntry{
 				{
-					Inputs: []*driver.TransferInputMetadata{
-						{
-							Senders: []*driver.AuditableIdentity{
-								{Identity: Identity("sender1")},
+					ActionID: 0,
+					TransferMetadata: &driver.TransferMetadata{
+						Inputs: []*driver.TransferInputMetadata{
+							{
+								Senders: []*driver.AuditableIdentity{
+									{Identity: Identity("sender1")},
+								},
 							},
 						},
-					},
-					Outputs: []*driver.TransferOutputMetadata{
-						{
-							Receivers: []*driver.AuditableIdentity{
-								{Identity: Identity("receiver1")},
+						Outputs: []*driver.TransferOutputMetadata{
+							{
+								Receivers: []*driver.AuditableIdentity{
+									{Identity: Identity("receiver1")},
+								},
 							},
 						},
+						ExtraSigners: []driver.AuditableIdentity{
+							{Identity: Identity("extra1")},
+						},
+						Issuer: driver.AuditableIdentity{
+							Identity: Identity("issuer1"),
+						},
 					},
-					ExtraSigners: []Identity{Identity("extra1")},
-					Issuer:       Identity("issuer1"),
 				},
 			},
 		},
@@ -768,25 +814,32 @@ func TestRequest_Transfers(t *testing.T) {
 func TestRequest_TransferSigners(t *testing.T) {
 	r := &Request{
 		Metadata: &driver.TokenRequestMetadata{
-			Transfers: []*driver.TransferMetadata{
+			Actions: []*driver.ActionMetadataEntry{
 				{
-					Inputs: []*driver.TransferInputMetadata{
-						{
-							Senders: []*driver.AuditableIdentity{
-								{Identity: Identity("sender1")},
-								{Identity: Identity("sender2")},
+					ActionID: 0,
+					TransferMetadata: &driver.TransferMetadata{
+						Inputs: []*driver.TransferInputMetadata{
+							{
+								Senders: []*driver.AuditableIdentity{
+									{Identity: Identity("sender1")},
+									{Identity: Identity("sender2")},
+								},
 							},
 						},
-					},
-					Outputs: []*driver.TransferOutputMetadata{
-						{
-							Receivers: []*driver.AuditableIdentity{
-								{Identity: Identity("receiver1")},
+						Outputs: []*driver.TransferOutputMetadata{
+							{
+								Receivers: []*driver.AuditableIdentity{
+									{Identity: Identity("receiver1")},
+								},
 							},
 						},
+						ExtraSigners: []driver.AuditableIdentity{
+							{Identity: Identity("extra1")},
+						},
+						Issuer: driver.AuditableIdentity{
+							Identity: Identity("issuer1"),
+						},
 					},
-					ExtraSigners: []Identity{Identity("extra1")},
-					Issuer:       Identity("issuer1"),
 				},
 			},
 		},
@@ -804,16 +857,25 @@ func TestRequest_TransferSigners(t *testing.T) {
 func TestRequest_IssueSigners(t *testing.T) {
 	r := &Request{
 		Metadata: &driver.TokenRequestMetadata{
-			Issues: []*driver.IssueMetadata{
+			Actions: []*driver.ActionMetadataEntry{
 				{
-					Issuer: driver.AuditableIdentity{
-						Identity: Identity("issuer1"),
+					ActionID: 0,
+					IssueMetadata: &driver.IssueMetadata{
+						Issuer: driver.AuditableIdentity{
+							Identity: Identity("issuer1"),
+						},
+						ExtraSigners: []driver.AuditableIdentity{
+							{Identity: Identity("extra1")},
+							{Identity: Identity("extra2")},
+						},
 					},
-					ExtraSigners: []Identity{Identity("extra1"), Identity("extra2")},
 				},
 				{
-					Issuer: driver.AuditableIdentity{
-						Identity: Identity("issuer2"),
+					ActionID: 1,
+					IssueMetadata: &driver.IssueMetadata{
+						Issuer: driver.AuditableIdentity{
+							Identity: Identity("issuer2"),
+						},
 					},
 				},
 			},
@@ -831,28 +893,37 @@ func TestRequest_IssueSigners(t *testing.T) {
 // TestRequest_SetSignatures tests SetSignatures method
 func TestRequest_SetSignatures(t *testing.T) {
 	r := &Request{
-		Actions: &driver.TokenRequest{},
-		Metadata: &driver.TokenRequestMetadata{
-			Issues: []*driver.IssueMetadata{
-				{
-					Issuer: driver.AuditableIdentity{
-						Identity: Identity("issuer1"),
-					},
-				},
+		Actions: &driver.TokenRequest{
+			Actions: []*driver.TypedAction{
+				{Type: request.ActionType_ACTION_TYPE_ISSUE, Raw: []byte("issue1")},
+				{Type: request.ActionType_ACTION_TYPE_TRANSFER, Raw: []byte("transfer1")},
 			},
-			Transfers: []*driver.TransferMetadata{
+		},
+		Metadata: &driver.TokenRequestMetadata{
+			Actions: []*driver.ActionMetadataEntry{
 				{
-					Inputs: []*driver.TransferInputMetadata{
-						{
-							Senders: []*driver.AuditableIdentity{
-								{Identity: Identity("sender1")},
-							},
+					ActionID: 0,
+					IssueMetadata: &driver.IssueMetadata{
+						Issuer: driver.AuditableIdentity{
+							Identity: Identity("issuer1"),
 						},
 					},
-					Outputs: []*driver.TransferOutputMetadata{
-						{
-							Receivers: []*driver.AuditableIdentity{
-								{Identity: Identity("receiver1")},
+				},
+				{
+					ActionID: 1,
+					TransferMetadata: &driver.TransferMetadata{
+						Inputs: []*driver.TransferInputMetadata{
+							{
+								Senders: []*driver.AuditableIdentity{
+									{Identity: Identity("sender1")},
+								},
+							},
+						},
+						Outputs: []*driver.TransferOutputMetadata{
+							{
+								Receivers: []*driver.AuditableIdentity{
+									{Identity: Identity("receiver1")},
+								},
 							},
 						},
 					},
@@ -873,8 +944,12 @@ func TestRequest_SetSignatures(t *testing.T) {
 	allPresent := r.SetSignatures(sigmas)
 	assert.True(t, allPresent)
 	require.Len(t, r.Actions.Signatures, 2)
-	assert.Equal(t, []byte("sig1"), r.Actions.Signatures[0])
-	assert.Equal(t, []byte("sig2"), r.Actions.Signatures[1])
+	require.NotNil(t, r.Actions.Signatures[0].Action)
+	require.NotNil(t, r.Actions.Signatures[1].Action)
+	assert.Equal(t, []byte("sig1"), r.Actions.Signatures[0].Action.Signature)
+	assert.Equal(t, uint32(0), r.Actions.Signatures[0].Action.ActionID)
+	assert.Equal(t, []byte("sig2"), r.Actions.Signatures[1].Action.Signature)
+	assert.Equal(t, uint32(1), r.Actions.Signatures[1].Action.ActionID)
 
 	// Test with missing signature
 	r.Actions.Signatures = nil
@@ -885,8 +960,10 @@ func TestRequest_SetSignatures(t *testing.T) {
 	allPresent = r.SetSignatures(sigmas)
 	assert.False(t, allPresent)
 	require.Len(t, r.Actions.Signatures, 2)
-	assert.Equal(t, []byte("sig1"), r.Actions.Signatures[0])
-	assert.Nil(t, r.Actions.Signatures[1])
+	require.NotNil(t, r.Actions.Signatures[0].Action)
+	require.NotNil(t, r.Actions.Signatures[1].Action)
+	assert.Equal(t, []byte("sig1"), r.Actions.Signatures[0].Action.Signature)
+	assert.Nil(t, r.Actions.Signatures[1].Action.Signature)
 }
 
 // TestRequest_cleanupInputIDs tests the cleanupInputIDs utility function

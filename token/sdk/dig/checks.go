@@ -7,8 +7,8 @@ SPDX-License-Identifier: Apache-2.0
 package sdk
 
 import (
-	"github.com/hyperledger-labs/fabric-token-sdk/token/sdk/db"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/db/common"
+	"github.com/LFDT-Panurus/panurus/token/sdk/db"
+	"github.com/LFDT-Panurus/panurus/token/services/storage/db/common"
 	"go.uber.org/dig"
 )
 

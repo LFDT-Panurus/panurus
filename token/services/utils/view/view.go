@@ -12,8 +12,8 @@ import (
 	"context"
 	"time"
 
+	"github.com/LFDT-Panurus/panurus/token/services/logging"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/view"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/logging"
 )
 
 type viewContext = view.Context

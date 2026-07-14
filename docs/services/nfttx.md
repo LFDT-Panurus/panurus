@@ -10,7 +10,7 @@ The NFTTX Service is responsible for:
 *   **Metadata Management**: Handling the storage and retrieval of rich metadata associated with an NFT, which can include URIs, attributes, and ownership history.
 *   **Querying NFTs**: Providing specialized APIs to query the current owner and state of specific NFTs.
 
-## Interaction with Token SDK Layers
+## Interaction with Panurus Layers
 
 The NFTTX Service is an **Application Service** that leverages the core Token API and other infrastructure services.
 

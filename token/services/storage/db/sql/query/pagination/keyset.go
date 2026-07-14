@@ -14,8 +14,8 @@ import (
 
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 
+	"github.com/LFDT-Panurus/panurus/token/services/storage/db/sql/query/common"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/common/driver"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/db/sql/query/common"
 )
 
 // PropertyName is the name of the field in the struct that is returned from the database

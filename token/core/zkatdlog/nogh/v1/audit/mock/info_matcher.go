@@ -5,8 +5,8 @@ import (
 	"context"
 	"sync"
 
-	"github.com/hyperledger-labs/fabric-token-sdk/token/core/zkatdlog/nogh/v1/audit"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/driver"
+	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/audit"
+	"github.com/LFDT-Panurus/panurus/token/driver"
 )
 
 type InfoMatcher struct {
@@ -22,6 +22,19 @@ type InfoMatcher struct {
 	}
 	matchIdentityReturnsOnCall map[int]struct {
 		result1 error
+	}
+	RecipientsStub        func(driver.Identity) ([]driver.Identity, error)
+	recipientsMutex       sync.RWMutex
+	recipientsArgsForCall []struct {
+		arg1 driver.Identity
+	}
+	recipientsReturns struct {
+		result1 []driver.Identity
+		result2 error
+	}
+	recipientsReturnsOnCall map[int]struct {
+		result1 []driver.Identity
+		result2 error
 	}
 	invocations      map[string][][]interface{}
 	invocationsMutex sync.RWMutex
@@ -93,6 +106,70 @@ func (fake *InfoMatcher) MatchIdentityReturnsOnCall(i int, result1 error) {
 	fake.matchIdentityReturnsOnCall[i] = struct {
 		result1 error
 	}{result1}
+}
+
+func (fake *InfoMatcher) Recipients(arg1 driver.Identity) ([]driver.Identity, error) {
+	fake.recipientsMutex.Lock()
+	ret, specificReturn := fake.recipientsReturnsOnCall[len(fake.recipientsArgsForCall)]
+	fake.recipientsArgsForCall = append(fake.recipientsArgsForCall, struct {
+		arg1 driver.Identity
+	}{arg1})
+	stub := fake.RecipientsStub
+	fakeReturns := fake.recipientsReturns
+	fake.recordInvocation("Recipients", []interface{}{arg1})
+	fake.recipientsMutex.Unlock()
+	if stub != nil {
+		return stub(arg1)
+	}
+	if specificReturn {
+		return ret.result1, ret.result2
+	}
+	return fakeReturns.result1, fakeReturns.result2
+}
+
+func (fake *InfoMatcher) RecipientsCallCount() int {
+	fake.recipientsMutex.RLock()
+	defer fake.recipientsMutex.RUnlock()
+	return len(fake.recipientsArgsForCall)
+}
+
+func (fake *InfoMatcher) RecipientsCalls(stub func(driver.Identity) ([]driver.Identity, error)) {
+	fake.recipientsMutex.Lock()
+	defer fake.recipientsMutex.Unlock()
+	fake.RecipientsStub = stub
+}
+
+func (fake *InfoMatcher) RecipientsArgsForCall(i int) driver.Identity {
+	fake.recipientsMutex.RLock()
+	defer fake.recipientsMutex.RUnlock()
+	argsForCall := fake.recipientsArgsForCall[i]
+	return argsForCall.arg1
+}
+
+func (fake *InfoMatcher) RecipientsReturns(result1 []driver.Identity, result2 error) {
+	fake.recipientsMutex.Lock()
+	defer fake.recipientsMutex.Unlock()
+	fake.RecipientsStub = nil
+	fake.recipientsReturns = struct {
+		result1 []driver.Identity
+		result2 error
+	}{result1, result2}
+}
+
+func (fake *InfoMatcher) RecipientsReturnsOnCall(i int, result1 []driver.Identity, result2 error) {
+	fake.recipientsMutex.Lock()
+	defer fake.recipientsMutex.Unlock()
+	fake.RecipientsStub = nil
+	if fake.recipientsReturnsOnCall == nil {
+		fake.recipientsReturnsOnCall = make(map[int]struct {
+			result1 []driver.Identity
+			result2 error
+		})
+	}
+	fake.recipientsReturnsOnCall[i] = struct {
+		result1 []driver.Identity
+		result2 error
+	}{result1, result2}
 }
 
 func (fake *InfoMatcher) Invocations() map[string][][]interface{} {

@@ -9,7 +9,7 @@ SPDX-License-Identifier: Apache-2.0
 package queue
 
 import (
-	"github.com/hyperledger-labs/fabric-token-sdk/token/core/common/metrics"
+	"github.com/LFDT-Panurus/panurus/token/core/common/metrics"
 )
 
 // Metrics holds the instrumentation for the EventQueue.

@@ -3,16 +3,15 @@ Copyright IBM Corp. All Rights Reserved.
 
 SPDX-License-Identifier: Apache-2.0
 */
+
 package token
 
 import (
 	"context"
 
+	"github.com/LFDT-Panurus/panurus/token/token"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/token"
 )
-
-//go:generate sh -c "counterfeiter -o selector_mock.go -fake-name SelectorMock . Selector && sed -i '/\"github.com\\/hyperledger-labs\\/fabric-token-sdk\\/token\"/d' selector_mock.go && sed -i 's/token\\.Selector/Selector/g' selector_mock.go && sed -i 's/token\\.OwnerFilter/OwnerFilter/g' selector_mock.go"
 
 var (
 	// SelectorInsufficientFunds is returned when funds are not sufficient to cover the request
@@ -35,6 +34,8 @@ type OwnerFilter interface {
 }
 
 // Selector is the interface of token selectors
+//
+//go:generate counterfeiter -o mock/selector.go -fake-name Selector . Selector
 type Selector interface {
 	// Select returns the list of token identifiers where
 	// 1. The owner match the passed owner filter.

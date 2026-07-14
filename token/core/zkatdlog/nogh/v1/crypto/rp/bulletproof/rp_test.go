@@ -14,8 +14,8 @@ import (
 	"testing"
 
 	math "github.com/IBM/mathlib"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/core/zkatdlog/nogh/v1/crypto/rp/bulletproof"
-	benchmark2 "github.com/hyperledger-labs/fabric-token-sdk/token/services/benchmark"
+	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/crypto/rp/bulletproof"
+	benchmark2 "github.com/LFDT-Panurus/panurus/token/services/benchmark"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

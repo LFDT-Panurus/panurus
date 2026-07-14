@@ -12,9 +12,9 @@ import (
 	"fmt"
 	"math/big"
 
+	"github.com/LFDT-Panurus/panurus/token/driver"
+	"github.com/LFDT-Panurus/panurus/token/token"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/driver"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/token"
 )
 
 type QueryService interface {
@@ -89,6 +89,36 @@ func (o *OutputStream) ByType(typ token.Type) *OutputStream {
 	return o.Filter(func(t *Output) bool {
 		return t.Type == typ
 	})
+}
+
+// IsRedeem returns true if this output is a redeem, i.e., it has no owner.
+func (o *Output) IsRedeem() bool {
+	return len(o.Owner) == 0
+}
+
+// ByRedeem filters the OutputStream to only include outputs that are redeems.
+func (o *OutputStream) ByRedeem() *OutputStream {
+	return o.Filter(func(t *Output) bool {
+		return t.IsRedeem()
+	})
+}
+
+// Issuers returns the distinct issuer identities of the outputs in the OutputStream.
+func (o *OutputStream) Issuers() []driver.Identity {
+	duplicates := map[string]any{}
+	var issuers []driver.Identity
+	for _, output := range o.outputs {
+		if output.Issuer.IsNone() {
+			continue
+		}
+		key := output.Issuer.UniqueID()
+		if _, ok := duplicates[key]; !ok {
+			issuers = append(issuers, output.Issuer)
+			duplicates[key] = true
+		}
+	}
+
+	return issuers
 }
 
 // Outputs returns the outputs of the OutputStream.

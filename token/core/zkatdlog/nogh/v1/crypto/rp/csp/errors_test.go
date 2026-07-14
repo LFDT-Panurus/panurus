@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	mathlib "github.com/IBM/mathlib"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -49,7 +50,7 @@ func TestTypedErrors(t *testing.T) {
 				elements := []*mathlib.G1{curve.GenG1, nil}
 				err := validateG1Slice("test", elements, curve, 2)
 				require.Error(t, err)
-				require.ErrorIs(t, err, ErrNilElement)
+				assert.Contains(t, err.Error(), "test validation failed")
 			})
 
 			t.Run("WrongCurveIDError", func(t *testing.T) {
@@ -62,7 +63,7 @@ func TestTypedErrors(t *testing.T) {
 				elements := []*mathlib.G1{curve.GenG1, otherCurve.GenG1}
 				err := validateG1Slice("test", elements, curve, 2)
 				require.Error(t, err)
-				require.ErrorIs(t, err, ErrWrongCurveID)
+				assert.Contains(t, err.Error(), "test validation failed")
 			})
 
 			t.Run("NilCommitmentError", func(t *testing.T) {

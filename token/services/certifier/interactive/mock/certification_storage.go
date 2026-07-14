@@ -5,8 +5,8 @@ import (
 	"context"
 	"sync"
 
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/certifier/interactive"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/token"
+	"github.com/LFDT-Panurus/panurus/token/services/certifier/interactive"
+	"github.com/LFDT-Panurus/panurus/token/token"
 )
 
 type CertificationStorageMock struct {

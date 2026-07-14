@@ -1,32 +1,31 @@
-# Fabric Token SDK
-[![License](https://img.shields.io/badge/license-Apache%202-blue)](LICENSE)
-[![Go Report Card](https://goreportcard.com/badge/github.com/hyperledger-labs/fabric-token-sdk)](https://goreportcard.com/badge/github.com/hyperledger-labs/fabric-token-sdk)
-[![Tests](https://github.com/hyperledger-labs/fabric-token-sdk/actions/workflows/tests.yml/badge.svg?branch=main)](https://github.com/hyperledger-labs/fabric-token-sdk/actions/workflows/tests.yml)
-[![CodeQL](https://github.com/hyperledger-labs/fabric-token-sdk/actions/workflows/codeql-analysis.yml/badge.svg?branch=main)](https://github.com/hyperledger-labs/fabric-token-sdk/actions/workflows/codeql-analysis.yml)
-[![Coverage Status](https://coveralls.io/repos/github/hyperledger-labs/fabric-token-sdk/badge.svg?branch=main)](https://coveralls.io/github/hyperledger-labs/fabric-token-sdk?branch=main)
+<p align="center">
+  <img src="docs/imgs/Panurus_white.png" alt="Panurus" width="450"/>
+</p>
 
-The `Fabric Token SDK` provides a collection of APIs and services that streamline development for token-based distributed applications.
+<p align="center">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache%202-blue" alt="License"></a>
+  <a href="https://goreportcard.com/badge/github.com/LFDT-Panurus/panurus"><img src="https://goreportcard.com/badge/github.com/LFDT-Panurus/panurus" alt="Go Report Card"></a>
+  <a href="https://github.com/LFDT-Panurus/panurus/actions/workflows/tests.yml"><img src="https://github.com/LFDT-Panurus/panurus/actions/workflows/tests.yml/badge.svg?branch=main" alt="Tests"></a>
+  <a href="https://github.com/LFDT-Panurus/panurus/actions/workflows/codeql-analysis.yml"><img src="https://github.com/LFDT-Panurus/panurus/actions/workflows/codeql-analysis.yml/badge.svg?branch=main" alt="CodeQL"></a>
+  <a href="https://coveralls.io/github/LFDT-Panurus/panurus?branch=main"><img src="https://coveralls.io/repos/github/LFDT-Panurus/panurus/badge.svg?branch=main" alt="Coverage Status"></a>
+</p>
 
-# Disclaimer
-
-`Fabric Token SDK` has not been audited and is provided as-is, use at your own risk.
-The project will be subject to rapid changes to complete the open-sourcing process, and  the list of features.
+Panurus provides a collection of APIs and services that streamline development for token-based distributed applications.
 
 # Useful Links
  
-- [`Documentation`](docs/README.md): The entry point for the Fabric Token SDK documentation.
-- [`Code Wiki`](https://codewiki.google/github.com/hyperledger-labs/fabric-token-sdk): AI-powered documentation, architecture overviews, and interactive exploration of the Fabric Token SDK codebase.
+- [`Documentation`](docs/README.md): The entry point for Panurus documentation.
 - [`Development`](docs/development/development.md): All about the development guidelines.
 - [`Contributing`](CONTRIBUTING.md): How to contribute to the project.
-- [`Fabric Samples`](https://github.com/hyperledger/fabric-samples/tree/main/token-sdk) Token SDK sample application is the
+- [`Fabric Samples`](https://github.com/hyperledger/fabric-samples/tree/main/token-sdk) Panurus sample application is the
   quickest way to get a full network running with a REST API to issue, transfer and redeem tokens right away.
 - [`Benchmarks`](./docs/drivers/benchmark/benchmark.md): Benchmark guidelines and reports.
-- `Feedback`: Your help is the key to the success of the Fabric Token SDK. 
-  - Submit your issues [`here`][`fabric-token-sdk` Issues]. 
+- `Feedback`: Your help is the key to the success of Panurus. 
+  - Submit your issues [`here`][`panurus` Issues]. 
   - Found a bug? Need help to fix an issue? You have a great idea for a new feature? Talk to us! You can reach us on
-    [Discord](https://discord.gg/hyperledger) in #fabric-token-sdk.
+    [Discord](https://discord.gg/hyperledger) in #panurus.
   
-- [`Fabric Smart Client`](https://github.com/hyperledger-labs/fabric-smart-client): The Token SDK leverages the 
+- [`Fabric Smart Client`](https://github.com/hyperledger-labs/fabric-smart-client): Panurus leverages the 
   `Fabric Smart Client` for transaction orchestration, storing tokens and wallets, and more. Check it out.
 
 # Additional Resources
@@ -35,9 +34,14 @@ The project will be subject to rapid changes to complete the open-sourcing proce
   Tokenizing the physical world is a hot blockchain topic in the industry, especially as it relates to the 
   trade of tokens as a basis of new forms of commerce. In this Hyperledger Foundation member webinar, 
   the IBM Research team describes in this webinar what tokenization use cases are possible with Hyperledger Fabric today, 
-  and what enhancements are in the works (aka Fabric Token SDK).
+  and what enhancements are in the works (aka Panurus).
 - (October 12, 2023) [How to create a currency management app and deploy it to a Hyperledger Fabric network](https://www.youtube.com/watch?v=PX9SDva97vQ):
-  In this comprehensive guide, we'll walk you through two essential aspects of the Fabric Token-SDK. Firstly, you'll learn how to develop a straightforward token application to manage a currency. You'll grasp the fundamentals of creating tokens, and implementing transaction logic using the Fabric Token-SDK. Once you've mastered the application development, we'll then show you how to effortlessly deploy it in your existing Fabric network, ensuring a seamless integration with your blockchain infrastructure. By the end of this tutorial, you'll be equipped with the skills to expand your blockchain capabilities and unleash the true potential of decentralized currency management. (Refers to [Fabric Samples](https://github.com/hyperledger/fabric-samples/tree/main/token-sdk))
+  In this comprehensive guide, we'll walk you through two essential aspects of Panurus. Firstly, you'll learn how to develop a straightforward token application to manage a currency. You'll grasp the fundamentals of creating tokens, and implementing transaction logic using Panurus. Once you've mastered the application development, we'll then show you how to effortlessly deploy it in your existing Fabric network, ensuring a seamless integration with your blockchain infrastructure. By the end of this tutorial, you'll be equipped with the skills to expand your blockchain capabilities and unleash the true potential of decentralized currency management. (Refers to [Fabric Samples](https://github.com/hyperledger/fabric-samples/tree/main/token-sdk))
+
+# Disclaimer
+
+`Panurus` has not been audited and is provided as-is, use at your own risk.
+The project will be subject to rapid changes to complete the open-sourcing process, and  the list of features.
 
 # Motivation
 
@@ -53,9 +57,9 @@ While blockchain is often associated with cryptocurrencies, its potential extend
 
 Developing applications that leverage tokens on Hyperledger Fabric can be complex. Fabric lacked a built-in SDK for creating and managing tokens, forcing developers to build solutions from scratch.  This not only led to wasted effort with duplicated code, but also exposed applications to potential security vulnerabilities.
 
-**Introducing the Fabric Token SDK: Streamlining Tokenized Development (and Beyond)**
+**Introducing Panurus: Streamlining Tokenized Development (and Beyond)**
 
-The Fabric Token SDK has evolved beyond its initial focus on Hyperledger Fabric. It now empowers developers with the following capabilities across various platforms, including permissioned blockchains like Fabric:
+Panurus has evolved beyond its initial focus on Hyperledger Fabric. It now empowers developers with the following capabilities across various platforms, including permissioned blockchains like Fabric:
 
 * **Tokenization Made Easy:** Create tokens representing any type of asset, be it physical or digital.
 * **Privacy by Design:** Select the appropriate privacy level for your specific use case, without modifying your application logic.
@@ -65,11 +69,11 @@ The Fabric Token SDK has evolved beyond its initial focus on Hyperledger Fabric.
 * **Interoperability:** Connect with token systems on other blockchain networks, fostering broader ecosystems.
 * **Seamless Integration:** Add a token layer to existing applications, regardless of platform, with minimal effort.
 
-With a robust Fabric Token SDK, developing secure and efficient enterprise-grade tokenized applications becomes a reality, offering flexibility for developers to choose the platform that best suits their needs.
+With Panurus, developing secure and efficient enterprise-grade tokenized applications becomes a reality, offering flexibility for developers to choose the platform that best suits their needs.
 
 # License
 
 This project is licensed under the Apache 2 License - see the [`LICENSE`](LICENSE) file for details
 
-[`fabric-token-sdk` Issues]: https://github.com/hyperledger-labs/fabric-token-sdk/issues
-[#fabric-token-sdk in Discord]: https://discord.gg/hyperledger
+[`Panurus` Issues]: https://github.com/LFDT-Panurus/panurus/issues
+[#panurus in Discord]: https://discord.gg/hyperledger

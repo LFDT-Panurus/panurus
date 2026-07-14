@@ -9,9 +9,9 @@ package tokenapi
 import (
 	"testing"
 
-	"github.com/hyperledger-labs/fabric-token-sdk/token"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/driver/mock"
-	mock2 "github.com/hyperledger-labs/fabric-token-sdk/token/mock"
+	"github.com/LFDT-Panurus/panurus/token"
+	"github.com/LFDT-Panurus/panurus/token/driver/mock"
+	mock2 "github.com/LFDT-Panurus/panurus/token/mock"
 	"github.com/stretchr/testify/require"
 )
 

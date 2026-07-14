@@ -10,20 +10,21 @@ import (
 	"bytes"
 	"io"
 	"os"
+	"sort"
 	"text/template"
 	"time"
 
 	math3 "github.com/IBM/mathlib"
+	common2 "github.com/LFDT-Panurus/panurus/integration/nwo/token/common"
+	"github.com/LFDT-Panurus/panurus/integration/nwo/token/generators"
+	"github.com/LFDT-Panurus/panurus/integration/nwo/token/generators/crypto/fabtokenv1"
+	"github.com/LFDT-Panurus/panurus/integration/nwo/token/generators/crypto/zkatdlognoghv1"
+	topology2 "github.com/LFDT-Panurus/panurus/integration/nwo/token/topology"
+	"github.com/LFDT-Panurus/panurus/token"
+	"github.com/LFDT-Panurus/panurus/token/services/logging"
 	api2 "github.com/hyperledger-labs/fabric-smart-client/integration/nwo/api"
 	"github.com/hyperledger-labs/fabric-smart-client/integration/nwo/fsc"
 	sfcnode "github.com/hyperledger-labs/fabric-smart-client/integration/nwo/fsc/node"
-	common2 "github.com/hyperledger-labs/fabric-token-sdk/integration/nwo/token/common"
-	"github.com/hyperledger-labs/fabric-token-sdk/integration/nwo/token/generators"
-	"github.com/hyperledger-labs/fabric-token-sdk/integration/nwo/token/generators/crypto/fabtokenv1"
-	"github.com/hyperledger-labs/fabric-token-sdk/integration/nwo/token/generators/crypto/zkatdlognoghv1"
-	topology2 "github.com/hyperledger-labs/fabric-token-sdk/integration/nwo/token/topology"
-	"github.com/hyperledger-labs/fabric-token-sdk/token"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/logging"
 	"github.com/onsi/gomega"
 )
 
@@ -122,7 +123,7 @@ func (p *NetworkHandler) GenerateExtension(tms *topology2.TMS, node *sfcnode.Nod
 	t, err := template.New("peer").Funcs(template.FuncMap{
 		"TMSID":       func() string { return tms.TmsID() },
 		"TMS":         func() *topology2.TMS { return tms },
-		"Wallets":     func() *topology2.Wallets { return p.GetEntry(tms).Wallets[node.Name] },
+		"Wallets":     func() *topology2.Wallets { return p.getCombinedWallets(tms, node.Name) },
 		"Endorsement": func() bool { return IsFSCEndorsementEnabled(tms) },
 		"Endorsers":   func() []string { return Endorsers(tms) },
 		"EndorserID":  func() string { return "" },
@@ -296,6 +297,78 @@ func (p *NetworkHandler) GenerateCryptoMaterial(cmGenerator generators.CryptoMat
 			wallet.Certifiers[len(wallet.Certifiers)-1].Default = true
 		}
 	}
+}
+
+// getCombinedWallets aggregates wallet identities for nodeName across all entries
+// that share the same TmsID (network-channel-namespace, without alias).
+//
+// This is necessary when multiple TMSs are co-located on the same namespace — for
+// example, a primary fabtoken TMS and a transient dlog TMS used during a token
+// upgrade. Both TMSs emit their config extension under the same YAML key (TmsID),
+// and FSC's MergeYAML replaces arrays on conflict (last writer wins). Without
+// aggregation, the last-generated extension would overwrite earlier ones, losing
+// wallet entries for the other TMSs.
+//
+// Entries are ordered non-transient first, then alphabetically by alias, so the
+// primary TMS's identities appear first and retain their Default flags. Identities
+// are deduplicated by (role, ID, path) to avoid duplicates when entries share the
+// same wallet (e.g. a shared auditor).
+//
+// Safe to call during extension generation because platform.go uses two sequential
+// phases: all entries are fully populated before any extension is generated.
+func (p *NetworkHandler) getCombinedWallets(tms *topology2.TMS, nodeName string) *topology2.Wallets {
+	var matching []*Entry
+	for _, entry := range p.Entries {
+		if entry.TMS.TmsID() == tms.TmsID() {
+			matching = append(matching, entry)
+		}
+	}
+	if len(matching) == 1 {
+		return matching[0].Wallets[nodeName]
+	}
+	// Non-transient entries first, then stable sort by alias.
+	sort.Slice(matching, func(i, j int) bool {
+		ti, tj := matching[i].TMS, matching[j].TMS
+		if ti.Transient != tj.Transient {
+			return !ti.Transient
+		}
+
+		return ti.Alias < tj.Alias
+	})
+	combined := &topology2.Wallets{}
+	seen := map[string]bool{}
+	for _, entry := range matching {
+		w := entry.Wallets[nodeName]
+		if w == nil {
+			continue
+		}
+		for _, id := range w.Issuers {
+			if k := "i:" + id.ID + ":" + id.Path; !seen[k] {
+				seen[k] = true
+				combined.Issuers = append(combined.Issuers, id)
+			}
+		}
+		for _, id := range w.Owners {
+			if k := "o:" + id.ID + ":" + id.Path; !seen[k] {
+				seen[k] = true
+				combined.Owners = append(combined.Owners, id)
+			}
+		}
+		for _, id := range w.Auditors {
+			if k := "a:" + id.ID + ":" + id.Path; !seen[k] {
+				seen[k] = true
+				combined.Auditors = append(combined.Auditors, id)
+			}
+		}
+		for _, id := range w.Certifiers {
+			if k := "c:" + id.ID + ":" + id.Path; !seen[k] {
+				seen[k] = true
+				combined.Certifiers = append(combined.Certifiers, id)
+			}
+		}
+	}
+
+	return combined
 }
 
 func (p *NetworkHandler) GetEntry(tms *topology2.TMS) *Entry {

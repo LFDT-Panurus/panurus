@@ -9,7 +9,7 @@ package dbtest
 import (
 	"testing"
 
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/db/driver"
+	"github.com/LFDT-Panurus/panurus/token/services/storage/db/driver"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

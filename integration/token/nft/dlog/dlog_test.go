@@ -7,14 +7,14 @@ SPDX-License-Identifier: Apache-2.0
 package dlog
 
 import (
+	"github.com/LFDT-Panurus/panurus/integration"
+	"github.com/LFDT-Panurus/panurus/integration/nwo/token/generators/crypto/zkatdlognoghv1"
+	"github.com/LFDT-Panurus/panurus/integration/token"
+	"github.com/LFDT-Panurus/panurus/integration/token/common"
+	"github.com/LFDT-Panurus/panurus/integration/token/common/sdk/fdlog"
+	"github.com/LFDT-Panurus/panurus/integration/token/nft"
 	"github.com/hyperledger-labs/fabric-smart-client/integration/nwo/fsc"
 	nodepkg "github.com/hyperledger-labs/fabric-smart-client/pkg/node"
-	"github.com/hyperledger-labs/fabric-token-sdk/integration"
-	"github.com/hyperledger-labs/fabric-token-sdk/integration/nwo/token/generators/crypto/zkatdlognoghv1"
-	"github.com/hyperledger-labs/fabric-token-sdk/integration/token"
-	"github.com/hyperledger-labs/fabric-token-sdk/integration/token/common"
-	"github.com/hyperledger-labs/fabric-token-sdk/integration/token/common/sdk/fdlog"
-	"github.com/hyperledger-labs/fabric-token-sdk/integration/token/nft"
 	. "github.com/onsi/ginkgo/v2"
 )
 

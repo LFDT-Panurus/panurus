@@ -11,7 +11,7 @@ import (
 	"encoding/hex"
 	"testing"
 
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/interop/encoding"
+	"github.com/LFDT-Panurus/panurus/token/services/interop/encoding"
 	"github.com/stretchr/testify/assert"
 )
 

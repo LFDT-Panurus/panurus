@@ -10,7 +10,7 @@ import (
 	"context"
 	"fmt"
 
-	tdriver "github.com/hyperledger-labs/fabric-token-sdk/token/driver"
+	tdriver "github.com/LFDT-Panurus/panurus/token/driver"
 )
 
 // IdentityRoleType is the role of an identity

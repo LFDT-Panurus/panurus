@@ -131,7 +131,7 @@ func BatchInverse(elems []*mathlib.Zr, curve *mathlib.Curve) []*mathlib.Zr {
 	// Forward pass: build prefix products in the inv array
 	inv[0] = elems[0] // No copy needed since we don't mutate inv[0]
 	for i := 1; i < n; i++ {
-		inv[i] = curve.ModMul(inv[i-1], elems[i], curve.GroupOrder)
+		inv[i] = curve.ModMul(inv[i-1], elems[i], curve.GroupOrder) // #nosec G602 -- i < n == len(elems)
 	}
 
 	// Single inversion of the total product

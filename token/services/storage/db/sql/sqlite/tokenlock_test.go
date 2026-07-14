@@ -11,11 +11,11 @@ import (
 	"testing"
 	"time"
 
+	q "github.com/LFDT-Panurus/panurus/token/services/storage/db/sql/query"
 	common2 "github.com/hyperledger-labs/fabric-smart-client/platform/view/services/storage/driver/common"
-	q "github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/db/sql/query"
 
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/db/driver"
-	common3 "github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/db/sql/common"
+	"github.com/LFDT-Panurus/panurus/token/services/storage/db/driver"
+	common3 "github.com/LFDT-Panurus/panurus/token/services/storage/db/sql/common"
 	. "github.com/onsi/gomega"
 )
 
@@ -26,6 +26,7 @@ func mockTokenLockStore(db *sql.DB) *common3.TokenLockStore {
 
 	store, _ := NewTokenLockStore(&dbs, common3.TableNames{
 		TokenLocks: "TOKEN_LOCKS",
+		Tokens:     "TOKENS",
 		Requests:   "REQUESTS",
 	})
 
@@ -44,9 +45,22 @@ func TestIsStale(t *testing.T) {
 		"FROM TokenLocks AS tl " +
 		"LEFT JOIN Requests AS tr " +
 		"ON tl.tx_id = tr.tx_id " +
-		"WHERE (tr.status = $1) OR (tl.created_at < datetime('now', '-5 seconds'))" +
+		"WHERE ((tr.status) IN (($1), ($2))) OR (tl.created_at < datetime('now', '-5 seconds'))" +
 		")"))
-	Expect(args).To(ConsistOf(driver.Deleted))
+	Expect(args).To(ConsistOf(driver.Deleted, driver.Orphan))
+}
+
+func TestIsStaleOrphan(t *testing.T) {
+	RegisterTestingT(t)
+
+	query, args := q.DeleteFrom("TokenLocks").
+		Where(IsStale("TokenLocks", "Requests", 10*time.Second)).
+		Format(NewConditionInterpreter())
+
+	// Verify the query includes both Deleted (3) and Orphan (4) statuses using IN syntax
+	Expect(query).To(ContainSubstring("(tr.status) IN"))
+	Expect(query).To(ContainSubstring("datetime('now', '-10 seconds')"))
+	Expect(args).To(ConsistOf(driver.Deleted, driver.Orphan))
 }
 
 func TestLock(t *testing.T) {
@@ -55,4 +69,12 @@ func TestLock(t *testing.T) {
 
 func TestUnlockByTxID(t *testing.T) {
 	common3.TestUnlockByTxID(t, mockTokenLockStore)
+}
+
+func TestLockContextCancelled(t *testing.T) {
+	common3.TestLockContextCancelled(t, mockTokenLockStore)
+}
+
+func TestUnlockByTxIDContextCancelled(t *testing.T) {
+	common3.TestUnlockByTxIDContextCancelled(t, mockTokenLockStore)
 }

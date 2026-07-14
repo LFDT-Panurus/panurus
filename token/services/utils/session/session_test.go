@@ -11,9 +11,9 @@ import (
 	"testing"
 	"time"
 
+	utilsession "github.com/LFDT-Panurus/panurus/token/services/utils/session"
+	"github.com/LFDT-Panurus/panurus/token/services/utils/session/mock"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/view"
-	utilsession "github.com/hyperledger-labs/fabric-token-sdk/token/services/utils/session"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/utils/session/mock"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

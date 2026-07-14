@@ -25,19 +25,19 @@ import (
 
 	"github.com/IBM/idemix/bccsp/types"
 	math "github.com/IBM/mathlib"
+	math2 "github.com/LFDT-Panurus/panurus/token/core/common/crypto/math"
+	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/crypto/rp"
+	executor "github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/crypto/rp/executor"
+	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/setup"
+	"github.com/LFDT-Panurus/panurus/token/driver"
+	"github.com/LFDT-Panurus/panurus/token/services/identity"
+	idemix2 "github.com/LFDT-Panurus/panurus/token/services/identity/idemix"
+	"github.com/LFDT-Panurus/panurus/token/services/identity/idemix/crypto"
+	"github.com/LFDT-Panurus/panurus/token/services/identity/idemixnym"
+	ix509 "github.com/LFDT-Panurus/panurus/token/services/identity/x509"
+	crypto2 "github.com/LFDT-Panurus/panurus/token/services/identity/x509/crypto"
+	"github.com/LFDT-Panurus/panurus/token/services/storage/db/kvs"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
-	math2 "github.com/hyperledger-labs/fabric-token-sdk/token/core/common/crypto/math"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/core/zkatdlog/nogh/v1/crypto/rp"
-	executor "github.com/hyperledger-labs/fabric-token-sdk/token/core/zkatdlog/nogh/v1/crypto/rp/executor"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/core/zkatdlog/nogh/v1/setup"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/driver"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/identity"
-	idemix2 "github.com/hyperledger-labs/fabric-token-sdk/token/services/identity/idemix"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/identity/idemix/crypto"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/identity/idemixnym"
-	ix509 "github.com/hyperledger-labs/fabric-token-sdk/token/services/identity/x509"
-	crypto2 "github.com/hyperledger-labs/fabric-token-sdk/token/services/identity/x509/crypto"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/db/kvs"
 )
 
 type SetupConfigurationSer struct {
@@ -47,14 +47,34 @@ type SetupConfigurationSer struct {
 }
 
 // SetupParams holds all parameters needed to create benchmark configurations.
+//
+// # Range-proof system selection
+//
+// PublicParams supports up to two range-proof systems simultaneously
+// (RangeProofType / BulletProof and CSPRangeProofType / CSP). At least one
+// must be configured; both may be present at the same time, for example
+// during a range-proof migration window.
+//
+// ProofType controls which params sub-struct is generated for the benchmark:
+//   - rp.RangeProofType: generates BulletProof (RangeProofParams) only.
+//   - rp.CSPRangeProofType: generates CSP (CSPRangeProofParams) only.
+//
+// When proving (prover-side), the driver prefers CSP if CSPRangeProofParams
+// is non-nil, and falls back to BulletProof otherwise (see NewProver in
+// transfer/issue packages). On the verifier side, the algorithm is fixed by
+// the proof type recorded in the action, which is validated against the
+// available params before any sub-struct is dereferenced.
 type SetupParams struct {
 	IdemixTestdataPath string
 	Bits               []uint64
 	CurveIDs           []math.CurveID
 	OwnerIdentityType  identity.Type
-	ProofType          rp.ProofType // RangeProofType or CSPRangeProofType
+	// ProofType selects which range-proof system's parameters are generated
+	// for this benchmark configuration. Valid values: rp.RangeProofType
+	// (BulletProof) or rp.CSPRangeProofType (CSP).
+	ProofType rp.ProofType
 	// ExecutorProvider controls how independent range proofs are executed.
-	// If nil, rp.SerialProvider{} is used (serial execution, zero overhead).
+	// If nil, executor.SerialProvider{} is used (serial execution, zero overhead).
 	ExecutorProvider executor.ExecutorProvider
 }
 
@@ -99,7 +119,11 @@ func NewSetupConfigurations(idemixTestdataPath string, bits []uint64, curveIDs [
 
 // NewSetupConfigurationsWithParams loads test data and builds setup configurations
 // for each combination of the provided parameters. The ProofType field in params
-// determines which range proof system to use (0 = RangeProof, 1 = CSPRangeProof).
+// determines which range-proof parameters to generate: rp.RangeProofType produces
+// BulletProof parameters, rp.CSPRangeProofType produces CSP parameters. Both sets
+// may coexist in a single PublicParams (e.g. for migration); use
+// pp.GenerateRangeProofParameters or pp.GenerateCSPRangeProofParameters after
+// setup to add a second system to an existing configuration.
 // It returns a container mapping keys to configurations or an error if any setup step fails.
 func NewSetupConfigurationsWithParams(params SetupParams) (*SetupConfigurations, error) {
 	configurations := map[string]*SetupConfiguration{}
@@ -492,7 +516,7 @@ type Signer struct {
 	SK     *ecdsa.PrivateKey
 	Signer driver.Signer
 
-	ID        []byte
+	ID        driver.Identity
 	AuditInfo []byte
 }
 

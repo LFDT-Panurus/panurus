@@ -9,9 +9,9 @@ package multisig
 import (
 	"testing"
 
-	"github.com/hyperledger-labs/fabric-token-sdk/token"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/driver"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/identity/multisig/mock"
+	"github.com/LFDT-Panurus/panurus/token"
+	"github.com/LFDT-Panurus/panurus/token/driver"
+	"github.com/LFDT-Panurus/panurus/token/services/identity/multisig/mock"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -164,6 +164,21 @@ func TestVerifier_Verify_InvalidMultisigBytes(t *testing.T) {
 
 	// Verify no verifiers were called (failed during unmarshal)
 	assert.Equal(t, 0, verifier1.VerifyCallCount())
+}
+
+// Verify returns an error immediately when the Verifier has no sub-verifiers,
+// even if the raw signature encodes an empty MultiSignature{} (the "anyone-can-spend"
+// exploit path patched in sig.go).
+func TestVerifier_Verify_ZeroVerifiers(t *testing.T) {
+	emptyMultiSig := &MultiSignature{Signatures: [][]byte{}}
+	emptyBytes, err := emptyMultiSig.Bytes()
+	require.NoError(t, err)
+
+	verifier := &Verifier{Verifiers: []driver.Verifier{}}
+
+	err = verifier.Verify([]byte("any message"), emptyBytes)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "multisig verifier has no members")
 }
 
 // Create a raw multi-sig of one sig  and fail to verify it with a multi-verifier

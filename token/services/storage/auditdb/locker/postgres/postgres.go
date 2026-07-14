@@ -13,15 +13,15 @@ import (
 	"sync"
 	"time"
 
+	"github.com/LFDT-Panurus/panurus/token/services/logging"
+	"github.com/LFDT-Panurus/panurus/token/services/storage/auditdb/locker/dedup"
+	"github.com/LFDT-Panurus/panurus/token/services/storage/auditdb/locker/errs"
+	"github.com/LFDT-Panurus/panurus/token/services/storage/auditdb/locker/id"
+	pgcond "github.com/LFDT-Panurus/panurus/token/services/storage/db/sql/postgres"
+	q "github.com/LFDT-Panurus/panurus/token/services/storage/db/sql/query"
+	qcommon "github.com/LFDT-Panurus/panurus/token/services/storage/db/sql/query/common"
+	"github.com/LFDT-Panurus/panurus/token/services/storage/db/sql/query/cond"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/logging"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/auditdb/locker/dedup"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/auditdb/locker/errs"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/auditdb/locker/id"
-	pgcond "github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/db/sql/postgres"
-	q "github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/db/sql/query"
-	qcommon "github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/db/sql/query/common"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/db/sql/query/cond"
 )
 
 var logger = logging.MustGetLogger()

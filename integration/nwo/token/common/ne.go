@@ -11,11 +11,11 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/LFDT-Panurus/panurus/integration/nwo/token/generators"
+	topology2 "github.com/LFDT-Panurus/panurus/integration/nwo/token/topology"
 	api2 "github.com/hyperledger-labs/fabric-smart-client/integration/nwo/api"
 	"github.com/hyperledger-labs/fabric-smart-client/integration/nwo/common"
 	sfcnode "github.com/hyperledger-labs/fabric-smart-client/integration/nwo/fsc/node"
-	"github.com/hyperledger-labs/fabric-token-sdk/integration/nwo/token/generators"
-	topology2 "github.com/hyperledger-labs/fabric-token-sdk/integration/nwo/token/topology"
 	"github.com/onsi/gomega/gexec"
 )
 

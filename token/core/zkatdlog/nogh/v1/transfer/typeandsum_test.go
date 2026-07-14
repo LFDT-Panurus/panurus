@@ -9,9 +9,9 @@ import (
 	"testing"
 
 	math "github.com/IBM/mathlib"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/core/zkatdlog/nogh/v1/token"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/core/zkatdlog/nogh/v1/transfer"
-	token2 "github.com/hyperledger-labs/fabric-token-sdk/token/token"
+	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/token"
+	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/transfer"
+	token2 "github.com/LFDT-Panurus/panurus/token/token"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -298,4 +298,55 @@ func prepareToken(value *math.Zr, rand *math.Zr, ttype string, pp []*math.G1, c 
 	token.Add(pp[2].Mul(rand))
 
 	return token
+}
+
+// TestTypeAndSumVerify_ShortInputBlindingFactors is T-GAP-C4: verifies that
+// TypeAndSumProof.Validate() (and the pre-loop guard in Verify) catches
+// a proof whose InputBlindingFactors slice is shorter than InputValues,
+// returning a clean error instead of an index-out-of-bounds panic.
+//
+// Before the Phase 0 fix, Validate() used len(p.InputBlindingFactors) as the
+// expected length, so a short slice always passed. The verifier loop then
+// accessed stp.InputBlindingFactors[i] beyond the slice bounds and panicked.
+func TestTypeAndSumVerify_ShortInputBlindingFactors(t *testing.T) {
+	c := math.Curves[TestCurve]
+
+	// Build a proof with 2 InputValues but only 1 InputBlindingFactor.
+	proof := &transfer.TypeAndSumProof{
+		CommitmentToType:     c.GenG1.Copy(),
+		InputBlindingFactors: []*math.Zr{c.NewZrFromInt(1)},                    // only 1
+		InputValues:          []*math.Zr{c.NewZrFromInt(2), c.NewZrFromInt(3)}, // 2
+		Type:                 c.NewZrFromInt(4),
+		TypeBlindingFactor:   c.NewZrFromInt(5),
+		EqualityOfSum:        c.NewZrFromInt(6),
+		Challenge:            c.NewZrFromInt(7),
+	}
+
+	// Validate() must return an error — the fix changes the expected length to
+	// len(p.InputValues) so the mismatch (1 != 2) is caught here.
+	err := proof.Validate(TestCurve)
+	require.Error(t, err, "T-GAP-C4: short InputBlindingFactors must fail Validate()")
+	require.ErrorIs(t, err, transfer.ErrInvalidInputBlindingFactors)
+
+	// Also verify that the defence-in-depth guard in TypeAndSumVerifier.Verify
+	// returns an error (not a panic) when the short proof slips through Validate
+	// on an older build. To test this path we call Verify directly with a proof
+	// that has a valid-looking CommitmentToType so Validate would otherwise pass,
+	// but the verifier's input count is larger.
+	pp := preparePedersenParameters(t, c)
+	in := make([]*math.G1, 2) // verifier expects 2 inputs
+	out := make([]*math.G1, 1)
+	for i := range 2 {
+		in[i] = c.GenG1.Copy()
+	}
+	out[0] = c.GenG1.Copy()
+
+	verifier := transfer.NewTypeAndSumVerifier(pp, in, out, c)
+
+	// Proof has only 1 InputBlindingFactor; verifier expects 2.
+	require.NotPanics(t, func() {
+		err = verifier.Verify(proof)
+	}, "T-GAP-C4: Verify must not panic on short InputBlindingFactors")
+	require.Error(t, err, "T-GAP-C4: Verify must return an error for short InputBlindingFactors")
+	require.ErrorIs(t, err, transfer.ErrMissingSumAndTypeComponents)
 }

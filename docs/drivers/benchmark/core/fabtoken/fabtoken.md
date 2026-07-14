@@ -1,6 +1,6 @@
 # Fabtoken Benchmarks
 
-This document provides an overview of the performance benchmarks for the Fabtoken driver in the Fabric Token SDK.
+This document provides an overview of the performance benchmarks for the Fabtoken driver in Panurus.
 
 > **Related Documentation:**
 > - [Testing Architecture](./fabtoken_architecture.md) - Understanding the test layers

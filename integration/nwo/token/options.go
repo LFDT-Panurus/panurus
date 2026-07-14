@@ -7,8 +7,8 @@ SPDX-License-Identifier: Apache-2.0
 package token
 
 import (
+	"github.com/LFDT-Panurus/panurus/integration/nwo/token/topology"
 	fsc "github.com/hyperledger-labs/fabric-smart-client/integration/nwo/fsc/node"
-	"github.com/hyperledger-labs/fabric-token-sdk/integration/nwo/token/topology"
 )
 
 func WithIssuerIdentity(label string, hsm bool) fsc.Option {

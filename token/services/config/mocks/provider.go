@@ -4,8 +4,8 @@ package mocks
 import (
 	"sync"
 
+	"github.com/LFDT-Panurus/panurus/token/services/config"
 	configa "github.com/hyperledger-labs/fabric-smart-client/platform/view/services/config"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/config"
 )
 
 type Provider struct {

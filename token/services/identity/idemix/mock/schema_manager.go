@@ -5,7 +5,7 @@ import (
 	"sync"
 
 	"github.com/IBM/idemix/bccsp/types"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/identity/idemix/schema"
+	"github.com/LFDT-Panurus/panurus/token/services/identity/idemix/schema"
 )
 
 type SchemaManager struct {

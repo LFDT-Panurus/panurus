@@ -17,6 +17,7 @@ Column naming convention:
 
 import csv
 import os
+import sys
 import shutil
 import subprocess
 import re
@@ -141,16 +142,28 @@ def run_and_parse_non_parallel_metrics(bench_name, params, curve="BLS12_381_BBS_
     if folder == "":
         folder = transfer_benchmarks_folder
 
-    proof_flag = f"-proof_type={proof_type}"
+    # Only add proof_type flag for benchmarks that support it (not issuer benchmarks)
+    proof_flag = ""
+    if folder != issuer_benchmarks_folder:
+        proof_flag = f"-proof_type={proof_type}"
+    
     cmd = (
-    f"go test {folder} -run='^$' -bench={bench_name} -v -benchmem "
-    f"-count={count} -cpu=32 -timeout {timeout} "
-    f"{params} | tee bench.txt; benchstat bench.txt"
-)
+        f"go test {folder} -run='^$' -bench={bench_name} -v -benchmem "
+        f"-count={count} -cpu=32 -timeout {timeout} "
+        f"-curves={curve} {proof_flag} {params} | tee bench.txt; benchstat bench.txt"
+    )
     n = _next_run()
     print(f"{n} Running: {cmd}")
 
-    result = subprocess.run(cmd, shell=True, capture_output=True, text=True, check=True)
+    try:
+        result = subprocess.run(cmd, shell=True, capture_output=True, text=True, check=True)
+    except subprocess.CalledProcessError as e:
+        print(f"Error executing non-parallel benchmark {bench_name}: {e}")
+        if e.stdout:
+            print(f"Stdout:\n{e.stdout}")
+        if e.stderr:
+            print(f"Stderr:\n{e.stderr}")
+        raise e
 
     log_path = os.path.join(output_folder_path, f"{bench_name}.log")
     if not os.path.exists(log_path):
@@ -282,7 +295,15 @@ def run_and_parse_parallel_metrics(bench_name, params, cpu=1,
     n = _next_run()
     print(f"{n} Running [{executor}]: {cmd}")
 
-    result = subprocess.run(cmd, shell=True, capture_output=True, text=True, check=True)
+    try:
+        result = subprocess.run(cmd, shell=True, capture_output=True, text=True, check=True)
+    except subprocess.CalledProcessError as e:
+        print(f"Error executing parallel benchmark {bench_name}: {e}")
+        if e.stdout:
+            print(f"Stdout:\n{e.stdout}")
+        if e.stderr:
+            print(f"Stderr:\n{e.stderr}")
+        raise e
 
     log_path = os.path.join(output_folder_path, f"{bench_name}-{executor}-{cpu}.log")
     if not os.path.exists(log_path):
@@ -390,11 +411,15 @@ if not benchName:
 
     # Generate plots
     try:
-        cmd = "python plot_benchmark_results.py"
+        cmd = f"{sys.executable} plot_benchmark_results.py"
         print(f"\nRunning: {cmd}")
         subprocess.run(cmd, shell=True, capture_output=True, text=True, check=True)
     except subprocess.CalledProcessError as e:
         print(f"Plot generation failed: {e}")
+        if e.stdout:
+            print(f"Stdout:\n{e.stdout}")
+        if e.stderr:
+            print(f"Stderr:\n{e.stderr}")
 
     # Copy outputs into the log folder
     for src_file in [results_csv, results_pdf, results_IO]:

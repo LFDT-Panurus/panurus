@@ -7,12 +7,12 @@ SPDX-License-Identifier: Apache-2.0
 package views
 
 import (
+	"github.com/LFDT-Panurus/panurus/integration/token/dvp/views/house"
+	"github.com/LFDT-Panurus/panurus/token/services/nfttx"
+	"github.com/LFDT-Panurus/panurus/token/services/ttx"
+	token2 "github.com/LFDT-Panurus/panurus/token/token"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/common/utils/assert"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/view"
-	"github.com/hyperledger-labs/fabric-token-sdk/integration/token/dvp/views/house"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/nfttx"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/ttx"
-	token2 "github.com/hyperledger-labs/fabric-token-sdk/token/token"
 )
 
 type BuyHouseView struct{}

@@ -1,6 +1,6 @@
 # ZK-ATDLOG Testing Architecture
 
-This document explains the testing architecture for the Zero-Knowledge Anonymous Token Discrete Logarithm (ZK-ATDLOG) implementation in the Fabric Token SDK.
+This document explains the testing architecture for the Zero-Knowledge Anonymous Token Discrete Logarithm (ZK-ATDLOG) implementation in Panurus.
 
 > **Related Documentation:**
 > - [Running Benchmarks](./dlognogh.md) - How to run performance benchmarks

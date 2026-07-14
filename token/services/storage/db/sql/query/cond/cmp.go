@@ -9,7 +9,7 @@ package cond
 import (
 	"time"
 
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/db/sql/query/common"
+	"github.com/LFDT-Panurus/panurus/token/services/storage/db/sql/query/common"
 )
 
 const (
@@ -65,6 +65,18 @@ func Lte[P comparable](f common.FieldName, val P) Condition { return CmpVal(f, "
 func Gt[P comparable](f common.FieldName, val P) Condition { return CmpVal(f, ">", val) }
 
 func Gte[P comparable](f common.FieldName, val P) Condition { return CmpVal(f, ">=", val) }
+
+type isNil struct {
+	f common.Serializable
+}
+
+func (c *isNil) WriteString(_ common.CondInterpreter, sb common.Builder) {
+	sb.WriteSerializables(c.f).
+		WriteRune(' ').
+		WriteString("IS NULL")
+}
+
+func IsNil(f common.Serializable) Condition { return &isNil{f: f} }
 
 func BetweenInts(f common.FieldName, start, end int) Condition {
 	return FieldBetweenInts(f, start, end)

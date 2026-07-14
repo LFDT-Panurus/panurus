@@ -9,7 +9,7 @@ package pp
 import (
 	"testing"
 
-	"github.com/hyperledger-labs/fabric-token-sdk/token/driver/protos-go/pp"
+	"github.com/LFDT-Panurus/panurus/token/driver/protos-go/v1/pp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

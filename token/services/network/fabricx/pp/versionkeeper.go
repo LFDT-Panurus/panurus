@@ -10,9 +10,9 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/LFDT-Panurus/panurus/token"
+	"github.com/LFDT-Panurus/panurus/token/services"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/common/utils/lazy"
-	"github.com/hyperledger-labs/fabric-token-sdk/token"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services"
 )
 
 type VersionKeeperProvider lazy.Provider[token.TMSID, *VersionKeeper]

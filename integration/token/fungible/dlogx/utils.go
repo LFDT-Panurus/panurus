@@ -7,13 +7,13 @@ SPDX-License-Identifier: Apache-2.0
 package dlogx
 
 import (
+	"github.com/LFDT-Panurus/panurus/integration/nwo/token"
+	"github.com/LFDT-Panurus/panurus/token/driver"
+	pp2 "github.com/LFDT-Panurus/panurus/token/services/network/fabricx/pp"
 	"github.com/hyperledger-labs/fabric-smart-client/integration"
 	"github.com/hyperledger-labs/fabric-smart-client/integration/nwo/api"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/common/utils"
-	"github.com/hyperledger-labs/fabric-token-sdk/integration/nwo/token"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/driver"
-	pp2 "github.com/hyperledger-labs/fabric-token-sdk/token/services/network/fabricx/pp"
 )
 
 type PublicParamsInputs struct {

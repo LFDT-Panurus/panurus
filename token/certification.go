@@ -10,8 +10,8 @@ package token
 import (
 	"context"
 
-	"github.com/hyperledger-labs/fabric-token-sdk/token/driver"
-	token2 "github.com/hyperledger-labs/fabric-token-sdk/token/token"
+	"github.com/LFDT-Panurus/panurus/token/driver"
+	token2 "github.com/LFDT-Panurus/panurus/token/token"
 )
 
 // CertificationManager manages token certifications as described by the paper

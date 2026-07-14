@@ -35,7 +35,7 @@ The Token Validation Service benchmarks serve several critical purposes:
 
 ## Prerequisites
 
-The token-sdk comes pre-equipped with test data containing cryptographic parameters and sample token transfers located at:
+Panurus comes pre-equipped with test data containing cryptographic parameters and sample token transfers located at:
 
 ```
 token/core/zkatdlog/nogh/v1/validator/regression/testdata/
@@ -132,7 +132,7 @@ We can use `Rsync` for this:
 ```bash
 cd cmd/token_validation_service
 
-rsync -avz <YourServerName>:/<fullpath>/fabric-token-sdk/cmd/token_validation_service/out/ ./out
+rsync -avz <YourServerName>:/<fullpath>/panurus/cmd/token_validation_service/out/ ./out
 ```
 Note: Make sure full path and server name are correct
 
@@ -188,8 +188,8 @@ Running fscnode test-node
 
 On dectrust1:
 ```bash
-cd ~/effi/fabric-token-sdk/cmd/token_validation_service
-rsync -avz root@dectrust2.vpc.cloud9.ibm.com:/root/effi/fabric-token-sdk/cmd/token_validation_service/out/ ./out
+cd ~/effi/panurus/cmd/token_validation_service
+rsync -avz root@dectrust2.vpc.cloud9.ibm.com:/root/effi/panurus/cmd/token_validation_service/out/ ./out
 sed 's#127.0.0.1#dectrust1.vpc.cloud9.ibm.com#g' ./out/testdata/fsc/nodes/test-node.0/client-config.yaml -i
 GOGC=10000 nohup go run ./client/ -benchtime=30s -count=5 -workloads=zkp -cpu=1,2,4,8,16,32 -numConn=1,2,4,8 2>&1 | tee example-2node.txt &
 ```

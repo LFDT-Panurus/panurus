@@ -8,10 +8,10 @@ package csp
 
 import (
 	math "github.com/IBM/mathlib"
+	"github.com/LFDT-Panurus/panurus/token/core/common/encoding/asn1"
+	math2 "github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/crypto/math"
+	executor "github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/crypto/rp/executor"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/core/common/encoding/asn1"
-	math2 "github.com/hyperledger-labs/fabric-token-sdk/token/core/zkatdlog/nogh/v1/crypto/math"
-	executor "github.com/hyperledger-labs/fabric-token-sdk/token/core/zkatdlog/nogh/v1/crypto/rp/executor"
 )
 
 // RangeCorrectness contains a set of range proofs for multiple commitments.

@@ -11,12 +11,12 @@ import (
 
 	. "github.com/onsi/gomega"
 
+	q "github.com/LFDT-Panurus/panurus/token/services/storage/db/sql/query"
+	"github.com/LFDT-Panurus/panurus/token/services/storage/db/sql/query/pagination"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/common/driver"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/common/utils"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/common/utils/collections"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/services/storage/driver/common"
-	q "github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/db/sql/query"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/db/sql/query/pagination"
 )
 
 type dbResult struct {

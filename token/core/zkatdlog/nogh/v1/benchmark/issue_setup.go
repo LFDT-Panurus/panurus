@@ -7,14 +7,14 @@ SPDX-License-Identifier: Apache-2.0
 package benchmark
 
 import (
+	tokcommon "github.com/LFDT-Panurus/panurus/token/core/common"
+	v1 "github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1"
+	v1driver "github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/driver"
+	"github.com/LFDT-Panurus/panurus/token/driver"
+	drivermock "github.com/LFDT-Panurus/panurus/token/driver/mock"
+	"github.com/LFDT-Panurus/panurus/token/services/logging"
+	token2 "github.com/LFDT-Panurus/panurus/token/token"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
-	tokcommon "github.com/hyperledger-labs/fabric-token-sdk/token/core/common"
-	v1 "github.com/hyperledger-labs/fabric-token-sdk/token/core/zkatdlog/nogh/v1"
-	v1driver "github.com/hyperledger-labs/fabric-token-sdk/token/core/zkatdlog/nogh/v1/driver"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/driver"
-	drivermock "github.com/hyperledger-labs/fabric-token-sdk/token/driver/mock"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/logging"
-	token2 "github.com/hyperledger-labs/fabric-token-sdk/token/token"
 )
 
 // IssueSetup holds a ready-to-call IssueService together with the invocation

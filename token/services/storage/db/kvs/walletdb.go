@@ -10,12 +10,12 @@ import (
 	"context"
 	"strconv"
 
+	"github.com/LFDT-Panurus/panurus/token"
+	driver2 "github.com/LFDT-Panurus/panurus/token/driver"
+	"github.com/LFDT-Panurus/panurus/token/services/storage"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/common/utils/collections"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/services/storage/kvs"
-	"github.com/hyperledger-labs/fabric-token-sdk/token"
-	driver2 "github.com/hyperledger-labs/fabric-token-sdk/token/driver"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/storage"
 )
 
 type WalletStore struct {

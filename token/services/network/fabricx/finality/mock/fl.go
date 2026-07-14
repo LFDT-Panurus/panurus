@@ -5,7 +5,7 @@ import (
 	"context"
 	"sync"
 
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/network/fabricx/finality"
+	"github.com/LFDT-Panurus/panurus/token/services/network/fabricx/finality"
 )
 
 type Listener struct {

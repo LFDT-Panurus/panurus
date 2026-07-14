@@ -1,21 +1,21 @@
-# Upgradability in Fabric Token SDK
+# Upgradability in Panurus
 
-This document provides a comprehensive guide to upgrading components within a Fabric Token SDK (FTS) application. Upgradability is essential for long-term maintenance, allowing for security patches, feature additions, and protocol migrations.
+This document provides a comprehensive guide to upgrading components within a Panurus application. Upgradability is essential for long-term maintenance, allowing for security patches, feature additions, and protocol migrations.
 
-The SDK manages upgradability at three distinct layers:
+Panurus manages upgradability at three distinct layers:
 1.  **Ledger Layer**: Upgrading existing tokens to new formats.
-2.  **Driver Layer**: Managing compatibility between the SDK and underlying token implementations.
+2.  **Driver Layer**: Managing compatibility between Panurus and underlying token implementations.
 3.  **Storage Layer**: Handling local database schema evolutions.
 
 ---
 
 ## Token Upgradability (Ledger)
 
-The SDK manages token upgrades using two distinct mechanisms: the **Atomic "Burn and Re-issue" protocol** for across-format migrations and **In-place Upgrades** for backward-compatible transitions.
+Panurus manages token upgrades using two distinct mechanisms: the **Atomic "Burn and Re-issue" protocol** for across-format migrations and **In-place Upgrades** for backward-compatible transitions.
 
 ### In-Place Upgrades
 
-In-place upgrades allow the SDK to spend tokens from a previous driver version or format (e.g., Fabtoken) directly as if they were native to the current driver (e.g., ZKAT-DLOG), without requiring an explicit ledger transaction first.
+In-place upgrades allow Panurus to spend tokens from a previous driver version or format (e.g., Fabtoken) directly as if they were native to the current driver (e.g., ZKAT-DLOG), without requiring an explicit ledger transaction first.
 
 #### Criteria for In-Place Upgrades:
 The current driver determines compatibility based on several criteria:
@@ -25,7 +25,7 @@ The current driver determines compatibility based on several criteria:
 
 ### The "Burn and Re-issue" Mechanism
 
-When in-place upgrade is not possible (e.g., moving to a completely incompatible cryptographic curve or increasing precision beyond limits), the SDK implements an atomic "Burn and Re-issue" protocol. 
+When in-place upgrade is not possible (e.g., moving to a completely incompatible cryptographic curve or increasing precision beyond limits), Panurus implements an atomic "Burn and Re-issue" protocol. 
 
 #### Step-by-Step Flow:
 1.  **Identification**: The owner identifies tokens that are no longer supported.
@@ -88,7 +88,7 @@ err = tx.Upgrade(
 
 ## Driver Upgradability
 
-The SDK handles driver transitions gracefully during its startup sequence.
+Panurus handles driver transitions gracefully during its startup sequence.
 
 ### Automatic Spendability Management
 
@@ -111,11 +111,11 @@ func SupportedTokenFormat(precision uint64) (token.Format, error) {
 }
 ```
 
-For more information on how token formats are used in the SDK's token service, see the [Tokens Service documentation](./services/tokens.md).
+For more information on how token formats are used in Panurus's token service, see the [Tokens Service documentation](./services/tokens.md).
 
 ### Public Parameters Upgrade Process
 
-The Fabric Token SDK provides a structured approach for upgrading public parameters across the network. 
+Panurus provides a structured approach for upgrading public parameters across the network. 
 This process ensures that all participants can smoothly transition to new cryptographic parameters while maintaining compatibility.
 
 ```mermaid
@@ -125,7 +125,7 @@ sequenceDiagram
     actor Admin as Administrator<br/>(or Issuer)
     participant Fabric as Ledger<br/>(Fabric/FabricX/etc)
 
-    box darkgreen Token SDK Stack
+    box darkgreen Panurus Stack
         participant Network as Network Service
         participant Provider as TMS Provider
         participant TMS as Token Management<br/>Service
@@ -151,7 +151,7 @@ sequenceDiagram
 1. **Generation**: New public parameters are created using tools like [tokengen](./development/tokengen.md) or custom processes
 2. **Publishing**: Parameters are distributed to the network backend (for Fabric: via chaincode transactions or configuration updates)
 3. **Detection**: The Network Service monitors the ledger for public parameter updates
-4. **Fetching**: The SDK retrieves new parameters through the `PublicParamsFetcher` interface
+4. **Fetching**: Panurus retrieves new parameters through the `PublicParamsFetcher` interface
 5. **Update**: The `TokenManagerServiceProvider` compares new vs existing parameters and updates the TMS if changed
 6. **Propagation**: All subsequent token operations use the upgraded public parameters
 
@@ -172,7 +172,7 @@ ppm := tms.PublicParametersManager()
 // Retrieve the current public parameters
 currentPP := ppm.PublicParameters()
 if currentPP == nil {
-    return fmt.Errorf("public parameters not available")
+    return errors.New("public parameters not available")
 }
 
 // Verify the parameters match the expected values
@@ -197,10 +197,10 @@ The local storage (SQL) uses a "Lazy Creation" strategy.
 
 ### Table Initialization logic
 
-The SDK uses `CREATE TABLE IF NOT EXISTS`. This handles fresh installs perfectly but does not manage `ALTER TABLE` operations for existing databases.
+Panurus uses `CREATE TABLE IF NOT EXISTS`. This handles fresh installs perfectly but does not manage `ALTER TABLE` operations for existing databases.
 
 ```sql
--- The SDK executes this on startup
+-- Panurus executes this on startup
 CREATE TABLE IF NOT EXISTS fsc_tokens (
     tx_id TEXT NOT NULL,
     idx INT NOT NULL,
@@ -212,32 +212,39 @@ CREATE TABLE IF NOT EXISTS fsc_tokens (
 
 ### Handling Schema Changes
 
-If a new version of the Token SDK adds a column (e.g., `ledger_metadata` or `spent_at`), the `IF NOT EXISTS` clause will prevent the new schema from being applied to an existing table.
+If a new version of Panurus adds a column (e.g., `ledger_metadata` or `spent_at`), the `IF NOT EXISTS` clause will prevent the new schema from being applied to an existing table.
 
 ### Recommendations for Schema Migrations
 1.  **Manual SQL Scripts**: For production systems, maintain a set of SQL migration scripts. Before starting the updated SDK, run:
     ```sql
     ALTER TABLE fsc_tokens ADD COLUMN IF NOT EXISTS ledger_metadata BYTEA;
     ```
-2.  **Vault Re-scan**: For non-critical nodes or during development, you can simply delete the local database file (e.g., `vault.db`). The SDK's `Vault` service can re-sync its state by scanning the ledger, though this may take time depending on the ledger size.
-3.  **Check Release Notes**: Always check the SDK release notes for "Database Schema Changes" which will list any required manual `ALTER` statements.
+2.  **Vault Re-scan**: For non-critical nodes or during development, you can simply delete the local database file (e.g., `vault.db`). Panurus's `Vault` service can re-sync its state by scanning the ledger, though this may take time depending on the ledger size.
+3.  **Check Release Notes**: Always check Panurus release notes for "Database Schema Changes" which will list any required manual `ALTER` statements.
+
+> [!WARNING]
+> **Breaking change**: the `Tokens` table (`fsc_tokens`) gained a new `redeemed BOOL NOT NULL DEFAULT false` column, and all `INSERT`/`SELECT` statements against this table were updated accordingly (see `IssuedBalance`/`RedeemedBalance` in [Issuer Wallet](tokenapi.md#wallet-manager)). Existing deployments **must** apply this migration before upgrading, otherwise the SDK's `INSERT INTO fsc_tokens (..., redeemed)` statements will fail against the old schema:
+> ```sql
+> ALTER TABLE fsc_tokens ADD COLUMN IF NOT EXISTS redeemed BOOL NOT NULL DEFAULT false;
+> ```
+> Any node that also stores tokens locally (e.g. an issuer that is also an owner or auditor) needs this migration applied to its `TokenDB` before upgrading.
 
 ---
 
 ## Serialization and Protocol Stability
 
-The Token SDK relies heavily on **Protocol Buffers (Protobuf)** for serializing all core objects, including Public Parameters, Token Requests, and individual Actions. This choice is fundamental to the SDK's ability to evolve over time while maintaining compatibility between nodes running different software versions.
+Panurus relies heavily on **Protocol Buffers (Protobuf)** for serializing all core objects, including Public Parameters, Token Requests, and individual Actions. This choice is fundamental to Panurus's ability to evolve over time while maintaining compatibility between nodes running different software versions.
 
 ### The Role of Protobuf in Upgradability
 
-Protobuf provides a binary serialization format that is both efficient and highly extensible. The SDK leverages several Protobuf features to ensure long-term stability:
+Protobuf provides a binary serialization format that is both efficient and highly extensible. Panurus leverages several Protobuf features to ensure long-term stability:
 
 1.  **Field Numbering and Compatibility**: 
-    - **Backward Compatibility**: Newer versions of the SDK can add new fields to messages (e.g., adding an optional `Priority` field to a `TokenRequest`). Older nodes receiving these messages will simply ignore the unknown fields and continue processing the data they recognize.
+    - **Backward Compatibility**: Newer versions of Panurus can add new fields to messages (e.g., adding an optional `Priority` field to a `TokenRequest`). Older nodes receiving these messages will simply ignore the unknown fields and continue processing the data they recognize.
     - **Forward Compatibility**: Newer nodes can receive messages from older nodes. Any missing fields in the older message are assigned their default values (e.g., `0` for integers, `""` for strings), allowing the new logic to handle them gracefully.
 
 2.  **Opaque "Raw" Envelopes**: 
-    The SDK uses a "wrapper" pattern for driver-specific data. For example, the `PublicParameters` message at the driver API level looks like this:
+    Panurus uses a "wrapper" pattern for driver-specific data. For example, the `PublicParameters` message at the driver API level looks like this:
     ```protobuf
     message PublicParameters {
       string identifier = 1; // e.g., "zkatdlognogh/v1"

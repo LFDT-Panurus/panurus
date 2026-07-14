@@ -7,20 +7,21 @@ SPDX-License-Identifier: Apache-2.0
 package mixed
 
 import (
+	"github.com/LFDT-Panurus/panurus/integration/nwo/token"
+	fabric2 "github.com/LFDT-Panurus/panurus/integration/nwo/token/fabric"
+	token2 "github.com/LFDT-Panurus/panurus/integration/token"
+	"github.com/LFDT-Panurus/panurus/integration/token/common"
+	auditor3 "github.com/LFDT-Panurus/panurus/integration/token/fungible/sdk/auditor"
+	issuer3 "github.com/LFDT-Panurus/panurus/integration/token/fungible/sdk/issuer"
+	"github.com/LFDT-Panurus/panurus/integration/token/fungible/sdk/party"
+	"github.com/LFDT-Panurus/panurus/token/core"
+	fabtokenv1 "github.com/LFDT-Panurus/panurus/token/core/fabtoken/v1/setup"
+	dlognoghv1 "github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/setup"
 	"github.com/hyperledger-labs/fabric-smart-client/integration/nwo/api"
 	"github.com/hyperledger-labs/fabric-smart-client/integration/nwo/fabric"
 	"github.com/hyperledger-labs/fabric-smart-client/integration/nwo/fsc"
 	"github.com/hyperledger-labs/fabric-smart-client/integration/nwo/fsc/node"
-	"github.com/hyperledger-labs/fabric-token-sdk/integration/nwo/token"
-	fabric2 "github.com/hyperledger-labs/fabric-token-sdk/integration/nwo/token/fabric"
-	token2 "github.com/hyperledger-labs/fabric-token-sdk/integration/token"
-	"github.com/hyperledger-labs/fabric-token-sdk/integration/token/common"
-	auditor3 "github.com/hyperledger-labs/fabric-token-sdk/integration/token/fungible/sdk/auditor"
-	issuer3 "github.com/hyperledger-labs/fabric-token-sdk/integration/token/fungible/sdk/issuer"
-	"github.com/hyperledger-labs/fabric-token-sdk/integration/token/fungible/sdk/party"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/core"
-	fabtokenv1 "github.com/hyperledger-labs/fabric-token-sdk/token/core/fabtoken/v1/setup"
-	dlognoghv1 "github.com/hyperledger-labs/fabric-token-sdk/token/core/zkatdlog/nogh/v1/setup"
+	"github.com/hyperledger-labs/fabric-smart-client/integration/nwo/fsc/support/libp2p"
 )
 
 var (
@@ -117,7 +118,7 @@ func Topology(opts common.Opts) []api.Topology {
 	// FSC topology
 	fscTopology.SetBootstrapNode(fscTopology.AddNodeByName("lib-p2p-bootstrap-node"))
 
-	// set the SDKs
+	// set Panuruss
 	// auditors
 	for _, node := range fscTopology.ListNodes("auditor1", "auditor2") {
 		node.AddSDKWithBase(opts.SDKs[0], &auditor3.SDK{})
@@ -134,9 +135,9 @@ func Topology(opts common.Opts) []api.Topology {
 	}
 
 	// additional nodes that are backend specific
-	fscTopology.ListNodes("lib-p2p-bootstrap-node")[0].AddSDK(opts.SDKs[0])
+	fscTopology.ListNodes("lib-p2p-bootstrap-node")[0].AddSDK(&libp2p.SDK{})
 
-	// add the rest of the SDKs
+	// add the rest of Panuruss
 	for i := 1; i < len(opts.SDKs); i++ {
 		fscTopology.AddSDK(opts.SDKs[i])
 	}

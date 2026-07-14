@@ -10,8 +10,8 @@ import (
 	"encoding/asn1"
 	"testing"
 
+	"github.com/LFDT-Panurus/panurus/token"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/view"
-	"github.com/hyperledger-labs/fabric-token-sdk/token"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

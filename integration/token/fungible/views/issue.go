@@ -11,12 +11,12 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/LFDT-Panurus/panurus/token"
+	"github.com/LFDT-Panurus/panurus/token/services/ttx"
+	token2 "github.com/LFDT-Panurus/panurus/token/token"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/common/utils/assert"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/services/id"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/view"
-	"github.com/hyperledger-labs/fabric-token-sdk/token"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/ttx"
-	token2 "github.com/hyperledger-labs/fabric-token-sdk/token/token"
 )
 
 // IssueCash contains the input information to issue a token
@@ -105,8 +105,8 @@ func (p *IssueCashView) Call(context view.Context) (any, error) {
 		tx, err = ttx.NewTransaction(context, nil, opts...)
 	}
 	assert.NoError(err, "failed creating issue transaction")
-	tx.SetApplicationMetadata("github.com/hyperledger-labs/fabric-token-sdk/integration/token/fungible/issue", []byte("issue"))
-	tx.SetApplicationMetadata("github.com/hyperledger-labs/fabric-token-sdk/integration/token/fungible/meta", []byte("meta"))
+	tx.SetApplicationMetadata("github.com/LFDT-Panurus/panurus/integration/token/fungible/issue", []byte("issue"))
+	tx.SetApplicationMetadata("github.com/LFDT-Panurus/panurus/integration/token/fungible/meta", []byte("meta"))
 
 	// The issuer adds a new issue operation to the transaction following the instruction received
 	err = tx.Issue(
@@ -124,7 +124,7 @@ func (p *IssueCashView) Call(context view.Context) (any, error) {
 	// Before completing, all recipients receive the approved transaction.
 	// Depending on the token driver implementation, the recipient's signature might or might not be needed to make
 	// the token transaction valid.
-	var eOpts []ttx.EndorsementsOpt
+	var eOpts []token.ServiceOption
 	if p.SkipAuditorSignatureVerification {
 		eOpts = append(eOpts, ttx.WithSkipAuditorSignatureVerification())
 	}

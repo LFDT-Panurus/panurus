@@ -11,14 +11,12 @@ import (
 	"io"
 
 	math "github.com/IBM/mathlib"
-	"github.com/IBM/mathlib/driver"
+	mathdriver "github.com/IBM/mathlib/driver"
 	"github.com/IBM/mathlib/driver/gurvy/bls12381"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/core/common/crypto/rng"
+	"github.com/LFDT-Panurus/panurus/token/core/common/crypto/rng"
 )
 
-var (
-	BLS12_381_BBS_GURVY_FAST_RNG math.CurveID
-)
+var BLS12_381_BBS_GURVY_FAST_RNG math.CurveID
 
 func init() {
 	BLS12_381_BBS_GURVY_FAST_RNG = math.CurveID(len(math.Curves))
@@ -43,12 +41,12 @@ func init() {
 
 // CurveWithFastRNG represents a curve with a fast random number generator.
 type CurveWithFastRNG struct {
-	driver.Curve
+	mathdriver.Curve
 	rng *rng.SecureRNG
 }
 
 // NewCurveWithFastRNG returns a new CurveWithFastRNG instance for the passed curve.
-func NewCurveWithFastRNG(c driver.Curve) *CurveWithFastRNG {
+func NewCurveWithFastRNG(c mathdriver.Curve) *CurveWithFastRNG {
 	return &CurveWithFastRNG{Curve: c, rng: rng.NewSecureRNG()}
 }
 

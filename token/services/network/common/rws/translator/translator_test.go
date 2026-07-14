@@ -10,12 +10,12 @@ import (
 	"context"
 	"strconv"
 
+	"github.com/LFDT-Panurus/panurus/token/services/network/common/rws/keys"
+	"github.com/LFDT-Panurus/panurus/token/services/network/common/rws/translator"
+	"github.com/LFDT-Panurus/panurus/token/services/network/common/rws/translator/mock"
+	"github.com/LFDT-Panurus/panurus/token/services/ttx"
+	"github.com/LFDT-Panurus/panurus/token/token"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/network/common/rws/keys"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/network/common/rws/translator"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/network/common/rws/translator/mock"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/ttx"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/token"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 )

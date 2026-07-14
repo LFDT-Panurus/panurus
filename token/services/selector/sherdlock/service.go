@@ -10,12 +10,12 @@ import (
 	"sync"
 	"time"
 
+	"github.com/LFDT-Panurus/panurus/token"
+	"github.com/LFDT-Panurus/panurus/token/core/common/metrics"
+	"github.com/LFDT-Panurus/panurus/token/services/selector/config"
+	"github.com/LFDT-Panurus/panurus/token/services/storage/tokenlockdb"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	lazy2 "github.com/hyperledger-labs/fabric-smart-client/platform/common/utils/lazy"
-	"github.com/hyperledger-labs/fabric-token-sdk/token"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/core/common/metrics"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/selector/config"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/tokenlockdb"
 )
 
 type SelectorService struct {

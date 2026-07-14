@@ -7,13 +7,13 @@ SPDX-License-Identifier: Apache-2.0
 package sdk
 
 import (
+	cdriver "github.com/LFDT-Panurus/panurus/token/core/common/driver"
+	"github.com/LFDT-Panurus/panurus/token/sdk/tms"
+	"github.com/LFDT-Panurus/panurus/token/sdk/vault"
+	"github.com/LFDT-Panurus/panurus/token/services/network"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/common/sdk/dig"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/services/endpoint"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/services/id"
-	cdriver "github.com/hyperledger-labs/fabric-token-sdk/token/core/common/driver"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/sdk/tms"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/sdk/vault"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/network"
 )
 
 // RegisterTokenDriverDependencies registers the dependencies of the token drivers in the passed dig container.

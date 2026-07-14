@@ -9,8 +9,8 @@ import (
 	"reflect"
 	"strconv"
 
+	"github.com/LFDT-Panurus/panurus/token"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/services/metrics"
-	"github.com/hyperledger-labs/fabric-token-sdk/token"
 )
 
 const (

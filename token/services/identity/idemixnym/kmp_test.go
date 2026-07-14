@@ -10,16 +10,16 @@ import (
 	"testing"
 
 	math "github.com/IBM/mathlib"
+	"github.com/LFDT-Panurus/panurus/token/services/identity/idemix/crypto"
+	"github.com/LFDT-Panurus/panurus/token/services/identity/idemixnym/mock"
+	kvs2 "github.com/LFDT-Panurus/panurus/token/services/storage/db/kvs"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/services/metrics/disabled"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/identity/idemix/crypto"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/identity/idemixnym/mock"
-	kvs2 "github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/db/kvs"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 func TestNewKeyManagerProvider(t *testing.T) {
-	testNewKeyManagerProvider(t, "../idemix/testdata/fp256bn_amcl/idemix", math.FP256BN_AMCL)
+	testNewKeyManagerProvider(t, "../idemix/testdata/bls12_381_bbs_gurvy/idemix", math.BLS12_381_BBS_GURVY)
 	testNewKeyManagerProvider(t, "../idemix/testdata/bls12_381_bbs/idemix", math.BLS12_381_BBS_GURVY)
 }
 

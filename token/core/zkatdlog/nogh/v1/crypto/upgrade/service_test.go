@@ -9,14 +9,14 @@ package upgrade_test
 import (
 	"testing"
 
+	v1 "github.com/LFDT-Panurus/panurus/token/core/fabtoken/v1"
+	"github.com/LFDT-Panurus/panurus/token/core/fabtoken/v1/actions"
+	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/crypto/upgrade"
+	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/crypto/upgrade/mock"
+	"github.com/LFDT-Panurus/panurus/token/driver"
+	mock2 "github.com/LFDT-Panurus/panurus/token/driver/mock"
+	"github.com/LFDT-Panurus/panurus/token/token"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
-	v1 "github.com/hyperledger-labs/fabric-token-sdk/token/core/fabtoken/v1"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/core/fabtoken/v1/actions"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/core/zkatdlog/nogh/v1/crypto/upgrade"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/core/zkatdlog/nogh/v1/crypto/upgrade/mock"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/driver"
-	mock2 "github.com/hyperledger-labs/fabric-token-sdk/token/driver/mock"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/token"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

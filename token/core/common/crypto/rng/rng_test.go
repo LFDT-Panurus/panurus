@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hyperledger-labs/fabric-token-sdk/token/core/common/crypto/rng"
+	"github.com/LFDT-Panurus/panurus/token/core/common/crypto/rng"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

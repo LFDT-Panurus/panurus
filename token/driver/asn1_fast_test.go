@@ -12,74 +12,125 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/LFDT-Panurus/panurus/token/driver/protos-go/v1/request"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 // TestFastMarshalTokenRequestForSigning_Compatibility verifies that the fast marshaller
-// produces identical output to encoding/asn1 for TokenRequest structures
+// produces identical output to encoding/asn1 for TokenRequest structures with typed actions
 func TestFastMarshalTokenRequestForSigning_Compatibility(t *testing.T) {
 	testCases := []struct {
-		name      string
-		issues    [][]byte
-		transfers [][]byte
+		name    string
+		actions []*TypedAction
 	}{
 		{
-			name:      "Empty",
-			issues:    [][]byte{},
-			transfers: [][]byte{},
+			name:    "Empty",
+			actions: []*TypedAction{},
 		},
 		{
-			name:      "Single issue",
-			issues:    [][]byte{[]byte("issue1")},
-			transfers: [][]byte{},
+			name: "Single issue",
+			actions: []*TypedAction{
+				{Type: request.ActionType_ACTION_TYPE_ISSUE, Raw: []byte("issue1")},
+			},
 		},
 		{
-			name:      "Single transfer",
-			issues:    [][]byte{},
-			transfers: [][]byte{[]byte("transfer1")},
+			name: "Single transfer",
+			actions: []*TypedAction{
+				{Type: request.ActionType_ACTION_TYPE_TRANSFER, Raw: []byte("transfer1")},
+			},
 		},
 		{
-			name:      "Multiple issues and transfers",
-			issues:    [][]byte{[]byte("issue1"), []byte("issue2")},
-			transfers: [][]byte{[]byte("transfer1"), []byte("transfer2")},
+			name: "Multiple issues then transfers",
+			actions: []*TypedAction{
+				{Type: request.ActionType_ACTION_TYPE_ISSUE, Raw: []byte("issue1")},
+				{Type: request.ActionType_ACTION_TYPE_ISSUE, Raw: []byte("issue2")},
+				{Type: request.ActionType_ACTION_TYPE_TRANSFER, Raw: []byte("transfer1")},
+				{Type: request.ActionType_ACTION_TYPE_TRANSFER, Raw: []byte("transfer2")},
+			},
 		},
 		{
-			name:      "Large data",
-			issues:    [][]byte{make([]byte, 1000), make([]byte, 2000)},
-			transfers: [][]byte{make([]byte, 1500)},
+			name: "Mixed order: issue, transfer, issue, transfer",
+			actions: []*TypedAction{
+				{Type: request.ActionType_ACTION_TYPE_ISSUE, Raw: []byte("issue1")},
+				{Type: request.ActionType_ACTION_TYPE_TRANSFER, Raw: []byte("transfer1")},
+				{Type: request.ActionType_ACTION_TYPE_ISSUE, Raw: []byte("issue2")},
+				{Type: request.ActionType_ACTION_TYPE_TRANSFER, Raw: []byte("transfer2")},
+			},
 		},
 		{
-			name:      "Many small items",
-			issues:    [][]byte{[]byte("a"), []byte("b"), []byte("c"), []byte("d"), []byte("e")},
-			transfers: [][]byte{[]byte("1"), []byte("2"), []byte("3")},
+			name: "Large data",
+			actions: []*TypedAction{
+				{Type: request.ActionType_ACTION_TYPE_ISSUE, Raw: make([]byte, 1000)},
+				{Type: request.ActionType_ACTION_TYPE_ISSUE, Raw: make([]byte, 2000)},
+				{Type: request.ActionType_ACTION_TYPE_TRANSFER, Raw: make([]byte, 1500)},
+			},
 		},
 		{
-			name:      "Empty byte slices",
-			issues:    [][]byte{{}, []byte("issue1")},
-			transfers: [][]byte{[]byte("transfer1"), {}},
+			name: "Many small items",
+			actions: []*TypedAction{
+				{Type: request.ActionType_ACTION_TYPE_ISSUE, Raw: []byte("a")},
+				{Type: request.ActionType_ACTION_TYPE_ISSUE, Raw: []byte("b")},
+				{Type: request.ActionType_ACTION_TYPE_ISSUE, Raw: []byte("c")},
+				{Type: request.ActionType_ACTION_TYPE_TRANSFER, Raw: []byte("1")},
+				{Type: request.ActionType_ACTION_TYPE_TRANSFER, Raw: []byte("2")},
+			},
 		},
 		{
-			name:      "Binary data",
-			issues:    [][]byte{{0x00, 0x01, 0x02, 0xFF}, {0xDE, 0xAD, 0xBE, 0xEF}},
-			transfers: [][]byte{{0x12, 0x34, 0x56, 0x78}},
+			name: "Empty byte slices",
+			actions: []*TypedAction{
+				{Type: request.ActionType_ACTION_TYPE_ISSUE, Raw: []byte{}},
+				{Type: request.ActionType_ACTION_TYPE_ISSUE, Raw: []byte("issue1")},
+				{Type: request.ActionType_ACTION_TYPE_TRANSFER, Raw: []byte("transfer1")},
+				{Type: request.ActionType_ACTION_TYPE_TRANSFER, Raw: []byte{}},
+			},
+		},
+		{
+			name: "Binary data",
+			actions: []*TypedAction{
+				{Type: request.ActionType_ACTION_TYPE_ISSUE, Raw: []byte{0x00, 0x01, 0x02, 0xFF}},
+				{Type: request.ActionType_ACTION_TYPE_ISSUE, Raw: []byte{0xDE, 0xAD, 0xBE, 0xEF}},
+				{Type: request.ActionType_ACTION_TYPE_TRANSFER, Raw: []byte{0x12, 0x34, 0x56, 0x78}},
+			},
 		},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			// Fast marshaller output
-			fastResult, err := fastMarshalTokenRequestForSigning(tc.issues, tc.transfers)
+			fastResult, err := fastMarshalTokenRequestForSigning(tc.actions)
 			require.NoError(t, err)
 
 			// Standard ASN.1 marshaller output
-			type tokenRequestForSigning struct {
-				Issues    [][]byte
-				Transfers [][]byte
+			type typedAction struct {
+				Type int
+				Data []byte
 			}
+			type tokenRequestForSigning struct {
+				Actions []typedAction
+			}
+
+			// Convert TypedAction to ASN.1 structure
+			asn1Actions := make([]typedAction, len(tc.actions))
+			for i, action := range tc.actions {
+				// Map protobuf enum to ASN.1 integer
+				var actionType int
+				switch action.Type {
+				case request.ActionType_ACTION_TYPE_ISSUE:
+					actionType = 0
+				case request.ActionType_ACTION_TYPE_TRANSFER:
+					actionType = 1
+				default:
+					actionType = 0
+				}
+				asn1Actions[i] = typedAction{
+					Type: actionType,
+					Data: action.Raw,
+				}
+			}
+
 			stdResult, err := asn1.Marshal(tokenRequestForSigning{
-				Issues:    tc.issues,
-				Transfers: tc.transfers,
+				Actions: asn1Actions,
 			})
 			require.NoError(t, err)
 
@@ -89,9 +140,9 @@ func TestFastMarshalTokenRequestForSigning_Compatibility(t *testing.T) {
 	}
 }
 
-// TestFastMarshalSignatureMessageV2_Compatibility verifies that the fast marshaller
+// TestFastMarshalSignatureMessageV1_Compatibility verifies that the fast marshaller
 // produces identical output to encoding/asn1 for SignatureMessage structures
-func TestFastMarshalSignatureMessageV2_Compatibility(t *testing.T) {
+func TestFastMarshalSignatureMessageV1_Compatibility(t *testing.T) {
 	testCases := []struct {
 		name    string
 		request []byte
@@ -137,7 +188,7 @@ func TestFastMarshalSignatureMessageV2_Compatibility(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			// Fast marshaller output
-			fastResult, err := fastMarshalSignatureMessageV2(tc.request, tc.anchor)
+			fastResult, err := fastMarshalSignatureMessageV1(tc.request, tc.anchor)
 			require.NoError(t, err)
 
 			// Standard ASN.1 marshaller output
@@ -160,12 +211,15 @@ func TestFastMarshalSignatureMessageV2_Compatibility(t *testing.T) {
 // TestFastMarshalTokenRequestForSigning_EdgeCases tests edge cases and boundary conditions
 func TestFastMarshalTokenRequestForSigning_EdgeCases(t *testing.T) {
 	t.Run("Nil slices", func(t *testing.T) {
-		fast, err := fastMarshalTokenRequestForSigning(nil, nil)
+		fast, err := fastMarshalTokenRequestForSigning(nil)
 		require.NoError(t, err)
 
+		type typedAction struct {
+			Type int
+			Data []byte
+		}
 		type tokenRequestForSigning struct {
-			Issues    [][]byte
-			Transfers [][]byte
+			Actions []typedAction
 		}
 		std, err := asn1.Marshal(tokenRequestForSigning{})
 		require.NoError(t, err)
@@ -175,14 +229,22 @@ func TestFastMarshalTokenRequestForSigning_EdgeCases(t *testing.T) {
 
 	t.Run("127-byte data (short form boundary)", func(t *testing.T) {
 		data := make([]byte, 127)
-		fast, err := fastMarshalTokenRequestForSigning([][]byte{data}, nil)
+		actions := []*TypedAction{
+			{Type: request.ActionType_ACTION_TYPE_ISSUE, Raw: data},
+		}
+		fast, err := fastMarshalTokenRequestForSigning(actions)
 		require.NoError(t, err)
 
-		type tokenRequestForSigning struct {
-			Issues    [][]byte
-			Transfers [][]byte
+		type typedAction struct {
+			Type int
+			Data []byte
 		}
-		std, err := asn1.Marshal(tokenRequestForSigning{Issues: [][]byte{data}})
+		type tokenRequestForSigning struct {
+			Actions []typedAction
+		}
+		std, err := asn1.Marshal(tokenRequestForSigning{
+			Actions: []typedAction{{Type: 0, Data: data}},
+		})
 		require.NoError(t, err)
 
 		assert.Equal(t, std, fast)
@@ -190,14 +252,22 @@ func TestFastMarshalTokenRequestForSigning_EdgeCases(t *testing.T) {
 
 	t.Run("128-byte data (long form boundary)", func(t *testing.T) {
 		data := make([]byte, 128)
-		fast, err := fastMarshalTokenRequestForSigning([][]byte{data}, nil)
+		actions := []*TypedAction{
+			{Type: request.ActionType_ACTION_TYPE_ISSUE, Raw: data},
+		}
+		fast, err := fastMarshalTokenRequestForSigning(actions)
 		require.NoError(t, err)
 
-		type tokenRequestForSigning struct {
-			Issues    [][]byte
-			Transfers [][]byte
+		type typedAction struct {
+			Type int
+			Data []byte
 		}
-		std, err := asn1.Marshal(tokenRequestForSigning{Issues: [][]byte{data}})
+		type tokenRequestForSigning struct {
+			Actions []typedAction
+		}
+		std, err := asn1.Marshal(tokenRequestForSigning{
+			Actions: []typedAction{{Type: 0, Data: data}},
+		})
 		require.NoError(t, err)
 
 		assert.Equal(t, std, fast)
@@ -255,26 +325,50 @@ func TestAppendLength(t *testing.T) {
 	}
 }
 
-// TestMarshalToMessageToSignV2_UsesFastMarshaller verifies that V2 uses the fast marshaller
-func TestMarshalToMessageToSignV2_UsesFastMarshaller(t *testing.T) {
+// TestMarshalToMessageToSignV1_UsesFastMarshaller verifies that V1 uses the fast marshaller
+func TestMarshalToMessageToSignV1_UsesFastMarshaller(t *testing.T) {
 	tr := &TokenRequest{
-		Issues:    [][]byte{[]byte("issue1"), []byte("issue2")},
-		Transfers: [][]byte{[]byte("transfer1")},
+		Actions: []*TypedAction{
+			{Type: request.ActionType_ACTION_TYPE_ISSUE, Raw: []byte("issue1")},
+			{Type: request.ActionType_ACTION_TYPE_ISSUE, Raw: []byte("issue2")},
+			{Type: request.ActionType_ACTION_TYPE_TRANSFER, Raw: []byte("transfer1")},
+		},
 	}
 	anchor := []byte("test-anchor")
 
-	// Get V2 output (should use fast marshaller)
-	v2Result, err := tr.marshalToMessageToSignV2(anchor)
+	// Get V1 output (should use fast marshaller)
+	v1Result, err := tr.marshalToMessageToSignV1(anchor)
 	require.NoError(t, err)
 
 	// Manually construct expected output using standard ASN.1
-	type tokenRequestForSigning struct {
-		Issues    [][]byte
-		Transfers [][]byte
+	type typedAction struct {
+		Type int
+		Data []byte
 	}
+	type tokenRequestForSigning struct {
+		Actions []typedAction
+	}
+
+	// Convert TypedAction to ASN.1 structure
+	asn1Actions := make([]typedAction, len(tr.Actions))
+	for i, action := range tr.Actions {
+		var actionType int
+		switch action.Type {
+		case request.ActionType_ACTION_TYPE_ISSUE:
+			actionType = 0
+		case request.ActionType_ACTION_TYPE_TRANSFER:
+			actionType = 1
+		default:
+			actionType = 0
+		}
+		asn1Actions[i] = typedAction{
+			Type: actionType,
+			Data: action.Raw,
+		}
+	}
+
 	requestBytes, err := asn1.Marshal(tokenRequestForSigning{
-		Issues:    tr.Issues,
-		Transfers: tr.Transfers,
+		Actions: asn1Actions,
 	})
 	require.NoError(t, err)
 
@@ -288,31 +382,47 @@ func TestMarshalToMessageToSignV2_UsesFastMarshaller(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	// V2 should produce identical output
-	assert.Equal(t, expectedResult, v2Result, "V2 should produce ASN.1-compatible output")
+	// V1 should produce identical output
+	assert.Equal(t, expectedResult, v1Result, "V1 should produce ASN.1-compatible output")
 }
 
 // TestFastMarshalRoundTrip verifies that fast-marshalled data can be unmarshalled correctly
 func TestFastMarshalRoundTrip(t *testing.T) {
-	issues := [][]byte{[]byte("issue1"), []byte("issue2")}
-	transfers := [][]byte{[]byte("transfer1")}
+	actions := []*TypedAction{
+		{Type: request.ActionType_ACTION_TYPE_ISSUE, Raw: []byte("issue1")},
+		{Type: request.ActionType_ACTION_TYPE_ISSUE, Raw: []byte("issue2")},
+		{Type: request.ActionType_ACTION_TYPE_TRANSFER, Raw: []byte("transfer1")},
+	}
 
 	// Fast marshal
-	marshalled, err := fastMarshalTokenRequestForSigning(issues, transfers)
+	marshalled, err := fastMarshalTokenRequestForSigning(actions)
 	require.NoError(t, err)
 
 	// Unmarshal using standard ASN.1
+	type typedAction struct {
+		Type int
+		Data []byte
+	}
 	type tokenRequestForSigning struct {
-		Issues    [][]byte
-		Transfers [][]byte
+		Actions []typedAction
 	}
 	var unmarshalled tokenRequestForSigning
 	_, err = asn1.Unmarshal(marshalled, &unmarshalled)
 	require.NoError(t, err)
 
 	// Verify data integrity
-	assert.Equal(t, issues, unmarshalled.Issues)
-	assert.Equal(t, transfers, unmarshalled.Transfers)
+	require.Len(t, actions, len(unmarshalled.Actions))
+	for i, action := range actions {
+		var expectedType int
+		switch action.Type {
+		case request.ActionType_ACTION_TYPE_ISSUE:
+			expectedType = 0
+		case request.ActionType_ACTION_TYPE_TRANSFER:
+			expectedType = 1
+		}
+		assert.Equal(t, expectedType, unmarshalled.Actions[i].Type)
+		assert.Equal(t, action.Raw, unmarshalled.Actions[i].Data)
+	}
 }
 
 // TestFastMarshalSignatureMessageRoundTrip verifies round-trip compatibility
@@ -321,7 +431,7 @@ func TestFastMarshalSignatureMessageRoundTrip(t *testing.T) {
 	anchor := []byte("anchor-data")
 
 	// Fast marshal
-	marshalled, err := fastMarshalSignatureMessageV2(request, anchor)
+	marshalled, err := fastMarshalSignatureMessageV1(request, anchor)
 	require.NoError(t, err)
 
 	// Unmarshal using standard ASN.1
@@ -340,17 +450,20 @@ func TestFastMarshalSignatureMessageRoundTrip(t *testing.T) {
 
 // TestFastMarshalDeterministic verifies that fast marshaller is deterministic
 func TestFastMarshalDeterministic(t *testing.T) {
-	issues := [][]byte{[]byte("issue1"), []byte("issue2")}
-	transfers := [][]byte{[]byte("transfer1")}
+	actions := []*TypedAction{
+		{Type: request.ActionType_ACTION_TYPE_ISSUE, Raw: []byte("issue1")},
+		{Type: request.ActionType_ACTION_TYPE_ISSUE, Raw: []byte("issue2")},
+		{Type: request.ActionType_ACTION_TYPE_TRANSFER, Raw: []byte("transfer1")},
+	}
 
 	// Marshal multiple times
-	result1, err := fastMarshalTokenRequestForSigning(issues, transfers)
+	result1, err := fastMarshalTokenRequestForSigning(actions)
 	require.NoError(t, err)
 
-	result2, err := fastMarshalTokenRequestForSigning(issues, transfers)
+	result2, err := fastMarshalTokenRequestForSigning(actions)
 	require.NoError(t, err)
 
-	result3, err := fastMarshalTokenRequestForSigning(issues, transfers)
+	result3, err := fastMarshalTokenRequestForSigning(actions)
 	require.NoError(t, err)
 
 	// All results must be identical

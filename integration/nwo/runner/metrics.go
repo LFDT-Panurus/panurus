@@ -7,7 +7,7 @@ SPDX-License-Identifier: Apache-2.0
 package runner
 
 import (
-	metrics2 "github.com/hyperledger-labs/fabric-token-sdk/token/core/common/metrics"
+	metrics2 "github.com/LFDT-Panurus/panurus/token/core/common/metrics"
 	"github.com/hyperledger/fabric-lib-go/common/metrics"
 )
 

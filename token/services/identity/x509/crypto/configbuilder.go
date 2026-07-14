@@ -19,7 +19,7 @@ const (
 	KeyStoreDirName  = "keystore"
 	PrivSKFileName   = "priv_sk"
 
-	ProtobufProtocolVersionV1 uint64 = 1
+	ProtobufProtocolVersionV1 uint32 = 1
 )
 
 func LoadConfig(dir string, keyStoreDirName string) (*Config, error) {

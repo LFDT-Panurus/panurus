@@ -9,14 +9,17 @@ package driver
 import (
 	"context"
 
+	"github.com/LFDT-Panurus/panurus/token"
+	"github.com/LFDT-Panurus/panurus/token/driver"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/common/utils/collections/iterators"
 	driver2 "github.com/hyperledger-labs/fabric-smart-client/platform/view/services/storage/driver"
-	"github.com/hyperledger-labs/fabric-token-sdk/token"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/driver"
 )
 
 // Keystore provides a minimal key/value style interface used by the identity
 // service to persist arbitrary cryptographic key objects keyed by an identifier.
+//
+// The `id` parameter is expected to be the hexadecimal representation of the key's
+// Subject Key Identifier (SKI). Other packages may depend on this convention.
 //
 // Implementations should treat the provided `key` as an opaque value.
 // For Put the caller supplies the value to store; for Get the caller supplies a
@@ -33,6 +36,11 @@ type Keystore interface {
 	// provided `key` parameter.
 	// If no entry exists for id, implementations should return an error describing the missing entry.
 	Get(id string, key any) error
+
+	// Delete removes the key with the given identifier.
+	// If the key does not exist, implementations should return nil (idempotent).
+	Delete(id string) error
+
 	// Close closes the store
 	Close() error
 }
@@ -58,6 +66,14 @@ type StorageProvider interface {
 // It yields pointers to IdentityConfiguration and follows the iterator
 // contract defined in the collections/iterators package.
 type IdentityConfigurationIterator = iterators.Iterator[*IdentityConfiguration]
+
+// SignerEntry holds a single row from the Signers table.
+type SignerEntry struct {
+	// IdentityHash is the primary key of the Signers row (hex-encoded hash of the identity).
+	IdentityHash string
+	// Identity is the raw serialised identity bytes.
+	Identity []byte
+}
 
 // WalletID models the wallet id type
 type WalletID = string
@@ -139,6 +155,8 @@ type IdentityStoreService interface {
 	// GetConfiguration returns the configuration with the given id, type, and url.
 	// It returns nil if the configuration does not exist.
 	GetConfiguration(ctx context.Context, id, typ, url string) (*IdentityConfiguration, error)
+	// ConfigurationsByID returns all configurations with the given id and type, regardless of their url.
+	ConfigurationsByID(ctx context.Context, id, configurationType string) ([]IdentityConfiguration, error)
 	// ConfigurationExists returns true if a configuration with the given id and type exists.
 	ConfigurationExists(ctx context.Context, id, typ, url string) (bool, error)
 	// IteratorConfigurations returns an iterator to all configurations stored
@@ -161,6 +179,11 @@ type IdentityStoreService interface {
 	GetSignerInfo(ctx context.Context, id []byte) ([]byte, error)
 	// RegisterIdentityDescriptor registers a descriptor for an identity and associates it with an alias
 	RegisterIdentityDescriptor(ctx context.Context, descriptor *IdentityDescriptor, alias driver.Identity) error
+	// IterateSigners returns a page of SignerEntry values from the Signers table ordered by
+	// identity_hash, starting at the given offset and returning at most limit entries.
+	// Use offset=0 for the first page and increment by limit on each subsequent call.
+	// When the returned slice has fewer entries than limit, iteration is complete.
+	IterateSigners(ctx context.Context, offset, limit int) ([]SignerEntry, error)
 	// Close closes the store
 	Close() error
 }

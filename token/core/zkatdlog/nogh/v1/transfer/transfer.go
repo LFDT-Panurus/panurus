@@ -8,9 +8,10 @@ package transfer
 
 import (
 	math "github.com/IBM/mathlib"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/core/zkatdlog/nogh/v1/crypto/rp"
-	v1 "github.com/hyperledger-labs/fabric-token-sdk/token/core/zkatdlog/nogh/v1/setup"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/core/zkatdlog/nogh/v1/token"
+	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/crypto/rp"
+	v1 "github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/setup"
+	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/token"
+	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 )
 
 type Prover interface {
@@ -31,10 +32,20 @@ type Verifier interface {
 	Verify(proofRaw []byte) error
 }
 
-func NewVerifier(inputs, outputs []*math.G1, pp *v1.PublicParams, proofType rp.ProofType) Verifier {
-	if proofType == rp.RangeProofType {
-		return NewBulletProofVerifier(inputs, outputs, pp)
+// NewVerifier returns a Verifier for the given proofType.
+// It returns ErrProofTypeMismatch if the params sub-struct required by proofType
+// is not populated in pp, preventing an attacker from selecting a verifier whose
+// params sub-struct is nil. Both proof systems may coexist in pp (e.g. during a
+// range-proof migration), so each is checked independently.
+func NewVerifier(inputs, outputs []*math.G1, pp *v1.PublicParams, proofType rp.ProofType) (Verifier, error) {
+	if !pp.SupportsRangeProofType(proofType) {
+		return nil, errors.Errorf("%w: proof type %d is not available in public parameters",
+			ErrProofTypeMismatch, proofType)
 	}
 
-	return NewCSPVerifier(inputs, outputs, pp)
+	if proofType == rp.RangeProofType {
+		return NewBulletProofVerifier(inputs, outputs, pp), nil
+	}
+
+	return NewCSPVerifier(inputs, outputs, pp), nil
 }

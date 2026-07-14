@@ -9,10 +9,10 @@ package runner
 import (
 	"time"
 
-	"github.com/hyperledger-labs/fabric-token-sdk/integration/nwo/txgen/model"
-	"github.com/hyperledger-labs/fabric-token-sdk/integration/nwo/txgen/model/api"
-	"github.com/hyperledger-labs/fabric-token-sdk/integration/nwo/txgen/service/logging"
-	"github.com/hyperledger-labs/fabric-token-sdk/integration/nwo/txgen/service/user"
+	"github.com/LFDT-Panurus/panurus/integration/nwo/txgen/model"
+	"github.com/LFDT-Panurus/panurus/integration/nwo/txgen/model/api"
+	"github.com/LFDT-Panurus/panurus/integration/nwo/txgen/service/logging"
+	"github.com/LFDT-Panurus/panurus/integration/nwo/txgen/service/user"
 
 	"github.com/sourcegraph/conc/pool"
 )

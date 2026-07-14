@@ -10,11 +10,11 @@ import (
 	"context"
 	"testing"
 
-	"github.com/hyperledger-labs/fabric-token-sdk/token/core/fabtoken/v1/actions"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/driver"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/driver/mock"
-	benchmark2 "github.com/hyperledger-labs/fabric-token-sdk/token/services/benchmark"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/token"
+	"github.com/LFDT-Panurus/panurus/token/core/fabtoken/v1/actions"
+	"github.com/LFDT-Panurus/panurus/token/driver"
+	"github.com/LFDT-Panurus/panurus/token/driver/mock"
+	benchmark2 "github.com/LFDT-Panurus/panurus/token/services/benchmark"
+	"github.com/LFDT-Panurus/panurus/token/token"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -146,7 +146,7 @@ func TestIssue(t *testing.T) {
 		des.GetAuditInfoReturns([]byte("audit"), nil)
 
 		opts := &driver.IssueOptions{
-			Attributes: map[any]any{"key": "value"},
+			Attributes: map[string]any{"key": "value"},
 		}
 		action, _, err := service.Issue(ctx, issuer, tokenType, values, owners, opts)
 		require.NoError(t, err)
@@ -155,9 +155,150 @@ func TestIssue(t *testing.T) {
 }
 
 func TestVerifyIssue(t *testing.T) {
-	service := NewIssueService(nil, nil, nil)
-	err := service.VerifyIssue(context.Background(), nil, nil)
-	require.NoError(t, err)
+	ctx := context.Background()
+	issuer := driver.Identity("issuer")
+
+	newMetadata := func(t *testing.T, issuer driver.Identity, receiver driver.Identity, auditInfo []byte) *driver.IssueOutputMetadata {
+		t.Helper()
+		om := &actions.OutputMetadata{Issuer: issuer}
+		raw, err := om.Serialize()
+		require.NoError(t, err)
+
+		return &driver.IssueOutputMetadata{
+			OutputMetadata: raw,
+			Receivers: []*driver.AuditableIdentity{
+				{Identity: receiver, AuditInfo: auditInfo},
+			},
+		}
+	}
+
+	t.Run("nil action", func(t *testing.T) {
+		service := NewIssueService(nil, nil, nil)
+		err := service.VerifyIssue(ctx, nil, nil)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "nil issue action")
+	})
+
+	t.Run("success", func(t *testing.T) {
+		ppm := &mock.PublicParamsManager{}
+		pp := &mock.PublicParameters{}
+		pp.PrecisionReturns(64)
+		ppm.PublicParametersReturns(pp)
+		des := &mock.Deserializer{}
+		des.MatchIdentityReturns(nil)
+		service := NewIssueService(ppm, nil, des)
+
+		action := &actions.IssueAction{
+			Issuer:  issuer,
+			Outputs: []*actions.Output{{Owner: []byte("owner1"), Type: "ABC", Quantity: "10"}},
+		}
+		metadata := []*driver.IssueOutputMetadata{
+			newMetadata(t, issuer, []byte("owner1"), []byte("audit1")),
+		}
+
+		err := service.VerifyIssue(ctx, action, metadata)
+		require.NoError(t, err)
+	})
+
+	t.Run("metadata count mismatch", func(t *testing.T) {
+		ppm := &mock.PublicParamsManager{}
+		pp := &mock.PublicParameters{}
+		pp.PrecisionReturns(64)
+		ppm.PublicParametersReturns(pp)
+		service := NewIssueService(ppm, nil, &mock.Deserializer{})
+
+		action := &actions.IssueAction{
+			Issuer:  issuer,
+			Outputs: []*actions.Output{{Owner: []byte("owner1"), Type: "ABC", Quantity: "10"}},
+		}
+
+		err := service.VerifyIssue(ctx, action, nil)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "number of outputs")
+	})
+
+	t.Run("zero quantity", func(t *testing.T) {
+		ppm := &mock.PublicParamsManager{}
+		pp := &mock.PublicParameters{}
+		pp.PrecisionReturns(64)
+		ppm.PublicParametersReturns(pp)
+		service := NewIssueService(ppm, nil, &mock.Deserializer{})
+
+		action := &actions.IssueAction{
+			Issuer:  issuer,
+			Outputs: []*actions.Output{{Owner: []byte("owner1"), Type: "ABC", Quantity: "0"}},
+		}
+		metadata := []*driver.IssueOutputMetadata{
+			newMetadata(t, issuer, []byte("owner1"), []byte("audit1")),
+		}
+
+		err := service.VerifyIssue(ctx, action, metadata)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "zero quantity")
+	})
+
+	t.Run("absent output metadata is skipped", func(t *testing.T) {
+		// A TokenRequest received over the wire may have had its metadata filtered by
+		// enrollment ID (Metadata.FilterBy) before reaching us: outputs we are not a
+		// receiver of legitimately carry nil metadata. VerifyIssue must tolerate this
+		// rather than treat it as a validation failure.
+		ppm := &mock.PublicParamsManager{}
+		pp := &mock.PublicParameters{}
+		pp.PrecisionReturns(64)
+		ppm.PublicParametersReturns(pp)
+		service := NewIssueService(ppm, nil, &mock.Deserializer{})
+
+		action := &actions.IssueAction{
+			Issuer:  issuer,
+			Outputs: []*actions.Output{{Owner: []byte("owner1"), Type: "ABC", Quantity: "10"}},
+		}
+		metadata := []*driver.IssueOutputMetadata{nil}
+
+		err := service.VerifyIssue(ctx, action, metadata)
+		require.NoError(t, err)
+	})
+
+	t.Run("issuer mismatch", func(t *testing.T) {
+		ppm := &mock.PublicParamsManager{}
+		pp := &mock.PublicParameters{}
+		pp.PrecisionReturns(64)
+		ppm.PublicParametersReturns(pp)
+		service := NewIssueService(ppm, nil, &mock.Deserializer{})
+
+		action := &actions.IssueAction{
+			Issuer:  issuer,
+			Outputs: []*actions.Output{{Owner: []byte("owner1"), Type: "ABC", Quantity: "10"}},
+		}
+		metadata := []*driver.IssueOutputMetadata{
+			newMetadata(t, driver.Identity("other-issuer"), []byte("owner1"), []byte("audit1")),
+		}
+
+		err := service.VerifyIssue(ctx, action, metadata)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "issuer in metadata")
+	})
+
+	t.Run("audit info mismatch", func(t *testing.T) {
+		ppm := &mock.PublicParamsManager{}
+		pp := &mock.PublicParameters{}
+		pp.PrecisionReturns(64)
+		ppm.PublicParametersReturns(pp)
+		des := &mock.Deserializer{}
+		des.MatchIdentityReturns(assert.AnError)
+		service := NewIssueService(ppm, nil, des)
+
+		action := &actions.IssueAction{
+			Issuer:  issuer,
+			Outputs: []*actions.Output{{Owner: []byte("owner1"), Type: "ABC", Quantity: "10"}},
+		}
+		metadata := []*driver.IssueOutputMetadata{
+			newMetadata(t, issuer, []byte("owner1"), []byte("bad-audit")),
+		}
+
+		err := service.VerifyIssue(ctx, action, metadata)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "failed matching audit info")
+	})
 }
 
 func TestDeserializeIssueAction(t *testing.T) {

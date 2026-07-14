@@ -13,12 +13,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/identity"
-	idriver "github.com/hyperledger-labs/fabric-token-sdk/token/services/identity/driver"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/identity/membership"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/identity/membership/mock"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/logging"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/storage"
+	"github.com/LFDT-Panurus/panurus/token/services/identity"
+	idriver "github.com/LFDT-Panurus/panurus/token/services/identity/driver"
+	"github.com/LFDT-Panurus/panurus/token/services/identity/membership"
+	"github.com/LFDT-Panurus/panurus/token/services/identity/membership/mock"
+	"github.com/LFDT-Panurus/panurus/token/services/logging"
+	"github.com/LFDT-Panurus/panurus/token/services/storage"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -79,10 +79,7 @@ func TestLocalMembership_Discovery(t *testing.T) {
 
 	// Mock DB update
 	newConfig := idriver.IdentityConfiguration{ID: "new", URL: "/tmp/new", Type: "testType"}
-	iter := &mock.IdentityConfigurationIterator{}
-	iter.NextReturnsOnCall(0, &newConfig, nil)
-	iter.NextReturnsOnCall(1, nil, nil)
-	iss.IteratorConfigurationsReturns(iter, nil)
+	iss.ConfigurationsByIDReturns([]idriver.IdentityConfiguration{newConfig}, nil)
 
 	// Discovery via GetIdentityInfo
 	info, err := lm.GetIdentityInfo(ctx, "new", nil)
@@ -91,6 +88,10 @@ func TestLocalMembership_Discovery(t *testing.T) {
 
 	ids, _ = lm.IDs()
 	assert.Contains(t, ids, "new")
+
+	// discovered through a point query, without a second full scan
+	assert.Equal(t, 1, iss.ConfigurationsByIDCallCount())
+	assert.Equal(t, 1, iss.IteratorConfigurationsCallCount())
 }
 
 func TestLocalMembership_DefaultOverride(t *testing.T) {
@@ -141,10 +142,7 @@ func TestLocalMembership_DefaultOverride(t *testing.T) {
 
 	// Discovery of a new identity (it was previously default: true, but now we don't support it)
 	newConfig := idriver.IdentityConfiguration{ID: "id2", URL: "/tmp/id2", Type: "testType"}
-	iter := &mock.IdentityConfigurationIterator{}
-	iter.NextReturnsOnCall(0, &newConfig, nil)
-	iter.NextReturnsOnCall(1, nil, nil)
-	iss.IteratorConfigurationsReturns(iter, nil)
+	iss.ConfigurationsByIDReturns([]idriver.IdentityConfiguration{newConfig}, nil)
 
 	_, err = lm.GetIdentityInfo(ctx, "id2", nil)
 	require.NoError(t, err)
@@ -187,16 +185,9 @@ func TestLocalMembership_DoubleCheckedLocking(t *testing.T) {
 
 	newConfig := idriver.IdentityConfiguration{ID: "new", URL: "/tmp/new", Type: "testType"}
 
-	// We want to ensure that refresh happens only once even if multiple goroutines call it
-	var refreshCount int
-	iss.IteratorConfigurationsStub = func(ctx context.Context, typ string) (membership.IdentityConfigurationIterator, error) {
-		refreshCount++
-		iter := &mock.IdentityConfigurationIterator{}
-		iter.NextReturnsOnCall(0, &newConfig, nil)
-		iter.NextReturnsOnCall(1, nil, nil)
-
-		return iter, nil
-	}
+	// We want to ensure that the configuration is registered only once even if
+	// multiple goroutines discover it concurrently
+	iss.ConfigurationsByIDReturns([]idriver.IdentityConfiguration{newConfig}, nil)
 
 	var wg sync.WaitGroup
 	for range 10 {
@@ -206,7 +197,9 @@ func TestLocalMembership_DoubleCheckedLocking(t *testing.T) {
 	}
 	wg.Wait()
 
-	assert.Equal(t, 1, refreshCount)
+	assert.Equal(t, 1, kmp.GetCallCount())
+	// no full rescan beyond the initial Load
+	assert.Equal(t, 1, iss.IteratorConfigurationsCallCount())
 }
 
 func TestLocalMembership_Notifier(t *testing.T) {
@@ -279,6 +272,84 @@ func TestLocalMembership_Notifier(t *testing.T) {
 	// Wait for background processing (though handleConfig is called synchronously in the callback in my implementation,
 	// but the callback itself is called from the notifier which might be background).
 	// In my lm.go, the callback is executed by the notifier loop.
+
+	assert.Eventually(t, func() bool {
+		ids, _ := lm.IDs()
+
+		return slices.Contains(ids, "new")
+	}, 2*time.Second, 100*time.Millisecond)
+}
+
+func TestLocalMembership_NotificationReadsStoreOutsideLock(t *testing.T) {
+	ctx := t.Context()
+
+	ip := &mock.IdentityProvider{}
+	des := &mock.SignerDeserializerManager{}
+	iss := &mock.IdentityStoreService{}
+	iss.ConfigurationExistsReturns(false, nil)
+	iss.AddConfigurationReturns(nil)
+
+	notifier := &mock.IdentityConfigurationNotifier{}
+	iss.NotifierReturns(notifier, nil)
+
+	km := &mock.KeyManager{}
+	km.EnrollmentIDReturns("e1")
+	km.IdentityReturns(&idriver.IdentityDescriptor{Identity: []byte("id1")}, nil)
+	km.IdentityTypeReturns(identity.Type(99))
+
+	kmp := &mock.KeyManagerProvider{}
+	kmp.GetReturns(km, nil)
+
+	lm := membership.NewLocalMembership(
+		logging.MustGetLogger("test"),
+		&mock.Config{},
+		[]byte("netid"),
+		des,
+		iss,
+		"testType",
+		false,
+		ip,
+		kmp,
+	)
+
+	iss.IteratorConfigurationsReturns(&mock.IdentityConfigurationIterator{}, nil)
+
+	var mu sync.Mutex
+	var subCallback func(idriver.Operation, idriver.IdentityConfigurationRecord)
+	notifier.SubscribeStub = func(callback func(idriver.Operation, idriver.IdentityConfigurationRecord)) error {
+		mu.Lock()
+		defer mu.Unlock()
+		subCallback = callback
+
+		return nil
+	}
+
+	require.NoError(t, lm.Load(ctx, nil, nil))
+
+	assert.Eventually(t, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+
+		return subCallback != nil
+	}, 2*time.Second, 100*time.Millisecond)
+
+	newConfig := idriver.IdentityConfiguration{ID: "new", URL: "/tmp/new", Type: "testType"}
+	iss.GetConfigurationStub = func(context.Context, string, string, string) (*idriver.IdentityConfiguration, error) {
+		// re-enter a read path: this deadlocks if the notification handler
+		// held the write lock across the store read
+		_, _ = lm.IDs()
+
+		return &newConfig, nil
+	}
+
+	mu.Lock()
+	callback := subCallback
+	mu.Unlock()
+	callback(idriver.Insert, idriver.IdentityConfigurationRecord{
+		ID:   "new",
+		Type: "testType",
+		URL:  "/tmp/new",
+	})
 
 	assert.Eventually(t, func() bool {
 		ids, _ := lm.IDs()

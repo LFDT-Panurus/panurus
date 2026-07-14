@@ -7,18 +7,18 @@ SPDX-License-Identifier: Apache-2.0
 package dvp
 
 import (
+	"github.com/LFDT-Panurus/panurus/integration/nwo/token"
+	fabric2 "github.com/LFDT-Panurus/panurus/integration/nwo/token/fabric"
+	token2 "github.com/LFDT-Panurus/panurus/integration/token"
+	"github.com/LFDT-Panurus/panurus/integration/token/common"
+	"github.com/LFDT-Panurus/panurus/integration/token/common/views"
+	views2 "github.com/LFDT-Panurus/panurus/integration/token/dvp/views"
+	"github.com/LFDT-Panurus/panurus/integration/token/dvp/views/cash"
+	"github.com/LFDT-Panurus/panurus/integration/token/dvp/views/house"
 	"github.com/hyperledger-labs/fabric-smart-client/integration/nwo/api"
 	"github.com/hyperledger-labs/fabric-smart-client/integration/nwo/fabric"
 	"github.com/hyperledger-labs/fabric-smart-client/integration/nwo/fsc"
 	nodepkg "github.com/hyperledger-labs/fabric-smart-client/pkg/node"
-	"github.com/hyperledger-labs/fabric-token-sdk/integration/nwo/token"
-	fabric2 "github.com/hyperledger-labs/fabric-token-sdk/integration/nwo/token/fabric"
-	token2 "github.com/hyperledger-labs/fabric-token-sdk/integration/token"
-	"github.com/hyperledger-labs/fabric-token-sdk/integration/token/common"
-	"github.com/hyperledger-labs/fabric-token-sdk/integration/token/common/views"
-	views2 "github.com/hyperledger-labs/fabric-token-sdk/integration/token/dvp/views"
-	"github.com/hyperledger-labs/fabric-token-sdk/integration/token/dvp/views/cash"
-	"github.com/hyperledger-labs/fabric-token-sdk/integration/token/dvp/views/house"
 )
 
 type Opts struct {

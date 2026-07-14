@@ -7,9 +7,9 @@ SPDX-License-Identifier: Apache-2.0
 package db
 
 import (
+	"github.com/LFDT-Panurus/panurus/token/services/storage"
+	"github.com/LFDT-Panurus/panurus/token/services/storage/ttxdb"
 	cdriver "github.com/hyperledger-labs/fabric-smart-client/platform/common/driver"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/storage"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/ttxdb"
 )
 
 // QueryTransactionsParams defines the parameters for querying movements

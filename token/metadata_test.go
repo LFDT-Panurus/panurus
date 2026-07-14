@@ -11,12 +11,12 @@ import (
 	"context"
 	"testing"
 
+	"github.com/LFDT-Panurus/panurus/token"
+	"github.com/LFDT-Panurus/panurus/token/driver"
+	"github.com/LFDT-Panurus/panurus/token/driver/mock"
+	"github.com/LFDT-Panurus/panurus/token/services/logging"
+	token2 "github.com/LFDT-Panurus/panurus/token/token"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
-	"github.com/hyperledger-labs/fabric-token-sdk/token"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/driver"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/driver/mock"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/logging"
-	token2 "github.com/hyperledger-labs/fabric-token-sdk/token/token"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -85,7 +85,10 @@ func testFilterByCase0(t *testing.T) {
 	metadata := &token.Metadata{
 		WalletService: ws,
 		TokenRequestMetadata: &driver.TokenRequestMetadata{
-			Transfers:   []*driver.TransferMetadata{aliceToBob, charlieToDave},
+			Actions: []*driver.ActionMetadataEntry{
+				{ActionID: 0, TransferMetadata: aliceToBob},
+				{ActionID: 1, TransferMetadata: charlieToDave},
+			},
 			Application: map[string][]byte{"application": []byte("application")},
 		},
 		Logger: logging.MustGetLogger(),
@@ -94,34 +97,34 @@ func testFilterByCase0(t *testing.T) {
 	// Scenario: Filter by Bob. Bob should only see his received transfer and its sender.
 	filteredMetadata, err := metadata.FilterBy(t.Context(), "Bob")
 	require.NoError(t, err)
-	assert.Len(t, filteredMetadata.TokenRequestMetadata.Transfers, 2)
-	assertEqualTransferMetadata(t, aliceToBob, filteredMetadata.TokenRequestMetadata.Transfers[0], true)
-	assertEmptyTransferMetadata(t, charlieToDave, filteredMetadata.TokenRequestMetadata.Transfers[1])
+	assert.Len(t, filteredMetadata.TokenRequestMetadata.Actions, 2)
+	assertEqualTransferMetadata(t, aliceToBob, filteredMetadata.TokenRequestMetadata.Actions[0].TransferMetadata, true)
+	assertEmptyTransferMetadata(t, charlieToDave, filteredMetadata.TokenRequestMetadata.Actions[1].TransferMetadata)
 
 	// Scenario: Filter by Charlie. Charlie should only see his received transfer and its sender.
 	filteredMetadata, err = metadata.FilterBy(t.Context(), "Charlie")
 	require.NoError(t, err)
-	assert.Len(t, filteredMetadata.TokenRequestMetadata.Transfers, 2)
-	assertEmptyTransferMetadata(t, aliceToBob, filteredMetadata.TokenRequestMetadata.Transfers[0])
-	assertEqualTransferMetadata(t, charlieToDave, filteredMetadata.TokenRequestMetadata.Transfers[1], true)
+	assert.Len(t, filteredMetadata.TokenRequestMetadata.Actions, 2)
+	assertEmptyTransferMetadata(t, aliceToBob, filteredMetadata.TokenRequestMetadata.Actions[0].TransferMetadata)
+	assertEqualTransferMetadata(t, charlieToDave, filteredMetadata.TokenRequestMetadata.Actions[1].TransferMetadata, true)
 
 	// Scenario: Filter by Eve. Eve should not see any transfer metadata.
 	filteredMetadata, err = metadata.FilterBy(t.Context(), "Eve")
 	require.NoError(t, err)
-	assertEmptyTransferMetadata(t, aliceToBob, filteredMetadata.TokenRequestMetadata.Transfers[0])
-	assertEmptyTransferMetadata(t, charlieToDave, filteredMetadata.TokenRequestMetadata.Transfers[1])
+	assertEmptyTransferMetadata(t, aliceToBob, filteredMetadata.TokenRequestMetadata.Actions[0].TransferMetadata)
+	assertEmptyTransferMetadata(t, charlieToDave, filteredMetadata.TokenRequestMetadata.Actions[1].TransferMetadata)
 
 	// Scenario: Filter by both Bob and Charlie. Both should see their respective metadata.
 	filteredMetadata, err = metadata.FilterBy(t.Context(), "Bob", "Charlie")
 	require.NoError(t, err)
-	assertEqualTransferMetadata(t, aliceToBob, filteredMetadata.TokenRequestMetadata.Transfers[0], true)
-	assertEqualTransferMetadata(t, charlieToDave, filteredMetadata.TokenRequestMetadata.Transfers[1], true)
+	assertEqualTransferMetadata(t, aliceToBob, filteredMetadata.TokenRequestMetadata.Actions[0].TransferMetadata, true)
+	assertEqualTransferMetadata(t, charlieToDave, filteredMetadata.TokenRequestMetadata.Actions[1].TransferMetadata, true)
 
 	// Scenario: No enrollment IDs provided. Should return the original metadata unchanged.
 	filteredMetadata, err = metadata.FilterBy(t.Context())
 	require.NoError(t, err)
-	assertEqualTransferMetadata(t, aliceToBob, filteredMetadata.TokenRequestMetadata.Transfers[0], false)
-	assertEqualTransferMetadata(t, charlieToDave, filteredMetadata.TokenRequestMetadata.Transfers[1], false)
+	assertEqualTransferMetadata(t, aliceToBob, filteredMetadata.TokenRequestMetadata.Actions[0].TransferMetadata, false)
+	assertEqualTransferMetadata(t, charlieToDave, filteredMetadata.TokenRequestMetadata.Actions[1].TransferMetadata, false)
 }
 
 // testFilterByCase1 tests filtering metadata for issue actions.
@@ -163,7 +166,10 @@ func testFilterByCase1(t *testing.T) {
 	metadata := &token.Metadata{
 		WalletService: ws,
 		TokenRequestMetadata: &driver.TokenRequestMetadata{
-			Issues: []*driver.IssueMetadata{aliceIssue, bobIssue},
+			Actions: []*driver.ActionMetadataEntry{
+				{ActionID: 0, IssueMetadata: aliceIssue},
+				{ActionID: 1, IssueMetadata: bobIssue},
+			},
 		},
 		Logger: logging.MustGetLogger(),
 	}
@@ -171,14 +177,14 @@ func testFilterByCase1(t *testing.T) {
 	// Filter by Alice. Only Alice's issue should be present.
 	filteredMetadata, err := metadata.FilterBy(t.Context(), "Alice")
 	require.NoError(t, err)
-	assertEqualIssueMetadata(t, aliceIssue, filteredMetadata.TokenRequestMetadata.Issues[0])
-	assertEmptyIssueMetadata(t, bobIssue, filteredMetadata.TokenRequestMetadata.Issues[1])
+	assertEqualIssueMetadata(t, aliceIssue, filteredMetadata.TokenRequestMetadata.Actions[0].IssueMetadata)
+	assertEmptyIssueMetadata(t, bobIssue, filteredMetadata.TokenRequestMetadata.Actions[1].IssueMetadata)
 
 	// Filter by Bob. Only Bob's issue should be present.
 	filteredMetadata, err = metadata.FilterBy(t.Context(), "Bob")
 	require.NoError(t, err)
-	assertEmptyIssueMetadata(t, aliceIssue, filteredMetadata.TokenRequestMetadata.Issues[0])
-	assertEqualIssueMetadata(t, bobIssue, filteredMetadata.TokenRequestMetadata.Issues[1])
+	assertEmptyIssueMetadata(t, aliceIssue, filteredMetadata.TokenRequestMetadata.Actions[0].IssueMetadata)
+	assertEqualIssueMetadata(t, bobIssue, filteredMetadata.TokenRequestMetadata.Actions[1].IssueMetadata)
 }
 
 // assertEqualIssueMetadata is a helper to verify that issue metadata has been correctly preserved after filtering.
@@ -248,10 +254,14 @@ func TestMetadata_TestMatchTransferAction(t *testing.T) {
 			action: &token.TransferAction{transferActionWithIssuer},
 			meta: &token.TransferMetadata{
 				&driver.TransferMetadata{
-					Issuer:       mockIssuer,
-					Inputs:       []*driver.TransferInputMetadata{{}},
-					Outputs:      []*driver.TransferOutputMetadata{{}},
-					ExtraSigners: []token.Identity{signer1},
+					Issuer: driver.AuditableIdentity{
+						Identity: mockIssuer,
+					},
+					Inputs:  []*driver.TransferInputMetadata{{}},
+					Outputs: []*driver.TransferOutputMetadata{{}},
+					ExtraSigners: []driver.AuditableIdentity{
+						{Identity: signer1},
+					},
 				},
 			},
 			wantErr: false,
@@ -263,7 +273,7 @@ func TestMetadata_TestMatchTransferAction(t *testing.T) {
 				&driver.TransferMetadata{},
 			},
 			wantErr:       true,
-			expectedError: "nil issue action",
+			expectedError: "nil transfer action",
 		},
 		{
 			name: "validation error",
@@ -277,7 +287,7 @@ func TestMetadata_TestMatchTransferAction(t *testing.T) {
 				&driver.TransferMetadata{},
 			},
 			wantErr:       true,
-			expectedError: "failed validating issue action",
+			expectedError: "failed validating transfer action",
 		},
 		{
 			name:   "mismatch inputs",
@@ -309,7 +319,7 @@ func TestMetadata_TestMatchTransferAction(t *testing.T) {
 				&driver.TransferMetadata{
 					Inputs:       []*driver.TransferInputMetadata{{}},
 					Outputs:      []*driver.TransferOutputMetadata{{}},
-					ExtraSigners: []token.Identity{},
+					ExtraSigners: []driver.AuditableIdentity{},
 				},
 			},
 			wantErr:       true,
@@ -320,23 +330,29 @@ func TestMetadata_TestMatchTransferAction(t *testing.T) {
 			action: &token.TransferAction{transferActionWithIssuer},
 			meta: &token.TransferMetadata{
 				&driver.TransferMetadata{
-					Inputs:       []*driver.TransferInputMetadata{{}},
-					Outputs:      []*driver.TransferOutputMetadata{{}},
-					ExtraSigners: []token.Identity{token.Identity("other")},
+					Inputs:  []*driver.TransferInputMetadata{{}},
+					Outputs: []*driver.TransferOutputMetadata{{}},
+					ExtraSigners: []driver.AuditableIdentity{
+						{Identity: token.Identity("other")},
+					},
 				},
 			},
 			wantErr:       true,
-			expectedError: "expected extra signer",
+			expectedError: "expected extra signer [2SmKENGwc1g33EvYXaxkGw887yekfl1TpU8vP1svz/o=] but got [kjnCsbFKyPwMtSk64mTokc83jkySwm75ZY82AM4yLrY=]",
 		},
 		{
 			name:   "error: mismatch issuer",
 			action: &token.TransferAction{transferActionWithIssuer},
 			meta: &token.TransferMetadata{
 				&driver.TransferMetadata{
-					Issuer:       token.Identity("other"),
-					Inputs:       []*driver.TransferInputMetadata{{}},
-					Outputs:      []*driver.TransferOutputMetadata{{}},
-					ExtraSigners: []token.Identity{signer1},
+					Issuer: driver.AuditableIdentity{
+						Identity: token.Identity("other"),
+					},
+					Inputs:  []*driver.TransferInputMetadata{{}},
+					Outputs: []*driver.TransferOutputMetadata{{}},
+					ExtraSigners: []driver.AuditableIdentity{
+						{Identity: signer1},
+					},
 				},
 			},
 			wantErr:       true,
@@ -364,14 +380,18 @@ func TestMetadata_SpentTokenID(t *testing.T) {
 
 	metadata := &token.Metadata{
 		TokenRequestMetadata: &driver.TokenRequestMetadata{
-			Issues: []*driver.IssueMetadata{
+			Actions: []*driver.ActionMetadataEntry{
 				{
-					Inputs: []*driver.IssueInputMetadata{{TokenID: issueTokenID}},
+					ActionID: 0,
+					IssueMetadata: &driver.IssueMetadata{
+						Inputs: []*driver.IssueInputMetadata{{TokenID: issueTokenID}},
+					},
 				},
-			},
-			Transfers: []*driver.TransferMetadata{
 				{
-					Inputs: []*driver.TransferInputMetadata{{TokenID: transferTokenID}},
+					ActionID: 1,
+					TransferMetadata: &driver.TransferMetadata{
+						Inputs: []*driver.TransferInputMetadata{{TokenID: transferTokenID}},
+					},
 				},
 			},
 		},
@@ -389,8 +409,10 @@ func TestMetadata_Issue_Transfer(t *testing.T) {
 	transferMeta := &driver.TransferMetadata{}
 	metadata := &token.Metadata{
 		TokenRequestMetadata: &driver.TokenRequestMetadata{
-			Issues:    []*driver.IssueMetadata{issueMeta},
-			Transfers: []*driver.TransferMetadata{transferMeta},
+			Actions: []*driver.ActionMetadataEntry{
+				{ActionID: 0, IssueMetadata: issueMeta},
+				{ActionID: 1, TransferMetadata: transferMeta},
+			},
 		},
 	}
 
@@ -470,17 +492,13 @@ func TestMetadata_FilterBy_Errors(t *testing.T) {
 		WalletService: ws,
 		Logger:        logging.MustGetLogger(),
 		TokenRequestMetadata: &driver.TokenRequestMetadata{
-			Issues: []*driver.IssueMetadata{
+			Actions: []*driver.ActionMetadataEntry{
 				{
-					Outputs: []*driver.IssueOutputMetadata{
-						{Receivers: []*driver.AuditableIdentity{{Identity: []byte("receiver")}}},
-					},
-				},
-			},
-			Transfers: []*driver.TransferMetadata{
-				{
-					Outputs: []*driver.TransferOutputMetadata{
-						{Receivers: []*driver.AuditableIdentity{{Identity: []byte("receiver")}}},
+					ActionID: 0,
+					IssueMetadata: &driver.IssueMetadata{
+						Outputs: []*driver.IssueOutputMetadata{
+							{Receivers: []*driver.AuditableIdentity{{Identity: []byte("receiver")}}},
+						},
 					},
 				},
 			},
@@ -490,13 +508,22 @@ func TestMetadata_FilterBy_Errors(t *testing.T) {
 	// Scenario: WalletService fails to resolve enrollment ID during issue filtering.
 	_, err := metadata.FilterBy(ctx, "Bob")
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "failed filtering issues")
+	assert.Contains(t, err.Error(), "failed filtering issue")
 
 	// Scenario: WalletService fails to resolve enrollment ID during transfer filtering.
-	metadata.TokenRequestMetadata.Issues = nil
+	metadata.TokenRequestMetadata.Actions = []*driver.ActionMetadataEntry{
+		{
+			ActionID: 0,
+			TransferMetadata: &driver.TransferMetadata{
+				Outputs: []*driver.TransferOutputMetadata{
+					{Receivers: []*driver.AuditableIdentity{{Identity: []byte("receiver")}}},
+				},
+			},
+		},
+	}
 	_, err = metadata.FilterBy(ctx, "Bob")
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "failed filtering transfers")
+	assert.Contains(t, err.Error(), "failed filtering transfer")
 }
 
 // TestIssueMetadata_Match tests that IssueMetadata.Match correctly validates an IssueAction.
@@ -522,10 +549,12 @@ func TestIssueMetadata_Match(t *testing.T) {
 			name: "match",
 			meta: &token.IssueMetadata{
 				IssueMetadata: &driver.IssueMetadata{
-					Issuer:       driver.AuditableIdentity{Identity: issuer1},
-					Inputs:       []*driver.IssueInputMetadata{{}},
-					Outputs:      []*driver.IssueOutputMetadata{{}},
-					ExtraSigners: []token.Identity{signer1},
+					Issuer:  driver.AuditableIdentity{Identity: issuer1},
+					Inputs:  []*driver.IssueInputMetadata{{}},
+					Outputs: []*driver.IssueOutputMetadata{{}},
+					ExtraSigners: []driver.AuditableIdentity{
+						{Identity: signer1},
+					},
 				},
 			},
 			action:  token.NewIssueAction(action),
@@ -583,7 +612,7 @@ func TestIssueMetadata_Match(t *testing.T) {
 				IssueMetadata: &driver.IssueMetadata{
 					Inputs:       []*driver.IssueInputMetadata{{}},
 					Outputs:      []*driver.IssueOutputMetadata{{}},
-					ExtraSigners: []token.Identity{},
+					ExtraSigners: []driver.AuditableIdentity{},
 				},
 			},
 			action:        token.NewIssueAction(action),
@@ -594,23 +623,27 @@ func TestIssueMetadata_Match(t *testing.T) {
 			name: "mismatch extra signers",
 			meta: &token.IssueMetadata{
 				IssueMetadata: &driver.IssueMetadata{
-					Inputs:       []*driver.IssueInputMetadata{{}},
-					Outputs:      []*driver.IssueOutputMetadata{{}},
-					ExtraSigners: []token.Identity{token.Identity("other")},
+					Inputs:  []*driver.IssueInputMetadata{{}},
+					Outputs: []*driver.IssueOutputMetadata{{}},
+					ExtraSigners: []driver.AuditableIdentity{
+						{Identity: token.Identity("other")},
+					},
 				},
 			},
 			action:        token.NewIssueAction(action),
 			wantErr:       true,
-			expectedError: "expected extra signer",
+			expectedError: "extra signer [kjnCsbFKyPwMtSk64mTokc83jkySwm75ZY82AM4yLrY=] from action not found in metadata",
 		},
 		{
 			name: "mismatch issuer",
 			meta: &token.IssueMetadata{
 				IssueMetadata: &driver.IssueMetadata{
-					Issuer:       driver.AuditableIdentity{Identity: issuer2},
-					Inputs:       []*driver.IssueInputMetadata{{}},
-					Outputs:      []*driver.IssueOutputMetadata{{}},
-					ExtraSigners: []token.Identity{signer1},
+					Issuer:  driver.AuditableIdentity{Identity: issuer2},
+					Inputs:  []*driver.IssueInputMetadata{{}},
+					Outputs: []*driver.IssueOutputMetadata{{}},
+					ExtraSigners: []driver.AuditableIdentity{
+						{Identity: signer1},
+					},
 				},
 			},
 			action:        token.NewIssueAction(action),

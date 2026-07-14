@@ -1,9 +1,9 @@
-# Evolution of Fabric Token SDK (v0.4.0 -> Present)
+# Evolution of Panurus (v0.4.0 -> Present)
 
-Since tag `v0.4.0` (January 2025), the Fabric Token SDK has undergone a significant architectural and functional evolution, comprising over 850 commits. The evolution can be summarized in several key areas:
+Since tag `v0.4.0` (January 2025), Panurus has undergone a significant architectural and functional evolution, comprising over 850 commits. The evolution can be summarized in several key areas:
 
 ## Architectural Refinement: Common Driver Framework
-The SDK has transitioned toward a more modular and robust internal driver architecture. A major shift involved moving core driver interfaces and shared logic into the `token/core/common/driver` package. This decoupling allows for more uniform driver implementations and simplifies the introduction of new token technologies.
+Panurus has transitioned toward a more modular and robust internal driver architecture. A major shift involved moving core driver interfaces and shared logic into the `token/core/common/driver` package. This decoupling allows for more uniform driver implementations and simplifies the introduction of new token technologies.
 *   *See also:* [**Driver API Overview**](driverapi.md)
 
 ## Privacy-Preserving Driver Evolution: `zkatdlog/nogh`
@@ -32,7 +32,7 @@ A major security enhancement introduced **Protocol V2** for token request signat
 *   *See also:* [**Protocol Versions and Signature Security**](driverapi.md)
 
 ## Cryptographic Optimization: Compressed Sigma Protocol Range Proofs
-The SDK now implements **Compressed Sigma Protocol-Based Range Proofs**, providing significant performance improvements for zero-knowledge range validation:
+Panurus now implements **Compressed Sigma Protocol-Based Range Proofs**, providing significant performance improvements for zero-knowledge range validation:
 
 - **Reduced Proof Size:** Compressed proofs are substantially smaller than traditional Bulletproofs, reducing on-chain storage and network bandwidth requirements.
 - **Faster Verification:** Optimized verification algorithms improve transaction validation throughput.
@@ -52,10 +52,10 @@ The Token Transaction service, a core component for orchestrating token lifecycl
     - **Network Integration:** Instantiated by both Fabric and FabricX network services
     - **Dual Database Support:** Operates on TTXDB for regular transactions and AuditDB for auditor nodes
 
-*   *See also:* [**TTX Service Documentation**](services/ttx.md), [**Transaction Recovery Service**](services/recovery.md)
+*   *See also:* [**TTX Service Documentation**](services/ttx.md), [**Transaction Recovery Service**](services/storage/recovery.md)
 
 ## Core Service Enhancements
-The SDK's foundational services have been matured:
+Panurus's foundational services have been matured:
 
 - **Identity Service:** Reorganized to better handle various identity types, with improved support for Idemix (privacy-preserving) and X.509 (standard) identities.
     *   *See also:* [**Identity Service**](services/identity.md)
@@ -63,7 +63,8 @@ The SDK's foundational services have been matured:
     - **Database Indexing:** Added missing indexes for token queries, significantly improving query performance
     - **Query Enhancements:** New `SearchDirection` support in `QueryTransactionsParams` for flexible result ordering
     - **Recovery Service Integration:** Built-in transaction recovery capabilities for handling finality listener failures
-    *   *See also:* [**Storage Service**](services/storage.md)
+    - **Keystore Cleanup Service:** Automatic deletion of cryptographic keys for deleted tokens, improving security and reducing storage overhead
+    *   *See also:* [**Storage Service**](services/storage.md), [**Keystore Cleanup Service**](services/storage/keystore_cleanup.md)
 - **Network Service:** Expanded to handle more complex Fabric network interactions and better integration with the Fabric Smart Client. A major change was the **removal of the Orion-based implementation**, which has been replaced by the introduction of **FabricX support**, providing a more modern and integrated approach for advanced ledger interactions.
     *   *See also:* [**Network Service**](services/network.md)
 
@@ -79,7 +80,7 @@ Significant investments in performance measurement and optimization:
 *   *See also:* [**Benchmark Service**](services/benchmark.md), [**Benchmarking Documentation**](drivers/benchmark/benchmark.md)
 
 ## Developer Experience: Testing & Documentation
-The SDK has seen a major push in both testing infrastructure and documentation:
+Panurus has seen a major push in both testing infrastructure and documentation:
 
 - **Comprehensive Test Coverage:** Massive improvements across the codebase:
     - `token/services/tokens`: 80%+ coverage
@@ -90,7 +91,7 @@ The SDK has seen a major push in both testing infrastructure and documentation:
     - `token/services/nfttx`: 80% coverage
     - Integration tests expanded for fungible, NFT, DVP, and interop scenarios
 - **Comprehensive Mocks:** A massive addition of mocks (`token/core/common/driver/mock`, etc.) simplifies application testing and improves SDK maintainability.
-- **Expanded Documentation:** The `docs/` directory has been substantially populated with detailed guides on driver APIs, token SDK usage, architectural diagrams, and development best practices.
+- **Expanded Documentation:** The `docs/` directory has been substantially populated with detailed guides on driver APIs, Panurus usage, architectural diagrams, and development best practices.
 - **Integration Tests:** The `integration/` tests have been expanded to cover new use cases, ensuring the stability of the evolved features.
     *   *See also:* [**Testing Guide**](development/testing.md)
 
@@ -113,6 +114,7 @@ The developer-facing Token API has been refined for better usability, consistenc
 -   **New `TokensService`:** A high-level service for advanced token operations, including de-obfuscation and support for the new in-place upgrade challenge/proof protocol.
 -   **Robust TMS Management:** The `ManagementService` now performs more thorough eager initialization of its sub-services and supports dynamic cache clearing via the `Update` mechanism, facilitating seamless public parameter rotations.
 -   **Enhanced Querying:** The `Vault` and `QueryEngine` have been expanded with new methods like `GetTokenOutputs` and `WhoDeletedTokens`, providing deeper insights into the token lifecycle on the ledger.
+-   **Issuer Wallet Balances:** `IssuerWallet` now exposes `IssuedBalance`, `RedeemedBalance`, and net `Balance`, filterable by token type and time range. Redeem outputs (empty owner) are attributed to the signing issuer and persisted with a `Redeemed` flag in the `TokenDB`, so the issuer node can track its outstanding issued supply.
 -   **Protobuf Backed Requests:** The high-level `Request` structures now leverage versioned Protobuf messages internally, ensuring that transaction blueprints created by one node version can be understood by others.
 -   **Improved Error Handling:** Wallet methods (`IssuerWallet`, `AuditorWallet`, `CertifierWallet`, `OwnerWallet`) now return errors instead of panicking, enabling better error handling and recovery.
 -   **Clone Support:** Added `Clone()` methods for safe copying of critical data structures.
@@ -126,4 +128,4 @@ The developer-facing Token API has been refined for better usability, consistenc
 - **Statistics Tools:** New tools for generating repository statistics and analyzing contribution patterns
 
 ## Conclusion
-The evolution since `v0.4.0` marks the SDK's transition into a mature, production-ready, and feature-rich framework. The focus on security (Protocol V2), reliability (Recovery Service), performance (Compressed Range Proofs, Benchmarking), and quality (80%+ test coverage) has solidified its role as a robust tool for building tokenized applications on Hyperledger Fabric. The architectural clarity, optimized privacy-preserving drivers, and comprehensive developer experience through documentation and testability position the SDK for continued growth and adoption.
+The evolution since `v0.4.0` marks Panurus's transition into a mature, production-ready, and feature-rich framework. The focus on security (Protocol V2), reliability (Recovery Service), performance (Compressed Range Proofs, Benchmarking), and quality (80%+ test coverage) has solidified its role as a robust tool for building tokenized applications on Hyperledger Fabric. The architectural clarity, optimized privacy-preserving drivers, and comprehensive developer experience through documentation and testability position Panurus for continued growth and adoption.

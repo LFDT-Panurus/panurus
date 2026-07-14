@@ -1,0 +1,59 @@
+// Copyright the Hyperledger Fabric contributors. All rights reserved.
+//
+// SPDX-License-Identifier: Apache-2.0
+
+syntax = "proto3";
+
+package fabric_token_sdk.identity.x509.v1;
+
+option go_package = "github.com/LFDT-Panurus/panurus/token/services/identity/x509/crypto/protos-go/v1/config";
+
+// Config collects all the configuration information for an x509 identity.
+message Config {
+  // Version indicates message protocol version
+  uint32 version = 1;
+
+  // SigningIdentity holds information on the signing identity
+  SigningIdentityInfo signing_identity = 2;
+
+  // CryptoConfig contains the configuration parameters
+  // for the cryptographic algorithms
+  CryptoConfig crypto_config = 3;
+}
+
+// CryptoConfig contains configuration parameters for the cryptographic algorithms
+message CryptoConfig {
+  // SignatureHashFamily is a string representing the hash family to be used
+  // during sign and verify operations.
+  // Allowed values are "SHA2" and "SHA3".
+  string signature_hash_family = 1;
+}
+
+// SigningIdentityInfo represents the configuration information
+// related to the signing identity the peer is to use for generating
+// endorsements
+message SigningIdentityInfo {
+  // PublicSigner carries the public information of the signing
+  // identity. For an X.509 provider this would be represented by
+  // an X.509 certificate
+  bytes public_signer = 1;
+
+  // PrivateSigner denotes a reference to the private key of the
+  // peer's signing identity
+  KeyInfo private_signer = 2;
+}
+
+// KeyInfo represents a (secret) key that is either already stored
+// in the bccsp/keystore or key material to be imported to the
+// bccsp key-store. In later versions it may contain also a
+// keystore identifier
+message KeyInfo {
+  // Identifier of the key inside the default keystore; this for
+  // the case of Software BCCSP as well as the HSM BCCSP would be
+  // the SKI of the key
+  string key_identifier = 1;
+
+  // KeyMaterial (optional) for the key to be imported; this is
+  // properly encoded key bytes, prefixed by the type of the key
+  bytes key_material = 2;
+}

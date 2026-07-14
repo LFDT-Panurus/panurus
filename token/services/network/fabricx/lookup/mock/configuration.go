@@ -5,7 +5,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/network/fabricx/lookup"
+	"github.com/LFDT-Panurus/panurus/token/services/network/fabricx/lookup"
 )
 
 type Configuration struct {

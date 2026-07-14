@@ -11,13 +11,13 @@ import (
 	"testing"
 
 	math "github.com/IBM/mathlib"
-	math2 "github.com/hyperledger-labs/fabric-token-sdk/token/core/common/crypto/math"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/core/zkatdlog/nogh/v1/crypto/rp"
-	issue2 "github.com/hyperledger-labs/fabric-token-sdk/token/core/zkatdlog/nogh/v1/issue"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/core/zkatdlog/nogh/v1/issue/mock"
-	v1 "github.com/hyperledger-labs/fabric-token-sdk/token/core/zkatdlog/nogh/v1/setup"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/core/zkatdlog/nogh/v1/token"
-	benchmark2 "github.com/hyperledger-labs/fabric-token-sdk/token/services/benchmark"
+	math2 "github.com/LFDT-Panurus/panurus/token/core/common/crypto/math"
+	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/crypto/rp"
+	issue2 "github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/issue"
+	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/issue/mock"
+	v1 "github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/setup"
+	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/token"
+	benchmark2 "github.com/LFDT-Panurus/panurus/token/services/benchmark"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -76,7 +76,9 @@ func TestIssuer(t *testing.T) {
 			for i := range len(action.Outputs) {
 				coms[i] = action.Outputs[i].Data
 			}
-			require.NoError(t, issue2.NewVerifier(coms, pp).Verify(action.GetProof()))
+			verifier, err := issue2.NewVerifier(coms, pp, action.ProofType)
+			require.NoError(t, err)
+			require.NoError(t, verifier.Verify(action.GetProof()))
 		})
 	}
 }
@@ -144,7 +146,9 @@ func BenchmarkProofVerificationIssuer(b *testing.B) {
 				for i := range len(action.Outputs) {
 					coms[i] = action.Outputs[i].Data
 				}
-				require.NoError(b, issue2.NewVerifier(coms, e.pp).Verify(action.GetProof()))
+				v, err := issue2.NewVerifier(coms, e.pp, action.ProofType)
+				require.NoError(b, err)
+				require.NoError(b, v.Verify(action.GetProof()))
 				i++
 			}
 		})
@@ -253,7 +257,8 @@ func prepareZKIssueWithSetup(t *testing.T, bits uint64, curveID math.CurveID, nu
 	tw, tokens := prepareInputsForZKIssue(pp, numOutputs)
 	prover, err := issue2.NewProver(tw, tokens, pp)
 	require.NoError(t, err)
-	verifier := issue2.NewVerifier(tokens, pp)
+	verifier, err := issue2.NewVerifier(tokens, pp, prover.RangeProofType())
+	require.NoError(t, err)
 
 	return prover, verifier
 }
@@ -338,4 +343,47 @@ func TestIssuerGenerateZKIssueErrors(t *testing.T) {
 	issuer.Signer = nil
 	_, _, err = issuer.GenerateZKIssue([]uint64{10}, [][]byte{[]byte("alice")})
 	require.ErrorIs(t, err, issue2.ErrNilSigner)
+}
+
+// TestNewVerifier_ProofTypeUnavailable is T-SEC-2: verifies that issue.NewVerifier
+// returns ErrProofTypeMismatch when the action's ProofType refers to a range-proof
+// algorithm whose params sub-struct is not populated in PublicParams, preventing an
+// attacker from selecting a verifier whose params sub-struct is nil.
+//
+// Scenario A: only BulletProof params populated, action claims CSP  → error.
+// Scenario B: only CSP params populated, action claims BulletProof  → error.
+// Scenario C: both params populated (migration), each type is accepted → no error.
+func TestNewVerifier_ProofTypeUnavailable(t *testing.T) {
+	pp := setup(t, 32, math.BLS12_381_BBS_GURVY)
+	_, tokens := prepareInputsForZKIssue(pp, 2)
+
+	t.Run("BulletProofPP_CSPActionType", func(t *testing.T) {
+		pp := setup(t, 32, math.BLS12_381_BBS_GURVY)
+		_, err := issue2.NewVerifier(tokens, pp, rp.CSPRangeProofType)
+		require.ErrorIs(t, err, issue2.ErrProofTypeMismatch,
+			"T-SEC-2A: CSP proof type against BulletProof-only pp must return ErrProofTypeMismatch")
+	})
+
+	t.Run("CSPParamsPP_BulletProofActionType", func(t *testing.T) {
+		pp := setupCSP(t, 32, math.BLS12_381_BBS_GURVY)
+		_, err := issue2.NewVerifier(tokens, pp, rp.RangeProofType)
+		require.ErrorIs(t, err, issue2.ErrProofTypeMismatch,
+			"T-SEC-2B: BulletProof proof type against CSP-only pp must return ErrProofTypeMismatch")
+	})
+
+	t.Run("BothParamsPP_BulletProofActionType", func(t *testing.T) {
+		pp := setup(t, 32, math.BLS12_381_BBS_GURVY)
+		require.NoError(t, pp.GenerateCSPRangeProofParameters(32))
+		_, err := issue2.NewVerifier(tokens, pp, rp.RangeProofType)
+		require.NoError(t, err,
+			"T-SEC-2C: BulletProof proof type against dual pp must be accepted")
+	})
+
+	t.Run("BothParamsPP_CSPActionType", func(t *testing.T) {
+		pp := setup(t, 32, math.BLS12_381_BBS_GURVY)
+		require.NoError(t, pp.GenerateCSPRangeProofParameters(32))
+		_, err := issue2.NewVerifier(tokens, pp, rp.CSPRangeProofType)
+		require.NoError(t, err,
+			"T-SEC-2D: CSP proof type against dual pp must be accepted")
+	})
 }

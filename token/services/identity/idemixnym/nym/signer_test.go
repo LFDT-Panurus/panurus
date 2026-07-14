@@ -14,15 +14,15 @@ import (
 
 	"github.com/IBM/idemix/bccsp/types"
 	math "github.com/IBM/mathlib"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/identity/idemix"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/identity/idemix/crypto"
-	kvs2 "github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/db/kvs"
+	"github.com/LFDT-Panurus/panurus/token/services/identity/idemix"
+	"github.com/LFDT-Panurus/panurus/token/services/identity/idemix/crypto"
+	kvs2 "github.com/LFDT-Panurus/panurus/token/services/storage/db/kvs"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 func TestSignerSign(t *testing.T) {
-	testSignerSign(t, "../../idemix/testdata/fp256bn_amcl/idemix", math.FP256BN_AMCL)
+	testSignerSign(t, "../../idemix/testdata/bls12_381_bbs_gurvy/idemix", math.BLS12_381_BBS_GURVY)
 	testSignerSign(t, "../../idemix/testdata/bls12_381_bbs/idemix", math.BLS12_381_BBS_GURVY)
 }
 
@@ -74,7 +74,7 @@ func testSignerSign(t *testing.T, configPath string, curveID math.CurveID) {
 }
 
 func TestVerifierVerify(t *testing.T) {
-	testVerifierVerify(t, "../../idemix/testdata/fp256bn_amcl/idemix", math.FP256BN_AMCL)
+	testVerifierVerify(t, "../../idemix/testdata/bls12_381_bbs_gurvy/idemix", math.BLS12_381_BBS_GURVY)
 	testVerifierVerify(t, "../../idemix/testdata/bls12_381_bbs/idemix", math.BLS12_381_BBS_GURVY)
 }
 
@@ -133,7 +133,7 @@ func testVerifierVerify(t *testing.T, configPath string, curveID math.CurveID) {
 }
 
 func TestVerifierVerifyErrorPaths(t *testing.T) {
-	testVerifierVerifyErrorPaths(t, "../../idemix/testdata/fp256bn_amcl/idemix", math.FP256BN_AMCL)
+	testVerifierVerifyErrorPaths(t, "../../idemix/testdata/bls12_381_bbs_gurvy/idemix", math.BLS12_381_BBS_GURVY)
 	testVerifierVerifyErrorPaths(t, "../../idemix/testdata/bls12_381_bbs/idemix", math.BLS12_381_BBS_GURVY)
 }
 
@@ -172,7 +172,7 @@ func testVerifierVerifyErrorPaths(t *testing.T, configPath string, curveID math.
 }
 
 func TestSignerProviderImpl(t *testing.T) {
-	testSignerProviderImpl(t, "../../idemix/testdata/fp256bn_amcl/idemix", math.FP256BN_AMCL)
+	testSignerProviderImpl(t, "../../idemix/testdata/bls12_381_bbs_gurvy/idemix", math.BLS12_381_BBS_GURVY)
 	testSignerProviderImpl(t, "../../idemix/testdata/bls12_381_bbs/idemix", math.BLS12_381_BBS_GURVY)
 }
 
@@ -234,7 +234,7 @@ func TestSignerEntryBytes(t *testing.T) {
 }
 
 func TestSignerSignVerifyIntegration(t *testing.T) {
-	testSignerSignVerifyIntegration(t, "../../idemix/testdata/fp256bn_amcl/idemix", math.FP256BN_AMCL)
+	testSignerSignVerifyIntegration(t, "../../idemix/testdata/bls12_381_bbs_gurvy/idemix", math.BLS12_381_BBS_GURVY)
 	testSignerSignVerifyIntegration(t, "../../idemix/testdata/bls12_381_bbs/idemix", math.BLS12_381_BBS_GURVY)
 }
 
@@ -291,7 +291,7 @@ func testSignerSignVerifyIntegration(t *testing.T, configPath string, curveID ma
 }
 
 func TestVerifierWithDifferentNyms(t *testing.T) {
-	testVerifierWithDifferentNyms(t, "../../idemix/testdata/fp256bn_amcl/idemix", math.FP256BN_AMCL)
+	testVerifierWithDifferentNyms(t, "../../idemix/testdata/bls12_381_bbs_gurvy/idemix", math.BLS12_381_BBS_GURVY)
 	testVerifierWithDifferentNyms(t, "../../idemix/testdata/bls12_381_bbs/idemix", math.BLS12_381_BBS_GURVY)
 }
 

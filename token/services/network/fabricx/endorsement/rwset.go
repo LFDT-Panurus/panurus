@@ -7,10 +7,10 @@ SPDX-License-Identifier: Apache-2.0
 package endorsement
 
 import (
+	"github.com/LFDT-Panurus/panurus/token/services/network/common/rws/translator"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/common/driver"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/fabricx/core/vault"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/network/common/rws/translator"
 )
 
 // rwSet interface, used to read from, and write to, a rwset.

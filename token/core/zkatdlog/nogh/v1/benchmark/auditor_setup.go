@@ -7,14 +7,16 @@ SPDX-License-Identifier: Apache-2.0
 package benchmark
 
 import (
+	tokcommon "github.com/LFDT-Panurus/panurus/token/core/common"
+	v1 "github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1"
+	zkcommon "github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/crypto/common"
+	v1driver "github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/driver"
+	issue_pkg "github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/issue"
+	"github.com/LFDT-Panurus/panurus/token/driver"
+	"github.com/LFDT-Panurus/panurus/token/driver/mock"
+	"github.com/LFDT-Panurus/panurus/token/driver/protos-go/v1/request"
+	"github.com/LFDT-Panurus/panurus/token/services/logging"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
-	tokcommon "github.com/hyperledger-labs/fabric-token-sdk/token/core/common"
-	v1 "github.com/hyperledger-labs/fabric-token-sdk/token/core/zkatdlog/nogh/v1"
-	zkcommon "github.com/hyperledger-labs/fabric-token-sdk/token/core/zkatdlog/nogh/v1/crypto/common"
-	v1driver "github.com/hyperledger-labs/fabric-token-sdk/token/core/zkatdlog/nogh/v1/driver"
-	issue_pkg "github.com/hyperledger-labs/fabric-token-sdk/token/core/zkatdlog/nogh/v1/issue"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/driver"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/logging"
 	"go.opentelemetry.io/otel/trace/noop"
 )
 
@@ -63,26 +65,31 @@ func NewAuditCheckSetup(conf *SetupConfiguration) (*AuditCheckSetup, error) {
 	}
 
 	request := &driver.TokenRequest{
-		Issues: [][]byte{issueActionRaw},
+		Actions: []*driver.TypedAction{
+			{Type: request.ActionType_ACTION_TYPE_ISSUE, Raw: issueActionRaw},
+		},
 	}
 
 	// The issuer identity stored in the action (ia.Issuer) equals issuerID.
 	// Setting IssueMetadata.Issuer.Identity to the same value satisfies the
 	// identity-equality check inside audit.GetAuditInfoForIssues.
 	metadata := &driver.TokenRequestMetadata{
-		Issues: []*driver.IssueMetadata{
+		Actions: []*driver.ActionMetadataEntry{
 			{
-				Issuer: driver.AuditableIdentity{
-					Identity:  issuerID,
-					AuditInfo: conf.IssuerSigner.AuditInfo,
-				},
-				Outputs: []*driver.IssueOutputMetadata{
-					{
-						OutputMetadata: metaBytes,
-						Receivers: []*driver.AuditableIdentity{
-							{
-								Identity:  conf.OwnerIdentity.ID,
-								AuditInfo: conf.OwnerIdentity.AuditInfo,
+				ActionID: 0,
+				IssueMetadata: &driver.IssueMetadata{
+					Issuer: driver.AuditableIdentity{
+						Identity:  issuerID,
+						AuditInfo: conf.IssuerSigner.AuditInfo,
+					},
+					Outputs: []*driver.IssueOutputMetadata{
+						{
+							OutputMetadata: metaBytes,
+							Receivers: []*driver.AuditableIdentity{
+								{
+									Identity:  conf.OwnerIdentity.ID,
+									AuditInfo: conf.OwnerIdentity.AuditInfo,
+								},
 							},
 						},
 					},
@@ -105,6 +112,7 @@ func NewAuditCheckSetup(conf *SetupConfiguration) (*AuditCheckSetup, error) {
 		logging.MustGetLogger(),
 		ppm,
 		deserializer,
+		&mock.QueryEngine{},
 		noop.NewTracerProvider(),
 	)
 

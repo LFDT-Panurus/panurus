@@ -5,8 +5,8 @@ import (
 	"context"
 	"sync"
 
+	"github.com/LFDT-Panurus/panurus/token/services/ttx"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/view"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/ttx"
 )
 
 type Session struct {

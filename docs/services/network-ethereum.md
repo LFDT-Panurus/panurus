@@ -1,15 +1,15 @@
 # Network Service - Ethereum Implementation Guide
 
 This guide describes how to implement a Network Service driver for Ethereum-based networks. 
-The Fabric Token SDK's driver architecture enables integration with Ethereum and EVM-compatible blockchains through two distinct approaches, each with different trade-offs.
+Panurus's driver architecture enables integration with Ethereum and EVM-compatible blockchains through two distinct approaches, each with different trade-offs.
 
 ## Overview
 
-Ethereum integration requires adapting the Token SDK's transaction model to Ethereum's account-based ledger and smart contract execution environment. Unlike Fabric's channel-based architecture, Ethereum uses a global state model with smart contracts for business logic execution.
+Ethereum integration requires adapting Panurus's transaction model to Ethereum's account-based ledger and smart contract execution environment. Unlike Fabric's channel-based architecture, Ethereum uses a global state model with smart contracts for business logic execution.
 
 ```mermaid
 graph TB
-    subgraph "Token SDK"
+    subgraph "Panurus"
         App[Application/TTX]
         Driver[Ethereum Network Driver]
     end
@@ -30,7 +30,7 @@ graph TB
 
 ## Implementation Approaches
 
-The SDK supports two architectural approaches for Ethereum integration, each suited to different requirements:
+Panurus supports two architectural approaches for Ethereum integration, each suited to different requirements:
 
 ### Approach 1: Smart Contract Validation
 
@@ -485,4 +485,4 @@ func (n *EthereumNetwork) RequestApproval(
 - [Fabric Implementation](./network-fabric.md) - Chaincode-based validation
 - [FabricX Implementation](./network-fabricx.md) - FSC endorser model
 - [Driver Interface](../../token/services/network/driver/network.go) - Network driver interface
-- [Token SDK Architecture](../tokensdk.md) - Overall system design
+- [Panurus Architecture](../tokensdk.md) - Overall system design

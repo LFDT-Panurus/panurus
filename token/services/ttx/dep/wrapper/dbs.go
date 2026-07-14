@@ -7,10 +7,10 @@ SPDX-License-Identifier: Apache-2.0
 package wrapper
 
 import (
-	"github.com/hyperledger-labs/fabric-token-sdk/token"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/auditdb"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/ttxdb"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/ttx/dep"
+	"github.com/LFDT-Panurus/panurus/token"
+	"github.com/LFDT-Panurus/panurus/token/services/storage/auditdb"
+	"github.com/LFDT-Panurus/panurus/token/services/storage/ttxdb"
+	"github.com/LFDT-Panurus/panurus/token/services/ttx/dep"
 )
 
 type TransactionDBProvider struct {

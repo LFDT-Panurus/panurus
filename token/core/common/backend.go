@@ -9,11 +9,11 @@ package common
 import (
 	"context"
 
+	"github.com/LFDT-Panurus/panurus/token/driver"
+	"github.com/LFDT-Panurus/panurus/token/services/logging"
+	"github.com/LFDT-Panurus/panurus/token/services/utils"
+	"github.com/LFDT-Panurus/panurus/token/token"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/driver"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/logging"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/utils"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/token"
 )
 
 // Backend represents a backend for token operations, providing access to the ledger and transaction signatures.
@@ -50,6 +50,10 @@ func (b *Backend) HasBeenSignedBy(ctx context.Context, id driver.Identity, verif
 
 // GetState returns the state associated with the provided token ID from the ledger.
 func (b *Backend) GetState(id token.ID) ([]byte, error) {
+	if b.Ledger == nil {
+		return nil, errors.New("ledger not available")
+	}
+
 	return b.Ledger(id)
 }
 

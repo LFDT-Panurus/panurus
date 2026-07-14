@@ -1,6 +1,6 @@
 #!/bin/bash
 
-REPO="hyperledger-labs/fabric-token-sdk"
+REPO="LFDT-Panurus/panurus"
 API_URL="https://api.github.com/repos/$REPO"
 SEARCH_API_URL="https://api.github.com/search/issues"
 

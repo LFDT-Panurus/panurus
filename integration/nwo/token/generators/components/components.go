@@ -23,5 +23,5 @@ func (c *Builder) Build(path string) string {
 }
 
 func (c *Builder) FSCCLI() string {
-	return c.Build("github.com/hyperledger-labs/fabric-smart-client/cmd/fsccli")
+	return c.Build("github.com/hyperledger-labs/fabric-smart-client/integration/nwo/cmd/fsccli")
 }

@@ -9,10 +9,10 @@ package rest
 import (
 	"net/http"
 
-	"github.com/hyperledger-labs/fabric-token-sdk/integration/nwo/txgen/model"
-	"github.com/hyperledger-labs/fabric-token-sdk/integration/nwo/txgen/service/logging"
-	"github.com/hyperledger-labs/fabric-token-sdk/integration/nwo/txgen/service/metrics"
-	"github.com/hyperledger-labs/fabric-token-sdk/integration/nwo/txgen/service/user"
+	"github.com/LFDT-Panurus/panurus/integration/nwo/txgen/model"
+	"github.com/LFDT-Panurus/panurus/integration/nwo/txgen/service/logging"
+	"github.com/LFDT-Panurus/panurus/integration/nwo/txgen/service/metrics"
+	"github.com/LFDT-Panurus/panurus/integration/nwo/txgen/service/user"
 )
 
 type restUserProvider struct {

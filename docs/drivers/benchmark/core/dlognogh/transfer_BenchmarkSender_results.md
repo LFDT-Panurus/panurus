@@ -9,7 +9,7 @@ Here is the summary produced by `benchstat`.
 ```shell
 goos: darwin
 goarch: arm64
-pkg: github.com/hyperledger-labs/fabric-token-sdk/token/core/zkatdlog/nogh/v1/transfer
+pkg: github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/transfer
 cpu: Apple M1 Max
                                                                                                       │ docs/drivers/benchmark/core/dlognogh/transfer_results.txt │
                                                                                                       │                    sec/op                    │

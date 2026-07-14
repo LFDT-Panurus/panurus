@@ -10,7 +10,7 @@ import (
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 
 	mathlib "github.com/IBM/mathlib"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/core/zkatdlog/nogh/v1/crypto/math"
+	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/crypto/math"
 )
 
 // validateCurve checks if the curve is non-nil and supported.
@@ -28,9 +28,10 @@ func validateCurve(curve *mathlib.Curve) error {
 	return nil
 }
 
-// validateG1Slice checks if a slice of G1 elements is valid.
-// Note: This validation allows infinity points (identity elements) which can legitimately
-// appear in generators or proof elements for edge cases.
+// validateG1Slice checks if a slice of G1 elements is valid: non-nil slice, correct
+// length, and every element passes math.CheckElements (non-nil, correct curve, not
+// the point at infinity).  An identity element in a generator or proof position
+// collapses the commitment scheme and must be rejected.
 func validateG1Slice(name string, elements []*mathlib.G1, curve *mathlib.Curve, expectedLen int) error {
 	if elements == nil {
 		return errors.Errorf("%s cannot be nil", name)
@@ -38,14 +39,8 @@ func validateG1Slice(name string, elements []*mathlib.G1, curve *mathlib.Curve, 
 	if expectedLen > 0 && len(elements) != expectedLen {
 		return errors.Wrapf(ErrInvalidLength, "%s expected %d, got %d", name, expectedLen, len(elements))
 	}
-	// Check each element for nil and curve ID match, but allow infinity
-	for i, elem := range elements {
-		if elem == nil {
-			return errors.Wrapf(ErrNilElement, "%s[%d]", name, i)
-		}
-		if elem.CurveID() != curve.ID() {
-			return errors.Wrapf(ErrWrongCurveID, "%s[%d]", name, i)
-		}
+	if err := math.CheckElements(elements, curve.ID(), uint64(len(elements))); err != nil {
+		return errors.Wrapf(err, "%s validation failed", name)
 	}
 
 	return nil
@@ -116,8 +111,11 @@ func validateCSPVerifierInputs(curve *mathlib.Curve, v *verifier) error {
 }
 
 // validateCSPProof validates the structure of a CSP proof.
-// Note: Proof elements (Left, Right) are NOT checked for infinity because
-// infinity points can legitimately appear in proofs for edge cases like zero witnesses.
+// proof.Left and proof.Right are prover-supplied folding commitments that are used
+// directly in the verifier equation; admitting the identity element (infinity) would
+// neutralise the corresponding round constraint and weaken range-proof soundness.
+// All G1 proof elements are therefore rejected if they are nil, on the wrong curve,
+// or the point at infinity — mirroring the check in the IPA verifier.
 func validateCSPProof(curve *mathlib.Curve, proof *Proof, expectedRounds uint64) error {
 	if proof == nil {
 		return ErrNilProof
@@ -125,11 +123,9 @@ func validateCSPProof(curve *mathlib.Curve, proof *Proof, expectedRounds uint64)
 	if err := validateCurve(curve); err != nil {
 		return errors.Wrapf(err, "invalid proof curve")
 	}
-	// Validate proof arrays without strict infinity checks (proof elements can be infinity)
 	if proof.Left == nil {
 		return errors.New("proof.Left cannot be nil")
 	}
-	// Validate proof arrays length - use uint64 comparison to avoid conversion
 	if uint64(len(proof.Left)) != expectedRounds {
 		return errors.Wrapf(ErrInvalidLength, "proof.Left expected %d, got %d", expectedRounds, len(proof.Left))
 	}
@@ -139,21 +135,11 @@ func validateCSPProof(curve *mathlib.Curve, proof *Proof, expectedRounds uint64)
 	if uint64(len(proof.Right)) != expectedRounds {
 		return errors.Wrapf(ErrInvalidLength, "proof.Right expected %d, got %d", expectedRounds, len(proof.Right))
 	}
-	for i, elem := range proof.Left {
-		if elem == nil {
-			return errors.Wrapf(ErrNilElement, "proof.Left[%d]", i)
-		}
-		if elem.CurveID() != curve.ID() {
-			return errors.Wrapf(ErrWrongCurveID, "proof.Left[%d]", i)
-		}
+	if err := math.CheckElements(proof.Left, curve.ID(), expectedRounds); err != nil {
+		return errors.Wrapf(err, "proof.Left validation failed")
 	}
-	for i, elem := range proof.Right {
-		if elem == nil {
-			return errors.Wrapf(ErrNilElement, "proof.Right[%d]", i)
-		}
-		if elem.CurveID() != curve.ID() {
-			return errors.Wrapf(ErrWrongCurveID, "proof.Right[%d]", i)
-		}
+	if err := math.CheckElements(proof.Right, curve.ID(), expectedRounds); err != nil {
+		return errors.Wrapf(err, "proof.Right validation failed")
 	}
 	// For Zr slices, validate length using uint64 comparison
 	if uint64(len(proof.VLeft)) != expectedRounds {

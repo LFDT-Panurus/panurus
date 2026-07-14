@@ -12,7 +12,7 @@ import (
 	common2 "github.com/hyperledger-labs/fabric-smart-client/platform/view/services/storage/driver/common"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/services/storage/driver/sql/common"
 
-	common3 "github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/db/sql/common"
+	common3 "github.com/LFDT-Panurus/panurus/token/services/storage/db/sql/common"
 )
 
 // WalletStore wraps common.WalletStore to add advisory lock to schema creation

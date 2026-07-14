@@ -7,7 +7,7 @@ SPDX-License-Identifier: Apache-2.0
 package auditdb
 
 import (
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/auditdb/locker"
+	"github.com/LFDT-Panurus/panurus/token/services/storage/auditdb/locker"
 )
 
 type (

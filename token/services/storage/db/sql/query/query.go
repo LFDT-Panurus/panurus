@@ -7,11 +7,11 @@ SPDX-License-Identifier: Apache-2.0
 package query
 
 import (
-	common2 "github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/db/sql/query/common"
-	_delete2 "github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/db/sql/query/delete"
-	_insert2 "github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/db/sql/query/insert"
-	_select2 "github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/db/sql/query/select"
-	_update2 "github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/db/sql/query/update"
+	common2 "github.com/LFDT-Panurus/panurus/token/services/storage/db/sql/query/common"
+	_delete2 "github.com/LFDT-Panurus/panurus/token/services/storage/db/sql/query/delete"
+	_insert2 "github.com/LFDT-Panurus/panurus/token/services/storage/db/sql/query/insert"
+	_select2 "github.com/LFDT-Panurus/panurus/token/services/storage/db/sql/query/select"
+	_update2 "github.com/LFDT-Panurus/panurus/token/services/storage/db/sql/query/update"
 )
 
 // Select initiates a SELECT query

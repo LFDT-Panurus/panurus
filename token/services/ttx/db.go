@@ -9,17 +9,17 @@ package ttx
 import (
 	"context"
 
+	"github.com/LFDT-Panurus/panurus/token"
+	"github.com/LFDT-Panurus/panurus/token/core/common/metrics"
+	"github.com/LFDT-Panurus/panurus/token/services/storage"
+	"github.com/LFDT-Panurus/panurus/token/services/storage/ttxdb"
+	"github.com/LFDT-Panurus/panurus/token/services/tokens"
+	"github.com/LFDT-Panurus/panurus/token/services/ttx/dep"
+	"github.com/LFDT-Panurus/panurus/token/services/ttx/dep/db"
+	"github.com/LFDT-Panurus/panurus/token/services/ttx/finality"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/services/tracing"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/view"
-	"github.com/hyperledger-labs/fabric-token-sdk/token"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/core/common/metrics"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/storage"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/ttxdb"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/tokens"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/ttx/dep"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/ttx/dep/db"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/ttx/finality"
 	"go.opentelemetry.io/otel/trace"
 )
 

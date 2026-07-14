@@ -9,12 +9,12 @@ package common
 import (
 	"time"
 
+	token2 "github.com/LFDT-Panurus/panurus/integration/token"
+	"github.com/LFDT-Panurus/panurus/integration/token/common/views"
+	"github.com/LFDT-Panurus/panurus/token"
 	"github.com/hyperledger-labs/fabric-smart-client/integration"
 	"github.com/hyperledger-labs/fabric-smart-client/integration/nwo/common"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/fabric/services/endorser"
-	token2 "github.com/hyperledger-labs/fabric-token-sdk/integration/token"
-	"github.com/hyperledger-labs/fabric-token-sdk/integration/token/common/views"
-	"github.com/hyperledger-labs/fabric-token-sdk/token"
 	"github.com/onsi/gomega"
 )
 

@@ -7,9 +7,9 @@ SPDX-License-Identifier: Apache-2.0
 package _select
 
 import (
+	common2 "github.com/LFDT-Panurus/panurus/token/services/storage/db/sql/query/common"
+	"github.com/LFDT-Panurus/panurus/token/services/storage/db/sql/query/cond"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/common/driver"
-	common2 "github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/db/sql/query/common"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/db/sql/query/cond"
 )
 
 type Query interface {

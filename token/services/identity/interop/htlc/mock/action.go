@@ -4,7 +4,7 @@ package mock
 import (
 	"sync"
 
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/identity/interop/htlc"
+	"github.com/LFDT-Panurus/panurus/token/services/identity/interop/htlc"
 )
 
 type Action struct {

@@ -10,9 +10,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/LFDT-Panurus/panurus/token/services/auditor"
+	"github.com/LFDT-Panurus/panurus/token/services/auditor/mock"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/auditor"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/auditor/mock"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

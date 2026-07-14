@@ -9,11 +9,11 @@ package tms_test
 import (
 	"testing"
 
-	"github.com/hyperledger-labs/fabric-token-sdk/token/sdk/tms"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/auditor"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/network"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/tokens"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/ttx"
+	"github.com/LFDT-Panurus/panurus/token/sdk/tms"
+	"github.com/LFDT-Panurus/panurus/token/services/auditor"
+	"github.com/LFDT-Panurus/panurus/token/services/network"
+	"github.com/LFDT-Panurus/panurus/token/services/tokens"
+	"github.com/LFDT-Panurus/panurus/token/services/ttx"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -81,4 +81,4 @@ func TestNewPostInitializer_MultipleInstances(t *testing.T) {
 // 2. Restores auditor database for the TMS
 // 3. Sets supported token formats
 // These operations are better tested through integration tests where all dependencies
-// are properly initialized. The method is tested through the SDK integration tests.
+// are properly initialized. The method is tested through Panurus integration tests.

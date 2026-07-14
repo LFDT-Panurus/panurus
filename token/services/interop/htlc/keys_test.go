@@ -10,7 +10,7 @@ import (
 	"encoding/hex"
 	"testing"
 
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/interop/htlc"
+	"github.com/LFDT-Panurus/panurus/token/services/interop/htlc"
 	"github.com/stretchr/testify/require"
 )
 

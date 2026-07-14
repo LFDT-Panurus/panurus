@@ -11,13 +11,13 @@ import (
 	"testing"
 
 	math "github.com/IBM/mathlib"
+	"github.com/LFDT-Panurus/panurus/token"
+	"github.com/LFDT-Panurus/panurus/token/services/identity/driver"
+	"github.com/LFDT-Panurus/panurus/token/services/identity/idemix/crypto"
+	"github.com/LFDT-Panurus/panurus/token/services/identity/membership"
+	kvs2 "github.com/LFDT-Panurus/panurus/token/services/storage/db/kvs"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/proto"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/services/metrics/disabled"
-	"github.com/hyperledger-labs/fabric-token-sdk/token"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/identity/driver"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/identity/idemix/crypto"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/identity/membership"
-	kvs2 "github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/db/kvs"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -39,7 +39,7 @@ func (m mockConfig) IdentitiesForRole(driver.IdentityRoleType) ([]driver.Configu
 
 //go:norace
 func TestNewKeyManagerProvider(t *testing.T) {
-	testNewKeyManagerProvider(t, "./testdata/fp256bn_amcl/idemix", math.FP256BN_AMCL)
+	testNewKeyManagerProvider(t, "./testdata/bls12_381_bbs_gurvy/idemix", math.BLS12_381_BBS_GURVY)
 	testNewKeyManagerProvider(t, "./testdata/bls12_381_bbs/idemix", math.BLS12_381_BBS_GURVY)
 }
 
@@ -129,7 +129,7 @@ func checkRawContent(t *testing.T, ipk []byte, raw []byte) {
 
 // TestKeyManagerProviderErrorPaths tests various error paths in kmp
 func TestKeyManagerProviderErrorPaths(t *testing.T) {
-	testKeyManagerProviderErrorPaths(t, "./testdata/fp256bn_amcl/idemix", math.FP256BN_AMCL)
+	testKeyManagerProviderErrorPaths(t, "./testdata/bls12_381_bbs_gurvy/idemix", math.BLS12_381_BBS_GURVY)
 	testKeyManagerProviderErrorPaths(t, "./testdata/bls12_381_bbs/idemix", math.BLS12_381_BBS_GURVY)
 }
 
@@ -199,7 +199,7 @@ func testKeyManagerProviderErrorPaths(t *testing.T, configPath string, curveID m
 // TestWrappedKeyManagerIdentity tests the WrappedKeyManager.Identity method
 // that uses a pre-generated cache of Idemix pseudonyms so that calling Identity is fast
 func TestWrappedKeyManagerIdentity(t *testing.T) {
-	testWrappedKeyManagerIdentity(t, "./testdata/fp256bn_amcl/idemix", math.FP256BN_AMCL)
+	testWrappedKeyManagerIdentity(t, "./testdata/bls12_381_bbs_gurvy/idemix", math.BLS12_381_BBS_GURVY)
 	testWrappedKeyManagerIdentity(t, "./testdata/bls12_381_bbs/idemix", math.BLS12_381_BBS_GURVY)
 }
 
@@ -247,16 +247,16 @@ func testWrappedKeyManagerIdentity(t *testing.T, configPath string, curveID math
 func TestCacheSizeConfiguration(t *testing.T) {
 	backend, err := kvs2.NewInMemory()
 	require.NoError(t, err)
-	config, err := crypto.NewConfig("./testdata/fp256bn_amcl/idemix")
+	config, err := crypto.NewConfig("./testdata/bls12_381_bbs_gurvy/idemix")
 	require.NoError(t, err)
-	keyStore, err := crypto.NewKeyStore(math.FP256BN_AMCL, kvs2.Keystore(backend))
+	keyStore, err := crypto.NewKeyStore(math.BLS12_381_BBS_GURVY, kvs2.Keystore(backend))
 	require.NoError(t, err)
 
 	// Test with custom cache size
 	customCacheSize := 10
 	kmp := NewKeyManagerProvider(
 		config.Ipk,
-		math.FP256BN_AMCL,
+		math.BLS12_381_BBS_GURVY,
 		keyStore,
 		&mockConfig{},
 		customCacheSize,
@@ -277,15 +277,15 @@ func TestCacheSizeConfiguration(t *testing.T) {
 func TestKeyManagerProviderWithIgnoreVerifyOnlyWallet(t *testing.T) {
 	backend, err := kvs2.NewInMemory()
 	require.NoError(t, err)
-	config, err := crypto.NewConfig("./testdata/fp256bn_amcl/idemix")
+	config, err := crypto.NewConfig("./testdata/bls12_381_bbs_gurvy/idemix")
 	require.NoError(t, err)
-	keyStore, err := crypto.NewKeyStore(math.FP256BN_AMCL, kvs2.Keystore(backend))
+	keyStore, err := crypto.NewKeyStore(math.BLS12_381_BBS_GURVY, kvs2.Keystore(backend))
 	require.NoError(t, err)
 
 	// Test with ignoreVerifyOnlyWallet = true
 	kmp := NewKeyManagerProvider(
 		config.Ipk,
-		math.FP256BN_AMCL,
+		math.BLS12_381_BBS_GURVY,
 		keyStore,
 		&mockConfig{},
 		0,
@@ -295,7 +295,7 @@ func TestKeyManagerProviderWithIgnoreVerifyOnlyWallet(t *testing.T) {
 
 	idConfig := &token.IdentityConfiguration{
 		ID:  "alice",
-		URL: "./testdata/fp256bn_amcl/idemix",
+		URL: "./testdata/bls12_381_bbs_gurvy/idemix",
 	}
 	km, err := kmp.Get(context.Background(), idConfig)
 	require.NoError(t, err)
@@ -307,14 +307,14 @@ func TestKeyManagerProviderWithIgnoreVerifyOnlyWallet(t *testing.T) {
 func TestKeyManagerProviderGetWithRawConfig(t *testing.T) {
 	backend, err := kvs2.NewInMemory()
 	require.NoError(t, err)
-	config, err := crypto.NewConfig("./testdata/fp256bn_amcl/idemix")
+	config, err := crypto.NewConfig("./testdata/bls12_381_bbs_gurvy/idemix")
 	require.NoError(t, err)
-	keyStore, err := crypto.NewKeyStore(math.FP256BN_AMCL, kvs2.Keystore(backend))
+	keyStore, err := crypto.NewKeyStore(math.BLS12_381_BBS_GURVY, kvs2.Keystore(backend))
 	require.NoError(t, err)
 
 	kmp := NewKeyManagerProvider(
 		config.Ipk,
-		math.FP256BN_AMCL,
+		math.BLS12_381_BBS_GURVY,
 		keyStore,
 		&mockConfig{},
 		0,
@@ -325,7 +325,7 @@ func TestKeyManagerProviderGetWithRawConfig(t *testing.T) {
 	// First get an idConfig from a URL to populate a valid Raw idConfig
 	idConfig := &token.IdentityConfiguration{
 		ID:  "alice",
-		URL: "./testdata/fp256bn_amcl/idemix",
+		URL: "./testdata/bls12_381_bbs_gurvy/idemix",
 	}
 	_, err = kmp.Get(context.Background(), idConfig)
 	require.NoError(t, err)

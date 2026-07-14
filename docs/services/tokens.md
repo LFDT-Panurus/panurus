@@ -15,7 +15,7 @@ The internal [Service](../../token/services/tokens/tokens.go) is responsible for
 
 ## Token Representations
 
-The SDK supports multiple cryptographic representations simultaneously using Type IDs:
+Panurus supports multiple cryptographic representations simultaneously using Type IDs:
 
 | Representation | Location | Type ID | Description |
 | :--- | :--- | :--- | :--- |

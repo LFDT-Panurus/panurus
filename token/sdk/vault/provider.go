@@ -9,12 +9,12 @@ package vault
 import (
 	"sync"
 
+	"github.com/LFDT-Panurus/panurus/token"
+	"github.com/LFDT-Panurus/panurus/token/driver"
+	"github.com/LFDT-Panurus/panurus/token/services/storage/auditdb"
+	"github.com/LFDT-Panurus/panurus/token/services/storage/tokendb"
+	"github.com/LFDT-Panurus/panurus/token/services/storage/ttxdb"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
-	"github.com/hyperledger-labs/fabric-token-sdk/token"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/driver"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/auditdb"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/tokendb"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/ttxdb"
 )
 
 // Provider creates and caches vault instances for TMS identifiers.

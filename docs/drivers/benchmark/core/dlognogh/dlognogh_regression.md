@@ -24,32 +24,56 @@ Regression tests ensure **backwards compatibility** of the ZK-ATDLOG validator b
 
 ```
 testdata/
-├── 32-BLS12_381_BBS_GURVY/     # 32-bit range proofs, BLS12_381 curve
-│   ├── params.txt              # Base64-encoded public parameters
-│   ├── transfers_i1_o1/        # Transfer: 1 input, 1 output
-│   │   ├── output.0.json
-│   │   ├── output.1.json
-│   │   └── ... (64 files)
-│   ├── transfers_i1_o2/        # Transfer: 1 input, 2 outputs
-│   ├── transfers_i2_o1/        # Transfer: 2 inputs, 1 output
-│   ├── transfers_i2_o2/        # Transfer: 2 inputs, 2 outputs
-│   ├── issues_i1_o1/           # Issue operations
-│   ├── redeems_i1_o1/          # Redeem operations
-│   └── swaps_i1_o1/            # Swap operations
-├── 32-BN254/                   # 32-bit range proofs, BN254 curve
-├── 64-BLS12_381_BBS_GURVY/     # 64-bit range proofs, BLS12_381 curve
-└── 64-BN254/                   # 64-bit range proofs, BN254 curve
+└── zero/
+    ├── 32-BLS12_381_BBS_GURVY/     # 32-bit range proofs, BLS12_381 curve
+    │   ├── params.txt              # Base64-encoded public parameters
+    │   └── testdata.json           # All test cases for this configuration
+    ├── 32-BN254/                   # 32-bit range proofs, BN254 curve
+    │   ├── params.txt
+    │   └── testdata.json
+    ├── 64-BLS12_381_BBS_GURVY/     # 64-bit range proofs, BLS12_381 curve
+    │   ├── params.txt
+    │   └── testdata.json
+    └── 64-BN254/                   # 64-bit range proofs, BN254 curve
+        ├── params.txt
+        └── testdata.json
 ```
 
 ### Test Vector Format
 
-Each `output.N.json` file contains:
+Each `testdata.json` file contains all test cases for a configuration with labeled keys:
+
 ```json
 {
-  "req_raw": "<base64-encoded token request>",
-  "txid": "<transaction ID>"
+  "transfers_i1_o1_0": {
+    "req_raw": "<base64-encoded token request>",
+    "txid": "<transaction ID>",
+    "metadata": "<base64-encoded metadata>",
+    "inputs": [[<serialized-token-bytes>], [...]]
+  },
+  "transfers_i1_o1_1": { ... },
+  ...
+  "transfers_i1_o1_63": { ... },
+  "transfers_i1_o2_0": { ... },
+  ...
+  "issues_i1_o1_0": { ... },
+  ...
+  "redeems_i2_o2_63": { ... },
+  "swaps_i2_o2_63": { ... }
 }
 ```
+
+**Key Format:** `<action>_i<inputs>_o<outputs>_<index>`
+- `action`: One of `transfers`, `issues`, `redeems`, `swaps`
+- `inputs`: Number of input tokens (1 or 2)
+- `outputs`: Number of output tokens (1 or 2)
+- `index`: Test case number (0-63)
+
+**Fields:**
+- `req_raw`: Base64-encoded serialized token request
+- `txid`: Transaction ID for the request
+- `metadata`: Base64-encoded token request metadata (for auditor validation)
+- `inputs`: Nested array of serialized input tokens (for auditor validation)
 
 ## Running Regression Tests
 
@@ -89,7 +113,9 @@ The regression suite tests:
 - **4 Action Types**: transfers, issues, redeems, swaps
 - **4 Input/Output Combinations**: i1_o1, i1_o2, i2_o1, i2_o2
 - **4 Configurations**: 2 bit sizes (32, 64) × 2 curves (BLS12_381, BN254)
-- **64 Vectors per Configuration**: Total of 4,096 test vectors
+- **64 Test Cases per Combination**: 64 vectors for each action/input/output combination
+- **1,024 Test Cases per Configuration**: 4 actions × 4 combinations × 64 vectors
+- **Total Test Vectors**: 4,096 test cases across all configurations (4 configs × 1,024 cases)
 
 ## Generating New Test Data
 
@@ -98,9 +124,11 @@ When code changes require regenerating test vectors:
 ### 1. Use the Generator
 
 ```bash
-cd token/core/zkatdlog/nogh/v1/validator/regression/testdata/generator
-go run main.go
+cd token/core/zkatdlog/nogh/v1/regression/testdata/zero/generator
+go generate
 ```
+
+This will generate `testdata.json` files in each configuration directory, with each file containing all 64 test cases in an aggregated format.
 
 ### 2. Document the Change
 
@@ -119,8 +147,7 @@ Description of the change that required test data regeneration.
 ### 3. Commit New Test Data
 
 ```bash
-git add testdata/
-git add changes.md
+git add token/core/zkatdlog/nogh/v1/regression/testdata/
 git commit -m "Regenerate regression test data: <reason>"
 ```
 

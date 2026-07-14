@@ -74,12 +74,14 @@ func (fake *HashMock) BlockSize() int {
 	if specificReturn {
 		return ret.result1
 	}
+
 	return fakeReturns.result1
 }
 
 func (fake *HashMock) BlockSizeCallCount() int {
 	fake.blockSizeMutex.RLock()
 	defer fake.blockSizeMutex.RUnlock()
+
 	return len(fake.blockSizeArgsForCall)
 }
 
@@ -127,6 +129,7 @@ func (fake *HashMock) Reset() {
 func (fake *HashMock) ResetCallCount() int {
 	fake.resetMutex.RLock()
 	defer fake.resetMutex.RUnlock()
+
 	return len(fake.resetArgsForCall)
 }
 
@@ -151,12 +154,14 @@ func (fake *HashMock) Size() int {
 	if specificReturn {
 		return ret.result1
 	}
+
 	return fakeReturns.result1
 }
 
 func (fake *HashMock) SizeCallCount() int {
 	fake.sizeMutex.RLock()
 	defer fake.sizeMutex.RUnlock()
+
 	return len(fake.sizeArgsForCall)
 }
 
@@ -210,12 +215,14 @@ func (fake *HashMock) Sum(arg1 []byte) []byte {
 	if specificReturn {
 		return ret.result1
 	}
+
 	return fakeReturns.result1
 }
 
 func (fake *HashMock) SumCallCount() int {
 	fake.sumMutex.RLock()
 	defer fake.sumMutex.RUnlock()
+
 	return len(fake.sumArgsForCall)
 }
 
@@ -229,6 +236,7 @@ func (fake *HashMock) SumArgsForCall(i int) []byte {
 	fake.sumMutex.RLock()
 	defer fake.sumMutex.RUnlock()
 	argsForCall := fake.sumArgsForCall[i]
+
 	return argsForCall.arg1
 }
 
@@ -276,12 +284,14 @@ func (fake *HashMock) Write(arg1 []byte) (int, error) {
 	if specificReturn {
 		return ret.result1, ret.result2
 	}
+
 	return fakeReturns.result1, fakeReturns.result2
 }
 
 func (fake *HashMock) WriteCallCount() int {
 	fake.writeMutex.RLock()
 	defer fake.writeMutex.RUnlock()
+
 	return len(fake.writeArgsForCall)
 }
 
@@ -295,6 +305,7 @@ func (fake *HashMock) WriteArgsForCall(i int) []byte {
 	fake.writeMutex.RLock()
 	defer fake.writeMutex.RUnlock()
 	argsForCall := fake.writeArgsForCall[i]
+
 	return argsForCall.arg1
 }
 
@@ -331,6 +342,7 @@ func (fake *HashMock) Invocations() map[string][][]interface{} {
 	for key, value := range fake.invocations {
 		copiedInvocations[key] = value
 	}
+
 	return copiedInvocations
 }
 

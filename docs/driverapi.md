@@ -81,7 +81,7 @@ graph TD
 *   **Deserializer**: Responsible for converting serialized identity data into cryptographic verifiers and extract recipient identities. It also provides matchers for audit information.
 *   **Configuration**: Provides access to TMS-specific configuration settings (e.g., paths, identifiers), allowing the services to adapt their behavior based on the environment.
 
-Currently, the Fabric Token SDK offers two reference driver implementations: `FabToken` and `ZKAT-DLog` (Zero-Knowledge Authenticated Token based on Discrete Logarithm).
+Currently, Panurus offers two reference driver implementations: `FabToken` and `ZKAT-DLog` (Zero-Knowledge Authenticated Token based on Discrete Logarithm).
 
 ## Serialization
 
@@ -99,128 +99,161 @@ A `TokenRequest` is the primary structure submitted to the ledger. It consists o
 - **Auditing**: A dedicated section for auditor signatures and their identities.
 - **Metadata**: (Sent via transient data) Contains cleartext information required by participants and auditors to process the transaction.
 
-## Protocol Versions and Signature Security
+### Message Hierarchy
 
-The Token SDK supports multiple protocol versions for token request signatures, providing a migration path for security improvements while maintaining backward compatibility.
+The following diagram illustrates the relationship between the core Protobuf messages defined in `token/driver/protos/v1`:
 
-**Supported Protocol Versions**:
-- **Protocol V1**: Original implementation (legacy)
-- **Protocol V2**: Enhanced security implementation (recommended)
+```mermaid
+classDiagram
+    direction TB
+    class TokenRequestWithMetadata {
+        +uint32 version
+        +string anchor
+    }
+    class TokenRequest {
+        +uint32 version
+    }
+    class TokenRequestMetadata {
+        +uint32 version
+        +map application_metadata
+    }
+    class Action {
+        <<oneof>>
+    }
+    class TypedAction {
+        +ActionType type
+        +bytes raw
+    }
+    class HashedAction {
+        +bytes hash
+    }
+    class ActionMetadata {
+        +uint32 action_id
+    }
+    class IssueMetadata {
+    }
+    class TransferMetadata {
+    }
+    class HashedMetadata {
+        +bytes hash
+    }
+    class RequestSignature {
+    }
+    class ActionSignature {
+        +uint32 action_id
+    }
+    class AuditorSignature {
+    }
+    class AuditableIdentity {
+        +bytes audit_info
+    }
+    class Identity {
+        +bytes raw
+    }
+    class TokenID {
+        +string tx_id
+        +uint64 index
+    }
+    class PublicParameters {
+        +string identifier
+        +bytes raw
+    }
 
-### Protocol V1 (Legacy)
-
-**Implementation**: [`token/driver/request.go:marshalToMessageToSignV1`](../token/driver/request.go)
-
-**Signature Message Construction**:
+    TokenRequestWithMetadata *-- TokenRequest : request
+    TokenRequestWithMetadata *-- TokenRequestMetadata : metadata
+    TokenRequest *-- Action : actions
+    TokenRequest *-- RequestSignature : signatures
+    Action *-- TypedAction : typed_action
+    Action *-- HashedAction : hashed_action
+    TokenRequestMetadata *-- ActionMetadata : metadata
+    ActionMetadata *-- IssueMetadata : issue_metadata
+    ActionMetadata *-- TransferMetadata : transfer_metadata
+    ActionMetadata *-- HashedMetadata : hashed_metadata
+    RequestSignature *-- ActionSignature : action_signature
+    RequestSignature *-- AuditorSignature : auditor_signature
+    IssueMetadata *-- AuditableIdentity : issuer
+    IssueMetadata *-- IssueInputMetadata : inputs
+    IssueMetadata *-- OutputMetadata : outputs
+    IssueMetadata *-- AuditableIdentity : extra_signers
+    TransferMetadata *-- TransferInputMetadata : inputs
+    TransferMetadata *-- OutputMetadata : outputs
+    TransferMetadata *-- AuditableIdentity : issuer
+    TransferMetadata *-- AuditableIdentity : extra_signers
+    IssueInputMetadata *-- TokenID : token_id
+    TransferInputMetadata *-- TokenID : token_id
+    TransferInputMetadata *-- AuditableIdentity : senders
+    OutputMetadata *-- AuditableIdentity : receivers
+    AuditableIdentity *-- Identity : identity
+    AuditorSignature *-- Identity : identity
 ```
-SignatureMessage = ASN.1(TokenRequest) || Anchor
+
+## Protocol V1 
+
+Protocol V1 defines how token requests are transformed into canonical byte representations for signature generation. 
+This protocol ensures deterministic, collision-resistant signatures that bind token actions to specific transaction contexts.
+
+### Message-to-Sign Computation
+
+When a token request needs to be signed (by owners, issuers, or auditors), the system computes a canonical message using the `MarshalToMessageToSign` method. This method takes an **anchor** parameter (typically the transaction ID) that uniquely binds the signature to a specific transaction context.
+
+The computation follows these steps:
+
+1. **Action Serialization**: All actions in the token request are serialized in their original order, preserving the sequence of issues and transfers as they appear in the request.
+
+2. **ASN.1 Encoding**: The actions are encoded using a structured ASN.1 format that includes both the action type and data:
+
 ```
-
-**Characteristics**:
-- Simple concatenation of ASN.1-encoded request and anchor
-- No delimiter or length prefix between components
-- Maintained for backward compatibility with existing deployments
-
-**Security Limitations**:
-- **Boundary Ambiguity**: Lack of delimiter creates potential for hash collision attacks
-- **No Input Validation**: Anchor parameter not validated for size or content
-- **Binary Data in Logs**: Error messages may expose sensitive data
-
-**Status**: ⚠️ **DEPRECATED** - Use Protocol V2 for new deployments
-
-### Protocol V2 (Recommended)
-
-**Implementation**: [`token/driver/request.go:marshalToMessageToSignV2`](../token/driver/request.go)
-
-**Signature Message Construction**:
-```go
-type SignatureMessage struct {
-    Request []byte  // ASN.1-encoded TokenRequest
-    Anchor  []byte  // Transaction anchor/ID
+SignatureMessage ::= SEQUENCE {
+  request OCTET STRING,  -- Encoded TokenRequest
+  anchor  OCTET STRING   -- Transaction anchor (e.g., TX ID)
 }
-SignatureMessage = ASN.1(SignatureMessage)
+
+TokenRequest ::= SEQUENCE {
+  actions SEQUENCE OF Action
+}
+
+Action ::= SEQUENCE {
+  type INTEGER,      -- 0 for ISSUE, 1 for TRANSFER
+  data OCTET STRING  -- Serialized action data
+}
 ```
 
-**Security Improvements**:
+3. **Type Mapping**: Action types from the protobuf enum are mapped to ASN.1 integers:
+   - `ACTION_TYPE_ISSUE` (protobuf value 1) → ASN.1 INTEGER 0
+   - `ACTION_TYPE_TRANSFER` (protobuf value 2) → ASN.1 INTEGER 1
 
-1. **Structured Format**: Uses ASN.1 structure with explicit field boundaries
-    - Prevents boundary ambiguity attacks
-    - Ensures unique mapping from (Request, Anchor) to signature message
-    - Maintains ASN.1 consistency throughout the protocol
+4. **Anchor Binding**: The anchor (transaction ID) is included in the outer ASN.1 structure, creating a cryptographic binding between the signature and the specific transaction.
 
-2. **Input Validation with Typed Errors**:
-    - Anchor must be non-empty (`ErrAnchorEmpty`)
-    - Anchor size limited to `MaxAnchorSize` (128 bytes) to prevent DoS (`ErrAnchorTooLarge`)
-    - Unsupported versions rejected with `ErrUnsupportedVersion`
-    - Validation occurs before signature generation
+### Security Properties
 
-3. **Secure Error Handling**:
-    - Binary data hex-encoded in error messages
-    - Prevents sensitive data exposure in logs
-    - Compatible with log aggregation systems
+Protocol V1 provides several critical security guarantees:
 
-4. **Comprehensive Documentation**:
-    - Security properties clearly documented
-    - Migration guidance provided
-    - Attack scenarios explained
+- **Deterministic Encoding**: The same token request and anchor always produce identical byte representations, ensuring signature verification consistency.
+- **Collision Resistance**: The structured ASN.1 format with explicit type tags prevents collision attacks where different requests could produce the same signature message.
+- **Order Preservation**: Actions are encoded in their original order, maintaining the semantic meaning of the transaction.
+- **Context Binding**: The anchor parameter prevents signature reuse across different transactions.
+- **Boundary Separation**: Clear ASN.1 structure boundaries prevent ambiguity in parsing and verification.
 
-**Security Properties**:
-- **Collision Resistance**: Different (Request, Anchor) pairs always produce different signature messages
-- **Deterministic**: Same input always produces same output
-- **Tamper-Evident**: Any modification to Request or Anchor changes the signature message
-- **DoS Protection**: Input validation prevents resource exhaustion attacks
+### Validation Requirements
 
-### Migration Guide
+The anchor parameter must satisfy these constraints:
+- **Non-empty**: Must contain at least one byte
+- **Size limit**: Maximum 128 bytes to prevent DoS attacks
+- **Uniqueness**: Must be unique per transaction to prevent signature replay
 
-**For New Deployments**:
-- Use Protocol V2 by default
-- Configure validators to require minimum version 2
-- Benefit from enhanced security properties
+### Implementation Notes
 
-**For Existing Deployments**:
+Panurus uses an optimized fast marshaller (`fastMarshalTokenRequestForSigning`) that avoids reflection overhead while maintaining full ASN.1 compatibility.
 
-1. **Phase 1: Deploy V2 Support**
-   ```go
-   // Deploy code supporting both V1 and V2
-   // V1 requests continue to work
-   // V2 requests are accepted
-   ```
-
-2. **Phase 2: Monitor Usage**
-   ```go
-   // V1 usage triggers deprecation warnings
-   // Monitor logs for V1 activity
-   // Plan migration timeline
-   ```
-
-3. **Phase 3: Migrate Applications**
-   ```go
-   // Update applications to use V2
-   // Test thoroughly in staging
-   // Roll out gradually
-   ```
-
-4. **Phase 4: Enforce V2**
-   ```go
-   // Configure validators with minimum version 2
-   // V1 requests rejected
-   // V1 support maintained for historical validation
-   ```
-
-**Backward Compatibility**:
-- V1 requests continue to validate correctly
-- Historical transactions remain valid
-- Regression tests ensure V1 compatibility
-- No breaking changes to existing deployments
-
+The version field in `TokenRequest` is included in the signature message, binding the signature to a specific protocol version and ensuring that signatures cannot be replayed across different protocol versions.
 
 ## Drivers
 
-The Token SDK comes equipped with two reference drivers:
+Panurus comes equipped with two reference drivers:
 
 - [**FabToken**](./drivers/fabtoken.md): A straightforward implementation prioritizing simplicity. It stores token transaction details (type, value, owner) in cleartext on the ledger, using X.509 certificates for identities.
 - [**DLOG w/o Graph Hiding (NOGH)**](./drivers/dlogwogh.md): A privacy-preserving driver using Zero-Knowledge Proofs (ZKP) to hide token types and values via Pedersen commitments. It leverages Idemix for owner anonymity while revealing the spending graph.
-- [**Extending a Validator Driver&&](./drivers/extending_validator.md)
+- [**Extending a Validator Driver**](./drivers/extending_validator.md)
 
 ## Observability
 

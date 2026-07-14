@@ -4,9 +4,9 @@
 
 syntax = "proto3";
 
-option go_package = "github.com/hyperledger-labs/fabric-token-sdk/token/services/identity/idemix/crypto/protos-go/config";
-
 package identity_idemix;
+
+option go_package = "github.com/LFDT-Panurus/panurus/token/services/identity/idemix/crypto/protos-go/config";
 
 // This struct represents an Idemix Identity
 // to be used to serialize it and deserialize it.

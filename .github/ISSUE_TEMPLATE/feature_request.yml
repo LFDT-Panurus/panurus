@@ -10,9 +10,9 @@ body:
         Before submitting:
         * **Search existing issues** and discussions to see if something similar has been discussed previously.
         * **Consult the Resources**:
-           - [Documentation Overview](https://github.com/hyperledger-labs/fabric-token-sdk/blob/main/docs/README.md)
-           - [Development Guidelines](https://github.com/hyperledger-labs/fabric-token-sdk/blob/main/docs/development/development.md)
-           - [Testing Guide](https://github.com/hyperledger-labs/fabric-token-sdk/blob/main/docs/development/testing.md)
+           - [Documentation Overview](https://github.com/LFDT-Panurus/panurus/blob/main/docs/README.md)
+           - [Development Guidelines](https://github.com/LFDT-Panurus/panurus/blob/main/docs/development/development.md)
+           - [Testing Guide](https://github.com/LFDT-Panurus/panurus/blob/main/docs/development/testing.md)
         * **Consider opening a GitHub discussion** first to gather feedback and reach consensus.
         * If this is a major architectural change, please provide as much detail as possible.
 

@@ -10,7 +10,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/hyperledger-labs/fabric-token-sdk/token"
+	"github.com/LFDT-Panurus/panurus/token"
 )
 
 type NewQueryEngineFunc func() QueryService

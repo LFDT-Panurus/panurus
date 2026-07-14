@@ -5,9 +5,9 @@ import (
 	"context"
 	"sync"
 
-	"github.com/hyperledger-labs/fabric-token-sdk/token/driver"
-	drivera "github.com/hyperledger-labs/fabric-token-sdk/token/services/identity/driver"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/identity/wallet"
+	"github.com/LFDT-Panurus/panurus/token/driver"
+	drivera "github.com/LFDT-Panurus/panurus/token/services/identity/driver"
+	"github.com/LFDT-Panurus/panurus/token/services/identity/wallet"
 )
 
 type RoleRegistry struct {

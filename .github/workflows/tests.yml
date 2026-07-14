@@ -2,9 +2,9 @@ name: Tests
 
 on:
   push:
-    branches: [ main ]
+    branches: [ main, feature/evm-network-driver, feature/zkat-snark-driver ]
   pull_request:
-    branches: [ main ]
+    branches: [ main, feature/evm-network-driver, feature/zkat-snark-driver ]
   workflow_dispatch:
     inputs:
       fsc-version:
@@ -45,6 +45,9 @@ jobs:
 
       - name: Run checks
         run: make checks
+
+      - name: Run linter
+        run: make lint
 
   utest:
     needs: checks
@@ -88,6 +91,7 @@ jobs:
 
   itest:
     needs: checks
+    if: github.ref == 'refs/heads/main' || github.base_ref == 'main'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false

@@ -11,7 +11,7 @@ Packages with benchmark tests:
 Here is an execution example:
 
 ```shell
-➜  fabric-token-sdk git:(1284-dlog-validator-service-benchmark) ✗ go test ./token/services/identity/idemix -test.run=TestParallelBenchmarkIdemixDeserializeSigner -test.v -test.timeout 0 -workers="NumCPU" -duration="10s" -setup_samples=128
+➜  panurus git:(1284-dlog-validator-service-benchmark) ✗ go test ./token/services/identity/idemix -test.run=TestParallelBenchmarkIdemixDeserializeSigner -test.v -test.timeout 0 -workers="NumCPU" -duration="10s" -setup_samples=128
 === RUN   TestParallelBenchmarkIdemixDeserializeSigner
 Metric           Value      Description
 ------           -----      -----------
@@ -76,6 +76,6 @@ Timeline: [▇▇▇▇▇▇▇█▇▇] (Max: 1906 ops/s)
 
 --- PASS: TestParallelBenchmarkIdemixDeserializeSigner (13.82s)
 PASS
-ok      github.com/hyperledger-labs/fabric-token-sdk/token/services/identity/idemix     14.365s
+ok      github.com/LFDT-Panurus/panurus/token/services/identity/idemix     14.365s
 
 ```

@@ -7,7 +7,7 @@ SPDX-License-Identifier: Apache-2.0
 package topology
 
 import (
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/identity/x509/crypto"
+	"github.com/LFDT-Panurus/panurus/token/services/identity/x509/crypto"
 )
 
 type Identity struct {

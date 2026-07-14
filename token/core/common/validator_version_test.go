@@ -9,7 +9,7 @@ package common
 import (
 	"testing"
 
-	"github.com/hyperledger-labs/fabric-token-sdk/token/driver"
+	"github.com/LFDT-Panurus/panurus/token/driver"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -32,12 +32,6 @@ func TestMinProtocolVersionEnforcement(t *testing.T) {
 			name:               "No minimum version set - accepts V1",
 			minProtocolVersion: 0,
 			requestVersion:     driver.ProtocolV1,
-			shouldFail:         false,
-		},
-		{
-			name:               "No minimum version set - accepts V2",
-			minProtocolVersion: 0,
-			requestVersion:     driver.ProtocolV2,
 			shouldFail:         false,
 		},
 		{

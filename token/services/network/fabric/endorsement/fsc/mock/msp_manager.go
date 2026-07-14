@@ -4,9 +4,9 @@ package mock
 import (
 	"sync"
 
+	"github.com/LFDT-Panurus/panurus/token/services/network/fabric/endorsement/fsc"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/fabric/driver"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/view"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/network/fabric/endorsement/fsc"
 )
 
 type MSPManager struct {

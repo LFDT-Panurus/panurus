@@ -9,8 +9,8 @@ package tokens
 import (
 	"encoding/asn1"
 
+	"github.com/LFDT-Panurus/panurus/token/services/tokens/driver"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/tokens/driver"
 )
 
 // TypedToken encodes a token representation along with its type identifier.

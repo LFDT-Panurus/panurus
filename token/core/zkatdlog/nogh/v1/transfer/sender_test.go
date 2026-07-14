@@ -13,17 +13,17 @@ import (
 	"testing"
 
 	math "github.com/IBM/mathlib"
+	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/benchmark"
+	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/crypto/rp"
+	v1 "github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/setup"
+	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/token"
+	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/transfer"
+	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/transfer/mock"
+	"github.com/LFDT-Panurus/panurus/token/driver"
+	benchmark2 "github.com/LFDT-Panurus/panurus/token/services/benchmark"
+	"github.com/LFDT-Panurus/panurus/token/services/identity/idemixnym"
+	token2 "github.com/LFDT-Panurus/panurus/token/token"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/core/zkatdlog/nogh/v1/benchmark"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/core/zkatdlog/nogh/v1/crypto/rp"
-	v1 "github.com/hyperledger-labs/fabric-token-sdk/token/core/zkatdlog/nogh/v1/setup"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/core/zkatdlog/nogh/v1/token"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/core/zkatdlog/nogh/v1/transfer"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/core/zkatdlog/nogh/v1/transfer/mock"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/driver"
-	benchmark2 "github.com/hyperledger-labs/fabric-token-sdk/token/services/benchmark"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/identity/idemixnym"
-	token2 "github.com/hyperledger-labs/fabric-token-sdk/token/token"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -216,12 +216,17 @@ func BenchmarkVerificationSenderProof(b *testing.B) {
 			}
 
 			// instantiate the verifier and verify
-			return transfer.NewVerifier(
+			verifier, err := transfer.NewVerifier(
 				inputTokens,
 				ta.GetOutputCommitments(),
 				env.SenderEnvs[0].sender.PublicParams,
 				ta.ProofType,
-			).Verify(ta.GetProof())
+			)
+			if err != nil {
+				return err
+			}
+
+			return verifier.Verify(ta.GetProof())
 		},
 	)
 }
@@ -250,12 +255,17 @@ func BenchmarkVerificationParallelSenderProof(b *testing.B) {
 			}
 
 			// instantiate the verifier and verify
-			return transfer.NewVerifier(
+			verifier, err := transfer.NewVerifier(
 				inputTokens,
 				ta.GetOutputCommitments(),
 				env.SenderEnvs[0].sender.PublicParams,
 				ta.ProofType,
-			).Verify(ta.GetProof())
+			)
+			if err != nil {
+				return err
+			}
+
+			return verifier.Verify(ta.GetProof())
 		},
 	)
 }
@@ -284,12 +294,17 @@ func TestParallelBenchmarkVerificationSenderProof(t *testing.T) {
 			}
 
 			// instantiate the verifier and verify
-			return transfer.NewVerifier(
+			verifier, err := transfer.NewVerifier(
 				inputTokens,
 				ta.GetOutputCommitments(),
 				env.SenderEnvs[0].sender.PublicParams,
 				ta.ProofType,
-			).Verify(ta.GetProof())
+			)
+			if err != nil {
+				return err
+			}
+
+			return verifier.Verify(ta.GetProof())
 		},
 	)
 }

@@ -10,10 +10,10 @@ import (
 	"encoding/json"
 	"time"
 
+	"github.com/LFDT-Panurus/panurus/token"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	view2 "github.com/hyperledger-labs/fabric-smart-client/platform/view/services/view"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/view"
-	"github.com/hyperledger-labs/fabric-token-sdk/token"
 )
 
 type StreamExternalWalletMsgType = int
@@ -113,7 +113,7 @@ type SignerProvider interface {
 	GetSigner(party view.Identity) (token.Signer, error)
 }
 
-// StreamExternalWalletSignerClient is the signer client executed where the token-sdk is in execution
+// StreamExternalWalletSignerClient is the signer client executed where Panurus is in execution
 type StreamExternalWalletSignerClient struct {
 	sp      SignerProvider
 	stream  view2.Stream

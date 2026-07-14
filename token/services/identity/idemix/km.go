@@ -11,13 +11,13 @@ import (
 	"fmt"
 
 	bccsp "github.com/IBM/idemix/bccsp/types"
+	tdriver "github.com/LFDT-Panurus/panurus/token/driver"
+	idriver "github.com/LFDT-Panurus/panurus/token/services/identity/driver"
+	"github.com/LFDT-Panurus/panurus/token/services/identity/idemix/crypto"
+	"github.com/LFDT-Panurus/panurus/token/services/identity/idemix/crypto/protos-go/config"
+	"github.com/LFDT-Panurus/panurus/token/services/identity/idemix/schema"
+	"github.com/LFDT-Panurus/panurus/token/services/utils"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
-	tdriver "github.com/hyperledger-labs/fabric-token-sdk/token/driver"
-	idriver "github.com/hyperledger-labs/fabric-token-sdk/token/services/identity/driver"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/identity/idemix/crypto"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/identity/idemix/crypto/protos-go/config"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/identity/idemix/schema"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/utils"
 )
 
 const (

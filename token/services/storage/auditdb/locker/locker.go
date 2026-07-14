@@ -9,8 +9,8 @@ package locker
 import (
 	"context"
 
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/auditdb/locker/errs"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/auditdb/locker/id"
+	"github.com/LFDT-Panurus/panurus/token/services/storage/auditdb/locker/errs"
+	"github.com/LFDT-Panurus/panurus/token/services/storage/auditdb/locker/id"
 )
 
 // Locker coordinates exclusive access to enrollment IDs during auditor processing.

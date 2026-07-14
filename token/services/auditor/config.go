@@ -9,8 +9,8 @@ package auditor
 import (
 	"time"
 
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/config"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/logging"
+	"github.com/LFDT-Panurus/panurus/token/services/config"
+	"github.com/LFDT-Panurus/panurus/token/services/logging"
 )
 
 //go:generate counterfeiter -o mock/config_provider.go -fake-name ConfigProvider . ConfigProvider

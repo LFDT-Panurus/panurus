@@ -15,14 +15,14 @@ import (
 	"maps"
 	"slices"
 
+	"github.com/LFDT-Panurus/panurus/token/core/common/meta"
+	"github.com/LFDT-Panurus/panurus/token/driver"
+	"github.com/LFDT-Panurus/panurus/token/driver/protos-go/v1/request"
+	"github.com/LFDT-Panurus/panurus/token/services/utils"
+	"github.com/LFDT-Panurus/panurus/token/token"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/proto"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/common/services/logging"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/core/common/meta"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/driver"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/driver/protos-go/request"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/utils"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/token"
 	"go.uber.org/zap/zapcore"
 )
 
@@ -58,7 +58,7 @@ type RecipientData = driver.RecipientData
 // IssueOptions contains optional parameters for token issuance operations.
 type IssueOptions struct {
 	// Attributes is a container of generic options that might be driver specific
-	Attributes map[any]any
+	Attributes map[string]any
 }
 
 // compileIssueOptions aggregates multiple IssueOption functions into a single IssueOptions struct.
@@ -77,10 +77,10 @@ func compileIssueOptions(opts ...IssueOption) (*IssueOptions, error) {
 type IssueOption func(*IssueOptions) error
 
 // WithIssueAttribute adds a custom attribute to an issue operation.
-func WithIssueAttribute(attr, value any) IssueOption {
+func WithIssueAttribute(attr string, value any) IssueOption {
 	return func(o *IssueOptions) error {
 		if o.Attributes == nil {
-			o.Attributes = map[any]any{}
+			o.Attributes = map[string]any{}
 		}
 		o.Attributes[attr] = value
 
@@ -96,7 +96,7 @@ func WithIssueMetadata(key string, value []byte) IssueOption {
 // TransferOptions contains optional parameters for token transfer operations.
 type TransferOptions struct {
 	// Attributes is a container of generic options that might be driver specific
-	Attributes map[any]any
+	Attributes map[string]any
 	// Selector is the custom token selector to use. If nil, the default will be used.
 	Selector Selector
 	// TokenIDs to transfer. If empty, the tokens will be selected.
@@ -158,10 +158,10 @@ func WithTokenIDs(ids ...*token.ID) TransferOption {
 }
 
 // WithTransferAttribute adds a custom attribute to a transfer operation.
-func WithTransferAttribute(attr, value any) TransferOption {
+func WithTransferAttribute(attr string, value any) TransferOption {
 	return func(o *TransferOptions) error {
 		if o.Attributes == nil {
-			o.Attributes = make(map[any]any)
+			o.Attributes = make(map[string]any)
 		}
 		o.Attributes[attr] = value
 
@@ -217,6 +217,13 @@ type Transfer struct {
 	ExtraSigners []Identity
 	// Issuer
 	Issuer Identity
+}
+
+// SignerWithAction associates a signer identity with its action ID.
+// This is used to preserve the action context during signature collection.
+type SignerWithAction struct {
+	Signer   Identity
+	ActionID uint32
 }
 
 // Request aggregates token operations that must be performed atomically.
@@ -334,8 +341,15 @@ func (r *Request) Issue(ctx context.Context, wallet *IssuerWallet, receiver Iden
 	if err != nil {
 		return nil, err
 	}
-	r.Actions.Issues = append(r.Actions.Issues, actionRaw)
-	r.Metadata.Issues = append(r.Metadata.Issues, metaRaw)
+	actionID := uint32(len(r.Actions.Actions)) //nolint:gosec
+	r.Actions.Actions = append(r.Actions.Actions, &driver.TypedAction{
+		Type: request.ActionType_ACTION_TYPE_ISSUE,
+		Raw:  actionRaw,
+	})
+	r.Metadata.Actions = append(r.Metadata.Actions, &driver.ActionMetadataEntry{
+		ActionID:      actionID,
+		IssueMetadata: metaRaw,
+	})
 
 	return &IssueAction{a: action}, nil
 }
@@ -387,8 +401,15 @@ func (r *Request) Transfer(ctx context.Context, wallet *OwnerWallet, typ token.T
 	if err != nil {
 		return nil, errors.Wrap(err, "failed serializing transfer action")
 	}
-	r.Actions.Transfers = append(r.Actions.Transfers, raw)
-	r.Metadata.Transfers = append(r.Metadata.Transfers, transferMetadata)
+	actionID := uint32(len(r.Actions.Actions)) //nolint:gosec
+	r.Actions.Actions = append(r.Actions.Actions, &driver.TypedAction{
+		Type: request.ActionType_ACTION_TYPE_TRANSFER,
+		Raw:  raw,
+	})
+	r.Metadata.Actions = append(r.Metadata.Actions, &driver.ActionMetadataEntry{
+		ActionID:         actionID,
+		TransferMetadata: transferMetadata,
+	})
 
 	return &TransferAction{TransferAction: transfer}, nil
 }
@@ -438,8 +459,15 @@ func (r *Request) Redeem(ctx context.Context, wallet *OwnerWallet, typ token.Typ
 		return nil, errors.Wrap(err, "failed serializing transfer action")
 	}
 
-	r.Actions.Transfers = append(r.Actions.Transfers, raw)
-	r.Metadata.Transfers = append(r.Metadata.Transfers, transferMetadata)
+	actionID := uint32(len(r.Actions.Actions)) //nolint:gosec
+	r.Actions.Actions = append(r.Actions.Actions, &driver.TypedAction{
+		Type: request.ActionType_ACTION_TYPE_TRANSFER,
+		Raw:  raw,
+	})
+	r.Metadata.Actions = append(r.Metadata.Actions, &driver.ActionMetadataEntry{
+		ActionID:         actionID,
+		TransferMetadata: transferMetadata,
+	})
 
 	return &TransferAction{transfer}, nil
 }
@@ -495,8 +523,15 @@ func (r *Request) Upgrade(
 	if err != nil {
 		return nil, err
 	}
-	r.Actions.Issues = append(r.Actions.Issues, raw)
-	r.Metadata.Issues = append(r.Metadata.Issues, meta)
+	actionID := uint32(len(r.Actions.Actions)) //nolint:gosec
+	r.Actions.Actions = append(r.Actions.Actions, &driver.TypedAction{
+		Type: request.ActionType_ACTION_TYPE_ISSUE,
+		Raw:  raw,
+	})
+	r.Metadata.Actions = append(r.Metadata.Actions, &driver.ActionMetadataEntry{
+		ActionID:      actionID,
+		IssueMetadata: meta,
+	})
 
 	return &IssueAction{a: action}, nil
 }
@@ -520,7 +555,8 @@ func (r *Request) outputs(ctx context.Context, failOnMissing bool) (*OutputStrea
 	var outputs []*Output
 	counter := uint64(0)
 	is := tms.IssueService()
-	for i, issue := range r.Actions.Issues {
+	issues := r.Actions.GetIssues()
+	for i, issue := range issues {
 		// deserialize action
 		issueAction, err := is.DeserializeIssueAction(issue)
 		if err != nil {
@@ -544,7 +580,8 @@ func (r *Request) outputs(ctx context.Context, failOnMissing bool) (*OutputStrea
 	}
 
 	ts := tms.TransferService()
-	for i, transfer := range r.Actions.Transfers {
+	transfers := r.Actions.GetTransfers()
+	for i, transfer := range transfers {
 		// deserialize action
 		transferAction, err := ts.DeserializeTransferAction(transfer)
 		if err != nil {
@@ -729,9 +766,18 @@ func (r *Request) extractTransferOutputs(ctx context.Context, i int, counter uin
 		if err != nil {
 			return nil, 0, errors.Wrapf(err, "failed getting transfer action output in the clear [%d,%d]", i, j)
 		}
+		// For a redeem output (empty owner), the per-output metadata does not carry the
+		// issuer identity: it is only available at the transfer action level. Recover it
+		// so that downstream processing can attribute the redeem to its issuer.
+		if len(tok.Owner) == 0 && issuer.IsNone() {
+			issuer = transferAction.GetIssuer()
+		}
 		if len(recipients) == 0 {
 			// Add an empty recipient
 			recipients = append(recipients, Identity{})
+		}
+		if len(issuer) == 0 && output.IsRedeem() {
+			issuer = transferAction.GetIssuer()
 		}
 
 		q, err := token.ToQuantity(tok.Quantity, precision)
@@ -826,7 +872,8 @@ func (r *Request) inputs(ctx context.Context, failOnMissing bool) (*InputStream,
 	}
 	var inputs []*Input
 	ts := tms.TransferService()
-	for i, transfer := range r.Actions.Transfers {
+	transfers := r.Actions.GetTransfers()
+	for i, transfer := range transfers {
 		// deserialize action
 		transferAction, err := ts.DeserializeTransferAction(transfer)
 		if err != nil {
@@ -930,7 +977,8 @@ func (r *Request) inputsAndOutputs(ctx context.Context, failOnMissing, verifyAct
 	counter := uint64(0)
 
 	issueService := tms.IssueService()
-	for i, issue := range r.Actions.Issues {
+	issues := r.Actions.GetIssues()
+	for i, issue := range issues {
 		// deserialize action
 		issueAction, err := issueService.DeserializeIssueAction(issue)
 		if err != nil {
@@ -968,7 +1016,8 @@ func (r *Request) inputsAndOutputs(ctx context.Context, failOnMissing, verifyAct
 	}
 
 	ts := tms.TransferService()
-	for i, transfer := range r.Actions.Transfers {
+	transfers := r.Actions.GetTransfers()
+	for i, transfer := range transfers {
 		// deserialize action
 		transferAction, err := ts.DeserializeTransferAction(transfer)
 		if err != nil {
@@ -1111,26 +1160,44 @@ func (r *Request) FromBytes(raw []byte) error {
 
 // AddAuditorSignature appends an auditor's signature to the request.
 func (r *Request) AddAuditorSignature(identity Identity, sigma []byte) {
-	r.Actions.AuditorSignatures = append(r.Actions.AuditorSignatures, &driver.AuditorSignature{
-		Identity:  identity,
-		Signature: sigma,
+	r.Actions.Signatures = append(r.Actions.Signatures, &driver.RequestSignature{
+		Auditor: &driver.AuditorSignature{
+			Identity:  identity,
+			Signature: sigma,
+		},
 	})
 }
 
 // SetSignatures assigns signatures to all signers. Returns true if all signatures are present.
+// This method now correctly preserves the action context by using SignerWithAction information.
 func (r *Request) SetSignatures(sigmas map[string][]byte) bool {
-	signers := append(r.IssueSigners(), r.TransferSigners()...)
-	signatures := make([][]byte, len(signers))
+	issueSignersWithActions := r.IssueSignersWithActions()
+	transferSignersWithActions := r.TransferSignersWithActions()
+
+	// Combine all signers with their action IDs
+	allSignersWithActions := append(issueSignersWithActions, transferSignersWithActions...)
+
+	signatures := make([]*driver.RequestSignature, 0, len(allSignersWithActions))
 	all := true
-	for i, signer := range signers {
-		if sigma, ok := sigmas[signer.UniqueID()]; ok {
-			signatures[i] = sigma
-			r.TokenService.logger.Debugf("signature [%d] for signer [%s] is [%s]", i, signer, logging.SHA256Base64(sigma))
+
+	for i, signerWithAction := range allSignersWithActions {
+		signature := &driver.RequestSignature{
+			Action: &driver.ActionSignature{
+				ActionID: signerWithAction.ActionID,
+			},
+		}
+		if sigma, ok := sigmas[signerWithAction.Signer.UniqueID()]; ok {
+			signature.Action.Signature = sigma
+			r.TokenService.logger.Debugf("signature [%d] for signer [%s] with actionID [%d] is [%s]",
+				i, signerWithAction.Signer, signerWithAction.ActionID, logging.SHA256Base64(sigma))
 		} else {
 			all = false
-			r.TokenService.logger.Debugf("signature [%d] for signer [%s] not found", i, signer)
+			r.TokenService.logger.Debugf("signature [%d] for signer [%s] with actionID [%d] not found",
+				i, signerWithAction.Signer, signerWithAction.ActionID)
 		}
+		signatures = append(signatures, signature)
 	}
+
 	r.Actions.Signatures = signatures
 
 	return all
@@ -1161,6 +1228,84 @@ func (r *Request) IssueSigners() []Identity {
 	return signers
 }
 
+// IssueSignersWithActions returns all identities that must sign issue actions along with their action IDs.
+// This preserves the action context needed for correct ActionSignature construction.
+func (r *Request) IssueSignersWithActions() []SignerWithAction {
+	signers := make([]SignerWithAction, 0)
+	issues := r.Issues()
+	issueIndex := 0
+
+	for _, action := range r.Metadata.Actions {
+		if action.IssueMetadata != nil {
+			if issueIndex >= len(issues) {
+				break
+			}
+			issue := issues[issueIndex]
+			issueIndex++
+
+			// Add issuer
+			signers = append(signers, SignerWithAction{
+				Signer:   issue.Issuer,
+				ActionID: action.ActionID,
+			})
+
+			// Add extra signers
+			for _, extraSigner := range issue.ExtraSigners {
+				signers = append(signers, SignerWithAction{
+					Signer:   extraSigner,
+					ActionID: action.ActionID,
+				})
+			}
+		}
+	}
+
+	return signers
+}
+
+// TransferSignersWithActions returns all identities that must sign transfer actions along with their action IDs.
+// This preserves the action context needed for correct ActionSignature construction.
+func (r *Request) TransferSignersWithActions() []SignerWithAction {
+	signers := make([]SignerWithAction, 0)
+	transfers := r.Transfers()
+	transferIndex := 0
+
+	for _, action := range r.Metadata.Actions {
+		if action.TransferMetadata != nil {
+			if transferIndex >= len(transfers) {
+				break
+			}
+			transfer := transfers[transferIndex]
+			transferIndex++
+
+			// Add senders
+			for _, sender := range transfer.Senders {
+				signers = append(signers, SignerWithAction{
+					Signer:   sender,
+					ActionID: action.ActionID,
+				})
+			}
+
+			// Add issuer if specified
+			if transfer.Issuer != nil {
+				signers = append(signers, SignerWithAction{
+					Signer:   transfer.Issuer,
+					ActionID: action.ActionID,
+				})
+			}
+
+			// Add extra signers
+			for _, extraSigner := range transfer.ExtraSigners {
+				signers = append(signers, SignerWithAction{
+					Signer:   extraSigner,
+					ActionID: action.ActionID,
+				})
+			}
+		}
+	}
+
+	return signers
+}
+
 // SetTokenService assigns the TMS to this request.
 func (r *Request) SetTokenService(service *ManagementService) {
 	r.TokenService = service
@@ -1169,9 +1314,14 @@ func (r *Request) SetTokenService(service *ManagementService) {
 // BindTo binds all external identities (senders/receivers not owned by caller) to the specified identity.
 // Used for privacy-preserving transactions to link ephemeral identities.
 func (r *Request) BindTo(ctx context.Context, binder Binder, identity Identity) error {
-	for i := range r.Actions.Transfers {
+	for _, action := range r.Metadata.Actions {
+		if action.TransferMetadata == nil {
+			continue
+		}
+		transfer := action.TransferMetadata
+
 		// senders
-		for _, input := range r.Metadata.Transfers[i].Inputs {
+		for _, input := range transfer.Inputs {
 			for _, sender := range input.Senders {
 				senderIdentity := sender.Identity
 				if w := r.TokenService.WalletManager().Wallet(ctx, senderIdentity); w != nil {
@@ -1186,19 +1336,19 @@ func (r *Request) BindTo(ctx context.Context, binder Binder, identity Identity) 
 		}
 
 		// extra signers
-		for _, eid := range r.Metadata.Transfers[i].ExtraSigners {
-			if w := r.TokenService.WalletManager().Wallet(ctx, eid); w != nil {
+		for _, eid := range transfer.ExtraSigners {
+			if w := r.TokenService.WalletManager().Wallet(ctx, eid.Identity); w != nil {
 				// this is me, skip
 				continue
 			}
-			r.TokenService.logger.DebugfContext(ctx, "bind extra signer [%s] to [%s]", eid, identity)
-			if err := binder.Bind(ctx, identity, eid); err != nil {
+			r.TokenService.logger.DebugfContext(ctx, "bind extra signer [%s] to [%s]", eid.Identity, identity)
+			if err := binder.Bind(ctx, identity, eid.Identity); err != nil {
 				return errors.Wrap(err, "failed binding sender identities")
 			}
 		}
 
 		// receivers
-		for _, output := range r.Metadata.Transfers[i].Outputs {
+		for _, output := range transfer.Outputs {
 			for _, receiver := range output.Receivers {
 				receiverIdentity := receiver.Identity
 				if w := r.TokenService.WalletManager().Wallet(ctx, receiverIdentity); w != nil {
@@ -1220,12 +1370,19 @@ func (r *Request) BindTo(ctx context.Context, binder Binder, identity Identity) 
 // Issues returns all issue actions in this request.
 func (r *Request) Issues() []*Issue {
 	var issues []*Issue
-	for _, issue := range r.Metadata.Issues {
-		issues = append(issues, &Issue{
-			Issuer:       issue.Issuer.Identity,
-			Receivers:    issue.Receivers(),
-			ExtraSigners: issue.ExtraSigners,
-		})
+	for _, action := range r.Metadata.Actions {
+		if action.IssueMetadata != nil {
+			// Convert []AuditableIdentity to []Identity for ExtraSigners
+			extraSigners := make([]Identity, len(action.IssueMetadata.ExtraSigners))
+			for i, es := range action.IssueMetadata.ExtraSigners {
+				extraSigners[i] = es.Identity
+			}
+			issues = append(issues, &Issue{
+				Issuer:       action.IssueMetadata.Issuer.Identity,
+				Receivers:    action.IssueMetadata.Receivers(),
+				ExtraSigners: extraSigners,
+			})
+		}
 	}
 
 	return issues
@@ -1234,13 +1391,20 @@ func (r *Request) Issues() []*Issue {
 // Transfers returns all transfer actions in this request.
 func (r *Request) Transfers() []*Transfer {
 	var transfers []*Transfer
-	for _, transfer := range r.Metadata.Transfers {
-		transfers = append(transfers, &Transfer{
-			Senders:      transfer.Senders(),
-			Receivers:    transfer.Receivers(),
-			ExtraSigners: transfer.ExtraSigners,
-			Issuer:       transfer.Issuer,
-		})
+	for _, action := range r.Metadata.Actions {
+		if action.TransferMetadata != nil {
+			// Convert []AuditableIdentity to []Identity for ExtraSigners
+			extraSigners := make([]Identity, len(action.TransferMetadata.ExtraSigners))
+			for i, es := range action.TransferMetadata.ExtraSigners {
+				extraSigners[i] = es.Identity
+			}
+			transfers = append(transfers, &Transfer{
+				Senders:      action.TransferMetadata.Senders(),
+				Receivers:    action.TransferMetadata.Receivers(),
+				ExtraSigners: extraSigners,
+				Issuer:       action.TransferMetadata.Issuer.Identity,
+			})
+		}
 	}
 
 	return transfers

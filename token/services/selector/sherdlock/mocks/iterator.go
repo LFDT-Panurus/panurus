@@ -4,7 +4,7 @@ package mocks
 import (
 	"sync"
 
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/selector/sherdlock"
+	"github.com/LFDT-Panurus/panurus/token/services/selector/sherdlock"
 )
 
 type FakeIterator[k any] struct {

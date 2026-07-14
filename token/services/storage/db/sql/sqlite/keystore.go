@@ -10,7 +10,7 @@ import (
 	common2 "github.com/hyperledger-labs/fabric-smart-client/platform/view/services/storage/driver/common"
 	fscSqlite "github.com/hyperledger-labs/fabric-smart-client/platform/view/services/storage/driver/sql/sqlite"
 
-	common3 "github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/db/sql/common"
+	common3 "github.com/LFDT-Panurus/panurus/token/services/storage/db/sql/common"
 )
 
 type KeystoreStore = common3.KeystoreStore

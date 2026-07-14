@@ -9,7 +9,7 @@ package token
 import (
 	"testing"
 
-	"github.com/hyperledger-labs/fabric-token-sdk/token/driver/mock"
+	"github.com/LFDT-Panurus/panurus/token/driver/mock"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

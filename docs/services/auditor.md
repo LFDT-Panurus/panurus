@@ -23,7 +23,7 @@ sequenceDiagram
     participant Auditor as Auditor Service
     participant Network as Network Service
 
-    box darkgreen Token SDK Stack
+    box darkgreen Panurus Stack
         participant TTX
         participant Auditor
         participant Network

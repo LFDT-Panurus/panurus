@@ -9,7 +9,7 @@ package dlogx
 import (
 	"testing"
 
-	"github.com/hyperledger-labs/fabric-token-sdk/integration"
+	"github.com/LFDT-Panurus/panurus/integration"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 )

@@ -9,12 +9,12 @@ package views
 import (
 	"encoding/json"
 
-	"github.com/hyperledger-labs/fabric-token-sdk/token"
-	token2 "github.com/hyperledger-labs/fabric-token-sdk/token/token"
+	"github.com/LFDT-Panurus/panurus/token"
+	token2 "github.com/LFDT-Panurus/panurus/token/token"
 
+	"github.com/LFDT-Panurus/panurus/token/services/ttx"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/common/utils/assert"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/view"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/ttx"
 )
 
 // ListUnspentTokens contains the input to query the list of unspent tokens

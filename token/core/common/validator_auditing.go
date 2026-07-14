@@ -10,8 +10,8 @@ import (
 	"context"
 	"slices"
 
+	"github.com/LFDT-Panurus/panurus/token/driver"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/driver"
 )
 
 var (
@@ -37,16 +37,23 @@ var (
 //
 // This behavior matches the semantics implemented by current token drivers.
 func AuditingSignaturesValidate[P driver.PublicParameters, T driver.Input, TA driver.TransferAction, IA driver.IssueAction, DS driver.Deserializer](c context.Context, ctx *Context[P, T, TA, IA, DS]) error {
+	auditorSignatures := make([]*driver.AuditorSignature, 0)
+	for _, signature := range ctx.TokenRequest.Signatures {
+		if signature == nil || signature.Auditor == nil {
+			continue
+		}
+		auditorSignatures = append(auditorSignatures, signature.Auditor)
+	}
 	if len(ctx.PP.Auditors()) == 0 {
 		// enforce no auditor signatures are attached
-		if len(ctx.TokenRequest.AuditorSignatures) != 0 {
+		if len(auditorSignatures) != 0 {
 			return ErrAuditorSignaturesPresent
 		}
 
 		return nil
 	}
 
-	if len(ctx.TokenRequest.AuditorSignatures) == 0 {
+	if len(auditorSignatures) == 0 {
 		return ErrAuditorSignaturesMissing
 	}
 
@@ -56,7 +63,7 @@ func AuditingSignaturesValidate[P driver.PublicParameters, T driver.Input, TA dr
 	// The presence of at least one valid signature is sufficient
 	// to satisfy the auditing requirement (1-of-N policy).
 
-	for _, auditorSignature := range ctx.TokenRequest.AuditorSignatures {
+	for _, auditorSignature := range auditorSignatures {
 		auditor := auditorSignature.Identity
 		// check that issuer of this issue action is authorized
 		if !slices.ContainsFunc(auditors, auditorSignature.Identity.Equal) {

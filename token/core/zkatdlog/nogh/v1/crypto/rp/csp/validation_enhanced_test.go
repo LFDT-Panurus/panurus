@@ -48,7 +48,15 @@ func TestValidateG1SliceEnhanced(t *testing.T) {
 		elements := []*mathlib.G1{curveBLS.GenG1}
 		err := validateG1Slice("test", elements, curveBN, 1)
 		require.Error(t, err)
-		require.ErrorIs(t, err, ErrWrongCurveID)
+		assert.Contains(t, err.Error(), "test validation failed")
+	})
+
+	t.Run("InfinityElement", func(t *testing.T) {
+		// Verify that the identity point is rejected from generator slices.
+		elements := []*mathlib.G1{curveBN.NewG1()}
+		err := validateG1Slice("test", elements, curveBN, 1)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "test validation failed")
 	})
 }
 
@@ -230,7 +238,7 @@ func TestValidateCSPProof(t *testing.T) {
 		pCopy.Left = []*mathlib.G1{nil}
 		err := validateCSPProof(curve, &pCopy, rounds)
 		require.Error(t, err)
-		require.ErrorIs(t, err, ErrNilElement)
+		assert.Contains(t, err.Error(), "proof.Left validation failed")
 	})
 
 	t.Run("WrongCurveInLeft", func(t *testing.T) {
@@ -239,7 +247,17 @@ func TestValidateCSPProof(t *testing.T) {
 		pCopy.Left = []*mathlib.G1{curveBLS.GenG1}
 		err := validateCSPProof(curve, &pCopy, rounds)
 		require.Error(t, err)
-		require.ErrorIs(t, err, ErrWrongCurveID)
+		assert.Contains(t, err.Error(), "proof.Left validation failed")
+	})
+
+	t.Run("InfinityInLeft", func(t *testing.T) {
+		// Regression test for HIGH finding: identity element in Left must be rejected
+		// to prevent round-constraint neutralisation and range-proof soundness weakening.
+		pCopy := *proof
+		pCopy.Left = []*mathlib.G1{curve.NewG1()} // point at infinity
+		err := validateCSPProof(curve, &pCopy, rounds)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "proof.Left validation failed")
 	})
 
 	t.Run("NilInRight", func(t *testing.T) {
@@ -247,7 +265,7 @@ func TestValidateCSPProof(t *testing.T) {
 		pCopy.Right = []*mathlib.G1{nil}
 		err := validateCSPProof(curve, &pCopy, rounds)
 		require.Error(t, err)
-		require.ErrorIs(t, err, ErrNilElement)
+		assert.Contains(t, err.Error(), "proof.Right validation failed")
 	})
 
 	t.Run("WrongCurveInRight", func(t *testing.T) {
@@ -256,7 +274,17 @@ func TestValidateCSPProof(t *testing.T) {
 		pCopy.Right = []*mathlib.G1{curveBLS.GenG1}
 		err := validateCSPProof(curve, &pCopy, rounds)
 		require.Error(t, err)
-		require.ErrorIs(t, err, ErrWrongCurveID)
+		assert.Contains(t, err.Error(), "proof.Right validation failed")
+	})
+
+	t.Run("InfinityInRight", func(t *testing.T) {
+		// Regression test for HIGH finding: identity element in Right must be rejected
+		// to prevent round-constraint neutralisation and range-proof soundness weakening.
+		pCopy := *proof
+		pCopy.Right = []*mathlib.G1{curve.NewG1()} // point at infinity
+		err := validateCSPProof(curve, &pCopy, rounds)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "proof.Right validation failed")
 	})
 
 	t.Run("WrongVLeftLength", func(t *testing.T) {

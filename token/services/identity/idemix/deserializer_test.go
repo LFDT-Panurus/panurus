@@ -14,16 +14,16 @@ import (
 
 	"github.com/IBM/idemix/bccsp/types"
 	math "github.com/IBM/mathlib"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/identity/idemix/crypto"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/identity/idemix/schema"
-	kvs2 "github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/db/kvs"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/utils"
+	"github.com/LFDT-Panurus/panurus/token/services/identity/idemix/crypto"
+	"github.com/LFDT-Panurus/panurus/token/services/identity/idemix/schema"
+	kvs2 "github.com/LFDT-Panurus/panurus/token/services/storage/db/kvs"
+	"github.com/LFDT-Panurus/panurus/token/services/utils"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 func TestNewDeserializer(t *testing.T) {
-	testNewDeserializer(t, "./testdata/fp256bn_amcl/idemix", math.FP256BN_AMCL)
+	testNewDeserializer(t, "./testdata/bls12_381_bbs_gurvy/idemix", math.BLS12_381_BBS_GURVY)
 	testNewDeserializer(t, "./testdata/bls12_381_bbs/idemix", math.BLS12_381_BBS_GURVY)
 }
 
@@ -129,7 +129,7 @@ func testNewDeserializer(t *testing.T, configPath string, curveID math.CurveID) 
 
 // TestDeserializerErrorPaths tests various error paths in different deserializer construction paths
 func TestDeserializerErrorPaths(t *testing.T) {
-	testDeserializerErrorPaths(t, "./testdata/fp256bn_amcl/idemix", math.FP256BN_AMCL)
+	testDeserializerErrorPaths(t, "./testdata/bls12_381_bbs_gurvy/idemix", math.BLS12_381_BBS_GURVY)
 	testDeserializerErrorPaths(t, "./testdata/bls12_381_bbs/idemix", math.BLS12_381_BBS_GURVY)
 }
 

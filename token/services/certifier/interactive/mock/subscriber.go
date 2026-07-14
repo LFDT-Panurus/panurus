@@ -4,8 +4,8 @@ package mock
 import (
 	"sync"
 
+	"github.com/LFDT-Panurus/panurus/token/services/certifier/interactive"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/services/events"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/certifier/interactive"
 )
 
 type SubscriberMock struct {

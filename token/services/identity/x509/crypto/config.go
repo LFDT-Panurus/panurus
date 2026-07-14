@@ -7,11 +7,11 @@ SPDX-License-Identifier: Apache-2.0
 package crypto
 
 import (
+	"github.com/LFDT-Panurus/panurus/token/services/identity/x509/crypto/pkcs11"
+	"github.com/LFDT-Panurus/panurus/token/services/identity/x509/crypto/protos-go/v1/config"
 	"github.com/go-viper/mapstructure/v2"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/proto"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/identity/x509/crypto/pkcs11"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/identity/x509/crypto/protos-go/config"
 )
 
 type (
@@ -60,13 +60,14 @@ type PKCS11 struct {
 	Hash     string `yaml:"Hash"`
 
 	// PKCS11 options
-	Library        string         `yaml:"Library"`
-	Label          string         `yaml:"Label"`
-	Pin            string         `yaml:"Pin"`
-	SoftwareVerify bool           `yaml:"SoftwareVerify,omitempty"`
-	Immutable      bool           `yaml:"Immutable,omitempty"`
-	AltID          string         `yaml:"AltId,omitempty"`
-	KeyIDs         []KeyIDMapping `mapstructure:"KeyIds"           yaml:"KeyIds,omitempty"`
+	Library          string         `yaml:"Library"`
+	Label            string         `yaml:"Label"`
+	Pin              string         `yaml:"Pin"`
+	SoftwareVerify   bool           `yaml:"SoftwareVerify,omitempty"`
+	Immutable        bool           `yaml:"Immutable,omitempty"`
+	AltID            string         `yaml:"AltId,omitempty"`
+	KeyIDs           []KeyIDMapping `mapstructure:"KeyIds"             yaml:"KeyIds,omitempty"`
+	SessionCacheSize uint           `yaml:"SessionCacheSize,omitempty"`
 }
 
 type KeyIDMapping struct {
@@ -94,14 +95,15 @@ func ToBCCSPOpts(boxed any) (*BCCSP, error) {
 
 func ToPKCS11OptsOpts(o *PKCS11) *pkcs11.PKCS11Opts {
 	res := &pkcs11.PKCS11Opts{
-		Security:       o.Security,
-		Hash:           o.Hash,
-		Library:        o.Library,
-		Label:          o.Label,
-		Pin:            o.Pin,
-		SoftwareVerify: o.SoftwareVerify,
-		Immutable:      o.Immutable,
-		AltID:          o.AltID,
+		Security:         o.Security,
+		Hash:             o.Hash,
+		Library:          o.Library,
+		Label:            o.Label,
+		Pin:              o.Pin,
+		SoftwareVerify:   o.SoftwareVerify,
+		Immutable:        o.Immutable,
+		AltID:            o.AltID,
+		SessionCacheSize: o.SessionCacheSize,
 	}
 	for _, d := range o.KeyIDs {
 		res.KeyIDs = append(res.KeyIDs, pkcs11.KeyIDMapping{

@@ -8,9 +8,9 @@ package utils
 
 import (
 	mathlib "github.com/IBM/mathlib"
+	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/protos-go/v1/math"
+	"github.com/LFDT-Panurus/panurus/token/services/utils/protos"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/core/zkatdlog/nogh/protos-go/math"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/utils/protos"
 )
 
 func ToProtoG1Slice(input []*mathlib.G1) ([]*math.G1, error) {

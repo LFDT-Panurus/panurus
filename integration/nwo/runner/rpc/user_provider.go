@@ -12,6 +12,11 @@ import (
 	"os"
 	"time"
 
+	runner2 "github.com/LFDT-Panurus/panurus/integration/nwo/runner"
+	"github.com/LFDT-Panurus/panurus/integration/nwo/txgen/model"
+	"github.com/LFDT-Panurus/panurus/integration/nwo/txgen/service/logging"
+	"github.com/LFDT-Panurus/panurus/integration/nwo/txgen/service/metrics"
+	"github.com/LFDT-Panurus/panurus/integration/nwo/txgen/service/user"
 	api2 "github.com/hyperledger-labs/fabric-smart-client/integration/nwo/api"
 	"github.com/hyperledger-labs/fabric-smart-client/integration/nwo/fsc"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
@@ -22,11 +27,6 @@ import (
 	grpcclient "github.com/hyperledger-labs/fabric-smart-client/platform/view/services/view/grpc/client"
 	webclient "github.com/hyperledger-labs/fabric-smart-client/platform/view/services/web/client"
 	view2 "github.com/hyperledger-labs/fabric-smart-client/platform/view/view"
-	runner2 "github.com/hyperledger-labs/fabric-token-sdk/integration/nwo/runner"
-	"github.com/hyperledger-labs/fabric-token-sdk/integration/nwo/txgen/model"
-	"github.com/hyperledger-labs/fabric-token-sdk/integration/nwo/txgen/service/logging"
-	"github.com/hyperledger-labs/fabric-token-sdk/integration/nwo/txgen/service/metrics"
-	"github.com/hyperledger-labs/fabric-token-sdk/integration/nwo/txgen/service/user"
 	"go.opentelemetry.io/otel/trace"
 	"go.opentelemetry.io/otel/trace/noop"
 )

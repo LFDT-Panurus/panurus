@@ -1,0 +1,7 @@
+version: v2
+name: buf.build/LFDT-Panurus/panurus-driver
+lint:
+  use:
+    - STANDARD
+  except:
+    - PACKAGE_DIRECTORY_MATCH

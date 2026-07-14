@@ -6,7 +6,7 @@ SPDX-License-Identifier: Apache-2.0
 
 package token
 
-import "github.com/hyperledger-labs/fabric-token-sdk/token/driver"
+import "github.com/LFDT-Panurus/panurus/token/driver"
 
 // Authorization defines method to check the relation between a token
 // and wallets (owner, auditor, etc.)

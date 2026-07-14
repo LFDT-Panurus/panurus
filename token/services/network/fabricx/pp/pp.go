@@ -7,7 +7,7 @@ SPDX-License-Identifier: Apache-2.0
 package pp
 
 import (
-	"github.com/hyperledger-labs/fabric-token-sdk/token"
+	"github.com/LFDT-Panurus/panurus/token"
 )
 
 // PublicParameters represents the public configuration data for a

@@ -6,7 +6,7 @@ SPDX-License-Identifier: Apache-2.0
 
 package common
 
-import "github.com/hyperledger-labs/fabric-token-sdk/token/services/config"
+import "github.com/LFDT-Panurus/panurus/token/services/config"
 
 // Configuration models the configuration provider
 type Configuration interface {

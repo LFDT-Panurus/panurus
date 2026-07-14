@@ -1,0 +1,10 @@
+version: v2
+name: buf.build/LFDT-Panurus/panurus-zkatdlog
+deps:
+  - token/driver/protos/v1
+  - token/core/fabtoken/protos/v1
+lint:
+  use:
+    - STANDARD
+  except:
+    - PACKAGE_DIRECTORY_MATCH

@@ -10,10 +10,10 @@ import (
 	"context"
 	"time"
 
+	"github.com/LFDT-Panurus/panurus/token"
+	"github.com/LFDT-Panurus/panurus/token/driver"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	driver2 "github.com/hyperledger-labs/fabric-smart-client/platform/common/driver"
-	"github.com/hyperledger-labs/fabric-token-sdk/token"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/driver"
 )
 
 var ErrTokenRequestDoesNotExist = errors.New("token request does not exist")
@@ -41,12 +41,8 @@ type TransactionStoreTransaction interface {
 	// This operation _requires_ a TokenRequest with the same tx_id to exist
 	AddTransaction(ctx context.Context, records ...TransactionRecord) error
 
-	// AddValidationRecord adds a new validation records for the given params
-	// This operation _requires_ a TokenRequest with the same tx_id to exist
-	AddValidationRecord(ctx context.Context, txID string, meta map[string][]byte) error
-
 	// SetStatus sets the status of a TokenRequest
-	// (and with that, the associated ValidationRecord, Movement and Transaction)
+	// (and with that, the associated Movement and Transaction)
 	SetStatus(ctx context.Context, txID string, status driver.TxStatus, message string) error
 }
 
@@ -58,7 +54,7 @@ type TransactionStore interface {
 	NewTransactionStoreTransaction() (TransactionStoreTransaction, error)
 
 	// SetStatus sets the status of a TokenRequest
-	// (and with that, the associated ValidationRecord, Movement and Transaction)
+	// (and with that, the associated Movement and Transaction)
 	SetStatus(ctx context.Context, txID string, status TxStatus, message string) error
 
 	// GetStatus returns the status of a given transaction.
@@ -70,9 +66,6 @@ type TransactionStore interface {
 
 	// QueryMovements returns a list of movement records
 	QueryMovements(ctx context.Context, params QueryMovementsParams) ([]*MovementRecord, error)
-
-	// QueryValidations returns a list of validation  records
-	QueryValidations(ctx context.Context, params QueryValidationRecordsParams) (ValidationRecordsIterator, error)
 
 	// QueryTokenRequests returns an iterator over the token requests matching the passed params
 	QueryTokenRequests(ctx context.Context, params QueryTokenRequestsParams) (TokenRequestIterator, error)

@@ -21,25 +21,24 @@ const (
 
 // TransferActionMetadata extracts the transfer metadata from the passed attributes and
 // sets them to the passed metadata
-func TransferActionMetadata(attrs map[any]any) map[string][]byte {
+func TransferActionMetadata(attrs map[string]any) map[string][]byte {
 	return ActionMetadata(attrs, TransferMetadataPrefix)
 }
 
 // IssueActionMetadata extracts the transfer metadata from the passed attributes and
 // sets them to the passed metadata
-func IssueActionMetadata(attrs map[any]any) map[string][]byte {
+func IssueActionMetadata(attrs map[string]any) map[string][]byte {
 	return ActionMetadata(attrs, IssueMetadataPrefix)
 }
 
 // ActionMetadata extracts the metadata that has the passed prefix from the passed attributes and
 // sets them to the passed metadata
-func ActionMetadata(attrs map[any]any, prefix string) map[string][]byte {
+func ActionMetadata(attrs map[string]any, prefix string) map[string][]byte {
 	metadata := map[string][]byte{}
 	for key, value := range attrs {
-		k, ok1 := key.(string)
-		v, ok2 := value.([]byte)
-		if ok1 && ok2 {
-			if after, ok := strings.CutPrefix(k, prefix); ok {
+		v, ok := value.([]byte)
+		if ok {
+			if after, ok2 := strings.CutPrefix(key, prefix); ok2 {
 				mKey := after
 				metadata[mKey] = v
 			}

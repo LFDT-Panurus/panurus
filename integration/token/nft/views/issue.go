@@ -9,11 +9,11 @@ package views
 import (
 	"encoding/json"
 
+	"github.com/LFDT-Panurus/panurus/token/services/nfttx"
+	"github.com/LFDT-Panurus/panurus/token/services/nfttx/uniqueness"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/common/utils/assert"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/services/id"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/view"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/nfttx"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/nfttx/uniqueness"
 )
 
 // IssueHouse contains the input information to issue a token
@@ -61,7 +61,7 @@ func (p *IssueHouseView) Call(context view.Context) (any, error) {
 		Valuation: p.Valuation,
 	}
 	// The issuer enforce uniqueness of the token by computing a unique identifier for the passed house.
-	uniqueID, err := uniqueness.GetService(context).ComputeID(h.Address)
+	uniqueID, err := uniqueness.GetService(context).ComputeID(context.Context(), h.Address)
 	assert.NoError(err, "failed computing unique ID")
 
 	err = tx.Issue(wallet, h, recipient, nfttx.WithUniqueID(uniqueID))

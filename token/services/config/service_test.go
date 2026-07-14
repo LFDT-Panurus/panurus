@@ -10,8 +10,8 @@ import (
 	"os"
 	"testing"
 
+	"github.com/LFDT-Panurus/panurus/token"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/services/config"
-	"github.com/hyperledger-labs/fabric-token-sdk/token"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -22,7 +22,7 @@ func TestConfigurations(t *testing.T) {
 	cp, err := config.NewProvider("./testdata/token0")
 	require.NoError(t, err)
 
-	// instantiate the token sdk config
+	// instantiate Panurus config
 	service := NewService(cp)
 	checkConfigurations(t, service, 2)
 

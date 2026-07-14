@@ -9,10 +9,10 @@ package ttx
 import (
 	"time"
 
+	"github.com/LFDT-Panurus/panurus/token"
+	"github.com/LFDT-Panurus/panurus/token/services/network"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/view"
-	"github.com/hyperledger-labs/fabric-token-sdk/token"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/network"
 )
 
 // TxOptions contains configuration options for token transactions including auditor selection,
@@ -206,13 +206,21 @@ func CompileServiceOptions(opts ...token.ServiceOption) (*token.ServiceOptions, 
 	return txOptions, nil
 }
 
+// Keys used to store application-specific parameters in token.ServiceOptions.Params.
+const (
+	paramsKeyRecipientData          = "RecipientData"
+	paramsKeyRecipientWalletID      = "RecipientWalletID"
+	paramsKeyWalletSelector         = "WalletSelector"
+	paramsKeyExchangeWalletSelector = "ExchangeWalletSelector"
+)
+
 // WithRecipientData is used to add a RecipientData to the service options
 func WithRecipientData(recipientData *RecipientData) token.ServiceOption {
 	return func(options *token.ServiceOptions) error {
 		if options.Params == nil {
 			options.Params = map[string]any{}
 		}
-		options.Params["RecipientData"] = recipientData
+		options.Params[paramsKeyRecipientData] = recipientData
 
 		return nil
 	}
@@ -227,7 +235,7 @@ func WithRecipientWalletID(walletID string) token.ServiceOption {
 		if options.Params == nil {
 			options.Params = map[string]any{}
 		}
-		options.Params["RecipientWalletID"] = walletID
+		options.Params[paramsKeyRecipientWalletID] = walletID
 
 		return nil
 	}
@@ -236,10 +244,86 @@ func WithRecipientWalletID(walletID string) token.ServiceOption {
 // getRecipientWalletID extracts the recipient wallet ID from service options.
 // Returns an empty string if the wallet ID is not set.
 func getRecipientWalletID(opts *token.ServiceOptions) string {
-	wBoxed, ok := opts.Params["RecipientWalletID"]
+	wBoxed, ok := opts.Params[paramsKeyRecipientWalletID]
 	if !ok {
 		return ""
 	}
 
 	return wBoxed.(string)
+}
+
+// WalletSelector lets the responder to a RecipientRequest choose which wallet to use
+// to answer the request. defaultWallet is the wallet that would be used absent a
+// selector (the responder's configured wallet, or the request's WalletID as fallback).
+// Returning defaultWallet unchanged preserves the default behavior.
+type WalletSelector func(request *RecipientRequest, defaultWallet string) (string, error)
+
+// ExchangeWalletSelector is the WalletSelector equivalent for ExchangeRecipientRequest.
+type ExchangeWalletSelector func(request *ExchangeRecipientRequest, defaultWallet string) (string, error)
+
+// WithWalletSelector sets a callback used by the responder to a RecipientRequest to
+// choose which wallet to use, overriding the default wallet resolution.
+// The returned token.ServiceOption never fails to apply; it always returns a nil error,
+// consistent with the other option setters in this file (e.g. WithRecipientData).
+func WithWalletSelector(selector WalletSelector) token.ServiceOption {
+	return func(options *token.ServiceOptions) error {
+		if selector == nil {
+			return nil
+		}
+		if options.Params == nil {
+			options.Params = map[string]any{}
+		}
+		options.Params[paramsKeyWalletSelector] = selector
+
+		return nil
+	}
+}
+
+// getWalletSelector extracts the WalletSelector from service options, if set.
+// Returns nil if the selector is not set or is not a WalletSelector.
+func getWalletSelector(opts *token.ServiceOptions) WalletSelector {
+	sBoxed, ok := opts.Params[paramsKeyWalletSelector]
+	if !ok {
+		return nil
+	}
+	selector, ok := sBoxed.(WalletSelector)
+	if !ok {
+		return nil
+	}
+
+	return selector
+}
+
+// WithExchangeWalletSelector sets a callback used by the responder to an
+// ExchangeRecipientRequest to choose which wallet to use, overriding the default wallet
+// resolution.
+// The returned token.ServiceOption never fails to apply; it always returns a nil error,
+// consistent with the other option setters in this file (e.g. WithRecipientData).
+func WithExchangeWalletSelector(selector ExchangeWalletSelector) token.ServiceOption {
+	return func(options *token.ServiceOptions) error {
+		if selector == nil {
+			return nil
+		}
+		if options.Params == nil {
+			options.Params = map[string]any{}
+		}
+		options.Params[paramsKeyExchangeWalletSelector] = selector
+
+		return nil
+	}
+}
+
+// getExchangeWalletSelector extracts the ExchangeWalletSelector from service options, if set.
+// Returns nil if the selector is not set or is not an ExchangeWalletSelector.
+func getExchangeWalletSelector(opts *token.ServiceOptions) ExchangeWalletSelector {
+	sBoxed, ok := opts.Params[paramsKeyExchangeWalletSelector]
+	if !ok {
+		return nil
+	}
+	selector, ok := sBoxed.(ExchangeWalletSelector)
+	if !ok {
+		return nil
+	}
+
+	return selector
 }

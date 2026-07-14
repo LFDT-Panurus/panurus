@@ -9,8 +9,8 @@ package certifier
 import (
 	"testing"
 
+	"github.com/LFDT-Panurus/panurus/token/services/certifier/driver/mock"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/certifier/driver/mock"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

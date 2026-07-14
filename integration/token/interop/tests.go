@@ -13,12 +13,12 @@ import (
 	"sync"
 	"time"
 
+	token2 "github.com/LFDT-Panurus/panurus/integration/token"
+	"github.com/LFDT-Panurus/panurus/integration/token/interop/views"
+	"github.com/LFDT-Panurus/panurus/token"
+	"github.com/LFDT-Panurus/panurus/token/services/interop/htlc"
+	token3 "github.com/LFDT-Panurus/panurus/token/token"
 	"github.com/hyperledger-labs/fabric-smart-client/integration"
-	token2 "github.com/hyperledger-labs/fabric-token-sdk/integration/token"
-	"github.com/hyperledger-labs/fabric-token-sdk/integration/token/interop/views"
-	"github.com/hyperledger-labs/fabric-token-sdk/token"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/interop/htlc"
-	token3 "github.com/hyperledger-labs/fabric-token-sdk/token/token"
 	"github.com/onsi/gomega"
 )
 

@@ -7,7 +7,7 @@ SPDX-License-Identifier: Apache-2.0
 package identity
 
 import (
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/identity/driver"
+	"github.com/LFDT-Panurus/panurus/token/services/identity/driver"
 )
 
 // RoleType is the role of an identity

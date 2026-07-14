@@ -9,10 +9,10 @@ package pagination
 import (
 	"fmt"
 
+	"github.com/LFDT-Panurus/panurus/token/services/storage/db/sql/query/common"
+	"github.com/LFDT-Panurus/panurus/token/services/storage/db/sql/query/cond"
+	_select "github.com/LFDT-Panurus/panurus/token/services/storage/db/sql/query/select"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/common/driver"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/db/sql/query/common"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/db/sql/query/cond"
-	_select "github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/db/sql/query/select"
 )
 
 func NewDefaultInterpreter() *interpreter {

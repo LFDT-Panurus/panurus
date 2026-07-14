@@ -1,12 +1,12 @@
 # Services
 
-Services in the Fabric Token SDK provide pre-built, high-level functionality designed to streamline the use of the Token API. These services are organized into two categories: **Application Services**, which orchestrate complex business logic, and **Infrastructure Services**, which provide foundational capabilities used by both Application Services and Token Drivers.
+Services in Panurus provide pre-built, high-level functionality designed to streamline the use of the Token API. These services are organized into two categories: **Application Services**, which orchestrate complex business logic, and **Infrastructure Services**, which provide foundational capabilities used by both Application Services and Token Drivers.
 
-The entire Token SDK utilizes **Fabric Smart Client (FSC)** project-wide facilities for logging, error handling, and monitoring to ensure consistency and reliability across the platform.
+Panurus utilizes **Fabric Smart Client (FSC)** project-wide facilities for logging, error handling, and monitoring to ensure consistency and reliability across the platform.
 
 ## Service Ecosystem
 
-The following diagram illustrates the high-level relationship between the Token SDK layers and the internal services:
+The following diagram illustrates the high-level relationship between Panurus layers and the internal services:
 
 ```mermaid
 graph TD
@@ -16,7 +16,7 @@ graph TD
         Interop[Interop Service]
     end
 
-    subgraph "Token SDK Services (Infrastructure)"
+    subgraph "Panurus Services (Infrastructure)"
         Identity[Identity Service]
         Config[Config Service]
         Network[Network Service]
@@ -66,19 +66,19 @@ The [Interop Service](./services/interop.md) enables cross-chain and cross-netwo
 
 ## Infrastructure Services
 
-Infrastructure services are internal to the SDK and provide the building blocks for token operations.
+Infrastructure services are internal to Panurus and provide the building blocks for token operations.
 
 ### Identity Service
-The [Identity Service](./services/identity.md) is internal to the Token SDK and is **independent** of the FSC identity service. It handles the management of cryptographic material, signatures, and wallets (supporting both X.509 and Idemix) specifically for token operations. This isolation ensures that token-related identities are managed according to the requirements of the token drivers (e.g., privacy-preserving signatures).
+The [Identity Service](./services/identity.md) is internal to Panurus and is **independent** of the FSC identity service. It handles the management of cryptographic material, signatures, and wallets (supporting both X.509 and Idemix) specifically for token operations. This isolation ensures that token-related identities are managed according to the requirements of the token drivers (e.g., privacy-preserving signatures).
 
 ### Config Service
-The [Config Service](./services/config.md) manages configuration settings for the Token SDK. It provides a centralized way to access and manage configuration values for various components of the SDK, including token management services, drivers, and internal services.
+The [Config Service](./services/config.md) manages configuration settings for Panurus. It provides a centralized way to access and manage configuration values for various components of Panurus, including token management services, drivers, and internal services.
 
 ### Network Service
 The [Network Service](./services/network.md) acts as a bridge layer. It translates generic token requests into backend-specific formats (such as Fabric or FabricX) and manages communication with the underlying ledger. It is also responsible for tracking transaction finality and triggering listeners when transactions are committed.
 
 ### Storage Service
-The [Storage Service](./services/storage.md) encapsulates all data persistence mechanisms required by the SDK. It manages specialized databases for different types of information, including:
+The [Storage Service](./services/storage.md) encapsulates all data persistence mechanisms required by Panurus. It manages specialized databases for different types of information, including:
 *   **TTXDB**: Stores transaction history and status.
 *   **TokenDB**: Maintains the current state of tokens (UTXOs).
 *   **AuditDB**: Used by auditors to track and verify transaction compliance.
@@ -97,4 +97,4 @@ The [Auditor Service](./services/auditor.md) provides tools for oversight and co
 The [Certifier Service](./services/certifier.md) handles the lifecycle of token certifications, which are used in certain driver implementations (like `zkatdlog`) to provide additional proofs of validity or ownership that can be verified off-chain.
 
 ### Benchmark Service
-The [Benchmark Service](./services/benchmark.md) provides performance benchmarking capabilities for the Token SDK. It allows developers and operators to measure the performance of various token operations under different configurations and workloads.
+The [Benchmark Service](./services/benchmark.md) provides performance benchmarking capabilities for the Panurus. It allows developers and operators to measure the performance of various token operations under different configurations and workloads.

@@ -10,11 +10,11 @@ import (
 	"context"
 	"encoding/json"
 
+	"github.com/LFDT-Panurus/panurus/token/services/network/common/rws/translator"
+	driver2 "github.com/LFDT-Panurus/panurus/token/services/network/driver"
+	"github.com/LFDT-Panurus/panurus/token/token"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/fabric"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/network/common/rws/translator"
-	driver2 "github.com/hyperledger-labs/fabric-token-sdk/token/services/network/driver"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/token"
 )
 
 func NewTokenExecutorProvider(fnsProvider *fabric.NetworkServiceProvider) *tokenFetcherProvider {

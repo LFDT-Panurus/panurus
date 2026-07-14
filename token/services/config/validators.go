@@ -7,7 +7,7 @@ SPDX-License-Identifier: Apache-2.0
 package config
 
 import (
-	"github.com/hyperledger-labs/fabric-token-sdk/token"
+	"github.com/LFDT-Panurus/panurus/token"
 )
 
 // ValidateConfiguration provides functions to access the configuration of a given TMS

@@ -1,6 +1,6 @@
 # AI Agents Best Practices
 
-The Fabric Token SDK project leverages AI agents to streamline development, maintenance, and testing. 
+Panurus project leverages AI agents to streamline development, maintenance, and testing. 
 To ensure consistent and high-quality results when using AI agents, please follow the guidelines below.
 
 ## Agent Context (`AGENTS.md`)

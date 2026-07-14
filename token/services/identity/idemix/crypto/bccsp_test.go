@@ -11,7 +11,7 @@ import (
 
 	"github.com/IBM/idemix/bccsp/keystore"
 	math "github.com/IBM/mathlib"
-	math2 "github.com/hyperledger-labs/fabric-token-sdk/token/core/common/crypto/math"
+	math2 "github.com/LFDT-Panurus/panurus/token/core/common/crypto/math"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

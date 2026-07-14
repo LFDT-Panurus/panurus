@@ -12,13 +12,13 @@ import (
 	"path/filepath"
 
 	math3 "github.com/IBM/mathlib"
+	"github.com/LFDT-Panurus/panurus/cmd/tokengen/cobra/pp/cc"
+	"github.com/LFDT-Panurus/panurus/cmd/tokengen/cobra/pp/common"
+	"github.com/LFDT-Panurus/panurus/cmd/tokengen/cobra/pp/idemix"
+	"github.com/LFDT-Panurus/panurus/integration/nwo/token/generators/crypto/zkatdlognoghv1"
+	setupv1 "github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/setup"
+	"github.com/LFDT-Panurus/panurus/token/driver"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
-	"github.com/hyperledger-labs/fabric-token-sdk/cmd/tokengen/cobra/pp/cc"
-	"github.com/hyperledger-labs/fabric-token-sdk/cmd/tokengen/cobra/pp/common"
-	"github.com/hyperledger-labs/fabric-token-sdk/cmd/tokengen/cobra/pp/idemix"
-	"github.com/hyperledger-labs/fabric-token-sdk/integration/nwo/token/generators/crypto/zkatdlognoghv1"
-	setupv1 "github.com/hyperledger-labs/fabric-token-sdk/token/core/zkatdlog/nogh/v1/setup"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/driver"
 	"github.com/spf13/cobra"
 )
 
@@ -39,7 +39,7 @@ type GeneratorArgs struct {
 	// Aries is a flag to indicate that aries should be used as backend for idemix
 	Aries bool
 	// Version allows the caller of tokengen to override the version number put in the public params
-	Version uint
+	Version uint32
 }
 
 var (
@@ -59,7 +59,7 @@ var (
 	// Aries is a flag to indicate that aries should be used as backend for idemix
 	Aries bool
 	// Version allows the caller of tokengen to override the version number put in the public params
-	Version uint
+	Version uint32
 	// Extras allows the caller to add extra parameters to the public parameters
 	Extras []string
 )
@@ -75,7 +75,7 @@ func Cmd() *cobra.Command {
 	flags.StringVarP(&IdemixMSPDir, "idemix", "i", "", "idemix msp dir")
 	flags.Uint64VarP(&BitLength, "bits", "b", 64, "bits is used to define the maximum quantity a token can contain")
 	flags.BoolVarP(&Aries, "aries", "r", false, "flag to indicate that aries should be used as backend for idemix")
-	flags.UintVarP(&Version, "version", "v", 0, "allows the caller of tokengen to override the version number put in the public params")
+	flags.Uint32VarP(&Version, "version", "v", 0, "allows the caller of tokengen to override the version number put in the public params")
 	flags.StringArrayVarP(&Extras, "extra", "x", []string{}, "extra data in key=value format, where value is the path to a file containing the data to load and store in the key")
 
 	return cobraCommand

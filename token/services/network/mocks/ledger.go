@@ -5,7 +5,7 @@ import (
 	"context"
 	"sync"
 
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/network/driver"
+	"github.com/LFDT-Panurus/panurus/token/services/network/driver"
 )
 
 type Ledger struct {

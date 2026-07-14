@@ -10,10 +10,10 @@ import (
 	"context"
 	"encoding/json"
 
+	tdriver "github.com/LFDT-Panurus/panurus/token/driver"
+	idriver "github.com/LFDT-Panurus/panurus/token/services/identity/driver"
+	"github.com/LFDT-Panurus/panurus/token/services/identity/idemix/crypto"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
-	tdriver "github.com/hyperledger-labs/fabric-token-sdk/token/driver"
-	idriver "github.com/hyperledger-labs/fabric-token-sdk/token/services/identity/driver"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/identity/idemix/crypto"
 )
 
 type backedDeserializer interface {

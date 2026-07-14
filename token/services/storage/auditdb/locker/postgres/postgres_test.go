@@ -13,9 +13,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/LFDT-Panurus/panurus/token/services/storage/auditdb/locker/errs"
+	lockerpostgres "github.com/LFDT-Panurus/panurus/token/services/storage/auditdb/locker/postgres"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/services/storage/driver/sql/postgres"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/auditdb/locker/errs"
-	lockerpostgres "github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/auditdb/locker/postgres"
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

@@ -12,19 +12,20 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/LFDT-Panurus/panurus/token/services/logging"
+	"github.com/LFDT-Panurus/panurus/token/services/storage/db/driver"
+	q "github.com/LFDT-Panurus/panurus/token/services/storage/db/sql/query"
+	common3 "github.com/LFDT-Panurus/panurus/token/services/storage/db/sql/query/common"
+	"github.com/LFDT-Panurus/panurus/token/services/storage/db/sql/query/cond"
+	"github.com/LFDT-Panurus/panurus/token/services/utils/types/transaction"
+	"github.com/LFDT-Panurus/panurus/token/token"
 	common2 "github.com/hyperledger-labs/fabric-smart-client/platform/view/services/storage/driver/common"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/services/storage/driver/sql/common"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/logging"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/db/driver"
-	q "github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/db/sql/query"
-	common3 "github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/db/sql/query/common"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/db/sql/query/cond"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/utils/types/transaction"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/token"
 )
 
 type tokenLockTables struct {
 	TokenLocks string
+	Tokens     string
 	Requests   string
 }
 
@@ -52,6 +53,7 @@ func NewTokenLockStore(readDB, writeDB *sql.DB, tables TableNames, ci common3.Co
 		writeDB,
 		tokenLockTables{
 			TokenLocks: tables.TokenLocks,
+			Tokens:     tables.Tokens,
 			Requests:   tables.Requests,
 		},
 		ci), nil
@@ -91,9 +93,11 @@ func (db *TokenLockStore) GetSchema() string {
 			idx INT NOT NULL,
 			consumer_tx_id TEXT NOT NULL,
 			created_at TIMESTAMP NOT NULL,
-			PRIMARY KEY(tx_id, idx)
+			PRIMARY KEY(tx_id, idx),
+			FOREIGN KEY (tx_id, idx) REFERENCES %s
 		);`,
 		db.Table.TokenLocks,
+		db.Table.Tokens,
 	)
 }
 
@@ -103,7 +107,7 @@ func (db *TokenLockStore) Close() error {
 
 func IsExpiredToken(tokenRequests, tokenLocks common3.Table, leaseExpiry time.Duration) cond.Condition {
 	return cond.Or(
-		cond.FieldIn(tokenRequests.Field("status"), driver.Deleted),
+		cond.FieldIn(tokenRequests.Field("status"), driver.Deleted, driver.Orphan),
 		cond.OlderThan(tokenLocks.Field("created_at"), leaseExpiry),
 	)
 }

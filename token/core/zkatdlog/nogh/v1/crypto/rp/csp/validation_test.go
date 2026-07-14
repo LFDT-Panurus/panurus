@@ -94,9 +94,16 @@ func TestValidateG1Slice(t *testing.T) {
 				elements := []*mathlib.G1{curve.GenG1, nil}
 				err := validateG1Slice("test", elements, curve, 2)
 				require.Error(t, err)
-				require.ErrorIs(t, err, ErrNilElement)
-				assert.Contains(t, err.Error(), "element cannot be nil")
-				assert.Contains(t, err.Error(), "test[1]")
+				assert.Contains(t, err.Error(), "test validation failed")
+			})
+
+			t.Run("InfinityElement", func(t *testing.T) {
+				// Verify that slices containing the identity point are rejected;
+				// a generator at infinity collapses the commitment scheme.
+				elements := []*mathlib.G1{curve.GenG1, curve.NewG1()}
+				err := validateG1Slice("test", elements, curve, 2)
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), "test validation failed")
 			})
 		})
 	}

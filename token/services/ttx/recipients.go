@@ -11,13 +11,13 @@ import (
 	"encoding/asn1"
 	"time"
 
+	"github.com/LFDT-Panurus/panurus/token"
+	"github.com/LFDT-Panurus/panurus/token/services/identity/boolpolicy"
+	"github.com/LFDT-Panurus/panurus/token/services/identity/multisig"
+	session2 "github.com/LFDT-Panurus/panurus/token/services/utils/json/session"
+	view3 "github.com/LFDT-Panurus/panurus/token/services/utils/view"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/services/endpoint"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/view"
-	"github.com/hyperledger-labs/fabric-token-sdk/token"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/identity/boolpolicy"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/identity/multisig"
-	session2 "github.com/hyperledger-labs/fabric-token-sdk/token/services/utils/json/session"
-	view3 "github.com/hyperledger-labs/fabric-token-sdk/token/services/utils/view"
 
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 )
@@ -443,24 +443,34 @@ func (f *RequestRecipientIdentityView) aggregateAndDistributePolicy(context view
 }
 
 type RespondRequestRecipientIdentityView struct {
-	Wallet string
+	Wallet         string
+	WalletSelector WalletSelector
 }
 
 // RespondRequestRecipientIdentity executes the RespondRequestRecipientIdentityView.
 // The recipient sends back the identity to receive ownership of tokens.
-// The identity is taken from the default wallet.
+// The identity is taken from the default wallet, unless a WalletSelector option
+// (see WithWalletSelector) overrides the choice.
 // If the wallet is not found, an error is returned.
-func RespondRequestRecipientIdentity(context view.Context) (view.Identity, error) {
-	return RespondRequestRecipientIdentityUsingWallet(context, "")
+func RespondRequestRecipientIdentity(context view.Context, opts ...token.ServiceOption) (view.Identity, error) {
+	return RespondRequestRecipientIdentityUsingWallet(context, "", opts...)
 }
 
 // RespondRequestRecipientIdentityUsingWallet executes the RespondRequestRecipientIdentityView.
 // The recipient sends back the identity to receive ownership of tokens.
-// The identity is taken from the passed wallet.
+// The identity is taken from the passed wallet, unless a WalletSelector option
+// (see WithWalletSelector) overrides the choice.
 // If the wallet is not found, an error is returned.
 // If the wallet is the empty string, the identity is taken from the default wallet.
-func RespondRequestRecipientIdentityUsingWallet(context view.Context, wallet string) (view.Identity, error) {
-	id, err := context.RunView(&RespondRequestRecipientIdentityView{Wallet: wallet})
+func RespondRequestRecipientIdentityUsingWallet(context view.Context, wallet string, opts ...token.ServiceOption) (view.Identity, error) {
+	options, err := CompileServiceOptions(opts...)
+	if err != nil {
+		return nil, errors.Wrapf(err, "failed compiling service options")
+	}
+	id, err := context.RunView(&RespondRequestRecipientIdentityView{
+		Wallet:         wallet,
+		WalletSelector: getWalletSelector(options),
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -481,6 +491,13 @@ func (s *RespondRequestRecipientIdentityView) Call(context view.Context) (any, e
 	wallet := s.Wallet
 	if len(wallet) == 0 && len(recipientRequest.WalletID) != 0 {
 		wallet = string(recipientRequest.WalletID)
+	}
+	if s.WalletSelector != nil {
+		selected, err := s.WalletSelector(recipientRequest, wallet)
+		if err != nil {
+			return nil, errors.Wrapf(err, "failed selecting wallet")
+		}
+		wallet = selected
 	}
 	logger.DebugfContext(context.Context(), "Respond request recipient identity using wallet [%s]", wallet)
 	tms, err := token.GetManagementService(context, token.WithTMSID(recipientRequest.TMSID))
@@ -837,14 +854,22 @@ func (f *ExchangeRecipientIdentitiesView) Call(context view.Context) (any, error
 }
 
 type RespondExchangeRecipientIdentitiesView struct {
-	Wallet string
+	Wallet         string
+	WalletSelector ExchangeWalletSelector
 }
 
 // RespondExchangeRecipientIdentities executes the RespondExchangeRecipientIdentitiesView.
 // The recipient sends back the identity to receive ownership of tokens.
-// The identity is taken from the default wallet
-func RespondExchangeRecipientIdentities(context view.Context) (view.Identity, view.Identity, error) {
-	ids, err := context.RunView(&RespondExchangeRecipientIdentitiesView{})
+// The identity is taken from the default wallet, unless an ExchangeWalletSelector option
+// (see WithExchangeWalletSelector) overrides the choice.
+func RespondExchangeRecipientIdentities(context view.Context, opts ...token.ServiceOption) (view.Identity, view.Identity, error) {
+	options, err := CompileServiceOptions(opts...)
+	if err != nil {
+		return nil, nil, errors.Wrapf(err, "failed compiling service options")
+	}
+	ids, err := context.RunView(&RespondExchangeRecipientIdentitiesView{
+		WalletSelector: getExchangeWalletSelector(options),
+	})
 	if err != nil {
 		return nil, nil, err
 	}
@@ -880,6 +905,13 @@ func (s *RespondExchangeRecipientIdentitiesView) Call(context view.Context) (any
 	wallet := s.Wallet
 	if len(wallet) == 0 && len(request.WalletID) != 0 {
 		wallet = string(request.WalletID)
+	}
+	if s.WalletSelector != nil {
+		selected, err := s.WalletSelector(request, wallet)
+		if err != nil {
+			return nil, errors.Wrapf(err, "failed selecting wallet")
+		}
+		wallet = selected
 	}
 	w, err := ts.WalletManager().OwnerWallet(context.Context(), wallet)
 	if err != nil {

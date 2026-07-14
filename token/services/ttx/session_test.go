@@ -13,8 +13,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/LFDT-Panurus/panurus/token/services/ttx"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/view"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/ttx"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -62,10 +62,10 @@ func TestNewLocalBidirectionalChannel_SessionInfo(t *testing.T) {
 	assert.NotEmpty(t, leftInfo.ID)
 
 	// Both should have the same endpoint info
-	assert.Equal(t, endpoint, leftInfo.Endpoint)
-	assert.Equal(t, endpoint, rightInfo.Endpoint)
-	assert.Equal(t, pkid, leftInfo.EndpointPKID)
-	assert.Equal(t, pkid, rightInfo.EndpointPKID)
+	assert.Equal(t, endpoint, leftInfo.RemoteEndpoint)
+	assert.Equal(t, endpoint, rightInfo.RemoteEndpoint)
+	assert.Equal(t, pkid, leftInfo.RemotePKID)
+	assert.Equal(t, pkid, rightInfo.RemotePKID)
 
 	// Both should not be closed initially
 	assert.False(t, leftInfo.Closed)

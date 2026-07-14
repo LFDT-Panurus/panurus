@@ -12,9 +12,9 @@ import (
 	"slices"
 	"time"
 
+	"github.com/LFDT-Panurus/panurus/token/services/utils/session"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/view"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/utils/session"
 )
 
 // CurrentVersion is the protocol version stamped on every outgoing envelope.

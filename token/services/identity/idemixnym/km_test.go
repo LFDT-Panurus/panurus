@@ -7,23 +7,24 @@ SPDX-License-Identifier: Apache-2.0
 package idemixnym
 
 import (
+	"encoding/hex"
 	"encoding/json"
 	"testing"
 
 	"github.com/IBM/idemix/bccsp/types"
 	math "github.com/IBM/mathlib"
+	"github.com/LFDT-Panurus/panurus/token/services/identity/idemix"
+	"github.com/LFDT-Panurus/panurus/token/services/identity/idemix/crypto"
+	"github.com/LFDT-Panurus/panurus/token/services/identity/idemixnym/mock"
+	"github.com/LFDT-Panurus/panurus/token/services/identity/idemixnym/nym"
+	kvs2 "github.com/LFDT-Panurus/panurus/token/services/storage/db/kvs"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/identity/idemix"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/identity/idemix/crypto"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/identity/idemixnym/mock"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/identity/idemixnym/nym"
-	kvs2 "github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/db/kvs"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 func TestNewKeyManager(t *testing.T) {
-	testNewKeyManager(t, "../idemix/testdata/fp256bn_amcl/idemix", math.FP256BN_AMCL)
+	testNewKeyManager(t, "../idemix/testdata/bls12_381_bbs_gurvy/idemix", math.BLS12_381_BBS_GURVY)
 	testNewKeyManager(t, "../idemix/testdata/bls12_381_bbs/idemix", math.BLS12_381_BBS_GURVY)
 }
 
@@ -57,7 +58,7 @@ func testNewKeyManager(t *testing.T, configPath string, curveID math.CurveID) {
 }
 
 func TestKeyManagerIdentity(t *testing.T) {
-	testKeyManagerIdentity(t, "../idemix/testdata/fp256bn_amcl/idemix", math.FP256BN_AMCL)
+	testKeyManagerIdentity(t, "../idemix/testdata/bls12_381_bbs_gurvy/idemix", math.BLS12_381_BBS_GURVY)
 	testKeyManagerIdentity(t, "../idemix/testdata/bls12_381_bbs/idemix", math.BLS12_381_BBS_GURVY)
 }
 
@@ -93,6 +94,21 @@ func testKeyManagerIdentity(t *testing.T, configPath string, curveID math.CurveI
 	assert.NotNil(t, identityDescriptor.Signer)
 	assert.False(t, identityDescriptor.Ephemeral)
 
+	// check SKI
+	iss := &mock.IdentityStoreService{}
+	iss.GetSignerInfoReturns(identityDescriptor.AuditInfo, nil)
+	skiProvider := NewSKIProvider(iss)
+	idSKI, err := skiProvider.GetSKIsFromIdentity(t.Context(), identityDescriptor.Identity)
+	require.NoError(t, err)
+	require.Len(t, idSKI, 1)
+	idSKIAtZero, err := hex.DecodeString(idSKI[0])
+	require.NoError(t, err)
+	require.Equal(
+		t,
+		identityDescriptor.Signer.(*nym.Signer).Signer.(*crypto.SigningIdentity).NymPublicKey.SKI(),
+		idSKIAtZero,
+	)
+
 	// verify the audit info contains the nym
 	auditInfo := &nym.AuditInfo{}
 	err = json.Unmarshal(identityDescriptor.AuditInfo, auditInfo)
@@ -107,7 +123,7 @@ func testKeyManagerIdentity(t *testing.T, configPath string, curveID math.CurveI
 }
 
 func TestDeserializeVerifier(t *testing.T) {
-	testDeserializeVerifier(t, "../idemix/testdata/fp256bn_amcl/idemix", math.FP256BN_AMCL)
+	testDeserializeVerifier(t, "../idemix/testdata/bls12_381_bbs_gurvy/idemix", math.BLS12_381_BBS_GURVY)
 	testDeserializeVerifier(t, "../idemix/testdata/bls12_381_bbs/idemix", math.BLS12_381_BBS_GURVY)
 }
 
@@ -152,7 +168,7 @@ func testDeserializeVerifier(t *testing.T, configPath string, curveID math.Curve
 }
 
 func TestDeserializeSigner(t *testing.T) {
-	testDeserializeSigner(t, "../idemix/testdata/fp256bn_amcl/idemix", math.FP256BN_AMCL)
+	testDeserializeSigner(t, "../idemix/testdata/bls12_381_bbs_gurvy/idemix", math.BLS12_381_BBS_GURVY)
 	testDeserializeSigner(t, "../idemix/testdata/bls12_381_bbs/idemix", math.BLS12_381_BBS_GURVY)
 }
 
@@ -208,7 +224,7 @@ func testDeserializeSigner(t *testing.T, configPath string, curveID math.CurveID
 }
 
 func TestKeyManagerErrorPaths(t *testing.T) {
-	testKeyManagerErrorPaths(t, "../idemix/testdata/fp256bn_amcl/idemix", math.FP256BN_AMCL)
+	testKeyManagerErrorPaths(t, "../idemix/testdata/bls12_381_bbs_gurvy/idemix", math.BLS12_381_BBS_GURVY)
 	testKeyManagerErrorPaths(t, "../idemix/testdata/bls12_381_bbs/idemix", math.BLS12_381_BBS_GURVY)
 }
 
@@ -256,7 +272,7 @@ func testKeyManagerErrorPaths(t *testing.T, configPath string, curveID math.Curv
 }
 
 func TestKeyManagerMethods(t *testing.T) {
-	testKeyManagerMethods(t, "../idemix/testdata/fp256bn_amcl/idemix", math.FP256BN_AMCL)
+	testKeyManagerMethods(t, "../idemix/testdata/bls12_381_bbs_gurvy/idemix", math.BLS12_381_BBS_GURVY)
 	testKeyManagerMethods(t, "../idemix/testdata/bls12_381_bbs/idemix", math.BLS12_381_BBS_GURVY)
 }
 
@@ -296,7 +312,7 @@ func testKeyManagerMethods(t *testing.T, configPath string, curveID math.CurveID
 }
 
 func TestKeyManagerIdentityWithAuditInfo(t *testing.T) {
-	testKeyManagerIdentityWithAuditInfo(t, "../idemix/testdata/fp256bn_amcl/idemix", math.FP256BN_AMCL)
+	testKeyManagerIdentityWithAuditInfo(t, "../idemix/testdata/bls12_381_bbs_gurvy/idemix", math.BLS12_381_BBS_GURVY)
 	testKeyManagerIdentityWithAuditInfo(t, "../idemix/testdata/bls12_381_bbs/idemix", math.BLS12_381_BBS_GURVY)
 }
 

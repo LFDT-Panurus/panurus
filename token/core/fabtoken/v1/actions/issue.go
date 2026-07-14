@@ -7,13 +7,13 @@ SPDX-License-Identifier: Apache-2.0
 package actions
 
 import (
+	"github.com/LFDT-Panurus/panurus/token/core/fabtoken/protos-go/v1/actions"
+	"github.com/LFDT-Panurus/panurus/token/driver"
+	driverv1 "github.com/LFDT-Panurus/panurus/token/driver/protos-go/v1"
+	"github.com/LFDT-Panurus/panurus/token/services/utils/protos"
+	"github.com/LFDT-Panurus/panurus/token/token"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/proto"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/core/fabtoken/protos-go/actions"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/core/fabtoken/protos-go/pp"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/driver"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/utils/protos"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/token"
 )
 
 // IssueAction encodes a fabtoken Issue
@@ -60,7 +60,7 @@ func (i *IssueAction) Serialize() ([]byte, error) {
 
 	issueAction := &actions.IssueAction{
 		Version: ProtocolV1,
-		Issuer: &pp.Identity{
+		Issuer: &driverv1.Identity{
 			Raw: i.Issuer,
 		},
 		Outputs:  outputs,

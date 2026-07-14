@@ -11,13 +11,13 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/hyperledger-labs/fabric-token-sdk/token/driver"
-	dmock "github.com/hyperledger-labs/fabric-token-sdk/token/driver/mock"
-	idriver "github.com/hyperledger-labs/fabric-token-sdk/token/services/identity/driver"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/identity/wallet"
-	wmock "github.com/hyperledger-labs/fabric-token-sdk/token/services/identity/wallet/mock"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/logging"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/token"
+	"github.com/LFDT-Panurus/panurus/token/driver"
+	dmock "github.com/LFDT-Panurus/panurus/token/driver/mock"
+	idriver "github.com/LFDT-Panurus/panurus/token/services/identity/driver"
+	"github.com/LFDT-Panurus/panurus/token/services/identity/wallet"
+	wmock "github.com/LFDT-Panurus/panurus/token/services/identity/wallet/mock"
+	"github.com/LFDT-Panurus/panurus/token/services/logging"
+	"github.com/LFDT-Panurus/panurus/token/token"
 	"github.com/stretchr/testify/require"
 )
 

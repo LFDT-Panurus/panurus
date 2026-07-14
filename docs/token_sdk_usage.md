@@ -1,11 +1,11 @@
-# Fabric Token SDK API Usage Guide
+# Panurus API Usage Guide
 
-This guide provides a comprehensive overview of how to use the Fabric Token SDK API. 
+This guide provides a comprehensive overview of how to use Panurus API. 
 It is based on the integration tests found in `integration/token/fungible/views`.
 
 ## 1. Core Concepts
 
-The Token SDK leverages the **View** model from the **Fabric Smart Client**. 
+Panurus leverages the **View** model from the **Fabric Smart Client**. 
 Views are used to model distributed business processes, allowing nodes to communicate and execute protocols (like token issuance or transfer) in a structured way.
 
 Most token operations follow this pattern:
@@ -314,6 +314,27 @@ if err != nil {
 }
 ```
 
+### Issuer Balance ([`history.go`](../integration/token/fungible/views/history.go))
+An issuer wallet can report its gross issued balance, its gross redeemed balance (tokens redeemed against that issuer), and its net outstanding issued supply.
+```go
+wallet := ttx.GetIssuerWallet(context, issuerWalletID)
+
+opts := &driver.IssuerBalanceOptions{TokenType: tokenType} // optionally add From/To to restrict by time range
+
+issued, err := wallet.IssuedBalance(context.Context(), opts)
+if err != nil {
+    return nil, err
+}
+redeemed, err := wallet.RedeemedBalance(context.Context(), opts)
+if err != nil {
+    return nil, err
+}
+net, err := wallet.Balance(context.Context(), opts) // == issued - redeemed
+if err != nil {
+    return nil, err
+}
+```
+
 ---
 
 ## 7. Special Patterns
@@ -331,8 +352,8 @@ Uses an **Initiator-Responder Inversion** pattern. The user requests a withdrawa
 
 For deeper dives into specific components, consult the following documentation:
 
-*   **Concepts & Architecture**: [`tokensdk.md`](./tokensdk.md) - High-level overview of the SDK, terminology, and architecture.
+*   **Concepts & Architecture**: [`tokensdk.md`](./tokensdk.md) - High-level overview of Panurus, terminology, and architecture.
 *   **API Specification**: [`tokenapi.md`](./tokenapi.md) - Detailed explanation of the Token API, Token Requests, and Wallet Manager.
-*   **Configuration**: [`core-token.md`](configuration.md) - Reference for compiling `core.yaml` and configuring the SDK.
+*   **Configuration**: [`core-token.md`](configuration.md) - Reference for compiling `core.yaml` and configuring Panurus.
 *   **Services**: [`services.md`](./services.md) - Overview of the supporting services like Identity and Network services.
 *   **Drivers**: [`driverapi.md`](./driverapi.md) - Information on implementing custom token drivers.

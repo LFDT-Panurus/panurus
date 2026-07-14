@@ -95,7 +95,7 @@ func (s *submitter) Submit(network, channel string, tx *applicationpb.Tx) error 
 	for idx, ns := range tx.GetNamespaces() {
 		// Note that a default msp signer hash the msg before signing.
 		// For that reason we use the TxNamespace message as ASN1 encoded msg
-		digest, err := ns.ASN1Marshal(txID)
+		digest, err := ns.ASN1Marshal(txID, nil)
 		if err != nil {
 			return errors.Wrap(err, "failed asn1 marshal tx")
 		}

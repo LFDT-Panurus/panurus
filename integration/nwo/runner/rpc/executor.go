@@ -11,17 +11,17 @@ import (
 	"errors"
 	"time"
 
+	runner2 "github.com/LFDT-Panurus/panurus/integration/nwo/runner"
+	"github.com/LFDT-Panurus/panurus/integration/nwo/txgen"
+	"github.com/LFDT-Panurus/panurus/integration/nwo/txgen/model"
+	"github.com/LFDT-Panurus/panurus/integration/nwo/txgen/service/logging"
+	runner3 "github.com/LFDT-Panurus/panurus/integration/nwo/txgen/service/runner"
+	"github.com/LFDT-Panurus/panurus/integration/nwo/txgen/service/user"
 	digutils "github.com/hyperledger-labs/fabric-smart-client/platform/common/utils/dig"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/services/metrics"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/services/metrics/operations"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/services/tracing"
 	web2 "github.com/hyperledger-labs/fabric-smart-client/platform/view/services/web/server"
-	runner2 "github.com/hyperledger-labs/fabric-token-sdk/integration/nwo/runner"
-	"github.com/hyperledger-labs/fabric-token-sdk/integration/nwo/txgen"
-	"github.com/hyperledger-labs/fabric-token-sdk/integration/nwo/txgen/model"
-	"github.com/hyperledger-labs/fabric-token-sdk/integration/nwo/txgen/service/logging"
-	runner3 "github.com/hyperledger-labs/fabric-token-sdk/integration/nwo/txgen/service/runner"
-	"github.com/hyperledger-labs/fabric-token-sdk/integration/nwo/txgen/service/user"
 	metrics2 "github.com/hyperledger/fabric-lib-go/common/metrics"
 	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/dig"
@@ -58,8 +58,8 @@ func NewSuiteExecutor(config UserProviderConfig) (*SuiteExecutor, error) {
 		}),
 		s.C.Provide(digutils.Identity[*web2.Server](), dig.As(new(operations.Server))),
 		s.C.Provide(operations.NewOperationSystem),
-		s.C.Provide(func(o *operations.Options, l operations.OperationsLogger) metrics.Provider {
-			return operations.NewMetricsProvider(o.Metrics, l, true)
+		s.C.Provide(func(o *operations.Options) metrics.Provider {
+			return operations.NewMetricsProvider(o.Metrics, true)
 		}),
 		s.C.Provide(func(mp metrics.Provider) (trace.TracerProvider, error) {
 			tp, err := tracing.NewProviderFromConfig(tracing.Config{

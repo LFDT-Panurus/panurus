@@ -10,11 +10,11 @@ import (
 	"context"
 	"testing"
 
-	"github.com/hyperledger-labs/fabric-token-sdk/token"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/driver"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/tokens"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/tokens/mock"
-	token2 "github.com/hyperledger-labs/fabric-token-sdk/token/token"
+	"github.com/LFDT-Panurus/panurus/token"
+	"github.com/LFDT-Panurus/panurus/token/driver"
+	"github.com/LFDT-Panurus/panurus/token/services/tokens"
+	"github.com/LFDT-Panurus/panurus/token/services/tokens/mock"
+	token2 "github.com/LFDT-Panurus/panurus/token/token"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -156,4 +156,56 @@ func TestParse(t *testing.T) {
 	assert.Equal(t, "tx2", store[1].TxID)
 	assert.Equal(t, output2.Index, store[1].Index)
 	assert.Equal(t, output2.Type, store[1].Tok.Type)
+}
+
+// TestParseRedeem verifies that a redeem output (empty owner) is stored as a redeemed token
+// when its issuer is known to this node, and skipped otherwise.
+func TestParseRedeem(t *testing.T) {
+	ctx := context.Background()
+	ts := &tokens.Service{
+		TMSProvider: nil,
+		Storage:     &tokens.DBStorage{},
+	}
+	md := &mock.FakeMetaData{}
+
+	qs := &mock.FakeQueryService{}
+	qs.IsMineReturns(false, nil)
+	is := token.NewInputStream(qs, []*token.Input{}, 64)
+
+	// a redeem output: empty owner, issuer set
+	redeem := &token.Output{
+		Token: token2.Token{
+			Type:  "TOK",
+			Owner: []byte{},
+		},
+		ActionIndex:  0,
+		Index:        0,
+		Type:         "TOK",
+		LedgerOutput: []byte("redeem,TOK,0x10"),
+		Quantity:     token2.NewQuantityFromUInt64(16),
+		Issuer:       []byte("issuer"),
+	}
+	os := token.NewOutputStream([]*token.Output{redeem}, 64)
+
+	// issuer is not mine: redeem is skipped
+	auth := &mock.FakeAuthorization{}
+	auth.IssuedReturns(false)
+	_, store, err := ts.Parse(ctx, auth, "txr", md, is, os, false, 64, false)
+	require.NoError(t, err)
+	assert.Empty(t, store)
+
+	// issuer is mine: redeem is stored, flagged as redeemed and issuer, but not mine
+	auth = &mock.FakeAuthorization{}
+	auth.IssuedReturns(true)
+	_, store, err = ts.Parse(ctx, auth, "txr", md, is, os, false, 64, false)
+	require.NoError(t, err)
+	require.Len(t, store, 1)
+	assert.Equal(t, "txr", store[0].TxID)
+	assert.Equal(t, redeem.Index, store[0].Index)
+	assert.Equal(t, redeem.LedgerOutput, store[0].TokenOnLedger)
+	assert.Equal(t, driver.Identity("issuer"), store[0].Issuer)
+	assert.False(t, store[0].Flags.Mine)
+	assert.True(t, store[0].Flags.Issuer)
+	assert.True(t, store[0].Flags.Redeemed)
+	assert.Empty(t, store[0].Owners)
 }

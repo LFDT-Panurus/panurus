@@ -1,6 +1,6 @@
 # Config Service
 
-The **Config Service** manages configuration settings for the Token SDK. It provides a centralized way to access and manage configuration values for various components of the SDK, including token management services, drivers, and internal services.
+The **Config Service** manages configuration settings for Panurus. It provides a centralized way to access and manage configuration values for various components of Panurus, including token management services, drivers, and internal services.
 
 ## Features
 
@@ -14,7 +14,7 @@ The Config Service includes:
 
 ## Implementation Details
 
-The Config Service is implemented in the `token/services/config` package and provides an interface for accessing configuration values throughout the Token SDK.
+The Config Service is implemented in the `token/services/config` package and provides an interface for accessing configuration values throughout Panurus.
 
 Key aspects of the configuration system:
 - Configuration paths follow the pattern: `token.<component>.<setting>`

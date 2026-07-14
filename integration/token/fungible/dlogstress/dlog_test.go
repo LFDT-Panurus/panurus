@@ -7,14 +7,14 @@ SPDX-License-Identifier: Apache-2.0
 package dlog
 
 import (
+	"github.com/LFDT-Panurus/panurus/integration/nwo/token/generators/crypto/zkatdlognoghv1"
+	"github.com/LFDT-Panurus/panurus/integration/token"
+	"github.com/LFDT-Panurus/panurus/integration/token/common"
+	"github.com/LFDT-Panurus/panurus/integration/token/common/sdk/fdlog"
+	"github.com/LFDT-Panurus/panurus/integration/token/fungible"
+	"github.com/LFDT-Panurus/panurus/integration/token/fungible/topology"
 	"github.com/hyperledger-labs/fabric-smart-client/integration/nwo/fsc"
 	nodepkg "github.com/hyperledger-labs/fabric-smart-client/pkg/node"
-	"github.com/hyperledger-labs/fabric-token-sdk/integration/nwo/token/generators/crypto/zkatdlognoghv1"
-	"github.com/hyperledger-labs/fabric-token-sdk/integration/token"
-	"github.com/hyperledger-labs/fabric-token-sdk/integration/token/common"
-	"github.com/hyperledger-labs/fabric-token-sdk/integration/token/common/sdk/fdlog"
-	"github.com/hyperledger-labs/fabric-token-sdk/integration/token/fungible"
-	"github.com/hyperledger-labs/fabric-token-sdk/integration/token/fungible/topology"
 	. "github.com/onsi/ginkgo/v2"
 )
 
@@ -45,7 +45,7 @@ func newTestSuite(backend string) (*token.TestSuite, *token.ReplicaSelector) {
 			DefaultTMSOpts:  common.TMSOpts{TokenSDKDriver: zkatdlognoghv1.DriverIdentifier, Aries: true},
 			ReplicationOpts: opts,
 			CommType:        fsc.LibP2P,
-			// FSCLogSpec:      "token-sdk=debug:info",
+			// FSCLogSpec:      "panurus=debug:info",
 			FSCLogSpec: "info",
 			SDKs:       []nodepkg.SDK{sdks[backend]},
 			Monitoring: true,

@@ -9,11 +9,11 @@ package network
 import (
 	"time"
 
-	"github.com/hyperledger-labs/fabric-token-sdk/token"
-	selector "github.com/hyperledger-labs/fabric-token-sdk/token/services/selector/simple"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/selector/simple/inmemory"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/db"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/ttxdb"
+	"github.com/LFDT-Panurus/panurus/token"
+	selector "github.com/LFDT-Panurus/panurus/token/services/selector/simple"
+	"github.com/LFDT-Panurus/panurus/token/services/selector/simple/inmemory"
+	"github.com/LFDT-Panurus/panurus/token/services/storage/db"
+	"github.com/LFDT-Panurus/panurus/token/services/storage/ttxdb"
 )
 
 // LockerProvider creates token lockers for the simple selector service.

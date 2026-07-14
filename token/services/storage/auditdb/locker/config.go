@@ -9,7 +9,7 @@ package locker
 import (
 	"time"
 
-	lockerpostgres "github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/auditdb/locker/postgres"
+	lockerpostgres "github.com/LFDT-Panurus/panurus/token/services/storage/auditdb/locker/postgres"
 )
 
 // Backend identifies which Locker implementation to use.

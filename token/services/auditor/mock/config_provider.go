@@ -4,7 +4,7 @@ package mock
 import (
 	"sync"
 
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/auditor"
+	"github.com/LFDT-Panurus/panurus/token/services/auditor"
 )
 
 type ConfigProvider struct {
@@ -19,11 +19,11 @@ type ConfigProvider struct {
 	isSetReturnsOnCall map[int]struct {
 		result1 bool
 	}
-	UnmarshalKeyStub        func(string, interface{}) error
+	UnmarshalKeyStub        func(string, any) error
 	unmarshalKeyMutex       sync.RWMutex
 	unmarshalKeyArgsForCall []struct {
 		arg1 string
-		arg2 interface{}
+		arg2 any
 	}
 	unmarshalKeyReturns struct {
 		result1 error
@@ -96,12 +96,12 @@ func (fake *ConfigProvider) IsSetReturnsOnCall(i int, result1 bool) {
 	}{result1}
 }
 
-func (fake *ConfigProvider) UnmarshalKey(arg1 string, arg2 interface{}) error {
+func (fake *ConfigProvider) UnmarshalKey(arg1 string, arg2 any) error {
 	fake.unmarshalKeyMutex.Lock()
 	ret, specificReturn := fake.unmarshalKeyReturnsOnCall[len(fake.unmarshalKeyArgsForCall)]
 	fake.unmarshalKeyArgsForCall = append(fake.unmarshalKeyArgsForCall, struct {
 		arg1 string
-		arg2 interface{}
+		arg2 any
 	}{arg1, arg2})
 	stub := fake.UnmarshalKeyStub
 	fakeReturns := fake.unmarshalKeyReturns
@@ -122,13 +122,13 @@ func (fake *ConfigProvider) UnmarshalKeyCallCount() int {
 	return len(fake.unmarshalKeyArgsForCall)
 }
 
-func (fake *ConfigProvider) UnmarshalKeyCalls(stub func(string, interface{}) error) {
+func (fake *ConfigProvider) UnmarshalKeyCalls(stub func(string, any) error) {
 	fake.unmarshalKeyMutex.Lock()
 	defer fake.unmarshalKeyMutex.Unlock()
 	fake.UnmarshalKeyStub = stub
 }
 
-func (fake *ConfigProvider) UnmarshalKeyArgsForCall(i int) (string, interface{}) {
+func (fake *ConfigProvider) UnmarshalKeyArgsForCall(i int) (string, any) {
 	fake.unmarshalKeyMutex.RLock()
 	defer fake.unmarshalKeyMutex.RUnlock()
 	argsForCall := fake.unmarshalKeyArgsForCall[i]

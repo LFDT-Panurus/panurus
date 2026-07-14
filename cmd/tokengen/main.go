@@ -10,9 +10,9 @@ import (
 	"os"
 	"strings"
 
-	"github.com/hyperledger-labs/fabric-token-sdk/cmd/tokengen/cobra/certfier"
-	"github.com/hyperledger-labs/fabric-token-sdk/cmd/tokengen/cobra/pp"
-	"github.com/hyperledger-labs/fabric-token-sdk/cmd/tokengen/cobra/version"
+	"github.com/LFDT-Panurus/panurus/cmd/tokengen/cobra/certfier"
+	"github.com/LFDT-Panurus/panurus/cmd/tokengen/cobra/pp"
+	"github.com/LFDT-Panurus/panurus/cmd/tokengen/cobra/version"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )

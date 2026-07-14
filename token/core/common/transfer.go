@@ -7,9 +7,9 @@ SPDX-License-Identifier: Apache-2.0
 package common
 
 import (
+	"github.com/LFDT-Panurus/panurus/token/driver"
+	"github.com/LFDT-Panurus/panurus/token/services/ttx"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/driver"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/ttx"
 )
 
 // SelectIssuerForRedeem returns the issuer's public key to use for a redeem.

@@ -12,10 +12,11 @@ import (
 
 	. "github.com/onsi/gomega"
 
+	localPostgres "github.com/LFDT-Panurus/panurus/token/services/storage/db/sql/postgres"
+	q "github.com/LFDT-Panurus/panurus/token/services/storage/db/sql/query"
+	common3 "github.com/LFDT-Panurus/panurus/token/services/storage/db/sql/query/common"
+	cond2 "github.com/LFDT-Panurus/panurus/token/services/storage/db/sql/query/cond"
 	common2 "github.com/hyperledger-labs/fabric-smart-client/platform/view/services/storage/driver/common"
-	localPostgres "github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/db/sql/postgres"
-	common3 "github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/db/sql/query/common"
-	cond2 "github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/db/sql/query/cond"
 )
 
 type testCase struct {
@@ -82,6 +83,16 @@ var testMatrix = []testCase{
 		condition:      cond2.BetweenBytes("pkey", []byte("start"), []byte("end")),
 		expectedQuery:  "(pkey >= $0) AND (pkey < $1)",
 		expectedParams: []common3.Param{[]byte("start"), []byte("end")},
+	},
+	{
+		condition: cond2.Exists(
+			q.Select().
+				Fields(common3.FieldName("1")).
+				From(common3.NewTable("requests")).
+				Where(cond2.Eq("status", 3)),
+		),
+		expectedQuery:  "EXISTS (SELECT 1 FROM requests WHERE status = $0)",
+		expectedParams: []common3.Param{3},
 	},
 }
 

@@ -7,19 +7,19 @@ SPDX-License-Identifier: Apache-2.0
 package interop
 
 import (
+	"github.com/LFDT-Panurus/panurus/integration/nwo/token"
+	fabric2 "github.com/LFDT-Panurus/panurus/integration/nwo/token/fabric"
+	token2 "github.com/LFDT-Panurus/panurus/integration/token"
 	"github.com/hyperledger-labs/fabric-smart-client/integration/nwo/api"
 	"github.com/hyperledger-labs/fabric-smart-client/integration/nwo/fabric"
 	"github.com/hyperledger-labs/fabric-smart-client/integration/nwo/fsc"
 	"github.com/hyperledger-labs/fabric-smart-client/integration/nwo/fsc/node"
-	"github.com/hyperledger-labs/fabric-token-sdk/integration/nwo/token"
-	fabric2 "github.com/hyperledger-labs/fabric-token-sdk/integration/nwo/token/fabric"
-	token2 "github.com/hyperledger-labs/fabric-token-sdk/integration/token"
 
-	"github.com/hyperledger-labs/fabric-token-sdk/integration/token/common"
-	views3 "github.com/hyperledger-labs/fabric-token-sdk/integration/token/common/views"
-	"github.com/hyperledger-labs/fabric-token-sdk/integration/token/fungible/views"
-	views2 "github.com/hyperledger-labs/fabric-token-sdk/integration/token/interop/views"
-	"github.com/hyperledger-labs/fabric-token-sdk/integration/token/interop/views/htlc"
+	"github.com/LFDT-Panurus/panurus/integration/token/common"
+	views3 "github.com/LFDT-Panurus/panurus/integration/token/common/views"
+	"github.com/LFDT-Panurus/panurus/integration/token/fungible/views"
+	views2 "github.com/LFDT-Panurus/panurus/integration/token/interop/views"
+	"github.com/LFDT-Panurus/panurus/integration/token/interop/views/htlc"
 )
 
 func HTLCSingleFabricNetworkTopology(opts common.Opts) []api.Topology {

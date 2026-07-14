@@ -10,8 +10,8 @@ import (
 	"context"
 	"time"
 
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/utils/types/transaction"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/token"
+	"github.com/LFDT-Panurus/panurus/token/services/utils/types/transaction"
+	"github.com/LFDT-Panurus/panurus/token/token"
 )
 
 type Locker interface {

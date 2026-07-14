@@ -7,11 +7,11 @@ SPDX-License-Identifier: Apache-2.0
 package wrapper
 
 import (
+	"github.com/LFDT-Panurus/panurus/token"
+	auditor2 "github.com/LFDT-Panurus/panurus/token/services/auditor"
+	"github.com/LFDT-Panurus/panurus/token/services/storage/auditdb"
+	"github.com/LFDT-Panurus/panurus/token/services/ttx/dep/auditor"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
-	"github.com/hyperledger-labs/fabric-token-sdk/token"
-	auditor2 "github.com/hyperledger-labs/fabric-token-sdk/token/services/auditor"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/auditdb"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/ttx/dep/auditor"
 )
 
 type AuditServiceProvider struct {

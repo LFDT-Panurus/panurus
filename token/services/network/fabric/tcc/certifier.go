@@ -11,9 +11,9 @@ import (
 
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/view"
 
-	"github.com/hyperledger-labs/fabric-token-sdk/token"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/network"
-	token2 "github.com/hyperledger-labs/fabric-token-sdk/token/token"
+	"github.com/LFDT-Panurus/panurus/token"
+	"github.com/LFDT-Panurus/panurus/token/services/network"
+	token2 "github.com/LFDT-Panurus/panurus/token/token"
 )
 
 type GetTokenView struct {

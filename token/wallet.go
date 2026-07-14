@@ -11,9 +11,9 @@ import (
 	"context"
 	"math/big"
 
+	"github.com/LFDT-Panurus/panurus/token/driver"
+	"github.com/LFDT-Panurus/panurus/token/token"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/driver"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/token"
 )
 
 // WalletLookupID defines the type of identifiers that can be used to retrieve a given wallet.
@@ -347,6 +347,27 @@ func (i *IssuerWallet) ListIssuedTokens(ctx context.Context, opts ...ListTokensO
 	}
 
 	return i.w.HistoryTokens(ctx, compiledOpts)
+}
+
+// IssuedBalance returns the sum of the quantities of the tokens issued by this wallet,
+// filtered using the passed options. The result is returned as a *big.Int to support
+// arbitrary precision and prevent overflow.
+func (i *IssuerWallet) IssuedBalance(ctx context.Context, opts *driver.IssuerBalanceOptions) (*big.Int, error) {
+	return i.w.IssuedBalance(ctx, opts)
+}
+
+// RedeemedBalance returns the sum of the quantities of the tokens redeemed against this issuer,
+// filtered using the passed options. The result is returned as a *big.Int to support arbitrary
+// precision and prevent overflow.
+func (i *IssuerWallet) RedeemedBalance(ctx context.Context, opts *driver.IssuerBalanceOptions) (*big.Int, error) {
+	return i.w.RedeemedBalance(ctx, opts)
+}
+
+// Balance returns the net issued supply of this wallet: IssuedBalance minus RedeemedBalance,
+// filtered using the passed options. The result is returned as a *big.Int to support arbitrary
+// precision and prevent overflow.
+func (i *IssuerWallet) Balance(ctx context.Context, opts *driver.IssuerBalanceOptions) (*big.Int, error) {
+	return i.w.Balance(ctx, opts)
 }
 
 func CompileListTokensOption(opts ...ListTokensOption) (*driver.ListTokensOptions, error) {

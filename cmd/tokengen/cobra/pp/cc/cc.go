@@ -33,12 +33,12 @@ func GeneratePackage(raw []byte, outputDir string) error {
 	}
 
 	err = packager.New().PackageChaincode(
-		"github.com/hyperledger-labs/fabric-token-sdk/token/services/network/fabric/tcc/main",
+		"github.com/LFDT-Panurus/panurus/token/services/network/fabric/tcc/main",
 		"golang",
 		"tcc",
 		filepath.Join(outputDir, "tcc.tar"),
 		func(s string, s2 string) (string, []byte) {
-			if strings.HasSuffix(s, "github.com/hyperledger-labs/fabric-token-sdk/token/tcc/params.go") {
+			if strings.HasSuffix(s, "github.com/LFDT-Panurus/panurus/token/tcc/params.go") {
 				return "", paramsFile.Bytes()
 			}
 

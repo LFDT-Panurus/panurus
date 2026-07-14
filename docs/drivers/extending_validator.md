@@ -5,13 +5,13 @@ This is useful when you need to enforce additional business rules or compliance 
 
 ## Overview
 
-The Token SDK uses a `ValidatorDriverService` to manage factories for creating `driver.Validator` instances. 
+Panurus uses a `ValidatorDriverService` to manage factories for creating `driver.Validator` instances. 
 Each driver version is identified by a unique string (e.g., `zkatdlognogh.v1`).
 
 To extend a validator, you typically:
 1.  Implement a custom `driver.ValidatorDriver` that wraps an existing one.
 2.  Override the `NewValidator` method to inject additional validation logic.
-3.  Register your custom driver factory in the SDK's dependency injection container.
+3.  Register your custom driver factory in Panurus's dependency injection container.
 
 ## Architecture
 
@@ -44,11 +44,11 @@ First, define a function that matches the signature expected by the validator. F
 package myextension
 
 import (
-	v1 "github.com/hyperledger-labs/fabric-token-sdk/token/core/zkatdlog/nogh/v1/setup"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/core/zkatdlog/nogh/v1/token"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/core/zkatdlog/nogh/v1/transfer"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/core/zkatdlog/nogh/v1/validator"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/driver"
+	v1 "github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/setup"
+	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/token"
+	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/transfer"
+	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/validator"
+	"github.com/LFDT-Panurus/panurus/token/driver"
 )
 
 func MyCustomTransferValidation(ctx validator.Context, tr *transfer.Action) error {
@@ -84,7 +84,7 @@ func (d *MyValidatorDriver) NewValidator(pp driver.PublicParameters) (driver.Val
 		return nil, err
 	}
     
-	logger := logging.DriverLoggerFromPP("token-sdk.driver.myextension", string(pp.TokenDriverName()))
+	logger := logging.DriverLoggerFromPP("panurus.driver.myextension", string(pp.TokenDriverName()))
 
 	// Instantiate the validator with your custom function
 	return validator.New(
@@ -100,7 +100,7 @@ func (d *MyValidatorDriver) NewValidator(pp driver.PublicParameters) (driver.Val
 
 ### 3. Register the extension
 
-Register your custom factory using the SDK's registration mechanism. If you are using the `dig` container (standard in FSC-based applications), you can provide it to the `token-validator-drivers` group.
+Register your custom factory using Panurus's registration mechanism. If you are using the `dig` container (standard in FSC-based applications), you can provide it to the `token-validator-drivers` group.
 
 ```go
 func NewMyValidatorDriver() core.NamedFactory[driver.ValidatorDriver] {

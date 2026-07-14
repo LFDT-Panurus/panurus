@@ -9,8 +9,9 @@ package driver
 import (
 	"testing"
 
-	"github.com/hyperledger-labs/fabric-token-sdk/token/driver/protos-go/request"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/token"
+	driver "github.com/LFDT-Panurus/panurus/token/driver/protos-go/v1"
+
+	"github.com/LFDT-Panurus/panurus/token/token"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -18,12 +19,12 @@ import (
 func TestToTokenID(t *testing.T) {
 	tests := []struct {
 		name     string
-		input    *request.TokenID
+		input    *driver.TokenID
 		expected *token.ID
 	}{
 		{
 			name: "Valid conversion",
-			input: &request.TokenID{
+			input: &driver.TokenID{
 				TxId:  "test-tx-id",
 				Index: 123,
 			},
@@ -52,7 +53,7 @@ func TestToProtoIdentitySlice(t *testing.T) {
 	tests := []struct {
 		name     string
 		input    []Identity
-		expected []*request.Identity
+		expected []*driver.Identity
 	}{
 		{
 			name: "Valid conversion",
@@ -60,7 +61,7 @@ func TestToProtoIdentitySlice(t *testing.T) {
 				[]byte("identity1"),
 				[]byte("identity2"),
 			},
-			expected: []*request.Identity{
+			expected: []*driver.Identity{
 				{Raw: []byte("identity1")},
 				{Raw: []byte("identity2")},
 			},
@@ -68,7 +69,7 @@ func TestToProtoIdentitySlice(t *testing.T) {
 		{
 			name:     "Empty input",
 			input:    []Identity{},
-			expected: []*request.Identity{},
+			expected: []*driver.Identity{},
 		},
 	}
 
@@ -84,12 +85,12 @@ func TestToProtoIdentitySlice(t *testing.T) {
 func TestFromProtoIdentitySlice(t *testing.T) {
 	tests := []struct {
 		name     string
-		input    []*request.Identity
+		input    []*driver.Identity
 		expected []Identity
 	}{
 		{
 			name: "Valid conversion",
-			input: []*request.Identity{
+			input: []*driver.Identity{
 				{Raw: []byte("identity1")},
 				{Raw: []byte("identity2")},
 			},
@@ -100,12 +101,12 @@ func TestFromProtoIdentitySlice(t *testing.T) {
 		},
 		{
 			name:     "Empty input",
-			input:    []*request.Identity{},
+			input:    []*driver.Identity{},
 			expected: []Identity{},
 		},
 		{
 			name: "Nil elements in input",
-			input: []*request.Identity{
+			input: []*driver.Identity{
 				nil,
 				{Raw: []byte("identity2")},
 			},
@@ -128,12 +129,12 @@ func TestFromProtoIdentitySlice(t *testing.T) {
 func TestToIdentity(t *testing.T) {
 	tests := []struct {
 		name     string
-		input    *request.Identity
+		input    *driver.Identity
 		expected Identity
 	}{
 		{
 			name: "Valid conversion",
-			input: &request.Identity{
+			input: &driver.Identity{
 				Raw: []byte("test-identity"),
 			},
 			expected: []byte("test-identity"),
@@ -145,7 +146,7 @@ func TestToIdentity(t *testing.T) {
 		},
 		{
 			name: "Nil Raw field",
-			input: &request.Identity{
+			input: &driver.Identity{
 				Raw: nil,
 			},
 			expected: nil,

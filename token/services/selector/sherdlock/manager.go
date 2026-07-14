@@ -11,10 +11,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/LFDT-Panurus/panurus/token"
+	"github.com/LFDT-Panurus/panurus/token/services/utils/types/transaction"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	lazy2 "github.com/hyperledger-labs/fabric-smart-client/platform/common/utils/lazy"
-	"github.com/hyperledger-labs/fabric-token-sdk/token"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/utils/types/transaction"
 )
 
 const (

@@ -9,7 +9,7 @@ import (
 	"database/sql"
 	"testing"
 
-	common2 "github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/db/sql/common"
+	common2 "github.com/LFDT-Panurus/panurus/token/services/storage/db/sql/common"
 )
 
 func mockWalletStore(db *sql.DB) *WalletStore {

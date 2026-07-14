@@ -17,12 +17,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hyperledger-labs/fabric-token-sdk/integration/nwo/txgen/model"
-	txgen "github.com/hyperledger-labs/fabric-token-sdk/integration/nwo/txgen/model/api"
-	c "github.com/hyperledger-labs/fabric-token-sdk/integration/nwo/txgen/model/constants"
-	"github.com/hyperledger-labs/fabric-token-sdk/integration/nwo/txgen/service/logging"
-	"github.com/hyperledger-labs/fabric-token-sdk/integration/nwo/txgen/service/metrics"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/utils"
+	"github.com/LFDT-Panurus/panurus/integration/nwo/txgen/model"
+	txgen "github.com/LFDT-Panurus/panurus/integration/nwo/txgen/model/api"
+	c "github.com/LFDT-Panurus/panurus/integration/nwo/txgen/model/constants"
+	"github.com/LFDT-Panurus/panurus/integration/nwo/txgen/service/logging"
+	"github.com/LFDT-Panurus/panurus/integration/nwo/txgen/service/metrics"
+	"github.com/LFDT-Panurus/panurus/token/services/utils"
 )
 
 var operationTypeMap = map[c.ApiRequestType]metrics.OperationType{

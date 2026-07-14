@@ -11,9 +11,9 @@ import (
 	"testing"
 
 	mathlib "github.com/IBM/mathlib"
+	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/crypto/math"
 	bls12381fr "github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
 	bn254fr "github.com/consensys/gnark-crypto/ecc/bn254/fr"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/core/zkatdlog/nogh/v1/crypto/math"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

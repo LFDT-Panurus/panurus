@@ -11,10 +11,10 @@ body:
         Before submitting, please:
         1. **Search existing issues** to see if your issue has already been reported.
         2. **Consult the Resources**:
-           - [Documentation Overview](https://github.com/hyperledger-labs/fabric-token-sdk/blob/main/docs/README.md)
-           - [Development Guidelines](https://github.com/hyperledger-labs/fabric-token-sdk/blob/main/docs/development/development.md)
-           - [Testing Guide](https://github.com/hyperledger-labs/fabric-token-sdk/blob/main/docs/development/testing.md)
-        3. **Join [Hyperledger Discord](https://discord.gg/hyperledger)** and ask in the `#fabric-token-sdk` channel if you're unsure.
+           - [Documentation Overview](https://github.com/LFDT-Panurus/panurus/blob/main/docs/README.md)
+           - [Development Guidelines](https://github.com/LFDT-Panurus/panurus/blob/main/docs/development/development.md)
+           - [Testing Guide](https://github.com/LFDT-Panurus/panurus/blob/main/docs/development/testing.md)
+        3. **Join [Hyperledger Discord](https://discord.gg/hyperledger)** and ask in the `#panurus` channel if you're unsure.
 
         ---
 
@@ -66,7 +66,7 @@ body:
   - type: input
     id: sdk-version
     attributes:
-      label: 📦 Fabric Token SDK Version
+      label: 📦 Panurus Version
       description: Which version or commit hash are you using?
       placeholder: e.g. v1.0.0 or 5a3f2b1
     validations:

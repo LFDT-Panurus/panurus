@@ -4,9 +4,9 @@ package mock
 import (
 	"sync"
 
-	"github.com/hyperledger-labs/fabric-token-sdk/token"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/sdk/identity"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/identitydb"
+	"github.com/LFDT-Panurus/panurus/token"
+	"github.com/LFDT-Panurus/panurus/token/sdk/identity"
+	"github.com/LFDT-Panurus/panurus/token/services/storage/identitydb"
 )
 
 type IdentityStoreServiceManager struct {

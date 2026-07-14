@@ -19,9 +19,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hyperledger-labs/fabric-token-sdk/token/driver"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/identity/x509/crypto/csp"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/db/kvs"
+	"github.com/LFDT-Panurus/panurus/token/driver"
+	"github.com/LFDT-Panurus/panurus/token/services/identity/x509/crypto/csp"
+	"github.com/LFDT-Panurus/panurus/token/services/storage/db/kvs"
 	"github.com/hyperledger/fabric-lib-go/bccsp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -185,7 +185,7 @@ func TestLoadConfig(t *testing.T) {
 	t.Run("Directory Without Certificates", func(t *testing.T) {
 		dir := t.TempDir()
 		signcertDir := filepath.Join(dir, SignCertsDirName)
-		err := os.MkdirAll(signcertDir, 0750)
+		err := os.MkdirAll(signcertDir, 0o750)
 		require.NoError(t, err)
 
 		_, err = LoadConfig(dir, "")

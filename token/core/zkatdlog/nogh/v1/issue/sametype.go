@@ -8,10 +8,10 @@ package issue
 
 import (
 	math "github.com/IBM/mathlib"
+	"github.com/LFDT-Panurus/panurus/token/core/common/encoding/asn1"
+	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/crypto/common"
+	token2 "github.com/LFDT-Panurus/panurus/token/token"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/core/common/encoding/asn1"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/core/zkatdlog/nogh/v1/crypto/common"
-	token2 "github.com/hyperledger-labs/fabric-token-sdk/token/token"
 )
 
 // SameType is a zero-knowledge proof that all issued tokens have the same type

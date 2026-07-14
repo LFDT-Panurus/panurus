@@ -11,12 +11,12 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/LFDT-Panurus/panurus/integration/nwo/txgen/model"
+	txgen "github.com/LFDT-Panurus/panurus/integration/nwo/txgen/model/api"
+	"github.com/LFDT-Panurus/panurus/integration/nwo/txgen/service/logging"
+	"github.com/LFDT-Panurus/panurus/integration/nwo/txgen/service/metrics"
+	"github.com/LFDT-Panurus/panurus/integration/nwo/txgen/service/user"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
-	"github.com/hyperledger-labs/fabric-token-sdk/integration/nwo/txgen/model"
-	txgen "github.com/hyperledger-labs/fabric-token-sdk/integration/nwo/txgen/model/api"
-	"github.com/hyperledger-labs/fabric-token-sdk/integration/nwo/txgen/service/logging"
-	"github.com/hyperledger-labs/fabric-token-sdk/integration/nwo/txgen/service/metrics"
-	"github.com/hyperledger-labs/fabric-token-sdk/integration/nwo/txgen/service/user"
 	"github.com/sourcegraph/conc"
 )
 

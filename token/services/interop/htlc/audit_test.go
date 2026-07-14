@@ -10,10 +10,10 @@ import (
 	"encoding/json"
 	"testing"
 
-	tokenapi "github.com/hyperledger-labs/fabric-token-sdk/token"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/driver"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/identity/marshal"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/interop/htlc"
+	tokenapi "github.com/LFDT-Panurus/panurus/token"
+	"github.com/LFDT-Panurus/panurus/token/driver"
+	"github.com/LFDT-Panurus/panurus/token/services/identity/marshal"
+	"github.com/LFDT-Panurus/panurus/token/services/interop/htlc"
 	"github.com/stretchr/testify/require"
 )
 

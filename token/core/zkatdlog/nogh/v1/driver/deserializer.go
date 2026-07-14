@@ -7,19 +7,19 @@ SPDX-License-Identifier: Apache-2.0
 package driver
 
 import (
+	"github.com/LFDT-Panurus/panurus/token/core/common"
+	v1 "github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/setup"
+	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/token"
+	"github.com/LFDT-Panurus/panurus/token/driver"
+	"github.com/LFDT-Panurus/panurus/token/services/identity/boolpolicy"
+	"github.com/LFDT-Panurus/panurus/token/services/identity/deserializer"
+	"github.com/LFDT-Panurus/panurus/token/services/identity/idemix"
+	"github.com/LFDT-Panurus/panurus/token/services/identity/idemixnym"
+	"github.com/LFDT-Panurus/panurus/token/services/identity/interop/htlc"
+	"github.com/LFDT-Panurus/panurus/token/services/identity/multisig"
+	"github.com/LFDT-Panurus/panurus/token/services/identity/x509"
+	htlc2 "github.com/LFDT-Panurus/panurus/token/services/interop/htlc"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/core/common"
-	v1 "github.com/hyperledger-labs/fabric-token-sdk/token/core/zkatdlog/nogh/v1/setup"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/core/zkatdlog/nogh/v1/token"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/driver"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/identity/boolpolicy"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/identity/deserializer"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/identity/idemix"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/identity/idemixnym"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/identity/interop/htlc"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/identity/multisig"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/identity/x509"
-	htlc2 "github.com/hyperledger-labs/fabric-token-sdk/token/services/interop/htlc"
 )
 
 // Deserializer deserializes verifiers associated with issuers, owners, and auditors.

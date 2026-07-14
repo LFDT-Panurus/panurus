@@ -12,8 +12,8 @@ import (
 	"os/signal"
 	"path"
 
+	bench "github.com/LFDT-Panurus/panurus/cmd/token_validation_service"
 	"github.com/hyperledger-labs/fabric-smart-client/integration/benchmark/node"
-	bench "github.com/hyperledger-labs/fabric-token-sdk/cmd/token_validation_service"
 )
 
 func main() {

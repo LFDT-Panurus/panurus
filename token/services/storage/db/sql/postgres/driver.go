@@ -12,13 +12,13 @@ import (
 	"fmt"
 	"strings"
 
+	driver3 "github.com/LFDT-Panurus/panurus/token/services/storage/db/driver"
+	common3 "github.com/LFDT-Panurus/panurus/token/services/storage/db/sql/common"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/common/utils"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/common/utils/lazy"
 	driver2 "github.com/hyperledger-labs/fabric-smart-client/platform/view/services/storage/driver"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/services/storage/driver/common"
 	fscPostgres "github.com/hyperledger-labs/fabric-smart-client/platform/view/services/storage/driver/sql/postgres"
-	driver3 "github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/db/driver"
-	common3 "github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/db/sql/common"
 )
 
 // configProvider defines the interface for retrieving database configuration.
@@ -29,7 +29,8 @@ type configProvider interface {
 
 // Driver implements the token storage driver for Postgres.
 type Driver struct {
-	cp configProvider
+	cp               configProvider
+	tableNamesConfig common3.TableNamesConfig
 
 	// Lazy providers for various store types to ensure they are initialized only when needed.
 	TokenLock lazy.Provider[fscPostgres.Config, *TokenLockStore]
@@ -38,6 +39,7 @@ type Driver struct {
 	Token     lazy.Provider[fscPostgres.Config, *TokenStore]
 	AuditTx   lazy.Provider[fscPostgres.Config, *AuditTransactionStore]
 	OwnerTx   lazy.Provider[fscPostgres.Config, *TransactionStore]
+	Endorser  lazy.Provider[fscPostgres.Config, *EndorserStore]
 	KeyStore  lazy.Provider[fscPostgres.Config, *KeystoreStore]
 }
 
@@ -56,23 +58,30 @@ func NewDriver(config driver3.Config) *Driver {
 
 // NewDriverWithDbProvider returns a new Driver for Postgres using the given database provider.
 func NewDriverWithDbProvider(config driver3.Config, dbProvider fscPostgres.DbProvider) *Driver {
-	d := &Driver{
-		cp: fscPostgres.NewConfigProvider(common.NewConfig(config)),
+	tableNamesConfig, err := common3.LoadTableNamesConfig(config)
+	if err != nil {
+		logger.Warnf("failed to load table name overrides: %v — using defaults", err)
 	}
 
-	d.TokenLock = newProviderWithKeyMapper(dbProvider, NewTokenLockStore, "tokenlock")
-	d.Wallet = newProviderWithKeyMapper(dbProvider, NewWalletStore, "wallet")
-	d.Identity = newIdentityStoreProvider(dbProvider)
-	d.Token = newTokenStoreProvider(dbProvider)
-	d.AuditTx = newProviderWithKeyMapper(dbProvider, NewAuditTransactionStore, "audittx")
-	d.OwnerTx = newTransactionStoreProvider(dbProvider)
-	d.KeyStore = newProviderWithKeyMapper(dbProvider, NewKeystoreStore, "keystore")
+	d := &Driver{
+		cp:               fscPostgres.NewConfigProvider(common.NewConfig(config)),
+		tableNamesConfig: tableNamesConfig,
+	}
+
+	d.TokenLock = newProviderWithKeyMapper(dbProvider, NewTokenLockStore, "tokenlock", tableNamesConfig)
+	d.Wallet = newProviderWithKeyMapper(dbProvider, NewWalletStore, "wallet", tableNamesConfig)
+	d.Identity = newIdentityStoreProvider(dbProvider, tableNamesConfig)
+	d.Token = newTokenStoreProvider(dbProvider, tableNamesConfig)
+	d.AuditTx = newProviderWithKeyMapper(dbProvider, NewAuditTransactionStore, "audittx", tableNamesConfig)
+	d.OwnerTx = newTransactionStoreProvider(dbProvider, tableNamesConfig)
+	d.Endorser = newEndorserStoreProvider(dbProvider, tableNamesConfig)
+	d.KeyStore = newProviderWithKeyMapper(dbProvider, NewKeystoreStore, "keystore", tableNamesConfig)
 
 	return d
 }
 
 // newTokenStoreProvider returns a lazy provider for TokenStore.
-func newTokenStoreProvider(dbProvider fscPostgres.DbProvider) lazy.Provider[fscPostgres.Config, *TokenStore] {
+func newTokenStoreProvider(dbProvider fscPostgres.DbProvider, tableNamesConfig common3.TableNamesConfig) lazy.Provider[fscPostgres.Config, *TokenStore] {
 	return lazy.NewProviderWithKeyMapper(key, func(o fscPostgres.Config) (*TokenStore, error) {
 		opts := fscPostgres.Opts{
 			DataSource:      o.DataSource,
@@ -87,7 +96,7 @@ func newTokenStoreProvider(dbProvider fscPostgres.DbProvider) lazy.Provider[fscP
 		if err != nil {
 			return nil, err
 		}
-		tableNames, err := common3.GetTableNames(o.TablePrefix, o.TableNameParams...)
+		tableNames, err := common3.GetTableNamesWithOverrides(o.TablePrefix, tableNamesConfig, o.TableNameParams...)
 		if err != nil {
 			return nil, err
 		}
@@ -117,7 +126,7 @@ func newTokenStoreProvider(dbProvider fscPostgres.DbProvider) lazy.Provider[fscP
 }
 
 // newIdentityStoreProvider returns a lazy provider for IdentityStore.
-func newIdentityStoreProvider(dbProvider fscPostgres.DbProvider) lazy.Provider[fscPostgres.Config, *IdentityStore] {
+func newIdentityStoreProvider(dbProvider fscPostgres.DbProvider, tableNamesConfig common3.TableNamesConfig) lazy.Provider[fscPostgres.Config, *IdentityStore] {
 	return lazy.NewProviderWithKeyMapper(key, func(o fscPostgres.Config) (*IdentityStore, error) {
 		opts := fscPostgres.Opts{
 			DataSource:      o.DataSource,
@@ -132,7 +141,7 @@ func newIdentityStoreProvider(dbProvider fscPostgres.DbProvider) lazy.Provider[f
 		if err != nil {
 			return nil, err
 		}
-		tableNames, err := common3.GetTableNames(o.TablePrefix, o.TableNameParams...)
+		tableNames, err := common3.GetTableNamesWithOverrides(o.TablePrefix, tableNamesConfig, o.TableNameParams...)
 		if err != nil {
 			return nil, err
 		}
@@ -163,7 +172,7 @@ func newIdentityStoreProvider(dbProvider fscPostgres.DbProvider) lazy.Provider[f
 }
 
 // newTransactionStoreProvider returns a lazy provider for TransactionStore with notifier support.
-func newTransactionStoreProvider(dbProvider fscPostgres.DbProvider) lazy.Provider[fscPostgres.Config, *TransactionStore] {
+func newTransactionStoreProvider(dbProvider fscPostgres.DbProvider, tableNamesConfig common3.TableNamesConfig) lazy.Provider[fscPostgres.Config, *TransactionStore] {
 	return lazy.NewProviderWithKeyMapper(key, func(o fscPostgres.Config) (*TransactionStore, error) {
 		opts := fscPostgres.Opts{
 			DataSource:      o.DataSource,
@@ -178,7 +187,7 @@ func newTransactionStoreProvider(dbProvider fscPostgres.DbProvider) lazy.Provide
 		if err != nil {
 			return nil, err
 		}
-		tableNames, err := common3.GetTableNames(o.TablePrefix, o.TableNameParams...)
+		tableNames, err := common3.GetTableNamesWithOverrides(o.TablePrefix, tableNamesConfig, o.TableNameParams...)
 		if err != nil {
 			return nil, err
 		}
@@ -277,8 +286,56 @@ func (d *Driver) NewOwnerTransaction(name driver2.PersistenceName, params ...str
 	return d.OwnerTx.Get(*opts)
 }
 
+// NewEndorser returns a new EndorserStore.
+func (d *Driver) NewEndorser(name driver2.PersistenceName, params ...string) (driver3.EndorserStore, error) {
+	opts, err := d.cp.GetOpts(name, params...)
+	if err != nil {
+		return nil, err
+	}
+
+	return d.Endorser.Get(*opts)
+}
+
+// newEndorserStoreProvider returns a lazy provider for EndorserStore.
+func newEndorserStoreProvider(dbProvider fscPostgres.DbProvider, tableNamesConfig common3.TableNamesConfig) lazy.Provider[fscPostgres.Config, *EndorserStore] {
+	return lazy.NewProviderWithKeyMapper(key, func(o fscPostgres.Config) (*EndorserStore, error) {
+		opts := fscPostgres.Opts{
+			DataSource:      o.DataSource,
+			MaxOpenConns:    o.MaxOpenConns,
+			MaxIdleConns:    *o.MaxIdleConns,
+			MaxIdleTime:     *o.MaxIdleTime,
+			TablePrefix:     o.TablePrefix,
+			TableNameParams: o.TableNameParams,
+			Tracing:         o.Tracing,
+		}
+		dbs, err := dbProvider.Get(opts)
+		if err != nil {
+			return nil, err
+		}
+		tableNames, err := common3.GetTableNamesWithOverrides(o.TablePrefix, tableNamesConfig, o.TableNameParams...)
+		if err != nil {
+			return nil, err
+		}
+
+		// Create endorser store (reuses validation table from transaction store)
+		p, err := NewEndorserStore(dbs, tableNames)
+		if err != nil {
+			return nil, err
+		}
+
+		// Create schema if needed
+		if !o.SkipCreateTable {
+			if err := p.CreateSchema(); err != nil {
+				return nil, err
+			}
+		}
+
+		return p, nil
+	})
+}
+
 // newProviderWithKeyMapper returns a lazy provider for a DB object using a common constructor.
-func newProviderWithKeyMapper[V common.DBObject](dbProvider fscPostgres.DbProvider, constructor common3.PersistenceConstructor[V], storeType string) lazy.Provider[fscPostgres.Config, V] {
+func newProviderWithKeyMapper[V common.DBObject](dbProvider fscPostgres.DbProvider, constructor common3.PersistenceConstructor[V], storeType string, tableNamesConfig common3.TableNamesConfig) lazy.Provider[fscPostgres.Config, V] {
 	return lazy.NewProviderWithKeyMapper(key, func(o fscPostgres.Config) (V, error) {
 		opts := fscPostgres.Opts{
 			DataSource:      o.DataSource,
@@ -293,7 +350,7 @@ func newProviderWithKeyMapper[V common.DBObject](dbProvider fscPostgres.DbProvid
 		if err != nil {
 			return utils.Zero[V](), err
 		}
-		tableNames, err := common3.GetTableNames(o.TablePrefix, o.TableNameParams...)
+		tableNames, err := common3.GetTableNamesWithOverrides(o.TablePrefix, tableNamesConfig, o.TableNameParams...)
 		if err != nil {
 			return utils.Zero[V](), err
 		}

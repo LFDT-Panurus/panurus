@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/certifier/interactive"
+	"github.com/LFDT-Panurus/panurus/token/services/certifier/interactive"
 	"github.com/stretchr/testify/assert"
 )
 

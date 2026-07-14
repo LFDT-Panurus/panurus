@@ -10,15 +10,21 @@ import (
 	"context"
 	"slices"
 
+	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/issue"
+	"github.com/LFDT-Panurus/panurus/token/services/logging"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/core/zkatdlog/nogh/v1/issue"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/logging"
 )
 
 var logger = logging.MustGetLogger()
 
 // IssueValidate validates the issue action by checking its structure, verifying the zero-knowledge proof,
 // and ensuring the issuer is authorized and has signed the action.
+//
+// Open-policy issuer behaviour: when PP.IssuerIDs is empty (len(ctx.PP.Issuers()) == 0),
+// the issuer authorization check is skipped and any identity may issue tokens.
+// This is an intentional open-policy design for deployments that do not restrict issuance
+// to a fixed set of identities. When issuer restriction is required, populate PP.IssuerIDs
+// with the authorized issuer identities before deploying the public parameters.
 func IssueValidate(c context.Context, ctx *Context) error {
 	action := ctx.IssueAction
 
@@ -31,9 +37,11 @@ func IssueValidate(c context.Context, ctx *Context) error {
 		return ErrIssueVerificationFailed
 	}
 	// Verify the zero-knowledge proof that the commitments are well-formed
-	if err := issue.NewVerifier(
-		commitments,
-		ctx.PP).Verify(action.GetProof()); err != nil {
+	zkVerifier, err := issue.NewVerifier(commitments, ctx.PP, action.ProofType)
+	if err != nil {
+		return errors.Join(err, ErrInvalidZKP)
+	}
+	if err := zkVerifier.Verify(action.GetProof()); err != nil {
 		return errors.Join(err, ErrInvalidZKP)
 	}
 

@@ -7,12 +7,12 @@ SPDX-License-Identifier: Apache-2.0
 package driver
 
 import (
+	"github.com/LFDT-Panurus/panurus/token/core"
+	v1 "github.com/LFDT-Panurus/panurus/token/core/fabtoken/v1/setup"
+	"github.com/LFDT-Panurus/panurus/token/core/fabtoken/v1/validator"
+	"github.com/LFDT-Panurus/panurus/token/driver"
+	"github.com/LFDT-Panurus/panurus/token/services/logging"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/core"
-	v1 "github.com/hyperledger-labs/fabric-token-sdk/token/core/fabtoken/v1/setup"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/core/fabtoken/v1/validator"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/driver"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/logging"
 )
 
 // ValidatorDriver is the implementation of the ValidatorDriver
@@ -36,7 +36,7 @@ func (d ValidatorDriver) NewValidator(pp driver.PublicParameters) (driver.Valida
 	if !ok {
 		return nil, errors.Errorf("invalid public parameters type [%T]", pp)
 	}
-	logger := logging.DriverLoggerFromPP("token-sdk.driver.fabtoken", string(core.DriverIdentifierFromPP(pp)))
+	logger := logging.DriverLoggerFromPP("panurus.driver.fabtoken", string(core.DriverIdentifierFromPP(pp)))
 	deserializer := NewDeserializer()
 
 	return validator.NewValidator(logger, ppp, deserializer, nil, nil, nil), nil

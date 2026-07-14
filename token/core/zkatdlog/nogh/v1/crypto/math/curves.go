@@ -10,7 +10,7 @@ import (
 	"fmt"
 
 	math "github.com/IBM/mathlib"
-	math2 "github.com/hyperledger-labs/fabric-token-sdk/token/core/common/crypto/math"
+	math2 "github.com/LFDT-Panurus/panurus/token/core/common/crypto/math"
 )
 
 const (

@@ -10,13 +10,13 @@ import (
 	"context"
 	"testing"
 
+	"github.com/LFDT-Panurus/panurus/token"
+	mock2 "github.com/LFDT-Panurus/panurus/token/driver/mock"
+	"github.com/LFDT-Panurus/panurus/token/services/network/driver"
+	"github.com/LFDT-Panurus/panurus/token/services/network/fabric/endorsement/fsc"
+	"github.com/LFDT-Panurus/panurus/token/services/network/fabric/endorsement/fsc/mock"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/view"
-	"github.com/hyperledger-labs/fabric-token-sdk/token"
-	mock2 "github.com/hyperledger-labs/fabric-token-sdk/token/driver/mock"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/network/driver"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/network/fabric/endorsement/fsc"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/network/fabric/endorsement/fsc/mock"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

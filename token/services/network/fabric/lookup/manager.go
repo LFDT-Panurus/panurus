@@ -7,11 +7,11 @@ SPDX-License-Identifier: Apache-2.0
 package lookup
 
 import (
+	"github.com/LFDT-Panurus/panurus/token/services/logging"
+	"github.com/LFDT-Panurus/panurus/token/services/network/common/rws/translator"
+	"github.com/LFDT-Panurus/panurus/token/services/network/fabric/config"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/fabric"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/fabric/core/generic/events"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/logging"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/network/common/rws/translator"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/network/fabric/config"
 	"go.opentelemetry.io/otel/trace"
 )
 

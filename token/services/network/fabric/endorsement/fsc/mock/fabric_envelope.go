@@ -4,7 +4,7 @@ package mock
 import (
 	"sync"
 
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/network/fabric/endorsement/fsc"
+	"github.com/LFDT-Panurus/panurus/token/services/network/fabric/endorsement/fsc"
 )
 
 type Envelope struct {

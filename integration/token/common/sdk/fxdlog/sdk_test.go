@@ -9,11 +9,11 @@ package fxdlog
 import (
 	"testing"
 
+	tokensdk "github.com/LFDT-Panurus/panurus/token/sdk/dig"
 	dig2 "github.com/hyperledger-labs/fabric-smart-client/platform/common/sdk/dig"
 	fabricsdk "github.com/hyperledger-labs/fabric-smart-client/platform/fabric/sdk/dig"
 	fabricx "github.com/hyperledger-labs/fabric-smart-client/platform/fabricx/sdk/dig"
 	sdk "github.com/hyperledger-labs/fabric-smart-client/platform/view/sdk/dig"
-	tokensdk "github.com/hyperledger-labs/fabric-token-sdk/token/sdk/dig"
 	"github.com/stretchr/testify/require"
 )
 

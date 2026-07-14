@@ -8,8 +8,8 @@ package driver
 import (
 	"context"
 
-	"github.com/hyperledger-labs/fabric-token-sdk/token"
-	token2 "github.com/hyperledger-labs/fabric-token-sdk/token/token"
+	"github.com/LFDT-Panurus/panurus/token"
+	token2 "github.com/LFDT-Panurus/panurus/token/token"
 )
 
 //go:generate counterfeiter -o mock/certification_client.go -fake-name CertificationClient . CertificationClient

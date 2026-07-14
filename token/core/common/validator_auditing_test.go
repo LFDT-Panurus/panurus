@@ -9,10 +9,10 @@ package common
 import (
 	"testing"
 
+	"github.com/LFDT-Panurus/panurus/token/driver"
+	"github.com/LFDT-Panurus/panurus/token/driver/mock"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/common/services/identity"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/driver"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/driver/mock"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -40,10 +40,12 @@ func TestAuditingSignaturesValidate(t *testing.T) {
 				return &TestContext{
 					PP: pp,
 					TokenRequest: &driver.TokenRequest{
-						AuditorSignatures: []*driver.AuditorSignature{
+						Signatures: []*driver.RequestSignature{
 							{
-								Identity:  driver.Identity("auditor"),
-								Signature: []byte("auditor's signature"),
+								Auditor: &driver.AuditorSignature{
+									Identity:  driver.Identity("auditor"),
+									Signature: []byte("auditor's signature"),
+								},
 							},
 						},
 					},
@@ -74,10 +76,12 @@ func TestAuditingSignaturesValidate(t *testing.T) {
 				return &TestContext{
 					PP: pp,
 					TokenRequest: &driver.TokenRequest{
-						AuditorSignatures: []*driver.AuditorSignature{
+						Signatures: []*driver.RequestSignature{
 							{
-								Identity:  driver.Identity("auditor2"),
-								Signature: []byte("auditor 2's signature"),
+								Auditor: &driver.AuditorSignature{
+									Identity:  driver.Identity("auditor2"),
+									Signature: []byte("auditor 2's signature"),
+								},
 							},
 						},
 					},
@@ -98,10 +102,12 @@ func TestAuditingSignaturesValidate(t *testing.T) {
 				return &TestContext{
 					PP: pp,
 					TokenRequest: &driver.TokenRequest{
-						AuditorSignatures: []*driver.AuditorSignature{
+						Signatures: []*driver.RequestSignature{
 							{
-								Identity:  driver.Identity("auditor"),
-								Signature: []byte("auditor's signature"),
+								Auditor: &driver.AuditorSignature{
+									Identity:  driver.Identity("auditor"),
+									Signature: []byte("auditor's signature"),
+								},
 							},
 						},
 					},
@@ -127,7 +133,7 @@ func TestAuditingSignaturesValidate(t *testing.T) {
 				return &TestContext{
 					PP: pp,
 					TokenRequest: &driver.TokenRequest{
-						AuditorSignatures: nil,
+						Signatures: nil,
 					},
 					Deserializer:      des,
 					SignatureProvider: sp,
@@ -152,10 +158,12 @@ func TestAuditingSignaturesValidate(t *testing.T) {
 				return &TestContext{
 						PP: pp,
 						TokenRequest: &driver.TokenRequest{
-							AuditorSignatures: []*driver.AuditorSignature{
+							Signatures: []*driver.RequestSignature{
 								{
-									Identity:  auditor,
-									Signature: []byte("auditor's signature"),
+									Auditor: &driver.AuditorSignature{
+										Identity:  auditor,
+										Signature: []byte("auditor's signature"),
+									},
 								},
 							},
 						},
@@ -188,10 +196,12 @@ func TestAuditingSignaturesValidate(t *testing.T) {
 				return &TestContext{
 						PP: pp,
 						TokenRequest: &driver.TokenRequest{
-							AuditorSignatures: []*driver.AuditorSignature{
+							Signatures: []*driver.RequestSignature{
 								{
-									Identity:  auditor,
-									Signature: []byte("auditor's signature"),
+									Auditor: &driver.AuditorSignature{
+										Identity:  auditor,
+										Signature: []byte("auditor's signature"),
+									},
 								},
 							},
 						},

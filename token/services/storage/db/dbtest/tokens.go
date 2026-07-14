@@ -8,16 +8,18 @@ package dbtest
 
 import (
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
+	"time"
 
+	tdriver "github.com/LFDT-Panurus/panurus/token/driver"
+	"github.com/LFDT-Panurus/panurus/token/services/storage"
+	driver2 "github.com/LFDT-Panurus/panurus/token/services/storage/db/driver"
+	"github.com/LFDT-Panurus/panurus/token/services/utils"
+	"github.com/LFDT-Panurus/panurus/token/token"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/common/utils/collections/iterators"
-	tdriver "github.com/hyperledger-labs/fabric-token-sdk/token/driver"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/storage"
-	driver2 "github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/db/driver"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/utils"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/token"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -68,12 +70,14 @@ var tokensCases = []struct {
 	{"GetTokenMetadata", TGetTokenInfos},
 	{"ListAuditTokens", TListAuditTokens},
 	{"ListIssuedTokens", TListIssuedTokens},
+	{"IssuerBalance", TIssuerBalance},
 	{"DeleteMultiple", TDeleteMultiple},
 	{"PublicParams", TPublicParams},
 	{"Certification", TCertification},
 	{"QueryTokenDetails", TQueryTokenDetails},
 	{"TTokenTypes", TTokenTypes},
 	{"ListUnspentTokensByWallets", TListUnspentTokensByWallets},
+	{"GetDeletedTokensPendingSKICleanup", TGetDeletedTokensPendingSKICleanup},
 }
 
 func TTokenTransaction(t *testing.T, db TestTokenDB) {
@@ -523,6 +527,103 @@ func TListIssuedTokens(t *testing.T, db TestTokenDB) {
 		assert.NotNil(t, token.Owner, "expected owner to not be nil")
 		assert.NotEmpty(t, token.Owner, "expected owner raw to not be empty")
 	}
+}
+
+// TIssuerBalance verifies that IssuedBalance and RedeemedBalance sum the amounts of the
+// issued and redeemed tokens respectively, honoring the token type filter, and that a
+// redeemed token (empty owner) can be stored and is excluded from the issued balance.
+func TIssuerBalance(t *testing.T, db TestTokenDB) {
+	t.Helper()
+	ctx := t.Context()
+
+	// two issued tokens of type ABC (amounts 10 and 20) and one of type DEF (amount 5)
+	issued := []struct {
+		txID   string
+		idx    uint64
+		typ    token.Type
+		amount uint64
+	}{
+		{"txi1", 0, ABC, 10},
+		{"txi2", 0, ABC, 20},
+		{"txi3", 0, "DEF", 5},
+	}
+	for _, i := range issued {
+		require.NoError(t, db.StoreToken(ctx, driver2.TokenRecord{
+			TxID:           i.txID,
+			Index:          i.idx,
+			OwnerRaw:       []byte{1, 2},
+			OwnerType:      "idemix",
+			OwnerIdentity:  []byte{},
+			OwnerWalletID:  "idemix",
+			IssuerRaw:      []byte{11, 12},
+			Ledger:         []byte("ledger"),
+			LedgerMetadata: []byte{},
+			Quantity:       fmt.Sprintf("0x%02x", i.amount),
+			Type:           i.typ,
+			Amount:         i.amount,
+			Owner:          false,
+			Auditor:        false,
+			Issuer:         true,
+			Redeemed:       false,
+		}, nil))
+	}
+
+	// two redeemed tokens of type ABC (amounts 3 and 4): empty owner, issuer=true, redeemed=true
+	redeemed := []struct {
+		txID   string
+		amount uint64
+	}{
+		{"txr1", 3},
+		{"txr2", 4},
+	}
+	for _, r := range redeemed {
+		require.NoError(t, db.StoreToken(ctx, driver2.TokenRecord{
+			TxID:           r.txID,
+			Index:          0,
+			OwnerRaw:       []byte{},
+			OwnerType:      "",
+			OwnerIdentity:  []byte{},
+			OwnerWalletID:  "",
+			IssuerRaw:      []byte{11, 12},
+			Ledger:         []byte("ledger"),
+			LedgerMetadata: []byte{},
+			Quantity:       fmt.Sprintf("0x%02x", r.amount),
+			Type:           ABC,
+			Amount:         r.amount,
+			Owner:          false,
+			Auditor:        false,
+			Issuer:         true,
+			Redeemed:       true,
+		}, nil))
+	}
+
+	// issued balance across all types = 10 + 20 + 5 = 35
+	issuedBalance, err := db.IssuedBalance(ctx, tdriver.IssuerBalanceQuery{})
+	require.NoError(t, err)
+	assert.Equal(t, int64(35), issuedBalance.Int64())
+
+	// issued balance for ABC = 10 + 20 = 30
+	issuedABC, err := db.IssuedBalance(ctx, tdriver.IssuerBalanceQuery{TokenType: ABC})
+	require.NoError(t, err)
+	assert.Equal(t, int64(30), issuedABC.Int64())
+
+	// redeemed balance across all types = 3 + 4 = 7
+	redeemedBalance, err := db.RedeemedBalance(ctx, tdriver.IssuerBalanceQuery{})
+	require.NoError(t, err)
+	assert.Equal(t, int64(7), redeemedBalance.Int64())
+
+	// redeemed balance for DEF = 0 (no redeems of that type)
+	redeemedDEF, err := db.RedeemedBalance(ctx, tdriver.IssuerBalanceQuery{TokenType: "DEF"})
+	require.NoError(t, err)
+	assert.Equal(t, int64(0), redeemedDEF.Int64())
+
+	// Simulate a node that is both issuer and auditor: when a token is spent (transferred/redeemed),
+	// DeleteTokens marks the issuer's record is_deleted=true. IssuedBalance must still count it —
+	// issued balance is a permanent historical sum, not an unspent balance.
+	require.NoError(t, db.DeleteTokens(ctx, "spender", &token.ID{TxId: "txi1", Index: 0}))
+	issuedAfterDelete, err := db.IssuedBalance(ctx, tdriver.IssuerBalanceQuery{TokenType: ABC})
+	require.NoError(t, err)
+	assert.Equal(t, int64(30), issuedAfterDelete.Int64(), "issued balance must not drop when an issued token is spent")
 }
 
 // GetTokenMetadata retrieves the token information for the passed ids.
@@ -1185,4 +1286,305 @@ func assertEqual(t *testing.T, r driver2.TokenRecord, d driver2.TokenDetails) {
 	assert.Equal(t, r.Index, d.Index)
 	assert.Equal(t, r.Amount, d.Amount.Uint64())
 	assert.Equal(t, r.OwnerType, d.OwnerType)
+}
+
+func TGetDeletedTokensPendingSKICleanup(t *testing.T, db TestTokenDB) {
+	t.Helper()
+	ctx := t.Context()
+
+	// Helper function to create and delete a token
+	createAndDeleteToken := func(txID string, index uint64, ownerType string) {
+		tr := driver2.TokenRecord{
+			TxID:           txID,
+			Index:          index,
+			OwnerRaw:       []byte{1, 2, 3},
+			OwnerType:      ownerType,
+			OwnerIdentity:  fmt.Appendf(nil, "owner_%s_%d", txID, index),
+			Ledger:         []byte("ledger"),
+			LedgerMetadata: []byte{},
+			Quantity:       "0x01",
+			Type:           ABC,
+			Amount:         1,
+			Owner:          true,
+		}
+		require.NoError(t, db.StoreToken(ctx, tr, []string{"alice"}))
+		require.NoError(t, db.DeleteTokens(ctx, "deleter_tx", &token.ID{TxId: txID, Index: index}))
+	}
+
+	// Test 1: Empty database - should return empty slice
+	t.Run("EmptyDatabase", func(t *testing.T) {
+		tokens, err := db.GetDeletedTokensPendingSKICleanup(ctx, 0, 10)
+		require.NoError(t, err, "query on empty database should not error")
+		assert.Empty(t, tokens, "empty database should return empty slice")
+	})
+
+	// Test 2: No deleted tokens - only active tokens
+	t.Run("NoDeletedTokens", func(t *testing.T) {
+		tr := driver2.TokenRecord{
+			TxID:           "active1",
+			Index:          0,
+			OwnerRaw:       []byte{1, 2, 3},
+			OwnerType:      "idemix",
+			OwnerIdentity:  []byte("active_owner"),
+			Ledger:         []byte("ledger"),
+			LedgerMetadata: []byte{},
+			Quantity:       "0x01",
+			Type:           ABC,
+			Amount:         1,
+			Owner:          true,
+		}
+		require.NoError(t, db.StoreToken(ctx, tr, []string{"alice"}))
+
+		tokens, err := db.GetDeletedTokensPendingSKICleanup(ctx, 0, 10)
+		require.NoError(t, err, "query with only active tokens should not error")
+		assert.Empty(t, tokens, "active tokens should not be returned")
+	})
+
+	// Test 3: Basic functionality - deleted tokens without cleanup records
+	t.Run("BasicFunctionality", func(t *testing.T) {
+		// Create deleted tokens
+		createAndDeleteToken("basic1", 0, "idemix")
+		createAndDeleteToken("basic2", 0, "x509")
+
+		// Query with very short duration to get recently deleted tokens
+		tokens, err := db.GetDeletedTokensPendingSKICleanup(ctx, 0, 10)
+		require.NoError(t, err, "query should not error")
+
+		// Find our test tokens
+		found := make(map[string]bool)
+		for _, tok := range tokens {
+			if tok.TxID == "basic1" || tok.TxID == "basic2" {
+				found[tok.TxID] = true
+				// Verify token fields are populated correctly
+				assert.NotEmpty(t, tok.TxID, "TxID should be populated")
+				assert.NotEmpty(t, tok.OwnerIdentity, "OwnerIdentity should be populated")
+				assert.NotEmpty(t, tok.OwnerType, "OwnerType should be populated")
+				assert.False(t, tok.DeletedAt.IsZero(), "DeletedAt should be populated")
+			}
+		}
+
+		assert.True(t, found["basic1"], "basic1 token should be found")
+		assert.True(t, found["basic2"], "basic2 token should be found")
+	})
+
+	// Test 4: Exclusion logic - tokens with cleanup records should be excluded
+	t.Run("ExcludeCleanedTokens", func(t *testing.T) {
+		// Create two deleted tokens
+		createAndDeleteToken("cleaned1", 0, "idemix")
+		createAndDeleteToken("uncleaned1", 0, "idemix")
+
+		// Mark one as cleaned
+		require.NoError(t, db.MarkTokenCleaned(ctx, "cleaned1", 0, "test_cleaner"))
+
+		tokens, err := db.GetDeletedTokensPendingSKICleanup(ctx, 0, 100)
+		require.NoError(t, err, "query should not error")
+
+		// Verify cleaned token is not in results
+		for _, tok := range tokens {
+			assert.NotEqual(t, "cleaned1", tok.TxID, "cleaned token should not be returned")
+		}
+
+		// Verify uncleaned token is in results
+		found := false
+		for _, tok := range tokens {
+			if tok.TxID == "uncleaned1" && tok.Index == 0 {
+				found = true
+
+				break
+			}
+		}
+		assert.True(t, found, "uncleaned token should be in results")
+	})
+
+	// Test 5: Time filtering - only tokens older than duration
+	t.Run("TimeFiltering", func(t *testing.T) {
+		// Create an old token
+		createAndDeleteToken("old_token", 0, "idemix")
+
+		// Wait a bit to ensure time difference
+		time.Sleep(100 * time.Millisecond)
+
+		// Create a recent token
+		createAndDeleteToken("recent_token", 0, "idemix")
+
+		// Query with duration that should exclude the recent token
+		tokens, err := db.GetDeletedTokensPendingSKICleanup(ctx, 50*time.Millisecond, 100)
+		require.NoError(t, err, "query should not error")
+
+		// Verify old token is in results
+		foundOld := false
+		foundRecent := false
+		for _, tok := range tokens {
+			if tok.TxID == "old_token" {
+				foundOld = true
+			}
+			if tok.TxID == "recent_token" {
+				foundRecent = true
+			}
+		}
+
+		assert.True(t, foundOld, "old token should be in results")
+		assert.False(t, foundRecent, "recent token should not be in results")
+	})
+
+	// Test 6: Limit parameter
+	t.Run("LimitParameter", func(t *testing.T) {
+		// Create more tokens than limit
+		for i := range 10 {
+			createAndDeleteToken(fmt.Sprintf("limit_test_%d", i), 0, "idemix")
+		}
+
+		tokens, err := db.GetDeletedTokensPendingSKICleanup(ctx, 0, 5)
+		require.NoError(t, err, "query should not error")
+
+		// Count our test tokens in results
+		count := 0
+		for _, tok := range tokens {
+			if strings.HasPrefix(tok.TxID, "limit_test_") {
+				count++
+			}
+		}
+		assert.LessOrEqual(t, count, 5, "should respect limit parameter")
+	})
+
+	// Test 7: Ordering - results should be ordered by spent_at ascending
+	t.Run("OrderingBySpentAt", func(t *testing.T) {
+		// Create tokens with time delays to ensure different spent_at times
+		createAndDeleteToken("order1", 0, "idemix")
+		time.Sleep(10 * time.Millisecond)
+		createAndDeleteToken("order2", 0, "idemix")
+		time.Sleep(10 * time.Millisecond)
+		createAndDeleteToken("order3", 0, "idemix")
+
+		tokens, err := db.GetDeletedTokensPendingSKICleanup(ctx, 0, 100)
+		require.NoError(t, err, "query should not error")
+
+		// Find our test tokens in results
+		var testTokens []driver2.DeletedToken
+		for _, tok := range tokens {
+			if tok.TxID == "order1" || tok.TxID == "order2" || tok.TxID == "order3" {
+				testTokens = append(testTokens, tok)
+			}
+		}
+
+		require.GreaterOrEqual(t, len(testTokens), 3, "should find all test tokens")
+
+		// Verify ordering (oldest first)
+		for i := 1; i < len(testTokens); i++ {
+			assert.True(t, testTokens[i-1].DeletedAt.Before(testTokens[i].DeletedAt) ||
+				testTokens[i-1].DeletedAt.Equal(testTokens[i].DeletedAt),
+				"tokens should be ordered by DeletedAt ascending")
+		}
+	})
+
+	// Test 8: Multiple owner types
+	t.Run("MultipleOwnerTypes", func(t *testing.T) {
+		createAndDeleteToken("idemix_token", 0, "idemix")
+		createAndDeleteToken("x509_token", 0, "x509")
+		createAndDeleteToken("htlc_token", 0, "htlc")
+
+		tokens, err := db.GetDeletedTokensPendingSKICleanup(ctx, 0, 100)
+		require.NoError(t, err, "query should not error")
+
+		// Verify all owner types are present
+		ownerTypes := make(map[string]bool)
+		for _, tok := range tokens {
+			if tok.TxID == "idemix_token" || tok.TxID == "x509_token" || tok.TxID == "htlc_token" {
+				ownerTypes[tok.OwnerType] = true
+			}
+		}
+
+		assert.True(t, ownerTypes["idemix"], "idemix owner type should be present")
+		assert.True(t, ownerTypes["x509"], "x509 owner type should be present")
+		assert.True(t, ownerTypes["htlc"], "htlc owner type should be present")
+	})
+
+	// Test 9: Zero limit
+	t.Run("ZeroLimit", func(t *testing.T) {
+		createAndDeleteToken("zero_limit", 0, "idemix")
+
+		tokens, err := db.GetDeletedTokensPendingSKICleanup(ctx, 0, 0)
+		require.NoError(t, err, "query with zero limit should not error")
+		assert.Empty(t, tokens, "zero limit should return empty results")
+	})
+
+	// Test 10: All tokens already cleaned
+	t.Run("AllTokensCleaned", func(t *testing.T) {
+		// Create and immediately mark as cleaned
+		createAndDeleteToken("all_cleaned1", 0, "idemix")
+		createAndDeleteToken("all_cleaned2", 0, "idemix")
+
+		require.NoError(t, db.MarkTokenCleaned(ctx, "all_cleaned1", 0, "cleaner"))
+		require.NoError(t, db.MarkTokenCleaned(ctx, "all_cleaned2", 0, "cleaner"))
+
+		tokens, err := db.GetDeletedTokensPendingSKICleanup(ctx, 0, 100)
+		require.NoError(t, err, "query should not error")
+
+		// Verify our cleaned tokens are not in results
+		for _, tok := range tokens {
+			assert.NotEqual(t, "all_cleaned1", tok.TxID, "cleaned token should not be returned")
+			assert.NotEqual(t, "all_cleaned2", tok.TxID, "cleaned token should not be returned")
+		}
+	})
+
+	// Test 11: Multiple indices for same transaction
+	t.Run("MultipleIndices", func(t *testing.T) {
+		createAndDeleteToken("multi_idx", 0, "idemix")
+		createAndDeleteToken("multi_idx", 1, "idemix")
+		createAndDeleteToken("multi_idx", 2, "idemix")
+
+		tokens, err := db.GetDeletedTokensPendingSKICleanup(ctx, 0, 100)
+		require.NoError(t, err, "query should not error")
+
+		// Count how many indices we found
+		count := 0
+		for _, tok := range tokens {
+			if tok.TxID == "multi_idx" {
+				count++
+			}
+		}
+
+		assert.Equal(t, 3, count, "should return all indices for the same transaction")
+	})
+
+	// Test 12: Non-owned tokens (auditor-only, issuer-only) must be excluded,
+	// since this node never holds the secret keys for tokens it does not own.
+	t.Run("ExcludeNonOwnedTokens", func(t *testing.T) {
+		createAndDeleteNonOwnedToken := func(txID string, index uint64, ownerType string, auditor, issuer bool) {
+			tr := driver2.TokenRecord{
+				TxID:           txID,
+				Index:          index,
+				OwnerRaw:       []byte{1, 2, 3},
+				OwnerType:      ownerType,
+				OwnerIdentity:  fmt.Appendf(nil, "owner_%s_%d", txID, index),
+				Ledger:         []byte("ledger"),
+				LedgerMetadata: []byte{},
+				Quantity:       "0x01",
+				Type:           ABC,
+				Amount:         1,
+				Owner:          false,
+				Auditor:        auditor,
+				Issuer:         issuer,
+			}
+			require.NoError(t, db.StoreToken(ctx, tr, nil))
+			require.NoError(t, db.DeleteTokens(ctx, "deleter_tx", &token.ID{TxId: txID, Index: index}))
+		}
+
+		createAndDeleteNonOwnedToken("auditor_only", 0, "idemix", true, false)
+		createAndDeleteNonOwnedToken("issuer_only", 0, "idemix", false, true)
+		createAndDeleteToken("owned_control", 0, "idemix")
+
+		tokens, err := db.GetDeletedTokensPendingSKICleanup(ctx, 0, 100)
+		require.NoError(t, err, "query should not error")
+
+		foundOwnedControl := false
+		for _, tok := range tokens {
+			assert.NotEqual(t, "auditor_only", tok.TxID, "auditor-only token should not be returned")
+			assert.NotEqual(t, "issuer_only", tok.TxID, "issuer-only token should not be returned")
+			if tok.TxID == "owned_control" {
+				foundOwnedControl = true
+			}
+		}
+		assert.True(t, foundOwnedControl, "owned token should still be returned")
+	})
 }

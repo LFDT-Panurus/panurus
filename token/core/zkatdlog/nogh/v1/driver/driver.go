@@ -7,22 +7,22 @@ SPDX-License-Identifier: Apache-2.0
 package driver
 
 import (
+	"github.com/LFDT-Panurus/panurus/token/core"
+	"github.com/LFDT-Panurus/panurus/token/core/common"
+	cdriver "github.com/LFDT-Panurus/panurus/token/core/common/driver"
+	"github.com/LFDT-Panurus/panurus/token/core/common/metrics"
+	v1 "github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1"
+	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/crypto/upgrade"
+	v1setup "github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/setup"
+	v1token "github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/token"
+	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/validator"
+	"github.com/LFDT-Panurus/panurus/token/driver"
+	"github.com/LFDT-Panurus/panurus/token/services/interop/htlc"
+	"github.com/LFDT-Panurus/panurus/token/services/logging"
+	"github.com/LFDT-Panurus/panurus/token/services/ttx/boolpolicy"
+	"github.com/LFDT-Panurus/panurus/token/services/ttx/multisig"
+	"github.com/LFDT-Panurus/panurus/token/services/utils"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/core"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/core/common"
-	cdriver "github.com/hyperledger-labs/fabric-token-sdk/token/core/common/driver"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/core/common/metrics"
-	v1 "github.com/hyperledger-labs/fabric-token-sdk/token/core/zkatdlog/nogh/v1"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/core/zkatdlog/nogh/v1/crypto/upgrade"
-	v1setup "github.com/hyperledger-labs/fabric-token-sdk/token/core/zkatdlog/nogh/v1/setup"
-	v1token "github.com/hyperledger-labs/fabric-token-sdk/token/core/zkatdlog/nogh/v1/token"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/core/zkatdlog/nogh/v1/validator"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/driver"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/interop/htlc"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/logging"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/ttx/boolpolicy"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/ttx/multisig"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/utils"
 )
 
 // Driver contains the non-static logic of the zkatdlog driver (including services).
@@ -88,7 +88,7 @@ func newTokenDriver(
 
 // NewTokenService returns a new zkatdlog token manager service for the passed TMS ID and public parameters.
 func (d *Driver) NewTokenService(tmsID driver.TMSID, publicParams []byte) (driver.TokenManagerService, error) {
-	logger := logging.DriverLogger("token-sdk.driver.zkatdlog", tmsID.Network, tmsID.Channel, tmsID.Namespace)
+	logger := logging.DriverLogger("panurus.driver.zkatdlog", tmsID.Network, tmsID.Channel, tmsID.Namespace)
 
 	logger.Debugf("creating new token service with public parameters [%s]", utils.Hashable(publicParams))
 
@@ -194,6 +194,7 @@ func (d *Driver) NewTokenService(tmsID driver.TMSID, publicParams []byte) (drive
 			logger,
 			ppm,
 			deserializer,
+			qe,
 			d.tracerProvider,
 		), metricsProvider),
 		metrics.NewTokensService(tokensService, metricsProvider),

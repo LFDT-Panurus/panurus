@@ -5,10 +5,10 @@ import (
 	"context"
 	"sync"
 
-	tokena "github.com/hyperledger-labs/fabric-token-sdk/token"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/driver"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/nfttx"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/token"
+	tokena "github.com/LFDT-Panurus/panurus/token"
+	"github.com/LFDT-Panurus/panurus/token/driver"
+	"github.com/LFDT-Panurus/panurus/token/services/nfttx"
+	"github.com/LFDT-Panurus/panurus/token/token"
 )
 
 type QueryService struct {

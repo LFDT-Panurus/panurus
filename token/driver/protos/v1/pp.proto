@@ -1,0 +1,21 @@
+/*
+   Copyright IBM Corp. All Rights Reserved.
+
+   SPDX-License-Identifier: Apache-2.0
+*/
+
+syntax = "proto3";
+
+package fabric_token_sdk.token.driver.v1;
+
+option go_package = "github.com/LFDT-Panurus/panurus/token/driver/protos-go/v1/pp";
+
+// PublicParameters is a generic container for driver-specific public parameters.
+// Different token drivers (fabtoken, zkatdlog, etc.) serialize their specific
+// public parameters into the raw field, identified by the identifier field.
+message PublicParameters {
+  // identifier specifies which token driver these parameters belong to (e.g., "fabtoken", "zkatdlog")
+  string identifier = 1;
+  // raw contains the serialized driver-specific public parameters
+  bytes raw = 2;
+}

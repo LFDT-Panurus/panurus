@@ -13,15 +13,15 @@ import (
 	"testing"
 
 	math "github.com/IBM/mathlib"
+	"github.com/LFDT-Panurus/panurus/token/core/common/encoding/json"
+	fabtokenv1 "github.com/LFDT-Panurus/panurus/token/core/fabtoken/v1/actions"
+	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/protos-go/v1/actions"
+	zkatmath "github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/protos-go/v1/math"
+	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/crypto/rp"
+	token2 "github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/token"
+	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/transfer"
+	"github.com/LFDT-Panurus/panurus/token/token"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/proto"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/core/common/encoding/json"
-	fabtokenv1 "github.com/hyperledger-labs/fabric-token-sdk/token/core/fabtoken/v1/actions"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/core/zkatdlog/nogh/protos-go/actions"
-	zkatmath "github.com/hyperledger-labs/fabric-token-sdk/token/core/zkatdlog/nogh/protos-go/math"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/core/zkatdlog/nogh/v1/crypto/rp"
-	token2 "github.com/hyperledger-labs/fabric-token-sdk/token/core/zkatdlog/nogh/v1/token"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/core/zkatdlog/nogh/v1/transfer"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/token"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -729,24 +729,36 @@ func TestAction_Deserialize_ErrorPaths(t *testing.T) {
 }
 
 func TestAction_Deserialize_ExtraBranches(t *testing.T) {
-	// Test with nil output and nil output.Token
-	protoAction := &actions.TransferAction{
+	// A nil output element is now rejected during deserialization.
+	// This is the FA3 (False Acceptance #3) attack vector; see
+	// TestSecurityFalseAcceptanceTransferDeserializeNilOutput in
+	// validator/validator_security_test.go for the full threat description.
+	protoNilOutput := &actions.TransferAction{
 		Version: 1, // ProtocolV1
 		Outputs: []*actions.TransferActionOutput{
 			nil,
-			{
-				Token: nil,
-			},
 		},
 	}
-	raw, err := proto.Marshal(protoAction)
+	raw, err := proto.Marshal(protoNilOutput)
 	require.NoError(t, err)
 	action := &transfer.Action{}
 	err = action.Deserialize(raw)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "output at index [0] is nil")
+
+	// A non-nil output entry with a nil Token field is also rejected.
+	protoNilToken := &actions.TransferAction{
+		Version: 1, // ProtocolV1
+		Outputs: []*actions.TransferActionOutput{
+			{Token: nil},
+		},
+	}
+	raw, err = proto.Marshal(protoNilToken)
 	require.NoError(t, err)
-	assert.Len(t, action.Outputs, 2)
-	assert.Nil(t, action.Outputs[0])
-	assert.Nil(t, action.Outputs[1])
+	action = &transfer.Action{}
+	err = action.Deserialize(raw)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "token of output at index [0] is nil")
 }
 
 func TestAction_SerializeOutputAt(t *testing.T) {
@@ -803,7 +815,8 @@ func TestAction_GetSerializedInputs(t *testing.T) {
 	assert.Nil(t, res[1])
 	assert.NotNil(t, res[2])
 
-	// case 2: Token is nil (panic path if not handled)
+	// case 2: Token is nil — hardened: GetSerializedInputs now returns an error
+	// instead of panicking (security fix P6: nil Token dereference).
 	actionErr := &transfer.Action{
 		Inputs: []*transfer.ActionInput{
 			{
@@ -812,10 +825,14 @@ func TestAction_GetSerializedInputs(t *testing.T) {
 			},
 		},
 	}
-	// Action.GetSerializedInputs will panic if Token is nil because it calls Token.Serialize()
-	assert.Panics(t, func() {
-		_, _ = actionErr.GetSerializedInputs()
+	// GetSerializedInputs must return an error, not panic.
+	require.NotPanics(t, func() {
+		_, err = actionErr.GetSerializedInputs()
 	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "nil token in input at index [0]")
+
+	// Validate() also catches this via ErrEmptyInputToken.
 	err = actionErr.Validate()
 	require.Error(t, err)
 	require.ErrorIs(t, err, transfer.ErrEmptyInputToken)

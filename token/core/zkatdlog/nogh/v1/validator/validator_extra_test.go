@@ -15,24 +15,25 @@ import (
 	"time"
 
 	math "github.com/IBM/mathlib"
+	fv1 "github.com/LFDT-Panurus/panurus/token/core/fabtoken/v1/actions"
+	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/benchmark"
+	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/issue"
+	v1 "github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/setup"
+	testing2 "github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/testutils"
+	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/token"
+	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/transfer"
+	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/validator"
+	"github.com/LFDT-Panurus/panurus/token/driver"
+	mock3 "github.com/LFDT-Panurus/panurus/token/driver/mock"
+	"github.com/LFDT-Panurus/panurus/token/driver/protos-go/v1/request"
+	benchmark2 "github.com/LFDT-Panurus/panurus/token/services/benchmark"
+	"github.com/LFDT-Panurus/panurus/token/services/identity"
+	"github.com/LFDT-Panurus/panurus/token/services/identity/idemixnym"
+	"github.com/LFDT-Panurus/panurus/token/services/identity/x509"
+	"github.com/LFDT-Panurus/panurus/token/services/interop/encoding"
+	"github.com/LFDT-Panurus/panurus/token/services/interop/htlc"
+	"github.com/LFDT-Panurus/panurus/token/services/logging"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
-	fv1 "github.com/hyperledger-labs/fabric-token-sdk/token/core/fabtoken/v1/actions"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/core/zkatdlog/nogh/v1/benchmark"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/core/zkatdlog/nogh/v1/issue"
-	v1 "github.com/hyperledger-labs/fabric-token-sdk/token/core/zkatdlog/nogh/v1/setup"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/core/zkatdlog/nogh/v1/token"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/core/zkatdlog/nogh/v1/transfer"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/core/zkatdlog/nogh/v1/validator"
-	testing2 "github.com/hyperledger-labs/fabric-token-sdk/token/core/zkatdlog/nogh/v1/validator/testutils"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/driver"
-	mock3 "github.com/hyperledger-labs/fabric-token-sdk/token/driver/mock"
-	benchmark2 "github.com/hyperledger-labs/fabric-token-sdk/token/services/benchmark"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/identity"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/identity/idemixnym"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/identity/x509"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/interop/encoding"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/interop/htlc"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/logging"
 	"github.com/stretchr/testify/require"
 )
 
@@ -68,7 +69,7 @@ func TestIssueValidateErrors(t *testing.T) {
 	require.NoError(t, err)
 
 	issueAction := &issue.Action{}
-	err = issueAction.Deserialize(env.TRWithIssue.Issues[0])
+	err = issueAction.Deserialize(env.TRWithIssue.GetIssues()[0])
 	require.NoError(t, err)
 
 	newCtx := func() *validator.Context {
@@ -135,7 +136,7 @@ func TestIssueValidateErrors(t *testing.T) {
 	err = validator.IssueValidate(context.Background(), newCtx())
 	require.Error(t, err)
 	// Reset to valid state
-	err = issueAction.Deserialize(env.TRWithIssue.Issues[0])
+	err = issueAction.Deserialize(env.TRWithIssue.GetIssues()[0])
 	require.NoError(t, err)
 
 	// Case 8: Success with issuers list
@@ -271,6 +272,16 @@ func TestTransferUpgradeWitnessValidateErrors(t *testing.T) {
 	err = validator.TransferUpgradeWitnessValidate(context.Background(), ctx)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "owners do not correspond")
+
+	// T-GAP-5: quantity that overflows uint64 boundary must be rejected cleanly (not panic).
+	// "0x10000000000000000" is 2^64, which exceeds the uint64 maximum.
+	action.Inputs[0].UpgradeWitness.FabToken.Quantity = "0x10000000000000000"
+	require.NotPanics(t, func() {
+		err = validator.TransferUpgradeWitnessValidate(context.Background(), ctx)
+	}, "T-GAP-5: overflow quantity must not panic")
+	require.Error(t, err, "T-GAP-5: overflow quantity must be rejected")
+	// token2.ToQuantity returns an error for quantities that exceed the precision;
+	// the exact message may vary so we only assert an error is returned.
 }
 
 func TestTransferZKProofValidateErrors(t *testing.T) {
@@ -430,18 +441,44 @@ func TestTransferHTLCValidateErrors(t *testing.T) {
 	ctx.TransferAction.Outputs = []*token.Token{{Owner: invalidJSONID}}
 	err = validator.TransferHTLCValidate(context.Background(), ctx)
 	require.Error(t, err)
+
+	// T-GAP-7: expired HTLC deadline — claim attempted after expiry must be rejected.
+	// Script has an expired deadline, so VerifyOwner returns Reclaim.
+	// The output owner is the recipient (not sender), so the owner check fails.
+	ctx = newCtx()
+	expiredScript := &htlc.Script{
+		Sender:    validSenderID,
+		Recipient: validRecipientID,
+		Deadline:  time.Now().Add(-100 * time.Hour), // expired
+		HashInfo: htlc.HashInfo{
+			Hash:         []byte("hash"),
+			HashFunc:     crypto.SHA256,
+			HashEncoding: encoding.Hex,
+		},
+	}
+	expiredScriptBytes, _ := json.Marshal(expiredScript)
+	expiredLockID, _ := identity.WrapWithType(htlc.ScriptType, expiredScriptBytes)
+	ctx.InputTokens[0].Owner = expiredLockID
+	// Output owner is the recipient — only valid for a claim, not a reclaim.
+	ctx.TransferAction.Outputs = []*token.Token{{Owner: validRecipientID, Data: &math.G1{}}}
+	err = validator.TransferHTLCValidate(context.Background(), ctx)
+	require.Error(t, err, "T-GAP-7: claim attempt after expiry must be rejected")
 }
 
 func TestDeserializeActionsErrors(t *testing.T) {
 	ad := &validator.ActionDeserializer{}
 	tr := &driver.TokenRequest{
-		Issues: [][]byte{[]byte("invalid")},
+		Actions: []*driver.TypedAction{
+			{Type: request.ActionType_ACTION_TYPE_ISSUE, Raw: []byte("invalid")},
+		},
 	}
 	_, _, err := ad.DeserializeActions(tr)
 	require.Error(t, err)
 
 	tr = &driver.TokenRequest{
-		Transfers: [][]byte{[]byte("invalid")},
+		Actions: []*driver.TypedAction{
+			{Type: request.ActionType_ACTION_TYPE_TRANSFER, Raw: []byte("invalid")},
+		},
 	}
 	_, _, err = ad.DeserializeActions(tr)
 	require.Error(t, err)

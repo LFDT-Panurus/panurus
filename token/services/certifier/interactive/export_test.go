@@ -9,8 +9,8 @@ SPDX-License-Identifier: Apache-2.0
 package interactive
 
 import (
+	"github.com/LFDT-Panurus/panurus/token/token"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/view"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/token"
 )
 
 // ClientTokensChan returns the raw tokens channel of a CertificationClient.

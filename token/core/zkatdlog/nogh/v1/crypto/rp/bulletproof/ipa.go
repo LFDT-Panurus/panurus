@@ -8,11 +8,13 @@ package bulletproof
 
 import (
 	mathlib "github.com/IBM/mathlib"
+	"github.com/LFDT-Panurus/panurus/token/core/common/encoding/asn1"
+	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/crypto/common"
+	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/crypto/math"
+	executor "github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/crypto/rp/executor"
+	bls12381fr "github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
+	bn254fr "github.com/consensys/gnark-crypto/ecc/bn254/fr"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/core/common/encoding/asn1"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/core/zkatdlog/nogh/v1/crypto/common"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/core/zkatdlog/nogh/v1/crypto/math"
-	executor "github.com/hyperledger-labs/fabric-token-sdk/token/core/zkatdlog/nogh/v1/crypto/rp/executor"
 )
 
 // IPA contains the proof for the inner product argument.
@@ -424,8 +426,20 @@ func (v *ipaVerifier) Verify(proof *IPA) error {
 }
 
 // reduceVectors reduces the size of the vectors passed in the parameters by 1/2,
-// as a function of the old vectors, x and 1/x
+// as a function of the old vectors, x and 1/x.
+//
+// For BLS12-381 and BN254 curves the inner loop is executed using native
+// gnark-crypto field elements (nativeReduceVectors) to avoid per-element
+// big.Int allocation. For all other curves the pure-mathlib path is used.
 func reduceVectors(left, right []*mathlib.Zr, x, xInv *mathlib.Zr, c *mathlib.Curve) ([]*mathlib.Zr, []*mathlib.Zr) {
+	isBLS, isBN254 := math.DispatchCurve(c)
+	if isBLS {
+		return nativeReduceVectors[bls12381fr.Element, *bls12381fr.Element](left, right, x, xInv, c)
+	} else if isBN254 {
+		return nativeReduceVectors[bn254fr.Element, *bn254fr.Element](left, right, x, xInv, c)
+	}
+
+	// Fallback: mathlib path for unsupported curves.
 	l := len(left) / 2
 	leftPrime := make([]*mathlib.Zr, l)
 	rightPrime := make([]*mathlib.Zr, l)
@@ -511,18 +525,30 @@ func CloneGenerators(LeftGenerators, RightGenerators []*mathlib.G1) ([]*mathlib.
 //	  sInv[i + 2^r] = sInv[i] · x_{k-1-r}^{-1}   (swapped)
 //	  sInv[i]       = sInv[i] · x_{k-1-r}         (swapped)
 //
-// This replaces the previous O(n·log n) nested-loop implementation and
-// eliminates the final BatchInverse call for sInv.
+// For BLS12-381 and BN254 curves the inner loop is executed using native
+// gnark-crypto field elements (nativeComputeSVector), which eliminates the
+// big.Int allocation overhead of the mathlib.Zr wrapper on every multiply.
+// For all other curves the pure-mathlib path is used as a fallback.
 //
 // Input: n, challenges = [x_0, …, x_{k-1}] where n = 2^k.
 // Returns (s, sInv) where sInv[i] = s[i]^{-1}.
 func ComputeSVector(n int, challenges []*mathlib.Zr, curve *mathlib.Curve) ([]*mathlib.Zr, []*mathlib.Zr) {
 	log2n := len(challenges)
 
-	// Verify n is consistent with number of challenges
+	// Verify n is consistent with number of challenges.
 	if 1<<log2n != n {
 		panic("n must equal 2^(number of challenges)")
 	}
+
+	// Dispatch to the allocation-free native path for supported curves.
+	isBLS, isBN254 := math.DispatchCurve(curve)
+	if isBLS {
+		return nativeComputeSVector[bls12381fr.Element, *bls12381fr.Element](n, challenges, curve)
+	} else if isBN254 {
+		return nativeComputeSVector[bn254fr.Element, *bn254fr.Element](n, challenges, curve)
+	}
+
+	// Fallback: mathlib path for unsupported curves.
 
 	// Precompute challenge inverses: O(log n) with a single field inversion.
 	challengeInvs := math.BatchInverse(challenges, curve)

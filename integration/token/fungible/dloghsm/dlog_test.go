@@ -7,15 +7,15 @@ SPDX-License-Identifier: Apache-2.0
 package dloghsm
 
 import (
+	integration2 "github.com/LFDT-Panurus/panurus/integration"
+	"github.com/LFDT-Panurus/panurus/integration/nwo/token/generators/crypto/zkatdlognoghv1"
+	token2 "github.com/LFDT-Panurus/panurus/integration/token"
+	"github.com/LFDT-Panurus/panurus/integration/token/common"
+	"github.com/LFDT-Panurus/panurus/integration/token/common/sdk/fdlog"
+	"github.com/LFDT-Panurus/panurus/integration/token/fungible"
+	"github.com/LFDT-Panurus/panurus/integration/token/fungible/topology"
 	"github.com/hyperledger-labs/fabric-smart-client/integration/nwo/fsc"
 	nodepkg "github.com/hyperledger-labs/fabric-smart-client/pkg/node"
-	integration2 "github.com/hyperledger-labs/fabric-token-sdk/integration"
-	"github.com/hyperledger-labs/fabric-token-sdk/integration/nwo/token/generators/crypto/zkatdlognoghv1"
-	token2 "github.com/hyperledger-labs/fabric-token-sdk/integration/token"
-	"github.com/hyperledger-labs/fabric-token-sdk/integration/token/common"
-	"github.com/hyperledger-labs/fabric-token-sdk/integration/token/common/sdk/fdlog"
-	"github.com/hyperledger-labs/fabric-token-sdk/integration/token/fungible"
-	"github.com/hyperledger-labs/fabric-token-sdk/integration/token/fungible/topology"
 	. "github.com/onsi/ginkgo/v2"
 )
 
@@ -57,7 +57,7 @@ func newTestSuite(commType fsc.P2PCommunicationType, mask int, factor int, names
 			HSM:             mask&HSM > 0,
 			WebEnabled:      mask&WebEnabled > 0,
 			SDKs:            []nodepkg.SDK{&fdlog.SDK{}},
-			// FSCLogSpec:      "token-sdk=debug:fabric-sdk=debug:info",
+			// FSCLogSpec:      "panurus=debug:fabric-sdk=debug:info",
 			ReplicationOpts: opts,
 		},
 	))

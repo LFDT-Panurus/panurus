@@ -1,6 +1,6 @@
 # Selector Service
 
-The **Selector Service** (`token/services/selector`) implements strategic token selection algorithms to ensure that the Fabric Token SDK can efficiently and correctly select the best set of unspent tokens (UTXOs) for any given transaction.
+The **Selector Service** (`token/services/selector`) implements strategic token selection algorithms to ensure that Panurus can efficiently and correctly select the best set of unspent tokens (UTXOs) for any given transaction.
 
 ## Core Responsibilities
 

@@ -11,7 +11,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/db/driver"
+	"github.com/LFDT-Panurus/panurus/token/services/storage/db/driver"
 )
 
 // StatusEvent models an event related to the status of a transaction

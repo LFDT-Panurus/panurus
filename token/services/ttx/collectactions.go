@@ -7,12 +7,12 @@ SPDX-License-Identifier: Apache-2.0
 package ttx
 
 import (
+	"github.com/LFDT-Panurus/panurus/token"
+	session2 "github.com/LFDT-Panurus/panurus/token/services/utils/json/session"
+	token2 "github.com/LFDT-Panurus/panurus/token/token"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/services/endpoint"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/view"
-	"github.com/hyperledger-labs/fabric-token-sdk/token"
-	session2 "github.com/hyperledger-labs/fabric-token-sdk/token/services/utils/json/session"
-	token2 "github.com/hyperledger-labs/fabric-token-sdk/token/token"
 )
 
 type Actions struct {

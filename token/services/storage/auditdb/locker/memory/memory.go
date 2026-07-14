@@ -10,8 +10,8 @@ import (
 	"context"
 	"sync"
 
+	"github.com/LFDT-Panurus/panurus/token/services/storage/auditdb/locker/dedup"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/auditdb/locker/dedup"
 	"golang.org/x/sync/semaphore"
 )
 

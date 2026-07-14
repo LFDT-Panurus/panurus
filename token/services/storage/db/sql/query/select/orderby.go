@@ -6,7 +6,7 @@ SPDX-License-Identifier: Apache-2.0
 
 package _select
 
-import "github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/db/sql/query/common"
+import "github.com/LFDT-Panurus/panurus/token/services/storage/db/sql/query/common"
 
 type OrderBy = common.OrderBy
 
