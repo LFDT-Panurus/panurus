@@ -95,7 +95,7 @@ func NewValidator[P driver.PublicParameters, T driver.Input, TA driver.TransferA
 		TransferValidators: transferValidators,
 		IssueValidators:    issueValidators,
 		AuditingValidators: auditingValidators,
-		ValidationConfig: driver.DefaultValidationConfig,
+		ValidationConfig:   driver.DefaultValidationConfig,
 	}
 }
 
