@@ -91,6 +91,9 @@ func newTestSuite(commType fsc.P2PCommunicationType, mask int, factor int, token
 		})...)
 		i.DeleteOnStart = true
 		i.DeleteOnStop = false
+		if integration.WithRaceDetection {
+			i.EnableRaceDetector()
+		}
 		i.RegisterPlatformFactory(fabricx.NewPlatformFactory())
 		i.RegisterPlatformFactory(token.NewPlatformFactory(i))
 		i.Generate()
