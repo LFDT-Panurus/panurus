@@ -51,11 +51,14 @@ func Keccak256Hash(data ...[]byte) [HashLength]byte {
 	return out
 }
 
-// SHA256 returns the SHA-256 digest of data.
+// SHA256 returns the plain SHA-256 digest of data.
 //
-// It matches token/services/utils.Hashable.Raw() for non-empty input, which is what the Token
-// SDK uses for the token-request hash and the public-parameters hash. Use SHA256 (not Keccak256)
-// whenever a value must line up with those SDK-computed hashes.
+// SHA-256 (not Keccak256) is used for the two values that must line up with hashes the rest of the
+// Token SDK computes and compares: the token-request hash and the public-parameters hash. This
+// equals the SDK's token-request hash for all inputs (CommitTokenRequest applies plain SHA-256), and
+// the SDK's public-parameters hash (utils.Hashable.Raw()) for every non-empty input. The one
+// documented difference: Hashable.Raw() returns nil for empty input whereas this returns SHA-256("");
+// public parameters and token requests are never empty, so the distinction never arises in practice.
 func SHA256(data []byte) []byte {
 	sum := sha256.Sum256(data)
 
