@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# fetch_contributors.sh — Run from inside your token-sdk folder
+# fetch_contributors.sh — Run from inside your panurus folder
 
 set -euo pipefail
 

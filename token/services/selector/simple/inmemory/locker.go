@@ -12,11 +12,11 @@ import (
 	"sync"
 	"time"
 
+	"github.com/LFDT-Panurus/panurus/token/services/logging"
+	"github.com/LFDT-Panurus/panurus/token/services/selector/simple"
+	"github.com/LFDT-Panurus/panurus/token/services/storage/ttxdb"
+	token2 "github.com/LFDT-Panurus/panurus/token/token"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/logging"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/selector/simple"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/ttxdb"
-	token2 "github.com/hyperledger-labs/fabric-token-sdk/token/token"
 	"go.uber.org/zap/zapcore"
 )
 
@@ -24,6 +24,14 @@ var (
 	logger             = logging.MustGetLogger()
 	AlreadyLockedError = errors.New("already locked")
 )
+
+const (
+	// stopTimeout is the maximum time to wait for the scan goroutine to stop during shutdown.
+	// This prevents indefinite blocking if the goroutine fails to exit cleanly.
+	stopTimeout = 10 * time.Second
+)
+
+var ErrTimeout = errors.New("timeout occurred")
 
 type TXStatusProvider interface {
 	GetStatus(ctx context.Context, txID string) (ttxdb.TxStatus, string, error)
@@ -67,11 +75,20 @@ func NewLocker(ttxdb TXStatusProvider, timeout time.Duration, validTxEvictionTim
 }
 
 // Stop cancels the scan goroutine and waits for it to exit.
-func (d *locker) Stop() {
+func (d *locker) Stop() error {
+	var err error
 	d.stopOnce.Do(func() {
 		d.cancel()
-		<-d.scanDone
+		select {
+		case <-d.scanDone:
+			logger.Debugf("scan goroutine stopped successfully")
+		case <-time.After(stopTimeout):
+			err = ErrTimeout
+			logger.Warnf("scan goroutine did not stop within timeout")
+		}
 	})
+
+	return err
 }
 
 func (d *locker) Lock(ctx context.Context, id *token2.ID, txID string, reclaim bool) (string, error) {

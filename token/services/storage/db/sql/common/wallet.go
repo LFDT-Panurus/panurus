@@ -12,16 +12,16 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/LFDT-Panurus/panurus/token"
+	"github.com/LFDT-Panurus/panurus/token/services/logging"
+	"github.com/LFDT-Panurus/panurus/token/services/storage/db/driver"
+	q "github.com/LFDT-Panurus/panurus/token/services/storage/db/sql/query"
+	common3 "github.com/LFDT-Panurus/panurus/token/services/storage/db/sql/query/common"
+	"github.com/LFDT-Panurus/panurus/token/services/storage/db/sql/query/cond"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/common/utils/collections/iterators"
 	common2 "github.com/hyperledger-labs/fabric-smart-client/platform/view/services/storage/driver/common"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/services/storage/driver/sql/common"
-	"github.com/hyperledger-labs/fabric-token-sdk/token"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/logging"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/db/driver"
-	q "github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/db/sql/query"
-	common3 "github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/db/sql/query/common"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/db/sql/query/cond"
 )
 
 type walletTables struct {
@@ -147,14 +147,10 @@ func (db *WalletStore) GetSchema() string {
 			created_at TIMESTAMP,
 			PRIMARY KEY(identity_hash, wallet_id, role_id)
 		);
-		CREATE INDEX IF NOT EXISTS idx_identity_hash_%s ON %s ( identity_hash );
-		CREATE INDEX IF NOT EXISTS idx_identity_hash_and_wallet_and_role%s ON %s ( identity_hash, wallet_id, role_id );
 		CREATE INDEX IF NOT EXISTS idx_identity_hash_and_role%s ON %s ( identity_hash, role_id );
 		CREATE INDEX IF NOT EXISTS idx_role_id_%s ON %s ( role_id )
 		`,
 		db.table.Wallets,
-		db.table.Wallets, db.table.Wallets,
-		db.table.Wallets, db.table.Wallets,
 		db.table.Wallets, db.table.Wallets,
 		db.table.Wallets, db.table.Wallets,
 	)

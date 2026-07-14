@@ -9,7 +9,7 @@ import (
 	"testing"
 
 	math "github.com/IBM/mathlib"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/core/zkatdlog/nogh/v1/issue"
+	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/issue"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -127,4 +127,36 @@ func NewToken(value *math.Zr, rand *math.Zr, tokenType string, pp []*math.G1, cu
 	token.Add(pp[2].Mul(rand))
 
 	return token
+}
+
+// TestSameTypeVerify_ForgedCommitmentToType is T-GAP-C5: verifies that replacing
+// CommitmentToType in an otherwise valid SameType proof with a different point
+// causes the Fiat-Shamir challenge check to fail.
+//
+// The CommitmentToType value comes from the attacker-supplied proof bytes. An
+// attacker who substitutes a different point shifts the challenge hash, so the
+// recomputed challenge will not match the one stored in the proof. The Pedersen
+// binding property ensures that finding a collision (a different point that
+// produces the same challenge) is computationally infeasible.
+func TestSameTypeVerify_ForgedCommitmentToType(t *testing.T) {
+	prover, verifier := GetSameTypeProverAndVerifier(t)
+	proof, err := prover.Prove()
+	require.NoError(t, err)
+
+	// Replace CommitmentToType with a random point.
+	curve := math.Curves[1]
+	rand, err := curve.Rand()
+	require.NoError(t, err)
+
+	originalCommitment := proof.CommitmentToType
+	proof.CommitmentToType = curve.GenG1.Mul(curve.NewRandomZr(rand))
+
+	err = verifier.Verify(proof)
+	require.Error(t, err, "T-GAP-C5: forged CommitmentToType must cause verification failure")
+	require.ErrorIs(t, err, issue.ErrInvalidSameTypeProof)
+
+	// Restore original and confirm the proof is still valid after restore.
+	proof.CommitmentToType = originalCommitment
+	err = verifier.Verify(proof)
+	require.NoError(t, err, "T-GAP-C5: restored proof must still pass verification")
 }

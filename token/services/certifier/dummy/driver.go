@@ -9,9 +9,9 @@ package dummy
 import (
 	"context"
 
-	"github.com/hyperledger-labs/fabric-token-sdk/token"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/certifier/driver"
-	token2 "github.com/hyperledger-labs/fabric-token-sdk/token/token"
+	"github.com/LFDT-Panurus/panurus/token"
+	"github.com/LFDT-Panurus/panurus/token/services/certifier/driver"
+	token2 "github.com/LFDT-Panurus/panurus/token/token"
 )
 
 type CertificationClient struct{}

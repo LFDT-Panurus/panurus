@@ -1,12 +1,12 @@
 # Identity Service
 
-The **Identity Service** (`token/services/identity`) is an **internal infrastructure service** of the Fabric Token SDK. It provides a unified interface for managing identities, signatures, and verification, operating **independently** of the core Fabric Smart Client (FSC) identity service. 
+The **Identity Service** (`token/services/identity`) is an **internal infrastructure service** of Panurus. It provides a unified interface for managing identities, signatures, and verification, operating **independently** of the core Fabric Smart Client (FSC) identity service. 
 
 This independence ensures that token-related cryptographic material (such as Idemix pseudonyms or X.509 certificates used for token ownership) is managed according to the specific privacy and security requirements of the Token Drivers, regardless of the underlying DLT platform.
 
 ## Overview
 
-The Identity Service abstracts the complexity of different cryptographic schemes, allowing the SDK to support multiple identity types (e.g., X.509, Idemix) and different storage backends seamlessly. 
+The Identity Service abstracts the complexity of different cryptographic schemes, allowing Panurus to support multiple identity types (e.g., X.509, Idemix) and different storage backends seamlessly. 
 
 It is a fundamental component used by token drivers and application services (like the TTX service) to handle:
 *   **Signature Management**: Generating and verifying signatures for token requests.
@@ -139,7 +139,7 @@ func (d *Base) NewWalletService(...) (*wallet.Service, error) {
 ## Identity Types
 
 The Identity Service leverages a wrapper called **TypedIdentity** to support various identity schemes uniformly. 
-This allows the SDK to be extensible and capable of handling different cryptographic requirements.
+This allows Panurus to be extensible and capable of handling different cryptographic requirements.
 
 ### TypedIdentity
 
@@ -324,7 +324,7 @@ Located in `token/services/identity/interop/htlc`.
 ## Extending the Identity Service
 
 The Identity Service is designed to be extensible through the driver interfaces
-defined in the token SDK. Custom identity implementations can be provided by
+defined in Panurus. Custom identity implementations can be provided by
 implementing the required identity and wallet interfaces.
 
 Typical extension scenarios include:

@@ -1,0 +1,32 @@
+/*
+   Copyright IBM Corp. All Rights Reserved.
+
+   SPDX-License-Identifier: Apache-2.0
+*/
+
+syntax = "proto3";
+
+package fabric_token_sdk.token.driver.v1;
+
+option go_package = "github.com/LFDT-Panurus/panurus/token/driver/protos-go/v1;driver";
+
+// Identity represents a serialized identity.
+// The raw field contains a self-describing serialized identity format,
+// such as Fabric's SerializedIdentity or Idemix's SerializedIdemixIdentity.
+// This allows different identity providers to use their own serialization
+// while maintaining a common interface.
+message Identity {
+  // raw contains the serialized identity bytes.
+  // The format is self-describing and depends on the identity provider.
+  bytes raw = 1;
+}
+
+// TokenID uniquely identifies a token by its transaction ID and index.
+// This is used across all token drivers (fabtoken, zkatdlog, etc.) to
+// reference tokens in a consistent manner.
+message TokenID {
+  // tx_id is the transaction ID where this token was created
+  string tx_id = 1;
+  // index is the position of this token in the transaction output
+  uint64 index = 2;
+}

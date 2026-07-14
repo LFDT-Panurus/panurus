@@ -9,9 +9,9 @@ package v1_test
 import (
 	"testing"
 
-	v1 "github.com/hyperledger-labs/fabric-token-sdk/token/core/fabtoken/v1"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/driver/mock"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/logging"
+	v1 "github.com/LFDT-Panurus/panurus/token/core/fabtoken/v1"
+	"github.com/LFDT-Panurus/panurus/token/driver/mock"
+	"github.com/LFDT-Panurus/panurus/token/services/logging"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

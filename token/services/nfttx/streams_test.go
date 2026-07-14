@@ -10,7 +10,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/hyperledger-labs/fabric-token-sdk/token"
+	"github.com/LFDT-Panurus/panurus/token"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

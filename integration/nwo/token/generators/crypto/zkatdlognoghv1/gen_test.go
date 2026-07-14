@@ -11,10 +11,10 @@ import (
 	"testing"
 
 	math "github.com/IBM/mathlib"
+	"github.com/LFDT-Panurus/panurus/integration/nwo/token/generators/crypto/zkatdlognoghv1/mock"
+	"github.com/LFDT-Panurus/panurus/integration/nwo/token/topology"
+	"github.com/LFDT-Panurus/panurus/token/services/utils"
 	"github.com/hyperledger-labs/fabric-smart-client/integration/nwo/common"
-	"github.com/hyperledger-labs/fabric-token-sdk/integration/nwo/token/generators/crypto/zkatdlognoghv1/mock"
-	"github.com/hyperledger-labs/fabric-token-sdk/integration/nwo/token/topology"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/utils"
 	"github.com/onsi/gomega"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

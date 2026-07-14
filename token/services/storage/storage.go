@@ -7,8 +7,8 @@ SPDX-License-Identifier: Apache-2.0
 package storage
 
 import (
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/db/common"
-	dbdriver "github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/db/driver"
+	"github.com/LFDT-Panurus/panurus/token/services/storage/db/common"
+	dbdriver "github.com/LFDT-Panurus/panurus/token/services/storage/db/driver"
 )
 
 // TxStatus is the status of a transaction

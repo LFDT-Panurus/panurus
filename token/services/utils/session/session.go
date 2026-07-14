@@ -12,6 +12,7 @@ import (
 	"context"
 	"time"
 
+	panuruslogging "github.com/LFDT-Panurus/panurus/token/services/logging"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/common/services/logging"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/view"
@@ -28,7 +29,7 @@ var ErrNilMessage = errors.New("received message is nil")
 // ErrContextDone is returned when the context is done.
 var ErrContextDone = errors.New("context done")
 
-var logger = logging.MustGetLogger()
+var logger = panuruslogging.MustGetLogger()
 
 type Session = view.Session
 

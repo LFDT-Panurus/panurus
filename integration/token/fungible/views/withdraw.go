@@ -10,12 +10,13 @@ import (
 	"encoding/json"
 	"time"
 
+	"github.com/LFDT-Panurus/panurus/token"
+	"github.com/LFDT-Panurus/panurus/token/services/ttx"
+	token2 "github.com/LFDT-Panurus/panurus/token/token"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/common/utils/assert"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/services/id"
+	view4 "github.com/hyperledger-labs/fabric-smart-client/platform/view/services/view"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/view"
-	"github.com/hyperledger-labs/fabric-token-sdk/token"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/ttx"
-	token2 "github.com/hyperledger-labs/fabric-token-sdk/token/token"
 )
 
 type Withdrawal struct {
@@ -55,8 +56,27 @@ func (i *WithdrawalInitiatorView) Call(context view.Context) (any, error) {
 		w, err = tms.WalletManager().OwnerWallet(context.Context(), i.Wallet)
 		assert.NoError(err, "cannot find wallet [%s:%s]", i.TMSID, i.Wallet)
 		assert.NoError(w.RegisterRecipient(context.Context(), i.RecipientData), "failed to register remote recipient")
+
+		// We have an external wallet here.
+		// We need to provide access to it to RequestWithdrawalForRecipientView.
+		// Indeed, a signature is needed to prove to the issuer that the caller owns the recipient data
+		stream := view4.GetStream(context)
 		// Then request withdrawal
-		id, session, err = ttx.RequestWithdrawalForRecipient(context, view.Identity(i.Issuer), i.Wallet, i.TokenType, i.Amount, i.NotAnonymous, i.RecipientData, token.WithTMSID(i.TMSID))
+		externalWalletSignerServer := ttx.NewStreamExternalWalletSignerServer(stream)
+		defer func() {
+			assert.NoError(externalWalletSignerServer.Done())
+		}()
+		id, session, err = ttx.RequestWithdrawalForRecipient(
+			context,
+			view.Identity(i.Issuer),
+			i.Wallet,
+			i.TokenType,
+			i.Amount,
+			i.NotAnonymous,
+			i.RecipientData,
+			token.WithTMSID(i.TMSID),
+			ttx.WithExternalWalletSigner(i.Wallet, externalWalletSignerServer),
+		)
 	} else {
 		id, session, err = ttx.RequestWithdrawal(context, view.Identity(i.Issuer), i.Wallet, i.TokenType, i.Amount, i.NotAnonymous, token.WithTMSID(i.TMSID))
 	}

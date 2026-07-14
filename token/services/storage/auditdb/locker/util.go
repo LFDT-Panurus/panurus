@@ -6,7 +6,7 @@ SPDX-License-Identifier: Apache-2.0
 
 package locker
 
-import "github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/auditdb/locker/dedup"
+import "github.com/LFDT-Panurus/panurus/token/services/storage/auditdb/locker/dedup"
 
 // DeduplicateAndSort removes duplicate entries from a slice and sorts it.
 func DeduplicateAndSort(source []string) []string {

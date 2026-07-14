@@ -65,6 +65,10 @@ var (
 	ErrInvalidInputValues = errors.New("InputValues are invalid")
 	// ErrInvalidProofType is returned when a proof type is invalid
 	ErrInvalidProofType = errors.New("Type is invalid")
+	// ErrProofTypeMismatch is returned when the proof type in the action refers to a range-proof
+	// algorithm whose params sub-struct is not populated in PublicParams. This prevents an attacker
+	// from selecting a verifier whose params sub-struct is nil (nil-deref / algorithm confusion).
+	ErrProofTypeMismatch = errors.New("proof type in action is not available in public parameters")
 	// ErrInvalidTypeBlindingFactor is returned when a type blinding factor is invalid
 	ErrInvalidTypeBlindingFactor = errors.New("TypeBlindingFactor is invalid")
 	// ErrInvalidEqualityOfSum is returned when equality of sum is invalid

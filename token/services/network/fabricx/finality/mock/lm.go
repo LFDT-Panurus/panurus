@@ -4,9 +4,9 @@ package mock
 import (
 	"sync"
 
+	"github.com/LFDT-Panurus/panurus/token/services/network/fabricx/finality"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/common/driver"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/fabric"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/network/fabricx/finality"
 )
 
 type ListenerManager struct {

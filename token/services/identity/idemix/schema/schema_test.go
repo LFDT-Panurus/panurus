@@ -9,8 +9,8 @@ package schema
 import (
 	"testing"
 
-	msp "github.com/IBM/idemix"
 	bccsp "github.com/IBM/idemix/bccsp/types"
+	"github.com/IBM/idemix/msp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

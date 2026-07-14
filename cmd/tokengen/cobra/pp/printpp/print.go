@@ -10,10 +10,10 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/LFDT-Panurus/panurus/token/core"
+	fabtoken "github.com/LFDT-Panurus/panurus/token/core/fabtoken/v1/driver"
+	dlog "github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/driver"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/core"
-	fabtoken "github.com/hyperledger-labs/fabric-token-sdk/token/core/fabtoken/v1/driver"
-	dlog "github.com/hyperledger-labs/fabric-token-sdk/token/core/zkatdlog/nogh/v1/driver"
 	"github.com/spf13/cobra"
 )
 

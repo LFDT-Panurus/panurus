@@ -4,7 +4,7 @@ package mock
 import (
 	"sync"
 
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/ttx/dep"
+	"github.com/LFDT-Panurus/panurus/token/services/ttx/dep"
 )
 
 type NetworkProvider struct {

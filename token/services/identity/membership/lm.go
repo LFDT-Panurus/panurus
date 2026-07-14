@@ -12,18 +12,19 @@ import (
 	"path/filepath"
 	"slices"
 	"sync"
+	"unicode/utf8"
 
+	"github.com/LFDT-Panurus/panurus/token"
+	tdriver "github.com/LFDT-Panurus/panurus/token/driver"
+	"github.com/LFDT-Panurus/panurus/token/services/identity"
+	idriver "github.com/LFDT-Panurus/panurus/token/services/identity/driver"
+	"github.com/LFDT-Panurus/panurus/token/services/logging"
+	"github.com/LFDT-Panurus/panurus/token/services/storage"
+	"github.com/LFDT-Panurus/panurus/token/services/utils"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/common/utils/collections"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/view"
-	"github.com/hyperledger-labs/fabric-token-sdk/token"
-	tdriver "github.com/hyperledger-labs/fabric-token-sdk/token/driver"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/identity"
-	idriver "github.com/hyperledger-labs/fabric-token-sdk/token/services/identity/driver"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/logging"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/storage"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/utils"
-	"gopkg.in/yaml.v2"
+	"go.yaml.in/yaml/v3"
 )
 
 const (
@@ -76,6 +77,8 @@ type IdentityStoreService interface {
 	AddConfiguration(ctx context.Context, wp idriver.IdentityConfiguration) error
 	// GetConfiguration returns the configuration with the given id and type.
 	GetConfiguration(ctx context.Context, id, typ, url string) (*idriver.IdentityConfiguration, error)
+	// ConfigurationsByID returns all configurations with the given id and type, regardless of their url.
+	ConfigurationsByID(ctx context.Context, id, configurationType string) ([]idriver.IdentityConfiguration, error)
 	// ConfigurationExists returns true if a configuration with the given id,
 	// type and URL already exists in the store.
 	ConfigurationExists(ctx context.Context, id, typ, url string) (bool, error)
@@ -173,6 +176,7 @@ type LocalMembership struct {
 
 	localIdentitiesMutex      sync.RWMutex
 	localIdentities           []*LocalIdentity
+	cachedDefaultIdentifier   string
 	localIdentitiesByName     map[string][]LocalIdentityWithPriority
 	localIdentitiesByIdentity map[string]*LocalIdentity
 	localIdentitiesByConfig   map[string]*LocalIdentity
@@ -338,6 +342,7 @@ func (l *LocalMembership) Load(ctx context.Context, identities []idriver.Configu
 	// init fields
 	l.targetIdentities = targets
 	l.localIdentities = make([]*LocalIdentity, 0)
+	l.cachedDefaultIdentifier = ""
 	l.localIdentitiesByName = make(map[string][]LocalIdentityWithPriority, 0)
 	l.localIdentitiesByConfig = make(map[string]*LocalIdentity, 0)
 
@@ -376,7 +381,7 @@ func (l *LocalMembership) Load(ctx context.Context, identities []idriver.Configu
 
 	// load identities from configuration
 	for i, identityConfiguration := range ics {
-		l.logger.Infof("load identity configuration [%+v]", identityConfiguration)
+		l.logger.Debugf("load identity configuration [%+v]", identityConfiguration)
 		if err := l.registerIdentityConfiguration(ctx, &identityConfiguration, defaults[i]); err != nil {
 			// we log the error so the user can fix it but it shouldn't stop the loading of the service.
 			l.logger.Errorf("failed loading identity with err [%s]", err)
@@ -395,6 +400,8 @@ func (l *LocalMembership) Load(ctx context.Context, identities []idriver.Configu
 				l.logger.Warnf("no default identity can be set among the available identities [%d]", len(l.localIdentities))
 			} else {
 				defaultIdentity.Default = true
+				// firstDefaultIdentifier already honors the anonymity mode, so this is selectable.
+				l.cachedDefaultIdentifier = defaultIdentity.Name
 			}
 			l.logger.Warnf("default identity is [%s]", l.getDefaultIdentifier())
 		} else {
@@ -426,7 +433,7 @@ func (l *LocalMembership) subscribeNotifier() error {
 	}
 
 	err = notifier.Subscribe(func(operation idriver.Operation, record idriver.IdentityConfigurationRecord) {
-		l.logger.Infof("received notification: [%v][%v]", operation, record)
+		l.logger.Debugf("received notification: [%v][%v]", operation, record)
 		// we care only about insertions in the identity configurations table
 		if operation != idriver.Insert {
 			return
@@ -445,10 +452,9 @@ func (l *LocalMembership) subscribeNotifier() error {
 	return nil
 }
 
+// handleConfig registers the store configuration a change notification points
+// at. The store read runs outside the write lock.
 func (l *LocalMembership) handleConfig(id, typ, url string) {
-	l.localIdentitiesMutex.Lock()
-	defer l.localIdentitiesMutex.Unlock()
-
 	l.logger.Debugf("handle config for [%s:%s:%s]", id, typ, url)
 	config, err := l.identityDB.GetConfiguration(context.Background(), id, typ, url)
 	if err != nil {
@@ -462,6 +468,9 @@ func (l *LocalMembership) handleConfig(id, typ, url string) {
 		return
 	}
 
+	l.localIdentitiesMutex.Lock()
+	defer l.localIdentitiesMutex.Unlock()
+
 	key := l.configKey(config)
 	if _, ok := l.localIdentitiesByConfig[key]; ok {
 		l.logger.Debugf("configuration [%s] already loaded", key)
@@ -469,26 +478,16 @@ func (l *LocalMembership) handleConfig(id, typ, url string) {
 		return
 	}
 
-	l.logger.Infof("load identity configuration [%+v]", config)
+	l.logger.Debugf("load identity configuration [%+v]", config)
 	if err := l.registerIdentityConfiguration(context.Background(), config, false); err != nil {
 		l.logger.Errorf("failed loading identity with err [%s]", err)
 	}
 }
 
 // getDefaultIdentifier returns the name of the current default identity (may return empty string).
+// The value is cached (see cachedDefaultIdentifier); maintained by addLocalIdentity and Load.
 func (l *LocalMembership) getDefaultIdentifier() string {
-	for _, li := range l.localIdentities {
-		// if we are in anonymous mode skip non-anonymous identities
-		if l.anonymous && !li.Anonymous {
-			continue
-		}
-
-		if li.Default {
-			return li.Name
-		}
-	}
-
-	return ""
+	return l.cachedDefaultIdentifier
 }
 
 // firstDefaultIdentifier returns the first identity that can be used as default under the current
@@ -702,6 +701,12 @@ func (l *LocalMembership) addLocalIdentity(ctx context.Context, config *Identity
 		for _, li := range l.localIdentities {
 			li.Default = false
 		}
+		// Keep the cached default in sync; empty if not selectable under anonymity mode.
+		if !l.anonymous || localIdentity.Anonymous {
+			l.cachedDefaultIdentifier = name
+		} else {
+			l.cachedDefaultIdentifier = ""
+		}
 	}
 
 	list, ok := l.localIdentitiesByName[name]
@@ -735,47 +740,68 @@ func (l *LocalMembership) addLocalIdentity(ctx context.Context, config *Identity
 	return nil
 }
 
+// refreshAndGet resolves a label that missed the in-memory maps against the
+// identity store. The store is point-queried for that label only: a hit means
+// the configuration was registered by another node sharing the store (load
+// just that one), a miss means the label is genuinely unknown and returns
+// without ever taking the write lock.
 func (l *LocalMembership) refreshAndGet(ctx context.Context, label string) *LocalIdentity {
-	l.localIdentitiesMutex.Lock()
-	defer l.localIdentitiesMutex.Unlock()
-
-	// Double check
-	identities, ok := l.localIdentitiesByName[label]
-	if ok {
-		return identities[0].Identity
-	}
-	mapped, ok := l.localIdentitiesByIdentity[label]
-	if ok {
-		return mapped
+	// Double check: the identity may have been registered while the caller
+	// released the read lock.
+	l.localIdentitiesMutex.RLock()
+	res := l.lookup(label)
+	l.localIdentitiesMutex.RUnlock()
+	if res != nil {
+		return res
 	}
 
-	l.logger.DebugfContext(ctx, "refresh and get local identity for label [%s]", utils.Hashable(label))
-	storedIdentityConfigurations, err := l.storedIdentityConfigurations(ctx)
-	if err != nil {
-		l.logger.ErrorfContext(ctx, "failed to load stored identity configurations: %s", err)
-
+	// Configuration ids are stored in text columns, a label that is not valid
+	// UTF-8 cannot match any stored configuration.
+	if !utf8.ValidString(label) {
 		return nil
 	}
 
-	for _, identityConfiguration := range storedIdentityConfigurations {
-		key := l.configKey(&identityConfiguration)
-		if _, ok := l.localIdentitiesByConfig[key]; ok {
+	l.logger.DebugfContext(ctx, "refresh and get local identity for label [%s]", utils.Hashable(label))
+	configurations, err := l.identityDB.ConfigurationsByID(ctx, label, l.IdentityType)
+	if err != nil {
+		l.logger.ErrorfContext(ctx, "failed to load stored identity configurations for [%s]: %s", utils.Hashable(label), err)
+
+		return nil
+	}
+	if len(configurations) == 0 {
+		return nil
+	}
+
+	l.localIdentitiesMutex.Lock()
+	defer l.localIdentitiesMutex.Unlock()
+
+	// double check under the write lock: another goroutine may have registered
+	// the same configuration meanwhile
+	if res := l.lookup(label); res != nil {
+		return res
+	}
+
+	for _, identityConfiguration := range configurations {
+		if _, ok := l.localIdentitiesByConfig[l.configKey(&identityConfiguration)]; ok {
 			continue
 		}
 
-		l.logger.InfofContext(ctx, "load identity configuration [%+v]", identityConfiguration)
+		l.logger.DebugfContext(ctx, "load identity configuration [%+v]", identityConfiguration)
 		if err := l.registerIdentityConfiguration(ctx, &identityConfiguration, false); err != nil {
 			l.logger.ErrorfContext(ctx, "failed loading identity with err [%s]", err)
 		}
 	}
 
-	// check again
-	identities, ok = l.localIdentitiesByName[label]
-	if ok {
+	return l.lookup(label)
+}
+
+// lookup returns the local identity bound to label, or nil. The caller must
+// hold localIdentitiesMutex.
+func (l *LocalMembership) lookup(label string) *LocalIdentity {
+	if identities, ok := l.localIdentitiesByName[label]; ok {
 		return identities[0].Identity
 	}
-	mapped, ok = l.localIdentitiesByIdentity[label]
-	if ok {
+	if mapped, ok := l.localIdentitiesByIdentity[label]; ok {
 		return mapped
 	}
 

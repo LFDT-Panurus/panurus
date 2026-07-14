@@ -9,7 +9,7 @@ package driver
 import (
 	"context"
 
-	token2 "github.com/hyperledger-labs/fabric-token-sdk/token/token"
+	token2 "github.com/LFDT-Panurus/panurus/token/token"
 )
 
 type TokenQueryExecutorProvider interface {

@@ -12,12 +12,12 @@ import (
 
 	csp "github.com/IBM/idemix/bccsp/types"
 	math "github.com/IBM/mathlib"
+	"github.com/LFDT-Panurus/panurus/token/driver"
+	driver2 "github.com/LFDT-Panurus/panurus/token/services/identity/driver"
+	crypto2 "github.com/LFDT-Panurus/panurus/token/services/identity/idemix/crypto"
+	"github.com/LFDT-Panurus/panurus/token/services/identity/idemix/schema"
+	"github.com/LFDT-Panurus/panurus/token/services/utils"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/driver"
-	driver2 "github.com/hyperledger-labs/fabric-token-sdk/token/services/identity/driver"
-	crypto2 "github.com/hyperledger-labs/fabric-token-sdk/token/services/identity/idemix/crypto"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/identity/idemix/schema"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/utils"
 )
 
 type Deserializer struct {

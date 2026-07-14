@@ -7,11 +7,11 @@ SPDX-License-Identifier: Apache-2.0
 package sdk
 
 import (
+	"github.com/LFDT-Panurus/panurus/token/core"
+	"github.com/LFDT-Panurus/panurus/token/driver"
+	dbdriver "github.com/LFDT-Panurus/panurus/token/services/storage/db/driver"
+	"github.com/LFDT-Panurus/panurus/token/services/storage/db/multiplexed"
 	driver2 "github.com/hyperledger-labs/fabric-smart-client/platform/common/driver"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/core"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/driver"
-	dbdriver "github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/db/driver"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/db/multiplexed"
 	"go.uber.org/dig"
 )
 
@@ -21,7 +21,8 @@ func newMultiplexedDriver(in struct {
 	dig.In
 	Drivers        []dbdriver.NamedDriver `group:"token-db-drivers"`
 	ConfigProvider driver2.ConfigService
-}) multiplexed.Driver {
+},
+) multiplexed.Driver {
 	return multiplexed.NewDriver(in.ConfigProvider, in.Drivers...)
 }
 
@@ -30,13 +31,15 @@ func newMultiplexedDriver(in struct {
 func newTokenDriverService(in struct {
 	dig.In
 	Drivers []core.NamedFactory[driver.Driver] `group:"token-drivers"`
-}) *core.TokenDriverService {
+},
+) *core.TokenDriverService {
 	return core.NewTokenDriverService(in.Drivers)
 }
 
 func newValidatorDriverService(in struct {
 	dig.In
 	Drivers []core.NamedFactory[driver.ValidatorDriver] `group:"validator-drivers"`
-}) *core.ValidatorDriverService {
+},
+) *core.ValidatorDriverService {
 	return core.NewValidatorDriverService(in.Drivers...)
 }

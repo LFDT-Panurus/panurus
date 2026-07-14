@@ -12,15 +12,14 @@ import (
 	"reflect"
 	"time"
 
+	"github.com/LFDT-Panurus/panurus/token"
+	"github.com/LFDT-Panurus/panurus/token/services/logging"
+	"github.com/LFDT-Panurus/panurus/token/services/storage/db"
+	"github.com/LFDT-Panurus/panurus/token/services/storage/db/common"
+	dbdriver "github.com/LFDT-Panurus/panurus/token/services/storage/db/driver"
+	"github.com/LFDT-Panurus/panurus/token/services/storage/db/multiplexed"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	cdriver "github.com/hyperledger-labs/fabric-smart-client/platform/common/driver"
-	"github.com/hyperledger-labs/fabric-token-sdk/token"
-	driver2 "github.com/hyperledger-labs/fabric-token-sdk/token/driver"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/logging"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/db"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/db/common"
-	dbdriver "github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/db/driver"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/db/multiplexed"
 )
 
 //go:generate counterfeiter -o mock/ttx_store_service_manager.go --fake-name TTXStoreServiceManager . StoreServiceManager
@@ -108,13 +107,6 @@ type RecoveryClaim = dbdriver.RecoveryClaim
 // in a given token transaction.
 type MovementRecord = dbdriver.MovementRecord
 
-// ValidationRecord is a more finer-grained version of a movement record.
-// Given a Token Transaction, for each token action in the Token Request,
-// a transaction record is created for each unique enrollment ID found in the outputs.
-// The transaction record contains the total amount of the token type that was transferred to/from that enrollment ID
-// in that action.
-type ValidationRecord = dbdriver.ValidationRecord
-
 // TransactionIterator is an iterator over transaction records
 type TransactionIterator struct {
 	it dbdriver.TransactionIterator
@@ -128,30 +120,6 @@ func (t *TransactionIterator) Close() {
 // Next returns the next transaction record, if any.
 // It returns nil, nil if there are no more records.
 func (t *TransactionIterator) Next() (*TransactionRecord, error) {
-	next, err := t.it.Next()
-	if err != nil {
-		return nil, err
-	}
-	if next == nil {
-		return nil, nil
-	}
-
-	return next, nil
-}
-
-// ValidationRecordsIterator is an iterator over validation records
-type ValidationRecordsIterator struct {
-	it dbdriver.ValidationRecordsIterator
-}
-
-// Close closes the iterator. It must be called when done with the iterator.
-func (t *ValidationRecordsIterator) Close() {
-	t.it.Close()
-}
-
-// Next returns the next validation record, if any.
-// It returns nil, nil if there are no more records.
-func (t *ValidationRecordsIterator) Next() (*ValidationRecord, error) {
 	next, err := t.it.Next()
 	if err != nil {
 		return nil, err
@@ -196,9 +164,6 @@ type QueryTransactionsParams = dbdriver.QueryTransactionsParams
 // QueryTokenRequestsParams defines the parameters for querying token requests
 type QueryTokenRequestsParams = dbdriver.QueryTokenRequestsParams
 
-// QueryValidationRecordsParams defines the parameters for querying movements
-type QueryValidationRecordsParams = dbdriver.QueryValidationRecordsParams
-
 // Pagination defines the pagination for querying movements
 type Pagination = cdriver.Pagination
 
@@ -217,16 +182,6 @@ func (d *StoreService) TokenRequests(ctx context.Context, params QueryTokenReque
 
 func (d *StoreService) NewTransaction() (dbdriver.TransactionStoreTransaction, error) {
 	return d.db.NewTransactionStoreTransaction()
-}
-
-// ValidationRecords returns an iterators of validation records filtered by the given params.
-func (d *StoreService) ValidationRecords(ctx context.Context, params QueryValidationRecordsParams) (*ValidationRecordsIterator, error) {
-	it, err := d.db.QueryValidations(ctx, params)
-	if err != nil {
-		return nil, errors.Errorf("failed to query validation records: %s", err)
-	}
-
-	return &ValidationRecordsIterator{it: it}, nil
 }
 
 // AppendTransactionRecord appends the transaction records corresponding to the passed token request.
@@ -271,8 +226,8 @@ func (d *StoreService) AppendTransactionRecord(ctx context.Context, req *token.R
 
 		return errors.WithMessagef(err, "append token request for txid [%s] failed", record.Anchor)
 	}
-	for _, tx := range txs {
-		if err := w.AddTransaction(ctx, tx); err != nil {
+	if len(txs) > 0 {
+		if err := w.AddTransaction(ctx, txs...); err != nil {
 			w.Rollback()
 
 			return errors.WithMessagef(err, "append transactions for txid [%s] failed", record.Anchor)
@@ -338,33 +293,6 @@ func (d *StoreService) AddTransactionEndorsementAck(ctx context.Context, txID st
 // GetTransactionEndorsementAcks returns the endorsement signatures for the given transaction id
 func (d *StoreService) GetTransactionEndorsementAcks(ctx context.Context, txID string) (map[string][]byte, error) {
 	return d.db.GetTransactionEndorsementAcks(ctx, txID)
-}
-
-// AppendValidationRecord appends the given validation metadata related to the given transaction id
-func (d *StoreService) AppendValidationRecord(ctx context.Context, txID string, tokenRequest []byte, meta map[string][]byte, ppHash driver2.PPHash) error {
-	logger.DebugfContext(ctx, "appending new validation record... [%s]", txID)
-
-	w, err := d.db.NewTransactionStoreTransaction()
-	if err != nil {
-		return errors.WithMessagef(err, "begin update for txid [%s] failed", txID)
-	}
-	// we store the token request, but don't have or care about the application metadata
-	if err := w.AddTokenRequest(ctx, txID, tokenRequest, nil, nil, ppHash); err != nil {
-		w.Rollback()
-
-		return errors.WithMessagef(err, "append token request for txid [%s] failed", txID)
-	}
-	if err := w.AddValidationRecord(ctx, txID, meta); err != nil {
-		w.Rollback()
-
-		return errors.WithMessagef(err, "append validation record for txid [%s] failed", txID)
-	}
-	if err := w.Commit(); err != nil {
-		return errors.WithMessagef(err, "append validation record commit for txid [%s] failed", txID)
-	}
-	logger.DebugfContext(ctx, "appending validation record completed without errors")
-
-	return nil
 }
 
 // AcquireRecoveryLeadership tries to acquire the DB-backed recovery leadership lease.

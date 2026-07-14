@@ -11,11 +11,19 @@ import (
 	"sync"
 	"time"
 
+	"github.com/LFDT-Panurus/panurus/token"
+	"github.com/LFDT-Panurus/panurus/token/services/utils/types/transaction"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	lazy2 "github.com/hyperledger-labs/fabric-smart-client/platform/common/utils/lazy"
-	"github.com/hyperledger-labs/fabric-token-sdk/token"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/utils/types/transaction"
 )
+
+const (
+	// stopTimeout is the maximum time to wait for the cleaner goroutine to stop during shutdown.
+	// This prevents indefinite blocking if the goroutine fails to exit cleanly.
+	stopTimeout = 10 * time.Second
+)
+
+var ErrTimeout = errors.New("timeout occurred")
 
 type Manager struct {
 	selectorCache          lazy2.Provider[transaction.ID, TokenSelectorUnlocker]
@@ -96,9 +104,18 @@ func (m *Manager) cleaner(ctx context.Context) {
 }
 
 // Stop cancels the cleaner goroutine and waits for it to exit.
-func (m *Manager) Stop() {
+func (m *Manager) Stop() error {
+	var err error
 	m.stopOnce.Do(func() {
 		m.cancel()
-		<-m.cleanerDone
+		select {
+		case <-m.cleanerDone:
+			logger.Debugf("cleaner goroutine stopped successfully")
+		case <-time.After(stopTimeout):
+			err = ErrTimeout
+			logger.Warnf("cleaner goroutine did not stop within timeout")
+		}
 	})
+
+	return err
 }

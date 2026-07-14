@@ -7,12 +7,12 @@ SPDX-License-Identifier: Apache-2.0
 package driver
 
 import (
+	"github.com/LFDT-Panurus/panurus/token/core"
+	v1 "github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/setup"
+	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/validator"
+	"github.com/LFDT-Panurus/panurus/token/driver"
+	"github.com/LFDT-Panurus/panurus/token/services/logging"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/core"
-	v1 "github.com/hyperledger-labs/fabric-token-sdk/token/core/zkatdlog/nogh/v1/setup"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/core/zkatdlog/nogh/v1/validator"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/driver"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/logging"
 )
 
 // ValidatorDriver contains the static logic of the zkatdlog driver.
@@ -41,7 +41,7 @@ func (d ValidatorDriver) NewValidator(pp driver.PublicParameters) (driver.Valida
 	if err != nil {
 		return nil, errors.Errorf("failed to create token service deserializer: %v", err)
 	}
-	logger := logging.DriverLoggerFromPP("token-sdk.driver.zkatdlog", string(pp.TokenDriverName()))
+	logger := logging.DriverLoggerFromPP("panurus.driver.zkatdlog", string(pp.TokenDriverName()))
 
 	return validator.New(
 		logger,

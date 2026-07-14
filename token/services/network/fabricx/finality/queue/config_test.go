@@ -9,8 +9,8 @@ package queue_test
 import (
 	"testing"
 
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/network/fabricx/finality/queue"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/network/fabricx/finality/queue/mock"
+	"github.com/LFDT-Panurus/panurus/token/services/network/fabricx/finality/queue"
+	"github.com/LFDT-Panurus/panurus/token/services/network/fabricx/finality/queue/mock"
 	"github.com/stretchr/testify/assert"
 )
 

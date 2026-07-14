@@ -1,6 +1,6 @@
 # Fabtoken Testing Architecture
 
-This document explains the testing architecture for the Fabtoken implementation in the Fabric Token SDK.
+This document explains the testing architecture for the Fabtoken implementation in Panurus.
 
 > **Related Documentation:**
 > - [Running Benchmarks](./fabtoken.md) - How to run performance benchmarks

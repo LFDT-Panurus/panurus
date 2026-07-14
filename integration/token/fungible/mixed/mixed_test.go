@@ -7,13 +7,13 @@ SPDX-License-Identifier: Apache-2.0
 package mixed
 
 import (
+	"github.com/LFDT-Panurus/panurus/integration"
+	token2 "github.com/LFDT-Panurus/panurus/integration/token"
+	"github.com/LFDT-Panurus/panurus/integration/token/common"
+	"github.com/LFDT-Panurus/panurus/integration/token/common/sdk/fall"
+	"github.com/LFDT-Panurus/panurus/integration/token/fungible"
 	"github.com/hyperledger-labs/fabric-smart-client/integration/nwo/fsc"
 	nodepkg "github.com/hyperledger-labs/fabric-smart-client/pkg/node"
-	"github.com/hyperledger-labs/fabric-token-sdk/integration"
-	token2 "github.com/hyperledger-labs/fabric-token-sdk/integration/token"
-	"github.com/hyperledger-labs/fabric-token-sdk/integration/token/common"
-	"github.com/hyperledger-labs/fabric-token-sdk/integration/token/common/sdk/fall"
-	"github.com/hyperledger-labs/fabric-token-sdk/integration/token/fungible"
 	. "github.com/onsi/ginkgo/v2"
 )
 

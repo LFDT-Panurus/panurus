@@ -5,8 +5,8 @@ import (
 	"context"
 	"sync"
 
+	"github.com/LFDT-Panurus/panurus/token/services/network/fabric/endorsement/fsc"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/view"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/network/fabric/endorsement/fsc"
 	"go.opentelemetry.io/otel/trace"
 )
 

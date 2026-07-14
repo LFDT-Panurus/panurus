@@ -4,7 +4,7 @@ package mock
 import (
 	"sync"
 
-	"github.com/hyperledger-labs/fabric-token-sdk/token/core/zkatdlog/nogh/v1/audit"
+	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/audit"
 )
 
 type SigningIdentity struct {

@@ -9,17 +9,18 @@ package fxdlog
 import (
 	"errors"
 
+	dlog "github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/driver"
+	"github.com/LFDT-Panurus/panurus/token/sdk"
+	tokensdk "github.com/LFDT-Panurus/panurus/token/sdk/dig"
+	"github.com/LFDT-Panurus/panurus/token/services/network/fabricx"
+	"github.com/LFDT-Panurus/panurus/token/services/network/fabricx/pp"
+	"github.com/LFDT-Panurus/panurus/token/services/network/fabricx/tms"
+	"github.com/hyperledger-labs/fabric-smart-client/integration/nwo/fsc/support/libp2p"
 	common "github.com/hyperledger-labs/fabric-smart-client/platform/common/sdk/dig"
 	digutils "github.com/hyperledger-labs/fabric-smart-client/platform/common/utils/dig"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/fabric/services/state"
 	fabricxsdk "github.com/hyperledger-labs/fabric-smart-client/platform/fabricx/sdk/dig"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/services"
-	dlog "github.com/hyperledger-labs/fabric-token-sdk/token/core/zkatdlog/nogh/v1/driver"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/sdk"
-	tokensdk "github.com/hyperledger-labs/fabric-token-sdk/token/sdk/dig"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/network/fabricx"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/network/fabricx/pp"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/network/fabricx/tms"
 	"go.uber.org/dig"
 )
 
@@ -28,11 +29,11 @@ type SDK struct {
 }
 
 func NewSDK(registry services.Registry) *SDK {
-	return &SDK{SDK: tokensdk.NewFrom(fabricxsdk.NewSDK(registry))}
+	return &SDK{SDK: libp2p.NewFrom(tokensdk.NewFrom(fabricxsdk.NewSDK(registry)))}
 }
 
 func NewFrom(sdk common.SDK) *SDK {
-	return &SDK{SDK: sdk}
+	return &SDK{SDK: libp2p.NewFrom(sdk)}
 }
 
 func (p *SDK) FabricEnabled() bool {

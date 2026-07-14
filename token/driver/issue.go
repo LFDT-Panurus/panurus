@@ -9,7 +9,7 @@ package driver
 import (
 	"context"
 
-	"github.com/hyperledger-labs/fabric-token-sdk/token/token"
+	"github.com/LFDT-Panurus/panurus/token/token"
 )
 
 // TokenUpgradeRequest is a request to convert tokens
@@ -25,7 +25,7 @@ type TokenUpgradeRequest struct {
 // IssueOptions models the options that can be passed to the issue command
 type IssueOptions struct {
 	// Attributes is a container of generic options that might be driver specific
-	Attributes map[any]any
+	Attributes map[string]any
 	// TokensUpgradeRequest is a request to upgrade tokens
 	TokensUpgradeRequest *TokenUpgradeRequest
 	// Wallet is the wallet that should be used to issue the tokens.

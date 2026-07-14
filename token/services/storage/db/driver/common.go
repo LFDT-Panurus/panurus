@@ -13,9 +13,9 @@ import (
 	"strings"
 	"time"
 
+	driver2 "github.com/LFDT-Panurus/panurus/token/driver"
+	token2 "github.com/LFDT-Panurus/panurus/token/token"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/common/utils/collections/iterators"
-	driver2 "github.com/hyperledger-labs/fabric-token-sdk/token/driver"
-	token2 "github.com/hyperledger-labs/fabric-token-sdk/token/token"
 )
 
 // ActionType is the type of transaction
@@ -158,20 +158,6 @@ func (t TransactionRecord) String() string {
 	return s.String()
 }
 
-// ValidationRecord is a record that contains information about the validation of a given token request
-type ValidationRecord struct {
-	// TxID is the transaction ID
-	TxID string
-	// TokenRequest is the token request marshalled
-	TokenRequest []byte
-	// Metadata is the metadata produced by the validator when evaluating the token request
-	Metadata map[string][]byte
-	// Timestamp is the time the transaction was submitted to the db
-	Timestamp time.Time
-	// Status is the status of the transaction
-	Status TxStatus
-}
-
 type TokenRequestRecord struct {
 	// TxID is the transaction ID
 	TxID string
@@ -183,9 +169,6 @@ type TokenRequestRecord struct {
 
 // TransactionIterator is an iterator for transactions
 type TransactionIterator = iterators.Iterator[*TransactionRecord]
-
-// ValidationRecordsIterator is an iterator for transactions
-type ValidationRecordsIterator = iterators.Iterator[*ValidationRecord]
 
 // TokenRequestIterator is an iterator for token requests
 type TokenRequestIterator = iterators.Iterator[*TokenRequestRecord]
@@ -245,23 +228,6 @@ type QueryTransactionsParams struct {
 	// SearchDirection is the direction of the search.
 	// Default (zero value) is FromLast (descending by stored_at).
 	SearchDirection SearchDirection
-}
-
-// QueryValidationRecordsParams defines the parameters for querying validation records.
-type QueryValidationRecordsParams struct {
-	// From is the start time of the query
-	// If nil, the query starts from the first transaction
-	From *time.Time
-	// To is the end time of the query
-	// If nil, the query ends at the last transaction
-	To *time.Time
-	// Statuses is the list of transaction status to accept
-	// If empty, any status is accepted
-	Statuses []TxStatus
-	// Filter defines a custom filter function.
-	// If specified, this filter will be applied.
-	// the filter returns true if the record must be selected, false otherwise.
-	Filter func(record *ValidationRecord) bool
 }
 
 // QueryTokenRequestsParams defines the parameters for querying token requests

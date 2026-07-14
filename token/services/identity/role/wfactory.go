@@ -10,12 +10,12 @@ import (
 	"context"
 	"math/big"
 
+	"github.com/LFDT-Panurus/panurus/token/core/common/metrics"
+	"github.com/LFDT-Panurus/panurus/token/driver"
+	idriver "github.com/LFDT-Panurus/panurus/token/services/identity/driver"
+	"github.com/LFDT-Panurus/panurus/token/services/logging"
+	"github.com/LFDT-Panurus/panurus/token/token"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/core/common/metrics"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/driver"
-	idriver "github.com/hyperledger-labs/fabric-token-sdk/token/services/identity/driver"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/logging"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/token"
 )
 
 //go:generate counterfeiter -o mock/tv.go -fake-name TokenVault . TokenVault
@@ -23,6 +23,8 @@ type TokenVault interface {
 	UnspentTokensIteratorBy(ctx context.Context, id string, tokenType token.Type) (driver.UnspentTokensIterator, error)
 	ListHistoryIssuedTokens(ctx context.Context) (*token.IssuedTokens, error)
 	Balance(ctx context.Context, id string, tokenType token.Type) (*big.Int, error)
+	IssuedBalance(ctx context.Context, opts driver.IssuerBalanceQuery) (*big.Int, error)
+	RedeemedBalance(ctx context.Context, opts driver.IssuerBalanceQuery) (*big.Int, error)
 }
 
 //go:generate counterfeiter -o mock/wc.go -fake-name WalletsConfiguration . WalletsConfiguration

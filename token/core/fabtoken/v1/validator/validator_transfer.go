@@ -10,14 +10,14 @@ import (
 	"context"
 	"time"
 
+	"github.com/LFDT-Panurus/panurus/token/core/common/encoding/json"
+	"github.com/LFDT-Panurus/panurus/token/core/fabtoken/v1/actions"
+	"github.com/LFDT-Panurus/panurus/token/driver"
+	"github.com/LFDT-Panurus/panurus/token/services/identity"
+	htlc2 "github.com/LFDT-Panurus/panurus/token/services/identity/interop/htlc"
+	"github.com/LFDT-Panurus/panurus/token/services/interop/htlc"
+	"github.com/LFDT-Panurus/panurus/token/token"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/core/common/encoding/json"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/core/fabtoken/v1/actions"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/driver"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/identity"
-	htlc2 "github.com/hyperledger-labs/fabric-token-sdk/token/services/identity/interop/htlc"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/interop/htlc"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/token"
 )
 
 // TransferActionValidate validates the transfer action
@@ -31,16 +31,23 @@ func TransferSignatureValidate(c context.Context, ctx *Context) error {
 		return errors.Errorf("invalid number of token inputs, expected at least 1")
 	}
 
+	verifierCache := make(map[string]driver.Verifier)
 	var inputToken []*actions.Output
-	for _, in := range ctx.TransferAction.Inputs {
+	for i, in := range ctx.TransferAction.Inputs {
 		tok := in.Input
 
 		inputToken = append(inputToken, tok)
 		owner := tok.GetOwner()
 		ctx.Logger.Debugf("check sender [%s]", driver.Identity(owner).UniqueID())
-		verifier, err := ctx.Deserializer.GetOwnerVerifier(c, owner)
-		if err != nil {
-			return errors.Wrapf(err, "failed deserializing owner [%v][%s]", tok, driver.Identity(owner).UniqueID())
+		ownerKey := string(owner)
+		verifier, cached := verifierCache[ownerKey]
+		if !cached {
+			var err error
+			verifier, err = ctx.Deserializer.GetOwnerVerifier(c, owner)
+			if err != nil {
+				return errors.Wrapf(err, "failed deserializing owner [%d][%v][%s]", i, in, driver.Identity(owner).UniqueID())
+			}
+			verifierCache[ownerKey] = verifier
 		}
 		ctx.Logger.Debugf("signature verification [%v][%s]", tok, driver.Identity(owner).UniqueID())
 

@@ -12,10 +12,10 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/LFDT-Panurus/panurus/token/services/network/fabric/finality"
 	cdriver "github.com/hyperledger-labs/fabric-smart-client/platform/common/driver"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/fabric"
 	events2 "github.com/hyperledger-labs/fabric-smart-client/platform/fabric/core/generic/events"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/network/fabric/finality"
 	"github.com/hyperledger/fabric-protos-go-apiv2/common"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

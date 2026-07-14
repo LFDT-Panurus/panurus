@@ -9,8 +9,8 @@ package tms_test
 import (
 	"testing"
 
-	"github.com/hyperledger-labs/fabric-token-sdk/token/sdk/tms"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/config"
+	"github.com/LFDT-Panurus/panurus/token/sdk/tms"
+	"github.com/LFDT-Panurus/panurus/token/services/config"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

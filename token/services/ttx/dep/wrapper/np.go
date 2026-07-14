@@ -7,8 +7,8 @@ SPDX-License-Identifier: Apache-2.0
 package wrapper
 
 import (
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/network"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/ttx/dep"
+	"github.com/LFDT-Panurus/panurus/token/services/network"
+	"github.com/LFDT-Panurus/panurus/token/services/ttx/dep"
 )
 
 type NetworkProvider struct {

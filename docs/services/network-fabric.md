@@ -9,7 +9,7 @@ This chaincode validates token requests, manages token state, and enforces busin
 
 ```mermaid
 graph TB
-    subgraph "Application Node running FSC/FTS stack"
+    subgraph "Application Node running FSC/Panurus stack"
         App[Application/TTX]
         FabricNet[Fabric Network Service]
     end
@@ -50,7 +50,7 @@ The chaincode exposes the following functions:
 
 ### Chaincode Deployment
 
-The Token Chaincode must be deployed to the Fabric network before the Token SDK can operate:
+The Token Chaincode must be deployed to the Fabric network before Panurus can operate:
 
 ```mermaid
 sequenceDiagram

@@ -4,7 +4,7 @@ package mock
 import (
 	"sync"
 
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/identity/driver"
+	"github.com/LFDT-Panurus/panurus/token/services/identity/driver"
 )
 
 type Keystore struct {
@@ -18,11 +18,22 @@ type Keystore struct {
 	closeReturnsOnCall map[int]struct {
 		result1 error
 	}
-	GetStub        func(string, interface{}) error
+	DeleteStub        func(string) error
+	deleteMutex       sync.RWMutex
+	deleteArgsForCall []struct {
+		arg1 string
+	}
+	deleteReturns struct {
+		result1 error
+	}
+	deleteReturnsOnCall map[int]struct {
+		result1 error
+	}
+	GetStub        func(string, any) error
 	getMutex       sync.RWMutex
 	getArgsForCall []struct {
 		arg1 string
-		arg2 interface{}
+		arg2 any
 	}
 	getReturns struct {
 		result1 error
@@ -30,11 +41,11 @@ type Keystore struct {
 	getReturnsOnCall map[int]struct {
 		result1 error
 	}
-	PutStub        func(string, interface{}) error
+	PutStub        func(string, any) error
 	putMutex       sync.RWMutex
 	putArgsForCall []struct {
 		arg1 string
-		arg2 interface{}
+		arg2 any
 	}
 	putReturns struct {
 		result1 error
@@ -99,12 +110,73 @@ func (fake *Keystore) CloseReturnsOnCall(i int, result1 error) {
 	}{result1}
 }
 
-func (fake *Keystore) Get(arg1 string, arg2 interface{}) error {
+func (fake *Keystore) Delete(arg1 string) error {
+	fake.deleteMutex.Lock()
+	ret, specificReturn := fake.deleteReturnsOnCall[len(fake.deleteArgsForCall)]
+	fake.deleteArgsForCall = append(fake.deleteArgsForCall, struct {
+		arg1 string
+	}{arg1})
+	stub := fake.DeleteStub
+	fakeReturns := fake.deleteReturns
+	fake.recordInvocation("Delete", []interface{}{arg1})
+	fake.deleteMutex.Unlock()
+	if stub != nil {
+		return stub(arg1)
+	}
+	if specificReturn {
+		return ret.result1
+	}
+	return fakeReturns.result1
+}
+
+func (fake *Keystore) DeleteCallCount() int {
+	fake.deleteMutex.RLock()
+	defer fake.deleteMutex.RUnlock()
+	return len(fake.deleteArgsForCall)
+}
+
+func (fake *Keystore) DeleteCalls(stub func(string) error) {
+	fake.deleteMutex.Lock()
+	defer fake.deleteMutex.Unlock()
+	fake.DeleteStub = stub
+}
+
+func (fake *Keystore) DeleteArgsForCall(i int) string {
+	fake.deleteMutex.RLock()
+	defer fake.deleteMutex.RUnlock()
+	argsForCall := fake.deleteArgsForCall[i]
+	return argsForCall.arg1
+}
+
+func (fake *Keystore) DeleteReturns(result1 error) {
+	fake.deleteMutex.Lock()
+	defer fake.deleteMutex.Unlock()
+	fake.DeleteStub = nil
+	fake.deleteReturns = struct {
+		result1 error
+	}{result1}
+}
+
+func (fake *Keystore) DeleteReturnsOnCall(i int, result1 error) {
+	fake.deleteMutex.Lock()
+	defer fake.deleteMutex.Unlock()
+	fake.DeleteStub = nil
+	if fake.deleteReturnsOnCall == nil {
+		fake.deleteReturnsOnCall = make(map[int]struct {
+			result1 error
+		})
+	}
+	fake.deleteReturnsOnCall[i] = struct {
+		result1 error
+	}{result1}
+}
+
+func (fake *Keystore) Get(arg1 string, arg2 any) error {
 	fake.getMutex.Lock()
 	ret, specificReturn := fake.getReturnsOnCall[len(fake.getArgsForCall)]
 	fake.getArgsForCall = append(fake.getArgsForCall, struct {
 		arg1 string
-		arg2 interface{}
+		arg2 any
 	}{arg1, arg2})
 	stub := fake.GetStub
 	fakeReturns := fake.getReturns
@@ -125,13 +197,13 @@ func (fake *Keystore) GetCallCount() int {
 	return len(fake.getArgsForCall)
 }
 
-func (fake *Keystore) GetCalls(stub func(string, interface{}) error) {
+func (fake *Keystore) GetCalls(stub func(string, any) error) {
 	fake.getMutex.Lock()
 	defer fake.getMutex.Unlock()
 	fake.GetStub = stub
 }
 
-func (fake *Keystore) GetArgsForCall(i int) (string, interface{}) {
+func (fake *Keystore) GetArgsForCall(i int) (string, any) {
 	fake.getMutex.RLock()
 	defer fake.getMutex.RUnlock()
 	argsForCall := fake.getArgsForCall[i]
@@ -161,12 +233,12 @@ func (fake *Keystore) GetReturnsOnCall(i int, result1 error) {
 	}{result1}
 }
 
-func (fake *Keystore) Put(arg1 string, arg2 interface{}) error {
+func (fake *Keystore) Put(arg1 string, arg2 any) error {
 	fake.putMutex.Lock()
 	ret, specificReturn := fake.putReturnsOnCall[len(fake.putArgsForCall)]
 	fake.putArgsForCall = append(fake.putArgsForCall, struct {
 		arg1 string
-		arg2 interface{}
+		arg2 any
 	}{arg1, arg2})
 	stub := fake.PutStub
 	fakeReturns := fake.putReturns
@@ -187,13 +259,13 @@ func (fake *Keystore) PutCallCount() int {
 	return len(fake.putArgsForCall)
 }
 
-func (fake *Keystore) PutCalls(stub func(string, interface{}) error) {
+func (fake *Keystore) PutCalls(stub func(string, any) error) {
 	fake.putMutex.Lock()
 	defer fake.putMutex.Unlock()
 	fake.PutStub = stub
 }
 
-func (fake *Keystore) PutArgsForCall(i int) (string, interface{}) {
+func (fake *Keystore) PutArgsForCall(i int) (string, any) {
 	fake.putMutex.RLock()
 	defer fake.putMutex.RUnlock()
 	argsForCall := fake.putArgsForCall[i]

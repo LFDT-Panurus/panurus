@@ -16,11 +16,11 @@ import (
 	scommon "github.com/hyperledger-labs/fabric-smart-client/platform/view/services/storage/driver/common"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/services/storage/driver/sql/common"
 
-	tokensdriver "github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/db/driver"
-	sqlcommon "github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/db/sql/common"
-	q "github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/db/sql/query"
-	common3 "github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/db/sql/query/common"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/db/sql/query/cond"
+	tokensdriver "github.com/LFDT-Panurus/panurus/token/services/storage/db/driver"
+	sqlcommon "github.com/LFDT-Panurus/panurus/token/services/storage/db/sql/common"
+	q "github.com/LFDT-Panurus/panurus/token/services/storage/db/sql/query"
+	common3 "github.com/LFDT-Panurus/panurus/token/services/storage/db/sql/query/common"
+	"github.com/LFDT-Panurus/panurus/token/services/storage/db/sql/query/cond"
 )
 
 // AuditTransactionStore wraps common.TransactionStore to add advisory lock to schema creation
@@ -185,7 +185,7 @@ func (db *TransactionStore) ClaimPendingTransactions(ctx context.Context, params
 		return nil, errors.Wrapf(err, "failed to read claimed transactions")
 	}
 
-	logger.Infof("Claimed %d pending transactions for owner %s", len(claimed), params.Owner)
+	logger.Debugf("Claimed %d pending transactions for owner %s", len(claimed), params.Owner)
 
 	return claimed, nil
 }
@@ -237,7 +237,7 @@ func (db *TransactionStore) ReleaseRecoveryClaim(ctx context.Context, txID strin
 	if rowsAffected == 0 {
 		logger.Warnf("No recovery claim released for tx %s (not owned by %s or already released)", txID, owner)
 	} else {
-		logger.Infof("Released recovery claim for tx %s", txID)
+		logger.Debugf("Released recovery claim for tx %s", txID)
 	}
 
 	return nil
@@ -266,7 +266,7 @@ func (db *TransactionStore) CleanupExpiredClaims(ctx context.Context) (int, erro
 		return 0, errors.Wrapf(err, "failed to get rows affected during cleanup")
 	}
 
-	logger.Infof("Cleaned up %d expired recovery claims", rowsAffected)
+	logger.Debugf("Cleaned up %d expired recovery claims", rowsAffected)
 
 	return int(rowsAffected), nil
 }

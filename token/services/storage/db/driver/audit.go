@@ -21,7 +21,7 @@ type AuditTransactionStore interface {
 	NewTransactionStoreTransaction() (TransactionStoreTransaction, error)
 
 	// SetStatus sets the status of a TokenRequest
-	// (and with that, the associated ValidationRecord, Movement and Transaction)
+	// (and with that, the associated Movement and Transaction)
 	SetStatus(ctx context.Context, txID string, status TxStatus, message string) error
 
 	// GetStatus returns the status of a given transaction.
@@ -33,9 +33,6 @@ type AuditTransactionStore interface {
 
 	// QueryMovements returns a list of movement records
 	QueryMovements(ctx context.Context, params QueryMovementsParams) ([]*MovementRecord, error)
-
-	// QueryValidations returns an iterator over the validation records matching the passed params
-	QueryValidations(ctx context.Context, params QueryValidationRecordsParams) (ValidationRecordsIterator, error)
 
 	// QueryTokenRequests returns an iterator over the token requests matching the passed params
 	QueryTokenRequests(ctx context.Context, params QueryTokenRequestsParams) (TokenRequestIterator, error)

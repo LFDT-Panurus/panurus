@@ -19,7 +19,7 @@ body:
       label: 🆕🐥 Newcomer Friendly
       description: Who is this issue for?
       value: |
-        This **[Good First Issue](https://github.com/hyperledger-labs/fabric-token-sdk/issues?q=is%3Aissue%20state%3Aopen%20label%3A%22good%20first%20issue%22)** is a guided, well-scoped task intended for new human contributors to the Fabric Token SDK.
+        This **[Good First Issue](https://github.com/LFDT-Panurus/panurus/issues?q=is%3Aissue%20state%3Aopen%20label%3A%22good%20first%20issue%22)** is a guided, well-scoped task intended for new human contributors to Panurus.
 
         #### What you’ll do
         - ✅ Understand the project structure
@@ -83,8 +83,8 @@ body:
       label: 📋 Setup Guide
       description: Quick links for setting up the environment.
       value: |
-        #### Setup the Fabric Token SDK
-        - [ ] **Fork & Clone**: Follow the [Contributing Guide](https://github.com/hyperledger-labs/fabric-token-sdk/blob/main/CONTRIBUTING.md)
+        #### Setup Panurus
+        - [ ] **Fork & Clone**: Follow the [Contributing Guide](https://github.com/LFDT-Panurus/panurus/blob/main/CONTRIBUTING.md)
         - [ ] **Install Tools**: Run `make install-tools`
     validations:
       required: true
@@ -122,13 +122,13 @@ body:
       value: |
         If you get stuck, don't hesitate to ask!
         - Comment on this issue.
-        - Join us on **Discord**: [#fabric-token-sdk](https://discord.gg/hyperledger)
+        - Join us on **Discord**: [#panurus](https://discord.gg/hyperledger)
 
   - type: markdown
     attributes:
       value: |
         ---
         ### 📚 Useful Resources
-        - [Documentation Overview](https://github.com/hyperledger-labs/fabric-token-sdk/blob/main/docs/README.md)
-        - [Development Guidelines](https://github.com/hyperledger-labs/fabric-token-sdk/blob/main/docs/development/development.md)
-        - [Testing Guide](https://github.com/hyperledger-labs/fabric-token-sdk/blob/main/docs/development/testing.md)
+        - [Documentation Overview](https://github.com/LFDT-Panurus/panurus/blob/main/docs/README.md)
+        - [Development Guidelines](https://github.com/LFDT-Panurus/panurus/blob/main/docs/development/development.md)
+        - [Testing Guide](https://github.com/LFDT-Panurus/panurus/blob/main/docs/development/testing.md)

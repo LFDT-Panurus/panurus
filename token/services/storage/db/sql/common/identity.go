@@ -11,6 +11,17 @@ import (
 	"database/sql"
 	"fmt"
 
+	"github.com/LFDT-Panurus/panurus/token"
+	tdriver "github.com/LFDT-Panurus/panurus/token/driver"
+	idriver "github.com/LFDT-Panurus/panurus/token/services/identity/driver"
+	"github.com/LFDT-Panurus/panurus/token/services/logging"
+	"github.com/LFDT-Panurus/panurus/token/services/storage"
+	"github.com/LFDT-Panurus/panurus/token/services/storage/db/driver"
+	q "github.com/LFDT-Panurus/panurus/token/services/storage/db/sql/query"
+	common3 "github.com/LFDT-Panurus/panurus/token/services/storage/db/sql/query/common"
+	"github.com/LFDT-Panurus/panurus/token/services/storage/db/sql/query/cond"
+	"github.com/LFDT-Panurus/panurus/token/services/utils"
+	cache2 "github.com/LFDT-Panurus/panurus/token/services/utils/cache"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/common/utils/cache/secondcache"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/common/utils/collections/iterators"
@@ -18,17 +29,6 @@ import (
 	common2 "github.com/hyperledger-labs/fabric-smart-client/platform/view/services/storage/driver/common"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/services/storage/driver/sql/common"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/view"
-	"github.com/hyperledger-labs/fabric-token-sdk/token"
-	tdriver "github.com/hyperledger-labs/fabric-token-sdk/token/driver"
-	idriver "github.com/hyperledger-labs/fabric-token-sdk/token/services/identity/driver"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/logging"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/storage"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/db/driver"
-	q "github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/db/sql/query"
-	common3 "github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/db/sql/query/common"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/db/sql/query/cond"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/utils"
-	cache2 "github.com/hyperledger-labs/fabric-token-sdk/token/services/utils/cache"
 )
 
 type cache[T any] interface {
@@ -209,6 +209,32 @@ func (db *IdentityStore) GetConfiguration(ctx context.Context, id, typ, url stri
 	return c, nil
 }
 
+// ConfigurationsByID returns all configurations with the given id and type, regardless of their url.
+func (db *IdentityStore) ConfigurationsByID(ctx context.Context, id, configurationType string) ([]driver.IdentityConfiguration, error) {
+	query, args := q.Select().
+		FieldsByName("id", "type", "url", "conf", "raw").
+		From(q.Table(db.table.IdentityConfigurations)).
+		Where(cond.And(cond.Eq("id", id), cond.Eq("type", configurationType))).
+		Format(db.ci)
+	logging.Debug(logger, query, args)
+	rows, err := db.readDB.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	var res []driver.IdentityConfiguration
+	for rows.Next() {
+		var c driver.IdentityConfiguration
+		if err := rows.Scan(&c.ID, &c.Type, &c.URL, &c.Config, &c.Raw); err != nil {
+			return nil, err
+		}
+		res = append(res, c)
+	}
+
+	return res, rows.Err()
+}
+
 // IteratorConfigurations returns an iterator to all configurations of the given type.
 func (db *IdentityStore) IteratorConfigurations(ctx context.Context, configurationType string) (idriver.IdentityConfigurationIterator, error) {
 	query, args := q.Select().
@@ -328,19 +354,6 @@ func (db *IdentityStore) GetExistingSignerInfo(ctx context.Context, ids ...tdriv
 	}
 
 	idHashes = notFound
-	notFound = make([]string, 0)
-	for _, idHash := range idHashes {
-		if v, ok := db.signerInfoCache.Get(idHash); !ok {
-			notFound = append(notFound, idHash)
-		} else if v {
-			result = append(result, idHash)
-		}
-	}
-	if len(notFound) == 0 {
-		return result, nil
-	}
-
-	idHashes = notFound
 
 	query, args := q.Select().
 		FieldsByName("identity_hash").
@@ -383,6 +396,36 @@ func (db *IdentityStore) GetSignerInfo(ctx context.Context, identity []byte) ([]
 		Format(db.ci)
 
 	return common.QueryUniqueContext[[]byte](ctx, db.readDB, query, args...)
+}
+
+// IterateSigners returns a page of SignerEntry values from the Signers table, ordered by
+// identity_hash, starting at the given offset and returning at most limit entries.
+func (db *IdentityStore) IterateSigners(ctx context.Context, offset, limit int) ([]idriver.SignerEntry, error) {
+	query, args := q.Select().
+		FieldsByName("identity_hash", "identity").
+		From(q.Table(db.table.Signers)).
+		OrderBy(q.Asc(common3.FieldName("identity_hash"))).
+		Limit(limit).
+		Offset(offset).
+		Format(db.ci)
+	logging.Debug(logger, query, args)
+
+	rows, err := db.readDB.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, errors.Wrapf(err, "error querying signers")
+	}
+	defer Close(rows)
+
+	var entries []idriver.SignerEntry
+	for rows.Next() {
+		var e idriver.SignerEntry
+		if err := rows.Scan(&e.IdentityHash, &e.Identity); err != nil {
+			return nil, errors.Wrapf(err, "error scanning signer entry")
+		}
+		entries = append(entries, e)
+	}
+
+	return entries, rows.Err()
 }
 
 func (db *IdentityStore) RegisterIdentityDescriptor(ctx context.Context, descriptor *idriver.IdentityDescriptor, alias tdriver.Identity) error {
@@ -492,7 +535,6 @@ func (db *IdentityStore) GetSchema() string {
 			PRIMARY KEY(id, type, url)
 		);
 		CREATE INDEX IF NOT EXISTS idx_ic_type_%s ON %s ( type );
-		CREATE INDEX IF NOT EXISTS idx_ic_id_type_%s ON %s ( id, type, url );
 
 		-- IdentityInfo
 		CREATE TABLE IF NOT EXISTS %s (
@@ -502,7 +544,6 @@ func (db *IdentityStore) GetSchema() string {
 			token_metadata BYTEA,
 			token_metadata_audit_info BYTEA
 		);
-		CREATE INDEX IF NOT EXISTS idx_audits_%s ON %s ( identity_hash );
 
 		-- Signers
 		CREATE TABLE IF NOT EXISTS %s (
@@ -510,15 +551,11 @@ func (db *IdentityStore) GetSchema() string {
 			identity BYTEA NOT NULL,
 			info BYTEA
 		);
-		CREATE INDEX IF NOT EXISTS idx_signers_%s ON %s ( identity_hash );
 		`,
 		db.table.IdentityConfigurations,
 		db.table.IdentityConfigurations, db.table.IdentityConfigurations,
-		db.table.IdentityConfigurations, db.table.IdentityConfigurations,
 		db.table.IdentityInfo,
-		db.table.IdentityInfo, db.table.IdentityInfo,
 		db.table.Signers,
-		db.table.Signers, db.table.Signers,
 	)
 }
 

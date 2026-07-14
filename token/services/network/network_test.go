@@ -12,22 +12,22 @@ import (
 	"testing"
 	"time"
 
+	"github.com/LFDT-Panurus/panurus/token"
+	"github.com/LFDT-Panurus/panurus/token/services/network"
+	"github.com/LFDT-Panurus/panurus/token/services/network/driver"
+	"github.com/LFDT-Panurus/panurus/token/services/network/mocks"
+	token2 "github.com/LFDT-Panurus/panurus/token/token"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/view"
-	"github.com/hyperledger-labs/fabric-token-sdk/token"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/network"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/network/driver"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/network/mocks"
-	token2 "github.com/hyperledger-labs/fabric-token-sdk/token/token"
 	"github.com/stretchr/testify/require"
 )
 
-//go:generate counterfeiter -o mocks/envelope.go -fake-name Envelope github.com/hyperledger-labs/fabric-token-sdk/token/services/network/driver.Envelope
-//go:generate counterfeiter -o mocks/local_membership.go -fake-name LocalMembership github.com/hyperledger-labs/fabric-token-sdk/token/services/network/driver.LocalMembership
-//go:generate counterfeiter -o mocks/ledger.go -fake-name Ledger github.com/hyperledger-labs/fabric-token-sdk/token/services/network/driver.Ledger
-//go:generate counterfeiter -o mocks/network.go -fake-name Network github.com/hyperledger-labs/fabric-token-sdk/token/services/network/driver.Network
-//go:generate counterfeiter -o mocks/driver.go -fake-name Driver github.com/hyperledger-labs/fabric-token-sdk/token/services/network/driver.Driver
-//go:generate counterfeiter -o mocks/service_provider.go -fake-name ServiceProvider github.com/hyperledger-labs/fabric-token-sdk/token.ServiceProvider
+//go:generate counterfeiter -o mocks/envelope.go -fake-name Envelope github.com/LFDT-Panurus/panurus/token/services/network/driver.Envelope
+//go:generate counterfeiter -o mocks/local_membership.go -fake-name LocalMembership github.com/LFDT-Panurus/panurus/token/services/network/driver.LocalMembership
+//go:generate counterfeiter -o mocks/ledger.go -fake-name Ledger github.com/LFDT-Panurus/panurus/token/services/network/driver.Ledger
+//go:generate counterfeiter -o mocks/network.go -fake-name Network github.com/LFDT-Panurus/panurus/token/services/network/driver.Network
+//go:generate counterfeiter -o mocks/driver.go -fake-name Driver github.com/LFDT-Panurus/panurus/token/services/network/driver.Driver
+//go:generate counterfeiter -o mocks/service_provider.go -fake-name ServiceProvider github.com/LFDT-Panurus/panurus/token.ServiceProvider
 
 func TestValidationCodes(t *testing.T) {
 	require.Equal(t, driver.Valid, network.Valid)

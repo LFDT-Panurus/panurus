@@ -7,8 +7,8 @@ SPDX-License-Identifier: Apache-2.0
 package user
 
 import (
-	"github.com/hyperledger-labs/fabric-token-sdk/integration/nwo/txgen/model"
-	txgen "github.com/hyperledger-labs/fabric-token-sdk/integration/nwo/txgen/model/api"
+	"github.com/LFDT-Panurus/panurus/integration/nwo/txgen/model"
+	txgen "github.com/LFDT-Panurus/panurus/integration/nwo/txgen/model/api"
 )
 
 type Provider interface {

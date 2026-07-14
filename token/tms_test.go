@@ -9,10 +9,11 @@ package token
 import (
 	"testing"
 
+	"github.com/LFDT-Panurus/panurus/token/driver"
+	"github.com/LFDT-Panurus/panurus/token/driver/mock"
+	"github.com/LFDT-Panurus/panurus/token/driver/protos-go/v1/request"
+	"github.com/LFDT-Panurus/panurus/token/services/logging"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/driver"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/driver/mock"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/logging"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -353,7 +354,9 @@ func TestManagementService_NewRequestFromBytes(t *testing.T) {
 	// Create a valid request to serialize
 	original := NewRequest(ms, "test-anchor")
 	original.Actions = &driver.TokenRequest{
-		Issues: [][]byte{[]byte("issue1")},
+		Actions: []*driver.TypedAction{
+			{Type: request.ActionType_ACTION_TYPE_ISSUE, Raw: []byte("issue1")},
+		},
 	}
 
 	actionsBytes, err := original.Actions.Bytes()
@@ -386,7 +389,9 @@ func TestManagementService_NewFullRequestFromBytes(t *testing.T) {
 	// Create a valid request to serialize
 	original := NewRequest(ms, "test-anchor")
 	original.Actions = &driver.TokenRequest{
-		Issues: [][]byte{[]byte("issue1")},
+		Actions: []*driver.TypedAction{
+			{Type: request.ActionType_ACTION_TYPE_ISSUE, Raw: []byte("issue1")},
+		},
 	}
 
 	fullBytes, err := original.Bytes()
@@ -415,11 +420,14 @@ func TestManagementService_NewMetadataFromBytes(t *testing.T) {
 
 	// Create metadata to serialize
 	original := &driver.TokenRequestMetadata{
-		Issues: []*driver.IssueMetadata{
+		Actions: []*driver.ActionMetadataEntry{
 			{
-				Issuer: driver.AuditableIdentity{
-					Identity:  driver.Identity([]byte("issuer1")),
-					AuditInfo: []byte("audit1"),
+				ActionID: 0,
+				IssueMetadata: &driver.IssueMetadata{
+					Issuer: driver.AuditableIdentity{
+						Identity:  driver.Identity([]byte("issuer1")),
+						AuditInfo: []byte("audit1"),
+					},
 				},
 			},
 		},
@@ -433,7 +441,7 @@ func TestManagementService_NewMetadataFromBytes(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotNil(t, restored)
 	assert.NotNil(t, restored.TokenRequestMetadata)
-	assert.Len(t, restored.TokenRequestMetadata.Issues, 1)
+	assert.Len(t, restored.TokenRequestMetadata.Actions, 1)
 }
 
 // TestManagementService_NewMetadataFromBytes_Error verifies error handling

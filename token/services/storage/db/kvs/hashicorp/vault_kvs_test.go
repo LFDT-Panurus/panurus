@@ -10,14 +10,13 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"fmt"
 	"strconv"
 	"sync"
 	"testing"
 
+	"github.com/LFDT-Panurus/panurus/token/services/identity/storage/kvs/hashicorp"
 	vault "github.com/hashicorp/vault/api"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/services/storage/kvs"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/identity/storage/kvs/hashicorp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -44,9 +43,10 @@ func TestVaultKVS(t *testing.T) {
 }
 
 func testRound(t *testing.T, client *vault.Client) {
+	t.Helper()
 	// Test with slash at the end of the vault path
 	ctx := context.Background()
-	kvstore, err := hashicorp.NewWithClient(client, "kv1/data/token-sdk/")
+	kvstore, err := hashicorp.NewWithClient(client, "kv1/data/panurus/")
 	require.NoError(t, err)
 
 	k1, err := kvs.CreateCompositeKey("k", []string{"1"})
@@ -71,33 +71,34 @@ func testRound(t *testing.T, client *vault.Client) {
 	assert.Equal(t, &stuff{"claws", 2}, val)
 
 	results := kvstore.GetExisting(ctx, k1, k2)
-	assert.True(t, len(results) == 2)
+	assert.Len(t, results, 2)
 
 	it, err := kvstore.GetByPartialCompositeID(ctx, "k", []string{})
 	require.NoError(t, err)
-	defer it.Close()
+	defer hashicorp.SilentClose(it)
 
 	for ctr := 0; it.HasNext(); ctr++ {
 		val = &stuff{}
 		key, err := it.Next(val)
 		require.NoError(t, err)
-		if ctr == 0 {
+		switch ctr {
+		case 0:
 			assert.Equal(t, k1, key)
 			assert.Equal(t, &stuff{"santa", 1}, val)
-		} else if ctr == 1 {
+		case 1:
 			assert.Equal(t, k2, key)
 			assert.Equal(t, &stuff{"claws", 2}, val)
-		} else {
+		default:
 			assert.Fail(t, "expected 2 entries in the range, found more")
 		}
 	}
 
-	require.NoError(t, kvstore.Delete(k2))
+	require.NoError(t, kvstore.Delete(t.Context(), k2))
 	assert.False(t, kvstore.Exists(ctx, k2))
 
 	results = kvstore.GetExisting(ctx, k1, k2)
-	assert.True(t, len(results) == 1)
-	assert.True(t, results[0] == k1)
+	assert.Len(t, results, 1)
+	assert.Equal(t, results[0], k1)
 
 	val = &stuff{}
 	err = kvstore.Get(ctx, k2, val)
@@ -122,7 +123,7 @@ func testRound(t *testing.T, client *vault.Client) {
 
 	it, err = kvstore.GetByPartialCompositeID(ctx, "k", []string{})
 	require.NoError(t, err)
-	defer it.Close()
+	defer hashicorp.SilentClose(it)
 	for ctr := 0; it.HasNext(); ctr++ {
 		val = &stuff{}
 		key, err := it.Next(val)
@@ -135,7 +136,7 @@ func testRound(t *testing.T, client *vault.Client) {
 		}
 	}
 
-	require.NoError(t, kvstore.Delete(k1))
+	require.NoError(t, kvstore.Delete(t.Context(), k1))
 
 	val = &stuff{
 		S: "hello",
@@ -152,12 +153,12 @@ func testRound(t *testing.T, client *vault.Client) {
 	assert.Equal(t, val, val2)
 
 	results = kvstore.GetExisting(ctx, k)
-	assert.True(t, len(results) == 1)
+	assert.Len(t, results, 1)
 
 	it, err = kvstore.GetByPartialCompositeID(ctx, k, []string{})
 	require.NoError(t, err)
-	assert.True(t, it == nil)
-	require.NoError(t, kvstore.Delete(k))
+	assert.Nil(t, it)
+	require.NoError(t, kvstore.Delete(t.Context(), k))
 	assert.False(t, kvstore.Exists(ctx, k))
 
 	k1, err = kvs.CreateCompositeKey(k, []string{"1"})
@@ -165,7 +166,7 @@ func testRound(t *testing.T, client *vault.Client) {
 	require.NoError(t, kvstore.Put(ctx, k1, val))
 	it, err = kvstore.GetByPartialCompositeID(ctx, k, []string{})
 	require.NoError(t, err)
-	defer it.Close()
+	defer hashicorp.SilentClose(it)
 	for ctr := 0; it.HasNext(); ctr++ {
 		val = &stuff{}
 		key, err := it.Next(val)
@@ -177,13 +178,13 @@ func testRound(t *testing.T, client *vault.Client) {
 			assert.Fail(t, "expected 1 entries in the range, found more")
 		}
 	}
-	require.NoError(t, kvstore.Delete(k1))
+	require.NoError(t, kvstore.Delete(t.Context(), k1))
 	assert.False(t, kvstore.Exists(ctx, k1))
-	assert.True(t, kvstore.Delete(k1) == nil)
+	require.NoError(t, kvstore.Delete(t.Context(), k1))
 
 	it, err = kvstore.GetByPartialCompositeID(ctx, k, []string{})
 	require.NoError(t, err)
-	assert.True(t, it == nil)
+	assert.Nil(t, it)
 
 	_, err = kvstore.GetByPartialCompositeID(ctx, "k", []string{})
 	require.NoError(t, err)
@@ -197,22 +198,23 @@ func testRound(t *testing.T, client *vault.Client) {
 	err = kvstore.Get(ctx, k3, nil)
 	require.Error(t, err)
 
-	require.NoError(t, kvstore.Delete(k3))
-	require.NoError(t, kvstore.Delete(k3))
+	require.NoError(t, kvstore.Delete(t.Context(), k3))
+	require.NoError(t, kvstore.Delete(t.Context(), k3))
 
 	err = kvstore.Get(ctx, k3, nil)
 	require.NoError(t, err)
-	assert.True(t, it == nil)
+	assert.Nil(t, it)
 
 	k4, _ := kvs.CreateCompositeKey("k", []string{"4"})
-	require.NoError(t, kvstore.Delete(k4))
+	require.NoError(t, kvstore.Delete(t.Context(), k4))
 
 	results = kvstore.GetExisting(ctx)
-	assert.True(t, len(results) == 0)
+	assert.Empty(t, results)
 }
 
 func testParallelWrites(t *testing.T, client *vault.Client) {
-	kvstore, err := hashicorp.NewWithClient(client, "kv1/data/token-sdk")
+	t.Helper()
+	kvstore, err := hashicorp.NewWithClient(client, "kv1/data/panurus")
 	require.NoError(t, err)
 	ctx := context.Background()
 
@@ -220,12 +222,12 @@ func testParallelWrites(t *testing.T, client *vault.Client) {
 	wg := sync.WaitGroup{}
 	n := 100
 	wg.Add(n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		go func(i int) {
-			k1, err := kvs.CreateCompositeKey("parallel_key_1_", []string{fmt.Sprintf("%d", i)})
-			require.NoError(t, err)
+			k1, err := kvs.CreateCompositeKey("parallel_key_1_", []string{strconv.Itoa(i)})
+			assert.NoError(t, err)
 			err = kvstore.Put(ctx, k1, &stuff{"santa", i})
-			require.NoError(t, err)
+			assert.NoError(t, err)
 			defer wg.Done()
 		}(i)
 	}
@@ -236,10 +238,10 @@ func testParallelWrites(t *testing.T, client *vault.Client) {
 	wg.Add(n)
 	k1, err := kvs.CreateCompositeKey("parallel_key_2_", []string{"1"})
 	require.NoError(t, err)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		go func(i int) {
 			err := kvstore.Put(ctx, k1, &stuff{"santa", 1})
-			require.NoError(t, err)
+			assert.NoError(t, err)
 			defer wg.Done()
 		}(i)
 	}
@@ -249,13 +251,13 @@ func testParallelWrites(t *testing.T, client *vault.Client) {
 	wg = sync.WaitGroup{}
 	wg.Add(n)
 
-	for i := 0; i < n; i++ {
+	for i := range n {
 		go func(i int) {
 			data := "Hello World " + strconv.Itoa(i)
 			hash := sha256.Sum256([]byte(data)) // Replace with hash.Hashable if applicable
 			k2 := hex.EncodeToString(hash[:])   // Convert to clean hex string
 			err := kvstore.Put(ctx, k2, &stuff{"hello", 1})
-			require.NoError(t, err)
+			assert.NoError(t, err)
 			defer wg.Done()
 		}(i)
 	}
@@ -263,7 +265,8 @@ func testParallelWrites(t *testing.T, client *vault.Client) {
 }
 
 func testParallelWritesReadDelete(t *testing.T, client *vault.Client) {
-	kvstore, err := hashicorp.NewWithClient(client, "kv1/data/token-sdk")
+	t.Helper()
+	kvstore, err := hashicorp.NewWithClient(client, "kv1/data/panurus")
 	require.NoError(t, err)
 	ctx := context.Background()
 
@@ -271,52 +274,54 @@ func testParallelWritesReadDelete(t *testing.T, client *vault.Client) {
 	wg := sync.WaitGroup{}
 	n := 100
 	wg.Add(n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		go func(i int) {
-
-			k, err := kvs.CreateCompositeKey("parallel_key_2_", []string{fmt.Sprintf("%d", i)})
-			require.NoError(t, err)
+			k, err := kvs.CreateCompositeKey("parallel_key_2_", []string{strconv.Itoa(i)})
+			assert.NoError(t, err)
 
 			err = kvstore.Put(ctx, k, &stuff{"santa", i})
-			require.NoError(t, err)
+			assert.NoError(t, err)
 
 			val := &stuff{}
 			err = kvstore.Get(ctx, k, val)
-			require.NoError(t, err)
+			assert.NoError(t, err)
 			assert.Equal(t, &stuff{"santa", i}, val)
 
-			require.NoError(t, kvstore.Delete(k))
+			assert.NoError(t, kvstore.Delete(t.Context(), k))
 			defer wg.Done()
 		}(i)
 	}
 	wg.Wait()
 }
 
+//nolint:testifylint
 func testClient(t *testing.T, wg *sync.WaitGroup, prefix string, num int, client *vault.Client) {
+	t.Helper()
 	defer wg.Done()
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// Test without slah at the end of the vault path
-	kvstore, err := hashicorp.NewWithClient(client, "kv1/data/token-sdk")
-	require.NoError(t, err)
+	kvstore, err := hashicorp.NewWithClient(client, "kv1/data/panurus")
+	assert.NoError(t, err)
 
 	for i := 1; i <= num; i++ {
-		k, err := kvs.CreateCompositeKey(prefix, []string{fmt.Sprintf("%d", i)})
-		require.NoError(t, err)
+		k, err := kvs.CreateCompositeKey(prefix, []string{strconv.Itoa(i)})
+		assert.NoError(t, err)
 
 		err = kvstore.Put(ctx, k, &stuff{"santa", i})
-		require.NoError(t, err)
+		assert.NoError(t, err)
 
 		val := &stuff{}
 		err = kvstore.Get(ctx, k, val)
-		require.NoError(t, err)
+		assert.NoError(t, err)
 		assert.Equal(t, &stuff{"santa", i}, val)
 
-		require.NoError(t, kvstore.Delete(k))
+		assert.NoError(t, kvstore.Delete(t.Context(), k))
 	}
 }
 
 func testParallelConnections(t *testing.T, client *vault.Client) {
+	t.Helper()
 	var wg sync.WaitGroup
 	// test 20 clients that issues 50 put, get and delete to vault
 	n := 20
@@ -327,33 +332,35 @@ func testParallelConnections(t *testing.T, client *vault.Client) {
 	wg.Wait()
 }
 
+//nolint:testifylint
 func testWithVaultDown(t *testing.T, client *vault.Client) {
+	t.Helper()
 	// Test with slash at the end of the vault path
 	ctx := context.Background()
 
-	kvstore, err := hashicorp.NewWithClient(client, "kv1/data/token-sdk/")
-	require.NoError(t, err)
+	kvstore, err := hashicorp.NewWithClient(client, "kv1/data/panurus/")
+	assert.NoError(t, err)
 
 	k1, err := kvs.CreateCompositeKey("k", []string{"1"})
-	require.NoError(t, err)
+	assert.NoError(t, err)
 	k2, err := kvs.CreateCompositeKey("k", []string{"2"})
-	require.NoError(t, err)
+	assert.NoError(t, err)
 
 	err = kvstore.Put(ctx, k1, &stuff{"santa", 1})
-	require.Error(t, err)
+	assert.Error(t, err)
 
 	val := &stuff{}
 	err = kvstore.Get(ctx, k1, val)
-	require.Error(t, err)
+	assert.Error(t, err)
 
 	assert.False(t, kvstore.Exists(ctx, k2))
 
 	results := kvstore.GetExisting(ctx, k1, k2)
-	assert.True(t, len(results) == 0)
+	assert.Empty(t, results)
 
-	require.Error(t, kvstore.Delete(k1))
+	assert.Error(t, kvstore.Delete(t.Context(), k1))
 
 	it, err := kvstore.GetByPartialCompositeID(ctx, "k", []string{})
-	require.Error(t, err)
-	assert.True(t, it == nil)
+	assert.Error(t, err)
+	assert.Nil(t, it)
 }

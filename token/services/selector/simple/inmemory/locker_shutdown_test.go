@@ -12,8 +12,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/ttxdb"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/token"
+	"github.com/LFDT-Panurus/panurus/token/services/storage/ttxdb"
+	"github.com/LFDT-Panurus/panurus/token/token"
+	"github.com/stretchr/testify/require"
 )
 
 // TestLocker_Stop verifies that Stop() halts the scan goroutine and is idempotent.
@@ -42,7 +43,10 @@ func TestLocker_Stop(t *testing.T) {
 		default:
 		}
 
-		concreteLocker.Stop()
+		err = concreteLocker.Stop()
+		if err != nil {
+			t.Fatalf("unexpected stop error: %v", err)
+		}
 
 		// scanDone must be closed within a reasonable timeout.
 		select {
@@ -57,9 +61,15 @@ func TestLocker_Stop(t *testing.T) {
 		d := NewLocker(mock, 20*time.Millisecond, time.Minute).(*locker)
 
 		// Must not panic or deadlock.
-		d.Stop()
-		d.Stop()
-		d.Stop()
+		if err := d.Stop(); err != nil {
+			t.Fatalf("unexpected stop error: %v", err)
+		}
+		if err := d.Stop(); err != nil {
+			t.Fatalf("unexpected stop error on second stop: %v", err)
+		}
+		if err := d.Stop(); err != nil {
+			t.Fatalf("unexpected stop error on third stop: %v", err)
+		}
 	})
 }
 
@@ -73,7 +83,9 @@ func TestLocker_StopWhileSleeping(t *testing.T) {
 
 	done := make(chan struct{})
 	go func() {
-		d.Stop()
+		if err := d.Stop(); err != nil {
+			t.Errorf("unexpected stop error: %v", err)
+		}
 		close(done)
 	}()
 
@@ -109,7 +121,9 @@ func TestLocker_StopDuringActiveScan(t *testing.T) {
 
 	done := make(chan struct{})
 	go func() {
-		d.Stop()
+		if err := d.Stop(); err != nil {
+			t.Errorf("unexpected stop error: %v", err)
+		}
 		close(done)
 	}()
 
@@ -138,7 +152,9 @@ func TestLocker_ConcurrentStopAndLock(t *testing.T) {
 	}
 
 	wg.Go(func() {
-		d.Stop()
+		if err := d.Stop(); err != nil {
+			t.Errorf("unexpected stop error: %v", err)
+		}
 	})
 
 	done := make(chan struct{})
@@ -160,4 +176,17 @@ func TestLocker_ConcurrentStopAndLock(t *testing.T) {
 		// Stop may have returned before scan fully exited in the goroutine race;
 		// the stopOnce guarantees it will eventually close.
 	}
+}
+
+func TestLocker_StopReturnsTimeoutError(t *testing.T) {
+	d := &locker{
+		cancel:   func() {},
+		scanDone: make(chan struct{}),
+	}
+
+	start := time.Now()
+	err := d.Stop()
+	require.Error(t, err)
+	require.ErrorIs(t, err, ErrTimeout)
+	require.GreaterOrEqual(t, time.Since(start), stopTimeout)
 }

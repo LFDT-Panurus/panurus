@@ -15,6 +15,7 @@ a PDF with two plots per test:
          executor × worker combination
 """
 
+import sys
 import pandas as pd
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_pdf import PdfPages
@@ -40,6 +41,8 @@ test_names = [
     "TestParallelBenchmarkTransferProofGeneration",
     "TestParallelBenchmarkTransferServiceTransfer",
     "TestParallelBenchmarkValidatorTransfer",
+    "TestParallelBenchmarkIssueServiceIssue",
+    "TestParallelBenchmarkAuditorServiceCheck",
 ]
 
 executors     = ["serial", "unbounded", "pool"]
@@ -54,9 +57,17 @@ executor_markers = {
     "pool":      "^",
 }
 
+if not Path(csv_path).exists():
+    print(f"Error: Results file '{csv_path}' not found.", file=sys.stderr)
+    sys.exit(1)
+
 df = pd.read_csv(csv_path)
+if df.empty:
+    print(f"Error: Results file '{csv_path}' is empty.", file=sys.stderr)
+    sys.exit(1)
+
 last_row  = df.iloc[-1]
-timestamp = last_row["timestamp"]
+timestamp = last_row.get("timestamp", "N/A")
 
 # Column pattern: TestParallelBenchmarkSender[pool]/8 tps
 col_re = re.compile(
@@ -65,7 +76,12 @@ col_re = re.compile(
 
 def get_value(row, test, executor, cpu, metric):
     col = f"{test}[{executor}]/{cpu} {metric}"
-    return row.get(col, None)
+    val = row.get(col, None)
+    if val is None or pd.isna(val):
+        # Fall back to old-style column without executor tag
+        col_old = f"{test}/{cpu} {metric}"
+        val = row.get(col_old, None)
+    return val
 
 with PdfPages(pdf_path) as pdf:
     for test_name in test_names:
@@ -130,7 +146,7 @@ with PdfPages(pdf_path) as pdf:
                     continue
 
                 label = executor if executor not in plotted_executors else None
-                err = ax2.errorbar(
+                ax2.errorbar(
                     float(tps), float(avg),
                     yerr=float(std),
                     marker=executor_markers[executor],

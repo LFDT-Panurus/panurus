@@ -11,13 +11,13 @@ import (
 	"sync"
 	"time"
 
+	"github.com/LFDT-Panurus/panurus/token"
+	"github.com/LFDT-Panurus/panurus/token/driver"
+	"github.com/LFDT-Panurus/panurus/token/services/logging"
+	"github.com/LFDT-Panurus/panurus/token/services/selector/config"
+	token2 "github.com/LFDT-Panurus/panurus/token/token"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/common/utils/lazy"
-	"github.com/hyperledger-labs/fabric-token-sdk/token"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/driver"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/logging"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/selector/config"
-	token2 "github.com/hyperledger-labs/fabric-token-sdk/token/token"
 )
 
 var logger = logging.MustGetLogger()
@@ -32,7 +32,7 @@ type LockerProvider interface {
 
 // stoppable is implemented by lockers that have a lifecycle (e.g. inmemory.locker).
 type stoppable interface {
-	Stop()
+	Stop() error
 }
 
 type SelectorService struct {
@@ -76,7 +76,9 @@ func (s *SelectorService) Shutdown() {
 	s.mu.Unlock()
 
 	for _, l := range lockers {
-		l.Stop()
+		if err := l.Stop(); err != nil {
+			logger.Warnf("failed stopping locker: %s", err)
+		}
 	}
 }
 

@@ -13,9 +13,9 @@ import (
 	scommon "github.com/hyperledger-labs/fabric-smart-client/platform/view/services/storage/driver/common"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/services/storage/driver/sql/common"
 
+	idriver "github.com/LFDT-Panurus/panurus/token/services/identity/driver"
+	sqlcommon "github.com/LFDT-Panurus/panurus/token/services/storage/db/sql/common"
 	fscPostgres "github.com/hyperledger-labs/fabric-smart-client/platform/view/services/storage/driver/sql/postgres"
-	idriver "github.com/hyperledger-labs/fabric-token-sdk/token/services/identity/driver"
-	sqlcommon "github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/db/sql/common"
 )
 
 // IdentityStore wraps common.IdentityStore to add advisory lock to schema creation

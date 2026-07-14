@@ -109,7 +109,7 @@ func (p *fnsBroadcaster) Broadcast(network, channel string, txID driver.TxID, en
 		return errors.Wrapf(err, "failed broadcasting on [%s,%s]", network, channel)
 	}
 
-	logger.Infof("Wait for finality")
+	logger.Debugf("Wait for finality")
 
 	return <-final
 }
@@ -119,7 +119,7 @@ func (p *fnsBroadcaster) Broadcast(network, channel string, txID driver.TxID, en
 // handle EOF errors, which can occur during network startup or when
 // block 0 is not yet available.
 func getFinality(finality driver.Finality, txID string) error {
-	logger.Infof("wait for finality [txID=%v]", txID)
+	logger.Debugf("wait for finality [txID=%v]", txID)
 	for range finalityEOFRetries {
 		err := finality.IsFinal(context.Background(), txID)
 		if err == nil {

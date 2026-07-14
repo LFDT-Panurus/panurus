@@ -10,12 +10,12 @@ import (
 	"context"
 	"time"
 
+	q "github.com/LFDT-Panurus/panurus/token/services/storage/db/sql/query"
+	common2 "github.com/LFDT-Panurus/panurus/token/services/storage/db/sql/query/common"
+	"github.com/LFDT-Panurus/panurus/token/services/storage/db/sql/query/cond"
 	common3 "github.com/hyperledger-labs/fabric-smart-client/platform/view/services/storage/driver/common"
-	q "github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/db/sql/query"
-	common2 "github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/db/sql/query/common"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/db/sql/query/cond"
 
-	common4 "github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/db/sql/common"
+	common4 "github.com/LFDT-Panurus/panurus/token/services/storage/db/sql/common"
 )
 
 type TokenLockStore struct {

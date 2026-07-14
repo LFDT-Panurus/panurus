@@ -86,7 +86,13 @@ func ToQuantity(q string, precision uint64) (Quantity, error) {
 
 // ToQuantitySum computes the sum of the quantities of the tokens in the iterator.
 func ToQuantitySum(precision uint64) iterators.Reducer[*UnspentToken, Quantity] {
-	return iterators.NewReducer(NewZeroQuantity(precision), func(sum Quantity, tok *UnspentToken) (Quantity, error) {
+	return iterators.NewReducer(NewZeroQuantity(precision), func(sum Quantity, tok *UnspentToken) (res Quantity, err error) {
+		defer func() {
+			if r := recover(); r != nil {
+				err = errors.Errorf("failed to sum quantities: %v", r)
+			}
+		}()
+
 		q, err := ToQuantity(tok.Quantity, precision)
 		if err != nil {
 			return nil, err

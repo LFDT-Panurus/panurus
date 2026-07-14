@@ -11,20 +11,20 @@ import (
 	"reflect"
 	"time"
 
+	"github.com/LFDT-Panurus/panurus/token"
+	"github.com/LFDT-Panurus/panurus/token/services"
+	"github.com/LFDT-Panurus/panurus/token/services/logging"
+	"github.com/LFDT-Panurus/panurus/token/services/storage/auditdb/locker"
+	"github.com/LFDT-Panurus/panurus/token/services/storage/auditdb/locker/memory"
+	"github.com/LFDT-Panurus/panurus/token/services/storage/db"
+	"github.com/LFDT-Panurus/panurus/token/services/storage/db/common"
+	dbdriver "github.com/LFDT-Panurus/panurus/token/services/storage/db/driver"
+	"github.com/LFDT-Panurus/panurus/token/services/storage/db/multiplexed"
+	"github.com/LFDT-Panurus/panurus/token/services/storage/ttxdb"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	cdriver "github.com/hyperledger-labs/fabric-smart-client/platform/common/driver"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/common/utils/lazy"
 	fsccommon "github.com/hyperledger-labs/fabric-smart-client/platform/view/services/storage/driver/common"
-	"github.com/hyperledger-labs/fabric-token-sdk/token"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/logging"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/auditdb/locker"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/auditdb/locker/memory"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/db"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/db/common"
-	dbdriver "github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/db/driver"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/db/multiplexed"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/ttxdb"
 )
 
 var (
@@ -330,6 +330,8 @@ func (d *StoreService) GetTokenRequests(ctx context.Context, txIDs []string) (ma
 // The function respects context cancellation and deadlines, returning an error if the context is cancelled
 // or times out before all locks can be acquired. This prevents indefinite blocking and enables fast failure
 // in case of lock contention or deadlock scenarios.
+// The implementation provides deadlock prevention through deterministic lock ordering (sorted by enrollment ID).
+// Livelock prevention is handled by the caller through retry logic with exponential backoff.
 func (d *StoreService) AcquireLocks(ctx context.Context, anchor string, eIDs ...string) error {
 	logger.DebugfContext(ctx, "Acquire locks for [%s:%v] enrollment ids", anchor, eIDs)
 	if err := d.locker.AcquireLocks(ctx, anchor, eIDs...); err != nil {

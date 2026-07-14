@@ -1,6 +1,6 @@
 # Tokengen
 
-`tokengen` is a utility for generating Fabric Token-SDK material, such as public parameters, token chaincode packages, and other cryptographic artifacts. 
+`tokengen` is a utility for generating Panurus material, such as public parameters, token chaincode packages, and other cryptographic artifacts. 
 
 It is primarily used for pre-configuring development and testing environments.
 

@@ -7,7 +7,7 @@ SPDX-License-Identifier: Apache-2.0
 package cond
 
 import (
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/db/sql/query/common"
+	"github.com/LFDT-Panurus/panurus/token/services/storage/db/sql/query/common"
 )
 
 type inTuple struct {

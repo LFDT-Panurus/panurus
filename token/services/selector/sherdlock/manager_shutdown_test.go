@@ -47,7 +47,8 @@ func TestManager_Stop(t *testing.T) {
 			t.Fatal("cleaner did not fire before Stop")
 		}
 
-		m.Stop()
+		err := m.Stop()
+		require.NoError(t, err)
 
 		// Drain any in-flight calls that were already dispatched.
 		for {
@@ -83,9 +84,9 @@ func TestManager_Stop(t *testing.T) {
 		)
 
 		// Must not panic or deadlock when called multiple times.
-		m.Stop()
-		m.Stop()
-		m.Stop()
+		require.NoError(t, m.Stop())
+		require.NoError(t, m.Stop())
+		require.NoError(t, m.Stop())
 	})
 
 	t.Run("Stop is safe when cleaner was never started", func(t *testing.T) {
@@ -107,7 +108,7 @@ func TestManager_Stop(t *testing.T) {
 		// Must return immediately without blocking.
 		done := make(chan struct{})
 		go func() {
-			m.Stop()
+			assert.NoError(t, m.Stop())
 			close(done)
 		}()
 		select {
@@ -119,6 +120,19 @@ func TestManager_Stop(t *testing.T) {
 }
 
 // TestSelectorService_Shutdown verifies that SelectorService.Shutdown stops all managers.
+func TestManager_StopReturnsTimeoutError(t *testing.T) {
+	m := &Manager{
+		cancel:      func() {},
+		cleanerDone: make(chan struct{}),
+	}
+
+	start := time.Now()
+	err := m.Stop()
+	require.Error(t, err)
+	require.ErrorIs(t, err, ErrTimeout)
+	require.GreaterOrEqual(t, time.Since(start), stopTimeout)
+}
+
 func TestSelectorService_Shutdown(t *testing.T) {
 	t.Run("Shutdown stops all tracked managers", func(t *testing.T) {
 		svc := &SelectorService{}

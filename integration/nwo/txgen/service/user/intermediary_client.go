@@ -11,9 +11,9 @@ import (
 	"io"
 	"time"
 
-	"github.com/hyperledger-labs/fabric-token-sdk/integration/nwo/txgen/model"
-	txgen "github.com/hyperledger-labs/fabric-token-sdk/integration/nwo/txgen/model/api"
-	"github.com/hyperledger-labs/fabric-token-sdk/integration/nwo/txgen/service/logging"
+	"github.com/LFDT-Panurus/panurus/integration/nwo/txgen/model"
+	txgen "github.com/LFDT-Panurus/panurus/integration/nwo/txgen/model/api"
+	"github.com/LFDT-Panurus/panurus/integration/nwo/txgen/service/logging"
 )
 
 type IntermediaryClient struct {

@@ -7,7 +7,7 @@ SPDX-License-Identifier: Apache-2.0
 package finality
 
 import (
-	"github.com/hyperledger-labs/fabric-token-sdk/token/core/common/metrics"
+	"github.com/LFDT-Panurus/panurus/token/core/common/metrics"
 )
 
 // Metrics holds the instrumentation for the finality Listener.

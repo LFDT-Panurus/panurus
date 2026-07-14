@@ -5,8 +5,8 @@ import (
 	"context"
 	"sync"
 
-	token2 "github.com/hyperledger-labs/fabric-token-sdk/token"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/certifier/interactive"
+	token2 "github.com/LFDT-Panurus/panurus/token"
+	"github.com/LFDT-Panurus/panurus/token/services/certifier/interactive"
 )
 
 type QueryEngineMock struct {

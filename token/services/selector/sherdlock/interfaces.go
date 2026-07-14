@@ -10,10 +10,10 @@ import (
 	"context"
 	"time"
 
-	"github.com/hyperledger-labs/fabric-token-sdk/token"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/driver"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/utils/types/transaction"
-	token2 "github.com/hyperledger-labs/fabric-token-sdk/token/token"
+	"github.com/LFDT-Panurus/panurus/token"
+	"github.com/LFDT-Panurus/panurus/token/driver"
+	"github.com/LFDT-Panurus/panurus/token/services/utils/types/transaction"
+	token2 "github.com/LFDT-Panurus/panurus/token/token"
 )
 
 // Iterator represents a generic iterator with error return and Close method.
@@ -99,7 +99,7 @@ type Histogram interface {
 	With(labelValues ...string) Histogram
 }
 
-//go:generate counterfeiter -o mocks/metrics_provider.go -fake-name FakeProvider github.com/hyperledger-labs/fabric-token-sdk/token/core/common/metrics.Provider
+//go:generate counterfeiter -o mocks/metrics_provider.go -fake-name FakeProvider github.com/LFDT-Panurus/panurus/token/core/common/metrics.Provider
 type Provider interface {
 	NewCounter(opts struct {
 		Namespace  string
@@ -120,9 +120,9 @@ type Provider interface {
 	}) Histogram
 }
 
-//go:generate counterfeiter -o mocks/spendable_tokens_iterator.go -fake-name FakeSpendableTokensIterator github.com/hyperledger-labs/fabric-token-sdk/token/driver.SpendableTokensIterator
-//go:generate counterfeiter -o mocks/store_service_manager.go -fake-name FakeTokenDBStoreServiceManager github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/tokendb.StoreServiceManager
-//go:generate counterfeiter -o mocks/token_lock_store_service_manager.go -fake-name FakeTokenLockStoreServiceManager github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/tokenlockdb.StoreServiceManager
+//go:generate counterfeiter -o mocks/spendable_tokens_iterator.go -fake-name FakeSpendableTokensIterator github.com/LFDT-Panurus/panurus/token/driver.SpendableTokensIterator
+//go:generate counterfeiter -o mocks/store_service_manager.go -fake-name FakeTokenDBStoreServiceManager github.com/LFDT-Panurus/panurus/token/services/storage/tokendb.StoreServiceManager
+//go:generate counterfeiter -o mocks/token_lock_store_service_manager.go -fake-name FakeTokenLockStoreServiceManager github.com/LFDT-Panurus/panurus/token/services/storage/tokenlockdb.StoreServiceManager
 
 type StoreServiceManager interface {
 	StoreServiceByTMSId(id struct {

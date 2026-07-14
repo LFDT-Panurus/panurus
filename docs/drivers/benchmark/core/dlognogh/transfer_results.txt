@@ -1,6 +1,6 @@
 goos: darwin
 goarch: arm64
-pkg: github.com/hyperledger-labs/fabric-token-sdk/token/core/zkatdlog/nogh/v1/transfer
+pkg: github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/transfer
 cpu: Apple M1 Max
 BenchmarkSender/Setup(bits_32,_curve_BN254,_#i_1,_#o_1)_with_1_workers         	    2047	    577777 ns/op	   24095 B/op	     436 allocs/op
 BenchmarkSender/Setup(bits_32,_curve_BN254,_#i_1,_#o_1)_with_1_workers         	    2109	    580222 ns/op	   24096 B/op	     436 allocs/op
@@ -1083,4 +1083,4 @@ BenchmarkVerificationSenderProof/Setup(bits_64,_curve_BLS12_381_BBS_GURVY_FAST_R
 BenchmarkVerificationSenderProof/Setup(bits_64,_curve_BLS12_381_BBS_GURVY_FAST_RNG,_#i_3,_#o_3)_with_1_workers         	       8	 134888698 ns/op	 1772964 B/op	   20787 allocs/op
 BenchmarkVerificationSenderProof/Setup(bits_64,_curve_BLS12_381_BBS_GURVY_FAST_RNG,_#i_3,_#o_3)_with_1_workers         	       8	 134662646 ns/op	 1772980 B/op	   20790 allocs/op
 PASS
-ok  	github.com/hyperledger-labs/fabric-token-sdk/token/core/zkatdlog/nogh/v1/transfer	2657.476s
+ok  	github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/transfer	2657.476s

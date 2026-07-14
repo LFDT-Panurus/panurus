@@ -2,56 +2,12 @@
 package mock
 
 import (
-	"hash"
 	"sync"
 
 	"github.com/IBM/idemix/bccsp/types"
 )
 
 type BCCSP struct {
-	DecryptStub        func(types.Key, []byte, types.DecrypterOpts) ([]byte, error)
-	decryptMutex       sync.RWMutex
-	decryptArgsForCall []struct {
-		arg1 types.Key
-		arg2 []byte
-		arg3 types.DecrypterOpts
-	}
-	decryptReturns struct {
-		result1 []byte
-		result2 error
-	}
-	decryptReturnsOnCall map[int]struct {
-		result1 []byte
-		result2 error
-	}
-	EncryptStub        func(types.Key, []byte, types.EncrypterOpts) ([]byte, error)
-	encryptMutex       sync.RWMutex
-	encryptArgsForCall []struct {
-		arg1 types.Key
-		arg2 []byte
-		arg3 types.EncrypterOpts
-	}
-	encryptReturns struct {
-		result1 []byte
-		result2 error
-	}
-	encryptReturnsOnCall map[int]struct {
-		result1 []byte
-		result2 error
-	}
-	GetHashStub        func(types.HashOpts) (hash.Hash, error)
-	getHashMutex       sync.RWMutex
-	getHashArgsForCall []struct {
-		arg1 types.HashOpts
-	}
-	getHashReturns struct {
-		result1 hash.Hash
-		result2 error
-	}
-	getHashReturnsOnCall map[int]struct {
-		result1 hash.Hash
-		result2 error
-	}
 	GetKeyStub        func([]byte) (types.Key, error)
 	getKeyMutex       sync.RWMutex
 	getKeyArgsForCall []struct {
@@ -63,20 +19,6 @@ type BCCSP struct {
 	}
 	getKeyReturnsOnCall map[int]struct {
 		result1 types.Key
-		result2 error
-	}
-	HashStub        func([]byte, types.HashOpts) ([]byte, error)
-	hashMutex       sync.RWMutex
-	hashArgsForCall []struct {
-		arg1 []byte
-		arg2 types.HashOpts
-	}
-	hashReturns struct {
-		result1 []byte
-		result2 error
-	}
-	hashReturnsOnCall map[int]struct {
-		result1 []byte
 		result2 error
 	}
 	KeyDerivStub        func(types.Key, types.KeyDerivOpts) (types.Key, error)
@@ -106,10 +48,10 @@ type BCCSP struct {
 		result1 types.Key
 		result2 error
 	}
-	KeyImportStub        func(interface{}, types.KeyImportOpts) (types.Key, error)
+	KeyImportStub        func(any, types.KeyImportOpts) (types.Key, error)
 	keyImportMutex       sync.RWMutex
 	keyImportArgsForCall []struct {
-		arg1 interface{}
+		arg1 any
 		arg2 types.KeyImportOpts
 	}
 	keyImportReturns struct {
@@ -153,212 +95,6 @@ type BCCSP struct {
 	}
 	invocations      map[string][][]interface{}
 	invocationsMutex sync.RWMutex
-}
-
-func (fake *BCCSP) Decrypt(arg1 types.Key, arg2 []byte, arg3 types.DecrypterOpts) ([]byte, error) {
-	var arg2Copy []byte
-	if arg2 != nil {
-		arg2Copy = make([]byte, len(arg2))
-		copy(arg2Copy, arg2)
-	}
-	fake.decryptMutex.Lock()
-	ret, specificReturn := fake.decryptReturnsOnCall[len(fake.decryptArgsForCall)]
-	fake.decryptArgsForCall = append(fake.decryptArgsForCall, struct {
-		arg1 types.Key
-		arg2 []byte
-		arg3 types.DecrypterOpts
-	}{arg1, arg2Copy, arg3})
-	stub := fake.DecryptStub
-	fakeReturns := fake.decryptReturns
-	fake.recordInvocation("Decrypt", []interface{}{arg1, arg2Copy, arg3})
-	fake.decryptMutex.Unlock()
-	if stub != nil {
-		return stub(arg1, arg2, arg3)
-	}
-	if specificReturn {
-		return ret.result1, ret.result2
-	}
-	return fakeReturns.result1, fakeReturns.result2
-}
-
-func (fake *BCCSP) DecryptCallCount() int {
-	fake.decryptMutex.RLock()
-	defer fake.decryptMutex.RUnlock()
-	return len(fake.decryptArgsForCall)
-}
-
-func (fake *BCCSP) DecryptCalls(stub func(types.Key, []byte, types.DecrypterOpts) ([]byte, error)) {
-	fake.decryptMutex.Lock()
-	defer fake.decryptMutex.Unlock()
-	fake.DecryptStub = stub
-}
-
-func (fake *BCCSP) DecryptArgsForCall(i int) (types.Key, []byte, types.DecrypterOpts) {
-	fake.decryptMutex.RLock()
-	defer fake.decryptMutex.RUnlock()
-	argsForCall := fake.decryptArgsForCall[i]
-	return argsForCall.arg1, argsForCall.arg2, argsForCall.arg3
-}
-
-func (fake *BCCSP) DecryptReturns(result1 []byte, result2 error) {
-	fake.decryptMutex.Lock()
-	defer fake.decryptMutex.Unlock()
-	fake.DecryptStub = nil
-	fake.decryptReturns = struct {
-		result1 []byte
-		result2 error
-	}{result1, result2}
-}
-
-func (fake *BCCSP) DecryptReturnsOnCall(i int, result1 []byte, result2 error) {
-	fake.decryptMutex.Lock()
-	defer fake.decryptMutex.Unlock()
-	fake.DecryptStub = nil
-	if fake.decryptReturnsOnCall == nil {
-		fake.decryptReturnsOnCall = make(map[int]struct {
-			result1 []byte
-			result2 error
-		})
-	}
-	fake.decryptReturnsOnCall[i] = struct {
-		result1 []byte
-		result2 error
-	}{result1, result2}
-}
-
-func (fake *BCCSP) Encrypt(arg1 types.Key, arg2 []byte, arg3 types.EncrypterOpts) ([]byte, error) {
-	var arg2Copy []byte
-	if arg2 != nil {
-		arg2Copy = make([]byte, len(arg2))
-		copy(arg2Copy, arg2)
-	}
-	fake.encryptMutex.Lock()
-	ret, specificReturn := fake.encryptReturnsOnCall[len(fake.encryptArgsForCall)]
-	fake.encryptArgsForCall = append(fake.encryptArgsForCall, struct {
-		arg1 types.Key
-		arg2 []byte
-		arg3 types.EncrypterOpts
-	}{arg1, arg2Copy, arg3})
-	stub := fake.EncryptStub
-	fakeReturns := fake.encryptReturns
-	fake.recordInvocation("Encrypt", []interface{}{arg1, arg2Copy, arg3})
-	fake.encryptMutex.Unlock()
-	if stub != nil {
-		return stub(arg1, arg2, arg3)
-	}
-	if specificReturn {
-		return ret.result1, ret.result2
-	}
-	return fakeReturns.result1, fakeReturns.result2
-}
-
-func (fake *BCCSP) EncryptCallCount() int {
-	fake.encryptMutex.RLock()
-	defer fake.encryptMutex.RUnlock()
-	return len(fake.encryptArgsForCall)
-}
-
-func (fake *BCCSP) EncryptCalls(stub func(types.Key, []byte, types.EncrypterOpts) ([]byte, error)) {
-	fake.encryptMutex.Lock()
-	defer fake.encryptMutex.Unlock()
-	fake.EncryptStub = stub
-}
-
-func (fake *BCCSP) EncryptArgsForCall(i int) (types.Key, []byte, types.EncrypterOpts) {
-	fake.encryptMutex.RLock()
-	defer fake.encryptMutex.RUnlock()
-	argsForCall := fake.encryptArgsForCall[i]
-	return argsForCall.arg1, argsForCall.arg2, argsForCall.arg3
-}
-
-func (fake *BCCSP) EncryptReturns(result1 []byte, result2 error) {
-	fake.encryptMutex.Lock()
-	defer fake.encryptMutex.Unlock()
-	fake.EncryptStub = nil
-	fake.encryptReturns = struct {
-		result1 []byte
-		result2 error
-	}{result1, result2}
-}
-
-func (fake *BCCSP) EncryptReturnsOnCall(i int, result1 []byte, result2 error) {
-	fake.encryptMutex.Lock()
-	defer fake.encryptMutex.Unlock()
-	fake.EncryptStub = nil
-	if fake.encryptReturnsOnCall == nil {
-		fake.encryptReturnsOnCall = make(map[int]struct {
-			result1 []byte
-			result2 error
-		})
-	}
-	fake.encryptReturnsOnCall[i] = struct {
-		result1 []byte
-		result2 error
-	}{result1, result2}
-}
-
-func (fake *BCCSP) GetHash(arg1 types.HashOpts) (hash.Hash, error) {
-	fake.getHashMutex.Lock()
-	ret, specificReturn := fake.getHashReturnsOnCall[len(fake.getHashArgsForCall)]
-	fake.getHashArgsForCall = append(fake.getHashArgsForCall, struct {
-		arg1 types.HashOpts
-	}{arg1})
-	stub := fake.GetHashStub
-	fakeReturns := fake.getHashReturns
-	fake.recordInvocation("GetHash", []interface{}{arg1})
-	fake.getHashMutex.Unlock()
-	if stub != nil {
-		return stub(arg1)
-	}
-	if specificReturn {
-		return ret.result1, ret.result2
-	}
-	return fakeReturns.result1, fakeReturns.result2
-}
-
-func (fake *BCCSP) GetHashCallCount() int {
-	fake.getHashMutex.RLock()
-	defer fake.getHashMutex.RUnlock()
-	return len(fake.getHashArgsForCall)
-}
-
-func (fake *BCCSP) GetHashCalls(stub func(types.HashOpts) (hash.Hash, error)) {
-	fake.getHashMutex.Lock()
-	defer fake.getHashMutex.Unlock()
-	fake.GetHashStub = stub
-}
-
-func (fake *BCCSP) GetHashArgsForCall(i int) types.HashOpts {
-	fake.getHashMutex.RLock()
-	defer fake.getHashMutex.RUnlock()
-	argsForCall := fake.getHashArgsForCall[i]
-	return argsForCall.arg1
-}
-
-func (fake *BCCSP) GetHashReturns(result1 hash.Hash, result2 error) {
-	fake.getHashMutex.Lock()
-	defer fake.getHashMutex.Unlock()
-	fake.GetHashStub = nil
-	fake.getHashReturns = struct {
-		result1 hash.Hash
-		result2 error
-	}{result1, result2}
-}
-
-func (fake *BCCSP) GetHashReturnsOnCall(i int, result1 hash.Hash, result2 error) {
-	fake.getHashMutex.Lock()
-	defer fake.getHashMutex.Unlock()
-	fake.GetHashStub = nil
-	if fake.getHashReturnsOnCall == nil {
-		fake.getHashReturnsOnCall = make(map[int]struct {
-			result1 hash.Hash
-			result2 error
-		})
-	}
-	fake.getHashReturnsOnCall[i] = struct {
-		result1 hash.Hash
-		result2 error
-	}{result1, result2}
 }
 
 func (fake *BCCSP) GetKey(arg1 []byte) (types.Key, error) {
@@ -426,76 +162,6 @@ func (fake *BCCSP) GetKeyReturnsOnCall(i int, result1 types.Key, result2 error) 
 	}
 	fake.getKeyReturnsOnCall[i] = struct {
 		result1 types.Key
-		result2 error
-	}{result1, result2}
-}
-
-func (fake *BCCSP) Hash(arg1 []byte, arg2 types.HashOpts) ([]byte, error) {
-	var arg1Copy []byte
-	if arg1 != nil {
-		arg1Copy = make([]byte, len(arg1))
-		copy(arg1Copy, arg1)
-	}
-	fake.hashMutex.Lock()
-	ret, specificReturn := fake.hashReturnsOnCall[len(fake.hashArgsForCall)]
-	fake.hashArgsForCall = append(fake.hashArgsForCall, struct {
-		arg1 []byte
-		arg2 types.HashOpts
-	}{arg1Copy, arg2})
-	stub := fake.HashStub
-	fakeReturns := fake.hashReturns
-	fake.recordInvocation("Hash", []interface{}{arg1Copy, arg2})
-	fake.hashMutex.Unlock()
-	if stub != nil {
-		return stub(arg1, arg2)
-	}
-	if specificReturn {
-		return ret.result1, ret.result2
-	}
-	return fakeReturns.result1, fakeReturns.result2
-}
-
-func (fake *BCCSP) HashCallCount() int {
-	fake.hashMutex.RLock()
-	defer fake.hashMutex.RUnlock()
-	return len(fake.hashArgsForCall)
-}
-
-func (fake *BCCSP) HashCalls(stub func([]byte, types.HashOpts) ([]byte, error)) {
-	fake.hashMutex.Lock()
-	defer fake.hashMutex.Unlock()
-	fake.HashStub = stub
-}
-
-func (fake *BCCSP) HashArgsForCall(i int) ([]byte, types.HashOpts) {
-	fake.hashMutex.RLock()
-	defer fake.hashMutex.RUnlock()
-	argsForCall := fake.hashArgsForCall[i]
-	return argsForCall.arg1, argsForCall.arg2
-}
-
-func (fake *BCCSP) HashReturns(result1 []byte, result2 error) {
-	fake.hashMutex.Lock()
-	defer fake.hashMutex.Unlock()
-	fake.HashStub = nil
-	fake.hashReturns = struct {
-		result1 []byte
-		result2 error
-	}{result1, result2}
-}
-
-func (fake *BCCSP) HashReturnsOnCall(i int, result1 []byte, result2 error) {
-	fake.hashMutex.Lock()
-	defer fake.hashMutex.Unlock()
-	fake.HashStub = nil
-	if fake.hashReturnsOnCall == nil {
-		fake.hashReturnsOnCall = make(map[int]struct {
-			result1 []byte
-			result2 error
-		})
-	}
-	fake.hashReturnsOnCall[i] = struct {
-		result1 []byte
 		result2 error
 	}{result1, result2}
 }
@@ -629,11 +295,11 @@ func (fake *BCCSP) KeyGenReturnsOnCall(i int, result1 types.Key, result2 error) 
 	}{result1, result2}
 }
 
-func (fake *BCCSP) KeyImport(arg1 interface{}, arg2 types.KeyImportOpts) (types.Key, error) {
+func (fake *BCCSP) KeyImport(arg1 any, arg2 types.KeyImportOpts) (types.Key, error) {
 	fake.keyImportMutex.Lock()
 	ret, specificReturn := fake.keyImportReturnsOnCall[len(fake.keyImportArgsForCall)]
 	fake.keyImportArgsForCall = append(fake.keyImportArgsForCall, struct {
-		arg1 interface{}
+		arg1 any
 		arg2 types.KeyImportOpts
 	}{arg1, arg2})
 	stub := fake.KeyImportStub
@@ -655,13 +321,13 @@ func (fake *BCCSP) KeyImportCallCount() int {
 	return len(fake.keyImportArgsForCall)
 }
 
-func (fake *BCCSP) KeyImportCalls(stub func(interface{}, types.KeyImportOpts) (types.Key, error)) {
+func (fake *BCCSP) KeyImportCalls(stub func(any, types.KeyImportOpts) (types.Key, error)) {
 	fake.keyImportMutex.Lock()
 	defer fake.keyImportMutex.Unlock()
 	fake.KeyImportStub = stub
 }
 
-func (fake *BCCSP) KeyImportArgsForCall(i int) (interface{}, types.KeyImportOpts) {
+func (fake *BCCSP) KeyImportArgsForCall(i int) (any, types.KeyImportOpts) {
 	fake.keyImportMutex.RLock()
 	defer fake.keyImportMutex.RUnlock()
 	argsForCall := fake.keyImportArgsForCall[i]
@@ -845,26 +511,6 @@ func (fake *BCCSP) VerifyReturnsOnCall(i int, result1 bool, result2 error) {
 func (fake *BCCSP) Invocations() map[string][][]interface{} {
 	fake.invocationsMutex.RLock()
 	defer fake.invocationsMutex.RUnlock()
-	fake.decryptMutex.RLock()
-	defer fake.decryptMutex.RUnlock()
-	fake.encryptMutex.RLock()
-	defer fake.encryptMutex.RUnlock()
-	fake.getHashMutex.RLock()
-	defer fake.getHashMutex.RUnlock()
-	fake.getKeyMutex.RLock()
-	defer fake.getKeyMutex.RUnlock()
-	fake.hashMutex.RLock()
-	defer fake.hashMutex.RUnlock()
-	fake.keyDerivMutex.RLock()
-	defer fake.keyDerivMutex.RUnlock()
-	fake.keyGenMutex.RLock()
-	defer fake.keyGenMutex.RUnlock()
-	fake.keyImportMutex.RLock()
-	defer fake.keyImportMutex.RUnlock()
-	fake.signMutex.RLock()
-	defer fake.signMutex.RUnlock()
-	fake.verifyMutex.RLock()
-	defer fake.verifyMutex.RUnlock()
 	copiedInvocations := map[string][][]interface{}{}
 	for key, value := range fake.invocations {
 		copiedInvocations[key] = value

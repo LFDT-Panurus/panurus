@@ -11,8 +11,8 @@ import (
 	"testing"
 
 	idemix "github.com/IBM/idemix/bccsp/types"
+	"github.com/LFDT-Panurus/panurus/token/services/identity/idemix/mock"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/identity/idemix/mock"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/proto"
@@ -202,7 +202,7 @@ func TestAuditInfo_Match(t *testing.T) {
 
 		auditInfo := createAuditInfo()
 		auditInfo.SchemaManager = mockSchemaManager
-		auditInfo.EidNymAuditData = nil //cause Match to panic due to nil EidNymAuditData
+		auditInfo.EidNymAuditData = nil // cause Match to panic due to nil EidNymAuditData
 
 		assert.Panics(t, func() {
 			_ = auditInfo.Match(context.Background(), createIdentity())

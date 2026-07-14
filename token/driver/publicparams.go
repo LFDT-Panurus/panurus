@@ -13,7 +13,7 @@ type (
 	// TokenDriverName is the name of a token driver
 	TokenDriverName string
 	// TokenDriverVersion is the version of a token driver
-	TokenDriverVersion uint64
+	TokenDriverVersion uint32
 )
 
 type PPReader interface {

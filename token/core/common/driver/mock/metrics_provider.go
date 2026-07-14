@@ -4,8 +4,8 @@ package mock
 import (
 	"sync"
 
+	"github.com/LFDT-Panurus/panurus/token/core/common/driver"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/services/metrics"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/core/common/driver"
 )
 
 type MetricsProvider struct {

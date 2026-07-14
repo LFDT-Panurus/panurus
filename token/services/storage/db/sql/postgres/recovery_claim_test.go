@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	tokensdriver "github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/db/driver"
+	tokensdriver "github.com/LFDT-Panurus/panurus/token/services/storage/db/driver"
 	"github.com/stretchr/testify/require"
 )
 

@@ -10,12 +10,12 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/hyperledger-labs/fabric-token-sdk/token"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/sdk/identity"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/sdk/identity/mock"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/identitydb"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/keystoredb"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/walletdb"
+	"github.com/LFDT-Panurus/panurus/token"
+	"github.com/LFDT-Panurus/panurus/token/sdk/identity"
+	"github.com/LFDT-Panurus/panurus/token/sdk/identity/mock"
+	"github.com/LFDT-Panurus/panurus/token/services/storage/identitydb"
+	"github.com/LFDT-Panurus/panurus/token/services/storage/keystoredb"
+	"github.com/LFDT-Panurus/panurus/token/services/storage/walletdb"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

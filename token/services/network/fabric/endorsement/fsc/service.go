@@ -9,13 +9,13 @@ package fsc
 import (
 	"math/rand"
 
+	"github.com/LFDT-Panurus/panurus/token"
+	tdriver "github.com/LFDT-Panurus/panurus/token/driver"
+	"github.com/LFDT-Panurus/panurus/token/services/logging"
+	"github.com/LFDT-Panurus/panurus/token/services/network/common/rws/translator"
+	"github.com/LFDT-Panurus/panurus/token/services/network/driver"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/view"
-	"github.com/hyperledger-labs/fabric-token-sdk/token"
-	tdriver "github.com/hyperledger-labs/fabric-token-sdk/token/driver"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/logging"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/network/common/rws/translator"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/network/driver"
 )
 
 var (
@@ -116,7 +116,7 @@ func (e *EndorsementService) Endorse(context view.Context, requestRaw []byte, si
 	default:
 		endorsers = e.Endorsers
 	}
-	logger.DebugfContext(context.Context(), "request approval via fts endrosers with policy [%s]: [%d]...", e.PolicyType, len(endorsers))
+	logger.DebugfContext(context.Context(), "request approval via panurus endrosers with policy [%s]: [%d]...", e.PolicyType, len(endorsers))
 
 	envBoxed, err := e.ViewManager.InitiateView(context.Context(), NewRequestApprovalView(
 		e.TmsID,

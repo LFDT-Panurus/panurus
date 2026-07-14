@@ -13,12 +13,12 @@ import (
 	"testing"
 	"time"
 
-	mockDriver "github.com/hyperledger-labs/fabric-token-sdk/token/driver/mock"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/identity"
-	identityDriverMock "github.com/hyperledger-labs/fabric-token-sdk/token/services/identity/driver/mock"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/identity/interop/htlc"
-	desmock "github.com/hyperledger-labs/fabric-token-sdk/token/services/identity/interop/htlc/mock"
-	interop "github.com/hyperledger-labs/fabric-token-sdk/token/services/interop/htlc"
+	mockDriver "github.com/LFDT-Panurus/panurus/token/driver/mock"
+	"github.com/LFDT-Panurus/panurus/token/services/identity"
+	identityDriverMock "github.com/LFDT-Panurus/panurus/token/services/identity/driver/mock"
+	"github.com/LFDT-Panurus/panurus/token/services/identity/interop/htlc"
+	desmock "github.com/LFDT-Panurus/panurus/token/services/identity/interop/htlc/mock"
+	interop "github.com/LFDT-Panurus/panurus/token/services/interop/htlc"
 	"github.com/stretchr/testify/require"
 )
 

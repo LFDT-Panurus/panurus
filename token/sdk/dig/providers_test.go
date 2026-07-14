@@ -14,7 +14,7 @@ import (
 
 // Note: The functions newMultiplexedDriver and newTokenDriverService are dependency injection
 // provider functions that use dig.In structs. They are thin wrappers around constructors
-// and are primarily tested through integration tests and the SDK wiring test (TestFabricWiring).
+// and are primarily tested through integration tests and Panurus wiring test (TestFabricWiring).
 // Direct unit testing would require complex mocking of dig.In behavior which provides
 // limited value compared to integration testing.
 //

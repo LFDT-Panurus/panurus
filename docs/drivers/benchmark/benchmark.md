@@ -24,3 +24,6 @@
 
 ### Node Level Benchmarks
 - [Token Validation Service Benchmark](token_validation_service_benchmark.md)
+
+### Foundational Types
+- `Quantity` operations (`token/token/quantity_test.go`) — micro-benchmarks for `BigQuantity`/`UInt64Quantity` `Add`, `Sub`, `Cmp`, and `ToQuantity` parsing. Run with `go test -run='^$' -bench=. -benchmem ./token/token/`

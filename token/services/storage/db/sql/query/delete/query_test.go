@@ -11,9 +11,9 @@ import (
 
 	. "github.com/onsi/gomega"
 
-	localPostgres "github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/db/sql/postgres"
-	q "github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/db/sql/query"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/db/sql/query/cond"
+	localPostgres "github.com/LFDT-Panurus/panurus/token/services/storage/db/sql/postgres"
+	q "github.com/LFDT-Panurus/panurus/token/services/storage/db/sql/query"
+	"github.com/LFDT-Panurus/panurus/token/services/storage/db/sql/query/cond"
 )
 
 func TestDeleteSimple(t *testing.T) { //nolint:paralleltest

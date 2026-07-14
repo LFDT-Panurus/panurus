@@ -5,7 +5,7 @@ import (
 	"context"
 	"sync"
 
-	"github.com/hyperledger-labs/fabric-token-sdk/token/core"
+	"github.com/LFDT-Panurus/panurus/token/core"
 )
 
 type PublicParametersStorage struct {

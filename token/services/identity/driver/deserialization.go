@@ -9,7 +9,7 @@ package driver
 import (
 	"context"
 
-	tdriver "github.com/hyperledger-labs/fabric-token-sdk/token/driver"
+	tdriver "github.com/LFDT-Panurus/panurus/token/driver"
 )
 
 // TypedSignerDeserializer converts a raw byte representation into a concrete

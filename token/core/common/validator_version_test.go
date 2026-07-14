@@ -9,7 +9,7 @@ package common
 import (
 	"testing"
 
-	"github.com/hyperledger-labs/fabric-token-sdk/token/driver"
+	"github.com/LFDT-Panurus/panurus/token/driver"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -36,12 +36,6 @@ func TestMinProtocolVersionEnforcement(t *testing.T) {
 			shouldFail:         false,
 		},
 		{
-			name:               "No minimum version set - accepts V2",
-			minProtocolVersion: 0,
-			requestVersion:     driver.ProtocolV2,
-			shouldFail:         false,
-		},
-		{
 			name:               "Minimum V1 - rejects version 0",
 			minProtocolVersion: driver.ProtocolV1,
 			requestVersion:     0,
@@ -52,32 +46,6 @@ func TestMinProtocolVersionEnforcement(t *testing.T) {
 			name:               "Minimum V1 - accepts V1",
 			minProtocolVersion: driver.ProtocolV1,
 			requestVersion:     driver.ProtocolV1,
-			shouldFail:         false,
-		},
-		{
-			name:               "Minimum V1 - accepts V2",
-			minProtocolVersion: driver.ProtocolV1,
-			requestVersion:     driver.ProtocolV2,
-			shouldFail:         false,
-		},
-		{
-			name:               "Minimum V2 - rejects version 0",
-			minProtocolVersion: driver.ProtocolV2,
-			requestVersion:     0,
-			shouldFail:         true,
-			expectedError:      "invalid token request: protocol version cannot be 0",
-		},
-		{
-			name:               "Minimum V2 - rejects V1",
-			minProtocolVersion: driver.ProtocolV2,
-			requestVersion:     driver.ProtocolV1,
-			shouldFail:         true,
-			expectedError:      "token request protocol version [1] is below minimum required version [2]",
-		},
-		{
-			name:               "Minimum V2 - accepts V2",
-			minProtocolVersion: driver.ProtocolV2,
-			requestVersion:     driver.ProtocolV2,
 			shouldFail:         false,
 		},
 	}
@@ -115,13 +83,8 @@ func TestMinProtocolVersionLogic(t *testing.T) {
 	}{
 		{"V0 always invalid", 0, 0, false, "version 0 is invalid"},
 		{"No min, V1 request", 0, driver.ProtocolV1, true, ""},
-		{"No min, V2 request", 0, driver.ProtocolV2, true, ""},
 		{"Min V1, V0 request", driver.ProtocolV1, 0, false, "version 0 is invalid"},
 		{"Min V1, V1 request", driver.ProtocolV1, driver.ProtocolV1, true, ""},
-		{"Min V1, V2 request", driver.ProtocolV1, driver.ProtocolV2, true, ""},
-		{"Min V2, V0 request", driver.ProtocolV2, 0, false, "version 0 is invalid"},
-		{"Min V2, V1 request", driver.ProtocolV2, driver.ProtocolV1, false, "below minimum"},
-		{"Min V2, V2 request", driver.ProtocolV2, driver.ProtocolV2, true, ""},
 	}
 
 	for _, tt := range tests {

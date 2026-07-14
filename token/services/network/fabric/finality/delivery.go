@@ -9,8 +9,8 @@ package finality
 import (
 	"context"
 
+	"github.com/LFDT-Panurus/panurus/token/services/logging"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/fabric"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/logging"
 )
 
 type Delivery struct {

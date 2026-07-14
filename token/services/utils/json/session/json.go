@@ -10,8 +10,8 @@ package session
 import (
 	"encoding/json"
 
+	session "github.com/LFDT-Panurus/panurus/token/services/utils/session"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/view"
-	session "github.com/hyperledger-labs/fabric-token-sdk/token/services/utils/session"
 )
 
 // JSONMarshaller is the default JSON marshaller.

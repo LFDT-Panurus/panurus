@@ -9,16 +9,16 @@ package update
 import (
 	"strconv"
 
+	"github.com/LFDT-Panurus/panurus/integration"
+	"github.com/LFDT-Panurus/panurus/integration/nwo/token/generators/crypto/fabtokenv1"
+	"github.com/LFDT-Panurus/panurus/integration/nwo/token/generators/crypto/zkatdlognoghv1"
+	token2 "github.com/LFDT-Panurus/panurus/integration/token"
+	"github.com/LFDT-Panurus/panurus/integration/token/common"
+	"github.com/LFDT-Panurus/panurus/integration/token/common/sdk/fall"
+	"github.com/LFDT-Panurus/panurus/integration/token/fungible"
+	"github.com/LFDT-Panurus/panurus/integration/token/fungible/topology"
 	"github.com/hyperledger-labs/fabric-smart-client/integration/nwo/fsc"
 	nodepkg "github.com/hyperledger-labs/fabric-smart-client/pkg/node"
-	"github.com/hyperledger-labs/fabric-token-sdk/integration"
-	"github.com/hyperledger-labs/fabric-token-sdk/integration/nwo/token/generators/crypto/fabtokenv1"
-	"github.com/hyperledger-labs/fabric-token-sdk/integration/nwo/token/generators/crypto/zkatdlognoghv1"
-	token2 "github.com/hyperledger-labs/fabric-token-sdk/integration/token"
-	"github.com/hyperledger-labs/fabric-token-sdk/integration/token/common"
-	"github.com/hyperledger-labs/fabric-token-sdk/integration/token/common/sdk/fall"
-	"github.com/hyperledger-labs/fabric-token-sdk/integration/token/fungible"
-	"github.com/hyperledger-labs/fabric-token-sdk/integration/token/fungible/topology"
 	. "github.com/onsi/ginkgo/v2"
 )
 
@@ -79,7 +79,7 @@ func newTestSuite(commType fsc.P2PCommunicationType, fabtokenPrecision int, extr
 		ReplicationOpts: opts,
 		DefaultTMSOpts:  common.TMSOpts{TokenSDKDriver: fabtokenv1.DriverIdentifier, PublicParamsGenArgs: []string{strconv.Itoa(fabtokenPrecision)}},
 		ExtraTMSs:       extraTMSs,
-		// FSCLogSpec:      "token-sdk=debug:fabric-sdk=debug:info",
+		// FSCLogSpec:      "panurus=debug:fabric-sdk=debug:info",
 	}))
 
 	return ts, selector

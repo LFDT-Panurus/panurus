@@ -9,11 +9,11 @@ package auditor
 import (
 	errors2 "errors"
 
+	views1 "github.com/LFDT-Panurus/panurus/integration/token/common/views"
+	"github.com/LFDT-Panurus/panurus/integration/token/fungible/views"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	dig2 "github.com/hyperledger-labs/fabric-smart-client/platform/common/sdk/dig"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/services/view"
-	views1 "github.com/hyperledger-labs/fabric-token-sdk/integration/token/common/views"
-	"github.com/hyperledger-labs/fabric-token-sdk/integration/token/fungible/views"
 )
 
 type SDK struct {
@@ -45,6 +45,7 @@ func (p *SDK) Install() error {
 			registry.RegisterFactory("ListVaultUnspentTokens", &views.ListVaultUnspentTokensViewFactory{}),
 			registry.RegisterFactory("CheckIfExistsInVault", &views.CheckIfExistsInVaultViewFactory{}),
 			registry.RegisterFactory("RevokeUser", &views.RevokeUserViewFactory{}),
+			registry.RegisterFactory("AuthorizeRedeemIssuer", &views.AuthorizeRedeemIssuerViewFactory{}),
 			registry.RegisterFactory("DoesWalletExist", &views.DoesWalletExistViewFactory{}),
 			registry.RegisterFactory("TxFinality", &views1.TxFinalityViewFactory{}),
 			registry.RegisterFactory("GetPublicParams", &views.GetPublicParamsViewFactory{}),

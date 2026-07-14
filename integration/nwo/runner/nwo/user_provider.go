@@ -9,17 +9,17 @@ package nwo
 import (
 	"errors"
 
+	runner2 "github.com/LFDT-Panurus/panurus/integration/nwo/runner"
+	"github.com/LFDT-Panurus/panurus/integration/nwo/txgen/model"
+	"github.com/LFDT-Panurus/panurus/integration/nwo/txgen/service/logging"
+	"github.com/LFDT-Panurus/panurus/integration/nwo/txgen/service/metrics"
+	"github.com/LFDT-Panurus/panurus/integration/nwo/txgen/service/user"
+	token2 "github.com/LFDT-Panurus/panurus/integration/token"
 	"github.com/hyperledger-labs/fabric-smart-client/integration"
 	api2 "github.com/hyperledger-labs/fabric-smart-client/integration/nwo/api"
 	"github.com/hyperledger-labs/fabric-smart-client/integration/nwo/fsc"
 	errors2 "github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/common/utils/collections"
-	runner2 "github.com/hyperledger-labs/fabric-token-sdk/integration/nwo/runner"
-	"github.com/hyperledger-labs/fabric-token-sdk/integration/nwo/txgen/model"
-	"github.com/hyperledger-labs/fabric-token-sdk/integration/nwo/txgen/service/logging"
-	"github.com/hyperledger-labs/fabric-token-sdk/integration/nwo/txgen/service/metrics"
-	"github.com/hyperledger-labs/fabric-token-sdk/integration/nwo/txgen/service/user"
-	token2 "github.com/hyperledger-labs/fabric-token-sdk/integration/token"
 	"go.opentelemetry.io/otel/trace"
 )
 

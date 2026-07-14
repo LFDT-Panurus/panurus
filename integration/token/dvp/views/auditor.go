@@ -7,9 +7,9 @@ SPDX-License-Identifier: Apache-2.0
 package views
 
 import (
+	"github.com/LFDT-Panurus/panurus/token/services/ttx"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/common/utils/assert"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/view"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/ttx"
 )
 
 type AuditView struct{}

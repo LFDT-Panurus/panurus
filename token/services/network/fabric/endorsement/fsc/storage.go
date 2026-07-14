@@ -9,8 +9,8 @@ package fsc
 import (
 	"context"
 
-	"github.com/hyperledger-labs/fabric-token-sdk/token"
-	tdriver "github.com/hyperledger-labs/fabric-token-sdk/token/driver"
+	"github.com/LFDT-Panurus/panurus/token"
+	tdriver "github.com/LFDT-Panurus/panurus/token/driver"
 )
 
 // Storage defines the interface for storing token transaction records

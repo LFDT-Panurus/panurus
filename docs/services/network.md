@@ -1,10 +1,10 @@
 # Network Service
 
-The **Network Service** ([`token/services/network`](../../token/services/network/network.go)) is the **bridge layer** of the Fabric Token SDK. It provides a consistent, backend-agnostic interface that translates generic token operations into the specific formats and protocols required by the underlying Distributed Ledger Technology (DLT), such as Hyperledger Fabric or FabricX.
+The **Network Service** ([`token/services/network`](../../token/services/network/network.go)) is the **bridge layer** of Panurus. It provides a consistent, backend-agnostic interface that translates generic token operations into the specific formats and protocols required by the underlying Distributed Ledger Technology (DLT), such as Hyperledger Fabric or FabricX.
 
 ## Overview
 
-The Network Service abstracts the complexities of different ledger implementations, allowing Application Services (like TTX) and Token Drivers to remain agnostic of the specific network backend. This abstraction enables the SDK to support multiple DLT platforms through a pluggable driver architecture.
+The Network Service abstracts the complexities of different ledger implementations, allowing Application Services (like TTX) and Token Drivers to remain agnostic of the specific network backend. This abstraction enables Panurus to support multiple DLT platforms through a pluggable driver architecture.
 
 ```mermaid
 graph TB
@@ -39,7 +39,7 @@ graph TB
 
 ## Driver-Based Architecture
 
-The Network Service uses a **driver pattern** to enable pluggable backend implementations. This design separates the interface from the implementation, allowing the SDK to support different DLT platforms without changing application code.
+The Network Service uses a **driver pattern** to enable pluggable backend implementations. This design separates the interface from the implementation, allowing Panurus to support different DLT platforms without changing application code.
 
 ### Core Components
 
@@ -97,11 +97,11 @@ Translating high-level token requests (e.g., "Transfer 10 tokens from A to B") i
 Broadcasting endorsed transaction envelopes to the network's ordering service via [`Broadcast`](../../token/services/network/network.go).
 
 ### 3.  Finality Tracking
-Monitoring the ledger for transaction commitment. It provides a listener-based API ([`FinalityListener`](../../token/services/network/network.go)) that notifies the SDK when a transaction is validated or invalidated. 
+Monitoring the ledger for transaction commitment. It provides a listener-based API ([`FinalityListener`](../../token/services/network/network.go)) that notifies Panurus when a transaction is validated or invalidated. 
 The Network Service also instantiates the **Transaction Recovery Service** from the Storage Service to handle pending transactions that may have lost their finality listeners.
 
 ### 4. Public Parameters Discovery
-Acting as the primary fetcher for the system's [Public Parameters](../public_parameters.md). It monitors the ledger for updates and ensures the SDK is synchronized with the latest cryptographic material.
+Acting as the primary fetcher for the system's [Public Parameters](../public_parameters.md). It monitors the ledger for updates and ensures Panurus is synchronized with the latest cryptographic material.
 
 ### 5. Ledger Querying
 Providing a [`Ledger`](../../token/services/network/network.go) interface to retrieve the current state of tokens and other relevant ledger data.
@@ -124,7 +124,7 @@ The [`driver.Network`](../../token/services/network/driver/network.go) interface
 
 ## Available Implementations
 
-The SDK currently provides network driver implementations for the following platforms:
+Panurus currently provides network driver implementations for the following platforms:
 
 ### Hyperledger Fabric
 Traditional Fabric network with token chaincode deployed on peers for endorsement and validation.
@@ -213,4 +213,4 @@ For detailed information about the recovery mechanism, see [Storage Service - Tr
 - [Storage Service - Transaction Recovery](./storage.md#transaction-recovery-service) - Recovery mechanism details
 - [Public Parameters](../public_parameters.md) - Cryptographic setup management
 - [TTX Service](./ttx.md) - Token transaction orchestration
-- [Token SDK Architecture](../tokensdk.md) - Overall system design
+- [Panurus Architecture](../tokensdk.md) - Overall system design

@@ -12,15 +12,15 @@ import (
 	"time"
 
 	math "github.com/IBM/mathlib"
-	math2 "github.com/hyperledger-labs/fabric-token-sdk/token/core/common/crypto/math"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/core/zkatdlog/nogh/v1/benchmark"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/core/zkatdlog/nogh/v1/crypto/rp"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/core/zkatdlog/nogh/v1/crypto/rp/bulletproof"
-	v1 "github.com/hyperledger-labs/fabric-token-sdk/token/core/zkatdlog/nogh/v1/setup"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/core/zkatdlog/nogh/v1/token"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/core/zkatdlog/nogh/v1/transfer"
-	benchmark2 "github.com/hyperledger-labs/fabric-token-sdk/token/services/benchmark"
-	token2 "github.com/hyperledger-labs/fabric-token-sdk/token/token"
+	math2 "github.com/LFDT-Panurus/panurus/token/core/common/crypto/math"
+	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/benchmark"
+	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/crypto/rp"
+	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/crypto/rp/bulletproof"
+	v1 "github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/setup"
+	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/token"
+	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/transfer"
+	benchmark2 "github.com/LFDT-Panurus/panurus/token/services/benchmark"
+	token2 "github.com/LFDT-Panurus/panurus/token/token"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -245,7 +245,10 @@ func prepareZKTransferWithProofType(proofType rp.ProofType) (transfer.Prover, tr
 	if err != nil {
 		return nil, nil, err
 	}
-	verifier := transfer.NewVerifier(in, out, pp, proofType)
+	verifier, err := transfer.NewVerifier(in, out, pp, proofType)
+	if err != nil {
+		return nil, nil, err
+	}
 
 	return prover, verifier, nil
 }
@@ -265,7 +268,10 @@ func prepareZKTransferWithWrongSumAndProofType(proofType rp.ProofType) (transfer
 	if err != nil {
 		return nil, nil, err
 	}
-	verifier := transfer.NewVerifier(in, out, pp, proofType)
+	verifier, err := transfer.NewVerifier(in, out, pp, proofType)
+	if err != nil {
+		return nil, nil, err
+	}
 
 	return prover, verifier, nil
 }
@@ -285,7 +291,10 @@ func prepareZKTransferWithInvalidRangeAndProofType(proofType rp.ProofType) (tran
 	if err != nil {
 		return nil, nil, err
 	}
-	verifier := transfer.NewVerifier(in, out, pp, proofType)
+	verifier, err := transfer.NewVerifier(in, out, pp, proofType)
+	if err != nil {
+		return nil, nil, err
+	}
 
 	return prover, verifier, nil
 }
@@ -455,4 +464,103 @@ func newBenchmarkTransferEnvWithProofType(n int, benchmarkCase *benchmark2.Case,
 	}
 
 	return &benchmarkTransferEnv{ProverEnvs: entries, pp: pp}, nil
+}
+
+// TestBulletProofVerifier_1to1WithAttachedRangeProof is T-GAP-C1: verifies that
+// a 1-input/1-output transfer (ownership transfer) that has a non-nil
+// RangeCorrectness field attached is still accepted.
+//
+// The BulletProofVerifier skips range-proof verification when len(inputs) == 1
+// and len(outputs) == 1. A proof carrying a RangeCorrectness payload (e.g.,
+// produced by a prover with different skip logic) must be silently ignored by
+// the verifier and must not cause a failure.
+func TestBulletProofVerifier_1to1WithAttachedRangeProof(t *testing.T) {
+	pp, err := setupWithProofType(TestBits, TestCurve, rp.RangeProofType)
+	require.NoError(t, err)
+
+	// Build a 1-to-1 transfer: prover and verifier both use 1 input / 1 output.
+	intw, outtw, in, out, err := prepareInputsForZKTransfer(pp, 1, 1)
+	require.NoError(t, err)
+
+	prover, err := transfer.NewProver(intw, outtw, in, out, pp)
+	require.NoError(t, err)
+	proofRaw, err := prover.Prove()
+	require.NoError(t, err)
+
+	// Deserialize the proof and manually attach a non-nil (but empty)
+	// RangeCorrectness field to simulate a prover that always generates one.
+	// An empty-but-non-nil RangeCorrectness is sufficient to show the verifier
+	// ignores it for 1-to-1 transfers.
+	proof := &transfer.Proof{}
+	require.NoError(t, proof.Deserialize(proofRaw))
+
+	// Attach a non-nil but empty range correctness structure.
+	proof.RangeCorrectness = &bulletproof.RangeCorrectness{
+		Proofs: []*bulletproof.RangeProof{},
+	}
+	tamperedRaw, err := proof.Serialize()
+	require.NoError(t, err)
+
+	// The verifier must accept the proof: for 1-to-1 transfers RangeCorrectness
+	// is ignored entirely, so an incorrect (or even random) payload causes no failure.
+	verifier := transfer.NewBulletProofVerifier(in, out, pp)
+	err = verifier.Verify(tamperedRaw)
+	require.NoError(t, err, "T-GAP-C1: 1-to-1 transfer with attached range proof must still be accepted")
+}
+
+// TestNewVerifier_ProofTypeUnavailable is T-SEC-1: verifies that NewVerifier returns
+// ErrProofTypeMismatch when the action's ProofType refers to a range-proof algorithm
+// whose params sub-struct is not populated in PublicParams, preventing an attacker
+// from selecting a verifier whose params sub-struct is nil (algorithm confusion /
+// nil-deref).
+//
+// Scenario A: only BulletProof params populated, action claims CSP  → error.
+// Scenario B: only CSP params populated, action claims BulletProof  → error.
+// Scenario C: both params populated (migration), each type is accepted → no error.
+func TestNewVerifier_ProofTypeUnavailable(t *testing.T) {
+	pp, err := setupWithProofType(TestBits, TestCurve, rp.RangeProofType)
+	require.NoError(t, err)
+
+	_, _, in, out, err := prepareInputsForZKTransfer(pp, 2, 2)
+	require.NoError(t, err)
+
+	t.Run("BulletProofPP_CSPActionType", func(t *testing.T) {
+		pp, err := setupWithProofType(TestBits, TestCurve, rp.RangeProofType)
+		require.NoError(t, err)
+
+		_, err = transfer.NewVerifier(in, out, pp, rp.CSPRangeProofType)
+		require.ErrorIs(t, err, transfer.ErrProofTypeMismatch,
+			"T-SEC-1A: CSP proof type against BulletProof-only pp must return ErrProofTypeMismatch")
+	})
+
+	t.Run("CSPParamsPP_BulletProofActionType", func(t *testing.T) {
+		pp, err := setupWithProofType(TestBits, TestCurve, rp.CSPRangeProofType)
+		require.NoError(t, err)
+
+		_, err = transfer.NewVerifier(in, out, pp, rp.RangeProofType)
+		require.ErrorIs(t, err, transfer.ErrProofTypeMismatch,
+			"T-SEC-1B: BulletProof proof type against CSP-only pp must return ErrProofTypeMismatch")
+	})
+
+	t.Run("BothParamsPP_BulletProofActionType", func(t *testing.T) {
+		// Simulate a migration: both sub-structs are populated.
+		pp, err := setupWithProofType(TestBits, TestCurve, rp.RangeProofType)
+		require.NoError(t, err)
+		require.NoError(t, pp.GenerateCSPRangeProofParameters(TestBits))
+
+		_, err = transfer.NewVerifier(in, out, pp, rp.RangeProofType)
+		require.NoError(t, err,
+			"T-SEC-1C: BulletProof proof type against dual pp must be accepted")
+	})
+
+	t.Run("BothParamsPP_CSPActionType", func(t *testing.T) {
+		// Simulate a migration: both sub-structs are populated.
+		pp, err := setupWithProofType(TestBits, TestCurve, rp.RangeProofType)
+		require.NoError(t, err)
+		require.NoError(t, pp.GenerateCSPRangeProofParameters(TestBits))
+
+		_, err = transfer.NewVerifier(in, out, pp, rp.CSPRangeProofType)
+		require.NoError(t, err,
+			"T-SEC-1D: CSP proof type against dual pp must be accepted")
+	})
 }

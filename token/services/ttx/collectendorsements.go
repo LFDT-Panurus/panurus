@@ -12,19 +12,19 @@ import (
 	maps0 "maps"
 	"time"
 
+	"github.com/LFDT-Panurus/panurus/token"
+	"github.com/LFDT-Panurus/panurus/token/services/identity/boolpolicy"
+	"github.com/LFDT-Panurus/panurus/token/services/identity/multisig"
+	"github.com/LFDT-Panurus/panurus/token/services/logging"
+	"github.com/LFDT-Panurus/panurus/token/services/network"
+	"github.com/LFDT-Panurus/panurus/token/services/utils"
+	session2 "github.com/LFDT-Panurus/panurus/token/services/utils/json/session"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/common/utils/collections"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/services/endpoint"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/services/id"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/services/sig"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/view"
-	"github.com/hyperledger-labs/fabric-token-sdk/token"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/identity/boolpolicy"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/identity/multisig"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/logging"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/network"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/utils"
-	session2 "github.com/hyperledger-labs/fabric-token-sdk/token/services/utils/json/session"
 	"go.uber.org/zap/zapcore"
 )
 
@@ -75,7 +75,7 @@ type CollectEndorsementsView struct {
 // 3. Before completing, all recipients receive the approved transaction.
 // Depending on the token driver implementation, the recipient's signature might or might not be needed to make
 // the token transaction valid.
-func NewCollectEndorsementsView(tx *Transaction, opts ...EndorsementsOpt) *CollectEndorsementsView {
+func NewCollectEndorsementsView(tx *Transaction, opts ...token.ServiceOption) *CollectEndorsementsView {
 	options, err := CompileCollectEndorsementsOpts(opts...)
 	if err != nil {
 		panic(err)
@@ -100,6 +100,10 @@ func (c *CollectEndorsementsView) Call(context view.Context) (any, error) {
 
 	// Ensure Done() is called on all external wallets regardless of errors
 	defer c.CleanupExternalWallets(context, externalWallets)
+
+	// Close all endorsement sessions on every return path. Leaking the auditor
+	// session on an error path keeps its audit-DB enrollment-ID lock held.
+	defer c.cleanupSessions(context.Context())
 
 	// 1. First collect signatures on the token request
 	issueSigmas, err := c.requestSignaturesOnIssues(context, externalWallets)
@@ -142,14 +146,7 @@ func (c *CollectEndorsementsView) Call(context view.Context) (any, error) {
 		return nil, errors.WithMessagef(err, "failed distributing tx")
 	}
 
-	// Cleanup audit
-	logger.DebugfContext(context.Context(), "Cleanup audit")
-	if err := c.cleanupAudit(context); err != nil {
-		logger.ErrorfContext(context.Context(), "failed cleaning up audit: %s", err)
-
-		return nil, errors.WithMessagef(err, "failed cleaning up audit")
-	}
-
+	// Sessions are closed by the deferred cleanupSessions call.
 	logger.DebugfContext(context.Context(), "CollectEndorsementsView done.")
 
 	labels := []string{
@@ -166,8 +163,9 @@ func (c *CollectEndorsementsView) Call(context view.Context) (any, error) {
 // requestSignaturesOnIssues collects signatures from all issuers involved in the transaction's issue operations.
 // It delegates to requestSignatures with the appropriate issuer verifier function.
 func (c *CollectEndorsementsView) requestSignaturesOnIssues(context view.Context, externalWallets map[string]ExternalWalletSigner) (map[string][]byte, error) {
-	logger.DebugfContext(context.Context(), "collecting signature on [%d] request issue", len(c.tx.TokenRequest.Metadata.Issues))
+	logger.DebugfContext(context.Context(), "collecting signature on [%d] request issue", c.tx.TokenRequest.Metadata.NumIssues())
 
+	// Use IssueSigners() - the action context is preserved in metadata and used by SetSignatures()
 	return c.requestSignatures(
 		c.tx.TokenRequest.IssueSigners(),
 		c.tx.TokenService().SigService().IssuerVerifier,
@@ -179,8 +177,9 @@ func (c *CollectEndorsementsView) requestSignaturesOnIssues(context view.Context
 // requestSignaturesOnTransfers collects signatures from all owners involved in the transaction's transfer operations.
 // It delegates to requestSignatures with the appropriate owner verifier function.
 func (c *CollectEndorsementsView) requestSignaturesOnTransfers(context view.Context, externalWallets map[string]ExternalWalletSigner) (map[string][]byte, error) {
-	logger.DebugfContext(context.Context(), "collecting signature on [%d] request transfer", len(c.tx.TokenRequest.Metadata.Transfers))
+	logger.DebugfContext(context.Context(), "collecting signature on [%d] request transfer", c.tx.TokenRequest.Metadata.NumTransfers())
 
+	// Use TransferSigners() - the action context is preserved in metadata and used by SetSignatures()
 	return c.requestSignatures(
 		c.tx.TokenRequest.TransferSigners(),
 		c.tx.TokenService().SigService().OwnerVerifier,
@@ -449,18 +448,18 @@ func (c *CollectEndorsementsView) requestAudit(context view.Context) ([]view.Ide
 	return nil, nil
 }
 
-// cleanupAudit closes the auditor session if one was opened during the audit process.
-// This should be called after the transaction has been fully endorsed and distributed.
-func (c *CollectEndorsementsView) cleanupAudit(context view.Context) error {
-	if !c.tx.Opts.Auditor.IsNone() {
-		session, err := c.getSession(context, c.tx.Opts.Auditor)
-		if err != nil {
-			return errors.Wrap(err, "failed getting auditor's session")
+// cleanupSessions closes and removes every session opened while collecting
+// endorsements (e.g. the auditor session). Deleting entries as they are closed
+// makes it idempotent, so the deferred call is safe to run on any return path.
+func (c *CollectEndorsementsView) cleanupSessions(ctx context.Context) {
+	for key, session := range c.sessions {
+		delete(c.sessions, key)
+		if session == nil {
+			continue
 		}
+		logger.DebugfContext(ctx, "closing endorsement session [%s]", key)
 		session.Close()
 	}
-
-	return nil
 }
 
 // distributeTxToParties distributes the endorsed transaction to all parties in the distribution list.

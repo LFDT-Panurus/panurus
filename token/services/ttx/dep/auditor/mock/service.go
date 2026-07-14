@@ -5,9 +5,9 @@ import (
 	"context"
 	"sync"
 
-	"github.com/hyperledger-labs/fabric-token-sdk/token"
-	auditora "github.com/hyperledger-labs/fabric-token-sdk/token/services/auditor"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/ttx/dep/auditor"
+	"github.com/LFDT-Panurus/panurus/token"
+	auditora "github.com/LFDT-Panurus/panurus/token/services/auditor"
+	"github.com/LFDT-Panurus/panurus/token/services/ttx/dep/auditor"
 )
 
 type AuditService struct {

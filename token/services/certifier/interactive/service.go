@@ -11,12 +11,12 @@ import (
 	"sync"
 	"time"
 
+	token2 "github.com/LFDT-Panurus/panurus/token"
+	"github.com/LFDT-Panurus/panurus/token/services/utils/json/session"
+	"github.com/LFDT-Panurus/panurus/token/token"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/services/metrics"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/view"
-	token2 "github.com/hyperledger-labs/fabric-token-sdk/token"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/utils/json/session"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/token"
 )
 
 //go:generate counterfeiter -o mock/backend.go -fake-name BackendMock . Backend

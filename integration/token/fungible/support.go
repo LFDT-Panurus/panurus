@@ -19,31 +19,31 @@ import (
 	"strings"
 	"time"
 
+	tplatform "github.com/LFDT-Panurus/panurus/integration/nwo/token"
+	gfabtokenv1 "github.com/LFDT-Panurus/panurus/integration/nwo/token/generators/crypto/fabtokenv1"
+	"github.com/LFDT-Panurus/panurus/integration/nwo/token/generators/crypto/zkatdlognoghv1"
+	"github.com/LFDT-Panurus/panurus/integration/nwo/token/topology"
+	token3 "github.com/LFDT-Panurus/panurus/integration/token"
+	common2 "github.com/LFDT-Panurus/panurus/integration/token/common"
+	"github.com/LFDT-Panurus/panurus/integration/token/fungible/views"
+	token2 "github.com/LFDT-Panurus/panurus/token"
+	"github.com/LFDT-Panurus/panurus/token/core/common/encoding/pp"
+	fabtokenv1 "github.com/LFDT-Panurus/panurus/token/core/fabtoken/v1/setup"
+	dlognoghv1 "github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/setup"
+	"github.com/LFDT-Panurus/panurus/token/driver"
+	"github.com/LFDT-Panurus/panurus/token/services/identity"
+	"github.com/LFDT-Panurus/panurus/token/services/identity/x509"
+	"github.com/LFDT-Panurus/panurus/token/services/storage/db/kvs"
+	"github.com/LFDT-Panurus/panurus/token/services/storage/ttxdb"
+	"github.com/LFDT-Panurus/panurus/token/services/ttx"
+	"github.com/LFDT-Panurus/panurus/token/token"
 	"github.com/hyperledger-labs/fabric-smart-client/integration"
 	"github.com/hyperledger-labs/fabric-smart-client/integration/nwo/common"
 	topology2 "github.com/hyperledger-labs/fabric-smart-client/integration/nwo/fabric/topology"
 	"github.com/hyperledger-labs/fabric-smart-client/integration/reporting/prometheus"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
-	"github.com/hyperledger-labs/fabric-smart-client/platform/common/services/logging"
+	fsclogging "github.com/hyperledger-labs/fabric-smart-client/platform/common/services/logging"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/view"
-	tplatform "github.com/hyperledger-labs/fabric-token-sdk/integration/nwo/token"
-	gfabtokenv1 "github.com/hyperledger-labs/fabric-token-sdk/integration/nwo/token/generators/crypto/fabtokenv1"
-	"github.com/hyperledger-labs/fabric-token-sdk/integration/nwo/token/generators/crypto/zkatdlognoghv1"
-	"github.com/hyperledger-labs/fabric-token-sdk/integration/nwo/token/topology"
-	token3 "github.com/hyperledger-labs/fabric-token-sdk/integration/token"
-	common2 "github.com/hyperledger-labs/fabric-token-sdk/integration/token/common"
-	"github.com/hyperledger-labs/fabric-token-sdk/integration/token/fungible/views"
-	token2 "github.com/hyperledger-labs/fabric-token-sdk/token"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/core/common/encoding/pp"
-	fabtokenv1 "github.com/hyperledger-labs/fabric-token-sdk/token/core/fabtoken/v1/setup"
-	dlognoghv1 "github.com/hyperledger-labs/fabric-token-sdk/token/core/zkatdlog/nogh/v1/setup"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/driver"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/identity"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/identity/x509"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/db/kvs"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/ttxdb"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/ttx"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/token"
 	"github.com/onsi/gomega"
 	"github.com/prometheus/common/model"
 )
@@ -144,7 +144,7 @@ func issueCashForTMSID(
 	if len(expectedErrorMsgs) == 0 {
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		txID := common.JSONUnmarshalString(txIDBoxed)
-		for _, n := range []*token3.NodeReference{receiver, auditor} {
+		for _, n := range []*token3.NodeReference{receiver, auditor, issuer} {
 			common2.CheckFinality(network, n, txID, tmsId, false)
 		}
 		// Perform this check only if there is a fabric network
@@ -417,6 +417,28 @@ func ListIssuerHistoryForTMSID(network *integration.Infrastructure, wallet strin
 	common.JSONUnmarshal(res.([]byte), issuedTokens)
 
 	return issuedTokens
+}
+
+// CheckIssuerBalance verifies the issued, redeemed, and net balances of the given issuer
+// wallet and token type on the issuer node.
+func CheckIssuerBalance(network *integration.Infrastructure, issuer *token3.NodeReference, wallet string, typ token.Type, expectedIssued, expectedRedeemed, expectedNet uint64) {
+	CheckIssuerBalanceForTMSID(network, issuer, wallet, typ, expectedIssued, expectedRedeemed, expectedNet, nil)
+}
+
+func CheckIssuerBalanceForTMSID(network *integration.Infrastructure, issuer *token3.NodeReference, wallet string, typ token.Type, expectedIssued, expectedRedeemed, expectedNet uint64, tmsId *token2.TMSID) {
+	res, err := network.Client(issuer.ReplicaName()).CallView("issuerBalance", common.JSONMarshall(&views.IssuerBalanceQuery{
+		Wallet:    wallet,
+		TokenType: typ,
+		TMSID:     tmsId,
+	}))
+	gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+	balance := &views.IssuerBalance{}
+	common.JSONUnmarshal(res.([]byte), balance)
+
+	gomega.Expect(balance.Issued).To(gomega.BeEquivalentTo(strconv.FormatUint(expectedIssued, 10)), "issued balance mismatch for [%s:%s]: got [%s], expected [%d]", wallet, typ, balance.Issued, expectedIssued)
+	gomega.Expect(balance.Redeemed).To(gomega.BeEquivalentTo(strconv.FormatUint(expectedRedeemed, 10)), "redeemed balance mismatch for [%s:%s]: got [%s], expected [%d]", wallet, typ, balance.Redeemed, expectedRedeemed)
+	gomega.Expect(balance.Net).To(gomega.BeEquivalentTo(strconv.FormatUint(expectedNet, 10)), "net balance mismatch for [%s:%s]: got [%s], expected [%d]", wallet, typ, balance.Net, expectedNet)
 }
 
 func ListUnspentTokens(network *integration.Infrastructure, id *token3.NodeReference, wallet string, typ token.Type) *token.UnspentTokens {
@@ -912,7 +934,7 @@ func TransferCashWithSelector(network *integration.Infrastructure, sender *token
 	}
 }
 
-func RedeemCashForTMSID(network *integration.Infrastructure, id *token3.NodeReference, wallet string, typ token.Type, amount uint64, auditor *token3.NodeReference, issuer *token3.NodeReference, tmsID *token2.TMSID) {
+func RedeemCashForTMSID(network *integration.Infrastructure, id *token3.NodeReference, wallet string, typ token.Type, amount uint64, auditor *token3.NodeReference, issuer *token3.NodeReference, tmsID *token2.TMSID, expectedErrorMsgs ...string) {
 	issuerName := ""
 	var issuerPublicParamsPublicKey view.Identity = nil
 	if issuer != nil && tmsID != nil {
@@ -930,8 +952,28 @@ func RedeemCashForTMSID(network *integration.Infrastructure, id *token3.NodeRefe
 		Amount:                      amount,
 		TMSID:                       tmsID,
 	}))
+	if len(expectedErrorMsgs) == 0 {
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		common2.CheckFinality(network, auditor, common.JSONUnmarshalString(txID), tmsID, false)
+		common2.CheckFinality(network, issuer, common.JSONUnmarshalString(txID), tmsID, false)
+
+		return
+	}
+
+	gomega.Expect(err).To(gomega.HaveOccurred())
+	for _, msg := range expectedErrorMsgs {
+		gomega.Expect(err.Error()).To(gomega.ContainSubstring(msg), "err [%s] should contain [%s]", err.Error(), msg)
+	}
+	time.Sleep(5 * time.Second)
+}
+
+// AuthorizeRedeemIssuer adds the passed issuer identity to the auditor's allow-list of issuers
+// authorized to approve redeem operations.
+func AuthorizeRedeemIssuer(network *integration.Infrastructure, auditor *token3.NodeReference, issuerIdentity []byte) {
+	_, err := network.Client(auditor.ReplicaName()).CallView("AuthorizeRedeemIssuer", common.JSONMarshall(&views.AuthorizeRedeemIssuer{
+		Issuer: issuerIdentity,
+	}))
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
-	common2.CheckFinality(network, auditor, common.JSONUnmarshalString(txID), tmsID, false)
 }
 
 func RedeemCashByIDs(network *integration.Infrastructure, networkName string, id *token3.NodeReference, wallet string, ids []*token.ID, amount uint64, auditor *token3.NodeReference, issuer *token3.NodeReference) {
@@ -1345,7 +1387,7 @@ func GetRevocationHandle(network *integration.Infrastructure, ref *token3.NodeRe
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	rh := &views.RevocationHandle{}
 	common.JSONUnmarshal(rhBoxed.([]byte), rh)
-	fmt.Printf("GetRevocationHandle [%s][%s]", rh.RH, logging.SHA256Base64([]byte(rh.RH)))
+	fmt.Printf("GetRevocationHandle [%s][%s]", rh.RH, fsclogging.SHA256Base64([]byte(rh.RH)))
 
 	return rh.RH
 }
@@ -1367,22 +1409,45 @@ func SetSpendableFlag(network *integration.Infrastructure, user *token3.NodeRefe
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 }
 
-func Withdraw(network *integration.Infrastructure, wpm *WalletManagerProvider, user *token3.NodeReference, wallet string, typ token.Type, amount uint64, auditor *token3.NodeReference, issuer *token3.NodeReference, expectedErrorMsgs ...string) string {
+func Withdraw(network *integration.Infrastructure, wpm *WalletManagerProvider, webSocket bool, user *token3.NodeReference, wallet string, typ token.Type, amount uint64, auditor *token3.NodeReference, issuer *token3.NodeReference, expectedErrorMsgs ...string) string {
 	var recipientData *token2.RecipientData
 	if wpm != nil {
 		recipientData = wpm.RecipientData(user.Id(), wallet)
 	}
-	txid, err := network.Client(user.ReplicaName()).CallView("withdrawal", common.JSONMarshall(&views.Withdrawal{
+	input := common.JSONMarshall(&views.Withdrawal{
 		Wallet:        wallet,
 		TokenType:     typ,
 		Amount:        amount,
 		Issuer:        issuer.Id(),
 		RecipientData: recipientData,
-	}))
+	})
+	var stream Stream
+	var txIDBoxed any
+	var err error
+	if wpm != nil {
+		if webSocket {
+			stream, err = network.WebClient(user.ReplicaName()).StreamCallView("withdrawal", input)
+		} else {
+			stream, err = network.Client(user.ReplicaName()).StreamCallView("withdrawal", input)
+		}
+	} else {
+		txIDBoxed, err = network.Client(user.ReplicaName()).CallView("withdrawal", input)
+	}
+
+	// Here we handle the sign requests
+	if wpm != nil {
+		client := ttx.NewStreamExternalWalletSignerClient(wpm.SignerProvider(user.Id(), wallet), stream, 1)
+		gomega.Expect(client.Respond()).NotTo(gomega.HaveOccurred())
+	}
 
 	if len(expectedErrorMsgs) == 0 {
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
-		txID := common.JSONUnmarshalString(txid)
+
+		if wpm != nil {
+			txIDBoxed, err = stream.Result()
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		}
+		txID := common.JSONUnmarshalString(txIDBoxed)
 		common2.CheckFinality(network, user, txID, nil, false)
 		common2.CheckFinality(network, auditor, txID, nil, false)
 		common2.CheckFinality(network, issuer, txID, nil, false)
@@ -1390,6 +1455,7 @@ func Withdraw(network *integration.Infrastructure, wpm *WalletManagerProvider, u
 		return txID
 	}
 
+	gomega.Expect(txIDBoxed).To(gomega.BeEmpty())
 	gomega.Expect(err).To(gomega.HaveOccurred())
 	for _, msg := range expectedErrorMsgs {
 		gomega.Expect(err.Error()).To(gomega.ContainSubstring(msg), "err [%s] should contain [%s]", err.Error(), msg)

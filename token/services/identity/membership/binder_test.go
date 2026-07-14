@@ -9,7 +9,7 @@ package membership
 import (
 	"testing"
 
-	"github.com/hyperledger-labs/fabric-token-sdk/token"
+	"github.com/LFDT-Panurus/panurus/token"
 	"github.com/stretchr/testify/require"
 )
 

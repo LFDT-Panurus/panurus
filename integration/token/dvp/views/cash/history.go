@@ -9,11 +9,11 @@ package cash
 import (
 	"encoding/json"
 
+	token2 "github.com/LFDT-Panurus/panurus/token/token"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/common/utils/assert"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/view"
-	token2 "github.com/hyperledger-labs/fabric-token-sdk/token/token"
 
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/ttx"
+	"github.com/LFDT-Panurus/panurus/token/services/ttx"
 )
 
 // ListIssuedTokens contains the input to query the list of issued tokens

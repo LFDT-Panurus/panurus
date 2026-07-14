@@ -9,7 +9,7 @@ package membership
 import (
 	"context"
 
-	"github.com/hyperledger-labs/fabric-token-sdk/token"
+	"github.com/LFDT-Panurus/panurus/token"
 )
 
 // NoBinder implements a no-op binder

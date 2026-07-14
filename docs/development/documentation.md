@@ -1,6 +1,6 @@
 # Documentation Guide
 
-This guide outlines how to contribute to, test, build, and deploy the static documentation site for the Fabric Token SDK.
+This guide outlines how to contribute to, test, build, and deploy the static documentation site for Panurus.
 
 Documentation is built using [MkDocs](https://www.mkdocs.org/) with the premium, responsive [Material for MkDocs theme](https://squidfunk.github.io/mkdocs-material/).
 

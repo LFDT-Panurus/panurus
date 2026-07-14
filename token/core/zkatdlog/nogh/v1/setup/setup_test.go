@@ -12,8 +12,8 @@ import (
 	"testing"
 
 	math3 "github.com/IBM/mathlib"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/core/zkatdlog/nogh/v1/crypto/rp"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/driver"
+	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/crypto/rp"
+	"github.com/LFDT-Panurus/panurus/token/driver"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -546,18 +546,29 @@ func TestRangeProofParamsConversion(t *testing.T) {
 
 func TestGeneratePedersenParameters(t *testing.T) {
 	pp := &PublicParams{
-		Curve: math3.BN254,
+		Curve:         math3.BN254,
+		DriverName:    DLogNoGHDriverName,
+		DriverVersion: ProtocolV1,
 	}
 
 	err := pp.GeneratePedersenParameters()
 	require.NoError(t, err)
 	assert.Len(t, pp.PedersenGenerators, 3)
 
-	// Test all generators are different
+	// Generators must be distinct (different domain-separation strings → different points)
 	for i := range len(pp.PedersenGenerators) {
 		for j := i + 1; j < len(pp.PedersenGenerators); j++ {
 			assert.False(t, pp.PedersenGenerators[i].Equals(pp.PedersenGenerators[j]))
 		}
+	}
+
+	// Generators must be deterministic: a second call with identical params must
+	// produce byte-equal points, proving no randomness is involved.
+	pp2 := &PublicParams{Curve: math3.BN254, DriverName: DLogNoGHDriverName, DriverVersion: ProtocolV1}
+	require.NoError(t, pp2.GeneratePedersenParameters())
+	for i := range len(pp.PedersenGenerators) {
+		assert.True(t, pp.PedersenGenerators[i].Equals(pp2.PedersenGenerators[i]),
+			"generator %d must be deterministic (nothing-up-my-sleeve)", i)
 	}
 }
 
@@ -731,4 +742,219 @@ func TestExtras(t *testing.T) {
 	// Verify empty map case
 	pp.ExtraData = make(map[string][]byte)
 	assert.Empty(t, pp.Extras())
+}
+
+// TestCSPPublicParamsValidation exercises PublicParams.Validate for CSP-only
+// configurations (CSPRangeProofParams set, RangeProofParams nil).
+//
+// Regression: line 733 previously read p.RangeProofParams.BitLength inside the
+// `if p.CSPRangeProofParams != nil` branch; in a CSP-only config that is a
+// guaranteed nil-pointer dereference.  Every case below that reaches the
+// QuantityPrecision mismatch path must return an error, never panic.
+func TestCSPPublicParamsValidation(t *testing.T) {
+	issuerPK := testingHelper(t)
+
+	// cspPP builds a fully-valid CSP-only PublicParams for BN254 with the
+	// given bitLength, then lets the caller mutate it.
+	cspPP := func(t *testing.T, bitLength uint64) *PublicParams {
+		t.Helper()
+		pp, err := NewWith(SetupParams{
+			DriverName:     DLogNoGHDriverName,
+			DriverVersion:  ProtocolV1,
+			BitLength:      bitLength,
+			IdemixIssuerPK: issuerPK,
+			CurveID:        math3.BN254,
+			ProofType:      rp.CSPRangeProofType,
+		})
+		require.NoError(t, err)
+		require.Nil(t, pp.RangeProofParams, "CSP-only setup must leave RangeProofParams nil")
+		require.NotNil(t, pp.CSPRangeProofParams)
+
+		return pp
+	}
+
+	tests := []struct {
+		name          string
+		setupParams   func() *PublicParams
+		expectedError string
+	}{
+		{
+			// Baseline: a well-formed CSP-only config must pass Validate without
+			// panicking and without any error.
+			name: "valid CSP-only params",
+			setupParams: func() *PublicParams {
+				return cspPP(t, 32)
+			},
+			expectedError: "",
+		},
+		{
+			// Regression test for the nil-dereference bug (CVE-equivalent):
+			// CSPRangeProofParams set, RangeProofParams nil,
+			// QuantityPrecision deliberately mismatched to reach line 733.
+			// Must return an error string, never panic.
+			name: "CSP-only: QuantityPrecision mismatch must not panic (regression)",
+			setupParams: func() *PublicParams {
+				pp := cspPP(t, 32)
+				pp.QuantityPrecision = 16 // mismatch: CSPRangeProofParams.BitLength is 32
+
+				return pp
+			},
+			expectedError: "quantity precision should be [32] instead it is [16]",
+		},
+		{
+			// The error message must reference the CSP bit-length (32), not a
+			// value that would only be available from the nil RangeProofParams.
+			name: "CSP-only: error message references CSP bit length",
+			setupParams: func() *PublicParams {
+				pp := cspPP(t, 64)
+				pp.QuantityPrecision = 32 // mismatch; CSP bit-length is 64
+
+				return pp
+			},
+			expectedError: "quantity precision should be [64] instead it is [32]",
+		},
+		{
+			// CSPRangeProofParams.BitLength not in SupportedPrecisions triggers
+			// the earlier unsupported-precision guard, also inside the CSP branch.
+			name: "CSP-only: unsupported bit length",
+			setupParams: func() *PublicParams {
+				pp := cspPP(t, 32)
+				// Overwrite BitLength with a value not in SupportedPrecisions.
+				pp.CSPRangeProofParams.BitLength = 7
+
+				return pp
+			},
+			expectedError: "invalid bit length [7]",
+		},
+		{
+			// Both RangeProofParams and CSPRangeProofParams nil must be rejected
+			// before reaching either branch.
+			name: "both range proof params nil",
+			setupParams: func() *PublicParams {
+				pp := cspPP(t, 32)
+				pp.CSPRangeProofParams = nil
+
+				return pp
+			},
+			expectedError: "nil range proof parameters",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			pp := tt.setupParams()
+			// Call Validate via a helper that catches panics so a regression
+			// surfaces as a test failure rather than a process crash.
+			err := func() (retErr error) {
+				defer func() {
+					if r := recover(); r != nil {
+						retErr = fmt.Errorf("Validate panicked: %v", r)
+					}
+				}()
+
+				return pp.Validate()
+			}()
+
+			if tt.expectedError == "" {
+				require.NoError(t, err)
+			} else {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tt.expectedError)
+			}
+		})
+	}
+}
+
+// TestCSPRangeProofParamsValidation exercises CSPRangeProofParams.Validate
+// directly, mirroring the coverage that TestRangeProofParamsValidation
+// provides for RangeProofParams.
+func TestCSPRangeProofParamsValidation(t *testing.T) {
+	curve := math3.BN254
+	curveInst := math3.Curves[curve]
+
+	makeGenerators := func(length uint64) []*math3.G1 {
+		gen := make([]*math3.G1, length)
+		for i := range gen {
+			gen[i] = curveInst.GenG1
+		}
+
+		return gen
+	}
+
+	const bitLength uint64 = 32
+
+	tests := []struct {
+		name          string
+		params        *CSPRangeProofParams
+		expectedError string
+	}{
+		{
+			name: "valid params",
+			params: &CSPRangeProofParams{
+				BitLength:       bitLength,
+				LeftGenerators:  makeGenerators(bitLength + 1),
+				RightGenerators: makeGenerators(bitLength + 1),
+			},
+			expectedError: "",
+		},
+		{
+			name: "zero bit length",
+			params: &CSPRangeProofParams{
+				BitLength:       0,
+				LeftGenerators:  makeGenerators(1),
+				RightGenerators: makeGenerators(1),
+			},
+			expectedError: "invalid range proof parameters: bit length is zero",
+		},
+		{
+			name: "mismatched generator lengths",
+			params: &CSPRangeProofParams{
+				BitLength:       bitLength,
+				LeftGenerators:  makeGenerators(bitLength),
+				RightGenerators: makeGenerators(bitLength + 1),
+			},
+			expectedError: "the size of the left generators does not match the size of the right generators",
+		},
+		{
+			name: "wrong number of left generators",
+			params: &CSPRangeProofParams{
+				BitLength:       bitLength,
+				LeftGenerators:  makeGenerators(bitLength), // needs bitLength+1
+				RightGenerators: makeGenerators(bitLength),
+			},
+			expectedError: "invalid range proof parameters, left generators is invalid",
+		},
+		{
+			// Both slices have the same length so the size-mismatch check passes,
+			// but RightGenerators has bitLength entries (one short) — which causes
+			// the CheckElements call for the right generators to fail.
+			name: "wrong number of right generators",
+			params: &CSPRangeProofParams{
+				BitLength: bitLength,
+				// Left has the correct bitLength+1 entries.
+				LeftGenerators: makeGenerators(bitLength + 1),
+				// Right also has bitLength+1 entries, but the last one is nil so
+				// the curve element check rejects it.
+				RightGenerators: func() []*math3.G1 {
+					gen := makeGenerators(bitLength + 1)
+					gen[bitLength] = nil // inject an invalid element
+
+					return gen
+				}(),
+			},
+			expectedError: "invalid range proof parameters, right generators is invalid",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.params.Validate(curve)
+			if tt.expectedError == "" {
+				require.NoError(t, err)
+			} else {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tt.expectedError)
+			}
+		})
+	}
 }

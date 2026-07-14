@@ -4,7 +4,7 @@ package mock
 import (
 	"sync"
 
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/certifier/driver"
+	"github.com/LFDT-Panurus/panurus/token/services/certifier/driver"
 )
 
 type CertificationService struct {

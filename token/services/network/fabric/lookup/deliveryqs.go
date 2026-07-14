@@ -11,12 +11,12 @@ import (
 	"encoding/json"
 	"slices"
 
+	"github.com/LFDT-Panurus/panurus/token/services/network/fabric/tcc"
+	slices2 "github.com/LFDT-Panurus/panurus/token/services/utils/slices"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/common/driver"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/common/utils/collections"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/fabric"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/fabric/core/generic/events"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/network/fabric/tcc"
-	slices2 "github.com/hyperledger-labs/fabric-token-sdk/token/services/utils/slices"
 )
 
 const (

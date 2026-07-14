@@ -1,6 +1,6 @@
 # Makefile Guide
 
-This document explains the targets available in the `Makefile` for the Fabric Token SDK. The Makefile allows you to automate common tasks such as installing tools, running tests, and managing Docker images.
+This document explains the targets available in the `Makefile` for Panurus. The Makefile allows you to automate common tasks such as installing tools, running tests, and managing Docker images.
 
 ## Setup & Installation
 
@@ -20,13 +20,13 @@ These targets run various test suites.
 
 | Target | Description |
 | :--- | :--- |
-| `make unit-tests` | Runs standard unit tests for the SDK, excluding integration and regression tests. |
+| `make unit-tests` | Runs standard unit tests for Panurus, excluding integration and regression tests. |
 | `make unit-tests-race` | Runs unit tests with the Go race detector enabled. |
 | `make unit-tests-regression` | Runs regression tests. |
 
 ### Integration Tests
 
-The SDK has several integration test targets. Some common ones include:
+Panurus has several integration test targets. Some common ones include:
 
 | Target | Description |
 | :--- | :--- |

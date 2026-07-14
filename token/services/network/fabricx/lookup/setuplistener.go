@@ -9,13 +9,13 @@ package lookup
 import (
 	"context"
 
+	"github.com/LFDT-Panurus/panurus/token"
+	"github.com/LFDT-Panurus/panurus/token/services/network/fabric"
+	"github.com/LFDT-Panurus/panurus/token/services/network/fabric/lookup"
+	"github.com/LFDT-Panurus/panurus/token/services/network/fabricx/pp"
+	"github.com/LFDT-Panurus/panurus/token/services/tokens"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/common/driver"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/common/utils"
-	"github.com/hyperledger-labs/fabric-token-sdk/token"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/network/fabric"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/network/fabric/lookup"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/network/fabricx/pp"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/tokens"
 )
 
 // NewSetupListenerProvider returns a new setupListenerProvider instance

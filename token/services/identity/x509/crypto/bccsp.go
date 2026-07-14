@@ -9,9 +9,9 @@ package crypto
 import (
 	"encoding/hex"
 
+	"github.com/LFDT-Panurus/panurus/token/services/identity/x509/crypto/csp"
+	"github.com/LFDT-Panurus/panurus/token/services/identity/x509/crypto/pkcs11"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/identity/x509/crypto/csp"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/identity/x509/crypto/pkcs11"
 	"github.com/hyperledger/fabric-lib-go/bccsp"
 	"github.com/hyperledger/fabric-lib-go/bccsp/sw"
 )

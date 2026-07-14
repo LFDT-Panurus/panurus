@@ -14,16 +14,16 @@ import (
 
 	"github.com/IBM/idemix/bccsp/types"
 	math "github.com/IBM/mathlib"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/identity/idemix"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/identity/idemix/crypto"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/identity/idemixnym/mock"
-	kvs2 "github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/db/kvs"
+	"github.com/LFDT-Panurus/panurus/token/services/identity/idemix"
+	"github.com/LFDT-Panurus/panurus/token/services/identity/idemix/crypto"
+	"github.com/LFDT-Panurus/panurus/token/services/identity/idemixnym/mock"
+	kvs2 "github.com/LFDT-Panurus/panurus/token/services/storage/db/kvs"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 func TestNewDeserializer(t *testing.T) {
-	testNewDeserializer(t, "../idemix/testdata/fp256bn_amcl/idemix", math.FP256BN_AMCL)
+	testNewDeserializer(t, "../idemix/testdata/bls12_381_bbs_gurvy/idemix", math.BLS12_381_BBS_GURVY)
 	testNewDeserializer(t, "../idemix/testdata/bls12_381_bbs/idemix", math.BLS12_381_BBS_GURVY)
 }
 
@@ -105,7 +105,7 @@ func testNewDeserializer(t *testing.T, configPath string, curveID math.CurveID) 
 }
 
 func TestDeserializerErrorPaths(t *testing.T) {
-	testDeserializerErrorPaths(t, "../idemix/testdata/fp256bn_amcl/idemix", math.FP256BN_AMCL)
+	testDeserializerErrorPaths(t, "../idemix/testdata/bls12_381_bbs_gurvy/idemix", math.BLS12_381_BBS_GURVY)
 	testDeserializerErrorPaths(t, "../idemix/testdata/bls12_381_bbs/idemix", math.BLS12_381_BBS_GURVY)
 }
 
@@ -177,10 +177,10 @@ func testDeserializerErrorPaths(t *testing.T, configPath string, curveID math.Cu
 }
 
 func TestDeserializeAuditInfoEdgeCases(t *testing.T) {
-	config, err := crypto.NewConfig("../idemix/testdata/fp256bn_amcl/idemix")
+	config, err := crypto.NewConfig("../idemix/testdata/bls12_381_bbs_gurvy/idemix")
 	require.NoError(t, err)
 
-	backendDeserializer, err := idemix.NewDeserializer(config.Ipk, math.FP256BN_AMCL)
+	backendDeserializer, err := idemix.NewDeserializer(config.Ipk, math.BLS12_381_BBS_GURVY)
 	require.NoError(t, err)
 
 	d := NewDeserializer(backendDeserializer)

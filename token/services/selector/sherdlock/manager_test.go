@@ -13,16 +13,16 @@ import (
 	"testing"
 	"time"
 
+	"github.com/LFDT-Panurus/panurus/token"
+	"github.com/LFDT-Panurus/panurus/token/services/selector/testutils"
+	"github.com/LFDT-Panurus/panurus/token/services/storage/db/dbtest"
+	"github.com/LFDT-Panurus/panurus/token/services/storage/db/sql/postgres"
+	"github.com/LFDT-Panurus/panurus/token/services/utils/types/transaction"
+	token2 "github.com/LFDT-Panurus/panurus/token/token"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/services/metrics/disabled"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/services/storage/driver/common"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/services/storage/driver/multiplexed"
 	postgres2 "github.com/hyperledger-labs/fabric-smart-client/platform/view/services/storage/driver/sql/postgres"
-	"github.com/hyperledger-labs/fabric-token-sdk/token"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/selector/testutils"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/db/dbtest"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/db/sql/postgres"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/utils/types/transaction"
-	token2 "github.com/hyperledger-labs/fabric-token-sdk/token/token"
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -96,13 +96,17 @@ func createManager(pgConnStr string, backoff time.Duration, maxRetries int) (tes
 		DataSource:   pgConnStr,
 		MaxOpenConns: 10,
 	}), &dbProvider{})
-	lockDB, err := d.NewTokenLock("")
+
+	// Create Token DB first
+	tokenDB, err := d.NewToken("")
 	if err != nil {
 		return nil, err
 	}
-	tokenDB, err := d.NewToken("")
+
+	// Create Lock DB after
+	lockDB, err := d.NewTokenLock("")
 	if err != nil {
-		return nil, errors.Join(err, lockDB.Close())
+		return nil, errors.Join(err, tokenDB.Close())
 	}
 
 	m := NewMetrics(&disabled.Provider{})

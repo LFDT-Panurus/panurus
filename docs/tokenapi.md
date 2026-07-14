@@ -4,11 +4,11 @@ The **Token API** (`token/`) provides a powerful and versatile abstraction for m
 
 ## The Token Data Model
 
-The SDK defines a token as a discrete unit of value with a three-part structure:
+Panurus defines a token as a discrete unit of value with a three-part structure:
 
 *   **Owner**: A byte slice (`[]byte`) representing the entity with the right to spend the token. Driver implementations interpret this field based on their specific technology (e.g., an X.509 certificate, an Idemix pseudonym, or a script).
 *   **Type**: A case-sensitive string (`token.Type`) representing the token's denomination or category (e.g., "USD", "Gold", "Diamond_ID").
-*   **Quantity**: A base-16 string (`0x`-prefixed) representing the amount. The SDK uses a configurable **Precision** to handle fractional values consistently across drivers.
+*   **Quantity**: A base-16 string (`0x`-prefixed) representing the amount. Panurus uses a configurable **Precision** to handle fractional values consistently across drivers.
 
 Tokens are uniquely identified by a `token.ID`, which consists of the **Transaction ID** that created it and its **Index** within that transaction's outputs.
 
@@ -49,7 +49,7 @@ The [PublicParametersManager](../token/publicparams.go) holds the cryptographic 
 The [WalletManager](../token/wallet.go) manages the digital identities used to interact with tokens. It categorizes identities into specialized roles:
 
 *   **Owner Wallet**: Manages identities that can receive, hold, and transfer tokens. It provides methods to list unspent tokens and check balances.
-*   **Issuer Wallet**: Manages identities authorized to mint new tokens.
+*   **Issuer Wallet**: Manages identities authorized to mint new tokens. Besides listing historical issued tokens (`ListIssuedTokens`), it exposes `IssuedBalance`, `RedeemedBalance`, and `Balance` (net issued supply = issued minus redeemed), each filterable by token type and time range via `driver.IssuerBalanceOptions`. A redeem is attributed to an issuer wallet when its output has an empty owner and the transfer action was signed by that issuer.
 *   **Auditor Wallet**: Manages identities capable of viewing and verifying private transaction details without being a participant.
 *   **Certifier Wallet**: Used in specific drivers to provide an additional layer of transaction validation or "certification".
 
@@ -76,7 +76,7 @@ sequenceDiagram
     participant NS as Network Service
     participant Ledger as DLT Ledger
 
-    box darkgreen Token SDK Stack
+    box darkgreen Panurus Stack
         participant TMS
         participant WM
         participant NS
@@ -93,7 +93,7 @@ sequenceDiagram
 
 ## Token Vault and Selector
 
-The SDK provides sophisticated tools for managing the local state of tokens:
+Panurus provides sophisticated tools for managing the local state of tokens:
 
 *   **Token Vault**: A specialized query engine ([Vault](../token/vault.go)) that tracks the status of tokens (Unspent, Spent, Pending) and provides historical insights into transaction outcomes.
 *   **Token Selector**: A smart selection engine ([Selector](../token/selector.go)) that identifies the optimal set of unspent tokens to satisfy a transfer request. It automatically **locks** tokens to prevent double-spending in highly concurrent environments.

@@ -30,11 +30,11 @@ func TestNewTokenValidationParamsSlice_ValidPath(t *testing.T) {
 	// The important thing is that it doesn't panic and handles errors properly
 	if err != nil {
 		// If there's an error, it should be a proper error, not a panic
-		require.NotNil(t, err)
+		require.Error(t, err)
 		t.Logf("Expected error when test data is not available: %v", err)
 	} else {
 		// If successful, verify we got valid params
 		require.NotNil(t, params)
-		require.Greater(t, len(params), 0)
+		require.NotEmpty(t, params)
 	}
 }

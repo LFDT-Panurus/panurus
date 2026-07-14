@@ -9,7 +9,7 @@ package cond
 import (
 	"fmt"
 
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/db/sql/query/common"
+	"github.com/LFDT-Panurus/panurus/token/services/storage/db/sql/query/common"
 )
 
 func Constant(s string) *constant {

@@ -9,12 +9,12 @@ package ttx
 import (
 	"context"
 
+	"github.com/LFDT-Panurus/panurus/token"
+	"github.com/LFDT-Panurus/panurus/token/services/storage"
+	"github.com/LFDT-Panurus/panurus/token/services/ttx/dep"
+	"github.com/LFDT-Panurus/panurus/token/services/ttx/dep/db"
 	driver2 "github.com/hyperledger-labs/fabric-smart-client/platform/common/driver"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/view"
-	"github.com/hyperledger-labs/fabric-token-sdk/token"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/storage"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/ttx/dep"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/ttx/dep/db"
 )
 
 type TxOwner struct {

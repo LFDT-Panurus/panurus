@@ -1,9 +1,9 @@
-site_name: Fabric Token SDK
-site_url: https://hyperledger-labs.github.io/fabric-token-sdk/
+site_name: Panurus
+site_url: https://LFDT-Panurus.github.io/panurus/
 site_description: Privacy-preserving token management for Hyperledger Fabric
-site_author: Hyperledger Labs
-repo_url: https://github.com/hyperledger-labs/fabric-token-sdk
-repo_name: hyperledger-labs/fabric-token-sdk
+site_author: LFDT Panurus
+repo_url: https://github.com/LFDT-Panurus/panurus
+repo_name: LFDT-Panurus/panurus
 edit_uri: edit/main/docs/
 
 validation:
@@ -64,7 +64,7 @@ markdown_extensions:
 nav:
   - Home: README.md
   - Core Concepts:
-      - Token SDK Overview: tokensdk.md
+      - Panurus Overview: tokensdk.md
       - Token API: tokenapi.md
       - Token API Usage: token_sdk_usage.md
       - Driver API: driverapi.md
@@ -100,9 +100,11 @@ nav:
       - Network Fabricx: services/network-fabricx.md
       - Network: services/network.md
       - NFT Tx: services/nfttx.md
-      - Recovery: services/recovery.md
       - Selector: services/selector.md
-      - Storage: services/storage.md
+      - Storage:
+          - Overview: services/storage.md
+          - Cleanup Service: services/storage/keystore_cleanup.md
+          - Recovery Service: services/storage/recovery.md
       - Tokens: services/tokens.md
       - TTX: services/ttx.md
   - Development:

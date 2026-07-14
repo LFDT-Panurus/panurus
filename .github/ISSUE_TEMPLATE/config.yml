@@ -2,7 +2,7 @@ blank_issues_enabled: true
 contact_links:
   - name: Hyperledger Discord
     url: https://discord.gg/hyperledger
-    about: Join the #fabric-token-sdk channel for real-time discussion.
+    about: Join the #panurus channel for real-time discussion.
   - name: Documentation
-    url: https://github.com/hyperledger-labs/fabric-token-sdk/blob/main/docs/README.md
+    url: https://github.com/LFDT-Panurus/panurus/blob/main/docs/README.md
     about: Read the official documentation.

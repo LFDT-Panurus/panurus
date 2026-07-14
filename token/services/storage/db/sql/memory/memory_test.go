@@ -9,8 +9,8 @@ package memory
 import (
 	"testing"
 
-	dbtest2 "github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/db/dbtest"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/db/driver"
+	dbtest2 "github.com/LFDT-Panurus/panurus/token/services/storage/db/dbtest"
+	"github.com/LFDT-Panurus/panurus/token/services/storage/db/driver"
 )
 
 func TestTokens(t *testing.T) {
@@ -35,4 +35,8 @@ func TestKeyStore(t *testing.T) {
 
 func TestWallet(t *testing.T) {
 	dbtest2.WalletTest(t, func(string) driver.Driver { return NewDriver() })
+}
+
+func TestEndorser(t *testing.T) {
+	dbtest2.EndorserTest(t, func(string) driver.Driver { return NewDriver() })
 }

@@ -10,13 +10,13 @@ import (
 	"context"
 	"path/filepath"
 
+	"github.com/LFDT-Panurus/panurus/token/driver"
+	idriver "github.com/LFDT-Panurus/panurus/token/services/identity/driver"
+	"github.com/LFDT-Panurus/panurus/token/services/identity/membership"
+	"github.com/LFDT-Panurus/panurus/token/services/identity/x509/crypto"
+	"github.com/LFDT-Panurus/panurus/token/services/identity/x509/crypto/csp"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/driver"
-	idriver "github.com/hyperledger-labs/fabric-token-sdk/token/services/identity/driver"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/identity/membership"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/identity/x509/crypto"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/identity/x509/crypto/csp"
-	"gopkg.in/yaml.v2"
+	"go.yaml.in/yaml/v3"
 )
 
 const (
@@ -96,7 +96,7 @@ func (k *KeyManagerProvider) registerProvider(ctx context.Context, conf *crypto.
 	provider, conf, err := NewKeyManagerFromConf(conf, translatedPath, keyStorePath, opts, k.keyStore)
 	if err != nil {
 		logger.DebugfContext(ctx, "failed loading provider at [%s]: [%s]", translatedPath, err)
-		// Try with ExtraPathElement
+		// Try with ExtraPathElement (msp/)
 		provider, conf, err = NewKeyManagerFromConf(conf, filepath.Join(translatedPath, ExtraPathElement), keyStorePath, opts, k.keyStore)
 		if err != nil {
 			logger.DebugfContext(ctx, "failed loading provider at [%s]: [%s]", filepath.Join(translatedPath, ExtraPathElement), err)

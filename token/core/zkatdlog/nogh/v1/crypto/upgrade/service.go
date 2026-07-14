@@ -12,12 +12,12 @@ import (
 	"crypto/rand"
 	"slices"
 
+	v1 "github.com/LFDT-Panurus/panurus/token/core/fabtoken/v1"
+	token2 "github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/token"
+	"github.com/LFDT-Panurus/panurus/token/driver"
+	"github.com/LFDT-Panurus/panurus/token/services/logging"
+	"github.com/LFDT-Panurus/panurus/token/token"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
-	v1 "github.com/hyperledger-labs/fabric-token-sdk/token/core/fabtoken/v1"
-	token2 "github.com/hyperledger-labs/fabric-token-sdk/token/core/zkatdlog/nogh/v1/token"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/driver"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/logging"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/token"
 )
 
 const (

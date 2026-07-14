@@ -10,11 +10,11 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/hyperledger-labs/fabric-token-sdk/token/driver"
-	drvmock "github.com/hyperledger-labs/fabric-token-sdk/token/driver/mock"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/identity"
-	idmock "github.com/hyperledger-labs/fabric-token-sdk/token/services/identity/mock"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/logging"
+	"github.com/LFDT-Panurus/panurus/token/driver"
+	drvmock "github.com/LFDT-Panurus/panurus/token/driver/mock"
+	"github.com/LFDT-Panurus/panurus/token/services/identity"
+	idmock "github.com/LFDT-Panurus/panurus/token/services/identity/mock"
+	"github.com/LFDT-Panurus/panurus/token/services/logging"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

@@ -9,11 +9,11 @@ package issuer
 import (
 	errors2 "errors"
 
+	views1 "github.com/LFDT-Panurus/panurus/integration/token/common/views"
+	"github.com/LFDT-Panurus/panurus/integration/token/fungible/views"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	dig2 "github.com/hyperledger-labs/fabric-smart-client/platform/common/sdk/dig"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/services/view"
-	views1 "github.com/hyperledger-labs/fabric-token-sdk/integration/token/common/views"
-	"github.com/hyperledger-labs/fabric-token-sdk/integration/token/fungible/views"
 )
 
 type SDK struct {
@@ -39,6 +39,7 @@ func (p *SDK) Install() error {
 			registry.RegisterFactory("balance", &views.BalanceViewFactory{}),
 			registry.RegisterFactory("historyIssuedToken", &views.ListIssuedTokensViewFactory{}),
 			registry.RegisterFactory("issuedTokenQuery", &views.ListIssuedTokensViewFactory{}),
+			registry.RegisterFactory("issuerBalance", &views.IssuerBalanceViewFactory{}),
 			registry.RegisterFactory("GetEnrollmentID", &views.GetEnrollmentIDViewFactory{}),
 			registry.RegisterFactory("acceptedTransactionHistory", &views.ListAcceptedTransactionsViewFactory{}),
 			registry.RegisterFactory("transactionInfo", &views.TransactionInfoViewFactory{}),

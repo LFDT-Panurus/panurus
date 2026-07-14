@@ -24,10 +24,10 @@ token:
         {{ if TMS.Certifiers }} interactive:
           ids: {{ range TMS.Certifiers }}
           - {{ . }}{{ end }}{{ end }}
-      {{ if Endorsement }}
       services:
         network:
           fabric:
+            {{ if Endorsement }}
             fsc_endorsement:
               endorser: {{ Endorser }}
               id: {{ EndorserID }}
@@ -35,8 +35,14 @@ token:
                 type: 1outn
               endorsers: {{ range Endorsers }}
               - {{ . }}{{ end }}
-      {{ end }}
- 
+            {{ end }}
+        storage:
+          cleanup:
+            enabled: true
+            ttl: 1ms
+            scanInterval: 1s
+            batchSize: 100
+            workerCount: 1 
       {{ if Wallets }}
       # Wallets associated with this TMS
       wallets:

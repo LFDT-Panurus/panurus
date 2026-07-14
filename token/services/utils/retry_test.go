@@ -14,8 +14,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/logging"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/utils"
+	"github.com/LFDT-Panurus/panurus/token/services/logging"
+	"github.com/LFDT-Panurus/panurus/token/services/utils"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -518,4 +518,449 @@ func TestRunWithErrorsContext_MaxRetriesExhaustedNoErrors(t *testing.T) {
 
 	require.ErrorIs(t, err, utils.ErrMaxRetriesExceeded)
 	assert.Equal(t, 3, calls)
+}
+
+// TestNewRetryRunnerWithJitter_NegativeBackoffMultiplier verifies that negative
+// backoff multiplier defaults to 2.0 and produces standard exponential backoff.
+func TestNewRetryRunnerWithJitter_NegativeBackoffMultiplier(t *testing.T) {
+	runner := utils.NewRetryRunnerWithJitter(
+		testLogger(),
+		5,
+		10*time.Millisecond,
+		1*time.Second,
+		-1.0, // invalid, should default to 2.0
+		0.0,  // no jitter for predictable testing
+	)
+
+	var intervals []time.Duration
+	prev := time.Now()
+
+	_ = runner.RunWithContext(t.Context(), func() error {
+		now := time.Now()
+		intervals = append(intervals, now.Sub(prev))
+		prev = now
+
+		return errors.New("always fail")
+	})
+
+	// Skip first interval (no sleep before first call)
+	intervals = intervals[1:]
+
+	// Should behave like default 2.0 multiplier
+	for i := 1; i < 3 && i < len(intervals); i++ {
+		ratio := float64(intervals[i]) / float64(intervals[i-1])
+		assert.InDelta(t, 2.0, ratio, 1.0,
+			"interval %d should be ~2x interval %d (default multiplier)", i, i-1)
+	}
+}
+
+// TestNewRetryRunnerWithJitter_ZeroBackoffMultiplier verifies that zero
+// backoff multiplier defaults to 2.0.
+func TestNewRetryRunnerWithJitter_ZeroBackoffMultiplier(t *testing.T) {
+	runner := utils.NewRetryRunnerWithJitter(
+		testLogger(),
+		5,
+		10*time.Millisecond,
+		1*time.Second,
+		0.0, // invalid, should default to 2.0
+		0.0, // no jitter
+	)
+
+	var intervals []time.Duration
+	prev := time.Now()
+
+	_ = runner.RunWithContext(t.Context(), func() error {
+		now := time.Now()
+		intervals = append(intervals, now.Sub(prev))
+		prev = now
+
+		return errors.New("always fail")
+	})
+
+	intervals = intervals[1:]
+
+	// Should behave like default 2.0 multiplier
+	for i := 1; i < 3 && i < len(intervals); i++ {
+		ratio := float64(intervals[i]) / float64(intervals[i-1])
+		assert.InDelta(t, 2.0, ratio, 1.0,
+			"interval %d should be ~2x interval %d (default multiplier)", i, i-1)
+	}
+}
+
+// TestNewRetryRunnerWithJitter_NegativeJitterFactor verifies that negative
+// jitter factor is clamped to 0.0 (no jitter).
+func TestNewRetryRunnerWithJitter_NegativeJitterFactor(t *testing.T) {
+	runner := utils.NewRetryRunnerWithJitter(
+		testLogger(),
+		5,
+		10*time.Millisecond,
+		1*time.Second,
+		2.0,
+		-0.5, // invalid, should be clamped to 0.0
+	)
+
+	var intervals []time.Duration
+	prev := time.Now()
+
+	_ = runner.RunWithContext(t.Context(), func() error {
+		now := time.Now()
+		intervals = append(intervals, now.Sub(prev))
+		prev = now
+
+		return errors.New("always fail")
+	})
+
+	intervals = intervals[1:]
+
+	// With zero jitter, should have predictable exponential pattern
+	for i := 1; i < 3 && i < len(intervals); i++ {
+		ratio := float64(intervals[i]) / float64(intervals[i-1])
+		assert.InDelta(t, 2.0, ratio, 0.5,
+			"interval %d should be ~2x interval %d (no jitter)", i, i-1)
+	}
+}
+
+// TestNewRetryRunnerWithJitter_ExcessiveJitterFactor verifies that jitter
+// factor > 1.0 is clamped to 1.0.
+func TestNewRetryRunnerWithJitter_ExcessiveJitterFactor(t *testing.T) {
+	runner := utils.NewRetryRunnerWithJitter(
+		testLogger(),
+		10,
+		100*time.Millisecond,
+		10*time.Second,
+		2.0,
+		1.5, // invalid, should be clamped to 1.0
+	)
+
+	var delays []time.Duration
+	prev := time.Now()
+
+	_ = runner.RunWithContext(t.Context(), func() error {
+		now := time.Now()
+		delays = append(delays, now.Sub(prev))
+		prev = now
+
+		return errors.New("always fail")
+	})
+
+	delays = delays[1:]
+
+	// With max jitter (1.0), delays should vary within ±50% of base
+	for i, d := range delays {
+		baseDelay := min(100*time.Millisecond*time.Duration(1<<i), 10*time.Second)
+
+		// Should not exceed bounds of 1.0 jitter factor
+		minDelay := time.Duration(float64(baseDelay) * 0.25)
+		maxDelay := time.Duration(float64(baseDelay) * 2.0)
+
+		assert.GreaterOrEqual(t, d, minDelay,
+			"delay %d should be >= %v with clamped jitter", i, minDelay)
+		assert.LessOrEqual(t, d, maxDelay,
+			"delay %d should be <= %v with clamped jitter", i, maxDelay)
+	}
+}
+
+// TestNewRetryRunnerWithJitter_ZeroMaxDelay verifies that zero maxDelay
+// defaults to 30 seconds.
+func TestNewRetryRunnerWithJitter_ZeroMaxDelay(t *testing.T) {
+	runner := utils.NewRetryRunnerWithJitter(
+		testLogger(),
+		15,
+		10*time.Millisecond,
+		0, // should default to 30s
+		2.0,
+		0.0,
+	)
+
+	var delays []time.Duration
+	prev := time.Now()
+
+	_ = runner.RunWithContext(t.Context(), func() error {
+		now := time.Now()
+		delays = append(delays, now.Sub(prev))
+		prev = now
+
+		return errors.New("always fail")
+	})
+
+	delays = delays[1:]
+
+	// Find delays that should be capped at 30s
+	cappedDelays := 0
+	for _, d := range delays {
+		if d >= 20*time.Second && d <= 35*time.Second {
+			cappedDelays++
+		}
+	}
+
+	// Should have several delays capped at ~30s
+	assert.GreaterOrEqual(t, cappedDelays, 3,
+		"expected at least 3 delays capped at default 30s")
+}
+
+// TestNewRetryRunnerWithJitter_NegativeMaxDelay verifies that negative maxDelay
+// defaults to 30 seconds.
+func TestNewRetryRunnerWithJitter_NegativeMaxDelay(t *testing.T) {
+	runner := utils.NewRetryRunnerWithJitter(
+		testLogger(),
+		15,
+		10*time.Millisecond,
+		-10*time.Second, // invalid, should default to 30s
+		2.0,
+		0.0,
+	)
+
+	var delays []time.Duration
+	prev := time.Now()
+
+	_ = runner.RunWithContext(t.Context(), func() error {
+		now := time.Now()
+		delays = append(delays, now.Sub(prev))
+		prev = now
+
+		return errors.New("always fail")
+	})
+
+	delays = delays[1:]
+
+	// Find delays that should be capped at 30s
+	cappedDelays := 0
+	for _, d := range delays {
+		if d >= 20*time.Second && d <= 35*time.Second {
+			cappedDelays++
+		}
+	}
+
+	assert.GreaterOrEqual(t, cappedDelays, 3,
+		"expected at least 3 delays capped at default 30s")
+}
+
+// TestNewRetryRunnerWithJitter_CustomBackoffMultiplier verifies that custom backoff
+// multipliers produce the expected exponential growth pattern.
+func TestNewRetryRunnerWithJitter_CustomBackoffMultiplier(t *testing.T) {
+	// Use multiplier of 3.0 instead of default 2.0
+	runner := utils.NewRetryRunnerWithJitter(
+		testLogger(),
+		5,
+		10*time.Millisecond,
+		1*time.Second,
+		3.0, // 3x growth
+		0.0, // no jitter for predictable testing
+	)
+
+	var intervals []time.Duration
+	prev := time.Now()
+
+	_ = runner.RunWithContext(t.Context(), func() error {
+		now := time.Now()
+		intervals = append(intervals, now.Sub(prev))
+		prev = now
+
+		return errors.New("always fail")
+	})
+
+	// Skip first interval (no sleep before first call)
+	// Expected delays: 10ms, 30ms, 90ms, 270ms, 810ms (but capped at 1s)
+	intervals = intervals[1:]
+
+	// Verify 3x growth for first few intervals
+	for i := 1; i < 3 && i < len(intervals); i++ {
+		ratio := float64(intervals[i]) / float64(intervals[i-1])
+		// Allow generous tolerance for CI scheduling jitter
+		assert.InDelta(t, 3.0, ratio, 2.0,
+			"interval %d should be ~3x interval %d with multiplier 3.0", i, i-1)
+	}
+}
+
+// TestNewRetryRunnerWithJitter_JitterBehavior verifies that jitter adds randomness
+// to delays while keeping them within expected bounds.
+func TestNewRetryRunnerWithJitter_JitterBehavior(t *testing.T) {
+	// Use jitterFactor of 0.5 (50% jitter range)
+	runner := utils.NewRetryRunnerWithJitter(
+		testLogger(),
+		10,
+		100*time.Millisecond,
+		10*time.Second,
+		2.0,
+		0.5, // 50% jitter
+	)
+
+	var delays []time.Duration
+	prev := time.Now()
+
+	_ = runner.RunWithContext(t.Context(), func() error {
+		now := time.Now()
+		delays = append(delays, now.Sub(prev))
+		prev = now
+
+		return errors.New("always fail")
+	})
+
+	// Skip first delay (no sleep before first call)
+	delays = delays[1:]
+
+	// With jitterFactor=0.5, delays should be within ±25% of base delay
+	// Base delays: 100ms, 200ms, 400ms, 800ms, 1600ms, 3200ms, 6400ms, 10s (capped)
+	// For each delay, verify it's within reasonable bounds
+	for i, d := range delays {
+		// Calculate expected base delay (without jitter)
+		baseDelay := min(100*time.Millisecond*time.Duration(1<<i), 10*time.Second)
+
+		// With 50% jitter, delay should be in range [base*0.75, base*1.25]
+		minDelay := time.Duration(float64(baseDelay) * 0.5)  // 75% - 25% tolerance
+		maxDelay := time.Duration(float64(baseDelay) * 1.75) // 125% + 50% tolerance
+
+		assert.GreaterOrEqual(t, d, minDelay,
+			"delay %d (%v) should be >= %v (base %v with jitter)", i, d, minDelay, baseDelay)
+		assert.LessOrEqual(t, d, maxDelay,
+			"delay %d (%v) should be <= %v (base %v with jitter)", i, d, maxDelay, baseDelay)
+	}
+}
+
+// TestNewRetryRunnerWithJitter_CustomMaxDelay verifies that custom maxDelay
+// caps exponential backoff at the specified value.
+func TestNewRetryRunnerWithJitter_CustomMaxDelay(t *testing.T) {
+	// Use a small maxDelay of 500ms
+	runner := utils.NewRetryRunnerWithJitter(
+		testLogger(),
+		10,
+		50*time.Millisecond,
+		500*time.Millisecond, // custom cap
+		2.0,
+		0.0, // no jitter for predictable testing
+	)
+
+	var delays []time.Duration
+	prev := time.Now()
+
+	_ = runner.RunWithContext(t.Context(), func() error {
+		now := time.Now()
+		delays = append(delays, now.Sub(prev))
+		prev = now
+
+		return errors.New("always fail")
+	})
+
+	// Skip first delay (no sleep before first call)
+	// Expected delays: 50ms, 100ms, 200ms, 400ms, 500ms (capped), 500ms, 500ms...
+	delays = delays[1:]
+
+	// Find where delays start getting capped
+	cappedCount := 0
+	for i, d := range delays {
+		if d >= 400*time.Millisecond {
+			// Should be capped at ~500ms (with tolerance for scheduling)
+			assert.LessOrEqual(t, d, 700*time.Millisecond,
+				"delay %d should be capped at ~500ms, got %v", i, d)
+			cappedCount++
+		}
+	}
+
+	// Verify that at least some delays were capped
+	assert.Greater(t, cappedCount, 3,
+		"expected multiple delays to be capped at 500ms")
+}
+
+// TestNewRetryRunnerWithJitter_ZeroJitter verifies that zero jitter produces
+// deterministic exponential backoff (no randomness).
+func TestNewRetryRunnerWithJitter_ZeroJitter(t *testing.T) {
+	runner := utils.NewRetryRunnerWithJitter(
+		testLogger(),
+		5,
+		10*time.Millisecond,
+		1*time.Second,
+		2.0,
+		0.0, // no jitter
+	)
+
+	var intervals []time.Duration
+	prev := time.Now()
+
+	_ = runner.RunWithContext(t.Context(), func() error {
+		now := time.Now()
+		intervals = append(intervals, now.Sub(prev))
+		prev = now
+
+		return errors.New("always fail")
+	})
+
+	// Skip first interval (no sleep before first call)
+	intervals = intervals[1:]
+
+	// With zero jitter, delays should follow strict exponential pattern
+	// Expected: 10ms, 20ms, 40ms, 80ms, 160ms
+	for i := 1; i < len(intervals); i++ {
+		ratio := float64(intervals[i]) / float64(intervals[i-1])
+		// Allow tolerance for scheduling jitter but should be close to 2.0
+		assert.InDelta(t, 2.0, ratio, 0.5,
+			"interval %d should be ~2x interval %d with zero jitter", i, i-1)
+	}
+}
+
+// TestNewRetryRunnerWithJitter_MaxJitter verifies that maximum jitter (1.0)
+// produces the widest variation in delays.
+func TestNewRetryRunnerWithJitter_MaxJitter(t *testing.T) {
+	runner := utils.NewRetryRunnerWithJitter(
+		testLogger(),
+		10,
+		100*time.Millisecond,
+		10*time.Second,
+		2.0,
+		1.0, // maximum jitter
+	)
+
+	var delays []time.Duration
+	prev := time.Now()
+
+	_ = runner.RunWithContext(t.Context(), func() error {
+		now := time.Now()
+		delays = append(delays, now.Sub(prev))
+		prev = now
+
+		return errors.New("always fail")
+	})
+
+	// Skip first delay (no sleep before first call)
+	delays = delays[1:]
+
+	// With jitterFactor=1.0, delays can vary by ±50% of base
+	// Base delays: 100ms, 200ms, 400ms, 800ms, 1600ms, 3200ms, 6400ms, 10s (capped)
+	for i, d := range delays {
+		baseDelay := min(100*time.Millisecond*time.Duration(1<<i), 10*time.Second)
+
+		// With 100% jitter, delay should be in range [base*0.5, base*1.5]
+		minDelay := time.Duration(float64(baseDelay) * 0.25) // 50% - 25% tolerance
+		maxDelay := time.Duration(float64(baseDelay) * 2.0)  // 150% + 50% tolerance
+
+		assert.GreaterOrEqual(t, d, minDelay,
+			"delay %d (%v) should be >= %v (base %v with max jitter)", i, d, minDelay, baseDelay)
+		assert.LessOrEqual(t, d, maxDelay,
+			"delay %d (%v) should be <= %v (base %v with max jitter)", i, d, maxDelay, baseDelay)
+	}
+}
+
+// TestNewRetryRunnerWithJitter_FunctionalBehavior verifies that the runner
+// created with jitter still functions correctly for retries.
+func TestNewRetryRunnerWithJitter_FunctionalBehavior(t *testing.T) {
+	runner := utils.NewRetryRunnerWithJitter(
+		testLogger(),
+		5,
+		10*time.Millisecond,
+		1*time.Second,
+		2.0,
+		0.3,
+	)
+
+	calls := 0
+	err := runner.RunWithContext(t.Context(), func() error {
+		calls++
+		if calls < 3 {
+			return errors.New("transient error")
+		}
+
+		return nil
+	})
+
+	require.NoError(t, err)
+	assert.Equal(t, 3, calls, "should succeed after 3 attempts")
 }

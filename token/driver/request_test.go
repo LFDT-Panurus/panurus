@@ -10,9 +10,11 @@ import (
 	"encoding/asn1"
 	"testing"
 
+	driver "github.com/LFDT-Panurus/panurus/token/driver/protos-go/v1"
+
+	"github.com/LFDT-Panurus/panurus/token/driver/protos-go/v1/request"
+	"github.com/LFDT-Panurus/panurus/token/token"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/proto"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/driver/protos-go/request"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/token"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -34,7 +36,7 @@ func TestAuditorSignature_ToProtos(t *testing.T) {
 // TestAuditorSignature_FromProtos tests the conversion from protobuf to AuditorSignature
 func TestAuditorSignature_FromProtos(t *testing.T) {
 	proto := &request.AuditorSignature{
-		Identity: &request.Identity{
+		Identity: &driver.Identity{
 			Raw: []byte("auditor1"),
 		},
 		Signature: &request.Signature{
@@ -63,13 +65,22 @@ func TestAuditorSignature_FromProtos_NilFields(t *testing.T) {
 // TestTokenRequest_Bytes tests serialization of TokenRequest
 func TestTokenRequest_Bytes(t *testing.T) {
 	req := &TokenRequest{
-		Issues:     [][]byte{[]byte("issue1")},
-		Transfers:  [][]byte{[]byte("transfer1")},
-		Signatures: [][]byte{[]byte("signature1")},
-		AuditorSignatures: []*AuditorSignature{
+		Actions: []*TypedAction{
+			{Type: request.ActionType_ACTION_TYPE_ISSUE, Raw: []byte("issue1")},
+			{Type: request.ActionType_ACTION_TYPE_TRANSFER, Raw: []byte("transfer1")},
+		},
+		Signatures: []*RequestSignature{
 			{
-				Identity:  Identity("auditor1"),
-				Signature: []byte("audsig1"),
+				Action: &ActionSignature{
+					ActionID:  0,
+					Signature: []byte("signature1"),
+				},
+			},
+			{
+				Auditor: &AuditorSignature{
+					Identity:  Identity("auditor1"),
+					Signature: []byte("audsig1"),
+				},
 			},
 		},
 	}
@@ -84,7 +95,14 @@ func TestTokenRequest_FromBytes_InvalidVersion(t *testing.T) {
 	protoReq := &request.TokenRequest{
 		Version: 999, // Invalid version
 		Actions: []*request.Action{
-			{Type: request.ActionType_ISSUE, Raw: []byte("issue1")},
+			{
+				Action: &request.Action_TypedAction{
+					TypedAction: &request.TypedAction{
+						Type: request.ActionType_ACTION_TYPE_ISSUE,
+						Raw:  []byte("issue1"),
+					},
+				},
+			},
 		},
 	}
 
@@ -98,6 +116,8 @@ func TestTokenRequest_FromBytes_InvalidVersion(t *testing.T) {
 }
 
 // TestTokenRequest_FromBytes_NilAction tests error handling for nil action
+// Note: protobuf unmarshaling converts nil actions to default-initialized actions
+// with Type=ACTION_TYPE_UNSPECIFIED, which is now caught by our validation
 func TestTokenRequest_FromBytes_NilAction(t *testing.T) {
 	protoReq := &request.TokenRequest{
 		Version: ProtocolV1,
@@ -109,11 +129,9 @@ func TestTokenRequest_FromBytes_NilAction(t *testing.T) {
 
 	req := &TokenRequest{}
 	err = req.FromBytes(raw)
-	// Note: protobuf unmarshaling may skip nil elements, so this might not error
-	// The actual behavior depends on protobuf implementation
-	if err != nil {
-		assert.Contains(t, err.Error(), "nil action found")
-	}
+	// Protobuf converts nil to default-initialized Action, which has no TypedAction set
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "only TypedAction is currently supported")
 }
 
 // TestTokenRequest_FromBytes_UnknownActionType tests error handling for unknown action type
@@ -121,7 +139,14 @@ func TestTokenRequest_FromBytes_UnknownActionType(t *testing.T) {
 	protoReq := &request.TokenRequest{
 		Version: ProtocolV1,
 		Actions: []*request.Action{
-			{Type: 999, Raw: []byte("unknown")}, // Unknown action type
+			{
+				Action: &request.Action_TypedAction{
+					TypedAction: &request.TypedAction{
+						Type: 999, // Unknown action type
+						Raw:  []byte("unknown"),
+					},
+				},
+			},
 		},
 	}
 
@@ -134,14 +159,20 @@ func TestTokenRequest_FromBytes_UnknownActionType(t *testing.T) {
 	assert.Contains(t, err.Error(), "unknown action type")
 }
 
-// TestTokenRequest_FromBytes_NilSignature tests error handling for nil signature
-func TestTokenRequest_FromBytes_NilSignature(t *testing.T) {
+// TestTokenRequest_FromBytes_UnspecifiedActionType tests error handling for unspecified action type
+func TestTokenRequest_FromBytes_UnspecifiedActionType(t *testing.T) {
 	protoReq := &request.TokenRequest{
 		Version: ProtocolV1,
 		Actions: []*request.Action{
-			{Type: request.ActionType_ISSUE, Raw: []byte("issue1")},
+			{
+				Action: &request.Action_TypedAction{
+					TypedAction: &request.TypedAction{
+						Type: request.ActionType_ACTION_TYPE_UNSPECIFIED,
+						Raw:  []byte("unspecified"),
+					},
+				},
+			},
 		},
-		Signatures: []*request.Signature{nil},
 	}
 
 	raw, err := proto.Marshal(protoReq)
@@ -150,7 +181,33 @@ func TestTokenRequest_FromBytes_NilSignature(t *testing.T) {
 	req := &TokenRequest{}
 	err = req.FromBytes(raw)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "nil signature found")
+	assert.Contains(t, err.Error(), "action type must be explicitly specified")
+}
+
+// TestTokenRequest_FromBytes_NilSignature tests error handling for nil signature
+func TestTokenRequest_FromBytes_NilSignature(t *testing.T) {
+	protoReq := &request.TokenRequest{
+		Version: ProtocolV1,
+		Actions: []*request.Action{
+			{
+				Action: &request.Action_TypedAction{
+					TypedAction: &request.TypedAction{
+						Type: request.ActionType_ACTION_TYPE_ISSUE,
+						Raw:  []byte("issue1"),
+					},
+				},
+			},
+		},
+		Signatures: []*request.RequestSignature{nil},
+	}
+
+	raw, err := proto.Marshal(protoReq)
+	require.NoError(t, err)
+
+	req := &TokenRequest{}
+	err = req.FromBytes(raw)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "request signature type not recognized")
 }
 
 // TestTokenRequest_FromBytes_EmptySignature tests error handling for empty signature
@@ -158,9 +215,25 @@ func TestTokenRequest_FromBytes_EmptySignature(t *testing.T) {
 	protoReq := &request.TokenRequest{
 		Version: ProtocolV1,
 		Actions: []*request.Action{
-			{Type: request.ActionType_ISSUE, Raw: []byte("issue1")},
+			{
+				Action: &request.Action_TypedAction{
+					TypedAction: &request.TypedAction{
+						Type: request.ActionType_ACTION_TYPE_ISSUE,
+						Raw:  []byte("issue1"),
+					},
+				},
+			},
 		},
-		Signatures: []*request.Signature{{Raw: []byte{}}},
+		Signatures: []*request.RequestSignature{
+			{
+				Signature: &request.RequestSignature_ActionSignature{
+					ActionSignature: &request.ActionSignature{
+						ActionId:  0,
+						Signature: &request.Signature{Raw: []byte{}},
+					},
+				},
+			},
+		},
 	}
 
 	raw, err := proto.Marshal(protoReq)
@@ -169,21 +242,28 @@ func TestTokenRequest_FromBytes_EmptySignature(t *testing.T) {
 	req := &TokenRequest{}
 	err = req.FromBytes(raw)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "nil signature found")
+	assert.Contains(t, err.Error(), "nil action signature found")
 }
 
 func TestTokenRequestSerialization(t *testing.T) {
 	req := &TokenRequest{
-		Issues: [][]byte{
-			[]byte("issue1"),
-			[]byte("issue2"),
+		Actions: []*TypedAction{
+			{Type: request.ActionType_ACTION_TYPE_ISSUE, Raw: []byte("issue1")},
+			{Type: request.ActionType_ACTION_TYPE_ISSUE, Raw: []byte("issue2")},
+			{Type: request.ActionType_ACTION_TYPE_TRANSFER, Raw: []byte("transfer1")},
 		},
-		Transfers:  [][]byte{[]byte("transfer1")},
-		Signatures: [][]byte{[]byte("signature1")},
-		AuditorSignatures: []*AuditorSignature{
+		Signatures: []*RequestSignature{
 			{
-				Identity:  Identity("auditor1"),
-				Signature: []byte("signature1"),
+				Action: &ActionSignature{
+					ActionID:  0,
+					Signature: []byte("signature1"),
+				},
+			},
+			{
+				Auditor: &AuditorSignature{
+					Identity:  Identity("auditor1"),
+					Signature: []byte("signature1"),
+				},
 			},
 		},
 	}
@@ -194,16 +274,18 @@ func TestTokenRequestSerialization(t *testing.T) {
 	err = req2.FromBytes(raw)
 	require.NoError(t, err)
 
-	// Version defaults to V2 for new requests
-	req.Version = ProtocolV2
+	// Version defaults to V1 (structured format) for new requests
+	req.Version = ProtocolV1
 	assert.Equal(t, req, req2)
 }
 
 // TestTokenRequest_MarshalToMessageToSign tests message marshaling for signing
 func TestTokenRequest_MarshalToMessageToSign(t *testing.T) {
 	req := &TokenRequest{
-		Issues:    [][]byte{[]byte("issue1")},
-		Transfers: [][]byte{[]byte("transfer1")},
+		Actions: []*TypedAction{
+			{Type: request.ActionType_ACTION_TYPE_ISSUE, Raw: []byte("issue1")},
+			{Type: request.ActionType_ACTION_TYPE_TRANSFER, Raw: []byte("transfer1")},
+		},
 	}
 
 	anchor := []byte("anchor123")
@@ -231,7 +313,7 @@ func TestAuditableIdentity_ToProtos(t *testing.T) {
 // TestAuditableIdentity_FromProtos tests conversion from protobuf
 func TestAuditableIdentity_FromProtos(t *testing.T) {
 	proto := &request.AuditableIdentity{
-		Identity: &request.Identity{
+		Identity: &driver.Identity{
 			Raw: []byte("identity1"),
 		},
 		AuditInfo: []byte("auditinfo1"),
@@ -263,7 +345,7 @@ func TestIssueInputMetadata_ToProtos(t *testing.T) {
 // TestIssueInputMetadata_FromProtos tests conversion from protobuf
 func TestIssueInputMetadata_FromProtos(t *testing.T) {
 	proto := &request.IssueInputMetadata{
-		TokenId: &request.TokenID{
+		TokenId: &driver.TokenID{
 			TxId:  "tx123",
 			Index: 5,
 		},
@@ -325,7 +407,7 @@ func TestIssueOutputMetadata_FromProtos(t *testing.T) {
 		Metadata: []byte("metadata1"),
 		Receivers: []*request.AuditableIdentity{
 			{
-				Identity:  &request.Identity{Raw: []byte("receiver1")},
+				Identity:  &driver.Identity{Raw: []byte("receiver1")},
 				AuditInfo: []byte("audit1"),
 			},
 		},
@@ -387,7 +469,9 @@ func TestIssueMetadata_ToProtos(t *testing.T) {
 		Outputs: []*IssueOutputMetadata{
 			{OutputMetadata: []byte("output1")},
 		},
-		ExtraSigners: []Identity{Identity("signer1")},
+		ExtraSigners: []AuditableIdentity{
+			{Identity: Identity("signer1"), AuditInfo: []byte("signer1_audit")},
+		},
 	}
 
 	proto, err := im.ToProtos()
@@ -401,24 +485,24 @@ func TestIssueMetadata_ToProtos(t *testing.T) {
 	assert.Len(t, proto.Outputs, 1)
 	assert.Equal(t, []byte("output1"), proto.Outputs[0].Metadata)
 	assert.Len(t, proto.ExtraSigners, 1)
-	assert.Equal(t, []byte("signer1"), proto.ExtraSigners[0].Raw)
+	assert.Equal(t, []byte("signer1"), proto.ExtraSigners[0].Identity.Raw)
 }
 
 // TestIssueMetadata_FromProtos tests conversion from protobuf
 func TestIssueMetadata_FromProtos(t *testing.T) {
 	proto := &request.IssueMetadata{
 		Issuer: &request.AuditableIdentity{
-			Identity:  &request.Identity{Raw: []byte("issuer1")},
+			Identity:  &driver.Identity{Raw: []byte("issuer1")},
 			AuditInfo: []byte("issuer_audit"),
 		},
 		Inputs: []*request.IssueInputMetadata{
-			{TokenId: &request.TokenID{TxId: "tx1", Index: 0}},
+			{TokenId: &driver.TokenID{TxId: "tx1", Index: 0}},
 		},
 		Outputs: []*request.OutputMetadata{
 			{Metadata: []byte("output1")},
 		},
-		ExtraSigners: []*request.Identity{
-			{Raw: []byte("signer1")},
+		ExtraSigners: []*request.AuditableIdentity{
+			{Identity: &driver.Identity{Raw: []byte("signer1")}},
 		},
 	}
 
@@ -432,7 +516,8 @@ func TestIssueMetadata_FromProtos(t *testing.T) {
 	assert.Len(t, im.Outputs, 1)
 	assert.Equal(t, []byte("output1"), im.Outputs[0].OutputMetadata)
 	assert.Len(t, im.ExtraSigners, 1)
-	assert.Equal(t, Identity("signer1"), im.ExtraSigners[0])
+	assert.Equal(t, Identity("signer1"), im.ExtraSigners[0].Identity)
+	assert.Nil(t, im.ExtraSigners[0].AuditInfo)
 }
 
 // TestTransferInputMetadata_ToProtos tests conversion to protobuf
@@ -457,10 +542,10 @@ func TestTransferInputMetadata_ToProtos(t *testing.T) {
 // TestTransferInputMetadata_FromProtos tests conversion from protobuf
 func TestTransferInputMetadata_FromProtos(t *testing.T) {
 	proto := &request.TransferInputMetadata{
-		TokenId: &request.TokenID{TxId: "tx123", Index: 5},
+		TokenId: &driver.TokenID{TxId: "tx123", Index: 5},
 		Senders: []*request.AuditableIdentity{
 			{
-				Identity:  &request.Identity{Raw: []byte("sender1")},
+				Identity:  &driver.Identity{Raw: []byte("sender1")},
 				AuditInfo: []byte("audit1"),
 			},
 		},
@@ -528,7 +613,7 @@ func TestTransferOutputMetadata_FromProtos(t *testing.T) {
 		Metadata:  []byte("metadata1"),
 		AuditInfo: []byte("auditinfo1"),
 		Receivers: []*request.AuditableIdentity{
-			{Identity: &request.Identity{Raw: []byte("receiver1")}},
+			{Identity: &driver.Identity{Raw: []byte("receiver1")}},
 		},
 	}
 
@@ -648,8 +733,13 @@ func TestTransferMetadata_ToProtos(t *testing.T) {
 		Outputs: []*TransferOutputMetadata{
 			{OutputMetadata: []byte("output1")},
 		},
-		ExtraSigners: []Identity{Identity("signer1")},
-		Issuer:       Identity("issuer1"),
+		ExtraSigners: []AuditableIdentity{
+			{Identity: Identity("signer1"), AuditInfo: []byte("signer1_audit")},
+		},
+		Issuer: AuditableIdentity{
+			Identity:  Identity("issuer1"),
+			AuditInfo: []byte("issuer1_audit"),
+		},
 	}
 
 	proto, err := tm.ToProtos()
@@ -661,9 +751,9 @@ func TestTransferMetadata_ToProtos(t *testing.T) {
 	assert.Len(t, proto.Outputs, 1)
 	assert.Equal(t, []byte("output1"), proto.Outputs[0].Metadata)
 	assert.Len(t, proto.ExtraSigners, 1)
-	assert.Equal(t, []byte("signer1"), proto.ExtraSigners[0].Raw)
+	assert.Equal(t, []byte("signer1"), proto.ExtraSigners[0].Identity.Raw)
 	assert.NotNil(t, proto.Issuer)
-	assert.Equal(t, []byte("issuer1"), proto.Issuer.Raw)
+	assert.Equal(t, []byte("issuer1"), proto.Issuer.Identity.Raw)
 }
 
 // TestTransferMetadata_ToProtos_NilIssuer tests conversion with nil issuer
@@ -671,7 +761,7 @@ func TestTransferMetadata_ToProtos_NilIssuer(t *testing.T) {
 	tm := &TransferMetadata{
 		Inputs:  []*TransferInputMetadata{},
 		Outputs: []*TransferOutputMetadata{},
-		Issuer:  nil,
+		Issuer:  AuditableIdentity{},
 	}
 
 	proto, err := tm.ToProtos()
@@ -684,15 +774,17 @@ func TestTransferMetadata_ToProtos_NilIssuer(t *testing.T) {
 func TestTransferMetadata_FromProtos(t *testing.T) {
 	proto := &request.TransferMetadata{
 		Inputs: []*request.TransferInputMetadata{
-			{TokenId: &request.TokenID{TxId: "tx1", Index: 1}},
+			{TokenId: &driver.TokenID{TxId: "tx1", Index: 1}},
 		},
 		Outputs: []*request.OutputMetadata{
 			{Metadata: []byte("output1")},
 		},
-		ExtraSigners: []*request.Identity{
-			{Raw: []byte("signer1")},
+		ExtraSigners: []*request.AuditableIdentity{
+			{Identity: &driver.Identity{Raw: []byte("signer1")}},
 		},
-		Issuer: &request.Identity{Raw: []byte("issuer1")},
+		Issuer: &request.AuditableIdentity{
+			Identity: &driver.Identity{Raw: []byte("issuer1")},
+		},
 	}
 
 	tm := &TransferMetadata{}
@@ -704,8 +796,10 @@ func TestTransferMetadata_FromProtos(t *testing.T) {
 	assert.Len(t, tm.Outputs, 1)
 	assert.Equal(t, []byte("output1"), tm.Outputs[0].OutputMetadata)
 	assert.Len(t, tm.ExtraSigners, 1)
-	assert.Equal(t, Identity("signer1"), tm.ExtraSigners[0])
-	assert.Equal(t, Identity("issuer1"), tm.Issuer)
+	assert.Equal(t, Identity("signer1"), tm.ExtraSigners[0].Identity)
+	assert.Nil(t, tm.ExtraSigners[0].AuditInfo)
+	assert.Equal(t, Identity("issuer1"), tm.Issuer.Identity)
+	assert.Nil(t, tm.Issuer.AuditInfo)
 }
 
 // TestTransferMetadata_FromProtos_NilIssuer tests conversion with nil issuer
@@ -719,99 +813,106 @@ func TestTransferMetadata_FromProtos_NilIssuer(t *testing.T) {
 	tm := &TransferMetadata{}
 	err := tm.FromProtos(proto)
 	require.NoError(t, err)
-	assert.Nil(t, tm.Issuer)
+	assert.Nil(t, tm.Issuer.Identity)
+	assert.Nil(t, tm.Issuer.AuditInfo)
 }
 
 func TestTokenRequestMetadataSerialization(t *testing.T) {
 	reqMeta := &TokenRequestMetadata{
-		Issues: []*IssueMetadata{
+		Actions: []*ActionMetadataEntry{
 			{
-				Issuer: AuditableIdentity{
-					Identity:  []byte("issuer1"),
-					AuditInfo: []byte("issuer_auditinfo1"),
-				},
-				Inputs: []*IssueInputMetadata{},
-				Outputs: []*IssueOutputMetadata{
-					{
-						OutputMetadata: []byte("token_info1"),
-						Receivers: []*AuditableIdentity{
-							{
-								Identity:  []byte("receiver1"),
-								AuditInfo: []byte("audit_info1"),
+				ActionID: 0,
+				IssueMetadata: &IssueMetadata{
+					Issuer: AuditableIdentity{
+						Identity:  []byte("issuer1"),
+						AuditInfo: []byte("issuer_auditinfo1"),
+					},
+					Inputs: []*IssueInputMetadata{},
+					Outputs: []*IssueOutputMetadata{
+						{
+							OutputMetadata: []byte("token_info1"),
+							Receivers: []*AuditableIdentity{
+								{
+									Identity:  []byte("receiver1"),
+									AuditInfo: []byte("audit_info1"),
+								},
+							},
+						},
+						{
+							OutputMetadata: []byte("token_info2"),
+							Receivers: []*AuditableIdentity{
+								{
+									Identity:  []byte("receiver2"),
+									AuditInfo: []byte("audit_info2"),
+								},
 							},
 						},
 					},
-					{
-						OutputMetadata: []byte("token_info2"),
-						Receivers: []*AuditableIdentity{
-							{
-								Identity:  []byte("receiver2"),
-								AuditInfo: []byte("audit_info2"),
-							},
-						},
+					ExtraSigners: []AuditableIdentity{
+						{Identity: []byte("issue_extra_signer1")},
+						{Identity: []byte("issue_extra_signer2")},
 					},
-				},
-				ExtraSigners: []Identity{
-					[]byte("issue_extra_signer1"),
-					[]byte("issue_extra_signer2"),
 				},
 			},
-		},
-		Transfers: []*TransferMetadata{
 			{
-				Inputs: []*TransferInputMetadata{
-					{
-						TokenID: &token.ID{
-							TxId:  "txid1",
-							Index: 1,
+				ActionID: 1,
+				TransferMetadata: &TransferMetadata{
+					Inputs: []*TransferInputMetadata{
+						{
+							TokenID: &token.ID{
+								TxId:  "txid1",
+								Index: 1,
+							},
+							Senders: []*AuditableIdentity{
+								{
+									Identity:  []byte("sender1"),
+									AuditInfo: []byte("sender1_audit_info"),
+								},
+							},
 						},
-						Senders: []*AuditableIdentity{
-							{
-								Identity:  []byte("sender1"),
-								AuditInfo: []byte("sender1_audit_info"),
+						{
+							TokenID: &token.ID{
+								TxId:  "txid2",
+								Index: 1,
+							},
+							Senders: []*AuditableIdentity{
+								{
+									Identity:  []byte("sender2"),
+									AuditInfo: []byte("sender2_audit_info"),
+								},
 							},
 						},
 					},
-					{
-						TokenID: &token.ID{
-							TxId:  "txid2",
-							Index: 1,
-						},
-						Senders: []*AuditableIdentity{
-							{
-								Identity:  []byte("sender2"),
-								AuditInfo: []byte("sender2_audit_info"),
+					Outputs: []*TransferOutputMetadata{
+						{
+							OutputAuditInfo: []byte("token_info_3"),
+							OutputMetadata:  []byte("token_meta_3"),
+							Receivers: []*AuditableIdentity{
+								{
+									Identity:  []byte("receiver3"),
+									AuditInfo: []byte("audit_info3"),
+								},
 							},
 						},
+						{
+							OutputAuditInfo: []byte("token_info_4"),
+							OutputMetadata:  []byte("token_meta_4"),
+							Receivers: []*AuditableIdentity{
+								{
+									Identity:  []byte("receiver4"),
+									AuditInfo: []byte("audit_info4"),
+								},
+							},
+						},
+					},
+					ExtraSigners: []AuditableIdentity{
+						{Identity: []byte("extra_signer1")},
+						{Identity: []byte("extra_signer2")},
+					},
+					Issuer: AuditableIdentity{
+						Identity: Identity([]byte("issuer")),
 					},
 				},
-				Outputs: []*TransferOutputMetadata{
-					{
-						OutputAuditInfo: []byte("token_info_3"),
-						OutputMetadata:  []byte("token_meta_3"),
-						Receivers: []*AuditableIdentity{
-							{
-								Identity:  []byte("receiver3"),
-								AuditInfo: []byte("audit_info3"),
-							},
-						},
-					},
-					{
-						OutputAuditInfo: []byte("token_info_4"),
-						OutputMetadata:  []byte("token_meta_4"),
-						Receivers: []*AuditableIdentity{
-							{
-								Identity:  []byte("receiver4"),
-								AuditInfo: []byte("audit_info4"),
-							},
-						},
-					},
-				},
-				ExtraSigners: []Identity{
-					[]byte("extra_signer1"),
-					[]byte("extra_signer2"),
-				},
-				Issuer: Identity([]byte("issuer")),
 			},
 		},
 		Application: map[string][]byte{
@@ -854,7 +955,9 @@ func TestTokenRequestMetadata_FromBytes_InvalidVersion(t *testing.T) {
 // TestTokenRequestMetadata_ToProtos_NilIssueMetadata tests error handling for nil issue metadata
 func TestTokenRequestMetadata_ToProtos_NilIssueMetadata(t *testing.T) {
 	reqMeta := &TokenRequestMetadata{
-		Issues: []*IssueMetadata{nil},
+		Actions: []*ActionMetadataEntry{
+			{ActionID: 0, IssueMetadata: nil},
+		},
 	}
 
 	_, err := reqMeta.ToProtos()
@@ -865,7 +968,9 @@ func TestTokenRequestMetadata_ToProtos_NilIssueMetadata(t *testing.T) {
 // TestTokenRequestMetadata_ToProtos_NilTransferMetadata tests error handling for nil transfer metadata
 func TestTokenRequestMetadata_ToProtos_NilTransferMetadata(t *testing.T) {
 	reqMeta := &TokenRequestMetadata{
-		Transfers: []*TransferMetadata{nil},
+		Actions: []*ActionMetadataEntry{
+			{ActionID: 0, TransferMetadata: nil},
+		},
 	}
 
 	_, err := reqMeta.ToProtos()
@@ -891,8 +996,7 @@ func TestTokenRequestMetadata_FromProtos_UnrecognizedMetadata(t *testing.T) {
 // TestTokenRequestMetadata_EmptyApplication tests handling of empty application map
 func TestTokenRequestMetadata_EmptyApplication(t *testing.T) {
 	reqMeta := &TokenRequestMetadata{
-		Issues:      []*IssueMetadata{},
-		Transfers:   []*TransferMetadata{},
+		Actions:     []*ActionMetadataEntry{},
 		Application: nil,
 	}
 
@@ -908,8 +1012,7 @@ func TestTokenRequestMetadata_EmptyApplication(t *testing.T) {
 // TestTokenRequestMetadata_WithApplication tests application metadata handling
 func TestTokenRequestMetadata_WithApplication(t *testing.T) {
 	reqMeta := &TokenRequestMetadata{
-		Issues:    []*IssueMetadata{},
-		Transfers: []*TransferMetadata{},
+		Actions: []*ActionMetadataEntry{},
 		Application: map[string][]byte{
 			"app_key1": []byte("app_value1"),
 			"app_key2": []byte("app_value2"),
@@ -969,7 +1072,9 @@ func TestTransferMetadata_TokenIDs_EmptyInputs(t *testing.T) {
 func TestTokenRequest_Bytes_Error(t *testing.T) {
 	// Create a request that will serialize successfully
 	req := &TokenRequest{
-		Issues: [][]byte{[]byte("issue1")},
+		Actions: []*TypedAction{
+			{Type: request.ActionType_ACTION_TYPE_ISSUE, Raw: []byte("issue1")},
+		},
 	}
 
 	raw, err := req.Bytes()
@@ -1038,10 +1143,10 @@ func TestIssueMetadata_ToProtos_ErrorInOutputs(t *testing.T) {
 func TestIssueMetadata_FromProtos_ErrorInInputs(t *testing.T) {
 	proto := &request.IssueMetadata{
 		Issuer: &request.AuditableIdentity{
-			Identity: &request.Identity{Raw: []byte("issuer1")},
+			Identity: &driver.Identity{Raw: []byte("issuer1")},
 		},
 		Inputs: []*request.IssueInputMetadata{
-			{TokenId: &request.TokenID{TxId: "tx1", Index: 0}},
+			{TokenId: &driver.TokenID{TxId: "tx1", Index: 0}},
 		},
 		Outputs: []*request.OutputMetadata{},
 	}
@@ -1055,7 +1160,7 @@ func TestIssueMetadata_FromProtos_ErrorInInputs(t *testing.T) {
 func TestIssueMetadata_FromProtos_ErrorInOutputs(t *testing.T) {
 	proto := &request.IssueMetadata{
 		Issuer: &request.AuditableIdentity{
-			Identity: &request.Identity{Raw: []byte("issuer1")},
+			Identity: &driver.Identity{Raw: []byte("issuer1")},
 		},
 		Inputs: []*request.IssueInputMetadata{},
 		Outputs: []*request.OutputMetadata{
@@ -1115,7 +1220,7 @@ func TestTransferMetadata_ToProtos_ErrorInOutputs(t *testing.T) {
 func TestTransferMetadata_FromProtos_ErrorInInputs(t *testing.T) {
 	proto := &request.TransferMetadata{
 		Inputs: []*request.TransferInputMetadata{
-			{TokenId: &request.TokenID{TxId: "tx1", Index: 1}},
+			{TokenId: &driver.TokenID{TxId: "tx1", Index: 1}},
 		},
 		Outputs: []*request.OutputMetadata{},
 	}
@@ -1142,8 +1247,7 @@ func TestTransferMetadata_FromProtos_ErrorInOutputs(t *testing.T) {
 // TestTokenRequestMetadata_Bytes_Error tests error handling in Bytes
 func TestTokenRequestMetadata_Bytes_Error(t *testing.T) {
 	reqMeta := &TokenRequestMetadata{
-		Issues:    []*IssueMetadata{},
-		Transfers: []*TransferMetadata{},
+		Actions: []*ActionMetadataEntry{},
 	}
 
 	raw, err := reqMeta.Bytes()
@@ -1162,12 +1266,14 @@ func TestTokenRequestMetadata_FromBytes_UnmarshalError(t *testing.T) {
 // TestTokenRequestMetadata_ToProtos_ErrorInIssues tests error in issues conversion
 func TestTokenRequestMetadata_ToProtos_ErrorInIssues(t *testing.T) {
 	reqMeta := &TokenRequestMetadata{
-		Issues: []*IssueMetadata{
+		Actions: []*ActionMetadataEntry{
 			{
-				Issuer: AuditableIdentity{Identity: Identity("issuer1")},
+				ActionID: 0,
+				IssueMetadata: &IssueMetadata{
+					Issuer: AuditableIdentity{Identity: Identity("issuer1")},
+				},
 			},
 		},
-		Transfers: []*TransferMetadata{},
 	}
 
 	proto, err := reqMeta.ToProtos()
@@ -1178,11 +1284,13 @@ func TestTokenRequestMetadata_ToProtos_ErrorInIssues(t *testing.T) {
 // TestTokenRequestMetadata_ToProtos_ErrorInTransfers tests error in transfers conversion
 func TestTokenRequestMetadata_ToProtos_ErrorInTransfers(t *testing.T) {
 	reqMeta := &TokenRequestMetadata{
-		Issues: []*IssueMetadata{},
-		Transfers: []*TransferMetadata{
+		Actions: []*ActionMetadataEntry{
 			{
-				Inputs:  []*TransferInputMetadata{},
-				Outputs: []*TransferOutputMetadata{},
+				ActionID: 0,
+				TransferMetadata: &TransferMetadata{
+					Inputs:  []*TransferInputMetadata{},
+					Outputs: []*TransferOutputMetadata{},
+				},
 			},
 		},
 	}
@@ -1201,7 +1309,7 @@ func TestTokenRequestMetadata_FromProtos_NilIssueMetadata(t *testing.T) {
 				Metadata: &request.ActionMetadata_IssueMetadata{
 					IssueMetadata: &request.IssueMetadata{
 						Issuer: &request.AuditableIdentity{
-							Identity: &request.Identity{Raw: []byte("issuer1")},
+							Identity: &driver.Identity{Raw: []byte("issuer1")},
 						},
 					},
 				},
@@ -1212,8 +1320,9 @@ func TestTokenRequestMetadata_FromProtos_NilIssueMetadata(t *testing.T) {
 	reqMeta := &TokenRequestMetadata{}
 	err := reqMeta.FromProtos(proto)
 	require.NoError(t, err)
-	require.Len(t, reqMeta.Issues, 1)
-	assert.Equal(t, Identity("issuer1"), reqMeta.Issues[0].Issuer.Identity)
+	require.Len(t, reqMeta.Actions, 1)
+	require.NotNil(t, reqMeta.Actions[0].IssueMetadata)
+	assert.Equal(t, Identity("issuer1"), reqMeta.Actions[0].IssueMetadata.Issuer.Identity)
 }
 
 // TestTokenRequestMetadata_FromProtos_NilTransferMetadata tests nil transfer metadata handling
@@ -1312,10 +1421,10 @@ func TestIssueMetadata_ToProtos_WithExtraSigners(t *testing.T) {
 		Outputs: []*IssueOutputMetadata{
 			{OutputMetadata: []byte("output1")},
 		},
-		ExtraSigners: []Identity{
-			Identity("signer1"),
-			Identity("signer2"),
-			Identity("signer3"),
+		ExtraSigners: []AuditableIdentity{
+			{Identity: Identity("signer1"), AuditInfo: []byte("signer1_audit")},
+			{Identity: Identity("signer2"), AuditInfo: []byte("signer2_audit")},
+			{Identity: Identity("signer3"), AuditInfo: []byte("signer3_audit")},
 		},
 	}
 
@@ -1323,9 +1432,9 @@ func TestIssueMetadata_ToProtos_WithExtraSigners(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotNil(t, proto)
 	assert.Len(t, proto.ExtraSigners, 3)
-	assert.Equal(t, []byte("signer1"), proto.ExtraSigners[0].Raw)
-	assert.Equal(t, []byte("signer2"), proto.ExtraSigners[1].Raw)
-	assert.Equal(t, []byte("signer3"), proto.ExtraSigners[2].Raw)
+	assert.Equal(t, []byte("signer1"), proto.ExtraSigners[0].Identity.Raw)
+	assert.Equal(t, []byte("signer2"), proto.ExtraSigners[1].Identity.Raw)
+	assert.Equal(t, []byte("signer3"), proto.ExtraSigners[2].Identity.Raw)
 }
 
 // TestTransferMetadata_ToProtos_WithExtraSigners tests ToProtos with extra signers
@@ -1337,35 +1446,47 @@ func TestTransferMetadata_ToProtos_WithExtraSigners(t *testing.T) {
 		Outputs: []*TransferOutputMetadata{
 			{OutputMetadata: []byte("output1")},
 		},
-		ExtraSigners: []Identity{
-			Identity("signer1"),
-			Identity("signer2"),
+		ExtraSigners: []AuditableIdentity{
+			{Identity: Identity("signer1"), AuditInfo: []byte("signer1_audit")},
+			{Identity: Identity("signer2"), AuditInfo: []byte("signer2_audit")},
 		},
-		Issuer: Identity("issuer1"),
+		Issuer: AuditableIdentity{
+			Identity:  Identity("issuer1"),
+			AuditInfo: []byte("issuer1_audit"),
+		},
 	}
 
 	proto, err := tm.ToProtos()
 	require.NoError(t, err)
 	assert.NotNil(t, proto)
 	assert.Len(t, proto.ExtraSigners, 2)
-	assert.Equal(t, []byte("signer1"), proto.ExtraSigners[0].Raw)
-	assert.Equal(t, []byte("signer2"), proto.ExtraSigners[1].Raw)
+	assert.Equal(t, []byte("signer1"), proto.ExtraSigners[0].Identity.Raw)
+	assert.Equal(t, []byte("signer2"), proto.ExtraSigners[1].Identity.Raw)
 	assert.NotNil(t, proto.Issuer)
-	assert.Equal(t, []byte("issuer1"), proto.Issuer.Raw)
+	assert.Equal(t, []byte("issuer1"), proto.Issuer.Identity.Raw)
 }
 
 // TestTokenRequest_ToProtos_EmptyAuditorSignatures tests ToProtos with empty auditor signatures
 func TestTokenRequest_ToProtos_EmptyAuditorSignatures(t *testing.T) {
 	req := &TokenRequest{
-		Issues:            [][]byte{[]byte("issue1")},
-		Signatures:        [][]byte{[]byte("sig1")},
-		AuditorSignatures: []*AuditorSignature{},
+		Actions: []*TypedAction{
+			{Type: request.ActionType_ACTION_TYPE_ISSUE, Raw: []byte("issue1")},
+		},
+		Signatures: []*RequestSignature{
+			{
+				Action: &ActionSignature{
+					ActionID:  0,
+					Signature: []byte("sig1"),
+				},
+			},
+		},
 	}
 
 	proto, err := req.ToProtos()
 	require.NoError(t, err)
-	assert.NotNil(t, proto.Auditing)
-	assert.Empty(t, proto.Auditing.Signatures)
+	require.Len(t, proto.Signatures, 1)
+	assert.NotNil(t, proto.Signatures[0].GetActionSignature())
+	assert.Nil(t, proto.Signatures[0].GetAuditorSignature())
 }
 
 // TestIssueOutputMetadata_FromProtos_NilOutputMetadata tests FromProtos with nil output metadata
@@ -1397,11 +1518,24 @@ func TestTransferOutputMetadata_FromProtos_NilOutputMetadata(t *testing.T) {
 // TestTokenRequest_ToProtos_WithBothIssuesAndTransfers tests ToProtos with multiple action types
 func TestTokenRequest_ToProtos_WithBothIssuesAndTransfers(t *testing.T) {
 	req := &TokenRequest{
-		Issues:     [][]byte{[]byte("issue1"), []byte("issue2")},
-		Transfers:  [][]byte{[]byte("transfer1")},
-		Signatures: [][]byte{[]byte("sig1")},
-		AuditorSignatures: []*AuditorSignature{
-			{Identity: Identity("aud1"), Signature: []byte("audsig1")},
+		Actions: []*TypedAction{
+			{Type: request.ActionType_ACTION_TYPE_ISSUE, Raw: []byte("issue1")},
+			{Type: request.ActionType_ACTION_TYPE_ISSUE, Raw: []byte("issue2")},
+			{Type: request.ActionType_ACTION_TYPE_TRANSFER, Raw: []byte("transfer1")},
+		},
+		Signatures: []*RequestSignature{
+			{
+				Action: &ActionSignature{
+					ActionID:  0,
+					Signature: []byte("sig1"),
+				},
+			},
+			{
+				Auditor: &AuditorSignature{
+					Identity:  Identity("aud1"),
+					Signature: []byte("audsig1"),
+				},
+			},
 		},
 	}
 
@@ -1409,15 +1543,30 @@ func TestTokenRequest_ToProtos_WithBothIssuesAndTransfers(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, proto)
 	assert.Len(t, proto.Actions, 3)
-	assert.Equal(t, []byte("issue1"), proto.Actions[0].Raw)
-	assert.Equal(t, request.ActionType_ISSUE, proto.Actions[0].Type)
-	assert.Equal(t, []byte("issue2"), proto.Actions[1].Raw)
-	assert.Equal(t, request.ActionType_ISSUE, proto.Actions[1].Type)
-	assert.Equal(t, []byte("transfer1"), proto.Actions[2].Raw)
-	assert.Equal(t, request.ActionType_TRANSFER, proto.Actions[2].Type)
-	assert.NotNil(t, proto.Auditing)
-	assert.Len(t, proto.Auditing.Signatures, 1)
-	assert.Equal(t, []byte("aud1"), proto.Auditing.Signatures[0].Identity.Raw)
+
+	// Verify first action (issue1)
+	typedAction0 := proto.Actions[0].GetTypedAction()
+	require.NotNil(t, typedAction0)
+	assert.Equal(t, []byte("issue1"), typedAction0.Raw)
+	assert.Equal(t, request.ActionType_ACTION_TYPE_ISSUE, typedAction0.Type)
+
+	// Verify second action (issue2)
+	typedAction1 := proto.Actions[1].GetTypedAction()
+	require.NotNil(t, typedAction1)
+	assert.Equal(t, []byte("issue2"), typedAction1.Raw)
+	assert.Equal(t, request.ActionType_ACTION_TYPE_ISSUE, typedAction1.Type)
+
+	// Verify third action (transfer1)
+	typedAction2 := proto.Actions[2].GetTypedAction()
+	require.NotNil(t, typedAction2)
+	assert.Equal(t, []byte("transfer1"), typedAction2.Raw)
+	assert.Equal(t, request.ActionType_ACTION_TYPE_TRANSFER, typedAction2.Type)
+
+	require.Len(t, proto.Signatures, 2)
+	assert.NotNil(t, proto.Signatures[0].GetActionSignature())
+	assert.Equal(t, uint32(0), proto.Signatures[0].GetActionSignature().ActionId)
+	assert.NotNil(t, proto.Signatures[1].GetAuditorSignature())
+	assert.Equal(t, []byte("aud1"), proto.Signatures[1].GetAuditorSignature().Identity.Raw)
 }
 
 // TestTokenRequest_FromProtos_WithAuditing tests FromProtos with auditing
@@ -1425,14 +1574,30 @@ func TestTokenRequest_FromProtos_WithAuditing(t *testing.T) {
 	protoReq := &request.TokenRequest{
 		Version: ProtocolV1,
 		Actions: []*request.Action{
-			{Type: request.ActionType_ISSUE, Raw: []byte("issue1")},
+			{
+				Action: &request.Action_TypedAction{
+					TypedAction: &request.TypedAction{
+						Type: request.ActionType_ACTION_TYPE_ISSUE,
+						Raw:  []byte("issue1"),
+					},
+				},
+			},
 		},
-		Signatures: []*request.Signature{{Raw: []byte("sig1")}},
-		Auditing: &request.Auditing{
-			Signatures: []*request.AuditorSignature{
-				{
-					Identity:  &request.Identity{Raw: []byte("aud1")},
-					Signature: &request.Signature{Raw: []byte("audsig1")},
+		Signatures: []*request.RequestSignature{
+			{
+				Signature: &request.RequestSignature_ActionSignature{
+					ActionSignature: &request.ActionSignature{
+						ActionId:  0,
+						Signature: &request.Signature{Raw: []byte("sig1")},
+					},
+				},
+			},
+			{
+				Signature: &request.RequestSignature_AuditorSignature{
+					AuditorSignature: &request.AuditorSignature{
+						Identity:  &driver.Identity{Raw: []byte("aud1")},
+						Signature: &request.Signature{Raw: []byte("audsig1")},
+					},
 				},
 			},
 		},
@@ -1441,20 +1606,24 @@ func TestTokenRequest_FromProtos_WithAuditing(t *testing.T) {
 	req := &TokenRequest{}
 	err := req.FromProtos(protoReq)
 	require.NoError(t, err)
-	assert.Len(t, req.Issues, 1)
-	assert.Equal(t, []byte("issue1"), req.Issues[0])
-	assert.Len(t, req.Signatures, 1)
-	assert.Equal(t, []byte("sig1"), req.Signatures[0])
-	assert.Len(t, req.AuditorSignatures, 1)
-	assert.Equal(t, Identity("aud1"), req.AuditorSignatures[0].Identity)
-	assert.Equal(t, []byte("audsig1"), req.AuditorSignatures[0].Signature)
+	issues := req.GetIssues()
+	assert.Len(t, issues, 1)
+	assert.Equal(t, []byte("issue1"), issues[0])
+	assert.Len(t, req.Signatures, 2)
+	require.NotNil(t, req.Signatures[0].Action)
+	assert.Equal(t, []byte("sig1"), req.Signatures[0].Action.Signature)
+	require.NotNil(t, req.Signatures[1].Auditor)
+	assert.Equal(t, Identity("aud1"), req.Signatures[1].Auditor.Identity)
+	assert.Equal(t, []byte("audsig1"), req.Signatures[1].Auditor.Signature)
 }
 
 // TestTokenRequest_MarshalToMessageToSign_WithAnchor tests MarshalToMessageToSign
 func TestTokenRequest_MarshalToMessageToSign_WithAnchor(t *testing.T) {
 	req := &TokenRequest{
-		Issues:    [][]byte{[]byte("issue1")},
-		Transfers: [][]byte{[]byte("transfer1")},
+		Actions: []*TypedAction{
+			{Type: request.ActionType_ACTION_TYPE_ISSUE, Raw: []byte("issue1")},
+			{Type: request.ActionType_ACTION_TYPE_TRANSFER, Raw: []byte("transfer1")},
+		},
 	}
 
 	raw, err := req.MarshalToMessageToSign([]byte("anchor"))
@@ -1582,13 +1751,15 @@ func TestTransferMetadata_ToProtos_WithIssuer(t *testing.T) {
 		Outputs: []*TransferOutputMetadata{
 			{OutputMetadata: []byte("output1")},
 		},
-		Issuer: Identity("issuer1"),
+		Issuer: AuditableIdentity{
+			Identity: Identity("issuer1"),
+		},
 	}
 
 	proto, err := meta.ToProtos()
 	require.NoError(t, err)
 	assert.NotNil(t, proto.Issuer)
-	assert.Equal(t, []byte("issuer1"), proto.Issuer.Raw)
+	assert.Equal(t, []byte("issuer1"), proto.Issuer.Identity.Raw)
 }
 
 // TestTransferMetadata_FromProtos_WithEmptySlices tests FromProtos with empty slices
@@ -1608,7 +1779,9 @@ func TestTransferMetadata_FromProtos_WithEmptySlices(t *testing.T) {
 // TestTokenRequestMetadata_Bytes_ToProtosError tests Bytes error when ToProtos fails
 func TestTokenRequestMetadata_Bytes_ToProtosError(t *testing.T) {
 	reqMeta := &TokenRequestMetadata{
-		Issues: []*IssueMetadata{nil},
+		Actions: []*ActionMetadataEntry{
+			{ActionID: 0, IssueMetadata: nil, TransferMetadata: nil},
+		},
 	}
 
 	raw, err := reqMeta.Bytes()
@@ -1619,8 +1792,7 @@ func TestTokenRequestMetadata_Bytes_ToProtosError(t *testing.T) {
 // TestTokenRequestMetadata_ToProtos_WithEmptyMetadata tests ToProtos with empty metadata
 func TestTokenRequestMetadata_ToProtos_WithEmptyMetadata(t *testing.T) {
 	reqMeta := &TokenRequestMetadata{
-		Issues:    []*IssueMetadata{},
-		Transfers: []*TransferMetadata{},
+		Actions: []*ActionMetadataEntry{},
 	}
 
 	proto, err := reqMeta.ToProtos()
@@ -1628,11 +1800,14 @@ func TestTokenRequestMetadata_ToProtos_WithEmptyMetadata(t *testing.T) {
 	assert.Empty(t, proto.Metadata)
 }
 
-// TestMarshalToMessageToSign_V1 tests the V1 protocol signature message construction
-func TestMarshalToMessageToSign_V1(t *testing.T) {
+// TestMarshalToMessageToSign_V1_Success tests the V1 protocol signature message construction
+func TestMarshalToMessageToSign_V1_Success(t *testing.T) {
 	tr := &TokenRequest{
-		Issues:    [][]byte{[]byte("issue1"), []byte("issue2")},
-		Transfers: [][]byte{[]byte("transfer1")},
+		Actions: []*TypedAction{
+			{Type: request.ActionType_ACTION_TYPE_ISSUE, Raw: []byte("issue1")},
+			{Type: request.ActionType_ACTION_TYPE_ISSUE, Raw: []byte("issue2")},
+			{Type: request.ActionType_ACTION_TYPE_TRANSFER, Raw: []byte("transfer1")},
+		},
 	}
 
 	anchor := []byte("test-anchor")
@@ -1640,145 +1815,119 @@ func TestMarshalToMessageToSign_V1(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, msg)
 
-	// V1 should use simple concatenation
-	// The message should end with the anchor
-	assert.Greater(t, len(msg), len(anchor))
-	assert.Equal(t, anchor, msg[len(msg)-len(anchor):])
+	// V1 uses structured ASN.1 format
+	assert.NotEmpty(t, msg)
 }
 
-// TestMarshalToMessageToSign_V2_Success tests the V2 protocol signature message construction
-func TestMarshalToMessageToSign_V2_Success(t *testing.T) {
+// TestMarshalToMessageToSign_V1_EmptyAnchor tests V1 validation for empty anchor
+func TestMarshalToMessageToSign_V1_EmptyAnchor(t *testing.T) {
 	tr := &TokenRequest{
-		Issues:    [][]byte{[]byte("issue1"), []byte("issue2")},
-		Transfers: [][]byte{[]byte("transfer1")},
+		Actions: []*TypedAction{
+			{Type: request.ActionType_ACTION_TYPE_ISSUE, Raw: []byte("issue1")},
+			{Type: request.ActionType_ACTION_TYPE_TRANSFER, Raw: []byte("transfer1")},
+		},
 	}
 
-	anchor := []byte("test-anchor")
-	msg, err := tr.marshalToMessageToSignV2(anchor)
-	require.NoError(t, err)
-	require.NotNil(t, msg)
-
-	// V2 should use structured ASN.1 format
-	// The message should be different from V1
-	msgV1, err := tr.marshalToMessageToSignV1(anchor)
-	require.NoError(t, err)
-	assert.NotEqual(t, msgV1, msg, "V2 message should differ from V1")
-}
-
-// TestMarshalToMessageToSign_V2_EmptyAnchor tests V2 validation for empty anchor
-func TestMarshalToMessageToSign_V2_EmptyAnchor(t *testing.T) {
-	tr := &TokenRequest{
-		Issues:    [][]byte{[]byte("issue1")},
-		Transfers: [][]byte{[]byte("transfer1")},
-	}
-
-	_, err := tr.marshalToMessageToSignV2([]byte{})
+	_, err := tr.marshalToMessageToSignV1([]byte{})
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrAnchorEmpty)
 }
 
-// TestMarshalToMessageToSign_V2_AnchorTooLarge tests V2 validation for oversized anchor
-func TestMarshalToMessageToSign_V2_AnchorTooLarge(t *testing.T) {
+// TestMarshalToMessageToSign_V1_AnchorTooLarge tests V1 validation for oversized anchor
+func TestMarshalToMessageToSign_V1_AnchorTooLarge(t *testing.T) {
 	tr := &TokenRequest{
-		Issues:    [][]byte{[]byte("issue1")},
-		Transfers: [][]byte{[]byte("transfer1")},
+		Actions: []*TypedAction{
+			{Type: request.ActionType_ACTION_TYPE_ISSUE, Raw: []byte("issue1")},
+			{Type: request.ActionType_ACTION_TYPE_TRANSFER, Raw: []byte("transfer1")},
+		},
 	}
 
 	// Create anchor larger than MaxAnchorSize
 	largeAnchor := make([]byte, MaxAnchorSize+1)
-	_, err := tr.marshalToMessageToSignV2(largeAnchor)
+	_, err := tr.marshalToMessageToSignV1(largeAnchor)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrAnchorTooLarge)
 }
 
-// TestMarshalToMessageToSign_V2_UniquenessProperty tests that different inputs produce different outputs
-func TestMarshalToMessageToSign_V2_UniquenessProperty(t *testing.T) {
+// TestMarshalToMessageToSign_V1_UniquenessProperty tests that different inputs produce different outputs
+func TestMarshalToMessageToSign_V1_UniquenessProperty(t *testing.T) {
 	tr1 := &TokenRequest{
-		Issues:    [][]byte{[]byte("issue1")},
-		Transfers: [][]byte{[]byte("transfer1")},
+		Actions: []*TypedAction{
+			{Type: request.ActionType_ACTION_TYPE_ISSUE, Raw: []byte("issue1")},
+			{Type: request.ActionType_ACTION_TYPE_TRANSFER, Raw: []byte("transfer1")},
+		},
 	}
 	tr2 := &TokenRequest{
-		Issues:    [][]byte{[]byte("issue2")},
-		Transfers: [][]byte{[]byte("transfer2")},
+		Actions: []*TypedAction{
+			{Type: request.ActionType_ACTION_TYPE_ISSUE, Raw: []byte("issue2")},
+			{Type: request.ActionType_ACTION_TYPE_TRANSFER, Raw: []byte("transfer2")},
+		},
 	}
 
 	anchor := []byte("test-anchor")
 
-	msg1, err := tr1.marshalToMessageToSignV2(anchor)
+	msg1, err := tr1.marshalToMessageToSignV1(anchor)
 	require.NoError(t, err)
 
-	msg2, err := tr2.marshalToMessageToSignV2(anchor)
+	msg2, err := tr2.marshalToMessageToSignV1(anchor)
 	require.NoError(t, err)
 
 	// Different requests should produce different messages
 	assert.NotEqual(t, msg1, msg2, "Different requests should produce different signature messages")
 }
 
-// TestMarshalToMessageToSign_V2_AnchorUniqueness tests that different anchors produce different outputs
-func TestMarshalToMessageToSign_V2_AnchorUniqueness(t *testing.T) {
+// TestMarshalToMessageToSign_V1_AnchorUniqueness tests that different anchors produce different outputs
+func TestMarshalToMessageToSign_V1_AnchorUniqueness(t *testing.T) {
 	tr := &TokenRequest{
-		Issues:    [][]byte{[]byte("issue1")},
-		Transfers: [][]byte{[]byte("transfer1")},
+		Actions: []*TypedAction{
+			{Type: request.ActionType_ACTION_TYPE_ISSUE, Raw: []byte("issue1")},
+			{Type: request.ActionType_ACTION_TYPE_TRANSFER, Raw: []byte("transfer1")},
+		},
 	}
 
 	anchor1 := []byte("anchor1")
 	anchor2 := []byte("anchor2")
 
-	msg1, err := tr.marshalToMessageToSignV2(anchor1)
+	msg1, err := tr.marshalToMessageToSignV1(anchor1)
 	require.NoError(t, err)
 
-	msg2, err := tr.marshalToMessageToSignV2(anchor2)
+	msg2, err := tr.marshalToMessageToSignV1(anchor2)
 	require.NoError(t, err)
 
 	// Different anchors should produce different messages
 	assert.NotEqual(t, msg1, msg2, "Different anchors should produce different signature messages")
 }
 
-// TestMarshalToMessageToSign_V1_V2_Difference tests that V1 and V2 produce different outputs
-func TestMarshalToMessageToSign_V1_V2_Difference(t *testing.T) {
+// TestMarshalToMessageToSign_V1_Deterministic tests that V1 is deterministic
+func TestMarshalToMessageToSign_V1_Deterministic(t *testing.T) {
 	tr := &TokenRequest{
-		Issues:    [][]byte{[]byte("issue1"), []byte("issue2")},
-		Transfers: [][]byte{[]byte("transfer1"), []byte("transfer2")},
+		Actions: []*TypedAction{
+			{Type: request.ActionType_ACTION_TYPE_ISSUE, Raw: []byte("issue1")},
+			{Type: request.ActionType_ACTION_TYPE_TRANSFER, Raw: []byte("transfer1")},
+		},
 	}
 
 	anchor := []byte("test-anchor")
 
-	msgV1, err := tr.marshalToMessageToSignV1(anchor)
+	msg1, err := tr.marshalToMessageToSignV1(anchor)
 	require.NoError(t, err)
 
-	msgV2, err := tr.marshalToMessageToSignV2(anchor)
-	require.NoError(t, err)
-
-	// V1 and V2 should produce different messages for the same input
-	assert.NotEqual(t, msgV1, msgV2, "V1 and V2 should produce different signature messages")
-}
-
-// TestMarshalToMessageToSign_V2_Deterministic tests that V2 is deterministic
-func TestMarshalToMessageToSign_V2_Deterministic(t *testing.T) {
-	tr := &TokenRequest{
-		Issues:    [][]byte{[]byte("issue1")},
-		Transfers: [][]byte{[]byte("transfer1")},
-	}
-
-	anchor := []byte("test-anchor")
-
-	msg1, err := tr.marshalToMessageToSignV2(anchor)
-	require.NoError(t, err)
-
-	msg2, err := tr.marshalToMessageToSignV2(anchor)
+	msg2, err := tr.marshalToMessageToSignV1(anchor)
 	require.NoError(t, err)
 
 	// Same input should always produce same output
-	assert.Equal(t, msg1, msg2, "V2 should be deterministic")
+	assert.Equal(t, msg1, msg2, "V1 should be deterministic")
 }
 
 // TestTokenRequest_VersionPreservation tests that version is preserved during serialization
 func TestTokenRequest_VersionPreservation(t *testing.T) {
 	// Test V1 preservation
 	trV1 := &TokenRequest{
-		Issues:    [][]byte{[]byte("issue1")},
-		Transfers: [][]byte{[]byte("transfer1")},
-		Version:   uint32(ProtocolV1),
+		Actions: []*TypedAction{
+			{Type: request.ActionType_ACTION_TYPE_ISSUE, Raw: []byte("issue1")},
+			{Type: request.ActionType_ACTION_TYPE_TRANSFER, Raw: []byte("transfer1")},
+		},
+		Version: uint32(ProtocolV1),
 	}
 
 	bytes, err := trV1.Bytes()
@@ -1788,28 +1937,13 @@ func TestTokenRequest_VersionPreservation(t *testing.T) {
 	err = trV1Restored.FromBytes(bytes)
 	require.NoError(t, err)
 	assert.Equal(t, uint32(ProtocolV1), trV1Restored.Version, "V1 version should be preserved")
-	assert.Equal(t, ProtocolV1, trV1Restored.getVersion(), "getVersion should return V1")
 
-	// Test V2 preservation
-	trV2 := &TokenRequest{
-		Issues:    [][]byte{[]byte("issue1")},
-		Transfers: [][]byte{[]byte("transfer1")},
-		Version:   uint32(ProtocolV2),
-	}
-
-	bytes, err = trV2.Bytes()
-	require.NoError(t, err)
-
-	trV2Restored := &TokenRequest{}
-	err = trV2Restored.FromBytes(bytes)
-	require.NoError(t, err)
-	assert.Equal(t, uint32(ProtocolV2), trV2Restored.Version, "V2 version should be preserved")
-	assert.Equal(t, ProtocolV2, trV2Restored.getVersion(), "getVersion should return V2")
-
-	// Test default to V2 for new requests
+	// Test default to V1 for new requests
 	trNew := &TokenRequest{
-		Issues:    [][]byte{[]byte("issue1")},
-		Transfers: [][]byte{[]byte("transfer1")},
+		Actions: []*TypedAction{
+			{Type: request.ActionType_ACTION_TYPE_ISSUE, Raw: []byte("issue1")},
+			{Type: request.ActionType_ACTION_TYPE_TRANSFER, Raw: []byte("transfer1")},
+		},
 		// Version not set (0)
 	}
 
@@ -1819,53 +1953,59 @@ func TestTokenRequest_VersionPreservation(t *testing.T) {
 	trNewRestored := &TokenRequest{}
 	err = trNewRestored.FromBytes(bytes)
 	require.NoError(t, err)
-	assert.Equal(t, uint32(ProtocolV2), trNewRestored.Version, "New requests should default to V2")
-	assert.Equal(t, ProtocolV2, trNewRestored.getVersion(), "getVersion should return V2 for new requests")
+	assert.Equal(t, uint32(ProtocolV1), trNewRestored.Version, "New requests should default to V1")
 }
 
-// TestMarshalToMessageToSign_V1_BackwardCompatibility verifies V1 produces same output as original implementation
-func TestMarshalToMessageToSign_V1_BackwardCompatibility(t *testing.T) {
+// TestMarshalToMessageToSign_V1_StructuredFormat verifies V1 uses structured ASN.1 format
+func TestMarshalToMessageToSign_V1_StructuredFormat(t *testing.T) {
 	tr := &TokenRequest{
-		Issues:    [][]byte{[]byte("issue1"), []byte("issue2")},
-		Transfers: [][]byte{[]byte("transfer1")},
-		Version:   uint32(ProtocolV1),
+		Actions: []*TypedAction{
+			{Type: request.ActionType_ACTION_TYPE_ISSUE, Raw: []byte("issue1")},
+			{Type: request.ActionType_ACTION_TYPE_ISSUE, Raw: []byte("issue2")},
+			{Type: request.ActionType_ACTION_TYPE_TRANSFER, Raw: []byte("transfer1")},
+		},
+		Version: uint32(ProtocolV1),
 	}
 
 	anchor := []byte("test-anchor")
 
-	// Get the new V1 implementation output
+	// Get the V1 implementation output
 	msgNew, err := tr.marshalToMessageToSignV1(anchor)
 	require.NoError(t, err)
 
-	// Simulate the ACTUAL original implementation (with 4 fields in struct)
-	// The original TokenRequest had Issues, Transfers, Signatures, AuditorSignatures
-	type oldTokenRequest struct {
-		Issues            [][]byte
-		Transfers         [][]byte
-		Signatures        [][]byte
-		AuditorSignatures []*AuditorSignature
-	}
-	bytesOld, err := asn1.Marshal(oldTokenRequest{Issues: tr.Issues, Transfers: tr.Transfers})
-	require.NoError(t, err)
-	msgOld := append(bytesOld, anchor...)
+	// V1 should use structured ASN.1 format with Request and Anchor fields
+	// Verify it's not empty and has reasonable length
+	assert.NotEmpty(t, msgNew, "V1 should produce non-empty output")
+	assert.Greater(t, len(msgNew), len(anchor), "V1 output should be larger than anchor alone")
 
-	// They should be identical
-	assert.Equal(t, msgOld, msgNew, "V1 implementation should produce same output as original")
+	// Verify the output is valid ASN.1 by attempting to parse it
+	type signatureMessage struct {
+		Request []byte
+		Anchor  []byte
+	}
+	var parsed signatureMessage
+	_, err = asn1.Unmarshal(msgNew, &parsed)
+	require.NoError(t, err, "V1 output should be valid ASN.1")
+	assert.Equal(t, anchor, parsed.Anchor, "Anchor should be preserved in structured format")
 }
 
 // TestMarshalToMessageToSign_V1_ExcludesVersion verifies Version field is not included in V1 marshaling
 func TestMarshalToMessageToSign_V1_ExcludesVersion(t *testing.T) {
 	// Create two requests with same Issues/Transfers but different Versions
 	tr1 := &TokenRequest{
-		Issues:    [][]byte{[]byte("issue1")},
-		Transfers: [][]byte{[]byte("transfer1")},
-		Version:   uint32(ProtocolV1),
+		Actions: []*TypedAction{
+			{Type: request.ActionType_ACTION_TYPE_ISSUE, Raw: []byte("issue1")},
+			{Type: request.ActionType_ACTION_TYPE_TRANSFER, Raw: []byte("transfer1")},
+		},
+		Version: uint32(ProtocolV1),
 	}
 
 	tr2 := &TokenRequest{
-		Issues:    [][]byte{[]byte("issue1")},
-		Transfers: [][]byte{[]byte("transfer1")},
-		Version:   uint32(ProtocolV2), // Different version
+		Actions: []*TypedAction{
+			{Type: request.ActionType_ACTION_TYPE_ISSUE, Raw: []byte("issue1")},
+			{Type: request.ActionType_ACTION_TYPE_TRANSFER, Raw: []byte("transfer1")},
+		},
+		Version: uint32(2), // Different version number (hypothetical future version)
 	}
 
 	anchor := []byte("test-anchor")
@@ -1878,4 +2018,319 @@ func TestMarshalToMessageToSign_V1_ExcludesVersion(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Equal(t, msg1, msg2, "V1 marshaling should not include Version field")
+}
+
+// TestTokenRequest_Validate_Success tests successful validation of a valid TokenRequest
+func TestTokenRequest_Validate_Success(t *testing.T) {
+	req := &TokenRequest{
+		Version: uint32(ProtocolV1),
+		Actions: []*TypedAction{
+			{Type: request.ActionType_ACTION_TYPE_ISSUE, Raw: []byte("issue1")},
+			{Type: request.ActionType_ACTION_TYPE_TRANSFER, Raw: []byte("transfer1")},
+		},
+		Signatures: []*RequestSignature{
+			{
+				Action: &ActionSignature{
+					ActionID:  0,
+					Signature: []byte("signature1"),
+				},
+			},
+		},
+	}
+
+	err := req.Validate()
+	require.NoError(t, err)
+}
+
+// TestTokenRequest_Validate_EmptyRequest tests that completely empty requests are allowed (for test scenarios)
+func TestTokenRequest_Validate_EmptyRequest(t *testing.T) {
+	req := &TokenRequest{
+		Version: 0,
+		Actions: []*TypedAction{},
+	}
+
+	err := req.Validate()
+	require.NoError(t, err, "Empty requests should be allowed for test scenarios")
+}
+
+// TestTokenRequest_Validate_NilActions tests that nil Actions slice is allowed (for test scenarios)
+func TestTokenRequest_Validate_NilActions(t *testing.T) {
+	req := &TokenRequest{
+		Version: 0,
+		Actions: nil,
+	}
+
+	err := req.Validate()
+	require.NoError(t, err, "Nil Actions should be allowed for test scenarios")
+}
+
+// TestTokenRequest_Validate_EmptyActionsWithVersion tests that empty actions with version set is allowed
+// This is necessary because ToProtos() sets Version=ProtocolV1 even for empty requests
+func TestTokenRequest_Validate_EmptyActionsWithVersion(t *testing.T) {
+	req := &TokenRequest{
+		Version: uint32(ProtocolV1),
+		Actions: []*TypedAction{}, // Empty actions
+	}
+
+	err := req.Validate()
+	require.NoError(t, err, "Empty actions should be allowed even with version set (ToProtos behavior)")
+}
+
+// TestTokenRequest_Validate_NilAction tests validation failure for nil action
+func TestTokenRequest_Validate_NilAction(t *testing.T) {
+	req := &TokenRequest{
+		Version: uint32(ProtocolV1),
+		Actions: []*TypedAction{
+			{Type: request.ActionType_ACTION_TYPE_ISSUE, Raw: []byte("issue1")},
+			nil, // Nil action
+			{Type: request.ActionType_ACTION_TYPE_TRANSFER, Raw: []byte("transfer1")},
+		},
+	}
+
+	err := req.Validate()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "action at index 1 is nil")
+}
+
+// TestTokenRequest_Validate_EmptyActionRaw tests validation failure for empty action Raw bytes
+func TestTokenRequest_Validate_EmptyActionRaw(t *testing.T) {
+	req := &TokenRequest{
+		Version: uint32(ProtocolV1),
+		Actions: []*TypedAction{
+			{Type: request.ActionType_ACTION_TYPE_ISSUE, Raw: []byte("issue1")},
+			{Type: request.ActionType_ACTION_TYPE_TRANSFER, Raw: []byte{}}, // Empty Raw
+		},
+	}
+
+	err := req.Validate()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "action at index 1 has empty Raw bytes")
+}
+
+// TestTokenRequest_Validate_NilSignature tests validation failure for nil signature
+func TestTokenRequest_Validate_NilSignature(t *testing.T) {
+	req := &TokenRequest{
+		Version: uint32(ProtocolV1),
+		Actions: []*TypedAction{
+			{Type: request.ActionType_ACTION_TYPE_ISSUE, Raw: []byte("issue1")},
+		},
+		Signatures: []*RequestSignature{
+			{
+				Action: &ActionSignature{
+					ActionID:  0,
+					Signature: []byte("signature1"),
+				},
+			},
+			nil, // Nil signature
+		},
+	}
+
+	err := req.Validate()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "signature at index 1 is nil")
+}
+
+// TestTokenRequest_Validate_EmptyActionSignature tests validation failure for empty action signature bytes
+func TestTokenRequest_Validate_EmptyActionSignature(t *testing.T) {
+	req := &TokenRequest{
+		Version: uint32(ProtocolV1),
+		Actions: []*TypedAction{
+			{Type: request.ActionType_ACTION_TYPE_ISSUE, Raw: []byte("issue1")},
+		},
+		Signatures: []*RequestSignature{
+			{
+				Action: &ActionSignature{
+					ActionID:  0,
+					Signature: []byte{}, // Empty signature
+				},
+			},
+		},
+	}
+
+	err := req.Validate()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "action signature at index 0 has empty signature bytes")
+}
+
+// TestTokenRequest_Validate_EmptyAuditorSignature tests validation failure for empty auditor signature bytes
+func TestTokenRequest_Validate_EmptyAuditorSignature(t *testing.T) {
+	req := &TokenRequest{
+		Version: uint32(ProtocolV1),
+		Actions: []*TypedAction{
+			{Type: request.ActionType_ACTION_TYPE_ISSUE, Raw: []byte("issue1")},
+		},
+		Signatures: []*RequestSignature{
+			{
+				Auditor: &AuditorSignature{
+					Identity:  Identity("auditor1"),
+					Signature: []byte{}, // Empty signature
+				},
+			},
+		},
+	}
+
+	err := req.Validate()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "auditor signature at index 0 has empty signature bytes")
+}
+
+// TestTokenRequest_Validate_SignatureWithoutActionOrAuditor tests validation failure for signature with neither action nor auditor
+func TestTokenRequest_Validate_SignatureWithoutActionOrAuditor(t *testing.T) {
+	req := &TokenRequest{
+		Version: uint32(ProtocolV1),
+		Actions: []*TypedAction{
+			{Type: request.ActionType_ACTION_TYPE_ISSUE, Raw: []byte("issue1")},
+		},
+		Signatures: []*RequestSignature{
+			{
+				// Neither Action nor Auditor set
+			},
+		},
+	}
+
+	err := req.Validate()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "signature at index 0 has neither action nor auditor signature")
+}
+
+// TestTokenRequest_Validate_NoSignatures tests successful validation with no signatures
+func TestTokenRequest_Validate_NoSignatures(t *testing.T) {
+	req := &TokenRequest{
+		Version: uint32(ProtocolV1),
+		Actions: []*TypedAction{
+			{Type: request.ActionType_ACTION_TYPE_ISSUE, Raw: []byte("issue1")},
+		},
+		Signatures: []*RequestSignature{}, // Empty signatures is valid
+	}
+
+	err := req.Validate()
+	require.NoError(t, err)
+}
+
+// TestTokenRequest_Validate_MultipleValidSignatures tests successful validation with multiple signatures
+func TestTokenRequest_Validate_MultipleValidSignatures(t *testing.T) {
+	req := &TokenRequest{
+		Version: uint32(ProtocolV1),
+		Actions: []*TypedAction{
+			{Type: request.ActionType_ACTION_TYPE_ISSUE, Raw: []byte("issue1")},
+			{Type: request.ActionType_ACTION_TYPE_TRANSFER, Raw: []byte("transfer1")},
+		},
+		Signatures: []*RequestSignature{
+			{
+				Action: &ActionSignature{
+					ActionID:  0,
+					Signature: []byte("signature1"),
+				},
+			},
+			{
+				Action: &ActionSignature{
+					ActionID:  1,
+					Signature: []byte("signature2"),
+				},
+			},
+			{
+				Auditor: &AuditorSignature{
+					Identity:  Identity("auditor1"),
+					Signature: []byte("audsig1"),
+				},
+			},
+		},
+	}
+
+	err := req.Validate()
+	require.NoError(t, err)
+}
+
+// TestTokenRequest_FromBytes_CallsValidate tests that FromBytes calls Validate
+func TestTokenRequest_FromBytes_CallsValidate(t *testing.T) {
+	// Create a valid protobuf request
+	protoReq := &request.TokenRequest{
+		Version: uint32(ProtocolV1),
+		Actions: []*request.Action{
+			{
+				Action: &request.Action_TypedAction{
+					TypedAction: &request.TypedAction{
+						Type: request.ActionType_ACTION_TYPE_ISSUE,
+						Raw:  []byte("issue1"),
+					},
+				},
+			},
+		},
+	}
+
+	raw, err := proto.Marshal(protoReq)
+	require.NoError(t, err)
+
+	// Deserialize - should succeed
+	req := &TokenRequest{}
+	err = req.FromBytes(raw)
+	require.NoError(t, err)
+
+	// Now create an invalid protobuf request (action with empty Raw bytes)
+	invalidProtoReq := &request.TokenRequest{
+		Version: uint32(ProtocolV1),
+		Actions: []*request.Action{
+			{
+				Action: &request.Action_TypedAction{
+					TypedAction: &request.TypedAction{
+						Type: request.ActionType_ACTION_TYPE_ISSUE,
+						Raw:  []byte{}, // Empty Raw bytes should fail validation
+					},
+				},
+			},
+		},
+	}
+
+	invalidRaw, err := proto.Marshal(invalidProtoReq)
+	require.NoError(t, err)
+
+	// Deserialize - should fail validation
+	invalidReq := &TokenRequest{}
+	err = invalidReq.FromBytes(invalidRaw)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "validation failed")
+}
+
+// TestTokenRequest_FromProtos_CallsValidate tests that FromProtos calls Validate
+func TestTokenRequest_FromProtos_CallsValidate(t *testing.T) {
+	// Create a valid protobuf request
+	protoReq := &request.TokenRequest{
+		Version: uint32(ProtocolV1),
+		Actions: []*request.Action{
+			{
+				Action: &request.Action_TypedAction{
+					TypedAction: &request.TypedAction{
+						Type: request.ActionType_ACTION_TYPE_ISSUE,
+						Raw:  []byte("issue1"),
+					},
+				},
+			},
+		},
+	}
+
+	// Deserialize - should succeed
+	req := &TokenRequest{}
+	err := req.FromProtos(protoReq)
+	require.NoError(t, err)
+
+	// Now create an invalid protobuf request (action with empty Raw bytes)
+	invalidProtoReq := &request.TokenRequest{
+		Version: uint32(ProtocolV1),
+		Actions: []*request.Action{
+			{
+				Action: &request.Action_TypedAction{
+					TypedAction: &request.TypedAction{
+						Type: request.ActionType_ACTION_TYPE_ISSUE,
+						Raw:  []byte{}, // Empty Raw bytes should fail validation
+					},
+				},
+			},
+		},
+	}
+
+	// Deserialize - should fail validation
+	invalidReq := &TokenRequest{}
+	err = invalidReq.FromProtos(invalidProtoReq)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "validation failed")
 }

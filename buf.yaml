@@ -1,0 +1,24 @@
+version: v2
+modules:
+  - path: token/core/fabtoken/protos/v1
+  - path: token/core/zkatdlog/nogh/protos/v1
+  - path: token/driver/protos/v1
+  - path: token/services/identity/x509/crypto/protos/v1
+  - path: token/services/identity/idemix/crypto/protos
+lint:
+  use:
+    - STANDARD
+    - PACKAGE_DIRECTORY_MATCH
+    - PACKAGE_VERSION_SUFFIX
+    - FIELD_LOWER_SNAKE_CASE
+    - ENUM_ZERO_VALUE_SUFFIX
+    - ENUM_VALUE_PREFIX
+    - COMMENTS # Enforce documentation standards
+  except:
+    - PACKAGE_DIRECTORY_MATCH
+    - PACKAGE_SAME_GO_PACKAGE
+  ignore:
+    - token/services/identity/idemix/crypto/protos/idemix_config.proto
+breaking:
+  use:
+    - FILE

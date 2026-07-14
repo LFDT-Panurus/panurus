@@ -9,11 +9,11 @@ package config
 import (
 	"fmt"
 
+	"github.com/LFDT-Panurus/panurus/token"
+	"github.com/LFDT-Panurus/panurus/token/driver"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/services/config"
-	"github.com/hyperledger-labs/fabric-token-sdk/token"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/driver"
-	"gopkg.in/yaml.v2"
+	"go.yaml.in/yaml/v3"
 )
 
 const (
@@ -41,10 +41,10 @@ func NewConfiguration(cp Provider, keyID string, tmsID driver.TMSID) *Configurat
 func (m *Configuration) Validate() error {
 	// check TMS ID
 	if len(m.tmsID.Network) == 0 {
-		return errors.New("token-sdk configuration error: missing required field 'network'")
+		return errors.New("configuration error: missing required field 'network'")
 	}
 	if len(m.tmsID.Namespace) == 0 {
-		return errors.New("token-sdk configuration error: missing required field 'namespace'")
+		return errors.New("configuration error: missing required field 'namespace'")
 	}
 
 	for _, validator := range m.validators {

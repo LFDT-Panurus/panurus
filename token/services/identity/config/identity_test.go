@@ -10,12 +10,12 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/LFDT-Panurus/panurus/token/driver"
+	config2 "github.com/LFDT-Panurus/panurus/token/services/config"
+	"github.com/LFDT-Panurus/panurus/token/services/identity/config"
+	idriver "github.com/LFDT-Panurus/panurus/token/services/identity/driver"
+	"github.com/LFDT-Panurus/panurus/token/services/identity/x509/crypto"
 	config3 "github.com/hyperledger-labs/fabric-smart-client/platform/view/services/config"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/driver"
-	config2 "github.com/hyperledger-labs/fabric-token-sdk/token/services/config"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/identity/config"
-	idriver "github.com/hyperledger-labs/fabric-token-sdk/token/services/identity/driver"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/identity/x509/crypto"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -45,7 +45,7 @@ func TestTranslatePath(t *testing.T) {
 	tms := config2.NewConfiguration(cp, "n1c1ns1", driver.TMSID{})
 	identityConfig, err := config.NewIdentityConfig(tms)
 	require.NoError(t, err, "failed creating identity config")
-	assert.Contains(t, identityConfig.TranslatePath("./testdata/token0"), "fabric-token-sdk", "translate path should contain fabric-token-sdk")
+	assert.Contains(t, identityConfig.TranslatePath("./testdata/token0"), "panurus", "translate path should contain panurus")
 }
 
 func TestIdentitiesForRole(t *testing.T) {

@@ -11,9 +11,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hyperledger-labs/fabric-token-sdk/token"
-	selector "github.com/hyperledger-labs/fabric-token-sdk/token/services/selector/simple"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/ttxdb"
+	"github.com/LFDT-Panurus/panurus/token"
+	selector "github.com/LFDT-Panurus/panurus/token/services/selector/simple"
+	"github.com/LFDT-Panurus/panurus/token/services/storage/ttxdb"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"

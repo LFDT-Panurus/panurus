@@ -1,14 +1,14 @@
-# Token-SDK Configuration Example
+# Panurus Configuration Example
 
-The following example provides descriptions for the various keys required by the Token SDK.
+The following example provides descriptions for the various keys required by Panurus.
 
 ```yaml
-# ------------------- Token SDK Configuration -------------------------
+# ------------------- Panurus Configuration -------------------------
 token:
   # version is the version of this configuration structure. 
   # If not specified, the latest version is used.
   version: v1
-  # enabled determines if the Token SDK is enabled.
+  # enabled determines if Panurus is enabled.
   enabled: true
 
   # selector configuration allows the use of different implementations of the token selector.
@@ -42,7 +42,7 @@ token:
 
   # When we are interested in knowing when a transaction reaches finality, we subscribe to the Finality Listener Manager for the finality event of that transaction.
   # This configuration specifies the way the manager is instantiated (i.e., how it gets notified about the finality events, how often it checks).
- finality:
+  finality:
     # Only applicable for fabric networks.
     # The manager subscribes to the delivery service and receives all final transactions.
     #   This manager keeps two structures: an LRU cache of recently finalized transactions, and a list of listeners that are waiting for future transactions.
@@ -74,12 +74,23 @@ token:
     # Only applicable for fabricx networks
     # notification: The manager is notified about finality events via a notification service (e.g. for FabricX).
     #   When a new notification arrives, an event is added to a queue for asynchronous processing.
-    #   When a client subscribes to the manager for a specific transaction, we perform an immediate query to check its status.
+    #   When a client subscribes to the manager for a specific transaction, the transaction joins a pending set
+    #   that the shared poller sweeps with batched status queries (see poller below).
     notification:
       # workers is the number of goroutines that process events in parallel. Defaults to 10.
       workers: 10
       # queueSize is the size of the event buffer. Defaults to 1000.
       queueSize: 1000
+    # Only applicable for fabricx networks
+    # poller: resolves the status of pending transactions with periodic batched committer queries.
+    poller:
+      # interval is how often the poller sweeps the pending set. Defaults to 1s.
+      interval: 1s
+      # batchSize is the maximum number of txIDs in one committer status query. Defaults to 2000.
+      batchSize: 2000
+      # pendingTTL is how long a tx stays pending before its slot is reclaimed.
+      # It should exceed the longest caller finality timeout. Defaults to 10m.
+      pendingTTL: 10m
   
   # fabricx configuration for FabricX-specific settings
   fabricx:
@@ -96,6 +107,14 @@ token:
         # interval is the polling interval for one-time lookups. Defaults to 2s.
         interval: 2s
         
+  # optional global SQL table name overrides (applied to all TMS instances).
+  # The value replaces the short code; the FSC-generated prefix and params still wrap it.
+  # Unknown keys are warned and ignored. Omit the section to keep all default names.
+  storage:
+    tableNames:
+      # id_signers: identity_signers
+      # tokens: my_tokens
+
   tms:
     mytms: # unique name of this token management system
       network: default # the name of the network this TMS refers to (Fabric, etc.)
@@ -103,7 +122,7 @@ token:
       namespace: tns # the name of the channel's namespace this TMS refers to, if applicable
 
       # sections dedicated to the definition of the storage.
-      # The Token SDK uses multiple databases to keep track of transactions, tokens, identities, and audit records where applicable.
+      # Panurus uses multiple databases to keep track of transactions, tokens, identities, and audit records where applicable.
       # These are the available databases:
       # ttxdb: stores records of transactions.
       # tokendb: stores information about the available tokens.
@@ -209,6 +228,56 @@ token:
               # on every sweep until it either resolves or an operator intervenes.
               notFoundGracePeriod: 30m
 
+        # storage service configuration
+        storage:
+          # cleanup config controls automatic deletion of cryptographic keys from the keystore
+          # for tokens that have been deleted (spent, expired, or invalidated).
+          # If omitted, the cleanup manager uses its built-in defaults (disabled by default).
+          cleanup:
+            # enabled determines whether keystore cleanup runs. Default: false.
+            # Must be explicitly enabled. This is a conservative default to prevent
+            # unexpected key deletion in existing deployments.
+            enabled: false
+            
+            # ttl is the minimum age of deleted tokens before their keys are eligible for cleanup. Default: 24h.
+            # This ensures tokens are truly finalized before key deletion.
+            # Increase this value for additional safety margin in high-latency networks.
+            # Relationship: Should be significantly greater than transaction finality time.
+            ttl: 24h
+            
+            # scanInterval is how often the cleanup manager scans for deleted tokens. Default: 1h.
+            # Lower values provide faster cleanup but increase database load.
+            # Higher values reduce overhead but delay key removal.
+            # Relationship: Should be less than ttl to ensure timely cleanup.
+            # Performance impact: Each scan queries the token database for deleted tokens.
+            scanInterval: 1h
+            
+            # batchSize is the maximum number of deleted tokens processed per scan. Default: 100.
+            # Limits the number of tokens processed in a single cleanup sweep.
+            # Increase for high-volume environments with many deleted tokens.
+            # Performance impact: Larger batches reduce scan overhead but increase memory usage and processing time per sweep.
+            batchSize: 100
+            
+            # workerCount is the number of local workers that process tokens in parallel. Default: 1.
+            # Increase to improve cleanup throughput in high-volume scenarios.
+            # Decrease to reduce resource consumption on constrained systems.
+            # Performance impact: More workers increase CPU utilization during cleanup sweeps.
+            workerCount: 1
+            
+            # advisoryLockID is the PostgreSQL advisory lock identifier used for cleanup leader election.
+            # This ensures only one replica performs cleanup sweeps at a time in multi-instance deployments.
+            # Default: 8389190333894887277 (hex: 0x74746b636c65616e, ASCII: "ttkclean")
+            # The default value is derived from the ASCII encoding of "ttkclean" (Token Transaction Keystore Cleanup).
+            # Only change this if you need to run multiple independent cleanup managers on the same database.
+            # Note: PostgreSQL advisory locks use 64-bit integers. This value must be unique across your application.
+            advisoryLockID: 8389190333894887277
+            
+            # instanceID identifies this replica in logs and monitoring.
+            # If empty, a unique identifier is generated automatically at startup.
+            # Set this explicitly in containerized environments for consistent identity across restarts.
+            # This helps with debugging and tracking which instance performed cleanup operations.
+            instanceID:
+
       # auditor-specific settings
       auditor:
         # locker configures the distributed locking strategy for the auditor's
@@ -292,12 +361,37 @@ token:
                   Security: 256
                 SW:
                   Hash: SHA2
+      # Auditor lock configuration for enrollment ID locking during audit operations
+      # These settings control the retry behavior when multiple auditors compete for locks
+      auditor:
+        lock:
+          # maxRetries is the maximum number of retry attempts for lock acquisition
+          # Default: 10
+          maxRetries: 10
+          
+          # initialBackoff is the initial backoff delay before the first retry
+          # Default: 10ms
+          initialBackoff: 10ms
+          
+          # maxBackoff is the maximum backoff delay between retries
+          # Default: 5s
+          maxBackoff: 5s
+          
+          # backoffMultiplier is the exponential backoff multiplier
+          # Each retry delay is multiplied by this factor
+          # Default: 2.0
+          backoffMultiplier: 2.0
+          
+          # jitterFactor is the randomization factor to prevent thundering herd (0.0 to 1.0)
+          # Adds random jitter to break symmetry when multiple auditors retry simultaneously
+          # Default: 0.3 (30%)
+          jitterFactor: 0.3
                   Security: 256
 ```
 
-## Minimal Token-SDK Configuration
+## Minimal Configuration
 
-The Token SDK can start with the following minimal configuration:
+Panurus can start with the following minimal configuration:
 
 ```yaml
 token:
@@ -343,6 +437,9 @@ Default values:
 - delivery.listenerTimeout: 10s
 - notification.workers: 10
 - notification.queueSize: 1000
+- poller.interval: 1s
+- poller.batchSize: 2000
+- poller.pendingTTL: 10m
 
 ---
 
@@ -419,6 +516,199 @@ Default values:
    - Increase `batchSize` to 200-500 to process more transactions per sweep
    - Increase `workerCount` to 8-16 to improve parallel processing
    - Decrease `scanInterval` to 2-3s for faster recovery detection
+
+
+### Optional: token.storage.tableNames
+
+Globally overrides individual SQL table short codes for all TMS instances on the node.
+The override value replaces the short code *before* the FSC formatter runs, so the
+FSC-generated prefix and params are still applied around it. Unknown keys are warned
+and ignored.
+
+If not specified (or the section is omitted entirely), all tables use their default names.
+
+```yaml
+token:
+  storage:
+    tableNames:
+      id_signers: identity_signers   # replaces the "id_signers" short code
+      tokens: my_tokens              # replaces the "tokens" short code
+```
+
+All 17 configurable short codes and their defaults:
+
+| Short code | Default table name pattern |
+|---|---|
+| `movements` | `fsc_movements_<prefix>_<params>` |
+| `txs` | `fsc_txs_<prefix>_<params>` |
+| `tx_ends` | `fsc_tx_ends_<prefix>_<params>` |
+| `requests` | `fsc_requests_<prefix>_<params>` |
+| `req_vals` | `fsc_req_vals_<prefix>_<params>` |
+| `tokens` | `fsc_tokens_<prefix>_<params>` |
+| `tkn_own` | `fsc_tkn_own_<prefix>_<params>` |
+| `tkn_crts` | `fsc_tkn_crts_<prefix>_<params>` |
+| `tkn_locks` | `fsc_tkn_locks_<prefix>_<params>` |
+| `public_params` | `fsc_public_params_<prefix>_<params>` |
+| `wallets` | `fsc_wallets_<prefix>_<params>` |
+| `id_cfgs` | `fsc_id_cfgs_<prefix>_<params>` |
+| `id_info` | `fsc_id_info_<prefix>_<params>` |
+| `id_signers` | `fsc_id_signers_<prefix>_<params>` |
+| `key_store` | `fsc_key_store_<prefix>_<params>` |
+| `eid_leases` | `fsc_eid_leases_<prefix>_<params>` |
+| `tkn_ski_cleanups` | `fsc_tkn_ski_cleanups_<prefix>_<params>` |
+
+> **Note:** When no `TablePrefix` is configured and no `TableNameParams` are present, the
+> pattern simplifies to `fsc_<short_code>` (e.g. `fsc_id_signers`).
+
+---
+
+### Optional: token.storage.skipPrefix
+
+When set to `true`, the FSC-generated prefix is omitted from **all** SQL table names.
+This is useful when connecting to an existing database whose tables were created without
+a prefix, or when the target database already enforces schema-level isolation and a
+prefix would be redundant.
+
+Default: `false` (prefix is applied as normal).
+
+```yaml
+token:
+  storage:
+    skipPrefix: true
+```
+
+With `skipPrefix: true` the table name pattern changes from `fsc_<short_code>_<params>`
+to `<params>_<short_code>` (params still apply when provided; short-code overrides from
+`tableNames` are also still respected).
+
+> **Caution:** Enabling `skipPrefix` on a node that previously used the default prefix
+> will cause the node to look for tables under different names. Make sure the underlying
+> tables already exist under the unprefixed names before enabling this flag.
+
+---
+
+### Optional: token.tms.<name>.services.storage.cleanup
+
+If not specified, the default configuration is:
+
+```yaml
+token:
+  tms:
+    <name>:
+      services:
+        storage:
+          cleanup:
+            enabled: false
+            ttl: 24h
+            scanInterval: 1h
+            batchSize: 100
+            workerCount: 1
+            advisoryLockID: 8389190333894887277
+            instanceID:
+```
+
+Default values:
+
+- enabled: false
+- ttl: 24h
+- scanInterval: 1h
+- batchSize: 100
+- workerCount: 1
+- advisoryLockID: 8389190333894887277 (`0x74746b636c65616e`)
+- instanceID: empty, auto-generated when the cleanup manager starts
+
+**Parameter Relationships and Tuning:**
+
+- **Cleanup is disabled by default** and must be explicitly enabled. This is a conservative default to prevent unexpected key deletion in existing deployments.
+- **Only deleted tokens older than `ttl` are considered for cleanup** to ensure tokens are truly finalized before key deletion.
+- **The manager validates** that `ttl`, `scanInterval`, `batchSize`, and `workerCount` are all greater than zero.
+- **`advisoryLockID`** is used to acquire PostgreSQL advisory-lock leadership so that only one replica performs a cleanup sweep at a time. The default value (8389190333894887277 or 0x74746b636c65616e) represents the ASCII string "ttkclean" (Token Transaction Keystore Cleanup) encoded as a 64-bit integer.
+- **`instanceID`** is used to identify this replica in logs and monitoring; if omitted, the manager generates a unique identifier automatically at startup.
+
+**Tuning Recommendations:**
+
+1. **For High-Volume Environments:**
+   - Increase `batchSize` to 200-500 to process more tokens per sweep
+   - Increase `workerCount` to 8-16 to improve parallel key deletion
+   - Decrease `scanInterval` to 30m for more frequent cleanup
+
+2. **For Resource-Constrained Systems:**
+   - Decrease `workerCount` to 2 to reduce CPU usage
+   - Increase `scanInterval` to 2-4h to reduce database load
+   - Keep default `batchSize` to limit memory usage
+
+3. **For Security-Sensitive Deployments:**
+   - Decrease `ttl` to 12h for faster key removal
+   - Decrease `scanInterval` to 30m for more frequent cleanup
+   - Monitor cleanup metrics to ensure timely processing
+
+4. **For Multi-Instance Deployments:**
+   - **PostgreSQL Required**: Multi-instance deployments require PostgreSQL for distributed coordination via advisory locks
+   - Keep default `advisoryLockID` unless running multiple independent cleanup systems
+   - Consider setting explicit `instanceID` values for easier debugging and monitoring
+
+5. **For Single-Node Deployments:**
+   - **SQLite Supported**: SQLite can be used for single-node deployments and handles node restarts gracefully
+   - Cleanup works automatically after node restarts by scanning for eligible tokens
+   - **Important**: Do not use SQLite with multiple replicas as it lacks the advisory lock mechanism for leader election
+
+**Performance Considerations:**
+- Each scan queries the token database, so `scanInterval` directly affects database load
+- `workerCount` affects CPU utilization during cleanup sweeps
+- `batchSize` affects memory usage and the duration of each cleanup sweep
+- The relationship `scanInterval < ttl` ensures timely cleanup without premature processing
+
+---
+---
+
+### Optional: token.tms.<name>.auditor.lock
+
+If not specified, the default configuration is:
+
+```yaml
+token:
+  tms:
+    <name>:
+      auditor:
+        lock:
+          maxRetries: 10
+          initialBackoff: 10ms
+          maxBackoff: 5s
+          backoffMultiplier: 2.0
+          jitterFactor: 0.3
+```
+
+Default values:
+
+- maxRetries: 10
+- initialBackoff: 10ms
+- maxBackoff: 5s
+- backoffMultiplier: 2.0
+- jitterFactor: 0.3
+
+**Parameter Descriptions:**
+
+- **maxRetries**: Maximum number of retry attempts when acquiring locks on enrollment IDs during audit operations
+- **initialBackoff**: Initial delay before the first retry attempt
+- **maxBackoff**: Maximum delay between retry attempts (exponential backoff is capped at this value)
+- **backoffMultiplier**: Factor by which the backoff delay increases after each retry (exponential growth)
+- **jitterFactor**: Randomization factor (0.0 to 1.0) added to backoff delays to prevent multiple auditors from retrying simultaneously (prevents thundering herd problem)
+
+**Tuning Recommendations:**
+
+1. **For High-Contention Environments:**
+   - Increase `maxRetries` to 15-20 to handle more lock conflicts
+   - Increase `maxBackoff` to 10s to spread out retry attempts
+   - Keep `jitterFactor` at 0.3 or higher to maintain randomization
+
+2. **For Low-Latency Requirements:**
+   - Decrease `initialBackoff` to 5ms for faster initial retries
+   - Decrease `maxBackoff` to 2s to avoid long waits
+   - Increase `backoffMultiplier` to 3.0 for faster exponential growth
+
+3. **For Resource-Constrained Environments:**
+   - Decrease `maxRetries` to 5 to fail faster
+   - Keep default backoff settings to balance retry attempts with resource usage
 
 2. **For Resource-Constrained Environments:**
    - Decrease `batchSize` to 50 to reduce memory usage

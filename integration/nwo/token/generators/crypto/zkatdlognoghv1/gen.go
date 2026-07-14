@@ -14,21 +14,21 @@ import (
 	"strings"
 	"time"
 
-	"github.com/IBM/idemix"
+	idemix "github.com/IBM/idemix/msp"
 	mathlib "github.com/IBM/mathlib"
+	"github.com/LFDT-Panurus/panurus/integration/nwo/token/generators"
+	"github.com/LFDT-Panurus/panurus/integration/nwo/token/generators/commands"
+	"github.com/LFDT-Panurus/panurus/integration/nwo/token/generators/crypto/fabtokenv1"
+	"github.com/LFDT-Panurus/panurus/integration/nwo/token/topology"
+	"github.com/LFDT-Panurus/panurus/token/core"
+	dlognoghv1 "github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/setup"
+	msp2 "github.com/LFDT-Panurus/panurus/token/services/identity/idemix/crypto"
+	"github.com/LFDT-Panurus/panurus/token/services/identity/idemix/crypto/protos-go/config"
+	"github.com/LFDT-Panurus/panurus/token/services/logging"
 	"github.com/hyperledger-labs/fabric-smart-client/integration/nwo/api"
 	"github.com/hyperledger-labs/fabric-smart-client/integration/nwo/common"
 	"github.com/hyperledger-labs/fabric-smart-client/integration/nwo/fsc/node"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/proto"
-	"github.com/hyperledger-labs/fabric-token-sdk/integration/nwo/token/generators"
-	"github.com/hyperledger-labs/fabric-token-sdk/integration/nwo/token/generators/commands"
-	"github.com/hyperledger-labs/fabric-token-sdk/integration/nwo/token/generators/crypto/fabtokenv1"
-	"github.com/hyperledger-labs/fabric-token-sdk/integration/nwo/token/topology"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/core"
-	dlognoghv1 "github.com/hyperledger-labs/fabric-token-sdk/token/core/zkatdlog/nogh/v1/setup"
-	msp2 "github.com/hyperledger-labs/fabric-token-sdk/token/services/identity/idemix/crypto"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/identity/idemix/crypto/protos-go/config"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/logging"
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
 	"github.com/onsi/gomega/gexec"
@@ -175,7 +175,7 @@ func (d *CryptoMaterialGenerator) GenerateOwnerIdentities(tms *topology.TMS, n *
 			)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
-			// overwrite the signer config file so that the token-sdk will interpreter this wallet as a remote one or verify only wallet
+			// overwrite the signer config file so that panurus will interpreter this wallet as a remote one or verify only wallet
 			raw, err := proto.Marshal(signerConfig)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 

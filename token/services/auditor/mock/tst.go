@@ -5,8 +5,8 @@ import (
 	"context"
 	"sync"
 
-	drivera "github.com/hyperledger-labs/fabric-token-sdk/token/driver"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/db/driver"
+	drivera "github.com/LFDT-Panurus/panurus/token/driver"
+	"github.com/LFDT-Panurus/panurus/token/services/storage/db/driver"
 )
 
 type TransactionStoreTransaction struct {
@@ -50,12 +50,14 @@ type TransactionStoreTransaction struct {
 	addTransactionReturnsOnCall map[int]struct {
 		result1 error
 	}
-	AddValidationRecordStub        func(context.Context, string, map[string][]byte) error
+	AddValidationRecordStub        func(context.Context, string, []byte, map[string][]byte, drivera.PPHash) error
 	addValidationRecordMutex       sync.RWMutex
 	addValidationRecordArgsForCall []struct {
 		arg1 context.Context
 		arg2 string
-		arg3 map[string][]byte
+		arg3 []byte
+		arg4 map[string][]byte
+		arg5 drivera.PPHash
 	}
 	addValidationRecordReturns struct {
 		result1 error
@@ -300,20 +302,27 @@ func (fake *TransactionStoreTransaction) AddTransactionReturnsOnCall(i int, resu
 	}{result1}
 }
 
-func (fake *TransactionStoreTransaction) AddValidationRecord(arg1 context.Context, arg2 string, arg3 map[string][]byte) error {
+func (fake *TransactionStoreTransaction) AddValidationRecord(arg1 context.Context, arg2 string, arg3 []byte, arg4 map[string][]byte, arg5 drivera.PPHash) error {
+	var arg3Copy []byte
+	if arg3 != nil {
+		arg3Copy = make([]byte, len(arg3))
+		copy(arg3Copy, arg3)
+	}
 	fake.addValidationRecordMutex.Lock()
 	ret, specificReturn := fake.addValidationRecordReturnsOnCall[len(fake.addValidationRecordArgsForCall)]
 	fake.addValidationRecordArgsForCall = append(fake.addValidationRecordArgsForCall, struct {
 		arg1 context.Context
 		arg2 string
-		arg3 map[string][]byte
-	}{arg1, arg2, arg3})
+		arg3 []byte
+		arg4 map[string][]byte
+		arg5 drivera.PPHash
+	}{arg1, arg2, arg3Copy, arg4, arg5})
 	stub := fake.AddValidationRecordStub
 	fakeReturns := fake.addValidationRecordReturns
-	fake.recordInvocation("AddValidationRecord", []interface{}{arg1, arg2, arg3})
+	fake.recordInvocation("AddValidationRecord", []interface{}{arg1, arg2, arg3Copy, arg4, arg5})
 	fake.addValidationRecordMutex.Unlock()
 	if stub != nil {
-		return stub(arg1, arg2, arg3)
+		return stub(arg1, arg2, arg3, arg4, arg5)
 	}
 	if specificReturn {
 		return ret.result1
@@ -327,17 +336,17 @@ func (fake *TransactionStoreTransaction) AddValidationRecordCallCount() int {
 	return len(fake.addValidationRecordArgsForCall)
 }
 
-func (fake *TransactionStoreTransaction) AddValidationRecordCalls(stub func(context.Context, string, map[string][]byte) error) {
+func (fake *TransactionStoreTransaction) AddValidationRecordCalls(stub func(context.Context, string, []byte, map[string][]byte, drivera.PPHash) error) {
 	fake.addValidationRecordMutex.Lock()
 	defer fake.addValidationRecordMutex.Unlock()
 	fake.AddValidationRecordStub = stub
 }
 
-func (fake *TransactionStoreTransaction) AddValidationRecordArgsForCall(i int) (context.Context, string, map[string][]byte) {
+func (fake *TransactionStoreTransaction) AddValidationRecordArgsForCall(i int) (context.Context, string, []byte, map[string][]byte, drivera.PPHash) {
 	fake.addValidationRecordMutex.RLock()
 	defer fake.addValidationRecordMutex.RUnlock()
 	argsForCall := fake.addValidationRecordArgsForCall[i]
-	return argsForCall.arg1, argsForCall.arg2, argsForCall.arg3
+	return argsForCall.arg1, argsForCall.arg2, argsForCall.arg3, argsForCall.arg4, argsForCall.arg5
 }
 
 func (fake *TransactionStoreTransaction) AddValidationRecordReturns(result1 error) {

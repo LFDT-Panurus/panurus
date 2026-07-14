@@ -157,3 +157,5 @@ func nativeIPAReduce[T any, E math.GnarkFr[T]](p *ipaProver, X, com *mathlib.G1)
 
 	return leftResult, rightResult, LArray, RArray, nil
 }
+
+// nativeComputeSVector computes the s vector and its entry-wise inverse using

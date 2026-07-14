@@ -1,13 +1,13 @@
-# The Fabric Token SDK
+# Panurus
 
-The Fabric Token SDK (FTS) is a comprehensive framework for building token-based decentralized applications. It provides a modular, extensible, and privacy-preserving architecture that abstracts the complexities of the underlying blockchain platform.
+Panurus is a comprehensive framework for building token-based decentralized applications. It provides a modular, extensible, and privacy-preserving architecture that abstracts the complexities of the underlying blockchain platform.
 
 ---
 
 ## Key Concepts & Terminology
 
 - **UTXO (Unspent Transaction Output)**: The fundamental data model where a token is an output of a transaction that has not yet been spent.
-- **TMS (Token Management Service)**: The central hub of the Token SDK, providing access to wallets, vault, and selection services for a specific `(Network, Channel, Namespace)`.
+- **TMS (Token Management Service)**: The central hub of Panurus, providing access to wallets, vault, and selection services for a specific `(Network, Channel, Namespace)`.
 - **Token Request**: A collection of token operations (Actions) and signatures bundled into an atomic transaction for the ledger.
 - **Action**: An individual operation within a request, such as `Issue` (creating new tokens) or `Transfer` (spending existing tokens).
 - **Token Request Metadata**: Private data (e.g., blinding factors, audit information) required by participants and auditors to process privacy-preserving tokens.
@@ -27,7 +27,7 @@ The Fabric Token SDK (FTS) is a comprehensive framework for building token-based
 
 ## Architectural Layers
 
-The Token SDK is organized into a vertical stack of layers, each providing a specific level of abstraction. A key design principle is the isolation of the **Network Service** to handle backend-specific complexities, allowing drivers to remain entirely ledger-agnostic.
+Panurus is organized into a vertical stack of layers, each providing a specific level of abstraction. A key design principle is the isolation of the **Network Service** to handle backend-specific complexities, allowing drivers to remain entirely ledger-agnostic.
 
 ```mermaid
 graph TD
@@ -39,7 +39,7 @@ graph TD
         TTX[TTX: Transaction Orchestration]
         Selector[Selector: UTXO Selection]
         Auditor[Auditor: Compliance Service]
-        Identity[Identity: FTS Identity Service]
+        Identity[Identity: Panurus Identity Service]
     end
 
     subgraph "Token API"
@@ -77,21 +77,21 @@ graph TD
 ```
 
 ### Key Components
-- **Services Layer**: High-level libraries for common patterns. `TTX` handles multi-party flows. The **Identity Service** is internal to the Token SDK and manages cryptographic materials, signatures, and identity resolution independently of the underlying platform.
+- **Services Layer**: High-level libraries for common patterns. `TTX` handles multi-party flows. The **Identity Service** is internal to Panurus and manages cryptographic materials, signatures, and identity resolution independently of the underlying platform.
 - **Token API**: The primary developer entry point. The `ManagementService` (TMS) acts as a gateway to all token functionalities for a specific namespace.
 - **Driver Layer**: This layer is **backend-agnostic**. Drivers (like FabToken or ZKAT-DLOG) focus exclusively on token logic, cryptographic proofs, and data structures without any awareness of the underlying network (Fabric, FabricX, etc.).
-- **Network Service Layer**: The "bridge" between the SDK and the blockchain. It handles the translation of token requests into the format understood by the specific backend and manages communication (broadcasting, finality listening).
+- **Network Service Layer**: The "bridge" between Panurus and the blockchain. It handles the translation of token requests into the format understood by the specific backend and manages communication (broadcasting, finality listening).
 
 ---
 
 ## Integration with Fabric Smart Client (FSC)
 
-The Token SDK is built atop the **Fabric Smart Client**, leveraging its foundational platform services for workflow orchestration and infrastructure. Notably, the SDK manages its own identities and does not rely on the FSC identity service. However, the entire SDK consistently uses FSC's cross-cutting facilities for error handling, logging, and system monitoring.
+Panurus is built atop the **Fabric Smart Client**, leveraging its foundational platform services for workflow orchestration and infrastructure. Notably, Panurus manages its own identities and does not rely on the FSC identity service. However, the entire SDK consistently uses FSC's cross-cutting facilities for error handling, logging, and system monitoring.
 
 ```mermaid
 graph LR
-    subgraph FTS [Fabric Token SDK]
-        FTSCore[SDK]
+    subgraph Panurus [Panurus]
+        PanurusCore[SDK]
     end
 
     subgraph FSC Services
@@ -103,18 +103,18 @@ graph LR
         Monitoring[Monitoring: Metrics & Traces]
     end
 
-    FTSCore -.-> Network
-    FTSCore -.-> Storage
-    FTSCore -.-> Workflow
-    FTSCore -.-> Errors
-    FTSCore -.-> Logging
-    FTSCore -.-> Monitoring
+    PanurusCore -.-> Network
+    PanurusCore -.-> Storage
+    PanurusCore -.-> Workflow
+    PanurusCore -.-> Errors
+    PanurusCore -.-> Logging
+    PanurusCore -.-> Monitoring
 ```
 
 - **Workflow**: All token operations are orchestrated within FSC **Views**.
-- **Network**: The SDK uses the FSC Network Service to listen for ledger events (e.g., Public Parameter updates or transaction finality).
+- **Network**: Panurus uses the FSC Network Service to listen for ledger events (e.g., Public Parameter updates or transaction finality).
 - **Storage**: Tokens and transaction metadata are stored in the FSC-managed local database.
-- **Error Handling**: The SDK utilizes FSC's specialized error packages to provide consistent and descriptive error reporting across all layers.
+- **Error Handling**: Panurus utilizes FSC's specialized error packages to provide consistent and descriptive error reporting across all layers.
 - **Logging**: The project relies on FSC's logging infrastructure for unified output, level control, and context-aware logs.
 - **Monitoring**: Integrated project-wide with FSC's metrics (Prometheus) and tracing (OpenTelemetry) providers.
 
@@ -135,7 +135,7 @@ graph LR
 ```
 
 1.  **Issuance**: An authorized issuer creates a new token output on the ledger. See [Issuance Details](services/ttx.md#issue).
-2.  **Discovery**: The Token SDK registers a listener to the **Network Service** to learn when transactions assembled by the node (and therefore registered in the local Transaction DB) are confirmed or rejected on the ledger. Upon notification, the SDK updates the local [Token Store](services/storage.md#token-store-tokendb) to make the tokens available in the [Vault](tokenapi.md#token-vault-and-selector).
+2.  **Discovery**: Panurus registers a listener to the **Network Service** to learn when transactions assembled by the node (and therefore registered in the local Transaction DB) are confirmed or rejected on the ledger. Upon notification, Panurus updates the local [Token Store](services/storage.md#token-store-tokendb) to make the tokens available in the [Vault](tokenapi.md#token-vault-and-selector).
 3.  **Selection & Locking**: When an owner wants to spend tokens, the [Selector](tokenapi.md#token-vault-and-selector) picks available UTXOs and **locks** them locally to prevent double-spending. See [Transfer Operation](services/ttx.md#transfer).
 4.  **Spending (Assembly & Signing)**: The initiator assembles a [Token Request](tokenapi.md#token-requests-and-transactions) and collects the necessary signatures. See [Collecting Endorsements](services/ttx.md#collecting-endorsements).
 5.  **Commitment & Finality**: The transaction is submitted to the [Ordering Service](services/ttx.md#distribution-and-ordering). The [Network Service](services/network.md#finality-management) monitors its status until it reaches [Finality](services/ttx.md#finality-and-discovery).
@@ -146,14 +146,14 @@ graph LR
 ## Developer Experience
 
 - **High-Level API**: Developers typically use the `ManagementService` and `TTX` views to build applications.
-- **Testing**: The SDK includes the **Network Orchestrator (NWO)** for spinning up full Fabric networks in integration tests.
+- **Testing**: Panurus includes the **Network Orchestrator (NWO)** for spinning up full Fabric networks in integration tests.
 - **CLI**: The `tokengen` tool is used to generate cryptographic material, chaincode packages, and public parameters. See [tokengen documentation](../cmd/tokengen/README.md).
 
 ---
 
 ## Operation & Maintenance
 
-- **High Availability**: Multiple FSC nodes can share the same SQL backend. The SDK's locking mechanism and state synchronization ensure consistency across replicas.
+- **High Availability**: Multiple FSC nodes can share the same SQL backend. Panurus's locking mechanism and state synchronization ensure consistency across replicas.
 - **Monitoring**: Integrated with FSC's metrics (Prometheus) and tracing (OpenTelemetry) for performance analysis.
 - **Upgradability**: Supports atomic "Burn and Re-issue" and in-place upgrades for protocol evolution. See [Upgradability Guide](./upgradability.md).
 

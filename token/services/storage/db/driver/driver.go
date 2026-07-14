@@ -28,5 +28,7 @@ type Driver interface {
 
 	NewOwnerTransaction(driver.PersistenceName, ...string) (TokenTransactionStore, error)
 
+	NewEndorser(driver.PersistenceName, ...string) (EndorserStore, error)
+
 	NewKeyStore(name driver.PersistenceName, params ...string) (KeyStore, error)
 }

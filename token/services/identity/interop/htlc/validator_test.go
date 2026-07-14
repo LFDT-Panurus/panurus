@@ -11,10 +11,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/identity"
-	ihtlc "github.com/hyperledger-labs/fabric-token-sdk/token/services/identity/interop/htlc"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/identity/interop/htlc/mock"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/interop/htlc"
+	"github.com/LFDT-Panurus/panurus/token/services/identity"
+	ihtlc "github.com/LFDT-Panurus/panurus/token/services/identity/interop/htlc"
+	"github.com/LFDT-Panurus/panurus/token/services/identity/interop/htlc/mock"
+	"github.com/LFDT-Panurus/panurus/token/services/interop/htlc"
 	"github.com/stretchr/testify/require"
 )
 

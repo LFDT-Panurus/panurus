@@ -7,12 +7,12 @@ SPDX-License-Identifier: Apache-2.0
 package token
 
 import (
+	tfabric "github.com/LFDT-Panurus/panurus/integration/nwo/token/fabric"
+	"github.com/LFDT-Panurus/panurus/integration/nwo/token/fabric/cc"
+	fabricx2 "github.com/LFDT-Panurus/panurus/integration/nwo/token/fabricx"
 	"github.com/hyperledger-labs/fabric-smart-client/integration/nwo/api"
 	"github.com/hyperledger-labs/fabric-smart-client/integration/nwo/fabric"
 	"github.com/hyperledger-labs/fabric-smart-client/integration/nwo/fabricx"
-	tfabric "github.com/hyperledger-labs/fabric-token-sdk/integration/nwo/token/fabric"
-	"github.com/hyperledger-labs/fabric-token-sdk/integration/nwo/token/fabric/cc"
-	fabricx2 "github.com/hyperledger-labs/fabric-token-sdk/integration/nwo/token/fabricx"
 )
 
 type platformFactory struct {

@@ -11,31 +11,32 @@ import (
 	"sync"
 	"time"
 
+	token2 "github.com/LFDT-Panurus/panurus/token"
+	"github.com/LFDT-Panurus/panurus/token/core/common/encoding/json"
+	"github.com/LFDT-Panurus/panurus/token/core/common/metrics"
+	"github.com/LFDT-Panurus/panurus/token/services/logging"
+	ncommon "github.com/LFDT-Panurus/panurus/token/services/network/common"
+	"github.com/LFDT-Panurus/panurus/token/services/network/common/rws/translator"
+	"github.com/LFDT-Panurus/panurus/token/services/network/driver"
+	"github.com/LFDT-Panurus/panurus/token/services/network/fabric/endorsement"
+	"github.com/LFDT-Panurus/panurus/token/services/network/fabric/finality"
+	"github.com/LFDT-Panurus/panurus/token/services/network/fabric/lookup"
+	"github.com/LFDT-Panurus/panurus/token/services/storage"
+	"github.com/LFDT-Panurus/panurus/token/services/storage/auditdb"
+	"github.com/LFDT-Panurus/panurus/token/services/storage/services/cleanup"
+	recovery2 "github.com/LFDT-Panurus/panurus/token/services/storage/services/recovery"
+	"github.com/LFDT-Panurus/panurus/token/services/storage/ttxdb"
+	"github.com/LFDT-Panurus/panurus/token/services/tokens"
+	"github.com/LFDT-Panurus/panurus/token/services/ttx"
+	"github.com/LFDT-Panurus/panurus/token/services/ttx/dep/wrapper"
+	ttxfinality "github.com/LFDT-Panurus/panurus/token/services/ttx/finality"
+	"github.com/LFDT-Panurus/panurus/token/services/utils"
+	"github.com/LFDT-Panurus/panurus/token/token"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/common/utils/lazy"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/fabric"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/services/tracing"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/view"
-	token2 "github.com/hyperledger-labs/fabric-token-sdk/token"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/core/common/encoding/json"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/core/common/metrics"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/logging"
-	ncommon "github.com/hyperledger-labs/fabric-token-sdk/token/services/network/common"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/network/common/rws/translator"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/network/driver"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/network/fabric/endorsement"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/network/fabric/finality"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/network/fabric/lookup"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/storage"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/auditdb"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/recovery"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/ttxdb"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/tokens"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/ttx"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/ttx/dep/wrapper"
-	ttxfinality "github.com/hyperledger-labs/fabric-token-sdk/token/services/ttx/finality"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/utils"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/token"
 	"github.com/hyperledger/fabric-protos-go-apiv2/peer"
 	"go.opentelemetry.io/otel/trace"
 )
@@ -206,6 +207,7 @@ type Network struct {
 	localMembership          *lm
 	auditStoreServiceManager auditdb.StoreServiceManager
 	ttxStoreServiceManager   ttxdb.StoreServiceManager
+	cleanupServiceManager    cleanup.ServiceManager
 	metricsProvider          metrics.Provider
 
 	setupListenerProvider      SetupListenerProvider
@@ -240,6 +242,7 @@ func NewNetwork(
 	setupListenerProvider SetupListenerProvider,
 	ttxStoreServiceManager ttxdb.StoreServiceManager,
 	auditStoreServiceManager auditdb.StoreServiceManager,
+	cleanupServiceManager cleanup.ServiceManager,
 	metricsProvider metrics.Provider,
 	ledger driver.Ledger,
 ) *Network {
@@ -266,6 +269,7 @@ func NewNetwork(
 		localMembership:          &lm{lm: n.LocalMembership()},
 		ttxStoreServiceManager:   ttxStoreServiceManager,
 		auditStoreServiceManager: auditStoreServiceManager,
+		cleanupServiceManager:    cleanupServiceManager,
 		metricsProvider:          metricsProvider,
 	}
 	network.connectedNamespaces = lazy.NewProviderWithKeyMapper(func(s string) string {
@@ -466,11 +470,17 @@ func (n *Network) connect(ns string) ([]token2.ServiceOption, error) {
 		}
 	}
 
+	// Initialize cleanup manager for token storage
+	_, err = n.createCleanupManager(tmsID)
+	if err != nil {
+		return nil, errors.Wrapf(err, "failed to create cleanup manager for [%s]", tmsID)
+	}
+
 	return nil, nil
 }
 
 // createRecoveryManager initializes and starts the recovery manager for the given namespace
-func (n *Network) createRecoveryManager(tmsID token2.TMSID, storage transactionDB, tokensService *tokens.Service) (*recovery.Manager, error) {
+func (n *Network) createRecoveryManager(tmsID token2.TMSID, storage transactionDB, tokensService *tokens.Service) (*recovery2.Manager, error) {
 	// Get TMS configuration
 	cfg, err := n.configuration.ConfigurationFor(tmsID.Network, tmsID.Channel, tmsID.Namespace)
 	if err != nil {
@@ -479,15 +489,15 @@ func (n *Network) createRecoveryManager(tmsID token2.TMSID, storage transactionD
 	}
 
 	// Load recovery configuration
-	var recoveryConfig recovery.Config
+	var recoveryConfig recovery2.Config
 	if cfg != nil {
-		recoveryConfig, err = recovery.LoadConfig(cfg)
+		recoveryConfig, err = recovery2.LoadConfig(cfg)
 		if err != nil {
 			logger.Warnf("failed to load recovery config for [%s], using defaults: %v", tmsID, err)
-			recoveryConfig = recovery.DefaultConfig()
+			recoveryConfig = recovery2.DefaultConfig()
 		}
 	} else {
-		recoveryConfig = recovery.DefaultConfig()
+		recoveryConfig = recovery2.DefaultConfig()
 	}
 
 	// Create recovery handler with all required dependencies
@@ -503,7 +513,7 @@ func (n *Network) createRecoveryManager(tmsID token2.TMSID, storage transactionD
 		n.metricsProvider,
 	)
 
-	manager := recovery.NewManager(
+	manager := recovery2.NewManager(
 		logger,
 		storage,
 		recoveryHandler,
@@ -516,6 +526,19 @@ func (n *Network) createRecoveryManager(tmsID token2.TMSID, storage transactionD
 	}
 
 	logger.Debugf("recovery manager started for namespace [%s]", tmsID.Namespace)
+
+	return manager, nil
+}
+
+// createCleanupManager initializes and starts the cleanup manager for the given namespace
+func (n *Network) createCleanupManager(tmsID token2.TMSID) (*cleanup.Manager, error) {
+	// Use the cleanup service manager to get the manager for this TMS ID
+	manager, err := n.cleanupServiceManager.ServiceByTMSId(tmsID)
+	if err != nil {
+		return nil, errors.Wrapf(err, "failed to get cleanup manager for [%s]", tmsID)
+	}
+
+	logger.Debugf("cleanup manager retrieved for namespace [%s]", tmsID.Namespace)
 
 	return manager, nil
 }
@@ -617,7 +640,7 @@ type transactionDB interface {
 	NewTransaction() (storage.TransactionStoreTransaction, error)
 	GetTokenRequest(ctx context.Context, txID string) ([]byte, error)
 	SetStatus(ctx context.Context, txID string, status storage.TxStatus, message string) error
-	AcquireRecoveryLeadership(ctx context.Context, lockID int64) (recovery.Leadership, bool, error)
+	AcquireRecoveryLeadership(ctx context.Context, lockID int64) (recovery2.Leadership, bool, error)
 	ClaimPendingTransactions(ctx context.Context, olderThan time.Duration, leaseDuration time.Duration, limit int, owner string) ([]*ttxdb.RecoveryClaim, error)
 	ReleaseRecoveryClaim(ctx context.Context, txID string, owner string, message string) error
 }

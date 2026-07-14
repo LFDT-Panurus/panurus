@@ -9,8 +9,8 @@ package nfttx
 import (
 	"testing"
 
+	"github.com/LFDT-Panurus/panurus/token/services/ttx"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/view"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/ttx"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

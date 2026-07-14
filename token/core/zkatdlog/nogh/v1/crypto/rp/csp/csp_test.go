@@ -13,7 +13,7 @@ import (
 	"time"
 
 	math "github.com/IBM/mathlib"
-	math2 "github.com/hyperledger-labs/fabric-token-sdk/token/core/zkatdlog/nogh/v1/crypto/math"
+	math2 "github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/crypto/math"
 	"github.com/stretchr/testify/require"
 )
 
@@ -292,6 +292,43 @@ func TestCSPSVector(t *testing.T) {
 				require.True(t, s[i].Equals(expected),
 					"s[%d] mismatch: got %s, want %s", i, s[i], expected)
 			}
+		})
+	}
+}
+
+// TestCSP_TranscriptHeaderMismatch is T-GAP-C2: verifies that a CSP proof
+// generated with transcript header "A" is rejected when verified with
+// transcript header "B", and that no panic occurs.
+//
+// The CSP Fiat-Shamir transform uses the transcript header as a domain
+// separator in the challenge computation. A single-byte difference produces
+// a completely different challenge sequence, causing the IPA verification
+// to fail. This test documents the availability-risk: if PP is stored and
+// reloaded with a different header encoding, all existing proofs become
+// unverifiable.
+func TestCSP_TranscriptHeaderMismatch(t *testing.T) {
+	curves := []math.CurveID{math.BN254, math.BLS12_381_BBS_GURVY}
+	for _, curveID := range curves {
+		t.Run(fmt.Sprintf("curveID=%d", curveID), func(t *testing.T) {
+			curve := math.Curves[curveID]
+
+			// Build a setup using transcript header "headerA".
+			setup := newCSPSetup(t, curve, 2)
+			// The prover already has "transcriptHeader" set.
+			// Override to use a custom header for the prover only.
+			setup.prover.WithTranscriptHeader([]byte("headerA"))
+
+			proof, err := setup.prover.Prove()
+			require.NoError(t, err)
+			require.NotNil(t, proof)
+
+			// Verifier uses a different header — all challenges will differ.
+			setup.verifier.WithTranscriptHeader([]byte("headerB"))
+
+			require.NotPanics(t, func() {
+				err = setup.verifier.Verify(proof)
+			}, "T-GAP-C2: transcript header mismatch must not panic")
+			require.Error(t, err, "T-GAP-C2: transcript header mismatch must cause verification failure")
 		})
 	}
 }

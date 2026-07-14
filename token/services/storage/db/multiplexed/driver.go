@@ -7,11 +7,11 @@ SPDX-License-Identifier: Apache-2.0
 package multiplexed
 
 import (
+	driver4 "github.com/LFDT-Panurus/panurus/token/services/storage/db/driver"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	driver3 "github.com/hyperledger-labs/fabric-smart-client/platform/common/driver"
 	driver2 "github.com/hyperledger-labs/fabric-smart-client/platform/view/services/storage/driver"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/services/storage/driver/common"
-	driver4 "github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/db/driver"
 )
 
 var _ driver4.Driver = &Driver{}
@@ -94,6 +94,15 @@ func (d Driver) NewOwnerTransaction(name driver2.PersistenceName, params ...stri
 	}
 
 	return dr.NewOwnerTransaction(name, params...)
+}
+
+func (d Driver) NewEndorser(name driver2.PersistenceName, params ...string) (driver4.EndorserStore, error) {
+	dr, err := d.getDriver(name)
+	if err != nil {
+		return nil, err
+	}
+
+	return dr.NewEndorser(name, params...)
 }
 
 func (d Driver) getDriver(name driver2.PersistenceName) (driver4.Driver, error) {

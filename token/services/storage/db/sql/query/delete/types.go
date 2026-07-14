@@ -7,8 +7,8 @@ SPDX-License-Identifier: Apache-2.0
 package _delete
 
 import (
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/db/sql/query/common"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/db/sql/query/cond"
+	"github.com/LFDT-Panurus/panurus/token/services/storage/db/sql/query/common"
+	"github.com/LFDT-Panurus/panurus/token/services/storage/db/sql/query/cond"
 )
 
 // Query is the query state after DELETE FROM

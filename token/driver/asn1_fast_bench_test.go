@@ -9,17 +9,21 @@ package driver
 import (
 	"encoding/asn1"
 	"testing"
+
+	"github.com/LFDT-Panurus/panurus/token/driver/protos-go/v1/request"
 )
 
 // BenchmarkFastMarshalTokenRequestForSigning_Small benchmarks fast marshaller with small data
 func BenchmarkFastMarshalTokenRequestForSigning_Small(b *testing.B) {
-	issues := [][]byte{[]byte("issue1")}
-	transfers := [][]byte{[]byte("transfer1")}
+	actions := []*TypedAction{
+		{Type: request.ActionType_ACTION_TYPE_ISSUE, Raw: []byte("issue1")},
+		{Type: request.ActionType_ACTION_TYPE_TRANSFER, Raw: []byte("transfer1")},
+	}
 
 	b.ResetTimer()
 	b.ReportAllocs()
 	for range b.N {
-		_, err := fastMarshalTokenRequestForSigning(issues, transfers)
+		_, err := fastMarshalTokenRequestForSigning(actions)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -28,13 +32,18 @@ func BenchmarkFastMarshalTokenRequestForSigning_Small(b *testing.B) {
 
 // BenchmarkStdMarshalTokenRequestForSigning_Small benchmarks standard ASN.1 with small data
 func BenchmarkStdMarshalTokenRequestForSigning_Small(b *testing.B) {
+	type typedAction struct {
+		Type int
+		Data []byte
+	}
 	type tokenRequestForSigning struct {
-		Issues    [][]byte
-		Transfers [][]byte
+		Actions []typedAction
 	}
 	req := tokenRequestForSigning{
-		Issues:    [][]byte{[]byte("issue1")},
-		Transfers: [][]byte{[]byte("transfer1")},
+		Actions: []typedAction{
+			{Type: 0, Data: []byte("issue1")},
+			{Type: 1, Data: []byte("transfer1")},
+		},
 	}
 
 	b.ResetTimer()
@@ -49,20 +58,18 @@ func BenchmarkStdMarshalTokenRequestForSigning_Small(b *testing.B) {
 
 // BenchmarkFastMarshalTokenRequestForSigning_Medium benchmarks fast marshaller with medium data
 func BenchmarkFastMarshalTokenRequestForSigning_Medium(b *testing.B) {
-	issues := [][]byte{
-		make([]byte, 100),
-		make([]byte, 200),
-		make([]byte, 150),
-	}
-	transfers := [][]byte{
-		make([]byte, 180),
-		make([]byte, 220),
+	actions := []*TypedAction{
+		{Type: request.ActionType_ACTION_TYPE_ISSUE, Raw: make([]byte, 100)},
+		{Type: request.ActionType_ACTION_TYPE_ISSUE, Raw: make([]byte, 200)},
+		{Type: request.ActionType_ACTION_TYPE_ISSUE, Raw: make([]byte, 150)},
+		{Type: request.ActionType_ACTION_TYPE_TRANSFER, Raw: make([]byte, 180)},
+		{Type: request.ActionType_ACTION_TYPE_TRANSFER, Raw: make([]byte, 220)},
 	}
 
 	b.ResetTimer()
 	b.ReportAllocs()
 	for range b.N {
-		_, err := fastMarshalTokenRequestForSigning(issues, transfers)
+		_, err := fastMarshalTokenRequestForSigning(actions)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -71,19 +78,20 @@ func BenchmarkFastMarshalTokenRequestForSigning_Medium(b *testing.B) {
 
 // BenchmarkStdMarshalTokenRequestForSigning_Medium benchmarks standard ASN.1 with medium data
 func BenchmarkStdMarshalTokenRequestForSigning_Medium(b *testing.B) {
+	type typedAction struct {
+		Type int
+		Data []byte
+	}
 	type tokenRequestForSigning struct {
-		Issues    [][]byte
-		Transfers [][]byte
+		Actions []typedAction
 	}
 	req := tokenRequestForSigning{
-		Issues: [][]byte{
-			make([]byte, 100),
-			make([]byte, 200),
-			make([]byte, 150),
-		},
-		Transfers: [][]byte{
-			make([]byte, 180),
-			make([]byte, 220),
+		Actions: []typedAction{
+			{Type: 0, Data: make([]byte, 100)},
+			{Type: 0, Data: make([]byte, 200)},
+			{Type: 0, Data: make([]byte, 150)},
+			{Type: 1, Data: make([]byte, 180)},
+			{Type: 1, Data: make([]byte, 220)},
 		},
 	}
 
@@ -99,22 +107,20 @@ func BenchmarkStdMarshalTokenRequestForSigning_Medium(b *testing.B) {
 
 // BenchmarkFastMarshalTokenRequestForSigning_Large benchmarks fast marshaller with large data
 func BenchmarkFastMarshalTokenRequestForSigning_Large(b *testing.B) {
-	issues := [][]byte{
-		make([]byte, 5000),
-		make([]byte, 8000),
-		make([]byte, 6000),
-		make([]byte, 7000),
-	}
-	transfers := [][]byte{
-		make([]byte, 4000),
-		make([]byte, 9000),
-		make([]byte, 5500),
+	actions := []*TypedAction{
+		{Type: request.ActionType_ACTION_TYPE_ISSUE, Raw: make([]byte, 5000)},
+		{Type: request.ActionType_ACTION_TYPE_ISSUE, Raw: make([]byte, 8000)},
+		{Type: request.ActionType_ACTION_TYPE_ISSUE, Raw: make([]byte, 6000)},
+		{Type: request.ActionType_ACTION_TYPE_ISSUE, Raw: make([]byte, 7000)},
+		{Type: request.ActionType_ACTION_TYPE_TRANSFER, Raw: make([]byte, 4000)},
+		{Type: request.ActionType_ACTION_TYPE_TRANSFER, Raw: make([]byte, 9000)},
+		{Type: request.ActionType_ACTION_TYPE_TRANSFER, Raw: make([]byte, 5500)},
 	}
 
 	b.ResetTimer()
 	b.ReportAllocs()
 	for range b.N {
-		_, err := fastMarshalTokenRequestForSigning(issues, transfers)
+		_, err := fastMarshalTokenRequestForSigning(actions)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -123,21 +129,22 @@ func BenchmarkFastMarshalTokenRequestForSigning_Large(b *testing.B) {
 
 // BenchmarkStdMarshalTokenRequestForSigning_Large benchmarks standard ASN.1 with large data
 func BenchmarkStdMarshalTokenRequestForSigning_Large(b *testing.B) {
+	type typedAction struct {
+		Type int
+		Data []byte
+	}
 	type tokenRequestForSigning struct {
-		Issues    [][]byte
-		Transfers [][]byte
+		Actions []typedAction
 	}
 	req := tokenRequestForSigning{
-		Issues: [][]byte{
-			make([]byte, 5000),
-			make([]byte, 8000),
-			make([]byte, 6000),
-			make([]byte, 7000),
-		},
-		Transfers: [][]byte{
-			make([]byte, 4000),
-			make([]byte, 9000),
-			make([]byte, 5500),
+		Actions: []typedAction{
+			{Type: 0, Data: make([]byte, 5000)},
+			{Type: 0, Data: make([]byte, 8000)},
+			{Type: 0, Data: make([]byte, 6000)},
+			{Type: 0, Data: make([]byte, 7000)},
+			{Type: 1, Data: make([]byte, 4000)},
+			{Type: 1, Data: make([]byte, 9000)},
+			{Type: 1, Data: make([]byte, 5500)},
 		},
 	}
 
@@ -151,23 +158,23 @@ func BenchmarkStdMarshalTokenRequestForSigning_Large(b *testing.B) {
 	}
 }
 
-// BenchmarkFastMarshalSignatureMessageV2_Small benchmarks fast marshaller with small signature message
-func BenchmarkFastMarshalSignatureMessageV2_Small(b *testing.B) {
+// BenchmarkFastMarshalSignatureMessageV1_Small benchmarks fast marshaller with small signature message
+func BenchmarkFastMarshalSignatureMessageV1_Small(b *testing.B) {
 	request := []byte("small-request-data")
 	anchor := []byte("anchor")
 
 	b.ResetTimer()
 	b.ReportAllocs()
 	for range b.N {
-		_, err := fastMarshalSignatureMessageV2(request, anchor)
+		_, err := fastMarshalSignatureMessageV1(request, anchor)
 		if err != nil {
 			b.Fatal(err)
 		}
 	}
 }
 
-// BenchmarkStdMarshalSignatureMessageV2_Small benchmarks standard ASN.1 with small signature message
-func BenchmarkStdMarshalSignatureMessageV2_Small(b *testing.B) {
+// BenchmarkStdMarshalSignatureMessageV1_Small benchmarks standard ASN.1 with small signature message
+func BenchmarkStdMarshalSignatureMessageV1_Small(b *testing.B) {
 	type signatureMessage struct {
 		Request []byte
 		Anchor  []byte
@@ -187,23 +194,23 @@ func BenchmarkStdMarshalSignatureMessageV2_Small(b *testing.B) {
 	}
 }
 
-// BenchmarkFastMarshalSignatureMessageV2_Medium benchmarks fast marshaller with medium signature message
-func BenchmarkFastMarshalSignatureMessageV2_Medium(b *testing.B) {
+// BenchmarkFastMarshalSignatureMessageV1_Medium benchmarks fast marshaller with medium signature message
+func BenchmarkFastMarshalSignatureMessageV1_Medium(b *testing.B) {
 	request := make([]byte, 1000)
 	anchor := make([]byte, 64)
 
 	b.ResetTimer()
 	b.ReportAllocs()
 	for range b.N {
-		_, err := fastMarshalSignatureMessageV2(request, anchor)
+		_, err := fastMarshalSignatureMessageV1(request, anchor)
 		if err != nil {
 			b.Fatal(err)
 		}
 	}
 }
 
-// BenchmarkStdMarshalSignatureMessageV2_Medium benchmarks standard ASN.1 with medium signature message
-func BenchmarkStdMarshalSignatureMessageV2_Medium(b *testing.B) {
+// BenchmarkStdMarshalSignatureMessageV1_Medium benchmarks standard ASN.1 with medium signature message
+func BenchmarkStdMarshalSignatureMessageV1_Medium(b *testing.B) {
 	type signatureMessage struct {
 		Request []byte
 		Anchor  []byte
@@ -223,23 +230,23 @@ func BenchmarkStdMarshalSignatureMessageV2_Medium(b *testing.B) {
 	}
 }
 
-// BenchmarkFastMarshalSignatureMessageV2_Large benchmarks fast marshaller with large signature message
-func BenchmarkFastMarshalSignatureMessageV2_Large(b *testing.B) {
+// BenchmarkFastMarshalSignatureMessageV1_Large benchmarks fast marshaller with large signature message
+func BenchmarkFastMarshalSignatureMessageV1_Large(b *testing.B) {
 	request := make([]byte, 50000)
 	anchor := make([]byte, 128)
 
 	b.ResetTimer()
 	b.ReportAllocs()
 	for range b.N {
-		_, err := fastMarshalSignatureMessageV2(request, anchor)
+		_, err := fastMarshalSignatureMessageV1(request, anchor)
 		if err != nil {
 			b.Fatal(err)
 		}
 	}
 }
 
-// BenchmarkStdMarshalSignatureMessageV2_Large benchmarks standard ASN.1 with large signature message
-func BenchmarkStdMarshalSignatureMessageV2_Large(b *testing.B) {
+// BenchmarkStdMarshalSignatureMessageV1_Large benchmarks standard ASN.1 with large signature message
+func BenchmarkStdMarshalSignatureMessageV1_Large(b *testing.B) {
 	type signatureMessage struct {
 		Request []byte
 		Anchor  []byte
@@ -259,38 +266,13 @@ func BenchmarkStdMarshalSignatureMessageV2_Large(b *testing.B) {
 	}
 }
 
-// BenchmarkMarshalToMessageToSignV2_Complete benchmarks the complete V2 marshalling flow
-func BenchmarkMarshalToMessageToSignV2_Complete(b *testing.B) {
-	tr := &TokenRequest{
-		Issues: [][]byte{
-			make([]byte, 500),
-			make([]byte, 800),
-		},
-		Transfers: [][]byte{
-			make([]byte, 600),
-		},
-	}
-	anchor := []byte("test-anchor-data")
-
-	b.ResetTimer()
-	b.ReportAllocs()
-	for range b.N {
-		_, err := tr.marshalToMessageToSignV2(anchor)
-		if err != nil {
-			b.Fatal(err)
-		}
-	}
-}
-
-// BenchmarkMarshalToMessageToSignV1_Complete benchmarks the V1 marshalling flow for comparison
+// BenchmarkMarshalToMessageToSignV1_Complete benchmarks the complete V1 marshalling flow
 func BenchmarkMarshalToMessageToSignV1_Complete(b *testing.B) {
 	tr := &TokenRequest{
-		Issues: [][]byte{
-			make([]byte, 500),
-			make([]byte, 800),
-		},
-		Transfers: [][]byte{
-			make([]byte, 600),
+		Actions: []*TypedAction{
+			{Type: request.ActionType_ACTION_TYPE_ISSUE, Raw: make([]byte, 500)},
+			{Type: request.ActionType_ACTION_TYPE_ISSUE, Raw: make([]byte, 800)},
+			{Type: request.ActionType_ACTION_TYPE_TRANSFER, Raw: make([]byte, 600)},
 		},
 	}
 	anchor := []byte("test-anchor-data")
@@ -307,17 +289,22 @@ func BenchmarkMarshalToMessageToSignV1_Complete(b *testing.B) {
 
 // BenchmarkManySmallItems benchmarks performance with many small items
 func BenchmarkManySmallItems_Fast(b *testing.B) {
-	issues := make([][]byte, 50)
-	transfers := make([][]byte, 50)
-	for i := range issues {
-		issues[i] = []byte{byte(i)}
-		transfers[i] = []byte{byte(i + 50)}
+	actions := make([]*TypedAction, 100)
+	for i := range actions {
+		actionType := request.ActionType_ACTION_TYPE_ISSUE
+		if i >= 50 {
+			actionType = request.ActionType_ACTION_TYPE_TRANSFER
+		}
+		actions[i] = &TypedAction{
+			Type: actionType,
+			Raw:  []byte{byte(i)},
+		}
 	}
 
 	b.ResetTimer()
 	b.ReportAllocs()
 	for range b.N {
-		_, err := fastMarshalTokenRequestForSigning(issues, transfers)
+		_, err := fastMarshalTokenRequestForSigning(actions)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -326,19 +313,26 @@ func BenchmarkManySmallItems_Fast(b *testing.B) {
 
 // BenchmarkManySmallItems_Std benchmarks standard ASN.1 with many small items
 func BenchmarkManySmallItems_Std(b *testing.B) {
-	type tokenRequestForSigning struct {
-		Issues    [][]byte
-		Transfers [][]byte
+	type typedAction struct {
+		Type int
+		Data []byte
 	}
-	issues := make([][]byte, 50)
-	transfers := make([][]byte, 50)
-	for i := range issues {
-		issues[i] = []byte{byte(i)}
-		transfers[i] = []byte{byte(i + 50)}
+	type tokenRequestForSigning struct {
+		Actions []typedAction
+	}
+	asn1Actions := make([]typedAction, 100)
+	for i := range asn1Actions {
+		actionType := 0 // ISSUE
+		if i >= 50 {
+			actionType = 1 // TRANSFER
+		}
+		asn1Actions[i] = typedAction{
+			Type: actionType,
+			Data: []byte{byte(i)},
+		}
 	}
 	req := tokenRequestForSigning{
-		Issues:    issues,
-		Transfers: transfers,
+		Actions: asn1Actions,
 	}
 
 	b.ResetTimer()

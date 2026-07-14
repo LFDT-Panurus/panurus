@@ -10,7 +10,7 @@ import (
 	"crypto/sha256"
 
 	mathlib "github.com/IBM/mathlib"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/core/common/encoding/asn1"
+	"github.com/LFDT-Panurus/panurus/token/core/common/encoding/asn1"
 )
 
 type Transcript struct {

@@ -43,6 +43,10 @@ func (k *kvsAdapter) Close() error {
 	return k.kvs.Close()
 }
 
+func (k *kvsAdapter) Delete(id string) error {
+	return k.kvs.Delete(context.Background(), id)
+}
+
 type fscKVS struct {
 	*kvs.KVS
 }

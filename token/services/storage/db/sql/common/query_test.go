@@ -9,11 +9,11 @@ package common_test
 import (
 	"testing"
 
-	q "github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/db/sql/query"
-	qcommon "github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/db/sql/query/common"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/db/sql/query/cond"
+	q "github.com/LFDT-Panurus/panurus/token/services/storage/db/sql/query"
+	qcommon "github.com/LFDT-Panurus/panurus/token/services/storage/db/sql/query/common"
+	"github.com/LFDT-Panurus/panurus/token/services/storage/db/sql/query/cond"
 
-	common "github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/db/sql/common"
+	common "github.com/LFDT-Panurus/panurus/token/services/storage/db/sql/common"
 	"github.com/stretchr/testify/assert"
 )
 

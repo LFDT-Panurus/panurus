@@ -7,9 +7,9 @@ SPDX-License-Identifier: Apache-2.0
 package ttx
 
 import (
+	"github.com/LFDT-Panurus/panurus/token"
+	token2 "github.com/LFDT-Panurus/panurus/token/token"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/view"
-	"github.com/hyperledger-labs/fabric-token-sdk/token"
-	token2 "github.com/hyperledger-labs/fabric-token-sdk/token/token"
 )
 
 // WithType returns a list token option that filter by the passed token type.

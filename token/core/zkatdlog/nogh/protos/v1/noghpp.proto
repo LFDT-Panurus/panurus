@@ -1,0 +1,85 @@
+/*
+   Copyright IBM Corp. All Rights Reserved.
+
+   SPDX-License-Identifier: Apache-2.0
+*/
+
+syntax = "proto3";
+
+package fabric_token_sdk.token.zkatdlog.v1;
+
+import "common.proto";
+import "noghmath.proto";
+
+option go_package = "github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/protos-go/v1/pp";
+
+// IdemixIssuerPublicKey contains the public key of an Idemix issuer.
+// Idemix is used for anonymous credential-based authentication.
+message IdemixIssuerPublicKey {
+  // public_key is the serialized Idemix issuer public key
+  bytes public_key = 1;
+  // curve_id identifies the elliptic curve used by this Idemix key
+  CurveID curve_id = 2;
+}
+
+// RangeProofParams contains the public parameters for the Bulletproofs range proof system.
+// Range proofs ensure that committed values lie within a valid range without revealing the values.
+message RangeProofParams {
+  // left_generators are the G vector generators for the inner product argument
+  repeated G1 left_generators = 1;
+  // right_generators are the H vector generators for the inner product argument
+  repeated G1 right_generators = 2;
+  // p is a generator used in the range proof protocol
+  G1 p = 3;
+  // q is another generator used in the range proof protocol
+  G1 q = 4;
+  // bit_length is the number of bits in the range (e.g., 64 for 64-bit values)
+  uint64 bit_length = 5;
+  // number_of_rounds is the number of rounds in the range proof protocol
+  uint64 number_of_rounds = 6;
+}
+
+// CSPRangeProofParams contains parameters for the CSP (Constraint Satisfaction Problem)
+// based range proof system, an alternative to Bulletproofs.
+message CSPRangeProofParams {
+  // left_generators are the G vector generators for the CSP proof
+  repeated G1 left_generators = 1;
+  // right_generators are the H vector generators for the CSP proof
+  repeated G1 right_generators = 2;
+  // bit_length is the number of bits in the range (e.g., 64 for 64-bit values)
+  uint64 bit_length = 3;
+  // number_of_rounds is the number of rounds in the CSP proof protocol
+  uint64 number_of_rounds = 4;
+}
+
+// PublicParameters contains the public configuration for the zkatdlog (zero-knowledge
+// anonymous token with discrete log) driver. These parameters define the cryptographic
+// setup for privacy-preserving token operations.
+message PublicParameters {
+  // token_driver_name is the identifier of the token driver (e.g., "zkatdlog")
+  string token_driver_name = 1;
+  // token_driver_version is the protocol version of the token driver
+  uint32 token_driver_version = 2;
+  // curve_id identifies the pairing-friendly elliptic curve used for cryptographic operations
+  CurveID curve_id = 3;
+  // pedersen_generators are the public generators for the Pedersen commitment scheme
+  repeated G1 pedersen_generators = 4;
+  // range_proof_params contains parameters for the Bulletproofs range proof system
+  RangeProofParams range_proof_params = 5;
+  // idemix_issuer_public_keys contains Idemix issuer public keys for anonymous credentials.
+  // Wallets should prefer keys with lower array indices.
+  repeated IdemixIssuerPublicKey idemix_issuer_public_keys = 6;
+  // auditors is the list of auditor identities who can decrypt and view token operations
+  repeated fabric_token_sdk.token.driver.v1.Identity auditors = 7;
+  // issuers is the list of authorized issuer identities who can create new tokens
+  repeated fabric_token_sdk.token.driver.v1.Identity issuers = 8;
+  // max_token is the maximum quantity value a single token can hold
+  uint64 max_token = 9;
+  // quantity_precision is the number of decimal places supported for token quantities
+  uint64 quantity_precision = 10;
+  // metadata stores arbitrary application-specific or extension data.
+  // Keys should follow reverse-DNS naming (e.g., "com.example.myapp.field") to avoid collisions.
+  map<string, bytes> metadata = 11;
+  // csp_range_proof_params contains parameters for the CSP-based range proof system
+  CSPRangeProofParams csp_range_proof_params = 12;
+}

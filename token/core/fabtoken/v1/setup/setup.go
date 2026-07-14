@@ -7,15 +7,16 @@ SPDX-License-Identifier: Apache-2.0
 package setup
 
 import (
+	"github.com/LFDT-Panurus/panurus/token/core"
+	"github.com/LFDT-Panurus/panurus/token/core/common/encoding/json"
+	encoding "github.com/LFDT-Panurus/panurus/token/core/common/encoding/pp"
+	fabpp "github.com/LFDT-Panurus/panurus/token/core/fabtoken/protos-go/v1/pp"
+	"github.com/LFDT-Panurus/panurus/token/driver"
+	driverv1 "github.com/LFDT-Panurus/panurus/token/driver/protos-go/v1"
+	"github.com/LFDT-Panurus/panurus/token/driver/protos-go/v1/pp"
+	"github.com/LFDT-Panurus/panurus/token/services/utils/protos"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/proto"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/core"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/core/common/encoding/json"
-	encoding "github.com/hyperledger-labs/fabric-token-sdk/token/core/common/encoding/pp"
-	fabpp "github.com/hyperledger-labs/fabric-token-sdk/token/core/fabtoken/protos-go/pp"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/driver"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/driver/protos-go/pp"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/utils/protos"
 )
 
 const (
@@ -119,8 +120,8 @@ func (p *PublicParams) MaxTokenValue() uint64 {
 
 // Bytes marshals PublicParams
 func (p *PublicParams) Bytes() ([]byte, error) {
-	issuers, err := protos.ToProtosSliceFunc(p.IssuerIDs, func(id driver.Identity) (*fabpp.Identity, error) {
-		return &fabpp.Identity{
+	issuers, err := protos.ToProtosSliceFunc(p.IssuerIDs, func(id driver.Identity) (*driverv1.Identity, error) {
+		return &driverv1.Identity{
 			Raw: id,
 		}, nil
 	})
@@ -130,14 +131,14 @@ func (p *PublicParams) Bytes() ([]byte, error) {
 
 	params := &fabpp.PublicParameters{
 		TokenDriverName:    string(p.DriverName),
-		TokenDriverVersion: uint64(p.DriverVersion),
-		Auditor: &fabpp.Identity{
+		TokenDriverVersion: uint32(p.DriverVersion),
+		Auditor: &driverv1.Identity{
 			Raw: p.Auditor,
 		},
 		Issuers:           issuers,
 		MaxToken:          p.MaxToken,
 		QuantityPrecision: p.QuantityPrecision,
-		ExtraData:         p.ExtraData,
+		Metadata:          p.ExtraData,
 	}
 
 	return proto.Marshal(params)
@@ -151,7 +152,7 @@ func (p *PublicParams) FromBytes(data []byte) error {
 	p.DriverVersion = driver.TokenDriverVersion(publicParams.TokenDriverVersion)
 	p.QuantityPrecision = publicParams.QuantityPrecision
 	p.MaxToken = publicParams.MaxToken
-	issuers, err := protos.FromProtosSliceFunc2(publicParams.Issuers, func(id *fabpp.Identity) (driver.Identity, error) {
+	issuers, err := protos.FromProtosSliceFunc2(publicParams.Issuers, func(id *driverv1.Identity) (driver.Identity, error) {
 		if id == nil {
 			return nil, nil
 		}
@@ -165,7 +166,7 @@ func (p *PublicParams) FromBytes(data []byte) error {
 	if publicParams.Auditor != nil {
 		p.Auditor = publicParams.Auditor.Raw
 	}
-	p.ExtraData = publicParams.ExtraData
+	p.ExtraData = publicParams.Metadata
 	if p.ExtraData == nil {
 		p.ExtraData = driver.Extras{}
 	}

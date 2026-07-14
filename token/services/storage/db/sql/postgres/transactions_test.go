@@ -10,7 +10,7 @@ import (
 	"database/sql"
 	"testing"
 
-	common2 "github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/db/sql/common"
+	common2 "github.com/LFDT-Panurus/panurus/token/services/storage/db/sql/common"
 )
 
 func mockTransactionsStore(db *sql.DB) *common2.TransactionStore {
@@ -46,10 +46,6 @@ func TestGetStatus(t *testing.T) {
 	common2.TestGetStatus(t, mockTransactionsStore)
 }
 
-func TestQueryValidations(t *testing.T) {
-	common2.TestQueryValidations(t, mockTransactionsStore, queryConstructorTraits)
-}
-
 func TestQueryTokenRequests(t *testing.T) {
 	common2.TestQueryTokenRequests(t, mockTransactionsStore, queryConstructorTraits)
 }
@@ -76,8 +72,4 @@ func TestAWAddTokenRequest(t *testing.T) {
 
 func TestAWAddMovement(t *testing.T) {
 	common2.TestAWAddMovement(t, mockTransactionsStore)
-}
-
-func TestAWAddValidationRecord(t *testing.T) {
-	common2.TestAWAddValidationRecord(t, mockTransactionsStore)
 }

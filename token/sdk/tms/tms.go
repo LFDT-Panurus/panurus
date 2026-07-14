@@ -7,13 +7,13 @@ SPDX-License-Identifier: Apache-2.0
 package tms
 
 import (
+	token3 "github.com/LFDT-Panurus/panurus/token"
+	"github.com/LFDT-Panurus/panurus/token/driver"
+	"github.com/LFDT-Panurus/panurus/token/services/auditor"
+	"github.com/LFDT-Panurus/panurus/token/services/network"
+	tokens2 "github.com/LFDT-Panurus/panurus/token/services/tokens"
+	"github.com/LFDT-Panurus/panurus/token/services/ttx"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
-	token3 "github.com/hyperledger-labs/fabric-token-sdk/token"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/driver"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/auditor"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/network"
-	tokens2 "github.com/hyperledger-labs/fabric-token-sdk/token/services/tokens"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/ttx"
 )
 
 // PostInitializer performs post-initialization tasks for TMS instances.

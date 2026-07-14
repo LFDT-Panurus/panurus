@@ -9,8 +9,8 @@ package config
 import (
 	"time"
 
+	"github.com/LFDT-Panurus/panurus/token/services/selector/driver"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/selector/driver"
 )
 
 const (

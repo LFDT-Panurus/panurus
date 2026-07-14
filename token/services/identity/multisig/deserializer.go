@@ -9,23 +9,23 @@ package multisig
 import (
 	"context"
 
+	"github.com/LFDT-Panurus/panurus/token/core/common/encoding/json"
+	"github.com/LFDT-Panurus/panurus/token/driver"
+	"github.com/LFDT-Panurus/panurus/token/services/identity"
+	driver2 "github.com/LFDT-Panurus/panurus/token/services/identity/driver"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/core/common/encoding/json"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/driver"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/identity"
-	driver2 "github.com/hyperledger-labs/fabric-token-sdk/token/services/identity/driver"
 )
 
-//go:generate counterfeiter -o mock/audit_info_provider.go -fake-name AuditInfoProvider github.com/hyperledger-labs/fabric-token-sdk/token/driver.AuditInfoProvider
-//go:generate counterfeiter -o mock/verifier.go -fake-name Verifier github.com/hyperledger-labs/fabric-token-sdk/token/driver.Verifier
-//go:generate counterfeiter -o mock/matcher.go -fake-name Matcher github.com/hyperledger-labs/fabric-token-sdk/token/driver.Matcher
+//go:generate counterfeiter -o mock/audit_info_provider.go -fake-name AuditInfoProvider github.com/LFDT-Panurus/panurus/token/driver.AuditInfoProvider
+//go:generate counterfeiter -o mock/verifier.go -fake-name Verifier github.com/LFDT-Panurus/panurus/token/driver.Verifier
+//go:generate counterfeiter -o mock/matcher.go -fake-name Matcher github.com/LFDT-Panurus/panurus/token/driver.Matcher
 //go:generate counterfeiter -o mock/audit_info_matcher.go -fake-name AuditInfoMatcher . AuditInfoMatcher
 //go:generate sed -i "/var _ multisig\\.AuditInfoMatcher = new(AuditInfoMatcher)/d" mock/audit_info_matcher.go
-//go:generate sed -i "/\"github.com\\/hyperledger-labs\\/fabric-token-sdk\\/token\\/services\\/identity\\/multisig\"/d" mock/audit_info_matcher.go
+//go:generate sed -i "/\"github.com\\/hyperledger-labs\\/panurus\\/token\\/services\\/identity\\/multisig\"/d" mock/audit_info_matcher.go
 
 //go:generate counterfeiter -o mock/verifier_des.go -fake-name VerifierDES . VerifierDES
 //go:generate sed -i "/var _ multisig\\.VerifierDES = new(VerifierDES)/d" mock/verifier_des.go
-//go:generate sed -i "/\"github.com\\/hyperledger-labs\\/fabric-token-sdk\\/token\\/services\\/identity\\/multisig\"/d" mock/verifier_des.go
+//go:generate sed -i "/\"github.com\\/hyperledger-labs\\/panurus\\/token\\/services\\/identity\\/multisig\"/d" mock/verifier_des.go
 
 type VerifierDES interface {
 	DeserializeVerifier(ctx context.Context, id driver.Identity) (driver.Verifier, error)
@@ -33,7 +33,7 @@ type VerifierDES interface {
 
 //go:generate counterfeiter -o mock/audit_info_matcher.go -fake-name AuditInfoMatcher . AuditInfoMatcher
 //go:generate sed -i "/var _ multisig\\.AuditInfoMatcher = new(AuditInfoMatcher)/d" mock/audit_info_matcher.go
-//go:generate sed -i "/\"github.com\\/hyperledger-labs\\/fabric-token-sdk\\/token\\/services\\/identity\\/multisig\"/d" mock/audit_info_matcher.go
+//go:generate sed -i "/\"github.com\\/hyperledger-labs\\/panurus\\/token\\/services\\/identity\\/multisig\"/d" mock/audit_info_matcher.go
 
 type AuditInfoMatcher interface {
 	GetAuditInfoMatcher(ctx context.Context, owner driver.Identity, auditInfo []byte) (driver.Matcher, error)
@@ -114,6 +114,9 @@ func (d *TypedIdentityDeserializer) DeserializeVerifier(ctx context.Context, typ
 	err := multisigIdentity.Deserialize(raw)
 	if err != nil {
 		return nil, errors.New("failed to unmarshal multisig identity")
+	}
+	if len(multisigIdentity.Identities) == 0 {
+		return nil, errors.New("multisig identity has no members")
 	}
 	verifier := &Verifier{}
 	verifier.Verifiers = make([]driver.Verifier, len(multisigIdentity.Identities))

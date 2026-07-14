@@ -9,9 +9,9 @@ package sherdlock_test
 import (
 	"testing"
 
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/selector/sherdlock"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/selector/sherdlock/mocks"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/utils/types/transaction"
+	"github.com/LFDT-Panurus/panurus/token/services/selector/sherdlock"
+	"github.com/LFDT-Panurus/panurus/token/services/selector/sherdlock/mocks"
+	"github.com/LFDT-Panurus/panurus/token/services/utils/types/transaction"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -37,6 +37,6 @@ func TestManagerUnit(t *testing.T) {
 	})
 
 	t.Run("Stop", func(t *testing.T) {
-		mgr.Stop()
+		require.NoError(t, mgr.Stop())
 	})
 }

@@ -11,11 +11,11 @@ package multisig_test
 import (
 	"testing"
 
+	"github.com/LFDT-Panurus/panurus/token/services/identity"
+	identityMultisig "github.com/LFDT-Panurus/panurus/token/services/identity/multisig"
+	"github.com/LFDT-Panurus/panurus/token/services/ttx/multisig"
+	token2 "github.com/LFDT-Panurus/panurus/token/token"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/view"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/identity"
-	identityMultisig "github.com/hyperledger-labs/fabric-token-sdk/token/services/identity/multisig"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/ttx/multisig"
-	token2 "github.com/hyperledger-labs/fabric-token-sdk/token/token"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

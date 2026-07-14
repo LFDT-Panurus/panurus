@@ -6,7 +6,7 @@ SPDX-License-Identifier: Apache-2.0
 
 package driver
 
-import "github.com/hyperledger-labs/fabric-token-sdk/token/token"
+import "github.com/LFDT-Panurus/panurus/token/token"
 
 // SetupAction defines the interface for actions that update the driver's public parameters.
 type SetupAction interface {

@@ -11,18 +11,18 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/hyperledger-labs/fabric-token-sdk/cmd/tokengen/cobra/pp/cc"
-	"github.com/hyperledger-labs/fabric-token-sdk/cmd/tokengen/cobra/pp/common"
-	"github.com/hyperledger-labs/fabric-token-sdk/integration/nwo/token/generators/crypto/fabtokenv1"
-	setupv1 "github.com/hyperledger-labs/fabric-token-sdk/token/core/fabtoken/v1/setup"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/driver"
+	"github.com/LFDT-Panurus/panurus/cmd/tokengen/cobra/pp/cc"
+	"github.com/LFDT-Panurus/panurus/cmd/tokengen/cobra/pp/common"
+	"github.com/LFDT-Panurus/panurus/integration/nwo/token/generators/crypto/fabtokenv1"
+	setupv1 "github.com/LFDT-Panurus/panurus/token/core/fabtoken/v1/setup"
+	"github.com/LFDT-Panurus/panurus/token/driver"
 
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	"github.com/spf13/cobra"
 )
 
 var (
-	// Driver is the Token-SDK driver to use.
+	// Driver is the Panurus token driver to use.
 	Driver string
 	// OutputDir is the directory to output the generated files.
 	OutputDir string
@@ -33,7 +33,7 @@ var (
 	// Auditors is the list of auditor MSP directories containing the corresponding auditor certificate.
 	Auditors []string
 	// Version allows the caller of tokengen to override the version number put in the public parameters.
-	Version uint
+	Version uint32
 	// Extras allows the caller to add extra parameters to the public parameters.
 	Extras []string
 )
@@ -46,7 +46,7 @@ func Cmd() *cobra.Command {
 	flags.BoolVarP(&GenerateCCPackage, "cc", "", false, "generate chaincode package")
 	flags.StringSliceVarP(&Auditors, "auditors", "a", nil, "list of auditor MSP directories containing the corresponding auditor certificate")
 	flags.StringSliceVarP(&Issuers, "issuers", "s", nil, "list of issuer MSP directories containing the corresponding issuer certificate")
-	flags.UintVarP(&Version, "version", "v", 0, "allows the caller of tokengen to override the version number put in the public params")
+	flags.Uint32VarP(&Version, "version", "v", 0, "allows the caller of tokengen to override the version number put in the public params")
 	flags.StringArrayVarP(&Extras, "extra", "x", []string{}, "extra data in key=value format, where value is the path to a file containing the data to load and store in the key")
 
 	return cobraCommand

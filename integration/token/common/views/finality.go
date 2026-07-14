@@ -13,12 +13,12 @@ import (
 	"sync"
 	"time"
 
+	"github.com/LFDT-Panurus/panurus/token"
+	"github.com/LFDT-Panurus/panurus/token/services/network"
+	"github.com/LFDT-Panurus/panurus/token/services/ttx"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/common/utils/assert"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/view"
-	"github.com/hyperledger-labs/fabric-token-sdk/token"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/network"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/ttx"
 )
 
 type TxFinality struct {
@@ -53,11 +53,25 @@ func (r *TxFinalityView) Call(context view.Context) (any, error) {
 	}()
 
 	// When both arrive, return
-	if err := <-errs; err != nil {
-		return nil, err
+	var err1, err2 error
+	select {
+	case err1 = <-errs:
+		// Received first finality result
+	case <-context.Context().Done():
+		return nil, errors.Wrapf(context.Context().Err(), "context cancelled while waiting for first finality confirmation")
+	}
+	if err1 != nil {
+		return nil, err1
 	}
 
-	return nil, <-errs
+	select {
+	case err2 = <-errs:
+		// Received second finality result
+	case <-context.Context().Done():
+		return nil, errors.Wrapf(context.Context().Err(), "context cancelled while waiting for second finality confirmation")
+	}
+
+	return nil, err2
 }
 
 type TxFinalityViewFactory struct{}

@@ -14,15 +14,15 @@ import (
 	"encoding/json"
 	"time"
 
+	"github.com/LFDT-Panurus/panurus/token"
+	"github.com/LFDT-Panurus/panurus/token/driver"
+	"github.com/LFDT-Panurus/panurus/token/services/identity"
+	"github.com/LFDT-Panurus/panurus/token/services/interop/encoding"
+	"github.com/LFDT-Panurus/panurus/token/services/ttx"
+	token2 "github.com/LFDT-Panurus/panurus/token/token"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/services/endpoint"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/view"
-	"github.com/hyperledger-labs/fabric-token-sdk/token"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/driver"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/identity"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/interop/encoding"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/ttx"
-	token2 "github.com/hyperledger-labs/fabric-token-sdk/token/token"
 )
 
 const (
@@ -35,7 +35,7 @@ const (
 func WithHash(hash []byte) token.TransferOption {
 	return func(o *token.TransferOptions) error {
 		if o.Attributes == nil {
-			o.Attributes = map[any]any{}
+			o.Attributes = map[string]any{}
 		}
 		o.Attributes["htlc.hash"] = hash
 
@@ -47,7 +47,7 @@ func WithHash(hash []byte) token.TransferOption {
 func WithHashFunc(hashFunc crypto.Hash) token.TransferOption {
 	return func(o *token.TransferOptions) error {
 		if o.Attributes == nil {
-			o.Attributes = map[any]any{}
+			o.Attributes = map[string]any{}
 		}
 		o.Attributes["htlc.hashFunc"] = hashFunc
 
@@ -59,7 +59,7 @@ func WithHashFunc(hashFunc crypto.Hash) token.TransferOption {
 func WithHashEncoding(encoding encoding.Encoding) token.TransferOption {
 	return func(o *token.TransferOptions) error {
 		if o.Attributes == nil {
-			o.Attributes = map[any]any{}
+			o.Attributes = map[string]any{}
 		}
 		o.Attributes["htlc.hashEncoding"] = encoding
 

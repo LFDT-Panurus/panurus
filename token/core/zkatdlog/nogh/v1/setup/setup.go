@@ -14,23 +14,24 @@ import (
 	"strconv"
 
 	mathlib "github.com/IBM/mathlib"
+	"github.com/LFDT-Panurus/panurus/token/core"
+	"github.com/LFDT-Panurus/panurus/token/core/common/encoding/json"
+	pp3 "github.com/LFDT-Panurus/panurus/token/core/common/encoding/pp"
+	utils2 "github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/protos-go/utils"
+	math2 "github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/protos-go/v1/math"
+	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/protos-go/v1/pp"
+	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/crypto/math"
+	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/crypto/rp"
+	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/crypto/rp/csp"
+	executor "github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/crypto/rp/executor"
+	"github.com/LFDT-Panurus/panurus/token/driver"
+	protosv1 "github.com/LFDT-Panurus/panurus/token/driver/protos-go/v1"
+	pp2 "github.com/LFDT-Panurus/panurus/token/driver/protos-go/v1/pp"
+	"github.com/LFDT-Panurus/panurus/token/services/utils/protos"
+	"github.com/LFDT-Panurus/panurus/token/services/utils/slices"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/proto"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/common/utils/collections"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/core"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/core/common/encoding/json"
-	pp3 "github.com/hyperledger-labs/fabric-token-sdk/token/core/common/encoding/pp"
-	math2 "github.com/hyperledger-labs/fabric-token-sdk/token/core/zkatdlog/nogh/protos-go/math"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/core/zkatdlog/nogh/protos-go/pp"
-	utils2 "github.com/hyperledger-labs/fabric-token-sdk/token/core/zkatdlog/nogh/protos-go/utils"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/core/zkatdlog/nogh/v1/crypto/math"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/core/zkatdlog/nogh/v1/crypto/rp"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/core/zkatdlog/nogh/v1/crypto/rp/csp"
-	executor "github.com/hyperledger-labs/fabric-token-sdk/token/core/zkatdlog/nogh/v1/crypto/rp/executor"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/driver"
-	pp2 "github.com/hyperledger-labs/fabric-token-sdk/token/driver/protos-go/pp"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/utils/protos"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/utils/slices"
 )
 
 const (
@@ -38,9 +39,7 @@ const (
 	ProtocolV1         = driver.TokenDriverVersion(1)
 )
 
-var (
-	SupportedPrecisions = []uint64{16, 32, 64}
-)
+var SupportedPrecisions = []uint64{16, 32, 64}
 
 // SetupParams contains all parameters needed to setup public parameters
 type SetupParams struct {
@@ -219,7 +218,7 @@ func (i *IdemixIssuerPublicKey) ToProtos() (*pp.IdemixIssuerPublicKey, error) {
 
 	return &pp.IdemixIssuerPublicKey{
 		PublicKey: i.PublicKey,
-		CurverId: &math2.CurveID{
+		CurveId: &math2.CurveID{
 			Id: uint64(i.Curve), // #nosec G115
 		},
 	}, nil
@@ -230,13 +229,13 @@ func (i *IdemixIssuerPublicKey) FromProtos(s *pp.IdemixIssuerPublicKey) error {
 		return errors.New("invalid idemix public key, it is nil")
 	}
 	i.PublicKey = s.PublicKey
-	if s.CurverId == nil {
+	if s.CurveId == nil {
 		return errors.New("invalid idemix issuer public key")
 	}
-	if s.CurverId.Id > math3.MaxInt {
+	if s.CurveId.Id > math3.MaxInt {
 		return errors.New("curve id out of range")
 	}
-	i.Curve = mathlib.CurveID(s.CurverId.Id) // #nosec G115
+	i.Curve = mathlib.CurveID(s.CurveId.Id) // #nosec G115
 
 	return nil
 }
@@ -418,16 +417,16 @@ func (p *PublicParams) Serialize() ([]byte, error) {
 			return nil, errors.Wrapf(err, "failed to serialize csp-based range proof parameters")
 		}
 	}
-	issuers, err := protos.ToProtosSliceFunc(p.IssuerIDs, func(id driver.Identity) (*pp.Identity, error) {
-		return &pp.Identity{
+	issuers, err := protos.ToProtosSliceFunc(p.IssuerIDs, func(id driver.Identity) (*protosv1.Identity, error) {
+		return &protosv1.Identity{
 			Raw: id,
 		}, nil
 	})
 	if err != nil {
 		return nil, errors.Wrapf(err, "failed to serialize issuer")
 	}
-	auditors, err := protos.ToProtosSliceFunc(p.AuditorIDs, func(id driver.Identity) (*pp.Identity, error) {
-		return &pp.Identity{
+	auditors, err := protos.ToProtosSliceFunc(p.AuditorIDs, func(id driver.Identity) (*protosv1.Identity, error) {
+		return &protosv1.Identity{
 			Raw: id,
 		}, nil
 	})
@@ -441,7 +440,7 @@ func (p *PublicParams) Serialize() ([]byte, error) {
 
 	publicParams := &pp.PublicParameters{
 		TokenDriverName:    string(p.DriverName),
-		TokenDriverVersion: uint64(p.DriverVersion), // #nosec G115 driver.TokenDriverVersion is a uint64
+		TokenDriverVersion: uint32(p.DriverVersion),
 		CurveId: &math2.CurveID{
 			Id: uint64(p.Curve), // #nosec G115
 		},
@@ -453,7 +452,7 @@ func (p *PublicParams) Serialize() ([]byte, error) {
 		Issuers:                issuers,
 		MaxToken:               p.MaxToken,
 		QuantityPrecision:      p.QuantityPrecision,
-		ExtraData:              p.ExtraData,
+		Metadata:               p.ExtraData,
 	}
 	raw, err := proto.Marshal(publicParams)
 	if err != nil {
@@ -501,7 +500,7 @@ func (p *PublicParams) Deserialize(raw []byte) error {
 		return errors.Wrapf(err, "failed to deserialize public parameters")
 	}
 	p.PedersenGenerators = pg
-	issuers, err := protos.FromProtosSliceFunc2(publicParams.Issuers, func(id *pp.Identity) (driver.Identity, error) {
+	issuers, err := protos.FromProtosSliceFunc2(publicParams.Issuers, func(id *protosv1.Identity) (driver.Identity, error) {
 		if id == nil {
 			return nil, nil
 		}
@@ -512,7 +511,7 @@ func (p *PublicParams) Deserialize(raw []byte) error {
 		return errors.Wrapf(err, "failed to deserialize issuers")
 	}
 	p.IssuerIDs = issuers
-	auditors, err := protos.FromProtosSliceFunc2(publicParams.Auditors, func(id *pp.Identity) (driver.Identity, error) {
+	auditors, err := protos.FromProtosSliceFunc2(publicParams.Auditors, func(id *protosv1.Identity) (driver.Identity, error) {
 		if id == nil {
 			return nil, nil
 		}
@@ -544,7 +543,7 @@ func (p *PublicParams) Deserialize(raw []byte) error {
 		}
 	}
 
-	p.ExtraData = publicParams.ExtraData
+	p.ExtraData = publicParams.Metadata
 	if p.ExtraData == nil {
 		p.ExtraData = driver.Extras{}
 	}
@@ -554,14 +553,10 @@ func (p *PublicParams) Deserialize(raw []byte) error {
 
 func (p *PublicParams) GeneratePedersenParameters() error {
 	curve := mathlib.Curves[p.Curve]
-	rand, err := curve.Rand()
-	if err != nil {
-		return errors.Errorf("failed to get RNG")
-	}
 	p.PedersenGenerators = make([]*mathlib.G1, 3)
 
 	for i := 0; i < len(p.PedersenGenerators); i++ {
-		p.PedersenGenerators[i] = curve.GenG1.Mul(curve.NewRandomZr(rand))
+		p.PedersenGenerators[i] = curve.HashToG1([]byte("lfdt-panurus." + string(p.DriverName) + "." + strconv.Itoa(int(p.DriverVersion)) + ".PedersenGenerators." + strconv.Itoa(i)))
 	}
 
 	return nil
@@ -570,9 +565,10 @@ func (p *PublicParams) GeneratePedersenParameters() error {
 func (p *PublicParams) GenerateRangeProofParameters(bitLength uint64) error {
 	curve := mathlib.Curves[p.Curve]
 
+	domainPrefix := "lfdt-panurus." + string(p.DriverName) + "." + strconv.Itoa(int(p.DriverVersion)) + "."
 	p.RangeProofParams = &RangeProofParams{
-		P:              curve.HashToG1([]byte(strconv.Itoa(0))),
-		Q:              curve.HashToG1([]byte(strconv.Itoa(1))),
+		P:              curve.HashToG1([]byte(domainPrefix + "RangeProof.P")),
+		Q:              curve.HashToG1([]byte(domainPrefix + "RangeProof.Q")),
 		BitLength:      bitLength,
 		NumberOfRounds: log2(bitLength),
 	}
@@ -580,8 +576,8 @@ func (p *PublicParams) GenerateRangeProofParameters(bitLength uint64) error {
 	p.RangeProofParams.RightGenerators = make([]*mathlib.G1, bitLength)
 
 	for i := range bitLength {
-		p.RangeProofParams.LeftGenerators[i] = curve.HashToG1([]byte("RangeProof." + strconv.FormatUint(2*(i+1), 10)))
-		p.RangeProofParams.RightGenerators[i] = curve.HashToG1([]byte("RangeProof." + strconv.FormatUint(2*(i+1)+1, 10)))
+		p.RangeProofParams.LeftGenerators[i] = curve.HashToG1([]byte(domainPrefix + "RangeProof.L." + strconv.FormatUint(i, 10)))
+		p.RangeProofParams.RightGenerators[i] = curve.HashToG1([]byte(domainPrefix + "RangeProof.R." + strconv.FormatUint(i, 10)))
 	}
 
 	return nil
@@ -590,6 +586,7 @@ func (p *PublicParams) GenerateRangeProofParameters(bitLength uint64) error {
 func (p *PublicParams) GenerateCSPRangeProofParameters(bitLength uint64) error {
 	curve := mathlib.Curves[p.Curve]
 
+	domainPrefix := "lfdt-panurus." + string(p.DriverName) + "." + strconv.Itoa(int(p.DriverVersion)) + "."
 	p.CSPRangeProofParams = &CSPRangeProofParams{
 		BitLength: bitLength,
 	}
@@ -597,8 +594,8 @@ func (p *PublicParams) GenerateCSPRangeProofParameters(bitLength uint64) error {
 	p.CSPRangeProofParams.RightGenerators = make([]*mathlib.G1, bitLength+1)
 
 	for i := range bitLength + 1 {
-		p.CSPRangeProofParams.LeftGenerators[i] = curve.HashToG1([]byte("CSPRangeProof." + strconv.FormatUint(2*(i+1), 10)))
-		p.CSPRangeProofParams.RightGenerators[i] = curve.HashToG1([]byte("CSPRangeProof." + strconv.FormatUint(2*(i+1)+1, 10)))
+		p.CSPRangeProofParams.LeftGenerators[i] = curve.HashToG1([]byte(domainPrefix + "CSPRangeProof.L." + strconv.FormatUint(i, 10)))
+		p.CSPRangeProofParams.RightGenerators[i] = curve.HashToG1([]byte(domainPrefix + "CSPRangeProof.R." + strconv.FormatUint(i, 10)))
 	}
 
 	return nil
@@ -731,13 +728,31 @@ func (p *PublicParams) Validate() error {
 			return errors.Wrap(err, "invalid public parameters")
 		}
 		if p.QuantityPrecision != p.CSPRangeProofParams.BitLength {
-			return errors.Errorf("invalid public parameters: quantity precision should be [%d] instead it is [%d]", p.RangeProofParams.BitLength, p.QuantityPrecision)
+			return errors.Errorf("invalid public parameters: quantity precision should be [%d] instead it is [%d]", p.CSPRangeProofParams.BitLength, p.QuantityPrecision)
 		}
 	}
 
 	maxToken := p.ComputeMaxTokenValue()
 	if maxToken != p.MaxToken {
 		return errors.Errorf("invalid max token, [%d]!=[%d]", maxToken, p.MaxToken)
+	}
+
+	return nil
+}
+
+// ValidateForDeployment checks configuration choices that are technically valid
+// but may indicate a misconfiguration. It does not change the behaviour of
+// Validate(); empty IssuerIDs remain permitted (open-policy mode).
+//
+// Returns a non-nil error if the public parameters appear to be in open-policy
+// mode (IssuerIDs is empty), so that callers can surface an explicit warning at
+// deployment time instead of silently operating in a mode where any identity
+// can mint or redeem tokens.
+//
+// See FA-1 in the security analysis for the rationale.
+func (p *PublicParams) ValidateForDeployment() error {
+	if len(p.IssuerIDs) == 0 {
+		return errors.New("open-policy mode: IssuerIDs is empty — any identity can issue and redeem tokens; populate IssuerIDs to restrict minting and redemption")
 	}
 
 	return nil
@@ -753,6 +768,21 @@ func (p *PublicParams) BitLength() uint64 {
 	}
 
 	return p.CSPRangeProofParams.BitLength
+}
+
+// SupportsRangeProofType reports whether the params sub-struct required by
+// proofType is populated. Both sub-structs may be present simultaneously (e.g.
+// during a range-proof-algorithm migration), so this is a per-type availability
+// check rather than a single-value getter.
+func (p *PublicParams) SupportsRangeProofType(proofType rp.ProofType) bool {
+	switch proofType {
+	case rp.RangeProofType:
+		return p.RangeProofParams != nil
+	case rp.CSPRangeProofType:
+		return p.CSPRangeProofParams != nil
+	default:
+		return false
+	}
 }
 
 func log2(x uint64) uint64 {

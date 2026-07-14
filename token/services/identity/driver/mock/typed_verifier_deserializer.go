@@ -5,8 +5,8 @@ import (
 	"context"
 	"sync"
 
-	drivera "github.com/hyperledger-labs/fabric-token-sdk/token/driver"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/identity/driver"
+	drivera "github.com/LFDT-Panurus/panurus/token/driver"
+	"github.com/LFDT-Panurus/panurus/token/services/identity/driver"
 )
 
 type TypedVerifierDeserializer struct {

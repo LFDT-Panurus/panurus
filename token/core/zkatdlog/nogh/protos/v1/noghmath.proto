@@ -1,0 +1,32 @@
+/*
+   Copyright IBM Corp. All Rights Reserved.
+
+   SPDX-License-Identifier: Apache-2.0
+*/
+
+syntax = "proto3";
+
+package fabric_token_sdk.token.zkatdlog.v1;
+
+option go_package = "github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/protos-go/v1/math";
+
+// G1 represents a point on the G1 group of a pairing-friendly elliptic curve.
+// This is used for commitments and public keys in zero-knowledge proofs.
+message G1 {
+  // raw contains the serialized representation of the G1 point
+  bytes raw = 1;
+}
+
+// Zr represents an element in the scalar field (Zr) of the elliptic curve.
+// This is used for private values, blinding factors, and other scalars.
+message Zr {
+  // raw contains the serialized representation of the field element
+  bytes raw = 1;
+}
+
+// CurveID identifies which pairing-friendly elliptic curve is being used.
+// Different curves offer different security levels and performance characteristics.
+message CurveID {
+  // id is the numeric identifier of the curve (e.g., BN254, BLS12-381)
+  uint64 id = 1;
+}

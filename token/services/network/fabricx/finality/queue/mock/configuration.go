@@ -4,7 +4,7 @@ package mock
 import (
 	"sync"
 
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/network/fabricx/finality/queue"
+	"github.com/LFDT-Panurus/panurus/token/services/network/fabricx/finality/queue"
 )
 
 type Configuration struct {

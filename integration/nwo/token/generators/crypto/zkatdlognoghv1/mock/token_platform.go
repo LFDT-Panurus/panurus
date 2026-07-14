@@ -4,10 +4,10 @@ package mock
 import (
 	"sync"
 
+	"github.com/LFDT-Panurus/panurus/integration/nwo/token/generators"
+	"github.com/LFDT-Panurus/panurus/integration/nwo/token/topology"
 	"github.com/hyperledger-labs/fabric-smart-client/integration/nwo/api"
 	"github.com/hyperledger-labs/fabric-smart-client/integration/nwo/common"
-	"github.com/hyperledger-labs/fabric-token-sdk/integration/nwo/token/generators"
-	"github.com/hyperledger-labs/fabric-token-sdk/integration/nwo/token/topology"
 	"github.com/onsi/gomega/gexec"
 )
 

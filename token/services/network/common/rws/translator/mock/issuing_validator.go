@@ -4,8 +4,8 @@ package mock
 import (
 	"sync"
 
+	"github.com/LFDT-Panurus/panurus/token/services/network/common/rws/translator"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/view"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/network/common/rws/translator"
 )
 
 type IssuingValidator struct {

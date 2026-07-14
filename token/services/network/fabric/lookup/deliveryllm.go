@@ -11,6 +11,10 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/LFDT-Panurus/panurus/token/services/logging"
+	"github.com/LFDT-Panurus/panurus/token/services/network/common/rws/translator"
+	"github.com/LFDT-Panurus/panurus/token/services/network/driver"
+	finality2 "github.com/LFDT-Panurus/panurus/token/services/network/fabric/finality"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	vault2 "github.com/hyperledger-labs/fabric-smart-client/platform/common/core/generic/vault"
 	driver2 "github.com/hyperledger-labs/fabric-smart-client/platform/common/driver"
@@ -22,10 +26,6 @@ import (
 	"github.com/hyperledger-labs/fabric-smart-client/platform/fabric/core/generic/rwset"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/fabric/core/generic/vault"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/services/tracing"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/logging"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/network/common/rws/translator"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/network/driver"
-	finality2 "github.com/hyperledger-labs/fabric-token-sdk/token/services/network/fabric/finality"
 	"github.com/hyperledger/fabric-protos-go-apiv2/common"
 	"go.opentelemetry.io/otel/trace"
 )

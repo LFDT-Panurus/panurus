@@ -1,6 +1,6 @@
 # Interoperability (Interop) Service
 
-The **Interoperability (Interop) Service** (`token/services/interop`) enables cross-chain and cross-network token operations within the Fabric Token SDK. Its primary focus is on implementing secure value exchange mechanisms like **Atomic Swaps** through **Hashed Timelock Contracts (HTLCs)**.
+The **Interoperability (Interop) Service** (`token/services/interop`) enables cross-chain and cross-network token operations within Panurus. Its primary focus is on implementing secure value exchange mechanisms like **Atomic Swaps** through **Hashed Timelock Contracts (HTLCs)**.
 
 ## Core Responsibilities
 
@@ -19,7 +19,7 @@ sequenceDiagram
     participant Alice as Party A<br/>(Network A)
     participant Bob as Party B<br/>(Network B)
 
-    box darkgreen Token SDK Stack
+    box darkgreen Panurus Stack
         participant Alice
         participant Bob
     end

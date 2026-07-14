@@ -9,9 +9,9 @@ package common
 import (
 	"testing"
 
+	"github.com/LFDT-Panurus/panurus/token/driver"
+	"github.com/LFDT-Panurus/panurus/token/services/ttx"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/view"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/driver"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/ttx"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -20,7 +20,7 @@ func TestSelectIssuerForRedeem(t *testing.T) {
 	type testCase struct {
 		name           string
 		issuers        []driver.Identity
-		attributes     map[any]any
+		attributes     map[string]any
 		expectError    bool
 		expectIdentity driver.Identity
 	}
@@ -33,7 +33,7 @@ func TestSelectIssuerForRedeem(t *testing.T) {
 		{
 			name:    "opts with FSC issuer identity and public key",
 			issuers: []driver.Identity{dummyIssuer},
-			attributes: map[any]any{
+			attributes: map[string]any{
 				ttx.IssuerFSCIdentityKey:        issuerFSCIdentity,
 				ttx.IssuerPublicParamsPublicKey: issuerPPPublicKey,
 			},
@@ -43,7 +43,7 @@ func TestSelectIssuerForRedeem(t *testing.T) {
 		{
 			name:    "opts with FSC issuer identity but no public key",
 			issuers: []driver.Identity{dummyIssuer},
-			attributes: map[any]any{
+			attributes: map[string]any{
 				ttx.IssuerFSCIdentityKey: issuerFSCIdentity,
 			},
 			expectError:    true,
@@ -52,21 +52,21 @@ func TestSelectIssuerForRedeem(t *testing.T) {
 		{
 			name:           "opts with no FSC issuer identity, issuers present",
 			issuers:        []driver.Identity{dummyIssuer, issuerPPPublicKey},
-			attributes:     map[any]any{},
+			attributes:     map[string]any{},
 			expectError:    false,
 			expectIdentity: dummyIssuer,
 		},
 		{
 			name:           "opts with no FSC issuer identity, no issuers",
 			issuers:        []driver.Identity{},
-			attributes:     map[any]any{},
+			attributes:     map[string]any{},
 			expectError:    false,
 			expectIdentity: nil,
 		},
 		{
 			name:    "IssuerFSCIdentityKey is not a view Identity",
 			issuers: []driver.Identity{dummyIssuer},
-			attributes: map[any]any{
+			attributes: map[string]any{
 				ttx.IssuerFSCIdentityKey: 1234,
 			},
 			expectError:    true,
@@ -75,7 +75,7 @@ func TestSelectIssuerForRedeem(t *testing.T) {
 		{
 			name:    "IssuerPublicParamsPublicKey is not a view Identity",
 			issuers: []driver.Identity{dummyIssuer},
-			attributes: map[any]any{
+			attributes: map[string]any{
 				ttx.IssuerFSCIdentityKey:        issuerFSCIdentity,
 				ttx.IssuerPublicParamsPublicKey: 1234,
 			},
@@ -85,7 +85,7 @@ func TestSelectIssuerForRedeem(t *testing.T) {
 		{
 			name:    "IssuerFSCIdentityKey is none, issuers present",
 			issuers: []driver.Identity{dummyIssuer},
-			attributes: map[any]any{
+			attributes: map[string]any{
 				ttx.IssuerFSCIdentityKey: view.Identity(nil),
 			},
 			expectError:    false,

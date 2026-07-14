@@ -2,7 +2,7 @@
 
 Public Parameters (PP) are the cryptographic foundation of a Token Management System (TMS). They define the rules of the token system, including the cryptographic curves, generators, and authorized participants (issuers, auditors).
 
-This document describes the lifecycle of public parameters in the Fabric Token SDK, from generation to dynamic updates.
+This document describes the lifecycle of public parameters in Panurus, from generation to dynamic updates.
 
 ---
 
@@ -53,7 +53,7 @@ When an FSC node starts or connects to a TMS, it must fetch the current public p
 
 ## Dynamic Updates and Synchronization
 
-The SDK supports dynamic synchronization of public parameter updates across the entire network without requiring node restarts.
+Panurus supports dynamic synchronization of public parameter updates across the entire network without requiring node restarts.
 
 ### The Role of the Network Service
 The **Network Service** is responsible for monitoring the ledger for changes to the public parameters.

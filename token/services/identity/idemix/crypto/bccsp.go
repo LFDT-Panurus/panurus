@@ -13,8 +13,8 @@ import (
 	"github.com/IBM/idemix/bccsp/schemes/dlog/crypto/translator/amcl"
 	bccsp "github.com/IBM/idemix/bccsp/types"
 	math "github.com/IBM/mathlib"
+	math2 "github.com/LFDT-Panurus/panurus/token/core/common/crypto/math"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
-	math2 "github.com/hyperledger-labs/fabric-token-sdk/token/core/common/crypto/math"
 )
 
 // NewKeyStore creates a new Idemix key store for the specified curve using the provided KVS backend.

@@ -10,14 +10,14 @@ import (
 	"encoding/json"
 	"time"
 
+	token3 "github.com/LFDT-Panurus/panurus/integration/token"
+	common2 "github.com/LFDT-Panurus/panurus/integration/token/common"
+	views2 "github.com/LFDT-Panurus/panurus/integration/token/dvp/views"
+	"github.com/LFDT-Panurus/panurus/integration/token/dvp/views/cash"
+	"github.com/LFDT-Panurus/panurus/integration/token/dvp/views/house"
+	token2 "github.com/LFDT-Panurus/panurus/token/token"
 	"github.com/hyperledger-labs/fabric-smart-client/integration"
 	"github.com/hyperledger-labs/fabric-smart-client/integration/nwo/common"
-	token3 "github.com/hyperledger-labs/fabric-token-sdk/integration/token"
-	common2 "github.com/hyperledger-labs/fabric-token-sdk/integration/token/common"
-	views2 "github.com/hyperledger-labs/fabric-token-sdk/integration/token/dvp/views"
-	"github.com/hyperledger-labs/fabric-token-sdk/integration/token/dvp/views/cash"
-	"github.com/hyperledger-labs/fabric-token-sdk/integration/token/dvp/views/house"
-	token2 "github.com/hyperledger-labs/fabric-token-sdk/token/token"
 	"github.com/onsi/gomega"
 )
 

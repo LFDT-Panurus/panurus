@@ -8,17 +8,17 @@ package issue
 
 import (
 	math "github.com/IBM/mathlib"
+	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/protos-go/utils"
+	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/protos-go/v1/actions"
+	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/crypto/rp"
+	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/token"
+	"github.com/LFDT-Panurus/panurus/token/driver"
+	protosv1 "github.com/LFDT-Panurus/panurus/token/driver/protos-go/v1"
+	"github.com/LFDT-Panurus/panurus/token/services/utils/protos"
+	"github.com/LFDT-Panurus/panurus/token/services/utils/slices"
+	token2 "github.com/LFDT-Panurus/panurus/token/token"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/proto"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/core/zkatdlog/nogh/protos-go/actions"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/core/zkatdlog/nogh/protos-go/pp"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/core/zkatdlog/nogh/protos-go/utils"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/core/zkatdlog/nogh/v1/crypto/rp"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/core/zkatdlog/nogh/v1/token"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/driver"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/utils/protos"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/utils/slices"
-	token2 "github.com/hyperledger-labs/fabric-token-sdk/token/token"
 )
 
 const ProtocolV1 = 1
@@ -34,8 +34,8 @@ type ActionInput struct {
 // ToProtos converts ActionInput to its protobuf representation.
 func (i *ActionInput) ToProtos() (*actions.IssueActionInput, error) {
 	return &actions.IssueActionInput{
-		Id: &actions.TokenID{
-			Id:    i.ID.TxId,
+		Id: &protosv1.TokenID{
+			TxId:  i.ID.TxId,
 			Index: i.ID.Index,
 		},
 		Token: i.Token,
@@ -45,7 +45,7 @@ func (i *ActionInput) ToProtos() (*actions.IssueActionInput, error) {
 // FromProtos populates ActionInput from its protobuf representation.
 func (i *ActionInput) FromProtos(p *actions.IssueActionInput) error {
 	if p.Id != nil {
-		i.ID.TxId = p.Id.Id
+		i.ID.TxId = p.Id.TxId
 		i.ID.Index = p.Id.Index
 	}
 	i.Token = p.Token
@@ -266,7 +266,7 @@ func (i *Action) Serialize() ([]byte, error) {
 
 	issueAction := &actions.IssueAction{
 		Version: ProtocolV1,
-		Issuer: &pp.Identity{
+		Issuer: &protosv1.Identity{
 			Raw: i.Issuer,
 		},
 		Inputs:   inputs,
@@ -301,8 +301,11 @@ func (i *Action) Deserialize(raw []byte) error {
 	// outputs
 	i.Outputs = make([]*token.Token, len(issueAction.Outputs))
 	for j, output := range issueAction.Outputs {
-		if output == nil || output.Token == nil {
-			continue
+		if output == nil {
+			return errors.Errorf("invalid issue action: output at index [%d] is nil", j)
+		}
+		if output.Token == nil {
+			return errors.Errorf("invalid issue action: token of output at index [%d] is nil", j)
 		}
 		data, err := utils.FromG1Proto(output.Token.Data)
 		if err != nil {

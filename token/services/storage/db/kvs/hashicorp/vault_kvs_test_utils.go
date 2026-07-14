@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/netip"
 	"runtime/debug"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -44,6 +45,7 @@ func NewVaultClient(address, token string) (*vault.Client, error) {
 }
 
 func StartHashicorpVaultContainer(t *testing.T, port int) (func(), string, string) {
+	t.Helper()
 	docker, err := docker2.GetInstance()
 	if err != nil {
 		t.Fatalf("failed to connect to docker daemon: %v", err)
@@ -53,12 +55,12 @@ func StartHashicorpVaultContainer(t *testing.T, port int) (func(), string, strin
 		t.Fatal(err)
 	}
 
-	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+	cli, err := client.New(client.FromEnv)
 	if err != nil {
 		t.Fatal(err)
 	}
 	// Define the container configuration
-	portStr := fmt.Sprintf("%d", port)
+	portStr := strconv.Itoa(port)
 	token := "00000000-0000-0000-0000-000000000000"
 	listenAddress := "0.0.0.0:" + portStr
 	clientAddress := "127.0.0.1:" + portStr
@@ -111,7 +113,7 @@ func StartHashicorpVaultContainer(t *testing.T, port int) (func(), string, strin
 	fmt.Println(resp.ID)
 
 	// Wait for Vault to be ready using 127.0.0.1 (0.0.0.0 is a bind address, not routable by clients)
-	vaultURL := fmt.Sprintf("http://%s", clientAddress)
+	vaultURL := "http://" + clientAddress
 	if err := waitForVault(vaultURL, token); err != nil {
 		t.Fatal(err)
 	}
@@ -132,14 +134,13 @@ func StartHashicorpVaultContainer(t *testing.T, port int) (func(), string, strin
 
 func waitForVault(vaultURL, token string) error {
 	client := &http.Client{}
-	req, err := http.NewRequest("GET", fmt.Sprintf("%s/v1/sys/health", vaultURL), nil)
+	req, err := http.NewRequest(http.MethodGet, vaultURL+"/v1/sys/health", nil)
 	if err != nil {
 		return err
 	}
 	req.Header.Set("X-Vault-Token", token)
 
-	for i := 0; i < 90; i++ { // Try for a bit
-
+	for i := range 90 { // Try for a bit
 		resp, err := client.Do(req)
 		if err == nil && resp.StatusCode == http.StatusOK {
 			return nil
@@ -148,17 +149,18 @@ func waitForVault(vaultURL, token string) error {
 			fmt.Printf("vault not ready yet (iteration %d): %s\n", i, err)
 		} else {
 			fmt.Printf("vault not ready yet (iteration %d): status %d\n", i, resp.StatusCode)
-			resp.Body.Close()
+			SilentClose(resp.Body)
 		}
 		time.Sleep(2 * time.Second)
 	}
+
 	return errors.Errorf("vault did not become ready in time")
 }
 
 func enableKVSecretEngine(vaultURL, token, path string) error {
 	client := &http.Client{}
 	reqBody := `{"type": "kv", "options": {"version": "1"}}`
-	req, err := http.NewRequest("POST", fmt.Sprintf("%s/v1/sys/mounts/%s", vaultURL, path), strings.NewReader(reqBody))
+	req, err := http.NewRequest(http.MethodPost, fmt.Sprintf("%s/v1/sys/mounts/%s", vaultURL, path), strings.NewReader(reqBody))
 	if err != nil {
 		return err
 	}
@@ -169,10 +171,19 @@ func enableKVSecretEngine(vaultURL, token, path string) error {
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer SilentClose(resp.Body)
 
 	if resp.StatusCode != http.StatusNoContent {
 		return errors.Errorf("failed to enable kv secret engine: %s", resp.Status)
 	}
+
 	return nil
+}
+
+type closer interface {
+	Close() error
+}
+
+func SilentClose(c closer) {
+	_ = c.Close()
 }

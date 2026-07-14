@@ -13,7 +13,7 @@ import (
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/services/storage/driver/sql/common"
 	fscPostgres "github.com/hyperledger-labs/fabric-smart-client/platform/view/services/storage/driver/sql/postgres"
 
-	common3 "github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/db/sql/common"
+	common3 "github.com/LFDT-Panurus/panurus/token/services/storage/db/sql/common"
 )
 
 // KeystoreStore wraps common.KeystoreStore to add advisory lock to schema creation

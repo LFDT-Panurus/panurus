@@ -9,9 +9,9 @@ package boolpolicy
 import (
 	"encoding/asn1"
 
+	"github.com/LFDT-Panurus/panurus/token"
+	"github.com/LFDT-Panurus/panurus/token/driver"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
-	"github.com/hyperledger-labs/fabric-token-sdk/token"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/driver"
 )
 
 // PolicySignature is the on-wire signature envelope for a policy identity.

@@ -12,9 +12,10 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/hyperledger-labs/fabric-token-sdk/token/driver"
-	dmock "github.com/hyperledger-labs/fabric-token-sdk/token/driver/mock"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/logging"
+	"github.com/LFDT-Panurus/panurus/token/driver"
+	dmock "github.com/LFDT-Panurus/panurus/token/driver/mock"
+	"github.com/LFDT-Panurus/panurus/token/driver/protos-go/v1/request"
+	"github.com/LFDT-Panurus/panurus/token/services/logging"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -218,11 +219,23 @@ func TestValidatorWithCounterfeiter(t *testing.T) {
 
 	t.Run("VerifyTokenRequestFromRaw", func(t *testing.T) {
 		tr := &driver.TokenRequest{
-			Issues: [][]byte{[]byte("issue1")},
-			AuditorSignatures: []*driver.AuditorSignature{
-				{Identity: []byte("auditor"), Signature: []byte("sig")},
+			Actions: []*driver.TypedAction{
+				{Type: request.ActionType_ACTION_TYPE_ISSUE, Raw: []byte("issue1")},
 			},
-			Signatures: [][]byte{[]byte("sig2")},
+			Signatures: []*driver.RequestSignature{
+				{
+					Auditor: &driver.AuditorSignature{
+						Identity:  []byte("auditor"),
+						Signature: []byte("sig"),
+					},
+				},
+				{
+					Action: &driver.ActionSignature{
+						ActionID:  0,
+						Signature: []byte("sig2"),
+					},
+				},
+			},
 		}
 		raw, err := tr.Bytes()
 		require.NoError(t, err)
@@ -247,7 +260,7 @@ func TestValidatorWithCounterfeiter(t *testing.T) {
 
 func TestIsAnyNil(t *testing.T) {
 	var a *int
-	var b = 1
+	b := 1
 	assert.True(t, IsAnyNil(a))
 	assert.False(t, IsAnyNil(&b))
 	assert.True(t, IsAnyNil(&b, a))

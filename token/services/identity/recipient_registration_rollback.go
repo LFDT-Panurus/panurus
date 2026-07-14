@@ -9,7 +9,7 @@ package identity
 import (
 	"context"
 
-	"github.com/hyperledger-labs/fabric-token-sdk/token/driver"
+	"github.com/LFDT-Panurus/panurus/token/driver"
 )
 
 // RecipientRegistrationRollback is implemented by identity providers that record

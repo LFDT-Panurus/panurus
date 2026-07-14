@@ -7,7 +7,7 @@ SPDX-License-Identifier: Apache-2.0
 package sqlite
 
 import (
-	sqlcommon "github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/db/sql/common"
+	sqlcommon "github.com/LFDT-Panurus/panurus/token/services/storage/db/sql/common"
 )
 
 type IdentityStore = sqlcommon.IdentityStore

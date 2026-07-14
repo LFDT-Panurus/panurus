@@ -10,8 +10,8 @@ import (
 	"context"
 	"encoding/json"
 
-	"github.com/hyperledger-labs/fabric-token-sdk/token/driver"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/interop/htlc"
+	"github.com/LFDT-Panurus/panurus/token/driver"
+	"github.com/LFDT-Panurus/panurus/token/services/interop/htlc"
 )
 
 type Script = htlc.Script

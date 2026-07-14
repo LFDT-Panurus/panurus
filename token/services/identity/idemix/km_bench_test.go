@@ -13,8 +13,8 @@ import (
 	"time"
 
 	math "github.com/IBM/mathlib"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/driver"
-	benchmark2 "github.com/hyperledger-labs/fabric-token-sdk/token/services/benchmark"
+	"github.com/LFDT-Panurus/panurus/token/driver"
+	benchmark2 "github.com/LFDT-Panurus/panurus/token/services/benchmark"
 	"github.com/stretchr/testify/require"
 )
 

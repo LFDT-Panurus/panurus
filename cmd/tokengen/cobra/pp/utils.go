@@ -7,7 +7,7 @@ SPDX-License-Identifier: Apache-2.0
 package pp
 
 import (
-	"github.com/hyperledger-labs/fabric-token-sdk/cmd/tokengen/cobra/pp/printpp"
+	"github.com/LFDT-Panurus/panurus/cmd/tokengen/cobra/pp/printpp"
 	"github.com/spf13/cobra"
 )
 

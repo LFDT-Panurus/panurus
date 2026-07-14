@@ -12,7 +12,7 @@ import (
 	"math"
 	"unsafe"
 
-	"github.com/hyperledger-labs/fabric-token-sdk/token/driver"
+	"github.com/LFDT-Panurus/panurus/token/driver"
 )
 
 // DER tag bytes — derived from encoding/asn1 constants.

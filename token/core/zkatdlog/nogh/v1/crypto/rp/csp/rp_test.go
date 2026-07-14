@@ -13,8 +13,8 @@ import (
 	"testing"
 
 	math "github.com/IBM/mathlib"
+	benchmark2 "github.com/LFDT-Panurus/panurus/token/services/benchmark"
 	fscprofile "github.com/hyperledger-labs/fabric-smart-client/node/start/profile"
-	benchmark2 "github.com/hyperledger-labs/fabric-token-sdk/token/services/benchmark"
 	"github.com/stretchr/testify/require"
 )
 

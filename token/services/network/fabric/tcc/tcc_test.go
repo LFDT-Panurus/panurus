@@ -9,9 +9,9 @@ import (
 	"encoding/base64"
 	"os"
 
+	chaincode2 "github.com/LFDT-Panurus/panurus/token/services/network/fabric/tcc"
+	"github.com/LFDT-Panurus/panurus/token/services/network/fabric/tcc/mock"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
-	chaincode2 "github.com/hyperledger-labs/fabric-token-sdk/token/services/network/fabric/tcc"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/network/fabric/tcc/mock"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 )

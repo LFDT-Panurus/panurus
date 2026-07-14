@@ -7,9 +7,9 @@ SPDX-License-Identifier: Apache-2.0
 package actions
 
 import (
+	"github.com/LFDT-Panurus/panurus/token/core/common/encoding/json"
+	"github.com/LFDT-Panurus/panurus/token/services/tokens/core/fabtoken"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/core/common/encoding/json"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/tokens/core/fabtoken"
 )
 
 // OutputMetadata contains a serialization of the issuer of the token.

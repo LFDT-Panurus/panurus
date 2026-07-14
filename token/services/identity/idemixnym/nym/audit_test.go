@@ -13,15 +13,15 @@ import (
 
 	"github.com/IBM/idemix/bccsp/types"
 	math "github.com/IBM/mathlib"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/identity/idemix"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/identity/idemix/crypto"
-	kvs2 "github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/db/kvs"
+	"github.com/LFDT-Panurus/panurus/token/services/identity/idemix"
+	"github.com/LFDT-Panurus/panurus/token/services/identity/idemix/crypto"
+	kvs2 "github.com/LFDT-Panurus/panurus/token/services/storage/db/kvs"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 func TestAuditInfoMatch(t *testing.T) {
-	testAuditInfoMatch(t, "../../idemix/testdata/fp256bn_amcl/idemix", math.FP256BN_AMCL)
+	testAuditInfoMatch(t, "../../idemix/testdata/bls12_381_bbs_gurvy/idemix", math.BLS12_381_BBS_GURVY)
 	testAuditInfoMatch(t, "../../idemix/testdata/bls12_381_bbs/idemix", math.BLS12_381_BBS_GURVY)
 }
 
@@ -68,7 +68,7 @@ func testAuditInfoMatch(t *testing.T, configPath string, curveID math.CurveID) {
 }
 
 func TestDeserializeAuditInfo(t *testing.T) {
-	testDeserializeAuditInfo(t, "../../idemix/testdata/fp256bn_amcl/idemix", math.FP256BN_AMCL)
+	testDeserializeAuditInfo(t, "../../idemix/testdata/bls12_381_bbs_gurvy/idemix", math.BLS12_381_BBS_GURVY)
 	testDeserializeAuditInfo(t, "../../idemix/testdata/bls12_381_bbs/idemix", math.BLS12_381_BBS_GURVY)
 }
 
@@ -163,7 +163,7 @@ func TestDeserializeAuditInfoErrorPaths(t *testing.T) {
 }
 
 func TestAuditInfoMatchErrorPaths(t *testing.T) {
-	testAuditInfoMatchErrorPaths(t, "../../idemix/testdata/fp256bn_amcl/idemix", math.FP256BN_AMCL)
+	testAuditInfoMatchErrorPaths(t, "../../idemix/testdata/bls12_381_bbs_gurvy/idemix", math.BLS12_381_BBS_GURVY)
 	testAuditInfoMatchErrorPaths(t, "../../idemix/testdata/bls12_381_bbs/idemix", math.BLS12_381_BBS_GURVY)
 }
 

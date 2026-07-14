@@ -10,19 +10,20 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/LFDT-Panurus/panurus/token/core"
+	mock2 "github.com/LFDT-Panurus/panurus/token/core/common/driver/mock"
+	"github.com/LFDT-Panurus/panurus/token/core/fabtoken/v1/driver"
+	"github.com/LFDT-Panurus/panurus/token/core/fabtoken/v1/setup"
+	tdriver "github.com/LFDT-Panurus/panurus/token/driver"
+	dmock "github.com/LFDT-Panurus/panurus/token/driver/mock"
+	imock "github.com/LFDT-Panurus/panurus/token/services/identity/driver/mock"
+	idmock "github.com/LFDT-Panurus/panurus/token/services/identity/mock"
+	"github.com/LFDT-Panurus/panurus/token/services/network"
+	"github.com/LFDT-Panurus/panurus/token/services/storage"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/services/metrics/disabled"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/core"
-	mock2 "github.com/hyperledger-labs/fabric-token-sdk/token/core/common/driver/mock"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/core/fabtoken/v1/driver"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/core/fabtoken/v1/setup"
-	tdriver "github.com/hyperledger-labs/fabric-token-sdk/token/driver"
-	dmock "github.com/hyperledger-labs/fabric-token-sdk/token/driver/mock"
-	imock "github.com/hyperledger-labs/fabric-token-sdk/token/services/identity/driver/mock"
-	idmock "github.com/hyperledger-labs/fabric-token-sdk/token/services/identity/mock"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/network"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/storage"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/otel/trace/noop"
 )
 
 // TestNewDriver tests the creation of a new fabtoken driver.
@@ -37,7 +38,7 @@ func TestNewDriver(t *testing.T) {
 
 	factory := driver.NewTokenDriver(
 		metricsProvider,
-		nil,
+		noop.NewTracerProvider(),
 		configService,
 		storageProvider,
 		identityProvider,
@@ -62,7 +63,7 @@ func TestNewTokenService(t *testing.T) {
 
 	d := driver.NewTokenDriver(
 		metricsProvider,
-		nil,
+		noop.NewTracerProvider(),
 		configService,
 		storageProvider,
 		identityProvider,

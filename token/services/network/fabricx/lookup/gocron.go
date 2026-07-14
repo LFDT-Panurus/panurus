@@ -13,12 +13,12 @@ import (
 	"sync"
 	"time"
 
+	"github.com/LFDT-Panurus/panurus/token"
+	"github.com/LFDT-Panurus/panurus/token/services/logging"
+	"github.com/LFDT-Panurus/panurus/token/services/network/fabric/lookup"
 	"github.com/go-co-op/gocron/v2"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/fabricx/core/committer/queryservice"
-	"github.com/hyperledger-labs/fabric-token-sdk/token"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/logging"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/network/fabric/lookup"
 )
 
 var logger = logging.MustGetLogger()
@@ -75,7 +75,7 @@ func (n *CronListenerManager) PermanentLookupListenerSupported() bool {
 // the value of a key changes. It schedules a recurring job that polls
 // the query service at the configured permanent interval.
 func (n *CronListenerManager) AddPermanentLookupListener(namespace string, key string, listener Listener) error {
-	logger.Infof("AddPermanentLookupListener [%s:%s]", namespace, key)
+	logger.Debugf("AddPermanentLookupListener [%s:%s]", namespace, key)
 
 	job := NewPermanentJob(namespace, key, listener, n.queryService)
 	j, err := n.scheduler.NewJob(
@@ -99,7 +99,7 @@ func (n *CronListenerManager) AddPermanentLookupListener(namespace string, key s
 // repeatedly until the key is found or the configured deadline is reached.
 // The job is automatically removed after completion.
 func (n *CronListenerManager) AddLookupListener(namespace string, key string, listener lookup.Listener) error {
-	logger.Infof("AddLookupListener [%s:%s]", namespace, key)
+	logger.Debugf("AddLookupListener [%s:%s]", namespace, key)
 
 	deadline := time.Now().Add(n.config.OnceDeadline())
 
@@ -108,10 +108,10 @@ func (n *CronListenerManager) AddLookupListener(namespace string, key string, li
 	var err error
 
 	task := gocron.NewTask(func() {
-		logger.Infof("[KeyCheck] check for key [%s:%s]", namespace, key)
+		logger.Debugf("[KeyCheck] check for key [%s:%s]", namespace, key)
 		v, err := n.queryService.GetState(namespace, key)
 		if err == nil && v != nil && len(v.Raw) != 0 {
-			logger.Infof("[KeyCheck] key [%s:%s] found, notify listener", namespace, key)
+			logger.Debugf("[KeyCheck] key [%s:%s] found, notify listener", namespace, key)
 			listener.OnStatus(context.Background(), key, v.Raw)
 
 			// Stop the job, no error is expected here
@@ -121,7 +121,7 @@ func (n *CronListenerManager) AddLookupListener(namespace string, key string, li
 		}
 
 		if time.Now().After(deadline) {
-			logger.Infof("[KeyCheck] key [%s:%s] not found, deadline reached", namespace, key)
+			logger.Debugf("[KeyCheck] key [%s:%s] not found, deadline reached", namespace, key)
 			listener.OnError(context.Background(), key, errors.Errorf("key [%s:%s] not found", namespace, key))
 
 			// Stop the job, no error is expected here
@@ -150,7 +150,7 @@ func (n *CronListenerManager) AddLookupListener(namespace string, key string, li
 // RemoveLookupListener stops and removes the gocron job associated
 // with the provided listener.
 func (n *CronListenerManager) RemoveLookupListener(id string, listener Listener) error {
-	logger.Infof("RemoveLookupListener [%s]", id)
+	logger.Debugf("RemoveLookupListener [%s]", id)
 	n.mu.Lock()
 	defer n.mu.Unlock()
 
@@ -215,7 +215,7 @@ func NewPermanentJob(namespace string, key string, listener Listener, queryServi
 // hash with the last seen hash and notifies the listener only if a change
 // is detected.
 func (j *PermanentJob) Run() {
-	logger.Infof("[PermanentKeyCheck] check for key [%s:%s]", j.namespace, j.key)
+	logger.Debugf("[PermanentKeyCheck] check for key [%s:%s]", j.namespace, j.key)
 	v, err := j.queryService.GetState(j.namespace, j.key)
 	if err == nil && v != nil && len(v.Raw) != 0 {
 		newHash := token.Hashable(v.Raw).Raw()

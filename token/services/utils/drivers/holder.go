@@ -13,7 +13,7 @@ import (
 	"reflect"
 	"sync"
 
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/logging"
+	"github.com/LFDT-Panurus/panurus/token/services/logging"
 )
 
 type Holder[K comparable, D any] struct {

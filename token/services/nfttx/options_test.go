@@ -9,7 +9,7 @@ package nfttx
 import (
 	"testing"
 
-	"github.com/hyperledger-labs/fabric-token-sdk/token"
+	"github.com/LFDT-Panurus/panurus/token"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -18,9 +18,9 @@ func TestWithUniqueID(t *testing.T) {
 	opt := WithUniqueID("my-id")
 
 	opts := &token.IssueOptions{
-		Attributes: make(map[any]any),
+		Attributes: make(map[string]any),
 	}
 	err := opt(opts)
 	require.NoError(t, err)
-	assert.Equal(t, "my-id", opts.Attributes["github.com/hyperledger-labs/fabric-token-sdk/token/services/nfttx/UniqueID"])
+	assert.Equal(t, "my-id", opts.Attributes["github.com/LFDT-Panurus/panurus/token/services/nfttx/UniqueID"])
 }

@@ -9,15 +9,16 @@ package auditor
 import (
 	"reflect"
 
+	"github.com/LFDT-Panurus/panurus/token"
+	"github.com/LFDT-Panurus/panurus/token/core/common/metrics"
+	"github.com/LFDT-Panurus/panurus/token/services"
+	"github.com/LFDT-Panurus/panurus/token/services/config"
+	"github.com/LFDT-Panurus/panurus/token/services/storage/auditdb"
+	"github.com/LFDT-Panurus/panurus/token/services/tokens"
+	"github.com/LFDT-Panurus/panurus/token/services/ttx/dep"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/common/utils/lazy"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/services/tracing"
-	"github.com/hyperledger-labs/fabric-token-sdk/token"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/core/common/metrics"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/auditdb"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/tokens"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/ttx/dep"
 	"go.opentelemetry.io/otel/trace"
 )
 
@@ -47,6 +48,7 @@ type ServiceManager struct {
 	networkProvider     NetworkProvider
 	tokenServiceManager TokensServiceManager
 	tmsProvider         dep.TokenManagementServiceProvider
+	configService       *config.Service
 }
 
 // NewServiceManager creates a new Service manager.
@@ -58,6 +60,7 @@ func NewServiceManager(
 	tracerProvider trace.TracerProvider,
 	metricsProvider metrics.Provider,
 	checkServiceProvider CheckServiceProvider,
+	configService *config.Service,
 ) *ServiceManager {
 	return &ServiceManager{
 		p: lazy.NewProviderWithKeyMapper(services.Key, func(tmsID token.TMSID) (*Service, error) {
@@ -78,6 +81,19 @@ func NewServiceManager(
 				return nil, errors.WithMessagef(err, "failed to get checkservice for [%s]", tmsID)
 			}
 
+			// Load lock configuration from config service
+			var lockConfig *LockConfig
+			if configService != nil {
+				if tmsConfig, err := configService.ConfigurationFor(tmsID.Network, tmsID.Channel, tmsID.Namespace); err == nil {
+					lockConfig = LoadLockConfigFromConfiguration(tmsConfig)
+				} else {
+					logger.Warnf("failed to get configuration for [%s], using default lock config: %v", tmsID, err)
+					lockConfig = DefaultLockConfig()
+				}
+			} else {
+				lockConfig = DefaultLockConfig()
+			}
+
 			auditor := &Service{
 				networkProvider: networkProvider,
 				tmsID:           tmsID,
@@ -90,6 +106,7 @@ func NewServiceManager(
 				metricsProvider: metricsProvider,
 				metrics:         newMetrics(metricsProvider),
 				checkService:    checkService,
+				lockConfig:      lockConfig,
 			}
 
 			return auditor, nil
@@ -97,6 +114,7 @@ func NewServiceManager(
 		networkProvider:     networkProvider,
 		tokenServiceManager: tokensServiceManager,
 		tmsProvider:         tmsProvider,
+		configService:       configService,
 	}
 }
 

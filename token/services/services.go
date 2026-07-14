@@ -7,7 +7,7 @@ SPDX-License-Identifier: Apache-2.0
 package services
 
 import (
-	"github.com/hyperledger-labs/fabric-token-sdk/token"
+	"github.com/LFDT-Panurus/panurus/token"
 )
 
 type ServiceManager[S any] interface {

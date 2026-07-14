@@ -25,6 +25,19 @@ import (
 	"unicode"
 )
 
+const (
+	// maxPolicyLen is the maximum byte length accepted by Parse.
+	// Policies longer than 4 KB cannot represent a sensible real-world
+	// expression and are almost certainly an attack or a bug.
+	maxPolicyLen = 4 * 1024
+
+	// maxParseDepth is the maximum parenthesis nesting depth allowed by the
+	// recursive-descent parser.  Each open parenthesis adds one frame to the
+	// Go call stack; capping at 64 prevents goroutine stack exhaustion from
+	// attacker-supplied deeply-nested expressions.
+	maxParseDepth = 64
+)
+
 // ---------------------------------------------------------------------------
 // AST nodes
 // ---------------------------------------------------------------------------
@@ -169,14 +182,24 @@ type parser struct {
 
 // Parse parses a boolean expression string and returns the root AST node.
 // It returns an error for any lexical or syntactic problems.
+//
+// Parse enforces two hard limits to prevent resource exhaustion:
+//   - input longer than maxPolicyLen bytes is rejected immediately.
+//   - parenthesis nesting deeper than maxParseDepth levels is rejected;
+//     this bounds the Go call-stack depth of the recursive descent and
+//     prevents goroutine stack exhaustion from attacker-supplied input.
 func Parse(input string) (Node, error) {
+	if len(input) > maxPolicyLen {
+		return nil, fmt.Errorf("policy expression exceeds maximum length of %d bytes (got %d)", maxPolicyLen, len(input))
+	}
+
 	p := &parser{lex: newLexer(input)}
 	p.advance() // prime the lookahead
 	if p.err != nil {
 		return nil, p.err
 	}
 
-	node := p.parseOr()
+	node := p.parseOr(0)
 	if p.err != nil {
 		return nil, p.err
 	}
@@ -196,11 +219,11 @@ func (p *parser) advance() {
 
 // parseOr handles: and_expr ( 'OR' and_expr )*
 // OR is left-associative and lower precedence than AND.
-func (p *parser) parseOr() Node {
-	left := p.parseAnd()
+func (p *parser) parseOr(depth int) Node {
+	left := p.parseAnd(depth)
 	for p.err == nil && p.current.kind == tokOr {
 		p.advance()
-		right := p.parseAnd()
+		right := p.parseAnd(depth)
 		left = &OrNode{Left: left, Right: right}
 	}
 
@@ -209,11 +232,11 @@ func (p *parser) parseOr() Node {
 
 // parseAnd handles: primary ( 'AND' primary )*
 // AND is left-associative and higher precedence than OR.
-func (p *parser) parseAnd() Node {
-	left := p.parsePrimary()
+func (p *parser) parseAnd(depth int) Node {
+	left := p.parsePrimary(depth)
 	for p.err == nil && p.current.kind == tokAnd {
 		p.advance()
-		right := p.parsePrimary()
+		right := p.parsePrimary(depth)
 		left = &AndNode{Left: left, Right: right}
 	}
 
@@ -221,7 +244,7 @@ func (p *parser) parseAnd() Node {
 }
 
 // parsePrimary handles: '$' digits | '(' expr ')'
-func (p *parser) parsePrimary() Node {
+func (p *parser) parsePrimary(depth int) Node {
 	if p.err != nil {
 		return nil
 	}
@@ -233,8 +256,13 @@ func (p *parser) parsePrimary() Node {
 		return node
 
 	case tokLParen:
+		if depth >= maxParseDepth {
+			p.err = fmt.Errorf("policy expression exceeds maximum nesting depth of %d", maxParseDepth)
+
+			return nil
+		}
 		p.advance() // consume '('
-		node := p.parseOr()
+		node := p.parseOr(depth + 1)
 		if p.err != nil {
 			return nil
 		}

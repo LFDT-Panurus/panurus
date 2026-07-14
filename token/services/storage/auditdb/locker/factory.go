@@ -9,11 +9,11 @@ package locker
 import (
 	"database/sql"
 
+	"github.com/LFDT-Panurus/panurus/token/services/storage/auditdb/locker/id"
+	"github.com/LFDT-Panurus/panurus/token/services/storage/auditdb/locker/memory"
+	lockerpostgres "github.com/LFDT-Panurus/panurus/token/services/storage/auditdb/locker/postgres"
+	dbdriver "github.com/LFDT-Panurus/panurus/token/services/storage/db/driver"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/auditdb/locker/id"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/auditdb/locker/memory"
-	lockerpostgres "github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/auditdb/locker/postgres"
-	dbdriver "github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/db/driver"
 )
 
 // WriteDBProvider is an optional interface that SQL-backed AuditTransactionStore

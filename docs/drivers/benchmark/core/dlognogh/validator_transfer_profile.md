@@ -351,14 +351,14 @@ It's spent in `verifyIPA` doing work that's NOT in instrumented child functions:
 This call tree was generated using the Profiler tool. To get an updated version after code changes:
 
 ```bash
-cd /path/to/fabric-token-sdk/tools/profiler
+cd /path/to/panurus/tools/profiler
 ./profile.sh BenchmarkValidatorTransfer -f VerifyTokenRequestFromRaw
 ```
 
-For more profiler options and usage examples, see the [Profiler Tool README](../../../../../tools/profiler/README.md).
+For more profiler options and usage examples, see the [Profiler Tool README](../../../../../cmd/profiler/README.md).
 
 ## References
 
-- [Profiler Tool](../../../../../tools/profiler/README.md) - Automatic profiling tool for tests and benchmarks
+- [Profiler Tool](../../../../../cmd/profiler/README.md) - Automatic profiling tool for tests and benchmarks
 - [Validator Implementation](../../../../../token/core/zkatdlog/nogh/v1/validator/)
 - [Idemix Identity](../../../../../token/services/identity/idemix/)

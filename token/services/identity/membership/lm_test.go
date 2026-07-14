@@ -14,15 +14,15 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/LFDT-Panurus/panurus/token"
+	mock2 "github.com/LFDT-Panurus/panurus/token/driver/mock"
+	"github.com/LFDT-Panurus/panurus/token/services/identity"
+	idriver "github.com/LFDT-Panurus/panurus/token/services/identity/driver"
+	"github.com/LFDT-Panurus/panurus/token/services/identity/membership"
+	"github.com/LFDT-Panurus/panurus/token/services/identity/membership/mock"
+	"github.com/LFDT-Panurus/panurus/token/services/logging"
+	"github.com/LFDT-Panurus/panurus/token/services/storage"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/view"
-	"github.com/hyperledger-labs/fabric-token-sdk/token"
-	mock2 "github.com/hyperledger-labs/fabric-token-sdk/token/driver/mock"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/identity"
-	idriver "github.com/hyperledger-labs/fabric-token-sdk/token/services/identity/driver"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/identity/membership"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/identity/membership/mock"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/logging"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/storage"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -834,4 +834,101 @@ func TestPriorityComparison(t *testing.T) {
 	assert.Equal(t, 0, list[0].Priority)
 	assert.Equal(t, 5, list[1].Priority)
 	assert.Equal(t, 10, list[2].Priority)
+}
+
+func TestRefreshAndGet_PointQueryLoadsReplicaConfiguration(t *testing.T) {
+	ctx := t.Context()
+
+	ip := &mock.IdentityProvider{}
+	ip.BindReturns(nil)
+
+	iss := &mock.IdentityStoreService{}
+	iss.NotifierReturns(nil, storage.ErrNotSupported)
+	iss.IteratorConfigurationsReturns(&mock.IdentityConfigurationIterator{}, nil)
+	// the shared store holds a configuration registered by another replica
+	iss.ConfigurationsByIDReturns([]idriver.IdentityConfiguration{
+		{ID: "replica-wallet", URL: "/tmp/replica", Type: "testType"},
+	}, nil)
+
+	km := &mock.KeyManager{}
+	km.EnrollmentIDReturns("e1")
+	km.AnonymousReturns(false)
+	km.IsRemoteReturns(false)
+	km.IdentityReturns(&idriver.IdentityDescriptor{Identity: []byte("id1"), AuditInfo: []byte("ai")}, nil)
+	km.IdentityTypeReturns(identity.Type(99))
+
+	kmp := &mock.KeyManagerProvider{}
+	kmp.GetReturns(km, nil)
+
+	lm := membership.NewLocalMembership(
+		logging.MustGetLogger("test"),
+		&mock.Config{},
+		[]byte("netid"),
+		&mock.SignerDeserializerManager{},
+		iss,
+		"testType",
+		false,
+		ip,
+		kmp,
+	)
+	require.NoError(t, lm.Load(ctx, nil, nil))
+
+	info, err := lm.GetIdentityInfo(ctx, "replica-wallet", nil)
+	require.NoError(t, err)
+	assert.Equal(t, "replica-wallet", info.ID())
+
+	// resolved through the point query, without a second full scan
+	require.Equal(t, 1, iss.ConfigurationsByIDCallCount())
+	_, id, typ := iss.ConfigurationsByIDArgsForCall(0)
+	assert.Equal(t, "replica-wallet", id)
+	assert.Equal(t, "testType", typ)
+	assert.Equal(t, 1, iss.IteratorConfigurationsCallCount())
+}
+
+func TestRefreshAndGet_UnknownLabelDoesNotFullScan(t *testing.T) {
+	ctx := t.Context()
+
+	iss := &mock.IdentityStoreService{}
+	lm := membership.NewLocalMembership(
+		logging.MustGetLogger("test"),
+		&mock.Config{},
+		[]byte("netid"),
+		&mock.SignerDeserializerManager{},
+		iss,
+		"testType",
+		false,
+		&mock.IdentityProvider{},
+	)
+
+	_, err := lm.GetIdentityInfo(ctx, "unknown", nil)
+	require.Error(t, err)
+
+	require.Equal(t, 1, iss.ConfigurationsByIDCallCount())
+	_, id, typ := iss.ConfigurationsByIDArgsForCall(0)
+	assert.Equal(t, "unknown", id)
+	assert.Equal(t, "testType", typ)
+	assert.Equal(t, 0, iss.IteratorConfigurationsCallCount())
+}
+
+func TestRefreshAndGet_NonUTF8LabelSkipsStore(t *testing.T) {
+	ctx := t.Context()
+
+	iss := &mock.IdentityStoreService{}
+	lm := membership.NewLocalMembership(
+		logging.MustGetLogger("test"),
+		&mock.Config{},
+		[]byte("netid"),
+		&mock.SignerDeserializerManager{},
+		iss,
+		"testType",
+		false,
+		&mock.IdentityProvider{},
+	)
+
+	// raw identity bytes are not valid UTF-8 and cannot be a configuration id
+	_, err := lm.GetIdentityInfo(ctx, string([]byte{0xff, 0xfe, 0xfd}), nil)
+	require.Error(t, err)
+
+	assert.Equal(t, 0, iss.ConfigurationsByIDCallCount())
+	assert.Equal(t, 0, iss.IteratorConfigurationsCallCount())
 }

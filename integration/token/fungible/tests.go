@@ -15,24 +15,24 @@ import (
 	"strings"
 	"time"
 
+	"github.com/LFDT-Panurus/panurus/integration/nwo/runner/nwo"
+	"github.com/LFDT-Panurus/panurus/integration/nwo/token"
+	"github.com/LFDT-Panurus/panurus/integration/nwo/txgen/model"
+	token3 "github.com/LFDT-Panurus/panurus/integration/token"
+	common2 "github.com/LFDT-Panurus/panurus/integration/token/common"
+	dlog "github.com/LFDT-Panurus/panurus/integration/token/fungible/dlogstress/support"
+	"github.com/LFDT-Panurus/panurus/integration/token/fungible/views"
+	token4 "github.com/LFDT-Panurus/panurus/token"
+	dlognoghv1 "github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/setup"
+	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/validator"
+	"github.com/LFDT-Panurus/panurus/token/services/storage/ttxdb"
+	"github.com/LFDT-Panurus/panurus/token/services/ttx"
+	token2 "github.com/LFDT-Panurus/panurus/token/token"
 	"github.com/hyperledger-labs/fabric-smart-client/integration"
 	"github.com/hyperledger-labs/fabric-smart-client/integration/nwo/common"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
-	"github.com/hyperledger-labs/fabric-smart-client/platform/common/services/logging"
+	fsclogging "github.com/hyperledger-labs/fabric-smart-client/platform/common/services/logging"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/common/utils/assert"
-	"github.com/hyperledger-labs/fabric-token-sdk/integration/nwo/runner/nwo"
-	"github.com/hyperledger-labs/fabric-token-sdk/integration/nwo/token"
-	"github.com/hyperledger-labs/fabric-token-sdk/integration/nwo/txgen/model"
-	token3 "github.com/hyperledger-labs/fabric-token-sdk/integration/token"
-	common2 "github.com/hyperledger-labs/fabric-token-sdk/integration/token/common"
-	dlog "github.com/hyperledger-labs/fabric-token-sdk/integration/token/fungible/dlogstress/support"
-	"github.com/hyperledger-labs/fabric-token-sdk/integration/token/fungible/views"
-	token4 "github.com/hyperledger-labs/fabric-token-sdk/token"
-	dlognoghv1 "github.com/hyperledger-labs/fabric-token-sdk/token/core/zkatdlog/nogh/v1/setup"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/core/zkatdlog/nogh/v1/validator"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/ttxdb"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/ttx"
-	token2 "github.com/hyperledger-labs/fabric-token-sdk/token/token"
 	"github.com/onsi/gomega"
 )
 
@@ -43,6 +43,10 @@ const (
 	// FabTokenNamespace is the default name for the namespace where the token chaincode is deployed when using the fabtoken driver
 	// #nosec G101  no passwords here
 	FabTokenNamespace = "fabtoken_token_chaincode"
+
+	// transferTimeout is the maximum time to wait for a transfer operation to complete in tests.
+	// This generous timeout accounts for variable CI environment performance.
+	transferTimeout = 60 * time.Second
 )
 
 var AuditedTransactions = []TransactionRecord{
@@ -312,9 +316,10 @@ func TestAll(network *integration.Infrastructure, auditorId string, onRestart On
 	CheckAcceptedTransactions(network, alice, "", AliceAcceptedTransactions[:1], nil, nil, []ttxdb.TxStatus{ttxdb.Confirmed}, ttxdb.Issue)
 	CheckAcceptedTransactions(network, alice, "", AliceAcceptedTransactions[:1], nil, nil, nil)
 	CheckAcceptedTransactions(network, alice, "", AliceAcceptedTransactions[:1], &t0, &t1, nil)
+	CheckIssuerBalance(network, issuer, "", "USD", 110, 0, 110)
 
 	t2 := time.Now()
-	Withdraw(network, nil, alice, "", "USD", 10, auditor, issuer)
+	Withdraw(network, nil, false, alice, "", "USD", 10, auditor, issuer)
 	t3 := time.Now()
 	CheckBalanceAndHolding(network, alice, "", "USD", 120, auditor)
 	CheckBalanceAndHolding(network, alice, "alice", "USD", 120, auditor)
@@ -324,6 +329,7 @@ func TestAll(network *integration.Infrastructure, auditorId string, onRestart On
 	CheckAcceptedTransactions(network, alice, "", AliceAcceptedTransactions[:2], nil, nil, nil)
 	CheckAcceptedTransactions(network, alice, "", AliceAcceptedTransactions[:2], &t0, &t3, nil)
 	CheckAcceptedTransactions(network, alice, "", AliceAcceptedTransactions[1:2], &t2, &t3, nil)
+	CheckIssuerBalance(network, issuer, "", "USD", 120, 0, 120)
 
 	h := ListIssuerHistory(network, "", "USD", issuer)
 	gomega.Expect(h.Count()).To(gomega.BeNumerically(">", 0))
@@ -427,12 +433,14 @@ func TestAll(network *integration.Infrastructure, auditorId string, onRestart On
 	gomega.Expect(ut.Sum(64).ToBigInt().Cmp(big.NewInt(111))).To(gomega.BeEquivalentTo(0), "got [%d], expected 111", ut.Sum(64).ToBigInt())
 	gomega.Expect(ut.ByType("USD").Count()).To(gomega.BeEquivalentTo(ut.Count()))
 
+	AuthorizeRedeemIssuer(network, auditor, GetIssuerIdentity(tms, issuer.Id()))
 	RedeemCashForTMSID(network, bob, "", "USD", 11, auditor, issuer, defaultTMSID)
 	t10 := time.Now()
 	CheckAcceptedTransactions(network, bob, "", BobAcceptedTransactions[:6], nil, nil, nil)
 	CheckAcceptedTransactions(network, bob, "", BobAcceptedTransactions[5:6], nil, nil, nil, ttxdb.Redeem)
 	CheckAcceptedTransactions(network, bob, "", BobAcceptedTransactions[5:6], nil, nil, []ttxdb.TxStatus{ttxdb.Confirmed}, ttxdb.Redeem)
 	CheckAuditedTransactions(network, auditor, AuditedTransactions[7:9], &t9, &t10)
+	CheckIssuerBalance(network, issuer, "", "USD", 120, 11, 109)
 
 	t11 := time.Now()
 	IssueCash(network, "", "USD", 10, bob, auditor, true, issuer)
@@ -440,6 +448,12 @@ func TestAll(network *integration.Infrastructure, auditorId string, onRestart On
 	CheckAuditedTransactions(network, auditor, AuditedTransactions[9:10], &t11, &t12)
 	CheckAuditedTransactions(network, auditor, AuditedTransactions[:10], &t0, &t12)
 	CheckSpending(network, bob, "", "USD", auditor, 11)
+
+	// Check the issuer's issued/redeemed/net balances for the default "" issuer wallet.
+	// So far the "" wallet has issued USD: 110 (to alice) + 10 (withdraw) + 10 (to bob) = 130,
+	// and 11 USD have been redeemed against this issuer (bob's redeem above),
+	// hence the net outstanding issued supply is 130 - 11 = 119.
+	CheckIssuerBalance(network, issuer, "", "USD", 130, 11, 119)
 
 	// test multi action transfer...
 	t13 := time.Now()
@@ -709,7 +723,13 @@ func TestAll(network *integration.Infrastructure, auditorId string, onRestart On
 		}()
 	}
 	for _, transfer := range transferErrors {
-		err := <-transfer
+		var err error
+		select {
+		case err = <-transfer:
+			// Received transfer result
+		case <-time.After(transferTimeout):
+			gomega.Expect(false).To(gomega.BeTrue(), "timeout waiting for transfer to complete")
+		}
 		gomega.Expect(err).ToNot(gomega.HaveOccurred())
 	}
 	CheckBalanceAndHolding(network, bob, "", "EUR", 2820-sum, auditor)
@@ -754,7 +774,14 @@ func TestAll(network *integration.Infrastructure, auditorId string, onRestart On
 	// collect the errors, and check that they are all nil, and one of them is the error we expect.
 	var errs []error
 	for _, transfer := range transferErrors2 {
-		errs = append(errs, <-transfer)
+		var err error
+		select {
+		case err = <-transfer:
+			// Received transfer result
+		case <-time.After(transferTimeout):
+			gomega.Expect(false).To(gomega.BeTrue(), "timeout waiting for transfer to complete")
+		}
+		errs = append(errs, err)
 	}
 	gomega.Expect((errs[0] == nil && errs[1] != nil) || (errs[0] != nil && errs[1] == nil)).To(gomega.BeTrue())
 	var errStr string
@@ -807,14 +834,25 @@ func TestAll(network *integration.Infrastructure, auditorId string, onRestart On
 	// use the same token for both actions, this must fail
 	txIssuedPineapples1 := IssueCash(network, "", "Pineapples", 3, alice, auditor, true, issuer)
 	IssueCash(network, "", "Pineapples", 3, alice, auditor, true, issuer)
-	failedTransferTxID := TransferCashMultiActions(network, alice, "", "Pineapples", []uint64{2, 3}, []*token3.NodeReference{bob, charlie}, auditor, &token2.ID{TxId: txIssuedPineapples1}, "failed to append spent id", txIssuedPineapples1)
+	failedTransferTxID := TransferCashMultiActions(
+		network,
+		alice,
+		"",
+		"Pineapples",
+		[]uint64{2, 3},
+		[]*token3.NodeReference{bob, charlie},
+		auditor,
+		&token2.ID{TxId: txIssuedPineapples1},
+		fmt.Sprintf("duplicate token ID [[%s:0]] found in metadata at action index [1] for tx", txIssuedPineapples1),
+		txIssuedPineapples1,
+	)
 	// the above transfer must fail at execution phase, therefore the auditor should be explicitly informed about this transaction
 	CheckBalance(network, alice, "", "Pineapples", 6)
-	CheckHolding(network, alice, "", "Pineapples", 1, auditor)
+	CheckHolding(network, alice, "", "Pineapples", 6, auditor)
 	CheckBalance(network, bob, "", "Pineapples", 0)
-	CheckHolding(network, bob, "", "Pineapples", 2, auditor)
+	CheckHolding(network, bob, "", "Pineapples", 0, auditor)
 	CheckBalance(network, charlie, "", "Pineapples", 0)
-	CheckHolding(network, charlie, "", "Pineapples", 3, auditor)
+	CheckHolding(network, charlie, "", "Pineapples", 0, auditor)
 	fmt.Printf("failed transaction [%s]\n", failedTransferTxID)
 	SetTransactionAuditStatus(network, auditor, failedTransferTxID, ttx.Deleted)
 	CheckBalanceAndHolding(network, alice, "", "Pineapples", 6, auditor)
@@ -953,9 +991,9 @@ func TestRevokeIdentity(network *integration.Infrastructure, auditorId string, s
 	rId := GetRevocationHandle(network, bob)
 	RevokeIdentity(network, auditor, rId)
 	// try to issue to bob
-	IssueCash(network, "", "USD", 22, bob, auditor, true, issuer, logging.SHA256Base64([]byte(rId)).String()+" Identity is in revoked state")
+	IssueCash(network, "", "USD", 22, bob, auditor, true, issuer, fsclogging.SHA256Base64([]byte(rId)).String()+" Identity is in revoked state")
 	// try to transfer to bob
-	TransferCash(network, alice, "", "USD", 22, bob, auditor, logging.SHA256Base64([]byte(rId)).String()+" Identity is in revoked state")
+	TransferCash(network, alice, "", "USD", 22, bob, auditor, fsclogging.SHA256Base64([]byte(rId)).String()+" Identity is in revoked state")
 	CheckBalanceAndHolding(network, alice, "", "USD", 110, auditor)
 	CheckBalanceAndHolding(network, bob, "", "USD", 0, auditor)
 	CheckBalanceAndHolding(network, bob, "bob.id1", "USD", 0, auditor)
@@ -992,6 +1030,7 @@ func TestMixed(network *integration.Infrastructure, onRestart OnRestartFunc, sel
 	TransferCashForTMSID(network, alice, "", "USD", 20, bob, auditor1, dlogId)
 	TransferCashForTMSID(network, alice, "", "USD", 30, bob, auditor2, fabTokenId)
 
+	AuthorizeRedeemIssuer(network, auditor1, GetIssuerIdentity(GetTMSByTMSID(network, *dlogId), issuer1.Id()))
 	RedeemCashForTMSID(network, bob, "", "USD", 11, auditor1, issuer1, dlogId)
 	CheckSpendingForTMSID(network, bob, "", "USD", auditor1, 11, dlogId)
 
@@ -1048,7 +1087,7 @@ func TestRemoteOwnerWalletWithWMP(network *integration.Infrastructure, wmp *Wall
 	SetKVSEntry(network, issuer, "auditor", auditor.Id())
 	CheckPublicParams(network, issuer, auditor, alice, bob, charlie, manager)
 
-	Withdraw(network, wmp, alice, "alice_remote", "USD", 10, auditor, issuer)
+	Withdraw(network, wmp, websSocket, alice, "alice_remote", "USD", 10, auditor, issuer)
 	CheckBalanceAndHolding(network, alice, "alice_remote", "USD", 10, auditor)
 
 	TransferCashFromExternalWallet(network, wmp, websSocket, alice, "alice_remote", "USD", 7, bob, auditor)
@@ -1130,8 +1169,8 @@ func TestStressSuite(network *integration.Infrastructure, auditorId string, sele
 		UseExistingFunds: false,
 	}}))
 
-	CheckLocalMetrics(network, "alice", "github.com/hyperledger-labs/fabric-token-sdk/integration/token/fungible/views/BalanceView")
-	CheckPrometheusMetrics(network, "github.com/hyperledger-labs/fabric-token-sdk/integration/token/fungible/views/BalanceView")
+	CheckLocalMetrics(network, "alice", "github.com/LFDT-Panurus/panurus/integration/token/fungible/views/BalanceView")
+	CheckPrometheusMetrics(network, "github.com/LFDT-Panurus/panurus/integration/token/fungible/views/BalanceView")
 }
 
 func TestStress(network *integration.Infrastructure, auditorId string, selector *token3.ReplicaSelector) {
@@ -1587,6 +1626,13 @@ func TestRedeem(network *integration.Infrastructure, sel *token3.ReplicaSelector
 	CheckBalance(network, issuer, "", "USD", 110)
 	CheckHolding(network, issuer, "", "USD", 110, auditor)
 
+	// The auditor has not authorized this issuer to approve redeems yet: the redeem must be rejected.
+	RedeemCashForTMSID(network, issuer, "", "USD", 10, auditor, issuer, defaultTMSID, "not on the authorized issuers list")
+	CheckBalance(network, issuer, "", "USD", 110)
+	CheckHolding(network, issuer, "", "USD", 110, auditor)
+
+	// Once the auditor authorizes the issuer, the redeem it approves succeeds.
+	AuthorizeRedeemIssuer(network, auditor, GetIssuerIdentity(tms, issuer.Id()))
 	RedeemCashForTMSID(network, issuer, "", "USD", 10, auditor, issuer, defaultTMSID)
 	CheckBalance(network, issuer, "", "USD", 100)
 	CheckHolding(network, issuer, "", "USD", 100, auditor)

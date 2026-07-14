@@ -9,7 +9,7 @@ package common
 import (
 	"context"
 
-	"github.com/hyperledger-labs/fabric-token-sdk/token/driver"
+	"github.com/LFDT-Panurus/panurus/token/driver"
 )
 
 // Deserializer deserializes verifiers associated with issuers, owners, and auditors

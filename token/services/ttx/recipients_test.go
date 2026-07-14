@@ -10,8 +10,8 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/LFDT-Panurus/panurus/token"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/view"
-	"github.com/hyperledger-labs/fabric-token-sdk/token"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -177,6 +177,92 @@ func TestGetRecipientWalletID(t *testing.T) {
 			},
 		}
 		assert.Equal(t, "my-wallet-id", getRecipientWalletID(opts))
+	})
+}
+
+func TestWithWalletSelector(t *testing.T) {
+	t.Run("nil selector leaves params untouched", func(t *testing.T) {
+		options, err := CompileServiceOptions(WithWalletSelector(nil))
+		require.NoError(t, err)
+		assert.Nil(t, getWalletSelector(options))
+	})
+
+	t.Run("no selector set returns nil", func(t *testing.T) {
+		options, err := CompileServiceOptions()
+		require.NoError(t, err)
+		assert.Nil(t, getWalletSelector(options))
+	})
+
+	t.Run("selector is stored and retrieved", func(t *testing.T) {
+		called := false
+		selector := func(request *RecipientRequest, defaultWallet string) (string, error) {
+			called = true
+
+			return "selected-wallet", nil
+		}
+		options, err := CompileServiceOptions(WithWalletSelector(selector))
+		require.NoError(t, err)
+		got := getWalletSelector(options)
+		require.NotNil(t, got)
+		wallet, err := got(&RecipientRequest{}, "default-wallet")
+		require.NoError(t, err)
+		assert.True(t, called)
+		assert.Equal(t, "selected-wallet", wallet)
+	})
+}
+
+func TestWithExchangeWalletSelector(t *testing.T) {
+	t.Run("nil selector leaves params untouched", func(t *testing.T) {
+		options, err := CompileServiceOptions(WithExchangeWalletSelector(nil))
+		require.NoError(t, err)
+		assert.Nil(t, getExchangeWalletSelector(options))
+	})
+
+	t.Run("no selector set returns nil", func(t *testing.T) {
+		options, err := CompileServiceOptions()
+		require.NoError(t, err)
+		assert.Nil(t, getExchangeWalletSelector(options))
+	})
+
+	t.Run("selector is stored and retrieved", func(t *testing.T) {
+		selector := func(request *ExchangeRecipientRequest, defaultWallet string) (string, error) {
+			return defaultWallet + "-exchange", nil
+		}
+		options, err := CompileServiceOptions(WithExchangeWalletSelector(selector))
+		require.NoError(t, err)
+		got := getExchangeWalletSelector(options)
+		require.NotNil(t, got)
+		wallet, err := got(&ExchangeRecipientRequest{}, "default-wallet")
+		require.NoError(t, err)
+		assert.Equal(t, "default-wallet-exchange", wallet)
+	})
+}
+
+func TestRespondRequestRecipientIdentityView_WalletSelector(t *testing.T) {
+	t.Run("selector overrides the default wallet", func(t *testing.T) {
+		v := &RespondRequestRecipientIdentityView{
+			Wallet: "configured-wallet",
+			WalletSelector: func(request *RecipientRequest, defaultWallet string) (string, error) {
+				assert.Equal(t, "configured-wallet", defaultWallet)
+
+				return "overridden-wallet", nil
+			},
+		}
+		wallet := v.Wallet
+		require.NotNil(t, v.WalletSelector)
+		selected, err := v.WalletSelector(&RecipientRequest{}, wallet)
+		require.NoError(t, err)
+		assert.Equal(t, "overridden-wallet", selected)
+	})
+
+	t.Run("selector error is surfaced by the caller", func(t *testing.T) {
+		v := &RespondRequestRecipientIdentityView{
+			WalletSelector: func(request *RecipientRequest, defaultWallet string) (string, error) {
+				return "", assert.AnError
+			},
+		}
+		_, err := v.WalletSelector(&RecipientRequest{}, "")
+		require.ErrorIs(t, err, assert.AnError)
 	})
 }
 

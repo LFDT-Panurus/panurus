@@ -9,11 +9,11 @@ package common
 import (
 	"context"
 
+	token3 "github.com/LFDT-Panurus/panurus/token"
+	"github.com/LFDT-Panurus/panurus/token/services/storage/auditdb"
+	"github.com/LFDT-Panurus/panurus/token/services/storage/ttxdb"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	driver2 "github.com/hyperledger-labs/fabric-smart-client/platform/common/driver"
-	token3 "github.com/hyperledger-labs/fabric-token-sdk/token"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/auditdb"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/ttxdb"
 )
 
 type TransactionFilterProvider[F driver2.TransactionFilter] interface {
@@ -48,7 +48,7 @@ func (p *AcceptTxInDBFilterProvider) New(tmsID token3.TMSID) (*AcceptTxInDBsFilt
 }
 
 // AcceptTxInDBsFilter uses the transaction db and the audit db to decide if a given transaction needs
-// to be further processed by the token-sdk upon a network event about its finality
+// to be further processed by Panurus upon a network event about its finality
 type AcceptTxInDBsFilter struct {
 	ttxDB   *ttxdb.StoreService
 	auditDB *auditdb.StoreService

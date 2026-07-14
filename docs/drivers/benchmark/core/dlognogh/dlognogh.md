@@ -254,12 +254,12 @@ Timeline: [▇█▇▇▇▇▇▇▇] (Max: 247 ops/s)
 --- PASS: TestParallelBenchmarkSender (13.29s)
     --- PASS: TestParallelBenchmarkSender/Setup(bits_32,_curve_BN254,_#i_2,_#o_2)_with_10_workers (13.28s)
 PASS
-ok      github.com/hyperledger-labs/fabric-token-sdk/token/core/zkatdlog/nogh/v1/transfer       13.320s
+ok      github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/transfer       13.320s
 ```
 
 ### Running selected benchmarks with run_benchmarks.py
 The run_benchmarks.py script runs selected benchmarks and summarizes their results in a csv file, so it could be followed as more optimizations are added. 
-To run this script goto the ../fabric-token-sdk/cmd/benchmarking folder and run
+To run this script goto the ../panurus/cmd/benchmarking folder and run
 ```shell
 python run_benchmarks.py
 ```

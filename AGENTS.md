@@ -1,4 +1,4 @@
-# Fabric Token SDK
+# Panurus
 
 > **Performance Tip**: Use `Ctrl+F` to jump to sections using anchor links (e.g., `#building-and-running`)
 
@@ -158,6 +158,7 @@ All PRs and pushes to `main` trigger these workflows:
 
 ### Coding Standards
 - **Error Handling**: Handle errors explicitly; avoid blank identifier for errors
+- **Error Construction**: Never use `fmt.Errorf` (or `fmt` at all) to build or wrap errors. Always use `github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors` instead (`errors.New`, `errors.Errorf`, `errors.Wrap`, `errors.Wrapf`, `errors.WithMessage`, `errors.WithMessagef`, `errors.Join`, etc.). This applies to source code, tests, and code samples in `docs/`.
 - **Interfaces**: Define small, focused interfaces on consumer side; favor composition
 - **Concurrency**: Use goroutines and channels; avoid shared state; validate with race detector
 - **Globals**: Avoid global variables for testability
@@ -178,6 +179,13 @@ Before implementing any task:
 3. Log blockers/decisions under `## Notes & Decisions`
 4. Mark plan as `✅ COMPLETE` when finished
 
+### Documentation Updates (Workflow Rule)
+Before marking a task complete, update or create the relevant documentation under `docs/`:
+- If the task changes a public API, protocol, or user-facing behaviour, update the corresponding `docs/` page (or create one if it does not exist).
+- Keep docs consistent with code: function names, message fields, flow diagrams, and examples must match the implementation.
+- New `docs/` pages must follow the existing style (Markdown, same heading hierarchy as neighbouring files).
+- If no existing doc page covers the changed area, create `docs/<subsystem>/<topic>.md` and add a link from the nearest index or README.
+
 ## 🔍 Debugging & Advanced Testing
 
 ### Log Locations
@@ -197,38 +205,8 @@ Before implementing any task:
 - `token/`: Core SDK logic
 - `integration/`: Integration tests and Network Orchestrator
 
-## 🔄 CI Workflow Overview
-
-To ensure your commits pass CI automatically, understand what runs:
-
-### 🔧 Pre-Merge Checks (GitHub Actions)
-All PRs and pushes to `main` trigger these workflows:
-
-1. **Checks Job** (Prerequisite):
-   - License verification
-   - Code formatting (`gofmt`, `goimports`)
-   - Static analysis (`govet`, `staticcheck`, `ineffassign`, `misspell`)
-   - *Run locally with:* `make checks`
-
-2. **Unit Testing**:
-   - Race detector enabled tests
-   - Regression tests
-   - Coverage reporting to Coveralls
-
-3. **Integration Testing** (Extensive Matrix):
-   - Fabtoken (cleartext tokens): t1-t5
-   - ZKATDLog (privacy tokens): t1-t13
-   - Fabric-X, Interop, NFT, DVP, Update tests
-   - Stress tests
-   - All with coverage reporting
-
-4. **Separate Workflows**:
-   - **golangci-lint**: Comprehensive linting (30 min timeout)
-   - **Markdown links**: Validates all doc links
-   - **CodeQL**: Security analysis (weekly + on push/PR)
-
-### 💡 Best Practices for CI Success
+## 💡 Best Practices for CI Success
+Before marking a task complete:
 - **Always run** `make checks` and `make lint-auto-fix` before committing
-- **Verify** `FAB_BINS` is set for integration test compatibility
 - **Address** all linting and static check warnings promptly
 - **Keep** dependencies updated with `make tidy`

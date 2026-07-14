@@ -9,7 +9,7 @@ package driver
 import (
 	"context"
 
-	"github.com/hyperledger-labs/fabric-token-sdk/token/token"
+	"github.com/LFDT-Panurus/panurus/token/token"
 )
 
 // ValidationAttributeID is the type of validation attribute identifier

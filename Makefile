@@ -3,10 +3,10 @@ FABRIC_VERSION ?= 3.1.4
 FABRIC_CA_VERSION ?= 1.5.7
 FABRIC_TWO_DIGIT_VERSION = $(shell echo $(FABRIC_VERSION) | cut -d '.' -f 1,2)
 
-FABRIC_X_TOOLS_VERSION ?= v0.0.17
-FABRIC_X_COMMITTER_VERSION ?= 1.0.0-alpha.1
+FABRIC_X_TOOLS_VERSION ?= v1.0.0
+FABRIC_X_COMMITTER_VERSION ?= 1.0.3
 
-# need to install fabric binaries outside of fts tree for now (due to chaincode packaging issues)
+# need to install fabric binaries outside of panuru's  tree for now (due to chaincode packaging issues)
 FABRIC_BINARY_BASE=$(PWD)/../fabric
 FAB_BINS ?= $(FABRIC_BINARY_BASE)/bin
 
@@ -14,10 +14,28 @@ FAB_BINS ?= $(FABRIC_BINARY_BASE)/bin
 GINKGO_TEST_OPTS ?=
 GINKGO_TEST_OPTS += --keep-going -cover
 
+# Coverage scope for integration tests.
+#
+# Integration tests run cover-instrumented FSC node binaries whose generated main
+# package lives in the `integration` module (see integration/go.mod). `go build -cover`
+# defaults -coverpkg to "packages in the main Go module", so without an explicit
+# -coverpkg the main-module (`token/...`) packages are NOT instrumented and their
+# end-to-end coverage is lost from the report. FSC's builder forwards the environment
+# to `go build`, so exporting GOFLAGS with a targeted -coverpkg restores it.
+COVERPKG ?= github.com/LFDT-Panurus/panurus/...
+ifdef GOCOVERDIR
+export GOFLAGS := -coverpkg=$(COVERPKG)
+endif
+
 TOP = .
 
 # include the checks target
 include $(TOP)/checks.mk
+
+# Define all Go module directories
+GO_MODULES := . integration token/services/storage/db/kvs/hashicorp cmd/artifactgen cmd/tokengen cmd/token_validation_service cmd/profiler cmd/skicleanup
+TIDY_GO_MODULES := $(GO_MODULES) tools
+
 # include fabricx target
 include $(TOP)/fabricx.mk
 # include the interop target
@@ -117,12 +135,11 @@ integration-tests-dvp-dlog:
 .PHONY: tidy
 # tidy up go modules
 tidy:
-	@go mod tidy
-	cd tools; go mod tidy
-	cd token/services/storage/db/kvs/hashicorp; go mod tidy
-	cd cmd/artifactgen; go mod tidy
-	cd cmd/tokengen; go mod tidy
-	cd cmd/token_validation_service; go mod tidy
+	@echo "Tidying Go modules..."
+	@for dir in $(TIDY_GO_MODULES); do \
+		echo "  Tidying module: $$dir"; \
+		(cd $$dir && go mod tidy); \
+	done
 
 .PHONY: clean
 # clean up docker artifacts and generated files
@@ -162,12 +179,17 @@ clean-fabric-peer-images:
 .PHONY: tokengen
 # install tokengen tool (must build without cgo; see #1445)
 tokengen:
-	@cd ./cmd/tokengen/; CGO_ENABLED=0 go install github.com/hyperledger-labs/fabric-token-sdk/cmd/tokengen
+	@cd ./cmd/tokengen/; CGO_ENABLED=0 go install github.com/LFDT-Panurus/panurus/cmd/tokengen
 
 .PHONY: artifactgen
 # install artifactgen tool (must build without cgo; see #1445)
 artifactgen:
-	@cd ./cmd/artifactgen/; CGO_ENABLED=0 go install github.com/hyperledger-labs/fabric-token-sdk/cmd/artifactgen
+	@cd ./cmd/artifactgen/; CGO_ENABLED=0 go install github.com/LFDT-Panurus/panurus/cmd/artifactgen
+
+.PHONY: skicleanup
+# install skicleanup tool (must build without cgo; see #1445)
+skicleanup:
+	@cd ./cmd/skicleanup/; CGO_ENABLED=0 go install github.com/LFDT-Panurus/panurus/cmd/skicleanup
 
 .PHONY: traceinspector
 # install traceinspector tool
@@ -217,13 +239,19 @@ clean-all-containers:
 # run various linters
 lint:
 	@echo "Running Go Linters..."
-	golangci-lint run --color=always --timeout=4m
+	@for dir in $(GO_MODULES); do \
+		echo "  Linting module: $$dir"; \
+		(cd $$dir && golangci-lint run --color=always --timeout=4m ./...) || exit 1; \
+	done
 
 .PHONY: lint-auto-fix
 # run linters with auto-fix
 lint-auto-fix:
 	@echo "Running Go Linters with auto-fix..."
-	golangci-lint run --color=always --timeout=4m --fix
+	@for dir in $(GO_MODULES); do \
+		echo "  Linting module: $$dir"; \
+		(cd $$dir && golangci-lint run --color=always --timeout=4m --fix ./...) || exit 1; \
+	done
 
 .PHONY: install-linter-tool
 # install golangci-lint
@@ -234,7 +262,10 @@ install-linter-tool:
 .PHONY: fmt
 fmt: ## Run gofmt on the entire project
 	@echo "Running gofmt..."
-	@gofmt -l -s -w .
+	@for dir in $(GO_MODULES); do \
+		echo "  Formatting module: $$dir"; \
+		(cd $$dir && find . -path './.git' -prune -o -name '*.go' -print | xargs gofmt -l -s -w); \
+	done
 
 .PHONY: update-all-deps-latest
 update-all-deps-latest: ## Update all dependencies in all Go modules to their latest version
@@ -258,3 +289,55 @@ docs-serve:
 # Build the static documentation site for production
 docs-build:
 	mkdocs build --strict
+
+.PHONY: protos-format
+protos-format: ## Run buf format to fix protobuf files
+	@echo "Fixing protobuf formatting..."
+	@buf format -w
+
+.PHONY: protos
+# generate protobuf files
+protos:
+	@echo "Generating protobuf files..."
+	@buf generate
+
+.PHONY: update-dep
+update-dep:
+	@test -n "$(DEP)" || (echo "usage: make update-dep DEP=module/path VER=vX.Y.Z" && exit 1)
+	@test -n "$(VER)" || (echo "usage: make update-dep DEP=module/path VER=vX.Y.Z" && exit 1)
+	@find . -name go.mod -not -path '*/vendor/*' -exec bash -ec '\
+		for mod do \
+			dir=$$(dirname "$$mod"); \
+			cd "$$dir" || exit 1; \
+			if go list -m all | grep -q "^$(DEP) "; then \
+				echo "==> $$(pwd)"; \
+				go get "$(DEP)@$(VER)" || exit 1; \
+			fi; \
+			cd - >/dev/null || exit 1; \
+		done \
+	' bash {} +
+	@$(MAKE) tidy
+
+.PHONY: list-dep-modules
+list-dep-modules:
+	@test -n "$(DEP)" || (echo "usage: make list-dep-modules DEP=module/path" && exit 1)
+	@find . -name go.mod -not -path '*/vendor/*' | while read -r mod; do \
+		dir=$$(dirname "$$mod"); \
+		( \
+			cd "$$dir" || exit 1; \
+			if go list -m all | grep -q "^$(DEP) "; then \
+				echo "$$dir"; \
+			fi; \
+		); \
+	done
+
+#########################
+# Release
+#########################
+
+.PHONY: tag-release
+tag-release: ## Create git tags for all modules at HEAD. Usage: make tag-release VERSION=v0.13.0 [DRY=1]
+ifndef VERSION
+	$(error VERSION is required. Usage: make tag-release VERSION=v0.13.0)
+endif
+	./ci/scripts/tag-release.sh $(if $(DRY),--dry) $(VERSION)

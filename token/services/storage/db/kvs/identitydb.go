@@ -11,12 +11,12 @@ import (
 	"encoding/base64"
 	"fmt"
 
+	"github.com/LFDT-Panurus/panurus/token"
+	tdriver "github.com/LFDT-Panurus/panurus/token/driver"
+	idriver "github.com/LFDT-Panurus/panurus/token/services/identity/driver"
+	"github.com/LFDT-Panurus/panurus/token/services/storage"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/services/storage/kvs"
-	"github.com/hyperledger-labs/fabric-token-sdk/token"
-	tdriver "github.com/hyperledger-labs/fabric-token-sdk/token/driver"
-	idriver "github.com/hyperledger-labs/fabric-token-sdk/token/services/identity/driver"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/storage"
 )
 
 const (
@@ -103,6 +103,32 @@ func (s *IdentityStore) IteratorConfigurations(ctx context.Context, configuratio
 	}
 
 	return &IdentityConfigurationsIterator{Iterator: it}, nil
+}
+
+// ConfigurationsByID returns all configurations with the given id and type, regardless of their url.
+// The composite key encodes id and url together, so this implementation scans the type and filters by id.
+func (s *IdentityStore) ConfigurationsByID(ctx context.Context, id, configurationType string) ([]storage.IdentityConfiguration, error) {
+	it, err := s.IteratorConfigurations(ctx, configurationType)
+	if err != nil {
+		return nil, err
+	}
+	defer it.Close()
+
+	var res []storage.IdentityConfiguration
+	for {
+		c, err := it.Next()
+		if err != nil {
+			return nil, err
+		}
+		if c == nil {
+			break
+		}
+		if c.ID == id {
+			res = append(res, *c)
+		}
+	}
+
+	return res, nil
 }
 
 func (s *IdentityStore) ConfigurationExists(ctx context.Context, id, configurationType, url string) (bool, error) {
@@ -276,6 +302,12 @@ func (s *IdentityStore) RegisterIdentityDescriptor(ctx context.Context, descript
 
 func (s *IdentityStore) Close() error {
 	return nil
+}
+
+// IterateSigners is not supported by the KVS-backed identity store.
+// It returns ErrNotSupported, consistent with other unsupported operations on this store.
+func (s *IdentityStore) IterateSigners(_ context.Context, _, _ int) ([]idriver.SignerEntry, error) {
+	return nil, storage.ErrNotSupported
 }
 
 type IdentityConfigurationsIterator struct {

@@ -1,6 +1,6 @@
-# Contributing to Fabric Token SDK
+# Contributing to Panurus
 
-We welcome contributions to the Fabric Token SDK!
+We welcome contributions to Panurus!
 
 Note that we follow the [LFDT Charter](https://www.lfdecentralizedtrust.org/about/charter). 
 All new inbound code contributions to the project shall be made under the Apache License, Version 2.0. 
@@ -26,9 +26,9 @@ Please note that we have a [Code of Conduct](CODE_OF_CONDUCT.md). Please follow 
 We maintain a set of issues labeled "good first issue" to help new contributors find approachable tasks and get started quickly. 
 If you're contributing for the first time, please consider picking one of these issues:
 
-- Browse the current list here: https://github.com/hyperledger-labs/fabric-token-sdk/issues?q=is%3Aissue+state%3Aopen+label%3A%22good+first+issue%22
+- Browse the current list here: https://github.com/LFDT-Panurus/panurus/issues?q=is%3Aissue+state%3Aopen+label%3A%22good+first+issue%22
 - Leave a comment on the issue saying you'd like to work on it and ask to be assigned.
-- If you need clarification or guidance, ask on our Discord channel (`#fabric-token-sdk`) or comment on the issue — maintainers and community members are happy to help.
+- If you need clarification or guidance, ask on our Discord channel (`#panurus`) or comment on the issue — maintainers and community members are happy to help.
 - Keep your first PR small and focused. Follow the project guidelines: run tests, sign your commits (`-s`), and rebase to keep a linear history.
 
 ## Detailed Development Guidelines
@@ -41,8 +41,8 @@ Please refer to the [Development Guidelines](docs/development/development.md) fo
 
 ## Reporting Issues
 
-If you find a bug or have a feature request, please search the [Issues](https://github.com/hyperledger-labs/fabric-token-sdk/issues) to see if it has already been reported. If not, please open a new issue.
+If you find a bug or have a feature request, please search the [Issues](https://github.com/LFDT-Panurus/panurus/issues) to see if it has already been reported. If not, please open a new issue.
 
 ## Community
 
-Join us on [Discord](https://discord.gg/hyperledger) in the `#fabric-token-sdk` channel.
+Join us on [Discord](https://discord.gg/hyperledger) in the `#panurus` channel.

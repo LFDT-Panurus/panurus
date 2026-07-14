@@ -19,13 +19,13 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/LFDT-Panurus/panurus/token"
+	"github.com/LFDT-Panurus/panurus/token/core"
+	fabtoken "github.com/LFDT-Panurus/panurus/token/core/fabtoken/v1/driver"
+	dlog "github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/driver"
+	v1setup "github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/setup"
+	tk "github.com/LFDT-Panurus/panurus/token/token"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/view"
-	"github.com/hyperledger-labs/fabric-token-sdk/token"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/core"
-	fabtoken "github.com/hyperledger-labs/fabric-token-sdk/token/core/fabtoken/v1/driver"
-	dlog "github.com/hyperledger-labs/fabric-token-sdk/token/core/zkatdlog/nogh/v1/driver"
-	v1setup "github.com/hyperledger-labs/fabric-token-sdk/token/core/zkatdlog/nogh/v1/setup"
-	tk "github.com/hyperledger-labs/fabric-token-sdk/token/token"
 )
 
 const (
@@ -155,7 +155,7 @@ func newTokenValidationParams(outputPath string, ppRaw []byte) (*transferService
 type fakeLedger struct{}
 
 func (*fakeLedger) GetState(_ tk.ID) ([]byte, error) {
-	return nil, fmt.Errorf("fakeLedger.GetState is not implemented")
+	return nil, errors.New("fakeLedger.GetState is not implemented")
 }
 
 func newTokenValidator(ppRaw []byte) (*token.Validator, error) {
@@ -198,7 +198,7 @@ type TokenValidationServiceView struct {
 //       f. TransferApplicationDataValidate [validates metadata]
 //   4. After all validators pass, it checks that all metadata have been validated
 
-func (q *TokenValidationServiceView) Call(viewCtx view.Context) (interface{}, error) {
+func (q *TokenValidationServiceView) Call(viewCtx view.Context) (any, error) {
 	if q.tokenData == nil {
 		return nil, errors.New("proof data is nil")
 	}

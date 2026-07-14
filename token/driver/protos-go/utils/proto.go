@@ -7,16 +7,21 @@ SPDX-License-Identifier: Apache-2.0
 package utils
 
 import (
-	"github.com/hyperledger-labs/fabric-token-sdk/token/driver/protos-go/request"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/token"
+	driver "github.com/LFDT-Panurus/panurus/token/driver/protos-go/v1"
+	"github.com/LFDT-Panurus/panurus/token/driver/protos-go/v1/request"
+	"github.com/LFDT-Panurus/panurus/token/token"
 )
 
 func ToActionSlice(actionType request.ActionType, actions [][]byte) []*request.Action {
 	res := make([]*request.Action, len(actions))
 	for i, action := range actions {
 		res[i] = &request.Action{
-			Type: actionType,
-			Raw:  action,
+			Action: &request.Action_TypedAction{
+				TypedAction: &request.TypedAction{
+					Type: actionType,
+					Raw:  action,
+				},
+			},
 		}
 	}
 
@@ -34,12 +39,12 @@ func ToSignatureSlice(signatures [][]byte) []*request.Signature {
 	return res
 }
 
-func ToTokenID(id *token.ID) (*request.TokenID, error) {
+func ToTokenID(id *token.ID) (*driver.TokenID, error) {
 	if id == nil {
 		return nil, nil
 	}
 
-	return &request.TokenID{
+	return &driver.TokenID{
 		TxId:  id.TxId,
 		Index: id.Index,
 	}, nil

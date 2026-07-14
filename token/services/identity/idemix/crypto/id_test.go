@@ -11,17 +11,17 @@ import (
 
 	"github.com/IBM/idemix/bccsp/types"
 	math "github.com/IBM/mathlib"
+	idemixmock "github.com/LFDT-Panurus/panurus/token/services/identity/idemix/mock"
+	kvs2 "github.com/LFDT-Panurus/panurus/token/services/storage/db/kvs"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/proto"
-	idemixmock "github.com/hyperledger-labs/fabric-token-sdk/token/services/identity/idemix/mock"
-	kvs2 "github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/db/kvs"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 // Test creating a new Idemix identity from its components
 func TestNewIdentity(t *testing.T) {
-	testNewIdentity(t, "../testdata/fp256bn_amcl/idemix", math.FP256BN_AMCL)
+	testNewIdentity(t, "../testdata/bls12_381_bbs_gurvy/idemix", math.BLS12_381_BBS_GURVY)
 	testNewIdentity(t, "../testdata/bls12_381_bbs/idemix", math.BLS12_381_BBS_GURVY)
 }
 
@@ -94,7 +94,7 @@ func testNewIdentity(t *testing.T, configPath string, curveID math.CurveID) {
 
 // Test serializing an Idemix identity by then desrializing and checking
 func TestIdentity_Serialize(t *testing.T) {
-	testIdentitySerialize(t, "../testdata/fp256bn_amcl/idemix", math.FP256BN_AMCL)
+	testIdentitySerialize(t, "../testdata/bls12_381_bbs_gurvy/idemix", math.BLS12_381_BBS_GURVY)
 	testIdentitySerialize(t, "../testdata/bls12_381_bbs/idemix", math.BLS12_381_BBS_GURVY)
 }
 
@@ -180,7 +180,7 @@ func TestIdentity_Constants(t *testing.T) {
 
 // Test invalid signing identities
 func TestSigningIdentity_Sign(t *testing.T) {
-	testSigningIdentitySign(t, "../testdata/fp256bn_amcl/idemix", math.FP256BN_AMCL)
+	testSigningIdentitySign(t, "../testdata/bls12_381_bbs_gurvy/idemix", math.BLS12_381_BBS_GURVY)
 	testSigningIdentitySign(t, "../testdata/bls12_381_bbs/idemix", math.BLS12_381_BBS_GURVY)
 }
 
@@ -610,7 +610,7 @@ func TestSigningIdentity_Sign_ErrorPaths(t *testing.T) {
 
 // Test NymSignature verification of an invalid signature
 func TestNymSignatureVerifier_Verify(t *testing.T) {
-	testNymSignatureVerifierVerify(t, "../testdata/fp256bn_amcl/idemix", math.FP256BN_AMCL)
+	testNymSignatureVerifierVerify(t, "../testdata/bls12_381_bbs_gurvy/idemix", math.BLS12_381_BBS_GURVY)
 	testNymSignatureVerifierVerify(t, "../testdata/bls12_381_bbs/idemix", math.BLS12_381_BBS_GURVY)
 }
 

@@ -10,12 +10,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/LFDT-Panurus/panurus/token"
+	"github.com/LFDT-Panurus/panurus/token/services/ttx"
+	mock2 "github.com/LFDT-Panurus/panurus/token/services/ttx/dep/mock"
+	jsession "github.com/LFDT-Panurus/panurus/token/services/utils/json/session"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/services/endpoint"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/view"
-	"github.com/hyperledger-labs/fabric-token-sdk/token"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/ttx"
-	mock2 "github.com/hyperledger-labs/fabric-token-sdk/token/services/ttx/dep/mock"
-	jsession "github.com/hyperledger-labs/fabric-token-sdk/token/services/utils/json/session"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

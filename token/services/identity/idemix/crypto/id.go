@@ -8,10 +8,10 @@ package crypto
 
 import (
 	bccsp "github.com/IBM/idemix/bccsp/types"
+	"github.com/LFDT-Panurus/panurus/token/services/identity/idemix/schema"
+	"github.com/LFDT-Panurus/panurus/token/services/logging"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/proto"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/identity/idemix/schema"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/logging"
 )
 
 const (

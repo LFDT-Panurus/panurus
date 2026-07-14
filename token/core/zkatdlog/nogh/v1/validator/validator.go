@@ -7,13 +7,13 @@ SPDX-License-Identifier: Apache-2.0
 package validator
 
 import (
-	"github.com/hyperledger-labs/fabric-token-sdk/token/core/common"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/core/zkatdlog/nogh/v1/issue"
-	v1 "github.com/hyperledger-labs/fabric-token-sdk/token/core/zkatdlog/nogh/v1/setup"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/core/zkatdlog/nogh/v1/token"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/core/zkatdlog/nogh/v1/transfer"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/driver"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/logging"
+	"github.com/LFDT-Panurus/panurus/token/core/common"
+	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/issue"
+	v1 "github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/setup"
+	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/token"
+	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/transfer"
+	"github.com/LFDT-Panurus/panurus/token/driver"
+	"github.com/LFDT-Panurus/panurus/token/services/logging"
 )
 
 // ValidateTransferFunc is a function that validates a transfer action
@@ -35,19 +35,21 @@ type ActionDeserializer struct {
 
 // DeserializeActions deserializes the actions from the token request
 func (a *ActionDeserializer) DeserializeActions(tr *driver.TokenRequest) ([]*issue.Action, []*transfer.Action, error) {
-	issueActions := make([]*issue.Action, len(tr.Issues))
-	for i := range len(tr.Issues) {
+	issues := tr.GetIssues()
+	issueActions := make([]*issue.Action, len(issues))
+	for i := range issues {
 		ia := &issue.Action{}
-		if err := ia.Deserialize(tr.Issues[i]); err != nil {
+		if err := ia.Deserialize(issues[i]); err != nil {
 			return nil, nil, err
 		}
 		issueActions[i] = ia
 	}
 
-	transferActions := make([]*transfer.Action, len(tr.Transfers))
-	for i := range len(tr.Transfers) {
+	transfers := tr.GetTransfers()
+	transferActions := make([]*transfer.Action, len(transfers))
+	for i := range transfers {
 		ta := &transfer.Action{}
-		if err := ta.Deserialize(tr.Transfers[i]); err != nil {
+		if err := ta.Deserialize(transfers[i]); err != nil {
 			return nil, nil, err
 		}
 		transferActions[i] = ta

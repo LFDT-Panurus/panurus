@@ -10,10 +10,10 @@ package token
 import (
 	"testing"
 
-	"github.com/hyperledger-labs/fabric-token-sdk/token/token"
+	"github.com/LFDT-Panurus/panurus/token/token"
 	"github.com/stretchr/testify/require"
 
-	"github.com/hyperledger-labs/fabric-token-sdk/token/driver/mock"
+	"github.com/LFDT-Panurus/panurus/token/driver/mock"
 	"github.com/stretchr/testify/assert"
 )
 

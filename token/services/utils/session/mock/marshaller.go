@@ -4,7 +4,7 @@ package mock
 import (
 	"sync"
 
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/utils/session"
+	"github.com/LFDT-Panurus/panurus/token/services/utils/session"
 )
 
 type Marshaller struct {

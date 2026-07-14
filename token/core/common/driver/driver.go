@@ -10,22 +10,22 @@ SPDX-License-Identifier: Apache-2.0
 package driver
 
 import (
-	"github.com/hyperledger-labs/fabric-token-sdk/token/core/common/metrics"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/driver"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/identity"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/network"
+	"github.com/LFDT-Panurus/panurus/token/core/common/metrics"
+	"github.com/LFDT-Panurus/panurus/token/driver"
+	"github.com/LFDT-Panurus/panurus/token/services/identity"
+	"github.com/LFDT-Panurus/panurus/token/services/network"
 	"go.opentelemetry.io/otel/trace"
 )
 
-//go:generate counterfeiter -o mock/metrics_provider.go -fake-name MetricsProvider github.com/hyperledger-labs/fabric-token-sdk/token/core/common/driver.MetricsProvider
-//go:generate counterfeiter -o mock/config_service.go -fake-name ConfigService github.com/hyperledger-labs/fabric-token-sdk/token/core/common/driver.ConfigService
-//go:generate counterfeiter -o mock/identity_provider.go -fake-name IdentityProvider github.com/hyperledger-labs/fabric-token-sdk/token/core/common/driver.IdentityProvider
-//go:generate counterfeiter -o mock/network_provider.go -fake-name NetworkProvider github.com/hyperledger-labs/fabric-token-sdk/token/core/common/driver.NetworkProvider
-//go:generate counterfeiter -o mock/vault_provider.go -fake-name VaultProvider github.com/hyperledger-labs/fabric-token-sdk/token/core/common/driver.VaultProvider
-//go:generate counterfeiter -o mock/local_membership.go -fake-name LocalMembership github.com/hyperledger-labs/fabric-token-sdk/token/services/network/driver.LocalMembership
-//go:generate counterfeiter -o mock/network_driver.go -fake-name Network github.com/hyperledger-labs/fabric-token-sdk/token/services/network/driver.Network
-//go:generate counterfeiter -o mock/keystore.go -fake-name Keystore github.com/hyperledger-labs/fabric-token-sdk/token/services/identity/driver.Keystore
-//go:generate counterfeiter -o mock/ici.go -fake-name IdentityConfigurationIterator github.com/hyperledger-labs/fabric-token-sdk/token/services/identity/driver.IdentityConfigurationIterator
+//go:generate counterfeiter -o mock/metrics_provider.go -fake-name MetricsProvider github.com/LFDT-Panurus/panurus/token/core/common/driver.MetricsProvider
+//go:generate counterfeiter -o mock/config_service.go -fake-name ConfigService github.com/LFDT-Panurus/panurus/token/core/common/driver.ConfigService
+//go:generate counterfeiter -o mock/identity_provider.go -fake-name IdentityProvider github.com/LFDT-Panurus/panurus/token/core/common/driver.IdentityProvider
+//go:generate counterfeiter -o mock/network_provider.go -fake-name NetworkProvider github.com/LFDT-Panurus/panurus/token/core/common/driver.NetworkProvider
+//go:generate counterfeiter -o mock/vault_provider.go -fake-name VaultProvider github.com/LFDT-Panurus/panurus/token/core/common/driver.VaultProvider
+//go:generate counterfeiter -o mock/local_membership.go -fake-name LocalMembership github.com/LFDT-Panurus/panurus/token/services/network/driver.LocalMembership
+//go:generate counterfeiter -o mock/network_driver.go -fake-name Network github.com/LFDT-Panurus/panurus/token/services/network/driver.Network
+//go:generate counterfeiter -o mock/keystore.go -fake-name Keystore github.com/LFDT-Panurus/panurus/token/services/identity/driver.Keystore
+//go:generate counterfeiter -o mock/ici.go -fake-name IdentityConfigurationIterator github.com/LFDT-Panurus/panurus/token/services/identity/driver.IdentityConfigurationIterator
 
 // MetricsProvider is an alias for the metrics.Provider interface.
 type MetricsProvider = metrics.Provider

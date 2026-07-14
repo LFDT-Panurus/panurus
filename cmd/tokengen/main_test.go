@@ -13,13 +13,13 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/hyperledger-labs/fabric-token-sdk/cmd/tokengen/cobra/pp/common"
-	"github.com/hyperledger-labs/fabric-token-sdk/integration/nwo/token/generators/crypto/fabtokenv1"
-	"github.com/hyperledger-labs/fabric-token-sdk/integration/nwo/token/generators/crypto/zkatdlognoghv1"
-	v1 "github.com/hyperledger-labs/fabric-token-sdk/token/core/zkatdlog/nogh/v1/setup"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/driver"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/utils"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/utils/slices"
+	"github.com/LFDT-Panurus/panurus/cmd/tokengen/cobra/pp/common"
+	"github.com/LFDT-Panurus/panurus/integration/nwo/token/generators/crypto/fabtokenv1"
+	"github.com/LFDT-Panurus/panurus/integration/nwo/token/generators/crypto/zkatdlognoghv1"
+	v1 "github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/setup"
+	"github.com/LFDT-Panurus/panurus/token/driver"
+	"github.com/LFDT-Panurus/panurus/token/services/utils"
+	"github.com/LFDT-Panurus/panurus/token/services/utils/slices"
 	. "github.com/onsi/gomega"
 	"github.com/onsi/gomega/gexec"
 )
@@ -30,7 +30,7 @@ import (
 // TestCompile checks if the tokengen tool can be compiled.
 func TestCompile(t *testing.T) {
 	gt := NewGomegaWithT(t)
-	_, err := gexec.Build("github.com/hyperledger-labs/fabric-token-sdk/cmd/tokengen")
+	_, err := gexec.Build("github.com/LFDT-Panurus/panurus/cmd/tokengen")
 	gt.Expect(err).NotTo(HaveOccurred())
 	defer gexec.CleanupBuildArtifacts()
 }
@@ -38,7 +38,7 @@ func TestCompile(t *testing.T) {
 // TestGenFullSuccess tests the generation of public parameters with all options.
 func TestGenFullSuccess(t *testing.T) {
 	gt := NewGomegaWithT(t)
-	tokengen, err := gexec.Build("github.com/hyperledger-labs/fabric-token-sdk/cmd/tokengen")
+	tokengen, err := gexec.Build("github.com/LFDT-Panurus/panurus/cmd/tokengen")
 	gt.Expect(err).NotTo(HaveOccurred())
 	defer gexec.CleanupBuildArtifacts()
 
@@ -80,7 +80,7 @@ func TestGenFullSuccess(t *testing.T) {
 // TestGenFullSuccessWithVersionOverrideAndNewExtras tests the generation of public parameters with version override and extra parameters.
 func TestGenFullSuccessWithVersionOverrideAndNewExtras(t *testing.T) {
 	gt := NewGomegaWithT(t)
-	tokengen, err := gexec.Build("github.com/hyperledger-labs/fabric-token-sdk/cmd/tokengen")
+	tokengen, err := gexec.Build("github.com/LFDT-Panurus/panurus/cmd/tokengen")
 	gt.Expect(err).NotTo(HaveOccurred())
 	defer gexec.CleanupBuildArtifacts()
 
@@ -124,7 +124,7 @@ func TestGenFullSuccessWithVersionOverrideAndNewExtras(t *testing.T) {
 // TestFullUpdate tests the full update of public parameters.
 func TestFullUpdate(t *testing.T) {
 	gt := NewWithT(t)
-	tokengen, err := gexec.Build("github.com/hyperledger-labs/fabric-token-sdk/cmd/tokengen")
+	tokengen, err := gexec.Build("github.com/LFDT-Panurus/panurus/cmd/tokengen")
 	gt.Expect(err).NotTo(HaveOccurred())
 	defer gexec.CleanupBuildArtifacts()
 
@@ -167,7 +167,7 @@ func TestFullUpdate(t *testing.T) {
 // TestPartialUpdate tests the partial update of public parameters.
 func TestPartialUpdate(t *testing.T) {
 	gt := NewWithT(t)
-	tokengen, err := gexec.Build("github.com/hyperledger-labs/fabric-token-sdk/cmd/tokengen")
+	tokengen, err := gexec.Build("github.com/LFDT-Panurus/panurus/cmd/tokengen")
 	gt.Expect(err).NotTo(HaveOccurred())
 	defer gexec.CleanupBuildArtifacts()
 
@@ -205,7 +205,7 @@ func TestPartialUpdate(t *testing.T) {
 // TestPartialUpdateWithVersion tests the partial update of public parameters with version override.
 func TestPartialUpdateWithVersion(t *testing.T) {
 	gt := NewWithT(t)
-	tokengen, err := gexec.Build("github.com/hyperledger-labs/fabric-token-sdk/cmd/tokengen")
+	tokengen, err := gexec.Build("github.com/LFDT-Panurus/panurus/cmd/tokengen")
 	gt.Expect(err).NotTo(HaveOccurred())
 	defer gexec.CleanupBuildArtifacts()
 
@@ -245,7 +245,7 @@ func TestPartialUpdateWithVersion(t *testing.T) {
 // TestGenFailure tests the failure cases for generating public parameters.
 func TestGenFailure(t *testing.T) {
 	gt := NewGomegaWithT(t)
-	tokengen, err := gexec.Build("github.com/hyperledger-labs/fabric-token-sdk/cmd/tokengen")
+	tokengen, err := gexec.Build("github.com/LFDT-Panurus/panurus/cmd/tokengen")
 	gt.Expect(err).NotTo(HaveOccurred())
 	defer gexec.CleanupBuildArtifacts()
 

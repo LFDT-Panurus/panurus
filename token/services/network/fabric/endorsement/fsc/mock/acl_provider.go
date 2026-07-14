@@ -4,8 +4,8 @@ package mock
 import (
 	"sync"
 
+	"github.com/LFDT-Panurus/panurus/token/services/network/fabric/endorsement/fsc"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/fabric"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/network/fabric/endorsement/fsc"
 )
 
 type ACLProvider struct {

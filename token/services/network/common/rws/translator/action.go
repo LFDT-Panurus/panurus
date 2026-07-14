@@ -6,7 +6,7 @@ SPDX-License-Identifier: Apache-2.0
 
 package translator
 
-import "github.com/hyperledger-labs/fabric-token-sdk/token/token"
+import "github.com/LFDT-Panurus/panurus/token/token"
 
 type SetupAction interface {
 	GetSetupParameters() ([]byte, error)

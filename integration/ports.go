@@ -7,9 +7,9 @@ SPDX-License-Identifier: Apache-2.0
 package integration
 
 import (
+	"github.com/LFDT-Panurus/panurus/integration/token"
 	"github.com/hyperledger-labs/fabric-smart-client/integration"
 	"github.com/hyperledger-labs/fabric-smart-client/integration/nwo/fsc"
-	"github.com/hyperledger-labs/fabric-token-sdk/integration/token"
 	"github.com/onsi/ginkgo/v2"
 )
 

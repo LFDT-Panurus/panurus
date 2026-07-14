@@ -7,13 +7,14 @@ SPDX-License-Identifier: Apache-2.0
 package ttx
 
 import (
+	"github.com/LFDT-Panurus/panurus/token"
+	"github.com/LFDT-Panurus/panurus/token/services/tokens"
+	"github.com/LFDT-Panurus/panurus/token/services/utils"
+	jsession "github.com/LFDT-Panurus/panurus/token/services/utils/json/session"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/services/id"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/services/sig"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/view"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/tokens"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/utils"
-	jsession "github.com/hyperledger-labs/fabric-token-sdk/token/services/utils/json/session"
 )
 
 // AcceptView is used to accept tokens without the need to generate any signature.
@@ -23,11 +24,11 @@ import (
 // necessary if the initiator has invoked CollectEndorsementsView.
 type AcceptView struct {
 	tx   *Transaction
-	opts []EndorsementsOpt
+	opts []token.ServiceOption
 }
 
 // NewAcceptView returns a new instance of AcceptView given in input a transaction.
-func NewAcceptView(tx *Transaction, opts ...EndorsementsOpt) *AcceptView {
+func NewAcceptView(tx *Transaction, opts ...token.ServiceOption) *AcceptView {
 	return &AcceptView{tx: tx, opts: opts}
 }
 

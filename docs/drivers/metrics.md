@@ -2,7 +2,7 @@
 
 ## Overview
 
-The Token SDK provides a shared metrics layer for all driver service implementations.
+Panurus provides a shared metrics layer for all driver service implementations.
 Rather than each driver embedding its own instrumentation, a set of **decorator wrappers** in
 `token/core/common/metrics/` transparently records Prometheus-style metrics around every
 driver service call. Both the FabToken and ZKAT-DLog drivers are wrapped identically,

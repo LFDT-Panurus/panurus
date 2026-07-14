@@ -15,21 +15,21 @@ import (
 	"strings"
 	"time"
 
+	"github.com/LFDT-Panurus/panurus/token"
+	driver2 "github.com/LFDT-Panurus/panurus/token/driver"
+	"github.com/LFDT-Panurus/panurus/token/services/logging"
+	"github.com/LFDT-Panurus/panurus/token/services/storage"
+	dbdriver "github.com/LFDT-Panurus/panurus/token/services/storage/db/driver"
+	q "github.com/LFDT-Panurus/panurus/token/services/storage/db/sql/query"
+	common3 "github.com/LFDT-Panurus/panurus/token/services/storage/db/sql/query/common"
+	"github.com/LFDT-Panurus/panurus/token/services/storage/db/sql/query/cond"
+	_select "github.com/LFDT-Panurus/panurus/token/services/storage/db/sql/query/select"
 	"github.com/hashicorp/go-uuid"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	driver3 "github.com/hyperledger-labs/fabric-smart-client/platform/common/driver"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/common/utils/collections/iterators"
 	common2 "github.com/hyperledger-labs/fabric-smart-client/platform/view/services/storage/driver/common"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/services/storage/driver/sql/common"
-	"github.com/hyperledger-labs/fabric-token-sdk/token"
-	driver2 "github.com/hyperledger-labs/fabric-token-sdk/token/driver"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/logging"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/storage"
-	dbdriver "github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/db/driver"
-	q "github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/db/sql/query"
-	common3 "github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/db/sql/query/common"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/db/sql/query/cond"
-	_select "github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/db/sql/query/select"
 )
 
 // maxAmountBits is the maximum bit length supported by NUMERIC(78, 0).
@@ -41,7 +41,6 @@ type transactionTables struct {
 	Movements             string
 	Transactions          string
 	Requests              string
-	Validations           string
 	TransactionEndorseAck string
 }
 
@@ -99,7 +98,6 @@ func NewOwnerTransactionStore(readDB, writeDB *sql.DB, tables TableNames, ci com
 		Movements:             tables.Movements,
 		Transactions:          tables.Transactions,
 		Requests:              tables.Requests,
-		Validations:           tables.Validations,
 		TransactionEndorseAck: tables.TransactionEndorseAck,
 	}, ci, pi, nil, nil), nil
 }
@@ -116,7 +114,6 @@ func NewTransactionStoreWithNotifierAndRecovery(
 		Movements:             tables.Movements,
 		Transactions:          tables.Transactions,
 		Requests:              tables.Requests,
-		Validations:           tables.Validations,
 		TransactionEndorseAck: tables.TransactionEndorseAck,
 	}, ci, pi, notifier, recoveryLeaderFactory), nil
 }
@@ -272,40 +269,6 @@ func (db *TransactionStore) GetStatus(ctx context.Context, txID string) (dbdrive
 	return status, statusMessage, nil
 }
 
-func (db *TransactionStore) QueryValidations(ctx context.Context, params dbdriver.QueryValidationRecordsParams) (dbdriver.ValidationRecordsIterator, error) {
-	validationsTable, requestsTable := q.Table(db.table.Validations), q.Table(db.table.Requests)
-	query, args := q.Select().
-		Fields(
-			validationsTable.Field("tx_id"), requestsTable.Field("request"), common3.FieldName("metadata"),
-			requestsTable.Field("status"), validationsTable.Field("stored_at"),
-		).
-		From(validationsTable.Join(requestsTable,
-			cond.Cmp(validationsTable.Field("tx_id"), "=", requestsTable.Field("tx_id"))),
-		).
-		Where(HasValidationParams(params, db.table.Validations)).
-		Format(db.ci)
-
-	logging.Debug(logger, query, args)
-	rows, err := db.readDB.QueryContext(ctx, query, args...)
-	if err != nil {
-		return nil, err
-	}
-
-	it := common.NewIterator(rows, func(r *dbdriver.ValidationRecord) error {
-		var meta []byte
-		if err := rows.Scan(&r.TxID, &r.TokenRequest, &meta, &r.Status, &r.Timestamp); err != nil {
-			return err
-		}
-
-		return unmarshal(meta, &r.Metadata)
-	})
-	if params.Filter == nil {
-		return it, nil
-	}
-
-	return iterators.Filter(it, params.Filter), nil
-}
-
 func (db *TransactionStore) Notifier() (dbdriver.TransactionNotifier, error) {
 	if db.notifier == nil {
 		return nil, storage.ErrNotSupported
@@ -393,6 +356,7 @@ func (db *TransactionStore) AddTransactionEndorsementAck(ctx context.Context, tx
 		Format()
 
 	logging.Debug(logger, query, txID, fmt.Sprintf("(%d bytes)", len(endorser)), fmt.Sprintf("(%d bytes)", len(sigma)), now)
+
 	if _, err = db.writeDB.ExecContext(ctx, query, args...); err != nil {
 		return ttxDBError(err)
 	}
@@ -498,6 +462,8 @@ func (db *TransactionStore) GetSchema() string {
 		);
 		CREATE INDEX IF NOT EXISTS idx_tx_id_%s ON %s ( tx_id );
 		CREATE INDEX IF NOT EXISTS idx_storedat_%s ON %s ( stored_at DESC );
+		CREATE INDEX IF NOT EXISTS idx_sender_eid_storedat_%s ON %s ( sender_eid, stored_at DESC );
+		CREATE INDEX IF NOT EXISTS idx_recipient_eid_storedat_%s ON %s ( recipient_eid, stored_at DESC );
 
 		-- movements
 		CREATE TABLE IF NOT EXISTS %s (
@@ -511,13 +477,6 @@ func (db *TransactionStore) GetSchema() string {
 		CREATE INDEX IF NOT EXISTS idx_tx_id_%s ON %s ( tx_id );
 		CREATE INDEX IF NOT EXISTS idx_eid_storedat_%s ON %s ( enrollment_id, stored_at );
 
-		-- validations
-		CREATE TABLE IF NOT EXISTS %s (
-			tx_id TEXT NOT NULL PRIMARY KEY REFERENCES %s,
-			metadata BYTEA NOT NULL,
-			stored_at TIMESTAMP NOT NULL
-		);
-
 		-- tea
 		CREATE TABLE IF NOT EXISTS %s (
 			id CHAR(36) NOT NULL PRIMARY KEY,
@@ -529,9 +488,8 @@ func (db *TransactionStore) GetSchema() string {
 		CREATE INDEX IF NOT EXISTS idx_tx_id_%s ON %s ( tx_id );
 		`,
 		db.table.Requests, db.table.Requests, db.table.Requests, db.table.Requests, db.table.Requests,
-		db.table.Transactions, db.table.Requests, db.table.Transactions, db.table.Transactions, db.table.Transactions, db.table.Transactions,
+		db.table.Transactions, db.table.Requests, db.table.Transactions, db.table.Transactions, db.table.Transactions, db.table.Transactions, db.table.Transactions, db.table.Transactions, db.table.Transactions, db.table.Transactions,
 		db.table.Movements, db.table.Requests, db.table.Movements, db.table.Movements, db.table.Movements, db.table.Movements,
-		db.table.Validations, db.table.Requests,
 		db.table.TransactionEndorseAck, db.table.TransactionEndorseAck, db.table.TransactionEndorseAck,
 	)
 }
@@ -602,6 +560,7 @@ func (w *TransactionStoreTransaction) AddTransaction(ctx context.Context, rs ...
 		Rows(rows).
 		Format()
 	logging.Debug(logger, query, args)
+
 	_, err := w.txn.ExecContext(ctx, query, args...)
 
 	return ttxDBError(err)
@@ -632,6 +591,7 @@ func (w *TransactionStoreTransaction) AddTokenRequest(ctx context.Context, txID 
 		Row(txID, tr, dbdriver.Pending, "", ja, jp, ppHash, time.Now().UTC()).
 		Format()
 	logging.Debug(logger, query, txID, fmt.Sprintf("(%d bytes)", len(tr)), len(applicationMetadata), len(publicMetadata), len(ppHash))
+
 	_, err = w.txn.ExecContext(ctx, query, args...)
 
 	return ttxDBError(err)
@@ -666,29 +626,8 @@ func (w *TransactionStoreTransaction) AddMovement(ctx context.Context, rs ...dbd
 		Rows(rows).
 		Format()
 	logging.Debug(logger, query, args)
+
 	_, err := w.txn.ExecContext(ctx, query, args...)
-
-	return ttxDBError(err)
-}
-
-func (w *TransactionStoreTransaction) AddValidationRecord(ctx context.Context, txID string, meta map[string][]byte) error {
-	logger.DebugfContext(ctx, "adding validation record [%s]", txID)
-	if w.txn == nil {
-		return errors.New("no db transaction in progress")
-	}
-	md, err := marshal(meta)
-	if err != nil {
-		return errors.New("can't marshal metadata")
-	}
-	now := time.Now().UTC()
-
-	query, args := q.InsertInto(w.table.Validations).
-		Fields("tx_id", "metadata", "stored_at").
-		Row(txID, md, now).
-		Format()
-	logging.Debug(logger, query, txID, len(md), now)
-
-	_, err = w.txn.ExecContext(ctx, query, args...)
 
 	return ttxDBError(err)
 }

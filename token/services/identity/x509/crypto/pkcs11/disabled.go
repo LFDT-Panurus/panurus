@@ -23,13 +23,14 @@ type PKCS11Opts struct {
 	Hash     string `yaml:"Hash"`
 
 	// PKCS11 options
-	Library        string         `yaml:"Library"`
-	Label          string         `yaml:"Label"`
-	Pin            string         `yaml:"Pin"`
-	SoftwareVerify bool           `yaml:"SoftwareVerify,omitempty"`
-	Immutable      bool           `yaml:"Immutable,omitempty"`
-	AltID          string         `yaml:"AltId,omitempty"`
-	KeyIDs         []KeyIDMapping `mapstructure:"KeyIds"           yaml:"KeyIds,omitempty"`
+	Library          string         `yaml:"Library"`
+	Label            string         `yaml:"Label"`
+	Pin              string         `yaml:"Pin"`
+	SoftwareVerify   bool           `yaml:"SoftwareVerify,omitempty"`
+	Immutable        bool           `yaml:"Immutable,omitempty"`
+	AltID            string         `yaml:"AltId,omitempty"`
+	KeyIDs           []KeyIDMapping `mapstructure:"KeyIds"             yaml:"KeyIds,omitempty"`
+	SessionCacheSize uint           `yaml:"SessionCacheSize,omitempty"`
 }
 
 func NewProvider(opts any, ks bccsp.KeyStore, mapper func(ski []byte) []byte) (bccsp.BCCSP, error) {

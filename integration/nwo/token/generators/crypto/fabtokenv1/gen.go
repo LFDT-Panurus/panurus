@@ -16,20 +16,20 @@ import (
 	"text/template"
 	"time"
 
+	"github.com/LFDT-Panurus/panurus/integration/nwo/token/generators"
+	"github.com/LFDT-Panurus/panurus/integration/nwo/token/generators/components"
+	"github.com/LFDT-Panurus/panurus/integration/nwo/token/topology"
+	"github.com/LFDT-Panurus/panurus/token/core"
+	fabtokenv1 "github.com/LFDT-Panurus/panurus/token/core/fabtoken/v1/setup"
+	"github.com/LFDT-Panurus/panurus/token/services/identity/x509"
+	"github.com/LFDT-Panurus/panurus/token/services/identity/x509/crypto"
+	"github.com/LFDT-Panurus/panurus/token/services/logging"
+	"github.com/LFDT-Panurus/panurus/token/services/utils"
 	"github.com/hyperledger-labs/fabric-smart-client/integration/nwo/api"
 	"github.com/hyperledger-labs/fabric-smart-client/integration/nwo/common"
 	"github.com/hyperledger-labs/fabric-smart-client/integration/nwo/fabric/commands"
 	ftopology "github.com/hyperledger-labs/fabric-smart-client/integration/nwo/fabric/topology"
 	"github.com/hyperledger-labs/fabric-smart-client/integration/nwo/fsc/node"
-	"github.com/hyperledger-labs/fabric-token-sdk/integration/nwo/token/generators"
-	"github.com/hyperledger-labs/fabric-token-sdk/integration/nwo/token/generators/components"
-	"github.com/hyperledger-labs/fabric-token-sdk/integration/nwo/token/topology"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/core"
-	fabtokenv1 "github.com/hyperledger-labs/fabric-token-sdk/token/core/fabtoken/v1/setup"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/identity/x509"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/identity/x509/crypto"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/logging"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/utils"
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
 	"github.com/onsi/gomega/gexec"
@@ -213,7 +213,7 @@ func (d *CryptoMaterialGenerator) Generate(tms *topology.TMS, n *node.Node, wall
 			utils.IgnoreError(in.Close)
 			utils.IgnoreError(out.Close)
 
-			// delete keystore/priv_sk so that the token-sdk will interpreter this wallet as a remote one
+			// delete keystore/priv_sk so that panurus will interpreter this wallet as a remote one
 			gomega.Expect(os.Remove(filepath.Join(idOutput, x509.KeystoreFolder, x509.PrivateKeyFileName))).NotTo(gomega.HaveOccurred())
 		}
 

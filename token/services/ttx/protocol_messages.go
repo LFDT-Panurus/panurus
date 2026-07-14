@@ -19,7 +19,9 @@ const (
 	TypePolicyRecipientData      = "policy_data"
 
 	// withdrawal.go
-	TypeWithdrawalRequest = "withdrawal_req"
+	TypeWithdrawalRequest   = "withdrawal_req"
+	TypeWithdrawalChallenge = "withdrawal_challenge"
+	TypeWithdrawalResponse  = "withdrawal_resp"
 
 	// upgrade.go
 	TypeUpgradeAgreement = "upgrade_agree"

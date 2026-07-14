@@ -9,10 +9,10 @@ package custodian
 import (
 	errors2 "errors"
 
+	"github.com/LFDT-Panurus/panurus/integration/token/fungible/views"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	dig2 "github.com/hyperledger-labs/fabric-smart-client/platform/common/sdk/dig"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/services/view"
-	"github.com/hyperledger-labs/fabric-token-sdk/integration/token/fungible/views"
 )
 
 type SDK struct {
@@ -24,7 +24,7 @@ func NewFrom(sdk dig2.SDK) *SDK {
 }
 
 func (p *SDK) Install() error {
-	// get dig from registry, this was installed by the FTS's sdk
+	// get dig from registry, this was installed by the Panurus's sdk
 	if err := p.SDK.Install(); err != nil {
 		return err
 	}

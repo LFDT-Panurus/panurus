@@ -10,7 +10,7 @@ GOGC=10000 go run ./server/
 1. Rsync:
 
 ```bash
-rsync -avz AWS-128:~/effi/fabric-token-sdk/cmd/token_validation_service/out/ ./out
+rsync -avz AWS-128:~/effi/panurus/cmd/token_validation_service/out/ ./out
 ```
 
 2. replacing ip

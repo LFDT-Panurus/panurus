@@ -13,14 +13,14 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/LFDT-Panurus/panurus/token/services/logging"
+	q "github.com/LFDT-Panurus/panurus/token/services/storage/db/sql/query"
+	qcommon "github.com/LFDT-Panurus/panurus/token/services/storage/db/sql/query/common"
+	"github.com/LFDT-Panurus/panurus/token/services/storage/db/sql/query/cond"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/services/storage/driver"
 	dcommon "github.com/hyperledger-labs/fabric-smart-client/platform/view/services/storage/driver/common"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/services/storage/driver/sql/common"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/logging"
-	q "github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/db/sql/query"
-	qcommon "github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/db/sql/query/common"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/db/sql/query/cond"
 )
 
 type keystoreTables struct {
@@ -130,6 +130,26 @@ func (db *KeystoreStore) GetRaw(key string) ([]byte, error) {
 	}
 
 	return raw, nil
+}
+
+func (db *KeystoreStore) Delete(key string) error {
+	if len(key) == 0 {
+		return errors.New("cannot delete empty key")
+	}
+
+	query, args := q.DeleteFrom(db.table.KeyStore).
+		Where(cond.Eq("key", key)).
+		Format(db.ci)
+	logging.Debug(logger, query, args)
+
+	_, err := db.writeDB.Exec(query, args...)
+	if err != nil {
+		return errors.Wrapf(err, "failed deleting key [%s]", key)
+	}
+
+	logger.Debugf("deleted key [%s] successfully", key)
+
+	return nil
 }
 
 func (db *KeystoreStore) GetSchema() string {

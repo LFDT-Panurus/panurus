@@ -8,7 +8,7 @@ The project utilizes the following layers of abstraction on top of the database 
 * `Service`: combines `StoreService` and `Service` instances to provide more complete functionality that can be used by the application.
   Each domain has a `Store`, a `StoreService` and potentially a `Service`.
 
-The Fabric Token SDK utilizes a robust data management system to ensure the secure and reliable tracking of all token-related activities.
+Panurus utilizes a robust data management system to ensure the secure and reliable tracking of all token-related activities.
 This system leverages several stores, each with a specific purpose:
 
 * **Transaction Store (`ttxdb`)**:
@@ -33,11 +33,11 @@ This system leverages several stores, each with a specific purpose:
   The `identitydb` plays a crucial role in managing user identities and wallets within the network.
   It securely stores wallet configurations, identity-related audit information, and so on, enabling secure interactions with the token system.
   The `identitydb.StoreService` is located under [`token/services/identitydb`](./../../token/services/storage/identitydb).
-  It also supports **Dynamic Identity Discovery** via the `IdentityNotifier`. This notifier allows services like `LocalMembership` to pro-actively subscribe to new identity configurations added to the database at runtime, ensuring the SDK can pick up new identities without a restart.
+  It also supports **Dynamic Identity Discovery** via the `IdentityNotifier`. This notifier allows services like `LocalMembership` to pro-actively subscribe to new identity configurations added to the database at runtime, ensuring Panurus can pick up new identities without a restart.
 
 ## Configuration
 
-The Token SDK offers flexibility in deploying these databases. Developers can choose to:
+Panurus offers flexibility in deploying these databases. Developers can choose to:
 
 * **Instantiate in Isolation:** Each database can operate independently, utilizing a distinct backend system for optimal performance and manageability.
   Here is an example of configuration
@@ -70,7 +70,7 @@ For the list of options to configure sql datasources, refer to the [Fabric Smart
 
 ## SQL Implementation and Data Criticality
 
-The Token SDK stores data in several SQL tables. Understanding which tables are "source of truth" and which can be reconstructed from the ledger is vital for disaster recovery and migration planning.
+Panurus stores data in several SQL tables. Understanding which tables are "source of truth" and which can be reconstructed from the ledger is vital for disaster recovery and migration planning.
 
 ### Table Schema Overview
 
@@ -96,10 +96,10 @@ The Token SDK stores data in several SQL tables. Understanding which tables are 
 
 #### 1. Critical Data (Cannot be lost)
 *   **Keys and Secrets (`Keystore`)**: If the private keys stored here are lost and not backed up elsewhere (e.g., in an HSM), any tokens owned by those keys become **permanently unspendable**.
-*   **Identity and Wallet Metadata**: These tables contain the "glue" that connects cryptographic identities to user-friendly wallet IDs and provides the audit info required to prove ownership (especially in privacy-preserving drivers like ZKATDLog). Without this, the SDK might not be able to identify which tokens on the ledger belong to which local wallet.
+*   **Identity and Wallet Metadata**: These tables contain the "glue" that connects cryptographic identities to user-friendly wallet IDs and provides the audit info required to prove ownership (especially in privacy-preserving drivers like ZKATDLog). Without this, Panurus might not be able to identify which tokens on the ledger belong to which local wallet.
 
 #### 2. Recoverable Data (Can be reconstructed)
-*   **Token and Transaction Records**: Most data in `tokendb` and `ttxdb` is derived from the ledger. If the local database is lost but the keys are preserved, the SDK can perform a **Vault Rescan**. During a rescan, the SDK iterates through the ledger history, uses the local keys to identify relevant transactions, and repopulates the local tables.
+*   **Token and Transaction Records**: Most data in `tokendb` and `ttxdb` is derived from the ledger. If the local database is lost but the keys are preserved, Panurus can perform a **Vault Rescan**. During a rescan, Panurus iterates through the ledger history, uses the local keys to identify relevant transactions, and repopulates the local tables.
 *   **Public Parameters**: These are typically broadcast on the ledger or provided by the network configuration.
 
 #### 3. Semi-Critical Data

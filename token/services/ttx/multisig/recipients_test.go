@@ -11,7 +11,7 @@ package multisig_test
 import (
 	"testing"
 
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/ttx/multisig"
+	"github.com/LFDT-Panurus/panurus/token/services/ttx/multisig"
 	"github.com/stretchr/testify/assert"
 )
 

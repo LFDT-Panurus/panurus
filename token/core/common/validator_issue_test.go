@@ -9,8 +9,8 @@ package common
 import (
 	"testing"
 
-	"github.com/hyperledger-labs/fabric-token-sdk/token/core/common/meta"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/driver/mock"
+	"github.com/LFDT-Panurus/panurus/token/core/common/meta"
+	"github.com/LFDT-Panurus/panurus/token/driver/mock"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

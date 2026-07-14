@@ -90,4 +90,8 @@ var (
 	// ErrEmptyProof is returned when the proof is empty
 	ErrEmptyProof       = errors.New("proof cannot be empty")
 	ErrInvalidProofType = errors.New("invalid proof type")
+	// ErrProofTypeMismatch is returned when the proof type in the action refers to a range-proof
+	// algorithm whose params sub-struct is not populated in PublicParams. This prevents an attacker
+	// from selecting a verifier whose params sub-struct is nil (nil-deref / algorithm confusion).
+	ErrProofTypeMismatch = errors.New("proof type in action is not available in public parameters")
 )

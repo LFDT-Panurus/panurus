@@ -11,6 +11,49 @@ import (
 	errors2 "errors"
 	"time"
 
+	"github.com/LFDT-Panurus/panurus/token"
+	ftscore "github.com/LFDT-Panurus/panurus/token/core"
+	"github.com/LFDT-Panurus/panurus/token/core/common/metrics"
+	ftsdriver "github.com/LFDT-Panurus/panurus/token/driver"
+	"github.com/LFDT-Panurus/panurus/token/sdk/db"
+	"github.com/LFDT-Panurus/panurus/token/sdk/identity"
+	network2 "github.com/LFDT-Panurus/panurus/token/sdk/network"
+	"github.com/LFDT-Panurus/panurus/token/sdk/tms"
+	"github.com/LFDT-Panurus/panurus/token/sdk/vault"
+	"github.com/LFDT-Panurus/panurus/token/services/auditor"
+	_ "github.com/LFDT-Panurus/panurus/token/services/certifier/dummy"
+	ftsconfig "github.com/LFDT-Panurus/panurus/token/services/config"
+	identity2 "github.com/LFDT-Panurus/panurus/token/services/identity"
+	"github.com/LFDT-Panurus/panurus/token/services/logging"
+	"github.com/LFDT-Panurus/panurus/token/services/network"
+	"github.com/LFDT-Panurus/panurus/token/services/network/common"
+	driver3 "github.com/LFDT-Panurus/panurus/token/services/network/driver"
+	"github.com/LFDT-Panurus/panurus/token/services/nfttx/uniqueness"
+	"github.com/LFDT-Panurus/panurus/token/services/selector/config"
+	sdriver "github.com/LFDT-Panurus/panurus/token/services/selector/driver"
+	"github.com/LFDT-Panurus/panurus/token/services/selector/sherdlock"
+	"github.com/LFDT-Panurus/panurus/token/services/selector/simple"
+	"github.com/LFDT-Panurus/panurus/token/services/storage/auditdb"
+	auditdblocker "github.com/LFDT-Panurus/panurus/token/services/storage/auditdb/locker"
+	db2 "github.com/LFDT-Panurus/panurus/token/services/storage/db"
+	common2 "github.com/LFDT-Panurus/panurus/token/services/storage/db/common"
+	"github.com/LFDT-Panurus/panurus/token/services/storage/db/sql/memory"
+	"github.com/LFDT-Panurus/panurus/token/services/storage/db/sql/postgres"
+	"github.com/LFDT-Panurus/panurus/token/services/storage/db/sql/sqlite"
+	"github.com/LFDT-Panurus/panurus/token/services/storage/endorserdb"
+	"github.com/LFDT-Panurus/panurus/token/services/storage/identitydb"
+	"github.com/LFDT-Panurus/panurus/token/services/storage/keystoredb"
+	"github.com/LFDT-Panurus/panurus/token/services/storage/services/cleanup"
+	"github.com/LFDT-Panurus/panurus/token/services/storage/tokendb"
+	"github.com/LFDT-Panurus/panurus/token/services/storage/tokenlockdb"
+	"github.com/LFDT-Panurus/panurus/token/services/storage/ttxdb"
+	"github.com/LFDT-Panurus/panurus/token/services/storage/walletdb"
+	"github.com/LFDT-Panurus/panurus/token/services/tokens"
+	"github.com/LFDT-Panurus/panurus/token/services/ttx"
+	"github.com/LFDT-Panurus/panurus/token/services/ttx/dep"
+	auditor2 "github.com/LFDT-Panurus/panurus/token/services/ttx/dep/auditor"
+	wrapper2 "github.com/LFDT-Panurus/panurus/token/services/ttx/dep/wrapper"
+	jsession "github.com/LFDT-Panurus/panurus/token/services/utils/json/session"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/common/driver"
 	dig2 "github.com/hyperledger-labs/fabric-smart-client/platform/common/sdk/dig"
@@ -20,46 +63,6 @@ import (
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/services"
 	fscconfig "github.com/hyperledger-labs/fabric-smart-client/platform/view/services/config"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/services/storage/kvs"
-	"github.com/hyperledger-labs/fabric-token-sdk/token"
-	ftscore "github.com/hyperledger-labs/fabric-token-sdk/token/core"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/core/common/metrics"
-	ftsdriver "github.com/hyperledger-labs/fabric-token-sdk/token/driver"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/sdk/db"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/sdk/identity"
-	network2 "github.com/hyperledger-labs/fabric-token-sdk/token/sdk/network"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/sdk/tms"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/sdk/vault"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/auditor"
-	_ "github.com/hyperledger-labs/fabric-token-sdk/token/services/certifier/dummy"
-	ftsconfig "github.com/hyperledger-labs/fabric-token-sdk/token/services/config"
-	identity2 "github.com/hyperledger-labs/fabric-token-sdk/token/services/identity"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/logging"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/network"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/network/common"
-	driver3 "github.com/hyperledger-labs/fabric-token-sdk/token/services/network/driver"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/selector/config"
-	sdriver "github.com/hyperledger-labs/fabric-token-sdk/token/services/selector/driver"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/selector/sherdlock"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/selector/simple"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/auditdb"
-	auditdblocker "github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/auditdb/locker"
-	db2 "github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/db"
-	common2 "github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/db/common"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/db/sql/memory"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/db/sql/postgres"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/db/sql/sqlite"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/identitydb"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/keystoredb"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/tokendb"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/tokenlockdb"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/ttxdb"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/walletdb"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/tokens"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/ttx"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/ttx/dep"
-	auditor2 "github.com/hyperledger-labs/fabric-token-sdk/token/services/ttx/dep/auditor"
-	wrapper2 "github.com/hyperledger-labs/fabric-token-sdk/token/services/ttx/dep/wrapper"
-	jsession "github.com/hyperledger-labs/fabric-token-sdk/token/services/utils/json/session"
 	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/dig"
 )
@@ -83,7 +86,7 @@ func (p *SDK) TokenEnabled() bool {
 	return p.ConfigService().GetBool("token.enabled")
 }
 
-// NewSDK creates a new token SDK from a service registry.
+// NewSDK creates a new Panurus from a service registry.
 func NewSDK(registry services.Registry) *SDK {
 	return NewFrom(fabricsdk.NewSDK(registry))
 }
@@ -112,6 +115,10 @@ func (p *SDK) Install() error {
 			dig.As(new(ftsconfig.Provider), new(sherdlock.ConfigProvider), new(simple.ConfigProvider), new(auditdblocker.ReplicaIDProvider)),
 		),
 		p.Container().Provide(ftsconfig.NewService),
+		p.Container().Provide(
+			digutils.Identity[*ftsconfig.Service](),
+			dig.As(new(cleanup.Configuration)),
+		),
 		p.Container().Provide(tms.NewConfigServiceWrapper),
 		p.Container().Provide(
 			digutils.Identity[*tms.ConfigServiceWrapper](),
@@ -181,6 +188,7 @@ func (p *SDK) Install() error {
 		p.Container().Provide(walletdb.NewStoreServiceManager, dig.As(new(identity.WalletStoreServiceManager))),
 		p.Container().Provide(tokenlockdb.NewStoreServiceManager),
 		p.Container().Provide(identity.NewDBStorageProvider),
+		p.Container().Provide(endorserdb.NewStoreServiceManager),
 		p.Container().Provide(digutils.Identity[*identity.DBStorageProvider](), dig.As(new(identity2.StorageProvider))),
 		p.Container().Provide(auditor.NewServiceManager),
 		p.Container().Provide(tokens.NewServiceManager),
@@ -194,6 +202,9 @@ func (p *SDK) Install() error {
 		p.Container().Provide(NewAuditorCheckServiceProvider),
 		p.Container().Provide(digutils.Identity[*db.AuditorCheckServiceProvider](), dig.As(new(auditor.CheckServiceProvider))),
 		p.Container().Provide(NewOwnerCheckServiceProvider),
+
+		// storage services
+		p.Container().Provide(cleanup.NewServiceManager),
 
 		// ttx service
 		p.Container().Provide(wrapper2.NewTokenManagementServiceProvider, dig.As(new(dep.TokenManagementServiceProvider))),
@@ -209,6 +220,7 @@ func (p *SDK) Install() error {
 		p.Container().Provide(ttx.NewServiceManager),
 		p.Container().Provide(ttx.NewMetrics),
 		p.Container().Provide(jsession.NewEnvelopeMetrics),
+		p.Container().Provide(uniqueness.NewMemoryService),
 	)
 	if err != nil {
 		return errors.WithMessagef(err, "failed setting up dig container")
@@ -229,6 +241,7 @@ func (p *SDK) Install() error {
 	// Backward compatibility with SP
 	err = errors2.Join(
 		digutils.Register[*kvs.KVS](p.Container()),
+		digutils.Register[*uniqueness.Service](p.Container()),
 		digutils.Register[*ftscore.TokenDriverService](p.Container()),
 		digutils.Register[*ftscore.ValidatorDriverService](p.Container()),
 		digutils.Register[*network.Provider](p.Container()),
@@ -310,7 +323,8 @@ func registerNetworkDrivers(in struct {
 	dig.In
 	NetworkProvider *network.Provider
 	Drivers         []driver3.Driver `group:"network-drivers"`
-}) {
+},
+) {
 	for _, d := range in.Drivers {
 		in.NetworkProvider.RegisterDriver(d)
 	}

@@ -78,7 +78,7 @@ To maintain clarity and traceability across contributions, all pull requests mus
 
 - **Description**: Every pull request must include a meaningful description outlining the purpose and scope of the change.
 - **Labels**: Assign appropriate labels to help with categorization and prioritization.
-- **Project Assignment**: The pull request must be added to the **Fabric Token SDK** project with an appropriate status (e.g., “To Do”, “In Progress”, “In Review”, etc.).
+- **Project Assignment**: The pull request must be added to the **Panurus** project with an appropriate status (e.g., “To Do”, “In Progress”, “In Review”, etc.).
 - **Associated Issue**: A GitHub Issue must be linked to the pull request. 
   This should be done via the Development section of the GitHub PR interface (not just mentioned in the description). 
   This ensures the PR is formally connected to the issue for proper project tracking and status updates.

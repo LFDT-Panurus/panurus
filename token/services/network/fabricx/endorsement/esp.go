@@ -9,17 +9,17 @@ package endorsement
 import (
 	"context"
 
+	token2 "github.com/LFDT-Panurus/panurus/token"
+	"github.com/LFDT-Panurus/panurus/token/services/network/common"
+	"github.com/LFDT-Panurus/panurus/token/services/network/common/rws/translator"
+	"github.com/LFDT-Panurus/panurus/token/services/network/fabric/endorsement"
+	"github.com/LFDT-Panurus/panurus/token/services/network/fabric/endorsement/fsc"
+	"github.com/LFDT-Panurus/panurus/token/services/network/fabricx/pp"
+	"github.com/LFDT-Panurus/panurus/token/services/storage/endorserdb"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/common/utils/lazy"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/fabric"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/view"
-	token2 "github.com/hyperledger-labs/fabric-token-sdk/token"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/network/common"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/network/common/rws/translator"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/network/fabric/endorsement"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/network/fabric/endorsement/fsc"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/network/fabricx/pp"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/ttxdb"
 )
 
 // IdentityProvider models an identity provider.
@@ -52,7 +52,7 @@ func NewServiceProvider(
 	keyTranslator translator.KeyTranslator,
 	versionKeeperProvider pp.VersionKeeperProvider,
 	tokenManagementSystemProvider *token2.ManagementServiceProvider,
-	storeServiceManager ttxdb.StoreServiceManager,
+	storeServiceManager endorserdb.StoreServiceManager,
 	fabricProvider *fabric.NetworkServiceProvider,
 ) *ServiceProvider {
 	l := &loader{
@@ -77,7 +77,7 @@ type loader struct {
 	identityProvider              IdentityProvider
 	keyTranslator                 translator.KeyTranslator
 	versionKeeperProvider         pp.VersionKeeperProvider
-	storeServiceManager           ttxdb.StoreServiceManager
+	storeServiceManager           endorserdb.StoreServiceManager
 	tokenManagementSystemProvider *token2.ManagementServiceProvider
 	fabricProvider                *fabric.NetworkServiceProvider
 }
@@ -123,8 +123,7 @@ func key(tmsID token2.TMSID) string {
 }
 
 // NamespaceTxProcessor models a namespace transaction processor for fabric X
-type NamespaceTxProcessor struct {
-}
+type NamespaceTxProcessor struct{}
 
 // EnableTxProcessing is a no-op implementation because for FabricX
 // the endorser service is stateless and does not require pre-processing.

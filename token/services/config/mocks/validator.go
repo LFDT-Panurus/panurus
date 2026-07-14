@@ -4,7 +4,7 @@ package mocks
 import (
 	"sync"
 
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/config"
+	"github.com/LFDT-Panurus/panurus/token/services/config"
 )
 
 type Validator struct {

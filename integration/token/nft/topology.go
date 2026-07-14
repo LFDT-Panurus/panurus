@@ -7,15 +7,15 @@ SPDX-License-Identifier: Apache-2.0
 package nft
 
 import (
+	"github.com/LFDT-Panurus/panurus/integration/nwo/token"
+	fabric2 "github.com/LFDT-Panurus/panurus/integration/nwo/token/fabric"
+	token2 "github.com/LFDT-Panurus/panurus/integration/token"
+	"github.com/LFDT-Panurus/panurus/integration/token/common"
+	views2 "github.com/LFDT-Panurus/panurus/integration/token/common/views"
+	"github.com/LFDT-Panurus/panurus/integration/token/nft/views"
 	"github.com/hyperledger-labs/fabric-smart-client/integration/nwo/api"
 	"github.com/hyperledger-labs/fabric-smart-client/integration/nwo/fabric"
 	"github.com/hyperledger-labs/fabric-smart-client/integration/nwo/fsc"
-	"github.com/hyperledger-labs/fabric-token-sdk/integration/nwo/token"
-	fabric2 "github.com/hyperledger-labs/fabric-token-sdk/integration/nwo/token/fabric"
-	token2 "github.com/hyperledger-labs/fabric-token-sdk/integration/token"
-	"github.com/hyperledger-labs/fabric-token-sdk/integration/token/common"
-	views2 "github.com/hyperledger-labs/fabric-token-sdk/integration/token/common/views"
-	"github.com/hyperledger-labs/fabric-token-sdk/integration/token/nft/views"
 )
 
 func Topology(opts common.Opts) []api.Topology {

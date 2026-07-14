@@ -7,20 +7,23 @@ SPDX-License-Identifier: Apache-2.0
 package driver
 
 import (
-	"encoding/asn1"
+	slices0 "slices"
 
+	"github.com/LFDT-Panurus/panurus/token/driver/protos-go/utils"
+	protosv1 "github.com/LFDT-Panurus/panurus/token/driver/protos-go/v1"
+	"github.com/LFDT-Panurus/panurus/token/driver/protos-go/v1/request"
+	"github.com/LFDT-Panurus/panurus/token/services/utils/protos"
+	"github.com/LFDT-Panurus/panurus/token/services/utils/slices"
+	"github.com/LFDT-Panurus/panurus/token/token"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/proto"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/driver/protos-go/request"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/driver/protos-go/utils"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/utils/protos"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/services/utils/slices"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/token"
 )
 
 const (
+	// ProtocolV1 demarks the V1 version of the protocol
+	// This version uses a secure structured format with explicit Request and Anchor fields,
+	// providing robust boundary separation and preventing collision attacks.
 	ProtocolV1 = 1
-	ProtocolV2 = 2
 
 	// MaxAnchorSize defines the maximum allowed size for anchor parameter in bytes.
 	// This limit prevents potential DoS attacks through excessive memory allocation.
@@ -29,10 +32,10 @@ const (
 
 // Typed errors for protocol validation
 var (
-	// ErrAnchorEmpty is returned when the anchor parameter is empty in V2 protocol
+	// ErrAnchorEmpty is returned when the anchor parameter is empty in V1 protocol
 	ErrAnchorEmpty = errors.New("anchor cannot be empty")
 
-	// ErrAnchorTooLarge is returned when the anchor exceeds MaxAnchorSize in V2 protocol
+	// ErrAnchorTooLarge is returned when the anchor exceeds MaxAnchorSize in V1 protocol
 	ErrAnchorTooLarge = errors.Errorf("anchor size exceeds maximum allowed size of %d bytes", MaxAnchorSize)
 
 	// ErrUnsupportedVersion is returned when an unsupported protocol version is encountered
@@ -50,6 +53,29 @@ type (
 	TokenRequestAnchor string
 )
 
+type ActionSignature struct {
+	ActionID  uint32
+	Signature []byte
+}
+
+func (r *ActionSignature) ToProtos() (*request.ActionSignature, error) {
+	return &request.ActionSignature{
+		ActionId: r.ActionID,
+		Signature: &request.Signature{
+			Raw: r.Signature,
+		},
+	}, nil
+}
+
+func (r *ActionSignature) FromProtos(tr *request.ActionSignature) error {
+	r.ActionID = tr.ActionId
+	if tr.Signature != nil {
+		r.Signature = tr.Signature.Raw
+	}
+
+	return nil
+}
+
 type AuditorSignature struct {
 	Identity  Identity
 	Signature []byte
@@ -57,7 +83,7 @@ type AuditorSignature struct {
 
 func (r *AuditorSignature) ToProtos() (*request.AuditorSignature, error) {
 	return &request.AuditorSignature{
-		Identity: &request.Identity{
+		Identity: &protosv1.Identity{
 			Raw: r.Identity,
 		},
 		Signature: &request.Signature{
@@ -77,20 +103,128 @@ func (r *AuditorSignature) FromProtos(tr *request.AuditorSignature) error {
 	return nil
 }
 
+type RequestSignature struct {
+	Action  *ActionSignature
+	Auditor *AuditorSignature
+}
+
+func (r *RequestSignature) ToProtos() (*request.RequestSignature, error) {
+	if r == nil {
+		return nil, errors.New("nil request signature")
+	}
+	switch {
+	case r.Action != nil && r.Auditor != nil:
+		return nil, errors.New("request signature cannot contain both action and auditor signatures")
+	case r.Action != nil:
+		actionSignature, err := r.Action.ToProtos()
+		if err != nil {
+			return nil, errors.Wrap(err, "failed converting action signature")
+		}
+
+		return &request.RequestSignature{
+			Signature: &request.RequestSignature_ActionSignature{
+				ActionSignature: actionSignature,
+			},
+		}, nil
+	case r.Auditor != nil:
+		auditorSignature, err := r.Auditor.ToProtos()
+		if err != nil {
+			return nil, errors.Wrap(err, "failed converting auditor signature")
+		}
+
+		return &request.RequestSignature{
+			Signature: &request.RequestSignature_AuditorSignature{
+				AuditorSignature: auditorSignature,
+			},
+		}, nil
+	default:
+		return nil, errors.New("request signature must contain either an action or auditor signature")
+	}
+}
+
+func (r *RequestSignature) FromProtos(tr *request.RequestSignature) error {
+	if tr == nil {
+		return errors.New("nil request signature")
+	}
+	if actionSignature := tr.GetActionSignature(); actionSignature != nil {
+		r.Action = &ActionSignature{}
+
+		return r.Action.FromProtos(actionSignature)
+	}
+	if auditorSignature := tr.GetAuditorSignature(); auditorSignature != nil {
+		r.Auditor = &AuditorSignature{}
+
+		return r.Auditor.FromProtos(auditorSignature)
+	}
+
+	return errors.New("request signature type not recognized")
+}
+
+// TypedAction represents a single token action with its type and raw bytes
+type TypedAction struct {
+	Type request.ActionType // ACTION_TYPE_ISSUE or ACTION_TYPE_TRANSFER
+	Raw  []byte             // Serialized action data
+}
+
 // TokenRequest represents a collection of token actions (issuance and transfer).
 // Each action within the request is logically independent, though they are processed together.
 // A TokenRequest also includes the signatures (witnesses) required to authorize its actions.
 type TokenRequest struct {
-	Issues            [][]byte
-	Transfers         [][]byte
-	Signatures        [][]byte
-	AuditorSignatures []*AuditorSignature
 	// Version specifies the protocol version for this token request.
-	// Defaults to ProtocolV2 for new requests.
-	// Set to ProtocolV1 when deserializing legacy requests for backward compatibility.
+	// Defaults to ProtocolV1 (structured format) for new requests.
 	// The asn1 tag with "-" means this field is never included in ASN.1 marshaling,
-	// ensuring backward compatibility with V1 signature verification.
-	Version uint32
+	// ensuring consistent signature verification.
+	Version    uint32
+	Actions    []*TypedAction // Unified slice of all actions
+	Signatures []*RequestSignature
+}
+
+// GetIssues returns all issue actions from the unified Actions slice
+func (r *TokenRequest) GetIssues() [][]byte {
+	var issues [][]byte
+	for _, action := range r.Actions {
+		if action.Type == request.ActionType_ACTION_TYPE_ISSUE {
+			issues = append(issues, action.Raw)
+		}
+	}
+
+	return issues
+}
+
+// GetTransfers returns all transfer actions from the unified Actions slice
+func (r *TokenRequest) GetTransfers() [][]byte {
+	var transfers [][]byte
+	for _, action := range r.Actions {
+		if action.Type == request.ActionType_ACTION_TYPE_TRANSFER {
+			transfers = append(transfers, action.Raw)
+		}
+	}
+
+	return transfers
+}
+
+// NumIssues returns the count of issue actions
+func (r *TokenRequest) NumIssues() int {
+	count := 0
+	for _, action := range r.Actions {
+		if action.Type == request.ActionType_ACTION_TYPE_ISSUE {
+			count++
+		}
+	}
+
+	return count
+}
+
+// NumTransfers returns the count of transfer actions
+func (r *TokenRequest) NumTransfers() int {
+	count := 0
+	for _, action := range r.Actions {
+		if action.Type == request.ActionType_ACTION_TYPE_TRANSFER {
+			count++
+		}
+	}
+
+	return count
 }
 
 func (r *TokenRequest) Bytes() ([]byte, error) {
@@ -113,66 +247,150 @@ func (r *TokenRequest) FromBytes(raw []byte) error {
 }
 
 func (r *TokenRequest) ToProtos() (*request.TokenRequest, error) {
-	actions := append(
-		utils.ToActionSlice(request.ActionType_ISSUE, r.Issues),
-		utils.ToActionSlice(request.ActionType_TRANSFER, r.Transfers)...,
-	)
-	signatures := utils.ToSignatureSlice(r.Signatures)
-	auditorSignatures, err := protos.ToProtosSlice[request.AuditorSignature, *AuditorSignature](r.AuditorSignatures)
-	if err != nil {
-		return nil, errors.Wrap(err, "failed converting auditor signatures")
-	}
-	auditing := &request.Auditing{
-		Signatures: auditorSignatures,
+	// Convert TypedActions to protobuf Actions
+	actions := make([]*request.Action, 0, len(r.Actions))
+	for _, action := range r.Actions {
+		if action == nil {
+			return nil, errors.New("nil action found")
+		}
+		actions = append(actions, &request.Action{
+			Action: &request.Action_TypedAction{
+				TypedAction: &request.TypedAction{
+					Type: action.Type,
+					Raw:  action.Raw,
+				},
+			},
+		})
 	}
 
-	// Use stored version, defaulting to V2 for new requests
+	signatures, err := protos.ToProtosSlice[request.RequestSignature, *RequestSignature](r.Signatures)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed converting request signatures")
+	}
+
+	// Use stored version, defaulting to V1 (structured format) for new requests
 	version := r.Version
 	if version == 0 {
-		version = uint32(ProtocolV2)
+		version = uint32(ProtocolV1)
 	}
 
 	return &request.TokenRequest{
 		Version:    version,
 		Actions:    actions,
 		Signatures: signatures,
-		Auditing:   auditing,
 	}, nil
 }
 
 func (r *TokenRequest) FromProtos(tr *request.TokenRequest) error {
-	// Validate version
-	if tr.Version != uint32(ProtocolV1) && tr.Version != uint32(ProtocolV2) {
-		return errors.Wrapf(ErrUnsupportedVersion, "expected [%d] or [%d], got [%d]", ProtocolV1, ProtocolV2, tr.Version)
+	// Validate version - only ProtocolV1 (structured format) is supported
+	if tr.Version != uint32(ProtocolV1) {
+		return errors.Wrapf(ErrUnsupportedVersion, "expected [%d], got [%d]", ProtocolV1, tr.Version)
 	}
 
 	// Store the version from the protobuf
 	r.Version = tr.Version
 
+	// Convert protobuf Actions to TypedActions
+	r.Actions = make([]*TypedAction, 0, len(tr.Actions))
 	for _, action := range tr.Actions {
 		if action == nil {
 			return errors.New("nil action found")
 		}
-		switch action.Type {
-		case request.ActionType_ISSUE:
-			r.Issues = append(r.Issues, action.Raw)
-		case request.ActionType_TRANSFER:
-			r.Transfers = append(r.Transfers, action.Raw)
-		default:
-			return errors.Errorf("unknown action type [%s]", action.Type)
+
+		// Handle the Action oneof - currently only TypedAction is supported
+		typedAction := action.GetTypedAction()
+		if typedAction == nil {
+			// HashedAction is not yet supported in this implementation
+			return errors.New("only TypedAction is currently supported")
 		}
+
+		// Validate that action type is explicitly set (not UNSPECIFIED)
+		if typedAction.Type == request.ActionType_ACTION_TYPE_UNSPECIFIED {
+			return errors.New("action type must be explicitly specified (ACTION_TYPE_UNSPECIFIED is not allowed)")
+		}
+
+		// Validate action type is known
+		switch typedAction.Type {
+		case request.ActionType_ACTION_TYPE_ISSUE, request.ActionType_ACTION_TYPE_TRANSFER:
+			// Valid types
+		default:
+			return errors.Errorf("unknown action type [%s]", typedAction.Type)
+		}
+
+		r.Actions = append(r.Actions, &TypedAction{
+			Type: typedAction.Type,
+			Raw:  typedAction.Raw,
+		})
 	}
+
 	for _, signature := range tr.Signatures {
-		if signature == nil || len(signature.Raw) == 0 {
+		if signature == nil {
 			return errors.New("nil signature found")
 		}
-		r.Signatures = append(r.Signatures, signature.Raw)
+		requestSignature := &RequestSignature{}
+		if err := requestSignature.FromProtos(signature); err != nil {
+			return errors.Wrap(err, "failed converting request signature")
+		}
+		switch {
+		case requestSignature.Action != nil && len(requestSignature.Action.Signature) == 0:
+			return errors.New("nil action signature found")
+		case requestSignature.Auditor != nil && len(requestSignature.Auditor.Signature) == 0:
+			return errors.New("nil auditor signature found")
+		}
+		r.Signatures = append(r.Signatures, requestSignature)
 	}
-	if tr.Auditing != nil {
-		r.AuditorSignatures = make([]*AuditorSignature, len(tr.Auditing.Signatures))
-		r.AuditorSignatures = slices.GenericSliceOfPointers[AuditorSignature](len(tr.Auditing.Signatures))
-		if err := protos.FromProtosSlice(tr.Auditing.Signatures, r.AuditorSignatures); err != nil {
-			return errors.Wrap(err, "failed converting auditor signatures")
+
+	// Validate the structural integrity of the token request
+	if err := r.Validate(); err != nil {
+		return errors.Wrap(err, "token request validation failed")
+	}
+
+	return nil
+}
+
+// Validate checks the structural validity of the TokenRequest.
+// It ensures that all required fields are present and non-empty.
+// This method should be called after unmarshalling to verify the request is well-formed.
+//
+// Special case: Empty requests (nil Actions or empty Actions slice) are allowed
+// to support test scenarios where requests are created but not yet populated.
+// This is necessary because ToProtos() sets Version=ProtocolV1 even for empty requests.
+//
+// Returns an error if:
+//   - Any action in Actions is nil
+//   - Any action has empty Raw bytes
+//   - Any signature in Signatures is nil
+//   - Any signature has empty signature bytes
+func (r *TokenRequest) Validate() error {
+	// If we have actions, validate them
+
+	for i, action := range r.Actions {
+		if action == nil {
+			return errors.Errorf("action at index %d is nil", i)
+		}
+		if len(action.Raw) == 0 {
+			return errors.Errorf("action at index %d has empty Raw bytes", i)
+		}
+	}
+
+	// Validate signatures (if present)
+	for i, sig := range r.Signatures {
+		if sig == nil {
+			return errors.Errorf("signature at index %d is nil", i)
+		}
+
+		// Check that signature has either Action or Auditor signature with non-empty bytes
+		switch {
+		case sig.Action != nil:
+			if len(sig.Action.Signature) == 0 {
+				return errors.Errorf("action signature at index %d has empty signature bytes", i)
+			}
+		case sig.Auditor != nil:
+			if len(sig.Auditor.Signature) == 0 {
+				return errors.Errorf("auditor signature at index %d has empty signature bytes", i)
+			}
+		default:
+			return errors.Errorf("signature at index %d has neither action nor auditor signature", i)
 		}
 	}
 
@@ -180,96 +398,37 @@ func (r *TokenRequest) FromProtos(tr *request.TokenRequest) error {
 }
 
 // MarshalToMessageToSign creates a canonical byte representation of the TokenRequest
-// for signature generation. The behavior depends on the protocol version:
+// for signature generation using the structured ASN.1 format.
 //
-// ProtocolV1: Uses simple concatenation (ASN.1-encoded request + anchor).
-// This method is maintained for backward compatibility but has known security
-// limitations regarding potential hash collisions.
-//
-// ProtocolV2: Uses structured ASN.1 format with separate Request and Anchor fields,
-// providing robust boundary separation and preventing collision attacks.
+// The ProtocolV1 format uses a secure structured ASN.1 format with separate Request
+// and Anchor fields, providing robust boundary separation and preventing collision attacks.
 //
 // Parameters:
 //   - anchor: A unique identifier (e.g., transaction ID) that binds this signature
-//     to a specific context. For V2, must be non-empty and within size limits.
+//     to a specific context. Must be non-empty and within size limits.
 //
 // Security considerations:
 //   - The anchor MUST be unique per transaction to prevent signature reuse
 //   - Signatures are not included in the marshaled data to avoid circular dependencies
-//   - V1 uses concatenation which requires careful anchor selection
-//   - V2 uses structured format which provides stronger security guarantees
+//   - Structured format provides strong security guarantees against collision attacks
 //
 // Returns the message bytes to be signed, or an error if marshaling fails.
 func (r *TokenRequest) MarshalToMessageToSign(anchor []byte) ([]byte, error) {
-	// Dispatch based on protocol version
-	switch r.getVersion() {
-	case ProtocolV1:
-		return r.marshalToMessageToSignV1(anchor)
-	case ProtocolV2:
-		return r.marshalToMessageToSignV2(anchor)
-	default:
-		return nil, errors.Errorf("unsupported protocol version [%d]", r.getVersion())
-	}
+	return r.marshalToMessageToSignV1(anchor)
 }
 
-// getVersion returns the protocol version of this TokenRequest.
-// Returns the stored version, defaulting to V2 for new requests.
-func (r *TokenRequest) getVersion() int {
-	if r.Version == 0 {
-		// Default to V2 for new requests
-		return ProtocolV2
-	}
-
-	return int(r.Version)
-}
-
-// marshalToMessageToSignV1 implements the V1 protocol signature message construction.
-// This method maintains the original behavior for backward compatibility with existing
-// test data and deployed systems.
-//
-// WARNING: This implementation has known security limitations:
-//   - Simple concatenation without delimiter allows potential boundary ambiguity
-//   - Different (request, anchor) pairs could theoretically produce identical messages
-//
-// This method is preserved unchanged to ensure regression tests pass.
-func (r *TokenRequest) marshalToMessageToSignV1(anchor []byte) ([]byte, error) {
-	// Use a struct that matches the original TokenRequest structure (4 fields).
-	// Even though only Issues and Transfers are populated, ASN.1 encodes all fields,
-	// including empty Signatures and AuditorSignatures as empty sequences.
-	// This ensures identical ASN.1 encoding for backward compatibility with V1 signatures.
-	type tokenRequestV1 struct {
-		Issues            [][]byte
-		Transfers         [][]byte
-		Signatures        [][]byte
-		AuditorSignatures []*AuditorSignature
-	}
-
-	bytes, err := asn1.Marshal(tokenRequestV1{
-		Issues:    r.Issues,
-		Transfers: r.Transfers,
-	})
-	if err != nil {
-		return nil, errors.Wrapf(err, "audit of tx [%s] failed: error marshal token request for signature", string(anchor))
-	}
-
-	return append(bytes, anchor...), nil
-}
-
-// marshalToMessageToSignV2 implements the V2 protocol signature message construction
+// marshalToMessageToSignV1 implements the V1 protocol signature message construction
 // using a secure structured ASN.1 format that prevents hash collision vulnerabilities.
 //
-// Security improvements over V1:
+// Security features:
 //   - Structured ASN.1 format with explicit Request and Anchor fields
 //   - Clear boundary separation prevents collision attacks
 //   - Input validation ensures anchor meets security requirements
 //   - Hex-encoded error messages prevent sensitive data exposure
 //
-// This method should be used for all new token requests to benefit from
-// enhanced security properties.
-//
 // This implementation uses an optimized fast marshaller that avoids reflection overhead
 // while maintaining full ASN.1 compatibility.
-func (r *TokenRequest) marshalToMessageToSignV2(anchor []byte) ([]byte, error) {
+func (r *TokenRequest) marshalToMessageToSignV1(anchor []byte) ([]byte, error) {
 	// Input validation with typed errors
 	if len(anchor) == 0 {
 		return nil, ErrAnchorEmpty
@@ -278,14 +437,14 @@ func (r *TokenRequest) marshalToMessageToSignV2(anchor []byte) ([]byte, error) {
 		return nil, ErrAnchorTooLarge
 	}
 
-	// Marshal the request data using fast marshaller (Issues and Transfers only)
-	requestBytes, err := fastMarshalTokenRequestForSigning(r.Issues, r.Transfers)
+	// Marshal the request data using fast marshaller with typed actions in order
+	requestBytes, err := fastMarshalTokenRequestForSigning(r.Actions)
 	if err != nil {
 		return nil, errors.Wrapf(err, "audit of tx [%x] failed: error marshal token request for signature", anchor)
 	}
 
 	// Marshal the complete structured message using fast marshaller
-	msgBytes, err := fastMarshalSignatureMessageV2(requestBytes, anchor)
+	msgBytes, err := fastMarshalSignatureMessageV1(requestBytes, anchor)
 	if err != nil {
 		return nil, errors.Wrapf(err, "audit of tx [%x] failed: error marshal signature message", anchor)
 	}
@@ -300,7 +459,7 @@ type AuditableIdentity struct {
 
 func (a *AuditableIdentity) ToProtos() (*request.AuditableIdentity, error) {
 	return &request.AuditableIdentity{
-		Identity: &request.Identity{
+		Identity: &protosv1.Identity{
 			Raw: a.Identity,
 		},
 		AuditInfo: a.AuditInfo,
@@ -338,6 +497,8 @@ func (i *IssueInputMetadata) FromProtos(issueInputMetadata *request.IssueInputMe
 // IssueOutputMetadata is the metadata of an output in an issue action
 type IssueOutputMetadata struct {
 	OutputMetadata []byte
+	// OutputAuditInfo, for each output owner we have audit info
+	OutputAuditInfo []byte
 	// Receivers, for each output we have a receiver
 	Receivers []*AuditableIdentity
 }
@@ -350,6 +511,7 @@ func (i *IssueOutputMetadata) ToProtos() (*request.OutputMetadata, error) {
 
 	return &request.OutputMetadata{
 		Metadata:  i.OutputMetadata,
+		AuditInfo: i.OutputAuditInfo,
 		Receivers: receivers,
 	}, nil
 }
@@ -359,6 +521,7 @@ func (i *IssueOutputMetadata) FromProtos(outputsMetadata *request.OutputMetadata
 		return nil
 	}
 	i.OutputMetadata = outputsMetadata.Metadata
+	i.OutputAuditInfo = outputsMetadata.AuditInfo
 	i.Receivers = slices.GenericSliceOfPointers[AuditableIdentity](len(outputsMetadata.Receivers))
 	if err := protos.FromProtosSlice(outputsMetadata.Receivers, i.Receivers); err != nil {
 		return errors.Wrap(err, "failed unmarshalling receivers metadata")
@@ -385,7 +548,7 @@ type IssueMetadata struct {
 	Outputs []*IssueOutputMetadata
 	// ExtraSigners is the list of extra identities that are not part of the issue action per se
 	// but needs to sign the request
-	ExtraSigners []Identity
+	ExtraSigners []AuditableIdentity
 }
 
 func (i *IssueMetadata) ToProtos() (*request.IssueMetadata, error) {
@@ -401,12 +564,16 @@ func (i *IssueMetadata) ToProtos() (*request.IssueMetadata, error) {
 	if err != nil {
 		return nil, errors.Wrapf(err, "failed marshalling outputs")
 	}
+	extraSigners, err := ToProtoAuditableIdentitySliceFromAuditable(i.ExtraSigners)
+	if err != nil {
+		return nil, errors.Wrapf(err, "failed marshalling extra signers")
+	}
 
 	return &request.IssueMetadata{
 		Issuer:       issuer,
 		Inputs:       inputs,
 		Outputs:      outputs,
-		ExtraSigners: ToProtoIdentitySlice(i.ExtraSigners),
+		ExtraSigners: extraSigners,
 	}, nil
 }
 
@@ -426,7 +593,10 @@ func (i *IssueMetadata) FromProtos(issueMetadata *request.IssueMetadata) error {
 	if err != nil {
 		return errors.Wrap(err, "failed unmarshalling output metadata")
 	}
-	i.ExtraSigners = FromProtoIdentitySlice(issueMetadata.ExtraSigners)
+	i.ExtraSigners, err = FromProtoAuditableIdentitySliceToAuditable(issueMetadata.ExtraSigners)
+	if err != nil {
+		return errors.Wrap(err, "failed unmarshalling extra signers")
+	}
 
 	return nil
 }
@@ -444,6 +614,57 @@ func (i *IssueMetadata) Receivers() []Identity {
 	}
 
 	return res
+}
+
+// Match verifies that the given action matches this metadata.
+// It performs a deep check of inputs, outputs, extra signers, and the issuer identity.
+func (i *IssueMetadata) Match(action IssueAction) error {
+	// Validate the action's structure.
+	if err := action.Validate(); err != nil {
+		return errors.Wrap(err, "failed validating issue action")
+	}
+
+	// Check that the number of inputs matches.
+	if len(i.Inputs) != action.NumInputs() {
+		return errors.Errorf("expected [%d] inputs but got [%d]", len(i.Inputs), action.NumInputs())
+	}
+
+	// Check that the number of outputs matches.
+	if len(i.Outputs) != action.NumOutputs() {
+		return errors.Errorf("expected [%d] outputs but got [%d]", len(i.Outputs), action.NumOutputs())
+	}
+
+	// Check that the extra signers match.
+	// The action returns []Identity, and metadata has []AuditableIdentity
+	extraSigners := action.ExtraSigners()
+	if len(i.ExtraSigners) != len(extraSigners) {
+		return errors.Errorf("expected [%d] extra signers but got [%d]", len(extraSigners), len(i.ExtraSigners))
+	}
+	for _, signer := range extraSigners {
+		found := slices0.ContainsFunc(i.ExtraSigners, func(a AuditableIdentity) bool {
+			return signer.Equal(a.Identity)
+		})
+		if !found {
+			return errors.Errorf("extra signer [%s] from action not found in metadata", signer)
+		}
+	}
+
+	// Check that the issuer identity matches.
+	// The metadata has Issuer.Identity (extracted from AuditableIdentity)
+	if !i.Issuer.Identity.Equal(action.GetIssuer()) {
+		return errors.Errorf("expected issuer [%s] but got [%s]", i.Issuer.Identity, action.GetIssuer())
+	}
+
+	return nil
+}
+
+// IsOutputAbsent returns true if the j-th output's metadata is absent (e.g., filtered out).
+func (i *IssueMetadata) IsOutputAbsent(j int) bool {
+	if j < 0 || j >= len(i.Outputs) {
+		return true
+	}
+
+	return i.Outputs[j] == nil
 }
 
 type TransferInputMetadata struct {
@@ -536,9 +757,9 @@ type TransferMetadata struct {
 	Outputs []*TransferOutputMetadata
 	// ExtraSigners is the list of extra identities that are not part of the transfer action per se
 	// but needs to sign the request
-	ExtraSigners []Identity
+	ExtraSigners []AuditableIdentity
 	// Issuer contains the identity of the issuer to sign the transfer action
-	Issuer Identity
+	Issuer AuditableIdentity
 }
 
 // TokenIDAt returns the TokenID at the given index.
@@ -560,18 +781,23 @@ func (t *TransferMetadata) ToProtos() (*request.TransferMetadata, error) {
 	if err != nil {
 		return nil, errors.Wrapf(err, "failed marshalling outputs")
 	}
+	extraSigners, err := ToProtoAuditableIdentitySliceFromAuditable(t.ExtraSigners)
+	if err != nil {
+		return nil, errors.Wrapf(err, "failed marshalling extra signers")
+	}
 
-	var issuer *request.Identity
-	if t.Issuer != nil {
-		issuer = &request.Identity{
-			Raw: t.Issuer.Bytes(),
+	var issuer *request.AuditableIdentity
+	if t.Issuer.Identity != nil {
+		issuer, err = t.Issuer.ToProtos()
+		if err != nil {
+			return nil, errors.Wrapf(err, "failed marshalling issuer")
 		}
 	}
 
 	return &request.TransferMetadata{
 		Inputs:       inputs,
 		Outputs:      outputs,
-		ExtraSigners: ToProtoIdentitySlice(t.ExtraSigners),
+		ExtraSigners: extraSigners,
 		Issuer:       issuer,
 	}, nil
 }
@@ -585,11 +811,17 @@ func (t *TransferMetadata) FromProtos(transferMetadata *request.TransferMetadata
 	if err := protos.FromProtosSlice(transferMetadata.Outputs, t.Outputs); err != nil {
 		return errors.Wrap(err, "failed unmarshalling outputs")
 	}
-	t.ExtraSigners = FromProtoIdentitySlice(transferMetadata.ExtraSigners)
+	var err error
+	t.ExtraSigners, err = FromProtoAuditableIdentitySliceToAuditable(transferMetadata.ExtraSigners)
+	if err != nil {
+		return errors.Wrap(err, "failed unmarshalling extra signers")
+	}
 
-	t.Issuer = nil
+	t.Issuer = AuditableIdentity{}
 	if transferMetadata.Issuer != nil {
-		t.Issuer = transferMetadata.Issuer.Raw
+		if err := t.Issuer.FromProtos(transferMetadata.Issuer); err != nil {
+			return errors.Wrap(err, "failed unmarshalling issuer")
+		}
 	}
 
 	return nil
@@ -637,15 +869,131 @@ func (t *TransferMetadata) TokenIDs() []*token.ID {
 	return res
 }
 
+// Match verifies that the given action matches this metadata.
+// It performs a deep check of inputs, outputs, extra signers, and the issuer identity (if present).
+func (t *TransferMetadata) Match(action TransferAction) error {
+	// Validate the action's structure.
+	if err := action.Validate(); err != nil {
+		return errors.Wrap(err, "failed validating transfer action")
+	}
+
+	// Check that the number of inputs matches.
+	if len(t.Inputs) != action.NumInputs() {
+		return errors.Errorf("expected [%d] inputs but got [%d]", len(t.Inputs), action.NumInputs())
+	}
+
+	// Check that the number of outputs matches.
+	if len(t.Outputs) != action.NumOutputs() {
+		return errors.Errorf("expected [%d] outputs but got [%d]", len(t.Outputs), action.NumOutputs())
+	}
+
+	// Check that the extra signers match.
+	// The action returns []Identity, and metadata has []AuditableIdentity
+	extraSigners := action.ExtraSigners()
+	if len(t.ExtraSigners) != len(extraSigners) {
+		return errors.Errorf("expected [%d] extra signers but got [%d]", len(t.ExtraSigners), len(extraSigners))
+	}
+	for i, signer := range extraSigners {
+		if !signer.Equal(t.ExtraSigners[i].Identity) {
+			return errors.Errorf("expected extra signer [%s] but got [%s]", t.ExtraSigners[i].Identity, signer)
+		}
+	}
+
+	// Check that the issuer identity matches, if present in the metadata.
+	// The metadata has Issuer as AuditableIdentity
+	if !t.Issuer.Identity.Equal(action.GetIssuer()) {
+		return errors.Errorf("expected issuer [%s] but got [%s]", t.Issuer.Identity, action.GetIssuer().Bytes())
+	}
+
+	return nil
+}
+
+// IsOutputAbsent returns true if the j-th output's metadata is absent (e.g., filtered out).
+func (t *TransferMetadata) IsOutputAbsent(j int) bool {
+	if j < 0 || j >= len(t.Outputs) {
+		return true
+	}
+
+	return t.Outputs[j] == nil
+}
+
+// IsInputAbsent returns true if the j-th input's metadata is absent (e.g., filtered out).
+func (t *TransferMetadata) IsInputAbsent(j int) bool {
+	if j < 0 || j >= len(t.Inputs) {
+		return true
+	}
+
+	return t.Inputs[j] == nil || len(t.Inputs[j].Senders) == 0
+}
+
+// ActionMetadataEntry represents metadata for a single action with its ID and type-discriminated metadata
+type ActionMetadataEntry struct {
+	ActionID         uint32            // Position in Actions slice
+	IssueMetadata    *IssueMetadata    // Non-nil if this is an issue action
+	TransferMetadata *TransferMetadata // Non-nil if this is a transfer action
+}
+
 // TokenRequestMetadata contains the supplementary information needed to process and interpret a TokenRequest.
 // It includes metadata for each issuance and transfer action, enabling de-obfuscation and identity recovery.
 type TokenRequestMetadata struct {
-	// Issues contains metadata for each issuance action in the corresponding TokenRequest.
-	Issues []*IssueMetadata
-	// Transfers contains metadata for each transfer action in the corresponding TokenRequest.
-	Transfers []*TransferMetadata
+	// Actions contains metadata for all actions in the corresponding TokenRequest.
+	Actions []*ActionMetadataEntry
 	// Application allows for attaching arbitrary application-level metadata to the token request.
 	Application map[string][]byte
+}
+
+// GetIssueMetadata returns issue metadata at the given index (among issues only)
+func (m *TokenRequestMetadata) GetIssueMetadata(index int) (*IssueMetadata, error) {
+	issueCount := 0
+	for _, action := range m.Actions {
+		if action.IssueMetadata != nil {
+			if issueCount == index {
+				return action.IssueMetadata, nil
+			}
+			issueCount++
+		}
+	}
+
+	return nil, errors.Errorf("issue metadata at index [%d] out of range [0:%d]", index, issueCount)
+}
+
+// GetTransferMetadata returns transfer metadata at the given index (among transfers only)
+func (m *TokenRequestMetadata) GetTransferMetadata(index int) (*TransferMetadata, error) {
+	transferCount := 0
+	for _, action := range m.Actions {
+		if action.TransferMetadata != nil {
+			if transferCount == index {
+				return action.TransferMetadata, nil
+			}
+			transferCount++
+		}
+	}
+
+	return nil, errors.Errorf("transfer metadata at index [%d] out of range [0:%d]", index, transferCount)
+}
+
+// NumIssues returns the count of issue metadata entries
+func (m *TokenRequestMetadata) NumIssues() int {
+	count := 0
+	for _, action := range m.Actions {
+		if action.IssueMetadata != nil {
+			count++
+		}
+	}
+
+	return count
+}
+
+// NumTransfers returns the count of transfer metadata entries
+func (m *TokenRequestMetadata) NumTransfers() int {
+	count := 0
+	for _, action := range m.Actions {
+		if action.TransferMetadata != nil {
+			count++
+		}
+	}
+
+	return count
 }
 
 func (m *TokenRequestMetadata) Bytes() ([]byte, error) {
@@ -669,38 +1017,42 @@ func (m *TokenRequestMetadata) FromBytes(raw []byte) error {
 
 func (m *TokenRequestMetadata) ToProtos() (*request.TokenRequestMetadata, error) {
 	trm := &request.TokenRequestMetadata{
-		Version:     ProtocolV1,
-		Metadata:    nil,
-		Application: m.Application,
+		Version:             ProtocolV1,
+		Metadata:            nil,
+		ApplicationMetadata: m.Application,
 	}
-	trm.Metadata = make([]*request.ActionMetadata, 0, len(m.Issues)+len(m.Transfers))
-	for _, meta := range m.Issues {
-		if meta == nil {
-			return nil, errors.Errorf("failed unmarshalling issue metadata, it is nil")
+	trm.Metadata = make([]*request.ActionMetadata, 0, len(m.Actions))
+
+	for _, action := range m.Actions {
+		if action == nil {
+			return nil, errors.Errorf("nil action metadata found")
 		}
-		metaProto, err := meta.ToProtos()
-		if err != nil {
-			return nil, errors.Wrapf(err, "failed marshalling issue metadata")
+
+		if action.IssueMetadata != nil {
+			metaProto, err := action.IssueMetadata.ToProtos()
+			if err != nil {
+				return nil, errors.Wrapf(err, "failed marshalling issue metadata")
+			}
+			trm.Metadata = append(trm.Metadata, &request.ActionMetadata{
+				ActionId: action.ActionID,
+				Metadata: &request.ActionMetadata_IssueMetadata{
+					IssueMetadata: metaProto,
+				},
+			})
+		} else if action.TransferMetadata != nil {
+			metaProto, err := action.TransferMetadata.ToProtos()
+			if err != nil {
+				return nil, errors.Wrapf(err, "failed marshalling transfer metadata")
+			}
+			trm.Metadata = append(trm.Metadata, &request.ActionMetadata{
+				ActionId: action.ActionID,
+				Metadata: &request.ActionMetadata_TransferMetadata{
+					TransferMetadata: metaProto,
+				},
+			})
+		} else {
+			return nil, errors.Errorf("action metadata must have either IssueMetadata or TransferMetadata, but it is nil")
 		}
-		trm.Metadata = append(trm.Metadata, &request.ActionMetadata{
-			Metadata: &request.ActionMetadata_IssueMetadata{
-				IssueMetadata: metaProto,
-			},
-		})
-	}
-	for _, meta := range m.Transfers {
-		if meta == nil {
-			return nil, errors.Errorf("failed unmarshalling issue metadata, it is nil")
-		}
-		metaProto, err := meta.ToProtos()
-		if err != nil {
-			return nil, errors.Wrapf(err, "failed marshalling transfer metadata")
-		}
-		trm.Metadata = append(trm.Metadata, &request.ActionMetadata{
-			Metadata: &request.ActionMetadata_TransferMetadata{
-				TransferMetadata: metaProto,
-			},
-		})
 	}
 
 	return trm, nil
@@ -712,25 +1064,34 @@ func (m *TokenRequestMetadata) FromProtos(trm *request.TokenRequestMetadata) err
 		return errors.Errorf("invalid token request metadata version, expected [%d], got [%d]", ProtocolV1, trm.Version)
 	}
 
-	m.Application = trm.Application
+	m.Application = trm.ApplicationMetadata
+	m.Actions = make([]*ActionMetadataEntry, 0, len(trm.Metadata))
+
 	for _, meta := range trm.Metadata {
+		entry := &ActionMetadataEntry{
+			ActionID: meta.ActionId,
+		}
+
 		im := meta.GetIssueMetadata()
 		if im != nil {
 			issueMetadata := &IssueMetadata{}
 			if err := issueMetadata.FromProtos(im); err != nil {
 				return errors.Wrapf(err, "failed unmarshalling issue metadata")
 			}
-			m.Issues = append(m.Issues, issueMetadata)
+			entry.IssueMetadata = issueMetadata
+			m.Actions = append(m.Actions, entry)
 
 			continue
 		}
+
 		tm := meta.GetTransferMetadata()
 		if tm != nil {
 			transferMetadata := &TransferMetadata{}
 			if err := transferMetadata.FromProtos(tm); err != nil {
 				return errors.Wrapf(err, "failed unmarshalling transfer metadata")
 			}
-			m.Transfers = append(m.Transfers, transferMetadata)
+			entry.TransferMetadata = transferMetadata
+			m.Actions = append(m.Actions, entry)
 
 			continue
 		}

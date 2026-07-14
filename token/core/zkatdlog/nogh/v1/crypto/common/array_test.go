@@ -11,7 +11,7 @@ import (
 	"testing"
 
 	math "github.com/IBM/mathlib"
-	"github.com/hyperledger-labs/fabric-token-sdk/token/core/common/crypto"
+	"github.com/LFDT-Panurus/panurus/token/core/common/crypto"
 	"github.com/stretchr/testify/require"
 )
 
