@@ -1,21 +1,20 @@
-# Panurus
-[![License](https://img.shields.io/badge/license-Apache%202-blue)](LICENSE)
-[![Go Report Card](https://goreportcard.com/badge/github.com/LFDT-Panurus/panurus)](https://goreportcard.com/badge/github.com/LFDT-Panurus/panurus)
-[![Tests](https://github.com/LFDT-Panurus/panurus/actions/workflows/tests.yml/badge.svg?branch=main)](https://github.com/LFDT-Panurus/panurus/actions/workflows/tests.yml)
-[![CodeQL](https://github.com/LFDT-Panurus/panurus/actions/workflows/codeql-analysis.yml/badge.svg?branch=main)](https://github.com/LFDT-Panurus/panurus/actions/workflows/codeql-analysis.yml)
-[![Coverage Status](https://coveralls.io/repos/github/LFDT-Panurus/panurus/badge.svg?branch=main)](https://coveralls.io/github/LFDT-Panurus/panurus?branch=main)
+<p align="center">
+  <img src="docs/imgs/Panurus_white.png" alt="Panurus" width="450"/>
+</p>
 
-`Panurs` provides a collection of APIs and services that streamline development for token-based distributed applications.
+<p align="center">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache%202-blue" alt="License"></a>
+  <a href="https://goreportcard.com/badge/github.com/LFDT-Panurus/panurus"><img src="https://goreportcard.com/badge/github.com/LFDT-Panurus/panurus" alt="Go Report Card"></a>
+  <a href="https://github.com/LFDT-Panurus/panurus/actions/workflows/tests.yml"><img src="https://github.com/LFDT-Panurus/panurus/actions/workflows/tests.yml/badge.svg?branch=main" alt="Tests"></a>
+  <a href="https://github.com/LFDT-Panurus/panurus/actions/workflows/codeql-analysis.yml"><img src="https://github.com/LFDT-Panurus/panurus/actions/workflows/codeql-analysis.yml/badge.svg?branch=main" alt="CodeQL"></a>
+  <a href="https://coveralls.io/github/LFDT-Panurus/panurus?branch=main"><img src="https://coveralls.io/repos/github/LFDT-Panurus/panurus/badge.svg?branch=main" alt="Coverage Status"></a>
+</p>
 
-# Disclaimer
-
-`Panurus` has not been audited and is provided as-is, use at your own risk.
-The project will be subject to rapid changes to complete the open-sourcing process, and  the list of features.
+Panurus provides a collection of APIs and services that streamline development for token-based distributed applications.
 
 # Useful Links
  
 - [`Documentation`](docs/README.md): The entry point for Panurus documentation.
-- [`Code Wiki`](https://codewiki.google/github.com/LFDT-Panurus/panurus): AI-powered documentation, architecture overviews, and interactive exploration of Panurus codebase.
 - [`Development`](docs/development/development.md): All about the development guidelines.
 - [`Contributing`](CONTRIBUTING.md): How to contribute to the project.
 - [`Fabric Samples`](https://github.com/hyperledger/fabric-samples/tree/main/token-sdk) Panurus sample application is the
@@ -38,6 +37,11 @@ The project will be subject to rapid changes to complete the open-sourcing proce
   and what enhancements are in the works (aka Panurus).
 - (October 12, 2023) [How to create a currency management app and deploy it to a Hyperledger Fabric network](https://www.youtube.com/watch?v=PX9SDva97vQ):
   In this comprehensive guide, we'll walk you through two essential aspects of Panurus. Firstly, you'll learn how to develop a straightforward token application to manage a currency. You'll grasp the fundamentals of creating tokens, and implementing transaction logic using Panurus. Once you've mastered the application development, we'll then show you how to effortlessly deploy it in your existing Fabric network, ensuring a seamless integration with your blockchain infrastructure. By the end of this tutorial, you'll be equipped with the skills to expand your blockchain capabilities and unleash the true potential of decentralized currency management. (Refers to [Fabric Samples](https://github.com/hyperledger/fabric-samples/tree/main/token-sdk))
+
+# Disclaimer
+
+`Panurus` has not been audited and is provided as-is, use at your own risk.
+The project will be subject to rapid changes to complete the open-sourcing process, and  the list of features.
 
 # Motivation
 

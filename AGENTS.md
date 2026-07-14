@@ -158,6 +158,7 @@ All PRs and pushes to `main` trigger these workflows:
 
 ### Coding Standards
 - **Error Handling**: Handle errors explicitly; avoid blank identifier for errors
+- **Error Construction**: Never use `fmt.Errorf` (or `fmt` at all) to build or wrap errors. Always use `github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors` instead (`errors.New`, `errors.Errorf`, `errors.Wrap`, `errors.Wrapf`, `errors.WithMessage`, `errors.WithMessagef`, `errors.Join`, etc.). This applies to source code, tests, and code samples in `docs/`.
 - **Interfaces**: Define small, focused interfaces on consumer side; favor composition
 - **Concurrency**: Use goroutines and channels; avoid shared state; validate with race detector
 - **Globals**: Avoid global variables for testability
@@ -178,7 +179,7 @@ Before implementing any task:
 3. Log blockers/decisions under `## Notes & Decisions`
 4. Mark plan as `✅ COMPLETE` when finished
 
-### Documentation Rule
+### Documentation Updates (Workflow Rule)
 Before marking a task complete, update or create the relevant documentation under `docs/`:
 - If the task changes a public API, protocol, or user-facing behaviour, update the corresponding `docs/` page (or create one if it does not exist).
 - Keep docs consistent with code: function names, message fields, flow diagrams, and examples must match the implementation.

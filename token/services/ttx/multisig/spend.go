@@ -14,11 +14,16 @@ import (
 	"github.com/LFDT-Panurus/panurus/token/core/common/encoding/json"
 	"github.com/LFDT-Panurus/panurus/token/services/identity/multisig"
 	"github.com/LFDT-Panurus/panurus/token/services/ttx"
+	"github.com/LFDT-Panurus/panurus/token/services/utils"
 	"github.com/LFDT-Panurus/panurus/token/services/utils/json/session"
 	"github.com/LFDT-Panurus/panurus/token/token"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/view"
 )
+
+// defaultSpendRequestTimeout is applied by NewRequestSpendView so callers that never
+// call WithTimeout are still protected against an unresponsive co-signer.
+const defaultSpendRequestTimeout = 30 * time.Second
 
 // SpendRequest is the request to spend a token
 type SpendRequest struct {
@@ -75,12 +80,6 @@ type SpendResponse struct {
 	Err error
 }
 
-type answer struct {
-	response *SpendResponse
-	err      error
-	party    view.Identity
-}
-
 // RequestSpendView sends a SpendRequest to all parties and waits for their responses
 type RequestSpendView struct {
 	unspentToken *token.UnspentToken
@@ -113,6 +112,7 @@ func NewRequestSpendView(unspentToken *token.UnspentToken, opts ...token2.Servic
 		unspentToken: unspentToken,
 		parties:      identities,
 		options:      serviceOptions,
+		timeout:      defaultSpendRequestTimeout,
 	}
 }
 
@@ -124,7 +124,7 @@ func (c *RequestSpendView) Call(context view.Context) (any, error) {
 	// send Transaction to each party and wait for their responses
 	request := &SpendRequest{Token: c.unspentToken}
 
-	answerChannel := make(chan *answer, len(c.parties))
+	collector := utils.NewAnswersCollector[string, *SpendResponse](len(c.parties), c.timeout)
 	logger.DebugfContext(context.Context(), "Notify %d parties about request", len(c.parties))
 	logger.DebugfContext(context.Context(), "Request [%v]", len(c.parties), request)
 	counter := 0
@@ -141,24 +141,21 @@ func (c *RequestSpendView) Call(context view.Context) (any, error) {
 
 			continue
 		}
-		go c.collectSpendRequestAnswers(context, party, request, answerChannel)
+		go c.collectSpendRequestAnswers(context, party, request, collector)
 		counter++
 	}
 
-	for range counter {
-		logger.DebugfContext(context.Context(), "Wait for answer")
-		var a *answer
-		select {
-		case a = <-answerChannel:
-			logger.DebugfContext(context.Context(), "Received answer")
-		case <-context.Context().Done():
-			return nil, errors.Wrapf(context.Context().Err(), "context cancelled while waiting for multisig answer")
+	logger.DebugfContext(context.Context(), "Wait for %d answers", counter)
+	answers, err := collector.Collect(context.Context(), counter)
+	if err != nil {
+		return nil, errors.Wrapf(err, "failed waiting for multisig answers")
+	}
+	for _, a := range answers {
+		if a.Err != nil {
+			return nil, errors.Wrapf(a.Err, "got failure [%s] from [%s]", a.Key, a.Err)
 		}
-		if a.err != nil {
-			return nil, errors.Wrapf(a.err, "got failure [%s] from [%s]", a.party.String(), a.err)
-		}
-		if a.response.Err != nil {
-			return nil, errors.Wrapf(a.response.Err, "got failure [%s] from [%s]", a.party.String(), a.response.Err)
+		if a.Value.Err != nil {
+			return nil, errors.Wrapf(a.Value.Err, "got failure [%s] from [%s]", a.Key, a.Value.Err)
 		}
 	}
 
@@ -175,15 +172,12 @@ func (c *RequestSpendView) collectSpendRequestAnswers(
 	context view.Context,
 	party view.Identity,
 	request *SpendRequest,
-	answerChan chan *answer) {
+	collector *utils.AnswersCollector[string, *SpendResponse]) {
 	defer logger.DebugfContext(context.Context(), "received response for from [%v]", party)
 
 	backendSession, err := context.GetSession(c, party, context.Initiator())
 	if err != nil {
-		answerChan <- &answer{
-			err:   errors.Wrapf(err, "failed to create session with [%s]", party),
-			party: party,
-		}
+		collector.Send(party.UniqueID(), nil, errors.Wrapf(err, "failed to create session with [%s]", party))
 
 		return
 	}
@@ -192,25 +186,19 @@ func (c *RequestSpendView) collectSpendRequestAnswers(
 	logger.DebugfContext(context.Context(), "send request to [%v]", party)
 	err = s.SendTyped(context.Context(), request, ttx.TypeSpendRequest)
 	if err != nil {
-		answerChan <- &answer{
-			err:   errors.Wrapf(err, "failed to send request to [%s]", party),
-			party: party,
-		}
+		collector.Send(party.UniqueID(), nil, errors.Wrapf(err, "failed to send request to [%s]", party))
 
 		return
 	}
 	response := &SpendResponse{}
 	if err := s.ReceiveTyped(ttx.TypeSpendResponse, response); err != nil {
-		answerChan <- &answer{
-			err:   errors.Wrapf(err, "failed to receive response from [%s]", party),
-			party: party,
-		}
+		collector.Send(party.UniqueID(), nil, errors.Wrapf(err, "failed to receive response from [%s]", party))
 
 		return
 	}
 	logger.DebugfContext(context.Context(), "received response from [%v]: [%v]", party, response.Err)
 
-	answerChan <- &answer{response: response, party: party}
+	collector.Send(party.UniqueID(), response, nil)
 }
 
 // ReceiveSpendTxView is the co-owner's view: it ACKs the SpendRequest and

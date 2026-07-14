@@ -172,7 +172,7 @@ ppm := tms.PublicParametersManager()
 // Retrieve the current public parameters
 currentPP := ppm.PublicParameters()
 if currentPP == nil {
-    return fmt.Errorf("public parameters not available")
+    return errors.New("public parameters not available")
 }
 
 // Verify the parameters match the expected values
