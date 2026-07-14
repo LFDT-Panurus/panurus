@@ -130,3 +130,46 @@ func schnorrChallenge(nonce, pk twistededwards.PointAffine, msg []byte) (fr.Elem
 
 	return hasher.SumElement(), nil
 }
+
+// SerializeSignature encodes a Signature as 96 bytes:
+//
+//	R.X (32) || R.Y (32) || S (32)
+//
+// This is uncompressed point encoding. No point-compression scheme is
+// implemented, so this is 96 bytes, not the 64-byte figure used in earlier
+// design-doc notes, that figure assumed a compressed encoding that does
+// not yet exist.
+func SerializeSignature(sig Signature) ([]byte, error) {
+	out := make([]byte, 0, 96)
+	rx := sig.R.X.Bytes()
+	ry := sig.R.Y.Bytes()
+	s := sig.S.Bytes()
+	out = append(out, rx[:]...)
+	out = append(out, ry[:]...)
+	out = append(out, s[:]...)
+
+	return out, nil
+}
+
+// DeserializeSignature reconstructs a Signature from 96 bytes produced by
+// SerializeSignature. Uses SetBytesCanonical throughout, rejects any
+// component that does not represent a canonical field element, matching
+// the same defensive posture used everywhere else untrusted bytes are
+// deserialized in this driver.
+func DeserializeSignature(raw []byte) (Signature, error) {
+	if len(raw) != 96 {
+		return Signature{}, fmt.Errorf("jubjub: signature must be 96 bytes, got %d", len(raw))
+	}
+	var sig Signature
+	if err := sig.R.X.SetBytesCanonical(raw[0:32]); err != nil {
+		return Signature{}, fmt.Errorf("jubjub: invalid R.X: %w", err)
+	}
+	if err := sig.R.Y.SetBytesCanonical(raw[32:64]); err != nil {
+		return Signature{}, fmt.Errorf("jubjub: invalid R.Y: %w", err)
+	}
+	if err := sig.S.SetBytesCanonical(raw[64:96]); err != nil {
+		return Signature{}, fmt.Errorf("jubjub: invalid S: %w", err)
+	}
+
+	return sig, nil
+}
