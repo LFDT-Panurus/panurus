@@ -8,6 +8,8 @@ package bulletproof
 
 import (
 	mathlib "github.com/IBM/mathlib"
+	bls12381fr "github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
+	bn254fr "github.com/consensys/gnark-crypto/ecc/bn254/fr"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	"github.com/hyperledger-labs/fabric-token-sdk/token/core/common/encoding/asn1"
 	"github.com/hyperledger-labs/fabric-token-sdk/token/core/zkatdlog/nogh/v1/crypto/common"
@@ -184,6 +186,13 @@ func (p *ipaProver) Prove() (*IPA, error) {
 // of the left vector and right is a function of right vector.
 // Both vectors are committed in com which is passed as a parameter to reduce
 func (p *ipaProver) reduce(X, com *mathlib.G1) (*mathlib.Zr, *mathlib.Zr, []*mathlib.G1, []*mathlib.G1, error) {
+	isBLS, isBN254 := math.DispatchCurve(p.Curve)
+	if isBLS {
+		return nativeIPAReduce[bls12381fr.Element, *bls12381fr.Element](p, X, com)
+	} else if isBN254 {
+		return nativeIPAReduce[bn254fr.Element, *bn254fr.Element](p, X, com)
+	}
+
 	left := p.leftVector
 	right := p.rightVector
 
