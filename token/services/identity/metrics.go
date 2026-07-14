@@ -44,23 +44,25 @@ func newMetrics(p metrics.Provider) *Metrics {
 		SignerResolutions: p.NewCounter(metrics.CounterOpts{
 			Name:       "identity_signer_resolutions_total",
 			Help:       "Total number of GetSigner calls by outcome (cache, routed, fallback)",
-			LabelNames: []string{"outcome"},
+			LabelNames: []string{"network", "channel", "namespace", "outcome"},
 		}),
 		GetSignerDuration: p.NewHistogram(metrics.HistogramOpts{
 			Name:                           "identity_get_signer_duration_seconds",
 			Help:                           "Histogram of GetSigner wall-clock time in seconds, labeled by resolution path",
-			LabelNames:                     []string{"path"},
+			LabelNames:                     []string{"network", "channel", "namespace", "path"},
 			Buckets:                        []float64{.001, .005, .01, .025, .05, .1, .25, .5, 1, 2.5, 5, 10},
 			NativeHistogramBucketFactor:    1.1,
 			NativeHistogramMaxBucketNumber: 100,
 		}),
 		SignerRouterRegistrations: p.NewCounter(metrics.CounterOpts{
-			Name: "identity_signer_router_registrations_total",
-			Help: "Total number of conf_id-to-KeyManager bindings registered with the SignerRouter",
+			Name:       "identity_signer_router_registrations_total",
+			Help:       "Total number of conf_id-to-KeyManager bindings registered with the SignerRouter",
+			LabelNames: []string{"network", "channel", "namespace"},
 		}),
 		NoProbeErrors: p.NewCounter(metrics.CounterOpts{
-			Name: "identity_signer_router_no_probe_errors_total",
-			Help: "Total number of errors from the SignerRouter's probe-free signer deserialization path",
+			Name:       "identity_signer_router_no_probe_errors_total",
+			Help:       "Total number of errors from the SignerRouter's probe-free signer deserialization path",
+			LabelNames: []string{"network", "channel", "namespace"},
 		}),
 	}
 }

@@ -155,10 +155,12 @@ func (d *Base) NewWalletService(...) (*wallet.Service, error) {
 
 | Metric | Type | Labels | Purpose |
 |:-------|:-----|:-------|:--------|
-| `identity_signer_resolutions_total` | Counter | `outcome` = `cache` \| `routed` \| `fallback` | How each `GetSigner` call was ultimately resolved. |
-| `identity_get_signer_duration_seconds` | Histogram | `path` = `cache` \| `routed` \| `fallback` | `GetSigner` wall-clock time by resolution path; compares the latency saved by skipping the probe. |
-| `identity_signer_router_registrations_total` | Counter | — | `conf_id`→`KeyManager` bindings registered with the `SignerRouter`. A near-zero count in production means routing is never populated and every call falls back. |
-| `identity_signer_router_no_probe_errors_total` | Counter | — | Failures of the probe-free deserialization path — since that path skips the cryptographic check, a non-zero count is worth investigating as a `conf_id` routing bug. |
+| `identity_signer_resolutions_total` | Counter | `network`, `channel`, `namespace`, `outcome` = `cache` \| `routed` \| `fallback` | How each `GetSigner` call was ultimately resolved. |
+| `identity_get_signer_duration_seconds` | Histogram | `network`, `channel`, `namespace`, `path` = `cache` \| `routed` \| `fallback` | `GetSigner` wall-clock time by resolution path; compares the latency saved by skipping the probe. |
+| `identity_signer_router_registrations_total` | Counter | `network`, `channel`, `namespace` | `conf_id`→`KeyManager` bindings registered with the `SignerRouter`. A near-zero count in production means routing is never populated and every call falls back. |
+| `identity_signer_router_no_probe_errors_total` | Counter | `network`, `channel`, `namespace` | Failures of the probe-free deserialization path — since that path skips the cryptographic check, a non-zero count is worth investigating as a `conf_id` routing bug. |
+
+> **Note:** `provider` here is a `NewTMSProvider`-wrapped `Provider` (see [Driver Metrics](../drivers/metrics.md#pitfall-labelnames-must-include-network-channel-namespace)), which binds `network`/`channel`/`namespace` on every metric via `.With(...)` before returning it. Every `CounterOpts`/`HistogramOpts` above must therefore declare those three as `LabelNames` in addition to its own label(s), or the metric panics with "inconsistent label cardinality" on first use. This is exactly the bug that crashed the DVP/DLog integration suite in `SignerRouter.Register` before it was fixed.
 
 ## Identity Types
 

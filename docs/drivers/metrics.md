@@ -42,6 +42,21 @@ Caller  →  Metrics Wrapper  →  Concrete Driver Service
 This keeps business logic free of monitoring concerns and guarantees that any new driver
 automatically gets the same metrics by wrapping its services at construction time.
 
+### Pitfall: `LabelNames` must include `network`, `channel`, `namespace`
+
+`NewTMSProvider` (`token/core/common/metrics/provider.go`) wraps the underlying `Provider` so that
+*every* metric it creates is bound to fixed `network`/`channel`/`namespace` label values via
+`.With(...)` before the metric is returned — the caller never supplies these three values itself.
+
+Because of this, any `CounterOpts`/`GaugeOpts`/`HistogramOpts` passed to a TMS-scoped provider's
+`NewCounter`/`NewGauge`/`NewHistogram` **must declare `"network", "channel", "namespace"` as
+`LabelNames`**, even though nothing in the wrapper code ever passes values for them explicitly.
+Forgetting them creates a Prometheus vector with 0 label names while `NewTMSProvider` immediately
+calls `.With(...)` with 3 values, which panics at runtime ("inconsistent label cardinality") the
+first time the metric is used — not at registration time, so it can slip past a quick smoke test.
+This exact mistake shipped in `token/services/identity/metrics.go` and crashed the DVP/DLog
+integration suite inside `SignerRouter.Register`; see that file for the corrected `LabelNames`.
+
 ## Wrapped Services
 
 Five driver services are wrapped:
