@@ -61,7 +61,11 @@ func (h *preparedStmtHolder[K]) Execute(ctx context.Context, db *sql.DB, key K, 
 	if stmt, err := h.getOrPrepare(ctx, db, key, query); err == nil {
 		if rows, qErr := stmt.QueryContext(ctx, args...); qErr == nil {
 			return rows, nil
+		} else {
+			logger.Warnf("prepared statement query failed for key [%v], falling back to unprepared query: %s", key, qErr)
 		}
+	} else {
+		logger.Warnf("failed preparing statement for key [%v], falling back to unprepared query: %s", key, err)
 	}
 
 	// Fall back to an unprepared, uncached query if preparing or executing
