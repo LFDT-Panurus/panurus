@@ -95,16 +95,7 @@ func NewValidator[P driver.PublicParameters, T driver.Input, TA driver.TransferA
 		TransferValidators: transferValidators,
 		IssueValidators:    issueValidators,
 		AuditingValidators: auditingValidators,
-		ValidationConfig: driver.ValidationConfig{
-			MaxTokenPayloadSize:  2 * 1024 * 1024,
-			MaxTokenOutputsPerTx: 1000,
-			MaxBulkDeleteSize:    10000,
-			MaxWalletIDSize:      1024,
-			MaxOwnerRawSize:      256 * 1024,
-			MaxIssuerRawSize:     256 * 1024,
-			MaxTokenRequestSize:  2 * 1024 * 1024,
-			MaxActionCount:       1000,
-		},
+		ValidationConfig: driver.DefaultValidationConfig,
 	}
 }
 
@@ -142,7 +133,7 @@ func (v *Validator[P, T, TA, IA, DS]) VerifyTokenRequestFromRaw(ctx context.Cont
 
 	// Validate protocol version
 	if tr.Version == 0 {
-		tr.Version = uint32(driver.ProtocolV1)
+		return nil, nil, driver.ErrInvalidVersion
 	}
 
 	// Enforce minimum protocol version if configured

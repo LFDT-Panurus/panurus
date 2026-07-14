@@ -107,16 +107,7 @@ func NewService(tmsID token.TMSID, TMSProvider TMSProvider, networkProvider Netw
 		NetworkProvider: networkProvider,
 		Storage:         storage,
 		RequestsCache:   requestsCache,
-		Config: ValidationConfig{
-			MaxTokenPayloadSize:  2 * 1024 * 1024,
-			MaxTokenOutputsPerTx: 1000,
-			MaxBulkDeleteSize:    10000,
-			MaxWalletIDSize:      1024,
-			MaxOwnerRawSize:      256 * 1024,
-			MaxIssuerRawSize:     256 * 1024,
-			MaxTokenRequestSize:  2 * 1024 * 1024,
-			MaxActionCount:       1000,
-		},
+		Config:          driver.DefaultValidationConfig,
 	}
 
 	return s
@@ -234,7 +225,7 @@ func (t *Service) validateAppendRequest(req *AppendRequest) error {
 
 	t.loadConfig()
 
-	if len(req.Tokens) > t.Config.MaxTokenOutputsPerTx {
+	if t.Config.MaxTokenOutputsPerTx > 0 && len(req.Tokens) > t.Config.MaxTokenOutputsPerTx {
 		return errors.Errorf("too many token outputs: %d > %d", len(req.Tokens), t.Config.MaxTokenOutputsPerTx)
 	}
 
@@ -242,17 +233,17 @@ func (t *Service) validateAppendRequest(req *AppendRequest) error {
 		if tok.Tok == nil {
 			return errors.Errorf("token at index %d is nil", i)
 		}
-		if len(tok.TokenOnLedger) > t.Config.MaxTokenPayloadSize {
+		if t.Config.MaxTokenPayloadSize > 0 && len(tok.TokenOnLedger) > t.Config.MaxTokenPayloadSize {
 			return errors.Errorf("token payload too large at index %d: %d > %d", i, len(tok.TokenOnLedger), t.Config.MaxTokenPayloadSize)
 		}
 
-		if len(tok.TokenOnLedgerMetadata) > t.Config.MaxTokenPayloadSize {
+		if t.Config.MaxTokenPayloadSize > 0 && len(tok.TokenOnLedgerMetadata) > t.Config.MaxTokenPayloadSize {
 			return errors.Errorf("token metadata too large at index %d: %d > %d", i, len(tok.TokenOnLedgerMetadata), t.Config.MaxTokenPayloadSize)
 		}
 
 		// OwnerWalletID can be empty in audit/sync flows where the wallet is not local.
 
-		if len(tok.OwnerWalletID) > t.Config.MaxWalletIDSize {
+		if t.Config.MaxWalletIDSize > 0 && len(tok.OwnerWalletID) > t.Config.MaxWalletIDSize {
 			return errors.Errorf("wallet_id too large at index %d: %d > %d", i, len(tok.OwnerWalletID), t.Config.MaxWalletIDSize)
 		}
 
@@ -260,16 +251,16 @@ func (t *Service) validateAppendRequest(req *AppendRequest) error {
 			return errors.Errorf("owner is missing at index %d", i)
 		}
 
-		if len(tok.Tok.Owner) > t.Config.MaxOwnerRawSize {
+		if t.Config.MaxOwnerRawSize > 0 && len(tok.Tok.Owner) > t.Config.MaxOwnerRawSize {
 			return errors.Errorf("owner_raw too large at index %d: %d > %d", i, len(tok.Tok.Owner), t.Config.MaxOwnerRawSize)
 		}
 
-		if len(tok.Issuer) > t.Config.MaxIssuerRawSize {
+		if t.Config.MaxIssuerRawSize > 0 && len(tok.Issuer) > t.Config.MaxIssuerRawSize {
 			return errors.Errorf("issuer_raw too large at index %d: %d > %d", i, len(tok.Issuer), t.Config.MaxIssuerRawSize)
 		}
 	}
 
-	if len(req.DeleteIDs) > t.Config.MaxBulkDeleteSize {
+	if t.Config.MaxBulkDeleteSize > 0 && len(req.DeleteIDs) > t.Config.MaxBulkDeleteSize {
 		return errors.Errorf("too many bulk deletes: %d > %d", len(req.DeleteIDs), t.Config.MaxBulkDeleteSize)
 	}
 

@@ -36,16 +36,7 @@ func (m *Configuration) UnmarshalKey(key string, rawVal any) error {
 
 // GetValidationConfig returns the validation configuration
 func (m *Configuration) GetValidationConfig() (driver.ValidationConfig, error) {
-	config := driver.ValidationConfig{
-		MaxTokenPayloadSize:  2 * 1024 * 1024,
-		MaxTokenOutputsPerTx: 1000,
-		MaxBulkDeleteSize:    10000,
-		MaxWalletIDSize:      1024,
-		MaxOwnerRawSize:      256 * 1024,
-		MaxIssuerRawSize:     256 * 1024,
-		MaxTokenRequestSize:  2 * 1024 * 1024,
-		MaxActionCount:       1000,
-	}
+	config := driver.DefaultValidationConfig
 	if m.cm != nil && m.cm.IsSet("validation") {
 		if err := m.cm.UnmarshalKey("validation", &config); err != nil {
 			return config, err

@@ -103,3 +103,15 @@ type Validator interface {
 	// SetValidationConfig configures the validation limits for the validator.
 	SetValidationConfig(config ValidationConfig)
 }
+
+// DefaultValidationConfig holds the default resource limits.
+var DefaultValidationConfig = ValidationConfig{
+	MaxTokenPayloadSize:  2 * 1024 * 1024,
+	MaxTokenOutputsPerTx: 1000,
+	MaxBulkDeleteSize:    10000,
+	MaxWalletIDSize:      1024,
+	MaxOwnerRawSize:      256 * 1024,
+	MaxIssuerRawSize:     256 * 1024,
+	MaxTokenRequestSize:  2 * 1024 * 1024,
+	MaxActionCount:       1000,
+}
