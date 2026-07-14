@@ -15,7 +15,7 @@ import (
 // referenced structs in alphabetical order (here only OutputToken). The field order must match the
 // Solidity struct, the Go struct, and encodeData below, byte-for-byte.
 const (
-	outputTokenType = "OutputToken(bytes32 tokenID,bytes32 snMarker,bytes tokenData)"
+	outputTokenType = "OutputToken(bytes32 tokenID,bytes32 snMarker,bytes tokenData)" // #nosec G101 -- EIP-712 type string, not a credential
 	stateDeltaType  = "StateDelta(bytes32 anchor,bytes32[] spentRefs,OutputToken[] outputs,bytes32[] metadataKeys,bytes[] metadataVals,bytes32 tokenRequestHash,bytes32 publicParamsHash,uint64 publicParamsVersion,bool isSetup,bytes setupParameters)" + outputTokenType
 )
 
