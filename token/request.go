@@ -1168,9 +1168,11 @@ func (r *Request) AddAuditorSignature(identity Identity, sigma []byte) {
 	})
 }
 
-// SetSignatures assigns signatures to all signers. Returns true if all signatures are present.
-// This method now correctly preserves the action context by using SignerWithAction information.
-func (r *Request) SetSignatures(sigmas map[string][]byte) bool {
+// AppendSignatures appends the action signatures for all issue and transfer
+// signers from sigmas, keyed by signer unique ID. Signatures already attached
+// to the request, e.g. via AddAuditorSignature, are left in place. Returns
+// true if every signer has a signature in sigmas.
+func (r *Request) AppendSignatures(sigmas map[string][]byte) bool {
 	issueSignersWithActions := r.IssueSignersWithActions()
 	transferSignersWithActions := r.TransferSignersWithActions()
 
@@ -1198,7 +1200,7 @@ func (r *Request) SetSignatures(sigmas map[string][]byte) bool {
 		signatures = append(signatures, signature)
 	}
 
-	r.Actions.Signatures = signatures
+	r.Actions.Signatures = append(r.Actions.Signatures, signatures...)
 
 	return all
 }

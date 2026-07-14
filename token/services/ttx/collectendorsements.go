@@ -118,8 +118,8 @@ func (c *CollectEndorsementsView) Call(context view.Context) (any, error) {
 
 	// Add the signatures to the token request
 	logger.DebugfContext(context.Context(), "Add the signatures to the token request")
-	if !c.tx.TokenRequest.SetSignatures(mergeSigmas(issueSigmas, transferSigmas)) {
-		return nil, errors.New("failed setting signatures on token request, some signatures are missing")
+	if !c.tx.TokenRequest.AppendSignatures(mergeSigmas(issueSigmas, transferSigmas)) {
+		return nil, errors.New("failed appending signatures to token request, some signatures are missing")
 	}
 
 	// 2. Audit
@@ -165,7 +165,7 @@ func (c *CollectEndorsementsView) Call(context view.Context) (any, error) {
 func (c *CollectEndorsementsView) requestSignaturesOnIssues(context view.Context, externalWallets map[string]ExternalWalletSigner) (map[string][]byte, error) {
 	logger.DebugfContext(context.Context(), "collecting signature on [%d] request issue", c.tx.TokenRequest.Metadata.NumIssues())
 
-	// Use IssueSigners() - the action context is preserved in metadata and used by SetSignatures()
+	// Use IssueSigners() - the action context is preserved in metadata and used by AppendSignatures()
 	return c.requestSignatures(
 		c.tx.TokenRequest.IssueSigners(),
 		c.tx.TokenService().SigService().IssuerVerifier,
@@ -179,7 +179,7 @@ func (c *CollectEndorsementsView) requestSignaturesOnIssues(context view.Context
 func (c *CollectEndorsementsView) requestSignaturesOnTransfers(context view.Context, externalWallets map[string]ExternalWalletSigner) (map[string][]byte, error) {
 	logger.DebugfContext(context.Context(), "collecting signature on [%d] request transfer", c.tx.TokenRequest.Metadata.NumTransfers())
 
-	// Use TransferSigners() - the action context is preserved in metadata and used by SetSignatures()
+	// Use TransferSigners() - the action context is preserved in metadata and used by AppendSignatures()
 	return c.requestSignatures(
 		c.tx.TokenRequest.TransferSigners(),
 		c.tx.TokenService().SigService().OwnerVerifier,

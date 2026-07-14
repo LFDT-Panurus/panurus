@@ -890,8 +890,8 @@ func TestRequest_IssueSigners(t *testing.T) {
 	assert.Equal(t, Identity("issuer2"), signers[3])
 }
 
-// TestRequest_SetSignatures tests SetSignatures method
-func TestRequest_SetSignatures(t *testing.T) {
+// TestRequest_AppendSignatures tests AppendSignatures method
+func TestRequest_AppendSignatures(t *testing.T) {
 	r := &Request{
 		Actions: &driver.TokenRequest{
 			Actions: []*driver.TypedAction{
@@ -941,7 +941,7 @@ func TestRequest_SetSignatures(t *testing.T) {
 		Identity("sender1").UniqueID(): []byte("sig2"),
 	}
 
-	allPresent := r.SetSignatures(sigmas)
+	allPresent := r.AppendSignatures(sigmas)
 	assert.True(t, allPresent)
 	require.Len(t, r.Actions.Signatures, 2)
 	require.NotNil(t, r.Actions.Signatures[0].Action)
@@ -957,13 +957,65 @@ func TestRequest_SetSignatures(t *testing.T) {
 		Identity("issuer1").UniqueID(): []byte("sig1"),
 	}
 
-	allPresent = r.SetSignatures(sigmas)
+	allPresent = r.AppendSignatures(sigmas)
 	assert.False(t, allPresent)
 	require.Len(t, r.Actions.Signatures, 2)
 	require.NotNil(t, r.Actions.Signatures[0].Action)
 	require.NotNil(t, r.Actions.Signatures[1].Action)
 	assert.Equal(t, []byte("sig1"), r.Actions.Signatures[0].Action.Signature)
 	assert.Nil(t, r.Actions.Signatures[1].Action.Signature)
+}
+
+// TestRequest_AppendSignatures_PreservesAuditorSignatures tests that AppendSignatures
+// keeps auditor signatures attached before it is called
+func TestRequest_AppendSignatures_PreservesAuditorSignatures(t *testing.T) {
+	r := &Request{
+		Actions: &driver.TokenRequest{
+			Actions: []*driver.TypedAction{
+				{Type: request.ActionType_ACTION_TYPE_ISSUE, Raw: []byte("issue1")},
+			},
+		},
+		Metadata: &driver.TokenRequestMetadata{
+			Actions: []*driver.ActionMetadataEntry{
+				{
+					ActionID: 0,
+					IssueMetadata: &driver.IssueMetadata{
+						Issuer: driver.AuditableIdentity{
+							Identity: Identity("issuer1"),
+						},
+					},
+				},
+			},
+		},
+		TokenService: &ManagementService{
+			logger: logging.MustGetLogger(),
+		},
+	}
+
+	r.AddAuditorSignature(Identity("auditor1"), []byte("auditor-sig"))
+
+	allPresent := r.AppendSignatures(map[string][]byte{
+		Identity("issuer1").UniqueID(): []byte("sig1"),
+	})
+	assert.True(t, allPresent)
+	require.Len(t, r.Actions.Signatures, 2)
+	require.NotNil(t, r.Actions.Signatures[0].Auditor)
+	assert.Equal(t, Identity("auditor1"), r.Actions.Signatures[0].Auditor.Identity)
+	assert.Equal(t, []byte("auditor-sig"), r.Actions.Signatures[0].Auditor.Signature)
+	require.NotNil(t, r.Actions.Signatures[1].Action)
+	assert.Equal(t, []byte("sig1"), r.Actions.Signatures[1].Action.Signature)
+
+	// calling AppendSignatures again appends another action signature and
+	// leaves the auditor signature in place
+	allPresent = r.AppendSignatures(map[string][]byte{
+		Identity("issuer1").UniqueID(): []byte("sig2"),
+	})
+	assert.True(t, allPresent)
+	require.Len(t, r.Actions.Signatures, 3)
+	require.NotNil(t, r.Actions.Signatures[0].Auditor)
+	assert.Equal(t, Identity("auditor1"), r.Actions.Signatures[0].Auditor.Identity)
+	require.NotNil(t, r.Actions.Signatures[2].Action)
+	assert.Equal(t, []byte("sig2"), r.Actions.Signatures[2].Action.Signature)
 }
 
 // TestRequest_cleanupInputIDs tests the cleanupInputIDs utility function
