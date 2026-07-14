@@ -7,7 +7,6 @@ SPDX-License-Identifier: Apache-2.0
 package nfttx_test
 
 import (
-	"context"
 	"errors"
 	"testing"
 
@@ -206,6 +205,6 @@ func TestOwnerWallet_QueryByKey(t *testing.T) {
 		Precision:       64,
 	}
 	assert.Panics(t, func() {
-		_ = ow.QueryByKey(context.TODO(), &House{}, "LinearID", "123")
+		_ = ow.QueryByKey(t.Context(), &House{}, "LinearID", "123")
 	})
 }

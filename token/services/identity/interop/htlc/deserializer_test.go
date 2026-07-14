@@ -7,7 +7,6 @@ SPDX-License-Identifier: Apache-2.0
 package htlc_test
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"testing"
@@ -105,7 +104,7 @@ func TestTypedIdentityDeserializer_GetAuditInfo(t *testing.T) {
 	ctx := t.Context()
 
 	// wrong type
-	_, err := d.GetAuditInfo(context.TODO(), []byte("id"), identity.Type(99), []byte{}, &mockDriver.AuditInfoProvider{})
+	_, err := d.GetAuditInfo(t.Context(), []byte("id"), identity.Type(99), []byte{}, &mockDriver.AuditInfoProvider{})
 	require.Error(t, err)
 
 	// invalid script

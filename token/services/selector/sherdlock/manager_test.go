@@ -82,7 +82,7 @@ func startManagers(t *testing.T, number int, backoff time.Duration, maxRetries i
 	replicas := make([]testutils.EnhancedManager, number)
 
 	for i := range number {
-		replica, err := createManager(pgConnStr, backoff, maxRetries)
+		replica, err := createManager(t, pgConnStr, backoff, maxRetries)
 		require.NoError(t, err)
 		replicas[i] = replica
 	}
@@ -90,7 +90,8 @@ func startManagers(t *testing.T, number int, backoff time.Duration, maxRetries i
 	return replicas, terminate
 }
 
-func createManager(pgConnStr string, backoff time.Duration, maxRetries int) (testutils.EnhancedManager, error) {
+func createManager(t *testing.T, pgConnStr string, backoff time.Duration, maxRetries int) (testutils.EnhancedManager, error) {
+	t.Helper()
 	d := postgres.NewDriverWithDbProvider(multiplexed.MockTypeConfig(postgres2.Persistence, postgres2.Config{
 		TablePrefix:  "test",
 		DataSource:   pgConnStr,
@@ -113,7 +114,7 @@ func createManager(pgConnStr string, backoff time.Duration, maxRetries int) (tes
 	fetcher := newMixedFetcher(tokenDB.(dbtest.TestTokenDB), m, 0, 0, 0)
 	manager := NewManager(fetcher, lockDB, testutils.TokenQuantityPrecision, backoff, maxRetries, 0, 0, m)
 
-	return testutils.NewEnhancedManager(manager, tokenDB.(dbtest.TestTokenDB)), nil
+	return testutils.NewEnhancedManager(t, manager, tokenDB.(dbtest.TestTokenDB)), nil
 }
 
 func startContainer(t *testing.T) (func(), string) {

@@ -7,7 +7,6 @@ SPDX-License-Identifier: Apache-2.0
 package nfttx_test
 
 import (
-	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -42,11 +41,11 @@ func TestQueryExecutor_QueryByKey_FilterErrors(t *testing.T) {
 	qe := nfttx.NewTestQueryExecutor(fakeSelector, fakeVault, 64)
 
 	fakeSelector.FilterReturns(nil, nfttx.ErrNoResults)
-	err := qe.QueryByKey(context.TODO(), &House{}, "LinearID", "123")
+	err := qe.QueryByKey(t.Context(), &House{}, "LinearID", "123")
 	require.ErrorIs(t, err, nfttx.ErrNoResults)
 
 	fakeSelector.FilterReturns(nil, errors.New("some filter error"))
-	err = qe.QueryByKey(context.TODO(), &House{}, "LinearID", "123")
+	err = qe.QueryByKey(t.Context(), &House{}, "LinearID", "123")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "some filter error")
 }
@@ -59,7 +58,7 @@ func TestQueryExecutor_QueryByKey_VaultErrors(t *testing.T) {
 
 	fakeSelector.FilterReturns([]*token2.ID{{TxId: "tx1", Index: 0}}, nil)
 	fakeVault.GetTokensReturns(nil, errors.New("vault error"))
-	err := qe.QueryByKey(context.TODO(), &House{}, "LinearID", "123")
+	err := qe.QueryByKey(t.Context(), &House{}, "LinearID", "123")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "vault error")
 }
@@ -88,19 +87,19 @@ func TestQueryExecutor_QueryByKey_Success(t *testing.T) {
 	fakeVault.GetTokensReturns(tokens, nil)
 
 	var house House
-	err = qe.QueryByKey(context.TODO(), &house, "LinearID", "123")
+	err = qe.QueryByKey(t.Context(), &house, "LinearID", "123")
 	require.NoError(t, err)
 	assert.Equal(t, "123", house.LinearID)
 
 	// fail decoding type
 	tokens[0].Type = "not-base64"
-	err = qe.QueryByKey(context.TODO(), &house, "LinearID", "123")
+	err = qe.QueryByKey(t.Context(), &house, "LinearID", "123")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to decode type")
 
 	// test no matching token, empty tokens list
 	fakeVault.GetTokensReturns([]*token2.Token{}, nil)
-	err = qe.QueryByKey(context.TODO(), &house, "LinearID", "123")
+	err = qe.QueryByKey(t.Context(), &house, "LinearID", "123")
 	require.ErrorIs(t, err, nfttx.ErrNoResults)
 }
 
@@ -116,7 +115,7 @@ func TestQueryExecutor_QueryByKey_BadQuantity(t *testing.T) {
 	fakeSelector.FilterReturns([]*token2.ID{{TxId: "tx1", Index: 0}}, nil)
 	fakeVault.GetTokensReturns(tokens, nil)
 
-	err := qe.QueryByKey(context.TODO(), &House{}, "LinearID", "123")
+	err := qe.QueryByKey(t.Context(), &House{}, "LinearID", "123")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to convert quantity")
 }
