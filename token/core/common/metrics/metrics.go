@@ -26,6 +26,6 @@ type (
 	// be created with 0 label names while every .With(...)/.Add(...)/.Observe(...) call supplies 3
 	// values, which panics at runtime with "inconsistent label cardinality" the first time the metric
 	// is used - see token/services/identity/metrics.go for a worked example.
-	Provider      = metrics.Provider
-	MetricLabel   = string
+	Provider    = metrics.Provider
+	MetricLabel = string
 )
