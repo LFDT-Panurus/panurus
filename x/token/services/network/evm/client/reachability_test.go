@@ -13,6 +13,7 @@ import (
 	"io"
 	"net/http"
 	"os/exec"
+	"strconv"
 	"testing"
 	"time"
 
@@ -46,7 +47,7 @@ func pollChainID(t *testing.T, endpoint string, timeout time.Duration) string {
 	deadline := time.Now().Add(timeout)
 	body := []byte(`{"jsonrpc":"2.0","id":1,"method":"eth_chainId","params":[]}`)
 	for time.Now().Before(deadline) {
-		resp, err := http.Post(endpoint, "application/json", bytes.NewReader(body))
+		resp, err := http.Post(endpoint, "application/json", bytes.NewReader(body)) // #nosec G107 -- local test endpoint
 		if err != nil {
 			time.Sleep(50 * time.Millisecond)
 

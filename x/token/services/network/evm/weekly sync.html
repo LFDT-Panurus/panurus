@@ -1,0 +1,293 @@
+<style>
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Serif:wght@500;600&display=swap');
+
+*{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --sans:'IBM Plex Sans',-apple-system,'Segoe UI',Roboto,sans-serif;
+  --mono:'IBM Plex Mono',ui-monospace,'SF Mono',Menlo,monospace;
+  --serif:'IBM Plex Serif',Georgia,serif;
+  --bg:#0E0E14; --panel:#15151D; --surface:#1B1B25; --surface2:#23232F;
+  --line:#2A2A38; --ink:#ECEBF3; --muted:#8C8A9C; --faint:#5A5A6B;
+  --gold:#F2B138; --mint:#3DDC97; --violet:#9C8CF8; --coral:#FB8467;
+  --gold-d:rgba(242,177,56,.13); --mint-d:rgba(61,220,151,.12);
+  --violet-d:rgba(156,140,248,.13); --coral-d:rgba(251,132,103,.12);
+}
+.deck{position:relative;color:var(--ink);font-family:var(--sans);border-radius:16px;overflow:hidden;border:1px solid var(--line);
+  background:
+    radial-gradient(1100px 460px at 12% -12%, rgba(156,140,248,.11), transparent 60%),
+    radial-gradient(1000px 480px at 104% 112%, rgba(242,177,56,.08), transparent 55%),
+    var(--bg)}
+.slide{display:none;min-height:524px;padding:42px 52px 30px;flex-direction:column;animation:fade .3s ease}
+.slide.active{display:flex}
+@keyframes fade{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+
+.top{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:22px}
+.eyebrow{font-family:var(--mono);font-size:10.5px;letter-spacing:.16em;text-transform:uppercase;color:var(--gold);display:flex;align-items:center;gap:9px}
+.eyebrow::before{content:'';width:16px;height:1.5px;background:var(--gold)}
+.snum{font-family:var(--mono);font-size:11px;color:var(--faint);letter-spacing:.12em}
+
+.h1{font-family:var(--serif);font-size:45px;font-weight:600;line-height:1.07;letter-spacing:-.015em}
+.h2{font-size:27px;font-weight:600;letter-spacing:-.012em;line-height:1.15}
+.lead{font-size:12.5px;color:var(--muted);line-height:1.65}
+.mlab{font-family:var(--mono);font-size:9.5px;letter-spacing:.11em;text-transform:uppercase;color:var(--faint);margin-bottom:6px}
+.pname{font-size:12.5px;color:var(--ink)}
+.mono{font-family:var(--mono);font-size:.85em;padding:1px 6px;border-radius:5px;background:var(--surface2);border:1px solid var(--line);color:#CFCDE0;white-space:nowrap}
+.k-gold{color:var(--gold)} .k-mint{color:var(--mint)} .k-violet{color:var(--violet)}
+
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:15px 17px}
+.card.g{border-color:rgba(242,177,56,.3);background:linear-gradient(var(--gold-d),transparent 78%),var(--surface)}
+.card.m{border-color:rgba(61,220,151,.3);background:linear-gradient(var(--mint-d),transparent 78%),var(--surface)}
+.card.v{border-color:rgba(156,140,248,.32);background:linear-gradient(var(--violet-d),transparent 78%),var(--surface)}
+.clabel{font-family:var(--mono);font-size:10px;letter-spacing:.09em;text-transform:uppercase;color:var(--muted);margin-bottom:10px}
+.cbody{font-size:12px;color:#C6C4D4;line-height:1.62}
+.li{display:flex;gap:9px;align-items:flex-start;font-size:11.5px;color:#C6C4D4;line-height:1.5;padding:3.5px 0}
+.li::before{content:'';width:5px;height:5px;border-radius:50%;background:var(--faint);margin-top:6px;flex:none}
+.li.g::before{background:var(--gold)} .li.m::before{background:var(--mint)} .li.v::before{background:var(--violet)}
+
+.pill{display:inline-flex;align-items:center;gap:6px;font-family:var(--mono);font-size:9.5px;font-weight:500;letter-spacing:.05em;padding:3px 9px;border-radius:20px;text-transform:uppercase;white-space:nowrap}
+.pill::before{content:'';width:5px;height:5px;border-radius:50%}
+.pill.done{color:var(--mint);background:var(--mint-d);border:1px solid rgba(61,220,151,.28)} .pill.done::before{background:var(--mint)}
+.pill.now{color:var(--gold);background:var(--gold-d);border:1px solid rgba(242,177,56,.28)} .pill.now::before{background:var(--gold)}
+.pill.next{color:var(--violet);background:var(--violet-d);border:1px solid rgba(156,140,248,.3)} .pill.next::before{background:var(--violet)}
+.pill.pend{color:var(--faint);background:var(--surface2);border:1px solid var(--line)} .pill.pend::before{background:var(--faint)}
+
+.bar{height:6px;background:var(--surface2);border-radius:20px;overflow:hidden}
+.bar>i{display:block;height:100%;border-radius:20px;background:linear-gradient(90deg,var(--gold),#F8CD78)}
+
+.stats{display:flex;gap:12px}
+.stat{flex:1;background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:15px 12px;text-align:center}
+.stat b{font-family:var(--serif);font-size:28px;font-weight:600;display:block;line-height:1}
+.stat span{font-family:var(--mono);font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);margin-top:7px;display:block}
+
+.wkrow{display:flex;align-items:center;gap:13px;padding:8.5px 13px;border-radius:10px;border:1px solid var(--line);background:var(--surface)}
+.wkrow.active{border-color:rgba(242,177,56,.4);background:linear-gradient(90deg,var(--gold-d),transparent 68%),var(--surface)}
+.wktitle{font-size:12.5px;font-weight:500}
+.wksub{font-size:10.5px;color:var(--muted);margin-top:1px}
+
+.gate{border-radius:12px;padding:15px 18px;border:1px solid var(--line)}
+.gate.pass{border-color:rgba(61,220,151,.32);background:linear-gradient(var(--mint-d),transparent 88%),var(--surface)}
+.gate.open{border-color:rgba(156,140,248,.32);background:linear-gradient(var(--violet-d),transparent 88%),var(--surface)}
+.glabel{font-family:var(--mono);font-size:10px;letter-spacing:.09em;text-transform:uppercase;margin-bottom:7px}
+
+.layer{display:flex;justify-content:space-between;align-items:center;padding:11px 16px;border-radius:9px;border:1px solid var(--line);background:var(--surface);font-size:12.5px}
+.lname{font-weight:500} .lnote{font-family:var(--mono);font-size:9.5px;color:var(--muted)}
+.layer.hi{border-color:rgba(242,177,56,.5);background:linear-gradient(90deg,var(--gold-d),transparent),var(--surface);box-shadow:0 8px 26px -14px rgba(242,177,56,.55)}
+
+.frow{display:flex;gap:13px;align-items:flex-start;padding:11px 0;border-bottom:1px solid var(--line)}
+.frow:last-child{border-bottom:none}
+.ftag{font-family:var(--mono);font-size:11px;color:var(--gold);min-width:34px;padding-top:1px}
+.qrow{display:flex;gap:13px;align-items:flex-start;padding:11px 0;border-bottom:1px solid var(--line)}
+.qrow:last-child{border-bottom:none}
+.qtitle{font-size:13px;font-weight:500;margin-bottom:3px}
+.qbody{font-size:11px;color:var(--muted);line-height:1.55}
+
+.nav{display:flex;justify-content:space-between;align-items:center;padding:13px 52px;border-top:1px solid var(--line);background:rgba(0,0,0,.22)}
+.nb{font-family:var(--mono);font-size:11px;padding:6px 15px;border:1px solid var(--line);background:var(--surface);color:var(--muted);border-radius:7px;cursor:pointer;transition:.15s}
+.nb:hover:not(:disabled){border-color:var(--gold);color:var(--gold)}
+.nb:disabled{opacity:.3;cursor:default}
+.dots{display:flex;gap:6px;align-items:center}
+.dot{width:6px;height:6px;border-radius:50%;background:var(--line);cursor:pointer;transition:.2s}
+.dot.active{background:var(--gold);width:20px;border-radius:3px}
+</style>
+
+<div class="deck">
+
+<div class="slide active">
+  <div class="top"><div class="eyebrow">LF Decentralized Trust · Mentorship 2026</div><div class="snum">01 / 08</div></div>
+  <div style="flex:1;display:flex;flex-direction:column;justify-content:center">
+    <div class="h1">Fabric Token SDK<br><span class="k-gold">EVM Network Driver</span></div>
+    <div class="lead" style="margin:20px 0 30px;max-width:540px">A production network driver that lets the Token SDK settle privacy-preserving tokens on Ethereum, alongside a refresh of the Fabric Token SDK sample. Issue #66 · June to November 2026.</div>
+    <div style="display:flex;gap:38px;margin-bottom:32px">
+      <div><div class="mlab">Mentee</div><div class="pname">Atharva Borade</div></div>
+      <div><div class="mlab">Mentor</div><div class="pname">Angelo De Caro · IBM Research Zurich</div></div>
+      <div><div class="mlab">Co-mentors</div><div class="pname">Ilie Circiumaru · Arne Rutjes</div></div>
+    </div>
+    <div class="stats">
+      <div class="stat"><b>6</b><span>months</span></div>
+      <div class="stat"><b class="k-violet">2</b><span>tracks</span></div>
+      <div class="stat"><b class="k-mint">Wk 2</b><span>complete</span></div>
+      <div class="stat"><b class="k-gold">40</b><span>forge tests</span></div>
+    </div>
+  </div>
+</div>
+
+<div class="slide">
+  <div class="top"><div class="eyebrow">Architecture</div><div class="snum">02 / 08</div></div>
+  <div class="h2">Where the EVM driver fits</div>
+  <div class="lead" style="margin:8px 0 20px">The driver is a swappable layer. Swap the Fabric backend for Ethereum and the Token SDK core stays identical.</div>
+  <div style="display:flex;gap:22px;align-items:stretch;flex:1">
+    <div style="flex:1;display:flex;flex-direction:column;gap:7px;justify-content:center">
+      <div class="layer"><span class="lname">Sample App</span><span class="lnote">fabric-samples/token-sdk</span></div>
+      <div class="layer"><span class="lname">Token SDK</span><span class="lnote">UTXO · ZK proofs · roles</span></div>
+      <div class="layer hi"><span class="lname k-gold">Network Driver</span><span class="lnote k-gold">your work</span></div>
+      <div class="layer"><span class="lname" style="color:var(--muted)">Fabric Smart Client</span><span class="lnote">views · identities · nodes</span></div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:7px">
+        <div class="layer" style="justify-content:center"><span class="lname" style="color:var(--muted)">Hyperledger Fabric</span></div>
+        <div class="layer" style="justify-content:center;border-color:rgba(61,220,151,.3)"><span class="lname k-mint">Ethereum / EVM</span></div>
+      </div>
+    </div>
+    <div style="width:222px;display:flex;flex-direction:column;gap:11px">
+      <div class="card v"><div class="clabel">Approach 2</div><div class="cbody">FSC nodes validate off-chain. The contract only checks signatures and spent tokens. No ZK proof runs on-chain.</div></div>
+      <div class="card"><div class="clabel">Two contracts</div><div class="cbody"><span class="mono">EndorsementVerifier</span> checks who signed. <span class="mono">TokenState</span> stores tokens and tracks spends.</div></div>
+      <div class="card"><div class="clabel">The idea</div><div class="cbody">The driver is a SIM card. Swap Fabric for Ethereum; the SDK core is untouched.</div></div>
+    </div>
+  </div>
+</div>
+
+<div class="slide">
+  <div class="top"><div class="eyebrow">6-month roadmap</div><div class="snum">03 / 08</div></div>
+  <div class="h2">June to November 2026</div>
+  <div class="lead" style="margin:8px 0 22px">Most of the time goes to the EVM driver; the rest modernises the sample and runs it on the new driver.</div>
+  <div style="display:grid;grid-template-columns:3fr 1fr 1fr 1fr;gap:10px;margin-bottom:8px">
+    <div class="mlab" style="text-align:center">June – August</div>
+    <div class="mlab" style="text-align:center">September</div>
+    <div class="mlab" style="text-align:center">October</div>
+    <div class="mlab" style="text-align:center">November</div>
+  </div>
+  <div style="display:grid;grid-template-columns:3fr 1fr 1fr 1fr;gap:10px;margin-bottom:20px">
+    <div class="card g" style="padding:14px 16px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:11px"><span style="font-size:13px;font-weight:600">EVM network driver</span><span class="pill now">in progress</span></div>
+      <div class="bar"><i style="width:25%"></i></div>
+      <div style="font-family:var(--mono);font-size:10px;color:var(--gold);margin-top:7px">2 of 8 weeks done</div>
+    </div>
+    <div class="card" style="display:flex;flex-direction:column;justify-content:center"><div style="font-size:12px;font-weight:600;color:var(--mint)">Sample</div><div style="font-size:10px;color:var(--muted);margin-top:3px">deps + feature + e2e</div></div>
+    <div class="card" style="display:flex;flex-direction:column;justify-content:center"><div style="font-size:12px;font-weight:600;color:var(--coral)">Integration</div><div style="font-size:10px;color:var(--muted);margin-top:3px">sample on driver</div></div>
+    <div class="card" style="display:flex;flex-direction:column;justify-content:center"><div style="font-size:12px;font-weight:600;color:var(--muted)">Wrap-up</div><div style="font-size:10px;color:var(--faint);margin-top:3px">docs · review</div></div>
+  </div>
+  <div class="grid2">
+    <div class="card v"><div class="clabel">Track 1 · 60–70%</div><div class="cbody">Build the EVM network driver end to end: contracts, endorsement, the driver, and integration on Besu. The bulk of the mentorship.</div></div>
+    <div class="card m"><div class="clabel">Track 2 · 30–40%</div><div class="cbody">Modernise the Fabric Token SDK sample (issue #66): update deps, add a feature, extend the e2e tests, then run it on the new driver.</div></div>
+  </div>
+</div>
+
+<div class="slide">
+  <div class="top"><div class="eyebrow">Track 1 · EVM driver</div><div class="snum">04 / 08</div></div>
+  <div class="h2">8-week breakdown</div>
+  <div style="display:flex;justify-content:space-between;align-items:center;margin:16px 0 7px">
+    <span style="font-family:var(--mono);font-size:10px;color:var(--muted)">overall progress</span>
+    <span style="font-family:var(--mono);font-size:10px;color:var(--gold)">2 of 8 weeks done</span>
+  </div>
+  <div class="bar" style="margin-bottom:16px"><i style="width:25%"></i></div>
+  <div style="display:flex;flex-direction:column;gap:6px">
+    <div class="wkrow"><span class="pill done">done</span><div style="flex:1"><div class="wktitle">Week 1 — Foundation freeze</div><div class="wksub">StateDelta · EVM keys · EIP-712 · registered driver · anvil spike</div></div></div>
+    <div class="wkrow"><span class="pill done">done</span><div style="flex:1"><div class="wktitle">Week 2 — Smart contracts</div><div class="wksub">EndorsementVerifier · TokenState · clones · 40 forge tests · PRs #1879 + #1894</div></div></div>
+    <div class="wkrow active"><span class="pill now">now</span><div style="flex:1"><div class="wktitle">Week 3 — StateDelta translator + secp256k1 signer</div><div class="wksub">the real Go signer these forge tests currently simulate</div></div></div>
+    <div class="wkrow"><span class="pill pend">wk 4</span><div style="flex:1"><div class="wktitle" style="color:var(--muted)">Endorsement — responder, initiator, identity registry</div></div></div>
+    <div class="wkrow"><span class="pill pend">wk 5</span><div style="flex:1"><div class="wktitle" style="color:var(--muted)">Driver + 16 network methods + JSON-RPC client + finality</div></div></div>
+    <div class="wkrow"><span class="pill pend">wk 6</span><div style="flex:1"><div class="wktitle" style="color:var(--muted)">Besu NWO bootstrap + fabtoken end-to-end</div></div></div>
+    <div class="wkrow"><span class="pill pend">wk 7</span><div style="flex:1"><div class="wktitle" style="color:var(--muted)">PP-update + zkatdlog end-to-end + recipient finality</div></div></div>
+    <div class="wkrow"><span class="pill pend">wk 8</span><div style="flex:1"><div class="wktitle" style="color:var(--muted)">Hardening · integration matrix · metrics · buffer</div></div></div>
+  </div>
+</div>
+
+<div class="slide">
+  <div class="top"><div class="eyebrow">Week 1 · complete</div><div class="snum">05 / 08</div></div>
+  <div class="h2">Foundation freeze</div>
+  <div class="lead" style="margin:8px 0 12px">Locked the data model and crypto that everything downstream signs against.</div>
+  <div style="flex:1">
+    <div class="frow"><span class="ftag">1.1</span><div style="flex:1"><div style="font-size:12.5px;font-weight:500">Scaffolding + crypto primitives</div><div style="font-size:11px;color:var(--muted);margin-top:2px">package tree · local Address/Hash types · Keccak256 + SHA-256 · go-ethereum guard passing</div></div></div>
+    <div class="frow"><span class="ftag">1.2</span><div style="flex:1"><div style="font-size:12.5px;font-weight:500">Wiring skeleton</div><div style="font-size:11px;color:var(--muted);margin-top:2px">EVMClient interface · registered driver · SDK wiring over the view SDK · anvil reachability spike</div></div></div>
+    <div class="frow"><span class="ftag">1.3</span><div style="flex:1"><div style="font-size:12.5px;font-weight:500">StateDelta types + EVM key derivations <span class="k-gold" style="font-family:var(--mono);font-size:10px">freeze 1</span></div><div style="font-size:11px;color:var(--muted);margin-top:2px">single spentRefs list · ComputeTokenID · OutputSNMarker · golden vectors locked</div></div></div>
+    <div class="frow"><span class="ftag">1.4</span><div style="flex:1"><div style="font-size:12.5px;font-weight:500">EIP-712 Go side <span class="k-gold" style="font-family:var(--mono);font-size:10px">freeze 2</span></div><div style="font-size:11px;color:var(--muted);margin-top:2px">domain · type hashes · hashStruct · digest <span class="mono">0xc9326b72…</span> · ethers v6 cross-check</div></div></div>
+  </div>
+  <div class="gate pass" style="margin-top:12px"><div class="glabel k-mint">week 1 gate — passed</div><div style="font-size:12px;color:#C6C4D4">build green · driver registers · go-ethereum guard passes · golden digest frozen and cross-checked against ethers v6</div></div>
+</div>
+
+<div class="slide">
+  <div class="top"><div class="eyebrow">Week 2 · complete</div><div class="snum">06 / 08</div></div>
+  <div class="h2">Smart contracts</div>
+  <div class="grid2" style="margin:16px 0 14px">
+    <div class="card v">
+      <div class="clabel">EndorsementVerifier.sol · <span class="k-violet">PR #1879</span></div>
+      <div class="li v">ecrecover over the EIP-712 digest, 65-byte {r,s,v}</div>
+      <div class="li v">low-s + v ∈ {27,28}: blocks signature malleability</div>
+      <div class="li v">signer uniqueness: N sigs from one endorser = 1 vote</div>
+      <div class="li v">strict: every provided sig valid, count ≥ threshold</div>
+    </div>
+    <div class="card m">
+      <div class="clabel">TokenState.sol · <span class="k-mint">PR #1894</span></div>
+      <div class="li m">applyStateDelta: verify → PP version → spent → apply atomically</div>
+      <div class="li m">content-bound markers reject forged bytes at a real position</div>
+      <div class="li m">endorsed PP update bumps the version, old deltas go stale</div>
+      <div class="li m">per-TMS EIP-1167 clone; Deploy.s.sol wires it up</div>
+    </div>
+  </div>
+  <div class="gate pass">
+    <div class="glabel k-mint">week 2 gate — passed</div>
+    <div style="font-size:12px;color:#C6C4D4;margin-bottom:4px">Solidity reproduces both locked digests <span class="mono">0xc9326b72…</span> and <span class="mono">0xdca9a011…</span>; Go, ethers and Solidity all agree.</div>
+    <div style="font-size:11px;color:var(--muted)">forged-content spend rejected on-chain · 40 forge tests green · both PRs raised for review</div>
+  </div>
+</div>
+
+<div class="slide">
+  <div class="top"><div class="eyebrow">Week 3 · next</div><div class="snum">07 / 08</div></div>
+  <div class="h2">StateDelta translator + Go signer</div>
+  <div class="grid2" style="margin:16px 0 14px">
+    <div class="card">
+      <div class="clabel">StateDelta translator</div>
+      <div class="li">validated actions → StateDelta, reusing the SDK action interfaces</div>
+      <div class="li">content-bound markers from GetInputs + GetSerializedInputs</div>
+      <div class="li">deterministic bytes: sorted metadata, exact counter order</div>
+      <div class="li">so every endorser produces the identical delta</div>
+    </div>
+    <div class="card">
+      <div class="clabel">secp256k1 signer</div>
+      <div class="li">decred/secp256k1, no go-ethereum</div>
+      <div class="li">65-byte {r,s,v}, low-s, v ∈ {27,28}</div>
+      <div class="li">address = keccak256(pubkey)[12:]</div>
+      <div class="li">sign / recover round-trip vectors</div>
+    </div>
+  </div>
+  <div class="gate open">
+    <div class="glabel k-violet">week 3 gate</div>
+    <div style="font-size:12px;color:#C6C4D4;margin-bottom:4px">a real Go-signed delta verifies on the Week-2 contract.</div>
+    <div style="font-size:11px;color:var(--muted)">this closes the Go ↔ Solidity signer loop the forge tests currently simulate with vm.sign</div>
+  </div>
+</div>
+
+<div class="slide">
+  <div class="top"><div class="eyebrow">For Angelo</div><div class="snum">08 / 08</div></div>
+  <div class="h2">Open questions</div>
+  <div style="margin-top:10px">
+    <div class="qrow">
+      <span class="pill now" style="min-width:70px;justify-content:center">repo</span>
+      <div><div class="qtitle">How should the contracts pull in forge-std?</div><div class="qbody">Foundry needs its test library (forge-std). The standard way is a git submodule under <span class="mono">contracts/lib</span>, which I've done, but it's the repo's first submodule, so a fresh clone needs <span class="mono">git submodule update --init</span>. Keep the submodule, or vendor it another way (Soldeer, or commit the files directly)?</div></div>
+    </div>
+    <div class="qrow">
+      <span class="pill now" style="min-width:70px;justify-content:center">contract</span>
+      <div><div class="qtitle">On-chain map vs off-chain resolve for "is this token spent?"</div><div class="qbody">A spend points at a content-bound marker, not the plain token id, so a spent-check by id needs a lookup. I store a <span class="mono">tokenID→marker</span> map on-chain (one extra write per output) so <span class="mono">isSpent(id)</span> answers in one call. The alternative is a leaner contract where the driver does two calls. I chose the one-call version. Good tradeoff, or prefer the leaner contract?</div></div>
+    </div>
+    <div class="qrow">
+      <span class="pill now" style="min-width:70px;justify-content:center">EIP-712</span>
+      <div><div class="qtitle">Confirm the EIP-712 domain name "Panurus"</div><div class="qbody">Every endorser signature is bound to an EIP-712 domain carrying a human-readable name; I set it to "Panurus". It's already baked into the frozen golden digests, so changing it later means re-freezing them. Keep "Panurus", or pick a different name now? (design §16)</div></div>
+    </div>
+    <div class="qrow">
+      <span class="pill pend" style="min-width:70px;justify-content:center">week 4</span>
+      <div><div class="qtitle">Who is allowed to request an endorsement?</div><div class="qbody">In Week 4 an endorser node needs to decide who may ask it to endorse. The planned default is the TMS network's own nodes (the EVM version of Fabric's MSP/ACL creator check). Flagging early so we can lock the policy before then. (design §16)</div></div>
+    </div>
+  </div>
+</div>
+
+</div>
+
+<div class="nav">
+  <button class="nb" id="pb" onclick="go(-1)">prev</button>
+  <div style="display:flex;align-items:center;gap:16px">
+    <div class="dots" id="de"></div>
+    <span class="snum" id="ne">01 / 08</span>
+  </div>
+  <button class="nb" id="nb2" onclick="go(1)">next</button>
+</div>
+
+<script>
+const slides=document.querySelectorAll('.slide');
+const de=document.getElementById('de');
+let c=0;
+slides.forEach((_,i)=>{const d=document.createElement('div');d.className='dot'+(i===0?' active':'');d.onclick=()=>gt(i);de.appendChild(d)});
+function up(){slides.forEach((s,i)=>s.classList.toggle('active',i===c));document.querySelectorAll('.dot').forEach((d,i)=>d.classList.toggle('active',i===c));document.getElementById('ne').textContent=String(c+1).padStart(2,'0')+' / '+String(slides.length).padStart(2,'0');document.getElementById('pb').disabled=c===0;document.getElementById('nb2').disabled=c===slides.length-1}
+function go(d){gt(c+d)}
+function gt(i){c=Math.max(0,Math.min(slides.length-1,i));up()}
+document.addEventListener('keydown',e=>{if(e.key==='ArrowRight'||e.key==='ArrowDown')go(1);if(e.key==='ArrowLeft'||e.key==='ArrowUp')go(-1)});
+up();
+</script>

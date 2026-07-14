@@ -1,0 +1,14 @@
+[profile.default]
+src = "src"
+out = "out"
+test = "test"
+libs = ["lib"]
+solc = "0.8.24"
+optimizer = true
+optimizer_runs = 200
+# The EIP-712 cross-impl gate (test/EIP712.t.sol) reads the golden fixture committed by the Go side.
+fs_permissions = [{ access = "read", path = "./test" }]
+
+# forge-std is not vendored; install it before running the suite:
+#   forge install foundry-rs/forge-std --no-commit
+# Then: forge test

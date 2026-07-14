@@ -1,0 +1,3 @@
+[submodule "x/token/services/network/evm/contracts/lib/forge-std"]
+	path = x/token/services/network/evm/contracts/lib/forge-std
+	url = https://github.com/foundry-rs/forge-std
