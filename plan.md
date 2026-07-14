@@ -1,66 +1,50 @@
-# Plan: Remove `Context` from `ttx.Transaction`
+# Plan — Ethereum / EVM Network Driver
+
+Feature-level tracker (per AGENTS.md). **Single source of truth for detail** lives in the package:
+- Design: `x/token/services/network/evm/eth_network_driver_design.md` (finalized)
+- Task-level plan: `x/token/services/network/evm/eth_network_driver_implementation_plan.md`
+
+This file tracks phase-level status only, so it doesn't duplicate (and drift from) the detailed plan.
 
 ## Goal
 
-Remove the `Context context.Context` field stored on `token/services/ttx/transaction.go`'s
-`Transaction` struct. Every method that needs a context receives it as an explicit `ctx
-context.Context` parameter from its caller instead of reading it off the struct. This fixes
-stale-context propagation across serialized/rebuilt transactions and a live bug in
-`htlc.Transaction.Lock`, which already accepts `ctx` but ignores it in favor of `t.Context`.
+Implement an Approach-2 EVM network driver (`token/services/network/driver.Network`) for both shipped drivers
+(fabtoken, zkatdlog/nogh), with two contracts (EndorsementVerifier, TokenState), EIP-712 endorsement, and
+gateway-`isPending` finality, on branch `feature/evm-network-driver`. Correctness parity with FabricX,
+validated by NWO integration tests.
 
-Full rationale and file-by-file breakdown: see the approved plan at
-`/Users/adc/.claude/plans/imperative-napping-shannon.md`.
+## Timeline: ~8 weeks — REAL driver against Besu (not an anvil demo)
 
-## Implementation Progress
+Acceptance backend = **Besu** (Angelo, 2026-07-08; anvil/forge = inner loop only). fabric-x-evm + gateway
+isPending = stretch, only if time remains. Target 6 wks, ceiling ~8 with buffer.
 
-1. [x] `token/services/ttx/transaction.go`: remove `Context` field and its two initializers;
-   add `ctx context.Context` param to `Bytes`, `Issue`, `Transfer`, `Redeem`, `Upgrade`,
-   `Outputs`, `Inputs`; reword the `Release()` comment.
-2. [x] `token/services/ttx/marshaller.go`: `marshal` takes `ctx` as first param.
-3. [x] `token/services/ttx/auditor.go`: `Validate` takes `ctx`; fix `startRemote`/`startLocal`
-   `.Bytes()` calls.
-4. [x] `token/services/ttx/collectactions.go`: thread `ctx`/`context.Context()` through
-   `Transfer`/`Bytes` calls.
-5. [x] `token/services/ttx/collectendorsements.go`: thread `context.Context()` through
-   `Bytes` calls.
-6. [x] `token/services/interop/htlc/transaction.go`: `Outputs` gains `ctx`; `Lock` body uses
-   `ctx` instead of `t.Context` (no signature change); `Reclaim`/`Claim` gain `ctx`.
-7. [x] `token/services/nfttx/transaction.go`: `Issue`/`Transfer`/`Outputs` gain `ctx`, forwarded.
-8. [x] `token/services/ttx/boolpolicy/tx.go` and `token/services/ttx/multisig/tx.go`: `Lock`/
-   `Spend` gain `ctx`, forwarded to `Transfer`.
-9. [x] Update all external call sites in `integration/token/{fungible,nft,interop,dvp}/**/views/*.go`
-   to pass `context.Context()` (or the in-scope `ctx`) as the new first argument.
-10. [x] Update unit tests: `token/services/ttx/{transaction_test.go, endorse_test.go,
-    receivetx_test.go}`, `token/services/nfttx/transaction_test.go`.
-11. [x] Update docs: `docs/token_sdk_usage.md`, `docs/upgradability.md`.
-12. [x] Verify: `go build ./...`, `make unit-tests`, `make unit-tests-race`, `make checks`,
-    `make lint-auto-fix`.
+- [x] Week 1 — Freeze foundation + registered skeleton (4 sub-phases; detail in the plan) — FROZEN:
+  - [x] 1.1 Scaffolding + deps + crypto primitives (keccak/sha256, local Address/Hash, no go-ethereum) — build+tests green
+  - [x] 1.2 Wiring skeleton: EVMClient iface + registered no-op driver + evmdlog SDK module + anvil spike — build+tests green, driver registers
+  - [x] 1.3 Frozen data model: StateDelta types + evm key derivations (freeze artifact 1) — golden vectors locked
+  - [x] 1.4 EIP-712 Go side + Week-1 freeze (freeze artifact 2) — golden digest locked, fixture committed for Solidity
+- [ ] Week 2 — Smart contracts (forge); Go↔Solidity signature vector gate
+- [ ] Week 3 — StateDelta translator + EIP-712 secp256k1 signer
+- [ ] Week 4 — Endorsement (responder/initiator/provider/registry)
+- [ ] Week 5 — Driver + 16 network methods + JSON-RPC client + DI + receipt-finality baseline
+- [ ] Week 6 — Besu NWO bootstrap + admin runbook + fabtoken END-TO-END on Besu
+- [ ] Week 7 — endorsed PP-update + zkatdlog END-TO-END + recipient anchor→finality (stretch: fabric-x-evm + isPending)
+- [ ] Week 8 — hardening + full integration matrix + metrics + buffer
+
+Deferred (additive future scope, not demo cuts): EIP-1167 clones, ERC-4337, graph-hiding driver. Status
+legend: `[ ] Pending`, `[x] Done`, `[~] In progress`, `[!] Blocked`. Update the detailed plan's checkboxes as
+tasks complete; flip a week here to `[x]` when its gate is met.
 
 ## Notes & Decisions
 
-- No compatibility shims/deprecated wrappers — internal pre-1.0 API, compiler catches every
-  missed call site.
-- `ttx.Context` (alias of `view.Context` in `views.go`, used only for counterfeiter mocks) is
-  unrelated and untouched.
-- `ctx` is always the first parameter, matching the existing `InputsAndOutputs`/`IsValid` style.
-- `.golangci.yml` on this branch separately (pre-existing, uncommitted) enables the
-  `containedctx` linter. A full repo-wide scan (`golangci-lint run --max-same-issues=0
-  --max-issues-per-linter=0 ./...` in both the root and `integration/` modules — the linter's
-  default output truncates same-message findings, which hid this) surfaced 11 structs holding a
-  `context.Context` field across both modules, not just the ones touched by this refactor. Per
-  explicit user decision, all 11 were suppressed with `//nolint:containedctx` plus a
-  justification comment rather than fixed, since fixing them was out of scope for this plan:
-  - Long-lived background-worker/service lifecycle (`ctx`/`cancel` set once in `Start()`,
-    cancelled in `Stop()`): `storage/services/cleanup/manager.go`, `storage/services/recovery/manager.go`,
-    `network/fabricx/finality/queue/queue.go`, `certifier/interactive/client.go`,
-    `storage/db/sql/postgres/notifier.go`, `integration/token/fungible/dlogstress/support/worker.go`.
-  - Per-request context override wrapper: `utils/view/view.go`'s `contextWrapper`.
-  - Per-event/message struct carrying context through a channel: `storage/db/common/status.go`'s
-    `StatusEvent`.
-  - Session-wrapper convenience default (ctx captured at construction, explicit
-    `...WithContext` variants exist alongside): `utils/session/session.go`'s `S`,
-    `token/services/ttx/session.go`'s `localSession`.
-  - Test fake mirroring `view.Context`: `token/services/ttx/withdrawal_test.go`'s
-    `minimalViewContext`.
-  - `make checks` and `make lint-auto-fix` are clean across every module (root, `integration`,
-    and all `cmd/*` modules) after these suppressions.
+- **Working rules R1–R6** (no undocumented decisions; freeze discipline; prove-don't-assume; one source of
+  truth for cross-impl values; deviations = design-doc edits; fail-fast on signed payloads) are binding for
+  every phase — defined in the detailed plan §0.2b, each traced to a real defect hit on this project.
+
+- All design decisions resolved in design §15 (grounded in the existing codebase). Non-blocking confirmations
+  for Angelo listed in design §16 — defaults are in place; these do not block Phases 1–2.
+- Module is `github.com/LFDT-Panurus/panurus`; work happens on `feature/evm-network-driver` (merges to `main`
+  only when the feature is complete).
+- No implementation started yet; this is planning only.
+
+<!-- Mark ✅ COMPLETE when Phase 6's integration suite is green and the driver is registered. -->

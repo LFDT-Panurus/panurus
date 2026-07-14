@@ -1,2264 +1,799 @@
-# Ethereum Network Driver Design Document
+# Ethereum / EVM Network Driver — Design Document (Finalized)
+
+> Branch: `feature/evm-network-driver`. Module: `github.com/LFDT-Panurus/panurus`.
+> This is the finalized design. All previously-open decisions are resolved in §15 with rationale grounded in
+> the existing codebase; §16 lists the handful worth a non-blocking confirmation from Angelo. The detailed,
+> task-level build sequence lives in `eth_network_driver_implementation_plan.md`.
+
+---
 
 ## 1. Executive Summary
 
-This document specifies the design and implementation of an Ethereum/EVM network driver for the Hyperledger Fabric Token SDK. The driver implements **Approach 2** (Pre-Order Execution with FSC Endorsers) from the existing network-ethereum.md documentation, enabling token operations on Ethereum networks while preserving the SDK's off-chain validation model.
+This document specifies an Ethereum/EVM network driver for the Token SDK (Panurus). It implements
+**Approach 2** (pre-order execution with FSC endorsers) from `docs/services/network-ethereum.md`: FSC nodes
+validate token requests off-chain in Go, sign the resulting state transition with secp256k1 keys (EIP-712),
+and an on-chain contract verifies the endorser signatures plus spent/existence constraints before applying
+the transition.
 
-### Key Design Decisions
+### 1.1 Trust model (the foundation)
 
-- **Validation Model**: Off-chain validation in Go within FSC nodes, on-chain signature verification and state application
-- **Token Support**: Both fabtoken and zkatdlog drivers supported from v1
-- **Identity**: secp256k1 keys for EIP-712 endorsement signatures, configured under TMS network services path
-- **Signature Envelope**: EIP-712 for endorser signatures with domain separation by chainID and contract address
-- **Contract Architecture**: Two-contract split (EndorsementVerifier + TokenState) for separation of concerns
-- **Backend**: EVMClient interface abstraction (fabric-x-evm used for NWO test network bootstrapping)
-- **Token Storage**: Each TMS uses a single TokenState contract; all tokens (fabtoken and zkatdlog) stored in one contract
-- **Transaction ID**: Deterministic internal ID using `keccak256(nonce || creator || chainID || contractAddr)`
-- **Contract Deployment**: Contracts deployed externally via deployment tools; driver reads addresses from configuration
-- **StateDelta Translator**: Dedicated translator component analogous to RWSet translator, consuming validated token actions to produce deterministic state transitions
-- **Spent ID Encoding**: Unified spent tracking using `keccak256` with domain separators (`SERIAL_NUMBER` prefix) to prevent collisions between token IDs and serial numbers
-- **Metadata Keys**: Deterministic hashing using `keccak256(namespace || key)` to prevent cross-TMS collisions
-- **Public Parameters**: StateDelta includes `publicParamsHash` for endorser verification of parameter consistency
-- **Finality Tracking**: Hybrid architecture combining receipt polling, indexed log queries, reorg detection, and status caching for efficiency
-- **Error Handling**: Typed errors with consistent wrapping patterns, recovery strategies, and retry logic for transient failures
-- **Endorser Discovery**: Dynamic endorser registry via contract queries for runtime flexibility
-- **Configuration Validation**: Comprehensive validation with sensible defaults for production readiness
+The chain performs **no token validation**. `TokenState.applyStateDelta` checks only:
+(a) a threshold of authorized endorser signatures, (b) the public-parameters version is current,
+(c) declared inputs exist and are unspent / declared serial numbers are unused. It does **not** verify ZK
+proofs, value conservation, or issuer authorization. Token correctness is established **entirely off-chain by
+the endorser quorum**. The system's security therefore reduces to endorser honesty and key custody. Every
+later section assumes this; §14 builds the threat model around it.
 
-### Out of Scope for v1
+### 1.2 What v1 supports
 
-- Cross-chain interoperability
-- Contract upgradeability
-- Advanced gas estimation (basic heuristic provided)
-- Full recovery mechanisms (basic recovery included, advanced features deferred to v2)
-- Batch operations (single transaction per state delta in v1)
-- State delta compression
+- Both shipped drivers: `fabtoken` and `zkatdlog/nogh`. Both are **graph-revealing** today
+  (`IsGraphHiding() == false`, `GetSerialNumbers() == nil`). The graph-hiding path is fully specified but
+  dormant until a graph-hiding driver ships.
+- A single `TokenState` contract per TMS (a TMS has exactly one token driver).
+- One Ethereum transaction per `StateDelta` (a delta is the translation of a whole token request, so it can
+  carry many operations).
 
-### Design Review Status
+### 1.3 Resolved key decisions (detail + rationale in §15)
 
-**Last Review**: 2026-05-13  
-**Status**: Comprehensive gap analysis completed with critical enhancements integrated  
-**Review Document**: See `eth_network_driver_design_review.md` for detailed gap analysis and recommendations  
-**Critical Updates**: StateDelta translator interface, finality architecture clarification, error taxonomy, security considerations
+| Area | Decision |
+|------|----------|
+| Spent/existence | `StateDelta` carries **one** `bytes32[] spentRefs`; the contract holds a `graphHiding` flag (from public params) and branches: graph-revealing => refs are token IDs that must exist & get marked spent; graph-hiding => refs are serial numbers that must not exist & get recorded *(Angelo, one-list steer)* |
+| Spend-ref identity | a bare `bytes32` (token ID or serial number); no `Input` struct, no `outputHash`; byte-binding enforced off-chain by endorsers |
+| Spent representation | explicit `spent`/`serialUsed` mapping (flag), output bytes retained for audit |
+| Hashing | keccak256 for EVM object keys; **SHA-256** for `tokenRequestHash` and `publicParamsHash` (SDK uses SHA-256) |
+| Key derivation | one `evm` key translator (analog of `common/rws/keys.Translator`), reproduced by the contract |
+| Anchor | `TokenRequestAnchor = SHA-256(nonce ‖ creator)`, decoupled from the Ethereum tx hash |
+| Public params | versioned on-chain; updates are **endorsed (quorum-gated)** via a setup delta; mirrors `pp.VersionKeeper` |
+| Governance | deployer only **seeds** the initial PP + endorser set; **once the quorum is set it owns everything** (PP updates, endorser-set changes, `setEndorsementVerifier`) *(Angelo)* |
+| Endorser identity | bound to both an FSC `view.Identity` (routing) and an Ethereum address (`ecrecover`) |
+| Signing | each endorser independently recomputes the delta+digest and signs; **never** blind-signs |
+| Backend | **Besu** (acceptance; Angelo 2026-07-08) — standard EVM node; fabric-x-evm is a stretch if time remains |
+| Finality | receipt + `eth_getTransactionByHash` polling (primary, any node) + FabricX event queue + `OnlyOnceListener`, read at `finalized` where exposed; gateway `isPending` lifecycle is the fabric-x-evm stretch layer |
+| Crypto lib | permissive: `x/crypto/sha3` + `decred/secp256k1`; **go-ethereum must not be linked, even transitively** *(Angelo: license is a hard blocker)* |
+| Gas | `eth_estimateGas` × multiplier (EIP-1559 fees); `fixed` only as override |
+
+### 1.4 Out of scope (v1)
+
+Cross-chain interop; contract upgradeability (a minimal-clone deploy path is included, §3.8); ERC-4337
+batching/sponsoring (the likely v2 path, §3.9); advanced gas estimation; a graph-hiding token driver;
+state-delta compression.
 
 ---
 
 ## 2. Architecture Overview
 
-### 2.0 Token Driver Support
+### 2.1 Roles
 
-The Ethereum network driver supports both token driver types from v1:
+- **Initiator** — the FSC node assembling the transaction: builds the token request, drives endorsement
+  collection over FSC sessions, assembles + signs + broadcasts the Ethereum transaction, tracks finality.
+- **Endorser** — an FSC node that validates the request in Go, recomputes the `StateDelta`, and EIP-712-signs
+  it. Identified by an FSC `view.Identity` (routing) **and** an Ethereum address (on-chain recovery).
+- **Submitter** — the account that signs and pays for the Ethereum transaction (gas). May reuse an endorser
+  key or be separate.
+- **Contracts** — `EndorsementVerifier` (endorser set, threshold, signature verification) and `TokenState`
+  (token storage, spent/existence, PP versioning, state application).
 
-**fabtoken (Cleartext Tokens)**:
-- Token amounts and types are visible on-chain
-- Simpler validation logic
-- Lower computational overhead
-- Suitable for use cases where privacy is not required
+### 2.2 Comparison with existing drivers
 
-**zkatdlog (Privacy-Preserving Tokens)**:
-- Token amounts hidden using zero-knowledge proofs
-- Requires cryptographic validation of ZK proofs
-- Higher computational overhead
-- Suitable for privacy-sensitive applications
+| Concern | Fabric | FabricX (Approach-2 template) | EVM (this driver) |
+|--------|--------|------------------------------|-------------------|
+| Validation | chaincode on-chain | FSC off-chain + endorse | FSC off-chain + endorse |
+| Backend artifact | RWSet | RWSet (+ read deps) | typed `StateDelta` |
+| Endorsement transport | Fabric endorser protocol | FSC views | FSC views |
+| Spent semantics | delete/SN keys | delete/SN keys + MVCC read-set | two-list delta + on-chain checks |
+| Re-validation at commit | MVCC | MVCC | **contract must do it** (no read-set) |
+| Finality | push committer | notification queue | gateway `isPending` + queue |
 
-The driver abstracts the token-specific logic through the existing driver interface. Token validation remains off-chain in Go (within FSC/TTX flows), while the on-chain contracts handle signature verification and state application regardless of token type.
+The EVM driver follows FabricX structurally (it is the Approach-2 template Angelo authored) but emits a
+`StateDelta` instead of an RWSet and replaces MVCC re-validation with explicit on-chain checks.
 
-### 2.1 High-Level Flow
+### 2.3 End-to-end flow
 
 ```mermaid
 sequenceDiagram
     participant App as Application/TTX
-    participant Driver as Ethereum Driver
-    participant E1 as FSC Endorser 1
-    participant E2 as FSC Endorser 2
-    participant Node as Ethereum Node
-    participant Contract as TokenState Contract
-    participant Verifier as EndorsementVerifier
+    participant I as Initiator (Driver)
+    participant E as Endorsers (FSC)
+    participant N as EVM Node / Gateway
+    participant TS as TokenState
+    participant EV as EndorsementVerifier
 
-    Note over App,Verifier: Token Transfer Flow
-    
-    App->>Driver: RequestApproval(tokenRequest)
-    Driver->>Driver: Compute state delta
-    
-    par Collect Endorsements
-        Driver->>E1: Request endorsement
-        E1->>E1: Validate in Go
-        E1->>E1: Sign EIP-712 digest
-        E1-->>Driver: Signature 1
-    and
-        Driver->>E2: Request endorsement
-        E2->>E2: Validate in Go
-        E2->>E2: Sign EIP-712 digest
-        E2-->>Driver: Signature 2
+    App->>I: RequestApproval(tokenRequest, anchor, metadata)
+    par per endorser over FSC session
+        I->>E: tokenRequest + TMS context + anchor
+        E->>E: validate in Go (eth_call@finalized ledger)
+        E->>E: recompute StateDelta (evm key translator)
+        E->>E: assert local ppHash/version == delta
+        E->>E: persist validation record
+        E->>E: sign EIP-712(StateDelta)
+        E-->>I: {signature, endorserAddress}
     end
-    
-    Driver->>Driver: ABI-encode applyStateDelta()
-    Driver->>Driver: Build & sign Ethereum tx
-    
-    App->>Driver: Broadcast(envelope)
-    Driver->>Node: eth_sendRawTransaction
-    Node->>Contract: Execute applyStateDelta()
-    Contract->>Verifier: verify(signatures)
-    Verifier-->>Contract: Valid
-    Contract->>Contract: Check double-spend
-    Contract->>Contract: Apply state delta
-    Contract->>Contract: Emit StateCommitted event
-    
-    Node->>Node: Mine block
-    Driver->>Driver: Poll receipt
-    Driver->>Contract: getTokenRequestHash(txID)
-    Driver-->>App: OnStatus(Valid, requestHash)
+    I->>I: verify threshold, ABI-encode typed applyStateDelta, sign eth tx
+    I->>N: eth_sendRawTransaction
+    N->>TS: applyStateDelta(delta, signatures)
+    TS->>EV: verify(structHash, signatures)
+    EV-->>TS: ok (threshold met, unique, low-s)
+    TS->>TS: anchor unused? ppVersion current? inputs exist&unspent? serials unused?
+    TS->>TS: mark spent, store outputs, store metadata, store tokenRequestHash
+    TS-->>N: emit StateCommitted(anchor, true)
+    I->>N: TransactionByHash(ethTxHash).isPending → finalized
+    I-->>App: OnStatus(Valid, tokenRequestHash)
 ```
 
-### 2.2 Component Architecture
+### 2.4 Package layout
 
 ```
-token/services/network/ethereum/
-├── driver.go              # Driver registration
-├── network.go             # Network interface implementation
-├── ledger.go              # Ledger interface implementation
-├── envelope.go            # Ethereum transaction envelope
-├── client.go              # JSON-RPC client abstraction
-├── eip712.go              # EIP-712 signing utilities
-├── config.go              # Configuration structures
-├── endorsement/
-│   └── esp.go             # Endorsement service provider
-├── finality/
-│   └── poller.go          # Receipt polling for finality
-└── contract/
-    └── abi.go             # Contract ABI encoding/decoding
+token/services/network/evm/
+├── driver.go                # NewDriver(...) DI constructor + Registration (mirrors fabricx/driver.go)
+├── network.go               # driver.Network implementation
+├── ledger.go                # driver.Ledger adapter (read-only, eth_call@finalized)
+├── envelope.go              # driver.Envelope (Bytes/FromBytes/TxID/String)
+├── config.go                # config.Service-backed configuration + validation
+├── client/                  # EVMClient interface + JSON-RPC client + local Address/Hash types
+├── eip712/                  # domain separator, type hashes, digest, secp256k1 signer/verifier
+├── keys/                    # evm KeyTranslator (analog of common/rws/keys.Translator)
+├── statedelta/              # StateDelta translator (validated actions -> StateDelta)
+├── endorsement/             # ServiceProvider (lazy per TMSID), initiator + responder views, identity registry
+├── finality/                # poller/manager over gateway isPending, reuses fabricx queue + OnlyOnceListener
+├── pp/                      # public-parameters version keeper (analog of fabricx/pp)
+└── contracts/               # Solidity sources (EndorsementVerifier, TokenState), ABI, deploy scripts
 ```
 
 ---
 
 ## 3. Smart Contracts
 
-### 3.1 Contract Architecture
+### 3.1 Storage layout — TokenState
 
-Two separate contracts provide separation of concerns and enable endorser policy updates without redeploying token state:
-
-1. **EndorsementVerifier**: Manages authorized endorsers and verifies signatures
-2. **TokenState**: Stores token data and delegates signature verification
-
-**Deployment Model**: Contracts are deployed externally using deployment tools (e.g., Foundry, Hardhat) before the driver starts. The driver reads contract addresses from configuration under `token.tms.<tms-id>.services.network.ethereum.*`.
-
-**Token Storage Model**: Each TMS refers to a single TokenState contract. All tokens managed by that TMS are stored in this one contract, regardless of token type (fabtoken or zkatdlog). The contract address is specified in the configuration:
-
-```yaml
-token:
-  tms:
-    mytms:
-      namespace: token
-      services:
-        network:
-          ethereum:
-            contracts:
-              tokenState: 0x1234...           # Single TokenState for this TMS
-              endorsementVerifier: 0x5678...  # EndorsementVerifier contract
-```
-
-Multiple TMS instances can be configured, each with its own TokenState contract if needed for organizational separation.
-
-### 3.2 EndorsementVerifier Contract
-
-**Purpose**: Centralized signature verification and endorser management.
-
-**Interface**:
 ```solidity
-interface IEndorsementVerifier {
-    // Verify endorser signatures on a state delta
-    function verify(
-        bytes32 domainSeparator,
-        bytes32 structHash,
-        bytes[] calldata signatures
-    ) external view returns (bool);
-    
-    // Endorser management (admin only)
-    function addEndorser(address endorser) external;
-    function removeEndorser(address endorser) external;
-    function setThreshold(uint256 threshold) external;
-    
-    // Query functions
-    function isEndorser(address addr) external view returns (bool);
-    function getEndorsers() external view returns (address[] memory);
-    function getThreshold() external view returns (uint256);
-    
-    // Events
-    event EndorserAdded(address indexed endorser);
-    event EndorserRemoved(address indexed endorser);
-    event ThresholdChanged(uint256 oldThreshold, uint256 newThreshold);
+contract TokenState {
+    // token data, keyed by tokenID = keccak256(abi.encode(anchor, index))
+    mapping(bytes32 => bytes)   tokens;          // tokenID => token bytes (addressable by anchor,index)
+    mapping(bytes32 => bool)    snExists;        // graph-revealing: content-bound output markers recorded at creation
+    mapping(bytes32 => bool)    snSpent;         // graph-revealing: markers consumed by a spend
+    mapping(bytes32 => bool)    serialUsed;      // graph-hiding: serial number seen
+    mapping(bytes32 => bytes32) tokenRequestHash; // anchor => SHA-256(tokenRequest)
+    mapping(bytes32 => bool)    processedAnchor;  // idempotency / replay guard
+    mapping(bytes32 => bytes)   transferMetadata; // metadataKey => value
+
+    bytes   publicParameters;
+    bytes32 publicParamsHash;     // SHA-256(publicParameters)
+    uint64  publicParamsVersion;  // mirrors pp.VersionKeeper: first set = 0, then +1
+    bool    graphHiding;          // set from public params at init/PP-update; selects spentRefs semantics
+    address endorsementVerifier;
+    address deployer;             // seeds the initial PP + endorser set once; after that the quorum owns all
 }
 ```
 
-**Storage**:
+Rationale for `spent` flag + retained bytes (vs Fabric's delete): the network driver is the abstraction
+boundary, so higher layers only observe `AreTokensSpent`/`QueryTokens` results; retaining bytes preserves
+on-chain auditability and lets `getToken` answer for spent tokens. The deleted-key gas refund is marginal and
+not worth losing history. See §15.2.
+
+The `graphHiding` flag lets a **single** `spentRefs` list serve both modes: since each TokenState serves one
+driver, the mode is fixed per contract and the interpretation of `spentRefs` is unambiguous (Angelo's one-list
+steer). See §3.6.
+
+### 3.2 EndorsementVerifier
+
 ```solidity
-mapping(address => bool) endorsers;
-address[] endorserList;
-uint256 threshold;
-address admin;
+interface IEndorsementVerifier {
+    // digest = keccak256(0x1901 || domainSeparator || hashStruct(StateDelta)); TokenState computes it (it
+    // owns the domain, whose verifyingContract = address(this)) and passes the final digest — see note below.
+    function verify(bytes32 digest, bytes[] calldata signatures) external view returns (bool);
+
+    function isEndorser(address a) external view returns (bool);
+    function getEndorsers() external view returns (address[] memory);
+    function getThreshold() external view returns (uint256);
+}
 ```
 
-**Signature Verification Logic**:
-1. Recover signer address from each signature using `ecrecover`
-2. Verify each recovered address is unique and in the endorser set
-3. Check that number of valid signatures meets threshold
-4. Return true if all checks pass
+`verify` rules, in order (implemented in `contracts/src/EndorsementVerifier.sol`, PR 2a):
+1. `signatures.length ≥ threshold`, else `InsufficientEndorsements`.
+2. Recover each signer over the passed `digest` with `ecrecover`; reject malformed signatures: require
+   65-byte `{r,s,v}`, `v ∈ {27,28}`, and **low-s** (`s ≤ secp256k1n/2`) to block malleability (EIP-2 style).
+3. Each recovered address must be a current endorser and **unique within the call** (so N signatures from one
+   endorser are not counted N times — raised by @arner).
+4. **Strict semantics: every provided signature must be valid** — the contract does not scan for "at least
+   threshold valid among possibly-invalid ones." The initiator assembles the bundle and must only include
+   signatures it verified; a partially-invalid bundle is evidence of a broken or malicious initiator, and
+   accepting it would mask faults (it also removes any gas incentive to pad the call with junk). Failures
+   revert with a typed reason (per §13) rather than returning false.
 
-### 3.3 TokenState Contract
+**Implementation deviations (PR 2a, 2026-07-08):**
+- `verify` takes the **final `digest`**, not `structHash`. The digest binds `domainSeparator`, which includes
+  `verifyingContract = TokenState`. TokenState is a per-TMS EIP-1167 clone, so it — not a shared/decoupled
+  verifier — computes the digest (via `EIP712.digest`); a verifier taking `structHash` would need to know each
+  clone's address, a needless coupling and a chicken-and-egg at deploy. `domainSeparator` still binds `chainId`
+  + `verifyingContract`, so signatures cannot be replayed across chains or contracts.
+- **No `addEndorser`/`removeEndorser`/`setThreshold` in v1.** The deployer seeds the set + threshold at
+  construction (immutable thereafter). Per §15.3 the quorum owns governance post-bootstrap, but runtime
+  endorser-set mutation is a quorum-gated feature deferred beyond v1 — none of the v1 acceptance flows
+  (issue/transfer/redeem/PP-update) mutate the endorser set. Add the mutators + their events when governance
+  lands.
 
-**Purpose**: Store token state and apply endorsed state updates.
+### 3.3 TokenState — interface
 
-**Interface**:
 ```solidity
 interface ITokenState {
-    // Apply an endorsed state delta
-    function applyStateDelta(
-        bytes32 txID,
-        bytes calldata stateDelta,
-        bytes[] calldata signatures
-    ) external returns (bool);
-    
-    // Query functions
+    // delta passed as a TYPED struct (not opaque bytes) so the contract recomputes hashStruct itself.
+    function applyStateDelta(StateDelta calldata delta, bytes[] calldata signatures) external returns (bool);
+
     function getToken(bytes32 tokenID) external view returns (bytes memory);
     function isSpent(bytes32 tokenID) external view returns (bool);
     function areTokensSpent(bytes32[] calldata tokenIDs) external view returns (bool[] memory);
+    function isSerialUsed(bytes32 serial) external view returns (bool);
     function getPublicParameters() external view returns (bytes memory);
-    function getTransferMetadata(bytes32 metadataKey) external view returns (bytes memory);
-    function getTokenRequestHash(bytes32 txID) external view returns (bytes32);
-    
-    // Admin functions
-    function setPublicParameters(bytes calldata params) external;
-    function setEndorsementVerifier(address verifier) external;
-    
-    // Events
-    event StateCommitted(bytes32 indexed txID, bool success, string message);
-    event PublicParametersUpdated(bytes32 indexed paramsHash);
+    function getPublicParamsVersion() external view returns (uint64);
+    function getTransferMetadata(bytes32 key) external view returns (bytes memory);
+    function getTokenRequestHash(bytes32 anchor) external view returns (bytes32); // SHA-256 value
+
+    event StateCommitted(bytes32 indexed anchor, bool success, string message);
+    event PublicParametersUpdated(bytes32 indexed paramsHash, uint64 version);
 }
 ```
 
-**Storage**:
+Note there is **no** privileged `setPublicParameters(address admin)`: PP updates arrive as an endorsed setup
+delta (§3.5), gated by the same threshold as any other state change. Governance (Angelo): the **deployer only
+seeds** the initial PP + endorser set; **once the quorum is set it owns everything** — endorser-set changes,
+threshold changes, and `setEndorsementVerifier` are all quorum-gated (a threshold-signed admin delta / call),
+not deployer privileges (§3.8, §15.3).
+
+### 3.4 applyStateDelta — semantics (replaces Fabric MVCC)
+
+On Fabric/FabricX, the read-dependencies created by `checkInputs` and `AddPublicParamsDependency`
+(`StateMustExist`/`StateMustNotExist` → `AddReadAt(version)`) are re-validated at commit by MVCC. The EVM has
+no read-set, so `applyStateDelta` performs these checks itself, in this order, reverting with a typed reason:
+
+1. `require(!processedAnchor[delta.anchor])` — else `AnchorAlreadyProcessed`.
+2. `structHash = hashStruct(delta)`; `require(verifier.verify(structHash, signatures))` — else `InvalidSignatures`.
+3. `require(delta.publicParamsVersion == publicParamsVersion && delta.publicParamsHash == publicParamsHash)`
+   — else `StalePublicParams`. (On-chain equivalent of `AddPublicParamsDependency`.)
+4. Interpret the single `delta.spentRefs` by mode:
+   - if `!graphHiding` (graph-revealing): each `ref` is a **content-bound output marker**; `require(snExists[ref]
+     && !snSpent[ref])` — else `InputMissingOrSpent`. Existence of the marker proves the spent token has the
+     exact bytes recorded at creation, so forged content is rejected.
+   - if `graphHiding`: for each `ref`, `require(!serialUsed[ref])` — else `DoubleSpend`.
+5. Apply (all-or-nothing): for each `ref` set `snSpent[ref]=true` (graph-revealing) or `serialUsed[ref]=true`
+   (graph-hiding); for each output store `tokens[out.tokenID]=out.tokenData` and record `snExists[out.snMarker]=true`;
+   `transferMetadata[k]=v` for metadata; `tokenRequestHash[anchor]=delta.tokenRequestHash`;
+   `processedAnchor[anchor]=true`.
+6. `emit StateCommitted(anchor, true, "")`.
+
+`AreTokensSpent(txid, index)` for graph-revealing resolves the token content via `getToken(ComputeTokenID(...))`,
+recomputes `OutputSNMarker(anchor, index, content)`, and returns `snSpent[marker]`.
+
+Any failed `require` reverts the whole transaction (atomicity); the finality layer maps the revert to
+`Invalid` via the receipt status.
+
+### 3.5 Public-parameters lifecycle (endorsed, versioned)
+
+PP updates are not privileged. The flow mirrors the SDK's `SetupAction` → `commitSetupAction`:
+- A setup token request produces a `SetupAction`; the StateDelta translator emits a **setup delta** carrying
+  the new `publicParameters` bytes (outputs/inputs empty).
+- Endorsers validate and sign it like any delta. `applyStateDelta` (setup variant or a flag on the delta)
+  stores `publicParameters`, sets `publicParamsHash = sha256(params)`, and bumps `publicParamsVersion`
+  (first set → 0, subsequent → +1, exactly as `pp.VersionKeeper.UpdateVersion`), then emits
+  `PublicParametersUpdated`.
+- Initial PP v0 and the initial endorser set are seeded by the deployer at deployment (bootstrap), since no
+  quorum exists yet.
+
+The driver-side `pp.VersionKeeper` (per TMS) caches the version and is synced from
+`getPublicParamsVersion()`; endorsers refuse to sign a delta whose `publicParamsVersion` ≠ their synced value.
+
+### 3.6 Spent / existence model — one list, contract-side mode
+
+Verified opposite polarities in `token/services/network/common/rws/translator/translator.go`:
+
+- **Graph-revealing** (fabtoken, zkatdlog/nogh): each output stored under `CreateOutputKey(anchor,index)`
+  **and** `CreateOutputSNKey(anchor,index,outputBytes)`. `checkInputs` requires the input to **exist**
+  (`StateMustExist`), `spendInputs` **deletes** it. Spent = absence. `GetInputs()` populated,
+  `GetSerialNumbers()` nil.
+- **Graph-hiding**: `checkInputs` requires the serial number to **not exist**, `spendInputs` **writes** it.
+  Spent = presence. `GetInputs()` empty, `GetSerialNumbers()` populated.
+
+The two modes need opposite on-chain checks, but they do **not** need two lists in the delta. Because each
+TokenState serves a single driver, the mode is a fixed property of the contract, carried as the `graphHiding`
+flag (set from public params at init/PP-update). So `StateDelta` carries **one** `bytes32[] spentRefs`, and
+the contract branches (Angelo's one-list steer, §3.4):
+- graph-revealing: each `ref` is a token ID → `tokens[ref]` must exist and `spent[ref]` false → set `spent[ref]`.
+- graph-hiding: each `ref` is a serial number → `serialUsed[ref]` must be false → set `serialUsed[ref]`.
+
+`areTokensSpent` mirrors this: graph-revealing returns `spent[ref]`; graph-hiding returns `serialUsed[ref]`.
+The driver's off-chain translator produces `spentRefs` from `GetInputs()` (graph-revealing, as token IDs) or
+`GetSerialNumbers()` (graph-hiding) — only one is ever non-empty for a given driver.
+
+### 3.7 Token ID derivation
+
+One derivation, defined by the `evm` key translator (§5.2) and reproduced by the contract:
+
 ```solidity
-// Token state
-mapping(bytes32 => bytes) tokens;           // tokenID => serialized token
-mapping(bytes32 => bool) spent;             // tokenID => spent flag
-mapping(bytes32 => bytes32) tokenRequestHash; // txID => request hash
-
-// Metadata
-mapping(bytes32 => bytes) transferMetadata; // metadataKey => value
-
-// Configuration
-bytes publicParameters;
-address endorsementVerifier;
-address admin;
-```
-
-**State Delta Structure**:
-```solidity
-struct StateDelta {
-    bytes32 txID;              // Transaction ID
-    bytes32[] spentIDs;        // Token IDs to mark as spent
-    OutputToken[] outputs;     // New tokens to create
-    bytes32[] metadataKeys;    // Metadata keys to store
-    bytes[] metadataVals;      // Metadata values
-    bytes32 requestHash;       // Hash of original token request
-}
-
-struct OutputToken {
-    bytes32 tokenID;           // Computed token ID
-    bytes tokenData;           // Serialized token
+function computeTokenID(bytes32 anchor, uint256 index) internal pure returns (bytes32) {
+    return keccak256(abi.encode(anchor, index)); // abi.encode is length-safe; never raw-concat
 }
 ```
 
-**applyStateDelta Logic**:
-1. Verify transaction ID is unique (not already processed)
-2. Compute EIP-712 digest of state delta
-3. Call EndorsementVerifier.verify() with digest and signatures
-4. If verification fails, revert with "Invalid signatures"
-5. Check all spentIDs are not already spent (double-spend check)
-6. If double-spend detected, revert with "Double spend detected"
-7. Mark all spentIDs as spent
-8. Store all output tokens
-9. Store all metadata key-value pairs
-10. Store token request hash
-11. Emit StateCommitted event with success=true
+### 3.8 Deployment (minimal clones)
 
-### 3.4 Token ID Mapping
+Per-TMS full-bytecode deployment is costly. Decision (§15.4): deploy one shared `TokenState` implementation +
+one `EndorsementVerifier`, then create a per-TMS `TokenState` via **EIP-1167 minimal proxy (clone)** with an
+`initialize(verifier, deployer, pp0, endorsers, threshold)` initializer. Minimal clones are cheap and do
+**not** introduce upgradeability (which stays out of scope). NWO/forge scripts perform deployment.
 
-The SDK uses composite string keys internally: `\x00token\x00<txID>\x00<index>`
+### 3.9 Transaction model / batching
 
-**Ethereum Mapping**:
-```solidity
-function computeTokenID(bytes32 txID, uint256 index) internal pure returns (bytes32) {
-    return keccak256(abi.encode(txID, index));
-}
-```
-
-This provides:
-- Deterministic mapping from SDK token IDs to Ethereum bytes32
-- Cheap computation (single keccak256)
-- Collision resistance
-- No storage overhead
+v1: one `eth_sendRawTransaction` per `StateDelta`. Keep `applyStateDelta` internally a function so a future
+`applyStateDeltaBatch(StateDelta[])` is additive without an ABI break. ERC-4337 (UserOperations + paymaster
+gas sponsoring, removing the need for FSC nodes to hold ETH) is the planned v2 path; it would change
+`Broadcast()` and add EntryPoint integration. (Raised by @alexandrosfilios.)
 
 ---
 
-## 4. EIP-712 Signature Envelope
+## 4. StateDelta and EIP-712
 
-### 4.1 Domain Separator
+### 4.1 StateDelta (final, typed) — field by field
 
 ```solidity
-EIP712Domain {
-    name: "FabricTokenSDK",
-    version: "1",
-    chainId: <chain ID>,
-    verifyingContract: <TokenState contract address>
+struct OutputToken { bytes32 tokenID; bytes32 snMarker; bytes tokenData; }
+
+struct StateDelta {
+    bytes32       anchor;              // TokenRequestAnchor = SHA-256(nonce ‖ creator); NOT the eth tx hash
+    bytes32[]     spentRefs;          // one list; content-bound output markers (graph-revealing) OR serials (graph-hiding), per contract graphHiding flag
+    OutputToken[] outputs;             // new non-redeem tokens, in deterministic counter order
+    bytes32[]     metadataKeys;        // sorted ascending (canonicalization, §4.4)
+    bytes[]       metadataVals;        // aligned with metadataKeys
+    bytes32       tokenRequestHash;    // SHA-256(tokenRequest)
+    bytes32       publicParamsHash;    // SHA-256(publicParameters)
+    uint64        publicParamsVersion; // must equal on-chain version at apply time
+    bool          isSetup;             // true => setup/PP-update delta (spentRefs/outputs empty, carries new PP)
+    bytes         setupParameters;     // present iff isSetup
 }
 ```
 
-**Properties**:
-- Binds signatures to specific chain (prevents replay across chains)
-- Binds signatures to specific contract (prevents replay across contracts)
-- Standard EIP-712 format (wallet compatibility)
+One field set, used identically by the Go struct, the EIP-712 type, and the Solidity struct. `spentRefs` is a
+single `bytes32[]` (Angelo's one-list steer); there is no `Input` struct. (The original doc had two divergent
+`StateDelta` definitions and an EIP-712 type missing `publicParamsHash`.)
 
-### 4.2 StateDelta Type Hash
+### 4.2 EIP-712 encoding
 
-```solidity
-StateDelta(
-    bytes32 txID,
-    bytes32[] spentIDs,
-    OutputToken[] outputs,
-    bytes32[] metadataKeys,
-    bytes[] metadataVals,
-    bytes32 requestHash
-)
+- Domain: `EIP712Domain{ name:"Panurus", version:"1", chainId, verifyingContract:<TokenState clone> }`.
+- The type string lists every field above, with the referenced struct `OutputToken` appended per EIP-712
+  (`spentRefs`/`metadataKeys` are plain `bytes32[]`, no referenced struct).
+- `hashStruct` follows EIP-712: dynamic members (`bytes`, arrays, struct arrays) are hashed per spec;
+  `tokenData`/`setupParameters` (`bytes`) hash to `keccak256(value)`; arrays hash to
+  `keccak256(concat(encodeElement))`.
+- Digest = `keccak256(0x1901 ‖ domainSeparator ‖ hashStruct(StateDelta))`. keccak is mandated by EIP-712 and
+  applies to the 32-byte field values; the *values* of `tokenRequestHash`/`publicParamsHash` are SHA-256.
 
-OutputToken(
-    bytes32 tokenID,
-    bytes tokenData
-)
-```
+### 4.3 Hashing summary (avoid the keccak/SHA-256 trap)
 
-### 4.3 Signature Generation (Endorser Side)
+| Value | Algorithm | Why |
+|------|-----------|-----|
+| token ID, spent marker, metadata key, EIP-712 digest/structHash | keccak256 | EVM-native, cheap on-chain |
+| `tokenRequestHash` | SHA-256 | SDK stores/compares SHA-256 (`translator.go:CommitTokenRequest`) |
+| `publicParamsHash` | SHA-256 | SDK PP hash is SHA-256 (`core/common/ppm.go` → `utils.Hashable.Raw()`) |
 
-```go
-func (e *Endorser) SignStateDelta(delta *StateDelta) ([]byte, error) {
-    // 1. Compute domain separator
-    domainSeparator := computeDomainSeparator(
-        "FabricTokenSDK",
-        "1",
-        e.chainID,
-        e.contractAddress,
-    )
-    
-    // 2. Compute struct hash
-    structHash := computeStateDeltaHash(delta)
-    
-    // 3. Compute EIP-712 digest
-    digest := keccak256(
-        "\x19\x01",
-        domainSeparator,
-        structHash,
-    )
-    
-    // 4. Sign with secp256k1
-    signature, err := e.signer.Sign(digest)
-    if err != nil {
-        return nil, err
-    }
-    
-    return signature, nil
-}
-```
+If the contract must reproduce the SHA-256 values it uses the SHA-256 precompile (address 0x02).
 
-### 4.4 Signature Verification (Contract Side)
+### 4.4 Determinism (identical bytes across all endorsers)
 
-```solidity
-function verifySignature(
-    bytes32 domainSeparator,
-    bytes32 structHash,
-    bytes memory signature
-) internal pure returns (address) {
-    bytes32 digest = keccak256(
-        abi.encodePacked(
-            "\x19\x01",
-            domainSeparator,
-            structHash
-        )
-    );
-    
-    return ecrecover(digest, v, r, s);
-}
-```
+All endorsers must serialize a byte-identical `StateDelta`, else signatures verify against different
+`structHash`es. Canonicalize every nondeterministic source:
+- `metadataKeys/Vals`: built from a Go `map` (random iteration order in `translator.go:commitIssueAction/
+  commitTransferAction`). **Sort by `metadataKey` ascending**, keep `vals` aligned.
+- `spentRefs`, `outputs`: emit in deterministic action/counter order. Reproduce the translator
+  counter exactly: issue advances by `len(outputs)`; transfer advances by `NumOutputs()` (redeem slots
+  included); redeem outputs are skipped (`IsRedeemAt`).
+
+### 4.5 No blind-signing
+
+The endorsement request carries **only** the token request + TMS context + anchor — never a precomputed
+digest. Each endorser validates, recomputes the delta from the validated actions via the shared key
+translator, checks `publicParamsHash/version`, computes the digest locally, and signs. This is the issue
+@atharrva01 raised on the PR: a malicious initiator must not be able to get endorsers to sign a delta that
+doesn't match what they validated.
 
 ---
 
 ## 5. Driver Interface Implementation
 
-### 5.1 Token Request to StateDelta Translation
+Implements `token/services/network/driver/network.go` `Network` (signatures below match exactly).
 
-For Ethereum, the translation step must follow the same architectural role that `RequestApprovalResponderView` plays for Fabric endorsement. In Fabric, the responder validates the token request, unmarshals it into token actions, and invokes the translator in `token/services/network/common/rws/translator` to materialize an RWSet. For Ethereum, we need the same pattern, but the backend artifact is a `StateDelta` instead of a Fabric RWSet.
+### 5.1 evm key derivations (`evm/keys`)
 
-The important design point is: **the Ethereum path must not invent an ad-hoc token-request mapper**. It should reuse the validated token actions returned by the validator and pass them through a dedicated translator component, analogous to the current RWSet translator.
+The one source of truth for on-chain keys, shared by initiator + endorsers and reproduced by the contract.
+These return **`[32]byte`** (not the string keys of `translator.KeyTranslator`): the EVM driver builds its own
+StateDelta translator rather than reusing Fabric's RWSet translator, and needs `bytes32`, so the package
+exposes EVM-native derivations (as implemented in Phase 1.3):
 
-#### StateDelta Translator Interface
+| Function | Derivation | Used for |
+|--------|-----------|-----------|
+| `ComputeTokenID(anchor, index)` | `keccak256(abi.encode(anchor, index))` | addressable token id / storage key (queries) |
+| `OutputSNMarker(anchor, index, tokenData)` | `keccak256(abi.encode(anchor, index, keccak256(tokenData)))` | **content-bound** graph-revealing spent ref |
+| `SpentRefForSerial(serial)` | `keccak256(0x03 ‖ serial)` | graph-hiding spent ref |
+| `IssueMetadataKey(subkey)` | `keccak256(0x01 ‖ subkey)` | issue metadata key |
+| `TransferMetadataKey(subkey)` | `keccak256(0x02 ‖ subkey)` | transfer metadata key |
+| `AnchorFromTxID(txID)` | decode hex-32 | txID string → `bytes32` anchor |
 
-The translator must implement the following interface to ensure consistency with the RWSet translator pattern:
+**Content binding (why `OutputSNMarker`, not `ComputeTokenID`, is the graph-revealing spent ref):** the SDK
+validator is stateless — the fabtoken transfer validator sets `ctx.InputTokens` from the action's own inputs
+(`validator_transfer.go:89`) and checks balance against those, never loading the real on-chain token. So a
+spend reference keyed only by `(anchor, index)` would let a spender present forged bytes at a real position.
+`OutputSNMarker` binds the token content (mirroring Fabric's `CreateOutputSNKey`): the marker is recorded when
+the output is created and referenced by a graph-revealing spend, so forged content yields a marker that was
+never recorded and the spend is rejected. `ComputeTokenID` remains the addressable storage key (so
+QueryTokens/AreTokensSpent can resolve a `token.ID`).
+
+Class separation uses fixed 1-byte prefixes (mirroring `keys.HashedKeyTranslator`), not ad-hoc
+`"SERIAL_NUMBER"` strings. The token-request hash and PP hash are stored directly by the contract keyed by
+anchor / fixed slots. `spentRefs` and `snMarker` are opaque `bytes32` to the contract (existence checks only);
+all hashing happens off-chain.
+
+### 5.2 StateDelta translator (`evm/statedelta`)
+
+EVM analog of `common/rws/translator`. Consumes **validated actions** (not the raw request); reuses the same
+action methods the RWSet translator uses. Surface matches what the responder calls, plus a `StateDelta()`
+extractor:
 
 ```go
-// Translator translates validated token actions into Ethereum state deltas
-// This interface matches the pattern used in Fabric's RequestApprovalResponderView
 type Translator interface {
-    // Write processes a token action and accumulates state changes
-    Write(ctx context.Context, action any) error
-    
-    // AddPublicParamsDependency records dependency on public parameters
-    AddPublicParamsDependency() error
-    
-    // CommitTokenRequest stores the token request hash
-    CommitTokenRequest(raw []byte, storeHash bool) ([]byte, error)
+    Write(ctx context.Context, action any) error                   // routes Setup/Issue/Transfer
+    AddPublicParamsDependency() error                              // sets delta.publicParamsHash + version
+    CommitTokenRequest(raw []byte, storeHash bool) ([]byte, error) // SHA-256 -> delta.tokenRequestHash
 }
+// concrete *Translator additionally exposes: StateDelta() (StateDelta, error)
 ```
 
-**Note**: The translator interface is intentionally minimal, matching the Fabric pattern used in `RequestApprovalResponderView`. The StateDelta is extracted through the concrete implementation (e.g., a `StateDelta()` method on the struct), not through the interface. Additional methods like `QueryTokens`, `AreTokensSpent`, etc. are internal implementation details.
+Action → StateDelta mapping:
+
+| Action | Effect |
+|--------|--------|
+| `SetupAction` | `isSetup=true`, `setupParameters = GetSetupParameters()`, set ppHash/version; empty spentRefs/outputs |
+| `IssueAction` | append outputs (`GetSerializedOutputs`), metadata (`GetMetadata`); spentRefs only if the action declares inputs |
+| `TransferAction` | append non-redeem outputs (`SerializeOutputAt`, skip `IsRedeemAt`); append to `spentRefs` from `GetInputs()` as token IDs (graph-revealing) **or** `GetSerialNumbers()` (graph-hiding) — one is empty; append metadata |
+
+Counter handling and ordering per §4.4.
+
+### 5.3 Network methods (detailed)
+
+- `Name()` → configured network name; `Channel()` → `""`.
+- `Normalize(opt)` → default network if empty, force channel `""`.
+- `Connect(ns)` → validate TokenState clone address present, `client.Ping`, `ChainID` matches config, PP
+  version keeper synced; return `[]token.ServiceOption{WithNetwork, WithChannel(""), WithNamespace}`.
+- `ComputeTxID(id)` → `hex(SHA-256(lenPrefix(id.Nonce) ‖ id.Creator))` = `TokenRequestAnchor`. Length-safe
+  (no raw append), independent of chainID/contract and of the eth tx hash.
+- `NewEnvelope()` → empty `*Envelope`.
+- `Broadcast(ctx, blob)` → assert `*Envelope`; `client.SendRawTransaction(rawTx)`; record eth tx hash;
+  `finality.Track(anchor, ethTxHash)`.
+- `RequestApproval(ctx, tms, requestRaw, signer, txID, metadata)` → `endorsementProvider.Get(tms.ID()).Endorse(...)` (§6).
+- `FetchPublicParameters(ns)` → `eth_call getPublicParameters` (opaque bytes, both drivers).
+- `QueryTokens(ctx, ns, IDs)` → per ID, `getToken(keys.ComputeTokenID(anchor, index))`.
+- `AreTokensSpent(ctx, ns, IDs, meta)` → graph-hiding (`len(meta)!=0`): `isSerialUsed(keys.SpentRefForSerial(sn))`;
+  graph-revealing: resolve through the **content-bound marker** (the spent flag is keyed by `snMarker`, not
+  `tokenID`), per §3.4 — either a contract `tokenID → spent` mapping populated at output creation, or the
+  driver's `getToken(ComputeTokenID)` → recompute `OutputSNMarker(anchor, index, content)` → `snSpent[marker]`.
+  (Query-surface decision pinned in the plan's Week 2.) A bare `isSpent(keys.ComputeTokenID(...))` is
+  **insufficient** — it ignores content and cannot see the marker-keyed spent flag.
+- `GetTransactionStatus(ctx, ns, anchor)` → resolve via indexed `StateCommitted` log by `anchor` → eth tx →
+  finality (§7) → `getTokenRequestHash(anchor)`. Returns `(status, tokenRequestHash, message, err)`.
+- `LookupTransferMetadataKey(ns, key, timeout)` → poll `getTransferMetadata(CreateTransferActionMetadataKey(key))`
+  until found/timeout; context-aware, no bare `time.Sleep`.
+- `LocalMembership()` → EVM membership resolving this node's endorser/submitter identities (config-driven).
+- `Ledger()` → read-only `driver.Ledger` (`Status`, `GetTransactionStatus`, `GetStates`,
+  `TransferMetadataKey`) over `eth_call@finalized`. No mutation path.
+
+### 5.4 Envelope
 
-#### Translator Implementation Structure
-
-```go
-type Translator struct {
-    // Transaction context
-    TxID          string
-    Namespace     string
-    ChainID       *big.Int
-    ContractAddr  common.Address
-    
-    // State accumulation
-    SpentIDs      [][32]byte
-    Outputs       []OutputToken
-    MetadataKeys  [][32]byte
-    MetadataVals  [][]byte
-    
-    // Counters and hashes
-    counter           uint64
-    publicParamsHash  [32]byte
-    tokenRequestHash  [32]byte
-    
-    // Dependencies
-    ledger       Ledger
-    client       EVMClient
-}
-```
-
-#### Translation Flow Aligned with `RequestApprovalResponderView`
-
-The flow should be:
-
-1. Receive the token request and TMS context
-2. Validate the proposal/request
-3. Invoke `Validator().UnmarshallAndVerifyWithMetadata(...)`
-4. Obtain:
-   - `actions []any`
-   - `meta map[string][]byte`
-5. Feed the resulting actions to a new **StateDelta translator**
-6. Produce a deterministic `StateDelta`
-7. Hash/sign that `StateDelta` using EIP-712
-
-**Critical Design Requirement**: The StateDelta translator MUST be a separate, well-defined component that mirrors the RWSet translator's role but targets EVM state transitions instead of Fabric RWSets. This ensures:
-- Consistent validation semantics across backends
-- Reuse of existing token action interfaces
-- Clear separation between token logic and backend serialization
-
-This mirrors the current Fabric responder flow:
-
-```go
-actions, meta, err := validator.UnmarshallAndVerifyWithMetadata(
-    ctx,
-    ledger,
-    token.RequestAnchor(anchor),
-    requestRaw,
-)
-```
-
-followed by:
-
-```go
-for _, action := range actions {
-    if err := w.Write(ctx, action); err != nil {
-        return err
-    }
-}
-```
-
-In Ethereum, `w` is not an RWSet writer. It is a `StateDelta` writer/translator.
-
-#### New Translator Abstraction
-
-The current translator package is RWSet-oriented because it emits Fabric reads/writes and read-dependencies. For Ethereum we need a sibling abstraction that follows the same minimal interface pattern used in Fabric's `RequestApprovalResponderView`:
-
-```go
-// Translator translates validated token actions into Ethereum state deltas
-type Translator interface {
-    // Write processes a token action and accumulates state changes
-    Write(ctx context.Context, action any) error
-    
-    // AddPublicParamsDependency records dependency on public parameters
-    AddPublicParamsDependency() error
-    
-    // CommitTokenRequest stores the token request hash
-    CommitTokenRequest(raw []byte, storeHash bool) ([]byte, error)
-}
-```
-
-**Key Responsibilities**:
-- Consume validated token actions (IssueAction, TransferAction, SetupAction)
-- Build deterministic StateDelta structures internally
-- Maintain transaction-scoped state (output counter, spent IDs)
-- Handle both graph-revealing and graph-hiding flows
-- Ensure metadata keys are deterministically hashed
-- Track public parameters dependencies
-
-**Implementation Note**: The translator will need an additional method to extract the final StateDelta, but this is an implementation detail, not part of the core interface. The pattern matches Fabric's RWSet translator where the RWSet is extracted separately.
-
-A possible package layout is:
-
-```text
-token/services/network/ethereum/statedelta/
-```
-
-The key requirement is that this translator is **action-driven**, not RWSet-driven, and follows the same minimal interface pattern as the Fabric translator.
-
-#### StateDelta Translator Responsibilities
-
-Like the RWSet translator, the StateDelta translator must process three action categories:
-
-- `SetupAction`
-- `IssueAction`
-- `TransferAction`
-
-and translate them into a `StateDelta` with fields such as:
-
-```solidity
-struct StateDelta {
-    bytes32 txID;
-    bytes32[] spentIDs;
-    OutputToken[] outputs;
-    bytes32[] metadataKeys;
-    bytes[] metadataVals;
-    bytes32 requestHash;
-    bytes publicParamsHash;
-}
-```
-
-The translator should maintain internal state similarly to the RWSet translator:
-
-- transaction identifier
-- output counter
-- spent identifiers accumulated so far
-- output entries accumulated so far
-- metadata entries accumulated so far
-- public-parameter dependency/hash
-- token request hash
-
-Conceptually:
-
-```go
-type Translator struct {
-    TxID            string
-    SpentIDs        []string
-    Outputs         []OutputToken
-    MetadataKeys    [][]byte
-    MetadataVals    [][]byte
-    counter         uint64
-    publicParamsHash []byte
-    tokenRequestHash []byte
-}
-```
-
-#### Action-to-StateDelta Mapping
-
-**SetupAction**
-- does not create spent IDs or outputs
-- records the public parameters payload/hash that the transaction depends on
-- if setup is represented on-chain, it becomes a dedicated setup/update call or a `StateDelta` carrying only public-parameter updates
-
-**IssueAction**
-- adds newly created outputs to `StateDelta.outputs`
-- records issue metadata into `metadataKeys` / `metadataVals`
-- if the token action is graph-hiding, preserves the serialized output as opaque bytes
-- does not mark existing tokens as spent unless the issue action explicitly consumes inputs
-
-**TransferAction**
-- adds all consumed inputs to `StateDelta.spentIDs`
-- adds all non-redeem outputs to `StateDelta.outputs`
-- records transfer metadata into `metadataKeys` / `metadataVals`
-- for graph-hiding actions, serial numbers are not RWSet keys anymore; instead, they must be represented as entries in `spentIDs` or in a dedicated serial-number section of the delta, depending on the contract model
-
-#### Graph-Revealing vs Graph-Hiding
-
-This is where the Ethereum translator differs most from the RWSet translator.
-
-In the current RWSet translator:
-
-- graph-revealing flows delete output keys and serial-number keys
-- graph-hiding flows add input serial-number keys and check their non-existence
-
-For Ethereum, there is no RWSet. Therefore:
-
-- **graph-revealing** actions translate spent inputs into deterministic spent token identifiers in `spentIDs`
-- **graph-hiding** actions translate consumed serial numbers into the `spentIDs` domain as first-class spent markers
-
-In other words, `StateDelta.spentIDs` must be the canonical on-chain representation of “already consumed” objects, whether they correspond to:
-- visible token output IDs, or
-- graph-hiding serial numbers
-
-The contract then enforces uniqueness/non-reuse by checking that each `spentID` has not been recorded before.
-
-
-
-**Spent ID Encoding Specification**:
-
-To prevent collisions between token IDs and serial numbers, use domain-separated hashing:
-
-```go
-// For graph-revealing flows: token IDs become spent markers
-func ComputeTokenSpentID(txID string, index uint64) [32]byte {
-    // Direct encoding without domain separator since txID is already unique
-    return keccak256(abi.encode(txID, index))
-}
-
-// For graph-hiding flows: serial numbers become spent markers
-func ComputeSerialNumberSpentID(serialNumber string) [32]byte {
-    // Use domain separator to prevent collisions with token IDs
-    return keccak256([]byte("SERIAL_NUMBER"), []byte(serialNumber))
-}
-```
-
-**Critical Design Point**: The domain separator `"SERIAL_NUMBER"` ensures that even if a serial number value happens to match a token ID encoding, they will produce different spent IDs. This prevents any possibility of collision between the two spent tracking mechanisms.
-
-
-#### Token Identifiers and Output Creation
-
-The translator must preserve the same deterministic output allocation logic used today by the RWSet translator:
-
-- outputs are assigned in transaction order
-- output index is derived from the translator-local counter
-- token identifiers are deterministically derived from `(txID, outputIndex)`
-
-For Ethereum, these identifiers are then encoded into the contract-native format, for example:
-
-```go
-func ComputeOutputID(txID string, index uint64) []byte {
-    return keccak256(abi.encode(txID, index))
-}
-```
-
-The serialized output bytes should come directly from the token action methods already used by the RWSet translator:
-
-- `IssueAction.GetSerializedOutputs()`
-- `TransferAction.SerializeOutputAt(i)`
-
-This is important because it keeps the backend-specific translator independent from token-driver-specific serialization details.
-
-
-**Metadata Key Hashing Specification**:
-
-To ensure deterministic and collision-free metadata storage, use namespace-scoped hashing:
-
-```go
-// HashMetadataKey creates a deterministic hash for metadata keys
-// Includes namespace to prevent cross-TMS collisions
-func HashMetadataKey(namespace string, key string) [32]byte {
-    return keccak256([]byte(namespace), []byte(key))
-}
-```
-
-**Rationale**: Including the namespace in the hash prevents metadata key collisions between different TMS instances that might use the same metadata key names. This is critical when multiple TMS instances share infrastructure or when metadata keys are generic (e.g., "recipient", "amount").
-
-
-
-
-
-**Public Parameters Dependency Specification**:
-
-The StateDelta must include a public parameters hash to ensure all endorsers validate against the same cryptographic parameters:
-
-```go
-// In StateDelta structure
-type StateDelta struct {
-    bytes32 txID;
-    bytes32[] spentIDs;
-    OutputToken[] outputs;
-    bytes32[] metadataKeys;
-    bytes[] metadataVals;
-    bytes32 requestHash;
-    bytes32 publicParamsHash;  // Hash of public parameters used for validation
-}
-
-// Computing the hash
-func ComputePublicParamsHash(publicParams []byte) [32]byte {
-    return keccak256(publicParams)
-}
-
-// Endorser verification
-func (e *Endorser) VerifyPublicParams(stateDelta *StateDelta) error {
-    localHash := ComputePublicParamsHash(e.publicParams)
-    if localHash != stateDelta.publicParamsHash {
-        return errors.New("Public parameters mismatch: endorser has different parameters")
-    }
-    return nil
-}
-```
-
-**Critical Requirement**: All endorsers MUST verify that their local public parameters hash matches the `publicParamsHash` in the StateDelta before signing. This prevents endorsement of transactions validated against outdated or incorrect parameters.
-
-
-#### Metadata Translation
-
-The translator must also reuse the action metadata already exposed by the validated actions:
-
-- `IssueAction.GetMetadata()`
-- `TransferAction.GetMetadata()`
-
-Unlike Fabric RWSet translation, where metadata is written under derived keys, Ethereum translation should turn each metadata entry into a deterministic `(key, value)` pair in the `StateDelta`.
-
-Conceptually:
-
-```go
-for key, value := range action.GetMetadata() {
-    delta.MetadataKeys = append(delta.MetadataKeys, HashMetadataKey(key))
-    delta.MetadataVals = append(delta.MetadataVals, value)
-}
-```
-
-The hashing/encoding rule must be deterministic and shared by:
-- initiator
-- endorsers
-- contract ABI encoder / decoder
-
-#### Request Hash and Public Parameter Dependency
-
-The Fabric responder currently commits the token request hash and adds a dependency on public parameters through the RWSet translator. The Ethereum translator must preserve both semantics:
-
-- `CommitTokenRequest(...)` becomes computation/storage of the token request hash into the `StateDelta`
-- `AddPublicParamsDependency()` becomes embedding the public parameter hash/version into the delta or envelope so endorsers sign against the exact public parameters used during validation
-
-Therefore the translator should expose logic equivalent to:
-
-```go
-func (t *Translator) CommitTokenRequest(raw []byte, storeHash bool) ([]byte, error)
-func (t *Translator) AddPublicParamsDependency() error
-```
-
-but instead of generating RWSet reads/writes, it updates the in-memory `StateDelta` to carry:
-- `requestHash`
-- `publicParamsHash` (or equivalent dependency field)
-
-#### Integration in the Ethereum Request Approval Responder
-
-The Ethereum responder should conceptually mirror Fabric's `translate(...)` method:
-
-```go
-func (r *RequestApprovalResponderView) translate(ctx context.Context, request *Request) error {
-    w, err := r.getTranslator(request.Anchor, request.TMSID.Namespace)
-    if err != nil {
-        return err
-    }
-
-    for _, action := range request.Actions {
-        if err := w.Write(ctx, action); err != nil {
-            return err
-        }
-    }
-
-    if err := w.AddPublicParamsDependency(); err != nil {
-        return err
-    }
-
-    _, err = w.CommitTokenRequest(request.Meta[common.TokenRequestToSign], true)
-    if err != nil {
-        return err
-    }
-
-    request.StateDelta, err = w.StateDelta()
-    return err
-}
-```
-
-This is the correct design anchor for Ethereum: same responder pattern, same validator output, different translator target.
-
-#### Why a Dedicated StateDelta Translator is Required
-
-The current `token/services/network/common/rws/translator` is tightly coupled to Fabric concepts:
-
-- `RWSet`
-- `SetState`
-- `GetState`
-- `DeleteState`
-- existence/version dependencies over keys
-
-Those abstractions do not match EVM execution. Reusing that package directly would leak Fabric semantics into the Ethereum driver.
-
-Instead, the Ethereum design should introduce a dedicated translator that:
-
-- consumes the same validated token actions
-- preserves the same transaction semantics
-- emits a backend-neutral or EVM-ready `StateDelta`
-- avoids any dependency on Fabric RWSet structures
-
-This keeps the architecture aligned across drivers while respecting backend differences.
-
-### 5.2 Network Interface Methods
-
-The driver implements all methods from `token/services/network/driver/network.go`. Key implementations are detailed below.
-
-#### Name() and Channel()
-```go
-func (n *Network) Name() string {
-    return n.config.NetworkName
-}
-
-func (n *Network) Channel() string {
-    return "" // Ethereum has no channel concept
-}
-```
-
-#### ComputeTxID()
-```go
-func (n *Network) ComputeTxID(id *driver.TxID) string {
-    // Compute deterministic internal ID
-    data := append(id.Nonce, id.Creator...)
-    data = append(data, n.chainID.Bytes()...)
-    data = append(data, n.config.GetDefaultContractAddress().Bytes()...)
-    
-    hash := keccak256(data)
-    return hex.EncodeToString(hash)
-}
-```
-
-**Rationale**: The Ethereum tx hash only exists after signing. We need a deterministic ID before signing for the SDK's transaction lifecycle. The contract stores this internal ID and rejects duplicates.
-
-#### RequestApproval()
-
-The endorsement flow follows the FabricX pattern, collecting EIP-712 signatures from endorsers before assembling the final Ethereum transaction.
-
-**Flow Diagram**:
-
-```mermaid
-sequenceDiagram
-    participant Initiator
-    participant Driver
-    participant ESP as EndorsementService
-    participant E1 as Endorser 1
-    participant E2 as Endorser 2
-
-    Note over Initiator,E2: Phase 1: Endorsement Collection
-    
-    Initiator->>Driver: RequestApproval(tokenRequest, txID, metadata)
-    Driver->>ESP: Endorse(tokenRequest, txID, metadata)
-    
-    ESP->>ESP: Compute state delta from tokenRequest
-    Note over ESP: StateDelta {<br/>  txID: internal_id<br/>  spentIDs: [input tokens]<br/>  outputs: [new tokens]<br/>  metadataKeys: [keys]<br/>  metadataVals: [values]<br/>  requestHash: hash(tokenRequest)<br/>}
-    
-    ESP->>ESP: Compute EIP-712 digest
-    Note over ESP: digest = keccak256(<br/>  "\\x19\\x01",<br/>  domainSeparator,<br/>  structHash(stateDelta)<br/>)
-    
-    par Collect Endorsements
-        ESP->>E1: RequestApprovalView {<br/>  tokenRequest,<br/>  stateDelta,<br/>  eip712Digest<br/>}
-        E1->>E1: Validate tokenRequest in Go
-        E1->>E1: Verify stateDelta correctness
-        E1->>E1: Sign digest with secp256k1
-        E1-->>ESP: EndorsementResponse {<br/>  signature: sig1,<br/>  endorserAddr: 0xabcd...<br/>}
-    and
-        ESP->>E2: RequestApprovalView {<br/>  tokenRequest,<br/>  stateDelta,<br/>  eip712Digest<br/>}
-        E2->>E2: Validate tokenRequest in Go
-        E2->>E2: Verify stateDelta correctness
-        E2->>E2: Sign digest with secp256k1
-        E2-->>ESP: EndorsementResponse {<br/>  signature: sig2,<br/>  endorserAddr: 0xef01...<br/>}
-    end
-    
-    Note over Initiator,E2: Phase 2: Ethereum Transaction Assembly
-    
-    ESP->>ESP: Verify endorsement policy satisfied
-    ESP->>ESP: ABI-encode applyStateDelta(txID, stateDelta, [sig1, sig2])
-    Note over ESP: calldata = abi.encode(<br/>  "applyStateDelta",<br/>  txID,<br/>  abi.encode(stateDelta),<br/>  [sig1, sig2]<br/>)
-    
-    ESP->>ESP: Build Ethereum transaction
-    Note over ESP: ethTx = {<br/>  to: tokenStateContract,<br/>  data: calldata,<br/>  nonce: nextNonce,<br/>  gasLimit: config.gas.limit,<br/>  gasPrice: config.gas.price,<br/>  chainID: config.chainID<br/>}
-    
-    ESP->>ESP: Sign ethTx with submitter key
-    Note over ESP: rawTx = rlp.encode(<br/>  signedEthTx<br/>)
-    
-    ESP->>ESP: Create envelope
-    Note over ESP: envelope = {<br/>  txID: internal_id,<br/>  ethTxHash: keccak256(rawTx),<br/>  rawTx: rawTx,<br/>  stateDelta: stateDelta,<br/>  endorsements: [sig1, sig2]<br/>}
-    
-    ESP-->>Driver: envelope
-    Driver-->>Initiator: envelope
-    
-    Note over Initiator: Envelope ready for Broadcast()
-```
-
-**Message Structures**:
-
-**1. RequestApprovalView (Initiator → Endorsers)**:
-```go
-type RequestApprovalView struct {
-    TokenRequest []byte      // Serialized token request
-    StateDelta   StateDelta  // Computed state delta
-    EIP712Digest [32]byte    // EIP-712 digest to sign
-    TxID         string      // Internal transaction ID
-}
-```
-
-**2. EndorsementResponse (Endorsers → Initiator)**:
-```go
-type EndorsementResponse struct {
-    Signature     []byte          // secp256k1 signature (65 bytes: r, s, v)
-    EndorserAddr  common.Address  // Ethereum address of endorser
-    Error         error           // Error if endorsement failed
-}
-```
-
-**3. Envelope (Returned to Application)**:
 ```go
 type Envelope struct {
-    TxID          string          // Internal transaction ID
-    EthTxHash     common.Hash     // Ethereum transaction hash
-    RawTx         []byte          // RLP-encoded signed Ethereum transaction
-    StateDelta    StateDelta      // State delta for reference
-    Endorsements  [][]byte        // Collected endorser signatures
+    Anchor       string   // TokenRequestAnchor
+    EthTxHash    string   // filled after Broadcast
+    RawTx        []byte   // RLP-encoded signed eth tx
+    Delta        StateDelta
+    Endorsements [][]byte
 }
+// implements driver.Envelope: Bytes()/FromBytes()/TxID()=Anchor/String()
 ```
 
-**Implementation**:
+---
+
+## 6. Endorsement (initiator + responder)
+
+Mirrors `fabric/endorsement/fsc` (initiator.go + responder.go); artifact is a `StateDelta`, signature is
+EIP-712. Wired as a lazy `ServiceProvider` keyed by `TMSID` (the `esp.go` pattern).
+
+### 6.1 Identity registry (address ↔ FSC identity)
+
+Endorsement is an FSC view call to another node, addressed by `view.Identity` (the initiator calls
+`CollectEndorsements(..., endorsers ...view.Identity)`); the request travels as transient data over an
+authenticated FSC session. But endorsers are also Ethereum addresses (for `ecrecover`). The driver maintains a
+**registry** mapping each endorser's Ethereum address ↔ FSC `view.Identity`, sourced from config (§9) and/or
+the on-chain endorser set. The EndorsementVerifier set alone yields addresses, which cannot route an FSC call.
+
+### 6.2 Responder (`evm/endorsement` responder view)
+
+`receive → authorize → validate → persist → translate → check pp → sign → reply`:
+
+1. **Authorize** the requester by FSC identity (the FSC session authenticates the caller); require membership
+   in the configured allowlist for the TMS (default: the TMS network's nodes). This is the EVM analog of the
+   Fabric responder's MSP/ACL creator check (no MSP on EVM). See §15.7.
+2. **Validate**: `tms.Validator().UnmarshallAndVerifyWithMetadata(ctx, ledger, anchor, requestRaw)` where
+   `ledger` is backed by `getState: token.ID → CreateOutputKey → eth_call getToken@finalized`. Yields
+   `(actions, meta)`.
+3. **Persist** a validation record (request, meta, ppHash) for audit/idempotency, analogous to
+   `AppendValidationRecord`.
+4. **Translate** actions → `StateDelta` via the StateDelta translator; `AddPublicParamsDependency`;
+   `CommitTokenRequest`.
+5. **Check pp**: assert `delta.publicParamsVersion == VersionKeeper.GetVersion()`; refuse otherwise.
+6. **Sign** the EIP-712 digest; reply `{signature, endorserAddress}`.
+
+### 6.3 Initiator (`evm/endorsement` initiator view)
+
+Collect signatures from the resolved FSC identities; verify threshold/policy; ABI-encode the **typed**
+`applyStateDelta(delta, signatures)`; build + sign the eth tx with the submitter key (nonce + gas per §8);
+wrap in `Envelope`; return to `Broadcast`.
+
+### 6.4 Messages
 
 ```go
-func (n *Network) RequestApproval(
-    context view.Context,
-    tms *token.ManagementService,
-    requestRaw []byte,
-    signer view.Identity,
-    txID driver.TxID,
-    metadata driver.TransientMap,
-) (driver.Envelope, error) {
-    endorsementService, err := n.endorsementServiceProvider.Get(tms.ID())
-    if err != nil {
-        return nil, errors.Wrapf(err, "failed to get endorsement service")
-    }
-    
-    return endorsementService.Endorse(context, requestRaw, signer, txID, metadata)
-}
+type EndorseRequest  struct { TokenRequest []byte; TMSID token.TMSID; Anchor string; Metadata map[string][]byte }
+type EndorseResponse struct { Signature []byte; EndorserAddress string; Err string }
 ```
 
-**Key Points**:
+(No `EIP712Digest` field — endorsers recompute, §4.5.)
 
-1. **State Delta Computation**: Done once by initiator, shared with all endorsers for consistency
-2. **EIP-712 Digest**: Pre-computed and sent to endorsers to ensure all sign the same digest
-3. **Endorser Validation**: Each endorser independently validates the token request in Go before signing
-4. **Signature Collection**: Initiator collects signatures in parallel from all endorsers
-5. **Policy Verification**: Initiator verifies endorsement policy is satisfied before proceeding
-6. **Ethereum Transaction**: Built after endorsements collected, includes all signatures in calldata
-7. **Envelope**: Contains both the raw Ethereum transaction and metadata for tracking
+---
 
-#### Remaining `Network` Interface Methods
+## 7. Finality
 
-To fully cover `token/services/network/driver/network.go`, the Ethereum driver must also specify the following methods.
+**Backend note (Angelo, 2026-07-08):** the acceptance backend is **Besu**, a standard EVM node; fabric-x-evm
+is a stretch. So the **primary** finality path is receipt + standard tx-status polling (works on any node), and
+the fabric-x gateway-specific lifecycle (`isPending` semantics, superseded-tx) is an efficiency layer added
+only for the fabric-x-evm stretch. Do not build a second tx-state system either way.
 
-#### Normalize()
-`Normalize()` fills missing `token.ServiceOptions` values using the TMS-scoped Ethereum configuration. In particular it:
-- sets the network to `ethereum` if omitted
-- forces `channel` to the empty string
-- resolves the namespace/TMS-scoped contract configuration
-- injects defaults for finality and gas settings when not explicitly provided
+### 7.1 Signal and lifecycle
+
+Primary signal (Besu / any standard node): poll the **receipt** together with
+`eth_getTransactionByHash(ethTxHash).blockNumber`. Resolution:
+- tx known, `blockNumber == null` → still pending, keep polling.
+- `blockNumber` set → fetch receipt: status 1 ⇒ `Valid`, status 0 ⇒ `Invalid`.
+- tx unknown (never seen / evicted) → `dropped` (treat as `Invalid` after timeout).
+
+The `EVMClient.IsPending(txHash) (pending, found, err)` method already abstracts this: on Besu it is backed by
+`eth_getTransactionByHash` (`found=false` ⇒ dropped, `blockNumber==nil` ⇒ pending); on the fabric-x-evm
+stretch it is backed by the gateway, which additionally exposes the `pending → in-progress → committed |
+failed | superseded` lifecycle and the **superseded** case (replacement tx, fabric-x-evm#62: the old hash gets
+a synthetic status-0 receipt — resolve to it rather than time out). The superseded handling is fabric-x-only
+and not required for the Besu acceptance path.
+
+### 7.2 Confirmation depth
+
+Read at the PoS **`finalized`** block tag (~2 epochs, ~13 min), which removes reorg handling from v1. Optional
+later: expose soft (`safe`/included) vs hard (`finalized`) levels to callers. (`confirmationDepth: 12` was a
+PoW-era heuristic — @alexandrosfilios.)
+
+### 7.3 Reuse vs replace
+
+- **Reuse directly**: the FabricX finality **event queue** (`fabricx/finality/queue`) for async delivery +
+  retry/backpressure, and `OnlyOnceListener` for exactly-once notification — both backend-agnostic.
+- **Replace**: `NSListenerManager` / `TxCheck` / `ListenerEvent` (tied to the FabricX committer + queryservice)
+  → an EVM manager whose ticks come from receipt + tx-status polling (gateway `isPending` on the fabric-x-evm
+  stretch) and whose status check is the §7.1 resolver, enriching `Valid` results with
+  `getTokenRequestHash(anchor)`.
+
+### 7.4 Recipient resolution (anchor → finality from chain alone)
+
+A recipient who only saw the token request knows the `anchor`, not the eth tx hash. Resolution must not depend
+on the initiator's cache: search logs for `StateCommitted(bytes32 indexed anchor, …)` on the configured
+TokenState clone → extract the eth tx hash from the log → receipt/finality → `getTokenRequestHash(anchor)`.
+`AddFinalityListener(ns, anchor, listener)` notifies immediately if already final, else once on transition.
+
+---
+
+## 8. Identity, Signing, Nonce
+
+- **Endorser identity**: secp256k1; Ethereum address = `keccak256(pubkey)[12:]`; registered in
+  EndorsementVerifier; bound to an FSC `view.Identity` (§6.1). secp256k1 signing is wired in the driver;
+  integrating it into FSC's signer/identity services is real work, not assumed trivial.
+- **Signer** (`evm/eip712`): produces 65-byte `{r,s,v}`, `v ∈ {27,28}`, low-s normalized; uses
+  `decred/secp256k1` + `x/crypto/sha3` (no go-ethereum).
+- **Submitter / NonceManager**: per submitter address; explicit `initialized bool` (never use `nonce == 0` as
+  "uninitialized"); tracks in-flight nonces; `RecoverNonce` re-syncs from `PendingNonceAt` and is wired into
+  the retry path. A submitter shared across processes needs external coordination (`PendingNonceAt` does not
+  see locally reserved nonces) — documented constraint for v1.
+
+---
+
+## 9. Backend Abstraction (`evm/client`)
+
+The interface as implemented in Phase 1.2 (type-safe over the local `Address`/`Hash` types; `IsPending` plus
+the receipt give the finality resolver pending vs committed vs dropped):
 
 ```go
-func (n *Network) Normalize(opt *token.ServiceOptions) (*token.ServiceOptions, error) {
-    if opt == nil {
-        opt = &token.ServiceOptions{}
-    }
-    if len(opt.Network) == 0 {
-        opt.Network = n.Name()
-    }
-    opt.Channel = ""
-    return opt, nil
-}
-```
-
-#### Connect()
-`Connect(ns string)` initializes namespace-specific services for the current TMS. For Ethereum this does not open a Fabric-style channel connection; instead it validates that:
-- the configured `tokenState` contract is present for the TMS
-- the JSON-RPC client is reachable
-- the chain ID matches configuration
-- namespace-scoped helper services (ledger accessor, finality tracker, metadata lookup) are ready
-
-It returns service options needed by upper layers, similarly to other drivers.
-
-```go
-func (n *Network) Connect(ns string) ([]token.ServiceOption, error) {
-    if err := n.checkNamespace(ns); err != nil {
-        return nil, err
-    }
-    if err := n.client.Ping(n.ctx); err != nil {
-        return nil, err
-    }
-    return []token.ServiceOption{
-        token.WithNetwork(n.Name()),
-        token.WithChannel(""),
-        token.WithNamespace(ns),
-    }, nil
-}
-```
-
-#### Broadcast()
-`Broadcast()` submits the envelope produced by `RequestApproval()` to Ethereum. The expected blob is the Ethereum envelope carrying the raw signed transaction. The method:
-- validates the blob type
-- extracts the raw transaction bytes
-- invokes `eth_sendRawTransaction`
-- stores the returned Ethereum transaction hash in the envelope/finality tracker
-- starts or registers finality tracking for the internal txID
-
-```go
-func (n *Network) Broadcast(ctx context.Context, blob interface{}) error {
-    env, ok := blob.(*Envelope)
-    if !ok {
-        return errors.Errorf("invalid blob type [%T]", blob)
-    }
-
-    txHash, err := n.client.SendRawTransaction(ctx, env.RawTx)
-    if err != nil {
-        return err
-    }
-    env.EthTxHash = txHash
-    return n.finalityTracker.Track(env.TxID, txHash)
-}
-```
-
-#### NewEnvelope()
-`NewEnvelope()` returns an empty Ethereum-specific envelope instance. This allows generic SDK code to allocate a backend envelope before unmarshalling or population.
-
-```go
-func (n *Network) NewEnvelope() driver.Envelope {
-    return &Envelope{}
-}
-```
-
-The Ethereum envelope must at least carry:
-- internal txID
-- Ethereum tx hash
-- raw signed transaction bytes
-- serialized StateDelta or equivalent payload reference
-- collected endorsements/signatures
-
-#### FetchPublicParameters()
-`FetchPublicParameters(namespace string)` retrieves the latest public parameters from the TMS TokenState contract using `eth_call` and contract ABI decoding.
-
-```go
-func (n *Network) FetchPublicParameters(namespace string) ([]byte, error) {
-    contractAddr, err := n.contractAddress(namespace)
-    if err != nil {
-        return nil, err
-    }
-    callData := abiEncode("getPublicParameters")
-    return n.client.Call(context.Background(), contractAddr, callData)
-}
-```
-
-For v1, this must work for both fabtoken and zkatdlog public parameters, treated as opaque bytes by the network layer.
-
-#### QueryTokens()
-`QueryTokens()` reads token bytes from the TokenState contract for the given token IDs. The driver converts SDK token identifiers into the on-chain identifier format and queries the contract using read-only calls.
-
-```go
-func (n *Network) QueryTokens(ctx context.Context, namespace string, IDs []*token.ID) ([][]byte, error) {
-    contractAddr, err := n.contractAddress(namespace)
-    if err != nil {
-        return nil, err
-    }
-
-    res := make([][]byte, 0, len(IDs))
-    for _, id := range IDs {
-        tokenID := ComputeOutputID(id.TxId, id.Index)
-        raw, err := n.client.Call(ctx, contractAddr, abiEncode("getToken", tokenID))
-        if err != nil {
-            return nil, err
-        }
-        res = append(res, abiDecodeBytes(raw))
-    }
-    return res, nil
-}
-```
-
-#### AreTokensSpent()
-`AreTokensSpent()` checks whether the passed tokens have already been consumed. For graph-revealing flows it checks token IDs; for graph-hiding flows it checks the corresponding serial numbers or spent markers passed in `meta`.
-
-```go
-func (n *Network) AreTokensSpent(ctx context.Context, namespace string, tokenIDs []*token.ID, meta []string) ([]bool, error) {
-    contractAddr, err := n.contractAddress(namespace)
-    if err != nil {
-        return nil, err
-    }
-
-    spentIDs := make([][32]byte, 0, len(tokenIDs))
-    if len(meta) != 0 {
-        for _, id := range meta {
-            spentIDs = append(spentIDs, HashSpentMarker(id))
-        }
-    } else {
-        for _, id := range tokenIDs {
-            spentIDs = append(spentIDs, ComputeOutputID(id.TxId, id.Index))
-        }
-    }
-
-    raw, err := n.client.Call(ctx, contractAddr, abiEncode("areTokensSpent", spentIDs))
-    if err != nil {
-        return nil, err
-    }
-    return abiDecodeBoolArray(raw), nil
-}
-```
-
-This aligns the Network interface with the StateDelta translator design: spent checks are performed against the same canonical spent identifiers used in `StateDelta.spentIDs`.
-
-#### LocalMembership()
-`LocalMembership()` returns the local Ethereum-aware membership service. This service is responsible for:
-- resolving the node's configured endorser identity
-- resolving the submitter identity
-- exposing signer/verifier services needed by endorsement and transaction assembly
-
-Because Ethereum does not have MSP/channel membership semantics, this component is TMS-local and configuration-driven.
-
-```go
-func (n *Network) LocalMembership() driver.LocalMembership {
-    return n.localMembership
-}
-```
-
-#### AddFinalityListener()
-`AddFinalityListener()` is implemented by the receipt poller described in Section 6. It must:
-- immediately resolve the listener if the transaction is already final
-- otherwise register the listener under the internal txID
-- notify exactly once
-
-**FabricX reuse assessment**:
-- **Reuse as-is**: the `OnlyOnceListener` pattern can be reused directly because it is backend-agnostic and already matches the `driver.FinalityListener` contract.
-- **Reuse with adaptation**: the asynchronous event-queue pattern from `token/services/network/fabricx/finality/queue` is also reusable for Ethereum to decouple receipt polling from listener notification, retries, and backpressure handling.
-- **Do not reuse directly**: `NSFinalityListener`, `NSListenerManager`, `TxCheck`, and `ListenerEvent` from FabricX are tied to FabricX-specific dependencies (`finalityx.ListenerManager`, `queryservice.QueryService`, RWSet key translation, vault state access). Ethereum has no underlying push-based committer or vault query service, so these pieces need Ethereum-specific replacements.
-
-For Ethereum, the equivalent design should therefore be:
-- keep the `OnlyOnceListener` wrapper
-- optionally reuse the generic worker queue package unchanged
-- replace `TxCheck` with a receipt-based status checker
-- replace `ListenerEvent` with an EVM-specific event that queries receipts/logs and, on success, fetches the token request hash from `TokenState`
-- replace `NSListenerManager` with an Ethereum listener manager driven by poller ticks rather than FabricX notifications
-
-#### GetTransactionStatus()
-`GetTransactionStatus()` is also implemented by the finality subsystem. It must:
-- resolve the Ethereum tx hash associated with the internal txID
-- inspect the receipt and current block height
-- report `Valid`, `Invalid`, or `Unknown`
-- return the token request hash stored in the TokenState contract when available
-
-A transaction is:
-- `Unknown` if no receipt exists yet or confirmation depth is not met
-- `Valid` if receipt status is success and confirmation depth is satisfied
-- `Invalid` if receipt status is reverted/failed or the corresponding contract event indicates rejection
-
-**Anchor-to-receipt resolution for recipients**:
-The token request anchor is the internal txID returned by `ComputeTxID()`. Therefore, if Bob receives a token request and later asks for finality using that anchor, the driver must be able to resolve:
-
-`anchor/internal txID -> Ethereum tx hash -> transaction receipt`
-
-Alice and Bob must **not** be assumed to share any off-chain storage. Therefore, the resolution mechanism must be derivable from the network itself.
-
-For the current design, the best fit is to make the on-chain event keyed by `txID` the discovery point. The `TokenState` contract already emits:
-
-```solidity
-event StateCommitted(bytes32 indexed txID, bool success, string message);
-```
-
-That indexed event must become the canonical bridge from the anchor to the Ethereum transaction hash. Under this model:
-
-- `Broadcast()` submits the transaction normally and may cache the Ethereum tx hash locally, but correctness must not depend on that cache
-- `GetTransactionStatus(namespace, txID)` first searches logs for `StateCommitted` emitted by the configured `TokenState` contract with indexed topic `txID`
-- once a matching log is found, the driver extracts the corresponding Ethereum tx hash from the log entry
-- the driver then calls `eth_getTransactionReceipt(txHash)`
-- if the receipt is successful and sufficiently confirmed, the driver calls `getTokenRequestHash(txID)` on `TokenState`
-- if no matching event is found yet, the status is `Unknown`
-
-Conceptually:
-
-```go
-type Log struct {
-    Address common.Address
-    Topics  []common.Hash
-    Data    []byte
-    TxHash  common.Hash
-    BlockNumber uint64
-}
-
 type EVMClient interface {
-    // ...
+    ChainID(ctx context.Context) (*big.Int, error)
+    Ping(ctx context.Context) error
+    Call(ctx context.Context, to Address, data []byte, blockTag string) ([]byte, error) // e.g. "finalized"
     GetLogs(ctx context.Context, q LogFilter) ([]Log, error)
-    GetTransactionReceipt(ctx context.Context, txHash string) (*Receipt, error)
+    PendingNonceAt(ctx context.Context, account Address) (uint64, error)
+    EstimateGas(ctx context.Context, msg CallMsg) (uint64, error)
+    SuggestGasFees(ctx context.Context) (GasFees, error)
+    SendRawTransaction(ctx context.Context, rawTx []byte) (Hash, error)
+    GetTransactionReceipt(ctx context.Context, txHash Hash) (*Receipt, error)
+    IsPending(ctx context.Context, txHash Hash) (pending bool, found bool, err error)
 }
-
-type LogFilter struct {
-    Address    string
-    FromBlock  uint64
-    ToBlock    uint64
-    Topics     [][]common.Hash
-}
+type Receipt struct { TxHash Hash; BlockNumber *uint64; Status uint64; Logs []Log }
+type Log struct { Address Address; Topics []Hash; Data []byte; TxHash Hash; BlockNumber uint64 }
+type GasFees struct { MaxFeePerGas, MaxPriorityFeePerGas *big.Int }
+type CallMsg struct { From, To *Address; Data []byte; Value *big.Int }
 ```
 
-This keeps the anchor equal to `ComputeTxID()` while allowing any party, including Bob, to resolve finality from chain data alone.
-
-**GetTransactionStatus resolution flow**:
-`GetTransactionStatus(namespace, txID)` should behave as follows:
-
-```go
-func (n *Network) GetTransactionStatus(ctx context.Context, namespace, txID string) (int, []byte, string, error) {
-    contractAddr, err := n.contractAddress(namespace)
-    if err != nil {
-        return 0, nil, "", err
-    }
-
-    logs, err := n.client.GetLogs(ctx, LogFilter{
-        Address: contractAddr,
-        Topics: [][]common.Hash{
-            {StateCommittedEventID},
-            {HashTxID(txID)},
-        },
-    })
-    if err != nil {
-        return 0, nil, "", err
-    }
-    if len(logs) == 0 {
-        return driver.Unknown, nil, "", nil
-    }
-
-    txHash := logs[len(logs)-1].TxHash.String()
-    receipt, err := n.client.GetTransactionReceipt(ctx, txHash)
-    if err != nil {
-        return 0, nil, "", err
-    }
-
-    // confirmation-depth and status evaluation omitted
-    tokenRequestHash, err := n.getTokenRequestHash(ctx, contractAddr, txID)
-    if err != nil {
-        return 0, nil, "", err
-    }
-
-    return driver.Valid, tokenRequestHash, "", nil
-}
-```
-
-**FabricX reuse assessment**:
-- The **control flow** of `TxCheck.Process()` is reusable at the design level: first check current status, then enrich valid results with the token request hash, then notify the listener.
-- The **implementation** is not reusable because FabricX reads status from `QueryService.GetTransactionStatus(txID)` and reads the token request hash through RWSet-derived keys and `GetState(...)`.
-- Ethereum must replace that with:
-  - indexed log lookup by `txID`
-  - `eth_getTransactionReceipt`
-  - block-depth confirmation check
-  - optional event/log inspection for revert reason or contract-side validation message
-  - `eth_call` to `getTokenRequestHash(txID)` on the configured `TokenState` contract
-
-So the Ethereum driver should deliberately mirror the FabricX state machine, but not import the FabricX `TxCheck` type itself.
-
-#### LookupTransferMetadataKey()
-`LookupTransferMetadataKey()` reads transfer metadata from the TokenState contract. It replaces Fabric ledger scans with repeated `eth_call` queries until the value is found or the timeout expires.
-
-**FabricX reuse assessment**:
-- There is **no direct reusable lookup implementation** in the FabricX finality package for Ethereum metadata lookup.
-- What is reusable is only the broader pattern of retrying asynchronous observation work through the generic event queue.
-- The FabricX key-translation logic must **not** be reused because it derives Fabric RWSet/vault keys (`GetTransferMetadataSubKey`, prefixes, token request keys), while Ethereum metadata is retrieved through contract-defined key hashing and ABI calls.
-
-```go
-func (n *Network) LookupTransferMetadataKey(namespace string, key string, timeout time.Duration) ([]byte, error) {
-    deadline := time.Now().Add(timeout)
-    hashedKey := HashMetadataKey(key)
-
-    for time.Now().Before(deadline) {
-        raw, err := n.client.Call(
-            context.Background(),
-            n.mustContractAddress(namespace),
-            abiEncode("getTransferMetadata", hashedKey),
-        )
-        if err == nil {
-            value := abiDecodeBytes(raw)
-            if len(value) != 0 {
-                return value, nil
-            }
-        }
-        time.Sleep(500 * time.Millisecond)
-    }
-    return nil, errors.Errorf("metadata key [%s] not found before timeout", key)
-}
-```
-
-#### Ledger()
-`Ledger()` returns an Ethereum-backed ledger adapter implementing the SDK `Ledger` interface. This adapter is responsible for wrapping:
-- public-parameter queries
-- token reads
-- spent checks
-- metadata lookup
-
-```go
-func (n *Network) Ledger() (driver.Ledger, error) {
-    return NewLedger(n.client, n.config, n.abiCodec), nil
-}
-```
-
-The ledger adapter should remain read-oriented. State transitions are executed through `RequestApproval()` plus `Broadcast()`, not through direct ledger mutation APIs.
+A JSON-RPC implementation backs this; the driver speaks plain JSON-RPC so it works against any EVM node
+including fabric-x-evm. `client` defines local `Address`/`Hash` types. **go-ethereum must not be linked, even
+transitively** (Angelo: the license is a hard blocker) — CI should `go mod why` / grep the build graph to
+guarantee it. The one place this bites is **raw-transaction (RLP) encoding + signing** in `Broadcast`:
+`decred/secp256k1` covers signing, but the RLP encoder and the EIP-1559 tx envelope must be a permissive
+implementation (small hand-rolled RLP, or a permissively-licensed lib) — not `go-ethereum/core/types`.
+fabric-x-evm already implements `eth_getLogs` with indexed-topic filtering (Storm1289: `gateway/api/eth.go`),
+which §7.4 relies on.
 
 ---
 
-## 6. Finality Tracking
+## 10. Configuration (`evm/config`)
 
-### 6.1 Finality Architecture Overview
-
-Unlike Fabric's push-based finality, Ethereum requires a hybrid approach combining receipt polling with indexed log queries for efficient transaction status tracking.
-
-**Architecture Components**:
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│                     Application Layer                        │
-│                  (AddFinalityListener)                       │
-└────────────────────────┬────────────────────────────────────┘
-                         │
-                         ▼
-┌─────────────────────────────────────────────────────────────┐
-│              FinalityListenerManager                         │
-│  - Immediate status check (via indexed logs)                │
-│  - Register for future updates if Unknown                   │
-│  - OnlyOnceListener wrapper for exactly-once notification   │
-└────────────────────────┬────────────────────────────────────┘
-                         │
-                         ▼
-┌─────────────────────────────────────────────────────────────┐
-│                  Receipt Poller                              │
-│  - Periodic polling (configurable interval)                 │
-│  - Indexed log queries by txID                              │
-│  - Confirmation depth tracking                              │
-│  - Reorg detection and recovery                             │
-│  - Status caching for efficiency                            │
-└────────────────────────┬────────────────────────────────────┘
-                         │
-                         ▼
-┌─────────────────────────────────────────────────────────────┐
-│                  Event Queue (Optional)                      │
-│  - Async notification delivery                              │
-│  - Retry with exponential backoff                           │
-│  - Decouples polling from listener notification             │
-└─────────────────────────────────────────────────────────────┘
-```
-
-**Configuration**:
-```yaml
-ethereum:
-  finality:
-    pollInterval: 2s        # How often to check for receipts
-    confirmationDepth: 12   # Blocks to wait (1 for devnet, 12+ for mainnet)
-    timeout: 5m             # Max time to wait for finality
-    cacheTTL: 1h           # How long to cache finalized status
-    enableReorgDetection: true  # Enable chain reorganization detection
-```
-
-### 6.2 Receipt Polling with Reorg Detection
-
-**Poller Implementation**:
-```go
-type FinalityPoller struct {
-    client              EVMClient
-    pollInterval        time.Duration
-    confirmationDepth   uint64
-    pendingListeners    map[string][]driver.FinalityListener
-    namespaceContracts  map[string]common.Address
-    mu                  sync.RWMutex
-    stopCh              chan struct{}
-}
-
-func (p *FinalityPoller) AddListener(namespace string, txID string, listener driver.FinalityListener) error {
-    // Check if already finalized
-    status, requestHash, message, err := p.getTransactionStatus(namespace, txID)
-    if err == nil && status != driver.Unknown {
-        // Already finalized, notify immediately
-        listener.OnStatus(context.Background(), txID, status, message, requestHash)
-        return nil
-    }
-    
-    // Add to pending with OnlyOnceListener wrapper
-    p.mu.Lock()
-    defer p.mu.Unlock()
-    
-    wrappedListener := &OnlyOnceListener{
-        delegate: listener,
-        once:     &sync.Once{},
-    }
-    
-    p.pendingListeners[txID] = append(p.pendingListeners[txID], wrappedListener)
-    return nil
-}
-```
-
-**OnlyOnceListener Pattern** (borrowed from FabricX):
-```go
-type OnlyOnceListener struct {
-    delegate driver.FinalityListener
-    once     *sync.Once
-}
-
-func (l *OnlyOnceListener) OnStatus(ctx context.Context, txID string, status int, message string, tokenRequestHash []byte) {
-    l.once.Do(func() {
-        l.delegate.OnStatus(ctx, txID, status, message, tokenRequestHash)
-    })
-}
-
-func (l *OnlyOnceListener) OnError(ctx context.Context, txID string, err error) {
-    l.once.Do(func() {
-        l.delegate.OnError(ctx, txID, err)
-    })
-}
-```
-
-This prevents duplicate notifications when both immediate check and poller fire.
-
----
-
-## 7. Identity and Signing
-
-### 7.1 secp256k1 Integration
-
-**Endorser Identity**:
-- Uses secp256k1 keys for signing EIP-712 digests
-- Ethereum address derived from public key: `keccak256(pubkey)[12:]`
-- Address registered in EndorsementVerifier contract
-- Integration implemented directly in token-sdk network driver (no FSC extension needed)
-
-**Identity Configuration**:
-
-Configuration follows the pattern `token.tms.<tms-id>.services.network.ethereum.*` similar to Fabric's configuration structure:
+Under `token.tms.<tms-id>.services.network.evm.*`, loaded via `config.Service` (`UnmarshalKey`), with
+validation + defaults at load.
 
 ```yaml
 token:
   tms:
     mytms:
-      network: ethereum
+      network: evm
       channel: ""
       namespace: token
-      driver: fabtoken  # or dlog for zkatdlog
+      driver: fabtoken              # or dlog
       services:
         network:
-          ethereum:
-            # Endorser identity configuration
-            endorser:
-              enabled: true              # Flag indicating this node is an endorser
-              keystore: /path/to/keystore
-              address: 0x1234...         # Ethereum address for this endorser
-            # Transaction submitter configuration
-            submitter:
-              keystore: /path/to/submitter/keystore
-              address: 0x5678...         # Address that pays gas fees
-```
-
-**Endorser Flag**: The `endorser.enabled` flag indicates whether this node acts as an endorser. When `true`, the node will:
-- Load the endorser secp256k1 key from the specified keystore
-- Register itself to respond to endorsement requests
-- Sign state deltas with EIP-712 signatures
-
-**Signer Implementation**:
-```go
-type Secp256k1Signer struct {
-    privateKey *ecdsa.PrivateKey
-}
-
-func (s *Secp256k1Signer) Sign(digest []byte) ([]byte, error) {
-    signature, err := crypto.Sign(digest, s.privateKey)
-    if err != nil {
-        return nil, err
-    }
-    
-    // Adjust V value for Ethereum compatibility
-    signature[64] += 27
-    
-    return signature, nil
-}
-
-func (s *Secp256k1Signer) Address() common.Address {
-    pubKey := s.privateKey.Public().(*ecdsa.PublicKey)
-    return crypto.PubkeyToAddress(*pubKey)
-}
-```
-
-### 7.2 Transaction Submitter
-
-**Role**: Signs and submits Ethereum transactions, pays gas fees.
-
-**Can be**:
-- Same key as endorser (simpler setup)
-- Separate key (better separation of concerns)
-
-**Nonce Management**:
-- Driver maintains nonce counter per submitter address
-- Increments after each successful broadcast
-- Resets on node restart (queries current nonce from network)
-
-```go
-type NonceManager struct {
-    client  EVMClient
-    address common.Address
-    nonce   uint64
-    mu      sync.Mutex
-}
-
-func (nm *NonceManager) GetNextNonce(ctx context.Context) (uint64, error) {
-    nm.mu.Lock()
-    defer nm.mu.Unlock()
-    
-    if nm.nonce == 0 {
-        // First call, query from network
-        nonce, err := nm.client.PendingNonceAt(ctx, nm.address)
-        if err != nil {
-            return 0, err
-        }
-        nm.nonce = nonce
-    }
-    
-    current := nm.nonce
-    nm.nonce++
-    return current, nil
-}
-```
-
----
-
-## 8. Backend Abstraction
-
-### 8.1 EVMClient Interface
-
-```go
-type EVMClient interface {
-    // Transaction operations
-    SendRawTransaction(ctx context.Context, rawTx []byte) (string, error)
-    GetTransactionReceipt(ctx context.Context, txHash string) (*Receipt, error)
-    
-    // State queries
-    Call(ctx context.Context, contractAddr string, data []byte) ([]byte, error)
-    
-    // Network info
-    ChainID(ctx context.Context) (*big.Int, error)
-    BlockNumber(ctx context.Context) (uint64, error)
-    PendingNonceAt(ctx context.Context, account common.Address) (uint64, error)
-}
-
-type Receipt struct {
-    TxHash      string
-    BlockNumber uint64
-    Status      uint64  // 1 = success, 0 = failure
-    Logs        []Log
-}
-
-type Log struct {
-    Address common.Address
-    Topics  []common.Hash
-    Data    []byte
-}
-```
-
-### 8.2 JSON-RPC Implementation
-
-The driver uses a custom JSON-RPC client implementation to avoid direct dependency on go-ethereum (due to license constraints):
-
-```go
-type JSONRPCClient struct {
-    endpoint string
-    client   *http.Client
-}
-
-func (c *JSONRPCClient) SendRawTransaction(ctx context.Context, rawTx []byte) (string, error) {
-    params := []interface{}{
-        "0x" + hex.EncodeToString(rawTx),
-    }
-    
-    var result string
-    err := c.call(ctx, "eth_sendRawTransaction", params, &result)
-    return result, err
-}
-
-func (c *JSONRPCClient) GetTransactionReceipt(ctx context.Context, txHash string) (*Receipt, error) {
-    params := []interface{}{txHash}
-    
-    var result *Receipt
-    err := c.call(ctx, "eth_getTransactionReceipt", params, &result)
-    return result, err
-}
-
-func (c *JSONRPCClient) Call(ctx context.Context, contractAddr string, data []byte) ([]byte, error) {
-    params := []interface{}{
-        map[string]string{
-            "to":   contractAddr,
-            "data": "0x" + hex.EncodeToString(data),
-        },
-        "latest",
-    }
-    
-    var result string
-    err := c.call(ctx, "eth_call", params, &result)
-    if err != nil {
-        return nil, err
-    }
-    
-    return hex.DecodeString(strings.TrimPrefix(result, "0x"))
-}
-```
-
-**No go-ethereum dependency**: All types (Address, Hash, Receipt, etc.) are defined locally using only the standard library. This avoids license compatibility issues with go-ethereum's LGPL license.
-
-### 8.3 fabric-x-evm Integration
-
-**Usage Context**: fabric-x-evm is used by the Network Orchestrator (NWO) for bootstrapping test networks during integration testing. The driver itself does not depend on fabric-x-evm.
-
-**Integration Pattern**:
-```go
-// integration/nwo/token/ethereum/topology.go
-// NWO uses fabric-x-evm to start local EVM network
-func (t *EthereumTopology) StartEVMNetwork() error {
-    // Use fabric-x-evm to bootstrap local network
-    evmNetwork := fabricxevm.New(t.config)
-    return evmNetwork.Start()
-}
-```
-
-The driver communicates with any EVM network (including fabric-x-evm) through the standard EVMClient interface using JSON-RPC.
-
----
-
-## 9. Configuration
-
-### 9.1 Network Configuration
-
-Configuration is organized under the TMS services path following the pattern established by Fabric and FabricX drivers:
-
-```yaml
-token:
-  tms:
-    mytms:
-      network: ethereum
-      channel: ""  # Always empty for Ethereum
-      namespace: token
-      services:
-        network:
-          ethereum:
-            # Network connection
-            endpoint: https://mainnet.infura.io/v3/YOUR-PROJECT-ID
+          evm:
+            endpoint: https://gateway:8545
             chainID: 1
-            
-            # Contract addresses for this TMS
             contracts:
-              tokenState: 0x1234567890123456789012345678901234567890
-              endorsementVerifier: 0x2345678901234567890123456789012345678901
-            
-            # Finality configuration
+              tokenState: 0x...        # per-TMS clone
+              endorsementVerifier: 0x...
             finality:
+              blockTag: finalized      # finalized | safe
               pollInterval: 2s
-              confirmationDepth: 12
               timeout: 5m
-            
-            # Gas configuration
             gas:
-              limit: 500000
-              price: 20000000000  # 20 gwei
-            
-            # Endorser identity (if this node is an endorser)
-            endorser:
+              strategy: estimate       # estimate | fixed
+              multiplier: 1.2          # estimate * multiplier
+              limit: 0                 # used only when strategy=fixed
+            endorser:                  # present if this node endorses
               enabled: true
-              keystore: /path/to/endorser/keystore
-              address: 0xabcd...
-            
-            # Transaction submitter identity
+              keystore: /path
+              address: 0x...
+              fscIdentity: <id>
             submitter:
-              keystore: /path/to/submitter/keystore
-              address: 0xef01...
-            
-            # Endorsement policy
+              keystore: /path
+              address: 0x...
             endorsement:
-              # List of all endorser addresses in the network
-              endorsers:
-                - 0xabcd...
-                - 0xef01...
-              policy: all  # or "1outn"
-              threshold: 2
+              threshold: 2             # single source of truth (no separate "policy")
+              allowlist: [<fscId>, ...]  # who may request endorsement (default: TMS network nodes)
+              endorsers:               # address <-> fsc identity binding
+                - { address: 0x..., fscIdentity: <id> }
+                - { address: 0x..., fscIdentity: <id> }
 ```
 
-**Configuration Path Pattern**: `token.tms.<tms-id>.services.network.ethereum.*`
-
-This follows the same pattern as:
-- Fabric: `token.tms.<tms-id>.services.network.fabric.*`
-- FabricX: `token.tms.<tms-id>.services.network.fabricx.*`
-
-### 9.2 Configuration Structure
-
-```go
-type Config struct {
-    // Network connection
-    Endpoint    string
-    ChainID     *big.Int
-    
-    // Contract addresses for this TMS
-    Contracts   ContractsConfig
-    
-    // Finality settings
-    Finality    FinalityConfig
-    
-    // Gas settings
-    Gas         GasConfig
-    
-    // Endorser identity (if this node is an endorser)
-    Endorser    *EndorserConfig
-    
-    // Transaction submitter identity
-    Submitter   SubmitterConfig
-    
-    // Endorsement policy
-    Endorsement EndorsementConfig
-}
-
-type ContractsConfig struct {
-    TokenState          common.Address  // Single TokenState contract for this TMS
-    EndorsementVerifier common.Address  // EndorsementVerifier contract
-}
-
-type FinalityConfig struct {
-    PollInterval      time.Duration
-    ConfirmationDepth uint64
-    Timeout           time.Duration
-}
-
-type GasConfig struct {
-    Limit uint64
-    Price *big.Int
-}
-
-type EndorserConfig struct {
-    Enabled   bool
-    Keystore  string
-    Address   common.Address
-}
-
-type SubmitterConfig struct {
-    Keystore  string
-    Address   common.Address
-}
-
-type EndorsementConfig struct {
-    Endorsers []common.Address  // All endorser addresses in the network
-    Policy    string            // "all" or "1outn"
-    Threshold int
-}
-```
-
-**Configuration Loading**:
-
-```go
-func LoadConfig(tms *token.ManagementService) (*Config, error) {
-    config := &Config{}
-    
-    // Load from token.tms.<tms-id>.services.network.ethereum.*
-    configKey := "services.network.ethereum"
-    
-    if err := tms.Configuration().UnmarshalKey(configKey, config); err != nil {
-        return nil, errors.Wrapf(err, "failed to unmarshal ethereum config")
-    }
-    
-    return config, nil
-}
-```
+Go structs mirror this; `LoadConfig` validates: endpoint reachable, chainID matches, TokenState present,
+threshold ≤ len(endorsers), every endorser has both address and fscIdentity.
 
 ---
 
-## 10. Testing Strategy
+## 11. Testing
 
-### 10.1 Unit Tests
-
-**Location**: Alongside implementation (`*_test.go`)
-
-**Coverage**:
-- EIP-712 digest computation
-- Token ID mapping
-- ABI encoding/decoding
-- Nonce management
-- Configuration parsing
-- Finality poller state machine
-
-**Mocking**:
-```go
-type MockEVMClient struct {
-    mock.Mock
-}
-
-func (m *MockEVMClient) SendRawTransaction(ctx context.Context, rawTx []byte) (string, error) {
-    args := m.Called(ctx, rawTx)
-    return args.String(0), args.Error(1)
-}
-
-// Test example
-func TestBroadcast(t *testing.T) {
-    client := new(MockEVMClient)
-    client.On("SendRawTransaction", mock.Anything, mock.Anything).
-        Return("0xabcd...", nil)
-    
-    network := NewNetwork(client, ...)
-    err := network.Broadcast(context.Background(), envelope)
-    
-    assert.NoError(t, err)
-    client.AssertExpectations(t)
-}
-```
-
-### 10.2 Integration Tests
-
-**Test Environment**: fabric-x-evm or Anvil (Foundry's local Ethereum node)
-
-**Why fabric-x-evm/Anvil**:
-- Single binary, no go-ethereum dependency
-- Deterministic behavior
-- Fast block times
-- Easy to reset state
-- Supports all standard JSON-RPC methods
-- fabric-x-evm provides additional integration with FSC infrastructure
-
-**NWO Integration**:
-
-The Network Orchestrator (NWO) uses fabric-x-evm to bootstrap local EVM networks for testing. NWO handles:
-1. Starting the EVM network (fabric-x-evm)
-2. Deploying contracts using external deployment tools (Foundry's forge)
-3. Configuring FSC nodes with contract addresses
-4. Setting up endorser identities
-
-The driver itself communicates with the network through the standard EVMClient interface:
-
-```go
-// integration/nwo/token/ethereum/topology.go
-type EthereumTopology struct {
-    AnvilPath       string
-    AnvilPort       int
-    Contracts       map[string]string  // namespace -> deployed address
-    Endorsers       []string
-}
-
-func (t *EthereumTopology) Setup() error {
-    // 1. Start Anvil
-    cmd := exec.Command(t.AnvilPath, "--port", strconv.Itoa(t.AnvilPort))
-    if err := cmd.Start(); err != nil {
-        return err
-    }
-    
-    // 2. Deploy contracts
-    for namespace := range t.Contracts {
-        addr, err := t.deployContracts(namespace)
-        if err != nil {
-            return err
-        }
-        t.Contracts[namespace] = addr
-    }
-    
-    // 3. Configure endorsers
-    for _, endorser := range t.Endorsers {
-        if err := t.configureEndorser(endorser); err != nil {
-            return err
-        }
-    }
-    
-    return nil
-}
-
-func (t *EthereumTopology) deployContracts(namespace string) (string, error) {
-    // Deploy EndorsementVerifier
-    verifierAddr, err := t.deployContract("EndorsementVerifier")
-    if err != nil {
-        return "", err
-    }
-    
-    // Deploy TokenState with verifier address
-    tokenStateAddr, err := t.deployContract("TokenState", verifierAddr)
-    if err != nil {
-        return "", err
-    }
-    
-    return tokenStateAddr, nil
-}
-```
-
-**Test Cases**:
-
-```go
-// integration/token/ethereum/ethereum_test.go
-var _ = Describe("Ethereum Network Driver", func() {
-    var (
-        network *nwo.Network
-        alice   *nwo.Node
-        bob     *nwo.Node
-    )
-    
-    BeforeEach(func() {
-        network = nwo.NewEthereumNetwork()
-        alice = network.AddNode("alice", nwo.WithEndorser())
-        bob = network.AddNode("bob")
-        network.Start()
-    })
-    
-    AfterEach(func() {
-        network.Cleanup()
-    })
-    
-    It("should issue tokens", func() {
-        // Issue tokens to Alice
-        tx := alice.IssueTokens("100", "USD")
-        Expect(tx).To(BeValid())
-        
-        // Verify tokens exist
-        tokens := alice.ListTokens()
-        Expect(tokens).To(HaveLen(1))
-        Expect(tokens[0].Quantity).To(Equal("100"))
-    })
-    
-    It("should transfer tokens", func() {
-        // Setup: Alice has tokens
-        alice.IssueTokens("100", "USD")
-        
-        // Transfer to Bob
-        tx := alice.TransferTokens(bob, "50", "USD")
-        Expect(tx).To(BeValid())
-        
-        // Verify balances
-        Expect(alice.Balance("USD")).To(Equal("50"))
-        Expect(bob.Balance("USD")).To(Equal("50"))
-    })
-    
-    It("should reject double-spend", func() {
-        // Setup: Alice has tokens
-        alice.IssueTokens("100", "USD")
-        
-        // First transfer succeeds
-        tx1 := alice.TransferTokens(bob, "100", "USD")
-        Expect(tx1).To(BeValid())
-        
-        // Second transfer with same inputs fails
-        tx2 := alice.TransferTokens(bob, "100", "USD")
-        Expect(tx2).To(BeInvalid())
-        Expect(tx2.Message).To(ContainSubstring("Double spend"))
-    })
-    
-    It("should reject insufficient signatures", func() {
-        // Configure network to require 2 endorsers
-        network.SetEndorsementPolicy("all", 2)
-        
-        // Only 1 endorser available
-        network.RemoveEndorser("endorser2")
-        
-        // Transfer should fail
-        tx := alice.TransferTokens(bob, "50", "USD")
-        Expect(tx).To(BeInvalid())
-        Expect(tx.Message).To(ContainSubstring("Invalid signatures"))
-    })
-    
-    It("should handle finality timeout", func() {
-        // Stop Anvil to prevent mining
-        network.StopMining()
-        
-        // Transfer should timeout
-        tx := alice.TransferTokens(bob, "50", "USD")
-        Expect(tx).To(BeUnknown())
-    })
-})
-```
+- **Unit**: EIP-712 type/digest vectors; key derivation; StateDelta determinism (sorted metadata, counter
+  order, redeem skipping); translator action mapping (issue/transfer/redeem/setup, both graph modes);
+  NonceManager (init flag, recovery); config validation; finality resolver (pending/committed/failed/dropped/
+  superseded). Mock `EVMClient` + Solidity unit tests (forge) for the contracts.
+- **Integration (NWO)**: topology that boots fabric-x-evm (or anvil), deploys EndorsementVerifier + a
+  TokenState clone via forge, provisions endorser identities (address ↔ FSC), wires FSC nodes. Cases: issue,
+  transfer, redeem, double-spend reject, sub-threshold reject, stale-PP reject, PP update (endorsed) + version
+  bump, finality at `finalized`, recipient-side anchor→finality resolution, superseded tx.
 
 ---
 
-## 11. Metrics and Monitoring
+## 12. Metrics and Logging
 
-### 11.1 Metrics to Expose
-
-Following the SDK's existing metrics patterns:
-
-```go
-type Metrics struct {
-    // Transaction metrics
-    TransactionSubmitted    prometheus.Counter
-    TransactionConfirmed    prometheus.Counter
-    TransactionFailed       prometheus.Counter
-    TransactionLatency      prometheus.Histogram
-    
-    // Endorsement metrics
-    EndorsementRequested    prometheus.Counter
-    EndorsementReceived     prometheus.Counter
-    EndorsementFailed       prometheus.Counter
-    EndorsementLatency      prometheus.Histogram
-    
-    // Finality metrics
-    FinalityListenerAdded   prometheus.Counter
-    FinalityNotified        prometheus.Counter
-    FinalityPolls           prometheus.Counter
-    FinalityLatency         prometheus.Histogram
-    ReorgDetected           prometheus.Counter
-    StatusCacheHits         prometheus.Counter
-    StatusCacheMisses       prometheus.Counter
-    
-    // Contract interaction metrics
-    ContractCallSuccess     prometheus.Counter
-    ContractCallFailure     prometheus.Counter
-    ContractCallLatency     prometheus.Histogram
-    
-    // Gas metrics
-    GasUsed                 prometheus.Histogram
-    GasPrice                prometheus.Gauge
-    
-    // Error metrics
-    NonceConflicts          prometheus.Counter
-    NetworkErrors           prometheus.Counter
-    DoubleSpendAttempts     prometheus.Counter
-}
-```
-
-### 11.2 Alerting Thresholds
-
-```yaml
-alerts:
-  - name: HighTransactionFailureRate
-    condition: transaction_failed_total / transaction_submitted_total > 0.1
-    duration: 5m
-    severity: warning
-    
-  - name: EndorsementTimeout
-    condition: endorsement_failed_total{reason="timeout"} > 10
-    duration: 5m
-    severity: critical
-    
-  - name: FinalityDelayed
-    condition: finality_latency_seconds > 300
-    duration: 10m
-    severity: warning
-    
-  - name: NonceConflict
-    condition: rate(nonce_conflict_total[5m]) > 1
-    duration: 5m
-    severity: warning
-    
-  - name: ReorgDetected
-    condition: reorg_detected_total > 0
-    duration: 1m
-    severity: warning
-```
-
-### 11.2 Logging
-
-Use existing SDK logger with structured fields:
-
-```go
-logger.Debugf("broadcasting transaction [txID=%s, ethTxHash=%s]", txID, ethTxHash)
-logger.Infof("transaction confirmed [txID=%s, block=%d, confirmations=%d]", txID, blockNum, confirmations)
-logger.Warnf("endorsement failed [txID=%s, endorser=%s, error=%v]", txID, endorserID, err)
-logger.Errorf("contract call failed [contract=%s, method=%s, error=%v]", contractAddr, method, err)
-```
+Counters/histograms: transactions (submitted/confirmed/failed/latency), endorsements (requested/received/
+failed/latency), finality (listeners/notified/polls/latency), contract calls (success/failure/latency), gas
+(used/price), errors (nonce conflicts, double-spend attempts, stale-PP). Structured logs via the SDK logger
+(`logging.MustGetLogger`).
 
 ---
 
-## 12. Error Handling
+## 13. Error Handling
 
-### 12.1 Error Taxonomy
+Typed sentinel errors with `errors.Is` classification (using `fabric-smart-client/pkg/utils/errors`):
 
-The driver defines typed errors for different failure modes:
+| Error | Class | Recovery |
+|------|-------|----------|
+| `ErrInsufficientEndorsements`, `ErrInvalidSignature` | permanent | reject |
+| `ErrDoubleSpend`, `ErrInputMissingOrSpent`, `ErrStalePublicParams` | permanent | reject (re-derive request) |
+| `ErrNetworkUnavailable`, `ErrNonceConflict` | transient | backoff retry (nonce: re-sync then retry) |
+| `ErrTransactionReverted` | permanent | map to `Invalid` via receipt |
+| `ErrFinalityTimeout` | transient | continue polling within timeout |
+| `ErrInvalidConfiguration`, `ErrMissingContract` | fatal | fail fast at startup |
 
-```go
-// Error types for Ethereum network driver
-var (
-    // Transaction errors
-    ErrInsufficientEndorsements = errors.New("insufficient endorsements")
-    ErrInvalidSignature        = errors.New("invalid endorser signature")
-    ErrDoubleSpend             = errors.New("double spend detected")
-    ErrInvalidStateDelta       = errors.New("invalid state delta")
-    
-    // Network errors
-    ErrNetworkUnavailable      = errors.New("network unavailable")
-    ErrContractNotFound        = errors.New("contract not found")
-    ErrInsufficientGas         = errors.New("insufficient gas")
-    ErrNonceConflict           = errors.New("nonce conflict")
-    
-    // Finality errors
-    ErrTransactionReverted     = errors.New("transaction reverted")
-    ErrFinalityTimeout         = errors.New("finality timeout")
-    ErrReorgDetected           = errors.New("chain reorganization detected")
-    
-    // Configuration errors
-    ErrInvalidConfiguration    = errors.New("invalid configuration")
-    ErrMissingContract         = errors.New("missing contract address")
-    ErrInvalidEndorserKey      = errors.New("invalid endorser key")
-)
-
-// Error classification helpers
-func IsRetryable(err error) bool {
-    return errors.Is(err, ErrNetworkUnavailable) ||
-           errors.Is(err, ErrNonceConflict) ||
-           errors.Is(err, ErrFinalityTimeout)
-}
-
-func IsTransient(err error) bool {
-    return errors.Is(err, ErrNetworkUnavailable) ||
-           errors.Is(err, ErrInsufficientGas)
-}
-
-func IsPermanent(err error) bool {
-    return errors.Is(err, ErrDoubleSpend) ||
-           errors.Is(err, ErrInvalidSignature) ||
-           errors.Is(err, ErrInvalidStateDelta)
-}
-```
-
-### 12.2 Recovery Strategies
-
-| Error Type | Recovery Strategy | Retry | User Action Required |
-|------------|------------------|-------|---------------------|
-| Insufficient Endorsements | Collect more signatures | No | Yes - contact endorsers |
-| Invalid Signature | Reject transaction | No | Yes - fix endorser config |
-| Double Spend | Reject transaction | No | Yes - transaction invalid |
-| Network Unavailable | Exponential backoff retry | Yes (3x) | No |
-| Insufficient Gas | Increase gas limit | No | Yes - adjust config |
-| Nonce Conflict | Refresh nonce and retry | Yes (1x) | No |
-| Transaction Reverted | Check revert reason | No | Yes - fix transaction |
-| Finality Timeout | Continue polling | Yes | No |
-| Reorg Detected | Re-verify transaction | Yes | No |
-
-### 12.3 Nonce Recovery
-
-```go
-func (nm *NonceManager) RecoverNonce(ctx context.Context) error {
-    nm.mu.Lock()
-    defer nm.mu.Unlock()
-    
-    // Query current nonce from network
-    networkNonce, err := nm.client.PendingNonceAt(ctx, nm.address)
-    if err != nil {
-        return errors.Wrap(err, "failed to query network nonce")
-    }
-    
-    // Check for nonce gap
-    if networkNonce > nm.nonce {
-        logger.Warnf("Nonce gap detected: local=%d, network=%d", 
-            nm.nonce, networkNonce)
-        nm.nonce = networkNonce
-    } else if networkNonce < nm.nonce {
-        logger.Warnf("Local nonce ahead of network: local=%d, network=%d", 
-            nm.nonce, networkNonce)
-        // Keep local nonce - transactions may be pending
-    }
-    
-    return nil
-}
-```
+### Mapping reverts → status
+`applyStateDelta` reverts (receipt status 0) map to `Invalid`. The contract's revert reason string is surfaced
+in `StateCommitted.message`/the receipt for diagnostics.
 
 ---
 
-## 13. Security Considerations
+## 14. Security Considerations
 
-### 13.1 Threat Model
-
-**Threat 1: Endorser Key Compromise**
-- **Risk**: Attacker could sign malicious state deltas
-- **Mitigation**: HSM key storage, key rotation, threshold signatures, monitoring
-
-**Threat 2: Replay Attacks**
-- **Risk**: Reuse of valid signatures on different chains
-- **Mitigation**: EIP-712 domain separator includes chainID and contract address
-
-**Threat 3: Front-Running**
-- **Risk**: Attacker observes pending transaction and submits competing transaction
-- **Mitigation**: Private transaction pools, transaction ordering guarantees, monitoring
-
-**Threat 4: Double-Spend via Reorg**
-- **Risk**: Transaction confirmed then reverted in reorg
-- **Mitigation**: Configurable confirmation depth, reorg detection, re-verification
-
-**Threat 5: Denial of Service**
-- **Risk**: Attacker floods network with invalid transactions
-- **Mitigation**: Rate limiting, gas requirements, validation before endorsement
-
-**Threat 6: Smart Contract Vulnerabilities**
-- **Risk**: Bugs in contracts could be exploited
-- **Mitigation**: Comprehensive testing, security audits, formal verification, emergency pause
-
-### 13.2 Access Control
-
-```solidity
-// Access control for contract admin operations
-contract TokenState {
-    address public admin;
-    
-    modifier onlyAdmin() {
-        require(msg.sender == admin, "Only admin");
-        _;
-    }
-    
-    function setPublicParameters(bytes calldata params) external onlyAdmin {
-        // ...
-    }
-    
-    function setEndorsementVerifier(address verifier) external onlyAdmin {
-        // ...
-    }
-    
-    function transferAdmin(address newAdmin) external onlyAdmin {
-        require(newAdmin != address(0), "Invalid address");
-        admin = newAdmin;
-    }
-}
-```
+- **Foundational**: security = the endorser quorum (§1.1). Endorser key custody (HSM, rotation, threshold,
+  monitoring) is the primary control.
+- **Replay**: EIP-712 domain binds chainId + TokenState clone address; `processedAnchor` prevents
+  anchor reuse.
+- **Front-running** (§15.5): signatures aren't bound to `msg.sender`, so anyone can submit a valid delta; the
+  effect is benign (it applies the same valid transition; the original submitter's tx then reverts on
+  `processedAnchor`). Accepted for v1.
+- **PP governance**: updates are quorum-endorsed (§3.5), not admin-controlled — a single key cannot rewrite
+  validation rules.
+- **Metadata size**: enforce `MAX_METADATA_VALUE_SIZE` at the approver (zkatdlog metadata can be large and is
+  untrusted — @alexandrosfilios).
+- **Reorg**: avoided in v1 by reading at `finalized`.
+- **Contract audit**: EndorsementVerifier (ecrecover, low-s, uniqueness) and TokenState (atomicity, access on
+  deployer-only seeds) are the audit surface.
 
 ---
 
-## 14. Implementation Phases
+## 15. Resolved Decisions (with rationale)
 
-### Phase 1: Driver Scaffold (Week 1-2)
-- [ ] Package structure setup
-- [ ] Driver registration
-- [ ] Configuration loading and validation
-- [ ] JSON-RPC client implementation
-- [ ] Error taxonomy definition
-- [ ] Basic unit tests
+Items 1, 3, 6, 9 were confirmed by Angelo on 2026-07-02 (DM); the rest are grounded defaults.
 
-### Phase 2: Core Transaction Flow (Week 3-4)
-- [ ] Envelope implementation
-- [ ] ComputeTxID logic
-- [ ] Broadcast implementation
-- [ ] Nonce management with recovery
-- [ ] Basic integration test with Anvil
+1. **One `spentRefs` list + contract `graphHiding` flag** *(Angelo)*. Not two lists. Each TokenState serves a
+   single driver, so the mode is fixed per contract; the contract branches on `graphHiding` (from PP): refs
+   are token IDs (must exist & get spent) or serial numbers (must not exist & get recorded). Spend-ref
+   identity is a bare `bytes32` (no `Input` struct, no `outputHash`) — existence/unspent is checked by the
+   ref; byte-binding is enforced off-chain by endorsers, which suffices because the bytes are already on-chain
+   and endorsers validate them (Approach-2 trust model).
+2. **Spent = flag, bytes retained.** Auditability + simpler queries; the driver boundary hides delete-vs-flag
+   from higher layers as long as `AreTokensSpent` is correct. Delete's gas refund is marginal.
+3. **Governance: quorum owns everything post-bootstrap** *(Angelo: "once the quorum is set, they can do
+   everything")*. The deployer only seeds the initial PP + endorser set; thereafter PP updates (endorsed setup
+   delta, versioned like `pp.VersionKeeper`), endorser-set/threshold changes, and `setEndorsementVerifier` are
+   all quorum-gated. No standing deployer/admin privilege.
+4. **EIP-1167 minimal clones** for per-TMS TokenState: cheap deployment, no upgradeability implication.
+5. **Accept benign front-running** in v1; don't bind the submitter (the transition is identical; replay is
+   blocked by `processedAnchor`).
+6. **No go-ethereum, even transitively** *(Angelo: license is a hard blocker)*. Use `x/crypto/sha3` +
+   `decred/secp256k1` + local `Address`/`Hash` types; permissive RLP for raw-tx encoding (§9). CI must fail if
+   the build graph pulls go-ethereum.
+7. **Endorsement ACL by FSC identity allowlist** over the authenticated FSC session (EVM analog of the Fabric
+   MSP/ACL creator check).
+8. **Gas via `eth_estimateGas` × multiplier**, EIP-1559 fees from node suggestion; `fixed` only as override.
+   ERC-4337 deferred to v2.
+9. **Endorser identity** bound to both an FSC `view.Identity` (routing) and an Ethereum address (`ecrecover`).
+10. **Module isolation** *(Angelo, Week-1 review: "everything stays under `x/token/services/network/evm` …
+    create a go module … the rest of the token-sdk does not depend on this new network driver")*. The driver is
+    its own Go module under `x/token/services/network/evm`; the core token-sdk must never import it. The lean
+    module also must not import `token/sdk/dig` (it drags core's fabric+idemix graph in and cannot be
+    version-reconciled), so the `evmdlog` SDK composition of the driver with a token driver is an
+    integration-module concern (plan Week 6 / rule R7).
 
-### Phase 3: StateDelta Translator (Week 5-6)
-- [ ] Translator interface implementation
-- [ ] Action processing logic (Setup, Issue, Transfer)
-- [ ] Graph-hiding support
-- [ ] Metadata handling
-- [ ] Public parameters dependency
-- [ ] Unit tests for translator
+## 16. Still to confirm with Angelo (non-blocking)
 
-### Phase 4: EIP-712 and Endorsement (Week 7-8)
-- [ ] EIP-712 utilities
-- [ ] secp256k1 signer integration
-- [ ] Endorsement service provider
-- [ ] Endorser responder view
-- [ ] RequestApproval flow
-- [ ] Unit tests for signing
+- §15.7 the default endorsement allowlist policy (who may request endorsement) — parked for the endorsement
+  work (plan Week 4).
+- Minor: `Panurus` as the EIP-712 domain `name` (vs a project-preferred string).
 
-### Phase 5: Smart Contracts (Week 9-10)
-- [ ] EndorsementVerifier contract
-- [ ] TokenState contract
-- [ ] Contract deployment scripts
-- [ ] ABI encoding/decoding utilities
-- [ ] Contract unit tests (Solidity)
-- [ ] Security audit preparation
+The load-bearing items (spent model, governance, crypto, StateDelta shape) are settled, so the Week-1 freeze
+can proceed.
 
-### Phase 6: Finality and Queries (Week 11-12)
-- [ ] Finality poller implementation
-- [ ] Reorg detection
-- [ ] Status caching
-- [ ] AddFinalityListener
-- [ ] GetTransactionStatus
-- [ ] QueryTokens
-- [ ] AreTokensSpent
-- [ ] FetchPublicParameters
-- [ ] Integration tests for finality
+## 17. Implementation Phases (summary)
+
+Frozen-first: (1) StateDelta + evm key translator + on-chain check-list; (2) contracts; (3) StateDelta
+translator; (4) EIP-712 + endorsement; (5) driver + network methods + wiring; (6) finality. Task-level detail,
+file lists, and acceptance criteria are in `eth_network_driver_implementation_plan.md`.
