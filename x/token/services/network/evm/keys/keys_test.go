@@ -66,7 +66,7 @@ func TestOutputSNMarkerBinding(t *testing.T) {
 	assert.NotEqual(t, base, OutputSNMarker(a, 0, []byte("forged-token")), "different content must not match")
 	assert.NotEqual(t, base, OutputSNMarker(a, 1, []byte("real-token")), "different index must differ")
 	assert.NotEqual(t, base, OutputSNMarker(anchor(0x12), 0, []byte("real-token")), "different anchor must differ")
-	assert.NotEqual(t, base, [32]byte(ComputeTokenID(a, 0)), "marker must not collide with the addressable id")
+	assert.NotEqual(t, base, ComputeTokenID(a, 0), "marker must not collide with the addressable id")
 }
 
 func TestComputeTokenIDDistinct(t *testing.T) {
@@ -80,8 +80,8 @@ func TestComputeTokenIDDistinct(t *testing.T) {
 // TestDomainSeparation guards that the different key classes never collide for the same input.
 func TestDomainSeparation(t *testing.T) {
 	assert.NotEqual(t, IssueMetadataKey("k"), TransferMetadataKey("k"))
-	assert.NotEqual(t, TransferMetadataKey("k"), [32]byte(SpentRefForSerial([]byte("k"))))
-	assert.NotEqual(t, IssueMetadataKey("k"), [32]byte(SpentRefForSerial([]byte("k"))))
+	assert.NotEqual(t, TransferMetadataKey("k"), SpentRefForSerial([]byte("k")))
+	assert.NotEqual(t, IssueMetadataKey("k"), SpentRefForSerial([]byte("k")))
 
 	assert.NotEqual(t, TransferMetadataKey("a"), TransferMetadataKey("b"))
 	assert.NotEqual(t, SpentRefForSerial([]byte("sn1")), SpentRefForSerial([]byte("sn2")))
@@ -89,9 +89,12 @@ func TestDomainSeparation(t *testing.T) {
 
 func TestDeterminism(t *testing.T) {
 	a := anchor(0x42)
-	assert.Equal(t, ComputeTokenID(a, 7), ComputeTokenID(a, 7))
-	assert.Equal(t, TransferMetadataKey("x"), TransferMetadataKey("x"))
-	assert.Equal(t, SpentRefForSerial([]byte("s")), SpentRefForSerial([]byte("s")))
+	id1, id2 := ComputeTokenID(a, 7), ComputeTokenID(a, 7)
+	assert.Equal(t, id1, id2)
+	mk1, mk2 := TransferMetadataKey("x"), TransferMetadataKey("x")
+	assert.Equal(t, mk1, mk2)
+	sr1, sr2 := SpentRefForSerial([]byte("s")), SpentRefForSerial([]byte("s"))
+	assert.Equal(t, sr1, sr2)
 }
 
 func TestAnchorFromTxID(t *testing.T) {
@@ -101,7 +104,7 @@ func TestAnchorFromTxID(t *testing.T) {
 	assert.Equal(t, a, got)
 
 	_, err = AnchorFromTxID("zzzz")
-	assert.Error(t, err, "non-hex must be rejected")
+	require.Error(t, err, "non-hex must be rejected")
 	_, err = AnchorFromTxID("1234")
 	assert.Error(t, err, "wrong length must be rejected")
 }

@@ -57,7 +57,7 @@ func TestSHA256KnownVector(t *testing.T) {
 // the driver writes on-chain would not match what the rest of the SDK computes and compares.
 func TestSHA256MatchesHashable(t *testing.T) {
 	for _, in := range [][]byte{[]byte("abc"), []byte("public-parameters"), []byte("a token request")} {
-		require.Equal(t, []byte(utils.Hashable(in).Raw()), SHA256(in))
+		require.Equal(t, utils.Hashable(in).Raw(), SHA256(in))
 	}
 }
 
@@ -66,5 +66,5 @@ func TestSHA256MatchesHashable(t *testing.T) {
 // empty input; public parameters and token requests are never empty, so this never bites in practice.
 func TestSHA256Empty(t *testing.T) {
 	assert.Equal(t, "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", hex.EncodeToString(SHA256(nil)))
-	assert.Nil(t, []byte(utils.Hashable(nil).Raw()))
+	assert.Nil(t, utils.Hashable(nil).Raw())
 }

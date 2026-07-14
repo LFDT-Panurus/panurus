@@ -99,7 +99,8 @@ func TestGoldenSetupDigest(t *testing.T) {
 
 func TestDigestDeterministic(t *testing.T) {
 	d := fixtureDomain(t)
-	assert.Equal(t, Digest(d, fixtureDelta()), Digest(d, fixtureDelta()))
+	first, second := Digest(d, fixtureDelta()), Digest(d, fixtureDelta())
+	assert.Equal(t, first, second)
 }
 
 // TestDigestSensitivity guards that the digest actually covers each field: mutating any of them must
