@@ -131,9 +131,9 @@ func (v *Validator[P, T, TA, IA, DS]) VerifyTokenRequestFromRaw(ctx context.Cont
 		return nil, nil, errors.Errorf("too many actions: %d > %d", len(tr.Actions), v.ValidationConfig.MaxActionCount)
 	}
 
-	// Legacy support: treat V0 as V1
+	// Validate protocol version
 	if tr.Version == 0 {
-		tr.Version = uint32(driver.ProtocolV1)
+		return nil, nil, driver.ErrInvalidVersion
 	}
 
 	// Enforce minimum protocol version if configured
