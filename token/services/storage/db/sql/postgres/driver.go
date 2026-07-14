@@ -12,13 +12,13 @@ import (
 	"fmt"
 	"strings"
 
+	driver3 "github.com/LFDT-Panurus/panurus/token/services/storage/db/driver"
+	common3 "github.com/LFDT-Panurus/panurus/token/services/storage/db/sql/common"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/common/utils"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/common/utils/lazy"
 	driver2 "github.com/hyperledger-labs/fabric-smart-client/platform/view/services/storage/driver"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/services/storage/driver/common"
 	fscPostgres "github.com/hyperledger-labs/fabric-smart-client/platform/view/services/storage/driver/sql/postgres"
-	driver3 "github.com/LFDT-Panurus/panurus/token/services/storage/db/driver"
-	common3 "github.com/LFDT-Panurus/panurus/token/services/storage/db/sql/common"
 )
 
 // configProvider defines the interface for retrieving database configuration.
@@ -288,7 +288,6 @@ func (d *Driver) NewEndorser(name driver2.PersistenceName, params ...string) (dr
 
 	return d.Endorser.Get(*opts)
 }
-
 
 // newProviderWithKeyMapper returns a lazy provider for a DB object using a common constructor.
 func newProviderWithKeyMapper[V common.DBObject](dbProvider fscPostgres.DbProvider, constructor common3.PersistenceConstructor[V], storeType string) lazy.Provider[fscPostgres.Config, V] {

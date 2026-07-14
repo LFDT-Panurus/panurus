@@ -9,10 +9,10 @@ package main
 import (
 	fscnode "github.com/hyperledger-labs/fabric-smart-client/node"
 
-	viewregistry "github.com/hyperledger-labs/fabric-smart-client/platform/view/services/view"
 	fdlog "github.com/LFDT-Panurus/panurus/integration/token/common/sdk/fdlog"
 	views "github.com/LFDT-Panurus/panurus/integration/token/dvp/views"
 	house "github.com/LFDT-Panurus/panurus/integration/token/dvp/views/house"
+	viewregistry "github.com/hyperledger-labs/fabric-smart-client/platform/view/services/view"
 )
 
 func main() {

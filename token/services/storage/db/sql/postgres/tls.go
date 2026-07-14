@@ -16,9 +16,9 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/stdlib"
 
+	driver3 "github.com/LFDT-Panurus/panurus/token/services/storage/db/driver"
 	driver2 "github.com/hyperledger-labs/fabric-smart-client/platform/view/services/storage/driver"
 	fscPostgres "github.com/hyperledger-labs/fabric-smart-client/platform/view/services/storage/driver/sql/postgres"
-	driver3 "github.com/LFDT-Panurus/panurus/token/services/storage/db/driver"
 )
 
 // TLSConfig defines the configuration parameters for securing database connections.
