@@ -83,7 +83,9 @@ type Storage interface {
     // AcquireCleanupLeadership obtains distributed lock for leader election
     AcquireCleanupLeadership(ctx context.Context, lockID int64) (Leadership, bool, error)
     
-    // GetDeletedTokensPendingSKICleanup queries deleted tokens older than TTL that haven't been cleaned
+    // GetDeletedTokensPendingSKICleanup queries deleted, owned tokens older than TTL that haven't been cleaned.
+    // Tokens for which this node is only an auditor or issuer are excluded, since this node
+    // never holds the secret keys for those tokens.
     GetDeletedTokensPendingSKICleanup(ctx context.Context, olderThan time.Duration, limit int) ([]DeletedToken, error)
     
     // MarkTokenCleaned records successful key cleanup to prevent reprocessing
@@ -303,10 +305,12 @@ A token transitions through the following states related to cleanup:
 
 - **Active**: Token is unspent and in use
 - **Deleted**: Token marked as deleted (`is_deleted=true`, `spent_at` set)
-- **Eligible for Cleanup**: Deleted token older than TTL without a cleanup record in `token_ski_cleanups`
+- **Eligible for Cleanup**: Deleted, **owned** token (`owner=true`) older than TTL without a cleanup record in `token_ski_cleanups`
 - **Cleaned**: Keys deleted from keystore (record exists in `token_ski_cleanups`)
 
-The cleanup service only processes tokens in the "Eligible for Cleanup" state.
+The cleanup service only processes tokens in the "Eligible for Cleanup" state. Tokens for which
+this node is only an auditor or issuer (`owner=false`) are never selected, since this node
+never holds the secret keys for tokens it does not own.
 
 ## Database Schema
 

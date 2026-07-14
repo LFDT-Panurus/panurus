@@ -32,7 +32,8 @@ type DeletedToken struct {
 type Storage interface {
 	// AcquireCleanupLeadership acquires an advisory lock for cleanup leadership
 	AcquireCleanupLeadership(ctx context.Context, lockID int64) (Leadership, bool, error)
-	// GetDeletedTokensPendingSKICleanup returns deleted tokens older than the specified duration that haven't had their SKI keys cleaned
+	// GetDeletedTokensPendingSKICleanup returns deleted tokens older than the specified duration that haven't had their SKI keys cleaned.
+	// Only tokens owned by this node are returned, since this node only holds the secret keys for tokens it owns.
 	GetDeletedTokensPendingSKICleanup(ctx context.Context, olderThan time.Duration, limit int) ([]DeletedToken, error)
 	// MarkTokenCleaned marks a token as having its SKI keys cleaned up
 	MarkTokenCleaned(ctx context.Context, txID string, index uint64, cleanedBy string) error

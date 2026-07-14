@@ -18,11 +18,16 @@ import (
 	"github.com/LFDT-Panurus/panurus/token/core/common/encoding/json"
 	"github.com/LFDT-Panurus/panurus/token/services/identity/boolpolicy"
 	"github.com/LFDT-Panurus/panurus/token/services/ttx"
+	"github.com/LFDT-Panurus/panurus/token/services/utils"
 	"github.com/LFDT-Panurus/panurus/token/services/utils/json/session"
 	"github.com/LFDT-Panurus/panurus/token/token"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/view"
 )
+
+// defaultSpendRequestTimeout is applied by NewRequestSpendView so callers that never
+// call WithTimeout are still protected against an unresponsive co-owner.
+const defaultSpendRequestTimeout = 30 * time.Second
 
 // SpendRequest carries a policy token selected for spending to co-owners.
 type SpendRequest struct {
@@ -84,12 +89,6 @@ type SpendResponse struct {
 	Err error
 }
 
-type answer struct {
-	response *SpendResponse
-	err      error
-	party    view.Identity
-}
-
 // RequestSpendView sends a SpendRequest to all co-owners of a policy token and
 // collects their acknowledgements.  This is needed for AND policies; OR-policy
 // spends can skip this step.
@@ -98,7 +97,8 @@ type RequestSpendView struct {
 	parties      []view.Identity
 	options      *token2.ServiceOptions
 
-	err error
+	err     error
+	timeout time.Duration
 }
 
 // NewRequestSpendView creates a RequestSpendView for the given policy token.
@@ -126,7 +126,15 @@ func NewRequestSpendView(unspentToken *token.UnspentToken, opts ...token2.Servic
 		unspentToken: unspentToken,
 		parties:      parties,
 		options:      serviceOptions,
+		timeout:      defaultSpendRequestTimeout,
 	}
+}
+
+// WithTimeout sets the maximum time to wait for all co-owners to respond.
+func (c *RequestSpendView) WithTimeout(timeout time.Duration) *RequestSpendView {
+	c.timeout = timeout
+
+	return c
 }
 
 // Call implements view.View.
@@ -140,56 +148,53 @@ func (c *RequestSpendView) Call(context view.Context) (any, error) {
 		return nil, errors.Wrapf(err, "failed getting TMS for [%s]", c.options.TMSID())
 	}
 	areMe := tms.SigService().AreMe(context.Context(), c.parties...)
-	answerChannel := make(chan *answer, len(c.parties))
+	collector := utils.NewAnswersCollector[string, *SpendResponse](len(c.parties), c.timeout)
 	counter := 0
 	for _, party := range c.parties {
 		if slices.Contains(areMe, party.UniqueID()) {
 			continue
 		}
-		go c.collectAnswers(context, party, request, answerChannel)
+		go c.collectAnswers(context, party, request, collector)
 		counter++
 	}
-	for range counter {
-		var a *answer
-		select {
-		case a = <-answerChannel:
-			// Received answer from party
-		case <-context.Context().Done():
-			return nil, errors.Wrapf(context.Context().Err(), "context cancelled while waiting for answer from party")
+	answers, err := collector.Collect(context.Context(), counter)
+	if err != nil {
+		return nil, errors.Wrapf(err, "failed waiting for policy answers")
+	}
+	for _, a := range answers {
+		if a.Err != nil {
+			return nil, errors.Wrapf(a.Err, "failure from [%s]", a.Key)
 		}
-		if a.err != nil {
-			return nil, errors.Wrapf(a.err, "failure from [%s]", a.party)
-		}
-		if a.response.Err != nil {
-			return nil, errors.Wrapf(a.response.Err, "failure from [%s]", a.party)
+		if a.Value.Err != nil {
+			return nil, errors.Wrapf(a.Value.Err, "failure from [%s]", a.Key)
 		}
 	}
 
 	return nil, nil
 }
 
-func (c *RequestSpendView) collectAnswers(context view.Context, party view.Identity, request *SpendRequest, ch chan *answer) {
+func (c *RequestSpendView) collectAnswers(context view.Context, party view.Identity, request *SpendRequest, collector *utils.AnswersCollector[string, *SpendResponse]) {
 	defer logger.DebugfContext(context.Context(), "received response from [%v]", party)
 
 	backendSession, err := context.GetSession(c, party, context.Initiator())
 	if err != nil {
-		ch <- &answer{err: errors.Wrapf(err, "failed to create session with [%s]", party), party: party}
+		collector.Send(party.UniqueID(), nil, errors.Wrapf(err, "failed to create session with [%s]", party))
 
 		return
 	}
 	s := session.NewTypedSession(context, backendSession)
 	if err = s.SendTyped(context.Context(), request, ttx.TypeSpendRequest); err != nil {
-		ch <- &answer{err: errors.Wrapf(err, "failed to send request to [%s]", party), party: party}
+		collector.Send(party.UniqueID(), nil, errors.Wrapf(err, "failed to send request to [%s]", party))
 
 		return
 	}
 	response := &SpendResponse{}
 	if err := s.ReceiveTyped(ttx.TypeSpendResponse, response); err != nil {
-		ch <- &answer{err: errors.Wrapf(err, "failed to receive response from [%s]", party), party: party}
+		collector.Send(party.UniqueID(), nil, errors.Wrapf(err, "failed to receive response from [%s]", party))
 
 		return
 	}
-	ch <- &answer{response: response, party: party}
+	collector.Send(party.UniqueID(), response, nil)
 }
 
 // ReceiveSpendTxView is the co-owner's view for AND-policy spends: it ACKs
