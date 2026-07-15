@@ -67,18 +67,7 @@ func (w *RWSetWrapper) StateMustExist(key translator.Key, version translator.Key
 	case translator.VersionZero:
 		return w.RWSet.AddReadAt(w.Namespace, key, vault.MarshalVersion(0))
 	case translator.Latest:
-		// TODO: AF
 		return w.RWSet.AddReadAt(w.Namespace, key, vault.MarshalVersion(w.ppVersion))
-		// // When StateMustExist is called on VersionZero, Latest behaviour is used instead.
-		// // This works under the assumption that keys are used only once.
-		// h, err := w.RWSet.GetState(w.Namespace, key)
-		// if err != nil {
-		//	return errors.Wrapf(err, "failed to read state [%s:%s] for [%s]", w.Namespace, key, w.TxID)
-		// }
-		// if len(h) == 0 {
-		//	return errors.Errorf("state [%s:%s] does not exist for [%s]", w.Namespace, key, w.TxID)
-		// }
-		// return nil
 	default:
 		return errors.Errorf("invalid version [%d]", version)
 	}
