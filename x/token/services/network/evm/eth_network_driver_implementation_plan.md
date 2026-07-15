@@ -258,6 +258,23 @@ on-chain; a forged-content spend (real `tokenID`, different `tokenData`) is reje
 
 ## Week 3 — StateDelta translator + EIP-712 signer
 
+**Delivered as two PRs, phased like Week 2 (quality gate per phase):**
+
+- **PR 3a — secp256k1 signer + the Go→contract signature gate:**
+  - [x] Phase A: `eip712/signer.go` (Sign/RecoverAddress/PubKeyToAddress; the §8 byte-format traps
+    handled: SignCompact `{v,r,s}`→`{r,s,v}` reorder, uncompressed-only so v∈{27,28}, 0x04 prefix
+    stripped for the address, low-s asserted both when signing and recovering) + unit tests incl.
+    golden addresses for keys 1/2, RFC 6979 determinism, round-trip, malleable-s rejection.
+  - [x] Phase B: **the Week-3 gate, passed** — real Go-produced signatures over the frozen digest
+    committed to the fixture (`endorsement` block; RFC 6979 keeps them reproducible), pinned by a Go
+    golden test, independently validated with ethers v6, and **verified on-chain by
+    EndorsementVerifier in `test/GoEndorsement.t.sol`** (2-of-2 quorum). The vm.sign simulation gap
+    is closed at the signature layer.
+- **PR 3b — StateDelta translator:**
+  - [ ] Phase C: `statedelta/translator.go` (see the task list below).
+  - [ ] Phase D: translator tests: determinism, counter/redeem semantics, content-binding round-trip
+    with real token-driver actions.
+
 - [ ] `statedelta/translator.go`: Setup/Issue/Transfer mapping (§5.2) producing a `statedelta.StateDelta`.
       Build `SpentRefs` off-chain via `keys`, **content-bound** (the snMarker decision, confirmed by Angelo
       2026-07-03: the SDK validator is stateless on token content, so a bare `(anchor, index)` ref would let a

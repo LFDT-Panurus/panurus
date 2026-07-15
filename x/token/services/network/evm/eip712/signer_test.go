@@ -8,6 +8,7 @@ package eip712
 
 import (
 	"bytes"
+	"encoding/hex"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -153,4 +154,35 @@ func TestNewSignerFromBytesRejectsInvalid(t *testing.T) {
 
 	_, err = NewSignerFromBytes(make([]byte, PrivateKeyLength))
 	require.Error(t, err, "zero scalar must be rejected")
+}
+
+// TestGoldenFixtureEndorsement pins the fixture endorsement (statedelta_digest_fixture.json): the
+// signer must reproduce, byte for byte, the committed signatures over the frozen digest with the
+// well-known test keys 1 and 2 (RFC 6979 makes them deterministic; they were independently validated
+// with ethers v6). The Solidity side accepts the same bytes in test/GoEndorsement.t.sol, closing the
+// Go -> contract signature loop the forge suites previously simulated with vm.sign.
+func TestGoldenFixtureEndorsement(t *testing.T) {
+	digest, err := hexTo32("c9326b72636896424aabe0039efef420df6cd18811b82db3237260110f39b64d")
+	require.NoError(t, err)
+
+	expected := []string{
+		"61f5eef325cc3086223597422c5217d0dfdc88ee5dfe9d223b54d9030ff3900b08f17c1fa26cf286bab6ef7d83e69c2ee58da218bd51cd6ffd31af44e561ecbd1c",
+		"c81abb08a72fe90d3658b2e819aebb1a02e1be82001d46d4a9ccdd7747efb46e6267065c0a8ac036ed2a4a9bb94a9384956c00e2878dfc50562ebe323778663e1c",
+	}
+	for i, low := range []byte{1, 2} {
+		sig, err := testSigner(t, low).Sign(digest)
+		require.NoError(t, err)
+		assert.Equal(t, expected[i], hex.EncodeToString(sig), "key %d signature diverges from the fixture", low)
+	}
+}
+
+func hexTo32(s string) ([32]byte, error) {
+	var out [32]byte
+	b, err := hex.DecodeString(s)
+	if err != nil {
+		return out, err
+	}
+	copy(out[:], b)
+
+	return out, nil
 }
