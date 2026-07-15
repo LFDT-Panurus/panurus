@@ -234,6 +234,8 @@ The setup listener watches for changes to a specific ledger key that stores publ
 3. **Validation**: Parameters are validated before being applied
 4. **Persistence**: New parameters are stored in the local database
 
+The same delivery-based mechanism is reused by the [lookup service](../../token/services/network/fabric/lookup/deliveryllm.go) to detect transfer action metadata writes: it derives the transfer action metadata key prefix from [`KeyTranslator.TransferActionMetadataKeyPrefix`](../../token/services/network/common/rws/translator/rwset.go) and prefix-matches rwset writes against it, without needing to know each write's specific subkey ahead of time.
+
 ## State Queries
 
 The Fabric implementation provides efficient state querying through the chaincode:

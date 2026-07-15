@@ -101,7 +101,9 @@ type TransferOptions struct {
 	Selector Selector
 	// TokenIDs to transfer. If empty, the tokens will be selected.
 	TokenIDs []*token.ID
-	// RestRecipientIdentity TODO:
+	// RestRecipientIdentity is the recipient to which the transfer's leftover (change) amount is
+	// assigned when the selected inputs exceed the requested output sum. If nil, the change is
+	// assigned to the sender wallet's default recipient identity. Set via WithRestRecipientIdentity.
 	RestRecipientIdentity *RecipientData
 }
 

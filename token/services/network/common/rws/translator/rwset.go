@@ -42,7 +42,9 @@ type KeyTranslator interface {
 	CreateTransferActionMetadataKey(subkey string) (Key, error)
 	// GetTransferMetadataSubKey returns the subkey in the given transfer action metadata key
 	GetTransferMetadataSubKey(k string) (Key, error)
-	// TransferActionMetadataKeyPrefix TODO
+	// TransferActionMetadataKeyPrefix returns the key prefix shared by all transfer action metadata
+	// keys, i.e., the same prefix produced by CreateTransferActionMetadataKey with no subkey. It is
+	// used to prefix-match transfer action metadata writes without knowing a specific subkey.
 	TransferActionMetadataKeyPrefix() (Key, error)
 }
 
