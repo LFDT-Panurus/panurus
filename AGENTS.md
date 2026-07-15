@@ -169,6 +169,23 @@ All PRs and pushes to `main` trigger these workflows:
 - **Linear History**: Use rebase workflow; avoid merge commits
 - **License**: Apache License, Version 2.0
 
+### Issue & PR Metadata (Workflow Rule)
+Full guidance: [docs/development/general.md](docs/development/general.md). Summary:
+
+- **Open an issue before non-trivial work**, unless one already exists. Describe the
+  problem/impact only — do not reference a fix that already exists or is in progress.
+- **Every issue and PR must be assigned**: Assignee, Labels (`gh label list` for the
+  current set), Milestone (`gh api repos/LFDT-Panurus/panurus/milestones --jq '.[].title'`),
+  and Project (always `"Panurus"`). One `gh pr create`/`gh issue create` call can set
+  all of these via `--assignee`, `--label`, `--milestone`, `--project`.
+- **Issues only** also get an Issue Type (Bug/Task/Feature) — this field does not exist
+  on PRs. `gh` has no CLI flag for it; set it via `gh api graphql` with
+  `updateIssueIssueType` (node IDs from `gh api orgs/LFDT-Panurus/issue-types`).
+- **Link the PR to its issue** with `Fixes #N` / `Closes #N` in the PR body — not just a
+  mention — so GitHub connects them and the project board updates automatically.
+- Never push directly or open a PR without the user's explicit go-ahead; confirm before
+  `git push` and before `gh pr create`.
+
 ### Plan Documentation (Workflow Rule)
 Before implementing any task:
 1. Create `plan.md` in project root with:

@@ -45,6 +45,15 @@ Keep changes focused and minimal.
 - **Feature Addition:** Research -> Design -> Strategy -> Implement -> Test -> Validate.
 - **Documentation:** Research -> Draft -> Review -> Refine.
 
+## Issue & PR Submission
+
+Non-trivial fixes/features should have a GitHub Issue before implementation (describing
+the problem, not the fix), and the resulting PR must link back to it and carry the same
+metadata (assignee, labels, milestone, `Panurus` project). See
+[General Guidelines](./general.md#issue-creation-guidelines) for the exact `gh` commands,
+including the GraphQL workaround needed to set an issue's Type field. Always confirm with
+the user before pushing a branch or opening the actual PR/issue on GitHub.
+
 ## Feedback and Iteration
 If an agent provides suboptimal results, provide specific feedback based on the project's conventions. 
 Update `AGENTS.md` if there are persistent misunderstandings about the project's architecture or standards.

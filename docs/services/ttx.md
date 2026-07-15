@@ -433,6 +433,13 @@ sequenceDiagram
     R-->>I: Envelope{t:"tx_resp", b:TransactionPayload{Raw}}
 ```
 
+On each response, the initiator merges the returned payload into its transaction. The
+returned token request must be a superset-extension of the current one (its actions must
+start with exactly the actions already present, in the same order, which is what this
+round-trip protocol produces); a violation is treated as an error rather than silently
+accepted. Transient entries from the response are merged in without overwriting any key
+already set locally.
+
 ## Token Operations
 
 The TTX service supports three primary operations through the `TokenRequest` API:

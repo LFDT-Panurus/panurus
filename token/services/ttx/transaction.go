@@ -7,6 +7,7 @@ SPDX-License-Identifier: Apache-2.0
 package ttx
 
 import (
+	"bytes"
 	"context"
 
 	"github.com/LFDT-Panurus/panurus/token"
@@ -424,38 +425,61 @@ func (t *Transaction) TMSID() token.TMSID {
 	return t.tmsID
 }
 
-// appendPayload merges the given payload into this transaction by copying its token request
-// and transient data. This is used internally for transaction composition.
-// TODO: This implementation is incomplete and needs to be enhanced to properly merge all payload components.
+// appendPayload merges the given payload into this transaction. The incoming token
+// request must be a superset-extension of the current one (i.e. its actions start with
+// exactly the actions already present in this transaction, in the same order) since that
+// is what the collect-actions protocol produces; violating this invariant is treated as
+// an error rather than silently accepted. Transient entries from the payload are merged in
+// without overwriting any key already set on this transaction.
 func (t *Transaction) appendPayload(payload *Payload) error {
-	// TODO: change this
-	t.TokenRequest = payload.TokenRequest
-	t.Transient = payload.Transient
+	if err := t.mergeTokenRequest(payload.TokenRequest); err != nil {
+		return errors.Wrap(err, "failed merging token request")
+	}
+	t.mergeTransient(payload.Transient)
 
 	return nil
+}
 
-	// for _, bytes := range payload.Request.Issues {
-	//	t.Payload.Request.Issues = append(t.Payload.Request.Issues, bytes)
-	// }
-	// for _, bytes := range payload.Request.Transfers {
-	//	t.Payload.Request.Transfers = append(t.Payload.Request.Transfers, bytes)
-	// }
-	// for _, info := range payload.TokenInfos {
-	//	t.Payload.TokenInfos = append(t.Payload.TokenInfos, info)
-	// }
-	// for _, issueMetadata := range payload.ValidationRecords.Issues {
-	//	t.Payload.ValidationRecords.Issues = append(t.Payload.ValidationRecords.Issues, issueMetadata)
-	// }
-	// for _, transferMetadata := range payload.ValidationRecords.Transfers {
-	//	t.Payload.ValidationRecords.Transfers = append(t.Payload.ValidationRecords.Transfers, transferMetadata)
-	// }
-	//
-	// for key, value := range payload.Transient {
-	//	for _, v := range value {
-	//		if err := t.Set(key, v); err != nil {
-	//			return err
-	//		}
-	//	}
-	// }
-	// return nil
+// mergeTokenRequest adopts the incoming token request, provided it is a superset-extension
+// of the current one. If this transaction has no actions yet, the incoming request is
+// adopted unconditionally.
+func (t *Transaction) mergeTokenRequest(incoming *token.Request) error {
+	if incoming == nil {
+		return nil
+	}
+
+	existingActions := t.TokenRequest.Actions.Actions
+	if len(existingActions) == 0 {
+		t.TokenRequest = incoming
+
+		return nil
+	}
+
+	incomingActions := incoming.Actions.Actions
+	if len(incomingActions) < len(existingActions) {
+		return errors.Errorf("incoming token request has fewer actions [%d] than the existing one [%d]", len(incomingActions), len(existingActions))
+	}
+	for i, action := range existingActions {
+		other := incomingActions[i]
+		if action.Type != other.Type || !bytes.Equal(action.Raw, other.Raw) {
+			return errors.Errorf("incoming token request diverges from the existing one at action [%d]", i)
+		}
+	}
+
+	t.TokenRequest = incoming
+
+	return nil
+}
+
+// mergeTransient copies entries from incoming into this transaction's transient map,
+// without overwriting any key already present.
+func (t *Transaction) mergeTransient(incoming network.TransientMap) {
+	if t.Transient == nil {
+		t.Transient = network.TransientMap{}
+	}
+	for k, v := range incoming {
+		if !t.Transient.Exists(k) {
+			t.Transient[k] = v
+		}
+	}
 }
