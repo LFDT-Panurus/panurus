@@ -195,19 +195,6 @@ func (r *RequestWithdrawalView) Call(context view.Context) (any, error) {
 }
 
 func (r *RequestWithdrawalView) getRecipientIdentity(context view.Context) (*token.TMSID, *RecipientData, *token.OwnerWallet, error) {
-	if r.RecipientData != nil {
-		tms, err := token.GetManagementService(context, token.WithTMSID(r.TMSID))
-		if err != nil {
-			return nil, nil, nil, errors.Wrapf(err, "tms not found for [%s]", r.TMSID)
-		}
-
-		// TODO: check that RecipientData is registered
-
-		r.ExternalWallet = true
-
-		return new(tms.ID()), r.RecipientData, nil, nil
-	}
-
 	w := GetWallet(
 		context,
 		r.Wallet,
@@ -220,7 +207,17 @@ func (r *RequestWithdrawalView) getRecipientIdentity(context view.Context) (*tok
 	}
 
 	if r.RecipientData != nil {
-		return new(w.TMS().ID()), r.RecipientData, w, nil
+		// Register the caller-supplied recipient data with the local wallet
+		// before using it to drive the withdrawal handshake, so it is validated
+		// against the identity this wallet is bound to (and, for anonymous
+		// wallets, bound/recorded) rather than trusted as-is.
+		if err := w.RegisterRecipient(context.Context(), r.RecipientData); err != nil {
+			return nil, nil, nil, errors.Wrapf(err, "failed to register recipient data")
+		}
+
+		r.ExternalWallet = true
+
+		return new(w.TMS().ID()), r.RecipientData, nil, nil
 	}
 
 	recipientData, err := w.GetRecipientData(context.Context())

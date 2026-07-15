@@ -47,16 +47,8 @@ func (i *WithdrawalInitiatorView) Call(context view.Context) (any, error) {
 	var session view.Session
 	var err error
 	if i.RecipientData != nil {
-		// Use the passed RecipientData.
-		// First register it locally
-		var tms *token.ManagementService
-		tms, err = token.GetManagementService(context, token.WithTMSID(i.TMSID))
-		assert.NoError(err, "failed getting management service")
-		var w *token.OwnerWallet
-		w, err = tms.WalletManager().OwnerWallet(context.Context(), i.Wallet)
-		assert.NoError(err, "cannot find wallet [%s:%s]", i.TMSID, i.Wallet)
-		assert.NoError(w.RegisterRecipient(context.Context(), i.RecipientData), "failed to register remote recipient")
-
+		// Use the passed RecipientData. RequestWithdrawalForRecipient validates and
+		// registers it locally against the wallet before using it.
 		// We have an external wallet here.
 		// We need to provide access to it to RequestWithdrawalForRecipientView.
 		// Indeed, a signature is needed to prove to the issuer that the caller owns the recipient data

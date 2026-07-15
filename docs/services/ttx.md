@@ -323,7 +323,8 @@ sequenceDiagram
 
     rect rgba(230, 230, 250, 0.35)
         Note over I,Iss: Phase 1 - Request
-        I->>I: Resolve recipient identity (caller-supplied or wallet-generated)
+        I->>I: Resolve local wallet (r.Wallet)
+        I->>I: If caller-supplied RecipientData: w.RegisterRecipient(RecipientData) else w.GetRecipientData()
         I->>Iss: Envelope{t:"withdrawal_req", b:WithdrawalRequest{TMSID, RecipientData, TokenType, Amount, NotAnonymous}}
     end
 
@@ -351,6 +352,19 @@ sequenceDiagram
 ```
 
 The attestation message is the same DER-encoded (`encoding/asn1`) structure used by the recipient-identity protocols, with `walletID` fixed to `nil` — the issuer does not need to know the requester's wallet identifier.
+
+### Caller-supplied recipient data (external wallet)
+
+A caller can drive the withdrawal for a recipient identity it generated outside the local
+wallet (an "external wallet") by passing `RecipientData` directly to
+`RequestWithdrawalForRecipient`. Before this data is sent to the issuer,
+`RequestWithdrawalView.getRecipientIdentity` resolves the caller's local `r.Wallet` and calls
+`OwnerWallet.RegisterRecipient(ctx, RecipientData)` on it. For an `AnonymousOwnerWallet` this
+runs `Deserializer.MatchIdentity(Identity, AuditInfo)` before registering and binding the
+identity, so a caller-supplied `Identity`/`AuditInfo` pair that doesn't match is rejected with
+an error and the withdrawal request is never sent. For a `LongTermOwnerWallet`,
+`RegisterRecipient` is currently a no-op, so this check does not add protection when the
+caller's local wallet is long-term-identity-backed rather than anonymous.
 
 ## Token Upgrade Flow
 
