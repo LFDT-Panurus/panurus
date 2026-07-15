@@ -195,13 +195,18 @@ one-list model; his one-line ack on the input-identity read is the only outstand
     TokenState (a per-TMS clone) owns the domain separator (binds `verifyingContract=address(this)`), so it
     computes the digest; a shared/decoupled verifier cannot. Avoids a verifier↔TokenState address
     chicken-and-egg. Design §3.2 updated to match.
-- **PR 2b — TokenState + deploy + integration** (the state machine on the proven crypto):
-  - Phase A: `TokenState.sol` storage §3.1 + `applyStateDelta` §3.4 (computes `hashStruct`+digest via the
-    PR-2a library, calls `verifier.verify(digest, sigs)`) + core tests (Go-signed delta verifies on-chain;
-    double-spend; forged-content spend rejected by `snMarker`).
-  - Phase B: PP/setup lifecycle (SHA-256 precompile `0x02`, version bump first=0/then+1), queries (with the
-    §5.3 `isSpent` query-surface decision — recommend option (a): `tokenID → spent` map), events, deploy
-    script + `stale-PP`/`PP-update` integration tests.
+- **PR 2b — TokenState + deploy** (the state machine on the proven crypto) — ✅ DONE, 41/41 forge tests
+  (incl. the 2026-07-11 pre-Week-3 fix: metadata keys are **write-once** on-chain, `MetadataKeyOccupied` —
+  Fabric `StateMustNotExist` parity the §3.4 check-list had missed):
+  - [x] Phase A: `TokenState.sol` storage §3.1 + `applyStateDelta` §3.4 (computes `hashStruct`+digest via the
+    PR-2a library, calls `verifier.verify(digest, sigs)`) + 11 core tests: issue/spend, double-spend,
+    **forged-content spend rejected by `snMarker`**, tampered-delta fails verification, stale-PP, replay,
+    insufficient sigs, init guards. (Endorsers are simulated with forge `vm.sign`; the Go↔Solidity *signer*
+    cross-check is Week 3, the NWO end-to-end is Week 6.)
+  - [x] Phase B: PP/setup lifecycle (setup delta bumps version 0→1→…, `PublicParametersUpdated`, stale
+    ordering), queries with the §5.3 option-(a) `tokenID → marker` map (`isSpent`/`areTokensSpent` single
+    call), graph-hiding serial path, metadata; `Clones.sol` (EIP-1167) + `script/Deploy.s.sol` (verifier +
+    impl + initialized clone; **dry-run deploys end-to-end**) + implementation-lock hardening.
 
 Frozen contract from Week 1 (do not deviate): the Solidity `StateDelta`/`OutputToken` structs must use the
 **exact field names, types and order** of the EIP-712 type in `eip712/hashstruct.go` — note
@@ -271,8 +276,15 @@ on-chain; a forged-content spend (real `tokenID`, different `tokenData`) is reje
       `TokenRequestHash` = `crypto.SHA256(request)`, `PublicParamsHash` = `crypto.SHA256(pp)`.
 - [ ] Exact counter (issue `+= len(outputs)`, transfer `+= NumOutputs()`, redeem skipped) + canonical
       ordering (sort metadata by key) so all endorsers emit byte-identical deltas; call `delta.Validate()`.
+      (Counter rules verified against `translator.go:359/421` on 2026-07-11. Also verified: the responder
+      template drives exactly `Write(action)` → `AddPublicParamsDependency()` → `CommitTokenRequest(raw,
+      true)`, `fsc/responder.go:277-285` — keep the §5.2 surface identical.)
 - [ ] `eip712/signer.go`: secp256k1 sign/verify (`decred/secp256k1`), 65-byte `{r,s,v}`, low-s, address
       derivation `keccak256(pubkey)[12:]`; add `decred/dcrd/dcrec/secp256k1/v4` to `go.mod` here (first use).
+      **Byte-format traps (design §8, 2026-07-11):** decred `SignCompact` returns `{v,r,s}` (recovery byte
+      FIRST) — reorder to `{r,s,v}`; sign with `compressed=false` so `v ∈ {27,28}`; address input is the
+      64-byte uncompressed pubkey WITHOUT the `0x04` prefix (strip `SerializeUncompressed()[0]`); assert
+      low-s even though dcrd is canonical, so a library change cannot reintroduce malleability.
 - [ ] Unit tests: translator determinism (shuffled metadata → identical bytes), key parity with `keys`, signer
       round-trip/recovery vectors (sign digest → recover expected address), and the **content-binding
       round-trip** — a token created as an output at `(anchor, index)` yields, when later spent as an input, a
@@ -307,9 +319,17 @@ Gate: 2-of-N endorsement (mocked FSC sessions) assembles a tx whose sigs verify 
       decodable by `keys.AnchorFromTxID` (round-trip test); `NonceManager` (init flag+recovery); `ledger.go`,
       `envelope.go`. `AreTokensSpent` (graph-revealing) resolves through the **content-bound marker** per the
       Week-2 query-surface decision (§5.3), not `isSpent(ComputeTokenID)` — see the Week-2 note.
+      **`ComputeTxID` is MUTATING (verified vs FSC 2026-07-11, see design §5.3):** when `id.Nonce` is empty it
+      must generate a fresh random nonce (FSC uses 24 bytes) and write it back into `id` before hashing —
+      that is the contract the fabric driver and FSC implement and the ttx layer depends on. Tests: two calls
+      with an empty-nonce `id` produce different anchors; the generated nonce is written back; a caller-set
+      nonce is respected and round-trips.
 - [ ] `finality/manager.go` **baseline**: receipt polling at `finalized`; reuse `OnlyOnceListener` + event
       queue; `StateCommitted` indexed-log resolution (recipient-side); wire `AddFinalityListener`/
-      `GetTransactionStatus` + `getTokenRequestHash`.
+      `GetTransactionStatus` + `getTokenRequestHash`. **Status mapping (verified vs `driver/vault.go`
+      2026-07-11):** return the SDK's `driver.ValidationCode` values — `Valid=1`, `Invalid=2`, `Busy=3`,
+      `Unknown=4` (0 is not a code). Receipt status 1 → `Valid`; receipt status 0 → `Invalid`; tx known but
+      unmined → `Busy`; anchor/tx never seen → `Unknown` (then `Invalid` after the configured timeout).
 - [ ] `driver.go` `NewDriver(...)` finalized DI (model `fabric/driver.go:119`); SDK module provides EVM services.
 
 Gate: with the real client against anvil, issue→transfer round-trips RequestApproval→Broadcast→finality; the
@@ -330,6 +350,10 @@ container resolves the real driver.
 - [ ] **Admin deployment runbook** (Angelo, Wk6 deliverable): enumerated bootstrap steps — deploy verifier +
       TokenState clone, seed PP v0, register endorser set + threshold + `graphHiding`. This doc becomes the
       spec the forge/NWO deploy scripts automate.
+- [ ] **Deploy hardening (2026-07-11 review, design §3.8):** close the clone→`initialize` front-running
+      window — add a small factory contract that clones and initializes the TokenState in ONE transaction;
+      until it lands, `Deploy.s.sol` must read back and assert the post-initialize state (verifier address,
+      PP hash, `graphHiding`) before recording the clone address.
 - [ ] `Makefile` target `integration-tests-evm`.
 - [ ] `integration/token/evm/evm_test.go` (Ginkgo) — **fabtoken on Besu**, reusing the existing fungible
       `dlog` test bodies retargeted at the EVM topology: issue, transfer, double-spend reject, sub-threshold
