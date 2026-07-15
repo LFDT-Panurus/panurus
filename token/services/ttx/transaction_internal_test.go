@@ -80,22 +80,44 @@ func TestTransaction_MergeTokenRequest_ViolationDivergentPrefix(t *testing.T) {
 	assert.Same(t, existing, tx.TokenRequest, "existing request must not be replaced on violation")
 }
 
-func TestTransaction_MergeTransient_ExistingWins(t *testing.T) {
+func TestTransaction_MergeTransient_NewKeys(t *testing.T) {
 	tx := &Transaction{Payload: &Payload{Transient: network.TransientMap{"k": []byte("v1")}}}
-	incoming := network.TransientMap{"k": []byte("v2"), "k2": []byte("v3")}
+	incoming := network.TransientMap{"k2": []byte("v3")}
 
-	tx.mergeTransient(incoming)
+	err := tx.mergeTransient(incoming)
 
-	assert.Equal(t, []byte("v1"), tx.Transient["k"], "existing value must not be overwritten")
+	require.NoError(t, err)
+	assert.Equal(t, []byte("v1"), tx.Transient["k"])
 	assert.Equal(t, []byte("v3"), tx.Transient["k2"])
+}
+
+func TestTransaction_MergeTransient_IdenticalValueNoConflict(t *testing.T) {
+	tx := &Transaction{Payload: &Payload{Transient: network.TransientMap{"k": []byte("v1")}}}
+	incoming := network.TransientMap{"k": []byte("v1")}
+
+	err := tx.mergeTransient(incoming)
+
+	require.NoError(t, err)
+	assert.Equal(t, []byte("v1"), tx.Transient["k"])
+}
+
+func TestTransaction_MergeTransient_ConflictingValueErrors(t *testing.T) {
+	tx := &Transaction{Payload: &Payload{Transient: network.TransientMap{"k": []byte("v1")}}}
+	incoming := network.TransientMap{"k": []byte("v2")}
+
+	err := tx.mergeTransient(incoming)
+
+	require.Error(t, err)
+	assert.Equal(t, []byte("v1"), tx.Transient["k"], "existing value must not be overwritten on conflict")
 }
 
 func TestTransaction_MergeTransient_NilTarget(t *testing.T) {
 	tx := &Transaction{Payload: &Payload{Transient: nil}}
 	incoming := network.TransientMap{"k": []byte("v")}
 
-	tx.mergeTransient(incoming)
+	err := tx.mergeTransient(incoming)
 
+	require.NoError(t, err)
 	require.NotNil(t, tx.Transient)
 	assert.Equal(t, []byte("v"), tx.Transient["k"])
 }
@@ -109,7 +131,7 @@ func TestTransaction_AppendPayload_MergesBoth(t *testing.T) {
 	}}
 	payload := &Payload{
 		TokenRequest: newRequestWithActions(actionA, actionB),
-		Transient:    network.TransientMap{"k": []byte("v2"), "k2": []byte("v3")},
+		Transient:    network.TransientMap{"k": []byte("v1"), "k2": []byte("v3")},
 	}
 
 	err := tx.appendPayload(payload)
@@ -118,4 +140,20 @@ func TestTransaction_AppendPayload_MergesBoth(t *testing.T) {
 	assert.Len(t, tx.TokenRequest.Actions.Actions, 2)
 	assert.Equal(t, []byte("v1"), tx.Transient["k"])
 	assert.Equal(t, []byte("v3"), tx.Transient["k2"])
+}
+
+func TestTransaction_AppendPayload_TransientConflictErrors(t *testing.T) {
+	actionA := typedAction(request.ActionType_ACTION_TYPE_TRANSFER, "A")
+	tx := &Transaction{Payload: &Payload{
+		TokenRequest: newRequestWithActions(actionA),
+		Transient:    network.TransientMap{"k": []byte("v1")},
+	}}
+	payload := &Payload{
+		TokenRequest: newRequestWithActions(actionA),
+		Transient:    network.TransientMap{"k": []byte("v2")},
+	}
+
+	err := tx.appendPayload(payload)
+
+	require.Error(t, err)
 }

@@ -437,8 +437,8 @@ On each response, the initiator merges the returned payload into its transaction
 returned token request must be a superset-extension of the current one (its actions must
 start with exactly the actions already present, in the same order, which is what this
 round-trip protocol produces); a violation is treated as an error rather than silently
-accepted. Transient entries from the response are merged in without overwriting any key
-already set locally.
+accepted. Transient entries from the response are merged in; if a key is already set
+locally with a different value, the merge fails rather than silently picking one side.
 
 ## Token Operations
 

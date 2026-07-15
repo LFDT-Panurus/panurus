@@ -429,13 +429,16 @@ func (t *Transaction) TMSID() token.TMSID {
 // request must be a superset-extension of the current one (i.e. its actions start with
 // exactly the actions already present in this transaction, in the same order) since that
 // is what the collect-actions protocol produces; violating this invariant is treated as
-// an error rather than silently accepted. Transient entries from the payload are merged in
-// without overwriting any key already set on this transaction.
+// an error rather than silently accepted. Transient entries from the payload are merged in;
+// a key already set on this transaction with a different value is treated as an error
+// rather than silently resolved.
 func (t *Transaction) appendPayload(payload *Payload) error {
 	if err := t.mergeTokenRequest(payload.TokenRequest); err != nil {
 		return errors.Wrap(err, "failed merging token request")
 	}
-	t.mergeTransient(payload.Transient)
+	if err := t.mergeTransient(payload.Transient); err != nil {
+		return errors.Wrap(err, "failed merging transient")
+	}
 
 	return nil
 }
@@ -471,15 +474,23 @@ func (t *Transaction) mergeTokenRequest(incoming *token.Request) error {
 	return nil
 }
 
-// mergeTransient copies entries from incoming into this transaction's transient map,
-// without overwriting any key already present.
-func (t *Transaction) mergeTransient(incoming network.TransientMap) {
+// mergeTransient copies entries from incoming into this transaction's transient map.
+// If a key is already present with a different value, it returns an error rather than
+// silently picking one side.
+func (t *Transaction) mergeTransient(incoming network.TransientMap) error {
 	if t.Transient == nil {
 		t.Transient = network.TransientMap{}
 	}
 	for k, v := range incoming {
-		if !t.Transient.Exists(k) {
-			t.Transient[k] = v
+		if existing, ok := t.Transient[k]; ok {
+			if !bytes.Equal(existing, v) {
+				return errors.Errorf("incoming transient value for key [%s] diverges from the existing one", k)
+			}
+
+			continue
 		}
+		t.Transient[k] = v
 	}
+
+	return nil
 }
