@@ -12,9 +12,14 @@ Solidity sources for the EVM network driver (Approach 2), built with [Foundry](h
 - `src/EndorsementVerifier.sol` — the authorized endorser set + threshold; verifies a quorum of
   EIP-712 signatures over a digest (ecrecover, low-s, `v ∈ {27,28}`, signer uniqueness, strict
   all-provided-valid semantics — design §3.2). Landed in PR 2a.
-- `TokenState.sol` (PR 2b, upcoming) — stores token state and applies endorsed `StateDelta`s:
-  verifies signatures, checks the public-parameters version, enforces spent/existence per the
-  `graphHiding` flag, then applies the transition. Deployed per TMS via an EIP-1167 minimal clone.
+- `src/TokenState.sol` - stores token state and applies endorsed `StateDelta`s: verifies signatures,
+  checks the public-parameters version, enforces spent/existence per the `graphHiding` flag, then
+  applies the transition. Deployed per TMS as an EIP-1167 clone; the shared implementation is locked.
+  Landed in PR 2b.
+- `src/Clones.sol` - minimal EIP-1167 proxy deployment for the per-TMS `TokenState` clones.
+- `script/Deploy.s.sol` - deploys the verifier, the `TokenState` implementation, and an initialized
+  clone for one TMS (endorsers, threshold, PP v0, and graphHiding come from the environment). This is
+  the admin bootstrap the Week-6 NWO topology automates.
 
 ## The cross-impl gate
 
