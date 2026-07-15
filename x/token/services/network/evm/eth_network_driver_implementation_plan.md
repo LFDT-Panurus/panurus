@@ -271,9 +271,14 @@ on-chain; a forged-content spend (real `tokenID`, different `tokenData`) is reje
     EndorsementVerifier in `test/GoEndorsement.t.sol`** (2-of-2 quorum). The vm.sign simulation gap
     is closed at the signature layer.
 - **Phases C+D — StateDelta translator:**
-  - [ ] Phase C: `statedelta/translator.go` (see the task list below).
-  - [ ] Phase D: translator tests: determinism, counter/redeem semantics, content-binding round-trip
-    with real token-driver actions.
+  - [x] Phase C: `statedelta/translator.go` — same surface the responder drives (Write /
+    AddPublicParamsDependency / CommitTokenRequest + StateDelta finalizer), consuming the SDK's own
+    action interfaces; counter rules mirror the Fabric translator; stricter fail-fast (unknown action
+    types error, no setup mixing, finalizer refuses unbound deltas).
+  - [x] Phase D: determinism under shuffled map iteration (byte-identical deltas); **content-binding
+    round-trip with REAL fabtoken AND zkatdlog/nogh actions** (creation marker == spend ref; forged
+    content diverges) — the invariant the spend model rests on, proven against both shipped drivers;
+    full-loop test (translate → digest → sign → recover). Week-3 gate met end to end.
 
 - [ ] `statedelta/translator.go`: Setup/Issue/Transfer mapping (§5.2) producing a `statedelta.StateDelta`.
       Build `SpentRefs` off-chain via `keys`, **content-bound** (the snMarker decision, confirmed by Angelo
