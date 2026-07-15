@@ -6,6 +6,7 @@ replace github.com/LFDT-Panurus/panurus => ../../../../..
 
 require (
 	github.com/LFDT-Panurus/panurus v0.0.0-00010101000000-000000000000
+	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.4.1
 	github.com/hyperledger-labs/fabric-smart-client v0.14.2
 	github.com/stretchr/testify v1.11.1
 	golang.org/x/crypto v0.54.0
