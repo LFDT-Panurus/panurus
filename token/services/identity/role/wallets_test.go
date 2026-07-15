@@ -14,6 +14,7 @@ import (
 	"github.com/LFDT-Panurus/panurus/token/driver"
 	"github.com/LFDT-Panurus/panurus/token/services/identity/role"
 	"github.com/LFDT-Panurus/panurus/token/services/identity/role/mock"
+	"github.com/LFDT-Panurus/panurus/token/services/identity/wallet"
 	"github.com/LFDT-Panurus/panurus/token/services/logging"
 	"github.com/LFDT-Panurus/panurus/token/token"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/services/metrics/disabled"
@@ -279,6 +280,37 @@ func TestLongTermOwnerWallet(t *testing.T) {
 
 		_, err = w.GetSigner(t.Context(), driver.Identity("other"))
 		require.Error(t, err)
+	})
+
+	t.Run("RegisterRecipient", func(t *testing.T) {
+		w, _, _ := setup(t)
+
+		// Case 1: nil data
+		err := w.RegisterRecipient(t.Context(), nil)
+		require.ErrorIs(t, err, wallet.ErrNilRecipientData)
+
+		// Case 2: matching identity and audit info
+		err = w.RegisterRecipient(t.Context(), &driver.RecipientData{
+			Identity:  driver.Identity("ownerIdentity"),
+			AuditInfo: []byte("audit-info"),
+		})
+		require.NoError(t, err)
+
+		// Case 3: mismatched identity
+		err = w.RegisterRecipient(t.Context(), &driver.RecipientData{
+			Identity:  driver.Identity("other"),
+			AuditInfo: []byte("audit-info"),
+		})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "does not belong to this wallet")
+
+		// Case 4: matching identity, mismatched audit info
+		err = w.RegisterRecipient(t.Context(), &driver.RecipientData{
+			Identity:  driver.Identity("ownerIdentity"),
+			AuditInfo: []byte("other-audit-info"),
+		})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "audit info does not match")
 	})
 }
 

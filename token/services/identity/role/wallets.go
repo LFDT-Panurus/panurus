@@ -7,6 +7,7 @@ SPDX-License-Identifier: Apache-2.0
 package role
 
 import (
+	"bytes"
 	"context"
 	"math/big"
 
@@ -466,11 +467,23 @@ func (w *LongTermOwnerWallet) EnrollmentID() string {
 	return w.OwnerIdentityInfo.EnrollmentID()
 }
 
-// RegisterRecipient registers recipient data (identity + audit info).
-// The long-term owner wallet currently has a no-op implementation here
-// and returns nil. The TODO indicates where custom logic would be added.
+// RegisterRecipient validates that the passed recipient data (identity +
+// audit info) matches the long-term identity this wallet is bound to.
+// Unlike AnonymousOwnerWallet, no registration/binding is performed here
+// because the wallet's identity is already resolved and bound at
+// construction time (see NewLongTermOwnerWallet); this is purely a guard
+// against mismatched recipient data.
 func (w *LongTermOwnerWallet) RegisterRecipient(ctx context.Context, data *driver.RecipientData) error {
-	// TODO: if identity is equal to the one this wallet is bound to, then we are good. Otherwise return an error
+	if data == nil {
+		return errors.Wrapf(wallet.ErrNilRecipientData, "invalid recipient data")
+	}
+	if !w.Contains(ctx, data.Identity) {
+		return errors.Errorf("identity [%s] does not belong to this wallet [%s]", data.Identity, w.ID())
+	}
+	if !bytes.Equal(data.AuditInfo, w.OwnerAuditInfo) {
+		return errors.Errorf("audit info does not match the one this wallet [%s] is bound to", w.ID())
+	}
+
 	return nil
 }
 
