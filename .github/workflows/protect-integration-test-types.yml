@@ -1,0 +1,30 @@
+name: Protect Integration Test Types
+
+on:
+  pull_request:
+    branches: [ main, feature/evm-network-driver, feature/zkat-snark-driver ]
+    paths:
+      - 'integration/ports.go'
+      - 'integration/ports_test.go'
+      - '.github/workflows/protect-integration-test-types.yml'
+
+env:
+  GOFLAGS: -mod=mod
+
+jobs:
+  guard-all-test-types:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: "integration/go.mod"
+          cache-dependency-path: "**/*.sum"
+
+      - name: Verify AllTestTypes retains required infrastructure types
+        working-directory: integration
+        run: go test . -run TestAllTestTypesIncludesRequiredInfrastructureTypes -v
