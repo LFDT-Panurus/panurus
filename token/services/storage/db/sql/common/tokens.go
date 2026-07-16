@@ -365,8 +365,12 @@ func (it *dedupedTokenRowsIterator) Next() (*token.UnspentToken, error) {
 }
 
 // SpendableTokensIteratorBy returns the minimum information about the tokens needed for the selector
-func (db *TokenStore) SpendableTokensIteratorBy(ctx context.Context, walletID string, typ token.Type) (tdriver.SpendableTokensIterator, error) {
-	query, args := q.Select().
+// buildSpendableTokensIteratorByQuery builds the SQL query and args for
+// SpendableTokensIteratorBy without executing it. Extracted so benchmarks
+// can compare the dynamic path against a prepared-once path using identical
+// SQL (see #1919).
+func buildSpendableTokensIteratorByQuery(db *TokenStore, walletID string, typ token.Type) (string, []any) {
+	return q.Select().
 		FieldsByName("tx_id", "idx", "token_type", "quantity", "owner_wallet_id").
 		From(q.Table(db.table.Tokens)).
 		Where(HasTokenDetails(driver.QueryTokenDetailsParams{
@@ -376,6 +380,10 @@ func (db *TokenStore) SpendableTokensIteratorBy(ctx context.Context, walletID st
 			LedgerTokenFormats: db.getSupportedTokenFormats(),
 		}, nil)).
 		Format(db.ci)
+}
+
+func (db *TokenStore) SpendableTokensIteratorBy(ctx context.Context, walletID string, typ token.Type) (tdriver.SpendableTokensIterator, error) {
+	query, args := buildSpendableTokensIteratorByQuery(db, walletID, typ)
 
 	logging.Debug(logger, query, args)
 	rows, err := db.readDB.QueryContext(ctx, query, args...)
