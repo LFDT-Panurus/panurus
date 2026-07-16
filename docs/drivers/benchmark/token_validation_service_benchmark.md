@@ -38,17 +38,17 @@ The Token Validation Service benchmarks serve several critical purposes:
 Panurus comes pre-equipped with test data containing cryptographic parameters and sample token transfers located at:
 
 ```
-token/core/zkatdlog/nogh/v1/validator/regression/testdata/
+token/core/zkatdlog/nogh/v1/validator/regression/testdata/zero
 ```
 
 This directory includes:
 - Public parameters for zero-knowledge proofs (e.g., `32-BLS12_381_BBS_GURVY/params.txt`)
-- Pre-generated token transfer test cases in subdirectories like `transfers_i2_o2/`
+- Pre-generated token transfer test cases in `testdata/`
 
 **Note**: The test data is already included in the repository. You only need to regenerate it if you want to create custom test cases with different parameters or token configurations. To regenerate test data on demand:
 
 ```bash
-cd token/core/zkatdlog/nogh/v1/validator
+cd token/core/zkatdlog/nogh/v1/regression
 go test -run TestRegression -v
 ```
 - Sample token commitments and metadata

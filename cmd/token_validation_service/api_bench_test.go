@@ -18,14 +18,16 @@ func BenchmarkAPI(b *testing.B) {
 	testdataPath := b.TempDir()
 	nodeConfPath := path.Join(testdataPath, "fsc", "nodes", "test-node.0")
 
-	err := node.GenerateConfig(testdataPath)
+	err := generateConfigWS(testdataPath)
 	require.NoError(b, err)
 
-	n, err := node.SetupNode(nodeConfPath, node.NamedFactory{
+	n, err := setupNodeP2P(nodeConfPath, node.NamedFactory{
 		Name:    "token-validation-service",
 		Factory: &TokenValidationServiceViewFactory{},
 	})
+
 	require.NoError(b, err)
+
 	defer n.Stop()
 
 	vm, err := viewregistry.GetManager(n)

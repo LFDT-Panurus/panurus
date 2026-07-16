@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -31,7 +32,8 @@ import (
 
 const (
 	// DefaultTestRoot is the default path to test data for token transfer verification
-	DefaultTestRoot = "../../token/core/zkatdlog/nogh/v1/validator/regression/testdata/32-BLS12_381_BBS_GURVY/transfers_i2_o2"
+	DefaultTestRoot   = "../../token/core/zkatdlog/nogh/v1/regression/testdata/zero/32-BLS12_381_BBS_GURVY"
+	defaultCasePrefix = "transfers_i2_o2_"
 )
 
 var (
@@ -102,55 +104,51 @@ func NewTokenValidationParamsSlice(TestRootPath string) ([]*transferServiceParam
 	if TestRootPath == "" {
 		return nil, errors.New("TestRootPath cannot be empty")
 	}
-	paramsTxt := filepath.Join(filepath.Dir(TestRootPath), "params.txt")
 
-	paramsRaw, err := os.ReadFile(paramsTxt)
+	testdataPath := filepath.Join(TestRootPath, "testdata.json")
+	testdataRaw, err := os.ReadFile(testdataPath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read params file %s: %w", paramsTxt, err)
+		return nil, fmt.Errorf("failed to read testdata file %s: %w", testdataPath, err)
 	}
 
-	ppRaw, err := base64.StdEncoding.DecodeString(strings.TrimSpace(string(paramsRaw)))
-	if err != nil {
-		return nil, fmt.Errorf("failed to base64-decode params.txt: %w", err)
+	var allCases map[string]struct {
+		ReqRaw string `json:"req_raw"`
+		TXID   string `json:"txid"`
+	}
+	if err := json.Unmarshal(testdataRaw, &allCases); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal testdata file: %w", err)
 	}
 
-	outPaths, err := os.ReadDir(TestRootPath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read directory %s: %w", TestRootPath, err)
-	}
-	ret := make([]*transferServiceParams, len(outPaths))
-	for i, outPath := range outPaths {
-		params, err := newTokenValidationParams(filepath.Join(TestRootPath, outPath.Name()), ppRaw)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create params for %s: %w", outPath.Name(), err)
+	keys := make([]string, 0, len(allCases))
+	for key := range allCases {
+		if strings.HasPrefix(key, defaultCasePrefix) {
+			keys = append(keys, key)
 		}
-		ret[i] = params
+	}
+	if len(keys) == 0 {
+		return nil, fmt.Errorf("no test cases with prefix %q found in %s", defaultCasePrefix, testdataPath)
+	}
+	sort.Strings(keys)
+
+	caseFamily := strings.TrimSuffix(defaultCasePrefix, "_")
+	ret := make([]*transferServiceParams, 0, len(keys))
+	for _, key := range keys {
+		tokenCase := allCases[key]
+		reqRaw, err := base64.StdEncoding.DecodeString(tokenCase.ReqRaw)
+		if err != nil {
+			return nil, fmt.Errorf("failed to base64-decode req_raw for %s: %w", key, err)
+		}
+		ret = append(ret, &transferServiceParams{
+			// Synthetic path: <configDir>/<caseFamily>/<idx> for path-based helpers.
+			OutputPath: filepath.Join(TestRootPath, caseFamily, strings.TrimPrefix(key, defaultCasePrefix)),
+			TokenData: &TokenData{
+				TokenRequestRaw: reqRaw,
+				TxID:            tokenCase.TXID,
+			},
+		})
 	}
 
 	return ret, nil
-}
-
-func newTokenValidationParams(outputPath string, ppRaw []byte) (*transferServiceParams, error) {
-	outputRaw, err := os.ReadFile(outputPath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read %s: %w", outputPath, err)
-	}
-
-	var tokenData struct {
-		ReqRaw []byte `json:"req_raw"`
-		TXID   string `json:"txid"`
-	}
-	if err := json.Unmarshal(outputRaw, &tokenData); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal output file: %w", err)
-	}
-
-	return &transferServiceParams{
-		OutputPath: outputPath,
-		TokenData: &TokenData{
-			TokenRequestRaw: tokenData.ReqRaw,
-			TxID:            tokenData.TXID,
-		},
-	}, nil
 }
 
 type fakeLedger struct{}
