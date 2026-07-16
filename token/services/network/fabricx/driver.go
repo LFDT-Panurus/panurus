@@ -12,7 +12,6 @@ import (
 	"github.com/LFDT-Panurus/panurus/token"
 	"github.com/LFDT-Panurus/panurus/token/core/common/metrics"
 	"github.com/LFDT-Panurus/panurus/token/services/config"
-	"github.com/LFDT-Panurus/panurus/token/services/network/common"
 	"github.com/LFDT-Panurus/panurus/token/services/network/common/rws/keys"
 	"github.com/LFDT-Panurus/panurus/token/services/network/common/rws/translator"
 	"github.com/LFDT-Panurus/panurus/token/services/network/driver"
@@ -49,7 +48,6 @@ func NewDriver(
 	tokensManager *tokens.ServiceManager,
 	configs *config.Service,
 	viewManager *view.Manager,
-	filterProvider *common.AcceptTxInDBFilterProvider,
 	tmsProvider *token.ManagementServiceProvider,
 	tracerProvider trace.TracerProvider,
 	identityProvider view.IdentityProvider,
@@ -88,7 +86,6 @@ func NewDriver(
 		tokensManager:              tokensManager,
 		configService:              configs,
 		viewManager:                viewManager,
-		filterProvider:             filterProvider,
 		tmsProvider:                tmsProvider,
 		tracerProvider:             tracerProvider,
 		identityProvider:           identityProvider,
@@ -137,7 +134,6 @@ type Driver struct {
 	tokensManager              *tokens.ServiceManager
 	configService              *config.Service
 	viewManager                *view.Manager
-	filterProvider             *common.AcceptTxInDBFilterProvider
 	tmsProvider                *token.ManagementServiceProvider
 	tracerProvider             trace.TracerProvider
 	identityProvider           view.IdentityProvider
@@ -199,7 +195,6 @@ func (d *Driver) New(network, channel string) (driver.Network, error) {
 		fns,
 		ch,
 		d.configService,
-		d.filterProvider,
 		d.tokensManager,
 		d.viewManager,
 		d.tmsProvider,

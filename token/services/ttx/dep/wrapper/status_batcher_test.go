@@ -4,7 +4,7 @@ Copyright IBM Corp. All Rights Reserved.
 SPDX-License-Identifier: Apache-2.0
 */
 
-package common
+package wrapper
 
 import (
 	"context"
@@ -22,12 +22,18 @@ type fakeStatusFetcher struct {
 	calls     [][]string
 	responses map[string]dbdriver.TxStatus
 	err       error
+	block     chan struct{}
 }
 
 func (f *fakeStatusFetcher) GetStatuses(_ context.Context, txIDs []string) (map[string]dbdriver.TxStatus, error) {
 	f.mu.Lock()
 	f.calls = append(f.calls, append([]string(nil), txIDs...))
+	block := f.block
 	f.mu.Unlock()
+
+	if block != nil {
+		<-block
+	}
 
 	if f.err != nil {
 		return nil, f.err
@@ -54,7 +60,7 @@ func TestStatusBatcher_SingleLookup(t *testing.T) {
 	fetch := &fakeStatusFetcher{responses: map[string]dbdriver.TxStatus{"tx1": dbdriver.Confirmed}}
 	b := newStatusBatcher(fetch)
 
-	status, err := b.Get("tx1")
+	status, err := b.Get(t.Context(), "tx1")
 	require.NoError(t, err)
 	assert.Equal(t, dbdriver.Confirmed, status)
 	assert.Equal(t, 1, fetch.callCount())
@@ -64,7 +70,7 @@ func TestStatusBatcher_MissingTxIsUnknown(t *testing.T) {
 	fetch := &fakeStatusFetcher{responses: map[string]dbdriver.TxStatus{}}
 	b := newStatusBatcher(fetch)
 
-	status, err := b.Get("missing")
+	status, err := b.Get(t.Context(), "missing")
 	require.NoError(t, err)
 	assert.Equal(t, dbdriver.Unknown, status)
 }
@@ -84,7 +90,7 @@ func TestStatusBatcher_CoalescesConcurrentLookups(t *testing.T) {
 		wg.Add(1)
 		go func(i int, id string) {
 			defer wg.Done()
-			s, err := b.Get(id)
+			s, err := b.Get(t.Context(), id)
 			assert.NoError(t, err)
 			results[i] = s
 		}(i, id)
@@ -105,7 +111,7 @@ func TestStatusBatcher_DuplicateTxIDInSameBatch(t *testing.T) {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			s, err := b.Get("tx1")
+			s, err := b.Get(t.Context(), "tx1")
 			assert.NoError(t, err)
 			results[i] = s
 		}(i)
@@ -123,9 +129,9 @@ func TestStatusBatcher_SeparateBatchesAfterFlush(t *testing.T) {
 
 	// Get blocks until its own batch flushes, so these two calls can never
 	// land in the same window.
-	_, err := b.Get("tx1")
+	_, err := b.Get(t.Context(), "tx1")
 	require.NoError(t, err)
-	_, err = b.Get("tx2")
+	_, err = b.Get(t.Context(), "tx2")
 	require.NoError(t, err)
 
 	assert.Equal(t, 2, fetch.callCount(), "lookups that don't overlap in time should not be coalesced")
@@ -136,6 +142,29 @@ func TestStatusBatcher_PropagatesError(t *testing.T) {
 	fetch := &fakeStatusFetcher{err: wantErr}
 	b := newStatusBatcher(fetch)
 
-	_, err := b.Get("tx1")
-	assert.ErrorIs(t, err, wantErr)
+	_, err := b.Get(t.Context(), "tx1")
+	require.ErrorIs(t, err, wantErr)
+}
+
+func TestStatusBatcher_HonorsContextCancellation(t *testing.T) {
+	block := make(chan struct{})
+	fetch := &fakeStatusFetcher{
+		responses: map[string]dbdriver.TxStatus{"tx1": dbdriver.Confirmed},
+		block:     block,
+	}
+	b := newStatusBatcher(fetch)
+
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan error, 1)
+	go func() {
+		_, err := b.Get(ctx, "tx1")
+		done <- err
+	}()
+
+	cancel()
+	err := <-done
+	require.ErrorIs(t, err, context.Canceled)
+
+	// unblock the in-flight fetch so its goroutine can finish
+	close(block)
 }

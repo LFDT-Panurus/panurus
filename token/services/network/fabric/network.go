@@ -201,7 +201,6 @@ type Network struct {
 	viewManager              ViewManager
 	ledger                   driver.Ledger
 	configuration            ncommon.Configuration
-	filterProvider           ncommon.TransactionFilterProvider[*ncommon.AcceptTxInDBsFilter]
 	tokensProvider           *tokens.ServiceManager
 	finalityTracer           trace.Tracer
 	localMembership          *lm
@@ -227,7 +226,6 @@ func NewNetwork(
 	n *fabric.NetworkService,
 	ch *fabric.Channel,
 	configuration ncommon.Configuration,
-	filterProvider ncommon.TransactionFilterProvider[*ncommon.AcceptTxInDBsFilter],
 	tokensProvider *tokens.ServiceManager,
 	viewManager ViewManager,
 	tmsProvider *token2.ManagementServiceProvider,
@@ -253,7 +251,6 @@ func NewNetwork(
 		viewManager:                viewManager,
 		ledger:                     ledger,
 		configuration:              configuration,
-		filterProvider:             filterProvider,
 		tokensProvider:             tokensProvider,
 		flm:                        flm,
 		llm:                        llm,

@@ -26,7 +26,6 @@ import (
 	identity2 "github.com/LFDT-Panurus/panurus/token/services/identity"
 	"github.com/LFDT-Panurus/panurus/token/services/logging"
 	"github.com/LFDT-Panurus/panurus/token/services/network"
-	"github.com/LFDT-Panurus/panurus/token/services/network/common"
 	driver3 "github.com/LFDT-Panurus/panurus/token/services/network/driver"
 	"github.com/LFDT-Panurus/panurus/token/services/nfttx/uniqueness"
 	"github.com/LFDT-Panurus/panurus/token/services/selector/config"
@@ -107,8 +106,6 @@ func (p *SDK) Install() error {
 
 	logger.Infof("Token platform enabled, installing...")
 	err := errors2.Join(
-		p.Container().Provide(common.NewAcceptTxInDBFilterProvider),
-
 		// config service
 		p.Container().Provide(
 			digutils.Identity[*fscconfig.Provider](),

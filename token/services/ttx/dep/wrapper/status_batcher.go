@@ -4,7 +4,7 @@ Copyright IBM Corp. All Rights Reserved.
 SPDX-License-Identifier: Apache-2.0
 */
 
-package common
+package wrapper
 
 import (
 	"context"
@@ -51,8 +51,10 @@ func newStatusBatcher(fetch statusFetcher) *statusBatcher {
 }
 
 // Get returns the status of txID, coalescing this call with any others that
-// arrive within the batch window into a single GetStatuses query.
-func (b *statusBatcher) Get(txID string) (dbdriver.TxStatus, error) {
+// arrive within the batch window into a single GetStatuses query. If ctx is
+// cancelled while waiting, Get returns ctx.Err(); the batched query still
+// completes on behalf of the other waiters.
+func (b *statusBatcher) Get(ctx context.Context, txID string) (dbdriver.TxStatus, error) {
 	ch := make(chan statusResult, 1)
 
 	b.mu.Lock()
@@ -66,15 +68,20 @@ func (b *statusBatcher) Get(txID string) (dbdriver.TxStatus, error) {
 	batch.waiters[txID] = append(batch.waiters[txID], ch)
 	b.mu.Unlock()
 
-	res := <-ch
-
-	return res.status, res.err
+	select {
+	case res := <-ch:
+		return res.status, res.err
+	case <-ctx.Done():
+		return dbdriver.Unknown, ctx.Err()
+	}
 }
 
 // flush resolves a batch's transaction ids in one call and hands each
 // waiter its result. It detaches the batch from b.pending first so that
 // callers arriving after this point start a new batch instead of joining
-// one that's already being flushed.
+// one that's already being flushed. The lookup deliberately runs on
+// context.Background(): the batch serves multiple callers, so it must not
+// be tied to any single caller's context.
 func (b *statusBatcher) flush(batch *statusBatch) {
 	b.mu.Lock()
 	if b.pending == batch {
