@@ -343,6 +343,18 @@ func (n *Network) RequestApproval(context view.Context, tms *token2.ManagementSe
 	return endorsement.Endorse(context, requestRaw, signer, txID, metadata)
 }
 
+// SetupPublicParams submits new or updated public parameters for a namespace, mirroring
+// RequestApproval. It resolves the endorsement service by TMSID directly, so it also works
+// for first-time setup of a namespace that has no public parameters yet.
+func (n *Network) SetupPublicParams(context view.Context, tmsID token2.TMSID, publicParamsRaw []byte, signer view.Identity, txID driver.TxID) (driver.Envelope, error) {
+	endorsement, err := n.endorsementServiceProvider.Get(tmsID)
+	if err != nil {
+		return nil, errors.Wrapf(err, "network not connected [%s]", tmsID)
+	}
+
+	return endorsement.SetupPublicParams(context, publicParamsRaw, signer, txID)
+}
+
 // ComputeTxID calculates the Fabric transaction ID based on creator and nonce.
 func (n *Network) ComputeTxID(id *driver.TxID) string {
 	logger.Debugf("compute tx id for [%s]", id.String())

@@ -32,7 +32,7 @@ token:
               endorser: {{ Endorser }}
               id: {{ EndorserID }}
               policy:
-                type: 1outn
+                type: {{ EndorsementPolicyType }}
               endorsers: {{ range Endorsers }}
               - {{ . }}{{ end }}
             {{ end }}

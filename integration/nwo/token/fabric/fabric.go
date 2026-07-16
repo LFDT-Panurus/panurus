@@ -121,13 +121,14 @@ func (p *NetworkHandler) GenerateArtifacts(tms *topology2.TMS) {
 
 func (p *NetworkHandler) GenerateExtension(tms *topology2.TMS, node *sfcnode.Node, uniqueName string) string {
 	t, err := template.New("peer").Funcs(template.FuncMap{
-		"TMSID":       func() string { return tms.TmsID() },
-		"TMS":         func() *topology2.TMS { return tms },
-		"Wallets":     func() *topology2.Wallets { return p.getCombinedWallets(tms, node.Name) },
-		"Endorsement": func() bool { return IsFSCEndorsementEnabled(tms) },
-		"Endorsers":   func() []string { return Endorsers(tms) },
-		"EndorserID":  func() string { return "" },
-		"Endorser":    func() bool { return topology2.ToOptions(node.Options).Endorser() },
+		"TMSID":                 func() string { return tms.TmsID() },
+		"TMS":                   func() *topology2.TMS { return tms },
+		"Wallets":               func() *topology2.Wallets { return p.getCombinedWallets(tms, node.Name) },
+		"Endorsement":           func() bool { return IsFSCEndorsementEnabled(tms) },
+		"Endorsers":             func() []string { return Endorsers(tms) },
+		"EndorserID":            func() string { return "" },
+		"Endorser":              func() bool { return topology2.ToOptions(node.Options).Endorser() },
+		"EndorsementPolicyType": func() string { return FSCEndorsementPolicyType(tms) },
 	}).Parse(Extension)
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 

@@ -59,3 +59,38 @@ func Endorsers(tms *topology.TMS) []string {
 
 	return v.([]string)
 }
+
+// WithFSCEndorsementPolicyType sets services.network.fabric.fsc_endorsement.policy.type for the given TMS
+func WithFSCEndorsementPolicyType(tms *topology.TMS, policyType string) *topology.TMS {
+	tms.BackendParams["endorsement.policy.type"] = policyType
+
+	return tms
+}
+
+// FSCEndorsementPolicyType returns the configured policy type, defaulting to "1outn" when unset
+func FSCEndorsementPolicyType(tms *topology.TMS) string {
+	v, ok := tms.BackendParams["endorsement.policy.type"]
+	if !ok {
+		return "1outn"
+	}
+
+	return v.(string)
+}
+
+// WithNamespacePolicy sets a raw endorsement policy DSL string to use for the token namespace,
+// overriding the default unanimity policy over the TMS's orgs
+func WithNamespacePolicy(tms *topology.TMS, policy string) *topology.TMS {
+	tms.BackendParams["fabric.namespace.policy"] = policy
+
+	return tms
+}
+
+// GetNamespacePolicy returns the raw namespace policy DSL string configured via WithNamespacePolicy, or "" if unset
+func GetNamespacePolicy(tms *topology.TMS) string {
+	v, ok := tms.BackendParams["fabric.namespace.policy"]
+	if !ok {
+		return ""
+	}
+
+	return v.(string)
+}

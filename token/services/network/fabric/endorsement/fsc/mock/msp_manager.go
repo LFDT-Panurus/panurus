@@ -10,6 +10,19 @@ import (
 )
 
 type MSPManager struct {
+	GetMSPIdentifierStub        func([]byte) (string, error)
+	getMSPIdentifierMutex       sync.RWMutex
+	getMSPIdentifierArgsForCall []struct {
+		arg1 []byte
+	}
+	getMSPIdentifierReturns struct {
+		result1 string
+		result2 error
+	}
+	getMSPIdentifierReturnsOnCall map[int]struct {
+		result1 string
+		result2 error
+	}
 	GetVerifierStub        func(view.Identity) (driver.Verifier, error)
 	getVerifierMutex       sync.RWMutex
 	getVerifierArgsForCall []struct {
@@ -36,6 +49,75 @@ type MSPManager struct {
 	}
 	invocations      map[string][][]interface{}
 	invocationsMutex sync.RWMutex
+}
+
+func (fake *MSPManager) GetMSPIdentifier(arg1 []byte) (string, error) {
+	var arg1Copy []byte
+	if arg1 != nil {
+		arg1Copy = make([]byte, len(arg1))
+		copy(arg1Copy, arg1)
+	}
+	fake.getMSPIdentifierMutex.Lock()
+	ret, specificReturn := fake.getMSPIdentifierReturnsOnCall[len(fake.getMSPIdentifierArgsForCall)]
+	fake.getMSPIdentifierArgsForCall = append(fake.getMSPIdentifierArgsForCall, struct {
+		arg1 []byte
+	}{arg1Copy})
+	stub := fake.GetMSPIdentifierStub
+	fakeReturns := fake.getMSPIdentifierReturns
+	fake.recordInvocation("GetMSPIdentifier", []interface{}{arg1Copy})
+	fake.getMSPIdentifierMutex.Unlock()
+	if stub != nil {
+		return stub(arg1)
+	}
+	if specificReturn {
+		return ret.result1, ret.result2
+	}
+	return fakeReturns.result1, fakeReturns.result2
+}
+
+func (fake *MSPManager) GetMSPIdentifierCallCount() int {
+	fake.getMSPIdentifierMutex.RLock()
+	defer fake.getMSPIdentifierMutex.RUnlock()
+	return len(fake.getMSPIdentifierArgsForCall)
+}
+
+func (fake *MSPManager) GetMSPIdentifierCalls(stub func([]byte) (string, error)) {
+	fake.getMSPIdentifierMutex.Lock()
+	defer fake.getMSPIdentifierMutex.Unlock()
+	fake.GetMSPIdentifierStub = stub
+}
+
+func (fake *MSPManager) GetMSPIdentifierArgsForCall(i int) []byte {
+	fake.getMSPIdentifierMutex.RLock()
+	defer fake.getMSPIdentifierMutex.RUnlock()
+	argsForCall := fake.getMSPIdentifierArgsForCall[i]
+	return argsForCall.arg1
+}
+
+func (fake *MSPManager) GetMSPIdentifierReturns(result1 string, result2 error) {
+	fake.getMSPIdentifierMutex.Lock()
+	defer fake.getMSPIdentifierMutex.Unlock()
+	fake.GetMSPIdentifierStub = nil
+	fake.getMSPIdentifierReturns = struct {
+		result1 string
+		result2 error
+	}{result1, result2}
+}
+
+func (fake *MSPManager) GetMSPIdentifierReturnsOnCall(i int, result1 string, result2 error) {
+	fake.getMSPIdentifierMutex.Lock()
+	defer fake.getMSPIdentifierMutex.Unlock()
+	fake.GetMSPIdentifierStub = nil
+	if fake.getMSPIdentifierReturnsOnCall == nil {
+		fake.getMSPIdentifierReturnsOnCall = make(map[int]struct {
+			result1 string
+			result2 error
+		})
+	}
+	fake.getMSPIdentifierReturnsOnCall[i] = struct {
+		result1 string
+		result2 error
+	}{result1, result2}
 }
 
 func (fake *MSPManager) GetVerifier(arg1 view.Identity) (driver.Verifier, error) {

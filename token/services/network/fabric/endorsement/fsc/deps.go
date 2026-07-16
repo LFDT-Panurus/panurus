@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/LFDT-Panurus/panurus/token"
+	tdriver "github.com/LFDT-Panurus/panurus/token/driver"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/fabric"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/fabric/driver"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/fabric/services/endorser"
@@ -59,7 +60,7 @@ type Context = view.Context
 type FabricTransaction = driver.Transaction
 
 type IdentityProvider interface {
-	Identity(string) view.Identity
+	Identity(string) (view.Identity, error)
 }
 
 type ViewManager interface {
@@ -85,6 +86,18 @@ type MSPManager interface {
 	IsValid(identity view.Identity) error
 	// GetVerifier returns a verifier for the given identity, which can be used to verify signatures
 	GetVerifier(identity view.Identity) (driver.Verifier, error)
+	// GetMSPIdentifier returns the MSP ID that the given serialized identity belongs to.
+	GetMSPIdentifier(sid []byte) (string, error)
+}
+
+// EndorserSelector returns the subset of configured endorsers that should be contacted
+// for a given tx, according to the real endorsement policy of the namespace. Implementations
+// are network-specific (Fabric discovery / FabricX query service). It returns an error if the
+// policy cannot be satisfied by the configured endorsers.
+//
+//go:generate counterfeiter -o mock/endorser_selector.go -fake-name EndorserSelector . EndorserSelector
+type EndorserSelector interface {
+	SelectEndorsers(ctx context.Context, tmsID token.TMSID, configured []view.Identity) ([]view.Identity, error)
 }
 
 // ACLProvider offers ACL-related services
@@ -103,4 +116,14 @@ type ChannelProvider interface {
 	// GetMSPManager returns the MSP manager for the given network and channel
 	GetMSPManager(network, channel string) (MSPManager, error)
 	GetACLProvider(network, channel string) (ACLProvider, error)
+}
+
+// PublicParamsValidator deserializes raw public parameters bytes into a driver.PublicParameters
+// instance. It is used by the setup responder to parse the submitted public parameters before
+// validating and committing them. token/core.PPManagerFactoryService satisfies this interface.
+//
+//go:generate counterfeiter -o mock/pp_validator.go -fake-name PublicParamsValidator . PublicParamsValidator
+type PublicParamsValidator interface {
+	// PublicParametersFromBytes unmarshals the bytes to a driver.PublicParameters instance.
+	PublicParametersFromBytes(raw []byte) (tdriver.PublicParameters, error)
 }

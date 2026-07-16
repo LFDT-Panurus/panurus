@@ -67,6 +67,8 @@ func TestNewEndorsementService(t *testing.T) {
 			tmsp,
 			storageProvider,
 			channelProvider,
+			&mock.EndorserSelector{},
+			&mock.PublicParamsValidator{},
 		)
 
 		require.NoError(t, err)
@@ -116,6 +118,8 @@ func TestNewEndorsementService(t *testing.T) {
 			tmsp,
 			storageProvider,
 			channelProvider,
+			&mock.EndorserSelector{},
+			&mock.PublicParamsValidator{},
 		)
 
 		require.NoError(t, err)
@@ -156,6 +160,8 @@ func TestNewEndorsementService(t *testing.T) {
 			&mock.TokenManagementSystemProvider{},
 			&mock.StorageProvider{},
 			&mock.ChannelProvider{},
+			&mock.EndorserSelector{},
+			&mock.PublicParamsValidator{},
 		)
 
 		require.NoError(t, err)
@@ -190,6 +196,8 @@ func TestNewEndorsementService(t *testing.T) {
 			&mock.TokenManagementSystemProvider{},
 			&mock.StorageProvider{},
 			&mock.ChannelProvider{},
+			&mock.EndorserSelector{},
+			&mock.PublicParamsValidator{},
 		)
 
 		require.Error(t, err)
@@ -224,6 +232,45 @@ func TestNewEndorsementService(t *testing.T) {
 			&mock.TokenManagementSystemProvider{},
 			&mock.StorageProvider{},
 			&mock.ChannelProvider{},
+			&mock.EndorserSelector{},
+			&mock.PublicParamsValidator{},
+		)
+
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "failed to register public params setup view")
+	})
+
+	t.Run("failed to register approval responder", func(t *testing.T) {
+		config := &mock2.Configuration{}
+		config.GetBoolReturns(true)
+		config.UnmarshalKeyStub = func(key string, rawVal any) error {
+			if key == fsc.EndorsersKey {
+				*rawVal.(*[]string) = []string{"endorser1"}
+			}
+
+			return nil
+		}
+
+		viewRegistry := &mockViewRegistry{
+			registerResponderError:       errors.New("failed to register"),
+			registerResponderErrorOnCall: 2,
+		}
+
+		_, err := fsc.NewEndorsementService(
+			&mockNamespaceTxProcessor{},
+			tmsID,
+			config,
+			viewRegistry,
+			&mockViewManager{},
+			&mockIdentityProvider{},
+			nil,
+			nil,
+			&mock.EndorserService{},
+			&mock.TokenManagementSystemProvider{},
+			&mock.StorageProvider{},
+			&mock.ChannelProvider{},
+			&mock.EndorserSelector{},
+			&mock.PublicParamsValidator{},
 		)
 
 		require.Error(t, err)
@@ -248,6 +295,8 @@ func TestNewEndorsementService(t *testing.T) {
 			&mock.TokenManagementSystemProvider{},
 			&mock.StorageProvider{},
 			&mock.ChannelProvider{},
+			&mock.EndorserSelector{},
+			&mock.PublicParamsValidator{},
 		)
 
 		require.Error(t, err)
@@ -278,6 +327,8 @@ func TestNewEndorsementService(t *testing.T) {
 			&mock.TokenManagementSystemProvider{},
 			&mock.StorageProvider{},
 			&mock.ChannelProvider{},
+			&mock.EndorserSelector{},
+			&mock.PublicParamsValidator{},
 		)
 
 		require.Error(t, err)
@@ -312,6 +363,8 @@ func TestNewEndorsementService(t *testing.T) {
 			&mock.TokenManagementSystemProvider{},
 			&mock.StorageProvider{},
 			&mock.ChannelProvider{},
+			&mock.EndorserSelector{},
+			&mock.PublicParamsValidator{},
 		)
 
 		require.Error(t, err)
@@ -403,6 +456,62 @@ func TestEndorsementService_Endorse(t *testing.T) {
 		require.NotNil(t, env)
 	})
 
+	t.Run("success - NamespacePolicy delegates to selector", func(t *testing.T) {
+		ctx := &mock.Context{}
+		ctx.ContextReturns(context.Background())
+
+		mockEnv := &mock.Envelope{}
+		viewManager := &mockViewManager{
+			initiateViewResult: mockEnv,
+		}
+		selected := []view.Identity{[]byte("endorser2")}
+		selector := &mock.EndorserSelector{}
+		selector.SelectEndorsersReturns(selected, nil)
+
+		service := &fsc.EndorsementService{
+			TmsID: tmsID,
+			Endorsers: []view.Identity{
+				[]byte("endorser1"),
+				[]byte("endorser2"),
+			},
+			ViewManager:      viewManager,
+			PolicyType:       fsc.NamespacePolicy,
+			EndorserService:  &mock.EndorserService{},
+			EndorserSelector: selector,
+		}
+
+		env, err := service.Endorse(ctx, []byte("request"), []byte("signer"), driver.TxID{}, nil)
+
+		require.NoError(t, err)
+		require.NotNil(t, env)
+		require.Equal(t, 1, selector.SelectEndorsersCallCount())
+		_, gotTmsID, gotConfigured := selector.SelectEndorsersArgsForCall(0)
+		assert.Equal(t, tmsID, gotTmsID)
+		assert.Equal(t, service.Endorsers, gotConfigured)
+	})
+
+	t.Run("failed - NamespacePolicy selector error", func(t *testing.T) {
+		ctx := &mock.Context{}
+		ctx.ContextReturns(context.Background())
+
+		selector := &mock.EndorserSelector{}
+		selector.SelectEndorsersReturns(nil, errors.New("no covering subset"))
+
+		service := &fsc.EndorsementService{
+			TmsID:            tmsID,
+			Endorsers:        []view.Identity{[]byte("endorser1")},
+			ViewManager:      &mockViewManager{},
+			PolicyType:       fsc.NamespacePolicy,
+			EndorserService:  &mock.EndorserService{},
+			EndorserSelector: selector,
+		}
+
+		_, err := service.Endorse(ctx, []byte("request"), []byte("signer"), driver.TxID{}, nil)
+
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "failed selecting endorsers by namespace policy")
+	})
+
 	t.Run("failed to initiate view", func(t *testing.T) {
 		ctx := &mock.Context{}
 		ctx.ContextReturns(context.Background())
@@ -448,6 +557,191 @@ func TestEndorsementService_Endorse(t *testing.T) {
 	})
 }
 
+func TestEndorsementService_SetupPublicParams(t *testing.T) {
+	tmsID := token.TMSID{
+		Network:   "test_network",
+		Channel:   "test_channel",
+		Namespace: "test_namespace",
+	}
+
+	t.Run("success - AllPolicy", func(t *testing.T) {
+		ctx := &mock.Context{}
+		ctx.ContextReturns(context.Background())
+
+		mockEnv := &mock.Envelope{}
+		viewManager := &mockViewManager{
+			initiateViewResult: mockEnv,
+		}
+
+		service := &fsc.EndorsementService{
+			TmsID: tmsID,
+			Endorsers: []view.Identity{
+				[]byte("endorser1"),
+				[]byte("endorser2"),
+			},
+			ViewManager:     viewManager,
+			PolicyType:      fsc.AllPolicy,
+			EndorserService: &mock.EndorserService{},
+		}
+
+		env, err := service.SetupPublicParams(ctx, []byte("public_params"), []byte("signer"), driver.TxID{})
+
+		require.NoError(t, err)
+		require.NotNil(t, env)
+		assert.True(t, viewManager.initiateViewCalled)
+	})
+
+	t.Run("success - OneOutNPolicy", func(t *testing.T) {
+		ctx := &mock.Context{}
+		ctx.ContextReturns(context.Background())
+
+		mockEnv := &mock.Envelope{}
+		viewManager := &mockViewManager{
+			initiateViewResult: mockEnv,
+		}
+
+		service := &fsc.EndorsementService{
+			TmsID: tmsID,
+			Endorsers: []view.Identity{
+				[]byte("endorser1"),
+				[]byte("endorser2"),
+				[]byte("endorser3"),
+			},
+			ViewManager:     viewManager,
+			PolicyType:      fsc.OneOutNPolicy,
+			EndorserService: &mock.EndorserService{},
+		}
+
+		env, err := service.SetupPublicParams(ctx, []byte("public_params"), []byte("signer"), driver.TxID{})
+
+		require.NoError(t, err)
+		require.NotNil(t, env)
+	})
+
+	t.Run("success - unknown policy defaults to all", func(t *testing.T) {
+		ctx := &mock.Context{}
+		ctx.ContextReturns(context.Background())
+
+		mockEnv := &mock.Envelope{}
+		viewManager := &mockViewManager{
+			initiateViewResult: mockEnv,
+		}
+
+		service := &fsc.EndorsementService{
+			TmsID:           tmsID,
+			Endorsers:       []view.Identity{[]byte("endorser1")},
+			ViewManager:     viewManager,
+			PolicyType:      "unknown",
+			EndorserService: &mock.EndorserService{},
+		}
+
+		env, err := service.SetupPublicParams(ctx, []byte("public_params"), []byte("signer"), driver.TxID{})
+
+		require.NoError(t, err)
+		require.NotNil(t, env)
+	})
+
+	t.Run("success - NamespacePolicy delegates to selector", func(t *testing.T) {
+		ctx := &mock.Context{}
+		ctx.ContextReturns(context.Background())
+
+		mockEnv := &mock.Envelope{}
+		viewManager := &mockViewManager{
+			initiateViewResult: mockEnv,
+		}
+		selected := []view.Identity{[]byte("endorser2")}
+		selector := &mock.EndorserSelector{}
+		selector.SelectEndorsersReturns(selected, nil)
+
+		service := &fsc.EndorsementService{
+			TmsID: tmsID,
+			Endorsers: []view.Identity{
+				[]byte("endorser1"),
+				[]byte("endorser2"),
+			},
+			ViewManager:      viewManager,
+			PolicyType:       fsc.NamespacePolicy,
+			EndorserService:  &mock.EndorserService{},
+			EndorserSelector: selector,
+		}
+
+		env, err := service.SetupPublicParams(ctx, []byte("public_params"), []byte("signer"), driver.TxID{})
+
+		require.NoError(t, err)
+		require.NotNil(t, env)
+		require.Equal(t, 1, selector.SelectEndorsersCallCount())
+		_, gotTmsID, gotConfigured := selector.SelectEndorsersArgsForCall(0)
+		assert.Equal(t, tmsID, gotTmsID)
+		assert.Equal(t, service.Endorsers, gotConfigured)
+	})
+
+	t.Run("failed - NamespacePolicy selector error", func(t *testing.T) {
+		ctx := &mock.Context{}
+		ctx.ContextReturns(context.Background())
+
+		selector := &mock.EndorserSelector{}
+		selector.SelectEndorsersReturns(nil, errors.New("no covering subset"))
+
+		service := &fsc.EndorsementService{
+			TmsID:            tmsID,
+			Endorsers:        []view.Identity{[]byte("endorser1")},
+			ViewManager:      &mockViewManager{},
+			PolicyType:       fsc.NamespacePolicy,
+			EndorserService:  &mock.EndorserService{},
+			EndorserSelector: selector,
+		}
+
+		_, err := service.SetupPublicParams(ctx, []byte("public_params"), []byte("signer"), driver.TxID{})
+
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "failed selecting endorsers by namespace policy")
+	})
+
+	t.Run("failed to initiate view", func(t *testing.T) {
+		ctx := &mock.Context{}
+		ctx.ContextReturns(context.Background())
+
+		viewManager := &mockViewManager{
+			initiateViewError: errors.New("initiate failed"),
+		}
+
+		service := &fsc.EndorsementService{
+			TmsID:           tmsID,
+			Endorsers:       []view.Identity{[]byte("endorser1")},
+			ViewManager:     viewManager,
+			PolicyType:      fsc.AllPolicy,
+			EndorserService: &mock.EndorserService{},
+		}
+
+		_, err := service.SetupPublicParams(ctx, []byte("public_params"), []byte("signer"), driver.TxID{})
+
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "failed to request public params setup")
+	})
+
+	t.Run("invalid envelope type", func(t *testing.T) {
+		ctx := &mock.Context{}
+		ctx.ContextReturns(context.Background())
+
+		viewManager := &mockViewManager{
+			initiateViewResult: "not an envelope",
+		}
+
+		service := &fsc.EndorsementService{
+			TmsID:           tmsID,
+			Endorsers:       []view.Identity{[]byte("endorser1")},
+			ViewManager:     viewManager,
+			PolicyType:      fsc.AllPolicy,
+			EndorserService: &mock.EndorserService{},
+		}
+
+		_, err := service.SetupPublicParams(ctx, []byte("public_params"), []byte("signer"), driver.TxID{})
+
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "expected driver.Envelope")
+	})
+}
+
 // Mock implementations
 
 type mockNamespaceTxProcessor struct {
@@ -462,12 +756,25 @@ func (m *mockNamespaceTxProcessor) EnableTxProcessing(tmsID token.TMSID) error {
 }
 
 type mockViewRegistry struct {
-	registerResponderCalled bool
-	registerResponderError  error
+	registerResponderCalled    bool
+	registerResponderCallCount int
+	registerResponderError     error
+	// registerResponderErrorOnCall, if non-zero, makes RegisterResponder fail only on the
+	// given 1-indexed call, succeeding on all others.
+	registerResponderErrorOnCall int
 }
 
 func (m *mockViewRegistry) RegisterResponder(responder view.View, initiatedBy any) error {
 	m.registerResponderCalled = true
+	m.registerResponderCallCount++
+
+	if m.registerResponderErrorOnCall != 0 {
+		if m.registerResponderCallCount == m.registerResponderErrorOnCall {
+			return m.registerResponderError
+		}
+
+		return nil
+	}
 
 	return m.registerResponderError
 }
@@ -488,10 +795,10 @@ type mockIdentityProvider struct {
 	identities map[string]view.Identity
 }
 
-func (m *mockIdentityProvider) Identity(id string) view.Identity {
+func (m *mockIdentityProvider) Identity(id string) (view.Identity, error) {
 	if identity, ok := m.identities[id]; ok {
-		return identity
+		return identity, nil
 	}
 
-	return nil
+	return nil, errors.Errorf("cannot find identity for endorser [%s]", id)
 }

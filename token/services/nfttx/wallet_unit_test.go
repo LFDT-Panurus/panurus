@@ -56,6 +56,10 @@ func (d *dummyTMSProvider) Update(opts driver.ServiceOptions) error {
 	return nil
 }
 
+func (d *dummyTMSProvider) ConfigurationFor(network, channel, namespace string) (driver.Configuration, error) {
+	return nil, errors.New("dummy tms provider error")
+}
+
 type dummyTMSProviderSuccess struct{}
 
 func (d *dummyTMSProviderSuccess) GetTokenManagerService(opts driver.ServiceOptions) (driver.TokenManagerService, error) {
@@ -74,6 +78,10 @@ func (d *dummyTMSProviderSuccess) GetTokenManagerService(opts driver.ServiceOpti
 }
 func (d *dummyTMSProviderSuccess) Update(opts driver.ServiceOptions) error {
 	return nil
+}
+
+func (d *dummyTMSProviderSuccess) ConfigurationFor(network, channel, namespace string) (driver.Configuration, error) {
+	return nil, errors.New("not implemented")
 }
 
 func getErrorCtx() *mock.Context {

@@ -16,6 +16,7 @@ import (
 	"github.com/LFDT-Panurus/panurus/token/services/network/common/rws/translator"
 	"github.com/LFDT-Panurus/panurus/token/services/network/driver"
 	"github.com/LFDT-Panurus/panurus/token/services/network/fabric"
+	"github.com/LFDT-Panurus/panurus/token/services/network/fabric/endorsement/fsc"
 	"github.com/LFDT-Panurus/panurus/token/services/network/fabric/finality"
 	"github.com/LFDT-Panurus/panurus/token/services/network/fabric/lookup"
 	"github.com/LFDT-Panurus/panurus/token/services/network/fabricx/endorsement"
@@ -61,6 +62,8 @@ func NewDriver(
 	queryServiceProvider queryservice.Provider,
 	finalityProvider *finalityx.Provider,
 	metricsProvider metrics.Provider,
+	grpcClientProvider queryservice.GRPCClientProvider,
+	ppValidator fsc.PublicParamsValidator,
 ) (driver.Driver, error) {
 	vkp := pp2.NewVersionKeeperProvider()
 	kt := &keys.Translator{}
@@ -112,6 +115,8 @@ func NewDriver(
 			tmsProvider,
 			endorserStoreServiceManager,
 			fnsProvider,
+			grpcClientProvider,
+			ppValidator,
 		),
 		setupListenerProvider: lookup2.NewSetupListenerProvider(
 			tmsProvider,

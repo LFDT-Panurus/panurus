@@ -27,6 +27,7 @@ import (
 	"github.com/LFDT-Panurus/panurus/token/services/logging"
 	"github.com/LFDT-Panurus/panurus/token/services/network"
 	driver3 "github.com/LFDT-Panurus/panurus/token/services/network/driver"
+	"github.com/LFDT-Panurus/panurus/token/services/network/fabric/endorsement/fsc"
 	"github.com/LFDT-Panurus/panurus/token/services/nfttx/uniqueness"
 	"github.com/LFDT-Panurus/panurus/token/services/selector/config"
 	sdriver "github.com/LFDT-Panurus/panurus/token/services/selector/driver"
@@ -125,6 +126,10 @@ func (p *SDK) Install() error {
 		// network service
 		p.Container().Provide(network.NewProvider),
 		p.Container().Provide(newTokenDriverService),
+		p.Container().Provide(
+			digutils.Identity[*ftscore.TokenDriverService](),
+			dig.As(new(fsc.PublicParamsValidator)),
+		),
 		p.Container().Provide(newValidatorDriverService),
 		p.Container().Provide(
 			digutils.Identity[*network.Provider](),

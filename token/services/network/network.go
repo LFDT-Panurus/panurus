@@ -257,6 +257,22 @@ func (n *Network) RequestApproval(context view.Context, tms *token.ManagementSer
 	return &Envelope{e: env}, nil
 }
 
+// SetupPublicParams submits new or updated public parameters for a namespace to the
+// network's endorsement service, mirroring RequestApproval. Unlike RequestApproval it
+// takes a TMSID rather than a *ManagementService, so it also works for first-time setup
+// of a namespace that has no public parameters yet.
+func (n *Network) SetupPublicParams(context view.Context, tmsID token.TMSID, publicParamsRaw []byte, signer view.Identity, txID TxID) (*Envelope, error) {
+	env, err := n.n.SetupPublicParams(context, tmsID, publicParamsRaw, signer, driver.TxID{
+		Nonce:   txID.Nonce,
+		Creator: txID.Creator,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return &Envelope{e: env}, nil
+}
+
 // ComputeTxID calculates the transaction identifier in the network's native format.
 func (n *Network) ComputeTxID(id *TxID) string {
 	temp := &driver.TxID{

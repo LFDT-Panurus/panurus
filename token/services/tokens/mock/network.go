@@ -223,6 +223,23 @@ type FakeNetwork struct {
 		result1 driver.Envelope
 		result2 error
 	}
+	SetupPublicParamsStub        func(view.Context, tokena.TMSID, []byte, view.Identity, driver.TxID) (driver.Envelope, error)
+	setupPublicParamsMutex       sync.RWMutex
+	setupPublicParamsArgsForCall []struct {
+		arg1 view.Context
+		arg2 tokena.TMSID
+		arg3 []byte
+		arg4 view.Identity
+		arg5 driver.TxID
+	}
+	setupPublicParamsReturns struct {
+		result1 driver.Envelope
+		result2 error
+	}
+	setupPublicParamsReturnsOnCall map[int]struct {
+		result1 driver.Envelope
+		result2 error
+	}
 	invocations      map[string][][]interface{}
 	invocationsMutex sync.RWMutex
 }
@@ -1228,6 +1245,79 @@ func (fake *FakeNetwork) RequestApprovalReturnsOnCall(i int, result1 driver.Enve
 		})
 	}
 	fake.requestApprovalReturnsOnCall[i] = struct {
+		result1 driver.Envelope
+		result2 error
+	}{result1, result2}
+}
+
+func (fake *FakeNetwork) SetupPublicParams(arg1 view.Context, arg2 tokena.TMSID, arg3 []byte, arg4 view.Identity, arg5 driver.TxID) (driver.Envelope, error) {
+	var arg3Copy []byte
+	if arg3 != nil {
+		arg3Copy = make([]byte, len(arg3))
+		copy(arg3Copy, arg3)
+	}
+	fake.setupPublicParamsMutex.Lock()
+	ret, specificReturn := fake.setupPublicParamsReturnsOnCall[len(fake.setupPublicParamsArgsForCall)]
+	fake.setupPublicParamsArgsForCall = append(fake.setupPublicParamsArgsForCall, struct {
+		arg1 view.Context
+		arg2 tokena.TMSID
+		arg3 []byte
+		arg4 view.Identity
+		arg5 driver.TxID
+	}{arg1, arg2, arg3Copy, arg4, arg5})
+	stub := fake.SetupPublicParamsStub
+	fakeReturns := fake.setupPublicParamsReturns
+	fake.recordInvocation("SetupPublicParams", []interface{}{arg1, arg2, arg3Copy, arg4, arg5})
+	fake.setupPublicParamsMutex.Unlock()
+	if stub != nil {
+		return stub(arg1, arg2, arg3, arg4, arg5)
+	}
+	if specificReturn {
+		return ret.result1, ret.result2
+	}
+	return fakeReturns.result1, fakeReturns.result2
+}
+
+func (fake *FakeNetwork) SetupPublicParamsCallCount() int {
+	fake.setupPublicParamsMutex.RLock()
+	defer fake.setupPublicParamsMutex.RUnlock()
+	return len(fake.setupPublicParamsArgsForCall)
+}
+
+func (fake *FakeNetwork) SetupPublicParamsCalls(stub func(view.Context, tokena.TMSID, []byte, view.Identity, driver.TxID) (driver.Envelope, error)) {
+	fake.setupPublicParamsMutex.Lock()
+	defer fake.setupPublicParamsMutex.Unlock()
+	fake.SetupPublicParamsStub = stub
+}
+
+func (fake *FakeNetwork) SetupPublicParamsArgsForCall(i int) (view.Context, tokena.TMSID, []byte, view.Identity, driver.TxID) {
+	fake.setupPublicParamsMutex.RLock()
+	defer fake.setupPublicParamsMutex.RUnlock()
+	argsForCall := fake.setupPublicParamsArgsForCall[i]
+	return argsForCall.arg1, argsForCall.arg2, argsForCall.arg3, argsForCall.arg4, argsForCall.arg5
+}
+
+func (fake *FakeNetwork) SetupPublicParamsReturns(result1 driver.Envelope, result2 error) {
+	fake.setupPublicParamsMutex.Lock()
+	defer fake.setupPublicParamsMutex.Unlock()
+	fake.SetupPublicParamsStub = nil
+	fake.setupPublicParamsReturns = struct {
+		result1 driver.Envelope
+		result2 error
+	}{result1, result2}
+}
+
+func (fake *FakeNetwork) SetupPublicParamsReturnsOnCall(i int, result1 driver.Envelope, result2 error) {
+	fake.setupPublicParamsMutex.Lock()
+	defer fake.setupPublicParamsMutex.Unlock()
+	fake.SetupPublicParamsStub = nil
+	if fake.setupPublicParamsReturnsOnCall == nil {
+		fake.setupPublicParamsReturnsOnCall = make(map[int]struct {
+			result1 driver.Envelope
+			result2 error
+		})
+	}
+	fake.setupPublicParamsReturnsOnCall[i] = struct {
 		result1 driver.Envelope
 		result2 error
 	}{result1, result2}

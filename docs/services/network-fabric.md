@@ -144,6 +144,97 @@ The chaincode endorsement follows Fabric's standard endorsement policies:
 
 Example policy: `"OR('Org1MSP.peer', 'Org2MSP.peer')"` - requires endorsement from either Org1 or Org2.
 
+### FSC Endorsement
+
+As an alternative to chaincode-based endorsement, FSC nodes equipped with a proper
+endorsement key can endorse the token chaincode themselves (see
+`services.network.fabric.fsc_endorsement` in [Configuration](../configuration.md)).
+The set of endorsers to contact is selected by `fsc_endorsement.policy.type`:
+
+- `1outn` — contact one random configured endorser.
+- `all` (default) — contact all configured endorsers.
+- `namespace` — fetch the namespace's real endorsement policy via Fabric service
+  discovery (`Channel.Chaincode(namespace).Discover()`) and contact a random subset of
+  the configured endorsers that satisfies it. Discovery already returns the required
+  MSPs; if none of the configured endorsers can cover them, endorsement fails with an
+  error rather than falling back to a weaker policy. See
+  [FabricX FSC Endorsement Service](network-fabricx.md#fsc-endorsement-service) for
+  the equivalent (query-service-based) mechanism on FabricX.
+
+### Public Parameters Setup/Update via FSC
+
+Besides endorsing token requests, the same FSC endorsement machinery can be used to
+submit new or updated public parameters (PP) for a namespace, as an alternative to
+setting them through the chaincode `Init` lifecycle callback. A second
+initiator/responder pair handles this:
+
+- `SetupPublicParamsView` (initiator) builds an endorsement proposal carrying the raw
+  PP bytes and submits it for endorsement, exactly like `RequestApprovalView` does for
+  token requests.
+- `SetupPublicParamsResponderView` (responder) receives the proposal, validates it, and
+  writes the PP into the RWSet via the existing `translator.SetupAction` mechanism —
+  the same setup key/hash that the chaincode `Init` path writes.
+
+The two initiator/responder pairs are distinguished by chaincode function name and
+transient key: the token-request flow uses the `invoke` function, while the PP flow
+uses a dedicated `setup` function and carries the raw parameters under a dedicated
+`public_params` transient key (in addition to the `tmsID` key used by both).
+
+Both responders share a common `receive` step that only checks that the proposal's
+`tmsID` transient carries a non-empty network, channel, and namespace — it does not
+look up the TMS itself. Each responder looks up the TMS for that `tmsID` on its own,
+at validation time, and decides for itself whether an absent TMS is a problem:
+
+- The token-request responder (`invoke`) requires an existing TMS; if none is found,
+  validation fails.
+- The PP setup responder (`setup`) tolerates a missing TMS, since the namespace may be
+  going through its first-time initialization. Any other lookup error (i.e. anything
+  other than "TMS not found") still fails validation.
+
+Endorsing the proposal (common to both responders) needs the local endorser identity,
+resolved from `fsc_endorsement.id` in the namespace's configuration. This is resolved
+directly from configuration rather than through a fully-built TMS, so it also works
+during first-time PP setup, before any TMS exists for the namespace.
+
+The responder enforces the following before writing:
+
+1. If a TMS is found for the namespace, its ID must match the `tmsID` carried by the
+   proposal.
+2. The raw PP must be deserializable (`PublicParametersFromBytes`) and pass
+   `PublicParameters.Validate()`.
+3. If a TMS with existing public parameters is already present for the namespace, the
+   submitted PP's driver name and version must match the existing ones. This check is
+   skipped for first-time setup, when no PP exists yet.
+
+There is no separate "init" vs. "update" API: the write is an unconditional overwrite
+of the setup key, mirroring the semantics of the chaincode `Init` path. Endorser
+selection reuses the same `fsc_endorsement.policy.type` mechanism described above
+(`1outn`/`all`/`namespace`) — there is no separate policy configuration for PP setup.
+
+As with token requests, the responder does not refresh the local TMS directly after
+writing; the existing ledger setup-key listener (see
+[Public Parameters Management](#public-parameters-management)) detects the committed
+write and updates the TMS.
+
+#### Reachability
+
+`SetupPublicParamsView` is reachable from application code through the same layering
+as `RequestApproval`, but keyed by `TMSID` rather than `*token.ManagementService` — a
+namespace has no TMS yet before its first PP setup:
+
+```
+network.Network.SetupPublicParams(tmsID, ppRaw, signer, txID)
+  -> driver.Network.SetupPublicParams
+    -> fabric.Network.SetupPublicParams
+      -> endorsement.Service.SetupPublicParams
+        -> fsc.EndorsementService.SetupPublicParams
+          -> NewSetupPublicParamsView
+```
+
+Chaincode-based endorsement (`ChaincodeEndorsementService`) does not support this
+call and returns an error — for that endorsement mode, PP setup/update remains
+exclusively through the chaincode `Init` lifecycle callback described above.
+
 ## Finality Management
 
 The Fabric implementation supports two modes for monitoring transaction finality:

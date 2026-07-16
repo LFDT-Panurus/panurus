@@ -153,7 +153,13 @@ token:
               # If empty, the default identity will be used.
               id:
               # This section is used to set the policy to be used to select the endorsers to contact.
-              # Available policies are: `1outn`, `all`. Default policy is `all`.
+              # Available policies are: `1outn`, `all`, `namespace`. Default policy is `all`.
+              #   - `1outn`: contact one random endorser from the list below.
+              #   - `all`: contact all the endorsers listed below.
+              #   - `namespace`: fetch the real endorsement policy of the token namespace and contact a
+              #     random subset of the endorsers below that satisfies it. On Fabric, the policy is
+              #     obtained via service discovery; on FabricX, via the query service. Endorsement fails
+              #     if the endorsers below cannot satisfy the namespace's policy.
               policy:
                 type: 1outn
               # A list of FSC node identifiers that must be contacted to obtain the endorsement.

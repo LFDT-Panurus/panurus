@@ -8,28 +8,28 @@ import (
 )
 
 type ServiceProvider struct {
-	GetServiceStub        func(interface{}) (interface{}, error)
+	GetServiceStub        func(any) (any, error)
 	getServiceMutex       sync.RWMutex
 	getServiceArgsForCall []struct {
-		arg1 interface{}
+		arg1 any
 	}
 	getServiceReturns struct {
-		result1 interface{}
+		result1 any
 		result2 error
 	}
 	getServiceReturnsOnCall map[int]struct {
-		result1 interface{}
+		result1 any
 		result2 error
 	}
 	invocations      map[string][][]interface{}
 	invocationsMutex sync.RWMutex
 }
 
-func (fake *ServiceProvider) GetService(arg1 interface{}) (interface{}, error) {
+func (fake *ServiceProvider) GetService(arg1 any) (any, error) {
 	fake.getServiceMutex.Lock()
 	ret, specificReturn := fake.getServiceReturnsOnCall[len(fake.getServiceArgsForCall)]
 	fake.getServiceArgsForCall = append(fake.getServiceArgsForCall, struct {
-		arg1 interface{}
+		arg1 any
 	}{arg1})
 	stub := fake.GetServiceStub
 	fakeReturns := fake.getServiceReturns
@@ -50,41 +50,41 @@ func (fake *ServiceProvider) GetServiceCallCount() int {
 	return len(fake.getServiceArgsForCall)
 }
 
-func (fake *ServiceProvider) GetServiceCalls(stub func(interface{}) (interface{}, error)) {
+func (fake *ServiceProvider) GetServiceCalls(stub func(any) (any, error)) {
 	fake.getServiceMutex.Lock()
 	defer fake.getServiceMutex.Unlock()
 	fake.GetServiceStub = stub
 }
 
-func (fake *ServiceProvider) GetServiceArgsForCall(i int) interface{} {
+func (fake *ServiceProvider) GetServiceArgsForCall(i int) any {
 	fake.getServiceMutex.RLock()
 	defer fake.getServiceMutex.RUnlock()
 	argsForCall := fake.getServiceArgsForCall[i]
 	return argsForCall.arg1
 }
 
-func (fake *ServiceProvider) GetServiceReturns(result1 interface{}, result2 error) {
+func (fake *ServiceProvider) GetServiceReturns(result1 any, result2 error) {
 	fake.getServiceMutex.Lock()
 	defer fake.getServiceMutex.Unlock()
 	fake.GetServiceStub = nil
 	fake.getServiceReturns = struct {
-		result1 interface{}
+		result1 any
 		result2 error
 	}{result1, result2}
 }
 
-func (fake *ServiceProvider) GetServiceReturnsOnCall(i int, result1 interface{}, result2 error) {
+func (fake *ServiceProvider) GetServiceReturnsOnCall(i int, result1 any, result2 error) {
 	fake.getServiceMutex.Lock()
 	defer fake.getServiceMutex.Unlock()
 	fake.GetServiceStub = nil
 	if fake.getServiceReturnsOnCall == nil {
 		fake.getServiceReturnsOnCall = make(map[int]struct {
-			result1 interface{}
+			result1 any
 			result2 error
 		})
 	}
 	fake.getServiceReturnsOnCall[i] = struct {
-		result1 interface{}
+		result1 any
 		result2 error
 	}{result1, result2}
 }

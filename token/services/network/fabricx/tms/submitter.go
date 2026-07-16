@@ -14,6 +14,7 @@ import (
 	"github.com/hyperledger-labs/fabric-smart-client/platform/fabric"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/fabric/core/generic/fabricutils"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/fabric/core/generic/transaction"
+	"github.com/hyperledger-labs/fabric-smart-client/platform/view/view"
 	cb "github.com/hyperledger/fabric-protos-go-apiv2/common"
 	"github.com/hyperledger/fabric-x-common/api/applicationpb"
 	"github.com/hyperledger/fabric-x-common/api/msppb"
@@ -67,7 +68,7 @@ type submitter struct {
 // 4. Marshals the complete transaction into protobuf.
 // 5. Wraps the transaction in a Fabric envelope and broadcasts it.
 func (s *submitter) Submit(network, channel string, tx *applicationpb.Tx) error {
-	logger.Infof("Submitting to [%s,%s] following %d namespaces: [%v]", network, channel, len(tx.GetNamespaces()), tx.GetNamespaces())
+	logger.Debugf("Submitting to [%s,%s] following %d namespaces: [%v]", network, channel, len(tx.GetNamespaces()), tx.GetNamespaces())
 
 	signer, err := s.signingIdentityProvider.DefaultSigningIdentity(network, channel)
 	if err != nil {
@@ -83,6 +84,8 @@ func (s *submitter) Submit(network, channel string, tx *applicationpb.Tx) error 
 	if err := proto.Unmarshal(serializedCreator, identity); err != nil {
 		return errors.Wrapf(err, "failed unmarshaling default identity")
 	}
+
+	logger.Debugf("Submitting with identity [%s,%s]", identity.MspId, view.Identity(identity.GetCertificate()))
 
 	nonce, err := transaction.GetRandomNonce()
 	if err != nil {

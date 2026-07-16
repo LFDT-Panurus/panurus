@@ -7,6 +7,8 @@ SPDX-License-Identifier: Apache-2.0
 package topology
 
 import (
+	"fmt"
+
 	"github.com/LFDT-Panurus/panurus/integration/nwo/token"
 	fabric2 "github.com/LFDT-Panurus/panurus/integration/nwo/token/fabric"
 	"github.com/LFDT-Panurus/panurus/integration/nwo/token/generators/crypto/zkatdlognoghv1"
@@ -16,7 +18,7 @@ import (
 	"github.com/LFDT-Panurus/panurus/integration/token/fungible/sdk/endorser"
 	issuer2 "github.com/LFDT-Panurus/panurus/integration/token/fungible/sdk/issuer"
 	"github.com/LFDT-Panurus/panurus/integration/token/fungible/sdk/party"
-	"github.com/LFDT-Panurus/panurus/integration/token/fungible/views/fabricx/tmsdeploy"
+	endorsementfsc "github.com/LFDT-Panurus/panurus/token/services/network/fabric/endorsement/fsc"
 	"github.com/hyperledger-labs/fabric-smart-client/integration/nwo/api"
 	"github.com/hyperledger-labs/fabric-smart-client/integration/nwo/fabric"
 	"github.com/hyperledger-labs/fabric-smart-client/integration/nwo/fabricx"
@@ -28,21 +30,26 @@ import (
 )
 
 func Topology(opts common.Opts) []api.Topology {
+	orgs := opts.Orgs
+	if len(orgs) == 0 {
+		orgs = []string{"Org1", "Org2"}
+	}
+
 	var backendTopology api.Topology
 	var backendChannel string
 	switch opts.Backend {
 	case "fabric":
 		fabricTopology := fabric.NewDefaultTopology()
 		fabricTopology.EnableIdemix()
-		fabricTopology.AddOrganizationsByName("Org1", "Org2")
-		fabricTopology.SetNamespaceApproverOrgs("Org1")
+		fabricTopology.AddOrganizationsByName(orgs...)
+		fabricTopology.SetNamespaceApproverOrgs(orgs[0])
 		backendTopology = fabricTopology
 		backendChannel = fabricTopology.Channels[0].Name
 	case "fabricx":
 		fabricTopology := fabricx.NewDefaultTopology()
 		fabricTopology.EnableIdemix()
-		fabricTopology.AddOrganizationsByName("Org1", "Org2")
-		fabricTopology.SetNamespaceApproverOrgs("Org1")
+		fabricTopology.AddOrganizationsByName(orgs...)
+		fabricTopology.SetNamespaceApproverOrgs(orgs[0])
 		backendTopology = fabricTopology
 		backendChannel = fabricTopology.Channels[0].Name
 	default:
@@ -145,18 +152,32 @@ func Topology(opts common.Opts) []api.Topology {
 
 	var endorserIDs []string
 	if opts.FSCBasedEndorsement {
-		endorserTemplate := fscTopology.NewTemplate("endorser")
-		endorserTemplate.AddOptions(
-			fabric.WithOrganization("Org1"),
-			fabric2.WithEndorserRole(),
-		)
-		endorserTemplate.RegisterViewFactory("TMSDeploy", &tmsdeploy.ViewFactory{})
-		fscTopology.AddNodeFromTemplate("endorser-1", endorserTemplate).AddOptions(opts.ReplicationOpts.For("endorser-1")...)
-		endorserIDs = append(endorserIDs, "endorser-1")
-		if opts.Backend != "fabricx" {
-			fscTopology.AddNodeFromTemplate("endorser-2", endorserTemplate).AddOptions(opts.ReplicationOpts.For("endorser-2")...)
-			fscTopology.AddNodeFromTemplate("endorser-3", endorserTemplate).AddOptions(opts.ReplicationOpts.For("endorser-3")...)
-			endorserIDs = append(endorserIDs, "endorser-2", "endorser-3")
+		if opts.FSCEndorsementPolicyType == endorsementfsc.NamespacePolicy {
+			// one endorser per org, so that the namespace endorsement policy can pick a
+			// satisfying subset of endorsers across different MSPs
+			for i, org := range orgs {
+				endorserTemplate := fscTopology.NewTemplate("endorser")
+				endorserTemplate.AddOptions(
+					fabric.WithOrganization(org),
+					fabric2.WithEndorserRole(),
+				)
+				endorserID := fmt.Sprintf("endorser-%d", i+1)
+				fscTopology.AddNodeFromTemplate(endorserID, endorserTemplate).AddOptions(opts.ReplicationOpts.For(endorserID)...)
+				endorserIDs = append(endorserIDs, endorserID)
+			}
+		} else {
+			endorserTemplate := fscTopology.NewTemplate("endorser")
+			endorserTemplate.AddOptions(
+				fabric.WithOrganization(orgs[0]),
+				fabric2.WithEndorserRole(),
+			)
+			fscTopology.AddNodeFromTemplate("endorser-1", endorserTemplate).AddOptions(opts.ReplicationOpts.For("endorser-1")...)
+			endorserIDs = append(endorserIDs, "endorser-1")
+			if opts.Backend != "fabricx" {
+				fscTopology.AddNodeFromTemplate("endorser-2", endorserTemplate).AddOptions(opts.ReplicationOpts.For("endorser-2")...)
+				fscTopology.AddNodeFromTemplate("endorser-3", endorserTemplate).AddOptions(opts.ReplicationOpts.For("endorser-3")...)
+				endorserIDs = append(endorserIDs, "endorser-2", "endorser-3")
+			}
 		}
 	}
 
@@ -171,8 +192,18 @@ func Topology(opts common.Opts) []api.Topology {
 	}
 	if opts.FSCBasedEndorsement {
 		fabric2.WithFSCEndorsers(tms, endorserIDs...)
+		if len(opts.FSCEndorsementPolicyType) > 0 {
+			fabric2.WithFSCEndorsementPolicyType(tms, opts.FSCEndorsementPolicyType)
+		}
+		if len(opts.NamespacePolicy) > 0 {
+			fabric2.WithNamespacePolicy(tms, opts.NamespacePolicy)
+		}
 	}
-	fabric2.SetOrgs(tms, "Org1")
+	if opts.FSCEndorsementPolicyType == endorsementfsc.NamespacePolicy {
+		fabric2.SetOrgs(tms, orgs...)
+	} else {
+		fabric2.SetOrgs(tms, "Org1")
+	}
 	nodeList := fscTopology.ListNodes()
 	fscTopology.SetBootstrapNode(fscTopology.AddNodeByName("lib-p2p-bootstrap-node"))
 

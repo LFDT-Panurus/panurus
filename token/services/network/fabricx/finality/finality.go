@@ -24,6 +24,7 @@ import (
 	fdriver "github.com/hyperledger-labs/fabric-smart-client/platform/fabric/driver"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/fabricx/core/committer/queryservice"
 	finalityx "github.com/hyperledger-labs/fabric-smart-client/platform/fabricx/core/finality"
+	"github.com/hyperledger/fabric-x-common/api/applicationpb"
 	"github.com/hyperledger/fabric-x-common/api/committerpb"
 )
 
@@ -56,6 +57,7 @@ type QueryService interface {
 	GetTransactionStatus(txID string) (int32, error)
 	GetTransactionStatuses(txIDs []string) (map[string]int32, error)
 	GetConfigTransaction() (*queryservice.ConfigTransactionInfo, error)
+	GetNamespacePolicies() (*applicationpb.NamespacePolicies, error)
 }
 
 // Listener is an alias for ndriver.FinalityListener

@@ -265,15 +265,32 @@ func TestTMSProvider(t *testing.T) {
 		_, err = provider.GetTokenManagerService(driver.ServiceOptions{})
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "network not specified")
+		require.NotErrorIs(t, err, core.ErrTMSNotFound)
 
 		_, err = provider.GetTokenManagerService(driver.ServiceOptions{Network: "n"})
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "namespace not specified")
+		require.NotErrorIs(t, err, core.ErrTMSNotFound)
 
 		// Test Update Errors
 		require.Error(t, provider.Update(driver.ServiceOptions{}))
 		require.Error(t, provider.Update(driver.ServiceOptions{Network: "n"}))
 		require.Error(t, provider.Update(driver.ServiceOptions{Network: "n", Namespace: "ns"}))
 		require.Error(t, provider.Update(driver.ServiceOptions{Network: "n", Namespace: "ns", PublicParams: nil}))
+	})
+
+	// Test case: ErrTMSNotFound is returned (and distinguishable via errors.Is) when no public
+	// parameters can be retrieved from any source, but not for unrelated input-validation errors.
+	t.Run("ErrTMSNotFound", func(t *testing.T) {
+		pps.PublicParamsReturns(nil, errors.New("storage error"))
+		configService.ConfigurationForReturns(nil, errors.New("no config"))
+
+		_, err = provider.GetTokenManagerService(driver.ServiceOptions{Network: "n6", Namespace: "ns6"})
+		require.Error(t, err)
+		require.ErrorIs(t, err, core.ErrTMSNotFound)
+
+		_, err = provider.NewTokenManagerService(driver.ServiceOptions{Network: "n6-new", Namespace: "ns6"})
+		require.Error(t, err)
+		require.ErrorIs(t, err, core.ErrTMSNotFound)
 	})
 }

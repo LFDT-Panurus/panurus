@@ -192,6 +192,13 @@ func (m *TMSProvider) SetCallback(callback CallbackFunc) {
 	m.callback = callback
 }
 
+// ConfigurationFor returns the configuration for the given TMS coordinates without
+// instantiating the token manager service. It returns an error if no configuration
+// is registered for the coordinates.
+func (m *TMSProvider) ConfigurationFor(network, channel, namespace string) (driver.Configuration, error) {
+	return m.configService.ConfigurationFor(network, channel, namespace)
+}
+
 func (m *TMSProvider) getTokenManagerService(opts driver.ServiceOptions) (service driver.TokenManagerService, err error) {
 	logger.Debugf("creating new token manager service for [%s]", opts)
 	service, err = m.newTMS(&opts)
@@ -240,7 +247,7 @@ func (m *TMSProvider) loadPublicParams(opts *driver.ServiceOptions) ([]byte, err
 	}
 	logger.Errorf("cannot retrieve public params for [%s]: [%s]", opts, string(debug.Stack()))
 
-	return nil, errors.Errorf("cannot retrieve public params for [%s]", opts)
+	return nil, errors.Join(errors.Errorf("cannot retrieve public params for [%s]", opts), ErrTMSNotFound)
 }
 
 func (m *TMSProvider) ppFromOpts(opts *driver.ServiceOptions) ([]byte, error) {

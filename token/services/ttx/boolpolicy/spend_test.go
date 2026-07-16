@@ -49,6 +49,10 @@ func (d *dummyTMSProvider) Update(driver.ServiceOptions) error {
 	return nil
 }
 
+func (d *dummyTMSProvider) ConfigurationFor(network, channel, namespace string) (driver.Configuration, error) {
+	return nil, errors.New("not implemented")
+}
+
 // newSpendTestContext builds a mock.Context that resolves a real
 // token.ManagementServiceProvider (backed entirely by driver-level mocks), so
 // RequestSpendView.Call can run end-to-end without a live FSC network.

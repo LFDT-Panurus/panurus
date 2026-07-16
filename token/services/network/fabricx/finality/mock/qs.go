@@ -7,6 +7,7 @@ import (
 	"github.com/LFDT-Panurus/panurus/token/services/network/fabricx/finality"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/common/driver"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/fabricx/core/committer/queryservice"
+	"github.com/hyperledger/fabric-x-common/api/applicationpb"
 )
 
 type QueryService struct {
@@ -20,6 +21,18 @@ type QueryService struct {
 	}
 	getConfigTransactionReturnsOnCall map[int]struct {
 		result1 *queryservice.ConfigTransactionInfo
+		result2 error
+	}
+	GetNamespacePoliciesStub        func() (*applicationpb.NamespacePolicies, error)
+	getNamespacePoliciesMutex       sync.RWMutex
+	getNamespacePoliciesArgsForCall []struct {
+	}
+	getNamespacePoliciesReturns struct {
+		result1 *applicationpb.NamespacePolicies
+		result2 error
+	}
+	getNamespacePoliciesReturnsOnCall map[int]struct {
+		result1 *applicationpb.NamespacePolicies
 		result2 error
 	}
 	GetStateStub        func(driver.Namespace, driver.PKey) (*driver.VaultValue, error)
@@ -131,6 +144,62 @@ func (fake *QueryService) GetConfigTransactionReturnsOnCall(i int, result1 *quer
 	}
 	fake.getConfigTransactionReturnsOnCall[i] = struct {
 		result1 *queryservice.ConfigTransactionInfo
+		result2 error
+	}{result1, result2}
+}
+
+func (fake *QueryService) GetNamespacePolicies() (*applicationpb.NamespacePolicies, error) {
+	fake.getNamespacePoliciesMutex.Lock()
+	ret, specificReturn := fake.getNamespacePoliciesReturnsOnCall[len(fake.getNamespacePoliciesArgsForCall)]
+	fake.getNamespacePoliciesArgsForCall = append(fake.getNamespacePoliciesArgsForCall, struct {
+	}{})
+	stub := fake.GetNamespacePoliciesStub
+	fakeReturns := fake.getNamespacePoliciesReturns
+	fake.recordInvocation("GetNamespacePolicies", []interface{}{})
+	fake.getNamespacePoliciesMutex.Unlock()
+	if stub != nil {
+		return stub()
+	}
+	if specificReturn {
+		return ret.result1, ret.result2
+	}
+	return fakeReturns.result1, fakeReturns.result2
+}
+
+func (fake *QueryService) GetNamespacePoliciesCallCount() int {
+	fake.getNamespacePoliciesMutex.RLock()
+	defer fake.getNamespacePoliciesMutex.RUnlock()
+	return len(fake.getNamespacePoliciesArgsForCall)
+}
+
+func (fake *QueryService) GetNamespacePoliciesCalls(stub func() (*applicationpb.NamespacePolicies, error)) {
+	fake.getNamespacePoliciesMutex.Lock()
+	defer fake.getNamespacePoliciesMutex.Unlock()
+	fake.GetNamespacePoliciesStub = stub
+}
+
+func (fake *QueryService) GetNamespacePoliciesReturns(result1 *applicationpb.NamespacePolicies, result2 error) {
+	fake.getNamespacePoliciesMutex.Lock()
+	defer fake.getNamespacePoliciesMutex.Unlock()
+	fake.GetNamespacePoliciesStub = nil
+	fake.getNamespacePoliciesReturns = struct {
+		result1 *applicationpb.NamespacePolicies
+		result2 error
+	}{result1, result2}
+}
+
+func (fake *QueryService) GetNamespacePoliciesReturnsOnCall(i int, result1 *applicationpb.NamespacePolicies, result2 error) {
+	fake.getNamespacePoliciesMutex.Lock()
+	defer fake.getNamespacePoliciesMutex.Unlock()
+	fake.GetNamespacePoliciesStub = nil
+	if fake.getNamespacePoliciesReturnsOnCall == nil {
+		fake.getNamespacePoliciesReturnsOnCall = make(map[int]struct {
+			result1 *applicationpb.NamespacePolicies
+			result2 error
+		})
+	}
+	fake.getNamespacePoliciesReturnsOnCall[i] = struct {
+		result1 *applicationpb.NamespacePolicies
 		result2 error
 	}{result1, result2}
 }

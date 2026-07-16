@@ -122,6 +122,10 @@ func (m *mockTokenManagerServiceProvider) Update(opts driver.ServiceOptions) err
 	return m.updateErr
 }
 
+func (m *mockTokenManagerServiceProvider) ConfigurationFor(network, channel, namespace string) (driver.Configuration, error) {
+	return nil, errors.Errorf("not implemented")
+}
+
 // mockVaultProvider mocks VaultProvider interface
 type mockVaultProvider struct {
 	vault driver.Vault
@@ -213,6 +217,35 @@ func TestManagementServiceProvider_Update(t *testing.T) {
 	// Verify cache was cleared
 	_, exists := provider.services["net1ch1ns1"]
 	assert.False(t, exists)
+}
+
+// TestManagementServiceProvider_GetManagementService_TMSNotFound verifies that ErrTMSNotFound
+// remains distinguishable via errors.Is through GetManagementService's wrap chain.
+func TestManagementServiceProvider_GetManagementService_TMSNotFound(t *testing.T) {
+	tmsProvider := &mockTokenManagerServiceProvider{
+		getTMSErr: errors.Join(errors.New("cannot retrieve public params"), ErrTMSNotFound),
+	}
+	normalizer := &mockNormalizer{}
+	vaultProvider := &mockVaultProvider{}
+	certProvider := &mockCertificationClientProvider{}
+	selectorProvider := &mockSelectorManagerProvider{}
+
+	provider := NewManagementServiceProvider(
+		tmsProvider,
+		normalizer,
+		vaultProvider,
+		certProvider,
+		selectorProvider,
+	)
+
+	_, err := provider.GetManagementService(WithTMSID(TMSID{
+		Network:   "net1",
+		Channel:   "ch1",
+		Namespace: "ns1",
+	}))
+
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, ErrTMSNotFound))
 }
 
 // TestManagementServiceProvider_Update_Error verifies error handling

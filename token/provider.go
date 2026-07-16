@@ -145,6 +145,12 @@ func (p *ManagementServiceProvider) Update(tmsID TMSID, val []byte) error {
 	return nil
 }
 
+// ConfigurationFor returns the configuration for the given TMS id without building a
+// management service. It returns an error if no configuration is found.
+func (p *ManagementServiceProvider) ConfigurationFor(tmsID TMSID) (driver.Configuration, error) {
+	return p.tmsProvider.ConfigurationFor(tmsID.Network, tmsID.Channel, tmsID.Namespace)
+}
+
 func (p *ManagementServiceProvider) managementService(opts ...ServiceOption) (*ManagementService, error) {
 	opt, err := CompileServiceOptions(opts...)
 	if err != nil {

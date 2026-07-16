@@ -14,6 +14,10 @@ configtxgen: ## Install configtxgen
 integration-tests-fabricx-dlog-t1:
 	make integration-tests-fabricx-dlog TEST_FILTER="T1"
 
+.PHONY: integration-tests-fabricx-dlog-t2
+integration-tests-fabricx-dlog-t2:
+	make integration-tests-fabricx-dlog TEST_FILTER="T2"
+
 .PHONY: integration-tests-fabricx-dlog
 integration-tests-fabricx-dlog:
 	cd ./integration/token/fungible/dlogx; export FAB_BINS=$(FAB_BINS); ginkgo $(GINKGO_TEST_OPTS) --label-filter="$(TEST_FILTER)" .

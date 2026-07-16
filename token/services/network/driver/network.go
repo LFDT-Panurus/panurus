@@ -65,6 +65,12 @@ type Network interface {
 	// metadata carries optional application-level key-value pairs forwarded to the approver.
 	RequestApproval(context view.Context, tms *token2.ManagementService, requestRaw []byte, signer view.Identity, txID TxID, metadata TransientMap) (Envelope, error)
 
+	// SetupPublicParams submits new or updated public parameters for a namespace to the
+	// network's endorsement service, mirroring RequestApproval. Unlike RequestApproval it
+	// takes a TMSID rather than a *ManagementService, so it also works for first-time setup
+	// of a namespace that has no public parameters yet.
+	SetupPublicParams(context view.Context, tmsID token2.TMSID, publicParamsRaw []byte, signer view.Identity, txID TxID) (Envelope, error)
+
 	// ComputeTxID calculates the ledger-specific transaction ID from an abstract TxID.
 	ComputeTxID(id *TxID) string
 

@@ -8,6 +8,21 @@ import (
 )
 
 type FakeTokenManagerServiceProvider struct {
+	ConfigurationForStub        func(string, string, string) (driver.Configuration, error)
+	configurationForMutex       sync.RWMutex
+	configurationForArgsForCall []struct {
+		arg1 string
+		arg2 string
+		arg3 string
+	}
+	configurationForReturns struct {
+		result1 driver.Configuration
+		result2 error
+	}
+	configurationForReturnsOnCall map[int]struct {
+		result1 driver.Configuration
+		result2 error
+	}
 	GetTokenManagerServiceStub        func(driver.ServiceOptions) (driver.TokenManagerService, error)
 	getTokenManagerServiceMutex       sync.RWMutex
 	getTokenManagerServiceArgsForCall []struct {
@@ -34,6 +49,72 @@ type FakeTokenManagerServiceProvider struct {
 	}
 	invocations      map[string][][]interface{}
 	invocationsMutex sync.RWMutex
+}
+
+func (fake *FakeTokenManagerServiceProvider) ConfigurationFor(arg1 string, arg2 string, arg3 string) (driver.Configuration, error) {
+	fake.configurationForMutex.Lock()
+	ret, specificReturn := fake.configurationForReturnsOnCall[len(fake.configurationForArgsForCall)]
+	fake.configurationForArgsForCall = append(fake.configurationForArgsForCall, struct {
+		arg1 string
+		arg2 string
+		arg3 string
+	}{arg1, arg2, arg3})
+	stub := fake.ConfigurationForStub
+	fakeReturns := fake.configurationForReturns
+	fake.recordInvocation("ConfigurationFor", []interface{}{arg1, arg2, arg3})
+	fake.configurationForMutex.Unlock()
+	if stub != nil {
+		return stub(arg1, arg2, arg3)
+	}
+	if specificReturn {
+		return ret.result1, ret.result2
+	}
+	return fakeReturns.result1, fakeReturns.result2
+}
+
+func (fake *FakeTokenManagerServiceProvider) ConfigurationForCallCount() int {
+	fake.configurationForMutex.RLock()
+	defer fake.configurationForMutex.RUnlock()
+	return len(fake.configurationForArgsForCall)
+}
+
+func (fake *FakeTokenManagerServiceProvider) ConfigurationForCalls(stub func(string, string, string) (driver.Configuration, error)) {
+	fake.configurationForMutex.Lock()
+	defer fake.configurationForMutex.Unlock()
+	fake.ConfigurationForStub = stub
+}
+
+func (fake *FakeTokenManagerServiceProvider) ConfigurationForArgsForCall(i int) (string, string, string) {
+	fake.configurationForMutex.RLock()
+	defer fake.configurationForMutex.RUnlock()
+	argsForCall := fake.configurationForArgsForCall[i]
+	return argsForCall.arg1, argsForCall.arg2, argsForCall.arg3
+}
+
+func (fake *FakeTokenManagerServiceProvider) ConfigurationForReturns(result1 driver.Configuration, result2 error) {
+	fake.configurationForMutex.Lock()
+	defer fake.configurationForMutex.Unlock()
+	fake.ConfigurationForStub = nil
+	fake.configurationForReturns = struct {
+		result1 driver.Configuration
+		result2 error
+	}{result1, result2}
+}
+
+func (fake *FakeTokenManagerServiceProvider) ConfigurationForReturnsOnCall(i int, result1 driver.Configuration, result2 error) {
+	fake.configurationForMutex.Lock()
+	defer fake.configurationForMutex.Unlock()
+	fake.ConfigurationForStub = nil
+	if fake.configurationForReturnsOnCall == nil {
+		fake.configurationForReturnsOnCall = make(map[int]struct {
+			result1 driver.Configuration
+			result2 error
+		})
+	}
+	fake.configurationForReturnsOnCall[i] = struct {
+		result1 driver.Configuration
+		result2 error
+	}{result1, result2}
 }
 
 func (fake *FakeTokenManagerServiceProvider) GetTokenManagerService(arg1 driver.ServiceOptions) (driver.TokenManagerService, error) {

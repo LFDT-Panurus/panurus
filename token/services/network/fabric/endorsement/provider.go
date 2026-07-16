@@ -44,6 +44,7 @@ func NewServiceProvider(
 	identityProvider fsc.IdentityProvider,
 	keyTranslator translator.KeyTranslator,
 	storeServiceManager endorserdb.StoreServiceManager,
+	ppValidator fsc.PublicParamsValidator,
 ) *ServiceProvider {
 	l := &loader{
 		fnsp:                fnsp,
@@ -55,6 +56,7 @@ func NewServiceProvider(
 		keyTranslator:       keyTranslator,
 		storeServiceManager: storeServiceManager,
 		fabricProvider:      fnsp,
+		ppValidator:         ppValidator,
 	}
 
 	return &ServiceProvider{Provider: lazy.NewProviderWithKeyMapper(key, l.load)}
@@ -62,6 +64,9 @@ func NewServiceProvider(
 
 type Service interface {
 	Endorse(context view.Context, requestRaw []byte, signer view.Identity, txID driver.TxID, metadata driver.TransientMap) (driver.Envelope, error)
+	// SetupPublicParams submits new or updated public parameters for a namespace to the
+	// endorsement service, following the same endorser-selection policy used by Endorse.
+	SetupPublicParams(context view.Context, publicParamsRaw []byte, signer view.Identity, txID driver.TxID) (driver.Envelope, error)
 }
 
 type loader struct {
@@ -74,6 +79,7 @@ type loader struct {
 	keyTranslator       translator.KeyTranslator
 	storeServiceManager endorserdb.StoreServiceManager
 	fabricProvider      *fabric.NetworkServiceProvider
+	ppValidator         fsc.PublicParamsValidator
 }
 
 func (l *loader) load(tmsID token2.TMSID) (Service, error) {
@@ -90,13 +96,18 @@ func (l *loader) load(tmsID token2.TMSID) (Service, error) {
 
 	logger.Debugf("FSC endorsement enabled...")
 
+	fns, err := l.fabricProvider.FabricNetworkService(tmsID.Network)
+	if err != nil {
+		return nil, errors.Wrapf(err, "failed to get fabric network service for [%s]", tmsID.Network)
+	}
+
 	return fsc.NewEndorsementService(
 		NewNamespaceTxProcessor(l.fnsp),
 		tmsID,
 		configuration,
 		l.viewRegistry,
 		l.viewManager,
-		l.identityProvider,
+		fns.IdentityProvider(),
 		l.keyTranslator,
 		func(txID string, namespace string, rws *fabric.RWSet) (fsc.Translator, error) {
 			return translator.New(
@@ -109,6 +120,8 @@ func (l *loader) load(tmsID token2.TMSID) (Service, error) {
 		l.tmsp,
 		NewStorageProvider(l.storeServiceManager),
 		NewChannelProvider(l.fnsp),
+		NewDiscoveryEndorserSelector(NewNetworkDiscoveryProvider(l.fnsp), NewChannelProvider(l.fnsp)),
+		l.ppValidator,
 	)
 }
 
@@ -230,11 +243,11 @@ func (e *EndorserService) CollectEndorsements(ctx view.Context, tx *endorser.Tra
 
 func (e *EndorserService) EndorserID(tmsID token2.TMSID) (view.Identity, error) {
 	var endorserIDLabel string
-	tms, err := e.tmsProvider.GetManagementService(token2.WithTMSID(tmsID))
+	configuration, err := e.tmsProvider.ConfigurationFor(tmsID)
 	if err != nil {
-		return nil, errors.WithMessagef(err, "failed getting management service for [%s]", tmsID)
+		return nil, errors.WithMessagef(err, "failed getting configuration for [%s]", tmsID)
 	}
-	if err := tms.Configuration().UnmarshalKey("services.network.fabric.fsc_endorsement.id", &endorserIDLabel); err != nil {
+	if err := configuration.UnmarshalKey("services.network.fabric.fsc_endorsement.id", &endorserIDLabel); err != nil {
 		return nil, errors.WithMessagef(err, "failed to load endorserID")
 	}
 	fns, err := e.fabricProvider.FabricNetworkService(tmsID.Network)

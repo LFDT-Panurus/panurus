@@ -42,6 +42,16 @@ type Opts struct {
 	TokenSelector       string
 	FSCBasedEndorsement bool
 	ExtraTMSs           []TMSOpts
+
+	// Orgs is the list of organizations to create for the backend network.
+	// If empty, defaults to ["Org1", "Org2"].
+	Orgs []string
+	// FSCEndorsementPolicyType sets services.network.fabric.fsc_endorsement.policy.type.
+	// If empty, defaults to "1outn".
+	FSCEndorsementPolicyType string
+	// NamespacePolicy, if set, is used as the raw endorsement policy DSL string
+	// for the token namespace, instead of the default unanimity policy over Orgs.
+	NamespacePolicy string
 }
 
 func SetDefaultParams(tms *topology.TMS, opts TMSOpts) {

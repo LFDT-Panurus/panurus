@@ -19,6 +19,7 @@ import (
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/common/utils/lazy"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/fabric"
+	"github.com/hyperledger-labs/fabric-smart-client/platform/fabricx/core/committer/queryservice"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/view"
 )
 
@@ -54,6 +55,8 @@ func NewServiceProvider(
 	tokenManagementSystemProvider *token2.ManagementServiceProvider,
 	storeServiceManager endorserdb.StoreServiceManager,
 	fabricProvider *fabric.NetworkServiceProvider,
+	grpcClientProvider queryservice.GRPCClientProvider,
+	ppValidator fsc.PublicParamsValidator,
 ) *ServiceProvider {
 	l := &loader{
 		configService:                 configService,
@@ -65,6 +68,8 @@ func NewServiceProvider(
 		tokenManagementSystemProvider: tokenManagementSystemProvider,
 		storeServiceManager:           storeServiceManager,
 		fabricProvider:                fabricProvider,
+		grpcClientProvider:            grpcClientProvider,
+		ppValidator:                   ppValidator,
 	}
 
 	return &ServiceProvider{Provider: lazy.NewProviderWithKeyMapper(key, l.load)}
@@ -80,6 +85,8 @@ type loader struct {
 	storeServiceManager           endorserdb.StoreServiceManager
 	tokenManagementSystemProvider *token2.ManagementServiceProvider
 	fabricProvider                *fabric.NetworkServiceProvider
+	grpcClientProvider            queryservice.GRPCClientProvider
+	ppValidator                   fsc.PublicParamsValidator
 }
 
 // load creates and returns an endorsement.Service for the specified TMS ID.
@@ -96,13 +103,18 @@ func (l *loader) load(tmsID token2.TMSID) (endorsement.Service, error) {
 		return nil, err
 	}
 
+	fns, err := l.fabricProvider.FabricNetworkService(tmsID.Network)
+	if err != nil {
+		return nil, errors.Wrapf(err, "failed to get fabric network service for [%s]", tmsID.Network)
+	}
+
 	return fsc.NewEndorsementService(
 		&NamespaceTxProcessor{},
 		tmsID,
 		configuration,
 		l.viewRegistry,
 		l.viewManager,
-		l.identityProvider,
+		fns.IdentityProvider(),
 		l.keyTranslator,
 		func(txID string, namespace string, rws *fabric.RWSet) (fsc.Translator, error) {
 			return translator.New(
@@ -115,6 +127,8 @@ func (l *loader) load(tmsID token2.TMSID) (endorsement.Service, error) {
 		l.tokenManagementSystemProvider,
 		endorsement.NewStorageProvider(l.storeServiceManager),
 		endorsement.NewChannelProvider(l.fabricProvider),
+		NewQueryServiceEndorserSelector(l.grpcClientProvider, endorsement.NewChannelProvider(l.fabricProvider)),
+		l.ppValidator,
 	)
 }
 

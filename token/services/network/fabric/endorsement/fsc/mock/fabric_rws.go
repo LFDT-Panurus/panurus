@@ -73,10 +73,10 @@ type FabricRWSet struct {
 	doneMutex       sync.RWMutex
 	doneArgsForCall []struct {
 	}
-	EqualsStub        func(interface{}, ...driver.Namespace) error
+	EqualsStub        func(any, ...driver.Namespace) error
 	equalsMutex       sync.RWMutex
 	equalsArgsForCall []struct {
-		arg1 interface{}
+		arg1 any
 		arg2 []driver.Namespace
 	}
 	equalsReturns struct {
@@ -590,11 +590,11 @@ func (fake *FabricRWSet) DoneCalls(stub func()) {
 	fake.DoneStub = stub
 }
 
-func (fake *FabricRWSet) Equals(arg1 interface{}, arg2 ...driver.Namespace) error {
+func (fake *FabricRWSet) Equals(arg1 any, arg2 ...driver.Namespace) error {
 	fake.equalsMutex.Lock()
 	ret, specificReturn := fake.equalsReturnsOnCall[len(fake.equalsArgsForCall)]
 	fake.equalsArgsForCall = append(fake.equalsArgsForCall, struct {
-		arg1 interface{}
+		arg1 any
 		arg2 []driver.Namespace
 	}{arg1, arg2})
 	stub := fake.EqualsStub
@@ -616,13 +616,13 @@ func (fake *FabricRWSet) EqualsCallCount() int {
 	return len(fake.equalsArgsForCall)
 }
 
-func (fake *FabricRWSet) EqualsCalls(stub func(interface{}, ...driver.Namespace) error) {
+func (fake *FabricRWSet) EqualsCalls(stub func(any, ...driver.Namespace) error) {
 	fake.equalsMutex.Lock()
 	defer fake.equalsMutex.Unlock()
 	fake.EqualsStub = stub
 }
 
-func (fake *FabricRWSet) EqualsArgsForCall(i int) (interface{}, []driver.Namespace) {
+func (fake *FabricRWSet) EqualsArgsForCall(i int) (any, []driver.Namespace) {
 	fake.equalsMutex.RLock()
 	defer fake.equalsMutex.RUnlock()
 	argsForCall := fake.equalsArgsForCall[i]

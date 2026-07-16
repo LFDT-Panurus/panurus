@@ -220,6 +220,37 @@ services:
 
 Only one endorser (randomly selected) will be contacted.
 
+#### Namespace Policy
+Derives the set of endorsers to contact from the *real* endorsement policy of the
+token namespace, instead of a static rule:
+
+```yaml
+services:
+  network:
+    fabric:
+      fsc_endorsement:
+        policy:
+          type: namespace
+        endorsers:
+          - endorser1.example.com
+          - endorser2.example.com
+          - endorser3.example.com
+```
+
+On FabricX, the namespace's endorsement policy is fetched via the query service's
+`GetNamespacePolicies` RPC. The policy is mapped onto MSP IDs (`msp_rule`, an
+identity/MSP-based `SignaturePolicyEnvelope`) and a random subset of the configured
+`endorsers` that jointly satisfies it is selected — for example, given an
+`OR(Org1MSP, Org2MSP)` policy, either a configured Org1 endorser or a configured Org2
+endorser is contacted, chosen at random.
+
+Two cases are treated as hard errors, since correctness takes priority over
+availability:
+- the namespace policy is a `ThresholdRule` (a raw-public-key signer, not identity/MSP
+  based, so it cannot be mapped onto a subset of endorser identities);
+- none of the configured `endorsers` can satisfy the namespace's policy (e.g. no
+  configured endorser belongs to a required MSP).
+
 ### Endorsement Flow
 
 ```mermaid
@@ -228,9 +259,11 @@ graph TB
     
     Policy -->|all| SelectAll[Select All Endorsers]
     Policy -->|1outn| SelectOne[Select Random Endorser]
+    Policy -->|namespace| SelectByPolicy[Fetch Namespace Policy via<br/>Query Service, Select<br/>Satisfying Endorser Subset]
     
     SelectAll --> CreateView[Create RequestApprovalView]
     SelectOne --> CreateView
+    SelectByPolicy --> CreateView
     
     CreateView --> SetTxID[Set Transaction ID]
     SetTxID --> SetRequest[Set Token Request]

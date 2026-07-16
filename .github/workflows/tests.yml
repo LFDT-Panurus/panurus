@@ -112,6 +112,7 @@ jobs:
           dlog-fabric-t12,
           dlog-fabric-t13,
           fabricx-dlog-t1,
+          fabricx-dlog-t2,
           fabtoken-dlog-fabric,
           dloghsm-fabric-t1,
           dloghsm-fabric-t2,

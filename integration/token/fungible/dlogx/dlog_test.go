@@ -17,7 +17,8 @@ import (
 	"github.com/LFDT-Panurus/panurus/integration/token/common/sdk/fxdlog"
 	"github.com/LFDT-Panurus/panurus/integration/token/fungible"
 	"github.com/LFDT-Panurus/panurus/integration/token/fungible/topology"
-	"github.com/LFDT-Panurus/panurus/integration/token/fungible/views/fabricx/tmsdeploy"
+	"github.com/LFDT-Panurus/panurus/integration/token/fungible/views/ppsetup"
+	endorsementfsc "github.com/LFDT-Panurus/panurus/token/services/network/fabric/endorsement/fsc"
 	"github.com/hyperledger-labs/fabric-smart-client/integration"
 	common2 "github.com/hyperledger-labs/fabric-smart-client/integration/nwo/common"
 	"github.com/hyperledger-labs/fabric-smart-client/integration/nwo/fabricx"
@@ -27,6 +28,12 @@ import (
 	. "github.com/onsi/gomega"
 )
 
+// namespacePolicy2of3 requires signatures from 2 out of the 3 orgs (Org1, Org2, Org3) to
+// endorse the token namespace, exercising the "namespace" FSC endorsement policy type.
+const namespacePolicy2of3 = "OutOf(2, 'Org1MSP.member', 'Org2MSP.member', 'Org3MSP.member')"
+
+var namespacePolicyOrgs = []string{"Org1", "Org2", "Org3"}
+
 const None = 0
 const (
 	Aries = 1 << iota
@@ -35,6 +42,7 @@ const (
 	HSM
 	WebEnabled
 	WithEndorsers
+	WithNamespacePolicy
 )
 
 var _ = Describe("EndToEnd", func() {
@@ -51,12 +59,39 @@ var _ = Describe("EndToEnd", func() {
 				Expect(err).ToNot(HaveOccurred())
 
 				tms := fungible.GetTMSByNetworkName(ts.II, "default")
-				_, err = ts.II.Client("endorser-1").CallView("TMSDeploy", common2.JSONMarshall(
-					&tmsdeploy.Deploy{
+				_, err = ts.II.Client("issuer").CallView("SetupPublicParams", common2.JSONMarshall(
+					&ppsetup.SetupPublicParams{
 						Network:         tms.Network,
 						Channel:         tms.Channel,
 						Namespace:       tms.Namespace,
 						PublicParamsRaw: pps[0].PublicParameters.Raw,
+						Timeout:         2 * time.Minute,
+					},
+				))
+				Expect(err).NotTo(HaveOccurred())
+
+				fungible.TestAll(ts.II, "auditor", nil, true, selector)
+			})
+		})
+
+		Describe("T2 Fungible with a 2-of-3 namespace endorsement policy", t.Label, func() {
+			ts, selector := newTestSuite(t.CommType, Aries|WithEndorsers|WithNamespacePolicy, t.ReplicationFactor, "", "alice", "bob", "charlie")
+			BeforeEach(ts.Setup)
+			AfterEach(ts.TearDown)
+			It("succeeded", Label("T2"), func() {
+				time.Sleep(10 * time.Second)
+
+				pps, err := GetPublicParamsInputs(ts.II)
+				Expect(err).ToNot(HaveOccurred())
+
+				tms := fungible.GetTMSByNetworkName(ts.II, "default")
+				_, err = ts.II.Client("issuer").CallView("SetupPublicParams", common2.JSONMarshall(
+					&ppsetup.SetupPublicParams{
+						Network:         tms.Network,
+						Channel:         tms.Channel,
+						Namespace:       tms.Namespace,
+						PublicParamsRaw: pps[0].PublicParameters.Raw,
+						Timeout:         2 * time.Minute,
 					},
 				))
 				Expect(err).NotTo(HaveOccurred())
@@ -70,25 +105,32 @@ var _ = Describe("EndToEnd", func() {
 
 func newTestSuite(commType fsc.P2PCommunicationType, mask int, factor int, tokenSelector string, names ...string) (*integration.TestSuite, *token2.ReplicaSelector) {
 	opts, selector := token2.NewReplicationOptions(factor, names...)
+	tmsOpts := common.Opts{
+		Backend:  fabricx.PlatformName, // select fabricx platform for NWO
+		CommType: commType,
+		DefaultTMSOpts: common.TMSOpts{
+			TokenSDKDriver: zkatdlognoghv1.DriverIdentifier,
+			Aries:          mask&Aries > 0,
+		},
+		NoAuditor:           mask&NoAuditor > 0,
+		AuditorAsIssuer:     mask&AuditorAsIssuer > 0,
+		HSM:                 mask&HSM > 0,
+		WebEnabled:          mask&WebEnabled > 0,
+		SDKs:                []node.SDK{&fxdlog.SDK{}}, // add fabricx SDK
+		Monitoring:          false,
+		ReplicationOpts:     opts,
+		FSCBasedEndorsement: mask&WithEndorsers > 0,
+		FSCLogSpec:          "debug",
+		TokenSelector:       tokenSelector,
+	}
+	if mask&WithNamespacePolicy > 0 {
+		tmsOpts.Orgs = namespacePolicyOrgs
+		tmsOpts.FSCEndorsementPolicyType = endorsementfsc.NamespacePolicy
+		tmsOpts.NamespacePolicy = namespacePolicy2of3
+	}
+
 	ts := integration.NewTestSuite(func() (*integration.Infrastructure, error) {
-		i, err := integration.New(StartPortDlog(), "./testdata", topology.Topology(common.Opts{
-			Backend:  fabricx.PlatformName, // select fabricx platform for NWO
-			CommType: commType,
-			DefaultTMSOpts: common.TMSOpts{
-				TokenSDKDriver: zkatdlognoghv1.DriverIdentifier,
-				Aries:          mask&Aries > 0,
-			},
-			NoAuditor:           mask&NoAuditor > 0,
-			AuditorAsIssuer:     mask&AuditorAsIssuer > 0,
-			HSM:                 mask&HSM > 0,
-			WebEnabled:          mask&WebEnabled > 0,
-			SDKs:                []node.SDK{&fxdlog.SDK{}}, // add fabricx SDK
-			Monitoring:          false,
-			ReplicationOpts:     opts,
-			FSCBasedEndorsement: mask&WithEndorsers > 0,
-			FSCLogSpec:          "info",
-			TokenSelector:       tokenSelector,
-		})...)
+		i, err := integration.New(StartPortDlog(), "./testdata", topology.Topology(tmsOpts)...)
 		i.DeleteOnStart = true
 		i.DeleteOnStop = false
 		if integration.WithRaceDetection {

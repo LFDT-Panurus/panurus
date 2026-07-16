@@ -10,6 +10,7 @@ import (
 	errors2 "errors"
 
 	"github.com/LFDT-Panurus/panurus/integration/token/fungible/views"
+	"github.com/LFDT-Panurus/panurus/integration/token/fungible/views/fabricx/tmsdeploy"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	dig2 "github.com/hyperledger-labs/fabric-smart-client/platform/common/sdk/dig"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/fabric/services/endorser"
@@ -37,6 +38,8 @@ func (p *SDK) Install() error {
 			registry.RegisterFactory("GetPublicParams", &views.GetPublicParamsViewFactory{}),
 			registry.RegisterFactory("EndorserFinality", &endorser.FinalityViewFactory{}),
 			registry.RegisterFactory("FetchAndUpdatePublicParams", &views.UpdatePublicParamsViewFactory{}),
+			registry.RegisterFactory("CheckPublicParamsMatch", &views.CheckPublicParamsMatchViewFactory{}),
+			registry.RegisterFactory("TMSDeploy", &tmsdeploy.ViewFactory{}),
 		)
 	}); err != nil {
 		return errors.WithMessagef(err, "failed to install endorser's views")

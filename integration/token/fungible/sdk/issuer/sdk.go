@@ -11,6 +11,7 @@ import (
 
 	views1 "github.com/LFDT-Panurus/panurus/integration/token/common/views"
 	"github.com/LFDT-Panurus/panurus/integration/token/fungible/views"
+	"github.com/LFDT-Panurus/panurus/integration/token/fungible/views/ppsetup"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	dig2 "github.com/hyperledger-labs/fabric-smart-client/platform/common/sdk/dig"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/services/view"
@@ -52,6 +53,7 @@ func (p *SDK) Install() error {
 			registry.RegisterFactory("SetKVSEntry", &views.SetKVSEntryViewFactory{}),
 			registry.RegisterFactory("DoesWalletExist", &views.DoesWalletExistViewFactory{}),
 			registry.RegisterFactory("TxFinality", &views1.TxFinalityViewFactory{}),
+			registry.RegisterFactory("SetupPublicParams", &ppsetup.SetupPublicParamsViewFactory{}),
 			registry.RegisterFactory("issue", &views.IssueCashViewFactory{}),
 			registry.RegisterFactory("FetchAndUpdatePublicParams", &views.UpdatePublicParamsViewFactory{}),
 			registry.RegisterFactory("SetBinding", &views.SetBindingViewFactory{}),

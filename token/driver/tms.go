@@ -115,4 +115,9 @@ type TokenManagerServiceProvider interface {
 	// If the public parameters in the options are identical to those in the current TMS, then nothing happens.
 	// If a TMS does not exist for the given options, one is created with the given public parameters.
 	Update(options ServiceOptions) error
+
+	// ConfigurationFor returns the configuration for the given TMS coordinates without
+	// instantiating the token manager service. It returns an error if no configuration
+	// is registered for the coordinates.
+	ConfigurationFor(network, channel, namespace string) (Configuration, error)
 }

@@ -66,13 +66,14 @@ func (v *rejectingVerifier) Verify(message, sigma []byte) error {
 }
 
 type MockNewRequestApprovalResponderView struct {
-	view            *fsc.RequestApprovalResponderView
+	view            *fsc.ResponderView
 	ctx             *mock.Context
 	fabricTx        *mock.FabricTransaction
 	tmsIDRaw        []byte
 	validator       *mock2.Validator
 	rws             *mock.FabricRWSet
 	es              *mock.EndorserService
+	tmsp            *mock.TokenManagementSystemProvider
 	channelProvider *mock.ChannelProvider
 	mspManager      *mock.MSPManager
 }
@@ -140,7 +141,7 @@ func mockNewRequestApprovalResponderView(t *testing.T, overrideTMSID *token.TMSI
 	channelProvider.GetMSPManagerReturns(mspManager, nil)
 	channelProvider.GetACLProviderReturns(aclProvider, nil)
 
-	view := fsc.NewRequestApprovalResponderView(
+	view := fsc.NewResponderView(
 		nil,
 		func(txID string, namespace string, rws *fabric.RWSet) (fsc.Translator, error) {
 			return &mock.Translator{}, nil
@@ -149,6 +150,7 @@ func mockNewRequestApprovalResponderView(t *testing.T, overrideTMSID *token.TMSI
 		tmsp,
 		storageProvider,
 		channelProvider,
+		&mock.PublicParamsValidator{},
 	)
 
 	return &MockNewRequestApprovalResponderView{
@@ -159,6 +161,7 @@ func mockNewRequestApprovalResponderView(t *testing.T, overrideTMSID *token.TMSI
 		validator:       validator,
 		rws:             rws,
 		es:              es,
+		tmsp:            tmsp,
 		channelProvider: channelProvider,
 		mspManager:      mspManager,
 	}
@@ -319,7 +322,10 @@ func TestRequestApprovalResponderView(t *testing.T) {
 			expectErrorType:  fsc.ErrInvalidProposal,
 			expectErrContain: "invalid function [strawberry]",
 			verify: func(m *MockNewRequestApprovalResponderView, res any) {
-				assert.Equal(t, 1, m.rws.DoneCallCount())
+				// the function name is resolved to a behaviour before the RWSet is
+				// fetched, so an unknown function is rejected without ever obtaining
+				// (and thus without needing to release) the RWSet
+				assert.Equal(t, 0, m.rws.DoneCallCount())
 			},
 		},
 		{
@@ -465,6 +471,42 @@ func TestRequestApprovalResponderView(t *testing.T) {
 			expectError:      true,
 			expectErrorType:  fsc.ErrValidateProposal,
 			expectErrContain: "proposal signature verification failed",
+			verify: func(m *MockNewRequestApprovalResponderView, res any) {
+				assert.Equal(t, 1, m.rws.DoneCallCount())
+			},
+		},
+		{
+			name: "tms not found",
+			setup: func() *MockNewRequestApprovalResponderView {
+				m := mockNewRequestApprovalResponderView(t, nil)
+				m.tmsp.GetManagementServiceReturns(nil, token.ErrTMSNotFound)
+
+				return m
+			},
+			expectError:      true,
+			expectErrorType:  fsc.ErrValidateProposal,
+			expectErrContain: "no tms found",
+			verify: func(m *MockNewRequestApprovalResponderView, res any) {
+				assert.Equal(t, 1, m.rws.DoneCallCount())
+			},
+		},
+		{
+			name: "tms ids do not match",
+			setup: func() *MockNewRequestApprovalResponderView {
+				m := mockNewRequestApprovalResponderView(t, nil)
+				otherTms, otherValidator := tokenapi.NewMockedManagementServiceWithValidation(t, token.TMSID{
+					Network:   "a_network",
+					Channel:   "a_channel",
+					Namespace: "other_namespace",
+				})
+				otherValidator.VerifyTokenRequestFromRawReturns(nil, nil, nil)
+				m.tmsp.GetManagementServiceReturns(otherTms, nil)
+
+				return m
+			},
+			expectError:      true,
+			expectErrorType:  fsc.ErrValidateProposal,
+			expectErrContain: "tms ids do not match",
 			verify: func(m *MockNewRequestApprovalResponderView, res any) {
 				assert.Equal(t, 1, m.rws.DoneCallCount())
 			},

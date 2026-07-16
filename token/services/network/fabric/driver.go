@@ -17,6 +17,7 @@ import (
 	"github.com/LFDT-Panurus/panurus/token/services/network/driver"
 	config3 "github.com/LFDT-Panurus/panurus/token/services/network/fabric/config"
 	"github.com/LFDT-Panurus/panurus/token/services/network/fabric/endorsement"
+	"github.com/LFDT-Panurus/panurus/token/services/network/fabric/endorsement/fsc"
 	"github.com/LFDT-Panurus/panurus/token/services/network/fabric/finality"
 	"github.com/LFDT-Panurus/panurus/token/services/network/fabric/lookup"
 	"github.com/LFDT-Panurus/panurus/token/services/storage/auditdb"
@@ -76,6 +77,7 @@ func NewGenericDriver(
 	cleanupServiceManager cleanup.ServiceManager,
 	endorserStoreServiceManager endorserdb.StoreServiceManager,
 	metricsProvider metrics.Provider,
+	ppValidator fsc.PublicParamsValidator,
 ) driver.Driver {
 	keyTranslator := &keys.Translator{}
 
@@ -99,9 +101,10 @@ func NewGenericDriver(
 			configProvider,
 			viewManager,
 			viewRegistry,
-			identityProvider,
+			nil,
 			keyTranslator,
 			endorserStoreServiceManager,
+			ppValidator,
 		),
 		NewSetupListenerProvider(tmsProvider, tokensManager),
 		ttxStoreServiceManager,
