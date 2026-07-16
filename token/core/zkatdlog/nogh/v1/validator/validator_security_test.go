@@ -945,6 +945,15 @@ func TestSecurityFA_RedeemAcceptedWithoutIssuerWhenIssuersEmpty(t *testing.T) {
 
 	// Clear the issuer list — open-policy mode.
 	env.Engine.PublicParams.IssuerIDs = nil
+	// The fixture is initially built with an issuer policy and appends the issuer
+	// signature last. Remove it so the request reflects the open-policy signer plan.
+	for i := len(env.TRWithRedeem.Signatures) - 1; i >= 0; i-- {
+		if env.TRWithRedeem.Signatures[i] != nil && env.TRWithRedeem.Signatures[i].Action != nil {
+			env.TRWithRedeem.Signatures = append(env.TRWithRedeem.Signatures[:i], env.TRWithRedeem.Signatures[i+1:]...)
+
+			break
+		}
+	}
 
 	raw, err := env.TRWithRedeem.Bytes()
 	require.NoError(t, err)

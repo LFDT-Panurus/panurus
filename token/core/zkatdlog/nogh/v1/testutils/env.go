@@ -578,18 +578,18 @@ func prepareSwapRequest(benchCase *benchmark2.Case, pp *v1setup.PublicParams, au
 		},
 	})
 
-	for i, signature := range sender1Signatures {
+	for _, signature := range sender1Signatures {
 		ar.Signatures = append(ar.Signatures, &driver.RequestSignature{
 			Action: &driver.ActionSignature{
-				ActionID:  uint32(i),
+				ActionID:  0,
 				Signature: signature,
 			},
 		})
 	}
-	for i, signature := range sender2Signatures {
+	for _, signature := range sender2Signatures {
 		ar.Signatures = append(ar.Signatures, &driver.RequestSignature{
 			Action: &driver.ActionSignature{
-				ActionID:  uint32(len(sender1Signatures) + i), //nolint:gosec
+				ActionID:  1,
 				Signature: signature,
 			},
 		})
@@ -853,10 +853,10 @@ func prepareTransfer(
 	if err != nil {
 		return nil, nil, nil, nil, err
 	}
-	for i, signature := range signatures {
+	for _, signature := range signatures {
 		tr.Signatures = append(tr.Signatures, &driver.RequestSignature{
 			Action: &driver.ActionSignature{
-				ActionID:  uint32(i),
+				ActionID:  0,
 				Signature: signature,
 			},
 		})
@@ -870,7 +870,7 @@ func prepareTransfer(
 		}
 		tr.Signatures = append(tr.Signatures, &driver.RequestSignature{
 			Action: &driver.ActionSignature{
-				ActionID:  uint32(len(signatures)), //nolint:gosec
+				ActionID:  0,
 				Signature: issuerSignature,
 			},
 		})

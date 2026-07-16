@@ -10,6 +10,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/LFDT-Panurus/panurus/token/core/common"
 	"github.com/LFDT-Panurus/panurus/token/core/common/encoding/json"
 	"github.com/LFDT-Panurus/panurus/token/core/fabtoken/v1/actions"
 	"github.com/LFDT-Panurus/panurus/token/driver"
@@ -48,6 +49,9 @@ func TransferSignatureValidate(c context.Context, ctx *Context) error {
 				return errors.Wrapf(err, "failed deserializing owner [%d][%v][%s]", i, in, driver.Identity(owner).UniqueID())
 			}
 			verifierCache[ownerKey] = verifier
+		}
+		if common.IsNil(ctx.SignatureProvider) {
+			return common.ErrNilSignatureProvider
 		}
 		ctx.Logger.Debugf("signature verification [%v][%s]", tok, driver.Identity(owner).UniqueID())
 

@@ -56,7 +56,7 @@ graph TD
     end
 ```
 
-*   **Validator**: Performs rigorous validation of token transactions. It unmarshals actions from a token request and verifies the request against the ledger state and a provided anchor.
+*   **Validator**: Performs structural, cryptographic, authorization, signature, and policy validation. A driver validator may be stateful or stateless: the Driver API imposes no state-access restriction. Drivers that use a stateless validator can rely on the network commit layer to enforce input existence and double-spending atomically.
 *   **Auditor Service**: Enables auditing capabilities, allowing authorized auditors to inspect token requests and their associated metadata against a provided anchor to ensure compliance.
 *   **Certification Service**: Manages token certifications, providing mechanisms for certifying tokens on the ledger and verifying their authenticity.
 *   **Public Parameters Manager**: Manages the TMS instance's public parameters, providing access to the parameters themselves, their hash, and facilitating the generation of certifier key pairs.
@@ -186,6 +186,13 @@ classDiagram
     AuditableIdentity *-- Identity : identity
     AuditorSignature *-- Identity : identity
 ```
+
+`ActionSignature.action_id` is the zero-based index of the action in
+`TokenRequest.actions`. A request can contain multiple signatures for the same
+action, in the signer order required by that action. Signature envelopes may be
+globally reordered, but validation routes them by `action_id`, rejects IDs
+outside the action list, and rejects signatures left unconsumed by the declared
+action.
 
 ## Protocol V1 
 

@@ -9,8 +9,10 @@ package common
 import (
 	"context"
 	"encoding/json"
+	"reflect"
 
 	"github.com/LFDT-Panurus/panurus/token/driver"
+	request2 "github.com/LFDT-Panurus/panurus/token/driver/protos-go/v1/request"
 	"github.com/LFDT-Panurus/panurus/token/services/logging"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 )
@@ -23,6 +25,21 @@ const (
 	TokenRequestToSign driver.ValidationAttributeID = "trs"
 	// TokenRequestSignatures is the attribute ID for the token request signatures.
 	TokenRequestSignatures driver.ValidationAttributeID = "sigs"
+)
+
+var (
+	// ErrNoActions is returned when a submitted token request contains no actions.
+	ErrNoActions = errors.New("token request has no actions")
+	// ErrNilTokenRequest is returned when a nil token request is passed to validation.
+	ErrNilTokenRequest = errors.New("token request is nil")
+	// ErrNilActionDeserializer is returned when validation has no action deserializer.
+	ErrNilActionDeserializer = errors.New("action deserializer is nil")
+	// ErrNilAction is returned when an action deserializer returns a nil action.
+	ErrNilAction = errors.New("deserialized action is nil")
+	// ErrNilSignatureProvider is returned when a validator needs signatures but no provider is available.
+	ErrNilSignatureProvider = errors.New("signature provider is nil")
+	// ErrActionSignatureIDOutOfRange is returned when an action signature references an action that does not exist.
+	ErrActionSignatureIDOutOfRange = errors.New("action signature ID is out of range")
 )
 
 // Context contains the context for token request validation.
@@ -44,6 +61,9 @@ type Context[P driver.PublicParameters, T driver.Input, TA driver.TransferAction
 
 // CountMetadataKey increments the counter for the passed metadata key.
 func (c *Context[P, T, TA, IA, DS]) CountMetadataKey(key string) {
+	if c.MetadataCounter == nil {
+		c.MetadataCounter = map[MetadataCounterID]int{}
+	}
 	c.MetadataCounter[key] = c.MetadataCounter[key] + 1
 }
 
@@ -128,6 +148,9 @@ func (v *Validator[P, T, TA, IA, DS]) VerifyTokenRequestFromRaw(ctx context.Cont
 			v.MinProtocolVersion,
 		)
 	}
+	if len(tr.Actions) == 0 {
+		return nil, nil, ErrNoActions
+	}
 
 	// Prepare message expected to be signed
 	signed, err := tr.MarshalToMessageToSign([]byte(anchor))
@@ -136,6 +159,7 @@ func (v *Validator[P, T, TA, IA, DS]) VerifyTokenRequestFromRaw(ctx context.Cont
 	}
 	auditorSignatures := make([][]byte, 0, len(tr.Signatures))
 	actionSignatures := make([][]byte, 0, len(tr.Signatures))
+	actionSignaturesByID := make(map[uint32][][]byte)
 	for _, sig := range tr.Signatures {
 		if sig == nil {
 			continue
@@ -146,7 +170,16 @@ func (v *Validator[P, T, TA, IA, DS]) VerifyTokenRequestFromRaw(ctx context.Cont
 			continue
 		}
 		if sig.Action != nil {
+			if uint64(sig.Action.ActionID) >= uint64(len(tr.Actions)) {
+				return nil, nil, errors.Wrapf(
+					ErrActionSignatureIDOutOfRange,
+					"action signature ID [%d], number of actions [%d]",
+					sig.Action.ActionID,
+					len(tr.Actions),
+				)
+			}
 			actionSignatures = append(actionSignatures, sig.Action.Signature)
+			actionSignaturesByID[sig.Action.ActionID] = append(actionSignaturesByID[sig.Action.ActionID], sig.Action.Signature)
 		}
 	}
 	// Merge signatures with auditor signatures first
@@ -161,9 +194,15 @@ func (v *Validator[P, T, TA, IA, DS]) VerifyTokenRequestFromRaw(ctx context.Cont
 		return nil, nil, errors.Wrap(err, "failed to marshal token request signatures")
 	}
 
-	backend := NewBackend(v.Logger, getState, signed, signatures)
+	ledger := NewBackend(v.Logger, getState, signed, nil)
+	auditorProvider := NewBackend(v.Logger, nil, signed, auditorSignatures)
+	actionProviders := make(map[uint32]*Backend, len(tr.Actions))
+	for i := range tr.Actions {
+		actionID := uint32(i) // #nosec G115 -- bounded by the in-memory slice length
+		actionProviders[actionID] = NewBackend(v.Logger, nil, signed, actionSignaturesByID[actionID])
+	}
 
-	return v.VerifyTokenRequest(ctx, backend, backend, anchor, tr, attributes)
+	return v.verifyTokenRequestWithScopedSignatures(ctx, ledger, auditorProvider, actionProviders, anchor, tr, attributes)
 }
 
 // VerifyTokenRequest verifies a token request.
@@ -175,31 +214,28 @@ func (v *Validator[P, T, TA, IA, DS]) VerifyTokenRequest(
 	tr *driver.TokenRequest,
 	attributes driver.ValidationAttributes,
 ) ([]any, driver.ValidationAttributes, error) {
-	if err := v.VerifyAuditing(ctx, anchor, tr, ledger, signatureProvider, attributes); err != nil {
-		return nil, nil, errors.Wrapf(err, "failed to verifier auditor's signature [%s]", anchor)
+	if tr == nil {
+		return nil, nil, ErrNilTokenRequest
 	}
-	ia, ta, err := v.ActionDeserializer.DeserializeActions(tr)
+	if IsNil(v.ActionDeserializer) {
+		return nil, nil, ErrNilActionDeserializer
+	}
+	if err := v.VerifyAuditing(ctx, anchor, tr, ledger, signatureProvider, attributes); err != nil {
+		return nil, nil, errors.Wrapf(err, "failed to verify auditor signatures [%s]", anchor)
+	}
+	actions, err := v.deserializeActionsInRequestOrder(tr)
 	if err != nil {
 		return nil, nil, errors.Wrapf(err, "failed to unmarshal actions [%s]", anchor)
 	}
-	err = v.verifyIssues(ctx, anchor, tr, ledger, ia, signatureProvider, attributes)
-	if err != nil {
-		return nil, nil, errors.Wrapf(err, "failed to verify issue actions [%s]", anchor)
-	}
-	err = v.verifyTransfers(ctx, anchor, tr, ledger, ta, signatureProvider, attributes)
-	if err != nil {
-		return nil, nil, errors.Wrapf(err, "failed to verify transfer actions [%s]", anchor)
-	}
-
-	var actions []any
-	for _, action := range ia {
-		actions = append(actions, action)
-	}
-	for _, action := range ta {
-		actions = append(actions, action)
+	res := make([]any, 0, len(actions))
+	for _, action := range actions {
+		if err := v.verifyDeserializedAction(ctx, anchor, tr, ledger, signatureProvider, action, attributes); err != nil {
+			return nil, nil, err
+		}
+		res = append(res, action.value())
 	}
 
-	return actions, attributes, nil
+	return res, attributes, nil
 }
 
 // UnmarshalActions unmarshals the actions from the passed raw representation of a token request.
@@ -210,37 +246,19 @@ func (v *Validator[P, T, TA, IA, DS]) UnmarshalActions(raw []byte) ([]any, error
 		return nil, errors.Wrap(err, "failed to unmarshal token request")
 	}
 
-	ia, ta, err := v.ActionDeserializer.DeserializeActions(tr)
+	if IsNil(v.ActionDeserializer) {
+		return nil, ErrNilActionDeserializer
+	}
+	actions, err := v.deserializeActionsInRequestOrder(tr)
 	if err != nil {
 		return nil, errors.Wrapf(err, "failed to unmarshal actions")
 	}
-	var res []any
-	for _, action := range ia {
-		res = append(res, action)
-	}
-	for _, action := range ta {
-		res = append(res, action)
+	res := make([]any, 0, len(actions))
+	for _, action := range actions {
+		res = append(res, action.value())
 	}
 
 	return res, nil
-}
-
-func (v *Validator[P, T, TA, IA, DS]) verifyIssues(
-	ctx context.Context,
-	anchor driver.TokenRequestAnchor,
-	tokenRequest *driver.TokenRequest,
-	ledger driver.Ledger,
-	issues []IA,
-	signatureProvider driver.SignatureProvider,
-	attributes driver.ValidationAttributes,
-) error {
-	for i, issue := range issues {
-		if err := v.VerifyIssue(ctx, anchor, tokenRequest, issue, ledger, signatureProvider, attributes); err != nil {
-			return errors.Wrapf(err, "failed to verify issue action at [%d]", i)
-		}
-	}
-
-	return nil
 }
 
 // VerifyIssue verifies an issue action.
@@ -253,6 +271,9 @@ func (v *Validator[P, T, TA, IA, DS]) VerifyIssue(
 	signatureProvider driver.SignatureProvider,
 	attributes driver.ValidationAttributes,
 ) error {
+	if IsNil(action) {
+		return ErrNilAction
+	}
 	context := &Context[P, T, TA, IA, DS]{
 		Logger:            v.Logger,
 		PP:                v.PublicParams,
@@ -286,26 +307,6 @@ func (v *Validator[P, T, TA, IA, DS]) VerifyIssue(
 	return nil
 }
 
-func (v *Validator[P, T, TA, IA, DS]) verifyTransfers(
-	ctx context.Context,
-	anchor driver.TokenRequestAnchor,
-	tokenRequest *driver.TokenRequest,
-	ledger driver.Ledger,
-	transferActions []TA,
-	signatureProvider driver.SignatureProvider,
-	attributes driver.ValidationAttributes,
-) error {
-	v.Logger.Debugf("check sender start...")
-	defer v.Logger.Debugf("check sender finished.")
-	for i, action := range transferActions {
-		if err := v.VerifyTransfer(ctx, anchor, tokenRequest, action, ledger, signatureProvider, attributes); err != nil {
-			return errors.Wrapf(err, "failed to verify transfer action at [%d]", i)
-		}
-	}
-
-	return nil
-}
-
 // VerifyTransfer verifies a transfer action.
 func (v *Validator[P, T, TA, IA, DS]) VerifyTransfer(
 	ctx context.Context,
@@ -316,6 +317,9 @@ func (v *Validator[P, T, TA, IA, DS]) VerifyTransfer(
 	signatureProvider driver.SignatureProvider,
 	attributes driver.ValidationAttributes,
 ) error {
+	if IsNil(action) {
+		return ErrNilAction
+	}
 	context := &Context[P, T, TA, IA, DS]{
 		Logger:            v.Logger,
 		PP:                v.PublicParams,
@@ -358,6 +362,9 @@ func (v *Validator[P, T, TA, IA, DS]) VerifyAuditing(
 	signatureProvider driver.SignatureProvider,
 	attributes driver.ValidationAttributes,
 ) error {
+	if tokenRequest == nil {
+		return ErrNilTokenRequest
+	}
 	context := &Context[P, T, TA, IA, DS]{
 		Logger:            v.Logger,
 		PP:                v.PublicParams,
@@ -387,4 +394,151 @@ func IsAnyNil[T any](args ...*T) bool {
 	}
 
 	return false
+}
+
+// IsNil returns true for nil values and interfaces containing typed nil values.
+func IsNil(value any) bool {
+	if value == nil {
+		return true
+	}
+	reflected := reflect.ValueOf(value)
+	switch reflected.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
+		return reflected.IsNil()
+	default:
+		return false
+	}
+}
+
+type deserializedAction[TA driver.TransferAction, IA driver.IssueAction] struct {
+	index    int
+	actionID uint32
+	typeID   request2.ActionType
+	issue    IA
+	transfer TA
+}
+
+func (a deserializedAction[TA, IA]) value() any {
+	if a.typeID == request2.ActionType_ACTION_TYPE_ISSUE {
+		return a.issue
+	}
+
+	return a.transfer
+}
+
+func (v *Validator[P, T, TA, IA, DS]) deserializeActionsInRequestOrder(tr *driver.TokenRequest) ([]deserializedAction[TA, IA], error) {
+	if tr == nil {
+		return nil, ErrNilTokenRequest
+	}
+	if IsNil(v.ActionDeserializer) {
+		return nil, ErrNilActionDeserializer
+	}
+	issues, transfers, err := v.ActionDeserializer.DeserializeActions(tr)
+	if err != nil {
+		return nil, err
+	}
+
+	actions := make([]deserializedAction[TA, IA], 0, len(tr.Actions))
+	issueIndex := 0
+	transferIndex := 0
+	for index, typedAction := range tr.Actions {
+		if typedAction == nil {
+			return nil, errors.Wrapf(ErrNilAction, "action at request index [%d]", index)
+		}
+		action := deserializedAction[TA, IA]{
+			index:    index,
+			actionID: uint32(index), // #nosec G115 -- bounded by the in-memory slice length
+			typeID:   typedAction.Type,
+		}
+		switch typedAction.Type {
+		case request2.ActionType_ACTION_TYPE_ISSUE:
+			if issueIndex >= len(issues) || IsNil(issues[issueIndex]) {
+				return nil, errors.Wrapf(ErrNilAction, "issue action at request index [%d]", index)
+			}
+			action.issue = issues[issueIndex]
+			issueIndex++
+		case request2.ActionType_ACTION_TYPE_TRANSFER:
+			if transferIndex >= len(transfers) || IsNil(transfers[transferIndex]) {
+				return nil, errors.Wrapf(ErrNilAction, "transfer action at request index [%d]", index)
+			}
+			action.transfer = transfers[transferIndex]
+			transferIndex++
+		default:
+			return nil, errors.Errorf("unknown action type [%s] at request index [%d]", typedAction.Type, index)
+		}
+		actions = append(actions, action)
+	}
+	if issueIndex != len(issues) || transferIndex != len(transfers) {
+		return nil, errors.Errorf(
+			"deserialized action count mismatch, issues [%d]!=[%d], transfers [%d]!=[%d]",
+			issueIndex,
+			len(issues),
+			transferIndex,
+			len(transfers),
+		)
+	}
+
+	return actions, nil
+}
+
+func (v *Validator[P, T, TA, IA, DS]) verifyDeserializedAction(
+	ctx context.Context,
+	anchor driver.TokenRequestAnchor,
+	tr *driver.TokenRequest,
+	ledger driver.Ledger,
+	signatureProvider driver.SignatureProvider,
+	action deserializedAction[TA, IA],
+	attributes driver.ValidationAttributes,
+) error {
+	switch action.typeID {
+	case request2.ActionType_ACTION_TYPE_ISSUE:
+		if err := v.VerifyIssue(ctx, anchor, tr, action.issue, ledger, signatureProvider, attributes); err != nil {
+			return errors.Wrapf(err, "failed to verify issue action at request index [%d]", action.index)
+		}
+	case request2.ActionType_ACTION_TYPE_TRANSFER:
+		if err := v.VerifyTransfer(ctx, anchor, tr, action.transfer, ledger, signatureProvider, attributes); err != nil {
+			return errors.Wrapf(err, "failed to verify transfer action at request index [%d]", action.index)
+		}
+	default:
+		return errors.Errorf("unknown action type [%s] at request index [%d]", action.typeID, action.index)
+	}
+
+	return nil
+}
+
+func (v *Validator[P, T, TA, IA, DS]) verifyTokenRequestWithScopedSignatures(
+	ctx context.Context,
+	ledger driver.Ledger,
+	auditorProvider *Backend,
+	actionProviders map[uint32]*Backend,
+	anchor driver.TokenRequestAnchor,
+	tr *driver.TokenRequest,
+	attributes driver.ValidationAttributes,
+) ([]any, driver.ValidationAttributes, error) {
+	if err := v.VerifyAuditing(ctx, anchor, tr, ledger, auditorProvider, attributes); err != nil {
+		return nil, nil, errors.Wrapf(err, "failed to verify auditor signatures [%s]", anchor)
+	}
+	if err := auditorProvider.EnsureExhausted(); err != nil {
+		return nil, nil, errors.Wrap(err, "failed to consume auditor signatures")
+	}
+	actions, err := v.deserializeActionsInRequestOrder(tr)
+	if err != nil {
+		return nil, nil, errors.Wrapf(err, "failed to unmarshal actions [%s]", anchor)
+	}
+	res := make([]any, 0, len(actions))
+	for _, action := range actions {
+		provider := actionProviders[action.actionID]
+		if provider == nil {
+			provider = NewBackend(v.Logger, nil, nil, nil)
+		}
+		if err := v.verifyDeserializedAction(ctx, anchor, tr, ledger, provider, action, attributes); err != nil {
+			return nil, nil, err
+		}
+		if err := provider.EnsureExhausted(); err != nil {
+			return nil, nil, errors.Wrapf(err, "failed to consume signatures for action at request index [%d]", action.index)
+		}
+		res = append(res, action.value())
+	}
+
+	return res, attributes, nil
 }

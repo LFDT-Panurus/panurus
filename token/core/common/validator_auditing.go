@@ -74,6 +74,9 @@ func AuditingSignaturesValidate[P driver.PublicParameters, T driver.Input, TA dr
 		if err != nil {
 			return errors.Wrapf(err, "failed to deserialize auditor's public key")
 		}
+		if IsNil(ctx.SignatureProvider) {
+			return ErrNilSignatureProvider
+		}
 		_, err = ctx.SignatureProvider.HasBeenSignedBy(c, auditor, verifier)
 		if err != nil {
 			return errors.Wrap(err, "failed to verify auditor's signature")

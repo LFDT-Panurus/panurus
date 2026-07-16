@@ -10,6 +10,7 @@ import (
 	"context"
 	"slices"
 
+	"github.com/LFDT-Panurus/panurus/token/core/common"
 	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/issue"
 	"github.com/LFDT-Panurus/panurus/token/services/logging"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
@@ -50,10 +51,12 @@ func IssueValidate(c context.Context, ctx *Context) error {
 		return ErrIssuerNotAuthorized
 	}
 	logger.Debugf("Found issue owner [%s]", action.Issuer)
-
 	verifier, err := ctx.Deserializer.GetIssuerVerifier(c, action.Issuer)
 	if err != nil {
 		return errors.Wrapf(err, "failed getting verifier for issuer [%s]", action.Issuer.String())
+	}
+	if common.IsNil(ctx.SignatureProvider) {
+		return common.ErrNilSignatureProvider
 	}
 	if _, err := ctx.SignatureProvider.HasBeenSignedBy(c, action.Issuer, verifier); err != nil {
 		return errors.Wrapf(err, "failed verifying signature")

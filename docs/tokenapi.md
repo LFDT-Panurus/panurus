@@ -108,3 +108,8 @@ The [Validator](../token/validator.go) is the guardian of the token system. It i
 *   **Policy**: Enforcing issuer and auditor constraints defined in the Public Parameters.
 
 In privacy-preserving drivers, the Validator performs complex Zero-Knowledge proof verification to ensure transaction validity without revealing sensitive data.
+
+Built-in validators are stateless: they do not decide whether an input is still
+spendable. The network translator/commit phase binds each graph-visible input to
+its serialized ledger token and atomically rejects missing, substituted, or
+duplicate spends.

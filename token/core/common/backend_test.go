@@ -92,3 +92,17 @@ func TestBackend(t *testing.T) {
 		assert.Nil(t, res)
 	})
 }
+
+func TestBackendSignatureConsumption(t *testing.T) {
+	backend := NewBackend(&logging.MockLogger{}, nil, []byte("message"), [][]byte{[]byte("signature")})
+	require.ErrorIs(t, backend.EnsureExhausted(), ErrUnconsumedSignatures)
+
+	_, err := backend.HasBeenSignedBy(t.Context(), nil, nil)
+	require.ErrorIs(t, err, ErrNilSignatureVerifier)
+	require.ErrorIs(t, backend.EnsureExhausted(), ErrUnconsumedSignatures)
+
+	verifier := &mock.Verifier{}
+	_, err = backend.HasBeenSignedBy(t.Context(), nil, verifier)
+	require.NoError(t, err)
+	require.NoError(t, backend.EnsureExhausted())
+}

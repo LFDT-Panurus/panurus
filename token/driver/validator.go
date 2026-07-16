@@ -45,9 +45,10 @@ type ValidatorLedger interface {
 	GetState(id token.ID) ([]byte, error)
 }
 
-// Validator provides methods for validating token transaction requests.
-// It ensures that requests are well-formed and consistent with the rules
-// defined by the token driver.
+// Validator provides stateless methods for validating token transaction requests.
+// It ensures that requests are well-formed and consistent with the cryptographic,
+// authorization, and policy rules defined by the token driver. Ledger existence
+// and double-spend checks belong to the network's atomic commit layer.
 //
 //go:generate counterfeiter -o mock/validator.go -fake-name Validator . Validator
 type Validator interface {
@@ -55,8 +56,10 @@ type Validator interface {
 	// from their serialized representation in a token request.
 	UnmarshalActions(raw []byte) ([]any, error)
 
-	// VerifyTokenRequestFromRaw validates a marshalled token request against the provided ledger state and anchor.
-	// It performs a comprehensive check of all actions and signatures within the request.
+	// VerifyTokenRequestFromRaw validates a marshalled token request against the provided anchor.
+	// It checks all actions and signatures while preserving their signed action order.
+	// The state getter is available to custom validation extensions; built-in validators
+	// remain stateless and rely on the network commit layer for spendability checks.
 	// It returns:
 	// - The list of unmarshalled actions.
 	// - A map of validation attributes (driver-specific) containing additional details about the request.

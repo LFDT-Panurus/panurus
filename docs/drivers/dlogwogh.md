@@ -894,7 +894,7 @@ The validation process consists of multiple stages:
    - Verify auditor signatures (if present)
    - Check owner signatures (for transfer actions)
 5. **Balance Verification**: Ensure sum of inputs equals sum of outputs
-6. **Double-Spending Prevention**: Check input tokens haven't been spent
+6. **Action Sequencing**: Preserve the signed mixed-action order in the returned action list
 
 **Validation Flow**:
 
@@ -916,7 +916,7 @@ graph TD
 
 #### 9.1.2 Validator Construction
 
-The validator is instantiated with the public parameters and requires no additional configuration. It operates statelessly, relying only on the ledger state and the public parameters for validation decisions.
+The validator is instantiated with the public parameters and requires no additional configuration. It operates statelessly from the request, anchor, and public parameters. Input existence, serialized-token binding, and duplicate-spend prevention are enforced later by the network translator during atomic commit.
 
 For implementation details, see [`validator/validator.go`](../../token/core/zkatdlog/nogh/v1/validator/validator.go).
 
@@ -997,6 +997,11 @@ For implementation details, see [`audit/auditor.go`](../../token/core/zkatdlog/n
 **Implementation**: [`validator/validator.go`](../../token/core/zkatdlog/nogh/v1/validator/validator.go)
 
 Stateless verification of `TokenRequest`.
+
+Actions are validated and returned in their signed order. Action signatures are
+routed by `ActionID`; every signature declared for an action must be consumed by
+that action's signer plan. Ledger spendability remains a network commit concern,
+not a built-in validator check.
 
 #### 9.1.1 Validation Pipeline
 

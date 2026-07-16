@@ -74,9 +74,9 @@ func TestAnchorInContext(t *testing.T) {
 	require.EqualError(t, err, "transfer, anchor does not match, expected hello world, got another anchor")
 
 	// check anchor in the context for a transfer action
-	err = v.VerifyAuditing(ctx, anchor, nil, nil, nil, nil)
+	err = v.VerifyAuditing(ctx, anchor, &driver.TokenRequest{}, nil, nil, nil)
 	require.NoError(t, err)
-	err = v.VerifyAuditing(ctx, anotherAnchor, nil, nil, nil, nil)
+	err = v.VerifyAuditing(ctx, anotherAnchor, &driver.TokenRequest{}, nil, nil, nil)
 	require.Error(t, err)
 	require.EqualError(t, err, "audit, anchor does not match, expected hello world, got another anchor")
 }
@@ -94,7 +94,10 @@ func TestValidatorWithCounterfeiter(t *testing.T) {
 	)
 
 	t.Run("VerifyTokenRequest_Success", func(t *testing.T) {
-		tr := &driver.TokenRequest{}
+		tr := &driver.TokenRequest{Actions: []*driver.TypedAction{
+			{Type: request.ActionType_ACTION_TYPE_ISSUE, Raw: []byte("issue")},
+			{Type: request.ActionType_ACTION_TYPE_TRANSFER, Raw: []byte("transfer")},
+		}}
 		ia := []driver.IssueAction{&dmock.IssueAction{}}
 		ta := []driver.TransferAction{&dmock.TransferAction{}}
 		ad.DeserializeActionsReturns(ia, ta, nil)
@@ -134,7 +137,9 @@ func TestValidatorWithCounterfeiter(t *testing.T) {
 			}, nil,
 		)
 		ad.DeserializeActionsReturns([]driver.IssueAction{&dmock.IssueAction{}}, nil, nil)
-		_, _, err := vErr.VerifyTokenRequest(ctx, nil, nil, anchor, &driver.TokenRequest{}, nil)
+		_, _, err := vErr.VerifyTokenRequest(ctx, nil, nil, anchor, &driver.TokenRequest{Actions: []*driver.TypedAction{
+			{Type: request.ActionType_ACTION_TYPE_ISSUE, Raw: []byte("issue")},
+		}}, nil)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "issue validation failed")
 	})
@@ -148,13 +153,17 @@ func TestValidatorWithCounterfeiter(t *testing.T) {
 			}, nil, nil,
 		)
 		ad.DeserializeActionsReturns(nil, []driver.TransferAction{&dmock.TransferAction{}}, nil)
-		_, _, err := vErr.VerifyTokenRequest(ctx, nil, nil, anchor, &driver.TokenRequest{}, nil)
+		_, _, err := vErr.VerifyTokenRequest(ctx, nil, nil, anchor, &driver.TokenRequest{Actions: []*driver.TypedAction{
+			{Type: request.ActionType_ACTION_TYPE_TRANSFER, Raw: []byte("transfer")},
+		}}, nil)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "transfer validation failed")
 	})
 
 	t.Run("UnmarshalActions", func(t *testing.T) {
-		tr := &driver.TokenRequest{}
+		tr := &driver.TokenRequest{Actions: []*driver.TypedAction{
+			{Type: request.ActionType_ACTION_TYPE_ISSUE, Raw: []byte("issue")},
+		}}
 		raw, err := tr.Bytes()
 		require.NoError(t, err)
 
@@ -221,20 +230,6 @@ func TestValidatorWithCounterfeiter(t *testing.T) {
 		tr := &driver.TokenRequest{
 			Actions: []*driver.TypedAction{
 				{Type: request.ActionType_ACTION_TYPE_ISSUE, Raw: []byte("issue1")},
-			},
-			Signatures: []*driver.RequestSignature{
-				{
-					Auditor: &driver.AuditorSignature{
-						Identity:  []byte("auditor"),
-						Signature: []byte("sig"),
-					},
-				},
-				{
-					Action: &driver.ActionSignature{
-						ActionID:  0,
-						Signature: []byte("sig2"),
-					},
-				},
 			},
 		}
 		raw, err := tr.Bytes()

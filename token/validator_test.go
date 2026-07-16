@@ -173,3 +173,38 @@ func TestStateGetter_GetState_Error(t *testing.T) {
 	assert.Nil(t, data)
 	assert.Equal(t, expectedErr, err)
 }
+
+func TestValidatorNilArgumentsDoNotPanic(t *testing.T) {
+	t.Run("nil ledger is passed through as unavailable state", func(t *testing.T) {
+		backend := &mock.Validator{}
+		backend.VerifyTokenRequestFromRawReturns([]any{"action"}, nil, nil)
+		validator := NewValidator(backend)
+
+		require.NotPanics(t, func() {
+			actions, err := validator.UnmarshallAndVerify(t.Context(), nil, "anchor", []byte("raw"))
+			require.NoError(t, err)
+			require.Equal(t, []any{"action"}, actions)
+		})
+		_, getState, _, _ := backend.VerifyTokenRequestFromRawArgsForCall(0)
+		assert.Nil(t, getState)
+	})
+
+	t.Run("nil backend", func(t *testing.T) {
+		validator := NewValidator(nil)
+		require.NotPanics(t, func() {
+			_, err := validator.UnmarshalActions(nil)
+			require.ErrorContains(t, err, "validator backend is nil")
+		})
+		require.NotPanics(t, func() {
+			_, err := validator.UnmarshallAndVerify(t.Context(), nil, "anchor", nil)
+			require.ErrorContains(t, err, "validator backend is nil")
+		})
+	})
+
+	t.Run("nil state getter", func(t *testing.T) {
+		require.NotPanics(t, func() {
+			_, err := NewLedgerFromGetter(nil).GetState(token.ID{})
+			require.ErrorContains(t, err, "ledger not available")
+		})
+	})
+}

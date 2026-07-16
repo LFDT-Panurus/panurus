@@ -318,4 +318,32 @@ var _ = Describe("Translator", func() {
 			})
 		})
 	})
+
+	Describe("Action order", func() {
+		It("assigns output indexes in the order actions are written", func() {
+			faketransfer.NumOutputsReturns(1)
+			faketransfer.IsRedeemAtReturns(false)
+			faketransfer.SerializeOutputAtReturns([]byte("transfer-output"), nil)
+			faketransfer.IsGraphHidingReturns(true)
+			fakeissue.NumOutputsReturns(1)
+			fakeissue.GetSerializedOutputsReturns([][]byte{[]byte("issue-output")}, nil)
+			fakeissue.IsGraphHidingReturns(true)
+
+			Expect(writer.Write(context.Background(), faketransfer)).To(Succeed())
+			Expect(writer.Write(context.Background(), fakeissue)).To(Succeed())
+
+			Expect(fakeRWSet.SetStateCallCount()).To(Equal(2))
+			_, transferOutputID, transferOutput := fakeRWSet.SetStateArgsForCall(0)
+			expectedTransferOutputID, err := keyTranslator.CreateOutputKey("0", 0)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(transferOutputID).To(Equal(expectedTransferOutputID))
+			Expect(transferOutput).To(Equal([]byte("transfer-output")))
+
+			_, issueOutputID, issueOutput := fakeRWSet.SetStateArgsForCall(1)
+			expectedIssueOutputID, err := keyTranslator.CreateOutputKey("0", 1)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(issueOutputID).To(Equal(expectedIssueOutputID))
+			Expect(issueOutput).To(Equal([]byte("issue-output")))
+		})
+	})
 })
