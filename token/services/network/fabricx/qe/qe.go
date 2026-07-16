@@ -8,7 +8,6 @@ package qe
 
 import (
 	"context"
-	errors2 "errors"
 
 	"github.com/LFDT-Panurus/panurus/token/services/network/common/rws/keys"
 	"github.com/LFDT-Panurus/panurus/token/services/network/common/rws/translator"
@@ -25,6 +24,16 @@ type (
 	TokenData = []byte
 	Data      = []byte
 )
+
+// QueryServiceProvider is an alias for queryservice.Provider
+//
+//go:generate counterfeiter -o mock/qsp.go -fake-name QueryServiceProvider . QueryServiceProvider
+type QueryServiceProvider = queryservice.Provider
+
+// QueryService is an alias for queryservice.QueryService
+//
+//go:generate counterfeiter -o mock/qs.go -fake-name QueryService . QueryService
+type QueryService = queryservice.QueryService
 
 // QueryStatesExecutor models an executor for querying states.
 type QueryStatesExecutor interface {
@@ -97,6 +106,8 @@ func NewExecutor(network string, channel string, qsProvider queryservice.Provide
 
 // QueryTokens retrieves raw token data from the ledger for the specified token IDs.
 // It generates output keys for each ID and performs a batch state query.
+// A token ID with no corresponding state on the ledger yields a nil entry at
+// that position, matching Fabric's GetState semantics (missing key, not an error).
 func (e *Executor) QueryTokens(_ context.Context, namespace driver.Namespace, ids []*token.ID) ([]TokenData, error) {
 	if len(ids) == 0 {
 		return nil, nil
@@ -129,20 +140,10 @@ func (e *Executor) QueryTokens(_ context.Context, namespace driver.Namespace, id
 	}
 
 	// map[driver.Namespace]map[driver.PKey]driver.VaultValue
-	tokens := make([]TokenData, 0, len(res[namespace]))
 	ns := res[namespace]
-	var errs []error
-	for _, key := range keys {
-		value := ns[key]
-		if len(value.Raw) == 0 {
-			errs = append(errs, errors.Errorf("output for key [%s] does not exist", key))
-
-			continue
-		}
-		tokens = append(tokens, value.Raw)
-	}
-	if len(errs) != 0 {
-		return nil, errors2.Join(errs...)
+	tokens := make([]TokenData, len(keys))
+	for i, key := range keys {
+		tokens[i] = ns[key].Raw
 	}
 
 	return tokens, nil
@@ -185,8 +186,8 @@ func (e *Executor) QuerySpentTokens(_ context.Context, namespace driver.Namespac
 	}
 
 	// map[driver.Namespace]map[driver.PKey]driver.VaultValue
-	spentFlags := make([]bool, len(res[namespace]))
 	ns := res[namespace]
+	spentFlags := make([]bool, len(keys))
 	for i, key := range keys {
 		value := ns[key]
 		spentFlags[i] = len(value.Raw) == 0
@@ -197,6 +198,8 @@ func (e *Executor) QuerySpentTokens(_ context.Context, namespace driver.Namespac
 
 // QueryStates retrieves the raw values for the provided keys from the specified
 // namespace. It triggers a batch query to the query service.
+// A key with no corresponding state on the ledger yields a nil entry at that
+// position, matching Fabric's GetState semantics (missing key, not an error).
 func (e *Executor) QueryStates(_ context.Context, namespace driver.Namespace, keys []string) ([]Data, error) {
 	if len(keys) == 0 {
 		return nil, nil
@@ -214,20 +217,10 @@ func (e *Executor) QueryStates(_ context.Context, namespace driver.Namespace, ke
 	}
 
 	// map[driver.Namespace]map[driver.PKey]driver.VaultValue
-	tokens := make([]Data, 0, len(res[namespace]))
 	ns := res[namespace]
-	var errs []error
-	for _, key := range keys {
-		value := ns[key]
-		if len(value.Raw) == 0 {
-			errs = append(errs, errors.Errorf("output for key [%s] does not exist", key))
-
-			continue
-		}
-		tokens = append(tokens, value.Raw)
-	}
-	if len(errs) != 0 {
-		return nil, errors2.Join(errs...)
+	tokens := make([]Data, len(keys))
+	for i, key := range keys {
+		tokens[i] = ns[key].Raw
 	}
 
 	return tokens, nil
