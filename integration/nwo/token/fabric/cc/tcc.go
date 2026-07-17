@@ -112,6 +112,10 @@ func (p *GenericBackend) PrepareNamespace(tms *topology3.TMS) {
 	p.Fabric(tms).Topology().AddChaincode(cc)
 }
 
+func (p *GenericBackend) InstallPublicParams(tms *topology3.TMS, raw []byte) {
+	// nothing to do here cause the chaincode initialization is done already in the fabric platform
+}
+
 func (p *GenericBackend) UpdatePublicParams(tms *topology3.TMS, ppRaw []byte) {
 	var cc *topology.ChannelChaincode
 	for _, chaincode := range p.Fabric(tms).Topology().Chaincodes {

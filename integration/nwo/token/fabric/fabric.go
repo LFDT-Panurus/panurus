@@ -39,6 +39,7 @@ type Entry struct {
 type Backend interface {
 	PrepareNamespace(tms *topology2.TMS)
 	UpdatePublicParams(tms *topology2.TMS, raw []byte)
+	InstallPublicParams(tms *topology2.TMS, raw []byte)
 }
 
 type NetworkHandler struct {
@@ -147,6 +148,8 @@ func (p *NetworkHandler) PostRun(load bool, tms *topology2.TMS) {
 			gomega.Expect(entry.CA.Start()).ToNot(gomega.HaveOccurred(), "failed to start CA for [%s]", tms.ID())
 		}
 	}
+
+	p.Backend.InstallPublicParams(tms, p.TokenPlatform.PublicParameters(tms))
 }
 
 func (p *NetworkHandler) Cleanup() {

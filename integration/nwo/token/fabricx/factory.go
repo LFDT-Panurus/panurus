@@ -13,6 +13,7 @@ import (
 	"github.com/LFDT-Panurus/panurus/integration/nwo/token/fabric"
 	tokentopology "github.com/LFDT-Panurus/panurus/integration/nwo/token/topology"
 	"github.com/LFDT-Panurus/panurus/integration/token/fungible/views/ppsetup"
+	"github.com/bytedance/gopkg/util/logger"
 	"github.com/hyperledger-labs/fabric-smart-client/integration/nwo/api"
 	common2 "github.com/hyperledger-labs/fabric-smart-client/integration/nwo/common"
 	fabrictopology "github.com/hyperledger-labs/fabric-smart-client/integration/nwo/fabric/topology"
@@ -66,11 +67,40 @@ func addNamespace(n *fabrictopology.Topology, tms *tokentopology.TMS, orgs ...st
 	n.AddNamespace(tms.Namespace, policy, peers...)
 }
 
+func (b *Backend) InstallPublicParams(tms *tokentopology.TMS, ppRaw []byte) {
+	time.Sleep(10 * time.Second)
+
+	go func() {
+		for {
+			logger.Infof("installing public params on [%s:%s:%s:%s]...", tms.Network, tms.Channel, tms.Namespace, tms.Driver)
+			issuer := b.ClientProvider.Client("issuer")
+			if issuer != nil {
+				_, err := b.ClientProvider.Client("issuer").CallView("SetupPublicParams", common2.JSONMarshall(
+					&ppsetup.SetupPublicParams{
+						Network:         tms.Network,
+						Channel:         tms.Channel,
+						Namespace:       tms.Namespace,
+						PublicParamsRaw: ppRaw,
+						Timeout:         2 * time.Minute,
+					},
+				))
+				if err != nil {
+					logger.Error("installing public params on [%s:%s:%s:%s]...failed [%v]", tms.Network, tms.Channel, tms.Namespace, tms.Driver, err)
+
+					panic("failed updating pps: " + err.Error())
+				}
+				logger.Infof("installing public params on [%s:%s:%s:%s]...done", tms.Network, tms.Channel, tms.Namespace, tms.Driver)
+
+				return
+			}
+
+			logger.Infof("installing public params on [%s:%s:%s:%s]...client not ready, wait a bit...", tms.Network, tms.Channel, tms.Namespace, tms.Driver)
+			time.Sleep(1 * time.Second)
+		}
+	}()
+}
+
 func (b *Backend) UpdatePublicParams(tms *tokentopology.TMS, ppRaw []byte) {
-	endorsers := fabric.Endorsers(tms)
-	if len(endorsers) == 0 {
-		panic("no endorsers found")
-	}
 	_, err := b.ClientProvider.Client("issuer").CallView("SetupPublicParams", common2.JSONMarshall(
 		&ppsetup.SetupPublicParams{
 			Network:         tms.Network,
