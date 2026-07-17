@@ -758,6 +758,37 @@ func (c *CollectEndorsementsView) getSession(context view.Context, p view.Identi
 	return context.GetSession(context.Initiator(), p)
 }
 
+// answerCollectionTimeout bounds the wait for each fan-out answer. It is a
+// backstop only: workers are already bounded by their own per-receive timeouts.
+const answerCollectionTimeout = 2 * time.Minute
+
+// fanOut runs work(i) for each i in [0, n) on its own goroutine and returns the
+// results in index order. It returns on the first error without waiting for the
+// remaining workers; those drain into the collector's buffered channel and exit.
+func fanOut[T any](ctx context.Context, n int, work func(i int) (T, error)) ([]T, error) {
+	collector := utils.NewAnswersCollector[int, T](n, answerCollectionTimeout)
+	for i := range n {
+		go func() {
+			value, err := work(i)
+			collector.Send(i, value, err)
+		}()
+	}
+
+	results := make([]T, n)
+	for range n {
+		answers, err := collector.Collect(ctx, 1)
+		if err != nil {
+			return nil, err
+		}
+		if answers[0].Err != nil {
+			return nil, answers[0].Err
+		}
+		results[answers[0].Key] = answers[0].Value
+	}
+
+	return results, nil
+}
+
 // mergeSigmas merges multiple signature maps into a single map.
 // If the same key appears in multiple maps, the last occurrence wins.
 func mergeSigmas(maps ...map[string][]byte) map[string][]byte {
