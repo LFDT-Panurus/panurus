@@ -24,12 +24,18 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Initialize CodeQL
-        uses: github/codeql-action/init@v3
+        uses: github/codeql-action/init@v4
         with:
           languages: go
-          build-mode: autobuild
+          build-mode: manual
+
+      - name: Build manually
+        shell: bash
+        run: |
+          go build -o /dev/null ./...
+          cd cmd/node && go build -o /dev/null .
 
       - name: Perform CodeQL Analysis
-        uses: github/codeql-action/analyze@v3
+        uses: github/codeql-action/analyze@v4
         with:
           category: "/language:go"
