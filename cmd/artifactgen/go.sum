@@ -948,12 +948,10 @@ github.com/hashicorp/serf v0.8.2/go.mod h1:6hOLApaqBFA1NXqRQAsxw9QxuDEvNxSQRwA/J
 github.com/hpcloud/tail v1.0.0/go.mod h1:ab1qPbhIpdTxEkNHXyeSf5vhxWSCs/tWer42PpOxQnU=
 github.com/huin/goupnp v1.3.0 h1:UvLUlWDNpoUdYzb2TCn+MuTWtcjXKSza2n6CBdQ0xXc=
 github.com/huin/goupnp v1.3.0/go.mod h1:gnGPsThkYa7bFi/KWmEysQRf48l2dvR5bxr2OFckNX8=
-github.com/hyperledger-labs/SmartBFT v1.0.1 h1:5+otMbvxtiuGwwOg37QvXDcln9almNBRp9fYVW+kgdY=
-github.com/hyperledger-labs/SmartBFT v1.0.1/go.mod h1:BLK++r4BpOjd5M5wncauC9PXBDKBcNCYJkGMgwfJm7M=
-github.com/hyperledger-labs/fabric-smart-client v0.14.3-0.20260716084917-c10decb043ec h1:pxbs6Kf+W1TPTzO2wfO/WAAgB4E2AlVL+o6D9WwgsPs=
-github.com/hyperledger-labs/fabric-smart-client v0.14.3-0.20260716084917-c10decb043ec/go.mod h1:ajglGXiDoMMxZXVkaEXU0Og5jS2Vvoea3pJX+Fn8io0=
-github.com/hyperledger-labs/fabric-smart-client/integration v0.14.2 h1:T/dwFSWJXyawifxYPAcs38gcEHi/qXP/NAWMsnr7z1g=
-github.com/hyperledger-labs/fabric-smart-client/integration v0.14.2/go.mod h1:+fDIc1Ut52YlcfPj1C9lRVgiqf2l3l4jxb99R1tH5Mw=
+github.com/hyperledger-labs/fabric-smart-client v0.14.3-0.20260716152906-60a85d843ab6 h1:zSTaf8uVFwgHjs1bn4qQ7UIEKNKFVRT8oN6DiAfEiHk=
+github.com/hyperledger-labs/fabric-smart-client v0.14.3-0.20260716152906-60a85d843ab6/go.mod h1:ajglGXiDoMMxZXVkaEXU0Og5jS2Vvoea3pJX+Fn8io0=
+github.com/hyperledger-labs/fabric-smart-client/integration v0.14.3-0.20260716152906-60a85d843ab6 h1:E/uf/FFg5Z800d5g9hRiuqpMI2sd7bcTmdp54RqFAN4=
+github.com/hyperledger-labs/fabric-smart-client/integration v0.14.3-0.20260716152906-60a85d843ab6/go.mod h1:h4oJWvCYXZy67ryMVsb7DO1Ec5+GP3i7iYb1/arUgpM=
 github.com/hyperledger-labs/fabric-smart-client/platform/fabric/services/state/cc/query v0.14.2 h1:sSPiQYWIJ0MrG00MfOMLwmxIeUWW8Pi8VtHLzb5hWaE=
 github.com/hyperledger-labs/fabric-smart-client/platform/fabric/services/state/cc/query v0.14.2/go.mod h1:V6zpG8iWY+gWlqDrnCnB7KpJmYwlqjaBf+TxmYM993c=
 github.com/hyperledger-labs/fabric-smart-client/platform/view/services/comm/host/libp2p v0.14.2 h1:3iS8rY1gBePRmmDIGhYwbQC6Ihltuu9d+V84py4xX9U=
@@ -968,8 +966,6 @@ github.com/hyperledger/fabric-lib-go v1.1.5-0.20260708100132-163bcc919208 h1:qA4
 github.com/hyperledger/fabric-lib-go v1.1.5-0.20260708100132-163bcc919208/go.mod h1:EKqTudBsC2yovZdcJq5ekWvkq3USF1mbau07I0y8zMs=
 github.com/hyperledger/fabric-protos-go-apiv2 v0.3.7 h1:sQ5qv8vQQfwewa1JlCiSCC8dLElmaU2/frLolpgibEY=
 github.com/hyperledger/fabric-protos-go-apiv2 v0.3.7/go.mod h1:bJnwzfv03oZQeCc863pdGTDgf5nmCy6Za3RAE7d2XsQ=
-github.com/hyperledger/fabric-x-common v0.2.8 h1:gTKJlORCjZjZo+4gPAvOUjTlOYBG8GToy3BTMLOI7sA=
-github.com/hyperledger/fabric-x-common v0.2.8/go.mod h1:f30Yws3c5Cg22yHLy2oT2XR0wwZI+JdqbUqB2fwFIsM=
 github.com/iancoleman/strcase v0.2.0/go.mod h1:iwCmte+B7n89clKwxIoIXy/HfoL7AsD47ZCWhYzw7ho=
 github.com/ianlancetaylor/demangle v0.0.0-20181102032728-5e5cf60278f6/go.mod h1:aSSvb/t6k1mPoxDqO4vJh6VOCGPwU4O0C2/Eqndh1Sc=
 github.com/ianlancetaylor/demangle v0.0.0-20200824232613-28f6c0f3b639/go.mod h1:aSSvb/t6k1mPoxDqO4vJh6VOCGPwU4O0C2/Eqndh1Sc=

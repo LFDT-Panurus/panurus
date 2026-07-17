@@ -14,8 +14,8 @@ require (
 	github.com/IBM/mathlib v0.3.0
 	github.com/LFDT-Panurus/panurus v0.10.1
 	github.com/LFDT-Panurus/panurus/integration v0.0.0
-	github.com/hyperledger-labs/fabric-smart-client v0.14.3-0.20260716084917-c10decb043ec
-	github.com/hyperledger-labs/fabric-smart-client/integration v0.14.2
+	github.com/hyperledger-labs/fabric-smart-client v0.14.3-0.20260716152906-60a85d843ab6
+	github.com/hyperledger-labs/fabric-smart-client/integration v0.14.3-0.20260716152906-60a85d843ab6
 	github.com/onsi/gomega v1.42.1
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/viper v1.21.0

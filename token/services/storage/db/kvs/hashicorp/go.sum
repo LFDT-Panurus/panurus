@@ -113,10 +113,10 @@ github.com/hashicorp/hcl v1.0.1-vault-7 h1:ag5OxFVy3QYTFTJODRzTKVZ6xvdfLLCA1cy/Y
 github.com/hashicorp/hcl v1.0.1-vault-7/go.mod h1:XYhtn6ijBSAj6n4YqAaf7RBPS4I06AItNorpy+MoQNM=
 github.com/hashicorp/vault/api v1.23.0 h1:gXgluBsSECfRWTSW9niY2jwg2e9mMJc4WoHNv4g3h6A=
 github.com/hashicorp/vault/api v1.23.0/go.mod h1:zransKiB9ftp+kgY8ydjnvCU7Wk8i9L0DYWpXeMj9ko=
-github.com/hyperledger-labs/fabric-smart-client v0.14.3-0.20260716084917-c10decb043ec h1:pxbs6Kf+W1TPTzO2wfO/WAAgB4E2AlVL+o6D9WwgsPs=
-github.com/hyperledger-labs/fabric-smart-client v0.14.3-0.20260716084917-c10decb043ec/go.mod h1:ajglGXiDoMMxZXVkaEXU0Og5jS2Vvoea3pJX+Fn8io0=
-github.com/hyperledger-labs/fabric-smart-client/integration v0.14.2 h1:T/dwFSWJXyawifxYPAcs38gcEHi/qXP/NAWMsnr7z1g=
-github.com/hyperledger-labs/fabric-smart-client/integration v0.14.2/go.mod h1:+fDIc1Ut52YlcfPj1C9lRVgiqf2l3l4jxb99R1tH5Mw=
+github.com/hyperledger-labs/fabric-smart-client v0.14.3-0.20260716152906-60a85d843ab6 h1:zSTaf8uVFwgHjs1bn4qQ7UIEKNKFVRT8oN6DiAfEiHk=
+github.com/hyperledger-labs/fabric-smart-client v0.14.3-0.20260716152906-60a85d843ab6/go.mod h1:ajglGXiDoMMxZXVkaEXU0Og5jS2Vvoea3pJX+Fn8io0=
+github.com/hyperledger-labs/fabric-smart-client/integration v0.14.3-0.20260716152906-60a85d843ab6 h1:E/uf/FFg5Z800d5g9hRiuqpMI2sd7bcTmdp54RqFAN4=
+github.com/hyperledger-labs/fabric-smart-client/integration v0.14.3-0.20260716152906-60a85d843ab6/go.mod h1:h4oJWvCYXZy67ryMVsb7DO1Ec5+GP3i7iYb1/arUgpM=
 github.com/hyperledger/fabric-amcl v0.0.0-20230602173724-9e02669dceb2 h1:B1Nt8hKb//KvgGRprk0h1t4lCnwhE9/ryb1WqfZbV+M=
 github.com/hyperledger/fabric-amcl v0.0.0-20230602173724-9e02669dceb2/go.mod h1:X+DIyUsaTmalOpmpQfIvFZjKHQedrURQ5t4YqquX7lE=
 github.com/hyperledger/fabric-lib-go v1.1.5-0.20260708100132-163bcc919208 h1:qA49XOMwyNPxggVyW+HSDAg7I3GdtlGWDTbh40/rwZk=

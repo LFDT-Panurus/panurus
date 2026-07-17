@@ -6,7 +6,7 @@ replace github.com/LFDT-Panurus/panurus => ./../../
 
 require (
 	github.com/LFDT-Panurus/panurus v0.10.1
-	github.com/hyperledger-labs/fabric-smart-client v0.14.3-0.20260716084917-c10decb043ec
+	github.com/hyperledger-labs/fabric-smart-client v0.14.3-0.20260716152906-60a85d843ab6
 	github.com/jackc/pgx/v5 v5.10.0
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/viper v1.21.0
