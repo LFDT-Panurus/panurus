@@ -36,6 +36,14 @@ type TransactionDB struct {
 		result1 driver.TransactionStoreTransaction
 		result2 error
 	}
+	NotifyStatusStub        func(context.Context, string, storage.TxStatus, string)
+	notifyStatusMutex       sync.RWMutex
+	notifyStatusArgsForCall []struct {
+		arg1 context.Context
+		arg2 string
+		arg3 storage.TxStatus
+		arg4 string
+	}
 	SetStatusStub        func(context.Context, string, storage.TxStatus, string) error
 	setStatusMutex       sync.RWMutex
 	setStatusArgsForCall []struct {
@@ -173,6 +181,41 @@ func (fake *TransactionDB) NewTransactionReturnsOnCall(i int, result1 driver.Tra
 		result1 driver.TransactionStoreTransaction
 		result2 error
 	}{result1, result2}
+}
+
+func (fake *TransactionDB) NotifyStatus(arg1 context.Context, arg2 string, arg3 storage.TxStatus, arg4 string) {
+	fake.notifyStatusMutex.Lock()
+	fake.notifyStatusArgsForCall = append(fake.notifyStatusArgsForCall, struct {
+		arg1 context.Context
+		arg2 string
+		arg3 storage.TxStatus
+		arg4 string
+	}{arg1, arg2, arg3, arg4})
+	stub := fake.NotifyStatusStub
+	fake.recordInvocation("NotifyStatus", []interface{}{arg1, arg2, arg3, arg4})
+	fake.notifyStatusMutex.Unlock()
+	if stub != nil {
+		fake.NotifyStatusStub(arg1, arg2, arg3, arg4)
+	}
+}
+
+func (fake *TransactionDB) NotifyStatusCallCount() int {
+	fake.notifyStatusMutex.RLock()
+	defer fake.notifyStatusMutex.RUnlock()
+	return len(fake.notifyStatusArgsForCall)
+}
+
+func (fake *TransactionDB) NotifyStatusCalls(stub func(context.Context, string, storage.TxStatus, string)) {
+	fake.notifyStatusMutex.Lock()
+	defer fake.notifyStatusMutex.Unlock()
+	fake.NotifyStatusStub = stub
+}
+
+func (fake *TransactionDB) NotifyStatusArgsForCall(i int) (context.Context, string, storage.TxStatus, string) {
+	fake.notifyStatusMutex.RLock()
+	defer fake.notifyStatusMutex.RUnlock()
+	argsForCall := fake.notifyStatusArgsForCall[i]
+	return argsForCall.arg1, argsForCall.arg2, argsForCall.arg3, argsForCall.arg4
 }
 
 func (fake *TransactionDB) SetStatus(arg1 context.Context, arg2 string, arg3 storage.TxStatus, arg4 string) error {

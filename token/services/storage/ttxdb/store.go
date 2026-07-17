@@ -250,14 +250,17 @@ func (d *StoreService) SetStatus(ctx context.Context, txID string, status dbdriv
 	}
 
 	// notify the listeners
-	d.Notify(common.StatusEvent{
-		Ctx:            ctx,
-		TxID:           txID,
-		ValidationCode: status,
-	})
+	d.NotifyStatus(ctx, txID, status, message)
 	logger.DebugfContext(ctx, "set status [%s][%s] done", txID, dbdriver.TxStatusMessage[status])
 
 	return nil
+}
+
+// NotifyStatus pushes a status event to the in-process listeners without
+// touching the database. Used after a transaction-scoped status update,
+// which bypasses SetStatus.
+func (d *StoreService) NotifyStatus(ctx context.Context, txID string, status dbdriver.TxStatus, message string) {
+	d.Notify(common.StatusEvent{Ctx: ctx, TxID: txID, ValidationCode: status, ValidationMessage: message})
 }
 
 // GetStatus return the status of the given transaction id.

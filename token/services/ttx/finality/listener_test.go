@@ -19,6 +19,7 @@ import (
 	"github.com/LFDT-Panurus/panurus/token/services/logging"
 	"github.com/LFDT-Panurus/panurus/token/services/network"
 	"github.com/LFDT-Panurus/panurus/token/services/storage"
+	drivermock "github.com/LFDT-Panurus/panurus/token/services/storage/db/driver/mock"
 	depmock "github.com/LFDT-Panurus/panurus/token/services/ttx/dep/mock"
 	"github.com/LFDT-Panurus/panurus/token/services/ttx/finality"
 	"github.com/LFDT-Panurus/panurus/token/services/ttx/finality/mock"
@@ -212,6 +213,40 @@ func TestOnStatus_StatusSetToDeletedForInvalidTx(t *testing.T) {
 
 	require.Equal(t, storage.Deleted, capturedStatus,
 		"an Invalid network status should map to Deleted in local storage")
+}
+
+// TestCommit_NotifiesConfirmed verifies that the confirmed path pushes the
+// status event to waiters after the store transaction commits: the
+// transactional SetStatus bypasses the store service, so without an explicit
+// NotifyStatus the finality waiters would only wake on the fallback polling.
+func TestCommit_NotifiesConfirmed(t *testing.T) {
+	db := &mock.TransactionDB{}
+	storeTx := &drivermock.TransactionStoreTransaction{}
+	db.NewTransactionReturns(storeTx, nil)
+
+	require.NoError(t, finality.Commit(t.Context(), logging.MustGetLogger(), &mock.TokensService{}, db, "tx1", nil))
+
+	require.Equal(t, 1, storeTx.SetStatusCallCount())
+	_, _, txStatus, _ := storeTx.SetStatusArgsForCall(0)
+	assert.Equal(t, storage.Confirmed, txStatus)
+	require.Equal(t, 1, storeTx.CommitCallCount())
+
+	require.Equal(t, 1, db.NotifyStatusCallCount(), "commit must push the Confirmed event to waiters")
+	_, notifiedTxID, notifiedStatus, _ := db.NotifyStatusArgsForCall(0)
+	assert.Equal(t, "tx1", notifiedTxID)
+	assert.Equal(t, storage.Confirmed, notifiedStatus)
+}
+
+// TestCommit_NoNotifyOnCommitFailure verifies no status event is pushed when
+// the store transaction fails to commit.
+func TestCommit_NoNotifyOnCommitFailure(t *testing.T) {
+	db := &mock.TransactionDB{}
+	storeTx := &drivermock.TransactionStoreTransaction{}
+	storeTx.CommitReturns(errors.New("commit failed"))
+	db.NewTransactionReturns(storeTx, nil)
+
+	require.Error(t, finality.Commit(t.Context(), logging.MustGetLogger(), &mock.TokensService{}, db, "tx1", nil))
+	assert.Equal(t, 0, db.NotifyStatusCallCount(), "a failed commit must not wake waiters")
 }
 
 // TestOnError tests the OnError callback
