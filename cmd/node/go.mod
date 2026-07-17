@@ -9,7 +9,7 @@ replace (
 
 require (
 	github.com/LFDT-Panurus/panurus/integration v0.0.0
-	github.com/hyperledger-labs/fabric-smart-client v0.14.3-0.20260716084917-c10decb043ec
+	github.com/hyperledger-labs/fabric-smart-client v0.14.3-0.20260716152906-60a85d843ab6
 )
 
 require (
@@ -63,7 +63,7 @@ require (
 	github.com/hashicorp/go-uuid v1.0.3 // indirect
 	github.com/hashicorp/golang-lru v1.0.2 // indirect
 	github.com/huin/goupnp v1.3.0 // indirect
-	github.com/hyperledger-labs/fabric-smart-client/integration v0.14.2 // indirect
+	github.com/hyperledger-labs/fabric-smart-client/integration v0.14.3-0.20260716152906-60a85d843ab6 // indirect
 	github.com/hyperledger-labs/fabric-smart-client/platform/view/services/comm/host/libp2p v0.14.2 // indirect
 	github.com/hyperledger/fabric-amcl v0.0.0-20230602173724-9e02669dceb2 // indirect
 	github.com/hyperledger/fabric-chaincode-go/v2 v2.3.1-0.20260319210430-56968fdc7833 // indirect
