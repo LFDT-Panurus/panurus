@@ -12,6 +12,7 @@ import (
 	"github.com/LFDT-Panurus/panurus/token"
 	"github.com/LFDT-Panurus/panurus/token/services"
 	"github.com/LFDT-Panurus/panurus/token/services/storage/auditdb"
+	dbdriver "github.com/LFDT-Panurus/panurus/token/services/storage/db/driver"
 	"github.com/LFDT-Panurus/panurus/token/services/storage/ttxdb"
 	"github.com/LFDT-Panurus/panurus/token/services/ttx/dep"
 	"github.com/LFDT-Panurus/panurus/token/services/ttx/dep/db"
@@ -20,11 +21,14 @@ import (
 
 // statusStore is the subset of a transaction/audit store service needed by
 // the batching decorator: the batched status lookup plus the status
-// listener registry, which is passed through untouched.
+// listener registry and notification surface, which are passed through
+// untouched.
 type statusStore interface {
 	statusFetcher
 	AddStatusListener(txID string, ch chan db.TransactionStatusEvent)
 	DeleteStatusListener(txID string, ch chan db.TransactionStatusEvent)
+	ListenerTxIDs() []string
+	NotifyStatus(ctx context.Context, txID string, status dbdriver.TxStatus, message string)
 }
 
 // batchingStatusDB wraps a transaction/audit store service so that
@@ -48,12 +52,26 @@ func (b *batchingStatusDB) GetStatus(ctx context.Context, txID string) (token.Tx
 	return status, "", err
 }
 
+// GetStatuses is already a batch operation, so it goes straight to the store
+// without passing through the single-tx batcher.
+func (b *batchingStatusDB) GetStatuses(ctx context.Context, txIDs []string) (map[string]dbdriver.TxStatus, error) {
+	return b.store.GetStatuses(ctx, txIDs)
+}
+
 func (b *batchingStatusDB) AddStatusListener(txID string, ch chan db.TransactionStatusEvent) {
 	b.store.AddStatusListener(txID, ch)
 }
 
 func (b *batchingStatusDB) DeleteStatusListener(txID string, ch chan db.TransactionStatusEvent) {
 	b.store.DeleteStatusListener(txID, ch)
+}
+
+func (b *batchingStatusDB) ListenerTxIDs() []string {
+	return b.store.ListenerTxIDs()
+}
+
+func (b *batchingStatusDB) NotifyStatus(ctx context.Context, txID string, status dbdriver.TxStatus, message string) {
+	b.store.NotifyStatus(ctx, txID, status, message)
 }
 
 type TransactionDBProvider struct {

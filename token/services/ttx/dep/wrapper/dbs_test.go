@@ -7,6 +7,7 @@ SPDX-License-Identifier: Apache-2.0
 package wrapper
 
 import (
+	"context"
 	"sync"
 	"testing"
 
@@ -21,8 +22,9 @@ import (
 
 type fakeStatusStore struct {
 	fakeStatusFetcher
-	added   []string
-	deleted []string
+	added    []string
+	deleted  []string
+	notified []string
 }
 
 func (f *fakeStatusStore) AddStatusListener(txID string, _ chan db.TransactionStatusEvent) {
@@ -35,6 +37,19 @@ func (f *fakeStatusStore) DeleteStatusListener(txID string, _ chan db.Transactio
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.deleted = append(f.deleted, txID)
+}
+
+func (f *fakeStatusStore) ListenerTxIDs() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	return append([]string(nil), f.added...)
+}
+
+func (f *fakeStatusStore) NotifyStatus(_ context.Context, txID string, _ dbdriver.TxStatus, _ string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.notified = append(f.notified, txID)
 }
 
 func TestBatchingStatusDB_CoalescesConcurrentGetStatus(t *testing.T) {
@@ -82,6 +97,22 @@ func TestBatchingStatusDB_ListenersPassThrough(t *testing.T) {
 
 	assert.Equal(t, []string{"tx1"}, store.added)
 	assert.Equal(t, []string{"tx1"}, store.deleted)
+	assert.Equal(t, []string{"tx1"}, d.ListenerTxIDs())
+
+	d.NotifyStatus(t.Context(), "tx1", dbdriver.Confirmed, "")
+	assert.Equal(t, []string{"tx1"}, store.notified)
+}
+
+func TestBatchingStatusDB_GetStatusesBypassesBatcher(t *testing.T) {
+	store := &fakeStatusStore{fakeStatusFetcher: fakeStatusFetcher{responses: map[string]dbdriver.TxStatus{
+		"tx1": dbdriver.Confirmed,
+	}}}
+	d := newBatchingStatusDB(store)
+
+	statuses, err := d.GetStatuses(t.Context(), []string{"tx1"})
+	require.NoError(t, err)
+	assert.Equal(t, map[string]dbdriver.TxStatus{"tx1": dbdriver.Confirmed}, statuses)
+	assert.Equal(t, 1, store.callCount(), "a batch lookup goes straight to the store")
 }
 
 func TestTransactionDBProvider_CachesPerTMS(t *testing.T) {

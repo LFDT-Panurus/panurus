@@ -139,8 +139,11 @@ func GetNetworkIdentityProvider(sp token.ServiceProvider) (NetworkIdentityProvid
 //go:generate counterfeiter -o mock/transaction_db.go -fake-name TransactionDB . TransactionDB
 type TransactionDB interface {
 	GetStatus(ctx context.Context, txID string) (token.TxStatus, string, error)
+	GetStatuses(ctx context.Context, txIDs []string) (map[string]token.TxStatus, error)
 	AddStatusListener(txID string, ch chan db.TransactionStatusEvent)
 	DeleteStatusListener(txID string, ch chan db.TransactionStatusEvent)
+	ListenerTxIDs() []string
+	NotifyStatus(ctx context.Context, txID string, status token.TxStatus, message string)
 }
 
 // TransactionDBProvider is used to retrieves instances of TransactionDB
@@ -170,8 +173,11 @@ func GetTransactionDB(sp token.ServiceProvider, tmsID token.TMSID) (TransactionD
 //go:generate counterfeiter -o mock/audit_db.go -fake-name AuditDB . AuditDB
 type AuditDB interface {
 	GetStatus(ctx context.Context, txID string) (token.TxStatus, string, error)
+	GetStatuses(ctx context.Context, txIDs []string) (map[string]token.TxStatus, error)
 	AddStatusListener(txID string, ch chan db.TransactionStatusEvent)
 	DeleteStatusListener(txID string, ch chan db.TransactionStatusEvent)
+	ListenerTxIDs() []string
+	NotifyStatus(ctx context.Context, txID string, status token.TxStatus, message string)
 }
 
 // AuditDBProvider is used to retrieves instances of AuditDB

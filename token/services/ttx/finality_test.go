@@ -7,10 +7,12 @@ SPDX-License-Identifier: Apache-2.0
 package ttx_test
 
 import (
+	"context"
 	"testing"
 	"time"
 
 	"github.com/LFDT-Panurus/panurus/token"
+	"github.com/LFDT-Panurus/panurus/token/services/storage/db/common"
 	"github.com/LFDT-Panurus/panurus/token/services/storage/ttxdb"
 	"github.com/LFDT-Panurus/panurus/token/services/ttx"
 	"github.com/LFDT-Panurus/panurus/token/services/ttx/dep/db"
@@ -19,6 +21,15 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// notifyStatusVia adapts the flat NotifyStatus mock signature to a
+// StatusSupport's event-based Notify, so poller pushes reach the channels the
+// view registered on the same support.
+func notifyStatusVia(support *common.StatusSupport) func(context.Context, string, token.TxStatus, string) {
+	return func(ctx context.Context, txID string, status token.TxStatus, message string) {
+		support.Notify(common.StatusEvent{Ctx: ctx, TxID: txID, ValidationCode: status, ValidationMessage: message})
+	}
+}
 
 type testFinalityViewContext struct {
 	ctx                   *mock.Context
@@ -34,11 +45,25 @@ func newTestFinalityViewContext(t *testing.T) *testFinalityViewContext {
 	ctx := &mock.Context{}
 	ctx.ContextReturns(t.Context())
 
+	// Back the listener methods with a real StatusSupport so the shared
+	// fallback poller sees the registrations the view makes and its
+	// NotifyStatus reaches the view's channel, like the production store
+	// services.
 	transactionDB := &mock.TransactionDB{}
+	transactionDBSupport := common.NewStatusSupport()
+	transactionDB.AddStatusListenerStub = transactionDBSupport.AddStatusListener
+	transactionDB.DeleteStatusListenerStub = transactionDBSupport.DeleteStatusListener
+	transactionDB.ListenerTxIDsStub = transactionDBSupport.ListenerTxIDs
+	transactionDB.NotifyStatusStub = notifyStatusVia(transactionDBSupport)
 	transactionDBProvider := &mock.TransactionDBProvider{}
 	transactionDBProvider.TransactionDBReturns(transactionDB, nil)
 
 	auditDB := &mock.AuditDB{}
+	auditDBSupport := common.NewStatusSupport()
+	auditDB.AddStatusListenerStub = auditDBSupport.AddStatusListener
+	auditDB.DeleteStatusListenerStub = auditDBSupport.DeleteStatusListener
+	auditDB.ListenerTxIDsStub = auditDBSupport.ListenerTxIDs
+	auditDB.NotifyStatusStub = notifyStatusVia(auditDBSupport)
 	auditDBProvider := &mock.AuditDBProvider{}
 	auditDBProvider.AuditDBReturns(auditDB, nil)
 
@@ -183,50 +208,67 @@ func TestFinalityView(t *testing.T) {
 			errorContains: "db error",
 		},
 		{
-			name: "timeout tick then confirmed",
+			name: "poller fallback confirmed",
 			prepare: func(c *testFinalityViewContext) {
-				c.transactionDB.GetStatusReturnsOnCall(0, ttxdb.Pending, "", nil)   // call check
-				c.transactionDB.GetStatusReturnsOnCall(1, ttxdb.Pending, "", nil)   // dbFinality initial check
-				c.transactionDB.GetStatusReturnsOnCall(2, ttxdb.Confirmed, "", nil) // dbFinality timeout check
+				c.transactionDB.GetStatusReturns(ttxdb.Pending, "", nil)
 				c.auditDB.GetStatusReturns(ttxdb.Unknown, "", nil)
+				c.transactionDB.GetStatusesReturns(map[string]token.TxStatus{
+					"tx_id": ttxdb.Confirmed,
+				}, nil)
 			},
-			opts:        []ttx.TxOption{ttx.WithTimeout(1500 * time.Millisecond)},
+			opts: []ttx.TxOption{
+				ttx.WithTimeout(2 * time.Second),
+				ttx.WithPollingTimeout(100 * time.Millisecond),
+			},
 			expectError: false,
 		},
 		{
-			name: "timeout tick then deleted",
+			name: "poller fallback deleted",
 			prepare: func(c *testFinalityViewContext) {
-				c.transactionDB.GetStatusReturnsOnCall(0, ttxdb.Pending, "", nil) // call check
-				c.transactionDB.GetStatusReturnsOnCall(1, ttxdb.Pending, "", nil) // dbFinality initial check
-				c.transactionDB.GetStatusReturnsOnCall(2, ttxdb.Deleted, "", nil) // dbFinality timeout check
+				c.transactionDB.GetStatusReturns(ttxdb.Pending, "", nil)
 				c.auditDB.GetStatusReturns(ttxdb.Unknown, "", nil)
+				c.transactionDB.GetStatusesReturns(map[string]token.TxStatus{
+					"tx_id": ttxdb.Deleted,
+				}, nil)
 			},
-			opts:          []ttx.TxOption{ttx.WithTimeout(1500 * time.Millisecond)},
+			opts: []ttx.TxOption{
+				ttx.WithTimeout(2 * time.Second),
+				ttx.WithPollingTimeout(100 * time.Millisecond),
+			},
 			expectError:   true,
 			errorContains: "transaction [tx_id] is not valid",
 			expectErr:     ttx.ErrFinalityInvalidTransaction,
 		},
 		{
-			name: "timeout tick then error then confirmed",
+			name: "poller fallback error then confirmed",
 			prepare: func(c *testFinalityViewContext) {
-				c.transactionDB.GetStatusReturnsOnCall(0, ttxdb.Pending, "", nil)                           // call check
-				c.transactionDB.GetStatusReturnsOnCall(1, ttxdb.Pending, "", nil)                           // dbFinality initial check
-				c.transactionDB.GetStatusReturnsOnCall(2, ttxdb.Unknown, "", errors.New("transient error")) // dbFinality timeout check 1
-				c.transactionDB.GetStatusReturnsOnCall(3, ttxdb.Confirmed, "", nil)                         // dbFinality timeout check 2
+				c.transactionDB.GetStatusReturns(ttxdb.Pending, "", nil)
 				c.auditDB.GetStatusReturns(ttxdb.Unknown, "", nil)
+				c.transactionDB.GetStatusesReturnsOnCall(0, nil, errors.New("transient error"))
+				c.transactionDB.GetStatusesReturns(map[string]token.TxStatus{
+					"tx_id": ttxdb.Confirmed,
+				}, nil)
 			},
-			opts:        []ttx.TxOption{ttx.WithTimeout(2500 * time.Millisecond)},
+			opts: []ttx.TxOption{
+				ttx.WithTimeout(2 * time.Second),
+				ttx.WithPollingTimeout(100 * time.Millisecond),
+			},
 			expectError: false,
 		},
 		{
-			name: "initial get status error then confirmed",
+			name: "initial get status error then poller confirmed",
 			prepare: func(c *testFinalityViewContext) {
 				c.transactionDB.GetStatusReturnsOnCall(0, ttxdb.Pending, "", nil)                         // call check
 				c.transactionDB.GetStatusReturnsOnCall(1, ttxdb.Unknown, "", errors.New("initial error")) // dbFinality initial check
-				c.transactionDB.GetStatusReturnsOnCall(2, ttxdb.Confirmed, "", nil)                       // dbFinality timeout check
 				c.auditDB.GetStatusReturns(ttxdb.Unknown, "", nil)
+				c.transactionDB.GetStatusesReturns(map[string]token.TxStatus{
+					"tx_id": ttxdb.Confirmed,
+				}, nil)
 			},
-			opts:        []ttx.TxOption{ttx.WithTimeout(1500 * time.Millisecond)},
+			opts: []ttx.TxOption{
+				ttx.WithTimeout(2 * time.Second),
+				ttx.WithPollingTimeout(100 * time.Millisecond),
+			},
 			expectError: false,
 		},
 		{

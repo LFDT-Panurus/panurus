@@ -39,6 +39,38 @@ type TransactionDB struct {
 		result2 string
 		result3 error
 	}
+	GetStatusesStub        func(context.Context, []string) (map[string]token.TxStatus, error)
+	getStatusesMutex       sync.RWMutex
+	getStatusesArgsForCall []struct {
+		arg1 context.Context
+		arg2 []string
+	}
+	getStatusesReturns struct {
+		result1 map[string]token.TxStatus
+		result2 error
+	}
+	getStatusesReturnsOnCall map[int]struct {
+		result1 map[string]token.TxStatus
+		result2 error
+	}
+	ListenerTxIDsStub        func() []string
+	listenerTxIDsMutex       sync.RWMutex
+	listenerTxIDsArgsForCall []struct {
+	}
+	listenerTxIDsReturns struct {
+		result1 []string
+	}
+	listenerTxIDsReturnsOnCall map[int]struct {
+		result1 []string
+	}
+	NotifyStatusStub        func(context.Context, string, token.TxStatus, string)
+	notifyStatusMutex       sync.RWMutex
+	notifyStatusArgsForCall []struct {
+		arg1 context.Context
+		arg2 string
+		arg3 token.TxStatus
+		arg4 string
+	}
 	invocations      map[string][][]interface{}
 	invocationsMutex sync.RWMutex
 }
@@ -175,6 +207,164 @@ func (fake *TransactionDB) GetStatusReturnsOnCall(i int, result1 token.TxStatus,
 		result2 string
 		result3 error
 	}{result1, result2, result3}
+}
+
+func (fake *TransactionDB) GetStatuses(arg1 context.Context, arg2 []string) (map[string]token.TxStatus, error) {
+	var arg2Copy []string
+	if arg2 != nil {
+		arg2Copy = make([]string, len(arg2))
+		copy(arg2Copy, arg2)
+	}
+	fake.getStatusesMutex.Lock()
+	ret, specificReturn := fake.getStatusesReturnsOnCall[len(fake.getStatusesArgsForCall)]
+	fake.getStatusesArgsForCall = append(fake.getStatusesArgsForCall, struct {
+		arg1 context.Context
+		arg2 []string
+	}{arg1, arg2Copy})
+	stub := fake.GetStatusesStub
+	fakeReturns := fake.getStatusesReturns
+	fake.recordInvocation("GetStatuses", []interface{}{arg1, arg2Copy})
+	fake.getStatusesMutex.Unlock()
+	if stub != nil {
+		return stub(arg1, arg2)
+	}
+	if specificReturn {
+		return ret.result1, ret.result2
+	}
+	return fakeReturns.result1, fakeReturns.result2
+}
+
+func (fake *TransactionDB) GetStatusesCallCount() int {
+	fake.getStatusesMutex.RLock()
+	defer fake.getStatusesMutex.RUnlock()
+	return len(fake.getStatusesArgsForCall)
+}
+
+func (fake *TransactionDB) GetStatusesCalls(stub func(context.Context, []string) (map[string]token.TxStatus, error)) {
+	fake.getStatusesMutex.Lock()
+	defer fake.getStatusesMutex.Unlock()
+	fake.GetStatusesStub = stub
+}
+
+func (fake *TransactionDB) GetStatusesArgsForCall(i int) (context.Context, []string) {
+	fake.getStatusesMutex.RLock()
+	defer fake.getStatusesMutex.RUnlock()
+	argsForCall := fake.getStatusesArgsForCall[i]
+	return argsForCall.arg1, argsForCall.arg2
+}
+
+func (fake *TransactionDB) GetStatusesReturns(result1 map[string]token.TxStatus, result2 error) {
+	fake.getStatusesMutex.Lock()
+	defer fake.getStatusesMutex.Unlock()
+	fake.GetStatusesStub = nil
+	fake.getStatusesReturns = struct {
+		result1 map[string]token.TxStatus
+		result2 error
+	}{result1, result2}
+}
+
+func (fake *TransactionDB) GetStatusesReturnsOnCall(i int, result1 map[string]token.TxStatus, result2 error) {
+	fake.getStatusesMutex.Lock()
+	defer fake.getStatusesMutex.Unlock()
+	fake.GetStatusesStub = nil
+	if fake.getStatusesReturnsOnCall == nil {
+		fake.getStatusesReturnsOnCall = make(map[int]struct {
+			result1 map[string]token.TxStatus
+			result2 error
+		})
+	}
+	fake.getStatusesReturnsOnCall[i] = struct {
+		result1 map[string]token.TxStatus
+		result2 error
+	}{result1, result2}
+}
+
+func (fake *TransactionDB) ListenerTxIDs() []string {
+	fake.listenerTxIDsMutex.Lock()
+	ret, specificReturn := fake.listenerTxIDsReturnsOnCall[len(fake.listenerTxIDsArgsForCall)]
+	fake.listenerTxIDsArgsForCall = append(fake.listenerTxIDsArgsForCall, struct {
+	}{})
+	stub := fake.ListenerTxIDsStub
+	fakeReturns := fake.listenerTxIDsReturns
+	fake.recordInvocation("ListenerTxIDs", []interface{}{})
+	fake.listenerTxIDsMutex.Unlock()
+	if stub != nil {
+		return stub()
+	}
+	if specificReturn {
+		return ret.result1
+	}
+	return fakeReturns.result1
+}
+
+func (fake *TransactionDB) ListenerTxIDsCallCount() int {
+	fake.listenerTxIDsMutex.RLock()
+	defer fake.listenerTxIDsMutex.RUnlock()
+	return len(fake.listenerTxIDsArgsForCall)
+}
+
+func (fake *TransactionDB) ListenerTxIDsCalls(stub func() []string) {
+	fake.listenerTxIDsMutex.Lock()
+	defer fake.listenerTxIDsMutex.Unlock()
+	fake.ListenerTxIDsStub = stub
+}
+
+func (fake *TransactionDB) ListenerTxIDsReturns(result1 []string) {
+	fake.listenerTxIDsMutex.Lock()
+	defer fake.listenerTxIDsMutex.Unlock()
+	fake.ListenerTxIDsStub = nil
+	fake.listenerTxIDsReturns = struct {
+		result1 []string
+	}{result1}
+}
+
+func (fake *TransactionDB) ListenerTxIDsReturnsOnCall(i int, result1 []string) {
+	fake.listenerTxIDsMutex.Lock()
+	defer fake.listenerTxIDsMutex.Unlock()
+	fake.ListenerTxIDsStub = nil
+	if fake.listenerTxIDsReturnsOnCall == nil {
+		fake.listenerTxIDsReturnsOnCall = make(map[int]struct {
+			result1 []string
+		})
+	}
+	fake.listenerTxIDsReturnsOnCall[i] = struct {
+		result1 []string
+	}{result1}
+}
+
+func (fake *TransactionDB) NotifyStatus(arg1 context.Context, arg2 string, arg3 token.TxStatus, arg4 string) {
+	fake.notifyStatusMutex.Lock()
+	fake.notifyStatusArgsForCall = append(fake.notifyStatusArgsForCall, struct {
+		arg1 context.Context
+		arg2 string
+		arg3 token.TxStatus
+		arg4 string
+	}{arg1, arg2, arg3, arg4})
+	stub := fake.NotifyStatusStub
+	fake.recordInvocation("NotifyStatus", []interface{}{arg1, arg2, arg3, arg4})
+	fake.notifyStatusMutex.Unlock()
+	if stub != nil {
+		fake.NotifyStatusStub(arg1, arg2, arg3, arg4)
+	}
+}
+
+func (fake *TransactionDB) NotifyStatusCallCount() int {
+	fake.notifyStatusMutex.RLock()
+	defer fake.notifyStatusMutex.RUnlock()
+	return len(fake.notifyStatusArgsForCall)
+}
+
+func (fake *TransactionDB) NotifyStatusCalls(stub func(context.Context, string, token.TxStatus, string)) {
+	fake.notifyStatusMutex.Lock()
+	defer fake.notifyStatusMutex.Unlock()
+	fake.NotifyStatusStub = stub
+}
+
+func (fake *TransactionDB) NotifyStatusArgsForCall(i int) (context.Context, string, token.TxStatus, string) {
+	fake.notifyStatusMutex.RLock()
+	defer fake.notifyStatusMutex.RUnlock()
+	argsForCall := fake.notifyStatusArgsForCall[i]
+	return argsForCall.arg1, argsForCall.arg2, argsForCall.arg3, argsForCall.arg4
 }
 
 func (fake *TransactionDB) Invocations() map[string][][]interface{} {

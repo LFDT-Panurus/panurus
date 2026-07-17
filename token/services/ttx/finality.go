@@ -22,7 +22,10 @@ import (
 type finalityDB interface {
 	AddStatusListener(txID string, ch chan db.TransactionStatusEvent)
 	DeleteStatusListener(txID string, ch chan db.TransactionStatusEvent)
+	ListenerTxIDs() []string
+	NotifyStatus(ctx context.Context, txID string, status TxStatus, message string)
 	GetStatus(ctx context.Context, txID string) (TxStatus, string, error)
+	GetStatuses(ctx context.Context, txIDs []string) (map[string]TxStatus, error)
 }
 
 type finalityView struct {
@@ -116,23 +119,15 @@ func (f *finalityView) call(ctx view.Context, txID string, tmsID token.TMSID, ti
 	}
 
 	logger.DebugfContext(ctx.Context(), "Listen for DB finality")
-	// Calculate iterations using ceiling division to avoid precision loss
-	iterations := int((timeout + f.pollingTimeout - 1) / f.pollingTimeout)
-	if iterations == 0 {
-		iterations = 1
-	}
-	index := 0
 	if knownInTTXDB {
 		logger.DebugfContext(ctx.Context(), "Request TTXDB finality")
-		index, err = f.dbFinality(c, txID, transactionDB, index, iterations)
-		if err != nil {
+		if err := f.dbFinality(c, txID, transactionDB); err != nil {
 			return nil, err
 		}
 	}
 	if knownInAuditDB {
 		logger.DebugfContext(ctx.Context(), "Request AuditDB finality")
-		_, err = f.dbFinality(c, txID, auditDB, index, iterations)
-		if err != nil {
+		if err := f.dbFinality(c, txID, auditDB); err != nil {
 			return nil, err
 		}
 	}
@@ -141,22 +136,21 @@ func (f *finalityView) call(ctx view.Context, txID string, tmsID token.TMSID, ti
 }
 
 // dbFinality waits for a transaction to reach finality in a specific database.
-// It polls the database at regular intervals (pollingTimeout) up to a maximum
-// number of iterations calculated from the timeout.
+// Detection is push-first: SetStatus on the database notifies the registered
+// listener channel in-process. A shared per-database poller batch-checks every
+// waited-on transaction (pollingTimeout interval) as a fallback for lost push
+// events, so no per-transaction polling happens here.
 //
 // Parameters:
 //   - ctx: Context for cancellation and timeout
 //   - txID: Transaction ID to monitor
 //   - finalityDB: Database to monitor for finality
-//   - startCounter: Starting iteration counter (for logging/debugging)
-//   - iterations: Maximum number of polling iterations
 //
 // Returns:
-//   - int: The iteration number when finality was reached or error occurred
 //   - error: Error if transaction is invalid or timeout occurs
-func (f *finalityView) dbFinality(ctx context.Context, txID string, finalityDB finalityDB, startCounter, iterations int) (int, error) {
+func (f *finalityView) dbFinality(ctx context.Context, txID string, finalityDB finalityDB) error {
 	// notice that adding the listener can happen after the event we are looking for has already happened
-	// therefore we need to check more often before the timeout happens
+	// therefore we need to check the status right after registering
 	dbChannel := make(chan db.TransactionStatusEvent, 1)
 
 	logger.DebugfContext(ctx, "Add status listener")
@@ -169,63 +163,36 @@ func (f *finalityView) dbFinality(ctx context.Context, txID string, finalityDB f
 		logger.DebugfContext(ctx, "Removed status listener and closed channel")
 	}()
 
+	unregister := registerStatusWaiter(finalityDB, f.pollingTimeout)
+	defer unregister()
+
 	logger.DebugfContext(ctx, "Get status")
 	status, _, err := finalityDB.GetStatus(ctx, txID)
 	if err == nil {
 		if status == ttxdb.Confirmed {
-			return startCounter, nil
+			return nil
 		}
 		if status == ttxdb.Deleted {
 			logger.ErrorfContext(ctx, "Deleted tx")
 
-			return startCounter, errors.Wrapf(ErrFinalityInvalidTransaction, "transaction [%s] is not valid", txID)
+			return errors.Wrapf(ErrFinalityInvalidTransaction, "transaction [%s] is not valid", txID)
 		}
 	}
 
 	logger.DebugfContext(ctx, "Listen DB channels")
-	for i := startCounter; i < iterations; i++ {
-		logger.DebugfContext(ctx, "Start iteration [%d]", i)
-		timeout := time.NewTimer(f.pollingTimeout)
+	select {
+	case <-ctx.Done():
+		logger.ErrorfContext(ctx, "Is [%s] final? Failed to listen to transaction for timeout", txID)
 
-		select {
-		case <-ctx.Done():
-			timeout.Stop()
-
-			return i, errors.Wrapf(ErrFinalityTimeout, "failed to listen to transaction [%s] for timeout", txID)
-		case event := <-dbChannel:
-
-			trace.SpanFromContext(ctx).AddLink(trace.LinkFromContext(event.Ctx))
-			logger.DebugfContext(ctx, "Got an answer to finality of [%s]: [%s]", txID, event)
-			timeout.Stop()
-			if event.ValidationCode == ttxdb.Confirmed {
-				return i, nil
-			}
-			logger.ErrorfContext(ctx, "transaction [%s] is not valid [%s]", txID, TxStatusMessage[event.ValidationCode])
-
-			return i, errors.Wrapf(ErrFinalityInvalidTransaction, "transaction [%s] is not valid [%s]", txID, TxStatusMessage[event.ValidationCode])
-		case <-timeout.C:
-			timeout.Stop()
-			logger.DebugfContext(ctx, "Got a timeout for finality of [%s], check the status", txID)
-			vd, _, err := finalityDB.GetStatus(ctx, txID)
-			if err != nil {
-				logger.DebugfContext(ctx, "Is [%s] final? not available yet, wait [err:%s, vc:%d]", txID, err, vd)
-
-				break
-			}
-			switch vd {
-			case ttxdb.Confirmed:
-				logger.DebugfContext(ctx, "Listen to finality of [%s]. VALID", txID)
-
-				return i, nil
-			case ttxdb.Deleted:
-				logger.ErrorfContext(ctx, "Listen to finality of [%s]. NOT VALID", txID)
-
-				return i, errors.Wrapf(ErrFinalityInvalidTransaction, "transaction [%s] is not valid", txID)
-			}
+		return errors.Wrapf(ErrFinalityTimeout, "failed to listen to transaction [%s] for timeout", txID)
+	case event := <-dbChannel:
+		trace.SpanFromContext(ctx).AddLink(trace.LinkFromContext(event.Ctx))
+		logger.DebugfContext(ctx, "Got an answer to finality of [%s]: [%s]", txID, event)
+		if event.ValidationCode == ttxdb.Confirmed {
+			return nil
 		}
+		logger.ErrorfContext(ctx, "transaction [%s] is not valid [%s]", txID, TxStatusMessage[event.ValidationCode])
+
+		return errors.Wrapf(ErrFinalityInvalidTransaction, "transaction [%s] is not valid [%s]", txID, TxStatusMessage[event.ValidationCode])
 	}
-
-	logger.ErrorfContext(ctx, "Is [%s] final? Failed to listen to transaction for timeout", txID)
-
-	return iterations, errors.Wrapf(ErrFinalityTimeout, "failed to listen to transaction [%s] for timeout", txID)
 }

@@ -497,6 +497,8 @@ Once fully endorsed, the transaction metadata is distributed to all recipients s
 
 The `FinalityView` allows applications to wait for a transaction to be committed to the ledger. Internally, Panurus's **Network Service** listens for ledger events. When a transaction reaches finality, the Network Service notifies Panurus, which then updates the local `Transactions DB` and `Tokens DB` to reflect the new state.
 
+Waiting is push-first: each waiter registers a status listener on the local database (`TTXDB` or `AuditDB`), checks the status once to cover the registration race, and then blocks until a status event arrives. Status writes — including the confirmed commit path — push the event in-process. As a safety net for lost push events, a single fallback poller per database batch-fetches the statuses of all waited-on transactions (`GetStatuses`) and re-publishes terminal ones; it sweeps at the smallest polling interval among the active waiters (`WithPollingTimeout`, default 1s) and stops when no waiter remains. There is no per-transaction polling.
+
 ### Transaction Recovery
 
 Panurus includes an automatic recovery mechanism to handle pending transactions that may have lost their finality listeners due to node restarts, network interruptions, or other failures. 

@@ -47,6 +47,21 @@ func (c *StatusSupport) AddStatusListener(txID string, ch chan StatusEvent) {
 	c.listeners[txID] = ls
 }
 
+// ListenerTxIDs returns the tx ids that currently have at least one
+// registered status listener. Used by fallback pollers to scope batch
+// status lookups to transactions someone is actually waiting on.
+func (c *StatusSupport) ListenerTxIDs() []string {
+	c.mutex.RLock()
+	defer c.mutex.RUnlock()
+
+	txIDs := make([]string, 0, len(c.listeners))
+	for txID := range c.listeners {
+		txIDs = append(txIDs, txID)
+	}
+
+	return txIDs
+}
+
 func (c *StatusSupport) DeleteStatusListener(txID string, ch chan StatusEvent) {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
