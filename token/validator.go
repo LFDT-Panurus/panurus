@@ -8,9 +8,9 @@ package token
 
 import (
 	"context"
-	"reflect"
 
 	"github.com/LFDT-Panurus/panurus/token/driver"
+	"github.com/LFDT-Panurus/panurus/token/services/utils"
 	"github.com/LFDT-Panurus/panurus/token/token"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 )
@@ -29,7 +29,7 @@ func NewValidator(backend driver.Validator) *Validator {
 
 // UnmarshalActions returns the actions contained in the serialized token request
 func (c *Validator) UnmarshalActions(raw []byte) ([]any, error) {
-	if c == nil || isNil(c.backend) {
+	if c == nil || utils.IsNil(c.backend) {
 		return nil, errors.New("validator backend is nil")
 	}
 
@@ -38,11 +38,11 @@ func (c *Validator) UnmarshalActions(raw []byte) ([]any, error) {
 
 // UnmarshallAndVerify unmarshalls the token request and verifies it against the passed ledger and anchor
 func (c *Validator) UnmarshallAndVerify(ctx context.Context, ledger Ledger, anchor RequestAnchor, raw []byte) ([]any, error) {
-	if c == nil || isNil(c.backend) {
+	if c == nil || utils.IsNil(c.backend) {
 		return nil, errors.New("validator backend is nil")
 	}
 	var getState driver.GetStateFnc
-	if !isNil(ledger) {
+	if !utils.IsNil(ledger) {
 		getState = ledger.GetState
 	}
 	actions, _, err := c.backend.VerifyTokenRequestFromRaw(ctx, getState, anchor, raw)
@@ -59,11 +59,11 @@ func (c *Validator) UnmarshallAndVerify(ctx context.Context, ledger Ledger, anch
 // UnmarshallAndVerifyWithMetadata behaves as UnmarshallAndVerify. In addition, it returns the metadata extracts from the token request
 // in the form of map.
 func (c *Validator) UnmarshallAndVerifyWithMetadata(ctx context.Context, ledger Ledger, anchor RequestAnchor, raw []byte) ([]any, map[string][]byte, error) {
-	if c == nil || isNil(c.backend) {
+	if c == nil || utils.IsNil(c.backend) {
 		return nil, nil, errors.New("validator backend is nil")
 	}
 	var getState driver.GetStateFnc
-	if !isNil(ledger) {
+	if !utils.IsNil(ledger) {
 		getState = ledger.GetState
 	}
 	actions, meta, err := c.backend.VerifyTokenRequestFromRaw(ctx, getState, anchor, raw)
@@ -91,17 +91,4 @@ func (g *stateGetter) GetState(id token.ID) ([]byte, error) {
 	}
 
 	return g.f(id)
-}
-
-func isNil(value any) bool {
-	if value == nil {
-		return true
-	}
-	reflected := reflect.ValueOf(value)
-	switch reflected.Kind() {
-	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
-		return reflected.IsNil()
-	default:
-		return false
-	}
 }

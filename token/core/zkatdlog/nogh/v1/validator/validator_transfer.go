@@ -19,6 +19,7 @@ import (
 	"github.com/LFDT-Panurus/panurus/token/services/identity"
 	htlc2 "github.com/LFDT-Panurus/panurus/token/services/identity/interop/htlc"
 	"github.com/LFDT-Panurus/panurus/token/services/interop/htlc"
+	"github.com/LFDT-Panurus/panurus/token/services/utils"
 	token2 "github.com/LFDT-Panurus/panurus/token/token"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 )
@@ -64,7 +65,7 @@ func TransferSignatureValidate(c context.Context, ctx *Context) error {
 		if err != nil {
 			return errors.Wrapf(err, "failed deserializing owner [%d][%s]", i, uniqueID)
 		}
-		if common.IsNil(ctx.SignatureProvider) {
+		if utils.IsNil(ctx.SignatureProvider) {
 			return common.ErrNilSignatureProvider
 		}
 		ctx.Logger.Debugf("signature verification [%d][%s]", i, uniqueID)

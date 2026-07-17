@@ -11,6 +11,7 @@ import (
 	"slices"
 
 	"github.com/LFDT-Panurus/panurus/token/driver"
+	"github.com/LFDT-Panurus/panurus/token/services/utils"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 )
 
@@ -74,7 +75,7 @@ func AuditingSignaturesValidate[P driver.PublicParameters, T driver.Input, TA dr
 		if err != nil {
 			return errors.Wrapf(err, "failed to deserialize auditor's public key")
 		}
-		if IsNil(ctx.SignatureProvider) {
+		if utils.IsNil(ctx.SignatureProvider) {
 			return ErrNilSignatureProvider
 		}
 		_, err = ctx.SignatureProvider.HasBeenSignedBy(c, auditor, verifier)

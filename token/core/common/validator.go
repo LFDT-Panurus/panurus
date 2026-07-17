@@ -9,11 +9,11 @@ package common
 import (
 	"context"
 	"encoding/json"
-	"reflect"
 
 	"github.com/LFDT-Panurus/panurus/token/driver"
 	request2 "github.com/LFDT-Panurus/panurus/token/driver/protos-go/v1/request"
 	"github.com/LFDT-Panurus/panurus/token/services/logging"
+	"github.com/LFDT-Panurus/panurus/token/services/utils"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 )
 
@@ -217,7 +217,7 @@ func (v *Validator[P, T, TA, IA, DS]) VerifyTokenRequest(
 	if tr == nil {
 		return nil, nil, ErrNilTokenRequest
 	}
-	if IsNil(v.ActionDeserializer) {
+	if utils.IsNil(v.ActionDeserializer) {
 		return nil, nil, ErrNilActionDeserializer
 	}
 	if err := v.VerifyAuditing(ctx, anchor, tr, ledger, signatureProvider, attributes); err != nil {
@@ -246,7 +246,7 @@ func (v *Validator[P, T, TA, IA, DS]) UnmarshalActions(raw []byte) ([]any, error
 		return nil, errors.Wrap(err, "failed to unmarshal token request")
 	}
 
-	if IsNil(v.ActionDeserializer) {
+	if utils.IsNil(v.ActionDeserializer) {
 		return nil, ErrNilActionDeserializer
 	}
 	actions, err := v.deserializeActionsInRequestOrder(tr)
@@ -271,7 +271,7 @@ func (v *Validator[P, T, TA, IA, DS]) VerifyIssue(
 	signatureProvider driver.SignatureProvider,
 	attributes driver.ValidationAttributes,
 ) error {
-	if IsNil(action) {
+	if utils.IsNil(action) {
 		return ErrNilAction
 	}
 	context := &Context[P, T, TA, IA, DS]{
@@ -317,7 +317,7 @@ func (v *Validator[P, T, TA, IA, DS]) VerifyTransfer(
 	signatureProvider driver.SignatureProvider,
 	attributes driver.ValidationAttributes,
 ) error {
-	if IsNil(action) {
+	if utils.IsNil(action) {
 		return ErrNilAction
 	}
 	context := &Context[P, T, TA, IA, DS]{
@@ -396,20 +396,6 @@ func IsAnyNil[T any](args ...*T) bool {
 	return false
 }
 
-// IsNil returns true for nil values and interfaces containing typed nil values.
-func IsNil(value any) bool {
-	if value == nil {
-		return true
-	}
-	reflected := reflect.ValueOf(value)
-	switch reflected.Kind() {
-	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
-		return reflected.IsNil()
-	default:
-		return false
-	}
-}
-
 type deserializedAction[TA driver.TransferAction, IA driver.IssueAction] struct {
 	index    int
 	actionID uint32
@@ -430,7 +416,7 @@ func (v *Validator[P, T, TA, IA, DS]) deserializeActionsInRequestOrder(tr *drive
 	if tr == nil {
 		return nil, ErrNilTokenRequest
 	}
-	if IsNil(v.ActionDeserializer) {
+	if utils.IsNil(v.ActionDeserializer) {
 		return nil, ErrNilActionDeserializer
 	}
 	issues, transfers, err := v.ActionDeserializer.DeserializeActions(tr)
@@ -452,13 +438,13 @@ func (v *Validator[P, T, TA, IA, DS]) deserializeActionsInRequestOrder(tr *drive
 		}
 		switch typedAction.Type {
 		case request2.ActionType_ACTION_TYPE_ISSUE:
-			if issueIndex >= len(issues) || IsNil(issues[issueIndex]) {
+			if issueIndex >= len(issues) || utils.IsNil(issues[issueIndex]) {
 				return nil, errors.Wrapf(ErrNilAction, "issue action at request index [%d]", index)
 			}
 			action.issue = issues[issueIndex]
 			issueIndex++
 		case request2.ActionType_ACTION_TYPE_TRANSFER:
-			if transferIndex >= len(transfers) || IsNil(transfers[transferIndex]) {
+			if transferIndex >= len(transfers) || utils.IsNil(transfers[transferIndex]) {
 				return nil, errors.Wrapf(ErrNilAction, "transfer action at request index [%d]", index)
 			}
 			action.transfer = transfers[transferIndex]

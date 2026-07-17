@@ -50,13 +50,13 @@ func (b *Backend) HasBeenSignedBy(ctx context.Context, id driver.Identity, verif
 	if b.Cursor >= len(b.Sigs) {
 		return nil, errors.New("invalid state, insufficient number of signatures")
 	}
-	if IsNil(verifier) {
+	if utils.IsNil(verifier) {
 		return nil, ErrNilSignatureVerifier
 	}
 	sigma := b.Sigs[b.Cursor]
 	b.Cursor++
 
-	if !IsNil(b.Logger) {
+	if !utils.IsNil(b.Logger) {
 		b.Logger.DebugfContext(ctx, "verify signature [%s][%s][%s]", id, logging.Base64(sigma), utils.Hashable(b.Message))
 	}
 

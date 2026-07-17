@@ -13,6 +13,7 @@ import (
 	"github.com/LFDT-Panurus/panurus/token/core/common"
 	"github.com/LFDT-Panurus/panurus/token/core/fabtoken/v1/actions"
 	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/validator"
+	"github.com/LFDT-Panurus/panurus/token/services/utils"
 	"github.com/LFDT-Panurus/panurus/token/token"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 )
@@ -49,7 +50,7 @@ func IssueValidate(c context.Context, ctx *Context) error {
 	if err != nil {
 		return errors.Wrapf(err, "failed getting verifier for issuer identity [%s]", action.Issuer.String())
 	}
-	if common.IsNil(ctx.SignatureProvider) {
+	if utils.IsNil(ctx.SignatureProvider) {
 		return common.ErrNilSignatureProvider
 	}
 	// verify if the token request concatenated with the anchor was signed by the issuer
