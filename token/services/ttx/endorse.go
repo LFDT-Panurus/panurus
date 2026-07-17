@@ -154,20 +154,59 @@ func (s *EndorseView) receiveTransaction(context view.Context) ([]byte, error) {
 		return nil, errors.Wrapf(err, "failed receiving transaction")
 	}
 
-	// check that the content of the token request match
-	m1, err := s.tx.TokenRequest.MarshalToSign()
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to marshal token request to sign from the local transaction")
-	}
-	m2, err := tx.TokenRequest.MarshalToSign()
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to marshal token request to sign from the remote transaction")
-	}
-	if !bytes.Equal(m1, m2) {
-		return nil, errors.Errorf("token request's signer does not match the expected signer")
+	if err := validateEndorsedTransaction(s.tx, tx); err != nil {
+		return nil, err
 	}
 
 	return tx.FromRaw, nil
+}
+
+func validateEndorsedTransaction(expected, received *Transaction) error {
+	if expected == nil || expected.Payload == nil || received == nil || received.Payload == nil {
+		return errors.New("invalid endorsed transaction: transaction or payload is nil")
+	}
+	if expected.TokenRequest == nil || received.TokenRequest == nil {
+		return errors.New("invalid endorsed transaction: token request is nil")
+	}
+	m1, err := expected.TokenRequest.MarshalToSign()
+	if err != nil {
+		return errors.Wrap(err, "failed to marshal token request to sign from the local transaction")
+	}
+	m2, err := received.TokenRequest.MarshalToSign()
+	if err != nil {
+		return errors.Wrap(err, "failed to marshal token request to sign from the remote transaction")
+	}
+	if !bytes.Equal(m1, m2) {
+		return errors.New("invalid endorsed transaction: token request changed")
+	}
+	if expected.ID() != received.ID() || !expected.TMSID().Equal(received.TMSID()) {
+		return errors.New("invalid endorsed transaction: transaction identity changed")
+	}
+	if !bytes.Equal(expected.TxID.Nonce, received.TxID.Nonce) || !bytes.Equal(expected.TxID.Creator, received.TxID.Creator) {
+		return errors.New("invalid endorsed transaction: network transaction identity changed")
+	}
+	if !bytes.Equal(expected.Signer, received.Signer) {
+		return errors.New("invalid endorsed transaction: network signer changed")
+	}
+	if !equalTransient(expected.Transient, received.Transient) {
+		return errors.New("invalid endorsed transaction: transient data changed")
+	}
+
+	return nil
+}
+
+func equalTransient(left, right map[string][]byte) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for key, value := range left {
+		other, ok := right[key]
+		if !ok || !bytes.Equal(value, other) {
+			return false
+		}
+	}
+
+	return true
 }
 
 // ack sends back an acknowledgement message to the initiator of the endorsement collection process.

@@ -43,6 +43,7 @@ type ExchangeRecipientRequest struct {
 	WalletID      []byte
 	RecipientData *RecipientData
 	Nonce         []byte
+	Signature     []byte
 }
 
 // ExchangeRecipientResponse carries the responder's identity material together
@@ -601,7 +602,10 @@ func (s *RespondRequestRecipientIdentityView) handleMultisig(
 	}
 	logger.DebugfContext(context.Context(), "Received multisig")
 
-	// unmarshal the envelope
+	multisigIdentities, auditInfos, err := validateMultisigRecipientData(multisigRecipientData, recipientIdentity)
+	if err != nil {
+		return err
+	}
 
 	// register the multisig recipient identity
 	wm := tms.WalletManager()
@@ -625,20 +629,6 @@ func (s *RespondRequestRecipientIdentityView) handleMultisig(
 	}
 
 	// register the audit info for each party too
-	multisigIdentities, ok, err := multisig.Unwrap(multisigRecipientData.RecipientData.Identity)
-	if err != nil {
-		return errors.Wrapf(err, "failed to unwrap multisig identity")
-	}
-	if !ok {
-		return errors.Errorf("expected multisig identity")
-	}
-	ok, auditInfos, err := multisig.UnwrapAuditInfo(multisigRecipientData.RecipientData.AuditInfo)
-	if err != nil {
-		return errors.Wrapf(err, "failed to unwrap multisig audit info")
-	}
-	if !ok {
-		return errors.Errorf("expected multisig audit info")
-	}
 	for i, identity := range multisigIdentities {
 		if identity.Equal(recipientIdentity) {
 			continue
@@ -666,11 +656,36 @@ func (s *RespondRequestRecipientIdentityView) handleMultisig(
 	return nil
 }
 
+func validateMultisigRecipientData(data *MultisigRecipientData, recipientIdentity token.Identity) ([]token.Identity, [][]byte, error) {
+	if data == nil || data.RecipientData == nil {
+		return nil, nil, errors.New("invalid multisig recipient data: recipient data is nil")
+	}
+	identities, ok, err := multisig.Unwrap(data.RecipientData.Identity)
+	if err != nil {
+		return nil, nil, errors.Wrap(err, "failed to unwrap multisig identity")
+	}
+	if !ok {
+		return nil, nil, errors.New("invalid multisig recipient data: expected multisig identity")
+	}
+	ok, auditInfos, err := multisig.UnwrapAuditInfo(data.RecipientData.AuditInfo)
+	if err != nil {
+		return nil, nil, errors.Wrap(err, "failed to unwrap multisig audit info")
+	}
+	if !ok {
+		return nil, nil, errors.New("invalid multisig recipient data: expected multisig audit info")
+	}
+	if err := validateCompositeRecipientData(identities, auditInfos, data.Nodes, data.Recipients, recipientIdentity); err != nil {
+		return nil, nil, errors.Wrap(err, "invalid multisig recipient data")
+	}
+
+	return identities, auditInfos, nil
+}
+
 func (s *RespondRequestRecipientIdentityView) handlePolicy(
 	context view.Context,
 	session view.Session,
 	tms *token.ManagementService,
-	_ *RecipientRequest,
+	recipientRequest *RecipientRequest,
 	recipientIdentity token.Identity,
 ) error {
 	jsonSession := session2.NewTypedSession(context, session)
@@ -681,6 +696,11 @@ func (s *RespondRequestRecipientIdentityView) handlePolicy(
 		return errors.Wrapf(err, "failed to receive policy recipient data")
 	}
 	logger.DebugfContext(context.Context(), "Received policy recipient data")
+
+	pi, auditInfos, err := validatePolicyRecipientData(prd, recipientRequest.Policy, recipientIdentity)
+	if err != nil {
+		return err
+	}
 
 	// register the composite policy identity
 	wm := tms.WalletManager()
@@ -699,17 +719,6 @@ func (s *RespondRequestRecipientIdentityView) handlePolicy(
 	}
 
 	// register audit info for each component identity
-	pi, ok, err := boolpolicy.Unwrap(prd.RecipientData.Identity)
-	if err != nil {
-		return errors.Wrapf(err, "failed to unwrap policy identity")
-	}
-	if !ok {
-		return errors.Errorf("expected policy identity")
-	}
-	_, auditInfos, err := boolpolicy.UnwrapAuditInfo(prd.RecipientData.AuditInfo)
-	if err != nil {
-		return errors.Wrapf(err, "failed to unwrap policy audit info")
-	}
 	for i, raw := range pi.Identities {
 		componentID := token.Identity(raw)
 		if componentID.Equal(recipientIdentity) {
@@ -731,6 +740,75 @@ func (s *RespondRequestRecipientIdentityView) handlePolicy(
 		if err := resolver.Bind(context.Context(), node, prd.Recipients[i]); err != nil {
 			return errors.Wrapf(err, "failed to bind node to recipient identity")
 		}
+	}
+
+	return nil
+}
+
+func validatePolicyRecipientData(data *PolicyRecipientData, expectedPolicy string, recipientIdentity token.Identity) (*boolpolicy.PolicyIdentity, [][]byte, error) {
+	if data == nil || data.RecipientData == nil {
+		return nil, nil, errors.New("invalid policy recipient data: recipient data is nil")
+	}
+	if data.Policy != expectedPolicy {
+		return nil, nil, errors.Errorf("invalid policy recipient data: policy mismatch [%s]!=[%s]", data.Policy, expectedPolicy)
+	}
+	pi, ok, err := boolpolicy.Unwrap(data.RecipientData.Identity)
+	if err != nil {
+		return nil, nil, errors.Wrap(err, "failed to unwrap policy identity")
+	}
+	if !ok {
+		return nil, nil, errors.New("invalid policy recipient data: expected policy identity")
+	}
+	if pi.Policy != expectedPolicy {
+		return nil, nil, errors.Errorf("invalid policy recipient data: embedded policy mismatch [%s]!=[%s]", pi.Policy, expectedPolicy)
+	}
+	_, auditInfos, err := boolpolicy.UnwrapAuditInfo(data.RecipientData.AuditInfo)
+	if err != nil {
+		return nil, nil, errors.Wrap(err, "failed to unwrap policy audit info")
+	}
+	identities := make([]token.Identity, len(pi.Identities))
+	for i, raw := range pi.Identities {
+		identities[i] = raw
+	}
+	if err := validateCompositeRecipientData(identities, auditInfos, data.Nodes, data.Recipients, recipientIdentity); err != nil {
+		return nil, nil, errors.Wrap(err, "invalid policy recipient data")
+	}
+
+	return pi, auditInfos, nil
+}
+
+func validateCompositeRecipientData(
+	identities []token.Identity,
+	auditInfos [][]byte,
+	nodes []view.Identity,
+	recipients []token.Identity,
+	recipientIdentity token.Identity,
+) error {
+	if len(identities) == 0 {
+		return errors.New("composite identity has no components")
+	}
+	if len(auditInfos) != len(identities) {
+		return errors.Errorf("identity/audit-info count mismatch [%d]!=[%d]", len(identities), len(auditInfos))
+	}
+	if len(nodes) != len(identities) || len(recipients) != len(identities) {
+		return errors.Errorf(
+			"identity/node/recipient count mismatch [%d]!=[%d]!=[%d]",
+			len(identities),
+			len(nodes),
+			len(recipients),
+		)
+	}
+	foundRecipient := false
+	for i, identity := range identities {
+		if !identity.Equal(recipients[i]) {
+			return errors.Errorf("component/recipient mismatch at index [%d]", i)
+		}
+		if identity.Equal(recipientIdentity) {
+			foundRecipient = true
+		}
+	}
+	if !foundRecipient {
+		return errors.New("responder identity is not a component")
 	}
 
 	return nil
@@ -809,6 +887,14 @@ func (f *ExchangeRecipientIdentitiesView) Call(context view.Context) (any, error
 			RecipientData: localRecipientData,
 			Nonce:         nonce,
 		}
+		message, err := buildAttestationMessage(request.TMSID, request.WalletID, localRecipientData.Identity, false, "", request.Nonce, session.Info().ID, context.ID())
+		if err != nil {
+			return nil, errors.Wrap(err, "failed to build exchange initiator attestation message")
+		}
+		request.Signature, err = signRecipientAttestation(context.Context(), w, message, localRecipientData.Identity, true)
+		if err != nil {
+			return nil, errors.Wrap(err, "failed to sign exchange initiator attestation")
+		}
 		if err = session.SendTyped(context.Context(), request, TypeExchangeRecipientRequest); err != nil {
 			return nil, err
 		}
@@ -826,7 +912,7 @@ func (f *ExchangeRecipientIdentitiesView) Call(context view.Context) (any, error
 		if err != nil {
 			return nil, errors.Wrapf(err, "failed to get verifier for exchange recipient")
 		}
-		message, err := buildAttestationMessage(request.TMSID, request.WalletID, resp.RecipientData.Identity, false, "", request.Nonce, session.Info().ID, context.ID())
+		message, err = buildAttestationMessage(request.TMSID, request.WalletID, resp.RecipientData.Identity, false, "", request.Nonce, session.Info().ID, context.ID())
 		if err != nil {
 			return nil, errors.Wrapf(err, "failed to build attestation message")
 		}
@@ -887,12 +973,25 @@ func (s *RespondExchangeRecipientIdentitiesView) Call(context view.Context) (any
 	if len(request.Nonce) == 0 {
 		return nil, errors.New("exchange request missing nonce")
 	}
+	if request.RecipientData == nil {
+		return nil, errors.New("exchange request missing recipient data")
+	}
+	if len(request.Signature) == 0 {
+		return nil, errors.New("exchange request missing initiator signature")
+	}
 
 	ts, err := token.GetManagementService(context, token.WithTMSID(request.TMSID))
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to get token management service")
 	}
 	other := request.RecipientData.Identity
+	message, err := buildAttestationMessage(request.TMSID, request.WalletID, other, false, "", request.Nonce, session.Info().ID, context.ID())
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to build exchange initiator attestation message")
+	}
+	if err = verifyRecipientAttestation(context.Context(), ts, message, request.RecipientData, request.Signature, false); err != nil {
+		return nil, errors.Wrap(err, "exchange initiator key-ownership attestation failed")
+	}
 	if err = ts.WalletManager().RegisterRecipientIdentity(context.Context(), &RecipientData{
 		Identity:               other,
 		AuditInfo:              request.RecipientData.AuditInfo,
@@ -924,7 +1023,7 @@ func (s *RespondExchangeRecipientIdentitiesView) Call(context view.Context) (any
 	}
 
 	// Sign the request-bound attestation to prove key ownership when the key is local.
-	message, err := buildAttestationMessage(request.TMSID, request.WalletID, recipientData.Identity, false, "", request.Nonce, session.Info().ID, context.ID())
+	message, err = buildAttestationMessage(request.TMSID, request.WalletID, recipientData.Identity, false, "", request.Nonce, session.Info().ID, context.ID())
 	if err != nil {
 		return nil, errors.Wrapf(err, "failed to build attestation message")
 	}

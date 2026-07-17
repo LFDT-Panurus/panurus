@@ -7,6 +7,7 @@ SPDX-License-Identifier: Apache-2.0
 package ttx
 
 import (
+	"bytes"
 	"encoding/asn1"
 	"reflect"
 	"strings"
@@ -53,6 +54,75 @@ func TestMarshalMetaUnmarshalMeta(t *testing.T) {
 	if !reflect.DeepEqual(m, got) {
 		t.Fatalf("expected %+v, got %+v", m, got)
 	}
+}
+
+func TestUnmarshalMetaRejectsMalformedCardinalityWithoutPanicking(t *testing.T) {
+	raw, err := asn1.Marshal(metaSer{Keys: []string{"first", "second"}, Vals: [][]byte{[]byte("one")}})
+	if err != nil {
+		t.Fatalf("failed preparing malformed metadata: %v", err)
+	}
+
+	_, err = UnmarshalMeta(raw)
+	if err == nil || !strings.Contains(err.Error(), "key/value count mismatch") {
+		t.Fatalf("expected cardinality error, got %v", err)
+	}
+}
+
+func TestUnmarshalMetaRejectsDuplicateKeys(t *testing.T) {
+	raw, err := asn1.Marshal(metaSer{Keys: []string{"duplicate", "duplicate"}, Vals: [][]byte{[]byte("one"), []byte("two")}})
+	if err != nil {
+		t.Fatalf("failed preparing duplicate metadata: %v", err)
+	}
+
+	_, err = UnmarshalMeta(raw)
+	if err == nil || !strings.Contains(err.Error(), "duplicate key") {
+		t.Fatalf("expected duplicate-key error, got %v", err)
+	}
+}
+
+func TestUnmarshalMetaRejectsTrailingData(t *testing.T) {
+	raw, err := MarshalMeta(map[string][]byte{"key": []byte("value")})
+	if err != nil {
+		t.Fatalf("failed preparing metadata: %v", err)
+	}
+	raw = append(raw, 0, 1, 2)
+
+	_, err = UnmarshalMeta(raw)
+	if err == nil || !strings.Contains(err.Error(), "trailing data") {
+		t.Fatalf("expected trailing-data error, got %v", err)
+	}
+}
+
+func FuzzUnmarshalMetaNeverPanics(f *testing.F) {
+	valid, err := MarshalMeta(map[string][]byte{"key": []byte("value")})
+	if err != nil {
+		f.Fatalf("failed preparing valid seed: %v", err)
+	}
+	mismatched, err := asn1.Marshal(metaSer{Keys: []string{"first", "second"}, Vals: [][]byte{[]byte("one")}})
+	if err != nil {
+		f.Fatalf("failed preparing malformed seed: %v", err)
+	}
+	f.Add(valid)
+	f.Add(mismatched)
+	f.Add([]byte{0, 1, 2, 3})
+
+	f.Fuzz(func(t *testing.T, raw []byte) {
+		metadata, err := UnmarshalMeta(raw)
+		if err != nil {
+			return
+		}
+		roundTrip, err := MarshalMeta(metadata)
+		if err != nil {
+			t.Fatalf("accepted metadata could not be marshalled: %v", err)
+		}
+		decoded, err := UnmarshalMeta(roundTrip)
+		if err != nil {
+			t.Fatalf("accepted metadata failed round trip: %v", err)
+		}
+		if !reflect.DeepEqual(metadata, decoded) {
+			t.Fatalf("metadata changed across round trip: %v != %v", metadata, decoded)
+		}
+	})
 }
 
 func TestTransactionMarshalUnmarshalRoundtrip(t *testing.T) {
@@ -151,6 +221,30 @@ func TestUnmarshal_ErrorCases(t *testing.T) {
 		err := unmarshal(func(network, channel string) (dep.Network, error) { return nil, nil }, p, raw)
 		if err == nil || !strings.Contains(err.Error(), "failed unmarshalling transient") {
 			t.Fatalf("expected transient unmarshal error, got %v", err)
+		}
+	}
+
+	// case: trailing transaction data
+	{
+		ser := TransactionSer{Network: "net", Namespace: "ns"}
+		raw := append(m(ser), 1, 2, 3)
+		p := &Payload{Transient: map[string][]byte{}, TokenRequest: token.NewRequest(nil, ""), Envelope: &network.Envelope{}}
+		err := unmarshal(func(network, channel string) (dep.Network, error) { return nil, nil }, p, raw)
+		if err == nil || !strings.Contains(err.Error(), "trailing data") {
+			t.Fatalf("expected trailing-data error, got %v", err)
+		}
+	}
+
+	// case: malformed transaction does not echo attacker-controlled bytes
+	{
+		raw := []byte("attacker-controlled-log-injection")
+		p := &Payload{Transient: map[string][]byte{}, TokenRequest: token.NewRequest(nil, ""), Envelope: &network.Envelope{}}
+		err := unmarshal(func(network, channel string) (dep.Network, error) { return nil, nil }, p, raw)
+		if err == nil {
+			t.Fatal("expected malformed transaction error")
+		}
+		if bytes.Contains([]byte(err.Error()), raw) {
+			t.Fatalf("error leaked attacker-controlled raw transaction: %v", err)
 		}
 	}
 

@@ -48,7 +48,7 @@ func (f *ReceiveTransactionView) Call(context view.Context) (any, error) {
 		if errors.Is(err, utilsession.ErrTimeout) {
 			return nil, errors.Join(err, ErrTimeout)
 		}
-		logger.ErrorfContext(context.Context(), err.Error())
+		logger.ErrorfContext(context.Context(), "%s", err)
 
 		return nil, err
 	}

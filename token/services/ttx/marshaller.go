@@ -54,12 +54,25 @@ func MarshalMeta(v map[string][]byte) ([]byte, error) {
 
 func UnmarshalMeta(raw []byte) (map[string][]byte, error) {
 	var metaSer metaSer
-	_, err := asn1.Unmarshal(raw, &metaSer)
+	rest, err := asn1.Unmarshal(raw, &metaSer)
 	if err != nil {
 		return nil, err
 	}
+	if len(rest) != 0 {
+		return nil, errors.Errorf("invalid transient metadata: trailing data [%d] bytes", len(rest))
+	}
+	if len(metaSer.Keys) != len(metaSer.Vals) {
+		return nil, errors.Errorf(
+			"invalid transient metadata: key/value count mismatch [%d]!=[%d]",
+			len(metaSer.Keys),
+			len(metaSer.Vals),
+		)
+	}
 	v := make(map[string][]byte, len(metaSer.Keys))
 	for i, k := range metaSer.Keys {
+		if _, ok := v[k]; ok {
+			return nil, errors.Errorf("invalid transient metadata: duplicate key [%s]", k)
+		}
 		v[k] = metaSer.Vals[i]
 	}
 
@@ -153,8 +166,12 @@ func marshal(t *Transaction, eIDs ...string) ([]byte, error) {
 
 func unmarshal(getNetwork GetNetworkFunc, p *Payload, raw []byte) error {
 	var ser TransactionSer
-	if _, err := asn1.Unmarshal(raw, &ser); err != nil {
-		return errors.Wrapf(err, "failed unmarshalling transaction [%s]", string(raw))
+	rest, err := asn1.Unmarshal(raw, &ser)
+	if err != nil {
+		return errors.Wrap(err, "failed unmarshalling transaction")
+	}
+	if len(rest) != 0 {
+		return errors.Errorf("failed unmarshalling transaction: trailing data [%d] bytes", len(rest))
 	}
 	// sanity checks
 	if len(ser.Network) == 0 {

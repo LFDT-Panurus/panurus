@@ -110,6 +110,26 @@ func newSilentSession(t *testing.T) *dep_mock.Session {
 	return s
 }
 
+func TestReceiveSpendRequestViewRejectsNilToken(t *testing.T) {
+	env, err := jsession.WrapEnvelope(&SpendRequest{}, ttx.TypeSpendRequest)
+	require.NoError(t, err)
+	raw, err := json.Marshal(env)
+	require.NoError(t, err)
+
+	s := &dep_mock.Session{}
+	messages := make(chan *view.Message, 1)
+	messages <- &view.Message{Payload: raw}
+	s.ReceiveReturns(messages)
+	ctx := &dep_mock.Context{}
+	ctx.ContextReturns(t.Context())
+	ctx.SessionReturns(s)
+	ctx.GetServiceReturns(nil, errors.New("service not registered in test"))
+
+	_, err = NewReceiveSpendRequestView().Call(ctx)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "token is nil")
+}
+
 func TestRequestSpendView_Call_TimesOutOnUnresponsiveParty(t *testing.T) {
 	partyA := view.Identity("party-a")
 	partyB := view.Identity("party-b")

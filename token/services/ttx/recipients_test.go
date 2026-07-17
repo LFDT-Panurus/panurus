@@ -66,7 +66,8 @@ func TestExchangeRecipientRequest_BytesRoundTrip(t *testing.T) {
 			TokenMetadata:          []byte("token-meta"),
 			TokenMetadataAuditInfo: []byte("meta-audit"),
 		},
-		Nonce: []byte("exchange-nonce"),
+		Nonce:     []byte("exchange-nonce"),
+		Signature: []byte("initiator-signature"),
 	}
 
 	raw, err := original.Bytes()
@@ -79,6 +80,7 @@ func TestExchangeRecipientRequest_BytesRoundTrip(t *testing.T) {
 	assert.Equal(t, original.TMSID, decoded.TMSID)
 	assert.Equal(t, original.WalletID, decoded.WalletID)
 	assert.Equal(t, original.Nonce, decoded.Nonce)
+	assert.Equal(t, original.Signature, decoded.Signature)
 	require.NotNil(t, decoded.RecipientData)
 	assert.Equal(t, original.RecipientData.Identity, decoded.RecipientData.Identity)
 	assert.Equal(t, original.RecipientData.AuditInfo, decoded.RecipientData.AuditInfo)

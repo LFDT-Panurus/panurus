@@ -51,9 +51,10 @@ func TestVersionedRecipientResponseAckRoundTrip(t *testing.T) {
 
 func TestVersionedExchangeRecipientRoundTrip(t *testing.T) {
 	original := &ExchangeRecipientRequest{
-		TMSID:    token.TMSID{Network: "net", Channel: "ch", Namespace: "ns"},
-		WalletID: []byte("wallet"),
-		Nonce:    []byte("exchange-nonce-32bytes-pad-xxxxx"),
+		TMSID:     token.TMSID{Network: "net", Channel: "ch", Namespace: "ns"},
+		WalletID:  []byte("wallet"),
+		Nonce:     []byte("exchange-nonce-32bytes-pad-xxxxx"),
+		Signature: []byte("initiator-signature"),
 	}
 	roundTripTTXMessage(t, TypeExchangeRecipientRequest, original, &ExchangeRecipientRequest{})
 }

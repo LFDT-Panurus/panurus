@@ -71,6 +71,9 @@ func (f *ReceiveSpendRequestView) Call(context view.Context) (any, error) {
 
 		return nil, err
 	}
+	if tx.Token == nil {
+		return nil, errors.New("invalid multisig spend request: token is nil")
+	}
 
 	return tx, nil
 }

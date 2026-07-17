@@ -13,3 +13,4 @@ cmd/token_validation_service/out/
 /.antigravitycli/
 /site/
 coverage.out
+/.codex/
