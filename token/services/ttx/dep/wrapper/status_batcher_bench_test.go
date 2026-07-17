@@ -139,9 +139,7 @@ func runConcurrentLookups(b *testing.B, workers int, queries *atomic.Int64, look
 
 	var wg sync.WaitGroup
 	for range workers {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			for {
 				i := next.Add(1) - 1
 				if i >= int64(b.N) {
@@ -151,7 +149,7 @@ func runConcurrentLookups(b *testing.B, workers int, queries *atomic.Int64, look
 					failed.Add(1)
 				}
 			}
-		}()
+		})
 	}
 	wg.Wait()
 	b.StopTimer()
