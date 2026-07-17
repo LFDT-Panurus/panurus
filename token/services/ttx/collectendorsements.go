@@ -10,6 +10,7 @@ import (
 	"context"
 	"encoding/json"
 	maps0 "maps"
+	"sync"
 	"time"
 
 	"github.com/LFDT-Panurus/panurus/token"
@@ -62,9 +63,13 @@ func (sr *SignatureRequest) Bytes() ([]byte, error) {
 }
 
 type CollectEndorsementsView struct {
-	tx       *Transaction
-	Opts     *EndorsementsOpts
-	sessions map[string]view.Session
+	tx   *Transaction
+	Opts *EndorsementsOpts
+
+	// sessionsMu guards sessions: on the fail-fast path, distribution workers
+	// still in flight can read the cache while the deferred cleanup deletes from it.
+	sessionsMu sync.Mutex
+	sessions   map[string]view.Session
 }
 
 // NewCollectEndorsementsView returns an instance of the CollectEndorsementsView struct.
@@ -459,7 +464,9 @@ func (c *CollectEndorsementsView) requestAudit(context view.Context) ([]view.Ide
 		if err != nil {
 			return nil, errors.WithMessagef(err, "failed requesting auditing from [%s]", c.tx.Opts.Auditor.String())
 		}
+		c.sessionsMu.Lock()
 		c.sessions[c.tx.Opts.Auditor.String()] = sessionBoxed.(view.Session)
+		c.sessionsMu.Unlock()
 
 		return []view.Identity{c.tx.Opts.Auditor}, nil
 	} else {
@@ -473,6 +480,8 @@ func (c *CollectEndorsementsView) requestAudit(context view.Context) ([]view.Ide
 // endorsements (e.g. the auditor session). Deleting entries as they are closed
 // makes it idempotent, so the deferred call is safe to run on any return path.
 func (c *CollectEndorsementsView) cleanupSessions(ctx context.Context) {
+	c.sessionsMu.Lock()
+	defer c.sessionsMu.Unlock()
 	for key, session := range c.sessions {
 		delete(c.sessions, key)
 		if session == nil {
@@ -516,75 +525,92 @@ func (c *CollectEndorsementsView) distributeTxToParties(context view.Context, di
 		return errors.Wrapf(err, "failed adding transaction %s to the token transaction database", c.tx.ID())
 	}
 
+	// Marshal the payload for each remote party on this goroutine.
+	// If the party is an auditor, then send the full set of metadata.
+	// Otherwise, filter the metadata by Enrollment ID.
 	logger.DebugfContext(context.Context(), "start distributing to %d parties", len(finalDistributionList))
+	remote := make([]distributionListEntry, 0, len(finalDistributionList))
+	payloads := make([][]byte, 0, len(finalDistributionList))
 	for i, entry := range finalDistributionList {
 		// If it is me, no need to open a remote connection. Just store the envelope locally.
 		if entry.IsMe && !entry.Auditor {
 			logger.DebugfContext(context.Context(), "tx [%d] is me [%s], endorse locally", i, entry.ID)
 
 			continue
-		} else {
-			logger.DebugfContext(context.Context(), "tx [%d] is not me [%s:%s], ask endorse", i, entry.ID, entry.EID)
 		}
+		logger.DebugfContext(context.Context(), "tx [%d] is not me [%s:%s], ask endorse", i, entry.ID, entry.EID)
 
-		// The party is not me, open a connection to the party.
-		// If the party is an auditor, then send the full set of metadata.
-		// Otherwise, filter the metadata by Enrollment ID.
 		var txRaw []byte
 		var err error
 		if entry.Auditor {
 			logger.DebugfContext(context.Context(), "This is an auditor [%s], send the full set of metadata", entry.ID)
 			txRaw, err = c.tx.Bytes()
-			if err != nil {
-				return errors.Wrap(err, "failed marshalling transaction content")
-			}
 		} else {
 			logger.DebugfContext(context.Context(), "This is not an auditor [%s], send the filtered metadata", entry.ID)
 			txRaw, err = c.tx.Bytes(entry.EID)
-			if err != nil {
-				return errors.Wrap(err, "failed marshalling transaction content")
-			}
 		}
+		if err != nil {
+			return errors.Wrap(err, "failed marshalling transaction content")
+		}
+		remote = append(remote, entry)
+		payloads = append(payloads, txRaw)
+	}
 
-		// TODO:
-		// This operation might be retried, but this requires a change of protocol to make sure the recipient can always receive.
-		// It could be done by using a new context.
+	// TODO:
+	// This operation might be retried, but this requires a change of protocol to make sure the recipient can always receive.
+	// It could be done by using a new context.
+	// Remote parties are independent, fan out the round-trips so total latency
+	// tracks the slowest party. Workers only do network I/O and verification;
+	// the acks are recorded on this goroutine from the collected answers.
+	sigmas, err := fanOut(context.Context(), len(remote), func(i int) ([]byte, error) {
+		entry := &remote[i]
 		logger.DebugfContext(context.Context(), "Distribute to %s", entry.EID)
-		if err := c.distributeTxToParty(context, &entry, txRaw, owner); err != nil {
-			return errors.Wrapf(err, "failed distribute evn of tx [%s] to party [%s:%s]", c.tx.ID(), entry.EID, entry.ID)
+		sigma, err := c.distributeTxToParty(context, entry, payloads[i])
+		if err != nil {
+			return nil, errors.Wrapf(err, "failed distribute evn of tx [%s] to party [%s:%s]", c.tx.ID(), entry.EID, entry.ID)
 		}
 		logger.DebugfContext(context.Context(), "Done distributing to %s", entry.EID)
+
+		return sigma, nil
+	})
+	if err != nil {
+		return err
+	}
+	for i := range remote {
+		if err := owner.appendTransactionEndorseAck(context.Context(), c.tx, remote[i].LongTerm, sigmas[i]); err != nil {
+			return errors.Wrapf(err, "failed appending transaction endorsement ack to transaction %s", c.tx.ID())
+		}
 	}
 
 	return nil
 }
 
 // distributeTxToParty sends the transaction to a single party, waits for their acknowledgment,
-// verifies the acknowledgment signature, and records it in the transaction database.
+// verifies the acknowledgment signature, and returns it. It is safe to call from
+// concurrent goroutines: it writes no shared state.
 // The txRaw parameter should contain the transaction bytes filtered by the party's enrollment ID
 // (unless the party is an auditor, in which case it contains the full transaction).
 func (c *CollectEndorsementsView) distributeTxToParty(
 	context view.Context,
 	entry *distributionListEntry,
 	txRaw []byte,
-	owner *TxOwner,
-) error {
+) ([]byte, error) {
 	// Open a session to the party. and send the transaction.
 	session, err := c.getSession(context, entry.ID)
 	if err != nil {
-		return errors.Wrap(err, "failed getting session")
+		return nil, errors.Wrap(err, "failed getting session")
 	}
 	// Send the content
 	logger.DebugfContext(context.Context(), "Send transaction content")
 	ts := session2.NewTypedSession(context, session)
 	if err := ts.SendTyped(context.Context(), &TransactionPayload{Raw: txRaw}, TypeTransaction); err != nil {
-		return errors.Wrap(err, "failed sending transaction content")
+		return nil, errors.Wrap(err, "failed sending transaction content")
 	}
 
 	logger.DebugfContext(context.Context(), "Wait for ack")
 	var signaturePayload SignaturePayload
 	if err := ts.ReceiveTypedWithTimeout(TypeSignature, &signaturePayload, time.Minute); err != nil {
-		return errors.Wrapf(err, "failed reading message on session [%s]", session.Info().ID)
+		return nil, errors.Wrapf(err, "failed reading message on session [%s]", session.Info().ID)
 	}
 	sigma := signaturePayload.Signature
 	logger.DebugfContext(context.Context(), "received ack from [%s] [%s], checking signature on [%s]",
@@ -594,23 +620,19 @@ func (c *CollectEndorsementsView) distributeTxToParty(
 	logger.DebugfContext(context.Context(), "Verify signature")
 	sigService, err := sig.GetService(context)
 	if err != nil {
-		return errors.Wrapf(err, "failed getting sig service for [%s]", c.tx.Opts.Auditor)
+		return nil, errors.Wrapf(err, "failed getting sig service for [%s]", c.tx.Opts.Auditor)
 	}
 	verifier, err := sigService.GetVerifier(entry.LongTerm)
 	if err != nil {
-		return errors.Wrapf(err, "failed getting verifier for identity [%s]", entry.ID)
+		return nil, errors.Wrapf(err, "failed getting verifier for identity [%s]", entry.ID)
 	}
 	if err := verifier.Verify(txRaw, sigma); err != nil {
-		return errors.Wrapf(err, "failed verifying ack signature from [%s]", entry.ID)
+		return nil, errors.Wrapf(err, "failed verifying ack signature from [%s]", entry.ID)
 	}
 
 	logger.DebugfContext(context.Context(), "CollectEndorsementsView: collected signature from %s", entry.ID)
 
-	if err := owner.appendTransactionEndorseAck(context.Context(), c.tx, entry.LongTerm, sigma); err != nil {
-		return errors.Wrapf(err, "failed appending transaction endorsement ack to transaction %s", c.tx.ID())
-	}
-
-	return nil
+	return sigma, nil
 }
 
 // prepareDistributionList processes the raw distribution list and auditors list to create
@@ -767,9 +789,12 @@ func (c *CollectEndorsementsView) prepareDistributionList(context view.Context, 
 }
 
 // getSession retrieves an existing session for the given party from the cache,
-// or creates a new session if one doesn't exist.
+// or creates a new session if one doesn't exist. It is called by the concurrent
+// distribution workers.
 func (c *CollectEndorsementsView) getSession(context view.Context, p view.Identity) (view.Session, error) {
+	c.sessionsMu.Lock()
 	s, ok := c.sessions[p.UniqueID()]
+	c.sessionsMu.Unlock()
 	if ok {
 		logger.DebugfContext(context.Context(), "getSession: found session for [%s]", p.UniqueID())
 
