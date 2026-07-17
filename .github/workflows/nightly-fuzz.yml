@@ -1,0 +1,135 @@
+name: Nightly Fuzz
+
+on:
+  schedule:
+    - cron: '17 2 * * *'
+  workflow_dispatch:
+    inputs:
+      fuzztime:
+        default: '4h'
+        required: true
+        description: 'Duration passed to go test -fuzztime for each target'
+
+permissions:
+  contents: read
+
+env:
+  GOFLAGS: -mod=mod
+
+jobs:
+  fuzz:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    permissions:
+      contents: read
+      issues: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: common-verify-token-request
+            pkg: ./token/core/common
+            func: FuzzVerifyTokenRequestFromRawNoPanic
+          - name: common-signature-envelope
+            pkg: ./token/core/common
+            func: FuzzStructuredTokenRequestSignatureEnvelope
+          - name: fabtoken-action-deserializer
+            pkg: ./token/core/fabtoken/v1/validator
+            func: FuzzActionDeserializerNoPanic
+          - name: zkatdlog-action-deserializer
+            pkg: ./token/core/zkatdlog/nogh/v1/validator
+            func: FuzzActionDeserializerNoPanic
+          - name: zkatdlog-multi-action-deserializer
+            pkg: ./token/core/zkatdlog/nogh/v1/validator
+            func: FuzzActionDeserializerMultiActionNoPanic
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: "go.mod"
+          cache-dependency-path: "**/*.sum"
+
+      - name: Restore fuzz corpus cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/go-build/fuzz
+          key: fuzz-${{ matrix.name }}-${{ github.run_id }}
+          restore-keys: |
+            fuzz-${{ matrix.name }}-
+
+      - name: Run fuzz campaign
+        run: |
+          go test ${{ matrix.pkg }} \
+            -run='^$' \
+            -fuzz='^${{ matrix.func }}$' \
+            -fuzztime="${{ github.event.inputs.fuzztime || '4h' }}" \
+            2>&1 | tee fuzz-output.log
+
+      - name: Collect crash artifacts
+        if: failure()
+        run: |
+          mkdir -p fuzz-failure
+          cp fuzz-output.log fuzz-failure/ || true
+          find "${{ matrix.pkg }}" -type d -path "*/testdata/fuzz/${{ matrix.func }}*" \
+            -exec cp -r {} fuzz-failure/ \; || true
+
+      - name: Upload crash artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-failure-${{ matrix.name }}
+          path: fuzz-failure/
+          retention-days: 30
+
+      - name: File or update GitHub issue
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const name = '${{ matrix.name }}'
+            const pkg = '${{ matrix.pkg }}'
+            const func = '${{ matrix.func }}'
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`
+            const title = `Nightly fuzz failure: ${name}`
+
+            const body = [
+              `The nightly fuzz workflow found a failing input for \`${func}\` in \`${pkg}\`.`,
+              '',
+              `**Latest failing run:** ${runUrl}`,
+              '',
+              'Download the `fuzz-failure-' + name + '` artifact from that run for the',
+              'failing seed and full log, then reproduce locally with:',
+              '',
+              '```bash',
+              `go test ${pkg} -run='${func}/<hash>'`,
+              '```',
+              '',
+              'If confirmed, commit the failing seed file into the target\'s',
+              '`testdata/fuzz/' + func + '/` directory to add it to the permanent regression corpus.',
+            ].join('\n')
+
+            const existing = await github.rest.search.issuesAndPullRequests({
+              q: `repo:${context.repo.owner}/${context.repo.repo} is:issue is:open in:title "${title}"`,
+            })
+
+            if (existing.data.items.length > 0) {
+              const issue = existing.data.items[0]
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                body: `New failing run: ${runUrl}`,
+              })
+            } else {
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title,
+                body,
+                labels: ['testing', 'bug'],
+              })
+            }
