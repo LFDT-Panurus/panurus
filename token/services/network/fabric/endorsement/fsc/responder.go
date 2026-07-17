@@ -505,38 +505,9 @@ func (b *setupBehaviour) validate(_ view.Context, request *Request) error {
 		request.Tms = tms
 	}
 
-	pp, err := b.ppValidator.PublicParametersFromBytes(request.PublicParamsRaw)
-	if err != nil {
-		return errors.WithMessagef(err, "failed to parse public params for [%s]", request.Anchor)
-	}
-	if err := pp.Validate(); err != nil {
-		return errors.WithMessagef(err, "public params are not valid for [%s]", request.Anchor)
-	}
-
-	if existing := b.currentPublicParameters(request); existing != nil {
-		if existing.TokenDriverName() != pp.TokenDriverName() || existing.TokenDriverVersion() != pp.TokenDriverVersion() {
-			return errors.Errorf(
-				"public params driver mismatch for [%s]: expected [%s:%d], got [%s:%d]",
-				request.Anchor,
-				existing.TokenDriverName(), existing.TokenDriverVersion(),
-				pp.TokenDriverName(), pp.TokenDriverVersion(),
-			)
-		}
-	}
+	// TODO: need to add validation logic...to be addressed in a specific PR
 
 	return nil
-}
-
-func (b *setupBehaviour) currentPublicParameters(request *Request) tdriver.PublicParameters {
-	if request.Tms == nil {
-		return nil
-	}
-	ppm := request.Tms.PublicParametersManager()
-	if ppm == nil {
-		return nil
-	}
-
-	return ppm.PublicParameters()
 }
 
 func (b *setupBehaviour) translate(ctx context.Context, request *Request) error {
