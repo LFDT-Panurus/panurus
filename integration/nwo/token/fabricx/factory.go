@@ -71,7 +71,8 @@ func (b *Backend) InstallPublicParams(tms *tokentopology.TMS, ppRaw []byte) {
 	time.Sleep(10 * time.Second)
 
 	go func() {
-		for {
+		// let's wait for a maximum of one minute
+		for range 60 {
 			logger.Infof("installing public params on [%s:%s:%s:%s]...", tms.Network, tms.Channel, tms.Namespace, tms.Driver)
 			issuer := b.ClientProvider.Client("issuer")
 			if issuer != nil {
@@ -97,6 +98,7 @@ func (b *Backend) InstallPublicParams(tms *tokentopology.TMS, ppRaw []byte) {
 			logger.Infof("installing public params on [%s:%s:%s:%s]...client not ready, wait a bit...", tms.Network, tms.Channel, tms.Namespace, tms.Driver)
 			time.Sleep(1 * time.Second)
 		}
+		panic("failed installing public params")
 	}()
 }
 
