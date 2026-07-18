@@ -9,10 +9,14 @@ package validator_test
 import (
 	"testing"
 
+	"github.com/LFDT-Panurus/panurus/token/core/common"
+	fbactions "github.com/LFDT-Panurus/panurus/token/core/fabtoken/protos-go/v1/actions"
 	"github.com/LFDT-Panurus/panurus/token/core/fabtoken/v1/actions"
 	"github.com/LFDT-Panurus/panurus/token/core/fabtoken/v1/validator"
 	"github.com/LFDT-Panurus/panurus/token/driver"
+	driverv1 "github.com/LFDT-Panurus/panurus/token/driver/protos-go/v1"
 	"github.com/LFDT-Panurus/panurus/token/driver/protos-go/v1/request"
+	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/proto"
 	"github.com/stretchr/testify/require"
 )
 
@@ -41,4 +45,96 @@ func FuzzActionDeserializerNoPanic(f *testing.F) {
 	})
 }
 
-const maxFuzzActionBytes = 256 << 10
+// maxFuzzActionBytes mirrors common.MaxActionBytes: it is the real production limit enforced on
+// TypedAction.Raw by the common validator, so fuzzing beyond it exercises no additional code path.
+const maxFuzzActionBytes = common.MaxActionBytes
+
+// marshalFuzzedIssueAction builds the raw protobuf bytes of an issue action with the given
+// output count, bypassing IssueAction.Serialize so that out-of-limit shapes (which Serialize's
+// own caller never produces) can still be exercised.
+func marshalFuzzedIssueAction(outputs int) []byte {
+	ia := &fbactions.IssueAction{
+		Version: actions.ProtocolV1,
+		Issuer:  &driverv1.Identity{Raw: []byte("issuer")},
+	}
+	for range outputs {
+		ia.Outputs = append(ia.Outputs, &fbactions.IssueActionOutput{Token: &fbactions.Token{Owner: []byte("o"), Type: "TYPE", Quantity: "0x1"}})
+	}
+	raw, _ := proto.Marshal(ia)
+
+	return raw
+}
+
+// marshalFuzzedTransferAction mirrors marshalFuzzedIssueAction for transfer actions.
+func marshalFuzzedTransferAction(inputs, outputs int) []byte {
+	ta := &fbactions.TransferAction{
+		Version: actions.ProtocolV1,
+	}
+	for range inputs {
+		ta.Inputs = append(ta.Inputs, &fbactions.TransferActionInput{Input: &fbactions.Token{Owner: []byte("o"), Type: "TYPE", Quantity: "0x1"}})
+	}
+	for range outputs {
+		ta.Outputs = append(ta.Outputs, &fbactions.TransferActionOutput{Token: &fbactions.Token{Owner: []byte("o"), Type: "TYPE", Quantity: "0x1"}})
+	}
+	raw, _ := proto.Marshal(ta)
+
+	return raw
+}
+
+// boundInt clamps n into [lo, hi], using n's magnitude modulo the range width so that fuzzed
+// values (including negatives) still exercise the full range deterministically.
+func boundInt(n, lo, hi int) int {
+	if hi <= lo {
+		return lo
+	}
+	width := hi - lo + 1
+	if n < 0 {
+		n = -n
+	}
+
+	return lo + n%width
+}
+
+// FuzzActionResourceLimits fuzzes issue and transfer actions shaped by their resource
+// dimensions (input/output counts) and asserts that Deserialize never panics and rejects
+// any dimension that exceeds its configured limit with the corresponding typed error.
+func FuzzActionResourceLimits(f *testing.F) {
+	f.Add(true, 1, 1)
+	f.Add(true, 1, actions.MaxOutputs)
+	f.Add(true, 1, actions.MaxOutputs+1)
+	f.Add(false, 1, 1)
+	f.Add(false, actions.MaxInputs, 1)
+	f.Add(false, actions.MaxInputs+1, 1)
+	f.Add(false, 1, actions.MaxOutputs)
+	f.Add(false, 1, actions.MaxOutputs+1)
+
+	f.Fuzz(func(t *testing.T, isIssue bool, inputs, outputs int) {
+		inputs = boundInt(inputs, 1, 512)
+		outputs = boundInt(outputs, 1, 512)
+
+		var raw []byte
+		var err error
+		if isIssue {
+			raw = marshalFuzzedIssueAction(outputs)
+			require.NotPanics(t, func() {
+				err = (&actions.IssueAction{}).Deserialize(raw)
+			})
+			if outputs > actions.MaxOutputs {
+				require.ErrorIs(t, err, actions.ErrTooManyOutputs)
+			}
+
+			return
+		}
+
+		raw = marshalFuzzedTransferAction(inputs, outputs)
+		require.NotPanics(t, func() {
+			err = (&actions.TransferAction{}).Deserialize(raw)
+		})
+		switch {
+		case inputs > actions.MaxInputs:
+			require.ErrorIs(t, err, actions.ErrTooManyInputs)
+		case outputs > actions.MaxOutputs:
+			require.ErrorIs(t, err, actions.ErrTooManyOutputs)
+		}
+	})
+}

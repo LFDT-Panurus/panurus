@@ -214,6 +214,18 @@ func (i *Action) Validate() error {
 	if len(i.Proof) == 0 {
 		return ErrEmptyProof
 	}
+	if len(i.Proof) > MaxProofBytes {
+		return ErrProofTooLarge
+	}
+	if len(i.Inputs) > MaxInputs {
+		return ErrTooManyInputs
+	}
+	if len(i.Outputs) > MaxOutputs {
+		return ErrTooManyOutputs
+	}
+	if err := checkMetadataLimits(i.Metadata); err != nil {
+		return err
+	}
 
 	return nil
 }
@@ -292,6 +304,22 @@ func (i *Action) Deserialize(raw []byte) error {
 	// assert version
 	if issueAction.Version != ProtocolV1 {
 		return errors.Join(ErrInvalidProtocolVersion, errors.Errorf("expected [%d], got [%d]", ProtocolV1, issueAction.Version))
+	}
+
+	// enforce resource limits before any allocation proportional to attacker-controlled counts
+	if len(issueAction.Inputs) > MaxInputs {
+		return ErrTooManyInputs
+	}
+	if len(issueAction.Outputs) > MaxOutputs {
+		return ErrTooManyOutputs
+	}
+	if err := checkMetadataLimits(issueAction.Metadata); err != nil {
+		return err
+	}
+	if proof := issueAction.GetProof(); proof != nil {
+		if len(proof.GetProof()) > MaxProofBytes || len(proof.GetCspBasedProof()) > MaxProofBytes {
+			return ErrProofTooLarge
+		}
 	}
 
 	// inputs

@@ -17,11 +17,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-const (
-	maxFuzzRequestBytes   = 256 << 10
-	maxFuzzSignatureBytes = 4 << 10
-)
-
 func FuzzVerifyTokenRequestFromRawNoPanic(f *testing.F) {
 	valid, err := (&driver.TokenRequest{Actions: []*driver.TypedAction{
 		{Type: request.ActionType_ACTION_TYPE_TRANSFER, Raw: []byte("transfer")},
@@ -32,7 +27,7 @@ func FuzzVerifyTokenRequestFromRawNoPanic(f *testing.F) {
 	f.Add([]byte("malformed"))
 
 	f.Fuzz(func(t *testing.T, raw []byte) {
-		if len(raw) > maxFuzzRequestBytes {
+		if len(raw) > MaxRequestBytes {
 			t.Skip()
 		}
 		actionDeserializer := &dmock.ActionDeserializer[driver.TransferAction, driver.IssueAction]{}
@@ -71,7 +66,7 @@ func FuzzStructuredTokenRequestSignatureEnvelope(f *testing.F) {
 	f.Add(uint32(0), []byte("signature"), true)
 
 	f.Fuzz(func(t *testing.T, actionID uint32, signature []byte, appendExtra bool) {
-		if len(signature) == 0 || len(signature) > maxFuzzSignatureBytes {
+		if len(signature) == 0 || len(signature) > MaxSignatureBytes {
 			t.Skip()
 		}
 		actionDeserializer := &dmock.ActionDeserializer[driver.TransferAction, driver.IssueAction]{}
@@ -104,4 +99,96 @@ func FuzzStructuredTokenRequestSignatureEnvelope(f *testing.F) {
 			_, _, _ = validator.VerifyTokenRequestFromRaw(t.Context(), nil, "anchor", raw)
 		})
 	})
+}
+
+// FuzzRequestResourceLimits fuzzes token requests shaped by their resource dimensions (action
+// count, signature count, per-action bytes, per-signature bytes) and asserts that
+// VerifyTokenRequestFromRaw never panics, and that any request exceeding a configured limit is
+// rejected with the corresponding typed error rather than reaching signature verification.
+func FuzzRequestResourceLimits(f *testing.F) {
+	f.Add(1, 0, 8, 8)
+	f.Add(MaxActions, 0, 8, 8)
+	f.Add(MaxActions+1, 0, 8, 8)
+	f.Add(1, 1, 8, 8)
+	f.Add(1, MaxSignatures, 8, 8)
+	f.Add(1, MaxSignatures+1, 8, 8)
+	f.Add(1, 0, MaxActionBytes, 8)
+	f.Add(1, 0, MaxActionBytes+1, 8)
+	f.Add(1, 1, 8, MaxSignatureBytes)
+	f.Add(1, 1, 8, MaxSignatureBytes+1)
+
+	f.Fuzz(func(t *testing.T, numActions, numSignatures, actionBytes, sigBytes int) {
+		// Bound fuzzed counts/sizes to a range that keeps the test fast while still crossing
+		// every configured limit; the values above MaxActions/MaxSignatures/MaxActionBytes/
+		// MaxSignatureBytes are the ones this test cares about observing rejection for.
+		numActions = boundInt(numActions, 0, MaxActions+8)
+		numSignatures = boundInt(numSignatures, 0, MaxSignatures+8)
+		// Actions and signatures must carry at least one byte: TokenRequest.Validate rejects
+		// empty Raw/Signature bytes before any resource-limit check runs.
+		actionBytes = boundInt(actionBytes, 1, MaxActionBytes+8)
+		sigBytes = boundInt(sigBytes, 1, MaxSignatureBytes+8)
+
+		tr := &driver.TokenRequest{
+			Actions: actionsOfLen(numActions),
+		}
+		for i := range tr.Actions {
+			tr.Actions[i].Raw = make([]byte, actionBytes)
+		}
+		tr.Signatures = make([]*driver.RequestSignature, numSignatures)
+		for i := range tr.Signatures {
+			tr.Signatures[i] = &driver.RequestSignature{Action: &driver.ActionSignature{ActionID: 0, Signature: make([]byte, sigBytes)}}
+		}
+
+		raw, err := tr.Bytes()
+		require.NoError(t, err)
+
+		actionDeserializer := &dmock.ActionDeserializer[driver.TransferAction, driver.IssueAction]{}
+		actionDeserializer.DeserializeActionsCalls(func(tr *driver.TokenRequest) ([]driver.IssueAction, []driver.TransferAction, error) {
+			transfers := make([]driver.TransferAction, len(tr.Actions))
+			for i := range transfers {
+				transfers[i] = &dmock.TransferAction{}
+			}
+
+			return nil, transfers, nil
+		})
+		validator := NewValidator[driver.PublicParameters, driver.Input, driver.TransferAction, driver.IssueAction, driver.Deserializer](
+			&logging.MockLogger{}, nil, nil, actionDeserializer, nil, nil, nil,
+		)
+
+		var validationErr error
+		require.NotPanics(t, func() {
+			_, _, validationErr = validator.VerifyTokenRequestFromRaw(t.Context(), nil, "anchor", raw)
+		})
+
+		switch {
+		case len(raw) > MaxRequestBytes:
+			// The raw envelope size gate runs before the request is even parsed, so an
+			// oversized action or signature payload may be caught here first.
+			require.ErrorIs(t, validationErr, ErrRequestTooLarge)
+		case numActions == 0:
+			require.ErrorIs(t, validationErr, ErrNoActions)
+		case numActions > MaxActions:
+			require.ErrorIs(t, validationErr, ErrTooManyActions)
+		case numSignatures > MaxSignatures:
+			require.ErrorIs(t, validationErr, ErrTooManySignatures)
+		case actionBytes > MaxActionBytes:
+			require.ErrorIs(t, validationErr, ErrActionTooLarge)
+		case numSignatures > 0 && sigBytes > MaxSignatureBytes:
+			require.ErrorIs(t, validationErr, ErrSignatureTooLarge)
+		}
+	})
+}
+
+// boundInt clamps n into [lo, hi], using n's magnitude modulo the range width so that fuzzed
+// values (including negatives) still exercise the full range deterministically.
+func boundInt(n, lo, hi int) int {
+	if hi <= lo {
+		return lo
+	}
+	width := hi - lo + 1
+	if n < 0 {
+		n = -n
+	}
+
+	return lo + n%width
 }

@@ -194,6 +194,9 @@ func (t *TransferAction) Validate() error {
 	if len(t.Inputs) == 0 {
 		return errors.Errorf("invalid number of token inputs, expected at least 1")
 	}
+	if len(t.Inputs) > MaxInputs {
+		return ErrTooManyInputs
+	}
 	for i, in := range t.Inputs {
 		if in == nil {
 			return errors.Errorf("invalid input at index [%d], empty input", i)
@@ -211,6 +214,9 @@ func (t *TransferAction) Validate() error {
 			return errors.Wrapf(err, "invalid input token at index [%d]", i)
 		}
 	}
+	if len(t.Outputs) > MaxOutputs {
+		return ErrTooManyOutputs
+	}
 	for i, out := range t.Outputs {
 		if out == nil {
 			return errors.Errorf("invalid output at index [%d], empty output", i)
@@ -221,6 +227,9 @@ func (t *TransferAction) Validate() error {
 		if len(out.Quantity) == 0 {
 			return errors.Errorf("invalid output's quantity at index [%d], output quantity is empty", i)
 		}
+	}
+	if err := checkMetadataLimits(t.Metadata); err != nil {
+		return err
 	}
 	// The following check must happen only if the public parameters contain issuers.
 	// The validator enforces the signature of an issuer only in that case.
@@ -286,6 +295,17 @@ func (t *TransferAction) Deserialize(raw []byte) error {
 	// assert version
 	if action.Version != ProtocolV1 {
 		return errors.Errorf("invalid issue version, expected [%d], got [%d]", ProtocolV1, action.Version)
+	}
+
+	// enforce resource limits before any allocation proportional to attacker-controlled counts
+	if len(action.Inputs) > MaxInputs {
+		return ErrTooManyInputs
+	}
+	if len(action.Outputs) > MaxOutputs {
+		return ErrTooManyOutputs
+	}
+	if err := checkMetadataLimits(action.Metadata); err != nil {
+		return err
 	}
 
 	// inputs

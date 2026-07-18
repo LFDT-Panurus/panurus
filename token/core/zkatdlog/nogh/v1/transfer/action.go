@@ -335,6 +335,9 @@ func (t *Action) Validate() error {
 	if len(t.Inputs) == 0 {
 		return ErrInvalidInputs
 	}
+	if len(t.Inputs) > MaxInputs {
+		return ErrTooManyInputs
+	}
 	for i, in := range t.Inputs {
 		if in == nil {
 			return errors.Wrapf(ErrEmptyInput, "invalid input at index [%d], empty input", i)
@@ -361,6 +364,9 @@ func (t *Action) Validate() error {
 	if len(t.Outputs) == 0 {
 		return ErrInvalidOutputs
 	}
+	if len(t.Outputs) > MaxOutputs {
+		return ErrTooManyOutputs
+	}
 	for i, out := range t.Outputs {
 		if out == nil {
 			return errors.Wrapf(ErrEmptyOutputToken, "invalid output token at index [%d]", i)
@@ -379,6 +385,12 @@ func (t *Action) Validate() error {
 	}
 	if len(t.Proof) == 0 {
 		return ErrEmptyProof
+	}
+	if len(t.Proof) > MaxProofBytes {
+		return ErrProofTooLarge
+	}
+	if err := checkMetadataLimits(t.Metadata); err != nil {
+		return err
 	}
 
 	return nil
@@ -463,6 +475,22 @@ func (t *Action) Deserialize(raw []byte) error {
 	// assert version
 	if action.Version != ProtocolV1 {
 		return errors.Wrapf(ErrInvalidVersion, "expected [%d], got [%d]", ProtocolV1, action.Version)
+	}
+
+	// enforce resource limits before any allocation proportional to attacker-controlled counts
+	if len(action.Inputs) > MaxInputs {
+		return ErrTooManyInputs
+	}
+	if len(action.Outputs) > MaxOutputs {
+		return ErrTooManyOutputs
+	}
+	if err := checkMetadataLimits(action.Metadata); err != nil {
+		return err
+	}
+	if proof := action.GetProof(); proof != nil {
+		if len(proof.GetProof()) > MaxProofBytes || len(proof.GetCspBasedProof()) > MaxProofBytes {
+			return ErrProofTooLarge
+		}
 	}
 
 	// inputs

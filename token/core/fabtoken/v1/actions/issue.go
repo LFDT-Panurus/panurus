@@ -83,6 +83,14 @@ func (i *IssueAction) Deserialize(raw []byte) error {
 		return errors.Errorf("invalid issue version, expected [%d], got [%d]", ProtocolV1, issueAction.Version)
 	}
 
+	// enforce resource limits before any allocation proportional to attacker-controlled counts
+	if len(issueAction.Outputs) > MaxOutputs {
+		return ErrTooManyOutputs
+	}
+	if err := checkMetadataLimits(issueAction.Metadata); err != nil {
+		return err
+	}
+
 	// outputs
 	i.Outputs = make([]*Output, len(issueAction.Outputs))
 	for j, output := range issueAction.Outputs {
@@ -164,6 +172,9 @@ func (i *IssueAction) Validate() error {
 	if len(i.Outputs) == 0 {
 		return errors.Errorf("no outputs in issue action")
 	}
+	if len(i.Outputs) > MaxOutputs {
+		return ErrTooManyOutputs
+	}
 	for i, output := range i.Outputs {
 		if output == nil {
 			return errors.Errorf("nil output in issue action")
@@ -174,6 +185,9 @@ func (i *IssueAction) Validate() error {
 		if len(output.Quantity) == 0 {
 			return errors.Errorf("invalid output's quantity at index [%d], output quantity is empty", i)
 		}
+	}
+	if err := checkMetadataLimits(i.Metadata); err != nil {
+		return err
 	}
 
 	return nil

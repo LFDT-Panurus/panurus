@@ -128,6 +128,9 @@ func (v *Validator[P, T, TA, IA, DS]) VerifyTokenRequestFromRaw(ctx context.Cont
 	if len(raw) == 0 {
 		return nil, nil, errors.New("empty token request")
 	}
+	if err := CheckRawRequestSize(raw); err != nil {
+		return nil, nil, err
+	}
 	tr := &driver.TokenRequest{}
 	err := tr.FromBytes(raw)
 	if err != nil {
@@ -150,6 +153,9 @@ func (v *Validator[P, T, TA, IA, DS]) VerifyTokenRequestFromRaw(ctx context.Cont
 	}
 	if len(tr.Actions) == 0 {
 		return nil, nil, ErrNoActions
+	}
+	if err := CheckRequestLimits(tr); err != nil {
+		return nil, nil, err
 	}
 
 	// Prepare message expected to be signed

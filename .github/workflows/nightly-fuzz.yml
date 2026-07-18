@@ -57,6 +57,15 @@ jobs:
           - name: identity-idemixnym-audit-info-deserializer
             pkg: ./token/services/identity/idemixnym/nym
             func: FuzzDeserializeAuditInfoNoPanic
+          - name: common-request-limits
+            pkg: ./token/core/common
+            func: FuzzRequestResourceLimits
+          - name: zkatdlog-action-limits
+            pkg: ./token/core/zkatdlog/nogh/v1/validator
+            func: FuzzActionResourceLimits
+          - name: fabtoken-action-limits
+            pkg: ./token/core/fabtoken/v1/validator
+            func: FuzzActionResourceLimits
 
     steps:
       - name: Checkout code
@@ -78,6 +87,7 @@ jobs:
 
       - name: Run fuzz campaign
         run: |
+          set -o pipefail
           go test ${{ matrix.pkg }} \
             -run='^$' \
             -fuzz='^${{ matrix.func }}$' \
