@@ -31,6 +31,10 @@ type fakeTMSProvider struct {
 	tms driver.TokenManagerService
 }
 
+func (f *fakeTMSProvider) ConfigurationFor(network, channel, namespace string) (driver.Configuration, error) {
+	return nil, errors.New("not implemented")
+}
+
 func (f *fakeTMSProvider) GetTokenManagerService(_ driver.ServiceOptions) (driver.TokenManagerService, error) {
 	return f.tms, nil
 }
@@ -216,4 +220,50 @@ func TestGetRecipientIdentity_NoRecipientData_UsesLocalWallet(t *testing.T) {
 	assert.NotNil(t, w)
 	assert.False(t, r.ExternalWallet)
 	assert.Equal(t, 0, mockOwnerWallet.RegisterRecipientCallCount())
+}
+
+// TestGetRecipientIdentity_GetRecipientDataFails verifies that when no
+// RecipientData is supplied and the local wallet's own GetRecipientData call
+// fails, getRecipientIdentity surfaces the error instead of proceeding.
+func TestGetRecipientIdentity_GetRecipientDataFails(t *testing.T) {
+	mockOwnerWallet := &driver_mock.OwnerWallet{}
+	mockOwnerWallet.GetRecipientDataReturns(nil, errors.New("keystore unavailable"))
+
+	mockWalletService := &driver_mock.WalletService{}
+	mockWalletService.OwnerWalletReturns(mockOwnerWallet, nil)
+
+	mockTMS := newStubbedTokenManagerService(mockWalletService)
+	ctx := newWithdrawalTestContext(t, mockTMS)
+
+	r := &RequestWithdrawalView{Wallet: "local-wallet"}
+
+	tmsID, recipientData, w, err := r.getRecipientIdentity(ctx)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to get recipient data")
+	assert.Nil(t, tmsID)
+	assert.Nil(t, recipientData)
+	assert.Nil(t, w)
+}
+
+// TestGetRecipientIdentity_WalletNotFound verifies that when the requested wallet
+// cannot be resolved (e.g. the wallet service fails to return an owner wallet),
+// getRecipientIdentity surfaces a "wallet not found" error instead of panicking
+// on a nil wallet.
+func TestGetRecipientIdentity_WalletNotFound(t *testing.T) {
+	mockWalletService := &driver_mock.WalletService{}
+	mockWalletService.OwnerWalletReturns(nil, errors.New("no such wallet"))
+
+	mockTMS := newStubbedTokenManagerService(mockWalletService)
+	ctx := newWithdrawalTestContext(t, mockTMS)
+
+	r := &RequestWithdrawalView{Wallet: "missing-wallet"}
+
+	tmsID, recipientData, w, err := r.getRecipientIdentity(ctx)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not found")
+	assert.Nil(t, tmsID)
+	assert.Nil(t, recipientData)
+	assert.Nil(t, w)
 }
