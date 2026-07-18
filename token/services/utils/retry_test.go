@@ -867,7 +867,7 @@ func TestNewRetryRunnerWithJitter_ZeroJitter(t *testing.T) {
 	runner := utils.NewRetryRunnerWithJitter(
 		testLogger(),
 		5,
-		10*time.Millisecond,
+		50*time.Millisecond,
 		1*time.Second,
 		2.0,
 		0.0, // no jitter
@@ -887,8 +887,9 @@ func TestNewRetryRunnerWithJitter_ZeroJitter(t *testing.T) {
 	// Skip first interval (no sleep before first call)
 	intervals = intervals[1:]
 
-	// With zero jitter, delays should follow strict exponential pattern
-	// Expected: 10ms, 20ms, 40ms, 80ms, 160ms
+	// With zero jitter, delays should follow strict exponential pattern.
+	// Expected: 50ms, 100ms, 200ms, 400ms. A larger base delay (vs. 10ms) keeps
+	// OS scheduling jitter small relative to the delay, avoiding flakiness.
 	for i := 1; i < len(intervals); i++ {
 		ratio := float64(intervals[i]) / float64(intervals[i-1])
 		// Allow tolerance for scheduling jitter but should be close to 2.0
