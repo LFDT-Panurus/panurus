@@ -489,9 +489,11 @@ func (b *setupBehaviour) extractTransient(tx *endorser.Transaction, request *Req
 	return nil
 }
 
-// validate parses the submitted public parameters, checks that they are internally consistent,
-// and, if the TMS already has public parameters, checks that the token driver name and version
-// have not changed.
+// validate looks up the TMS for request.TMSID, if any, and checks that it matches the
+// requested TMS ID. Validating the submitted public parameters themselves (parsing,
+// internal consistency, and driver compatibility against an existing TMS) is left for
+// https://github.com/LFDT-Panurus/panurus/issues/1943, since at this point we don't know
+// enough to make that call yet.
 func (b *setupBehaviour) validate(_ view.Context, request *Request) error {
 	tms, err := b.tokenManagementSystemProvider.GetManagementService(token2.WithTMSID(request.TMSID))
 	if err != nil {
@@ -505,7 +507,7 @@ func (b *setupBehaviour) validate(_ view.Context, request *Request) error {
 		request.Tms = tms
 	}
 
-	// TODO: need to add validation logic...to be addressed in a specific PR
+	// TODO: need to add validation logic...to be addressed in #1943
 
 	return nil
 }

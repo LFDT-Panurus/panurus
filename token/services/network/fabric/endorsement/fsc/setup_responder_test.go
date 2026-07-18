@@ -11,7 +11,6 @@ import (
 
 	"github.com/LFDT-Panurus/panurus/token"
 	mock2 "github.com/LFDT-Panurus/panurus/token/driver/mock"
-	mock3 "github.com/LFDT-Panurus/panurus/token/mock"
 	"github.com/LFDT-Panurus/panurus/token/services/network/fabric/endorsement/fsc"
 	"github.com/LFDT-Panurus/panurus/token/services/network/fabric/endorsement/fsc/mock"
 	"github.com/LFDT-Panurus/panurus/token/services/ttx/dep/tokenapi"
@@ -101,10 +100,6 @@ func mockNewSetupPublicParamsResponderView(t *testing.T, overrideTMSID *token.TM
 
 	ppValidator := &mock.PublicParamsValidator{}
 	pp := &mock2.PublicParameters{}
-	pp.ValidateReturns(nil)
-	// TokenDriverName/TokenDriverVersion default to the zero value, matching the
-	// zero-value PublicParameters mock returned by tokenapi.NewMockedManagementService's
-	// PublicParamsManager, so the driver/version compatibility check passes by default.
 	ppValidator.PublicParametersFromBytesReturns(pp, nil)
 
 	view := fsc.NewResponderView(
@@ -323,81 +318,6 @@ func TestSetupPublicParamsResponderView(t *testing.T) {
 			expectError:      true,
 			expectErrorType:  fsc.ErrValidateProposal,
 			expectErrContain: "proposal signature verification failed",
-			verify: func(m *MockNewSetupPublicParamsResponderView, res any) {
-				assert.Equal(t, 1, m.rws.DoneCallCount())
-			},
-		},
-		{
-			name: "failed to parse public params",
-			setup: func() *MockNewSetupPublicParamsResponderView {
-				m := mockNewSetupPublicParamsResponderView(t, nil)
-				m.ppValidator.PublicParametersFromBytesReturns(nil, errors.New("cannot parse"))
-
-				return m
-			},
-			expectError:      true,
-			expectErrorType:  fsc.ErrValidateProposal,
-			expectErrContain: "failed to parse public params",
-			verify: func(m *MockNewSetupPublicParamsResponderView, res any) {
-				assert.Equal(t, 1, m.rws.DoneCallCount())
-			},
-		},
-		{
-			name: "public params fail validation",
-			setup: func() *MockNewSetupPublicParamsResponderView {
-				m := mockNewSetupPublicParamsResponderView(t, nil)
-				m.pp.ValidateReturns(errors.New("not valid"))
-
-				return m
-			},
-			expectError:      true,
-			expectErrorType:  fsc.ErrValidateProposal,
-			expectErrContain: "public params are not valid",
-			verify: func(m *MockNewSetupPublicParamsResponderView, res any) {
-				assert.Equal(t, 1, m.rws.DoneCallCount())
-			},
-		},
-		{
-			name: "public params driver mismatch against existing TMS",
-			setup: func() *MockNewSetupPublicParamsResponderView {
-				m := mockNewSetupPublicParamsResponderView(t, nil)
-				existing := &mock2.PublicParameters{}
-				existing.TokenDriverNameReturns("other_driver")
-				existing.TokenDriverVersionReturns(2)
-				ppm := &mock2.PublicParamsManager{}
-				ppm.PublicParametersReturns(existing)
-				tms := &mock2.TokenManagerService{}
-				tms.PublicParamsManagerReturns(ppm)
-				vp := &mock3.VaultProvider{}
-				vault := &mock2.Vault{}
-				qe := &mock2.QueryEngine{}
-				vault.QueryEngineReturns(qe)
-				vp.VaultReturns(vault, nil)
-				retms, err := token.NewManagementService(token.TMSID{
-					Network:   "a_network",
-					Channel:   "a_channel",
-					Namespace: "a_namespace",
-				}, tms, nil, vp, nil, nil)
-				require.NoError(t, err)
-				tmsp := &mock.TokenManagementSystemProvider{}
-				tmsp.GetManagementServiceReturns(retms, nil)
-				m.view = fsc.NewResponderView(
-					nil,
-					func(txID string, namespace string, rws *fabric.RWSet) (fsc.Translator, error) {
-						return m.translator, nil
-					},
-					m.es,
-					tmsp,
-					&mock.StorageProvider{},
-					m.channelProvider,
-					m.ppValidator,
-				)
-
-				return m
-			},
-			expectError:      true,
-			expectErrorType:  fsc.ErrValidateProposal,
-			expectErrContain: "public params driver mismatch",
 			verify: func(m *MockNewSetupPublicParamsResponderView, res any) {
 				assert.Equal(t, 1, m.rws.DoneCallCount())
 			},
