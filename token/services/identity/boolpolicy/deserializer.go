@@ -94,6 +94,9 @@ func (d *TypedIdentityDeserializer) GetAuditInfoMatcher(ctx context.Context, own
 	if err = pi.Deserialize(tid.Identity); err != nil {
 		return nil, err
 	}
+	if err = validateComponentIdentities(pi.Identities); err != nil {
+		return nil, errors.Wrap(err, "invalid policy identity")
+	}
 	if len(pi.Identities) != len(ei.IdentityAuditInfos) {
 		return nil, errors.Errorf("expected %d audit info but received %d",
 			len(pi.Identities), len(ei.IdentityAuditInfos))
@@ -115,6 +118,9 @@ func (d *TypedIdentityDeserializer) DeserializeVerifier(ctx context.Context, typ
 	pi := &PolicyIdentity{}
 	if err := pi.Deserialize(raw); err != nil {
 		return nil, errors.Wrap(err, "failed to unmarshal policy identity")
+	}
+	if err := validateComponentIdentities(pi.Identities); err != nil {
+		return nil, errors.Wrap(err, "invalid policy identity")
 	}
 	node, err := Parse(pi.Policy)
 	if err != nil {

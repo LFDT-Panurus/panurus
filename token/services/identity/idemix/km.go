@@ -359,15 +359,14 @@ func (p *KeyManager) DeserializeSignerNoProbe(ctx context.Context, raw []byte) (
 func (p *KeyManager) Info(ctx context.Context, raw []byte, auditInfo []byte) (string, error) {
 	eid := ""
 	if len(auditInfo) != 0 {
-		ai := &crypto.AuditInfo{
-			Csp:             p.Csp,
-			IssuerPublicKey: p.IssuerPublicKey,
-			SchemaManager:   p.SchemaManager,
-			Schema:          p.Schema,
-		}
-		if err := ai.FromBytes(auditInfo); err != nil {
+		ai, err := crypto.DeserializeAuditInfo(auditInfo)
+		if err != nil {
 			return "", err
 		}
+		ai.Csp = p.Csp
+		ai.IssuerPublicKey = p.IssuerPublicKey
+		ai.SchemaManager = p.SchemaManager
+		ai.Schema = p.Schema
 		if err := ai.Match(ctx, raw); err != nil {
 			return "", err
 		}

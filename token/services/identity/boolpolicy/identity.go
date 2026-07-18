@@ -151,6 +151,30 @@ func (e *InfoMatcher) Match(ctx context.Context, raw []byte) error {
 	return nil
 }
 
+// validateComponentIdentities rejects an empty/none component identity and
+// any duplicate among ids. This is the single choke point applied both when
+// constructing a policy identity via WrapPolicyIdentity and when accepting
+// one from raw (potentially attacker-controlled) wire bytes during
+// deserialization in deserializer.go — an attacker who crafts a
+// PolicyIdentity's DER bytes directly bypasses WrapPolicyIdentity entirely,
+// so validation must also happen at the deserialization boundary to
+// actually close the gap.
+func validateComponentIdentities(ids [][]byte) error {
+	seen := make(map[string]struct{}, len(ids))
+	for k, raw := range ids {
+		id := token.Identity(raw)
+		if id.IsNone() {
+			return errors.Errorf("component identity at index %d must not be empty", k)
+		}
+		if _, dup := seen[id.UniqueID()]; dup {
+			return errors.Errorf("component identity at index %d is a duplicate of an earlier identity", k)
+		}
+		seen[id.UniqueID()] = struct{}{}
+	}
+
+	return nil
+}
+
 // WrapPolicyIdentity encodes policy and identities into a fully-enveloped
 // token.Identity (TypedIdentity with type tag Policy).
 func WrapPolicyIdentity(policy string, ids ...token.Identity) (token.Identity, error) {
@@ -164,6 +188,9 @@ func WrapPolicyIdentity(policy string, ids ...token.Identity) (token.Identity, e
 	raw2D := make([][]byte, len(ids))
 	for k, id := range ids {
 		raw2D[k] = id
+	}
+	if err := validateComponentIdentities(raw2D); err != nil {
+		return nil, err
 	}
 	pi := &PolicyIdentity{Policy: policy, Identities: raw2D}
 

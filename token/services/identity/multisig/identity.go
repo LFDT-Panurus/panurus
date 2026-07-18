@@ -42,11 +42,38 @@ func (m *MultiIdentity) Bytes() ([]byte, error) {
 	return asn1.Marshal(*m)
 }
 
+// validateComponentIdentities rejects an empty/none component identity and
+// any duplicate among ids. This is the single choke point applied both when
+// constructing a multisig identity via WrapIdentities and when accepting one
+// from raw (potentially attacker-controlled) wire bytes during
+// deserialization in deserializer.go — an attacker who crafts a
+// MultiIdentity's DER bytes directly bypasses WrapIdentities entirely, so
+// validation must also happen at the deserialization boundary to actually
+// close the gap.
+func validateComponentIdentities(ids []token.Identity) error {
+	seen := make(map[string]struct{}, len(ids))
+	for k, id := range ids {
+		if id.IsNone() {
+			return errors.Errorf("component identity at index %d must not be empty", k)
+		}
+		if _, dup := seen[id.UniqueID()]; dup {
+			return errors.Errorf("component identity at index %d is a duplicate of an earlier identity", k)
+		}
+		seen[id.UniqueID()] = struct{}{}
+	}
+
+	return nil
+}
+
 // WrapIdentities wraps the given identities into a multisig identity
 func WrapIdentities(ids ...token.Identity) (token.Identity, error) {
 	if len(ids) == 0 {
 		return nil, errors.New("no identities provided")
 	}
+	if err := validateComponentIdentities(ids); err != nil {
+		return nil, err
+	}
+
 	mi := &MultiIdentity{Identities: ids}
 	raw, err := mi.Bytes()
 	if err != nil {

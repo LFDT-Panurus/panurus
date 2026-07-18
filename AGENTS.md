@@ -148,6 +148,24 @@ All PRs and pushes to `main` trigger these workflows:
 - Use `TEST_FILTER` environment variable with Ginkgo labels for focused testing
 - Example: `TEST_FILTER="T1"` runs only tests with T1 label
 
+### Fuzz Testing
+- Add a `FuzzXxx` test (Go native fuzzing) wherever meaningful — any exported
+  function that parses untrusted/attacker-controlled bytes (deserializers,
+  wire-format decoders, signature/identity/token parsers) should get one,
+  proactively when the entry point is added or touched, not only after a bug
+  is found there.
+- Seed the corpus with `f.Add(...)`: valid input, empty input, truncated/
+  malformed input, and any known historical edge cases (e.g. a payload that
+  previously triggered a panic).
+- Verify locally before committing: `go test <pkg> -run='^$' -fuzz='^FuzzXxx$' -fuzztime=20s`
+  with no panics, plus a plain `go test <pkg>` run to confirm the seed corpus
+  passes as ordinary test cases.
+- **Wire every new `FuzzXxx` target into `.github/workflows/nightly-fuzz.yml`**:
+  add a `{name, pkg, func}` entry to the `fuzz` job's `strategy.matrix.include`
+  list. A fuzz test that isn't in that matrix never actually runs under
+  extended `-fuzztime` in CI — it only gets exercised by its seed corpus in
+  the regular unit-test run.
+
 ### Mocking Best Practices
 - Generate mocks with `counterfeiter` (`go generate ./...`)
 - Use `disabled.Provider` for metrics to avoid nil panics

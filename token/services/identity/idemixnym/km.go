@@ -93,8 +93,8 @@ func (k *KeyManager) signerInfo(ctx context.Context, raw []byte) (*nym.AuditInfo
 	if len(signerInfoRaw) == 0 {
 		return nil, errors.Errorf("no signer info found for identity [%s]", tdriver.Identity(raw).UniqueID())
 	}
-	auditInfo := &nym.AuditInfo{}
-	if err := json.Unmarshal(signerInfoRaw, auditInfo); err != nil {
+	auditInfo, err := nym.DeserializeAuditInfo(signerInfoRaw)
+	if err != nil {
 		return nil, errors.Wrapf(err, "failed to deserialize audit info")
 	}
 

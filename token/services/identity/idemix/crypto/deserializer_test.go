@@ -266,7 +266,9 @@ func testDeserializerDeserializeAuditInfo(t *testing.T, configPath string, curve
 				[]byte("enrollment-id"),
 				[]byte("revocation-handle"),
 			},
-			Schema: "test-schema",
+			Schema:          "test-schema",
+			EidNymAuditData: &types.AttrNymAuditData{},
+			RhNymAuditData:  &types.AttrNymAuditData{},
 		}
 		raw, err := auditInfo.Bytes()
 		require.NoError(t, err)
@@ -299,6 +301,6 @@ func testDeserializerDeserializeAuditInfo(t *testing.T, configPath string, curve
 
 		_, err = deserializer.DeserializeAuditInfo(context.Background(), raw)
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "no attributes found")
+		assert.Contains(t, err.Error(), "expected at least")
 	})
 }

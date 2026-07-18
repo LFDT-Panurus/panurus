@@ -181,6 +181,36 @@ func TestVerifier_Verify_ZeroVerifiers(t *testing.T) {
 	assert.Contains(t, err.Error(), "multisig verifier has no members")
 }
 
+// A MultiIdentity whose Identities slice repeats the SAME member (e.g. three
+// slots all bound to Alice, meant to look like a 3-of-3 policy) lets one real
+// signature from Alice satisfy every slot: JoinSignatures only needs one map
+// entry per unique UniqueID, and Verifier.Verify has no logic detecting or
+// rejecting duplicate members. A "3 signers required" policy is silently
+// equivalent to "1 signer, repeated" whenever the identity list contains
+// duplicates.
+func TestVerifier_Verify_DuplicateMemberSingleSignerBypass(t *testing.T) {
+	alice := token.Identity([]byte("alice-pubkey"))
+	msg := []byte("test message")
+
+	mid := &MultiIdentity{Identities: []token.Identity{alice, alice, alice}}
+
+	verifierForAlice := &mock.Verifier{}
+	verifierForAlice.VerifyReturns(nil) // any of the 3 slots verifies with Alice's one real key
+
+	verifier := &Verifier{
+		Verifiers: []driver.Verifier{verifierForAlice, verifierForAlice, verifierForAlice},
+	}
+
+	// Alice supplies exactly one real signature, keyed by her own UniqueID.
+	sigmas := map[string][]byte{alice.UniqueID(): []byte("alice-real-sig")}
+	joined, err := JoinSignatures(mid.Identities, sigmas)
+	require.NoError(t, err)
+
+	err = verifier.Verify(msg, joined)
+	require.NoError(t, err, "a single real signature from a duplicated member satisfies all of its slots")
+	assert.Equal(t, 3, verifierForAlice.VerifyCallCount())
+}
+
 // Create a raw multi-sig of one sig  and fail to verify it with a multi-verifier
 // with two verifiers
 func TestVerifier_Verify_SignatureCountMismatch(t *testing.T) {

@@ -109,6 +109,29 @@ func (a *AuditInfo) Match(_ context.Context, id []byte) error {
 	return nil
 }
 
+// MinAuditAttributes is the number of Attributes entries EnrollmentID and
+// RevocationHandle unconditionally index into (Attributes[2] and
+// Attributes[3] respectively).
+const MinAuditAttributes = 4
+
+// Validate checks the invariants EnrollmentID, RevocationHandle, and Match
+// rely on without further nil/bounds checking of their own. Callers that
+// embed AuditInfo (e.g. idemixnym's nym.AuditInfo) must call this after
+// deserializing raw, attacker-controlled bytes into it.
+func (a *AuditInfo) Validate() error {
+	if len(a.Attributes) < MinAuditAttributes {
+		return errors.Errorf("failed to unmarshal, expected at least %d attributes, got %d", MinAuditAttributes, len(a.Attributes))
+	}
+	if a.EidNymAuditData == nil {
+		return errors.New("failed to unmarshal, no EID nym audit data found")
+	}
+	if a.RhNymAuditData == nil {
+		return errors.New("failed to unmarshal, no RH nym audit data found")
+	}
+
+	return nil
+}
+
 // DeserializeAuditInfo deserializes the audit information from JSON.
 func DeserializeAuditInfo(raw []byte) (*AuditInfo, error) {
 	auditInfo := &AuditInfo{}
@@ -116,8 +139,8 @@ func DeserializeAuditInfo(raw []byte) (*AuditInfo, error) {
 	if err != nil {
 		return nil, err
 	}
-	if len(auditInfo.Attributes) == 0 {
-		return nil, errors.Errorf("failed to unmarshal, no attributes found [%s]", string(raw))
+	if err := auditInfo.Validate(); err != nil {
+		return nil, err
 	}
 
 	return auditInfo, nil

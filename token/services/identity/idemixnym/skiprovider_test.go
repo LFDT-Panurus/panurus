@@ -125,8 +125,20 @@ func testSKIProviderGetSKIsFromIdentity(t *testing.T, configPath string, curveID
 	})
 
 	t.Run("InvalidIdemixSignature", func(t *testing.T) {
-		// Create audit info with invalid IdemixSignature
+		// Create audit info that passes deserialization (valid AuditInfo,
+		// Attributes, and EidNymAuditData/RhNymAuditData) but carries an
+		// IdemixSignature that isn't a valid serialized identity.
 		invalidAuditInfo := &nym.AuditInfo{
+			AuditInfo: &crypto.AuditInfo{
+				Attributes: [][]byte{
+					[]byte("attr0"),
+					[]byte("attr1"),
+					[]byte("enrollment-id"),
+					[]byte("revocation-handle"),
+				},
+				EidNymAuditData: &types.AttrNymAuditData{},
+				RhNymAuditData:  &types.AttrNymAuditData{},
+			},
 			IdemixSignature: []byte("invalid-idemix-signature"),
 		}
 		invalidSignerInfo, err := json.Marshal(invalidAuditInfo)

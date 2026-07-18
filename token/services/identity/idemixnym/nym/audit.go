@@ -63,8 +63,8 @@ func DeserializeAuditInfo(raw []byte) (*AuditInfo, error) {
 	if auditInfo.AuditInfo == nil {
 		return nil, errors.Errorf("failed to unmarshal, no audit info found")
 	}
-	if len(auditInfo.Attributes) == 0 {
-		return nil, errors.Errorf("failed to unmarshal, no attributes found")
+	if err := auditInfo.Validate(); err != nil {
+		return nil, err
 	}
 	if len(auditInfo.IdemixSignature) == 0 {
 		return nil, errors.Errorf("failed to unmarshal, no idemix signature found")

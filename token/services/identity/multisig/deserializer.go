@@ -95,6 +95,9 @@ func (d *TypedIdentityDeserializer) GetAuditInfoMatcher(ctx context.Context, own
 	if err != nil {
 		return nil, err
 	}
+	if err = validateComponentIdentities(mid.Identities); err != nil {
+		return nil, errors.Wrap(err, "invalid multisig identity")
+	}
 	if len(mid.Identities) != len(ei.IdentityAuditInfos) {
 		return nil, errors.Errorf("expected %d audit info but received %d", len(mid.Identities), len(ei.IdentityAuditInfos))
 	}
@@ -117,6 +120,9 @@ func (d *TypedIdentityDeserializer) DeserializeVerifier(ctx context.Context, typ
 	}
 	if len(multisigIdentity.Identities) == 0 {
 		return nil, errors.New("multisig identity has no members")
+	}
+	if err = validateComponentIdentities(multisigIdentity.Identities); err != nil {
+		return nil, errors.Wrap(err, "invalid multisig identity")
 	}
 	verifier := &Verifier{}
 	verifier.Verifiers = make([]driver.Verifier, len(multisigIdentity.Identities))

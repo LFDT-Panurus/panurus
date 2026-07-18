@@ -12,6 +12,7 @@ import (
 
 	idemix "github.com/IBM/idemix/bccsp/types"
 	"github.com/LFDT-Panurus/panurus/token/services/identity/idemix/mock"
+	"github.com/LFDT-Panurus/panurus/token/services/identity/idemix/schema"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -74,8 +75,15 @@ func TestAuditInfo_Accessors(t *testing.T) {
 func TestDeserializeAuditInfo(t *testing.T) {
 	t.Run("Valid audit info", func(t *testing.T) {
 		original := &AuditInfo{
-			Attributes: [][]byte{[]byte("attr1"), []byte("attr2")},
-			Schema:     "test-schema",
+			Attributes: [][]byte{
+				[]byte("attr1"),
+				[]byte("attr2"),
+				[]byte("enrollment-id"),
+				[]byte("revocation-handle"),
+			},
+			Schema:          "test-schema",
+			EidNymAuditData: &idemix.AttrNymAuditData{},
+			RhNymAuditData:  &idemix.AttrNymAuditData{},
 		}
 
 		bytes, err := original.Bytes()
@@ -103,7 +111,80 @@ func TestDeserializeAuditInfo(t *testing.T) {
 
 		_, err = DeserializeAuditInfo(bytes)
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "no attributes found")
+		assert.Contains(t, err.Error(), "expected at least")
+	})
+
+	// DeserializeAuditInfo now rejects any Attributes slice shorter than the
+	// four entries EnrollmentID/RevocationHandle unconditionally index into,
+	// instead of deserializing successfully and panicking later the moment
+	// EnrollmentID() or RevocationHandle() is called.
+	t.Run("Attributes present but too few - rejected at deserialize time", func(t *testing.T) {
+		auditInfo := &AuditInfo{Attributes: [][]byte{[]byte("only-one-attribute")}, Schema: "test-schema"}
+		bytes, err := auditInfo.Bytes()
+		require.NoError(t, err)
+
+		result, err := DeserializeAuditInfo(bytes)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "expected at least")
+		assert.Nil(t, result)
+	})
+
+	t.Run("Three attributes - still rejected, one short of the required four", func(t *testing.T) {
+		auditInfo := &AuditInfo{
+			Attributes: [][]byte{[]byte("attr0"), []byte("attr1"), []byte("enrollment-id")},
+			Schema:     "test-schema",
+		}
+		bytes, err := auditInfo.Bytes()
+		require.NoError(t, err)
+
+		result, err := DeserializeAuditInfo(bytes)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "expected at least")
+		assert.Nil(t, result)
+	})
+
+	// DeserializeAuditInfo also now rejects a full four-element Attributes
+	// slice if EidNymAuditData/RhNymAuditData are absent, instead of
+	// deserializing successfully and nil-pointer-dereferencing later inside
+	// Match().
+	t.Run("Full attributes but nil EidNymAuditData - rejected at deserialize time", func(t *testing.T) {
+		auditInfo := &AuditInfo{
+			Attributes: [][]byte{
+				[]byte("attr0"),
+				[]byte("attr1"),
+				[]byte("enrollment-id"),
+				[]byte("revocation-handle"),
+			},
+			Schema:         "test-schema",
+			RhNymAuditData: &idemix.AttrNymAuditData{},
+		}
+		bytes, err := auditInfo.Bytes()
+		require.NoError(t, err)
+
+		result, err := DeserializeAuditInfo(bytes)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "EID nym audit data")
+		assert.Nil(t, result)
+	})
+
+	t.Run("Full attributes but nil RhNymAuditData - rejected at deserialize time", func(t *testing.T) {
+		auditInfo := &AuditInfo{
+			Attributes: [][]byte{
+				[]byte("attr0"),
+				[]byte("attr1"),
+				[]byte("enrollment-id"),
+				[]byte("revocation-handle"),
+			},
+			Schema:          "test-schema",
+			EidNymAuditData: &idemix.AttrNymAuditData{},
+		}
+		bytes, err := auditInfo.Bytes()
+		require.NoError(t, err)
+
+		result, err := DeserializeAuditInfo(bytes)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "RH nym audit data")
+		assert.Nil(t, result)
 	})
 }
 
@@ -195,7 +276,15 @@ func TestAuditInfo_Match(t *testing.T) {
 		}
 	})
 
-	t.Run("EidNymAuditData is nil - panic", func(t *testing.T) {
+	// Match() itself still has no nil-check of its own: it trusts its caller
+	// to have validated EidNymAuditData first. That validation now lives in
+	// DeserializeAuditInfo/Validate, the boundary every production caller
+	// routes attacker-controlled bytes through (see km.go's Info and
+	// idemixnym's DeserializeAuditInfo). An AuditInfo built directly via a
+	// struct literal, bypassing that boundary, is a misuse of the internal
+	// API contract rather than a reachable attack, so Match still panics
+	// here - this documents the contract, it does not indicate a live gap.
+	t.Run("EidNymAuditData is nil - panics when the deserialize-time validation is bypassed", func(t *testing.T) {
 		mockSchemaManager := &mock.SchemaManager{}
 		// force sm.EidNymAuditOpts(..) called by Match to return this valid pair
 		mockSchemaManager.EidNymAuditOptsReturns(&idemix.EidNymAuditOpts{EidIndex: 2, EnrollmentID: "enrollment-id"}, nil)
@@ -312,5 +401,37 @@ func TestAuditInfo_Match(t *testing.T) {
 		err := auditInfo.Match(context.Background(), createIdentity())
 		require.NoError(t, err)
 		assert.Equal(t, 2, mockCsp.VerifyCallCount())
+	})
+
+	// Previously, Match() was reachable directly off attacker-controlled,
+	// too-short Attributes and panicked inside the real (non-mock)
+	// SchemaManager.EidNymAuditOpts, which indexes attrs[eidIdx]
+	// unconditionally. DeserializeAuditInfo now rejects short Attributes
+	// before any caller can reach Match with them at all.
+	t.Run("Short Attributes rejected before Match is ever reachable", func(t *testing.T) {
+		auditInfo := &AuditInfo{
+			Attributes: [][]byte{[]byte("only-one-attribute")},
+			Schema:     schema.DefaultSchema,
+		}
+		bytes, err := auditInfo.Bytes()
+		require.NoError(t, err)
+
+		result, err := DeserializeAuditInfo(bytes)
+		require.Error(t, err)
+		assert.Nil(t, result)
+	})
+
+	// Previously, DeserializeAuditInfo never validated that
+	// EidNymAuditData/RhNymAuditData are present, so attacker JSON that
+	// simply omits them (Go's encoding/json leaves the pointer fields nil)
+	// passed deserialization even with a full 4-element Attributes slice,
+	// then nil-pointer-dereferenced on a.EidNymAuditData.Rand inside Match().
+	// DeserializeAuditInfo now rejects this input outright.
+	t.Run("EidNymAuditData omitted from JSON rejected before Match is ever reachable", func(t *testing.T) {
+		raw := []byte(`{"Attributes":[[0],[1],[101,105,100],[114,104]],"Schema":""}`)
+		auditInfo, err := DeserializeAuditInfo(raw)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "EID nym audit data")
+		assert.Nil(t, auditInfo)
 	})
 }

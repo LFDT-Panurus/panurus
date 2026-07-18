@@ -9,7 +9,6 @@ package idemixnym
 import (
 	"context"
 	"encoding/hex"
-	"encoding/json"
 
 	idemixcrypto "github.com/LFDT-Panurus/panurus/token/services/identity/idemix/crypto"
 	"github.com/LFDT-Panurus/panurus/token/services/identity/idemixnym/nym"
@@ -70,8 +69,8 @@ func (p *SKIProvider) GetSKIsFromIdentity(ctx context.Context, identity []byte) 
 	}
 
 	// Step 2: Unmarshal signer info to get audit info (same as DeserializeSigner)
-	auditInfo := &nym.AuditInfo{}
-	if err := json.Unmarshal(signerInfoRaw, auditInfo); err != nil {
+	auditInfo, err := nym.DeserializeAuditInfo(signerInfoRaw)
+	if err != nil {
 		return nil, errors.Wrapf(err, "failed to deserialize audit info for IdemixNym identity")
 	}
 

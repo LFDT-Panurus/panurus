@@ -18,6 +18,7 @@ import (
 	kvs2 "github.com/LFDT-Panurus/panurus/token/services/storage/db/kvs"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/protobuf/proto"
 )
 
 func TestAuditInfoMatch(t *testing.T) {
@@ -141,7 +142,14 @@ func TestDeserializeAuditInfoErrorPaths(t *testing.T) {
 	// test with valid JSON but missing IdemixSignature
 	auditInfo2 := &AuditInfo{
 		AuditInfo: &crypto.AuditInfo{
-			Attributes: [][]byte{[]byte("attr1")},
+			Attributes: [][]byte{
+				[]byte("attr0"),
+				[]byte("attr1"),
+				[]byte("enrollment-id"),
+				[]byte("revocation-handle"),
+			},
+			EidNymAuditData: &types.AttrNymAuditData{},
+			RhNymAuditData:  &types.AttrNymAuditData{},
 		},
 	}
 	raw2, err := json.Marshal(auditInfo2)
@@ -159,7 +167,61 @@ func TestDeserializeAuditInfoErrorPaths(t *testing.T) {
 	require.NoError(t, err)
 	_, err = DeserializeAuditInfo(raw3)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "no attributes found")
+	assert.Contains(t, err.Error(), "expected at least")
+}
+
+// DeserializeAuditInfo now rejects an Attributes slice shorter than the four
+// entries the embedded crypto.AuditInfo's EnrollmentID/RevocationHandle
+// unconditionally index into, instead of deserializing successfully and
+// panicking later, mirroring the identical fix in idemix/crypto.AuditInfo.
+func TestDeserializeAuditInfoAttributesTooFewRejected(t *testing.T) {
+	auditInfo := &AuditInfo{
+		AuditInfo:       &crypto.AuditInfo{Attributes: [][]byte{[]byte("only-one-attribute")}},
+		IdemixSignature: []byte("signature"),
+	}
+	raw, err := json.Marshal(auditInfo)
+	require.NoError(t, err)
+
+	result, err := DeserializeAuditInfo(raw)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "expected at least")
+	assert.Nil(t, result)
+}
+
+// DeserializeAuditInfo also now validates that EidNymAuditData/RhNymAuditData are
+// present on the embedded crypto.AuditInfo, so attacker JSON that simply omits them
+// (encoding/json leaves the pointer fields nil) is rejected at deserialize time
+// instead of passing through with a full 4-element Attributes slice and later
+// nil-pointer-dereferencing on EidNymAuditData.Rand inside Match(), mirroring the
+// identical fix confirmed directly in idemix/crypto/audit_test.go.
+func TestAuditInfoMatchNilEidNymAuditDataFromJSONRejected(t *testing.T) {
+	serialized := &crypto.SerializedIdemixIdentity{
+		NymPublicKey: []byte("fake-nym-key"),
+		Proof:        []byte("fake-proof"),
+		Schema:       "",
+	}
+	idBytes, err := proto.Marshal(serialized)
+	require.NoError(t, err)
+
+	attackerPayload := &AuditInfo{
+		AuditInfo: &crypto.AuditInfo{
+			Attributes: [][]byte{
+				[]byte("attr0"),
+				[]byte("attr1"),
+				[]byte("enrollment-id"),
+				[]byte("revocation-handle"),
+			},
+			Schema: "",
+		},
+		IdemixSignature: idBytes,
+	}
+	raw, err := json.Marshal(attackerPayload)
+	require.NoError(t, err)
+
+	auditInfo, err := DeserializeAuditInfo(raw)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "EID nym audit data")
+	assert.Nil(t, auditInfo)
 }
 
 func TestAuditInfoMatchErrorPaths(t *testing.T) {

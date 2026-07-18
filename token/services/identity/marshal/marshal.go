@@ -151,12 +151,26 @@ func readLen(b []byte, pos int) (int, int, error) {
 		return 0, 0, ErrInvalidLen
 	}
 	pos++
-	l := 0
+	// Accumulate in uint64: at most 4 bytes, so l can never exceed
+	// 0xFFFFFFFF and this addition/shift can never overflow, regardless of
+	// the platform's native int width.
+	var l uint64
 	for i := range n {
-		l = l<<8 | int(b[pos+i])
+		l = l<<8 | uint64(b[pos+i])
+	}
+	pos += n
+	// Reject a declared length that claims more bytes than remain in the
+	// buffer here, in unsigned arithmetic, before ever converting it to
+	// int. Doing the equivalent check with a plain-int accumulator (as
+	// before) is platform-dependent: on a 32-bit-int platform a 4-byte
+	// length with the high bit set wraps around to a negative int, which
+	// defeats every caller's own "np+l > len(b)" bounds check.
+	//nolint:gosec // pos <= len(b) here (enforced by the pos+1+n > len(b) check above), so len(b)-pos is never negative
+	if l > uint64(len(b)-pos) {
+		return 0, 0, ErrTruncated
 	}
 
-	return l, pos + n, nil
+	return int(l), pos, nil
 }
 
 // parseInt32 decodes a DER big-endian signed integer into int32.
@@ -207,9 +221,17 @@ func appendTLV(dst []byte, tag byte, val []byte) []byte {
 		dst = append(dst, byte(l))
 	case l < 0x100:
 		dst = append(dst, 0x81, byte(l))
-	default:
-		//nolint:gosec // l is the length of the value, and we assume it fits in 16 bits here for 0x82 tag
+	case l < 0x10000:
+		//nolint:gosec // l < 0x10000 here, so each byte() truncation below is a deliberate low-byte mask, not overflow
 		dst = append(dst, 0x82, byte(l>>8), byte(l))
+	case l < 0x1000000:
+		//nolint:gosec // l < 0x1000000 here, so each byte() truncation below is a deliberate low-byte mask, not overflow
+		dst = append(dst, 0x83, byte(l>>16), byte(l>>8), byte(l))
+	default:
+		// readLen caps the long-form length at 4 length-bytes (4 GiB), so
+		// this is the widest form it can decode back.
+		//nolint:gosec // appendTLV is only ever called internally with l == len(val), never with an attacker-controlled 4GiB+ value; each byte() truncation below is a deliberate low-byte mask
+		dst = append(dst, 0x84, byte(l>>24), byte(l>>16), byte(l>>8), byte(l))
 	}
 
 	return append(dst, val...)

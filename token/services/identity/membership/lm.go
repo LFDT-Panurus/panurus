@@ -317,7 +317,7 @@ func (l *LocalMembership) GetIdentityInfo(ctx context.Context, label string, aud
 	l.logger.DebugfContext(ctx, "get identity info by label [%s][%s]", logging.Printable(label), utils.Hashable(label))
 	localIdentity := l.getLocalIdentity(ctx, label)
 	if localIdentity == nil {
-		return nil, errors.Errorf("local identity not found for label [%s][%v]", utils.Hashable(label), l.localIdentitiesByName)
+		return nil, errors.Errorf("local identity not found for label [%s][%v]", utils.Hashable(label), logging.Keys(l.localIdentitiesByName))
 	}
 
 	return NewIdentityInfo(localIdentity, func(ctx context.Context) (token.Identity, []byte, error) {
@@ -924,13 +924,19 @@ func (l *LocalMembership) getLocalIdentity(ctx context.Context, label string) *L
 		return mapped
 	}
 
-	l.logger.DebugfContext(ctx, "local identity not found for label [%s][%v], try to refresh", utils.Hashable(label), l.localIdentitiesByName)
+	l.logger.DebugfContext(ctx, "local identity not found for label [%s], try to refresh", utils.Hashable(label))
 
+	// The caller holds the read lock via its own defer RUnlock, so it must
+	// still hold a read lock by the time this function returns - including
+	// when refreshAndGet (or anything it transitively calls, e.g. the
+	// identity store) panics. Using defer here, instead of an imperative
+	// RLock() call after refreshAndGet returns, guarantees the RLock always
+	// runs during stack unwind before the panic propagates further, keeping
+	// the reader count balanced for the caller's deferred RUnlock.
 	l.localIdentitiesMutex.RUnlock()
-	res := l.refreshAndGet(ctx, label)
-	l.localIdentitiesMutex.RLock()
+	defer l.localIdentitiesMutex.RLock()
 
-	return res
+	return l.refreshAndGet(ctx, label)
 }
 
 func (l *LocalMembership) storedIdentityConfigurations(ctx context.Context) ([]idriver.IdentityConfiguration, error) {

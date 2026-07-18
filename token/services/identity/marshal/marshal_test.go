@@ -595,6 +595,31 @@ func TestAppendTLVVariations(t *testing.T) {
 	assert.Equal(t, r3.Data, res3.Data)
 }
 
+// appendTLV previously only ever emitted its 2-byte (0x82) long-form length
+// variant, which can only represent lengths up to 0xFFFF (65535). For a
+// payload of exactly 0x10000 (65536) bytes, byte(l>>8)/byte(l) truncated
+// silently: the declared length wrapped to 0 instead of growing to a 3-byte
+// form, corrupting the wire encoding and causing DecodeIdentity to silently
+// drop the payload instead of failing.
+//
+// appendTLV now grows to a 3-byte (0x83) or 4-byte (0x84) long form as
+// needed, so a payload at and beyond this boundary round-trips correctly
+// instead of being silently corrupted.
+func TestEncodeIdentity_PayloadAtTwoByteLengthBoundary_RoundTrips(t *testing.T) {
+	data := make([]byte, 0x10000) // 65536 bytes — one past the old 0x82 form's 0xFFFF max
+	for i := range data {
+		data[i] = byte(i)
+	}
+
+	enc := marshal.EncodeIdentity(7, data)
+
+	res, err := marshal.DecodeIdentity(enc)
+	require.NoError(t, err)
+	require.Len(t, res.Data, len(data), "the payload must round-trip intact across the 2-byte length boundary")
+	assert.Equal(t, data, res.Data)
+	assert.Equal(t, int32(7), res.Int32)
+}
+
 // ---------------------------------------------------------------------------
 // Benchmarks — fast decoder vs encoding/asn1 stdlib (paired for each variant)
 // ---------------------------------------------------------------------------

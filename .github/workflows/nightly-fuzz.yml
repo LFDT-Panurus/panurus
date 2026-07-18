@@ -42,6 +42,21 @@ jobs:
           - name: zkatdlog-multi-action-deserializer
             pkg: ./token/core/zkatdlog/nogh/v1/validator
             func: FuzzActionDeserializerMultiActionNoPanic
+          - name: identity-marshal-decode-identity
+            pkg: ./token/services/identity/marshal
+            func: FuzzDecodeIdentityNoPanic
+          - name: identity-multisig-deserializer
+            pkg: ./token/services/identity/multisig
+            func: FuzzMultiIdentityDeserializeNoPanic
+          - name: identity-multisig-signature-from-bytes
+            pkg: ./token/services/identity/multisig
+            func: FuzzMultiSignatureFromBytesNoPanic
+          - name: identity-idemix-audit-info-deserializer
+            pkg: ./token/services/identity/idemix/crypto
+            func: FuzzDeserializeAuditInfoNoPanic
+          - name: identity-idemixnym-audit-info-deserializer
+            pkg: ./token/services/identity/idemixnym/nym
+            func: FuzzDeserializeAuditInfoNoPanic
 
     steps:
       - name: Checkout code
