@@ -15,6 +15,7 @@ import (
 	"github.com/LFDT-Panurus/panurus/token/core/common/encoding/json"
 	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/protos-go/v1/actions"
 	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/crypto/rp"
+	v1 "github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/setup"
 	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/token"
 	token2 "github.com/LFDT-Panurus/panurus/token/token"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/proto"
@@ -236,4 +237,43 @@ func TestValidate(t *testing.T) {
 
 	// Valid action again
 	require.NoError(t, action.Validate())
+}
+
+// TestValidateRejectsNilOutputCommitment guards against a nil output commitment
+// (e.g. an attacker-supplied G1 proto with empty Raw bytes, which deserializes to
+// nil without error) reaching zero-knowledge verification, where it previously
+// caused a nil-pointer-dereference panic in mathlib.G1.Copy inside the verifier
+// (issue/verifier.go), before any issuer-authorization or signature check runs.
+func TestValidateRejectsNilOutputCommitment(t *testing.T) {
+	curve := math.Curves[math.BN254]
+	pp, err := v1.Setup(32, nil, math.BN254)
+	require.NoError(t, err)
+
+	tokens, tw, err := token.GetTokensWithWitness([]uint64{10}, "ABC", pp.PedersenGenerators, curve)
+	require.NoError(t, err)
+	prover, err := NewProver(tw, tokens, pp)
+	require.NoError(t, err)
+	proofBytes, err := prover.Prove()
+	require.NoError(t, err)
+
+	action := &Action{
+		Issuer: []byte("issuer"),
+		Outputs: []*token.Token{
+			{Owner: []byte("alice"), Data: nil},
+		},
+		ProofType: rp.RangeProofType,
+		Proof:     proofBytes,
+	}
+
+	err = action.Validate()
+	require.ErrorIs(t, err, ErrInvalidOutput)
+
+	_, err = action.GetCommitments()
+	require.ErrorIs(t, err, ErrNilOutputData)
+
+	require.NotPanics(t, func() {
+		verifier, verr := NewVerifier(tokens, pp, action.ProofType)
+		require.NoError(t, verr)
+		_ = verifier.Verify(action.GetProof())
+	})
 }

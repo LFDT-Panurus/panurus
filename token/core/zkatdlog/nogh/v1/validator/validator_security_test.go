@@ -20,8 +20,10 @@ import (
 
 	math "github.com/IBM/mathlib"
 	"github.com/LFDT-Panurus/panurus/token/core/common"
+	"github.com/LFDT-Panurus/panurus/token/core/common/encoding/asn1"
 	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/benchmark"
 	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/crypto/rp"
+	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/issue"
 	v1 "github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/setup"
 	testing2 "github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/testutils"
 	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/token"
@@ -1080,3 +1082,110 @@ func TestSecurityAuditing_OneValidOneBadSignature(t *testing.T) {
 	require.Error(t, err, "T-GAP-8: forged auditor signature must cause rejection")
 	assert.Contains(t, err.Error(), "failed to verify auditor's signature")
 }
+
+// ===========================================================================
+// ISSUE-ACTION DoS REGRESSION TESTS (validator entry point)
+// ===========================================================================
+
+// tamperIssueAction deserializes the sole issue action carried by env.TRWithIssue,
+// applies mutate to it, re-serializes it back into env.TRWithIssue.Actions[0].Raw,
+// and neutralizes the auditing gate so the tampered request reaches IssueValidate's
+// ZK-verification code path instead of being rejected earlier for a stale auditor
+// signature. Tampering the action's raw bytes changes the message that was
+// originally signed (TokenRequest.MarshalToMessageToSign covers all Actions), so any
+// signature computed over the original bytes no longer verifies; the auditor check
+// runs before IssueValidate in the pipeline, so it must be disabled explicitly. The
+// stale action signature is left in place: IssueValidate runs action.Validate,
+// action.GetCommitments and zkVerifier.Verify before the issuer/signature checks, so
+// the intended error surfaces first regardless.
+func tamperIssueAction(t *testing.T, env *testing2.Env, mutate func(*issue.Action)) []byte {
+	t.Helper()
+
+	env.Engine.PublicParams.AuditorIDs = nil
+	var stripped []*driver.RequestSignature
+	for _, sig := range env.TRWithIssue.Signatures {
+		if sig != nil && sig.Auditor == nil {
+			stripped = append(stripped, sig)
+		}
+	}
+	env.TRWithIssue.Signatures = stripped
+
+	require.Len(t, env.TRWithIssue.Actions, 1)
+	action := &issue.Action{}
+	require.NoError(t, action.Deserialize(env.TRWithIssue.Actions[0].Raw))
+
+	mutate(action)
+
+	raw, err := action.Serialize()
+	require.NoError(t, err)
+	env.TRWithIssue.Actions[0].Raw = raw
+
+	trRaw, err := env.TRWithIssue.Bytes()
+	require.NoError(t, err)
+
+	return trRaw
+}
+
+// TestSecurityValidatorRejectsNilOutputCommitmentInIssueRequest guards against the
+// nil-output-commitment DoS (fixed in issue/action.go) at the real validator entry
+// point, not just at the unit level. An attacker-supplied issue action whose output
+// commitment (Data) is nil must be rejected by Engine.VerifyTokenRequestFromRaw with
+// an error, never a panic.
+func TestSecurityValidatorRejectsNilOutputCommitmentInIssueRequest(t *testing.T) {
+	env := newSecurityTestEnv(t)
+
+	raw := tamperIssueAction(t, env, func(action *issue.Action) {
+		require.NotEmpty(t, action.Outputs)
+		action.Outputs[0].Data = nil
+	})
+
+	var err error
+	require.NotPanics(t, func() {
+		_, _, err = env.Engine.VerifyTokenRequestFromRaw(context.Background(), nil, "1", raw)
+	})
+	require.Error(t, err)
+}
+
+// TestSecurityValidatorRejectsTruncatedSameTypeProofInIssueRequest guards against the
+// SameType-proof-missing-Validate DoS (fixed in issue/sametype.go and
+// issue/verifier.go) at the real validator entry point. An attacker-supplied issue
+// action whose BulletProof.SameType sub-proof was truncated to fewer ASN.1 elements
+// deserializes without error (nil trailing fields), and must be rejected by
+// Engine.VerifyTokenRequestFromRaw with an error, never a panic.
+func TestSecurityValidatorRejectsTruncatedSameTypeProofInIssueRequest(t *testing.T) {
+	env := newSecurityTestEnv(t)
+
+	raw := tamperIssueAction(t, env, func(action *issue.Action) {
+		require.Equal(t, rp.RangeProofType, action.ProofType)
+
+		bp := &issue.BulletProof{}
+		require.NoError(t, bp.Deserialize(action.Proof))
+
+		truncatedSameType, err := asn1.MarshalMath(bp.SameType.Type, bp.SameType.BlindingFactor)
+		require.NoError(t, err)
+
+		corrupted, err := asn1.Marshal[asn1.Serializer](
+			&rawIssueProofSerializer{truncatedSameType},
+			bp.RangeCorrectness,
+		)
+		require.NoError(t, err)
+
+		action.Proof = corrupted
+	})
+
+	var err error
+	require.NotPanics(t, func() {
+		_, _, err = env.Engine.VerifyTokenRequestFromRaw(context.Background(), nil, "1", raw)
+	})
+	require.Error(t, err)
+}
+
+// rawIssueProofSerializer wraps pre-marshalled bytes to satisfy asn1.Serializer,
+// letting the test inject an already-corrupted SameType sub-proof into a BulletProof
+// envelope (mirrors issue/sametype_test.go's rawSerializer).
+type rawIssueProofSerializer struct {
+	raw []byte
+}
+
+func (r *rawIssueProofSerializer) Serialize() ([]byte, error) { return r.raw, nil }
+func (r *rawIssueProofSerializer) Deserialize([]byte) error   { return nil }

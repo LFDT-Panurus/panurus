@@ -164,9 +164,21 @@ func TestRangeProofOutOfRange(t *testing.T) {
 			prover.WithTranscriptHeader([]byte("transcript-header"))
 
 			// the proof is still generated, the verification will fail though
-			_, err = prover.Prove()
+			proof, err := prover.Prove()
 			require.NoError(t, err)
-			// require.Contains(t, err.Error(), "does not fit")
+
+			verifier := &rangeVerifier{
+				VGenerators:  vGens,
+				AGenerators:  aGens,
+				BGenerators:  bGens,
+				VCommitment:  vComm,
+				NumberOfBits: n,
+				Curve:        curve,
+			}
+			verifier.WithTranscriptHeader([]byte("transcript-header"))
+
+			err = verifier.Verify(proof)
+			require.Error(t, err, "out-of-range value must be rejected by verifier")
 		})
 	}
 }

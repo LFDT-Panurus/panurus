@@ -9,7 +9,11 @@ import (
 	"testing"
 
 	math "github.com/IBM/mathlib"
+	"github.com/LFDT-Panurus/panurus/token/core/common/encoding/asn1"
+	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/crypto/rp"
 	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/issue"
+	v1 "github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/setup"
+	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/token"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -159,4 +163,56 @@ func TestSameTypeVerify_ForgedCommitmentToType(t *testing.T) {
 	proof.CommitmentToType = originalCommitment
 	err = verifier.Verify(proof)
 	require.NoError(t, err, "T-GAP-C5: restored proof must still pass verification")
+}
+
+// rawSerializer wraps pre-marshalled bytes to satisfy asn1.Serializer, letting the
+// test inject an already-corrupted SameType sub-proof into a BulletProof envelope.
+type rawSerializer struct {
+	raw []byte
+}
+
+func (r *rawSerializer) Serialize() ([]byte, error) { return r.raw, nil }
+func (r *rawSerializer) Deserialize([]byte) error   { return nil }
+
+// TestBulletProofVerifierRejectsTruncatedSameTypeProof guards against a BulletProof
+// whose SameType sub-proof was serialized with missing trailing ASN.1 elements. In
+// that case Deserialize leaves Challenge/CommitmentToType nil without returning an
+// error (asn1.NextZr/NextG1 return (nil, nil) past the end of the encoded values),
+// and previously the missing SameType.Validate step let those nil fields reach
+// SameTypeVerifier.Verify's Mul/Sub calls and BulletProofVerifier.Verify's
+// CommitmentToType.Copy(), panicking instead of returning an error.
+func TestBulletProofVerifierRejectsTruncatedSameTypeProof(t *testing.T) {
+	curve := math.Curves[math.BN254]
+	pp, err := v1.Setup(32, nil, math.BN254)
+	require.NoError(t, err)
+
+	tokens, tw, err := token.GetTokensWithWitness([]uint64{10}, "ABC", pp.PedersenGenerators, curve)
+	require.NoError(t, err)
+	prover, err := issue.NewProver(tw, tokens, pp)
+	require.NoError(t, err)
+	proofBytes, err := prover.Prove()
+	require.NoError(t, err)
+
+	bp := &issue.BulletProof{}
+	require.NoError(t, bp.Deserialize(proofBytes))
+
+	// Truncate the SameType sub-proof to only its first 2 of 4 elements.
+	truncatedSameType, err := asn1.MarshalMath(bp.SameType.Type, bp.SameType.BlindingFactor)
+	require.NoError(t, err)
+
+	corrupted, err := asn1.Marshal[asn1.Serializer](
+		&rawSerializer{truncatedSameType},
+		bp.RangeCorrectness,
+	)
+	require.NoError(t, err)
+
+	verifier, err := issue.NewVerifier(tokens, pp, rp.RangeProofType)
+	require.NoError(t, err)
+
+	var verifyErr error
+	require.NotPanics(t, func() {
+		verifyErr = verifier.Verify(corrupted)
+	})
+	require.Error(t, verifyErr)
+	require.ErrorIs(t, verifyErr, issue.ErrInvalidIssueProof)
 }

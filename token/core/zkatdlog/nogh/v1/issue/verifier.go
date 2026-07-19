@@ -19,11 +19,13 @@ type BulletProofVerifier struct {
 	SameType *SameTypeVerifier
 	// RangeCorrectness is the verifier for the range correctness property.
 	RangeCorrectness *bulletproof.RangeCorrectnessVerifier
+	// curveID is the curve the proof elements are expected to belong to.
+	curveID math.CurveID
 }
 
 // NewBulletProofVerifier instantiates a BulletProofVerifier for the given token commitments and public parameters.
 func NewBulletProofVerifier(tokens []*math.G1, pp *v1.PublicParams) *BulletProofVerifier {
-	v := &BulletProofVerifier{}
+	v := &BulletProofVerifier{curveID: pp.Curve}
 	v.SameType = NewSameTypeVerifier(tokens, pp.PedersenGenerators, math.Curves[pp.Curve])
 	v.RangeCorrectness = bulletproof.NewRangeCorrectnessVerifier(pp.PedersenGenerators[1:], pp.RangeProofParams.LeftGenerators, pp.RangeProofParams.RightGenerators, pp.RangeProofParams.P, pp.RangeProofParams.Q, pp.RangeProofParams.BitLength, pp.RangeProofParams.NumberOfRounds, math.Curves[pp.Curve], pp.ExecutorProvider)
 
@@ -38,6 +40,12 @@ func (v *BulletProofVerifier) Verify(proof []byte) error {
 	err := tp.Deserialize(proof)
 	if err != nil {
 		return errors.Join(ErrDeserializeProofFailed, err)
+	}
+	// Validate the same-type proof structurally before it is used: a proof deserialized
+	// from truncated bytes can have nil fields, which would otherwise panic below
+	// (e.g. CommitmentToType.Copy()) or inside SameType.Verify's Mul/Sub calls.
+	if err := tp.SameType.Validate(v.curveID); err != nil {
+		return errors.Join(ErrInvalidIssueProof, err)
 	}
 	// Verify the same-type proof.
 	err = v.SameType.Verify(tp.SameType)

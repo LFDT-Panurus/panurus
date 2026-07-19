@@ -204,6 +204,9 @@ func (i *Action) Validate() error {
 		if output == nil {
 			return ErrNilOutput
 		}
+		if err := output.Validate(false); err != nil {
+			return errors.Join(ErrInvalidOutput, err)
+		}
 	}
 	if i.ProofType != rp.RangeProofType && i.ProofType != rp.CSPRangeProofType {
 		return ErrInvalidProofType
@@ -343,6 +346,9 @@ func (i *Action) GetCommitments() ([]*math.G1, error) {
 	for j := range com {
 		if i.Outputs[j] == nil {
 			return nil, ErrNilOutput
+		}
+		if i.Outputs[j].Data == nil {
+			return nil, ErrNilOutputData
 		}
 		com[j] = i.Outputs[j].Data
 	}

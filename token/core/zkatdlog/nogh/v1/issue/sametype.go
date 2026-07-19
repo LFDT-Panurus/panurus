@@ -10,6 +10,7 @@ import (
 	math "github.com/IBM/mathlib"
 	"github.com/LFDT-Panurus/panurus/token/core/common/encoding/asn1"
 	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/crypto/common"
+	math2 "github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/crypto/math"
 	token2 "github.com/LFDT-Panurus/panurus/token/token"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 )
@@ -58,6 +59,26 @@ func (stp *SameType) Deserialize(bytes []byte) error {
 	stp.CommitmentToType, err = unmarshaller.NextG1()
 	if err != nil {
 		return errors.Join(ErrDeserializeCommitmentToTypeFailed, err)
+	}
+
+	return nil
+}
+
+// Validate ensures the proof elements are valid for the given curve, rejecting nil or
+// otherwise malformed fields before they are used in verification (Copy/Mul/Sub), so
+// that a proof deserialized from truncated attacker-supplied bytes cannot panic.
+func (stp *SameType) Validate(curveID math.CurveID) error {
+	if err := math2.CheckBaseElement(stp.Type, curveID); err != nil {
+		return errors.Join(ErrInvalidSameTypeProof, errors.Wrap(err, "invalid type"))
+	}
+	if err := math2.CheckBaseElement(stp.BlindingFactor, curveID); err != nil {
+		return errors.Join(ErrInvalidSameTypeProof, errors.Wrap(err, "invalid blinding factor"))
+	}
+	if err := math2.CheckBaseElement(stp.Challenge, curveID); err != nil {
+		return errors.Join(ErrInvalidSameTypeProof, errors.Wrap(err, "invalid challenge"))
+	}
+	if err := math2.CheckElement(stp.CommitmentToType, curveID); err != nil {
+		return errors.Join(ErrInvalidSameTypeProof, errors.Wrap(err, "invalid commitment to type"))
 	}
 
 	return nil

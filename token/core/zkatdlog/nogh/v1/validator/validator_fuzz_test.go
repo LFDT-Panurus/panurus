@@ -81,6 +81,57 @@ func validTransferRaw(tb testing.TB, proofType rp.ProofType, redeem bool) []byte
 	return raw
 }
 
+// issueRawWithNilOutputData returns the serialized bytes of an issue action whose sole
+// output commitment is nil. Action.Serialize encodes a nil Data as a G1 proto with an
+// empty Raw field (utils.ToProtoG1), which utils.FromG1Proto then decodes back to nil
+// without error on the other side (empty Raw is treated as "absent", not malformed).
+// This is exactly the wire shape that let a nil commitment reach ZK verification and
+// panic before issue/action.go's Validate/GetCommitments guards were added.
+func issueRawWithNilOutputData(tb testing.TB) []byte {
+	tb.Helper()
+	raw, err := (&issue.Action{
+		Issuer: []byte("issuer"),
+		Outputs: []*token.Token{
+			{Owner: []byte("owner-1"), Data: nil},
+		},
+		ProofType: rp.RangeProofType,
+		Proof:     []byte("proof"),
+	}).Serialize()
+	require.NoError(tb, err)
+
+	return raw
+}
+
+// FuzzIssueActionValidateNoPanic fuzzes issue.Action.Deserialize followed by Validate
+// and GetCommitments on arbitrary bytes. These are the exact calls IssueValidate makes
+// before any issuer-authorization or signature check runs, so a nil-deref anywhere in
+// this chain is an unauthenticated validator DoS. The seed corpus includes a
+// nil-output-commitment action (the fixed bug) so a regression is caught immediately.
+func FuzzIssueActionValidateNoPanic(f *testing.F) {
+	f.Add(validIssueRaw(f, rp.RangeProofType))
+	f.Add(validIssueRaw(f, rp.CSPRangeProofType))
+	f.Add(issueRawWithNilOutputData(f))
+	f.Add([]byte{})
+	f.Add([]byte("malformed"))
+
+	f.Fuzz(func(t *testing.T, raw []byte) {
+		if len(raw) > maxFuzzActionBytes {
+			t.Skip()
+		}
+
+		require.NotPanics(t, func() {
+			action := &issue.Action{}
+			if err := action.Deserialize(raw); err != nil {
+				return
+			}
+			if err := action.Validate(); err != nil {
+				return
+			}
+			_, _ = action.GetCommitments()
+		})
+	})
+}
+
 func actionTypeFor(kind uint8) request.ActionType {
 	if kind%2 == 1 {
 		return request.ActionType_ACTION_TYPE_TRANSFER

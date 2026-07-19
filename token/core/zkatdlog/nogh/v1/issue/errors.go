@@ -13,6 +13,10 @@ var (
 	ErrOwnerTokenMismatch = errors.New("number of owners does not match number of tokens")
 	// ErrNilOutput is returned when there is a nil output in an issue action
 	ErrNilOutput = errors.New("nil output in issue action")
+	// ErrNilOutputData is returned when an issue action output has a nil commitment
+	ErrNilOutputData = errors.New("nil output commitment in issue action")
+	// ErrInvalidOutput is returned when an issue action output fails structural validation
+	ErrInvalidOutput = errors.New("invalid output in issue action")
 	// ErrInvalidProtocolVersion is returned when the protocol version is invalid
 	ErrInvalidProtocolVersion = errors.New("invalid protocol version")
 	// ErrIssuerNotSet is returned when the issuer is not set
