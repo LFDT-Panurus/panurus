@@ -24,6 +24,7 @@ func GenerateConfigWS(testdataDir string) error {
 	fscTopology.AddNodeByName("test-node")
 
 	_, err := integration.GenerateAt(8099, testdataDir, false, fscTopology)
+
 	return err
 }
 
