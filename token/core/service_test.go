@@ -215,6 +215,7 @@ func TestValidatorDriverService_NewDefaultValidator(t *testing.T) {
 
 	driverMock := &mock.ValidatorDriver{}
 	service := core.NewValidatorDriverService(
+		driver.DefaultResourceLimits(),
 		core.NamedFactory[driver.ValidatorDriver]{
 			Name:   identifier,
 			Driver: driverMock,
@@ -242,4 +243,37 @@ func TestValidatorDriverService_NewDefaultValidator(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, res)
 	assert.Contains(t, err.Error(), "no validator found for token driver [unknown.v1]")
+}
+
+// TestValidatorDriverService_ForwardsConfiguredLimits verifies that the ResourceLimits passed to
+// NewValidatorDriverService are the exact ones forwarded to the underlying driver's NewValidator,
+// proving an override actually reaches the validator instead of being silently dropped.
+func TestValidatorDriverService_ForwardsConfiguredLimits(t *testing.T) {
+	name := driver.TokenDriverName("test-driver")
+	version := driver.TokenDriverVersion(1)
+	identifier := core.DriverIdentifier(name, version)
+
+	custom := driver.DefaultResourceLimits()
+	custom.MaxActions = 2
+
+	driverMock := &mock.ValidatorDriver{}
+	driverMock.NewValidatorReturns(&mock.Validator{}, nil)
+	service := core.NewValidatorDriverService(
+		custom,
+		core.NamedFactory[driver.ValidatorDriver]{
+			Name:   identifier,
+			Driver: driverMock,
+		},
+	)
+
+	pp := &mock.PublicParameters{}
+	pp.TokenDriverNameReturns(name)
+	pp.TokenDriverVersionReturns(version)
+
+	_, err := service.NewValidator(pp)
+	require.NoError(t, err)
+
+	require.Equal(t, 1, driverMock.NewValidatorCallCount())
+	_, gotLimits := driverMock.NewValidatorArgsForCall(0)
+	assert.Equal(t, custom, gotLimits)
 }

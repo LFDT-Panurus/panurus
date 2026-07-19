@@ -178,7 +178,7 @@ func testRegression(t *testing.T, configDir string) {
 }
 
 func tokenServicesFactory(bytes []byte) (tcc.PublicParameters, tcc.Validator, error) {
-	is := core.NewValidatorDriverService(fabtoken.NewValidatorDriver(), dlog.NewValidatorDriver())
+	is := core.NewValidatorDriverService(driver.DefaultResourceLimits(), fabtoken.NewValidatorDriver(), dlog.NewValidatorDriver())
 
 	ppm, err := is.PublicParametersFromBytes(bytes)
 	if err != nil {

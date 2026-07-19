@@ -107,6 +107,29 @@ token:
         # interval is the polling interval for one-time lookups. Defaults to 2s.
         interval: 2s
         
+  # validation configures the resource limits enforced on untrusted token requests/actions
+  # before they reach cryptographic verification. Process-wide (not per-TMS): both the FSC/DI
+  # runtime and the standalone Fabric chaincode process resolve a single ResourceLimits value.
+  # Every field is optional; any field left unset defaults to the safe, historical value.
+  # The chaincode process (which has no config service) reads the same limits from
+  # TOKEN_VALIDATION_MAX_* environment variables instead. See
+  # docs/drivers/validation-resource-limits.md for the full enforcement and consensus-safety
+  # contract: if you override any limit, every peer validating the same channel/namespace MUST
+  # be configured with the identical value.
+  validation:
+    limits:
+      maxRequestBytes: 262144
+      maxActions: 256
+      maxSignatures: 4096
+      maxSignatureBytes: 4096
+      maxActionBytes: 262144
+      maxInputs: 256
+      maxOutputs: 256
+      maxMetadataEntries: 64
+      maxMetadataKeyBytes: 256
+      maxMetadataValueBytes: 4096
+      maxProofBytes: 131072
+
   # optional global SQL table name overrides (applied to all TMS instances).
   # The value replaces the short code; the FSC-generated prefix and params still wrap it.
   # Unknown keys are warned and ignored. Omit the section to keep all default names.
@@ -446,6 +469,60 @@ Default values:
 - poller.interval: 1s
 - poller.batchSize: 2000
 - poller.pendingTTL: 10m
+
+---
+
+### Optional: token.validation.limits
+
+Process-wide (not per-TMS) resource limits enforced on untrusted token requests/actions before
+cryptographic verification. See [docs/drivers/validation-resource-limits.md](drivers/validation-resource-limits.md)
+for the full enforcement points and the consensus-safety contract.
+
+If not specified, the default configuration is:
+
+```yaml
+token:
+  validation:
+    limits:
+      maxRequestBytes: 262144
+      maxActions: 256
+      maxSignatures: 4096
+      maxSignatureBytes: 4096
+      maxActionBytes: 262144
+      maxInputs: 256
+      maxOutputs: 256
+      maxMetadataEntries: 64
+      maxMetadataKeyBytes: 256
+      maxMetadataValueBytes: 4096
+      maxProofBytes: 131072
+```
+
+Default values:
+
+- maxRequestBytes: 262144 (256 KiB)
+- maxActions: 256
+- maxSignatures: 4096
+- maxSignatureBytes: 4096 (4 KiB)
+- maxActionBytes: 262144 (256 KiB)
+- maxInputs: 256
+- maxOutputs: 256
+- maxMetadataEntries: 64
+- maxMetadataKeyBytes: 256
+- maxMetadataValueBytes: 4096 (4 KiB)
+- maxProofBytes: 131072 (128 KiB) — ignored by drivers without a zero-knowledge proof (fabtoken)
+
+Every field is optional; any field omitted (or the whole `token.validation.limits` key omitted)
+resolves to its default. Read via the config service, so this key applies only to the FSC/DI
+runtime. The standalone Fabric chaincode process (`token/services/network/fabric/tcc/main`) has no
+config service and instead reads the equivalent `TOKEN_VALIDATION_MAX_*` environment variables
+(e.g. `TOKEN_VALIDATION_MAX_ACTIONS`), with the same unset-defaults overlay.
+
+**Consensus-safety warning:** the defaults above are safe and identical across every peer that
+does not override them. If you override any limit, every peer validating the same
+channel/namespace — and the chaincode process, if it enforces limits independently — MUST be
+configured with the identical value, or endorsement determinism silently breaks (one peer accepts
+a request another rejects). Treat a limits change like a `driver.MaxAnchorSize` change: roll it
+out as a coordinated configuration change before any peer relies on the new value.
 
 ---
 

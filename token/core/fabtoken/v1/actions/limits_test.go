@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/LFDT-Panurus/panurus/token/core/fabtoken/protos-go/v1/actions"
+	"github.com/LFDT-Panurus/panurus/token/driver"
 	driverv1 "github.com/LFDT-Panurus/panurus/token/driver/protos-go/v1"
 	"github.com/LFDT-Panurus/panurus/token/token"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/proto"
@@ -43,6 +44,7 @@ func baseValidTransferAction() *TransferAction {
 }
 
 func TestIssueAction_Validate_TooManyOutputs(t *testing.T) {
+	limits := driver.DefaultResourceLimits()
 	mk := func(n int) *IssueAction {
 		a := baseValidIssueAction()
 		a.Outputs = make([]*Output, n)
@@ -52,12 +54,30 @@ func TestIssueAction_Validate_TooManyOutputs(t *testing.T) {
 
 		return a
 	}
-	require.NoError(t, mk(MaxOutputs-1).Validate())
-	require.NoError(t, mk(MaxOutputs).Validate())
-	require.ErrorIs(t, mk(MaxOutputs+1).Validate(), ErrTooManyOutputs)
+	require.NoError(t, mk(limits.MaxOutputs-1).Validate())
+	require.NoError(t, mk(limits.MaxOutputs).Validate())
+	require.ErrorIs(t, mk(limits.MaxOutputs+1).Validate(), ErrTooManyOutputs)
+}
+
+func TestIssueAction_Validate_TooManyOutputs_CustomLimit(t *testing.T) {
+	custom := driver.DefaultResourceLimits()
+	custom.MaxOutputs = 2
+	mk := func(n int) *IssueAction {
+		a := baseValidIssueAction()
+		a.Outputs = make([]*Output, n)
+		for i := range a.Outputs {
+			a.Outputs[i] = &Output{Owner: []byte("owner"), Type: "TYPE", Quantity: "0x1"}
+		}
+		a.SetLimits(custom)
+
+		return a
+	}
+	require.NoError(t, mk(2).Validate())
+	require.ErrorIs(t, mk(3).Validate(), ErrTooManyOutputs)
 }
 
 func TestIssueAction_Validate_MetadataLimits(t *testing.T) {
+	limits := driver.DefaultResourceLimits()
 	t.Run("entries", func(t *testing.T) {
 		mk := func(n int) *IssueAction {
 			a := baseValidIssueAction()
@@ -68,9 +88,9 @@ func TestIssueAction_Validate_MetadataLimits(t *testing.T) {
 
 			return a
 		}
-		require.NoError(t, mk(MaxMetadataEntries-1).Validate())
-		require.NoError(t, mk(MaxMetadataEntries).Validate())
-		require.ErrorIs(t, mk(MaxMetadataEntries+1).Validate(), ErrTooManyMetadataEntries)
+		require.NoError(t, mk(limits.MaxMetadataEntries-1).Validate())
+		require.NoError(t, mk(limits.MaxMetadataEntries).Validate())
+		require.ErrorIs(t, mk(limits.MaxMetadataEntries+1).Validate(), ErrTooManyMetadataEntries)
 	})
 	t.Run("key bytes", func(t *testing.T) {
 		mk := func(n int) *IssueAction {
@@ -79,9 +99,9 @@ func TestIssueAction_Validate_MetadataLimits(t *testing.T) {
 
 			return a
 		}
-		require.NoError(t, mk(MaxMetadataKeyBytes-1).Validate())
-		require.NoError(t, mk(MaxMetadataKeyBytes).Validate())
-		require.ErrorIs(t, mk(MaxMetadataKeyBytes+1).Validate(), ErrMetadataKeyTooLarge)
+		require.NoError(t, mk(limits.MaxMetadataKeyBytes-1).Validate())
+		require.NoError(t, mk(limits.MaxMetadataKeyBytes).Validate())
+		require.ErrorIs(t, mk(limits.MaxMetadataKeyBytes+1).Validate(), ErrMetadataKeyTooLarge)
 	})
 	t.Run("value bytes", func(t *testing.T) {
 		mk := func(n int) *IssueAction {
@@ -90,9 +110,9 @@ func TestIssueAction_Validate_MetadataLimits(t *testing.T) {
 
 			return a
 		}
-		require.NoError(t, mk(MaxMetadataValueBytes-1).Validate())
-		require.NoError(t, mk(MaxMetadataValueBytes).Validate())
-		require.ErrorIs(t, mk(MaxMetadataValueBytes+1).Validate(), ErrMetadataValueTooLarge)
+		require.NoError(t, mk(limits.MaxMetadataValueBytes-1).Validate())
+		require.NoError(t, mk(limits.MaxMetadataValueBytes).Validate())
+		require.ErrorIs(t, mk(limits.MaxMetadataValueBytes+1).Validate(), ErrMetadataValueTooLarge)
 	})
 }
 
@@ -112,12 +132,23 @@ func marshalIssueAction(t *testing.T, outputs int) []byte {
 }
 
 func TestIssueAction_Deserialize_TooManyOutputs(t *testing.T) {
+	limits := driver.DefaultResourceLimits()
 	a := &IssueAction{}
-	require.NoError(t, a.Deserialize(marshalIssueAction(t, MaxOutputs)))
-	require.ErrorIs(t, a.Deserialize(marshalIssueAction(t, MaxOutputs+1)), ErrTooManyOutputs)
+	require.NoError(t, a.Deserialize(marshalIssueAction(t, limits.MaxOutputs)))
+	require.ErrorIs(t, a.Deserialize(marshalIssueAction(t, limits.MaxOutputs+1)), ErrTooManyOutputs)
+}
+
+func TestIssueAction_Deserialize_TooManyOutputs_CustomLimit(t *testing.T) {
+	custom := driver.DefaultResourceLimits()
+	custom.MaxOutputs = 2
+	a := &IssueAction{}
+	a.SetLimits(custom)
+	require.NoError(t, a.Deserialize(marshalIssueAction(t, 2)))
+	require.ErrorIs(t, a.Deserialize(marshalIssueAction(t, 3)), ErrTooManyOutputs)
 }
 
 func TestTransferAction_Validate_TooManyInputs(t *testing.T) {
+	limits := driver.DefaultResourceLimits()
 	mk := func(n int) *TransferAction {
 		a := baseValidTransferAction()
 		a.Inputs = make([]*TransferActionInput, n)
@@ -130,12 +161,33 @@ func TestTransferAction_Validate_TooManyInputs(t *testing.T) {
 
 		return a
 	}
-	require.NoError(t, mk(MaxInputs-1).Validate())
-	require.NoError(t, mk(MaxInputs).Validate())
-	require.ErrorIs(t, mk(MaxInputs+1).Validate(), ErrTooManyInputs)
+	require.NoError(t, mk(limits.MaxInputs-1).Validate())
+	require.NoError(t, mk(limits.MaxInputs).Validate())
+	require.ErrorIs(t, mk(limits.MaxInputs+1).Validate(), ErrTooManyInputs)
+}
+
+func TestTransferAction_Validate_TooManyInputs_CustomLimit(t *testing.T) {
+	custom := driver.DefaultResourceLimits()
+	custom.MaxInputs = 2
+	mk := func(n int) *TransferAction {
+		a := baseValidTransferAction()
+		a.Inputs = make([]*TransferActionInput, n)
+		for i := range a.Inputs {
+			a.Inputs[i] = &TransferActionInput{
+				ID:    &token.ID{TxId: "txid", Index: uint64(i)},
+				Input: &Output{Owner: []byte("owner"), Type: "TYPE", Quantity: "0x1"},
+			}
+		}
+		a.SetLimits(custom)
+
+		return a
+	}
+	require.NoError(t, mk(2).Validate())
+	require.ErrorIs(t, mk(3).Validate(), ErrTooManyInputs)
 }
 
 func TestTransferAction_Validate_TooManyOutputs(t *testing.T) {
+	limits := driver.DefaultResourceLimits()
 	mk := func(n int) *TransferAction {
 		a := baseValidTransferAction()
 		a.Outputs = make([]*Output, n)
@@ -145,12 +197,13 @@ func TestTransferAction_Validate_TooManyOutputs(t *testing.T) {
 
 		return a
 	}
-	require.NoError(t, mk(MaxOutputs-1).Validate())
-	require.NoError(t, mk(MaxOutputs).Validate())
-	require.ErrorIs(t, mk(MaxOutputs+1).Validate(), ErrTooManyOutputs)
+	require.NoError(t, mk(limits.MaxOutputs-1).Validate())
+	require.NoError(t, mk(limits.MaxOutputs).Validate())
+	require.ErrorIs(t, mk(limits.MaxOutputs+1).Validate(), ErrTooManyOutputs)
 }
 
 func TestTransferAction_Validate_MetadataLimits(t *testing.T) {
+	limits := driver.DefaultResourceLimits()
 	mk := func(n int) *TransferAction {
 		a := baseValidTransferAction()
 		a.Metadata = make(map[string][]byte, n)
@@ -160,9 +213,9 @@ func TestTransferAction_Validate_MetadataLimits(t *testing.T) {
 
 		return a
 	}
-	require.NoError(t, mk(MaxMetadataEntries-1).Validate())
-	require.NoError(t, mk(MaxMetadataEntries).Validate())
-	require.ErrorIs(t, mk(MaxMetadataEntries+1).Validate(), ErrTooManyMetadataEntries)
+	require.NoError(t, mk(limits.MaxMetadataEntries-1).Validate())
+	require.NoError(t, mk(limits.MaxMetadataEntries).Validate())
+	require.ErrorIs(t, mk(limits.MaxMetadataEntries+1).Validate(), ErrTooManyMetadataEntries)
 }
 
 func marshalTransferAction(t *testing.T, inputs, outputs int) []byte {
@@ -183,18 +236,30 @@ func marshalTransferAction(t *testing.T, inputs, outputs int) []byte {
 }
 
 func TestTransferAction_Deserialize_TooManyInputs(t *testing.T) {
+	limits := driver.DefaultResourceLimits()
 	a := &TransferAction{}
-	require.NoError(t, a.Deserialize(marshalTransferAction(t, MaxInputs, 1)))
-	require.ErrorIs(t, a.Deserialize(marshalTransferAction(t, MaxInputs+1, 1)), ErrTooManyInputs)
+	require.NoError(t, a.Deserialize(marshalTransferAction(t, limits.MaxInputs, 1)))
+	require.ErrorIs(t, a.Deserialize(marshalTransferAction(t, limits.MaxInputs+1, 1)), ErrTooManyInputs)
 }
 
 func TestTransferAction_Deserialize_TooManyOutputs(t *testing.T) {
+	limits := driver.DefaultResourceLimits()
 	a := &TransferAction{}
-	require.NoError(t, a.Deserialize(marshalTransferAction(t, 1, MaxOutputs)))
-	require.ErrorIs(t, a.Deserialize(marshalTransferAction(t, 1, MaxOutputs+1)), ErrTooManyOutputs)
+	require.NoError(t, a.Deserialize(marshalTransferAction(t, 1, limits.MaxOutputs)))
+	require.ErrorIs(t, a.Deserialize(marshalTransferAction(t, 1, limits.MaxOutputs+1)), ErrTooManyOutputs)
 }
 
 func TestTransferAction_Deserialize_ManyTinyInputs(t *testing.T) {
+	limits := driver.DefaultResourceLimits()
 	a := &TransferAction{}
-	require.ErrorIs(t, a.Deserialize(marshalTransferAction(t, MaxInputs+1, 1)), ErrTooManyInputs)
+	require.ErrorIs(t, a.Deserialize(marshalTransferAction(t, limits.MaxInputs+1, 1)), ErrTooManyInputs)
+}
+
+func TestTransferAction_Deserialize_TooManyInputs_CustomLimit(t *testing.T) {
+	custom := driver.DefaultResourceLimits()
+	custom.MaxInputs = 2
+	a := &TransferAction{}
+	a.SetLimits(custom)
+	require.NoError(t, a.Deserialize(marshalTransferAction(t, 2, 1)))
+	require.ErrorIs(t, a.Deserialize(marshalTransferAction(t, 3, 1)), ErrTooManyInputs)
 }

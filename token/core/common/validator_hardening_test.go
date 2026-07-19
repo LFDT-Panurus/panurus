@@ -31,7 +31,7 @@ func TestVerifyTokenRequestPreservesOriginalActionOrder(t *testing.T) {
 		nil,
 	)
 	validator := NewValidator[driver.PublicParameters, driver.Input, driver.TransferAction, driver.IssueAction, driver.Deserializer](
-		&logging.MockLogger{}, nil, nil, actionDeserializer, nil, nil, nil,
+		&logging.MockLogger{}, nil, nil, driver.DefaultResourceLimits(), actionDeserializer, nil, nil, nil,
 	)
 	requestWithMixedActions := &driver.TokenRequest{Actions: []*driver.TypedAction{
 		{Type: request.ActionType_ACTION_TYPE_TRANSFER, Raw: []byte("transfer-0")},
@@ -79,6 +79,7 @@ func TestVerifyTokenRequestFromRawScopesSignaturesByActionID(t *testing.T) {
 		&logging.MockLogger{},
 		nil,
 		nil,
+		driver.DefaultResourceLimits(),
 		actionDeserializer,
 		[]ValidateTransferFunc[driver.PublicParameters, driver.Input, driver.TransferAction, driver.IssueAction, driver.Deserializer]{
 			func(_ context.Context, ctx *Context[driver.PublicParameters, driver.Input, driver.TransferAction, driver.IssueAction, driver.Deserializer]) error {
@@ -128,7 +129,7 @@ func TestVerifyTokenRequestFromRawRejectsInvalidSignatureEnvelope(t *testing.T) 
 		actionDeserializer.DeserializeActionsReturns(nil, []driver.TransferAction{&dmock.TransferAction{}}, nil)
 
 		return NewValidator[driver.PublicParameters, driver.Input, driver.TransferAction, driver.IssueAction, driver.Deserializer](
-			&logging.MockLogger{}, nil, nil, actionDeserializer,
+			&logging.MockLogger{}, nil, nil, driver.DefaultResourceLimits(), actionDeserializer,
 			[]ValidateTransferFunc[driver.PublicParameters, driver.Input, driver.TransferAction, driver.IssueAction, driver.Deserializer]{
 				func(c context.Context, ctx *Context[driver.PublicParameters, driver.Input, driver.TransferAction, driver.IssueAction, driver.Deserializer]) error {
 					for range consumptionCount {
@@ -186,7 +187,7 @@ func TestVerifyTokenRequestFromRawRejectsInvalidSignatureEnvelope(t *testing.T) 
 
 func TestVerifyTokenRequestFromRawRejectsNoActions(t *testing.T) {
 	validator := NewValidator[driver.PublicParameters, driver.Input, driver.TransferAction, driver.IssueAction, driver.Deserializer](
-		&logging.MockLogger{}, nil, nil, &dmock.ActionDeserializer[driver.TransferAction, driver.IssueAction]{}, nil, nil, nil,
+		&logging.MockLogger{}, nil, nil, driver.DefaultResourceLimits(), &dmock.ActionDeserializer[driver.TransferAction, driver.IssueAction]{}, nil, nil, nil,
 	)
 	raw, err := (&driver.TokenRequest{}).Bytes()
 	require.NoError(t, err)
@@ -197,7 +198,7 @@ func TestVerifyTokenRequestFromRawRejectsNoActions(t *testing.T) {
 
 func TestValidatorPublicMethodsRejectNilWithoutPanic(t *testing.T) {
 	validator := NewValidator[driver.PublicParameters, driver.Input, driver.TransferAction, driver.IssueAction, driver.Deserializer](
-		&logging.MockLogger{}, nil, nil, &dmock.ActionDeserializer[driver.TransferAction, driver.IssueAction]{}, nil, nil, nil,
+		&logging.MockLogger{}, nil, nil, driver.DefaultResourceLimits(), &dmock.ActionDeserializer[driver.TransferAction, driver.IssueAction]{}, nil, nil, nil,
 	)
 	var issue *dmock.IssueAction
 	var transfer *dmock.TransferAction

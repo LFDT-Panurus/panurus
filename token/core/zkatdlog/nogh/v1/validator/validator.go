@@ -31,6 +31,7 @@ type Context = common.Context[*v1.PublicParams, *token.Token, *transfer.Action, 
 // ActionDeserializer is a deserializer for actions
 type ActionDeserializer struct {
 	PublicParams *v1.PublicParams
+	Limits       driver.ResourceLimits
 }
 
 // DeserializeActions deserializes the actions from the token request
@@ -39,6 +40,7 @@ func (a *ActionDeserializer) DeserializeActions(tr *driver.TokenRequest) ([]*iss
 	issueActions := make([]*issue.Action, len(issues))
 	for i := range issues {
 		ia := &issue.Action{}
+		ia.SetLimits(a.Limits)
 		if err := ia.Deserialize(issues[i]); err != nil {
 			return nil, nil, err
 		}
@@ -49,6 +51,7 @@ func (a *ActionDeserializer) DeserializeActions(tr *driver.TokenRequest) ([]*iss
 	transferActions := make([]*transfer.Action, len(transfers))
 	for i := range transfers {
 		ta := &transfer.Action{}
+		ta.SetLimits(a.Limits)
 		if err := ta.Deserialize(transfers[i]); err != nil {
 			return nil, nil, err
 		}
@@ -66,6 +69,7 @@ func New(
 	logger logging.Logger,
 	pp *v1.PublicParams,
 	deserializer driver.Deserializer,
+	limits driver.ResourceLimits,
 	extraTransferValidators []ValidateTransferFunc,
 	extraIssuerValidators []ValidateIssueFunc,
 	extraAuditorValidators []ValidateAuditingFunc,
@@ -95,7 +99,8 @@ func New(
 		logger,
 		pp,
 		deserializer,
-		&ActionDeserializer{},
+		limits,
+		&ActionDeserializer{PublicParams: pp, Limits: limits},
 		transferValidators,
 		issueValidators,
 		auditingValidators,

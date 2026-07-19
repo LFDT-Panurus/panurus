@@ -10,7 +10,6 @@ import (
 	"testing"
 
 	math "github.com/IBM/mathlib"
-	"github.com/LFDT-Panurus/panurus/token/core/common"
 	fv1 "github.com/LFDT-Panurus/panurus/token/core/fabtoken/v1/actions"
 	nghactions "github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/protos-go/v1/actions"
 	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/crypto/rp"
@@ -25,10 +24,6 @@ import (
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/proto"
 	"github.com/stretchr/testify/require"
 )
-
-// maxFuzzActionBytes mirrors common.MaxActionBytes: it is the real production limit enforced on
-// TypedAction.Raw by the common validator, so fuzzing beyond it exercises no additional code path.
-const maxFuzzActionBytes = common.MaxActionBytes
 
 // fuzzCurve is a fixed, non-nil curve used to build well-formed G1/Zr elements for the
 // seed corpus. Any curve works here: these seeds only need to survive Serialize/Deserialize,
@@ -170,15 +165,16 @@ func FuzzActionDeserializerNoPanic(f *testing.F) {
 	f.Add(uint8(0), issueRaw[:len(issueRaw)/2])
 	f.Add(uint8(1), transferRaw[:len(transferRaw)/2])
 
+	limits := driver.DefaultResourceLimits()
 	f.Fuzz(func(t *testing.T, actionKind uint8, raw []byte) {
-		if len(raw) > maxFuzzActionBytes {
+		if len(raw) > limits.MaxActionBytes {
 			t.Skip()
 		}
 		typeID := actionTypeFor(actionKind)
 		tokenRequest := &driver.TokenRequest{Actions: []*driver.TypedAction{{Type: typeID, Raw: raw}}}
 
 		require.NotPanics(t, func() {
-			issues, transfers, err := (&validator.ActionDeserializer{}).DeserializeActions(tokenRequest)
+			issues, transfers, err := (&validator.ActionDeserializer{Limits: limits}).DeserializeActions(tokenRequest)
 			if err != nil {
 				return
 			}
@@ -210,8 +206,9 @@ func FuzzActionDeserializerMultiActionNoPanic(f *testing.F) {
 	f.Add(uint8(1), []byte("malformed"), uint8(0), issueRaw)
 	f.Add(uint8(0), issueRaw, uint8(1), []byte{})
 
+	limits := driver.DefaultResourceLimits()
 	f.Fuzz(func(t *testing.T, kind1 uint8, raw1 []byte, kind2 uint8, raw2 []byte) {
-		if len(raw1) > maxFuzzActionBytes || len(raw2) > maxFuzzActionBytes {
+		if len(raw1) > limits.MaxActionBytes || len(raw2) > limits.MaxActionBytes {
 			t.Skip()
 		}
 		tokenRequest := &driver.TokenRequest{Actions: []*driver.TypedAction{
@@ -220,7 +217,7 @@ func FuzzActionDeserializerMultiActionNoPanic(f *testing.F) {
 		}}
 
 		require.NotPanics(t, func() {
-			issues, transfers, err := (&validator.ActionDeserializer{}).DeserializeActions(tokenRequest)
+			issues, transfers, err := (&validator.ActionDeserializer{Limits: limits}).DeserializeActions(tokenRequest)
 			if err != nil {
 				return
 			}
@@ -291,20 +288,21 @@ func boundInt(n, lo, hi int) int {
 // separately by the dedicated RejectsBeforeCryptographicWork unit tests, which run without
 // fuzz-worker CPU contention.
 func FuzzActionResourceLimits(f *testing.F) {
+	limits := driver.DefaultResourceLimits()
 	f.Add(true, 1, 1, 8)
-	f.Add(true, issue.MaxInputs, 1, 8)
-	f.Add(true, issue.MaxInputs+1, 1, 8)
-	f.Add(true, 1, issue.MaxOutputs, 8)
-	f.Add(true, 1, issue.MaxOutputs+1, 8)
-	f.Add(true, 1, 1, issue.MaxProofBytes)
-	f.Add(true, 1, 1, issue.MaxProofBytes+1)
+	f.Add(true, limits.MaxInputs, 1, 8)
+	f.Add(true, limits.MaxInputs+1, 1, 8)
+	f.Add(true, 1, limits.MaxOutputs, 8)
+	f.Add(true, 1, limits.MaxOutputs+1, 8)
+	f.Add(true, 1, 1, limits.MaxProofBytes)
+	f.Add(true, 1, 1, limits.MaxProofBytes+1)
 	f.Add(false, 1, 1, 8)
-	f.Add(false, transfer.MaxInputs, 1, 8)
-	f.Add(false, transfer.MaxInputs+1, 1, 8)
-	f.Add(false, 1, transfer.MaxOutputs, 8)
-	f.Add(false, 1, transfer.MaxOutputs+1, 8)
-	f.Add(false, 1, 1, transfer.MaxProofBytes)
-	f.Add(false, 1, 1, transfer.MaxProofBytes+1)
+	f.Add(false, limits.MaxInputs, 1, 8)
+	f.Add(false, limits.MaxInputs+1, 1, 8)
+	f.Add(false, 1, limits.MaxOutputs, 8)
+	f.Add(false, 1, limits.MaxOutputs+1, 8)
+	f.Add(false, 1, 1, limits.MaxProofBytes)
+	f.Add(false, 1, 1, limits.MaxProofBytes+1)
 
 	f.Fuzz(func(t *testing.T, isIssue bool, inputs, outputs, proofBytes int) {
 		inputs = boundInt(inputs, 1, 512)
@@ -312,15 +310,13 @@ func FuzzActionResourceLimits(f *testing.F) {
 		proofBytes = boundInt(proofBytes, 1, 256<<10)
 
 		var raw []byte
-		var maxInputs, maxOutputs, maxProofBytes int
+		maxInputs, maxOutputs, maxProofBytes := limits.MaxInputs, limits.MaxOutputs, limits.MaxProofBytes
 		var errTooManyInputs, errTooManyOutputs, errProofTooLarge error
 		if isIssue {
 			raw = marshalFuzzedIssueAction(inputs, outputs, proofBytes)
-			maxInputs, maxOutputs, maxProofBytes = issue.MaxInputs, issue.MaxOutputs, issue.MaxProofBytes
 			errTooManyInputs, errTooManyOutputs, errProofTooLarge = issue.ErrTooManyInputs, issue.ErrTooManyOutputs, issue.ErrProofTooLarge
 		} else {
 			raw = marshalFuzzedTransferAction(inputs, outputs, proofBytes)
-			maxInputs, maxOutputs, maxProofBytes = transfer.MaxInputs, transfer.MaxOutputs, transfer.MaxProofBytes
 			errTooManyInputs, errTooManyOutputs, errProofTooLarge = transfer.ErrTooManyInputs, transfer.ErrTooManyOutputs, transfer.ErrProofTooLarge
 		}
 

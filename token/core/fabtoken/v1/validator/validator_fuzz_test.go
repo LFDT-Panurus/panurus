@@ -9,7 +9,6 @@ package validator_test
 import (
 	"testing"
 
-	"github.com/LFDT-Panurus/panurus/token/core/common"
 	fbactions "github.com/LFDT-Panurus/panurus/token/core/fabtoken/protos-go/v1/actions"
 	"github.com/LFDT-Panurus/panurus/token/core/fabtoken/v1/actions"
 	"github.com/LFDT-Panurus/panurus/token/core/fabtoken/v1/validator"
@@ -29,8 +28,9 @@ func FuzzActionDeserializerNoPanic(f *testing.F) {
 	f.Add(uint8(1), transferRaw)
 	f.Add(uint8(1), []byte("malformed"))
 
+	limits := driver.DefaultResourceLimits()
 	f.Fuzz(func(t *testing.T, actionKind uint8, raw []byte) {
-		if len(raw) > maxFuzzActionBytes {
+		if len(raw) > limits.MaxActionBytes {
 			t.Skip()
 		}
 		typeID := request.ActionType_ACTION_TYPE_ISSUE
@@ -40,14 +40,10 @@ func FuzzActionDeserializerNoPanic(f *testing.F) {
 		tokenRequest := &driver.TokenRequest{Actions: []*driver.TypedAction{{Type: typeID, Raw: raw}}}
 
 		require.NotPanics(t, func() {
-			_, _, _ = (&validator.ActionDeserializer{}).DeserializeActions(tokenRequest)
+			_, _, _ = (&validator.ActionDeserializer{Limits: limits}).DeserializeActions(tokenRequest)
 		})
 	})
 }
-
-// maxFuzzActionBytes mirrors common.MaxActionBytes: it is the real production limit enforced on
-// TypedAction.Raw by the common validator, so fuzzing beyond it exercises no additional code path.
-const maxFuzzActionBytes = common.MaxActionBytes
 
 // marshalFuzzedIssueAction builds the raw protobuf bytes of an issue action with the given
 // output count, bypassing IssueAction.Serialize so that out-of-limit shapes (which Serialize's
@@ -99,14 +95,15 @@ func boundInt(n, lo, hi int) int {
 // dimensions (input/output counts) and asserts that Deserialize never panics and rejects
 // any dimension that exceeds its configured limit with the corresponding typed error.
 func FuzzActionResourceLimits(f *testing.F) {
+	limits := driver.DefaultResourceLimits()
 	f.Add(true, 1, 1)
-	f.Add(true, 1, actions.MaxOutputs)
-	f.Add(true, 1, actions.MaxOutputs+1)
+	f.Add(true, 1, limits.MaxOutputs)
+	f.Add(true, 1, limits.MaxOutputs+1)
 	f.Add(false, 1, 1)
-	f.Add(false, actions.MaxInputs, 1)
-	f.Add(false, actions.MaxInputs+1, 1)
-	f.Add(false, 1, actions.MaxOutputs)
-	f.Add(false, 1, actions.MaxOutputs+1)
+	f.Add(false, limits.MaxInputs, 1)
+	f.Add(false, limits.MaxInputs+1, 1)
+	f.Add(false, 1, limits.MaxOutputs)
+	f.Add(false, 1, limits.MaxOutputs+1)
 
 	f.Fuzz(func(t *testing.T, isIssue bool, inputs, outputs int) {
 		inputs = boundInt(inputs, 1, 512)
@@ -119,7 +116,7 @@ func FuzzActionResourceLimits(f *testing.F) {
 			require.NotPanics(t, func() {
 				err = (&actions.IssueAction{}).Deserialize(raw)
 			})
-			if outputs > actions.MaxOutputs {
+			if outputs > limits.MaxOutputs {
 				require.ErrorIs(t, err, actions.ErrTooManyOutputs)
 			}
 
@@ -131,9 +128,9 @@ func FuzzActionResourceLimits(f *testing.F) {
 			err = (&actions.TransferAction{}).Deserialize(raw)
 		})
 		switch {
-		case inputs > actions.MaxInputs:
+		case inputs > limits.MaxInputs:
 			require.ErrorIs(t, err, actions.ErrTooManyInputs)
-		case outputs > actions.MaxOutputs:
+		case outputs > limits.MaxOutputs:
 			require.ErrorIs(t, err, actions.ErrTooManyOutputs)
 		}
 	})

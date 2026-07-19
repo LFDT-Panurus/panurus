@@ -20,13 +20,16 @@ type ValidateIssueFunc = common.ValidateIssueFunc[*setup.PublicParams, *actions.
 
 type ValidateAuditingFunc = common.ValidateAuditingFunc[*setup.PublicParams, *actions.Output, *actions.TransferAction, *actions.IssueAction, driver.Deserializer]
 
-type ActionDeserializer struct{}
+type ActionDeserializer struct {
+	Limits driver.ResourceLimits
+}
 
 func (a *ActionDeserializer) DeserializeActions(tr *driver.TokenRequest) ([]*actions.IssueAction, []*actions.TransferAction, error) {
 	issues := tr.GetIssues()
 	issueActions := make([]*actions.IssueAction, len(issues))
 	for i := range issues {
 		ia := &actions.IssueAction{}
+		ia.SetLimits(a.Limits)
 		if err := ia.Deserialize(issues[i]); err != nil {
 			return nil, nil, err
 		}
@@ -37,6 +40,7 @@ func (a *ActionDeserializer) DeserializeActions(tr *driver.TokenRequest) ([]*act
 	transferActions := make([]*actions.TransferAction, len(transfers))
 	for i := range transfers {
 		ta := &actions.TransferAction{}
+		ta.SetLimits(a.Limits)
 		if err := ta.Deserialize(transfers[i]); err != nil {
 			return nil, nil, err
 		}
@@ -54,6 +58,7 @@ func NewValidator(
 	logger logging.Logger,
 	pp *setup.PublicParams,
 	deserializer driver.Deserializer,
+	limits driver.ResourceLimits,
 	extraTransferValidators []ValidateTransferFunc,
 	extraIssuerValidators []ValidateIssueFunc,
 	extraAuditorValidators []ValidateAuditingFunc,
@@ -82,7 +87,8 @@ func NewValidator(
 		logger,
 		pp,
 		deserializer,
-		&ActionDeserializer{},
+		limits,
+		&ActionDeserializer{Limits: limits},
 		transferValidators,
 		issueValidators,
 		auditingValidators,

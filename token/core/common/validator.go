@@ -87,6 +87,10 @@ type Validator[P driver.PublicParameters, T driver.Input, TA driver.TransferActi
 	TransferValidators []ValidateTransferFunc[P, T, TA, IA, DS]
 	IssueValidators    []ValidateIssueFunc[P, T, TA, IA, DS]
 
+	// Limits bounds the resources spent deserializing and validating untrusted requests, before
+	// any cryptographic work is performed. See driver.ResourceLimits.
+	Limits driver.ResourceLimits
+
 	// MinProtocolVersion specifies the minimum protocol version required for token requests.
 	// If set to 0, no minimum version is enforced (accepts all versions).
 	// If set to a specific version (e.g., driver.ProtocolV1), only requests with that version
@@ -99,6 +103,7 @@ func NewValidator[P driver.PublicParameters, T driver.Input, TA driver.TransferA
 	Logger logging.Logger,
 	publicParams P,
 	deserializer DS,
+	limits driver.ResourceLimits,
 	actionDeserializer driver.ActionDeserializer[TA, IA],
 	transferValidators []ValidateTransferFunc[P, T, TA, IA, DS],
 	issueValidators []ValidateIssueFunc[P, T, TA, IA, DS],
@@ -109,6 +114,7 @@ func NewValidator[P driver.PublicParameters, T driver.Input, TA driver.TransferA
 		PublicParams:       publicParams,
 		Deserializer:       deserializer,
 		ActionDeserializer: actionDeserializer,
+		Limits:             limits,
 		TransferValidators: transferValidators,
 		IssueValidators:    issueValidators,
 		AuditingValidators: auditingValidators,
@@ -128,7 +134,7 @@ func (v *Validator[P, T, TA, IA, DS]) VerifyTokenRequestFromRaw(ctx context.Cont
 	if len(raw) == 0 {
 		return nil, nil, errors.New("empty token request")
 	}
-	if err := CheckRawRequestSize(raw); err != nil {
+	if err := v.CheckRawRequestSize(raw); err != nil {
 		return nil, nil, err
 	}
 	tr := &driver.TokenRequest{}
@@ -154,7 +160,7 @@ func (v *Validator[P, T, TA, IA, DS]) VerifyTokenRequestFromRaw(ctx context.Cont
 	if len(tr.Actions) == 0 {
 		return nil, nil, ErrNoActions
 	}
-	if err := CheckRequestLimits(tr); err != nil {
+	if err := v.CheckRequestLimits(tr); err != nil {
 		return nil, nil, err
 	}
 

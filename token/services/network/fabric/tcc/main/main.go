@@ -58,7 +58,11 @@ func main() {
 		Writer:  os.Stderr,
 	})
 
+	limits, err := tcc.NewEnvResourceLimitsProvider().ResourceLimits()
+	assertNoError(err, "cannot resolve validation resource limits")
+
 	is := core.NewValidatorDriverService(
+		limits,
 		fabtoken.NewValidatorDriver(),
 		dlog.NewValidatorDriver(),
 	)

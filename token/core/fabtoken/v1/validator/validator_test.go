@@ -102,7 +102,7 @@ func TestNewValidator(t *testing.T) {
 	pp := &setup.PublicParams{}
 	deserializer := &mock.Deserializer{}
 
-	v := validator.NewValidator(logger, pp, deserializer, nil, nil, nil)
+	v := validator.NewValidator(logger, pp, deserializer, driver.DefaultResourceLimits(), nil, nil, nil)
 	assert.NotNil(t, v)
 }
 
@@ -1136,7 +1136,7 @@ func newValidatorEnv(benchmarkCase *benchmark2.Case, isIssue bool) (*validatorEn
 		return nil, err
 	}
 	des := &mock.Deserializer{}
-	v := validator.NewValidator(logger, pp, des, nil, nil, nil)
+	v := validator.NewValidator(logger, pp, des, driver.DefaultResourceLimits(), nil, nil, nil)
 
 	id, _ := identity.WrapWithType(x509.IdentityType, []byte("owner"))
 	issuer, _ := identity.WrapWithType(x509.IdentityType, []byte("issuer"))

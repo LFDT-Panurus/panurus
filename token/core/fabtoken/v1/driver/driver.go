@@ -159,6 +159,7 @@ func (d *Driver) NewTokenService(tmsID driver.TMSID, publicParams []byte) (drive
 		logger,
 		publicParamsManager.PublicParams(),
 		deserializer,
+		driver.DefaultResourceLimits(),
 		nil,
 		nil,
 		nil,

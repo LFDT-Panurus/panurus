@@ -28,7 +28,7 @@ func NewValidatorDriver() core.NamedFactory[driver.ValidatorDriver] {
 	}
 }
 
-func (d ValidatorDriver) NewValidator(pp driver.PublicParameters) (driver.Validator, error) {
+func (d ValidatorDriver) NewValidator(pp driver.PublicParameters, limits driver.ResourceLimits) (driver.Validator, error) {
 	if err := pp.Validate(); err != nil {
 		return nil, errors.Wrapf(err, "failed validating public parameters")
 	}
@@ -39,5 +39,5 @@ func (d ValidatorDriver) NewValidator(pp driver.PublicParameters) (driver.Valida
 	logger := logging.DriverLoggerFromPP("panurus.driver.fabtoken", string(core.DriverIdentifierFromPP(pp)))
 	deserializer := NewDeserializer()
 
-	return validator.NewValidator(logger, ppp, deserializer, nil, nil, nil), nil
+	return validator.NewValidator(logger, ppp, deserializer, limits, nil, nil, nil), nil
 }

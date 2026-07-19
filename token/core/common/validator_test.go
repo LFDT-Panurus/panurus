@@ -28,6 +28,7 @@ func TestAnchorInContext(t *testing.T) {
 		&logging.MockLogger{},
 		nil,
 		nil,
+		driver.DefaultResourceLimits(),
 		nil,
 		[]ValidateTransferFunc[driver.PublicParameters, driver.Input, driver.TransferAction, driver.IssueAction, driver.Deserializer]{
 			func(c context.Context, ctx *Context[driver.PublicParameters, driver.Input, driver.TransferAction, driver.IssueAction, driver.Deserializer]) error {
@@ -90,7 +91,7 @@ func TestValidatorWithCounterfeiter(t *testing.T) {
 	anchor := driver.TokenRequestAnchor("anchor")
 
 	v := NewValidator[driver.PublicParameters, driver.Input, driver.TransferAction, driver.IssueAction, driver.Deserializer](
-		logger, pp, des, ad, nil, nil, nil,
+		logger, pp, des, driver.DefaultResourceLimits(), ad, nil, nil, nil,
 	)
 
 	t.Run("VerifyTokenRequest_Success", func(t *testing.T) {
@@ -110,7 +111,7 @@ func TestValidatorWithCounterfeiter(t *testing.T) {
 
 	t.Run("VerifyTokenRequest_AuditingError", func(t *testing.T) {
 		vErr := NewValidator[driver.PublicParameters, driver.Input, driver.TransferAction, driver.IssueAction, driver.Deserializer](
-			logger, pp, des, ad, nil, nil, []ValidateAuditingFunc[driver.PublicParameters, driver.Input, driver.TransferAction, driver.IssueAction, driver.Deserializer]{
+			logger, pp, des, driver.DefaultResourceLimits(), ad, nil, nil, []ValidateAuditingFunc[driver.PublicParameters, driver.Input, driver.TransferAction, driver.IssueAction, driver.Deserializer]{
 				func(c context.Context, ctx *Context[driver.PublicParameters, driver.Input, driver.TransferAction, driver.IssueAction, driver.Deserializer]) error {
 					return errors.New("audit failed")
 				},
@@ -130,7 +131,7 @@ func TestValidatorWithCounterfeiter(t *testing.T) {
 
 	t.Run("VerifyTokenRequest_VerifyIssueError", func(t *testing.T) {
 		vErr := NewValidator[driver.PublicParameters, driver.Input, driver.TransferAction, driver.IssueAction, driver.Deserializer](
-			logger, pp, des, ad, nil, []ValidateIssueFunc[driver.PublicParameters, driver.Input, driver.TransferAction, driver.IssueAction, driver.Deserializer]{
+			logger, pp, des, driver.DefaultResourceLimits(), ad, nil, []ValidateIssueFunc[driver.PublicParameters, driver.Input, driver.TransferAction, driver.IssueAction, driver.Deserializer]{
 				func(c context.Context, ctx *Context[driver.PublicParameters, driver.Input, driver.TransferAction, driver.IssueAction, driver.Deserializer]) error {
 					return errors.New("issue validation failed")
 				},
@@ -146,7 +147,7 @@ func TestValidatorWithCounterfeiter(t *testing.T) {
 
 	t.Run("VerifyTokenRequest_VerifyTransferError", func(t *testing.T) {
 		vErr := NewValidator[driver.PublicParameters, driver.Input, driver.TransferAction, driver.IssueAction, driver.Deserializer](
-			logger, pp, des, ad, []ValidateTransferFunc[driver.PublicParameters, driver.Input, driver.TransferAction, driver.IssueAction, driver.Deserializer]{
+			logger, pp, des, driver.DefaultResourceLimits(), ad, []ValidateTransferFunc[driver.PublicParameters, driver.Input, driver.TransferAction, driver.IssueAction, driver.Deserializer]{
 				func(c context.Context, ctx *Context[driver.PublicParameters, driver.Input, driver.TransferAction, driver.IssueAction, driver.Deserializer]) error {
 					return errors.New("transfer validation failed")
 				},
@@ -189,7 +190,7 @@ func TestValidatorWithCounterfeiter(t *testing.T) {
 		assert.Contains(t, err.Error(), "more metadata than those validated")
 
 		vCount := NewValidator[driver.PublicParameters, driver.Input, driver.TransferAction, driver.IssueAction, driver.Deserializer](
-			logger, pp, des, ad, nil, []ValidateIssueFunc[driver.PublicParameters, driver.Input, driver.TransferAction, driver.IssueAction, driver.Deserializer]{
+			logger, pp, des, driver.DefaultResourceLimits(), ad, nil, []ValidateIssueFunc[driver.PublicParameters, driver.Input, driver.TransferAction, driver.IssueAction, driver.Deserializer]{
 				func(c context.Context, ctx *Context[driver.PublicParameters, driver.Input, driver.TransferAction, driver.IssueAction, driver.Deserializer]) error {
 					ctx.CountMetadataKey("k1")
 					ctx.CountMetadataKey("k1")
@@ -212,7 +213,7 @@ func TestValidatorWithCounterfeiter(t *testing.T) {
 		assert.Contains(t, err.Error(), "more metadata than those validated")
 
 		vCount := NewValidator[driver.PublicParameters, driver.Input, driver.TransferAction, driver.IssueAction, driver.Deserializer](
-			logger, pp, des, ad, []ValidateTransferFunc[driver.PublicParameters, driver.Input, driver.TransferAction, driver.IssueAction, driver.Deserializer]{
+			logger, pp, des, driver.DefaultResourceLimits(), ad, []ValidateTransferFunc[driver.PublicParameters, driver.Input, driver.TransferAction, driver.IssueAction, driver.Deserializer]{
 				func(c context.Context, ctx *Context[driver.PublicParameters, driver.Input, driver.TransferAction, driver.IssueAction, driver.Deserializer]) error {
 					ctx.CountMetadataKey("k1")
 					ctx.CountMetadataKey("k1")

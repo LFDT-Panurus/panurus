@@ -16,6 +16,7 @@ import (
 	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/crypto/rp"
 	token2 "github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/token"
 	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/transfer"
+	"github.com/LFDT-Panurus/panurus/token/driver"
 	"github.com/LFDT-Panurus/panurus/token/token"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/proto"
 	"github.com/stretchr/testify/require"
@@ -41,6 +42,7 @@ func baseValidTransferAction() *transfer.Action {
 }
 
 func TestTransferAction_Validate_TooManyInputs(t *testing.T) {
+	limits := driver.DefaultResourceLimits()
 	curve := math.Curves[math.BN254]
 	mk := func(n int) *transfer.Action {
 		a := baseValidTransferAction()
@@ -54,12 +56,34 @@ func TestTransferAction_Validate_TooManyInputs(t *testing.T) {
 
 		return a
 	}
-	require.NoError(t, mk(transfer.MaxInputs-1).Validate())
-	require.NoError(t, mk(transfer.MaxInputs).Validate())
-	require.ErrorIs(t, mk(transfer.MaxInputs+1).Validate(), transfer.ErrTooManyInputs)
+	require.NoError(t, mk(limits.MaxInputs-1).Validate())
+	require.NoError(t, mk(limits.MaxInputs).Validate())
+	require.ErrorIs(t, mk(limits.MaxInputs+1).Validate(), transfer.ErrTooManyInputs)
+}
+
+func TestTransferAction_Validate_TooManyInputs_CustomLimit(t *testing.T) {
+	custom := driver.DefaultResourceLimits()
+	custom.MaxInputs = 2
+	curve := math.Curves[math.BN254]
+	mk := func(n int) *transfer.Action {
+		a := baseValidTransferAction()
+		a.Inputs = make([]*transfer.ActionInput, n)
+		for i := range a.Inputs {
+			a.Inputs[i] = &transfer.ActionInput{
+				ID:    &token.ID{TxId: "txid", Index: uint64(i)},
+				Token: &token2.Token{Owner: []byte("owner"), Data: curve.GenG1},
+			}
+		}
+		a.SetLimits(custom)
+
+		return a
+	}
+	require.NoError(t, mk(2).Validate())
+	require.ErrorIs(t, mk(3).Validate(), transfer.ErrTooManyInputs)
 }
 
 func TestTransferAction_Validate_TooManyOutputs(t *testing.T) {
+	limits := driver.DefaultResourceLimits()
 	curve := math.Curves[math.BN254]
 	mk := func(n int) *transfer.Action {
 		a := baseValidTransferAction()
@@ -70,24 +94,40 @@ func TestTransferAction_Validate_TooManyOutputs(t *testing.T) {
 
 		return a
 	}
-	require.NoError(t, mk(transfer.MaxOutputs-1).Validate())
-	require.NoError(t, mk(transfer.MaxOutputs).Validate())
-	require.ErrorIs(t, mk(transfer.MaxOutputs+1).Validate(), transfer.ErrTooManyOutputs)
+	require.NoError(t, mk(limits.MaxOutputs-1).Validate())
+	require.NoError(t, mk(limits.MaxOutputs).Validate())
+	require.ErrorIs(t, mk(limits.MaxOutputs+1).Validate(), transfer.ErrTooManyOutputs)
 }
 
 func TestTransferAction_Validate_ProofTooLarge(t *testing.T) {
+	limits := driver.DefaultResourceLimits()
 	mk := func(n int) *transfer.Action {
 		a := baseValidTransferAction()
 		a.Proof = make([]byte, n)
 
 		return a
 	}
-	require.NoError(t, mk(transfer.MaxProofBytes-1).Validate())
-	require.NoError(t, mk(transfer.MaxProofBytes).Validate())
-	require.ErrorIs(t, mk(transfer.MaxProofBytes+1).Validate(), transfer.ErrProofTooLarge)
+	require.NoError(t, mk(limits.MaxProofBytes-1).Validate())
+	require.NoError(t, mk(limits.MaxProofBytes).Validate())
+	require.ErrorIs(t, mk(limits.MaxProofBytes+1).Validate(), transfer.ErrProofTooLarge)
+}
+
+func TestTransferAction_Validate_ProofTooLarge_CustomLimit(t *testing.T) {
+	custom := driver.DefaultResourceLimits()
+	custom.MaxProofBytes = 16
+	mk := func(n int) *transfer.Action {
+		a := baseValidTransferAction()
+		a.Proof = make([]byte, n)
+		a.SetLimits(custom)
+
+		return a
+	}
+	require.NoError(t, mk(16).Validate())
+	require.ErrorIs(t, mk(17).Validate(), transfer.ErrProofTooLarge)
 }
 
 func TestTransferAction_Validate_MetadataLimits(t *testing.T) {
+	limits := driver.DefaultResourceLimits()
 	t.Run("entries", func(t *testing.T) {
 		mk := func(n int) *transfer.Action {
 			a := baseValidTransferAction()
@@ -98,9 +138,9 @@ func TestTransferAction_Validate_MetadataLimits(t *testing.T) {
 
 			return a
 		}
-		require.NoError(t, mk(transfer.MaxMetadataEntries-1).Validate())
-		require.NoError(t, mk(transfer.MaxMetadataEntries).Validate())
-		require.ErrorIs(t, mk(transfer.MaxMetadataEntries+1).Validate(), transfer.ErrTooManyMetadataEntries)
+		require.NoError(t, mk(limits.MaxMetadataEntries-1).Validate())
+		require.NoError(t, mk(limits.MaxMetadataEntries).Validate())
+		require.ErrorIs(t, mk(limits.MaxMetadataEntries+1).Validate(), transfer.ErrTooManyMetadataEntries)
 	})
 	t.Run("key bytes", func(t *testing.T) {
 		mk := func(n int) *transfer.Action {
@@ -109,9 +149,9 @@ func TestTransferAction_Validate_MetadataLimits(t *testing.T) {
 
 			return a
 		}
-		require.NoError(t, mk(transfer.MaxMetadataKeyBytes-1).Validate())
-		require.NoError(t, mk(transfer.MaxMetadataKeyBytes).Validate())
-		require.ErrorIs(t, mk(transfer.MaxMetadataKeyBytes+1).Validate(), transfer.ErrMetadataKeyTooLarge)
+		require.NoError(t, mk(limits.MaxMetadataKeyBytes-1).Validate())
+		require.NoError(t, mk(limits.MaxMetadataKeyBytes).Validate())
+		require.ErrorIs(t, mk(limits.MaxMetadataKeyBytes+1).Validate(), transfer.ErrMetadataKeyTooLarge)
 	})
 	t.Run("value bytes", func(t *testing.T) {
 		mk := func(n int) *transfer.Action {
@@ -120,9 +160,9 @@ func TestTransferAction_Validate_MetadataLimits(t *testing.T) {
 
 			return a
 		}
-		require.NoError(t, mk(transfer.MaxMetadataValueBytes-1).Validate())
-		require.NoError(t, mk(transfer.MaxMetadataValueBytes).Validate())
-		require.ErrorIs(t, mk(transfer.MaxMetadataValueBytes+1).Validate(), transfer.ErrMetadataValueTooLarge)
+		require.NoError(t, mk(limits.MaxMetadataValueBytes-1).Validate())
+		require.NoError(t, mk(limits.MaxMetadataValueBytes).Validate())
+		require.ErrorIs(t, mk(limits.MaxMetadataValueBytes+1).Validate(), transfer.ErrMetadataValueTooLarge)
 	})
 }
 
@@ -147,32 +187,46 @@ func marshalTransferAction(t *testing.T, inputs, outputs, proofLen int) []byte {
 }
 
 func TestTransferAction_Deserialize_TooManyInputs(t *testing.T) {
+	limits := driver.DefaultResourceLimits()
 	a := &transfer.Action{}
-	require.NoError(t, a.Deserialize(marshalTransferAction(t, transfer.MaxInputs, 1, 1)))
-	require.ErrorIs(t, a.Deserialize(marshalTransferAction(t, transfer.MaxInputs+1, 1, 1)), transfer.ErrTooManyInputs)
+	require.NoError(t, a.Deserialize(marshalTransferAction(t, limits.MaxInputs, 1, 1)))
+	require.ErrorIs(t, a.Deserialize(marshalTransferAction(t, limits.MaxInputs+1, 1, 1)), transfer.ErrTooManyInputs)
 }
 
 func TestTransferAction_Deserialize_TooManyOutputs(t *testing.T) {
+	limits := driver.DefaultResourceLimits()
 	a := &transfer.Action{}
-	require.NoError(t, a.Deserialize(marshalTransferAction(t, 1, transfer.MaxOutputs, 1)))
-	require.ErrorIs(t, a.Deserialize(marshalTransferAction(t, 1, transfer.MaxOutputs+1, 1)), transfer.ErrTooManyOutputs)
+	require.NoError(t, a.Deserialize(marshalTransferAction(t, 1, limits.MaxOutputs, 1)))
+	require.ErrorIs(t, a.Deserialize(marshalTransferAction(t, 1, limits.MaxOutputs+1, 1)), transfer.ErrTooManyOutputs)
 }
 
 func TestTransferAction_Deserialize_ProofTooLarge(t *testing.T) {
+	limits := driver.DefaultResourceLimits()
 	a := &transfer.Action{}
-	require.ErrorIs(t, a.Deserialize(marshalTransferAction(t, 1, 1, transfer.MaxProofBytes+1)), transfer.ErrProofTooLarge)
+	require.ErrorIs(t, a.Deserialize(marshalTransferAction(t, 1, 1, limits.MaxProofBytes+1)), transfer.ErrProofTooLarge)
 }
 
 func TestTransferAction_Deserialize_ManyTinyInputs(t *testing.T) {
+	limits := driver.DefaultResourceLimits()
 	a := &transfer.Action{}
-	require.ErrorIs(t, a.Deserialize(marshalTransferAction(t, transfer.MaxInputs+1, 1, 1)), transfer.ErrTooManyInputs)
+	require.ErrorIs(t, a.Deserialize(marshalTransferAction(t, limits.MaxInputs+1, 1, 1)), transfer.ErrTooManyInputs)
+}
+
+func TestTransferAction_Deserialize_TooManyInputs_CustomLimit(t *testing.T) {
+	custom := driver.DefaultResourceLimits()
+	custom.MaxInputs = 2
+	a := &transfer.Action{}
+	a.SetLimits(custom)
+	require.NoError(t, a.Deserialize(marshalTransferAction(t, 2, 1, 1)))
+	require.ErrorIs(t, a.Deserialize(marshalTransferAction(t, 3, 1, 1)), transfer.ErrTooManyInputs)
 }
 
 // TestTransferAction_Deserialize_RejectsBeforeCryptographicWork proves that an oversized
 // proof is rejected by the resource-limit check before any cryptographic verifier work would
 // run: Deserialize returns near-instantly and never reaches proof-specific unmarshalling.
 func TestTransferAction_Deserialize_RejectsBeforeCryptographicWork(t *testing.T) {
-	raw := marshalTransferAction(t, 1, 1, transfer.MaxProofBytes+1)
+	limits := driver.DefaultResourceLimits()
+	raw := marshalTransferAction(t, 1, 1, limits.MaxProofBytes+1)
 
 	start := time.Now()
 	a := &transfer.Action{}

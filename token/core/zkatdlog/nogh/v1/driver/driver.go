@@ -162,17 +162,15 @@ func (d *Driver) NewTokenService(tmsID driver.TMSID, publicParams []byte) (drive
 	if err != nil {
 		return nil, errors.Wrapf(err, "failed to initiliaze token upgrade service for [%s:%s]", tmsID.Network, tmsID.Namespace)
 	}
-	validator, err := validator.New(
+	validator := validator.New(
 		logger,
 		ppm.PublicParams(),
 		deserializer,
+		driver.DefaultResourceLimits(),
 		nil,
 		nil,
 		nil,
-	), nil
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to instantiate validator")
-	}
+	)
 	service, err := v1.NewTokenService(
 		logger,
 		ws,

@@ -162,12 +162,12 @@ func TestNewDefaultValidator(t *testing.T) {
 	pp, _ := setup.NewWith(setup.FabTokenDriverName, setup.ProtocolV1, 64)
 
 	// Case 1: Valid public parameters
-	v, err := d.NewValidator(pp)
+	v, err := d.NewValidator(pp, tdriver.DefaultResourceLimits())
 	require.NoError(t, err)
 	assert.NotNil(t, v)
 
 	// Case 2: Invalid public parameters type
-	v, err = d.NewValidator(&dmock.PublicParameters{})
+	v, err = d.NewValidator(&dmock.PublicParameters{}, tdriver.DefaultResourceLimits())
 	require.Error(t, err)
 	assert.Nil(t, v)
 	assert.Contains(t, err.Error(), "invalid public parameters type")

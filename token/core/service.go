@@ -149,18 +149,20 @@ type TokenDriverService = TMSDriverService
 // ValidatorDriverService manages factories for creating validators.
 type ValidatorDriverService struct {
 	*factoryDirectory[driver.ValidatorDriver]
+	limits driver.ResourceLimits
 }
 
-// NewValidatorDriverService creates a new ValidatorDriverService with the provided factories.
-func NewValidatorDriverService(factories ...NamedFactory[driver.ValidatorDriver]) *ValidatorDriverService {
-	return &ValidatorDriverService{factoryDirectory: newFactoryDirectory(factories...)}
+// NewValidatorDriverService creates a new ValidatorDriverService with the provided resource
+// limits and factories. The limits are applied to every validator this service creates.
+func NewValidatorDriverService(limits driver.ResourceLimits, factories ...NamedFactory[driver.ValidatorDriver]) *ValidatorDriverService {
+	return &ValidatorDriverService{factoryDirectory: newFactoryDirectory(factories...), limits: limits}
 }
 
 // NewValidator returns a new instance of driver.Validator for the passed public parameters.
 // If no driver is registered for the public params' identifier, it returns an error.
 func (s *ValidatorDriverService) NewValidator(pp driver.PublicParameters) (driver.Validator, error) {
 	if d, ok := s.factories[DriverIdentifierFromPP(pp)]; ok {
-		return d.NewValidator(pp)
+		return d.NewValidator(pp, s.limits)
 	}
 
 	return nil, errors.Errorf("no validator found for token driver [%s]", DriverIdentifierFromPP(pp))

@@ -499,7 +499,7 @@ func TestSecurityFR_Version0Rejected(t *testing.T) {
 	pp, err := v1.Setup(32, []byte("idemix"), math.BLS12_381_BBS_GURVY)
 	require.NoError(t, err)
 
-	v := validator.New(logging.MustGetLogger(), pp, nil, nil, nil, nil)
+	v := validator.New(logging.MustGetLogger(), pp, nil, driver.DefaultResourceLimits(), nil, nil, nil)
 
 	// Build a minimal TokenRequest with Version explicitly set to 0.
 	tr := &driver.TokenRequest{

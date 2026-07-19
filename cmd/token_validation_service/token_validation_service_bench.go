@@ -24,6 +24,7 @@ import (
 	fabtoken "github.com/LFDT-Panurus/panurus/token/core/fabtoken/v1/driver"
 	dlog "github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/driver"
 	v1setup "github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/setup"
+	"github.com/LFDT-Panurus/panurus/token/driver"
 	tk "github.com/LFDT-Panurus/panurus/token/token"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/view"
 )
@@ -159,7 +160,7 @@ func (*fakeLedger) GetState(_ tk.ID) ([]byte, error) {
 }
 
 func newTokenValidator(ppRaw []byte) (*token.Validator, error) {
-	is := core.NewValidatorDriverService(fabtoken.NewValidatorDriver(), dlog.NewValidatorDriver())
+	is := core.NewValidatorDriverService(driver.DefaultResourceLimits(), fabtoken.NewValidatorDriver(), dlog.NewValidatorDriver())
 	ppm, err := is.PublicParametersFromBytes(ppRaw)
 	if err != nil {
 		return nil, fmt.Errorf("failed to deserialize public parameters: %w", err)

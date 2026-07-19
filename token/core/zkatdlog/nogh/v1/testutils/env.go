@@ -104,6 +104,7 @@ func NewEnv(benchCase *benchmark2.Case, configurations *benchmark.SetupConfigura
 		logging.MustGetLogger(),
 		pp,
 		deserializer,
+		driver.DefaultResourceLimits(),
 		nil,
 		nil,
 		nil,

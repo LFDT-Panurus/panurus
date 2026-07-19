@@ -9,8 +9,10 @@ package sdk
 import (
 	"github.com/LFDT-Panurus/panurus/token/core"
 	"github.com/LFDT-Panurus/panurus/token/driver"
+	"github.com/LFDT-Panurus/panurus/token/services/config"
 	dbdriver "github.com/LFDT-Panurus/panurus/token/services/storage/db/driver"
 	"github.com/LFDT-Panurus/panurus/token/services/storage/db/multiplexed"
+	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	driver2 "github.com/hyperledger-labs/fabric-smart-client/platform/common/driver"
 	"go.uber.org/dig"
 )
@@ -38,8 +40,14 @@ func newTokenDriverService(in struct {
 
 func newValidatorDriverService(in struct {
 	dig.In
-	Drivers []core.NamedFactory[driver.ValidatorDriver] `group:"validator-drivers"`
+	Drivers        []core.NamedFactory[driver.ValidatorDriver] `group:"validator-drivers"`
+	ConfigProvider config.Provider
 },
-) *core.ValidatorDriverService {
-	return core.NewValidatorDriverService(in.Drivers...)
+) (*core.ValidatorDriverService, error) {
+	limits, err := config.NewResourceLimitsProvider(in.ConfigProvider).ResourceLimits()
+	if err != nil {
+		return nil, errors.Wrap(err, "failed resolving validation resource limits")
+	}
+
+	return core.NewValidatorDriverService(limits, in.Drivers...), nil
 }

@@ -8,10 +8,11 @@ import (
 )
 
 type ValidatorDriver struct {
-	NewValidatorStub        func(driver.PublicParameters) (driver.Validator, error)
+	NewValidatorStub        func(driver.PublicParameters, driver.ResourceLimits) (driver.Validator, error)
 	newValidatorMutex       sync.RWMutex
 	newValidatorArgsForCall []struct {
 		arg1 driver.PublicParameters
+		arg2 driver.ResourceLimits
 	}
 	newValidatorReturns struct {
 		result1 driver.Validator
@@ -38,42 +39,46 @@ type ValidatorDriver struct {
 	invocationsMutex sync.RWMutex
 }
 
-func (fake *ValidatorDriver) NewValidator(arg1 driver.PublicParameters) (driver.Validator, error) {
+func (fake *ValidatorDriver) NewValidator(arg1 driver.PublicParameters, arg2 driver.ResourceLimits) (driver.Validator, error) {
 	fake.newValidatorMutex.Lock()
 	ret, specificReturn := fake.newValidatorReturnsOnCall[len(fake.newValidatorArgsForCall)]
 	fake.newValidatorArgsForCall = append(fake.newValidatorArgsForCall, struct {
 		arg1 driver.PublicParameters
-	}{arg1})
+		arg2 driver.ResourceLimits
+	}{arg1, arg2})
 	stub := fake.NewValidatorStub
 	fakeReturns := fake.newValidatorReturns
-	fake.recordInvocation("NewValidator", []interface{}{arg1})
+	fake.recordInvocation("NewValidator", []interface{}{arg1, arg2})
 	fake.newValidatorMutex.Unlock()
 	if stub != nil {
-		return stub(arg1)
+		return stub(arg1, arg2)
 	}
 	if specificReturn {
 		return ret.result1, ret.result2
 	}
+
 	return fakeReturns.result1, fakeReturns.result2
 }
 
 func (fake *ValidatorDriver) NewValidatorCallCount() int {
 	fake.newValidatorMutex.RLock()
 	defer fake.newValidatorMutex.RUnlock()
+
 	return len(fake.newValidatorArgsForCall)
 }
 
-func (fake *ValidatorDriver) NewValidatorCalls(stub func(driver.PublicParameters) (driver.Validator, error)) {
+func (fake *ValidatorDriver) NewValidatorCalls(stub func(driver.PublicParameters, driver.ResourceLimits) (driver.Validator, error)) {
 	fake.newValidatorMutex.Lock()
 	defer fake.newValidatorMutex.Unlock()
 	fake.NewValidatorStub = stub
 }
 
-func (fake *ValidatorDriver) NewValidatorArgsForCall(i int) driver.PublicParameters {
+func (fake *ValidatorDriver) NewValidatorArgsForCall(i int) (driver.PublicParameters, driver.ResourceLimits) {
 	fake.newValidatorMutex.RLock()
 	defer fake.newValidatorMutex.RUnlock()
 	argsForCall := fake.newValidatorArgsForCall[i]
-	return argsForCall.arg1
+
+	return argsForCall.arg1, argsForCall.arg2
 }
 
 func (fake *ValidatorDriver) NewValidatorReturns(result1 driver.Validator, result2 error) {
@@ -123,12 +128,14 @@ func (fake *ValidatorDriver) PublicParametersFromBytes(arg1 []byte) (driver.Publ
 	if specificReturn {
 		return ret.result1, ret.result2
 	}
+
 	return fakeReturns.result1, fakeReturns.result2
 }
 
 func (fake *ValidatorDriver) PublicParametersFromBytesCallCount() int {
 	fake.publicParametersFromBytesMutex.RLock()
 	defer fake.publicParametersFromBytesMutex.RUnlock()
+
 	return len(fake.publicParametersFromBytesArgsForCall)
 }
 
@@ -142,6 +149,7 @@ func (fake *ValidatorDriver) PublicParametersFromBytesArgsForCall(i int) []byte 
 	fake.publicParametersFromBytesMutex.RLock()
 	defer fake.publicParametersFromBytesMutex.RUnlock()
 	argsForCall := fake.publicParametersFromBytesArgsForCall[i]
+
 	return argsForCall.arg1
 }
 
@@ -178,6 +186,7 @@ func (fake *ValidatorDriver) Invocations() map[string][][]interface{} {
 	for key, value := range fake.invocations {
 		copiedInvocations[key] = value
 	}
+
 	return copiedInvocations
 }
 

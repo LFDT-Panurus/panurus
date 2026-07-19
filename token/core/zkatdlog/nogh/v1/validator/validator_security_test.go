@@ -173,6 +173,7 @@ func TestSecurityPanicAuditingContextMetadataCounter(t *testing.T) {
 		logging.MustGetLogger(),
 		pp,
 		nil,
+		driver.DefaultResourceLimits(),
 		nil,
 		nil,
 		[]validator.ValidateAuditingFunc{auditingValidator},
@@ -294,7 +295,7 @@ func TestSecurityFalseAcceptanceEmptyTokenRequest(t *testing.T) {
 	pp, err := v1.Setup(32, []byte("idemix"), math.BLS12_381_BBS_GURVY)
 	require.NoError(t, err)
 
-	v := validator.New(logging.MustGetLogger(), pp, nil, nil, nil, nil)
+	v := validator.New(logging.MustGetLogger(), pp, nil, driver.DefaultResourceLimits(), nil, nil, nil)
 
 	require.NotPanics(t, func() {
 		_, _, err = v.VerifyTokenRequestFromRaw(context.Background(), nil, "anchor", nil)
@@ -769,6 +770,7 @@ func TestSecurityFA_MultipleMetadataCountForSameKey(t *testing.T) {
 		logging.MustGetLogger(),
 		pp,
 		nil,
+		driver.DefaultResourceLimits(),
 		&validator.ActionDeserializer{},
 		[]validator.ValidateTransferFunc{doubleCounter},
 		nil,
@@ -820,6 +822,7 @@ func TestSecurityFA_UnvalidatedMetadataKey(t *testing.T) {
 		logging.MustGetLogger(),
 		pp,
 		nil,
+		driver.DefaultResourceLimits(),
 		&validator.ActionDeserializer{},
 		[]validator.ValidateTransferFunc{noopTransferValidator},
 		nil,

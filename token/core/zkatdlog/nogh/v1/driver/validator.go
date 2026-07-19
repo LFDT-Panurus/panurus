@@ -29,7 +29,7 @@ func NewValidatorDriver() core.NamedFactory[driver.ValidatorDriver] {
 }
 
 // NewValidator returns a new zkatdlog validator for the passed public parameters.
-func (d ValidatorDriver) NewValidator(pp driver.PublicParameters) (driver.Validator, error) {
+func (d ValidatorDriver) NewValidator(pp driver.PublicParameters, limits driver.ResourceLimits) (driver.Validator, error) {
 	ppp, ok := pp.(*v1.PublicParams)
 	if !ok {
 		return nil, errors.Errorf("invalid public parameters type [%T]", pp)
@@ -47,6 +47,7 @@ func (d ValidatorDriver) NewValidator(pp driver.PublicParameters) (driver.Valida
 		logger,
 		ppp,
 		deserializer,
+		limits,
 		nil,
 		nil,
 		nil,

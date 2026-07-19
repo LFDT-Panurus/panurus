@@ -27,7 +27,8 @@ func FuzzVerifyTokenRequestFromRawNoPanic(f *testing.F) {
 	f.Add([]byte("malformed"))
 
 	f.Fuzz(func(t *testing.T, raw []byte) {
-		if len(raw) > MaxRequestBytes {
+		limits := driver.DefaultResourceLimits()
+		if len(raw) > limits.MaxRequestBytes {
 			t.Skip()
 		}
 		actionDeserializer := &dmock.ActionDeserializer[driver.TransferAction, driver.IssueAction]{}
@@ -46,7 +47,7 @@ func FuzzVerifyTokenRequestFromRawNoPanic(f *testing.F) {
 			return issues, transfers, nil
 		})
 		validator := NewValidator[driver.PublicParameters, driver.Input, driver.TransferAction, driver.IssueAction, driver.Deserializer](
-			&logging.MockLogger{}, nil, nil, actionDeserializer, nil, nil, nil,
+			&logging.MockLogger{}, nil, nil, limits, actionDeserializer, nil, nil, nil,
 		)
 
 		require.NotPanics(t, func() {
@@ -66,13 +67,14 @@ func FuzzStructuredTokenRequestSignatureEnvelope(f *testing.F) {
 	f.Add(uint32(0), []byte("signature"), true)
 
 	f.Fuzz(func(t *testing.T, actionID uint32, signature []byte, appendExtra bool) {
-		if len(signature) == 0 || len(signature) > MaxSignatureBytes {
+		limits := driver.DefaultResourceLimits()
+		if len(signature) == 0 || len(signature) > limits.MaxSignatureBytes {
 			t.Skip()
 		}
 		actionDeserializer := &dmock.ActionDeserializer[driver.TransferAction, driver.IssueAction]{}
 		actionDeserializer.DeserializeActionsReturns(nil, []driver.TransferAction{&dmock.TransferAction{}}, nil)
 		validator := NewValidator[driver.PublicParameters, driver.Input, driver.TransferAction, driver.IssueAction, driver.Deserializer](
-			&logging.MockLogger{}, nil, nil, actionDeserializer,
+			&logging.MockLogger{}, nil, nil, limits, actionDeserializer,
 			[]ValidateTransferFunc[driver.PublicParameters, driver.Input, driver.TransferAction, driver.IssueAction, driver.Deserializer]{
 				func(c context.Context, ctx *Context[driver.PublicParameters, driver.Input, driver.TransferAction, driver.IssueAction, driver.Deserializer]) error {
 					_, err := ctx.SignatureProvider.HasBeenSignedBy(c, nil, &dmock.Verifier{})
@@ -106,27 +108,28 @@ func FuzzStructuredTokenRequestSignatureEnvelope(f *testing.F) {
 // VerifyTokenRequestFromRaw never panics, and that any request exceeding a configured limit is
 // rejected with the corresponding typed error rather than reaching signature verification.
 func FuzzRequestResourceLimits(f *testing.F) {
+	limits := driver.DefaultResourceLimits()
 	f.Add(1, 0, 8, 8)
-	f.Add(MaxActions, 0, 8, 8)
-	f.Add(MaxActions+1, 0, 8, 8)
+	f.Add(limits.MaxActions, 0, 8, 8)
+	f.Add(limits.MaxActions+1, 0, 8, 8)
 	f.Add(1, 1, 8, 8)
-	f.Add(1, MaxSignatures, 8, 8)
-	f.Add(1, MaxSignatures+1, 8, 8)
-	f.Add(1, 0, MaxActionBytes, 8)
-	f.Add(1, 0, MaxActionBytes+1, 8)
-	f.Add(1, 1, 8, MaxSignatureBytes)
-	f.Add(1, 1, 8, MaxSignatureBytes+1)
+	f.Add(1, limits.MaxSignatures, 8, 8)
+	f.Add(1, limits.MaxSignatures+1, 8, 8)
+	f.Add(1, 0, limits.MaxActionBytes, 8)
+	f.Add(1, 0, limits.MaxActionBytes+1, 8)
+	f.Add(1, 1, 8, limits.MaxSignatureBytes)
+	f.Add(1, 1, 8, limits.MaxSignatureBytes+1)
 
 	f.Fuzz(func(t *testing.T, numActions, numSignatures, actionBytes, sigBytes int) {
 		// Bound fuzzed counts/sizes to a range that keeps the test fast while still crossing
 		// every configured limit; the values above MaxActions/MaxSignatures/MaxActionBytes/
 		// MaxSignatureBytes are the ones this test cares about observing rejection for.
-		numActions = boundInt(numActions, 0, MaxActions+8)
-		numSignatures = boundInt(numSignatures, 0, MaxSignatures+8)
+		numActions = boundInt(numActions, 0, limits.MaxActions+8)
+		numSignatures = boundInt(numSignatures, 0, limits.MaxSignatures+8)
 		// Actions and signatures must carry at least one byte: TokenRequest.Validate rejects
 		// empty Raw/Signature bytes before any resource-limit check runs.
-		actionBytes = boundInt(actionBytes, 1, MaxActionBytes+8)
-		sigBytes = boundInt(sigBytes, 1, MaxSignatureBytes+8)
+		actionBytes = boundInt(actionBytes, 1, limits.MaxActionBytes+8)
+		sigBytes = boundInt(sigBytes, 1, limits.MaxSignatureBytes+8)
 
 		tr := &driver.TokenRequest{
 			Actions: actionsOfLen(numActions),
@@ -152,7 +155,7 @@ func FuzzRequestResourceLimits(f *testing.F) {
 			return nil, transfers, nil
 		})
 		validator := NewValidator[driver.PublicParameters, driver.Input, driver.TransferAction, driver.IssueAction, driver.Deserializer](
-			&logging.MockLogger{}, nil, nil, actionDeserializer, nil, nil, nil,
+			&logging.MockLogger{}, nil, nil, limits, actionDeserializer, nil, nil, nil,
 		)
 
 		var validationErr error
@@ -161,19 +164,19 @@ func FuzzRequestResourceLimits(f *testing.F) {
 		})
 
 		switch {
-		case len(raw) > MaxRequestBytes:
+		case len(raw) > limits.MaxRequestBytes:
 			// The raw envelope size gate runs before the request is even parsed, so an
 			// oversized action or signature payload may be caught here first.
 			require.ErrorIs(t, validationErr, ErrRequestTooLarge)
 		case numActions == 0:
 			require.ErrorIs(t, validationErr, ErrNoActions)
-		case numActions > MaxActions:
+		case numActions > limits.MaxActions:
 			require.ErrorIs(t, validationErr, ErrTooManyActions)
-		case numSignatures > MaxSignatures:
+		case numSignatures > limits.MaxSignatures:
 			require.ErrorIs(t, validationErr, ErrTooManySignatures)
-		case actionBytes > MaxActionBytes:
+		case actionBytes > limits.MaxActionBytes:
 			require.ErrorIs(t, validationErr, ErrActionTooLarge)
-		case numSignatures > 0 && sigBytes > MaxSignatureBytes:
+		case numSignatures > 0 && sigBytes > limits.MaxSignatureBytes:
 			require.ErrorIs(t, validationErr, ErrSignatureTooLarge)
 		}
 	})
