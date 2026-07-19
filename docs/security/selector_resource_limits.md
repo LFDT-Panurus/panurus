@@ -4,6 +4,16 @@
 
 The Token SDK selector service implements per-identity resource limits to prevent resource exhaustion attacks and ensure fair resource allocation. These limits are enforced at the service layer and apply regardless of the storage backend in use.
 
+**Selector coverage**: rate limiting is enforced by both selector drivers:
+
+- The **simple** selector enforces both the lock quota and the rate limit inside its
+  in-memory locker (`LockWithIdentity`), keyed on `ownerFilter.ID()`.
+- The **sherdlock** selector enforces the rate limit once per selection request at
+  the top of its selection loop, keyed on `owner.ID()`.
+
+Both share the same enforcer (`inmemory.Locker`, built with `inmemory.NewEnforcer`),
+so the rate-limiter behaviour and error type are identical across drivers.
+
 ## Security Controls
 
 ### 1. Lock Quota
@@ -92,6 +102,59 @@ lockerProvider := network.NewLockerProviderWithConfig(
 )
 ```
 
+### Supplying a Custom Rate Limiter
+
+By default the SDK uses a built-in in-memory token-bucket limiter. Applications that
+need different behaviour — for example a distributed limiter shared across processes
+(Redis-backed, etc.) — can supply their own implementation of the `RateLimiter`
+interface:
+
+```go
+// token/services/selector/simple/inmemory/ratelimiter.go
+type RateLimiter interface {
+    // Allow returns nil if a request from the given identity may proceed,
+    // or a non-nil error if the request is throttled.
+    Allow(identity string) error
+    // Stop releases any background resources held by the limiter.
+    Stop()
+}
+```
+
+Any non-nil error returned by `Allow` is normalised to `simple.ErrRateLimitExceeded`
+by the enforcer, so callers handle a single error type regardless of implementation.
+
+**Lifecycle ownership**: when you supply your own limiter, *you* own its lifecycle.
+The enforcer will never call `Stop()` on an application-supplied limiter (it may be
+shared across many managers/lockers). The built-in limiter, created when no custom
+one is supplied, is owned and stopped by the enforcer.
+
+**Library-level injection** (assembling the services yourself):
+
+```go
+custom := myRateLimiter{} // implements inmemory.RateLimiter
+
+// simple selector
+lockerProvider := network.NewLockerProviderWithConfig(
+    ttxStoreServiceManager, sleepTimeout, validTxEvictionTimeout,
+    inmemory.LockerConfig{RateLimiter: custom},
+)
+
+// sherdlock selector
+svc := sherdlock.NewServiceWithRateLimiter(
+    fetcherProvider, tokenLockStoreServiceManager, configProvider, metricsProvider, custom,
+)
+```
+
+**Dependency-injection (dig) injection** (standard SDK assembly): simply `Provide`
+an `inmemory.RateLimiter` in the container. Both the simple locker provider and the
+sherdlock selector service declare it as an optional dependency, so it is picked up
+automatically for whichever selector driver is configured. When none is provided the
+built-in limiter is used.
+
+```go
+container.Provide(func() inmemory.RateLimiter { return myRateLimiter{} })
+```
+
 ### Disabling Limits
 
 To disable a specific limit, set its value to 0:
@@ -126,11 +189,11 @@ The following behaviors can be monitored through application logs:
 1. **Handle Errors Gracefully**:
    ```go
    _, err := selector.Select(ctx, ownerFilter, amount, tokenType)
-   if errors.HasType(err, inmemory.ErrQuotaExceeded) {
+   if errors.HasType(err, simple.ErrQuotaExceeded) {
        // Quota exceeded - wait or release locks
        return handleQuotaExceeded(err)
    }
-   if errors.HasType(err, inmemory.ErrRateLimitExceeded) {
+   if errors.HasType(err, simple.ErrRateLimitExceeded) {
        // Rate limited - implement backoff
        return handleRateLimitExceeded(err)
    }
@@ -181,6 +244,9 @@ The implementation maintains backward compatibility:
 
 ## Error Types
 
+Both error types are defined in the `simple` package
+(`token/services/selector/simple/selector.go`) and shared by both selector drivers.
+
 ### ErrQuotaExceeded
 
 ```go
@@ -204,6 +270,8 @@ Returned when an identity exceeds the configured rate limit for lock creation re
 Comprehensive unit tests are provided in:
 - `token/services/selector/simple/inmemory/ratelimiter_test.go`
 - `token/services/selector/simple/inmemory/locker_quota_test.go`
+- `token/services/selector/simple/inmemory/locker_enforcer_test.go` (custom limiter + lifecycle ownership)
+- `token/services/selector/sherdlock/selector_test.go` (`TestSelectorRateLimit`, incl. custom limiter)
 
 ### Integration Testing
 
@@ -221,7 +289,7 @@ func TestQuotaEnforcement(t *testing.T) {
     for i := 0; i < 10; i++ {
         _, err := selector.Select(ctx, ownerFilter, amount, tokenType)
         if i >= 5 {
-            assert.ErrorIs(t, err, inmemory.ErrQuotaExceeded)
+            assert.ErrorIs(t, err, simple.ErrQuotaExceeded)
         }
     }
 }

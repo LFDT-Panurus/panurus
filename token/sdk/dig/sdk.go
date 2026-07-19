@@ -33,6 +33,7 @@ import (
 	sdriver "github.com/LFDT-Panurus/panurus/token/services/selector/driver"
 	"github.com/LFDT-Panurus/panurus/token/services/selector/sherdlock"
 	"github.com/LFDT-Panurus/panurus/token/services/selector/simple"
+	"github.com/LFDT-Panurus/panurus/token/services/selector/simple/inmemory"
 	"github.com/LFDT-Panurus/panurus/token/services/storage/auditdb"
 	auditdblocker "github.com/LFDT-Panurus/panurus/token/services/storage/auditdb/locker"
 	db2 "github.com/LFDT-Panurus/panurus/token/services/storage/db"
@@ -70,10 +71,44 @@ import (
 var logger = logging.MustGetLogger()
 
 // selectorProviders maps selector driver types to their constructor functions.
+// The constructors are DI adapters that resolve an optional application-supplied
+// rate limiter (inmemory.RateLimiter) from the container.
 var selectorProviders = map[sdriver.Driver]any{
-	sdriver.Simple:    simple.NewService,
-	sdriver.Sherdlock: sherdlock.NewService,
-	"":                sherdlock.NewService,
+	sdriver.Simple:    newSimpleSelectorService,
+	sdriver.Sherdlock: newSherdlockSelectorService,
+	"":                newSherdlockSelectorService,
+}
+
+// newSimpleSelectorService builds the simple selector service. Its rate limiter is
+// supplied through the simple.LockerProvider (see lockerProviderInput below), so no
+// rate limiter is injected here.
+func newSimpleSelectorService(lockerProvider simple.LockerProvider, c simple.ConfigProvider) *simple.SelectorService {
+	return simple.NewService(lockerProvider, c)
+}
+
+// sherdlockSelectorInput lets the container inject an optional application-supplied
+// rate limiter into the sherdlock selector service. When no inmemory.RateLimiter is
+// provided, the built-in token-bucket limiter is used.
+type sherdlockSelectorInput struct {
+	dig.In
+	FetcherProvider sherdlock.FetcherProvider
+	LockStore       tokenlockdb.StoreServiceManager
+	Config          sherdlock.ConfigProvider
+	Metrics         metrics.Provider
+	RateLimiter     inmemory.RateLimiter `optional:"true"`
+}
+
+func newSherdlockSelectorService(in sherdlockSelectorInput) *sherdlock.SelectorService {
+	return sherdlock.NewServiceWithRateLimiter(in.FetcherProvider, in.LockStore, in.Config, in.Metrics, in.RateLimiter)
+}
+
+// lockerProviderInput lets the container inject an optional application-supplied
+// rate limiter and the selector config into the simple locker provider.
+type lockerProviderInput struct {
+	dig.In
+	TTX         ttxdb.StoreServiceManager
+	Config      simple.ConfigProvider
+	RateLimiter inmemory.RateLimiter `optional:"true"`
 }
 
 // SDK wraps the base SDK and provides token platform functionality.
@@ -149,8 +184,19 @@ func (p *SDK) Install() error {
 		p.Container().Provide(digutils.Identity[*ftscore.TMSProvider](), dig.As(new(ftsdriver.TokenManagerServiceProvider))),
 		p.Container().Provide(tms.NewPostInitializer),
 
-		p.Container().Provide(func(ttxStoreServiceManager ttxdb.StoreServiceManager) *network2.LockerProvider {
-			return network2.NewLockerProvider(ttxStoreServiceManager, 2*time.Second, 5*time.Minute)
+		p.Container().Provide(func(in lockerProviderInput) *network2.LockerProvider {
+			lc := inmemory.DefaultLockerConfig()
+			if cfg, err := config.New(in.Config); err != nil {
+				logger.Errorf("error getting selector config for locker, using defaults. %s", err.Error())
+			} else {
+				lc.MaxLocksPerIdentity = cfg.GetMaxLocksPerIdentity()
+				lc.RateLimit = cfg.GetRateLimit()
+				lc.RateLimitBurst = cfg.GetRateLimitBurst()
+			}
+			// Optional application-supplied rate limiter overrides the built-in one.
+			lc.RateLimiter = in.RateLimiter
+
+			return network2.NewLockerProviderWithConfig(in.TTX, 2*time.Second, 5*time.Minute, lc)
 		}, dig.As(new(simple.LockerProvider))),
 		p.Container().Provide(selectorProviders[sdriver.Driver(p.ConfigService().GetString("token.selector.driver"))], dig.As(new(token.SelectorManagerProvider))),
 		p.Container().Provide(network2.NewCertificationClientProvider, dig.As(new(token.CertificationClientProvider))),

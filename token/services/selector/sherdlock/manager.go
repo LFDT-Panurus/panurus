@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/LFDT-Panurus/panurus/token"
+	"github.com/LFDT-Panurus/panurus/token/services/selector/simple/inmemory"
 	"github.com/LFDT-Panurus/panurus/token/services/utils/types/transaction"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	lazy2 "github.com/hyperledger-labs/fabric-smart-client/platform/common/utils/lazy"
@@ -28,6 +29,7 @@ var ErrTimeout = errors.New("timeout occurred")
 type Manager struct {
 	selectorCache          lazy2.Provider[transaction.ID, TokenSelectorUnlocker]
 	locker                 Locker
+	enforcer               *inmemory.Locker
 	leaseExpiry            time.Duration
 	leaseCleanupTickPeriod time.Duration
 	metrics                *Metrics
@@ -46,16 +48,32 @@ func NewManager(
 	leaseCleanupTickPeriod time.Duration,
 	m *Metrics,
 ) *Manager {
+	return NewManagerWithConfig(fetcher, locker, precision, backoff, maxRetriesAfterBackOff, leaseExpiry, leaseCleanupTickPeriod, m, inmemory.LockerConfig{})
+}
+
+func NewManagerWithConfig(
+	fetcher TokenFetcher,
+	locker Locker,
+	precision uint64,
+	backoff time.Duration,
+	maxRetriesAfterBackOff int,
+	leaseExpiry time.Duration,
+	leaseCleanupTickPeriod time.Duration,
+	m *Metrics,
+	lockerConfig inmemory.LockerConfig,
+) *Manager {
 	ctx, cancel := context.WithCancel(context.Background())
+	enforcer := inmemory.NewEnforcer(lockerConfig)
 	mgr := &Manager{
 		locker:                 locker,
+		enforcer:               enforcer,
 		leaseExpiry:            leaseExpiry,
 		leaseCleanupTickPeriod: leaseCleanupTickPeriod,
 		metrics:                m,
 		cancel:                 cancel,
 		cleanerDone:            make(chan struct{}),
 		selectorCache: lazy2.NewProvider(func(txID transaction.ID) (TokenSelectorUnlocker, error) {
-			return NewSherdSelector(txID, fetcher, locker, precision, backoff, maxRetriesAfterBackOff, m), nil
+			return NewSherdSelector(txID, fetcher, locker, enforcer, precision, backoff, maxRetriesAfterBackOff, m), nil
 		}),
 	}
 	if leaseCleanupTickPeriod > 0 && leaseExpiry > 0 {
@@ -114,6 +132,9 @@ func (m *Manager) Stop() error {
 		case <-time.After(stopTimeout):
 			err = ErrTimeout
 			logger.Warnf("cleaner goroutine did not stop within timeout")
+		}
+		if m.enforcer != nil {
+			m.enforcer.Stop()
 		}
 	})
 

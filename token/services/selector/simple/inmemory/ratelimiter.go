@@ -64,10 +64,21 @@ func (tb *tokenBucket) allow() bool {
 	return false
 }
 
-// RateLimiter manages rate limits for multiple identities.
-// Idle buckets (those not accessed for longer than idleTTL) are evicted
-// by a background goroutine that runs every cleanupInterval.
-type RateLimiter struct {
+// RateLimiter throttles requests per identity. Applications may supply their own
+// implementation via LockerConfig.RateLimiter to replace the built-in token-bucket
+// limiter (e.g. a distributed/Redis-backed limiter shared across processes).
+type RateLimiter interface {
+	// Allow returns nil if a request from the given identity may proceed,
+	// or a non-nil error if the request is throttled.
+	Allow(identity string) error
+	// Stop releases any background resources held by the limiter.
+	Stop()
+}
+
+// TokenBucketRateLimiter is the built-in RateLimiter: it manages a token bucket
+// per identity. Idle buckets (those not accessed for longer than idleTTL) are
+// evicted by a background goroutine that runs every cleanupInterval.
+type TokenBucketRateLimiter struct {
 	buckets         map[string]*tokenBucket
 	mu              sync.RWMutex
 	maxTokens       float64 // burst capacity
@@ -83,7 +94,7 @@ type RateLimiter struct {
 // burstSize: maximum burst of requests allowed (should be >= requestsPerSecond).
 // idleTTL: how long a bucket may be idle before it is evicted (0 = no eviction).
 // cleanupInterval: how often the eviction sweep runs (0 = defaults to idleTTL/2).
-func NewRateLimiter(requestsPerSecond float64, burstSize float64, idleTTL time.Duration, cleanupInterval time.Duration) *RateLimiter {
+func NewRateLimiter(requestsPerSecond float64, burstSize float64, idleTTL time.Duration, cleanupInterval time.Duration) *TokenBucketRateLimiter {
 	if burstSize < requestsPerSecond {
 		burstSize = requestsPerSecond
 	}
@@ -93,7 +104,7 @@ func NewRateLimiter(requestsPerSecond float64, burstSize float64, idleTTL time.D
 
 	ctx, cancel := context.WithCancel(context.Background())
 
-	rl := &RateLimiter{
+	rl := &TokenBucketRateLimiter{
 		buckets:         make(map[string]*tokenBucket),
 		maxTokens:       burstSize,
 		refillRate:      requestsPerSecond,
@@ -114,14 +125,14 @@ func NewRateLimiter(requestsPerSecond float64, burstSize float64, idleTTL time.D
 }
 
 // Stop stops the background cleanup goroutine and waits for it to exit.
-func (rl *RateLimiter) Stop() {
+func (rl *TokenBucketRateLimiter) Stop() {
 	rl.cancel()
 	<-rl.cleanupDone
 }
 
 // Allow checks if a request from the given identity should be allowed.
 // Returns nil if allowed, ErrRateLimitExceeded if the rate limit is exceeded.
-func (rl *RateLimiter) Allow(identity string) error {
+func (rl *TokenBucketRateLimiter) Allow(identity string) error {
 	if identity == "" {
 		return errors.New("identity cannot be empty")
 	}
@@ -153,21 +164,21 @@ func (rl *RateLimiter) Allow(identity string) error {
 
 // Reset removes the rate limit state for a specific identity.
 // Useful for testing or administrative operations.
-func (rl *RateLimiter) Reset(identity string) {
+func (rl *TokenBucketRateLimiter) Reset(identity string) {
 	rl.mu.Lock()
 	defer rl.mu.Unlock()
 	delete(rl.buckets, identity)
 }
 
 // ResetAll clears all rate limit state.
-func (rl *RateLimiter) ResetAll() {
+func (rl *TokenBucketRateLimiter) ResetAll() {
 	rl.mu.Lock()
 	defer rl.mu.Unlock()
 	rl.buckets = make(map[string]*tokenBucket)
 }
 
 // GetStats returns current statistics for an identity (for monitoring/debugging).
-func (rl *RateLimiter) GetStats(identity string) (availableTokens float64, exists bool) {
+func (rl *TokenBucketRateLimiter) GetStats(identity string) (availableTokens float64, exists bool) {
 	rl.mu.RLock()
 	bucket, exists := rl.buckets[identity]
 	rl.mu.RUnlock()
@@ -191,7 +202,7 @@ func (rl *RateLimiter) GetStats(identity string) (availableTokens float64, exist
 }
 
 // sweepLoop runs periodically and evicts buckets that have been idle for longer than idleTTL.
-func (rl *RateLimiter) sweepLoop(ctx context.Context) {
+func (rl *TokenBucketRateLimiter) sweepLoop(ctx context.Context) {
 	defer close(rl.cleanupDone)
 	ticker := time.NewTicker(rl.cleanupInterval)
 	defer ticker.Stop()
@@ -206,7 +217,7 @@ func (rl *RateLimiter) sweepLoop(ctx context.Context) {
 }
 
 // evictIdle removes all buckets whose lastSeen is older than idleTTL.
-func (rl *RateLimiter) evictIdle() {
+func (rl *TokenBucketRateLimiter) evictIdle() {
 	cutoff := time.Now().Add(-rl.idleTTL)
 
 	// Collect candidates under read lock to minimise write-lock contention.

@@ -49,6 +49,7 @@ func TestStubbornSelector_ContextCancellation(t *testing.T) {
 			logger,
 			mockFetcher,
 			mockLck,
+			nil,
 			64,
 			time.Hour,
 			10,
@@ -94,7 +95,7 @@ func TestSelector_UnlockAllOnQuantityParseError(t *testing.T) {
 		}
 
 		m := NewMetrics(&disabled.Provider{})
-		sel := NewSelector(logger, mockFetcher, mockLck, 64, m)
+		sel := NewSelector(logger, mockFetcher, mockLck, nil, 64, m)
 
 		_, _, err := sel.Select(t.Context(), &ownerFilter{id: "wallet1"}, "100", "USD")
 

@@ -13,6 +13,8 @@ import (
 
 	"github.com/LFDT-Panurus/panurus/token/services/selector/sherdlock"
 	"github.com/LFDT-Panurus/panurus/token/services/selector/sherdlock/mocks"
+	"github.com/LFDT-Panurus/panurus/token/services/selector/simple"
+	"github.com/LFDT-Panurus/panurus/token/services/selector/simple/inmemory"
 	token2 "github.com/LFDT-Panurus/panurus/token/token"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	"github.com/stretchr/testify/assert"
@@ -25,7 +27,7 @@ func TestSelectorUnit(t *testing.T) {
 	t.Run("SelectSuccess", func(t *testing.T) {
 		mockFetcher := &mocks.FakeTokenFetcher{}
 		mockLocker := &mocks.FakeTokenLocker{}
-		s := sherdlock.NewSelector(sherdlock.Logger(), mockFetcher, mockLocker, 64, metrics)
+		s := sherdlock.NewSelector(sherdlock.Logger(), mockFetcher, mockLocker, nil, 64, metrics)
 
 		mockIt := &mocks.FakeIterator[*token2.UnspentTokenInWallet]{}
 		mockIt.NextReturnsOnCall(0, &token2.UnspentTokenInWallet{
@@ -47,7 +49,7 @@ func TestSelectorUnit(t *testing.T) {
 	t.Run("InsufficientFunds", func(t *testing.T) {
 		mockFetcher := &mocks.FakeTokenFetcher{}
 		mockLocker := &mocks.FakeTokenLocker{}
-		s := sherdlock.NewSelector(sherdlock.Logger(), mockFetcher, mockLocker, 64, metrics)
+		s := sherdlock.NewSelector(sherdlock.Logger(), mockFetcher, mockLocker, nil, 64, metrics)
 
 		mockIt := &mocks.FakeIterator[*token2.UnspentTokenInWallet]{}
 		mockIt.NextReturns(nil, nil)
@@ -61,7 +63,7 @@ func TestSelectorUnit(t *testing.T) {
 	t.Run("ClosedError", func(t *testing.T) {
 		mockFetcher := &mocks.FakeTokenFetcher{}
 		mockLocker := &mocks.FakeTokenLocker{}
-		s2 := sherdlock.NewSelector(sherdlock.Logger(), mockFetcher, mockLocker, 2, metrics)
+		s2 := sherdlock.NewSelector(sherdlock.Logger(), mockFetcher, mockLocker, nil, 2, metrics)
 		err := s2.Close()
 		require.NoError(t, err)
 
@@ -73,7 +75,7 @@ func TestSelectorUnit(t *testing.T) {
 	t.Run("FetcherError", func(t *testing.T) {
 		mockFetcher := &mocks.FakeTokenFetcher{}
 		mockLocker := &mocks.FakeTokenLocker{}
-		s := sherdlock.NewSelector(sherdlock.Logger(), mockFetcher, mockLocker, 64, metrics)
+		s := sherdlock.NewSelector(sherdlock.Logger(), mockFetcher, mockLocker, nil, 64, metrics)
 
 		mockFetcher.UnspentTokensIteratorByReturns(nil, errors.New("fetcher error"))
 		_, _, err := s.Select(t.Context(), &unitTestMockOwnerFilter{id: "alice"}, "50", "ABC")
@@ -88,7 +90,7 @@ func TestStubbornSelectorUnit(t *testing.T) {
 	t.Run("SelectSuccessAfterImmediateRetries", func(t *testing.T) {
 		mockFetcher := &mocks.FakeTokenFetcher{}
 		mockLocker := &mocks.FakeTokenLocker{}
-		s := sherdlock.NewStubbornSelector(sherdlock.Logger(), mockFetcher, mockLocker, 64, 100*time.Millisecond, 2, metrics)
+		s := sherdlock.NewStubbornSelector(sherdlock.Logger(), mockFetcher, mockLocker, nil, 64, 100*time.Millisecond, 2, metrics)
 
 		mockFetcher.UnspentTokensIteratorByStub = func(ctx context.Context, walletID string, tokenType token2.Type) (sherdlock.Iterator[*token2.UnspentTokenInWallet], error) {
 			mockIt := &mocks.FakeIterator[*token2.UnspentTokenInWallet]{}
@@ -115,7 +117,7 @@ func TestStubbornSelectorUnit(t *testing.T) {
 	t.Run("ContextCanceled", func(t *testing.T) {
 		mockFetcher := &mocks.FakeTokenFetcher{}
 		mockLocker := &mocks.FakeTokenLocker{}
-		s := sherdlock.NewStubbornSelector(sherdlock.Logger(), mockFetcher, mockLocker, 64, 100*time.Millisecond, 2, metrics)
+		s := sherdlock.NewStubbornSelector(sherdlock.Logger(), mockFetcher, mockLocker, nil, 64, 100*time.Millisecond, 2, metrics)
 
 		ctx, cancel := context.WithCancel(t.Context())
 		cancel()
@@ -145,11 +147,104 @@ func TestStubbornSelectorUnit(t *testing.T) {
 		}
 		mockLocker.TryLockReturns(false)
 
-		shortBackoffS := sherdlock.NewStubbornSelector(sherdlock.Logger(), mockFetcher, mockLocker, 64, 1*time.Millisecond, 1, metrics)
+		shortBackoffS := sherdlock.NewStubbornSelector(sherdlock.Logger(), mockFetcher, mockLocker, nil, 64, 1*time.Millisecond, 1, metrics)
 		_, _, err := shortBackoffS.Select(t.Context(), &unitTestMockOwnerFilter{id: "alice"}, "50", "ABC")
 		require.Error(t, err)
 	})
 }
+
+func TestSelectorRateLimit(t *testing.T) {
+	_, metrics := setupMetricsMocks()
+
+	t.Run("RateLimitExceeded", func(t *testing.T) {
+		mockFetcher := &mocks.FakeTokenFetcher{}
+		mockLocker := &mocks.FakeTokenLocker{}
+
+		// Allow only 1 request per second with a burst of 1.
+		enforcer := inmemory.NewEnforcer(inmemory.LockerConfig{
+			RateLimit:        1.0,
+			RateLimitBurst:   1.0,
+			RateLimitIdleTTL: time.Minute,
+		})
+		defer enforcer.Stop()
+
+		mockIt := &mocks.FakeIterator[*token2.UnspentTokenInWallet]{}
+		mockIt.NextReturns(nil, nil)
+		mockFetcher.UnspentTokensIteratorByReturns(mockIt, nil)
+
+		s := sherdlock.NewSelector(sherdlock.Logger(), mockFetcher, mockLocker, enforcer, 64, metrics)
+
+		// First call consumes the single burst token — should succeed (insufficient funds, not rate limited).
+		_, _, err := s.Select(t.Context(), &unitTestMockOwnerFilter{id: "alice"}, "50", "ABC")
+		require.Error(t, err)
+		assert.False(t, errors.Is(err, simple.ErrRateLimitExceeded), "first call should not be rate limited")
+
+		// Second immediate call should be rate-limited.
+		_, _, err = s.Select(t.Context(), &unitTestMockOwnerFilter{id: "alice"}, "50", "ABC")
+		require.Error(t, err)
+		assert.True(t, errors.Is(err, simple.ErrRateLimitExceeded), "second call should be rate limited, got: %v", err)
+	})
+
+	t.Run("DifferentIdentitiesNotCrossLimited", func(t *testing.T) {
+		mockFetcher := &mocks.FakeTokenFetcher{}
+		mockLocker := &mocks.FakeTokenLocker{}
+
+		enforcer := inmemory.NewEnforcer(inmemory.LockerConfig{
+			RateLimit:        1.0,
+			RateLimitBurst:   1.0,
+			RateLimitIdleTTL: time.Minute,
+		})
+		defer enforcer.Stop()
+
+		mockIt := &mocks.FakeIterator[*token2.UnspentTokenInWallet]{}
+		mockIt.NextReturns(nil, nil)
+		mockFetcher.UnspentTokensIteratorByReturns(mockIt, nil)
+
+		s := sherdlock.NewSelector(sherdlock.Logger(), mockFetcher, mockLocker, enforcer, 64, metrics)
+
+		// Exhaust alice's bucket.
+		_, _, _ = s.Select(t.Context(), &unitTestMockOwnerFilter{id: "alice"}, "50", "ABC")
+
+		// bob has a fresh bucket and should not be rate-limited.
+		_, _, err := s.Select(t.Context(), &unitTestMockOwnerFilter{id: "bob"}, "50", "ABC")
+		require.Error(t, err)
+		assert.False(t, errors.Is(err, simple.ErrRateLimitExceeded), "bob should not be rate limited, got: %v", err)
+	})
+
+	t.Run("CustomRateLimiter", func(t *testing.T) {
+		mockFetcher := &mocks.FakeTokenFetcher{}
+		mockLocker := &mocks.FakeTokenLocker{}
+
+		// An application-supplied limiter that denies every request.
+		custom := &stubRateLimiter{allow: errors.New("denied by custom limiter")}
+		enforcer := inmemory.NewEnforcer(inmemory.LockerConfig{RateLimiter: custom})
+
+		mockIt := &mocks.FakeIterator[*token2.UnspentTokenInWallet]{}
+		mockIt.NextReturns(nil, nil)
+		mockFetcher.UnspentTokensIteratorByReturns(mockIt, nil)
+
+		s := sherdlock.NewSelector(sherdlock.Logger(), mockFetcher, mockLocker, enforcer, 64, metrics)
+
+		_, _, err := s.Select(t.Context(), &unitTestMockOwnerFilter{id: "alice"}, "50", "ABC")
+		require.Error(t, err)
+		assert.True(t, errors.Is(err, simple.ErrRateLimitExceeded), "custom limiter denial should surface as rate-limit error, got: %v", err)
+
+		// The enforcer must not stop an application-supplied limiter: its lifecycle
+		// is owned by the application, which may share it across managers.
+		enforcer.Stop()
+		assert.False(t, custom.stopped, "application-supplied limiter must not be stopped by the enforcer")
+	})
+}
+
+// stubRateLimiter is an application-supplied inmemory.RateLimiter used in tests.
+type stubRateLimiter struct {
+	allow   error
+	stopped bool
+}
+
+func (s *stubRateLimiter) Allow(string) error { return s.allow }
+
+func (s *stubRateLimiter) Stop() { s.stopped = true }
 
 type unitTestMockOwnerFilter struct {
 	id string

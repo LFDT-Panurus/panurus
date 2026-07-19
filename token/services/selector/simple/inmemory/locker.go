@@ -79,6 +79,11 @@ type LockerConfig struct {
 	RateLimit           float64       // Lock requests per second per identity (0 = unlimited)
 	RateLimitBurst      float64       // Burst capacity for rate limiter
 	RateLimitIdleTTL    time.Duration // How long a rate-limit bucket may be idle before eviction (0 = no eviction)
+	// RateLimiter, when non-nil, is an application-supplied rate limiter used instead
+	// of the built-in token-bucket limiter. Its lifecycle is owned by the application:
+	// the locker/enforcer will not Stop it. When nil, a built-in limiter is created
+	// from RateLimit/RateLimitBurst (if RateLimit > 0).
+	RateLimiter RateLimiter
 }
 
 // DefaultLockerConfig returns sensible defaults

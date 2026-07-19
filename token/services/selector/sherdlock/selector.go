@@ -15,6 +15,7 @@ import (
 
 	"github.com/LFDT-Panurus/panurus/token"
 	"github.com/LFDT-Panurus/panurus/token/services/logging"
+	"github.com/LFDT-Panurus/panurus/token/services/selector/simple/inmemory"
 	"github.com/LFDT-Panurus/panurus/token/services/utils/types/transaction"
 	token2 "github.com/LFDT-Panurus/panurus/token/token"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
@@ -41,6 +42,7 @@ type Selector struct {
 	cache     Iterator[*token2.UnspentTokenInWallet]
 	fetcher   TokenFetcher
 	locker    TokenLocker
+	enforcer  *inmemory.Locker
 	precision uint64
 	metrics   *Metrics
 	mu        sync.Mutex // protects cache field for concurrent Close() calls
@@ -97,20 +99,21 @@ func (m *StubbornSelector) Select(ctx context.Context, ownerFilter token.OwnerFi
 	return nil, nil, errors.Wrapf(token.SelectorInsufficientFunds, "aborted too many times and no other process unlocked or added tokens")
 }
 
-func NewStubbornSelector(logger logging.Logger, tokenDB TokenFetcher, lockDB TokenLocker, precision uint64, backoff time.Duration, retries int, m *Metrics) *StubbornSelector {
+func NewStubbornSelector(logger logging.Logger, tokenDB TokenFetcher, lockDB TokenLocker, enforcer *inmemory.Locker, precision uint64, backoff time.Duration, retries int, m *Metrics) *StubbornSelector {
 	return &StubbornSelector{
-		Selector:               NewSelector(logger, tokenDB, lockDB, precision, m),
+		Selector:               NewSelector(logger, tokenDB, lockDB, enforcer, precision, m),
 		backoffInterval:        backoff,
 		maxRetriesAfterBackoff: retries,
 	}
 }
 
-func NewSelector(logger logging.Logger, tokenDB TokenFetcher, lockDB TokenLocker, precision uint64, m *Metrics) *Selector {
+func NewSelector(logger logging.Logger, tokenDB TokenFetcher, lockDB TokenLocker, enforcer *inmemory.Locker, precision uint64, m *Metrics) *Selector {
 	return &Selector{
 		logger:    logger,
 		cache:     collections.NewEmptyIterator[*token2.UnspentTokenInWallet](),
 		fetcher:   tokenDB,
 		locker:    lockDB,
+		enforcer:  enforcer,
 		precision: precision,
 		metrics:   m,
 	}
@@ -154,6 +157,12 @@ func (s *Selector) selectWithoutMetrics(ctx context.Context, owner token.OwnerFi
 func (s *Selector) selectInternal(ctx context.Context, owner token.OwnerFilter, q string, tokenType token2.Type) ([]*token2.ID, token2.Quantity, int, error) {
 	if s.isClosed() {
 		return nil, nil, 0, errors.Errorf("selector is already closed")
+	}
+	if s.enforcer != nil {
+		// CheckRateLimit already returns a wrapped simple.ErrRateLimitExceeded.
+		if err := s.enforcer.CheckRateLimit(owner.ID()); err != nil {
+			return nil, nil, 0, err
+		}
 	}
 	quantity, err := token2.ToQuantity(q, s.precision)
 	if err != nil {
@@ -261,12 +270,12 @@ func (l *locker) UnlockAll(ctx context.Context) error {
 	return l.UnlockByTxID(ctx, l.txID)
 }
 
-func NewSherdSelector(txID transaction.ID, fetcher TokenFetcher, lockDB Locker, precision uint64, backoff time.Duration, maxRetriesAfterBackoff int, m *Metrics) TokenSelectorUnlocker {
+func NewSherdSelector(txID transaction.ID, fetcher TokenFetcher, lockDB Locker, enforcer *inmemory.Locker, precision uint64, backoff time.Duration, maxRetriesAfterBackoff int, m *Metrics) TokenSelectorUnlocker {
 	logger := logger.Named("selector-" + txID)
 	locker := &locker{txID: txID, Locker: lockDB}
 	if backoff < 0 {
-		return NewSelector(logger, fetcher, locker, precision, m)
+		return NewSelector(logger, fetcher, locker, enforcer, precision, m)
 	} else {
-		return NewStubbornSelector(logger, fetcher, locker, precision, backoff, maxRetriesAfterBackoff, m)
+		return NewStubbornSelector(logger, fetcher, locker, enforcer, precision, backoff, maxRetriesAfterBackoff, m)
 	}
 }

@@ -16,7 +16,8 @@ import (
 // Locker enforces per-identity rate limiting and quota for token lock operations.
 // Construct it with NewEnforcer and compose it into any locker implementation.
 type Locker struct {
-	rateLimiter         *RateLimiter
+	rateLimiter         RateLimiter
+	ownsRateLimiter     bool
 	identityLockCount   map[string]int
 	maxLocksPerIdentity int
 	mu                  sync.Mutex
@@ -24,22 +25,35 @@ type Locker struct {
 
 // NewEnforcer builds a Locker from the given LockerConfig.
 // It starts any background goroutines required by the rate limiter.
+//
+// If config.RateLimiter is set, that application-supplied limiter is used and its
+// lifecycle is owned by the caller (Stop does not stop it). Otherwise, when
+// config.RateLimit > 0, a built-in TokenBucketRateLimiter is created and owned by
+// this enforcer.
 func NewEnforcer(config LockerConfig) *Locker {
-	var rateLimiter *RateLimiter
-	if config.RateLimit > 0 {
+	var rateLimiter RateLimiter
+	var ownsRateLimiter bool
+	switch {
+	case config.RateLimiter != nil:
+		rateLimiter = config.RateLimiter
+	case config.RateLimit > 0:
 		rateLimiter = NewRateLimiter(config.RateLimit, config.RateLimitBurst, config.RateLimitIdleTTL, 0)
+		ownsRateLimiter = true
 	}
 
 	return &Locker{
 		rateLimiter:         rateLimiter,
+		ownsRateLimiter:     ownsRateLimiter,
 		identityLockCount:   map[string]int{},
 		maxLocksPerIdentity: config.MaxLocksPerIdentity,
 	}
 }
 
 // Stop shuts down any background goroutines (e.g. the rate-limiter sweep).
+// An application-supplied rate limiter is not stopped, since it may be shared
+// across multiple lockers/managers and is owned by the application.
 func (e *Locker) Stop() {
-	if e.rateLimiter != nil {
+	if e.rateLimiter != nil && e.ownsRateLimiter {
 		e.rateLimiter.Stop()
 	}
 }
