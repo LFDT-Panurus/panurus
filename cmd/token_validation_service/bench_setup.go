@@ -15,9 +15,9 @@ import (
 	viewregistry "github.com/hyperledger-labs/fabric-smart-client/platform/view/services/view"
 )
 
-// generateConfigWS mirrors node.GenerateConfig but uses websocket transport.
+// GenerateConfigWS mirrors node.GenerateConfig but uses websocket transport.
 // (node.GenerateConfig uses default LibP2P)
-func generateConfigWS(testdataDir string) error {
+func GenerateConfigWS(testdataDir string) error {
 	fscTopology := fsc.NewTopology()
 	fscTopology.P2PCommunicationType = fsc.WebSocket
 	fscTopology.SetLogging("error", "")
@@ -27,8 +27,8 @@ func generateConfigWS(testdataDir string) error {
 	return err
 }
 
-// setupNodeP2P mirrors node.SetupNode and uses the default websocket transport.
-func setupNodeP2P(confPath string, factories ...node.NamedFactory) (*fscnode.Node, error) {
+// SetupNodeP2P mirrors node.SetupNode and uses the default websocket transport.
+func SetupNodeP2P(confPath string, factories ...node.NamedFactory) (*fscnode.Node, error) {
 	n := fscnode.NewWithConfPath(confPath)
 
 	if err := n.InstallSDK(viewsdk.NewSDK(n)); err != nil {

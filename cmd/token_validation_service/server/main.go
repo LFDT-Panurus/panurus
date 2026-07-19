@@ -13,6 +13,7 @@ import (
 	"path"
 
 	bench "github.com/LFDT-Panurus/panurus/cmd/token_validation_service"
+
 	"github.com/hyperledger-labs/fabric-smart-client/integration/benchmark/node"
 )
 
@@ -21,14 +22,14 @@ func main() {
 	nodeConfPath := path.Join(testdataPath, "fsc", "nodes", "test-node.0")
 
 	// we generate our testdata
-	err := node.GenerateConfig(testdataPath)
+	err := bench.GenerateConfigWS(testdataPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to generate config: %v\n", err)
 		os.Exit(1)
 	}
 
 	// create server
-	n, err := node.SetupNode(nodeConfPath, node.NamedFactory{
+	n, err := bench.SetupNodeP2P(nodeConfPath, node.NamedFactory{
 		Name:    "token-validation-service",
 		Factory: &bench.TokenValidationServiceViewFactory{},
 	})
