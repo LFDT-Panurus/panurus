@@ -13,6 +13,8 @@ import (
 	math "github.com/IBM/mathlib"
 	math2 "github.com/LFDT-Panurus/panurus/token/core/common/crypto/math"
 	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/crypto/rp"
+	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/crypto/rp/bulletproof"
+	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/crypto/rp/csp"
 	issue2 "github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/issue"
 	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/issue/mock"
 	v1 "github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/setup"
@@ -385,5 +387,59 @@ func TestNewVerifier_ProofTypeUnavailable(t *testing.T) {
 		_, err := issue2.NewVerifier(tokens, pp, rp.CSPRangeProofType)
 		require.NoError(t, err,
 			"T-SEC-2D: CSP proof type against dual pp must be accepted")
+	})
+}
+
+func TestVerifier_ValidationErrors(t *testing.T) {
+	pp := setup(t, 32, math.BLS12_381_BBS_GURVY)
+	curve := math.Curves[pp.Curve]
+	_, tokens := prepareInputsForZKIssue(pp, 2)
+
+	t.Run("DirectValidate_NilSameType", func(t *testing.T) {
+		proof := &issue2.BulletProof{
+			SameType:         nil,
+			RangeCorrectness: &bulletproof.RangeCorrectness{},
+		}
+		err := proof.Validate(pp.Curve)
+		require.ErrorIs(t, err, issue2.ErrMissingSameTypeProof)
+	})
+
+	t.Run("DirectValidate_NilRangeCorrectness", func(t *testing.T) {
+		proof := &issue2.BulletProof{
+			SameType: &issue2.SameType{
+				Type:             curve.NewZrFromInt(1),
+				BlindingFactor:   curve.NewZrFromInt(1),
+				Challenge:        curve.NewZrFromInt(1),
+				CommitmentToType: curve.GenG1.Copy(),
+			},
+			RangeCorrectness: nil,
+		}
+		err := proof.Validate(pp.Curve)
+		require.ErrorIs(t, err, issue2.ErrMissingRangeProof)
+	})
+
+	t.Run("Verifier_Verify_MalformedProof_NoPanic", func(t *testing.T) {
+		verifier, err := issue2.NewVerifier(tokens, pp, rp.RangeProofType)
+		require.NoError(t, err)
+
+		proof := &issue2.BulletProof{
+			SameType:         nil,
+			RangeCorrectness: &bulletproof.RangeCorrectness{},
+		}
+		raw, err := proof.Serialize()
+		require.NoError(t, err)
+
+		err = verifier.Verify(raw)
+		require.Error(t, err)
+		require.ErrorIs(t, err, issue2.ErrInvalidIssueProof)
+	})
+
+	t.Run("CSP_DirectValidate_NilSameType", func(t *testing.T) {
+		proof := &issue2.CSPProof{
+			SameType:         nil,
+			RangeCorrectness: &csp.RangeCorrectness{},
+		}
+		err := proof.Validate(pp.Curve)
+		require.ErrorIs(t, err, issue2.ErrMissingSameTypeProof)
 	})
 }

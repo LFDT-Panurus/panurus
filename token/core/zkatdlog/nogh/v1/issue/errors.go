@@ -94,4 +94,16 @@ var (
 	// algorithm whose params sub-struct is not populated in PublicParams. This prevents an attacker
 	// from selecting a verifier whose params sub-struct is nil (nil-deref / algorithm confusion).
 	ErrProofTypeMismatch = errors.New("proof type in action is not available in public parameters")
+	// ErrMissingSameTypeProof is returned when a same-type proof is missing from an issue proof
+	ErrMissingSameTypeProof = errors.New("invalid issue proof: missing same-type proof")
+	// ErrMissingRangeProof is returned when a range proof is missing from an issue proof
+	ErrMissingRangeProof = errors.New("invalid issue proof: missing range proof")
+	// ErrInvalidRangeProof is returned when the range proof is invalid
+	ErrInvalidRangeProof = errors.New("invalid range proof")
+	// ErrInvalidTypeBlindingFactor is returned when a type blinding factor is invalid
+	ErrInvalidTypeBlindingFactor = errors.New("TypeBlindingFactor is invalid")
+	// ErrInvalidChallenge is returned when a challenge is invalid
+	ErrInvalidChallenge = errors.New("Challenge is invalid")
+	// ErrInvalidCommitmentToType is returned when a commitment to type is invalid
+	ErrInvalidCommitmentToType = errors.New("CommitmentToType is invalid")
 )

@@ -15,6 +15,8 @@ import (
 
 // BulletProofVerifier coordinates the verification of zero-knowledge proofs for an issue action.
 type BulletProofVerifier struct {
+	// PP is the public parameters.
+	PP *v1.PublicParams
 	// SameType is the verifier for the same-type property.
 	SameType *SameTypeVerifier
 	// RangeCorrectness is the verifier for the range correctness property.
@@ -23,7 +25,9 @@ type BulletProofVerifier struct {
 
 // NewBulletProofVerifier instantiates a BulletProofVerifier for the given token commitments and public parameters.
 func NewBulletProofVerifier(tokens []*math.G1, pp *v1.PublicParams) *BulletProofVerifier {
-	v := &BulletProofVerifier{}
+	v := &BulletProofVerifier{
+		PP: pp,
+	}
 	v.SameType = NewSameTypeVerifier(tokens, pp.PedersenGenerators, math.Curves[pp.Curve])
 	v.RangeCorrectness = bulletproof.NewRangeCorrectnessVerifier(pp.PedersenGenerators[1:], pp.RangeProofParams.LeftGenerators, pp.RangeProofParams.RightGenerators, pp.RangeProofParams.P, pp.RangeProofParams.Q, pp.RangeProofParams.BitLength, pp.RangeProofParams.NumberOfRounds, math.Curves[pp.Curve], pp.ExecutorProvider)
 
@@ -38,6 +42,9 @@ func (v *BulletProofVerifier) Verify(proof []byte) error {
 	err := tp.Deserialize(proof)
 	if err != nil {
 		return errors.Join(ErrDeserializeProofFailed, err)
+	}
+	if err := tp.Validate(v.PP.Curve); err != nil {
+		return errors.Join(err, ErrInvalidIssueProof)
 	}
 	// Verify the same-type proof.
 	err = v.SameType.Verify(tp.SameType)

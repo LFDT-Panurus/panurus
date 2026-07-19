@@ -43,6 +43,24 @@ func (p *CSPProof) Deserialize(bytes []byte) error {
 	return nil
 }
 
+// Validate ensures the CSPProof components are present and well-formed.
+func (p *CSPProof) Validate(curveID math.CurveID) error {
+	if p.SameType == nil {
+		return errors.Join(ErrMissingSameTypeProof, ErrInvalidIssueProof)
+	}
+	if err := p.SameType.Validate(curveID); err != nil {
+		return errors.Join(err, ErrInvalidSameTypeProof, ErrInvalidIssueProof)
+	}
+	if p.RangeCorrectness == nil {
+		return errors.Join(ErrMissingRangeProof, ErrInvalidIssueProof)
+	}
+	if err := p.RangeCorrectness.Validate(curveID); err != nil {
+		return errors.Join(err, ErrInvalidRangeProof, ErrInvalidIssueProof)
+	}
+
+	return nil
+}
+
 // CSPBasedProver produces a CSP-based proof of validity for an IssueAction.
 type CSPBasedProver struct {
 	// SameType is the prover for the same-type property.
@@ -128,6 +146,8 @@ func (p *CSPBasedProver) RangeProofType() rp.ProofType {
 
 // CSPVerifier coordinates the verification of CSP-based zero-knowledge proofs for an issue action.
 type CSPVerifier struct {
+	// PP is the public parameters.
+	PP *v1.PublicParams
 	// SameType is the verifier for the same-type property.
 	SameType *SameTypeVerifier
 	// RangeCorrectness is the verifier for the range correctness property.
@@ -136,7 +156,9 @@ type CSPVerifier struct {
 
 // NewCSPVerifier instantiates a CSPVerifier for the given token commitments and public parameters.
 func NewCSPVerifier(tokens []*math.G1, pp *v1.PublicParams) *CSPVerifier {
-	v := &CSPVerifier{}
+	v := &CSPVerifier{
+		PP: pp,
+	}
 	v.SameType = NewSameTypeVerifier(tokens, pp.PedersenGenerators, math.Curves[pp.Curve])
 	v.RangeCorrectness = csp.NewRangeCorrectnessVerifier(
 		pp.PedersenGenerators[1:],
@@ -158,6 +180,9 @@ func (v *CSPVerifier) Verify(proof []byte) error {
 	err := tp.Deserialize(proof)
 	if err != nil {
 		return errors.Join(ErrDeserializeProofFailed, err)
+	}
+	if err := tp.Validate(v.PP.Curve); err != nil {
+		return errors.Join(err, ErrInvalidIssueProof)
 	}
 	// Verify the same-type proof.
 	err = v.SameType.Verify(tp.SameType)

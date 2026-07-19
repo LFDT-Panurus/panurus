@@ -42,6 +42,24 @@ func (p *BulletProof) Deserialize(bytes []byte) error {
 	return nil
 }
 
+// Validate ensures the BulletProof components are present and well-formed.
+func (p *BulletProof) Validate(curveID math.CurveID) error {
+	if p.SameType == nil {
+		return errors.Join(ErrMissingSameTypeProof, ErrInvalidIssueProof)
+	}
+	if err := p.SameType.Validate(curveID); err != nil {
+		return errors.Join(err, ErrInvalidSameTypeProof, ErrInvalidIssueProof)
+	}
+	if p.RangeCorrectness == nil {
+		return errors.Join(ErrMissingRangeProof, ErrInvalidIssueProof)
+	}
+	if err := p.RangeCorrectness.Validate(curveID); err != nil {
+		return errors.Join(err, ErrInvalidRangeProof, ErrInvalidIssueProof)
+	}
+
+	return nil
+}
+
 // BulletProofProver produces a proof of validity for an IssueAction.
 type BulletProofProver struct {
 	// SameType is the prover for the same-type property.

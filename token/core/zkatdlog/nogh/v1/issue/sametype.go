@@ -10,6 +10,7 @@ import (
 	math "github.com/IBM/mathlib"
 	"github.com/LFDT-Panurus/panurus/token/core/common/encoding/asn1"
 	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/crypto/common"
+	math2 "github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/crypto/math"
 	token2 "github.com/LFDT-Panurus/panurus/token/token"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 )
@@ -58,6 +59,24 @@ func (stp *SameType) Deserialize(bytes []byte) error {
 	stp.CommitmentToType, err = unmarshaller.NextG1()
 	if err != nil {
 		return errors.Join(ErrDeserializeCommitmentToTypeFailed, err)
+	}
+
+	return nil
+}
+
+// Validate ensures the proof elements are valid for the given curve.
+func (stp *SameType) Validate(curveID math.CurveID) error {
+	if err := math2.CheckBaseElement(stp.Type, curveID); err != nil {
+		return errors.Join(err, ErrInvalidProofType)
+	}
+	if err := math2.CheckBaseElement(stp.BlindingFactor, curveID); err != nil {
+		return errors.Join(err, ErrInvalidTypeBlindingFactor)
+	}
+	if err := math2.CheckBaseElement(stp.Challenge, curveID); err != nil {
+		return errors.Join(err, ErrInvalidChallenge)
+	}
+	if err := math2.CheckElement(stp.CommitmentToType, curveID); err != nil {
+		return errors.Join(err, ErrInvalidCommitmentToType)
 	}
 
 	return nil
