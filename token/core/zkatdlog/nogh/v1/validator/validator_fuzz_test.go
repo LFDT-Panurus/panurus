@@ -25,6 +25,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+const maxFuzzActionBytes = 256 << 10
+
 // fuzzCurve is a fixed, non-nil curve used to build well-formed G1/Zr elements for the
 // seed corpus. Any curve works here: these seeds only need to survive Serialize/Deserialize,
 // not a real ZK verification.
