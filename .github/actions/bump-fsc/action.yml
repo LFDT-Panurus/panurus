@@ -1,0 +1,18 @@
+name: Bump FSC dependency
+description: >
+  Resolves the latest fabric-smart-client main commit and bumps it (and its
+  /integration submodule) across every Go module in the repo via `make update-dep`.
+runs:
+  using: composite
+  steps:
+    - name: Bump fabric-smart-client to latest main
+      shell: bash
+      run: |
+        SHA=$(git ls-remote https://github.com/hyperledger-labs/fabric-smart-client.git refs/heads/main | cut -f1)
+        if [ -z "$SHA" ]; then
+          echo "Failed to resolve fabric-smart-client main SHA" >&2
+          exit 1
+        fi
+        echo "Bumping fabric-smart-client to $SHA"
+        make update-dep DEP=github.com/hyperledger-labs/fabric-smart-client VER=$SHA
+        make update-dep DEP=github.com/hyperledger-labs/fabric-smart-client/integration VER=$SHA

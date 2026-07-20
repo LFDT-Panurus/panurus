@@ -1,0 +1,244 @@
+name: Nightly FSC Update
+
+on:
+  schedule:
+    - cron: '23 3 * * *'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+env:
+  GOFLAGS: -mod=mod
+
+jobs:
+
+  checks:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: "go.mod"
+          cache-dependency-path: "**/*.sum"
+
+      - name: Bump FSC dependency
+        uses: ./.github/actions/bump-fsc
+
+      - name: Set up tools
+        run: make install-tools
+
+      - name: Run checks
+        run: make checks
+
+      - name: Run linter
+        run: make lint
+
+  utest:
+    needs: checks
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        tests: [unit-tests-race, unit-tests-regression]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: "go.mod"
+          cache-dependency-path: "**/*.sum"
+
+      - name: Bump FSC dependency
+        uses: ./.github/actions/bump-fsc
+
+      - name: Set up tools
+        run: make install-tools
+
+      - name: Install Testing Docker Images
+        run: make testing-docker-images
+
+      - name: Unit Tests with Coverage
+        run: |
+          make unit-tests
+          ./ci/scripts/filter-coverage.sh profile.cov profile.cov
+
+      - name: Send coverage to Coveralls
+        uses: coverallsapp/github-action@v2
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          file: profile.cov
+          flag-name: utest-nightly-${{ matrix.tests }}
+          parallel: true
+          fail-on-error: false
+
+      - name: Run ${{ matrix.tests }}
+        run: make ${{ matrix.tests }}
+
+  itest:
+    needs: checks
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        tests: [
+          dlog-fabric-t1,
+          dlog-fabric-t2,
+          dlog-fabric-t2.1,
+          dlog-fabric-t3,
+          dlog-fabric-t4,
+          dlog-fabric-t5,
+          dlog-fabric-t6,
+          dlog-fabric-t7,
+          dlog-fabric-t8,
+          dlog-fabric-t9,
+          dlog-fabric-t10,
+          dlog-fabric-t11,
+          dlog-fabric-t12,
+          dlog-fabric-t13,
+#          dlog-fabric-t14,
+          fabricx-dlog-t1,
+#          fabricx-dlog-t2,
+#          fabricx-dlog-t2.1,
+          fabricx-dlog-t3,
+          fabricx-dlog-t4,
+          fabricx-dlog-t5,
+          fabricx-dlog-t6,
+#          fabricx-dlog-t7,
+#          fabricx-dlog-t9,
+          fabricx-dlog-t11,
+#          fabricx-dlog-t12,
+          fabricx-dlog-t13,
+#          fabricx-dlog-t14,
+          fabricx-dlog-t16,
+          fabtoken-dlog-fabric,
+          dloghsm-fabric-t1,
+          dloghsm-fabric-t2,
+          fabtoken-fabric-t1,
+          fabtoken-fabric-t2,
+          fabtoken-fabric-t3,
+          fabtoken-fabric-t4,
+          fabtoken-fabric-t5,
+          update-t1,
+          update-t2,
+          update-t3,
+          nft-dlog,
+          nft-fabtoken,
+          dvp-fabtoken,
+          dvp-dlog,
+          interop-fabtoken-t1,
+          interop-fabtoken-t3,
+          interop-fabtoken-t4,
+          interop-fabtoken-t5,
+          interop-dlog-t1,
+          interop-dlog-t3,
+          interop-dlog-t4,
+          interop-dlog-t5,
+          dlogstress-t1,
+        ]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: "go.mod"
+          cache-dependency-path: "**/*.sum"
+
+      - name: Bump FSC dependency
+        uses: ./.github/actions/bump-fsc
+
+      - name: Set up tools
+        run: make install-tools
+
+      - name: Download fabric binaries
+        run: make download-fabric
+
+      - name: Docker
+        run: make docker-images
+
+      - name: Fabric-x setup
+        if: startsWith(matrix.tests, 'fabricx')
+        run: |
+          make fxconfig configtxgen fabricx-docker-images
+
+      - name: Run ${{ matrix.tests }}
+        run: |
+          mkdir -p covdata
+          GOCOVERDIR=$(realpath covdata) make integration-tests-${{ matrix.tests }}
+          go tool covdata textfmt -i=covdata -o coverage.profile
+          ./ci/scripts/filter-coverage.sh coverage.profile coverage.profile
+
+      - name: Send coverage to Coveralls
+        uses: coverallsapp/github-action@v2
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          file: coverage.profile
+          flag-name: itest-nightly-${{ matrix.tests }}
+          parallel: true
+          fail-on-error: false
+
+  publish-coverage:
+    needs: [ utest, itest ]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Finish coverage report
+        uses: coverallsapp/github-action@v2
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          parallel-finished: true
+          fail-on-error: false
+
+  bench-check:
+    needs: checks
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: "go.mod"
+          cache-dependency-path: "**/*.sum"
+
+      - name: Bump FSC dependency
+        uses: ./.github/actions/bump-fsc
+
+      - name: Compile benchmarks (do not run)
+        run: go test ./... -run=^$ -bench=^$
+
+  cgo-check:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: "go.mod"
+          cache-dependency-path: "**/*.sum"
+
+      - name: Bump FSC dependency
+        uses: ./.github/actions/bump-fsc
+
+      - name: Build tokengen without cgo
+        env:
+          CGO_ENABLED: "0"
+        run: cd ./cmd/tokengen; go build -o /dev/null .
+
+      - name: Build artifactgen without cgo
+        env:
+          CGO_ENABLED: "0"
+        run: cd ./cmd/artifactgen; go build -o /dev/null .
