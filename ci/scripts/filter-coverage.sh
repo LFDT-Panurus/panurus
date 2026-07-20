@@ -45,6 +45,9 @@ awk '
   # Exclude integration
   /\/integration\// { next }
 
+  # Exclude Fabric Smart Client dependency code (not part of this module)
+  /hyperledger-labs\/fabric-smart-client\// { next }
+
   # Exclude tools and docs
   /\/tools\// { next }
   /\/docs\// { next }
