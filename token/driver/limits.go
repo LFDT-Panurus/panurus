@@ -67,43 +67,45 @@ func DefaultResourceLimits() ResourceLimits {
 	}
 }
 
-// WithDefaults returns a copy of l where every zero-valued field is replaced by the
-// corresponding field from DefaultResourceLimits. It lets callers accept a partially-specified
-// ResourceLimits (e.g. parsed from a config file or environment variables where most fields are
-// left unset) without ever silently disabling a limit by leaving it at zero.
+// WithDefaults returns a copy of l where every field that is not a positive value (i.e. zero or
+// negative) is replaced by the corresponding field from DefaultResourceLimits. It lets callers
+// accept a partially-specified ResourceLimits (e.g. parsed from a config file or environment
+// variables where most fields are left unset) without ever silently disabling a limit by leaving
+// it at zero, and without a negative value (e.g. a config typo) being misread as "unlimited" by
+// the comparisons in token/core/common that enforce these limits.
 func (l ResourceLimits) WithDefaults() ResourceLimits {
 	d := DefaultResourceLimits()
-	if l.MaxRequestBytes == 0 {
+	if l.MaxRequestBytes <= 0 {
 		l.MaxRequestBytes = d.MaxRequestBytes
 	}
-	if l.MaxActions == 0 {
+	if l.MaxActions <= 0 {
 		l.MaxActions = d.MaxActions
 	}
-	if l.MaxSignatures == 0 {
+	if l.MaxSignatures <= 0 {
 		l.MaxSignatures = d.MaxSignatures
 	}
-	if l.MaxSignatureBytes == 0 {
+	if l.MaxSignatureBytes <= 0 {
 		l.MaxSignatureBytes = d.MaxSignatureBytes
 	}
-	if l.MaxActionBytes == 0 {
+	if l.MaxActionBytes <= 0 {
 		l.MaxActionBytes = d.MaxActionBytes
 	}
-	if l.MaxInputs == 0 {
+	if l.MaxInputs <= 0 {
 		l.MaxInputs = d.MaxInputs
 	}
-	if l.MaxOutputs == 0 {
+	if l.MaxOutputs <= 0 {
 		l.MaxOutputs = d.MaxOutputs
 	}
-	if l.MaxMetadataEntries == 0 {
+	if l.MaxMetadataEntries <= 0 {
 		l.MaxMetadataEntries = d.MaxMetadataEntries
 	}
-	if l.MaxMetadataKeyBytes == 0 {
+	if l.MaxMetadataKeyBytes <= 0 {
 		l.MaxMetadataKeyBytes = d.MaxMetadataKeyBytes
 	}
-	if l.MaxMetadataValueBytes == 0 {
+	if l.MaxMetadataValueBytes <= 0 {
 		l.MaxMetadataValueBytes = d.MaxMetadataValueBytes
 	}
-	if l.MaxProofBytes == 0 {
+	if l.MaxProofBytes <= 0 {
 		l.MaxProofBytes = d.MaxProofBytes
 	}
 

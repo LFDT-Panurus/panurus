@@ -20,15 +20,23 @@ The `ValidatorDriverService` (found in `token/core/service.go`) maintains a map 
 ```go
 type ValidatorDriverService struct {
 	*factoryDirectory[driver.ValidatorDriver]
+	limits driver.ResourceLimits
 }
 
 func (s *ValidatorDriverService) NewValidator(pp driver.PublicParameters) (driver.Validator, error) {
 	if driver, ok := s.factories[DriverIdentifierFromPP(pp)]; ok {
-		return driver.NewValidator(pp)
+		return driver.NewValidator(pp, s.limits)
 	}
 	return nil, errors.Errorf("no validator found for token driver [%s]", DriverIdentifierFromPP(pp))
 }
 ```
+
+`s.limits` is a `driver.ResourceLimits` value (see
+[Validator Resource Limits](validation-resource-limits.md)) resolved once at composition-root time
+and applied to every validator the service creates. Every `driver.ValidatorDriver.NewValidator`
+implementation — including any custom one you register — must accept and forward it; a wrapper
+that constructs a validator without it would silently drop the resource-limit enforcement described
+below.
 
 By providing a custom factory with the same identifier as an existing driver, you can effectively "hijack" the validator creation process.
 
@@ -70,7 +78,7 @@ type MyValidatorDriver struct {
 	driver.ValidatorDriver // Wrap the existing driver
 }
 
-func (d *MyValidatorDriver) NewValidator(pp driver.PublicParameters) (driver.Validator, error) {
+func (d *MyValidatorDriver) NewValidator(pp driver.PublicParameters, limits driver.ResourceLimits) (driver.Validator, error) {
 	// We can't easily use the wrapped driver's NewValidator if we want to 
     // inject functions into its internal pipeline, so we replicate its logic.
     
@@ -86,11 +94,14 @@ func (d *MyValidatorDriver) NewValidator(pp driver.PublicParameters) (driver.Val
     
 	logger := logging.DriverLoggerFromPP("panurus.driver.myextension", string(pp.TokenDriverName()))
 
-	// Instantiate the validator with your custom function
+	// Instantiate the validator with your custom function, forwarding the resource limits the
+	// ValidatorDriverService resolved (see the Architecture section above) so this driver enforces
+	// the same consensus-relevant bounds as every other validating peer.
 	return validator.New(
 		logger,
 		ppp,
 		deserializer,
+		limits,
 		[]validator.ValidateTransferFunc{MyCustomTransferValidation}, // Extra transfer validators
 		nil, // Extra issuer validators
 		nil, // Extra auditor validators
