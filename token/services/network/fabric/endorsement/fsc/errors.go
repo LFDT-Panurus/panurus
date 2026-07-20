@@ -21,4 +21,7 @@ var (
 	ErrValidateProposal = errors.New("failed to validate proposal")
 	// ErrEndorseProposal signals a failure in endorsing the proposal
 	ErrEndorseProposal = errors.New("failed to endorse proposal")
+	// ErrValidatePublicParams signals that the submitted public parameters failed
+	// authorization or consistency checks
+	ErrValidatePublicParams = errors.New("invalid public parameters")
 )

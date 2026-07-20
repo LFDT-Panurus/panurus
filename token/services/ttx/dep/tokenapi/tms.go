@@ -35,6 +35,33 @@ func NewMockedManagementService(t *testing.T, tmsID token.TMSID) *token.Manageme
 	return res
 }
 
+// NewMockedManagementServiceWithIssuers returns a mocked token.ManagementService whose public
+// parameters report the given issuers and whose Deserializer resolves issuer verifiers via the
+// returned mock.Deserializer, so tests can control signature verification outcomes with
+// deserializer.GetIssuerVerifierReturns. The returned mock.PublicParameters lets tests further
+// adjust the current public parameters (e.g. pp.IssuersReturns(nil) to simulate no issuers).
+func NewMockedManagementServiceWithIssuers(t *testing.T, tmsID token.TMSID, issuers []token.Identity) (*token.ManagementService, *mock.PublicParameters, *mock.Deserializer) {
+	t.Helper()
+	tms := &mock.TokenManagerService{}
+	pp := &mock.PublicParameters{}
+	pp.IssuersReturns(issuers)
+	ppm := &mock.PublicParamsManager{}
+	ppm.PublicParametersReturns(pp)
+	tms.PublicParamsManagerReturns(ppm)
+	deserializer := &mock.Deserializer{}
+	tms.DeserializerReturns(deserializer)
+	vp := &mock2.VaultProvider{}
+	vault := &mock.Vault{}
+	qe := &mock.QueryEngine{}
+	vault.QueryEngineReturns(qe)
+	vp.VaultReturns(vault, nil)
+
+	res, err := token.NewManagementService(tmsID, tms, nil, vp, nil, nil)
+	require.NoError(t, err)
+
+	return res, pp, deserializer
+}
+
 // NewMockedManagementServiceWithValidation returns a mocked token.ManagementService and a validator
 func NewMockedManagementServiceWithValidation(t *testing.T, tmsID token.TMSID) (*token.ManagementService, *mock.Validator) {
 	t.Helper()

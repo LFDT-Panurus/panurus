@@ -6,6 +6,7 @@ SPDX-License-Identifier: Apache-2.0
 package fsc
 
 import (
+	"encoding/json"
 	"time"
 
 	"github.com/LFDT-Panurus/panurus/token"
@@ -19,11 +20,29 @@ import (
 // from the initiator to the responder.
 const TransientPublicParamsKey = "public_params"
 
+// TransientPublicParamsSigKey is the transient map key used to carry the detached issuer
+// signature over the raw public parameters bytes. It is present only on re-setup, when a
+// TMS already exists for the namespace and the setup responder requires proof that the
+// submission is authorized by a current issuer.
+const TransientPublicParamsSigKey = "public_params_sig"
+
+// PublicParamsSignature is a detached signature over the raw public parameters bytes,
+// produced by a current issuer to authorize a re-setup.
+type PublicParamsSignature struct {
+	// SignerIdentity is the identity of the issuer that produced Signature.
+	SignerIdentity view.Identity `json:"signer_identity"`
+	// Signature is the detached signature over the raw public parameters bytes.
+	Signature []byte `json:"signature"`
+}
+
 // SetupPublicParamsView is the initiator of the public parameters setup/update protocol.
 type SetupPublicParamsView struct {
 	TMSID           token.TMSID
 	TxID            driver.TxID
 	PublicParamsRaw []byte
+	// PublicParamsSig is the detached issuer signature over PublicParamsRaw, required on
+	// re-setup and nil on first-time setup.
+	PublicParamsSig *PublicParamsSignature
 	// Endorsers are the identities of the FSC node that play the role of endorser
 	Endorsers []view.Identity
 
@@ -36,6 +55,7 @@ func NewSetupPublicParamsView(
 	TMSID token.TMSID,
 	txID driver.TxID,
 	publicParamsRaw []byte,
+	ppSig *PublicParamsSignature,
 	endorsers []view.Identity,
 	endorserService EndorserService,
 ) *SetupPublicParamsView {
@@ -43,6 +63,7 @@ func NewSetupPublicParamsView(
 		TMSID:           TMSID,
 		TxID:            txID,
 		PublicParamsRaw: publicParamsRaw,
+		PublicParamsSig: ppSig,
 		Endorsers:       endorsers,
 		EndorserService: endorserService,
 	}
@@ -71,6 +92,15 @@ func (s *SetupPublicParamsView) Call(ctx view.Context) (any, error) {
 	}
 	if err := tx.SetTransient(TransientPublicParamsKey, s.PublicParamsRaw); err != nil {
 		return nil, errors.WithMessagef(err, "failed to set public params transient")
+	}
+	if s.PublicParamsSig != nil {
+		sigRaw, err := json.Marshal(s.PublicParamsSig)
+		if err != nil {
+			return nil, errors.WithMessagef(err, "failed to marshal public params signature")
+		}
+		if err := tx.SetTransient(TransientPublicParamsSigKey, sigRaw); err != nil {
+			return nil, errors.WithMessagef(err, "failed to set public params signature transient")
+		}
 	}
 
 	logger.DebugfContext(ctx.Context(), "request endorsement on tx [%s] to [%v]...", tx.ID(), s.Endorsers)

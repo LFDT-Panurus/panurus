@@ -36,7 +36,13 @@ type MockNewSetupPublicParamsResponderView struct {
 	ppValidator     *mock.PublicParamsValidator
 	pp              *mock2.PublicParameters
 	tms             *token.ManagementService
+	currentPP       *mock2.PublicParameters
+	deserializer    *mock2.Deserializer
 }
+
+// currentIssuer is the identity used as the sole current issuer in the mocked TMS returned by
+// mockNewSetupPublicParamsResponderView; it is also the default valid signer for re-setup cases.
+var currentIssuer = token.Identity("current_issuer_identity")
 
 func mockNewSetupPublicParamsResponderView(t *testing.T, overrideTMSID *token.TMSID) *MockNewSetupPublicParamsResponderView {
 	t.Helper()
@@ -67,9 +73,15 @@ func mockNewSetupPublicParamsResponderView(t *testing.T, overrideTMSID *token.TM
 	tmsIDRaw, err := json.Marshal(tmsID)
 	require.NoError(t, err)
 	publicParamsRaw := []byte("a_public_params")
+	sigRaw, err := json.Marshal(&fsc.PublicParamsSignature{
+		SignerIdentity: currentIssuer,
+		Signature:      []byte("a_valid_signature"),
+	})
+	require.NoError(t, err)
 	fabricTx.TransientReturns(map[string][]byte{
-		fsc.TransientTMSIDKey:        tmsIDRaw,
-		fsc.TransientPublicParamsKey: publicParamsRaw,
+		fsc.TransientTMSIDKey:           tmsIDRaw,
+		fsc.TransientPublicParamsKey:    publicParamsRaw,
+		fsc.TransientPublicParamsSigKey: sigRaw,
 	})
 	rws := &mock.FabricRWSet{}
 	fabricTx.GetRWSetReturns(rws, nil)
@@ -82,7 +94,8 @@ func mockNewSetupPublicParamsResponderView(t *testing.T, overrideTMSID *token.TM
 		Transaction: fabric.NewTransaction(nil, fabricTx),
 	}, nil)
 	tmsp := &mock.TokenManagementSystemProvider{}
-	tms := tokenapi.NewMockedManagementService(t, tmsID)
+	tms, currentPP, deserializer := tokenapi.NewMockedManagementServiceWithIssuers(t, tmsID, []token.Identity{currentIssuer})
+	deserializer.GetIssuerVerifierReturns(&alwaysValidVerifier{}, nil)
 	tmsp.GetManagementServiceReturns(tms, nil)
 
 	mspManager := &mock.MSPManager{}
@@ -100,6 +113,8 @@ func mockNewSetupPublicParamsResponderView(t *testing.T, overrideTMSID *token.TM
 
 	ppValidator := &mock.PublicParamsValidator{}
 	pp := &mock2.PublicParameters{}
+	pp.IssuersReturns([]token.Identity{currentIssuer})
+	pp.ValidateReturns(nil)
 	ppValidator.PublicParametersFromBytesReturns(pp, nil)
 
 	view := fsc.NewResponderView(
@@ -128,6 +143,8 @@ func mockNewSetupPublicParamsResponderView(t *testing.T, overrideTMSID *token.TM
 		ppValidator:     ppValidator,
 		pp:              pp,
 		tms:             tms,
+		currentPP:       currentPP,
+		deserializer:    deserializer,
 	}
 }
 
@@ -158,7 +175,7 @@ func TestSetupPublicParamsResponderView(t *testing.T) {
 			},
 		},
 		{
-			name: "invalid number of transient fields",
+			name: "invalid number of transient fields (too few)",
 			setup: func() *MockNewSetupPublicParamsResponderView {
 				m := mockNewSetupPublicParamsResponderView(t, nil)
 				m.fabricTx.TransientReturns(map[string][]byte{
@@ -169,7 +186,70 @@ func TestSetupPublicParamsResponderView(t *testing.T) {
 			},
 			expectError:      true,
 			expectErrorType:  fsc.ErrReceivedProposal,
-			expectErrContain: "invalid number of transient fields, expected 2, got 1",
+			expectErrContain: "invalid number of transient fields, expected 2 or 3, got 1",
+			verify: func(m *MockNewSetupPublicParamsResponderView, res any) {
+				assert.Equal(t, 0, m.rws.DoneCallCount())
+			},
+		},
+		{
+			name: "invalid number of transient fields (too many)",
+			setup: func() *MockNewSetupPublicParamsResponderView {
+				m := mockNewSetupPublicParamsResponderView(t, nil)
+				m.fabricTx.TransientReturns(map[string][]byte{
+					"transient":  []byte("transient"),
+					"transient2": []byte("transient2"),
+					"transient3": []byte("transient3"),
+					"transient4": []byte("transient4"),
+				})
+
+				return m
+			},
+			expectError:      true,
+			expectErrorType:  fsc.ErrReceivedProposal,
+			expectErrContain: "invalid number of transient fields, expected 2 or 3, got 4",
+			verify: func(m *MockNewSetupPublicParamsResponderView, res any) {
+				assert.Equal(t, 0, m.rws.DoneCallCount())
+			},
+		},
+		{
+			name: "malformed public params signature transient",
+			setup: func() *MockNewSetupPublicParamsResponderView {
+				m := mockNewSetupPublicParamsResponderView(t, nil)
+				m.fabricTx.TransientReturns(map[string][]byte{
+					fsc.TransientTMSIDKey:           m.tmsIDRaw,
+					fsc.TransientPublicParamsKey:    []byte("a_public_params"),
+					fsc.TransientPublicParamsSigKey: []byte("not_json"),
+				})
+
+				return m
+			},
+			expectError:      true,
+			expectErrorType:  fsc.ErrReceivedProposal,
+			expectErrContain: "failed to unmarshal public params signature",
+			verify: func(m *MockNewSetupPublicParamsResponderView, res any) {
+				assert.Equal(t, 0, m.rws.DoneCallCount())
+			},
+		},
+		{
+			name: "incomplete public params signature envelope",
+			setup: func() *MockNewSetupPublicParamsResponderView {
+				m := mockNewSetupPublicParamsResponderView(t, nil)
+				sigRaw, err := json.Marshal(&fsc.PublicParamsSignature{
+					SignerIdentity: currentIssuer,
+					Signature:      nil,
+				})
+				require.NoError(t, err)
+				m.fabricTx.TransientReturns(map[string][]byte{
+					fsc.TransientTMSIDKey:           m.tmsIDRaw,
+					fsc.TransientPublicParamsKey:    []byte("a_public_params"),
+					fsc.TransientPublicParamsSigKey: sigRaw,
+				})
+
+				return m
+			},
+			expectError:      true,
+			expectErrorType:  fsc.ErrReceivedProposal,
+			expectErrContain: "incomplete public params signature",
 			verify: func(m *MockNewSetupPublicParamsResponderView, res any) {
 				assert.Equal(t, 0, m.rws.DoneCallCount())
 			},
@@ -369,6 +449,158 @@ func TestSetupPublicParamsResponderView(t *testing.T) {
 			expectErrContain: "tms ids do not match",
 			verify: func(m *MockNewSetupPublicParamsResponderView, res any) {
 				assert.Equal(t, 1, m.rws.DoneCallCount())
+			},
+		},
+		{
+			name: "failed to parse public params",
+			setup: func() *MockNewSetupPublicParamsResponderView {
+				m := mockNewSetupPublicParamsResponderView(t, nil)
+				m.ppValidator.PublicParametersFromBytesReturns(nil, errors.New("cannot parse"))
+
+				return m
+			},
+			expectError:      true,
+			expectErrorType:  fsc.ErrValidateProposal,
+			expectErrContain: "failed to unmarshal public params",
+			verify: func(m *MockNewSetupPublicParamsResponderView, res any) {
+				assert.Equal(t, 1, m.rws.DoneCallCount())
+			},
+		},
+		{
+			name: "public params fail Validate",
+			setup: func() *MockNewSetupPublicParamsResponderView {
+				m := mockNewSetupPublicParamsResponderView(t, nil)
+				m.pp.ValidateReturns(errors.New("internally inconsistent"))
+
+				return m
+			},
+			expectError:      true,
+			expectErrorType:  fsc.ErrValidateProposal,
+			expectErrContain: "failed to validate public params",
+			verify: func(m *MockNewSetupPublicParamsResponderView, res any) {
+				assert.Equal(t, 1, m.rws.DoneCallCount())
+			},
+		},
+		{
+			name: "re-setup with new public params declaring no issuers succeeds",
+			setup: func() *MockNewSetupPublicParamsResponderView {
+				m := mockNewSetupPublicParamsResponderView(t, nil)
+				m.pp.IssuersReturns(nil)
+
+				return m
+			},
+			expectError: false,
+			verify: func(m *MockNewSetupPublicParamsResponderView, res any) {
+				assert.Equal(t, 1, m.rws.DoneCallCount())
+				assert.Equal(t, 1, m.translator.WriteCallCount())
+			},
+		},
+		{
+			name: "re-setup with current public params declaring no issuers",
+			setup: func() *MockNewSetupPublicParamsResponderView {
+				m := mockNewSetupPublicParamsResponderView(t, nil)
+				m.currentPP.IssuersReturns(nil)
+
+				return m
+			},
+			expectError:      true,
+			expectErrorType:  fsc.ErrValidateProposal,
+			expectErrContain: "current public parameters",
+			verify: func(m *MockNewSetupPublicParamsResponderView, res any) {
+				assert.Equal(t, 1, m.rws.DoneCallCount())
+			},
+		},
+		{
+			name: "re-setup missing public params signature",
+			setup: func() *MockNewSetupPublicParamsResponderView {
+				m := mockNewSetupPublicParamsResponderView(t, nil)
+				m.fabricTx.TransientReturns(map[string][]byte{
+					fsc.TransientTMSIDKey:        m.tmsIDRaw,
+					fsc.TransientPublicParamsKey: []byte("a_public_params"),
+				})
+
+				return m
+			},
+			expectError:      true,
+			expectErrorType:  fsc.ErrValidateProposal,
+			expectErrContain: "missing public params signature",
+			verify: func(m *MockNewSetupPublicParamsResponderView, res any) {
+				assert.Equal(t, 1, m.rws.DoneCallCount())
+			},
+		},
+		{
+			name: "re-setup signed by a non-issuer",
+			setup: func() *MockNewSetupPublicParamsResponderView {
+				m := mockNewSetupPublicParamsResponderView(t, nil)
+				sigRaw, err := json.Marshal(&fsc.PublicParamsSignature{
+					SignerIdentity: token.Identity("not_an_issuer"),
+					Signature:      []byte("a_signature"),
+				})
+				require.NoError(t, err)
+				m.fabricTx.TransientReturns(map[string][]byte{
+					fsc.TransientTMSIDKey:           m.tmsIDRaw,
+					fsc.TransientPublicParamsKey:    []byte("a_public_params"),
+					fsc.TransientPublicParamsSigKey: sigRaw,
+				})
+
+				return m
+			},
+			expectError:      true,
+			expectErrorType:  fsc.ErrValidateProposal,
+			expectErrContain: "is not a current issuer",
+			verify: func(m *MockNewSetupPublicParamsResponderView, res any) {
+				assert.Equal(t, 1, m.rws.DoneCallCount())
+			},
+		},
+		{
+			name: "re-setup issuer verifier lookup fails",
+			setup: func() *MockNewSetupPublicParamsResponderView {
+				m := mockNewSetupPublicParamsResponderView(t, nil)
+				m.deserializer.GetIssuerVerifierReturns(nil, errors.New("no verifier"))
+
+				return m
+			},
+			expectError:      true,
+			expectErrorType:  fsc.ErrValidateProposal,
+			expectErrContain: "failed to get issuer verifier",
+			verify: func(m *MockNewSetupPublicParamsResponderView, res any) {
+				assert.Equal(t, 1, m.rws.DoneCallCount())
+			},
+		},
+		{
+			name: "re-setup signature verification fails",
+			setup: func() *MockNewSetupPublicParamsResponderView {
+				m := mockNewSetupPublicParamsResponderView(t, nil)
+				m.deserializer.GetIssuerVerifierReturns(&rejectingVerifier{}, nil)
+
+				return m
+			},
+			expectError:      true,
+			expectErrorType:  fsc.ErrValidateProposal,
+			expectErrContain: "public params signature verification failed",
+			verify: func(m *MockNewSetupPublicParamsResponderView, res any) {
+				assert.Equal(t, 1, m.rws.DoneCallCount())
+			},
+		},
+		{
+			name: "first-time setup with empty issuers succeeds",
+			setup: func() *MockNewSetupPublicParamsResponderView {
+				m := mockNewSetupPublicParamsResponderView(t, nil)
+				m.tmsp.GetManagementServiceReturns(nil, token.ErrTMSNotFound)
+				m.pp.IssuersReturns(nil)
+				m.fabricTx.TransientReturns(map[string][]byte{
+					fsc.TransientTMSIDKey:        m.tmsIDRaw,
+					fsc.TransientPublicParamsKey: []byte("a_public_params"),
+				})
+
+				return m
+			},
+			expectError: false,
+			verify: func(m *MockNewSetupPublicParamsResponderView, res any) {
+				assert.Equal(t, 1, m.rws.DoneCallCount())
+				assert.Equal(t, 1, m.translator.WriteCallCount())
+				assert.Equal(t, 1, m.ppValidator.PublicParametersFromBytesCallCount())
+				assert.Equal(t, 1, m.pp.ValidateCallCount())
 			},
 		},
 		{

@@ -178,7 +178,10 @@ initiator/responder pair handles this:
 The two initiator/responder pairs are distinguished by chaincode function name and
 transient key: the token-request flow uses the `invoke` function, while the PP flow
 uses a dedicated `setup` function and carries the raw parameters under a dedicated
-`public_params` transient key (in addition to the `tmsID` key used by both).
+`public_params` transient key (in addition to the `tmsID` key used by both). On
+re-setup of a namespace that already has a TMS, a third transient key,
+`public_params_sig`, carries a detached signature (JSON-encoded signer identity plus
+signature bytes) authorizing the change — see below.
 
 Both responders share a common `receive` step that only checks that the proposal's
 `tmsID` transient carries a non-empty network, channel, and namespace — it does not
@@ -202,9 +205,29 @@ The responder enforces the following before writing:
    proposal.
 2. The raw PP must be deserializable (`PublicParametersFromBytes`) and pass
    `PublicParameters.Validate()`.
-3. If a TMS with existing public parameters is already present for the namespace, the
-   submitted PP's driver name and version must match the existing ones. This check is
-   skipped for first-time setup, when no PP exists yet.
+3. First-time setup (no TMS found for the namespace yet) stops here — an empty
+   issuer list is allowed, matching the permissive "anyone can issue" default some
+   drivers (e.g. fabtoken) use out of the box.
+4. Re-setup (a TMS already exists) additionally requires:
+   - the *current* PP declares at least one issuer (otherwise no identity could ever
+     be authorized to change it) — the submitted PP is not required to declare any
+     issuers itself;
+   - the proposal carries a `public_params_sig` transient: a detached signature over
+     the raw PP bytes, produced by one of the *current* PP's issuers;
+   - that signer identity is verified against the current TMS's `Deserializer`
+     (`SigService().IssuerVerifier`).
+
+   Driver name, version, and `CertificationDriver()` are all allowed to change freely
+   on re-setup — the only gate is the current-issuer signature above, there is no
+   equality check against the previous PP. There is likewise no monotonicity or
+   replay protection beyond what Fabric's own transaction anti-replay already
+   provides.
+
+The signature itself is produced entirely on the initiator side, without changing the
+public `SetupPublicParams` API: `fsc.EndorsementService` resolves the current TMS via
+its `TokenManagementSystemProvider`, iterates the current PP's issuers, and signs the
+raw PP bytes with the first one it holds a local wallet/signer for. On first-time setup
+(no current TMS) it submits no signature, matching the responder's tolerance above.
 
 There is no separate "init" vs. "update" API: the write is an unconditional overwrite
 of the setup key, mirroring the semantics of the chaincode `Init` path. Endorser

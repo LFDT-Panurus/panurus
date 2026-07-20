@@ -9,6 +9,7 @@ package fsc
 import (
 	"context"
 	"encoding/json"
+	"slices"
 
 	token2 "github.com/LFDT-Panurus/panurus/token"
 	"github.com/LFDT-Panurus/panurus/token/core/common"
@@ -50,6 +51,9 @@ type Request struct {
 
 	// setup-specific fields, populated by setupBehaviour
 	PublicParamsRaw []byte
+	// PublicParamsSig is the detached issuer signature over PublicParamsRaw, present only
+	// on re-setup (i.e. when Tms is non-nil).
+	PublicParamsSig *PublicParamsSignature
 }
 
 // responderBehaviour models the protocol-specific steps of ResponderView. ResponderView
@@ -469,9 +473,9 @@ type setupBehaviour struct {
 func (b *setupBehaviour) function() string { return SetupFunction }
 
 func (b *setupBehaviour) checkTransientCount(tx *endorser.Transaction) error {
-	// 2 required (tmsID + public_params)
-	if n := len(tx.Transaction.Transient()); n != 2 {
-		return errors.Wrapf(ErrInvalidTransient, "invalid number of transient fields, expected 2, got %d", n)
+	// 2 required (tmsID + public_params) plus 1 optional (public_params_sig, on re-setup)
+	if n := len(tx.Transaction.Transient()); n < 2 || n > 3 {
+		return errors.Wrapf(ErrInvalidTransient, "invalid number of transient fields, expected 2 or 3, got %d", n)
 	}
 
 	return nil
@@ -483,18 +487,32 @@ func (b *setupBehaviour) extractTransient(tx *endorser.Transaction, request *Req
 	if len(publicParamsRaw) == 0 {
 		return errors.Wrapf(ErrInvalidTransient, "empty public params")
 	}
-
 	request.PublicParamsRaw = publicParamsRaw
+
+	// public parameters signature (optional, present only on re-setup)
+	if sigRaw := tx.GetTransient(TransientPublicParamsSigKey); len(sigRaw) > 0 {
+		var sig PublicParamsSignature
+		if err := json.Unmarshal(sigRaw, &sig); err != nil {
+			return errors.Wrapf(ErrInvalidTransient, "failed to unmarshal public params signature")
+		}
+		if len(sig.SignerIdentity) == 0 || len(sig.Signature) == 0 {
+			return errors.Wrapf(ErrInvalidTransient, "incomplete public params signature")
+		}
+		request.PublicParamsSig = &sig
+	}
 
 	return nil
 }
 
-// validate looks up the TMS for request.TMSID, if any, and checks that it matches the
-// requested TMS ID. Validating the submitted public parameters themselves (parsing,
-// internal consistency, and driver compatibility against an existing TMS) is left for
-// https://github.com/LFDT-Panurus/panurus/issues/1943, since at this point we don't know
-// enough to make that call yet.
-func (b *setupBehaviour) validate(_ view.Context, request *Request) error {
+// validate looks up the TMS for request.TMSID, if any, and enforces the setup invariants:
+// the submitted public parameters must always parse and pass driver-level Validate(); on
+// re-setup of a namespace that already has a TMS, the current public parameters must declare
+// at least one issuer, and the submission must carry a detached signature over the raw public
+// parameters bytes produced by one of the current issuers. The new public parameters are not
+// required to declare any issuers themselves. Driver name, version, and certification driver
+// are allowed to change freely on re-setup: they are gated only by that signature, not by
+// equality checks.
+func (b *setupBehaviour) validate(ctx view.Context, request *Request) error {
 	tms, err := b.tokenManagementSystemProvider.GetManagementService(token2.WithTMSID(request.TMSID))
 	if err != nil {
 		if !errors.Is(err, token2.ErrTMSNotFound) {
@@ -507,7 +525,42 @@ func (b *setupBehaviour) validate(_ view.Context, request *Request) error {
 		request.Tms = tms
 	}
 
-	// TODO: need to add validation logic...to be addressed in #1943
+	pp, err := b.ppValidator.PublicParametersFromBytes(request.PublicParamsRaw)
+	if err != nil {
+		return errors.Join(ErrValidatePublicParams, errors.Wrapf(err, "failed to unmarshal public params"))
+	}
+	if err := pp.Validate(); err != nil {
+		return errors.Join(ErrValidatePublicParams, errors.Wrapf(err, "failed to validate public params"))
+	}
+
+	if request.Tms == nil {
+		// first-time setup: empty issuers are allowed, no authorization signature required
+		return nil
+	}
+
+	currentPP := request.Tms.PublicParameters()
+	if currentPP == nil {
+		return errors.Join(ErrValidatePublicParams, errors.Errorf("no current public parameters found for [%s]", request.TMSID))
+	}
+	currentIssuers := currentPP.Issuers()
+	if len(currentIssuers) == 0 {
+		return errors.Join(ErrValidatePublicParams, errors.Errorf("current public parameters for [%s] declare no issuers", request.TMSID))
+	}
+
+	if request.PublicParamsSig == nil {
+		return errors.Join(ErrValidatePublicParams, errors.Errorf("missing public params signature for re-setup of [%s]", request.TMSID))
+	}
+	if !slices.ContainsFunc(currentIssuers, request.PublicParamsSig.SignerIdentity.Equal) {
+		return errors.Join(ErrValidatePublicParams, errors.Errorf("signer [%s] is not a current issuer of [%s]", request.PublicParamsSig.SignerIdentity, request.TMSID))
+	}
+
+	verifier, err := request.Tms.SigService().IssuerVerifier(ctx.Context(), request.PublicParamsSig.SignerIdentity)
+	if err != nil {
+		return errors.Join(ErrValidatePublicParams, errors.Wrapf(err, "failed to get issuer verifier for [%s]", request.PublicParamsSig.SignerIdentity))
+	}
+	if err := verifier.Verify(request.PublicParamsRaw, request.PublicParamsSig.Signature); err != nil {
+		return errors.Join(ErrValidatePublicParams, errors.Wrapf(err, "public params signature verification failed for [%s]", request.TMSID))
+	}
 
 	return nil
 }
