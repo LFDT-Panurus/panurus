@@ -62,21 +62,20 @@ func computeNumeratorsBinaryTree[T any, E math2.GnarkFr[T]](m int, c *mathlib.Zr
 		excludeE[i] = E(&pooled.slab[treeSize+i])
 	}
 
-	m2 := m/2
+	m2 := m / 2
 	cE := math2.NativeFromZr[T, E](c)
 	var jE T
 
-	if m & 1 == 1 {
+	if m&1 == 1 {
 		E(&jE).SetInt64(int64(m2))
 		fullE[leafStart].Sub(cE, E(&jE))
 	}
 	for i := range m2 {
 		E(&jE).SetInt64(int64(i))
-		fullE[leafStart + 2*i + (m&1)].Sub(cE, E(&jE))
-		E(&jE).SetInt64(int64(m-1-i))
-		fullE[leafStart + 2*i + 1 + (m&1)].Sub(cE, E(&jE))
+		fullE[leafStart+2*i+(m&1)].Sub(cE, E(&jE))
+		E(&jE).SetInt64(int64(m - 1 - i))
+		fullE[leafStart+2*i+1+(m&1)].Sub(cE, E(&jE))
 	}
-
 
 	// start of the inner nodes whose both children are leaves
 	leafPairsStart := leafStart - m2
@@ -90,7 +89,7 @@ func computeNumeratorsBinaryTree[T any, E math2.GnarkFr[T]](m int, c *mathlib.Zr
 
 	for i := leafStart - 1; i >= leafPairsStart; i-- {
 		j := i - leafPairsStart
-		E(&jE).SetInt64(int64(j*(m-1-j)))
+		E(&jE).SetInt64(int64(j * (m - 1 - j)))
 		fullE[i].Add(ccmE, E(&jE))
 	}
 
@@ -119,20 +118,16 @@ func computeNumeratorsBinaryTree[T any, E math2.GnarkFr[T]](m int, c *mathlib.Zr
 	}
 
 	numersE := make([]E, m)
-	if m & 1 == 1 {
-		numersE[m2] = E(&pooled.slab[treeSize + leafStart])
+	if m&1 == 1 {
+		numersE[m2] = E(&pooled.slab[treeSize+leafStart])
 	}
 	for i := range m2 {
-		numersE[i] = E(&pooled.slab[treeSize + leafStart + 2*i + (m&1)])
-		numersE[m-1-i] = E(&pooled.slab[treeSize + leafStart + 2*i + 1 + (m&1)])
+		numersE[i] = E(&pooled.slab[treeSize+leafStart+2*i+(m&1)])
+		numersE[m-1-i] = E(&pooled.slab[treeSize+leafStart+2*i+1+(m&1)])
 	}
 
 	return numersE
 }
-
-
-
-
 
 // getLagrangeMultipliersNative is the native fr.Element implementation of
 // getLagrangeMultipliers. Conversions between mathlib.Zr and fr.Element occur
