@@ -258,6 +258,28 @@ on-chain; a forged-content spend (real `tokenID`, different `tokenData`) is reje
 
 ## Week 3 — StateDelta translator + EIP-712 signer
 
+**Delivered as ONE PR with four phase commits (checkpoint per phase, quality gate per phase):**
+
+- **Phases A+B — secp256k1 signer + the Go→contract signature gate:**
+  - [x] Phase A: `eip712/signer.go` (Sign/RecoverAddress/PubKeyToAddress; the §8 byte-format traps
+    handled: SignCompact `{v,r,s}`→`{r,s,v}` reorder, uncompressed-only so v∈{27,28}, 0x04 prefix
+    stripped for the address, low-s asserted both when signing and recovering) + unit tests incl.
+    golden addresses for keys 1/2, RFC 6979 determinism, round-trip, malleable-s rejection.
+  - [x] Phase B: **the Week-3 gate, passed** — real Go-produced signatures over the frozen digest
+    committed to the fixture (`endorsement` block; RFC 6979 keeps them reproducible), pinned by a Go
+    golden test, independently validated with ethers v6, and **verified on-chain by
+    EndorsementVerifier in `test/GoEndorsement.t.sol`** (2-of-2 quorum). The vm.sign simulation gap
+    is closed at the signature layer.
+- **Phases C+D — StateDelta translator:**
+  - [x] Phase C: `statedelta/translator.go` — same surface the responder drives (Write /
+    AddPublicParamsDependency / CommitTokenRequest + StateDelta finalizer), consuming the SDK's own
+    action interfaces; counter rules mirror the Fabric translator; stricter fail-fast (unknown action
+    types error, no setup mixing, finalizer refuses unbound deltas).
+  - [x] Phase D: determinism under shuffled map iteration (byte-identical deltas); **content-binding
+    round-trip with REAL fabtoken AND zkatdlog/nogh actions** (creation marker == spend ref; forged
+    content diverges) — the invariant the spend model rests on, proven against both shipped drivers;
+    full-loop test (translate → digest → sign → recover). Week-3 gate met end to end.
+
 - [ ] `statedelta/translator.go`: Setup/Issue/Transfer mapping (§5.2) producing a `statedelta.StateDelta`.
       Build `SpentRefs` off-chain via `keys`, **content-bound** (the snMarker decision, confirmed by Angelo
       2026-07-03: the SDK validator is stateless on token content, so a bare `(anchor, index)` ref would let a

@@ -50,5 +50,17 @@
     "digest": "0xc9326b72636896424aabe0039efef420df6cd18811b82db3237260110f39b64d",
     "setupHashStruct": "0xaef849354e919674c879039b642d9c01720e23c7e971f403a79aa330580d08dc",
     "setupDigest": "0xdca9a011c43cf475b62f274c4b970ba2755982cad95a09198332cb211ac50a76"
+  },
+  "endorsement": {
+    "_comment": "Real signatures over expected.digest produced by the Go eip712.Signer (RFC 6979, so reproducible) with the well-known test keys 1 and 2. Independently validated with ethers v6 recoverAddress. The Solidity EndorsementVerifier must accept them (test/GoEndorsement.t.sol); the Go side must reproduce them byte for byte (eip712 signer golden test). Never hand-edit.",
+    "signers": [
+      "0x7e5f4552091a69125d5dfcb7b8c2659029395bdf",
+      "0x2b5ad5c4795c026514f8317c7a215e218dccd6cf"
+    ],
+    "signatures": [
+      "0x61f5eef325cc3086223597422c5217d0dfdc88ee5dfe9d223b54d9030ff3900b08f17c1fa26cf286bab6ef7d83e69c2ee58da218bd51cd6ffd31af44e561ecbd1c",
+      "0xc81abb08a72fe90d3658b2e819aebb1a02e1be82001d46d4a9ccdd7747efb46e6267065c0a8ac036ed2a4a9bb94a9384956c00e2878dfc50562ebe323778663e1c"
+    ],
+    "threshold": 2
   }
 }
