@@ -45,6 +45,17 @@ Keep changes focused and minimal.
 - **Feature Addition:** Research -> Design -> Strategy -> Implement -> Test -> Validate.
 - **Documentation:** Research -> Draft -> Review -> Refine.
 
+## Runbooks
+
+Some recurring maintenance chores are captured as standalone, agent-agnostic runbooks
+under `docs/development/`, so any agent that has read `AGENTS.md` can execute them
+without re-deriving the steps each time:
+
+- **[Update `fabric-smart-client` to latest `main`](./update-fsc.md)** — bumps the FSC
+  dependency across all Go modules, resolves resulting API/lint breakage until
+  `make checks` is clean, then pauses for user confirmation before pushing or opening
+  a PR. Also available in Claude Code as `/update-fsc`.
+
 ## Issue & PR Submission
 
 Non-trivial fixes/features should have a GitHub Issue before implementation (describing

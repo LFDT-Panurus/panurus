@@ -121,5 +121,6 @@ nav:
       - Tools: development/tools.md
       - Versioning: development/versioning.md
       - AI Agents: development/ai_agents.md
+      - Update FSC Dependency: development/update-fsc.md
       - Documentation: development/documentation.md
   - Evolution: evolution_summary.md

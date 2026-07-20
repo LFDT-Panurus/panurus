@@ -221,6 +221,18 @@ Before marking a task complete, update or create the relevant documentation unde
 - New `docs/` pages must follow the existing style (Markdown, same heading hierarchy as neighbouring files).
 - If no existing doc page covers the changed area, create `docs/<subsystem>/<topic>.md` and add a link from the nearest index or README.
 
+### Automation Runbooks (Workflow Rule)
+Reusable, agent-agnostic step-by-step procedures live under `docs/development/` and are
+readable by any agent that reads this file — not just Claude Code. When Claude Code also
+needs a `/slash-command` trigger for one, add a symlink at
+`.claude/skills/<name>/SKILL.md` pointing back at the doc, so there is one source of truth.
+
+- **Update `fabric-smart-client` to latest `main`**: [docs/development/update-fsc.md](docs/development/update-fsc.md)
+  (Claude Code: `/update-fsc`). Bumps the FSC dependency across every Go module, resolves
+  API/lint breakage until `make checks` and `make lint-auto-fix` are clean, then stops and
+  waits for the user's go-ahead before pushing a branch or opening the PR — the "never push
+  or open a PR without explicit go-ahead" rule above still applies to this runbook.
+
 ## 🔍 Debugging & Advanced Testing
 
 ### Log Locations
