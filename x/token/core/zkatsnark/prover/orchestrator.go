@@ -1,0 +1,283 @@
+/*
+Copyright IBM Corp. All Rights Reserved.
+SPDX-License-Identifier: Apache-2.0
+*/
+
+package prover
+
+import (
+	"context"
+	"errors"
+	"fmt"
+
+	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/crypto/jubjub"
+	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/pp"
+	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/setup"
+	snarktoken "github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/token"
+)
+
+// Orchestrator drives parallel proof generation for a single action and
+// assembles the resulting wire-format Action. Construct once at driver
+// startup, holding already-loaded provers, and reuse across every
+// transaction.
+type Orchestrator struct {
+	spendProver  *SpendProver
+	outputProver *OutputProver
+}
+
+func NewOrchestrator(spendProver *SpendProver, outputProver *OutputProver) *Orchestrator {
+	return &Orchestrator{spendProver: spendProver, outputProver: outputProver}
+}
+
+type SpendRequest struct {
+	Note *snarktoken.Note
+}
+
+type OutputRequest struct {
+	Value     uint64
+	TokenType string
+	Recipient []byte
+}
+
+type spendOutcome struct {
+	index  int
+	result ProofResult
+	desc   snarktoken.SpendDescription
+	err    error
+}
+
+type outputOutcome struct {
+	index  int
+	result ProofResult
+	desc   snarktoken.OutputDescription
+	note   *snarktoken.Note
+	err    error
+}
+
+// BuildTransferAction generates every Spend and Output proof concurrently,
+// computes the per-action binding signature, and assembles the resulting
+// TransferAction. Returns the newly created output Notes alongside the
+// action, persisting or transmitting them is the caller's responsibility.
+// All inputs and outputs must share tokenType
+func (o *Orchestrator) BuildTransferAction(
+	ctx context.Context,
+	inputs []SpendRequest,
+	outputs []OutputRequest,
+	tokenType string,
+	publicParams *pp.PublicParams,
+) (*snarktoken.TransferAction, []*snarktoken.Note, error) {
+	if len(inputs) == 0 && len(outputs) == 0 {
+		return nil, nil, errors.New("orchestrator: transfer action requires at least one input or output")
+	}
+
+	spendCh := make(chan spendOutcome, len(inputs))
+	outputCh := make(chan outputOutcome, len(outputs))
+
+	for i, req := range inputs {
+		go o.proveSpend(i, req, spendCh)
+	}
+
+	for j, req := range outputs {
+		go o.proveOutput(j, req, publicParams, outputCh)
+	}
+
+	spendOutcomes := make([]spendOutcome, len(inputs))
+	for range inputs {
+		r := <-spendCh
+		if r.err != nil {
+			return nil, nil, fmt.Errorf("orchestrator: spend proof %d failed: %w", r.index, r.err)
+		}
+		spendOutcomes[r.index] = r
+	}
+
+	outputOutcomes := make([]outputOutcome, len(outputs))
+	for range outputs {
+		r := <-outputCh
+		if r.err != nil {
+			return nil, nil, fmt.Errorf("orchestrator: output proof %d failed: %w", r.index, r.err)
+		}
+		outputOutcomes[r.index] = r
+	}
+
+	inputResults := make([]ProofResult, len(spendOutcomes))
+	inputDescs := make([]snarktoken.SpendDescription, len(spendOutcomes))
+	for i, oc := range spendOutcomes {
+		inputResults[i] = oc.result
+		inputDescs[i] = oc.desc
+	}
+
+	outputResults := make([]ProofResult, len(outputOutcomes))
+	outputDescs := make([]snarktoken.OutputDescription, len(outputOutcomes))
+	newNotes := make([]*snarktoken.Note, len(outputOutcomes))
+	for j, oc := range outputOutcomes {
+		outputResults[j] = oc.result
+		outputDescs[j] = oc.desc
+		newNotes[j] = oc.note
+	}
+
+	sig, err := ComputeBindingSignature(snarktoken.ActionTypeTransfer, tokenType, inputResults, outputResults)
+	if err != nil {
+		return nil, nil, fmt.Errorf("orchestrator: binding signature failed: %w", err)
+	}
+	sigBytes, err := jubjub.SerializeSignature(sig)
+	if err != nil {
+		return nil, nil, fmt.Errorf("orchestrator: binding signature serialization failed: %w", err)
+	}
+
+	action := &snarktoken.TransferAction{
+		TokenType:        tokenType,
+		Inputs:           inputDescs,
+		Outputs:          outputDescs,
+		BindingSignature: sigBytes,
+	}
+
+	return action, newNotes, nil
+}
+
+// BuildIssueAction generates proofs for a set of newly issued tokens and
+// assembles the resulting IssueAction. Structurally identical to
+// BuildTransferAction with zero inputs.
+func (o *Orchestrator) BuildIssueAction(
+	ctx context.Context,
+	issuer []byte,
+	outputs []OutputRequest,
+	tokenType string,
+	publicParams *pp.PublicParams,
+) (*snarktoken.IssueAction, []*snarktoken.Note, error) {
+	if len(outputs) == 0 {
+		return nil, nil, errors.New("orchestrator: issue action requires at least one output")
+	}
+
+	outputCh := make(chan outputOutcome, len(outputs))
+	for j, req := range outputs {
+		go o.proveOutput(j, req, publicParams, outputCh)
+	}
+
+	outputOutcomes := make([]outputOutcome, len(outputs))
+	for range outputs {
+		r := <-outputCh
+		if r.err != nil {
+			return nil, nil, fmt.Errorf("orchestrator: output proof %d failed: %w", r.index, r.err)
+		}
+		outputOutcomes[r.index] = r
+	}
+
+	outputResults := make([]ProofResult, len(outputOutcomes))
+	outputDescs := make([]snarktoken.OutputDescription, len(outputOutcomes))
+	newNotes := make([]*snarktoken.Note, len(outputOutcomes))
+	for j, oc := range outputOutcomes {
+		outputResults[j] = oc.result
+		outputDescs[j] = oc.desc
+		newNotes[j] = oc.note
+	}
+
+	sig, err := ComputeBindingSignature(snarktoken.ActionTypeIssue, tokenType, nil, outputResults)
+	if err != nil {
+		return nil, nil, fmt.Errorf("orchestrator: binding signature failed: %w", err)
+	}
+	sigBytes, err := jubjub.SerializeSignature(sig)
+	if err != nil {
+		return nil, nil, fmt.Errorf("orchestrator: binding signature serialization failed: %w", err)
+	}
+
+	action := &snarktoken.IssueAction{
+		Issuer:           issuer,
+		TokenType:        tokenType,
+		Outputs:          outputDescs,
+		BindingSignature: sigBytes,
+	}
+
+	return action, newNotes, nil
+}
+
+func (o *Orchestrator) proveSpend(index int, req SpendRequest, out chan<- spendOutcome) {
+	witnessRes, err := BuildSpendWitness(req.Note)
+	if err != nil {
+		out <- spendOutcome{index: index, err: err}
+
+		return
+	}
+
+	proof, err := o.spendProver.Prove(witnessRes.Assignment)
+	if err != nil {
+		out <- spendOutcome{index: index, err: err}
+
+		return
+	}
+
+	proofBytes, err := setup.SerializeProof(proof)
+	if err != nil {
+		out <- spendOutcome{index: index, err: err}
+
+		return
+	}
+
+	cm := witnessRes.Commitment.Bytes()
+	cx := witnessRes.ValueCommitment.X.Bytes()
+	cy := witnessRes.ValueCommitment.Y.Bytes()
+	tokenTypeField := snarktoken.EncodeTokenType(req.Note.TokenType)
+	tb := tokenTypeField.Bytes()
+
+	out <- spendOutcome{
+		index: index,
+		result: ProofResult{
+			Commitment:  witnessRes.Commitment,
+			ValueCommit: witnessRes.ValueCommitment,
+			RCV:         witnessRes.RCV,
+		},
+		desc: snarktoken.SpendDescription{
+			CommitmentIn:   cm[:],
+			ValueCommitInX: cx[:],
+			ValueCommitInY: cy[:],
+			TokenType:      tb[:],
+			SpendProof:     proofBytes,
+		},
+	}
+}
+
+func (o *Orchestrator) proveOutput(index int, req OutputRequest, publicParams *pp.PublicParams, out chan<- outputOutcome) {
+	witnessRes, err := BuildOutputWitness(req.Value, req.TokenType, publicParams)
+	if err != nil {
+		out <- outputOutcome{index: index, err: err}
+
+		return
+	}
+
+	proof, err := o.outputProver.Prove(witnessRes.Assignment)
+	if err != nil {
+		out <- outputOutcome{index: index, err: err}
+
+		return
+	}
+
+	proofBytes, err := setup.SerializeProof(proof)
+	if err != nil {
+		out <- outputOutcome{index: index, err: err}
+
+		return
+	}
+
+	cm := witnessRes.Commitment.Bytes()
+	cx := witnessRes.ValueCommitment.X.Bytes()
+	cy := witnessRes.ValueCommitment.Y.Bytes()
+	tokenTypeField := snarktoken.EncodeTokenType(req.TokenType)
+	tb := tokenTypeField.Bytes()
+
+	out <- outputOutcome{
+		index: index,
+		result: ProofResult{
+			Commitment:  witnessRes.Commitment,
+			ValueCommit: witnessRes.ValueCommitment,
+			RCV:         witnessRes.RCV,
+		},
+		desc: snarktoken.OutputDescription{
+			CommitmentOut:   cm[:],
+			ValueCommitOutX: cx[:],
+			ValueCommitOutY: cy[:],
+			TokenType:       tb[:],
+			OutputProof:     proofBytes,
+			Recipient:       req.Recipient,
+		},
+		note: witnessRes.Note,
+	}
+}
