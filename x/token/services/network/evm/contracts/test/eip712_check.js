@@ -75,6 +75,17 @@ if (fx.setupDelta) {
 }
 
 let ok = true;
+
+// Endorsement: the Go signer's committed signatures must recover to the fixture's signer addresses.
+if (fx.endorsement) {
+  for (let i = 0; i < fx.endorsement.signatures.length; i++) {
+    const recovered = ethers.recoverAddress(fx.expected.digest, fx.endorsement.signatures[i]).toLowerCase();
+    const match = recovered === fx.endorsement.signers[i].toLowerCase();
+    ok = ok && match;
+    console.log(`${match ? "OK  " : "FAIL"}  endorsement.signature[${i}] recovers ${recovered}`);
+  }
+}
+
 for (const k of Object.keys(fx.expected)) {
   const match = got[k].toLowerCase() === fx.expected[k].toLowerCase();
   ok = ok && match;
