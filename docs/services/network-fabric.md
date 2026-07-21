@@ -326,7 +326,7 @@ loaders construct their own `Guard` inside `loader.load` from that TMS's
 shared by both drivers since FabricX reuses the Fabric `fsc_endorsement` namespace), falling
 back to `replay.DefaultConfig()` field-for-field when the block is absent. This means each
 TMS an endorser serves gets its own dedup cache, sized and tuned independently — see
-[Optional: token.tms.\<name\>.services.network.fabric.fsc_endorsement.replay](../configuration.md#optional-tokentmsnameservicesnetworkfabricfsc_endorsementreplay)
+[Optional: token.tms.\<name\>.services.network.fabric.fsc_endorsement.replay](../configuration.md#optional-tokentmsservicesnetworkfabricfsc_endorsementreplay)
 for the full configuration reference.
 
 #### Reachability
