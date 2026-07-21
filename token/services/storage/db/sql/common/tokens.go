@@ -60,6 +60,12 @@ type TokenStore struct {
 	// spendableTokensStmts caches prepared statements for
 	// SpendableTokensIteratorBy, keyed the same way. See #1919.
 	spendableTokensStmts PreparedStmtHolder[string]
+
+	// balanceStmts caches prepared statements for balance, keyed the same
+	// way. balance() has a single caller (Balance()) that always sets only
+	// WalletID/TokenType, so unspentTokensStmtKey's shape encoding applies
+	// here too.
+	balanceStmts PreparedStmtHolder[string]
 }
 
 func newTokenStore(readDB, writeDB *sql.DB, tables tokenTables, ci common3.CondInterpreter, notifier driver.TokenNotifier, cleanupLeaderFactory func(context.Context, *sql.DB, int64) (driver.CleanupLeadership, bool, error)) *TokenStore {
@@ -73,6 +79,7 @@ func newTokenStore(readDB, writeDB *sql.DB, tables tokenTables, ci common3.CondI
 	}
 	ts.unspentTokensStmts = newPreparedStmtHolder[string]()
 	ts.spendableTokensStmts = newPreparedStmtHolder[string]()
+	ts.balanceStmts = newPreparedStmtHolder[string]()
 
 	return ts
 }
@@ -454,23 +461,43 @@ func (db *TokenStore) Balance(ctx context.Context, walletID string, typ token.Ty
 	})
 }
 
-func (db *TokenStore) balance(ctx context.Context, opts driver.QueryTokenDetailsParams) (*big.Int, error) {
+// buildBalanceQuery builds the SQL query and args for balance without
+// executing it. Extracted so a benchmark can compare the dynamic path
+// against a prepared-once path using identical SQL (see the Balance
+// discussion following #1889/#1929).
+func buildBalanceQuery(db *TokenStore, opts driver.QueryTokenDetailsParams) (string, []any) {
 	tokenTable, ownershipTable := q.Table(db.table.Tokens), q.Table(db.table.Ownership)
-	query, args := q.Select().FieldsByName("SUM(amount)").
+
+	return q.Select().FieldsByName("SUM(amount)").
 		From(tokenTable.Join(ownershipTable, cond.And(
 			cond.Cmp(tokenTable.Field("tx_id"), "=", ownershipTable.Field("tx_id")),
 			cond.Cmp(tokenTable.Field("idx"), "=", ownershipTable.Field("idx"))),
 		)).
 		Where(HasTokenDetails(opts, tokenTable)).
 		Format(db.ci)
+}
+
+func (db *TokenStore) balance(ctx context.Context, opts driver.QueryTokenDetailsParams) (*big.Int, error) {
+	key := unspentTokensStmtKey(opts.WalletID, opts.TokenType)
+	rows, err := db.balanceStmts.Execute(ctx, db.readDB, key, func() (string, []any, error) {
+		query, args := buildBalanceQuery(db, opts)
+
+		return query, args, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
 
 	var sum BigInt
-	err := db.readDB.QueryRowContext(ctx, query, args...).Scan(&sum)
-	if err != nil {
-		if err == sql.ErrNoRows {
-			return big.NewInt(0), nil
+	if !rows.Next() {
+		if err := rows.Err(); err != nil {
+			return nil, err
 		}
 
+		return big.NewInt(0), nil
+	}
+	if err := rows.Scan(&sum); err != nil {
 		return nil, err
 	}
 	if sum.Int == nil {
@@ -1443,6 +1470,7 @@ func (db *TokenStore) GetSchema() string {
 func (db *TokenStore) Close() error {
 	_ = db.unspentTokensStmts.Close()
 	_ = db.spendableTokensStmts.Close()
+	_ = db.balanceStmts.Close()
 
 	return common2.Close(db.readDB, db.writeDB)
 }

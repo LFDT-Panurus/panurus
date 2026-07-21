@@ -148,3 +148,47 @@ func TestSpendableTokensIteratorByPreparedReuse(t *testing.T) {
 
 	require.NoError(t, mockDB.ExpectationsWereMet())
 }
+
+// TestBalancePreparedReuse verifies, without a real DB, that repeated
+// calls with the same argument shape reuse one prepared statement, and
+// different shapes prepare distinct statements.
+func TestBalancePreparedReuse(t *testing.T) {
+	db, mockDB, err := sqlmock.New()
+	require.NoError(t, err)
+	defer func() { _ = db.Close() }()
+
+	store := &TokenStore{
+		readDB: db,
+		table: tokenTables{
+			Tokens:    "tokens",
+			Ownership: "ownership",
+		},
+		ci:           stubCondInterpreter{},
+		balanceStmts: newPreparedStmtHolder[string](),
+	}
+
+	cols := []string{"sum"}
+	queryPattern := "(?s)SELECT.*SUM.*tokens.*ownership.*"
+
+	// same shape (walletID+tokenType present) called 3 times -> prepared once
+	mockDB.ExpectPrepare(queryPattern).
+		ExpectQuery().WillReturnRows(sqlmock.NewRows(cols).AddRow("100"))
+	mockDB.ExpectQuery(queryPattern).WillReturnRows(sqlmock.NewRows(cols).AddRow("100"))
+	mockDB.ExpectQuery(queryPattern).WillReturnRows(sqlmock.NewRows(cols).AddRow("100"))
+
+	for range 3 {
+		_, err := store.Balance(t.Context(), "wallet0", tokentype.Type("GOLD"))
+		require.NoError(t, err)
+	}
+	require.Equal(t, 1, store.balanceStmts.Count())
+
+	// different shape (walletID+tokenType both absent) -> a second statement
+	mockDB.ExpectPrepare(queryPattern).
+		ExpectQuery().WillReturnRows(sqlmock.NewRows(cols).AddRow("100"))
+
+	_, err = store.Balance(t.Context(), "", "")
+	require.NoError(t, err)
+	require.Equal(t, 2, store.balanceStmts.Count())
+
+	require.NoError(t, mockDB.ExpectationsWereMet())
+}
