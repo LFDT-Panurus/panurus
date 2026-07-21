@@ -37,13 +37,23 @@ func FromG1ProtoSlice(generators []*math.G1) ([]*mathlib.G1, error) {
 	})
 }
 
-func FromG1Proto(p *math.G1) (*mathlib.G1, error) {
+func FromG1Proto(p *math.G1) (result *mathlib.G1, err error) {
 	if p == nil || len(p.Raw) == 0 {
 		return nil, nil
 	}
+	// mathlib.G1.UnmarshalJSON indexes into its internal curve table using the
+	// attacker-controlled "Curve" field from the raw JSON without bounds-checking
+	// it, so an out-of-range value panics rather than returning an error. Recover
+	// here to turn that into an ordinary deserialization error.
+	defer func() {
+		if r := recover(); r != nil {
+			result = nil
+			err = errors.Errorf("failed to unmarshal G1: caught panic [%v]", r)
+		}
+	}()
+
 	g1 := &mathlib.G1{}
-	err := g1.UnmarshalJSON(p.Raw)
-	if err != nil {
+	if err := g1.UnmarshalJSON(p.Raw); err != nil {
 		return nil, errors.Wrap(err, "failed to unmarshal G1")
 	}
 
@@ -62,13 +72,21 @@ func ToProtoZr(s *mathlib.Zr) (*math.Zr, error) {
 	return &math.Zr{Raw: raw}, nil
 }
 
-func FromZrProto(p *math.Zr) (*mathlib.Zr, error) {
+func FromZrProto(p *math.Zr) (result *mathlib.Zr, err error) {
 	if p == nil {
 		return nil, nil
 	}
+	// mathlib.Zr.UnmarshalJSON has the same unchecked curve-table index as
+	// mathlib.G1.UnmarshalJSON above; recover to avoid an attacker-triggerable panic.
+	defer func() {
+		if r := recover(); r != nil {
+			result = nil
+			err = errors.Errorf("failed to unmarshal Zr: caught panic [%v]", r)
+		}
+	}()
+
 	zr := &mathlib.Zr{}
-	err := zr.UnmarshalJSON(p.Raw)
-	if err != nil {
+	if err := zr.UnmarshalJSON(p.Raw); err != nil {
 		return nil, errors.Wrap(err, "failed to unmarshal Zr")
 	}
 
