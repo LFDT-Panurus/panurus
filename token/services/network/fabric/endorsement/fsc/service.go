@@ -12,6 +12,7 @@ import (
 	"github.com/LFDT-Panurus/panurus/token"
 	tdriver "github.com/LFDT-Panurus/panurus/token/driver"
 	"github.com/LFDT-Panurus/panurus/token/services/logging"
+	"github.com/LFDT-Panurus/panurus/token/services/network/common/replay"
 	"github.com/LFDT-Panurus/panurus/token/services/network/common/rws/translator"
 	"github.com/LFDT-Panurus/panurus/token/services/network/driver"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
@@ -57,6 +58,7 @@ func NewEndorsementService(
 	channelProvider ChannelProvider,
 	endorserSelector EndorserSelector,
 	ppValidator PublicParamsValidator,
+	replayGuard replay.Guard,
 ) (*EndorsementService, error) {
 	if configuration.GetBool(AmIAnEndorserKey) {
 		logger.Debug("this node is an endorser, prepare it...")
@@ -71,6 +73,7 @@ func NewEndorsementService(
 			storageProvider,
 			channelProvider,
 			ppValidator,
+			replayGuard,
 		)
 		if err := viewRegistry.RegisterResponder(responderView, &SetupPublicParamsView{}); err != nil {
 			return nil, errors.WithMessagef(err, "failed to register public params setup view for [%s]", tmsID)

@@ -10,8 +10,11 @@ import (
 	"time"
 
 	token2 "github.com/LFDT-Panurus/panurus/token"
+	tdriver "github.com/LFDT-Panurus/panurus/token/driver"
 	"github.com/LFDT-Panurus/panurus/token/services/logging"
 	"github.com/LFDT-Panurus/panurus/token/services/network/common"
+	"github.com/LFDT-Panurus/panurus/token/services/network/common/replay"
+	"github.com/LFDT-Panurus/panurus/token/services/network/common/replay/factory"
 	"github.com/LFDT-Panurus/panurus/token/services/network/common/rws/translator"
 	"github.com/LFDT-Panurus/panurus/token/services/network/driver"
 	"github.com/LFDT-Panurus/panurus/token/services/network/fabric/endorsement/fsc"
@@ -27,6 +30,9 @@ import (
 
 const (
 	FSCEndorsementKey = "services.network.fabric.fsc_endorsement"
+	// ReplayKey is the per-TMS config key for the replay.Guard used by the FSC endorsement
+	// responder. Absent ⇒ replay.DefaultConfig().
+	ReplayKey = "services.network.fabric.fsc_endorsement.replay"
 )
 
 var logger = logging.MustGetLogger()
@@ -101,6 +107,11 @@ func (l *loader) load(tmsID token2.TMSID) (Service, error) {
 		return nil, errors.Wrapf(err, "failed to get fabric network service for [%s]", tmsID.Network)
 	}
 
+	replayGuard, err := NewReplayGuard(configuration, tmsID)
+	if err != nil {
+		return nil, err
+	}
+
 	return fsc.NewEndorsementService(
 		NewNamespaceTxProcessor(l.fnsp),
 		tmsID,
@@ -122,11 +133,27 @@ func (l *loader) load(tmsID token2.TMSID) (Service, error) {
 		NewChannelProvider(l.fnsp),
 		NewDiscoveryEndorserSelector(NewNetworkDiscoveryProvider(l.fnsp), NewChannelProvider(l.fnsp)),
 		l.ppValidator,
+		replayGuard,
 	)
 }
 
 func key(tmsID token2.TMSID) string {
 	return tmsID.Network + tmsID.Channel + tmsID.Namespace
+}
+
+// NewReplayGuard builds the replay.Guard for tmsID from its fsc_endorsement.replay
+// configuration (see ReplayKey), falling back to replay.DefaultConfig() when the block is
+// absent or partially set. Shared by both the Fabric and FabricX endorsement loaders since
+// FabricX reuses the same fsc_endorsement config namespace.
+func NewReplayGuard(configuration tdriver.Configuration, tmsID token2.TMSID) (replay.Guard, error) {
+	replayCfg := replay.DefaultConfig()
+	_ = configuration.UnmarshalKey(ReplayKey, &replayCfg)
+	replayGuard, err := factory.New(replayCfg)
+	if err != nil {
+		return nil, errors.WithMessagef(err, "failed to create replay guard for [%s]", tmsID)
+	}
+
+	return replayGuard, nil
 }
 
 // ChannelProvider provides access to the MSP manager for a given Fabric network and channel.

@@ -178,7 +178,7 @@ sequenceDiagram
 
 ## FSC Endorsement Service
 
-The FSC Endorsement Service ([`fsc.EndorsementService`](../../token/services/network/fabric/endorsement/fsc/service.go)) manages the endorsement process for FabricX.
+The FSC Endorsement Service ([`fsc.EndorsementService`](../../token/services/network/fabric/endorsement/fsc/service.go)) manages the endorsement process for FabricX. This is the same responder implementation used by the traditional Fabric FSC-endorsement path, including its replay-detection guard — see [Replay Detection](./network-fabric.md#replay-detection) for details.
 
 ### Endorsement Policies
 

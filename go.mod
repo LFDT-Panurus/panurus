@@ -13,6 +13,7 @@ require (
 	github.com/go-viper/mapstructure/v2 v2.5.0
 	github.com/google/pprof v0.0.0-20260709232956-b9395ee17fa0
 	github.com/hashicorp/go-uuid v1.0.3
+	github.com/hashicorp/golang-lru/v2 v2.0.7
 	github.com/hyperledger-labs/fabric-smart-client v0.17.0
 	github.com/hyperledger/fabric-chaincode-go/v2 v2.3.0
 	github.com/hyperledger/fabric-lib-go v1.1.5-0.20260708100132-163bcc919208

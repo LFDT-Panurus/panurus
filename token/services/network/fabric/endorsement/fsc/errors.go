@@ -7,6 +7,7 @@ SPDX-License-Identifier: Apache-2.0
 package fsc
 
 import (
+	"github.com/LFDT-Panurus/panurus/token/services/network/common/replay"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 )
 
@@ -24,4 +25,9 @@ var (
 	// ErrValidatePublicParams signals that the submitted public parameters failed
 	// authorization or consistency checks
 	ErrValidatePublicParams = errors.New("invalid public parameters")
+	// ErrAlreadyProcessed signals that an equivalent request has already been processed
+	ErrAlreadyProcessed = replay.ErrAlreadyProcessed
+	// ErrOutOfWindow signals that a request's claimed timestamp falls outside the replay
+	// guard's freshness window
+	ErrOutOfWindow = replay.ErrOutOfWindow
 )

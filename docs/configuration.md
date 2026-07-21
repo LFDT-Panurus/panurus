@@ -213,6 +213,24 @@ token:
               - endorser2
               - endorser2
 
+              # replay configures the guard that protects this TMS's endorsement responder from
+              # re-processing (or concurrently processing) an already-seen proposal. Applies to
+              # both token-request approval and public-params setup requests.
+              # If omitted, the guard uses its built-in defaults.
+              replay:
+                # backend selects the replay.Guard implementation. Only "memory" is available today.
+                backend: memory
+                # window bounds how far a proposal's claimed timestamp may lie from this node's
+                # current time (in either direction) before it is rejected as out-of-window,
+                # independently of whether it has been seen before. 0 disables the check.
+                window: 5m
+                # ttl is how long a seen proposal is remembered for dedup purposes. It is floored
+                # to 2*window internally, so a key always survives the window during which it
+                # could still be replayed.
+                ttl: 10m
+                # maxEntries bounds the in-memory dedup cache size (LRU eviction). 0 = unbounded.
+                maxEntries: 100000
+
             # recovery config controls background re-registration of finality listeners
             # for pending transactions that may have lost their listeners due to node restarts,
             # network interruptions, or other failures.
@@ -653,6 +671,47 @@ Default values:
    - Increase `batchSize` to 200-500 to process more transactions per sweep
    - Increase `workerCount` to 8-16 to improve parallel processing
    - Decrease `scanInterval` to 2-3s for faster recovery detection
+
+
+### Optional: token.tms.<name>.services.network.fabric.fsc_endorsement.replay
+
+Configures the replay-detection guard used by the FSC endorsement responder for this TMS
+(see [Replay Detection](services/network-fabric.md#replay-detection)). Since FabricX reuses
+the same `fsc_endorsement` configuration namespace, this section applies equally to Fabric and
+FabricX TMSs. Each TMS gets its own guard instance, built from its own configuration.
+
+If not specified, the default configuration is:
+
+```yaml
+token:
+  tms:
+    <name>:
+      services:
+        network:
+          fabric:
+            fsc_endorsement:
+              replay:
+                backend: memory
+                window: 5m
+                ttl: 10m
+                maxEntries: 100000
+```
+
+Default values:
+
+- backend: `memory` (only backend available today)
+- window: 5m (freshness window; 0 disables the check)
+- ttl: 10m (dedup retention; floored to `2*window` if set lower)
+- maxEntries: 100000 (0 = unbounded)
+
+**Notes:**
+- `window` and `ttl` are independent controls: `window` rejects a proposal outright if its
+  claimed timestamp is too far from this node's clock (in either direction); `ttl` bounds how
+  long an accepted proposal's key is remembered for deduplication.
+- An omitted `replay` key uses `replay.DefaultConfig()` in full, so existing deployments that
+  predate this option are unaffected.
+- A future distributed backend (e.g. Postgres- or Redis-backed, for multi-replica endorsers)
+  can be added as a new `backend` value without changing this schema.
 
 
 ### Optional: token.storage.tableNames

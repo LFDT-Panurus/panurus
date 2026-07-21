@@ -14,10 +14,13 @@ import (
 	token2 "github.com/LFDT-Panurus/panurus/token"
 	"github.com/LFDT-Panurus/panurus/token/core/common"
 	tdriver "github.com/LFDT-Panurus/panurus/token/driver"
+	"github.com/LFDT-Panurus/panurus/token/services/network/common/replay"
 	"github.com/LFDT-Panurus/panurus/token/services/network/common/rws/translator"
 	"github.com/LFDT-Panurus/panurus/token/token"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/fabric"
+	"github.com/hyperledger-labs/fabric-smart-client/platform/fabric/core/generic/transaction"
+	"github.com/hyperledger-labs/fabric-smart-client/platform/fabric/core/protoutil"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/fabric/services/endorser"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/view"
 )
@@ -83,12 +86,14 @@ type responderBehaviour interface {
 type ResponderView struct {
 	endorserService EndorserService
 	channelProvider ChannelProvider
+	replayGuard     replay.Guard
 	behaviours      map[string]responderBehaviour
 }
 
 func newResponderView(
 	endorserService EndorserService,
 	channelProvider ChannelProvider,
+	replayGuard replay.Guard,
 	behaviours ...responderBehaviour,
 ) *ResponderView {
 	m := make(map[string]responderBehaviour, len(behaviours))
@@ -99,6 +104,7 @@ func newResponderView(
 	return &ResponderView{
 		endorserService: endorserService,
 		channelProvider: channelProvider,
+		replayGuard:     replayGuard,
 		behaviours:      m,
 	}
 }
@@ -115,10 +121,12 @@ func NewResponderView(
 	storageProvider StorageProvider,
 	channelProvider ChannelProvider,
 	ppValidator PublicParamsValidator,
+	replayGuard replay.Guard,
 ) *ResponderView {
 	return newResponderView(
 		endorserService,
 		channelProvider,
+		replayGuard,
 		&approvalBehaviour{
 			keyTranslator:                 keyTranslator,
 			getTranslator:                 getTranslator,
@@ -141,6 +149,16 @@ func (r *ResponderView) Call(context view.Context) (any, error) {
 	}
 	defer request.Rws.Done()
 
+	// replay check: reject a request that has already been seen before doing any further,
+	// more expensive validation of it
+	key, err := proposalKey(request.Tx)
+	if err != nil {
+		return nil, errors.Join(ErrInvalidProposal, err)
+	}
+	if err := r.replayGuard.Check(context.Context(), key); err != nil {
+		return nil, errors.WithMessagef(err, "replay guard rejected proposal for tx [%s]", key.TxID)
+	}
+
 	// validate proposal
 	if err := validateProposal(context, r.channelProvider, request.Tx, request.TMSID, request.Anchor); err != nil {
 		return nil, errors.Join(ErrValidateProposal, err)
@@ -158,6 +176,28 @@ func (r *ResponderView) Call(context view.Context) (any, error) {
 	}
 
 	return res, nil
+}
+
+// proposalKey extracts the replay-detection key carried by tx's underlying Fabric proposal:
+// the transaction ID, the creator, the nonce, and the claimed creation timestamp. All four
+// values are read from the content of the proposal itself, before any expensive verification
+// of the request is performed.
+func proposalKey(tx *endorser.Transaction) (replay.Key, error) {
+	proposal, err := protoutil.UnmarshalProposal(tx.Transaction.SignedProposal().ProposalBytes())
+	if err != nil {
+		return replay.Key{}, errors.WithMessagef(err, "failed to unmarshal proposal for tx [%s]", tx.ID())
+	}
+	up, err := transaction.UnpackProposal(proposal)
+	if err != nil {
+		return replay.Key{}, errors.WithMessagef(err, "failed to unpack proposal for tx [%s]", tx.ID())
+	}
+
+	return replay.Key{
+		TxID:      tx.ID(),
+		Creator:   tx.Transaction.Creator(),
+		Nonce:     tx.Transaction.Nonce(),
+		Timestamp: up.ChannelHeader.Timestamp.AsTime(),
+	}, nil
 }
 
 func (r *ResponderView) receive(ctx view.Context) (*Request, responderBehaviour, error) {

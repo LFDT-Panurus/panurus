@@ -385,6 +385,14 @@ interface ITokenContractWithEndorsement {
 
 ### FSC Endorser Implementation
 
+An Ethereum/EVM endorser should reject a proposal it has already processed before running
+any validation, the same way the Fabric FSC responder does. Rather than reimplementing that
+check, reuse the driver-agnostic
+[`replay.Guard`](../../token/services/network/common/replay/guard.go) (see
+[Replay Detection](./network-fabric.md#replay-detection)): build a `replay.Key` from the
+Ethereum request's own txID/creator/nonce/timestamp-equivalent fields and call
+`Check` immediately after receiving the request, before `Validate`/`ComputeDelta`/`Sign`.
+
 **Endorser Service:**
 ```go
 type EthereumEndorserService struct {
