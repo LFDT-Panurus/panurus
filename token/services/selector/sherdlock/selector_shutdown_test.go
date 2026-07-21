@@ -49,7 +49,6 @@ func TestStubbornSelector_ContextCancellation(t *testing.T) {
 			logger,
 			mockFetcher,
 			mockLck,
-			nil,
 			64,
 			time.Hour,
 			10,
@@ -95,7 +94,7 @@ func TestSelector_UnlockAllOnQuantityParseError(t *testing.T) {
 		}
 
 		m := NewMetrics(&disabled.Provider{})
-		sel := NewSelector(logger, mockFetcher, mockLck, nil, 64, m)
+		sel := NewSelector(logger, mockFetcher, mockLck, 64, m)
 
 		_, _, err := sel.Select(t.Context(), &ownerFilter{id: "wallet1"}, "100", "USD")
 
@@ -111,8 +110,8 @@ type cancelTestLocker struct {
 	unlockAllCalled *bool
 }
 
-func (l *cancelTestLocker) TryLock(_ context.Context, _ *token2.ID) bool {
-	return l.tryLockResult
+func (l *cancelTestLocker) TryLock(_ context.Context, _ *token2.ID, _ string) (bool, error) {
+	return l.tryLockResult, nil
 }
 
 func (l *cancelTestLocker) UnlockAll(_ context.Context) error {

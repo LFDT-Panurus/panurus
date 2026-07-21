@@ -28,7 +28,10 @@ type Iterator[k any] interface {
 //
 //go:generate counterfeiter -o mocks/token_locker.go -fake-name FakeTokenLocker . TokenLocker
 type TokenLocker interface {
-	TryLock(context.Context, *token2.ID) bool
+	// TryLock attempts to lock the token for the selecting wallet (walletID).
+	// It returns whether the lock was acquired and, when it was not, the underlying
+	// error. When that error wraps token.SelectorRateLimited the selector aborts.
+	TryLock(ctx context.Context, tokenID *token2.ID, walletID string) (bool, error)
 	UnlockAll(ctx context.Context) error
 }
 
@@ -69,8 +72,11 @@ type TMS interface {
 //
 //go:generate counterfeiter -o mocks/locker.go -fake-name FakeLocker . Locker
 type Locker interface {
-	// Lock locks a specific token for the consumer TX
-	Lock(ctx context.Context, tokenID *token2.ID, consumerTxID transaction.ID) error
+	// Lock locks a specific token for the consumer TX on behalf of walletID (the wallet
+	// the tokens are selected for). A Locker implementation may use walletID to apply
+	// per-wallet policies such as rate limiting, returning an error wrapping
+	// token.SelectorRateLimited to make the selection fail fast.
+	Lock(ctx context.Context, tokenID *token2.ID, consumerTxID transaction.ID, walletID string) error
 	// UnlockByTxID unlocks all tokens locked by the consumer TX
 	UnlockByTxID(ctx context.Context, consumerTxID transaction.ID) error
 	// Cleanup removes the locks such that either:

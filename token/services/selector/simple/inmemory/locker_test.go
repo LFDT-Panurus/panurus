@@ -95,7 +95,7 @@ func TestScannerDoesNotDeleteReclaimed(t *testing.T) {
 	mock.setStatus(txA, ttxdb.Pending)
 	d := NewLocker(mock, 20*time.Millisecond, time.Minute).(*locker)
 	t.Cleanup(func() { _ = d.Stop() })
-	_, err := d.Lock(context.Background(), "alice", tokenID, txA, false)
+	_, err := d.Lock(context.Background(), tokenID, txA, "w1", false)
 	require.NoError(t, err)
 
 	// Arm a one-shot hook: the next status lookup that observes tx-A as
@@ -123,7 +123,7 @@ func TestScannerDoesNotDeleteReclaimed(t *testing.T) {
 	// deleting it. Reclaim the token for tx-B in that window.
 	<-entered
 	mock.setStatus(txB, ttxdb.Pending)
-	_, err = d.Lock(context.Background(), "alice", tokenID, txB, true)
+	_, err = d.Lock(context.Background(), tokenID, txB, "w1", true)
 	require.NoError(t, err)
 
 	// Let the scanner finish its delete phase.
@@ -134,7 +134,7 @@ func TestScannerDoesNotDeleteReclaimed(t *testing.T) {
 	require.Never(t, func() bool {
 		return !d.IsLocked(tokenID)
 	}, 300*time.Millisecond, 10*time.Millisecond, "scanner must not delete a reclaimed entry")
-	holder, err := d.Lock(context.Background(), "alice", tokenID, "tx-C", false)
+	holder, err := d.Lock(context.Background(), tokenID, "tx-C", "w1", false)
 	require.ErrorIs(t, err, AlreadyLockedError)
 	assert.Equal(t, txB, holder, "token must remain locked by tx-B")
 }
@@ -150,7 +150,7 @@ func TestScannerDeletesStaleEntry(t *testing.T) {
 	d := NewLocker(mock, 20*time.Millisecond, time.Minute).(*locker)
 	t.Cleanup(func() { _ = d.Stop() })
 
-	_, err := d.Lock(context.Background(), "alice", tokenID, txA, false)
+	_, err := d.Lock(context.Background(), tokenID, txA, "w1", false)
 	require.NoError(t, err)
 	require.True(t, d.IsLocked(tokenID))
 

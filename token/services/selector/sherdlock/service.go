@@ -13,7 +13,6 @@ import (
 	"github.com/LFDT-Panurus/panurus/token"
 	"github.com/LFDT-Panurus/panurus/token/core/common/metrics"
 	"github.com/LFDT-Panurus/panurus/token/services/selector/config"
-	"github.com/LFDT-Panurus/panurus/token/services/selector/simple/inmemory"
 	"github.com/LFDT-Panurus/panurus/token/services/storage/tokenlockdb"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	lazy2 "github.com/hyperledger-labs/fabric-smart-client/platform/common/utils/lazy"
@@ -31,29 +30,9 @@ func NewService(
 	c ConfigProvider,
 	metricsProvider metrics.Provider,
 ) *SelectorService {
-	return NewServiceWithRateLimiter(fetcherProvider, tokenLockStoreServiceManager, c, metricsProvider, nil)
-}
-
-// NewServiceWithRateLimiter is like NewService but lets the application supply its
-// own rate limiter. When rateLimiter is nil the built-in token-bucket limiter is
-// used, configured from the selector config (rateLimit/rateLimitBurst).
-func NewServiceWithRateLimiter(
-	fetcherProvider FetcherProvider,
-	tokenLockStoreServiceManager tokenlockdb.StoreServiceManager,
-	c ConfigProvider,
-	metricsProvider metrics.Provider,
-	rateLimiter inmemory.RateLimiter,
-) *SelectorService {
 	cfg, err := config.New(c)
 	if err != nil {
 		logger.Errorf("error getting selector config, using defaults. %s", err.Error())
-	}
-
-	lockerConfig := inmemory.LockerConfig{
-		RateLimit:        cfg.GetRateLimit(),
-		RateLimitBurst:   cfg.GetRateLimitBurst(),
-		RateLimitIdleTTL: 10 * time.Minute,
-		RateLimiter:      rateLimiter,
 	}
 
 	svc := &SelectorService{}
@@ -64,7 +43,6 @@ func NewServiceWithRateLimiter(
 		numRetries:                   cfg.GetNumRetries(),
 		leaseExpiry:                  cfg.GetLeaseExpiry(),
 		leaseCleanupTickPeriod:       cfg.GetLeaseCleanupTickPeriod(),
-		lockerConfig:                 lockerConfig,
 		metrics:                      NewMetrics(metricsProvider),
 		onCreate:                     svc.trackManager,
 	}
@@ -115,7 +93,6 @@ type loader struct {
 	retryInterval                time.Duration
 	leaseExpiry                  time.Duration
 	leaseCleanupTickPeriod       time.Duration
-	lockerConfig                 inmemory.LockerConfig
 	metrics                      *Metrics
 	onCreate                     func(*Manager)
 }
@@ -138,7 +115,7 @@ func (s *loader) loadTMS(tms TMS) (token.SelectorManager, error) {
 		return nil, errors.Errorf("failed to create token fetcher: %v", err)
 	}
 
-	mgr := NewManagerWithConfig(
+	mgr := NewManager(
 		fetcher,
 		tokenLockStoreService,
 		pp.Precision(),
@@ -147,7 +124,6 @@ func (s *loader) loadTMS(tms TMS) (token.SelectorManager, error) {
 		s.leaseExpiry,
 		s.leaseCleanupTickPeriod,
 		s.metrics,
-		s.lockerConfig,
 	)
 	if s.onCreate != nil {
 		s.onCreate(mgr)

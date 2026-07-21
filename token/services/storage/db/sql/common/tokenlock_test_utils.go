@@ -34,7 +34,7 @@ func TestLock(t *testing.T, store tokenLockStoreConstructor) {
 		WithArgs(trID, tokenID.TxId, tokenID.Index, now).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 
-	err = store(db).Lock(t.Context(), &tokenID, trID)
+	err = store(db).Lock(t.Context(), &tokenID, trID, "owner1")
 
 	gomega.Expect(mockDB.ExpectationsWereMet()).To(gomega.Succeed())
 	gomega.Expect(err).ToNot(gomega.HaveOccurred())
@@ -79,7 +79,7 @@ func TestLockContextCancelled(t *testing.T, store tokenLockStoreConstructor) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
 	defer cancel()
 
-	err = store(db).Lock(ctx, &tokenID, trID)
+	err = store(db).Lock(ctx, &tokenID, trID, "owner1")
 
 	gomega.Expect(fscerrors.Is(err, sqlmock.ErrCancelled)).To(gomega.BeTrue(),
 		"expected cancellation error, got: %v", err)

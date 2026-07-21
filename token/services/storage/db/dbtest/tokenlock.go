@@ -87,7 +87,7 @@ func TestFully(t *testing.T, tokenDB driver3.TokenStore, tokenLockDB driver3.Tok
 	require.NoError(t, tokenTx.Commit())
 
 	// Lock the token - this will now succeed because the token exists in the tokens table
-	err = tokenLockDB.Lock(ctx, &token.ID{TxId: "apple", Index: 0}, "pineapple")
+	err = tokenLockDB.Lock(ctx, &token.ID{TxId: "apple", Index: 0}, "pineapple", "owner1")
 	require.NoError(t, err, "Lock should succeed")
 
 	// Unlock the token by transaction ID

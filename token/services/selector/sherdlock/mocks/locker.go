@@ -24,12 +24,13 @@ type FakeLocker struct {
 	cleanupReturnsOnCall map[int]struct {
 		result1 error
 	}
-	LockStub        func(context.Context, *token.ID, transaction.ID) error
+	LockStub        func(context.Context, *token.ID, transaction.ID, string) error
 	lockMutex       sync.RWMutex
 	lockArgsForCall []struct {
 		arg1 context.Context
 		arg2 *token.ID
 		arg3 transaction.ID
+		arg4 string
 	}
 	lockReturns struct {
 		result1 error
@@ -115,20 +116,21 @@ func (fake *FakeLocker) CleanupReturnsOnCall(i int, result1 error) {
 	}{result1}
 }
 
-func (fake *FakeLocker) Lock(arg1 context.Context, arg2 *token.ID, arg3 transaction.ID) error {
+func (fake *FakeLocker) Lock(arg1 context.Context, arg2 *token.ID, arg3 transaction.ID, arg4 string) error {
 	fake.lockMutex.Lock()
 	ret, specificReturn := fake.lockReturnsOnCall[len(fake.lockArgsForCall)]
 	fake.lockArgsForCall = append(fake.lockArgsForCall, struct {
 		arg1 context.Context
 		arg2 *token.ID
 		arg3 transaction.ID
-	}{arg1, arg2, arg3})
+		arg4 string
+	}{arg1, arg2, arg3, arg4})
 	stub := fake.LockStub
 	fakeReturns := fake.lockReturns
-	fake.recordInvocation("Lock", []interface{}{arg1, arg2, arg3})
+	fake.recordInvocation("Lock", []interface{}{arg1, arg2, arg3, arg4})
 	fake.lockMutex.Unlock()
 	if stub != nil {
-		return stub(arg1, arg2, arg3)
+		return stub(arg1, arg2, arg3, arg4)
 	}
 	if specificReturn {
 		return ret.result1
@@ -142,17 +144,17 @@ func (fake *FakeLocker) LockCallCount() int {
 	return len(fake.lockArgsForCall)
 }
 
-func (fake *FakeLocker) LockCalls(stub func(context.Context, *token.ID, transaction.ID) error) {
+func (fake *FakeLocker) LockCalls(stub func(context.Context, *token.ID, transaction.ID, string) error) {
 	fake.lockMutex.Lock()
 	defer fake.lockMutex.Unlock()
 	fake.LockStub = stub
 }
 
-func (fake *FakeLocker) LockArgsForCall(i int) (context.Context, *token.ID, transaction.ID) {
+func (fake *FakeLocker) LockArgsForCall(i int) (context.Context, *token.ID, transaction.ID, string) {
 	fake.lockMutex.RLock()
 	defer fake.lockMutex.RUnlock()
 	argsForCall := fake.lockArgsForCall[i]
-	return argsForCall.arg1, argsForCall.arg2, argsForCall.arg3
+	return argsForCall.arg1, argsForCall.arg2, argsForCall.arg3, argsForCall.arg4
 }
 
 func (fake *FakeLocker) LockReturns(result1 error) {

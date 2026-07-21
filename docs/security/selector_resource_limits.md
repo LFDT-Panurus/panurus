@@ -2,300 +2,143 @@
 
 ## Overview
 
-The Token SDK selector service implements per-identity resource limits to prevent resource exhaustion attacks and ensure fair resource allocation. These limits are enforced at the service layer and apply regardless of the storage backend in use.
+Token selection acquires a short-lived *lock* on each candidate token so that two
+concurrent transactions do not try to spend the same token. Under load, a single
+wallet can drive a large number of selection/lock requests. Applications that need to
+throttle this — to protect the lock store, to enforce fairness between wallets, or to
+integrate with an existing quota system — can do so by supplying their own `Locker`
+implementation.
 
-**Selector coverage**: rate limiting is enforced by both selector drivers:
+The Token SDK deliberately ships **no built-in rate limiter or quota**. Instead it
+gives you two things:
 
-- The **simple** selector enforces both the lock quota and the rate limit inside its
-  in-memory locker (`LockWithIdentity`), keyed on `ownerFilter.ID()`.
-- The **sherdlock** selector enforces the rate limit once per selection request at
-  the top of its selection loop, keyed on `owner.ID()`.
+1. A **wallet-id-aware lock function**. Both selector drivers (simple and sherdlock)
+   pass the wallet id the tokens are being selected for into the `Locker`'s lock
+   function, so a custom `Locker` can apply per-wallet policies.
+2. A **fail-fast contract**, `token.SelectorRateLimited`. When a `Locker` denies a
+   lock by returning an error that wraps this sentinel, the selector aborts the
+   selection immediately and returns the error to the caller instead of retrying.
 
-Both share the same enforcer (`inmemory.Locker`, built with `inmemory.NewEnforcer`),
-so the rate-limiter behaviour and error type are identical across drivers.
+This keeps the token-sdk minimal and lets applications reuse whatever rate-limiting
+infrastructure they already run (for example a Redis-backed limiter shared across
+processes).
 
-## Security Controls
+## The lock function
 
-### 1. Lock Quota
+Both selector drivers route through a `Locker` whose lock function receives the
+wallet id.
 
-**Purpose**: Prevents any single identity (wallet) from monopolizing lock resources by imposing a hard upper bound on the number of active locks.
+**Simple selector** — `token/services/selector/simple/selector.go`:
 
-**Default**: 1000 locks per identity
-
-**Behavior**:
-- Each identity can hold a maximum number of simultaneous token locks
-- Requests exceeding this quota are immediately rejected with `ErrQuotaExceeded`
-- The quota is decremented when locks are released (via `UnlockIDs` or `UnlockByTxID`)
-- Quota tracking is per-identity, ensuring isolation between different wallets
-
-**Error Handling**:
-- Selector does NOT retry when quota is exceeded
-- Applications should handle `ErrQuotaExceeded` by either:
-  - Waiting and retrying later
-  - Releasing unused locks
-  - Splitting operations across multiple identities
-
-### 2. Rate Limiting
-
-**Purpose**: Prevents burst flooding by limiting the rate at which an identity can create new locks.
-
-**Default**: 10 requests/second with burst capacity of 20
-
-**Algorithm**: Token bucket
-- Allows burst traffic up to the burst capacity
-- Refills at a steady rate (requests per second)
-- Provides smooth rate limiting with predictable behavior
-
-**Behavior**:
-- Each identity has an independent rate limit bucket
-- Requests exceeding the rate limit are immediately rejected with `ErrRateLimitExceeded`
-- Rate limit state is maintained in memory and resets on service restart
-- Empty identity strings bypass rate limiting (for backward compatibility)
-
-**Error Handling**:
-- Selector does NOT retry when rate limit is exceeded
-- Applications should implement exponential backoff or request throttling
-
-## Configuration
-
-### YAML Configuration
-
-Add to your configuration file under `token.selector`:
-
-```yaml
-token:
-  selector:
-    # Maximum locks any single identity can hold simultaneously
-    # Set to 0 to disable quota enforcement
-    maxLocksPerIdentity: 1000
-    
-    # Lock creation requests per second per identity
-    # Set to 0 to disable rate limiting
-    rateLimit: 10.0
-    
-    # Burst capacity for rate limiter
-    # Should be >= rateLimit for smooth operation
-    rateLimitBurst: 20.0
+```go
+type Locker interface {
+    // Lock locks the token id for the consumer transaction txID on behalf of walletID
+    // (ownerFilter.ID()). Return an error wrapping token.SelectorRateLimited to deny
+    // the lock and make the selection fail fast.
+    Lock(ctx context.Context, id *token.ID, txID string, walletID string, reclaim bool) (string, error)
+    UnlockIDs(ctx context.Context, ids ...*token.ID) []*token.ID
+    UnlockByTxID(ctx context.Context, txID string)
+    IsLocked(id *token.ID) bool
+}
 ```
 
-### Programmatic Configuration
+**Sherdlock selector** — the lock store it drives is
+`token/services/storage/db/driver/token.go` `TokenLockStore` (also exposed as
+`sherdlock.Locker`):
+
+```go
+type TokenLockStore interface {
+    common.DBObject
+    // Lock locks tokenID for consumerTxID on behalf of walletID. A custom store may use
+    // walletID to throttle per wallet, returning an error wrapping token.SelectorRateLimited.
+    Lock(ctx context.Context, tokenID *token.ID, consumerTxID transaction.ID, walletID string) error
+    UnlockByTxID(ctx context.Context, consumerTxID transaction.ID) error
+    Cleanup(ctx context.Context, leaseExpiry time.Duration) error
+}
+```
+
+The built-in in-memory locker and the SQL-backed `TokenLockStore` accept `walletID`
+but do not act on it — they apply no rate limiting or quota.
+
+## The fail-fast contract
+
+`token/selector.go` defines:
+
+```go
+// SelectorRateLimited is the contract error a Locker implementation returns (directly
+// or wrapped) to deny a lock for policy reasons such as rate limiting or quota.
+var SelectorRateLimited = errors.New("selection rate limit exceeded")
+```
+
+When your `Locker` returns an error `e` with `errors.Is(e, token.SelectorRateLimited)`,
+the selector:
+
+- stops iterating candidate tokens,
+- releases any tokens it already locked for this request, and
+- returns `e` to the caller.
+
+Any *other* error from the lock function keeps the existing semantics: the token is
+treated as unavailable (e.g. already locked by another transaction) and selection
+continues / retries as before.
+
+## Integrating your own rate limiting
+
+Provide a `Locker` that wraps the SDK's default locker and enforces your policy before
+delegating. Below, a Redis-backed limiter throttles per wallet; the same shape works
+for an in-process limiter, a quota table, etc.
+
+### Simple selector
 
 ```go
 import (
-    "github.com/hyperledger-labs/fabric-token-sdk/token/services/selector/simple/inmemory"
-    "github.com/hyperledger-labs/fabric-token-sdk/token/sdk/network"
+    "context"
+
+    "github.com/hyperledger-labs/fabric-token-sdk/token"
+    "github.com/hyperledger-labs/fabric-token-sdk/token/services/selector/simple"
+    tokenapi "github.com/hyperledger-labs/fabric-token-sdk/token/token"
+    "github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 )
 
-// Create custom locker configuration
-lockerConfig := inmemory.LockerConfig{
-    MaxLocksPerIdentity: 500,      // Lower quota for stricter control
-    RateLimit:           5.0,       // 5 requests per second
-    RateLimitBurst:      10.0,      // Allow bursts up to 10
+// rateLimitedLocker decorates the default simple.Locker with per-wallet throttling.
+type rateLimitedLocker struct {
+    simple.Locker            // embeds the SDK's default locker
+    limiter       RedisLimiter // your existing infrastructure
 }
 
-// Create locker provider with custom config
-lockerProvider := network.NewLockerProviderWithConfig(
-    ttxStoreServiceManager,
-    sleepTimeout,
-    validTxEvictionTimeout,
-    lockerConfig,
-)
-```
-
-### Supplying a Custom Rate Limiter
-
-By default the SDK uses a built-in in-memory token-bucket limiter. Applications that
-need different behaviour — for example a distributed limiter shared across processes
-(Redis-backed, etc.) — can supply their own implementation of the `RateLimiter`
-interface:
-
-```go
-// token/services/selector/simple/inmemory/ratelimiter.go
-type RateLimiter interface {
-    // Allow returns nil if a request from the given identity may proceed,
-    // or a non-nil error if the request is throttled.
-    Allow(identity string) error
-    // Stop releases any background resources held by the limiter.
-    Stop()
-}
-```
-
-Any non-nil error returned by `Allow` is normalised to `simple.ErrRateLimitExceeded`
-by the enforcer, so callers handle a single error type regardless of implementation.
-
-**Lifecycle ownership**: when you supply your own limiter, *you* own its lifecycle.
-The enforcer will never call `Stop()` on an application-supplied limiter (it may be
-shared across many managers/lockers). The built-in limiter, created when no custom
-one is supplied, is owned and stopped by the enforcer.
-
-**Library-level injection** (assembling the services yourself):
-
-```go
-custom := myRateLimiter{} // implements inmemory.RateLimiter
-
-// simple selector
-lockerProvider := network.NewLockerProviderWithConfig(
-    ttxStoreServiceManager, sleepTimeout, validTxEvictionTimeout,
-    inmemory.LockerConfig{RateLimiter: custom},
-)
-
-// sherdlock selector
-svc := sherdlock.NewServiceWithRateLimiter(
-    fetcherProvider, tokenLockStoreServiceManager, configProvider, metricsProvider, custom,
-)
-```
-
-**Dependency-injection (dig) injection** (standard SDK assembly): simply `Provide`
-an `inmemory.RateLimiter` in the container. Both the simple locker provider and the
-sherdlock selector service declare it as an optional dependency, so it is picked up
-automatically for whichever selector driver is configured. When none is provided the
-built-in limiter is used.
-
-```go
-container.Provide(func() inmemory.RateLimiter { return myRateLimiter{} })
-```
-
-### Disabling Limits
-
-To disable a specific limit, set its value to 0:
-
-```yaml
-token:
-  selector:
-    maxLocksPerIdentity: 0  # Unlimited locks
-    rateLimit: 0            # No rate limiting
-```
-
-## Monitoring
-
-### Metrics
-
-The following behaviors can be monitored through application logs:
-
-- **Quota Exceeded**: Log entries with "quota exceeded for identity"
-- **Rate Limit Exceeded**: Log entries with "rate limit exceeded for identity"
-- **Lock Count**: Current number of locks per identity (via debug logs)
-
-### Recommended Alerts
-
-1. **High Quota Usage**: Alert when an identity consistently approaches the quota limit
-2. **Frequent Rate Limiting**: Alert when rate limit errors exceed a threshold
-3. **Quota Exhaustion**: Alert when quota errors prevent legitimate operations
-
-## Best Practices
-
-### For Application Developers
-
-1. **Handle Errors Gracefully**:
-   ```go
-   _, err := selector.Select(ctx, ownerFilter, amount, tokenType)
-   if errors.HasType(err, simple.ErrQuotaExceeded) {
-       // Quota exceeded - wait or release locks
-       return handleQuotaExceeded(err)
-   }
-   if errors.HasType(err, simple.ErrRateLimitExceeded) {
-       // Rate limited - implement backoff
-       return handleRateLimitExceeded(err)
-   }
-   ```
-
-2. **Release Locks Promptly**: Always unlock tokens when transactions fail or complete
-
-3. **Batch Operations**: Group related operations to minimize lock requests
-
-4. **Monitor Usage**: Track quota and rate limit errors in production
-
-### For Operators
-
-1. **Tune Limits**: Adjust based on observed usage patterns and system capacity
-
-2. **Set Conservative Defaults**: Start with lower limits and increase as needed
-
-3. **Monitor System Load**: Ensure limits don't cause legitimate operations to fail
-
-4. **Plan for Growth**: Review limits as transaction volume increases
-
-## Security Considerations
-
-### Attack Scenarios Mitigated
-
-1. **Resource Exhaustion**: Prevents a single malicious identity from locking all available tokens
-
-2. **Denial of Service**: Rate limiting prevents rapid-fire lock requests that could overwhelm the system
-
-3. **Lock Hoarding**: Quota limits prevent identities from accumulating excessive locks
-
-### Limitations
-
-1. **Sybil Attacks**: Limits are per-identity; attackers with multiple identities can still consume resources
-
-2. **Memory Usage**: Rate limiter state is kept in memory; many unique identities increase memory usage
-
-3. **Restart Behavior**: Rate limit state is lost on restart, allowing temporary burst after recovery
-
-## Backward Compatibility
-
-The implementation maintains backward compatibility:
-
-- The original `Lock()` method still works without identity tracking
-- Locks created without identity bypass quota and rate limiting
-- Existing code continues to function without modification
-- New code should use `LockWithIdentity()` for security benefits
-
-## Error Types
-
-Both error types are defined in the `simple` package
-(`token/services/selector/simple/selector.go`) and shared by both selector drivers.
-
-### ErrQuotaExceeded
-
-```go
-var ErrQuotaExceeded = errors.New("lock quota exceeded for identity")
-```
-
-Returned when an identity attempts to acquire more locks than allowed by `maxLocksPerIdentity`.
-
-### ErrRateLimitExceeded
-
-```go
-var ErrRateLimitExceeded = errors.New("rate limit exceeded")
-```
-
-Returned when an identity exceeds the configured rate limit for lock creation requests.
-
-## Testing
-
-### Unit Tests
-
-Comprehensive unit tests are provided in:
-- `token/services/selector/simple/inmemory/ratelimiter_test.go`
-- `token/services/selector/simple/inmemory/locker_quota_test.go`
-- `token/services/selector/simple/inmemory/locker_enforcer_test.go` (custom limiter + lifecycle ownership)
-- `token/services/selector/sherdlock/selector_test.go` (`TestSelectorRateLimit`, incl. custom limiter)
-
-### Integration Testing
-
-Test quota and rate limiting in integration tests:
-
-```go
-func TestQuotaEnforcement(t *testing.T) {
-    // Create selector with low quota for testing
-    config := inmemory.LockerConfig{
-        MaxLocksPerIdentity: 5,
-        RateLimit:           0,
+func (l *rateLimitedLocker) Lock(ctx context.Context, id *tokenapi.ID, txID string, walletID string, reclaim bool) (string, error) {
+    if !l.limiter.Allow(ctx, walletID) {
+        return "", errors.Wrapf(token.SelectorRateLimited, "wallet %s throttled", walletID)
     }
-    
-    // Attempt to exceed quota
-    for i := 0; i < 10; i++ {
-        _, err := selector.Select(ctx, ownerFilter, amount, tokenType)
-        if i >= 5 {
-            assert.ErrorIs(t, err, simple.ErrQuotaExceeded)
-        }
-    }
+
+    return l.Locker.Lock(ctx, id, txID, walletID, reclaim)
 }
 ```
 
-## References
+Wire it in by providing a `simple.LockerProvider` whose `New` returns your decorator
+instead of the default `inmemory.NewLocker`.
 
-- [Token Selector Service Documentation](../services/selector.md)
-- [Configuration Guide](../configuration.md)
+### Sherdlock selector
+
+Provide a `TokenLockStore` (via the `tokenlockdb.StoreServiceManager` used by
+`sherdlock.NewService`) whose `Lock` enforces the limit before delegating to the
+SQL-backed store, returning an error wrapping `token.SelectorRateLimited` when a wallet
+is throttled.
+
+## Handling the error
+
+Callers should treat `token.SelectorRateLimited` as a transient, retryable-later
+condition rather than an insufficient-funds error:
+
+```go
+ids, sum, err := selector.Select(ctx, ownerFilter, amount, tokenType)
+if errors.Is(err, token.SelectorRateLimited) {
+    // back off and retry later, shed the request, or surface a 429-style response
+}
+```
+
+## Notes
+
+- Passing an empty `walletID` is valid; a `Locker` that keys its policy on wallet id
+  should treat empty as "no throttling" (the default lockers ignore it entirely).
+- Because the policy lives in your `Locker`, its scope (per process vs shared across a
+  cluster), persistence, and lifecycle are entirely under your control.

@@ -327,8 +327,11 @@ type TokenNotifierDriver interface {
 // - unlock tokens that were locked by a process that exited unexpectedly
 type TokenLockStore interface {
 	common.DBObject
-	// Lock locks a specific token for the consumer TX
-	Lock(ctx context.Context, tokenID *token.ID, consumerTxID transaction.ID) error
+	// Lock locks a specific token for the consumer TX on behalf of walletID (the wallet
+	// the tokens are selected for). The built-in SQL store ignores walletID; a custom
+	// store may use it to apply per-wallet policies such as rate limiting, returning an
+	// error wrapping token.SelectorRateLimited to make the selection fail fast.
+	Lock(ctx context.Context, tokenID *token.ID, consumerTxID transaction.ID, walletID string) error
 	// UnlockByTxID unlocks all tokens locked by the consumer TX
 	UnlockByTxID(ctx context.Context, consumerTxID transaction.ID) error
 	// Cleanup removes the locks such that either:

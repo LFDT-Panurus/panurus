@@ -69,21 +69,17 @@ func (m *mockQueryService) GetTokens(_ context.Context, _ ...*token2.ID) ([]*tok
 	return nil, nil
 }
 
-// recordingLocker records every call to LockWithIdentity and UnlockIDs.
+// recordingLocker records every call to Lock and UnlockIDs.
 type recordingLocker struct {
 	// lockErr is returned for the lockFailAfter-th call onwards (0-indexed).
 	lockFailAfter int // after this many successes, start returning lockErr
 	lockErr       error
-	calls         int // total LockWithIdentity calls
+	calls         int // total Lock calls
 
 	unlocked [][]*token2.ID // each UnlockIDs call appended as a group
 }
 
-func (r *recordingLocker) Lock(_ context.Context, id *token2.ID, _ string, _ bool) (string, error) {
-	return r.LockWithIdentity(context.Background(), id, "", "", false)
-}
-
-func (r *recordingLocker) LockWithIdentity(_ context.Context, id *token2.ID, _ string, _ string, _ bool) (string, error) {
+func (r *recordingLocker) Lock(_ context.Context, id *token2.ID, _ string, _ string, _ bool) (string, error) {
 	idx := r.calls
 	r.calls++
 	if idx >= r.lockFailAfter {
@@ -176,39 +172,21 @@ func TestSelectByID_ToQuantityError(t *testing.T) {
 	require.Len(t, unlocked, 1, "the one successfully-locked token must be unlocked")
 }
 
-// TestSelectByID_QuotaExceeded: token 0 is locked successfully, then token 1
-// causes LockWithIdentity to return ErrQuotaExceeded.
-// Token 0 must be unlocked, and the error must be returned directly (no retry).
-func TestSelectByID_QuotaExceeded(t *testing.T) {
-	locker := &recordingLocker{
-		lockFailAfter: 1, // first lock succeeds, second fails
-		lockErr:       errors.Wrapf(ErrQuotaExceeded, "identity wallet1 has 1 locks (max 1)"),
-	}
-	qs := &mockQueryService{tokens: makeTokens(3, "USD", -1)}
-	sel := newSelector(locker, qs, 5) // 5 retries — must NOT retry on quota error
-
-	_, _, err := sel.Select(context.Background(), &ownerFilter{id: "wallet1"}, "0x3", "USD")
-	require.ErrorIs(t, err, ErrQuotaExceeded)
-
-	// token 0 was locked and must have been unlocked exactly once
-	unlocked := locker.totalUnlocked()
-	require.Len(t, unlocked, 1, "the one successfully-locked token must be unlocked")
-
-	// selector must not retry: LockWithIdentity called exactly 2 times (success + failure)
-	assert.Equal(t, 2, locker.calls, "should not retry after quota exceeded")
-}
-
-// TestSelectByID_RateLimitExceeded: same shape as quota, different sentinel error.
-func TestSelectByID_RateLimitExceeded(t *testing.T) {
+// TestSelectByID_RateLimited: tokens 0 & 1 are locked successfully, then token 2
+// causes the Locker to return an error wrapping token.SelectorRateLimited.
+// The already-locked tokens must be unlocked, and the error must be returned
+// directly without any retry — this is the contract an application-supplied,
+// wallet-id-aware Locker uses to integrate its own rate limiting.
+func TestSelectByID_RateLimited(t *testing.T) {
 	locker := &recordingLocker{
 		lockFailAfter: 2, // tokens 0 & 1 succeed, token 2 fails
-		lockErr:       errors.Wrapf(ErrRateLimitExceeded, "identity wallet1"),
+		lockErr:       errors.Wrapf(token.SelectorRateLimited, "wallet wallet1 throttled"),
 	}
 	qs := &mockQueryService{tokens: makeTokens(4, "USD", -1)}
 	sel := newSelector(locker, qs, 5) // 5 retries — must NOT retry on rate-limit error
 
 	_, _, err := sel.Select(context.Background(), &ownerFilter{id: "wallet1"}, "0x4", "USD")
-	require.ErrorIs(t, err, ErrRateLimitExceeded)
+	require.ErrorIs(t, err, token.SelectorRateLimited)
 
 	// tokens 0 & 1 were locked and must be unlocked
 	unlocked := locker.totalUnlocked()

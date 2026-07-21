@@ -17,13 +17,6 @@ import (
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 )
 
-var (
-	// ErrQuotaExceeded is returned when an identity exceeds their lock quota
-	ErrQuotaExceeded = errors.New("lock quota exceeded for identity")
-	// ErrRateLimitExceeded is returned when a caller exceeds their rate limit
-	ErrRateLimitExceeded = errors.New("rate limit exceeded")
-)
-
 type QueryService interface {
 	UnspentTokensIterator(ctx context.Context) (*token.UnspentTokensIterator, error)
 	UnspentTokensIteratorBy(ctx context.Context, id string, tokenType token2.Type) (driver.UnspentTokensIterator, error)
@@ -31,15 +24,15 @@ type QueryService interface {
 }
 
 type Locker interface {
-	// Lock locks the given token of the given owner for the given transaction.
-	// The owner scopes the lock state: locks of different owners never contend.
-	Lock(ctx context.Context, owner string, id *token2.ID, txID string, reclaim bool) (string, error)
-	// LockWithIdentity locks a token with identity tracking for quota and rate limiting.
-	// The owner scopes the lock state; identity is used for quota/rate enforcement.
-	LockWithIdentity(ctx context.Context, owner string, id *token2.ID, txID string, identity string, reclaim bool) (string, error)
-	// UnlockIDs unlocks the passed IDS of the given owner. It returns the list of tokens that were not locked
-	// in the first place among those passed.
-	UnlockIDs(ctx context.Context, owner string, ids ...*token2.ID) []*token2.ID
+	// Lock locks the token id for the consumer transaction txID on behalf of the given
+	// walletID. walletID is the wallet the tokens are selected for (ownerFilter.ID());
+	// it lets a Locker implementation apply per-wallet policies such as rate limiting.
+	// To deny a lock for policy reasons, return an error wrapping token.SelectorRateLimited:
+	// the selector then aborts immediately instead of retrying.
+	Lock(ctx context.Context, id *token2.ID, txID string, walletID string, reclaim bool) (string, error)
+	// UnlockIDs unlocks the passed IDS. It returns the list of tokens that were not locked in the first place among
+	// those passed.
+	UnlockIDs(ctx context.Context, ids ...*token2.ID) []*token2.ID
 	UnlockByTxID(ctx context.Context, txID string)
 	IsLocked(id *token2.ID) bool
 }
@@ -120,18 +113,18 @@ func (s *selector) selectByID(ctx context.Context, ownerFilter token.OwnerFilter
 
 			q, err := token2.ToQuantity(t.Quantity, s.precision)
 			if err != nil {
-				s.locker.UnlockIDs(ctx, id, toBeSpent...)
-				s.locker.UnlockIDs(ctx, id, toBeCertified...)
+				s.locker.UnlockIDs(ctx, toBeSpent...)
+				s.locker.UnlockIDs(ctx, toBeCertified...)
 
 				return nil, nil, errors.Wrap(err, "failed to convert quantity")
 			}
 
-			// lock the token with identity tracking
-			if _, lockErr := s.locker.LockWithIdentity(ctx, id, &t.Id, s.txID, id, reclaim); lockErr != nil {
-				// Check if this is a quota or rate limit error - these should not be retried
-				if errors.HasType(lockErr, ErrQuotaExceeded) || errors.HasType(lockErr, ErrRateLimitExceeded) {
-					s.locker.UnlockIDs(ctx, id, toBeSpent...)
-					s.locker.UnlockIDs(ctx, id, toBeCertified...)
+			// lock the token on behalf of the selecting wallet
+			if _, lockErr := s.locker.Lock(ctx, &t.Id, s.txID, id, reclaim); lockErr != nil {
+				// A rate-limit denial from the Locker is a hard stop: abort instead of retrying.
+				if errors.Is(lockErr, token.SelectorRateLimited) {
+					s.locker.UnlockIDs(ctx, toBeSpent...)
+					s.locker.UnlockIDs(ctx, toBeCertified...)
 
 					return nil, nil, lockErr
 				}
@@ -139,8 +132,8 @@ func (s *selector) selectByID(ctx context.Context, ownerFilter token.OwnerFilter
 				var addErr error
 				potentialSumWithLocked, addErr = potentialSumWithLocked.Add(q)
 				if addErr != nil {
-					s.locker.UnlockIDs(ctx, id, toBeSpent...)
-					s.locker.UnlockIDs(ctx, id, toBeCertified...)
+					s.locker.UnlockIDs(ctx, toBeSpent...)
+					s.locker.UnlockIDs(ctx, toBeCertified...)
 
 					return nil, nil, errors.Wrap(addErr, "failed to add locked quantity")
 				}
@@ -155,15 +148,15 @@ func (s *selector) selectByID(ctx context.Context, ownerFilter token.OwnerFilter
 			toBeSpent = append(toBeSpent, &t.Id)
 			sum, err = sum.Add(q)
 			if err != nil {
-				s.locker.UnlockIDs(ctx, id, toBeSpent...)
-				s.locker.UnlockIDs(ctx, id, toBeCertified...)
+				s.locker.UnlockIDs(ctx, toBeSpent...)
+				s.locker.UnlockIDs(ctx, toBeCertified...)
 
 				return nil, nil, errors.Wrap(err, "failed to add quantity")
 			}
 			potentialSumWithLocked, err = potentialSumWithLocked.Add(q)
 			if err != nil {
-				s.locker.UnlockIDs(ctx, id, toBeSpent...)
-				s.locker.UnlockIDs(ctx, id, toBeCertified...)
+				s.locker.UnlockIDs(ctx, toBeSpent...)
+				s.locker.UnlockIDs(ctx, toBeCertified...)
 
 				return nil, nil, errors.Wrap(err, "failed to add quantity")
 			}
@@ -184,8 +177,8 @@ func (s *selector) selectByID(ctx context.Context, ownerFilter token.OwnerFilter
 		}
 
 		// Unlock and check the conditions for a retry
-		s.locker.UnlockIDs(ctx, id, toBeSpent...)
-		s.locker.UnlockIDs(ctx, id, toBeCertified...)
+		s.locker.UnlockIDs(ctx, toBeSpent...)
+		s.locker.UnlockIDs(ctx, toBeCertified...)
 
 		if target.Cmp(potentialSumWithLocked) <= 0 && potentialSumWithLocked.Cmp(sum) != 0 {
 			// funds are potentially enough but they are locked
