@@ -56,7 +56,38 @@ Leave the `replace`-pinned FSC sub-modules alone:
 These are independently tagged releases (currently `v0.14.2`), not tracked to FSC
 `main`. Only touch them if a later step's build error specifically demands it.
 
-### 3. Detect API breakage
+### 3. Align pinned infra versions with FSC's Makefile
+
+FSC's own `Makefile` pins the Fabric/Fabric-X versions its integration-test tooling
+(binaries, Docker images) is built and tested against — currently `FABRIC_VERSION`,
+`FABRIC_TWO_DIGIT_VERSION` (derived from it), `FABRIC_X_TOOLS_VERSION`, and
+`FABRIC_X_COMMITTER_VERSION`, declared near the top under `# pinned versions`.
+Panurus's root `Makefile` (lines 1-7) and `fabricx.mk` mirror these same variables
+independently — they are **not** inherited from the Go module, so a bump can silently
+leave Panurus testing against a stale Fabric/Fabric-X version even though the code
+compiles fine. This matters specifically for integration tests, which are what
+actually exercise the pinned binaries/images.
+
+```bash
+GOMODCACHE=$(go env GOMODCACHE)
+FSC_MK="$GOMODCACHE/github.com/hyperledger-labs/fabric-smart-client@$(cd . && go list -m -f '{{.Version}}' github.com/hyperledger-labs/fabric-smart-client)/Makefile"
+grep -n "^FABRIC_VERSION\|^FABRIC_CA_VERSION\|^FABRIC_TWO_DIGIT_VERSION\|^FABRIC_X_TOOLS_VERSION\|^FABRIC_X_COMMITTER_VERSION" "$FSC_MK"
+grep -n "^FABRIC_VERSION\|^FABRIC_CA_VERSION\|^FABRIC_TWO_DIGIT_VERSION\|^FABRIC_X_TOOLS_VERSION\|^FABRIC_X_COMMITTER_VERSION" Makefile fabricx.mk
+```
+
+For each variable present in both files, bump Panurus's value to match FSC's if they
+differ. `FABRIC_CA_VERSION` is Panurus-only (FSC's `install-fabric-bins` target doesn't
+take a CA version) — leave it alone unless the FSC diff explicitly touches fabric-ca.
+
+Also diff the Docker image references FSC's Makefile pulls for these same
+versions (`fabric-baseos`, `fabric-ccenv`, `fabric-x-committer-test-node` targets) —
+registry host (e.g. `ghcr.io/hyperledger/...` vs. plain `hyperledger/...` on Docker
+Hub) and image names can change independently of the version numbers. Compare against
+Panurus's `fabric-docker-images` target in `Makefile` and `fabricx-docker-images` in
+`fabricx.mk`, and update the `docker pull`/`docker tag` lines to match FSC's source if
+they've drifted.
+
+### 4. Detect API breakage
 
 For every module in `GO_MODULES` (see `Makefile:36` for the current list — today:
 `. integration token/services/storage/db/kvs/hashicorp cmd/artifactgen cmd/tokengen
@@ -69,7 +100,7 @@ cmd/token_validation_service cmd/profiler cmd/skicleanup cmd/node`):
 `go vet` also type-checks `_test.go` files, catching test-only breakage that `go build`
 misses.
 
-### 4. Resolve compile errors from API changes
+### 5. Resolve compile errors from API changes
 
 For each error:
 
@@ -81,9 +112,9 @@ For each error:
   unrelated code (project convention, see `AGENTS.md`).
 - If an FSC interface used by a `counterfeiter` mock changed shape, regenerate mocks:
   `go generate ./...`.
-- Re-run step 3 until `go build` and `go vet` are clean in every module.
+- Re-run step 4 until `go build` and `go vet` are clean in every module.
 
-### 5. Lint and static checks
+### 6. Lint and static checks
 
 ```bash
 make lint-auto-fix
@@ -94,7 +125,7 @@ make checks
 staticcheck protos-lint buf-format tidy-check` (see `checks.mk`). Fix whatever it
 flags and re-run until it passes cleanly. Do not skip or silence individual checks.
 
-### 6. Tests
+### 7. Tests
 
 ```bash
 make unit-tests
@@ -106,7 +137,7 @@ Fix any regression the dependency bump introduced. Integration tests
 them locally only if the environment (`FAB_BINS`, Docker images) is already set up;
 otherwise note in the PR that they're expected to run in CI.
 
-### 7. Commit
+### 8. Commit
 
 One signed-off commit:
 
@@ -120,7 +151,7 @@ Include the old → new pseudo-version in the commit body. Never introduce
 `github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors` per project
 convention.
 
-### 8. Stop and confirm before any remote action
+### 9. Stop and confirm before any remote action
 
 **Do not push or open a PR without the user's explicit go-ahead**, per `AGENTS.md`.
 Report what changed and that `make checks` / `make unit-tests` are green, and wait for
@@ -129,7 +160,7 @@ confirmation.
 If `make checks` (or the build) cannot be made clean, **do not open a PR** — report the
 remaining blockers to the user instead of pushing broken state.
 
-### 9. Push and open the PR (after confirmation)
+### 10. Push and open the PR (after confirmation)
 
 ```bash
 git push -u origin fsc-update-${SHA:0:12}
