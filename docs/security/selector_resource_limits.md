@@ -9,7 +9,7 @@ throttle this — to protect the lock store, to enforce fairness between wallets
 integrate with an existing quota system — can do so by supplying their own `Locker`
 implementation.
 
-Panurus deliberately ships **no built-in rate limiter or quota**. Instead it
+The Token SDK deliberately ships **no built-in rate limiter or quota**. Instead it
 gives you two things:
 
 1. A **wallet-id-aware lock function**. Both selector drivers (simple and sherdlock)
@@ -19,7 +19,7 @@ gives you two things:
    lock by returning an error that wraps this sentinel, the selector aborts the
    selection immediately and returns the error to the caller instead of retrying.
 
-This keeps the Panurus minimal and lets applications reuse whatever rate-limiting
+This keeps the token-sdk minimal and lets applications reuse whatever rate-limiting
 infrastructure they already run (for example a Redis-backed limiter shared across
 processes).
 
@@ -32,11 +32,11 @@ wallet id.
 
 ```go
 type Locker interface {
-    // Lock locks the token id for the consumer transaction txID on behalf of owner
+    // Lock locks the token id for the consumer transaction txID on behalf of walletID
     // (ownerFilter.ID()). Return an error wrapping token.SelectorRateLimited to deny
     // the lock and make the selection fail fast.
-    Lock(ctx context.Context, owner string, id *token.ID, txID string, reclaim bool) (string, error)
-    UnlockIDs(ctx context.Context, owner string, ids ...*token.ID) []*token.ID
+    Lock(ctx context.Context, id *token.ID, txID string, walletID string, reclaim bool) (string, error)
+    UnlockIDs(ctx context.Context, ids ...*token.ID) []*token.ID
     UnlockByTxID(ctx context.Context, txID string)
     IsLocked(id *token.ID) bool
 }
@@ -57,8 +57,8 @@ type TokenLockStore interface {
 }
 ```
 
-The built-in in-memory locker applies rate limiting and quota on a per-wallet basis.
-The SQL-backed `TokenLockStore` accepts `walletID` but does not act on it.
+The built-in in-memory locker and the SQL-backed `TokenLockStore` accept `walletID`
+but do not act on it — they apply no rate limiting or quota.
 
 ## The fail-fast contract
 
@@ -81,37 +81,7 @@ Any *other* error from the lock function keeps the existing semantics: the token
 treated as unavailable (e.g. already locked by another transaction) and selection
 continues / retries as before.
 
-## Built-in rate limiting and quota
-
-The in-memory locker (`token/services/selector/simple/inmemory`) ships with built-in
-per-wallet rate limiting and lock-quota enforcement, both configurable via
-`token.selector` in YAML or via `inmemory.LockerConfig` at construction time.
-
-### Configuration
-
-```yaml
-token:
-  selector:
-    # Maximum locks any single wallet can hold simultaneously (0 = unlimited)
-    maxLocksPerIdentity: 1000
-    # Lock creation requests per second per wallet (0 = disabled)
-    rateLimit: 10.0
-    # Burst capacity for the token-bucket rate limiter
-    rateLimitBurst: 20.0
-```
-
-### Error types
-
-| Error | Sentinel | Meaning |
-|-------|----------|---------|
-| Quota exceeded | `simple.ErrQuotaExceeded` | Wallet holds `maxLocksPerIdentity` active locks |
-| Rate limited | `simple.ErrRateLimitExceeded` | Wallet's token bucket is empty |
-
-Both errors wrap `token.SelectorRateLimited`, so the selector aborts immediately
-rather than retrying. Callers should treat them as transient, back off, and retry
-later.
-
-## Integrating a custom rate limiter
+## Integrating your own rate limiting
 
 Provide a `Locker` that wraps the SDK's default locker and enforces your policy before
 delegating. Below, a Redis-backed limiter throttles per wallet; the same shape works
@@ -123,9 +93,9 @@ for an in-process limiter, a quota table, etc.
 import (
     "context"
 
-    "github.com/LFDT-Panurus/panurus/token"
-    "github.com/LFDT-Panurus/panurus/token/services/selector/simple"
-    tokenapi "github.com/LFDT-Panurus/panurus/token/token"
+    "github.com/hyperledger-labs/fabric-token-sdk/token"
+    "github.com/hyperledger-labs/fabric-token-sdk/token/services/selector/simple"
+    tokenapi "github.com/hyperledger-labs/fabric-token-sdk/token/token"
     "github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 )
 
@@ -135,12 +105,12 @@ type rateLimitedLocker struct {
     limiter       RedisLimiter // your existing infrastructure
 }
 
-func (l *rateLimitedLocker) Lock(ctx context.Context, owner string, id *tokenapi.ID, txID string, reclaim bool) (string, error) {
-    if !l.limiter.Allow(ctx, owner) {
-        return "", errors.Wrapf(token.SelectorRateLimited, "wallet %s throttled", owner)
+func (l *rateLimitedLocker) Lock(ctx context.Context, id *tokenapi.ID, txID string, walletID string, reclaim bool) (string, error) {
+    if !l.limiter.Allow(ctx, walletID) {
+        return "", errors.Wrapf(token.SelectorRateLimited, "wallet %s throttled", walletID)
     }
 
-    return l.Locker.Lock(ctx, owner, id, txID, reclaim)
+    return l.Locker.Lock(ctx, id, txID, walletID, reclaim)
 }
 ```
 
@@ -168,7 +138,7 @@ if errors.Is(err, token.SelectorRateLimited) {
 
 ## Notes
 
-- Passing an empty `walletID` is valid; the default lockers skip rate-limit and quota
-  enforcement for empty wallet IDs (backward compatibility).
+- Passing an empty `walletID` is valid; a `Locker` that keys its policy on wallet id
+  should treat empty as "no throttling" (the default lockers ignore it entirely).
 - Because the policy lives in your `Locker`, its scope (per process vs shared across a
   cluster), persistence, and lifecycle are entirely under your control.

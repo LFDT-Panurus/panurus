@@ -27,8 +27,8 @@ import (
 type WalletIDByRawIdentityFunc func(rawIdentity []byte) string
 
 type Locker interface {
-	Lock(ctx context.Context, owner string, id *token2.ID, txID string, reclaim bool) (string, error)
-	UnlockIDs(ctx context.Context, owner string, ids ...*token2.ID) []*token2.ID
+	Lock(ctx context.Context, id *token2.ID, txID string, walletID string, reclaim bool) (string, error)
+	UnlockIDs(ctx context.Context, ids ...*token2.ID) []*token2.ID
 	UnlockByTxID(ctx context.Context, txID string)
 	IsLocked(id *token2.ID) bool
 }
@@ -45,7 +45,7 @@ func (s *extendedSelector) Close() error { return s.Selector.Close() }
 
 func (s *extendedSelector) Unselect(id ...*token2.ID) {
 	if s.Lock != nil {
-		s.Lock.UnlockIDs(context.Background(), "", id...)
+		s.Lock.UnlockIDs(context.Background(), id...)
 	}
 }
 

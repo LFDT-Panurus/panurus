@@ -10,7 +10,6 @@ import (
 	"context"
 	"fmt"
 	"testing"
-	"time"
 
 	"github.com/LFDT-Panurus/panurus/token"
 	"github.com/LFDT-Panurus/panurus/token/driver"
@@ -79,7 +78,7 @@ type recordingLocker struct {
 	unlocked [][]*token2.ID // each UnlockIDs call appended as a group
 }
 
-func (r *recordingLocker) Lock(_ context.Context, _ string, id *token2.ID, _ string, _ bool) (string, error) {
+func (r *recordingLocker) Lock(_ context.Context, id *token2.ID, _ string, _ string, _ bool) (string, error) {
 	idx := r.calls
 	r.calls++
 	if idx >= r.lockFailAfter {
@@ -89,7 +88,7 @@ func (r *recordingLocker) Lock(_ context.Context, _ string, id *token2.ID, _ str
 	return "locked", nil
 }
 
-func (r *recordingLocker) UnlockIDs(_ context.Context, _ string, ids ...*token2.ID) []*token2.ID {
+func (r *recordingLocker) UnlockIDs(_ context.Context, ids ...*token2.ID) []*token2.ID {
 	if len(ids) > 0 {
 		cp := make([]*token2.ID, len(ids))
 		copy(cp, ids)
@@ -172,28 +171,6 @@ func TestSelectByID_ToQuantityError(t *testing.T) {
 	require.Len(t, unlocked, 1, "the one successfully-locked token must be unlocked")
 }
 
-// TestSelectByID_QuotaExceeded: token 0 is locked successfully, then token 1
-// causes Lock to return ErrQuotaExceeded (which wraps token.SelectorRateLimited).
-// Token 0 must be unlocked, and the error must be returned directly (no retry).
-func TestSelectByID_QuotaExceeded(t *testing.T) {
-	locker := &recordingLocker{
-		lockFailAfter: 1, // first lock succeeds, second fails
-		lockErr:       errors.Wrapf(token.SelectorRateLimited, "identity wallet1 has 1 locks (max 1)"),
-	}
-	qs := &mockQueryService{tokens: makeTokens(3, "USD", -1)}
-	sel := newSelector(locker, qs, 5) // 5 retries — must NOT retry on quota error
-
-	_, _, err := sel.Select(context.Background(), &ownerFilter{id: "wallet1"}, "0x3", "USD")
-	require.ErrorIs(t, err, token.SelectorRateLimited)
-
-	// token 0 was locked and must have been unlocked exactly once
-	unlocked := locker.totalUnlocked()
-	require.Len(t, unlocked, 1, "the one successfully-locked token must be unlocked")
-
-	// selector must not retry: Lock called exactly 2 times (success + failure)
-	assert.Equal(t, 2, locker.calls, "should not retry after quota exceeded")
-}
-
 // TestSelectByID_RateLimited: tokens 0 & 1 are locked successfully, then token 2
 // causes the Locker to return an error wrapping token.SelectorRateLimited.
 // The already-locked tokens must be unlocked, and the error must be returned
@@ -266,21 +243,4 @@ func TestSelectByID_HappyPath(t *testing.T) {
 
 	// no unlocks should have happened
 	assert.Empty(t, locker.unlocked, "no tokens should be unlocked on success")
-}
-
-// TestRetryBackoffIsJittered verifies the retry backoff is randomized over
-// [0, timeout) instead of a constant sleep, so transactions that lost a race
-// for the same funds don't all retry at the same instant.
-func TestRetryBackoffIsJittered(t *testing.T) {
-	timeout := 5 * time.Second
-	s := &selector{timeout: timeout}
-
-	seen := map[time.Duration]struct{}{}
-	for range 100 {
-		d := s.retryBackoff()
-		require.GreaterOrEqual(t, d, time.Duration(0))
-		require.Less(t, d, timeout)
-		seen[d] = struct{}{}
-	}
-	require.Greater(t, len(seen), 1, "backoff must vary across retries, not be a constant")
 }

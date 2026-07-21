@@ -22,7 +22,6 @@ type LockerProvider struct {
 	ttxStoreServiceManager db.StoreServiceManager[*ttxdb.StoreService]
 	sleepTimeout           time.Duration
 	validTxEvictionTimeout time.Duration
-	lockerConfig           inmemory.LockerConfig
 }
 
 // NewLockerProvider creates a new locker provider with the given configuration.
@@ -35,22 +34,6 @@ func NewLockerProvider(
 		ttxStoreServiceManager: ttxStoreServiceManager,
 		sleepTimeout:           sleepTimeout,
 		validTxEvictionTimeout: validTxEvictionTimeout,
-		lockerConfig:           inmemory.DefaultLockerConfig(),
-	}
-}
-
-// NewLockerProviderWithConfig creates a new locker provider with custom locker configuration.
-func NewLockerProviderWithConfig(
-	ttxStoreServiceManager db.StoreServiceManager[*ttxdb.StoreService],
-	sleepTimeout time.Duration,
-	validTxEvictionTimeout time.Duration,
-	lockerConfig inmemory.LockerConfig,
-) *LockerProvider {
-	return &LockerProvider{
-		ttxStoreServiceManager: ttxStoreServiceManager,
-		sleepTimeout:           sleepTimeout,
-		validTxEvictionTimeout: validTxEvictionTimeout,
-		lockerConfig:           lockerConfig,
 	}
 }
 
@@ -65,5 +48,5 @@ func (s *LockerProvider) New(network, channel, namespace string) (selector.Locke
 		return nil, err
 	}
 
-	return inmemory.NewLockerWithConfig(db, s.sleepTimeout, s.validTxEvictionTimeout, s.lockerConfig), nil
+	return inmemory.NewLocker(db, s.sleepTimeout, s.validTxEvictionTimeout), nil
 }
