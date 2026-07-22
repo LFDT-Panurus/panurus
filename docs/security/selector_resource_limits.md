@@ -9,7 +9,7 @@ throttle this — to protect the lock store, to enforce fairness between wallets
 integrate with an existing quota system — can do so by supplying their own `Locker`
 implementation.
 
-The Token SDK deliberately ships **no built-in rate limiter or quota**. Instead it
+Panurus deliberately ships **no built-in rate limiter or quota**. Instead it
 gives you two things:
 
 1. A **wallet-id-aware lock function**. Both selector drivers (simple and sherdlock)
@@ -19,7 +19,7 @@ gives you two things:
    lock by returning an error that wraps this sentinel, the selector aborts the
    selection immediately and returns the error to the caller instead of retrying.
 
-This keeps the token-sdk minimal and lets applications reuse whatever rate-limiting
+This keeps the Panurus minimal and lets applications reuse whatever rate-limiting
 infrastructure they already run (for example a Redis-backed limiter shared across
 processes).
 
@@ -93,9 +93,9 @@ for an in-process limiter, a quota table, etc.
 import (
     "context"
 
-    "github.com/hyperledger-labs/fabric-token-sdk/token"
-    "github.com/hyperledger-labs/fabric-token-sdk/token/services/selector/simple"
-    tokenapi "github.com/hyperledger-labs/fabric-token-sdk/token/token"
+    "github.com/LFDT-Panurus/panurus/token"
+    "github.com/LFDT-Panurus/panurus/token/services/selector/simple"
+    tokenapi "github.com/LFDT-Panurus/panurus/token/token"
     "github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 )
 
