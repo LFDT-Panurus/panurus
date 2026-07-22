@@ -4,24 +4,66 @@
 
 Token selection acquires a short-lived *lock* on each candidate token so that two
 concurrent transactions do not try to spend the same token. Under load, a single
-wallet can drive a large number of selection/lock requests. Applications that need to
-throttle this — to protect the lock store, to enforce fairness between wallets, or to
-integrate with an existing quota system — can do so by supplying their own `Locker`
-implementation.
+wallet can drive a large number of selection/lock requests.
 
-The Token SDK deliberately ships **no built-in rate limiter or quota**. Instead it
-gives you two things:
+The Token SDK ships a **built-in, per-wallet rate limiter that is on by default**
+and shared by both selector drivers (simple and sherdlock). It is fully
+configurable and can be disabled. Applications that need a different policy — for
+example a distributed/Redis-backed limiter shared across processes, or a quota
+system — can still supply their own `Locker` implementation instead.
 
-1. A **wallet-id-aware lock function**. Both selector drivers (simple and sherdlock)
-   pass the wallet id the tokens are being selected for into the `Locker`'s lock
-   function, so a custom `Locker` can apply per-wallet policies.
+Two mechanisms make this work, and both are shared across the two drivers:
+
+1. A **wallet-id-aware lock function**. Both selector drivers pass the wallet id
+   the tokens are being selected for into the `Locker`'s lock function, so a
+   policy can be applied per wallet.
 2. A **fail-fast contract**, `token.SelectorRateLimited`. When a `Locker` denies a
    lock by returning an error that wraps this sentinel, the selector aborts the
    selection immediately and returns the error to the caller instead of retrying.
 
-This keeps the token-sdk minimal and lets applications reuse whatever rate-limiting
-infrastructure they already run (for example a Redis-backed limiter shared across
-processes).
+## The built-in default rate limiter
+
+`token/services/selector/ratelimit` provides a selector-agnostic token-bucket
+limiter keyed by wallet id (`ratelimit.TokenBucketRateLimiter`, satisfying the
+`ratelimit.Limiter` interface). Each selector wraps its `Locker` with a small
+adapter (`simple.NewRateLimitedLocker`, `sherdlock.NewRateLimitedLocker`) that
+calls `limiter.Allow(walletID)` before delegating; on denial it returns an error
+wrapping `token.SelectorRateLimited`, so the existing fail-fast path handles it.
+
+- **Shared**: both drivers use the same `ratelimit.Limiter` type and the same
+  sentinel, so throttling behaves identically regardless of the selected driver.
+- **Scope**: one limiter instance per TMS (network/channel/namespace), per
+  process, keyed by wallet id.
+- **Lifecycle**: the limiter runs a background goroutine to evict idle per-wallet
+  buckets; it is stopped automatically when the selector service shuts down.
+
+### Configuration
+
+The limiter is configured under `token.selector` (see
+`token/services/selector/config/driver.go`):
+
+```yaml
+token:
+  selector:
+    # Per-wallet selection rate (requests/second).
+    #   unset / 0  -> default (10), limiter ENABLED
+    #   > 0        -> custom rate, limiter ENABLED
+    #   < 0        -> limiter DISABLED
+    rateLimit: 10
+    # Per-wallet burst capacity (unset/<=0 -> default 20).
+    rateLimitBurst: 20
+    # How long an idle per-wallet bucket is kept before eviction
+    # (unset/<=0 -> default 10m).
+    rateLimitIdleTTL: 10m
+```
+
+To turn the built-in limiter off entirely, set a negative rate:
+
+```yaml
+token:
+  selector:
+    rateLimit: -1
+```
 
 ## The lock function
 
@@ -58,7 +100,8 @@ type TokenLockStore interface {
 ```
 
 The built-in in-memory locker and the SQL-backed `TokenLockStore` accept `walletID`
-but do not act on it — they apply no rate limiting or quota.
+but do not act on it themselves — the rate limiting is layered on top by the
+`ratelimit` adapter described above.
 
 ## The fail-fast contract
 
@@ -70,7 +113,7 @@ but do not act on it — they apply no rate limiting or quota.
 var SelectorRateLimited = errors.New("selection rate limit exceeded")
 ```
 
-When your `Locker` returns an error `e` with `errors.Is(e, token.SelectorRateLimited)`,
+When a `Locker` returns an error `e` with `errors.Is(e, token.SelectorRateLimited)`,
 the selector:
 
 - stops iterating candidate tokens,
@@ -81,13 +124,31 @@ Any *other* error from the lock function keeps the existing semantics: the token
 treated as unavailable (e.g. already locked by another transaction) and selection
 continues / retries as before.
 
-## Integrating your own rate limiting
+## Supplying your own limiter or policy
 
-Provide a `Locker` that wraps the SDK's default locker and enforces your policy before
-delegating. Below, a Redis-backed limiter throttles per wallet; the same shape works
-for an in-process limiter, a quota table, etc.
+You can replace the built-in behaviour at two levels.
 
-### Simple selector
+### Supply a custom `ratelimit.Limiter`
+
+If you only want to swap the throttling algorithm/store but keep the wiring, pass
+your own `ratelimit.Limiter` (e.g. Redis-backed) to
+`simple.NewRateLimitedLocker` / `sherdlock.NewRateLimitedLocker`:
+
+```go
+type Limiter interface {
+    // Allow returns nil to permit, or an error wrapping token.SelectorRateLimited to deny.
+    Allow(identity string) error
+    Stop()
+}
+```
+
+### Supply a custom `Locker`
+
+For full control (arbitrary policy, quota tables, etc.), disable the built-in
+limiter (`token.selector.rateLimit: -1`) and provide your own `Locker` that
+enforces the policy before delegating.
+
+#### Simple selector
 
 ```go
 import (
@@ -117,7 +178,7 @@ func (l *rateLimitedLocker) Lock(ctx context.Context, id *tokenapi.ID, txID stri
 Wire it in by providing a `simple.LockerProvider` whose `New` returns your decorator
 instead of the default `inmemory.NewLocker`.
 
-### Sherdlock selector
+#### Sherdlock selector
 
 Provide a `TokenLockStore` (via the `tokenlockdb.StoreServiceManager` used by
 `sherdlock.NewService`) whose `Lock` enforces the limit before delegating to the
@@ -138,7 +199,8 @@ if errors.Is(err, token.SelectorRateLimited) {
 
 ## Notes
 
-- Passing an empty `walletID` is valid; a `Locker` that keys its policy on wallet id
-  should treat empty as "no throttling" (the default lockers ignore it entirely).
-- Because the policy lives in your `Locker`, its scope (per process vs shared across a
-  cluster), persistence, and lifecycle are entirely under your control.
+- Passing an empty `walletID` is valid and means "no policy": the built-in limiter
+  never throttles an empty wallet id (and does not allocate a bucket for it).
+- The built-in limiter's scope is per-TMS, per-process. For fairness across a
+  cluster, supply a distributed `ratelimit.Limiter` or a custom `Locker`, whose
+  scope, persistence, and lifecycle are entirely under your control.

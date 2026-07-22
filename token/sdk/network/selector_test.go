@@ -7,6 +7,7 @@ SPDX-License-Identifier: Apache-2.0
 package network
 
 import (
+	"context"
 	"errors"
 	"testing"
 	"time"
@@ -14,6 +15,7 @@ import (
 	"github.com/LFDT-Panurus/panurus/token"
 	selector "github.com/LFDT-Panurus/panurus/token/services/selector/simple"
 	"github.com/LFDT-Panurus/panurus/token/services/storage/ttxdb"
+	token2 "github.com/LFDT-Panurus/panurus/token/token"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -38,7 +40,7 @@ func TestNewLockerProvider(t *testing.T) {
 	sleepTimeout := 100 * time.Millisecond
 	validTxEvictionTimeout := 5 * time.Minute
 
-	provider := NewLockerProvider(ttxMgr, sleepTimeout, validTxEvictionTimeout)
+	provider := NewLockerProvider(ttxMgr, sleepTimeout, validTxEvictionTimeout, RateLimitConfig{})
 
 	require.NotNil(t, provider)
 	assert.Equal(t, ttxMgr, provider.ttxStoreServiceManager)
@@ -64,7 +66,7 @@ func TestLockerProvider_New_Success(t *testing.T) {
 	mockTTXStore := &ttxdb.StoreService{}
 	ttxMgr.On("StoreServiceByTMSId", expectedTMSID).Return(mockTTXStore, nil)
 
-	provider := NewLockerProvider(ttxMgr, sleepTimeout, validTxEvictionTimeout)
+	provider := NewLockerProvider(ttxMgr, sleepTimeout, validTxEvictionTimeout, RateLimitConfig{})
 	locker, err := provider.New(network, channel, namespace)
 
 	require.NoError(t, err)
@@ -90,7 +92,7 @@ func TestLockerProvider_New_Error(t *testing.T) {
 	expectedErr := errors.New("store service error")
 	ttxMgr.On("StoreServiceByTMSId", expectedTMSID).Return(nil, expectedErr)
 
-	provider := NewLockerProvider(ttxMgr, sleepTimeout, validTxEvictionTimeout)
+	provider := NewLockerProvider(ttxMgr, sleepTimeout, validTxEvictionTimeout, RateLimitConfig{})
 	locker, err := provider.New(network, channel, namespace)
 
 	require.Error(t, err)
@@ -122,7 +124,7 @@ func TestLockerProvider_New_MultipleNetworks(t *testing.T) {
 	ttxMgr.On("StoreServiceByTMSId", tmsID1).Return(mockTTXStore1, nil)
 	ttxMgr.On("StoreServiceByTMSId", tmsID2).Return(mockTTXStore2, nil)
 
-	provider := NewLockerProvider(ttxMgr, sleepTimeout, validTxEvictionTimeout)
+	provider := NewLockerProvider(ttxMgr, sleepTimeout, validTxEvictionTimeout, RateLimitConfig{})
 
 	locker1, err := provider.New(tmsID1.Network, tmsID1.Channel, tmsID1.Namespace)
 	require.NoError(t, err)
@@ -133,6 +135,32 @@ func TestLockerProvider_New_MultipleNetworks(t *testing.T) {
 	assert.NotNil(t, locker2)
 
 	ttxMgr.AssertExpectations(t)
+}
+
+func TestLockerProvider_New_RateLimitedWhenEnabled(t *testing.T) {
+	ttxMgr := &mockTTXStoreServiceManager{}
+	tmsID := token.TMSID{Network: "n", Channel: "c", Namespace: "ns"}
+	ttxMgr.On("StoreServiceByTMSId", tmsID).Return(&ttxdb.StoreService{}, nil)
+
+	// Burst 0 makes the limiter deny every request, so the lock never reaches the
+	// (empty, DB-less) inner locker: this verifies only that the provider wires the
+	// limiter and returns the shared sentinel on denial. Full allow/refill behaviour
+	// is covered by the ratelimit and adapter unit tests.
+	provider := NewLockerProvider(ttxMgr, 100*time.Millisecond, 5*time.Minute, RateLimitConfig{
+		Enabled:           true,
+		RequestsPerSecond: 0,
+		Burst:             0,
+	})
+	locker, err := provider.New(tmsID.Network, tmsID.Channel, tmsID.Namespace)
+	require.NoError(t, err)
+	require.NotNil(t, locker)
+
+	id := &token2.ID{TxId: "tx", Index: 0}
+	_, err = locker.Lock(context.Background(), id, "txID", "wallet1", false)
+	require.ErrorIs(t, err, token.SelectorRateLimited)
+
+	// The wrapper is stoppable so the service shutdown path can release the limiter.
+	require.NoError(t, locker.(interface{ Stop() error }).Stop())
 }
 
 func TestLockerProvider_New_WithEmptyParameters(t *testing.T) {
@@ -149,7 +177,7 @@ func TestLockerProvider_New_WithEmptyParameters(t *testing.T) {
 	mockTTXStore := &ttxdb.StoreService{}
 	ttxMgr.On("StoreServiceByTMSId", emptyTMSID).Return(mockTTXStore, nil)
 
-	provider := NewLockerProvider(ttxMgr, sleepTimeout, validTxEvictionTimeout)
+	provider := NewLockerProvider(ttxMgr, sleepTimeout, validTxEvictionTimeout, RateLimitConfig{})
 	locker, err := provider.New("", "", "")
 
 	require.NoError(t, err)
@@ -183,7 +211,7 @@ func TestLockerProvider_New_WithDifferentTimeouts(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			ttxMgr := &mockTTXStoreServiceManager{}
-			provider := NewLockerProvider(ttxMgr, tc.sleepTimeout, tc.validTxEvictionTimeout)
+			provider := NewLockerProvider(ttxMgr, tc.sleepTimeout, tc.validTxEvictionTimeout, RateLimitConfig{})
 
 			require.NotNil(t, provider)
 			assert.Equal(t, tc.sleepTimeout, provider.sleepTimeout)
@@ -212,7 +240,7 @@ func TestLockerProvider_Concurrent(t *testing.T) {
 	// Allow multiple calls
 	ttxMgr.On("StoreServiceByTMSId", tmsID).Return(mockTTXStore, nil)
 
-	provider := NewLockerProvider(ttxMgr, sleepTimeout, validTxEvictionTimeout)
+	provider := NewLockerProvider(ttxMgr, sleepTimeout, validTxEvictionTimeout, RateLimitConfig{})
 
 	// Test concurrent calls to New
 	done := make(chan bool, 10)
@@ -236,7 +264,7 @@ func TestLockerProvider_WithNilManager(t *testing.T) {
 	validTxEvictionTimeout := 5 * time.Minute
 
 	// Test with nil manager - should still create provider
-	provider := NewLockerProvider(nil, sleepTimeout, validTxEvictionTimeout)
+	provider := NewLockerProvider(nil, sleepTimeout, validTxEvictionTimeout, RateLimitConfig{})
 	require.NotNil(t, provider)
 	assert.Nil(t, provider.ttxStoreServiceManager)
 }

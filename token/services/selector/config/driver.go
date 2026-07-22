@@ -22,6 +22,14 @@ const (
 	defaultFetcherCacheSize       = 0 // 0 means use fetcher default
 	defaultFetcherCacheRefresh    = 0 // 0 means use fetcher default
 	defaultFetcherCacheMaxQueries = 0 // 0 means use fetcher default
+	// defaultRateLimit is the built-in default rate limit, in selection requests
+	// per second per wallet. The limiter is on by default with this value.
+	defaultRateLimit = 10.0
+	// defaultRateLimitBurst is the built-in default burst capacity per wallet.
+	defaultRateLimitBurst = 20.0
+	// defaultRateLimitIdleTTL is how long a per-wallet bucket may be idle before
+	// it is evicted to reclaim memory.
+	defaultRateLimitIdleTTL = 10 * time.Minute
 )
 
 //go:generate counterfeiter -o mock/config_service.go -fake-name ConfigService . configService
@@ -38,6 +46,17 @@ type Config struct {
 	FetcherCacheSize       int64         `yaml:"fetcherCacheSize,omitempty"`
 	FetcherCacheRefresh    time.Duration `yaml:"fetcherCacheRefresh,omitempty"`
 	FetcherCacheMaxQueries int           `yaml:"fetcherCacheMaxQueries,omitempty"`
+	// RateLimit is the built-in rate limiter's allowed selection requests per
+	// second per wallet. Semantics: unset/0 uses the built-in default
+	// (defaultRateLimit) and the limiter is enabled; a negative value disables
+	// the built-in limiter entirely.
+	RateLimit float64 `yaml:"rateLimit,omitempty"`
+	// RateLimitBurst is the built-in rate limiter's burst capacity per wallet.
+	// Unset/<=0 uses the built-in default (defaultRateLimitBurst).
+	RateLimitBurst float64 `yaml:"rateLimitBurst,omitempty"`
+	// RateLimitIdleTTL is how long a per-wallet bucket may be idle before it is
+	// evicted. Unset/<=0 uses the built-in default (defaultRateLimitIdleTTL).
+	RateLimitIdleTTL time.Duration `yaml:"rateLimitIdleTTL,omitempty"`
 }
 
 // New returns a SelectorConfig with the values from the token.selector key
@@ -104,4 +123,40 @@ func (c *Config) GetFetcherCacheRefresh() time.Duration {
 func (c *Config) GetFetcherCacheMaxQueries() int {
 	// Return 0 if not set, which will trigger use of fetcher default
 	return c.FetcherCacheMaxQueries
+}
+
+// RateLimitEnabled reports whether the built-in default rate limiter should be
+// wired in. The limiter is on by default; only an explicit negative RateLimit
+// disables it.
+func (c *Config) RateLimitEnabled() bool {
+	return c.RateLimit >= 0
+}
+
+// GetRateLimit returns the per-wallet selection rate (requests/second) for the
+// built-in limiter. An unset value (0) resolves to the default; a negative value
+// is returned as-is and means the limiter is disabled (see RateLimitEnabled).
+func (c *Config) GetRateLimit() float64 {
+	if c.RateLimit == 0 {
+		return defaultRateLimit
+	}
+
+	return c.RateLimit
+}
+
+// GetRateLimitBurst returns the per-wallet burst capacity for the built-in limiter.
+func (c *Config) GetRateLimitBurst() float64 {
+	if c.RateLimitBurst > 0 {
+		return c.RateLimitBurst
+	}
+
+	return defaultRateLimitBurst
+}
+
+// GetRateLimitIdleTTL returns how long an idle per-wallet bucket is kept before eviction.
+func (c *Config) GetRateLimitIdleTTL() time.Duration {
+	if c.RateLimitIdleTTL > 0 {
+		return c.RateLimitIdleTTL
+	}
+
+	return defaultRateLimitIdleTTL
 }

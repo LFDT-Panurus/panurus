@@ -149,8 +149,19 @@ func (p *SDK) Install() error {
 		p.Container().Provide(digutils.Identity[*ftscore.TMSProvider](), dig.As(new(ftsdriver.TokenManagerServiceProvider))),
 		p.Container().Provide(tms.NewPostInitializer),
 
-		p.Container().Provide(func(ttxStoreServiceManager ttxdb.StoreServiceManager) *network2.LockerProvider {
-			return network2.NewLockerProvider(ttxStoreServiceManager, 2*time.Second, 5*time.Minute)
+		p.Container().Provide(func(ttxStoreServiceManager ttxdb.StoreServiceManager, cp sherdlock.ConfigProvider) *network2.LockerProvider {
+			cfg, err := config.New(cp)
+			if err != nil || cfg == nil {
+				logger.Errorf("error getting selector config for simple locker, using defaults. %v", err)
+				cfg = &config.Config{}
+			}
+
+			return network2.NewLockerProvider(ttxStoreServiceManager, 2*time.Second, 5*time.Minute, network2.RateLimitConfig{
+				Enabled:           cfg.RateLimitEnabled(),
+				RequestsPerSecond: cfg.GetRateLimit(),
+				Burst:             cfg.GetRateLimitBurst(),
+				IdleTTL:           cfg.GetRateLimitIdleTTL(),
+			})
 		}, dig.As(new(simple.LockerProvider))),
 		p.Container().Provide(selectorProviders[sdriver.Driver(p.ConfigService().GetString("token.selector.driver"))], dig.As(new(token.SelectorManagerProvider))),
 		p.Container().Provide(network2.NewCertificationClientProvider, dig.As(new(token.CertificationClientProvider))),

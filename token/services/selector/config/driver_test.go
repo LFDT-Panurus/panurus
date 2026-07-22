@@ -228,6 +228,29 @@ func TestConfig_GetFetcherCacheMaxQueries(t *testing.T) {
 	}
 }
 
+func TestConfig_RateLimit(t *testing.T) {
+	t.Run("enabled by default with default values when unset", func(t *testing.T) {
+		c := &Config{}
+		assert.True(t, c.RateLimitEnabled(), "limiter must be on by default")
+		assert.InDelta(t, defaultRateLimit, c.GetRateLimit(), 0.01)
+		assert.InDelta(t, defaultRateLimitBurst, c.GetRateLimitBurst(), 0.01)
+		assert.Equal(t, defaultRateLimitIdleTTL, c.GetRateLimitIdleTTL())
+	})
+
+	t.Run("positive values override the defaults", func(t *testing.T) {
+		c := &Config{RateLimit: 42, RateLimitBurst: 84, RateLimitIdleTTL: time.Minute}
+		assert.True(t, c.RateLimitEnabled())
+		assert.InDelta(t, 42.0, c.GetRateLimit(), 0.01)
+		assert.InDelta(t, 84.0, c.GetRateLimitBurst(), 0.01)
+		assert.Equal(t, time.Minute, c.GetRateLimitIdleTTL())
+	})
+
+	t.Run("negative rate disables the limiter", func(t *testing.T) {
+		c := &Config{RateLimit: -1}
+		assert.False(t, c.RateLimitEnabled(), "negative rate must disable the limiter")
+	})
+}
+
 // TestNew verifies config parsing handles valid configs, empty configs, and unmarshal errors.
 func TestNew(t *testing.T) {
 	tests := []struct {
