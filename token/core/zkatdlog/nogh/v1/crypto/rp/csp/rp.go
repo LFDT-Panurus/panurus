@@ -121,11 +121,17 @@ func (p *RangeProof) Deserialize(raw []byte) error {
 	return nil
 }
 
+// Validate restores the Curve field lost during deserialization (it is not
+// part of the wire encoding) and structurally validates every element: non-nil,
+// on the expected curve, and, for G1 commitments, not the point at infinity.
+// This mirrors the checks RangeProofData.Validate/IPA.Validate perform for the
+// BulletProof-based range proof, so a truncated or corrupted proof is rejected
+// here rather than relying solely on the deeper checks in rangeVerifier.Verify.
 func (p *RangeProof) Validate(curve mathlib.CurveID) error {
-	// Restore the Curve field after deserialization
-	p.cspProof.Curve = mathlib.Curves[curve]
+	c := mathlib.Curves[curve]
+	p.cspProof.Curve = c
 
-	return nil
+	return validateRangeProof(c, p)
 }
 
 type rangeProver struct {

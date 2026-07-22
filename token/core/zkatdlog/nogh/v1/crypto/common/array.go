@@ -73,12 +73,16 @@ func GetG1Array(elements ...[]*math.G1) G1Array {
 
 // HashG1Array computes and returns the digest of the provided G1 elements
 // using the supplied hash.Hash. The hash is reset before use.
-func HashG1Array(h hash.Hash, elements ...*math.G1) []byte {
+// It returns an error if any element is nil.
+func HashG1Array(h hash.Hash, elements ...*math.G1) ([]byte, error) {
 	h.Reset()
 
 	for _, e := range elements {
+		if e == nil {
+			return nil, errors.Errorf("failed to hash array of G1: nil element")
+		}
 		h.Write(e.Bytes())
 	}
 
-	return h.Sum(nil)
+	return h.Sum(nil), nil
 }

@@ -47,6 +47,13 @@ func (v *BulletProofVerifier) Verify(proof []byte) error {
 	if err := tp.SameType.Validate(v.curveID); err != nil {
 		return errors.Join(ErrInvalidIssueProof, err)
 	}
+	// Validate the range correctness proof structurally before it is used: this
+	// rejects point-at-infinity elements in the IPA (matching 13a8bd89d's fix for
+	// the transfer path) as well as nil elements from a truncated/malformed proof,
+	// both of which would otherwise be accepted or panic inside RangeCorrectness.Verify.
+	if err := tp.RangeCorrectness.Validate(v.curveID); err != nil {
+		return errors.Join(ErrInvalidIssueProof, err)
+	}
 	// Verify the same-type proof.
 	err = v.SameType.Verify(tp.SameType)
 	if err != nil {

@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	math "github.com/IBM/mathlib"
+	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/crypto/rp"
 	v1 "github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/setup"
 	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/token"
 	"github.com/stretchr/testify/require"
@@ -43,6 +44,44 @@ func TestNewProverErrors(t *testing.T) {
 
 	_, err = NewProver([]*token.Metadata{validMeta, tw}, []*math.G1{curve.GenG1, curve.GenG1}, pp)
 	require.ErrorIs(t, err, ErrInvalidTokenWitnessValues)
+}
+
+// TestNewBulletProofProver_EmptyTokenWitness is T-GAP-C17: NewBulletProofProver
+// indexed tw[0] (to compute the commitment to the token type) without first
+// checking that tw was non-empty. An empty token-witness slice caused an
+// index-out-of-range panic instead of returning an error.
+func TestNewBulletProofProver_EmptyTokenWitness(t *testing.T) {
+	pp, err := v1.Setup(32, nil, math.BN254)
+	require.NoError(t, err)
+
+	var proverErr error
+	require.NotPanics(t, func() {
+		_, proverErr = NewBulletProofProver(nil, nil, pp)
+	})
+	require.Error(t, proverErr)
+	require.ErrorIs(t, proverErr, ErrInvalidInputs)
+}
+
+// TestNewCSPBasedProver_EmptyTokenWitness is T-GAP-C17: NewCSPBasedProver
+// indexed tw[0] (to compute the commitment to the token type) without first
+// checking that tw was non-empty. An empty token-witness slice caused an
+// index-out-of-range panic instead of returning an error.
+func TestNewCSPBasedProver_EmptyTokenWitness(t *testing.T) {
+	pp, err := v1.NewWith(v1.SetupParams{
+		DriverName:    v1.DLogNoGHDriverName,
+		DriverVersion: v1.ProtocolV1,
+		BitLength:     32,
+		CurveID:       math.BN254,
+		ProofType:     rp.CSPRangeProofType,
+	})
+	require.NoError(t, err)
+
+	var proverErr error
+	require.NotPanics(t, func() {
+		_, proverErr = NewCSPBasedProver(nil, nil, pp)
+	})
+	require.Error(t, proverErr)
+	require.ErrorIs(t, proverErr, ErrInvalidInputs)
 }
 
 // TestBulletProofVerifier_TokenCountMismatch is T-GAP-C3: verifies that a

@@ -37,6 +37,8 @@ var (
 	ErrNilSigner = errors.New("failed to generate ZK Issue: please initialize signer")
 	// ErrInvalidTokenWitness is returned when the token witness is invalid
 	ErrInvalidTokenWitness = errors.New("invalid token witness")
+	// ErrInvalidInputs is returned when the number of token witnesses is invalid
+	ErrInvalidInputs = errors.New("invalid number of token witnesses, expected at least 1")
 	// ErrInvalidTokenWitnessValues is returned when the token witness values are invalid
 	ErrInvalidTokenWitnessValues = errors.New("invalid token witness values")
 	// ErrGetRNGFailed is returned when the RNG cannot be obtained

@@ -392,3 +392,135 @@ func TestASN1Errors(t *testing.T) {
 	require.Error(t, err)
 	assert.EqualError(t, err, "elements cannot be empty")
 }
+
+// TestOutOfRangeCurveID reproduces the panic previously triggered by an
+// attacker-controlled Element.CurveID (decoded straight from untrusted
+// wire bytes) being used to index math.Curves without a bounds check.
+// Before the fix, each of these sub-tests panicked with an
+// "index out of range" runtime error instead of returning a clean error.
+func TestOutOfRangeCurveID(t *testing.T) {
+	for _, curveID := range []int{-1, len(math.Curves), 999999} {
+		t.Run("NextZr", func(t *testing.T) {
+			u := unmarshallerWithCurveID(t, curveID, []byte{1, 2, 3})
+			zr, err := u.NextZr()
+			require.Error(t, err)
+			assert.Nil(t, zr)
+			assert.Contains(t, err.Error(), "invalid curve id")
+		})
+
+		t.Run("NextG1", func(t *testing.T) {
+			u := unmarshallerWithCurveID(t, curveID, []byte{1, 2, 3})
+			g1, err := u.NextG1()
+			require.Error(t, err)
+			assert.Nil(t, g1)
+			assert.Contains(t, err.Error(), "invalid curve id")
+		})
+
+		t.Run("NextG2", func(t *testing.T) {
+			u := unmarshallerWithCurveID(t, curveID, []byte{1, 2, 3})
+			g2, err := u.NextG2()
+			require.Error(t, err)
+			assert.Nil(t, g2)
+			assert.Contains(t, err.Error(), "invalid curve id")
+		})
+
+		t.Run("NextZrArray", func(t *testing.T) {
+			vArray := Values{Values: [][]byte{{1, 2, 3}}}
+			vArrayRaw, err := asn1.Marshal(vArray)
+			require.NoError(t, err)
+			u := unmarshallerWithCurveID(t, curveID, vArrayRaw)
+			arr, err := u.NextZrArray()
+			require.Error(t, err)
+			assert.Nil(t, arr)
+			assert.Contains(t, err.Error(), "invalid curve id")
+		})
+
+		t.Run("NextG1Array", func(t *testing.T) {
+			vArray := Values{Values: [][]byte{{1, 2, 3}}}
+			vArrayRaw, err := asn1.Marshal(vArray)
+			require.NoError(t, err)
+			u := unmarshallerWithCurveID(t, curveID, vArrayRaw)
+			arr, err := u.NextG1Array()
+			require.Error(t, err)
+			assert.Nil(t, arr)
+			assert.Contains(t, err.Error(), "invalid curve id")
+		})
+	}
+}
+
+// unmarshallerWithCurveID builds a single-element unmarshaller whose Element
+// carries the given (possibly out-of-range) CurveID and raw payload.
+func unmarshallerWithCurveID(t *testing.T, curveID int, raw []byte) *unmarshaller {
+	t.Helper()
+
+	e := Element{CurveID: curveID, Raw: raw}
+	eRaw, err := asn1.Marshal(e)
+	require.NoError(t, err)
+	v := Values{Values: [][]byte{eRaw}}
+	vRaw, err := asn1.Marshal(v)
+	require.NoError(t, err)
+	u, err := NewUnmarshaller(vRaw)
+	require.NoError(t, err)
+
+	return u
+}
+
+// FuzzUnmarshallerNoPanic fuzzes the unmarshaller entry point used to
+// deserialize every zkatdlog proof type (TypeAndSum, SameType, Bulletproof
+// and CSP range proofs). Element.CurveID is decoded straight from these
+// bytes and was, prior to the curveAt bounds check, used to index
+// math.Curves unchecked - the exact class of bug this fuzzer targets.
+func FuzzUnmarshallerNoPanic(f *testing.F) {
+	curve := math.Curves[math.BN254]
+	container, err := NewRandomMathContainer(curve)
+	require.NoError(f, err)
+	validRaw, err := container.Serialize()
+	require.NoError(f, err)
+
+	f.Add(validRaw)
+	f.Add([]byte{})
+	f.Add([]byte("malformed"))
+	f.Add(validRaw[:len(validRaw)/2])
+
+	// Historical edge case: an Element with an out-of-range CurveID,
+	// embedded as the first value of an otherwise well-formed Values blob.
+	for _, curveID := range []int{-1, len(math.Curves), 999999} {
+		e := Element{CurveID: curveID, Raw: []byte{1, 2, 3}}
+		eRaw, err := asn1.Marshal(e)
+		require.NoError(f, err)
+		v := Values{Values: [][]byte{eRaw}}
+		vRaw, err := asn1.Marshal(v)
+		require.NoError(f, err)
+		f.Add(vRaw)
+	}
+
+	f.Fuzz(func(t *testing.T, raw []byte) {
+		if len(raw) > 1<<20 {
+			t.Skip()
+		}
+
+		require.NotPanics(t, func() {
+			u, err := NewUnmarshaller(raw)
+			if err != nil {
+				return
+			}
+			for range 8 {
+				if _, err := u.NextZr(); err != nil {
+					return
+				}
+				if _, err := u.NextG1(); err != nil {
+					return
+				}
+				if _, err := u.NextG2(); err != nil {
+					return
+				}
+				if _, err := u.NextZrArray(); err != nil {
+					return
+				}
+				if _, err := u.NextG1Array(); err != nil {
+					return
+				}
+			}
+		})
+	})
+}

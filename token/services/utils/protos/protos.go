@@ -8,7 +8,10 @@ SPDX-License-Identifier: Apache-2.0
 // ToProtosSlice and FromProtosSlice handle batch conversions with nil handling.
 package protos
 
-import "github.com/LFDT-Panurus/panurus/token/services/utils"
+import (
+	"github.com/LFDT-Panurus/panurus/token/services/utils"
+	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
+)
 
 type ProtoSource[T any] interface {
 	ToProtos() (*T, error)
@@ -63,6 +66,9 @@ func ToProtosSliceFunc[T any, S any](s []S, convert func(S) (*T, error)) ([]*T, 
 }
 
 func FromProtosSlice[T any, S ProtoDestination[T]](t []*T, s []S) error {
+	if len(t) != len(s) {
+		return errors.Errorf("mismatched slice lengths: expected [%d], got [%d]", len(s), len(t))
+	}
 	var err error
 	for i, x := range s {
 		if t[i] == nil {

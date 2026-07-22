@@ -591,16 +591,44 @@ func TestRangeProofLargeBitLength(t *testing.T) {
 }
 
 // TestRangeProofValidate verifies the Validate method.
-// Given a range proof,
+// Given a genuinely constructed range proof,
 // When the Validate method is called,
-// Then it should return no error (assuming correctly initialized).
+// Then it should return no error.
+//
+// T-GAP-C18: Validate used to be a no-op that only restored the transient
+// Curve field, so a RangeProof with every field nil (as produced by a
+// truncated/corrupted deserialization) was reported as "valid". Validate now
+// delegates to validateRangeProof, the same structural check the verifier
+// already performs internally, so a zero-value proof is rejected here too.
 func TestRangeProofValidate(t *testing.T) {
+	curves := []math.CurveID{math.BN254, math.BLS12_381_BBS_GURVY}
+	for _, curveID := range curves {
+		t.Run(fmt.Sprintf("curveID=%d", curveID), func(t *testing.T) {
+			curve := math.Curves[curveID]
+			setup, err := newRPSetup(curve, 4, 10)
+			require.NoError(t, err)
+
+			proof, err := setup.prover.Prove()
+			require.NoError(t, err)
+
+			err = proof.Validate(curveID)
+			require.NoError(t, err)
+		})
+	}
+}
+
+// TestRangeProofValidateRejectsZeroValue is T-GAP-C18: a RangeProof with every
+// field left nil (the shape produced when deserialization only partially
+// populates the struct, e.g. a truncated wire payload) used to be reported as
+// valid by Validate, since Validate only restored the transient Curve field
+// and performed no structural checks. Validate must reject it instead.
+func TestRangeProofValidateRejectsZeroValue(t *testing.T) {
 	curves := []math.CurveID{math.BN254, math.BLS12_381_BBS_GURVY}
 	for _, curveID := range curves {
 		t.Run(fmt.Sprintf("curveID=%d", curveID), func(t *testing.T) {
 			proof := &RangeProof{}
 			err := proof.Validate(curveID)
-			require.NoError(t, err)
+			require.Error(t, err)
 		})
 	}
 }

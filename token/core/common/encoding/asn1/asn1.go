@@ -139,6 +139,17 @@ func NewUnmarshaller(raw []byte) (*unmarshaller, error) {
 	return &unmarshaller{v: v, index: 0}, nil
 }
 
+// curveAt returns the curve registered under id, or an error if id is
+// out of range. Element.CurveID is decoded directly from untrusted wire
+// bytes, so it must never be used to index math.Curves without this check.
+func curveAt(id int) (*math.Curve, error) {
+	if id < 0 || id >= len(math.Curves) {
+		return nil, errors.Errorf("invalid curve id [%d]", id)
+	}
+
+	return math.Curves[id], nil
+}
+
 // NextZr returns the next math.Zr from the unmarshaller.
 func (u *unmarshaller) NextZr() (*math.Zr, error) {
 	e, err := u.Next()
@@ -148,9 +159,12 @@ func (u *unmarshaller) NextZr() (*math.Zr, error) {
 	if e == nil {
 		return nil, nil
 	}
-	zr := math.Curves[e.CurveID].NewZrFromBytes(e.Raw)
+	curve, err := curveAt(e.CurveID)
+	if err != nil {
+		return nil, err
+	}
 
-	return zr, nil
+	return curve.NewZrFromBytes(e.Raw), nil
 }
 
 // NextG1 returns the next math.G1 from the unmarshaller.
@@ -162,8 +176,12 @@ func (u *unmarshaller) NextG1() (*math.G1, error) {
 	if e == nil {
 		return nil, nil
 	}
+	curve, err := curveAt(e.CurveID)
+	if err != nil {
+		return nil, err
+	}
 
-	return math.Curves[e.CurveID].NewG1FromBytes(e.Raw)
+	return curve.NewG1FromBytes(e.Raw)
 }
 
 // NextG2 returns the next math.G2 from the unmarshaller.
@@ -175,8 +193,12 @@ func (u *unmarshaller) NextG2() (*math.G2, error) {
 	if e == nil {
 		return nil, nil
 	}
+	curve, err := curveAt(e.CurveID)
+	if err != nil {
+		return nil, err
+	}
 
-	return math.Curves[e.CurveID].NewG2FromBytes(e.Raw)
+	return curve.NewG2FromBytes(e.Raw)
 }
 
 // Next returns the next element from the unmarshaller.
@@ -216,10 +238,14 @@ func (u *unmarshaller) NextZrArray() ([]*math.Zr, error) {
 	if len(rest) != 0 {
 		return nil, errors.Errorf("values should not have trailing bytes")
 	}
+	curve, err := curveAt(e.CurveID)
+	if err != nil {
+		return nil, err
+	}
 
 	result := make([]*math.Zr, len(v.Values))
 	for i, value := range v.Values {
-		result[i] = math.Curves[e.CurveID].NewZrFromBytes(value)
+		result[i] = curve.NewZrFromBytes(value)
 	}
 
 	return result, nil
@@ -243,10 +269,14 @@ func (u *unmarshaller) NextG1Array() ([]*math.G1, error) {
 	if len(rest) != 0 {
 		return nil, errors.Errorf("values should not have trailing bytes")
 	}
+	curve, err := curveAt(e.CurveID)
+	if err != nil {
+		return nil, err
+	}
 
 	result := make([]*math.G1, len(v.Values))
 	for i, value := range v.Values {
-		result[i], err = math.Curves[e.CurveID].NewG1FromBytes(value)
+		result[i], err = curve.NewG1FromBytes(value)
 		if err != nil {
 			return nil, errors.Wrapf(err, `failed to deserialize element`)
 		}

@@ -68,6 +68,9 @@ type CSPBasedProver struct {
 
 // NewCSPBasedProver returns a new CSPBasedProver instance.
 func NewCSPBasedProver(inputWitness, outputWitness []*token.Metadata, inputs, outputs []*math.G1, pp *v1.PublicParams) (*CSPBasedProver, error) {
+	if len(inputWitness) == 0 {
+		return nil, errors.Wrap(ErrInvalidInputs, "cannot create CSP-based prover: no input witnesses")
+	}
 	c := math.Curves[pp.Curve]
 	p := &CSPBasedProver{}
 	inW := make([]*token.Metadata, len(inputWitness))
@@ -101,7 +104,11 @@ func NewCSPBasedProver(inputWitness, outputWitness []*token.Metadata, inputs, ou
 	}
 	commitmentToType.Add(pp.PedersenGenerators[2].Mul(typeBF))
 
-	p.TypeAndSum = NewTypeAndSumProver(NewTypeAndSumWitness(typeBF, inW, outW, c), pp.PedersenGenerators, inputs, outputs, commitmentToType, c)
+	tsWitness, err := NewTypeAndSumWitness(typeBF, inW, outW, c)
+	if err != nil {
+		return nil, err
+	}
+	p.TypeAndSum = NewTypeAndSumProver(tsWitness, pp.PedersenGenerators, inputs, outputs, commitmentToType, c)
 
 	// check if this is an ownership transfer
 	// if so, skip range proof, well-formedness proof is enough

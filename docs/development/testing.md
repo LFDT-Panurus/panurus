@@ -93,6 +93,14 @@ valid encodings are still correctly accepted.
 | `FuzzActionDeserializerNoPanic` | `token/core/fabtoken/v1/validator` | A single issue or transfer action's raw bytes through the FabToken `ActionDeserializer`. |
 | `FuzzActionDeserializerNoPanic` | `token/core/zkatdlog/nogh/v1/validator` | A single issue or transfer action's raw bytes through the ZKAT-DLOG `ActionDeserializer`, including both Range and CSP proof-type encodings. |
 | `FuzzActionDeserializerMultiActionNoPanic` | `token/core/zkatdlog/nogh/v1/validator` | Two independently typed, independently fuzzed actions in the same `TokenRequest`. |
+| `FuzzBulletProofVerifierNoPanic` | `token/core/zkatdlog/nogh/v1/issue` | Raw BulletProof issue-proof bytes through `BulletProofVerifier.Verify` — the call `IssueValidate` makes on unauthenticated wire bytes. |
+| `FuzzCSPVerifierNoPanic` | `token/core/zkatdlog/nogh/v1/issue` | Raw CSP issue-proof bytes through `CSPVerifier.Verify`. |
+| `FuzzBulletProofVerifierNoPanic` | `token/core/zkatdlog/nogh/v1/transfer` | Raw BulletProof transfer-proof bytes through `BulletProofVerifier.Verify` — the call `TransferValidate` makes on unauthenticated wire bytes. |
+| `FuzzCSPVerifierNoPanic` | `token/core/zkatdlog/nogh/v1/transfer` | Raw CSP transfer-proof bytes through `CSPVerifier.Verify`. |
+| `FuzzTokenDeserializeNoPanic` | `token/core/zkatdlog/nogh/v1/token` | Raw ledger-stored output bytes through `Token.Deserialize`. |
+| `FuzzMetadataDeserializeNoPanic` | `token/core/zkatdlog/nogh/v1/token` | Raw ledger-stored metadata bytes through `Metadata.Deserialize`. |
+| `FuzzPublicParamsDeserializeNoPanic` | `token/core/zkatdlog/nogh/v1/setup` | Raw ledger-stored public parameters through `NewPublicParamsFromBytes`, exercised by every validator/prover/verifier on startup and params update. |
+| `FuzzProofDeserializeNoPanic` | `token/core/zkatdlog/nogh/v1/crypto/upgrade` | Raw untrusted token-upgrade request bytes through `Proof.Deserialize`. |
 
 ### Running the Seed Corpus
 

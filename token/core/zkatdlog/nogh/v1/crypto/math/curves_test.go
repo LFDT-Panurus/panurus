@@ -50,6 +50,39 @@ func TestZeroOneTwoAndCached(t *testing.T) {
 	zrEquals(t, missed, c.NewZrFromUint64(999))
 }
 
+// TestNewCachedNegZrFromInt_IndexMiss is a regression test for a
+// shadowed-variable bug: on a cache hit for the curve but a miss for the
+// specific index, the cache-miss branch computed the negated value into a
+// `v := ...` that shadowed the outer `v, ok := cc[i]` (nil, since the index
+// lookup failed), so the function returned nil instead of the computed
+// value. Fixed by assigning to the outer v (`v = ...`) instead of
+// redeclaring it.
+func TestNewCachedNegZrFromInt_IndexMiss(t *testing.T) {
+	c := mathlib.Curves[mathlib.BN254]
+	require.NotNil(t, c)
+
+	negSnapshot := make(map[mathlib.CurveID]map[uint64]*mathlib.Zr, len(valueNegCache))
+	for k, vv := range valueNegCache {
+		m := make(map[uint64]*mathlib.Zr, len(vv))
+		maps.Copy(m, vv)
+		negSnapshot[k] = m
+	}
+	defer func() { valueNegCache = negSnapshot }()
+
+	// Curve is cached, but the specific index is not.
+	require.NotNil(t, valueNegCache[c.ID()])
+	const missingIndex = uint64(999)
+	_, ok := valueNegCache[c.ID()][missingIndex]
+	require.False(t, ok, "test assumes this index is absent from the cache")
+
+	got := NewCachedNegZrFromInt(c, missingIndex)
+	require.NotNil(t, got, "must not return nil on an index cache-miss within a cached curve")
+
+	want := c.NewZrFromUint64(missingIndex)
+	want.Neg()
+	zrEquals(t, got, want)
+}
+
 func TestPowerOfTwoAndSum(t *testing.T) {
 	c := mathlib.Curves[mathlib.BN254]
 	require.NotNil(t, c)

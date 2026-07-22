@@ -58,6 +58,9 @@ func (s *Sender) GenerateZKTransfer(ctx context.Context, values []uint64, owners
 	if len(values) != len(owners) {
 		return nil, nil, errors.Wrapf(ErrMismatchedValuesRecipients, "cannot generate transfer: number of values [%d] does not match number of recipients [%d]", len(values), len(owners))
 	}
+	if len(s.InputInformation) == 0 {
+		return nil, nil, errors.Wrap(ErrInvalidInputs, "cannot generate transfer: no inputs")
+	}
 	logger.DebugfContext(ctx, "Get token data for %d inputs", len(s.Inputs))
 	in := getTokenData(s.Inputs)
 	intw := make([]*token.Metadata, len(s.InputInformation))
