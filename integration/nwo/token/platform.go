@@ -142,6 +142,20 @@ func (p *Platform) GenerateArtifacts() {
 			}
 		}
 	}
+
+	// Enable the base token platform on nodes requested independently of any TMS.
+	covered := map[string]struct{}{}
+	for _, tms := range p.Topology.TMSs {
+		for _, n := range tms.FSCNodes {
+			covered[n.Name] = struct{}{}
+		}
+	}
+	for _, n := range p.Topology.TokenPlatformNodes {
+		if _, ok := covered[n.Name]; ok {
+			continue
+		}
+		p.GenerateExtension(n)
+	}
 }
 
 func (p *Platform) Load() {

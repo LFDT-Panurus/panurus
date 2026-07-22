@@ -171,6 +171,30 @@ To run the `dlog-fabric-t1` test:
 make integration-tests-dlog-fabric-t1
 ```
 
+### Enabling the Token Platform Without a TMS
+
+By default, an FSC node only gets `token: enabled: true` written into its generated
+`core.yaml` if it belongs to at least one TMS (`Topology.AddTMS`). `Topology.EnableTokenPlatform`
+(`integration/nwo/token/topology.go`) lets a topology install and start the token platform on
+every node of an `fsc.Topology` with **no TMS defined at all**:
+
+```go
+tokenTopology := token.NewTopology()
+tokenTopology.EnableTokenPlatform(fscTopology)
+```
+
+This only affects configuration generation — the base `token:` stanza from the extension
+template, without any TMS-specific selector or driver configuration. It does not attach the
+token Go SDK to the nodes; do that separately with `Topology.SetSDK` or
+`fscTopology.AddSDK(...)`, as usual.
+
+The token SDK starts up cleanly with zero TMS configs (all its dependencies are lazily
+provided and `network.Provider.Connect()` is a no-op with no configured networks), but
+`GetManagementService(...)` still returns "no token management service configs found" until a
+TMS is registered. `EnableTokenPlatform` is meant as the config-generation groundwork for
+bringing up nodes that will have a TMS registered dynamically at runtime, once that
+capability exists — it is not itself a way to use tokens.
+
 ## Fabric-X Tests
 
 For tests involving Fabric-X (starts with `fabricx`), you need additional setup:
