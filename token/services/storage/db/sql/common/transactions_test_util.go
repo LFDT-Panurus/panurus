@@ -142,7 +142,8 @@ func TestGetStatus(t *testing.T, store transactionsStoreConstructor) {
 	output := []driver2.Value{3, "some_message"}
 
 	mockDB.
-		ExpectQuery("SELECT status, status_message FROM REQUESTS WHERE tx_id = \\$1").
+		ExpectPrepare("SELECT status, status_message FROM REQUESTS WHERE tx_id = \\$1").
+		ExpectQuery().
 		WithArgs(input).
 		WillReturnRows(mockDB.NewRows([]string{"status", "status_message"}).AddRow(output...))
 
@@ -363,7 +364,8 @@ func TestGetStatusContextCancelled(t *testing.T, store transactionsStoreConstruc
 
 	// The mock delays the query by 1 s; the context expires after 10 ms.
 	mockDB.
-		ExpectQuery("SELECT status, status_message FROM REQUESTS WHERE tx_id = \\$1").
+		ExpectPrepare("SELECT status, status_message FROM REQUESTS WHERE tx_id = \\$1").
+		ExpectQuery().
 		WithArgs("1234").
 		WillDelayFor(time.Second).
 		WillReturnRows(mockDB.NewRows([]string{"status", "status_message"}))
