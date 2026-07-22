@@ -25,15 +25,16 @@ func BenchmarkAPIGRPC(b *testing.B) {
 	nodeConfPath := path.Join(testdataPath, "fsc", "nodes", "test-node.0")
 	clientConfPath := path.Join(nodeConfPath, "client-config.yaml")
 
-	err := node.GenerateConfig(testdataPath)
+	err := GenerateConfigWS(testdataPath)
 	require.NoError(b, err)
 
-	n, err := node.SetupNode(nodeConfPath, node.NamedFactory{
+	n, err := SetupNodeP2P(nodeConfPath, node.NamedFactory{
 		Name:    "token-validation-service",
 		Factory: &TokenValidationServiceViewFactory{},
 	})
 
 	require.NoError(b, err)
+
 	defer n.Stop()
 
 	paramsSlice, err := NewTokenValidationParamsSlice(DefaultTestRoot)
