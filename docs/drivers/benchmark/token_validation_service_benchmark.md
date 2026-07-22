@@ -38,12 +38,12 @@ The Token Validation Service benchmarks serve several critical purposes:
 Panurus comes pre-equipped with test data containing cryptographic parameters and sample token transfers located at:
 
 ```
-token/core/zkatdlog/nogh/v1/validator/regression/testdata/zero
+token/core/zkatdlog/nogh/v1/regression/testdata/zero
 ```
 
 This directory includes:
 - Public parameters for zero-knowledge proofs (e.g., `32-BLS12_381_BBS_GURVY/params.txt`)
-- Pre-generated token transfer test cases in `testdata/`
+- Pre-generated token transfer test cases in each `<config>/testdata.json`
 
 **Note**: The test data is already included in the repository. You only need to regenerate it if you want to create custom test cases with different parameters or token configurations. To regenerate test data on demand:
 
@@ -240,6 +240,57 @@ BenchmarkLocalTokenValidation/out-tokens=2in-tokens=2-32    1000    30000000 ns/
 - 2 input tokens, 2 output tokens
 - Each validation took ~30ms (30,000,000 ns)
 - Achieved ~33,333 transactions per second
+
+## Selecting the range-proof system (IPA vs CSP)
+
+The benchmarks are agnostic to the range-proof system used by the token transfers:
+the proof type is baked into the public parameters (`params.txt`) of whichever test-root
+you point at. Two corpora ship under `testdata/zero`:
+
+| Range-proof system | Test-root (relative to `cmd/token_validation_service`) |
+| --- | --- |
+| IPA / bulletproof (default) | `../../token/core/zkatdlog/nogh/v1/regression/testdata/zero/32-BLS12_381_BBS_GURVY` |
+| CSP | `../../token/core/zkatdlog/nogh/v1/regression/testdata/zero/csp/32-BLS12_381_BBS_GURVY` |
+
+Every benchmark (`BenchmarkLocalTokenValidation`, `BenchmarkAPI`, `BenchmarkAPIGRPC`)
+and the standalone `client` accept a `-testRoot` flag that overrides the corpus. When
+omitted it defaults to the IPA test-root above. To benchmark **CSP** proofs instead,
+pass the `csp` test-root:
+
+```bash
+cd cmd/token_validation_service
+
+# Local baseline against CSP proofs
+GOGC=10000 go test -run ^$ -bench=BenchmarkLocalTokenValidation -benchtime=30s -cpu=1,4,8,16,32 \
+  -testRoot=../../token/core/zkatdlog/nogh/v1/regression/testdata/zero/csp/32-BLS12_381_BBS_GURVY
+
+# API benchmark against CSP proofs
+GOGC=10000 go test -run ^$ -bench=BenchmarkAPI -benchtime=30s \
+  -testRoot=../../token/core/zkatdlog/nogh/v1/regression/testdata/zero/csp/32-BLS12_381_BBS_GURVY
+
+# gRPC benchmark against CSP proofs
+GOGC=10000 go test -run ^$ -bench=BenchmarkAPIGRPC -benchtime=30s -cpu=32 -numConn=1,2,4,8 \
+  -testRoot=../../token/core/zkatdlog/nogh/v1/regression/testdata/zero/csp/32-BLS12_381_BBS_GURVY
+
+# Standalone client (distributed benchmark) against CSP proofs
+GOGC=10000 go run ./client/ -testRoot=../../token/core/zkatdlog/nogh/v1/regression/testdata/zero/csp/32-BLS12_381_BBS_GURVY
+```
+
+Swap `32-BLS12_381_BBS_GURVY` for another configuration (`32-BN254`,
+`64-BLS12_381_BBS_GURVY`, `64-BN254`) to change the curve/bit-length.
+
+**Regenerating the CSP corpus** (only needed for custom parameters; the data ships in
+the repo):
+
+```bash
+cd token/core/zkatdlog/nogh/v1/regression/testdata/zero/generator
+go run . -proof_type=csp -bits=32,64 -curves=BN254,BLS12_381_BBS_GURVY -num_inputs=1,2 -num_outputs=1,2
+```
+
+The `-proof_type` flag selects the system (`csp` for CSP; omit it, or use `bf`/`bulletproof`,
+for the IPA default). CSP output is written to the separate `zero/csp/` subtree so it never
+overwrites the IPA vectors.
+
 
 
 ## Related Documentation

@@ -33,7 +33,7 @@ func BenchmarkAPI(b *testing.B) {
 	vm, err := viewregistry.GetManager(n)
 	require.NoError(b, err)
 
-	paramsSlice, err := NewTokenValidationParamsSlice(DefaultTestRoot)
+	paramsSlice, err := NewTokenValidationParamsSlice(*TestRoot)
 	require.NoError(b, err)
 
 	wl := node.Workload{

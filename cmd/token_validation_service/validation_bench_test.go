@@ -82,7 +82,7 @@ func (vp *viewPool) nextView() view.View {
 // BenchmarkLocalTokenValidation measures local token validation throughput.
 func BenchmarkLocalTokenValidation(b *testing.B) {
 	f := &TokenValidationServiceViewFactory{}
-	pool, params := CreateViewsWithProofs(b, DefaultTestRoot, f, defaultNumViews)
+	pool, params := CreateViewsWithProofs(b, *TestRoot, f, defaultNumViews)
 
 	fmt.Println("==========")
 	fmt.Println("Params size:")
