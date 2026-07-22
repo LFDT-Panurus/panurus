@@ -37,6 +37,10 @@ type Topology struct {
 
 	TokenSelector string
 	TMSs          []*topology.TMS
+
+	// TokenPlatformNodes lists FSC nodes that should have the token platform
+	// enabled independently of any TMS. Populated via EnableTokenPlatform.
+	TokenPlatformNodes []*node.Node `yaml:"-"`
 }
 
 func NewTopology() *Topology {
@@ -88,6 +92,16 @@ func (t *Topology) SetSDK(fscTopology *fsc.Topology, sdk nodepkg.SDK) {
 	for _, node := range fscTopology.Nodes {
 		node.AddSDK(sdk)
 	}
+}
+
+// EnableTokenPlatform marks every FSC node in the given topology as
+// token-platform-enabled (token.enabled: true in core.yaml) without
+// requiring any TMS to be defined. This is useful to bring up nodes that
+// will have a TMS registered dynamically at runtime. It only affects
+// configuration generation; attaching the token SDK to the nodes is the
+// caller's responsibility (see SetSDK).
+func (t *Topology) EnableTokenPlatform(fscTopology *fsc.Topology) {
+	t.TokenPlatformNodes = append(t.TokenPlatformNodes, fscTopology.ListNodes()...)
 }
 
 func (t *Topology) GetTMSs() []*topology.TMS {
