@@ -37,7 +37,7 @@ func BenchmarkAPIGRPC(b *testing.B) {
 
 	defer n.Stop()
 
-	paramsSlice, err := NewTokenValidationParamsSlice(DefaultTestRoot)
+	paramsSlice, err := NewTokenValidationParamsSlice(*TestRoot)
 	require.NoError(b, err)
 
 	wl := node.Workload{

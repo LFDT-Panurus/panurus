@@ -11,6 +11,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -35,6 +36,12 @@ const (
 	DefaultTestRoot   = "../../token/core/zkatdlog/nogh/v1/regression/testdata/zero/32-BLS12_381_BBS_GURVY"
 	defaultCasePrefix = "transfers_i2_o2_"
 )
+
+// TestRoot is the path to test data for token transfer verification, overridable
+// via the -testRoot flag. It defaults to DefaultTestRoot. Because it is registered
+// on the global flag set, it is parsed by both `go test` (for the benchmarks) and
+// the client's flag.Parse call.
+var TestRoot = flag.String("testRoot", DefaultTestRoot, "path to test data for token transfer verification")
 
 var (
 	once            sync.Once

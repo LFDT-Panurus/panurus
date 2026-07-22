@@ -60,7 +60,7 @@ func main() {
 	testdataPath := "./out/testdata" // for local debugging you can set testdataPath := "out/testdata"
 	clientConfPath := path.Join(testdataPath, "fsc", "nodes", "test-node.0", "client-config.yaml")
 
-	paramsSlice, err := bench.NewTokenValidationParamsSlice(bench.DefaultTestRoot)
+	paramsSlice, err := bench.NewTokenValidationParamsSlice(*bench.TestRoot)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to load test parameters: %v\n", err)
 		os.Exit(1)
