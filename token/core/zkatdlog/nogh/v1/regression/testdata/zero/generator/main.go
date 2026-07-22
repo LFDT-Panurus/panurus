@@ -16,24 +16,41 @@ import (
 	"sync"
 
 	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/benchmark"
+	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/crypto/rp"
 	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/testutils"
 	sbenchmark "github.com/LFDT-Panurus/panurus/token/services/benchmark"
 	"github.com/LFDT-Panurus/panurus/token/services/identity/idemixnym"
 )
 
 //go:generate go run . -bits=32,64 -curves=BN254,BLS12_381_BBS_GURVY -num_inputs=1,2 -num_outputs=1,2
+//go:generate go run . -proof_type=csp -bits=32,64 -curves=BN254,BLS12_381_BBS_GURVY -num_inputs=1,2 -num_outputs=1,2
 func main() {
 	flag.Parse()
+	// The -proof_type flag (registered by the benchmark package) selects the
+	// range-proof system: RangeProofType (IPA/bulletproof, the default) or
+	// CSPRangeProofType (CSP). CSP vectors are written to a separate `csp`
+	// subtree so they never overwrite the IPA vectors.
+	proofType := benchmark.ProofType()
+
 	// generate setup
 	bits, curves, testCases, err := sbenchmark.GenerateCasesWithDefaults()
 	if err != nil {
 		panic(err)
 	}
-	configurations, err := benchmark.NewSetupConfigurations("./../../../../testdata", bits, curves, idemixnym.IdentityType)
+	configurations, err := benchmark.NewSetupConfigurationsWithParams(benchmark.SetupParams{
+		IdemixTestdataPath: "./../../../../testdata",
+		Bits:               bits,
+		CurveIDs:           curves,
+		OwnerIdentityType:  idemixnym.IdentityType,
+		ProofType:          proofType,
+	})
 	if err != nil {
 		panic(err)
 	}
 	rootDir := "./../../zero"
+	if proofType == rp.CSPRangeProofType {
+		rootDir = filepath.Join(rootDir, "csp")
+	}
 	if err := configurations.SaveTo(rootDir); err != nil {
 		panic(err)
 	}
