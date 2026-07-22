@@ -15,7 +15,7 @@ import (
 )
 
 type Locker interface {
-	Lock(ctx context.Context, id *token.ID, txID string, reclaim bool) (string, error)
+	Lock(ctx context.Context, owner string, id *token.ID, txID string, reclaim bool) (string, error)
 	UnlockByTxID(ctx context.Context, txID string)
 }
 
@@ -32,7 +32,8 @@ func NewLocker(l Locker) *locker {
 }
 
 func (l *locker) Lock(ctx context.Context, tokenID *token.ID, consumerTxID transaction.ID) error {
-	_, err := l.Locker.Lock(ctx, tokenID, consumerTxID, false)
+	// this adapter has no owner context; the empty owner shares one default shard
+	_, err := l.Locker.Lock(ctx, "", tokenID, consumerTxID, false)
 
 	return err
 }

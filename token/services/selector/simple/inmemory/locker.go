@@ -47,10 +47,18 @@ func (l lockEntry) String() string {
 	return fmt.Sprintf("[[%s] since [%s], last access [%s]]", l.TxID, l.Created, l.LastAccess)
 }
 
+// shard holds the lock state for the tokens of a single owner. A token has
+// exactly one owner, so operations on different owners can never contend
+// for the same token and each shard can be guarded independently.
+type shard struct {
+	mu     sync.Mutex
+	locked map[token2.ID]*lockEntry
+}
+
 type locker struct {
 	ttxdb                  TXStatusProvider
-	lock                   *sync.RWMutex
-	locked                 map[token2.ID]*lockEntry
+	shardsMu               sync.RWMutex
+	shards                 map[string]*shard
 	sleepTimeout           time.Duration
 	validTxEvictionTimeout time.Duration
 	cancel                 context.CancelFunc
@@ -63,8 +71,7 @@ func NewLocker(ttxdb TXStatusProvider, timeout time.Duration, validTxEvictionTim
 	r := &locker{
 		ttxdb:                  ttxdb,
 		sleepTimeout:           timeout,
-		lock:                   &sync.RWMutex{},
-		locked:                 map[token2.ID]*lockEntry{},
+		shards:                 map[string]*shard{},
 		validTxEvictionTimeout: validTxEvictionTimeout,
 		cancel:                 cancel,
 		scanDone:               make(chan struct{}),
@@ -91,30 +98,54 @@ func (d *locker) Stop() error {
 	return err
 }
 
-func (d *locker) Lock(ctx context.Context, id *token2.ID, txID string, reclaim bool) (string, error) {
-	k := *id
-
-	// check quickly if the token is locked
-	d.lock.RLock()
-	if _, ok := d.locked[k]; ok && !reclaim {
-		// return immediately
-		d.lock.RUnlock()
-
-		return "", AlreadyLockedError
+// shard returns the shard for the given owner, creating it on first use.
+// The empty owner is a valid key: callers without owner context share one
+// default shard, which degrades to the pre-sharding single-map behavior.
+func (d *locker) shard(owner string) *shard {
+	d.shardsMu.RLock()
+	s, ok := d.shards[owner]
+	d.shardsMu.RUnlock()
+	if ok {
+		return s
 	}
-	d.lock.RUnlock()
 
-	// it is either not locked or we are reclaiming
-	d.lock.Lock()
-	defer d.lock.Unlock()
-	e, ok := d.locked[k]
+	d.shardsMu.Lock()
+	defer d.shardsMu.Unlock()
+	if s, ok := d.shards[owner]; ok {
+		return s
+	}
+	s = &shard{locked: map[token2.ID]*lockEntry{}}
+	d.shards[owner] = s
+
+	return s
+}
+
+// allShards returns a snapshot of the current shards.
+func (d *locker) allShards() []*shard {
+	d.shardsMu.RLock()
+	defer d.shardsMu.RUnlock()
+	shards := make([]*shard, 0, len(d.shards))
+	for _, s := range d.shards {
+		shards = append(shards, s)
+	}
+
+	return shards
+}
+
+func (d *locker) Lock(ctx context.Context, owner string, id *token2.ID, txID string, reclaim bool) (string, error) {
+	k := *id
+	s := d.shard(owner)
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	e, ok := s.locked[k]
 	if ok {
 		e.LastAccess = time.Now()
 
 		if reclaim {
 			// Second chance
 			logger.DebugfContext(ctx, "[%s] already locked by [%s], try to reclaim...", id, e)
-			reclaimed, status := d.reclaim(ctx, id, e.TxID)
+			reclaimed, status := d.reclaim(ctx, s, id, e.TxID)
 			if !reclaimed {
 				logger.DebugfContext(ctx, "[%s] already locked by [%s], reclaim failed, tx status [%s]", id, e, ttxdb.TxStatusMessage[status])
 				if logger.IsEnabledFor(zapcore.DebugLevel) {
@@ -135,22 +166,23 @@ func (d *locker) Lock(ctx context.Context, id *token2.ID, txID string, reclaim b
 	}
 	logger.DebugfContext(ctx, "locking [%s] for [%s]", id, txID)
 	now := time.Now()
-	d.locked[k] = &lockEntry{TxID: txID, Created: now, LastAccess: now}
+	s.locked[k] = &lockEntry{TxID: txID, Created: now, LastAccess: now}
 
 	return "", nil
 }
 
-// UnlockIDs unlocks the passed IDS. It returns the list of tokens that were not locked in the first place among
-// those passed.
-func (d *locker) UnlockIDs(ctx context.Context, ids ...*token2.ID) []*token2.ID {
-	d.lock.Lock()
-	defer d.lock.Unlock()
+// UnlockIDs unlocks the passed IDS of the given owner. It returns the list of tokens that were
+// not locked in the first place among those passed.
+func (d *locker) UnlockIDs(ctx context.Context, owner string, ids ...*token2.ID) []*token2.ID {
+	s := d.shard(owner)
+	s.mu.Lock()
+	defer s.mu.Unlock()
 
 	logger.DebugfContext(ctx, "unlocking tokens [%v]", ids)
 	var notFound []*token2.ID
 	for _, id := range ids {
 		k := *id
-		entry, ok := d.locked[k]
+		entry, ok := s.locked[k]
 		if !ok {
 			notFound = append(notFound, &k)
 			logger.Warnf("unlocking [%s] hold by no one, skipping [%s]", id, entry)
@@ -158,42 +190,51 @@ func (d *locker) UnlockIDs(ctx context.Context, ids ...*token2.ID) []*token2.ID 
 			continue
 		}
 		logger.DebugfContext(ctx, "unlocking [%s] hold by [%s]", id, entry)
-		delete(d.locked, k)
+		delete(s.locked, k)
 	}
 
 	return notFound
 }
 
+// UnlockByTxID unlocks all tokens locked by the given transaction. The owner
+// is unknown at this point, so every shard is visited, each locked briefly.
 func (d *locker) UnlockByTxID(ctx context.Context, txID string) {
-	d.lock.Lock()
-	defer d.lock.Unlock()
-
 	logger.DebugfContext(ctx, "unlocking tokens hold by [%s]", txID)
-	for id, entry := range d.locked {
-		if entry.TxID == txID {
-			logger.DebugfContext(ctx, "unlocking [%s] hold by [%s]", id, entry)
-			delete(d.locked, id)
+	for _, s := range d.allShards() {
+		s.mu.Lock()
+		for id, entry := range s.locked {
+			if entry.TxID == txID {
+				logger.DebugfContext(ctx, "unlocking [%s] hold by [%s]", id, entry)
+				delete(s.locked, id)
+			}
 		}
+		s.mu.Unlock()
 	}
 }
 
 func (d *locker) IsLocked(id *token2.ID) bool {
-	d.lock.Lock()
-	defer d.lock.Unlock()
+	k := *id
+	for _, s := range d.allShards() {
+		s.mu.Lock()
+		_, ok := s.locked[k]
+		s.mu.Unlock()
+		if ok {
+			return true
+		}
+	}
 
-	_, ok := d.locked[*id]
-
-	return ok
+	return false
 }
 
-func (d *locker) reclaim(ctx context.Context, id *token2.ID, txID string) (bool, int) {
+// reclaim must be called while holding the shard's mutex.
+func (d *locker) reclaim(ctx context.Context, s *shard, id *token2.ID, txID string) (bool, int) {
 	status, _, err := d.ttxdb.GetStatus(ctx, txID)
 	if err != nil {
 		return false, status
 	}
 	switch status {
 	case ttxdb.Deleted:
-		delete(d.locked, *id)
+		delete(s.locked, *id)
 
 		return true, status
 	default:
@@ -203,6 +244,18 @@ func (d *locker) reclaim(ctx context.Context, id *token2.ID, txID string) (bool,
 
 func (d *locker) start(ctx context.Context) {
 	go d.scan(ctx)
+}
+
+// lockedCount returns the total number of locked tokens across all shards.
+func (d *locker) lockedCount() int {
+	total := 0
+	for _, s := range d.allShards() {
+		s.mu.Lock()
+		total += len(s.locked)
+		s.mu.Unlock()
+	}
+
+	return total
 }
 
 func (d *locker) scan(ctx context.Context) {
@@ -217,50 +270,7 @@ func (d *locker) scan(ctx context.Context) {
 		default:
 		}
 		logger.DebugfContext(ctx, "token collector: scan locked tokens")
-		// Track both token ID and the txID that was observed during the scan,
-		// so we can re-validate before deleting (prevents TOCTOU race with Lock/reclaim).
-		type removeEntry struct {
-			id   token2.ID
-			txID string
-		}
-		var removeList []removeEntry
-		d.lock.RLock()
-		for id, entry := range d.locked {
-			status, _, err := d.ttxdb.GetStatus(ctx, entry.TxID)
-			if err != nil {
-				logger.Warnf("failed getting status for token [%s] locked by [%s], remove", id, entry)
-				removeList = append(removeList, removeEntry{id: id, txID: entry.TxID})
-
-				continue
-			}
-			switch status {
-			case ttxdb.Confirmed:
-				// remove only if elapsed enough time from last access, to avoid concurrency issue
-				if time.Since(entry.LastAccess) > d.validTxEvictionTimeout {
-					removeList = append(removeList, removeEntry{id: id, txID: entry.TxID})
-					logger.DebugfContext(ctx, "token [%s] locked by [%s] in status [%s], time elapsed, remove", id, entry, ttxdb.TxStatusMessage[status])
-				}
-			case ttxdb.Deleted:
-				removeList = append(removeList, removeEntry{id: id, txID: entry.TxID})
-				logger.DebugfContext(ctx, "token [%s] locked by [%s] in status [%s], remove", id, entry, ttxdb.TxStatusMessage[status])
-			default:
-				logger.DebugfContext(ctx, "token [%s] locked by [%s] in status [%s], skip", id, entry, ttxdb.TxStatusMessage[status])
-			}
-		}
-		d.lock.RUnlock()
-
-		d.lock.Lock()
-		logger.DebugfContext(ctx, "token collector: freeing [%d] items", len(removeList))
-		for _, s := range removeList {
-			// Re-validate: only delete if the entry still belongs to the same
-			// transaction that was inspected during the RLock scan phase.
-			// Between RUnlock and Lock, a Lock(reclaim=true) call may have
-			// reclaimed this token and re-locked it for a new transaction.
-			if entry, ok := d.locked[s.id]; ok && entry.TxID == s.txID {
-				delete(d.locked, s.id)
-			}
-		}
-		d.lock.Unlock()
+		d.scanShards(ctx)
 
 		for {
 			logger.DebugfContext(ctx, "token collector: sleep for some time...")
@@ -271,15 +281,84 @@ func (d *locker) scan(ctx context.Context) {
 
 				return
 			}
-			d.lock.RLock()
-			l := len(d.locked)
-			d.lock.RUnlock()
-			if l > 0 {
+			if l := d.lockedCount(); l > 0 {
 				// time to do some token collection
 				logger.DebugfContext(ctx, "token collector: time to do some token collection, [%d] locked", l)
 
 				break
 			}
 		}
+	}
+}
+
+// scanShards runs one collection cycle over every shard. For each shard it
+// snapshots the entries under the shard lock, resolves their transaction
+// statuses without holding any lock, and then deletes stale entries under
+// the shard lock again — re-validating that each entry still belongs to the
+// transaction observed during the snapshot, since a concurrent
+// Lock(reclaim=true) may have re-locked the token for a new transaction in
+// the meantime (TOCTOU).
+func (d *locker) scanShards(ctx context.Context) {
+	type scannedEntry struct {
+		id         token2.ID
+		txID       string
+		lastAccess time.Time
+	}
+	type removeEntry struct {
+		id        token2.ID
+		txID      string
+		confirmed bool
+	}
+
+	for _, s := range d.allShards() {
+		// Phase 1: snapshot the shard's entries.
+		s.mu.Lock()
+		entries := make([]scannedEntry, 0, len(s.locked))
+		for id, entry := range s.locked {
+			entries = append(entries, scannedEntry{id: id, txID: entry.TxID, lastAccess: entry.LastAccess})
+		}
+		s.mu.Unlock()
+
+		// Phase 2: resolve statuses without holding the shard lock, so the
+		// owner's Lock/Unlock operations are not blocked behind status lookups.
+		var removeList []removeEntry
+		for _, entry := range entries {
+			status, _, err := d.ttxdb.GetStatus(ctx, entry.txID)
+			if err != nil {
+				logger.Warnf("failed getting status for token [%s] locked by [%s], remove", entry.id, entry.txID)
+				removeList = append(removeList, removeEntry{id: entry.id, txID: entry.txID})
+
+				continue
+			}
+			switch status {
+			case ttxdb.Confirmed:
+				// remove only if elapsed enough time from last access, to avoid concurrency issue
+				if time.Since(entry.lastAccess) > d.validTxEvictionTimeout {
+					removeList = append(removeList, removeEntry{id: entry.id, txID: entry.txID, confirmed: true})
+					logger.DebugfContext(ctx, "token [%s] locked by [%s] in status [%s], time elapsed, remove", entry.id, entry.txID, ttxdb.TxStatusMessage[status])
+				}
+			case ttxdb.Deleted:
+				removeList = append(removeList, removeEntry{id: entry.id, txID: entry.txID})
+				logger.DebugfContext(ctx, "token [%s] locked by [%s] in status [%s], remove", entry.id, entry.txID, ttxdb.TxStatusMessage[status])
+			default:
+				logger.DebugfContext(ctx, "token [%s] locked by [%s] in status [%s], skip", entry.id, entry.txID, ttxdb.TxStatusMessage[status])
+			}
+		}
+
+		// Phase 3: delete, re-validating each entry.
+		s.mu.Lock()
+		logger.DebugfContext(ctx, "token collector: freeing [%d] items", len(removeList))
+		for _, r := range removeList {
+			entry, ok := s.locked[r.id]
+			if !ok || entry.TxID != r.txID {
+				continue
+			}
+			if r.confirmed && time.Since(entry.LastAccess) <= d.validTxEvictionTimeout {
+				// the entry was accessed again after the snapshot; keep it
+				continue
+			}
+			delete(s.locked, r.id)
+		}
+		s.mu.Unlock()
 	}
 }

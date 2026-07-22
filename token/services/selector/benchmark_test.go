@@ -27,8 +27,8 @@ import (
 type WalletIDByRawIdentityFunc func(rawIdentity []byte) string
 
 type Locker interface {
-	Lock(ctx context.Context, id *token2.ID, txID string, reclaim bool) (string, error)
-	UnlockIDs(ctx context.Context, ids ...*token2.ID) []*token2.ID
+	Lock(ctx context.Context, owner string, id *token2.ID, txID string, reclaim bool) (string, error)
+	UnlockIDs(ctx context.Context, owner string, ids ...*token2.ID) []*token2.ID
 	UnlockByTxID(ctx context.Context, txID string)
 	IsLocked(id *token2.ID) bool
 }
@@ -43,9 +43,9 @@ func (s *extendedSelector) Select(ctx context.Context, ownerFilter token.OwnerFi
 }
 func (s *extendedSelector) Close() error { return s.Selector.Close() }
 
-func (s *extendedSelector) Unselect(id ...*token2.ID) {
+func (s *extendedSelector) Unselect(owner string, id ...*token2.ID) {
 	if s.Lock != nil {
-		s.Lock.UnlockIDs(context.Background(), id...)
+		s.Lock.UnlockIDs(context.Background(), owner, id...)
 	}
 }
 
@@ -72,7 +72,7 @@ func BenchmarkSelectorSingle(b *testing.B) {
 				wg.Add(1)
 				go func(ids []*token2.ID) {
 					defer wg.Done()
-					s.selector.Unselect(ids...)
+					s.selector.Unselect(s.filter.ID(), ids...)
 				}(ids)
 			}
 		})
@@ -110,7 +110,7 @@ func BenchmarkSelectorParallel(b *testing.B) {
 					wg.Add(1)
 					go func(ids []*token2.ID) {
 						defer wg.Done()
-						s.selector.Unselect(ids...)
+						s.selector.Unselect(s.filter.ID(), ids...)
 					}(ids)
 				}
 			})
@@ -199,7 +199,7 @@ type LockerProviderFunction func() selector.Locker
 
 type ExtendedSelector interface {
 	token.Selector
-	Unselect(id ...*token2.ID)
+	Unselect(owner string, id ...*token2.ID)
 }
 
 type MockTokenIterator struct {
