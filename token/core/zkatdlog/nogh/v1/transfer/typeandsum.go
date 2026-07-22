@@ -144,7 +144,11 @@ type TypeAndSumWitness struct {
 }
 
 // NewTypeAndSumWitness returns a new TypeAndSumWitness instance.
-func NewTypeAndSumWitness(bf *math.Zr, in, out []*token.Metadata, c *math.Curve) *TypeAndSumWitness {
+// It returns an error if in is empty.
+func NewTypeAndSumWitness(bf *math.Zr, in, out []*token.Metadata, c *math.Curve) (*TypeAndSumWitness, error) {
+	if len(in) == 0 {
+		return nil, errors.Wrap(ErrInvalidInputs, "cannot create type-and-sum witness: no inputs")
+	}
 	inValues := make([]*math.Zr, len(in))
 	outValues := make([]*math.Zr, len(out))
 	inBF := make([]*math.Zr, len(in))
@@ -158,7 +162,7 @@ func NewTypeAndSumWitness(bf *math.Zr, in, out []*token.Metadata, c *math.Curve)
 		outBF[i] = out[i].BlindingFactor
 	}
 
-	return &TypeAndSumWitness{inValues: inValues, outValues: outValues, Type: c.HashToZr([]byte(in[0].Type)), inBlindingFactors: inBF, outBlindingFactors: outBF, typeBlindingFactor: bf}
+	return &TypeAndSumWitness{inValues: inValues, outValues: outValues, Type: c.HashToZr([]byte(in[0].Type)), inBlindingFactors: inBF, outBlindingFactors: outBF, typeBlindingFactor: bf}, nil
 }
 
 // TypeAndSumProofRandomness holds the randomness used in the generation of a TypeAndSumProof.
@@ -334,6 +338,9 @@ func (v *TypeAndSumVerifier) Verify(stp *TypeAndSumProof) error {
 		return ErrMissingSumAndTypeComponents
 	}
 	if len(stp.InputBlindingFactors) != len(v.Inputs) {
+		return ErrMissingSumAndTypeComponents
+	}
+	if len(stp.InputValues) != len(v.Inputs) {
 		return ErrMissingSumAndTypeComponents
 	}
 

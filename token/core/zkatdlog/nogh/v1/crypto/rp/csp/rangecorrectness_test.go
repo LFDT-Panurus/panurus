@@ -394,13 +394,26 @@ func TestCSPRangeCorrectnessSerializationRoundTrip(t *testing.T) {
 }
 
 // TestCSPRangeCorrectnessValidate verifies the Validate method.
-// Given various batch proof sets (empty, valid, or containing nil elements),
-// When the Validate method is called,
-// Then it should correctly identify invalid proof sets.
+// Given various batch proof sets (empty, valid, zero-value, or containing nil
+// elements), when the Validate method is called, then it should correctly
+// identify invalid proof sets.
+//
+// T-GAP-C18: the "zero_value_single" case used to be named "valid_single" and
+// asserted no error for a RangeProof with every field nil, because
+// RangeProof.Validate was a no-op that only restored the transient Curve
+// field. Now that Validate performs real structural checks, a zero-value
+// RangeProof is correctly rejected; a genuinely constructed proof is added as
+// the new "valid_single" case to keep a true-positive case in the suite.
 func TestCSPRangeCorrectnessValidate(t *testing.T) {
 	curves := []math.CurveID{math.BN254, math.BLS12_381_BBS_GURVY}
 	for _, curveID := range curves {
 		t.Run(fmt.Sprintf("curveID=%d", curveID), func(t *testing.T) {
+			curve := math.Curves[curveID]
+			setup, err := newRPSetup(curve, 4, 10)
+			require.NoError(t, err)
+			genuineProof, err := setup.prover.Prove()
+			require.NoError(t, err)
+
 			testCases := []struct {
 				name      string
 				rc        *RangeCorrectness
@@ -418,10 +431,18 @@ func TestCSPRangeCorrectnessValidate(t *testing.T) {
 				{
 					name: "valid_single",
 					rc: &RangeCorrectness{
-						Proofs: []*RangeProof{{}},
+						Proofs: []*RangeProof{genuineProof},
 					},
 					curveID:   curveID,
 					expectErr: false,
+				},
+				{
+					name: "zero_value_single",
+					rc: &RangeCorrectness{
+						Proofs: []*RangeProof{{}},
+					},
+					curveID:   curveID,
+					expectErr: true,
 				},
 				{
 					name: "nil_proof",

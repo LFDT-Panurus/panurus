@@ -262,6 +262,9 @@ func (m *Metadata) Validate(checkIssuer bool) error {
 
 // commit computes a Pedersen commitment to a vector of field elements using the provided generators.
 func commit(vector []*math.Zr, generators []*math.G1, c *math.Curve) (*math.G1, error) {
+	if len(generators) < len(vector) {
+		return nil, errors.Errorf("insufficient generators: expecting at least [%d], got [%d]", len(vector), len(generators))
+	}
 	com := c.NewG1()
 	for i := range vector {
 		if vector[i] == nil {

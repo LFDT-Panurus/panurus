@@ -356,6 +356,9 @@ func validateIssueOutputs(ctx context.Context, infoMatcher InfoMatcher, pedersen
 		if err := tokenMetadata.Deserialize(outputMetadata.OutputMetadata); err != nil {
 			return errors.Wrapf(err, "failed to deserialize token metadata at index [%d]", i)
 		}
+		if err := tokenMetadata.Validate(true); err != nil {
+			return errors.Wrapf(err, "invalid token metadata at index [%d]", i)
+		}
 
 		// Create inspectable token and validate commitment
 		inspectable, err := NewInspectableToken(
@@ -488,6 +491,9 @@ func validateTransferOutputs(ctx context.Context, infoMatcher InfoMatcher, peder
 		tokenMetadata := &token.Metadata{}
 		if err := tokenMetadata.Deserialize(outputMetadata.OutputMetadata); err != nil {
 			return errors.Wrapf(err, "failed to deserialize token metadata at index [%d]", i)
+		}
+		if err := tokenMetadata.Validate(false); err != nil {
+			return errors.Wrapf(err, "invalid token metadata at index [%d]", i)
 		}
 
 		// Create inspectable token using OutputAuditInfo (primary audit info for transfer outputs)

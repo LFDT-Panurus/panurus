@@ -43,7 +43,10 @@ func (d *BaseWalletServiceFactory) NewWalletService(
 	ignoreRemote bool,
 	metricsProvider metrics.Provider,
 ) (*wallet.Service, error) {
-	pp := publicParams.(*v1.PublicParams)
+	pp, ok := publicParams.(*v1.PublicParams)
+	if !ok {
+		return nil, errors.Errorf("invalid public parameters type [%T]", publicParams)
+	}
 	roles := role.NewRoles()
 	deserializerManager := deserializer.NewTypedSignerDeserializerMultiplex()
 	tmsID := tmsConfig.ID()

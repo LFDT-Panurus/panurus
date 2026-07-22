@@ -53,6 +53,9 @@ type CSPBasedProver struct {
 
 // NewCSPBasedProver instantiates a CSPBasedProver for an issue action using the provided witnesses, tokens, and public parameters.
 func NewCSPBasedProver(tw []*token.Metadata, tokens []*math.G1, pp *v1.PublicParams) (*CSPBasedProver, error) {
+	if len(tw) == 0 {
+		return nil, errors.Wrap(ErrInvalidInputs, "cannot create CSP-based prover: no token witnesses")
+	}
 	c := math.Curves[pp.Curve]
 	p := &CSPBasedProver{}
 	tokenType := c.HashToZr([]byte(tw[0].Type))
@@ -132,11 +135,13 @@ type CSPVerifier struct {
 	SameType *SameTypeVerifier
 	// RangeCorrectness is the verifier for the range correctness property.
 	RangeCorrectness *csp.RangeCorrectnessVerifier
+	// curveID is the curve the proof elements are expected to belong to.
+	curveID math.CurveID
 }
 
 // NewCSPVerifier instantiates a CSPVerifier for the given token commitments and public parameters.
 func NewCSPVerifier(tokens []*math.G1, pp *v1.PublicParams) *CSPVerifier {
-	v := &CSPVerifier{}
+	v := &CSPVerifier{curveID: pp.Curve}
 	v.SameType = NewSameTypeVerifier(tokens, pp.PedersenGenerators, math.Curves[pp.Curve])
 	v.RangeCorrectness = csp.NewRangeCorrectnessVerifier(
 		pp.PedersenGenerators[1:],
@@ -158,6 +163,18 @@ func (v *CSPVerifier) Verify(proof []byte) error {
 	err := tp.Deserialize(proof)
 	if err != nil {
 		return errors.Join(ErrDeserializeProofFailed, err)
+	}
+	// Validate the same-type proof structurally before it is used: a proof deserialized
+	// from truncated bytes can have nil fields, which would otherwise panic below
+	// (e.g. CommitmentToType.Copy()) or inside SameType.Verify's Mul/Sub calls.
+	if err := tp.SameType.Validate(v.curveID); err != nil {
+		return errors.Join(ErrInvalidIssueProof, err)
+	}
+	// Validate the range correctness proof structurally before it is used: this
+	// rejects nil/malformed elements from a truncated or corrupted proof before
+	// they reach RangeCorrectness.Verify (mirroring the BulletProof issue path).
+	if err := tp.RangeCorrectness.Validate(v.curveID); err != nil {
+		return errors.Join(ErrInvalidIssueProof, err)
 	}
 	// Verify the same-type proof.
 	err = v.SameType.Verify(tp.SameType)

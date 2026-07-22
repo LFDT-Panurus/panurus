@@ -508,6 +508,25 @@ func TestBulletProofVerifier_1to1WithAttachedRangeProof(t *testing.T) {
 	require.NoError(t, err, "T-GAP-C1: 1-to-1 transfer with attached range proof must still be accepted")
 }
 
+// TestNewBulletProofProver_EmptyInputWitness is T-GAP-C16: NewBulletProofProver indexed
+// inputWitness[0] (to compute the commitment to the token type) without first checking
+// that inputWitness was non-empty. An empty inputWitness slice caused an
+// index-out-of-range panic instead of returning an error.
+func TestNewBulletProofProver_EmptyInputWitness(t *testing.T) {
+	pp, err := setupWithProofType(TestBits, TestCurve, rp.RangeProofType)
+	require.NoError(t, err)
+
+	_, outtw, _, out, err := prepareInputsForZKTransfer(pp, 1, 1)
+	require.NoError(t, err)
+
+	var proverErr error
+	require.NotPanics(t, func() {
+		_, proverErr = transfer.NewBulletProofProver(nil, outtw, nil, out, pp)
+	})
+	require.Error(t, proverErr)
+	assert.Contains(t, proverErr.Error(), "invalid number of token inputs")
+}
+
 // TestNewVerifier_ProofTypeUnavailable is T-SEC-1: verifies that NewVerifier returns
 // ErrProofTypeMismatch when the action's ProofType refers to a range-proof algorithm
 // whose params sub-struct is not populated in PublicParams, preventing an attacker

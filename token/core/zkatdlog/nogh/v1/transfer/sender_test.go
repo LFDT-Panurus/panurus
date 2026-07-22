@@ -53,6 +53,24 @@ func TestSender(t *testing.T) {
 				assert.Contains(t, err.Error(), "number of values [2] does not match number of recipients [1]")
 			})
 
+			// T-GAP-C15: GenerateZKTransfer indexed s.InputInformation[0]
+			// (to compare token types and set the output type) without first
+			// checking that InputInformation was non-empty. A Sender with zero
+			// inputs (e.g. constructed with empty tokens/ids/inf slices, which
+			// NewSender's length-matching check does not reject) panicked with
+			// an index-out-of-range instead of returning an error.
+			t.Run("GenerateZKTransfer empty inputs", func(t *testing.T) {
+				env, err := newSenderEnvWithProofType(nil, 0, 1, pt.proofType)
+				require.NoError(t, err)
+
+				var transferErr error
+				require.NotPanics(t, func() {
+					_, _, transferErr = env.sender.GenerateZKTransfer(t.Context(), env.outvalues, env.owners)
+				})
+				require.Error(t, transferErr)
+				assert.Contains(t, transferErr.Error(), "invalid number of token inputs")
+			})
+
 			t.Run("GenerateZKTransfer mismatched input types", func(t *testing.T) {
 				env, err := newSenderEnvWithProofType(nil, 2, 1, pt.proofType)
 				require.NoError(t, err)

@@ -83,7 +83,8 @@ func TestHashG1Array(t *testing.T) {
 	g2 := randomG1(t, curve)
 
 	h := sha256.New()
-	hRes := HashG1Array(h, g1, g2)
+	hRes, err := HashG1Array(h, g1, g2)
+	require.NoError(t, err)
 
 	// compute expected by hand
 	h2 := sha256.New()
@@ -92,4 +93,23 @@ func TestHashG1Array(t *testing.T) {
 	h2.Write(g2.Bytes())
 	exp := h2.Sum(nil)
 	require.Equal(t, exp, hRes)
+}
+
+// TestHashG1ArrayWithNilElementErrors is T-GAP-C14. HashG1Array called
+// e.Bytes() on every element without checking for nil first. A nil *math.G1
+// in the slice (e.g. a caller passing through a partially-deserialized or
+// corrupted commitment) caused a nil-pointer-dereference panic instead of a
+// clean error.
+func TestHashG1ArrayWithNilElementErrors(t *testing.T) {
+	require.NotEmpty(t, math.Curves)
+	curve := math.Curves[0]
+
+	g1 := randomG1(t, curve)
+	h := sha256.New()
+
+	var err error
+	require.NotPanics(t, func() {
+		_, err = HashG1Array(h, g1, nil)
+	})
+	require.Error(t, err)
 }

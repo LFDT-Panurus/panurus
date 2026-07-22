@@ -12,6 +12,8 @@ import (
 
 	"github.com/IBM/idemix/bccsp/types"
 	math "github.com/IBM/mathlib"
+	noghutils "github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/protos-go/utils"
+	noghactions "github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/protos-go/v1/actions"
 	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/audit"
 	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/audit/mock"
 	zkatdlog "github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/driver"
@@ -20,14 +22,17 @@ import (
 	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/token"
 	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/transfer"
 	"github.com/LFDT-Panurus/panurus/token/driver"
+	protosv1 "github.com/LFDT-Panurus/panurus/token/driver/protos-go/v1"
 	"github.com/LFDT-Panurus/panurus/token/driver/protos-go/v1/request"
 	"github.com/LFDT-Panurus/panurus/token/services/identity"
 	"github.com/LFDT-Panurus/panurus/token/services/identity/idemix"
 	"github.com/LFDT-Panurus/panurus/token/services/identity/idemix/crypto"
 	"github.com/LFDT-Panurus/panurus/token/services/logging"
 	kvs2 "github.com/LFDT-Panurus/panurus/token/services/storage/db/kvs"
+	comm "github.com/LFDT-Panurus/panurus/token/services/tokens/core/comm"
 	token3 "github.com/LFDT-Panurus/panurus/token/token"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
+	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/proto"
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/otel/trace/noop"
 )
@@ -554,6 +559,103 @@ func TestAuditor_StructuralValidation(t *testing.T) {
 
 // TestAuditor_TransferInputValidation tests the new validation logic for transfer inputs
 func TestAuditor_TransferInputValidation(t *testing.T) {
+}
+
+// craftTokenMetadataWithNilValue builds serialized, type-wrapped token.Metadata bytes
+// directly from the underlying protobuf message, bypassing Metadata.Serialize (which
+// always converts a nil *mathlib.Zr to a non-nil, zero-valued *math.Zr proto via
+// ToProtoZr and therefore can never itself produce a Value-less TokenMetadata). This
+// simulates an attacker-crafted OutputMetadata blob with a missing "value" field, which
+// is exactly what Metadata.Deserialize will happily accept: FromZrProto returns
+// (nil, nil) for a nil proto pointer, so m.Value ends up nil with no deserialize error.
+func craftTokenMetadataWithNilValue(t *testing.T, tokenType, issuer []byte, bf *math.Zr) []byte {
+	t.Helper()
+	blindingFactor, err := noghutils.ToProtoZr(bf)
+	require.NoError(t, err)
+	raw, err := proto.Marshal(&noghactions.TokenMetadata{
+		Type:           string(tokenType),
+		Value:          nil,
+		BlindingFactor: blindingFactor,
+		Issuer:         &protosv1.Identity{Raw: issuer},
+	})
+	require.NoError(t, err)
+	wrapped, err := comm.WrapMetadataWithType(raw)
+	require.NoError(t, err)
+
+	return wrapped
+}
+
+// TestValidateIssueOutputs_RejectsNilValueMetadata is T-GAP-C9: verifies that
+// validateIssueOutputs (invoked via Auditor.Check on an ISSUE action) rejects output
+// metadata whose Value field is missing, returning a clean error instead of letting the
+// nil Value propagate into InspectOutput's commitment recomputation and panic.
+//
+// Before this fix, validateIssueOutputs deserialized tokenMetadata and passed it
+// straight into NewInspectableToken / InspectOutput without calling
+// tokenMetadata.Validate(true). InspectOutput's local commit() helper (auditor.go) has
+// no nil-element guard, so generators[i].Mul(vector[i]) panics with a nil pointer
+// dereference when vector[i] (here, output.Data.Value) is nil.
+func TestValidateIssueOutputs_RejectsNilValueMetadata(t *testing.T) {
+	_, pp, auditor := setupAuditorTest(t)
+	c := math.Curves[pp.Curve]
+
+	ia, meta := createIssue(t, pp)
+
+	rand, err := c.Rand()
+	require.NoError(t, err)
+	// Craft metadata with a nil Value but a real BlindingFactor and Issuer, mimicking a
+	// crafted proto that omits the "value" field. meta.Issuer is left untouched (set by
+	// createIssue to the identity that actually signed the issue action).
+	meta.Outputs[0].OutputMetadata = craftTokenMetadataWithNilValue(t, []byte("ABC"), []byte("issuer"), c.NewRandomZr(rand))
+
+	raw, err := ia.Serialize()
+	require.NoError(t, err)
+
+	var checkErr error
+	require.NotPanics(t, func() {
+		checkErr = auditor.Check(
+			t.Context(),
+			&driver.TokenRequest{Actions: []*driver.TypedAction{{Type: request.ActionType_ACTION_TYPE_ISSUE, Raw: raw}}},
+			&driver.TokenRequestMetadata{Actions: []*driver.ActionMetadataEntry{{ActionID: 0, IssueMetadata: meta}}},
+			"1", map[string]*token3.Token{},
+		)
+	}, "T-GAP-C9: Check must not panic on issue output metadata with a nil Value")
+	require.Error(t, checkErr, "T-GAP-C9: Check must reject issue output metadata with a nil Value")
+	require.Contains(t, checkErr.Error(), "invalid token metadata")
+}
+
+// TestValidateTransferOutputs_RejectsNilValueMetadata is T-GAP-C9: the transfer-output
+// sibling of TestValidateIssueOutputs_RejectsNilValueMetadata, verifying that
+// validateTransferOutputs also rejects output metadata with a missing Value field
+// instead of panicking inside InspectOutput's commitment recomputation.
+func TestValidateTransferOutputs_RejectsNilValueMetadata(t *testing.T) {
+	_, pp, auditor := setupAuditorTest(t)
+	c := math.Curves[pp.Curve]
+
+	transferAction, metadata, inputs := createTransfer(t, pp)
+
+	rand, err := c.Rand()
+	require.NoError(t, err)
+	// Craft metadata for the first output with a nil Value and no Issuer (matching the
+	// checkIssuer=false convention for transfer outputs).
+	metadata.Outputs[0].OutputMetadata = craftTokenMetadataWithNilValue(t, []byte("ABC"), nil, c.NewRandomZr(rand))
+
+	raw, err := transferAction.Serialize()
+	require.NoError(t, err)
+
+	auditTokens := buildAuditTokensFromInputs(t, metadata, inputs)
+
+	var checkErr error
+	require.NotPanics(t, func() {
+		checkErr = auditor.Check(
+			t.Context(),
+			&driver.TokenRequest{Actions: []*driver.TypedAction{{Type: request.ActionType_ACTION_TYPE_TRANSFER, Raw: raw}}},
+			&driver.TokenRequestMetadata{Actions: []*driver.ActionMetadataEntry{{ActionID: 0, TransferMetadata: metadata}}},
+			"1", auditTokens,
+		)
+	}, "T-GAP-C9: Check must not panic on transfer output metadata with a nil Value")
+	require.Error(t, checkErr, "T-GAP-C9: Check must reject transfer output metadata with a nil Value")
+	require.Contains(t, checkErr.Error(), "invalid token metadata")
 }
 
 func setupAuditorTest(t *testing.T, issuers ...driver.Identity) (*mock.SigningIdentity, *v1.PublicParams, *audit.AuditorWrapper) {

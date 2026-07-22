@@ -393,6 +393,30 @@ func TestInternal(t *testing.T) {
 	assert.Contains(t, err.Error(), "failed to compute token")
 }
 
+// TestCommit_InsufficientGenerators is T-GAP-C13. commit indexed
+// generators[i] for each vector element without first checking that there
+// were at least as many generators as vector elements. ToClear calls commit
+// with pp.PedersenGenerators sized from deserialized, potentially malformed
+// public parameters and a fixed 3-element vector (type hash, value, blinding
+// factor) derived from untrusted per-token Metadata; a PublicParams with
+// fewer than 3 Pedersen generators previously caused an index-out-of-range
+// panic instead of a clean error.
+func TestCommit_InsufficientGenerators(t *testing.T) {
+	curve := math.BN254
+	c := math.Curves[curve]
+	rand, err := c.Rand()
+	require.NoError(t, err)
+	gens := []*math.G1{c.GenG1.Mul(c.NewRandomZr(rand))}
+	vector := []*math.Zr{c.NewRandomZr(rand), c.NewRandomZr(rand), c.NewRandomZr(rand)}
+
+	var commitErr error
+	require.NotPanics(t, func() {
+		_, commitErr = commit(vector, gens, c)
+	})
+	require.Error(t, commitErr)
+	assert.Contains(t, commitErr.Error(), "insufficient generators")
+}
+
 func TestToken_DeserializeExtra(t *testing.T) {
 	tok := &Token{}
 

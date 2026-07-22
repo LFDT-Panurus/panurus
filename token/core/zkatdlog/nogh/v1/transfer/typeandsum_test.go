@@ -270,7 +270,10 @@ func prepareIOCProver(tb testing.TB, pp []*math.G1, c *math.Curve) (*transfer.Ty
 	commitmentToType := pp[0].Mul(c.HashToZr([]byte(ttype)))
 	commitmentToType.Add(pp[2].Mul(typeBlindingFactor))
 
-	return transfer.NewTypeAndSumWitness(typeBlindingFactor, intw, outtw, c), in, out, inBF, outBF, commitmentToType
+	witness, err := transfer.NewTypeAndSumWitness(typeBlindingFactor, intw, outtw, c)
+	require.NoError(tb, err)
+
+	return witness, in, out, inBF, outBF, commitmentToType
 }
 
 func prepareInputsOutputs(inValues, outValues []uint64, inBF, outBF []*math.Zr, ttype token2.Type, pp []*math.G1, c *math.Curve) ([]*math.G1, []*math.G1) {
@@ -349,4 +352,72 @@ func TestTypeAndSumVerify_ShortInputBlindingFactors(t *testing.T) {
 	}, "T-GAP-C4: Verify must not panic on short InputBlindingFactors")
 	require.Error(t, err, "T-GAP-C4: Verify must return an error for short InputBlindingFactors")
 	require.ErrorIs(t, err, transfer.ErrMissingSumAndTypeComponents)
+}
+
+// TestTypeAndSumVerify_ShortInputValues is T-GAP-C7: verifies that
+// TypeAndSumVerifier.Verify rejects a proof whose InputValues slice is
+// shorter than the verifier's Inputs, returning a clean error instead of an
+// index-out-of-bounds panic.
+//
+// Deserialize reads InputBlindingFactors and InputValues as two independent
+// ASN.1 sequences (typeandsum.go Deserialize), so an attacker can craft a
+// proof where len(InputBlindingFactors) == len(v.Inputs) (passing the
+// existing guard) while len(InputValues) < len(v.Inputs). Before this fix,
+// Verify's loop indexed stp.InputValues[i] up to len(v.Inputs), panicking on
+// the missing element.
+func TestTypeAndSumVerify_ShortInputValues(t *testing.T) {
+	c := math.Curves[TestCurve]
+
+	pp := preparePedersenParameters(t, c)
+	in := make([]*math.G1, 2) // verifier expects 2 inputs
+	out := make([]*math.G1, 1)
+	for i := range 2 {
+		in[i] = c.GenG1.Copy()
+	}
+	out[0] = c.GenG1.Copy()
+
+	verifier := transfer.NewTypeAndSumVerifier(pp, in, out, c)
+
+	rand, err := c.Rand()
+	require.NoError(t, err)
+
+	// InputBlindingFactors matches len(v.Inputs) == 2, but InputValues has
+	// only 1 element.
+	proof := &transfer.TypeAndSumProof{
+		CommitmentToType:     c.GenG1.Copy(),
+		InputBlindingFactors: []*math.Zr{c.NewRandomZr(rand), c.NewRandomZr(rand)},
+		InputValues:          []*math.Zr{c.NewRandomZr(rand)},
+		Type:                 c.NewZrFromInt(4),
+		TypeBlindingFactor:   c.NewZrFromInt(5),
+		EqualityOfSum:        c.NewZrFromInt(6),
+		Challenge:            c.NewZrFromInt(7),
+	}
+
+	require.NotPanics(t, func() {
+		err = verifier.Verify(proof)
+	}, "T-GAP-C7: Verify must not panic on short InputValues")
+	require.Error(t, err, "T-GAP-C7: Verify must return an error for short InputValues")
+	require.ErrorIs(t, err, transfer.ErrMissingSumAndTypeComponents)
+}
+
+// TestNewTypeAndSumWitness_EmptyInputs is T-GAP-C16: NewTypeAndSumWitness indexed
+// in[0] (to compute the token type) without first checking that in was non-empty.
+// An empty in slice caused an index-out-of-range panic instead of returning an
+// error.
+func TestNewTypeAndSumWitness_EmptyInputs(t *testing.T) {
+	c := math.Curves[TestCurve]
+
+	rand, err := c.Rand()
+	require.NoError(t, err)
+	bf := c.NewRandomZr(rand)
+
+	out := []*token.Metadata{{BlindingFactor: bf, Value: c.NewZrFromInt(1), Type: token2.Type("ABC")}}
+
+	var witness *transfer.TypeAndSumWitness
+	require.NotPanics(t, func() {
+		witness, err = transfer.NewTypeAndSumWitness(bf, nil, out, c)
+	})
+	require.Error(t, err)
+	require.Nil(t, witness)
+	assert.Contains(t, err.Error(), "invalid number of token inputs")
 }

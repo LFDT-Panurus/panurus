@@ -94,7 +94,7 @@ func NewCachedNegZrFromInt(c *math.Curve, i uint64) *math.Zr {
 	}
 	v, ok := cc[i]
 	if !ok {
-		v := c.NewZrFromUint64(i)
+		v = c.NewZrFromUint64(i)
 		v.Neg()
 	}
 

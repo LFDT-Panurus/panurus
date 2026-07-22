@@ -180,6 +180,36 @@ func TestFromProtosSlice(t *testing.T) {
 		assert.Nil(t, dests[1], "nil proto should result in nil destination")
 		assert.Equal(t, "third", dests[2].data)
 	})
+
+	// T-GAP-C12: FromProtosSlice indexed t[i] without checking len(t) == len(s)
+	// first. A deserialized proto message can legitimately carry a shorter
+	// repeated field than the destination slice the caller pre-sized (e.g. a
+	// crafted request.IssueMetadata with fewer Inputs than IssueInputMetadata
+	// entries the caller allocated from a different, unrelated length), which
+	// panicked with an index-out-of-range instead of returning an error.
+	t.Run("destination slice longer than protos slice", func(t *testing.T) {
+		protos := []*TestProto{{Value: "first"}}
+		dests := []*TestDestination{{}, {}, {}}
+
+		var err error
+		require.NotPanics(t, func() {
+			err = FromProtosSlice(protos, dests)
+		})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "mismatched slice lengths")
+	})
+
+	t.Run("protos slice longer than destination slice", func(t *testing.T) {
+		protos := []*TestProto{{Value: "first"}, {Value: "second"}, {Value: "third"}}
+		dests := []*TestDestination{{}}
+
+		var err error
+		require.NotPanics(t, func() {
+			err = FromProtosSlice(protos, dests)
+		})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "mismatched slice lengths")
+	})
 }
 
 // TestFromProtosSliceFunc verifies FromProtosSliceFunc with custom converter

@@ -52,6 +52,9 @@ type BulletProofProver struct {
 
 // NewBulletProofProver instantiates a BulletProofProver for an issue action using the provided witnesses, tokens, and public parameters.
 func NewBulletProofProver(tw []*token.Metadata, tokens []*math.G1, pp *v1.PublicParams) (*BulletProofProver, error) {
+	if len(tw) == 0 {
+		return nil, errors.Wrap(ErrInvalidInputs, "cannot create bulletproof prover: no token witnesses")
+	}
 	c := math.Curves[pp.Curve]
 	p := &BulletProofProver{}
 	tokenType := c.HashToZr([]byte(tw[0].Type))

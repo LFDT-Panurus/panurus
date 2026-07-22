@@ -15,6 +15,7 @@ import (
 	math3 "github.com/IBM/mathlib"
 	"github.com/LFDT-Panurus/panurus/token/core"
 	mock2 "github.com/LFDT-Panurus/panurus/token/core/common/driver/mock"
+	coremock "github.com/LFDT-Panurus/panurus/token/core/mock"
 	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/crypto/rp"
 	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/driver"
 	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/setup"
@@ -22,6 +23,8 @@ import (
 	dmock "github.com/LFDT-Panurus/panurus/token/driver/mock"
 	imock "github.com/LFDT-Panurus/panurus/token/services/identity/driver/mock"
 	idmock "github.com/LFDT-Panurus/panurus/token/services/identity/mock"
+	"github.com/LFDT-Panurus/panurus/token/services/identity/wallet"
+	"github.com/LFDT-Panurus/panurus/token/services/logging"
 	"github.com/LFDT-Panurus/panurus/token/services/network"
 	"github.com/LFDT-Panurus/panurus/token/services/storage"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/services/metrics/disabled"
@@ -284,6 +287,44 @@ func TestWalletServiceFactory(t *testing.T) {
 	_, err = wsFactory.NewWalletService(tmsConfig, pp)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to get identity storage provider")
+}
+
+// TestBaseWalletServiceFactoryRejectsInvalidPublicParametersType is T-GAP-C11.
+//
+// BaseWalletServiceFactory.NewWalletService used an unchecked type assertion
+// (`publicParams.(*v1.PublicParams)`) instead of the checked, two-value form
+// every other factory in this package uses (PPMFactory.NewPublicParametersManager,
+// WalletServiceFactory.NewWalletService). WalletServiceFactory.NewWalletService
+// already validates the type before delegating to this method, so the panic
+// was not reachable through that composed path — but BaseWalletServiceFactory
+// is exported and its method can be called directly (or via any future
+// caller) with a mismatched driver.PublicParameters implementation, which
+// would panic instead of returning an error.
+func TestBaseWalletServiceFactoryRejectsInvalidPublicParametersType(t *testing.T) {
+	storageProvider := &imock.StorageProvider{}
+	base := &driver.BaseWalletServiceFactory{}
+	tmsConfig := &coremock.Config{}
+	tmsConfig.IDReturns(tdriver.TMSID{Network: "n1", Channel: "c1", Namespace: "ns1"})
+
+	var ws *wallet.Service
+	var err error
+	require.NotPanics(t, func() {
+		ws, err = base.NewWalletService(
+			tmsConfig,
+			&idmock.NetworkBinderService{},
+			storageProvider,
+			nil,
+			logging.MustGetLogger("test"),
+			nil,
+			nil,
+			&dmock.PublicParameters{},
+			true,
+			&disabled.Provider{},
+		)
+	})
+	require.Error(t, err)
+	assert.Nil(t, ws)
+	assert.Contains(t, err.Error(), "invalid public parameters type")
 }
 
 // TestDeserializers tests the zkatdlog deserializer and EIDRH deserializer creation.
