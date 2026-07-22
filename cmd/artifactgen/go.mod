@@ -10,8 +10,8 @@ replace (
 require (
 	github.com/LFDT-Panurus/panurus v0.10.1
 	github.com/LFDT-Panurus/panurus/integration v0.0.0
-	github.com/hyperledger-labs/fabric-smart-client v0.15.1-0.20260721110612-2bc555859757
-	github.com/hyperledger-labs/fabric-smart-client/integration v0.15.1-0.20260721110612-2bc555859757
+	github.com/hyperledger-labs/fabric-smart-client v0.15.1-0.20260721183515-486916e457eb
+	github.com/hyperledger-labs/fabric-smart-client/integration v0.15.1-0.20260721183515-486916e457eb
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/viper v1.21.0
 	github.com/stretchr/testify v1.11.1
