@@ -51,12 +51,25 @@ A `driver.StaticResourceLimits` provider (a trivial wrapper returning a fixed va
 tests, tools, and any caller that only needs the defaults (e.g.
 `cmd/token_validation_service`, the zkatdlog regression suite).
 
-The resolved `driver.ResourceLimits` flows: composition root → `core.NewValidatorDriverService(limits, ...)`
-→ `driver.ValidatorDriver.NewValidator(pp, limits)` → the per-driver `common.NewValidator(..., limits, ...)`
-→ `ActionDeserializer.DeserializeActions`, which calls `action.SetLimits(limits)` on every
-deserialized action before `Deserialize` runs. Any action constructed without `SetLimits` (e.g. in
-tests or other non-validator call sites) falls back to `DefaultResourceLimits()` via an internal
-`effectiveLimits()` helper — never more permissive than the historical behavior.
+The FSC/DI runtime (`token/sdk/dig/sdk.go`) registers exactly one `driver.ResourceLimitsProvider` in
+the dig container — the config-backed implementation above — and injects it into **both** validator
+construction paths, so they always enforce the same configured limits:
+
+- The per-TMS token manager service: each driver's `NewTokenDriver` constructor
+  (`token/core/fabtoken/v1/driver/driver.go`, `token/core/zkatdlog/nogh/v1/driver/driver.go`) takes a
+  `driver.ResourceLimitsProvider` and resolves it inside `NewTokenService`, immediately before
+  constructing that TMS's validator.
+- The standalone validator-driver service: `newValidatorDriverService`
+  (`token/sdk/dig/providers.go`) takes the same injected `driver.ResourceLimitsProvider` and resolves
+  it once when building `core.ValidatorDriverService`.
+
+The resolved `driver.ResourceLimits` flows: provider → (`Driver.NewTokenService` /
+`core.NewValidatorDriverService(limits, ...)` → `driver.ValidatorDriver.NewValidator(pp, limits)`) →
+the per-driver `common.NewValidator(..., limits, ...)` → `ActionDeserializer.DeserializeActions`,
+which calls `action.SetLimits(limits)` on every deserialized action before `Deserialize` runs. Any
+action constructed without `SetLimits` (e.g. in tests or other non-validator call sites) falls back
+to `DefaultResourceLimits()` via an internal `effectiveLimits()` helper — never more permissive than
+the historical behavior.
 
 ## Consensus-safety contract
 

@@ -122,6 +122,7 @@ func (p *SDK) Install() error {
 			digutils.Identity[*tms.ConfigServiceWrapper](),
 			dig.As(new(ftscore.ConfigService), new(db2.ConfigService), new(tms.ConfigService)),
 		),
+		p.Container().Provide(ftsconfig.NewResourceLimitsProvider, dig.As(new(ftsdriver.ResourceLimitsProvider))),
 
 		// network service
 		p.Container().Provide(network.NewProvider),

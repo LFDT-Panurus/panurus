@@ -45,6 +45,7 @@ func TestNewDriver(t *testing.T) {
 		endpointService,
 		networkProvider,
 		vaultProvider,
+		tdriver.StaticResourceLimits(tdriver.DefaultResourceLimits()),
 	)
 
 	assert.NotNil(t, factory.Driver)
@@ -70,6 +71,7 @@ func TestNewTokenService(t *testing.T) {
 		endpointService,
 		networkProvider,
 		vaultProvider,
+		tdriver.StaticResourceLimits(tdriver.DefaultResourceLimits()),
 	).Driver.(*driver.Driver)
 
 	tmsID := tdriver.TMSID{Network: "n1", Channel: "c1", Namespace: "ns1"}
