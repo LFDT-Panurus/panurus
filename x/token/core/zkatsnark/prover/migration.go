@@ -76,8 +76,8 @@ func BuildMigrationWitness(
 		return nil, errors.Wrapf(err, "prover: migration commitment derivation failed")
 	}
 
-	var rcv fr.Element
-	if _, err := rcv.SetRandom(); err != nil {
+	rcv, err := jubjub.RandomJubjubScalar()
+	if err != nil {
 		return nil, errors.Wrapf(err, "prover: migration RCV generation failed")
 	}
 

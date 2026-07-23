@@ -9,12 +9,34 @@ package jubjub
 import (
 	"errors"
 	"math/big"
+	"crypto/rand"
+	"fmt"
 
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/twistededwards"
 )
 
 var ErrInvalidScalar = errors.New("jubjub: invalid scalar")
+
+// RandomJubjubScalar generates a cryptographically random scalar uniform in
+// [0, jubjub_order). This MUST be used instead of fr.Element.SetRandom() for
+// any scalar that will be used as a Jubjub curve scalar multiplier (e.g. RCV),
+// because fr.Element.SetRandom() samples from [0, BLS12-381_r), a different,
+// larger modulus. Using the wrong range breaks the homomorphic property that
+// the binding signature relies on.
+func RandomJubjubScalar() (fr.Element, error) {
+	params := twistededwards.GetEdwardsCurve()
+
+	k, err := rand.Int(rand.Reader, &params.Order)
+	if err != nil {
+		return fr.Element{}, fmt.Errorf("jubjub: random scalar generation failed: %w", err)
+	}
+
+	var s fr.Element
+	s.SetBigInt(k)
+
+	return s, nil
+}
 
 // ValueCommit computes the value commitment cv = v·V + rcv·R over Jubjub.
 //

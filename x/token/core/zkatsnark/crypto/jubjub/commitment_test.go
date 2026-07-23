@@ -7,10 +7,12 @@ SPDX-License-Identifier: Apache-2.0
 package jubjub_test
 
 import (
+	"math/big"
 	"testing"
 
 	"github.com/consensys/gnark-crypto/ecc"
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
+	"github.com/consensys/gnark-crypto/ecc/bls12-381/twistededwards"
 	"github.com/consensys/gnark/frontend"
 	"github.com/consensys/gnark/frontend/cs/r1cs"
 
@@ -22,8 +24,7 @@ import (
 )
 
 func TestValueCommitDeterminism(t *testing.T) {
-	var rcv fr.Element
-	_, err := rcv.SetRandom()
+	rcv, err := jubjub.RandomJubjubScalar()
 	require.NoError(t, err)
 
 	cv1, _ := jubjub.ValueCommit(100, rcv)
@@ -37,16 +38,21 @@ func TestValueCommitDeterminism(t *testing.T) {
 // ValueCommit(v1+v2, rcv1+rcv2) == ValueCommit(v1,rcv1) + ValueCommit(v2,rcv2)
 // If this test fails, the conservation proof is unsound.
 func TestValueCommitHomomorphism(t *testing.T) {
-	var rcv1 fr.Element
-	_, err := rcv1.SetRandom()
+	rcv1, err := jubjub.RandomJubjubScalar()
 	require.NoError(t, err)
 
-	var rcv2 fr.Element
-	_, err = rcv2.SetRandom()
+	rcv2, err := jubjub.RandomJubjubScalar()
 	require.NoError(t, err)
+
+	// rcvSum must be computed mod the Jubjub subgroup order, not mod the
+	// BLS12-381 scalar field. fr.Element.Add reduces mod r (BLS12-381),
+	// which is a different modulus. Use big.Int arithmetic.
+	params := twistededwards.GetEdwardsCurve()
+	rcvSumBig := new(big.Int).Add(rcv1.BigInt(new(big.Int)), rcv2.BigInt(new(big.Int)))
+	rcvSumBig.Mod(rcvSumBig, &params.Order)
 
 	var rcvSum fr.Element
-	rcvSum.Add(&rcv1, &rcv2)
+	rcvSum.SetBigInt(rcvSumBig)
 
 	cv1, _ := jubjub.ValueCommit(uint64(100), rcv1)
 	cv2, _ := jubjub.ValueCommit(uint64(100), rcv2)
@@ -60,10 +66,10 @@ func TestValueCommitHomomorphism(t *testing.T) {
 }
 
 func TestValueCommitDistinct(t *testing.T) {
-	var rcv1, rcv2 fr.Element
-	_, err := rcv1.SetRandom()
+	rcv1, err := jubjub.RandomJubjubScalar()
 	require.NoError(t, err)
-	_, err = rcv2.SetRandom()
+
+	rcv2, err := jubjub.RandomJubjubScalar()
 	require.NoError(t, err)
 
 	cv1, _ := jubjub.ValueCommit(100, rcv1)
@@ -76,8 +82,7 @@ func TestValueCommitDistinct(t *testing.T) {
 
 func TestValueCommitOnCurve(t *testing.T) {
 	for i := range 20 {
-		var rcv fr.Element
-		_, err := rcv.SetRandom()
+		rcv, err := jubjub.RandomJubjubScalar()
 		require.NoError(t, err)
 		cv, _ := jubjub.ValueCommit(uint64(i+1), rcv)
 		require.True(t, cv.IsOnCurve())
@@ -91,8 +96,7 @@ func TestValueCommitSumEmpty(t *testing.T) {
 }
 
 func TestNegatePoint(t *testing.T) {
-	var rcv fr.Element
-	_, err := rcv.SetRandom()
+	rcv, err := jubjub.RandomJubjubScalar()
 	require.NoError(t, err)
 	cv, _ := jubjub.ValueCommit(42, rcv)
 	neg := jubjub.NegatePoint(cv)
@@ -137,8 +141,7 @@ func TestValueCommitCrossConsistency(t *testing.T) {
 	require.NoError(t, err)
 
 	for trial := range 20 {
-		var rcv fr.Element
-		_, err = rcv.SetRandom()
+		rcv, err := jubjub.RandomJubjubScalar()
 		require.NoError(t, err)
 		v := uint64(trial*137 + 1)
 
