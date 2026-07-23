@@ -238,18 +238,30 @@ services:
 ```
 
 On FabricX, the namespace's endorsement policy is fetched via the query service's
-`GetNamespacePolicies` RPC. The policy is mapped onto MSP IDs (`msp_rule`, an
-identity/MSP-based `SignaturePolicyEnvelope`) and a random subset of the configured
-`endorsers` that jointly satisfies it is selected — for example, given an
-`OR(Org1MSP, Org2MSP)` policy, either a configured Org1 endorser or a configured Org2
-endorser is contacted, chosen at random.
+`GetNamespacePolicies` RPC, and endorser selection depends on which rule the policy uses:
 
-Two cases are treated as hard errors, since correctness takes priority over
+- **`msp_rule`** (an identity/MSP-based `SignaturePolicyEnvelope`): the policy is mapped
+  onto MSP IDs, and a random subset of the configured `endorsers` that jointly satisfies
+  it is selected — for example, given an `OR(Org1MSP, Org2MSP)` policy, either a
+  configured Org1 endorser or a configured Org2 endorser is contacted, chosen at random.
+- **`threshold_rule`** (a single raw public key + signature scheme, *not* a k-of-n
+  group despite the name): there is no MSP principal to satisfy, so the policy instead
+  names one specific signer directly by key. The configured `endorsers` are searched for
+  the one whose own MSP/X.509 identity carries that same public key, and only that
+  endorser is contacted. Only the `ECDSA` scheme is supported, since FSC endorser
+  identities are X.509/ECDSA-based — this also matches FSC's own pre-broadcast
+  endorsement verification, which checks every endorsement against the endorser's
+  MSP/X.509 key regardless of the namespace's on-chain policy, so a signature can only
+  pass both checks if the two keys are the same key. `BLS`/`EdDSA` `threshold_rule`
+  namespaces cannot be endorsed through the current FSC signing path.
+
+The following are treated as hard errors, since correctness takes priority over
 availability:
-- the namespace policy is a `ThresholdRule` (a raw-public-key signer, not identity/MSP
-  based, so it cannot be mapped onto a subset of endorser identities);
-- none of the configured `endorsers` can satisfy the namespace's policy (e.g. no
-  configured endorser belongs to a required MSP).
+- for `msp_rule`: none of the configured `endorsers` can satisfy the namespace's policy
+  (e.g. no configured endorser belongs to a required MSP);
+- for `threshold_rule`: the scheme is not `ECDSA`; the public key cannot be parsed; zero
+  configured endorsers' identities carry the policy's key; or more than one does (which
+  would mean two endorsers share a private key — a misconfiguration).
 
 ### Endorsement Flow
 
