@@ -29,7 +29,7 @@ var (
 	// or wrapped) to deny a lock for policy reasons such as rate limiting or quota.
 	// Both the simple and sherdlock selectors detect it via errors.Is and abort the
 	// selection immediately, returning the error to the caller instead of retrying.
-	// The token-sdk ships no built-in limiter: applications integrate their own
+	// Panurus ships no built-in limiter: applications integrate their own
 	// (e.g. a Redis-backed limiter) by providing a Locker implementation that returns
 	// this error when a request must be throttled.
 	SelectorRateLimited = errors.New("selection rate limit exceeded")
