@@ -13,6 +13,122 @@ import (
 	bn254fr "github.com/consensys/gnark-crypto/ecc/bn254/fr"
 )
 
+// leftChild returns the index of the left child of node i in the tree array.
+func leftChild(i int) int {
+	return 2*i + 1
+}
+
+// rightChild returns the index of the right child of node i in the tree array.
+func rightChild(i int) int {
+	return 2*i + 2
+}
+
+// computeNumeratorsBinaryTree computes the numerators for Lagrange interpolation
+// using a binary tree approach. For each leaf i, it computes the product of all
+// (c-j) for j != i.
+//
+// It first writes c-j for j in [0,m) into the leaves region of pooled.slab
+// (slab[leafStart:treeSize]). pooled.tree and pooled.leaves are contiguous in
+// the slab, so a single fullE pointer array of length treeSize covers the
+// entire tree with no leaf/internal distinction needed at read time.
+//
+// The slab layout is:
+//
+//	slab = [ tree (leafStart) | leaves (m) | exclude (leafStart) | numers (m) ]
+//	       |<---------- treeSize ---------->|<---------- treeSize ----------->|
+//
+// slab[treeSize:] mirrors the tree shape: internal-node slots hold exclude
+// values and leaf slots hold numerator outputs. A single excludeE pointer array
+// of length treeSize covering slab[treeSize:] lets the top-down pass write to
+// either region with a plain index — no branch on whether a child is a leaf.
+//
+// Algorithm:
+//  0. Initialise leaves: slab[leafStart+j] = c - j, for j in [0,m).
+//  1. Build fullE[0..treeSize-1]: pointers into slab[0:treeSize] (tree+leaves).
+//  2. Build excludeE[0..treeSize-1]: pointers into slab[treeSize:] (exclude+numers).
+//  3. Bottom-up: for each internal node, multiply its two children's values.
+//  4. Top-down: propagate exclude products; excludeE[child] receives the result
+//     directly — if child < leafStart it lands in exclude, otherwise in numers.
+func computeNumeratorsBinaryTree[T any, E math2.GnarkFr[T]](m int, c *mathlib.Zr, pooled *treeArrays[T]) []E {
+	leafStart := m - 1
+	treeSize := 2*m - 1
+
+	// fullE: pointers into slab[0:treeSize] — the bottom-up tree (internal + leaves).
+	fullE := make([]E, treeSize)
+	// excludeE: pointers into slab[treeSize:2*treeSize] — mirrors the tree shape.
+	excludeE := make([]E, treeSize)
+	for i := range treeSize {
+		fullE[i] = E(&pooled.slab[i])
+		excludeE[i] = E(&pooled.slab[treeSize+i])
+	}
+
+	m2 := m / 2
+	cE := math2.NativeFromZr[T, E](c)
+	var jE T
+
+	if m&1 == 1 {
+		E(&jE).SetInt64(int64(m2))
+		fullE[leafStart].Sub(cE, E(&jE))
+	}
+	for i := range m2 {
+		E(&jE).SetInt64(int64(i))
+		fullE[leafStart+2*i+(m&1)].Sub(cE, E(&jE))
+		E(&jE).SetInt64(int64(m - 1 - i))
+		fullE[leafStart+2*i+1+(m&1)].Sub(cE, E(&jE))
+	}
+
+	// start of the inner nodes whose both children are leaves
+	leafPairsStart := leafStart - m2
+
+	// Phase 1: Bottom-up — compute subtree products for internal nodes.
+	var ccmT, cMinusMm1T T
+	ccmE := E(&ccmT)
+	E(&jE).SetInt64(int64(m - 1))
+	E(&cMinusMm1T).Sub(cE, E(&jE))
+	ccmE.Mul(cE, E(&cMinusMm1T))
+
+	for i := leafStart - 1; i >= leafPairsStart; i-- {
+		j := i - leafPairsStart
+		E(&jE).SetInt64(int64(j * (m - 1 - j)))
+		fullE[i].Add(ccmE, E(&jE))
+	}
+
+	for i := leafPairsStart - 1; i >= 0; i-- {
+		left := leftChild(i)
+		right := rightChild(i)
+
+		// Both children exist: node = left × right.
+		fullE[i].Mul(fullE[left], fullE[right])
+	}
+
+	// Phase 2: Top-down — compute exclude products and write leaf numerators.
+	// Root's exclude is 1 (nothing excluded above it).
+	excludeE[0].SetOne()
+
+	for i := range leafStart {
+		left := leftChild(i)
+		right := rightChild(i)
+
+		// Both children exist.
+		// Left child's exclude = parent exclude × right subtree product.
+		// Right child's exclude = parent exclude × left subtree product.
+		// excludeE[child] lands in exclude if child < leafStart, numers otherwise.
+		excludeE[left].Mul(excludeE[i], fullE[right])
+		excludeE[right].Mul(excludeE[i], fullE[left])
+	}
+
+	numersE := make([]E, m)
+	if m&1 == 1 {
+		numersE[m2] = E(&pooled.slab[treeSize+leafStart])
+	}
+	for i := range m2 {
+		numersE[i] = E(&pooled.slab[treeSize+leafStart+2*i+(m&1)])
+		numersE[m-1-i] = E(&pooled.slab[treeSize+leafStart+2*i+1+(m&1)])
+	}
+
+	return numersE
+}
+
 // getLagrangeMultipliersNative is the native fr.Element implementation of
 // getLagrangeMultipliers. Conversions between mathlib.Zr and fr.Element occur
 // only once at the boundary (once for input c, n+1 times for the output slice),
@@ -23,33 +139,10 @@ import (
 func getLagrangeMultipliersNative[T any, E math2.GnarkFr[T]](n uint64, c *mathlib.Zr, curve *mathlib.Curve, denomInvs []E) ([]*mathlib.Zr, error) {
 	m := int(n) + 1 // #nosec G115
 
-	// Convert c once.
-	cE := math2.NativeFromZr[T, E](c)
-
-	// cMinusJ[j] = c - j  for j = 0..n
-	cMinusJ := make([]T, m)
-	cMinusJE := make([]E, m)
-	for j := range m {
-		cMinusJE[j] = E(&cMinusJ[j])
-		var jE T
-		E(&jE).SetInt64(int64(j))
-		cMinusJE[j].Sub(cE, E(&jE))
-	}
-
 	// Compute numerator for each Lagrange basis polynomial L_i(c).
 	// Denominators come from the cache — no O(n²) recomputation.
-	numers := make([]T, m)
-	numersE := make([]E, m)
-	for i := range numers {
-		numersE[i] = E(&numers[i])
-		numersE[i].SetOne()
-		for j := range m {
-			if j == i {
-				continue
-			}
-			numersE[i].Mul(numersE[i], cMinusJE[j])
-		}
-	}
+	pooled := getTreeArrays[T](m)
+	numersE := computeNumeratorsBinaryTree[T, E](m, c, pooled)
 
 	result := make([]*mathlib.Zr, m)
 	for i := range m {
@@ -57,6 +150,7 @@ func getLagrangeMultipliersNative[T any, E math2.GnarkFr[T]](n uint64, c *mathli
 		E(&prod).Mul(numersE[i], denomInvs[i])
 		result[i] = math2.NativeToZr[T, E](E(&prod), curve)
 	}
+	putTreeArrays(pooled)
 
 	return result, nil
 }
@@ -67,47 +161,26 @@ func getLagrangeMultipliersNative[T any, E math2.GnarkFr[T]](n uint64, c *mathli
 func getLagrangeMultipliersPartialNative[T any, E math2.GnarkFr[T]](n uint64, c *mathlib.Zr, curve *mathlib.Curve, denomInvs []E) ([]*mathlib.Zr, error) {
 	total := 2*int(n) + 1 // #nosec G115 // all evaluation points: 0..2n
 
-	cE := math2.NativeFromZr[T, E](c)
-
-	// cMinusJ[j] = c - j  for j = 0..2n
-	cMinusJ := make([]T, total)
-	cMinusJE := make([]E, total)
-	for j := range total {
-		cMinusJE[j] = E(&cMinusJ[j])
-		var jE T
-		E(&jE).SetInt64(int64(j))
-		cMinusJE[j].Sub(cE, E(&jE))
-	}
-
+	// Compute numerators for all points, then extract relevant ones.
 	// Relevant indices in the full point set: {0, n+1, n+2, ..., 2n}
-	relevant := make([]int, int(n)+1) // #nosec G115
-	relevant[0] = 0
+	// relevant[0]=0, relevant[k]=n+k for k>=1 — computed inline, no allocation needed.
+	pooled := getTreeArrays[T](total)
+	allNumersE := computeNumeratorsBinaryTree[T, E](total, c, pooled)
+
+	result := make([]*mathlib.Zr, int(n)+1) // #nosec G115
+
+	// k=0: relevant index is 0
+	var prod0 T
+	E(&prod0).Mul(allNumersE[0], denomInvs[0])
+	result[0] = math2.NativeToZr[T, E](E(&prod0), curve)
+
+	// k=1..n: relevant index is n+k
 	for k := 1; k <= int(n); k++ { // #nosec G115
-		relevant[k] = int(n) + k // #nosec G115
-	}
-
-	numers := make([]T, len(relevant))
-	numersE := make([]E, len(relevant))
-	for k := range relevant {
-		numersE[k] = E(&numers[k])
-	}
-
-	for k, i := range relevant {
-		numersE[k].SetOne()
-		for j := range total {
-			if j == i {
-				continue
-			}
-			numersE[k].Mul(numersE[k], cMinusJE[j])
-		}
-	}
-
-	result := make([]*mathlib.Zr, len(relevant))
-	for k := range relevant {
 		var prod T
-		E(&prod).Mul(numersE[k], denomInvs[k])
+		E(&prod).Mul(allNumersE[int(n)+k], denomInvs[k]) // #nosec G115
 		result[k] = math2.NativeToZr[T, E](E(&prod), curve)
 	}
+	putTreeArrays(pooled)
 
 	return result, nil
 }

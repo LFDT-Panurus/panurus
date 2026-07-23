@@ -12,6 +12,38 @@ import (
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 )
 
+// collapseTrailingEqualPoints folds a maximal trailing run of identical points
+// into a single entry whose scalar is the sum of the run's scalars. As MSM is
+// linear, MSM(points, scalars) is unchanged.
+//
+// The CSP generators are power-of-two padded with a trailing run of GenG1, so
+// this shrinks the gen_f MSM to its distinct generators. It returns reduced
+// views of the inputs and overwrites scalars[start] with the run sum, so the
+// caller must not reuse scalars afterwards. The slices are returned unchanged
+// when the trailing run has length < 2.
+func collapseTrailingEqualPoints(points []*mathlib.G1, scalars []*mathlib.Zr, curve *mathlib.Curve) ([]*mathlib.G1, []*mathlib.Zr) {
+	n := len(points)
+	if n < 2 {
+		return points, scalars
+	}
+
+	start := n - 1
+	for start > 0 && points[start-1].Equals(points[n-1]) {
+		start--
+	}
+	if start == n-1 {
+		return points, scalars // no run to fold
+	}
+
+	sum := scalars[start].Copy()
+	for i := start + 1; i < n; i++ {
+		sum = curve.ModAdd(sum, scalars[i], curve.GroupOrder)
+	}
+	scalars[start] = sum
+
+	return points[:start+1], scalars[:start+1]
+}
+
 // Proof is the non-interactive compressed sigma-protocol proof for a linear
 // form evaluation over a Pedersen commitment.
 //
@@ -295,25 +327,39 @@ func (v *verifier) Verify(proof *Proof) error {
 		comScalars = append(comScalars, mulScratch.Copy())
 	}
 
-	com := v.Curve.MultiScalarMul(comPoints, comScalars)
-
 	// Compute the coefficient vector s such that
 	//   gen_f = sum_i s[i] · gen[i]   and   f_f = sum_i s[i] · f[i]
 	// then evaluate both via a single MSM and a single inner product.
 	n := 1 << v.NumberOfRounds
 	s := sVector(n, challenges, v.Curve)
 
-	// gen_f = MSM(Generators, s)
-	genF := v.Curve.MultiScalarMul(v.Generators, s)
-
-	// f_f = ⟨s, LinearForm⟩  (scalar-field MSM via ModAddMul)
+	// f_f = ⟨s, LinearForm⟩  (scalar-field MSM via ModAddMul).
+	// Computed before the gen_f collapse below, which may truncate s in place.
 	fF := math.InnerProduct(s, v.LinearForm, v.Curve)
 
-	// Final check: com_f^{f_f} == gen_f^{val_f}
-	lhs := com.Mul(fF)
-	rhs := genF.Mul(val)
+	// gen_f = MSM(Generators, s). The generators are power-of-two padded with a
+	// trailing run of GenG1; fold it away so the MSM runs over distinct points.
+	genPoints, genScalars := collapseTrailingEqualPoints(v.Generators, s, v.Curve)
 
-	if !lhs.Equals(rhs) {
+	// Final check: com^{f_f} == gen_f^{val}, where com = MSM(comPoints, comScalars)
+	// and gen_f = MSM(genPoints, genScalars). Since MSM is linear this is the same as
+	//   MSM(comPoints ∪ genPoints, [comScalars·f_f, genScalars·(−val)]) == identity,
+	// so we pre-scale the two scalar vectors (field muls), concatenate, and run a
+	// single MSM instead of two MSMs plus two EC scalar multiplications.
+	negVal := v.Curve.ModNeg(val, v.Curve.GroupOrder)
+
+	allPoints := make([]*mathlib.G1, 0, len(comPoints)+len(genPoints))
+	allScalars := make([]*mathlib.Zr, 0, len(comPoints)+len(genPoints))
+	for i := range comPoints {
+		allPoints = append(allPoints, comPoints[i])
+		allScalars = append(allScalars, v.Curve.ModMul(comScalars[i], fF, v.Curve.GroupOrder))
+	}
+	for i := range genPoints {
+		allPoints = append(allPoints, genPoints[i])
+		allScalars = append(allScalars, v.Curve.ModMul(genScalars[i], negVal, v.Curve.GroupOrder))
+	}
+
+	if !v.Curve.MultiScalarMul(allPoints, allScalars).IsInfinity() {
 		return errors.New("CSP proof verification failed")
 	}
 
