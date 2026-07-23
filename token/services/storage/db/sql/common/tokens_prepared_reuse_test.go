@@ -192,3 +192,62 @@ func TestBalancePreparedReuse(t *testing.T) {
 
 	require.NoError(t, mockDB.ExpectationsWereMet())
 }
+
+// TestGetStatusPreparedReuse verifies, without a real DB, that GetStatus
+// reuses the same prepared statement across repeated calls with different
+// txIDs, since the query has only one shape ever (tx_id = ?).
+func TestGetStatusPreparedReuse(t *testing.T) {
+	db, mockDB, err := sqlmock.New()
+	require.NoError(t, err)
+	defer func() { _ = db.Close() }()
+
+	store := &TransactionStore{
+		readDB:        db,
+		table:         transactionTables{Requests: "requests"},
+		ci:            stubCondInterpreter{},
+		getStatusStmt: newPreparedStmtHolder[string](),
+	}
+
+	cols := []string{"status", "status_message"}
+	queryPattern := "(?s)SELECT.*status.*requests.*"
+
+	mockDB.ExpectPrepare(queryPattern).
+		ExpectQuery().WillReturnRows(sqlmock.NewRows(cols).AddRow(1, ""))
+	mockDB.ExpectQuery(queryPattern).WillReturnRows(sqlmock.NewRows(cols).AddRow(1, ""))
+	mockDB.ExpectQuery(queryPattern).WillReturnRows(sqlmock.NewRows(cols).AddRow(1, ""))
+
+	for _, txID := range []string{"tx-a", "tx-b", "tx-c"} {
+		_, _, err := store.GetStatus(t.Context(), txID)
+		require.NoError(t, err)
+	}
+	require.Equal(t, 1, store.getStatusStmt.Count())
+	require.NoError(t, mockDB.ExpectationsWereMet())
+}
+
+// TestGetTokenRequestPreparedReuse verifies the same for GetTokenRequest.
+func TestGetTokenRequestPreparedReuse(t *testing.T) {
+	db, mockDB, err := sqlmock.New()
+	require.NoError(t, err)
+	defer func() { _ = db.Close() }()
+
+	store := &TransactionStore{
+		readDB:              db,
+		table:               transactionTables{Requests: "requests"},
+		ci:                  stubCondInterpreter{},
+		getTokenRequestStmt: newPreparedStmtHolder[string](),
+	}
+
+	cols := []string{"request"}
+	queryPattern := "(?s)SELECT.*request.*requests.*"
+
+	mockDB.ExpectPrepare(queryPattern).
+		ExpectQuery().WillReturnRows(sqlmock.NewRows(cols).AddRow([]byte("r")))
+	mockDB.ExpectQuery(queryPattern).WillReturnRows(sqlmock.NewRows(cols).AddRow([]byte("r")))
+
+	for _, txID := range []string{"tx-a", "tx-b"} {
+		_, err := store.GetTokenRequest(t.Context(), txID)
+		require.NoError(t, err)
+	}
+	require.Equal(t, 1, store.getTokenRequestStmt.Count())
+	require.NoError(t, mockDB.ExpectationsWereMet())
+}

@@ -54,6 +54,16 @@ type TransactionStore struct {
 	pi                    common3.PagInterpreter
 	notifier              dbdriver.TransactionNotifier
 	recoveryLeaderFactory func(context.Context, *sql.DB, int64) (dbdriver.RecoveryLeadership, bool, error)
+
+	// getStatusStmt caches the single prepared statement for GetStatus.
+	// Unlike the token-store queries, this query has exactly one shape
+	// (tx_id = ?, always present), so the holder always uses the same
+	// constant key.
+	getStatusStmt PreparedStmtHolder[string]
+
+	// getTokenRequestStmt caches the single prepared statement for
+	// GetTokenRequest, same single-shape reasoning as getStatusStmt.
+	getTokenRequestStmt PreparedStmtHolder[string]
 }
 
 func newTransactionStore(
@@ -66,7 +76,7 @@ func newTransactionStore(
 	notifier dbdriver.TransactionNotifier,
 	recoveryLeaderFactory func(context.Context, *sql.DB, int64) (dbdriver.RecoveryLeadership, bool, error),
 ) *TransactionStore {
-	return &TransactionStore{
+	ts := &TransactionStore{
 		readDB:                readDB,
 		writeDB:               writeDB,
 		table:                 tables,
@@ -77,6 +87,10 @@ func newTransactionStore(
 		notifier:              notifier,
 		recoveryLeaderFactory: recoveryLeaderFactory,
 	}
+	ts.getStatusStmt = newPreparedStmtHolder[string]()
+	ts.getTokenRequestStmt = newPreparedStmtHolder[string]()
+
+	return ts
 }
 
 // PrefixedTableName returns the formatted table name for the given logical name.
@@ -123,13 +137,31 @@ func (db *TransactionStore) CreateSchema() error {
 }
 
 func (db *TransactionStore) GetTokenRequest(ctx context.Context, txID string) ([]byte, error) {
-	query, args := q.Select().
-		FieldsByName("request").
-		From(q.Table(db.table.Requests)).
-		Where(cond.Eq("tx_id", txID)).
-		Format(db.ci)
+	rows, err := db.getTokenRequestStmt.Execute(ctx, db.readDB, "", func() (string, []any, error) {
+		query, args := q.Select().
+			FieldsByName("request").
+			From(q.Table(db.table.Requests)).
+			Where(cond.Eq("tx_id", txID)).
+			Format(db.ci)
 
-	return common.QueryUniqueContext[[]byte](ctx, db.readDB, query, args...)
+		return query, args, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	if !rows.Next() {
+		// Missing tx id - see GetTokenRequests' doc comment: callers should
+		// treat this identically to a present-but-nil result.
+		return nil, rows.Err()
+	}
+	var request []byte
+	if err := rows.Scan(&request); err != nil {
+		return nil, err
+	}
+
+	return request, nil
 }
 
 // GetTokenRequests fetches the token requests for the given tx ids in a
@@ -248,21 +280,30 @@ func (db *TransactionStore) QueryTransactions(ctx context.Context, params dbdriv
 func (db *TransactionStore) GetStatus(ctx context.Context, txID string) (dbdriver.TxStatus, string, error) {
 	var status dbdriver.TxStatus
 	var statusMessage string
-	query, args := q.Select().
-		FieldsByName("status", "status_message").
-		From(q.Table(db.table.Requests)).
-		Where(cond.Eq("tx_id", txID)).
-		Format(db.ci)
-	logging.Debug(logger, query, txID)
 
-	row := db.readDB.QueryRowContext(ctx, query, args...)
-	if err := row.Scan(&status, &statusMessage); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			logger.DebugfContext(ctx, "tried to get status for non-existent tx [%s], returning unknown", txID)
+	rows, err := db.getStatusStmt.Execute(ctx, db.readDB, "", func() (string, []any, error) {
+		query, args := q.Select().
+			FieldsByName("status", "status_message").
+			From(q.Table(db.table.Requests)).
+			Where(cond.Eq("tx_id", txID)).
+			Format(db.ci)
 
-			return dbdriver.Unknown, "", nil
+		return query, args, nil
+	})
+	if err != nil {
+		return dbdriver.Unknown, "", errors.Wrapf(err, "error querying db")
+	}
+	defer func() { _ = rows.Close() }()
+
+	if !rows.Next() {
+		if err := rows.Err(); err != nil {
+			return dbdriver.Unknown, "", errors.Wrapf(err, "error querying db")
 		}
+		logger.DebugfContext(ctx, "tried to get status for non-existent tx [%s], returning unknown", txID)
 
+		return dbdriver.Unknown, "", nil
+	}
+	if err := rows.Scan(&status, &statusMessage); err != nil {
 		return dbdriver.Unknown, "", errors.Wrapf(err, "error querying db")
 	}
 
@@ -435,6 +476,9 @@ func (db *TransactionStore) GetTransactionEndorsementAcks(ctx context.Context, t
 }
 
 func (db *TransactionStore) Close() error {
+	_ = db.getStatusStmt.Close()
+	_ = db.getTokenRequestStmt.Close()
+
 	return common2.Close(db.readDB, db.writeDB)
 }
 

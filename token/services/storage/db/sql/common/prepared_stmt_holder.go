@@ -61,9 +61,16 @@ func (h *preparedStmtHolder[K]) Execute(ctx context.Context, db *sql.DB, key K, 
 	if stmt, err := h.getOrPrepare(ctx, db, key, query); err == nil {
 		if rows, qErr := stmt.QueryContext(ctx, args...); qErr == nil {
 			return rows, nil
+		} else if ctx.Err() != nil {
+			// The context is already done - retrying via the fallback path
+			// would fail identically and only obscure the original
+			// cancellation/deadline error for callers checking its type.
+			return nil, qErr
 		} else {
 			logger.Warnf("prepared statement query failed for key [%v], falling back to unprepared query: %s", key, qErr)
 		}
+	} else if ctx.Err() != nil {
+		return nil, err
 	} else {
 		logger.Warnf("failed preparing statement for key [%v], falling back to unprepared query: %s", key, err)
 	}
