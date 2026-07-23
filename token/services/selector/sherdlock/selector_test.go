@@ -181,6 +181,49 @@ func TestSelectorRateLimit(t *testing.T) {
 		// Fail-fast: the selector must not spin retrying on a rate-limited lock.
 		assert.Equal(t, 1, mockLocker.TryLockCallCount(), "selector must abort after the first rate-limited lock")
 	})
+
+	// ReleasesLocksOnRateLimitedAbort verifies that when the selector has already
+	// locked one or more tokens and a subsequent lock is denied with
+	// token.SelectorRateLimited, it releases everything via UnlockAll before
+	// returning. The abort path must not leak the tokens locked so far.
+	t.Run("ReleasesLocksOnRateLimitedAbort", func(t *testing.T) {
+		mockFetcher := &mocks.FakeTokenFetcher{}
+		mockLocker := &mocks.FakeTokenLocker{}
+
+		// Three tokens of 30 each. The request for 70 forces the selector to lock
+		// the first two (60, still short) before it reaches the third.
+		mockIt := &mocks.FakeIterator[*token2.UnspentTokenInWallet]{}
+		mockIt.NextReturnsOnCall(0, &token2.UnspentTokenInWallet{
+			Id:       token2.ID{TxId: "tx1", Index: 0},
+			Type:     "ABC",
+			Quantity: "30",
+		}, nil)
+		mockIt.NextReturnsOnCall(1, &token2.UnspentTokenInWallet{
+			Id:       token2.ID{TxId: "tx2", Index: 0},
+			Type:     "ABC",
+			Quantity: "30",
+		}, nil)
+		mockIt.NextReturnsOnCall(2, &token2.UnspentTokenInWallet{
+			Id:       token2.ID{TxId: "tx3", Index: 0},
+			Type:     "ABC",
+			Quantity: "30",
+		}, nil)
+		mockFetcher.UnspentTokensIteratorByReturns(mockIt, nil)
+
+		// Lock the first two tokens successfully, then hit the rate limit on the third.
+		mockLocker.TryLockReturnsOnCall(0, true, nil)
+		mockLocker.TryLockReturnsOnCall(1, true, nil)
+		mockLocker.TryLockReturnsOnCall(2, false, errors.Wrapf(token.SelectorRateLimited, "wallet alice throttled"))
+
+		s := sherdlock.NewSelector(sherdlock.Logger(), mockFetcher, mockLocker, 64, metrics)
+		_, _, err := s.Select(t.Context(), &unitTestMockOwnerFilter{id: "alice"}, "70", "ABC")
+		require.Error(t, err)
+		assert.True(t, errors.Is(err, token.SelectorRateLimited), "expected rate-limit error, got: %v", err)
+		// Two tokens were locked before the rate-limited third lock aborted selection.
+		assert.Equal(t, 3, mockLocker.TryLockCallCount())
+		// The abort path must release the already-locked tokens.
+		assert.Equal(t, 1, mockLocker.UnlockAllCallCount(), "selector must release locked tokens via UnlockAll on abort")
+	})
 }
 
 type unitTestMockOwnerFilter struct {
