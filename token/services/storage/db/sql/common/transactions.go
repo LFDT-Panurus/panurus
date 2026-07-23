@@ -395,7 +395,7 @@ func (db *TransactionStore) Notifier() (dbdriver.TransactionNotifier, error) {
 	return db.notifier, nil
 }
 
-// QueryTokenRequests returns an iterator over the token requests matching the passed params
+// QueryTokenRequests returns an iterator over the token requests matching the passed params.
 func (db *TransactionStore) QueryTokenRequests(ctx context.Context, params dbdriver.QueryTokenRequestsParams) (dbdriver.TokenRequestIterator, error) {
 	query, args := q.Select().
 		FieldsByName("tx_id", "request", "status").

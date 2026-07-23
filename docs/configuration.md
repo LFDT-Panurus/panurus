@@ -798,6 +798,42 @@ to `<params>_<short_code>` (params still apply when provided; short-code overrid
 
 ---
 
+### Optional: token.storage.maxPayloadSize
+
+Maximum serialised size, in bytes, accepted by a single storage-service write
+(applies across the transaction, token, endorser, identity, and wallet stores).
+Writes whose payload exceeds this size are rejected before reaching the database.
+A value of `0` disables the check. When the key is absent, the default (4 MiB) applies.
+
+```yaml
+token:
+  storage:
+    maxPayloadSize: 4194304   # 4 MiB
+```
+
+---
+
+### Optional: token.storage.maxPageSize
+
+Maximum page size a paginated storage-service read may request, so an unlimited scan
+cannot exhaust database resources. A query that asks for an unbounded page (`nil` or
+`pagination.None()`) or a page larger than this value is rejected; callers page
+through the full result set instead. When the key is absent, the default (1000)
+applies.
+
+```yaml
+token:
+  storage:
+    maxPageSize: 1000
+```
+
+This bounds the paginated reads only. Streaming iterator reads are deliberately not
+row-capped, because they accept no page size for the caller to comply with — see
+[Storage API Limits](services/storage.md#storage-api-limits) for the full list and
+the reasoning, including why movement/balance queries are never row-capped.
+
+---
+
 ### Optional: token.tms.<name>.services.storage.cleanup
 
 If not specified, the default configuration is:
