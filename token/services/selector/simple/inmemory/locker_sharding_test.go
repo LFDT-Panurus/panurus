@@ -37,15 +37,21 @@ func TestLockDifferentOwnersDoNotBlock(t *testing.T) {
 	mock := newMockTXStatusProvider()
 	entered := make(chan struct{})
 	release := make(chan struct{})
-	var once sync.Once
+	var enteredOnce, releaseOnce sync.Once
+	releaseAll := func() { releaseOnce.Do(func() { close(release) }) }
+	defer releaseAll()
+	// The hook blocks every tx-a1 status lookup: the reclaim below, and —
+	// on a slow machine — possibly the background scanner's too. The
+	// scanner never holds a shard lock during lookups, so a blocked
+	// scanner is harmless, and releaseAll (close, not a single send)
+	// wakes every blocked lookup regardless of how many there are.
 	mock.getStatusHook = func(txID string) {
 		if txID == "tx-a1" {
-			once.Do(func() { close(entered) })
+			enteredOnce.Do(func() { close(entered) })
 			<-release
 		}
 	}
 	d := quietLocker(t, mock)
-	defer close(release)
 
 	tokenA := &token.ID{TxId: "tok-a", Index: 0}
 	tokenB := &token.ID{TxId: "tok-b", Index: 0}
@@ -78,8 +84,8 @@ func TestLockDifferentOwnersDoNotBlock(t *testing.T) {
 		t.Fatal("bob's Lock blocked behind alice's in-flight reclaim: owners are serializing on a shared lock")
 	}
 
-	// Cleanup: unblock the reclaim and wait for it to finish.
-	release <- struct{}{}
+	// Cleanup: unblock every blocked status lookup and wait for the reclaim.
+	releaseAll()
 	<-reclaimDone
 }
 
