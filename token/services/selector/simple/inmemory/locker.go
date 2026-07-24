@@ -9,6 +9,7 @@ package inmemory
 import (
 	"context"
 	"fmt"
+	"maps"
 	"sync"
 	"time"
 
@@ -53,6 +54,10 @@ func (l lockEntry) String() string {
 type shard struct {
 	mu     sync.Mutex
 	locked map[token2.ID]*lockEntry
+	// dead is set (under mu) when the scanner prunes this empty shard from
+	// the registry; a caller that raced the pruning and still holds a
+	// reference must retry the registry lookup instead of using it.
+	dead bool
 }
 
 type locker struct {
@@ -120,23 +125,33 @@ func (d *locker) shard(owner string) *shard {
 	return s
 }
 
-// allShards returns a snapshot of the current shards.
-func (d *locker) allShards() []*shard {
+// lockShard returns the owner's shard with its mutex held. If the shard was
+// pruned between the registry lookup and acquiring its mutex, the lookup is
+// retried, so callers never operate on a shard that left the registry.
+func (d *locker) lockShard(owner string) *shard {
+	for {
+		s := d.shard(owner)
+		s.mu.Lock()
+		if !s.dead {
+			return s
+		}
+		s.mu.Unlock()
+	}
+}
+
+// allShards returns a snapshot of the current shards keyed by owner.
+func (d *locker) allShards() map[string]*shard {
 	d.shardsMu.RLock()
 	defer d.shardsMu.RUnlock()
-	shards := make([]*shard, 0, len(d.shards))
-	for _, s := range d.shards {
-		shards = append(shards, s)
-	}
+	shards := make(map[string]*shard, len(d.shards))
+	maps.Copy(shards, d.shards)
 
 	return shards
 }
 
 func (d *locker) Lock(ctx context.Context, owner string, id *token2.ID, txID string, reclaim bool) (string, error) {
 	k := *id
-	s := d.shard(owner)
-
-	s.mu.Lock()
+	s := d.lockShard(owner)
 	defer s.mu.Unlock()
 	e, ok := s.locked[k]
 	if ok {
@@ -174,8 +189,7 @@ func (d *locker) Lock(ctx context.Context, owner string, id *token2.ID, txID str
 // UnlockIDs unlocks the passed IDS of the given owner. It returns the list of tokens that were
 // not locked in the first place among those passed.
 func (d *locker) UnlockIDs(ctx context.Context, owner string, ids ...*token2.ID) []*token2.ID {
-	s := d.shard(owner)
-	s.mu.Lock()
+	s := d.lockShard(owner)
 	defer s.mu.Unlock()
 
 	logger.DebugfContext(ctx, "unlocking tokens [%v]", ids)
@@ -310,7 +324,7 @@ func (d *locker) scanShards(ctx context.Context) {
 		confirmed bool
 	}
 
-	for _, s := range d.allShards() {
+	for owner, s := range d.allShards() {
 		// Phase 1: snapshot the shard's entries.
 		s.mu.Lock()
 		entries := make([]scannedEntry, 0, len(s.locked))
@@ -360,5 +374,31 @@ func (d *locker) scanShards(ctx context.Context) {
 			delete(s.locked, r.id)
 		}
 		s.mu.Unlock()
+
+		d.pruneIfEmpty(owner, s)
+	}
+}
+
+// pruneIfEmpty removes the owner's shard from the registry when it holds no
+// locks. Both the registry lock and the shard lock are held while re-checking
+// emptiness and marking the shard dead, so a concurrent Lock either finds the
+// shard still registered or observes dead and retries the registry lookup —
+// a live lock can never end up in a pruned shard.
+func (d *locker) pruneIfEmpty(owner string, s *shard) {
+	s.mu.Lock()
+	empty := len(s.locked) == 0
+	s.mu.Unlock()
+	if !empty {
+		// common case: skip the exclusive registry lock entirely
+		return
+	}
+
+	d.shardsMu.Lock()
+	defer d.shardsMu.Unlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.locked) == 0 && d.shards[owner] == s {
+		s.dead = true
+		delete(d.shards, owner)
 	}
 }
