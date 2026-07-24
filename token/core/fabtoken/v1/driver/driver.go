@@ -26,14 +26,15 @@ import (
 // Driver contains the non-static logic of the fabtoken driver (including services).
 type Driver struct {
 	BaseWalletServiceFactory
-	metricsProvider  cdriver.MetricsProvider
-	tracerProvider   cdriver.TracerProvider
-	configService    cdriver.ConfigService
-	storageProvider  cdriver.StorageProvider
-	identityProvider cdriver.IdentityProvider
-	endpointService  cdriver.NetworkBinderService
-	networkProvider  cdriver.NetworkProvider
-	vaultProvider    cdriver.VaultProvider
+	metricsProvider        cdriver.MetricsProvider
+	tracerProvider         cdriver.TracerProvider
+	configService          cdriver.ConfigService
+	storageProvider        cdriver.StorageProvider
+	identityProvider       cdriver.IdentityProvider
+	endpointService        cdriver.NetworkBinderService
+	networkProvider        cdriver.NetworkProvider
+	vaultProvider          cdriver.VaultProvider
+	resourceLimitsProvider driver.ResourceLimitsProvider
 }
 
 // NewTokenDriver returns a new factory for the fabtoken driver.
@@ -46,6 +47,7 @@ func NewTokenDriver(
 	endpointService cdriver.NetworkBinderService,
 	networkProvider cdriver.NetworkProvider,
 	vaultProvider cdriver.VaultProvider,
+	resourceLimitsProvider driver.ResourceLimitsProvider,
 ) core.NamedFactory[driver.Driver] {
 	return core.NamedFactory[driver.Driver]{
 		Name: core.DriverIdentifier(v1setup.FabTokenDriverName, 1),
@@ -58,6 +60,7 @@ func NewTokenDriver(
 			endpointService,
 			networkProvider,
 			vaultProvider,
+			resourceLimitsProvider,
 		),
 	}
 }
@@ -71,16 +74,18 @@ func newTokenDriver(
 	endpointService cdriver.NetworkBinderService,
 	networkProvider cdriver.NetworkProvider,
 	vaultProvider cdriver.VaultProvider,
+	resourceLimitsProvider driver.ResourceLimitsProvider,
 ) *Driver {
 	return &Driver{
-		metricsProvider:  metricsProvider,
-		tracerProvider:   tracerProvider,
-		configService:    configService,
-		storageProvider:  storageProvider,
-		identityProvider: identityProvider,
-		endpointService:  endpointService,
-		networkProvider:  networkProvider,
-		vaultProvider:    vaultProvider,
+		metricsProvider:        metricsProvider,
+		tracerProvider:         tracerProvider,
+		configService:          configService,
+		storageProvider:        storageProvider,
+		identityProvider:       identityProvider,
+		endpointService:        endpointService,
+		networkProvider:        networkProvider,
+		vaultProvider:          vaultProvider,
+		resourceLimitsProvider: resourceLimitsProvider,
 	}
 }
 
@@ -155,11 +160,15 @@ func (d *Driver) NewTokenService(tmsID driver.TMSID, publicParams []byte) (drive
 	if err != nil {
 		return nil, errors.Wrapf(err, "failed to initialize token service for [%s:%s]", tmsID.Network, tmsID.Namespace)
 	}
+	limits, err := d.resourceLimitsProvider.ResourceLimits()
+	if err != nil {
+		return nil, errors.Wrapf(err, "failed resolving validator resource limits")
+	}
 	validator := validator.NewValidator(
 		logger,
 		publicParamsManager.PublicParams(),
 		deserializer,
-		driver.DefaultResourceLimits(),
+		limits,
 		nil,
 		nil,
 		nil,

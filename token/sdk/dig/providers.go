@@ -9,7 +9,6 @@ package sdk
 import (
 	"github.com/LFDT-Panurus/panurus/token/core"
 	"github.com/LFDT-Panurus/panurus/token/driver"
-	"github.com/LFDT-Panurus/panurus/token/services/config"
 	dbdriver "github.com/LFDT-Panurus/panurus/token/services/storage/db/driver"
 	"github.com/LFDT-Panurus/panurus/token/services/storage/db/multiplexed"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
@@ -40,11 +39,11 @@ func newTokenDriverService(in struct {
 
 func newValidatorDriverService(in struct {
 	dig.In
-	Drivers        []core.NamedFactory[driver.ValidatorDriver] `group:"validator-drivers"`
-	ConfigProvider config.Provider
+	Drivers                []core.NamedFactory[driver.ValidatorDriver] `group:"validator-drivers"`
+	ResourceLimitsProvider driver.ResourceLimitsProvider
 },
 ) (*core.ValidatorDriverService, error) {
-	limits, err := config.NewResourceLimitsProvider(in.ConfigProvider).ResourceLimits()
+	limits, err := in.ResourceLimitsProvider.ResourceLimits()
 	if err != nil {
 		return nil, errors.Wrap(err, "failed resolving validation resource limits")
 	}
