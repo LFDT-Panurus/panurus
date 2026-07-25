@@ -19,6 +19,7 @@ package setup
 
 import (
 	"bytes"
+	"math/big"
 
 	"github.com/consensys/gnark-crypto/ecc"
 	"github.com/consensys/gnark/backend/groth16"
@@ -99,6 +100,79 @@ func CompileOutputCircuit(p *pp.PublicParams) (constraint.ConstraintSystem, erro
 	}
 
 	return cs, nil
+}
+
+// PedersenGeneratorCoords holds the affine coordinates of the three Pedersen
+// generators from the source zkatdlog driver, needed as compile-time
+// constants for MigrationCircuit. These must match exactly the generators
+// used to create the on-chain commitments being migrated.
+type PedersenGeneratorCoords struct {
+	G0X, G0Y *big.Int
+	G1X, G1Y *big.Int
+	G2X, G2Y *big.Int
+}
+
+// CompileMigrationCircuit compiles circuit.MigrationCircuit for the curve
+// specified in p.Curve, with the range-check bit-width from p.MaxBits and
+// the Pedersen generator coordinates from gens.
+//
+// The Pedersen generators are compile-time constants baked into the
+// constraint system. Two calls with different generators produce different
+// circuits requiring separate keys.
+func CompileMigrationCircuit(p *pp.PublicParams, gens PedersenGeneratorCoords) (constraint.ConstraintSystem, error) {
+	if p.MaxBits <= 0 {
+		return nil, errors.Errorf("setup: cannot compile MigrationCircuit: MaxBits must be positive, got %d", p.MaxBits)
+	}
+
+	cs, err := frontend.Compile(
+		p.Curve.ScalarField(),
+		r1cs.NewBuilder,
+		&circuit.MigrationCircuit{
+			MaxBits: p.MaxBits,
+			PedG0X:  gens.G0X, PedG0Y: gens.G0Y,
+			PedG1X: gens.G1X, PedG1Y: gens.G1Y,
+			PedG2X: gens.G2X, PedG2Y: gens.G2Y,
+		},
+	)
+	if err != nil {
+		return nil, errors.Wrapf(err, "setup: MigrationCircuit compilation failed")
+	}
+
+	return cs, nil
+}
+
+// SetupMigration compiles MigrationCircuit and runs groth16.Setup,
+// populating p.PKMigration/VKMigration in place.
+//
+// This is deliberately NOT called from SetupAll. It is a separate,
+// explicitly-invoked function until the Pedersen opening group (Group 1)
+// is confirmed correct against real zkatdlog data, so the existing working
+// Spend/Output setup path can never be broken by in-progress migration
+// circuit changes.
+func SetupMigration(p *pp.PublicParams, gens PedersenGeneratorCoords) (*pp.PublicParams, error) {
+	if p.ProofSystem != "groth16" {
+		return nil, errors.Wrapf(ErrNotImplemented, "setup: SetupMigration only supports groth16, got %q", p.ProofSystem)
+	}
+
+	migCS, err := CompileMigrationCircuit(p, gens)
+	if err != nil {
+		return nil, err
+	}
+
+	migPK, migVK, err := groth16.Setup(migCS)
+	if err != nil {
+		return nil, errors.Wrapf(err, "setup: MigrationCircuit groth16.Setup failed")
+	}
+
+	if p.PKMigration, err = SerializeProvingKey(migPK); err != nil {
+		return nil, errors.Wrapf(err, "setup: MigrationCircuit proving key serialization")
+	}
+
+	if p.VKMigration, err = SerializeVerifyingKey(migVK); err != nil {
+		return nil, errors.Wrapf(err, "setup: MigrationCircuit verifying key serialization")
+	}
+
+	return p, nil
 }
 
 // ── Trusted setup ───────────────────────────────────────────────────────────────
