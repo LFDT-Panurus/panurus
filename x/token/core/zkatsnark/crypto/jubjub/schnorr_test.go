@@ -71,14 +71,16 @@ func TestSchnorrNonceUniqueness(t *testing.T) {
 // TestSchnorrBindingSig simulates the full binding signature workflow.
 // This is exactly the sequence the TransferAction prover and validator follow.
 func TestSchnorrBindingSig(t *testing.T) {
-	var rcv1, rcv2, rcv3, rcv4 fr.Element
-	_, err := rcv1.SetRandom()
+	rcv1, err := jubjub.RandomJubjubScalar()
 	require.NoError(t, err)
-	_, err = rcv2.SetRandom()
+
+	rcv2, err := jubjub.RandomJubjubScalar()
 	require.NoError(t, err)
-	_, err = rcv3.SetRandom()
+
+	rcv3, err := jubjub.RandomJubjubScalar()
 	require.NoError(t, err)
-	_, err = rcv4.SetRandom()
+
+	rcv4, err := jubjub.RandomJubjubScalar()
 	require.NoError(t, err)
 
 	// bsk = rcv1 + rcv2 - rcv3 - rcv4

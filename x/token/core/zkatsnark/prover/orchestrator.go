@@ -21,12 +21,20 @@ import (
 // startup, holding already-loaded provers, and reuse across every
 // transaction.
 type Orchestrator struct {
-	spendProver  *SpendProver
-	outputProver *OutputProver
+	spendProver     *SpendProver
+	outputProver    *OutputProver
+	migrationProver *MigrationProver // nil when migration is not configured
 }
 
 func NewOrchestrator(spendProver *SpendProver, outputProver *OutputProver) *Orchestrator {
 	return &Orchestrator{spendProver: spendProver, outputProver: outputProver}
+}
+
+// SetMigrationProver configures migration support. Call this after
+// NewOrchestrator and SetupMigration have both completed. The orchestrator
+// does not require a migration prover for non-migration actions.
+func (o *Orchestrator) SetMigrationProver(mp *MigrationProver) {
+	o.migrationProver = mp
 }
 
 type SpendRequest struct {
@@ -50,6 +58,19 @@ type outputOutcome struct {
 	index  int
 	result ProofResult
 	desc   snarktoken.OutputDescription
+	note   *snarktoken.Note
+	err    error
+}
+
+// MigrationRequest describes a single zkatdlog token to migrate.
+type MigrationRequest struct {
+	Opening   snarktoken.PedersenOpening
+	Recipient []byte
+}
+
+type migrationOutcome struct {
+	index  int
+	action snarktoken.MigrationAction
 	note   *snarktoken.Note
 	err    error
 }
@@ -190,6 +211,51 @@ func (o *Orchestrator) BuildIssueAction(
 	return action, newNotes, nil
 }
 
+// BuildMigrationAction generates proofs for a batch of zkatdlog token
+// migrations concurrently, producing one MigrationAction per token.
+// No binding signature is computed (Decision C: the shared Value variable
+// in each circuit is the conservation proof).
+//
+// Returns the newly created Notes alongside the actions; persisting or
+// transmitting them is the caller's responsibility.
+func (o *Orchestrator) BuildMigrationAction(
+	ctx context.Context,
+	requests []MigrationRequest,
+	publicParams *pp.PublicParams,
+) ([]snarktoken.MigrationAction, []*snarktoken.Note, error) {
+	if len(requests) == 0 {
+		return nil, nil, errors.New("orchestrator: migration action requires at least one request")
+	}
+
+	if o.migrationProver == nil {
+		return nil, nil, errors.New("orchestrator: migration prover not configured — call SetMigrationProver")
+	}
+
+	migCh := make(chan migrationOutcome, len(requests))
+	for i, req := range requests {
+		go o.proveMigration(i, req, publicParams, migCh)
+	}
+
+	outcomes := make([]migrationOutcome, len(requests))
+	for range requests {
+		r := <-migCh
+		if r.err != nil {
+			return nil, nil, fmt.Errorf("orchestrator: migration proof %d failed: %w", r.index, r.err)
+		}
+
+		outcomes[r.index] = r
+	}
+
+	actions := make([]snarktoken.MigrationAction, len(outcomes))
+	notes := make([]*snarktoken.Note, len(outcomes))
+	for i, oc := range outcomes {
+		actions[i] = oc.action
+		notes[i] = oc.note
+	}
+
+	return actions, notes, nil
+}
+
 func (o *Orchestrator) proveSpend(index int, req SpendRequest, out chan<- spendOutcome) {
 	witnessRes, err := BuildSpendWitness(req.Note)
 	if err != nil {
@@ -277,6 +343,50 @@ func (o *Orchestrator) proveOutput(index int, req OutputRequest, publicParams *p
 			TokenType:       tb[:],
 			OutputProof:     proofBytes,
 			Recipient:       req.Recipient,
+		},
+		note: witnessRes.Note,
+	}
+}
+
+func (o *Orchestrator) proveMigration(index int, req MigrationRequest, publicParams *pp.PublicParams, out chan<- migrationOutcome) {
+	witnessRes, err := BuildMigrationWitness(req.Opening, publicParams)
+	if err != nil {
+		out <- migrationOutcome{index: index, err: err}
+
+		return
+	}
+
+	proof, err := o.migrationProver.Prove(witnessRes.Assignment)
+	if err != nil {
+		out <- migrationOutcome{index: index, err: err}
+
+		return
+	}
+
+	proofBytes, err := setup.SerializeProof(proof)
+	if err != nil {
+		out <- migrationOutcome{index: index, err: err}
+
+		return
+	}
+
+	cm := witnessRes.Commitment.Bytes()
+	cx := witnessRes.ValueCommitment.X.Bytes()
+	cy := witnessRes.ValueCommitment.Y.Bytes()
+	tokenTypeField := snarktoken.EncodeTokenType(req.Opening.TokenType)
+	tb := tokenTypeField.Bytes()
+
+	out <- migrationOutcome{
+		index: index,
+		action: snarktoken.MigrationAction{
+			CommitmentPedersenX: witnessRes.PedersenCommitX[:],
+			CommitmentPedersenY: witnessRes.PedersenCommitY[:],
+			CommitmentMiMC:      cm[:],
+			ValueCommitOutX:     cx[:],
+			ValueCommitOutY:     cy[:],
+			TokenType:           tb[:],
+			MigrationProof:      proofBytes,
+			Recipient:           req.Recipient,
 		},
 		note: witnessRes.Note,
 	}
