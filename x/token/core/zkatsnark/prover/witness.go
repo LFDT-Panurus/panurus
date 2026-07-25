@@ -48,8 +48,8 @@ func BuildSpendWitness(note *snarktoken.Note) (*SpendWitnessResult, error) {
 		return nil, err
 	}
 
-	var rcv fr.Element
-	if _, err := rcv.SetRandom(); err != nil {
+	rcv, err := jubjub.RandomJubjubScalar()
+	if err != nil {
 		return nil, fmt.Errorf("prover: RCV generation failed: %w", err)
 	}
 
@@ -108,8 +108,8 @@ func BuildOutputWitness(value uint64, tokenType string, publicParams *pp.PublicP
 		return nil, fmt.Errorf("prover: commitment derivation failed: %w", err)
 	}
 
-	var rcv fr.Element
-	if _, err := rcv.SetRandom(); err != nil {
+	rcv, err := jubjub.RandomJubjubScalar()
+	if err != nil {
 		return nil, fmt.Errorf("prover: RCV generation failed: %w", err)
 	}
 
