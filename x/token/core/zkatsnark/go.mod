@@ -3,6 +3,7 @@ module github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark
 go 1.26.3
 
 require (
+	github.com/IBM/mathlib v0.3.0
 	github.com/LFDT-Panurus/panurus v0.14.2
 	github.com/consensys/gnark v0.15.0
 	github.com/consensys/gnark-crypto v0.20.1
@@ -11,7 +12,6 @@ require (
 )
 
 require (
-	github.com/IBM/mathlib v0.3.0 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/bits-and-blooms/bitset v1.24.4 // indirect
 	github.com/blang/semver/v4 v4.0.0 // indirect
