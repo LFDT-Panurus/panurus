@@ -17,8 +17,7 @@ import (
 
 func mustProofResult(t *testing.T, value uint64) prover.ProofResult {
 	t.Helper()
-	var rcv fr.Element
-	_, err := rcv.SetRandom()
+	rcv, err := jubjub.RandomJubjubScalar()
 	require.NoError(t, err)
 
 	cv, err := jubjub.ValueCommit(value, rcv)
