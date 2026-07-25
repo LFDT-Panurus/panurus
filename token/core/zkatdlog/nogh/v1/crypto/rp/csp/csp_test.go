@@ -332,3 +332,52 @@ func TestCSP_TranscriptHeaderMismatch(t *testing.T) {
 		})
 	}
 }
+
+// TestRound0FastPathMatchesFull verifies that the round-0 padding optimization
+// (realLen hint) is value-preserving: for the same padded statement, the proof
+// produced with the hint is byte-identical to the one produced without it, and
+// both verify. This is the core safety property — identical proofs imply an
+// identical Fiat-Shamir transcript, so soundness is unaffected.
+func TestRound0FastPathMatchesFull(t *testing.T) {
+	curves := []math.CurveID{math.BN254, math.BLS12_381_BBS_GURVY}
+	// (rounds, m) chosen to cover: the token cases (n=32/64), a case with no
+	// padding (m==N), and a case where m is only just above N/2.
+	cases := []struct {
+		rounds uint64
+		m      int
+	}{
+		{7, 68},  // n=32 -> N=128
+		{8, 132}, // n=64 -> N=256
+		{6, 64},  // m==N: no padding, fast path must be a no-op
+		{6, 33},  // m just above N/2=32
+		{6, 63},  // m just below N
+		{4, 9},   // small: N=16, m just above 8
+	}
+
+	for _, curveID := range curves {
+		curve := math.Curves[curveID]
+		for _, tc := range cases {
+			t.Run(fmt.Sprintf("curve=%d/rounds=%d/m=%d", curveID, tc.rounds, tc.m), func(t *testing.T) {
+				pi := buildPaddedInstance(curve, tc.rounds, tc.m)
+
+				full, err := pi.prover().Prove() // realLen=0 -> full path
+				require.NoError(t, err)
+				fast, err := pi.proverHinted().Prove() // realLen=m -> fast path
+				require.NoError(t, err)
+
+				// Byte-identical cross-terms across all rounds.
+				require.Len(t, fast.Left, len(full.Left))
+				for i := range full.Left {
+					require.Equal(t, full.Left[i].Bytes(), fast.Left[i].Bytes(), "Left[%d]", i)
+					require.Equal(t, full.Right[i].Bytes(), fast.Right[i].Bytes(), "Right[%d]", i)
+					require.Equal(t, full.VLeft[i].Bytes(), fast.VLeft[i].Bytes(), "VLeft[%d]", i)
+					require.Equal(t, full.VRight[i].Bytes(), fast.VRight[i].Bytes(), "VRight[%d]", i)
+				}
+
+				// Both proofs must verify against the same statement.
+				require.NoError(t, pi.verifier().Verify(full))
+				require.NoError(t, pi.verifier().Verify(fast))
+			})
+		}
+	}
+}
