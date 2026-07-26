@@ -148,8 +148,8 @@ func (p *prover) Prove() (*Proof, error) {
 		// Cross-commitments via MSM:
 		//   left[i]  = MSM(gen_L, wit_R)   gen_L = generators[:n], wit_R = witness[n:]
 		//   right[i] = MSM(gen_R, wit_L)   gen_R = generators[n:], wit_L = witness[:n]
-		left[i] = p.Curve.MultiScalarMul(generators[:n], witness[n:])
-		right[i] = p.Curve.MultiScalarMul(generators[n:], witness[:n])
+		left[i] = smallMSM(p.Curve, generators[:n], witness[n:])
+		right[i] = smallMSM(p.Curve, generators[n:], witness[:n])
 
 		// Cross scalar products via ModAddMul (scalar-field MSM):
 		//   vLeft[i]  = ⟨f_L, wit_R⟩
@@ -359,7 +359,7 @@ func (v *verifier) Verify(proof *Proof) error {
 		allScalars = append(allScalars, v.Curve.ModMul(genScalars[i], negVal, v.Curve.GroupOrder))
 	}
 
-	if !v.Curve.MultiScalarMul(allPoints, allScalars).IsInfinity() {
+	if !smallMSM(v.Curve, allPoints, allScalars).IsInfinity() {
 		return errors.New("CSP proof verification failed")
 	}
 
