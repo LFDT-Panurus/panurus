@@ -21,6 +21,35 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestTokensService_UpgradeSupportedTokenFormatList is a regression test for a bug where the
+// inclusion condition for UpgradeSupportedTokenFormatList was inverted (precision > maxPrecision
+// instead of precision <= maxPrecision), which would make the list contain exactly the wrong set
+// of formats: e.g. with maxPrecision=16 it would be empty instead of containing the 16-bit format,
+// and with maxPrecision=32 it would contain only the 64-bit format instead of the 16- and 32-bit ones.
+func TestTokensService_UpgradeSupportedTokenFormatList(t *testing.T) {
+	format16, err := v1.SupportedTokenFormat(16)
+	require.NoError(t, err)
+	format32, err := v1.SupportedTokenFormat(32)
+	require.NoError(t, err)
+	format64, err := v1.SupportedTokenFormat(64)
+	require.NoError(t, err)
+
+	tests := []struct {
+		maxPrecision uint64
+		expected     []token.Format
+	}{
+		{maxPrecision: 16, expected: []token.Format{format16}},
+		{maxPrecision: 32, expected: []token.Format{format16, format32}},
+		{maxPrecision: 64, expected: []token.Format{format16, format32, format64}},
+	}
+
+	for _, tt := range tests {
+		ts, err := upgrade.NewService(nil, tt.maxPrecision, nil, nil)
+		require.NoError(t, err)
+		assert.ElementsMatch(t, tt.expected, ts.UpgradeSupportedTokenFormatList)
+	}
+}
+
 func TestTokensService_NewUpgradeChallenge(t *testing.T) {
 	ts, err := upgrade.NewService(nil, 16, nil, nil)
 	require.NoError(t, err)
@@ -405,35 +434,10 @@ func TestTokensService_CheckUpgradeProof(t *testing.T) {
 			getDeserializer: nilDeserializer,
 		},
 		{
-			name:         "valid but process fails",
-			ch:           ch,
-			ledgerTokens: validTokens,
-			proof: func() driver.TokensUpgradeProof {
-				proof := &upgrade.Proof{
-					Challenge:  ch,
-					Tokens:     validTokens,
-					Signatures: []upgrade.Signature{[]byte("a signature")},
-				}
-				raw, err := proof.Serialize()
-				require.NoError(t, err)
-
-				return raw
-			},
-			wantErr: false,
-			getDeserializer: func() upgrade.Deserializer {
-				v := &mock2.Verifier{}
-				v.VerifyReturns(nil)
-				d := &mock.Deserializer{}
-				d.GetOwnerVerifierReturns(v, nil)
-
-				return d
-			},
-			expected:       true,
-			wantErrProcess: true,
-			processErrMsg:  "upgrade of unsupported token format [baff495e067aea1a0a5e6a37d72689316c457251e359a6796329761ca3227648] requested",
-		},
-		{
-			name: "valid and supported format",
+			// A token whose precision (32) exceeds the deployment's maxPrecision (16) must
+			// not be accepted for upgrade: upgrading it would let a higher-precision value
+			// silently fit into a lower-precision destination format.
+			name: "valid but process fails",
 			ch:   ch,
 			ledgerTokens: func() []token.LedgerToken {
 				format32, _ := v1.SupportedTokenFormat(32)
@@ -454,6 +458,35 @@ func TestTokensService_CheckUpgradeProof(t *testing.T) {
 				proof := &upgrade.Proof{
 					Challenge:  ch,
 					Tokens:     lts,
+					Signatures: []upgrade.Signature{[]byte("a signature")},
+				}
+				raw, err := proof.Serialize()
+				require.NoError(t, err)
+
+				return raw
+			},
+			wantErr: false,
+			getDeserializer: func() upgrade.Deserializer {
+				v := &mock2.Verifier{}
+				v.VerifyReturns(nil)
+				d := &mock.Deserializer{}
+				d.GetOwnerVerifierReturns(v, nil)
+
+				return d
+			},
+			expected:       true,
+			wantErrProcess: true,
+		},
+		{
+			// A token whose precision (16) is at (or below) the deployment's maxPrecision (16)
+			// must be accepted for upgrade.
+			name:         "valid and supported format",
+			ch:           ch,
+			ledgerTokens: validTokens,
+			proof: func() driver.TokensUpgradeProof {
+				proof := &upgrade.Proof{
+					Challenge:  ch,
+					Tokens:     validTokens,
 					Signatures: []upgrade.Signature{[]byte("a signature")},
 				}
 				raw, err := proof.Serialize()

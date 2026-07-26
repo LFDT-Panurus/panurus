@@ -96,6 +96,34 @@ func TestAuditor(t *testing.T) {
 		require.Equal(t, 0, fakeSigningIdentity.SignCallCount())
 	})
 
+	// swapping recipient audit info between two distinct outputs is F-03: the report claims that
+	// InspectOutput's Pedersen-commitment recomputation and InspectIdentity's audit-info matching
+	// are independent checks with no cryptographic binding between a token's commitment and its
+	// audit info, so an attacker holding two valid outputs could swap their OutputAuditInfo values
+	// and have both pass audit, misattributing which identity actually received which output. This
+	// test builds a transfer with two outputs to two DIFFERENT recipients and swaps their
+	// OutputAuditInfo (leaving owners/receivers untouched, exactly the described attack), expecting
+	// the audit to reject it: InspectIdentity calls the real idemix MatchIdentity, which requires
+	// the audit info to actually decrypt to the output's owner identity, so a swapped audit info
+	// belonging to the other, different recipient does not match and the check fails.
+	t.Run("swapping recipient audit info between two outputs is rejected", func(t *testing.T) {
+		_, pp, auditor := setupAuditorTest(t)
+		transfer, metadata, inputs := createTransferWithTwoRecipients(t, pp)
+
+		require.Len(t, metadata.Outputs, 2)
+		metadata.Outputs[0].OutputAuditInfo, metadata.Outputs[1].OutputAuditInfo =
+			metadata.Outputs[1].OutputAuditInfo, metadata.Outputs[0].OutputAuditInfo
+
+		raw, err := transfer.Serialize()
+		require.NoError(t, err)
+
+		auditTokens := buildAuditTokensFromInputs(t, metadata, inputs)
+
+		err = auditor.Check(t.Context(), &driver.TokenRequest{Actions: []*driver.TypedAction{{Type: request.ActionType_ACTION_TYPE_TRANSFER, Raw: raw}}}, &driver.TokenRequestMetadata{Actions: []*driver.ActionMetadataEntry{{ActionID: 0, TransferMetadata: metadata}}}, "1", auditTokens)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "does not match the provided opening")
+	})
+
 	// recipient audit info does not match output tests that the audit fails when the recipient's
 	// audit information does not match the output token's owner identity.
 	t.Run("recipient audit info does not match output", func(t *testing.T) {
@@ -156,6 +184,27 @@ func TestAuditor(t *testing.T) {
 		auditTokens := buildAuditTokensFromInputs(t, metadata, inputs)
 
 		err = auditor.Check(t.Context(), &driver.TokenRequest{Actions: []*driver.TypedAction{{Type: request.ActionType_ACTION_TYPE_TRANSFER, Raw: raw}}}, &driver.TokenRequestMetadata{Actions: []*driver.ActionMetadataEntry{{ActionID: 0, TransferMetadata: metadata}}}, "1", auditTokens)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "is not a recognized issuer")
+	})
+
+	// audit an issue with an unrecognized issuer is F-14: validateIssuer previously checked only
+	// that the issuer identity matched the audit metadata (InspectIdentity), without ever checking
+	// membership in the public parameters' issuer list. This meant any signer able to produce a
+	// valid ZK issue proof and matching audit info could pass the audit, even if it was never
+	// registered as an authorized issuer in the public parameters. This test pins the fix: an
+	// issue action signed and audited by an identity that is absent from PP.Issuers() must be
+	// rejected, mirroring the existing "unrecognized issuer" protection already enforced for redeems.
+	t.Run("audit an issue with an unrecognized issuer", func(t *testing.T) {
+		authorizedIssuerID, _ := getIdemixInfo(t, "./testdata/bls12_381_bbs/idemix")
+		// setupAuditorTest lists authorizedIssuerID as the sole recognized issuer, but createIssue
+		// signs and audits with a freshly derived identity that is never added to that list.
+		_, pp, auditor := setupAuditorTest(t, authorizedIssuerID)
+		ia, metadata := createIssue(t, pp)
+		raw, err := ia.Serialize()
+		require.NoError(t, err)
+
+		err = auditor.Check(t.Context(), &driver.TokenRequest{Actions: []*driver.TypedAction{{Type: request.ActionType_ACTION_TYPE_ISSUE, Raw: raw}}}, &driver.TokenRequestMetadata{Actions: []*driver.ActionMetadataEntry{{ActionID: 0, IssueMetadata: metadata}}}, "1", map[string]*token3.Token{})
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "is not a recognized issuer")
 	})
@@ -723,6 +772,60 @@ func createTransfer(t *testing.T, pp *v1.PublicParams) (*transfer.Action, *drive
 	tokns[0] = append(tokns[0], inputs...)
 
 	return transfer, metadata, tokns
+}
+
+// createTransferWithTwoRecipients is like createTransfer but sends the two outputs to two
+// DIFFERENT recipient identities (each with its own, distinct audit info), so that swapping
+// OutputAuditInfo between the two outputs (F-03's attack scenario) actually changes which
+// identity each output's audit info decrypts to.
+func createTransferWithTwoRecipients(t *testing.T, pp *v1.PublicParams) (*transfer.Action, *driver.TransferMetadata, [][]*token.Token) {
+	t.Helper()
+	senderID, senderAuditInfoRaw := getIdemixInfo(t, "./testdata/bls12_381_bbs/idemix")
+	recipient1ID, recipient1AuditInfoRaw := getIdemixInfo(t, "./testdata/bls12_381_bbs/idemix")
+	recipient2ID, recipient2AuditInfoRaw := getIdemixInfo(t, "./testdata/bls12_381_bbs/idemix")
+
+	inputs, tokenInfos := createInputs(t, pp, senderID)
+	fakeSigner := &mock.SigningIdentity{}
+	sender, err := transfer.NewSender([]driver.Signer{fakeSigner, fakeSigner}, inputs, []*token3.ID{{TxId: "0"}, {TxId: "1"}}, tokenInfos, pp)
+	require.NoError(t, err)
+	transferAction, meta, err := sender.GenerateZKTransfer(t.Context(), []uint64{40, 20}, [][]byte{recipient1ID, recipient2ID})
+	require.NoError(t, err)
+
+	tokenIDs := []*token3.ID{{TxId: "0"}, {TxId: "1"}}
+
+	metadata := &driver.TransferMetadata{}
+	for i := range len(transferAction.Inputs) {
+		metadata.Inputs = append(metadata.Inputs, &driver.TransferInputMetadata{
+			TokenID: tokenIDs[i],
+			Senders: []*driver.AuditableIdentity{
+				{
+					Identity:  transferAction.Inputs[i].Token.Owner,
+					AuditInfo: senderAuditInfoRaw,
+				},
+			},
+		})
+	}
+
+	recipientAuditInfo := [][]byte{recipient1AuditInfoRaw, recipient2AuditInfoRaw}
+	for i := range len(transferAction.Outputs) {
+		marshalledMeta, err := meta[i].Serialize()
+		require.NoError(t, err)
+		metadata.Outputs = append(metadata.Outputs, &driver.TransferOutputMetadata{
+			OutputMetadata:  marshalledMeta,
+			OutputAuditInfo: recipientAuditInfo[i],
+			Receivers: []*driver.AuditableIdentity{
+				{
+					Identity:  transferAction.Outputs[i].Owner,
+					AuditInfo: recipientAuditInfo[i],
+				},
+			},
+		})
+	}
+
+	tokns := make([][]*token.Token, 1)
+	tokns[0] = append(tokns[0], inputs...)
+
+	return transferAction, metadata, tokns
 }
 
 // createRedeemTransfer creates a transfer action with a single redeemed (nil-owner) output,

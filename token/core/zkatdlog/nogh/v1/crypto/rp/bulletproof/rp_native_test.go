@@ -198,6 +198,59 @@ func TestNativeRPTamperedProofRejected(t *testing.T) {
 				bad.Data.T2 = ctx.curve.GenG1.Mul(ctx.curve.NewRandomZr(rand))
 				assert.Error(t, ctx.verify(t, bad))
 			})
+
+			t.Run("tampered_C", func(t *testing.T) {
+				bad := copyRangeProof(t, proof)
+				bad.Data.C = ctx.curve.GenG1.Mul(ctx.curve.NewRandomZr(rand))
+				assert.Error(t, ctx.verify(t, bad))
+			})
+
+			t.Run("tampered_D", func(t *testing.T) {
+				bad := copyRangeProof(t, proof)
+				bad.Data.D = ctx.curve.GenG1.Mul(ctx.curve.NewRandomZr(rand))
+				assert.Error(t, ctx.verify(t, bad))
+			})
+		})
+	}
+}
+
+// TestNativeRPForeignCommitmentsRejected is F-09 (zkatdlog security report): "Missing
+// Domain Separation in Bulletproof z-Challenge Derivation". The report observes that
+// y := HashToZr(C, D, V) but z := HashToZr(y.Bytes()) does not re-hash C, D, V directly,
+// and argues this violates the Fiat-Shamir requirement that every challenge be bound to
+// all prior commitments, concluding z is "not bound to the original proof commitments".
+//
+// This is refuted. Two independent reasons z remains bound to (C, D, V), either of which
+// is sufficient on its own:
+//
+//  1. z = H(y) with y = H(C, D, V) is a one-way hash chain, not an unbound value. Under
+//     the random-oracle model a prover cannot influence z without going through y, and
+//     cannot influence y without going through (C, D, V) — so z is bound transitively,
+//     not directly. This is the same "chained transcript" pattern used elsewhere for
+//     Fiat-Shamir composition and does not by itself weaken soundness.
+//  2. Independently of how z is derived, C and D are not merely hashed for the
+//     challenge — they are used as commitment points in the algebraic equation Verify
+//     checks (see rp.go Verify/verifyIPA and rp_native.go nativeRPVerify/
+//     nativeRPVerifyIPA: both D and C appear directly in the MultiScalarMul that must
+//     equal the IPA commitment). So substituting foreign C/D values breaks the checked
+//     equation regardless of what z would have hashed to.
+//
+// This test swaps in a genuine (C, D) pair taken from an entirely different, honestly
+// generated proof for the same commitment/value — the scenario the report's "not bound"
+// language would predict succeeds if z's binding to C/D were actually missing. It is
+// rejected, confirming the finding does not translate into an exploitable forgery.
+func TestNativeRPForeignCommitmentsRejected(t *testing.T) {
+	for _, tc := range nativeCurves() {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := newNativeTestCtx(t, tc.id, 32, 100)
+			proof := ctx.prove(t, 100)
+			foreign := ctx.prove(t, 100)
+
+			bad := copyRangeProof(t, proof)
+			bad.Data.C = foreign.Data.C
+			bad.Data.D = foreign.Data.D
+			err := ctx.verify(t, bad)
+			require.Error(t, err, "F-09: proof with foreign C/D from another honest proof must be rejected")
 		})
 	}
 }

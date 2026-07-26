@@ -68,7 +68,7 @@ func NewService(
 		if err != nil {
 			return nil, errors.Wrapf(err, "failed computing fabtoken token format with precision [%d]", precision)
 		}
-		if precision > maxPrecision {
+		if precision <= maxPrecision {
 			upgradeSupportedTokenFormatList = append(upgradeSupportedTokenFormatList, format)
 		}
 	}
