@@ -38,12 +38,12 @@ func TestLockEntry(t *testing.T) {
 }
 
 // mockTXStatusProvider is a thread-safe mock that allows tests to control
-// the status returned for each txID and to inject delays.
+// the status returned for each txID and to inject hooks.
 type mockTXStatusProvider struct {
 	mu       sync.Mutex
 	statuses map[string]ttxdb.TxStatus
-	// getStatusHook is called inside GetStatus while the scanner holds RLock.
-	// Tests use it to inject a reclaim between the scan's RUnlock and Lock.
+	// getStatusHook, if set, is called at the beginning of every GetStatus.
+	// Tests use it to synchronize with (or block) status lookups.
 	getStatusHook func(txID string)
 }
 
@@ -57,104 +57,86 @@ func (m *mockTXStatusProvider) setStatus(txID string, status ttxdb.TxStatus) {
 	m.statuses[txID] = status
 }
 
-func (m *mockTXStatusProvider) GetStatus(_ context.Context, txID string) (ttxdb.TxStatus, string, error) {
-	if m.getStatusHook != nil {
-		m.getStatusHook(txID)
-	}
+func (m *mockTXStatusProvider) status(txID string) ttxdb.TxStatus {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	status, ok := m.statuses[txID]
 	if !ok {
-		return ttxdb.Pending, "", nil
+		return ttxdb.Pending
 	}
 
-	return status, "", nil
+	return status
 }
 
-// TestScannerDoesNotDeleteReclaimed verifies the TOCTOU fix:
-// when the scanner collects a token for removal and a concurrent
-// Lock(reclaim=true) re-locks that token for a new transaction,
-// the scanner must NOT delete the new entry.
+func (m *mockTXStatusProvider) GetStatus(_ context.Context, txID string) (ttxdb.TxStatus, string, error) {
+	m.mu.Lock()
+	hook := m.getStatusHook
+	m.mu.Unlock()
+	if hook != nil {
+		hook(txID)
+	}
+
+	return m.status(txID), "", nil
+}
+
+// TestScannerDoesNotDeleteReclaimed verifies the TOCTOU protection in the
+// scanner: when the scanner has observed a token as removable (its tx is
+// Deleted) and a concurrent Lock(reclaim=true) re-locks that token for a new
+// transaction before the scanner deletes, the scanner must NOT delete the
+// new entry. The test drives the real scan loop and blocks the scanner's
+// status lookup to open the race window deterministically.
 func TestScannerDoesNotDeleteReclaimed(t *testing.T) {
 	mock := newMockTXStatusProvider()
 	tokenID := &token.ID{TxId: "tok1", Index: 0}
 	txA := "tx-A"
 	txB := "tx-B"
 
-	// Use a short sleep timeout so the scanner loop iterates quickly.
-	d := &locker{
-		ttxdb:                  mock,
-		sleepTimeout:           50 * time.Millisecond,
-		lock:                   &sync.RWMutex{},
-		locked:                 map[token.ID]*lockEntry{},
-		validTxEvictionTimeout: 0, // immediate eviction for Confirmed
-	}
-
-	// Step 1: Lock the token for tx-A.
+	// Lock the token for tx-A while it is still Pending.
 	mock.setStatus(txA, ttxdb.Pending)
-	_, err := d.Lock(context.Background(), tokenID, txA, false)
+	d := NewLocker(mock, 20*time.Millisecond, time.Minute).(*locker)
+	t.Cleanup(func() { _ = d.Stop() })
+	_, err := d.Lock(context.Background(), "alice", tokenID, txA, false)
 	require.NoError(t, err)
 
-	// Step 2: Mark tx-A as Deleted so the scanner will collect it.
+	// Arm a one-shot hook: the next status lookup that observes tx-A as
+	// Deleted blocks — that is the scanner mid-evaluation, before its
+	// delete phase.
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	var once sync.Once
+	mock.getStatusHook = func(txID string) {
+		if txID == txA && mock.status(txA) == ttxdb.Deleted {
+			first := false
+			once.Do(func() { first = true })
+			if !first {
+				return
+			}
+			// only the first observer (the scanner) blocks; later lookups
+			// (the reclaim's) must pass through or they would deadlock
+			close(entered)
+			<-release
+		}
+	}
 	mock.setStatus(txA, ttxdb.Deleted)
 
-	// Step 3: Run the scan manually instead of in a goroutine so we
-	// can control timing. We simulate the race by using getStatusHook:
-	// while the scanner reads statuses under RLock, we prepare to reclaim
-	// right after RUnlock.
-	//
-	// We replicate the scan logic inline to inject the reclaim at the
-	// exact right moment (between RUnlock and Lock).
-	type removeEntry struct {
-		id   token.ID
-		txID string
-	}
-	var removeList []removeEntry
-
-	// Scan phase (RLock)
-	d.lock.RLock()
-	for id, entry := range d.locked {
-		status, _, _ := d.ttxdb.GetStatus(context.Background(), entry.TxID)
-		switch status {
-		case ttxdb.Deleted:
-			removeList = append(removeList, removeEntry{id: id, txID: entry.TxID})
-		case ttxdb.Confirmed:
-			if time.Since(entry.LastAccess) > d.validTxEvictionTimeout {
-				removeList = append(removeList, removeEntry{id: id, txID: entry.TxID})
-			}
-		}
-	}
-	d.lock.RUnlock()
-
-	// --- RACE WINDOW: scanner has released RLock but hasn't acquired Lock yet ---
-
-	// Simulate Lock(reclaim=true) for tx-B: tx-A is Deleted so reclaim succeeds.
+	// The scanner is now stuck between observing tx-A as removable and
+	// deleting it. Reclaim the token for tx-B in that window.
+	<-entered
 	mock.setStatus(txB, ttxdb.Pending)
-	_, err = d.Lock(context.Background(), tokenID, txB, true)
+	_, err = d.Lock(context.Background(), "alice", tokenID, txB, true)
 	require.NoError(t, err)
 
-	// Verify the token is now locked by tx-B.
-	d.lock.RLock()
-	entry := d.locked[*tokenID]
-	assert.Equal(t, txB, entry.TxID, "token should be locked by tx-B after reclaim")
-	d.lock.RUnlock()
+	// Let the scanner finish its delete phase.
+	close(release)
 
-	// Delete phase (Lock) — this is the code under test from scan().
-	d.lock.Lock()
-	for _, s := range removeList {
-		// The fix: re-validate before deleting.
-		if entry, ok := d.locked[s.id]; ok && entry.TxID == s.txID {
-			delete(d.locked, s.id)
-		}
-	}
-	d.lock.Unlock()
-
-	// Step 4: Assert the token is still locked by tx-B (not deleted).
-	d.lock.RLock()
-	entry, ok := d.locked[*tokenID]
-	d.lock.RUnlock()
-	assert.True(t, ok, "token entry must still exist after scanner runs")
-	assert.Equal(t, txB, entry.TxID, "token must remain locked by tx-B, not deleted by scanner")
+	// The token must remain locked by tx-B: the scanner's re-validation
+	// must notice the entry changed hands.
+	require.Never(t, func() bool {
+		return !d.IsLocked(tokenID)
+	}, 300*time.Millisecond, 10*time.Millisecond, "scanner must not delete a reclaimed entry")
+	holder, err := d.Lock(context.Background(), "alice", tokenID, "tx-C", false)
+	require.ErrorIs(t, err, AlreadyLockedError)
+	assert.Equal(t, txB, holder, "token must remain locked by tx-B")
 }
 
 // TestScannerDeletesStaleEntry verifies that the scanner still correctly
@@ -164,47 +146,17 @@ func TestScannerDeletesStaleEntry(t *testing.T) {
 	tokenID := &token.ID{TxId: "tok2", Index: 0}
 	txA := "tx-A"
 
-	d := &locker{
-		ttxdb:                  mock,
-		sleepTimeout:           50 * time.Millisecond,
-		lock:                   &sync.RWMutex{},
-		locked:                 map[token.ID]*lockEntry{},
-		validTxEvictionTimeout: 0,
-	}
-
-	// Lock the token for tx-A, then mark it Deleted.
 	mock.setStatus(txA, ttxdb.Pending)
-	_, err := d.Lock(context.Background(), tokenID, txA, false)
+	d := NewLocker(mock, 20*time.Millisecond, time.Minute).(*locker)
+	t.Cleanup(func() { _ = d.Stop() })
+
+	_, err := d.Lock(context.Background(), "alice", tokenID, txA, false)
 	require.NoError(t, err)
+	require.True(t, d.IsLocked(tokenID))
+
+	// Once the transaction is Deleted, the scanner must evict the lock.
 	mock.setStatus(txA, ttxdb.Deleted)
-
-	// Scan phase
-	type removeEntry struct {
-		id   token.ID
-		txID string
-	}
-	var removeList []removeEntry
-
-	d.lock.RLock()
-	for id, entry := range d.locked {
-		status, _, _ := d.ttxdb.GetStatus(context.Background(), entry.TxID)
-		if status == ttxdb.Deleted {
-			removeList = append(removeList, removeEntry{id: id, txID: entry.TxID})
-		}
-	}
-	d.lock.RUnlock()
-
-	// No reclaim happens — delete phase should remove the entry.
-	d.lock.Lock()
-	for _, s := range removeList {
-		if entry, ok := d.locked[s.id]; ok && entry.TxID == s.txID {
-			delete(d.locked, s.id)
-		}
-	}
-	d.lock.Unlock()
-
-	d.lock.RLock()
-	_, ok := d.locked[*tokenID]
-	d.lock.RUnlock()
-	assert.False(t, ok, "stale entry should have been removed by scanner")
+	require.Eventually(t, func() bool {
+		return !d.IsLocked(tokenID)
+	}, 2*time.Second, 20*time.Millisecond, "stale entry should have been removed by scanner")
 }

@@ -29,7 +29,7 @@ func TestLocker_Stop(t *testing.T) {
 
 		d := NewLocker(mock, 20*time.Millisecond, time.Minute)
 
-		_, err := d.Lock(context.Background(), tokenID, txA, false)
+		_, err := d.Lock(context.Background(), "alice", tokenID, txA, false)
 		if err != nil {
 			t.Fatalf("unexpected lock error: %v", err)
 		}
@@ -113,7 +113,7 @@ func TestLocker_StopDuringActiveScan(t *testing.T) {
 	d := NewLocker(mock, 20*time.Millisecond, time.Minute).(*locker)
 
 	for _, id := range ids {
-		_, _ = d.Lock(context.Background(), id, "stop-scan-tx", false)
+		_, _ = d.Lock(context.Background(), "alice", id, "stop-scan-tx", false)
 	}
 
 	// Give the scan goroutine a moment to start iterating.
@@ -147,7 +147,7 @@ func TestLocker_ConcurrentStopAndLock(t *testing.T) {
 			defer wg.Done()
 			id := &token.ID{TxId: "conc", Index: uint64(i)} //nolint:gosec // G115: i is in [0,5), no overflow
 			mock.setStatus("conc", ttxdb.Pending)
-			_, _ = d.Lock(context.Background(), id, "conc", false)
+			_, _ = d.Lock(context.Background(), "alice", id, "conc", false)
 		}(i)
 	}
 

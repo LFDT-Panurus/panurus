@@ -8,6 +8,7 @@ package simple
 
 import (
 	"context"
+	"math/rand/v2"
 	"time"
 
 	"github.com/LFDT-Panurus/panurus/token"
@@ -23,10 +24,12 @@ type QueryService interface {
 }
 
 type Locker interface {
-	Lock(ctx context.Context, id *token2.ID, txID string, reclaim bool) (string, error)
-	// UnlockIDs unlocks the passed IDS. It returns the list of tokens that were not locked in the first place among
-	// those passed.
-	UnlockIDs(ctx context.Context, ids ...*token2.ID) []*token2.ID
+	// Lock locks the given token of the given owner for the given transaction.
+	// The owner scopes the lock state: locks of different owners never contend.
+	Lock(ctx context.Context, owner string, id *token2.ID, txID string, reclaim bool) (string, error)
+	// UnlockIDs unlocks the passed IDS of the given owner. It returns the list of tokens that were not locked
+	// in the first place among those passed.
+	UnlockIDs(ctx context.Context, owner string, ids ...*token2.ID) []*token2.ID
 	UnlockByTxID(ctx context.Context, txID string)
 	IsLocked(id *token2.ID) bool
 }
@@ -107,19 +110,19 @@ func (s *selector) selectByID(ctx context.Context, ownerFilter token.OwnerFilter
 
 			q, err := token2.ToQuantity(t.Quantity, s.precision)
 			if err != nil {
-				s.locker.UnlockIDs(ctx, toBeSpent...)
-				s.locker.UnlockIDs(ctx, toBeCertified...)
+				s.locker.UnlockIDs(ctx, id, toBeSpent...)
+				s.locker.UnlockIDs(ctx, id, toBeCertified...)
 
 				return nil, nil, errors.Wrap(err, "failed to convert quantity")
 			}
 
 			// lock the token
-			if _, lockErr := s.locker.Lock(ctx, &t.Id, s.txID, reclaim); lockErr != nil {
+			if _, lockErr := s.locker.Lock(ctx, id, &t.Id, s.txID, reclaim); lockErr != nil {
 				var addErr error
 				potentialSumWithLocked, addErr = potentialSumWithLocked.Add(q)
 				if addErr != nil {
-					s.locker.UnlockIDs(ctx, toBeSpent...)
-					s.locker.UnlockIDs(ctx, toBeCertified...)
+					s.locker.UnlockIDs(ctx, id, toBeSpent...)
+					s.locker.UnlockIDs(ctx, id, toBeCertified...)
 
 					return nil, nil, errors.Wrap(addErr, "failed to add locked quantity")
 				}
@@ -134,15 +137,15 @@ func (s *selector) selectByID(ctx context.Context, ownerFilter token.OwnerFilter
 			toBeSpent = append(toBeSpent, &t.Id)
 			sum, err = sum.Add(q)
 			if err != nil {
-				s.locker.UnlockIDs(ctx, toBeSpent...)
-				s.locker.UnlockIDs(ctx, toBeCertified...)
+				s.locker.UnlockIDs(ctx, id, toBeSpent...)
+				s.locker.UnlockIDs(ctx, id, toBeCertified...)
 
 				return nil, nil, errors.Wrap(err, "failed to add quantity")
 			}
 			potentialSumWithLocked, err = potentialSumWithLocked.Add(q)
 			if err != nil {
-				s.locker.UnlockIDs(ctx, toBeSpent...)
-				s.locker.UnlockIDs(ctx, toBeCertified...)
+				s.locker.UnlockIDs(ctx, id, toBeSpent...)
+				s.locker.UnlockIDs(ctx, id, toBeCertified...)
 
 				return nil, nil, errors.Wrap(err, "failed to add quantity")
 			}
@@ -163,8 +166,8 @@ func (s *selector) selectByID(ctx context.Context, ownerFilter token.OwnerFilter
 		}
 
 		// Unlock and check the conditions for a retry
-		s.locker.UnlockIDs(ctx, toBeSpent...)
-		s.locker.UnlockIDs(ctx, toBeCertified...)
+		s.locker.UnlockIDs(ctx, id, toBeSpent...)
+		s.locker.UnlockIDs(ctx, id, toBeCertified...)
 
 		if target.Cmp(potentialSumWithLocked) <= 0 && potentialSumWithLocked.Cmp(sum) != 0 {
 			// funds are potentially enough but they are locked
@@ -202,7 +205,19 @@ func (s *selector) selectByID(ctx context.Context, ownerFilter token.OwnerFilter
 			)
 		}
 
-		logger.DebugfContext(ctx, "token selection: let's wait [%v] before retry...", s.timeout)
-		time.Sleep(s.timeout)
+		backoff := s.retryBackoff()
+		logger.DebugfContext(ctx, "token selection: let's wait [%v] before retry...", backoff)
+		time.Sleep(backoff)
 	}
+}
+
+// retryBackoff returns a random duration in [0, timeout), so transactions
+// that lost a race for the same funds don't all retry at the same instant
+// (same jittering pattern as sherdlock's selector).
+func (s *selector) retryBackoff() time.Duration {
+	if s.timeout <= 0 {
+		return 0
+	}
+
+	return time.Duration(rand.Int64N(int64(s.timeout)))
 }
