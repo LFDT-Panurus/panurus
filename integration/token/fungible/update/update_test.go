@@ -29,7 +29,7 @@ var _ = Describe("EndToEnd", func() {
 				{
 					Alias:               "dlog-32bits",
 					TokenSDKDriver:      zkatdlognoghv1.DriverIdentifier,
-					PublicParamsGenArgs: []string{"32"},
+					PublicParamsGenArgs: []string{"64"},
 				},
 			}, t.ReplicationFactor, "alice", "bob", "charlie")
 			BeforeEach(ts.Setup)
