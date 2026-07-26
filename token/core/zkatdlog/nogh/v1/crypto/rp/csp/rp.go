@@ -211,7 +211,7 @@ func (rp *rangeProver) Prove() (*RangeProof, error) {
 	}
 	pokTv := rp.Curve.NewRandomZr(rand)
 	pokTr := rp.Curve.NewRandomZr(rand)
-	pokA := rp.Curve.MultiScalarMul(rp.VGenerators, []*mathlib.Zr{pokTv, pokTr})
+	pokA := smallMSM(rp.Curve, rp.VGenerators, []*mathlib.Zr{pokTv, pokTr})
 	tr.Absorb(pokA.Bytes())
 	pokE, err := tr.Squeeze()
 	if err != nil {
@@ -264,7 +264,7 @@ func (rp *rangeProver) Prove() (*RangeProof, error) {
 	copy(g[n+1:], rp.BGenerators)
 
 	// First prover message: pComm = MSM(g, p). Absorb and squeeze eta, c.
-	pComm := rp.Curve.MultiScalarMul(g, p)
+	pComm := smallMSM(rp.Curve, g, p)
 	tr.Absorb(pComm.Bytes())
 	eta, err := tr.Squeeze()
 	if err != nil {
@@ -375,7 +375,7 @@ func (rp *rangeProver) Prove() (*RangeProof, error) {
 	for i := range sBlind {
 		sBlind[i] = rp.Curve.NewRandomZr(rand)
 	}
-	sComm := rp.Curve.MultiScalarMul(gExt, sBlind)
+	sComm := smallMSM(rp.Curve, gExt, sBlind)
 	// Compute sVal = ⟨lf, sBlind⟩ — dispatch to native for supported curves.
 	var sVal *mathlib.Zr
 	if isBLS {
@@ -515,7 +515,7 @@ func (rv *rangeVerifier) Verify(proof *RangeProof) error {
 	if err != nil {
 		return errors.New("unable to recompute PoK challenge")
 	}
-	pokLHS := rv.Curve.MultiScalarMul(rv.VGenerators, proof.pokV.Z)
+	pokLHS := smallMSM(rv.Curve, rv.VGenerators, proof.pokV.Z)
 	pokRHS := proof.pokV.A.Copy()
 	pokRHS.Add(rv.VCommitment.Mul(pokE))
 	if !pokLHS.Equals(pokRHS) {

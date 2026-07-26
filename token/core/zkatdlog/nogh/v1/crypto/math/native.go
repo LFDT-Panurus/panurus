@@ -91,6 +91,32 @@ func NativeBatchInverse[T any, E GnarkFr[T]](elems []E) []E {
 	return resultE
 }
 
+// NativeBatchInverseInto is the zero-allocation counterpart of NativeBatchInverse,
+// for hot loops that perform many same-size batch inversions: the caller hoists
+// prefix and out once and reuses them across calls instead of paying 3 fresh
+// allocations (prefix, result, resultE) per call.
+//
+// elems, prefix, and out must all have equal, non-zero length; prefix and out
+// must not alias elems or each other. out[i] must already be a valid pointer
+// into caller-owned storage (e.g. out[i] = E(&outBacking[i])).
+func NativeBatchInverseInto[T any, E GnarkFr[T]](elems []E, prefix []T, out []E) {
+	n := len(elems)
+
+	prefix[0] = *elems[0]
+	for i := 1; i < n; i++ {
+		E(&prefix[i]).Mul(E(&prefix[i-1]), elems[i])
+	}
+
+	var acc T
+	E(&acc).Inverse(E(&prefix[n-1]))
+
+	for i := n - 1; i > 0; i-- {
+		out[i].Mul(E(&acc), E(&prefix[i-1]))
+		E(&acc).Mul(E(&acc), elems[i])
+	}
+	*out[0] = acc
+}
+
 // DispatchCurve returns true for BLS and BN254 curves based on the curve ID.
 func DispatchCurve(curve *mathlib.Curve) (isBLS bool, isBN254 bool) {
 	switch curve.GroupOrder.CurveID() {

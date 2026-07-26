@@ -15,6 +15,12 @@ import (
 
 type Transcript struct {
 	fsState []byte
+	// scratch is a reused input buffer for Absorb's fsState||hashBytes
+	// concatenation. Without it, every Absorb call would append into a
+	// freshly grown slice (fsState's capacity never exceeds its length),
+	// forcing a heap allocation per call across the many Absorb calls per
+	// CSP/range-proof round.
+	scratch []byte
 	Curve   *mathlib.Curve
 }
 
@@ -33,8 +39,17 @@ func (tr *Transcript) InitHasherWithDomain(domainSeparator string) {
 
 // Absorb the message from transcript
 func (tr *Transcript) Absorb(hashBytes []byte) {
-	bytesToHash := append(tr.fsState, hashBytes...)
-	newHash := sha256.Sum256(bytesToHash)
+	need := len(tr.fsState) + len(hashBytes)
+	if cap(tr.scratch) < need {
+		tr.scratch = make([]byte, need)
+	}
+	buf := tr.scratch[:need]
+	copy(buf, tr.fsState)
+	copy(buf[len(tr.fsState):], hashBytes)
+
+	newHash := sha256.Sum256(buf)
+	// fsState is replaced with a fresh array (not a view into scratch) so a
+	// slice previously returned by State() is never mutated by later Absorb calls.
 	tr.fsState = newHash[:]
 }
 

@@ -211,28 +211,43 @@ func interpolateNative[T any, E math2.GnarkFr[T]](n uint64, valuesOverN []*mathl
 	result := make([]*mathlib.Zr, 2*int(n)+1) // #nosec G115
 	copy(result, valuesOverN)
 
+	// Scratch buffers reused across every x in the loop below. Calling
+	// Mul/Add through the generic dictionary-dispatched E defeats escape
+	// analysis, so anything declared inside the loop would heap-allocate on
+	// every one of the O(n) outer iterations (each doing an O(m) batch
+	// inversion); declaring them once and reusing them (each iteration fully
+	// overwrites every entry before reading it) amortizes that to a single
+	// allocation per buffer for the whole call.
+	var li, px, val T
+	liE, pxE, valE := E(&li), E(&px), E(&val)
+
+	xMinusJ := make([]T, m)
+	xMinusJE := make([]E, m)
+	for j := range m {
+		xMinusJE[j] = E(&xMinusJ[j])
+	}
+
+	invPrefix := make([]T, m)
+	xMinusJInvs := make([]T, m)
+	xMinusJInvsE := make([]E, m)
+	for j := range m {
+		xMinusJInvsE[j] = E(&xMinusJInvs[j])
+	}
+
 	// Evaluate at each x in {n+1, ..., 2n} via Lagrange interpolation.
 	for x := int(n) + 1; x <= 2*int(n); x++ { // #nosec G115
 		// xMinusJ[j] = x - j, and px = ∏_j xMinusJ[j]
-		xMinusJ := make([]T, m)
-		xMinusJE := make([]E, m)
-		var px T
-		pxE := E(&px)
 		pxE.SetOne()
 		for j := range m {
-			xMinusJE[j] = E(&xMinusJ[j])
 			xMinusJE[j].SetInt64(int64(x - j)) // #nosec G115
 			pxE.Mul(pxE, xMinusJE[j])
 		}
 
-		xMinusJInvs := math2.NativeBatchInverse[T, E](xMinusJE)
+		math2.NativeBatchInverseInto[T, E](xMinusJE, invPrefix, xMinusJInvsE)
 
-		var val T
-		valE := E(&val)
+		valE.SetZero()
 		for i := range m {
-			var li T
-			liE := E(&li)
-			liE.Mul(pxE, xMinusJInvs[i])
+			liE.Mul(pxE, xMinusJInvsE[i])
 			liE.Mul(liE, denomInvs[i])
 			liE.Mul(liE, valsE[i])
 			valE.Add(valE, liE)
