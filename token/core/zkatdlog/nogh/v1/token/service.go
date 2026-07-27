@@ -70,7 +70,12 @@ func NewTokensService(logger logging.Logger, publicParametersManager common.Publ
 		}
 	}
 
-	// in addition, we support all fabtoken with precision less than maxPrecision
+	// in addition, we support all fabtoken with precision less than maxPrecision: such
+	// tokens can be safely reinterpreted locally without any issuer involvement. Fabtoken
+	// precisions strictly greater than maxPrecision are deliberately left out of this list;
+	// those are handled by upgrade.Service's issuer-mediated upgrade path instead, which
+	// expects to own exactly the complement of this list (see the doc comment on
+	// upgrade.Service).
 	for _, precision := range []uint64{16, 32, 64} {
 		format, err := v1.SupportedTokenFormat(precision)
 		if err != nil {

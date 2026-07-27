@@ -41,6 +41,18 @@ type IdentityProvider interface {
 }
 
 // Service provides functionality for token upgrades.
+//
+// This service is only meant for tokens that TokensService.SupportedTokenFormats cannot
+// already handle in place. TokensService.NewTokensService adds every fabtoken precision
+// with precision <= maxPrecision to that direct-support list, because such tokens can be
+// silently reinterpreted locally at read time without any issuer involvement. What is left
+// for this service is precisely the complement: fabtoken precisions strictly greater than
+// maxPrecision, which cannot be safely reinterpreted locally (the destination format cannot
+// represent the full value range) and therefore require the issuer to countersign an
+// explicit upgrade proof. Consequently UpgradeSupportedTokenFormatList must stay the
+// complement of the direct-support list, not overlap with it: mirroring the same
+// precision <= maxPrecision condition here would make every upgrade-eligible format also
+// directly supported, leaving no token that ever needs this path.
 type Service struct {
 	// Logger is the system logger.
 	Logger logging.Logger
@@ -61,14 +73,16 @@ func NewService(
 	deserializer Deserializer,
 	identityProvider IdentityProvider,
 ) (*Service, error) {
-	// compute supported tokens
+	// compute supported tokens: precisions above maxPrecision are exactly the ones NOT
+	// already covered by TokensService's direct support (see the Service doc comment above),
+	// so those are the only ones that need the issuer-mediated upgrade path.
 	var upgradeSupportedTokenFormatList []token.Format
 	for _, precision := range []uint64{16, 32, 64} {
 		format, err := v1.SupportedTokenFormat(precision)
 		if err != nil {
 			return nil, errors.Wrapf(err, "failed computing fabtoken token format with precision [%d]", precision)
 		}
-		if precision <= maxPrecision {
+		if precision > maxPrecision {
 			upgradeSupportedTokenFormatList = append(upgradeSupportedTokenFormatList, format)
 		}
 	}

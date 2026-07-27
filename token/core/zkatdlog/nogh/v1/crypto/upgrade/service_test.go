@@ -21,14 +21,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestTokensService_UpgradeSupportedTokenFormatList is a regression test for a bug where the
-// inclusion condition for UpgradeSupportedTokenFormatList was inverted (precision > maxPrecision
-// instead of precision <= maxPrecision), which would make the list contain exactly the wrong set
-// of formats: e.g. with maxPrecision=16 it would be empty instead of containing the 16-bit format,
-// and with maxPrecision=32 it would contain only the 64-bit format instead of the 16- and 32-bit ones.
+// TestTokensService_UpgradeSupportedTokenFormatList pins UpgradeSupportedTokenFormatList to
+// exactly the fabtoken precisions strictly greater than maxPrecision. Those are the only
+// precisions token.TokensService cannot already support directly (see the Service doc
+// comment in service.go), so they are the only ones that legitimately need the
+// issuer-mediated upgrade path. Formats at or below maxPrecision must be absent here.
 func TestTokensService_UpgradeSupportedTokenFormatList(t *testing.T) {
-	format16, err := v1.SupportedTokenFormat(16)
-	require.NoError(t, err)
 	format32, err := v1.SupportedTokenFormat(32)
 	require.NoError(t, err)
 	format64, err := v1.SupportedTokenFormat(64)
@@ -38,9 +36,9 @@ func TestTokensService_UpgradeSupportedTokenFormatList(t *testing.T) {
 		maxPrecision uint64
 		expected     []token.Format
 	}{
-		{maxPrecision: 16, expected: []token.Format{format16}},
-		{maxPrecision: 32, expected: []token.Format{format16, format32}},
-		{maxPrecision: 64, expected: []token.Format{format16, format32, format64}},
+		{maxPrecision: 16, expected: []token.Format{format32, format64}},
+		{maxPrecision: 32, expected: []token.Format{format64}},
+		{maxPrecision: 64, expected: nil},
 	}
 
 	for _, tt := range tests {
@@ -434,10 +432,41 @@ func TestTokensService_CheckUpgradeProof(t *testing.T) {
 			getDeserializer: nilDeserializer,
 		},
 		{
-			// A token whose precision (32) exceeds the deployment's maxPrecision (16) must
-			// not be accepted for upgrade: upgrading it would let a higher-precision value
-			// silently fit into a lower-precision destination format.
-			name: "valid but process fails",
+			// validTokens carries the 16-bit fabtoken format, which at maxPrecision=16 is
+			// already directly supported by TokensService (see the Service doc comment in
+			// service.go) and therefore must NOT be in UpgradeSupportedTokenFormatList: this
+			// upgrade path exists only for precisions the TokensService cannot already handle.
+			name:         "valid but process fails",
+			ch:           ch,
+			ledgerTokens: validTokens,
+			proof: func() driver.TokensUpgradeProof {
+				proof := &upgrade.Proof{
+					Challenge:  ch,
+					Tokens:     validTokens,
+					Signatures: []upgrade.Signature{[]byte("a signature")},
+				}
+				raw, err := proof.Serialize()
+				require.NoError(t, err)
+
+				return raw
+			},
+			wantErr: false,
+			getDeserializer: func() upgrade.Deserializer {
+				v := &mock2.Verifier{}
+				v.VerifyReturns(nil)
+				d := &mock.Deserializer{}
+				d.GetOwnerVerifierReturns(v, nil)
+
+				return d
+			},
+			expected:       true,
+			wantErrProcess: true,
+			processErrMsg:  "upgrade of unsupported token format [baff495e067aea1a0a5e6a37d72689316c457251e359a6796329761ca3227648] requested",
+		},
+		{
+			// A 32-bit fabtoken exceeds maxPrecision=16, so it is NOT directly supported by
+			// TokensService and must go through this issuer-mediated upgrade path instead.
+			name: "valid and supported format",
 			ch:   ch,
 			ledgerTokens: func() []token.LedgerToken {
 				format32, _ := v1.SupportedTokenFormat(32)
@@ -458,35 +487,6 @@ func TestTokensService_CheckUpgradeProof(t *testing.T) {
 				proof := &upgrade.Proof{
 					Challenge:  ch,
 					Tokens:     lts,
-					Signatures: []upgrade.Signature{[]byte("a signature")},
-				}
-				raw, err := proof.Serialize()
-				require.NoError(t, err)
-
-				return raw
-			},
-			wantErr: false,
-			getDeserializer: func() upgrade.Deserializer {
-				v := &mock2.Verifier{}
-				v.VerifyReturns(nil)
-				d := &mock.Deserializer{}
-				d.GetOwnerVerifierReturns(v, nil)
-
-				return d
-			},
-			expected:       true,
-			wantErrProcess: true,
-		},
-		{
-			// A token whose precision (16) is at (or below) the deployment's maxPrecision (16)
-			// must be accepted for upgrade.
-			name:         "valid and supported format",
-			ch:           ch,
-			ledgerTokens: validTokens,
-			proof: func() driver.TokensUpgradeProof {
-				proof := &upgrade.Proof{
-					Challenge:  ch,
-					Tokens:     validTokens,
 					Signatures: []upgrade.Signature{[]byte("a signature")},
 				}
 				raw, err := proof.Serialize()
