@@ -186,6 +186,7 @@ func (w *EndorserStoreTransaction) AddValidationRecord(ctx context.Context, txID
 	query, args := q.InsertInto(w.table).
 		Fields("tx_id", "request", "metadata", "pp_hash", "status", "status_message", "stored_at").
 		Row(txID, tokenRequest, metaBytes, ppHash, dbdriver.Pending, "", time.Now().UTC()).
+		OnConflictDoNothing().
 		Format()
 
 	logging.Debug(logger, query, args)
