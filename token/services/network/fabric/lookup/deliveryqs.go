@@ -25,9 +25,37 @@ const (
 	FirstBlock       = 1
 )
 
+// stateQuerier is the subset of the Fabric channel used to ask the token chaincode for the
+// current value of a set of state keys in a single namespace.
+type stateQuerier interface {
+	QueryStates(ns driver.Namespace, arg []byte) ([]byte, error)
+}
+
+// rwsetInspector is the subset of the Fabric vault used to read the writes of a scanned
+// transaction.
+type rwsetInspector interface {
+	InspectRWSet(ctx context.Context, rwset []byte, namespaces ...driver.Namespace) (*fabric.RWSet, error)
+}
+
+// blockScanner is the subset of the Fabric delivery service used to scan blocks.
+type blockScanner interface {
+	ScanFromBlock(ctx context.Context, block uint64, callback fabric.DeliveryCallback) error
+}
+
+// ChannelStateQuerier queries the token chaincode of a namespace over a Fabric channel.
+type ChannelStateQuerier struct {
+	Channel *fabric.Channel
+}
+
+// QueryStates invokes QueryStates on the token chaincode deployed under ns.
+func (c *ChannelStateQuerier) QueryStates(ns driver.Namespace, arg []byte) ([]byte, error) {
+	return c.Channel.Chaincode(ns).Query(QueryStates, arg).Query()
+}
+
 type DeliveryScanQueryByID struct {
-	Delivery *fabric.Delivery
-	Channel  *fabric.Channel
+	Delivery blockScanner
+	Querier  stateQuerier
+	Vault    rwsetInspector
 }
 
 func (q *DeliveryScanQueryByID) QueryByID(ctx context.Context, startingBlock driver.BlockNum, evicted map[driver.PKey][]events.ListenerEntry[KeyInfo]) (<-chan []KeyInfo, error) {
@@ -59,27 +87,32 @@ func (q *DeliveryScanQueryByID) queryByID(ctx context.Context, keys []driver.PKe
 	// for each namespace, have a call to the token chaincode
 	startDelivery := false
 	for ns, keys := range keysByNS {
+		// A failure here concerns this namespace only. Leave its keys in keysByNS and keySet and
+		// fall back to the block scan, rather than returning and dropping every other namespace
+		// in the batch along with it (see #1990, and #1426 for the same fix on the finality path).
 		arg, err := json.Marshal(keys)
 		if err != nil {
-			logger.Errorf("failed marshalling args for query by ids [%v]: [%s]", keys, err)
+			logger.Errorf("failed marshalling args for query by ids [%v]: [%s], falling back to block scan", keys, err)
+			startDelivery = true
 
-			return
+			continue
 		}
 
 		logger.DebugfContext(ctx, "querying chaincode [%s] for the states of ids [%v]", ns, keys)
-		chaincode := q.Channel.Chaincode(ns)
-		res, err := chaincode.Query(QueryStates, arg).Query()
+		res, err := q.Querier.QueryStates(ns, arg)
 		if err != nil {
-			logger.Errorf("failed querying by ids [%v]: [%s]", keys, err)
+			logger.Errorf("failed querying by ids [%v]: [%s], falling back to block scan", keys, err)
+			startDelivery = true
 
-			return
+			continue
 		}
 		values := make([][]byte, 0, len(keys))
 		err = json.Unmarshal(res, &values)
 		if err != nil {
-			logger.Errorf("failed unmarshalling results for query by ids [%v]: [%s]", keys, err)
+			logger.Errorf("failed unmarshalling results for query by ids [%v]: [%s], falling back to block scan", keys, err)
+			startDelivery = true
 
-			return
+			continue
 		}
 		found := make([]KeyInfo, 0, len(values))
 		var notFound []string
@@ -114,7 +147,7 @@ func (q *DeliveryScanQueryByID) queryByID(ctx context.Context, keys []driver.PKe
 	logger.DebugfContext(ctx, "start scanning blocks starting from [%d], looking for remaining keys [%s]", startingBlock, keySet)
 
 	// start delivery for the future
-	v := q.Channel.Vault()
+	v := q.Vault
 	err := q.Delivery.ScanFromBlock(
 		ctx,
 		startingBlock,

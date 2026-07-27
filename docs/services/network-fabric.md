@@ -350,6 +350,13 @@ The setup listener watches for changes to a specific ledger key that stores publ
 
 The same delivery-based mechanism is reused by the [lookup service](../../token/services/network/fabric/lookup/deliveryllm.go) to detect transfer action metadata writes: it derives the transfer action metadata key prefix from [`KeyTranslator.TransferActionMetadataKeyPrefix`](../../token/services/network/common/rws/translator/rwset.go) and prefix-matches rwset writes against it, without needing to know each write's specific subkey ahead of time.
 
+When resolving a batch of keys, the lookup service groups them by namespace and issues one
+`QueryStates` chaincode call per namespace
+([`deliveryqs.go`](../../token/services/network/fabric/lookup/deliveryqs.go)). Each namespace is
+resolved independently: if its query cannot be built, does not reach the chaincode, or returns a
+response that cannot be decoded, only that namespace falls back to the block scan. The keys of the
+other namespaces in the same batch are still resolved and delivered.
+
 ## State Queries
 
 The Fabric implementation provides efficient state querying through the chaincode:
