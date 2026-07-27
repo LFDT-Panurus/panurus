@@ -158,7 +158,14 @@ func mustECDSAPublicKeyPEM(t require.TestingT) []byte {
 }
 
 func mustEndorserIdentity(t require.TestingT, pubKeyPEM []byte) view.Identity {
-	si := &msp.SerializedIdentity{Mspid: "Org1MSP", IdBytes: pubKeyPEM}
+	return mustEndorserIdentityWithMSP(t, "Org1MSP", pubKeyPEM)
+}
+
+// mustEndorserIdentityWithMSP builds a serialized MSP identity for mspID, so tests can
+// construct two distinct configured endorsers (different MSPs) that happen to carry the
+// same public key, as opposed to two byte-identical entries for the same endorser.
+func mustEndorserIdentityWithMSP(t require.TestingT, mspID string, pubKeyPEM []byte) view.Identity {
+	si := &msp.SerializedIdentity{Mspid: mspID, IdBytes: pubKeyPEM}
 	raw, err := proto.Marshal(si)
 	require.NoError(t, err)
 
@@ -200,10 +207,21 @@ func TestEndorserForThresholdRule(t *testing.T) {
 		assert.Contains(t, err.Error(), "no configured endorser")
 	})
 
-	t.Run("multiple configured endorsers match - error", func(t *testing.T) {
+	t.Run("same endorser identity listed twice - no error, single match", func(t *testing.T) {
 		pubPEM := mustECDSAPublicKeyPEM(t)
-		endorser1 := mustEndorserIdentity(t, pubPEM)
-		endorser2 := mustEndorserIdentity(t, pubPEM)
+		endorser := mustEndorserIdentity(t, pubPEM)
+		rule := &applicationpb.ThresholdRule{Scheme: "ECDSA", PublicKey: pubPEM}
+
+		got, err := endorserForThresholdRule(rule, []view.Identity{endorser, endorser})
+
+		require.NoError(t, err)
+		assert.Equal(t, endorser, got)
+	})
+
+	t.Run("multiple distinct endorsers share the key - error", func(t *testing.T) {
+		pubPEM := mustECDSAPublicKeyPEM(t)
+		endorser1 := mustEndorserIdentityWithMSP(t, "Org1MSP", pubPEM)
+		endorser2 := mustEndorserIdentityWithMSP(t, "Org2MSP", pubPEM)
 		rule := &applicationpb.ThresholdRule{Scheme: "ECDSA", PublicKey: pubPEM}
 
 		_, err := endorserForThresholdRule(rule, []view.Identity{endorser1, endorser2})

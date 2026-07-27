@@ -260,8 +260,9 @@ availability:
 - for `msp_rule`: none of the configured `endorsers` can satisfy the namespace's policy
   (e.g. no configured endorser belongs to a required MSP);
 - for `threshold_rule`: the scheme is not `ECDSA`; the public key cannot be parsed; zero
-  configured endorsers' identities carry the policy's key; or more than one does (which
-  would mean two endorsers share a private key — a misconfiguration).
+  configured endorsers' identities carry the policy's key; or more than one *distinct*
+  configured identity does (a duplicate entry for the same endorser is not an error; two
+  different endorsers sharing a private key is a misconfiguration).
 
 ### Endorsement Flow
 

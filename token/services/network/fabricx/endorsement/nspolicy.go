@@ -205,6 +205,11 @@ func mspIDsOf(principalSet []*msp.MSPPrincipal) ([]string, error) {
 // key before broadcast, so a signature can only satisfy both that check and the namespace's
 // on-chain ThresholdRule check if the two keys are, in fact, the same key. BLS and EdDSA
 // ThresholdRule namespaces cannot be endorsed through the current FSC signing path.
+//
+// configured may list the same endorser identity more than once (e.g. a duplicated entry in
+// the endorsers configuration); such duplicates collapse to a single match. The "more than
+// one match" error is reserved for genuinely distinct configured identities that carry the
+// same key, which would mean two different endorsers share a private key.
 func endorserForThresholdRule(rule *applicationpb.ThresholdRule, configured []view.Identity) (view.Identity, error) {
 	if !strings.EqualFold(rule.GetScheme(), ecdsaScheme) {
 		return nil, errors.Errorf("threshold-rule endorsement policy uses unsupported scheme [%s]; only [%s] is supported for endorser selection", rule.GetScheme(), ecdsaScheme)
@@ -219,13 +224,15 @@ func endorserForThresholdRule(rule *applicationpb.ThresholdRule, configured []vi
 		return nil, errors.Errorf("threshold-rule public key is not an ECDSA key")
 	}
 
+	seen := make(map[string]bool)
 	var matches []view.Identity
 	for _, id := range configured {
 		key, ok := ecdsaPublicKeyOf(id)
 		if !ok {
 			continue
 		}
-		if key.Equal(ruleKey) {
+		if key.Equal(ruleKey) && !seen[string(id)] {
+			seen[string(id)] = true
 			matches = append(matches, id)
 		}
 	}
@@ -236,7 +243,7 @@ func endorserForThresholdRule(rule *applicationpb.ThresholdRule, configured []vi
 	case 1:
 		return matches[0], nil
 	default:
-		return nil, errors.Errorf("[%d] configured endorsers' identities match the threshold-rule public key; expected exactly one", len(matches))
+		return nil, errors.Errorf("[%d] distinct configured endorser identities match the threshold-rule public key; expected exactly one", len(matches))
 	}
 }
 
