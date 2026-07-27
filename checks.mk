@@ -1,6 +1,12 @@
 .PHONY: checks
 checks: licensecheck gofmt goimports govet gofix misspell ineffassign staticcheck protos-lint buf-format tidy-check
 
+.PHONY: checks-no-tidy
+# same as 'checks' but without tidy-check; for use after a workflow step that
+# already rewrote go.mod/go.sum to a new dependency version and ran 'make tidy'
+# itself, where tidy-check's git-diff-against-HEAD heuristic would always fail
+checks-no-tidy: licensecheck gofmt goimports govet gofix misspell ineffassign staticcheck protos-lint buf-format
+
 .PHONY: licensecheck
 licensecheck:
 	@echo Running license check
