@@ -316,16 +316,42 @@ on-chain; a forged-content spend (real `tokenID`, different `tokenData`) is reje
 
 Gate: deterministic delta bytes; a Go-signed delta verifies on the Week-2 contract.
 
-## Week 4 — Endorsement (responder, initiator, provider, registry)
+## Week 4 — Endorsement (responder, initiator, provider, registry) — DONE (gate met)
 
-- [ ] `endorsement/registry.go`: address ↔ `view.Identity`.
-- [ ] `endorsement/responder.go` (template `fabric/.../responder.go`): authorize (allowlist) → validate
-      (`UnmarshallAndVerifyWithMetadata` + `eth_call` `getState` ledger) → persist validation record →
-      translate → assert pp version → sign. **No precomputed digest.**
-- [ ] `endorsement/initiator.go` + `esp.go` (lazy `Provider[TMSID,Service]` + view registration).
-- [ ] Tests: tampered-delta refusal (no blind-sign), 2-of-N assembly, authorization reject.
+- [x] `abi/abi.go`: minimal dependency-free ABI read codec (selector, bytes32-call encode, dynamic
+      `bytes` and `uint64` decode), added because the validation ledger reads on-chain state without
+      go-ethereum. Selectors cross-checked with `cast sig`.
+- [x] `endorsement/registry.go`: address ↔ `view.Identity`, both directions; rejects duplicate address
+      or identity (the distinct-signer rule starts at construction).
+- [x] `endorsement/messages.go`: `EndorseRequest`/`EndorseResponse`, **no digest field** (a wire-format
+      test guards it), carried in the versioned session envelope.
+- [x] `endorsement/ledger.go`: `token.Ledger` backed by `getToken@finalized` via the mock/real EVMClient
+      (the `EVMClient` counterfeiter mock, deferred since 1.2, is generated here).
+- [x] `endorsement/responder.go` (template `fabric/.../responder.go`): authorize (allowlist) → validate
+      (`UnmarshallAndVerifyWithMetadata` + `eth_call` `getToken` ledger) → translate → sign. **No
+      precomputed digest**: the endorser recomputes it from the validated actions.
+- [x] `endorsement/delta.go`: `DeltaFactory`, the single validate-and-translate path the responder and
+      the initiator both build through (byte-identical deltas by shared construction, §4.4).
+- [x] `endorsement/initiator.go`: collect over FSC sessions; recover each signature to a **distinct
+      registered** endorser over the locally-computed digest before counting it; threshold/uniqueness.
+- [x] `endorsement/service.go`: `Service.Endorse` entry point (initiates the initiator view) +
+      `RegisterEndorser`; the driver envelope now carries the endorsed delta + collected signatures.
+- [x] Tests: tampered-delta refusal (no blind-sign), 2-of-3 assembly over in-memory sessions,
+      authorization reject, duplicate/unknown/wrong-digest signature rejection, ledger + ABI + registry.
 
-Gate: 2-of-N endorsement (mocked FSC sessions) assembles a tx whose sigs verify on the contract.
+Gate MET: `gate_test.go` drives the real initiator + responders over in-memory sessions to assemble a
+2-of-3 quorum and pins it to a committed fixture; `contracts/test/Endorsement2ofN.t.sol` verifies that
+exact quorum on the `EndorsementVerifier` on-chain (the Week-3 Go→Solidity loop, now over the full flow).
+
+Deferred to Week 5 (need the config/DI + storage wiring, not the endorsement logic):
+- **Validation-record persistence** (design §6.2 step 3, `AppendValidationRecord` analog): needs the
+  `endorserdb` storage provider, wired with the rest of the DI in Week 5.
+- **Lazy `Provider[TMSID, Service]` + `esp.go`**: the `Service` is built; keying it per-TMS from config
+  (allowlist default = TMS network nodes, §15.7) and registering the responder when the node is an
+  endorser are config-driven, landing with `config.go` in Week 5.
+- **pp-version cross-check**: the endorser binds the delta to the pp bytes+version its provider returns
+  (on-chain source in production); comparing against a client-declared version arrives with the
+  `VersionKeeper` (Week 5). The contract is the final enforcer at apply time either way.
 
 ## Week 5 — Driver, 16 methods, JSON-RPC client, DI, receipt-finality baseline
 
