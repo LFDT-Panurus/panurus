@@ -59,7 +59,6 @@ func (n *Network) Broadcast(ctx context.Context, blob any) error {
 // NewEnvelope returns a new, empty EVM envelope.
 func (n *Network) NewEnvelope() driver.Envelope { return &Envelope{} }
 
-// RequestApproval collects endorsements and assembles the EVM transaction envelope.
 func (n *Network) RequestApproval(
 	context view.Context,
 	tms *token2.ManagementService,
@@ -73,6 +72,11 @@ func (n *Network) RequestApproval(
 
 // ComputeTxID computes the deterministic token-request anchor for the transaction.
 func (n *Network) ComputeTxID(id *driver.TxID) string { return "" }
+
+func (n *Network) SetupPublicParams(context view.Context, tmsID token2.TMSID, publicParamsRaw []byte, signer view.Identity, txID driver.TxID) (driver.Envelope, error) {
+	// TODO implement me
+	panic("implement me")
+}
 
 // FetchPublicParameters retrieves the public parameters from the TokenState contract.
 func (n *Network) FetchPublicParameters(namespace string) ([]byte, error) {
