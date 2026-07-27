@@ -313,6 +313,7 @@ func (db *TokenStore) PreparedStmtCount() int {
 
 func (db *TokenStore) UnspentTokensIteratorBy(ctx context.Context, walletID string, tokenType token.Type) (tdriver.UnspentTokensIterator, error) {
 	key := unspentTokensStmtKey(walletID, tokenType)
+	//nolint:rowserrcheck // rows.Err is checked by dedupedTokenRowsIterator.Next, which owns rows from here on
 	rows, err := db.unspentTokensStmts.Execute(ctx, db.readDB, key, func() (string, []any, error) {
 		query, args := buildUnspentTokensIteratorByQuery(db, walletID, tokenType)
 
@@ -371,6 +372,13 @@ func (it *dedupedTokenRowsIterator) Next() (*token.UnspentToken, error) {
 		it.seen[key] = struct{}{}
 
 		return &t, nil
+	}
+
+	// rows.Next returning false does not distinguish exhaustion from failure, so without this
+	// a mid-iteration error would surface as a clean end of results and the caller would act on
+	// a silently truncated token set.
+	if err := it.rows.Err(); err != nil {
+		return nil, err
 	}
 
 	return nil, nil
