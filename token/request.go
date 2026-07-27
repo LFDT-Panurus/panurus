@@ -686,6 +686,40 @@ func (r *Request) extractIssueOutputs(ctx context.Context, i int, counter uint64
 				LedgerOutputFormat:   format,
 				LedgerOutputMetadata: issueMeta.Outputs[j].OutputMetadata,
 			})
+		} else if len(recipients) > 1 {
+			// The owner is a composite identity (e.g. multisig/policy): recipients are
+			// its individual co-owners, not independent output owners. Emit a single
+			// Output for the composite owner instead of fanning out one per co-owner,
+			// otherwise each co-owner's audit movements would show the full quantity.
+			for k, recipient := range recipients {
+				metaRecipient := issueMeta.Outputs[j].RecipientAt(k)
+				if metaRecipient == nil {
+					return nil, 0, errors.Errorf("missing recipient metadata for output [%d,%d]", i, j)
+				}
+				if !recipient.Equal(metaRecipient.Identity) {
+					return nil, 0, errors.Errorf("invalid recipient [%d,%d] [%s:%s]", i, j, recipient, metaRecipient.Identity)
+				}
+			}
+			ownerAuditInfo := issueMeta.Outputs[j].OutputAuditInfo
+			eID, rID, err := tms.WalletService().GetEIDAndRH(ctx, tok.Owner, ownerAuditInfo)
+			if err != nil {
+				return nil, 0, errors.Wrapf(err, "failed getting enrollment id and revocation handle [%d,%d]", i, j)
+			}
+			outputs = append(outputs, &Output{
+				Token:                *tok,
+				ActionIndex:          i,
+				Index:                counter,
+				Owner:                tok.Owner,
+				OwnerAuditInfo:       ownerAuditInfo,
+				EnrollmentID:         eID,
+				RevocationHandler:    rID,
+				Type:                 tok.Type,
+				Quantity:             q,
+				Issuer:               issuer,
+				LedgerOutput:         raw,
+				LedgerOutputFormat:   format,
+				LedgerOutputMetadata: issueMeta.Outputs[j].OutputMetadata,
+			})
 		} else {
 			for k, recipient := range recipients {
 				metaRecipient := issueMeta.Outputs[j].RecipientAt(k)
@@ -811,6 +845,42 @@ func (r *Request) extractTransferOutputs(ctx context.Context, i int, counter uin
 					return nil, 0, errors.Errorf("invalid recipient [%d,%d] [%s:%s]", i, j, recipient, metaRecipient.Identity)
 				}
 			}
+		} else if len(recipients) > 1 {
+			// The owner is a composite identity (e.g. multisig/policy): recipients are
+			// its individual co-owners, not independent output owners. Emit a single
+			// Output for the composite owner instead of fanning out one per co-owner,
+			// otherwise each co-owner's audit movements would show the full quantity.
+			for k, recipient := range recipients {
+				metaRecipient := transferMeta.Outputs[j].RecipientAt(k)
+				if metaRecipient == nil {
+					return nil, 0, errors.Errorf("missing recipient metadata for output [%d,%d]", i, j)
+				}
+				if !recipient.Equal(metaRecipient.Identity) {
+					return nil, 0, errors.Errorf("invalid recipient [%d,%d] [%s:%s]", i, j, recipient, metaRecipient.Identity)
+				}
+				recipientCounter++
+			}
+			ownerAuditInfo := transferMeta.Outputs[j].OutputAuditInfo
+			eID, rID, err := tms.WalletService().GetEIDAndRH(ctx, tok.Owner, ownerAuditInfo)
+			if err != nil {
+				return nil, 0, errors.Wrapf(err, "failed getting enrollment id and revocation handle [%d,%d]", i, j)
+			}
+			r.TokenService.logger.Debugf("Transfer Action Output [%d,%d][%s:%d] is present, extract [%s]", i, j, r.Anchor, counter, Hashable(ledgerOutput))
+			outputs = append(outputs, &Output{
+				Token:                *tok,
+				ActionIndex:          i,
+				Index:                counter,
+				Owner:                tok.Owner,
+				OwnerAuditInfo:       ownerAuditInfo,
+				EnrollmentID:         eID,
+				RevocationHandler:    rID,
+				Type:                 tok.Type,
+				Quantity:             q,
+				LedgerOutput:         ledgerOutput,
+				LedgerOutputFormat:   ledgerOutputFormat,
+				LedgerOutputMetadata: transferMeta.Outputs[j].OutputMetadata,
+				Issuer:               issuer,
+			})
 		} else {
 			for k, recipient := range recipients {
 				metaRecipient := transferMeta.Outputs[j].RecipientAt(k)
