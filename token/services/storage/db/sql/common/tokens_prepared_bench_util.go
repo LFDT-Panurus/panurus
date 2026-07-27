@@ -76,6 +76,7 @@ func RunUnspentTokensIteratorByPreparedComparison(b *testing.B, store *TokenStor
 			cfg,
 			func() *sql.Stmt { return stmt },
 			func(s *sql.Stmt) error {
+				//nolint:rowserrcheck // rows.Err is checked by dedupedTokenRowsIterator.Next below
 				rows, err := s.QueryContext(context.Background(), args...)
 				if err != nil {
 					return err

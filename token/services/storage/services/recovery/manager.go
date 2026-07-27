@@ -107,6 +107,9 @@ func (m *Manager) Start() error {
 		m.config.InstanceID = fmt.Sprintf("recovery-%p", m)
 	}
 
+	// The context is deliberately held on the manager: it scopes the background recovery loop
+	// started below and is cancelled by Stop, so its lifetime is the manager's, not a caller's.
+	//nolint:fatcontext // long-running service lifecycle, not a per-request context
 	m.ctx, m.cancel = context.WithCancel(context.Background())
 	m.started = true
 

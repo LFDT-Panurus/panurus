@@ -35,6 +35,7 @@ func TestPreparedStmtHolder_PrepareAndReuse(t *testing.T) {
 
 	rows, err := h.Execute(t.Context(), db, "k", buildQuery)
 	require.NoError(t, err)
+	require.NoError(t, rows.Err())
 	require.NoError(t, rows.Close())
 	require.Equal(t, 1, h.Count())
 
@@ -42,6 +43,7 @@ func TestPreparedStmtHolder_PrepareAndReuse(t *testing.T) {
 	// expected above), buildQuery still invoked for its args
 	rows, err = h.Execute(t.Context(), db, "k", buildQuery)
 	require.NoError(t, err)
+	require.NoError(t, rows.Err())
 	require.NoError(t, rows.Close())
 	require.Equal(t, 1, h.Count())
 	require.Equal(t, 2, buildCalls)
@@ -65,10 +67,12 @@ func TestPreparedStmtHolder_DistinctKeys(t *testing.T) {
 
 	rows, err := h.Execute(t.Context(), db, "a", func() (string, []any, error) { return "SELECT 1", nil, nil })
 	require.NoError(t, err)
+	require.NoError(t, rows.Err())
 	require.NoError(t, rows.Close())
 
 	rows, err = h.Execute(t.Context(), db, "b", func() (string, []any, error) { return "SELECT 2", nil, nil })
 	require.NoError(t, err)
+	require.NoError(t, rows.Err())
 	require.NoError(t, rows.Close())
 
 	require.Equal(t, 2, h.Count())
@@ -87,6 +91,7 @@ func TestPreparedStmtHolder_FallsBackOnPrepareError(t *testing.T) {
 	h := newPreparedStmtHolder[string]()
 	rows, err := h.Execute(t.Context(), db, "k", func() (string, []any, error) { return "SELECT 1", nil, nil })
 	require.NoError(t, err)
+	require.NoError(t, rows.Err())
 	require.NoError(t, rows.Close())
 	// prepare failed, so nothing got cached
 	require.Equal(t, 0, h.Count())
@@ -100,6 +105,7 @@ func TestPreparedStmtHolder_BuildQueryErrorPropagates(t *testing.T) {
 
 	h := newPreparedStmtHolder[string]()
 	buildErr := sql.ErrNoRows
+	//nolint:rowserrcheck // Execute fails while building the query, so it never returns rows
 	_, err = h.Execute(t.Context(), db, "k", func() (string, []any, error) { return "", nil, buildErr })
 	require.ErrorIs(t, err, buildErr)
 }
@@ -117,6 +123,7 @@ func TestPreparedStmtHolder_Close(t *testing.T) {
 	h := newPreparedStmtHolder[string]()
 	rows, err := h.Execute(t.Context(), db, "k", func() (string, []any, error) { return "SELECT 1", nil, nil })
 	require.NoError(t, err)
+	require.NoError(t, rows.Err())
 	require.NoError(t, rows.Close())
 	require.Equal(t, 1, h.Count())
 

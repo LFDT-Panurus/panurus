@@ -9,6 +9,7 @@ linters:
     - durationcheck # Check for two durations multiplied together.
     - errorlint # Find code that can cause problems with the error wrapping scheme introduced in Go 1.13. [auto-fix]
     - exptostd # Detects functions from golang.org/x/exp/ that can be replaced by std functions. [auto-fix]
+    - fatcontext # Detects nested contexts in loops and function literals. [auto-fix]
     - ginkgolinter # Enforces standards of using ginkgo and gomega. [auto-fix]
     - goheader # Check if file header matches to pattern. [fast, auto-fix]
     - gosec # Inspects source code for security problems.
@@ -25,6 +26,7 @@ linters:
     - nolintlint # Reports ill-formed or insufficient nolint directives. [fast, auto-fix]
     - perfsprint # Checks that fmt.Sprintf can be replaced with a faster alternative. [auto-fix]
     - reassign # Checks that package variables are not reassigned.
+    - rowserrcheck # Checks whether Rows.Err of rows is checked successfully.
     - sloglint # Ensure consistent code style when using log/slog. [auto-fix]
     - spancheck # Checks for mistakes with OpenTelemetry/Census spans.
     - staticcheck # It's the set of rules from staticcheck. [auto-fix]
