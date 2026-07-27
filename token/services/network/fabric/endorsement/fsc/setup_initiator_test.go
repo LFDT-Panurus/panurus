@@ -32,7 +32,7 @@ type MockNewSetupPublicParamsView struct {
 	env             *fabric.Envelope
 }
 
-func mockNewSetupPublicParamsView(t *testing.T, overrideTMSID *token.TMSID) *MockNewSetupPublicParamsView {
+func mockNewSetupPublicParamsView(t *testing.T, overrideTMSID *token.TMSID, ppSig *fsc.PublicParamsSignature) *MockNewSetupPublicParamsView {
 	t.Helper()
 
 	ctx := &mock.Context{}
@@ -66,6 +66,7 @@ func mockNewSetupPublicParamsView(t *testing.T, overrideTMSID *token.TMSID) *Moc
 		tmsID,
 		driver.TxID{},
 		publicParamsRaw,
+		ppSig,
 		nil,
 		es,
 	)
@@ -96,7 +97,7 @@ func TestSetupPublicParamsView(t *testing.T) {
 		{
 			name: "Success",
 			setup: func() *MockNewSetupPublicParamsView {
-				m := mockNewSetupPublicParamsView(t, nil)
+				m := mockNewSetupPublicParamsView(t, nil, nil)
 
 				return m
 			},
@@ -116,9 +117,31 @@ func TestSetupPublicParamsView(t *testing.T) {
 			expectError: false,
 		},
 		{
+			name: "Success with public params signature",
+			setup: func() *MockNewSetupPublicParamsView {
+				m := mockNewSetupPublicParamsView(t, nil, &fsc.PublicParamsSignature{
+					SignerIdentity: token.Identity("an_issuer"),
+					Signature:      []byte("a_signature"),
+				})
+
+				return m
+			},
+			verify: func(m *MockNewSetupPublicParamsView, res any) {
+				assert.Len(t, m.transientMap, 3)
+				assert.Equal(t, m.tmsIDRaw, m.transientMap[fsc.TransientTMSIDKey])
+				assert.Equal(t, m.publicParamsRaw, m.transientMap[fsc.TransientPublicParamsKey])
+				var sig fsc.PublicParamsSignature
+				require.NoError(t, json.Unmarshal(m.transientMap[fsc.TransientPublicParamsSigKey], &sig))
+				assert.Equal(t, token.Identity("an_issuer"), sig.SignerIdentity)
+				assert.Equal(t, []byte("a_signature"), sig.Signature)
+				assert.Equal(t, m.env, res)
+			},
+			expectError: false,
+		},
+		{
 			name: "failed NewTransaction",
 			setup: func() *MockNewSetupPublicParamsView {
-				m := mockNewSetupPublicParamsView(t, nil)
+				m := mockNewSetupPublicParamsView(t, nil, nil)
 				m.es.NewTransactionReturns(nil, errors.New("failed NewTransaction"))
 
 				return m
@@ -129,7 +152,7 @@ func TestSetupPublicParamsView(t *testing.T) {
 		{
 			name: "failed EndorseProposal",
 			setup: func() *MockNewSetupPublicParamsView {
-				m := mockNewSetupPublicParamsView(t, nil)
+				m := mockNewSetupPublicParamsView(t, nil, nil)
 				m.fabricTx.EndorseProposalReturns(errors.New("failed EndorseProposal"))
 
 				return m
@@ -140,7 +163,7 @@ func TestSetupPublicParamsView(t *testing.T) {
 		{
 			name: "failed CollectEndorsements",
 			setup: func() *MockNewSetupPublicParamsView {
-				m := mockNewSetupPublicParamsView(t, nil)
+				m := mockNewSetupPublicParamsView(t, nil, nil)
 				m.es.CollectEndorsementsReturns(errors.New("failed CollectEndorsements"))
 
 				return m

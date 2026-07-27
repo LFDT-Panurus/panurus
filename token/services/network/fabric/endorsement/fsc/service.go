@@ -33,12 +33,13 @@ const (
 )
 
 type EndorsementService struct {
-	TmsID            token.TMSID
-	Endorsers        []view.Identity
-	ViewManager      ViewManager
-	PolicyType       string
-	EndorserService  EndorserService
-	EndorserSelector EndorserSelector
+	TmsID                         token.TMSID
+	Endorsers                     []view.Identity
+	ViewManager                   ViewManager
+	PolicyType                    string
+	EndorserService               EndorserService
+	EndorserSelector              EndorserSelector
+	TokenManagementSystemProvider TokenManagementSystemProvider
 }
 
 func NewEndorsementService(
@@ -105,12 +106,13 @@ func NewEndorsementService(
 	}
 
 	return &EndorsementService{
-		Endorsers:        endorsers,
-		TmsID:            tmsID,
-		ViewManager:      viewManager,
-		PolicyType:       policyType,
-		EndorserService:  endorserService,
-		EndorserSelector: endorserSelector,
+		Endorsers:                     endorsers,
+		TmsID:                         tmsID,
+		ViewManager:                   viewManager,
+		PolicyType:                    policyType,
+		EndorserService:               endorserService,
+		EndorserSelector:              endorserSelector,
+		TokenManagementSystemProvider: tokenManagementSystemProvider,
 	}, nil
 }
 
@@ -161,7 +163,9 @@ func (e *EndorsementService) Endorse(context view.Context, requestRaw []byte, si
 }
 
 // SetupPublicParams submits new/updated public parameters for endorsement, following the same
-// endorser-selection policy used by Endorse.
+// endorser-selection policy used by Endorse. On re-setup of a namespace that already has a TMS,
+// the submission is signed with a locally-held current-issuer wallet, so the responder can
+// authorize the change; first-time setup carries no signature.
 func (e *EndorsementService) SetupPublicParams(context view.Context, publicParamsRaw []byte, signer view.Identity, txID driver.TxID) (driver.Envelope, error) {
 	endorsers, err := e.selectEndorsers(context)
 	if err != nil {
@@ -169,10 +173,25 @@ func (e *EndorsementService) SetupPublicParams(context view.Context, publicParam
 	}
 	logger.DebugfContext(context.Context(), "request public params setup via panurus endorsers with policy [%s]: [%d]...", e.PolicyType, len(endorsers))
 
+	var ppSig *PublicParamsSignature
+	tms, err := e.TokenManagementSystemProvider.GetManagementService(token.WithTMSID(e.TmsID))
+	switch {
+	case err == nil:
+		ppSig, err = signPublicParamsWithCurrentIssuer(context, tms, publicParamsRaw)
+		if err != nil {
+			return nil, errors.WithMessagef(err, "failed to sign public parameters for re-setup of [%s]", e.TmsID)
+		}
+	case errors.Is(err, token.ErrTMSNotFound):
+		// first-time setup: no existing TMS to be authorized by, no signature needed
+	default:
+		return nil, errors.WithMessagef(err, "failed to look up tms [%s] for public params setup", e.TmsID)
+	}
+
 	envBoxed, err := e.ViewManager.InitiateView(context.Context(), NewSetupPublicParamsView(
 		e.TmsID,
 		txID,
 		publicParamsRaw,
+		ppSig,
 		endorsers,
 		e.EndorserService,
 	))
@@ -185,4 +204,37 @@ func (e *EndorsementService) SetupPublicParams(context view.Context, publicParam
 	}
 
 	return env, nil
+}
+
+// signPublicParamsWithCurrentIssuer produces a detached signature over ppRaw using a locally
+// held signer for one of the current public parameters' issuers, authorizing a re-setup.
+func signPublicParamsWithCurrentIssuer(context view.Context, tms *token.ManagementService, ppRaw []byte) (*PublicParamsSignature, error) {
+	issuers := tms.PublicParameters().Issuers()
+	if len(issuers) == 0 {
+		return nil, errors.Errorf("no issuers defined in current public parameters for [%s]", tms.ID())
+	}
+
+	var lastErr error
+	for _, id := range issuers {
+		wallet, err := tms.WalletManager().IssuerWallet(context.Context(), id)
+		if err != nil {
+			lastErr = err
+
+			continue
+		}
+		signer, err := wallet.GetSigner(context.Context(), id)
+		if err != nil {
+			lastErr = err
+
+			continue
+		}
+		sigma, err := signer.Sign(ppRaw)
+		if err != nil {
+			return nil, errors.WithMessagef(err, "failed to sign public parameters with issuer [%s]", id)
+		}
+
+		return &PublicParamsSignature{SignerIdentity: id, Signature: sigma}, nil
+	}
+
+	return nil, errors.WithMessagef(lastErr, "no local signer found for any current issuer of [%s]", tms.ID())
 }

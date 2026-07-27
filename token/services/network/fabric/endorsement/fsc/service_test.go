@@ -12,6 +12,7 @@ import (
 
 	"github.com/LFDT-Panurus/panurus/token"
 	mock2 "github.com/LFDT-Panurus/panurus/token/driver/mock"
+	tokenmock "github.com/LFDT-Panurus/panurus/token/mock"
 	"github.com/LFDT-Panurus/panurus/token/services/network/driver"
 	"github.com/LFDT-Panurus/panurus/token/services/network/fabric/endorsement/fsc"
 	"github.com/LFDT-Panurus/panurus/token/services/network/fabric/endorsement/fsc/mock"
@@ -564,6 +565,13 @@ func TestEndorsementService_SetupPublicParams(t *testing.T) {
 		Namespace: "test_namespace",
 	}
 
+	firstTimeSetupTMSP := func() *mock.TokenManagementSystemProvider {
+		tmsp := &mock.TokenManagementSystemProvider{}
+		tmsp.GetManagementServiceReturns(nil, token.ErrTMSNotFound)
+
+		return tmsp
+	}
+
 	t.Run("success - AllPolicy", func(t *testing.T) {
 		ctx := &mock.Context{}
 		ctx.ContextReturns(context.Background())
@@ -579,9 +587,10 @@ func TestEndorsementService_SetupPublicParams(t *testing.T) {
 				[]byte("endorser1"),
 				[]byte("endorser2"),
 			},
-			ViewManager:     viewManager,
-			PolicyType:      fsc.AllPolicy,
-			EndorserService: &mock.EndorserService{},
+			ViewManager:                   viewManager,
+			PolicyType:                    fsc.AllPolicy,
+			EndorserService:               &mock.EndorserService{},
+			TokenManagementSystemProvider: firstTimeSetupTMSP(),
 		}
 
 		env, err := service.SetupPublicParams(ctx, []byte("public_params"), []byte("signer"), driver.TxID{})
@@ -607,9 +616,10 @@ func TestEndorsementService_SetupPublicParams(t *testing.T) {
 				[]byte("endorser2"),
 				[]byte("endorser3"),
 			},
-			ViewManager:     viewManager,
-			PolicyType:      fsc.OneOutNPolicy,
-			EndorserService: &mock.EndorserService{},
+			ViewManager:                   viewManager,
+			PolicyType:                    fsc.OneOutNPolicy,
+			EndorserService:               &mock.EndorserService{},
+			TokenManagementSystemProvider: firstTimeSetupTMSP(),
 		}
 
 		env, err := service.SetupPublicParams(ctx, []byte("public_params"), []byte("signer"), driver.TxID{})
@@ -628,11 +638,12 @@ func TestEndorsementService_SetupPublicParams(t *testing.T) {
 		}
 
 		service := &fsc.EndorsementService{
-			TmsID:           tmsID,
-			Endorsers:       []view.Identity{[]byte("endorser1")},
-			ViewManager:     viewManager,
-			PolicyType:      "unknown",
-			EndorserService: &mock.EndorserService{},
+			TmsID:                         tmsID,
+			Endorsers:                     []view.Identity{[]byte("endorser1")},
+			ViewManager:                   viewManager,
+			PolicyType:                    "unknown",
+			EndorserService:               &mock.EndorserService{},
+			TokenManagementSystemProvider: firstTimeSetupTMSP(),
 		}
 
 		env, err := service.SetupPublicParams(ctx, []byte("public_params"), []byte("signer"), driver.TxID{})
@@ -659,10 +670,11 @@ func TestEndorsementService_SetupPublicParams(t *testing.T) {
 				[]byte("endorser1"),
 				[]byte("endorser2"),
 			},
-			ViewManager:      viewManager,
-			PolicyType:       fsc.NamespacePolicy,
-			EndorserService:  &mock.EndorserService{},
-			EndorserSelector: selector,
+			ViewManager:                   viewManager,
+			PolicyType:                    fsc.NamespacePolicy,
+			EndorserService:               &mock.EndorserService{},
+			EndorserSelector:              selector,
+			TokenManagementSystemProvider: firstTimeSetupTMSP(),
 		}
 
 		env, err := service.SetupPublicParams(ctx, []byte("public_params"), []byte("signer"), driver.TxID{})
@@ -683,12 +695,13 @@ func TestEndorsementService_SetupPublicParams(t *testing.T) {
 		selector.SelectEndorsersReturns(nil, errors.New("no covering subset"))
 
 		service := &fsc.EndorsementService{
-			TmsID:            tmsID,
-			Endorsers:        []view.Identity{[]byte("endorser1")},
-			ViewManager:      &mockViewManager{},
-			PolicyType:       fsc.NamespacePolicy,
-			EndorserService:  &mock.EndorserService{},
-			EndorserSelector: selector,
+			TmsID:                         tmsID,
+			Endorsers:                     []view.Identity{[]byte("endorser1")},
+			ViewManager:                   &mockViewManager{},
+			PolicyType:                    fsc.NamespacePolicy,
+			EndorserService:               &mock.EndorserService{},
+			EndorserSelector:              selector,
+			TokenManagementSystemProvider: firstTimeSetupTMSP(),
 		}
 
 		_, err := service.SetupPublicParams(ctx, []byte("public_params"), []byte("signer"), driver.TxID{})
@@ -706,11 +719,12 @@ func TestEndorsementService_SetupPublicParams(t *testing.T) {
 		}
 
 		service := &fsc.EndorsementService{
-			TmsID:           tmsID,
-			Endorsers:       []view.Identity{[]byte("endorser1")},
-			ViewManager:     viewManager,
-			PolicyType:      fsc.AllPolicy,
-			EndorserService: &mock.EndorserService{},
+			TmsID:                         tmsID,
+			Endorsers:                     []view.Identity{[]byte("endorser1")},
+			ViewManager:                   viewManager,
+			PolicyType:                    fsc.AllPolicy,
+			EndorserService:               &mock.EndorserService{},
+			TokenManagementSystemProvider: firstTimeSetupTMSP(),
 		}
 
 		_, err := service.SetupPublicParams(ctx, []byte("public_params"), []byte("signer"), driver.TxID{})
@@ -728,11 +742,12 @@ func TestEndorsementService_SetupPublicParams(t *testing.T) {
 		}
 
 		service := &fsc.EndorsementService{
-			TmsID:           tmsID,
-			Endorsers:       []view.Identity{[]byte("endorser1")},
-			ViewManager:     viewManager,
-			PolicyType:      fsc.AllPolicy,
-			EndorserService: &mock.EndorserService{},
+			TmsID:                         tmsID,
+			Endorsers:                     []view.Identity{[]byte("endorser1")},
+			ViewManager:                   viewManager,
+			PolicyType:                    fsc.AllPolicy,
+			EndorserService:               &mock.EndorserService{},
+			TokenManagementSystemProvider: firstTimeSetupTMSP(),
 		}
 
 		_, err := service.SetupPublicParams(ctx, []byte("public_params"), []byte("signer"), driver.TxID{})
@@ -740,6 +755,210 @@ func TestEndorsementService_SetupPublicParams(t *testing.T) {
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "expected driver.Envelope")
 	})
+
+	t.Run("failed to look up tms", func(t *testing.T) {
+		ctx := &mock.Context{}
+		ctx.ContextReturns(context.Background())
+
+		tmsp := &mock.TokenManagementSystemProvider{}
+		tmsp.GetManagementServiceReturns(nil, errors.New("lookup failed"))
+
+		service := &fsc.EndorsementService{
+			TmsID:                         tmsID,
+			Endorsers:                     []view.Identity{[]byte("endorser1")},
+			ViewManager:                   &mockViewManager{},
+			PolicyType:                    fsc.AllPolicy,
+			EndorserService:               &mock.EndorserService{},
+			TokenManagementSystemProvider: tmsp,
+		}
+
+		_, err := service.SetupPublicParams(ctx, []byte("public_params"), []byte("signer"), driver.TxID{})
+
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "failed to look up tms")
+	})
+
+	t.Run("success - re-setup signs with current issuer", func(t *testing.T) {
+		ctx := &mock.Context{}
+		ctx.ContextReturns(context.Background())
+
+		issuer := token.Identity("current_issuer")
+		signature := []byte("issuer_signature")
+		signer := &mock2.Signer{}
+		signer.SignReturns(signature, nil)
+		issuerWallet := &mock2.IssuerWallet{}
+		issuerWallet.GetSignerReturns(signer, nil)
+		ws := &mock2.WalletService{}
+		ws.IssuerWalletReturns(issuerWallet, nil)
+		tms := newResetupManagementService(t, tmsID, []token.Identity{issuer}, ws)
+		tmsp := &mock.TokenManagementSystemProvider{}
+		tmsp.GetManagementServiceReturns(tms, nil)
+
+		mockEnv := &mock.Envelope{}
+		viewManager := &mockViewManager{
+			initiateViewResult: mockEnv,
+		}
+
+		service := &fsc.EndorsementService{
+			TmsID:                         tmsID,
+			Endorsers:                     []view.Identity{[]byte("endorser1")},
+			ViewManager:                   viewManager,
+			PolicyType:                    fsc.AllPolicy,
+			EndorserService:               &mock.EndorserService{},
+			TokenManagementSystemProvider: tmsp,
+		}
+
+		ppRaw := []byte("public_params")
+		env, err := service.SetupPublicParams(ctx, ppRaw, []byte("signer"), driver.TxID{})
+
+		require.NoError(t, err)
+		require.NotNil(t, env)
+		require.NotNil(t, viewManager.initiateViewArg)
+		setupView, ok := viewManager.initiateViewArg.(*fsc.SetupPublicParamsView)
+		require.True(t, ok)
+		require.NotNil(t, setupView.PublicParamsSig)
+		assert.Equal(t, issuer, setupView.PublicParamsSig.SignerIdentity)
+		assert.Equal(t, signature, setupView.PublicParamsSig.Signature)
+		require.Equal(t, 1, signer.SignCallCount())
+		assert.Equal(t, ppRaw, signer.SignArgsForCall(0))
+	})
+
+	t.Run("failed - re-setup current public params have no issuers", func(t *testing.T) {
+		ctx := &mock.Context{}
+		ctx.ContextReturns(context.Background())
+
+		tms := newResetupManagementService(t, tmsID, nil, &mock2.WalletService{})
+		tmsp := &mock.TokenManagementSystemProvider{}
+		tmsp.GetManagementServiceReturns(tms, nil)
+
+		service := &fsc.EndorsementService{
+			TmsID:                         tmsID,
+			Endorsers:                     []view.Identity{[]byte("endorser1")},
+			ViewManager:                   &mockViewManager{},
+			PolicyType:                    fsc.AllPolicy,
+			EndorserService:               &mock.EndorserService{},
+			TokenManagementSystemProvider: tmsp,
+		}
+
+		_, err := service.SetupPublicParams(ctx, []byte("public_params"), []byte("signer"), driver.TxID{})
+
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "failed to sign public parameters for re-setup")
+		assert.Contains(t, err.Error(), "no issuers defined")
+	})
+
+	t.Run("failed - re-setup no local signer for any current issuer", func(t *testing.T) {
+		ctx := &mock.Context{}
+		ctx.ContextReturns(context.Background())
+
+		issuer := token.Identity("current_issuer")
+		ws := &mock2.WalletService{}
+		ws.IssuerWalletReturns(nil, errors.New("no wallet for issuer"))
+		tms := newResetupManagementService(t, tmsID, []token.Identity{issuer}, ws)
+		tmsp := &mock.TokenManagementSystemProvider{}
+		tmsp.GetManagementServiceReturns(tms, nil)
+
+		service := &fsc.EndorsementService{
+			TmsID:                         tmsID,
+			Endorsers:                     []view.Identity{[]byte("endorser1")},
+			ViewManager:                   &mockViewManager{},
+			PolicyType:                    fsc.AllPolicy,
+			EndorserService:               &mock.EndorserService{},
+			TokenManagementSystemProvider: tmsp,
+		}
+
+		_, err := service.SetupPublicParams(ctx, []byte("public_params"), []byte("signer"), driver.TxID{})
+
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "failed to sign public parameters for re-setup")
+		assert.Contains(t, err.Error(), "no local signer found for any current issuer")
+		assert.Contains(t, err.Error(), "no wallet for issuer")
+	})
+
+	t.Run("failed - re-setup GetSigner fails for all current issuers", func(t *testing.T) {
+		ctx := &mock.Context{}
+		ctx.ContextReturns(context.Background())
+
+		issuer := token.Identity("current_issuer")
+		issuerWallet := &mock2.IssuerWallet{}
+		issuerWallet.GetSignerReturns(nil, errors.New("no signer registered"))
+		ws := &mock2.WalletService{}
+		ws.IssuerWalletReturns(issuerWallet, nil)
+		tms := newResetupManagementService(t, tmsID, []token.Identity{issuer}, ws)
+		tmsp := &mock.TokenManagementSystemProvider{}
+		tmsp.GetManagementServiceReturns(tms, nil)
+
+		service := &fsc.EndorsementService{
+			TmsID:                         tmsID,
+			Endorsers:                     []view.Identity{[]byte("endorser1")},
+			ViewManager:                   &mockViewManager{},
+			PolicyType:                    fsc.AllPolicy,
+			EndorserService:               &mock.EndorserService{},
+			TokenManagementSystemProvider: tmsp,
+		}
+
+		_, err := service.SetupPublicParams(ctx, []byte("public_params"), []byte("signer"), driver.TxID{})
+
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "failed to sign public parameters for re-setup")
+		assert.Contains(t, err.Error(), "no local signer found for any current issuer")
+		assert.Contains(t, err.Error(), "no signer registered")
+	})
+
+	t.Run("failed - re-setup signing fails", func(t *testing.T) {
+		ctx := &mock.Context{}
+		ctx.ContextReturns(context.Background())
+
+		issuer := token.Identity("current_issuer")
+		signer := &mock2.Signer{}
+		signer.SignReturns(nil, errors.New("signing device unavailable"))
+		issuerWallet := &mock2.IssuerWallet{}
+		issuerWallet.GetSignerReturns(signer, nil)
+		ws := &mock2.WalletService{}
+		ws.IssuerWalletReturns(issuerWallet, nil)
+		tms := newResetupManagementService(t, tmsID, []token.Identity{issuer}, ws)
+		tmsp := &mock.TokenManagementSystemProvider{}
+		tmsp.GetManagementServiceReturns(tms, nil)
+
+		service := &fsc.EndorsementService{
+			TmsID:                         tmsID,
+			Endorsers:                     []view.Identity{[]byte("endorser1")},
+			ViewManager:                   &mockViewManager{},
+			PolicyType:                    fsc.AllPolicy,
+			EndorserService:               &mock.EndorserService{},
+			TokenManagementSystemProvider: tmsp,
+		}
+
+		_, err := service.SetupPublicParams(ctx, []byte("public_params"), []byte("signer"), driver.TxID{})
+
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "failed to sign public parameters for re-setup")
+		assert.Contains(t, err.Error(), "signing device unavailable")
+	})
+}
+
+// newResetupManagementService returns a mocked token.ManagementService whose current public
+// parameters report the given issuers and whose wallet manager resolves issuer wallets via ws,
+// so tests can control the outcome of signPublicParamsWithCurrentIssuer.
+func newResetupManagementService(t *testing.T, tmsID token.TMSID, issuers []token.Identity, ws *mock2.WalletService) *token.ManagementService {
+	t.Helper()
+	tms := &mock2.TokenManagerService{}
+	pp := &mock2.PublicParameters{}
+	pp.IssuersReturns(issuers)
+	ppm := &mock2.PublicParamsManager{}
+	ppm.PublicParametersReturns(pp)
+	tms.PublicParamsManagerReturns(ppm)
+	tms.WalletServiceReturns(ws)
+	vp := &tokenmock.VaultProvider{}
+	vault := &mock2.Vault{}
+	qe := &mock2.QueryEngine{}
+	vault.QueryEngineReturns(qe)
+	vp.VaultReturns(vault, nil)
+
+	res, err := token.NewManagementService(tmsID, tms, nil, vp, nil, nil)
+	require.NoError(t, err)
+
+	return res
 }
 
 // Mock implementations
@@ -783,10 +1002,12 @@ type mockViewManager struct {
 	initiateViewCalled bool
 	initiateViewResult any
 	initiateViewError  error
+	initiateViewArg    view.View
 }
 
 func (m *mockViewManager) InitiateView(ctx context.Context, view view.View) (any, error) {
 	m.initiateViewCalled = true
+	m.initiateViewArg = view
 
 	return m.initiateViewResult, m.initiateViewError
 }
