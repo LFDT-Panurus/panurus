@@ -12,8 +12,8 @@ import (
 
 	"github.com/LFDT-Panurus/panurus/token"
 	mock2 "github.com/LFDT-Panurus/panurus/token/driver/mock"
-	replaymock "github.com/LFDT-Panurus/panurus/token/services/network/common/replay/mock"
 	tokenmock "github.com/LFDT-Panurus/panurus/token/mock"
+	replaymock "github.com/LFDT-Panurus/panurus/token/services/network/common/replay/mock"
 	"github.com/LFDT-Panurus/panurus/token/services/network/driver"
 	"github.com/LFDT-Panurus/panurus/token/services/network/fabric/endorsement/fsc"
 	"github.com/LFDT-Panurus/panurus/token/services/network/fabric/endorsement/fsc/mock"
