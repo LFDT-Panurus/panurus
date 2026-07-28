@@ -43,6 +43,14 @@ include $(TOP)/interop.mk
 # include the fungible target
 include $(TOP)/fungible.mk
 
+# Run `make help` to find the supported targets
+.DEFAULT_GOAL := help
+
+.PHONY: help
+help: ## List all commands with documentation
+	@echo "Available commands:"
+	@awk 'BEGIN {FS = ":.*?## "}; /^[a-zA-Z_-]+:.*?## / {printf "\033[36m%-25s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
+
 all: install-tools install-softhsm checks unit-tests #integration-tests
 
 .PHONY: install-tools
