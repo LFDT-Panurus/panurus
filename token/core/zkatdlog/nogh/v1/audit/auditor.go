@@ -9,6 +9,7 @@ package audit
 import (
 	"bytes"
 	"context"
+	"slices"
 
 	math "github.com/IBM/mathlib"
 	"github.com/LFDT-Panurus/panurus/token/core/common"
@@ -226,7 +227,7 @@ func IssueAuditValidate(infoMatcher InfoMatcher, pedersenParams []*math.G1, curv
 		}
 
 		// Validate issuer identity
-		if err := validateIssuer(ctx, infoMatcher, action.Issuer, &metadata.Issuer); err != nil {
+		if err := validateIssuer(ctx, infoMatcher, auditCtx.PP.Issuers(), action.Issuer, &metadata.Issuer); err != nil {
 			return err
 		}
 
@@ -385,8 +386,10 @@ func validateIssueOutputs(ctx context.Context, infoMatcher InfoMatcher, pedersen
 	return nil
 }
 
-// validateIssuer validates the issuer identity against metadata.
-func validateIssuer(ctx context.Context, infoMatcher InfoMatcher, issuer driver.Identity, issuerMetadata *driver.AuditableIdentity) error {
+// validateIssuer validates the issuer identity against metadata and confirms it is one of the
+// issuers listed in the public parameters. When the public parameters do not list any issuer,
+// issuance is open-policy (mirrors the validator's IssueValidate) and membership is not enforced.
+func validateIssuer(ctx context.Context, infoMatcher InfoMatcher, issuers []driver.Identity, issuer driver.Identity, issuerMetadata *driver.AuditableIdentity) error {
 	issuerIdentity := InspectableIdentity{
 		Identity:         issuer,
 		IdentityFromMeta: issuerMetadata.Identity,
@@ -394,6 +397,10 @@ func validateIssuer(ctx context.Context, infoMatcher InfoMatcher, issuer driver.
 	}
 	if err := InspectIdentity(ctx, infoMatcher, &issuerIdentity, 0); err != nil {
 		return errors.Wrapf(err, "failed checking issuer identity")
+	}
+
+	if len(issuers) != 0 && !slices.ContainsFunc(issuers, issuer.Equal) {
+		return errors.Errorf("issuer [%s] is not a recognized issuer", issuer)
 	}
 
 	return nil

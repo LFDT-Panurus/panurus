@@ -25,7 +25,10 @@ The current driver determines compatibility based on several criteria:
 
 ### The "Burn and Re-issue" Mechanism
 
-When in-place upgrade is not possible (e.g., moving to a completely incompatible cryptographic curve or increasing precision beyond limits), Panurus implements an atomic "Burn and Re-issue" protocol. 
+When in-place upgrade is not possible (e.g., moving to a completely incompatible cryptographic curve or increasing precision beyond limits), Panurus implements an atomic "Burn and Re-issue" protocol.
+
+> [!NOTE]
+> **Eligibility is the complement of in-place support, by design.** For Fabtoken-to-DLog upgrades, a token's precision is either `<= maxPrecision` (in-place support, criterion 2 above — no issuer needed) or `> maxPrecision` (this path — issuer sign-off required because the value cannot be safely reinterpreted in a lower-precision format). These two ranges must never overlap: a driver that also accepted `<= maxPrecision` tokens into the Burn-and-Re-issue eligibility list would leave no token that ever needs this path, since every upgrade-eligible token would already be directly spendable. See the `Service` doc comment in `token/core/zkatdlog/nogh/v1/crypto/upgrade/service.go` for the implementation-level invariant.
 
 #### Step-by-Step Flow:
 1.  **Identification**: The owner identifies tokens that are no longer supported.

@@ -21,6 +21,33 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestTokensService_UpgradeSupportedTokenFormatList pins UpgradeSupportedTokenFormatList to
+// exactly the fabtoken precisions strictly greater than maxPrecision. Those are the only
+// precisions token.TokensService cannot already support directly (see the Service doc
+// comment in service.go), so they are the only ones that legitimately need the
+// issuer-mediated upgrade path. Formats at or below maxPrecision must be absent here.
+func TestTokensService_UpgradeSupportedTokenFormatList(t *testing.T) {
+	format32, err := v1.SupportedTokenFormat(32)
+	require.NoError(t, err)
+	format64, err := v1.SupportedTokenFormat(64)
+	require.NoError(t, err)
+
+	tests := []struct {
+		maxPrecision uint64
+		expected     []token.Format
+	}{
+		{maxPrecision: 16, expected: []token.Format{format32, format64}},
+		{maxPrecision: 32, expected: []token.Format{format64}},
+		{maxPrecision: 64, expected: nil},
+	}
+
+	for _, tt := range tests {
+		ts, err := upgrade.NewService(nil, tt.maxPrecision, nil, nil)
+		require.NoError(t, err)
+		assert.ElementsMatch(t, tt.expected, ts.UpgradeSupportedTokenFormatList)
+	}
+}
+
 func TestTokensService_NewUpgradeChallenge(t *testing.T) {
 	ts, err := upgrade.NewService(nil, 16, nil, nil)
 	require.NoError(t, err)
@@ -405,6 +432,10 @@ func TestTokensService_CheckUpgradeProof(t *testing.T) {
 			getDeserializer: nilDeserializer,
 		},
 		{
+			// validTokens carries the 16-bit fabtoken format, which at maxPrecision=16 is
+			// already directly supported by TokensService (see the Service doc comment in
+			// service.go) and therefore must NOT be in UpgradeSupportedTokenFormatList: this
+			// upgrade path exists only for precisions the TokensService cannot already handle.
 			name:         "valid but process fails",
 			ch:           ch,
 			ledgerTokens: validTokens,
@@ -433,6 +464,8 @@ func TestTokensService_CheckUpgradeProof(t *testing.T) {
 			processErrMsg:  "upgrade of unsupported token format [baff495e067aea1a0a5e6a37d72689316c457251e359a6796329761ca3227648] requested",
 		},
 		{
+			// A 32-bit fabtoken exceeds maxPrecision=16, so it is NOT directly supported by
+			// TokensService and must go through this issuer-mediated upgrade path instead.
 			name: "valid and supported format",
 			ch:   ch,
 			ledgerTokens: func() []token.LedgerToken {
