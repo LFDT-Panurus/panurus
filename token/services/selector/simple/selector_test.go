@@ -79,7 +79,7 @@ type recordingLocker struct {
 	unlocked [][]*token2.ID // each UnlockIDs call appended as a group
 }
 
-func (r *recordingLocker) Lock(_ context.Context, id *token2.ID, _ string, _ string, _ bool) (string, error) {
+func (r *recordingLocker) Lock(_ context.Context, _ string, id *token2.ID, _ string, _ bool) (string, error) {
 	idx := r.calls
 	r.calls++
 	if idx >= r.lockFailAfter {
@@ -89,7 +89,7 @@ func (r *recordingLocker) Lock(_ context.Context, id *token2.ID, _ string, _ str
 	return "locked", nil
 }
 
-func (r *recordingLocker) UnlockIDs(_ context.Context, ids ...*token2.ID) []*token2.ID {
+func (r *recordingLocker) UnlockIDs(_ context.Context, _ string, ids ...*token2.ID) []*token2.ID {
 	if len(ids) > 0 {
 		cp := make([]*token2.ID, len(ids))
 		copy(cp, ids)
@@ -244,6 +244,7 @@ func TestSelectByID_HappyPath(t *testing.T) {
 
 	// no unlocks should have happened
 	assert.Empty(t, locker.unlocked, "no tokens should be unlocked on success")
+}
 
 // TestRetryBackoffIsJittered verifies the retry backoff is randomized over
 // [0, timeout) instead of a constant sleep, so transactions that lost a race
@@ -260,5 +261,4 @@ func TestRetryBackoffIsJittered(t *testing.T) {
 		seen[d] = struct{}{}
 	}
 	require.Greater(t, len(seen), 1, "backoff must vary across retries, not be a constant")
-
 }
