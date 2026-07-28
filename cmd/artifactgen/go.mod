@@ -177,8 +177,8 @@ require (
 	github.com/prometheus/common v0.68.0 // indirect
 	github.com/prometheus/procfs v0.20.1 // indirect
 	github.com/quic-go/qpack v0.6.0 // indirect
-	github.com/quic-go/quic-go v0.59.1 // indirect
-	github.com/quic-go/webtransport-go v0.10.0 // indirect
+	github.com/quic-go/quic-go v0.60.0 // indirect
+	github.com/quic-go/webtransport-go v0.11.1 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	github.com/rogpeppe/go-internal v1.14.1 // indirect
 	github.com/sagikazarmark/locafero v0.12.0 // indirect
@@ -234,6 +234,6 @@ require (
 	modernc.org/sqlite v1.53.0 // indirect
 )
 
-replace github.com/hyperledger-labs/fabric-smart-client => github.com/SaidAltury-ibm/fabric-smart-client v0.0.0-20260728065946-6a9ca0743671
+replace github.com/hyperledger-labs/fabric-smart-client => github.com/SaidAltury-ibm/fabric-smart-client v0.0.0-20260728144644-a45d26593538
 
-replace github.com/hyperledger-labs/fabric-smart-client/integration => github.com/SaidAltury-ibm/fabric-smart-client/integration v0.0.0-20260728065946-6a9ca0743671
+replace github.com/hyperledger-labs/fabric-smart-client/integration => github.com/SaidAltury-ibm/fabric-smart-client/integration v0.0.0-20260728144644-a45d26593538

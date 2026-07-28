@@ -142,4 +142,4 @@ require (
 	modernc.org/memory v1.11.0 // indirect
 )
 
-replace github.com/hyperledger-labs/fabric-smart-client => github.com/SaidAltury-ibm/fabric-smart-client v0.0.0-20260728065946-6a9ca0743671
+replace github.com/hyperledger-labs/fabric-smart-client => github.com/SaidAltury-ibm/fabric-smart-client v0.0.0-20260728144644-a45d26593538
