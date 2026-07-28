@@ -260,7 +260,7 @@ func (c *CollectEndorsementsView) requestSignatures(signers []view.Identity, ver
 			// If the caller supplied WithPolicySigners, only contact those
 			// components; the absent slots stay nil in the PolicySignature,
 			// which satisfies OR branches without unnecessary network calls.
-			collectIDs := c.policyCollectIDs(componentIDs)
+			collectIDs := c.policyCollectIDs(context.Context(), componentIDs)
 			logger.DebugfContext(context.Context(), "found policy identity [%s], collecting signatures from [%d/%d] components", signerIdentity, len(collectIDs), len(componentIDs))
 			componentSigmas, err := c.requestSignatures(collectIDs, verifierGetter, context, externalWallets)
 			if err != nil {
@@ -873,7 +873,17 @@ func TransferDistributionList(r *token.Request) []view.Identity {
 // policyCollectIDs returns the subset of componentIDs to collect signatures from.
 // When WithPolicySigners was supplied, only those matching identities are returned;
 // otherwise all components are returned (the default, AND-safe behaviour).
-func (c *CollectEndorsementsView) policyCollectIDs(componentIDs []token.Identity) []token.Identity {
+//
+// A component matches a requested signer either by exact identity bytes, or,
+// failing that, when the local node can sign for the component (SigService().IsMe).
+// The exact-bytes check alone is not sufficient for anonymous/pseudonymous owner
+// wallets (e.g. dlog/zkatdlog): the caller of WithPolicySigners typically only
+// knows the party's raw network identity, while the component identity recorded
+// in the PolicyIdentity is a wallet-derived pseudonym with different bytes. The
+// IsMe fallback lets "restrict to this party" work regardless of which identity
+// representation the caller happened to supply, mirroring the membership check
+// already used for composite owners in OutputStream.ByRecipientOrMember.
+func (c *CollectEndorsementsView) policyCollectIDs(ctx context.Context, componentIDs []token.Identity) []token.Identity {
 	if len(c.Opts.PolicySigners) == 0 {
 		return componentIDs
 	}
@@ -881,9 +891,15 @@ func (c *CollectEndorsementsView) policyCollectIDs(componentIDs []token.Identity
 	for _, id := range c.Opts.PolicySigners {
 		allowed[id.UniqueID()] = struct{}{}
 	}
+	sigService := c.tx.TokenService().SigService()
 	filtered := make([]token.Identity, 0, len(c.Opts.PolicySigners))
 	for _, id := range componentIDs {
 		if _, ok := allowed[id.UniqueID()]; ok {
+			filtered = append(filtered, id)
+
+			continue
+		}
+		if sigService.IsMe(ctx, id) {
 			filtered = append(filtered, id)
 		}
 	}
