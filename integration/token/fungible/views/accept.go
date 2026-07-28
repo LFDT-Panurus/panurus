@@ -35,12 +35,13 @@ func (a *AcceptCashView) Call(context view.Context) (any, error) {
 	outputs, err := tx.Outputs()
 	assert.NoError(err, "failed getting outputs")
 	assert.True(outputs.Count() > 0)
-	assert.True(outputs.ByRecipient(id).Count() > 0)
+	sigService := tx.TokenService().SigService()
+	assert.True(outputs.ByRecipientOrMember(context.Context(), id, sigService).Count() > 0)
 
 	// The recipient here is checking that, for each type of token she is receiving,
 	// she does not hold already more than 3000 units of that type.
 	// Just a fancy query to show the capabilities of the services we are using.
-	for _, output := range outputs.ByRecipient(id).Outputs() {
+	for _, output := range outputs.ByRecipientOrMember(context.Context(), id, sigService).Outputs() {
 		if output.Type == "MAX" {
 			continue
 		}
