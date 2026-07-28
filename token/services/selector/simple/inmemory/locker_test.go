@@ -44,11 +44,21 @@ type mockTXStatusProvider struct {
 	statuses map[string]ttxdb.TxStatus
 	// getStatusHook, if set, is called at the beginning of every GetStatus.
 	// Tests use it to synchronize with (or block) status lookups.
+	// Guarded by mu: it may be armed while a locker's scan goroutine is
+	// already calling GetStatus, so it must never be assigned directly.
 	getStatusHook func(txID string)
 }
 
 func newMockTXStatusProvider() *mockTXStatusProvider {
 	return &mockTXStatusProvider{statuses: make(map[string]ttxdb.TxStatus)}
+}
+
+// setGetStatusHook installs hook, to be called at the beginning of every
+// subsequent GetStatus. It is safe to call while status lookups are in flight.
+func (m *mockTXStatusProvider) setGetStatusHook(hook func(txID string)) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.getStatusHook = hook
 }
 
 func (m *mockTXStatusProvider) setStatus(txID string, status ttxdb.TxStatus) {
@@ -104,7 +114,7 @@ func TestScannerDoesNotDeleteReclaimed(t *testing.T) {
 	entered := make(chan struct{})
 	release := make(chan struct{})
 	var once sync.Once
-	mock.getStatusHook = func(txID string) {
+	mock.setGetStatusHook(func(txID string) {
 		if txID == txA && mock.status(txA) == ttxdb.Deleted {
 			first := false
 			once.Do(func() { first = true })
@@ -116,7 +126,7 @@ func TestScannerDoesNotDeleteReclaimed(t *testing.T) {
 			close(entered)
 			<-release
 		}
-	}
+	})
 	mock.setStatus(txA, ttxdb.Deleted)
 
 	// The scanner is now stuck between observing tx-A as removable and
