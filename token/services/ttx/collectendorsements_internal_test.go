@@ -14,8 +14,10 @@ import (
 	"github.com/LFDT-Panurus/panurus/token"
 	"github.com/LFDT-Panurus/panurus/token/driver"
 	drivermock "github.com/LFDT-Panurus/panurus/token/driver/mock"
+	"github.com/LFDT-Panurus/panurus/token/services/identity/boolpolicy"
 	"github.com/LFDT-Panurus/panurus/token/services/ttx/dep"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
+	"github.com/hyperledger-labs/fabric-smart-client/platform/view/view"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -180,4 +182,53 @@ func TestPolicyCollectIDsNoMatch(t *testing.T) {
 	componentIDs := []token.Identity{[]byte("alice"), []byte("carol")}
 	got := view.policyCollectIDs(t.Context(), componentIDs)
 	assert.Empty(t, got)
+}
+
+// TestUnwrapDistributionIDsPolicyRestrictsToSigners verifies the fix for the
+// dlog-fabric-t14/fabricx-dlog-t14 failure: when an OR-policy spend restricts
+// signing to a subset of co-owners via WithPolicySigners, the distribution
+// list built from the policy identity must contain only those selected
+// signers, not every co-owner. A non-signing co-owner (e.g. charlie) that
+// never opens a session expecting the assembled transaction must not be
+// contacted, or its RespondRequestRecipientIdentityView panics with
+// "expected recipient_req, got transaction".
+func TestUnwrapDistributionIDsPolicyRestrictsToSigners(t *testing.T) {
+	alice := token.Identity("alice")
+	bob := token.Identity("bob")
+	charlie := token.Identity("charlie")
+
+	policyID, err := boolpolicy.WrapPolicyIdentity("$0 OR $1 OR $2", alice, bob, charlie)
+	require.NoError(t, err)
+
+	// Only bob was selected to sign the OR-policy spend.
+	v := newPolicyCollectIDsView(t, []token.Identity{bob}, func(party driver.Identity) bool {
+		return party.UniqueID() == bob.UniqueID()
+	})
+
+	got, err := v.unwrapDistributionIDs(t.Context(), []view.Identity{policyID})
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	assert.Equal(t, bob, got[0])
+}
+
+// TestUnwrapDistributionIDsNoPolicySignersKeepsAllComponents verifies that
+// without WithPolicySigners (AND-policy / lock-notification flows), every
+// co-owner is still included in the distribution list, preserving prior
+// behaviour for those paths.
+func TestUnwrapDistributionIDsNoPolicySignersKeepsAllComponents(t *testing.T) {
+	alice := token.Identity("alice")
+	bob := token.Identity("bob")
+
+	policyID, err := boolpolicy.WrapPolicyIdentity("$0 AND $1", alice, bob)
+	require.NoError(t, err)
+
+	v := newPolicyCollectIDsView(t, nil, func(driver.Identity) bool {
+		t.Fatal("IsMe must not be consulted when there are no policy signers")
+
+		return false
+	})
+
+	got, err := v.unwrapDistributionIDs(t.Context(), []view.Identity{policyID})
+	require.NoError(t, err)
+	require.ElementsMatch(t, []view.Identity{alice, bob}, got)
 }
