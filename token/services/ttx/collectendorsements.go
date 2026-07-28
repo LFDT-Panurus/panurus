@@ -635,20 +635,16 @@ func (c *CollectEndorsementsView) distributeTxToParty(
 	return sigma, nil
 }
 
-// prepareDistributionList processes the raw distribution list and auditors list to create
-// a compressed list of unique parties to distribute the transaction to. It:
-// - Unwraps multi-signature and policy identities into their component identities
-// - Resolves long-term identities for remote parties
-// - Extracts enrollment IDs for non-local parties
-// - Removes duplicates based on long-term identity
-// - Marks which parties are local (isMe) and which are auditors
-// Returns a deduplicated list of distribution entries with all necessary metadata.
-func (c *CollectEndorsementsView) prepareDistributionList(context view.Context, auditors []view.Identity, distributionList []view.Identity) ([]distributionListEntry, error) {
-	// Compress distributionList by removing duplicates
-
-	// check if there are multisig identities, if yes, unwrap them
-	allIds := make([]view.Identity, 0, len(distributionList)+len(auditors))
-	for _, id := range distributionList {
+// unwrapDistributionIDs expands multi-sig and policy identities in ids into
+// their component identities. Policy components are filtered through
+// policyCollectIDs, mirroring requestSignatures: a co-owner excluded from an
+// OR-policy spend (e.g. WithPolicySigners restricts to one signer) never
+// opens a session expecting the assembled transaction, so sending it to them
+// anyway makes their RespondRequestRecipientIdentityView fail with "expected
+// recipient_req, got transaction".
+func (c *CollectEndorsementsView) unwrapDistributionIDs(ctx context.Context, ids []view.Identity) ([]view.Identity, error) {
+	allIds := make([]view.Identity, 0, len(ids))
+	for _, id := range ids {
 		if id.IsNone() {
 			// This is a redeem, nothing to do here.
 			continue
@@ -668,14 +664,35 @@ func (c *CollectEndorsementsView) prepareDistributionList(context view.Context, 
 			return nil, errors.Wrapf(err, "failed unwrapping policy identity [%s]", id)
 		}
 		if ok {
-			for _, b := range pi.Identities {
-				allIds = append(allIds, token.Identity(b))
+			componentIDs := make([]token.Identity, len(pi.Identities))
+			for idx, b := range pi.Identities {
+				componentIDs[idx] = b
 			}
+			allIds = append(allIds, c.policyCollectIDs(ctx, componentIDs)...)
 
 			continue
 		}
 
 		allIds = append(allIds, id)
+	}
+
+	return allIds, nil
+}
+
+// prepareDistributionList processes the raw distribution list and auditors list to create
+// a compressed list of unique parties to distribute the transaction to. It:
+// - Unwraps multi-signature and policy identities into their component identities
+// - Resolves long-term identities for remote parties
+// - Extracts enrollment IDs for non-local parties
+// - Removes duplicates based on long-term identity
+// - Marks which parties are local (isMe) and which are auditors
+// Returns a deduplicated list of distribution entries with all necessary metadata.
+func (c *CollectEndorsementsView) prepareDistributionList(context view.Context, auditors []view.Identity, distributionList []view.Identity) ([]distributionListEntry, error) {
+	// Compress distributionList by removing duplicates
+
+	allIds, err := c.unwrapDistributionIDs(context.Context(), distributionList)
+	if err != nil {
+		return nil, err
 	}
 	distributionList = allIds
 	allIds = append(allIds, auditors...)
