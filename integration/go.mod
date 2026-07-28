@@ -10,8 +10,8 @@ require (
 	github.com/LFDT-Panurus/panurus v0.0.0
 	github.com/bytedance/gopkg v0.1.3
 	github.com/gin-gonic/gin v1.12.0
-	github.com/hyperledger-labs/fabric-smart-client v0.15.2-0.20260728041942-1c00de90725d
-	github.com/hyperledger-labs/fabric-smart-client/integration v0.15.2-0.20260728041942-1c00de90725d
+	github.com/hyperledger-labs/fabric-smart-client v0.15.2-0.20260728083411-729552eaf32c
+	github.com/hyperledger-labs/fabric-smart-client/integration v0.15.2-0.20260728083411-729552eaf32c
 	github.com/hyperledger/fabric-lib-go v1.1.5-0.20260708100132-163bcc919208
 	github.com/onsi/ginkgo/v2 v2.32.0
 	github.com/onsi/gomega v1.42.1
@@ -192,8 +192,8 @@ require (
 	github.com/prometheus/client_model v0.6.2 // indirect
 	github.com/prometheus/procfs v0.20.1 // indirect
 	github.com/quic-go/qpack v0.6.0 // indirect
-	github.com/quic-go/quic-go v0.59.1 // indirect
-	github.com/quic-go/webtransport-go v0.10.0 // indirect
+	github.com/quic-go/quic-go v0.60.0 // indirect
+	github.com/quic-go/webtransport-go v0.11.1 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	github.com/robfig/cron/v3 v3.0.1 // indirect
 	github.com/rogpeppe/go-internal v1.14.1 // indirect

@@ -6,8 +6,8 @@ replace github.com/LFDT-Panurus/panurus => ./../../
 
 require (
 	github.com/LFDT-Panurus/panurus v0.0.0-00010101000000-000000000000
-	github.com/hyperledger-labs/fabric-smart-client v0.15.2-0.20260728041942-1c00de90725d
-	github.com/hyperledger-labs/fabric-smart-client/integration v0.15.2-0.20260728041942-1c00de90725d
+	github.com/hyperledger-labs/fabric-smart-client v0.15.2-0.20260728083411-729552eaf32c
+	github.com/hyperledger-labs/fabric-smart-client/integration v0.15.2-0.20260728083411-729552eaf32c
 	github.com/stretchr/testify v1.11.1
 	google.golang.org/grpc v1.82.1
 )
@@ -166,8 +166,8 @@ require (
 	github.com/prometheus/common v0.68.0 // indirect
 	github.com/prometheus/procfs v0.20.1 // indirect
 	github.com/quic-go/qpack v0.6.0 // indirect
-	github.com/quic-go/quic-go v0.59.1 // indirect
-	github.com/quic-go/webtransport-go v0.10.0 // indirect
+	github.com/quic-go/quic-go v0.60.0 // indirect
+	github.com/quic-go/webtransport-go v0.11.1 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	github.com/rogpeppe/go-internal v1.14.1 // indirect
 	github.com/spaolacci/murmur3 v1.1.0 // indirect

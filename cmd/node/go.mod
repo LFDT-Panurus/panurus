@@ -9,7 +9,7 @@ replace (
 
 require (
 	github.com/LFDT-Panurus/panurus/integration v0.0.0-00010101000000-000000000000
-	github.com/hyperledger-labs/fabric-smart-client v0.15.2-0.20260728041942-1c00de90725d
+	github.com/hyperledger-labs/fabric-smart-client v0.15.2-0.20260728083411-729552eaf32c
 )
 
 require (
@@ -63,7 +63,7 @@ require (
 	github.com/hashicorp/go-uuid v1.0.3 // indirect
 	github.com/hashicorp/golang-lru v1.0.2 // indirect
 	github.com/huin/goupnp v1.3.0 // indirect
-	github.com/hyperledger-labs/fabric-smart-client/integration v0.15.2-0.20260728041942-1c00de90725d // indirect
+	github.com/hyperledger-labs/fabric-smart-client/integration v0.15.2-0.20260728083411-729552eaf32c // indirect
 	github.com/hyperledger-labs/fabric-smart-client/platform/view/services/comm/host/libp2p v0.14.2 // indirect
 	github.com/hyperledger/fabric-amcl v0.0.0-20230602173724-9e02669dceb2 // indirect
 	github.com/hyperledger/fabric-chaincode-go/v2 v2.3.1-0.20260319210430-56968fdc7833 // indirect
@@ -164,8 +164,8 @@ require (
 	github.com/prometheus/common v0.68.0 // indirect
 	github.com/prometheus/procfs v0.20.1 // indirect
 	github.com/quic-go/qpack v0.6.0 // indirect
-	github.com/quic-go/quic-go v0.59.1 // indirect
-	github.com/quic-go/webtransport-go v0.10.0 // indirect
+	github.com/quic-go/quic-go v0.60.0 // indirect
+	github.com/quic-go/webtransport-go v0.11.1 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	github.com/robfig/cron/v3 v3.0.1 // indirect
 	github.com/rogpeppe/go-internal v1.14.1 // indirect
