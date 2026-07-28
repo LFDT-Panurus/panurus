@@ -85,7 +85,7 @@ func newValidProposalBytes(t *testing.T, txID string, creator, nonce []byte, tim
 	cis := &pb.ChaincodeInvocationSpec{
 		ChaincodeSpec: &pb.ChaincodeSpec{
 			ChaincodeId: &pb.ChaincodeID{Name: "a_namespace", Version: "1.0"},
-			Input:       &pb.ChaincodeInput{},
+			Input:       &pb.ChaincodeInput{Args: [][]byte{[]byte("invoke")}},
 		},
 	}
 	proposalPayload := &pb.ChaincodeProposalPayload{
