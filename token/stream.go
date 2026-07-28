@@ -84,6 +84,15 @@ func (o *OutputStream) ByRecipient(id Identity) *OutputStream {
 	})
 }
 
+// ByRecipientOrMember filters the OutputStream to only include outputs whose owner is the
+// passed recipient, or a composite (e.g., multisig/policy) identity that the recipient is a
+// member of, as determined by sigService.IsMe (a signer is registered for each of its members).
+func (o *OutputStream) ByRecipientOrMember(ctx context.Context, id Identity, sigService *SignatureService) *OutputStream {
+	return o.Filter(func(t *Output) bool {
+		return id.Equal(t.Owner) || sigService.IsMe(ctx, t.Owner)
+	})
+}
+
 // ByType filters the OutputStream to only include outputs that match the passed type.
 func (o *OutputStream) ByType(typ token.Type) *OutputStream {
 	return o.Filter(func(t *Output) bool {
