@@ -40,6 +40,17 @@ const (
 	ConfigKeySkipPrefix = "token.storage.skipPrefix"
 )
 
+// DefaultMaxOpenConns is the connection-pool ceiling applied to a Panurus SQL store whose
+// persistence configuration does not set maxOpenConns.
+//
+// database/sql reads a maximum of 0 as "unlimited", and FSC's configuration provider leaves the
+// value at 0 when the key is absent — so an unconfigured deployment lets every concurrent request
+// open its own connection. A burst of requests then converts directly into backend connections,
+// exhausting the database server's own connection limit and starving every other store sharing it.
+// Deployments that genuinely need a larger pool can still raise it with maxOpenConns in the
+// persistence configuration; this value only replaces "no limit at all".
+const DefaultMaxOpenConns = 50
+
 // TableNamesConfig maps a short code (e.g. "id_signers") to the replacement short code
 // that will be used when generating the final SQL table name. The FSC-generated prefix
 // and params are still applied around the replacement value.

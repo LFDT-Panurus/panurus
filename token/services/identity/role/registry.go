@@ -22,6 +22,52 @@ type WalletFactory interface {
 	NewWallet(ctx context.Context, id idriver.WalletID, role idriver.IdentityRoleType, is IdentitySupport, info idriver.IdentityInfo) (driver.Wallet, error)
 }
 
+// MaxIdentitiesPerWallet bounds how many identities a single wallet may have bound to it for a
+// given role.
+//
+// The binding store is append-only: producing a recipient identity for a wallet adds a row and
+// nothing ever removes one. Because a counterparty can ask this node for recipient identities (see
+// ttx.RespondRequestRecipientIdentityView), that growth is remotely driven and otherwise unbounded,
+// in both the wallet registry and the identity store that holds each identity's audit and signer
+// data.
+//
+// The value is deliberately generous. An anonymous owner wallet consumes roughly one identity per
+// transaction it receives, so this is a backstop against runaway growth rather than an operational
+// quota; a wallet reaching it has either been attacked or long outlived the retention assumptions
+// of its deployment.
+const MaxIdentitiesPerWallet = 1 << 20
+
+// ErrTooManyIdentities is returned by BindIdentity when a wallet already holds
+// MaxIdentitiesPerWallet identities for its role. It is a permanent condition for that wallet:
+// bindings are never removed.
+var ErrTooManyIdentities = errors.New("wallet has reached the maximum number of bound identities")
+
+// walletIdentityCount tracks how many identities are bound to one wallet, so that the common case
+// costs no query. All fields are guarded by mu.
+type walletIdentityCount struct {
+	mu sync.Mutex
+	// seeded records that stored has been read from storage. Until then stored is meaningless: a
+	// process that has just started knows nothing about bindings written by earlier runs.
+	seeded bool
+	// stored is the number of bindings believed to be committed: seeded from storage, then
+	// incremented as writes succeed.
+	stored int
+	// inFlight is the number of reservations whose write has not finished yet. It is tracked apart
+	// from stored because a re-read of storage cannot see them: counting only committed rows while
+	// concurrent writes are in progress would hand out the same slots twice.
+	inFlight int
+	// sealed records that stored was re-read from storage and the wallet was still full. Since
+	// bindings are never removed, that verdict can never be reversed, so a sealed wallet is
+	// rejected without further queries — an attacker cannot turn repeated rejections into repeated
+	// database work.
+	sealed bool
+}
+
+// total returns the number of slots currently accounted for, committed and in flight alike.
+func (c *walletIdentityCount) total() int {
+	return c.stored + c.inFlight
+}
+
 // Registry manages wallets whose long-term identities have a given role.
 //
 // Concurrency and invariants:
@@ -39,17 +85,24 @@ type Registry struct {
 	WalletFactory WalletFactory
 	WalletMu      sync.RWMutex
 	Wallets       map[string]driver.Wallet
+
+	// identityCountMu guards identityCounts. It is separate from WalletMu because the two protect
+	// unrelated state and BindIdentity must not contend with wallet lookups.
+	identityCountMu sync.Mutex
+	// identityCounts caps the growth of the binding store per wallet. See MaxIdentitiesPerWallet.
+	identityCounts map[idriver.WalletID]*walletIdentityCount
 }
 
 // NewRegistry returns a new registry for the passed parameters.
 // A registry is bound to a given role, and it is persistent.
 func NewRegistry(logger logging.Logger, role idriver.Role, storage idriver.WalletStoreService, walletFactory WalletFactory) *Registry {
 	return &Registry{
-		Logger:        logger,
-		Role:          role,
-		Storage:       storage,
-		WalletFactory: walletFactory,
-		Wallets:       map[string]driver.Wallet{},
+		Logger:         logger,
+		Role:           role,
+		Storage:        storage,
+		WalletFactory:  walletFactory,
+		Wallets:        map[string]driver.Wallet{},
+		identityCounts: map[idriver.WalletID]*walletIdentityCount{},
 	}
 }
 
@@ -180,6 +233,10 @@ func (r *Registry) RegisterWallet(ctx context.Context, id string, w driver.Walle
 // Additional metadata can be bound to the identity. confID is the unique identifier
 // of the IdentityConfiguration that originated the identity being bound
 // (see driver.IdentityConfiguration.UniqueID).
+//
+// A wallet that already holds MaxIdentitiesPerWallet identities for this role is rejected with
+// ErrTooManyIdentities before anything is written, bounding the growth of the append-only binding
+// store.
 func (r *Registry) BindIdentity(ctx context.Context, identity driver.Identity, eID string, wID idriver.WalletID, meta any, confID string) error {
 	r.Logger.DebugfContext(ctx, "put recipient identity [%s]->[%s]", identity, wID)
 	metaEncoded, err := json.Marshal(meta)
@@ -187,7 +244,136 @@ func (r *Registry) BindIdentity(ctx context.Context, identity driver.Identity, e
 		return errors.Wrapf(err, "failed to marshal metadata")
 	}
 
-	return r.Storage.StoreIdentity(ctx, identity, eID, wID, int(r.Role.ID()), metaEncoded, confID)
+	reserved, err := r.reserveIdentitySlot(ctx, identity, wID)
+	if err != nil {
+		return err
+	}
+
+	if err := r.Storage.StoreIdentity(ctx, identity, eID, wID, int(r.Role.ID()), metaEncoded, confID); err != nil {
+		if reserved {
+			r.releaseIdentitySlot(wID)
+		}
+
+		return err
+	}
+	if reserved {
+		r.commitIdentitySlot(wID)
+	}
+
+	return nil
+}
+
+// identityCounter returns the counter for wID, creating it on first use. The global mutex is held
+// only for the map access; all accounting for a wallet happens under that wallet's own mutex.
+func (r *Registry) identityCounter(wID idriver.WalletID) *walletIdentityCount {
+	r.identityCountMu.Lock()
+	defer r.identityCountMu.Unlock()
+	entry, ok := r.identityCounts[wID]
+	if !ok {
+		entry = &walletIdentityCount{}
+		r.identityCounts[wID] = entry
+	}
+
+	return entry
+}
+
+// reserveIdentitySlot accounts for one more identity under wID, rejecting with ErrTooManyIdentities
+// once the wallet is full. It is called before the write so the limit fails closed.
+//
+// It reports whether a slot was actually reserved. A full wallet re-binding an identity it already
+// holds is permitted without a reservation (the write adds no row), and that caller must not later
+// settle one. When reserved is true the caller must finish with exactly one of commitIdentitySlot
+// or releaseIdentitySlot.
+//
+// The committed count is seeded from storage on first use and maintained in memory afterwards, so
+// the common path issues no query. StoreIdentity ignores conflicts, so re-binding an identity that
+// is already stored consumes a slot without adding a row and the local count drifts upwards; that
+// drift is corrected by re-reading storage on reaching the limit, which also lets an already-bound
+// identity be re-bound by a full wallet. Reservations still in flight are added back on top of the
+// re-read value, because storage cannot see them.
+func (r *Registry) reserveIdentitySlot(ctx context.Context, identity driver.Identity, wID idriver.WalletID) (bool, error) {
+	roleID := int(r.Role.ID())
+	entry := r.identityCounter(wID)
+
+	// Reservations for one wallet are serialised, which keeps the accounting exact. The mutex is
+	// released before the caller writes to storage.
+	entry.mu.Lock()
+	defer entry.mu.Unlock()
+
+	if entry.sealed {
+		return false, r.allowOnlyExistingIdentity(ctx, identity, wID, roleID)
+	}
+
+	if !entry.seeded {
+		stored, err := r.Storage.IdentityCount(ctx, wID, roleID)
+		if err != nil {
+			return false, errors.WithMessagef(err, "failed counting identities of wallet [%s]", wID)
+		}
+		entry.stored = stored
+		entry.seeded = true
+	}
+
+	if entry.total() < MaxIdentitiesPerWallet {
+		entry.inFlight++
+
+		return true, nil
+	}
+
+	// Full according to local accounting, which may over-report. Re-read the committed count once
+	// before refusing, keeping the in-flight reservations that the query cannot observe.
+	stored, err := r.Storage.IdentityCount(ctx, wID, roleID)
+	if err != nil {
+		return false, errors.WithMessagef(err, "failed counting identities of wallet [%s]", wID)
+	}
+	entry.stored = stored
+	if entry.total() < MaxIdentitiesPerWallet {
+		entry.inFlight++
+
+		return true, nil
+	}
+
+	// Only seal once nothing is in flight: with writes outstanding the committed count is still
+	// moving, so this verdict would not yet be final.
+	if entry.inFlight == 0 {
+		entry.sealed = true
+		r.Logger.Warnf("wallet [%s] reached the maximum of [%d] bound identities for role [%d]", wID, MaxIdentitiesPerWallet, roleID)
+	}
+
+	return false, r.allowOnlyExistingIdentity(ctx, identity, wID, roleID)
+}
+
+// allowOnlyExistingIdentity permits a binding for a full wallet only when the identity is already
+// stored, in which case re-binding it adds no row. Everything else is refused.
+func (r *Registry) allowOnlyExistingIdentity(ctx context.Context, identity driver.Identity, wID idriver.WalletID, roleID int) error {
+	if r.Storage.IdentityExists(ctx, identity, wID, roleID) {
+		r.Logger.DebugfContext(ctx, "wallet [%s] is full but identity [%s] is already bound, allowing", wID, identity)
+
+		return nil
+	}
+
+	return errors.Wrapf(ErrTooManyIdentities, "wallet [%s], limit [%d]", wID, MaxIdentitiesPerWallet)
+}
+
+// commitIdentitySlot promotes a reservation whose write succeeded into the committed count.
+func (r *Registry) commitIdentitySlot(wID idriver.WalletID) {
+	entry := r.identityCounter(wID)
+	entry.mu.Lock()
+	defer entry.mu.Unlock()
+	if entry.inFlight > 0 {
+		entry.inFlight--
+		entry.stored++
+	}
+}
+
+// releaseIdentitySlot discards a reservation whose write did not succeed, so that transient storage
+// errors do not permanently consume slots.
+func (r *Registry) releaseIdentitySlot(wID idriver.WalletID) {
+	entry := r.identityCounter(wID)
+	entry.mu.Lock()
+	defer entry.mu.Unlock()
+	if entry.inFlight > 0 {
+		entry.inFlight--
+	}
 }
 
 // ContainsIdentity returns true if the passed identity belongs to the passed wallet,

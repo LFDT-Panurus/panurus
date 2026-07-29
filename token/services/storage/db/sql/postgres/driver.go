@@ -27,6 +27,29 @@ type configProvider interface {
 	GetOpts(name driver2.PersistenceName, params ...string) (*fscPostgres.Config, error)
 }
 
+// boundedConfigProvider applies common3.DefaultMaxOpenConns to any configuration that leaves the
+// connection pool unbounded.
+//
+// It wraps the provider once, at driver construction, rather than clamping inside each store's
+// lazy provider: FSC caches the *sql.DB per data source, so the pool a store actually observes is
+// the one opened by whichever store reached that data source first. Clamping per store would make
+// the effective limit depend on initialisation order.
+type boundedConfigProvider struct {
+	cp configProvider
+}
+
+func (p *boundedConfigProvider) GetOpts(name driver2.PersistenceName, params ...string) (*fscPostgres.Config, error) {
+	opts, err := p.cp.GetOpts(name, params...)
+	if err != nil {
+		return nil, err
+	}
+	if opts.MaxOpenConns <= 0 {
+		opts.MaxOpenConns = common3.DefaultMaxOpenConns
+	}
+
+	return opts, nil
+}
+
 // Driver implements the token storage driver for Postgres.
 type Driver struct {
 	cp               configProvider
@@ -64,7 +87,7 @@ func NewDriverWithDbProvider(config driver3.Config, dbProvider fscPostgres.DbPro
 	}
 
 	d := &Driver{
-		cp:               fscPostgres.NewConfigProvider(common.NewConfig(config)),
+		cp:               &boundedConfigProvider{cp: fscPostgres.NewConfigProvider(common.NewConfig(config))},
 		tableNamesConfig: tableNamesConfig,
 	}
 

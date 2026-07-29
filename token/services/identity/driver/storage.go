@@ -93,6 +93,11 @@ type WalletStoreService interface {
 	StoreIdentity(ctx context.Context, identity token.Identity, eID string, wID WalletID, roleID int, meta []byte, confID string) error
 	// IdentityExists checks whether an identity-wallet binding has already been stored
 	IdentityExists(ctx context.Context, identity token.Identity, wID WalletID, roleID int) bool
+	// IdentityCount returns how many identities are currently bound to the given wallet for the
+	// given role. It is used to enforce an upper bound on the growth of the persistent registry,
+	// which is otherwise append-only: every recipient identity produced for a wallet adds a
+	// binding and none are ever removed.
+	IdentityCount(ctx context.Context, wID WalletID, roleID int) (int, error)
 	// LoadMeta returns the metadata stored for a specific identity
 	LoadMeta(ctx context.Context, identity token.Identity, wID WalletID, roleID int) ([]byte, error)
 	// GetConfID returns the identity configuration id (see driver.IdentityConfiguration.UniqueID)

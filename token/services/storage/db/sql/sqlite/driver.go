@@ -27,6 +27,29 @@ type configProvider interface {
 	GetOpts(name driver2.PersistenceName, params ...string) (*fscSqlite.Config, error)
 }
 
+// boundedConfigProvider applies common2.DefaultMaxOpenConns to any configuration that leaves the
+// connection pool unbounded.
+//
+// It wraps the provider once, at driver construction, rather than clamping inside each store's
+// lazy provider: FSC caches the *sql.DB per data source, so the pool a store actually observes is
+// the one opened by whichever store reached that data source first. Clamping per store would make
+// the effective limit depend on initialisation order.
+type boundedConfigProvider struct {
+	cp configProvider
+}
+
+func (p *boundedConfigProvider) GetOpts(name driver2.PersistenceName, params ...string) (*fscSqlite.Config, error) {
+	opts, err := p.cp.GetOpts(name, params...)
+	if err != nil {
+		return nil, err
+	}
+	if opts.MaxOpenConns <= 0 {
+		opts.MaxOpenConns = common2.DefaultMaxOpenConns
+	}
+
+	return opts, nil
+}
+
 type Driver struct {
 	cp               configProvider
 	tableNamesConfig common2.TableNamesConfig
@@ -59,7 +82,7 @@ func NewDriverWithDbProvider(config driver3.Config, dbProvider fscSqlite.DbProvi
 	}
 
 	d := &Driver{
-		cp:               fscSqlite.NewConfigProvider(common.NewConfig(config)),
+		cp:               &boundedConfigProvider{cp: fscSqlite.NewConfigProvider(common.NewConfig(config))},
 		tableNamesConfig: tableNamesConfig,
 	}
 

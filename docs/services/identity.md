@@ -162,6 +162,40 @@ func (d *Base) NewWalletService(...) (*wallet.Service, error) {
 
 > **Note:** `provider` here is a `NewTMSProvider`-wrapped `Provider` (see [Driver Metrics](../drivers/metrics.md#pitfall-labelnames-must-include-network-channel-namespace)), which binds `network`/`channel`/`namespace` on every metric via `.With(...)` before returning it. Every `CounterOpts`/`HistogramOpts` above must therefore declare those three as `LabelNames` in addition to its own label(s), or the metric panics with "inconsistent label cardinality" on first use. This is exactly the bug that crashed the DVP/DLog integration suite in `SignerRouter.Register` before it was fixed.
 
+## Resource Limits
+
+Producing a recipient identity is expensive and remotely reachable. When a transaction counterparty
+asks this node for one (`ttx.RespondRequestRecipientIdentityView`), an *anonymous* owner wallet
+generates a fresh zero-knowledge (idemix) credential and writes to both the wallet registry and the
+identity store. Nothing above the wallet service rate-limits that request today, so the wallet layer
+enforces its own upper bounds. All of them are package constants — there is no configuration key to
+tune them.
+
+| Limit | Constant | Value | What it bounds |
+|:------|:---------|:------|:---------------|
+| Recipient-data cache size | `role.MaxRecipientDataCacheSize` | 1024 | The largest cache allocated per anonymous owner wallet, whatever `wallets.owners[].cacheSize` / `wallets.defaultCacheSize` asks for. Cached entries are pre-generated identities held in memory. |
+| Concurrent generations | `role.MaxConcurrentRecipientDataGenerations` | 8 | How many identities one wallet generates at the same time on cache misses. Callers beyond it **wait** for a slot rather than being rejected, so a burst costs latency instead of unbounded CPU, memory and storage. |
+| Identities per wallet | `role.MaxIdentitiesPerWallet` | 2²⁰ (1,048,576) | Total identities bound to one wallet for one role. The binding store is append-only — nothing ever deletes a row — so without this the registry and `identitydb` grow without limit. Exceeding it fails with `role.ErrTooManyIdentities`. |
+| Wallet query timeout | `common.WalletQueryTimeout` | 30s | How long any single wallet-store query may occupy a pooled connection, so a blocked statement cannot hold one indefinitely. |
+| Connection pool | `common.DefaultMaxOpenConns` | 50 | Applied to a Panurus SQL store whose persistence configuration omits `maxOpenConns`, which `database/sql` would otherwise read as *unlimited*. An explicit `maxOpenConns` still wins. |
+
+Notes on behaviour worth knowing before tuning any of this:
+
+*   **The background provisioner is throttled from two sides.** `provisionIdentities` blocks on a
+    full cache, so it can never run more than `Capacity()` identities ahead of consumption, and a
+    failing backend is retried with exponential backoff (50 ms doubling to 30 s). Before the backoff
+    existed, a persistent failure spun a goroutine at 100 % CPU per wallet.
+*   **`MaxIdentitiesPerWallet` is a backstop, not a quota.** An anonymous owner wallet consumes
+    roughly one identity per transaction it receives, so a wallet that reaches the limit has either
+    been attacked or long outlived its deployment's retention assumptions. The count is seeded from
+    storage on first use and then kept in memory, so the common path issues no extra query; once a
+    wallet is confirmed full it is *sealed* and refused without further queries, so repeated
+    rejections cannot themselves become database load. A full wallet still accepts re-binding an
+    identity it already holds, since that adds no row.
+*   **The pool ceiling is applied per driver, not per store.** FSC caches the `*sql.DB` per data
+    source, so the pool a store observes is the one opened by whichever store reached that data
+    source first; clamping per store would make the effective limit depend on initialisation order.
+
 ## Identity Types
 
 The Identity Service leverages a wrapper called **TypedIdentity** to support various identity schemes uniformly. 

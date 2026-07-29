@@ -50,3 +50,53 @@ func TestWalletStoreGetConfID(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, got)
 }
+
+// TestWalletStoreIdentityCount asserts that IdentityCount reports the identities bound to one
+// wallet for one role, and only those. StoreIdentity writes several entries per identity (the
+// wallet reference plus "meta" and "configid" companions), so the count must select exactly the
+// wallet-reference entries or it would multiply every binding.
+func TestWalletStoreIdentityCount(t *testing.T) {
+	backend, err := NewInMemory()
+	require.NoError(t, err)
+	tmsID := token.TMSID{Network: "apple", Channel: "pears", Namespace: "strawberries"}
+	db := NewWalletStore(backend, tmsID)
+	ctx := t.Context()
+
+	const confID = "wallet-test-conf-id"
+
+	// A wallet with nothing bound to it counts zero rather than failing.
+	count, err := db.IdentityCount(ctx, "frank_wallet", 0)
+	require.NoError(t, err)
+	assert.Equal(t, 0, count)
+
+	// Metadata is stored alongside the binding; the count must still be one per identity.
+	require.NoError(t, db.StoreIdentity(ctx, []byte("frank-1"), "eID", "frank_wallet", 0, []byte("meta"), confID))
+	require.NoError(t, db.StoreIdentity(ctx, []byte("frank-2"), "eID", "frank_wallet", 0, nil, confID))
+	count, err = db.IdentityCount(ctx, "frank_wallet", 0)
+	require.NoError(t, err)
+	assert.Equal(t, 2, count)
+
+	// Re-storing an identity that is already bound must not move the count.
+	require.NoError(t, db.StoreIdentity(ctx, []byte("frank-1"), "eID", "frank_wallet", 0, []byte("meta"), confID))
+	count, err = db.IdentityCount(ctx, "frank_wallet", 0)
+	require.NoError(t, err)
+	assert.Equal(t, 2, count)
+
+	// The same identity under a different role is a distinct binding, counted separately.
+	require.NoError(t, db.StoreIdentity(ctx, []byte("frank-1"), "eID", "frank_wallet", 1, nil, confID))
+	count, err = db.IdentityCount(ctx, "frank_wallet", 0)
+	require.NoError(t, err)
+	assert.Equal(t, 2, count, "role 0 must not see the role 1 binding")
+	count, err = db.IdentityCount(ctx, "frank_wallet", 1)
+	require.NoError(t, err)
+	assert.Equal(t, 1, count)
+
+	// Another wallet's identities must not be counted.
+	require.NoError(t, db.StoreIdentity(ctx, []byte("grace-1"), "eID", "grace_wallet", 0, nil, confID))
+	count, err = db.IdentityCount(ctx, "frank_wallet", 0)
+	require.NoError(t, err)
+	assert.Equal(t, 2, count, "another wallet's identities must not be counted")
+	count, err = db.IdentityCount(ctx, "grace_wallet", 0)
+	require.NoError(t, err)
+	assert.Equal(t, 1, count)
+}

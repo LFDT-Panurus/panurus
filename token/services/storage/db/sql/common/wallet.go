@@ -24,6 +24,21 @@ import (
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/services/storage/driver/sql/common"
 )
 
+// WalletQueryTimeout bounds how long any single wallet-store query may occupy a pooled connection.
+//
+// Wallet lookups sit on request paths driven by remote counterparties (resolving a recipient
+// identity, binding it to a wallet), and callers there do not necessarily supply a deadline. Without
+// an upper bound, one slow or blocked statement holds its connection indefinitely and, under
+// concurrency, starves every other user of the pool. The timeout is deliberately generous: these are
+// point lookups and small inserts, so reaching it means the backend is already unhealthy.
+const WalletQueryTimeout = 30 * time.Second
+
+// withQueryTimeout derives a context carrying WalletQueryTimeout. If ctx already has an earlier
+// deadline that one still wins, so callers can always ask for less time, never for more.
+func withQueryTimeout(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(ctx, WalletQueryTimeout)
+}
+
 type walletTables struct {
 	Wallets                string
 	IdentityConfigurations string
@@ -57,6 +72,9 @@ func (db *WalletStore) CreateSchema() error {
 }
 
 func (db *WalletStore) GetWalletID(ctx context.Context, identity token.Identity, roleID int) (driver.WalletID, error) {
+	ctx, cancel := withQueryTimeout(ctx)
+	defer cancel()
+
 	idHash := identity.UniqueID()
 	query, args := q.Select().
 		FieldsByName("wallet_id").
@@ -74,6 +92,9 @@ func (db *WalletStore) GetWalletID(ctx context.Context, identity token.Identity,
 }
 
 func (db *WalletStore) GetWalletIDs(ctx context.Context, roleID int) ([]driver.WalletID, error) {
+	ctx, cancel := withQueryTimeout(ctx)
+	defer cancel()
+
 	query, args := q.SelectDistinct().
 		FieldsByName("wallet_id").
 		From(q.Table(db.table.Wallets)).
@@ -91,6 +112,9 @@ func (db *WalletStore) GetWalletIDs(ctx context.Context, roleID int) ([]driver.W
 }
 
 func (db *WalletStore) StoreIdentity(ctx context.Context, identity token.Identity, eID string, wID driver.WalletID, roleID int, meta []byte, confID string) error {
+	ctx, cancel := withQueryTimeout(ctx)
+	defer cancel()
+
 	query, args := q.InsertInto(db.table.Wallets).
 		Fields("identity_hash", "meta", "wallet_id", "role_id", "created_at", "enrollment_id", "conf_id").
 		Row(identity.UniqueID(), meta, wID, roleID, time.Now().UTC(), eID, confID).
@@ -108,6 +132,9 @@ func (db *WalletStore) StoreIdentity(ctx context.Context, identity token.Identit
 }
 
 func (db *WalletStore) GetConfID(ctx context.Context, identity token.Identity) (string, error) {
+	ctx, cancel := withQueryTimeout(ctx)
+	defer cancel()
+
 	idHash := identity.UniqueID()
 	query, args := q.Select().
 		FieldsByName("conf_id").
@@ -125,6 +152,9 @@ func (db *WalletStore) GetConfID(ctx context.Context, identity token.Identity) (
 }
 
 func (db *WalletStore) LoadMeta(ctx context.Context, identity token.Identity, wID driver.WalletID, roleID int) ([]byte, error) {
+	ctx, cancel := withQueryTimeout(ctx)
+	defer cancel()
+
 	idHash := identity.UniqueID()
 	query, args := q.Select().
 		FieldsByName("meta").
@@ -141,6 +171,9 @@ func (db *WalletStore) LoadMeta(ctx context.Context, identity token.Identity, wI
 }
 
 func (db *WalletStore) IdentityExists(ctx context.Context, identity token.Identity, wID driver.WalletID, roleID int) bool {
+	ctx, cancel := withQueryTimeout(ctx)
+	defer cancel()
+
 	idHash := identity.UniqueID()
 	query, args := q.Select().
 		FieldsByName("wallet_id").
@@ -154,6 +187,29 @@ func (db *WalletStore) IdentityExists(ctx context.Context, identity token.Identi
 	logger.DebugfContext(ctx, "found identity for wallet-identity [%v-%v]: %v", wID, idHash, result)
 
 	return result != ""
+}
+
+// IdentityCount returns the number of identities bound to wID for roleID. The count is served by
+// the idx_wallet_id_and_role index, so it stays proportional to the bindings of the one wallet
+// rather than to the size of the whole table.
+func (db *WalletStore) IdentityCount(ctx context.Context, wID driver.WalletID, roleID int) (int, error) {
+	ctx, cancel := withQueryTimeout(ctx)
+	defer cancel()
+
+	query, args := q.Select().
+		FieldsByName("COUNT(*)").
+		From(q.Table(db.table.Wallets)).
+		Where(cond.And(cond.Eq("wallet_id", wID), cond.Eq("role_id", roleID))).
+		Format(db.ci)
+	logging.Debug(logger, query)
+
+	var count int
+	if err := db.readDB.QueryRowContext(ctx, query, args...).Scan(&count); err != nil {
+		return 0, errors.Wrapf(err, "failed counting identities for wallet [%v]", wID)
+	}
+	logger.DebugfContext(ctx, "wallet [%v] has [%d] identities for role [%d]", wID, count, roleID)
+
+	return count, nil
 }
 
 func (db *WalletStore) GetSchema() string {
@@ -172,9 +228,11 @@ func (db *WalletStore) GetSchema() string {
 		);
 		CREATE INDEX IF NOT EXISTS idx_identity_hash_and_role%s ON %s ( identity_hash, role_id );
 		CREATE INDEX IF NOT EXISTS idx_role_id_%s ON %s ( role_id );
-		CREATE INDEX IF NOT EXISTS idx_conf_id_%s ON %s ( conf_id )
+		CREATE INDEX IF NOT EXISTS idx_conf_id_%s ON %s ( conf_id );
+		CREATE INDEX IF NOT EXISTS idx_wallet_id_and_role_%s ON %s ( wallet_id, role_id )
 		`,
 		db.table.Wallets, db.table.IdentityConfigurations,
+		db.table.Wallets, db.table.Wallets,
 		db.table.Wallets, db.table.Wallets,
 		db.table.Wallets, db.table.Wallets,
 		db.table.Wallets, db.table.Wallets,
