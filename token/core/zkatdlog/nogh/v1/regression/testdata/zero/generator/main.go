@@ -15,6 +15,7 @@ import (
 	"runtime"
 	"sync"
 
+	math "github.com/IBM/mathlib"
 	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/benchmark"
 	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/crypto/rp"
 	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/testutils"
@@ -139,10 +140,127 @@ func main() {
 			wg.Wait()
 		}
 
+		// The scenarios below are single fixed-shape fixtures (gaps 1, 4, 5, 6, 7):
+		// unlike the transfer/issue/redeem/swap sweep above, they don't depend on
+		// num_inputs/num_outputs, so they are generated once per configuration
+		// rather than once per input/output combination.
+		log.Printf("generating fixed-shape scenario fixtures for configuration %s...\n", k)
+		scenarioEnv, err := testutils.NewEnv(&sbenchmark.Case{
+			Bits:       configuration.Bits,
+			CurveID:    configuration.CurveID,
+			NumInputs:  2,
+			NumOutputs: 2,
+		}, configurations)
+		if err != nil {
+			panic(err)
+		}
+
+		upgradeWitnessCase, err := scenarioEnv.UpgradeWitnessTransferToTestCase()
+		if err != nil {
+			panic(err)
+		}
+		pubMetadataIssueCase, err := scenarioEnv.PublicMetadataIssueToTestCase()
+		if err != nil {
+			panic(err)
+		}
+		pubMetadataTransferCase, err := scenarioEnv.PublicMetadataTransferToTestCase()
+		if err != nil {
+			panic(err)
+		}
+		unclaimedMetadataCase, err := scenarioEnv.UnclaimedMetadataToTestCase()
+		if err != nil {
+			panic(err)
+		}
+		multiAuditorCase, err := scenarioEnv.MultiAuditorTransferToTestCase()
+		if err != nil {
+			panic(err)
+		}
+		extraSignatureCase, err := scenarioEnv.ExtraSignatureToTestCase()
+		if err != nil {
+			panic(err)
+		}
+
+		allTestCases["upgrade_witness_0"] = upgradeWitnessCase
+		allTestCases["pub_metadata_issue_0"] = pubMetadataIssueCase
+		allTestCases["pub_metadata_transfer_0"] = pubMetadataTransferCase
+		allTestCases["unclaimed_metadata_0"] = unclaimedMetadataCase
+		allTestCases["multi_auditor_0"] = multiAuditorCase
+		allTestCases["extra_signature_0"] = extraSignatureCase
+
 		// Write single aggregated file for this configuration
 		log.Printf("writing aggregated file for configuration %s...\n", k)
 		if err := testutils.SaveAggregatedToFile(filepath.Join(configDir, "testdata.json"), allTestCases); err != nil {
 			panic(err)
 		}
 	}
+
+	// Gap 3 (open issuer/auditor policy): a dedicated sibling PP with an empty
+	// PP.IssuerIDs, generated as its own configuration set and saved to its own
+	// corpus subtree. Issuer policy is orthogonal to the range-proof system, so
+	// this is only generated once, for the IPA/bulletproof proof type.
+	if proofType == rp.RangeProofType {
+		if err := generateOpenPolicyCorpus(bits, curves); err != nil {
+			panic(err)
+		}
+	}
+}
+
+// generateOpenPolicyCorpus generates the gap-3 open-issuer-policy corpus
+// (open_policy_issue_0 / open_policy_redeem_0 fixtures), one fixture pair per
+// bits/curve configuration, saved under testdata/zero/open-policy/<config>/.
+func generateOpenPolicyCorpus(bits []uint64, curves []math.CurveID) error {
+	openPolicyConfigurations, err := benchmark.NewOpenIssuerPolicySetupConfigurations(benchmark.SetupParams{
+		IdemixTestdataPath: "./../../../../testdata",
+		Bits:               bits,
+		CurveIDs:           curves,
+		OwnerIdentityType:  idemixnym.IdentityType,
+		ProofType:          rp.RangeProofType,
+	})
+	if err != nil {
+		return err
+	}
+
+	openPolicyRootDir := filepath.Join("./../../zero", "open-policy")
+	if err := openPolicyConfigurations.SaveTo(openPolicyRootDir); err != nil {
+		return err
+	}
+
+	for k, configuration := range openPolicyConfigurations.Configurations {
+		configDir := filepath.Join(openPolicyRootDir, k)
+		if err := os.MkdirAll(configDir, 0o755); err != nil {
+			return err
+		}
+
+		log.Printf("generating open-policy scenario fixtures for configuration %s...\n", k)
+		env, err := testutils.NewOpenPolicyEnv(&sbenchmark.Case{
+			Bits:       configuration.Bits,
+			CurveID:    configuration.CurveID,
+			NumInputs:  1,
+			NumOutputs: 2,
+		}, openPolicyConfigurations)
+		if err != nil {
+			return err
+		}
+
+		issueCase, err := env.OpenPolicyIssueToTestCase()
+		if err != nil {
+			return err
+		}
+		redeemCase, err := env.OpenPolicyRedeemToTestCase()
+		if err != nil {
+			return err
+		}
+
+		allTestCases := map[string]*testutils.TestCase{
+			"open_policy_issue_0":  issueCase,
+			"open_policy_redeem_0": redeemCase,
+		}
+
+		log.Printf("writing aggregated file for open-policy configuration %s...\n", k)
+		if err := testutils.SaveAggregatedToFile(filepath.Join(configDir, "testdata.json"), allTestCases); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }

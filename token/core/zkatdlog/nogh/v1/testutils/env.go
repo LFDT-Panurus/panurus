@@ -14,6 +14,9 @@ import (
 	"os"
 
 	math "github.com/IBM/mathlib"
+	"github.com/LFDT-Panurus/panurus/token/core/common/meta"
+	fabtokenv1 "github.com/LFDT-Panurus/panurus/token/core/fabtoken/v1"
+	fabtokenactions "github.com/LFDT-Panurus/panurus/token/core/fabtoken/v1/actions"
 	v1 "github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1"
 	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/audit"
 	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/benchmark"
@@ -61,6 +64,48 @@ type Env struct {
 	TRWithSwapRaw      []byte
 	TRWithSwapMetadata *driver.TokenRequestMetadata
 	TRWithSwapInputs   map[string]*token2.Token
+
+	TRWithUpgradeWitnessTransfer         *driver.TokenRequest
+	TRWithUpgradeWitnessTransferTxID     string
+	TRWithUpgradeWitnessTransferRaw      []byte
+	TRWithUpgradeWitnessTransferMetadata *driver.TokenRequestMetadata
+	TRWithUpgradeWitnessTransferInputs   map[string]*token2.Token
+
+	TRWithPublicMetadataIssue         *driver.TokenRequest
+	TRWithPublicMetadataIssueTxID     string
+	TRWithPublicMetadataIssueRaw      []byte
+	TRWithPublicMetadataIssueMetadata *driver.TokenRequestMetadata
+	TRWithPublicMetadataIssueInputs   map[string]*token2.Token
+
+	TRWithPublicMetadataTransfer         *driver.TokenRequest
+	TRWithPublicMetadataTransferTxID     string
+	TRWithPublicMetadataTransferRaw      []byte
+	TRWithPublicMetadataTransferMetadata *driver.TokenRequestMetadata
+	TRWithPublicMetadataTransferInputs   map[string]*token2.Token
+
+	// TRWithUnclaimedMetadataTransfer is a NEGATIVE fixture: its metadata
+	// carries a key that no validator branch claims, so re-validation must
+	// fail with "more metadata than those validated".
+	TRWithUnclaimedMetadataTransfer         *driver.TokenRequest
+	TRWithUnclaimedMetadataTransferTxID     string
+	TRWithUnclaimedMetadataTransferRaw      []byte
+	TRWithUnclaimedMetadataTransferMetadata *driver.TokenRequestMetadata
+	TRWithUnclaimedMetadataTransferInputs   map[string]*token2.Token
+
+	TRWithMultiAuditorTransfer         *driver.TokenRequest
+	TRWithMultiAuditorTransferTxID     string
+	TRWithMultiAuditorTransferRaw      []byte
+	TRWithMultiAuditorTransferMetadata *driver.TokenRequestMetadata
+	TRWithMultiAuditorTransferInputs   map[string]*token2.Token
+
+	// TRWithExtraSignatureTransfer is a NEGATIVE fixture: it carries one
+	// extra, unconsumed action signature, so re-validation must fail with
+	// "unconsumed signatures".
+	TRWithExtraSignatureTransfer         *driver.TokenRequest
+	TRWithExtraSignatureTransferTxID     string
+	TRWithExtraSignatureTransferRaw      []byte
+	TRWithExtraSignatureTransferMetadata *driver.TokenRequestMetadata
+	TRWithExtraSignatureTransferInputs   map[string]*token2.Token
 }
 
 func NewEnv(benchCase *benchmark2.Case, configurations *benchmark.SetupConfigurations) (*Env, error) {
@@ -79,6 +124,23 @@ func NewEnv(benchCase *benchmark2.Case, configurations *benchmark.SetupConfigura
 		tr         *driver.TokenRequest         // transfer request
 		trMetadata *driver.TokenRequestMetadata // transfer metadata
 		trInputs   map[string]*token2.Token     // transfer inputs
+		uwtr       *driver.TokenRequest         // upgrade-witness transfer request
+		uwtrMeta   *driver.TokenRequestMetadata // upgrade-witness transfer metadata
+		uwtrInputs map[string]*token2.Token     // upgrade-witness transfer inputs
+		pmir       *driver.TokenRequest         // public-metadata issue request
+		pmirMeta   *driver.TokenRequestMetadata // public-metadata issue metadata
+		pmtr       *driver.TokenRequest         // public-metadata transfer request
+		pmtrMeta   *driver.TokenRequestMetadata // public-metadata transfer metadata
+		pmtrInputs map[string]*token2.Token     // public-metadata transfer inputs
+		umtr       *driver.TokenRequest         // unclaimed-metadata transfer request (negative)
+		umtrMeta   *driver.TokenRequestMetadata // unclaimed-metadata transfer metadata
+		umtrInputs map[string]*token2.Token     // unclaimed-metadata transfer inputs
+		matr       *driver.TokenRequest         // multi-auditor transfer request
+		matrMeta   *driver.TokenRequestMetadata // multi-auditor transfer metadata
+		matrInputs map[string]*token2.Token     // multi-auditor transfer inputs
+		estr       *driver.TokenRequest         // extra-signature transfer request (negative)
+		estrMeta   *driver.TokenRequestMetadata // extra-signature transfer metadata
+		estrInputs map[string]*token2.Token     // extra-signature transfer inputs
 		ar         *driver.TokenRequest         // atomic action request
 		arMetadata *driver.TokenRequestMetadata // swap metadata
 		arInputs   map[string]*token2.Token     // swap inputs
@@ -141,6 +203,66 @@ func NewEnv(benchCase *benchmark2.Case, configurations *benchmark.SetupConfigura
 		return nil, err
 	}
 
+	// prepare upgrade-witness transfer (first input loaded as a Fabtoken output)
+	_, uwtr, uwtrMeta, uwtrInputs, err = prepareUpgradeWitnessTransferRequest(pp, auditor, setupConfiguration.AuditorSigner, oID)
+	if err != nil {
+		return nil, err
+	}
+	upgradeWitnessTransferRaw, err := uwtr.Bytes()
+	if err != nil {
+		return nil, err
+	}
+
+	// prepare public-metadata issue
+	_, pmir, pmirMeta, err = preparePublicMetadataIssueRequest(pp, auditor, setupConfiguration)
+	if err != nil {
+		return nil, err
+	}
+	publicMetadataIssueRaw, err := pmir.Bytes()
+	if err != nil {
+		return nil, err
+	}
+
+	// prepare public-metadata transfer
+	_, pmtr, pmtrMeta, pmtrInputs, err = preparePublicMetadataTransferRequest(pp, auditor, setupConfiguration.AuditorSigner, oID)
+	if err != nil {
+		return nil, err
+	}
+	publicMetadataTransferRaw, err := pmtr.Bytes()
+	if err != nil {
+		return nil, err
+	}
+
+	// prepare unclaimed-metadata transfer (negative fixture)
+	_, umtr, umtrMeta, umtrInputs, err = prepareUnclaimedMetadataTransferRequest(pp, auditor, setupConfiguration.AuditorSigner, oID)
+	if err != nil {
+		return nil, err
+	}
+	unclaimedMetadataTransferRaw, err := umtr.Bytes()
+	if err != nil {
+		return nil, err
+	}
+
+	// prepare multi-auditor transfer
+	_, matr, matrMeta, matrInputs, err = prepareMultiAuditorTransferRequest(pp, auditor, setupConfiguration.SecondAuditorSigner, oID)
+	if err != nil {
+		return nil, err
+	}
+	multiAuditorTransferRaw, err := matr.Bytes()
+	if err != nil {
+		return nil, err
+	}
+
+	// prepare extra-signature transfer (negative fixture)
+	_, estr, estrMeta, estrInputs, err = prepareExtraSignatureTransferRequest(benchCase, pp, auditor, setupConfiguration.AuditorSigner, oID)
+	if err != nil {
+		return nil, err
+	}
+	extraSignatureTransferRaw, err := estr.Bytes()
+	if err != nil {
+		return nil, err
+	}
+
 	// atomic action request
 	sender, ar, arMetadata, arInputs, err = prepareSwapRequest(benchCase, pp, auditor, setupConfiguration.AuditorSigner, oID)
 	if err != nil {
@@ -161,6 +283,42 @@ func NewEnv(benchCase *benchmark2.Case, configurations *benchmark.SetupConfigura
 		TRWithTransferRaw:      transferRaw,
 		TRWithTransferMetadata: trMetadata,
 		TRWithTransferInputs:   trInputs,
+
+		TRWithUpgradeWitnessTransfer:         uwtr,
+		TRWithUpgradeWitnessTransferTxID:     "1",
+		TRWithUpgradeWitnessTransferRaw:      upgradeWitnessTransferRaw,
+		TRWithUpgradeWitnessTransferMetadata: uwtrMeta,
+		TRWithUpgradeWitnessTransferInputs:   uwtrInputs,
+
+		TRWithPublicMetadataIssue:         pmir,
+		TRWithPublicMetadataIssueTxID:     "1",
+		TRWithPublicMetadataIssueRaw:      publicMetadataIssueRaw,
+		TRWithPublicMetadataIssueMetadata: pmirMeta,
+		TRWithPublicMetadataIssueInputs:   map[string]*token2.Token{},
+
+		TRWithPublicMetadataTransfer:         pmtr,
+		TRWithPublicMetadataTransferTxID:     "1",
+		TRWithPublicMetadataTransferRaw:      publicMetadataTransferRaw,
+		TRWithPublicMetadataTransferMetadata: pmtrMeta,
+		TRWithPublicMetadataTransferInputs:   pmtrInputs,
+
+		TRWithUnclaimedMetadataTransfer:         umtr,
+		TRWithUnclaimedMetadataTransferTxID:     "1",
+		TRWithUnclaimedMetadataTransferRaw:      unclaimedMetadataTransferRaw,
+		TRWithUnclaimedMetadataTransferMetadata: umtrMeta,
+		TRWithUnclaimedMetadataTransferInputs:   umtrInputs,
+
+		TRWithMultiAuditorTransfer:         matr,
+		TRWithMultiAuditorTransferTxID:     "1",
+		TRWithMultiAuditorTransferRaw:      multiAuditorTransferRaw,
+		TRWithMultiAuditorTransferMetadata: matrMeta,
+		TRWithMultiAuditorTransferInputs:   matrInputs,
+
+		TRWithExtraSignatureTransfer:         estr,
+		TRWithExtraSignatureTransferTxID:     "1",
+		TRWithExtraSignatureTransferRaw:      extraSignatureTransferRaw,
+		TRWithExtraSignatureTransferMetadata: estrMeta,
+		TRWithExtraSignatureTransferInputs:   estrInputs,
 
 		TRWithRedeem:         rr,
 		TRWithRedeemTxID:     "1",
@@ -261,6 +419,40 @@ func (e *Env) TransferToTestCase() (*TestCase, error) {
 	return e.toTestCase(e.TRWithTransferTxID, e.TRWithTransferRaw, e.TRWithTransferMetadata, e.TRWithTransferInputs)
 }
 
+// UpgradeWitnessTransferToTestCase converts the Env's upgrade-witness transfer data to a TestCase
+func (e *Env) UpgradeWitnessTransferToTestCase() (*TestCase, error) {
+	return e.toTestCase(e.TRWithUpgradeWitnessTransferTxID, e.TRWithUpgradeWitnessTransferRaw, e.TRWithUpgradeWitnessTransferMetadata, e.TRWithUpgradeWitnessTransferInputs)
+}
+
+// PublicMetadataIssueToTestCase converts the Env's public-metadata issue data to a TestCase
+func (e *Env) PublicMetadataIssueToTestCase() (*TestCase, error) {
+	return e.toTestCase(e.TRWithPublicMetadataIssueTxID, e.TRWithPublicMetadataIssueRaw, e.TRWithPublicMetadataIssueMetadata, e.TRWithPublicMetadataIssueInputs)
+}
+
+// PublicMetadataTransferToTestCase converts the Env's public-metadata transfer data to a TestCase
+func (e *Env) PublicMetadataTransferToTestCase() (*TestCase, error) {
+	return e.toTestCase(e.TRWithPublicMetadataTransferTxID, e.TRWithPublicMetadataTransferRaw, e.TRWithPublicMetadataTransferMetadata, e.TRWithPublicMetadataTransferInputs)
+}
+
+// UnclaimedMetadataToTestCase converts the Env's unclaimed-metadata transfer
+// data to a TestCase. This is a NEGATIVE fixture: validation is expected to
+// fail with "more metadata than those validated".
+func (e *Env) UnclaimedMetadataToTestCase() (*TestCase, error) {
+	return e.toTestCase(e.TRWithUnclaimedMetadataTransferTxID, e.TRWithUnclaimedMetadataTransferRaw, e.TRWithUnclaimedMetadataTransferMetadata, e.TRWithUnclaimedMetadataTransferInputs)
+}
+
+// MultiAuditorTransferToTestCase converts the Env's multi-auditor transfer data to a TestCase
+func (e *Env) MultiAuditorTransferToTestCase() (*TestCase, error) {
+	return e.toTestCase(e.TRWithMultiAuditorTransferTxID, e.TRWithMultiAuditorTransferRaw, e.TRWithMultiAuditorTransferMetadata, e.TRWithMultiAuditorTransferInputs)
+}
+
+// ExtraSignatureToTestCase converts the Env's extra-signature transfer data
+// to a TestCase. This is a NEGATIVE fixture: validation is expected to fail
+// with "unconsumed signatures".
+func (e *Env) ExtraSignatureToTestCase() (*TestCase, error) {
+	return e.toTestCase(e.TRWithExtraSignatureTransferTxID, e.TRWithExtraSignatureTransferRaw, e.TRWithExtraSignatureTransferMetadata, e.TRWithExtraSignatureTransferInputs)
+}
+
 // IssueToTestCase converts the Env's issue data to a TestCase
 func (e *Env) IssueToTestCase() (*TestCase, error) {
 	return e.toTestCase(e.TRWithIssueTxID, e.TRWithIssueRaw, e.TRWithIssueMetadata, e.TRWithIssueInputs)
@@ -281,6 +473,10 @@ func (e *Env) toTestCase(txID string, raw []byte, metadata *driver.TokenRequestM
 		return nil, errors.Errorf("nil Env")
 	}
 
+	return buildTestCase(txID, raw, metadata, inputs)
+}
+
+func buildTestCase(txID string, raw []byte, metadata *driver.TokenRequestMetadata, inputs map[string]*token2.Token) (*TestCase, error) {
 	tc := &TestCase{
 		TxID:   txID,
 		ReqRaw: base64.StdEncoding.EncodeToString(raw),
@@ -337,6 +533,22 @@ func (e *Env) saveToFile(path string, txID string, raw []byte, metadata *driver.
 }
 
 func prepareIssueRequest(pp *v1setup.PublicParams, auditor *audit.Auditor, setupConfiguration *benchmark.SetupConfiguration) (*issue2.Issuer, *driver.TokenRequest, *driver.TokenRequestMetadata, error) {
+	return prepareIssueRequestWithAttrs(pp, auditor, setupConfiguration, nil)
+}
+
+// preparePublicMetadataIssueRequest builds a regular issue request carrying a
+// "pub."-prefixed application metadata attribute, so that
+// IssueApplicationDataValidate's metadata-claiming branch is exercised
+// end-to-end.
+func preparePublicMetadataIssueRequest(pp *v1setup.PublicParams, auditor *audit.Auditor, setupConfiguration *benchmark.SetupConfiguration) (*issue2.Issuer, *driver.TokenRequest, *driver.TokenRequestMetadata, error) {
+	attrs := map[string]any{
+		meta.IssueMetadataPrefix + meta.PublicMetadataPrefix + "note": []byte("public issue metadata"),
+	}
+
+	return prepareIssueRequestWithAttrs(pp, auditor, setupConfiguration, attrs)
+}
+
+func prepareIssueRequestWithAttrs(pp *v1setup.PublicParams, auditor *audit.Auditor, setupConfiguration *benchmark.SetupConfiguration, attrs map[string]any) (*issue2.Issuer, *driver.TokenRequest, *driver.TokenRequestMetadata, error) {
 	// Create PublicParametersManager
 	ppm := &testPublicParamsManager{pp: pp}
 
@@ -390,13 +602,17 @@ func prepareIssueRequest(pp *v1setup.PublicParams, auditor *audit.Auditor, setup
 	owners := [][]byte{setupConfiguration.OwnerIdentity.ID}
 	values := []uint64{40}
 
+	var issueOpts *driver.IssueOptions
+	if len(attrs) > 0 {
+		issueOpts = &driver.IssueOptions{Attributes: attrs}
+	}
 	issueAction, issueMetadata, err := issueService.Issue(
 		context.Background(),
 		issuerIdentity,
 		"ABC",
 		values,
 		owners,
-		nil, // no options
+		issueOpts,
 	)
 	if err != nil {
 		return nil, nil, nil, errors.Wrap(err, "failed to issue tokens")
@@ -505,6 +721,42 @@ func prepareRedeemRequest(benchCase *benchmark2.Case, pp *v1setup.PublicParams, 
 	)
 }
 
+// prepareOpenPolicyRedeemRequest builds a redeem (nil-owner output) against an
+// open-policy PP (empty PP.IssuerIDs) without attaching any issuer identity or
+// signature. TransferSignatureValidate never requires an issuer signature for
+// a redeem when PP.Issuers() is empty, so this mirrors what a real open-policy
+// redeem looks like on the wire, and it keeps TransferMetadata.Issuer.Identity
+// at its zero value (None) so that audit/auditor.go's validateRedeemIssuer -
+// which, unlike its issue-side counterpart validateIssuer, has no open-policy
+// bypass - is never invoked.
+func prepareOpenPolicyRedeemRequest(benchCase *benchmark2.Case, pp *v1setup.PublicParams, auditor *audit.Auditor, setupConfig *benchmark.SetupConfiguration) (*transfer.Sender, *driver.TokenRequest, *driver.TokenRequestMetadata, map[string]*token2.Token, error) {
+	benchCaseRedeem := &benchmark2.Case{
+		Workers:    benchCase.Workers,
+		Bits:       benchCase.Bits,
+		CurveID:    benchCase.CurveID,
+		NumInputs:  benchCase.NumInputs,
+		NumOutputs: 2,
+	}
+	owners := make([][]byte, 2)
+	for i := range benchCase.NumInputs {
+		owners[i] = setupConfig.OwnerIdentity.ID
+	}
+	owners[0] = nil
+
+	return prepareTransfer(
+		benchCaseRedeem,
+		pp,
+		setupConfig.OwnerIdentity.Signer,
+		auditor,
+		setupConfig.OwnerIdentity.AuditInfo,
+		setupConfig.OwnerIdentity.ID,
+		owners,
+		nil,
+		nil,
+		setupConfig.AuditorSigner,
+	)
+}
+
 func prepareTransferRequest(benchCase *benchmark2.Case, pp *v1setup.PublicParams, auditor *audit.Auditor, signer *benchmark.Signer, oID *benchmark.OwnerIdentity) (*transfer.Sender, *driver.TokenRequest, *driver.TokenRequestMetadata, map[string]*token2.Token, error) {
 	owners := make([][]byte, benchCase.NumOutputs)
 	for i := range benchCase.NumOutputs {
@@ -522,6 +774,30 @@ func prepareTransferRequest(benchCase *benchmark2.Case, pp *v1setup.PublicParams
 		nil,
 		nil,
 		signer,
+	)
+}
+
+// prepareUpgradeWitnessTransferRequest builds a single-input, single-output
+// transfer whose sole input is loaded as a Fabtoken output, so that
+// TransferUpgradeWitnessValidate's non-nil-witness branch is exercised
+// end-to-end (see prepareTransferWithOpts).
+func prepareUpgradeWitnessTransferRequest(pp *v1setup.PublicParams, auditor *audit.Auditor, signer *benchmark.Signer, oID *benchmark.OwnerIdentity) (*transfer.Sender, *driver.TokenRequest, *driver.TokenRequestMetadata, map[string]*token2.Token, error) {
+	benchCase := &benchmark2.Case{NumInputs: 1, NumOutputs: 1}
+	owners := [][]byte{oID.ID}
+
+	return prepareTransferWithOpts(
+		benchCase,
+		pp,
+		oID.Signer,
+		auditor,
+		oID.AuditInfo,
+		oID.ID,
+		owners,
+		nil,
+		nil,
+		signer,
+		true,
+		nil,
 	)
 }
 
@@ -629,6 +905,148 @@ func prepareTransfer(
 	issuerIdentity []byte,
 	auditorSigner *benchmark.Signer,
 ) (*transfer.Sender, *driver.TokenRequest, *driver.TokenRequestMetadata, map[string]*token2.Token, error) {
+	return prepareTransferWithOpts(benchCase, pp, signer, auditor, auditInfo, id, owners, issuer, issuerIdentity, auditorSigner, false, nil)
+}
+
+// preparePublicMetadataTransferRequest builds a single-input, single-output
+// transfer carrying a "pub."-prefixed application metadata attribute, so that
+// TransferApplicationDataValidate's metadata-claiming branch is exercised
+// end-to-end.
+func preparePublicMetadataTransferRequest(pp *v1setup.PublicParams, auditor *audit.Auditor, signer *benchmark.Signer, oID *benchmark.OwnerIdentity) (*transfer.Sender, *driver.TokenRequest, *driver.TokenRequestMetadata, map[string]*token2.Token, error) {
+	benchCase := &benchmark2.Case{NumInputs: 1, NumOutputs: 1}
+	owners := [][]byte{oID.ID}
+	attrs := map[string]any{
+		meta.TransferMetadataPrefix + meta.PublicMetadataPrefix + "note": []byte("public transfer metadata"),
+	}
+
+	return prepareTransferWithOpts(
+		benchCase,
+		pp,
+		oID.Signer,
+		auditor,
+		oID.AuditInfo,
+		oID.ID,
+		owners,
+		nil,
+		nil,
+		signer,
+		false,
+		attrs,
+	)
+}
+
+// prepareUnclaimedMetadataTransferRequest builds a single-input, single-output
+// transfer carrying a metadata attribute whose key, once the
+// meta.TransferMetadataPrefix is stripped, does NOT start with
+// meta.PublicMetadataPrefix ("pub."). No validator branch claims such a key
+// via ctx.CountMetadataKey, so VerifyTransfer's metadata-counter invariant
+// ("more metadata than those validated") fails when the resulting request is
+// re-validated. This is a NEGATIVE fixture: the auditor.Check call inside
+// prepareTransferWithOpts still succeeds (audit.TransferAuditValidate only
+// checks structural correspondence via TransferMetadata.Match, not metadata
+// content), so the failure must be observed by re-running the real validator
+// stack over the returned bytes.
+func prepareUnclaimedMetadataTransferRequest(pp *v1setup.PublicParams, auditor *audit.Auditor, signer *benchmark.Signer, oID *benchmark.OwnerIdentity) (*transfer.Sender, *driver.TokenRequest, *driver.TokenRequestMetadata, map[string]*token2.Token, error) {
+	benchCase := &benchmark2.Case{NumInputs: 1, NumOutputs: 1}
+	owners := [][]byte{oID.ID}
+	attrs := map[string]any{
+		meta.TransferMetadataPrefix + "unclaimed": []byte("unclaimed transfer metadata"),
+	}
+
+	return prepareTransferWithOpts(
+		benchCase,
+		pp,
+		oID.Signer,
+		auditor,
+		oID.AuditInfo,
+		oID.ID,
+		owners,
+		nil,
+		nil,
+		signer,
+		false,
+		attrs,
+	)
+}
+
+// prepareMultiAuditorTransferRequest builds a single-input, single-output
+// transfer endorsed by auditorSigner, which is expected to be the
+// SetupConfiguration's SecondAuditorSigner rather than the first-registered
+// AuditorSigner. AuditingSignaturesValidate implements a 1-of-N policy over
+// PP.Auditors(), so this exercises the "signed by a non-first configured
+// auditor key" path end-to-end while remaining a POSITIVE fixture.
+func prepareMultiAuditorTransferRequest(pp *v1setup.PublicParams, auditor *audit.Auditor, secondAuditorSigner *benchmark.Signer, oID *benchmark.OwnerIdentity) (*transfer.Sender, *driver.TokenRequest, *driver.TokenRequestMetadata, map[string]*token2.Token, error) {
+	benchCase := &benchmark2.Case{NumInputs: 1, NumOutputs: 1}
+	owners := [][]byte{oID.ID}
+
+	return prepareTransferWithOpts(
+		benchCase,
+		pp,
+		oID.Signer,
+		auditor,
+		oID.AuditInfo,
+		oID.ID,
+		owners,
+		nil,
+		nil,
+		secondAuditorSigner,
+		false,
+		nil,
+	)
+}
+
+// prepareExtraSignatureTransferRequest builds a normal transfer and then
+// appends one additional, spurious action signature beyond what
+// TransferSignatureValidate will ever consume for that action. Backend.
+// EnsureExhausted (invoked from verifyTokenRequestWithScopedSignatures right
+// after the action validates) fails with "unconsumed signatures" wrapped as
+// "failed to consume signatures for action at request index [0]" once this
+// request is re-validated. This is a NEGATIVE fixture: auditor.Check inside
+// prepareTransfer still succeeds, since the auditor never inspects signature
+// counts.
+func prepareExtraSignatureTransferRequest(benchCase *benchmark2.Case, pp *v1setup.PublicParams, auditor *audit.Auditor, auditorSigner *benchmark.Signer, oID *benchmark.OwnerIdentity) (*transfer.Sender, *driver.TokenRequest, *driver.TokenRequestMetadata, map[string]*token2.Token, error) {
+	sender, tr, trMetadata, trInputs, err := prepareTransferRequest(benchCase, pp, auditor, auditorSigner, oID)
+	if err != nil {
+		return nil, nil, nil, nil, err
+	}
+
+	tr.Signatures = append(tr.Signatures, &driver.RequestSignature{
+		Action: &driver.ActionSignature{
+			ActionID:  0,
+			Signature: []byte("spurious extra signature"),
+		},
+	})
+
+	return sender, tr, trMetadata, trInputs, nil
+}
+
+// fabtokenUpgradeWitnessPrecision is the precision used to serialize the first
+// input of an upgrade-witness transfer as a Fabtoken output. 16 is always
+// <= the smallest benchmark precision in use (32/64 bits), so the resulting
+// format is always present in TokensService.SupportedTokenFormatList.
+const fabtokenUpgradeWitnessPrecision = 16
+
+// prepareTransferWithOpts is prepareTransfer with an additional option to make
+// the first input exercise TransferUpgradeWitnessValidate: instead of loading it
+// with the zkatdlog OutputTokenFormat/serialized commitment token, it is loaded
+// as a Fabtoken-formatted output. TokensService.DeserializeToken's existing
+// auto-upgrade path (see token/core/zkatdlog/nogh/v1/token/service.go) then
+// derives the input's commitment, metadata, and UpgradeWitness all from the
+// same underlying Fabtoken data, so no further reconciliation is required.
+func prepareTransferWithOpts(
+	benchCase *benchmark2.Case,
+	pp *v1setup.PublicParams,
+	signer driver.SigningIdentity,
+	auditor *audit.Auditor,
+	auditInfo []byte,
+	id []byte,
+	owners [][]byte,
+	issuer *issue2.Issuer,
+	issuerIdentity []byte,
+	auditorSigner *benchmark.Signer,
+	upgradeFirstInput bool,
+	attrs map[string]any,
+) (*transfer.Sender, *driver.TokenRequest, *driver.TokenRequestMetadata, map[string]*token2.Token, error) {
 	signers := make([]driver.Signer, benchCase.NumInputs)
 	for i := range benchCase.NumInputs {
 		signers[i] = signer
@@ -709,6 +1127,34 @@ func prepareTransfer(
 	// Prepare token loader with the input tokens
 	tokenLoaderMap := make(map[string]v1.LoadedToken)
 	for i, tok := range tokens {
+		key := ids[i].String()
+
+		if upgradeFirstInput && i == 0 {
+			// Load this input as a Fabtoken output instead of a zkatdlog commitment
+			// token, so TokensService.DeserializeToken exercises its auto-upgrade
+			// path and populates ActionInput.UpgradeWitness.
+			fabtokenFormat, err := fabtokenv1.SupportedTokenFormat(fabtokenUpgradeWitnessPrecision)
+			if err != nil {
+				return nil, nil, nil, nil, errors.Wrap(err, "failed to compute fabtoken token format")
+			}
+			fabtokenOutput := &fabtokenactions.Output{
+				Owner:    tok.Owner,
+				Type:     inputInf[i].Type,
+				Quantity: token2.NewQuantityFromUInt64(inValuesUint64[i]).Hex(),
+			}
+			tokenRaw, err := fabtokenOutput.Serialize()
+			if err != nil {
+				return nil, nil, nil, nil, errors.Wrap(err, "failed to serialize fabtoken output for loader")
+			}
+			tokenLoaderMap[key] = v1.LoadedToken{
+				Token:       tokenRaw,
+				Metadata:    nil,
+				TokenFormat: fabtokenFormat,
+			}
+
+			continue
+		}
+
 		tokenRaw, err := tok.Serialize()
 		if err != nil {
 			return nil, nil, nil, nil, errors.Wrap(err, "failed to serialize token for loader")
@@ -717,7 +1163,6 @@ func prepareTransfer(
 		if err != nil {
 			return nil, nil, nil, nil, errors.Wrap(err, "failed to serialize metadata for loader")
 		}
-		key := ids[i].String()
 		tokenLoaderMap[key] = v1.LoadedToken{
 			Token:       tokenRaw,
 			Metadata:    metadataRaw,
@@ -769,13 +1214,17 @@ func prepareTransfer(
 
 	// Use TransferService to create the transfer action
 	// Pass empty options instead of nil to avoid nil pointer dereference in SelectIssuerForRedeem
+	transferOpts := &driver.TransferOptions{}
+	if len(attrs) > 0 {
+		transferOpts.Attributes = attrs
+	}
 	transfer2, transferMetadata, err := transferService.Transfer(
 		context.Background(),
 		"1", // anchor (txID)
 		ownerWallet,
 		ids,
 		outputTokens,
-		&driver.TransferOptions{}, // empty options
+		transferOpts,
 	)
 	if err != nil {
 		return nil, nil, nil, nil, errors.Wrap(err, "failed to generate transfer using TransferService")

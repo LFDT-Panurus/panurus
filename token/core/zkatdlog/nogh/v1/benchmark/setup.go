@@ -85,13 +85,19 @@ type SetupParams struct {
 //   - PP: public parameters produced by the protocol setup.
 //   - OwnerIdentity: identity information for the owner used in the benchmark.
 //   - AuditorSigner / IssuerSigner: ephemeral ECDSA signers for the auditor and issuer.
+//   - SecondAuditorSigner: a second ephemeral ECDSA signer also registered as an
+//     auditor in PP (PP.AuditorIDs has 2 entries). Since AuditingSignaturesValidate
+//     implements a 1-of-N policy, existing fixtures signed only by AuditorSigner remain
+//     valid; fixtures that want to exercise the "signed by a non-first auditor key"
+//     path should sign with this signer instead.
 type SetupConfiguration struct {
-	PP            *setup.PublicParams
-	OwnerIdentity *OwnerIdentity
-	AuditorSigner *Signer
-	IssuerSigner  *Signer
-	Bits          uint64
-	CurveID       math.CurveID
+	PP                  *setup.PublicParams
+	OwnerIdentity       *OwnerIdentity
+	AuditorSigner       *Signer
+	SecondAuditorSigner *Signer
+	IssuerSigner        *Signer
+	Bits                uint64
+	CurveID             math.CurveID
 	// ExecutorProvider is the execution strategy for range proofs in this configuration.
 	ExecutorProvider executor.ExecutorProvider
 }
@@ -126,6 +132,20 @@ func NewSetupConfigurations(idemixTestdataPath string, bits []uint64, curveIDs [
 // setup to add a second system to an existing configuration.
 // It returns a container mapping keys to configurations or an error if any setup step fails.
 func NewSetupConfigurationsWithParams(params SetupParams) (*SetupConfigurations, error) {
+	return newSetupConfigurationsWithParams(params, true)
+}
+
+// NewOpenIssuerPolicySetupConfigurations mirrors NewSetupConfigurationsWithParams
+// except that the generated PublicParams never registers the issuer (PP.IssuerIDs
+// stays empty), so IssueValidate's and TransferSignatureValidate's open-issuer-policy
+// branches can be exercised end-to-end. An IssuerSigner is still generated and
+// returned in each SetupConfiguration so fixtures can sign issue/redeem actions with
+// an issuer identity that is deliberately not a member of PP.Issuers().
+func NewOpenIssuerPolicySetupConfigurations(params SetupParams) (*SetupConfigurations, error) {
+	return newSetupConfigurationsWithParams(params, false)
+}
+
+func newSetupConfigurationsWithParams(params SetupParams, registerIssuer bool) (*SetupConfigurations, error) {
 	configurations := map[string]*SetupConfiguration{}
 	for _, curveID := range params.CurveIDs {
 		var ipk []byte
@@ -162,6 +182,10 @@ func NewSetupConfigurationsWithParams(params SetupParams) (*SetupConfigurations,
 		if err != nil {
 			return nil, err
 		}
+		secondAuditorSigner, err := PrepareECDSASigner()
+		if err != nil {
+			return nil, err
+		}
 		issuerSigner, err := PrepareECDSASigner()
 		if err != nil {
 			return nil, err
@@ -188,16 +212,23 @@ func NewSetupConfigurationsWithParams(params SetupParams) (*SetupConfigurations,
 			if err != nil {
 				return nil, err
 			}
-			issuerID, err := issuerSigner.Serialize()
-			if err != nil {
-				return nil, err
+			if registerIssuer {
+				issuerID, err := issuerSigner.Serialize()
+				if err != nil {
+					return nil, err
+				}
+				pp.AddIssuer(issuerID)
 			}
-			pp.AddIssuer(issuerID)
 			auditorID, err := auditorSigner.Serialize()
 			if err != nil {
 				return nil, err
 			}
 			pp.AddAuditor(auditorID)
+			secondAuditorID, err := secondAuditorSigner.Serialize()
+			if err != nil {
+				return nil, err
+			}
+			pp.AddAuditor(secondAuditorID)
 
 			provider := params.ExecutorProvider
 			if provider == nil {
@@ -206,13 +237,14 @@ func NewSetupConfigurationsWithParams(params SetupParams) (*SetupConfigurations,
 			pp.ExecutorProvider = provider
 
 			configurations[key(bit, curveID)] = &SetupConfiguration{
-				Bits:             bit,
-				CurveID:          curveID,
-				PP:               pp,
-				OwnerIdentity:    oID,
-				AuditorSigner:    auditorSigner,
-				IssuerSigner:     issuerSigner,
-				ExecutorProvider: provider,
+				Bits:                bit,
+				CurveID:             curveID,
+				PP:                  pp,
+				OwnerIdentity:       oID,
+				AuditorSigner:       auditorSigner,
+				SecondAuditorSigner: secondAuditorSigner,
+				IssuerSigner:        issuerSigner,
+				ExecutorProvider:    provider,
 			}
 		}
 	}
