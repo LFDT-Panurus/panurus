@@ -51,7 +51,9 @@ func buildPaddedInstance(curve *math.Curve, rounds uint64, m int) *paddedInstanc
 
 func (pi *paddedInstance) prover() *prover { return pi.proverRealLen(0) }
 
-func (pi *paddedInstance) proverHinted() *prover { return pi.proverRealLen(uint64(int64(pi.m))) }
+func (pi *paddedInstance) proverHinted() *prover {
+	return pi.proverRealLen(uint64(pi.m)) //nolint:gosec // m is always non-negative
+}
 
 // proverRealLen builds a CSP prover for this instance; realLen=0 disables the
 // round-0 fast path (baseline), realLen=m enables it.
