@@ -45,12 +45,13 @@ func buildPaddedInstance(curve *math.Curve, rounds uint64, m int) *paddedInstanc
 			lf[i] = curve.NewZrFromInt(0)
 		}
 	}
+
 	return &paddedInstance{curve: curve, rounds: rounds, N: N, m: m, generators: gen, witness: wit, linearForm: lf}
 }
 
 func (pi *paddedInstance) prover() *prover { return pi.proverRealLen(0) }
 
-func (pi *paddedInstance) proverHinted() *prover { return pi.proverRealLen(uint64(pi.m)) }
+func (pi *paddedInstance) proverHinted() *prover { return pi.proverRealLen(uint64(int64(pi.m))) }
 
 // proverRealLen builds a CSP prover for this instance; realLen=0 disables the
 // round-0 fast path (baseline), realLen=m enables it.
@@ -67,6 +68,7 @@ func (pi *paddedInstance) proverRealLen(realLen uint64) *prover {
 		witness:        pi.witness,
 		realLen:        realLen,
 	}
+
 	return p.WithTranscriptHeader([]byte("bench"))
 }
 
@@ -81,6 +83,7 @@ func (pi *paddedInstance) verifier() *verifier {
 		NumberOfRounds: pi.rounds,
 		Curve:          pi.curve,
 	}
+
 	return v.WithTranscriptHeader([]byte("bench"))
 }
 
