@@ -915,6 +915,7 @@ func TestPublicParamsUpdate(network *integration.Infrastructure, newAuditorID st
 	alice := sel.Get("alice")
 	manager := sel.Get("manager")
 	auditor := sel.Get("auditor")
+	endorsers := GetEndorsers(network, sel)
 	if issuerAsAuditor {
 		auditor = issuer
 	}
@@ -931,6 +932,10 @@ func TestPublicParamsUpdate(network *integration.Infrastructure, newAuditorID st
 	if !issuerAsAuditor {
 		gomega.Eventually(GetPublicParams).WithArguments(network, newAuditor).WithTimeout(60 * time.Second).WithPolling(5 * time.Second).Should(gomega.Equal(ppBytes))
 	}
+	for _, endorser := range endorsers {
+		gomega.Eventually(GetPublicParams).WithArguments(network, endorser).WithTimeout(60 * time.Second).WithPolling(5 * time.Second).Should(gomega.Equal(ppBytes))
+	}
+	CheckPublicParams(network, endorsers...)
 	// give time to the issuer and the auditor to update their public parameters and reload their wallets
 	gomega.Eventually(DoesWalletExist).WithArguments(network, newIssuer, "", views.IssuerWallet).WithTimeout(1 * time.Minute).WithPolling(15 * time.Second).Should(gomega.BeTrue())
 	if issuerAsAuditor {
