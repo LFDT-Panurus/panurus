@@ -55,10 +55,10 @@ github.com/Masterminds/squirrel v1.5.4 h1:uUcX/aBc8O7Fg9kaISIUsHXdKuqehiXAMQTYX8
 github.com/Masterminds/squirrel v1.5.4/go.mod h1:NNaOrjSoIDfDA40n7sr2tPNZRfjzjA400rg+riTZj10=
 github.com/Microsoft/go-winio v0.6.2 h1:F2VQgta7ecxGYO8k3ZZz3RS8fVIXVxONVUPlNERoyfY=
 github.com/Microsoft/go-winio v0.6.2/go.mod h1:yd8OoFMLzJbo9gZq8j5qaps8bJ9aShtEA8Ipt1oGCvU=
-github.com/SaidAltury-ibm/fabric-smart-client v0.0.0-20260728144644-a45d26593538 h1:iI9NS1Kxcj8HCmBZJHIzpSE/nbkdghvirFFdOJWx7A0=
-github.com/SaidAltury-ibm/fabric-smart-client v0.0.0-20260728144644-a45d26593538/go.mod h1:GokCTCKpQuVHAL/xbYy2TEHxHLTqzlMaJwcpi4kHRps=
-github.com/SaidAltury-ibm/fabric-smart-client/integration v0.0.0-20260728144644-a45d26593538 h1:BIyBxlgr+LYRoWaW2ObEuXKEwKlAHy8UdMqPRpKG8zY=
-github.com/SaidAltury-ibm/fabric-smart-client/integration v0.0.0-20260728144644-a45d26593538/go.mod h1:VvGss37fgrAKoKhBUvVWqFy3EMxj7OrAy6bW+V5awLw=
+github.com/SaidAltury-ibm/fabric-smart-client v0.0.0-20260728210322-f9a4276d9f2b h1:HsH8GNvRYNBgwlLmyc9arVP6WsyR3bAuh8w+OgqGDZo=
+github.com/SaidAltury-ibm/fabric-smart-client v0.0.0-20260728210322-f9a4276d9f2b/go.mod h1:GokCTCKpQuVHAL/xbYy2TEHxHLTqzlMaJwcpi4kHRps=
+github.com/SaidAltury-ibm/fabric-smart-client/integration v0.0.0-20260728210322-f9a4276d9f2b h1:oeO53gX6fsyu1sQrcZKsYVP4gzU68c2A9C5O1rARHnA=
+github.com/SaidAltury-ibm/fabric-smart-client/integration v0.0.0-20260728210322-f9a4276d9f2b/go.mod h1:VvGss37fgrAKoKhBUvVWqFy3EMxj7OrAy6bW+V5awLw=
 github.com/antihax/optional v1.0.0/go.mod h1:uupD/76wgC+ih3iEmQUL+0Ugr19nfwCT1kdvxnR2qWY=
 github.com/armon/circbuf v0.0.0-20150827004946-bbbad097214e/go.mod h1:3U/XgcO3hCbHZ8TKRvWD2dDTCfh9M9ya+I9JpbB7O8o=
 github.com/armon/go-metrics v0.0.0-20180917152333-f0300d1749da/go.mod h1:Q73ZrmVTwzkszR9V5SSuryQ31EELlFMUz1kKyl939pY=
