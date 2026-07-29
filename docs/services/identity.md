@@ -176,8 +176,6 @@ tune them.
 | Recipient-data cache size | `role.MaxRecipientDataCacheSize` | 1024 | The largest cache allocated per anonymous owner wallet, whatever `wallets.owners[].cacheSize` / `wallets.defaultCacheSize` asks for. Cached entries are pre-generated identities held in memory. |
 | Concurrent generations | `role.MaxConcurrentRecipientDataGenerations` | 8 | How many identities one wallet generates at the same time on cache misses. Callers beyond it **wait** for a slot rather than being rejected, so a burst costs latency instead of unbounded CPU, memory and storage. |
 | Identities per wallet | `role.MaxIdentitiesPerWallet` | 2²⁰ (1,048,576) | Total identities bound to one wallet for one role. The binding store is append-only — nothing ever deletes a row — so without this the registry and `identitydb` grow without limit. Exceeding it fails with `role.ErrTooManyIdentities`. |
-| Wallet query timeout | `common.WalletQueryTimeout` | 30s | How long any single wallet-store query may occupy a pooled connection, so a blocked statement cannot hold one indefinitely. |
-| Connection pool | `common.DefaultMaxOpenConns` | 50 | Applied to a Panurus SQL store whose persistence configuration omits `maxOpenConns`, which `database/sql` would otherwise read as *unlimited*. An explicit `maxOpenConns` still wins. |
 
 Notes on behaviour worth knowing before tuning any of this:
 
@@ -192,9 +190,23 @@ Notes on behaviour worth knowing before tuning any of this:
     wallet is confirmed full it is *sealed* and refused without further queries, so repeated
     rejections cannot themselves become database load. A full wallet still accepts re-binding an
     identity it already holds, since that adds no row.
-*   **The pool ceiling is applied per driver, not per store.** FSC caches the `*sql.DB` per data
-    source, so the pool a store observes is the one opened by whichever store reached that data
-    source first; clamping per store would make the effective limit depend on initialisation order.
+*   **Database resource limits are not set here, by design.** Neither query timeouts nor connection
+    pool sizes are imposed by this layer. Per the resolution of
+    [#1740](https://github.com/LFDT-Panurus/panurus/issues/1740), the SDK's obligation is to
+    *respect* the context it is given — every `WalletStore` method takes a `context.Context` and
+    passes it to a context-aware database call, so a caller's deadline or cancellation interrupts
+    the query — while **database-side query limits and timeouts are configured by the database
+    administrator and the application developer**. An SDK-imposed ceiling would override that
+    choice rather than support it.
+
+    Connection pool sizing likewise belongs to FSC, not here: `maxOpenConns` is read from
+    `fsc.persistences.<name>.opts.maxOpenConns`, lives on FSC's `Config`, and is applied by FSC's
+    `db.SetMaxOpenConns`. Note that FSC's `ConfigProvider.GetOpts` defaults `maxIdleConns` (2) and
+    `maxIdleTime` (1 min) when those keys are absent, but leaves `maxOpenConns` at 0 — which
+    `database/sql` reads as *unlimited*. Panurus cannot correct this from its side, because FSC
+    caches the `*sql.DB` per data source and the pool is therefore fixed by whichever store opens
+    that data source first. **Set `fsc.persistences.<name>.opts.maxOpenConns` explicitly**, together
+    with the timeouts your database supports, in any deployment you care about.
 
 ## Identity Types
 
