@@ -1,6 +1,24 @@
+# The suites below wrap their specs in a loop over integration.AllTestTypes, so a
+# label filter of just "TN" runs that spec once per infrastructure type
+# (websocket, libp2p, replicas) sequentially in a single job. For the specs that
+# call fungible.TestAll — by far the most expensive — we also expose per-infra
+# targets so CI can run the three configurations as parallel jobs instead. The
+# aggregate "TN" targets are kept for local runs and still cover all three.
 .PHONY: integration-tests-dlog-fabric-t1
 integration-tests-dlog-fabric-t1:
 	make integration-tests-dlog-fabric TEST_FILTER="T1"
+
+.PHONY: integration-tests-dlog-fabric-t1-websocket
+integration-tests-dlog-fabric-t1-websocket:
+	make integration-tests-dlog-fabric TEST_FILTER="T1 && websocket"
+
+.PHONY: integration-tests-dlog-fabric-t1-libp2p
+integration-tests-dlog-fabric-t1-libp2p:
+	make integration-tests-dlog-fabric TEST_FILTER="T1 && libp2p"
+
+.PHONY: integration-tests-dlog-fabric-t1-replicas
+integration-tests-dlog-fabric-t1-replicas:
+	make integration-tests-dlog-fabric TEST_FILTER="T1 && replicas"
 
 .PHONY: integration-tests-dlog-fabric-t2
 integration-tests-dlog-fabric-t2:
@@ -26,6 +44,18 @@ integration-tests-dlog-fabric-t5:
 integration-tests-dlog-fabric-t6:
 	make integration-tests-dlog-fabric TEST_FILTER="T6"
 
+.PHONY: integration-tests-dlog-fabric-t6-websocket
+integration-tests-dlog-fabric-t6-websocket:
+	make integration-tests-dlog-fabric TEST_FILTER="T6 && websocket"
+
+.PHONY: integration-tests-dlog-fabric-t6-libp2p
+integration-tests-dlog-fabric-t6-libp2p:
+	make integration-tests-dlog-fabric TEST_FILTER="T6 && libp2p"
+
+.PHONY: integration-tests-dlog-fabric-t6-replicas
+integration-tests-dlog-fabric-t6-replicas:
+	make integration-tests-dlog-fabric TEST_FILTER="T6 && replicas"
+
 .PHONY: integration-tests-dlog-fabric-t7
 integration-tests-dlog-fabric-t7:
 	make integration-tests-dlog-fabric TEST_FILTER="T7"
@@ -34,6 +64,18 @@ integration-tests-dlog-fabric-t7:
 integration-tests-dlog-fabric-t8:
 	make integration-tests-dlog-fabric TEST_FILTER="T8"
 
+.PHONY: integration-tests-dlog-fabric-t8-websocket
+integration-tests-dlog-fabric-t8-websocket:
+	make integration-tests-dlog-fabric TEST_FILTER="T8 && websocket"
+
+.PHONY: integration-tests-dlog-fabric-t8-libp2p
+integration-tests-dlog-fabric-t8-libp2p:
+	make integration-tests-dlog-fabric TEST_FILTER="T8 && libp2p"
+
+.PHONY: integration-tests-dlog-fabric-t8-replicas
+integration-tests-dlog-fabric-t8-replicas:
+	make integration-tests-dlog-fabric TEST_FILTER="T8 && replicas"
+
 .PHONY: integration-tests-dlog-fabric-t9
 integration-tests-dlog-fabric-t9:
 	make integration-tests-dlog-fabric TEST_FILTER="T9"
@@ -41,6 +83,18 @@ integration-tests-dlog-fabric-t9:
 .PHONY: integration-tests-dlog-fabric-t10
 integration-tests-dlog-fabric-t10:
 	make integration-tests-dlog-fabric TEST_FILTER="T10"
+
+.PHONY: integration-tests-dlog-fabric-t10-websocket
+integration-tests-dlog-fabric-t10-websocket:
+	make integration-tests-dlog-fabric TEST_FILTER="T10 && websocket"
+
+.PHONY: integration-tests-dlog-fabric-t10-libp2p
+integration-tests-dlog-fabric-t10-libp2p:
+	make integration-tests-dlog-fabric TEST_FILTER="T10 && libp2p"
+
+.PHONY: integration-tests-dlog-fabric-t10-replicas
+integration-tests-dlog-fabric-t10-replicas:
+	make integration-tests-dlog-fabric TEST_FILTER="T10 && replicas"
 
 .PHONY: integration-tests-dlog-fabric-t11
 integration-tests-dlog-fabric-t11:
@@ -70,9 +124,33 @@ integration-tests-fabtoken-dlog-fabric:
 integration-tests-dloghsm-fabric-t1:
 	make integration-tests-dloghsm-fabric TEST_FILTER="T1"
 
+.PHONY: integration-tests-dloghsm-fabric-t1-websocket
+integration-tests-dloghsm-fabric-t1-websocket:
+	make integration-tests-dloghsm-fabric TEST_FILTER="T1 && websocket"
+
+.PHONY: integration-tests-dloghsm-fabric-t1-libp2p
+integration-tests-dloghsm-fabric-t1-libp2p:
+	make integration-tests-dloghsm-fabric TEST_FILTER="T1 && libp2p"
+
+.PHONY: integration-tests-dloghsm-fabric-t1-replicas
+integration-tests-dloghsm-fabric-t1-replicas:
+	make integration-tests-dloghsm-fabric TEST_FILTER="T1 && replicas"
+
 .PHONY: integration-tests-dloghsm-fabric-t2
 integration-tests-dloghsm-fabric-t2:
 	make integration-tests-dloghsm-fabric TEST_FILTER="T2"
+
+.PHONY: integration-tests-dloghsm-fabric-t2-websocket
+integration-tests-dloghsm-fabric-t2-websocket:
+	make integration-tests-dloghsm-fabric TEST_FILTER="T2 && websocket"
+
+.PHONY: integration-tests-dloghsm-fabric-t2-libp2p
+integration-tests-dloghsm-fabric-t2-libp2p:
+	make integration-tests-dloghsm-fabric TEST_FILTER="T2 && libp2p"
+
+.PHONY: integration-tests-dloghsm-fabric-t2-replicas
+integration-tests-dloghsm-fabric-t2-replicas:
+	make integration-tests-dloghsm-fabric TEST_FILTER="T2 && replicas"
 
 .PHONY: integration-tests-dloghsm-fabric
 integration-tests-dloghsm-fabric: install-softhsm
@@ -84,6 +162,18 @@ integration-tests-dloghsm-fabric: install-softhsm
 .PHONY: integration-tests-fabtoken-fabric-t1
 integration-tests-fabtoken-fabric-t1:
 	make integration-tests-fabtoken-fabric TEST_FILTER="T1"
+
+.PHONY: integration-tests-fabtoken-fabric-t1-websocket
+integration-tests-fabtoken-fabric-t1-websocket:
+	make integration-tests-fabtoken-fabric TEST_FILTER="T1 && websocket"
+
+.PHONY: integration-tests-fabtoken-fabric-t1-libp2p
+integration-tests-fabtoken-fabric-t1-libp2p:
+	make integration-tests-fabtoken-fabric TEST_FILTER="T1 && libp2p"
+
+.PHONY: integration-tests-fabtoken-fabric-t1-replicas
+integration-tests-fabtoken-fabric-t1-replicas:
+	make integration-tests-fabtoken-fabric TEST_FILTER="T1 && replicas"
 
 .PHONY: integration-tests-fabtoken-fabric-t2
 integration-tests-fabtoken-fabric-t2:

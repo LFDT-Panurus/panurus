@@ -10,9 +10,24 @@ fxconfig: ## Install fxconfig
 configtxgen: ## Install configtxgen
 	@env GOBIN=$(FAB_BINS) go install $(GO_FLAGS) github.com/hyperledger/fabric-x/tools/configtxgen@$(FABRIC_X_TOOLS_VERSION)
 
+# See the note in fungible.mk: these suites loop over integration.AllTestTypes, so
+# the specs calling fungible.TestAll also get per-infra targets that CI runs as
+# parallel jobs instead of three sequential configurations in one job.
 .PHONY: integration-tests-fabricx-dlog-t1
 integration-tests-fabricx-dlog-t1:
 	make integration-tests-fabricx-dlog TEST_FILTER="T1"
+
+.PHONY: integration-tests-fabricx-dlog-t1-websocket
+integration-tests-fabricx-dlog-t1-websocket:
+	make integration-tests-fabricx-dlog TEST_FILTER="T1 && websocket"
+
+.PHONY: integration-tests-fabricx-dlog-t1-libp2p
+integration-tests-fabricx-dlog-t1-libp2p:
+	make integration-tests-fabricx-dlog TEST_FILTER="T1 && libp2p"
+
+.PHONY: integration-tests-fabricx-dlog-t1-replicas
+integration-tests-fabricx-dlog-t1-replicas:
+	make integration-tests-fabricx-dlog TEST_FILTER="T1 && replicas"
 
 .PHONY: integration-tests-fabricx-dlog-t2
 integration-tests-fabricx-dlog-t2:
@@ -37,6 +52,18 @@ integration-tests-fabricx-dlog-t5:
 .PHONY: integration-tests-fabricx-dlog-t6
 integration-tests-fabricx-dlog-t6:
 	make integration-tests-fabricx-dlog TEST_FILTER="T6"
+
+.PHONY: integration-tests-fabricx-dlog-t6-websocket
+integration-tests-fabricx-dlog-t6-websocket:
+	make integration-tests-fabricx-dlog TEST_FILTER="T6 && websocket"
+
+.PHONY: integration-tests-fabricx-dlog-t6-libp2p
+integration-tests-fabricx-dlog-t6-libp2p:
+	make integration-tests-fabricx-dlog TEST_FILTER="T6 && libp2p"
+
+.PHONY: integration-tests-fabricx-dlog-t6-replicas
+integration-tests-fabricx-dlog-t6-replicas:
+	make integration-tests-fabricx-dlog TEST_FILTER="T6 && replicas"
 
 .PHONY: integration-tests-fabricx-dlog-t7
 integration-tests-fabricx-dlog-t7:
@@ -65,6 +92,18 @@ integration-tests-fabricx-dlog-t14:
 .PHONY: integration-tests-fabricx-dlog-t16
 integration-tests-fabricx-dlog-t16:
 	make integration-tests-fabricx-dlog TEST_FILTER="T16"
+
+.PHONY: integration-tests-fabricx-dlog-t16-websocket
+integration-tests-fabricx-dlog-t16-websocket:
+	make integration-tests-fabricx-dlog TEST_FILTER="T16 && websocket"
+
+.PHONY: integration-tests-fabricx-dlog-t16-libp2p
+integration-tests-fabricx-dlog-t16-libp2p:
+	make integration-tests-fabricx-dlog TEST_FILTER="T16 && libp2p"
+
+.PHONY: integration-tests-fabricx-dlog-t16-replicas
+integration-tests-fabricx-dlog-t16-replicas:
+	make integration-tests-fabricx-dlog TEST_FILTER="T16 && replicas"
 
 .PHONY: integration-tests-fabricx-dlog
 integration-tests-fabricx-dlog:
