@@ -144,7 +144,7 @@ sed 's#127.0.0.1#123.456.789#g' ./out/testdata/fsc/nodes/test-node.0/client-conf
 5. Start client and tee output to file
 
 ```bash
-c-workloads=token-validation-service -cpu=1,2,4,8,16,32,48,64 -numConn=1,2,4,8 2>&1 | tee out.txt &
+GOGC=10000 go run ./client/ -benchtime=30s -count=5 -workloads=token-validation-service -cpu=1,2,4,8,16,32,48,64 -numConn=1,2,4,8 2>&1 | tee out.txt &
 ```
 
 This setup is ideal for:
@@ -159,7 +159,7 @@ This setup is ideal for:
 ```bash
 python -m venv .venv 
 source .venv/bin/activate
-pip install streamlit pandas
+pip install streamlit pandas plotly
 ```
 
 1. Place the results in `.txt` files in a folder called `bench`.

@@ -1,0 +1,216 @@
+name: Token Validation Benchmark
+
+# Runs the token-validation benchmarks on both the PR branch and its base
+# branch, then posts a comment on the PR with the percentage differences.
+#
+# Run locally with act (https://github.com/nektos/act):
+#   1. Create an event payload describing the PR to benchmark. base.sha/head.sha
+#      must be commits that exist locally; number is only used for the comment.
+#        cat > /tmp/pr-event.json <<'JSON'
+#        {
+#          "pull_request": {
+#            "number": 1,
+#            "base": { "sha": "<base-commit-sha>" },
+#            "head": { "sha": "<pr-commit-sha>" }
+#          }
+#        }
+#        JSON
+#   2. Run one variant at a time so the two gRPC jobs never share port 8099
+#      (act puts all matrix jobs on the host network; real CI isolates them):
+#        act pull_request \
+#          -W .github/workflows/token-validation-benchmark.yml \
+#          -e /tmp/pr-event.json \
+#          --matrix variant:ipa \
+#          --artifact-server-path /tmp/act-artifacts
+#   3. The final `gh pr comment` step needs a real token/PR; expect it to fail
+#      locally. Inspect the generated report in the compare job's logs instead,
+#      or add `--matrix ...` and run only the `benchmark` job with `-j benchmark`.
+#   If a run is interrupted, clear leftover containers before retrying:
+#        docker rm -f $(docker ps -aq --filter ancestor=catthehacker/ubuntu:act-latest)
+on:
+  pull_request:
+  workflow_dispatch:
+  
+# Needed so the compare job can post a comment on the PR.
+permissions:
+  contents: read
+  pull-requests: write
+
+env:
+  # -mod=mod lets `go test` update go.mod/go.sum in the ephemeral CI checkout.
+  GOFLAGS: -mod=mod
+  MODULE_DIR: cmd/token_validation_service
+  GO_MOD_FILE: cmd/token_validation_service/go.mod
+  OUTPUT_DIR: bench
+  # go test knobs. Kept modest so the PR feedback loop stays reasonable; raise
+  # COUNT for more statistically stable comparisons.
+  BENCHTIME: 10s
+  COUNT: 5
+  # -cpu is set at run time to the number of CPUs the runner actually has
+  # (nproc), rather than a fixed 16/32 that may exceed the runner and skew
+  # results. NUM_CONN is the gRPC client connection sweep, unrelated to -cpu.
+  NUM_CONN: 4
+  # -testRoot values selecting the crypto variant. Each variant now names its
+  # testdata explicitly rather than relying on a compiled-in default.
+  CSP_TEST_ROOT: -testRoot=../../token/core/zkatdlog/nogh/v1/regression/testdata/zero/csp/32-BLS12_381_BBS_GURVY
+  IPA_TEST_ROOT: -testRoot=../../token/core/zkatdlog/nogh/v1/regression/testdata/zero/32-BLS12_381_BBS_GURVY
+  # GOGC for the benchmark runs. A high value suppresses GC during the short
+  # benchtime windows so measurements aren't perturbed by collection pauses.
+  GOGC: 10000
+  # Percentage change treated as noise by the compare step. Deltas smaller than
+  # this (or whose base/PR sample ranges overlap) are reported as neutral (➖).
+  DELTA: 1
+
+jobs:
+  # Job 1: benchmark BOTH branches on the SAME runner, interleaved.
+  #
+  # The matrix is the cross product of:
+  #   * variant  - the crypto backend (ipa is the default, csp adds -testRoot)
+  #   * bench     - which benchmark to run and the flags unique to it
+  #
+  # giving (2 variants x 2 benchmarks) = 4 runs. Crucially, `ref` (pr vs base)
+  # is NOT a matrix dimension: each job checks out both the PR head and the base
+  # commit and benchmarks them on the one runner, sample-by-sample interleaved.
+  # This is deliberate — GitHub-hosted runners sit on heterogeneous host CPUs
+  # with noisy neighbors, so benchmarking pr and base on two different VMs made
+  # the reported delta a measure of hardware variance (±10-25%) rather than of
+  # the diff. Same-runner + interleaving cancels both host-to-host variance and
+  # within-runner drift, so the ratio reflects the code change.
+  #
+  # Because the two runs on a runner are sequential (not parallel), the fixed
+  # gRPC server port never collides.
+  benchmark:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [ipa, csp]
+        bench:
+          # Per-benchmark flags are assembled in the run step (below) because
+          # the ${{ env }} context is not available inside a matrix.
+          - id: local
+            name: BenchmarkLocalTokenValidation
+            file_prefix: local-token-validation
+          - id: grpc
+            name: BenchmarkAPIGRPC
+            file_prefix: api-grpc
+    env:
+      # The _pr_ / _base_ tag in the filename is how the compare job groups
+      # results back into the two branches.
+      BASE_FILE: ${{ matrix.bench.file_prefix }}-${{ matrix.variant }}_base_.txt
+      PR_FILE: ${{ matrix.bench.file_prefix }}-${{ matrix.variant }}_pr_.txt
+    steps:
+      - name: Checkout base (${{ github.event.pull_request.base.sha }})
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: base
+
+      - name: Checkout pr (${{ github.event.pull_request.head.sha }})
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          path: pr
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: pr/${{ env.GO_MOD_FILE }}
+          cache-dependency-path: "**/*.sum"
+
+      - name: Run ${{ matrix.bench.name }} (${{ matrix.variant }}, base vs pr interleaved)
+        run: |
+          set -o pipefail
+          mkdir -p "$GITHUB_WORKSPACE/$OUTPUT_DIR"
+
+          # Use exactly the CPUs the runner has, so -cpu never exceeds the
+          # available parallelism (which would oversubscribe and add noise).
+          cpu=$(nproc)
+
+          # Flags unique to each benchmark:
+          #   local - in-process validation, no server, -cpu = runner CPUs.
+          #   grpc  - full gRPC API path, -cpu = runner CPUs, sweep client conns.
+          case "${{ matrix.bench.id }}" in
+            local) bench_flags="-run ^$ -cpu=$cpu" ;;
+            grpc)  bench_flags="-cpu=$cpu -numConn=$NUM_CONN" ;;
+          esac
+
+          # Each variant selects its crypto testdata explicitly.
+          case "${{ matrix.variant }}" in
+            ipa) test_root="$IPA_TEST_ROOT" ;;
+            csp) test_root="$CSP_TEST_ROOT" ;;
+          esac
+
+          base_out="$GITHUB_WORKSPACE/$OUTPUT_DIR/$BASE_FILE"
+          pr_out="$GITHUB_WORKSPACE/$OUTPUT_DIR/$PR_FILE"
+          : > "$base_out"
+          : > "$pr_out"
+
+          # Run one sample of base, then one of pr, and repeat COUNT times.
+          # Interleaving (base,pr,base,pr,...) cancels slow drift on the runner
+          # in addition to the host-to-host variance the same-runner design
+          # already removes. Each file ends up with COUNT benchmark lines, which
+          # is shape-identical to `go test -count=COUNT` for the parser.
+          run_one() {
+            # $1 = checkout dir, $2 = output file to append to
+            ( cd "$1/$MODULE_DIR" && go test \
+                -bench=${{ matrix.bench.name }} \
+                -benchtime="$BENCHTIME" \
+                -count=1 \
+                $bench_flags \
+                $test_root \
+            ) | tee -a "$2"
+          }
+
+          for i in $(seq 1 "$COUNT"); do
+            echo "=== sample $i/$COUNT: base ==="
+            run_one base "$base_out"
+            echo "=== sample $i/$COUNT: pr ==="
+            run_one pr "$pr_out"
+          done
+
+      - name: Upload raw benchmark output
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-raw-${{ matrix.bench.id }}-${{ matrix.variant }}
+          path: |
+            ${{ env.OUTPUT_DIR }}/${{ env.BASE_FILE }}
+            ${{ env.OUTPUT_DIR }}/${{ env.PR_FILE }}
+          if-no-files-found: error
+
+  # Job 2: pair PR-vs-base results and post the percentage differences.
+  compare:
+    needs: benchmark
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download raw benchmark outputs
+        uses: actions/download-artifact@v4
+        with:
+          pattern: benchmark-raw-*
+          path: ${{ env.OUTPUT_DIR }}
+          merge-multiple: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install parser dependencies
+        run: pip install pandas
+
+      - name: Build comparison report
+        run: |
+          python cmd/benchmarking/compare_benchmarks.py \
+            --input-dir "$OUTPUT_DIR" \
+            --base-tag '_base_' \
+            --pr-tag '_pr_' \
+            --delta "$DELTA" \
+            --output comment.md
+
+      - name: Post comparison comment
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh pr comment "${{ github.event.pull_request.number }}" --body-file comment.md
