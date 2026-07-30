@@ -81,7 +81,7 @@ func HashG1Array(h hash.Hash, elements ...*math.G1) ([]byte, error) {
 		if e == nil {
 			return nil, errors.Errorf("failed to hash array of G1: nil element")
 		}
-		h.Write(e.Bytes())
+		_, _ = h.Write(e.Bytes())
 	}
 
 	return h.Sum(nil), nil

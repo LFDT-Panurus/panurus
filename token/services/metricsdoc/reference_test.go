@@ -176,8 +176,8 @@ var groups = []group{
 			{file: "token/core/fabtoken/v1/driver/ws.go", call: "identity.NewMetrics(metricsProvider)"},
 			{file: "token/core/zkatdlog/nogh/v1/driver/ws.go", call: "identity.NewMetrics(metricsProvider)"},
 			// the hop that carries the TMS-scoped provider into the wallet service
-			{file: "token/core/fabtoken/v1/driver/driver.go", call: "ws, err := d.newWalletService("},
-			{file: "token/core/zkatdlog/nogh/v1/driver/driver.go", call: "ws, err := d.NewWalletService("},
+			{file: "token/core/fabtoken/v1/driver/driver.go", call: "ws, sigStack, err := d.newWalletService("},
+			{file: "token/core/zkatdlog/nogh/v1/driver/driver.go", call: "ws, sigStack, err := d.newWalletService("},
 		},
 		build: func(p metrics.Provider) { identity.NewMetrics(p) },
 	},

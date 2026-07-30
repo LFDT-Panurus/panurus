@@ -63,33 +63,33 @@ func (s *Select) OrderBy(orderBy string) *Select {
 
 func (s *Select) Compile() (string, error) {
 	sb := new(strings.Builder)
-	sb.WriteString(s.stmt)
-	sb.WriteString(" ")
+	_, _ = sb.WriteString(s.stmt)
+	_, _ = sb.WriteString(" ")
 	if len(s.columns) > 0 {
-		sb.WriteString(strings.Join(s.columns, ","))
-		sb.WriteString(" ")
+		_, _ = sb.WriteString(strings.Join(s.columns, ","))
+		_, _ = sb.WriteString(" ")
 	} else {
-		sb.WriteString("* ")
+		_, _ = sb.WriteString("* ")
 	}
 	if len(s.from) == 0 {
 		return "", errors.New("no from specified")
 	}
-	sb.WriteString("FROM ")
-	sb.WriteString(strings.TrimSpace(strings.Join(s.from, " ")))
+	_, _ = sb.WriteString("FROM ")
+	_, _ = sb.WriteString(strings.TrimSpace(strings.Join(s.from, " ")))
 
 	if len(s.where) > 0 {
 		if !strings.HasPrefix(s.where, "WHERE") {
-			sb.WriteString(" WHERE ")
+			_, _ = sb.WriteString(" WHERE ")
 		} else {
-			sb.WriteString(" ")
+			_, _ = sb.WriteString(" ")
 		}
-		sb.WriteString(s.where)
+		_, _ = sb.WriteString(s.where)
 	}
 	if len(s.orderBy) > 0 {
 		if !strings.HasPrefix(strings.TrimSpace(s.orderBy), "ORDER BY") {
-			sb.WriteString(" ORDER BY ")
+			_, _ = sb.WriteString(" ORDER BY ")
 		}
-		sb.WriteString(s.orderBy)
+		_, _ = sb.WriteString(s.orderBy)
 	}
 
 	return sb.String(), nil
@@ -116,32 +116,32 @@ func (i *Insert) Rows(rows string) *Insert {
 
 func (i *Insert) Compile() (string, error) {
 	sb := new(strings.Builder)
-	sb.WriteString(i.stmt)
-	sb.WriteString(" ")
-	sb.WriteString(i.table)
-	sb.WriteString(" ")
+	_, _ = sb.WriteString(i.stmt)
+	_, _ = sb.WriteString(" ")
+	_, _ = sb.WriteString(i.table)
+	_, _ = sb.WriteString(" ")
 	if len(i.rows) == 0 {
 		return "", errors.New("no rows in insert statement")
 	}
 	if !strings.HasPrefix(i.rows, "(") {
-		sb.WriteString("(")
+		_, _ = sb.WriteString("(")
 	}
-	sb.WriteString(i.rows)
+	_, _ = sb.WriteString(i.rows)
 	if !strings.HasSuffix(i.rows, ")") {
-		sb.WriteString(")")
+		_, _ = sb.WriteString(")")
 	}
-	sb.WriteString(" ")
+	_, _ = sb.WriteString(" ")
 
 	// count number of rows
 	splitRows := strings.Split(i.rows, ",")
-	sb.WriteString("VALUES ")
-	sb.WriteString("($1")
+	_, _ = sb.WriteString("VALUES ")
+	_, _ = sb.WriteString("($1")
 	for i := 2; i <= len(splitRows); i++ {
 		if _, err := fmt.Fprintf(sb, ", $%d", i); err != nil {
 			return "", err
 		}
 	}
-	sb.WriteString(")")
+	_, _ = sb.WriteString(")")
 
 	return sb.String(), nil
 }
@@ -175,20 +175,20 @@ func (u *Update) Where(where string) *Update {
 func (u *Update) Compile() (string, error) {
 	counter := 1
 	sb := new(strings.Builder)
-	sb.WriteString(u.stmt)
-	sb.WriteString(" ")
+	_, _ = sb.WriteString(u.stmt)
+	_, _ = sb.WriteString(" ")
 	if len(u.table) == 0 {
 		return "", errors.New("no table specified")
 	}
-	sb.WriteString(u.table)
-	sb.WriteString(" SET ")
+	_, _ = sb.WriteString(u.table)
+	_, _ = sb.WriteString(" SET ")
 	splitRows := strings.Split(u.rows, ",")
 	for i, row := range splitRows {
 		if _, err := fmt.Fprintf(sb, "%s = $%d", strings.TrimSpace(row), counter); err != nil {
 			return "", err
 		}
 		if i < len(splitRows)-1 {
-			sb.WriteString(", ")
+			_, _ = sb.WriteString(", ")
 		}
 		counter++
 	}
@@ -196,7 +196,7 @@ func (u *Update) Compile() (string, error) {
 
 	if len(u.where) > 0 {
 		if !strings.HasPrefix(u.where, "WHERE") {
-			sb.WriteString(" WHERE ")
+			_, _ = sb.WriteString(" WHERE ")
 		}
 		if !strings.Contains(u.where, "$") {
 			splitWhere := strings.Split(u.where, ",")
@@ -205,12 +205,12 @@ func (u *Update) Compile() (string, error) {
 					return "", err
 				}
 				if i < len(splitWhere)-1 {
-					sb.WriteString(" AND ")
+					_, _ = sb.WriteString(" AND ")
 				}
 				counter++
 			}
 		} else {
-			sb.WriteString(u.where)
+			_, _ = sb.WriteString(u.where)
 		}
 	}
 
@@ -238,17 +238,17 @@ func (s *Delete) Where(where string) *Delete {
 
 func (s *Delete) Compile() (string, error) {
 	sb := new(strings.Builder)
-	sb.WriteString(s.stmt)
-	sb.WriteString(" ")
+	_, _ = sb.WriteString(s.stmt)
+	_, _ = sb.WriteString(" ")
 	if len(s.table) == 0 {
 		return "", errors.New("no table specified")
 	}
-	sb.WriteString(s.table)
+	_, _ = sb.WriteString(s.table)
 	if len(s.where) > 0 {
 		if !strings.HasPrefix(s.where, "WHERE") {
-			sb.WriteString(" WHERE ")
+			_, _ = sb.WriteString(" WHERE ")
 		}
-		sb.WriteString(s.where)
+		_, _ = sb.WriteString(s.where)
 	}
 
 	return sb.String(), nil

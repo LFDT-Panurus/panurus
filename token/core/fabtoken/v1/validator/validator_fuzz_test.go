@@ -174,7 +174,7 @@ func FuzzTransferHTLCValidateNoPanic(f *testing.F) {
 
 	preimage := []byte("preimage")
 	hash := crypto.SHA256.New()
-	hash.Write(preimage)
+	_, _ = hash.Write(preimage)
 	img := hash.Sum(nil)
 	script := &htlc.Script{
 		Sender:    sender,
