@@ -55,6 +55,9 @@ without re-deriving the steps each time:
   dependency across all Go modules, resolves resulting API/lint breakage until
   `make checks` is clean, then pauses for user confirmation before pushing or opening
   a PR. Also available in Claude Code as `/update-fsc`.
+- **[Debugging Integration Tests](./debug-integration-tests.md)** — log locations,
+  Docker/network inspection, and Ginkgo focus/skip techniques for diagnosing failing
+  integration tests. Also available in Claude Code as `/debug-integration-tests`.
 
 ## Issue & PR Submission
 

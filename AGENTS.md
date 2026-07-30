@@ -26,18 +26,6 @@
 - `make tidy` - Synchronize Go dependencies
 - `go generate ./...` - Generate mocks
 
-## 📁 Project Structure
-```
-token/
-├── core/          # Driver implementations (fabtoken, zkatdlog)
-├── driver/        # Interface definitions (ports)
-├── services/      # High-level services (identity, network, ttx, storage)
-└── sdk/           # Public API entry points
-integration/
-├── nwo/           # Network Orchestrator for test networks
-└── token/         # Actual test suites (fungible, nft, dvp, etc.)
-```
-
 ## 🔧 Development Workflow
 
 ### 1. Setup (One-time)
@@ -82,57 +70,12 @@ make integration-tests-dlog-fabric TEST_FILTER="T1"
 - **Go module issues**: `make tidy`
 - **Mock generation failures**: `make install-tools` (ensures counterfeiter is installed)
 
-## 🔄 CI Workflow Overview
-
-To ensure your commits pass CI automatically, understand what runs:
-
-### 🔧 Pre-Merge Checks (GitHub Actions)
-All PRs and pushes to `main` trigger these workflows:
-
-1. **Checks Job** (Prerequisite):
-   - License verification
-   - Code formatting (`gofmt`, `goimports`)
-   - Static analysis (`govet`, `staticcheck`, `ineffassign`, `misspell`)
-   - *Run locally with:* `make checks`
-
-2. **Unit Testing**:
-   - Race detector enabled tests
-   - Regression tests
-   - Coverage reporting to Coveralls
-
-3. **Integration Testing** (Extensive Matrix):
-   - Fabtoken (cleartext tokens): t1-t5
-   - ZKATDLog (privacy tokens): t1-t13
-   - Fabric-X, Interop, NFT, DVP, Update tests
-   - Stress tests
-   - All with coverage reporting
-
-4. **Separate Workflows**:
-   - **golangci-lint**: Comprehensive linting (30 min timeout)
-   - **Markdown links**: Validates all doc links
-   - **CodeQL**: Security analysis (weekly + on push/PR)
-
-### 💡 Best Practices for CI Success
-- **Always run** `make checks` and `make lint-auto-fix` before committing
-- **Verify** `FAB_BINS` is set for integration test compatibility
-- **Address** all linting and static check warnings promptly
-- **Keep** dependencies updated with `make tidy`
-
 ## 🏗️ Architecture Overview
 
 ### Core Patterns
 - **Driver Pattern**: Swappable token technologies via interfaces in `token/driver`
 - **Service Pattern**: Encapsulated high-level logic in `token/services`
 - **TTX Service**: Orchestrates token transaction lifecycle (Request → Assemble → Sign → Commit)
-
-### Key Technologies
-- Go 1.24+
-- Hyperledger Fabric
-- Fabric Smart Client (FSC)
-- Idemix/zkatdlog (privacy)
-- Mathlib
-- Ginkgo (testing framework)
-- Cobra (CLI framework)
 
 ## 🧪 Testing Strategy
 
@@ -232,28 +175,10 @@ needs a `/slash-command` trigger for one, add a symlink at
   API/lint breakage until `make checks` and `make lint-auto-fix` are clean, then stops and
   waits for the user's go-ahead before pushing a branch or opening the PR — the "never push
   or open a PR without explicit go-ahead" rule above still applies to this runbook.
+- **Debugging Integration Tests**: [docs/development/debug-integration-tests.md](docs/development/debug-integration-tests.md)
+  (Claude Code: `/debug-integration-tests`). Log locations, Docker/network inspection, and
+  Ginkgo focus/skip techniques for diagnosing failing integration tests.
 
 ## 🔍 Debugging & Advanced Testing
 
-### Log Locations
-- **Integration Tests**: System temp directory (`/tmp/fsc-integration-<random>/...`)
-- **Containers**: `docker logs <container_name>`
-- **Persisted Logs**: Temporarily modify test to use `NewLocalTestSuite` (outputs to `./testdata`)
-
-### Debugging Techniques
-- **Manual Inspection**: Use `time.Sleep()` or pause loops in tests to inspect Docker state
-- **Network Preservation**: Check for `no-cleanup` option or manually comment test suite cleanup
-- **Focused Tests**: Modify `It(...)` to `FIt(...)` to focus, or `XIt(...)` to skip (never commit these changes)
-
-## 📚 Key Files & Directories
-- `Makefile`: Central control hub - read to discover targets
-- `go.mod`: Project dependencies
-- `tools/tools.go`: Tool dependencies source of truth (install with `make install-tools`)
-- `token/`: Core SDK logic
-- `integration/`: Integration tests and Network Orchestrator
-
-## 💡 Best Practices for CI Success
-Before marking a task complete:
-- **Always run** `make checks` and `make lint-auto-fix` before committing
-- **Address** all linting and static check warnings promptly
-- **Keep** dependencies updated with `make tidy`
+See [Debugging Integration Tests](docs/development/debug-integration-tests.md) (Claude Code: `/debug-integration-tests`).
