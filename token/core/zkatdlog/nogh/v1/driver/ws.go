@@ -18,6 +18,7 @@ import (
 	"github.com/LFDT-Panurus/panurus/token/services/identity/idemixnym"
 	"github.com/LFDT-Panurus/panurus/token/services/identity/membership"
 	"github.com/LFDT-Panurus/panurus/token/services/identity/role"
+	"github.com/LFDT-Panurus/panurus/token/services/identity/sigpolicy"
 	"github.com/LFDT-Panurus/panurus/token/services/identity/wallet"
 	"github.com/LFDT-Panurus/panurus/token/services/identity/x509"
 	"github.com/LFDT-Panurus/panurus/token/services/logging"
@@ -31,6 +32,14 @@ type BaseWalletServiceFactory struct {
 }
 
 // NewWalletService returns a new zkatdlog wallet service.
+//
+// It is a convenience wrapper over newWalletService for callers that have no client-facing
+// signature service to gate: the signature policy stack is stopped before returning, which
+// releases its background goroutines. The per-operation metrics and audit instrumentation the
+// stack installed on the identity provider and deserializer stay wired and keep reporting; the
+// throttle policy is left inert (a stopped stack neither denies nor accumulates state), so the
+// escalator that is still referenced by that chain cannot grow state its released reaper could
+// never reclaim.
 func (d *BaseWalletServiceFactory) NewWalletService(
 	tmsConfig core.Config,
 	binder identity.NetworkBinderService,
@@ -43,28 +52,78 @@ func (d *BaseWalletServiceFactory) NewWalletService(
 	ignoreRemote bool,
 	metricsProvider metrics.Provider,
 ) (*wallet.Service, error) {
+	ws, sigStack, err := d.newWalletService(
+		tmsConfig,
+		binder,
+		storageProvider,
+		qe,
+		logger,
+		fscIdentity,
+		networkDefaultIdentity,
+		publicParams,
+		ignoreRemote,
+		metricsProvider,
+	)
+	if err != nil {
+		return nil, err
+	}
+	sigStack.Stop()
+
+	return ws, nil
+}
+
+// newWalletService returns a new zkatdlog wallet service together with the signature
+// observability stack its identity provider and deserializer report to. The caller owns the
+// stack: it must install it on the token service, so that the client-facing signature service is
+// gated by it and it is released with the service, or stop it.
+func (d *BaseWalletServiceFactory) newWalletService(
+	tmsConfig core.Config,
+	binder identity.NetworkBinderService,
+	storageProvider identity.StorageProvider,
+	qe driver.QueryEngine,
+	logger logging.Logger,
+	fscIdentity view.Identity,
+	networkDefaultIdentity view.Identity,
+	publicParams driver.PublicParameters,
+	ignoreRemote bool,
+	metricsProvider metrics.Provider,
+) (*wallet.Service, *sigpolicy.Stack, error) {
 	pp, ok := publicParams.(*v1.PublicParams)
 	if !ok {
-		return nil, errors.Errorf("invalid public parameters type [%T]", publicParams)
+		return nil, nil, errors.Errorf("invalid public parameters type [%T]", publicParams)
 	}
 	roles := role.NewRoles()
 	deserializerManager := deserializer.NewTypedSignerDeserializerMultiplex()
 	tmsID := tmsConfig.ID()
 	identityDB, err := storageProvider.IdentityStore(tmsID)
 	if err != nil {
-		return nil, errors.Wrapf(err, "failed to open identity db for tms [%s]", tmsID)
+		return nil, nil, errors.Wrapf(err, "failed to open identity db for tms [%s]", tmsID)
 	}
 	baseKeyStore, err := storageProvider.Keystore(tmsID)
 	if err != nil {
-		return nil, errors.Wrapf(err, "failed to open keystore for tms [%s]", tmsID)
+		return nil, nil, errors.Wrapf(err, "failed to open keystore for tms [%s]", tmsID)
 	}
 	identityMetrics := identity.NewMetrics(metricsProvider)
+	sigStack, err := sigpolicy.New(logger.Named("signature"), tmsConfig, identityMetrics)
+	if err != nil {
+		return nil, nil, errors.WithMessagef(err, "failed to create signature policy for tms [%s]", tmsID)
+	}
+	// From here on the stack has started its background goroutines. Any error return below hands
+	// the caller a nil stack, so it cannot stop it; release the goroutines here instead. Ownership
+	// transfers to the caller on the successful return, which sets transferred true.
+	transferred := false
+	defer func() {
+		if !transferred {
+			sigStack.Stop()
+		}
+	}()
 	signerRouter := identity.NewSignerRouter(identityMetrics)
 	identityProvider := identity.NewProvider(logger.Named("identity"), identityDB, deserializerManager, binder, NewEIDRHDeserializer(), identityMetrics)
 	identityProvider.SetSignerRouter(signerRouter)
+	identityProvider.SetObserver(sigStack.Observer())
 	identityConfig, err := config.NewIdentityConfig(tmsConfig)
 	if err != nil {
-		return nil, errors.WithMessagef(err, "failed to create identity config")
+		return nil, nil, errors.WithMessagef(err, "failed to create identity config")
 	}
 
 	// Prepare roles
@@ -85,7 +144,7 @@ func (d *BaseWalletServiceFactory) NewWalletService(
 	for _, key := range pp.IdemixIssuerPublicKeys {
 		keyStore, err := msp2.NewKeyStore(key.Curve, baseKeyStore)
 		if err != nil {
-			return nil, errors.Wrapf(err, "failed to instantiate bccsp key store")
+			return nil, nil, errors.Wrapf(err, "failed to instantiate bccsp key store")
 		}
 		kmp := idemixnym.NewKeyManagerProvider(
 			key.PublicKey,
@@ -104,42 +163,47 @@ func (d *BaseWalletServiceFactory) NewWalletService(
 
 	newRole, err := roleFactory.NewRole(identity.OwnerRole, true, nil, kmps...)
 	if err != nil {
-		return nil, errors.WithMessagef(err, "failed to create owner role")
+		return nil, nil, errors.WithMessagef(err, "failed to create owner role")
 	}
 	roles.Register(identity.OwnerRole, newRole)
 	newRole, err = roleFactory.NewRole(identity.IssuerRole, false, pp.Issuers(), x509.NewKeyManagerProvider(identityConfig, keyStore, ignoreRemote))
 	if err != nil {
-		return nil, errors.WithMessagef(err, "failed to create issuer role")
+		return nil, nil, errors.WithMessagef(err, "failed to create issuer role")
 	}
 	roles.Register(identity.IssuerRole, newRole)
 	newRole, err = roleFactory.NewRole(identity.AuditorRole, false, pp.Auditors(), x509.NewKeyManagerProvider(identityConfig, keyStore, ignoreRemote))
 	if err != nil {
-		return nil, errors.WithMessagef(err, "failed to create auditor role")
+		return nil, nil, errors.WithMessagef(err, "failed to create auditor role")
 	}
 	roles.Register(identity.AuditorRole, newRole)
 	newRole, err = roleFactory.NewRole(identity.CertifierRole, false, nil, x509.NewKeyManagerProvider(identityConfig, keyStore, ignoreRemote))
 	if err != nil {
-		return nil, errors.WithMessagef(err, "failed to create certifier role")
+		return nil, nil, errors.WithMessagef(err, "failed to create certifier role")
 	}
 	roles.Register(identity.CertifierRole, newRole)
 
 	// wallet service
 	walletDB, err := storageProvider.WalletStore(tmsID)
 	if err != nil {
-		return nil, errors.Wrapf(err, "failed to get identity storage provider")
+		return nil, nil, errors.Wrapf(err, "failed to get identity storage provider")
 	}
 	signerRouter.SetConfIDResolver(walletDB)
 	deserializer, err := NewDeserializer(pp)
 	if err != nil {
-		return nil, errors.Wrapf(err, "failed to instantiate the deserializer")
+		return nil, nil, errors.Wrapf(err, "failed to instantiate the deserializer")
 	}
+	deserializer.SetObserver(sigStack.Observer())
 
-	return wallet.NewService(
+	ws := wallet.NewService(
 		logger,
 		identityProvider,
 		deserializer,
 		wallet.Convert(roles.Registries(logger, walletDB, role.NewDefaultFactory(logger, identityProvider, qe, identityConfig, deserializer, metricsProvider))),
-	), nil
+	)
+
+	transferred = true
+
+	return ws, sigStack, nil
 }
 
 // WalletServiceFactory is a factory for creating zkatdlog wallet services.
