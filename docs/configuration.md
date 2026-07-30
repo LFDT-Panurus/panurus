@@ -1028,3 +1028,73 @@ Default values:
 - When using `postgres`, all auditor replicas must share the same PostgreSQL database so that EID locks are globally visible.
 - Set `heartbeat` to roughly `ttl / 3` to ensure leases are renewed well before expiry.
 - `owner` identifies the replica holding each lease and **must be non-empty and unique per replica**: every lease query (acquire, release, renew, and the pre-write `AssertLocksHeld` check) is scoped by it. If several replicas shared one owner value, those predicates would match each other's rows and mutual exclusion would be lost cluster-wide, so an empty or blank resolved owner is rejected at startup rather than tolerated. A typical cause is a templated node configuration with `fsc.id` left unset. No owner is synthesized as a fallback, because an owner that changed on each restart would leave a replica unable to renew or release the leases it still holds. The `memory` backend has no owner and is unaffected.
+
+---
+
+### Optional: token.tms.<name>.identity.throttle
+
+Escalating throttle policy on the signer/verifier surface: per-principal rate limiting plus
+automatic escalation on error and invalid-signature ratios. See
+[docs/security/signature_observability.md](security/signature_observability.md) for the metrics,
+the audit trail, and the enforcement boundary.
+
+If not specified, the default configuration is:
+
+```yaml
+token:
+  tms:
+    <name>:
+      identity:
+        throttle:
+          mode: monitor
+          rate: 200
+          burst: 400
+          window: 1m
+          minSamples: 50
+          errorRateThreshold: 0.5
+          invalidSignatureRateThreshold: 0.2
+          quotaReductionFactor: 0.25
+          softDuration: 5m
+          blockDuration: 1m
+          deescalateAfter: 5m
+          idleTTL: 10m
+```
+
+Default values:
+
+- mode: monitor
+- rate: 200
+- burst: 400
+- window: 1m
+- minSamples: 50
+- errorRateThreshold: 0.5
+- invalidSignatureRateThreshold: 0.2
+- quotaReductionFactor: 0.25
+- softDuration: 5m
+- blockDuration: 1m
+- deescalateAfter: 5m
+- idleTTL: 10m
+
+**Parameter Descriptions:**
+
+- **mode**: `off` (nothing metered, nothing denied), `monitor` (evaluate and report, never deny) or `enforce` (deny throttled principals)
+- **rate**: Metered signature operations per second allowed per principal; a negative value disables the policy like `off`
+- **burst**: Token bucket capacity, absorbing short spikes without raising the sustained rate; values below `rate` are raised to `rate`
+- **window**: Period over which the error and invalid-signature ratios are evaluated
+- **minSamples**: Minimum number of observations in a window before a ratio can escalate a principal
+- **errorRateThreshold**: Fraction of failing operations in a window that escalates a principal; a value greater than `1` disables this trigger
+- **invalidSignatureRateThreshold**: Fraction of rejected verifications in a window that escalates a principal
+- **quotaReductionFactor**: Multiplier applied to `rate` and `burst` while a principal is soft-limited; must be in `(0,1]`
+- **softDuration**: Minimum time a principal stays on the reduced quota
+- **blockDuration**: How long a blocked principal is refused before being released back to the reduced quota
+- **deescalateAfter**: Violation-free period required before a level is restored
+- **idleTTL**: How long per-principal state is kept after its last operation
+
+**Notes:**
+
+- The default `monitor` mode reports what `enforce` would have denied, so thresholds can be tuned
+  against production traffic before they bite.
+- Out-of-range values (an `invalidSignatureRateThreshold` below 0, a `quotaReductionFactor` outside
+  `(0,1]`, an unknown `mode`) fail at startup rather than being clamped.
+- Denied operations return an error wrapping `token.SignatureThrottled`; callers detect it with
+  `errors.Is` and back off.

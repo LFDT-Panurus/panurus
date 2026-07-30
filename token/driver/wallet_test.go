@@ -35,7 +35,7 @@ func unescapeConfigKeyField(field string) string {
 		if field[i] == configKeyEscape && i+1 < len(field) {
 			i++
 		}
-		b.WriteByte(field[i])
+		_ = b.WriteByte(field[i])
 	}
 
 	return b.String()

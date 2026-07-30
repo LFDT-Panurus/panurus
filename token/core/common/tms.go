@@ -8,8 +8,23 @@ package common
 
 import (
 	"github.com/LFDT-Panurus/panurus/token/driver"
+	"github.com/LFDT-Panurus/panurus/token/services/identity/sigobserve"
 	"github.com/LFDT-Panurus/panurus/token/services/logging"
 )
+
+// SignatureInstrumentation bundles the observability and policy a driver installs on a token
+// service: the observer its signature operations are reported to, and the gate that may deny
+// them. It is an interface so that this package does not depend on the policy implementation;
+// sigpolicy.Stack is what a driver actually passes.
+type SignatureInstrumentation interface {
+	// Observer returns the observer signature operations are reported to.
+	Observer() sigobserve.Observer
+	// Gate returns the gate consulted before a client-facing signature operation, or nil when
+	// no policy is active.
+	Gate() sigobserve.Gate
+	// Stop releases the resources held by the instrumentation.
+	Stop()
+}
 
 // ValidatorFactory is a function that returns a driver.Validator instance.
 type ValidatorFactory = func() (driver.Validator, error)
@@ -36,6 +51,8 @@ type Service[T driver.PublicParameters] struct {
 	tokensUpgradeService    driver.TokensUpgradeService
 	authorization           driver.Authorization
 	validator               driver.Validator
+
+	signatureInstrumentation SignatureInstrumentation
 }
 
 // NewTokenService returns a new token service instance for the passed arguments.
@@ -73,6 +90,34 @@ func NewTokenService[T driver.PublicParameters](
 	}
 
 	return s, nil
+}
+
+// SetSignatureInstrumentation installs the signature observability and policy bundle. It is a
+// setter rather than a constructor parameter because the bundle is assembled together with the
+// wallet service, before this service exists, and because a driver that installs none must keep
+// working unchanged.
+func (s *Service[T]) SetSignatureInstrumentation(si SignatureInstrumentation) {
+	s.signatureInstrumentation = si
+}
+
+// SignatureObserver returns the observer the client-facing signature service reports denials to,
+// or a no-op observer when no instrumentation is installed.
+func (s *Service[T]) SignatureObserver() sigobserve.Observer {
+	if s.signatureInstrumentation == nil {
+		return sigobserve.Nop
+	}
+
+	return s.signatureInstrumentation.Observer()
+}
+
+// SignatureGate returns the gate the client-facing signature service consults, or nil when no
+// policy is active.
+func (s *Service[T]) SignatureGate() sigobserve.Gate {
+	if s.signatureInstrumentation == nil {
+		return nil
+	}
+
+	return s.signatureInstrumentation.Gate()
 }
 
 // IdentityProvider returns the identity provider associated with the service.
@@ -142,6 +187,10 @@ func (s *Service[T]) Validator() (driver.Validator, error) {
 
 // Done releases all the resources allocated by this service.
 func (s *Service[T]) Done() error {
+	if s.signatureInstrumentation != nil {
+		s.signatureInstrumentation.Stop()
+	}
+
 	// call done on all the services that support it
 	if s.walletService != nil {
 		return s.walletService.Done()

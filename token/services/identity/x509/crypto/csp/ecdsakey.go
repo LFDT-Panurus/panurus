@@ -41,7 +41,7 @@ func (k *ecdsaPrivateKey) SKI() []byte {
 
 	// Hash it
 	hash := sha256.New()
-	hash.Write(raw)
+	_, _ = hash.Write(raw)
 
 	return hash.Sum(nil)
 }
@@ -125,7 +125,7 @@ func (k *ecdsaPublicKey) SKI() []byte {
 
 	// Hash it
 	hash := sha256.New()
-	hash.Write(raw)
+	_, _ = hash.Write(raw)
 
 	return hash.Sum(nil)
 }
