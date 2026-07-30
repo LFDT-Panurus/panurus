@@ -75,7 +75,7 @@ func (c *JSONRPCClient) Ping(ctx context.Context) error {
 // Call performs a read-only contract call at the given block tag.
 func (c *JSONRPCClient) Call(ctx context.Context, to Address, data []byte, blockTag string) ([]byte, error) {
 	if blockTag == "" {
-		blockTag = "finalized"
+		blockTag = BlockTagFinalized
 	}
 	arg := map[string]any{"to": to.Hex(), "data": encodeHexBytes(data)}
 	var out string
