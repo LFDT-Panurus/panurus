@@ -1,0 +1,437 @@
+/*
+Copyright IBM Corp. All Rights Reserved.
+
+SPDX-License-Identifier: Apache-2.0
+*/
+
+package client
+
+import (
+	"bytes"
+	"context"
+	"encoding/hex"
+	"encoding/json"
+	"math/big"
+	"net/http"
+	"strconv"
+	"strings"
+	"sync/atomic"
+	"time"
+
+	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
+)
+
+// DefaultRequestTimeout bounds a single JSON-RPC round trip when the caller's context has no
+// deadline of its own.
+const DefaultRequestTimeout = 30 * time.Second
+
+// JSONRPCClient is the EVMClient implementation over HTTP JSON-RPC. It speaks plain eth_* methods,
+// so it works against any standard node (Besu is the acceptance backend, anvil the inner loop, and
+// an fabric-x-evm gateway is just another endpoint).
+//
+// It is deliberately dependency-free: the requests and the hex-quantity encoding the Ethereum JSON-RPC
+// spec mandates are handled here rather than pulled from go-ethereum, whose license is a hard blocker
+// (design §9, §15.6).
+type JSONRPCClient struct {
+	endpoint string
+	http     *http.Client
+	// id is the JSON-RPC request counter, incremented atomically so concurrent calls never reuse an id.
+	id atomic.Uint64
+}
+
+// Compile-time assertion that the client satisfies the frozen interface.
+var _ EVMClient = (*JSONRPCClient)(nil)
+
+// NewJSONRPCClient returns a client for the node at endpoint. A nil httpClient uses a default one
+// with DefaultRequestTimeout.
+func NewJSONRPCClient(endpoint string, httpClient *http.Client) (*JSONRPCClient, error) {
+	if strings.TrimSpace(endpoint) == "" {
+		return nil, errors.New("evm client: empty endpoint")
+	}
+	if httpClient == nil {
+		httpClient = &http.Client{Timeout: DefaultRequestTimeout}
+	}
+
+	return &JSONRPCClient{endpoint: endpoint, http: httpClient}, nil
+}
+
+// ChainID returns the chain id reported by the node.
+func (c *JSONRPCClient) ChainID(ctx context.Context) (*big.Int, error) {
+	var out string
+	if err := c.call(ctx, "eth_chainId", &out); err != nil {
+		return nil, err
+	}
+
+	return parseHexBig(out)
+}
+
+// Ping checks the node is reachable by asking for its chain id.
+func (c *JSONRPCClient) Ping(ctx context.Context) error {
+	_, err := c.ChainID(ctx)
+
+	return err
+}
+
+// Call performs a read-only contract call at the given block tag.
+func (c *JSONRPCClient) Call(ctx context.Context, to Address, data []byte, blockTag string) ([]byte, error) {
+	if blockTag == "" {
+		blockTag = "finalized"
+	}
+	arg := map[string]any{"to": to.Hex(), "data": encodeHexBytes(data)}
+	var out string
+	if err := c.call(ctx, "eth_call", &out, arg, blockTag); err != nil {
+		return nil, err
+	}
+
+	return decodeHexBytes(out)
+}
+
+// GetLogs returns the logs matching the filter.
+func (c *JSONRPCClient) GetLogs(ctx context.Context, q LogFilter) ([]Log, error) {
+	topics := make([]any, 0, len(q.Topics))
+	for _, position := range q.Topics {
+		if len(position) == 0 {
+			topics = append(topics, nil) // matches any value at this position
+
+			continue
+		}
+		values := make([]string, 0, len(position))
+		for _, t := range position {
+			values = append(values, t.Hex())
+		}
+		topics = append(topics, values)
+	}
+	arg := map[string]any{
+		"address":   q.Address.Hex(),
+		"fromBlock": encodeHexUint(q.FromBlock),
+		"toBlock":   encodeHexUint(q.ToBlock),
+	}
+	if len(topics) != 0 {
+		arg["topics"] = topics
+	}
+
+	var raw []jsonLog
+	if err := c.call(ctx, "eth_getLogs", &raw, arg); err != nil {
+		return nil, err
+	}
+	out := make([]Log, 0, len(raw))
+	for i := range raw {
+		l, err := raw[i].toLog()
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, l)
+	}
+
+	return out, nil
+}
+
+// PendingNonceAt returns the next nonce for account, including pending transactions.
+func (c *JSONRPCClient) PendingNonceAt(ctx context.Context, account Address) (uint64, error) {
+	var out string
+	if err := c.call(ctx, "eth_getTransactionCount", &out, account.Hex(), "pending"); err != nil {
+		return 0, err
+	}
+
+	return parseHexUint(out)
+}
+
+// EstimateGas estimates the gas needed to execute msg.
+func (c *JSONRPCClient) EstimateGas(ctx context.Context, msg CallMsg) (uint64, error) {
+	arg := map[string]any{}
+	if msg.From != nil {
+		arg["from"] = msg.From.Hex()
+	}
+	if msg.To != nil {
+		arg["to"] = msg.To.Hex()
+	}
+	if len(msg.Data) != 0 {
+		arg["data"] = encodeHexBytes(msg.Data)
+	}
+	if msg.Value != nil {
+		arg["value"] = encodeHexBig(msg.Value)
+	}
+
+	var out string
+	if err := c.call(ctx, "eth_estimateGas", &out, arg); err != nil {
+		return 0, err
+	}
+
+	return parseHexUint(out)
+}
+
+// SuggestGasFees returns the node's suggested EIP-1559 fees: the priority tip it reports, and a max
+// fee of baseFee*2 + tip, the customary headroom that keeps a transaction includable across a few
+// blocks of base-fee growth.
+func (c *JSONRPCClient) SuggestGasFees(ctx context.Context) (GasFees, error) {
+	var tipHex string
+	if err := c.call(ctx, "eth_maxPriorityFeePerGas", &tipHex); err != nil {
+		return GasFees{}, err
+	}
+	tip, err := parseHexBig(tipHex)
+	if err != nil {
+		return GasFees{}, err
+	}
+
+	var head struct {
+		BaseFeePerGas string `json:"baseFeePerGas"`
+	}
+	if err := c.call(ctx, "eth_getBlockByNumber", &head, "latest", false); err != nil {
+		return GasFees{}, err
+	}
+	baseFee := new(big.Int)
+	if head.BaseFeePerGas != "" {
+		if baseFee, err = parseHexBig(head.BaseFeePerGas); err != nil {
+			return GasFees{}, err
+		}
+	}
+
+	maxFee := new(big.Int).Add(new(big.Int).Mul(baseFee, big.NewInt(2)), tip)
+
+	return GasFees{MaxFeePerGas: maxFee, MaxPriorityFeePerGas: tip}, nil
+}
+
+// SendRawTransaction submits a signed, RLP-encoded transaction and returns its hash.
+func (c *JSONRPCClient) SendRawTransaction(ctx context.Context, rawTx []byte) (Hash, error) {
+	var out string
+	if err := c.call(ctx, "eth_sendRawTransaction", &out, encodeHexBytes(rawTx)); err != nil {
+		return Hash{}, err
+	}
+
+	return HexToHash(out)
+}
+
+// GetTransactionReceipt returns the receipt for txHash, or (nil, nil) if it is not yet mined.
+func (c *JSONRPCClient) GetTransactionReceipt(ctx context.Context, txHash Hash) (*Receipt, error) {
+	var raw *jsonReceipt
+	if err := c.call(ctx, "eth_getTransactionReceipt", &raw, txHash.Hex()); err != nil {
+		return nil, err
+	}
+	if raw == nil {
+		return nil, nil // not mined yet
+	}
+
+	return raw.toReceipt()
+}
+
+// IsPending reports whether txHash is still pending. found is false when the node does not know the
+// transaction at all (dropped or never seen), which the finality resolver uses to distinguish
+// "pending" from "dropped" (design §7.1).
+func (c *JSONRPCClient) IsPending(ctx context.Context, txHash Hash) (bool, bool, error) {
+	var tx *struct {
+		BlockNumber *string `json:"blockNumber"`
+	}
+	if err := c.call(ctx, "eth_getTransactionByHash", &tx, txHash.Hex()); err != nil {
+		return false, false, err
+	}
+	if tx == nil {
+		return false, false, nil // unknown to the node
+	}
+
+	// A null blockNumber means the node holds it in the mempool but it is not mined.
+	return tx.BlockNumber == nil, true, nil
+}
+
+// --- JSON-RPC plumbing ---------------------------------------------------------------------------
+
+type rpcRequest struct {
+	JSONRPC string `json:"jsonrpc"`
+	ID      uint64 `json:"id"`
+	Method  string `json:"method"`
+	Params  []any  `json:"params"`
+}
+
+type rpcError struct {
+	Code    int    `json:"code"`
+	Message string `json:"message"`
+}
+
+func (e *rpcError) Error() string {
+	return "json-rpc error " + strconv.Itoa(e.Code) + ": " + e.Message
+}
+
+type rpcResponse struct {
+	Result json.RawMessage `json:"result"`
+	Error  *rpcError       `json:"error"`
+}
+
+// call performs one JSON-RPC request and unmarshals the result into out. A JSON-RPC error response
+// is returned as an *rpcError so callers can classify by code.
+func (c *JSONRPCClient) call(ctx context.Context, method string, out any, params ...any) error {
+	if params == nil {
+		params = []any{}
+	}
+	body, err := json.Marshal(&rpcRequest{JSONRPC: "2.0", ID: c.id.Add(1), Method: method, Params: params})
+	if err != nil {
+		return errors.Wrapf(err, "failed to marshal %s request", method)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.endpoint, bytes.NewReader(body))
+	if err != nil {
+		return errors.Wrapf(err, "failed to build %s request", method)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return errors.Wrapf(err, "%s call failed", method)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		return errors.Errorf("%s call returned http %d", method, resp.StatusCode)
+	}
+
+	var rpcResp rpcResponse
+	if err := json.NewDecoder(resp.Body).Decode(&rpcResp); err != nil {
+		return errors.Wrapf(err, "failed to decode %s response", method)
+	}
+	if rpcResp.Error != nil {
+		return errors.Wrapf(rpcResp.Error, "%s failed", method)
+	}
+	if out == nil {
+		return nil
+	}
+	if err := json.Unmarshal(rpcResp.Result, out); err != nil {
+		return errors.Wrapf(err, "failed to unmarshal %s result", method)
+	}
+
+	return nil
+}
+
+// --- wire types ----------------------------------------------------------------------------------
+
+type jsonLog struct {
+	Address     string   `json:"address"`
+	Topics      []string `json:"topics"`
+	Data        string   `json:"data"`
+	TxHash      string   `json:"transactionHash"`
+	BlockNumber string   `json:"blockNumber"`
+}
+
+func (j *jsonLog) toLog() (Log, error) {
+	addr, err := HexToAddress(j.Address)
+	if err != nil {
+		return Log{}, errors.Wrap(err, "invalid log address")
+	}
+	topics := make([]Hash, 0, len(j.Topics))
+	for _, t := range j.Topics {
+		h, err := HexToHash(t)
+		if err != nil {
+			return Log{}, errors.Wrap(err, "invalid log topic")
+		}
+		topics = append(topics, h)
+	}
+	data, err := decodeHexBytes(j.Data)
+	if err != nil {
+		return Log{}, errors.Wrap(err, "invalid log data")
+	}
+	txHash, err := HexToHash(j.TxHash)
+	if err != nil {
+		return Log{}, errors.Wrap(err, "invalid log transaction hash")
+	}
+	blockNumber, err := parseHexUint(j.BlockNumber)
+	if err != nil {
+		return Log{}, errors.Wrap(err, "invalid log block number")
+	}
+
+	return Log{Address: addr, Topics: topics, Data: data, TxHash: txHash, BlockNumber: blockNumber}, nil
+}
+
+type jsonReceipt struct {
+	TxHash      string    `json:"transactionHash"`
+	BlockNumber *string   `json:"blockNumber"`
+	Status      string    `json:"status"`
+	Logs        []jsonLog `json:"logs"`
+}
+
+func (j *jsonReceipt) toReceipt() (*Receipt, error) {
+	txHash, err := HexToHash(j.TxHash)
+	if err != nil {
+		return nil, errors.Wrap(err, "invalid receipt transaction hash")
+	}
+	status, err := parseHexUint(j.Status)
+	if err != nil {
+		return nil, errors.Wrap(err, "invalid receipt status")
+	}
+	out := &Receipt{TxHash: txHash, Status: status}
+	if j.BlockNumber != nil {
+		bn, err := parseHexUint(*j.BlockNumber)
+		if err != nil {
+			return nil, errors.Wrap(err, "invalid receipt block number")
+		}
+		out.BlockNumber = &bn
+	}
+	for i := range j.Logs {
+		l, err := j.Logs[i].toLog()
+		if err != nil {
+			return nil, err
+		}
+		out.Logs = append(out.Logs, l)
+	}
+
+	return out, nil
+}
+
+// --- hex quantities ------------------------------------------------------------------------------
+
+// encodeHexUint encodes a number as a minimal 0x-prefixed hex quantity, the JSON-RPC convention.
+func encodeHexUint(x uint64) string {
+	return "0x" + strconv.FormatUint(x, 16)
+}
+
+// encodeHexBig encodes a big.Int as a minimal 0x-prefixed hex quantity.
+func encodeHexBig(x *big.Int) string {
+	if x == nil {
+		return "0x0"
+	}
+
+	return "0x" + x.Text(16)
+}
+
+// encodeHexBytes encodes a byte slice as 0x-prefixed hex data.
+func encodeHexBytes(b []byte) string {
+	return "0x" + hex.EncodeToString(b)
+}
+
+// decodeHexBytes decodes 0x-prefixed hex data, tolerating an empty or bare "0x" value.
+func decodeHexBytes(s string) ([]byte, error) {
+	s = strings.TrimPrefix(strings.TrimSpace(s), "0x")
+	if s == "" {
+		return nil, nil
+	}
+	b, err := hex.DecodeString(s)
+	if err != nil {
+		return nil, errors.Wrapf(err, "invalid hex data [%s]", s)
+	}
+
+	return b, nil
+}
+
+// parseHexUint parses a 0x-prefixed hex quantity into a uint64.
+func parseHexUint(s string) (uint64, error) {
+	trimmed := strings.TrimPrefix(strings.TrimSpace(s), "0x")
+	if trimmed == "" {
+		return 0, errors.Errorf("empty hex quantity")
+	}
+	v, err := strconv.ParseUint(trimmed, 16, 64)
+	if err != nil {
+		return 0, errors.Wrapf(err, "invalid hex quantity [%s]", s)
+	}
+
+	return v, nil
+}
+
+// parseHexBig parses a 0x-prefixed hex quantity into a big.Int.
+func parseHexBig(s string) (*big.Int, error) {
+	trimmed := strings.TrimPrefix(strings.TrimSpace(s), "0x")
+	if trimmed == "" {
+		return nil, errors.Errorf("empty hex quantity")
+	}
+	v, ok := new(big.Int).SetString(trimmed, 16)
+	if !ok {
+		return nil, errors.Errorf("invalid hex quantity [%s]", s)
+	}
+
+	return v, nil
+}
