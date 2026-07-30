@@ -14,9 +14,11 @@ or routing the plain provider past it, therefore fails too rather than silently 
 below.
 
 See [Monitoring](./monitoring.md) for the wider monitoring setup and [Driver Metrics](../drivers/metrics.md)
-for how the driver instrumentation is wired. Every metric below already has a panel in the importable
-[Grafana overview dashboard](../monitoring/grafana/README.md), whose queries are checked against this
-same list.
+for how the driver instrumentation is wired. Almost every metric below already has a panel in the
+importable [Grafana overview dashboard](../monitoring/grafana/README.md), whose queries are checked
+against this same list; the signature and throttle series added by
+[Signature observability](../security/signature_observability.md) are the exception and are queried
+directly for now.
 
 ## How a metric name is built
 
@@ -217,12 +219,23 @@ and every signer lookup falls back to the probing deserializer. The two `*_provi
 counters rise when a cache cannot pre-provision in the background, so requests are served on the slow
 path while the identity backend keeps failing; the corresponding log line alone is easy to miss.
 
+The `identity_signature_*`, `identity_signer_cache_lookups_total` and `identity_throttle*` series come
+from the signature observer described in [Signature observability](../security/signature_observability.md),
+which also lists the closed sets `op`, `role`, `outcome`, `level` and `reason` range over and the alerts
+worth writing against them. `identity_throttle_escalations_total` counts de-escalations back to `normal`
+too, so it is the level *entered* rather than a monotonically worsening signal.
+
 | Metric | Type | Labels | Description |
 |---|---|---|---|
 | `panurus_core_common_metrics_identity_signer_resolutions_total` | counter | `network,channel,namespace,outcome` | Total number of GetSigner calls by outcome (cache, routed, fallback) |
 | `panurus_core_common_metrics_identity_get_signer_duration_seconds` | histogram | `network,channel,namespace,path` | Histogram of GetSigner wall-clock time in seconds, labeled by resolution path |
 | `panurus_core_common_metrics_identity_signer_router_registrations_total` | counter | `network,channel,namespace` | Total number of conf_id-to-KeyManager bindings registered with the SignerRouter |
 | `panurus_core_common_metrics_identity_signer_router_no_probe_errors_total` | counter | `network,channel,namespace` | Total number of errors from the SignerRouter's probe-free signer deserialization path |
+| `panurus_core_common_metrics_identity_signature_operations_total` | counter | `network,channel,namespace,op,role,outcome` | Total number of signer/verifier service operations by operation, role and outcome |
+| `panurus_core_common_metrics_identity_signature_operation_duration_seconds` | histogram | `network,channel,namespace,op` | Histogram of signer/verifier service operation wall-clock time in seconds, labeled by operation |
+| `panurus_core_common_metrics_identity_signer_cache_lookups_total` | counter | `network,channel,namespace,result` | Total number of signer cache lookups by result (hit, miss) |
+| `panurus_core_common_metrics_identity_throttle_escalations_total` | counter | `network,channel,namespace,level,reason` | Total number of throttle level changes by the level entered and the reason |
+| `panurus_core_common_metrics_identity_throttled_principals` | gauge | `network,channel,namespace,level` | Number of principals currently held at each throttle level above normal |
 | `panurus_core_common_metrics_cache_level` | gauge | `network,channel,namespace` | Level of the idemix cache |
 | `panurus_core_common_metrics_cache_provision_failures_total` | counter | `network,channel,namespace` | Failed attempts to pre-provision idemix identities |
 | `panurus_core_common_metrics_recipient_data_cache_level` | gauge | `network,channel,namespace` | Level of the wallet recipient data cache |
