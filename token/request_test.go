@@ -1105,3 +1105,89 @@ func TestRequest_PublicParamsHash(t *testing.T) {
 	hash := r.PublicParamsHash()
 	assert.Equal(t, expectedHash, hash)
 }
+
+// TestRequest_AuditRecord_OwnerAuditInfo checks how AuditRecord fills the audit
+// info of an input: the local wallet service wins when it knows the owner, and
+// the audit info carried by the request metadata survives when it does not.
+func TestRequest_AuditRecord_OwnerAuditInfo(t *testing.T) {
+	ctx := t.Context()
+	owner := Identity("owner1")
+	metadataAuditInfo := []byte("audit-info-from-metadata")
+
+	newRequest := func(localAuditInfo []byte) *Request {
+		// A transfer with one input and no output: AuditRecord only reads back
+		// the inputs, and no output keeps the action deobfuscation out of play.
+		transferAction := &driver2.TransferAction{}
+		transferAction.NumInputsReturns(1)
+		transferAction.NumOutputsReturns(0)
+
+		transferService := &driver2.TransferService{}
+		transferService.DeserializeTransferActionReturns(transferAction, nil)
+
+		walletService := &driver2.WalletService{}
+		walletService.GetAuditInfoReturns(localAuditInfo, nil)
+
+		pp := &driver2.PublicParameters{}
+		pp.PrecisionReturns(64)
+		ppm := &driver2.PublicParamsManager{}
+		ppm.PublicParametersReturns(pp)
+
+		tms := &driver2.TokenManagerService{}
+		tms.TransferServiceReturns(transferService)
+		tms.WalletServiceReturns(walletService)
+		tms.PublicParamsManagerReturns(ppm)
+
+		qe := &driver2.QueryEngine{}
+		qe.ListAuditTokensReturns([]*token.Token{{Owner: owner, Type: "USD", Quantity: "0x64"}}, nil)
+		vault := &driver2.Vault{}
+		vault.QueryEngineReturns(qe)
+
+		logger := logging.MustGetLogger()
+
+		return &Request{
+			Anchor: "test-anchor",
+			Actions: &driver.TokenRequest{
+				Actions: []*driver.TypedAction{
+					{Type: request.ActionType_ACTION_TYPE_TRANSFER, Raw: []byte("transfer1")},
+				},
+			},
+			Metadata: &driver.TokenRequestMetadata{
+				Actions: []*driver.ActionMetadataEntry{
+					{
+						ActionID: 0,
+						TransferMetadata: &driver.TransferMetadata{
+							Inputs: []*driver.TransferInputMetadata{
+								{
+									TokenID: &token.ID{TxId: "tx1", Index: 0},
+									Senders: []*driver.AuditableIdentity{
+										{Identity: owner, AuditInfo: metadataAuditInfo},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			TokenService: &ManagementService{
+				tms:    tms,
+				logger: logger,
+				vault:  &Vault{v: vault, logger: logger},
+			},
+		}
+	}
+
+	t.Run("local wallet service knows the owner", func(t *testing.T) {
+		localAuditInfo := []byte("audit-info-from-wallet-service")
+		record, err := newRequest(localAuditInfo).AuditRecord(ctx)
+		require.NoError(t, err)
+		require.Equal(t, 1, record.Inputs.Count())
+		assert.Equal(t, localAuditInfo, record.Inputs.At(0).OwnerAuditInfo)
+	})
+
+	t.Run("local wallet service does not know the owner", func(t *testing.T) {
+		record, err := newRequest(nil).AuditRecord(ctx)
+		require.NoError(t, err)
+		require.Equal(t, 1, record.Inputs.Count())
+		assert.Equal(t, metadataAuditInfo, record.Inputs.At(0).OwnerAuditInfo)
+	})
+}

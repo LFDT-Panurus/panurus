@@ -1470,7 +1470,12 @@ func (r *Request) AuditRecord(ctx context.Context) (*AuditRecord, error) {
 		if err != nil {
 			return nil, errors.Wrapf(err, "failed getting audit info for owner [%s]", toks[i].Owner)
 		}
-		in.OwnerAuditInfo = ownerAuditInfo
+		// The wallet service only knows the identities registered on this node
+		// and returns nil for the others, so keep the audit info the request
+		// metadata already carries when the local lookup finds nothing.
+		if len(ownerAuditInfo) != 0 {
+			in.OwnerAuditInfo = ownerAuditInfo
+		}
 	}
 
 	return &AuditRecord{
