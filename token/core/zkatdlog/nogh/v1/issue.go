@@ -10,6 +10,7 @@ import (
 	"context"
 
 	math "github.com/IBM/mathlib"
+	common2 "github.com/LFDT-Panurus/panurus/token/core/common"
 	"github.com/LFDT-Panurus/panurus/token/core/common/meta"
 	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/crypto/common"
 	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/crypto/upgrade"
@@ -145,15 +146,14 @@ func (s *IssueService) Issue(ctx context.Context, issuerIdentity driver.Identity
 		if err != nil {
 			return nil, nil, err
 		}
+		receivers, err := common2.AuditableRecipients(ctx, s.Deserializer, s.WalletService, owner)
+		if err != nil {
+			return nil, nil, errors.WithMessagef(err, "failed getting receivers of issue output [%d]", i)
+		}
 		outputsMetadata = append(outputsMetadata, &driver.IssueOutputMetadata{
 			OutputMetadata:  raw,
 			OutputAuditInfo: auditInfo,
-			Receivers: []*driver.AuditableIdentity{
-				{
-					Identity:  owner,
-					AuditInfo: auditInfo,
-				},
-			},
+			Receivers:       receivers,
 		})
 	}
 

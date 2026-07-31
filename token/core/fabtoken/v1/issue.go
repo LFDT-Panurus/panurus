@@ -9,6 +9,7 @@ package v1
 import (
 	"context"
 
+	"github.com/LFDT-Panurus/panurus/token/core/common"
 	"github.com/LFDT-Panurus/panurus/token/core/common/meta"
 	v1 "github.com/LFDT-Panurus/panurus/token/core/fabtoken/v1/actions"
 	"github.com/LFDT-Panurus/panurus/token/driver"
@@ -71,15 +72,14 @@ func (s *IssueService) Issue(ctx context.Context, issuerIdentity driver.Identity
 		if err != nil {
 			return nil, nil, err
 		}
+		receivers, err := common.AuditableRecipients(ctx, s.Deserializer, s.WalletService, owners[i])
+		if err != nil {
+			return nil, nil, errors.WithMessagef(err, "failed getting receivers of issue output [%d]", i)
+		}
 		outputsMetadata = append(outputsMetadata, &driver.IssueOutputMetadata{
 			OutputMetadata:  outputMetadataRaw,
 			OutputAuditInfo: auditInfo,
-			Receivers: []*driver.AuditableIdentity{
-				{
-					Identity:  owners[i],
-					AuditInfo: auditInfo,
-				},
-			},
+			Receivers:       receivers,
 		})
 	}
 	issuerAuditInfo, err := s.Deserializer.GetAuditInfo(ctx, issuerIdentity, s.WalletService)
