@@ -9,17 +9,29 @@ package evm
 import (
 	"testing"
 
+	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-// fakeResolver reports a fixed set of (network|channel) pairs as EVM networks.
+// fakeResolver reports a fixed set of (network|channel) pairs as EVM networks and yields a minimal
+// valid configuration for them.
 type fakeResolver struct {
 	evm map[string]bool
 }
 
 func (f fakeResolver) IsEVMNetwork(network, channel string) bool {
 	return f.evm[network+"|"+channel]
+}
+
+func (f fakeResolver) ConfigFor(network, channel string) (*Config, error) {
+	if !f.IsEVMNetwork(network, channel) {
+		return nil, errors.Errorf("no evm configuration for [%s:%s]", network, channel)
+	}
+	c := validConfig()
+	c.applyDefaults()
+
+	return c, c.Validate()
 }
 
 func TestDriverNewRouting(t *testing.T) {
@@ -41,15 +53,17 @@ func TestDriverNewRouting(t *testing.T) {
 	assert.Error(t, err)
 }
 
-// TestNetworkStubNotImplemented documents that the skeleton's behavioural methods are wired to the
-// interface but not yet implemented, so a mis-registration surfaces as a clear error rather than a
-// nil-pointer panic.
-func TestNetworkStubNotImplemented(t *testing.T) {
-	n := newNetwork("evm-net")
+// TestNetworkDeferredSurface documents the methods that land with the finality manager: they are
+// wired to the interface and return a clear error rather than panicking.
+func TestNetworkDeferredSurface(t *testing.T) {
+	n := testNetwork(t, nil, nil)
 
 	assert.NotNil(t, n.NewEnvelope())
-	err := n.Broadcast(t.Context(), &Envelope{})
+	_, err := n.Ledger()
 	require.ErrorIs(t, err, errNotImplemented)
-	_, err = n.Ledger()
-	assert.ErrorIs(t, err, errNotImplemented)
+	err = n.AddFinalityListener("ns", "tx", nil)
+	require.ErrorIs(t, err, errNotImplemented)
+	status, _, _, err := n.GetTransactionStatus(t.Context(), "ns", "tx")
+	require.ErrorIs(t, err, errNotImplemented)
+	assert.Equal(t, 4, status, "an unresolvable status must be Unknown (4), never the invalid zero code")
 }

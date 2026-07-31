@@ -12,6 +12,7 @@ import (
 	"github.com/LFDT-Panurus/panurus/token/services/config"
 	"github.com/LFDT-Panurus/panurus/token/services/logging"
 	"github.com/LFDT-Panurus/panurus/token/services/network/driver"
+	"github.com/LFDT-Panurus/panurus/x/token/services/network/evm/client"
 )
 
 var logger = logging.MustGetLogger()
@@ -20,12 +21,14 @@ var logger = logging.MustGetLogger()
 // i.e. token.tms.<tms-id>.services.network.evm. Its presence marks a TMS as an EVM network.
 const EVMConfigKey = "services.network.evm"
 
-// networkResolver decides whether a (network, channel) pair is served by the EVM driver. It is a
-// small seam over the configuration so the driver's routing can be unit-tested without a full
-// config service.
+// networkResolver decides whether a (network, channel) pair is served by the EVM driver, and yields
+// that network's configuration. It is a small seam over the configuration service so the driver's
+// routing can be unit-tested without a full config service.
 type networkResolver interface {
 	// IsEVMNetwork reports whether the given network/channel has an EVM network configuration.
 	IsEVMNetwork(network, channel string) bool
+	// ConfigFor returns the EVM configuration for the given network/channel.
+	ConfigFor(network, channel string) (*Config, error)
 }
 
 // Driver is the EVM network driver factory. It implements driver.Driver: the network provider calls
@@ -46,13 +49,26 @@ func NewDriver(configService *config.Service) driver.Driver {
 
 // New returns an EVM Network for the given network/channel, or an error if that network is not
 // configured for EVM (so the network provider falls through to the next registered driver).
+//
+// The endorsement service and the submitter are supplied by the SDK wiring, which owns the key
+// material and the FSC view manager they need; a Network built here can serve queries and assemble
+// approvals once they are injected.
 func (d *Driver) New(network, channel string) (driver.Network, error) {
 	if !d.resolver.IsEVMNetwork(network, channel) {
 		return nil, errors.Errorf("evm: no evm network configuration for [%s:%s]", network, channel)
 	}
 	logger.Debugf("creating evm network [%s:%s]", network, channel)
 
-	return newNetwork(network), nil
+	config, err := d.resolver.ConfigFor(network, channel)
+	if err != nil {
+		return nil, err
+	}
+	evmClient, err := client.NewJSONRPCClient(config.Endpoint, nil)
+	if err != nil {
+		return nil, errors.Wrapf(err, "evm: failed to create a client for [%s:%s]", network, channel)
+	}
+
+	return NewNetwork(network, config, evmClient, nil, nil)
 }
 
 // configNetworkResolver resolves EVM networks from the token-sdk configuration.
@@ -77,4 +93,22 @@ func (r *configNetworkResolver) IsEVMNetwork(network, channel string) bool {
 	}
 
 	return false
+}
+
+// ConfigFor loads and validates the EVM configuration of the first TMS declaring it for the given
+// network/channel. Every TMS on one EVM network shares the endpoint and chain, so the first match is
+// the network's configuration.
+func (r *configNetworkResolver) ConfigFor(network, channel string) (*Config, error) {
+	configs, err := r.cs.Configurations()
+	if err != nil {
+		return nil, errors.Wrapf(err, "evm: failed to load token-sdk configurations for [%s:%s]", network, channel)
+	}
+	for _, c := range configs {
+		id := c.ID()
+		if id.Network == network && id.Channel == channel && c.IsSet(EVMConfigKey) {
+			return LoadConfig(c)
+		}
+	}
+
+	return nil, errors.Errorf("evm: no evm network configuration for [%s:%s]", network, channel)
 }
