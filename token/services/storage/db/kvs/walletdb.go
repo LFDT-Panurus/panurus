@@ -22,11 +22,6 @@ import (
 // StoreIdentity for a "configid" entry: [tmsID, roleID, idHash, wID, "configid"].
 const walletConfigIDAttributeCount = 5
 
-// walletReferenceAttributeCount is the number of composite-key attributes written by StoreIdentity
-// for an identity's wallet-reference entry: [tmsID, roleID, idHash, wID]. Exactly one such entry
-// exists per identity-wallet binding, which makes it the entry to count in IdentityCount.
-const walletReferenceAttributeCount = 4
-
 type WalletStore struct {
 	kvs   KVS
 	tmsID token.TMSID
@@ -82,42 +77,6 @@ func (s *WalletStore) IdentityExists(ctx context.Context, identity driver2.Ident
 	}
 
 	return s.kvs.Exists(ctx, k)
-}
-
-// IdentityCount returns the number of identities bound to wID for roleID.
-//
-// StoreIdentity writes several entries per identity under
-// [tmsID, roleID, idHash, ...]; only the wallet-reference entry
-// [tmsID, roleID, idHash, wID] (four attributes, no trailing marker) represents one binding, so
-// this counts those and ignores the "meta" and "configid" companions.
-func (s *WalletStore) IdentityCount(ctx context.Context, wID storage.WalletID, roleID int) (int, error) {
-	it, err := s.kvs.GetByPartialCompositeID(ctx, "walletDB", []string{s.tmsID.String(), strconv.Itoa(roleID)})
-	if err != nil {
-		return 0, errors.Wrapf(err, "failed to get wallets iterator")
-	}
-	defer func() { _ = it.Close() }()
-
-	count := 0
-	for it.HasNext() {
-		var storedWID storage.WalletID
-		key, err := it.Next(&storedWID)
-		if err != nil {
-			return 0, errors.Wrapf(err, "failed to get next entry from iterator")
-		}
-		_, attributes, err := kvs.SplitCompositeKey(key)
-		if err != nil {
-			return 0, errors.Wrapf(err, "failed to split composite key [%s]", key)
-		}
-		if len(attributes) != walletReferenceAttributeCount {
-			continue
-		}
-		if attributes[len(attributes)-1] != wID {
-			continue
-		}
-		count++
-	}
-
-	return count, nil
 }
 
 func (s *WalletStore) GetWalletID(ctx context.Context, identity driver2.Identity, roleID int) (storage.WalletID, error) {

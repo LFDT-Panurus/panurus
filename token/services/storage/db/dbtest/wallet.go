@@ -58,7 +58,6 @@ var walletCases = []struct {
 	{"TWalletIdentities", TWalletIdentities},
 	{"TWalletConfigurationLink", TWalletConfigurationLink},
 	{"TGetConfID", TGetConfID},
-	{"TIdentityCount", TIdentityCount},
 }
 
 func TDuplicate(t *testing.T, db driver.WalletStore, _ driver.IdentityStore, conf driver.IdentityConfiguration) {
@@ -152,49 +151,4 @@ func TGetConfID(t *testing.T, db driver.WalletStore, _ driver.IdentityStore, con
 	got, err = db.GetConfID(ctx, []byte("erin"))
 	require.NoError(t, err)
 	assert.Equal(t, confID, got)
-}
-
-// TIdentityCount asserts that IdentityCount reports the number of identities bound to one wallet
-// for one role, and only those. This is the count the wallet registry seeds its per-wallet identity
-// limit from, so a count that leaked identities from another wallet or another role would make the
-// limit fire on the wrong wallet.
-func TIdentityCount(t *testing.T, db driver.WalletStore, _ driver.IdentityStore, conf driver.IdentityConfiguration) {
-	t.Helper()
-	ctx := t.Context()
-	confID := conf.UniqueID()
-
-	// A wallet with nothing bound to it counts zero rather than failing.
-	count, err := db.IdentityCount(ctx, "frank_wallet", 0)
-	require.NoError(t, err)
-	assert.Equal(t, 0, count)
-
-	require.NoError(t, db.StoreIdentity(ctx, []byte("frank-1"), "eID", "frank_wallet", 0, nil, confID))
-	require.NoError(t, db.StoreIdentity(ctx, []byte("frank-2"), "eID", "frank_wallet", 0, nil, confID))
-	count, err = db.IdentityCount(ctx, "frank_wallet", 0)
-	require.NoError(t, err)
-	assert.Equal(t, 2, count)
-
-	// Re-storing an identity that is already bound is a no-op, so the count must not move.
-	require.NoError(t, db.StoreIdentity(ctx, []byte("frank-1"), "eID", "frank_wallet", 0, nil, confID))
-	count, err = db.IdentityCount(ctx, "frank_wallet", 0)
-	require.NoError(t, err)
-	assert.Equal(t, 2, count)
-
-	// The same identity under a different role is a distinct binding, counted separately.
-	require.NoError(t, db.StoreIdentity(ctx, []byte("frank-1"), "eID", "frank_wallet", 1, nil, confID))
-	count, err = db.IdentityCount(ctx, "frank_wallet", 0)
-	require.NoError(t, err)
-	assert.Equal(t, 2, count, "role 0 must not see the role 1 binding")
-	count, err = db.IdentityCount(ctx, "frank_wallet", 1)
-	require.NoError(t, err)
-	assert.Equal(t, 1, count)
-
-	// Another wallet's identities must not be counted.
-	require.NoError(t, db.StoreIdentity(ctx, []byte("grace-1"), "eID", "grace_wallet", 0, nil, confID))
-	count, err = db.IdentityCount(ctx, "frank_wallet", 0)
-	require.NoError(t, err)
-	assert.Equal(t, 2, count, "another wallet's identities must not be counted")
-	count, err = db.IdentityCount(ctx, "grace_wallet", 0)
-	require.NoError(t, err)
-	assert.Equal(t, 1, count)
 }

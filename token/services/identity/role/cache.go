@@ -8,94 +8,115 @@ package role
 
 import (
 	"context"
+	"sync"
 	"time"
 
 	"github.com/LFDT-Panurus/panurus/token/driver"
 	"github.com/LFDT-Panurus/panurus/token/services/logging"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	"go.uber.org/zap/zapcore"
-	"golang.org/x/sync/semaphore"
 )
 
-// MaxConcurrentRecipientDataGenerations bounds how many recipient identities this node produces at
-// the same time, across all wallets.
-//
-// Producing one is remotely reachable and not free: a counterparty opens a session and asks this
-// node for a recipient identity (see ttx.RespondRequestRecipientIdentityView), and the node derives
-// a pseudonym and writes it to the identity and wallet stores. Without a bound, a burst of such
-// requests translates one-to-one into concurrent work.
-//
-// Callers beyond the bound wait for a slot rather than being rejected, so the effect is
-// backpressure: request latency grows while CPU, memory and storage consumption stay bounded. A
-// caller whose context is cancelled while queued is released instead of holding its place.
-//
-// The bound is process-wide rather than per wallet on purpose: the resource being protected is this
-// node's CPU and storage, which every wallet draws from, so a per-wallet bound would scale with the
-// number of wallets and stop being a bound at all.
-const MaxConcurrentRecipientDataGenerations = 8
+var logger = logging.MustGetLogger()
 
-// RecipientDataBackendFunc produces fresh recipient data.
+const (
+	// provisionRetryBackoff is the initial pause the background provisioning loop takes after a
+	// failed generation attempt. It doubles on each consecutive failure up to
+	// maxProvisionRetryBackoff and resets on the first success.
+	provisionRetryBackoff = 50 * time.Millisecond
+
+	// maxProvisionRetryBackoff caps the exponential backoff of the background provisioning loop.
+	maxProvisionRetryBackoff = 30 * time.Second
+)
+
 type RecipientDataBackendFunc func(ctx context.Context) (*driver.RecipientData, error)
 
-// RecipientDataProvider produces recipient data on demand, admitting at most
-// MaxConcurrentRecipientDataGenerations generations at a time.
-//
-// It deliberately does not cache. The expensive part of producing a recipient identity is the
-// credential generation, and that is already served from a pre-provisioned cache one layer down
-// (idemix/cache.IdentityCache, wired in idemix.KeyManagerProvider). A second cache here bought a
-// few milliseconds on the request path while holding pre-generated identities in memory for the
-// lifetime of the node and writing a binding row for each one, whether or not any counterparty
-// ever asked for it.
-type RecipientDataProvider struct {
+type RecipientDataCache struct {
 	Logger logging.Logger
 
+	once   sync.Once
 	backed RecipientDataBackendFunc
 
-	// generations bounds concurrent calls to backed. See MaxConcurrentRecipientDataGenerations.
-	generations *semaphore.Weighted
+	cache        chan *driver.RecipientData
+	cacheTimeout time.Duration
+	metrics      *Metrics
 }
 
-// NewRecipientDataProvider returns a provider that generates recipient data through backed, with at
-// most MaxConcurrentRecipientDataGenerations generations running concurrently.
-//
-// generations is shared by every wallet built from the same factory, so the bound applies to the
-// node rather than to each wallet. Passing nil creates a provider with its own bound, which is
-// useful in tests but should not be done in production wiring.
-func NewRecipientDataProvider(logger logging.Logger, backed RecipientDataBackendFunc, generations *semaphore.Weighted) *RecipientDataProvider {
-	if generations == nil {
-		generations = semaphore.NewWeighted(MaxConcurrentRecipientDataGenerations)
+func NewRecipientDataCache(Logger logging.Logger, backed RecipientDataBackendFunc, size int, metrics *Metrics) *RecipientDataCache {
+	if size < 0 {
+		size = 0
+	}
+	ci := &RecipientDataCache{
+		Logger:       Logger,
+		backed:       backed,
+		cache:        make(chan *driver.RecipientData, size),
+		cacheTimeout: time.Millisecond * 5,
+		metrics:      metrics,
 	}
 
-	return &RecipientDataProvider{
-		Logger:      logger,
-		backed:      backed,
-		generations: generations,
-	}
+	return ci
 }
 
-// RecipientData returns freshly generated recipient data, waiting for a generation slot if the node
-// is already at MaxConcurrentRecipientDataGenerations. It returns an error if ctx is cancelled while
-// waiting.
-func (c *RecipientDataProvider) RecipientData(ctx context.Context) (*driver.RecipientData, error) {
+func (c *RecipientDataCache) RecipientData(ctx context.Context) (*driver.RecipientData, error) {
+	c.once.Do(func() {
+		c.Logger.Debugf("provision wallet recipient data with cache size [%d]", cap(c.cache))
+		if cap(c.cache) > 0 {
+			go c.provisionIdentities()
+		}
+	})
+
 	var start time.Time
 	if c.Logger.IsEnabledFor(zapcore.DebugLevel) {
 		start = time.Now()
 	}
+	timeout := time.NewTimer(c.cacheTimeout)
+	defer timeout.Stop()
 
-	if !c.generations.TryAcquire(1) {
-		c.Logger.DebugfContext(ctx, "recipient data generation limit [%d] reached, waiting for a slot", MaxConcurrentRecipientDataGenerations)
-		if err := c.generations.Acquire(ctx, 1); err != nil {
-			return nil, errors.Wrap(err, "failed waiting for a recipient data generation slot")
+	var identity *driver.RecipientData
+	var err error
+	logger.DebugfContext(ctx, "fetching wallet recipient data")
+	select {
+	case entry := <-c.cache:
+		c.metrics.CacheLevelGauge.Add(-1)
+		logger.DebugfContext(ctx, "fetched wallet recipient data from cache")
+		identity = entry
+		c.Logger.DebugfContext(ctx, "fetching wallet identity from cache [%s] took [%v]", identity, time.Since(start))
+	case <-timeout.C:
+		logger.DebugfContext(ctx, "generating wallet recipient data on the spot")
+		identity, err = c.backed(ctx)
+		if err != nil {
+			return nil, errors.Wrap(err, "failed fetching wallet identity")
 		}
+		c.Logger.DebugfContext(ctx, "fetching wallet identity from backend after a timeout [%s] took [%v]", identity, time.Since(start))
+	case <-ctx.Done():
+		return nil, errors.New("context is done")
 	}
-	defer c.generations.Release(1)
-
-	c.Logger.DebugfContext(ctx, "generating wallet recipient data")
-	identity, err := c.backed(ctx)
-	if err != nil {
-		return nil, errors.Wrap(err, "failed fetching wallet identity")
-	}
-	c.Logger.DebugfContext(ctx, "generating wallet recipient data [%s] took [%v]", identity, time.Since(start))
+	logger.DebugfContext(ctx, "fetching wallet recipient data done")
 
 	return identity, nil
+}
+
+// provisionIdentities keeps the cache full in the background.
+//
+// A failed generation is retried with exponential backoff rather than immediately, so a persistent
+// failure (storage down, key material unavailable) cannot turn this into a busy loop burning a core
+// per wallet. The backoff resets on the first success.
+func (c *RecipientDataCache) provisionIdentities() {
+	ctx := context.Background()
+	backoff := provisionRetryBackoff
+	for {
+		id, err := c.backed(ctx)
+		if err != nil {
+			c.Logger.Debugf("failed provisioning wallet recipient data, retrying in [%v]: %v", backoff, err)
+			time.Sleep(backoff)
+			if backoff *= 2; backoff > maxProvisionRetryBackoff {
+				backoff = maxProvisionRetryBackoff
+			}
+
+			continue
+		}
+		backoff = provisionRetryBackoff
+		c.metrics.CacheLevelGauge.Add(1)
+		c.cache <- id
+	}
 }

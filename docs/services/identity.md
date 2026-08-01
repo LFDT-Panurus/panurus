@@ -162,54 +162,6 @@ func (d *Base) NewWalletService(...) (*wallet.Service, error) {
 
 > **Note:** `provider` here is a `NewTMSProvider`-wrapped `Provider` (see [Driver Metrics](../drivers/metrics.md#pitfall-labelnames-must-include-network-channel-namespace)), which binds `network`/`channel`/`namespace` on every metric via `.With(...)` before returning it. Every `CounterOpts`/`HistogramOpts` above must therefore declare those three as `LabelNames` in addition to its own label(s), or the metric panics with "inconsistent label cardinality" on first use. This is exactly the bug that crashed the DVP/DLog integration suite in `SignerRouter.Register` before it was fixed.
 
-## Resource Limits
-
-Producing a recipient identity is remotely reachable. When a transaction counterparty asks this node
-for one (`ttx.RespondRequestRecipientIdentityView`), an *anonymous* owner wallet derives a fresh
-pseudonym and writes to both the wallet registry and the identity store. Nothing above the wallet
-service rate-limits that request today, so the wallet layer bounds how much of it can happen at once.
-
-| Limit | Constant | Value | What it bounds |
-|:------|:---------|:------|:---------------|
-| Concurrent generations | `role.MaxConcurrentRecipientDataGenerations` | 8 | How many recipient identities this **node** produces at the same time, across every wallet. Callers beyond it **wait** for a slot rather than being rejected, so a burst costs latency instead of unbounded CPU, memory and storage. A caller whose context is cancelled while queued is released. |
-
-The semaphore is owned by `role.DefaultFactory` and shared by every anonymous owner wallet it
-creates. That is deliberate: the resource being protected is this node's CPU and storage, which all
-wallets draw from, so a per-wallet bound would scale with the number of wallets and stop bounding
-anything.
-
-Notes on behaviour worth knowing:
-
-*   **Recipient identities are not cached at this layer.** `role.RecipientDataProvider` generates on
-    demand. An earlier design pre-provisioned identities into a per-wallet channel, but the expensive
-    part — the idemix credential — is already served from a pre-provisioned cache one layer down
-    (`idemix/cache.IdentityCache`, wired in `idemix.KeyManagerProvider` and sized from the same
-    `wallets.owners[].cacheSize` / `wallets.defaultCacheSize` keys). Caching again here bought a few
-    milliseconds on a path dominated by session round trips and finality, while holding pre-generated
-    identities in memory for the lifetime of the node and writing a binding row for each one whether
-    or not a counterparty ever asked for it. The `recipient_data_cache_level` gauge went away with it.
-*   **The binding store is still append-only.** Nothing deletes a row, so a wallet's identity count
-    grows with the transactions it receives. Bounding that growth needs usage tracking and
-    garbage collection rather than a fixed cap — see
-    [#1642](https://github.com/LFDT-Panurus/panurus/issues/1642).
-*   **Database resource limits are not set here, by design.** Neither query timeouts nor connection
-    pool sizes are imposed by this layer. Per the resolution of
-    [#1740](https://github.com/LFDT-Panurus/panurus/issues/1740), the SDK's obligation is to
-    *respect* the context it is given — every `WalletStore` method takes a `context.Context` and
-    passes it to a context-aware database call, so a caller's deadline or cancellation interrupts
-    the query — while **database-side query limits and timeouts are configured by the database
-    administrator and the application developer**. An SDK-imposed ceiling would override that
-    choice rather than support it.
-
-    Connection pool sizing likewise belongs to FSC, not here: `maxOpenConns` is read from
-    `fsc.persistences.<name>.opts.maxOpenConns`, lives on FSC's `Config`, and is applied by FSC's
-    `db.SetMaxOpenConns`. Note that FSC's `ConfigProvider.GetOpts` defaults `maxIdleConns` (2) and
-    `maxIdleTime` (1 min) when those keys are absent, but leaves `maxOpenConns` at 0 — which
-    `database/sql` reads as *unlimited*. Panurus cannot correct this from its side, because FSC
-    caches the `*sql.DB` per data source and the pool is therefore fixed by whichever store opens
-    that data source first. **Set `fsc.persistences.<name>.opts.maxOpenConns` explicitly**, together
-    with the timeouts your database supports, in any deployment you care about.
-
 ## Identity Types
 
 The Identity Service leverages a wrapper called **TypedIdentity** to support various identity schemes uniformly. 

@@ -156,26 +156,6 @@ func (db *WalletStore) IdentityExists(ctx context.Context, identity token.Identi
 	return result != ""
 }
 
-// IdentityCount returns the number of identities bound to wID for roleID. The count is served by
-// the idx_wallet_id_and_role index, so it stays proportional to the bindings of the one wallet
-// rather than to the size of the whole table.
-func (db *WalletStore) IdentityCount(ctx context.Context, wID driver.WalletID, roleID int) (int, error) {
-	query, args := q.Select().
-		FieldsByName("COUNT(*)").
-		From(q.Table(db.table.Wallets)).
-		Where(cond.And(cond.Eq("wallet_id", wID), cond.Eq("role_id", roleID))).
-		Format(db.ci)
-	logging.Debug(logger, query)
-
-	var count int
-	if err := db.readDB.QueryRowContext(ctx, query, args...).Scan(&count); err != nil {
-		return 0, errors.Wrapf(err, "failed counting identities for wallet [%v]", wID)
-	}
-	logger.DebugfContext(ctx, "wallet [%v] has [%d] identities for role [%d]", wID, count, roleID)
-
-	return count, nil
-}
-
 func (db *WalletStore) GetSchema() string {
 	return fmt.Sprintf(`
 		-- Wallets
@@ -192,11 +172,9 @@ func (db *WalletStore) GetSchema() string {
 		);
 		CREATE INDEX IF NOT EXISTS idx_identity_hash_and_role%s ON %s ( identity_hash, role_id );
 		CREATE INDEX IF NOT EXISTS idx_role_id_%s ON %s ( role_id );
-		CREATE INDEX IF NOT EXISTS idx_conf_id_%s ON %s ( conf_id );
-		CREATE INDEX IF NOT EXISTS idx_wallet_id_and_role_%s ON %s ( wallet_id, role_id )
+		CREATE INDEX IF NOT EXISTS idx_conf_id_%s ON %s ( conf_id )
 		`,
 		db.table.Wallets, db.table.IdentityConfigurations,
-		db.table.Wallets, db.table.Wallets,
 		db.table.Wallets, db.table.Wallets,
 		db.table.Wallets, db.table.Wallets,
 		db.table.Wallets, db.table.Wallets,

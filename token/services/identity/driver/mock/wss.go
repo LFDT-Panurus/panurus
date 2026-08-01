@@ -63,21 +63,6 @@ type WalletStoreService struct {
 		result1 []driver.WalletID
 		result2 error
 	}
-	IdentityCountStub        func(context.Context, driver.WalletID, int) (int, error)
-	identityCountMutex       sync.RWMutex
-	identityCountArgsForCall []struct {
-		arg1 context.Context
-		arg2 driver.WalletID
-		arg3 int
-	}
-	identityCountReturns struct {
-		result1 int
-		result2 error
-	}
-	identityCountReturnsOnCall map[int]struct {
-		result1 int
-		result2 error
-	}
 	IdentityExistsStub        func(context.Context, token.Identity, driver.WalletID, int) bool
 	identityExistsMutex       sync.RWMutex
 	identityExistsArgsForCall []struct {
@@ -374,72 +359,6 @@ func (fake *WalletStoreService) GetWalletIDsReturnsOnCall(i int, result1 []drive
 	}
 	fake.getWalletIDsReturnsOnCall[i] = struct {
 		result1 []driver.WalletID
-		result2 error
-	}{result1, result2}
-}
-
-func (fake *WalletStoreService) IdentityCount(arg1 context.Context, arg2 driver.WalletID, arg3 int) (int, error) {
-	fake.identityCountMutex.Lock()
-	ret, specificReturn := fake.identityCountReturnsOnCall[len(fake.identityCountArgsForCall)]
-	fake.identityCountArgsForCall = append(fake.identityCountArgsForCall, struct {
-		arg1 context.Context
-		arg2 driver.WalletID
-		arg3 int
-	}{arg1, arg2, arg3})
-	stub := fake.IdentityCountStub
-	fakeReturns := fake.identityCountReturns
-	fake.recordInvocation("IdentityCount", []interface{}{arg1, arg2, arg3})
-	fake.identityCountMutex.Unlock()
-	if stub != nil {
-		return stub(arg1, arg2, arg3)
-	}
-	if specificReturn {
-		return ret.result1, ret.result2
-	}
-	return fakeReturns.result1, fakeReturns.result2
-}
-
-func (fake *WalletStoreService) IdentityCountCallCount() int {
-	fake.identityCountMutex.RLock()
-	defer fake.identityCountMutex.RUnlock()
-	return len(fake.identityCountArgsForCall)
-}
-
-func (fake *WalletStoreService) IdentityCountCalls(stub func(context.Context, driver.WalletID, int) (int, error)) {
-	fake.identityCountMutex.Lock()
-	defer fake.identityCountMutex.Unlock()
-	fake.IdentityCountStub = stub
-}
-
-func (fake *WalletStoreService) IdentityCountArgsForCall(i int) (context.Context, driver.WalletID, int) {
-	fake.identityCountMutex.RLock()
-	defer fake.identityCountMutex.RUnlock()
-	argsForCall := fake.identityCountArgsForCall[i]
-	return argsForCall.arg1, argsForCall.arg2, argsForCall.arg3
-}
-
-func (fake *WalletStoreService) IdentityCountReturns(result1 int, result2 error) {
-	fake.identityCountMutex.Lock()
-	defer fake.identityCountMutex.Unlock()
-	fake.IdentityCountStub = nil
-	fake.identityCountReturns = struct {
-		result1 int
-		result2 error
-	}{result1, result2}
-}
-
-func (fake *WalletStoreService) IdentityCountReturnsOnCall(i int, result1 int, result2 error) {
-	fake.identityCountMutex.Lock()
-	defer fake.identityCountMutex.Unlock()
-	fake.IdentityCountStub = nil
-	if fake.identityCountReturnsOnCall == nil {
-		fake.identityCountReturnsOnCall = make(map[int]struct {
-			result1 int
-			result2 error
-		})
-	}
-	fake.identityCountReturnsOnCall[i] = struct {
-		result1 int
 		result2 error
 	}{result1, result2}
 }

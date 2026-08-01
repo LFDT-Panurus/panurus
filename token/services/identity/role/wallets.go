@@ -11,6 +11,7 @@ import (
 	"context"
 	"math/big"
 
+	"github.com/LFDT-Panurus/panurus/token/core/common/metrics"
 	"github.com/LFDT-Panurus/panurus/token/driver"
 	idriver "github.com/LFDT-Panurus/panurus/token/services/identity/driver"
 	"github.com/LFDT-Panurus/panurus/token/services/identity/wallet"
@@ -19,7 +20,6 @@ import (
 	"github.com/LFDT-Panurus/panurus/token/token"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/common/utils/collections/iterators"
-	"golang.org/x/sync/semaphore"
 )
 
 // UnspentTokensIterator defines an iterator over unspent tokens
@@ -494,22 +494,20 @@ func (w *LongTermOwnerWallet) Remote() bool {
 
 // AnonymousOwnerWallet represents an owner wallet that uses ephemeral
 // pseudonyms for privacy. It embeds a LongTermOwnerWallet for shared
-// functionality and adds registry interactions to produce and manage
-// anonymous recipient identities.
+// functionality and adds a cache and registry interactions to produce and
+// manage anonymous recipient identities.
 type AnonymousOwnerWallet struct {
 	*LongTermOwnerWallet
 	Logger          logging.Logger
 	Deserializer    Deserializer
 	IdentitySupport IdentitySupport
-	Recipients      *RecipientDataProvider
+	IdentityCache   *RecipientDataCache
 }
 
-// NewAnonymousOwnerWallet creates an AnonymousOwnerWallet. Recipient identities are produced on
-// demand through a RecipientDataProvider, bounded by the generations semaphore, and are not cached
-// here: see RecipientDataProvider for why.
-//
-// generations is shared across wallets so that the bound on concurrent generation applies to the
-// node rather than to each wallet.
+// NewAnonymousOwnerWallet creates an AnonymousOwnerWallet. It initializes
+// a RecipientDataCache (used to cache pseudonyms/recipient data) and stores
+// references to the identity provider, vault, deserializer and wallet
+// registry used to validate and register pseudonyms.
 func NewAnonymousOwnerWallet(
 	logger logging.Logger,
 	IdentityProvider IdentityProvider,
@@ -518,7 +516,8 @@ func NewAnonymousOwnerWallet(
 	identitySupport IdentitySupport,
 	id idriver.WalletID,
 	identityInfo idriver.IdentityInfo,
-	generations *semaphore.Weighted,
+	cacheSize int,
+	metricsProvider metrics.Provider,
 ) (*AnonymousOwnerWallet, error) {
 	w := &AnonymousOwnerWallet{
 		LongTermOwnerWallet: &LongTermOwnerWallet{
@@ -531,7 +530,8 @@ func NewAnonymousOwnerWallet(
 		IdentitySupport: identitySupport,
 		Deserializer:    Deserializer,
 	}
-	w.Recipients = NewRecipientDataProvider(logger, w.getRecipientIdentity, generations)
+	w.IdentityCache = NewRecipientDataCache(logger, w.getRecipientIdentity, cacheSize, NewMetrics(metricsProvider))
+	logger.Debugf("added wallet cache for id %s with cache of size %d", id+"@"+identityInfo.EnrollmentID(), cacheSize)
 
 	return w, nil
 }
@@ -548,9 +548,10 @@ func (w *AnonymousOwnerWallet) ContainsToken(ctx context.Context, token *token.U
 	return w.Contains(ctx, token.Owner)
 }
 
-// GetRecipientIdentity returns a freshly generated recipient identity (pseudonym).
+// GetRecipientIdentity returns the current recipient identity (pseudonym)
+// from the cache, creating a new one if necessary.
 func (w *AnonymousOwnerWallet) GetRecipientIdentity(ctx context.Context) (Identity, error) {
-	rd, err := w.Recipients.RecipientData(ctx)
+	rd, err := w.IdentityCache.RecipientData(ctx)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to get recipient data")
 	}
@@ -558,9 +559,10 @@ func (w *AnonymousOwnerWallet) GetRecipientIdentity(ctx context.Context) (Identi
 	return rd.Identity, nil
 }
 
-// GetRecipientData returns freshly generated recipient data (identity + audit info).
+// GetRecipientData returns recipient data (identity + audit info) from the
+// identity cache.
 func (w *AnonymousOwnerWallet) GetRecipientData(ctx context.Context) (*driver.RecipientData, error) {
-	return w.Recipients.RecipientData(ctx)
+	return w.IdentityCache.RecipientData(ctx)
 }
 
 // RegisterRecipient validates and registers the provided recipient data

@@ -10,12 +10,12 @@ import (
 	"context"
 	"math/big"
 
+	"github.com/LFDT-Panurus/panurus/token/core/common/metrics"
 	"github.com/LFDT-Panurus/panurus/token/driver"
 	idriver "github.com/LFDT-Panurus/panurus/token/services/identity/driver"
 	"github.com/LFDT-Panurus/panurus/token/services/logging"
 	"github.com/LFDT-Panurus/panurus/token/token"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
-	"golang.org/x/sync/semaphore"
 )
 
 //go:generate counterfeiter -o mock/tv.go -fake-name TokenVault . TokenVault
@@ -25,6 +25,11 @@ type TokenVault interface {
 	Balance(ctx context.Context, id string, tokenType token.Type) (*big.Int, error)
 	IssuedBalance(ctx context.Context, opts driver.IssuerBalanceQuery) (*big.Int, error)
 	RedeemedBalance(ctx context.Context, opts driver.IssuerBalanceQuery) (*big.Int, error)
+}
+
+//go:generate counterfeiter -o mock/wc.go -fake-name WalletsConfiguration . WalletsConfiguration
+type WalletsConfiguration interface {
+	CacheSizeForOwnerID(id string) int
 }
 
 //go:generate counterfeiter -o mock/is.go -fake-name IdentitySupport . IdentitySupport
@@ -38,32 +43,30 @@ type Deserializer = driver.Deserializer
 
 // DefaultFactory creates wallets for the default role.
 type DefaultFactory struct {
-	Logger           logging.Logger
-	IdentityProvider IdentityProvider
-	TokenVault       TokenVault
-	Deserializer     Deserializer
-
-	// Generations bounds concurrent recipient identity generation across every anonymous owner
-	// wallet this factory creates. See MaxConcurrentRecipientDataGenerations.
-	Generations *semaphore.Weighted
+	Logger               logging.Logger
+	IdentityProvider     IdentityProvider
+	TokenVault           TokenVault
+	WalletsConfiguration WalletsConfiguration
+	Deserializer         Deserializer
+	MetricsProvider      metrics.Provider
 }
 
 // NewDefaultFactory creates a new DefaultFactory.
-//
-// The factory owns one generation semaphore that every anonymous owner wallet it creates shares, so
-// that MaxConcurrentRecipientDataGenerations bounds this node rather than each wallet separately.
 func NewDefaultFactory(
 	logger logging.Logger,
 	identityProvider driver.IdentityProvider,
 	tokenVault TokenVault,
+	walletsConfiguration WalletsConfiguration,
 	deserializer Deserializer,
+	metricsProvider metrics.Provider,
 ) *DefaultFactory {
 	return &DefaultFactory{
-		Logger:           logger,
-		IdentityProvider: identityProvider,
-		TokenVault:       tokenVault,
-		Deserializer:     deserializer,
-		Generations:      semaphore.NewWeighted(MaxConcurrentRecipientDataGenerations),
+		Logger:               logger,
+		IdentityProvider:     identityProvider,
+		TokenVault:           tokenVault,
+		WalletsConfiguration: walletsConfiguration,
+		Deserializer:         deserializer,
+		MetricsProvider:      metricsProvider,
 	}
 }
 
@@ -79,7 +82,8 @@ func (w *DefaultFactory) NewWallet(ctx context.Context, id idriver.WalletID, rol
 				wr,
 				id,
 				info,
-				w.Generations,
+				w.WalletsConfiguration.CacheSizeForOwnerID(id),
+				w.MetricsProvider,
 			)
 			if err != nil {
 				return nil, errors.WithMessagef(err, "failed to create new owner wallet [%s]", id)
