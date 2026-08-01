@@ -40,9 +40,10 @@ type Ledger struct {
 	blockTag   string
 }
 
-// DefaultBlockTag is the block tag the ledger reads at when none is configured: the PoS finalized
-// tag, which removes reorg handling from validation (design §7.2).
-const DefaultBlockTag = "finalized"
+// DefaultBlockTag is the block tag the ledger reads at when none is configured. It aliases the
+// canonical value in the client package so the endorsers' ledger, the version keeper and the driver
+// can never drift onto different views of the chain.
+const DefaultBlockTag = client.BlockTagFinalized
 
 // NewLedger returns a Ledger reading the TokenState contract through the EVM client. An empty
 // blockTag defaults to DefaultBlockTag.
