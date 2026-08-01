@@ -35,4 +35,5 @@ type IssueAction struct {
 	TokenType        string
 	Outputs          []OutputDescription
 	BindingSignature []byte // 96 bytes: R.X || R.Y || S
+	TotalValue		 []byte
 }
