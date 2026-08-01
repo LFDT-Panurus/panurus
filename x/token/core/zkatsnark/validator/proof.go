@@ -113,7 +113,6 @@ func verifyAllProofs(
 	ch := make(chan proofOutcome, total)
 
 	for i := range inputs {
-
 		go func() {
 			proof, err := setup.DeserializeProof(inputs[i].SpendProof, curve)
 			if err != nil {
@@ -140,7 +139,6 @@ func verifyAllProofs(
 	}
 
 	for j := range outputs {
-
 		go func() {
 			proof, err := setup.DeserializeProof(outputs[j].OutputProof, curve)
 			if err != nil {
