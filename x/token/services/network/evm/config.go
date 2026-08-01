@@ -1,0 +1,277 @@
+/*
+Copyright IBM Corp. All Rights Reserved.
+
+SPDX-License-Identifier: Apache-2.0
+*/
+
+package evm
+
+import (
+	"math/big"
+	"time"
+
+	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
+
+	"github.com/LFDT-Panurus/panurus/x/token/services/network/evm/client"
+)
+
+// Configuration defaults. They are applied at load time so a minimal config (endpoint, chain id,
+// contracts, endorsement) is enough to run, and every unset knob has a documented, safe value.
+const (
+	// DefaultBlockTag is the block tag state reads use: the PoS finalized tag, which removes reorg
+	// handling from v1 (design §7.2). It aliases the canonical value in the client package.
+	DefaultBlockTag = client.BlockTagFinalized
+	// DefaultPollInterval is how often finality polls a transaction's status.
+	DefaultPollInterval = 2 * time.Second
+	// DefaultFinalityTimeout bounds how long a transaction is awaited before it is treated as failed.
+	DefaultFinalityTimeout = 5 * time.Minute
+	// DefaultGasMultiplier scales the node's gas estimate to absorb small state changes between
+	// estimation and execution.
+	DefaultGasMultiplier = 1.2
+	// DefaultGasStrategy estimates gas per transaction rather than using a fixed limit.
+	DefaultGasStrategy = GasStrategyEstimate
+)
+
+// Gas strategies.
+const (
+	// GasStrategyEstimate asks the node to estimate gas and scales it by Multiplier.
+	GasStrategyEstimate = "estimate"
+	// GasStrategyFixed uses Limit for every transaction.
+	GasStrategyFixed = "fixed"
+)
+
+// Config is the EVM network configuration for one TMS, read from
+// token.tms.<tms-id>.services.network.evm (design §10).
+type Config struct {
+	// Endpoint is the node's JSON-RPC URL.
+	Endpoint string `yaml:"endpoint"`
+	// ChainID is the chain the driver signs for; it is checked against the node at startup so a
+	// misconfiguration surfaces immediately rather than as rejected transactions.
+	ChainID int64 `yaml:"chainID"`
+
+	Contracts   ContractsConfig   `yaml:"contracts"`
+	Finality    FinalityConfig    `yaml:"finality"`
+	Gas         GasConfig         `yaml:"gas"`
+	Endorser    EndorserConfig    `yaml:"endorser"`
+	Submitter   SubmitterConfig   `yaml:"submitter"`
+	Endorsement EndorsementConfig `yaml:"endorsement"`
+}
+
+// ContractsConfig holds the deployed contract addresses for the TMS.
+type ContractsConfig struct {
+	// TokenState is this TMS's TokenState clone; it also anchors the EIP-712 domain.
+	TokenState string `yaml:"tokenState"`
+	// EndorsementVerifier is the verifier the TokenState calls; optional in config, since the
+	// TokenState holds the authoritative reference.
+	EndorsementVerifier string `yaml:"endorsementVerifier"`
+}
+
+// FinalityConfig controls how transaction finality is observed.
+type FinalityConfig struct {
+	// BlockTag is the tag state is read at (finalized or safe).
+	BlockTag string `yaml:"blockTag"`
+	// PollInterval is the delay between status polls.
+	PollInterval time.Duration `yaml:"pollInterval"`
+	// Timeout bounds how long a transaction is awaited. It is also a recipient's only failure signal:
+	// a failed apply reverts and emits no log, so "no event by the timeout" is what makes it Invalid
+	// (design §7.4).
+	Timeout time.Duration `yaml:"timeout"`
+}
+
+// GasConfig controls gas limit selection.
+type GasConfig struct {
+	// Strategy is estimate or fixed.
+	Strategy string `yaml:"strategy"`
+	// Multiplier scales the node's estimate when Strategy is estimate.
+	Multiplier float64 `yaml:"multiplier"`
+	// Limit is the gas limit used when Strategy is fixed.
+	Limit uint64 `yaml:"limit"`
+}
+
+// EndorserConfig describes this node's endorser identity, present only if the node endorses.
+type EndorserConfig struct {
+	// Enabled marks this node as an endorser.
+	Enabled bool `yaml:"enabled"`
+	// Keystore is the path to this endorser's secp256k1 key material.
+	Keystore string `yaml:"keystore"`
+	// Address is the endorser's Ethereum address, as registered in the EndorsementVerifier.
+	Address string `yaml:"address"`
+	// FSCIdentity is the endorser's FSC identity, used to route endorsement requests.
+	FSCIdentity string `yaml:"fscIdentity"`
+}
+
+// SubmitterConfig describes the account that signs and pays for transactions.
+type SubmitterConfig struct {
+	// Keystore is the path to the submitter's secp256k1 key material.
+	Keystore string `yaml:"keystore"`
+	// Address is the submitter's Ethereum address.
+	Address string `yaml:"address"`
+}
+
+// EndorsementConfig is the endorsement policy: the quorum, who may ask for endorsement, and the
+// endorser set with the address to FSC identity binding the initiator routes on (design §6.1).
+type EndorsementConfig struct {
+	// Threshold is the number of distinct endorser signatures a transaction needs. It must match the
+	// threshold the EndorsementVerifier was constructed with.
+	Threshold uint `yaml:"threshold"`
+	// Allowlist is the FSC identities permitted to request endorsement. Empty means the policy is
+	// resolved from the TMS network's nodes at wiring time.
+	Allowlist []string `yaml:"allowlist"`
+	// Endorsers binds each endorser's Ethereum address to its FSC identity.
+	Endorsers []EndorserBinding `yaml:"endorsers"`
+}
+
+// EndorserBinding is one endorser's address and FSC identity.
+type EndorserBinding struct {
+	Address     string `yaml:"address"`
+	FSCIdentity string `yaml:"fscIdentity"`
+}
+
+// LoadConfig reads the EVM configuration from the TMS configuration, applies defaults, and validates
+// it. It fails fast: a bad configuration is a startup error (design §13), never a surprise at the
+// first transaction.
+func LoadConfig(configuration Configuration) (*Config, error) {
+	var c Config
+	if err := configuration.UnmarshalKey(EVMConfigKey, &c); err != nil {
+		return nil, errors.Wrapf(err, "failed to unmarshal evm configuration under [%s]", EVMConfigKey)
+	}
+	c.applyDefaults()
+	if err := c.Validate(); err != nil {
+		return nil, err
+	}
+
+	return &c, nil
+}
+
+// Configuration is the slice of the SDK's configuration service this package needs.
+type Configuration interface {
+	// IsSet reports whether a key is defined.
+	IsSet(key string) bool
+	// UnmarshalKey decodes the value at key into rawVal.
+	UnmarshalKey(key string, rawVal any) error
+}
+
+// applyDefaults fills unset optional fields.
+func (c *Config) applyDefaults() {
+	if c.Finality.BlockTag == "" {
+		c.Finality.BlockTag = DefaultBlockTag
+	}
+	if c.Finality.PollInterval <= 0 {
+		c.Finality.PollInterval = DefaultPollInterval
+	}
+	if c.Finality.Timeout <= 0 {
+		c.Finality.Timeout = DefaultFinalityTimeout
+	}
+	if c.Gas.Strategy == "" {
+		c.Gas.Strategy = DefaultGasStrategy
+	}
+	if c.Gas.Multiplier <= 0 {
+		c.Gas.Multiplier = DefaultGasMultiplier
+	}
+}
+
+// Validate checks the configuration is internally consistent and usable.
+func (c *Config) Validate() error {
+	if c.Endpoint == "" {
+		return errors.New("evm config: endpoint is required")
+	}
+	if c.ChainID <= 0 {
+		return errors.Errorf("evm config: chainID must be positive, got %d", c.ChainID)
+	}
+	if _, err := c.TokenStateAddress(); err != nil {
+		return err
+	}
+	if c.Contracts.EndorsementVerifier != "" {
+		if _, err := client.HexToAddress(c.Contracts.EndorsementVerifier); err != nil {
+			return errors.Wrap(err, "evm config: invalid endorsementVerifier address")
+		}
+	}
+	switch c.Finality.BlockTag {
+	case client.BlockTagFinalized, client.BlockTagSafe, client.BlockTagLatest:
+	default:
+		return errors.Errorf("evm config: unsupported finality blockTag [%s]", c.Finality.BlockTag)
+	}
+	if err := c.validateGas(); err != nil {
+		return err
+	}
+
+	return c.validateEndorsement()
+}
+
+func (c *Config) validateGas() error {
+	switch c.Gas.Strategy {
+	case GasStrategyEstimate:
+		if c.Gas.Multiplier < 1 {
+			return errors.Errorf("evm config: gas multiplier must be at least 1, got %v", c.Gas.Multiplier)
+		}
+	case GasStrategyFixed:
+		if c.Gas.Limit == 0 {
+			return errors.New("evm config: gas limit is required when strategy is fixed")
+		}
+	default:
+		return errors.Errorf("evm config: unsupported gas strategy [%s]", c.Gas.Strategy)
+	}
+
+	return nil
+}
+
+// validateEndorsement enforces the quorum invariants: a positive threshold no larger than the
+// endorser set, and every endorser carrying both an address and an FSC identity (one without the
+// other cannot be routed to or recovered from, design §6.1). Duplicate addresses are rejected because
+// the contract counts distinct signers, so a duplicate would inflate an apparent quorum.
+func (c *Config) validateEndorsement() error {
+	e := c.Endorsement
+	if len(e.Endorsers) == 0 {
+		return errors.New("evm config: no endorsers configured")
+	}
+	if e.Threshold == 0 {
+		return errors.New("evm config: endorsement threshold must be positive")
+	}
+	if int(e.Threshold) > len(e.Endorsers) {
+		return errors.Errorf("evm config: endorsement threshold %d exceeds the %d configured endorsers",
+			e.Threshold, len(e.Endorsers))
+	}
+
+	seen := make(map[client.Address]struct{}, len(e.Endorsers))
+	for i, b := range e.Endorsers {
+		if b.FSCIdentity == "" {
+			return errors.Errorf("evm config: endorser %d has no fscIdentity", i)
+		}
+		addr, err := client.HexToAddress(b.Address)
+		if err != nil {
+			return errors.Wrapf(err, "evm config: endorser %d has an invalid address", i)
+		}
+		if _, dup := seen[addr]; dup {
+			return errors.Errorf("evm config: duplicate endorser address [%s]", b.Address)
+		}
+		seen[addr] = struct{}{}
+	}
+
+	if c.Endorser.Enabled {
+		if c.Endorser.Address == "" {
+			return errors.New("evm config: endorser.address is required when endorser.enabled is set")
+		}
+		if _, err := client.HexToAddress(c.Endorser.Address); err != nil {
+			return errors.Wrap(err, "evm config: invalid endorser address")
+		}
+	}
+
+	return nil
+}
+
+// TokenStateAddress returns the configured TokenState clone address.
+func (c *Config) TokenStateAddress() (client.Address, error) {
+	if c.Contracts.TokenState == "" {
+		return client.Address{}, errors.New("evm config: contracts.tokenState is required")
+	}
+	addr, err := client.HexToAddress(c.Contracts.TokenState)
+	if err != nil {
+		return client.Address{}, errors.Wrap(err, "evm config: invalid tokenState address")
+	}
+
+	return addr, nil
+}
+
+// ChainIDBig returns the chain id as a big.Int, the form the EIP-712 domain and transaction signing
+// need.
+func (c *Config) ChainIDBig() *big.Int { return big.NewInt(c.ChainID) }

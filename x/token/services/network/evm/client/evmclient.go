@@ -13,6 +13,21 @@ import (
 
 //go:generate counterfeiter -o mock/evmclient.go -fake-name EVMClient . EVMClient
 
+// Block tags for state-reading calls. They live here, in the package every other one depends on, so
+// there is a single source of truth: the driver, the endorsers' validation ledger and the version
+// keeper must all read at the same tag, or they would validate against different views of the chain.
+const (
+	// BlockTagFinalized is the PoS finalized tag, the default everywhere: reading at it removes reorg
+	// handling from v1 (design §7.2).
+	BlockTagFinalized = "finalized"
+	// BlockTagSafe is the weaker "safe head" tag, available for deployments that accept reorg risk in
+	// exchange for lower latency.
+	BlockTagSafe = "safe"
+	// BlockTagLatest is the chain head; it offers no reorg protection and is intended for local
+	// development against an instant-mining node.
+	BlockTagLatest = "latest"
+)
+
 // Receipt is the subset of an Ethereum transaction receipt the driver needs.
 type Receipt struct {
 	TxHash      Hash
