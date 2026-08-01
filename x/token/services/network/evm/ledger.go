@@ -24,6 +24,7 @@ const (
 	areTokensSpentMethod      = "areTokensSpent(bytes32[])" // #nosec G101 -- ABI method signature
 	getPublicParametersMethod = "getPublicParameters()"     // #nosec G101 -- ABI method signature
 	getTransferMetadataMethod = "getTransferMetadata(bytes32)"
+	getTokenRequestHashMethod = "getTokenRequestHash(bytes32)"
 )
 
 // contractReader performs the driver's read-only calls against a TMS's TokenState clone. It is the
@@ -115,6 +116,26 @@ func (r *contractReader) transferMetadata(ctx context.Context, key [32]byte) ([]
 	}
 
 	return abi.DecodeBytes(raw)
+}
+
+// TokenRequestHash returns the token-request hash recorded for an anchor, and whether the anchor has
+// been applied at all. The contract records it as the last step of applyStateDelta and a failed apply
+// reverts the whole transaction, so a recorded hash proves the transition was committed. It satisfies
+// the finality manager's StateReader.
+func (r *contractReader) TokenRequestHash(ctx context.Context, anchor [32]byte) ([]byte, bool, error) {
+	raw, err := r.client.Call(ctx, r.tokenState, abi.EncodeBytes32Call(getTokenRequestHashMethod, anchor), r.blockTag)
+	if err != nil {
+		return nil, false, errors.Wrap(err, "getTokenRequestHash failed")
+	}
+	hash, err := abi.DecodeBytes32(raw)
+	if err != nil {
+		return nil, false, err
+	}
+	if hash == ([32]byte{}) {
+		return nil, false, nil
+	}
+
+	return hash[:], true, nil
 }
 
 // tokenIDOf resolves an SDK token id to its addressable on-chain id, the same derivation the

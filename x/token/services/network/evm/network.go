@@ -8,6 +8,9 @@ package evm
 
 import (
 	"context"
+	"encoding/hex"
+	"strconv"
+	"strings"
 	"time"
 
 	token2 "github.com/LFDT-Panurus/panurus/token"
@@ -18,11 +21,9 @@ import (
 	"github.com/LFDT-Panurus/panurus/token/services/network/driver"
 	"github.com/LFDT-Panurus/panurus/x/token/services/network/evm/client"
 	"github.com/LFDT-Panurus/panurus/x/token/services/network/evm/endorsement"
+	"github.com/LFDT-Panurus/panurus/x/token/services/network/evm/finality"
 	"github.com/LFDT-Panurus/panurus/x/token/services/network/evm/keys"
 )
-
-// errNotImplemented marks the surface that lands with the finality manager.
-var errNotImplemented = errors.New("evm: not implemented")
 
 // EndorsementService is the endorsement entry point the driver drives to collect a quorum. It is
 // satisfied by *endorsement.Service and narrowed here so the network can be tested with a stub.
@@ -41,6 +42,7 @@ type Network struct {
 	endorsement EndorsementService
 	submitter   *Submitter
 	reader      *contractReader
+	finality    *finality.Manager
 	tokenState  client.Address
 }
 
@@ -66,13 +68,16 @@ func NewNetwork(
 		return nil, err
 	}
 
+	reader := newContractReader(evmClient, tokenState, config.Finality.BlockTag)
+
 	return &Network{
 		name:        name,
 		config:      config,
 		client:      evmClient,
 		endorsement: endorsementService,
 		submitter:   submitter,
-		reader:      newContractReader(evmClient, tokenState, config.Finality.BlockTag),
+		reader:      reader,
+		finality:    finality.NewManager(evmClient, reader, config.Finality.PollInterval, config.Finality.Timeout),
 		tokenState:  tokenState,
 	}, nil
 }
@@ -304,22 +309,102 @@ func (n *Network) LookupTransferMetadataKey(namespace string, key string, timeou
 	}
 }
 
-// LocalMembership returns the local membership service for EVM identities. It lands with the driver
-// wiring.
+// LocalMembership returns the local membership service for EVM identities. It is supplied by the SDK
+// wiring, which owns the node's identities.
 func (n *Network) LocalMembership() driver.LocalMembership { return nil }
 
-// AddFinalityListener registers a listener for the finality of a transaction. It lands with the
-// finality manager.
+// AddFinalityListener registers a listener for the finality of the transaction identified by its
+// anchor. If the transaction is already final the listener is notified immediately; otherwise it is
+// notified once, when the anchor appears on chain or the finality timeout expires.
 func (n *Network) AddFinalityListener(namespace string, txID string, listener driver.FinalityListener) error {
-	return errNotImplemented
+	anchor, err := keys.AnchorFromTxID(txID)
+	if err != nil {
+		return errors.Wrapf(err, "evm network: invalid transaction id [%s]", txID)
+	}
+
+	return n.finality.AddListener(context.Background(), anchor, txID, listener)
 }
 
-// GetTransactionStatus returns the validation status and token-request hash of a transaction. It
-// lands with the finality manager.
+// GetTransactionStatus returns the validation status and token-request hash of a transaction,
+// identified by its anchor.
+//
+// Only success is observable by anchor: the contract records the anchor as the last step of a
+// successful apply, while a failure reverts and leaves nothing behind. An unrecorded anchor is
+// therefore Unknown, not Invalid; resolving it as failed is the finality timeout's job (design §7.4).
 func (n *Network) GetTransactionStatus(ctx context.Context, namespace, txID string) (int, []byte, string, error) {
-	return driver.Unknown, nil, "", errNotImplemented
+	anchor, err := keys.AnchorFromTxID(txID)
+	if err != nil {
+		return driver.Unknown, nil, "", errors.Wrapf(err, "evm network: invalid transaction id [%s]", txID)
+	}
+
+	return n.finality.StatusByAnchor(ctx, anchor)
 }
 
-// Ledger returns the read-only EVM ledger adapter. It lands with the finality manager, whose status
-// resolution it shares.
-func (n *Network) Ledger() (driver.Ledger, error) { return nil, errNotImplemented }
+// Ledger returns the read-only ledger view, which answers the validation status of a transaction.
+func (n *Network) Ledger() (driver.Ledger, error) { return &ledgerView{network: n}, nil }
+
+// ledgerView adapts the network to the driver's Ledger contract.
+type ledgerView struct {
+	network *Network
+}
+
+// Status returns the validation code of the transaction with the given anchor.
+func (l *ledgerView) Status(id string) (driver.ValidationCode, error) {
+	code, _, _, err := l.network.GetTransactionStatus(context.Background(), "", id)
+	if err != nil {
+		return driver.Unknown, err
+	}
+
+	return code, nil
+}
+
+// GetTransactionStatus returns the status and token-request hash of a transaction by anchor.
+func (l *ledgerView) GetTransactionStatus(
+	ctx context.Context,
+	namespace, txID string,
+) (int, []byte, string, error) {
+	return l.network.GetTransactionStatus(ctx, namespace, txID)
+}
+
+// GetStates returns the raw token bytes stored at each key, where a key is a token id in the
+// hex-anchor:index form the driver addresses tokens by. A key with no state yields a nil entry.
+func (l *ledgerView) GetStates(ctx context.Context, namespace string, keys ...string) ([][]byte, error) {
+	out := make([][]byte, len(keys))
+	for i, k := range keys {
+		id, err := parseTokenKey(k)
+		if err != nil {
+			return nil, err
+		}
+		data, err := l.network.reader.tokenData(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		if len(data) != 0 {
+			out[i] = data
+		}
+	}
+
+	return out, nil
+}
+
+// TransferMetadataKey derives the on-chain key of a transfer metadata sub-key. It is pure derivation
+// and says nothing about whether the key exists.
+func (l *ledgerView) TransferMetadataKey(k string) (string, error) {
+	key := keys.TransferMetadataKey(k)
+
+	return hex.EncodeToString(key[:]), nil
+}
+
+// parseTokenKey parses a "<hex-anchor>:<index>" token key.
+func parseTokenKey(k string) (*token.ID, error) {
+	sep := strings.LastIndex(k, ":")
+	if sep < 0 {
+		return nil, errors.Errorf("evm ledger: malformed token key [%s], want <anchor>:<index>", k)
+	}
+	index, err := strconv.ParseUint(k[sep+1:], 10, 64)
+	if err != nil {
+		return nil, errors.Wrapf(err, "evm ledger: malformed token key [%s]", k)
+	}
+
+	return &token.ID{TxId: k[:sep], Index: index}, nil
+}

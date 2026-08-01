@@ -9,6 +9,9 @@ package evm
 import (
 	"testing"
 
+	"github.com/LFDT-Panurus/panurus/token/services/network/driver"
+	"github.com/LFDT-Panurus/panurus/x/token/services/network/evm/client/mock"
+
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -53,17 +56,40 @@ func TestDriverNewRouting(t *testing.T) {
 	assert.Error(t, err)
 }
 
-// TestNetworkDeferredSurface documents the methods that land with the finality manager: they are
-// wired to the interface and return a clear error rather than panicking.
-func TestNetworkDeferredSurface(t *testing.T) {
-	n := testNetwork(t, nil, nil)
+// TestNetworkSurfaceIsWired checks the methods that used to be stubs now answer through the finality
+// manager rather than returning a not-implemented error.
+func TestNetworkSurfaceIsWired(t *testing.T) {
+	evm := &mock.EVMClient{}
+	// getTokenRequestHash returns the zero hash: the anchor has not been applied.
+	evm.CallReturns(make([]byte, 32), nil)
+	n := testNetwork(t, evm, nil)
 
 	assert.NotNil(t, n.NewEnvelope())
-	_, err := n.Ledger()
-	require.ErrorIs(t, err, errNotImplemented)
-	err = n.AddFinalityListener("ns", "tx", nil)
-	require.ErrorIs(t, err, errNotImplemented)
-	status, _, _, err := n.GetTransactionStatus(t.Context(), "ns", "tx")
-	require.ErrorIs(t, err, errNotImplemented)
-	assert.Equal(t, 4, status, "an unresolvable status must be Unknown (4), never the invalid zero code")
+
+	ledger, err := n.Ledger()
+	require.NoError(t, err)
+	require.NotNil(t, ledger)
+
+	// An anchor the chain has never seen is Unknown: never the invalid zero code, and never Invalid,
+	// because a reverted apply is indistinguishable from one still pending (design 7.4).
+	status, hash, _, err := n.GetTransactionStatus(t.Context(), "token", anchorHex(0x01))
+	require.NoError(t, err)
+	assert.Equal(t, driver.Unknown, status)
+	assert.Nil(t, hash)
+
+	code, err := ledger.Status(anchorHex(0x01))
+	require.NoError(t, err)
+	assert.Equal(t, driver.Unknown, code)
+}
+
+// TestNetworkRejectsMalformedTransactionID checks the anchor-shaped identifier is validated rather
+// than silently producing a wrong on-chain lookup.
+func TestNetworkRejectsMalformedTransactionID(t *testing.T) {
+	n := testNetwork(t, nil, nil)
+
+	_, _, _, err := n.GetTransactionStatus(t.Context(), "token", "not-a-valid-anchor")
+	require.Error(t, err)
+
+	err = n.AddFinalityListener("token", "not-a-valid-anchor", nil)
+	require.Error(t, err)
 }

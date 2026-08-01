@@ -92,9 +92,7 @@ func TestNonceConcurrentAllocationIsUnique(t *testing.T) {
 		got = make(map[uint64]struct{}, callers)
 	)
 	for range callers {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			nonce, err := n.Next(t.Context())
 			if err != nil {
 				return
@@ -102,7 +100,7 @@ func TestNonceConcurrentAllocationIsUnique(t *testing.T) {
 			mu.Lock()
 			got[nonce] = struct{}{}
 			mu.Unlock()
-		}()
+		})
 	}
 	wg.Wait()
 
