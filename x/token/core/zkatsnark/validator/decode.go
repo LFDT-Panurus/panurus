@@ -7,8 +7,8 @@ package validator
 
 import (
 	bls12381 "github.com/consensys/gnark-crypto/ecc/bls12-381"
-	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fp"
+	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/twistededwards"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 
@@ -21,18 +21,18 @@ import (
 // witness usage inside proof.go) and ProofResult construction
 // (binding-signature verification)
 type decodedSpend struct {
-	Commitment fr.Element
+	Commitment   fr.Element
 	ValueCommitX fr.Element
 	ValueCommitY fr.Element
-	TokenType fr.Element
+	TokenType    fr.Element
 }
 
 // decodedOutput is the OutputDescription equivalent.
 type decodedOutput struct {
-	Commitment fr.Element
+	Commitment   fr.Element
 	ValueCommitX fr.Element
 	ValueCommitY fr.Element
-	TokenType fr.Element
+	TokenType    fr.Element
 }
 
 // decodedMigration is the canonical decoding of a MigrationAction's public
@@ -60,7 +60,7 @@ type decodedMigration struct {
 // correct length
 func decodeSpendDescription(i int, d snarktoken.SpendDescription) (decodedSpend, error) {
 	var out decodedSpend
-	if err:= out.Commitment.SetBytesCanonical(d.CommitmentIn); err != nil {
+	if err := out.Commitment.SetBytesCanonical(d.CommitmentIn); err != nil {
 		return decodedSpend{}, errors.Wrapf(err, "validator: input %d CommitmentIn not canonical", i)
 	}
 	if err := out.ValueCommitX.SetBytesCanonical(d.ValueCommitInX); err != nil {
@@ -116,6 +116,7 @@ func decodeAllSpends(inputs []snarktoken.SpendDescription) ([]decodedSpend, erro
 		}
 		out[i] = ds
 	}
+
 	return out, nil
 }
 
@@ -129,6 +130,7 @@ func decodeAllOutputs(outputs []snarktoken.OutputDescription) ([]decodedOutput, 
 		}
 		out[j] = do
 	}
+
 	return out, nil
 }
 

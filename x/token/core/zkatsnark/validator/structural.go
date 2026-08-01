@@ -42,6 +42,7 @@ func validateSpendDescriptionShape(i int, d snarktoken.SpendDescription) error {
 	if len(d.SpendProof) != groth16ProofLen {
 		return errors.Wrapf(ErrMalformedAction, "input %d: SpendProof must be %d bytes, got %d", i, groth16ProofLen, len(d.SpendProof))
 	}
+
 	return nil
 }
 
@@ -62,6 +63,7 @@ func validateOutputDescriptionShape(j int, d snarktoken.OutputDescription) error
 	if len(d.OutputProof) != groth16ProofLen {
 		return errors.Wrapf(ErrMalformedAction, "output %d: OutputProof must be %d bytes, got %d", j, groth16ProofLen, len(d.OutputProof))
 	}
+
 	return nil
 }
 
@@ -69,6 +71,7 @@ func validateBindingSignatureShape(sig []byte) error {
 	if len(sig) != signatureLen {
 		return errors.Wrapf(ErrMalformedAction, "BindingSignature must be %d bytes, got %d", signatureLen, len(sig))
 	}
+
 	return nil
 }
 
@@ -88,6 +91,7 @@ func validateTransferActionShape(a *snarktoken.TransferAction) error {
 			return err
 		}
 	}
+
 	return validateBindingSignatureShape(a.BindingSignature)
 }
 
@@ -105,6 +109,7 @@ func validateIssueActionShape(a *snarktoken.IssueAction) error {
 			return err
 		}
 	}
+
 	return validateBindingSignatureShape(a.BindingSignature)
 }
 
@@ -131,5 +136,6 @@ func validateMigrationActionShape(a *snarktoken.MigrationAction) error {
 	if len(a.MigrationProof) != migrationProofLen {
 		return errors.Wrapf(ErrMalformedAction, "MigrationProof must be %d bytes, got %d", migrationProofLen, len(a.MigrationProof))
 	}
+
 	return nil
 }

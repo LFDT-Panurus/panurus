@@ -46,12 +46,12 @@ func verifyBindingSignature(
 	publicValueDelta uint64,
 ) error {
 	spendResults := make([]prover.ProofResult, len(decodedInputs))
-	for i := range len(decodedInputs) {
+	for i := range decodedInputs {
 		spendResults[i] = toSpendProofResult(decodedInputs[i])
 	}
 
 	outputResults := make([]prover.ProofResult, len(decodedOutputs))
-	for i := range len(decodedOutputs) {
+	for i := range decodedOutputs {
 		outputResults[i] = toOutputProofResult(decodedOutputs[i])
 	}
 

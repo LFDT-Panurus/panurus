@@ -7,14 +7,14 @@ package validator_test
 
 import (
 	"context"
-	"sync"
-	"testing"
 	"crypto/sha256"
 	"math/big"
 	"strconv"
+	"sync"
+	"testing"
 
-	"github.com/stretchr/testify/require"
 	mathlib "github.com/IBM/mathlib"
+	"github.com/stretchr/testify/require"
 
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
 
@@ -26,11 +26,11 @@ import (
 )
 
 var (
-	testPP       *pp.PublicParams
-	testOrch     *prover.Orchestrator
-	testVal      *validator.Validator
-	e2eSetupOnce sync.Once
- 	migrationE2EOnce sync.Once
+	testPP           *pp.PublicParams
+	testOrch         *prover.Orchestrator
+	testVal          *validator.Validator
+	e2eSetupOnce     sync.Once
+	migrationE2EOnce sync.Once
 )
 
 // setupEndToEnd compiles both circuits, runs a real (local) trusted setup,

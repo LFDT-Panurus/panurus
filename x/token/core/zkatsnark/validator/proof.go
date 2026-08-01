@@ -58,6 +58,7 @@ func publicWitnessForOutput(d decodedOutput) (witness.Witness, error) {
 	if err != nil {
 		return nil, errors.Wrapf(err, "validator: building output public witness")
 	}
+
 	return w, nil
 }
 
@@ -88,6 +89,7 @@ func publicWitnessForMigration(d decodedMigration) (witness.Witness, error) {
 	if err != nil {
 		return nil, errors.Wrapf(err, "validator: building migration public witness")
 	}
+
 	return w, nil
 }
 
@@ -111,22 +113,25 @@ func verifyAllProofs(
 	ch := make(chan proofOutcome, total)
 
 	for i := range inputs {
-		i := i
+
 		go func() {
 			proof, err := setup.DeserializeProof(inputs[i].SpendProof, curve)
 			if err != nil {
 				ch <- proofOutcome{errors.Wrapf(err, "input %d: proof decode", i)}
+
 				return
 			}
 
 			pw, err := publicWitnessForSpend(decodedInputs[i])
 			if err != nil {
 				ch <- proofOutcome{err}
+
 				return
 			}
 
 			if err := groth16.Verify(proof, vkSpend, pw); err != nil {
 				ch <- proofOutcome{errors.Wrapf(ErrInvalidProof, "input %d: %s", i, err)}
+
 				return
 			}
 
@@ -135,20 +140,23 @@ func verifyAllProofs(
 	}
 
 	for j := range outputs {
-		j := j
+
 		go func() {
 			proof, err := setup.DeserializeProof(outputs[j].OutputProof, curve)
 			if err != nil {
 				ch <- proofOutcome{errors.Wrapf(err, "output %d: proof decode", j)}
+
 				return
 			}
 			pw, err := publicWitnessForOutput(decodedOutputs[j])
 			if err != nil {
 				ch <- proofOutcome{err}
+
 				return
 			}
 			if err := groth16.Verify(proof, vkOutput, pw); err != nil {
 				ch <- proofOutcome{errors.Wrapf(ErrInvalidProof, "output %d: %s", j, err)}
+
 				return
 			}
 			ch <- proofOutcome{}
@@ -160,6 +168,7 @@ func verifyAllProofs(
 			return o.err
 		}
 	}
+
 	return nil
 }
 
@@ -187,5 +196,6 @@ func verifyMigrationProof(
 	if err := groth16.Verify(proof, vkMigration, pw); err != nil {
 		return errors.Wrapf(ErrInvalidProof, "%s", err)
 	}
+
 	return nil
 }

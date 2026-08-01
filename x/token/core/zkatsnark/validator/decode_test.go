@@ -107,6 +107,7 @@ func TestDecodeAllSpends_StopsAtFirstFailure(t *testing.T) {
 func onCurveG1Point(t *testing.T) bls12381.G1Affine {
 	t.Helper()
 	_, _, g1Gen, _ := bls12381.Generators()
+
 	return g1Gen
 }
 

@@ -23,6 +23,7 @@ func checkTypeHomogeneitySpend(declaredType string, decoded []decodedSpend) erro
 			return errors.Wrapf(ErrTypeMismatch, "input %d: token type does not match declared type %q", i, declaredType)
 		}
 	}
+
 	return nil
 }
 
@@ -34,5 +35,6 @@ func checkTypeHomogeneityOutput(declaredType string, decoded []decodedOutput) er
 			return errors.Wrapf(ErrTypeMismatch, "output %d: token type does not match declared type %q", j, declaredType)
 		}
 	}
+
 	return nil
 }
