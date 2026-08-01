@@ -17,7 +17,6 @@ import (
 	"github.com/LFDT-Panurus/panurus/token/services/identity/wallet"
 	"github.com/LFDT-Panurus/panurus/token/services/logging"
 	"github.com/LFDT-Panurus/panurus/token/token"
-	"github.com/hyperledger-labs/fabric-smart-client/platform/view/services/metrics/disabled"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -325,7 +324,7 @@ func TestAnonymousOwnerWallet(t *testing.T) {
 		logger := logging.MustGetLogger("test")
 
 		// Create wallet
-		w, err := role.NewAnonymousOwnerWallet(logger, ip, tv, des, is, "w1", info, 10, &disabled.Provider{})
+		w, err := role.NewAnonymousOwnerWallet(logger, ip, tv, des, is, "w1", info, nil)
 		require.NoError(t, err)
 
 		return w, ip, tv, is, des

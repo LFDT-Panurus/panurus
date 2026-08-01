@@ -16,33 +16,30 @@ import (
 	"github.com/LFDT-Panurus/panurus/token/services/identity/role"
 	"github.com/LFDT-Panurus/panurus/token/services/identity/role/mock"
 	"github.com/LFDT-Panurus/panurus/token/services/logging"
-	"github.com/hyperledger-labs/fabric-smart-client/platform/view/services/metrics/disabled"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 func TestDefaultFactory(t *testing.T) {
-	setup := func(t *testing.T) (*role.DefaultFactory, *mock.IdentityProvider, *mock.TokenVault, *mock.WalletsConfiguration, *mock.Deserializer, *mock.IdentitySupport) {
+	setup := func(t *testing.T) (*role.DefaultFactory, *mock.IdentityProvider, *mock.TokenVault, *mock.Deserializer, *mock.IdentitySupport) {
 		t.Helper()
 		ip := &mock.IdentityProvider{}
 		tv := &mock.TokenVault{}
-		wc := &mock.WalletsConfiguration{}
 		des := &mock.Deserializer{}
 		is := &mock.IdentitySupport{}
 		logger := logging.MustGetLogger("test")
 
-		f := role.NewDefaultFactory(logger, ip, tv, wc, des, &disabled.Provider{})
+		f := role.NewDefaultFactory(logger, ip, tv, des)
 		require.NotNil(t, f)
 
-		return f, ip, tv, wc, des, is
+		return f, ip, tv, des, is
 	}
 
 	t.Run("Owner Wallet - Anonymous", func(t *testing.T) {
-		f, _, _, wc, _, is := setup(t)
+		f, _, _, _, is := setup(t)
 		id := "owner-wallet-anon"
 		info := &mockIdentityInfo{id: id, anonymous: true}
 
-		wc.CacheSizeForOwnerIDReturns(5)
 		is.ContainsIdentityReturns(true) // For NewAnonymousOwnerWallet check
 
 		w, err := f.NewWallet(t.Context(), id, idriver.OwnerRole, is, info)
@@ -53,7 +50,7 @@ func TestDefaultFactory(t *testing.T) {
 	})
 
 	t.Run("Owner Wallet - LongTerm", func(t *testing.T) {
-		f, _, _, _, _, reg := setup(t)
+		f, _, _, _, reg := setup(t)
 		id := "owner-wallet-lt"
 		info := &mockIdentityInfo{id: id, anonymous: false}
 
@@ -64,7 +61,7 @@ func TestDefaultFactory(t *testing.T) {
 	})
 
 	t.Run("Issuer Wallet", func(t *testing.T) {
-		f, ip, _, _, _, reg := setup(t)
+		f, ip, _, _, reg := setup(t)
 		id := "issuer-wallet"
 		info := &mockIdentityInfo{id: "issuer-id", anonymous: false}
 
@@ -84,7 +81,7 @@ func TestDefaultFactory(t *testing.T) {
 	})
 
 	t.Run("Issuer Wallet - Failures", func(t *testing.T) {
-		f, ip, _, _, _, reg := setup(t)
+		f, ip, _, _, reg := setup(t)
 		id := "issuer-wallet-fail"
 
 		// Case 1: Info Get fails
@@ -109,7 +106,7 @@ func TestDefaultFactory(t *testing.T) {
 	})
 
 	t.Run("Auditor Wallet", func(t *testing.T) {
-		f, ip, _, _, _, reg := setup(t)
+		f, ip, _, _, reg := setup(t)
 		id := "auditor-wallet"
 		info := &mockIdentityInfo{id: "auditor-id"}
 
@@ -126,7 +123,7 @@ func TestDefaultFactory(t *testing.T) {
 	})
 
 	t.Run("Auditor Wallet - Failures", func(t *testing.T) {
-		f, ip, _, _, _, reg := setup(t)
+		f, ip, _, _, reg := setup(t)
 		id := "auditor-wallet-fail"
 
 		// Case 1: Info Get fails
@@ -151,7 +148,7 @@ func TestDefaultFactory(t *testing.T) {
 	})
 
 	t.Run("Certifier Wallet - Unsupported", func(t *testing.T) {
-		f, _, _, _, _, reg := setup(t)
+		f, _, _, _, reg := setup(t)
 		id := "certifier-wallet"
 		info := &mockIdentityInfo{id: "cert-id"}
 
@@ -161,7 +158,7 @@ func TestDefaultFactory(t *testing.T) {
 	})
 
 	t.Run("Unknown Role - Unsupported", func(t *testing.T) {
-		f, _, _, _, _, reg := setup(t)
+		f, _, _, _, reg := setup(t)
 		id := "unknown-wallet"
 		info := &mockIdentityInfo{id: "unk-id"}
 

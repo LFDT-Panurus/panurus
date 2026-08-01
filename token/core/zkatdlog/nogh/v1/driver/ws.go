@@ -138,7 +138,7 @@ func (d *BaseWalletServiceFactory) NewWalletService(
 		logger,
 		identityProvider,
 		deserializer,
-		wallet.Convert(roles.Registries(logger, walletDB, role.NewDefaultFactory(logger, identityProvider, qe, identityConfig, deserializer, metricsProvider))),
+		wallet.Convert(roles.Registries(logger, walletDB, role.NewDefaultFactory(logger, identityProvider, qe, deserializer))),
 	), nil
 }
 

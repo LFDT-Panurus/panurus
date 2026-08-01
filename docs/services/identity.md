@@ -164,32 +164,34 @@ func (d *Base) NewWalletService(...) (*wallet.Service, error) {
 
 ## Resource Limits
 
-Producing a recipient identity is expensive and remotely reachable. When a transaction counterparty
-asks this node for one (`ttx.RespondRequestRecipientIdentityView`), an *anonymous* owner wallet
-generates a fresh zero-knowledge (idemix) credential and writes to both the wallet registry and the
-identity store. Nothing above the wallet service rate-limits that request today, so the wallet layer
-enforces its own upper bounds. All of them are package constants — there is no configuration key to
-tune them.
+Producing a recipient identity is remotely reachable. When a transaction counterparty asks this node
+for one (`ttx.RespondRequestRecipientIdentityView`), an *anonymous* owner wallet derives a fresh
+pseudonym and writes to both the wallet registry and the identity store. Nothing above the wallet
+service rate-limits that request today, so the wallet layer bounds how much of it can happen at once.
 
 | Limit | Constant | Value | What it bounds |
 |:------|:---------|:------|:---------------|
-| Recipient-data cache size | `role.MaxRecipientDataCacheSize` | 1024 | The largest cache allocated per anonymous owner wallet, whatever `wallets.owners[].cacheSize` / `wallets.defaultCacheSize` asks for. Cached entries are pre-generated identities held in memory. |
-| Concurrent generations | `role.MaxConcurrentRecipientDataGenerations` | 8 | How many identities one wallet generates at the same time on cache misses. Callers beyond it **wait** for a slot rather than being rejected, so a burst costs latency instead of unbounded CPU, memory and storage. |
-| Identities per wallet | `role.MaxIdentitiesPerWallet` | 2²⁰ (1,048,576) | Total identities bound to one wallet for one role. The binding store is append-only — nothing ever deletes a row — so without this the registry and `identitydb` grow without limit. Exceeding it fails with `role.ErrTooManyIdentities`. |
+| Concurrent generations | `role.MaxConcurrentRecipientDataGenerations` | 8 | How many recipient identities this **node** produces at the same time, across every wallet. Callers beyond it **wait** for a slot rather than being rejected, so a burst costs latency instead of unbounded CPU, memory and storage. A caller whose context is cancelled while queued is released. |
 
-Notes on behaviour worth knowing before tuning any of this:
+The semaphore is owned by `role.DefaultFactory` and shared by every anonymous owner wallet it
+creates. That is deliberate: the resource being protected is this node's CPU and storage, which all
+wallets draw from, so a per-wallet bound would scale with the number of wallets and stop bounding
+anything.
 
-*   **The background provisioner is throttled from two sides.** `provisionIdentities` blocks on a
-    full cache, so it can never run more than `Capacity()` identities ahead of consumption, and a
-    failing backend is retried with exponential backoff (50 ms doubling to 30 s). Before the backoff
-    existed, a persistent failure spun a goroutine at 100 % CPU per wallet.
-*   **`MaxIdentitiesPerWallet` is a backstop, not a quota.** An anonymous owner wallet consumes
-    roughly one identity per transaction it receives, so a wallet that reaches the limit has either
-    been attacked or long outlived its deployment's retention assumptions. The count is seeded from
-    storage on first use and then kept in memory, so the common path issues no extra query; once a
-    wallet is confirmed full it is *sealed* and refused without further queries, so repeated
-    rejections cannot themselves become database load. A full wallet still accepts re-binding an
-    identity it already holds, since that adds no row.
+Notes on behaviour worth knowing:
+
+*   **Recipient identities are not cached at this layer.** `role.RecipientDataProvider` generates on
+    demand. An earlier design pre-provisioned identities into a per-wallet channel, but the expensive
+    part — the idemix credential — is already served from a pre-provisioned cache one layer down
+    (`idemix/cache.IdentityCache`, wired in `idemix.KeyManagerProvider` and sized from the same
+    `wallets.owners[].cacheSize` / `wallets.defaultCacheSize` keys). Caching again here bought a few
+    milliseconds on a path dominated by session round trips and finality, while holding pre-generated
+    identities in memory for the lifetime of the node and writing a binding row for each one whether
+    or not a counterparty ever asked for it. The `recipient_data_cache_level` gauge went away with it.
+*   **The binding store is still append-only.** Nothing deletes a row, so a wallet's identity count
+    grows with the transactions it receives. Bounding that growth needs usage tracking and
+    garbage collection rather than a fixed cap — see
+    [#1642](https://github.com/LFDT-Panurus/panurus/issues/1642).
 *   **Database resource limits are not set here, by design.** Neither query timeouts nor connection
     pool sizes are imposed by this layer. Per the resolution of
     [#1740](https://github.com/LFDT-Panurus/panurus/issues/1740), the SDK's obligation is to
