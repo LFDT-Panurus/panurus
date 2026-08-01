@@ -125,26 +125,38 @@ func TestConcurrentAccess(t *testing.T) {
 	evm.CallReturns(uint64Return(5), nil)
 	k := NewVersionKeeper(evm, testAddress(0xAA), "finalized")
 
-	var wg sync.WaitGroup
+	// Failures are collected rather than asserted inside the goroutines: a failed assertion there
+	// would call FailNow off the test goroutine, which is not allowed.
+	var (
+		wg   sync.WaitGroup
+		mu   sync.Mutex
+		errs []error
+	)
+	record := func(err error) {
+		if err == nil {
+			return
+		}
+		mu.Lock()
+		errs = append(errs, err)
+		mu.Unlock()
+	}
+
 	for range 16 {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			_, err := k.GetVersion(context.Background())
-			assert.NoError(t, err)
+			record(err)
 			k.Cached()
-		}()
+		})
 	}
 	for range 4 {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			k.Invalidate()
 			_, err := k.Sync(context.Background())
-			assert.NoError(t, err)
-		}()
+			record(err)
+		})
 	}
 	wg.Wait()
+	require.Empty(t, errs, "concurrent access must not fail")
 
 	version, ok := k.Cached()
 	assert.True(t, ok)
