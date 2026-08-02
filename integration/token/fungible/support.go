@@ -379,20 +379,26 @@ func CheckCoOwnedBalance(network *integration.Infrastructure, ref *token3.NodeRe
 	CheckCoOwnedBalanceForTMSID(network, ref, wallet, typ, expected, nil)
 }
 
+// CheckCoOwnedBalanceForTMSID asserts that ref reports expected as the balance of the
+// tokens it co-owns. The check retries: the co-owners of a multisig transaction observe
+// its commit independently of the node that assembled and ordered it, so a one-shot query
+// right after the sender's view returns races with the co-owner's own commit.
 func CheckCoOwnedBalanceForTMSID(network *integration.Infrastructure, ref *token3.NodeReference, wallet string, typ token.Type, expected uint64, tmsID *token2.TMSID) {
-	res, err := network.Client(ref.ReplicaName()).CallView("CoOwnedBalance", common.JSONMarshall(&views.CoOwnedBalanceQuery{
-		Wallet: wallet,
-		Type:   typ,
-		TMSID:  tmsID,
-	}))
-	gomega.Expect(err).NotTo(gomega.HaveOccurred())
-	b := &views.Balance{}
-	common.JSONUnmarshal(res.([]byte), b)
-	gomega.Expect(b.Type).To(gomega.BeEquivalentTo(typ))
-	q, err := token.ToQuantity(b.Quantity, 64)
-	gomega.Expect(err).NotTo(gomega.HaveOccurred())
-	expectedQ := token.NewQuantityFromUInt64(expected)
-	gomega.Expect(expectedQ.Cmp(q)).To(gomega.BeEquivalentTo(0), "[%s]!=[%s]", expected, q)
+	gomega.Eventually(func(g gomega.Gomega, network *integration.Infrastructure, ref *token3.NodeReference, wallet string, typ token.Type, expected uint64, tmsID *token2.TMSID) {
+		res, err := network.Client(ref.ReplicaName()).CallView("CoOwnedBalance", common.JSONMarshall(&views.CoOwnedBalanceQuery{
+			Wallet: wallet,
+			Type:   typ,
+			TMSID:  tmsID,
+		}))
+		g.Expect(err).NotTo(gomega.HaveOccurred())
+		b := &views.Balance{}
+		common.JSONUnmarshal(res.([]byte), b)
+		g.Expect(b.Type).To(gomega.BeEquivalentTo(typ))
+		q, err := token.ToQuantity(b.Quantity, 64)
+		g.Expect(err).NotTo(gomega.HaveOccurred())
+		expectedQ := token.NewQuantityFromUInt64(expected)
+		g.Expect(expectedQ.Cmp(q)).To(gomega.BeEquivalentTo(0), "[%s]!=[%s]", expected, q)
+	}).WithArguments(network, ref, wallet, typ, expected, tmsID).WithTimeout(eventualCheckTimeout).WithPolling(eventualCheckPolling).Should(gomega.Succeed())
 }
 
 func CheckHolding(network *integration.Infrastructure, ref *token3.NodeReference, wallet string, typ token.Type, expected int64, auditor *token3.NodeReference) {
