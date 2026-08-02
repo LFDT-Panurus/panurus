@@ -258,6 +258,9 @@ func Topology(opts common.Opts) []api.Topology {
 		if tmsOpts.Aries {
 			zkatdlognoghv1.WithAries(tms)
 		}
+		if tmsOpts.CSP {
+			zkatdlognoghv1.WithCSP(tms)
+		}
 		tms.SetTokenGenPublicParams(tmsOpts.PublicParamsGenArgs...)
 		if !opts.NoAuditor {
 			tms.AddAuditor(auditor)

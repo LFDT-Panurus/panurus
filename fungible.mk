@@ -116,6 +116,26 @@ integration-tests-dlog-fabric-t14:
 integration-tests-dlog-fabric:
 	cd ./integration/token/fungible/dlog; export FAB_BINS=$(FAB_BINS); ginkgo $(GINKGO_TEST_OPTS) --label-filter="$(TEST_FILTER)" .
 
+.PHONY: integration-tests-dlogcsp-fabric-t1
+integration-tests-dlogcsp-fabric-t1:
+	make integration-tests-dlogcsp-fabric TEST_FILTER="T1"
+
+.PHONY: integration-tests-dlogcsp-fabric-t1-websocket
+integration-tests-dlogcsp-fabric-t1-websocket:
+	make integration-tests-dlogcsp-fabric TEST_FILTER="T1 && websocket"
+
+.PHONY: integration-tests-dlogcsp-fabric-t1-libp2p
+integration-tests-dlogcsp-fabric-t1-libp2p:
+	make integration-tests-dlogcsp-fabric TEST_FILTER="T1 && libp2p"
+
+.PHONY: integration-tests-dlogcsp-fabric-t1-replicas
+integration-tests-dlogcsp-fabric-t1-replicas:
+	make integration-tests-dlogcsp-fabric TEST_FILTER="T1 && replicas"
+
+.PHONY: integration-tests-dlogcsp-fabric
+integration-tests-dlogcsp-fabric:
+	cd ./integration/token/fungible/dlogcsp; export FAB_BINS=$(FAB_BINS); ginkgo $(GINKGO_TEST_OPTS) --label-filter="$(TEST_FILTER)" .
+
 .PHONY: integration-tests-fabtoken-dlog-fabric
 integration-tests-fabtoken-dlog-fabric:
 	cd ./integration/token/fungible/mixed; export FAB_BINS=$(FAB_BINS); ginkgo $(GINKGO_TEST_OPTS) .

@@ -179,6 +179,24 @@ To run the `dlog-fabric-t1` test:
 make integration-tests-dlog-fabric-t1
 ```
 
+### CSP Range-Proof Suite
+
+The DLOG driver supports two range-proof backends: the default BulletProof
+(`rp.RangeProofType`) and the Compressed Sigma Protocol (`rp.CSPRangeProofType`). The
+regular `dlog-fabric-*` fungible suite exercises the BulletProof path. The parallel
+`dlogcsp` suite (`integration/token/fungible/dlogcsp/`) is a verbatim mirror that stands
+up the same fungible topology with CSP range proofs instead, so the CSP prover/verifier is
+covered end-to-end.
+
+```bash
+make integration-tests-dlogcsp-fabric-t1
+```
+
+CSP is selected at the topology level: set `common.TMSOpts.CSP = true` (which applies
+`zkatdlognoghv1.WithCSP` to the TMS). The public-parameters generator then builds the PP
+via `setup.WithVersionAndProofType(..., rp.CSPRangeProofType)` instead of the default
+`setup.WithVersion`.
+
 ### Enabling the Token Platform Without a TMS
 
 By default, an FSC node only gets `token: enabled: true` written into its generated

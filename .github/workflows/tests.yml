@@ -127,6 +127,10 @@ jobs:
           dlog-fabric-t12,
           dlog-fabric-t13,
 #          dlog-fabric-t14,
+          # Single job: covers the CSP range-proof prover/verifier end-to-end. The
+          # libp2p/replicas variants run identical CSP code, so they would only add
+          # network spin-up time without adding coverage.
+          dlogcsp-fabric-t1-websocket,
           fabricx-dlog-t1-websocket,
           fabricx-dlog-t1-libp2p,
           fabricx-dlog-t1-replicas,
