@@ -25,10 +25,11 @@ const (
 )
 
 var (
-	ErrLockContention     = locker.ErrLockContention
-	ErrLockAcquireTimeout = locker.ErrLockAcquireTimeout
-	ErrLockLost           = locker.ErrLockLost
-	ErrLockNotHeld        = locker.ErrLockNotHeld
+	ErrLockContention      = locker.ErrLockContention
+	ErrLockAcquireTimeout  = locker.ErrLockAcquireTimeout
+	ErrLockLost            = locker.ErrLockLost
+	ErrLockNotHeld         = locker.ErrLockNotHeld
+	ErrLockerOwnerRequired = locker.ErrLockerOwnerRequired
 )
 
 // DefaultLockerConfig returns the default auditor locker configuration.

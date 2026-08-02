@@ -82,7 +82,7 @@ token:
             acquireBackoff: 100ms
             acquireDeadline: 1m
             heartbeat: 10s
-            owner:            # optional; defaults to the FSC node ID
+            owner:            # required; defaults to the FSC node ID
 ```
 
 **Backend selection:**
@@ -92,4 +92,30 @@ token:
 | `memory` | Single replica | Any |
 | `postgres` | Multi-replica | PostgreSQL only |
 
-The Postgres backend creates an `eid_leases` table (prefixed per TMS persistence settings) and uses lease rows with heartbeat renewal. The replica owner defaults to the FSC config provider node `ID()` when `owner` is empty.
+The Postgres backend creates an `eid_leases` table (prefixed per TMS persistence settings) and uses lease rows with heartbeat renewal.
+
+### Replica owner identity
+
+Every lease row carries an `owner` column, and each replica scopes all of its lease
+queries by it — the acquire upsert, the release, the heartbeat renewal, and
+`AssertLocksHeld`. The owner must therefore be **non-empty and unique per replica**.
+
+Resolution order:
+
+1. `token.tms.<name>.auditor.locker.postgres.owner`, when set.
+2. Otherwise the FSC node ID (`fsc.id`, via the config provider's `ID()`).
+
+If both are empty or blank, the locker **fails to start** with
+`auditor locker owner is required`, and the audit store for that TMS is never
+created. This is deliberate: a shared empty owner would make every owner-scoped
+lease predicate match on rows belonging to *other* replicas, so a replica could
+release or renew leases it does not hold and `AssertLocksHeld` could be satisfied
+by another replica's row — silently removing mutual exclusion across the whole
+cluster. Failing at startup surfaces the misconfiguration instead.
+
+A common way to hit this is a templated or cloned node configuration where `fsc.id`
+was left unset. Note that no owner is synthesized as a fallback: an owner that
+changed on every restart would leave a restarted replica unable to renew or release
+the leases it still holds in the table.
+
+The `memory` backend has no owner concept and is unaffected.

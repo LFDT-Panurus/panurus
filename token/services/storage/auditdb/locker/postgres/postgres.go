@@ -46,6 +46,13 @@ type lockSession struct {
 
 // New creates a Postgres-backed distributed Locker.
 // The table is created if it does not exist. db must be a *sql.DB connected to Postgres.
+//
+// cfg.Owner defaults to the identifier reported by replicaID (the FSC node ID in
+// production). It returns an error wrapping errs.ErrLockerOwnerRequired when the
+// resolved owner is empty or blank — including when replicaID is nil or reports
+// an empty ID — because an owner shared by several replicas disables mutual
+// exclusion across all of them. That check runs before the table is created, so
+// a misconfigured node fails without touching the database.
 func New(db *sql.DB, table string, cfg Config, replicaID id.ReplicaIDProvider) (*Locker, error) {
 	if db == nil {
 		return nil, errors.New("postgres locker requires a non-nil *sql.DB")
@@ -55,6 +62,9 @@ func New(db *sql.DB, table string, cfg Config, replicaID id.ReplicaIDProvider) (
 		owner = replicaID.ID()
 	}
 	cfg = cfg.withDefaults(owner)
+	if err := cfg.validate(); err != nil {
+		return nil, err
+	}
 	l := &Locker{
 		db:       db,
 		table:    table,
@@ -65,6 +75,7 @@ func New(db *sql.DB, table string, cfg Config, replicaID id.ReplicaIDProvider) (
 	if err := l.createSchema(); err != nil {
 		return nil, err
 	}
+	logger.Infof("postgres auditor locker for table [%s] locking as owner [%s]", table, cfg.Owner)
 
 	return l, nil
 }

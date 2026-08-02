@@ -13,4 +13,9 @@ var (
 	ErrLockAcquireTimeout = errors.New("auditor enrollment id lock acquire timeout")
 	ErrLockLost           = errors.New("auditor enrollment id lock lost")
 	ErrLockNotHeld        = errors.New("auditor enrollment id locks not held")
+	// ErrLockerOwnerRequired signals that a distributed locker was configured
+	// without a usable owner identity. The owner identifies the replica holding
+	// each lease, so an empty value shared by every replica would make all
+	// owner-scoped lease queries match across the whole cluster.
+	ErrLockerOwnerRequired = errors.New("auditor locker owner is required")
 )

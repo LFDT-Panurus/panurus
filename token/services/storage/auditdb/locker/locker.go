@@ -24,8 +24,9 @@ type Locker interface {
 type ReplicaIDProvider = id.ReplicaIDProvider
 
 var (
-	ErrLockContention     = errs.ErrLockContention
-	ErrLockAcquireTimeout = errs.ErrLockAcquireTimeout
-	ErrLockLost           = errs.ErrLockLost
-	ErrLockNotHeld        = errs.ErrLockNotHeld
+	ErrLockContention      = errs.ErrLockContention
+	ErrLockAcquireTimeout  = errs.ErrLockAcquireTimeout
+	ErrLockLost            = errs.ErrLockLost
+	ErrLockNotHeld         = errs.ErrLockNotHeld
+	ErrLockerOwnerRequired = errs.ErrLockerOwnerRequired
 )

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/LFDT-Panurus/panurus/token/services/storage/auditdb/locker/errs"
+	"github.com/LFDT-Panurus/panurus/token/services/storage/auditdb/locker/id"
 	lockerpostgres "github.com/LFDT-Panurus/panurus/token/services/storage/auditdb/locker/postgres"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/services/storage/driver/sql/postgres"
 	_ "github.com/jackc/pgx/v5/stdlib"
@@ -24,6 +25,18 @@ import (
 type stubReplicaID struct{ id string }
 
 func (s stubReplicaID) ID() string { return s.id }
+
+// unconnectedDB returns a valid, non-nil *sql.DB that is never dialled: the
+// DSN parses but points nowhere. Owner validation happens before any query, so
+// construction-time failures can be asserted without a live database.
+func unconnectedDB(t *testing.T) *sql.DB {
+	t.Helper()
+	db, err := sql.Open("pgx", "postgres://user:pass@127.0.0.1:1/none")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+
+	return db
+}
 
 func startPostgres(t *testing.T) *sql.DB {
 	t.Helper()
@@ -128,7 +141,82 @@ func TestLocker_ConcurrentNonOverlapping(t *testing.T) {
 	wg.Wait()
 }
 
+func TestLocker_OwnerScopingAcrossReplicas(t *testing.T) {
+	db := startPostgres(t)
+	table := "test_eid_lease_os"
+	cleanTable(t, db, table)
+	t.Cleanup(func() { cleanTable(t, db, table) })
+
+	cfg := lockerpostgres.Config{
+		TTL: 30 * time.Second, AcquireBackoff: 50 * time.Millisecond,
+		AcquireDeadline: 200 * time.Millisecond, Heartbeat: 10 * time.Second,
+	}
+	cfg.Owner = "owner-1"
+	l1 := newLocker(t, db, table, cfg)
+	cfg.Owner = "owner-2"
+	l2 := newLocker(t, db, table, cfg)
+
+	ctx := context.Background()
+	require.NoError(t, l1.AcquireLocks(ctx, "anchor1", "alice"))
+
+	// owner-2 must not be able to release owner-1's leases, even for the same anchor
+	l2.ReleaseLocks(ctx, "anchor1")
+
+	var count int
+	require.NoError(t, db.QueryRow("SELECT COUNT(*) FROM "+table+" WHERE anchor = $1 AND owner = $2", "anchor1", "owner-1").Scan(&count))
+	assert.Equal(t, 1, count, "owner-2 released a lease it does not own")
+	require.NoError(t, l1.AssertLocksHeld(ctx, "anchor1"))
+
+	l1.ReleaseLocks(ctx, "anchor1")
+}
+
 func TestLocker_NilDB(t *testing.T) {
 	_, err := lockerpostgres.New(nil, "t", lockerpostgres.Config{}, stubReplicaID{id: "owner"})
 	require.Error(t, err)
+}
+
+func TestLocker_OwnerRequired(t *testing.T) {
+	tests := []struct {
+		name      string
+		cfgOwner  string
+		replicaID id.ReplicaIDProvider
+	}{
+		{name: "empty config owner and empty replica id", cfgOwner: "", replicaID: stubReplicaID{id: ""}},
+		{name: "nil replica id provider", cfgOwner: "", replicaID: nil},
+		{name: "blank config owner and blank replica id", cfgOwner: "   ", replicaID: stubReplicaID{id: "  "}},
+		{name: "blank replica id", cfgOwner: "", replicaID: stubReplicaID{id: " \t"}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			l, err := lockerpostgres.New(
+				unconnectedDB(t),
+				"test_eid_lease_owner",
+				lockerpostgres.Config{Owner: test.cfgOwner},
+				test.replicaID,
+			)
+			require.ErrorIs(t, err, errs.ErrLockerOwnerRequired)
+			assert.Nil(t, l)
+		})
+	}
+}
+
+func TestLocker_OwnerFromReplicaID(t *testing.T) {
+	db := startPostgres(t)
+	table := "test_eid_lease_orid"
+	cleanTable(t, db, table)
+	t.Cleanup(func() { cleanTable(t, db, table) })
+
+	// no cfg.Owner: the replica id is used as the lease owner
+	l, err := lockerpostgres.New(db, table, lockerpostgres.Config{
+		TTL: 5 * time.Second, Heartbeat: 2 * time.Second,
+	}, stubReplicaID{id: "replica-7"})
+	require.NoError(t, err)
+
+	ctx := context.Background()
+	require.NoError(t, l.AcquireLocks(ctx, "anchor1", "alice"))
+	t.Cleanup(func() { l.ReleaseLocks(ctx, "anchor1") })
+
+	var owner string
+	require.NoError(t, db.QueryRow("SELECT owner FROM "+table+" WHERE eid = $1", "alice").Scan(&owner))
+	assert.Equal(t, "replica-7", owner)
 }

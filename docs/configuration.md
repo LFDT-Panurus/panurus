@@ -850,7 +850,9 @@ Default values:
 - postgres.acquireBackoff: 100ms
 - postgres.acquireDeadline: 1m
 - postgres.heartbeat: 10s
-- postgres.owner: empty, defaults to the FSC node ID (`config.Provider.ID()`)
+- postgres.owner: empty, defaults to the FSC node ID (`config.Provider.ID()`). Required
+  when `backend: postgres` — if both this value and `fsc.id` are empty or blank, the
+  locker fails to start with `auditor locker owner is required` (see the note below).
 
 **Backend Selection:**
 
@@ -864,3 +866,4 @@ Default values:
 - The `memory` backend uses in-process semaphores and provides no cross-replica coordination. It is suitable for single-node or development setups.
 - When using `postgres`, all auditor replicas must share the same PostgreSQL database so that EID locks are globally visible.
 - Set `heartbeat` to roughly `ttl / 3` to ensure leases are renewed well before expiry.
+- `owner` identifies the replica holding each lease and **must be non-empty and unique per replica**: every lease query (acquire, release, renew, and the pre-write `AssertLocksHeld` check) is scoped by it. If several replicas shared one owner value, those predicates would match each other's rows and mutual exclusion would be lost cluster-wide, so an empty or blank resolved owner is rejected at startup rather than tolerated. A typical cause is a templated node configuration with `fsc.id` left unset. No owner is synthesized as a fallback, because an owner that changed on each restart would leave a replica unable to renew or release the leases it still holds. The `memory` backend has no owner and is unaffected.
