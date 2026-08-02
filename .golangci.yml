@@ -17,6 +17,7 @@ linters:
     - importas # Enforces consistent import aliases. [auto-fix]
     - intrange # Intrange is a linter to find places where for loops could make use of an integer range. [auto-fix]
     - loggercheck # Checks key value pairs for common logger libraries (kitlog,klog,logr,slog,zap).
+    - lll # Reports long lines. [fast]
     - mirror # Reports wrong mirror patterns of bytes/strings usage. [auto-fix]
     - misspell # Finds commonly misspelled English words. [fast, auto-fix]
     - nakedret # Checks that functions with naked returns are not longer than a maximum size (can be zero). [fast, auto-fix]

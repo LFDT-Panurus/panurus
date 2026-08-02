@@ -98,19 +98,60 @@ func getFabricTopology(network *integration.Infrastructure) *topology2.Topology 
 	return nil
 }
 
-func IssueCash(network *integration.Infrastructure, wallet string, typ token.Type, amount uint64, receiver *token3.NodeReference, auditor *token3.NodeReference, anonymous bool, issuer *token3.NodeReference, expectedErrorMsgs ...string) string {
+func IssueCash(
+	network *integration.Infrastructure,
+	wallet string,
+	typ token.Type,
+	amount uint64,
+	receiver *token3.NodeReference,
+	auditor *token3.NodeReference,
+	anonymous bool,
+	issuer *token3.NodeReference,
+	expectedErrorMsgs ...string,
+) string {
 	return IssueCashForTMSID(network, wallet, typ, amount, receiver, auditor, anonymous, issuer, nil, expectedErrorMsgs...)
 }
 
-func IssueSuccessfulCash(network *integration.Infrastructure, wallet string, typ token.Type, amount uint64, receiver *token3.NodeReference, auditor *token3.NodeReference, anonymous bool, issuer *token3.NodeReference, finalities ...*token3.NodeReference) string {
+func IssueSuccessfulCash(
+	network *integration.Infrastructure,
+	wallet string,
+	typ token.Type,
+	amount uint64,
+	receiver *token3.NodeReference,
+	auditor *token3.NodeReference,
+	anonymous bool,
+	issuer *token3.NodeReference,
+	finalities ...*token3.NodeReference,
+) string {
 	return issueCashForTMSID(network, wallet, typ, amount, receiver, auditor, anonymous, issuer, nil, finalities, false, []string{})
 }
 
-func IssueCashForTMSID(network *integration.Infrastructure, wallet string, typ token.Type, amount uint64, receiver *token3.NodeReference, auditor *token3.NodeReference, anonymous bool, issuer *token3.NodeReference, tmsId *token2.TMSID, expectedErrorMsgs ...string) string {
+func IssueCashForTMSID(
+	network *integration.Infrastructure,
+	wallet string,
+	typ token.Type,
+	amount uint64,
+	receiver *token3.NodeReference,
+	auditor *token3.NodeReference,
+	anonymous bool,
+	issuer *token3.NodeReference,
+	tmsId *token2.TMSID,
+	expectedErrorMsgs ...string,
+) string {
 	return issueCashForTMSID(network, wallet, typ, amount, receiver, auditor, anonymous, issuer, tmsId, []*token3.NodeReference{}, false, expectedErrorMsgs)
 }
 
-func IssueCashWithNoAuditorSigVerification(network *integration.Infrastructure, wallet string, typ token.Type, amount uint64, receiver *token3.NodeReference, auditor *token3.NodeReference, anonymous bool, issuer *token3.NodeReference, expectedErrorMsgs ...string) string {
+func IssueCashWithNoAuditorSigVerification(
+	network *integration.Infrastructure,
+	wallet string,
+	typ token.Type,
+	amount uint64,
+	receiver *token3.NodeReference,
+	auditor *token3.NodeReference,
+	anonymous bool,
+	issuer *token3.NodeReference,
+	expectedErrorMsgs ...string,
+) string {
 	return issueCashForTMSID(network, wallet, typ, amount, receiver, auditor, anonymous, issuer, nil, []*token3.NodeReference{}, true, expectedErrorMsgs)
 }
 
@@ -463,7 +504,17 @@ func TransferCash(network *integration.Infrastructure, sender *token3.NodeRefere
 	return TransferCashForTMSID(network, sender, wallet, typ, amount, receiver, auditor, nil, expectedErrorMsgs...)
 }
 
-func TransferCashForTMSID(network *integration.Infrastructure, sender *token3.NodeReference, wallet string, typ token.Type, amount uint64, receiver *token3.NodeReference, auditor *token3.NodeReference, tmsId *token2.TMSID, expectedErrorMsgs ...string) string {
+func TransferCashForTMSID(
+	network *integration.Infrastructure,
+	sender *token3.NodeReference,
+	wallet string,
+	typ token.Type,
+	amount uint64,
+	receiver *token3.NodeReference,
+	auditor *token3.NodeReference,
+	tmsId *token2.TMSID,
+	expectedErrorMsgs ...string,
+) string {
 	txidBoxed, err := network.Client(sender.ReplicaName()).CallView("transfer", common.JSONMarshall(&views.Transfer{
 		Auditor:      auditor.Id(),
 		Wallet:       wallet,
@@ -515,7 +566,18 @@ func TransferCashNoFinalityCheck(network *integration.Infrastructure, sender *to
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 }
 
-func TransferCashFromExternalWallet(network *integration.Infrastructure, wmp *WalletManagerProvider, websSocket bool, sender *token3.NodeReference, wallet string, typ token.Type, amount uint64, receiver *token3.NodeReference, auditor *token3.NodeReference, expectedErrorMsgs ...string) string {
+func TransferCashFromExternalWallet(
+	network *integration.Infrastructure,
+	wmp *WalletManagerProvider,
+	websSocket bool,
+	sender *token3.NodeReference,
+	wallet string,
+	typ token.Type,
+	amount uint64,
+	receiver *token3.NodeReference,
+	auditor *token3.NodeReference,
+	expectedErrorMsgs ...string,
+) string {
 	// obtain the recipient for the rest
 	restRecipient := wmp.RecipientData(sender.Id(), wallet)
 	// start the call as a stream
@@ -573,7 +635,18 @@ func TransferCashFromExternalWallet(network *integration.Infrastructure, wmp *Wa
 	return ""
 }
 
-func TransferCashToExternalWallet(network *integration.Infrastructure, wmp *WalletManagerProvider, sender *token3.NodeReference, wallet string, typ token.Type, amount uint64, receiver *token3.NodeReference, receiverWallet string, auditor *token3.NodeReference, expectedErrorMsgs ...string) string {
+func TransferCashToExternalWallet(
+	network *integration.Infrastructure,
+	wmp *WalletManagerProvider,
+	sender *token3.NodeReference,
+	wallet string,
+	typ token.Type,
+	amount uint64,
+	receiver *token3.NodeReference,
+	receiverWallet string,
+	auditor *token3.NodeReference,
+	expectedErrorMsgs ...string,
+) string {
 	// obtain the recipient data for the recipient and register it
 	recipientData := wmp.RecipientData(receiver.Id(), receiverWallet)
 	RegisterRecipientData(network, receiver, receiverWallet, recipientData)
@@ -621,7 +694,19 @@ func TransferCashToExternalWallet(network *integration.Infrastructure, wmp *Wall
 	return ""
 }
 
-func TransferCashFromAndToExternalWallet(network *integration.Infrastructure, wmp *WalletManagerProvider, websSocket bool, sender *token3.NodeReference, wallet string, typ token.Type, amount uint64, receiver *token3.NodeReference, receiverWallet string, auditor *token3.NodeReference, expectedErrorMsgs ...string) string {
+func TransferCashFromAndToExternalWallet(
+	network *integration.Infrastructure,
+	wmp *WalletManagerProvider,
+	websSocket bool,
+	sender *token3.NodeReference,
+	wallet string,
+	typ token.Type,
+	amount uint64,
+	receiver *token3.NodeReference,
+	receiverWallet string,
+	auditor *token3.NodeReference,
+	expectedErrorMsgs ...string,
+) string {
 	// obtain the recipient for the rest
 	restRecipient := wmp.RecipientData(sender.Id(), wallet)
 
@@ -685,7 +770,17 @@ func TransferCashFromAndToExternalWallet(network *integration.Infrastructure, wm
 	return ""
 }
 
-func TransferCashMultiActions(network *integration.Infrastructure, sender *token3.NodeReference, wallet string, typ token.Type, amounts []uint64, receivers []*token3.NodeReference, auditor *token3.NodeReference, tokenID *token.ID, expectedErrorMsgs ...string) string {
+func TransferCashMultiActions(
+	network *integration.Infrastructure,
+	sender *token3.NodeReference,
+	wallet string,
+	typ token.Type,
+	amounts []uint64,
+	receivers []*token3.NodeReference,
+	auditor *token3.NodeReference,
+	tokenID *token.ID,
+	expectedErrorMsgs ...string,
+) string {
 	gomega.Expect(len(amounts)).To(gomega.BeNumerically(">", 1))
 	gomega.Expect(len(receivers)).To(gomega.BeEquivalentTo(len(amounts)))
 	transfer := &views.Transfer{
@@ -755,7 +850,17 @@ func TransferCashMultiActions(network *integration.Infrastructure, sender *token
 	return strErr[s+4 : e]
 }
 
-func MaliciousTransferCash(network *integration.Infrastructure, id *token3.NodeReference, wallet string, typ token.Type, amount uint64, receiver *token3.NodeReference, auditor *token3.NodeReference, tmsId *token2.TMSID, expectedErrorMsgs ...string) string {
+func MaliciousTransferCash(
+	network *integration.Infrastructure,
+	id *token3.NodeReference,
+	wallet string,
+	typ token.Type,
+	amount uint64,
+	receiver *token3.NodeReference,
+	auditor *token3.NodeReference,
+	tmsId *token2.TMSID,
+	expectedErrorMsgs ...string,
+) string {
 	txidBoxed, err := network.Client(id.ReplicaName()).CallView("MaliciousTransfer", common.JSONMarshall(&views.Transfer{
 		Auditor:      auditor.Id(),
 		Wallet:       wallet,
@@ -782,7 +887,18 @@ func MaliciousTransferCash(network *integration.Infrastructure, id *token3.NodeR
 	return ""
 }
 
-func PrepareTransferCash(network *integration.Infrastructure, sender *token3.NodeReference, wallet string, typ token.Type, amount uint64, receiver *token3.NodeReference, auditor *token3.NodeReference, tokenID *token.ID, expectedErrorMsgs ...string) (string, []byte) {
+func PrepareTransferCash(
+	network *integration.Infrastructure,
+	sender *token3.NodeReference,
+	wallet string,
+	typ token.Type,
+	amount uint64,
+	receiver *token3.NodeReference,
+	auditor *token3.NodeReference,
+	tokenID *token.ID,
+	expectedErrorMsgs ...string) (string,
+	[]byte,
+) {
 	transferInput := &views.Transfer{
 		Auditor:      auditor.Id(),
 		Wallet:       wallet,
@@ -882,7 +998,17 @@ func GetTransactionInfoForTMSID(network *integration.Infrastructure, id *token3.
 	return info
 }
 
-func TransferCashByIDs(network *integration.Infrastructure, ref *token3.NodeReference, wallet string, ids []*token.ID, amount uint64, receiver *token3.NodeReference, auditor *token3.NodeReference, failToRelease bool, expectedErrorMsgs ...string) string {
+func TransferCashByIDs(
+	network *integration.Infrastructure,
+	ref *token3.NodeReference,
+	wallet string,
+	ids []*token.ID,
+	amount uint64,
+	receiver *token3.NodeReference,
+	auditor *token3.NodeReference,
+	failToRelease bool,
+	expectedErrorMsgs ...string,
+) string {
 	txIDBoxed, err := network.Client(ref.ReplicaName()).CallView("transfer", common.JSONMarshall(&views.Transfer{
 		Auditor:       auditor.Id(),
 		Wallet:        wallet,
@@ -934,7 +1060,17 @@ func TransferCashWithSelector(network *integration.Infrastructure, sender *token
 	}
 }
 
-func RedeemCashForTMSID(network *integration.Infrastructure, id *token3.NodeReference, wallet string, typ token.Type, amount uint64, auditor *token3.NodeReference, issuer *token3.NodeReference, tmsID *token2.TMSID, expectedErrorMsgs ...string) {
+func RedeemCashForTMSID(
+	network *integration.Infrastructure,
+	id *token3.NodeReference,
+	wallet string,
+	typ token.Type,
+	amount uint64,
+	auditor *token3.NodeReference,
+	issuer *token3.NodeReference,
+	tmsID *token2.TMSID,
+	expectedErrorMsgs ...string,
+) {
 	issuerName := ""
 	var issuerPublicParamsPublicKey view.Identity = nil
 	if issuer != nil && tmsID != nil {
@@ -1409,7 +1545,18 @@ func SetSpendableFlag(network *integration.Infrastructure, user *token3.NodeRefe
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 }
 
-func Withdraw(network *integration.Infrastructure, wpm *WalletManagerProvider, webSocket bool, user *token3.NodeReference, wallet string, typ token.Type, amount uint64, auditor *token3.NodeReference, issuer *token3.NodeReference, expectedErrorMsgs ...string) string {
+func Withdraw(
+	network *integration.Infrastructure,
+	wpm *WalletManagerProvider,
+	webSocket bool,
+	user *token3.NodeReference,
+	wallet string,
+	typ token.Type,
+	amount uint64,
+	auditor *token3.NodeReference,
+	issuer *token3.NodeReference,
+	expectedErrorMsgs ...string,
+) string {
 	var recipientData *token2.RecipientData
 	if wpm != nil {
 		recipientData = wpm.RecipientData(user.Id(), wallet)
@@ -1507,7 +1654,16 @@ func CheckPrometheusMetrics(ii *integration.Infrastructure, viewName string) {
 	}
 }
 
-func TokensUpgrade(network *integration.Infrastructure, wpm *WalletManagerProvider, user *token3.NodeReference, wallet string, typ token.Type, auditor *token3.NodeReference, issuer *token3.NodeReference, expectedErrorMsgs ...string) string {
+func TokensUpgrade(
+	network *integration.Infrastructure,
+	wpm *WalletManagerProvider,
+	user *token3.NodeReference,
+	wallet string,
+	typ token.Type,
+	auditor *token3.NodeReference,
+	issuer *token3.NodeReference,
+	expectedErrorMsgs ...string,
+) string {
 	var recipientData *token2.RecipientData
 	if wpm != nil {
 		recipientData = wpm.RecipientData(user.Id(), wallet)
@@ -1589,7 +1745,17 @@ func PolicyLockCash(network *integration.Infrastructure, sender *token3.NodeRefe
 }
 
 // PolicyLockCashForTMSID is like PolicyLockCash but pins a specific TMSID.
-func PolicyLockCashForTMSID(network *integration.Infrastructure, sender *token3.NodeReference, wallet string, typ token.Type, amount uint64, policy string, receivers []*token3.NodeReference, auditor *token3.NodeReference, tmsID *token2.TMSID) string {
+func PolicyLockCashForTMSID(
+	network *integration.Infrastructure,
+	sender *token3.NodeReference,
+	wallet string,
+	typ token.Type,
+	amount uint64,
+	policy string,
+	receivers []*token3.NodeReference,
+	auditor *token3.NodeReference,
+	tmsID *token2.TMSID,
+) string {
 	parties := make([]view.Identity, len(receivers))
 	for i, r := range receivers {
 		parties[i] = network.Identity(r.Id())

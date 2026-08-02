@@ -179,7 +179,9 @@ func TestMarshal(t *testing.T) {
 	// test failures
 	err = Unmarshal[Serializer]([]byte{0, 1, 2})
 	require.Error(t, err)
-	require.EqualError(t, err, "failed to unmarshal values: asn1: structure error: tags don't match (16 vs {class:0 tag:0 length:1 isCompound:false}) {optional:false explicit:false application:false private:false defaultValue:<nil> tag:<nil> stringType:0 timeType:0 set:false omitEmpty:false} Values @2")
+	require.EqualError(t, err,
+		"failed to unmarshal values: asn1: structure error: tags don't match (16 vs {class:0 tag:0 length:1 isCompound:false}) "+
+			"{optional:false explicit:false application:false private:false defaultValue:<nil> tag:<nil> stringType:0 timeType:0 set:false omitEmpty:false} Values @2")
 	err = Unmarshal[Serializer](raw, a1)
 	require.Error(t, err)
 	require.EqualError(t, err, "number of values does not match number of values")
@@ -208,7 +210,9 @@ func TestUnmarshaller(t *testing.T) {
 	// some errors
 	err = p1.Deserialize([]byte{0, 1, 2})
 	require.Error(t, err)
-	require.EqualError(t, err, "failed to deserialize: failed to unmarshal values: asn1: structure error: tags don't match (16 vs {class:0 tag:0 length:1 isCompound:false}) {optional:false explicit:false application:false private:false defaultValue:<nil> tag:<nil> stringType:0 timeType:0 set:false omitEmpty:false} Values @2")
+	require.EqualError(t, err,
+		"failed to deserialize: failed to unmarshal values: asn1: structure error: tags don't match (16 vs {class:0 tag:0 length:1 isCompound:false}) "+
+			"{optional:false explicit:false application:false private:false defaultValue:<nil> tag:<nil> stringType:0 timeType:0 set:false omitEmpty:false} Values @2")
 	// success
 	err = p1.Deserialize(raw)
 	require.NoError(t, err)

@@ -60,7 +60,17 @@ func RequestTokensUpgrade(context view.Context, issuer view.Identity, wallet str
 
 // RequestTokensUpgradeForRecipient runs UpgradeTokensInitiatorView with the passed arguments.
 // The view will send the passed recipient data to the issuer.
-func RequestTokensUpgradeForRecipient(context view.Context, issuer view.Identity, wallet string, tokens []token2.LedgerToken, notAnonymous bool, recipientData *RecipientData, opts ...token.ServiceOption) (view.Identity, view.Session, error) {
+func RequestTokensUpgradeForRecipient(
+	context view.Context,
+	issuer view.Identity,
+	wallet string,
+	tokens []token2.LedgerToken,
+	notAnonymous bool,
+	recipientData *RecipientData,
+	opts ...token.ServiceOption) (view.Identity,
+	view.Session,
+	error,
+) {
 	options, err := CompileServiceOptions(opts...)
 	if err != nil {
 		return nil, nil, errors.WithMessagef(err, "failed to compile options")
