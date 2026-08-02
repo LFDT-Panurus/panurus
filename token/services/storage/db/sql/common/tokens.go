@@ -1640,7 +1640,26 @@ func (t *TokenTransaction) StoreToken(ctx context.Context, tr driver.TokenRecord
 	// Store token
 	query, args := q.InsertInto(t.table.Tokens).
 		Fields("tx_id", "idx", "issuer_raw", "owner_raw", "owner_type", "owner_identity", "owner_wallet_id", "ledger", "ledger_type", "ledger_metadata", "token_type", "quantity", "amount", "stored_at", "owner", "auditor", "issuer", "redeemed").
-		Row(tr.TxID, tr.Index, tr.IssuerRaw, tr.OwnerRaw, tr.OwnerType, tr.OwnerIdentity, tr.OwnerWalletID, tr.Ledger, tr.LedgerFormat, tr.LedgerMetadata, tr.Type, tr.Quantity, tr.Amount, time.Now().UTC(), tr.Owner, tr.Auditor, tr.Issuer, tr.Redeemed).
+		Row(
+			tr.TxID,
+			tr.Index,
+			tr.IssuerRaw,
+			tr.OwnerRaw,
+			tr.OwnerType,
+			tr.OwnerIdentity,
+			tr.OwnerWalletID,
+			tr.Ledger,
+			tr.LedgerFormat,
+			tr.LedgerMetadata,
+			tr.Type,
+			tr.Quantity,
+			tr.Amount,
+			time.Now().UTC(),
+			tr.Owner,
+			tr.Auditor,
+			tr.Issuer,
+			tr.Redeemed,
+		).
 		OnConflictDoNothing().
 		Format()
 	logging.Debug(logger, query, args)

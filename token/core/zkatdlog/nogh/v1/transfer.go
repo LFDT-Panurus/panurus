@@ -114,7 +114,16 @@ func NewTransferService(
 
 // Transfer generates a new TransferAction based on the provided arguments.
 // It returns the TransferAction, the corresponding TransferMetadata, or an error if the operation fails.
-func (s *TransferService) Transfer(ctx context.Context, anchor driver.TokenRequestAnchor, wallet driver.OwnerWallet, ids []*token2.ID, outputs []*token2.Token, opts *driver.TransferOptions) (driver.TransferAction, *driver.TransferMetadata, error) {
+func (s *TransferService) Transfer(
+	ctx context.Context,
+	anchor driver.TokenRequestAnchor,
+	wallet driver.OwnerWallet,
+	ids []*token2.ID,
+	outputs []*token2.Token,
+	opts *driver.TransferOptions) (driver.TransferAction,
+	*driver.TransferMetadata,
+	error,
+) {
 	s.Logger.DebugfContext(ctx, "Prepare Transfer Action [%s,%v]", anchor, ids)
 	if common.IsAnyNil(ids...) {
 		return nil, nil, errors.New("failed to prepare transfer action: nil token id")

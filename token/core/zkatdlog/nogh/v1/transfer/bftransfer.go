@@ -75,7 +75,17 @@ func NewBulletProofVerifier(inputs, outputs []*math.G1, pp *v1.PublicParams) *Bu
 	// if so, skip range proof as well-formedness proof is sufficient.
 	var rangeCorrectness *bulletproof.RangeCorrectnessVerifier
 	if len(inputs) != 1 || len(outputs) != 1 {
-		rangeCorrectness = bulletproof.NewRangeCorrectnessVerifier(pp.PedersenGenerators[1:], pp.RangeProofParams.LeftGenerators, pp.RangeProofParams.RightGenerators, pp.RangeProofParams.P, pp.RangeProofParams.Q, pp.RangeProofParams.BitLength, pp.RangeProofParams.NumberOfRounds, math.Curves[pp.Curve], pp.ExecutorProvider)
+		rangeCorrectness = bulletproof.NewRangeCorrectnessVerifier(
+			pp.PedersenGenerators[1:],
+			pp.RangeProofParams.LeftGenerators,
+			pp.RangeProofParams.RightGenerators,
+			pp.RangeProofParams.P,
+			pp.RangeProofParams.Q,
+			pp.RangeProofParams.BitLength,
+			pp.RangeProofParams.NumberOfRounds,
+			math.Curves[pp.Curve],
+			pp.ExecutorProvider,
+		)
 	}
 
 	return &BulletProofVerifier{

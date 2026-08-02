@@ -76,7 +76,10 @@ func (m *StubbornSelector) Select(ctx context.Context, ownerFilter token.OwnerFi
 		if m.backoffInterval > 0 {
 			backoffDuration = time.Duration(rand.Int64N(int64(m.backoffInterval)))
 		}
-		m.logger.DebugfContext(ctx, "Token selection aborted, so that other procs can retry. Release tokens and backoff for %v before retrying to select. In the meantime maybe some other process releases token locks or adds tokens.", backoffDuration)
+		m.logger.DebugfContext(ctx,
+			"Token selection aborted, so that other procs can retry. Release tokens and backoff for %v before retrying to select. "+
+				"In the meantime maybe some other process releases token locks or adds tokens.",
+			backoffDuration)
 		select {
 		case <-time.After(backoffDuration):
 		case <-ctx.Done():

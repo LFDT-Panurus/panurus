@@ -52,7 +52,16 @@ func NewTransferService(inner driver.TransferService, p Provider) *TransferServi
 	}
 }
 
-func (w *TransferService) Transfer(ctx context.Context, anchor driver.TokenRequestAnchor, wallet driver.OwnerWallet, ids []*token.ID, outputs []*token.Token, opts *driver.TransferOptions) (driver.TransferAction, *driver.TransferMetadata, error) {
+func (w *TransferService) Transfer(
+	ctx context.Context,
+	anchor driver.TokenRequestAnchor,
+	wallet driver.OwnerWallet,
+	ids []*token.ID,
+	outputs []*token.Token,
+	opts *driver.TransferOptions) (driver.TransferAction,
+	*driver.TransferMetadata,
+	error,
+) {
 	w.calls.With("method", "Transfer").Add(1)
 	start := time.Now()
 	action, meta, err := w.inner.Transfer(ctx, anchor, wallet, ids, outputs, opts)

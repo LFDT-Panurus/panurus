@@ -27,7 +27,17 @@ type BulletProofVerifier struct {
 func NewBulletProofVerifier(tokens []*math.G1, pp *v1.PublicParams) *BulletProofVerifier {
 	v := &BulletProofVerifier{curveID: pp.Curve}
 	v.SameType = NewSameTypeVerifier(tokens, pp.PedersenGenerators, math.Curves[pp.Curve])
-	v.RangeCorrectness = bulletproof.NewRangeCorrectnessVerifier(pp.PedersenGenerators[1:], pp.RangeProofParams.LeftGenerators, pp.RangeProofParams.RightGenerators, pp.RangeProofParams.P, pp.RangeProofParams.Q, pp.RangeProofParams.BitLength, pp.RangeProofParams.NumberOfRounds, math.Curves[pp.Curve], pp.ExecutorProvider)
+	v.RangeCorrectness = bulletproof.NewRangeCorrectnessVerifier(
+		pp.PedersenGenerators[1:],
+		pp.RangeProofParams.LeftGenerators,
+		pp.RangeProofParams.RightGenerators,
+		pp.RangeProofParams.P,
+		pp.RangeProofParams.Q,
+		pp.RangeProofParams.BitLength,
+		pp.RangeProofParams.NumberOfRounds,
+		math.Curves[pp.Curve],
+		pp.ExecutorProvider,
+	)
 
 	return v
 }

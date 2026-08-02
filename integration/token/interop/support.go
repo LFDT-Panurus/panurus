@@ -167,7 +167,17 @@ func CheckBalanceAndHolding(network *integration.Infrastructure, id *token3.Node
 }
 
 // #nosec G115
-func CheckBalanceWithLockedAndHolding(network *integration.Infrastructure, id *token3.NodeReference, wallet string, typ token2.Type, expectedBalance uint64, expectedLocked uint64, expectedExpired uint64, expectedHolding int64, opts ...token.ServiceOption) {
+func CheckBalanceWithLockedAndHolding(
+	network *integration.Infrastructure,
+	id *token3.NodeReference,
+	wallet string,
+	typ token2.Type,
+	expectedBalance uint64,
+	expectedLocked uint64,
+	expectedExpired uint64,
+	expectedHolding int64,
+	opts ...token.ServiceOption,
+) {
 	CheckBalanceWithLocked(network, id, wallet, typ, expectedBalance, expectedLocked, expectedExpired, opts...)
 	if expectedHolding == -1 {
 		expectedHolding = int64(expectedBalance + expectedLocked + expectedExpired)
@@ -266,7 +276,22 @@ func Restart(network *integration.Infrastructure, ids ...*token3.NodeReference) 
 	time.Sleep(10 * time.Second)
 }
 
-func HTLCLock(network *integration.Infrastructure, tmsID token.TMSID, id *token3.NodeReference, wallet string, typ token2.Type, amount uint64, receiver *token3.NodeReference, auditor *token3.NodeReference, deadline time.Duration, hash []byte, hashFunc crypto.Hash, errorMsgs ...string) (string, []byte, []byte) {
+func HTLCLock(
+	network *integration.Infrastructure,
+	tmsID token.TMSID,
+	id *token3.NodeReference,
+	wallet string,
+	typ token2.Type,
+	amount uint64,
+	receiver *token3.NodeReference,
+	auditor *token3.NodeReference,
+	deadline time.Duration,
+	hash []byte,
+	hashFunc crypto.Hash,
+	errorMsgs ...string) (string,
+	[]byte,
+	[]byte,
+) {
 	result, err := network.Client(id.ReplicaName()).CallView("htlc.lock", common.JSONMarshall(&htlc.Lock{
 		TMSID:               tmsID,
 		ReclamationDeadline: deadline,
@@ -398,7 +423,18 @@ func htlcClaim(network *integration.Infrastructure, tmsID token.TMSID, id *token
 	}
 }
 
-func fastExchange(network *integration.Infrastructure, id *token3.NodeReference, recipient *token3.NodeReference, tmsID1 token.TMSID, typ1 token2.Type, amount1 uint64, tmsID2 token.TMSID, typ2 token2.Type, amount2 uint64, deadline time.Duration) {
+func fastExchange(
+	network *integration.Infrastructure,
+	id *token3.NodeReference,
+	recipient *token3.NodeReference,
+	tmsID1 token.TMSID,
+	typ1 token2.Type,
+	amount1 uint64,
+	tmsID2 token.TMSID,
+	typ2 token2.Type,
+	amount2 uint64,
+	deadline time.Duration,
+) {
 	_, err := network.Client(id.ReplicaName()).CallView("htlc.fastExchange", common.JSONMarshall(&htlc.FastExchange{
 		Recipient:           network.Identity(recipient.Id()),
 		TMSID1:              tmsID1,

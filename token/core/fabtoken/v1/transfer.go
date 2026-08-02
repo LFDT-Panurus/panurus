@@ -45,7 +45,16 @@ func NewTransferService(
 
 // Transfer returns a TransferAction as a function of the passed arguments
 // It also returns the corresponding TransferMetadata
-func (s *TransferService) Transfer(ctx context.Context, anchor driver.TokenRequestAnchor, wallet driver.OwnerWallet, ids []*token.ID, outputs []*token.Token, opts *driver.TransferOptions) (driver.TransferAction, *driver.TransferMetadata, error) {
+func (s *TransferService) Transfer(
+	ctx context.Context,
+	anchor driver.TokenRequestAnchor,
+	wallet driver.OwnerWallet,
+	ids []*token.ID,
+	outputs []*token.Token,
+	opts *driver.TransferOptions) (driver.TransferAction,
+	*driver.TransferMetadata,
+	error,
+) {
 	// select inputs
 	inputTokens, err := s.TokenLoader.GetTokens(ctx, ids)
 	if err != nil {

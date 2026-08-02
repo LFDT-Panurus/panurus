@@ -306,7 +306,10 @@ func TestGenFailure(t *testing.T) {
 				"--idemix", "./testdata/idemix",
 				"--issuers", "Error: failed to generate public parameters: failed to get issuer identity [aOrg1MSP]: invalid input [aOrg1MSP]",
 			},
-			ErrMsg: "Error: failed to generate public parameters: failed to setup issuer and auditors: failed to get issuer identity [Error: failed to generate public parameters: failed to get issuer identity [aOrg1MSP]: invalid input [aOrg1MSP]]: failed to load certificates from Error: failed to generate public parameters: failed to get issuer identity [aOrg1MSP]: invalid input [aOrg1MSP]/signcerts: stat Error: failed to generate public parameters: failed to get issuer identity [aOrg1MSP]: invalid input [aOrg1MSP]/signcerts: no such file or directory",
+			ErrMsg: "Error: failed to generate public parameters: failed to setup issuer and auditors: failed to get issuer identity [Error: failed to generate public " +
+				"parameters: failed to get issuer identity [aOrg1MSP]: invalid input [aOrg1MSP]]: failed to load certificates from Error: failed to generate public " +
+				"parameters: failed to get issuer identity [aOrg1MSP]: invalid input [aOrg1MSP]/signcerts: stat Error: failed to generate public parameters: failed to " +
+				"get issuer identity [aOrg1MSP]: invalid input [aOrg1MSP]/signcerts: no such file or directory",
 		},
 	}...,
 	)

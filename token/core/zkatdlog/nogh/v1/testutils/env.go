@@ -687,7 +687,16 @@ func prepareIssueRequestWithAttrs(pp *v1setup.PublicParams, auditor *audit.Audit
 	return issuer, ir, requestMetadata, nil
 }
 
-func prepareRedeemRequest(benchCase *benchmark2.Case, pp *v1setup.PublicParams, auditor *audit.Auditor, setupConfig *benchmark.SetupConfiguration) (*transfer.Sender, *driver.TokenRequest, *driver.TokenRequestMetadata, map[string]*token2.Token, error) {
+func prepareRedeemRequest(
+	benchCase *benchmark2.Case,
+	pp *v1setup.PublicParams,
+	auditor *audit.Auditor,
+	setupConfig *benchmark.SetupConfiguration) (*transfer.Sender,
+	*driver.TokenRequest,
+	*driver.TokenRequestMetadata,
+	map[string]*token2.Token,
+	error,
+) {
 	benchCaseRedeem := &benchmark2.Case{
 		Workers:    benchCase.Workers,
 		Bits:       benchCase.Bits,
@@ -729,7 +738,16 @@ func prepareRedeemRequest(benchCase *benchmark2.Case, pp *v1setup.PublicParams, 
 // at its zero value (None) so that audit/auditor.go's validateRedeemIssuer -
 // which, unlike its issue-side counterpart validateIssuer, has no open-policy
 // bypass - is never invoked.
-func prepareOpenPolicyRedeemRequest(benchCase *benchmark2.Case, pp *v1setup.PublicParams, auditor *audit.Auditor, setupConfig *benchmark.SetupConfiguration) (*transfer.Sender, *driver.TokenRequest, *driver.TokenRequestMetadata, map[string]*token2.Token, error) {
+func prepareOpenPolicyRedeemRequest(
+	benchCase *benchmark2.Case,
+	pp *v1setup.PublicParams,
+	auditor *audit.Auditor,
+	setupConfig *benchmark.SetupConfiguration) (*transfer.Sender,
+	*driver.TokenRequest,
+	*driver.TokenRequestMetadata,
+	map[string]*token2.Token,
+	error,
+) {
 	benchCaseRedeem := &benchmark2.Case{
 		Workers:    benchCase.Workers,
 		Bits:       benchCase.Bits,
@@ -757,7 +775,17 @@ func prepareOpenPolicyRedeemRequest(benchCase *benchmark2.Case, pp *v1setup.Publ
 	)
 }
 
-func prepareTransferRequest(benchCase *benchmark2.Case, pp *v1setup.PublicParams, auditor *audit.Auditor, signer *benchmark.Signer, oID *benchmark.OwnerIdentity) (*transfer.Sender, *driver.TokenRequest, *driver.TokenRequestMetadata, map[string]*token2.Token, error) {
+func prepareTransferRequest(
+	benchCase *benchmark2.Case,
+	pp *v1setup.PublicParams,
+	auditor *audit.Auditor,
+	signer *benchmark.Signer,
+	oID *benchmark.OwnerIdentity) (*transfer.Sender,
+	*driver.TokenRequest,
+	*driver.TokenRequestMetadata,
+	map[string]*token2.Token,
+	error,
+) {
 	owners := make([][]byte, benchCase.NumOutputs)
 	for i := range benchCase.NumOutputs {
 		owners[i] = oID.ID
@@ -781,7 +809,16 @@ func prepareTransferRequest(benchCase *benchmark2.Case, pp *v1setup.PublicParams
 // transfer whose sole input is loaded as a Fabtoken output, so that
 // TransferUpgradeWitnessValidate's non-nil-witness branch is exercised
 // end-to-end (see prepareTransferWithOpts).
-func prepareUpgradeWitnessTransferRequest(pp *v1setup.PublicParams, auditor *audit.Auditor, signer *benchmark.Signer, oID *benchmark.OwnerIdentity) (*transfer.Sender, *driver.TokenRequest, *driver.TokenRequestMetadata, map[string]*token2.Token, error) {
+func prepareUpgradeWitnessTransferRequest(
+	pp *v1setup.PublicParams,
+	auditor *audit.Auditor,
+	signer *benchmark.Signer,
+	oID *benchmark.OwnerIdentity) (*transfer.Sender,
+	*driver.TokenRequest,
+	*driver.TokenRequestMetadata,
+	map[string]*token2.Token,
+	error,
+) {
 	benchCase := &benchmark2.Case{NumInputs: 1, NumOutputs: 1}
 	owners := [][]byte{oID.ID}
 
@@ -801,7 +838,17 @@ func prepareUpgradeWitnessTransferRequest(pp *v1setup.PublicParams, auditor *aud
 	)
 }
 
-func prepareSwapRequest(benchCase *benchmark2.Case, pp *v1setup.PublicParams, auditor *audit.Auditor, auditorSigner *benchmark.Signer, oID *benchmark.OwnerIdentity) (*transfer.Sender, *driver.TokenRequest, *driver.TokenRequestMetadata, map[string]*token2.Token, error) {
+func prepareSwapRequest(
+	benchCase *benchmark2.Case,
+	pp *v1setup.PublicParams,
+	auditor *audit.Auditor,
+	auditorSigner *benchmark.Signer,
+	oID *benchmark.OwnerIdentity) (*transfer.Sender,
+	*driver.TokenRequest,
+	*driver.TokenRequestMetadata,
+	map[string]*token2.Token,
+	error,
+) {
 	sender1, tr1, trmetadata1, inputsForTransfer1, err := prepareTransferRequest(benchCase, pp, auditor, auditorSigner, oID)
 	if err != nil {
 		return nil, nil, nil, nil, err
@@ -912,7 +959,16 @@ func prepareTransfer(
 // transfer carrying a "pub."-prefixed application metadata attribute, so that
 // TransferApplicationDataValidate's metadata-claiming branch is exercised
 // end-to-end.
-func preparePublicMetadataTransferRequest(pp *v1setup.PublicParams, auditor *audit.Auditor, signer *benchmark.Signer, oID *benchmark.OwnerIdentity) (*transfer.Sender, *driver.TokenRequest, *driver.TokenRequestMetadata, map[string]*token2.Token, error) {
+func preparePublicMetadataTransferRequest(
+	pp *v1setup.PublicParams,
+	auditor *audit.Auditor,
+	signer *benchmark.Signer,
+	oID *benchmark.OwnerIdentity) (*transfer.Sender,
+	*driver.TokenRequest,
+	*driver.TokenRequestMetadata,
+	map[string]*token2.Token,
+	error,
+) {
 	benchCase := &benchmark2.Case{NumInputs: 1, NumOutputs: 1}
 	owners := [][]byte{oID.ID}
 	attrs := map[string]any{
@@ -946,7 +1002,16 @@ func preparePublicMetadataTransferRequest(pp *v1setup.PublicParams, auditor *aud
 // checks structural correspondence via TransferMetadata.Match, not metadata
 // content), so the failure must be observed by re-running the real validator
 // stack over the returned bytes.
-func prepareUnclaimedMetadataTransferRequest(pp *v1setup.PublicParams, auditor *audit.Auditor, signer *benchmark.Signer, oID *benchmark.OwnerIdentity) (*transfer.Sender, *driver.TokenRequest, *driver.TokenRequestMetadata, map[string]*token2.Token, error) {
+func prepareUnclaimedMetadataTransferRequest(
+	pp *v1setup.PublicParams,
+	auditor *audit.Auditor,
+	signer *benchmark.Signer,
+	oID *benchmark.OwnerIdentity) (*transfer.Sender,
+	*driver.TokenRequest,
+	*driver.TokenRequestMetadata,
+	map[string]*token2.Token,
+	error,
+) {
 	benchCase := &benchmark2.Case{NumInputs: 1, NumOutputs: 1}
 	owners := [][]byte{oID.ID}
 	attrs := map[string]any{
@@ -975,7 +1040,16 @@ func prepareUnclaimedMetadataTransferRequest(pp *v1setup.PublicParams, auditor *
 // AuditorSigner. AuditingSignaturesValidate implements a 1-of-N policy over
 // PP.Auditors(), so this exercises the "signed by a non-first configured
 // auditor key" path end-to-end while remaining a POSITIVE fixture.
-func prepareMultiAuditorTransferRequest(pp *v1setup.PublicParams, auditor *audit.Auditor, secondAuditorSigner *benchmark.Signer, oID *benchmark.OwnerIdentity) (*transfer.Sender, *driver.TokenRequest, *driver.TokenRequestMetadata, map[string]*token2.Token, error) {
+func prepareMultiAuditorTransferRequest(
+	pp *v1setup.PublicParams,
+	auditor *audit.Auditor,
+	secondAuditorSigner *benchmark.Signer,
+	oID *benchmark.OwnerIdentity) (*transfer.Sender,
+	*driver.TokenRequest,
+	*driver.TokenRequestMetadata,
+	map[string]*token2.Token,
+	error,
+) {
 	benchCase := &benchmark2.Case{NumInputs: 1, NumOutputs: 1}
 	owners := [][]byte{oID.ID}
 
@@ -1004,7 +1078,17 @@ func prepareMultiAuditorTransferRequest(pp *v1setup.PublicParams, auditor *audit
 // request is re-validated. This is a NEGATIVE fixture: auditor.Check inside
 // prepareTransfer still succeeds, since the auditor never inspects signature
 // counts.
-func prepareExtraSignatureTransferRequest(benchCase *benchmark2.Case, pp *v1setup.PublicParams, auditor *audit.Auditor, auditorSigner *benchmark.Signer, oID *benchmark.OwnerIdentity) (*transfer.Sender, *driver.TokenRequest, *driver.TokenRequestMetadata, map[string]*token2.Token, error) {
+func prepareExtraSignatureTransferRequest(
+	benchCase *benchmark2.Case,
+	pp *v1setup.PublicParams,
+	auditor *audit.Auditor,
+	auditorSigner *benchmark.Signer,
+	oID *benchmark.OwnerIdentity) (*transfer.Sender,
+	*driver.TokenRequest,
+	*driver.TokenRequestMetadata,
+	map[string]*token2.Token,
+	error,
+) {
 	sender, tr, trMetadata, trInputs, err := prepareTransferRequest(benchCase, pp, auditor, auditorSigner, oID)
 	if err != nil {
 		return nil, nil, nil, nil, err

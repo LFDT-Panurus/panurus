@@ -50,7 +50,13 @@ func TestAuditor(t *testing.T) {
 		// Build auditTokens map from inputs
 		auditTokens := buildAuditTokensFromInputs(t, metadata, inputs)
 
-		err = auditor.Check(t.Context(), &driver.TokenRequest{Actions: []*driver.TypedAction{{Type: request.ActionType_ACTION_TYPE_TRANSFER, Raw: raw}}}, &driver.TokenRequestMetadata{Actions: []*driver.ActionMetadataEntry{{ActionID: 0, TransferMetadata: metadata}}}, "1", auditTokens)
+		err = auditor.Check(
+			t.Context(),
+			&driver.TokenRequest{Actions: []*driver.TypedAction{{Type: request.ActionType_ACTION_TYPE_TRANSFER, Raw: raw}}},
+			&driver.TokenRequestMetadata{Actions: []*driver.ActionMetadataEntry{{ActionID: 0, TransferMetadata: metadata}}},
+			"1",
+			auditTokens,
+		)
 		require.NoError(t, err)
 	})
 
@@ -89,7 +95,13 @@ func TestAuditor(t *testing.T) {
 		// Build auditTokens map from inputs
 		auditTokens := buildAuditTokensFromInputs(t, metadata, inputs)
 
-		err = auditor.Check(t.Context(), &driver.TokenRequest{Actions: []*driver.TypedAction{{Type: request.ActionType_ACTION_TYPE_TRANSFER, Raw: raw}}}, &driver.TokenRequestMetadata{Actions: []*driver.ActionMetadataEntry{{ActionID: 0, TransferMetadata: metadata}}}, "1", auditTokens)
+		err = auditor.Check(
+			t.Context(),
+			&driver.TokenRequest{Actions: []*driver.TypedAction{{Type: request.ActionType_ACTION_TYPE_TRANSFER, Raw: raw}}},
+			&driver.TokenRequestMetadata{Actions: []*driver.ActionMetadataEntry{{ActionID: 0, TransferMetadata: metadata}}},
+			"1",
+			auditTokens,
+		)
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "owner at index [0] does not match the provided opening")
 		require.NotContains(t, err.Error(), "attribute mistmatch")
@@ -119,7 +131,13 @@ func TestAuditor(t *testing.T) {
 
 		auditTokens := buildAuditTokensFromInputs(t, metadata, inputs)
 
-		err = auditor.Check(t.Context(), &driver.TokenRequest{Actions: []*driver.TypedAction{{Type: request.ActionType_ACTION_TYPE_TRANSFER, Raw: raw}}}, &driver.TokenRequestMetadata{Actions: []*driver.ActionMetadataEntry{{ActionID: 0, TransferMetadata: metadata}}}, "1", auditTokens)
+		err = auditor.Check(
+			t.Context(),
+			&driver.TokenRequest{Actions: []*driver.TypedAction{{Type: request.ActionType_ACTION_TYPE_TRANSFER, Raw: raw}}},
+			&driver.TokenRequestMetadata{Actions: []*driver.ActionMetadataEntry{{ActionID: 0, TransferMetadata: metadata}}},
+			"1",
+			auditTokens,
+		)
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "does not match the provided opening")
 	})
@@ -138,7 +156,13 @@ func TestAuditor(t *testing.T) {
 		// Build auditTokens map from inputs
 		auditTokens := buildAuditTokensFromInputs(t, metadata, inputs)
 
-		err = auditor.Check(t.Context(), &driver.TokenRequest{Actions: []*driver.TypedAction{{Type: request.ActionType_ACTION_TYPE_TRANSFER, Raw: raw}}}, &driver.TokenRequestMetadata{Actions: []*driver.ActionMetadataEntry{{ActionID: 0, TransferMetadata: metadata}}}, "1", auditTokens)
+		err = auditor.Check(
+			t.Context(),
+			&driver.TokenRequest{Actions: []*driver.TypedAction{{Type: request.ActionType_ACTION_TYPE_TRANSFER, Raw: raw}}},
+			&driver.TokenRequestMetadata{Actions: []*driver.ActionMetadataEntry{{ActionID: 0, TransferMetadata: metadata}}},
+			"1",
+			auditTokens,
+		)
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "owner at index [0] does not match the provided opening")
 		require.Contains(t, err.Error(), "does not match the provided opening")
@@ -152,7 +176,13 @@ func TestAuditor(t *testing.T) {
 		raw, err := ia.Serialize()
 		require.NoError(t, err)
 		// Issues have no inputs, so pass empty map
-		err = auditor.Check(t.Context(), &driver.TokenRequest{Actions: []*driver.TypedAction{{Type: request.ActionType_ACTION_TYPE_ISSUE, Raw: raw}}}, &driver.TokenRequestMetadata{Actions: []*driver.ActionMetadataEntry{{ActionID: 0, IssueMetadata: metadata}}}, "1", map[string]*token3.Token{})
+		err = auditor.Check(
+			t.Context(),
+			&driver.TokenRequest{Actions: []*driver.TypedAction{{Type: request.ActionType_ACTION_TYPE_ISSUE, Raw: raw}}},
+			&driver.TokenRequestMetadata{Actions: []*driver.ActionMetadataEntry{{ActionID: 0, IssueMetadata: metadata}}},
+			"1",
+			map[string]*token3.Token{},
+		)
 		require.NoError(t, err)
 	})
 
@@ -167,7 +197,13 @@ func TestAuditor(t *testing.T) {
 
 		auditTokens := buildAuditTokensFromInputs(t, metadata, inputs)
 
-		err = auditor.Check(t.Context(), &driver.TokenRequest{Actions: []*driver.TypedAction{{Type: request.ActionType_ACTION_TYPE_TRANSFER, Raw: raw}}}, &driver.TokenRequestMetadata{Actions: []*driver.ActionMetadataEntry{{ActionID: 0, TransferMetadata: metadata}}}, "1", auditTokens)
+		err = auditor.Check(
+			t.Context(),
+			&driver.TokenRequest{Actions: []*driver.TypedAction{{Type: request.ActionType_ACTION_TYPE_TRANSFER, Raw: raw}}},
+			&driver.TokenRequestMetadata{Actions: []*driver.ActionMetadataEntry{{ActionID: 0, TransferMetadata: metadata}}},
+			"1",
+			auditTokens,
+		)
 		require.NoError(t, err)
 	})
 
@@ -183,7 +219,13 @@ func TestAuditor(t *testing.T) {
 
 		auditTokens := buildAuditTokensFromInputs(t, metadata, inputs)
 
-		err = auditor.Check(t.Context(), &driver.TokenRequest{Actions: []*driver.TypedAction{{Type: request.ActionType_ACTION_TYPE_TRANSFER, Raw: raw}}}, &driver.TokenRequestMetadata{Actions: []*driver.ActionMetadataEntry{{ActionID: 0, TransferMetadata: metadata}}}, "1", auditTokens)
+		err = auditor.Check(
+			t.Context(),
+			&driver.TokenRequest{Actions: []*driver.TypedAction{{Type: request.ActionType_ACTION_TYPE_TRANSFER, Raw: raw}}},
+			&driver.TokenRequestMetadata{Actions: []*driver.ActionMetadataEntry{{ActionID: 0, TransferMetadata: metadata}}},
+			"1",
+			auditTokens,
+		)
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "is not a recognized issuer")
 	})
@@ -204,7 +246,13 @@ func TestAuditor(t *testing.T) {
 		raw, err := ia.Serialize()
 		require.NoError(t, err)
 
-		err = auditor.Check(t.Context(), &driver.TokenRequest{Actions: []*driver.TypedAction{{Type: request.ActionType_ACTION_TYPE_ISSUE, Raw: raw}}}, &driver.TokenRequestMetadata{Actions: []*driver.ActionMetadataEntry{{ActionID: 0, IssueMetadata: metadata}}}, "1", map[string]*token3.Token{})
+		err = auditor.Check(
+			t.Context(),
+			&driver.TokenRequest{Actions: []*driver.TypedAction{{Type: request.ActionType_ACTION_TYPE_ISSUE, Raw: raw}}},
+			&driver.TokenRequestMetadata{Actions: []*driver.ActionMetadataEntry{{ActionID: 0, IssueMetadata: metadata}}},
+			"1",
+			map[string]*token3.Token{},
+		)
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "is not a recognized issuer")
 	})
@@ -269,7 +317,13 @@ func TestAuditor_Check_Errors(t *testing.T) {
 	// issues cannot be retrieved.
 	t.Run("Check issue audit info error", func(t *testing.T) {
 		_, _, auditor := setupAuditorTest(t)
-		err := auditor.Check(t.Context(), &driver.TokenRequest{Actions: []*driver.TypedAction{{Type: request.ActionType_ACTION_TYPE_ISSUE, Raw: []byte{1, 2, 3}}}}, &driver.TokenRequestMetadata{Actions: []*driver.ActionMetadataEntry{{ActionID: 0, IssueMetadata: &driver.IssueMetadata{}}}}, "1", map[string]*token3.Token{})
+		err := auditor.Check(
+			t.Context(),
+			&driver.TokenRequest{Actions: []*driver.TypedAction{{Type: request.ActionType_ACTION_TYPE_ISSUE, Raw: []byte{1, 2, 3}}}},
+			&driver.TokenRequestMetadata{Actions: []*driver.ActionMetadataEntry{{ActionID: 0, IssueMetadata: &driver.IssueMetadata{}}}},
+			"1",
+			map[string]*token3.Token{},
+		)
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "failed to deserialize")
 	})
@@ -281,7 +335,13 @@ func TestAuditor_Check_Errors(t *testing.T) {
 		ia, meta := createIssue(t, pp)
 		ia.Outputs[0].Data = pp.PedersenGenerators[0] // wrong data
 		raw, _ := ia.Serialize()
-		err := auditor.Check(t.Context(), &driver.TokenRequest{Actions: []*driver.TypedAction{{Type: request.ActionType_ACTION_TYPE_ISSUE, Raw: raw}}}, &driver.TokenRequestMetadata{Actions: []*driver.ActionMetadataEntry{{ActionID: 0, IssueMetadata: meta}}}, "1", map[string]*token3.Token{})
+		err := auditor.Check(
+			t.Context(),
+			&driver.TokenRequest{Actions: []*driver.TypedAction{{Type: request.ActionType_ACTION_TYPE_ISSUE, Raw: raw}}},
+			&driver.TokenRequestMetadata{Actions: []*driver.ActionMetadataEntry{{ActionID: 0, IssueMetadata: meta}}},
+			"1",
+			map[string]*token3.Token{},
+		)
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "output at index [0] does not match the provided opening")
 	})
@@ -293,7 +353,13 @@ func TestAuditor_Check_Errors(t *testing.T) {
 		ia, meta := createIssue(t, pp)
 		meta.Issuer.AuditInfo = []byte("wrong")
 		raw, _ := ia.Serialize()
-		err := auditor.Check(t.Context(), &driver.TokenRequest{Actions: []*driver.TypedAction{{Type: request.ActionType_ACTION_TYPE_ISSUE, Raw: raw}}}, &driver.TokenRequestMetadata{Actions: []*driver.ActionMetadataEntry{{ActionID: 0, IssueMetadata: meta}}}, "1", map[string]*token3.Token{})
+		err := auditor.Check(
+			t.Context(),
+			&driver.TokenRequest{Actions: []*driver.TypedAction{{Type: request.ActionType_ACTION_TYPE_ISSUE, Raw: raw}}},
+			&driver.TokenRequestMetadata{Actions: []*driver.ActionMetadataEntry{{ActionID: 0, IssueMetadata: meta}}},
+			"1",
+			map[string]*token3.Token{},
+		)
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "failed checking issuer identity")
 	})
@@ -302,7 +368,13 @@ func TestAuditor_Check_Errors(t *testing.T) {
 	// transfers cannot be retrieved.
 	t.Run("Check transfer audit info error", func(t *testing.T) {
 		_, _, auditor := setupAuditorTest(t)
-		err := auditor.Check(t.Context(), &driver.TokenRequest{Actions: []*driver.TypedAction{{Type: request.ActionType_ACTION_TYPE_TRANSFER, Raw: []byte{1, 2, 3}}}}, &driver.TokenRequestMetadata{Actions: []*driver.ActionMetadataEntry{{ActionID: 0, TransferMetadata: &driver.TransferMetadata{}}}}, "1", map[string]*token3.Token{})
+		err := auditor.Check(
+			t.Context(),
+			&driver.TokenRequest{Actions: []*driver.TypedAction{{Type: request.ActionType_ACTION_TYPE_TRANSFER, Raw: []byte{1, 2, 3}}}},
+			&driver.TokenRequestMetadata{Actions: []*driver.ActionMetadataEntry{{ActionID: 0, TransferMetadata: &driver.TransferMetadata{}}}},
+			"1",
+			map[string]*token3.Token{},
+		)
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "failed to deserialize")
 	})
