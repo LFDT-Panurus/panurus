@@ -45,17 +45,32 @@ The limiter is configured under `token.selector` (see
 ```yaml
 token:
   selector:
-    # Per-wallet selection rate (requests/second).
-    #   unset / 0  -> default (10), limiter ENABLED
+    # Per-wallet token-lock rate (requests/second).
+    #   unset / 0  -> default (1000), limiter ENABLED
     #   > 0        -> custom rate, limiter ENABLED
     #   < 0        -> limiter DISABLED
-    rateLimit: 10
-    # Per-wallet burst capacity (unset/<=0 -> default 20).
-    rateLimitBurst: 20
+    rateLimit: 1000
+    # Per-wallet burst capacity (unset/<=0 -> default 2000).
+    rateLimitBurst: 2000
     # How long an idle per-wallet bucket is kept before eviction
     # (unset/<=0 -> default 10m).
     rateLimitIdleTTL: 10m
 ```
+
+### What the rate counts
+
+The limiter is consulted **once per token-lock attempt**, not once per selection.
+A selection locks one candidate token at a time until the requested amount is
+covered, and when candidates are already locked by other transactions it retries
+the whole scan (`maxImmediateRetries` times per attempt, then `numRetries` times
+after a backoff). A single transaction can therefore legitimately issue tens to
+hundreds of lock requests, and the amount depends on how the wallet's funds are
+split across tokens and on how much concurrency the wallet sees.
+
+The defaults are deliberately generous for this reason: they shed pathological
+load (a runaway selection loop) without interfering with normal operation. Pick a
+custom `rateLimit` from an observed lock-request rate, not from a target
+transaction rate.
 
 To turn the built-in limiter off entirely, set a negative rate:
 

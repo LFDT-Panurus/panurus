@@ -22,7 +22,9 @@ import (
 type RateLimitConfig struct {
 	// Enabled reports whether the built-in limiter should be wired in.
 	Enabled bool
-	// RequestsPerSecond is the per-wallet selection rate.
+	// RequestsPerSecond is the per-wallet token-lock rate. One selection issues
+	// one lock request per candidate token, and retries the scan when candidates
+	// are locked by others, so this bounds lock requests and not transactions.
 	RequestsPerSecond float64
 	// Burst is the per-wallet burst capacity.
 	Burst float64

@@ -22,11 +22,20 @@ const (
 	defaultFetcherCacheSize       = 0 // 0 means use fetcher default
 	defaultFetcherCacheRefresh    = 0 // 0 means use fetcher default
 	defaultFetcherCacheMaxQueries = 0 // 0 means use fetcher default
-	// defaultRateLimit is the built-in default rate limit, in selection requests
+	// defaultRateLimit is the built-in default rate limit, in token-lock requests
 	// per second per wallet. The limiter is on by default with this value.
-	defaultRateLimit = 10.0
+	//
+	// The limiter is consulted once per token-lock attempt, not once per
+	// selection: a single selection locks one candidate token at a time and, when
+	// candidates are already locked by other transactions, retries the whole scan
+	// up to (defaultNumRetries+1)*(sherdlock.maxImmediateRetries+1) times. One
+	// transaction can therefore legitimately issue tens to hundreds of lock
+	// requests. The default is set well above that so it only sheds pathological
+	// load and never interferes with normal operation; deployments that want a
+	// tighter policy should configure token.selector.rateLimit explicitly.
+	defaultRateLimit = 1000.0
 	// defaultRateLimitBurst is the built-in default burst capacity per wallet.
-	defaultRateLimitBurst = 20.0
+	defaultRateLimitBurst = 2000.0
 	// defaultRateLimitIdleTTL is how long a per-wallet bucket may be idle before
 	// it is evicted to reclaim memory.
 	defaultRateLimitIdleTTL = 10 * time.Minute
@@ -46,7 +55,7 @@ type Config struct {
 	FetcherCacheSize       int64         `yaml:"fetcherCacheSize,omitempty"`
 	FetcherCacheRefresh    time.Duration `yaml:"fetcherCacheRefresh,omitempty"`
 	FetcherCacheMaxQueries int           `yaml:"fetcherCacheMaxQueries,omitempty"`
-	// RateLimit is the built-in rate limiter's allowed selection requests per
+	// RateLimit is the built-in rate limiter's allowed token-lock requests per
 	// second per wallet. Semantics: unset/0 uses the built-in default
 	// (defaultRateLimit) and the limiter is enabled; a negative value disables
 	// the built-in limiter entirely.
@@ -132,7 +141,7 @@ func (c *Config) RateLimitEnabled() bool {
 	return c.RateLimit >= 0
 }
 
-// GetRateLimit returns the per-wallet selection rate (requests/second) for the
+// GetRateLimit returns the per-wallet token-lock rate (requests/second) for the
 // built-in limiter. An unset value (0) resolves to the default; a negative value
 // is returned as-is and means the limiter is disabled (see RateLimitEnabled).
 func (c *Config) GetRateLimit() float64 {
