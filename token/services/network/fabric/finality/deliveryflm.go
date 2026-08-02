@@ -190,10 +190,14 @@ func (m *EndorserTxInfoMapper) MapTxData(ctx context.Context, tx []byte, block *
 		return nil, errors.Wrapf(err, "failed extracting rwset")
 	}
 
-	if len(block.Metadata) < int(common.BlockMetadataIndex_TRANSACTIONS_FILTER) {
+	if len(block.Metadata) <= int(common.BlockMetadataIndex_TRANSACTIONS_FILTER) {
 		return nil, errors.Errorf("block metadata lacks transaction filter")
 	}
-	code, message := committer.MapValidationCode(int32(committer.ValidationFlags(block.Metadata[common.BlockMetadataIndex_TRANSACTIONS_FILTER])[txNum]))
+	txFilter := committer.ValidationFlags(block.Metadata[common.BlockMetadataIndex_TRANSACTIONS_FILTER])
+	if txNum >= uint64(len(txFilter)) {
+		return nil, errors.Errorf("transaction filter too short: index [%d] out of range [%d]", txNum, len(txFilter))
+	}
+	code, message := committer.MapValidationCode(int32(txFilter[txNum]))
 
 	return m.mapTxInfo(rwSet, chdr.TxId, code, message)
 }
