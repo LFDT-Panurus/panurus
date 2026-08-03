@@ -1,0 +1,56 @@
+name: "OpenSSF Scorecard"
+
+# The README Scorecard badge is intentionally NOT added yet: api.scorecard.dev only
+# serves data for a repository after this workflow has run on the default branch with
+# publish_results: true. Until then the badge renders "invalid repo path". Add
+#   https://api.scorecard.dev/projects/github.com/LFDT-Panurus/panurus/badge
+# to the README badge row once the first run on `main` has completed.
+
+on:
+  # Re-run when branch protection changes, since Branch-Protection is a scored check.
+  branch_protection_rule:
+  schedule:
+    - cron: '27 6 * * 1'
+  push:
+    branches: [ "main" ]
+
+# Least privilege by default; the job below elevates only what it needs.
+permissions: read-all
+
+jobs:
+  analysis:
+    name: Scorecard analysis
+    runs-on: ubuntu-latest
+    permissions:
+      # Required to upload the results to code-scanning.
+      security-events: write
+      # Required by publish_results, which signs the results for the public API
+      # that serves the README badge.
+      id-token: write
+
+    steps:
+      - name: "Checkout code"
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: "Run analysis"
+        uses: ossf/scorecard-action@v2.4.4
+        with:
+          results_file: results.sarif
+          results_format: sarif
+          # Must stay true: without it the api.securityscorecards.dev endpoint
+          # serves no data and the README badge renders "invalid repo path".
+          publish_results: true
+
+      - name: "Upload artifact"
+        uses: actions/upload-artifact@v4
+        with:
+          name: SARIF file
+          path: results.sarif
+          retention-days: 5
+
+      - name: "Upload to code-scanning"
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: results.sarif

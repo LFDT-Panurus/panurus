@@ -4,6 +4,7 @@
 
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache%202-blue" alt="License"></a>
+  <a href="https://www.bestpractices.dev/projects/7176"><img src="https://www.bestpractices.dev/projects/7176/badge" alt="OpenSSF Best Practices"></a>
   <a href="https://goreportcard.com/badge/github.com/LFDT-Panurus/panurus"><img src="https://goreportcard.com/badge/github.com/LFDT-Panurus/panurus" alt="Go Report Card"></a>
   <a href="https://github.com/LFDT-Panurus/panurus/actions/workflows/tests.yml"><img src="https://github.com/LFDT-Panurus/panurus/actions/workflows/tests.yml/badge.svg?branch=main" alt="Tests"></a>
   <a href="https://github.com/LFDT-Panurus/panurus/actions/workflows/codeql-analysis.yml"><img src="https://github.com/LFDT-Panurus/panurus/actions/workflows/codeql-analysis.yml/badge.svg?branch=main" alt="CodeQL"></a>
@@ -15,8 +16,14 @@ Panurus provides a collection of APIs and services that streamline development f
 # Useful Links
  
 - [`Documentation`](docs/README.md): The entry point for Panurus documentation.
+- [`Releases`](https://github.com/LFDT-Panurus/panurus/releases): Current and past releases, with
+  release notes. The latest release is always at
+  [`releases/latest`](https://github.com/LFDT-Panurus/panurus/releases/latest).
 - [`Development`](docs/development/development.md): All about the development guidelines.
 - [`Contributing`](CONTRIBUTING.md): How to contribute to the project.
+- [`Adopters`](ADOPTERS.md): Who is using Panurus. **Using Panurus? Please add yourself to
+  [`ADOPTERS.md`](ADOPTERS.md)** — it helps the community understand where the project is deployed.
+- [`Security`](SECURITY.md): How to report a security vulnerability.
 - [`Fabric Samples`](https://github.com/hyperledger/fabric-samples/tree/main/token-sdk) Panurus sample application is the
   quickest way to get a full network running with a REST API to issue, transfer and redeem tokens right away.
 - [`Benchmarks`](./docs/drivers/benchmark/benchmark.md): Benchmark guidelines and reports.
@@ -30,7 +37,7 @@ Panurus provides a collection of APIs and services that streamline development f
 
 # Additional Resources
 
-- (March 17, 2022) [`Hyperledger in-Depth: Tokens in Hyperledger Fabric: What’s possible today and what’s coming`](https://www.hyperledger.org/learn/webinars/hyperledger-in-depth-tokens-in-hyperledger-fabric-whats-possible-today-and-whats-coming):
+- (March 17, 2022) [`Hyperledger in-Depth: Tokens in Hyperledger Fabric: What’s possible today and what’s coming`](https://lfdecentralizedtrust.org/learn/webinars/hyperledger-in-depth-tokens-in-hyperledger-fabric-whats-possible-today-and-whats-coming):
   Tokenizing the physical world is a hot blockchain topic in the industry, especially as it relates to the 
   trade of tokens as a basis of new forms of commerce. In this Hyperledger Foundation member webinar, 
   the IBM Research team describes in this webinar what tokenization use cases are possible with Hyperledger Fabric today, 
