@@ -31,5 +31,8 @@ func NewListenerManagerProvider(fnsp *fabric.NetworkServiceProvider, tracerProvi
 		ListenerTimeout:         lmConfig.DeliveryListenerTimeout(),
 		LRUSize:                 lmConfig.DeliveryLRUSize(),
 		LRUBuffer:               lmConfig.DeliveryLRUBuffer(),
-	})
+	}, WithLedgerInfoRetry(LedgerInfoRetry{
+		Attempts: lmConfig.DeliveryLedgerInfoAttempts(),
+		Delay:    lmConfig.DeliveryLedgerInfoRetryDelay(),
+	}))
 }

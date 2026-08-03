@@ -10,6 +10,7 @@ import (
 	"github.com/LFDT-Panurus/panurus/token/services/logging"
 	"github.com/LFDT-Panurus/panurus/token/services/network/common/rws/translator"
 	"github.com/LFDT-Panurus/panurus/token/services/network/fabric/config"
+	finality2 "github.com/LFDT-Panurus/panurus/token/services/network/fabric/finality"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/fabric"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/fabric/core/generic/events"
 	"go.opentelemetry.io/otel/trace"
@@ -35,5 +36,8 @@ func NewListenerManagerProvider(fnsp *fabric.NetworkServiceProvider, tracerProvi
 		ListenerTimeout:         lmConfig.DeliveryListenerTimeout(),
 		LRUSize:                 lmConfig.DeliveryLRUSize(),
 		LRUBuffer:               lmConfig.DeliveryLRUBuffer(),
-	})
+	}, WithLedgerInfoRetry(finality2.LedgerInfoRetry{
+		Attempts: lmConfig.DeliveryLedgerInfoAttempts(),
+		Delay:    lmConfig.DeliveryLedgerInfoRetryDelay(),
+	}))
 }
