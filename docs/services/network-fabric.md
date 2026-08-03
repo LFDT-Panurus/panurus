@@ -294,6 +294,58 @@ sequenceDiagram
 - LRU cache for recent transactions
 - Automatic retry on connection failures
 
+#### Choosing the Starting Block
+
+The scan resumes at the peer's current ledger height, read via `GetLedgerInfo`
+([`delivery.go`](../../token/services/network/fabric/finality/delivery.go)). Because that
+one RPC decides the starting block, a failure is retried with an exponentially growing
+delay — 7 attempts spanning ~31.5s by default, aborting early if the context is cancelled.
+Both are configurable via `token.finality.delivery.ledgerInfoAttempts` and
+`ledgerInfoRetryDelay` (see [Finality Configuration](#finality-configuration)).
+
+That budget is deliberately long. Nothing retries `ScanBlock`: FSC's
+`events.ListenerManager` calls it once from a goroutine that only logs the result, so an
+error escaping the retry loop leaves the channel with **no block-based finality until the
+process restarts**. The retries therefore have to outlast a peer restart, not merely a
+dropped packet.
+
+If the height is still unavailable after the last attempt, `ScanBlock` returns the error
+rather than defaulting to block 0. Starting at genesis would rescan the entire chain and
+replay finality notifications for every historical transaction, while the caller would have
+no way to tell a transient RPC failure from a genuinely fresh chain. Block 0 is used only
+when no ledger is configured at all.
+
+The doubling has a ceiling of 30s, so raising `ledgerInfoAttempts` lengthens the budget
+without letting a single pause grow without bound. A `ledgerInfoRetryDelay` larger than the
+ceiling is honoured as configured — the cap limits growth, it does not shorten the delay you
+asked for. The backoff itself is `utils.RetryRunner`, shared with the rest of the SDK rather
+than reimplemented here.
+
+The returned error is classifiable with `errors.Is`, so a caller does not have to match on
+its message. `ErrLedgerHeightUnavailable` is the single test for "the starting block could
+not be resolved, so no scan started" — it accompanies every such failure, including a
+cancelled one:
+
+| Sentinel | Meaning |
+| --- | --- |
+| `finality.ErrLedgerHeightUnavailable` | the height could not be read, so no scan started |
+| `finality.ErrNoLedgerInfo` | **some** attempt saw the ledger return neither info nor an error — a driver contract violation |
+| `context.Canceled` / `context.DeadlineExceeded` | a wait between attempts was cut short, or the scan itself was cancelled |
+
+Every attempt's failure is reported, so `ErrNoLedgerInfo` is present whenever the contract
+was violated at least once, even intermittently. The context error is not a discriminator on
+its own: the same context governs the scan, so it does not say which phase ended — pair it
+with `ErrLedgerHeightUnavailable` to tell a cancelled height read from a cancelled scan.
+
+The underlying ledger errors are preserved in every case. An error that does not match
+`ErrLedgerHeightUnavailable` comes from the block scan itself rather than from resolving the
+starting block.
+
+There is no in-tree caller that inspects these sentinels yet — today the sole consumer logs
+the error and stops. Classifying the failure is what a future caller needs to react
+(fall back to query-based finality, retry, or restart the manager) rather than a description
+of current behaviour.
+
 ### Notification Mode
 
 Uses asynchronous event notifications from the FSC layer:
@@ -434,7 +486,14 @@ token:
       blockProcessParallelism: 10  # Parallel block processors
       lruSize: 30                  # Cache size for recent transactions
       listenerTimeout: 10s         # Timeout for listener notifications
+      ledgerInfoAttempts: 7        # Attempts at reading the starting ledger height
+      ledgerInfoRetryDelay: 500ms  # First retry pause; doubles each attempt (~31.5s total)
 ```
+
+`ledgerInfoAttempts` and `ledgerInfoRetryDelay` bound the ledger-height read that decides
+where a block scan starts — see [Choosing the Starting Block](#choosing-the-starting-block).
+Non-positive values are ignored in favour of the defaults: zero attempts would refuse every
+scan, and a non-positive delay would busy loop.
 
 ### Endorsement Configuration
 

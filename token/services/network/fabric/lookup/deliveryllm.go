@@ -76,22 +76,46 @@ func (i KeyInfo) ID() driver2.PKey {
 }
 
 type deliveryBasedLLMProvider struct {
-	fnsp           *fabric.NetworkServiceProvider
-	tracerProvider trace.TracerProvider
-	config         events.DeliveryListenerManagerConfig
-	newMapper      newTxInfoMapper
+	fnsp            *fabric.NetworkServiceProvider
+	tracerProvider  trace.TracerProvider
+	config          events.DeliveryListenerManagerConfig
+	newMapper       newTxInfoMapper
+	ledgerInfoRetry finality2.LedgerInfoRetry
 }
 
-func NewDeliveryBasedLLMProvider(fnsp *fabric.NetworkServiceProvider, tracerProvider trace.TracerProvider, config events.DeliveryListenerManagerConfig, newMapper newTxInfoMapper) *deliveryBasedLLMProvider {
-	return &deliveryBasedLLMProvider{
+// LLMProviderOption customizes a delivery-based lookup listener manager provider.
+type LLMProviderOption func(*deliveryBasedLLMProvider)
+
+// WithLedgerInfoRetry sets the retry budget each manager applies to the
+// ledger-height read that decides where its block scan starts. Zero fields select
+// the finality.Delivery defaults.
+func WithLedgerInfoRetry(retry finality2.LedgerInfoRetry) LLMProviderOption {
+	return func(p *deliveryBasedLLMProvider) {
+		p.ledgerInfoRetry = retry
+	}
+}
+
+func NewDeliveryBasedLLMProvider(fnsp *fabric.NetworkServiceProvider, tracerProvider trace.TracerProvider, config events.DeliveryListenerManagerConfig, newMapper newTxInfoMapper, opts ...LLMProviderOption) *deliveryBasedLLMProvider {
+	p := &deliveryBasedLLMProvider{
 		fnsp:           fnsp,
 		tracerProvider: tracerProvider,
 		config:         config,
 		newMapper:      newMapper,
 	}
+	for _, opt := range opts {
+		opt(p)
+	}
+
+	return p
 }
 
-func newEndorserDeliveryBasedLLMProvider(fnsp *fabric.NetworkServiceProvider, tracerProvider trace.TracerProvider, keyTranslator translator.KeyTranslator, config events.DeliveryListenerManagerConfig) *deliveryBasedLLMProvider {
+func newEndorserDeliveryBasedLLMProvider(
+	fnsp *fabric.NetworkServiceProvider,
+	tracerProvider trace.TracerProvider,
+	keyTranslator translator.KeyTranslator,
+	config events.DeliveryListenerManagerConfig,
+	opts ...LLMProviderOption,
+) *deliveryBasedLLMProvider {
 	prefix, err := keyTranslator.TransferActionMetadataKeyPrefix()
 	if err != nil {
 		panic(err)
@@ -106,7 +130,7 @@ func newEndorserDeliveryBasedLLMProvider(fnsp *fabric.NetworkServiceProvider, tr
 			network:  network,
 			prefixes: []string{prefix, setupKey},
 		}
-	})
+	}, opts...)
 }
 
 func (p *deliveryBasedLLMProvider) NewManager(network, channel string) (ListenerManager, error) {
@@ -123,9 +147,11 @@ func (p *deliveryBasedLLMProvider) NewManager(network, channel string) (Listener
 		logger,
 		p.config,
 		&finality2.Delivery{
-			Delivery: ch.Delivery(),
-			Ledger:   ch.Ledger(),
-			Logger:   logger,
+			Delivery:             ch.Delivery(),
+			Ledger:               ch.Ledger(),
+			Logger:               logger,
+			LedgerInfoAttempts:   p.ledgerInfoRetry.Attempts,
+			LedgerInfoRetryDelay: p.ledgerInfoRetry.Delay,
 		},
 		&DeliveryScanQueryByID{
 			Delivery: ch.Delivery(),
