@@ -1,0 +1,172 @@
+/*
+Copyright IBM Corp. All Rights Reserved.
+
+SPDX-License-Identifier: Apache-2.0
+*/
+
+package evm
+
+import (
+	"math/big"
+	"testing"
+
+	"github.com/decred/dcrd/dcrec/secp256k1/v4"
+	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"github.com/LFDT-Panurus/panurus/x/token/services/network/evm/abi"
+	"github.com/LFDT-Panurus/panurus/x/token/services/network/evm/client"
+	"github.com/LFDT-Panurus/panurus/x/token/services/network/evm/client/mock"
+	"github.com/LFDT-Panurus/panurus/x/token/services/network/evm/statedelta"
+)
+
+// testKey returns the well-known secp256k1 test key with the given low byte.
+func testKey(low byte) *secp256k1.PrivateKey {
+	raw := make([]byte, 32)
+	raw[31] = low
+
+	return secp256k1.PrivKeyFromBytes(raw)
+}
+
+func testDelta() *statedelta.StateDelta {
+	var anchor, hash [32]byte
+	anchor[31] = 0xA1
+	hash[31] = 0x0F
+
+	return &statedelta.StateDelta{
+		Anchor:              anchor,
+		TokenRequestHash:    hash,
+		PublicParamsHash:    hash,
+		PublicParamsVersion: 1,
+	}
+}
+
+// readySubmitterClient returns a mock node that answers everything a successful submit needs.
+func readySubmitterClient() *mock.EVMClient {
+	evm := &mock.EVMClient{}
+	evm.PendingNonceAtReturns(3, nil)
+	evm.EstimateGasReturns(100_000, nil)
+	evm.SuggestGasFeesReturns(client.GasFees{
+		MaxFeePerGas:         big.NewInt(20_000_000_000),
+		MaxPriorityFeePerGas: big.NewInt(1_000_000_000),
+	}, nil)
+	evm.SendRawTransactionReturns(client.Hash{}, nil)
+
+	return evm
+}
+
+func testSubmitter(t *testing.T, evm client.EVMClient, gas GasConfig) *Submitter {
+	t.Helper()
+	tokenState, err := client.HexToAddress(testTokenState)
+	require.NoError(t, err)
+	s, err := NewSubmitter(evm, testKey(1), tokenState, big.NewInt(testChainID), gas)
+	require.NoError(t, err)
+
+	return s
+}
+
+func estimateGas() GasConfig {
+	return GasConfig{Strategy: GasStrategyEstimate, Multiplier: DefaultGasMultiplier}
+}
+
+// TestSubmitSendsSignedApplyStateDelta checks the whole write path: the endorsed delta is encoded as
+// an applyStateDelta call, signed, and sent to the TokenState.
+func TestSubmitSendsSignedApplyStateDelta(t *testing.T) {
+	evm := readySubmitterClient()
+	s := testSubmitter(t, evm, estimateGas())
+	endorsements := [][]byte{make([]byte, 65)}
+
+	rawTx, _, err := s.Submit(t.Context(), testDelta(), endorsements)
+	require.NoError(t, err)
+	require.NotEmpty(t, rawTx)
+
+	require.Equal(t, 1, evm.SendRawTransactionCallCount())
+	_, sent := evm.SendRawTransactionArgsForCall(0)
+	assert.Equal(t, rawTx, sent)
+	assert.Equal(t, client.TxTypeDynamicFee, rawTx[0], "the driver sends type-2 transactions")
+
+	// the gas estimation must have been for the same calldata that gets signed
+	_, msg := evm.EstimateGasArgsForCall(0)
+	assert.Equal(t, abi.EncodeApplyStateDelta(testDelta(), endorsements), msg.Data)
+	require.NotNil(t, msg.To)
+	assert.Equal(t, s.tokenState, *msg.To)
+}
+
+// TestSubmitAppliesGasMultiplier checks the safety margin: state can change between estimation and
+// execution, so the bare estimate is not enough.
+func TestSubmitAppliesGasMultiplier(t *testing.T) {
+	evm := readySubmitterClient()
+	evm.EstimateGasReturns(100_000, nil)
+	s := testSubmitter(t, evm, GasConfig{Strategy: GasStrategyEstimate, Multiplier: 1.5})
+
+	limit, err := s.gasLimit(t.Context(), []byte{0x01})
+	require.NoError(t, err)
+	assert.Equal(t, uint64(150_000), limit)
+}
+
+func TestSubmitFixedGasStrategy(t *testing.T) {
+	evm := readySubmitterClient()
+	s := testSubmitter(t, evm, GasConfig{Strategy: GasStrategyFixed, Limit: 250_000})
+
+	limit, err := s.gasLimit(t.Context(), []byte{0x01})
+	require.NoError(t, err)
+	assert.Equal(t, uint64(250_000), limit)
+	assert.Zero(t, evm.EstimateGasCallCount(), "a fixed limit must not consult the node")
+}
+
+// TestSubmitResetsNonceOnFailure is the production trap: a nonce allocated for a transaction that
+// never reached the node would leave a gap, and every later transaction would sit unmineable behind
+// it. A failed submit must put the sequence back under the node's authority.
+func TestSubmitResetsNonceOnFailure(t *testing.T) {
+	evm := readySubmitterClient()
+	evm.SendRawTransactionReturns(client.Hash{}, errors.New("broadcast rejected"))
+	s := testSubmitter(t, evm, estimateGas())
+
+	_, _, err := s.Submit(t.Context(), testDelta(), [][]byte{make([]byte, 65)})
+	require.Error(t, err)
+
+	_, initialized := s.nonces.Cached()
+	assert.False(t, initialized, "a failed broadcast must reset the nonce sequence")
+}
+
+func TestSubmitRejectsIncompleteInput(t *testing.T) {
+	s := testSubmitter(t, readySubmitterClient(), estimateGas())
+
+	t.Run("nil delta", func(t *testing.T) {
+		_, _, err := s.Submit(t.Context(), nil, [][]byte{make([]byte, 65)})
+		require.Error(t, err)
+	})
+
+	t.Run("no endorsements", func(t *testing.T) {
+		_, _, err := s.Submit(t.Context(), testDelta(), nil)
+		require.Error(t, err, "an unendorsed delta must never be broadcast")
+	})
+}
+
+func TestNewSubmitterValidates(t *testing.T) {
+	tokenState, err := client.HexToAddress(testTokenState)
+	require.NoError(t, err)
+
+	t.Run("nil client", func(t *testing.T) {
+		_, err := NewSubmitter(nil, testKey(1), tokenState, big.NewInt(1), estimateGas())
+		require.Error(t, err)
+	})
+
+	t.Run("nil key", func(t *testing.T) {
+		_, err := NewSubmitter(&mock.EVMClient{}, nil, tokenState, big.NewInt(1), estimateGas())
+		require.Error(t, err)
+	})
+
+	t.Run("missing chain id", func(t *testing.T) {
+		_, err := NewSubmitter(&mock.EVMClient{}, testKey(1), tokenState, nil, estimateGas())
+		require.Error(t, err, "an unset chain id would allow cross-chain replay")
+	})
+}
+
+// TestSubmitterAddressMatchesKey checks the submitter reports the account that actually pays, derived
+// from its own key.
+func TestSubmitterAddressMatchesKey(t *testing.T) {
+	s := testSubmitter(t, readySubmitterClient(), estimateGas())
+	assert.Equal(t, "0x7e5f4552091a69125d5dfcb7b8c2659029395bdf", s.Address().Hex())
+}
