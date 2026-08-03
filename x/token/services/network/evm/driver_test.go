@@ -9,17 +9,32 @@ package evm
 import (
 	"testing"
 
+	"github.com/LFDT-Panurus/panurus/token/services/network/driver"
+	"github.com/LFDT-Panurus/panurus/x/token/services/network/evm/client/mock"
+
+	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-// fakeResolver reports a fixed set of (network|channel) pairs as EVM networks.
+// fakeResolver reports a fixed set of (network|channel) pairs as EVM networks and yields a minimal
+// valid configuration for them.
 type fakeResolver struct {
 	evm map[string]bool
 }
 
 func (f fakeResolver) IsEVMNetwork(network, channel string) bool {
 	return f.evm[network+"|"+channel]
+}
+
+func (f fakeResolver) ConfigFor(network, channel string) (*Config, error) {
+	if !f.IsEVMNetwork(network, channel) {
+		return nil, errors.Errorf("no evm configuration for [%s:%s]", network, channel)
+	}
+	c := validConfig()
+	c.applyDefaults()
+
+	return c, c.Validate()
 }
 
 func TestDriverNewRouting(t *testing.T) {
@@ -41,15 +56,40 @@ func TestDriverNewRouting(t *testing.T) {
 	assert.Error(t, err)
 }
 
-// TestNetworkStubNotImplemented documents that the skeleton's behavioural methods are wired to the
-// interface but not yet implemented, so a mis-registration surfaces as a clear error rather than a
-// nil-pointer panic.
-func TestNetworkStubNotImplemented(t *testing.T) {
-	n := newNetwork("evm-net")
+// TestNetworkSurfaceIsWired checks the methods that used to be stubs now answer through the finality
+// manager rather than returning a not-implemented error.
+func TestNetworkSurfaceIsWired(t *testing.T) {
+	evm := &mock.EVMClient{}
+	// getTokenRequestHash returns the zero hash: the anchor has not been applied.
+	evm.CallReturns(make([]byte, 32), nil)
+	n := testNetwork(t, evm, nil)
 
 	assert.NotNil(t, n.NewEnvelope())
-	err := n.Broadcast(t.Context(), &Envelope{})
-	require.ErrorIs(t, err, errNotImplemented)
-	_, err = n.Ledger()
-	assert.ErrorIs(t, err, errNotImplemented)
+
+	ledger, err := n.Ledger()
+	require.NoError(t, err)
+	require.NotNil(t, ledger)
+
+	// An anchor the chain has never seen is Unknown: never the invalid zero code, and never Invalid,
+	// because a reverted apply is indistinguishable from one still pending (design 7.4).
+	status, hash, _, err := n.GetTransactionStatus(t.Context(), "token", anchorHex(0x01))
+	require.NoError(t, err)
+	assert.Equal(t, driver.Unknown, status)
+	assert.Nil(t, hash)
+
+	code, err := ledger.Status(anchorHex(0x01))
+	require.NoError(t, err)
+	assert.Equal(t, driver.Unknown, code)
+}
+
+// TestNetworkRejectsMalformedTransactionID checks the anchor-shaped identifier is validated rather
+// than silently producing a wrong on-chain lookup.
+func TestNetworkRejectsMalformedTransactionID(t *testing.T) {
+	n := testNetwork(t, nil, nil)
+
+	_, _, _, err := n.GetTransactionStatus(t.Context(), "token", "not-a-valid-anchor")
+	require.Error(t, err)
+
+	err = n.AddFinalityListener("token", "not-a-valid-anchor", nil)
+	require.Error(t, err)
 }
