@@ -94,6 +94,8 @@ token:
 
 The Postgres backend creates an `eid_leases` table (prefixed per TMS persistence settings) and uses lease rows with heartbeat renewal.
 
+**Lease ownership:** each row is keyed by EID and carries the holding replica (`owner`) plus the request it was taken for (`anchor`). An acquisition may only take over an existing row when the lease has expired, or when the row is the same replica's lease for the *same* anchor — a re-acquisition, which just refreshes the deadline. Two different anchors therefore never hold the same EID at once, including two concurrent audits on a single replica; the second one is contended and retried until `acquireDeadline`.
+
 ### Replica owner identity
 
 Every lease row carries an `owner` column, and each replica scopes all of its lease

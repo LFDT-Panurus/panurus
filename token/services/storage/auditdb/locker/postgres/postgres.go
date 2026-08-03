@@ -198,10 +198,17 @@ func (p *Locker) tryAcquireAll(ctx context.Context, anchor string, eIDs []string
 // buildAcquireQuery builds the atomic acquisition statement: an INSERT of one
 // row per enrollment ID that, ON CONFLICT on the eid primary key, overwrites
 // the existing row only when it is safe to steal — the current lease has
-// expired (InPast) or is already owned by this replica. The WHERE clause on the
+// expired (InPast), or the row is this replica's own lease for this very anchor
+// (a re-acquisition, whose lease is simply refreshed). The WHERE clause on the
 // upsert enforces that condition, and RETURNING eid yields exactly the IDs that
 // were claimed, which tryAcquireAll counts. expires_at is set to now()+TTL via
 // an interval-bound parameter.
+//
+// The anchor must be compared as well as the owner: owner is a per-replica
+// constant, so matching on it alone let one node's concurrent audits of two
+// different anchors overwrite each other's live lease for a shared enrollment
+// ID, with both acquisitions reporting success. Requiring anchor equality turns
+// that case back into ordinary contention, which the caller retries.
 func (p *Locker) buildAcquireQuery(anchor string, eIDs []string) (string, []any) {
 	tbl := q.Table(p.table)
 	ins := q.InsertInto(p.table).
@@ -224,7 +231,10 @@ func (p *Locker) buildAcquireQuery(anchor string, eIDs []string) (string, []any)
 		).
 		Where(cond.Or(
 			cond.InPast(tbl.Field("expires_at")),
-			cond.Cmp(tbl.Field("owner"), "=", q.ExcludedValue("owner")),
+			cond.And(
+				cond.Cmp(tbl.Field("owner"), "=", q.ExcludedValue("owner")),
+				cond.Cmp(tbl.Field("anchor"), "=", q.ExcludedValue("anchor")),
+			),
 		)).
 		Returning("eid").
 		Format()
