@@ -69,6 +69,11 @@ func MyCustomTransferValidation(ctx validator.Context, tr *transfer.Action) erro
 }
 ```
 
+A validation function must not assume that any other step of the pipeline has already run:
+fields that earlier steps populate (`validator.Context.InputTokens`, `Context.Signatures`, ...)
+may be empty or shorter than expected, so bound-check them and return an error instead of
+indexing blindly.
+
 ### 2. Create a custom Validator Driver
 
 Implement the `driver.ValidatorDriver` interface by wrapping the standard one.

@@ -150,11 +150,18 @@ func TransferBalanceValidate(c context.Context, ctx *Context) error {
 	return nil
 }
 
-// TransferHTLCValidate checks the validity of the HTLC scripts, if any
+// TransferHTLCValidate checks the validity of the HTLC scripts, if any.
+// A nil input token or a signature missing at the index of an HTLC-owned input
+// yields a validation error rather than a panic, regardless of the order in which
+// the validation steps of the pipeline are executed.
 func TransferHTLCValidate(c context.Context, ctx *Context) error {
 	now := time.Now()
 
 	for i, in := range ctx.InputTokens {
+		// guard: a nil token in the input slice must return an error, not panic
+		if in == nil {
+			return errors.Errorf("nil input token at index [%d]", i)
+		}
 		owner, err := identity.UnmarshalTypedIdentity(in.GetOwner())
 		if err != nil {
 			return errors.Wrap(err, "failed to unmarshal owner of input token")
@@ -186,6 +193,11 @@ func TransferHTLCValidate(c context.Context, ctx *Context) error {
 			}
 
 			// check metadata
+			// guard against a missing signature at index i (e.g., when this validator
+			// runs without TransferSignatureValidate having populated ctx.Signatures)
+			if i >= len(ctx.Signatures) {
+				return errors.Errorf("missing signature for input at index [%d]", i)
+			}
 			sigma := ctx.Signatures[i]
 			metadataKey, err := htlc2.MetadataClaimKeyCheck(ctx.TransferAction, script, op, sigma)
 			if err != nil {
