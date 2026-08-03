@@ -170,6 +170,164 @@ func TestLocker_OwnerScopingAcrossReplicas(t *testing.T) {
 	l1.ReleaseLocks(ctx, "anchor1")
 }
 
+// TestLocker_SameOwnerDifferentAnchorsCannotShareEID is the regression test for
+// issue #2033: two audits on the same node (hence the same owner) for different
+// anchors that share an enrollment ID. The second acquisition used to overwrite
+// the first one's live lease and report success, leaving both callers believing
+// they held it exclusively. It must now be plain contention.
+func TestLocker_SameOwnerDifferentAnchorsCannotShareEID(t *testing.T) {
+	db := startPostgres(t)
+	table := "test_eid_lease_same_owner"
+	cleanTable(t, db, table)
+	t.Cleanup(func() { cleanTable(t, db, table) })
+
+	l := newLocker(t, db, table, lockerpostgres.Config{
+		TTL: 30 * time.Second, AcquireBackoff: 25 * time.Millisecond,
+		AcquireDeadline: 300 * time.Millisecond, Heartbeat: 10 * time.Second,
+		Owner: "owner-1",
+	})
+
+	ctx := context.Background()
+	require.NoError(t, l.AcquireLocks(ctx, "anchor1", "alice", "bob"))
+
+	// anchor2 shares "alice" with anchor1 and belongs to the same owner.
+	err := l.AcquireLocks(ctx, "anchor2", "alice")
+	require.ErrorIs(t, err, errs.ErrLockContention, "a live lease of another anchor must not be stealable")
+	require.ErrorIs(t, err, errs.ErrLockAcquireTimeout)
+
+	// anchor1 still owns the shared lease, unchanged.
+	var anchor, owner string
+	require.NoError(t, db.QueryRow("SELECT anchor, owner FROM "+table+" WHERE eid = $1", "alice").Scan(&anchor, &owner))
+	assert.Equal(t, "anchor1", anchor, "the shared enrollment ID must still be held by the first anchor")
+	assert.Equal(t, "owner-1", owner)
+	require.NoError(t, l.AssertLocksHeld(ctx, "anchor1"))
+
+	// The failed attempt left nothing behind.
+	var count int
+	require.NoError(t, db.QueryRow("SELECT COUNT(*) FROM "+table+" WHERE anchor = $1", "anchor2").Scan(&count))
+	assert.Equal(t, 0, count)
+	require.ErrorIs(t, l.AssertLocksHeld(ctx, "anchor2"), errs.ErrLockNotHeld)
+
+	l.ReleaseLocks(ctx, "anchor1")
+
+	// Once released, the same enrollment ID is claimable by the other anchor.
+	require.NoError(t, l.AcquireLocks(ctx, "anchor2", "alice"))
+	l.ReleaseLocks(ctx, "anchor2")
+}
+
+// TestLocker_SameOwnerSameAnchorRefreshesLease verifies the case the conflict
+// clause is meant to allow: re-acquiring the same enrollment IDs under the same
+// anchor is idempotent and pushes the lease deadline out.
+func TestLocker_SameOwnerSameAnchorRefreshesLease(t *testing.T) {
+	db := startPostgres(t)
+	table := "test_eid_lease_reacquire"
+	cleanTable(t, db, table)
+	t.Cleanup(func() { cleanTable(t, db, table) })
+
+	l := newLocker(t, db, table, lockerpostgres.Config{
+		TTL: 30 * time.Second, AcquireBackoff: 25 * time.Millisecond,
+		AcquireDeadline: 300 * time.Millisecond, Heartbeat: time.Hour,
+		Owner: "owner-1",
+	})
+
+	ctx := context.Background()
+	expiry := func() time.Time {
+		t.Helper()
+		var at time.Time
+		require.NoError(t, db.QueryRow("SELECT expires_at FROM "+table+" WHERE eid = $1", "alice").Scan(&at))
+
+		return at
+	}
+
+	require.NoError(t, l.AcquireLocks(ctx, "anchor1", "alice"))
+	first := expiry()
+
+	time.Sleep(50 * time.Millisecond)
+	require.NoError(t, l.AcquireLocks(ctx, "anchor1", "alice"), "re-acquiring one's own anchor must succeed")
+	assert.True(t, expiry().After(first), "re-acquisition must refresh the lease deadline")
+
+	require.NoError(t, l.AssertLocksHeld(ctx, "anchor1"))
+	l.ReleaseLocks(ctx, "anchor1")
+}
+
+// TestLocker_ExpiredLeaseIsClaimableByAnotherAnchor verifies the crash-recovery
+// path still works: once a lease expires it may be taken over, even by a
+// different anchor of the same owner. Heartbeat is longer than the TTL so no
+// renewal interferes.
+func TestLocker_ExpiredLeaseIsClaimableByAnotherAnchor(t *testing.T) {
+	db := startPostgres(t)
+	table := "test_eid_lease_expired"
+	cleanTable(t, db, table)
+	t.Cleanup(func() { cleanTable(t, db, table) })
+
+	l := newLocker(t, db, table, lockerpostgres.Config{
+		TTL: 200 * time.Millisecond, AcquireBackoff: 25 * time.Millisecond,
+		AcquireDeadline: 5 * time.Second, Heartbeat: time.Hour,
+		Owner: "owner-1",
+	})
+
+	ctx := context.Background()
+	require.NoError(t, l.AcquireLocks(ctx, "anchor1", "alice"))
+	time.Sleep(400 * time.Millisecond) // outlive the lease
+
+	require.NoError(t, l.AcquireLocks(ctx, "anchor2", "alice"))
+
+	var anchor string
+	require.NoError(t, db.QueryRow("SELECT anchor FROM "+table+" WHERE eid = $1", "alice").Scan(&anchor))
+	assert.Equal(t, "anchor2", anchor)
+	l.ReleaseLocks(ctx, "anchor2")
+}
+
+// TestLocker_ConcurrentSharedEIDSingleWinner is the concurrency shape the issue
+// describes: several audits in flight on one node, all touching the same
+// enrollment ID. Exactly one may hold it; the rest must time out contended.
+func TestLocker_ConcurrentSharedEIDSingleWinner(t *testing.T) {
+	db := startPostgres(t)
+	table := "test_eid_lease_concurrent"
+	cleanTable(t, db, table)
+	t.Cleanup(func() { cleanTable(t, db, table) })
+
+	l := newLocker(t, db, table, lockerpostgres.Config{
+		TTL: 30 * time.Second, AcquireBackoff: 25 * time.Millisecond,
+		AcquireDeadline: 300 * time.Millisecond, Heartbeat: time.Hour,
+		Owner: "owner-1",
+	})
+
+	const audits = 4
+	ctx := context.Background()
+	anchors := []string{"a0", "a1", "a2", "a3"}
+	results := make([]error, audits)
+
+	var wg sync.WaitGroup
+	wg.Add(audits)
+	for i := range audits {
+		go func() {
+			defer wg.Done()
+			// No release: whoever wins keeps the lease for the whole test.
+			results[i] = l.AcquireLocks(ctx, anchors[i], "alice")
+		}()
+	}
+	wg.Wait()
+
+	winners := make([]string, 0, audits)
+	for i, err := range results {
+		if err == nil {
+			winners = append(winners, anchors[i])
+
+			continue
+		}
+		require.ErrorIs(t, err, errs.ErrLockContention, "a losing audit must report contention")
+	}
+	require.Len(t, winners, 1, "exactly one audit may hold the shared enrollment ID, got %v", winners)
+
+	var anchor string
+	require.NoError(t, db.QueryRow("SELECT anchor FROM "+table+" WHERE eid = $1", "alice").Scan(&anchor))
+	assert.Equal(t, winners[0], anchor, "the table must reflect the one audit that reported success")
+	require.NoError(t, l.AssertLocksHeld(ctx, winners[0]))
+
+	l.ReleaseLocks(ctx, winners[0])
+}
+
 func TestLocker_NilDB(t *testing.T) {
 	_, err := lockerpostgres.New(nil, "t", lockerpostgres.Config{}, stubReplicaID{id: "owner"})
 	require.Error(t, err)
