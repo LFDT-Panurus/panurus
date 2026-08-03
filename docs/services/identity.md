@@ -268,6 +268,14 @@ To accommodate different deployment structures, the Key Manager performs directo
 1. It first attempts to load the files directly from the configured directory (`<dir>`).
 2. If this fails, it appends an extra `msp` path element to the directory (i.e., `<dir>/msp/`) and tries again (e.g. searching for `<dir>/msp/msp/IssuerPublicKey` and `<dir>/msp/user/SignerConfig`).
 
+##### Credential Verification at Load Time
+When the loaded signer configuration carries secret key material (user secret key plus credential),
+the Idemix Key Manager verifies the credential against the issuer public key while it is being
+constructed. A credential that does not verify — whether the underlying BCCSP reports the failure as
+an error or simply as a negative verification result — makes construction fail with
+`credential is not cryptographically valid`; no key manager is returned. Configurations without
+secret key material are loaded as verify-only (remote) key managers and skip this check.
+
 #### 3. IdemixNym (Idemix with Pseudonym-based Identity)
 An extension of Idemix that uses a **commitment to the Enrollment ID (EID)** as the identity instead of the full Idemix signature.
 *   **Identity (Payload)**: A small **Nym EID** (a cryptographic commitment to the enrollment ID, $g^{sk} \cdot h^{r_{eid}}$).
