@@ -109,6 +109,10 @@ nav:
       - TTX: services/ttx.md
   - Security:
       - HTLC Deadlines and Clock Synchronisation: security/htlc_deadline_clock_assumptions.md
+      - OpenSSF Baseline: openssf/README.md
+      - Baseline Level 1: openssf/baseline_level_1.md
+      - Baseline Level 2: openssf/baseline_level_2.md
+      - Baseline Level 3: openssf/baseline_level_3.md
       - Selector Resource Limits: security/selector_resource_limits.md
   - Development:
       - Overview: development/development.md
