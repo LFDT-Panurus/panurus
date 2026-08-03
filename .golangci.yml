@@ -16,6 +16,7 @@ linters:
     - govet # Vet examines Go source code and reports suspicious constructs. It is roughly the same as 'go vet' and uses its passes. [auto-fix]
     - importas # Enforces consistent import aliases. [auto-fix]
     - intrange # Intrange is a linter to find places where for loops could make use of an integer range. [auto-fix]
+    - ireturn # Accept Interfaces, Return Concrete Types.
     - loggercheck # Checks key value pairs for common logger libraries (kitlog,klog,logr,slog,zap).
     - lll # Reports long lines. [fast]
     - mirror # Reports wrong mirror patterns of bytes/strings usage. [auto-fix]
@@ -90,6 +91,31 @@ linters:
         - github.com/prometheus/client_golang/prometheus.Counter
         - github.com/prometheus/client_golang/prometheus.Gauge
         - github.com/prometheus/client_golang/prometheus.Histogram
+        # Third-party interfaces we are obliged to return: either the signature is fixed by an
+        # interface we implement (Pagination, bccsp.Key, KeyStore) or it is the framework's own
+        # constructor convention (view.View, view.Session). Returning a concrete type instead is
+        # not an option in these cases, so allow them rather than carry a nolint at every site.
+        - github.com/hyperledger-labs/fabric-smart-client/platform/common/driver.Pagination
+        - github.com/hyperledger-labs/fabric-smart-client/platform/view/view.View
+        - github.com/hyperledger-labs/fabric-smart-client/platform/view/view.Session
+        - github.com/hyperledger/fabric-lib-go/bccsp.Key
+        - github.com/hyperledger/fabric-lib-go/bccsp.BCCSP
+        - github.com/hyperledger/fabric-lib-go/bccsp.HashOpts
+        - github.com/IBM/idemix/bccsp/types.BCCSP
+        - github.com/IBM/idemix/bccsp/types.KeyStore
+        - go.opentelemetry.io/otel/trace.Span
+        - github.com/hyperledger/fabric-lib-go/common/metrics.Gauge
+        - github.com/hyperledger/fabric-lib-go/common/metrics.Histogram
+        - github.com/hyperledger-labs/fabric-smart-client/platform/common/driver.ConfigService
+        - github.com/hyperledger-labs/fabric-smart-client/integration/nwo/api.ViewClient
+        - github.com/hyperledger-labs/fabric-smart-client/integration/nwo/api.Platform
+        - github.com/hyperledger-labs/fabric-smart-client/integration/nwo/api.Context
+        - github.com/hyperledger/fabric-lib-go/common/metrics.Gauge
+        - github.com/hyperledger/fabric-lib-go/common/metrics.Histogram
+        - github.com/hyperledger-labs/fabric-smart-client/platform/common/driver.ConfigService
+        - github.com/hyperledger-labs/fabric-smart-client/integration/nwo/api.ViewClient
+        - github.com/hyperledger-labs/fabric-smart-client/integration/nwo/api.Platform
+        - github.com/hyperledger-labs/fabric-smart-client/integration/nwo/api.Context
     lll:
       # Max line length, lines longer will be reported.
       line-length: 240
