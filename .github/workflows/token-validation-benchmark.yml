@@ -28,13 +28,21 @@ name: Token Validation Benchmark
 #   If a run is interrupted, clear leftover containers before retrying:
 #        docker rm -f $(docker ps -aq --filter ancestor=catthehacker/ubuntu:act-latest)
 on:
-  pull_request:
+  # pull_request_target runs in the BASE repo context, so GITHUB_TOKEN keeps
+  # write access even for fork PRs — which is what lets the compare job post its
+  # comment. The tradeoff is that this event is inherently more dangerous: the
+  # benchmark job below checks out and runs the PR HEAD (untrusted) code. To
+  # keep that safe, the default token here is read-only (see permissions), and
+  # pull-requests: write is granted ONLY to the trusted compare job that never
+  # runs PR code. Do not add secrets or write scopes to the benchmark job.
+  pull_request_target:
   workflow_dispatch:
-  
-# Needed so the compare job can post a comment on the PR.
+
+# Read-only by default. The benchmark job runs untrusted PR head code, so it
+# must not have a write-capable token. Write access is scoped per-job on the
+# compare job (below), which only runs trusted base-repo code.
 permissions:
   contents: read
-  pull-requests: write
 
 env:
   # -mod=mod lets `go test` update go.mod/go.sum in the ephemeral CI checkout.
@@ -182,7 +190,17 @@ jobs:
   compare:
     needs: benchmark
     runs-on: ubuntu-latest
+    # Write scope lives HERE, not at the top level, because this job runs only
+    # trusted base-repo code (the checkout below takes the default base ref, and
+    # it never checks out or executes PR head code). The benchmark job keeps the
+    # read-only default token.
+    permissions:
+      contents: read
+      pull-requests: write
     steps:
+      # No ref specified: under pull_request_target this checks out the BASE
+      # repo/branch (trusted), which is exactly what we want for the code that
+      # holds the write token.
       - name: Checkout code
         uses: actions/checkout@v4
 
