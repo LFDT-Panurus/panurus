@@ -119,3 +119,51 @@ func readWordAsLength(word []byte, what string) (int, error) {
 
 // maxInt is the largest value of the platform int, used to bound-check ABI lengths before conversion.
 const maxInt = int(^uint(0) >> 1)
+
+// DecodeBytes32 decodes a single bytes32 return value.
+func DecodeBytes32(ret []byte) ([32]byte, error) {
+	var out [32]byte
+	if len(ret) < wordLength {
+		return out, errors.Errorf("abi: bytes32 return too short: %d bytes", len(ret))
+	}
+	copy(out[:], ret[:wordLength])
+
+	return out, nil
+}
+
+// DecodeBoolArray decodes a bool[] return value: a head word holding the offset to the tail, then at
+// the tail a length word followed by one word per element (zero is false, anything else true).
+func DecodeBoolArray(ret []byte) ([]bool, error) {
+	if len(ret) < wordLength {
+		return nil, errors.Errorf("abi: bool array return too short for offset word: %d bytes", len(ret))
+	}
+	offset, err := readWordAsLength(ret[:wordLength], "offset")
+	if err != nil {
+		return nil, err
+	}
+	if offset > len(ret)-wordLength {
+		return nil, errors.Errorf("abi: bool array offset %d out of bounds (len %d)", offset, len(ret))
+	}
+	length, err := readWordAsLength(ret[offset:offset+wordLength], "length")
+	if err != nil {
+		return nil, err
+	}
+	body := ret[offset+wordLength:]
+	if length > len(body)/wordLength {
+		return nil, errors.Errorf("abi: bool array length %d exceeds the %d available words", length, len(body)/wordLength)
+	}
+
+	out := make([]bool, length)
+	for i := range length {
+		word := body[i*wordLength : (i+1)*wordLength]
+		for _, b := range word {
+			if b != 0 {
+				out[i] = true
+
+				break
+			}
+		}
+	}
+
+	return out, nil
+}
