@@ -10,6 +10,8 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
+
 	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/crypto/jubjub"
 	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/pp"
 	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/setup"
@@ -169,9 +171,11 @@ func (o *Orchestrator) BuildIssueAction(
 		return nil, nil, errors.New("orchestrator: issue action requires at least one output")
 	}
 
+	var totalValue uint64
 	outputCh := make(chan outputOutcome, len(outputs))
 	for j, req := range outputs {
 		go o.proveOutput(j, req, publicParams, outputCh)
+		totalValue += req.Value
 	}
 
 	outputOutcomes := make([]outputOutcome, len(outputs))
@@ -201,11 +205,16 @@ func (o *Orchestrator) BuildIssueAction(
 		return nil, nil, fmt.Errorf("orchestrator: binding signature serialization failed: %w", err)
 	}
 
+	var totalValueField fr.Element
+	totalValueField.SetUint64(totalValue)
+	totalValueBytes := totalValueField.Bytes()
+
 	action := &snarktoken.IssueAction{
 		Issuer:           issuer,
 		TokenType:        tokenType,
 		Outputs:          outputDescs,
 		BindingSignature: sigBytes,
+		TotalValue:       totalValueBytes[:],
 	}
 
 	return action, newNotes, nil
