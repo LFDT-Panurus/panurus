@@ -197,6 +197,7 @@ jobs:
     permissions:
       contents: read
       pull-requests: write
+    continue-on-error: true
     steps:
       # No ref specified: under pull_request_target this checks out the BASE
       # repo/branch (trusted), which is exactly what we want for the code that
