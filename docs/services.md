@@ -88,7 +88,7 @@ The [Storage Service](./services/storage.md) encapsulates all data persistence m
 The [Tokens Service](./services/tokens.md) provides advanced operations on tokens that go beyond basic UTXO management. This includes de-obfuscating token metadata for authorized parties and handling token upgrades (e.g., migrating from one driver implementation to another).
 
 ### Selector Service
-The [Selector Service](./services/selector.md) implements strategic token selection algorithms. It is responsible for selecting the optimal set of UTXOs for a given transaction while mitigating the risk of double-spending by temporarily locking tokens in use.
+The [Selector Service](./services/selector.md) selects the UTXOs that fund a transaction, using a randomized greedy first-fit over the wallet's candidate tokens, and mitigates the risk of double-spending by temporarily locking the tokens in use.
 
 ### Auditor Service
 The [Auditor Service](./services/auditor.md) provides tools for oversight and compliance. It allows authorized auditors to inspect transactions, verify public parameters, and ensure that the system adheres to established rules without compromising the privacy of non-audited users.

@@ -1,13 +1,13 @@
 # Selector Service
 
-The **Selector Service** (`token/services/selector`) implements strategic token selection algorithms to ensure that Panurus can efficiently and correctly select the best set of unspent tokens (UTXOs) for any given transaction.
+The **Selector Service** (`token/services/selector`) picks the unspent tokens (UTXOs) that fund a transaction and holds them under a temporary lock while the transaction is assembled, so that concurrent transactions of the same wallet do not try to spend the same tokens.
 
 ## Core Responsibilities
 
 The Selector Service is responsible for:
 *   **UTXO Selection**: Finding a set of spendable tokens that cover the total quantity required for a transfer operation.
 *   **Double-Spending Mitigation**: Temporarily locking selected tokens during the transaction assembly phase to prevent multiple concurrent transactions from attempting to spend the same tokens.
-*   **Selection Strategy Implementation**: Providing different algorithms (e.g., First-In-First-Out, smallest-first) to optimize for transaction size, cost, or privacy.
+*   **Candidate Enumeration**: Walking the wallet's candidate tokens in randomized order, locking each one as it is encountered, and stopping as soon as the accumulated amount covers the request. Token amounts do not order or rank the candidates.
 
 ## Interaction with TTX and Storage
 
@@ -25,43 +25,98 @@ graph LR
     
     subgraph "Selection Logic"
         Query[Query Spendable Tokens]
-        Strategy[Apply Selection Strategy]
+        Pick[Take Next Candidate - randomized order]
         Lock[Acquire Temporary Lock]
+        Done[Return Locked Tokens]
     end
     
     Selector --> Fetcher
     Selector --> Query
-    Query --> Strategy
-    Strategy --> Lock
+    Query --> Pick
+    Pick --> Lock
+    Lock -->|locked by another process, or sum still below target| Pick
+    Lock -->|requested amount covered| Done
 ```
 
 **How the components interact:**
 - **Selector Service**: Creates a selector instance per transaction and orchestrates the Selection Logic steps
 - **Query Spendable Tokens**: Selector calls the Fetcher to retrieve available tokens
 - **Fetcher Logic**: Checks cache first (fast path), queries Token Store - TokenDB on cache miss (slow path)
-- **Apply Selection Strategy**: Selector picks optimal tokens (e.g., smallest-first to minimize transaction size)
-- **Acquire Temporary Lock**: Selector locks each selected token in storage to prevent concurrent selection
+- **Take Next Candidate**: Selector takes the next token from the randomized candidate set; the token's amount plays no part in the choice
+- **Acquire Temporary Lock**: Selector locks each candidate as it is encountered, before it knows whether the request can be covered at all; a candidate already locked by another process is skipped and the loop moves on
 
 ## Key Components
 
 ### Selector Manager
 The `SelectorManager` is the entry point for obtaining a `Selector` instance anchored to a specific transaction. It ensures that the selection process is consistent and tied to the lifecycle of a single token request.
 
-### Token Selection Strategy
-The service supports various strategies for picking tokens (see "Strategy" box in diagram above). A common strategy is to pick the smallest number of tokens that cover the requested amount to minimize the transaction size and the associated verification overhead on the ledger.
+### Token Selection Algorithm
+
+Selection is a **randomized greedy first-fit**. It is not configurable, and it is not
+amount-aware. `Selector.selectInternal` (`token/services/selector/sherdlock/selector.go`)
+does the following:
+
+1. the candidate tokens of the wallet and token type are enumerated in randomized order,
+2. each candidate is locked as it is encountered — a candidate already locked by another
+   process is skipped; a lock failure wrapping `token.SelectorRateLimited` is a hard abort
+   (not a skip),
+3. the amounts of the successfully locked tokens are added up, and
+4. the selector returns as soon as the running sum reaches the requested quantity.
+
+A token's amount therefore only decides *when* the loop stops, never *which* candidate is
+picked. Two consequences worth planning for:
+
+*   **The number and size of the inputs is not minimized.** A request that a single large
+    token could have covered may well be funded by several small ones.
+*   **The result is not deterministic.** The same request against the same wallet can select
+    a different set of tokens, and a different number of inputs, on each run.
+
+**The randomization is deliberate.** It is what spreads concurrent selectors of the same
+wallet across different candidates: walking a fixed order would make every selector contend
+for the same first tokens, driving up lock failures and, with them, the immediate-retry path
+that gives up with `token.SelectorSufficientButLockedFunds`, and beyond it the backoff path
+that ends in `token.SelectorInsufficientFunds`.
+
+The shuffle lives in the sherdlock fetcher, not in the selection loop
+(`token/services/selector/sherdlock/fetcher.go`): the lazy fetcher wraps the database
+iterator in `collections.NewPermutatedIterator`, and the cached fetcher hands out a fresh
+permutation of the cached slice on every query. The `simple` driver does **not** shuffle — it
+walks the database iterator in the order the token store returns it
+(`token/services/selector/simple/selector.go`) — so concurrent selectors under `simple` are
+more exposed to colliding on the same leading candidates.
 
 **How it works in the flow (see "Selection Logic" subgraph in diagram):**
 1. **TTX Request**: TTX Service requests token selection for a transfer operation
 2. **Query Spendable Tokens**: Selector queries via Fetcher (Cache Hit → fast path, Cache Miss → Token Store - TokenDB)
-3. **Apply Selection Strategy**: Algorithm picks optimal tokens based on configured strategy (e.g., smallest-first)
-4. **Acquire Temporary Lock**: Selected tokens are locked in TokenLocks table to prevent double-spending
+3. **Take Next Candidate**: Selector takes the next token from the randomized candidate set
+4. **Acquire Temporary Lock**: The candidate is locked to prevent double-spending (in the `TokenLocks` table under the `sherdlock` driver, in memory under `simple`); on success its amount is added to the running sum, on failure the loop moves to the next candidate
+5. **Return or Retry**: The selector returns as soon as the sum covers the request; if the
+   candidate set is exhausted while other processes hold locks, it retries in two distinct
+   layers:
+   - **Immediate-retry layer** (`sherdlock` only): the inner loop refetches — refreshing the
+     sherdlock token cache via the fetcher — up to a hardcoded `maxImmediateRetries = 5` times
+     without releasing its already-acquired locks, then gives up with
+     `token.SelectorSufficientButLockedFunds`. Under `simple`, there is no equivalent cache
+     layer; the outer retry loop re-queries the query service directly on every attempt.
+   - **Backoff layer**: a configurable `numRetries` / `retryInterval` outer loop (the
+     `StubbornSelector` wrapper in `sherdlock`; the `numRetry` / `timeout` loop in `simple`)
+     releases locks, sleeps, and re-runs the whole selection from scratch. Exhausting this
+     layer returns `token.SelectorInsufficientFunds`.
+
+#### Strategies that are not implemented
+
+Amount-aware strategies — smallest-first, largest-first, First-In-First-Out, or minimizing
+the number of inputs — are **not** implemented and cannot be configured. There is no
+strategy abstraction in the code and no configuration key that selects one. Making selection
+amount-aware is tracked in
+[issue #2017](https://github.com/LFDT-Panurus/panurus/issues/2017).
 
 ### Locking Mechanism
 To prevent double-spending *before* the transaction is committed to the ledger, the Selector Service uses a local `TokenLocks` table in the **Storage Service** (see "TokenLocks" box in diagram above).
 
 **Lock lifecycle:**
-1.  **Lock Acquisition**: When a token is selected by the Strategy, the service attempts to insert a record in the `TokenLocks` table.
-2.  **Concurrency Control**: If another concurrent process has already locked that token, the insertion fails, and the selector picks a different token.
+1.  **Lock Acquisition**: When the selector takes a candidate token, it attempts to insert a record in the `TokenLocks` table.
+2.  **Concurrency Control**: If another concurrent process has already locked that token, the insertion fails, and the selector moves on to the next candidate.
 3.  **Lock Release**: Locks are released either when the transaction reaches finality (success/failure) or when a timeout occurs, ensuring that tokens do not remain permanently inaccessible due to crashed or abandoned transactions.
 
 ### In-Memory Locker Internals
@@ -119,7 +174,7 @@ Configure the selector service in your `core.yaml`:
 ```yaml
 token:
   selector:
-    driver: sherdlock                    # Selection strategy (default: sherdlock)
+    driver: sherdlock                    # Selector implementation and locking backend: sherdlock | simple (default: sherdlock)
     numRetries: 3                        # Retry attempts for token selection (default: 3)
     retryInterval: 5s                    # Wait time between retries (default: 5s)
     leaseExpiry: 3m                      # Lock expiration time (default: 3m)
@@ -128,6 +183,24 @@ token:
     fetcherCacheRefresh: 30s             # Cache refresh interval (default: 0 = use fetcher default)
     fetcherCacheMaxQueries: 100          # Max queries before cache refresh (default: 0 = use fetcher default)
 ```
+
+### Driver
+
+`driver` selects the selector implementation and, with it, the locking backend:
+
+- **sherdlock** (default): locks in the `TokenLocks` table of the Storage Service, with
+  leases governed by `leaseExpiry` and `leaseCleanupTickPeriod`.
+- **simple**: keeps its locks in memory (see [In-Memory Locker Internals](#in-memory-locker-internals)).
+
+It does **not** select a selection algorithm: both drivers walk candidates greedily and stop
+on first cover, but they diverge in several ways beyond the shuffle:
+
+- `sherdlock` randomizes the candidate order; `simple` walks tokens in database order.
+- `sherdlock` holds already-acquired locks across immediate retries; `simple` releases all
+  locks between every retry attempt.
+- `simple` runs a `GetTokens` concurrency check after a successful cover and can return a
+  fourth error sentinel, `token.SelectorSufficientFundsButConcurrencyIssue`, which
+  `sherdlock` does not produce.
 
 ### Cache Configuration
 
