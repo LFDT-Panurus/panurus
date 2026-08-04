@@ -162,6 +162,74 @@ func (d *Base) NewWalletService(...) (*wallet.Service, error) {
 
 > **Note:** `provider` here is a `NewTMSProvider`-wrapped `Provider` (see [Driver Metrics](../drivers/metrics.md#pitfall-labelnames-must-include-network-channel-namespace)), which binds `network`/`channel`/`namespace` on every metric via `.With(...)` before returning it. Every `CounterOpts`/`HistogramOpts` above must therefore declare those three as `LabelNames` in addition to its own label(s), or the metric panics with "inconsistent label cardinality" on first use. This is exactly the bug that crashed the DVP/DLog integration suite in `SignerRouter.Register` before it was fixed.
 
+## Wallet Lifecycle and Recipient Data Caching
+
+Anonymous owner wallets hand out a fresh pseudonym for every payment. Generating one is
+expensive (an Idemix pseudonym plus a registry binding), so `AnonymousOwnerWallet` keeps a
+pre-provisioned buffer of recipient data. Two caches implement that buffer:
+
+| Cache | Buffers | Sized by |
+|:------|:--------|:---------|
+| `role.RecipientDataCache` (`token/services/identity/role/cache.go`) | `driver.RecipientData` (pseudonym + audit info) for one wallet | `wallets.owners[].cacheSize`, falling back to `wallets.defaultCacheSize` (see [configuration](../configuration.md)) |
+| `idemix/cache.IdentityCache` (`token/services/identity/idemix/cache/cache.go`) | `idriver.IdentityDescriptor` for one Idemix key manager | same lookup, via `KeyManagerProvider.cacheSizeForID` |
+
+Both follow the same contract:
+
+*   **Provisioning is lazy.** The background goroutine is started by the first request, and
+    only when the configured size is greater than zero. With a size of zero the cache is
+    disabled and every request goes straight to the backend.
+*   **Requests never wait on the cache.** A request that does not find a buffered entry
+    within a short timeout (5 ms) generates the data on the spot instead of blocking, so a
+    slow backend degrades latency rather than stalling the caller. A cancelled caller
+    context aborts the request immediately.
+*   **A failing backend backs off, and is observable.** The provisioning loop logs the
+    failure, increments a counter and waits one second before retrying, so a broken
+    identity backend cannot turn pre-provisioning into a busy loop — and the condition can
+    be alerted on instead of only appearing in the logs.
+*   **`Close()` is mandatory and idempotent.** It cancels the background context, which
+    terminates the provisioning goroutine even while it is parked on a full buffer or
+    inside a retry backoff. A cache that is never closed keeps its goroutine, its channel
+    and its backend closure alive for the lifetime of the process. After `Close()` the
+    cache still serves requests from the backend; it simply stops pre-provisioning.
+
+### Cache metrics
+
+| Metric | Type | Cache | Purpose |
+|:-------|:-----|:------|:--------|
+| `recipient_data_cache_level` | Gauge | `RecipientDataCache` | Entries currently buffered. Counted only once an entry is really in the buffer, so it cannot drift upward when the producer is blocked. |
+| `recipient_data_provision_failures_total` | Counter | `RecipientDataCache` | Failed pre-provisioning attempts. A rising rate means the identity backend is failing and requests are falling back to the slower on-demand path. |
+| `cache_level` | Gauge | idemix `IdentityCache` | As above, for Idemix identities. |
+| `cache_provision_failures_total` | Counter | idemix `IdentityCache` | As above, for Idemix identities. |
+
+> **Note:** these providers are `NewTMSProvider`-wrapped, so every `GaugeOpts`/`CounterOpts`
+> above must declare `network`, `channel` and `namespace` in `LabelNames` — omitting them
+> panics with "inconsistent label cardinality" on first use. See
+> [Driver Metrics](../drivers/metrics.md#pitfall-labelnames-must-include-network-channel-namespace).
+
+### Who calls `Close()`
+
+Application code does not normally close these caches itself: they are released by the
+existing teardown chain when a token management service is unloaded, for instance when
+its public parameters are updated.
+
+```
+core.TMSProvider.Update            (token/core/tms.go)
+  └── Service.Done()               (token/core/common/tms.go)
+        └── wallet.Service.Done()  (token/services/identity/wallet/service.go)
+              └── role.Registry.Done()
+                    ├── Close() on every wallet it created that holds resources
+                    │     └── AnonymousOwnerWallet.Close() → RecipientDataCache.Close()
+                    └── Role.Done() → LocalMembership.Close()
+```
+
+`role.Registry.Done()` closes wallets through a local `interface{ Close() }` assertion
+rather than through `driver.Wallet`, so wallet types with nothing to release need not
+implement a no-op `Close()`. If you add a wallet type that owns a goroutine, a ticker or
+any other resource, give it a `Close()` method and it will be released automatically.
+
+> **Note:** tests that exercise an anonymous owner wallet should `t.Cleanup(w.Close)`,
+> otherwise each test leaves a provisioning goroutine behind for the rest of the run.
+
 ## Identity Types
 
 The Identity Service leverages a wrapper called **TypedIdentity** to support various identity schemes uniformly. 
