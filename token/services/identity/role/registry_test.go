@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -25,6 +26,7 @@ import (
 	"github.com/LFDT-Panurus/panurus/token/services/identity/role/mock"
 	"github.com/LFDT-Panurus/panurus/token/services/logging"
 	"github.com/LFDT-Panurus/panurus/token/services/storage"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -338,4 +340,39 @@ func TestLookup_ByIdentityBytesResolvesViaSharedStores(t *testing.T) {
 
 	// resolved through the point query, without a second full scan
 	require.Equal(t, 1, iss.IteratorConfigurationsCallCount())
+}
+
+// closableWallet is a wallet that records whether it has been closed.
+type closableWallet struct {
+	*mock2.Wallet
+	closed atomic.Int32
+}
+
+func (w *closableWallet) Close() { w.closed.Add(1) }
+
+// TestDoneClosesRegisteredWallets checks Done releases the wallets held by the
+// registry, so that background goroutines they own (such as the recipient data
+// provisioning of an anonymous owner wallet) are terminated instead of living for the
+// lifetime of the process.
+func TestDoneClosesRegisteredWallets(t *testing.T) {
+	reg, _, r, _ := newRegistryWithFakes()
+	ctx := t.Context()
+
+	closable := &closableWallet{Wallet: &mock2.Wallet{}}
+	closable.IDReturns("w1")
+	require.NoError(t, reg.RegisterWallet(ctx, "w1", closable))
+
+	// A wallet with no resources to release must simply be skipped.
+	plain := &mock2.Wallet{}
+	plain.IDReturns("w2")
+	require.NoError(t, reg.RegisterWallet(ctx, "w2", plain))
+
+	require.NoError(t, reg.Done())
+
+	assert.Equal(t, int32(1), closable.closed.Load(), "the wallet was not closed exactly once")
+	assert.Equal(t, 1, r.DoneCallCount(), "the role was not released")
+
+	reg.WalletMu.RLock()
+	defer reg.WalletMu.RUnlock()
+	assert.Empty(t, reg.Wallets, "the wallet cache was not dropped")
 }

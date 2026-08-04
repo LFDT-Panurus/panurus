@@ -122,18 +122,23 @@ func (l *KeyManagerProvider) Get(ctx context.Context, identityConfig *driver.Ide
 	}
 
 	var getIdentityFunc func(context.Context, []byte) (*idriver.IdentityDescriptor, error)
+	// identityCache is kept on the wrapper, not discarded: the cache owns a background
+	// provisioning goroutine and only its Close can stop it. Taking just the Identity
+	// method value here would make the cache unreachable and the goroutine permanent.
+	var identityCache *cache.IdentityCache
 	if keyManager.IsRemote() {
 		id := identityConfig.ID
 		getIdentityFunc = func(context.Context, []byte) (*idriver.IdentityDescriptor, error) {
 			return nil, errors.Errorf("cannot invoke this function, remote must register pseudonyms on wallet [%v]", id)
 		}
 	} else {
-		getIdentityFunc = cache.NewIdentityCache(
+		identityCache = cache.NewIdentityCache(
 			keyManager.Identity,
 			cacheSize,
 			nil,
 			cache.NewMetrics(l.metricsProvider),
-		).Identity
+		)
+		getIdentityFunc = identityCache.Identity
 	}
 
 	// finalize identity configuration
@@ -148,6 +153,7 @@ func (l *KeyManagerProvider) Get(ctx context.Context, identityConfig *driver.Ide
 	return &WrappedKeyManager{
 		KeyManager:      keyManager,
 		getIdentityFunc: getIdentityFunc,
+		identityCache:   identityCache,
 	}, nil
 }
 
@@ -164,6 +170,18 @@ func (l *KeyManagerProvider) cacheSizeForID(id string) (int, error) {
 type WrappedKeyManager struct {
 	membership.KeyManager
 	getIdentityFunc func(context.Context, []byte) (*idriver.IdentityDescriptor, error)
+	// identityCache is nil for remote key managers, which do not pre-provision.
+	identityCache *cache.IdentityCache
+}
+
+// Close releases the resources held by this key manager, stopping the background
+// identity provisioning of its cache. It is idempotent and safe to call on a remote
+// key manager, which has no cache. LocalMembership.Close calls this for every key
+// manager it loaded.
+func (k *WrappedKeyManager) Close() {
+	if k.identityCache != nil {
+		k.identityCache.Close()
+	}
 }
 
 func (k *WrappedKeyManager) Identity(ctx context.Context, auditInfo []byte) (*idriver.IdentityDescriptor, error) {
