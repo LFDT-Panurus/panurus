@@ -513,6 +513,44 @@ The `CollectEndorsementsView` is responsible for gathering all signatures requir
 *   **Auditor Signatures**: If the TMS is configured with an auditor, the transaction must be approved via the `AuditApproveView`.
 *   **Network Endorsements**: The service delegates to the **Network Service** to obtain backend-specific endorsements (e.g., Fabric chaincode endorsements).
 
+### Streaming signer for external wallets (`external.go`)
+
+When the signing key for a wallet does not live on the node, `ttx.WithExternalWalletSigner(walletID, ews)`
+registers an `ExternalWalletSigner` (`Sign(party, message)` plus `Done()`) that
+`CollectEndorsementsView` calls instead of the local signature service. `external.go` provides an
+implementation of that interface on top of an FSC stream, so the wallet holder can be the
+application that invoked the view over `StreamCallView`:
+
+*   `StreamExternalWalletSignerServer` sits on the view's end of the stream. It is constructed
+    with the view's stream and passed to `WithExternalWalletSigner`; each `Sign` call sends a
+    `SigRequest` message and blocks for the matching `SignResponse`, and `Done` sends a `Done`
+    message once no further signatures are needed.
+*   `StreamExternalWalletSignerClient` sits on the application's end. It is constructed with a
+    `SignerProvider` over the local wallet, and its `Respond()` loop signs each incoming
+    `SigRequest` and writes back a `SignResponse` until the `Done` message arrives.
+
+All three message kinds travel inside a `StreamExternalWalletMsg` envelope (`Type` plus
+JSON-encoded `Raw`).
+
+`Respond()` returns `nil` once the peer signals `Done`. Otherwise it returns the failure that
+terminated the exchange:
+
+*   a signing failure (no signer for the party, or the signer itself failing) or a failure
+    sending the response back;
+*   a failure receiving or JSON-decoding a request. These are detected by the client's internal
+    receive goroutine and handed to `Respond()` over a buffered error channel, so the caller
+    gets the real transport or decoding error. The buffering matters: it lets that goroutine
+    complete its send and exit rather than blocking forever on a channel nobody reads;
+*   `Timeout waiting for stream input exceeded` if no message arrives within the configured
+    timeout. `NewStreamExternalWalletSignerClient` defaults to one hour; use
+    `NewStreamExternalWalletSignerClientWithTimeout` to choose another value. A timeout now means
+    what it says — the stream went quiet — rather than masking a stream error.
+
+However `Respond()` ends, it signals its receive goroutine to stop before returning, so a
+request decoded after the caller has given up is dropped rather than left waiting for a
+consumer that will never come. The client is therefore single-use: once `Respond()` has
+returned, no further signatures are served on that stream.
+
 ## Distribution and Ordering
 
 Once fully endorsed, the transaction metadata is distributed to all recipients so they can track and spend their new tokens. The initiator then uses the `OrderingView` to broadcast the transaction envelope to the network's ordering service.
