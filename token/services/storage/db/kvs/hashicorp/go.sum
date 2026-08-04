@@ -1,9 +1,9 @@
 github.com/DATA-DOG/go-sqlmock v1.5.2 h1:OcvFkGmslmlZibjAjaHm3L//6LiuBgolP7OputlJIzU=
 github.com/DATA-DOG/go-sqlmock v1.5.2/go.mod h1:88MAG/4G7SMwSE3CeA0ZKzrT5CiOU3OJ+JlNzwDqpNU=
-github.com/IBM/idemix v0.2.0 h1:BY5Fd/pIwpVc4lRgidbTvdjY/2HJ4UZsNZ+jDUopFgs=
-github.com/IBM/idemix v0.2.0/go.mod h1:JLi8e59+BWAEtKQ3q9+EKPpkJdwyvA4F8UGH0W9RRB0=
-github.com/IBM/mathlib v0.3.0 h1:lYmtMn43OZRzuw8yVnKqPPZD4MnWV34fffFM/X4apvk=
-github.com/IBM/mathlib v0.3.0/go.mod h1:r5/+9SWcYCm1TSZE9HRXq9/ejjdtS0Ab2MjLYBuF9S4=
+github.com/IBM/idemix v0.2.2-0.20260804120204-9f57f06495cb h1:UjtavWcEPxmbSODYvlaROcz0vn6l7XWi8kS0QsJG3Eo=
+github.com/IBM/idemix v0.2.2-0.20260804120204-9f57f06495cb/go.mod h1:eWXGhLUFvZCdtgkkQYJLbVHInoxzrhV5O5r1uzmQY1U=
+github.com/IBM/mathlib v0.3.1 h1:9TQO897Tps8BqxETHzwh1fZR16FBgg5vp8zZKhbB+SU=
+github.com/IBM/mathlib v0.3.1/go.mod h1:r5/+9SWcYCm1TSZE9HRXq9/ejjdtS0Ab2MjLYBuF9S4=
 github.com/Masterminds/semver/v3 v3.5.0 h1:kQceYJfbupGfZOKZQg0kou0DgAKhzDg2NZPAwZ/2OOE=
 github.com/Masterminds/semver/v3 v3.5.0/go.mod h1:4V+yj/TJE1HU9XfppCwVMZq3I84lprf4nC11bSS5beM=
 github.com/Masterminds/squirrel v1.5.4 h1:uUcX/aBc8O7Fg9kaISIUsHXdKuqehiXAMQTYX8afzqM=
