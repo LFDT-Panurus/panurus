@@ -14,11 +14,15 @@ import (
 	"github.com/hyperledger-labs/fabric-smart-client/platform/common/utils/collections"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/fabric"
 	events2 "github.com/hyperledger-labs/fabric-smart-client/platform/fabric/core/generic/events"
+
+	"github.com/LFDT-Panurus/panurus/token/services/network/fabric/blockscan"
 )
 
 const (
-	NumberPastBlocks = 10
-	FirstBlock       = 1
+	// NumberPastBlocks is how far back the fallback block scan rewinds from the last known block.
+	NumberPastBlocks = blockscan.NumberPastBlocks
+	// FirstBlock is the earliest block the fallback scan may start from.
+	FirstBlock = blockscan.FirstBlock
 )
 
 // ErrTxNotFound is the sentinel returned by txLedger when a transaction does not
@@ -98,7 +102,7 @@ func (q *DeliveryScanQueryByID) queryByID(ctx context.Context, keys []driver.TxI
 		return
 	}
 
-	startingBlock := max(FirstBlock, lastBlock-NumberPastBlocks)
+	startingBlock := blockscan.StartingBlock(lastBlock)
 	logger.DebugfContext(ctx, "start scanning blocks starting from [%d], looking for remaining keys [%s]", startingBlock, keySet)
 
 	// start delivery for the future

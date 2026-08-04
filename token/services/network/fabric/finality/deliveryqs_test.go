@@ -206,3 +206,38 @@ func TestQueryByID_TransientError_ContinuesToNextTx(t *testing.T) {
 	assert.Contains(t, received, wantInfo, "tx2 info must be delivered despite tx1 transient error")
 	assert.True(t, scanner.called, "transient error must trigger delivery scan for tx1")
 }
+
+// TestQueryByID_FallbackScanStartingBlock verifies that the fallback block scan never starts from
+// an underflowed block number: on a chain younger than NumberPastBlocks the scan must start from
+// FirstBlock instead of wrapping around to a block near MaxUint64, which would silently find
+// nothing and surface no error.
+func TestQueryByID_FallbackScanStartingBlock(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		lastBlock cdriver.BlockNum
+		expected  uint64
+	}{
+		{name: "young chain clamps to first block", lastBlock: 5, expected: finality.FirstBlock},
+		{name: "mature chain rewinds by the full window", lastBlock: 100, expected: 90},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+
+			scanner := &fakeScanner{}
+			// fakeLedger returns "TXID [tx1] not available" for unknown keys, so tx1 falls back
+			// to the block scan.
+			q := &finality.DeliveryScanQueryByID{
+				Delivery: scanner,
+				Ledger:   &fakeLedger{results: map[string]fakeLedgerResult{}},
+				Mapper:   &fakeMapper{results: map[*fabric.ProcessedTransaction]fakeMapperResult{}},
+			}
+
+			ch, err := q.QueryByID(ctx, tc.lastBlock, evicted("tx1"))
+			require.NoError(t, err)
+			drain(ch)
+
+			require.True(t, scanner.called, "TxNotFound must trigger delivery scan")
+			assert.Equal(t, tc.expected, scanner.startBlock)
+		})
+	}
+}

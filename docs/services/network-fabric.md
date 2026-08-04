@@ -357,6 +357,13 @@ resolved independently: if its query cannot be built, does not reach the chainco
 response that cannot be decoded, only that namespace falls back to the block scan. The keys of the
 other namespaces in the same batch are still resolved and delivered.
 
+The block scan itself is the fallback shared by the lookup service and the
+[finality service](../../token/services/network/fabric/finality/deliveryqs.go): it rewinds
+`NumberPastBlocks` blocks behind the last known block and scans forward from there. The starting
+block is computed by [`blockscan.StartingBlock`](../../token/services/network/fabric/blockscan/blockscan.go),
+which clamps the result to `FirstBlock` so that a chain shorter than the rewind window is scanned
+from its first block rather than from an underflowed block number.
+
 ## State Queries
 
 The Fabric implementation provides efficient state querying through the chaincode:
