@@ -296,6 +296,45 @@ An extension of Idemix that uses a **commitment to the Enrollment ID (EID)** as 
 | **Identity Size** | Large (~several KB) | Small (~32-64 bytes) |
 | **Storage Overhead** | High | Low |
 
+#### Audit Info Deserialization (Idemix and IdemixNym)
+
+Audit info is JSON and can arrive from a counterparty (recipient registration, auditing
+flows), so both `crypto.AuditInfo.FromBytes`
+(`token/services/identity/idemix/crypto/audit.go`) and `nym.AuditInfo.FromBytes`
+(`token/services/identity/idemixnym/nym/audit.go`) treat their input as untrusted and reject
+malformed payloads with an error.
+
+`EidNymAuditData` and `RhNymAuditData` embed `mathlib` curve elements, which JSON-encode as
+a curve ID plus the raw element bytes:
+
+```json
+{"EidNymAuditData":{"Nym":{"curve":3,"element":"..."},"Rand":{...},"Attr":{...}}}
+```
+
+`mathlib`'s `UnmarshalJSON` uses that curve ID to index its internal curve table **without a
+bounds check**, so an out-of-range ID raises an `index out of range` panic from inside
+`encoding/json`. Both `FromBytes` implementations therefore run their decode through
+`crypto.UnmarshalAuditInfo`, which recovers that panic and returns it as an ordinary error:
+
+```go
+return crypto.UnmarshalAuditInfo(func() error {
+    return json.Unmarshal(raw, a)
+})
+```
+
+The guard wraps the real decode rather than pre-validating the payload's curve IDs, because
+`mathlib` runs *during* `encoding/json`'s traversal: a separate validation pass has to
+reproduce that traversal exactly to see every curve element the decode reaches, including
+ones that never appear in the decoded result (a duplicate key overwriting an earlier value,
+input after the first JSON value, a curve element following a type error). The same defect
+is contained the same way in `FromG1Proto`
+(`token/core/zkatdlog/nogh/protos-go/utils/proto.go`).
+
+Where curve IDs arrive as plain data rather than through a third-party unmarshaler, prefer an
+explicit bounds check instead — see `curveAt` in
+`token/core/common/encoding/asn1/asn1.go` and `PublicParams.Validate` in
+`token/core/zkatdlog/nogh/v1/setup/setup.go`.
+
 ### Other Identity Types
 
 The architecture supports specialized identity types for complex use cases:
