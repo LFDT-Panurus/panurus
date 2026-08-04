@@ -8,6 +8,7 @@ package common
 
 import (
 	"context"
+	"time"
 
 	"github.com/LFDT-Panurus/panurus/token/driver"
 	"github.com/LFDT-Panurus/panurus/token/driver/protos-go/v1/request"
@@ -15,6 +16,16 @@ import (
 	"github.com/LFDT-Panurus/panurus/token/token"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	"go.opentelemetry.io/otel/trace"
+)
+
+// AuditTokensNumRetries and AuditTokensRetryDelay control how RetrieveAuditTokens
+// tolerates the read-timing race in which a referenced token's producing
+// transaction is still pending, so its outputs have not yet been persisted to the
+// token store by the asynchronous finality listener. They mirror the retry/backoff
+// already applied on the sibling token.QueryEngine audit path (see token/vault.go).
+var (
+	AuditTokensNumRetries = 3
+	AuditTokensRetryDelay = 3 * time.Second
 )
 
 // AuditContext contains the context for token request auditing.
@@ -267,7 +278,7 @@ func ExtractTokenIDsAndCheckDuplicates(
 // The returned map uses token ID pointers as keys, allowing callers to efficiently look up
 // tokens by their ID during validation.
 //
-// IMPORTANT: This function always returns a non-nil map (possibly empty) to ensure
+// This function always returns a non-nil map (possibly empty) to ensure
 // validation logic can distinguish between "no tokens requested" and "tokens not found".
 func RetrieveAuditTokens(
 	ctx context.Context,
@@ -288,7 +299,7 @@ func RetrieveAuditTokens(
 	}
 
 	logger.DebugfContext(ctx, "[%s] retrieving [%d] audit tokens...", anchor, len(tokenIDs))
-	tokens, err := queryEngine.ListAuditTokens(ctx, tokenIDs...)
+	tokens, err := listAuditTokensWithRetry(ctx, logger, queryEngine, tokenIDs, anchor)
 	if err != nil {
 		return nil, errors.WithMessagef(err, "failed to retrieve audit tokens for tx [%s]", anchor)
 	}
@@ -302,6 +313,59 @@ func RetrieveAuditTokens(
 	logger.DebugfContext(ctx, "[%s] retrieved [%d] audit tokens", anchor, len(auditTokens))
 
 	return auditTokens, nil
+}
+
+// listAuditTokensWithRetry calls queryEngine.ListAuditTokens, tolerating the
+// read-timing race where a referenced token is momentarily missing from the token
+// store because its producing transaction is still pending (its outputs are
+// persisted only later, by the asynchronous finality listener). On failure, it
+// checks whether any requested token belongs to a still-pending transaction and,
+// if so, waits AuditTokensRetryDelay and retries up to AuditTokensNumRetries times
+// before giving up. This mirrors the tolerance already implemented for the sibling
+// Audit() path in token/vault.go, so the earlier AuditorCheck gate no longer
+// spuriously rejects a validly-audited, quickly-chained transaction.
+func listAuditTokensWithRetry(
+	ctx context.Context,
+	logger logging.Logger,
+	queryEngine driver.QueryEngine,
+	tokenIDs []*token.ID,
+	anchor driver.TokenRequestAnchor,
+) ([]*token.Token, error) {
+	var tokens []*token.Token
+	var err error
+
+	for i := range AuditTokensNumRetries {
+		tokens, err = queryEngine.ListAuditTokens(ctx, tokenIDs...)
+		if err == nil {
+			return tokens, nil
+		}
+
+		// The lookup failed. Check whether any requested token belongs to a
+		// transaction that is still pending; if so, the row is expected to appear
+		// once the finality listener persists it, so wait a bit and retry.
+		retry := false
+		for _, id := range tokenIDs {
+			pending, pErr := queryEngine.IsPending(ctx, id)
+			if pending || pErr != nil {
+				logger.Warnf("[%s] cannot get audit token for id [%s] because the relative transaction is pending, retry [%d/%d]: with err [%v]", anchor, id, i+1, AuditTokensNumRetries, pErr)
+				if i == AuditTokensNumRetries-1 {
+					return nil, errors.Errorf("failed to get audit tokens, tx [%s] is still pending", id.TxId)
+				}
+				retry = true
+
+				break
+			}
+		}
+
+		if !retry {
+			// None of the tokens is pending: this is a genuine failure, do not retry.
+			return nil, err
+		}
+
+		time.Sleep(AuditTokensRetryDelay)
+	}
+
+	return tokens, err
 }
 
 // ValidateStructure ensures complete structural correspondence between TokenRequest and TokenRequestMetadata.
