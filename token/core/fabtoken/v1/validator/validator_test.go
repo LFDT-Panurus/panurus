@@ -997,6 +997,93 @@ func TestTransferHTLCValidate(t *testing.T) {
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "expiration date has already passed")
 	})
+
+	t.Run("MissingSignature_NoPanic", func(t *testing.T) {
+		sender, _ := identity.WrapWithType(x509.IdentityType, []byte("sender"))
+		htlcOwner := newExpiredHTLCOwner(t, sender)
+
+		ta := &actions.TransferAction{
+			Outputs: []*actions.Output{
+				{Owner: sender, Type: "ABC", Quantity: "100"},
+			},
+		}
+		c := &validator.Context{
+			TransferAction:  ta,
+			InputTokens:     []*actions.Output{{Owner: htlcOwner, Type: "ABC", Quantity: "100"}},
+			Signatures:      nil,
+			MetadataCounter: make(map[string]int),
+		}
+		err := validator.TransferHTLCValidate(ctx, c)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "missing signature for input at index [0]")
+	})
+
+	t.Run("ShortSignatures_NoPanic", func(t *testing.T) {
+		sender, _ := identity.WrapWithType(x509.IdentityType, []byte("sender"))
+		htlcOwner := newExpiredHTLCOwner(t, sender)
+
+		ta := &actions.TransferAction{
+			Outputs: []*actions.Output{
+				{Owner: sender, Type: "ABC", Quantity: "100"},
+			},
+		}
+		// two htlc-owned inputs but only one signature: the second input must
+		// return an error instead of indexing past the end of ctx.Signatures
+		c := &validator.Context{
+			TransferAction: ta,
+			InputTokens: []*actions.Output{
+				{Owner: htlcOwner, Type: "ABC", Quantity: "100"},
+				{Owner: htlcOwner, Type: "ABC", Quantity: "100"},
+			},
+			Signatures:      [][]byte{[]byte("sig")},
+			MetadataCounter: make(map[string]int),
+		}
+		err := validator.TransferHTLCValidate(ctx, c)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "missing signature for input at index [1]")
+	})
+
+	t.Run("NilInputToken_NoPanic", func(t *testing.T) {
+		owner1, _ := identity.WrapWithType(x509.IdentityType, []byte("owner1"))
+		ta := &actions.TransferAction{
+			Outputs: []*actions.Output{{Owner: owner1, Type: "ABC", Quantity: "100"}},
+		}
+		c := &validator.Context{
+			TransferAction:  ta,
+			InputTokens:     []*actions.Output{nil},
+			MetadataCounter: make(map[string]int),
+		}
+		err := validator.TransferHTLCValidate(ctx, c)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "nil input token at index [0]")
+	})
+}
+
+// newExpiredHTLCOwner returns an htlc-script identity whose deadline has already
+// passed, so that a transfer back to the sender is validated as a reclaim.
+func newExpiredHTLCOwner(t *testing.T, sender driver.Identity) driver.Identity {
+	t.Helper()
+
+	recipient, err := identity.WrapWithType(x509.IdentityType, []byte("recipient"))
+	require.NoError(t, err)
+	hash := crypto.SHA256.New()
+	hash.Write([]byte("preimage"))
+	script := &htlc.Script{
+		Sender:    sender,
+		Recipient: recipient,
+		Deadline:  time.Now().Add(-1 * time.Hour), // expired
+		HashInfo: htlc.HashInfo{
+			Hash:         hash.Sum(nil),
+			HashFunc:     crypto.SHA256,
+			HashEncoding: encoding.Base64,
+		},
+	}
+	scriptBytes, err := json.Marshal(script)
+	require.NoError(t, err)
+	htlcOwner, err := identity.WrapWithType(htlc.ScriptType, scriptBytes)
+	require.NoError(t, err)
+
+	return htlcOwner
 }
 
 // BenchmarkValidatorTransfer benchmarks the verification of a transfer token request.
