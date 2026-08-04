@@ -121,7 +121,7 @@ func (*DefaultManager) PublicKeyImportOpts(schema string) (*bccsp.IdemixIssuerPu
 	return nil, errors.Errorf("unsupported schema '%s' for PublicKeyImportOpts", schema)
 }
 
-// Returns the options for creating signatures/proofs (specifying which attributes are hidden)
+// SignerOpts returns the options for creating signatures/proofs (specifying which attributes are hidden)
 func (*DefaultManager) SignerOpts(schema string) (*bccsp.IdemixSignerOpts, error) {
 	switch schema {
 	case "":

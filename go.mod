@@ -4,8 +4,8 @@ go 1.26.5
 
 require (
 	github.com/DATA-DOG/go-sqlmock v1.5.2
-	github.com/IBM/idemix v0.2.0
-	github.com/IBM/mathlib v0.3.0
+	github.com/IBM/idemix v0.2.2-0.20260804120204-9f57f06495cb
+	github.com/IBM/mathlib v0.3.1
 	github.com/consensys/gnark-crypto v0.20.1
 	github.com/dgraph-io/badger/v4 v4.9.4
 	github.com/dgraph-io/ristretto/v2 v2.4.2
