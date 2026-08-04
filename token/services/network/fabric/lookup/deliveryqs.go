@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"slices"
 
+	"github.com/LFDT-Panurus/panurus/token/services/network/fabric/blockscan"
 	"github.com/LFDT-Panurus/panurus/token/services/network/fabric/tcc"
 	slices2 "github.com/LFDT-Panurus/panurus/token/services/utils/slices"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/common/driver"
@@ -20,9 +21,11 @@ import (
 )
 
 const (
-	QueryStates      = tcc.QueryStates
-	NumberPastBlocks = 10
-	FirstBlock       = 1
+	QueryStates = tcc.QueryStates
+	// NumberPastBlocks is how far back the fallback block scan rewinds from the last known block.
+	NumberPastBlocks = blockscan.NumberPastBlocks
+	// FirstBlock is the earliest block the fallback scan may start from.
+	FirstBlock = blockscan.FirstBlock
 )
 
 // stateQuerier is the subset of the Fabric channel used to ask the token chaincode for the
@@ -142,8 +145,7 @@ func (q *DeliveryScanQueryByID) queryByID(ctx context.Context, keys []driver.PKe
 		return
 	}
 
-	startingBlock := max(FirstBlock, lastBlock-NumberPastBlocks)
-	// startingBlock := uint64(0)
+	startingBlock := blockscan.StartingBlock(lastBlock)
 	logger.DebugfContext(ctx, "start scanning blocks starting from [%d], looking for remaining keys [%s]", startingBlock, keySet)
 
 	// start delivery for the future

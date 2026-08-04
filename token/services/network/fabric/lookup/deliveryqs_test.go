@@ -193,3 +193,33 @@ func TestQueryByID_MissingValueTriggersScan(t *testing.T) {
 	assert.Empty(t, drain(ch))
 	assert.True(t, scanner.called)
 }
+
+// The fallback block scan must never start from an underflowed block number: on a chain younger
+// than NumberPastBlocks it starts from FirstBlock instead of wrapping around to a block near
+// MaxUint64, which would silently find nothing and surface no error.
+func TestQueryByID_FallbackScanStartingBlock(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		lastBlock driver.BlockNum
+		expected  uint64
+	}{
+		{name: "young chain clamps to first block", lastBlock: 5, expected: lookup.FirstBlock},
+		{name: "mature chain rewinds by the full window", lastBlock: 100, expected: 90},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			querier := &fakeQuerier{results: map[driver.Namespace]querierResult{
+				"ns1": {raw: values(t, []byte{})},
+			}}
+			scanner := &fakeScanner{}
+
+			ch, err := newQuery(querier, scanner).QueryByID(t.Context(), tc.lastBlock, evictedFor(map[driver.Namespace]driver.PKey{
+				"ns1": "k1",
+			}))
+			require.NoError(t, err)
+
+			assert.Empty(t, drain(ch))
+			require.True(t, scanner.called, "a missing value must trigger the block scan")
+			assert.Equal(t, tc.expected, scanner.startBlock)
+		})
+	}
+}
