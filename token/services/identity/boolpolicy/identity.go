@@ -95,11 +95,21 @@ type IdentityAuditInfo struct {
 // It is a sequence of per-component audit infos in the same order as Identities.
 type AuditInfo struct {
 	IdentityAuditInfos []IdentityAuditInfo
+	// eid is the enrollment ID shared by all component identities;
+	// empty when they span enrollments.
+	eid string
 }
 
-func (a *AuditInfo) EnrollmentID() string     { return "" }
+// EnrollmentID returns the enrollment ID shared by all component identities,
+// or "" when there is none.
+func (a *AuditInfo) EnrollmentID() string { return a.eid }
+
+// RevocationHandle returns "": a policy identity has no revocation handle of
+// its own.
 func (a *AuditInfo) RevocationHandle() string { return "" }
-func (a *AuditInfo) Bytes() ([]byte, error)   { return json.Marshal(a) }
+
+// Bytes returns the JSON encoding of the AuditInfo.
+func (a *AuditInfo) Bytes() ([]byte, error) { return json.Marshal(a) }
 
 // WrapAuditInfo packs per-component audit info bytes into a single blob.
 func WrapAuditInfo(recipients [][]byte) ([]byte, error) {

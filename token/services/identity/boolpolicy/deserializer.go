@@ -154,13 +154,68 @@ func (d *TypedIdentityDeserializer) Recipients(id driver.Identity, typ identity.
 
 // AuditInfoDeserializer deserialises raw audit info bytes into the AuditInfo
 // struct for the enrollment-ID / revocation-handle path.
-type AuditInfoDeserializer struct{}
+// It derives the policy identity's enrollment ID from its components.
+type AuditInfoDeserializer struct {
+	inner driver2.AuditInfoDeserializer
+}
 
-func (a *AuditInfoDeserializer) DeserializeAuditInfo(_ context.Context, _ driver.Identity, raw []byte) (driver2.AuditInfo, error) {
+// NewAuditInfoDeserializer constructs an AuditInfoDeserializer resolving
+// per-component audit infos through inner, typically the parent multiplex
+// deserializer.
+func NewAuditInfoDeserializer(inner driver2.AuditInfoDeserializer) *AuditInfoDeserializer {
+	return &AuditInfoDeserializer{inner: inner}
+}
+
+// DeserializeAuditInfo decodes raw policy audit info and derives its enrollment ID.
+func (a *AuditInfoDeserializer) DeserializeAuditInfo(ctx context.Context, id driver.Identity, raw []byte) (driver2.AuditInfo, error) {
 	ei := &AuditInfo{}
 	if err := json.Unmarshal(raw, ei); err != nil {
 		return nil, err
 	}
+	eid, err := a.commonEnrollmentID(ctx, id, ei)
+	if err != nil {
+		return nil, errors.WithMessagef(err, "failed deriving policy enrollment ID")
+	}
+	ei.eid = eid
 
 	return ei, nil
+}
+
+// commonEnrollmentID returns the enrollment ID shared by all components:
+// "" when a component has none (e.g. a nested composite) or they disagree,
+// an error on unresolvable audit info or a component count mismatch.
+func (a *AuditInfoDeserializer) commonEnrollmentID(ctx context.Context, id driver.Identity, ei *AuditInfo) (string, error) {
+	if a.inner == nil {
+		return "", nil
+	}
+	pi := PolicyIdentity{}
+	if err := pi.Deserialize(id); err != nil {
+		return "", errors.Wrapf(err, "failed to deserialize policy identity")
+	}
+	if len(pi.Identities) != len(ei.IdentityAuditInfos) {
+		return "", errors.Errorf("expected %d component audit infos but received %d",
+			len(pi.Identities), len(ei.IdentityAuditInfos))
+	}
+	if len(pi.Identities) == 0 {
+		return "", errors.New("policy identity has no components")
+	}
+	// resolve every component before declaring a result so corruption in a
+	// later component is not masked by an earlier "no common EID" outcome
+	eids := make([]string, len(ei.IdentityAuditInfos))
+	for k, info := range ei.IdentityAuditInfos {
+		memberAuditInfo, err := a.inner.DeserializeAuditInfo(ctx, pi.Identities[k], info.AuditInfo)
+		if err != nil {
+			return "", errors.Wrapf(err, "failed to deserialize audit info of component [%d]", k)
+		}
+		eids[k] = memberAuditInfo.EnrollmentID()
+	}
+	for _, memberEID := range eids {
+		if memberEID == "" || memberEID != eids[0] {
+			// no common EID: a member has none (e.g. a nested composite
+			// spanning enrollments) or members belong to different ones
+			return "", nil
+		}
+	}
+
+	return eids[0], nil
 }
