@@ -16,6 +16,7 @@ import (
 	"github.com/LFDT-Panurus/panurus/token"
 	"github.com/LFDT-Panurus/panurus/token/services/selector/testutils"
 	"github.com/LFDT-Panurus/panurus/token/services/storage/db/dbtest"
+	"github.com/LFDT-Panurus/panurus/token/services/storage/db/driver"
 	"github.com/LFDT-Panurus/panurus/token/services/storage/db/sql/postgres"
 	"github.com/LFDT-Panurus/panurus/token/services/utils/types/transaction"
 	token2 "github.com/LFDT-Panurus/panurus/token/token"
@@ -420,6 +421,119 @@ func TestManager_Cleaner(t *testing.T) {
 		// Manager should still be functional
 		assert.NotNil(t, m)
 	})
+
+	t.Run("cleanup skipped when leadership not acquired", func(t *testing.T) {
+		mockFetcher := &mockTokenFetcher{}
+		mockLocker := &mockLocker{}
+
+		cleanupCalled := make(chan struct{}, 1)
+		mockLocker.cleanupFunc = func(ctx context.Context, expiry time.Duration) error {
+			cleanupCalled <- struct{}{}
+
+			return nil
+		}
+		leadershipAttempted := make(chan struct{}, 1)
+		mockLocker.acquireCleanupLeadershipFunc = func(ctx context.Context) (driver.CleanupLeadership, bool, error) {
+			// Non-blocking: the ticker keeps calling this every tick, but
+			// the test only reads once. A blocking send here would leave
+			// the cleaner goroutine stuck inside this call on the second
+			// tick, past the point where it can react to Stop().
+			select {
+			case leadershipAttempted <- struct{}{}:
+			default:
+			}
+
+			return nil, false, nil
+		}
+
+		m := NewManager(
+			mockFetcher,
+			mockLocker,
+			100,
+			time.Second,
+			5,
+			10*time.Minute,
+			50*time.Millisecond,
+			NewMetrics(&disabled.Provider{}),
+		)
+
+		select {
+		case <-leadershipAttempted:
+		case <-time.After(200 * time.Millisecond):
+			t.Fatal("leadership was never attempted")
+		}
+
+		select {
+		case <-cleanupCalled:
+			t.Fatal("Cleanup should not be called when leadership is not acquired")
+		case <-time.After(150 * time.Millisecond):
+			// expected: no cleanup call
+		}
+
+		require.NoError(t, m.Stop())
+	})
+
+	t.Run("leadership released after cleanup ran", func(t *testing.T) {
+		mockFetcher := &mockTokenFetcher{}
+		mockLocker := &mockLocker{}
+
+		// events records "cleanup" then "closed" in order, so the test
+		// verifies Cleanup actually ran (not just that Close was called),
+		// and that release happens after Cleanup completes, not before or
+		// concurrently with it.
+		events := make(chan string, 2)
+		mockLocker.cleanupFunc = func(ctx context.Context, expiry time.Duration) error {
+			events <- "cleanup"
+
+			return nil
+		}
+		mockLocker.acquireCleanupLeadershipFunc = func(ctx context.Context) (driver.CleanupLeadership, bool, error) {
+			return &fakeLeadership{events: events}, true, nil
+		}
+
+		m := NewManager(
+			mockFetcher,
+			mockLocker,
+			100,
+			time.Second,
+			5,
+			10*time.Minute,
+			50*time.Millisecond,
+			NewMetrics(&disabled.Provider{}),
+		)
+
+		var got []string
+		for range 2 {
+			select {
+			case e := <-events:
+				got = append(got, e)
+			case <-time.After(200 * time.Millisecond):
+				t.Fatalf("timed out waiting for events, got so far: %v", got)
+			}
+		}
+		require.Equal(t, []string{"cleanup", "closed"}, got, "Cleanup must run, and leadership must release only after it completes")
+
+		require.NoError(t, m.Stop())
+	})
+}
+
+// fakeLeadership is a minimal driver.CleanupLeadership for tests, signaling
+// on a channel when Close is called. If events is set, it writes "closed"
+// to it (used to verify ordering relative to other recorded events).
+type fakeLeadership struct {
+	closed chan struct{}
+	events chan string
+}
+
+func (f *fakeLeadership) Close() error {
+	if f.closed != nil {
+		f.closed <- struct{}{}
+	}
+	if f.events != nil {
+		f.events <- "closed"
+	}
+
+	return nil
 }
 
 // TestManager_NewSelector_Concurrent verifies concurrent selector creation returns same instance.
@@ -686,10 +800,11 @@ func (m *mockTokenFetcher) UnspentTokensIteratorBy(ctx context.Context, walletID
 }
 
 type mockLocker struct {
-	lockFunc           func(ctx context.Context, tokenID *token2.ID, consumerTxID transaction.ID) error
-	unlockByTxIDFunc   func(ctx context.Context, consumerTxID transaction.ID) error
-	unlockByTxIDCalled bool
-	cleanupFunc        func(ctx context.Context, leaseExpiry time.Duration) error
+	lockFunc                     func(ctx context.Context, tokenID *token2.ID, consumerTxID transaction.ID) error
+	unlockByTxIDFunc             func(ctx context.Context, consumerTxID transaction.ID) error
+	unlockByTxIDCalled           bool
+	cleanupFunc                  func(ctx context.Context, leaseExpiry time.Duration) error
+	acquireCleanupLeadershipFunc func(ctx context.Context) (driver.CleanupLeadership, bool, error)
 }
 
 func (m *mockLocker) Lock(ctx context.Context, tokenID *token2.ID, consumerTxID transaction.ID, walletID string) error {
@@ -715,6 +830,17 @@ func (m *mockLocker) Cleanup(ctx context.Context, leaseExpiry time.Duration) err
 	}
 
 	return nil
+}
+
+// AcquireCleanupLeadership defaults to always-granted, matching the
+// non-distributed backends' behavior, so existing tests that don't set
+// acquireCleanupLeadershipFunc are unaffected. See #1798.
+func (m *mockLocker) AcquireCleanupLeadership(ctx context.Context) (driver.CleanupLeadership, bool, error) {
+	if m.acquireCleanupLeadershipFunc != nil {
+		return m.acquireCleanupLeadershipFunc(ctx)
+	}
+
+	return driver.NoopCleanupLeadership{}, true, nil
 }
 
 type mockIterator struct {

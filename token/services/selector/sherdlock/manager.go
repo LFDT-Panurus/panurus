@@ -91,15 +91,38 @@ func (m *Manager) cleaner(ctx context.Context) {
 	for {
 		select {
 		case <-ticker.C:
-			logger.DebugfContext(ctx, "release token locks older than [%s]", m.leaseExpiry)
-			if err := m.locker.Cleanup(ctx, m.leaseExpiry); err != nil {
-				logger.Errorf("failed to release token locks: [%s]", err)
-			}
+			m.runCleanupTick(ctx)
 		case <-ctx.Done():
 			logger.Debugf("cleaner stopping")
 
 			return
 		}
+	}
+}
+
+// runCleanupTick acquires cleanup leadership for this tick so only one
+// replica runs Cleanup at a time; other replicas skip the tick. See #1798.
+func (m *Manager) runCleanupTick(ctx context.Context) {
+	leadership, acquired, err := m.locker.AcquireCleanupLeadership(ctx)
+	if err != nil {
+		logger.Errorf("failed to acquire cleanup leadership: [%s]", err)
+
+		return
+	}
+	if !acquired {
+		logger.DebugfContext(ctx, "cleanup leadership not acquired, skipping tick")
+
+		return
+	}
+	defer func() {
+		if err := leadership.Close(); err != nil {
+			logger.Warnf("failed to release cleanup leadership: [%s]", err)
+		}
+	}()
+
+	logger.DebugfContext(ctx, "release token locks older than [%s]", m.leaseExpiry)
+	if err := m.locker.Cleanup(ctx, m.leaseExpiry); err != nil {
+		logger.Errorf("failed to release token locks: [%s]", err)
 	}
 }
 

@@ -15,6 +15,7 @@ import (
 	"github.com/LFDT-Panurus/panurus/token/services/storage/db/sql/query/cond"
 	common3 "github.com/hyperledger-labs/fabric-smart-client/platform/view/services/storage/driver/common"
 
+	"github.com/LFDT-Panurus/panurus/token/services/storage/db/driver"
 	common4 "github.com/LFDT-Panurus/panurus/token/services/storage/db/sql/common"
 )
 
@@ -57,6 +58,13 @@ func (db *TokenLockStore) Cleanup(ctx context.Context, leaseExpiry time.Duration
 	}
 
 	return err
+}
+
+// AcquireCleanupLeadership always grants leadership locally - sqlite is a
+// non-distributed backend with only one instance, so there is nothing to
+// coordinate. See #1798.
+func (db *TokenLockStore) AcquireCleanupLeadership(_ context.Context) (driver.CleanupLeadership, bool, error) {
+	return driver.NoopCleanupLeadership{}, true, nil
 }
 
 func NewTokenLockStore(dbs *common3.RWDB, tableNames common4.TableNames) (*TokenLockStore, error) {

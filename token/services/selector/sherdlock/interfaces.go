@@ -12,6 +12,7 @@ import (
 
 	"github.com/LFDT-Panurus/panurus/token"
 	"github.com/LFDT-Panurus/panurus/token/driver"
+	dbdriver "github.com/LFDT-Panurus/panurus/token/services/storage/db/driver"
 	"github.com/LFDT-Panurus/panurus/token/services/utils/types/transaction"
 	token2 "github.com/LFDT-Panurus/panurus/token/token"
 )
@@ -83,6 +84,11 @@ type Locker interface {
 	// 1. The transaction that locked that token is valid or invalid;
 	// 2. The lock is too old.
 	Cleanup(ctx context.Context, leaseExpiry time.Duration) error
+	// AcquireCleanupLeadership attempts to acquire leadership for the
+	// cleanup tick, so only one replica runs Cleanup per tick. Non-distributed
+	// backends (sqlite, in-memory) always grant leadership locally. The lock
+	// id (if any) is owned internally by the implementation. See #1798.
+	AcquireCleanupLeadership(ctx context.Context) (dbdriver.CleanupLeadership, bool, error)
 }
 
 // TokenSelectorUnlocker interface combines Selector and UnlockAll.
