@@ -21,6 +21,7 @@ func TestSelectEndorsersForMSPSets(t *testing.T) {
 	org1Endorser2 := view.Identity("org1-endorser2")
 	org2Endorser1 := view.Identity("org2-endorser1")
 	org3Endorser1 := view.Identity("org3-endorser1")
+	staleEndorser := view.Identity("stale-endorser")
 
 	mspOf := func(id view.Identity) (string, error) {
 		switch id.String() {
@@ -98,6 +99,18 @@ func TestSelectEndorsersForMSPSets(t *testing.T) {
 
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "no candidate MSP set")
+	})
+
+	t.Run("unsatisfiable - stale endorser check", func(t *testing.T) {
+		configured := []view.Identity{org1Endorser1, staleEndorser}
+		_, err := fsc.SelectEndorsersForMSPSets(configured, mspOf, [][]string{{"Org1MSP", "Org2MSP"}})
+		require.Error(t, err)
+	})
+
+	t.Run("satisfiable - stale endorser skipped check", func(t *testing.T) {
+		configured := []view.Identity{org1Endorser1, org2Endorser1, staleEndorser}
+		_, err := fsc.SelectEndorsersForMSPSets(configured, mspOf, [][]string{{"Org1MSP", "Org2MSP"}})
+		require.NoError(t, err)
 	})
 
 	t.Run("mspOf error surfaces", func(t *testing.T) {

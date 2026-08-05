@@ -25,13 +25,17 @@ func SelectEndorsersForMSPSets(configured []view.Identity, mspOf func(view.Ident
 	if len(candidates) == 0 {
 		return nil, errors.Errorf("no candidate MSP set to satisfy the namespace endorsement policy")
 	}
-
+	var skipped []error
 	byMSP := make(map[string][]view.Identity)
 	for _, id := range configured {
 		mspID, err := mspOf(id)
 		if err != nil {
-			return nil, errors.WithMessagef(err, "failed to resolve MSP for configured endorser [%s]", id)
+			skipped = append(skipped, err)
+			logger.Warnf("skipping unresolvable MSP for configured endorser [%s]: %v", id, err)
+
+			continue
 		}
+
 		byMSP[mspID] = append(byMSP[mspID], id)
 	}
 
@@ -53,5 +57,7 @@ func SelectEndorsersForMSPSets(configured []view.Identity, mspOf func(view.Ident
 		}
 	}
 
-	return nil, errors.Errorf("no configured endorser covers any of the [%d] policy-satisfying MSP set(s)", len(candidates))
+	return nil, errors.Join(errors.Errorf("no configured endorser covers any of the [%d] policy-satisfying MSP set(s)", len(candidates)),
+		errors.Join(skipped...),
+		errors.Errorf("failed to resolve MSP"))
 }
