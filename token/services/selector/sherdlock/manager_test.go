@@ -51,7 +51,12 @@ func TestSufficientTokensBigDenominationsOneReplica(t *testing.T) {
 }
 
 func TestSufficientTokensBigDenominationsManyReplicas(t *testing.T) {
-	replicas, terminate := startManagers(t, 3, 2*time.Second, 10)
+	// The retry budget has to absorb contention, not decide the result. Three replicas compete for
+	// the same two tokens here, so a replica can legitimately be beaten to a token several times
+	// before it wins one. The single replica variant above already needs 20 retries with no
+	// competition at all, so 10 across three replicas was far too tight and made the outcome
+	// depend on scheduling. See #2121.
+	replicas, terminate := startManagers(t, 3, 2*time.Second, 60)
 	defer terminate()
 	testutils.TestSufficientTokensBigDenominationsManyReplicas(t, replicas)
 }

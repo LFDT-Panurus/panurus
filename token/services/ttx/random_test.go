@@ -18,6 +18,10 @@ import (
 
 // TestGetRandomBytes_Success verifies that GetRandomBytes returns the correct length
 // of random bytes and that the buffer is fully filled.
+// allZeroCheckMinLen is the smallest buffer for which an all-zero draw is implausible enough
+// to assert on: 2^-64.
+const allZeroCheckMinLen = 8
+
 func TestGetRandomBytes_Success(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -39,8 +43,11 @@ func TestGetRandomBytes_Success(t *testing.T) {
 			require.NoError(t, err)
 			assert.Len(t, result, tt.length, "returned buffer should have requested length")
 
-			// For non-zero lengths, verify buffer is not all zeros (extremely unlikely with crypto/rand)
-			if tt.length > 0 {
+			// Only meaningful once the buffer is wide enough that all-zeros is not a plausible
+			// draw. At one byte it just means the byte is 0, which happens 1 run in 256, so
+			// asserting it made this test flaky. Randomness itself is covered by
+			// TestGetRandomBytes_Uniqueness.
+			if tt.length >= allZeroCheckMinLen {
 				allZeros := true
 				for _, b := range result {
 					if b != 0 {

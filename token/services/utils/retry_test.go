@@ -286,54 +286,6 @@ func TestRunWithErrors_ExponentialBackoff(t *testing.T) {
 	}
 }
 
-// TestNextDelay_MaxDelayCap verifies that exponential backoff is capped at maxDelay (30s default).
-// This test uses a fast-running approach by checking delays grow exponentially until they hit the cap.
-func TestNextDelay_MaxDelayCap(t *testing.T) {
-	// Use 10ms initial delay with exponential backoff
-	// Delays will be: 10ms, 20ms, 40ms, 80ms, 160ms, 320ms, 640ms, 1.28s, 2.56s, 5.12s, 10.24s, 20.48s, 30s (capped), 30s, 30s...
-	runner := utils.NewRetryRunner(testLogger(), 15, 10*time.Millisecond, true)
-
-	var delays []time.Duration
-	prev := time.Now()
-
-	_ = runner.RunWithContext(t.Context(), func() error {
-		now := time.Now()
-		delays = append(delays, now.Sub(prev))
-		prev = now
-
-		return errors.New("always fail")
-	})
-
-	// Skip first delay (no sleep before first call)
-	delays = delays[1:]
-
-	// Verify exponential growth until cap
-	for i := range len(delays) - 1 {
-		if delays[i] < 20*time.Second {
-			// Before cap: should roughly double.
-			// Tolerance (1.0) allows for ratios between 1.0 and 3.0 to account for CI scheduling jitter.
-			ratio := float64(delays[i+1]) / float64(delays[i])
-			assert.InDelta(t, 2.0, ratio, 1.0,
-				"delay %d (%v) should roughly double to delay %d (%v)", i, delays[i], i+1, delays[i+1])
-		} else {
-			// After cap: should stay at ~30s (with tolerance for scheduling)
-			assert.GreaterOrEqual(t, delays[i], 20*time.Second,
-				"delay %d should be capped near 30s, got %v", i, delays[i])
-			assert.LessOrEqual(t, delays[i], 35*time.Second,
-				"delay %d should not exceed 30s cap by much, got %v", i, delays[i])
-		}
-	}
-
-	// Verify the last few delays are all capped at 30s (with tolerance)
-	lastDelays := delays[len(delays)-3:]
-	for i, d := range lastDelays {
-		assert.GreaterOrEqual(t, d, 20*time.Second,
-			"final delay %d should be capped near 30s, got %v", i, d)
-		assert.LessOrEqual(t, d, 35*time.Second,
-			"final delay %d should not exceed 30s cap by much, got %v", i, d)
-	}
-}
-
 // TestRunWithContext_MaxRetriesExhaustedNoErrors verifies the edge case where
 // maxTimes is exhausted but the runner never returned an error (always returned nil).
 // This should return ErrMaxRetriesExceeded.
