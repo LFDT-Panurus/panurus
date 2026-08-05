@@ -1,0 +1,1 @@
+{"id":"90088575-1d46-49e5-9677-6e9d41c30053","fileUri":"file:///home/hayimsha/go/src/github.com/hyperledger-labs/fabric-token-sdk/token/services/storage/auditdb/locker/postgres/config.go","repoName":"fabric-token-sdk","branchName":"2035_fail_fast_on_empty_locker_owner","toolName":"apply_diff","startLine":75,"endLine":75,"taskId":null,"createdAt":1785938029357}
