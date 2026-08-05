@@ -25,6 +25,9 @@ type TMSOpts struct {
 	TokenSDKDriver      string
 	PublicParamsGenArgs []string
 	Aries               bool
+	// CSP, when true, generates DLog public parameters that use the Compressed
+	// Sigma Protocol (CSP) range-proof backend instead of the default BulletProof.
+	CSP bool
 }
 
 type Opts struct {
@@ -59,6 +62,9 @@ func SetDefaultParams(tms *topology.TMS, opts TMSOpts) {
 	case zkatdlognoghv1.DriverIdentifier:
 		if opts.Aries {
 			zkatdlognoghv1.WithAries(tms)
+		}
+		if opts.CSP {
+			zkatdlognoghv1.WithCSP(tms)
 		}
 	case fabtokenv1.DriverIdentifier:
 		// no nothig

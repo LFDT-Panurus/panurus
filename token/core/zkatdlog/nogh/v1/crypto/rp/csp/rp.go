@@ -427,7 +427,10 @@ func (rp *rangeProver) Prove() (*RangeProof, error) {
 		lf = append(lf, math.Zero(rp.Curve))
 	}
 
-	// Non-ZK CSP proof for the blinded statement.
+	// Non-ZK CSP proof for the blinded statement. realLen marks the real prefix
+	// (before the power-of-two padding appended above): its tail [witSize, paddedSize)
+	// has witness=0, LinearForm=0 and Generators=GenG1, which the prover exploits in
+	// its round-0 fast path.
 	cspP := &prover{
 		Commitment:     witComm,
 		Generators:     gExt,
@@ -436,6 +439,7 @@ func (rp *rangeProver) Prove() (*RangeProof, error) {
 		NumberOfRounds: cspRounds,
 		Curve:          rp.Curve,
 		witness:        wit,
+		realLen:        witSize,
 	}
 	cspProof, err := cspP.WithTranscriptHeader(rp.TranscriptHeader).Prove()
 	if err != nil {

@@ -71,6 +71,7 @@ const (
 	ZKATDLogFungible
 	ZKATDLogFungibleStress
 	ZKATDLogFungibleHSM
+	ZKATDLogFungibleCSP
 
 	FabTokenFungible
 

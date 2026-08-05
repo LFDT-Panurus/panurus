@@ -81,6 +81,16 @@ type prover struct {
 	Curve          *mathlib.Curve // Curve identifier
 	witness        []*mathlib.Zr  // opening for the commitment
 
+	// realLen is an optional hint: the number of leading "real" entries, i.e. the
+	// prefix [0, realLen) of Generators/LinearForm/witness before the caller's
+	// power-of-two padding. When rp.go builds the statement it pads the tail
+	// [realLen, 2^NumberOfRounds) with witness=0, LinearForm=0 and Generators=GenG1.
+	// A valid hint (0 < realLen < N and realLen > N/2) lets Prove() take a faster
+	// round-0 path that skips the zero terms and collapses the duplicated GenG1
+	// generators. The result is byte-identical to the full path, so the proof and
+	// transcript are unchanged. Zero (the default) disables the optimization.
+	realLen uint64
+
 	TranscriptHeader []byte
 }
 
@@ -145,17 +155,55 @@ func (p *prover) Prove() (*Proof, error) {
 	for i := range p.NumberOfRounds {
 		n := len(generators) / 2
 
-		// Cross-commitments via MSM:
-		//   left[i]  = MSM(gen_L, wit_R)   gen_L = generators[:n], wit_R = witness[n:]
-		//   right[i] = MSM(gen_R, wit_L)   gen_R = generators[n:], wit_L = witness[:n]
-		left[i] = smallMSM(p.Curve, generators[:n], witness[n:])
-		right[i] = smallMSM(p.Curve, generators[n:], witness[:n])
+		// Fast round-0 path: rp.go pads the tail [realLen, N) with witness=0,
+		// LinearForm=0 and Generators=GenG1, and realLen > N/2 so the whole
+		// padding lies in the second half. Only round 0 sees this structure (the
+		// fold densifies everything afterwards). nzR is the count of "real"
+		// columns whose right-half partner is not padding. The results below are
+		// value-identical to the full path — zero terms vanish and the duplicated
+		// GenG1 generators collapse by distributivity — so the transcript and the
+		// emitted proof are unchanged.
+		fastRound0 := i == 0 && p.realLen > uint64(n) && p.realLen < uint64(len(generators))
+		nzR := n
+		if fastRound0 {
+			nzR = int(p.realLen) - n // #nosec G115 -- 0 < realLen-n < n by the guard above
+		}
 
-		// Cross scalar products via ModAddMul (scalar-field MSM):
-		//   vLeft[i]  = ⟨f_L, wit_R⟩
-		//   vRight[i] = ⟨f_R, wit_L⟩
-		vLeft[i] = math.InnerProduct(linearForm[:n], witness[n:], p.Curve)
-		vRight[i] = math.InnerProduct(linearForm[n:], witness[:n], p.Curve)
+		if fastRound0 {
+			// left = MSM(gen_L, wit_R): wit_R is zero beyond nzR.
+			left[i] = smallMSM(p.Curve, generators[:nzR], witness[n:n+nzR])
+
+			// right = MSM(gen_R, wit_L): the gen_R tail is a run of GenG1, so
+			//   right = MSM(gen_R[:nzR], wit_L[:nzR]) + (Σ_{j≥nzR} wit_L[j])·GenG1.
+			tailSum := p.Curve.NewZrFromInt(0)
+			for j := nzR; j < n; j++ {
+				tailSum = p.Curve.ModAdd(tailSum, witness[j], p.Curve.GroupOrder)
+			}
+			rPoints := make([]*mathlib.G1, 0, nzR+1)
+			rScalars := make([]*mathlib.Zr, 0, nzR+1)
+			rPoints = append(rPoints, generators[n:n+nzR]...)
+			rScalars = append(rScalars, witness[:nzR]...)
+			rPoints = append(rPoints, p.Curve.GenG1)
+			rScalars = append(rScalars, tailSum)
+			right[i] = smallMSM(p.Curve, rPoints, rScalars)
+
+			// vLeft = ⟨f_L, wit_R⟩: wit_R zero beyond nzR.
+			// vRight = ⟨f_R, wit_L⟩: f_R zero beyond nzR.
+			vLeft[i] = math.InnerProduct(linearForm[:nzR], witness[n:n+nzR], p.Curve)
+			vRight[i] = math.InnerProduct(linearForm[n:n+nzR], witness[:nzR], p.Curve)
+		} else {
+			// Cross-commitments via MSM:
+			//   left[i]  = MSM(gen_L, wit_R)   gen_L = generators[:n], wit_R = witness[n:]
+			//   right[i] = MSM(gen_R, wit_L)   gen_R = generators[n:], wit_L = witness[:n]
+			left[i] = smallMSM(p.Curve, generators[:n], witness[n:])
+			right[i] = smallMSM(p.Curve, generators[n:], witness[:n])
+
+			// Cross scalar products via ModAddMul (scalar-field MSM):
+			//   vLeft[i]  = ⟨f_L, wit_R⟩
+			//   vRight[i] = ⟨f_R, wit_L⟩
+			vLeft[i] = math.InnerProduct(linearForm[:n], witness[n:], p.Curve)
+			vRight[i] = math.InnerProduct(linearForm[n:], witness[:n], p.Curve)
+		}
 
 		// Absorb cross terms into transcript, then squeeze challenge.
 		tr.Absorb(left[i].Bytes())
@@ -171,23 +219,39 @@ func (p *prover) Prove() (*Proof, error) {
 		// Fold generators:  gen'[j] = gen_L[j] + c · gen_R[j]
 		// Fold linear form: f'[j]   = f_L[j]   + c · f_R[j]
 		// Fold witness:     w'[j]   = c · w_L[j] + w_R[j]
+		//
+		// For the padded tail (j ≥ nzR, only in the fast round-0 path) the
+		// right-half partners are gen_R=GenG1, f_R=0, w_R=0, so the fold reduces
+		// to gen'[j]=gen_L[j]+c·GenG1 (a shared point-add), f'[j]=f_L[j] (a no-op)
+		// and w'[j]=c·w_L[j] (a single mul).
+		var cG *mathlib.G1
+		if fastRound0 {
+			cG = p.Curve.GenG1.Mul(c) // the single shared c·GenG1
+		}
 		for j := range n {
-			// gen'[j] = 1·gen_L[j] + c·gen_R[j], zero allocations
-			generators[j].Mul2InPlace(one, generators[n+j], c)
+			if j < nzR {
+				// gen'[j] = 1·gen_L[j] + c·gen_R[j], zero allocations
+				generators[j].Mul2InPlace(one, generators[n+j], c)
 
-			p.Curve.ModAddMul2InPlace(
-				linearForm[j],
-				one, linearForm[j],
-				c, linearForm[n+j],
-				p.Curve.GroupOrder,
-			)
+				p.Curve.ModAddMul2InPlace(
+					linearForm[j],
+					one, linearForm[j],
+					c, linearForm[n+j],
+					p.Curve.GroupOrder,
+				)
 
-			p.Curve.ModAddMul2InPlace(
-				witness[j],
-				c, witness[j],
-				witness[n+j], one,
-				p.Curve.GroupOrder,
-			)
+				p.Curve.ModAddMul2InPlace(
+					witness[j],
+					c, witness[j],
+					witness[n+j], one,
+					p.Curve.GroupOrder,
+				)
+			} else {
+				// Padded tail (fast round 0 only).
+				generators[j].Add(cG)                                                // gen'[j] = gen_L[j] + c·GenG1
+				p.Curve.ModMulInPlace(witness[j], c, witness[j], p.Curve.GroupOrder) // w'[j] = c·w_L[j]
+				// linearForm'[j] = f_L[j] + c·0 = f_L[j]: unchanged, no-op.
+			}
 		}
 
 		generators = generators[:n]
