@@ -20,11 +20,17 @@ Example
 from __future__ import annotations
 
 import argparse
+import sys
 from pathlib import Path
 
 import pandas as pd
 
 from bench_parse import simple_parser
+
+# Exit code used by ``main`` when the report contains at least one regression.
+# Distinct from 1 (used by argparse/uncaught errors) so callers can tell a
+# detected regression apart from the script failing to run at all.
+EXIT_REGRESSION = 3
 
 # Measurement/derived columns produced by the parser. These vary run-to-run
 # and must never be part of a row's identity key — only the benchmark's input
@@ -110,26 +116,38 @@ def _ranges_overlap(base_samples: list, pr_samples: list) -> bool:
     return min(base_samples) <= max(pr_samples) and min(pr_samples) <= max(base_samples)
 
 
-def _emoji(metric: str, pct: float, base_samples: list, pr_samples: list, delta: float = _DEFAULT_DELTA) -> str:
-    """Pick an indicator for a change, given whether lower is better.
+# Classification of a single metric change, independent of how it is rendered.
+_NEUTRAL, _IMPROVED, _REGRESSED = "neutral", "improved", "regressed"
 
-    Returns the neutral marker when the change is within the ±1% noise band or
-    when the base/PR sample ranges overlap (i.e. the delta is not statistically
-    distinguishable from run-to-run jitter).
+_STATUS_EMOJI = {_NEUTRAL: "➖", _IMPROVED: "🟢", _REGRESSED: "🔴"}
+
+
+def _classify(metric: str, pct: float, base_samples: list, pr_samples: list, delta: float = _DEFAULT_DELTA) -> str:
+    """Classify a metric change as neutral, improved, or regressed.
+
+    Returns ``_NEUTRAL`` when the change is within the ±delta% noise band or when
+    the base/PR sample ranges overlap (i.e. the delta is not statistically
+    distinguishable from run-to-run jitter). This is the single source of truth
+    for whether a row is a regression — the emoji is derived from it, never the
+    other way around.
     """
-    if abs(pct) < delta:  # treat sub-1% as noise
-        return "➖"
+    if abs(pct) < delta:  # treat sub-delta as noise
+        return _NEUTRAL
     if _ranges_overlap(base_samples, pr_samples):
-        return "➖"
+        return _NEUTRAL
     improved = (pct < 0) == _LOWER_IS_BETTER[metric]
-    return "🟢" if improved else "🔴"
+    return _IMPROVED if improved else _REGRESSED
 
 
-def build_report(base: pd.DataFrame, pr: pd.DataFrame, delta: float = _DEFAULT_DELTA) -> str:
-    """Render the Markdown comparison table for two parsed benchmark groups."""
+def build_report(base: pd.DataFrame, pr: pd.DataFrame, delta: float = _DEFAULT_DELTA) -> tuple[str, bool]:
+    """Render the Markdown comparison table for two parsed benchmark groups.
+
+    Returns ``(report, regressed)`` where ``regressed`` is ``True`` if any row was
+    classified as a regression. Missing results are not treated as a regression.
+    """
     if base.empty or pr.empty:
         missing = "base" if base.empty else "PR"
-        return f"⚠️ No benchmark results found for the **{missing}** branch."
+        return f"⚠️ No benchmark results found for the **{missing}** branch.", False
 
     # Parameter columns identify a row: everything except variant/bench/workers,
     # the measurements, and any derived latency column (``... (ms)``).
@@ -154,7 +172,7 @@ def build_report(base: pd.DataFrame, pr: pd.DataFrame, delta: float = _DEFAULT_D
                         for r in rows if not pd.isna(r.get(metric))]
                 agg[metric] = sum(vals) / len(vals) if vals else float("nan")
                 # Retain the raw per-count samples so the significance guard in
-                # ``_emoji`` can compare the base/PR ranges, not just the means.
+                # ``_classify`` can compare the base/PR ranges, not just the means.
                 # A plain string key avoids pandas treating a tuple as a
                 # multi-index label on the Series.
                 agg[f"_samples_{metric}"] = vals
@@ -163,6 +181,8 @@ def build_report(base: pd.DataFrame, pr: pd.DataFrame, delta: float = _DEFAULT_D
 
     base_by_key = by_key(base)
     pr_by_key = by_key(pr)
+
+    regressed = False
 
     lines = [
         "## 📊 Token Validation Benchmark",
@@ -192,9 +212,11 @@ def build_report(base: pd.DataFrame, pr: pd.DataFrame, delta: float = _DEFAULT_D
             pct = _pct(bv, pv)
             base_samples = b.get(f"_samples_{metric}", [])
             pr_samples = p.get(f"_samples_{metric}", [])
+            status = _classify(metric, pct, base_samples, pr_samples, delta)
+            if status == _REGRESSED:
+                regressed = True
             cells.append(f"{bv:,.0f} → {pv:,.0f}")
-            cells.append(
-                f"{_emoji(metric, pct, base_samples, pr_samples)} {pct:+.1f}%")
+            cells.append(f"{_STATUS_EMOJI[status]} {pct:+.1f}%")
         lines.append("| " + " | ".join(cells) + " |")
 
     only_pr = pr_by_key.keys() - base_by_key.keys()
@@ -206,7 +228,7 @@ def build_report(base: pd.DataFrame, pr: pd.DataFrame, delta: float = _DEFAULT_D
         lines += ["",
                   f"> ℹ️ {len(only_base)} benchmark(s) present only on the base branch (removed/renamed)."]
 
-    return "\n".join(lines) + "\n"
+    return "\n".join(lines) + "\n", regressed
 
 
 def main() -> None:
@@ -230,10 +252,16 @@ def main() -> None:
 
     base = _load_group(args.input_dir, args.base_tag)
     pr = _load_group(args.input_dir, args.pr_tag)
-    report = build_report(base, pr, delta=args.delta)
+    report, regressed = build_report(base, pr, delta=args.delta)
 
+    # Always write and print the report so it is visible regardless of outcome.
     args.output.write_text(report)
     print(report)
+
+    # Signal a detected regression via a distinct exit code so callers (e.g. CI)
+    # can gate on it without parsing the rendered Markdown/emoji.
+    if regressed:
+        sys.exit(EXIT_REGRESSION)
 
 
 if __name__ == "__main__":

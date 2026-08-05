@@ -28,19 +28,24 @@ name: Token Validation Benchmark
 #   If a run is interrupted, clear leftover containers before retrying:
 #        docker rm -f $(docker ps -aq --filter ancestor=catthehacker/ubuntu:act-latest)
 on:
-  # pull_request_target runs in the BASE repo context, so GITHUB_TOKEN keeps
-  # write access even for fork PRs — which is what lets the compare job post its
-  # comment. The tradeoff is that this event is inherently more dangerous: the
-  # benchmark job below checks out and runs the PR HEAD (untrusted) code. To
-  # keep that safe, the default token here is read-only (see permissions), and
-  # pull-requests: write is granted ONLY to the trusted compare job that never
-  # runs PR code. Do not add secrets or write scopes to the benchmark job.
-  pull_request_target:
+  # The benchmark job below checks out and runs the PR HEAD (untrusted fork)
+  # code, so this workflow runs on `pull_request`, NOT `pull_request_target`:
+  # fork PRs run in the fork's untrusted context with a read-only GITHUB_TOKEN
+  # and no access to secrets, and `actions/checkout` pulls the fork's PR code
+  # directly (no `allow-unsafe-pr-checkout` needed). This workflow only produces
+  # artifacts; posting the PR comment happens in the companion
+  # `token-validation-benchmark-comment.yml`, which runs on `workflow_run` in the
+  # trusted base-repo context and therefore has `pull-requests: write` even for
+  # fork PRs.
+  pull_request:
   workflow_dispatch:
 
-# Read-only by default. The benchmark job runs untrusted PR head code, so it
-# must not have a write-capable token. Write access is scoped per-job on the
-# compare job (below), which only runs trusted base-repo code.
+# Read-only by default: the benchmark job runs untrusted fork code and must not
+# have a write-capable token. pull-requests: write is scoped per-job on the
+# compare job (below). Under `pull_request` that write scope is effective only
+# for same-repo PRs; for fork PRs the token stays read-only, so the compare
+# job's comment step fails harmlessly (it is continue-on-error) and the
+# companion workflow_run workflow posts the comment from the trusted context.
 permissions:
   contents: read
 
@@ -191,17 +196,18 @@ jobs:
     needs: benchmark
     runs-on: ubuntu-latest
     # Write scope lives HERE, not at the top level, because this job runs only
-    # trusted base-repo code (the checkout below takes the default base ref, and
-    # it never checks out or executes PR head code). The benchmark job keeps the
-    # read-only default token.
+    # trusted base-repo code (it never checks out or executes PR head code). The
+    # benchmark job keeps the read-only default token. On fork PRs the token is
+    # read-only regardless, so the comment step below cannot post — that is why
+    # the comment step itself is continue-on-error and the companion workflow_run
+    # workflow handles commenting for forks. The job as a whole is NOT
+    # continue-on-error: a detected regression fails it (see the final step).
     permissions:
       contents: read
       pull-requests: write
-    continue-on-error: true
     steps:
-      # No ref specified: under pull_request_target this checks out the BASE
-      # repo/branch (trusted), which is exactly what we want for the code that
-      # holds the write token.
+      # No ref specified: checks out this workflow's ref (the base repo), NOT the
+      # PR head, so the compare script we run is trusted.
       - name: Checkout code
         uses: actions/checkout@v4
 
@@ -221,15 +227,44 @@ jobs:
         run: pip install pandas
 
       - name: Build comparison report
+        id: report
         run: |
+          # Always build and print the report so it is visible in the job log,
+          # regardless of whether a regression is detected. The script exits 3
+          # when it detects a regression, 0 otherwise; any other non-zero code is
+          # a real failure and must propagate. Capture the code without letting
+          # `set -e` abort the step on the expected exit 3.
+          set +e
           python cmd/benchmarking/compare_benchmarks.py \
             --input-dir "$OUTPUT_DIR" \
             --base-tag '_base_' \
             --pr-tag '_pr_' \
             --delta "$DELTA" \
             --output comment.md
+          rc=$?
+          set -e
 
+          case "$rc" in
+            0) echo "degraded=false" >> "$GITHUB_OUTPUT" ;;
+            3) echo "degraded=true"  >> "$GITHUB_OUTPUT" ;;
+            *) echo "compare_benchmarks.py failed with exit code $rc" >&2
+               exit "$rc" ;;
+          esac
+
+      # Only comment when there is a regression to report. On fork PRs the token
+      # is read-only and this step cannot post, so it is continue-on-error; the
+      # companion workflow_run workflow handles commenting for forks.
       - name: Post comparison comment
+        if: steps.report.outputs.degraded == 'true'
+        continue-on-error: true
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: gh pr comment "${{ github.event.pull_request.number }}" --body-file comment.md
+
+      # Fail the job on regression, after the comment has been posted, so the
+      # PR check turns red and the degradation is not silently accepted.
+      - name: Fail on regression
+        if: steps.report.outputs.degraded == 'true'
+        run: |
+          echo "::error::Token validation benchmark detected a performance regression (see report above)."
+          exit 1
