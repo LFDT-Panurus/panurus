@@ -16,6 +16,7 @@ import (
 	math3 "github.com/IBM/mathlib"
 	"github.com/LFDT-Panurus/panurus/integration/nwo/token/generators/crypto/zkatdlognoghv1"
 	"github.com/LFDT-Panurus/panurus/integration/nwo/token/topology"
+	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/crypto/rp"
 	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/setup"
 	"github.com/LFDT-Panurus/panurus/token/driver"
 	"github.com/LFDT-Panurus/panurus/token/services/identity"
@@ -71,7 +72,11 @@ func (d *DLogPublicParamsGenerator) Generate(tms *topology.TMS, wallets *topolog
 			return nil, err
 		}
 	}
-	pp, err := setup.WithVersion(bits, ipkBytes, curveID, d.DriverVersion)
+	proofType := rp.RangeProofType
+	if zkatdlognoghv1.IsCSP(tms) {
+		proofType = rp.CSPRangeProofType
+	}
+	pp, err := setup.WithVersionAndProofType(bits, ipkBytes, curveID, d.DriverVersion, proofType)
 	if err != nil {
 		return nil, err
 	}

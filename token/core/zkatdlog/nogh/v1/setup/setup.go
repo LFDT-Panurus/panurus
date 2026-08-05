@@ -301,13 +301,19 @@ func Setup(bitLength uint64, idemixIssuerPK []byte, curveID mathlib.CurveID) (*P
 
 // WithVersion is like Setup with the additional possibility to specify the version number
 func WithVersion(bitLength uint64, idemixIssuerPK []byte, curveID mathlib.CurveID, version driver.TokenDriverVersion) (*PublicParams, error) {
+	return WithVersionAndProofType(bitLength, idemixIssuerPK, curveID, version, rp.RangeProofType)
+}
+
+// WithVersionAndProofType is like WithVersion but also lets the caller choose the
+// range-proof backend (rp.RangeProofType for BulletProof, rp.CSPRangeProofType for CSP).
+func WithVersionAndProofType(bitLength uint64, idemixIssuerPK []byte, curveID mathlib.CurveID, version driver.TokenDriverVersion, proofType rp.ProofType) (*PublicParams, error) {
 	return NewWith(SetupParams{
 		DriverName:     DLogNoGHDriverName,
 		DriverVersion:  version,
 		BitLength:      bitLength,
 		IdemixIssuerPK: idemixIssuerPK,
 		CurveID:        curveID,
-		ProofType:      rp.RangeProofType,
+		ProofType:      proofType,
 	})
 }
 

@@ -53,6 +53,23 @@ func IsAries(tms *topology.TMS) bool {
 	return false
 }
 
+// WithCSP notifies the backend to generate public parameters that use the
+// Compressed Sigma Protocol (CSP) range-proof backend instead of the default
+// BulletProof.
+func WithCSP(tms *topology.TMS) {
+	tms.BackendParams["rangeproof.csp"] = true
+}
+
+// IsCSP returns true if this TMS requires CSP range proofs.
+func IsCSP(tms *topology.TMS) bool {
+	cspBoxed, ok := tms.BackendParams["rangeproof.csp"]
+	if ok {
+		return cspBoxed.(bool)
+	}
+
+	return false
+}
+
 var logger = logging.MustGetLogger()
 
 type CryptoMaterialGenerator struct {

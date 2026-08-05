@@ -12,6 +12,7 @@ import (
 
 	math "github.com/IBM/mathlib"
 	math2 "github.com/LFDT-Panurus/panurus/token/core/common/crypto/math"
+	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/benchmark"
 	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/crypto/rp"
 	issue2 "github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/issue"
 	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/issue/mock"
@@ -84,7 +85,9 @@ func TestIssuer(t *testing.T) {
 }
 
 // BenchmarkIssuer measures the cost of creating ZK-issue actions under
-// different parameter sets provided by the benchmark helper.
+// different parameter sets provided by the benchmark helper. The range-proof
+// backend is selected with -proof_type (1/bulletproof/bf, or 2/csp); CSP
+// exercises the round-0 prover optimization.
 func BenchmarkIssuer(b *testing.B) {
 	bits, err := benchmark2.Bits(32, 64)
 	require.NoError(b, err)
@@ -92,10 +95,11 @@ func BenchmarkIssuer(b *testing.B) {
 	outputs, err := benchmark2.NumOutputs(1, 2, 3)
 	require.NoError(b, err)
 	testCases := benchmark2.GenerateCases(bits, curves, nil, outputs, nil)
+	proofType := benchmark.ProofType()
 
 	for _, tc := range testCases {
 		b.Run(tc.Name, func(b *testing.B) {
-			env := newBenchmarkIssuerEnv(b, b.N, tc.BenchmarkCase)
+			env := newBenchmarkIssuerEnv(b, b.N, tc.BenchmarkCase, proofType)
 
 			// Optional: Reset timer if you had expensive setup code above
 			b.ResetTimer()
@@ -214,11 +218,15 @@ type benchmarkIssuerEnv struct {
 }
 
 // newBenchmarkIssuerEnv creates n prepared issuer environments using the
-// provided benchmark case parameters.
-func newBenchmarkIssuerEnv(b *testing.B, n int, benchmarkCase *benchmark2.Case) *benchmarkIssuerEnv {
+// provided benchmark case parameters and range-proof backend.
+func newBenchmarkIssuerEnv(b *testing.B, n int, benchmarkCase *benchmark2.Case, proofType rp.ProofType) *benchmarkIssuerEnv {
 	b.Helper()
 	envs := make([]*issuerEnv, n)
-	pp := setup(b, benchmarkCase.Bits, benchmarkCase.CurveID)
+	setupFn := setup
+	if proofType == rp.CSPRangeProofType {
+		setupFn = setupCSP
+	}
+	pp := setupFn(b, benchmarkCase.Bits, benchmarkCase.CurveID)
 	for i := range envs {
 		envs[i] = newIssuerEnv(pp, benchmarkCase.NumOutputs)
 	}
