@@ -162,6 +162,8 @@ func BenchmarkTransferProofGeneration(b *testing.B) {
 				require.NoError(b, err)
 				i++
 			}
+
+			b.ReportMetric(float64(b.N)/b.Elapsed().Seconds(), "TPS")
 		})
 	}
 }
