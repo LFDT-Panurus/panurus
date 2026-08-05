@@ -60,6 +60,9 @@ jobs:
           - name: identity-idemixnym-audit-info-deserializer
             pkg: ./token/services/identity/idemixnym/nym
             func: FuzzDeserializeAuditInfoNoPanic
+          - name: identity-boolpolicy-audit-info-deserializer
+            pkg: ./token/services/identity/boolpolicy
+            func: FuzzDeserializeAuditInfoNoPanic
           - name: common-request-limits
             pkg: ./token/core/common
             func: FuzzRequestResourceLimits
