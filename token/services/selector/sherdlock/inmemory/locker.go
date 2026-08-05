@@ -10,6 +10,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/LFDT-Panurus/panurus/token/services/storage/db/driver"
 	"github.com/LFDT-Panurus/panurus/token/services/utils/types/transaction"
 	"github.com/LFDT-Panurus/panurus/token/token"
 )
@@ -45,4 +46,11 @@ func (l *locker) UnlockByTxID(ctx context.Context, txID transaction.ID) error {
 
 func (l *locker) Cleanup(ctx context.Context, leaseExpiry time.Duration) error {
 	return nil
+}
+
+// AcquireCleanupLeadership always grants leadership locally - this in-memory
+// locker is a non-distributed backend with only one instance, so there is
+// nothing to coordinate. See #1798.
+func (l *locker) AcquireCleanupLeadership(_ context.Context) (driver.CleanupLeadership, bool, error) {
+	return driver.NoopCleanupLeadership{}, true, nil
 }

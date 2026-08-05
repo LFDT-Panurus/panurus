@@ -137,6 +137,13 @@ type CleanupLeadership interface {
 	Close() error
 }
 
+// NoopCleanupLeadership is a no-op CleanupLeadership for non-distributed
+// backends (sqlite, in-memory) that always grant leadership locally,
+// since there is only ever one instance to coordinate. See #1798.
+type NoopCleanupLeadership struct{}
+
+func (NoopCleanupLeadership) Close() error { return nil }
+
 // CertificationStore defines a database to manager token certifications
 type CertificationStore interface {
 	// ExistsCertification returns true if a certification for the passed token exists,
@@ -338,6 +345,12 @@ type TokenLockStore interface {
 	// 1. The transaction that locked that token is valid or invalid;
 	// 2. The lock is too old.
 	Cleanup(ctx context.Context, leaseExpiry time.Duration) error
+	// AcquireCleanupLeadership attempts to acquire leadership for the
+	// cleanup tick, so only one replica runs Cleanup per tick. Non-distributed
+	// backends (sqlite, in-memory) always grant leadership locally. The lock
+	// id (if any) is owned internally by the implementation, since it must
+	// be derived per-TMS, not passed in by the caller. See #1798.
+	AcquireCleanupLeadership(ctx context.Context) (CleanupLeadership, bool, error)
 	// Close closes the database
 	Close() error
 }

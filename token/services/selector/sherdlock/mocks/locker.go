@@ -7,11 +7,27 @@ import (
 	"time"
 
 	"github.com/LFDT-Panurus/panurus/token/services/selector/sherdlock"
+	"github.com/LFDT-Panurus/panurus/token/services/storage/db/driver"
 	"github.com/LFDT-Panurus/panurus/token/services/utils/types/transaction"
 	"github.com/LFDT-Panurus/panurus/token/token"
 )
 
 type FakeLocker struct {
+	AcquireCleanupLeadershipStub        func(context.Context) (driver.CleanupLeadership, bool, error)
+	acquireCleanupLeadershipMutex       sync.RWMutex
+	acquireCleanupLeadershipArgsForCall []struct {
+		arg1 context.Context
+	}
+	acquireCleanupLeadershipReturns struct {
+		result1 driver.CleanupLeadership
+		result2 bool
+		result3 error
+	}
+	acquireCleanupLeadershipReturnsOnCall map[int]struct {
+		result1 driver.CleanupLeadership
+		result2 bool
+		result3 error
+	}
 	CleanupStub        func(context.Context, time.Duration) error
 	cleanupMutex       sync.RWMutex
 	cleanupArgsForCall []struct {
@@ -52,6 +68,73 @@ type FakeLocker struct {
 	}
 	invocations      map[string][][]interface{}
 	invocationsMutex sync.RWMutex
+}
+
+func (fake *FakeLocker) AcquireCleanupLeadership(arg1 context.Context) (driver.CleanupLeadership, bool, error) {
+	fake.acquireCleanupLeadershipMutex.Lock()
+	ret, specificReturn := fake.acquireCleanupLeadershipReturnsOnCall[len(fake.acquireCleanupLeadershipArgsForCall)]
+	fake.acquireCleanupLeadershipArgsForCall = append(fake.acquireCleanupLeadershipArgsForCall, struct {
+		arg1 context.Context
+	}{arg1})
+	stub := fake.AcquireCleanupLeadershipStub
+	fakeReturns := fake.acquireCleanupLeadershipReturns
+	fake.recordInvocation("AcquireCleanupLeadership", []interface{}{arg1})
+	fake.acquireCleanupLeadershipMutex.Unlock()
+	if stub != nil {
+		return stub(arg1)
+	}
+	if specificReturn {
+		return ret.result1, ret.result2, ret.result3
+	}
+	return fakeReturns.result1, fakeReturns.result2, fakeReturns.result3
+}
+
+func (fake *FakeLocker) AcquireCleanupLeadershipCallCount() int {
+	fake.acquireCleanupLeadershipMutex.RLock()
+	defer fake.acquireCleanupLeadershipMutex.RUnlock()
+	return len(fake.acquireCleanupLeadershipArgsForCall)
+}
+
+func (fake *FakeLocker) AcquireCleanupLeadershipCalls(stub func(context.Context) (driver.CleanupLeadership, bool, error)) {
+	fake.acquireCleanupLeadershipMutex.Lock()
+	defer fake.acquireCleanupLeadershipMutex.Unlock()
+	fake.AcquireCleanupLeadershipStub = stub
+}
+
+func (fake *FakeLocker) AcquireCleanupLeadershipArgsForCall(i int) context.Context {
+	fake.acquireCleanupLeadershipMutex.RLock()
+	defer fake.acquireCleanupLeadershipMutex.RUnlock()
+	argsForCall := fake.acquireCleanupLeadershipArgsForCall[i]
+	return argsForCall.arg1
+}
+
+func (fake *FakeLocker) AcquireCleanupLeadershipReturns(result1 driver.CleanupLeadership, result2 bool, result3 error) {
+	fake.acquireCleanupLeadershipMutex.Lock()
+	defer fake.acquireCleanupLeadershipMutex.Unlock()
+	fake.AcquireCleanupLeadershipStub = nil
+	fake.acquireCleanupLeadershipReturns = struct {
+		result1 driver.CleanupLeadership
+		result2 bool
+		result3 error
+	}{result1, result2, result3}
+}
+
+func (fake *FakeLocker) AcquireCleanupLeadershipReturnsOnCall(i int, result1 driver.CleanupLeadership, result2 bool, result3 error) {
+	fake.acquireCleanupLeadershipMutex.Lock()
+	defer fake.acquireCleanupLeadershipMutex.Unlock()
+	fake.AcquireCleanupLeadershipStub = nil
+	if fake.acquireCleanupLeadershipReturnsOnCall == nil {
+		fake.acquireCleanupLeadershipReturnsOnCall = make(map[int]struct {
+			result1 driver.CleanupLeadership
+			result2 bool
+			result3 error
+		})
+	}
+	fake.acquireCleanupLeadershipReturnsOnCall[i] = struct {
+		result1 driver.CleanupLeadership
+		result2 bool
+		result3 error
+	}{result1, result2, result3}
 }
 
 func (fake *FakeLocker) Cleanup(arg1 context.Context, arg2 time.Duration) error {

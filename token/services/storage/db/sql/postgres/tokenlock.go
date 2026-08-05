@@ -32,6 +32,16 @@ type TokenLockStore struct {
 	writeDB *sql.DB
 	ci      common3.CondInterpreter
 	lockID  int64
+
+	// cleanupLockID is derived from the fully-qualified table name (not the
+	// prefix alone, which is not unique per TMS - see review discussion on
+	// #1982), so it is unique per TMS - distinct from lockID (schema-creation
+	// lock) and from other TMSes' cleanup locks on the same node. A single global constant here
+	// was a real bug: it caused every TMS on a node to compete for the
+	// exact same advisory lock, so only one TMS across the whole fleet
+	// ever won cleanup on any tick. See #1798.
+	cleanupLockID        int64
+	cleanupLeaderFactory func(context.Context, *sql.DB, int64) (driver.CleanupLeadership, bool, error)
 }
 
 // GetSchema overrides the base GetSchema to prefix with advisory lock
@@ -55,11 +65,24 @@ func NewTokenLockStore(dbs *common2.RWDB, tableNames common5.TableNames) (*Token
 	}
 
 	return &TokenLockStore{
-		TokenLockStore: tldb,
-		writeDB:        dbs.WriteDB,
-		ci:             ci,
-		lockID:         createTableLockID("tokenlock"),
+		TokenLockStore:       tldb,
+		writeDB:              dbs.WriteDB,
+		ci:                   ci,
+		lockID:               createTableLockID(tableNames.TokenLocks),
+		cleanupLockID:        createTableLockID(tableNames.TokenLocks + "_cleanup"),
+		cleanupLeaderFactory: NewCleanupLeaderFactory(),
 	}, nil
+}
+
+// AcquireCleanupLeadership attempts to acquire a Postgres advisory lock so
+// only one replica runs Cleanup per tick for this TMS; others skip the tick
+// and release no held resources, so contention is limited to the acquire
+// attempt itself. The lock id and factory are fixed at construction. Note
+// the winner holds a dedicated connection off writeDB for the tick's
+// duration (see NewAdvisoryLock), so writeDB's connection pool needs at
+// least one spare connection beyond normal write traffic. See #1798.
+func (db *TokenLockStore) AcquireCleanupLeadership(ctx context.Context) (driver.CleanupLeadership, bool, error) {
+	return db.cleanupLeaderFactory(ctx, db.writeDB, db.cleanupLockID)
 }
 
 // Cleanup removes stale token locks that have expired.
