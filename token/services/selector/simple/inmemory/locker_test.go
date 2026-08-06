@@ -95,6 +95,14 @@ func (m *mockTXStatusProvider) GetStatus(_ context.Context, txID string) (ttxdb.
 // transaction before the scanner deletes, the scanner must NOT delete the
 // new entry. The test drives the real scan loop and blocks the scanner's
 // status lookup to open the race window deterministically.
+// Bounds for the coordination in TestScannerDoesNotDeleteReclaimed. Both are far longer than the
+// 20ms scan interval the test drives, so they only fire when something is genuinely wrong, but they
+// keep a missed interleaving from turning into a 10 minute package timeout. See #2156.
+const (
+	scannerObserveTimeout = 30 * time.Second
+	hookReleaseTimeout    = 30 * time.Second
+)
+
 func TestScannerDoesNotDeleteReclaimed(t *testing.T) {
 	mock := newMockTXStatusProvider()
 	tokenID := &token.ID{TxId: "tok1", Index: 0}
@@ -124,14 +132,31 @@ func TestScannerDoesNotDeleteReclaimed(t *testing.T) {
 			// only the first observer (the scanner) blocks; later lookups
 			// (the reclaim's) must pass through or they would deadlock
 			close(entered)
-			<-release
+			// Bounded: if the test fails before reaching close(release), this
+			// goroutine must not sit here forever. Note reclaim() calls
+			// GetStatus while holding the shard lock, so a blocked hook can
+			// hold that lock too.
+			select {
+			case <-release:
+			case <-time.After(hookReleaseTimeout):
+			}
 		}
 	})
 	mock.setStatus(txA, ttxdb.Deleted)
 
 	// The scanner is now stuck between observing tx-A as removable and
 	// deleting it. Reclaim the token for tx-B in that window.
-	<-entered
+	//
+	// Bounded rather than a bare receive: this test has hung in CI until the
+	// 10 minute package timeout, which hides the failure and takes the rest of
+	// the package's results with it. Failing here says which wait did not
+	// complete. See #2156.
+	select {
+	case <-entered:
+	case <-time.After(scannerObserveTimeout):
+		t.Fatal("scanner never observed tx-A as Deleted: the status hook did not fire within " +
+			scannerObserveTimeout.String())
+	}
 	mock.setStatus(txB, ttxdb.Pending)
 	_, err = d.Lock(context.Background(), "w1", tokenID, txB, true)
 	require.NoError(t, err)
