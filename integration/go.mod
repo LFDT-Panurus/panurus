@@ -23,6 +23,7 @@ require (
 	go.opentelemetry.io/otel/trace v1.44.0
 	go.uber.org/dig v1.19.0
 	go.yaml.in/yaml/v3 v3.0.4
+	gopkg.in/yaml.v2 v2.4.0
 )
 
 require (
