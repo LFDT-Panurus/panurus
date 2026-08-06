@@ -179,15 +179,16 @@ func (d *locker) lockInShard(ctx context.Context, s *shard, owner string, id *to
 	// The holder observed here is re-validated under the lock below, since it may
 	// change while the lock is not held.
 	var (
-		observedTxID   string
-		observedStatus int
-		statusResolved bool
+		observedTxID       string
+		observedLastAccess time.Time
+		observedStatus     int
+		statusResolved     bool
 	)
 	if reclaim {
 		s.mu.RLock()
 		e, held := s.locked[k]
 		if held {
-			observedTxID = e.TxID
+			observedTxID, observedLastAccess = e.TxID, e.LastAccess
 		}
 		s.mu.RUnlock()
 
@@ -209,30 +210,41 @@ func (d *locker) lockInShard(ctx context.Context, s *shard, owner string, id *to
 	}
 	e, ok := s.locked[k]
 	if ok {
+		// Read before the refresh below clobbers it: the re-validation compares against
+		// the value observed during the status lookup.
+		prevAccess := e.LastAccess
 		e.LastAccess = time.Now()
 
 		if reclaim {
-			// Second chance. Only act on the status resolved above if the entry is
-			// still the one it was resolved for: a concurrent Lock(reclaim=true) may
-			// have handed the token to another transaction in the meantime, and
-			// reclaiming on a stale status would take a token away from its new
-			// holder. When it no longer matches, report the token as locked and let
-			// the caller retry.
+			// Second chance. Only act on the status resolved above if the entry is still
+			// exactly the one it was resolved for, matching the collector's delete phase:
+			// same transaction and same last access. Comparing the transaction alone is
+			// not enough, since the entry may have been unlocked and re-locked under the
+			// same txID while the shard lock was released, and reclaiming on that stale
+			// verdict would drop a fresh entry. When it no longer matches, report the
+			// token as locked and let the caller retry.
 			logger.DebugfContext(ctx, "[%s] already locked by [%s], try to reclaim...", id, e)
-			status := observedStatus
-			reclaimed := statusResolved && e.TxID == observedTxID && status == ttxdb.Deleted
+			unchanged := statusResolved && e.TxID == observedTxID && prevAccess.Equal(observedLastAccess)
+			reclaimed := unchanged && observedStatus == ttxdb.Deleted
 			if reclaimed {
 				delete(s.locked, k)
 			}
 			if !reclaimed {
-				logger.DebugfContext(ctx, "[%s] already locked by [%s], reclaim failed, tx status [%s]", id, e, ttxdb.TxStatusMessage[status])
+				// Only report the status when it belongs to the holder still in place;
+				// otherwise it describes observedTxID, not e, and pairing the two sends
+				// a reader after the wrong transaction.
+				if unchanged {
+					logger.DebugfContext(ctx, "[%s] already locked by [%s], reclaim failed, tx status [%s]", id, e, ttxdb.TxStatusMessage[observedStatus])
+				} else {
+					logger.DebugfContext(ctx, "[%s] already locked by [%s], reclaim failed, entry changed since the status of [%s] was read", id, e, observedTxID)
+				}
 				if logger.IsEnabledFor(zapcore.DebugLevel) {
 					return e.TxID, errors.Errorf("already locked by [%s]", e)
 				}
 
 				return e.TxID, AlreadyLockedError
 			}
-			logger.DebugfContext(ctx, "[%s] already locked by [%s], reclaimed successful, tx status [%s]", id, e, ttxdb.TxStatusMessage[status])
+			logger.DebugfContext(ctx, "[%s] reclaimed from [%s], tx status [%s]", id, observedTxID, ttxdb.TxStatusMessage[observedStatus])
 		} else {
 			logger.DebugfContext(ctx, "[%s] already locked by [%s], no reclaim", id, e)
 			if logger.IsEnabledFor(zapcore.DebugLevel) {
