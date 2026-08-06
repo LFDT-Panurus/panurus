@@ -195,3 +195,71 @@ func TestScannerDeletesStaleEntry(t *testing.T) {
 		return !d.IsLocked(tokenID)
 	}, 2*time.Second, 20*time.Millisecond, "stale entry should have been removed by scanner")
 }
+
+// TestReclaimDoesNotHoldShardLockDuringStatusLookup pins the invariant the collector
+// already documents: a status lookup must never run while the shard lock is held.
+// Lock(reclaim=true) used to call GetStatus from under the write lock, so a slow or
+// stuck transaction store blocked every other operation on that owner's shard until
+// it returned.
+func TestReclaimDoesNotHoldShardLockDuringStatusLookup(t *testing.T) {
+	mock := newMockTXStatusProvider()
+	tokenID := &token.ID{TxId: "tok1", Index: 0}
+	txA := "tx-A"
+
+	mock.setStatus(txA, ttxdb.Pending)
+	// A long sleep timeout keeps the collector out of the way: this test is about
+	// the locking path, not the scanner.
+	d := NewLocker(mock, time.Hour, time.Hour).(*locker)
+	t.Cleanup(func() { _ = d.Stop() })
+	_, err := d.Lock(context.Background(), "w1", tokenID, txA, false)
+	require.NoError(t, err)
+
+	// Block the next status lookup for tx-A, standing in for a slow transaction store.
+	inLookup := make(chan struct{})
+	unblock := make(chan struct{})
+	var once sync.Once
+	mock.setGetStatusHook(func(txID string) {
+		if txID != txA {
+			return
+		}
+		first := false
+		once.Do(func() { first = true })
+		if !first {
+			return
+		}
+		close(inLookup)
+		<-unblock
+	})
+
+	// Reclaim in the background; it will stall inside the status lookup.
+	reclaimReturned := make(chan struct{})
+	go func() {
+		defer close(reclaimReturned)
+		_, _ = d.Lock(context.Background(), "w1", tokenID, "tx-B", true)
+	}()
+
+	select {
+	case <-inLookup:
+	case <-time.After(5 * time.Second):
+		close(unblock)
+		t.Fatal("reclaim never reached the status lookup")
+	}
+
+	// The shard must still be usable while that lookup is outstanding. Before the
+	// fix this blocked on the write lock the reclaim was holding, and the test
+	// timed out here.
+	done := make(chan bool, 1)
+	go func() { done <- d.IsLocked(tokenID) }()
+
+	select {
+	case locked := <-done:
+		assert.True(t, locked, "token should still be reported as locked")
+	case <-time.After(5 * time.Second):
+		close(unblock)
+		t.Fatal("IsLocked blocked while a reclaim's status lookup was in flight: " +
+			"the shard lock is being held across GetStatus")
+	}
+
+	close(unblock)
+	<-reclaimReturned
+}
