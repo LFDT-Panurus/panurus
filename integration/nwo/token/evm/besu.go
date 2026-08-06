@@ -98,6 +98,13 @@ func StartBesu(ctx context.Context, cfg BesuConfig) (*Besu, error) {
 		return nil, errors.Wrap(err, "evm nwo: failed to create a docker client")
 	}
 
+	// A container left behind by an interrupted run would otherwise block this one on a name clash.
+	// The test network is generated fresh each time, so removing it is the same intent as
+	// DeleteOnStart rather than a destructive surprise.
+	if _, err := cli.ContainerRemove(ctx, cfg.Name, dcli.ContainerRemoveOptions{Force: true}); err != nil {
+		logger.Debugf("no previous besu container to remove: %v", err)
+	}
+
 	// On Linux the container needs an explicit route back to the host for anything the node has to
 	// reach; the fabric platforms add the same host alias.
 	var extraHosts []string

@@ -111,6 +111,17 @@ monitoring-docker-images:
 	docker pull grafana/grafana:latest
 	docker pull cr.jaegertracing.io/jaegertracing/jaeger:2.12.0
 
+# The EVM integration suite runs against this Besu image.
+BESU_IMAGE ?= hyperledger/besu:24.3.0
+
+.PHONY: integration-tests-evm
+# run the fungible integration tests against an EVM backend (Besu).
+# Unlike the fabric suites this needs no FAB_BINS, but it does need docker and the besu image, which
+# it pulls if missing, plus forge to deploy the contracts.
+integration-tests-evm:
+	docker image inspect $(BESU_IMAGE) >/dev/null 2>&1 || docker pull $(BESU_IMAGE)
+	cd ./integration/token/fungible/evm; ginkgo $(GINKGO_TEST_OPTS) .
+
 .PHONY: integration-tests-nft-dlog
 # run nft integration tests with idemix
 integration-tests-nft-dlog:
@@ -150,6 +161,8 @@ clean:
 	rm -rf ./integration/token/fungible/dlog/out/
 	rm -rf ./integration/token/fungible/dlog/testdata/
 	rm -rf ./integration/token/fungible/dlogx/out/
+	rm -rf ./integration/token/fungible/evm/out/
+	rm -rf ./integration/token/fungible/evm/testdata/
 	rm -rf ./integration/token/fungible/dloghsm/out/
 	rm -rf ./integration/token/fungible/dloghsm/testdata/
 	rm -rf ./integration/token/fungible/dlogstress/out/

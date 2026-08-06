@@ -19,6 +19,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	ncommon "github.com/LFDT-Panurus/panurus/token/services/network/common"
 	"github.com/LFDT-Panurus/panurus/token/services/network/driver"
 	"github.com/LFDT-Panurus/panurus/token/token"
 	"github.com/LFDT-Panurus/panurus/x/token/services/network/evm/client"
@@ -139,6 +140,26 @@ func TestNormalize(t *testing.T) {
 	t.Run("rejects nil options", func(t *testing.T) {
 		_, err := n.Normalize(nil)
 		require.Error(t, err)
+	})
+
+	t.Run("rejects another network", func(t *testing.T) {
+		_, err := n.Normalize(&token2.ServiceOptions{Network: "some-other-network"})
+		require.Error(t, err)
+	})
+
+	// Without a fetcher the token layer cannot find the public parameters on a fresh node, and the
+	// TMS fails to build with an error that points nowhere near here.
+	t.Run("installs the public parameters fetcher", func(t *testing.T) {
+		opt, err := n.Normalize(&token2.ServiceOptions{Namespace: "token"})
+		require.NoError(t, err)
+		require.NotNil(t, opt.PublicParamsFetcher, "the token layer reads public parameters through this")
+	})
+
+	t.Run("keeps a fetcher the caller supplied", func(t *testing.T) {
+		supplied := ncommon.NewPublicParamsFetcher(n, "token")
+		opt, err := n.Normalize(&token2.ServiceOptions{Namespace: "token", PublicParamsFetcher: supplied})
+		require.NoError(t, err)
+		assert.Same(t, supplied, opt.PublicParamsFetcher)
 	})
 }
 

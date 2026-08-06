@@ -61,7 +61,7 @@ type yamlConfiguration struct {
 
 func (c *yamlConfiguration) lookup(key string) (any, bool) {
 	var cur any = c.doc
-	for _, part := range strings.Split(key, ".") {
+	for part := range strings.SplitSeq(key, ".") {
 		m, ok := cur.(map[any]any)
 		if !ok {
 			return nil, false

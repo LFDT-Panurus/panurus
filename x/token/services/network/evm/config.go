@@ -13,6 +13,9 @@ import (
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 
 	"github.com/LFDT-Panurus/panurus/x/token/services/network/evm/client"
+	"github.com/LFDT-Panurus/panurus/x/token/services/network/evm/eip712"
+	"github.com/LFDT-Panurus/panurus/x/token/services/network/evm/endorsement"
+	"github.com/hyperledger-labs/fabric-smart-client/platform/view/view"
 )
 
 // Configuration defaults. They are applied at load time so a minimal config (endpoint, chain id,
@@ -275,6 +278,47 @@ func (c *Config) TokenStateAddress() (client.Address, error) {
 	}
 
 	return addr, nil
+}
+
+// EndorserRegistry builds the address to identity registry the endorsement flow routes on, from the
+// configured endorser set (design §6.1).
+func (c *Config) EndorserRegistry() (*endorsement.Registry, error) {
+	endorsers := make([]endorsement.Endorser, 0, len(c.Endorsement.Endorsers))
+	for i, b := range c.Endorsement.Endorsers {
+		address, err := client.HexToAddress(b.Address)
+		if err != nil {
+			return nil, errors.Wrapf(err, "evm config: endorser %d has an invalid address", i)
+		}
+		endorsers = append(endorsers, endorsement.Endorser{
+			Identity: view.Identity(b.FSCIdentity),
+			Address:  address,
+		})
+	}
+
+	return endorsement.NewRegistry(endorsers)
+}
+
+// EndorserSigner loads this node's endorsement signing key, or nil when the node does not endorse.
+func (c *Config) EndorserSigner() (*eip712.Signer, error) {
+	if !c.Endorser.Enabled {
+		return nil, nil
+	}
+	key, err := LoadKeyForAddress(c.Endorser.Keystore, c.Endorser.Address)
+	if err != nil {
+		return nil, err
+	}
+
+	return eip712.NewSigner(key), nil
+}
+
+// AllowedRequesters returns the identities permitted to request an endorsement.
+func (c *Config) AllowedRequesters() []view.Identity {
+	out := make([]view.Identity, 0, len(c.Endorsement.Allowlist))
+	for _, id := range c.Endorsement.Allowlist {
+		out = append(out, view.Identity(id))
+	}
+
+	return out
 }
 
 // ChainIDBig returns the chain id as a big.Int, the form the EIP-712 domain and transaction signing

@@ -8,6 +8,7 @@ package topology
 
 import (
 	"fmt"
+	tevm "github.com/LFDT-Panurus/panurus/integration/nwo/token/evm"
 
 	"github.com/LFDT-Panurus/panurus/integration/nwo/token"
 	fabric2 "github.com/LFDT-Panurus/panurus/integration/nwo/token/fabric"
@@ -52,6 +53,12 @@ func Topology(opts common.Opts) []api.Topology {
 		fabricTopology.SetNamespaceApproverOrgs(orgs[0])
 		backendTopology = fabricTopology
 		backendChannel = fabricTopology.Channels[0].Name
+	case tevm.TopologyName:
+		// An EVM network has no organizations or channels to describe: what a node needs to reach the
+		// chain is generated with the network and handed to it in its token configuration.
+		evmTopology := tevm.NewTopology()
+		backendTopology = evmTopology
+		backendChannel = ""
 	default:
 		panic("unknown backend: " + opts.Backend)
 	}

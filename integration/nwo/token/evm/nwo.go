@@ -14,11 +14,11 @@ import (
 	math3 "github.com/IBM/mathlib"
 	api2 "github.com/hyperledger-labs/fabric-smart-client/integration/nwo/api"
 	"github.com/hyperledger-labs/fabric-smart-client/integration/nwo/common/docker"
-	"github.com/hyperledger-labs/fabric-smart-client/integration/nwo/fsc"
 	sfcnode "github.com/hyperledger-labs/fabric-smart-client/integration/nwo/fsc/node"
 	"github.com/onsi/gomega"
 
 	"github.com/LFDT-Panurus/panurus/integration/nwo/token/common"
+	tfabric "github.com/LFDT-Panurus/panurus/integration/nwo/token/fabric"
 	"github.com/LFDT-Panurus/panurus/integration/nwo/token/generators"
 	fabtokenv1 "github.com/LFDT-Panurus/panurus/integration/nwo/token/generators/crypto/fabtokenv1"
 	zkatdlognoghv1 "github.com/LFDT-Panurus/panurus/integration/nwo/token/generators/crypto/zkatdlognoghv1"
@@ -66,8 +66,22 @@ type NetworkHandler struct {
 	// Threshold is the endorsement threshold; when zero every endorser must sign.
 	Threshold uint
 
+	// materials generates the token-level artifacts: wallet crypto material and the public
+	// parameters. That work is the same for every backend, since those identities belong to the token
+	// layer rather than the chain, so it is delegated rather than reimplemented. The backend it is
+	// given does nothing: namespace preparation on EVM is the contract deployment below.
+	materials *tfabric.NetworkHandler
+
 	networkID string
 }
+
+// noopBackend satisfies the fabric handler's backend so the token-level generation can be reused
+// without it trying to prepare a Fabric namespace.
+type noopBackend struct{}
+
+func (noopBackend) PrepareNamespace(*topology2.TMS)            {}
+func (noopBackend) UpdatePublicParams(*topology2.TMS, []byte)  {}
+func (noopBackend) InstallPublicParams(*topology2.TMS, []byte) {}
 
 // NewNetworkHandler returns a handler for EVM-backed TMSs.
 func NewNetworkHandler(tokenPlatform common.TokenPlatform, builder api2.Builder) *NetworkHandler {
@@ -80,7 +94,8 @@ func NewNetworkHandler(tokenPlatform common.TokenPlatform, builder api2.Builder)
 				zkatdlognoghv1.DriverIdentifier: zkatdlognoghv1.NewCryptoMaterialGenerator(tokenPlatform, math3.BN254, builder),
 			},
 		},
-		Entries: map[string]*Entry{},
+		Entries:   map[string]*Entry{},
+		materials: tfabric.NewNetworkHandler(tokenPlatform, builder, noopBackend{}),
 	}
 }
 
@@ -100,6 +115,10 @@ func (p *NetworkHandler) GetEntry(tms *topology2.TMS) *Entry {
 // node's configuration has to name the contract addresses, which do not exist until the deployment
 // has run.
 func (p *NetworkHandler) GenerateArtifacts(tms *topology2.TMS) {
+	// Wallet crypto material and the public parameters first: the deployment seeds the parameters on
+	// chain, so they have to exist before it runs.
+	p.materials.GenerateArtifacts(tms)
+
 	entry := p.GetEntry(tms)
 	ctx := p.TokenPlatform.GetContext()
 	keyDir := filepath.Join(p.TokenPlatform.TokenDir(), "evm", tms.TmsID(), "keys")
@@ -243,17 +262,7 @@ func (p *NetworkHandler) Cleanup() {
 // GenIssuerCryptoMaterial generates an issuer wallet. Issuer and owner identities belong to the token
 // layer, not the chain, so this is the same work every backend does.
 func (p *NetworkHandler) GenIssuerCryptoMaterial(tms *topology2.TMS, nodeID string, walletID string) string {
-	generator := p.CryptoMaterialGenerators[tms.Driver]
-	gomega.Expect(generator).NotTo(gomega.BeNil(), "no crypto material generator for driver [%s]", tms.Driver)
-
-	for _, node := range p.fscNodes() {
-		if node.ID() == nodeID {
-			return generator.GenerateIssuerIdentities(tms, node, walletID)[0].Path
-		}
-	}
-	gomega.Expect(false).To(gomega.BeTrue(), "cannot find FSC node [%s:%s]", tms.Network, nodeID)
-
-	return ""
+	return p.materials.GenIssuerCryptoMaterial(tms, nodeID, walletID)
 }
 
 // GenOwnerCryptoMaterial generates an owner wallet.
@@ -261,26 +270,7 @@ func (p *NetworkHandler) GenOwnerCryptoMaterial(
 	tms *topology2.TMS,
 	nodeID string,
 	walletID string,
-	_ bool,
-) (res token2.IdentityConfiguration) {
-	generator := p.CryptoMaterialGenerators[tms.Driver]
-	gomega.Expect(generator).NotTo(gomega.BeNil(), "no crypto material generator for driver [%s]", tms.Driver)
-
-	for _, node := range p.fscNodes() {
-		if node.ID() == nodeID {
-			ids := generator.GenerateOwnerIdentities(tms, node, walletID)
-			res.ID, res.URL, res.Raw = ids[0].ID, ids[0].Path, ids[0].Raw
-
-			return res
-		}
-	}
-	gomega.Expect(false).To(gomega.BeTrue(), "cannot find FSC node [%s:%s]", tms.Network, nodeID)
-
-	return res
-}
-
-func (p *NetworkHandler) fscNodes() []*sfcnode.Node {
-	topology := p.TokenPlatform.GetContext().TopologyByName(fsc.TopologyName).(*fsc.Topology)
-
-	return topology.Nodes
+	useCA bool,
+) token2.IdentityConfiguration {
+	return p.materials.GenOwnerCryptoMaterial(tms, nodeID, walletID, useCA)
 }

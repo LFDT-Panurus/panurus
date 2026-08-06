@@ -8,13 +8,19 @@ package evm
 
 import (
 	"strings"
+	"sync"
 
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 
+	token2 "github.com/LFDT-Panurus/panurus/token"
 	"github.com/LFDT-Panurus/panurus/token/services/config"
 	"github.com/LFDT-Panurus/panurus/token/services/logging"
 	"github.com/LFDT-Panurus/panurus/token/services/network/driver"
 	"github.com/LFDT-Panurus/panurus/x/token/services/network/evm/client"
+	"github.com/LFDT-Panurus/panurus/x/token/services/network/evm/eip712"
+	"github.com/LFDT-Panurus/panurus/x/token/services/network/evm/endorsement"
+	"github.com/LFDT-Panurus/panurus/x/token/services/network/evm/pp"
+	"github.com/hyperledger-labs/fabric-smart-client/platform/view/services/view"
 )
 
 var logger = logging.MustGetLogger()
@@ -38,19 +44,36 @@ type networkResolver interface {
 // return an error for networks that are not configured for EVM.
 type Driver struct {
 	resolver networkResolver
-	// endorsement and membership are supplied by the SDK wiring: the first is per-TMS and needs the
-	// TMS's validator, the second owns identities the driver does not mint.
-	endorsement EndorsementService
-	membership  driver.LocalMembership
+	// membership owns identities the driver does not mint.
+	membership driver.LocalMembership
+	// viewManager and viewRegistry drive the endorsement flow over FSC sessions.
+	viewManager  endorsement.ViewManager
+	viewRegistry endorsement.ViewRegistry
+	// registerOnce guards the responder registration, which is per node rather than per TMS.
+	registerOnce sync.Once
 }
 
 // Compile-time assertion that Driver satisfies the factory contract.
 var _ driver.Driver = (*Driver)(nil)
 
 // NewDriver returns a new EVM network Driver. It is wired into the SDK dig container under the
-// "network-drivers" group (see the evmdlog SDK module).
-func NewDriver(configService *config.Service) driver.Driver {
-	return &Driver{resolver: &configNetworkResolver{cs: configService}}
+// "network-drivers" group (see the evmdlog SDK module), which supplies both arguments.
+//
+// The identity provider is required rather than optional: the token drivers read
+// LocalMembership().DefaultIdentity() while constructing a TMS, so without it a node fails at
+// startup rather than at its first transaction.
+func NewDriver(
+	configService *config.Service,
+	identityProvider view.IdentityProvider,
+	viewManager *view.Manager,
+	viewRegistry *view.Registry,
+) driver.Driver {
+	return &Driver{
+		resolver:     &configNetworkResolver{cs: configService},
+		membership:   newLocalMembership(identityProvider),
+		viewManager:  viewManager,
+		viewRegistry: viewRegistry,
+	}
 }
 
 // New returns an EVM Network for the given network/channel, or an error if that network is not
@@ -79,7 +102,63 @@ func (d *Driver) New(network, channel string) (driver.Network, error) {
 		return nil, err
 	}
 
-	return NewNetwork(network, config, evmClient, d.endorsement, submitter, d.membership)
+	n, err := NewNetwork(network, config, evmClient, nil, submitter, d.membership)
+	if err != nil {
+		return nil, err
+	}
+	if err := d.installEndorsement(n, config, evmClient); err != nil {
+		return nil, err
+	}
+
+	return n, nil
+}
+
+// installEndorsement builds the endorsement seam for this network and hands it to the network. The
+// service itself is per TMS, because it needs that TMS's validator, so what is installed is a factory
+// that resolves one when the network is given a TMS to approve for.
+func (d *Driver) installEndorsement(n *Network, config *Config, evmClient client.EVMClient) error {
+	if d.viewManager == nil {
+		logger.Debugf("no view manager available; this node cannot collect endorsements")
+
+		return nil
+	}
+
+	registry, err := config.EndorserRegistry()
+	if err != nil {
+		return err
+	}
+	tokenState, err := config.TokenStateAddress()
+	if err != nil {
+		return err
+	}
+
+	factory, err := endorsement.NewServiceFactory(endorsement.FactoryConfig{
+		Registry:     registry,
+		Threshold:    int(config.Endorsement.Threshold),
+		Domain:       eip712.Domain{ChainID: config.ChainIDBig(), VerifyingContract: tokenState},
+		Client:       evmClient,
+		TokenState:   tokenState,
+		BlockTag:     config.Finality.BlockTag,
+		PublicParams: pp.NewChainProvider(evmClient, tokenState, config.Finality.BlockTag),
+		ViewManager:  d.viewManager,
+	})
+	if err != nil {
+		return err
+	}
+
+	n.SetEndorsementFactory(func(tms *token2.ManagementService) (EndorsementService, error) {
+		service, err := factory.ForTMS(tms)
+		if err != nil {
+			return nil, err
+		}
+		// A node that endorses answers requests as well as making them. Registration is idempotent
+		// per network, so it is done once here rather than on every approval.
+		d.registerEndorserOnce(factory, config, tms)
+
+		return service, nil
+	})
+
+	return nil
 }
 
 // newSubmitter builds the account that signs and pays for transactions. A network with no submitter
@@ -101,6 +180,44 @@ func (d *Driver) newSubmitter(config *Config, evmClient client.EVMClient) (*Subm
 	}
 
 	return NewSubmitter(evmClient, key, tokenState, config.ChainIDBig(), config.Gas)
+}
+
+// registerEndorserOnce registers this node's responder the first time an endorsement service is
+// resolved. A node that does not endorse has no key and registers nothing.
+func (d *Driver) registerEndorserOnce(
+	factory *endorsement.ServiceFactory,
+	config *Config,
+	tms *token2.ManagementService,
+) {
+	d.registerOnce.Do(func() {
+		if d.viewRegistry == nil || !config.Endorser.Enabled {
+			return
+		}
+		signer, err := config.EndorserSigner()
+		if err != nil || signer == nil {
+			logger.Errorf("this node is configured as an endorser but its key is unusable: %v", err)
+
+			return
+		}
+		authorizer, err := endorsement.NewAuthorizer(config.AllowedRequesters())
+		if err != nil {
+			logger.Errorf("failed to build the endorsement allowlist: %v", err)
+
+			return
+		}
+		responder, err := factory.NewResponderFor(tms, authorizer, signer)
+		if err != nil {
+			logger.Errorf("failed to build the endorsement responder: %v", err)
+
+			return
+		}
+		if err := endorsement.RegisterEndorser(d.viewRegistry, responder); err != nil {
+			logger.Errorf("failed to register the endorsement responder: %v", err)
+
+			return
+		}
+		logger.Infof("registered as an endorser with address %s", signer.Address())
+	})
 }
 
 // configNetworkResolver resolves EVM networks from the token-sdk configuration.

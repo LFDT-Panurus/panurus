@@ -18,6 +18,7 @@ import (
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/view"
 
+	ncommon "github.com/LFDT-Panurus/panurus/token/services/network/common"
 	"github.com/LFDT-Panurus/panurus/token/services/network/driver"
 	"github.com/LFDT-Panurus/panurus/x/token/services/network/evm/client"
 	"github.com/LFDT-Panurus/panurus/x/token/services/network/evm/endorsement"
@@ -40,11 +41,14 @@ type Network struct {
 	config      *Config
 	client      client.EVMClient
 	endorsement EndorsementService
-	submitter   *Submitter
-	reader      *contractReader
-	finality    *finality.Manager
-	tokenState  client.Address
-	membership  driver.LocalMembership
+	// endorsementFor resolves the per-TMS endorsement service. It is preferred over the field above,
+	// which stays for tests that inject a stub directly.
+	endorsementFor func(tms *token2.ManagementService) (EndorsementService, error)
+	submitter      *Submitter
+	reader         *contractReader
+	finality       *finality.Manager
+	tokenState     client.Address
+	membership     driver.LocalMembership
 }
 
 // Compile-time assertion that Network satisfies the driver contract.
@@ -91,7 +95,13 @@ func (n *Network) Name() string { return n.name }
 // Channel returns the empty string: EVM has no channel concept.
 func (n *Network) Channel() string { return "" }
 
-// Normalize fills default service options for the EVM network: this network and the empty channel.
+// Normalize fills default service options for the EVM network: this network, the empty channel, and
+// the fetcher the token layer reads public parameters through.
+//
+// The fetcher matters more than it looks. Building a TMS needs its public parameters, and the token
+// layer tries the options, its storage, the local configuration and finally this fetcher. On a fresh
+// node none of the first three hold anything, so without a fetcher here the parameters cannot be
+// found at all and the TMS fails to build, which surfaces far from its cause.
 func (n *Network) Normalize(opt *token2.ServiceOptions) (*token2.ServiceOptions, error) {
 	if opt == nil {
 		return nil, errors.New("evm network: nil service options")
@@ -99,10 +109,17 @@ func (n *Network) Normalize(opt *token2.ServiceOptions) (*token2.ServiceOptions,
 	if len(opt.Network) == 0 {
 		opt.Network = n.name
 	}
+	if opt.Network != n.name {
+		return nil, errors.Errorf("evm network: invalid network [%s], expected [%s]", opt.Network, n.name)
+	}
 	if len(opt.Channel) != 0 && opt.Channel != n.Channel() {
 		return nil, errors.Errorf("evm network has no channels, got [%s]", opt.Channel)
 	}
 	opt.Channel = n.Channel()
+
+	if opt.PublicParamsFetcher == nil {
+		opt.PublicParamsFetcher = ncommon.NewPublicParamsFetcher(n, opt.Namespace)
+	}
 
 	return opt, nil
 }
@@ -142,15 +159,16 @@ func (n *Network) RequestApproval(
 	txID driver.TxID,
 	metadata driver.TransientMap,
 ) (driver.Envelope, error) {
-	if n.endorsement == nil {
-		return nil, errors.New("evm network: no endorsement service configured")
-	}
 	if tms == nil {
 		return nil, errors.New("evm network: nil token management service")
 	}
+	endorser, err := n.endorserFor(tms)
+	if err != nil {
+		return nil, err
+	}
 
 	anchor := n.ComputeTxID(&txID)
-	result, err := n.endorsement.Endorse(context, &endorsement.EndorseRequest{
+	result, err := endorser.Endorse(context, &endorsement.EndorseRequest{
 		TokenRequest: requestRaw,
 		TMSID:        tms.ID(),
 		Anchor:       anchor,
@@ -165,6 +183,27 @@ func (n *Network) RequestApproval(
 		Delta:        result.Delta,
 		Endorsements: result.Endorsements,
 	}, nil
+}
+
+// endorserFor returns the endorsement service for a TMS: the one injected directly if there is one,
+// otherwise the per-TMS service the factory builds. The service is per TMS because validating a
+// request needs that TMS's validator.
+func (n *Network) endorserFor(tms *token2.ManagementService) (EndorsementService, error) {
+	if n.endorsement != nil {
+		return n.endorsement, nil
+	}
+	if n.endorsementFor == nil {
+		return nil, errors.New("evm network: no endorsement service configured")
+	}
+
+	return n.endorsementFor(tms)
+}
+
+// SetEndorsementFactory installs the resolver that builds the endorsement service per TMS. The SDK
+// wiring calls it after the network is created, because the factory needs collaborators (the view
+// manager, this node's signing key) that the network itself has no source for.
+func (n *Network) SetEndorsementFactory(f func(tms *token2.ManagementService) (EndorsementService, error)) {
+	n.endorsementFor = f
 }
 
 // Broadcast assembles the endorsed envelope into a signed transaction, sends it, and records the

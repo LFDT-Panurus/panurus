@@ -24,6 +24,7 @@ require (
 	github.com/DATA-DOG/go-sqlmock v1.5.2 // indirect
 	github.com/IBM/idemix v0.2.0 // indirect
 	github.com/IBM/mathlib v0.3.0 // indirect
+	github.com/LFDT-Panurus/panurus/x/token/services/network/evm v0.0.0 // indirect
 	github.com/Masterminds/semver/v3 v3.5.0 // indirect
 	github.com/Masterminds/squirrel v1.5.4 // indirect
 	github.com/Microsoft/go-winio v0.6.2 // indirect
@@ -233,3 +234,5 @@ require (
 	modernc.org/memory v1.11.0 // indirect
 	modernc.org/sqlite v1.53.0 // indirect
 )
+
+replace github.com/LFDT-Panurus/panurus/x/token/services/network/evm => ../../x/token/services/network/evm
