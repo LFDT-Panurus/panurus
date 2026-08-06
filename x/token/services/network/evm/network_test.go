@@ -60,7 +60,7 @@ func testNetwork(t *testing.T, evmClient client.EVMClient, endorser EndorsementS
 	c.applyDefaults()
 	require.NoError(t, c.Validate())
 
-	n, err := NewNetwork("evm-net", c, evmClient, endorser, nil)
+	n, err := NewNetwork("evm-net", c, evmClient, endorser, nil, nil)
 	require.NoError(t, err)
 
 	return n

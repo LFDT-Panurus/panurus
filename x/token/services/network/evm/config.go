@@ -76,6 +76,11 @@ type FinalityConfig struct {
 	// a failed apply reverts and emits no log, so "no event by the timeout" is what makes it Invalid
 	// (design §7.4).
 	Timeout time.Duration `yaml:"timeout"`
+	// FromBlock is where log searches start when resolving an anchor to its transaction hash. It
+	// defaults to zero, the whole chain, which is right for a freshly bootstrapped network; on a chain
+	// where the TokenState was deployed much later, set it to the deployment block so the search does
+	// not walk history that cannot contain the event.
+	FromBlock uint64 `yaml:"fromBlock"`
 }
 
 // GasConfig controls gas limit selection.

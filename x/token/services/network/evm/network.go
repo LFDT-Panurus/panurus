@@ -44,6 +44,7 @@ type Network struct {
 	reader      *contractReader
 	finality    *finality.Manager
 	tokenState  client.Address
+	membership  driver.LocalMembership
 }
 
 // Compile-time assertion that Network satisfies the driver contract.
@@ -56,6 +57,7 @@ func NewNetwork(
 	evmClient client.EVMClient,
 	endorsementService EndorsementService,
 	submitter *Submitter,
+	membership driver.LocalMembership,
 ) (*Network, error) {
 	if config == nil {
 		return nil, errors.New("evm network: nil configuration")
@@ -77,7 +79,8 @@ func NewNetwork(
 		endorsement: endorsementService,
 		submitter:   submitter,
 		reader:      reader,
-		finality:    finality.NewManager(evmClient, reader, config.Finality.PollInterval, config.Finality.Timeout),
+		membership:  membership,
+		finality:    finality.NewManager(evmClient, reader, tokenState, config.Finality.FromBlock, config.Finality.PollInterval, config.Finality.Timeout),
 		tokenState:  tokenState,
 	}, nil
 }
@@ -309,9 +312,10 @@ func (n *Network) LookupTransferMetadataKey(namespace string, key string, timeou
 	}
 }
 
-// LocalMembership returns the local membership service for EVM identities. It is supplied by the SDK
-// wiring, which owns the node's identities.
-func (n *Network) LocalMembership() driver.LocalMembership { return nil }
+// LocalMembership returns this node's identities. The driver does not mint identities of its own, so
+// the service is supplied by the SDK wiring, which owns them; a network built without one reports nil
+// rather than inventing a membership that would not correspond to any real node.
+func (n *Network) LocalMembership() driver.LocalMembership { return n.membership }
 
 // AddFinalityListener registers a listener for the finality of the transaction identified by its
 // anchor. If the transaction is already final the listener is notified immediately; otherwise it is

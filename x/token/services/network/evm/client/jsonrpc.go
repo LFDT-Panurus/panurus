@@ -101,10 +101,14 @@ func (c *JSONRPCClient) GetLogs(ctx context.Context, q LogFilter) ([]Log, error)
 		}
 		topics = append(topics, values)
 	}
+	toBlock := any(encodeHexUint(q.ToBlock))
+	if q.ToBlock == 0 {
+		toBlock = BlockTagLatest
+	}
 	arg := map[string]any{
 		"address":   q.Address.Hex(),
 		"fromBlock": encodeHexUint(q.FromBlock),
-		"toBlock":   encodeHexUint(q.ToBlock),
+		"toBlock":   toBlock,
 	}
 	if len(topics) != 0 {
 		arg["topics"] = topics

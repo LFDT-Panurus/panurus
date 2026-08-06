@@ -106,8 +106,8 @@
     <div class="stats">
       <div class="stat"><b>6</b><span>months</span></div>
       <div class="stat"><b class="k-violet">2</b><span>tracks</span></div>
-      <div class="stat"><b class="k-mint">Wk 2</b><span>complete</span></div>
-      <div class="stat"><b class="k-gold">40</b><span>forge tests</span></div>
+      <div class="stat"><b class="k-mint">Wk 5</b><span>complete</span></div>
+      <div class="stat"><b class="k-gold">47</b><span>forge tests</span></div>
     </div>
   </div>
 </div>
@@ -148,8 +148,8 @@
   <div style="display:grid;grid-template-columns:3fr 1fr 1fr 1fr;gap:10px;margin-bottom:20px">
     <div class="card g" style="padding:14px 16px">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:11px"><span style="font-size:13px;font-weight:600">EVM network driver</span><span class="pill now">in progress</span></div>
-      <div class="bar"><i style="width:25%"></i></div>
-      <div style="font-family:var(--mono);font-size:10px;color:var(--gold);margin-top:7px">2 of 8 weeks done</div>
+      <div class="bar"><i style="width:62.5%"></i></div>
+      <div style="font-family:var(--mono);font-size:10px;color:var(--gold);margin-top:7px">5 of 8 weeks done</div>
     </div>
     <div class="card" style="display:flex;flex-direction:column;justify-content:center"><div style="font-size:12px;font-weight:600;color:var(--mint)">Sample</div><div style="font-size:10px;color:var(--muted);margin-top:3px">deps + feature + e2e</div></div>
     <div class="card" style="display:flex;flex-direction:column;justify-content:center"><div style="font-size:12px;font-weight:600;color:var(--coral)">Integration</div><div style="font-size:10px;color:var(--muted);margin-top:3px">sample on driver</div></div>
@@ -166,106 +166,124 @@
   <div class="h2">8-week breakdown</div>
   <div style="display:flex;justify-content:space-between;align-items:center;margin:16px 0 7px">
     <span style="font-family:var(--mono);font-size:10px;color:var(--muted)">overall progress</span>
-    <span style="font-family:var(--mono);font-size:10px;color:var(--gold)">2 of 8 weeks done</span>
+    <span style="font-family:var(--mono);font-size:10px;color:var(--gold)">5 of 8 weeks done</span>
   </div>
-  <div class="bar" style="margin-bottom:16px"><i style="width:25%"></i></div>
+  <div class="bar" style="margin-bottom:16px"><i style="width:62.5%"></i></div>
   <div style="display:flex;flex-direction:column;gap:6px">
-    <div class="wkrow"><span class="pill done">done</span><div style="flex:1"><div class="wktitle">Week 1 — Foundation freeze</div><div class="wksub">StateDelta · EVM keys · EIP-712 · registered driver · anvil spike</div></div></div>
-    <div class="wkrow"><span class="pill done">done</span><div style="flex:1"><div class="wktitle">Week 2 — Smart contracts</div><div class="wksub">EndorsementVerifier · TokenState · clones · 40 forge tests · PRs #1879 + #1894</div></div></div>
-    <div class="wkrow active"><span class="pill now">now</span><div style="flex:1"><div class="wktitle">Week 3 — StateDelta translator + secp256k1 signer</div><div class="wksub">the real Go signer these forge tests currently simulate</div></div></div>
-    <div class="wkrow"><span class="pill pend">wk 4</span><div style="flex:1"><div class="wktitle" style="color:var(--muted)">Endorsement — responder, initiator, identity registry</div></div></div>
-    <div class="wkrow"><span class="pill pend">wk 5</span><div style="flex:1"><div class="wktitle" style="color:var(--muted)">Driver + 16 network methods + JSON-RPC client + finality</div></div></div>
-    <div class="wkrow"><span class="pill pend">wk 6</span><div style="flex:1"><div class="wktitle" style="color:var(--muted)">Besu NWO bootstrap + fabtoken end-to-end</div></div></div>
+    <div class="wkrow"><span class="pill done">done</span><div style="flex:1"><div class="wktitle">Week 1 — Foundation freeze</div><div class="wksub">StateDelta · EVM keys · EIP-712 · registered driver</div></div></div>
+    <div class="wkrow"><span class="pill done">done</span><div style="flex:1"><div class="wktitle">Week 2 — Smart contracts</div><div class="wksub">EndorsementVerifier · TokenState · clones · #1879 + #1894</div></div></div>
+    <div class="wkrow"><span class="pill done">done</span><div style="flex:1"><div class="wktitle">Week 3 — StateDelta translator + secp256k1 signer</div><div class="wksub">real Go signatures verify on the contract · #1936</div></div></div>
+    <div class="wkrow"><span class="pill done">done</span><div style="flex:1"><div class="wktitle">Week 4 — Endorsement flow</div><div class="wksub">responder · initiator · registry · 2-of-3 quorum on-chain · #1988</div></div></div>
+    <div class="wkrow"><span class="pill done">done</span><div style="flex:1"><div class="wktitle">Week 5 — Driver, JSON-RPC client, finality</div><div class="wksub">16 methods · tx signing · ABI codec · end to end on a node · #2082 + #2094</div></div></div>
+    <div class="wkrow active"><span class="pill now">now</span><div style="flex:1"><div class="wktitle">Week 6 — Besu NWO bootstrap + fabtoken end-to-end</div><div class="wksub">the acceptance milestone: the existing suite, unchanged, on real Besu</div></div></div>
     <div class="wkrow"><span class="pill pend">wk 7</span><div style="flex:1"><div class="wktitle" style="color:var(--muted)">PP-update + zkatdlog end-to-end + recipient finality</div></div></div>
     <div class="wkrow"><span class="pill pend">wk 8</span><div style="flex:1"><div class="wktitle" style="color:var(--muted)">Hardening · integration matrix · metrics · buffer</div></div></div>
   </div>
 </div>
 
 <div class="slide">
-  <div class="top"><div class="eyebrow">Week 1 · complete</div><div class="snum">05 / 08</div></div>
-  <div class="h2">Foundation freeze</div>
-  <div class="lead" style="margin:8px 0 12px">Locked the data model and crypto that everything downstream signs against.</div>
-  <div style="flex:1">
-    <div class="frow"><span class="ftag">1.1</span><div style="flex:1"><div style="font-size:12.5px;font-weight:500">Scaffolding + crypto primitives</div><div style="font-size:11px;color:var(--muted);margin-top:2px">package tree · local Address/Hash types · Keccak256 + SHA-256 · go-ethereum guard passing</div></div></div>
-    <div class="frow"><span class="ftag">1.2</span><div style="flex:1"><div style="font-size:12.5px;font-weight:500">Wiring skeleton</div><div style="font-size:11px;color:var(--muted);margin-top:2px">EVMClient interface · registered driver · SDK wiring over the view SDK · anvil reachability spike</div></div></div>
-    <div class="frow"><span class="ftag">1.3</span><div style="flex:1"><div style="font-size:12.5px;font-weight:500">StateDelta types + EVM key derivations <span class="k-gold" style="font-family:var(--mono);font-size:10px">freeze 1</span></div><div style="font-size:11px;color:var(--muted);margin-top:2px">single spentRefs list · ComputeTokenID · OutputSNMarker · golden vectors locked</div></div></div>
-    <div class="frow"><span class="ftag">1.4</span><div style="flex:1"><div style="font-size:12.5px;font-weight:500">EIP-712 Go side <span class="k-gold" style="font-family:var(--mono);font-size:10px">freeze 2</span></div><div style="font-size:11px;color:var(--muted);margin-top:2px">domain · type hashes · hashStruct · digest <span class="mono">0xc9326b72…</span> · ethers v6 cross-check</div></div></div>
-  </div>
-  <div class="gate pass" style="margin-top:12px"><div class="glabel k-mint">week 1 gate — passed</div><div style="font-size:12px;color:#C6C4D4">build green · driver registers · go-ethereum guard passes · golden digest frozen and cross-checked against ethers v6</div></div>
-</div>
-
-<div class="slide">
-  <div class="top"><div class="eyebrow">Week 2 · complete</div><div class="snum">06 / 08</div></div>
-  <div class="h2">Smart contracts</div>
-  <div class="grid2" style="margin:16px 0 14px">
-    <div class="card v">
-      <div class="clabel">EndorsementVerifier.sol · <span class="k-violet">PR #1879</span></div>
-      <div class="li v">ecrecover over the EIP-712 digest, 65-byte {r,s,v}</div>
-      <div class="li v">low-s + v ∈ {27,28}: blocks signature malleability</div>
-      <div class="li v">signer uniqueness: N sigs from one endorser = 1 vote</div>
-      <div class="li v">strict: every provided sig valid, count ≥ threshold</div>
+  <div class="top"><div class="eyebrow">Weeks 1 to 3 · shipped</div><div class="snum">05 / 08</div></div>
+  <div class="h2">Foundation, contracts, and the signer</div>
+  <div class="lead" style="margin:8px 0 14px">The frozen data model and the crypto everything downstream signs against, plus the contracts that verify it.</div>
+  <div class="grid2" style="margin-bottom:12px">
+    <div class="card m">
+      <div class="clabel">On chain</div>
+      <div class="li m">EndorsementVerifier: quorum, distinct signers, low-s and v malleability rejected</div>
+      <div class="li m">TokenState: verify, check the pp version, spend, apply atomically</div>
+      <div class="li m">content-bound markers reject forged bytes at a real position</div>
+      <div class="li m">per-TMS EIP-1167 clone, endorsed pp updates bump the version</div>
     </div>
     <div class="card m">
-      <div class="clabel">TokenState.sol · <span class="k-mint">PR #1894</span></div>
-      <div class="li m">applyStateDelta: verify → PP version → spent → apply atomically</div>
-      <div class="li m">content-bound markers reject forged bytes at a real position</div>
-      <div class="li m">endorsed PP update bumps the version, old deltas go stale</div>
-      <div class="li m">per-TMS EIP-1167 clone; Deploy.s.sol wires it up</div>
+      <div class="clabel">Off chain</div>
+      <div class="li m">StateDelta translator: validated actions to deterministic bytes</div>
+      <div class="li m">secp256k1 signer on decred, no go-ethereum anywhere</div>
+      <div class="li m">content binding proven with the real fabtoken and zkatdlog actions</div>
+      <div class="li m">every endorser produces byte-identical deltas</div>
     </div>
   </div>
   <div class="gate pass">
-    <div class="glabel k-mint">week 2 gate — passed</div>
-    <div style="font-size:12px;color:#C6C4D4;margin-bottom:4px">Solidity reproduces both locked digests <span class="mono">0xc9326b72…</span> and <span class="mono">0xdca9a011…</span>; Go, ethers and Solidity all agree.</div>
-    <div style="font-size:11px;color:var(--muted)">forged-content spend rejected on-chain · 40 forge tests green · both PRs raised for review</div>
+    <div class="glabel k-mint">gates passed</div>
+    <div style="font-size:12px;color:#C6C4D4;margin-bottom:4px">Go, ethers and Solidity all reproduce the same digests, and real Go signatures verify on the contract.</div>
+    <div style="font-size:11px;color:var(--muted)">PRs #1850 · #1853 · #1879 · #1894 · #1936, all merged</div>
   </div>
 </div>
 
 <div class="slide">
-  <div class="top"><div class="eyebrow">Week 3 · next</div><div class="snum">07 / 08</div></div>
-  <div class="h2">StateDelta translator + Go signer</div>
-  <div class="grid2" style="margin:16px 0 14px">
-    <div class="card">
-      <div class="clabel">StateDelta translator</div>
-      <div class="li">validated actions → StateDelta, reusing the SDK action interfaces</div>
-      <div class="li">content-bound markers from GetInputs + GetSerializedInputs</div>
-      <div class="li">deterministic bytes: sorted metadata, exact counter order</div>
-      <div class="li">so every endorser produces the identical delta</div>
+  <div class="top"><div class="eyebrow">Week 4 · complete</div><div class="snum">06 / 08</div></div>
+  <div class="h2">Endorsement flow</div>
+  <div class="lead" style="margin:8px 0 14px">The translator and signer wired into an actual flow over FSC sessions.</div>
+  <div class="grid2" style="margin-bottom:12px">
+    <div class="card v">
+      <div class="clabel">Responder</div>
+      <div class="li v">authorize the caller, validate against on-chain state, translate, sign</div>
+      <div class="li v">recomputes the digest itself and never signs one handed to it</div>
+      <div class="li v">so a bad initiator cannot get it to sign something it did not validate</div>
     </div>
-    <div class="card">
-      <div class="clabel">secp256k1 signer</div>
-      <div class="li">decred/secp256k1, no go-ethereum</div>
-      <div class="li">65-byte {r,s,v}, low-s, v ∈ {27,28}</div>
-      <div class="li">address = keccak256(pubkey)[12:]</div>
-      <div class="li">sign / recover round-trip vectors</div>
+    <div class="card v">
+      <div class="clabel">Initiator</div>
+      <div class="li v">collects signatures and assembles the quorum</div>
+      <div class="li v">recovers each signature to a distinct registered endorser first</div>
+      <div class="li v">the same rule the contract enforces, so it never builds a quorum that would be rejected</div>
+    </div>
+  </div>
+  <div class="gate pass">
+    <div class="glabel k-mint">week 4 gate — passed</div>
+    <div style="font-size:12px;color:#C6C4D4;margin-bottom:4px">a 2-of-3 quorum assembled over in-memory sessions verifies on the real contract.</div>
+    <div style="font-size:11px;color:var(--muted)">plus the address to identity registry and a dependency-free ABI codec · PR #1988 merged</div>
+  </div>
+</div>
+
+<div class="slide">
+  <div class="top"><div class="eyebrow">Week 5 · complete</div><div class="snum">07 / 08</div></div>
+  <div class="h2">The driver comes alive</div>
+  <div class="lead" style="margin:8px 0 14px">Everything built so far now runs as one system against a real node.</div>
+  <div class="grid2" style="margin-bottom:12px">
+    <div class="card g">
+      <div class="clabel">Talking to a node</div>
+      <div class="li g">JSON-RPC client over plain eth_* methods, works on any standard node</div>
+      <div class="li g">RLP encoder and EIP-1559 transaction signing, hand-rolled</div>
+      <div class="li g">ABI write codec for applyStateDelta, the nested dynamic tuple</div>
+      <div class="li g">config, version keeper, nonce manager, submitter</div>
+    </div>
+    <div class="card g">
+      <div class="clabel">The driver surface</div>
+      <div class="li g">all the network methods: approval, broadcast, queries, finality</div>
+      <div class="li g">ComputeTxID mutates the id, as FSC and the fabric driver do</div>
+      <div class="li g">finality resolves from the chain alone, so a restart needs no stored state</div>
+      <div class="li g">by anchor only success is observable, a revert leaves nothing behind</div>
+    </div>
+  </div>
+  <div class="gate pass">
+    <div class="glabel k-mint">week 5 gate — passed</div>
+    <div style="font-size:12px;color:#C6C4D4;margin-bottom:4px">against a real node: deploy, issue, transfer, double spend refused, finality read back, all through the driver's own path.</div>
+    <div style="font-size:11px;color:var(--muted)">two golden vectors verified with cast, not just against our own code · PRs #2082 + #2094 merged</div>
+  </div>
+</div>
+
+<div class="slide">
+  <div class="top"><div class="eyebrow">Week 6 · this week</div><div class="snum">08 / 08</div></div>
+  <div class="h2">Besu end to end</div>
+  <div class="lead" style="margin:8px 0 18px">The acceptance milestone. Everything so far has been proven in isolation or against anvil; this is the driver carrying the real suite on the real backend.</div>
+  <div class="grid2" style="margin-bottom:14px">
+    <div class="card v">
+      <div class="clabel">What gets built</div>
+      <div class="li v">NWO platform that boots Besu and deploys the contracts into it</div>
+      <div class="li v">endorser identities provisioned, address bound to FSC identity</div>
+      <div class="li v">the evmdlog SDK composition in the integration module</div>
+      <div class="li v">admin deployment runbook, and the clone front-running fix</div>
+    </div>
+    <div class="card v">
+      <div class="clabel">Shared with the NWO work</div>
+      <div class="li v">the nwo/token/evm skeleton landed already (#1992)</div>
+      <div class="li v">Besu is mine, the fabricx+EVM gateway backend is Arunabha's</div>
+      <div class="li v">both implement the same Backend, so the suite runs on either</div>
+      <div class="li v">suites switch backend the way dlog and dlogx do today</div>
     </div>
   </div>
   <div class="gate open">
-    <div class="glabel k-violet">week 3 gate</div>
-    <div style="font-size:12px;color:#C6C4D4;margin-bottom:4px">a real Go-signed delta verifies on the Week-2 contract.</div>
-    <div style="font-size:11px;color:var(--muted)">this closes the Go ↔ Solidity signer loop the forge tests currently simulate with vm.sign</div>
-  </div>
-</div>
-
-<div class="slide">
-  <div class="top"><div class="eyebrow">For Angelo</div><div class="snum">08 / 08</div></div>
-  <div class="h2">Open questions</div>
-  <div style="margin-top:10px">
-    <div class="qrow">
-      <span class="pill now" style="min-width:70px;justify-content:center">repo</span>
-      <div><div class="qtitle">How should the contracts pull in forge-std?</div><div class="qbody">Foundry needs its test library (forge-std). The standard way is a git submodule under <span class="mono">contracts/lib</span>, which I've done, but it's the repo's first submodule, so a fresh clone needs <span class="mono">git submodule update --init</span>. Keep the submodule, or vendor it another way (Soldeer, or commit the files directly)?</div></div>
-    </div>
-    <div class="qrow">
-      <span class="pill now" style="min-width:70px;justify-content:center">contract</span>
-      <div><div class="qtitle">On-chain map vs off-chain resolve for "is this token spent?"</div><div class="qbody">A spend points at a content-bound marker, not the plain token id, so a spent-check by id needs a lookup. I store a <span class="mono">tokenID→marker</span> map on-chain (one extra write per output) so <span class="mono">isSpent(id)</span> answers in one call. The alternative is a leaner contract where the driver does two calls. I chose the one-call version. Good tradeoff, or prefer the leaner contract?</div></div>
-    </div>
-    <div class="qrow">
-      <span class="pill now" style="min-width:70px;justify-content:center">EIP-712</span>
-      <div><div class="qtitle">Confirm the EIP-712 domain name "Panurus"</div><div class="qbody">Every endorser signature is bound to an EIP-712 domain carrying a human-readable name; I set it to "Panurus". It's already baked into the frozen golden digests, so changing it later means re-freezing them. Keep "Panurus", or pick a different name now? (design §16)</div></div>
-    </div>
-    <div class="qrow">
-      <span class="pill pend" style="min-width:70px;justify-content:center">week 4</span>
-      <div><div class="qtitle">Who is allowed to request an endorsement?</div><div class="qbody">In Week 4 an endorser node needs to decide who may ask it to endorse. The planned default is the TMS network's own nodes (the EVM version of Fabric's MSP/ACL creator check). Flagging early so we can lock the policy before then. (design §16)</div></div>
-    </div>
+    <div class="glabel k-violet">week 6 gate</div>
+    <div style="font-size:12px;color:#C6C4D4;margin-bottom:4px">the existing fungible fabtoken suite green end to end on real Besu, with the test bodies unchanged.</div>
+    <div style="font-size:11px;color:var(--muted)">unchanged is the point: if the same tests that validate Fabric pass on EVM, the driver is real</div>
   </div>
 </div>
 

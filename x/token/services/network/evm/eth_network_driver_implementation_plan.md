@@ -406,18 +406,32 @@ container resolves the real driver.
 - [ ] `integration/token/evm/evm_test.go` (Ginkgo) — **fabtoken on Besu**, reusing the existing fungible
       `dlog` test bodies retargeted at the EVM topology: issue, transfer, double-spend reject, sub-threshold
       reject, finality, recipient anchor→finality.
+- [ ] **Recipient-side anchor→finality (design §7.4) — MOVED HERE from Week 7 (Angelo, sync 2026-08-06).**
+      It is a *dependency* of the gate, not a later extra: the fungible bodies call
+      `CheckFinality(network, bob, txID, …)`, and bob is a recipient who only ever holds the anchor, so the
+      suite cannot pass without it. Two paths, both needed:
+      - `getTokenRequestHash(anchor)` (already built) is the cheap "is it committed" check: one `eth_call`,
+        no block range, works at any block tag. This stays the common path.
+      - `StateCommitted(bytes32 indexed anchor, …)` log lookup for when the caller also wants the
+        **ethTxHash** (to fetch the receipt, and on Besu the revert reason). **The hash is NOT in the event
+        payload and cannot be:** a contract has no way to read its own transaction hash (no opcode). It comes
+        from the log record's `transactionHash` metadata, which the node supplies and `client.Log` already
+        carries. Logs need a from/to block range and retention varies per node, so the common case must not
+        depend on them.
+      - Recipient failure stays timeout-driven: a failed apply reverts and emits nothing, so "no anchor by the
+        timeout" is the only failure signal, after the configured retries (Angelo confirmed this shape).
 
-Gate: fabtoken Ginkgo suite green **end-to-end on Besu** (not anvil).
+Gate: fabtoken Ginkgo suite green **end-to-end on Besu** (not anvil), recipients included.
 
-## Week 7 — endorsed PP-update + zkatdlog END-TO-END + recipient finality
+## Week 7 — endorsed PP-update + zkatdlog END-TO-END
 
 - [ ] Endorsed **PP-update flow**: setup token request → setup delta → contract stores PP, bumps version,
       emits `PublicParametersUpdated`; driver `VersionKeeper` resyncs; stale-PP delta rejected.
 - [ ] zkatdlog/nogh end-to-end on Besu (same path; opaque token bytes) added to the Ginkgo suite.
-- [ ] Recipient-side anchor→finality from chain data (`StateCommitted` indexed-log resolution) exercised
-      against Besu's `eth_getLogs`.
 
-Gate: endorsed PP update + version bump tested; zkatdlog suite green on Besu; recipient anchor→finality works.
+Gate: endorsed PP update + version bump tested; zkatdlog suite green on Besu.
+
+*(Recipient anchor→finality moved to Week 6: the fungible suite depends on it, so it cannot trail the gate.)*
 
 **Stretch (only if time remains — Angelo: "if time remains we will check fabricx+EVM"):** boot fabric-x-evm
 through NWO and layer the gateway `TransactionByHash().isPending` lifecycle (design §7.1: pending→receipt;

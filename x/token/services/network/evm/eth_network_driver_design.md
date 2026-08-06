@@ -623,6 +623,19 @@ finality timeout (or via the initiator sharing the eth tx hash out of band, whic
 not rely on). Recipient-side listeners must treat "no `StateCommitted` log by the timeout" as `Invalid`; the
 timeout is the recipient's only failure signal and must be configured accordingly (§10 `finality.timeout`).
 
+**Where the eth tx hash comes from (confirmed with Angelo, sync 2026-08-06).** The recipient path may also want
+the eth tx hash, to fetch the receipt and, on Besu, the revert reason. It is NOT in the `StateCommitted`
+payload and **cannot be**: the EVM gives a contract no way to read its own transaction hash (there is no
+opcode for it; `blockhash` only reaches past blocks). It does not need to be: every log record returned by
+`eth_getLogs` carries `transactionHash` as node-supplied metadata, which `client.Log` already models. So
+filtering `StateCommitted` by the indexed anchor yields both the commit and the hash.
+
+**Two resolution paths, deliberately.** `getTokenRequestHash(anchor)` is the common "is it committed" check:
+one `eth_call`, no block range, valid at any block tag. Log scanning is the richer path, used when the caller
+also wants the eth tx hash; it needs a from/to block range and log retention varies per node, so the common
+case must not depend on it. The split also matches the two roles: the submitter already holds the hash and
+uses the receipt directly (§7.1), while the recipient starts from the anchor.
+
 ---
 
 ## 8. Identity, Signing, Nonce
