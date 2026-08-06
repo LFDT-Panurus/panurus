@@ -59,6 +59,9 @@ func FuzzDeserializeAuditInfoNoPanic(f *testing.F) {
 	// member count mismatch
 	innerMismatch, _, wrappedOne := fuzzPolicy(f, "$0 OR $1", [][]byte{m0, m1}, [][]byte{ai0})
 	f.Add(innerMismatch, wrappedOne)
+	// missing component audit info
+	innerMissing, _, wrappedMissing := fuzzPolicy(f, "$0 OR $1", [][]byte{m0, m1}, [][]byte{ai0, nil})
+	f.Add(innerMissing, wrappedMissing)
 	// unknown member identity type
 	unknown, err := identity.WrapWithType(identity.Type(99), []byte("cert-x"))
 	require.NoError(f, err)

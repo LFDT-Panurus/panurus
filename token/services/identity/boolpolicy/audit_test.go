@@ -191,6 +191,44 @@ func TestPolicyAuditInfoGarbageStillErrors(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestPolicyEnrollmentIDMissingMemberAuditInfo(t *testing.T) {
+	// a member's audit info may be legally missing (e.g. an identity not
+	// registered locally): no common EID, not an error
+	m0, _ := newX509Member(t, "cert-zero", "wallet-42")
+	policyID, wrapped := newPolicyIdentity(t, "$0", [][]byte{m0}, [][]byte{nil})
+
+	eid, _, err := newEIDRHDeserializer().GetEIDAndRH(t.Context(), policyID, wrapped)
+	require.NoError(t, err)
+	assert.Empty(t, eid)
+}
+
+func TestPolicyEnrollmentIDMissingAndPresentMemberAuditInfo(t *testing.T) {
+	// one resolvable member plus one with missing audit info: no common EID
+	m0, ai0 := newX509Member(t, "cert-zero", "wallet-42")
+	m1, _ := newX509Member(t, "cert-one", "wallet-42")
+	policyID, wrapped := newPolicyIdentity(t, "$0 OR $1", [][]byte{m0, m1}, [][]byte{ai0, nil})
+
+	eid, _, err := newEIDRHDeserializer().GetEIDAndRH(t.Context(), policyID, wrapped)
+	require.NoError(t, err)
+	assert.Empty(t, eid)
+}
+
+func TestPolicyEnrollmentIDMissingThenMalformedMember(t *testing.T) {
+	// a missing member audit info must not mask corruption in a later member
+	unresolvable, err := identity.WrapWithType(identity.Type(99), []byte("cert-one"))
+	require.NoError(t, err)
+	unresolvableInfo, err := (&x509.AuditInfo{EID: "wallet-43"}).Bytes()
+	require.NoError(t, err)
+
+	m0, _ := newX509Member(t, "cert-zero", "wallet-42")
+	policyID, wrapped := newPolicyIdentity(t, "$0 OR $1",
+		[][]byte{m0, unresolvable}, [][]byte{nil, unresolvableInfo})
+
+	_, _, err = newEIDRHDeserializer().GetEIDAndRH(t.Context(), policyID, wrapped)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to deserialize audit info of component")
+}
+
 func TestPolicyEnrollmentIDCrossEIDThenMalformedMember(t *testing.T) {
 	// members legitimately span enrollments, but a later member is malformed:
 	// the corruption must surface as an error, not be masked by the
