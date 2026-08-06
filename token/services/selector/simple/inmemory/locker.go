@@ -169,6 +169,38 @@ func (d *locker) lockInShard(ctx context.Context, s *shard, owner string, id *to
 	}
 	s.mu.RUnlock()
 
+	// When reclaiming, resolve the current holder's status before taking the write
+	// lock. GetStatus goes to the transaction store, and holding the shard lock
+	// across it would make every Lock, UnlockIDs, IsLocked and the collector's own
+	// delete phase for this owner wait on that query. The collector already splits
+	// its cycle this way for exactly that reason; doing the lookup here under the
+	// lock inverted it, so a slow or stuck status provider stalled the whole shard.
+	//
+	// The holder observed here is re-validated under the lock below, since it may
+	// change while the lock is not held.
+	var (
+		observedTxID   string
+		observedStatus int
+		statusResolved bool
+	)
+	if reclaim {
+		s.mu.RLock()
+		e, held := s.locked[k]
+		if held {
+			observedTxID = e.TxID
+		}
+		s.mu.RUnlock()
+
+		if held {
+			status, _, err := d.ttxdb.GetStatus(ctx, observedTxID)
+			if err != nil {
+				logger.DebugfContext(ctx, "failed getting status of [%s] while reclaiming [%s]: [%s]", observedTxID, id, err)
+			} else {
+				observedStatus, statusResolved = status, true
+			}
+		}
+	}
+
 	// it is either not locked or we are reclaiming
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -180,9 +212,18 @@ func (d *locker) lockInShard(ctx context.Context, s *shard, owner string, id *to
 		e.LastAccess = time.Now()
 
 		if reclaim {
-			// Second chance
+			// Second chance. Only act on the status resolved above if the entry is
+			// still the one it was resolved for: a concurrent Lock(reclaim=true) may
+			// have handed the token to another transaction in the meantime, and
+			// reclaiming on a stale status would take a token away from its new
+			// holder. When it no longer matches, report the token as locked and let
+			// the caller retry.
 			logger.DebugfContext(ctx, "[%s] already locked by [%s], try to reclaim...", id, e)
-			reclaimed, status := d.reclaim(ctx, s, id, e.TxID)
+			status := observedStatus
+			reclaimed := statusResolved && e.TxID == observedTxID && status == ttxdb.Deleted
+			if reclaimed {
+				delete(s.locked, k)
+			}
 			if !reclaimed {
 				logger.DebugfContext(ctx, "[%s] already locked by [%s], reclaim failed, tx status [%s]", id, e, ttxdb.TxStatusMessage[status])
 				if logger.IsEnabledFor(zapcore.DebugLevel) {
@@ -298,24 +339,6 @@ func (d *locker) IsLocked(id *token2.ID) bool {
 	}
 
 	return false
-}
-
-// reclaim checks the tx status for id inside shard s and deletes the entry
-// if the holding transaction is finalized (Deleted). The caller must hold
-// s.mu (write lock).
-func (d *locker) reclaim(ctx context.Context, s *shard, id *token2.ID, txID string) (bool, int) {
-	status, _, err := d.ttxdb.GetStatus(ctx, txID)
-	if err != nil {
-		return false, status
-	}
-	switch status {
-	case ttxdb.Deleted:
-		delete(s.locked, *id)
-
-		return true, status
-	default:
-		return false, status
-	}
 }
 
 func (d *locker) start(ctx context.Context) {
