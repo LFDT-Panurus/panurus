@@ -8,115 +8,152 @@ package bulletproof
 
 import (
 	mathlib "github.com/IBM/mathlib"
-	math2 "github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/crypto/math"
+	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/crypto/common"
+	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/crypto/math"
 )
 
-// nativeComputeSVector computes the s vector and its entry-wise inverse using
-// native gnark-crypto field arithmetic to avoid big.Int allocations.
-//
-// The dual-butterfly recurrence is identical to ComputeSVector, but all
-// intermediate multiplications use in-place gnark field operations (T) rather
-// than mathlib.Zr wrappers around big.Int.  This eliminates the O(n) heap
-// allocations per butterfly round that the mathlib path incurs.
-//
-// The results are converted back to []*mathlib.Zr at the end so the caller
-// interface is unchanged.
-func nativeComputeSVector[T any, E math2.GnarkFr[T]](n int, challenges []*mathlib.Zr, curve *mathlib.Curve) ([]*mathlib.Zr, []*mathlib.Zr) {
-	log2n := len(challenges)
+// nativeIPAReduce performs the reduction of the inner product argument using native gnark-crypto arithmetic.
+func nativeIPAReduce[T any, E math.GnarkFr[T]](p *ipaProver, X, com *mathlib.G1) (*mathlib.Zr, *mathlib.Zr, []*mathlib.G1, []*mathlib.G1, error) {
+	n := len(p.leftVector)
 
-	// Convert all challenges and their inverses to native field elements once.
-	// This costs 2·log(n) big.Int conversions total — far fewer than the O(n)
-	// allocations that the mathlib butterfly loop would generate.
-	cNative := make([]T, log2n)
-	cInvNative := make([]T, log2n)
-	for r := range log2n {
-		math2.SetNativeFromZr[T, E](challenges[r], E(&cNative[r]))
-		// Inverse of the native element directly — no big.Int round-trip needed.
-		E(&cInvNative[r]).Inverse(E(&cNative[r]))
-	}
-
-	// Allocate native storage for s and sInv vectors.
-	sNative := make([]T, n)
-	sInvNative := make([]T, n)
-	E(&sNative[0]).SetOne()
-	E(&sInvNative[0]).SetOne()
-	for i := 1; i < n; i++ {
-		E(&sNative[i]).SetZero()
-		E(&sInvNative[i]).SetZero()
-	}
-
-	// Dual butterfly: O(n) in-place multiplications with no allocation.
-	for r := range log2n {
-		halfLen := 1 << r
-		c := E(&cNative[log2n-1-r])
-		cInv := E(&cInvNative[log2n-1-r])
-		for i := range halfLen {
-			// s[i+halfLen] = s[i] * c   (bit set → challenge)
-			E(&sNative[i+halfLen]).Mul(E(&sNative[i]), c)
-			// s[i] = s[i] * cInv        (bit unset → inverse)
-			E(&sNative[i]).Mul(E(&sNative[i]), cInv)
-
-			// sInv[i+halfLen] = sInv[i] * cInv  (swapped)
-			E(&sInvNative[i+halfLen]).Mul(E(&sInvNative[i]), cInv)
-			// sInv[i] = sInv[i] * c             (swapped)
-			E(&sInvNative[i]).Mul(E(&sInvNative[i]), c)
-		}
-	}
-
-	// Convert back to mathlib.Zr for the caller.
-	s := make([]*mathlib.Zr, n)
-	sInv := make([]*mathlib.Zr, n)
+	// Convert left and right vectors to native types
+	leftNative := make([]T, n)
+	rightNative := make([]T, n)
 	for i := range n {
-		s[i] = math2.NativeToZr[T, E](E(&sNative[i]), curve)
-		sInv[i] = math2.NativeToZr[T, E](E(&sInvNative[i]), curve)
+		math.SetNativeFromZr[T, E](p.leftVector[i], E(&leftNative[i]))
+		math.SetNativeFromZr[T, E](p.rightVector[i], E(&rightNative[i]))
 	}
 
-	return s, sInv
-}
+	LArray := make([]*mathlib.G1, p.NumberOfRounds)
+	RArray := make([]*mathlib.G1, p.NumberOfRounds)
+	xList := make([]*mathlib.Zr, 0, p.NumberOfRounds)
 
-// nativeReduceVectors reduces the left and right vectors by half using native
-// gnark-crypto field arithmetic, eliminating the intermediate mathlib.Zr
-// allocations that the mathlib path incurs per element.
-//
-// The recurrence is identical to reduceVectors:
-//
-//	leftPrime[i]  = left[i]*x  + left[i+l]*xInv
-//	rightPrime[i] = right[i]*xInv + right[i+l]*x
-func nativeReduceVectors[T any, E math2.GnarkFr[T]](
-	left, right []*mathlib.Zr,
-	x, xInv *mathlib.Zr,
-	curve *mathlib.Curve,
-) ([]*mathlib.Zr, []*mathlib.Zr) {
-	l := len(left) / 2
+	for i := range p.NumberOfRounds {
+		n_current := len(leftNative) / 2
 
-	// Convert x and xInv once.
-	var xE, xInvE T
-	math2.SetNativeFromZr[T, E](x, E(&xE))
-	math2.SetNativeFromZr[T, E](xInv, E(&xInvE))
+		// Compute leftIP and rightIP natively
+		var leftIPE T
+		E(&leftIPE).SetZero()
+		var rightIPE T
+		E(&rightIPE).SetZero()
+		var tmpE T
+		for j := range n_current {
+			E(&tmpE).Mul(E(&leftNative[j]), E(&rightNative[n_current+j]))
+			E(&leftIPE).Add(E(&leftIPE), E(&tmpE))
 
-	leftPrime := make([]*mathlib.Zr, l)
-	rightPrime := make([]*mathlib.Zr, l)
+			E(&tmpE).Mul(E(&leftNative[n_current+j]), E(&rightNative[j]))
+			E(&rightIPE).Add(E(&rightIPE), E(&tmpE))
+		}
+		leftIP := math.NativeToZr[T, E](E(&leftIPE), p.Curve)
+		rightIP := math.NativeToZr[T, E](E(&rightIPE), p.Curve)
 
-	for i := range l {
-		var liE, liHalfE, riE, riHalfE T
-		math2.SetNativeFromZr[T, E](left[i], E(&liE))
-		math2.SetNativeFromZr[T, E](left[i+l], E(&liHalfE))
-		math2.SetNativeFromZr[T, E](right[i], E(&riE))
-		math2.SetNativeFromZr[T, E](right[i+l], E(&riHalfE))
+		var s, sInv []*mathlib.Zr
+		if i == 0 {
+			s = []*mathlib.Zr{math.One(p.Curve)}
+			sInv = []*mathlib.Zr{math.One(p.Curve)}
+		} else {
+			s, sInv = ComputeSVector(1<<i, xList, p.Curve)
+		}
 
-		// leftPrime[i] = left[i]*x + left[i+l]*xInv
-		var tmp T
-		E(&liE).Mul(E(&liE), E(&xE))
-		E(&tmp).Mul(E(&liHalfE), E(&xInvE))
-		E(&liE).Add(E(&liE), E(&tmp))
-		leftPrime[i] = math2.NativeToZr[T, E](E(&liE), curve)
+		pointsL := make([]*mathlib.G1, 0, len(p.LeftGenerators)+1)
+		scalarsL := make([]*mathlib.Zr, 0, len(p.LeftGenerators)+1)
 
-		// rightPrime[i] = right[i]*xInv + right[i+l]*x
-		E(&riE).Mul(E(&riE), E(&xInvE))
-		E(&tmp).Mul(E(&riHalfE), E(&xE))
-		E(&riE).Add(E(&riE), E(&tmp))
-		rightPrime[i] = math2.NativeToZr[T, E](E(&riE), curve)
+		pointsR := make([]*mathlib.G1, 0, len(p.LeftGenerators)+1)
+		scalarsR := make([]*mathlib.Zr, 0, len(p.LeftGenerators)+1)
+
+		for m := range 1 << i {
+			var sE_, sInvE_ T
+			math.SetNativeFromZr[T, E](s[m], E(&sE_))
+			math.SetNativeFromZr[T, E](sInv[m], E(&sInvE_))
+			sE := E(&sE_)
+			sInvE := E(&sInvE_)
+
+			for j := range n_current {
+				idxG_R := j + (2*m+1)*n_current
+				idxH_L := j + 2*m*n_current
+
+				pointsL = append(pointsL, p.LeftGenerators[idxG_R], p.RightGenerators[idxH_L])
+				var tmp1 T
+				E(&tmp1).Mul(E(&leftNative[j]), sE)
+				var tmp2 T
+				E(&tmp2).Mul(E(&rightNative[n_current+j]), sInvE)
+				scalarsL = append(scalarsL,
+					math.NativeToZr[T, E](E(&tmp1), p.Curve),
+					math.NativeToZr[T, E](E(&tmp2), p.Curve),
+				)
+
+				idxG_L := j + 2*m*n_current
+				idxH_R := j + (2*m+1)*n_current
+
+				pointsR = append(pointsR, p.LeftGenerators[idxG_L], p.RightGenerators[idxH_R])
+				var tmp3 T
+				E(&tmp3).Mul(E(&leftNative[n_current+j]), sE)
+				var tmp4 T
+				E(&tmp4).Mul(E(&rightNative[j]), sInvE)
+				scalarsR = append(scalarsR,
+					math.NativeToZr[T, E](E(&tmp3), p.Curve),
+					math.NativeToZr[T, E](E(&tmp4), p.Curve),
+				)
+			}
+		}
+
+		pointsL = append(pointsL, X)
+		scalarsL = append(scalarsL, leftIP)
+
+		pointsR = append(pointsR, X)
+		scalarsR = append(scalarsR, rightIP)
+
+		LArray[i] = p.Curve.MultiScalarMul(pointsL, scalarsL)
+		RArray[i] = p.Curve.MultiScalarMul(pointsR, scalarsR)
+
+		array := common.GetG1Array([]*mathlib.G1{LArray[i], RArray[i]})
+		bytesToHash, err := array.Bytes()
+		if err != nil {
+			return nil, nil, nil, nil, err
+		}
+		x := p.Curve.HashToZr(bytesToHash)
+		xList = append(xList, x)
+
+		var xE_ T
+		math.SetNativeFromZr[T, E](x, E(&xE_))
+		xE := E(&xE_)
+		var xInvE T
+		E(&xInvE).Inverse(xE)
+
+		// Reduce left and right vectors natively
+		newLeftNative := make([]T, n_current)
+		newRightNative := make([]T, n_current)
+		for j := range n_current {
+			var l1 T
+			E(&l1).Mul(E(&leftNative[j]), xE)
+			var l2 T
+			E(&l2).Mul(E(&leftNative[n_current+j]), E(&xInvE))
+			E(&newLeftNative[j]).Add(E(&l1), E(&l2))
+
+			var r1 T
+			E(&r1).Mul(E(&rightNative[j]), E(&xInvE))
+			var r2 T
+			E(&r2).Mul(E(&rightNative[n_current+j]), xE)
+			E(&newRightNative[j]).Add(E(&r1), E(&r2))
+		}
+		leftNative = newLeftNative
+		rightNative = newRightNative
+
+		var xSquareE T
+		E(&xSquareE).Mul(xE, xE)
+		xSquare := math.NativeToZr[T, E](E(&xSquareE), p.Curve)
+
+		var xSquareInvE T
+		E(&xSquareInvE).Inverse(E(&xSquareE))
+		xSquareInv := math.NativeToZr[T, E](E(&xSquareInvE), p.Curve)
+
+		CPrime := LArray[i].Mul2(xSquare, RArray[i], xSquareInv)
+		CPrime.Add(com)
+		com = CPrime
 	}
 
-	return leftPrime, rightPrime
+	leftResult := math.NativeToZr[T, E](E(&leftNative[0]), p.Curve)
+	rightResult := math.NativeToZr[T, E](E(&rightNative[0]), p.Curve)
+
+	return leftResult, rightResult, LArray, RArray, nil
 }

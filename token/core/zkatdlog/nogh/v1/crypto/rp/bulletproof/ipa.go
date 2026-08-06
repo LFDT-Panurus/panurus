@@ -186,6 +186,13 @@ func (p *ipaProver) Prove() (*IPA, error) {
 // of the left vector and right is a function of right vector.
 // Both vectors are committed in com which is passed as a parameter to reduce
 func (p *ipaProver) reduce(X, com *mathlib.G1) (*mathlib.Zr, *mathlib.Zr, []*mathlib.G1, []*mathlib.G1, error) {
+	isBLS, isBN254 := math.DispatchCurve(p.Curve)
+	if isBLS {
+		return nativeIPAReduce[bls12381fr.Element, *bls12381fr.Element](p, X, com)
+	} else if isBN254 {
+		return nativeIPAReduce[bn254fr.Element, *bn254fr.Element](p, X, com)
+	}
+
 	left := p.leftVector
 	right := p.rightVector
 
@@ -426,20 +433,8 @@ func (v *ipaVerifier) Verify(proof *IPA) error {
 }
 
 // reduceVectors reduces the size of the vectors passed in the parameters by 1/2,
-// as a function of the old vectors, x and 1/x.
-//
-// For BLS12-381 and BN254 curves the inner loop is executed using native
-// gnark-crypto field elements (nativeReduceVectors) to avoid per-element
-// big.Int allocation. For all other curves the pure-mathlib path is used.
+// as a function of the old vectors, x and 1/x
 func reduceVectors(left, right []*mathlib.Zr, x, xInv *mathlib.Zr, c *mathlib.Curve) ([]*mathlib.Zr, []*mathlib.Zr) {
-	isBLS, isBN254 := math.DispatchCurve(c)
-	if isBLS {
-		return nativeReduceVectors[bls12381fr.Element, *bls12381fr.Element](left, right, x, xInv, c)
-	} else if isBN254 {
-		return nativeReduceVectors[bn254fr.Element, *bn254fr.Element](left, right, x, xInv, c)
-	}
-
-	// Fallback: mathlib path for unsupported curves.
 	l := len(left) / 2
 	leftPrime := make([]*mathlib.Zr, l)
 	rightPrime := make([]*mathlib.Zr, l)
@@ -525,30 +520,18 @@ func CloneGenerators(LeftGenerators, RightGenerators []*mathlib.G1) ([]*mathlib.
 //	  sInv[i + 2^r] = sInv[i] · x_{k-1-r}^{-1}   (swapped)
 //	  sInv[i]       = sInv[i] · x_{k-1-r}         (swapped)
 //
-// For BLS12-381 and BN254 curves the inner loop is executed using native
-// gnark-crypto field elements (nativeComputeSVector), which eliminates the
-// big.Int allocation overhead of the mathlib.Zr wrapper on every multiply.
-// For all other curves the pure-mathlib path is used as a fallback.
+// This replaces the previous O(n·log n) nested-loop implementation and
+// eliminates the final BatchInverse call for sInv.
 //
 // Input: n, challenges = [x_0, …, x_{k-1}] where n = 2^k.
 // Returns (s, sInv) where sInv[i] = s[i]^{-1}.
 func ComputeSVector(n int, challenges []*mathlib.Zr, curve *mathlib.Curve) ([]*mathlib.Zr, []*mathlib.Zr) {
 	log2n := len(challenges)
 
-	// Verify n is consistent with number of challenges.
+	// Verify n is consistent with number of challenges
 	if 1<<log2n != n {
 		panic("n must equal 2^(number of challenges)")
 	}
-
-	// Dispatch to the allocation-free native path for supported curves.
-	isBLS, isBN254 := math.DispatchCurve(curve)
-	if isBLS {
-		return nativeComputeSVector[bls12381fr.Element, *bls12381fr.Element](n, challenges, curve)
-	} else if isBN254 {
-		return nativeComputeSVector[bn254fr.Element, *bn254fr.Element](n, challenges, curve)
-	}
-
-	// Fallback: mathlib path for unsupported curves.
 
 	// Precompute challenge inverses: O(log n) with a single field inversion.
 	challengeInvs := math.BatchInverse(challenges, curve)
