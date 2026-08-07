@@ -229,10 +229,20 @@ func (p *NetworkHandler) GenerateExtension(tms *topology2.TMS, node *sfcnode.Nod
 		cfg.EndorserAddress = identity.Address.Hex()
 	}
 
-	ext, err := RenderExtension(tms, cfg)
+	ext, err := RenderExtension(tms, p.walletsOf(tms, node.Name), cfg)
 	gomega.Expect(err).NotTo(gomega.HaveOccurred(), "failed to render the configuration for [%s]", uniqueName)
 
 	return ext
+}
+
+// walletsOf returns the wallets issued to one node, which is what its configuration must list. The
+// materials handler tracks them per node while generating the crypto material; the TMS-level Wallets
+// is the union over the whole network and would leave every node without a usable identity of its
+// own, since none of those entries are its.
+func (p *NetworkHandler) walletsOf(tms *topology2.TMS, nodeName string) *topology2.Wallets {
+	// Through the handler's own accessor rather than indexing Entries: it keys on more than the TMS id,
+	// and a lookup that guesses the key silently returns nothing.
+	return p.materials.GetEntry(tms).Wallets[nodeName]
 }
 
 // PostRun has nothing to do: the chain and the contracts are already up, because the node

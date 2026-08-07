@@ -165,6 +165,52 @@ func TestSuggestGasFeesPreLondon(t *testing.T) {
 	assert.Equal(t, big.NewInt(1), fees.MaxFeePerGas, "with no base fee the max fee is just the tip")
 }
 
+// TestSuggestGasFeesWithoutMaxPriorityFee covers the node the test network actually runs on: Besu
+// does not implement eth_maxPriorityFeePerGas, which is an extension rather than part of the
+// JSON-RPC spec. The tip is then the part of the suggested gas price that sits above the base fee.
+func TestSuggestGasFeesWithoutMaxPriorityFee(t *testing.T) {
+	c, calls := newTestServer(t, map[string]string{
+		"eth_gasPrice":         `"0x3b9aca07"`,            // 1 gwei + 7 wei
+		"eth_getBlockByNumber": `{"baseFeePerGas":"0x7"}`, // 7 wei
+	})
+
+	fees, err := c.SuggestGasFees(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, big.NewInt(1_000_000_000), fees.MaxPriorityFeePerGas)
+	assert.Equal(t, big.NewInt(2*7+1_000_000_000), fees.MaxFeePerGas)
+
+	methods := make([]string, 0, len(*calls))
+	for _, call := range *calls {
+		methods = append(methods, call.Method)
+	}
+	assert.Contains(t, methods, "eth_maxPriorityFeePerGas", "the node must be asked before falling back")
+	assert.Contains(t, methods, "eth_gasPrice")
+}
+
+// TestSuggestGasFeesOnAZeroFeeChain covers a development chain that gives gas away: the suggested
+// price does not exceed the base fee, so there is no tip, and that is not an error.
+func TestSuggestGasFeesOnAZeroFeeChain(t *testing.T) {
+	c, _ := newTestServer(t, map[string]string{
+		"eth_gasPrice":         `"0x0"`,
+		"eth_getBlockByNumber": `{"baseFeePerGas":"0x0"}`,
+	})
+
+	fees, err := c.SuggestGasFees(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, big.NewInt(0), fees.MaxPriorityFeePerGas)
+	assert.Equal(t, big.NewInt(0), fees.MaxFeePerGas)
+}
+
+// TestSuggestGasFeesSurfacesRealFailures checks the fallback is only for an unimplemented method: a
+// node that implements neither is a failure rather than a silent zero fee.
+func TestSuggestGasFeesSurfacesRealFailures(t *testing.T) {
+	c, _ := newTestServer(t, map[string]string{"eth_getBlockByNumber": `{"baseFeePerGas":"0x7"}`})
+
+	_, err := c.SuggestGasFees(context.Background())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "eth_gasPrice")
+}
+
 func TestSendRawTransaction(t *testing.T) {
 	const txHash = "0x853f272fffc6efc284fc16a254decca742d2347e05703e501c59968f78f81ffa"
 	c, calls := newTestServer(t, map[string]string{"eth_sendRawTransaction": `"` + txHash + `"`})

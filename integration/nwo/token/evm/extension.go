@@ -19,15 +19,16 @@ import (
 // The rendered evm block is exactly the schema the driver reads, so this is the seam where the test
 // network and the driver agree. TestExtensionRoundTrips loads the output through the driver's own
 // parser rather than a hand-written expectation, which is what keeps the two from drifting.
-func RenderExtension(tms *topology2.TMS, cfg NodeConfig) (string, error) {
+//
+// wallets are this node's wallets, not the TMS's: a node holds only the identities it was issued, and
+// a config listing every node's wallets gives it none of its own.
+func RenderExtension(tms *topology2.TMS, wallets *topology2.Wallets, cfg NodeConfig) (string, error) {
 	cfg = cfg.WithDefaults()
 
 	t, err := template.New("evm").Funcs(template.FuncMap{
 		"TMSID": func() string { return tms.TmsID() },
 		"TMS":   func() *topology2.TMS { return tms },
-		"Wallets": func() *topology2.Wallets {
-			return tms.Wallets
-		},
+		"Wallets": func() *topology2.Wallets { return wallets },
 		"NodeName":            func() string { return cfg.NodeName },
 		"Endpoint":            func() string { return cfg.Endpoint },
 		"ChainID":             func() int64 { return cfg.ChainID },

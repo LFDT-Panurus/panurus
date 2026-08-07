@@ -36,6 +36,14 @@ func testTMS() *topology2.TMS {
 	}
 }
 
+// testWallets is one node's wallets, the way the materials handler issues them: the identities that
+// node actually holds, not the union over the network.
+func testWallets() *topology2.Wallets {
+	return &topology2.Wallets{
+		Owners: []topology2.Identity{{ID: "alice", Path: "/crypto/alice/owner", Default: true}},
+	}
+}
+
 func testNodeConfig() NodeConfig {
 	tokenState, _ := evmclient.HexToAddress(tokenStateAddr)
 	verifier, _ := evmclient.HexToAddress(verifierAddr)
@@ -99,7 +107,7 @@ func (c *yamlConfiguration) UnmarshalKey(key string, rawVal any) error {
 // hand-written expectation would only prove the template matches itself, so the rendered document is
 // parsed by LoadConfig and the resulting struct is checked.
 func TestExtensionRoundTrips(t *testing.T) {
-	rendered, err := RenderExtension(testTMS(), testNodeConfig())
+	rendered, err := RenderExtension(testTMS(), testWallets(), testNodeConfig())
 	require.NoError(t, err)
 
 	var doc map[any]any
@@ -138,7 +146,7 @@ func TestExtensionForNonEndorser(t *testing.T) {
 	cfg.EndorserKeystore, cfg.EndorserAddress = "", ""
 	cfg.SubmitterKeystore, cfg.SubmitterAddress = "", ""
 
-	rendered, err := RenderExtension(testTMS(), cfg)
+	rendered, err := RenderExtension(testTMS(), testWallets(), cfg)
 	require.NoError(t, err)
 
 	var doc map[any]any
@@ -160,7 +168,7 @@ func TestExtensionDefaults(t *testing.T) {
 	cfg := testNodeConfig()
 	cfg.BlockTag, cfg.PollInterval, cfg.FinalityTimeout = "", 0, 0
 
-	rendered, err := RenderExtension(testTMS(), cfg)
+	rendered, err := RenderExtension(testTMS(), testWallets(), cfg)
 	require.NoError(t, err)
 
 	var doc map[any]any
@@ -172,4 +180,38 @@ func TestExtensionDefaults(t *testing.T) {
 	assert.Equal(t, DefaultBlockTag, loaded.Finality.BlockTag)
 	assert.Equal(t, DefaultPollInterval, loaded.Finality.PollInterval)
 	assert.Equal(t, DefaultFinalityTimeout, loaded.Finality.Timeout)
+}
+
+// TestExtensionRendersTheNodeOwnWallets is the regression test for a node that started with no usable
+// identity: the wallets rendered must be the ones issued to that node. A node whose owners list is
+// empty has no identity to transact with, and the failure surfaces far away, as a wallet that does
+// not exist.
+func TestExtensionRendersTheNodeOwnWallets(t *testing.T) {
+	rendered, err := RenderExtension(testTMS(), testWallets(), testNodeConfig())
+	require.NoError(t, err)
+
+	var doc map[any]any
+	require.NoError(t, yaml.Unmarshal([]byte(rendered), &doc))
+	owners, ok := (&yamlConfiguration{doc: doc}).lookup("token.tms." + testTMS().TmsID() + ".wallets.owners")
+	require.True(t, ok, "the node must be given its owner wallets:\n%s", rendered)
+
+	list, ok := owners.([]any)
+	require.True(t, ok)
+	require.Len(t, list, 1)
+	assert.Equal(t, "alice", list[0].(map[any]any)["id"])
+	assert.Equal(t, "/crypto/alice/owner", list[0].(map[any]any)["path"])
+}
+
+// TestExtensionWithoutWallets checks a node holding no wallets at all still renders a loadable
+// configuration: the endorsers hold no token identities and must still start.
+func TestExtensionWithoutWallets(t *testing.T) {
+	rendered, err := RenderExtension(testTMS(), nil, testNodeConfig())
+	require.NoError(t, err)
+
+	var doc map[any]any
+	require.NoError(t, yaml.Unmarshal([]byte(rendered), &doc))
+	tmsBlock, ok := (&yamlConfiguration{doc: doc}).lookup("token.tms." + testTMS().TmsID())
+	require.True(t, ok)
+	_, err = evmdriver.LoadConfig(&yamlConfiguration{doc: tmsBlock.(map[any]any)})
+	require.NoError(t, err, "a node with no wallets must still produce a valid configuration:\n%s", rendered)
 }
