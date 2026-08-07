@@ -98,4 +98,5 @@ const (
 	// EVMFungible is appended rather than inserted: the ranges are positional, so adding one in the
 	// middle would shift every suite after it onto different ports.
 	EVMFungible
+	EVMFungibleFabToken
 )

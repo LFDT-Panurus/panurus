@@ -9,6 +9,7 @@ package evm
 import (
 	"testing"
 
+	token2 "github.com/LFDT-Panurus/panurus/token"
 	"github.com/LFDT-Panurus/panurus/token/services/network/driver"
 	"github.com/LFDT-Panurus/panurus/x/token/services/network/evm/client/mock"
 
@@ -35,6 +36,16 @@ func (f fakeResolver) ConfigFor(network, channel string) (*Config, error) {
 	c.applyDefaults()
 
 	return c, c.Validate()
+}
+
+// TMSIDsFor reports one TMS per configured network, enough for the routing tests: they never exercise
+// the public-parameters watcher, which needs a TMS provider the fake does not have.
+func (f fakeResolver) TMSIDsFor(network, channel string) []token2.TMSID {
+	if !f.IsEVMNetwork(network, channel) {
+		return nil
+	}
+
+	return []token2.TMSID{{Network: network, Channel: channel, Namespace: "token"}}
 }
 
 func TestDriverNewRouting(t *testing.T) {

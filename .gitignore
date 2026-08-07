@@ -14,3 +14,10 @@ cmd/token_validation_service/out/
 /site/
 coverage.out
 /.codex/
+
+# The EVM integration suites generate a node binary tree and a network under out/ and testdata/.
+# Both hold real Go files, so a stray "git add -A" commits them and a linter then reports on them.
+integration/token/fungible/evm/out/
+integration/token/fungible/evm/testdata/
+integration/token/fungible/evmfabtoken/out/
+integration/token/fungible/evmfabtoken/testdata/

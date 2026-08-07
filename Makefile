@@ -122,6 +122,12 @@ integration-tests-evm:
 	docker image inspect $(BESU_IMAGE) >/dev/null 2>&1 || docker pull $(BESU_IMAGE)
 	cd ./integration/token/fungible/evm; ginkgo $(GINKGO_TEST_OPTS) .
 
+.PHONY: integration-tests-evm-fabtoken
+# run the fungible integration tests against an EVM backend with the fabtoken driver.
+integration-tests-evm-fabtoken:
+	docker image inspect $(BESU_IMAGE) >/dev/null 2>&1 || docker pull $(BESU_IMAGE)
+	cd ./integration/token/fungible/evmfabtoken; ginkgo $(GINKGO_TEST_OPTS) .
+
 .PHONY: integration-tests-nft-dlog
 # run nft integration tests with idemix
 integration-tests-nft-dlog:
@@ -163,6 +169,8 @@ clean:
 	rm -rf ./integration/token/fungible/dlogx/out/
 	rm -rf ./integration/token/fungible/evm/out/
 	rm -rf ./integration/token/fungible/evm/testdata/
+	rm -rf ./integration/token/fungible/evmfabtoken/out/
+	rm -rf ./integration/token/fungible/evmfabtoken/testdata/
 	rm -rf ./integration/token/fungible/dloghsm/out/
 	rm -rf ./integration/token/fungible/dloghsm/testdata/
 	rm -rf ./integration/token/fungible/dlogstress/out/

@@ -7,6 +7,7 @@ SPDX-License-Identifier: Apache-2.0
 package evm
 
 import (
+	"context"
 	"strings"
 	"sync"
 
@@ -16,6 +17,7 @@ import (
 	"github.com/LFDT-Panurus/panurus/token/services/config"
 	"github.com/LFDT-Panurus/panurus/token/services/logging"
 	"github.com/LFDT-Panurus/panurus/token/services/network/driver"
+	"github.com/LFDT-Panurus/panurus/token/services/tokens"
 	"github.com/LFDT-Panurus/panurus/x/token/services/network/evm/client"
 	"github.com/LFDT-Panurus/panurus/x/token/services/network/evm/eip712"
 	"github.com/LFDT-Panurus/panurus/x/token/services/network/evm/endorsement"
@@ -38,6 +40,10 @@ type networkResolver interface {
 	IsEVMNetwork(network, channel string) bool
 	// ConfigFor returns the EVM configuration for the given network/channel.
 	ConfigFor(network, channel string) (*Config, error)
+	// TMSIDsFor returns every TMS configured on the given network/channel. Unlike ConfigFor, which
+	// takes the first match because the endpoint and chain are network-wide, a public-parameters
+	// update has to reach each TMS individually.
+	TMSIDsFor(network, channel string) []token2.TMSID
 }
 
 // Driver is the EVM network driver factory. It implements driver.Driver: the network provider calls
@@ -57,8 +63,15 @@ type Driver struct {
 	// time: resolving during construction would close a cycle, since building a TMS goes through this
 	// driver.
 	tmsProvider *token2.ManagementServiceProvider
+	// tokensManager gives the token store for a TMS, so a parameters update is persisted as well as
+	// applied to the running service.
+	tokensManager *tokens.ServiceManager
 	// registerOnce guards the responder registration, which is per node rather than per network.
 	registerOnce sync.Once
+	// watchers keeps one public-parameters watcher per network, so building a network twice does not
+	// leave two pollers on one contract.
+	watchersMu sync.Mutex
+	watchers   map[string]*pp.Watcher
 }
 
 // Compile-time assertion that Driver satisfies the factory contract.
@@ -76,14 +89,17 @@ func NewDriver(
 	viewManager *view.Manager,
 	viewRegistry *view.Registry,
 	tmsProvider *token2.ManagementServiceProvider,
+	tokensManager *tokens.ServiceManager,
 ) driver.Driver {
 	return &Driver{
-		resolver:     &configNetworkResolver{cs: configService},
-		membership:   newLocalMembership(identityProvider),
-		identities:   identityProvider,
-		viewManager:  viewManager,
-		viewRegistry: viewRegistry,
-		tmsProvider:  tmsProvider,
+		resolver:      &configNetworkResolver{cs: configService},
+		membership:    newLocalMembership(identityProvider),
+		identities:    identityProvider,
+		viewManager:   viewManager,
+		viewRegistry:  viewRegistry,
+		tmsProvider:   tmsProvider,
+		tokensManager: tokensManager,
+		watchers:      map[string]*pp.Watcher{},
 	}
 }
 
@@ -120,8 +136,79 @@ func (d *Driver) New(network, channel string) (driver.Network, error) {
 	if err := d.installEndorsement(n, config, evmClient); err != nil {
 		return nil, err
 	}
+	d.watchPublicParams(network, channel, config, evmClient)
 
 	return n, nil
+}
+
+// watchPublicParams starts watching the chain for public-parameters updates on this network.
+//
+// Parameters change through an endorsed setup delta that some other node submits, so there is nothing
+// local to trigger off: without this a node keeps serving whatever it started with. Fabric gets the
+// same signal from a listener on the setup key.
+func (d *Driver) watchPublicParams(network, channel string, config *Config, evmClient client.EVMClient) {
+	if d.tmsProvider == nil {
+		logger.Debugf("no token management service provider; this node cannot reload public parameters")
+
+		return
+	}
+
+	key := network + ":" + channel
+	d.watchersMu.Lock()
+	defer d.watchersMu.Unlock()
+	if _, running := d.watchers[key]; running {
+		return
+	}
+
+	tokenState, err := config.TokenStateAddress()
+	if err != nil {
+		logger.Errorf("cannot watch public parameters for [%s]: %v", key, err)
+
+		return
+	}
+	tmsIDs := d.resolver.TMSIDsFor(network, channel)
+	if len(tmsIDs) == 0 {
+		return
+	}
+
+	watcher, err := pp.NewWatcher(
+		evmClient, tokenState, config.Finality.BlockTag, config.Finality.PollInterval,
+		func(ctx context.Context, raw []byte, version uint64) {
+			d.applyPublicParams(ctx, tmsIDs, raw, version)
+		},
+	)
+	if err != nil {
+		logger.Errorf("cannot watch public parameters for [%s]: %v", key, err)
+
+		return
+	}
+	watcher.Start(context.Background())
+	d.watchers[key] = watcher
+}
+
+// applyPublicParams reloads every TMS on the network with the new parameters and persists them. A
+// failure for one TMS does not stop the others: they are independent, and a node serving stale
+// parameters for one is better than for all of them.
+func (d *Driver) applyPublicParams(ctx context.Context, tmsIDs []token2.TMSID, raw []byte, version uint64) {
+	for _, tmsID := range tmsIDs {
+		if err := d.tmsProvider.Update(tmsID, raw); err != nil {
+			logger.Warnf("failed to update tms [%s] to public parameters version %d: %v", tmsID, version, err)
+
+			continue
+		}
+		if d.tokensManager == nil {
+			continue
+		}
+		service, err := d.tokensManager.ServiceByTMSId(tmsID)
+		if err != nil {
+			logger.Warnf("failed to get the token store for [%s]: %v", tmsID, err)
+
+			continue
+		}
+		if err := service.StorePublicParams(ctx, raw); err != nil {
+			logger.Warnf("failed to store public parameters for [%s]: %v", tmsID, err)
+		}
+	}
 }
 
 // installEndorsement builds the endorsement seam for this network and hands it to the network. The
@@ -278,6 +365,27 @@ func (r *configNetworkResolver) IsEVMNetwork(network, channel string) bool {
 	}
 
 	return false
+}
+
+// TMSIDsFor returns the id of every TMS declaring the EVM network service on the given
+// network/channel.
+func (r *configNetworkResolver) TMSIDsFor(network, channel string) []token2.TMSID {
+	configs, err := r.cs.Configurations()
+	if err != nil {
+		logger.Errorf("failed to load token-sdk configurations while listing tms for [%s:%s]: %v", network, channel, err)
+
+		return nil
+	}
+	var out []token2.TMSID
+	for _, c := range configs {
+		id := c.ID()
+		if id.Network == network && id.Channel == channel && c.IsSet(EVMConfigKey) {
+			// token.TMSID is an alias for the driver's, so the configuration's id is already the right type.
+			out = append(out, id)
+		}
+	}
+
+	return out
 }
 
 // ConfigFor loads and validates the EVM configuration of the first TMS declaring it for the given
