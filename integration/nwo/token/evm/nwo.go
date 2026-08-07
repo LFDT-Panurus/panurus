@@ -8,6 +8,7 @@ package evm
 
 import (
 	"context"
+	"math/big"
 	"path/filepath"
 	"time"
 
@@ -24,6 +25,7 @@ import (
 	zkatdlognoghv1 "github.com/LFDT-Panurus/panurus/integration/nwo/token/generators/crypto/zkatdlognoghv1"
 	topology2 "github.com/LFDT-Panurus/panurus/integration/nwo/token/topology"
 	token2 "github.com/LFDT-Panurus/panurus/token"
+	evmdriver "github.com/LFDT-Panurus/panurus/x/token/services/network/evm"
 	evmclient "github.com/LFDT-Panurus/panurus/x/token/services/network/evm/client"
 	evmnwo "github.com/LFDT-Panurus/panurus/x/token/services/network/evm/nwo"
 )
@@ -251,9 +253,48 @@ func (p *NetworkHandler) PostRun(bool, *topology2.TMS) {}
 
 // UpdatePublicParams is not a deploy-time action on EVM. After bootstrap the parameters belong to the
 // endorser quorum, so an update travels as an endorsed setup delta.
+// UpdatePublicParams replaces the TMS's on-chain public parameters.
+//
+// The TokenState contract has no administrative setter, so this goes through the only path there is:
+// an endorsed setup delta. The handler generated every endorser key and holds the funded account, so
+// it can produce the quorum the contract requires, which is what the operator of a real network would
+// have to do as well.
 func (p *NetworkHandler) UpdatePublicParams(tms *topology2.TMS, ppRaw []byte) {
-	gomega.Expect(false).To(gomega.BeTrue(),
-		"public parameters are updated through an endorsed setup delta on EVM, not by the test network")
+	entry := p.GetEntry(tms)
+	gomega.Expect(entry.Node).NotTo(gomega.BeNil(), "the chain for [%s] is not running", tms.TmsID())
+
+	evmClient, err := evmclient.NewJSONRPCClient(entry.Node.Endpoint(), nil)
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), "failed to reach the chain for [%s]", tms.TmsID())
+
+	chainID := big.NewInt(entry.Node.ChainID())
+	submitterKey, err := evmdriver.LoadKeyForAddress(entry.Submitter.Keystore, entry.Submitter.Address.Hex())
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), "failed to load the submitter key")
+	submitter, err := evmdriver.NewSubmitter(
+		evmClient, submitterKey, entry.Deployment.TokenState, chainID, evmdriver.GasConfig{},
+	)
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), "failed to build the submitter")
+
+	// In the order the endorsers were registered on chain, so the quorum is taken from the front of a
+	// stable list rather than from whatever order a map iteration produced.
+	keys := make([][]byte, 0, len(entry.Endorsers))
+	for _, binding := range entry.Endorsers {
+		identity := entry.EndorserOf[binding.FSCIdentity]
+		key, err := evmdriver.LoadKeyForAddress(identity.Keystore, identity.Address.Hex())
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), "failed to load the key of endorser [%s]", binding.FSCIdentity)
+		keys = append(keys, key.Serialize())
+	}
+
+	updater, err := evmnwo.NewSetupUpdater(evmnwo.SetupUpdaterConfig{
+		Client:       evmClient,
+		TokenState:   entry.Deployment.TokenState,
+		ChainID:      chainID,
+		EndorserKeys: keys,
+		Threshold:    entry.Threshold,
+		Submitter:    submitter,
+	})
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), "failed to build the public-parameters updater")
+	gomega.Expect(updater.Update(context.Background(), ppRaw)).To(gomega.Succeed(),
+		"failed to update the public parameters of [%s]", tms.TmsID())
 }
 
 // Cleanup stops the chain.

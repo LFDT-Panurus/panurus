@@ -17,15 +17,27 @@ type Topology struct {
 	TopologyType string `yaml:"type,omitempty"`
 }
 
-// NewTopology returns the topology for an EVM-backed network.
+// DefaultNetworkName is the name of the network an unnamed EVM topology stands up. It is the name
+// the fabric and fabricx topologies give theirs too, and the suites address networks by it, so an
+// EVM-backed network answering to a different one would be invisible to them.
+const DefaultNetworkName = "default"
+
+// NewTopology returns the topology for an EVM-backed network under the default network name.
 func NewTopology() *Topology {
-	return &Topology{TopologyName: TopologyName, TopologyType: TopologyName}
+	return NewTopologyWithName(DefaultNetworkName)
 }
 
-// Name returns the network name.
+// NewTopologyWithName returns the topology for an EVM-backed network under the given name, for a
+// suite that stands up more than one.
+func NewTopologyWithName(name string) *Topology {
+	return &Topology{TopologyName: name, TopologyType: TopologyName}
+}
+
+// Name returns the network name. It is the name of this network instance, not of the technology
+// backing it: Type says that, and the token platform routes on Type alone.
 func (t *Topology) Name() string {
 	if t.TopologyName == "" {
-		return TopologyName
+		return DefaultNetworkName
 	}
 
 	return t.TopologyName
