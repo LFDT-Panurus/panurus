@@ -26,9 +26,9 @@ func RenderExtension(tms *topology2.TMS, wallets *topology2.Wallets, cfg NodeCon
 	cfg = cfg.WithDefaults()
 
 	t, err := template.New("evm").Funcs(template.FuncMap{
-		"TMSID": func() string { return tms.TmsID() },
-		"TMS":   func() *topology2.TMS { return tms },
-		"Wallets": func() *topology2.Wallets { return wallets },
+		"TMSID":               func() string { return tms.TmsID() },
+		"TMS":                 func() *topology2.TMS { return tms },
+		"Wallets":             func() *topology2.Wallets { return wallets },
 		"NodeName":            func() string { return cfg.NodeName },
 		"Endpoint":            func() string { return cfg.Endpoint },
 		"ChainID":             func() int64 { return cfg.ChainID },
