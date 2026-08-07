@@ -21,6 +21,7 @@ import (
 	"github.com/LFDT-Panurus/panurus/x/token/services/network/evm/endorsement"
 	"github.com/LFDT-Panurus/panurus/x/token/services/network/evm/pp"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/services/view"
+	view2 "github.com/hyperledger-labs/fabric-smart-client/platform/view/view"
 )
 
 var logger = logging.MustGetLogger()
@@ -46,6 +47,9 @@ type Driver struct {
 	resolver networkResolver
 	// membership owns identities the driver does not mint.
 	membership driver.LocalMembership
+	// identities resolves the node names the configuration carries into the identities sessions are
+	// actually opened to and authenticated against.
+	identities view.IdentityProvider
 	// viewManager and viewRegistry drive the endorsement flow over FSC sessions.
 	viewManager  endorsement.ViewManager
 	viewRegistry endorsement.ViewRegistry
@@ -76,6 +80,7 @@ func NewDriver(
 	return &Driver{
 		resolver:     &configNetworkResolver{cs: configService},
 		membership:   newLocalMembership(identityProvider),
+		identities:   identityProvider,
 		viewManager:  viewManager,
 		viewRegistry: viewRegistry,
 		tmsProvider:  tmsProvider,
@@ -129,7 +134,7 @@ func (d *Driver) installEndorsement(n *Network, config *Config, evmClient client
 		return nil
 	}
 
-	registry, err := config.EndorserRegistry()
+	registry, err := config.EndorserRegistry(d.resolveIdentity)
 	if err != nil {
 		return err
 	}
@@ -201,7 +206,13 @@ func (d *Driver) registerEndorser(factory *endorsement.ServiceFactory, config *C
 
 			return
 		}
-		authorizer, err := endorsement.NewAuthorizer(config.AllowedRequesters())
+		allowed, err := config.AllowedRequesters(d.resolveIdentity)
+		if err != nil {
+			logger.Errorf("failed to resolve the endorsement allowlist: %v", err)
+
+			return
+		}
+		authorizer, err := endorsement.NewAuthorizer(allowed)
 		if err != nil {
 			logger.Errorf("failed to build the endorsement allowlist: %v", err)
 
@@ -220,6 +231,20 @@ func (d *Driver) registerEndorser(factory *endorsement.ServiceFactory, config *C
 		}
 		logger.Infof("registered as an endorser with address %s", signer.Address())
 	})
+}
+
+// resolveIdentity turns a configured node name into the identity that node speaks with.
+func (d *Driver) resolveIdentity(name string) (view2.Identity, error) {
+	if d.identities == nil {
+		return nil, errors.New("evm: no identity provider available")
+	}
+
+	identity := d.identities.Identity(name)
+	if identity.IsNone() {
+		return nil, errors.Errorf("evm: no identity known for [%s]", name)
+	}
+
+	return identity, nil
 }
 
 // resolveTMS looks up the management service for a TMS id, for a request that has just arrived.
