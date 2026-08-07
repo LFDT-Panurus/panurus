@@ -9,6 +9,7 @@ package nwo
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/binary"
 	"math/big"
 	"time"
 
@@ -214,9 +215,7 @@ func setupAnchor(ppRaw []byte, supersedes uint64) [32]byte {
 	h := sha256.New()
 	h.Write([]byte("evm-nwo-setup"))
 	var version [8]byte
-	for i := range version {
-		version[i] = byte(supersedes >> (8 * (7 - i)))
-	}
+	binary.BigEndian.PutUint64(version[:], supersedes)
 	h.Write(version[:])
 	h.Write(ppRaw)
 

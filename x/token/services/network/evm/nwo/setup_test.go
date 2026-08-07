@@ -9,6 +9,7 @@ package nwo
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/binary"
 	"math/big"
 	"testing"
 
@@ -44,7 +45,7 @@ func abiBytes(b []byte) []byte {
 	head := make([]byte, 32)
 	head[31] = 0x20
 	length := make([]byte, 32)
-	length[31] = byte(len(b))
+	binary.BigEndian.PutUint64(length[24:], uint64(len(b)))
 	padded := make([]byte, (len(b)+31)/32*32)
 	copy(padded, b)
 
@@ -53,9 +54,7 @@ func abiBytes(b []byte) []byte {
 
 func abiUint64(v uint64) []byte {
 	out := make([]byte, 32)
-	for i := range 8 {
-		out[31-i] = byte(v >> (8 * i))
-	}
+	binary.BigEndian.PutUint64(out[24:], v)
 
 	return out
 }
