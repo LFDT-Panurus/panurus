@@ -79,7 +79,7 @@ func TestNewResponderForNeedsAKey(t *testing.T) {
 	auth, err := NewAuthorizer([]view.Identity{view.Identity("alice")})
 	require.NoError(t, err)
 
-	_, err = f.NewResponderFor(nil, auth, nil)
+	_, err = f.NewResponder(auth, nil, nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "signing key")
 }

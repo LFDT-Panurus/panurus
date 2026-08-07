@@ -49,7 +49,11 @@ type Driver struct {
 	// viewManager and viewRegistry drive the endorsement flow over FSC sessions.
 	viewManager  endorsement.ViewManager
 	viewRegistry endorsement.ViewRegistry
-	// registerOnce guards the responder registration, which is per node rather than per TMS.
+	// tmsProvider resolves a TMS when an endorsement request names one. It is used only at request
+	// time: resolving during construction would close a cycle, since building a TMS goes through this
+	// driver.
+	tmsProvider *token2.ManagementServiceProvider
+	// registerOnce guards the responder registration, which is per node rather than per network.
 	registerOnce sync.Once
 }
 
@@ -67,12 +71,14 @@ func NewDriver(
 	identityProvider view.IdentityProvider,
 	viewManager *view.Manager,
 	viewRegistry *view.Registry,
+	tmsProvider *token2.ManagementServiceProvider,
 ) driver.Driver {
 	return &Driver{
 		resolver:     &configNetworkResolver{cs: configService},
 		membership:   newLocalMembership(identityProvider),
 		viewManager:  viewManager,
 		viewRegistry: viewRegistry,
+		tmsProvider:  tmsProvider,
 	}
 }
 
@@ -147,16 +153,13 @@ func (d *Driver) installEndorsement(n *Network, config *Config, evmClient client
 	}
 
 	n.SetEndorsementFactory(func(tms *token2.ManagementService) (EndorsementService, error) {
-		service, err := factory.ForTMS(tms)
-		if err != nil {
-			return nil, err
-		}
-		// A node that endorses answers requests as well as making them. Registration is idempotent
-		// per network, so it is done once here rather than on every approval.
-		d.registerEndorserOnce(factory, config, tms)
-
-		return service, nil
+		return factory.ForTMS(tms)
 	})
+
+	// Registration happens now, not on the first approval. An endorser node answers requests without
+	// ever making one, so registering lazily on the approval path would mean it never registers at
+	// all and every request to it times out.
+	d.registerEndorser(factory, config)
 
 	return nil
 }
@@ -182,13 +185,12 @@ func (d *Driver) newSubmitter(config *Config, evmClient client.EVMClient) (*Subm
 	return NewSubmitter(evmClient, key, tokenState, config.ChainIDBig(), config.Gas)
 }
 
-// registerEndorserOnce registers this node's responder the first time an endorsement service is
-// resolved. A node that does not endorse has no key and registers nothing.
-func (d *Driver) registerEndorserOnce(
-	factory *endorsement.ServiceFactory,
-	config *Config,
-	tms *token2.ManagementService,
-) {
+// registerEndorser registers this node's responder so it can answer requests. A node that does not
+// endorse has no key and registers nothing.
+//
+// The TMS is resolved when a request arrives rather than now: resolving one here would ask the token
+// layer for a service that is still being built through this very driver.
+func (d *Driver) registerEndorser(factory *endorsement.ServiceFactory, config *Config) {
 	d.registerOnce.Do(func() {
 		if d.viewRegistry == nil || !config.Endorser.Enabled {
 			return
@@ -205,7 +207,7 @@ func (d *Driver) registerEndorserOnce(
 
 			return
 		}
-		responder, err := factory.NewResponderFor(tms, authorizer, signer)
+		responder, err := factory.NewResponder(authorizer, signer, d.resolveTMS)
 		if err != nil {
 			logger.Errorf("failed to build the endorsement responder: %v", err)
 
@@ -218,6 +220,15 @@ func (d *Driver) registerEndorserOnce(
 		}
 		logger.Infof("registered as an endorser with address %s", signer.Address())
 	})
+}
+
+// resolveTMS looks up the management service for a TMS id, for a request that has just arrived.
+func (d *Driver) resolveTMS(tmsID token2.TMSID) (*token2.ManagementService, error) {
+	if d.tmsProvider == nil {
+		return nil, errors.New("evm: no token management service provider available")
+	}
+
+	return d.tmsProvider.GetManagementService(token2.WithTMSID(tmsID))
 }
 
 // configNetworkResolver resolves EVM networks from the token-sdk configuration.

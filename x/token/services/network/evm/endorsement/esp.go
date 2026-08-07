@@ -125,26 +125,43 @@ func (f *ServiceFactory) ForTMS(tms *token2.ManagementService) (*Service, error)
 	return service, nil
 }
 
-// NewResponderFor builds the view that answers endorsement requests for a TMS. The wiring registers
-// it only on a node configured as an endorser; a node without a signing key has nothing to answer
-// with.
-func (f *ServiceFactory) NewResponderFor(
-	tms *token2.ManagementService,
+// TMSResolver returns the management service for a TMS id. The responder calls it when a request
+// arrives rather than at construction, which is what lets an endorser be registered before its TMS
+// exists.
+type TMSResolver func(tmsID token2.TMSID) (*token2.ManagementService, error)
+
+// NewResponder builds the view that answers endorsement requests. The wiring registers it only on a
+// node configured as an endorser; a node without a signing key has nothing to answer with.
+//
+// It is deliberately not tied to a TMS. An endorser has to be registered before any request reaches
+// it, and that is before its TMS has necessarily been built, since building one goes through the
+// network driver. The TMS is therefore resolved per request, from the id the request carries.
+func (f *ServiceFactory) NewResponder(
 	authorizer *Authorizer,
 	signer EndorserSigner,
+	resolve TMSResolver,
 ) (*Responder, error) {
 	if signer == nil {
 		return nil, errors.New("endorsement factory: an endorser needs a signing key")
 	}
-	validator, err := tms.Validator()
-	if err != nil {
-		return nil, errors.Wrapf(err, "endorsement factory: failed to get the validator for [%s]", tms.ID())
+	if resolve == nil {
+		return nil, errors.New("endorsement factory: an endorser needs a way to resolve a tms")
 	}
 
 	return NewResponder(
-		tms.ID(),
 		authorizer,
-		NewDeltaFactory(validator, f.publicParams, f.client, f.tokenState, f.blockTag),
+		func(tmsID token2.TMSID) (*DeltaFactory, error) {
+			tms, err := resolve(tmsID)
+			if err != nil {
+				return nil, errors.Wrapf(err, "failed to resolve tms [%s]", tmsID)
+			}
+			validator, err := tms.Validator()
+			if err != nil {
+				return nil, errors.Wrapf(err, "failed to get the validator for [%s]", tmsID)
+			}
+
+			return NewDeltaFactory(validator, f.publicParams, f.client, f.tokenState, f.blockTag), nil
+		},
 		signer,
 		f.domain,
 	), nil
