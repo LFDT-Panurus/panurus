@@ -8,10 +8,12 @@ package evm
 
 import (
 	"context"
+	"time"
 
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 
 	token2 "github.com/LFDT-Panurus/panurus/token"
+	"github.com/LFDT-Panurus/panurus/token/services/network/driver"
 	"github.com/LFDT-Panurus/panurus/token/services/storage"
 	dbdriver "github.com/LFDT-Panurus/panurus/token/services/storage/db/driver"
 	"github.com/LFDT-Panurus/panurus/token/services/storage/services/recovery"
@@ -74,12 +76,12 @@ func (d *Driver) startRecovery(tmsID token2.TMSID, network *Network) error {
 		return errors.Wrapf(err, "evm: failed to get the audit store for [%s]", tmsID)
 	}
 
-	config := d.recoveryConfig(tmsID)
+	config := d.recoveryConfig(tmsID, network.config.Finality.Timeout)
 	started := make([]*recovery.Manager, 0, 2)
 	for _, store := range []recoveryStore{ttxStore, auditStore} {
 		handler := ttxfinality.NewTTXRecoveryHandler(
 			logger,
-			network,
+			settledNetwork{network},
 			tmsID.Namespace,
 			ttxfinality.NewTokenRequestHasher(wrapper.NewTokenManagementServiceProvider(d.tmsProvider), tmsID),
 			tmsID,
@@ -109,21 +111,68 @@ func (d *Driver) startRecovery(tmsID token2.TMSID, network *Network) error {
 // recoveryConfig returns the TMS's recovery settings, falling back to the defaults. Recovery is a
 // safety net, so a configuration that cannot be read downgrades to the defaults rather than
 // preventing the network from coming up without it.
-func (d *Driver) recoveryConfig(tmsID token2.TMSID) recovery.Config {
+//
+// The TTL is raised to the finality timeout if it is shorter, which is what makes settledNetwork's
+// verdict safe. See its comment for why the two belong together.
+func (d *Driver) recoveryConfig(tmsID token2.TMSID, finalityTimeout time.Duration) recovery.Config {
+	config := recovery.DefaultConfig()
+
 	cfg, err := d.resolver.ConfigurationFor(tmsID)
-	if err != nil {
+	switch {
+	case err != nil:
 		logger.Debugf("no configuration for [%s]; recovering with the default settings: %v", tmsID, err)
-
-		return recovery.DefaultConfig()
+	default:
+		loaded, err := recovery.LoadConfig(cfg)
+		if err != nil {
+			logger.Warnf("failed to load the recovery configuration for [%s]; using the defaults: %v", tmsID, err)
+		} else {
+			config = loaded
+		}
 	}
-	loaded, err := recovery.LoadConfig(cfg)
-	if err != nil {
-		logger.Warnf("failed to load the recovery configuration for [%s]; using the defaults: %v", tmsID, err)
 
-		return recovery.DefaultConfig()
+	if finalityTimeout > config.TTL {
+		config.TTL = finalityTimeout
 	}
 
-	return loaded
+	return config
+}
+
+// settledNetwork answers "still unknown" as "invalid", for the recovery path only.
+//
+// A failed applyStateDelta reverts, so it emits no StateCommitted event and stores no token request
+// hash. Nothing about a rejected transaction is ever written to the chain, which means an anchor that
+// is absent is indistinguishable from one that was never submitted, and StatusByAnchor can only
+// answer Unknown for both. Time is the sole remaining signal, exactly as the design says (§7.1,
+// "Unknown, then Invalid after the configured timeout"; §7.4, the recipient's only failure signal).
+//
+// The finality listener already implements that escalation, because it knows when it started
+// waiting. The status path did not, and the two disagreeing is the whole defect: the shared recovery
+// handler treats Unknown as "transient, look again next sweep", so a rejected transaction was swept
+// every few seconds forever while the record stayed Pending and the holding it reserved was never
+// released.
+//
+// What makes the verdict safe here is *when* it is given. The recovery manager only claims rows whose
+// stored timestamp is older than the configured TTL, and recoveryConfig raises that TTL to the
+// finality timeout. So by the time this is asked, the database itself has established that the
+// transaction has been outstanding for longer than a transaction is ever awaited. That clock is a
+// column, not a field: it survives the restart that recovery exists to clean up after, which an
+// in-memory timer would not.
+type settledNetwork struct{ *Network }
+
+// GetTransactionStatus resolves an anchor that is still absent to Invalid rather than Unknown.
+func (n settledNetwork) GetTransactionStatus(
+	ctx context.Context,
+	namespace, txID string,
+) (int, []byte, string, error) {
+	status, hash, message, err := n.Network.GetTransactionStatus(ctx, namespace, txID)
+	if err != nil || status != driver.Unknown {
+		return status, hash, message, err
+	}
+
+	logger.Debugf(
+		"transaction [%s] is still absent from the chain after the finality timeout; recording it as invalid", txID)
+
+	return driver.Invalid, hash, "transaction was not applied within the finality timeout", nil
 }
 
 // stopAll stops a set of managers, used to unwind a partially started TMS.

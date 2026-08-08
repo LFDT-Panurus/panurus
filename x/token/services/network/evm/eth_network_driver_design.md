@@ -682,6 +682,25 @@ Placement and failure policy:
   would take out a working node over a facility it needs only for transactions it may not have.
 - A TMS with no readable recovery configuration downgrades to `recovery.DefaultConfig()`.
 
+**The status path must escalate like the listener path does (found 2026-08-08, Week 6).** §7.1 says an
+anchor that was never seen is `Unknown`, "then `Invalid` after the configured timeout". That second clause
+was implemented in `AddListener`, which knows when it started waiting, and *not* in `StatusByAnchor`, which
+is what `GetTransactionStatus` and therefore recovery call. Since a revert writes nothing to the chain, a
+rejected transaction is `Unknown` forever, and the shared recovery handler treats `Unknown` as "transient,
+look again next sweep": a rejected transaction was re-claimed every few seconds indefinitely while its
+record stayed `Pending` and the holding it reserved was never released.
+
+Recovery therefore wraps the network in `settledNetwork`, which reports a still-absent anchor as `Invalid`.
+What makes that verdict safe is *when* it is given: the recovery manager only claims rows whose stored
+timestamp is older than the configured TTL, and the driver raises that TTL to the finality timeout. So the
+database has already established that the transaction outlived the window in which one is ever awaited.
+**That clock is a column, not a field** — it survives the restart recovery exists to clean up after, which
+an in-memory timer would not.
+
+Consequence to keep in mind when configuring: `finality.timeout` must exceed the chain's real time-to-
+finality at the configured block tag, or both paths will condemn transactions that would have finalized.
+Reading at `finalized` on a PoS mainnet is ~13 minutes (§7.2).
+
 ---
 
 ## 8. Identity, Signing, Nonce

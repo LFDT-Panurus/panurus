@@ -485,6 +485,23 @@ a restart: in-memory state, and nothing that rebuilds it. All four are invisible
 construction, because each needs a *second* actor — an update, another account, a restart — to touch
 the state before the bug exists.
 
+8. **Two paths asking the same question gave different answers.** With 6 and 7 in, the run reached
+   `tests.go:578`: alice's balance was right and the auditor's *holding* for her was still -55. The
+   rejected transaction had been swept every five seconds since it failed, each sweep logging
+   "successfully recovered" and changing nothing. §7.1 says an unseen anchor is `Unknown` "then
+   `Invalid` after the configured timeout"; that escalation existed in `AddListener`, which knows when
+   it started waiting, and not in `StatusByAnchor`, which is what recovery calls. The shared handler
+   reads `Unknown` as transient, so the record never left `Pending` and the holding it reserved was
+   never released. Recovery now goes through `settledNetwork`, and the TTL is raised to the finality
+   timeout so the manager's own age filter is what licenses the verdict. Design §7.5.
+
+   Two things worth keeping from this one. **`tests.go:577` passed for the wrong reason**: it asserts
+   that finality *fails*, and the auditor's wait timed out, which is an error, so the assertion was
+   satisfied without the auditor ever learning anything. The real defect surfaced one line later.
+   **And `recovery.Config.NotFoundGracePeriod` is dead**: the field exists, `RecoveryClaim.StoredAt` is
+   plumbed to the manager for exactly this decision, and nothing reads either. That is a gap in the
+   shared SDK rather than in this driver, and deserves its own issue.
+
 ### Week-6 hardening pass (2026-08-08)
 
 Closing the gaps the work above left open, before the gate run:
