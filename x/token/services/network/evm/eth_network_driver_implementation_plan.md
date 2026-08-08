@@ -492,8 +492,15 @@ the state before the bug exists.
    `Invalid` after the configured timeout"; that escalation existed in `AddListener`, which knows when
    it started waiting, and not in `StatusByAnchor`, which is what recovery calls. The shared handler
    reads `Unknown` as transient, so the record never left `Pending` and the holding it reserved was
-   never released. Recovery now goes through `settledNetwork`, and the TTL is raised to the finality
-   timeout so the manager's own age filter is what licenses the verdict. Design §7.5.
+   never released. Recovery now goes through `settledNetwork`, which reads the transaction row's own
+   timestamp and condemns an anchor only once it is older than the finality timeout. Design §7.5.
+
+   The first attempt derived that age from the sweep schedule instead, by raising the recovery TTL to
+   the finality timeout, and the next run failed one assertion *earlier* than before: a transaction
+   that had committed was no longer recovered inside the 30s a finality check allows, because the
+   sweep would not look at it for two minutes. The TTL answers "how soon is it worth asking again" and
+   the timeout answers "how long before absence means rejection". They are not the same question, and
+   the committed case is the one where the answer was available immediately.
 
    Two things worth keeping from this one. **`tests.go:577` passed for the wrong reason**: it asserts
    that finality *fails*, and the auditor's wait timed out, which is an error, so the assertion was

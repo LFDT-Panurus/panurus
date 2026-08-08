@@ -7,6 +7,7 @@ SPDX-License-Identifier: Apache-2.0
 package evm
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -16,8 +17,11 @@ import (
 
 	token2 "github.com/LFDT-Panurus/panurus/token"
 	"github.com/LFDT-Panurus/panurus/token/services/network/driver"
+	dbdriver "github.com/LFDT-Panurus/panurus/token/services/storage/db/driver"
 	"github.com/LFDT-Panurus/panurus/token/services/storage/services/recovery"
 	"github.com/LFDT-Panurus/panurus/x/token/services/network/evm/client/mock"
+	cdriver "github.com/hyperledger-labs/fabric-smart-client/platform/common/driver"
+	"github.com/hyperledger-labs/fabric-smart-client/platform/common/utils/collections/iterators"
 )
 
 func testTMSID() token2.TMSID {
@@ -70,33 +74,12 @@ func TestRecoveryConfigFallsBackToDefaults(t *testing.T) {
 	// deployment that has not opted into custom recovery settings hits.
 	d := &Driver{resolver: fakeResolver{evm: map[string]bool{"evm-net|": true}}}
 
-	cfg := d.recoveryConfig(testTMSID(), 0)
+	cfg := d.recoveryConfig(testTMSID())
 	assert.Equal(t, recovery.DefaultConfig(), cfg)
 	assert.True(t, cfg.Enabled, "recovery is on unless a deployment turns it off")
 	assert.Positive(t, cfg.TTL, "a zero TTL would sweep transactions that are merely in flight")
 	assert.Positive(t, cfg.ScanInterval)
 	assert.Less(t, cfg.ScanInterval, 5*time.Minute, "a sweep this rare would not rescue anything usefully")
-}
-
-// TestRecoveryTTLCoversTheFinalityTimeout is what makes settledNetwork's verdict safe.
-//
-// Recovery reads a still-absent anchor as a rejection, and that is only true once the transaction has
-// been outstanding for longer than one is ever awaited. The manager claims rows by age, so raising
-// the TTL to the finality timeout is what puts that guarantee behind the verdict. A shorter TTL would
-// have recovery condemning transactions the finality listener is still legitimately waiting on.
-func TestRecoveryTTLCoversTheFinalityTimeout(t *testing.T) {
-	d := &Driver{resolver: fakeResolver{evm: map[string]bool{"evm-net|": true}}}
-
-	t.Run("a longer finality timeout raises the ttl", func(t *testing.T) {
-		cfg := d.recoveryConfig(testTMSID(), 4*time.Minute)
-		assert.Equal(t, 4*time.Minute, cfg.TTL)
-	})
-
-	t.Run("a shorter one leaves it alone", func(t *testing.T) {
-		defaults := recovery.DefaultConfig()
-		cfg := d.recoveryConfig(testTMSID(), time.Nanosecond)
-		assert.Equal(t, defaults.TTL, cfg.TTL, "the configured sweep delay is a floor, not a target")
-	})
 }
 
 // TestSettledNetworkResolvesAnAbsentAnchor is the fix for a rejected transaction being swept forever.
@@ -106,56 +89,102 @@ func TestRecoveryTTLCoversTheFinalityTimeout(t *testing.T) {
 // again on the next sweep, so the record stayed Pending, the holding it reserved was never released,
 // and the sweep repeated every few seconds indefinitely.
 func TestSettledNetworkResolvesAnAbsentAnchor(t *testing.T) {
-	anchorTxID := func(t *testing.T) string {
+	const timeout = time.Minute
+
+	// settled builds the wrapper over a node whose eth_call returns raw, and a store that claims the
+	// transaction was written age ago.
+	settled := func(t *testing.T, raw []byte, callErr error, age time.Duration) (settledNetwork, string) {
 		t.Helper()
 		evm := &mock.EVMClient{}
 		evm.ChainIDReturns(bigInt(testChainID), nil)
+		evm.CallReturns(raw, callErr)
 		n := testNetwork(t, evm, nil)
 
-		return n.ComputeTxID(&driver.TxID{Creator: []byte("creator")})
+		return settledNetwork{
+			Network: n,
+			store:   &agedStore{age: age},
+			timeout: timeout,
+		}, n.ComputeTxID(&driver.TxID{Creator: []byte("creator")})
 	}
 
-	t.Run("an absent anchor is invalid, not unknown", func(t *testing.T) {
-		evm := &mock.EVMClient{}
-		evm.ChainIDReturns(bigInt(testChainID), nil)
-		// An empty return is the contract reporting no token request hash for the anchor, which is
-		// what a reverted apply leaves behind.
-		evm.CallReturns(make([]byte, 32), nil)
-		n := testNetwork(t, evm, nil)
+	// An all-zero return is the contract reporting no token request hash for the anchor, which is what
+	// a reverted apply leaves behind.
+	absent := make([]byte, 32)
 
-		status, _, message, err := settledNetwork{n}.GetTransactionStatus(t.Context(), "token", anchorTxID(t))
+	t.Run("an anchor absent past the timeout is invalid", func(t *testing.T) {
+		n, txID := settled(t, absent, nil, 2*timeout)
+
+		status, _, message, err := n.GetTransactionStatus(t.Context(), "token", txID)
 		require.NoError(t, err)
 		assert.Equal(t, driver.Invalid, status, "the sweep must reach a verdict rather than repeat forever")
 		assert.NotEmpty(t, message, "the record should say why it was closed")
 	})
 
-	// Only Unknown is reinterpreted. A committed transaction still recovers as Valid, and its token
-	// request hash has to survive the wrapper or the handler cannot verify what it commits.
+	// The patient half, and the reason the age is read rather than assumed: a transaction younger than
+	// the timeout may still be on its way, and condemning it would delete a transfer that then lands.
+	t.Run("an anchor absent within the timeout stays unknown", func(t *testing.T) {
+		n, txID := settled(t, absent, nil, timeout/2)
+
+		status, _, _, err := n.GetTransactionStatus(t.Context(), "token", txID)
+		require.NoError(t, err)
+		assert.Equal(t, driver.Unknown, status, "a transaction still in flight must be left alone")
+	})
+
+	// Only Unknown is reinterpreted. A committed transaction still recovers as Valid however old it
+	// is, and its token request hash has to survive the wrapper or the handler cannot verify it.
 	t.Run("a committed anchor is untouched", func(t *testing.T) {
-		evm := &mock.EVMClient{}
-		evm.ChainIDReturns(bigInt(testChainID), nil)
 		hash := make([]byte, 32)
 		hash[31] = 0x7C
-		evm.CallReturns(hash, nil)
-		n := testNetwork(t, evm, nil)
+		n, txID := settled(t, hash, nil, 2*timeout)
 
-		status, got, _, err := settledNetwork{n}.GetTransactionStatus(t.Context(), "token", anchorTxID(t))
+		status, got, _, err := n.GetTransactionStatus(t.Context(), "token", txID)
 		require.NoError(t, err)
 		assert.Equal(t, driver.Valid, status)
 		assert.Equal(t, hash, got, "the token request hash must reach the handler intact")
 	})
 
-	// A node that could not be reached has not established anything about the transaction, so it must
-	// stay a failure and be retried rather than becoming a verdict.
+	// A node that could not be reached has established nothing about the transaction, so it stays a
+	// failure to be retried rather than becoming a verdict.
 	t.Run("an unreachable node is not a verdict", func(t *testing.T) {
-		evm := &mock.EVMClient{}
-		evm.ChainIDReturns(bigInt(testChainID), nil)
-		evm.CallReturns(nil, errors.New("connection refused"))
-		n := testNetwork(t, evm, nil)
+		n, txID := settled(t, nil, errors.New("connection refused"), 2*timeout)
 
-		_, _, _, err := settledNetwork{n}.GetTransactionStatus(t.Context(), "token", anchorTxID(t))
+		_, _, _, err := n.GetTransactionStatus(t.Context(), "token", txID)
 		require.Error(t, err)
 	})
+
+	// A store that cannot say how old the row is leaves the transaction in the sweep. Condemning it on
+	// the strength of a failed database read would be the one irreversible move available here.
+	t.Run("an unreadable store leaves it for the next sweep", func(t *testing.T) {
+		n, txID := settled(t, absent, nil, 2*timeout)
+		n.store = &agedStore{err: errors.New("store is down")}
+
+		status, _, _, err := n.GetTransactionStatus(t.Context(), "token", txID)
+		require.NoError(t, err)
+		assert.Equal(t, driver.Unknown, status)
+	})
+}
+
+// agedStore is a recoveryStore that only answers the age question, which is all settledNetwork asks
+// of it. Every other method is present to satisfy the interface and panics if the code under test
+// starts depending on it.
+type agedStore struct {
+	recoveryStore
+	age time.Duration
+	err error
+}
+
+func (s *agedStore) Transactions(
+	_ context.Context,
+	_ dbdriver.QueryTransactionsParams,
+	_ cdriver.Pagination,
+) (*cdriver.PageIterator[*dbdriver.TransactionRecord], error) {
+	if s.err != nil {
+		return nil, s.err
+	}
+
+	return &cdriver.PageIterator[*dbdriver.TransactionRecord]{
+		Items: iterators.Slice([]*dbdriver.TransactionRecord{{Timestamp: time.Now().Add(-s.age)}}),
+	}, nil
 }
 
 // newRecoveryDriver returns a Driver with the recovery bookkeeping initialized and no stores, which

@@ -690,12 +690,17 @@ rejected transaction is `Unknown` forever, and the shared recovery handler treat
 look again next sweep": a rejected transaction was re-claimed every few seconds indefinitely while its
 record stayed `Pending` and the holding it reserved was never released.
 
-Recovery therefore wraps the network in `settledNetwork`, which reports a still-absent anchor as `Invalid`.
-What makes that verdict safe is *when* it is given: the recovery manager only claims rows whose stored
-timestamp is older than the configured TTL, and the driver raises that TTL to the finality timeout. So the
-database has already established that the transaction outlived the window in which one is ever awaited.
-**That clock is a column, not a field** — it survives the restart recovery exists to clean up after, which
-an in-memory timer would not.
+Recovery therefore wraps the network in `settledNetwork`, which reports an anchor still absent past
+`finality.timeout` as `Invalid`. The age comes from the transaction row's own `Timestamp`. **That clock is a
+column, not a field** — it survives the restart recovery exists to clean up after, which an in-memory timer
+would not.
+
+**Do not derive the age from the sweep schedule instead.** Raising the recovery TTL to the finality timeout
+also licenses the verdict, and is wrong: the TTL answers "how soon is it worth asking again" and the timeout
+answers "how long before absence means rejection". Conflating them delays the *committed* case, which is the
+one where the answer was available immediately — a recipient whose transaction did commit then waits a full
+finality timeout to be told so, and a 30-second finality check fails on a transaction that succeeded. Keep
+the sweep frequent and the verdict patient.
 
 Consequence to keep in mind when configuring: `finality.timeout` must exceed the chain's real time-to-
 finality at the configured block tag, or both paths will condemn transactions that would have finalized.
