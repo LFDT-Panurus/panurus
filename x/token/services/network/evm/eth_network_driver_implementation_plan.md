@@ -385,28 +385,32 @@ container resolves the real driver.
 
 ## Week 6 — Besu NWO bootstrap + fabtoken END-TO-END (the integration milestone)
 
-- [ ] **Reintroduce the `evmdlog` SDK composition in the integration module** (R7): `integration/token/common/
+- [x] **Reintroduce the `evmdlog` SDK composition in the integration module** (R7): `integration/token/common/
       sdk/evmdlog/` wiring `evm.NewDriver` + the token driver over `viewsdk`, with a `DryRunWiring`
       registration test. It lives here (not in the lean evm module) because it imports `token/sdk/dig`; the
       integration module already aligns core's fabric+idemix deps. Add the `require`+`replace` for the evm
       module in `integration/go.mod`.
-- [ ] `integration/nwo/token/evm/`: an NWO platform/topology that **boots Besu** (dev-mode / Docker),
+- [x] `integration/nwo/token/evm/`: an NWO platform/topology that **boots Besu** (dev-mode / Docker),
       forge-deploys verifier + TokenState into it, provisions endorser identities (address↔FSC), wires FSC
       nodes with addresses + endpoints. Mirror `integration/nwo/token/fabricx/` (`Backend` with
       `PrepareNamespace`/`UpdatePublicParams`, `BackedTopology`) so the topology's public interface matches
       `fabricx`'s — the Ginkgo suite (below) reuses the fungible `dlog` bodies verbatim, `dlogx`-style.
-- [ ] **Admin deployment runbook** (Angelo, Wk6 deliverable): enumerated bootstrap steps — deploy verifier +
+- [x] **Admin deployment runbook** (Angelo, Wk6 deliverable): enumerated bootstrap steps — deploy verifier +
       TokenState clone, seed PP v0, register endorser set + threshold + `graphHiding`. This doc becomes the
-      spec the forge/NWO deploy scripts automate.
-- [ ] **Deploy hardening (2026-07-11 review, design §3.8):** close the clone→`initialize` front-running
-      window — add a small factory contract that clones and initializes the TokenState in ONE transaction;
-      until it lands, `Deploy.s.sol` must read back and assert the post-initialize state (verifier address,
-      PP hash, `graphHiding`) before recording the clone address.
-- [ ] `Makefile` target `integration-tests-evm`.
-- [ ] `integration/token/evm/evm_test.go` (Ginkgo) — **fabtoken on Besu**, reusing the existing fungible
-      `dlog` test bodies retargeted at the EVM topology: issue, transfer, double-spend reject, sub-threshold
-      reject, finality, recipient anchor→finality.
-- [ ] **Recipient-side anchor→finality (design §7.4) — MOVED HERE from Week 7 (Angelo, sync 2026-08-06).**
+      spec the forge/NWO deploy scripts automate. Landed as
+      `docs/services/network-ethereum-deployment.md`, linked from `network.md` and `network-ethereum.md`.
+- [x] **Deploy hardening (2026-07-11 review, design §3.8):** close the clone→`initialize` front-running
+      window — `TokenStateFactory` clones and initializes the TokenState in ONE transaction, and
+      `Deploy.s.sol` also reads the post-initialize state back (verifier, PP hash, version, `graphHiding`,
+      deployer) before recording the clone address. `TokenStateFactory.t.sol` pins both halves, including a
+      test that runs the hijack against the two-transaction deploy it replaced.
+- [x] `Makefile` targets `integration-tests-evm` (zkatdlog) and `integration-tests-evm-fabtoken`.
+- [~] `integration/token/fungible/{evm,evmfabtoken}/evm_test.go` (Ginkgo) — **fabtoken on Besu**, reusing the
+      existing fungible `dlog` test bodies retargeted at the EVM topology: issue, transfer, double-spend
+      reject, sub-threshold reject, finality, recipient anchor→finality. Both suites exist and call
+      `fungible.TestAll` unmodified; the run is being driven forward failure by failure (see the Week-6 log
+      below), so this stays `[~]` until it is green.
+- [x] **Recipient-side anchor→finality (design §7.4) — MOVED HERE from Week 7 (Angelo, sync 2026-08-06).**
       It is a *dependency* of the gate, not a later extra: the fungible bodies call
       `CheckFinality(network, bob, txID, …)`, and bob is a recipient who only ever holds the anchor, so the
       suite cannot pass without it. Two paths, both needed:
@@ -423,10 +427,93 @@ container resolves the real driver.
 
 Gate: fabtoken Ginkgo suite green **end-to-end on Besu** (not anvil), recipients included.
 
+### Week-6 log: what the end-to-end run found
+
+Recorded per R1 and R3. Each of these passed every unit test and only appeared once real nodes ran the
+shared fungible bodies against Besu, and each was found by reading the run rather than by reasoning.
+
+1. **Besu is not a superset of the JSON-RPC spec.** No `eth_maxPriorityFeePerGas` (it is an extension);
+   the submitter now derives the tip from the part of `eth_gasPrice` above the base fee. Its dev network
+   has no PUSH0, so contracts must build for `paris` — a `shanghai` build reverts every contract
+   creation. Golden digests and the forge suite are unaffected by the switch.
+2. **Names are not identities.** The endorsement config names nodes, but a session is opened to an
+   identity and the allowlist is compared against the identity a session authenticated with. Names are
+   resolved through the identity provider now, as the fabric endorsement service does.
+3. **A captured management service goes stale on a parameters update.** `Update` *evicts* the cached
+   `*token.ManagementService` so the next caller builds a new one — so anything holding the old pointer
+   keeps the old public parameters, and asking it again for a validator does not help. The initiator now
+   holds a TMS **id** and resolves per request, like the responder. Symptom: after an update authorising
+   a new issuer, that issuer's every request was rejected as `issuer is not authorized`, by a node that
+   had already logged the new parameters.
+4. **A provider that caches half its answer is worse than one that caches none.** `ChainProvider` read
+   the parameter bytes fresh and the version from a keeper only the watcher ever invalidated, so after
+   an update every delta carried the new bytes under the old version and the contract rejected each one
+   with `StalePublicParams`. It surfaced as `eth_estimateGas` reverting — nothing pointing at
+   parameters. Both halves are read per call now; the version costs one extra `eth_call`.
+
+5. **One funded account cannot back several nodes.** The harness handed every node the same pre-funded
+   development account. Nonces are per account and each node's `NonceManager` counts locally, so the
+   second node to broadcast reused a consumed nonce and got `nonce too low` — and the harness's own
+   parameters update, spending from the same account, moved the nodes' nonces behind their backs. The
+   topology now generates and funds an account per node (`Funder`, `fundSubmitters`), and keeps a
+   separate operator account for deploying and for submitting the setup delta.
+
+6. **A finality listener is in-memory state, so a restart loses it.** The shared bodies restart bob while
+   he holds a prepared transfer, then have alice broadcast it. Bob's row stays `Pending` forever: the
+   registration the ttx layer made when it stored the transaction died with the process, the chain has
+   the answer, and nobody is asking. Every wait then runs to its timeout, which reads as a finality bug
+   and is not one. The Fabric driver starts a recovery manager over the transaction store and the audit
+   store for exactly this reason and fabricx inherits them; this driver started none, which stays
+   invisible for as long as no node restarts. `recovery.go` starts both, per TMS, from `Connect`.
+   Design §7.5.
+
+7. **"Failed to estimate gas" is two different answers wearing one coat.** A reverted `eth_estimateGas`
+   is the node executing the transaction and rejecting it — permanent, and resending only pays gas to
+   be told again. Every other failure of the same call says nothing about the transaction and must be
+   retried. The driver returned both as one wrapped error, so no caller could tell them apart without
+   matching strings, and the suite's double-spend assertion (`"is not valid"`) had nothing to match.
+   Classification now happens in the client, where the JSON-RPC code and message are still in hand:
+   neither is sufficient alone — `-32000` is the implementation-defined range and covers every
+   server-side execution failure, and the wording differs between clients — so the two are paired.
+   Design §13.
+
+3 and 4 are the same mistake twice: state that a public-parameters update replaces, captured by
+something that outlives the update. Anything cached across an update on this path is suspect. 5 is the
+same shape at the account level — shared mutable state with a local cache in front of it — and, like
+the others, it stays invisible until something else touches the state. 6 is the same shape again across
+a restart: in-memory state, and nothing that rebuilds it. All four are invisible to unit tests by
+construction, because each needs a *second* actor — an update, another account, a restart — to touch
+the state before the bug exists.
+
+### Week-6 hardening pass (2026-08-08)
+
+Closing the gaps the work above left open, before the gate run:
+
+- [x] Tests for the revert classification, which had none: a table over geth/Besu wording, a reason
+      string, a different `-32000` failure and two other JSON-RPC codes (`client`), plus the submitter's
+      permanent-vs-transient verdict, the `"is not valid"` wording the shared bodies read, and the nonce
+      reset on a rejected transaction.
+- [x] Tests for the recovery guards: the no-stores downgrade, the per-TMS idempotency guard (two
+      managers sweeping one store would claim each other's transactions), `stopRecovery`, and the
+      configuration fallback.
+- [x] `ErrNetworkUnavailable` wired rather than left declared: the submitter's failed estimate, fee read
+      and broadcast are the transient class. A declared-but-unused sentinel documents an intention
+      instead of implementing one.
+- [x] Design doc caught up per R5 — §3.5 (nothing cached across a PP update, both halves read per call),
+      §7.5 (recovery), §9.1 (Besu's JSON-RPC gaps and `paris`), §13 (what of the taxonomy is built and
+      what is Week 8).
+- [x] `docs/services/network-ethereum.md` gains an operational section: error classes, recovery,
+      one funded account per submitting node, node compatibility.
+- [x] Stray `weekly sync.html` removed from the branch; the goimports failure on CI (`topology.go`) is
+      fixed in the tree.
+
 ## Week 7 — endorsed PP-update + zkatdlog END-TO-END
 
-- [ ] Endorsed **PP-update flow**: setup token request → setup delta → contract stores PP, bumps version,
-      emits `PublicParametersUpdated`; driver `VersionKeeper` resyncs; stale-PP delta rejected.
+- [x] Endorsed **PP-update flow**: setup token request → setup delta → contract stores PP, bumps version,
+      emits `PublicParametersUpdated`; driver `VersionKeeper` resyncs; stale-PP delta rejected. **Pulled
+      forward into Week 6**: the fungible bodies update parameters to authorise a new issuer wallet, so
+      the Week-6 gate depends on it. `nwo.SetupUpdater` builds and submits the delta; `pp.Watcher` is how
+      a node notices somebody else's update.
 - [ ] zkatdlog/nogh end-to-end on Besu (same path; opaque token bytes) added to the Ginkgo suite.
 
 Gate: endorsed PP update + version bump tested; zkatdlog suite green on Besu.

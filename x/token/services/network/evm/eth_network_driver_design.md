@@ -285,6 +285,25 @@ PP updates are not privileged. The flow mirrors the SDK's `SetupAction` → `com
 The driver-side `pp.VersionKeeper` (per TMS) caches the version and is synced from
 `getPublicParamsVersion()`; endorsers refuse to sign a delta whose `publicParamsVersion` ≠ their synced value.
 
+**The endorsement path reads both halves per call, and caches neither (found 2026-08-07, Week 6; R5).**
+`publicParamsHash` and `publicParamsVersion` travel together in a delta and the contract checks both against
+what it holds at apply time, so the pair has to be consistent by construction. `pp.ChainProvider` originally
+read the bytes fresh but took the version from a keeper only the watcher invalidated. That costs nothing until
+parameters are updated, and then every delta built afterwards carries the *new* bytes under the *old* version
+and the contract rejects each one with `StalePublicParams`, for as long as the cache lives. It surfaced only
+as `eth_estimateGas` reverting, with nothing pointing at parameters. `ChainProvider.PublicParams` therefore
+calls `VersionKeeper.Sync` rather than `GetVersion`: one extra `eth_call` per endorsement, in exchange for a
+correctness bug that appears only after an update.
+
+**The general shape, twice over.** The same mistake reached the initiator, which captured a
+`*token.ManagementService`; `Update` *evicts* that service so the next caller builds a new one, so the
+captured pointer kept validating against superseded parameters — and after an update authorising a new
+issuer, that issuer's every request was rejected as `issuer is not authorized`, by a node that had already
+logged the new parameters. The initiator now holds a TMS **id** and resolves per request, as the responder
+always did (`endorsement.ResolveValidator`). **Anything cached across a parameters update on this path is
+suspect**: state that an update replaces, captured by something that outlives the update, stays invisible
+until something else touches it.
+
 ### 3.6 Spent / existence model — one list, contract-side mode
 
 Verified opposite polarities in `token/services/network/common/rws/translator/translator.go`:
@@ -636,6 +655,33 @@ also wants the eth tx hash; it needs a from/to block range and log retention var
 case must not depend on it. The split also matches the two roles: the submitter already holds the hash and
 uses the receipt directly (§7.1), while the recipient starts from the anchor.
 
+### 7.5 Transaction recovery across a restart (added 2026-08-07, Week 6)
+
+**Added during the Week-6 integration run — recorded here per working rule R5.** Everything above resolves
+finality for a listener that is *registered*. Registration is the gap.
+
+A node learns that a transaction it holds became final through a finality listener the ttx layer registers
+when it stores that transaction (`token/services/ttx/db.go`, and the auditor's equivalent). That registration
+lives in memory. A node that restarts between storing a transaction and its finality is therefore left with a
+row stuck at `Pending` and nothing that will ever move it: the chain has the answer and nobody is asking.
+Every later wait on that transaction runs to its timeout, which reads as a finality bug and is not one.
+
+The driver therefore starts the SDK's **recovery manager** (`token/services/storage/services/recovery`) over
+both the transaction store and the audit store, per TMS. It periodically claims transactions Pending for
+longer than its TTL and resolves each through `GetTransactionStatus`, which for this driver is the same
+anchor lookup a fresh listener would have done (§7.4). The Fabric driver starts exactly these two managers
+for the same reason, and fabricx inherits them by building on it; this driver started none, which stays
+invisible for as long as no node restarts.
+
+Placement and failure policy:
+- Started from `Network.Connect(ns)`, not from `Driver.New`: recovery is per TMS and the namespace is only
+  known at connect time. Mirrors the Fabric driver.
+- Guarded per TMS. A network can be built more than once over a node's life, and two managers sweeping one
+  store would claim each other's transactions.
+- A failure to start it is logged, not returned. The node works without recovery; refusing the connection
+  would take out a working node over a facility it needs only for transactions it may not have.
+- A TMS with no readable recovery configuration downgrades to `recovery.DefaultConfig()`.
+
 ---
 
 ## 8. Identity, Signing, Nonce
@@ -694,6 +740,23 @@ guarantee it. The one place this bites is **raw-transaction (RLP) encoding + sig
 implementation (small hand-rolled RLP, or a permissively-licensed lib) — not `go-ethereum/core/types`.
 fabric-x-evm already implements `eth_getLogs` with indexed-topic filtering (Storm1289: `gateway/api/eth.go`),
 which §7.4 relies on.
+
+### 9.1 Besu is not a superset of the JSON-RPC spec (found 2026-08-07, Week 6)
+
+Recorded per R5. Both of these passed every unit test and only appeared against a real Besu node.
+
+- **No `eth_maxPriorityFeePerGas`.** It is a client extension, not part of the JSON-RPC specification, and
+  Besu does not implement it. `SuggestGasFees` asks for it first and, when the node answers
+  `-32601 method not found`, derives the tip from the part of `eth_gasPrice` that sits above the base fee.
+  The fallback is deliberately scoped to that one code: a node that implements neither is a failure, not a
+  silent zero fee, because a zero tip on a chain that wants one produces transactions that never mine.
+- **No PUSH0.** Besu's dev network predates it, so contracts must be compiled for **`paris`**; a `shanghai`
+  build reverts every contract creation with no useful diagnostic. Golden digests and the forge suite are
+  unaffected by the switch — the opcode change does not reach the EIP-712 encoding.
+
+The general lesson, which applies to any node this driver is pointed at: an RPC method existing in the
+specification does not mean the backend implements it, and a method the backend does implement may be worded
+differently in its errors (§13). Probe and fall back rather than assume.
 
 ---
 
@@ -785,6 +848,30 @@ Typed sentinel errors with `errors.Is` classification (using `fabric-smart-clien
 ### Mapping reverts → status
 `applyStateDelta` reverts (receipt status 0) map to `Invalid`. The contract's revert reason string is surfaced
 in `StateCommitted.message`/the receipt for diagnostics.
+
+### Build status (Week 6)
+
+The permanent/transient split is the part of this table that callers act on, so it was built first and the
+rest is Week-8 work. What exists today:
+
+| Sentinel | Where | Raised by |
+|---|---|---|
+| `client.ErrExecutionReverted` | `evm/client` | `eth_estimateGas` returning an implementation-defined server error whose message contains "revert" |
+| `ErrTransactionReverted` | `evm` | the submitter, on a reverted estimate — permanent, do not resend |
+| `ErrNetworkUnavailable` | `evm` | the submitter, on a failed estimate/fee read/broadcast — transient, retry |
+| `endorsement.ErrValidation` | `evm/endorsement` | a delta that fails validation before it is signed |
+
+**A reverted estimate is classified at the client**, where the JSON-RPC code and message are still in hand;
+once wrapped, a caller could only tell a rejected transaction from an unhappy node by matching strings. The
+code alone is not enough (`-32000` is the implementation-defined range and covers every server-side execution
+failure) and the message alone is not enough (clients word it differently — "execution reverted" on geth,
+"Execution reverted" on Besu), so the two are paired.
+
+The remaining sentinels in the table above — `ErrDoubleSpend`, `ErrInputMissingOrSpent`, `ErrStalePublicParams`,
+`ErrMetadataKeyOccupied`, `ErrInsufficientEndorsements`, `ErrInvalidSignature`, `ErrNonceConflict`,
+`ErrFinalityTimeout`, `ErrInvalidConfiguration`, `ErrMissingContract` — are **not yet built**. They subdivide
+the permanent class for diagnostics; decoding them means parsing the contract's revert reason, which is
+Week-8 hardening.
 
 ---
 
