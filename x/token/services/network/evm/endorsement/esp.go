@@ -23,9 +23,10 @@ import (
 // endorser set, the threshold, the chain, this node's signing key) is network-wide and is resolved
 // once, here.
 //
-// The TMS arrives from the caller rather than from a management-service provider on purpose: a TMS is
-// constructed through the network driver, so a driver that reached back for a TMS provider would be
-// building a cycle. The driver is already handed the TMS it needs on the approval path.
+// The factory takes a TMS id and resolves the management service itself, per request. Holding the
+// service would be wrong: updating public parameters evicts the cached management service and the next
+// caller gets a rebuilt one, so a captured pointer keeps serving the parameters that were current when
+// it was captured, and no amount of re-asking it for a validator changes that.
 type ServiceFactory struct {
 	registry     *Registry
 	threshold    int
@@ -35,6 +36,7 @@ type ServiceFactory struct {
 	blockTag     string
 	publicParams PublicParamsProvider
 	viewManager  ViewManager
+	resolveTMS   TMSResolver
 
 	mu       sync.Mutex
 	services map[string]*Service
@@ -58,6 +60,8 @@ type FactoryConfig struct {
 	PublicParams PublicParamsProvider
 	// ViewManager runs the initiator.
 	ViewManager ViewManager
+	// TMS resolves a management service from its id, on every request rather than once.
+	TMS TMSResolver
 }
 
 // NewServiceFactory returns a factory for the given network.
@@ -74,6 +78,9 @@ func NewServiceFactory(cfg FactoryConfig) (*ServiceFactory, error) {
 	if cfg.PublicParams == nil {
 		return nil, errors.New("endorsement factory: nil public parameters provider")
 	}
+	if cfg.TMS == nil {
+		return nil, errors.New("endorsement factory: nil tms resolver")
+	}
 	if cfg.Threshold < 1 || cfg.Threshold > cfg.Registry.Len() {
 		return nil, errors.Errorf("endorsement factory: threshold %d out of range [1,%d]",
 			cfg.Threshold, cfg.Registry.Len())
@@ -88,16 +95,17 @@ func NewServiceFactory(cfg FactoryConfig) (*ServiceFactory, error) {
 		blockTag:     cfg.BlockTag,
 		publicParams: cfg.PublicParams,
 		viewManager:  cfg.ViewManager,
+		resolveTMS:   cfg.TMS,
 		services:     map[string]*Service{},
 	}, nil
 }
 
 // ForTMS returns the endorsement service for the given TMS, building it on first use.
-func (f *ServiceFactory) ForTMS(tms *token2.ManagementService) (*Service, error) {
-	if tms == nil {
-		return nil, errors.New("endorsement factory: nil token management service")
+func (f *ServiceFactory) ForTMS(tmsID token2.TMSID) (*Service, error) {
+	if tmsID.Network == "" {
+		return nil, errors.New("endorsement factory: tms id without a network")
 	}
-	key := tms.ID().String()
+	key := tmsID.String()
 
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -105,29 +113,36 @@ func (f *ServiceFactory) ForTMS(tms *token2.ManagementService) (*Service, error)
 		return service, nil
 	}
 
-	validator, err := tms.Validator()
-	if err != nil {
-		return nil, errors.Wrapf(err, "endorsement factory: failed to get the validator for [%s]", tms.ID())
-	}
+	// Both the management service and the validator are resolved per request. The service cached here
+	// lives for the life of the node, but an endorsed setup delta replaces the management service
+	// underneath it, and only a fresh one knows the new public parameters.
+	resolve := ResolveValidator(func() (RequestValidator, error) {
+		tms, err := f.resolveTMS(tmsID)
+		if err != nil {
+			return nil, errors.Wrapf(err, "failed to resolve tms [%s]", tmsID)
+		}
+
+		return tms.Validator()
+	})
 
 	service, err := NewService(
 		f.registry,
 		f.threshold,
-		NewDeltaFactory(validator, f.publicParams, f.client, f.tokenState, f.blockTag),
+		NewDeltaFactory(resolve, f.publicParams, f.client, f.tokenState, f.blockTag),
 		f.domain,
 		f.viewManager,
 	)
 	if err != nil {
-		return nil, errors.Wrapf(err, "endorsement factory: failed to build the service for [%s]", tms.ID())
+		return nil, errors.Wrapf(err, "endorsement factory: failed to build the service for [%s]", tmsID)
 	}
 	f.services[key] = service
 
 	return service, nil
 }
 
-// TMSResolver returns the management service for a TMS id. The responder calls it when a request
-// arrives rather than at construction, which is what lets an endorser be registered before its TMS
-// exists.
+// TMSResolver returns the management service for a TMS id. It is called when a request arrives rather
+// than at construction, for two reasons: it lets an endorser be registered before its TMS exists, and
+// it keeps both sides off a management service that a public-parameters update has since replaced.
 type TMSResolver func(tmsID token2.TMSID) (*token2.ManagementService, error)
 
 // NewResponder builds the view that answers endorsement requests. The wiring registers it only on a

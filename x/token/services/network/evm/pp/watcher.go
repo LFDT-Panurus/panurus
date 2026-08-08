@@ -46,7 +46,7 @@ type Watcher struct {
 	handler  UpdateHandler
 
 	// mu guards everything below it. seen and hasSeen are only written by the polling goroutine, but
-	// they are read from tests and from baselineSet, so they are locked rather than left to a
+	// they are read from tests as well, so they are locked rather than left to a
 	// happens-before argument that a later change could quietly break.
 	mu      sync.Mutex
 	cancel  context.CancelFunc
@@ -55,15 +55,6 @@ type Watcher struct {
 	// establishes a baseline instead of replaying the parameters the node already started with.
 	seen    uint64
 	hasSeen bool
-}
-
-// baselineSet reports whether the watcher has observed the chain at least once, which is when it
-// starts treating a version change as an update rather than as its starting point.
-func (w *Watcher) baselineSet() bool {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-
-	return w.hasSeen
 }
 
 // NewWatcher returns a watcher for one TokenState clone. A zero interval means DefaultWatchInterval.
@@ -162,10 +153,6 @@ func (w *Watcher) poll(ctx context.Context) {
 		return
 	}
 
-	// The provider caches the version behind its own keeper, so without this it would pair the freshly
-	// read parameters with whatever version it last saw. That mismatch is invisible until two updates
-	// land in one run, which is exactly when it matters.
-	w.provider.Invalidate()
 	raw, actual, err := w.provider.PublicParams(ctx)
 	if err != nil {
 		logger.Warnf("public parameters moved to version %d but could not be read: %v", version, err)

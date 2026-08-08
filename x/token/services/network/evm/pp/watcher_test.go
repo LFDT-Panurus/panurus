@@ -80,6 +80,19 @@ func newWatcherHarness(t *testing.T, state *chainState) (*Watcher, *[]update, *s
 	return w, &got, &mu
 }
 
+// baselineSet reports whether the watcher has observed the chain at least once, which is when it
+// starts treating a version change as an update rather than as its starting point. Tests wait on it
+// before changing the chain, so that the change is seen as an update and not as the baseline.
+//
+// It lives here rather than on Watcher because only tests need it, and it takes the lock because the
+// polling goroutine is what writes the fields.
+func baselineSet(w *Watcher) bool {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	return w.hasSeen
+}
+
 // TestWatcherReportsAnUpdate is the behaviour the driver depends on: parameters change on chain
 // because somebody else submitted an endorsed setup delta, and this node has to notice on its own.
 func TestWatcherReportsAnUpdate(t *testing.T) {
@@ -91,7 +104,7 @@ func TestWatcherReportsAnUpdate(t *testing.T) {
 	defer w.Stop()
 
 	// let it establish a baseline, then move the chain on
-	require.Eventually(t, func() bool { return w.baselineSet() }, time.Second, 5*time.Millisecond)
+	require.Eventually(t, func() bool { return baselineSet(w) }, time.Second, 5*time.Millisecond)
 	state.set("params-v1", 1)
 
 	require.Eventually(t, func() bool {
@@ -117,7 +130,7 @@ func TestWatcherDoesNotReplayTheStartingParameters(t *testing.T) {
 	w.Start(context.Background())
 	defer w.Stop()
 
-	require.Eventually(t, func() bool { return w.baselineSet() }, time.Second, 5*time.Millisecond)
+	require.Eventually(t, func() bool { return baselineSet(w) }, time.Second, 5*time.Millisecond)
 	time.Sleep(50 * time.Millisecond)
 
 	mu.Lock()
@@ -135,7 +148,7 @@ func TestWatcherReportsEachUpdateOnce(t *testing.T) {
 	w.Start(context.Background())
 	defer w.Stop()
 
-	require.Eventually(t, func() bool { return w.baselineSet() }, time.Second, 5*time.Millisecond)
+	require.Eventually(t, func() bool { return baselineSet(w) }, time.Second, 5*time.Millisecond)
 	state.set("params-v1", 1)
 	require.Eventually(t, func() bool {
 		mu.Lock()
@@ -211,7 +224,7 @@ func TestWatcherStopIsIdempotentAndBlocks(t *testing.T) {
 	w, got, mu := newWatcherHarness(t, state)
 	w.Start(context.Background())
 	w.Start(context.Background()) // second start must be a no-op
-	require.Eventually(t, func() bool { return w.baselineSet() }, time.Second, 5*time.Millisecond)
+	require.Eventually(t, func() bool { return baselineSet(w) }, time.Second, 5*time.Millisecond)
 
 	w.Stop()
 	w.Stop() // stopping twice must not panic
