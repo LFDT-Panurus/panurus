@@ -41,8 +41,14 @@ type Entry struct {
 	Endorsers []EndorserBinding
 	// EndorserOf maps an FSC node name to the identity it endorses with, for the nodes that endorse.
 	EndorserOf map[string]Identity
-	// Submitter is the funded account that pays for transactions.
-	Submitter Identity
+	// SubmitterOf maps an FSC node name to the funded account it broadcasts from. Every node gets its
+	// own: nonces are per account and each node tracks its own locally, so a shared account produces
+	// "nonce too low" as soon as more than one node broadcasts.
+	SubmitterOf map[string]Identity
+	// Operator is the pre-funded account the harness itself spends from, for work an operator would
+	// do rather than a node: deploying, and submitting the endorsed setup delta that updates public
+	// parameters. Kept apart from the nodes' accounts for the same nonce reason.
+	Operator Identity
 	// Allowlist is who may request an endorsement: the TMS's own nodes.
 	Allowlist []string
 	// Threshold is how many distinct endorsements a transaction needs.
@@ -105,7 +111,7 @@ func NewNetworkHandler(tokenPlatform common.TokenPlatform, builder api2.Builder)
 func (p *NetworkHandler) GetEntry(tms *topology2.TMS) *Entry {
 	entry, ok := p.Entries[tms.TmsID()]
 	if !ok {
-		entry = &Entry{EndorserOf: map[string]Identity{}}
+		entry = &Entry{EndorserOf: map[string]Identity{}, SubmitterOf: map[string]Identity{}}
 		p.Entries[tms.TmsID()] = entry
 	}
 
@@ -143,9 +149,9 @@ func (p *NetworkHandler) GenerateArtifacts(tms *topology2.TMS) {
 	gomega.Expect(entry.Endorsers).NotTo(gomega.BeEmpty(),
 		"an EVM TMS needs at least one endorser; mark a node as one in the topology")
 
-	submitter, err := WriteFundedSubmitter(keyDir, "submitter")
-	gomega.Expect(err).NotTo(gomega.HaveOccurred(), "failed to write the submitter key")
-	entry.Submitter = submitter
+	operator, err := WriteFundedSubmitter(keyDir, "operator")
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), "failed to write the operator key")
+	entry.Operator = operator
 
 	entry.Threshold = p.Threshold
 	if entry.Threshold == 0 || int(entry.Threshold) > len(entry.Endorsers) {
@@ -174,7 +180,36 @@ func (p *NetworkHandler) GenerateArtifacts(tms *topology2.TMS) {
 	gomega.Expect(err).NotTo(gomega.HaveOccurred(), "failed to deploy the contracts for [%s]", tms.TmsID())
 	entry.Deployment = deployment
 
+	p.fundSubmitters(tms, entry, keyDir)
+
 	_ = ctx
+}
+
+// fundSubmitters gives every node of the TMS its own account, paid for out of the operator's.
+//
+// It has to run after the chain is up, which is why it is not next to the endorser identities. The
+// alternative, handing every node the same pre-funded development account, is what the suite used to
+// do: it survives as long as exactly one node is broadcasting and then fails with "nonce too low",
+// because the nonce sequence is per account and each node keeps its own count of it.
+func (p *NetworkHandler) fundSubmitters(tms *topology2.TMS, entry *Entry, keyDir string) {
+	evmClient, err := evmclient.NewJSONRPCClient(entry.Node.Endpoint(), nil)
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), "failed to reach the chain for [%s]", tms.TmsID())
+
+	operatorKey, err := evmdriver.LoadKeyForAddress(entry.Operator.Keystore, entry.Operator.Address.Hex())
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), "failed to load the operator key")
+
+	funder, err := NewFunder(evmClient, operatorKey, entry.Operator.Address, big.NewInt(entry.Node.ChainID()))
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), "failed to build the funder")
+
+	ctx := context.Background()
+	for _, node := range tms.FSCNodes {
+		if _, funded := entry.SubmitterOf[node.Name]; funded {
+			continue
+		}
+		identity, err := funder.FundedIdentity(ctx, keyDir, node.Name+"-submitter", DefaultFunding)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), "failed to fund a submitter for [%s]", node.Name)
+		entry.SubmitterOf[node.Name] = identity
+	}
 }
 
 // startNode boots the chain this TMS settles on, reusing one already started for the same network.
@@ -220,10 +255,13 @@ func (p *NetworkHandler) GenerateExtension(tms *topology2.TMS, node *sfcnode.Nod
 		Threshold:  entry.Threshold,
 		Allowlist:  entry.Allowlist,
 		Endorsers:  entry.Endorsers,
-		// Every node can broadcast in the test network, which keeps the suite's flows independent of
-		// which node happens to assemble a transaction.
-		SubmitterKeystore: entry.Submitter.Keystore,
-		SubmitterAddress:  entry.Submitter.Address.Hex(),
+	}
+	// Every node can broadcast in the test network, which keeps the suite's flows independent of which
+	// node happens to assemble a transaction. Each one pays from its own account, so their nonce
+	// sequences are independent too.
+	if submitter, ok := entry.SubmitterOf[node.Name]; ok {
+		cfg.SubmitterKeystore = submitter.Keystore
+		cfg.SubmitterAddress = submitter.Address.Hex()
 	}
 	if identity, ok := entry.EndorserOf[node.Name]; ok {
 		cfg.IsEndorser = true
@@ -267,8 +305,10 @@ func (p *NetworkHandler) UpdatePublicParams(tms *topology2.TMS, ppRaw []byte) {
 	gomega.Expect(err).NotTo(gomega.HaveOccurred(), "failed to reach the chain for [%s]", tms.TmsID())
 
 	chainID := big.NewInt(entry.Node.ChainID())
-	submitterKey, err := evmdriver.LoadKeyForAddress(entry.Submitter.Keystore, entry.Submitter.Address.Hex())
-	gomega.Expect(err).NotTo(gomega.HaveOccurred(), "failed to load the submitter key")
+	// From the operator's account, not any node's: this is the harness acting as the network's operator,
+	// and spending from a node's account would move that node's nonce without telling it.
+	submitterKey, err := evmdriver.LoadKeyForAddress(entry.Operator.Keystore, entry.Operator.Address.Hex())
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), "failed to load the operator key")
 	submitter, err := evmdriver.NewSubmitter(
 		evmClient, submitterKey, entry.Deployment.TokenState, chainID, evmdriver.GasConfig{},
 	)
