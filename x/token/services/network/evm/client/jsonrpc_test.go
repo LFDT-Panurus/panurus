@@ -14,6 +14,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -137,6 +138,77 @@ func TestEstimateGas(t *testing.T) {
 	got, err := c.EstimateGas(context.Background(), CallMsg{To: &to, Data: []byte{0x01}})
 	require.NoError(t, err)
 	assert.Equal(t, uint64(21000), got)
+}
+
+// newErrorServer starts a JSON-RPC server that answers every method with the given error code and
+// message. Revert classification is decided from exactly those two fields, so a test that pins it
+// has to be able to set both.
+func newErrorServer(t *testing.T, code int, message string) *JSONRPCClient {
+	t.Helper()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		body, err := json.Marshal(map[string]any{
+			"jsonrpc": "2.0",
+			"id":      1,
+			"error":   map[string]any{"code": code, "message": message},
+		})
+		// assert, not require: this runs on the server goroutine, where FailNow would not stop the test.
+		if !assert.NoError(t, err) {
+			w.WriteHeader(http.StatusInternalServerError)
+
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(body)
+	}))
+	t.Cleanup(srv.Close)
+
+	// #nosec G107 -- httptest local test server URL
+	c, err := NewJSONRPCClient(srv.URL, srv.Client())
+	require.NoError(t, err)
+
+	return c
+}
+
+// TestEstimateGasClassifiesReverts pins the one distinction the caller acts on: a node that executed
+// the transaction and rejected it, versus a node that failed to answer.
+//
+// A revert is permanent. Re-sending reaches the same verdict and pays gas for it, so the submitter
+// has to be able to tell the two apart by class rather than by matching strings itself. The wording
+// differs between clients, which is exactly why the message is matched case-insensitively here and
+// not compared for equality.
+func TestEstimateGasClassifiesReverts(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		code     int
+		message  string
+		reverted bool
+	}{
+		{name: "geth wording", code: -32000, message: "execution reverted", reverted: true},
+		{name: "besu wording", code: -32000, message: "Execution reverted", reverted: true},
+		{
+			name:     "revert with a reason string",
+			code:     -32000,
+			message:  "execution reverted: StalePublicParams",
+			reverted: true,
+		},
+		// Same implementation-defined code, a different server-side failure. Classifying this as a
+		// revert would make the submitter give up on a transaction the chain never judged.
+		{name: "another server error", code: -32000, message: "header not found", reverted: false},
+		{name: "method not found", code: -32601, message: "method not found", reverted: false},
+		{name: "invalid params", code: -32602, message: "invalid argument 0", reverted: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := newErrorServer(t, tc.code, tc.message)
+
+			_, err := c.EstimateGas(context.Background(), CallMsg{})
+			require.Error(t, err)
+			assert.Equal(t, tc.reverted, errors.Is(err, ErrExecutionReverted),
+				"a caller decides whether to retry from this classification")
+			// Either way the node's own words survive, because they are what a human debugs from.
+			assert.Contains(t, err.Error(), tc.message)
+		})
+	}
 }
 
 // TestSuggestGasFees checks the EIP-1559 fee derivation: the tip comes from the node, and the max

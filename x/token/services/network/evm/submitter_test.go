@@ -130,6 +130,79 @@ func TestSubmitResetsNonceOnFailure(t *testing.T) {
 	assert.False(t, initialized, "a failed broadcast must reset the nonce sequence")
 }
 
+// TestSubmitClassifiesARevertedEstimate covers the verdict the shared fungible bodies actually read.
+//
+// When the node estimates gas it executes the transaction, so an estimate that reverts is the chain
+// rejecting the delta - a double spend, stale public parameters, a quorum it will not accept. Sending
+// it anyway mines it with status 0 and reaches the same answer, having paid for it. The submitter has
+// to report that as the permanent rejection it is, and it must not report the same way when the node
+// merely failed to answer: those callers retry.
+func TestSubmitClassifiesARevertedEstimate(t *testing.T) {
+	reverted := errors.Wrapf(client.ErrExecutionReverted, "eth_estimateGas failed: execution reverted")
+
+	t.Run("a reverted estimate is a permanent rejection", func(t *testing.T) {
+		evm := readySubmitterClient()
+		evm.EstimateGasReturns(0, reverted)
+		s := testSubmitter(t, evm, estimateGas())
+
+		_, _, err := s.Submit(t.Context(), testDelta(), [][]byte{make([]byte, 65)})
+		require.Error(t, err)
+		assert.ErrorIs(t, err, ErrTransactionReverted)
+		assert.Zero(t, evm.SendRawTransactionCallCount(),
+			"a transaction the node has already rejected must not be paid for")
+	})
+
+	// The fungible bodies assert on this wording when they broadcast the second of two conflicting
+	// transfers, so it is part of the driver's contract with them and not just a log line.
+	t.Run("the message says the transaction is not valid", func(t *testing.T) {
+		evm := readySubmitterClient()
+		evm.EstimateGasReturns(0, reverted)
+		s := testSubmitter(t, evm, estimateGas())
+
+		_, _, err := s.Submit(t.Context(), testDelta(), [][]byte{make([]byte, 65)})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "is not valid")
+	})
+
+	t.Run("an unreachable node is not a rejection", func(t *testing.T) {
+		evm := readySubmitterClient()
+		evm.EstimateGasReturns(0, errors.New("connection refused"))
+		s := testSubmitter(t, evm, estimateGas())
+
+		_, _, err := s.Submit(t.Context(), testDelta(), [][]byte{make([]byte, 65)})
+		require.Error(t, err)
+		assert.NotErrorIs(t, err, ErrTransactionReverted,
+			"a node that never judged the transaction says nothing about its validity")
+		assert.ErrorIs(t, err, ErrNetworkUnavailable, "the caller should retry this one")
+	})
+
+	// A node that refuses the transaction has not executed it either, so it belongs in the same
+	// transient class as an unreachable one, not with the reverts.
+	t.Run("a refused broadcast is transient", func(t *testing.T) {
+		evm := readySubmitterClient()
+		evm.SendRawTransactionReturns(client.Hash{}, errors.New("connection reset"))
+		s := testSubmitter(t, evm, estimateGas())
+
+		_, _, err := s.Submit(t.Context(), testDelta(), [][]byte{make([]byte, 65)})
+		require.Error(t, err)
+		assert.ErrorIs(t, err, ErrNetworkUnavailable)
+		assert.NotErrorIs(t, err, ErrTransactionReverted)
+	})
+
+	// The nonce reset is what makes the retry advice usable: a rejected transaction that consumed a
+	// nonce locally would leave every later one stuck behind a gap.
+	t.Run("a rejected transaction leaves no nonce gap", func(t *testing.T) {
+		evm := readySubmitterClient()
+		evm.EstimateGasReturns(0, reverted)
+		s := testSubmitter(t, evm, estimateGas())
+
+		_, _, err := s.Submit(t.Context(), testDelta(), [][]byte{make([]byte, 65)})
+		require.Error(t, err)
+		_, initialized := s.nonces.Cached()
+		assert.False(t, initialized, "a rejected transaction must put the sequence back under the node")
+	})
+}
+
 func TestSubmitRejectsIncompleteInput(t *testing.T) {
 	s := testSubmitter(t, readySubmitterClient(), estimateGas())
 

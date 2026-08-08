@@ -157,7 +157,17 @@ func (c *JSONRPCClient) EstimateGas(ctx context.Context, msg CallMsg) (uint64, e
 	}
 
 	var out string
-	if err := c.call(ctx, "eth_estimateGas", &out, arg); err != nil {
+	rpcErr, err := c.invoke(ctx, "eth_estimateGas", &out, arg)
+	if rpcErr != nil {
+		// Classified here, where the code and message are still in hand: once wrapped, a caller can
+		// only tell a rejected transaction from an unhappy node by reading strings.
+		if isReverted(rpcErr) {
+			return 0, errors.Wrapf(ErrExecutionReverted, "eth_estimateGas failed: %s", rpcErr.Message)
+		}
+
+		return 0, errors.Wrap(rpcErr, "eth_estimateGas failed")
+	}
+	if err != nil {
 		return 0, err
 	}
 
@@ -166,6 +176,28 @@ func (c *JSONRPCClient) EstimateGas(ctx context.Context, msg CallMsg) (uint64, e
 
 // errMethodNotFound is the JSON-RPC code for a method the node does not implement.
 const errMethodNotFound = -32601
+
+// errServer is the code nodes use for an execution failure, which includes a reverted call. It is
+// not part of the JSON-RPC specification, which reserves -32000 to -32099 for implementations, so it
+// is paired with the message rather than trusted alone.
+const errServer = -32000
+
+// ErrExecutionReverted marks the node reporting that the call it was given reverts against current
+// state, as opposed to failing to answer at all.
+//
+// The difference is the whole point. A reverted eth_call or eth_estimateGas is the node executing the
+// transaction and rejecting it, so sending it would reach the same verdict and only pay gas to be
+// told again: it is permanent. Every other failure of the same call - unreachable node, timeout,
+// malformed response - says nothing about the transaction and has to be retried instead.
+var ErrExecutionReverted = errors.New("execution reverted")
+
+// isReverted reports whether a JSON-RPC error is a revert. It pairs the implementation-defined code
+// with the message, because the code covers everything a node treats as a server-side execution error
+// and the wording differs between clients ("execution reverted" on geth, "Execution reverted" on
+// Besu).
+func isReverted(err *rpcError) bool {
+	return err != nil && err.Code == errServer && strings.Contains(strings.ToLower(err.Message), "revert")
+}
 
 // SuggestGasFees returns the node's suggested EIP-1559 fees: the priority tip it reports, and a max
 // fee of baseFee*2 + tip, the customary headroom that keeps a transaction includable across a few
