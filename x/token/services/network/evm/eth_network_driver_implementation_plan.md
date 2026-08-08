@@ -405,11 +405,11 @@ container resolves the real driver.
       deployer) before recording the clone address. `TokenStateFactory.t.sol` pins both halves, including a
       test that runs the hijack against the two-transaction deploy it replaced.
 - [x] `Makefile` targets `integration-tests-evm` (zkatdlog) and `integration-tests-evm-fabtoken`.
-- [~] `integration/token/fungible/{evm,evmfabtoken}/evm_test.go` (Ginkgo) — **fabtoken on Besu**, reusing the
+- [x] `integration/token/fungible/{evm,evmfabtoken}/evm_test.go` (Ginkgo) — **fabtoken on Besu**, reusing the
       existing fungible `dlog` test bodies retargeted at the EVM topology: issue, transfer, double-spend
       reject, sub-threshold reject, finality, recipient anchor→finality. Both suites exist and call
-      `fungible.TestAll` unmodified; the run is being driven forward failure by failure (see the Week-6 log
-      below), so this stays `[~]` until it is green.
+      `fungible.TestAll` unmodified. **Green on 2026-08-08**: the whole body, 616s, including the
+      concurrent transfers and the parallel token selector that nothing had reached before.
 - [x] **Recipient-side anchor→finality (design §7.4) — MOVED HERE from Week 7 (Angelo, sync 2026-08-06).**
       It is a *dependency* of the gate, not a later extra: the fungible bodies call
       `CheckFinality(network, bob, txID, …)`, and bob is a recipient who only ever holds the anchor, so the
@@ -425,7 +425,8 @@ container resolves the real driver.
       - Recipient failure stays timeout-driven: a failed apply reverts and emits nothing, so "no anchor by the
         timeout" is the only failure signal, after the configured retries (Angelo confirmed this shape).
 
-Gate: fabtoken Ginkgo suite green **end-to-end on Besu** (not anvil), recipients included.
+Gate: fabtoken Ginkgo suite green **end-to-end on Besu** (not anvil), recipients included. **MET
+2026-08-08** — `SUCCESS! -- 1 Passed | 0 Failed`, shared bodies unmodified.
 
 ### Week-6 log: what the end-to-end run found
 
@@ -508,6 +509,21 @@ the state before the bug exists.
    **And `recovery.Config.NotFoundGracePeriod` is dead**: the field exists, `RecoveryClaim.StoredAt` is
    plumbed to the manager for exactly this decision, and nothing reads either. That is a gap in the
    shared SDK rather than in this driver, and deserves its own issue.
+
+9. **The finality timeout is load-bearing, and its lower bound is not the chain.** With 8 in, the
+   suite went green. Trying to then "tidy" the integration topology's two-minute timeout down to 45
+   seconds - on the grounds that this chain mines instantly and 45s still leaves a 15x margin - broke
+   it one assertion *earlier* than anything before: `tests.go:565`, bob's holding reading 0 instead of
+   110, before any broadcast has happened. The shared bodies prepare two transfers, restart two nodes,
+   and only then broadcast the first. A prepared-but-unsent transaction has no anchor on chain, which
+   is the same evidence a rejected one leaves, so recovery condemned both before they were ever sent.
+
+   §7.4 already says an absent anchor is indistinguishable from one that was never submitted. It was
+   written, and then contradicted by treating absence past a deadline as proof of rejection. The
+   binding lower bound on the timeout is not the chain's finality; it is **the longest gap the
+   application leaves between assembling a transaction and broadcasting it**. Recorded in design §7.5
+   and, more usefully, in a comment on the constant itself, because that is where the next person will
+   be standing when they decide it looks too long.
 
 ### Week-6 hardening pass (2026-08-08)
 

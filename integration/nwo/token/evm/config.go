@@ -20,8 +20,25 @@ const TopologyName = "evm"
 // blocks appear immediately, so polling fast and reading at the chain head costs nothing and keeps
 // the suite quick.
 const (
-	DefaultBlockTag        = "latest"
-	DefaultPollInterval    = 200 * time.Millisecond
+	DefaultBlockTag     = "latest"
+	DefaultPollInterval = 200 * time.Millisecond
+	// DefaultFinalityTimeout is bounded from both sides, and the bounds are not obvious. It looks
+	// absurdly long next to a chain that mines instantly, and shortening it to match the chain breaks
+	// the suite. Measured, not guessed:
+	//
+	//   - Lower bound, and the binding one: a transaction is condemned when its record is older than
+	//     this and its anchor is absent from the chain. A transaction that has been *prepared but not
+	//     yet broadcast* looks exactly like that, because absence is absence (design §7.4). The shared
+	//     bodies prepare two transfers, restart two nodes, and only then broadcast, so this must
+	//     comfortably exceed that whole gap or recovery deletes transfers that were never sent. At 45s
+	//     it does, and bob's holding reads 0 instead of 110 at tests.go:565.
+	//   - Also lower: `FinalityWithTimeout(bob, tx3, 20s)` asserts the wait lasts 20 to 40 seconds, so
+	//     resolving a never-submitted transaction sooner than 20s fails it too.
+	//   - Upper bound: the auditor releases the holding a rejected transfer reserved only once recovery
+	//     condemns it, checked by a 30-second Eventually against a record about two and a half minutes
+	//     old (tests.go:578).
+	//
+	// Two minutes sits in that window. Do not lower it without re-running the whole fungible suite.
 	DefaultFinalityTimeout = 2 * time.Minute
 )
 

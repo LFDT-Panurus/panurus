@@ -702,9 +702,23 @@ one where the answer was available immediately — a recipient whose transaction
 finality timeout to be told so, and a 30-second finality check fails on a transaction that succeeded. Keep
 the sweep frequent and the verdict patient.
 
-Consequence to keep in mind when configuring: `finality.timeout` must exceed the chain's real time-to-
-finality at the configured block tag, or both paths will condemn transactions that would have finalized.
-Reading at `finalized` on a PoS mainnet is ~13 minutes (§7.2).
+**`finality.timeout` is bounded from below by more than the chain (found 2026-08-08, the hard way).** The
+obvious lower bound is the chain's real time-to-finality at the configured block tag: reading at `finalized`
+on a PoS mainnet is ~13 minutes (§7.2), and a shorter timeout condemns transactions that would have
+finalized. The *binding* lower bound is larger and easy to miss.
+
+Absence is absence. A transaction that has been **prepared but not yet broadcast** is indistinguishable from
+one that was rejected: neither has an anchor on chain, and this section's own premise is that nothing else is
+written. So the timeout must also exceed the longest gap an application leaves between assembling a
+transaction and submitting it, or recovery will delete transactions that were never sent. Lowering the
+integration topology's timeout from two minutes to 45 seconds did exactly that: the shared bodies prepare two
+transfers, restart two nodes and only then broadcast, and both prepared transfers were condemned before the
+first broadcast.
+
+This is the price of the design's failure model, and it is worth stating plainly: **on this backend a
+transaction's fate is only ever established by absence over time, so any deployment must configure
+`finality.timeout` above both the chain's finality and its own submission latency.** A deployment that
+submits promptly can run a short timeout; one that holds signed transactions before broadcasting cannot.
 
 ---
 
