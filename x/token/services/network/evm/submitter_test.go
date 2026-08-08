@@ -147,7 +147,7 @@ func TestSubmitClassifiesARevertedEstimate(t *testing.T) {
 
 		_, _, err := s.Submit(t.Context(), testDelta(), [][]byte{make([]byte, 65)})
 		require.Error(t, err)
-		assert.ErrorIs(t, err, ErrTransactionReverted)
+		require.ErrorIs(t, err, ErrTransactionReverted)
 		assert.Zero(t, evm.SendRawTransactionCallCount(),
 			"a transaction the node has already rejected must not be paid for")
 	})
@@ -171,9 +171,9 @@ func TestSubmitClassifiesARevertedEstimate(t *testing.T) {
 
 		_, _, err := s.Submit(t.Context(), testDelta(), [][]byte{make([]byte, 65)})
 		require.Error(t, err)
-		assert.NotErrorIs(t, err, ErrTransactionReverted,
+		require.NotErrorIs(t, err, ErrTransactionReverted,
 			"a node that never judged the transaction says nothing about its validity")
-		assert.ErrorIs(t, err, ErrNetworkUnavailable, "the caller should retry this one")
+		require.ErrorIs(t, err, ErrNetworkUnavailable, "the caller should retry this one")
 	})
 
 	// A node that refuses the transaction has not executed it either, so it belongs in the same
@@ -185,8 +185,8 @@ func TestSubmitClassifiesARevertedEstimate(t *testing.T) {
 
 		_, _, err := s.Submit(t.Context(), testDelta(), [][]byte{make([]byte, 65)})
 		require.Error(t, err)
-		assert.ErrorIs(t, err, ErrNetworkUnavailable)
-		assert.NotErrorIs(t, err, ErrTransactionReverted)
+		require.ErrorIs(t, err, ErrNetworkUnavailable)
+		require.NotErrorIs(t, err, ErrTransactionReverted)
 	})
 
 	// The nonce reset is what makes the retry advice usable: a rejected transaction that consumed a
