@@ -53,7 +53,14 @@ func NewTransferService(
 	}
 }
 
-func (s *TransferService) Transfer(ctx context.Context, anchor driver.TokenRequestAnchor, wallet driver.OwnerWallet, tokenIDs []*token2.ID, outputTokens []*token2.Token, opts *driver.TransferOptions) (driver.TransferAction, *driver.TransferMetadata, error) {
+func (s *TransferService) Transfer(
+	ctx context.Context,
+	anchor driver.TokenRequestAnchor,
+	wallet driver.OwnerWallet,
+	tokenIDs []*token2.ID,
+	outputTokens []*token2.Token,
+	opts *driver.TransferOptions,
+) (driver.TransferAction, *driver.TransferMetadata, error) {
 	return nil, nil, errors.New("transfer service not fully implemented for zkatsnark")
 }
 
