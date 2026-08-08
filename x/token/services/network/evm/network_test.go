@@ -196,6 +196,56 @@ func TestConnectVerifiesChain(t *testing.T) {
 	})
 }
 
+// TestConnectStartsRecovery pins where transaction recovery is started, and why it has to be started
+// at all.
+//
+// A node is told that a transaction it holds became final by a finality listener the ttx layer
+// registers in memory when it stores that transaction. A restart destroys that registration, and
+// nothing else ever revisits the row: it stays Pending, and every later wait on it runs to its
+// timeout. Recovery is the sweep that re-asks the chain, and it is per TMS, so the namespace that
+// Connect carries is the earliest point it can start.
+func TestConnectStartsRecovery(t *testing.T) {
+	t.Run("connect starts recovery for the namespace", func(t *testing.T) {
+		evm := &mock.EVMClient{}
+		evm.ChainIDReturns(bigInt(testChainID), nil)
+		n := testNetwork(t, evm, nil)
+
+		var started []string
+		n.SetRecoveryStarter(func(ns string) error {
+			started = append(started, ns)
+
+			return nil
+		})
+
+		_, err := n.Connect("token")
+		require.NoError(t, err)
+		assert.Equal(t, []string{"token"}, started, "recovery must be started for the connected namespace")
+	})
+
+	t.Run("a network without a starter still connects", func(t *testing.T) {
+		evm := &mock.EVMClient{}
+		evm.ChainIDReturns(bigInt(testChainID), nil)
+		n := testNetwork(t, evm, nil)
+
+		_, err := n.Connect("token")
+		require.NoError(t, err)
+	})
+
+	// Recovery completes transactions left over from a previous run. A node that cannot start it is
+	// worse off, but it is not broken: refusing the connection would take out a working node over a
+	// facility it only needs for transactions it may not even have.
+	t.Run("a failure to start recovery does not refuse the connection", func(t *testing.T) {
+		evm := &mock.EVMClient{}
+		evm.ChainIDReturns(bigInt(testChainID), nil)
+		n := testNetwork(t, evm, nil)
+		n.SetRecoveryStarter(func(string) error { return errors.New("no store for this tms") })
+
+		opts, err := n.Connect("token")
+		require.NoError(t, err)
+		assert.Len(t, opts, 3)
+	})
+}
+
 // --- RequestApproval -----------------------------------------------------------------------------
 
 // TestRequestApprovalDoesNotTouchTheChain checks the separation the design relies on: collecting

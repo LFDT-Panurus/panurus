@@ -49,6 +49,9 @@ type Network struct {
 	finality       *finality.Manager
 	tokenState     client.Address
 	membership     driver.LocalMembership
+	// startRecovery starts the per-TMS transaction recovery sweep. It is installed by the driver,
+	// which owns the stores, and runs when a namespace binds rather than when the network is built.
+	startRecovery func(ns string) error
 }
 
 // Compile-time assertion that Network satisfies the driver contract.
@@ -138,6 +141,14 @@ func (n *Network) Connect(ns string) ([]token2.ServiceOption, error) {
 			chainID, n.config.ChainID)
 	}
 
+	// Recovery completes transactions this node left Pending when it last stopped. Failing to start
+	// it is not a reason to refuse the connection: the node works, it just cannot rescue those.
+	if n.startRecovery != nil {
+		if err := n.startRecovery(ns); err != nil {
+			logger.Errorf("could not start transaction recovery for [%s]: %v", ns, err)
+		}
+	}
+
 	return []token2.ServiceOption{
 		token2.WithNetwork(n.name),
 		token2.WithChannel(n.Channel()),
@@ -205,6 +216,11 @@ func (n *Network) endorserFor(tms *token2.ManagementService) (EndorsementService
 func (n *Network) SetEndorsementFactory(f func(tms *token2.ManagementService) (EndorsementService, error)) {
 	n.endorsementFor = f
 }
+
+// SetRecoveryStarter installs the hook that starts transaction recovery for a namespace. Like the
+// endorsement factory it is set by the driver after construction, because the stores it sweeps
+// belong to the driver rather than to the network.
+func (n *Network) SetRecoveryStarter(f func(ns string) error) { n.startRecovery = f }
 
 // Broadcast assembles the endorsed envelope into a signed transaction, sends it, and records the
 // resulting raw transaction and hash back into the envelope so the caller can follow its finality.

@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	token2 "github.com/LFDT-Panurus/panurus/token"
+	"github.com/LFDT-Panurus/panurus/token/services/config"
 	"github.com/LFDT-Panurus/panurus/token/services/network/driver"
 	"github.com/LFDT-Panurus/panurus/x/token/services/network/evm/client/mock"
 
@@ -46,6 +47,12 @@ func (f fakeResolver) TMSIDsFor(network, channel string) []token2.TMSID {
 	}
 
 	return []token2.TMSID{{Network: network, Channel: channel, Namespace: "token"}}
+}
+
+// ConfigurationFor reports no configuration: the routing tests have no config service, and every
+// caller of this treats a missing configuration as "use the defaults".
+func (f fakeResolver) ConfigurationFor(tmsID token2.TMSID) (*config.Configuration, error) {
+	return nil, errors.Errorf("no configuration for [%s]", tmsID)
 }
 
 func TestDriverNewRouting(t *testing.T) {

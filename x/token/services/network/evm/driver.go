@@ -14,16 +14,22 @@ import (
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 
 	token2 "github.com/LFDT-Panurus/panurus/token"
+	"github.com/LFDT-Panurus/panurus/token/core/common/metrics"
 	"github.com/LFDT-Panurus/panurus/token/services/config"
 	"github.com/LFDT-Panurus/panurus/token/services/logging"
 	"github.com/LFDT-Panurus/panurus/token/services/network/driver"
+	"github.com/LFDT-Panurus/panurus/token/services/storage/auditdb"
+	"github.com/LFDT-Panurus/panurus/token/services/storage/services/recovery"
+	"github.com/LFDT-Panurus/panurus/token/services/storage/ttxdb"
 	"github.com/LFDT-Panurus/panurus/token/services/tokens"
 	"github.com/LFDT-Panurus/panurus/x/token/services/network/evm/client"
 	"github.com/LFDT-Panurus/panurus/x/token/services/network/evm/eip712"
 	"github.com/LFDT-Panurus/panurus/x/token/services/network/evm/endorsement"
 	"github.com/LFDT-Panurus/panurus/x/token/services/network/evm/pp"
+	"github.com/hyperledger-labs/fabric-smart-client/platform/view/services/tracing"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/services/view"
 	view2 "github.com/hyperledger-labs/fabric-smart-client/platform/view/view"
+	"go.opentelemetry.io/otel/trace"
 )
 
 var logger = logging.MustGetLogger()
@@ -44,6 +50,9 @@ type networkResolver interface {
 	// takes the first match because the endpoint and chain are network-wide, a public-parameters
 	// update has to reach each TMS individually.
 	TMSIDsFor(network, channel string) []token2.TMSID
+	// ConfigurationFor returns the raw token-sdk configuration of one TMS, for the settings this
+	// driver reads through the shared loaders rather than its own.
+	ConfigurationFor(tmsID token2.TMSID) (*config.Configuration, error)
 }
 
 // Driver is the EVM network driver factory. It implements driver.Driver: the network provider calls
@@ -66,12 +75,21 @@ type Driver struct {
 	// tokensManager gives the token store for a TMS, so a parameters update is persisted as well as
 	// applied to the running service.
 	tokensManager *tokens.ServiceManager
+	// ttxStores and auditStores are the stores transaction recovery sweeps: a node that restarts
+	// loses the in-memory finality listeners that would have completed its pending transactions.
+	ttxStores       ttxdb.StoreServiceManager
+	auditStores     auditdb.StoreServiceManager
+	metricsProvider metrics.Provider
+	recoveryTracer  trace.Tracer
 	// registerOnce guards the responder registration, which is per node rather than per network.
 	registerOnce sync.Once
 	// watchers keeps one public-parameters watcher per network, so building a network twice does not
 	// leave two pollers on one contract.
 	watchersMu sync.Mutex
 	watchers   map[string]*pp.Watcher
+	// recoveries keeps the sweeps started per TMS, for the same reason.
+	recoveryMu sync.Mutex
+	recoveries map[string][]*recovery.Manager
 }
 
 // Compile-time assertion that Driver satisfies the factory contract.
@@ -90,6 +108,10 @@ func NewDriver(
 	viewRegistry *view.Registry,
 	tmsProvider *token2.ManagementServiceProvider,
 	tokensManager *tokens.ServiceManager,
+	ttxStores ttxdb.StoreServiceManager,
+	auditStores auditdb.StoreServiceManager,
+	tracerProvider trace.TracerProvider,
+	metricsProvider metrics.Provider,
 ) driver.Driver {
 	return &Driver{
 		resolver:      &configNetworkResolver{cs: configService},
@@ -99,7 +121,14 @@ func NewDriver(
 		viewRegistry:  viewRegistry,
 		tmsProvider:   tmsProvider,
 		tokensManager: tokensManager,
-		watchers:      map[string]*pp.Watcher{},
+		ttxStores:     ttxStores,
+		auditStores:   auditStores,
+		recoveryTracer: tracerProvider.Tracer("finality_listener", tracing.WithMetricsOpts(tracing.MetricsOpts{
+			LabelNames: []tracing.LabelName{},
+		})),
+		metricsProvider: metricsProvider,
+		watchers:        map[string]*pp.Watcher{},
+		recoveries:      map[string][]*recovery.Manager{},
 	}
 }
 
@@ -137,6 +166,12 @@ func (d *Driver) New(network, channel string) (driver.Network, error) {
 		return nil, err
 	}
 	d.watchPublicParams(network, channel, config, evmClient)
+
+	// Recovery starts when a namespace binds to the network rather than here, because it is per TMS
+	// and the namespace is only known then. Mirrors the Fabric driver, which starts it in connect.
+	n.SetRecoveryStarter(func(ns string) error {
+		return d.startRecovery(token2.TMSID{Network: network, Channel: channel, Namespace: ns}, n)
+	})
 
 	return n, nil
 }
@@ -239,13 +274,20 @@ func (d *Driver) installEndorsement(n *Network, config *Config, evmClient client
 		BlockTag:     config.Finality.BlockTag,
 		PublicParams: pp.NewChainProvider(evmClient, tokenState, config.Finality.BlockTag),
 		ViewManager:  d.viewManager,
+		TMS:          d.resolveTMS,
 	})
 	if err != nil {
 		return err
 	}
 
 	n.SetEndorsementFactory(func(tms *token2.ManagementService) (EndorsementService, error) {
-		return factory.ForTMS(tms)
+		if tms == nil {
+			return nil, errors.New("evm: nil token management service")
+		}
+
+		// Only the id is kept. The factory resolves the service again on every request, because this
+		// one is evicted and rebuilt whenever public parameters change.
+		return factory.ForTMS(tms.ID())
 	})
 
 	// Registration happens now, not on the first approval. An endorser node answers requests without
@@ -404,4 +446,9 @@ func (r *configNetworkResolver) ConfigFor(network, channel string) (*Config, err
 	}
 
 	return nil, errors.Errorf("evm: no evm network configuration for [%s:%s]", network, channel)
+}
+
+// ConfigurationFor returns the token-sdk configuration of one TMS.
+func (r *configNetworkResolver) ConfigurationFor(tmsID token2.TMSID) (*config.Configuration, error) {
+	return r.cs.ConfigurationFor(tmsID.Network, tmsID.Channel, tmsID.Namespace)
 }
