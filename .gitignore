@@ -21,3 +21,6 @@ integration/token/fungible/evm/out/
 integration/token/fungible/evm/testdata/
 integration/token/fungible/evmfabtoken/out/
 integration/token/fungible/evmfabtoken/testdata/
+# ginkgo leaves its compiled suite binary behind when a run fails.
+integration/token/fungible/evm/evm.test
+integration/token/fungible/evmfabtoken/evmfabtoken.test

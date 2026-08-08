@@ -8,6 +8,7 @@ package topology
 
 import (
 	"fmt"
+
 	tevm "github.com/LFDT-Panurus/panurus/integration/nwo/token/evm"
 
 	"github.com/LFDT-Panurus/panurus/integration/nwo/token"
