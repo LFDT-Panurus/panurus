@@ -44,7 +44,7 @@ func validSpendBytes(t *testing.T) snarktoken.SpendDescription {
 		CommitmentIn:   cmBytes[:],
 		ValueCommitInX: cxBytes[:],
 		ValueCommitInY: cyBytes[:],
-		TokenType:      ttBytes[:],
+		TypeCommitment: ttBytes[:],
 		SpendProof:     make([]byte, 192),
 	}
 }
@@ -143,7 +143,7 @@ func validMigrationBytes(t *testing.T) *snarktoken.MigrationAction {
 		CommitmentMiMC:      cmBytes[:],
 		ValueCommitOutX:     cxBytes[:],
 		ValueCommitOutY:     cyBytes[:],
-		TokenType:           ttBytes[:],
+		TypeCommitment:      ttBytes[:],
 		MigrationProof:      make([]byte, 192),
 	}
 }

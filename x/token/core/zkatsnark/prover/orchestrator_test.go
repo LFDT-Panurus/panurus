@@ -36,13 +36,13 @@ func publicWitnessFromSpendDescription(t *testing.T, desc snarktoken.SpendDescri
 	require.NoError(t, cm.SetBytesCanonical(desc.CommitmentIn), "CommitmentIn")
 	require.NoError(t, cx.SetBytesCanonical(desc.ValueCommitInX), "ValueCommitInX")
 	require.NoError(t, cy.SetBytesCanonical(desc.ValueCommitInY), "ValueCommitInY")
-	require.NoError(t, tt.SetBytesCanonical(desc.TokenType), "TokenType")
+	require.NoError(t, tt.SetBytesCanonical(desc.TypeCommitment), "TypeCommitment")
 
 	assignment := &circuit.SpendCircuit{
 		CommitmentIn:   cm,
 		ValueCommitInX: cx,
 		ValueCommitInY: cy,
-		TokenType:      tt,
+		TypeCommitment: tt,
 		// Private fields left as zero values, PublicOnly() below only
 		// extracts the gnark:",public" fields, so these are never read.
 	}
@@ -61,13 +61,13 @@ func publicWitnessFromOutputDescription(t *testing.T, desc snarktoken.OutputDesc
 	require.NoError(t, cm.SetBytesCanonical(desc.CommitmentOut), "CommitmentOut")
 	require.NoError(t, cx.SetBytesCanonical(desc.ValueCommitOutX), "ValueCommitOutX")
 	require.NoError(t, cy.SetBytesCanonical(desc.ValueCommitOutY), "ValueCommitOutY")
-	require.NoError(t, tt.SetBytesCanonical(desc.TokenType), "TokenType")
+	require.NoError(t, tt.SetBytesCanonical(desc.TypeCommitment), "TypeCommitment")
 
 	assignment := &circuit.OutputCircuit{
 		CommitmentOut:   cm,
 		ValueCommitOutX: cx,
 		ValueCommitOutY: cy,
-		TokenType:       tt,
+		TypeCommitment:  tt,
 		MaxBits:         testPP.MaxBits, // MaxBits is a plain
 		// int, not a frontend.Variable, so frontend.NewWitness never reads
 		// it; it only matters at compile time, already baked into outputVK.
@@ -155,7 +155,10 @@ func TestBuildTransferAction_Valid(t *testing.T) {
 	}
 
 	bvk := prover.ComputeBVK(inResults, outResults, 0)
-	actionHash := prover.ComputeActionHash(snarktoken.ActionTypeTransfer, action.TokenType, inResults, outResults)
+
+	var actionTC fr.Element
+	require.NoError(t, actionTC.SetBytesCanonical(action.TypeCommitment))
+	actionHash := prover.ComputeActionHash(snarktoken.ActionTypeTransfer, actionTC, inResults, outResults)
 
 	sig, err := jubjub.DeserializeSignature(action.BindingSignature)
 	require.NoError(t, err)

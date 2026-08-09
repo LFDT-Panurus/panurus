@@ -36,8 +36,8 @@ func validateSpendDescriptionShape(i int, d snarktoken.SpendDescription) error {
 	if len(d.ValueCommitInY) != fieldElementLen {
 		return errors.Wrapf(ErrMalformedAction, "input %d: ValueCommitInY must be %d bytes, got %d", i, fieldElementLen, len(d.ValueCommitInY))
 	}
-	if len(d.TokenType) != fieldElementLen {
-		return errors.Wrapf(ErrMalformedAction, "input %d: TokenType must be %d bytes, got %d", i, fieldElementLen, len(d.TokenType))
+	if len(d.TypeCommitment) != fieldElementLen {
+		return errors.Wrapf(ErrMalformedAction, "input %d: TypeCommitment must be %d bytes, got %d", i, fieldElementLen, len(d.TypeCommitment))
 	}
 	if len(d.SpendProof) != groth16ProofLen {
 		return errors.Wrapf(ErrMalformedAction, "input %d: SpendProof must be %d bytes, got %d", i, groth16ProofLen, len(d.SpendProof))
@@ -57,8 +57,8 @@ func validateOutputDescriptionShape(j int, d snarktoken.OutputDescription) error
 	if len(d.ValueCommitOutY) != fieldElementLen {
 		return errors.Wrapf(ErrMalformedAction, "output %d: ValueCommitOutY must be %d bytes, got %d", j, fieldElementLen, len(d.ValueCommitOutY))
 	}
-	if len(d.TokenType) != fieldElementLen {
-		return errors.Wrapf(ErrMalformedAction, "output %d: TokenType must be %d bytes, got %d", j, fieldElementLen, len(d.TokenType))
+	if len(d.TypeCommitment) != fieldElementLen {
+		return errors.Wrapf(ErrMalformedAction, "output %d: TypeCommitment must be %d bytes, got %d", j, fieldElementLen, len(d.TypeCommitment))
 	}
 	if len(d.OutputProof) != groth16ProofLen {
 		return errors.Wrapf(ErrMalformedAction, "output %d: OutputProof must be %d bytes, got %d", j, groth16ProofLen, len(d.OutputProof))
@@ -80,6 +80,9 @@ func validateBindingSignatureShape(sig []byte) error {
 func validateTransferActionShape(a *snarktoken.TransferAction) error {
 	if len(a.Inputs) == 0 && len(a.Outputs) == 0 {
 		return errors.Wrapf(ErrMalformedAction, "transfer action has no inputs and no outputs")
+	}
+	if len(a.TypeCommitment) != fieldElementLen {
+		return errors.Wrapf(ErrMalformedAction, "TypeCommitment must be %d bytes, got %d", fieldElementLen, len(a.TypeCommitment))
 	}
 	for i, d := range a.Inputs {
 		if err := validateSpendDescriptionShape(i, d); err != nil {
@@ -103,6 +106,9 @@ func validateIssueActionShape(a *snarktoken.IssueAction) error {
 	}
 	if len(a.TotalValue) != fieldElementLen {
 		return errors.Wrapf(ErrMalformedAction, "TotalValue must be %d bytes, got %d", fieldElementLen, len(a.TotalValue))
+	}
+	if len(a.TypeCommitment) != fieldElementLen {
+		return errors.Wrapf(ErrMalformedAction, "TypeCommitment must be %d bytes, got %d", fieldElementLen, len(a.TypeCommitment))
 	}
 	for j, d := range a.Outputs {
 		if err := validateOutputDescriptionShape(j, d); err != nil {
@@ -130,8 +136,8 @@ func validateMigrationActionShape(a *snarktoken.MigrationAction) error {
 	if len(a.ValueCommitOutY) != fieldElementLen {
 		return errors.Wrapf(ErrMalformedAction, "ValueCommitOutY must be %d bytes, got %d", fieldElementLen, len(a.ValueCommitOutY))
 	}
-	if len(a.TokenType) != fieldElementLen {
-		return errors.Wrapf(ErrMalformedAction, "TokenType must be %d bytes, got %d", fieldElementLen, len(a.TokenType))
+	if len(a.TypeCommitment) != fieldElementLen {
+		return errors.Wrapf(ErrMalformedAction, "TypeCommitment must be %d bytes, got %d", fieldElementLen, len(a.TypeCommitment))
 	}
 	if len(a.MigrationProof) != migrationProofLen {
 		return errors.Wrapf(ErrMalformedAction, "MigrationProof must be %d bytes, got %d", migrationProofLen, len(a.MigrationProof))
