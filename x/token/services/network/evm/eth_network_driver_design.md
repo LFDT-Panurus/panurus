@@ -344,13 +344,24 @@ one `EndorsementVerifier`, then create a per-TMS `TokenState` via **EIP-1167 min
 **not** introduce upgradeability (which stays out of scope). The shared implementation locks itself in its
 constructor so only clones can ever be initialized (PR 2b). NWO/forge scripts perform deployment.
 
-**Initializer front-running (2026-07-11 review):** clone creation and `initialize` are separate transactions
-in the current deploy script, so on a shared/public chain an attacker could initialize the clone first with
-their own verifier and endorser set (nothing binds `initialize` to the deployer). On the permissioned Besu
-target this is a low, but nonzero, risk. Production hardening (plan Week 6, deploy hardening): a small factory
-contract whose `create(...)` clones AND initializes in one transaction, making the window impossible; until
-then the deploy script must verify post-initialize state (verifier address, PP hash, graphHiding) before
-recording the clone address as the TMS contract.
+**Initializer front-running (2026-07-11 review), closed in Week 6.** `initialize` is unguarded by design: the
+implementation locks itself in its constructor, so only a fresh clone can ever be initialized, and whoever
+creates the clone is expected to seed it. Creating and initializing in two transactions leaves that
+expectation unenforced. Between the two, the clone is a live, uninitialized contract that anyone can seed with
+their own verifier and endorser set; the honest deployer's `initialize` then reverts with `AlreadyInitialized`,
+and a deployer that does not check the outcome records an address whose endorser set belongs to somebody else.
+On the permissioned Besu target the risk is low but not zero, and on a shared or public chain it is real.
+
+`TokenStateFactory.create(verifier, deployer, pp0, graphHiding)` clones and initializes inside one call. That
+removes the window rather than narrowing it: there is no block, and no point within a block, at which an
+uninitialized clone is reachable. It emits `TokenStateCreated(tokenState, verifier, deployer)` so an admin can
+confirm a deployment from logs. `deployer` is a parameter rather than `msg.sender` because a forge script
+calls the factory itself during simulation while the broadcasting EOA calls it on chain, so `msg.sender`
+differs between the two passes; `TokenState` treats `deployer` as a record and gates nothing on it, so passing
+it delegates no authority. Deployment goes through the factory. The deploy script still reads the seeded state
+back (verifier, PP hash, PP version, graphHiding, deployer) before reporting the address, but that check now
+guards against duller failures than hijacking, which the factory has made impossible: the wrong verifier wired
+up, or public parameters that did not survive the trip.
 
 ### 3.9 Transaction model / batching
 
