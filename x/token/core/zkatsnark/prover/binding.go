@@ -73,11 +73,15 @@ func writeLengthPrefixed(h hash.Hash, b []byte) {
 // any divergence in sorting, encoding, or field ordering causes every
 // legitimate binding signature to fail verification with no useful
 // diagnostic.
-func ComputeActionHash(actionType string, tokenType string, inputs, outputs []ProofResult) []byte {
+func ComputeActionHash(actionType string, typeCommitment fr.Element, inputs, outputs []ProofResult) []byte {
 	h := sha256.New()
 	h.Write([]byte(domainSeparator))
 	writeLengthPrefixed(h, []byte(actionType))
-	writeLengthPrefixed(h, []byte(tokenType))
+
+	// TypeCommitment is a fixed-length field element (32 bytes), so no
+	// length prefix is needed — there is no concatenation ambiguity.
+	tcBytes := typeCommitment.Bytes()
+	h.Write(tcBytes[:])
 
 	for _, r := range sortedByCommitment(inputs) {
 		cm := r.Commitment.Bytes()
@@ -156,7 +160,7 @@ func ComputeBVK(inputs, outputs []ProofResult, valueBalance uint64) twistededwar
 // For issuance (empty inputs), bsk becomes −Σrcv_out. There is no
 // conservation requirement for issuance, the signature instead attests
 // that the published output value commitments are correctly formed.
-func ComputeBindingSignature(actionType string, tokenType string, inputs, outputs []ProofResult) (jubjub.Signature, error) {
+func ComputeBindingSignature(actionType string, typeCommitment fr.Element, inputs, outputs []ProofResult) (jubjub.Signature, error) {
 	// bsk must be computed modulo the Jubjub subgroup order, NOT the
 	// BLS12-381 scalar field modulus. fr.Element.Add/Sub reduce mod r
 	// (the BLS12-381 scalar field), but the Schnorr signature scheme
@@ -179,7 +183,7 @@ func ComputeBindingSignature(actionType string, tokenType string, inputs, output
 	var bsk fr.Element
 	bsk.SetBigInt(bskBig)
 
-	actionHash := ComputeActionHash(actionType, tokenType, inputs, outputs)
+	actionHash := ComputeActionHash(actionType, typeCommitment, inputs, outputs)
 
 	sig, err := jubjub.Sign(bsk, actionHash, jubjub.R)
 	if err != nil {

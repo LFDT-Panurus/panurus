@@ -106,13 +106,14 @@ func setupMigration(t *testing.T) {
 // ── Test inputs ─────────────────────────────────────────────────────────────
 
 type migrationInputs struct {
-	value         uint64
-	tokenType     string
-	tokenTypeFr   fr.Element // EncodeTokenType(tokenType)
-	tokenTypePed  fr.Element // HashToZr(tokenType) for Pedersen
-	randomnessPed fr.Element // Pedersen blinding factor
-	randomnessNew fr.Element // MiMC randomness
-	rcv           fr.Element // Jubjub value-commitment randomness
+	value          uint64
+	tokenType      string
+	tokenTypeFr    fr.Element // EncodeTokenType(tokenType)
+	tokenTypePed   fr.Element // HashToZr(tokenType) for Pedersen
+	randomnessPed  fr.Element // Pedersen blinding factor
+	randomnessNew  fr.Element // MiMC randomness
+	rcv            fr.Element // Jubjub value-commitment randomness
+	typeRandomness fr.Element // TypeCommitment randomness
 }
 
 func newRandomMigrationInputs(t *testing.T) migrationInputs {
@@ -131,22 +132,25 @@ func newRandomMigrationInputs(t *testing.T) migrationInputs {
 	var tokenTypePed fr.Element
 	tokenTypePed.SetBigInt(digestBig)
 
-	var randomnessPed, randomnessNew, rcv fr.Element
+	var randomnessPed, randomnessNew, rcv, typeRandomness fr.Element
 	_, err := randomnessPed.SetRandom()
 	require.NoError(t, err)
 	_, err = randomnessNew.SetRandom()
 	require.NoError(t, err)
 	_, err = rcv.SetRandom()
 	require.NoError(t, err)
+	_, err = typeRandomness.SetRandom()
+	require.NoError(t, err)
 
 	return migrationInputs{
-		value:         value,
-		tokenType:     tokenType,
-		tokenTypeFr:   tokenTypeFr,
-		tokenTypePed:  tokenTypePed,
-		randomnessPed: randomnessPed,
-		randomnessNew: randomnessNew,
-		rcv:           rcv,
+		value:          value,
+		tokenType:      tokenType,
+		tokenTypeFr:    tokenTypeFr,
+		tokenTypePed:   tokenTypePed,
+		randomnessPed:  randomnessPed,
+		randomnessNew:  randomnessNew,
+		rcv:            rcv,
+		typeRandomness: typeRandomness,
 	}
 }
 
@@ -210,6 +214,10 @@ func buildMigrationAssignment(t *testing.T, inp migrationInputs) *circuit.Migrat
 	cv, err := jubjub.ValueCommit(inp.value, inp.rcv)
 	require.NoError(t, err, "jubjub.ValueCommit failed")
 
+	// Compute type commitment: MiMC(TokenType, TypeRandomness)
+	tc, err := mimc.Hash(inp.tokenTypeFr, inp.typeRandomness)
+	require.NoError(t, err, "mimc.Hash failed for type commitment")
+
 	return &circuit.MigrationCircuit{
 		// Public inputs
 		CommitmentPedersenX: emulated.ValueOf[emulated.BLS12381Fp](pedXBig),
@@ -217,13 +225,15 @@ func buildMigrationAssignment(t *testing.T, inp migrationInputs) *circuit.Migrat
 		CommitmentMiMC:      cm,
 		ValueCommitOutX:     cv.X,
 		ValueCommitOutY:     cv.Y,
-		TokenType:           inp.tokenTypeFr,
+		TypeCommitment:      tc,
 		// Private inputs
-		Value:         vField,
-		TokenTypePed:  inp.tokenTypePed,
-		RandomnessPed: inp.randomnessPed,
-		RandomnessNew: inp.randomnessNew,
-		RCV:           inp.rcv,
+		Value:          vField,
+		TokenType:      inp.tokenTypeFr,
+		TokenTypePed:   inp.tokenTypePed,
+		RandomnessPed:  inp.randomnessPed,
+		RandomnessNew:  inp.randomnessNew,
+		RCV:            inp.rcv,
+		TypeRandomness: inp.typeRandomness,
 		// Compile-time parameters
 		MaxBits: params.DefaultMaxBits,
 		PedG0X:  testPedGens.G0X, PedG0Y: testPedGens.G0Y,
@@ -410,6 +420,10 @@ func TestMigrationCircuitInvalid_OverflowValue(t *testing.T) {
 	cm, err := mimc.Hash(overflowValue, inp.tokenTypeFr, inp.randomnessNew)
 	require.NoError(t, err)
 
+	// Compute type commitment
+	tc, err := mimc.Hash(inp.tokenTypeFr, inp.typeRandomness)
+	require.NoError(t, err)
+
 	pedXBig := pedCommit.X.BigInt(new(big.Int))
 	pedYBig := pedCommit.Y.BigInt(new(big.Int))
 
@@ -426,12 +440,14 @@ func TestMigrationCircuitInvalid_OverflowValue(t *testing.T) {
 		CommitmentMiMC:      cm,
 		ValueCommitOutX:     fakeCVX,
 		ValueCommitOutY:     fakeCVY,
-		TokenType:           inp.tokenTypeFr,
+		TypeCommitment:      tc,
 		Value:               overflowValue,
+		TokenType:           inp.tokenTypeFr,
 		TokenTypePed:        inp.tokenTypePed,
 		RandomnessPed:       inp.randomnessPed,
 		RandomnessNew:       inp.randomnessNew,
 		RCV:                 inp.rcv,
+		TypeRandomness:      inp.typeRandomness,
 		MaxBits:             params.DefaultMaxBits,
 		PedG0X:              testPedGens.G0X, PedG0Y: testPedGens.G0Y,
 		PedG1X: testPedGens.G1X, PedG1Y: testPedGens.G1Y,
@@ -444,4 +460,23 @@ func TestMigrationCircuitInvalid_OverflowValue(t *testing.T) {
 	err = migrationCS.IsSolved(witness)
 	require.Error(t, err,
 		"MigrationCircuit must reject values >= 2^MaxBits, overflow attack possible if not")
+}
+
+func TestMigrationCircuitInvalid_WrongTypeRandomness(t *testing.T) {
+	setupMigration(t)
+
+	inp := newRandomMigrationInputs(t)
+	assignment := buildMigrationAssignment(t, inp)
+
+	var wrongTR fr.Element
+	_, err := wrongTR.SetRandom()
+	require.NoError(t, err)
+	assignment.TypeRandomness = wrongTR
+
+	witness, err := frontend.NewWitness(assignment, ecc.BLS12_381.ScalarField())
+	require.NoError(t, err)
+
+	err = migrationCS.IsSolved(witness)
+	require.Error(t, err,
+		"MigrationCircuit must reject a witness where TypeRandomness doesn't produce the public TypeCommitment")
 }

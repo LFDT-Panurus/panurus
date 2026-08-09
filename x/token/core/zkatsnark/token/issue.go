@@ -20,7 +20,7 @@ type OutputDescription struct {
 	CommitmentOut   []byte // 32 bytes: MiMC(value, type, randomness)
 	ValueCommitOutX []byte // 32 bytes: Jubjub X coordinate of cv
 	ValueCommitOutY []byte // 32 bytes: Jubjub Y coordinate of cv
-	TokenType       []byte // 32 bytes: canonical field-element encoding of type
+	TypeCommitment  []byte // 32 bytes: MiMC(TokenType, TypeRandomness)
 	OutputProof     []byte // 244 bytes: Groth16 proof for OutputCircuit
 	Recipient       []byte // intended recipient identity
 }
@@ -60,7 +60,8 @@ func (o *OutputDescription) GetOwner() []byte {
 // validator infrastructure can be used.
 type IssueAction struct {
 	Issuer           []byte
-	TokenType        string
+	TokenType        string // kept in cleartext for issuer authorization policy checks
+	TypeCommitment   []byte // 32 bytes: MiMC(TokenType, TypeRandomness), shared across all outputs
 	Outputs          []OutputDescription
 	BindingSignature []byte // 96 bytes: R.X || R.Y || S
 	TotalValue       []byte
