@@ -55,22 +55,25 @@ func setupOutput(t *testing.T) {
 }
 
 type outputInputs struct {
-	value      uint64
-	tokenType  fr.Element
-	randomness fr.Element
-	rcv        fr.Element
+	value          uint64
+	tokenType      fr.Element
+	randomness     fr.Element
+	rcv            fr.Element
+	typeRandomness fr.Element
 }
 
 func newRandomOutputInputs(t *testing.T) outputInputs {
 	t.Helper()
-	var tokenType, randomness, rcv fr.Element
+	var tokenType, randomness, rcv, typeRandomness fr.Element
 	tokenType.SetBytes([]byte("USD"))
 	_, err := randomness.SetRandom()
 	require.NoError(t, err)
 	_, err = rcv.SetRandom()
 	require.NoError(t, err)
+	_, err = typeRandomness.SetRandom()
+	require.NoError(t, err)
 
-	return outputInputs{value: 250, tokenType: tokenType, randomness: randomness, rcv: rcv}
+	return outputInputs{value: 250, tokenType: tokenType, randomness: randomness, rcv: rcv, typeRandomness: typeRandomness}
 }
 
 func buildOutputAssignment(t *testing.T, inp outputInputs) *circuit.OutputCircuit {
@@ -84,14 +87,20 @@ func buildOutputAssignment(t *testing.T, inp outputInputs) *circuit.OutputCircui
 	cv, err := jubjub.ValueCommit(inp.value, inp.rcv)
 	require.NoError(t, err)
 
+	// Compute the type commitment: MiMC(TokenType, TypeRandomness)
+	tc, err := mimc.Hash(inp.tokenType, inp.typeRandomness)
+	require.NoError(t, err)
+
 	return &circuit.OutputCircuit{
 		CommitmentOut:   cm,
 		ValueCommitOutX: cv.X,
 		ValueCommitOutY: cv.Y,
-		TokenType:       inp.tokenType,
+		TypeCommitment:  tc,
 		Value:           vField,
+		TokenType:       inp.tokenType,
 		Randomness:      inp.randomness,
 		RCV:             inp.rcv,
+		TypeRandomness:  inp.typeRandomness,
 		MaxBits:         params.DefaultMaxBits,
 	}
 }
@@ -124,8 +133,11 @@ func TestOutputCircuitInvalid_WrongValue(t *testing.T) {
 	wrongValue.SetUint64(inp.value + 500)
 	assignment.Value = wrongValue
 
-	witness, _ := frontend.NewWitness(assignment, ecc.BLS12_381.ScalarField())
-	require.Error(t, outputCS.IsSolved(witness), "must reject wrong Value")
+	witness, err := frontend.NewWitness(assignment, ecc.BLS12_381.ScalarField())
+	require.NoError(t, err)
+
+	err = outputCS.IsSolved(witness)
+	require.Error(t, err, "must reject wrong Value")
 }
 
 func TestOutputCircuitInvalid_WrongRandomness(t *testing.T) {
@@ -138,8 +150,11 @@ func TestOutputCircuitInvalid_WrongRandomness(t *testing.T) {
 	require.NoError(t, err)
 	assignment.Randomness = wrongR
 
-	witness, _ := frontend.NewWitness(assignment, ecc.BLS12_381.ScalarField())
-	require.Error(t, outputCS.IsSolved(witness), "must reject wrong Randomness")
+	witness, err := frontend.NewWitness(assignment, ecc.BLS12_381.ScalarField())
+	require.NoError(t, err)
+
+	err = outputCS.IsSolved(witness)
+	require.Error(t, err, "must reject wrong Randomness")
 }
 
 func TestOutputCircuitInvalid_WrongValueCommit(t *testing.T) {
@@ -154,8 +169,11 @@ func TestOutputCircuitInvalid_WrongValueCommit(t *testing.T) {
 	assignment.ValueCommitOutX = fakeCV.X
 	assignment.ValueCommitOutY = fakeCV.Y
 
-	witness, _ := frontend.NewWitness(assignment, ecc.BLS12_381.ScalarField())
-	require.Error(t, outputCS.IsSolved(witness), "must reject wrong ValueCommit")
+	witness, err := frontend.NewWitness(assignment, ecc.BLS12_381.ScalarField())
+	require.NoError(t, err)
+
+	err = outputCS.IsSolved(witness)
+	require.Error(t, err, "must reject wrong ValueCommit")
 }
 
 // TestOutputCircuitInvalid_ZeroValue is the critical range test.
@@ -164,11 +182,13 @@ func TestOutputCircuitInvalid_WrongValueCommit(t *testing.T) {
 func TestOutputCircuitInvalid_ZeroValue(t *testing.T) {
 	setupOutput(t)
 
-	var tokenType, randomness, rcv fr.Element
+	var tokenType, randomness, rcv, typeRandomness fr.Element
 	tokenType.SetBytes([]byte("USD"))
 	_, err := randomness.SetRandom()
 	require.NoError(t, err)
 	_, err = rcv.SetRandom()
+	require.NoError(t, err)
+	_, err = typeRandomness.SetRandom()
 	require.NoError(t, err)
 
 	var zeroField fr.Element
@@ -183,14 +203,19 @@ func TestOutputCircuitInvalid_ZeroValue(t *testing.T) {
 	cv, err := jubjub.ValueCommit(0, rcv)
 	require.NoError(t, err)
 
+	tc, err := mimc.Hash(tokenType, typeRandomness)
+	require.NoError(t, err)
+
 	assignment := &circuit.OutputCircuit{
 		CommitmentOut:   cm,
 		ValueCommitOutX: cv.X,
 		ValueCommitOutY: cv.Y,
-		TokenType:       tokenType,
+		TypeCommitment:  tc,
 		Value:           zeroField, // ← the invalid field
+		TokenType:       tokenType,
 		Randomness:      randomness,
 		RCV:             rcv,
+		TypeRandomness:  typeRandomness,
 		MaxBits:         params.DefaultMaxBits,
 	}
 
@@ -216,15 +241,20 @@ func TestOutputCircuitInvalid_OverflowValue(t *testing.T) {
 	b.SetBit(&b, params.DefaultMaxBits, 1) // 2^64
 	overflowValue.SetBigInt(&b)
 
-	var tokenType, randomness, rcv fr.Element
+	var tokenType, randomness, rcv, typeRandomness fr.Element
 	tokenType.SetBytes([]byte("USD"))
 	_, err := randomness.SetRandom()
 	require.NoError(t, err)
 	_, err = rcv.SetRandom()
 	require.NoError(t, err)
+	_, err = typeRandomness.SetRandom()
+	require.NoError(t, err)
 
 	// Compute a consistent commitment so only the range check fires.
 	cm, err := mimc.Hash(overflowValue, tokenType, randomness)
+	require.NoError(t, err)
+
+	tc, err := mimc.Hash(tokenType, typeRandomness)
 	require.NoError(t, err)
 
 	// We cannot call jubjub.ValueCommit with a field element value > uint64 max.
@@ -239,10 +269,12 @@ func TestOutputCircuitInvalid_OverflowValue(t *testing.T) {
 		CommitmentOut:   cm,
 		ValueCommitOutX: fakeCVX,
 		ValueCommitOutY: fakeCVY,
-		TokenType:       tokenType,
+		TypeCommitment:  tc,
 		Value:           overflowValue,
+		TokenType:       tokenType,
 		Randomness:      randomness,
 		RCV:             rcv,
+		TypeRandomness:  typeRandomness,
 		MaxBits:         params.DefaultMaxBits,
 	}
 
@@ -252,4 +284,22 @@ func TestOutputCircuitInvalid_OverflowValue(t *testing.T) {
 	err = outputCS.IsSolved(witness)
 	require.Error(t, err,
 		"OutputCircuit must reject values >= 2^MaxBits — overflow attack possible if not")
+}
+
+func TestOutputCircuitInvalid_WrongTypeRandomness(t *testing.T) {
+	setupOutput(t)
+	inp := newRandomOutputInputs(t)
+	assignment := buildOutputAssignment(t, inp)
+
+	var wrongTR fr.Element
+	_, err := wrongTR.SetRandom()
+	require.NoError(t, err)
+	assignment.TypeRandomness = wrongTR
+
+	witness, err := frontend.NewWitness(assignment, ecc.BLS12_381.ScalarField())
+	require.NoError(t, err)
+
+	err = outputCS.IsSolved(witness)
+	require.Error(t, err,
+		"OutputCircuit must reject a witness where TypeRandomness doesn't produce the public TypeCommitment")
 }
