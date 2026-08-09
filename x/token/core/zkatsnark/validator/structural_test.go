@@ -18,7 +18,7 @@ func validSpendDescription() snarktoken.SpendDescription {
 		CommitmentIn:   make([]byte, 32),
 		ValueCommitInX: make([]byte, 32),
 		ValueCommitInY: make([]byte, 32),
-		TokenType:      make([]byte, 32),
+		TypeCommitment: make([]byte, 32),
 		SpendProof:     make([]byte, 244),
 	}
 }
@@ -44,7 +44,7 @@ func validOutputDescription() snarktoken.OutputDescription {
 		CommitmentOut:   make([]byte, 32),
 		ValueCommitOutX: make([]byte, 32),
 		ValueCommitOutY: make([]byte, 32),
-		TokenType:       make([]byte, 32),
+		TypeCommitment:  make([]byte, 32),
 		OutputProof:     make([]byte, 244),
 	}
 }
@@ -53,9 +53,9 @@ func TestValidateOutputDescriptionShape_Valid(t *testing.T) {
 	require.NoError(t, validateOutputDescriptionShape(0, validOutputDescription()))
 }
 
-func TestValidateOutputDescriptionShape_WrongTokenTypeLength(t *testing.T) {
+func TestValidateOutputDescriptionShape_WrongTypeCommitmentLength(t *testing.T) {
 	d := validOutputDescription()
-	d.TokenType = make([]byte, 16)
+	d.TypeCommitment = make([]byte, 16)
 	require.ErrorIs(t, validateOutputDescriptionShape(0, d), ErrMalformedAction)
 }
 
@@ -65,13 +65,14 @@ func TestValidateBindingSignatureShape(t *testing.T) {
 }
 
 func TestValidateTransferActionShape_RejectsEmpty(t *testing.T) {
-	a := &snarktoken.TransferAction{TokenType: "USD"}
+	a := &snarktoken.TransferAction{TypeCommitment: make([]byte, 32)}
 	require.ErrorIs(t, validateTransferActionShape(a), ErrMalformedAction)
 }
 
 func TestValidateIssueActionShape_RequiresTotalValue(t *testing.T) {
 	a := &snarktoken.IssueAction{
 		TokenType:        "USD",
+		TypeCommitment:   make([]byte, 32),
 		Outputs:          []snarktoken.OutputDescription{validOutputDescription()},
 		BindingSignature: make([]byte, 96),
 		// TotalValue deliberately omitted
@@ -86,7 +87,7 @@ func validMigrationAction() *snarktoken.MigrationAction {
 		CommitmentMiMC:      make([]byte, 32),
 		ValueCommitOutX:     make([]byte, 32),
 		ValueCommitOutY:     make([]byte, 32),
-		TokenType:           make([]byte, 32),
+		TypeCommitment:      make([]byte, 32),
 		MigrationProof:      make([]byte, 292),
 	}
 }

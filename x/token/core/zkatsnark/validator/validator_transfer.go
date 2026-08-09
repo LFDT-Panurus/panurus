@@ -8,12 +8,15 @@ package validator
 import (
 	"context"
 
+	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
+
 	snarktoken "github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/token"
 )
 
 // TransferZKValidate is a ValidateTransferFunc callback that performs the
 // full zkatsnark transfer verification pipeline: structural shape → decode
-// → type homogeneity → parallel proof verification → binding signature.
+// → type commitment homogeneity → parallel proof verification → binding
+// signature.
 //
 // It is invoked by common.Validator when processing transfer actions via
 // VerifyTokenRequest / VerifyTransfer.
@@ -34,11 +37,13 @@ func (v *Validator) TransferZKValidate(_ context.Context, ctx *Context) error {
 		return err
 	}
 
-	if err := checkTypeHomogeneitySpend(action.TokenType, decodedInputs); err != nil {
+	// Decode the action-level TypeCommitment.
+	var actionTC fr.Element
+	if err := actionTC.SetBytesCanonical(action.TypeCommitment); err != nil {
 		return err
 	}
 
-	if err := checkTypeHomogeneityOutput(action.TokenType, decodedOutputs); err != nil {
+	if err := checkTypeCommitmentHomogeneity(actionTC, decodedInputs, decodedOutputs); err != nil {
 		return err
 	}
 
@@ -47,7 +52,7 @@ func (v *Validator) TransferZKValidate(_ context.Context, ctx *Context) error {
 	}
 
 	return verifyBindingSignature(
-		snarktoken.ActionTypeTransfer, action.TokenType,
+		snarktoken.ActionTypeTransfer, actionTC,
 		decodedInputs, decodedOutputs,
 		action.BindingSignature, 0,
 	)

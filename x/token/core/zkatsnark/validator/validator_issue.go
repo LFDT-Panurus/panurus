@@ -27,7 +27,7 @@ func parseTotalValue(raw []byte) (uint64, error) {
 
 // IssueZKValidate is a ValidateIssueFunc callback that performs the full
 // zkatsnark issue verification pipeline: structural shape → decode →
-// type homogeneity → proof verification → binding signature.
+// type commitment homogeneity → proof verification → binding signature.
 //
 // It is invoked by common.Validator when processing issue actions via
 // VerifyTokenRequest / VerifyIssue.
@@ -43,7 +43,13 @@ func (v *Validator) IssueZKValidate(_ context.Context, ctx *Context) error {
 		return err
 	}
 
-	if err := checkTypeHomogeneityOutput(action.TokenType, decodedOutputs); err != nil {
+	// Decode the action-level TypeCommitment.
+	var actionTC fr.Element
+	if err := actionTC.SetBytesCanonical(action.TypeCommitment); err != nil {
+		return err
+	}
+
+	if err := checkTypeCommitmentHomogeneity(actionTC, nil, decodedOutputs); err != nil {
 		return err
 	}
 
@@ -57,7 +63,7 @@ func (v *Validator) IssueZKValidate(_ context.Context, ctx *Context) error {
 	}
 
 	return verifyBindingSignature(
-		snarktoken.ActionTypeIssue, action.TokenType,
+		snarktoken.ActionTypeIssue, actionTC,
 		nil, decodedOutputs,
 		action.BindingSignature, totalValue,
 	)

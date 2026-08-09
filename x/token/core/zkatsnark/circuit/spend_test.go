@@ -55,26 +55,30 @@ func setupSpend(t *testing.T) {
 }
 
 type spendInputs struct {
-	value      uint64
-	tokenType  fr.Element
-	randomness fr.Element
-	rcv        fr.Element
+	value          uint64
+	tokenType      fr.Element
+	randomness     fr.Element
+	rcv            fr.Element
+	typeRandomness fr.Element
 }
 
 func newRandomSpendInputs(t *testing.T) spendInputs {
 	t.Helper()
-	var tokenType, randomness, rcv fr.Element
+	var tokenType, randomness, rcv, typeRandomness fr.Element
 	tokenType.SetBytes([]byte("USD"))
 	_, err := randomness.SetRandom()
 	require.NoError(t, err)
 	_, err = rcv.SetRandom()
 	require.NoError(t, err)
+	_, err = typeRandomness.SetRandom()
+	require.NoError(t, err)
 
 	return spendInputs{
-		value:      100,
-		tokenType:  tokenType,
-		randomness: randomness,
-		rcv:        rcv,
+		value:          100,
+		tokenType:      tokenType,
+		randomness:     randomness,
+		rcv:            rcv,
+		typeRandomness: typeRandomness,
 	}
 }
 
@@ -94,16 +98,22 @@ func buildSpendAssignment(t *testing.T, inp spendInputs) *circuit.SpendCircuit {
 	cv, err := jubjub.ValueCommit(inp.value, inp.rcv)
 	require.NoError(t, err, "jubjub.ValueCommit failed in buildSpendAssignment")
 
+	// Compute the type commitment: MiMC(TokenType, TypeRandomness)
+	tc, err := mimc.Hash(inp.tokenType, inp.typeRandomness)
+	require.NoError(t, err, "mimc.Hash failed for type commitment in buildSpendAssignment")
+
 	return &circuit.SpendCircuit{
 		// Public inputs — computed from private inputs
 		CommitmentIn:   cm,
 		ValueCommitInX: cv.X,
 		ValueCommitInY: cv.Y,
-		TokenType:      inp.tokenType,
+		TypeCommitment: tc,
 		// Private inputs
-		Value:      vField,
-		Randomness: inp.randomness,
-		RCV:        inp.rcv,
+		Value:          vField,
+		TokenType:      inp.tokenType,
+		Randomness:     inp.randomness,
+		RCV:            inp.rcv,
+		TypeRandomness: inp.typeRandomness,
 	}
 }
 
@@ -223,4 +233,23 @@ func TestSpendCircuitInvalid_WrongRCV(t *testing.T) {
 	err = spendCS.IsSolved(witness)
 	require.Error(t, err,
 		"SpendCircuit must reject a witness where RCV doesn't produce the public value commitment")
+}
+
+func TestSpendCircuitInvalid_WrongTypeRandomness(t *testing.T) {
+	setupSpend(t)
+
+	inp := newRandomSpendInputs(t)
+	assignment := buildSpendAssignment(t, inp)
+
+	var wrongTR fr.Element
+	_, err := wrongTR.SetRandom()
+	require.NoError(t, err)
+	assignment.TypeRandomness = wrongTR
+
+	witness, err := frontend.NewWitness(assignment, ecc.BLS12_381.ScalarField())
+	require.NoError(t, err)
+
+	err = spendCS.IsSolved(witness)
+	require.Error(t, err,
+		"SpendCircuit must reject a witness where TypeRandomness doesn't produce the public TypeCommitment")
 }
