@@ -39,6 +39,22 @@ func EncodeTokenType(tokenType string) fr.Element {
 	return t
 }
 
+// ComputeTypeCommitment computes a hiding commitment to the token type:
+// MiMC(EncodeTokenType(tokenType), typeRandomness). All inputs and outputs
+// in a single action share the same typeRandomness, so they produce the
+// same TypeCommitment, letting the validator confirm type homogeneity
+// without learning the plaintext type.
+func ComputeTypeCommitment(tokenType string, typeRandomness fr.Element) (fr.Element, error) {
+	t := EncodeTokenType(tokenType)
+
+	tc, err := mimc.Hash(t, typeRandomness)
+	if err != nil {
+		return fr.Element{}, fmt.Errorf("note: type commitment computation failed: %w", err)
+	}
+
+	return tc, nil
+}
+
 // Commitment computes cm = MiMC(Value, TokenType, Randomness).
 // This must match Constraint Group 1 in circuit.SpendCircuit.Define and
 // circuit.OutputCircuit.Define exactly, same three inputs, same order.

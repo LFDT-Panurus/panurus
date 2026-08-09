@@ -46,6 +46,7 @@ type MigrationWitnessResult struct {
 	RCV             fr.Element
 	Commitment      fr.Element
 	ValueCommitment twistededwards.PointAffine
+	TypeCommitment  fr.Element
 	// PedersenCommitX/Y are the extracted affine coordinates of the
 	// original Pedersen commitment, for inclusion in the wire format.
 	PedersenCommitX [48]byte
@@ -58,9 +59,13 @@ type MigrationWitnessResult struct {
 // A fresh Note (with new MiMC randomness) is generated internally and
 // returned alongside the assignment, exactly like BuildOutputWitness does
 // for freshly issued tokens.
+//
+// typeRandomness is the per-action randomness used to compute the type
+// commitment.
 func BuildMigrationWitness(
 	opening snarktoken.PedersenOpening,
 	publicParams *pp.PublicParams,
+	typeRandomness fr.Element,
 ) (*MigrationWitnessResult, error) {
 	if err := opening.Validate(); err != nil {
 		return nil, errors.Wrapf(err, "prover: invalid PedersenOpening")
@@ -119,6 +124,11 @@ func BuildMigrationWitness(
 
 	tField := snarktoken.EncodeTokenType(opening.TokenType)
 
+	tc, err := snarktoken.ComputeTypeCommitment(opening.TokenType, typeRandomness)
+	if err != nil {
+		return nil, errors.Wrapf(err, "prover: migration type commitment failed")
+	}
+
 	assignment := &circuit.MigrationCircuit{
 		// Public inputs — emulated field elements must use ValueOf.
 		CommitmentPedersenX: emulated.ValueOf[emulated.BLS12381Fp](pedXBig),
@@ -126,13 +136,15 @@ func BuildMigrationWitness(
 		CommitmentMiMC:      cm,
 		ValueCommitOutX:     cv.X,
 		ValueCommitOutY:     cv.Y,
-		TokenType:           tField,
+		TypeCommitment:      tc,
 		// Private inputs
-		Value:         vField,
-		TokenTypePed:  tokenTypePed,
-		RandomnessPed: blindingFactor,
-		RandomnessNew: note.Randomness,
-		RCV:           rcv,
+		Value:          vField,
+		TokenType:      tField,
+		TokenTypePed:   tokenTypePed,
+		RandomnessPed:  blindingFactor,
+		RandomnessNew:  note.Randomness,
+		RCV:            rcv,
+		TypeRandomness: typeRandomness,
 		// Compile-time parameters
 		MaxBits: publicParams.MaxBits,
 		PedG0X:  gens.G0X, PedG0Y: gens.G0Y,
@@ -146,6 +158,7 @@ func BuildMigrationWitness(
 		RCV:             rcv,
 		Commitment:      cm,
 		ValueCommitment: cv,
+		TypeCommitment:  tc,
 		PedersenCommitX: pedXBytes,
 		PedersenCommitY: pedYBytes,
 	}, nil

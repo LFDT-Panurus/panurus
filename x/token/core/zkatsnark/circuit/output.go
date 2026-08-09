@@ -16,21 +16,24 @@ import (
 
 // OutputCircuit proves that a newly created output token is well-formed.
 //
-// It enforces three constraint groups:
+// It enforces four constraint groups:
 //  1. CommitmentOut == MiMC(Value, TokenType, Randomness)
 //  2. (ValueCommitOutX, ValueCommitOutY) == Value·V + RCV·R
 //  3. Value ∈ [1, 2^MaxBits)
+//  4. TypeCommitment == MiMC(TokenType, TypeRandomness)
 type OutputCircuit struct {
 	// Public inputs
 	CommitmentOut   frontend.Variable `gnark:"public"`
 	ValueCommitOutX frontend.Variable `gnark:"public"`
 	ValueCommitOutY frontend.Variable `gnark:"public"`
-	TokenType       frontend.Variable `gnark:"public"`
+	TypeCommitment  frontend.Variable `gnark:"public"`
 
 	// Private inputs
-	Value      frontend.Variable
-	Randomness frontend.Variable
-	RCV        frontend.Variable
+	Value          frontend.Variable
+	TokenType      frontend.Variable
+	Randomness     frontend.Variable
+	RCV            frontend.Variable
+	TypeRandomness frontend.Variable
 
 	// Compile-time parameter
 	// MaxBits is the bit-width of the value range constraint.
@@ -76,6 +79,19 @@ func (c *OutputCircuit) Define(api frontend.API) error {
 	// the value to bits, it has to kepp running the comparison checks, bit by bit, which can require extra machinery.
 	_ = api.ToBinary(c.Value, maxBits)
 	api.AssertIsDifferent(c.Value, 0)
+
+	// ── Constraint Group 4: Type Commitment Integrity ───────────────────────
+	// Enforce: TypeCommitment == MiMC(TokenType, TypeRandomness)
+	//
+	// The same TokenType private variable used in Group 1 (note commitment)
+	// appears here, so the ZK proof structurally binds the committed type
+	// to the type encoded in the note commitment. The validator only sees
+	// TypeCommitment (a hiding commitment) — not the plaintext type.
+	tc, err := gadgets.HashCircuit(api, c.TokenType, c.TypeRandomness)
+	if err != nil {
+		return err
+	}
+	api.AssertIsEqual(tc, c.TypeCommitment)
 
 	return nil
 }

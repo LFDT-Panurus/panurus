@@ -6,6 +6,7 @@ SPDX-License-Identifier: Apache-2.0
 package validator
 
 import (
+	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
 	"github.com/consensys/gnark/backend/groth16"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 
@@ -98,8 +99,8 @@ func NewValidator(p *pp.PublicParams) (*Validator, error) {
 }
 
 // ValidateTransfer checks the cryptographic validity of a TransferAction.
-// Order: structural shape → decode → type homogeneity → parallel proof
-// verification → binding signature.
+// Order: structural shape → decode → type commitment homogeneity → parallel
+// proof verification → binding signature.
 func (v *Validator) ValidateTransfer(a *snarktoken.TransferAction) error {
 	if err := validateTransferActionShape(a); err != nil {
 		return err
@@ -115,11 +116,12 @@ func (v *Validator) ValidateTransfer(a *snarktoken.TransferAction) error {
 		return err
 	}
 
-	if err := checkTypeHomogeneitySpend(a.TokenType, decodedInputs); err != nil {
+	var actionTC fr.Element
+	if err := actionTC.SetBytesCanonical(a.TypeCommitment); err != nil {
 		return err
 	}
 
-	if err := checkTypeHomogeneityOutput(a.TokenType, decodedOutputs); err != nil {
+	if err := checkTypeCommitmentHomogeneity(actionTC, decodedInputs, decodedOutputs); err != nil {
 		return err
 	}
 
@@ -128,7 +130,7 @@ func (v *Validator) ValidateTransfer(a *snarktoken.TransferAction) error {
 	}
 
 	return verifyBindingSignature(
-		snarktoken.ActionTypeTransfer, a.TokenType,
+		snarktoken.ActionTypeTransfer, actionTC,
 		decodedInputs, decodedOutputs,
 		a.BindingSignature, 0,
 	)
@@ -145,7 +147,12 @@ func (v *Validator) ValidateIssue(a *snarktoken.IssueAction) error {
 		return err
 	}
 
-	if err := checkTypeHomogeneityOutput(a.TokenType, decodedOutputs); err != nil {
+	var actionTC fr.Element
+	if err := actionTC.SetBytesCanonical(a.TypeCommitment); err != nil {
+		return err
+	}
+
+	if err := checkTypeCommitmentHomogeneity(actionTC, nil, decodedOutputs); err != nil {
 		return err
 	}
 
@@ -159,7 +166,7 @@ func (v *Validator) ValidateIssue(a *snarktoken.IssueAction) error {
 	}
 
 	return verifyBindingSignature(
-		snarktoken.ActionTypeIssue, a.TokenType,
+		snarktoken.ActionTypeIssue, actionTC,
 		nil, decodedOutputs,
 		a.BindingSignature, totalValue,
 	)

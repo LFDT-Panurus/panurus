@@ -232,9 +232,9 @@ func TestValidateTransfer_RejectsTamperedCommitment(t *testing.T) {
 	require.Error(t, err, "a tampered commitment must be rejected")
 }
 
-// TestValidateTransfer_RejectsWrongTokenType exercises the homogeneity
+// TestValidateTransfer_RejectsWrongTypeCommitment exercises the homogeneity
 // check independently of proof verification.
-func TestValidateTransfer_RejectsWrongTokenType(t *testing.T) {
+func TestValidateTransfer_RejectsWrongTypeCommitment(t *testing.T) {
 	setupEndToEnd(t)
 
 	note, err := snarktoken.NewRandomNote(100, "USD")
@@ -249,10 +249,15 @@ func TestValidateTransfer_RejectsWrongTokenType(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	action.TokenType = "EUR" // declared type now disagrees with every description's actual encoded type
+	var typeRandomness fr.Element
+	_, _ = typeRandomness.SetRandom()
+	tcEUR, _ := snarktoken.ComputeTypeCommitment("EUR", typeRandomness)
+
+	tcBytes := tcEUR.Bytes()
+	action.TypeCommitment = tcBytes[:] // declared type commitment now disagrees with every description's actual encoded type
 
 	err = testVal.ValidateTransfer(action)
-	require.Error(t, err, "a declared type mismatching every description's actual type must be rejected")
+	require.Error(t, err, "a declared type commitment mismatching every description's actual type must be rejected")
 }
 
 // TestValidateTransfer_RejectsCorruptedBindingSignature confirms that
@@ -285,7 +290,7 @@ func TestValidateTransfer_MalformedShape(t *testing.T) {
 	setupEndToEnd(t)
 
 	action := &snarktoken.TransferAction{
-		TokenType: "USD",
+		TypeCommitment: make([]byte, 32),
 		Inputs: []snarktoken.SpendDescription{
 			{CommitmentIn: []byte("too short")},
 		},

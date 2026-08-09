@@ -14,19 +14,22 @@ import (
 )
 
 // SpendCircuit proves that the prover knows a valid opening of a commitment
-// recorded on the ledger, and that the published value commitment is correctly
-// formed from the same value.
+// recorded on the ledger, that the published value commitment is correctly
+// formed from the same value, and that the type commitment is correctly
+// formed from the same token type.
 type SpendCircuit struct {
 	// Public inputs
 	CommitmentIn   frontend.Variable `gnark:",public"`
 	ValueCommitInX frontend.Variable `gnark:",public"`
 	ValueCommitInY frontend.Variable `gnark:",public"`
-	TokenType      frontend.Variable `gnark:",public"`
+	TypeCommitment frontend.Variable `gnark:",public"`
 
 	// Private inputs
-	Value      frontend.Variable
-	Randomness frontend.Variable
-	RCV        frontend.Variable
+	Value          frontend.Variable
+	TokenType      frontend.Variable
+	Randomness     frontend.Variable
+	RCV            frontend.Variable
+	TypeRandomness frontend.Variable
 }
 
 // Define encodes the SpendCircuit constraints into the R1CS.
@@ -58,6 +61,19 @@ func (c *SpendCircuit) Define(api frontend.API) error {
 	}
 	api.AssertIsEqual(cv.X, c.ValueCommitInX)
 	api.AssertIsEqual(cv.Y, c.ValueCommitInY)
+
+	// ── Constraint Group 3: Type Commitment Integrity ───────────────────────
+	// Enforce: TypeCommitment == MiMC(TokenType, TypeRandomness)
+	//
+	// The same TokenType private variable used in Group 1 (note commitment)
+	// appears here, so the ZK proof structurally binds the committed type
+	// to the type encoded in the note commitment. The validator only sees
+	// TypeCommitment (a hiding commitment) — not the plaintext type.
+	tc, err := gadgets.HashCircuit(api, c.TokenType, c.TypeRandomness)
+	if err != nil {
+		return err
+	}
+	api.AssertIsEqual(tc, c.TypeCommitment)
 
 	return nil
 }

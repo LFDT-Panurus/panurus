@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/consensys/gnark-crypto/ecc"
+	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
 	"github.com/consensys/gnark/constraint"
 	"github.com/consensys/gnark/frontend"
 	"github.com/stretchr/testify/require"
@@ -49,7 +50,10 @@ func TestBuildSpendWitness_Satisfiable(t *testing.T) {
 	note, err := snarktoken.NewRandomNote(500, "USD")
 	require.NoError(t, err)
 
-	witnessRes, err := prover.BuildSpendWitness(note)
+	var typeRandomness fr.Element
+	_, _ = typeRandomness.SetRandom()
+
+	witnessRes, err := prover.BuildSpendWitness(note, typeRandomness)
 	require.NoError(t, err)
 
 	witness, err := frontend.NewWitness(witnessRes.Assignment, ecc.BLS12_381.ScalarField())
@@ -63,7 +67,10 @@ func TestBuildSpendWitness_CommitmentMatchesNote(t *testing.T) {
 	note, err := snarktoken.NewRandomNote(500, "USD")
 	require.NoError(t, err)
 
-	witnessRes, err := prover.BuildSpendWitness(note)
+	var typeRandomness fr.Element
+	_, _ = typeRandomness.SetRandom()
+
+	witnessRes, err := prover.BuildSpendWitness(note, typeRandomness)
 	require.NoError(t, err)
 
 	commitment, err := note.Commitment()
@@ -74,14 +81,20 @@ func TestBuildSpendWitness_CommitmentMatchesNote(t *testing.T) {
 }
 
 func TestBuildSpendWitness_NilNote(t *testing.T) {
-	_, err := prover.BuildSpendWitness(nil)
+	var typeRandomness fr.Element
+	_, _ = typeRandomness.SetRandom()
+
+	_, err := prover.BuildSpendWitness(nil, typeRandomness)
 	require.Error(t, err)
 }
 
 func TestBuildOutputWitness_Satisfiable(t *testing.T) {
 	compileTestCircuits(t)
 
-	witnessRes, err := prover.BuildOutputWitness(500, "USD", pp.DefaultPublicParams())
+	var typeRandomness fr.Element
+	_, _ = typeRandomness.SetRandom()
+
+	witnessRes, err := prover.BuildOutputWitness(500, "USD", pp.DefaultPublicParams(), typeRandomness)
 	require.NoError(t, err)
 
 	witness, err := frontend.NewWitness(witnessRes.Assignment, ecc.BLS12_381.ScalarField())
@@ -94,7 +107,10 @@ func TestBuildOutputWitness_Satisfiable(t *testing.T) {
 func TestBuildOutputWitness_ReturnsSpendableNote(t *testing.T) {
 	compileTestCircuits(t)
 
-	wr, err := prover.BuildOutputWitness(500, "USD", pp.DefaultPublicParams())
+	var typeRandomness fr.Element
+	_, _ = typeRandomness.SetRandom()
+
+	wr, err := prover.BuildOutputWitness(500, "USD", pp.DefaultPublicParams(), typeRandomness)
 	require.NoError(t, err)
 	require.NotNil(t, wr.Note)
 
@@ -109,7 +125,10 @@ func TestBuildOutputWitness_ReturnsSpendableNote(t *testing.T) {
 func TestBuildOutputWitness_ZeroValueRejectedBySolver(t *testing.T) {
 	compileTestCircuits(t)
 
-	wr, err := prover.BuildOutputWitness(0, "USD", testPP)
+	var typeRandomness fr.Element
+	_, _ = typeRandomness.SetRandom()
+
+	wr, err := prover.BuildOutputWitness(0, "USD", testPP, typeRandomness)
 	require.NoError(t, err, "BuildOutputWitness itself does not enforce value > 0")
 
 	witness, err := frontend.NewWitness(wr.Assignment, ecc.BLS12_381.ScalarField())

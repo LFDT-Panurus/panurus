@@ -15,13 +15,13 @@ import (
 
 // SpendDescription is the public wire-format record for one token being
 // consumed as an input. The commitment being spent, its value commitment,
-// and its type are all public; the value, randomness, and value-commitment
-// randomness that open them are not.
+// and its type commitment are all public; the value, token type, randomness,
+// type randomness, and value-commitment randomness that open them are not.
 type SpendDescription struct {
 	CommitmentIn   []byte // 32 bytes
 	ValueCommitInX []byte // 32 bytes
 	ValueCommitInY []byte // 32 bytes
-	TokenType      []byte // 32 bytes
+	TypeCommitment []byte // 32 bytes: MiMC(TokenType, TypeRandomness)
 	SpendProof     []byte // 244 bytes: Groth16 proof for SpendCircuit
 }
 
@@ -32,7 +32,7 @@ type SpendDescription struct {
 // It implements the driver.TransferAction interface so that the common
 // validator infrastructure can be used.
 type TransferAction struct {
-	TokenType        string
+	TypeCommitment   []byte // 32 bytes: MiMC(TokenType, TypeRandomness), shared across all inputs/outputs
 	Inputs           []SpendDescription
 	Outputs          []OutputDescription
 	BindingSignature []byte // 96 bytes: R.X || R.Y || S
