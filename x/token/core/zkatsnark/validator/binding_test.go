@@ -13,7 +13,20 @@ import (
 
 	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/crypto/jubjub"
 	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/prover"
+	snarktoken "github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/token"
 )
+
+func mustTypeCommitmentV(t *testing.T, tokenType string) fr.Element {
+	t.Helper()
+	var typeRandomness fr.Element
+	_, err := typeRandomness.SetRandom()
+	require.NoError(t, err)
+
+	tc, err := snarktoken.ComputeTypeCommitment(tokenType, typeRandomness)
+	require.NoError(t, err)
+
+	return tc
+}
 
 // TestVerifyBindingSignature_AgreesWithProverSideConstruction is the most
 // important test in this file: it independently proves that a signature
@@ -36,10 +49,12 @@ func TestVerifyBindingSignature_AgreesWithProverSideConstruction(t *testing.T) {
 	_, _ = cm1.SetRandom()
 	_, _ = cm2.SetRandom()
 
+	tc := mustTypeCommitmentV(t, "USD")
+
 	inputs := []prover.ProofResult{{Commitment: cm1, ValueCommit: cv1, RCV: rcv1}}
 	outputs := []prover.ProofResult{{Commitment: cm2, ValueCommit: cv2, RCV: rcv2}}
 
-	sig, err := prover.ComputeBindingSignature("transfer", "USD", inputs, outputs)
+	sig, err := prover.ComputeBindingSignature("transfer", tc, inputs, outputs)
 	require.NoError(t, err)
 	sigBytes, err := jubjub.SerializeSignature(sig)
 	require.NoError(t, err)
@@ -49,13 +64,15 @@ func TestVerifyBindingSignature_AgreesWithProverSideConstruction(t *testing.T) {
 	decodedIn := []decodedSpend{{Commitment: cm1, ValueCommitX: cv1.X, ValueCommitY: cv1.Y}}
 	decodedOut := []decodedOutput{{Commitment: cm2, ValueCommitX: cv2.X, ValueCommitY: cv2.Y}}
 
-	err = verifyBindingSignature("transfer", "USD", decodedIn, decodedOut, sigBytes, 0)
+	err = verifyBindingSignature("transfer", tc, decodedIn, decodedOut, sigBytes, 0)
 	require.NoError(t, err)
 }
 
 func TestVerifyBindingSignature_RejectsCorruptedSignatureBytes(t *testing.T) {
 	corrupted := make([]byte, 96) // all-zero, not a valid signature
-	err := verifyBindingSignature("transfer", "USD", nil, nil, corrupted, 0)
+	tc := mustTypeCommitmentV(t, "USD")
+
+	err := verifyBindingSignature("transfer", tc, nil, nil, corrupted, 0)
 	require.Error(t, err)
 }
 
@@ -68,11 +85,13 @@ func TestVerifyBindingSignature_WrongPublicValueDeltaFailsIssuance(t *testing.T)
 	var cm fr.Element
 	_, _ = cm.SetRandom()
 
+	tc := mustTypeCommitmentV(t, "USD")
+
 	outputs := []prover.ProofResult{{Commitment: cm, ValueCommit: cv, RCV: rcv}}
 	var totalIssued fr.Element
 	totalIssued.SetUint64(500)
 
-	sig, err := prover.ComputeBindingSignature("issue", "USD", nil, outputs)
+	sig, err := prover.ComputeBindingSignature("issue", tc, nil, outputs)
 	require.NoError(t, err)
 	sigBytes, err := jubjub.SerializeSignature(sig)
 	require.NoError(t, err)
@@ -82,6 +101,6 @@ func TestVerifyBindingSignature_WrongPublicValueDeltaFailsIssuance(t *testing.T)
 	// Deliberately verify with 0 instead of the real
 	// totalIssued, this is exactly the "forgot to pass TotalValue" bug
 	// this test exists to catch permanently.
-	err = verifyBindingSignature("issue", "USD", nil, decodedOut, sigBytes, 0)
+	err = verifyBindingSignature("issue", tc, nil, decodedOut, sigBytes, 0)
 	require.Error(t, err, "wrong publicValueDelta must fail, this is the exact bug class already found once in prover/binding_test.go")
 }

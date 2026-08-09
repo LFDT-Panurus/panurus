@@ -23,11 +23,12 @@ import (
 // zkatsnark token (MiMC commitment + Jubjub value commitment) has been
 // correctly created for the same value, in zero knowledge.
 //
-// It enforces four constraint groups:
+// It enforces five constraint groups:
 //  1. Pedersen opening: CommitmentPedersen == TokenTypePed·G[0] + Value·G[1] + RandomnessPed·G[2]
 //  2. MiMC commitment: CommitmentMiMC == MiMC(Value, TokenType, RandomnessNew)
 //  3. Value commitment: (ValueCommitOutX, ValueCommitOutY) == Value·V + RCV·R
 //  4. Range check: Value ∈ [1, 2^MaxBits)
+//  5. Type commitment: TypeCommitment == MiMC(TokenType, TypeRandomness)
 //
 // The shared Value witness variable across groups 1–3 is the structural
 // binding that proves the same denomination carries over (Decision C:
@@ -56,16 +57,21 @@ type MigrationCircuit struct {
 	// commitment.
 	ValueCommitOutY frontend.Variable `gnark:",public"`
 
-	// TokenType is the canonical field-element encoding of the token type,
-	// produced by EncodeTokenType (SetBytes). Public for type-homogeneity
-	// checks, consistent with SpendCircuit/OutputCircuit.
-	TokenType frontend.Variable `gnark:",public"`
+	// TypeCommitment is the hiding commitment to the token type:
+	// MiMC(EncodeTokenType(tokenType), TypeRandomness). Public for
+	// type-homogeneity checks, consistent with SpendCircuit/OutputCircuit.
+	TypeCommitment frontend.Variable `gnark:",public"`
 
 	// ── Private inputs ──────────────────────────────────────────────────
 
-	// Value is the token denomination, shared across all four constraint
+	// Value is the token denomination, shared across all five constraint
 	// groups. This shared variable is the conservation proof.
 	Value frontend.Variable
+
+	// TokenType is the canonical field-element encoding of the token type,
+	// produced by EncodeTokenType (SetBytes). Private — the validator
+	// only sees the TypeCommitment, not the plaintext type.
+	TokenType frontend.Variable
 
 	// TokenTypePed is the zkatdlog encoding of the token type:
 	// HashToZr(tokenType) = SHA256(tokenType) mod r. This is a DIFFERENT
@@ -83,6 +89,10 @@ type MigrationCircuit struct {
 	// RCV is the Jubjub value-commitment randomness, generated fresh for
 	// this proof.
 	RCV frontend.Variable
+
+	// TypeRandomness is the randomness used to hide the token type in
+	// the TypeCommitment. Shared across all descriptions in one action.
+	TypeRandomness frontend.Variable
 
 	// ── Compile-time parameters ─────────────────────────────────────────
 
@@ -222,6 +232,18 @@ func (c *MigrationCircuit) Define(api frontend.API) error {
 	// freshly-issued token (Decision A).
 	_ = api.ToBinary(c.Value, maxBits)
 	api.AssertIsDifferent(c.Value, 0)
+
+	// ── Constraint Group 5: Type Commitment Integrity ───────────────────
+	// Enforce: TypeCommitment == MiMC(TokenType, TypeRandomness)
+	//
+	// The same TokenType private variable used in Group 2 (MiMC commitment)
+	// appears here, so the ZK proof structurally binds the committed type
+	// to the type encoded in the note commitment.
+	tc, err := gadgets.HashCircuit(api, c.TokenType, c.TypeRandomness)
+	if err != nil {
+		return err
+	}
+	api.AssertIsEqual(tc, c.TypeCommitment)
 
 	return nil
 }
