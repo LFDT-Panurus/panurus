@@ -31,7 +31,7 @@ func publicWitnessForSpend(d decodedSpend) (witness.Witness, error) {
 		CommitmentIn:   d.Commitment,
 		ValueCommitInX: d.ValueCommitX,
 		ValueCommitInY: d.ValueCommitY,
-		TokenType:      d.TokenType,
+		TypeCommitment: d.TypeCommitment,
 	}
 
 	w, err := frontend.NewWitness(assignment, ecc.BLS12_381.ScalarField(), frontend.PublicOnly())
@@ -52,7 +52,7 @@ func publicWitnessForOutput(d decodedOutput) (witness.Witness, error) {
 		CommitmentOut:   d.Commitment,
 		ValueCommitOutX: d.ValueCommitX,
 		ValueCommitOutY: d.ValueCommitY,
-		TokenType:       d.TokenType,
+		TypeCommitment:  d.TypeCommitment,
 	}
 	w, err := frontend.NewWitness(assignment, ecc.BLS12_381.ScalarField(), frontend.PublicOnly())
 	if err != nil {
@@ -83,7 +83,7 @@ func publicWitnessForMigration(d decodedMigration) (witness.Witness, error) {
 		CommitmentMiMC:      d.CommitmentMiMC,
 		ValueCommitOutX:     d.ValueCommitX,
 		ValueCommitOutY:     d.ValueCommitY,
-		TokenType:           d.TokenType,
+		TypeCommitment:      d.TypeCommitment,
 	}
 	w, err := frontend.NewWitness(assignment, ecc.BLS12_381.ScalarField(), frontend.PublicOnly())
 	if err != nil {

@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/consensys/gnark-crypto/ecc"
+	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
 	"github.com/consensys/gnark/backend/groth16"
 	"github.com/consensys/gnark/frontend"
 	"github.com/stretchr/testify/require"
@@ -54,7 +55,10 @@ func TestSpendProver(t *testing.T) {
 	note, err := snarktoken.NewRandomNote(500, "USD")
 	require.NoError(t, err)
 
-	witnessRes, err := prover.BuildSpendWitness(note)
+	var typeRandomness fr.Element
+	_, _ = typeRandomness.SetRandom()
+
+	witnessRes, err := prover.BuildSpendWitness(note, typeRandomness)
 	require.NoError(t, err)
 
 	proof, err := spendProver.Prove(witnessRes.Assignment)
@@ -73,7 +77,10 @@ func TestSpendProver(t *testing.T) {
 func TestOutputProver(t *testing.T) {
 	setupProvers(t)
 
-	witnessRes, err := prover.BuildOutputWitness(750, "EUR", testPP)
+	var typeRandomness fr.Element
+	_, _ = typeRandomness.SetRandom()
+
+	witnessRes, err := prover.BuildOutputWitness(750, "EUR", testPP, typeRandomness)
 	require.NoError(t, err)
 
 	proof, err := outputProver.Prove(witnessRes.Assignment)

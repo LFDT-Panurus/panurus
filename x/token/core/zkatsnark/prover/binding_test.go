@@ -13,6 +13,7 @@ import (
 
 	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/crypto/jubjub"
 	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/prover"
+	snarktoken "github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/token"
 )
 
 func mustProofResult(t *testing.T, value uint64) prover.ProofResult {
@@ -32,12 +33,25 @@ func mustProofResult(t *testing.T, value uint64) prover.ProofResult {
 	return prover.ProofResult{Commitment: cm, ValueCommit: cv, RCV: rcv}
 }
 
+func mustTypeCommitment(t *testing.T, tokenType string) fr.Element {
+	t.Helper()
+	var typeRandomness fr.Element
+	_, err := typeRandomness.SetRandom()
+	require.NoError(t, err)
+
+	tc, err := snarktoken.ComputeTypeCommitment(tokenType, typeRandomness)
+	require.NoError(t, err)
+
+	return tc
+}
+
 func TestActionHashDeterminism(t *testing.T) {
 	in := []prover.ProofResult{mustProofResult(t, 100)}
 	out := []prover.ProofResult{mustProofResult(t, 100)}
+	tc := mustTypeCommitment(t, "USD")
 
-	h1 := prover.ComputeActionHash("transfer", "USD", in, out)
-	h2 := prover.ComputeActionHash("transfer", "USD", in, out)
+	h1 := prover.ComputeActionHash("transfer", tc, in, out)
+	h2 := prover.ComputeActionHash("transfer", tc, in, out)
 
 	require.Equal(t, h1, h2)
 }
@@ -45,9 +59,10 @@ func TestActionHashDeterminism(t *testing.T) {
 func TestActionHashOrderIndependence(t *testing.T) {
 	pr1 := mustProofResult(t, 50)
 	pr2 := mustProofResult(t, 100)
+	tc := mustTypeCommitment(t, "USD")
 
-	h1 := prover.ComputeActionHash("transfer", "USD", []prover.ProofResult{pr1, pr2}, nil)
-	h2 := prover.ComputeActionHash("transfer", "USD", []prover.ProofResult{pr2, pr1}, nil)
+	h1 := prover.ComputeActionHash("transfer", tc, []prover.ProofResult{pr1, pr2}, nil)
+	h2 := prover.ComputeActionHash("transfer", tc, []prover.ProofResult{pr2, pr1}, nil)
 
 	require.Equal(t, h1, h2, "hash must be independent of input slice order — this is what makes "+
 		"the hash canonical regardless of goroutine completion order")
@@ -56,17 +71,19 @@ func TestActionHashOrderIndependence(t *testing.T) {
 func TestActionHashSensitivity(t *testing.T) {
 	in := []prover.ProofResult{mustProofResult(t, 100)}
 	out := []prover.ProofResult{mustProofResult(t, 100)}
+	tc := mustTypeCommitment(t, "USD")
 
-	h := prover.ComputeActionHash("transfer", "USD", in, out)
+	h := prover.ComputeActionHash("transfer", tc, in, out)
 
-	withDifferentActionType := prover.ComputeActionHash("issue", "USD", in, out)
+	withDifferentActionType := prover.ComputeActionHash("issue", tc, in, out)
 	require.NotEqual(t, h, withDifferentActionType)
 
-	withDifferentTokenType := prover.ComputeActionHash("transfer", "EUR", in, out)
-	require.NotEqual(t, h, withDifferentTokenType)
+	tcEUR := mustTypeCommitment(t, "EUR")
+	withDifferentTypeCommitment := prover.ComputeActionHash("transfer", tcEUR, in, out)
+	require.NotEqual(t, h, withDifferentTypeCommitment)
 
 	differentOut := []prover.ProofResult{mustProofResult(t, 999)}
-	withDifferentOutputs := prover.ComputeActionHash("transfer", "USD", in, differentOut)
+	withDifferentOutputs := prover.ComputeActionHash("transfer", tc, in, differentOut)
 	require.NotEqual(t, h, withDifferentOutputs)
 }
 
@@ -75,10 +92,11 @@ func TestActionHashSensitivity(t *testing.T) {
 func TestComputeBindingSignatureValid(t *testing.T) {
 	in := []prover.ProofResult{mustProofResult(t, 100), mustProofResult(t, 50)}
 	out := []prover.ProofResult{mustProofResult(t, 120), mustProofResult(t, 30)}
+	tc := mustTypeCommitment(t, "USD")
 
-	h := prover.ComputeActionHash("transfer", "USD", in, out)
+	h := prover.ComputeActionHash("transfer", tc, in, out)
 
-	sig, err := prover.ComputeBindingSignature("transfer", "USD", in, out)
+	sig, err := prover.ComputeBindingSignature("transfer", tc, in, out)
 	require.NoError(t, err)
 
 	bvk := prover.ComputeBVK(in, out, 0)
@@ -96,10 +114,11 @@ func TestComputeBindingSignatureValid(t *testing.T) {
 func TestComputeBindingSignatureRejectsNonConservation(t *testing.T) {
 	in := []prover.ProofResult{mustProofResult(t, 100), mustProofResult(t, 50)}
 	out := []prover.ProofResult{mustProofResult(t, 120), mustProofResult(t, 40)}
+	tc := mustTypeCommitment(t, "USD")
 
-	h := prover.ComputeActionHash("transfer", "USD", in, out)
+	h := prover.ComputeActionHash("transfer", tc, in, out)
 
-	sig, err := prover.ComputeBindingSignature("transfer", "USD", in, out)
+	sig, err := prover.ComputeBindingSignature("transfer", tc, in, out)
 	require.NoError(t, err)
 
 	bvk := prover.ComputeBVK(in, out, 0)
@@ -112,29 +131,32 @@ func TestComputeBindingSignatureRejectsNonConservation(t *testing.T) {
 
 func TestComputeBindingSignatureIssuance(t *testing.T) {
 	out := []prover.ProofResult{mustProofResult(t, 500)}
+	tc := mustTypeCommitment(t, "USD")
 
-	sig, err := prover.ComputeBindingSignature("issue", "USD", nil, out)
+	sig, err := prover.ComputeBindingSignature("issue", tc, nil, out)
 	require.NoError(t, err)
 
 	bvk := prover.ComputeBVK(nil, out, 500)
-	actionHash := prover.ComputeActionHash("issue", "USD", nil, out)
+	actionHash := prover.ComputeActionHash("issue", tc, nil, out)
 
 	err = jubjub.Verify(bvk, actionHash, sig, jubjub.R)
 	require.NoError(t, err, "issuance binding signature (zero inputs) must verify")
 }
 
-func TestComputeBindingSignatureRejectsWrongTokenTypeAtVerification(t *testing.T) {
+func TestComputeBindingSignatureRejectsWrongTypeCommitmentAtVerification(t *testing.T) {
 	in := []prover.ProofResult{mustProofResult(t, 100)}
 	out := []prover.ProofResult{mustProofResult(t, 100)}
+	tcUSD := mustTypeCommitment(t, "USD")
 
-	sig, err := prover.ComputeBindingSignature("transfer", "USD", in, out)
+	sig, err := prover.ComputeBindingSignature("transfer", tcUSD, in, out)
 	require.NoError(t, err)
 
 	bvk := prover.ComputeBVK(in, out, 0)
-	h := prover.ComputeActionHash("transfer", "EUR", in, out)
+	tcEUR := mustTypeCommitment(t, "EUR")
+	h := prover.ComputeActionHash("transfer", tcEUR, in, out)
 
 	err = jubjub.Verify(bvk, h, sig, jubjub.R)
 	require.Error(t, err,
-		"verifying against a hash computed with the wrong token type must fail, "+
-			"this confirms token type really is bound into the signed message")
+		"verifying against a hash computed with a different type commitment must fail, "+
+			"this confirms type commitment really is bound into the signed message")
 }

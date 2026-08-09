@@ -6,6 +6,7 @@ SPDX-License-Identifier: Apache-2.0
 package validator
 
 import (
+	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/twistededwards"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 
@@ -39,7 +40,8 @@ func toOutputProofResult(d decodedOutput) prover.ProofResult {
 // publicValueDelta convention must match the prover exactly: prover.NoPublicValue
 // for TransferAction, the decoded TotalValue for IssueAction.
 func verifyBindingSignature(
-	actionType, tokenType string,
+	actionType string,
+	typeCommitment fr.Element,
 	decodedInputs []decodedSpend,
 	decodedOutputs []decodedOutput,
 	sigBytes []byte,
@@ -56,7 +58,7 @@ func verifyBindingSignature(
 	}
 
 	bvk := prover.ComputeBVK(spendResults, outputResults, publicValueDelta)
-	actionHash := prover.ComputeActionHash(actionType, tokenType, spendResults, outputResults)
+	actionHash := prover.ComputeActionHash(actionType, typeCommitment, spendResults, outputResults)
 
 	sig, err := jubjub.DeserializeSignature(sigBytes)
 	if err != nil {

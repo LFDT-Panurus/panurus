@@ -30,6 +30,7 @@ type SpendWitnessResult struct {
 	RCV             fr.Element
 	Commitment      fr.Element
 	ValueCommitment twistededwards.PointAffine
+	TypeCommitment  fr.Element
 }
 
 // BuildSpendWitness constructs a SpendCircuit assignment for spending an
@@ -38,7 +39,11 @@ type SpendWitnessResult struct {
 // note.Randomness must be the EXACT randomness originally used when this
 // token's commitment was recorded on the ledger, the wallet holding this
 // Note must have retained it unchanged since the token was received.
-func BuildSpendWitness(note *snarktoken.Note) (*SpendWitnessResult, error) {
+//
+// typeRandomness is the per-action randomness used to compute the type
+// commitment. All inputs and outputs in the same action must share the
+// same typeRandomness to produce the same TypeCommitment.
+func BuildSpendWitness(note *snarktoken.Note, typeRandomness fr.Element) (*SpendWitnessResult, error) {
 	if note == nil {
 		return nil, errors.New("prover: cannot build spend witness for a nil note")
 	}
@@ -58,6 +63,11 @@ func BuildSpendWitness(note *snarktoken.Note) (*SpendWitnessResult, error) {
 		return nil, fmt.Errorf("prover: value commitment failed: %w", err)
 	}
 
+	tc, err := snarktoken.ComputeTypeCommitment(note.TokenType, typeRandomness)
+	if err != nil {
+		return nil, fmt.Errorf("prover: type commitment failed: %w", err)
+	}
+
 	var vField fr.Element
 	vField.SetUint64(note.Value)
 	tField := snarktoken.EncodeTokenType(note.TokenType)
@@ -66,10 +76,12 @@ func BuildSpendWitness(note *snarktoken.Note) (*SpendWitnessResult, error) {
 		CommitmentIn:   cm,
 		ValueCommitInX: cv.X,
 		ValueCommitInY: cv.Y,
-		TokenType:      tField,
+		TypeCommitment: tc,
 		Value:          vField,
+		TokenType:      tField,
 		Randomness:     note.Randomness,
 		RCV:            rcv,
+		TypeRandomness: typeRandomness,
 	}
 
 	return &SpendWitnessResult{
@@ -77,6 +89,7 @@ func BuildSpendWitness(note *snarktoken.Note) (*SpendWitnessResult, error) {
 		RCV:             rcv,
 		Commitment:      cm,
 		ValueCommitment: cv,
+		TypeCommitment:  tc,
 	}, nil
 }
 
@@ -91,13 +104,18 @@ type OutputWitnessResult struct {
 	RCV             fr.Element
 	Commitment      fr.Element
 	ValueCommitment twistededwards.PointAffine
+	TypeCommitment  fr.Element
 }
 
 // BuildOutputWitness constructs an OutputCircuit assignment for creating a
 // new token of the given value and type. A fresh Note (including fresh
 // commitment randomness) is generated internally and returned to the
 // caller, it does not previously exist anywhere.
-func BuildOutputWitness(value uint64, tokenType string, publicParams *pp.PublicParams) (*OutputWitnessResult, error) {
+//
+// typeRandomness is the per-action randomness used to compute the type
+// commitment. All inputs and outputs in the same action must share the
+// same typeRandomness to produce the same TypeCommitment.
+func BuildOutputWitness(value uint64, tokenType string, publicParams *pp.PublicParams, typeRandomness fr.Element) (*OutputWitnessResult, error) {
 	note, err := snarktoken.NewRandomNote(value, tokenType)
 	if err != nil {
 		return nil, fmt.Errorf("prover: new output note failed: %w", err)
@@ -118,6 +136,11 @@ func BuildOutputWitness(value uint64, tokenType string, publicParams *pp.PublicP
 		return nil, fmt.Errorf("prover: value commitment failed: %w", err)
 	}
 
+	tc, err := snarktoken.ComputeTypeCommitment(tokenType, typeRandomness)
+	if err != nil {
+		return nil, fmt.Errorf("prover: type commitment failed: %w", err)
+	}
+
 	var vField fr.Element
 	vField.SetUint64(value)
 	tField := snarktoken.EncodeTokenType(tokenType)
@@ -126,10 +149,12 @@ func BuildOutputWitness(value uint64, tokenType string, publicParams *pp.PublicP
 		CommitmentOut:   cm,
 		ValueCommitOutX: cv.X,
 		ValueCommitOutY: cv.Y,
-		TokenType:       tField,
+		TypeCommitment:  tc,
 		Value:           vField,
+		TokenType:       tField,
 		Randomness:      note.Randomness,
 		RCV:             rcv,
+		TypeRandomness:  typeRandomness,
 		MaxBits:         publicParams.MaxBits,
 	}
 
@@ -139,5 +164,6 @@ func BuildOutputWitness(value uint64, tokenType string, publicParams *pp.PublicP
 		RCV:             rcv,
 		Commitment:      cm,
 		ValueCommitment: cv,
+		TypeCommitment:  tc,
 	}, nil
 }

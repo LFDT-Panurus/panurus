@@ -78,7 +78,7 @@ type MigrationAction struct {
 	// commitment (BLS12-381 Fr embedded Edwards coordinate, 32 bytes).
 	ValueCommitOutY []byte
 
-	TokenType      []byte
+	TypeCommitment []byte // 32 bytes: MiMC(TokenType, TypeRandomness)
 	MigrationProof []byte
 	Recipient      []byte
 }

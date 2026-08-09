@@ -81,7 +81,10 @@ type migrationOutcome struct {
 // computes the per-action binding signature, and assembles the resulting
 // TransferAction. Returns the newly created output Notes alongside the
 // action, persisting or transmitting them is the caller's responsibility.
-// All inputs and outputs must share tokenType
+// All inputs and outputs must share tokenType.
+//
+// A single typeRandomness is generated per action and shared across all
+// inputs and outputs, ensuring they all produce the same TypeCommitment.
 func (o *Orchestrator) BuildTransferAction(
 	ctx context.Context,
 	inputs []SpendRequest,
@@ -93,15 +96,27 @@ func (o *Orchestrator) BuildTransferAction(
 		return nil, nil, errors.New("orchestrator: transfer action requires at least one input or output")
 	}
 
+	// Generate a single typeRandomness for the entire action.
+	var typeRandomness fr.Element
+	if _, err := typeRandomness.SetRandom(); err != nil {
+		return nil, nil, fmt.Errorf("orchestrator: type randomness generation failed: %w", err)
+	}
+
+	// Compute the shared TypeCommitment once for the action envelope.
+	typeCommitment, err := snarktoken.ComputeTypeCommitment(tokenType, typeRandomness)
+	if err != nil {
+		return nil, nil, fmt.Errorf("orchestrator: type commitment computation failed: %w", err)
+	}
+
 	spendCh := make(chan spendOutcome, len(inputs))
 	outputCh := make(chan outputOutcome, len(outputs))
 
 	for i, req := range inputs {
-		go o.proveSpend(i, req, spendCh)
+		go o.proveSpend(i, req, typeRandomness, spendCh)
 	}
 
 	for j, req := range outputs {
-		go o.proveOutput(j, req, publicParams, outputCh)
+		go o.proveOutput(j, req, publicParams, typeRandomness, outputCh)
 	}
 
 	spendOutcomes := make([]spendOutcome, len(inputs))
@@ -138,7 +153,7 @@ func (o *Orchestrator) BuildTransferAction(
 		newNotes[j] = oc.note
 	}
 
-	sig, err := ComputeBindingSignature(snarktoken.ActionTypeTransfer, tokenType, inputResults, outputResults)
+	sig, err := ComputeBindingSignature(snarktoken.ActionTypeTransfer, typeCommitment, inputResults, outputResults)
 	if err != nil {
 		return nil, nil, fmt.Errorf("orchestrator: binding signature failed: %w", err)
 	}
@@ -147,8 +162,10 @@ func (o *Orchestrator) BuildTransferAction(
 		return nil, nil, fmt.Errorf("orchestrator: binding signature serialization failed: %w", err)
 	}
 
+	tcBytes := typeCommitment.Bytes()
+
 	action := &snarktoken.TransferAction{
-		TokenType:        tokenType,
+		TypeCommitment:   tcBytes[:],
 		Inputs:           inputDescs,
 		Outputs:          outputDescs,
 		BindingSignature: sigBytes,
@@ -171,10 +188,22 @@ func (o *Orchestrator) BuildIssueAction(
 		return nil, nil, errors.New("orchestrator: issue action requires at least one output")
 	}
 
+	// Generate a single typeRandomness for the entire action.
+	var typeRandomness fr.Element
+	if _, err := typeRandomness.SetRandom(); err != nil {
+		return nil, nil, fmt.Errorf("orchestrator: type randomness generation failed: %w", err)
+	}
+
+	// Compute the shared TypeCommitment once for the action envelope.
+	typeCommitment, err := snarktoken.ComputeTypeCommitment(tokenType, typeRandomness)
+	if err != nil {
+		return nil, nil, fmt.Errorf("orchestrator: type commitment computation failed: %w", err)
+	}
+
 	var totalValue uint64
 	outputCh := make(chan outputOutcome, len(outputs))
 	for j, req := range outputs {
-		go o.proveOutput(j, req, publicParams, outputCh)
+		go o.proveOutput(j, req, publicParams, typeRandomness, outputCh)
 		totalValue += req.Value
 	}
 
@@ -196,7 +225,7 @@ func (o *Orchestrator) BuildIssueAction(
 		newNotes[j] = oc.note
 	}
 
-	sig, err := ComputeBindingSignature(snarktoken.ActionTypeIssue, tokenType, nil, outputResults)
+	sig, err := ComputeBindingSignature(snarktoken.ActionTypeIssue, typeCommitment, nil, outputResults)
 	if err != nil {
 		return nil, nil, fmt.Errorf("orchestrator: binding signature failed: %w", err)
 	}
@@ -208,10 +237,12 @@ func (o *Orchestrator) BuildIssueAction(
 	var totalValueField fr.Element
 	totalValueField.SetUint64(totalValue)
 	totalValueBytes := totalValueField.Bytes()
+	tcBytes := typeCommitment.Bytes()
 
 	action := &snarktoken.IssueAction{
 		Issuer:           issuer,
 		TokenType:        tokenType,
+		TypeCommitment:   tcBytes[:],
 		Outputs:          outputDescs,
 		BindingSignature: sigBytes,
 		TotalValue:       totalValueBytes[:],
@@ -265,8 +296,8 @@ func (o *Orchestrator) BuildMigrationAction(
 	return actions, notes, nil
 }
 
-func (o *Orchestrator) proveSpend(index int, req SpendRequest, out chan<- spendOutcome) {
-	witnessRes, err := BuildSpendWitness(req.Note)
+func (o *Orchestrator) proveSpend(index int, req SpendRequest, typeRandomness fr.Element, out chan<- spendOutcome) {
+	witnessRes, err := BuildSpendWitness(req.Note, typeRandomness)
 	if err != nil {
 		out <- spendOutcome{index: index, err: err}
 
@@ -290,8 +321,7 @@ func (o *Orchestrator) proveSpend(index int, req SpendRequest, out chan<- spendO
 	cm := witnessRes.Commitment.Bytes()
 	cx := witnessRes.ValueCommitment.X.Bytes()
 	cy := witnessRes.ValueCommitment.Y.Bytes()
-	tokenTypeField := snarktoken.EncodeTokenType(req.Note.TokenType)
-	tb := tokenTypeField.Bytes()
+	tc := witnessRes.TypeCommitment.Bytes()
 
 	out <- spendOutcome{
 		index: index,
@@ -304,14 +334,14 @@ func (o *Orchestrator) proveSpend(index int, req SpendRequest, out chan<- spendO
 			CommitmentIn:   cm[:],
 			ValueCommitInX: cx[:],
 			ValueCommitInY: cy[:],
-			TokenType:      tb[:],
+			TypeCommitment: tc[:],
 			SpendProof:     proofBytes,
 		},
 	}
 }
 
-func (o *Orchestrator) proveOutput(index int, req OutputRequest, publicParams *pp.PublicParams, out chan<- outputOutcome) {
-	witnessRes, err := BuildOutputWitness(req.Value, req.TokenType, publicParams)
+func (o *Orchestrator) proveOutput(index int, req OutputRequest, publicParams *pp.PublicParams, typeRandomness fr.Element, out chan<- outputOutcome) {
+	witnessRes, err := BuildOutputWitness(req.Value, req.TokenType, publicParams, typeRandomness)
 	if err != nil {
 		out <- outputOutcome{index: index, err: err}
 
@@ -335,8 +365,7 @@ func (o *Orchestrator) proveOutput(index int, req OutputRequest, publicParams *p
 	cm := witnessRes.Commitment.Bytes()
 	cx := witnessRes.ValueCommitment.X.Bytes()
 	cy := witnessRes.ValueCommitment.Y.Bytes()
-	tokenTypeField := snarktoken.EncodeTokenType(req.TokenType)
-	tb := tokenTypeField.Bytes()
+	tc := witnessRes.TypeCommitment.Bytes()
 
 	out <- outputOutcome{
 		index: index,
@@ -349,7 +378,7 @@ func (o *Orchestrator) proveOutput(index int, req OutputRequest, publicParams *p
 			CommitmentOut:   cm[:],
 			ValueCommitOutX: cx[:],
 			ValueCommitOutY: cy[:],
-			TokenType:       tb[:],
+			TypeCommitment:  tc[:],
 			OutputProof:     proofBytes,
 			Recipient:       req.Recipient,
 		},
@@ -358,7 +387,16 @@ func (o *Orchestrator) proveOutput(index int, req OutputRequest, publicParams *p
 }
 
 func (o *Orchestrator) proveMigration(index int, req MigrationRequest, publicParams *pp.PublicParams, out chan<- migrationOutcome) {
-	witnessRes, err := BuildMigrationWitness(req.Opening, publicParams)
+	// Each migration request gets its own typeRandomness since
+	// each produces an independent MigrationAction.
+	var typeRandomness fr.Element
+	if _, err := typeRandomness.SetRandom(); err != nil {
+		out <- migrationOutcome{index: index, err: fmt.Errorf("type randomness generation failed: %w", err)}
+
+		return
+	}
+
+	witnessRes, err := BuildMigrationWitness(req.Opening, publicParams, typeRandomness)
 	if err != nil {
 		out <- migrationOutcome{index: index, err: err}
 
@@ -382,8 +420,7 @@ func (o *Orchestrator) proveMigration(index int, req MigrationRequest, publicPar
 	cm := witnessRes.Commitment.Bytes()
 	cx := witnessRes.ValueCommitment.X.Bytes()
 	cy := witnessRes.ValueCommitment.Y.Bytes()
-	tokenTypeField := snarktoken.EncodeTokenType(req.Opening.TokenType)
-	tb := tokenTypeField.Bytes()
+	tc := witnessRes.TypeCommitment.Bytes()
 
 	out <- migrationOutcome{
 		index: index,
@@ -393,7 +430,7 @@ func (o *Orchestrator) proveMigration(index int, req MigrationRequest, publicPar
 			CommitmentMiMC:      cm[:],
 			ValueCommitOutX:     cx[:],
 			ValueCommitOutY:     cy[:],
-			TokenType:           tb[:],
+			TypeCommitment:      tc[:],
 			MigrationProof:      proofBytes,
 			Recipient:           req.Recipient,
 		},

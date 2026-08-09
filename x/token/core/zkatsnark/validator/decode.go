@@ -21,18 +21,18 @@ import (
 // witness usage inside proof.go) and ProofResult construction
 // (binding-signature verification)
 type decodedSpend struct {
-	Commitment   fr.Element
-	ValueCommitX fr.Element
-	ValueCommitY fr.Element
-	TokenType    fr.Element
+	Commitment     fr.Element
+	ValueCommitX   fr.Element
+	ValueCommitY   fr.Element
+	TypeCommitment fr.Element
 }
 
 // decodedOutput is the OutputDescription equivalent.
 type decodedOutput struct {
-	Commitment   fr.Element
-	ValueCommitX fr.Element
-	ValueCommitY fr.Element
-	TokenType    fr.Element
+	Commitment     fr.Element
+	ValueCommitX   fr.Element
+	ValueCommitY   fr.Element
+	TypeCommitment fr.Element
 }
 
 // decodedMigration is the canonical decoding of a MigrationAction's public
@@ -50,7 +50,7 @@ type decodedMigration struct {
 	CommitmentMiMC fr.Element
 	ValueCommitX   fr.Element
 	ValueCommitY   fr.Element
-	TokenType      fr.Element
+	TypeCommitment fr.Element
 }
 
 // decodeSpendDescription decodes a SpendDescription's public bytes into
@@ -69,8 +69,8 @@ func decodeSpendDescription(i int, d snarktoken.SpendDescription) (decodedSpend,
 	if err := out.ValueCommitY.SetBytesCanonical(d.ValueCommitInY); err != nil {
 		return decodedSpend{}, errors.Wrapf(err, "validator: input %d ValueCommitInY not canonical", i)
 	}
-	if err := out.TokenType.SetBytesCanonical(d.TokenType); err != nil {
-		return decodedSpend{}, errors.Wrapf(err, "validator: input %d TokenType not canonical", i)
+	if err := out.TypeCommitment.SetBytesCanonical(d.TypeCommitment); err != nil {
+		return decodedSpend{}, errors.Wrapf(err, "validator: input %d TypeCommitment not canonical", i)
 	}
 
 	pt := twistededwards.PointAffine{X: out.ValueCommitX, Y: out.ValueCommitY}
@@ -93,8 +93,8 @@ func decodeOutputDescription(j int, d snarktoken.OutputDescription) (decodedOutp
 	if err := out.ValueCommitY.SetBytesCanonical(d.ValueCommitOutY); err != nil {
 		return decodedOutput{}, errors.Wrapf(err, "validator: output %d ValueCommitOutY not canonical", j)
 	}
-	if err := out.TokenType.SetBytesCanonical(d.TokenType); err != nil {
-		return decodedOutput{}, errors.Wrapf(err, "validator: output %d TokenType not canonical", j)
+	if err := out.TypeCommitment.SetBytesCanonical(d.TypeCommitment); err != nil {
+		return decodedOutput{}, errors.Wrapf(err, "validator: output %d TypeCommitment not canonical", j)
 	}
 
 	pt := twistededwards.PointAffine{X: out.ValueCommitX, Y: out.ValueCommitY}
@@ -173,8 +173,8 @@ func decodeMigrationAction(a *snarktoken.MigrationAction) (decodedMigration, err
 	if err := out.ValueCommitY.SetBytesCanonical(a.ValueCommitOutY); err != nil {
 		return decodedMigration{}, errors.Wrapf(err, "validator: ValueCommitOutY not canonical")
 	}
-	if err := out.TokenType.SetBytesCanonical(a.TokenType); err != nil {
-		return decodedMigration{}, errors.Wrapf(err, "validator: TokenType not canonical")
+	if err := out.TypeCommitment.SetBytesCanonical(a.TypeCommitment); err != nil {
+		return decodedMigration{}, errors.Wrapf(err, "validator: TypeCommitment not canonical")
 	}
 
 	jubjubPt := twistededwards.PointAffine{X: out.ValueCommitX, Y: out.ValueCommitY}
