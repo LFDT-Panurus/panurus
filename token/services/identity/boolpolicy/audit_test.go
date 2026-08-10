@@ -7,11 +7,14 @@ SPDX-License-Identifier: Apache-2.0
 package boolpolicy
 
 import (
+	"context"
 	"testing"
 
 	"github.com/LFDT-Panurus/panurus/token"
+	"github.com/LFDT-Panurus/panurus/token/driver"
 	"github.com/LFDT-Panurus/panurus/token/services/identity"
 	"github.com/LFDT-Panurus/panurus/token/services/identity/deserializer"
+	driver2 "github.com/LFDT-Panurus/panurus/token/services/identity/driver"
 	"github.com/LFDT-Panurus/panurus/token/services/identity/x509"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -227,6 +230,51 @@ func TestPolicyEnrollmentIDMissingThenMalformedMember(t *testing.T) {
 	_, _, err = newEIDRHDeserializer().GetEIDAndRH(t.Context(), policyID, wrapped)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to deserialize audit info of component")
+}
+
+func TestPolicyEnrollmentIDInvalidComponentIdentities(t *testing.T) {
+	// component identities rejected by DeserializeVerifier must not be
+	// attributed on the audit path either, which never runs the verifier
+	m0, ai0 := newX509Member(t, "cert-zero", "wallet-42")
+	cases := []struct {
+		name    string
+		members [][]byte
+		wantErr string
+	}{
+		{"duplicate member", [][]byte{m0, m0}, "duplicate of an earlier identity"},
+		{"empty member", [][]byte{m0, nil}, "must not be empty"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			policyID, wrapped := newPolicyIdentity(t, "$0 AND $1", tc.members, [][]byte{ai0, ai0})
+
+			_, _, err := newEIDRHDeserializer().GetEIDAndRH(t.Context(), policyID, wrapped)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tc.wantErr)
+		})
+	}
+}
+
+// nilAuditInfoDeserializer reports neither audit info nor error.
+type nilAuditInfoDeserializer struct{}
+
+func (nilAuditInfoDeserializer) DeserializeAuditInfo(context.Context, driver.Identity, []byte) (driver2.AuditInfo, error) {
+	return nil, nil
+}
+
+func TestPolicyEnrollmentIDNilMemberAuditInfo(t *testing.T) {
+	// an inner deserializer returning (nil, nil) must yield no common EID
+	// rather than a panic
+	m0, ai0 := newX509Member(t, "cert-zero", "wallet-42")
+	policyID, wrapped := newPolicyIdentity(t, "$0", [][]byte{m0}, [][]byte{ai0})
+
+	d := deserializer.NewEIDRHDeserializer()
+	d.AddDeserializer(Policy, NewAuditInfoDeserializer(nilAuditInfoDeserializer{}))
+
+	eid, rh, err := d.GetEIDAndRH(t.Context(), policyID, wrapped)
+	require.NoError(t, err)
+	assert.Empty(t, eid)
+	assert.Empty(t, rh)
 }
 
 func TestPolicyEnrollmentIDCrossEIDThenMalformedMember(t *testing.T) {
