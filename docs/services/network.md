@@ -151,7 +151,8 @@ Optimized Fabric variant where FSC nodes act as endorsers, eliminating the need 
 ### Ethereum (Implementation Guide)
 Guide for implementing a network driver for Ethereum and EVM-compatible blockchains.
 
-**Documentation**: [Network Service - Ethereum Implementation Guide](./network-ethereum.md)
+**Documentation**: [Network Service - Ethereum Implementation Guide](./network-ethereum.md),
+[Ethereum Deployment Runbook](./network-ethereum-deployment.md)
 
 **Approaches**:
 - **Smart Contract Validation**: Full validation logic in smart contract (similar to Fabric)

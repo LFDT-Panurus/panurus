@@ -11,6 +11,7 @@ import (
 	"math/big"
 	"testing"
 
+	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/view"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -96,7 +97,12 @@ func newResponder(t *testing.T, v RequestValidator, pp PublicParamsProvider, sig
 	require.NoError(t, err)
 	factory := NewDeltaFactory(v, pp, &mock.EVMClient{}, addr(0xAA), "")
 
-	return NewResponder(testTMSID(), auth, factory, signer, testDomain())
+	return NewResponder(
+		auth,
+		func(token2.TMSID) (*DeltaFactory, error) { return factory, nil },
+		signer,
+		testDomain(),
+	)
 }
 
 func newSigner(t *testing.T, low byte) *eip712.Signer {
@@ -175,17 +181,25 @@ func TestResponderRejectsUnauthorizedCaller(t *testing.T) {
 	assert.Contains(t, resp.Error().Error(), ErrUnauthorized.Error())
 }
 
-func TestResponderRejectsWrongTMS(t *testing.T) {
-	r := newResponder(t,
-		&fakeValidator{actions: []any{issueAction()}, meta: map[string][]byte{common.TokenRequestToSign: []byte(trsMessage)}},
-		&fakePP{raw: []byte(testPPRaw), version: testPPVer},
-		newSigner(t, 1),
-	)
-	req := validRequest()
-	req.TMSID = token2.TMSID{Network: "other", Namespace: "token"}
+// TestResponderRejectsUnservedTMS checks an endorser refuses a request for a TMS it cannot resolve.
+// The responder is registered before any TMS exists, so "which TMS do I serve" is answered by what it
+// can actually resolve and validate, rather than by an identity fixed at construction.
+func TestResponderRejectsUnservedTMS(t *testing.T) {
+	auth, err := NewAuthorizer([]view.Identity{view.Identity(testCaller)})
+	require.NoError(t, err)
 
-	resp := r.Handle(context.Background(), view.Identity(testCaller), req)
+	r := NewResponder(
+		auth,
+		func(tmsID token2.TMSID) (*DeltaFactory, error) {
+			return nil, errors.Errorf("no such tms [%s]", tmsID)
+		},
+		newSigner(t, 1),
+		testDomain(),
+	)
+
+	resp := r.Handle(context.Background(), view.Identity(testCaller), validRequest())
 	require.Error(t, resp.Error())
+	assert.Contains(t, resp.Error().Error(), "does not serve")
 	assert.Empty(t, resp.Signature)
 }
 

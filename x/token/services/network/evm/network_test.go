@@ -19,6 +19,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	ncommon "github.com/LFDT-Panurus/panurus/token/services/network/common"
 	"github.com/LFDT-Panurus/panurus/token/services/network/driver"
 	"github.com/LFDT-Panurus/panurus/token/token"
 	"github.com/LFDT-Panurus/panurus/x/token/services/network/evm/client"
@@ -60,7 +61,7 @@ func testNetwork(t *testing.T, evmClient client.EVMClient, endorser EndorsementS
 	c.applyDefaults()
 	require.NoError(t, c.Validate())
 
-	n, err := NewNetwork("evm-net", c, evmClient, endorser, nil)
+	n, err := NewNetwork("evm-net", c, evmClient, endorser, nil, nil)
 	require.NoError(t, err)
 
 	return n
@@ -140,6 +141,26 @@ func TestNormalize(t *testing.T) {
 		_, err := n.Normalize(nil)
 		require.Error(t, err)
 	})
+
+	t.Run("rejects another network", func(t *testing.T) {
+		_, err := n.Normalize(&token2.ServiceOptions{Network: "some-other-network"})
+		require.Error(t, err)
+	})
+
+	// Without a fetcher the token layer cannot find the public parameters on a fresh node, and the
+	// TMS fails to build with an error that points nowhere near here.
+	t.Run("installs the public parameters fetcher", func(t *testing.T) {
+		opt, err := n.Normalize(&token2.ServiceOptions{Namespace: "token"})
+		require.NoError(t, err)
+		require.NotNil(t, opt.PublicParamsFetcher, "the token layer reads public parameters through this")
+	})
+
+	t.Run("keeps a fetcher the caller supplied", func(t *testing.T) {
+		supplied := ncommon.NewPublicParamsFetcher(n, "token")
+		opt, err := n.Normalize(&token2.ServiceOptions{Namespace: "token", PublicParamsFetcher: supplied})
+		require.NoError(t, err)
+		assert.Same(t, supplied, opt.PublicParamsFetcher)
+	})
 }
 
 // TestConnectVerifiesChain checks the startup guard: a node on a different chain than configured must
@@ -172,6 +193,56 @@ func TestConnectVerifiesChain(t *testing.T) {
 
 		_, err := n.Connect("token")
 		require.Error(t, err)
+	})
+}
+
+// TestConnectStartsRecovery pins where transaction recovery is started, and why it has to be started
+// at all.
+//
+// A node is told that a transaction it holds became final by a finality listener the ttx layer
+// registers in memory when it stores that transaction. A restart destroys that registration, and
+// nothing else ever revisits the row: it stays Pending, and every later wait on it runs to its
+// timeout. Recovery is the sweep that re-asks the chain, and it is per TMS, so the namespace that
+// Connect carries is the earliest point it can start.
+func TestConnectStartsRecovery(t *testing.T) {
+	t.Run("connect starts recovery for the namespace", func(t *testing.T) {
+		evm := &mock.EVMClient{}
+		evm.ChainIDReturns(bigInt(testChainID), nil)
+		n := testNetwork(t, evm, nil)
+
+		var started []string
+		n.SetRecoveryStarter(func(ns string) error {
+			started = append(started, ns)
+
+			return nil
+		})
+
+		_, err := n.Connect("token")
+		require.NoError(t, err)
+		assert.Equal(t, []string{"token"}, started, "recovery must be started for the connected namespace")
+	})
+
+	t.Run("a network without a starter still connects", func(t *testing.T) {
+		evm := &mock.EVMClient{}
+		evm.ChainIDReturns(bigInt(testChainID), nil)
+		n := testNetwork(t, evm, nil)
+
+		_, err := n.Connect("token")
+		require.NoError(t, err)
+	})
+
+	// Recovery completes transactions left over from a previous run. A node that cannot start it is
+	// worse off, but it is not broken: refusing the connection would take out a working node over a
+	// facility it only needs for transactions it may not even have.
+	t.Run("a failure to start recovery does not refuse the connection", func(t *testing.T) {
+		evm := &mock.EVMClient{}
+		evm.ChainIDReturns(bigInt(testChainID), nil)
+		n := testNetwork(t, evm, nil)
+		n.SetRecoveryStarter(func(string) error { return errors.New("no store for this tms") })
+
+		opts, err := n.Connect("token")
+		require.NoError(t, err)
+		assert.Len(t, opts, 3)
 	})
 }
 
