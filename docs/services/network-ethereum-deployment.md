@@ -196,6 +196,21 @@ key per endorsing node plus a funded submitter, and writes each node the configu
 The rendered configuration is parsed back by the driver's own `LoadConfig` in a test, so a harness
 that writes something the driver cannot read fails there rather than halfway through a suite.
 
+### Port conflicts
+
+The suites allocate from a fixed range: 7100 for the zkatdlog suite and 7200 for fabtoken, a hundred
+ports each. If something on the machine already holds one of those, a node fails to bind and the run
+dies early with an error that says nothing about the driver.
+
+They used to start at 7000, which macOS binds to AirPlay Receiver by default, so every Mac hit it.
+The range now skips 7000 for that reason. If you hit a conflict anyway, find the holder with
+`lsof -nP -iTCP:7100 -sTCP:LISTEN` (or `ss -ltnp` on Linux) and either stop it or move the suite
+range in `integration/ports.go`.
+
+A container left over from an interrupted run holds its published port too. `docker ps -a | grep besu`
+finds it; the suites remove a stale container by name on startup, but only the one they are about to
+create.
+
 ## See also
 
 - [Ethereum implementation guide](./network-ethereum.md) - the two approaches and why this one
