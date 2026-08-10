@@ -239,6 +239,10 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          # forge-std is a submodule of the contracts project, and the deploy script imports it.
+          # Without this the checkout is missing lib/forge-std and forge fails to compile.
+          submodules: recursive
 
       - name: Set up Go
         uses: actions/setup-go@v5
