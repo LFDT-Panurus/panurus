@@ -183,8 +183,8 @@ func (a *AuditInfoDeserializer) DeserializeAuditInfo(ctx context.Context, id dri
 
 // commonEnrollmentID returns the enrollment ID shared by all components:
 // "" when a component has none (e.g. a nested composite), its audit info is
-// missing, or they disagree; an error on unresolvable audit info or a
-// component count mismatch.
+// missing, or they disagree; an error on an invalid component identity,
+// unresolvable audit info or a component count mismatch.
 func (a *AuditInfoDeserializer) commonEnrollmentID(ctx context.Context, id driver.Identity, ei *AuditInfo) (string, error) {
 	if a.inner == nil {
 		return "", nil
@@ -192,6 +192,9 @@ func (a *AuditInfoDeserializer) commonEnrollmentID(ctx context.Context, id drive
 	pi := PolicyIdentity{}
 	if err := pi.Deserialize(id); err != nil {
 		return "", errors.Wrapf(err, "failed to deserialize policy identity")
+	}
+	if err := validateComponentIdentities(pi.Identities); err != nil {
+		return "", errors.Wrap(err, "invalid policy identity")
 	}
 	if len(pi.Identities) != len(ei.IdentityAuditInfos) {
 		return "", errors.Errorf("expected %d component audit infos but received %d",
@@ -212,6 +215,11 @@ func (a *AuditInfoDeserializer) commonEnrollmentID(ctx context.Context, id drive
 		memberAuditInfo, err := a.inner.DeserializeAuditInfo(ctx, pi.Identities[k], info.AuditInfo)
 		if err != nil {
 			return "", errors.Wrapf(err, "failed to deserialize audit info of component [%d]", k)
+		}
+		if memberAuditInfo == nil {
+			// an inner deserializer may report neither audit info nor error:
+			// treat it like missing audit info rather than panicking
+			continue
 		}
 		eids[k] = memberAuditInfo.EnrollmentID()
 	}
