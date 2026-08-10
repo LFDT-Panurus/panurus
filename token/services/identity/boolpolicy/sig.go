@@ -81,31 +81,62 @@ func (v *PolicyVerifier) Verify(msg, sigBytes []byte) error {
 		return errors.Errorf("policy signature has [%d] slots, expected [%d]",
 			len(sig.Signatures), len(v.Verifiers))
 	}
-	if !v.evalNode(v.Policy, msg, sig.Signatures) {
+	// memo caches each index's verification result for the duration of this
+	// Verify call: a $N reference is checked against the same (msg, sigs[N])
+	// no matter how many times it appears in the policy, so the potentially
+	// expensive Verifiers[N].Verify is invoked at most once per index.
+	memo := make([]refResult, len(sig.Signatures))
+	if !v.evalNode(v.Policy, msg, sig.Signatures, memo) {
 		return errors.New("policy not satisfied")
 	}
 
 	return nil
 }
 
+// refResult is the memoised outcome of verifying a single component index.
+type refResult int8
+
+const (
+	refUnknown refResult = iota // not yet verified in this Verify call
+	refPass                     // verification succeeded
+	refFail                     // verification failed (absent slot or bad signature)
+)
+
 // evalNode recursively evaluates the policy AST against the provided signatures.
-func (v *PolicyVerifier) evalNode(node Node, msg []byte, sigs [][]byte) bool {
+// memo is indexed by component index ($N) and caches per-index verification
+// results across the whole traversal; it must have one entry per signature slot.
+func (v *PolicyVerifier) evalNode(node Node, msg []byte, sigs [][]byte, memo []refResult) bool {
 	switch n := node.(type) {
 	case *RefNode:
-		i := n.Index
-		if i < 0 || i >= len(sigs) || len(sigs[i]) == 0 {
-			return false
-		}
-
-		return v.Verifiers[i].Verify(msg, sigs[i]) == nil
+		return v.evalRef(n.Index, msg, sigs, memo)
 
 	case *AndNode:
-		return v.evalNode(n.Left, msg, sigs) && v.evalNode(n.Right, msg, sigs)
+		return v.evalNode(n.Left, msg, sigs, memo) && v.evalNode(n.Right, msg, sigs, memo)
 
 	case *OrNode:
-		return v.evalNode(n.Left, msg, sigs) || v.evalNode(n.Right, msg, sigs)
+		return v.evalNode(n.Left, msg, sigs, memo) || v.evalNode(n.Right, msg, sigs, memo)
 
 	default:
 		return false
 	}
+}
+
+// evalRef verifies the component identity at index i, reusing a previously
+// computed result for the same index when one is available.
+func (v *PolicyVerifier) evalRef(i int, msg []byte, sigs [][]byte, memo []refResult) bool {
+	if i < 0 || i >= len(sigs) || len(sigs[i]) == 0 {
+		return false
+	}
+	if memo[i] != refUnknown {
+		return memo[i] == refPass
+	}
+
+	ok := v.Verifiers[i].Verify(msg, sigs[i]) == nil
+	if ok {
+		memo[i] = refPass
+	} else {
+		memo[i] = refFail
+	}
+
+	return ok
 }

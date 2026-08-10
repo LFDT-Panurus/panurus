@@ -48,6 +48,9 @@ jobs:
           - name: identity-marshal-decode-identity
             pkg: ./token/services/identity/marshal
             func: FuzzDecodeIdentityNoPanic
+          - name: identity-boolpolicy-parse
+            pkg: ./token/services/identity/boolpolicy
+            func: FuzzParseNoPanic
           - name: identity-multisig-deserializer
             pkg: ./token/services/identity/multisig
             func: FuzzMultiIdentityDeserializeNoPanic

@@ -18,11 +18,12 @@ SPDX-License-Identifier: Apache-2.0
 package boolpolicy
 
 import (
-	"errors"
 	"fmt"
 	"strconv"
 	"strings"
 	"unicode"
+
+	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 )
 
 const (
@@ -36,6 +37,17 @@ const (
 	// Go call stack; capping at 64 prevents goroutine stack exhaustion from
 	// attacker-supplied deeply-nested expressions.
 	maxParseDepth = 64
+
+	// maxParseNodes is the maximum number of AST nodes (RefNode/AndNode/OrNode)
+	// that Parse will construct for a single expression.  The depth cap bounds
+	// the shape of the tree but not its size: a flat, unparenthesised chain such
+	// as "$0 OR $1 OR ..." stays at depth 0 while producing one node per token.
+	// Capping the total node count bounds the memory footprint of the AST — and
+	// the work any later traversal performs — regardless of expression shape.
+	// 1024 nodes comfortably covers real policies (hundreds of component
+	// identities) while staying well under the ~2000-node worst case the
+	// maxPolicyLen byte limit alone would otherwise permit.
+	maxParseNodes = 1024
 )
 
 // ---------------------------------------------------------------------------
@@ -140,11 +152,11 @@ func (l *lexer) next() (lexToken, error) {
 			l.pos++
 		}
 		if l.pos == start {
-			return lexToken{}, fmt.Errorf("expected digit after '$' at position %d", l.pos)
+			return lexToken{}, errors.Errorf("expected digit after '$' at position %d", l.pos)
 		}
 		idx, err := strconv.Atoi(string(l.runes[start:l.pos]))
 		if err != nil {
-			return lexToken{}, fmt.Errorf("invalid index at position %d: %w", start, err)
+			return lexToken{}, errors.Wrapf(err, "invalid index at position %d", start)
 		}
 
 		return lexToken{kind: tokRef, index: idx}, nil
@@ -161,11 +173,11 @@ func (l *lexer) next() (lexToken, error) {
 		case "OR":
 			return lexToken{kind: tokOr}, nil
 		default:
-			return lexToken{}, fmt.Errorf("unknown keyword %q at position %d", word, start)
+			return lexToken{}, errors.Errorf("unknown keyword %q at position %d", word, start)
 		}
 
 	default:
-		return lexToken{}, fmt.Errorf("unexpected character %q at position %d", string(ch), l.pos)
+		return lexToken{}, errors.Errorf("unexpected character %q at position %d", string(ch), l.pos)
 	}
 }
 
@@ -178,19 +190,40 @@ type parser struct {
 	lex     *lexer
 	current lexToken
 	err     error
+	nodes   int // number of AST nodes constructed so far
+}
+
+// countNode records the construction of one AST node and returns whether the
+// parser is still within the maxParseNodes budget.  On overflow it latches an
+// error (if one is not already set) so the caller can bail out immediately.
+func (p *parser) countNode() bool {
+	p.nodes++
+	if p.nodes > maxParseNodes {
+		if p.err == nil {
+			p.err = errors.Errorf("policy expression exceeds maximum node count of %d", maxParseNodes)
+		}
+
+		return false
+	}
+
+	return true
 }
 
 // Parse parses a boolean expression string and returns the root AST node.
 // It returns an error for any lexical or syntactic problems.
 //
-// Parse enforces two hard limits to prevent resource exhaustion:
+// Parse enforces three hard limits to prevent resource exhaustion:
 //   - input longer than maxPolicyLen bytes is rejected immediately.
 //   - parenthesis nesting deeper than maxParseDepth levels is rejected;
 //     this bounds the Go call-stack depth of the recursive descent and
 //     prevents goroutine stack exhaustion from attacker-supplied input.
+//   - expressions producing more than maxParseNodes AST nodes are rejected;
+//     this bounds the size of the AST (and the cost of any later traversal)
+//     independently of its shape, since the depth cap alone does not limit a
+//     flat chain such as "$0 OR $1 OR ...".
 func Parse(input string) (Node, error) {
 	if len(input) > maxPolicyLen {
-		return nil, fmt.Errorf("policy expression exceeds maximum length of %d bytes (got %d)", maxPolicyLen, len(input))
+		return nil, errors.Errorf("policy expression exceeds maximum length of %d bytes (got %d)", maxPolicyLen, len(input))
 	}
 
 	p := &parser{lex: newLexer(input)}
@@ -224,6 +257,9 @@ func (p *parser) parseOr(depth int) Node {
 	for p.err == nil && p.current.kind == tokOr {
 		p.advance()
 		right := p.parseAnd(depth)
+		if !p.countNode() {
+			return nil
+		}
 		left = &OrNode{Left: left, Right: right}
 	}
 
@@ -237,6 +273,9 @@ func (p *parser) parseAnd(depth int) Node {
 	for p.err == nil && p.current.kind == tokAnd {
 		p.advance()
 		right := p.parsePrimary(depth)
+		if !p.countNode() {
+			return nil
+		}
 		left = &AndNode{Left: left, Right: right}
 	}
 
@@ -250,6 +289,9 @@ func (p *parser) parsePrimary(depth int) Node {
 	}
 	switch p.current.kind {
 	case tokRef:
+		if !p.countNode() {
+			return nil
+		}
 		node := &RefNode{Index: p.current.index}
 		p.advance()
 
@@ -257,7 +299,7 @@ func (p *parser) parsePrimary(depth int) Node {
 
 	case tokLParen:
 		if depth >= maxParseDepth {
-			p.err = fmt.Errorf("policy expression exceeds maximum nesting depth of %d", maxParseDepth)
+			p.err = errors.Errorf("policy expression exceeds maximum nesting depth of %d", maxParseDepth)
 
 			return nil
 		}
@@ -267,7 +309,7 @@ func (p *parser) parsePrimary(depth int) Node {
 			return nil
 		}
 		if p.current.kind != tokRParen {
-			p.err = fmt.Errorf("expected ')' but got token kind %v", p.current.kind)
+			p.err = errors.Errorf("expected ')' but got token kind %v", p.current.kind)
 
 			return nil
 		}
@@ -276,7 +318,7 @@ func (p *parser) parsePrimary(depth int) Node {
 		return node
 
 	default:
-		p.err = fmt.Errorf("expected '$N' or '(' at position %d", p.lex.pos)
+		p.err = errors.Errorf("expected '$N' or '(' at position %d", p.lex.pos)
 
 		return nil
 	}
