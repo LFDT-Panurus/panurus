@@ -79,9 +79,9 @@ func TestTransaction_Issue(t *testing.T) {
 		Transaction: &ttx.Transaction{},
 	}
 	assert.Panics(t, func() {
-		_ = tx.Issue(nil, &mockLinearState{id: "1"}, nil)
+		_ = tx.Issue(t.Context(), nil, &mockLinearState{id: "1"}, nil)
 	})
-	err := tx.Issue(nil, make(chan int), nil)
+	err := tx.Issue(t.Context(), nil, make(chan int), nil)
 	require.Error(t, err)
 }
 
@@ -90,11 +90,11 @@ func TestTransaction_Transfer(t *testing.T) {
 		Transaction: &ttx.Transaction{},
 	}
 	ow := &OwnerWallet{}
-	err := tx.Transfer(ow, make(chan int), nil)
+	err := tx.Transfer(t.Context(), ow, make(chan int), nil)
 	require.Error(t, err)
 
 	assert.Panics(t, func() {
-		_ = tx.Transfer(ow, &mockLinearState{id: "1"}, nil)
+		_ = tx.Transfer(t.Context(), ow, &mockLinearState{id: "1"}, nil)
 	})
 }
 
@@ -103,6 +103,6 @@ func TestTransaction_Outputs(t *testing.T) {
 		Transaction: &ttx.Transaction{},
 	}
 	assert.Panics(t, func() {
-		_, _ = tx.Outputs()
+		_, _ = tx.Outputs(t.Context())
 	})
 }

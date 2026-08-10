@@ -19,10 +19,11 @@ type Task func()
 type Pool struct {
 	taskQueue chan Task
 	wg        sync.WaitGroup
-	ctx       context.Context
-	cancel    context.CancelFunc
-	label     string
-	stop      atomic.Bool
+	//nolint:containedctx // long-running worker-pool lifecycle, not a per-request context
+	ctx    context.Context
+	cancel context.CancelFunc
+	label  string
+	stop   atomic.Bool
 }
 
 func NewPool(label string, numWorkers int) *Pool {

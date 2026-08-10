@@ -62,6 +62,7 @@ type Manager struct {
 	storage Storage
 	handler Handler
 	config  Config
+	//nolint:containedctx // long-running service lifecycle, not a per-request context
 	ctx     context.Context
 	cancel  context.CancelFunc
 	wg      sync.WaitGroup

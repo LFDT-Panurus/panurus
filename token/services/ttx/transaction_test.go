@@ -328,7 +328,7 @@ func TestTransaction_Bytes(t *testing.T) {
 		}
 
 		// This will likely fail without proper setup, but tests the method exists
-		_, err := tx.Bytes()
+		_, err := tx.Bytes(t.Context())
 		// We don't assert on error as it depends on internal state
 		// Just verify the method can be called
 		_ = err
