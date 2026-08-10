@@ -415,7 +415,24 @@ token:
           # Adds random jitter to break symmetry when multiple auditors retry simultaneously
           # Default: 0.3 (30%)
           jitterFactor: 0.3
-                  Security: 256
+
+        # auditTokensRetry controls how the auditor's early validation gate
+        # (AuditorCheck) tolerates the read-timing race in which a referenced
+        # token's producing transaction is still pending, so its outputs have not
+        # yet been persisted to the token store by the asynchronous finality
+        # listener. When a lookup misses and the producing tx is still pending,
+        # the gate waits and retries instead of spuriously rejecting the request.
+        auditTokensRetry:
+          # numRetries is the number of token-lookup attempts before giving up.
+          # There are numRetries-1 delays between attempts. Values <= 0 (or an
+          # omitted key) keep the default; a single attempt is always made.
+          # Default: 3
+          numRetries: 3
+          # retryDelay is the backoff slept between attempts, as a duration string
+          # (e.g. 500ms, 3s). Must be > 0; an invalid or non-positive value falls
+          # back to the default. The backoff honors context cancellation.
+          # Default: 3s
+          retryDelay: 3s
 ```
 
 ## Minimal Configuration
@@ -818,6 +835,59 @@ Default values:
 - `workerCount` affects CPU and network utilization during recovery sweeps
 - `batchSize` affects memory usage and the duration of each recovery sweep
 - The relationship `scanInterval < ttl` ensures timely detection without premature recovery
+
+---
+
+### Optional: token.tms.<name>.auditor.auditTokensRetry
+
+Controls how the auditor's early validation gate (`AuditorCheck`) tolerates the
+read-timing race in which a referenced token's producing transaction is still
+pending, so its outputs have not yet been persisted to the token store by the
+asynchronous finality listener. On a missing lookup whose producing transaction is
+still `Pending`, the gate waits `retryDelay` and retries up to `numRetries`
+attempts before failing, instead of spuriously rejecting a validly-audited,
+quickly-chained transaction. This mirrors the tolerance already applied on the
+sibling `Audit()` path. Applies to both the `fabtoken` and `dlog` drivers.
+
+If not specified, the default configuration is:
+
+```yaml
+token:
+  tms:
+    <name>:
+      auditor:
+        auditTokensRetry:
+          numRetries: 3
+          retryDelay: 3s
+```
+
+Default values:
+
+- numRetries: 3
+- retryDelay: 3s
+
+**Parameter Descriptions:**
+
+- **numRetries**: Number of token-lookup attempts made before giving up, with
+  `numRetries - 1` backoff delays between them (so the defaults give a ~6s grace
+  window: 3 attempts, 2 delays of 3s). A value `<= 0`, or an omitted key, keeps the
+  default; at least one attempt is always made. Retries are only spent while a
+  referenced transaction is genuinely `Pending` — a hard lookup failure (or a
+  failure to determine pending status) fails fast without consuming the budget.
+- **retryDelay**: Backoff slept between attempts, expressed as a Go duration string
+  (e.g. `500ms`, `3s`). Must be `> 0`; an invalid or non-positive value logs a
+  warning and falls back to the default. The backoff honors context cancellation,
+  so a cancelled or timed-out request returns immediately rather than pinning a
+  goroutine for the full grace window.
+
+**Tuning Recommendations:**
+
+- **For quickly-chained, high-throughput workloads** (an output spent shortly after
+  it was audited), raise `numRetries` and/or `retryDelay` to widen the grace window
+  and further reduce spurious rejections when finality persistence lags.
+- **For latency-sensitive gates**, lower `retryDelay` (e.g. `500ms`) so the audit
+  gate fails faster when the producing transaction never becomes final, at the cost
+  of tolerating a shorter persistence lag.
 
 ---
 

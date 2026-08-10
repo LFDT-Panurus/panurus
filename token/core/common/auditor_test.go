@@ -156,10 +156,15 @@ func TestRetrieveAuditTokens(t *testing.T) {
 	logger := &logging.MockLogger{}
 	anchor := driver.TokenRequestAnchor("test-tx")
 
+	// testNumRetries mirrors the production default; testRetryDelay is tiny so the
+	// pending-status retry path can be exercised without real sleeps.
+	const testNumRetries = DefaultAuditTokensNumRetries
+	const testRetryDelay = time.Millisecond
+
 	t.Run("EmptyTokenIDs", func(t *testing.T) {
 		qe := &mock.QueryEngine{}
 
-		tokens, err := RetrieveAuditTokens(ctx, logger, qe, nil, anchor)
+		tokens, err := RetrieveAuditTokens(ctx, logger, qe, nil, anchor, testNumRetries, testRetryDelay)
 		require.NoError(t, err)
 		assert.NotNil(t, tokens)
 		assert.Empty(t, tokens)
@@ -176,7 +181,7 @@ func TestRetrieveAuditTokens(t *testing.T) {
 		tok2 := &token.Token{Type: "USD", Quantity: "200"}
 		qe.ListAuditTokensReturns([]*token.Token{tok1, tok2}, nil)
 
-		tokens, err := RetrieveAuditTokens(ctx, logger, qe, tokenIDs, anchor)
+		tokens, err := RetrieveAuditTokens(ctx, logger, qe, tokenIDs, anchor, testNumRetries, testRetryDelay)
 		require.NoError(t, err)
 		assert.Len(t, tokens, 2)
 		assert.Equal(t, tok1, tokens[id1.String()])
@@ -192,7 +197,7 @@ func TestRetrieveAuditTokens(t *testing.T) {
 
 		qe.ListAuditTokensReturns(nil, assert.AnError)
 
-		tokens, err := RetrieveAuditTokens(ctx, logger, qe, tokenIDs, anchor)
+		tokens, err := RetrieveAuditTokens(ctx, logger, qe, tokenIDs, anchor, testNumRetries, testRetryDelay)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "failed to retrieve audit tokens")
 		assert.Nil(t, tokens)
@@ -207,7 +212,7 @@ func TestRetrieveAuditTokens(t *testing.T) {
 		tok1 := &token.Token{Type: "USD", Quantity: "100"}
 		qe.ListAuditTokensReturns([]*token.Token{tok1, nil}, nil)
 
-		tokens, err := RetrieveAuditTokens(ctx, logger, qe, tokenIDs, anchor)
+		tokens, err := RetrieveAuditTokens(ctx, logger, qe, tokenIDs, anchor, testNumRetries, testRetryDelay)
 		require.NoError(t, err)
 		assert.Len(t, tokens, 2)
 		assert.Equal(t, tok1, tokens[id1.String()])
@@ -219,8 +224,6 @@ func TestRetrieveAuditTokens(t *testing.T) {
 		// persisted), then becomes available on the retry. This is the exact
 		// read-timing race from issue #2105: the token must be resolved, not
 		// spuriously rejected.
-		defer withFastAuditRetries(t)()
-
 		qe := &mock.QueryEngine{}
 		id1 := &token.ID{TxId: "tx1", Index: 0}
 		tokenIDs := []*token.ID{id1}
@@ -230,7 +233,7 @@ func TestRetrieveAuditTokens(t *testing.T) {
 		qe.ListAuditTokensReturnsOnCall(1, []*token.Token{tok1}, nil)
 		qe.IsPendingReturns(true, nil)
 
-		tokens, err := RetrieveAuditTokens(ctx, logger, qe, tokenIDs, anchor)
+		tokens, err := RetrieveAuditTokens(ctx, logger, qe, tokenIDs, anchor, testNumRetries, testRetryDelay)
 		require.NoError(t, err)
 		assert.Len(t, tokens, 1)
 		assert.Equal(t, tok1, tokens[id1.String()])
@@ -240,8 +243,6 @@ func TestRetrieveAuditTokens(t *testing.T) {
 	t.Run("NoRetryWhenNotPending", func(t *testing.T) {
 		// A genuine failure (no requested token is pending) must fail fast,
 		// without spending the retry budget.
-		defer withFastAuditRetries(t)()
-
 		qe := &mock.QueryEngine{}
 		id1 := &token.ID{TxId: "tx1", Index: 0}
 		tokenIDs := []*token.ID{id1}
@@ -249,7 +250,7 @@ func TestRetrieveAuditTokens(t *testing.T) {
 		qe.ListAuditTokensReturns(nil, assert.AnError)
 		qe.IsPendingReturns(false, nil)
 
-		tokens, err := RetrieveAuditTokens(ctx, logger, qe, tokenIDs, anchor)
+		tokens, err := RetrieveAuditTokens(ctx, logger, qe, tokenIDs, anchor, testNumRetries, testRetryDelay)
 		require.Error(t, err)
 		assert.Nil(t, tokens)
 		assert.Equal(t, 1, qe.ListAuditTokensCallCount())
@@ -257,8 +258,48 @@ func TestRetrieveAuditTokens(t *testing.T) {
 
 	t.Run("ExhaustsRetriesWhileStillPending", func(t *testing.T) {
 		// The producing tx never leaves the pending state within the grace
-		// window: we give up with a clear "still pending" error.
-		defer withFastAuditRetries(t)()
+		// window: we give up with a clear "still pending" error that still
+		// carries the underlying lookup error.
+		qe := &mock.QueryEngine{}
+		id1 := &token.ID{TxId: "tx1", Index: 0}
+		tokenIDs := []*token.ID{id1}
+
+		qe.ListAuditTokensReturns(nil, errors.New("token not found for key [tx1:0]"))
+		qe.IsPendingReturns(true, nil)
+
+		tokens, err := RetrieveAuditTokens(ctx, logger, qe, tokenIDs, anchor, testNumRetries, testRetryDelay)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "still pending")
+		assert.Contains(t, err.Error(), "token not found for key [tx1:0]")
+		assert.Nil(t, tokens)
+		assert.Equal(t, testNumRetries, qe.ListAuditTokensCallCount())
+	})
+
+	t.Run("IsPendingErrorIsSurfacedNotMaskedAsPending", func(t *testing.T) {
+		// When IsPending itself fails (e.g. a store outage), we must not report
+		// the tx as "still pending" nor burn the retry budget: the underlying
+		// lookup error and the IsPending error are surfaced immediately.
+		qe := &mock.QueryEngine{}
+		id1 := &token.ID{TxId: "tx1", Index: 0}
+		tokenIDs := []*token.ID{id1}
+
+		qe.ListAuditTokensReturns(nil, errors.New("connection refused"))
+		qe.IsPendingReturns(false, errors.New("db is down"))
+
+		tokens, err := RetrieveAuditTokens(ctx, logger, qe, tokenIDs, anchor, testNumRetries, testRetryDelay)
+		require.Error(t, err)
+		assert.NotContains(t, err.Error(), "still pending")
+		assert.Contains(t, err.Error(), "connection refused")
+		assert.Contains(t, err.Error(), "db is down")
+		assert.Nil(t, tokens)
+		assert.Equal(t, 1, qe.ListAuditTokensCallCount())
+	})
+
+	t.Run("ContextCancellationInterruptsBackoff", func(t *testing.T) {
+		// A cancelled context must abort the backoff immediately instead of
+		// pinning the goroutine for the full grace window.
+		cancelCtx, cancel := context.WithCancel(ctx)
+		cancel()
 
 		qe := &mock.QueryEngine{}
 		id1 := &token.ID{TxId: "tx1", Index: 0}
@@ -267,23 +308,30 @@ func TestRetrieveAuditTokens(t *testing.T) {
 		qe.ListAuditTokensReturns(nil, errors.New("token not found for key [tx1:0]"))
 		qe.IsPendingReturns(true, nil)
 
-		tokens, err := RetrieveAuditTokens(ctx, logger, qe, tokenIDs, anchor)
+		// Use a long delay: if ctx cancellation were ignored the test would hang.
+		tokens, err := RetrieveAuditTokens(cancelCtx, logger, qe, tokenIDs, anchor, testNumRetries, time.Hour)
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "still pending")
+		require.ErrorIs(t, err, context.Canceled)
 		assert.Nil(t, tokens)
-		assert.Equal(t, AuditTokensNumRetries, qe.ListAuditTokensCallCount())
+		assert.Equal(t, 1, qe.ListAuditTokensCallCount())
 	})
-}
 
-// withFastAuditRetries shrinks the audit-token retry delay for the duration of a
-// test so the pending-status retry path can be exercised without real sleeps, and
-// restores the original values on cleanup.
-func withFastAuditRetries(t *testing.T) func() {
-	t.Helper()
-	origDelay := AuditTokensRetryDelay
-	AuditTokensRetryDelay = time.Millisecond
+	t.Run("ZeroRetriesMakesSingleAttemptAndNeverReturnsNilNil", func(t *testing.T) {
+		// numRetries <= 0 must be clamped to a single attempt; on failure it must
+		// return an error (never a nil slice with a nil error, which would panic
+		// the caller when it indexes the slice).
+		qe := &mock.QueryEngine{}
+		id1 := &token.ID{TxId: "tx1", Index: 0}
+		tokenIDs := []*token.ID{id1}
 
-	return func() { AuditTokensRetryDelay = origDelay }
+		qe.ListAuditTokensReturns(nil, errors.New("token not found for key [tx1:0]"))
+		qe.IsPendingReturns(false, nil)
+
+		tokens, err := RetrieveAuditTokens(ctx, logger, qe, tokenIDs, anchor, 0, testRetryDelay)
+		require.Error(t, err)
+		assert.Nil(t, tokens)
+		assert.Equal(t, 1, qe.ListAuditTokensCallCount())
+	})
 }
 
 // BenchmarkRetrieveAuditTokens measures the latency added by the pending-status
@@ -293,7 +341,7 @@ func withFastAuditRetries(t *testing.T) func() {
 //     so no retry occurs and the added latency is only the (skipped) retry check.
 //   - RaceResolvesOnRetry: the issue #2105 race — the first lookup misses while
 //     the producing tx is pending, and the token is resolved on the retry. This
-//     is where the one AuditTokensRetryDelay backoff is paid.
+//     is where the one retryDelay backoff is paid.
 //
 // Run with a real delay to see the actual grace-window cost:
 //
@@ -312,7 +360,7 @@ func BenchmarkRetrieveAuditTokens(b *testing.B) {
 
 		b.ReportAllocs()
 		for range b.N {
-			if _, err := RetrieveAuditTokens(ctx, logger, qe, tokenIDs, anchor); err != nil {
+			if _, err := RetrieveAuditTokens(ctx, logger, qe, tokenIDs, anchor, DefaultAuditTokensNumRetries, time.Millisecond); err != nil {
 				b.Fatal(err)
 			}
 		}
@@ -321,10 +369,6 @@ func BenchmarkRetrieveAuditTokens(b *testing.B) {
 	b.Run("RaceResolvesOnRetry", func(b *testing.B) {
 		// Keep the retry mechanics but use a tiny backoff so the benchmark
 		// measures the added path cost rather than the wall-clock delay itself.
-		origDelay := AuditTokensRetryDelay
-		AuditTokensRetryDelay = time.Millisecond
-		defer func() { AuditTokensRetryDelay = origDelay }()
-
 		qe := &mock.QueryEngine{}
 		qe.IsPendingReturns(true, nil)
 		qe.ListAuditTokensStub = func(_ context.Context, _ ...*token.ID) ([]*token.Token, error) {
@@ -339,7 +383,7 @@ func BenchmarkRetrieveAuditTokens(b *testing.B) {
 
 		b.ReportAllocs()
 		for range b.N {
-			if _, err := RetrieveAuditTokens(ctx, logger, qe, tokenIDs, anchor); err != nil {
+			if _, err := RetrieveAuditTokens(ctx, logger, qe, tokenIDs, anchor, DefaultAuditTokensNumRetries, time.Millisecond); err != nil {
 				b.Fatal(err)
 			}
 		}

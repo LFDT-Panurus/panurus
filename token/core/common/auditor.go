@@ -18,14 +18,16 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
-// AuditTokensNumRetries and AuditTokensRetryDelay control how RetrieveAuditTokens
-// tolerates the read-timing race in which a referenced token's producing
-// transaction is still pending, so its outputs have not yet been persisted to the
-// token store by the asynchronous finality listener. They mirror the retry/backoff
-// already applied on the sibling token.QueryEngine audit path (see token/vault.go).
-var (
-	AuditTokensNumRetries = 3
-	AuditTokensRetryDelay = 3 * time.Second
+// DefaultAuditTokensNumRetries and DefaultAuditTokensRetryDelay are the default
+// retry budget and backoff used by RetrieveAuditTokens to tolerate the read-timing
+// race in which a referenced token's producing transaction is still pending, so its
+// outputs have not yet been persisted to the token store by the asynchronous
+// finality listener. They mirror the retry/backoff already applied on the sibling
+// token.QueryEngine audit path (see token/vault.go). Per-instance tuning is done via
+// the AuditorService fields that default to these values, not by mutating a global.
+const (
+	DefaultAuditTokensNumRetries = 3
+	DefaultAuditTokensRetryDelay = 3 * time.Second
 )
 
 // AuditContext contains the context for token request auditing.
@@ -280,12 +282,18 @@ func ExtractTokenIDsAndCheckDuplicates(
 //
 // This function always returns a non-nil map (possibly empty) to ensure
 // validation logic can distinguish between "no tokens requested" and "tokens not found".
+//
+// numRetries and retryDelay control the tolerance for the pending-transaction
+// read-timing race (see DefaultAuditTokensNumRetries / DefaultAuditTokensRetryDelay).
+// A numRetries <= 0 is clamped to a single attempt.
 func RetrieveAuditTokens(
 	ctx context.Context,
 	logger logging.Logger,
 	queryEngine driver.QueryEngine,
 	tokenIDs []*token.ID,
 	anchor driver.TokenRequestAnchor,
+	numRetries int,
+	retryDelay time.Duration,
 ) (map[string]*token.Token, error) {
 	if logger == nil {
 		return nil, errors.Errorf("logger cannot be nil for tx [%s]", anchor)
@@ -299,7 +307,7 @@ func RetrieveAuditTokens(
 	}
 
 	logger.DebugfContext(ctx, "[%s] retrieving [%d] audit tokens...", anchor, len(tokenIDs))
-	tokens, err := listAuditTokensWithRetry(ctx, logger, queryEngine, tokenIDs, anchor)
+	tokens, err := listAuditTokensWithRetry(ctx, logger, queryEngine, tokenIDs, anchor, numRetries, retryDelay)
 	if err != nil {
 		return nil, errors.WithMessagef(err, "failed to retrieve audit tokens for tx [%s]", anchor)
 	}
@@ -320,21 +328,31 @@ func RetrieveAuditTokens(
 // store because its producing transaction is still pending (its outputs are
 // persisted only later, by the asynchronous finality listener). On failure, it
 // checks whether any requested token belongs to a still-pending transaction and,
-// if so, waits AuditTokensRetryDelay and retries up to AuditTokensNumRetries times
-// before giving up. This mirrors the tolerance already implemented for the sibling
-// Audit() path in token/vault.go, so the earlier AuditorCheck gate no longer
-// spuriously rejects a validly-audited, quickly-chained transaction.
+// if so, waits retryDelay and retries. It makes up to numRetries attempts total,
+// sleeping retryDelay between them (numRetries-1 delays); numRetries <= 0 is
+// clamped to a single attempt. This mirrors the tolerance already implemented for
+// the sibling Audit() path in token/vault.go, so the earlier AuditorCheck gate no
+// longer spuriously rejects a validly-audited, quickly-chained transaction.
+//
+// The backoff honors ctx cancellation, so a cancelled or timed-out request returns
+// immediately instead of pinning a goroutine for the full grace window. A genuine
+// (non-pending) lookup failure, or a failure to determine pending status, is
+// returned rather than retried and never masked as "still pending".
 func listAuditTokensWithRetry(
 	ctx context.Context,
 	logger logging.Logger,
 	queryEngine driver.QueryEngine,
 	tokenIDs []*token.ID,
 	anchor driver.TokenRequestAnchor,
+	numRetries int,
+	retryDelay time.Duration,
 ) ([]*token.Token, error) {
+	attempts := max(1, numRetries)
+
 	var tokens []*token.Token
 	var err error
 
-	for i := range AuditTokensNumRetries {
+	for i := range attempts {
 		tokens, err = queryEngine.ListAuditTokens(ctx, tokenIDs...)
 		if err == nil {
 			return tokens, nil
@@ -346,11 +364,14 @@ func listAuditTokensWithRetry(
 		retry := false
 		for _, id := range tokenIDs {
 			pending, pErr := queryEngine.IsPending(ctx, id)
-			if pending || pErr != nil {
-				logger.Warnf("[%s] cannot get audit token for id [%s] because the relative transaction is pending, retry [%d/%d]: with err [%v]", anchor, id, i+1, AuditTokensNumRetries, pErr)
-				if i == AuditTokensNumRetries-1 {
-					return nil, errors.Errorf("failed to get audit tokens, tx [%s] is still pending", id.TxId)
-				}
+			if pErr != nil {
+				// We could not even determine the pending status: this is a hard
+				// failure, not a pending transaction. Surface both errors instead
+				// of masking them as "still pending".
+				return nil, errors.Wrapf(errors.Join(err, pErr), "failed to retrieve audit tokens, tx [%s]: cannot determine pending status of token [%s]", anchor, id)
+			}
+			if pending {
+				logger.Warnf("[%s] cannot get audit token for id [%s] because the relative transaction is pending, retry [%d/%d]: with err [%v]", anchor, id, i+1, attempts, err)
 				retry = true
 
 				break
@@ -362,10 +383,27 @@ func listAuditTokensWithRetry(
 			return nil, err
 		}
 
-		time.Sleep(AuditTokensRetryDelay)
+		if i == attempts-1 {
+			// Retry budget exhausted while a token is still pending. Report that,
+			// but keep the underlying lookup error so operators can diagnose it.
+			return nil, errors.Wrapf(err, "failed to get audit tokens for tx [%s], transaction is still pending", anchor)
+		}
+
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(retryDelay):
+		}
 	}
 
-	return tokens, err
+	// Unreachable: the loop above returns on success, on genuine failure, and on
+	// the final pending attempt. Return an explicit error so a nil/nil pair can
+	// never escape to callers that index the returned slice.
+	if err == nil {
+		err = errors.Errorf("failed to retrieve audit tokens for tx [%s]", anchor)
+	}
+
+	return nil, err
 }
 
 // ValidateStructure ensures complete structural correspondence between TokenRequest and TokenRequestMetadata.
