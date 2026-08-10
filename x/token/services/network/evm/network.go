@@ -18,6 +18,7 @@ import (
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/view"
 
+	ncommon "github.com/LFDT-Panurus/panurus/token/services/network/common"
 	"github.com/LFDT-Panurus/panurus/token/services/network/driver"
 	"github.com/LFDT-Panurus/panurus/x/token/services/network/evm/client"
 	"github.com/LFDT-Panurus/panurus/x/token/services/network/evm/endorsement"
@@ -40,10 +41,17 @@ type Network struct {
 	config      *Config
 	client      client.EVMClient
 	endorsement EndorsementService
-	submitter   *Submitter
-	reader      *contractReader
-	finality    *finality.Manager
-	tokenState  client.Address
+	// endorsementFor resolves the per-TMS endorsement service. It is preferred over the field above,
+	// which stays for tests that inject a stub directly.
+	endorsementFor func(tms *token2.ManagementService) (EndorsementService, error)
+	submitter      *Submitter
+	reader         *contractReader
+	finality       *finality.Manager
+	tokenState     client.Address
+	membership     driver.LocalMembership
+	// startRecovery starts the per-TMS transaction recovery sweep. It is installed by the driver,
+	// which owns the stores, and runs when a namespace binds rather than when the network is built.
+	startRecovery func(ns string) error
 }
 
 // Compile-time assertion that Network satisfies the driver contract.
@@ -56,6 +64,7 @@ func NewNetwork(
 	evmClient client.EVMClient,
 	endorsementService EndorsementService,
 	submitter *Submitter,
+	membership driver.LocalMembership,
 ) (*Network, error) {
 	if config == nil {
 		return nil, errors.New("evm network: nil configuration")
@@ -77,7 +86,8 @@ func NewNetwork(
 		endorsement: endorsementService,
 		submitter:   submitter,
 		reader:      reader,
-		finality:    finality.NewManager(evmClient, reader, config.Finality.PollInterval, config.Finality.Timeout),
+		membership:  membership,
+		finality:    finality.NewManager(evmClient, reader, tokenState, config.Finality.FromBlock, config.Finality.PollInterval, config.Finality.Timeout),
 		tokenState:  tokenState,
 	}, nil
 }
@@ -88,7 +98,13 @@ func (n *Network) Name() string { return n.name }
 // Channel returns the empty string: EVM has no channel concept.
 func (n *Network) Channel() string { return "" }
 
-// Normalize fills default service options for the EVM network: this network and the empty channel.
+// Normalize fills default service options for the EVM network: this network, the empty channel, and
+// the fetcher the token layer reads public parameters through.
+//
+// The fetcher matters more than it looks. Building a TMS needs its public parameters, and the token
+// layer tries the options, its storage, the local configuration and finally this fetcher. On a fresh
+// node none of the first three hold anything, so without a fetcher here the parameters cannot be
+// found at all and the TMS fails to build, which surfaces far from its cause.
 func (n *Network) Normalize(opt *token2.ServiceOptions) (*token2.ServiceOptions, error) {
 	if opt == nil {
 		return nil, errors.New("evm network: nil service options")
@@ -96,10 +112,17 @@ func (n *Network) Normalize(opt *token2.ServiceOptions) (*token2.ServiceOptions,
 	if len(opt.Network) == 0 {
 		opt.Network = n.name
 	}
+	if opt.Network != n.name {
+		return nil, errors.Errorf("evm network: invalid network [%s], expected [%s]", opt.Network, n.name)
+	}
 	if len(opt.Channel) != 0 && opt.Channel != n.Channel() {
 		return nil, errors.Errorf("evm network has no channels, got [%s]", opt.Channel)
 	}
 	opt.Channel = n.Channel()
+
+	if opt.PublicParamsFetcher == nil {
+		opt.PublicParamsFetcher = ncommon.NewPublicParamsFetcher(n, opt.Namespace)
+	}
 
 	return opt, nil
 }
@@ -116,6 +139,14 @@ func (n *Network) Connect(ns string) ([]token2.ServiceOption, error) {
 	if chainID.Cmp(n.config.ChainIDBig()) != 0 {
 		return nil, errors.Errorf("evm network: node reports chain id %s, configuration says %d",
 			chainID, n.config.ChainID)
+	}
+
+	// Recovery completes transactions this node left Pending when it last stopped. Failing to start
+	// it is not a reason to refuse the connection: the node works, it just cannot rescue those.
+	if n.startRecovery != nil {
+		if err := n.startRecovery(ns); err != nil {
+			logger.Errorf("could not start transaction recovery for [%s]: %v", ns, err)
+		}
 	}
 
 	return []token2.ServiceOption{
@@ -139,15 +170,16 @@ func (n *Network) RequestApproval(
 	txID driver.TxID,
 	metadata driver.TransientMap,
 ) (driver.Envelope, error) {
-	if n.endorsement == nil {
-		return nil, errors.New("evm network: no endorsement service configured")
-	}
 	if tms == nil {
 		return nil, errors.New("evm network: nil token management service")
 	}
+	endorser, err := n.endorserFor(tms)
+	if err != nil {
+		return nil, err
+	}
 
 	anchor := n.ComputeTxID(&txID)
-	result, err := n.endorsement.Endorse(context, &endorsement.EndorseRequest{
+	result, err := endorser.Endorse(context, &endorsement.EndorseRequest{
 		TokenRequest: requestRaw,
 		TMSID:        tms.ID(),
 		Anchor:       anchor,
@@ -163,6 +195,32 @@ func (n *Network) RequestApproval(
 		Endorsements: result.Endorsements,
 	}, nil
 }
+
+// endorserFor returns the endorsement service for a TMS: the one injected directly if there is one,
+// otherwise the per-TMS service the factory builds. The service is per TMS because validating a
+// request needs that TMS's validator.
+func (n *Network) endorserFor(tms *token2.ManagementService) (EndorsementService, error) {
+	if n.endorsement != nil {
+		return n.endorsement, nil
+	}
+	if n.endorsementFor == nil {
+		return nil, errors.New("evm network: no endorsement service configured")
+	}
+
+	return n.endorsementFor(tms)
+}
+
+// SetEndorsementFactory installs the resolver that builds the endorsement service per TMS. The SDK
+// wiring calls it after the network is created, because the factory needs collaborators (the view
+// manager, this node's signing key) that the network itself has no source for.
+func (n *Network) SetEndorsementFactory(f func(tms *token2.ManagementService) (EndorsementService, error)) {
+	n.endorsementFor = f
+}
+
+// SetRecoveryStarter installs the hook that starts transaction recovery for a namespace. Like the
+// endorsement factory it is set by the driver after construction, because the stores it sweeps
+// belong to the driver rather than to the network.
+func (n *Network) SetRecoveryStarter(f func(ns string) error) { n.startRecovery = f }
 
 // Broadcast assembles the endorsed envelope into a signed transaction, sends it, and records the
 // resulting raw transaction and hash back into the envelope so the caller can follow its finality.
@@ -309,9 +367,10 @@ func (n *Network) LookupTransferMetadataKey(namespace string, key string, timeou
 	}
 }
 
-// LocalMembership returns the local membership service for EVM identities. It is supplied by the SDK
-// wiring, which owns the node's identities.
-func (n *Network) LocalMembership() driver.LocalMembership { return nil }
+// LocalMembership returns this node's identities. The driver does not mint identities of its own, so
+// the service is supplied by the SDK wiring, which owns them; a network built without one reports nil
+// rather than inventing a membership that would not correspond to any real node.
+func (n *Network) LocalMembership() driver.LocalMembership { return n.membership }
 
 // AddFinalityListener registers a listener for the finality of the transaction identified by its
 // anchor. If the transaction is already final the listener is notified immediately; otherwise it is

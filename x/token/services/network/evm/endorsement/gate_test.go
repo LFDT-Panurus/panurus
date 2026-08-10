@@ -96,7 +96,13 @@ func gateEndorsers(t *testing.T, n int) (*Registry, map[string]*Responder) {
 		signer := newSigner(t, byte(k))
 		id := view.Identity(nodeName(k))
 		entries = append(entries, Endorser{Identity: id, Address: signer.Address()})
-		responders[id.UniqueID()] = NewResponder(gateRequest().TMSID, auth, gateFactory(), signer, gateDomain(t))
+		factory := gateFactory()
+		responders[id.UniqueID()] = NewResponder(
+			auth,
+			func(token2.TMSID) (*DeltaFactory, error) { return factory, nil },
+			signer,
+			gateDomain(t),
+		)
 	}
 	reg, err := NewRegistry(entries)
 	require.NoError(t, err)

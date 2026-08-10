@@ -13,6 +13,9 @@ import (
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 
 	"github.com/LFDT-Panurus/panurus/x/token/services/network/evm/client"
+	"github.com/LFDT-Panurus/panurus/x/token/services/network/evm/eip712"
+	"github.com/LFDT-Panurus/panurus/x/token/services/network/evm/endorsement"
+	"github.com/hyperledger-labs/fabric-smart-client/platform/view/view"
 )
 
 // Configuration defaults. They are applied at load time so a minimal config (endpoint, chain id,
@@ -76,6 +79,11 @@ type FinalityConfig struct {
 	// a failed apply reverts and emits no log, so "no event by the timeout" is what makes it Invalid
 	// (design §7.4).
 	Timeout time.Duration `yaml:"timeout"`
+	// FromBlock is where log searches start when resolving an anchor to its transaction hash. It
+	// defaults to zero, the whole chain, which is right for a freshly bootstrapped network; on a chain
+	// where the TokenState was deployed much later, set it to the deployment block so the search does
+	// not walk history that cannot contain the event.
+	FromBlock uint64 `yaml:"fromBlock"`
 }
 
 // GasConfig controls gas limit selection.
@@ -270,6 +278,78 @@ func (c *Config) TokenStateAddress() (client.Address, error) {
 	}
 
 	return addr, nil
+}
+
+// IdentityResolver turns the node name a configuration carries into the FSC identity that node
+// actually speaks with.
+//
+// The distinction matters twice over: a session is opened to an identity, not a name, so an
+// unresolved name routes nowhere; and the allowlist is compared against the identity a session
+// authenticated, so an unresolved name never matches and every request is refused as unauthorized.
+type IdentityResolver func(name string) (view.Identity, error)
+
+// EndorserRegistry builds the address to identity registry the endorsement flow routes on, from the
+// configured endorser set (design §6.1). Names are resolved through the identity provider, the way
+// the fabric endorsement service resolves its own.
+func (c *Config) EndorserRegistry(resolve IdentityResolver) (*endorsement.Registry, error) {
+	if resolve == nil {
+		return nil, errors.New("evm config: no identity resolver for the endorser set")
+	}
+	endorsers := make([]endorsement.Endorser, 0, len(c.Endorsement.Endorsers))
+	for i, b := range c.Endorsement.Endorsers {
+		address, err := client.HexToAddress(b.Address)
+		if err != nil {
+			return nil, errors.Wrapf(err, "evm config: endorser %d has an invalid address", i)
+		}
+		identity, err := resolve(b.FSCIdentity)
+		if err != nil {
+			return nil, errors.Wrapf(err, "evm config: cannot resolve the identity of endorser [%s]", b.FSCIdentity)
+		}
+		if identity.IsNone() {
+			return nil, errors.Errorf("evm config: endorser [%s] has no known identity", b.FSCIdentity)
+		}
+		endorsers = append(endorsers, endorsement.Endorser{Identity: identity, Address: address})
+	}
+
+	return endorsement.NewRegistry(endorsers)
+}
+
+// EndorserSigner loads this node's endorsement signing key, or nil when the node does not endorse.
+func (c *Config) EndorserSigner() (*eip712.Signer, error) {
+	if !c.Endorser.Enabled {
+		return nil, nil
+	}
+	key, err := LoadKeyForAddress(c.Endorser.Keystore, c.Endorser.Address)
+	if err != nil {
+		return nil, err
+	}
+
+	return eip712.NewSigner(key), nil
+}
+
+// AllowedRequesters returns the identities permitted to request an endorsement. The allowlist is
+// compared against the identity a session authenticated, so the configured names have to be resolved
+// to identities or nothing ever matches.
+func (c *Config) AllowedRequesters(resolve IdentityResolver) ([]view.Identity, error) {
+	if resolve == nil {
+		return nil, errors.New("evm config: no identity resolver for the allowlist")
+	}
+	out := make([]view.Identity, 0, len(c.Endorsement.Allowlist))
+	for _, name := range c.Endorsement.Allowlist {
+		// A name this node cannot resolve is dropped rather than fatal. It could never match an
+		// authenticated caller anyway, and failing here would take the endorser down for every other
+		// requester too. It is the common case, not the exotic one: the allowlist names every node in
+		// the network, and a node does not resolve its own name.
+		identity, err := resolve(name)
+		if err != nil || identity.IsNone() {
+			logger.Debugf("allowlisted requester [%s] has no known identity here and will not be admitted", name)
+
+			continue
+		}
+		out = append(out, identity)
+	}
+
+	return out, nil
 }
 
 // ChainIDBig returns the chain id as a big.Int, the form the EIP-712 domain and transaction signing

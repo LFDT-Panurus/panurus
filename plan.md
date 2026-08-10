@@ -37,9 +37,23 @@ isPending = stretch, only if time remains. Target 6 wks, ceiling ~8 with buffer.
     Service.Endorse entrypoint + envelope carries the delta + endorsements
   - [x] D: gate — 2-of-3 assembled over in-memory FSC sessions, quorum pinned to a committed fixture and
     verified on-chain (Endorsement2ofN.t.sol), mirroring the Week-3 Go→Solidity loop; docs
-- [ ] Week 5 — Driver + 16 network methods + JSON-RPC client + DI + receipt-finality baseline
-- [ ] Week 6 — Besu NWO bootstrap + admin runbook + fabtoken END-TO-END on Besu
-- [ ] Week 7 — endorsed PP-update + zkatdlog END-TO-END + recipient anchor→finality (stretch: fabric-x-evm + isPending)
+- [x] Week 5 — Driver + network methods + JSON-RPC client + receipt-finality baseline — two PRs, gate met:
+  - [x] 5a: JSON-RPC client, RLP + EIP-1559 signing, ABI write codec, config, VersionKeeper — MERGED (#2082);
+    signed tx and applyStateDelta calldata both pinned to vectors verified with `cast`, not just self-checked
+  - [x] 5b: network methods, mutating ComputeTxID, nonce manager, submitter, finality baseline — MERGED
+    (#2094); gate: on a real node, deploy → issue → transfer → double-spend refused → finality read back,
+    all through the driver's own submission path
+- [x] Week 6 — Besu NWO bootstrap + admin runbook + fabtoken END-TO-END on Besu, now including
+  recipient anchor→finality (moved from Week 7: the fungible suite has recipients calling CheckFinality by
+  txID, so the gate depends on it). **Gate met 2026-08-08**: the fabtoken Ginkgo suite runs green end to end
+  on a real Besu node with `fungible.TestAll` unmodified, including the concurrent transfers and parallel
+  token selector no run had previously reached. Everything else landed alongside it: NWO topology + Besu +
+  forge deploy, the `evmdlog`/`evmfabtoken` SDK compositions, both suites, the make targets, recipient
+  anchor→finality, the deploy-hardening factory, transaction recovery, the permanent/transient error split,
+  and the admin runbook (`docs/services/network-ethereum-deployment.md`). Nine findings are logged under
+  Week 6 in the detailed plan; every one of them needed real nodes to appear.
+- [~] Week 7 — endorsed PP-update + zkatdlog END-TO-END (stretch: fabric-x-evm + isPending). The endorsed
+  PP-update flow landed early, in Week 6, because the fungible bodies depend on it.
 - [ ] Week 8 — hardening + full integration matrix + metrics + buffer
 
 Deferred (additive future scope, not demo cuts): EIP-1167 clones, ERC-4337, graph-hiding driver. Status

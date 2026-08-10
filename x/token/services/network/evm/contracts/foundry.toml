@@ -4,6 +4,11 @@ out = "out"
 test = "test"
 libs = ["lib"]
 solc = "0.8.24"
+# Compile below Shanghai so the bytecode carries no PUSH0. Besu's development network, which the
+# integration suite runs against, does not enable EIP-3855, and a PUSH0 in the deployment code makes
+# every contract creation revert. Nothing here needs a post-Paris opcode, so targeting Paris costs
+# nothing and keeps the contracts deployable on the widest set of chains.
+evm_version = "paris"
 optimizer = true
 optimizer_runs = 200
 # The EIP-712 cross-impl gate (test/EIP712.t.sol) reads the golden fixture committed by the Go side.

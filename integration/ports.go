@@ -94,4 +94,14 @@ const (
 
 	Mixed
 	Updatability
+
+	// The evm suites are appended rather than inserted: the ranges are positional, so adding one in
+	// the middle would shift every suite after it onto different ports.
+	//
+	// evmSkipAirPlay stands between them and the range starting at 7000, which macOS binds to AirPlay
+	// Receiver by default. Landing there made the suites fail on every Mac with a port conflict rather
+	// than anything to do with the driver, which is a miserable first experience of the backend.
+	evmSkipAirPlay
+	EVMFungible
+	EVMFungibleFabToken
 )

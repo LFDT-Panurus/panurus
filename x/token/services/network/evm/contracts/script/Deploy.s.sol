@@ -3,8 +3,8 @@ pragma solidity 0.8.24;
 
 import {Script, console2} from "forge-std/Script.sol";
 import {TokenState} from "../src/TokenState.sol";
+import {TokenStateFactory} from "../src/TokenStateFactory.sol";
 import {EndorsementVerifier} from "../src/EndorsementVerifier.sol";
-import {Clones} from "../src/Clones.sol";
 
 /// @title Deploy
 /// @notice Deploys the EVM token contracts for one TMS (design §3.8): the EndorsementVerifier holding the
@@ -28,10 +28,21 @@ contract Deploy is Script {
 
         EndorsementVerifier v = new EndorsementVerifier(endorsers, threshold);
         TokenState impl = new TokenState();
-        TokenState ts = TokenState(Clones.clone(address(impl)));
-        ts.initialize(address(v), msg.sender, pp0, graphHiding);
+        // The clone is created and seeded by the factory in one transaction, so there is no window in
+        // which an uninitialized clone is reachable (design §3.8).
+        TokenStateFactory factory = new TokenStateFactory(address(impl));
+        TokenState ts = TokenState(factory.create(address(v), msg.sender, pp0, graphHiding));
 
         vm.stopBroadcast();
+
+        // Read the seeded state back before reporting the address. The factory already makes a
+        // hijacked clone impossible, so this is here to catch the deployment being wrong for duller
+        // reasons: the wrong verifier wired up, or public parameters that did not survive the trip.
+        require(ts.endorsementVerifier() == address(v), "Deploy: verifier not recorded on the clone");
+        require(ts.getPublicParamsHash() == sha256(pp0), "Deploy: public parameters were not seeded");
+        require(ts.getPublicParamsVersion() == 0, "Deploy: public parameters are not at version 0");
+        require(ts.graphHiding() == graphHiding, "Deploy: graphHiding was not applied");
+        require(ts.deployer() == msg.sender, "Deploy: deployer not recorded on the clone");
 
         verifier = address(v);
         implementation = address(impl);
@@ -39,6 +50,7 @@ contract Deploy is Script {
 
         console2.log("EndorsementVerifier:", verifier);
         console2.log("TokenState impl:", implementation);
+        console2.log("TokenStateFactory:", address(factory));
         console2.log("TokenState clone:", tokenState);
     }
 }

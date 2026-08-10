@@ -7,6 +7,7 @@ SPDX-License-Identifier: Apache-2.0
 package token
 
 import (
+	tevm "github.com/LFDT-Panurus/panurus/integration/nwo/token/evm"
 	tfabric "github.com/LFDT-Panurus/panurus/integration/nwo/token/fabric"
 	"github.com/LFDT-Panurus/panurus/integration/nwo/token/fabric/cc"
 	fabricx2 "github.com/LFDT-Panurus/panurus/integration/nwo/token/fabricx"
@@ -33,6 +34,7 @@ func (p *platformFactory) New(ctx api.Context, t api.Topology, builder api.Build
 	tp.AddNetworkHandler(fabricx.PlatformName, tfabric.NewNetworkHandler(tp, builder, &fabricx2.Backend{
 		ClientProvider: p.ClientProvider,
 	}))
+	tp.AddNetworkHandler(tevm.TopologyName, tevm.NewNetworkHandler(tp, builder))
 
 	return tp
 }

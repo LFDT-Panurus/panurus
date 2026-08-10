@@ -220,6 +220,47 @@ jobs:
           parallel: true
           fail-on-error: false
 
+  # The evm suites run on the feature branch rather than on main, because that is where the driver
+  # lives until it graduates. They are their own job for two reasons: they need foundry, which nothing
+  # else in this workflow does, and they need no fabric binaries at all.
+  #
+  # No coverage upload here on purpose. The other jobs upload with parallel: true and publish-coverage
+  # closes the set; adding this one would either make that job wait on a run that is skipped on main,
+  # or leave a parallel report that never finishes.
+  itest-evm:
+    needs: checks
+    if: github.ref == 'refs/heads/feature/evm-network-driver' || github.base_ref == 'feature/evm-network-driver'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        tests: [ evm, evm-fabtoken ]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          # forge-std is a submodule of the contracts project, and the deploy script imports it.
+          # Without this the checkout is missing lib/forge-std and forge fails to compile.
+          submodules: recursive
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: "go.mod"
+          cache-dependency-path: "**/*.sum"
+
+      - name: Set up tools
+        run: make install-tools
+
+      - name: Set up foundry
+        uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: stable
+
+      - name: Run ${{ matrix.tests }}
+        run: make integration-tests-${{ matrix.tests }}
+
   publish-coverage:
     needs: [ utest, itest ]
     runs-on: ubuntu-latest
