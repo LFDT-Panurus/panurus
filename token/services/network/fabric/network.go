@@ -407,9 +407,7 @@ func (n *Network) LookupTransferMetadataKey(namespace string, key string, timeou
 		return nil, errors.Wrapf(err, "failed to generate transfer action metadata key from [%s]", key)
 	}
 	logger.Debugf("lookup transfer metadata key [%s] from [%s] in namespace [%s]", key, transferMetadataKey, namespace)
-	wg := &sync.WaitGroup{}
-	wg.Add(1)
-	l := &lookupListener{wg: wg, key: transferMetadataKey}
+	l := newLookupListener(transferMetadataKey)
 	if err := n.llm.AddLookupListener(namespace, transferMetadataKey, l); err != nil {
 		return nil, errors.Wrapf(err, "failed to add lookup listener")
 	}
@@ -418,12 +416,10 @@ func (n *Network) LookupTransferMetadataKey(namespace string, key string, timeou
 			logger.Debugf("failed to remove lookup listener [%s]: %v", transferMetadataKey, err)
 		}
 	}()
-	if err := waitTimeout(wg, timeout); err != nil {
-		return nil, err
-	}
-	logger.Debugf("lookup transfer metadata key [%s] from [%s] in namespace [%s], done, result [%s][%s]", key, transferMetadataKey, namespace, l.value, l.err)
+	value, err := l.wait(timeout)
+	logger.Debugf("lookup transfer metadata key [%s] from [%s] in namespace [%s], done, result [%s][%v]", key, transferMetadataKey, namespace, value, err)
 
-	return l.value, l.err
+	return value, err
 }
 
 // Ledger returns direct access to the ledger querying layer.
@@ -552,44 +548,59 @@ func (n *Network) createCleanupManager(tmsID token2.TMSID) (*cleanup.Manager, er
 	return manager, nil
 }
 
+// lookupListener waits for the lookup manager to report the value of a single key.
+//
+// Completion is signalled by closing done, so a waiter that gives up on timeout leaves
+// nothing behind: there is no goroutine parked on the notification (#2124). done is closed
+// exactly once, which also makes a duplicate or racing notification harmless.
 type lookupListener struct {
 	key   string
-	wg    *sync.WaitGroup
+	done  chan struct{}
+	once  sync.Once
 	value []byte
 	err   error
 }
 
+// newLookupListener returns a listener waiting for the passed key.
+func newLookupListener(key string) *lookupListener {
+	return &lookupListener{key: key, done: make(chan struct{})}
+}
+
 func (l *lookupListener) OnStatus(ctx context.Context, key string, value []byte) {
 	logger.DebugfContext(ctx, "lookup transfer metadata key [%s], got value [%s][%v]", l.key, key, value)
-	if l.key == key {
-		l.value = value
-		l.wg.Done()
-
+	if l.key != key {
 		return
 	}
+	l.once.Do(func() {
+		l.value = value
+		close(l.done)
+	})
 }
 
 func (l *lookupListener) OnError(ctx context.Context, key string, err error) {
 	logger.DebugfContext(ctx, "lookup transfer metadata key [%s], got error [%s][%s]", l.key, key, err)
-	if l.key == key {
-		l.err = err
-		l.wg.Done()
-
+	if l.key != key {
 		return
 	}
+	l.once.Do(func() {
+		l.err = err
+		close(l.done)
+	})
 }
 
-func waitTimeout(wg *sync.WaitGroup, timeout time.Duration) error {
-	c := make(chan struct{})
-	go func() {
-		defer close(c)
-		wg.Wait()
-	}()
+// wait blocks until the listener has been notified or the timeout expires, and returns
+// whatever the lookup manager reported for the key. The timeout is reported as a plain
+// error rather than a context sentinel: a lookup that does not complete in time is an
+// expected outcome here, not a cancellation of the caller.
+func (l *lookupListener) wait(timeout time.Duration) ([]byte, error) {
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+
 	select {
-	case <-c:
-		return nil
-	case <-time.After(timeout):
-		return errors.Errorf("context done")
+	case <-l.done:
+		return l.value, l.err
+	case <-timer.C:
+		return nil, errors.Errorf("timed out after [%s] waiting for lookup of key [%s]", timeout, l.key)
 	}
 }
 
