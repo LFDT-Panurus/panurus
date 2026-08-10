@@ -9,6 +9,8 @@ package deserializer
 import (
 	"context"
 	errors2 "errors"
+	"slices"
+	"sync"
 
 	"github.com/LFDT-Panurus/panurus/token/driver"
 	"github.com/LFDT-Panurus/panurus/token/services/identity"
@@ -20,6 +22,7 @@ import (
 type TypedSignerDeserializer = idriver.TypedSignerDeserializer
 
 type TypedSignerDeserializerMultiplex struct {
+	mutex         sync.RWMutex
 	deserializers map[idriver.IdentityType][]TypedSignerDeserializer
 }
 
@@ -28,6 +31,8 @@ func NewTypedSignerDeserializerMultiplex() *TypedSignerDeserializerMultiplex {
 }
 
 func (v *TypedSignerDeserializerMultiplex) AddTypedSignerDeserializer(typ idriver.IdentityType, d idriver.TypedSignerDeserializer) {
+	v.mutex.Lock()
+	defer v.mutex.Unlock()
 	_, ok := v.deserializers[typ]
 	if !ok {
 		v.deserializers[typ] = []TypedSignerDeserializer{d}
@@ -42,8 +47,10 @@ func (v *TypedSignerDeserializerMultiplex) DeserializeSigner(ctx context.Context
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to unmarshal to TypedIdentity")
 	}
-	dess, ok := v.deserializers[si.Type]
-	if !ok {
+	v.mutex.RLock()
+	dess := slices.Clone(v.deserializers[si.Type])
+	v.mutex.RUnlock()
+	if dess == nil {
 		return nil, errors.Errorf("no deserializer found for [%v]", si.Type)
 	}
 	logger.DebugfContext(ctx, "deserializing [%s] with type [%v]", logging.Base64(id), si.Type)
