@@ -385,39 +385,180 @@ container resolves the real driver.
 
 ## Week 6 — Besu NWO bootstrap + fabtoken END-TO-END (the integration milestone)
 
-- [ ] **Reintroduce the `evmdlog` SDK composition in the integration module** (R7): `integration/token/common/
+- [x] **Reintroduce the `evmdlog` SDK composition in the integration module** (R7): `integration/token/common/
       sdk/evmdlog/` wiring `evm.NewDriver` + the token driver over `viewsdk`, with a `DryRunWiring`
       registration test. It lives here (not in the lean evm module) because it imports `token/sdk/dig`; the
       integration module already aligns core's fabric+idemix deps. Add the `require`+`replace` for the evm
       module in `integration/go.mod`.
-- [ ] `integration/nwo/token/evm/`: an NWO platform/topology that **boots Besu** (dev-mode / Docker),
+- [x] `integration/nwo/token/evm/`: an NWO platform/topology that **boots Besu** (dev-mode / Docker),
       forge-deploys verifier + TokenState into it, provisions endorser identities (address↔FSC), wires FSC
       nodes with addresses + endpoints. Mirror `integration/nwo/token/fabricx/` (`Backend` with
       `PrepareNamespace`/`UpdatePublicParams`, `BackedTopology`) so the topology's public interface matches
       `fabricx`'s — the Ginkgo suite (below) reuses the fungible `dlog` bodies verbatim, `dlogx`-style.
-- [ ] **Admin deployment runbook** (Angelo, Wk6 deliverable): enumerated bootstrap steps — deploy verifier +
+- [x] **Admin deployment runbook** (Angelo, Wk6 deliverable): enumerated bootstrap steps — deploy verifier +
       TokenState clone, seed PP v0, register endorser set + threshold + `graphHiding`. This doc becomes the
-      spec the forge/NWO deploy scripts automate.
-- [ ] **Deploy hardening (2026-07-11 review, design §3.8):** close the clone→`initialize` front-running
-      window — add a small factory contract that clones and initializes the TokenState in ONE transaction;
-      until it lands, `Deploy.s.sol` must read back and assert the post-initialize state (verifier address,
-      PP hash, `graphHiding`) before recording the clone address.
-- [ ] `Makefile` target `integration-tests-evm`.
-- [ ] `integration/token/evm/evm_test.go` (Ginkgo) — **fabtoken on Besu**, reusing the existing fungible
-      `dlog` test bodies retargeted at the EVM topology: issue, transfer, double-spend reject, sub-threshold
-      reject, finality, recipient anchor→finality.
+      spec the forge/NWO deploy scripts automate. Landed as
+      `docs/services/network-ethereum-deployment.md`, linked from `network.md` and `network-ethereum.md`.
+- [x] **Deploy hardening (2026-07-11 review, design §3.8):** close the clone→`initialize` front-running
+      window — `TokenStateFactory` clones and initializes the TokenState in ONE transaction, and
+      `Deploy.s.sol` also reads the post-initialize state back (verifier, PP hash, version, `graphHiding`,
+      deployer) before recording the clone address. `TokenStateFactory.t.sol` pins both halves, including a
+      test that runs the hijack against the two-transaction deploy it replaced.
+- [x] `Makefile` targets `integration-tests-evm` (zkatdlog) and `integration-tests-evm-fabtoken`.
+- [x] `integration/token/fungible/{evm,evmfabtoken}/evm_test.go` (Ginkgo) — **fabtoken on Besu**, reusing the
+      existing fungible `dlog` test bodies retargeted at the EVM topology: issue, transfer, double-spend
+      reject, sub-threshold reject, finality, recipient anchor→finality. Both suites exist and call
+      `fungible.TestAll` unmodified. **Green on 2026-08-08**: the whole body, 616s, including the
+      concurrent transfers and the parallel token selector that nothing had reached before.
+- [x] **Recipient-side anchor→finality (design §7.4) — MOVED HERE from Week 7 (Angelo, sync 2026-08-06).**
+      It is a *dependency* of the gate, not a later extra: the fungible bodies call
+      `CheckFinality(network, bob, txID, …)`, and bob is a recipient who only ever holds the anchor, so the
+      suite cannot pass without it. Two paths, both needed:
+      - `getTokenRequestHash(anchor)` (already built) is the cheap "is it committed" check: one `eth_call`,
+        no block range, works at any block tag. This stays the common path.
+      - `StateCommitted(bytes32 indexed anchor, …)` log lookup for when the caller also wants the
+        **ethTxHash** (to fetch the receipt, and on Besu the revert reason). **The hash is NOT in the event
+        payload and cannot be:** a contract has no way to read its own transaction hash (no opcode). It comes
+        from the log record's `transactionHash` metadata, which the node supplies and `client.Log` already
+        carries. Logs need a from/to block range and retention varies per node, so the common case must not
+        depend on them.
+      - Recipient failure stays timeout-driven: a failed apply reverts and emits nothing, so "no anchor by the
+        timeout" is the only failure signal, after the configured retries (Angelo confirmed this shape).
 
-Gate: fabtoken Ginkgo suite green **end-to-end on Besu** (not anvil).
+Gate: fabtoken Ginkgo suite green **end-to-end on Besu** (not anvil), recipients included. **MET
+2026-08-08** — `SUCCESS! -- 1 Passed | 0 Failed`, shared bodies unmodified.
 
-## Week 7 — endorsed PP-update + zkatdlog END-TO-END + recipient finality
+### Week-6 log: what the end-to-end run found
 
-- [ ] Endorsed **PP-update flow**: setup token request → setup delta → contract stores PP, bumps version,
-      emits `PublicParametersUpdated`; driver `VersionKeeper` resyncs; stale-PP delta rejected.
+Recorded per R1 and R3. Each of these passed every unit test and only appeared once real nodes ran the
+shared fungible bodies against Besu, and each was found by reading the run rather than by reasoning.
+
+1. **Besu is not a superset of the JSON-RPC spec.** No `eth_maxPriorityFeePerGas` (it is an extension);
+   the submitter now derives the tip from the part of `eth_gasPrice` above the base fee. Its dev network
+   has no PUSH0, so contracts must build for `paris` — a `shanghai` build reverts every contract
+   creation. Golden digests and the forge suite are unaffected by the switch.
+2. **Names are not identities.** The endorsement config names nodes, but a session is opened to an
+   identity and the allowlist is compared against the identity a session authenticated with. Names are
+   resolved through the identity provider now, as the fabric endorsement service does.
+3. **A captured management service goes stale on a parameters update.** `Update` *evicts* the cached
+   `*token.ManagementService` so the next caller builds a new one — so anything holding the old pointer
+   keeps the old public parameters, and asking it again for a validator does not help. The initiator now
+   holds a TMS **id** and resolves per request, like the responder. Symptom: after an update authorising
+   a new issuer, that issuer's every request was rejected as `issuer is not authorized`, by a node that
+   had already logged the new parameters.
+4. **A provider that caches half its answer is worse than one that caches none.** `ChainProvider` read
+   the parameter bytes fresh and the version from a keeper only the watcher ever invalidated, so after
+   an update every delta carried the new bytes under the old version and the contract rejected each one
+   with `StalePublicParams`. It surfaced as `eth_estimateGas` reverting — nothing pointing at
+   parameters. Both halves are read per call now; the version costs one extra `eth_call`.
+
+5. **One funded account cannot back several nodes.** The harness handed every node the same pre-funded
+   development account. Nonces are per account and each node's `NonceManager` counts locally, so the
+   second node to broadcast reused a consumed nonce and got `nonce too low` — and the harness's own
+   parameters update, spending from the same account, moved the nodes' nonces behind their backs. The
+   topology now generates and funds an account per node (`Funder`, `fundSubmitters`), and keeps a
+   separate operator account for deploying and for submitting the setup delta.
+
+6. **A finality listener is in-memory state, so a restart loses it.** The shared bodies restart bob while
+   he holds a prepared transfer, then have alice broadcast it. Bob's row stays `Pending` forever: the
+   registration the ttx layer made when it stored the transaction died with the process, the chain has
+   the answer, and nobody is asking. Every wait then runs to its timeout, which reads as a finality bug
+   and is not one. The Fabric driver starts a recovery manager over the transaction store and the audit
+   store for exactly this reason and fabricx inherits them; this driver started none, which stays
+   invisible for as long as no node restarts. `recovery.go` starts both, per TMS, from `Connect`.
+   Design §7.5.
+
+7. **"Failed to estimate gas" is two different answers wearing one coat.** A reverted `eth_estimateGas`
+   is the node executing the transaction and rejecting it — permanent, and resending only pays gas to
+   be told again. Every other failure of the same call says nothing about the transaction and must be
+   retried. The driver returned both as one wrapped error, so no caller could tell them apart without
+   matching strings, and the suite's double-spend assertion (`"is not valid"`) had nothing to match.
+   Classification now happens in the client, where the JSON-RPC code and message are still in hand:
+   neither is sufficient alone — `-32000` is the implementation-defined range and covers every
+   server-side execution failure, and the wording differs between clients — so the two are paired.
+   Design §13.
+
+3 and 4 are the same mistake twice: state that a public-parameters update replaces, captured by
+something that outlives the update. Anything cached across an update on this path is suspect. 5 is the
+same shape at the account level — shared mutable state with a local cache in front of it — and, like
+the others, it stays invisible until something else touches the state. 6 is the same shape again across
+a restart: in-memory state, and nothing that rebuilds it. All four are invisible to unit tests by
+construction, because each needs a *second* actor — an update, another account, a restart — to touch
+the state before the bug exists.
+
+8. **Two paths asking the same question gave different answers.** With 6 and 7 in, the run reached
+   `tests.go:578`: alice's balance was right and the auditor's *holding* for her was still -55. The
+   rejected transaction had been swept every five seconds since it failed, each sweep logging
+   "successfully recovered" and changing nothing. §7.1 says an unseen anchor is `Unknown` "then
+   `Invalid` after the configured timeout"; that escalation existed in `AddListener`, which knows when
+   it started waiting, and not in `StatusByAnchor`, which is what recovery calls. The shared handler
+   reads `Unknown` as transient, so the record never left `Pending` and the holding it reserved was
+   never released. Recovery now goes through `settledNetwork`, which reads the transaction row's own
+   timestamp and condemns an anchor only once it is older than the finality timeout. Design §7.5.
+
+   The first attempt derived that age from the sweep schedule instead, by raising the recovery TTL to
+   the finality timeout, and the next run failed one assertion *earlier* than before: a transaction
+   that had committed was no longer recovered inside the 30s a finality check allows, because the
+   sweep would not look at it for two minutes. The TTL answers "how soon is it worth asking again" and
+   the timeout answers "how long before absence means rejection". They are not the same question, and
+   the committed case is the one where the answer was available immediately.
+
+   Two things worth keeping from this one. **`tests.go:577` passed for the wrong reason**: it asserts
+   that finality *fails*, and the auditor's wait timed out, which is an error, so the assertion was
+   satisfied without the auditor ever learning anything. The real defect surfaced one line later.
+   **And `recovery.Config.NotFoundGracePeriod` is dead**: the field exists, `RecoveryClaim.StoredAt` is
+   plumbed to the manager for exactly this decision, and nothing reads either. That is a gap in the
+   shared SDK rather than in this driver, and deserves its own issue.
+
+9. **The finality timeout is load-bearing, and its lower bound is not the chain.** With 8 in, the
+   suite went green. Trying to then "tidy" the integration topology's two-minute timeout down to 45
+   seconds - on the grounds that this chain mines instantly and 45s still leaves a 15x margin - broke
+   it one assertion *earlier* than anything before: `tests.go:565`, bob's holding reading 0 instead of
+   110, before any broadcast has happened. The shared bodies prepare two transfers, restart two nodes,
+   and only then broadcast the first. A prepared-but-unsent transaction has no anchor on chain, which
+   is the same evidence a rejected one leaves, so recovery condemned both before they were ever sent.
+
+   §7.4 already says an absent anchor is indistinguishable from one that was never submitted. It was
+   written, and then contradicted by treating absence past a deadline as proof of rejection. The
+   binding lower bound on the timeout is not the chain's finality; it is **the longest gap the
+   application leaves between assembling a transaction and broadcasting it**. Recorded in design §7.5
+   and, more usefully, in a comment on the constant itself, because that is where the next person will
+   be standing when they decide it looks too long.
+
+### Week-6 hardening pass (2026-08-08)
+
+Closing the gaps the work above left open, before the gate run:
+
+- [x] Tests for the revert classification, which had none: a table over geth/Besu wording, a reason
+      string, a different `-32000` failure and two other JSON-RPC codes (`client`), plus the submitter's
+      permanent-vs-transient verdict, the `"is not valid"` wording the shared bodies read, and the nonce
+      reset on a rejected transaction.
+- [x] Tests for the recovery guards: the no-stores downgrade, the per-TMS idempotency guard (two
+      managers sweeping one store would claim each other's transactions), `stopRecovery`, and the
+      configuration fallback.
+- [x] `ErrNetworkUnavailable` wired rather than left declared: the submitter's failed estimate, fee read
+      and broadcast are the transient class. A declared-but-unused sentinel documents an intention
+      instead of implementing one.
+- [x] Design doc caught up per R5 — §3.5 (nothing cached across a PP update, both halves read per call),
+      §7.5 (recovery), §9.1 (Besu's JSON-RPC gaps and `paris`), §13 (what of the taxonomy is built and
+      what is Week 8).
+- [x] `docs/services/network-ethereum.md` gains an operational section: error classes, recovery,
+      one funded account per submitting node, node compatibility.
+- [x] Stray `weekly sync.html` removed from the branch; the goimports failure on CI (`topology.go`) is
+      fixed in the tree.
+
+## Week 7 — endorsed PP-update + zkatdlog END-TO-END
+
+- [x] Endorsed **PP-update flow**: setup token request → setup delta → contract stores PP, bumps version,
+      emits `PublicParametersUpdated`; driver `VersionKeeper` resyncs; stale-PP delta rejected. **Pulled
+      forward into Week 6**: the fungible bodies update parameters to authorise a new issuer wallet, so
+      the Week-6 gate depends on it. `nwo.SetupUpdater` builds and submits the delta; `pp.Watcher` is how
+      a node notices somebody else's update.
 - [ ] zkatdlog/nogh end-to-end on Besu (same path; opaque token bytes) added to the Ginkgo suite.
-- [ ] Recipient-side anchor→finality from chain data (`StateCommitted` indexed-log resolution) exercised
-      against Besu's `eth_getLogs`.
 
-Gate: endorsed PP update + version bump tested; zkatdlog suite green on Besu; recipient anchor→finality works.
+Gate: endorsed PP update + version bump tested; zkatdlog suite green on Besu.
+
+*(Recipient anchor→finality moved to Week 6: the fungible suite depends on it, so it cannot trail the gate.)*
 
 **Stretch (only if time remains — Angelo: "if time remains we will check fabricx+EVM"):** boot fabric-x-evm
 through NWO and layer the gateway `TransactionByHash().isPending` lifecycle (design §7.1: pending→receipt;

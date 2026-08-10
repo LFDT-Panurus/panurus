@@ -39,8 +39,9 @@ func newService(t *testing.T, vm ViewManager, threshold int) *Service {
 	return s
 }
 
-// serviceCtx is a view.Context that only needs to carry a context.Context for Service.Endorse.
-func serviceCtx() view.Context {
+// serviceCtx is a view.Context that only needs to carry a context.Context for Service.Endorse. It
+// returns the concrete type: callers pass it straight into Endorse, which takes the interface.
+func serviceCtx() *fakeContext {
 	return &fakeContext{ctx: context.Background()}
 }
 

@@ -165,7 +165,7 @@ func TestEndToEndAgainstAnvil(t *testing.T) {
 	submitter, err := NewSubmitter(evmClient, key, tokenState, big.NewInt(testChainID), cfg.Gas)
 	require.NoError(t, err)
 
-	n, err := NewNetwork("evm-net", cfg, evmClient, nil, submitter)
+	n, err := NewNetwork("evm-net", cfg, evmClient, nil, submitter, nil)
 	require.NoError(t, err)
 
 	// The node must be the chain we signed for.
@@ -285,6 +285,21 @@ func TestEndToEndAgainstAnvil(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotEqual(t, driver.Valid, status, "a double spend must never be recorded as valid")
 
+	// --- recipient path (design §7.4) --------------------------------------------------------------
+
+	// Bob only ever holds the anchor. He must be able to find the transaction that applied it, which is
+	// what the fungible suite's CheckFinality does for a recipient.
+	recipientHash, found, err := n.finality.TxHashByAnchor(t.Context(), issueAnchor)
+	require.NoError(t, err)
+	require.True(t, found, "a recipient must be able to resolve an applied anchor from the chain alone")
+	assert.Equal(t, issueEnv.EthTxHash, recipientHash.Hex(),
+		"the hash from the log metadata must be the transaction that applied the anchor")
+
+	// An anchor that was never applied yields nothing, rather than an error: it may simply be pending.
+	_, found, err = n.finality.TxHashByAnchor(t.Context(), anchorOf(t, n, "never-submitted"))
+	require.NoError(t, err)
+	assert.False(t, found)
+
 	// --- finality listener -------------------------------------------------------------------------
 
 	listener := &e2eListener{done: make(chan struct{})}
@@ -317,6 +332,16 @@ func waitMined(t *testing.T, c client.EVMClient, txHash string) uint64 {
 	t.Fatalf("transaction %s was never mined", txHash)
 
 	return 0
+}
+
+// anchorOf returns the anchor for a creator that never submitted anything, for the negative case.
+func anchorOf(t *testing.T, n *Network, creator string) [32]byte {
+	t.Helper()
+	id := n.ComputeTxID(&driver.TxID{Creator: []byte(creator)})
+	anchor, err := keys.AnchorFromTxID(id)
+	require.NoError(t, err)
+
+	return anchor
 }
 
 // endorse signs the delta's EIP-712 digest, producing the quorum the contract verifies.

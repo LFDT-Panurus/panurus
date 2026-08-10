@@ -86,7 +86,7 @@ func anchor(low byte) [32]byte {
 }
 
 func fastManager(evm client.EVMClient, state StateReader, timeout time.Duration) *Manager {
-	return NewManager(evm, state, 5*time.Millisecond, timeout)
+	return NewManager(evm, state, testAddress(0xAA), 0, 5*time.Millisecond, timeout)
 }
 
 // --- resolution by eth transaction hash ------------------------------------------------------------
