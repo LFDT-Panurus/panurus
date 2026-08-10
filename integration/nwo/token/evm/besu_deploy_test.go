@@ -38,23 +38,15 @@ func requireBesuTooling(t *testing.T) {
 	}
 }
 
-// startTestBesu boots a node on its own docker network and cleans both up afterwards.
+// startTestBesu boots a node and removes the container afterwards. There is no docker network to
+// create or clean up: the node is reached over its published port like everything else here.
 func startTestBesu(t *testing.T, name string, port int) *Besu {
 	t.Helper()
 	requireBesuTooling(t)
 
-	d, err := docker.GetInstance()
-	require.NoError(t, err)
-
-	networkID := name + "-net"
-	// A leftover network from an interrupted run would otherwise fail the create.
-	_ = exec.Command("docker", "network", "rm", networkID).Run()
-	require.NoError(t, d.CreateNetwork(networkID))
-	t.Cleanup(func() { _ = exec.Command("docker", "network", "rm", networkID).Run() })
-
 	_ = exec.Command("docker", "rm", "-f", name).Run()
 	node, err := StartBesu(context.Background(), BesuConfig{
-		NetworkID: networkID, Name: name, Port: port, StartTimeout: 3 * time.Minute,
+		Name: name, Port: port, StartTimeout: 3 * time.Minute,
 	})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = node.Stop(context.Background()) })

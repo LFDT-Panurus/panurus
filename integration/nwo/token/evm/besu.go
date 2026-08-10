@@ -41,8 +41,6 @@ const DefaultChainID int64 = 1337
 type BesuConfig struct {
 	// Image is the container image; DefaultBesuImage when empty.
 	Image string
-	// NetworkID is the docker network the container joins, so FSC nodes can reach it.
-	NetworkID string
 	// Name is the container name.
 	Name string
 	// Port is the host port the JSON-RPC endpoint is published on.
@@ -134,9 +132,9 @@ func StartBesu(ctx context.Context, cfg BesuConfig) (*Besu, error) {
 				}},
 			},
 		},
-		NetworkingConfig: &network.NetworkingConfig{
-			EndpointsConfig: map[string]*network.EndpointSettings{cfg.NetworkID: {}},
-		},
+		// No NetworkingConfig: the container joins docker's default bridge. Everything that talks to
+		// this node does so over the published port on 127.0.0.1 (the FSC nodes are host processes and
+		// forge runs on the host), so a dedicated network would be created, joined, and never used.
 	})
 	if err != nil {
 		return nil, errors.Wrap(err, "evm nwo: failed to create the besu container")

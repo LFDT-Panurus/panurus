@@ -10,11 +10,11 @@ import (
 	"context"
 	"math/big"
 	"path/filepath"
+	"strconv"
 	"time"
 
 	math3 "github.com/IBM/mathlib"
 	api2 "github.com/hyperledger-labs/fabric-smart-client/integration/nwo/api"
-	"github.com/hyperledger-labs/fabric-smart-client/integration/nwo/common/docker"
 	sfcnode "github.com/hyperledger-labs/fabric-smart-client/integration/nwo/fsc/node"
 	"github.com/onsi/gomega"
 
@@ -79,8 +79,6 @@ type NetworkHandler struct {
 	// layer rather than the chain, so it is delegated rather than reimplemented. The backend it is
 	// given does nothing: namespace preparation on EVM is the contract deployment below.
 	materials *tfabric.NetworkHandler
-
-	networkID string
 }
 
 // noopBackend satisfies the fabric handler's backend so the token-level generation can be reused
@@ -221,21 +219,18 @@ func (p *NetworkHandler) startNode(tms *topology2.TMS) *Besu {
 	}
 
 	ctx := p.TokenPlatform.GetContext()
-	d, err := docker.GetInstance()
-	gomega.Expect(err).NotTo(gomega.HaveOccurred(), "docker is required to run an EVM network")
 
-	// One docker network per test network, named after its root directory so parallel runs do not
-	// collide. Creating it is idempotent from this handler's point of view: another platform may have
-	// created it already.
-	p.networkID = filepath.Base(ctx.RootDir())
-	_ = d.CreateNetwork(p.networkID)
+	// The container is named after the port it publishes rather than after the root directory. Every
+	// suite passes "./testdata", so a name derived from it is the same string for all of them: the two
+	// evm suites would fight over one container instead of getting one each. The reserved port is
+	// unique by construction, which is exactly the property the name needs.
+	port := int(ctx.ReservePort())
 
 	node, err := StartBesu(context.Background(), BesuConfig{
-		Image:     p.Image,
-		NetworkID: p.networkID,
-		Name:      "besu-" + p.networkID,
-		Port:      int(ctx.ReservePort()),
-		ChainID:   p.ChainID,
+		Image:   p.Image,
+		Name:    "besu-" + strconv.Itoa(port),
+		Port:    port,
+		ChainID: p.ChainID,
 	})
 	gomega.Expect(err).NotTo(gomega.HaveOccurred(), "failed to start the EVM node")
 
