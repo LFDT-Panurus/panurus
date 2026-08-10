@@ -83,9 +83,12 @@ unit-tests-regression:
 install-softhsm:
 	./ci/scripts/install_softhsm.sh
 
+# The EVM integration suites run against this Besu image.
+BESU_IMAGE ?= hyperledger/besu:24.3.0
+
 .PHONY: docker-images
 # build/pull docker images needed for testing
-docker-images: fabric-docker-images monitoring-docker-images testing-docker-images
+docker-images: fabric-docker-images monitoring-docker-images testing-docker-images besu-docker-images
 
 .PHONY: testing-docker-images
 # pull docker images for testing (postgres, vault)
@@ -102,6 +105,11 @@ fabric-docker-images:
 	docker pull hyperledger/fabric-ccenv:$(FABRIC_TWO_DIGIT_VERSION)
 	docker image tag hyperledger/fabric-ccenv:$(FABRIC_TWO_DIGIT_VERSION) hyperledger/fabric-ccenv:latest
 
+.PHONY: besu-docker-images
+# pull the besu docker image the EVM integration suites run against
+besu-docker-images:
+	docker pull $(BESU_IMAGE)
+
 .PHONY: monitoring-docker-images
 # pull monitoring docker images (explorer, prometheus, grafana, jaeger)
 monitoring-docker-images:
@@ -111,21 +119,15 @@ monitoring-docker-images:
 	docker pull grafana/grafana:latest
 	docker pull cr.jaegertracing.io/jaegertracing/jaeger:2.12.0
 
-# The EVM integration suite runs against this Besu image.
-BESU_IMAGE ?= hyperledger/besu:24.3.0
-
 .PHONY: integration-tests-evm
 # run the fungible integration tests against an EVM backend (Besu).
-# Unlike the fabric suites this needs no FAB_BINS, but it does need docker and the besu image, which
-# it pulls if missing, plus forge to deploy the contracts.
-integration-tests-evm:
-	docker image inspect $(BESU_IMAGE) >/dev/null 2>&1 || docker pull $(BESU_IMAGE)
+# Unlike the fabric suites this needs no FAB_BINS, but it does need docker and forge.
+integration-tests-evm: besu-docker-images
 	cd ./integration/token/fungible/evm; ginkgo $(GINKGO_TEST_OPTS) .
 
 .PHONY: integration-tests-evm-fabtoken
 # run the fungible integration tests against an EVM backend with the fabtoken driver.
-integration-tests-evm-fabtoken:
-	docker image inspect $(BESU_IMAGE) >/dev/null 2>&1 || docker pull $(BESU_IMAGE)
+integration-tests-evm-fabtoken: besu-docker-images
 	cd ./integration/token/fungible/evmfabtoken; ginkgo $(GINKGO_TEST_OPTS) .
 
 .PHONY: integration-tests-nft-dlog
