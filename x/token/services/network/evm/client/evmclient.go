@@ -48,6 +48,10 @@ type Log struct {
 // LogFilter selects logs by contract address, block range and indexed topics.
 // Topics follows the eth_getLogs convention: position i lists the acceptable values for topic i;
 // an empty inner slice matches any value at that position.
+//
+// ToBlock == 0 means "latest": a range ending at genesis is never a useful query, and searching up to
+// the head is what a caller looking for an event actually wants, so the zero value is spent on the
+// common case rather than requiring a separate round trip to read the current block number.
 type LogFilter struct {
 	Address   Address
 	FromBlock uint64

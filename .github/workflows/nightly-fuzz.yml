@@ -123,6 +123,52 @@ jobs:
           - name: driver-config-key-field-round-trip
             pkg: ./token/driver
             func: FuzzConfigKeyFieldRoundTrip
+          # The evm driver is its own Go module, so its targets run from that module's root rather
+          # than the repository root. `dir` defaults to "." for every entry above.
+          - name: evm-recover-endorsement-signature
+            dir: ./x/token/services/network/evm
+            pkg: ./eip712
+            func: FuzzRecoverAddress
+          - name: evm-signer-from-bytes
+            dir: ./x/token/services/network/evm
+            pkg: ./eip712
+            func: FuzzNewSignerFromBytes
+          - name: evm-envelope-from-bytes
+            dir: ./x/token/services/network/evm
+            pkg: .
+            func: FuzzEnvelopeFromBytes
+          - name: evm-compute-anchor
+            dir: ./x/token/services/network/evm
+            pkg: .
+            func: FuzzComputeAnchor
+          - name: evm-abi-decode-bytes
+            dir: ./x/token/services/network/evm
+            pkg: ./abi
+            func: FuzzDecodeBytes
+          - name: evm-abi-decode-bool-array
+            dir: ./x/token/services/network/evm
+            pkg: ./abi
+            func: FuzzDecodeBoolArray
+          - name: evm-abi-decode-uint64
+            dir: ./x/token/services/network/evm
+            pkg: ./abi
+            func: FuzzDecodeUint64
+          - name: evm-abi-decode-bytes32
+            dir: ./x/token/services/network/evm
+            pkg: ./abi
+            func: FuzzDecodeBytes32
+          - name: evm-hex-to-address
+            dir: ./x/token/services/network/evm
+            pkg: ./client
+            func: FuzzHexToAddress
+          - name: evm-hex-to-hash
+            dir: ./x/token/services/network/evm
+            pkg: ./client
+            func: FuzzHexToHash
+          - name: evm-bytes-to-address
+            dir: ./x/token/services/network/evm
+            pkg: ./client
+            func: FuzzBytesToAddress
 
     steps:
       - name: Checkout code
@@ -143,6 +189,7 @@ jobs:
             fuzz-${{ matrix.name }}-
 
       - name: Run fuzz campaign
+        working-directory: ${{ matrix.dir || '.' }}
         run: |
           set -o pipefail
           go test ${{ matrix.pkg }} \
@@ -153,6 +200,9 @@ jobs:
 
       - name: Collect crash artifacts
         if: failure()
+        # Same directory the campaign ran in: both the log and the corpus that reproduces the crash are
+        # written relative to it, and losing them would leave only the fact that something failed.
+        working-directory: ${{ matrix.dir || '.' }}
         run: |
           mkdir -p fuzz-failure
           cp fuzz-output.log fuzz-failure/ || true
@@ -164,7 +214,7 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: fuzz-failure-${{ matrix.name }}
-          path: fuzz-failure/
+          path: ${{ matrix.dir || '.' }}/fuzz-failure/
           retention-days: 30
 
       - name: File or update GitHub issue

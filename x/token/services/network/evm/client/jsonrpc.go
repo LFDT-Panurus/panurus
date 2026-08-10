@@ -101,10 +101,14 @@ func (c *JSONRPCClient) GetLogs(ctx context.Context, q LogFilter) ([]Log, error)
 		}
 		topics = append(topics, values)
 	}
+	toBlock := any(encodeHexUint(q.ToBlock))
+	if q.ToBlock == 0 {
+		toBlock = BlockTagLatest
+	}
 	arg := map[string]any{
 		"address":   q.Address.Hex(),
 		"fromBlock": encodeHexUint(q.FromBlock),
-		"toBlock":   encodeHexUint(q.ToBlock),
+		"toBlock":   toBlock,
 	}
 	if len(topics) != 0 {
 		arg["topics"] = topics
@@ -153,42 +157,115 @@ func (c *JSONRPCClient) EstimateGas(ctx context.Context, msg CallMsg) (uint64, e
 	}
 
 	var out string
-	if err := c.call(ctx, "eth_estimateGas", &out, arg); err != nil {
+	rpcErr, err := c.invoke(ctx, "eth_estimateGas", &out, arg)
+	if rpcErr != nil {
+		// Classified here, where the code and message are still in hand: once wrapped, a caller can
+		// only tell a rejected transaction from an unhappy node by reading strings.
+		if isReverted(rpcErr) {
+			return 0, errors.Wrapf(ErrExecutionReverted, "eth_estimateGas failed: %s", rpcErr.Message)
+		}
+
+		return 0, errors.Wrap(rpcErr, "eth_estimateGas failed")
+	}
+	if err != nil {
 		return 0, err
 	}
 
 	return parseHexUint(out)
 }
 
+// errMethodNotFound is the JSON-RPC code for a method the node does not implement.
+const errMethodNotFound = -32601
+
+// errServer is the code nodes use for an execution failure, which includes a reverted call. It is
+// not part of the JSON-RPC specification, which reserves -32000 to -32099 for implementations, so it
+// is paired with the message rather than trusted alone.
+const errServer = -32000
+
+// ErrExecutionReverted marks the node reporting that the call it was given reverts against current
+// state, as opposed to failing to answer at all.
+//
+// The difference is the whole point. A reverted eth_call or eth_estimateGas is the node executing the
+// transaction and rejecting it, so sending it would reach the same verdict and only pay gas to be
+// told again: it is permanent. Every other failure of the same call - unreachable node, timeout,
+// malformed response - says nothing about the transaction and has to be retried instead.
+var ErrExecutionReverted = errors.New("execution reverted")
+
+// isReverted reports whether a JSON-RPC error is a revert. It pairs the implementation-defined code
+// with the message, because the code covers everything a node treats as a server-side execution error
+// and the wording differs between clients ("execution reverted" on geth, "Execution reverted" on
+// Besu).
+func isReverted(err *rpcError) bool {
+	return err != nil && err.Code == errServer && strings.Contains(strings.ToLower(err.Message), "revert")
+}
+
 // SuggestGasFees returns the node's suggested EIP-1559 fees: the priority tip it reports, and a max
 // fee of baseFee*2 + tip, the customary headroom that keeps a transaction includable across a few
 // blocks of base-fee growth.
 func (c *JSONRPCClient) SuggestGasFees(ctx context.Context) (GasFees, error) {
-	var tipHex string
-	if err := c.call(ctx, "eth_maxPriorityFeePerGas", &tipHex); err != nil {
-		return GasFees{}, err
-	}
-	tip, err := parseHexBig(tipHex)
+	baseFee, err := c.baseFee(ctx)
 	if err != nil {
 		return GasFees{}, err
 	}
-
-	var head struct {
-		BaseFeePerGas string `json:"baseFeePerGas"`
-	}
-	if err := c.call(ctx, "eth_getBlockByNumber", &head, "latest", false); err != nil {
+	tip, err := c.suggestTip(ctx, baseFee)
+	if err != nil {
 		return GasFees{}, err
-	}
-	baseFee := new(big.Int)
-	if head.BaseFeePerGas != "" {
-		if baseFee, err = parseHexBig(head.BaseFeePerGas); err != nil {
-			return GasFees{}, err
-		}
 	}
 
 	maxFee := new(big.Int).Add(new(big.Int).Mul(baseFee, big.NewInt(2)), tip)
 
 	return GasFees{MaxFeePerGas: maxFee, MaxPriorityFeePerGas: tip}, nil
+}
+
+// baseFee reads the base fee of the latest block. A chain with no base fee at all (a pre-London or
+// zero-fee configuration) reports none, which is a base fee of zero rather than an error.
+func (c *JSONRPCClient) baseFee(ctx context.Context) (*big.Int, error) {
+	var head struct {
+		BaseFeePerGas string `json:"baseFeePerGas"`
+	}
+	if err := c.call(ctx, "eth_getBlockByNumber", &head, "latest", false); err != nil {
+		return nil, err
+	}
+	if head.BaseFeePerGas == "" {
+		return new(big.Int), nil
+	}
+
+	return parseHexBig(head.BaseFeePerGas)
+}
+
+// suggestTip asks the node what priority fee to pay.
+//
+// eth_maxPriorityFeePerGas is a de-facto extension rather than part of the JSON-RPC spec, and nodes
+// are entitled not to implement it: Besu does not, in the configuration the test network runs. When
+// it is missing, the tip is derived from eth_gasPrice, which every node implements, by taking the
+// part of the suggested price that sits above the base fee. That is the same quantity, computed from
+// what the node will tell us.
+func (c *JSONRPCClient) suggestTip(ctx context.Context, baseFee *big.Int) (*big.Int, error) {
+	var tipHex string
+	supported, err := c.callOptional(ctx, "eth_maxPriorityFeePerGas", &tipHex)
+	if err != nil {
+		return nil, err
+	}
+	if supported {
+		return parseHexBig(tipHex)
+	}
+
+	var priceHex string
+	if err := c.call(ctx, "eth_gasPrice", &priceHex); err != nil {
+		return nil, errors.Wrap(err, "node implements neither eth_maxPriorityFeePerGas nor eth_gasPrice")
+	}
+	price, err := parseHexBig(priceHex)
+	if err != nil {
+		return nil, err
+	}
+
+	// A suggested price at or below the base fee leaves nothing for the tip, which is legitimate: a
+	// zero-fee dev chain reports a price of zero.
+	if price.Cmp(baseFee) <= 0 {
+		return new(big.Int), nil
+	}
+
+	return new(big.Int).Sub(price, baseFee), nil
 }
 
 // SendRawTransaction submits a signed, RLP-encoded transaction and returns its hash.
@@ -255,48 +332,77 @@ type rpcResponse struct {
 	Error  *rpcError       `json:"error"`
 }
 
-// call performs one JSON-RPC request and unmarshals the result into out. A JSON-RPC error response
-// is returned as an *rpcError so callers can classify by code.
+// call performs one JSON-RPC request and unmarshals the result into out.
 func (c *JSONRPCClient) call(ctx context.Context, method string, out any, params ...any) error {
+	rpcErr, err := c.invoke(ctx, method, out, params...)
+	if rpcErr != nil {
+		return errors.Wrapf(rpcErr, "%s failed", method)
+	}
+
+	return err
+}
+
+// callOptional behaves like call, but reports separately whether the node implements the method at
+// all. A caller that has a fallback can then take it without having to recover the JSON-RPC code from
+// a wrapped error, and a genuine failure of a supported method is still returned as one.
+func (c *JSONRPCClient) callOptional(
+	ctx context.Context, method string, out any, params ...any,
+) (supported bool, err error) {
+	rpcErr, err := c.invoke(ctx, method, out, params...)
+	if rpcErr != nil {
+		if rpcErr.Code == errMethodNotFound {
+			return false, nil
+		}
+
+		return true, errors.Wrapf(rpcErr, "%s failed", method)
+	}
+
+	return true, err
+}
+
+// invoke performs one JSON-RPC request and unmarshals the result into out. A JSON-RPC error response
+// is returned unwrapped, as the first result, so callers can classify it by code; every other failure
+// is returned as an ordinary error.
+func (c *JSONRPCClient) invoke(ctx context.Context, method string, out any, params ...any) (*rpcError, error) {
 	if params == nil {
 		params = []any{}
 	}
 	body, err := json.Marshal(&rpcRequest{JSONRPC: "2.0", ID: c.id.Add(1), Method: method, Params: params})
 	if err != nil {
-		return errors.Wrapf(err, "failed to marshal %s request", method)
+		return nil, errors.Wrapf(err, "failed to marshal %s request", method)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.endpoint, bytes.NewReader(body))
 	if err != nil {
-		return errors.Wrapf(err, "failed to build %s request", method)
+		return nil, errors.Wrapf(err, "failed to build %s request", method)
 	}
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return errors.Wrapf(err, "%s call failed", method)
+		return nil, errors.Wrapf(err, "%s call failed", method)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
-		return errors.Errorf("%s call returned http %d", method, resp.StatusCode)
+		return nil, errors.Errorf("%s call returned http %d", method, resp.StatusCode)
 	}
 
 	var rpcResp rpcResponse
 	if err := json.NewDecoder(resp.Body).Decode(&rpcResp); err != nil {
-		return errors.Wrapf(err, "failed to decode %s response", method)
+		return nil, errors.Wrapf(err, "failed to decode %s response", method)
 	}
 	if rpcResp.Error != nil {
-		return errors.Wrapf(rpcResp.Error, "%s failed", method)
+		return rpcResp.Error, nil
 	}
 	if out == nil {
-		return nil
+		return nil, nil
 	}
 	if err := json.Unmarshal(rpcResp.Result, out); err != nil {
-		return errors.Wrapf(err, "failed to unmarshal %s result", method)
+		return nil, errors.Wrapf(err, "failed to unmarshal %s result", method)
 	}
 
-	return nil
+	return nil, nil
 }
 
 // --- wire types ----------------------------------------------------------------------------------

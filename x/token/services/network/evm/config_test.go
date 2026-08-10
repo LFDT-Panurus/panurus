@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
+	"github.com/hyperledger-labs/fabric-smart-client/platform/view/view"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gopkg.in/yaml.v3"
@@ -235,4 +237,89 @@ func TestThresholdEqualToSetSizeIsValid(t *testing.T) {
 	require.NoError(t, err)
 	c.Endorsement.Threshold = uint(len(c.Endorsement.Endorsers))
 	require.NoError(t, c.Validate())
+}
+
+// --- identity resolution --------------------------------------------------------------------------
+
+// nameResolver resolves a fixed set of names, and fails on anything else, the way the FSC identity
+// provider fails for a node it has no endpoint resolver for.
+func nameResolver(known map[string]string) IdentityResolver {
+	return func(name string) (view.Identity, error) {
+		id, ok := known[name]
+		if !ok {
+			return nil, errors.Errorf("unknown [%s]", name)
+		}
+
+		return view.Identity(id), nil
+	}
+}
+
+// TestEndorserRegistryResolvesNames is the regression test for the bug that made every endorsement
+// time out: the configuration carries node names, but a session is opened to an identity. A registry
+// built from the raw names routes nowhere.
+func TestEndorserRegistryResolvesNames(t *testing.T) {
+	c, err := LoadConfig(newYAMLConfiguration(t, fullConfigYAML))
+	require.NoError(t, err)
+
+	registry, err := c.EndorserRegistry(nameResolver(map[string]string{
+		c.Endorsement.Endorsers[0].FSCIdentity: "identity-of-first",
+		c.Endorsement.Endorsers[1].FSCIdentity: "identity-of-second",
+	}))
+	require.NoError(t, err)
+
+	identities := registry.Identities()
+	require.Len(t, identities, 2)
+	for _, id := range identities {
+		assert.NotEqual(t, c.Endorsement.Endorsers[0].FSCIdentity, id.String(), "the name must not be used as the identity")
+	}
+	assert.Equal(t, view.Identity("identity-of-first"), identities[0])
+}
+
+// TestEndorserRegistryFailsOnUnknownEndorser checks an endorser the node cannot reach is a startup
+// failure rather than a silent timeout later: without its identity the quorum can never be met.
+func TestEndorserRegistryFailsOnUnknownEndorser(t *testing.T) {
+	c, err := LoadConfig(newYAMLConfiguration(t, fullConfigYAML))
+	require.NoError(t, err)
+
+	_, err = c.EndorserRegistry(nameResolver(map[string]string{
+		c.Endorsement.Endorsers[0].FSCIdentity: "identity-of-first",
+	}))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), c.Endorsement.Endorsers[1].FSCIdentity)
+}
+
+// TestEndorserRegistryNeedsAResolver checks the resolver is mandatory, so the raw names can never
+// silently become identities again.
+func TestEndorserRegistryNeedsAResolver(t *testing.T) {
+	c, err := LoadConfig(newYAMLConfiguration(t, fullConfigYAML))
+	require.NoError(t, err)
+	_, err = c.EndorserRegistry(nil)
+	require.Error(t, err)
+}
+
+// TestAllowedRequestersResolveNames checks the allowlist is expressed in identities, since it is
+// compared against the identity the session authenticated.
+func TestAllowedRequestersResolveNames(t *testing.T) {
+	c, err := LoadConfig(newYAMLConfiguration(t, fullConfigYAML))
+	require.NoError(t, err)
+	require.NotEmpty(t, c.Endorsement.Allowlist)
+
+	allowed, err := c.AllowedRequesters(nameResolver(map[string]string{
+		c.Endorsement.Allowlist[0]: "identity-of-requester",
+	}))
+	require.NoError(t, err)
+	require.Len(t, allowed, 1)
+	assert.Equal(t, view.Identity("identity-of-requester"), allowed[0])
+}
+
+// TestAllowedRequestersSkipUnknownNames checks an allowlisted node this one has never heard of is
+// dropped rather than fatal: it cannot be admitted either way, and refusing to start over it would
+// take the endorser down for every other requester too.
+func TestAllowedRequestersSkipUnknownNames(t *testing.T) {
+	c, err := LoadConfig(newYAMLConfiguration(t, fullConfigYAML))
+	require.NoError(t, err)
+
+	allowed, err := c.AllowedRequesters(nameResolver(nil))
+	require.NoError(t, err)
+	assert.Empty(t, allowed)
 }

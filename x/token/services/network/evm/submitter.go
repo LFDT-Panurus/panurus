@@ -104,7 +104,7 @@ func (s *Submitter) Submit(
 	}
 	fees, err := s.client.SuggestGasFees(ctx)
 	if err != nil {
-		return nil, client.Hash{}, errors.Wrap(err, "submitter: failed to get gas fees")
+		return nil, client.Hash{}, errors.Wrapf(ErrNetworkUnavailable, "submitter: failed to get gas fees: %v", err)
 	}
 
 	tx := &client.DynamicFeeTx{
@@ -124,7 +124,11 @@ func (s *Submitter) Submit(
 	}
 	txHash, err = s.client.SendRawTransaction(ctx, rawTx)
 	if err != nil {
-		return nil, client.Hash{}, errors.Wrap(err, "submitter: failed to broadcast the transaction")
+		// A transaction the node refused to accept was never judged by the chain, so this is the
+		// transient class: the delta is still valid and the caller should retry rather than re-derive
+		// it. A node that executed it and rejected it comes back through gasLimit instead.
+		return nil, client.Hash{}, errors.Wrapf(
+			ErrNetworkUnavailable, "submitter: failed to broadcast the transaction: %v", err)
 	}
 
 	return rawTx, txHash, nil
@@ -148,7 +152,18 @@ func (s *Submitter) gasLimit(ctx context.Context, data []byte) (uint64, error) {
 		Data: data,
 	})
 	if err != nil {
-		return 0, errors.Wrap(err, "submitter: failed to estimate gas")
+		// The node executed this transaction to estimate it and the transaction reverted. That is the
+		// chain rejecting the delta - a double spend, a stale set of public parameters, a quorum it
+		// will not accept - and not a problem with the estimate. Sending it anyway would mine it with
+		// status 0 and reach the same verdict, having paid for the privilege, so it is reported here
+		// as the permanent rejection it is rather than as a failure to estimate gas.
+		if errors.Is(err, client.ErrExecutionReverted) {
+			return 0, errors.Wrapf(ErrTransactionReverted, "submitter: %v", err)
+		}
+
+		// Everything else the estimate can fail with says nothing about the transaction: the node was
+		// unreachable, timed out, or answered something we could not read. Transient, so retry.
+		return 0, errors.Wrapf(ErrNetworkUnavailable, "submitter: failed to estimate gas: %v", err)
 	}
 
 	multiplier := s.gas.Multiplier

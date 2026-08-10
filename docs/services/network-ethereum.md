@@ -464,6 +464,67 @@ func (n *EthereumNetwork) RequestApproval(
 }
 ```
 
+## Operational Behaviour (Approach 2 driver)
+
+These are properties of the shipped Approach-2 driver that an operator has to know about. Bootstrapping
+steps live in the [Ethereum Deployment Runbook](./network-ethereum-deployment.md).
+
+### Error classification
+
+A caller decides what to do with a failure by class, not by reading a message. The driver exposes the
+distinction that matters — whether the chain has judged the transaction — as sentinel errors, matched with
+`errors.Is`:
+
+| Sentinel | Class | What it means | Recovery |
+|----------|-------|---------------|----------|
+| `evm.ErrTransactionReverted` | permanent | the node executed the transaction and it reverted: a double spend, stale public parameters, a quorum the contract will not accept | re-derive the request against current state; do **not** resend |
+| `evm.ErrNetworkUnavailable` | transient | the node could not be reached, timed out, or refused the transaction without executing it | retry with backoff; the request is untouched |
+| `client.ErrExecutionReverted` | permanent | the JSON-RPC layer's view of the same revert, before the driver wraps it | classified by the driver |
+
+The split is load-bearing. Collapsing the two leaves a caller choosing between retrying a doomed transaction
+forever and giving up on a working one. A revert is detected during `eth_estimateGas`, which executes the
+transaction — so a rejected transaction is reported **before** any gas is paid for it.
+
+### Transaction recovery across restarts
+
+The ttx layer registers a finality listener **in memory** when it stores a transaction. A node that restarts
+between storing a transaction and its finality would otherwise be left with a row stuck at `Pending` and
+nothing that would ever move it: the chain has the answer and nobody is asking. Every later wait on that
+transaction runs to its timeout, which looks like a finality bug and is not one.
+
+The driver therefore starts the SDK's recovery manager over both the transaction store and the audit store
+when a namespace connects. It periodically re-asks the chain about transactions that have been `Pending`
+longer than the configured TTL, using the same anchor lookup a fresh listener would have performed.
+
+- Settings come from the standard `recovery` block of the TMS configuration; a TMS with none uses the SDK
+  defaults (enabled, 30s TTL, 5s scan interval).
+- A failure to start recovery is logged, not fatal — the node still works, it just cannot rescue
+  transactions left over from a previous run.
+
+### One funded account per submitting node
+
+Every node that broadcasts needs **its own** Ethereum account. Nonces are per account and each node's nonce
+manager counts locally, so two nodes sharing an account will reuse a consumed nonce and get `nonce too low`.
+Anything else spending from that account — an administrative parameters update, for instance — moves the
+nodes' nonces behind their backs in the same way. Keep a separate operator account for deployment and
+administrative submissions.
+
+### Node compatibility
+
+The driver speaks plain JSON-RPC and does not link go-ethereum, so it works against any EVM node. Two things
+are worth checking against a new backend:
+
+- **`eth_maxPriorityFeePerGas` is a client extension, not part of the specification.** Besu does not implement
+  it; the driver asks first and falls back to deriving the tip from the part of `eth_gasPrice` above the base
+  fee. The fallback triggers only on `method not found` — a node that supports neither is an error, since a
+  zero tip produces transactions that never mine.
+- **Revert wording differs between clients** ("execution reverted" on geth, "Execution reverted" on Besu), and
+  the JSON-RPC error code for it (`-32000`) is implementation-defined and shared with other server-side
+  failures. The driver pairs the code with the message rather than trusting either alone.
+
+Contracts must be compiled for the EVM version the target node supports. Besu's dev network has no PUSH0, so
+contracts build for `paris`; a `shanghai` build reverts every contract creation.
+
 ## Trade-offs Summary
 
 **Choose Approach 1 (Smart Contract Validation) when:**
@@ -481,6 +542,7 @@ func (n *EthereumNetwork) RequestApproval(
 
 ## See Also
 
+- [Ethereum Deployment Runbook](./network-ethereum-deployment.md) - Bootstrapping a TMS with the Approach-2 driver
 - [Network Service Overview](./network.md) - Generic network service concepts
 - [Fabric Implementation](./network-fabric.md) - Chaincode-based validation
 - [FabricX Implementation](./network-fabricx.md) - FSC endorser model
