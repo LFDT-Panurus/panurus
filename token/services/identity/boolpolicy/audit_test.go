@@ -135,6 +135,19 @@ func TestPolicyEnrollmentIDUnresolvableMember(t *testing.T) {
 	assert.Contains(t, err.Error(), "failed to deserialize audit info of component")
 }
 
+func TestPolicyEnrollmentIDUnknownTypeWithoutAuditInfo(t *testing.T) {
+	// a missing component audit info is exempted before the member's identity
+	// type is resolved, so an unknown type with no audit info yields no common
+	// EID rather than the unresolvable-component error
+	m0, err := identity.WrapWithType(identity.Type(99), []byte("cert-zero"))
+	require.NoError(t, err)
+	policyID, wrapped := newPolicyIdentity(t, "$0", [][]byte{m0}, [][]byte{nil})
+
+	eid, _, err := newEIDRHDeserializer().GetEIDAndRH(t.Context(), policyID, wrapped)
+	require.NoError(t, err)
+	assert.Empty(t, eid)
+}
+
 func TestPolicyEnrollmentIDMemberCountMismatch(t *testing.T) {
 	// malformed: two members but a single component audit info
 	m0, ai0 := newX509Member(t, "cert-zero", "wallet-42")

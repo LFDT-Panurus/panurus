@@ -440,7 +440,7 @@ Located in `token/services/identity/boolpolicy`.
     - `identities` (SEQUENCE OF OCTET STRING): ordered list of raw component identity bytes; `$N` indexes into this list.
 *   **Audit Info**: JSON-encoded `AuditInfo` structure.
     - `IdentityAuditInfos` (array of `IdentityAuditInfo`): per-component audit info blobs in the same order as `identities`.
-*   **Enrollment ID**: When the audit-info deserializer is built with the parent multiplex deserializer (`NewAuditInfoDeserializer`), the policy identity reports the enrollment ID shared by all component identities. Components with no enrollment ID of their own (e.g. a nested composite spanning enrollments), components whose audit info is missing (e.g. an identity not registered locally), or disagreeing components yield an empty enrollment ID; an unresolvable component or a component count mismatch is an error.
+*   **Enrollment ID**: When the audit-info deserializer is built with the parent multiplex deserializer (`NewAuditInfoDeserializer`), the policy identity reports the enrollment ID shared by all component identities. Components with no enrollment ID of their own (e.g. a nested composite spanning enrollments), components whose audit info is missing (e.g. an identity not registered locally), or disagreeing components yield an empty enrollment ID; a missing component audit info takes precedence over subtype resolution, so an unknown component identity type carrying no audit info also yields an empty enrollment ID. A non-empty component audit info that cannot be resolved, an invalid component identity, or a component count mismatch is an error.
 *   **Encoding**:
     - `TypedIdentity` payload: ASN.1 DER.
     - Audit Info: JSON.
