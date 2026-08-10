@@ -32,9 +32,12 @@ const receiveTimeout = 30 * time.Second
 // validated actions and signs that, so a malicious initiator cannot get it to endorse a delta that
 // does not match the request it validated (design §4.5).
 type Responder struct {
-	tmsID      token2.TMSID
 	authorizer *Authorizer
-	factory    *DeltaFactory
+	// factoryFor resolves the delta factory for the TMS a request names. It is resolved per request
+	// rather than fixed at construction because an endorser must be registered before any request
+	// arrives, which is before its TMS has necessarily been built: building a TMS goes through the
+	// network driver, so a responder that demanded one up front could not be registered at all.
+	factoryFor func(tmsID token2.TMSID) (*DeltaFactory, error)
 	signer     EndorserSigner
 	domain     eip712.Domain
 }
@@ -42,16 +45,14 @@ type Responder struct {
 // NewResponder assembles a Responder for one TMS from its collaborators. The DeltaFactory carries the
 // validator, public-parameters provider and the ledger this endorser validates and translates with.
 func NewResponder(
-	tmsID token2.TMSID,
 	authorizer *Authorizer,
-	factory *DeltaFactory,
+	factoryFor func(tmsID token2.TMSID) (*DeltaFactory, error),
 	signer EndorserSigner,
 	domain eip712.Domain,
 ) *Responder {
 	return &Responder{
-		tmsID:      tmsID,
 		authorizer: authorizer,
-		factory:    factory,
+		factoryFor: factoryFor,
 		signer:     signer,
 		domain:     domain,
 	}
@@ -100,14 +101,18 @@ func (r *Responder) endorse(ctx context.Context, caller view.Identity, req *Endo
 	if err := req.Validate(); err != nil {
 		return nil, err
 	}
-	if !r.tmsID.Equal(req.TMSID) {
-		return nil, errors.Errorf("request targets tms [%s], this endorser serves [%s]", req.TMSID, r.tmsID)
-	}
 	if err := r.authorizer.Authorize(caller); err != nil {
 		return nil, err
 	}
 
-	delta, err := r.factory.Build(ctx, req)
+	// A TMS this endorser cannot resolve is one it does not serve, so refusing here is the same check
+	// the fixed TMS identity used to make, expressed through what it can actually validate.
+	factory, err := r.factoryFor(req.TMSID)
+	if err != nil {
+		return nil, errors.Wrapf(err, "this endorser does not serve tms [%s]", req.TMSID)
+	}
+
+	delta, err := factory.Build(ctx, req)
 	if err != nil {
 		return nil, err
 	}

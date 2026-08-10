@@ -56,6 +56,33 @@ func NewDeltaFactory(
 	}
 }
 
+// ResolveValidator adapts a function that looks a validator up into a RequestValidator, so a delta
+// factory resolves one per request instead of holding the one it was built with.
+//
+// The validator a TMS hands out is derived from that TMS's public parameters, and updating parameters
+// evicts the management service so that the next caller builds a new one. A validator captured at
+// construction therefore keeps checking actions against parameters that no longer describe the
+// network, and so does a validator re-read from a management service captured at construction: both
+// have to be resolved from the id, per request. Getting this wrong is not subtle in its effects -
+// after an update that authorises a new issuer, that issuer's every request is rejected as
+// unauthorised, by a node that has already logged the new parameters.
+type ResolveValidator func() (RequestValidator, error)
+
+// UnmarshallAndVerifyWithMetadata resolves the current validator and delegates to it.
+func (r ResolveValidator) UnmarshallAndVerifyWithMetadata(
+	ctx context.Context,
+	ledger token2.Ledger,
+	anchor token2.RequestAnchor,
+	raw []byte,
+) ([]any, map[string][]byte, error) {
+	validator, err := r()
+	if err != nil {
+		return nil, nil, errors.Wrap(err, "failed to resolve the validator")
+	}
+
+	return validator.UnmarshallAndVerifyWithMetadata(ctx, ledger, anchor, raw)
+}
+
 // Build validates req against on-chain state and returns the StateDelta to sign or assemble. A
 // validation failure is wrapped with ErrValidation so callers can classify it.
 func (f *DeltaFactory) Build(ctx context.Context, req *EndorseRequest) (*statedelta.StateDelta, error) {
