@@ -9,6 +9,8 @@ package deserializer
 import (
 	"context"
 	errors2 "errors"
+	"slices"
+	"sync"
 
 	"github.com/LFDT-Panurus/panurus/token/driver"
 	"github.com/LFDT-Panurus/panurus/token/services/identity"
@@ -23,6 +25,7 @@ var logger = logging.MustGetLogger()
 type TypedVerifierDeserializer = idriver.TypedVerifierDeserializer
 
 type TypedVerifierDeserializerMultiplex struct {
+	mutex         sync.RWMutex
 	deserializers map[idriver.IdentityType][]idriver.TypedVerifierDeserializer
 }
 
@@ -31,6 +34,8 @@ func NewTypedVerifierDeserializerMultiplex() *TypedVerifierDeserializerMultiplex
 }
 
 func (v *TypedVerifierDeserializerMultiplex) AddTypedVerifierDeserializer(typ idriver.IdentityType, d TypedVerifierDeserializer) {
+	v.mutex.Lock()
+	defer v.mutex.Unlock()
 	_, ok := v.deserializers[typ]
 	if !ok {
 		v.deserializers[typ] = []TypedVerifierDeserializer{d}
@@ -45,8 +50,10 @@ func (v *TypedVerifierDeserializerMultiplex) DeserializeVerifier(ctx context.Con
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to unmarshal to TypedIdentity")
 	}
-	dess, ok := v.deserializers[si.Type]
-	if !ok {
+	v.mutex.RLock()
+	dess := slices.Clone(v.deserializers[si.Type])
+	v.mutex.RUnlock()
+	if dess == nil {
 		return nil, errors.Errorf("no deserializer found for [%v]", si.Type)
 	}
 	logger.DebugfContext(ctx, "deserializing [%s] with type [%v]", id, si.Type)
@@ -73,8 +80,10 @@ func (v *TypedVerifierDeserializerMultiplex) Recipients(id driver.Identity) ([]d
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to unmarshal to TypedIdentity")
 	}
-	dess, ok := v.deserializers[si.Type]
-	if !ok {
+	v.mutex.RLock()
+	dess := slices.Clone(v.deserializers[si.Type])
+	v.mutex.RUnlock()
+	if dess == nil {
 		return nil, errors.Errorf("no deserializer found for [%v]", si.Type)
 	}
 
@@ -110,8 +119,10 @@ func (v *TypedVerifierDeserializerMultiplex) GetAuditInfoMatcher(ctx context.Con
 }
 
 func (v *TypedVerifierDeserializerMultiplex) getMatcher(ctx context.Context, idType idriver.IdentityType, id driver.Identity, auditInfo []byte) (driver.Matcher, error) {
-	dess, ok := v.deserializers[idType]
-	if !ok {
+	v.mutex.RLock()
+	dess := slices.Clone(v.deserializers[idType])
+	v.mutex.RUnlock()
+	if dess == nil {
 		return nil, errors.Errorf("no deserializer found for [%v]", idType)
 	}
 
@@ -153,8 +164,10 @@ func (v *TypedVerifierDeserializerMultiplex) GetAuditInfo(ctx context.Context, i
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to unmarshal to TypedIdentity")
 	}
-	dess, ok := v.deserializers[si.Type]
-	if !ok {
+	v.mutex.RLock()
+	dess := slices.Clone(v.deserializers[si.Type])
+	v.mutex.RUnlock()
+	if dess == nil {
 		return nil, errors.Errorf("no deserializer found for [%v]", si.Type)
 	}
 	var errs []error

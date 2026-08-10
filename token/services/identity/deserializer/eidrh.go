@@ -8,6 +8,7 @@ package deserializer
 
 import (
 	"context"
+	"sync"
 
 	"github.com/LFDT-Panurus/panurus/token/driver"
 	"github.com/LFDT-Panurus/panurus/token/services/identity"
@@ -17,6 +18,7 @@ import (
 
 // EIDRHDeserializer returns enrollment IDs behind the owners of token
 type EIDRHDeserializer struct {
+	mutex         sync.RWMutex
 	deserializers map[identity.Type]driver2.AuditInfoDeserializer
 }
 
@@ -28,6 +30,8 @@ func NewEIDRHDeserializer() *EIDRHDeserializer {
 }
 
 func (e *EIDRHDeserializer) AddDeserializer(typ identity.Type, d driver2.AuditInfoDeserializer) {
+	e.mutex.Lock()
+	defer e.mutex.Unlock()
 	e.deserializers[typ] = d
 }
 
@@ -69,7 +73,9 @@ func (e *EIDRHDeserializer) DeserializeAuditInfo(ctx context.Context, id driver.
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to unmarshal to TypedIdentity")
 	}
+	e.mutex.RLock()
 	d, ok := e.deserializers[si.Type]
+	e.mutex.RUnlock()
 	if !ok {
 		return nil, errors.Errorf("no deserializer found for [%v]", si.Type)
 	}

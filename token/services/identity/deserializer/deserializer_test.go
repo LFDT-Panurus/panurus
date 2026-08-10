@@ -9,6 +9,7 @@ package deserializer
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 
 	"github.com/LFDT-Panurus/panurus/token/driver"
@@ -879,4 +880,77 @@ func TestTypedIdentityVerifierDeserializer(t *testing.T) {
 		assert.Equal(t, mockMatcher, matcher)
 		assert.Equal(t, 1, mockMatcherDeserializer.GetAuditInfoMatcherCallCount())
 	})
+}
+
+// TestDeserializerMultiplexConcurrency exercises the three deserializer
+// multiplexes under concurrent registration (map writes) and deserialization
+// (map reads). Without the internal mutex this reliably trips the race
+// detector or the runtime's fatal "concurrent map read and map write" check;
+// with it, the test runs clean. Run under `go test -race` for full coverage.
+func TestDeserializerMultiplexConcurrency(t *testing.T) {
+	const (
+		goroutines = 16
+		iterations = 200
+	)
+
+	signerMultiplex := NewTypedSignerDeserializerMultiplex()
+	verifierMultiplex := NewTypedVerifierDeserializerMultiplex()
+	eidrhDeserializer := NewEIDRHDeserializer()
+
+	// Pre-register a deserializer for the type the readers look up so the read
+	// paths traverse the stored slice rather than bailing out on a miss.
+	mockSigner := &drivermock.Signer{}
+	signerDes := &identitydrivermock.TypedSignerDeserializer{}
+	signerDes.DeserializeSignerReturns(mockSigner, nil)
+	signerMultiplex.AddTypedSignerDeserializer(identity.Type(99), signerDes)
+
+	mockVerifier := &drivermock.Verifier{}
+	verifierDes := &identitydrivermock.TypedVerifierDeserializer{}
+	verifierDes.DeserializeVerifierReturns(mockVerifier, nil)
+	verifierDes.RecipientsReturns([]driver.Identity{[]byte("recipient")}, nil)
+	verifierDes.GetAuditInfoMatcherReturns(&drivermock.Matcher{}, nil)
+	verifierDes.GetAuditInfoReturns([]byte("audit-info"), nil)
+	verifierMultiplex.AddTypedVerifierDeserializer(identity.Type(99), verifierDes)
+
+	mockAuditInfo := &identitydrivermock.AuditInfo{}
+	auditDes := &identitydrivermock.AuditInfoDeserializer{}
+	auditDes.DeserializeAuditInfoReturns(mockAuditInfo, nil)
+	eidrhDeserializer.AddDeserializer(identity.Type(99), auditDes)
+
+	typedID := createTypedIdentity(t, identity.Type(99), []byte("raw-identity"))
+	provider := &drivermock.AuditInfoProvider{}
+
+	var wg sync.WaitGroup
+
+	// Writers: keep registering new deserializers concurrently.
+	for range goroutines {
+		wg.Go(func() {
+			for range iterations {
+				// Register under a distinct type so writers keep hammering the
+				// same map concurrently without clobbering the entry the
+				// readers rely on below.
+				signerMultiplex.AddTypedSignerDeserializer(identity.Type(100), &identitydrivermock.TypedSignerDeserializer{})
+				verifierMultiplex.AddTypedVerifierDeserializer(identity.Type(100), &identitydrivermock.TypedVerifierDeserializer{})
+				eidrhDeserializer.AddDeserializer(identity.Type(100), &identitydrivermock.AuditInfoDeserializer{})
+			}
+		})
+	}
+
+	// Readers: keep deserializing concurrently.
+	for range goroutines {
+		wg.Go(func() {
+			ctx := context.Background()
+			for range iterations {
+				_, _ = signerMultiplex.DeserializeSigner(ctx, typedID)
+				_, _ = verifierMultiplex.DeserializeVerifier(ctx, typedID)
+				_, _ = verifierMultiplex.Recipients(typedID)
+				_, _ = verifierMultiplex.GetAuditInfoMatcher(ctx, typedID, []byte("audit-info"))
+				_ = verifierMultiplex.MatchIdentity(ctx, typedID, []byte("audit-info"))
+				_, _ = verifierMultiplex.GetAuditInfo(ctx, typedID, provider)
+				_, _, _ = eidrhDeserializer.GetEIDAndRH(ctx, typedID, []byte("audit-info"))
+			}
+		})
+	}
+
+	wg.Wait()
 }
