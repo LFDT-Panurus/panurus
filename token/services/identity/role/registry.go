@@ -24,6 +24,87 @@ type WalletFactory interface {
 	NewWallet(ctx context.Context, id idriver.WalletID, role idriver.IdentityRoleType, is IdentitySupport, info idriver.IdentityInfo) (driver.Wallet, error)
 }
 
+// WalletIDStatus classifies the outcome of resolving an identity to the wallet id
+// bound to it. It exists so callers branch on an explicit, named state instead of
+// re-deriving intent from the ambiguous "(string, error)" shape — where ("", nil),
+// ("", err) and ("id", nil) each mean something different and the difference is easy
+// to get wrong (see issue #2063).
+type WalletIDStatus int
+
+const (
+	// WalletIDUnknown is the zero value and never returned by GetWalletID. It is the
+	// guard against a WalletIDResolution constructed without going through GetWalletID
+	// (a mock, or a future constructor that forgets to set Status): because callers act
+	// on a fallthrough only when authoritative() is true — Bound or Unbound — this zero
+	// value is treated as a lookup failure, not as a safe "no binding" that would create
+	// a duplicate wallet.
+	WalletIDUnknown WalletIDStatus = iota
+	// WalletIDBound means storage holds a wallet id for the identity. WalletID is set.
+	WalletIDBound
+	// WalletIDUnbound means storage answered authoritatively that the identity has no
+	// wallet binding. This is a definitive, successful miss: it is safe to fall through
+	// to the next resolution step and, ultimately, to create a wallet.
+	WalletIDUnbound
+	// WalletIDFailed means the storage lookup itself failed (timeout, connection reset,
+	// ...), so whether a binding exists is UNKNOWN. Err carries the cause. Callers MUST
+	// NOT treat this as WalletIDUnbound: doing so lets a transient blip masquerade as an
+	// unregistered identity and triggers the creation of a duplicate wallet.
+	WalletIDFailed
+)
+
+// WalletIDResolution is the explicit result of resolving an identity to its bound
+// wallet id. It is the single shared value every wallet-lookup fallback branches on,
+// so the "not found" vs "could not check" distinction is decided once (in GetWalletID)
+// rather than re-inferred at each call site.
+type WalletIDResolution struct {
+	// Status is the outcome of the lookup. Always inspect it via Bound/Unbound/Failed
+	// before reading the other fields, and branch exhaustively: any status that is
+	// neither Bound nor Unbound (Failed, or the WalletIDUnknown zero value) is not
+	// authoritative and must abort the lookup rather than fall through to creation.
+	Status WalletIDStatus
+	// WalletID is the bound wallet id; meaningful only when Status is WalletIDBound.
+	WalletID idriver.WalletID
+	// Err is the underlying storage failure; set only when Status is WalletIDFailed.
+	Err error
+}
+
+// Bound reports whether the identity has a wallet id bound to it.
+func (r WalletIDResolution) Bound() bool { return r.Status == WalletIDBound }
+
+// Unbound reports whether storage answered authoritatively that the identity has no
+// wallet binding. This is the ONLY non-Bound state that a caller may act on by falling
+// through to the next resolution step and, ultimately, wallet creation. Every other
+// state — Failed, or the zero value produced by a WalletIDResolution built without
+// going through GetWalletID — leaves the binding unknown and must abort the lookup.
+func (r WalletIDResolution) Unbound() bool { return r.Status == WalletIDUnbound }
+
+// Failed reports whether the storage lookup failed, leaving the binding unknown.
+// A failed resolution must abort the enclosing lookup, never fall through to creation.
+func (r WalletIDResolution) Failed() bool { return r.Status == WalletIDFailed }
+
+// authoritative reports whether the resolution definitively answers whether a wallet is
+// bound — i.e. it came back from GetWalletID as Bound or Unbound. Any other status
+// (Failed, or the zero-value WalletIDUnknown of a resolution built outside GetWalletID)
+// is non-authoritative: the binding is unknown and the caller MUST abort rather than
+// fall through to wallet creation. This is the guard the WalletIDUnknown zero value was
+// introduced to provide.
+func (r WalletIDResolution) authoritative() bool { return r.Bound() || r.Unbound() }
+
+// abortError returns the error a non-authoritative resolution must abort a wallet lookup
+// with. It preserves the storage cause for a WalletIDFailed and synthesizes one for a
+// zero-value / unknown resolution (whose Err is nil), so an unknown status can never
+// collapse into a nil error — via errors.WithMessagef(nil, ...) returning nil — and be
+// silently mistaken for a successful lookup. It must only be called once Bound and
+// Unbound have been ruled out (i.e. authoritative() is false).
+func (r WalletIDResolution) abortError(id driver.WalletLookupID) error {
+	cause := r.Err
+	if cause == nil {
+		cause = errors.Errorf("non-authoritative wallet id resolution status [%d]", r.Status)
+	}
+
+	return errors.WithMessagef(cause, "failed to lookup wallet [%s]", id)
+}
+
 // Registry manages wallets whose long-term identities have a given role.
 //
 // Concurrency and invariants:
@@ -108,11 +189,17 @@ func (r *Registry) Lookup(ctx context.Context, id driver.WalletLookupID) (driver
 		if ok {
 			r.Logger.DebugfContext(ctx, "lookup failed, check if there is a wallet for identity [%s]", passedIdentity)
 			// is this identity registered
-			wID, err := r.GetWalletID(ctx, passedIdentity)
-			if err == nil && len(wID) != 0 {
-				r.Logger.DebugfContext(ctx, "lookup failed, there is a wallet for identity [%s]: [%s]", passedIdentity, wID)
+			res := r.GetWalletID(ctx, passedIdentity)
+			if !res.authoritative() {
+				// A storage failure — or a resolution that never went through GetWalletID —
+				// leaves the binding unknown; it must not be treated as "not registered", or
+				// a transient blip would fall through to wallet creation and duplicate state.
+				return nil, nil, "", res.abortError(id)
+			}
+			if res.Bound() {
+				r.Logger.DebugfContext(ctx, "lookup failed, there is a wallet for identity [%s]: [%s]", passedIdentity, res.WalletID)
 				// we got a hit
-				walletID = wID
+				walletID = res.WalletID
 				ident = passedIdentity
 				fail = false
 			}
@@ -137,36 +224,53 @@ func (r *Registry) Lookup(ctx context.Context, id driver.WalletLookupID) (driver
 	if ok {
 		r.Logger.DebugfContext(ctx, "no wallet found, check if there is a wallet for identity [%s]", passedIdentity)
 		// is this identity registered
-		passedWalletID, err := r.GetWalletID(ctx, passedIdentity)
-		if err == nil && len(passedWalletID) != 0 {
-			r.Logger.DebugfContext(ctx, "no wallet found, there is a wallet for identity [%s]: [%s]", passedIdentity, passedWalletID)
+		res := r.GetWalletID(ctx, passedIdentity)
+		if res.Failed() {
+			// This probe is only an optimization: MapToIdentity already succeeded (or the
+			// fallback above recovered a binding), so wID is an authoritative candidate and
+			// is already in walletIdentifiers. A failed lookup here therefore costs at most
+			// a reuse opportunity, not correctness — log and continue with the mapped
+			// candidate rather than aborting the whole lookup on a transient blip. Failing
+			// closed belongs only at the branch above, where MapToIdentity failed and this
+			// probe is the sole signal for whether a wallet already exists (issue #2063).
+			r.Logger.Warnf("failed to check wallet binding for identity [%s], continuing with mapped wallet [%s]: %v", passedIdentity, wID, res.Err)
+		} else if res.Bound() {
+			r.Logger.DebugfContext(ctx, "no wallet found, there is a wallet for identity [%s]: [%s]", passedIdentity, res.WalletID)
 			// we got a hit
 			r.WalletMu.RLock()
-			walletEntry, ok = r.Wallets[passedWalletID]
+			walletEntry, ok = r.Wallets[res.WalletID]
 			r.WalletMu.RUnlock()
 			if ok {
-				return walletEntry, nil, passedWalletID, nil
+				return walletEntry, nil, res.WalletID, nil
 			}
-			r.Logger.DebugfContext(ctx, "no wallet found, there is a wallet for identity [%s]: [%s] but it has not been recreated yet", passedIdentity, passedWalletID)
+			r.Logger.DebugfContext(ctx, "no wallet found, there is a wallet for identity [%s]: [%s] but it has not been recreated yet", passedIdentity, res.WalletID)
+			// Only a Bound resolution carries a wallet id; an Unbound one has WalletID == ""
+			// and must not be appended (the consuming loop skips empties anyway).
+			walletIdentifiers = append(walletIdentifiers, res.WalletID)
 		}
-		walletIdentifiers = append(walletIdentifiers, passedWalletID)
 	}
 
 	r.Logger.DebugfContext(ctx, "no wallet found for [%s] at [%s]", passedIdentity, logging.Prefix(wID))
 	if len(ident) != 0 {
-		identityWID, err := r.GetWalletID(ctx, ident)
-		r.Logger.DebugfContext(ctx, "wallet for identity [%s] -> [%s:%s]", ident, identityWID, err)
-		if err == nil && len(identityWID) != 0 {
+		res := r.GetWalletID(ctx, ident)
+		r.Logger.DebugfContext(ctx, "wallet for identity [%s] -> [%s:%d]", ident, res.WalletID, res.Status)
+		if res.Failed() {
+			// Optimization probe only (see the probe above): ident came from an
+			// authoritative MapToIdentity, and its wallet id is already a candidate, so a
+			// failed lookup here is not decisive. Log and continue rather than aborting the
+			// lookup on a transient blip (issue #2063).
+			r.Logger.Warnf("failed to check wallet binding for identity [%s], continuing with mapped wallet [%s]: %v", ident, wID, res.Err)
+		} else if res.Bound() {
 			r.WalletMu.RLock()
-			w, ok := r.Wallets[identityWID]
+			w, ok := r.Wallets[res.WalletID]
 			r.WalletMu.RUnlock()
 			if ok {
-				r.Logger.DebugfContext(ctx, "found wallet [%s:%s:%s:%s]", ident, walletID, w.ID(), identityWID)
+				r.Logger.DebugfContext(ctx, "found wallet [%s:%s:%s:%s]", ident, walletID, w.ID(), res.WalletID)
 
-				return w, nil, identityWID, nil
+				return w, nil, res.WalletID, nil
 			}
+			walletIdentifiers = append(walletIdentifiers, res.WalletID)
 		}
-		walletIdentifiers = append(walletIdentifiers, identityWID)
 	}
 
 	for _, walletIdentifier := range walletIdentifiers {
@@ -259,16 +363,31 @@ func (r *Registry) GetIdentityMetadata(ctx context.Context, identity driver.Iden
 	return json.Unmarshal(raw, &meta)
 }
 
-// GetWalletID returns the wallet identifier bound to the passed identity
-func (r *Registry) GetWalletID(ctx context.Context, identity driver.Identity) (string, error) {
+// GetWalletID resolves the wallet identifier bound to the passed identity.
+//
+// It is the single point that translates the storage layer's (WalletID, error)
+// convention into an explicit WalletIDResolution, so no caller has to re-derive the
+// meaning of ("", nil) vs ("", err). The storage contract reports an unbound identity
+// as ("", nil); a non-nil error is a genuine storage failure (timeout, connection
+// reset, ...) whose result is therefore WalletIDFailed, never WalletIDUnbound. Keeping
+// the two apart here is what prevents a transient blip from looking like an
+// unregistered identity and triggering the creation of a duplicate wallet (issue #2063).
+func (r *Registry) GetWalletID(ctx context.Context, identity driver.Identity) WalletIDResolution {
 	wID, err := r.Storage.GetWalletID(ctx, identity, int(r.Role.ID()))
 	if err != nil {
-		//nolint:nilerr
-		return "", nil
+		return WalletIDResolution{
+			Status: WalletIDFailed,
+			Err:    errors.Wrapf(err, "failed to get wallet id for identity [%s]", identity),
+		}
+	}
+	if len(wID) == 0 {
+		r.Logger.DebugfContext(ctx, "no wallet bound to identity [%s]", identity)
+
+		return WalletIDResolution{Status: WalletIDUnbound}
 	}
 	r.Logger.DebugfContext(ctx, "wallet [%s] is bound to identity [%s]", wID, identity)
 
-	return wID, nil
+	return WalletIDResolution{Status: WalletIDBound, WalletID: wID}
 }
 
 // WalletByID returns the wallet bound to the passed lookup id, creating and registering it

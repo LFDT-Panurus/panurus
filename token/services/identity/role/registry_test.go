@@ -135,17 +135,153 @@ func TestBindIdentityAndContainsAndMetadataAndGetWalletID(t *testing.T) {
 	require.NoError(t, reg.GetIdentityMetadata(ctx, []byte("id"), "w", &meta))
 	require.Equal(t, "v", meta["k"])
 
-	// GetWalletID when storage returns value
+	// GetWalletID when storage returns a bound wallet id.
 	storage.GetWalletIDReturns("w", nil)
-	wid, err := reg.GetWalletID(ctx, []byte("id"))
-	require.NoError(t, err)
-	require.Equal(t, "w", wid)
+	res := reg.GetWalletID(ctx, []byte("id"))
+	require.Equal(t, role.WalletIDBound, res.Status)
+	require.True(t, res.Bound())
+	require.NoError(t, res.Err)
+	require.Equal(t, "w", res.WalletID)
 
-	// GetWalletID when storage returns error -> suppressed to empty string
+	// GetWalletID when storage authoritatively reports no binding -> WalletIDUnbound,
+	// a clean miss with no error and no wallet id.
+	storage.GetWalletIDReturns("", nil)
+	resUnbound := reg.GetWalletID(ctx, []byte("id"))
+	require.Equal(t, role.WalletIDUnbound, resUnbound.Status)
+	require.False(t, resUnbound.Bound())
+	require.True(t, resUnbound.Unbound())
+	require.False(t, resUnbound.Failed())
+	require.NoError(t, resUnbound.Err)
+	require.Empty(t, resUnbound.WalletID)
+
+	// GetWalletID when storage fails -> WalletIDFailed with the error preserved, so a
+	// transient storage blip cannot masquerade as "no binding".
 	storage.GetWalletIDReturns("", errors.New("boom"))
-	wid2, err2 := reg.GetWalletID(ctx, []byte("id"))
-	require.NoError(t, err2)
-	require.Empty(t, wid2)
+	resFailed := reg.GetWalletID(ctx, []byte("id"))
+	require.Equal(t, role.WalletIDFailed, resFailed.Status)
+	require.True(t, resFailed.Failed())
+	require.False(t, resFailed.Bound())
+	require.False(t, resFailed.Unbound())
+	require.Error(t, resFailed.Err)
+	require.Empty(t, resFailed.WalletID)
+}
+
+// TestWalletIDResolution_ZeroValueIsNotAuthoritative guards the WalletIDUnknown zero
+// value: a WalletIDResolution built without going through GetWalletID (a mock, or a
+// future constructor that forgets to set Status) must be indistinguishable from a
+// failure at every call site, never from an authoritative "unbound" miss. Callers act
+// on a fallthrough only when a resolution is Bound or Unbound, so the zero value —
+// being neither — is treated as a lookup failure rather than a safe "create a wallet".
+func TestWalletIDResolution_ZeroValueIsNotAuthoritative(t *testing.T) {
+	var zero role.WalletIDResolution
+
+	require.Equal(t, role.WalletIDUnknown, zero.Status)
+	require.False(t, zero.Bound(), "zero value must not read as a bound wallet id")
+	require.False(t, zero.Unbound(), "zero value must not read as an authoritative miss")
+	require.False(t, zero.Failed(), "zero value carries no storage error")
+	require.NoError(t, zero.Err)
+	require.Empty(t, zero.WalletID)
+}
+
+// TestLookup_StorageErrorDoesNotFallThrough pins the fix for #2063: when
+// MapToIdentity fails, the identity->wallet storage probe is the sole signal for
+// whether a wallet already exists, so a transient storage error there must abort
+// Lookup rather than be swallowed as "no binding". Otherwise the fallback chain
+// would fall through to wallet creation and persist a duplicate wallet for an
+// identity that already has one.
+func TestLookup_StorageErrorDoesNotFallThrough(t *testing.T) {
+	// Lookup never reaches the wallet factory (only WalletByID does, at
+	// registry.go:412), so NewWalletCallCount() would be 0 here even with the old
+	// swallow-and-fall-through bug restored — it cannot guard the regression. The
+	// real check is that the transient storage error aborts Lookup: a non-nil error
+	// and an otherwise empty result, rather than a resolved wallet id that would let
+	// the caller fall through to creation. WalletByID coverage of the
+	// no-duplicate-wallet guarantee lives in
+	// TestWalletByID_StorageErrorDoesNotCreateDuplicate.
+	reg, storage, role, _ := newRegistryWithFakes()
+	ctx := t.Context()
+
+	role.MapToIdentityReturns(nil, "", errors.New("no mapping"))
+	storage.GetWalletIDReturns("", errors.New("transient DB blip"))
+
+	wallet, idInfo, wID, err := reg.Lookup(ctx, []byte("id-with-binding"))
+	require.Error(t, err)
+	require.Nil(t, wallet)
+	require.Nil(t, idInfo)
+	require.Empty(t, wID)
+}
+
+// TestLookup_MappedWalletIDSurvivesProbeFailure is the complement of the #2063
+// guard: once MapToIdentity has *succeeded*, its wallet id is an authoritative
+// candidate and the later identity->wallet probes are only a cache-reuse
+// optimization. A transient storage error at those probes must NOT abort Lookup —
+// it must fall through to the mapped wallet id, so a storage blip never denies a
+// caller the wallet the role already resolved.
+func TestLookup_MappedWalletIDSurvivesProbeFailure(t *testing.T) {
+	reg, storage, role, _ := newRegistryWithFakes()
+	ctx := t.Context()
+
+	// mapping resolves to a wallet id that is not in the cache, so Lookup falls
+	// through to the identity->wallet storage probes, which fail transiently.
+	role.MapToIdentityReturns([]byte("id-with-binding"), "w-not-cached", nil)
+	storage.GetWalletIDReturns("", errors.New("transient DB blip"))
+	// the mapped wallet id still resolves to identity info, so Lookup returns it
+	// rather than aborting on the probe failure.
+	role.GetIdentityInfoReturns(&mockIdentityInfo{id: "w-not-cached"}, nil)
+
+	wallet, idInfo, wID, err := reg.Lookup(ctx, []byte("id-with-binding"))
+	require.NoError(t, err)
+	require.Nil(t, wallet)
+	require.NotNil(t, idInfo)
+	require.Equal(t, "w-not-cached", wID)
+}
+
+// TestWalletByID_StorageErrorDoesNotCreateDuplicate ensures that when MapToIdentity
+// fails and the identity->wallet storage probe (the sole remaining signal for an
+// existing binding) fails transiently, WalletByID surfaces the error instead of
+// creating a brand-new wallet (the duplicate-wallet bug of #2063).
+func TestWalletByID_StorageErrorDoesNotCreateDuplicate(t *testing.T) {
+	reg, storage, role, wf := newRegistryWithFakes()
+	ctx := t.Context()
+
+	role.MapToIdentityReturns(nil, "", errors.New("no mapping"))
+	storage.GetWalletIDReturns("", errors.New("transient DB blip"))
+
+	w, err := reg.WalletByID(ctx, 0, []byte("id-with-binding"))
+	require.Error(t, err)
+	require.Nil(t, w)
+	require.Equal(t, 0, wf.NewWalletCallCount())
+}
+
+// TestWalletByID_CreatesWalletForMappedIDWhenProbeFails is the complement of the
+// #2063 guard on the WalletByID path: when MapToIdentity has *succeeded*, the later
+// identity->wallet probes are only a cache-reuse optimization, so a transient
+// storage error there must not abort. WalletByID must fall through and create the
+// wallet under the *authoritative mapped id* — not a duplicate, and not nothing.
+func TestWalletByID_CreatesWalletForMappedIDWhenProbeFails(t *testing.T) {
+	reg, storage, role, wf := newRegistryWithFakes()
+	ctx := t.Context()
+
+	// The role resolves the identity to a wallet id that is not yet cached, so
+	// WalletByID falls through to the identity->wallet storage probes, which fail
+	// transiently. Since the mapped id is authoritative, the failure is logged and
+	// the wallet is created for that mapped id.
+	role.MapToIdentityReturns([]byte("id-with-binding"), "w-not-cached", nil)
+	storage.GetWalletIDReturns("", errors.New("transient DB blip"))
+	role.GetIdentityInfoReturns(&mockIdentityInfo{id: "w-not-cached"}, nil)
+	created := &mock2.Wallet{}
+	created.IDReturns("w-not-cached")
+	wf.NewWalletReturns(created, nil)
+
+	w, err := reg.WalletByID(ctx, 0, []byte("id-with-binding"))
+	require.NoError(t, err)
+	require.NotNil(t, w)
+	require.Equal(t, "w-not-cached", w.ID())
+	// exactly one wallet created, and for the mapped id — not a duplicate under a
+	// phantom id.
+	require.Equal(t, 1, wf.NewWalletCallCount())
+	_, gotID, _, _, _ := wf.NewWalletArgsForCall(0)
+	require.Equal(t, "w-not-cached", gotID)
 }
 
 func TestWalletIDs_MergesRoleAndStorage(t *testing.T) {
