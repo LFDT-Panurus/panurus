@@ -8,6 +8,7 @@ package v1
 
 import (
 	"context"
+	"time"
 
 	"github.com/LFDT-Panurus/panurus/token/core/common"
 	"github.com/LFDT-Panurus/panurus/token/core/fabtoken/v1/audit"
@@ -26,15 +27,27 @@ type AuditorService struct {
 	Deserializer            driver.Deserializer
 	QueryEngine             driver.QueryEngine
 	tracer                  trace.Tracer
+
+	// AuditTokensNumRetries and AuditTokensRetryDelay control how AuditorCheck's
+	// token lookup tolerates the pending-transaction read-timing race (issue #2105).
+	// They default to common.DefaultAuditTokensNumRetries / DefaultAuditTokensRetryDelay
+	// and can be tuned per TMS.
+	AuditTokensNumRetries int
+	AuditTokensRetryDelay time.Duration
 }
 
 // NewAuditorService returns a new instance of AuditorService.
+//
+// retryConfig sets the audit-token retry/backoff behavior of AuditorCheck; pass
+// common.DefaultAuditRetryConfig() for the built-in defaults or
+// common.LoadAuditRetryConfig(tmsConfig) to honor the per-TMS configuration file.
 func NewAuditorService(
 	logger logging.Logger,
 	publicParametersManager common.PublicParametersManager[*setup.PublicParams],
 	deserializer driver.Deserializer,
 	queryEngine driver.QueryEngine,
 	tracerProvider trace.TracerProvider,
+	retryConfig common.AuditRetryConfig,
 ) *AuditorService {
 	return &AuditorService{
 		Logger:                  logger,
@@ -42,6 +55,8 @@ func NewAuditorService(
 		Deserializer:            deserializer,
 		QueryEngine:             queryEngine,
 		tracer:                  tracerProvider.Tracer("auditor_service", tracing.WithMetricsOpts(tracing.MetricsOpts{})),
+		AuditTokensNumRetries:   retryConfig.NumRetries,
+		AuditTokensRetryDelay:   retryConfig.RetryDelay,
 	}
 }
 
@@ -58,7 +73,7 @@ func (s *AuditorService) AuditorCheck(ctx context.Context, request *driver.Token
 	}
 
 	// Retrieve audit tokens from the query engine
-	auditTokens, err := common.RetrieveAuditTokens(ctx, s.Logger, s.QueryEngine, tokenIDs, anchor)
+	auditTokens, err := common.RetrieveAuditTokens(ctx, s.Logger, s.QueryEngine, tokenIDs, anchor, s.AuditTokensNumRetries, s.AuditTokensRetryDelay)
 	if err != nil {
 		return err
 	}
