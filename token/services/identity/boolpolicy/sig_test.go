@@ -13,9 +13,23 @@ package boolpolicy
 import (
 	"testing"
 
+	tdriver "github.com/LFDT-Panurus/panurus/token/driver"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// countingVerifier wraps a driver.Verifier and records how many times Verify
+// was invoked, so tests can assert per-index memoisation.
+type countingVerifier struct {
+	inner tdriver.Verifier
+	calls int
+}
+
+func (c *countingVerifier) Verify(msg, sig []byte) error {
+	c.calls++
+
+	return c.inner.Verify(msg, sig)
+}
 
 // ---------------------------------------------------------------------------
 // AND policy
@@ -177,4 +191,46 @@ func TestPolicyVerify_SlotCountTooMany(t *testing.T) {
 	// 3 slots instead of 2
 	sig := buildPolicySig(t, "s0", "s1", "extra")
 	assert.Error(t, pv.Verify([]byte(testMsg), sig))
+}
+
+// ---------------------------------------------------------------------------
+// Per-index memoisation within a single Verify call
+// ---------------------------------------------------------------------------
+
+// TestPolicyVerify_Memoisation_RepeatedRefVerifiedOnce verifies that an index
+// referenced multiple times in a policy triggers the underlying verifier only
+// once per Verify call.
+func TestPolicyVerify_Memoisation_RepeatedRefVerifiedOnce(t *testing.T) {
+	stubs := makeVerifiers(testMsg, "s0", "s1")
+	counter := &countingVerifier{inner: stubs[0]}
+
+	// "$0 AND ($0 OR $1)" references $0 twice.
+	node, err := Parse("$0 AND ($0 OR $1)")
+	require.NoError(t, err)
+	pv := &PolicyVerifier{
+		Policy:    node,
+		Verifiers: []tdriver.Verifier{counter, stubs[1]},
+	}
+
+	require.NoError(t, pv.Verify([]byte(testMsg), buildPolicySig(t, "s0", "s1")))
+	assert.Equal(t, 1, counter.calls, "verifier for $0 must be invoked exactly once")
+}
+
+// TestPolicyVerify_Memoisation_FailingRefVerifiedOnce verifies that a failing
+// index is also cached: a wrong signature referenced twice is verified once and
+// the cached failure is reused.
+func TestPolicyVerify_Memoisation_FailingRefVerifiedOnce(t *testing.T) {
+	stubs := makeVerifiers(testMsg, "s0")
+	counter := &countingVerifier{inner: stubs[0]}
+
+	// "$0 OR $0" references $0 twice; a wrong signature fails both times.
+	node, err := Parse("$0 OR $0")
+	require.NoError(t, err)
+	pv := &PolicyVerifier{
+		Policy:    node,
+		Verifiers: []tdriver.Verifier{counter},
+	}
+
+	require.Error(t, pv.Verify([]byte(testMsg), buildPolicySig(t, "wrong")))
+	assert.Equal(t, 1, counter.calls, "failing verifier for $0 must be invoked exactly once")
 }

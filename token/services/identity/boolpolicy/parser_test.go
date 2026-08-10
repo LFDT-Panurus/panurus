@@ -299,6 +299,44 @@ func TestErrorNestingTooDeep(t *testing.T) {
 	assert.Contains(t, err.Error(), "exceeds maximum nesting depth")
 }
 
+// orChain builds a flat, unparenthesised OR chain of `refs` references using
+// the compact "$0OR$0OR..." form (no surrounding spaces), so the byte length
+// stays minimal while the node count grows.  The result has `refs` RefNodes and
+// `refs-1` OrNodes, i.e. 2*refs-1 AST nodes, all at nesting depth 0.
+func orChain(refs int) string {
+	var sb strings.Builder
+	sb.WriteString("$0")
+	for i := 1; i < refs; i++ {
+		sb.WriteString("OR$0")
+	}
+
+	return sb.String()
+}
+
+func TestErrorTooManyNodes(t *testing.T) {
+	// A flat OR chain stays at nesting depth 0 but produces one node per ref
+	// plus one per operator, so it exercises the node cap rather than the depth
+	// cap.  With R refs the chain yields 2R-1 nodes; pick R large enough to
+	// exceed maxParseNodes while the string stays under maxPolicyLen.
+	refs := maxParseNodes // 2*maxParseNodes-1 nodes, comfortably over the cap
+	policy := orChain(refs)
+	require.LessOrEqual(t, len(policy), maxPolicyLen, "test input must stay within the length cap")
+
+	_, err := Parse(policy)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "exceeds maximum node count")
+}
+
+func TestNodeCountAtLimitIsAllowed(t *testing.T) {
+	// Build an OR chain whose node count lands just at/under maxParseNodes: with
+	// R refs the node count is 2R-1, so R = (maxParseNodes+1)/2 hits the cap
+	// exactly when maxParseNodes is odd and lands just under it when even —
+	// either way it must parse without error.
+	refs := (maxParseNodes + 1) / 2
+	_, err := Parse(orChain(refs))
+	require.NoError(t, err)
+}
+
 func TestNestingAtLimitIsAllowed(t *testing.T) {
 	// A policy nested exactly at maxParseDepth must succeed.
 	policy := ""
