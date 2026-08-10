@@ -37,6 +37,28 @@ func TestGetWalletID(t *testing.T, store walletStoreConstructor) {
 	gomega.Expect(actualWalletID).To(gomega.Equal(output))
 }
 
+// TestGetWalletIDNotFound pins the not-found contract of the WalletStoreService: an identity with
+// no stored binding resolves to ("", nil), never an error. The role Registry relies on this to tell
+// a transient storage failure apart from "this identity was never registered" (issue #2063).
+func TestGetWalletIDNotFound(t *testing.T, store walletStoreConstructor) {
+	gomega.RegisterTestingT(t)
+	db, mockDB, err := sqlmock.New()
+	gomega.Expect(err).ToNot(gomega.HaveOccurred())
+
+	tokenID := token.Identity([]byte("1234"))
+	roleID := 5
+	mockDB.
+		ExpectQuery("SELECT wallet_id FROM WALLETS WHERE \\(identity_hash = \\$1\\) AND \\(role_id = \\$2\\)").
+		WithArgs(tokenID.UniqueID(), roleID).
+		WillReturnError(sql.ErrNoRows)
+
+	actualWalletID, err := store(db).GetWalletID(t.Context(), tokenID, roleID)
+
+	gomega.Expect(mockDB.ExpectationsWereMet()).To(gomega.Succeed())
+	gomega.Expect(err).ToNot(gomega.HaveOccurred())
+	gomega.Expect(actualWalletID).To(gomega.BeEmpty())
+}
+
 func TestGetWalletIDs(t *testing.T, store walletStoreConstructor) {
 	gomega.RegisterTestingT(t)
 	db, mockDB, err := sqlmock.New()

@@ -83,7 +83,10 @@ type WalletID = string
 //
 //go:generate counterfeiter -o mock/wss.go -fake-name WalletStoreService . WalletStoreService
 type WalletStoreService interface {
-	// GetWalletID fetches a walletID that is bound to the identity passed
+	// GetWalletID fetches a walletID that is bound to the identity passed.
+	// It returns an empty WalletID and no error if the identity has no stored
+	// binding; a non-nil error indicates a genuine storage failure and must not
+	// be interpreted by callers as "no binding".
 	GetWalletID(ctx context.Context, identity token.Identity, roleID int) (WalletID, error)
 	// GetWalletIDs fetches all walletID's that have been stored so far without duplicates
 	GetWalletIDs(ctx context.Context, roleID int) ([]WalletID, error)
