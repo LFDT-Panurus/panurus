@@ -20,7 +20,6 @@ type viewContext = view.Context
 
 type contextWrapper struct {
 	viewContext
-	//nolint:containedctx // this struct exists solely to override Context() with a derived timeout context
 	ctx context.Context
 }
 

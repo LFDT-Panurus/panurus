@@ -81,12 +81,11 @@ type Manager struct {
 	keystoreProvider KeystoreProvider
 	tmsID            token.TMSID
 	config           Config
-	//nolint:containedctx // long-running service lifecycle, not a per-request context
-	ctx     context.Context
-	cancel  context.CancelFunc
-	wg      sync.WaitGroup
-	started bool
-	mu      sync.Mutex
+	ctx              context.Context
+	cancel           context.CancelFunc
+	wg               sync.WaitGroup
+	started          bool
+	mu               sync.Mutex
 }
 
 // NewManager creates a new keystore cleanup manager

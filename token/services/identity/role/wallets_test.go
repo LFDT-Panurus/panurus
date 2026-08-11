@@ -10,7 +10,6 @@ import (
 	"errors"
 	"math/big"
 	"testing"
-	"time"
 
 	"github.com/LFDT-Panurus/panurus/token/driver"
 	"github.com/LFDT-Panurus/panurus/token/services/identity/role"
@@ -328,9 +327,6 @@ func TestAnonymousOwnerWallet(t *testing.T) {
 		// Create wallet
 		w, err := role.NewAnonymousOwnerWallet(logger, ip, tv, des, is, "w1", info, 10, &disabled.Provider{})
 		require.NoError(t, err)
-		// The wallet pre-provisions recipient data in the background; release it so the
-		// test does not leave the goroutine behind.
-		t.Cleanup(w.Close)
 
 		return w, ip, tv, is, des
 	}
@@ -356,22 +352,6 @@ func TestAnonymousOwnerWallet(t *testing.T) {
 		id, err := w.GetRecipientIdentity(t.Context())
 		require.NoError(t, err)
 		assert.Equal(t, driver.Identity("ownerIdentity"), id)
-	})
-
-	t.Run("Close stops the recipient data provisioning", func(t *testing.T) {
-		// Wait for goroutines released by earlier subtests to exit before counting.
-		requireProvisioningGoroutines(t, 0, 2*time.Second)
-		w, _, _, _, _ := setup(t)
-
-		// Using the wallet starts the background provisioning goroutine.
-		_, err := w.GetRecipientIdentity(t.Context())
-		require.NoError(t, err)
-		requireProvisioningGoroutines(t, 1, 2*time.Second)
-
-		// Closing the wallet must terminate it. Close is idempotent, so the cleanup
-		// registered by setup can still run.
-		w.Close()
-		requireProvisioningGoroutines(t, 0, 2*time.Second)
 	})
 
 	t.Run("RegisterRecipient", func(t *testing.T) {

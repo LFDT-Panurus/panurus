@@ -29,7 +29,7 @@ func (a *AcceptHouseView) Call(context view.Context) (any, error) {
 	// The recipient can perform any check on the transaction as required by the business process
 	// In particular, here, the recipient checks that the transaction contains one output that names the recipient.
 	// (The recipient is receiving something)
-	outputs, err := tx.Outputs(context.Context())
+	outputs, err := tx.Outputs()
 	assert.NoError(err, "failed getting outputs")
 	assert.NoError(outputs.Validate(), "failed validating outputs")
 	assert.True(outputs.Count() == 1, "the transaction must contain one output")

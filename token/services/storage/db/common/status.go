@@ -16,7 +16,6 @@ import (
 
 // StatusEvent models an event related to the status of a transaction
 type StatusEvent struct {
-	//nolint:containedctx // per-event context carried through the notification channel, not a per-request context on a service
 	Ctx               context.Context
 	TxID              string
 	ValidationCode    driver.TxStatus

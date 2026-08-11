@@ -99,7 +99,7 @@ func (d *SellHouseView) prepareHouseTransfer(context view.Context, tx *ttx.Trans
 	assert.NotNil(wallet, "failed getting default wallet")
 
 	// Transfer ownership of the house to the buyer
-	assert.NoError(nfttx.Wrap(tx).Transfer(context.Context(), wallet, house, buyer), "failed transferring house")
+	assert.NoError(nfttx.Wrap(tx).Transfer(wallet, house, buyer), "failed transferring house")
 
 	return tx, house, nil
 }

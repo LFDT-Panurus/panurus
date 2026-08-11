@@ -62,7 +62,6 @@ func (t *SwapInitiatorView) Call(context view.Context) (any, error) {
 
 	// Alice adds a new transfer operation to the transaction following the instruction received.
 	err = tx.Transfer(
-		context.Context(),
 		senderWallet,
 		t.FromAliceType,
 		[]uint64{t.FromAliceAmount},
@@ -88,7 +87,7 @@ func (t *SwapInitiatorView) Call(context view.Context) (any, error) {
 	// Alice doubles check that the content of the transaction is the one expected.
 	assert.NoError(tx.IsValid(context.Context()), "failed verifying transaction")
 
-	outputs, err := tx.Outputs(context.Context())
+	outputs, err := tx.Outputs()
 	assert.NoError(err, "failed getting outputs")
 	// get outputs by the type of tokens received from Alice.
 	os := outputs.ByRecipient(other).ByType(t.FromAliceType)
@@ -158,7 +157,6 @@ func (t *SwapResponderView) Call(context view.Context) (any, error) {
 	bobWallet := ttx.MyWalletFromTx(context, tx)
 	assert.NotNil(bobWallet, "To's default wallet not found")
 	err = tx.Transfer(
-		context.Context(),
 		bobWallet,
 		action.Type,
 		[]uint64{action.Amount},
@@ -193,7 +191,7 @@ func (t *SwapResponderView) Call(context view.Context) (any, error) {
 	assert.Equal(ttx.Confirmed, vc, "transaction [%s] should be in valid state", tx.ID())
 
 	// Check that the tokens are or are not in the db
-	outputs, err := tx.Outputs(context.Context())
+	outputs, err := tx.Outputs()
 	assert.NoError(err, "failed to retrieve outputs")
 	AssertTokens(context, tx, outputs, me)
 

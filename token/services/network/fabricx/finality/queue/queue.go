@@ -61,10 +61,9 @@ type Config struct {
 
 // EventQueue manages a pool of workers processing events
 type EventQueue struct {
-	workers int
-	events  chan Event
-	wg      sync.WaitGroup
-	//nolint:containedctx // long-running worker-pool lifecycle, not a per-request context
+	workers      int
+	events       chan Event
+	wg           sync.WaitGroup
 	ctx          context.Context
 	cancel       context.CancelFunc
 	shutdownOnce sync.Once

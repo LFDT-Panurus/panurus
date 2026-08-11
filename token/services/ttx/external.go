@@ -8,7 +8,6 @@ package ttx
 
 import (
 	"encoding/json"
-	"sync"
 	"time"
 
 	"github.com/LFDT-Panurus/panurus/token"
@@ -119,33 +118,21 @@ type StreamExternalWalletSignerClient struct {
 	sp      SignerProvider
 	stream  view2.Stream
 	timeout time.Duration
-	// input carries the signature requests decoded by init. It is closed when the remote
-	// wallet signals that no more signatures are required.
-	input chan *StreamExternalWalletSignRequest
-	// err carries the first failure hit by init. It is buffered so that init can always
-	// complete its send and return, even if nobody is receiving anymore.
-	err chan error
-	// done is closed once Respond stops consuming input, so that init never blocks forever
-	// handing over a request that nobody will take.
-	done     chan struct{}
-	doneOnce sync.Once
+	input   chan *StreamExternalWalletSignRequest
+	err     chan error
 }
 
-// NewStreamExternalWalletSignerClient creates a signer client with the default timeout of one hour.
 func NewStreamExternalWalletSignerClient(sp SignerProvider, stream view2.Stream, _ int) *StreamExternalWalletSignerClient {
 	return NewStreamExternalWalletSignerClientWithTimeout(sp, stream, 1*time.Hour)
 }
 
-// NewStreamExternalWalletSignerClientWithTimeout creates a signer client that gives up waiting
-// for the next signature request from the remote wallet after the passed timeout.
 func NewStreamExternalWalletSignerClientWithTimeout(sp SignerProvider, stream view2.Stream, timeout time.Duration) *StreamExternalWalletSignerClient {
 	c := &StreamExternalWalletSignerClient{
 		sp:      sp,
 		stream:  stream,
 		timeout: timeout,
 		input:   make(chan *StreamExternalWalletSignRequest),
-		err:     make(chan error, 1),
-		done:    make(chan struct{}),
+		err:     make(chan error),
 	}
 	go c.init()
 
@@ -171,13 +158,7 @@ func (s *StreamExternalWalletSignerClient) init() {
 
 				return
 			} else {
-				select {
-				case s.input <- req:
-				case <-s.done:
-					logger.Debugf("no responder left for signature request [%d], giving up", i)
-
-					return
-				}
+				s.input <- req
 			}
 		case Done:
 			logger.Debugf("no more signatures required")
@@ -189,17 +170,7 @@ func (s *StreamExternalWalletSignerClient) init() {
 	}
 }
 
-// Respond serves the signature requests sent by the remote wallet until the wallet signals
-// that it is done, a signature cannot be produced, or the stream fails. It returns nil once
-// the remote wallet is done, and otherwise the failure that terminated the exchange: errors
-// hit while receiving or decoding requests are reported by init on s.err and returned here,
-// so the caller sees the real transport or decoding failure rather than a timeout.
-//
-// On return it signals the receive goroutine to stop, so that goroutine never lingers waiting
-// to hand over a request that will no longer be served.
 func (s *StreamExternalWalletSignerClient) Respond() error {
-	defer s.stopConsuming()
-
 	for {
 		select {
 		case req, done := <-s.input:
@@ -214,18 +185,10 @@ func (s *StreamExternalWalletSignerClient) Respond() error {
 				return errors.Wrapf(err, "failed to send back signature, party [%s]", req.Party)
 			}
 			logger.Debugf("process signature request done")
-		case err := <-s.err:
-			return err
 		case <-time.After(s.timeout):
 			return errors.Errorf("Timeout waiting for stream input exceeded: %v", s.timeout)
 		}
 	}
-}
-
-// stopConsuming tells init that no further signature request will be consumed. It is safe to
-// call more than once.
-func (s *StreamExternalWalletSignerClient) stopConsuming() {
-	s.doneOnce.Do(func() { close(s.done) })
 }
 
 func (s *StreamExternalWalletSignerClient) sign(req *StreamExternalWalletSignRequest) (*StreamExternalWalletMsg, error) {

@@ -7,8 +7,6 @@ SPDX-License-Identifier: Apache-2.0
 package multisig
 
 import (
-	"context"
-
 	token2 "github.com/LFDT-Panurus/panurus/token"
 	"github.com/LFDT-Panurus/panurus/token/services/ttx"
 	"github.com/LFDT-Panurus/panurus/token/token"
@@ -26,9 +24,8 @@ func Wrap(tx *ttx.Transaction) *Transaction {
 }
 
 // Lock locks the given amount of tokens of the given type in the sender's wallet and transfers them to the recipient.
-func (t *Transaction) Lock(ctx context.Context, senderWallet *token2.OwnerWallet, tokenType token.Type, amount uint64, recipient token2.Identity, opts ...token2.TransferOption) error {
+func (t *Transaction) Lock(senderWallet *token2.OwnerWallet, tokenType token.Type, amount uint64, recipient token2.Identity, opts ...token2.TransferOption) error {
 	return t.Transfer(
-		ctx,
 		senderWallet,
 		tokenType,
 		[]uint64{amount},
@@ -38,7 +35,7 @@ func (t *Transaction) Lock(ctx context.Context, senderWallet *token2.OwnerWallet
 }
 
 // Spend spends the given token.
-func (t *Transaction) Spend(ctx context.Context, senderWallet *token2.OwnerWallet, at *token.UnspentToken, recipient token2.Identity, opts ...token2.TransferOption) error {
+func (t *Transaction) Spend(senderWallet *token2.OwnerWallet, at *token.UnspentToken, recipient token2.Identity, opts ...token2.TransferOption) error {
 	// convert quantity to uint64
 	q, err := token.ToQuantity(at.Quantity, t.TokenRequest.TokenService.PublicParametersManager().PublicParameters().Precision())
 	if err != nil {
@@ -46,7 +43,6 @@ func (t *Transaction) Spend(ctx context.Context, senderWallet *token2.OwnerWalle
 	}
 
 	return t.Transfer(
-		ctx,
 		senderWallet,
 		at.Type,
 		[]uint64{q.ToBigInt().Uint64()},

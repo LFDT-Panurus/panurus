@@ -54,7 +54,6 @@ func (passthroughNormalizer) Normalize(opt *token.ServiceOptions) (*token.Servic
 // dep/mock.Context cannot be imported from this white-box package.
 type minimalViewContext struct {
 	svc any
-	//nolint:containedctx // test fake mirrors view.Context's Context() accessor; not a per-request context
 	ctx context.Context
 }
 

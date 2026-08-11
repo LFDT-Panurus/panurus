@@ -44,6 +44,7 @@ type Transaction struct {
 	TMS              dep.TokenManagementServiceWithExtensions
 	NetworkProvider  GetNetworkFunc
 	Opts             *TxOptions
+	Context          context.Context
 	EndpointResolver *endpoint.Service
 	// FromRaw contains the raw material used to unmarshall this transaction.
 	// It is nil if the transaction was created from scratch.
@@ -144,6 +145,7 @@ func NewTransaction(context view.Context, signer view.Identity, opts ...TxOption
 		TMS:              tms,
 		NetworkProvider:  networkProvider.GetNetwork,
 		Opts:             txOpts,
+		Context:          context.Context(),
 		EndpointResolver: endpoint.GetService(context),
 	}
 	context.OnError(tx.Release)
@@ -187,6 +189,7 @@ func NewTransactionFromBytes(context view.Context, raw []byte) (*Transaction, er
 		Payload:         payload,
 		TMS:             tms,
 		NetworkProvider: networkProvider,
+		Context:         context.Context(),
 		FromRaw:         raw,
 	}
 	context.OnError(tx.Release)
@@ -267,30 +270,30 @@ func (t *Transaction) NetworkTxID() network.TxID {
 
 // Bytes returns the serialized version of the transaction.
 // If eIDs is not nil, then metadata is filtered by the passed eIDs.
-func (t *Transaction) Bytes(ctx context.Context, eIDs ...string) ([]byte, error) {
+func (t *Transaction) Bytes(eIDs ...string) ([]byte, error) {
 	logger.Debugf("marshalling tx, id [%s], for EIDs [%x]", t.TxID, eIDs)
 
-	return marshal(ctx, t, eIDs...)
+	return marshal(t, eIDs...)
 }
 
 // Issue appends a new Issue action to the TokenRequest of this transaction
-func (t *Transaction) Issue(ctx context.Context, wallet *token.IssuerWallet, receiver view.Identity, typ token2.Type, q uint64, opts ...token.IssueOption) error {
-	_, err := t.TokenRequest.Issue(ctx, wallet, receiver, typ, q, opts...)
+func (t *Transaction) Issue(wallet *token.IssuerWallet, receiver view.Identity, typ token2.Type, q uint64, opts ...token.IssueOption) error {
+	_, err := t.TokenRequest.Issue(t.Context, wallet, receiver, typ, q, opts...)
 
 	return err
 }
 
 // Transfer appends a new Transfer action to the TokenRequest of this transaction
-func (t *Transaction) Transfer(ctx context.Context, wallet *token.OwnerWallet, typ token2.Type, values []uint64, owners []view.Identity, opts ...token.TransferOption) error {
-	_, err := t.TokenRequest.Transfer(ctx, wallet, typ, values, owners, opts...)
+func (t *Transaction) Transfer(wallet *token.OwnerWallet, typ token2.Type, values []uint64, owners []view.Identity, opts ...token.TransferOption) error {
+	_, err := t.TokenRequest.Transfer(t.Context, wallet, typ, values, owners, opts...)
 
 	return err
 }
 
 // Redeem appends a new Redeem action to the TokenRequest of this transaction
-func (t *Transaction) Redeem(ctx context.Context, wallet *token.OwnerWallet, typ token2.Type, value uint64, opts ...token.TransferOption) error {
+func (t *Transaction) Redeem(wallet *token.OwnerWallet, typ token2.Type, value uint64, opts ...token.TransferOption) error {
 	// build the redeem action
-	action, err := t.TokenRequest.Redeem(ctx, wallet, typ, value, opts...)
+	action, err := t.TokenRequest.Redeem(t.Context, wallet, typ, value, opts...)
 	if err != nil {
 		return err
 	}
@@ -308,7 +311,7 @@ func (t *Transaction) Redeem(ctx context.Context, wallet *token.OwnerWallet, typ
 		return errors.Wrap(err, "failed to get issuer identity")
 	}
 	if !issuerNetworkIdentity.IsNone() {
-		if err := t.EndpointResolver.Bind(ctx, issuerNetworkIdentity, action.GetIssuer()); err != nil {
+		if err := t.EndpointResolver.Bind(t.Context, issuerNetworkIdentity, action.GetIssuer()); err != nil {
 			return errors.Wrapf(err, "failed to bind issuer identity [%s]", action.GetIssuer())
 		}
 	}
@@ -321,7 +324,6 @@ func (t *Transaction) Redeem(ctx context.Context, wallet *token.OwnerWallet, typ
 // If the proof verifies then the passed wallet will be used to issue a new amount of tokens
 // matching those whose upgrade has been requested.
 func (t *Transaction) Upgrade(
-	ctx context.Context,
 	wallet *token.IssuerWallet,
 	receiver token.Identity,
 	challenge token.TokensUpgradeChallenge,
@@ -329,21 +331,21 @@ func (t *Transaction) Upgrade(
 	proof token.TokensUpgradeProof,
 	opts ...token.IssueOption,
 ) error {
-	_, err := t.TokenRequest.Upgrade(ctx, wallet, receiver, challenge, tokens, proof, opts...)
+	_, err := t.TokenRequest.Upgrade(t.Context, wallet, receiver, challenge, tokens, proof, opts...)
 
 	return err
 }
 
 // Outputs returns the outputs of this transaction over all the actions.
 // The output stream returned can by further filter via the methods it exposes.
-func (t *Transaction) Outputs(ctx context.Context) (*token.OutputStream, error) {
-	return t.TokenRequest.Outputs(ctx)
+func (t *Transaction) Outputs() (*token.OutputStream, error) {
+	return t.TokenRequest.Outputs(t.Context)
 }
 
 // Inputs returns the inputs of this transaction over all the actions.
 // The input stream returned can by further filter via the methods it exposes.
-func (t *Transaction) Inputs(ctx context.Context) (*token.InputStream, error) {
-	return t.TokenRequest.Inputs(ctx)
+func (t *Transaction) Inputs() (*token.InputStream, error) {
+	return t.TokenRequest.Inputs(t.Context)
 }
 
 // InputsAndOutputs returns the inputs and outputs of this transaction over all the actions.
@@ -396,7 +398,7 @@ func (t *Transaction) Release() {
 	if err != nil {
 		logger.Warnf("failed to get token selector [%s]", err)
 	} else {
-		// we need to unlock even if the context that created this transaction has been canceled
+		// we need to unlock even if t.Context is canceled
 		if err := sm.Unlock(context.Background(), t.ID()); err != nil {
 			logger.Warnf("failed releasing tokens locked by [%s], [%s]", t.ID(), err)
 		}

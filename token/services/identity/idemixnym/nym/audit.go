@@ -22,12 +22,7 @@ type AuditInfo struct {
 
 // FromBytes deserializes the AuditInfo from JSON format.
 func (a *AuditInfo) FromBytes(raw []byte) error {
-	// The embedded crypto.AuditInfo's fields are inlined into this struct's JSON,
-	// so this decode reaches the panicking mathlib curve elements itself rather
-	// than going through crypto.AuditInfo.FromBytes. Guard it here too.
-	return crypto.UnmarshalAuditInfo(func() error {
-		return json.Unmarshal(raw, a)
-	})
+	return json.Unmarshal(raw, a)
 }
 
 func (a *AuditInfo) Match(ctx context.Context, id []byte) error {

@@ -7,8 +7,6 @@ SPDX-License-Identifier: Apache-2.0
 package common
 
 import (
-	"context"
-
 	"github.com/LFDT-Panurus/panurus/token/driver"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 )
@@ -34,19 +32,6 @@ var (
 	// ErrActionTooLarge is returned when an action's raw bytes exceed Limits.MaxActionBytes.
 	ErrActionTooLarge = errors.New("action exceeds maximum allowed size")
 )
-
-// withIdentityNestingLimits returns a context carrying this validator's bounds on composite
-// identity nesting, so that the deserializers that turn an untrusted owner identity into a
-// verifier enforce the configured limits rather than the package defaults.
-//
-// It is called at each public entry point of the validator rather than deeper down because the
-// owner identity is reached from several of them - transfer input verification, auditing, the
-// matcher path - and seeding once at the top covers all of them. Deserialization reached from a
-// context that was never seeded still gets the defaults, so a missed entry point weakens the bound
-// to the default rather than removing it (see driver.EnterCompositeIdentity).
-func (v *Validator[P, T, TA, IA, DS]) withIdentityNestingLimits(ctx context.Context) context.Context {
-	return driver.WithIdentityNestingLimits(ctx, v.Limits.MaxIdentityDepth, v.Limits.MaxIdentityComponents)
-}
 
 // CheckRawRequestSize rejects raw token request bytes that exceed v.Limits.MaxRequestBytes.
 // It must be called before unmarshalling so oversized payloads are rejected before any

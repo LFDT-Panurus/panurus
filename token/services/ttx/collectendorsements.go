@@ -207,7 +207,7 @@ func (c *CollectEndorsementsView) requestSignatures(signers []view.Identity, ver
 	if err != nil {
 		return nil, err
 	}
-	txRaw, err := c.tx.Bytes(context.Context())
+	txRaw, err := c.tx.Bytes()
 	if err != nil {
 		return nil, err
 	}
@@ -544,10 +544,10 @@ func (c *CollectEndorsementsView) distributeTxToParties(context view.Context, di
 		var err error
 		if entry.Auditor {
 			logger.DebugfContext(context.Context(), "This is an auditor [%s], send the full set of metadata", entry.ID)
-			txRaw, err = c.tx.Bytes(context.Context())
+			txRaw, err = c.tx.Bytes()
 		} else {
 			logger.DebugfContext(context.Context(), "This is not an auditor [%s], send the filtered metadata", entry.ID)
-			txRaw, err = c.tx.Bytes(context.Context(), entry.EID)
+			txRaw, err = c.tx.Bytes(entry.EID)
 		}
 		if err != nil {
 			return errors.Wrap(err, "failed marshalling transaction content")

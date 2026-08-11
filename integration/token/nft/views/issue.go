@@ -64,7 +64,7 @@ func (p *IssueHouseView) Call(context view.Context) (any, error) {
 	uniqueID, err := uniqueness.GetService(context).ComputeID(context.Context(), h.Address)
 	assert.NoError(err, "failed computing unique ID")
 
-	err = tx.Issue(context.Context(), wallet, h, recipient, nfttx.WithUniqueID(uniqueID))
+	err = tx.Issue(wallet, h, recipient, nfttx.WithUniqueID(uniqueID))
 	assert.NoError(err, "failed adding new issued token")
 
 	// The issuer is ready to collect all the required signatures.

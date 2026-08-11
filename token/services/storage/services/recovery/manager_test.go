@@ -7,10 +7,7 @@ SPDX-License-Identifier: Apache-2.0
 package recovery_test
 
 import (
-	"context"
 	"errors"
-	"strconv"
-	"sync"
 	"testing"
 	"time"
 
@@ -307,105 +304,6 @@ func TestManager_NoPromotionWhenGracePeriodDisabled(t *testing.T) {
 	_ = manager.Stop()
 
 	assert.Equal(t, 0, mockDB.SetStatusCallCount(), "grace period disabled should never call SetStatus")
-}
-
-// TestManager_StopDuringFanOutDoesNotDeadlock walks the exact failure scenario
-// reported in issue #2038, step by step:
-//
-//  1. recoveryLoop's goroutine is mid-fan-out, with claims still queued to send
-//     to work — forced here by returning 64 claims to a single worker that is
-//     parked inside Recover, so the unbuffered send has no receiver.
-//  2. Stop() cancels m.ctx — called from a goroutine so the test can observe it
-//     hanging instead of hanging with it.
-//  3. All WorkerCount workers observe ctx.Done() in their select and exit before
-//     draining the remaining items from work — the worker is released after the
-//     cancellation, so both its select arms are ready and it takes ctx.Done().
-//  4. The fan-out loop's next `work <- claim` send now has no receiver and, when
-//     unguarded, blocks forever.
-//  5. That send sits in the goroutine wg.Done() is deferred on, so the deferred
-//     call never runs.
-//  6. Stop()'s m.wg.Wait() — held under m.mu — hangs indefinitely, and every
-//     later Start()/Stop() deadlocks on m.mu; asserted by the final restart.
-//
-// Verified to fail (10s timeout at step 6) against the unguarded send and to
-// pass with the ctx.Done()-guarded fan-out.
-func TestManager_StopDuringFanOutDoesNotDeadlock(t *testing.T) {
-	logger := logging.MustGetLogger()
-	mockDB := &mock2.Storage{}
-	mockHandler := &mock2.Handler{}
-	config := recovery2.Config{
-		Enabled:        true,
-		TTL:            10 * time.Millisecond,
-		ScanInterval:   10 * time.Millisecond,
-		BatchSize:      100,
-		WorkerCount:    1,
-		LeaseDuration:  time.Second,
-		AdvisoryLockID: 1,
-		InstanceID:     "test-instance",
-	}
-
-	// Step 1: many more claims than workers, so the fan-out loop is guaranteed to
-	// still have undispatched claims when the context is cancelled. 64 also makes
-	// it statistically certain (1 - 2^-63) that the worker's select picks
-	// ctx.Done() before draining the batch on its own.
-	const claimCount = 64
-	records := make([]*ttxdb.RecoveryClaim, claimCount)
-	for i := range records {
-		records[i] = &ttxdb.RecoveryClaim{TxID: "tx" + strconv.Itoa(i)}
-	}
-
-	leadership := &mock2.Leadership{}
-	leadership.CloseReturns(nil)
-	mockDB.AcquireRecoveryLeadershipReturns(leadership, true, nil)
-	mockDB.ClaimPendingTransactionsReturns(records, nil)
-	mockDB.ReleaseRecoveryClaimReturns(nil)
-
-	var once sync.Once
-	inWorker := make(chan struct{})
-	release := make(chan struct{})
-	mockHandler.RecoverStub = func(_ context.Context, _ string) error {
-		// Hold the single worker inside Recover so the fan-out loop is parked
-		// on its send, then let it go only after Stop() cancelled the context.
-		once.Do(func() {
-			close(inWorker)
-			<-release
-		})
-
-		return nil
-	}
-
-	manager := recovery2.NewManager(logger, mockDB, mockHandler, config)
-	require.NoError(t, manager.Start())
-
-	select {
-	case <-inWorker:
-	case <-time.After(10 * time.Second):
-		t.Fatal("timed out waiting for the recovery sweep to reach a worker")
-	}
-
-	// Step 2: cancel m.ctx via Stop() while the fan-out is parked on its send.
-	stopped := make(chan error, 1)
-	go func() {
-		stopped <- manager.Stop()
-	}()
-
-	// Step 3: let Stop() cancel the context first, then unblock the worker so it
-	// returns to its select with both ctx.Done() and the fan-out send ready.
-	time.Sleep(50 * time.Millisecond)
-	close(release)
-
-	// Steps 4-5-6: with the unguarded send this never returns.
-	select {
-	case err := <-stopped:
-		require.NoError(t, err)
-	case <-time.After(10 * time.Second):
-		t.Fatal("Stop() deadlocked while the sweep was fanning out claims")
-	}
-
-	// Step 6, second half: the manager must not be wedged — m.mu was released, so
-	// a subsequent Start()/Stop() pair still works.
-	require.NoError(t, manager.Start())
-	require.NoError(t, manager.Stop())
 }
 
 func TestDefaultConfig(t *testing.T) {

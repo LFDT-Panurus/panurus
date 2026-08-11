@@ -42,23 +42,15 @@ func (m *MultiIdentity) Bytes() ([]byte, error) {
 	return asn1.Marshal(*m)
 }
 
-// validateComponentIdentities rejects an empty/none component identity, any
-// duplicate among ids, and more than maxComponents of them. This is the single
-// choke point applied both when constructing a multisig identity via
-// WrapIdentities and when accepting one from raw (potentially
-// attacker-controlled) wire bytes during deserialization in deserializer.go —
-// an attacker who crafts a MultiIdentity's DER bytes directly bypasses
-// WrapIdentities entirely, so validation must also happen at the
-// deserialization boundary to actually close the gap.
-//
-// The maxComponents bound is the fan-out half of the recursion budget: each
-// component is deserialized in turn, and a multisig identity may nest, so the
-// depth bound enforced in deserializer.go does not by itself bound the total
-// amount of recursive work.
-func validateComponentIdentities(ids []token.Identity, maxComponents int) error {
-	if len(ids) > maxComponents {
-		return errors.Wrapf(tdriver.ErrTooManyIdentityComponents, "got %d component identities, the maximum is %d", len(ids), maxComponents)
-	}
+// validateComponentIdentities rejects an empty/none component identity and
+// any duplicate among ids. This is the single choke point applied both when
+// constructing a multisig identity via WrapIdentities and when accepting one
+// from raw (potentially attacker-controlled) wire bytes during
+// deserialization in deserializer.go — an attacker who crafts a
+// MultiIdentity's DER bytes directly bypasses WrapIdentities entirely, so
+// validation must also happen at the deserialization boundary to actually
+// close the gap.
+func validateComponentIdentities(ids []token.Identity) error {
 	seen := make(map[string]struct{}, len(ids))
 	for k, id := range ids {
 		if id.IsNone() {
@@ -78,7 +70,7 @@ func WrapIdentities(ids ...token.Identity) (token.Identity, error) {
 	if len(ids) == 0 {
 		return nil, errors.New("no identities provided")
 	}
-	if err := validateComponentIdentities(ids, tdriver.DefaultResourceLimits().MaxIdentityComponents); err != nil {
+	if err := validateComponentIdentities(ids); err != nil {
 		return nil, err
 	}
 
@@ -120,20 +112,10 @@ type InfoMatcher struct {
 	AuditInfoMatcher []tdriver.Matcher
 }
 
-// Match matches raw, the inner MultiIdentity bytes of a multisig identity, against the
-// per-component audit info this matcher was built from.
-//
-// It recurses into the component matchers, which for a nested multisig identity are themselves
-// InfoMatchers. That recursion is independent of the one in
-// TypedIdentityDeserializer.GetAuditInfoMatcher that built this matcher, so it accounts for its own
-// depth against ctx rather than inheriting a budget already spent during construction.
 func (e *InfoMatcher) Match(ctx context.Context, raw []byte) error {
-	ctx, err := tdriver.EnterCompositeIdentity(ctx)
-	if err != nil {
-		return errors.Wrap(err, "cannot match multisig identity")
-	}
 	mid := MultiIdentity{}
-	if err := mid.Deserialize(raw); err != nil {
+	err := mid.Deserialize(raw)
+	if err != nil {
 		return err
 	}
 	if len(e.AuditInfoMatcher) != len(mid.Identities) {

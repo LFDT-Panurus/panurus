@@ -55,7 +55,6 @@ func (p *IssueCashView) Call(context view.Context) (any, error) {
 	wallet := ttx.GetIssuerWallet(context, p.IssuerWallet)
 	assert.NotNil(wallet, "issuer wallet [%s] not found", p.IssuerWallet)
 	err = tx.Issue(
-		context.Context(),
 		wallet,
 		recipient,
 		p.TokenType,

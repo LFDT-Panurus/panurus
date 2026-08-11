@@ -167,15 +167,8 @@ func NewKeyManagerWithSchema(
 				},
 			},
 		)
-		// Keep the two failure modes apart: the BCCSP may report an invalid credential either by
-		// returning an error or by returning valid == false with a nil error. Wrapping a nil error
-		// yields a nil error, which would turn a verification failure into a (nil, nil) return and
-		// a nil-pointer panic in the caller.
-		if err != nil {
+		if err != nil || !valid {
 			return nil, errors.WithMessagef(err, "credential is not cryptographically valid")
-		}
-		if !valid {
-			return nil, errors.New("credential is not cryptographically valid")
 		}
 		logger.Debugf("the signer contains key material, load it, done.")
 	} else {

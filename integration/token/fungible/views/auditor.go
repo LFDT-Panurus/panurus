@@ -39,7 +39,7 @@ func (a *AuditView) Call(context view.Context) (any, error) {
 	logger.Debugf("AuditView: get auditor [%s]", tx.ID())
 	auditor, err := ttx.NewAuditor(context, w)
 	assert.NoError(err, "failed to get auditor instance")
-	assert.NoError(auditor.Validate(context.Context(), tx), "failed auditing verification")
+	assert.NoError(auditor.Validate(tx), "failed auditing verification")
 	logger.Debugf("AuditView: get auditor done [%s]", tx.ID())
 
 	// Check ValidationRecords
