@@ -20,6 +20,14 @@ implementation, and records three metrics per method invocation:
 | **Histogram** (`*_duration_seconds`) | Execution duration of each call |
 | **Counter** (`*_errors_total`) | Total number of calls that returned an error |
 
+The metric names in this page are the **declared** names, as written in the wrapper sources.
+Prometheus exports them under a prefix derived from the package that creates them; because the driver
+wrappers receive a TMS-scoped provider, every metric below is exported as
+`panurus_core_common_metrics_<declared name>` — for instance `issue_service_operations_total` is
+queried as `panurus_core_common_metrics_issue_service_operations_total`. See
+[Metrics Reference](../development/metrics.md) for the derivation rules and the exported names of
+every metric in the SDK.
+
 All metrics carry four labels for multi-TMS filtering:
 
 | Label | Description |
@@ -136,27 +144,12 @@ Metrics emitted:
 
 ## Metric Reference
 
-The full list of metrics emitted by the driver wrappers:
+The exported names, types and labels of the fifteen driver metrics are listed in
+[Metrics Reference — Driver services](../development/metrics.md#driver-services). That page is kept in
+step with the code by `token/services/metricsdoc`, so it is the authoritative list; this page describes
+only how the wrappers work and which methods they instrument.
 
-| Metric Name | Type | Description |
-|-------------|------|-------------|
-| `issue_service_operations_total` | Counter | Total `IssueService` method invocations |
-| `issue_service_duration_seconds` | Histogram | Duration of `IssueService` method calls |
-| `issue_service_errors_total` | Counter | Total `IssueService` method errors |
-| `transfer_service_operations_total` | Counter | Total `TransferService` method invocations |
-| `transfer_service_duration_seconds` | Histogram | Duration of `TransferService` method calls |
-| `transfer_service_errors_total` | Counter | Total `TransferService` method errors |
-| `auditor_service_operations_total` | Counter | Total `AuditorService` method invocations |
-| `auditor_service_duration_seconds` | Histogram | Duration of `AuditorService` method calls |
-| `auditor_service_errors_total` | Counter | Total `AuditorService` method errors |
-| `tokens_service_operations_total` | Counter | Total `TokensService` method invocations |
-| `tokens_service_duration_seconds` | Histogram | Duration of `TokensService` method calls |
-| `tokens_service_errors_total` | Counter | Total `TokensService` method errors |
-| `tokens_upgrade_service_operations_total` | Counter | Total `TokensUpgradeService` method invocations |
-| `tokens_upgrade_service_duration_seconds` | Histogram | Duration of `TokensUpgradeService` method calls |
-| `tokens_upgrade_service_errors_total` | Counter | Total `TokensUpgradeService` method errors |
-
-All metrics use labels: `network`, `channel`, `namespace`, `method`.
+All driver metrics use labels: `network`, `channel`, `namespace`, `method`.
 
 ## Source
 

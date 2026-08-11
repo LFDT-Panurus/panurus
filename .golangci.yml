@@ -120,6 +120,7 @@ linters:
         - github.com/hyperledger/fabric-lib-go/common/metrics.Gauge
         - github.com/hyperledger/fabric-lib-go/common/metrics.Histogram
         - github.com/hyperledger-labs/fabric-smart-client/platform/view/services/metrics.Gauge
+        - github.com/hyperledger-labs/fabric-smart-client/platform/view/services/metrics.Histogram
         - github.com/hyperledger-labs/fabric-smart-client/platform/common/driver.ConfigService
         - github.com/hyperledger-labs/fabric-smart-client/integration/nwo/api.ViewClient
         - github.com/hyperledger-labs/fabric-smart-client/integration/nwo/api.Platform
