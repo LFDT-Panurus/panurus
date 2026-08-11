@@ -66,6 +66,7 @@ func (q *DeliveryScanQueryByID) QueryByID(ctx context.Context, startingBlock dri
 	// Keys are supposed to be unique
 	keys := collections.Keys(evicted) // These are the state keys we are looking for
 	ch := make(chan []KeyInfo, len(keys))
+
 	go q.queryByID(ctx, keys, ch, startingBlock, evicted)
 
 	return ch, nil
@@ -116,6 +117,13 @@ func (q *DeliveryScanQueryByID) queryByID(ctx context.Context, keys []driver.PKe
 			startDelivery = true
 
 			continue
+		}
+		if len(values) != len(keys) {
+			logger.Errorf("peer returned %d values for %d keys in ns [%s]; falling back to block scan",
+				len(values), len(keys), ns)
+			startDelivery = true
+
+			continue // treat as a per-namespace failure (=> fall back to the slow block scan)
 		}
 		found := make([]KeyInfo, 0, len(values))
 		var notFound []string
