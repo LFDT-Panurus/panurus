@@ -4,9 +4,9 @@ go 1.26.5
 
 require (
 	github.com/DATA-DOG/go-sqlmock v1.5.2
-	github.com/IBM/idemix v0.2.0
-	github.com/IBM/mathlib v0.3.0
-	github.com/consensys/gnark-crypto v0.20.1
+	github.com/IBM/idemix v0.3.0
+	github.com/IBM/mathlib v0.3.1
+	github.com/consensys/gnark-crypto v0.21.0
 	github.com/dgraph-io/badger/v4 v4.9.4
 	github.com/dgraph-io/ristretto/v2 v2.4.2
 	github.com/go-co-op/gocron/v2 v2.22.0
@@ -42,7 +42,7 @@ require (
 	github.com/alecthomas/kingpin/v2 v2.4.0 // indirect
 	github.com/alecthomas/units v0.0.0-20240927000941-0f3dac36c52b // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
-	github.com/bits-and-blooms/bitset v1.24.4 // indirect
+	github.com/bits-and-blooms/bitset v1.24.6 // indirect
 	github.com/cenkalti/backoff/v5 v5.0.3 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/cockroachdb/errors v1.14.0 // indirect
