@@ -134,7 +134,6 @@ func (v *Validator[P, T, TA, IA, DS]) VerifyTokenRequestFromRaw(ctx context.Cont
 	if len(raw) == 0 {
 		return nil, nil, errors.New("empty token request")
 	}
-	ctx = v.withIdentityNestingLimits(ctx)
 	if err := v.CheckRawRequestSize(raw); err != nil {
 		return nil, nil, err
 	}
@@ -233,7 +232,6 @@ func (v *Validator[P, T, TA, IA, DS]) VerifyTokenRequest(
 	if utils.IsNil(v.ActionDeserializer) {
 		return nil, nil, ErrNilActionDeserializer
 	}
-	ctx = v.withIdentityNestingLimits(ctx)
 	if err := v.VerifyAuditing(ctx, anchor, tr, ledger, signatureProvider, attributes); err != nil {
 		return nil, nil, errors.Wrapf(err, "failed to verify auditor signatures [%s]", anchor)
 	}

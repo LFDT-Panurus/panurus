@@ -62,7 +62,6 @@ type Manager struct {
 	storage Storage
 	handler Handler
 	config  Config
-	//nolint:containedctx // long-running service lifecycle, not a per-request context
 	ctx     context.Context
 	cancel  context.CancelFunc
 	wg      sync.WaitGroup
@@ -163,7 +162,7 @@ func (m *Manager) recoveryLoop() {
 	}
 
 	if err := m.runSweep(m.ctx); err != nil {
-		m.logSweepError("initial transaction recovery sweep", err)
+		m.logger.Warnf("initial transaction recovery sweep failed: %v", err)
 	}
 
 	for {
@@ -174,26 +173,10 @@ func (m *Manager) recoveryLoop() {
 			return
 		case <-ticker.C:
 			if err := m.runSweep(m.ctx); err != nil {
-				m.logSweepError("transaction recovery sweep", err)
+				m.logger.Warnf("transaction recovery sweep failed: %v", err)
 			}
 		}
 	}
-}
-
-// logSweepError reports a sweep that returned an error.
-//
-// A sweep aborted because Stop cancelled the manager context is an ordinary
-// shutdown rather than a failure, so it is logged at debug level: the fan-out
-// surfaces the cancellation as an error to keep the undispatched claims visible
-// to the caller, and warning about it would flag a healthy node shutdown.
-func (m *Manager) logSweepError(what string, err error) {
-	if errors.Is(err, context.Canceled) {
-		m.logger.Debugf("%s stopped: %v", what, err)
-
-		return
-	}
-
-	m.logger.Warnf("%s failed: %v", what, err)
 }
 
 func (m *Manager) validateConfig() error {
@@ -265,7 +248,16 @@ func (m *Manager) recoverTransactions(ctx context.Context) error {
 		go m.worker(ctx, &workerWG, work, errCh)
 	}
 
-	dispatched, fanOutErr := m.fanOut(ctx, records, work)
+	// ClaimPendingTransactions reads directly from the requests table where
+	// tx_id is the primary key, so each claim is already unique. Fan out
+	// straight to the workers; nil entries are defensive but should never
+	// occur in practice.
+	for _, claim := range records {
+		if claim == nil {
+			continue
+		}
+		work <- claim
+	}
 	close(work)
 
 	workerWG.Wait()
@@ -285,57 +277,13 @@ func (m *Manager) recoverTransactions(ctx context.Context) error {
 		}
 	}
 
-	// Successes are counted against what the fan-out actually dispatched, not
-	// against len(records): a cancelled fan-out leaves the tail undispatched,
-	// and those claims never reach errCh. Attributing them to len(records)-failures
-	// would report never-attempted work as succeeded.
-	if failures > 0 || dispatched < len(records) {
-		m.logger.Warnf("completed recovery sweep: claimed=%d, dispatched=%d, succeeded=%d, failed=%d",
-			len(records), dispatched, dispatched-failures, failures)
+	if failures > 0 {
+		m.logger.Warnf("completed recovery sweep: claimed=%d, succeeded=%d, failed=%d", len(records), len(records)-failures, failures)
 	} else {
 		m.logger.Debugf("completed recovery sweep: claimed=%d, all succeeded", len(records))
 	}
 
-	if fanOutErr != nil {
-		return errors.Join(fanOutErr, firstErr)
-	}
-
 	return firstErr
-}
-
-// fanOut dispatches the claimed records to the worker pool.
-//
-// ClaimPendingTransactions reads directly from the requests table where tx_id
-// is the primary key, so each claim is already unique. Fan out straight to the
-// workers; nil entries are defensive but should never occur in practice.
-//
-// The send is guarded on ctx.Done() because the workers return from their own
-// select as soon as the context is cancelled, without draining what is left in
-// work. An unguarded send would then block forever with no receiver, so
-// close(work) and the deferred wg.Done() of the recovery loop would never run
-// and Stop's wg.Wait() would hang while holding m.mu, wedging every later
-// Start/Stop call.
-//
-// It returns the number of claims actually handed to a worker. Callers need
-// this to report the sweep outcome: claims left undispatched by a cancellation
-// never reach errCh, so they cannot be inferred from the failure count.
-func (m *Manager) fanOut(ctx context.Context, records []*ttxdb.RecoveryClaim, work chan<- *ttxdb.RecoveryClaim) (int, error) {
-	dispatched := 0
-	for i, claim := range records {
-		if claim == nil {
-			continue
-		}
-		select {
-		case work <- claim:
-			dispatched++
-		case <-ctx.Done():
-			m.logger.Debugf("recovery fan-out cancelled: %d of %d claim(s) not dispatched", len(records)-i, len(records))
-
-			return dispatched, errors.Wrapf(ctx.Err(), "recovery fan-out cancelled")
-		}
-	}
-
-	return dispatched, nil
 }
 
 func (m *Manager) worker(ctx context.Context, wg *sync.WaitGroup, work <-chan *ttxdb.RecoveryClaim, errCh chan<- error) {

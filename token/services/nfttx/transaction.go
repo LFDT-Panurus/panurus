@@ -7,7 +7,6 @@ SPDX-License-Identifier: Apache-2.0
 package nfttx
 
 import (
-	"context"
 	"encoding/base64"
 
 	"github.com/LFDT-Panurus/panurus/token"
@@ -74,7 +73,7 @@ func ReceiveTransaction(context view.Context) (*Transaction, error) {
 	return &Transaction{Transaction: cctx}, nil
 }
 
-func (t *Transaction) Issue(ctx context.Context, wallet *token.IssuerWallet, state any, recipient view.Identity, opts ...token.IssueOption) error {
+func (t *Transaction) Issue(wallet *token.IssuerWallet, state any, recipient view.Identity, opts ...token.IssueOption) error {
 	// set state id first
 	_, err := t.setStateID(state)
 	if err != nil {
@@ -88,10 +87,10 @@ func (t *Transaction) Issue(ctx context.Context, wallet *token.IssuerWallet, sta
 	stateJSONStr := token2.Type(base64.StdEncoding.EncodeToString(stateJSON))
 
 	// Issue
-	return t.Transaction.Issue(ctx, wallet, recipient, stateJSONStr, 1, opts...)
+	return t.Transaction.Issue(wallet, recipient, stateJSONStr, 1, opts...)
 }
 
-func (t *Transaction) Transfer(ctx context.Context, wallet *OwnerWallet, state any, recipient view.Identity, opts ...token.TransferOption) error {
+func (t *Transaction) Transfer(wallet *OwnerWallet, state any, recipient view.Identity, opts ...token.TransferOption) error {
 	// marshal state to json
 	stateJSON, err := marshaller.Marshal(state)
 	if err != nil {
@@ -99,11 +98,11 @@ func (t *Transaction) Transfer(ctx context.Context, wallet *OwnerWallet, state a
 	}
 	stateJSONStr := token2.Type(base64.StdEncoding.EncodeToString(stateJSON))
 
-	return t.Transaction.Transfer(ctx, wallet.OwnerWallet, stateJSONStr, []uint64{1}, []view.Identity{recipient}, opts...)
+	return t.Transaction.Transfer(wallet.OwnerWallet, stateJSONStr, []uint64{1}, []view.Identity{recipient}, opts...)
 }
 
-func (t *Transaction) Outputs(ctx context.Context) (*OutputStream, error) {
-	os, err := t.Transaction.Outputs(ctx)
+func (t *Transaction) Outputs() (*OutputStream, error) {
+	os, err := t.Transaction.Outputs()
 	if err != nil {
 		return nil, err
 	}

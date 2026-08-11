@@ -25,7 +25,7 @@ func (a *AuditView) Call(context view.Context) (any, error) {
 	// Validate
 	auditor, err := ttx.NewAuditor(context, w)
 	assert.NoError(err, "failed to get auditor instance")
-	assert.NoError(auditor.Validate(context.Context(), tx), "failed auditing verification")
+	assert.NoError(auditor.Validate(tx), "failed auditing verification")
 
 	return context.RunView(ttx.NewAuditApproveView(w, tx))
 }

@@ -25,13 +25,18 @@ var (
 	// SelectorSufficientFundsButConcurrencyIssue is returned when funds are sufficient to cover the request, but
 	// concurrency issues does not make some of the selected tokens available.
 	SelectorSufficientFundsButConcurrencyIssue = errors.New("sufficient funds but concurrency issue")
-	// SelectorRateLimited is the contract error a Locker implementation returns (directly
-	// or wrapped) to deny a lock for policy reasons such as rate limiting or quota.
+	// SelectorRateLimited is the contract error returned (directly or wrapped) to deny a
+	// selection for policy reasons such as rate limiting or quota.
 	// Both the simple and sherdlock selectors detect it via errors.Is and abort the
-	// selection immediately, returning the error to the caller instead of retrying.
-	// Panurus ships no built-in limiter: applications integrate their own
-	// (e.g. a Redis-backed limiter) by providing a Locker implementation that returns
-	// this error when a request must be throttled.
+	// selection immediately, returning the error to the caller instead of retrying, so
+	// callers should treat it as a transient, retry-later condition rather than as
+	// insufficient funds.
+	// Nothing throttles selections by default. Panurus ships a built-in per-wallet limiter
+	// (token/services/selector/ratelimit) that a deployment can switch on under
+	// token.selector without writing any code. Applications can instead supply their own
+	// (e.g. a Redis-backed limiter shared across processes) through the selector services'
+	// WithLimiter option, or enforce their own policy in a Locker implementation that
+	// returns this error when a request must be throttled.
 	SelectorRateLimited = errors.New("selection rate limit exceeded")
 )
 

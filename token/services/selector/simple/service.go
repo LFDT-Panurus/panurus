@@ -15,6 +15,7 @@ import (
 	"github.com/LFDT-Panurus/panurus/token/driver"
 	"github.com/LFDT-Panurus/panurus/token/services/logging"
 	"github.com/LFDT-Panurus/panurus/token/services/selector/config"
+	"github.com/LFDT-Panurus/panurus/token/services/selector/ratelimit"
 	token2 "github.com/LFDT-Panurus/panurus/token/token"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/common/utils/lazy"
@@ -35,25 +36,68 @@ type stoppable interface {
 	Stop() error
 }
 
+// Option customizes a SelectorService.
+type Option func(*serviceOptions)
+
+// serviceOptions collects the optional settings of NewService.
+type serviceOptions struct {
+	limiter    ratelimit.Limiter
+	limiterSet bool
+}
+
+// WithLimiter installs an application-supplied rate limiter for token selection, in place
+// of whatever the configuration selects. Passing a nil Limiter disables rate limiting
+// altogether, which is what an application whose own throttling already lives in its
+// Locker wants. To switch the built-in limiter on from code, pass ratelimit.NewDefault().
+//
+// The application keeps ownership of a limiter passed here: Shutdown does not call Stop on
+// it, because Shutdown also runs on public-parameters updates rather than only at process
+// exit. Limiters that own resources must be stopped by the application.
+func WithLimiter(limiter ratelimit.Limiter) Option {
+	return func(o *serviceOptions) {
+		o.limiter = limiter
+		o.limiterSet = true
+	}
+}
+
 type SelectorService struct {
 	managerLazyCache lazy.Provider[*token.ManagementService, token.SelectorManager]
 	mu               sync.Mutex
 	lockers          []stoppable
+	// limiter throttles selections per wallet. It is nil when rate limiting is disabled.
+	limiter ratelimit.Limiter
+	// ownsLimiter records whether this service created limiter from the configuration, and
+	// is therefore responsible for stopping it. A limiter installed with WithLimiter belongs
+	// to the application and is never stopped here.
+	ownsLimiter bool
 }
 
-func NewService(lockerProvider LockerProvider, c ConfigProvider) *SelectorService {
+// NewService returns a selector service for the simple driver. Selections are not rate
+// limited unless the configuration switches the built-in per-wallet limiter on (see the
+// ratelimit package and token.selector's rateLimitEnabled) or WithLimiter supplies one.
+func NewService(lockerProvider LockerProvider, c ConfigProvider, opts ...Option) *SelectorService {
 	cfg, err := config.New(c)
 	if err != nil {
 		logger.Errorf("error getting selector config, using defaults. %s", err.Error())
 	}
 
-	svc := &SelectorService{}
+	o := &serviceOptions{}
+	for _, opt := range opts {
+		opt(o)
+	}
+	limiter := o.limiter
+	if !o.limiterSet {
+		limiter = ratelimit.FromConfig(cfg)
+	}
+
+	svc := &SelectorService{limiter: limiter, ownsLimiter: !o.limiterSet}
 	loader := &loader{
 		lockerProvider:       lockerProvider,
 		numRetries:           cfg.GetNumRetries(),
 		retryInterval:        cfg.GetRetryInterval(),
 		requestCertification: true,
 		onLockerCreated:      svc.trackLocker,
+		limiter:              limiter,
 	}
 	svc.managerLazyCache = lazy.NewProviderWithKeyMapper(key, loader.load)
 
@@ -69,11 +113,24 @@ func (s *SelectorService) SelectorManager(tms *token.ManagementService) (token.S
 }
 
 // Shutdown stops all background goroutines for every locker created by this service.
+//
+// It also stops the rate limiter, but only one this service built from the configuration: a
+// limiter installed with WithLimiter belongs to the application, and Shutdown is not only a
+// process-exit hook - ManagementServiceProvider.Update calls it whenever the public
+// parameters of a TMS change, mid-process. Stopping the application's limiter there would
+// release resources it is still using (a shared Redis client, say) while the wrapped
+// managers keep calling Allow on it.
 func (s *SelectorService) Shutdown() {
 	s.mu.Lock()
 	lockers := s.lockers
 	s.lockers = nil
+	limiter := s.limiter
+	ownsLimiter := s.ownsLimiter
 	s.mu.Unlock()
+
+	if limiter != nil && ownsLimiter {
+		limiter.Stop()
+	}
 
 	for _, l := range lockers {
 		if err := l.Stop(); err != nil {
@@ -118,6 +175,7 @@ type loader struct {
 	retryInterval        time.Duration
 	requestCertification bool
 	onLockerCreated      func(Locker)
+	limiter              ratelimit.Limiter
 }
 
 func (s *loader) load(tms *token.ManagementService) (token.SelectorManager, error) {
@@ -135,14 +193,18 @@ func (s *loader) load(tms *token.ManagementService) (token.SelectorManager, erro
 		locker: locker,
 	}
 
-	return NewManager(
+	mgr := NewManager(
 		locker,
 		func() QueryService { return qe },
 		s.numRetries,
 		s.retryInterval,
 		s.requestCertification,
 		tms.PublicParametersManager().PublicParameters().Precision(),
-	), nil
+	)
+
+	// Metering sits outside the manager so that it is charged once per selection request
+	// rather than once per token lock: a single selection locks every candidate it walks.
+	return ratelimit.NewSelectorManager(mgr, s.limiter, tms.ID().String()), nil
 }
 
 func key(tms *token.ManagementService) string {

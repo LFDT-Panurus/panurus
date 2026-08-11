@@ -142,7 +142,6 @@ func (t *TransferView) Call(context view.Context) (txID any, err error) {
 	// token2.WithTokenSelector(selector).
 	logger.DebugfContext(context.Context(), "Append transfer")
 	err = tx.Transfer(
-		context.Context(),
 		senderWallet,
 		t.Type,
 		[]uint64{t.Amount},
@@ -161,7 +160,6 @@ func (t *TransferView) Call(context view.Context) (txID any, err error) {
 		}
 
 		err = tx.Transfer(
-			context.Context(),
 			senderWallet,
 			t.Type,
 			[]uint64{action.Amount},
@@ -335,7 +333,6 @@ func (t *TransferWithSelectorView) Call(context view.Context) (any, error) {
 	// The sender adds a new transfer operation to the transaction following the instruction received.
 	// Notice the use of `token2.WithTokenIDs(t.TokenIDs...)` to pass the token ids selected above.
 	err = tx.Transfer(
-		context.Context(),
 		ttx.GetWallet(context, t.Wallet),
 		t.Type,
 		[]uint64{t.Amount},
@@ -432,7 +429,6 @@ func (t *PrepareTransferView) Call(context view.Context) (any, error) {
 	// It is also possible to pass a custom token selector to the Transfer function by using the relative opt:
 	// token2.WithTokenSelector(selector).
 	err = tx.Transfer(
-		context.Context(),
 		senderWallet,
 		t.Type,
 		[]uint64{t.Amount},
@@ -451,7 +447,7 @@ func (t *PrepareTransferView) Call(context view.Context) (any, error) {
 	_, err = context.RunView(ttx.NewCollectEndorsementsView(tx))
 	assert.NoError(err, "failed to sign transaction")
 
-	txRaw, err := tx.Bytes(context.Context())
+	txRaw, err := tx.Bytes()
 	assert.NoError(err, "failed to serialize transaction")
 
 	return &PrepareTransferResult{TxID: tx.ID(), TXRaw: txRaw}, nil
@@ -628,7 +624,6 @@ func (t *MaliciousTransferView) Call(context view.Context) (txID any, err error)
 	// It is also possible to pass a custom token selector to the MaliciousTransfer function by using the relative opt:
 	// token2.WithTokenSelector(selector).
 	err = tx.Transfer(
-		context.Context(),
 		senderWallet,
 		t.Type,
 		[]uint64{t.Amount},
@@ -675,7 +670,6 @@ func (t *MaliciousTransferView) Call(context view.Context) (txID any, err error)
 	self, err := senderWallet.GetRecipientIdentity(context.Context())
 	assert.NoError(err, "failed create recipient identity")
 	err = tx2.Transfer(
-		context.Context(),
 		senderWallet,
 		t.Type,
 		[]uint64{t.Amount},

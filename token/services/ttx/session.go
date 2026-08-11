@@ -74,7 +74,6 @@ func (c *LocalBidirectionalChannel) RightSession() view.Session {
 // localSession is a local session that is used to simulate a session between two views.
 // It has a read channel and a write channel.
 type localSession struct {
-	//nolint:containedctx // default context for the Send/SendError convenience wrappers; explicit *WithContext variants exist alongside
 	ctx          context.Context
 	name         string
 	contextID    string

@@ -203,7 +203,6 @@ func (d *Driver) NewTokenService(tmsID driver.TMSID, publicParams []byte) (drive
 			deserializer,
 			qe,
 			d.tracerProvider,
-			common.LoadAuditRetryConfig(tmsConfig),
 		), metricsProvider),
 		metrics.NewTokensService(tokensService, metricsProvider),
 		metrics.NewTokensUpgradeService(tokensUpgradeService, metricsProvider),

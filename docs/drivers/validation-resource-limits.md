@@ -10,11 +10,11 @@ The token request validators (`token/core/common`, and the fabtoken/zkatdlog dri
 of it) accept raw, attacker-controlled bytes over the network. Aside from the signing anchor
 (`driver.MaxAnchorSize`), nothing else bounds the size of the raw request, the number of actions or
 signatures, the size of an individual action or signature, the number of inputs/outputs/metadata
-entries in an action, the length of a zero-knowledge proof, or how deeply a composite owner identity
-nests — unless these limits are enforced. Without them, an attacker could force unbounded allocations
-(`make([]..., len(attackerControlledCount))`), unbounded recursion (a composite identity nested
-inside itself), and expensive cryptographic work (proof deserialization, ZK verification) purely by
-shaping the wire bytes, without needing any valid signature.
+entries in an action, or the length of a zero-knowledge proof — unless these limits are enforced.
+Without them, an attacker could force unbounded allocations
+(`make([]..., len(attackerControlledCount))`) and expensive cryptographic work (proof
+deserialization, ZK verification) purely by shaping the wire bytes, without needing any valid
+signature.
 
 ## Configuration mechanism
 
@@ -37,8 +37,6 @@ Two sources resolve a `driver.ResourceLimits` value at composition-root time, bo
       limits:
         maxActions: 128
         maxProofBytes: 65536
-        maxIdentityDepth: 5
-        maxIdentityComponents: 16
   ```
 
   Every field is optional; an entirely absent `token.validation.limits` key resolves to
@@ -158,81 +156,6 @@ Auditor-side deserializers (`.../audit/auditor.go` in both drivers) are not the
 consensus-endorsement boundary and are unaffected by this configuration mechanism — they always
 run with `DefaultResourceLimits()`.
 
-### 3. Composite identity nesting
-
-A token's owner is an identity, and three identity types are *composite* — their components are
-themselves identities:
-
-| Type | Registered as | Components |
-| --- | --- | --- |
-| `multisig` (`token/services/identity/multisig`) | `driver.MultiSigIdentityType` | N component identities, all of which must sign |
-| `boolpolicy` (`token/services/identity/boolpolicy`) | `driver.PolicyIdentityType` | N component identities, combined by a boolean expression |
-| `htlc` (`token/services/identity/interop/htlc`) | `htlc.ScriptType` | the script's sender and recipient |
-
-Each driver's `NewDeserializer` (`token/core/fabtoken/v1/driver/deserializer.go`,
-`token/core/zkatdlog/nogh/v1/driver/deserializer.go`) registers the verifier multiplex as the
-*component* deserializer for all three, including for itself:
-
-```go
-des := deserializer.NewTypedVerifierDeserializerMultiplex()
-...
-des.AddTypedVerifierDeserializer(htlc2.ScriptType, htlc.NewTypedIdentityDeserializer(des))
-des.AddTypedVerifierDeserializer(multisig.Multisig, multisig.NewTypedIdentityDeserializer(des, des))
-des.AddTypedVerifierDeserializer(boolpolicy.Policy, boolpolicy.NewTypedIdentityDeserializer(des, des))
-```
-
-That self-registration is what makes composite identities compose — a policy over a multisig over an
-x509 identity resolves correctly — and it is also what makes the recursion unbounded without an
-explicit budget. `GetOwnerVerifier` is called once per input token from the transfer validator, so an
-attacker-shaped owner identity drives that recursion **before any signature is verified**.
-
-Two bounds close it:
-
-| Field | Default | Bounds |
-| --- | --- | --- |
-| `MaxIdentityDepth` | 5 | How deeply composite identities may nest inside one another |
-| `MaxIdentityComponents` | 16 | How many components a single composite identity may carry |
-
-Both are needed. Depth alone does not bound fan-out (one level with thousands of components is a
-single recursive step doing unbounded work), and fan-out alone does not bound depth. Real deployments
-nest 2–3 levels — a policy over a multisig over x509 — comfortably inside the default.
-
-The depth budget is carried in `context.Context` (`token/driver/identity_nesting.go`), which is
-already the first parameter of every method in the recursion. `driver.EnterCompositeIdentity(ctx)`
-accounts for one level and returns the context to pass to the components; it returns an error
-wrapping `driver.ErrIdentityNestingTooDeep` past the limit. Exceeding `MaxIdentityComponents` returns
-`driver.ErrTooManyIdentityComponents`. Because the count rides in the context, it is **per-path**:
-sibling components each descend from their parent's depth rather than sharing a running total, which
-is the correct semantics for a depth bound and the reason the fan-out bound is required alongside it.
-
-There are four independent recursion chains, each of which accounts for its own depth — the matcher
-paths recurse separately from the deserialization that produced them, so a budget spent during
-construction must not be inherited at match time:
-
-| Chain | Entry point |
-| --- | --- |
-| Verifier deserialization | `TypedIdentityDeserializer.DeserializeVerifier` in all three packages |
-| Matcher construction | `TypedIdentityDeserializer.GetAuditInfoMatcher` (`multisig`, `boolpolicy`) |
-| Matcher evaluation | `InfoMatcher.Match` (`multisig`, `boolpolicy`), `AuditInfoMatcher.Match` (`htlc`) |
-| Audit-info collection | `TypedIdentityDeserializer.GetAuditInfo` in all three packages |
-
-Validators seed the configured limits into the context at each public entry point
-(`(*Validator).withIdentityNestingLimits`, `token/core/common/limits.go`). Composite identity
-deserialization is also reachable from paths that carry no `ResourceLimits` — a wallet resolving a
-recipient, an auditor inspecting a request, tests — and those **still get the defaults** rather than
-running unbounded, so a seeding site added later and forgotten weakens the bound to the default
-instead of disabling it.
-
-The fan-out bound is applied on every chain above that walks a component list — verifier
-deserialization, matcher construction and audit-info collection — through the same
-`validateComponentIdentities` choke point, which also rejects an empty or duplicated component. The
-matcher-evaluation chain needs no separate check: its component count is fixed by the matcher tree
-built during construction, which was already bounded.
-
-The fan-out bound is also applied on the honest-caller path, in `multisig.WrapIdentities` and
-`boolpolicy.WrapPolicyIdentity`, so an identity constructed in-process cannot exceed what a validator
-will later accept.
-
 ## Choosing and changing these values
 
 The default values are conservative but comfortably above real usage observed across the unit,
@@ -263,20 +186,9 @@ of the defaults. If a deployment needs a different limit:
   oversized proof is rejected in well under 50ms — i.e. before any verifier is constructed. This is
   a timing property, verified as a plain (non-fuzzed) unit test so it isn't subject to fuzz-worker
   CPU contention.
-- **Identity-nesting tests**: `nesting_test.go` in `multisig` and `boolpolicy` covers each of the
-  four recursion chains at `limit` and `limit+1`, that the depth counter is per-path rather than
-  global, and that an unseeded context is still bounded by the defaults.
-  `deserializer_nesting_test.go` (`token/core/fabtoken/v1/driver`) proves the same against the real
-  assembled multiplex, including composite types alternating with each other so that no type gets a
-  fresh budget, and asserts a realistic three-level identity is *not* rejected as over-nested.
 - **Fuzzing**: `common.FuzzRequestResourceLimits`, `zkatdlog validator.FuzzActionResourceLimits`,
   and `fabtoken validator.FuzzActionResourceLimits` fuzz requests/actions shaped directly by their
   resource dimensions (counts and byte lengths) against `DefaultResourceLimits()`, asserting no
-  panic and the expected typed error at every boundary. `fabtoken driver.FuzzOwnerVerifierNoPanic`
-  additionally fuzzes the owner-identity deserialization path itself — the one reached from the
-  transfer validator once per input token — seeded with identities nested from 1 to 600 levels deep.
-  The three resource-dimension targets each have a persisted seed corpus under their package's
-  `testdata/fuzz/<TargetName>/` covering every default's boundary; `FuzzOwnerVerifierNoPanic` seeds
-  from code only, since its interesting shapes are generated (nesting depth) rather than enumerated.
-  All of them run nightly via
-  [`.github/workflows/nightly-fuzz.yml`](../../.github/workflows/nightly-fuzz.yml).
+  panic and the expected typed error at every boundary. Each target has a persisted seed corpus
+  under its package's `testdata/fuzz/<TargetName>/` covering every default's boundary, and runs
+  nightly via [`.github/workflows/nightly-fuzz.yml`](../../.github/workflows/nightly-fuzz.yml).

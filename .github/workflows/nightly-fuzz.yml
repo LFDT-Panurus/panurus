@@ -60,9 +60,6 @@ jobs:
           - name: identity-idemixnym-audit-info-deserializer
             pkg: ./token/services/identity/idemixnym/nym
             func: FuzzDeserializeAuditInfoNoPanic
-          - name: identity-boolpolicy-audit-info-deserializer
-            pkg: ./token/services/identity/boolpolicy
-            func: FuzzDeserializeAuditInfoNoPanic
           - name: common-request-limits
             pkg: ./token/core/common
             func: FuzzRequestResourceLimits
@@ -99,9 +96,6 @@ jobs:
           - name: fabricx-endorser-for-threshold-rule
             pkg: ./token/services/network/fabricx/endorsement
             func: FuzzEndorserForThresholdRuleNoPanic
-          - name: fabtoken-owner-verifier
-            pkg: ./token/core/fabtoken/v1/driver
-            func: FuzzOwnerVerifierNoPanic
 
     steps:
       - name: Checkout code

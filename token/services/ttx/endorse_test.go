@@ -155,7 +155,7 @@ func newTestEndorseViewContext(t *testing.T, input *TestEndorseViewContextInput)
 	ctx.ContextReturns(baseCtx)
 	ctx.GetServiceStub = getService
 
-	txRaw, err := tx.Bytes(baseCtx)
+	txRaw, err := tx.Bytes()
 	require.NoError(t, err)
 
 	// Whether to queue messages in the channel depends on the scenario being tested:

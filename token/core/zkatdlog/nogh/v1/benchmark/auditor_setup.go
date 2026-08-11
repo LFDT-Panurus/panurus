@@ -114,7 +114,6 @@ func NewAuditCheckSetup(conf *SetupConfiguration) (*AuditCheckSetup, error) {
 		deserializer,
 		&mock.QueryEngine{},
 		noop.NewTracerProvider(),
-		tokcommon.DefaultAuditRetryConfig(),
 	)
 
 	return &AuditCheckSetup{

@@ -60,21 +60,13 @@ func (c *dbEventsCollector[T]) AssertSize(size int) error {
 		c.close <- true
 	}()
 
-	// The overall timeout must be computed once: allocating time.After inside
-	// the loop would reset it on every poll tick, so it could never elapse and
-	// AssertSize would spin forever when the expected size is never reached.
-	timeout := time.NewTimer(time.Second)
-	defer timeout.Stop()
-	ticker := time.NewTicker(20 * time.Millisecond)
-	defer ticker.Stop()
-
 	for {
 		select {
 		case <-c.close:
 			return errors.Errorf("db events collector closed")
-		case <-timeout.C:
+		case <-time.After(time.Second):
 			return errors.Errorf("db events collector timeout")
-		case <-ticker.C:
+		case <-time.After(20 * time.Millisecond):
 			c.mu.RLock()
 			resultSize := len(c.result)
 			c.mu.RUnlock()

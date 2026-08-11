@@ -11,7 +11,6 @@ import (
 	"math/big"
 	"testing"
 
-	"github.com/LFDT-Panurus/panurus/token/core/common"
 	v1 "github.com/LFDT-Panurus/panurus/token/core/fabtoken/v1"
 	"github.com/LFDT-Panurus/panurus/token/core/fabtoken/v1/actions"
 	"github.com/LFDT-Panurus/panurus/token/core/fabtoken/v1/setup"
@@ -112,7 +111,7 @@ func newAuditEnv(benchmarkCase *benchmark2.Case) (*auditEnv, error) {
 	queryEngine := &mockQueryEngine{}
 	tracerProvider := noop.NewTracerProvider()
 
-	as := v1.NewAuditorService(logger, publicParamsManager, deserializer, queryEngine, tracerProvider, common.DefaultAuditRetryConfig())
+	as := v1.NewAuditorService(logger, publicParamsManager, deserializer, queryEngine, tracerProvider)
 
 	// Create test data structures
 	issueAction := &actions.IssueAction{

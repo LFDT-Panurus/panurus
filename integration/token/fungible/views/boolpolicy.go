@@ -63,7 +63,7 @@ func (lv *PolicyLockView) Call(context view.Context) (any, error) {
 	)
 	assert.NoError(err, "failed creating transaction")
 
-	assert.NoError(bptx.Wrap(tx).Lock(context.Context(), senderWallet, lv.Type, lv.Amount, recipient), "failed adding lock")
+	assert.NoError(bptx.Wrap(tx).Lock(senderWallet, lv.Type, lv.Amount, recipient), "failed adding lock")
 
 	_, err = context.RunView(ttx.NewCollectEndorsementsView(tx))
 	assert.NoError(err, "failed to collect endorsements")
@@ -157,7 +157,7 @@ func (r *PolicySpendView) Call(context view.Context) (any, error) {
 		TxOpts(r.TMSID, ttx.WithAuditor(idProvider.Identity(r.Auditor)))...,
 	)
 	assert.NoError(err, "failed to create policy transaction")
-	assert.NoError(bptx.Wrap(tx).Spend(context.Context(), spendWallet, matched.At(0), recipient), "failed adding spend")
+	assert.NoError(bptx.Wrap(tx).Spend(spendWallet, matched.At(0), recipient), "failed adding spend")
 
 	var collectOpts []token2.ServiceOption
 	if len(r.Signers) > 0 {

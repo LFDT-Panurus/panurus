@@ -48,7 +48,7 @@ func (r *ReclaimAllView) Call(context view.Context) (any, error) {
 	)
 	assert.NoError(err, "failed to create an htlc transaction")
 	for _, id := range expired.Tokens {
-		assert.NoError(tx.Reclaim(context.Context(), senderWallet, id), "failed adding a reclaim for [%s]", id)
+		assert.NoError(tx.Reclaim(senderWallet, id), "failed adding a reclaim for [%s]", id)
 	}
 
 	// The sender is ready to collect all the required signatures.
@@ -107,7 +107,7 @@ func (r *ReclaimByHashView) Call(context view.Context) (any, error) {
 		ttx.WithTMSID(r.TMSID),
 	)
 	assert.NoError(err, "failed to create an htlc transaction")
-	assert.NoError(tx.Reclaim(context.Context(), senderWallet, expired), "failed adding a reclaim for [%s]", expired)
+	assert.NoError(tx.Reclaim(senderWallet, expired), "failed adding a reclaim for [%s]", expired)
 
 	// The sender is ready to collect all the required signatures.
 	// In this case, the sender's and the auditor's signatures.

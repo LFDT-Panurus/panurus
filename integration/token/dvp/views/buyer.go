@@ -32,7 +32,7 @@ func (b *BuyHouseView) Call(context view.Context) (any, error) {
 
 	// check transaction, it must contain the house transfer
 	nfttx := nfttx.Wrap(tx)
-	outputs, err := nfttx.Outputs(context.Context())
+	outputs, err := nfttx.Outputs()
 	assert.NoError(err, "failed getting outputs")
 	assert.NoError(outputs.Validate(), "failed validating outputs")
 	assert.True(outputs.Count() == 1, "the transaction must contain one output")
@@ -54,7 +54,6 @@ func (b *BuyHouseView) Call(context view.Context) (any, error) {
 
 	// Append the cash transfer to the transaction
 	err = tx.Transfer(
-		context.Context(),
 		ttx.MyWalletFromTx(context, tx),
 		action.Type,
 		[]uint64{action.Amount},

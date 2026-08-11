@@ -186,11 +186,8 @@ type LocalMembership struct {
 	// leaves deserializerManager-based dispatch as the only path, unchanged.
 	signerRouter *identity.SignerRouter
 
-	localIdentitiesMutex sync.RWMutex
-	localIdentities      []*LocalIdentity
-	// keyManagers holds every key manager loaded by this membership, so that Close can
-	// release the ones that own resources. Guarded by localIdentitiesMutex.
-	keyManagers               []KeyManager
+	localIdentitiesMutex      sync.RWMutex
+	localIdentities           []*LocalIdentity
 	cachedDefaultIdentifier   string
 	localIdentitiesByName     map[string][]LocalIdentityWithPriority
 	localIdentitiesByIdentity map[string]*LocalIdentity
@@ -250,30 +247,9 @@ func (l *LocalMembership) DefaultNetworkIdentity() token.Identity {
 	return l.defaultNetworkIdentity
 }
 
-// closer is implemented by key managers that hold resources needing an explicit
-// release, such as the background identity provisioning of an idemix identity cache.
-// It is declared here, on the consumer side, rather than widening KeyManager: most key
-// managers own nothing that needs releasing.
-type closer interface {
-	Close()
-}
-
-// Close releases the resources held by this local membership: the key managers it
-// loaded and the background identity notifier.
+// Close stops the background identity notifier.
 func (l *LocalMembership) Close() {
 	l.closeOnce.Do(func() {
-		// Release the key managers first. The notifier teardown below can return early
-		// or fail, and stopping their background goroutines must not depend on it.
-		l.localIdentitiesMutex.Lock()
-		keyManagers := l.keyManagers
-		l.keyManagers = nil
-		l.localIdentitiesMutex.Unlock()
-		for _, keyManager := range keyManagers {
-			if c, ok := keyManager.(closer); ok {
-				c.Close()
-			}
-		}
-
 		notifier, err := l.identityDB.Notifier()
 		if err != nil {
 			if errors.Is(err, storage.ErrNotSupported) {
@@ -840,10 +816,6 @@ func (l *LocalMembership) addLocalIdentity(ctx context.Context, config *Identity
 
 	// deserializer
 	l.deserializerManager.AddTypedSignerDeserializer(keyManager.IdentityType(), &TypedSignerDeserializer{KeyManager: keyManager})
-
-	// Track the key manager so Close can release what it owns. Callers of
-	// addLocalIdentity hold localIdentitiesMutex (see commitLocalIdentity).
-	l.keyManagers = append(l.keyManagers, keyManager)
 
 	// conf_id-pinned routing: register this KeyManager as the sole owner of its conf_id, so
 	// Provider can dispatch straight to it instead of scanning every KeyManager registered

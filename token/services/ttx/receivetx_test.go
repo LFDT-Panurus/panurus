@@ -116,7 +116,7 @@ func TestReceiveTx(t *testing.T) {
 
 				tx, err := ttx.NewTransaction(ctx, []byte("a_signer"))
 				require.NoError(t, err)
-				txRaw, err := tx.Bytes(t.Context())
+				txRaw, err := tx.Bytes()
 				require.NoError(t, err)
 
 				ch <- &view.Message{
@@ -164,7 +164,7 @@ func TestReceiveTx(t *testing.T) {
 
 				tx, err := ttx.NewTransaction(ctx, []byte("a_signer"))
 				require.NoError(t, err)
-				txRaw, err := tx.Bytes(t.Context())
+				txRaw, err := tx.Bytes()
 				require.NoError(t, err)
 
 				sr := &ttx.SignatureRequest{

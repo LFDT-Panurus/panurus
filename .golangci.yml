@@ -1,7 +1,6 @@
 version: "2"
 linters:
   enable:
-    - containedctx
     - asasalint # Check for pass []any as any in variadic func(...any).
     - canonicalheader # Canonicalheader checks whether net/http.Header uses canonical header. [auto-fix]
     - copyloopvar # A linter detects places where loop variables are copied. [fast, auto-fix]
@@ -107,7 +106,6 @@ linters:
         - go.opentelemetry.io/otel/trace.Span
         - github.com/hyperledger/fabric-lib-go/common/metrics.Gauge
         - github.com/hyperledger/fabric-lib-go/common/metrics.Histogram
-        - github.com/hyperledger-labs/fabric-smart-client/platform/view/services/metrics.Gauge
         - github.com/hyperledger-labs/fabric-smart-client/platform/common/driver.ConfigService
         - github.com/hyperledger-labs/fabric-smart-client/integration/nwo/api.ViewClient
         - github.com/hyperledger-labs/fabric-smart-client/integration/nwo/api.Platform

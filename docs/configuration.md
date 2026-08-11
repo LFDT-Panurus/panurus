@@ -39,6 +39,24 @@ token:
     # fetcherCacheMaxQueries is the number of queries after which a soft refresh (non-blocking background update) is triggered.
     # This helps keep the cache fresh without blocking queries. If not specified or set to 0, defaults to 5 queries.
     fetcherCacheMaxQueries: 5
+    # Selection rate limiting. Selections are NOT rate limited unless this section asks for it.
+    # Panurus ships a built-in per-wallet token bucket that can be switched on here; the limit is
+    # charged once per selection request, not per token lock.
+    # The three keys below are commented out on purpose: this is the shipped default, and it is
+    # no selection rate limiting at all. Uncomment to switch the limiter on.
+    # rateLimitEnabled switches that built-in limiter on with its built-in rate (100 selections per
+    # second per wallet) and burst (200), for deployments that want basic protection without
+    # choosing numbers. If not specified, there is no rate limiting at all.
+    # rateLimitEnabled: true
+    # rateLimit is the number of selections per second a single wallet may perform. A positive value
+    # switches the limiter on with that rate, whether or not rateLimitEnabled is set; a negative
+    # value keeps it off even when rateLimitEnabled is true. If not specified or set to 0, the
+    # built-in rate (100) applies when rateLimitEnabled is true, and no limiting applies otherwise.
+    # rateLimit: 100
+    # rateLimitBurst is the largest burst of selections a single wallet may perform after being idle.
+    # Only consulted when the limiter is on. If not specified or set to 0, defaults to 200.
+    # Values below rateLimit are raised to rateLimit.
+    # rateLimitBurst: 200
 
   # When we are interested in knowing when a transaction reaches finality, we subscribe to the Finality Listener Manager for the finality event of that transaction.
   # This configuration specifies the way the manager is instantiated (i.e., how it gets notified about the finality events, how often it checks).
@@ -129,8 +147,6 @@ token:
       maxMetadataKeyBytes: 256
       maxMetadataValueBytes: 4096
       maxProofBytes: 131072
-      maxIdentityDepth: 5
-      maxIdentityComponents: 16
 
   # optional global SQL table name overrides (applied to all TMS instances).
   # The value replaces the short code; the FSC-generated prefix and params still wrap it.
@@ -417,24 +433,7 @@ token:
           # Adds random jitter to break symmetry when multiple auditors retry simultaneously
           # Default: 0.3 (30%)
           jitterFactor: 0.3
-
-        # auditTokensRetry controls how the auditor's early validation gate
-        # (AuditorCheck) tolerates the read-timing race in which a referenced
-        # token's producing transaction is still pending, so its outputs have not
-        # yet been persisted to the token store by the asynchronous finality
-        # listener. When a lookup misses and the producing tx is still pending,
-        # the gate waits and retries instead of spuriously rejecting the request.
-        auditTokensRetry:
-          # numRetries is the number of token-lookup attempts before giving up.
-          # There are numRetries-1 delays between attempts. Values <= 0 (or an
-          # omitted key) keep the default; a single attempt is always made.
-          # Default: 3
-          numRetries: 3
-          # retryDelay is the backoff slept between attempts, as a duration string
-          # (e.g. 500ms, 3s). Must be > 0; an invalid or non-positive value falls
-          # back to the default. The backoff honors context cancellation.
-          # Default: 3s
-          retryDelay: 3s
+                  Security: 256
 ```
 
 ## Minimal Configuration
@@ -471,6 +470,15 @@ Default values:
 - numRetries: 3
 - leaseExpiry: 3m
 - leaseCleanupTickPeriod: 90s
+- rateLimitEnabled: false (no selection rate limiting at all)
+- rateLimit: 0 (unset; 100 selections per second per wallet once the limiter is on, negative forces it off)
+- rateLimitBurst: 200 (only consulted when the limiter is on)
+
+Selection rate limiting is **off by default**. Set `rateLimitEnabled: true` to switch on the
+built-in per-wallet limiter with its built-in rate and burst, or set `rateLimit` to a
+positive value to switch it on with a rate of your own. See
+[Selector Resource Limits](security/selector_resource_limits.md) for details, including how
+to supply your own limiter instead.
 
 ---
 
@@ -514,8 +522,6 @@ token:
       maxMetadataKeyBytes: 256
       maxMetadataValueBytes: 4096
       maxProofBytes: 131072
-      maxIdentityDepth: 5
-      maxIdentityComponents: 16
 ```
 
 Default values:
@@ -531,10 +537,6 @@ Default values:
 - maxMetadataKeyBytes: 256
 - maxMetadataValueBytes: 4096 (4 KiB)
 - maxProofBytes: 131072 (128 KiB) — ignored by drivers without a zero-knowledge proof (fabtoken)
-- maxIdentityDepth: 5 — how deeply composite owner identities (multisig, policy, HTLC script) may
-  nest inside one another. Real deployments nest 2–3 levels, e.g. a policy over a multisig over x509
-- maxIdentityComponents: 16 — how many component identities a single composite identity may carry.
-  Bounds fan-out, which maxIdentityDepth does not
 
 Every field is optional; any field omitted (or the whole `token.validation.limits` key omitted)
 resolves to its default. Read via the config service, so this key applies only to the FSC/DI
@@ -843,59 +845,6 @@ Default values:
 - `workerCount` affects CPU and network utilization during recovery sweeps
 - `batchSize` affects memory usage and the duration of each recovery sweep
 - The relationship `scanInterval < ttl` ensures timely detection without premature recovery
-
----
-
-### Optional: token.tms.<name>.auditor.auditTokensRetry
-
-Controls how the auditor's early validation gate (`AuditorCheck`) tolerates the
-read-timing race in which a referenced token's producing transaction is still
-pending, so its outputs have not yet been persisted to the token store by the
-asynchronous finality listener. On a missing lookup whose producing transaction is
-still `Pending`, the gate waits `retryDelay` and retries up to `numRetries`
-attempts before failing, instead of spuriously rejecting a validly-audited,
-quickly-chained transaction. This mirrors the tolerance already applied on the
-sibling `Audit()` path. Applies to both the `fabtoken` and `dlog` drivers.
-
-If not specified, the default configuration is:
-
-```yaml
-token:
-  tms:
-    <name>:
-      auditor:
-        auditTokensRetry:
-          numRetries: 3
-          retryDelay: 3s
-```
-
-Default values:
-
-- numRetries: 3
-- retryDelay: 3s
-
-**Parameter Descriptions:**
-
-- **numRetries**: Number of token-lookup attempts made before giving up, with
-  `numRetries - 1` backoff delays between them (so the defaults give a ~6s grace
-  window: 3 attempts, 2 delays of 3s). A value `<= 0`, or an omitted key, keeps the
-  default; at least one attempt is always made. Retries are only spent while a
-  referenced transaction is genuinely `Pending` — a hard lookup failure (or a
-  failure to determine pending status) fails fast without consuming the budget.
-- **retryDelay**: Backoff slept between attempts, expressed as a Go duration string
-  (e.g. `500ms`, `3s`). Must be `> 0`; an invalid or non-positive value logs a
-  warning and falls back to the default. The backoff honors context cancellation,
-  so a cancelled or timed-out request returns immediately rather than pinning a
-  goroutine for the full grace window.
-
-**Tuning Recommendations:**
-
-- **For quickly-chained, high-throughput workloads** (an output spent shortly after
-  it was audited), raise `numRetries` and/or `retryDelay` to widen the grace window
-  and further reduce spurious rejections when finality persistence lags.
-- **For latency-sensitive gates**, lower `retryDelay` (e.g. `500ms`) so the audit
-  gate fails faster when the producing transaction never becomes final, at the cost
-  of tolerating a shorter persistence lag.
 
 ---
 

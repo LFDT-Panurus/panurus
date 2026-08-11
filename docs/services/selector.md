@@ -182,6 +182,10 @@ token:
     fetcherCacheSize: 1000               # Cache size in entries (default: 0 = use fetcher default)
     fetcherCacheRefresh: 30s             # Cache refresh interval (default: 0 = use fetcher default)
     fetcherCacheMaxQueries: 100          # Max queries before cache refresh (default: 0 = use fetcher default)
+    # Commented out to match the shipped default: no selection rate limiting.
+    # rateLimitEnabled: true             # Switch the built-in per-wallet limiter on (default: false = no limiting)
+    # rateLimit: 100                     # Selections per second per wallet (positive also enables, negative forces off)
+    # rateLimitBurst: 200                # Burst capacity per wallet (default: 200, raised to rateLimit if lower)
 ```
 
 ### Driver
@@ -201,6 +205,29 @@ on first cover, but they diverge in several ways beyond the shuffle:
 - `simple` runs a `GetTokens` concurrency check after a successful cover and can return a
   fourth error sentinel, `token.SelectorSufficientFundsButConcurrencyIssue`, which
   `sherdlock` does not produce.
+
+### Rate Limit Configuration
+
+Selections are **not rate limited by default**. Panurus ships a per-wallet token-bucket
+limiter that a deployment can switch on without writing any code:
+
+- **rateLimitEnabled**: Switches the built-in limiter on with its built-in rate (100
+  selections per second per wallet) and burst (200). Absent, there is no rate limiting.
+- **rateLimit**: Selection requests per second a single wallet may perform. A positive value
+  switches the limiter on with that rate on its own; a negative value forces the limiter off
+  even when `rateLimitEnabled` is `true`.
+- **rateLimitBurst**: Largest burst a single wallet may perform after being idle, consulted
+  only when the limiter is on. Values below `rateLimit` are raised to it.
+
+The limiter is charged once per `Select` call, not once per token lock, so a selection that
+walks many candidate tokens still costs a single request. Throttled selections fail fast
+with an error wrapping `token.SelectorRateLimited`, which callers should treat as
+retry-later rather than as insufficient funds.
+
+Applications that already run their own limiter can install it with
+`sherdlock.WithLimiter` / `simple.WithLimiter` — and the same option takes
+`ratelimit.NewDefault()` to switch the built-in one on from code. See
+[Selector Resource Limits](../security/selector_resource_limits.md).
 
 ### Cache Configuration
 

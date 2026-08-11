@@ -182,7 +182,7 @@ func (d *Driver) NewTokenService(tmsID driver.TMSID, publicParams []byte) (drive
 		tmsConfig,
 		metrics.NewIssueService(v1.NewIssueService(publicParamsManager, ws, deserializer), metricsProvider),
 		metrics.NewTransferService(v1.NewTransferService(logger, publicParamsManager, ws, common.NewVaultTokenLoader(qe), deserializer), metricsProvider),
-		metrics.NewAuditorService(v1.NewAuditorService(logger, publicParamsManager, deserializer, qe, d.tracerProvider, common.LoadAuditRetryConfig(tmsConfig)), metricsProvider),
+		metrics.NewAuditorService(v1.NewAuditorService(logger, publicParamsManager, deserializer, qe, d.tracerProvider), metricsProvider),
 		metrics.NewTokensService(tokensService, metricsProvider),
 		metrics.NewTokensUpgradeService(&v1.TokensUpgradeService{}, metricsProvider),
 		authorization,
