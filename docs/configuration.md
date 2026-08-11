@@ -129,6 +129,8 @@ token:
       maxMetadataKeyBytes: 256
       maxMetadataValueBytes: 4096
       maxProofBytes: 131072
+      maxIdentityDepth: 5
+      maxIdentityComponents: 16
 
   # optional global SQL table name overrides (applied to all TMS instances).
   # The value replaces the short code; the FSC-generated prefix and params still wrap it.
@@ -512,6 +514,8 @@ token:
       maxMetadataKeyBytes: 256
       maxMetadataValueBytes: 4096
       maxProofBytes: 131072
+      maxIdentityDepth: 5
+      maxIdentityComponents: 16
 ```
 
 Default values:
@@ -527,6 +531,10 @@ Default values:
 - maxMetadataKeyBytes: 256
 - maxMetadataValueBytes: 4096 (4 KiB)
 - maxProofBytes: 131072 (128 KiB) — ignored by drivers without a zero-knowledge proof (fabtoken)
+- maxIdentityDepth: 5 — how deeply composite owner identities (multisig, policy, HTLC script) may
+  nest inside one another. Real deployments nest 2–3 levels, e.g. a policy over a multisig over x509
+- maxIdentityComponents: 16 — how many component identities a single composite identity may carry.
+  Bounds fan-out, which maxIdentityDepth does not
 
 Every field is optional; any field omitted (or the whole `token.validation.limits` key omitted)
 resolves to its default. Read via the config service, so this key applies only to the FSC/DI

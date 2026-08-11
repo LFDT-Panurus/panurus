@@ -99,6 +99,9 @@ jobs:
           - name: fabricx-endorser-for-threshold-rule
             pkg: ./token/services/network/fabricx/endorsement
             func: FuzzEndorserForThresholdRuleNoPanic
+          - name: fabtoken-owner-verifier
+            pkg: ./token/core/fabtoken/v1/driver
+            func: FuzzOwnerVerifierNoPanic
 
     steps:
       - name: Checkout code

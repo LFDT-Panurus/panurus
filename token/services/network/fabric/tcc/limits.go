@@ -31,6 +31,9 @@ const (
 	EnvMaxMetadataValueBytes = "TOKEN_VALIDATION_MAX_METADATA_VALUE_BYTES"
 
 	EnvMaxProofBytes = "TOKEN_VALIDATION_MAX_PROOF_BYTES"
+
+	EnvMaxIdentityDepth      = "TOKEN_VALIDATION_MAX_IDENTITY_DEPTH"
+	EnvMaxIdentityComponents = "TOKEN_VALIDATION_MAX_IDENTITY_COMPONENTS"
 )
 
 // EnvResourceLimitsProvider resolves driver.ResourceLimits from environment variables, overlaying
@@ -70,6 +73,8 @@ func (p *EnvResourceLimitsProvider) ResourceLimits() (driver.ResourceLimits, err
 		{EnvMaxMetadataKeyBytes, &l.MaxMetadataKeyBytes},
 		{EnvMaxMetadataValueBytes, &l.MaxMetadataValueBytes},
 		{EnvMaxProofBytes, &l.MaxProofBytes},
+		{EnvMaxIdentityDepth, &l.MaxIdentityDepth},
+		{EnvMaxIdentityComponents, &l.MaxIdentityComponents},
 	}
 	for _, f := range fields {
 		raw := getenv(f.env)
