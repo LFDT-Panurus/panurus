@@ -89,3 +89,15 @@ The following example shows how to retrieve the total amount of transactions for
 		fmt.Printf("Transaction: %s\n", tx.ID())
 	}
 ```
+
+## Composite Owners
+
+An output owned by a composite identity (multisig, boolpolicy) carries one
+audit row per member, so identity consumers (`ByRecipient`,
+`RevocationHandles`) see every member. Amount aggregations — payments,
+holdings, transaction records — count each `(output index, enrollment ID)`
+pair once (`OutputStream.UniquePerOutput`), so members sharing an enrollment
+ID do not multiply the recorded amount. A spent input is expanded the same
+way, one row per member carrying the token's full quantity; sent-amount
+aggregation counts each `(token ID, enrollment ID)` pair once
+(`InputStream.UniquePerInput`).

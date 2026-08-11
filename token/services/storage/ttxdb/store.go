@@ -385,7 +385,7 @@ func TransactionRecords(ctx context.Context, record *token.AuditRecord, timestam
 		outTT := ous.TokenTypes()
 		for _, outEID := range outEIDs {
 			for _, tokenType := range outTT {
-				received := ous.ByEnrollmentID(outEID).ByType(tokenType).Sum()
+				received := ous.ByEnrollmentID(outEID).ByType(tokenType).UniquePerOutput().Sum()
 				if received.Cmp(big.NewInt(0)) <= 0 {
 					continue
 				}
@@ -431,8 +431,8 @@ func Movements(ctx context.Context, record *token.AuditRecord, created time.Time
 
 	for _, eID := range eIDs {
 		for _, tokenType := range tokenTypes {
-			received := outputs.ByEnrollmentID(eID).ByType(tokenType).Sum()
-			sent := inputs.ByEnrollmentID(eID).ByType(tokenType).Sum()
+			received := outputs.ByEnrollmentID(eID).ByType(tokenType).UniquePerOutput().Sum()
+			sent := inputs.ByEnrollmentID(eID).ByType(tokenType).UniquePerInput().Sum()
 			diff := new(big.Int).Sub(received, sent)
 			if sent.Cmp(received) == 0 {
 				continue

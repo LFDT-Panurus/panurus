@@ -91,6 +91,27 @@ func (o *OutputStream) ByType(typ token.Type) *OutputStream {
 	})
 }
 
+// UniquePerOutput returns a stream keeping, for each (Index, EnrollmentID)
+// pair, only the first output, so amount aggregation counts a composite
+// owner's members once. Identity consumers use the full stream instead.
+func (o *OutputStream) UniquePerOutput() *OutputStream {
+	type key struct {
+		index uint64
+		eID   string
+	}
+	seen := map[key]bool{}
+
+	return o.Filter(func(t *Output) bool {
+		k := key{index: t.Index, eID: t.EnrollmentID}
+		if seen[k] {
+			return false
+		}
+		seen[k] = true
+
+		return true
+	})
+}
+
 // IsRedeem returns true if this output is a redeem, i.e., it has no owner.
 func (o *Output) IsRedeem() bool {
 	return len(o.Owner) == 0
@@ -367,6 +388,31 @@ func (is *InputStream) ByEnrollmentID(id string) *InputStream {
 func (is *InputStream) ByType(tokenType token.Type) *InputStream {
 	return is.Filter(func(t *Input) bool {
 		return t.Type == tokenType
+	})
+}
+
+// UniquePerInput returns a stream keeping, for each (token ID, EnrollmentID)
+// pair, only the first input, so amount aggregation counts a composite
+// owner's members once. Inputs with no token ID are all kept. Identity
+// consumers use the full stream instead.
+func (is *InputStream) UniquePerInput() *InputStream {
+	type key struct {
+		id  token.ID
+		eID string
+	}
+	seen := map[key]bool{}
+
+	return is.Filter(func(t *Input) bool {
+		if t.Id == nil {
+			return true
+		}
+		k := key{id: *t.Id, eID: t.EnrollmentID}
+		if seen[k] {
+			return false
+		}
+		seen[k] = true
+
+		return true
 	})
 }
 

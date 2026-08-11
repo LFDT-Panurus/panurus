@@ -325,3 +325,110 @@ func redeem() token.AuditRecord {
 		Outputs: token.NewOutputStream([]*token.Output{output1}, 64),
 	}
 }
+
+// compositePolicySpend models a policy wallet paying 6 to a bank with 34
+// change, where both the spent input and the change output are expanded into
+// one row per member of the composite owner: same enrollment ID, same
+// physical token.
+func compositePolicySpend() token.AuditRecord {
+	// distinct pointers to the same token ID value, as extraction produces
+	inputMember0 := &token.Input{
+		ActionIndex:  0,
+		Id:           &token2.ID{TxId: "spent-tx", Index: 0},
+		EnrollmentID: "policy",
+		Type:         "TOK",
+		Quantity:     token2.NewQuantityFromUInt64(40),
+	}
+	inputMember1 := &token.Input{
+		ActionIndex:  0,
+		Id:           &token2.ID{TxId: "spent-tx", Index: 0},
+		EnrollmentID: "policy",
+		Type:         "TOK",
+		Quantity:     token2.NewQuantityFromUInt64(40),
+	}
+	bankOutput := &token.Output{
+		ActionIndex:  0,
+		Index:        1,
+		EnrollmentID: "bank",
+		Type:         "TOK",
+		Quantity:     token2.NewQuantityFromUInt64(6),
+	}
+	changeMember0 := &token.Output{
+		ActionIndex:  0,
+		Index:        2,
+		EnrollmentID: "policy",
+		Type:         "TOK",
+		Quantity:     token2.NewQuantityFromUInt64(34),
+	}
+	changeMember1 := &token.Output{
+		ActionIndex:  0,
+		Index:        2,
+		EnrollmentID: "policy",
+		Type:         "TOK",
+		Quantity:     token2.NewQuantityFromUInt64(34),
+	}
+
+	return token.AuditRecord{
+		Anchor:  "test-composite",
+		Inputs:  token.NewInputStream(qsMock{}, []*token.Input{inputMember0, inputMember1}, 64),
+		Outputs: token.NewOutputStream([]*token.Output{bankOutput, changeMember0, changeMember1}, 64),
+	}
+}
+
+// TestMovementRecords_CompositePolicySpend checks the member-expanded change
+// rows count once: the payer moves -6 and the bank +6.
+func TestMovementRecords_CompositePolicySpend(t *testing.T) {
+	now := time.Now()
+	input := compositePolicySpend()
+	recs, err := ttxdb.Movements(t.Context(), &input, now)
+	require.NoError(t, err)
+	assert.Equal(t, []driver.MovementRecord{
+		{
+			TxID:         string(input.Anchor),
+			EnrollmentID: "policy",
+			TokenType:    "TOK",
+			Amount:       big.NewInt(-6),
+			Timestamp:    now,
+			Status:       driver.Pending,
+		},
+		{
+			TxID:         string(input.Anchor),
+			EnrollmentID: "bank",
+			TokenType:    "TOK",
+			Amount:       big.NewInt(6),
+			Timestamp:    now,
+			Status:       driver.Pending,
+		},
+	}, recs)
+}
+
+// TestTransactionRecords_CompositePolicySpend checks the change amount is
+// recorded once despite the per-member rows.
+func TestTransactionRecords_CompositePolicySpend(t *testing.T) {
+	now := time.Now()
+	input := compositePolicySpend()
+	recs, err := ttxdb.TransactionRecords(t.Context(), &input, now)
+	require.NoError(t, err)
+	assert.Equal(t, []driver.TransactionRecord{
+		{
+			TxID:         string(input.Anchor),
+			ActionType:   driver.Transfer,
+			SenderEID:    "policy",
+			RecipientEID: "bank",
+			TokenType:    "TOK",
+			Amount:       big.NewInt(6),
+			Timestamp:    now,
+			Status:       driver.Pending,
+		},
+		{
+			TxID:         string(input.Anchor),
+			ActionType:   driver.Transfer,
+			SenderEID:    "policy",
+			RecipientEID: "policy",
+			TokenType:    "TOK",
+			Amount:       big.NewInt(34),
+			Timestamp:    now,
+			Status:       driver.Pending,
+		},
+	}, recs)
+}
