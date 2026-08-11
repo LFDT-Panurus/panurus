@@ -107,6 +107,9 @@ nav:
           - Recovery Service: services/storage/recovery.md
       - Tokens: services/tokens.md
       - TTX: services/ttx.md
+  - Security:
+      - HTLC Deadlines and Clock Synchronisation: security/htlc_deadline_clock_assumptions.md
+      - Selector Resource Limits: security/selector_resource_limits.md
   - Development:
       - Overview: development/development.md
       - General Guidelines: development/general.md
