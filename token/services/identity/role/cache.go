@@ -38,7 +38,7 @@ type RecipientDataCache struct {
 
 	// provisionCtx governs the lifetime of the background provisioning goroutine.
 	// It is created at construction time and cancelled by Close.
-	provisionCtx context.Context
+	provisionCtx context.Context //nolint:containedctx
 	// cancel cancels provisionCtx. It is written once, at construction time, so
 	// that Close is safe to call concurrently with RecipientData.
 	cancel context.CancelFunc
