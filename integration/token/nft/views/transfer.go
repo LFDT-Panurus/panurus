@@ -52,7 +52,7 @@ func (d *TransferHouseView) Call(context view.Context) (any, error) {
 	assert.NotNil(wallet, "failed getting default wallet")
 
 	// Transfer ownership of the house to the buyer
-	assert.NoError(tx.Transfer(wallet, house, buyer), "failed transferring house")
+	assert.NoError(tx.Transfer(context.Context(), wallet, house, buyer), "failed transferring house")
 
 	// Collect signature from the parties
 	_, err = context.RunView(nfttx.NewCollectEndorsementsView(tx))

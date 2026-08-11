@@ -110,6 +110,7 @@ func (p *IssueCashView) Call(context view.Context) (any, error) {
 
 	// The issuer adds a new issue operation to the transaction following the instruction received
 	err = tx.Issue(
+		context.Context(),
 		wallet,
 		recipient,
 		p.TokenType,

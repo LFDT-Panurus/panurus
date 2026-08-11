@@ -78,6 +78,7 @@ func (t *RedeemView) Call(context view.Context) (any, error) {
 		opts = append(opts, ttx.WithIssuerPublicParamsPublicKey(t.IssuerPublicParamsPublicKey))
 	}
 	err = tx.Redeem(
+		context.Context(),
 		senderWallet,
 		t.Type,
 		t.Amount,

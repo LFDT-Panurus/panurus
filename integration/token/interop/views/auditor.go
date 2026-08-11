@@ -34,7 +34,7 @@ func (a *AuditView) Call(context view.Context) (any, error) {
 	assert.NotNil(w, "failed getting default auditor wallet")
 	auditor, err := ttx.NewAuditor(context, w)
 	assert.NoError(err, "failed to get auditor instance")
-	assert.NoError(auditor.Validate(tx), "failed auditing verification")
+	assert.NoError(auditor.Validate(context.Context(), tx), "failed auditing verification")
 
 	// Check limits
 

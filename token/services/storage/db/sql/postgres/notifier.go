@@ -56,6 +56,7 @@ type Notifier struct {
 	// closeOnce ensures the listener is closed only once
 	closeOnce sync.Once
 	// ctx is the context used for listener lifecycle management
+	//nolint:containedctx // long-running listener lifecycle, not a per-request context
 	ctx context.Context
 	// cancel is the cancel function for the listener context
 	cancel context.CancelFunc

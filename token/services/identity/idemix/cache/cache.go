@@ -38,7 +38,7 @@ type IdentityCache struct {
 	metrics *Metrics
 	// provisionCtx governs the lifetime of the background provisioning goroutine.
 	// Created at construction time and cancelled by Close.
-	provisionCtx context.Context
+	provisionCtx context.Context //nolint:containedctx
 	// cancel cancels provisionCtx. Written once, at construction time, so that Close
 	// is safe to call concurrently with Identity.
 	cancel context.CancelFunc

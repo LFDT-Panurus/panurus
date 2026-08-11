@@ -141,7 +141,7 @@ func TestTransactionMarshalUnmarshalRoundtrip(t *testing.T) {
 	}
 
 	// marshal
-	raw, err := marshal(tx)
+	raw, err := marshal(t.Context(), tx)
 	if err != nil {
 		t.Fatalf("marshal error: %v", err)
 	}
@@ -280,7 +280,7 @@ func TestMarshal_ErrorCases(t *testing.T) {
 				tmsID: token.TMSID{Network: "", Channel: "ch1", Namespace: "ns1"},
 			},
 		}
-		if _, err := marshal(tx); !errors.Is(err, ErrNetworkNotSet) {
+		if _, err := marshal(t.Context(), tx); !errors.Is(err, ErrNetworkNotSet) {
 			t.Fatalf("expected ErrNetworkNotSet, got %v", err)
 		}
 	}
@@ -292,7 +292,7 @@ func TestMarshal_ErrorCases(t *testing.T) {
 				tmsID: token.TMSID{Network: "net1", Channel: "ch1", Namespace: ""},
 			},
 		}
-		if _, err := marshal(tx); !errors.Is(err, ErrNamespaceNotSet) {
+		if _, err := marshal(t.Context(), tx); !errors.Is(err, ErrNamespaceNotSet) {
 			t.Fatalf("expected ErrNamespaceNotSet, got %v", err)
 		}
 	}
