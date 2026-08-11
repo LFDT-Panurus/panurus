@@ -194,6 +194,68 @@ func TestQueryByID_MissingValueTriggersScan(t *testing.T) {
 	assert.True(t, scanner.called)
 }
 
+// A peer that returns more values than keys requested
+// must not index the keys slice out of range and crash the process.
+// (From Issue #2055.)
+func TestQueryByID_OversizedResponse(t *testing.T) {
+	// 2 values returned, but only 1 key requested.
+	querier := &fakeQuerier{results: map[driver.Namespace]querierResult{
+		"ns1": {raw: values(t, []byte("v1"), []byte("v2-unexpected"))},
+	}}
+	scanner := &fakeScanner{}
+
+	ch, err := newQuery(querier, scanner).QueryByID(t.Context(), 100, evictedFor(map[driver.Namespace]driver.PKey{
+		"ns1": "k1",
+	}))
+	require.NoError(t, err)
+
+	// Nothing is delivered for the oversized namespace.
+	// It should fall back to the block scan rather than crashing.
+	assert.Empty(t, drain(ch))
+	assert.True(t, scanner.called, "the oversized response must fall back to the block scan")
+}
+
+// A namespace holding several keys where only some resolve must deliver the resolved ones and
+// fall back to the block scan for the rest, keeping the still-missing keys grouped under their
+// namespace (the notFound branch that rewrites keysByNS rather than deleting it).
+func TestQueryByID_PartialResolutionWithinNamespace(t *testing.T) {
+	// One value present, one absent. Key<->value pairing follows the (map-random) request order,
+	// so assert on the shape rather than a fixed key.
+	querier := &fakeQuerier{results: map[driver.Namespace]querierResult{
+		"ns1": {raw: values(t, []byte("v"), []byte{})},
+	}}
+	scanner := &fakeScanner{}
+
+	evicted := map[driver.PKey][]events.ListenerEntry[lookup.KeyInfo]{
+		"k1": {&fakeEntry{ns: "ns1"}},
+		"k2": {&fakeEntry{ns: "ns1"}},
+	}
+
+	ch, err := newQuery(querier, scanner).QueryByID(t.Context(), 100, evicted)
+	require.NoError(t, err)
+
+	got := drain(ch)
+	require.Len(t, got, 1, "exactly the resolved key must be delivered")
+	assert.Equal(t, driver.Namespace("ns1"), got[0].Namespace)
+	assert.Contains(t, []driver.PKey{"k1", "k2"}, got[0].Key)
+	assert.Equal(t, []byte("v"), got[0].Value)
+	assert.True(t, scanner.called, "the unresolved key must fall back to the block scan")
+	assert.Equal(t, uint64(90), scanner.startBlock)
+}
+
+// An empty batch has nothing to query and nothing to scan: the channel simply closes empty.
+func TestQueryByID_EmptyEvicted(t *testing.T) {
+	querier := &fakeQuerier{results: map[driver.Namespace]querierResult{}}
+	scanner := &fakeScanner{}
+
+	ch, err := newQuery(querier, scanner).QueryByID(t.Context(), 100, nil)
+	require.NoError(t, err)
+
+	assert.Empty(t, drain(ch))
+	assert.Empty(t, querier.queried, "no namespace should be queried")
+	assert.False(t, scanner.called, "an empty batch must not start a block scan")
+}
+
 // The fallback block scan must never start from an underflowed block number: on a chain younger
 // than NumberPastBlocks it starts from FirstBlock instead of wrapping around to a block near
 // MaxUint64, which would silently find nothing and surface no error.
