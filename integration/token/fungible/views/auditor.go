@@ -74,8 +74,8 @@ func (a *AuditView) Call(context view.Context) (any, error) {
 				continue
 			}
 			// compute the payment done in the transaction
-			sent := inputs.ByEnrollmentID(eID).ByType(tokenType).Sum()
-			received := outputs.ByEnrollmentID(eID).ByType(tokenType).Sum()
+			sent := inputs.ByEnrollmentID(eID).ByType(tokenType).UniquePerInput().Sum()
+			received := outputs.ByEnrollmentID(eID).ByType(tokenType).UniquePerOutput().Sum()
 			fmt.Printf("Payment Limit: [%s] Sent [%d], Received [%d], type [%s]\n", eID, sent.Int64(), received.Int64(), tokenType)
 
 			diff := big.NewInt(0).Sub(sent, received)
@@ -97,8 +97,8 @@ func (a *AuditView) Call(context view.Context) (any, error) {
 				continue
 			}
 			// compute the payment done in the transaction
-			sent := inputs.ByEnrollmentID(eID).ByType(tokenType).Sum()
-			received := outputs.ByEnrollmentID(eID).ByType(tokenType).Sum()
+			sent := inputs.ByEnrollmentID(eID).ByType(tokenType).UniquePerInput().Sum()
+			received := outputs.ByEnrollmentID(eID).ByType(tokenType).UniquePerOutput().Sum()
 			fmt.Printf("Cumulative Limit: [%s] Sent [%d], Received [%d], type [%s]\n", eID, sent.Int64(), received.Int64(), tokenType)
 
 			diff := sent.Sub(sent, received)
@@ -129,8 +129,8 @@ func (a *AuditView) Call(context view.Context) (any, error) {
 				continue
 			}
 			// compute the amount received
-			received := outputs.ByEnrollmentID(eID).ByType(tokenType).Sum()
-			sent := inputs.ByEnrollmentID(eID).ByType(tokenType).Sum()
+			received := outputs.ByEnrollmentID(eID).ByType(tokenType).UniquePerOutput().Sum()
+			sent := inputs.ByEnrollmentID(eID).ByType(tokenType).UniquePerInput().Sum()
 			fmt.Printf("Holding Limit: [%s] Sent [%d], Received [%d], type [%s]\n", eID, sent.Int64(), received.Int64(), tokenType)
 
 			diff := received.Sub(received, sent)

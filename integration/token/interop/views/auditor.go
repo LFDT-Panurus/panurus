@@ -51,8 +51,8 @@ func (a *AuditView) Call(context view.Context) (any, error) {
 		assert.NotEmpty(eID, "enrollment id should not be empty")
 		for _, tokenType := range tokenTypes {
 			// compute the payment done in the transaction
-			sent := inputs.ByEnrollmentID(eID).ByType(tokenType).Sum()
-			received := outputs.ByEnrollmentID(eID).ByType(tokenType).Sum()
+			sent := inputs.ByEnrollmentID(eID).ByType(tokenType).UniquePerInput().Sum()
+			received := outputs.ByEnrollmentID(eID).ByType(tokenType).UniquePerOutput().Sum()
 			logger.Debugf("Payment Limit: [%s] Sent [%d], Received [%d], type [%s]", eID, sent.Int64(), received.Int64(), tokenType)
 
 			diff := big.NewInt(0).Sub(sent, received)

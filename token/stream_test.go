@@ -252,6 +252,90 @@ func TestOutputStream_ByEnrollmentID(t *testing.T) {
 	assert.Equal(t, []*Output{output1, output3}, filtered.Outputs())
 }
 
+func TestOutputStream_UniquePerOutput(t *testing.T) {
+	cases := []struct {
+		name    string
+		outputs []*Output
+		want    []*Output
+	}{
+		{
+			"same index and enrollment ID collapse to the first row",
+			[]*Output{
+				{Index: 0, EnrollmentID: "enroll1", RevocationHandler: "first"},
+				{Index: 0, EnrollmentID: "enroll1", RevocationHandler: "second"},
+			},
+			[]*Output{{Index: 0, EnrollmentID: "enroll1", RevocationHandler: "first"}},
+		},
+		{
+			"same index with different enrollment IDs both survive",
+			[]*Output{{Index: 0, EnrollmentID: "enroll1"}, {Index: 0, EnrollmentID: "enroll2"}},
+			[]*Output{{Index: 0, EnrollmentID: "enroll1"}, {Index: 0, EnrollmentID: "enroll2"}},
+		},
+		{
+			"different indexes with the same enrollment ID both survive",
+			[]*Output{{Index: 0, EnrollmentID: "enroll1"}, {Index: 1, EnrollmentID: "enroll1"}},
+			[]*Output{{Index: 0, EnrollmentID: "enroll1"}, {Index: 1, EnrollmentID: "enroll1"}},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			unique := NewOutputStream(tc.outputs, 0).UniquePerOutput()
+			assert.Equal(t, tc.want, unique.Outputs())
+		})
+	}
+}
+
+func TestInputStream_UniquePerInput(t *testing.T) {
+	// distinct pointers to the same token ID value must collapse
+	cases := []struct {
+		name   string
+		inputs []*Input
+		want   []*Input
+	}{
+		{
+			"same token ID and enrollment ID collapse to the first row",
+			[]*Input{
+				{Id: &token.ID{TxId: "tx0", Index: 0}, EnrollmentID: "enroll1", RevocationHandler: "first"},
+				{Id: &token.ID{TxId: "tx0", Index: 0}, EnrollmentID: "enroll1", RevocationHandler: "second"},
+			},
+			[]*Input{{Id: &token.ID{TxId: "tx0", Index: 0}, EnrollmentID: "enroll1", RevocationHandler: "first"}},
+		},
+		{
+			"same token ID with different enrollment IDs both survive",
+			[]*Input{
+				{Id: &token.ID{TxId: "tx0", Index: 0}, EnrollmentID: "enroll1"},
+				{Id: &token.ID{TxId: "tx0", Index: 0}, EnrollmentID: "enroll2"},
+			},
+			[]*Input{
+				{Id: &token.ID{TxId: "tx0", Index: 0}, EnrollmentID: "enroll1"},
+				{Id: &token.ID{TxId: "tx0", Index: 0}, EnrollmentID: "enroll2"},
+			},
+		},
+		{
+			"different token IDs with the same enrollment ID both survive",
+			[]*Input{
+				{Id: &token.ID{TxId: "tx0", Index: 0}, EnrollmentID: "enroll1"},
+				{Id: &token.ID{TxId: "tx0", Index: 1}, EnrollmentID: "enroll1"},
+			},
+			[]*Input{
+				{Id: &token.ID{TxId: "tx0", Index: 0}, EnrollmentID: "enroll1"},
+				{Id: &token.ID{TxId: "tx0", Index: 1}, EnrollmentID: "enroll1"},
+			},
+		},
+		{
+			"inputs with no token ID are all kept",
+			[]*Input{{EnrollmentID: "enroll1"}, {EnrollmentID: "enroll1"}},
+			[]*Input{{EnrollmentID: "enroll1"}, {EnrollmentID: "enroll1"}},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			unique := NewInputStream(nil, tc.inputs, 0).UniquePerInput()
+			assert.Equal(t, tc.want, unique.Inputs())
+		})
+	}
+}
+
 func TestOwnerStream_Count(t *testing.T) {
 	owners := []string{"owner1", "owner2", "owner1"}
 	stream := NewOwnerStream(owners)
