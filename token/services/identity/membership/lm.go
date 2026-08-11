@@ -79,6 +79,9 @@ type IdentityStoreService interface {
 	AddConfiguration(ctx context.Context, wp idriver.IdentityConfiguration) error
 	// GetConfiguration returns the configuration with the given id and type.
 	GetConfiguration(ctx context.Context, id, typ, url string) (*idriver.IdentityConfiguration, error)
+	// GetConfigurationID returns the conf_id persisted for the configuration with the given
+	// id, type and url, or the empty string if that configuration is not stored yet.
+	GetConfigurationID(ctx context.Context, id, typ, url string) (string, error)
 	// ConfigurationsByID returns all configurations with the given id and type, regardless of their url.
 	ConfigurationsByID(ctx context.Context, id, configurationType string) ([]idriver.IdentityConfiguration, error)
 	// ConfigurationExists returns true if a configuration with the given id,
@@ -632,9 +635,9 @@ func (l *LocalMembership) registerLocalIdentity(ctx context.Context, identityCon
 // LocalMembership identity indices; concurrent use relies on the
 // KeyManagerProvider contract.
 func (l *LocalMembership) resolveKeyManager(ctx context.Context, identityConfig *IdentityConfiguration) (KeyManager, int, error) {
-	// Enforce type up-front so that any UniqueID() computed from this config (e.g. by
-	// addLocalIdentity below, before this config is persisted via AddConfiguration)
-	// matches the value that will eventually be persisted for this configuration.
+	// Enforce type up-front so that a UniqueID() computed from this config (by confIDFor, for a
+	// configuration not yet in the store) matches the value AddConfiguration will persist for
+	// it, and so that the store lookup in confIDFor targets the right row.
 	identityConfig.Type = l.IdentityType
 
 	var errs []error
@@ -688,13 +691,23 @@ func (l *LocalMembership) resolveKeyManager(ctx context.Context, identityConfig 
 // indices and persists the configuration if not stored yet. Must run on a
 // single goroutine at a time (Load and the runtime registration paths hold
 // localIdentitiesMutex).
+//
+// The conf_id the identity is bound under comes from the store whenever the configuration is
+// already persisted, and is only computed from the configuration for one that is not. See
+// confIDFor.
 func (l *LocalMembership) commitLocalIdentity(ctx context.Context, identityConfig *IdentityConfiguration, keyManager KeyManager, priority int, defaultIdentity bool) error {
 	l.logger.DebugfContext(ctx, "append local identity for [%s]", identityConfig.ID)
-	if err := l.addLocalIdentity(ctx, identityConfig, keyManager, defaultIdentity, priority); err != nil {
+
+	confID, stored, err := l.confIDFor(ctx, identityConfig)
+	if err != nil {
+		return errors.Wrapf(err, "failed to resolve conf_id for [%s]", identityConfig.ID)
+	}
+
+	if err := l.addLocalIdentity(ctx, identityConfig, confID, keyManager, defaultIdentity, priority); err != nil {
 		return errors.Wrapf(err, "failed to add local identity for [%s]", identityConfig.ID)
 	}
 
-	if exists, _ := l.identityDB.ConfigurationExists(ctx, identityConfig.ID, l.IdentityType, identityConfig.URL); !exists {
+	if !stored {
 		l.logger.DebugfContext(ctx, "does the configuration already exists for [%s]? no, add it", identityConfig.ID)
 		if err := l.identityDB.AddConfiguration(ctx, *identityConfig); err != nil {
 			return err
@@ -703,6 +716,34 @@ func (l *LocalMembership) commitLocalIdentity(ctx context.Context, identityConfi
 	l.logger.DebugfContext(ctx, "added local identity for id [%s], remote [%v]", identityConfig.ID+"@"+keyManager.EnrollmentID(), keyManager.IsRemote())
 
 	return nil
+}
+
+// confIDFor returns the conf_id to bind identities of the given configuration under, and
+// whether that configuration is already persisted.
+//
+// For a configuration already in the store the persisted conf_id is returned verbatim, never
+// recomputed. That matters across an upgrade that changes how the composite key is encoded:
+// IdentityConfiguration.UniqueID then derives a different value for an unchanged
+// configuration, while identity_configurations still holds the original one and
+// wallets.conf_id references it through a foreign key. Binding under the recomputed value
+// makes every subsequent WalletStore.StoreIdentity violate that constraint, so the node can no
+// longer register recipients. Reusing the stored value keeps such configurations working and
+// keeps nodes on either release in agreement.
+//
+// For a configuration that is not stored yet, the value is computed from the configuration —
+// which is exactly what the AddConfiguration that follows in commitLocalIdentity will write.
+func (l *LocalMembership) confIDFor(ctx context.Context, identityConfig *IdentityConfiguration) (string, bool, error) {
+	confID, err := l.identityDB.GetConfigurationID(ctx, identityConfig.ID, l.IdentityType, identityConfig.URL)
+	if err != nil {
+		return "", false, err
+	}
+	if len(confID) != 0 {
+		l.logger.DebugfContext(ctx, "reuse stored conf_id [%s] for [%s]", confID, identityConfig.ID)
+
+		return confID, true, nil
+	}
+
+	return identityConfig.UniqueID(), false, nil
 }
 
 func (l *LocalMembership) registerIdentityConfiguration(ctx context.Context, identity *IdentityConfiguration, defaultIdentity bool) error {
@@ -758,7 +799,11 @@ func (l *LocalMembership) registerLocalIdentities(ctx context.Context, configura
 	return nil
 }
 
-func (l *LocalMembership) addLocalIdentity(ctx context.Context, config *IdentityConfiguration, keyManager KeyManager, defaultID bool, priority int) error {
+// addLocalIdentity indexes a resolved KeyManager under the given configuration. confID is the
+// conf_id this configuration's identities are bound under, as resolved by confIDFor: it is
+// carried on LocalIdentity.ConfigurationID and used as the SignerRouter key, which must be the
+// same value WalletStore.GetConfID returns for those identities.
+func (l *LocalMembership) addLocalIdentity(ctx context.Context, config *IdentityConfiguration, confID string, keyManager KeyManager, defaultID bool, priority int) error {
 	var getIdentity GetIdentityFunc
 	var resolvedIdentity token.Identity
 
@@ -808,7 +853,7 @@ func (l *LocalMembership) addLocalIdentity(ctx context.Context, config *Identity
 		Anonymous:       keyManager.Anonymous(),
 		GetIdentity:     getIdentity,
 		Remote:          keyManager.IsRemote(),
-		ConfigurationID: config.UniqueID(),
+		ConfigurationID: confID,
 	}
 	l.logger.Debugf("new local identity for [%s:%s] - [%v]", name, eID, localIdentity)
 
@@ -849,7 +894,7 @@ func (l *LocalMembership) addLocalIdentity(ctx context.Context, config *Identity
 	// Provider can dispatch straight to it instead of scanning every KeyManager registered
 	// under the identity's type.
 	if l.signerRouter != nil {
-		l.signerRouter.Register(config.UniqueID(), keyManager)
+		l.signerRouter.Register(confID, keyManager)
 	}
 
 	// if the keyManager is not anonymous
@@ -935,8 +980,12 @@ func (l *LocalMembership) lookup(label string) *LocalIdentity {
 	return nil
 }
 
+// configKey returns the key under which config is indexed in localIdentitiesByConfig. It
+// delegates to IdentityConfiguration.CompositeKey so that this in-memory index and the
+// persisted conf_id (IdentityConfiguration.UniqueID, which hashes the same encoding) can never
+// disagree on whether two configurations are the same one.
 func (l *LocalMembership) configKey(config *IdentityConfiguration) string {
-	return config.ID + "@" + config.Type + "@" + config.URL
+	return config.CompositeKey()
 }
 
 func (l *LocalMembership) getLocalIdentity(ctx context.Context, label string) *LocalIdentity {

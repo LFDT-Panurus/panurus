@@ -35,6 +35,10 @@ func (p *panicOnConfigurationsByIDStore) GetConfiguration(context.Context, strin
 	return nil, nil
 }
 
+func (p *panicOnConfigurationsByIDStore) GetConfigurationID(context.Context, string, string, string) (string, error) {
+	return "", nil
+}
+
 func (p *panicOnConfigurationsByIDStore) ConfigurationsByID(context.Context, string, string) ([]idriver.IdentityConfiguration, error) {
 	panic("boom: simulated panic inside identityDB.ConfigurationsByID")
 }

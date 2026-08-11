@@ -161,6 +161,14 @@ type IdentityStoreService interface {
 	// GetConfiguration returns the configuration with the given id, type, and url.
 	// It returns nil if the configuration does not exist.
 	GetConfiguration(ctx context.Context, id, typ, url string) (*IdentityConfiguration, error)
+	// GetConfigurationID returns the conf_id persisted for the configuration with the given
+	// id, type, and url, or the empty string if that configuration is not stored yet.
+	//
+	// The stored value is authoritative and must be preferred over recomputing
+	// IdentityConfiguration.UniqueID: a release that changes how the composite key is encoded
+	// derives a different UniqueID for an unchanged configuration, while the value the wallet
+	// rows reference by foreign key is the one already on disk.
+	GetConfigurationID(ctx context.Context, id, typ, url string) (string, error)
 	// ConfigurationsByID returns all configurations with the given id and type, regardless of their url.
 	ConfigurationsByID(ctx context.Context, id, configurationType string) ([]IdentityConfiguration, error)
 	// ConfigurationExists returns true if a configuration with the given id and type exists.

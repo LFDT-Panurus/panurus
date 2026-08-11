@@ -25,8 +25,11 @@ type LocalIdentity struct {
 	Anonymous    bool
 	GetIdentity  GetIdentityFunc
 	Remote       bool
-	// ConfigurationID is the unique identifier of the IdentityConfiguration this
-	// identity was loaded from (see driver.IdentityConfiguration.UniqueID).
+	// ConfigurationID is the conf_id of the IdentityConfiguration this identity was loaded
+	// from, as resolved by LocalMembership.confIDFor: the value persisted in
+	// identity_configurations for a stored configuration, or a freshly computed
+	// driver.IdentityConfiguration.UniqueID for one being inserted. The role wallets pass it
+	// to BindIdentity, from where it reaches the wallets.conf_id column.
 	ConfigurationID string
 }
 

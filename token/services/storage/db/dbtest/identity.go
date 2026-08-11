@@ -62,6 +62,7 @@ var IdentityCases = []struct {
 	{"SignerInfo", TSignerInfo},
 	{"Configurations", TConfigurations},
 	{"GetConfiguration", TGetConfiguration},
+	{"GetConfigurationID", TGetConfigurationID},
 	{"SignerInfoConcurrent", TSignerInfoConcurrent},
 	{"GetExistingSignerInfo", TGetExistingSignerInfo},
 	{"RegisterIdentityDescriptor", TRegisterIdentityDescriptor},
@@ -146,6 +147,81 @@ func TGetConfiguration(t *testing.T, db driver.IdentityStore) {
 	c, err = db.GetConfiguration(ctx, expected.ID, expected.Type, "non-existent")
 	require.NoError(t, err)
 	assert.Nil(t, c)
+}
+
+// TGetConfigurationID checks that the conf_id a store reports for a configuration is the one it
+// persisted for it, and that an unknown configuration reports the empty string rather than an
+// error. LocalMembership.confIDFor relies on both: it binds identities under the returned value
+// and treats "" as "not stored yet, mint a new one".
+func TGetConfigurationID(t *testing.T, db driver.IdentityStore) {
+	t.Helper()
+	ctx := t.Context()
+
+	// the separator appears inside two fields on purpose: this is the shape whose conf_id
+	// changed when field escaping was introduced, so it is the shape that must survive a
+	// round-trip through the store unchanged
+	expected := idriver.IdentityConfiguration{
+		ID:     "alice@org1",
+		Type:   "core",
+		URL:    "/msp/alice@org1",
+		Config: []byte("config"),
+		Raw:    []byte("raw"),
+	}
+	require.NoError(t, db.AddConfiguration(ctx, expected))
+
+	confID, err := db.GetConfigurationID(ctx, expected.ID, expected.Type, expected.URL)
+	require.NoError(t, err)
+	assert.Equal(t, expected.UniqueID(), confID)
+
+	for _, missing := range []idriver.IdentityConfiguration{
+		{ID: "non-existent", Type: expected.Type, URL: expected.URL},
+		{ID: expected.ID, Type: "non-existent", URL: expected.URL},
+		{ID: expected.ID, Type: expected.Type, URL: "non-existent"},
+	} {
+		confID, err := db.GetConfigurationID(ctx, missing.ID, missing.Type, missing.URL)
+		require.NoError(t, err)
+		assert.Empty(t, confID, "an unstored configuration must report no conf_id, not an error")
+	}
+
+	// A store is free to key rows by a concatenation of id and url, and the kvs one does
+	// (base64(id||url), no separator), so these two configurations - which differ only in where
+	// the "/msp" prefix sits - share a row key there. Only the first is stored: the second must
+	// report no conf_id rather than the first one's. Handing back a colliding configuration's
+	// identifier would bind identities under it and take over its SignerRouter entry,
+	// reintroducing the wrong-KeyManager route with the cryptographic probe skipped.
+	stored := idriver.IdentityConfiguration{ID: "bob", Type: "core", URL: "/msp/alice", Config: []byte("config")}
+	require.NoError(t, db.AddConfiguration(ctx, stored))
+
+	confID, err = db.GetConfigurationID(ctx, "bob/msp", stored.Type, "/alice")
+	require.NoError(t, err)
+	assert.Empty(t, confID, "a configuration that was never stored must not report a colliding configuration's conf_id")
+
+	confID, err = db.GetConfigurationID(ctx, stored.ID, stored.Type, stored.URL)
+	require.NoError(t, err)
+	assert.Equal(t, stored.UniqueID(), confID, "the stored configuration must still report its own conf_id")
+
+	// Reporting no conf_id makes commitLocalIdentity treat the colliding configuration as not
+	// stored and insert it. Whether that insert succeeds is a property of the store - a store
+	// with a row per (id, type, url) holds both, one that shares a row key cannot - but either
+	// way the configuration that was already stored must come back intact. Overwriting it would
+	// drop its Config and Raw and leave it unable to reload from the store.
+	colliding := idriver.IdentityConfiguration{ID: "bob/msp", Type: stored.Type, URL: "/alice", Config: []byte("colliding")}
+	if err := db.AddConfiguration(ctx, colliding); err == nil {
+		confID, err = db.GetConfigurationID(ctx, colliding.ID, colliding.Type, colliding.URL)
+		require.NoError(t, err)
+		assert.Equal(t, colliding.UniqueID(), confID, "a store that accepted both must report each configuration's own conf_id")
+	}
+
+	c, err := db.GetConfiguration(ctx, stored.ID, stored.Type, stored.URL)
+	require.NoError(t, err)
+	require.NotNil(t, c, "the previously stored configuration must survive an attempt to store a colliding one")
+	assert.Equal(t, stored.ID, c.ID)
+	assert.Equal(t, stored.URL, c.URL)
+	assert.Equal(t, stored.Config, c.Config)
+
+	confID, err = db.GetConfigurationID(ctx, stored.ID, stored.Type, stored.URL)
+	require.NoError(t, err)
+	assert.Equal(t, stored.UniqueID(), confID)
 }
 
 func TIdentityInfo(t *testing.T, db driver.IdentityStore) {

@@ -9,6 +9,7 @@ package driver
 import (
 	"context"
 	"math/big"
+	"strings"
 	"time"
 
 	"github.com/LFDT-Panurus/panurus/token/services/utils"
@@ -219,12 +220,70 @@ type IdentityConfiguration struct {
 	Raw []byte
 }
 
-// UniqueID returns a stable identifier for this identity configuration, derived
-// deterministically from its (ID, Type, URL) tuple. It is used to link records that
-// originate from this configuration (e.g. wallet entries) back to it, without requiring
-// a database round-trip to compute.
+// configKeySeparator joins the fields of an IdentityConfiguration's composite key. It is
+// escaped inside each field (see escapeConfigKeyField) so the join stays unambiguous.
+const configKeySeparator = '@'
+
+// configKeyEscape escapes itself and configKeySeparator inside a field.
+const configKeyEscape = '\\'
+
+// escapeConfigKeyField escapes configKeySeparator and configKeyEscape inside a single field of a
+// composite key, so a separator occurring in a field's value can never be confused with the one
+// that joins the fields. It works on bytes, not runes: both delimiters are ASCII, and ranging over
+// a string would yield utf8.RuneError for every byte that is not valid UTF-8, encoding distinct
+// fields identically (issue #2070 review).
+//
+// A field containing neither delimiter is returned unchanged, keeping its conf_id byte-identical to
+// what an earlier release computed — which is why a stored conf_id must be read back rather than
+// recomputed, see UniqueID.
+func escapeConfigKeyField(field string) string {
+	if strings.IndexByte(field, configKeySeparator) < 0 && strings.IndexByte(field, configKeyEscape) < 0 {
+		return field
+	}
+
+	var b strings.Builder
+	b.Grow(len(field) + 8)
+	for i := range len(field) {
+		if field[i] == configKeySeparator || field[i] == configKeyEscape {
+			b.WriteByte(configKeyEscape)
+		}
+		b.WriteByte(field[i])
+	}
+
+	return b.String()
+}
+
+// CompositeKey returns an unambiguous encoding of this configuration's (ID, Type, URL) tuple:
+// distinct tuples always encode to distinct strings.
+//
+// The fields are joined by configKeySeparator with any occurrence of that separator escaped
+// inside each field. Without the escaping, the join would be ambiguous — {ID: "a@b", Type: "c"}
+// and {ID: "a", Type: "b@c"} would both encode to "a@b@c@..." — and since this key backs both
+// SignerRouter.byConfID and the conf_id column (see UniqueID), a collision routes signer
+// reconstruction to the wrong KeyManager.
+func (c IdentityConfiguration) CompositeKey() string {
+	sep := string(configKeySeparator)
+
+	return escapeConfigKeyField(c.ID) + sep + escapeConfigKeyField(c.Type) + sep + escapeConfigKeyField(c.URL)
+}
+
+// UniqueID derives an identifier for this identity configuration deterministically from its
+// (ID, Type, URL) tuple, by hashing CompositeKey. Distinct tuples therefore get distinct
+// UniqueIDs — with the same caveat CompositeKey carries: Config and Raw are not part of the
+// tuple, so two configurations differing only in those fields share a UniqueID.
+//
+// This computes what a *new* conf_id should be; it is not a way to look up an existing one.
+// conf_id is persisted (identity_configurations.conf_id, referenced by wallets.conf_id through
+// a foreign key), and a release that changes the encoding derives a different value for a
+// configuration that has not changed — every field containing a separator or an escape
+// character, whether or not it ever had a colliding partner. Recomputing where a stored value
+// exists therefore produces an identifier no wallet row references and the foreign key rejects.
+//
+// Callers that need the conf_id of a configuration which may already be stored must read it
+// back instead: IdentityStoreService.GetConfigurationID, as LocalMembership.confIDFor does.
+// Only AddConfiguration mints one from this function, for a configuration being inserted.
 func (c IdentityConfiguration) UniqueID() string {
-	return utils.Hashable(c.ID + "@" + c.Type + "@" + c.URL).String()
+	return utils.Hashable(c.CompositeKey()).String()
 }
 
 // WalletLookupID defines the type of identifiers that can be used to retrieve a given wallet.

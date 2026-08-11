@@ -209,6 +209,32 @@ func (db *IdentityStore) GetConfiguration(ctx context.Context, id, typ, url stri
 	return c, nil
 }
 
+// GetConfigurationID returns the conf_id persisted for the configuration with the given id,
+// type, and url. It returns the empty string if that configuration is not stored yet.
+//
+// The column is read rather than recomputed from driver.IdentityConfiguration.UniqueID on
+// purpose: conf_id is referenced by wallets.conf_id through a foreign key, so for a
+// configuration stored by an earlier release the value on disk is the only one the constraint
+// accepts, even when a newer encoding derives a different UniqueID for the same tuple.
+func (db *IdentityStore) GetConfigurationID(ctx context.Context, id, typ, url string) (string, error) {
+	query, args := q.Select().
+		FieldsByName("conf_id").
+		From(q.Table(db.table.IdentityConfigurations)).
+		Where(cond.And(cond.Eq("id", id), cond.Eq("type", typ), cond.Eq("url", url))).
+		Format(db.ci)
+	logging.Debug(logger, query, args)
+	var confID string
+	if err := db.readDB.QueryRowContext(ctx, query, args...).Scan(&confID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", nil
+		}
+
+		return "", err
+	}
+
+	return confID, nil
+}
+
 // ConfigurationsByID returns all configurations with the given id and type, regardless of their url.
 func (db *IdentityStore) ConfigurationsByID(ctx context.Context, id, configurationType string) ([]driver.IdentityConfiguration, error) {
 	query, args := q.Select().
