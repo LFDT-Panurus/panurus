@@ -323,12 +323,12 @@ sequenceDiagram
     
     Note over Driver,State: On-Chain Execution Phase
     Driver->>Node: eth_sendRawTransaction
-    Node->>Contract: Execute applyStateUpdate()
-    Contract->>Contract: Verify endorser signatures
-    Contract->>Contract: Check signature threshold
-    Contract->>Contract: Double Spending Check
+    Node->>Contract: Execute applyStateDelta()
+    Contract->>Contract: Recompute the EIP-712 digest
+    Contract->>Contract: Verify endorser quorum
+    Contract->>Contract: Check public parameters are current
     Contract->>State: Apply state delta
-    Contract->>Contract: Emit StateUpdateEvent
+    Contract->>Contract: Emit StateCommitted
     
     Node->>Node: Include in block
     Node->>Node: Mine block
@@ -337,7 +337,195 @@ sequenceDiagram
     Driver-->>App: OnStatus(VALID)
 ```
 
+### How the contracts interact
+
+This section describes the contracts as built. Every name, error and check order below comes from
+[`contracts/src`](../../x/token/services/network/evm/contracts/src); the conceptual sketch further down
+the page predates them.
+
+#### Where the work happens
+
+The single most important thing to understand is that **the chain does not validate token requests**.
+Zero-knowledge proofs are not verified on chain, signatures on the token request are not checked on
+chain, and balances are not recomputed on chain. All of that happens off chain, in FSC endorsers running
+the same Token SDK validator that a Fabric deployment uses.
+
+What reaches the chain is a `StateDelta`: a flat list of storage writes that the endorsers agreed on,
+plus their signatures over it. The contract's job is narrow and cheap.
+
+```mermaid
+flowchart LR
+    subgraph off ["Off chain"]
+        direction TB
+        R["Token request<br/>proofs, signatures, amounts"]
+        E["Endorsers<br/>each validates independently<br/>and derives the same StateDelta"]
+        R --> E
+    end
+
+    subgraph on ["On chain"]
+        direction TB
+        T["TokenState<br/>checks the signatures<br/>applies the writes"]
+    end
+
+    E -->|"StateDelta + N signatures"| T
+
+    style off fill:#f6f8fa,stroke:#d1d9e0,color:#1f2328
+    style on fill:#ddf4ff,stroke:#54aeff,color:#1f2328
+```
+
+This is why the contracts are small. They never see a proof. They answer one question: did enough
+authorized endorsers sign *this exact set of writes*, and are those writes still valid to apply?
+
+#### The StateDelta
+
+Everything below revolves around this struct, so it is worth reading once. It is defined in
+[`StateDelta.sol`](../../x/token/services/network/evm/contracts/src/StateDelta.sol) and mirrored exactly
+by the Go type in `evm/statedelta`. Field order is frozen: the EIP-712 hash depends on it, and every
+endorser signs over that hash.
+
+| Field | What it is | Who consumes it |
+|---|---|---|
+| `anchor` | The token-request id, `SHA-256(nonce‖creator)`. **Not** the Ethereum transaction hash. | Replay guard, and the key a recipient watches for |
+| `spentRefs` | The references being consumed. Meaning depends on the contract's mode, see below. | Double-spend check |
+| `outputs` | New tokens: `tokenID`, `snMarker`, and the opaque `tokenData` from the token driver | Written to storage |
+| `metadataKeys` / `metadataVals` | Aligned lists, keys sorted ascending so every endorser builds identical bytes | Written once, never overwritten |
+| `tokenRequestHash` | `SHA-256` of the token request, matching what the rest of the Token SDK stores | Recorded against the anchor |
+| `publicParamsHash` / `publicParamsVersion` | The parameters the endorsers validated against | Staleness check |
+| `isSetup` | Marks a parameters-update delta rather than a token transfer | Selects which branch applies |
+| `setupParameters` | The new public parameters, present only when `isSetup` | Stored by the setup branch |
+
+Two things about this struct trip people up.
+
+**`anchor` is not the transaction hash.** A contract cannot read its own transaction hash, so the driver
+identifies transactions by the anchor it derived off chain. This is why finality is resolved by scanning
+for an event keyed on the anchor rather than by looking up a transaction.
+
+**`spentRefs` means one of two things, fixed per contract.** With `graphHiding` off, each ref is a
+content-bound marker that must already exist and be unspent; because the marker commits to the token's
+bytes, a spender cannot substitute different content at the same position. With `graphHiding` on, each
+ref is a serial number that simply must not have been seen before, which reveals nothing about which
+output is being consumed. One TMS runs one token driver, so the mode is chosen at deployment and never
+changes.
+
+#### The contracts
+
+```mermaid
+flowchart TB
+    F["TokenStateFactory"] -->|"creates and initializes<br/>in one transaction"| C
+    C["TokenState clone<br/>one per TMS"] -.->|"delegatecall, all logic"| I["TokenState implementation<br/>deployed once, locked"]
+    C -->|"verify"| V["EndorsementVerifier<br/>endorser set and threshold"]
+
+    style C fill:#ddf4ff,stroke:#54aeff,color:#1f2328
+    style V fill:#dafbe1,stroke:#4ac26b,color:#1f2328
+```
+
+`TokenState` holds all token storage. `EndorsementVerifier` holds the endorser set and the threshold and
+has no token storage at all: it is a pure checker. Keeping them apart means the endorsement policy can be
+reviewed, and replaced, without touching the code that owns tokens.
+
+Each TMS gets its own `TokenState`, created as an [EIP-1167](https://eips.ethereum.org/EIPS/eip-1167)
+minimal proxy so a new TMS costs a proxy rather than a full deployment. The shared implementation locks
+itself in its constructor, so only a clone can ever be initialized. The factory clones **and** initializes
+in a single transaction, which closes the window where an uninitialized clone would be sitting on chain
+for anyone to seize.
+
+#### One transaction, end to end
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant D as Driver
+    participant N as EVM node
+    participant TS as TokenState
+    participant EV as EndorsementVerifier
+
+    Note over D: delta and signatures already<br/>collected from endorsers
+    D->>N: eth_sendRawTransaction
+    N->>TS: applyStateDelta(delta, signatures)
+
+    TS->>TS: cheap rejects first:<br/>initialized, anchor unseen, lists aligned
+    TS->>TS: recompute the EIP-712 digest<br/>from the delta in calldata
+
+    TS->>EV: verify(digest, signatures)
+    EV-->>TS: accepted, or revert with the reason
+
+    TS->>TS: are the public parameters still current?
+    TS->>TS: apply the writes
+
+    TS-->>N: emit StateCommitted(anchor)
+    N-->>D: receipt, status 1
+```
+
+Step 4 is the one worth pausing on. **`TokenState` computes the digest itself, from the delta sitting in
+calldata.** The digest is never passed in as an argument. That is what makes the endorsers' signatures
+binding: they signed the same typed structure the contract is about to apply. The digest also folds in a
+domain separator bound to this chain id and this contract address, so signatures gathered for one TMS
+cannot be replayed against another.
+
+#### The checks, in order
+
+`applyStateDelta` runs these gates in sequence. There is no partial success: any failure reverts the whole
+transaction, so state is either fully applied or completely untouched.
+
+```mermaid
+flowchart TB
+    G1["1 - contract is initialized"] --> G2["2 - anchor has never been processed"]
+    G2 --> G3["3 - metadata keys and values are the same length"]
+    G3 --> G4["4 - endorser quorum verifies against the digest"]
+    G4 --> G5["5 - public parameters are still current"]
+    G5 --> G6{"isSetup?"}
+    G6 -->|"yes"| S["store new parameters<br/>bump the version"]
+    G6 -->|"no"| T["consume spentRefs<br/>write outputs<br/>write metadata"]
+    S --> Z["record the request hash<br/>mark the anchor processed<br/>emit StateCommitted"]
+    T --> Z
+
+    style Z fill:#dafbe1,stroke:#4ac26b,color:#1f2328
+```
+
+The order is deliberate: the cheap rejections come before signature recovery, which is the expensive part,
+so a replayed or malformed delta costs as little gas as possible.
+
+#### What each failure means
+
+Every gate reverts with its own typed error, so a failed receipt tells you exactly what happened. This is
+the table to reach for when a transaction reverts.
+
+| Error | Meaning | Usual cause |
+|---|---|---|
+| `NotInitialized` | The clone was never seeded | Deployment did not go through the factory |
+| `AnchorAlreadyProcessed` | This anchor was applied before | A resubmitted transaction, or a genuine replay attempt |
+| `MetadataLengthMismatch` | Key and value lists differ in length | A malformed delta; the driver builds these aligned |
+| `InsufficientEndorsements` | Fewer signatures than the threshold | An endorser was unreachable when the quorum was collected |
+| `UnauthorizedSigner` | A signature came from a non-endorser | The driver's endorser set has drifted from the contract's |
+| `DuplicateSigner` | The same endorser signed twice | A broken initiator; N signatures from one endorser are not N endorsements |
+| `InvalidSignatureLength` | A signature was not 65 bytes | A malformed or truncated signature |
+| `StalePublicParams` | The delta names parameters that are no longer current | Someone updated the parameters between endorsement and submission; re-endorse |
+| `InputMissingOrSpent` | A consumed marker does not exist, or is already spent | A double spend, or a token whose content does not match what was recorded |
+| `DoubleSpend` | A serial number was already used (graph-hiding mode) | A double spend |
+| `MetadataKeyOccupied` | A metadata key was already written | A reused key, for example an HTLC claim seen twice |
+| `MalformedSetupDelta` | A setup delta carried spends, outputs or metadata, or no parameters | A driver bug; setup deltas carry only new parameters |
+| `MalformedTransferDelta` | A transfer delta carried setup parameters | A driver bug |
+
+Metadata keys being write-once is worth calling out. A reused key reverts rather than overwriting, which
+matches Fabric's `StateMustNotExist`. Silently overwriting something like an HTLC claim key would be a
+correctness bug, not a convenience.
+
+#### Why a failure is invisible to a recipient
+
+A revert emits no `StateCommitted` event. Since a recipient who only saw the token request knows the
+anchor and nothing else, and finds the transaction by scanning for that event, **log scanning can only
+ever discover success**. There is no failure event to find, because the failed transaction wrote nothing.
+
+A recipient must therefore treat "no event by the timeout" as failure. This asymmetry is a consequence of
+identifying transactions by anchor rather than by transaction hash, and it is why the finality timeout is a
+correctness setting rather than a tuning knob.
+
 ### Smart Contract Interface
+
+The sketch below predates the implementation and is kept for the shape of the idea. The contracts that
+were actually built live in
+[`contracts/src`](../../x/token/services/network/evm/contracts/src): the entry point is
+`TokenState.applyStateDelta(StateDelta, bytes[])`, described above.
 
 ```solidity
 // Conceptual interface - not production code
