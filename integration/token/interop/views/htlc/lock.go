@@ -118,7 +118,7 @@ func (hv *LockView) Call(context view.Context) (res any, err error) {
 	_, err = context.RunView(htlc.NewOrderingAndFinalityView(tx))
 	assert.NoError(err, "failed to commit htlc transaction")
 
-	outputs, err := tx.Outputs()
+	outputs, err := tx.Outputs(context.Context())
 	assert.NoError(err, "failed getting outputs")
 
 	return &LockInfo{
@@ -156,7 +156,7 @@ func (h *LockAcceptView) Call(context view.Context) (any, error) {
 	// The recipient can perform any check on the transaction as required by the business process
 	// In particular, here, the recipient checks that the transaction contains at least one output, and
 	// that there is at least one output that names the recipient. The recipient is receiving something.
-	outputs, err := tx.Outputs()
+	outputs, err := tx.Outputs(context.Context())
 	assert.NoError(err, "failed getting outputs")
 	assert.True(outputs.Count() >= 1, "expected at least one output, got [%d]", outputs.Count())
 	outputs = outputs.ByScript()

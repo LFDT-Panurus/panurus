@@ -45,7 +45,11 @@ func (a *AuditInfo) Bytes() ([]byte, error) {
 
 // FromBytes deserializes the AuditInfo from JSON format.
 func (a *AuditInfo) FromBytes(raw []byte) error {
-	return json.Unmarshal(raw, a)
+	// raw is untrusted and the pseudonym audit data holds mathlib curve elements,
+	// which panic on an out-of-range curve ID instead of rejecting it.
+	return UnmarshalAuditInfo(func() error {
+		return json.Unmarshal(raw, a)
+	})
 }
 
 // EnrollmentID returns the enrollment ID from Attributes[2].

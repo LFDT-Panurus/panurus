@@ -36,29 +36,37 @@ type IdentityCache struct {
 	cacheTimeout time.Duration
 	// Cache performance metrics
 	metrics *Metrics
-	// Cancellation function for background provisioning
+	// provisionCtx governs the lifetime of the background provisioning goroutine.
+	// Created at construction time and cancelled by Close.
+	provisionCtx context.Context //nolint:containedctx
+	// cancel cancels provisionCtx. Written once, at construction time, so that Close
+	// is safe to call concurrently with Identity.
 	cancel context.CancelFunc
 }
 
 // NewIdentityCache creates a new identity cache with specified size and backend.
 func NewIdentityCache(backed IdentityCacheBackendFunc, size int, auditInfo []byte, metrics *Metrics) *IdentityCache {
 	logger.Debugf("new identity cache with size [%d]", size)
+	// The provisioning goroutine must not inherit any caller's request context, but it
+	// must still be cancellable, hence a cancellable child of context.Background.
+	provisionCtx, cancel := context.WithCancel(context.Background())
 	ci := &IdentityCache{
 		backed:       backed,
 		cache:        make(chan *idriver.IdentityDescriptor, size),
 		auditInfo:    auditInfo,
 		cacheTimeout: 5 * time.Millisecond,
 		metrics:      metrics,
+		provisionCtx: provisionCtx,
+		cancel:       cancel,
 	}
 
 	return ci
 }
 
-// Close stops the background identity provisioning.
+// Close stops the background identity provisioning. It is idempotent and safe to call
+// even if provisioning was never started, or concurrently with Identity.
 func (c *IdentityCache) Close() {
-	if c.cancel != nil {
-		c.cancel()
-	}
+	c.cancel()
 }
 
 // Identity retrieves an identity from cache or generates on-demand.
@@ -70,10 +78,10 @@ func (c *IdentityCache) Identity(ctx context.Context, auditInfo []byte) (*idrive
 
 	c.once.Do(func() {
 		logger.DebugfContext(ctx, "provision identities with cache size [%d]", cap(c.cache))
-		if cap(c.cache) > 0 {
-			var backgroundCtx context.Context
-			backgroundCtx, c.cancel = context.WithCancel(context.Background())
-			go c.provisionIdentities(backgroundCtx)
+		// Do not spawn the goroutine if the cache has already been closed, otherwise a
+		// late first call would start a goroutine that nothing will ever stop.
+		if cap(c.cache) > 0 && c.provisionCtx.Err() == nil {
+			go c.provisionIdentities(c.provisionCtx)
 		}
 	})
 
@@ -143,6 +151,7 @@ func (c *IdentityCache) provisionIdentities(ctx context.Context) {
 	for {
 		identityDescriptor, err := c.backed(ctx, c.auditInfo)
 		if err != nil {
+			c.metrics.ProvisionFailuresCount.Add(1)
 			logger.Errorf("failed to provision identity [%s]", err)
 			select {
 			case <-ctx.Done():
@@ -153,9 +162,11 @@ func (c *IdentityCache) provisionIdentities(ctx context.Context) {
 			continue
 		}
 		logger.DebugfContext(ctx, "generated new idemix identity [%d]", count)
-		c.metrics.CacheLevelGauge.Add(1)
+		// The gauge is incremented only once the entry is actually in the channel, so a
+		// cancellation mid-send cannot leave the reported cache level skewed.
 		select {
 		case c.cache <- identityDescriptor:
+			c.metrics.CacheLevelGauge.Add(1)
 			count++
 		case <-ctx.Done():
 			return

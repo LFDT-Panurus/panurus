@@ -89,6 +89,16 @@ func (m *mockTXStatusProvider) GetStatus(_ context.Context, txID string) (ttxdb.
 	return m.status(txID), "", nil
 }
 
+// Bounds for the coordination in TestScannerDoesNotDeleteReclaimed. They are far longer than the
+// 20ms scan interval the test drives, so they only fire when something is genuinely wrong, but they
+// keep a missed interleaving from turning into a 10 minute package timeout. Both stay under
+// stopTimeout so that a failing run still lets t.Cleanup's Stop join the scan goroutine instead of
+// leaving it parked in the hook and running its delete phase during later tests. See #2156.
+const (
+	scannerObserveTimeout = 3 * time.Second
+	hookReleaseTimeout    = 3 * time.Second
+)
+
 // TestScannerDoesNotDeleteReclaimed verifies the TOCTOU protection in the
 // scanner: when the scanner has observed a token as removable (its tx is
 // Deleted) and a concurrent Lock(reclaim=true) re-locks that token for a new
@@ -124,14 +134,31 @@ func TestScannerDoesNotDeleteReclaimed(t *testing.T) {
 			// only the first observer (the scanner) blocks; later lookups
 			// (the reclaim's) must pass through or they would deadlock
 			close(entered)
-			<-release
+			// Bounded: if the test fails before reaching close(release), this
+			// goroutine must not sit here forever. This blocks the collector's
+			// lookup phase, which deliberately runs without the shard lock, so
+			// parking here does not wedge the shard.
+			select {
+			case <-release:
+			case <-time.After(hookReleaseTimeout):
+			}
 		}
 	})
 	mock.setStatus(txA, ttxdb.Deleted)
 
 	// The scanner is now stuck between observing tx-A as removable and
 	// deleting it. Reclaim the token for tx-B in that window.
-	<-entered
+	//
+	// Bounded rather than a bare receive: this test has hung in CI until the
+	// 10 minute package timeout, which hides the failure and takes the rest of
+	// the package's results with it. Failing here says which wait did not
+	// complete. See #2156.
+	select {
+	case <-entered:
+	case <-time.After(scannerObserveTimeout):
+		t.Fatal("scanner never observed tx-A as Deleted: the status hook did not fire within " +
+			scannerObserveTimeout.String())
+	}
 	mock.setStatus(txB, ttxdb.Pending)
 	_, err = d.Lock(context.Background(), "w1", tokenID, txB, true)
 	require.NoError(t, err)
@@ -169,4 +196,81 @@ func TestScannerDeletesStaleEntry(t *testing.T) {
 	require.Eventually(t, func() bool {
 		return !d.IsLocked(tokenID)
 	}, 2*time.Second, 20*time.Millisecond, "stale entry should have been removed by scanner")
+}
+
+// TestReclaimDoesNotHoldShardLockDuringStatusLookup pins the invariant the collector
+// already documents: a status lookup must never run while the shard lock is held.
+// Lock(reclaim=true) used to call GetStatus from under the write lock, so a slow or
+// stuck transaction store blocked every other operation on that owner's shard until
+// it returned.
+func TestReclaimDoesNotHoldShardLockDuringStatusLookup(t *testing.T) {
+	mock := newMockTXStatusProvider()
+	tokenID := &token.ID{TxId: "tok1", Index: 0}
+	txA := "tx-A"
+
+	mock.setStatus(txA, ttxdb.Pending)
+	d := NewLocker(mock, time.Hour, time.Hour).(*locker)
+	t.Cleanup(func() { _ = d.Stop() })
+	_, err := d.Lock(context.Background(), "w1", tokenID, txA, false)
+	require.NoError(t, err)
+
+	// Stop the collector before arming the hook. A long sleep timeout is not enough
+	// to keep it away: scan runs a full pass before its first sleep, so it can reach
+	// GetStatus while the hook is armed, consume the one-shot below and park there
+	// itself. The reclaim's own lookup would then pass straight through and the test
+	// would pass without ever holding a lookup open inside Lock, which it does even
+	// on the unfixed code. This test is about the locking path, so take the collector
+	// out of the picture entirely.
+	require.NoError(t, d.Stop())
+
+	// Block the next status lookup for tx-A, standing in for a slow transaction store.
+	inLookup := make(chan struct{})
+	unblock := make(chan struct{})
+	var once sync.Once
+	mock.setGetStatusHook(func(txID string) {
+		// Only the reclaim looks up tx-A now that the collector is stopped, so the
+		// one-shot is belt and braces rather than load bearing.
+		if txID != txA {
+			return
+		}
+		first := false
+		once.Do(func() { first = true })
+		if !first {
+			return
+		}
+		close(inLookup)
+		<-unblock
+	})
+
+	// Reclaim in the background; it will stall inside the status lookup.
+	reclaimReturned := make(chan struct{})
+	go func() {
+		defer close(reclaimReturned)
+		_, _ = d.Lock(context.Background(), "w1", tokenID, "tx-B", true)
+	}()
+
+	select {
+	case <-inLookup:
+	case <-time.After(5 * time.Second):
+		close(unblock)
+		t.Fatal("reclaim never reached the status lookup")
+	}
+
+	// The shard must still be usable while that lookup is outstanding. Before the
+	// fix this blocked on the write lock the reclaim was holding, and the test
+	// timed out here.
+	done := make(chan bool, 1)
+	go func() { done <- d.IsLocked(tokenID) }()
+
+	select {
+	case locked := <-done:
+		assert.True(t, locked, "token should still be reported as locked")
+	case <-time.After(5 * time.Second):
+		close(unblock)
+		t.Fatal("IsLocked blocked while a reclaim's status lookup was in flight: " +
+			"the shard lock is being held across GetStatus")
+	}
+
+	close(unblock)
+	<-reclaimReturned
 }

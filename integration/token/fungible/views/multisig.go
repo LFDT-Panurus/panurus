@@ -69,7 +69,7 @@ func (lv *MultiSigLockView) Call(context view.Context) (txID any, err error) {
 	assert.NoError(err, "failed creating transaction")
 
 	// lock
-	err = multisig.Wrap(tx).Lock(senderWallet, lv.Type, lv.Amount, recipient)
+	err = multisig.Wrap(tx).Lock(context.Context(), senderWallet, lv.Type, lv.Amount, recipient)
 	assert.NoError(err, "failed adding transfer action [%d:%v]", lv.Amount, recipient)
 
 	_, err = context.RunView(ttx.NewCollectEndorsementsView(tx))
@@ -148,7 +148,7 @@ func (r *MultiSigSpendView) Call(context view.Context) (res any, err error) {
 		TxOpts(r.TMSID, ttx.WithAuditor(idProvider.Identity(r.Auditor)))...,
 	)
 	assert.NoError(err, "failed to create an multisig transaction")
-	assert.NoError(multisig.Wrap(tx).Spend(spendWallet, matched.At(0), recipient), "failed adding a spend for [%s]", matched.At(0).Id)
+	assert.NoError(multisig.Wrap(tx).Spend(context.Context(), spendWallet, matched.At(0), recipient), "failed adding a spend for [%s]", matched.At(0).Id)
 
 	_, err = context.RunView(ttx.NewCollectEndorsementsView(tx))
 	assert.NoError(err, "failed to collect endorsements on multisig transaction")

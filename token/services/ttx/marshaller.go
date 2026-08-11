@@ -7,6 +7,7 @@ SPDX-License-Identifier: Apache-2.0
 package ttx
 
 import (
+	"context"
 	"encoding/asn1"
 	"sort"
 
@@ -99,7 +100,7 @@ type TransactionSer struct {
 	Envelope     []byte
 }
 
-func marshal(t *Transaction, eIDs ...string) ([]byte, error) {
+func marshal(ctx context.Context, t *Transaction, eIDs ...string) ([]byte, error) {
 	// sanity checks
 	if len(t.Network()) == 0 {
 		return nil, ErrNetworkNotSet
@@ -123,7 +124,7 @@ func marshal(t *Transaction, eIDs ...string) ([]byte, error) {
 		req := t.TokenRequest
 		// If eIDs are specified, we only marshal the metadata for the passed eIDs
 		if len(eIDs) != 0 {
-			req, err = t.TokenRequest.FilterMetadataBy(t.Context, eIDs...)
+			req, err = t.TokenRequest.FilterMetadataBy(ctx, eIDs...)
 			if err != nil {
 				return nil, errors.Wrap(err, "failed to filter metadata")
 			}

@@ -40,7 +40,8 @@ type Marshaller interface {
 }
 
 type S struct {
-	s          Session
+	s Session
+	//nolint:containedctx // default context for the Receive/Send convenience wrappers; explicit *WithContext variants exist alongside
 	ctx        context.Context
 	marshaller Marshaller
 }

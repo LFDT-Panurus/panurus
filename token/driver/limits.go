@@ -43,6 +43,18 @@ type ResourceLimits struct {
 	// proof is handed to the bulletproof/CSP verifier for deserialization. Drivers without a
 	// zero-knowledge proof (e.g. fabtoken) ignore this field.
 	MaxProofBytes int
+
+	// MaxIdentityDepth bounds how deeply composite identities (multisig, policy, HTLC script)
+	// may nest inside one another. A composite identity's components are themselves identities,
+	// and the deserializer that turns an owner identity into a verifier recurses into each one,
+	// so an identity nested to depth d costs O(d) recursive deserializations - each of which
+	// re-parses the whole subtree still below it. Real deployments nest 2-3 levels, e.g. a policy
+	// over a multisig over x509.
+	MaxIdentityDepth int
+	// MaxIdentityComponents bounds the number of component identities in a single composite
+	// identity. MaxIdentityDepth bounds how deep the recursion goes; this bounds how wide it
+	// fans out at each level.
+	MaxIdentityComponents int
 }
 
 // DefaultResourceLimits returns the resource limits enforced when no override is configured.
@@ -64,6 +76,9 @@ func DefaultResourceLimits() ResourceLimits {
 		MaxMetadataValueBytes: 4 << 10, // 4 KiB
 
 		MaxProofBytes: 128 << 10, // 128 KiB
+
+		MaxIdentityDepth:      5,
+		MaxIdentityComponents: 16,
 	}
 }
 
@@ -107,6 +122,12 @@ func (l ResourceLimits) WithDefaults() ResourceLimits {
 	}
 	if l.MaxProofBytes <= 0 {
 		l.MaxProofBytes = d.MaxProofBytes
+	}
+	if l.MaxIdentityDepth <= 0 {
+		l.MaxIdentityDepth = d.MaxIdentityDepth
+	}
+	if l.MaxIdentityComponents <= 0 {
+		l.MaxIdentityComponents = d.MaxIdentityComponents
 	}
 
 	return l

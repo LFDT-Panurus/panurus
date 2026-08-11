@@ -171,3 +171,7 @@ All three terminal statuses (`Confirmed`, `Deleted`, `Orphan`) are excluded from
 ## Thread Safety
 
 The Manager is thread-safe and can be safely started/stopped from multiple goroutines. The Handler implementation must also be thread-safe as it will be called concurrently by multiple workers.
+
+## Shutdown Behaviour
+
+`Stop()` cancels the manager context and waits for the recovery loop to return. If a sweep is mid-batch, the fan-out to the worker pool aborts on cancellation: workers stop after their in-flight `Handler.Recover()` call and any claims not yet dispatched are simply left undispatched. Those rows keep their `Pending` status, so they become eligible again once their lease (`leaseDuration`) expires and are picked up by the next sweep — on this or another replica. The aborted sweep reports a `recovery fan-out cancelled` error. Because this is an ordinary shutdown rather than a failure, the loop logs it at debug level and only warns for genuine sweep errors. The sweep summary counts successes against the claims actually dispatched, so a partial sweep logs `claimed=N, dispatched=M, ...` at warn level instead of crediting the undispatched tail as succeeded.

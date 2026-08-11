@@ -50,6 +50,7 @@ type ViewManager interface {
 // It batches incoming token IDs, dispatches them to a configurable worker pool, and retries
 // on failure. Callers must invoke Start() before using the client and Stop() to release resources.
 type CertificationClient struct {
+	//nolint:containedctx // long-running client lifecycle, not a per-request context
 	ctx    context.Context
 	cancel context.CancelFunc
 	wg     sync.WaitGroup

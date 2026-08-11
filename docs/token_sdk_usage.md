@@ -56,7 +56,7 @@ if err != nil {
 // 3. Issue Tokens
 // Use the issuer wallet to issue 'quantity' of 'tokenType' to 'recipient'.
 wallet := ttx.GetIssuerWallet(context, issuerWalletID)
-err = tx.Issue(wallet, recipient, tokenType, quantity)
+err = tx.Issue(context.Context(), wallet, recipient, tokenType, quantity)
 if err != nil {
     return nil, err
 }
@@ -99,6 +99,7 @@ if err != nil {
 // Sender wallet is used to select input tokens.
 senderWallet := ttx.GetWallet(context, senderWalletID)
 err = tx.Transfer(
+    context.Context(),
     senderWallet,
     tokenType,
     []uint64{amount},
@@ -147,6 +148,7 @@ if err != nil {
 // If needed, also pin the issuer signing key expected by public parameters.
 senderWallet := ttx.GetWallet(context, senderWalletID)
 err = tx.Redeem(
+    context.Context(),
     senderWallet,
     tokenType,
     amount,
@@ -195,7 +197,7 @@ if err != nil {
 
 // 3. Add Alice's Transfer
 senderWallet := ttx.GetWallet(context, aliceWallet)
-err = tx.Transfer(senderWallet, aliceTokenType, []uint64{aliceAmount}, []view.Identity{other})
+err = tx.Transfer(context.Context(), senderWallet, aliceTokenType, []uint64{aliceAmount}, []view.Identity{other})
 if err != nil {
     return nil, err
 }
@@ -239,7 +241,7 @@ if err != nil {
 
 // 3. Add Bob's Transfer
 bobWallet := ttx.MyWalletFromTx(context, tx)
-err = tx.Transfer(bobWallet, action.Type, []uint64{action.Amount}, []view.Identity{action.Recipient})
+err = tx.Transfer(context.Context(), bobWallet, action.Type, []uint64{action.Amount}, []view.Identity{action.Recipient})
 if err != nil {
     return nil, err
 }
@@ -343,8 +345,8 @@ if err != nil {
 Uses an **Initiator-Responder Inversion** pattern. The user requests a withdrawal, and the Issuer (responder) becomes the initiator of the Token Transaction to issue the tokens.
 
 ### Multisig ([`multisig.go`](../integration/token/fungible/views/multisig.go))
-*   **Lock**: `multisig.Wrap(tx).Lock(...)`
-*   **Spend**: `multisig.Wrap(tx).Spend(...)`. Requires `multisig.Wallet` to list co-owned tokens.
+*   **Lock**: `multisig.Wrap(tx).Lock(ctx, ...)`
+*   **Spend**: `multisig.Wrap(tx).Spend(ctx, ...)`. Requires `multisig.Wallet` to list co-owned tokens.
 
 ---
 
