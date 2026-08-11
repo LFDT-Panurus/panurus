@@ -300,8 +300,35 @@ func (r *Registry) WalletByID(ctx context.Context, role idriver.IdentityRoleType
 	return newWallet, nil
 }
 
-// Done releases all the resources allocated by this service.
+// closer is implemented by wallets that hold resources needing an explicit
+// release, such as a background provisioning goroutine. It is declared here,
+// on the consumer side, rather than widening driver.Wallet: only anonymous
+// owner wallets have anything to release, and widening the port would force a
+// no-op Close on every wallet type of every driver.
+type closer interface {
+	Close()
+}
+
+// Done releases all the resources allocated by this service. Wallets created by
+// this registry that hold releasable resources are closed and the wallet cache is
+// dropped, so their background goroutines terminate instead of living for the
+// lifetime of the process.
 func (r *Registry) Done() error {
+	r.WalletMu.Lock()
+	wallets := make([]driver.Wallet, 0, len(r.Wallets))
+	for _, w := range r.Wallets {
+		wallets = append(wallets, w)
+	}
+	r.Wallets = map[string]driver.Wallet{}
+	r.WalletMu.Unlock()
+
+	// Close outside the lock: never hold the registry mutex while calling out.
+	for _, w := range wallets {
+		if c, ok := w.(closer); ok {
+			c.Close()
+		}
+	}
+
 	return r.Role.Done()
 }
 

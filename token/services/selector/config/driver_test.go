@@ -13,7 +13,6 @@ import (
 
 	"github.com/LFDT-Panurus/panurus/token/services/selector/config/mock"
 	"github.com/LFDT-Panurus/panurus/token/services/selector/driver"
-	"github.com/LFDT-Panurus/panurus/token/services/selector/ratelimit"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -229,102 +228,6 @@ func TestConfig_GetFetcherCacheMaxQueries(t *testing.T) {
 	}
 }
 
-func TestConfig_GetRateLimit(t *testing.T) {
-	tests := []struct {
-		name     string
-		config   *Config
-		expected int
-	}{
-		{
-			// Rate limiting is off unless it is asked for: an unconfigured deployment must
-			// see no limiter at all. The getter reports that as zero, which
-			// ratelimit.FromConfig maps to a nil Limiter.
-			name:     "off when not set",
-			config:   &Config{},
-			expected: 0,
-		},
-		{
-			// rateLimitEnabled is the "protect me, pick the numbers for me" switch.
-			name:     "enabled flag selects the built-in rate",
-			config:   &Config{RateLimitEnabled: true},
-			expected: ratelimit.DefaultRate,
-		},
-		{
-			// A configured rate is never silently ignored: it switches the limiter on by
-			// itself, without also needing the flag.
-			name:     "custom value switches it on",
-			config:   &Config{RateLimit: 42},
-			expected: 42,
-		},
-		{
-			name:     "custom value with the flag set",
-			config:   &Config{RateLimitEnabled: true, RateLimit: 42},
-			expected: 42,
-		},
-		{
-			// A negative rate is the explicit "off" even when the flag says otherwise.
-			name:     "negative value overrides the enabled flag",
-			config:   &Config{RateLimitEnabled: true, RateLimit: -1},
-			expected: -1,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := tt.config.GetRateLimit()
-			assert.Equal(t, tt.expected, result)
-		})
-	}
-}
-
-func TestConfig_GetRateLimitBurst(t *testing.T) {
-	tests := []struct {
-		name     string
-		config   *Config
-		expected int
-	}{
-		{
-			name:     "default when not set",
-			config:   &Config{},
-			expected: ratelimit.DefaultBurst,
-		},
-		{
-			name:     "custom value",
-			config:   &Config{RateLimitBurst: 7},
-			expected: 7,
-		},
-		{
-			name:     "default when not positive",
-			config:   &Config{RateLimitBurst: -5},
-			expected: ratelimit.DefaultBurst,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := tt.config.GetRateLimitBurst()
-			assert.Equal(t, tt.expected, result)
-		})
-	}
-}
-
-// The built-in limiter reads its settings through the ratelimit.Config interface, so Config
-// must keep satisfying it.
-func TestConfig_SatisfiesRateLimitConfig(t *testing.T) {
-	var _ ratelimit.Config = &Config{}
-
-	limiter := ratelimit.FromConfig(&Config{RateLimit: 1, RateLimitBurst: 1})
-	require.NotNil(t, limiter)
-	t.Cleanup(limiter.Stop)
-
-	require.NoError(t, limiter.Allow("alice"))
-	require.Error(t, limiter.Allow("alice"))
-
-	assert.Nil(t, ratelimit.FromConfig(&Config{RateLimit: -1}))
-	// The zero config is the common case: no limiter.
-	assert.Nil(t, ratelimit.FromConfig(&Config{}))
-}
-
 // TestNew verifies config parsing handles valid configs, empty configs, and unmarshal errors.
 func TestNew(t *testing.T) {
 	tests := []struct {
@@ -382,9 +285,7 @@ func TestNew(t *testing.T) {
 
 			if tt.expectError {
 				require.Error(t, err)
-				// New always returns a non-nil *Config so callers that log and continue
-				// get a safe zero-value config (all defaults) instead of a nil pointer.
-				assert.NotNil(t, cfg, "cfg must be non-nil even on error")
+				assert.Nil(t, cfg)
 			} else {
 				require.NoError(t, err)
 				assert.NotNil(t, cfg)

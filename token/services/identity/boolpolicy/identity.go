@@ -95,11 +95,21 @@ type IdentityAuditInfo struct {
 // It is a sequence of per-component audit infos in the same order as Identities.
 type AuditInfo struct {
 	IdentityAuditInfos []IdentityAuditInfo
+	// eid is the enrollment ID shared by all component identities;
+	// empty when they span enrollments.
+	eid string
 }
 
-func (a *AuditInfo) EnrollmentID() string     { return "" }
+// EnrollmentID returns the enrollment ID shared by all component identities,
+// or "" when there is none.
+func (a *AuditInfo) EnrollmentID() string { return a.eid }
+
+// RevocationHandle returns "": a policy identity has no revocation handle of
+// its own.
 func (a *AuditInfo) RevocationHandle() string { return "" }
-func (a *AuditInfo) Bytes() ([]byte, error)   { return json.Marshal(a) }
+
+// Bytes returns the JSON encoding of the AuditInfo.
+func (a *AuditInfo) Bytes() ([]byte, error) { return json.Marshal(a) }
 
 // WrapAuditInfo packs per-component audit info bytes into a single blob.
 func WrapAuditInfo(recipients [][]byte) ([]byte, error) {
@@ -133,7 +143,18 @@ type InfoMatcher struct {
 	AuditInfoMatcher []tdriver.Matcher
 }
 
+// Match matches raw, the inner PolicyIdentity bytes of a policy identity, against the
+// per-component audit info this matcher was built from.
+//
+// It recurses into the component matchers, which for a nested composite identity are themselves
+// InfoMatchers. That recursion is independent of the one in
+// TypedIdentityDeserializer.GetAuditInfoMatcher that built this matcher, so it accounts for its own
+// depth against ctx rather than inheriting a budget already spent during construction.
 func (e *InfoMatcher) Match(ctx context.Context, raw []byte) error {
+	ctx, err := tdriver.EnterCompositeIdentity(ctx)
+	if err != nil {
+		return errors.Wrap(err, "cannot match policy identity")
+	}
 	pi := PolicyIdentity{}
 	if err := pi.Deserialize(raw); err != nil {
 		return err
@@ -151,15 +172,23 @@ func (e *InfoMatcher) Match(ctx context.Context, raw []byte) error {
 	return nil
 }
 
-// validateComponentIdentities rejects an empty/none component identity and
-// any duplicate among ids. This is the single choke point applied both when
-// constructing a policy identity via WrapPolicyIdentity and when accepting
-// one from raw (potentially attacker-controlled) wire bytes during
-// deserialization in deserializer.go — an attacker who crafts a
-// PolicyIdentity's DER bytes directly bypasses WrapPolicyIdentity entirely,
-// so validation must also happen at the deserialization boundary to
-// actually close the gap.
-func validateComponentIdentities(ids [][]byte) error {
+// validateComponentIdentities rejects an empty/none component identity, any
+// duplicate among ids, and more than maxComponents of them. This is the single
+// choke point applied both when constructing a policy identity via
+// WrapPolicyIdentity and when accepting one from raw (potentially
+// attacker-controlled) wire bytes during deserialization in deserializer.go —
+// an attacker who crafts a PolicyIdentity's DER bytes directly bypasses
+// WrapPolicyIdentity entirely, so validation must also happen at the
+// deserialization boundary to actually close the gap.
+//
+// The maxComponents bound is the fan-out half of the recursion budget: each
+// component is deserialized in turn, and a policy identity may nest, so the
+// depth bound enforced in deserializer.go does not by itself bound the total
+// amount of recursive work.
+func validateComponentIdentities(ids [][]byte, maxComponents int) error {
+	if len(ids) > maxComponents {
+		return errors.Wrapf(tdriver.ErrTooManyIdentityComponents, "got %d component identities, the maximum is %d", len(ids), maxComponents)
+	}
 	seen := make(map[string]struct{}, len(ids))
 	for k, raw := range ids {
 		id := token.Identity(raw)
@@ -189,7 +218,7 @@ func WrapPolicyIdentity(policy string, ids ...token.Identity) (token.Identity, e
 	for k, id := range ids {
 		raw2D[k] = id
 	}
-	if err := validateComponentIdentities(raw2D); err != nil {
+	if err := validateComponentIdentities(raw2D, tdriver.DefaultResourceLimits().MaxIdentityComponents); err != nil {
 		return nil, err
 	}
 	pi := &PolicyIdentity{Policy: policy, Identities: raw2D}

@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/LFDT-Panurus/panurus/token/services/selector/driver"
-	"github.com/LFDT-Panurus/panurus/token/services/selector/ratelimit"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 )
 
@@ -23,11 +22,6 @@ const (
 	defaultFetcherCacheSize       = 0 // 0 means use fetcher default
 	defaultFetcherCacheRefresh    = 0 // 0 means use fetcher default
 	defaultFetcherCacheMaxQueries = 0 // 0 means use fetcher default
-	defaultRateLimit              = ratelimit.DefaultRate
-	defaultRateLimitBurst         = ratelimit.DefaultBurst
-	// rateLimitOff is what GetRateLimit reports when rate limiting is not switched on,
-	// which is the default.
-	rateLimitOff = 0
 )
 
 //go:generate counterfeiter -o mock/config_service.go -fake-name ConfigService . configService
@@ -44,29 +38,14 @@ type Config struct {
 	FetcherCacheSize       int64         `yaml:"fetcherCacheSize,omitempty"`
 	FetcherCacheRefresh    time.Duration `yaml:"fetcherCacheRefresh,omitempty"`
 	FetcherCacheMaxQueries int           `yaml:"fetcherCacheMaxQueries,omitempty"`
-	// RateLimitEnabled switches the built-in per-wallet rate limiter on with its built-in
-	// rate and burst, for deployments that want basic protection without picking numbers.
-	// Rate limiting is off unless this is true or RateLimit is set.
-	RateLimitEnabled bool `yaml:"rateLimitEnabled,omitempty"`
-	// RateLimit is the number of token-selection requests a single wallet may perform per
-	// second before being throttled. A positive value switches the built-in limiter on with
-	// that rate; a negative value keeps it off even when RateLimitEnabled is true. Zero
-	// (unset) leaves the decision to RateLimitEnabled.
-	RateLimit int `yaml:"rateLimit,omitempty"`
-	// RateLimitBurst is the largest burst of selections a single wallet may perform after
-	// an idle period. Zero (unset) selects the built-in default. Values below RateLimit are
-	// raised to it.
-	RateLimitBurst int `yaml:"rateLimitBurst,omitempty"`
 }
 
-// New returns a Config populated from the token.selector key. On unmarshal failure it
-// returns a zero-value &Config{} (all defaults) together with the error, so callers that
-// log the error and continue receive a safe, fully-functional config rather than a nil
-// pointer.
+// New returns a SelectorConfig with the values from the token.selector key
 func New(config configService) (*Config, error) {
 	c := &Config{}
-	if err := config.UnmarshalKey("token.selector", c); err != nil {
-		return c, errors.Wrap(err, "invalid config for key [token.selector]: expected retryInterval (duration) and numRetries (integer))")
+	err := config.UnmarshalKey("token.selector", c)
+	if err != nil {
+		return nil, errors.Wrap(err, "invalid config for key [token.selector]: expected retryInterval (duration) and numRetries (integer))")
 	}
 
 	return c, nil
@@ -125,29 +104,4 @@ func (c *Config) GetFetcherCacheRefresh() time.Duration {
 func (c *Config) GetFetcherCacheMaxQueries() int {
 	// Return 0 if not set, which will trigger use of fetcher default
 	return c.FetcherCacheMaxQueries
-}
-
-// GetRateLimit returns the number of selections per second per wallet the built-in limiter
-// allows, or zero when rate limiting is off. Off is the default: it takes either a positive
-// RateLimit or RateLimitEnabled to switch the limiter on.
-func (c *Config) GetRateLimit() int {
-	// An explicit rate decides on its own, in both directions: positive switches the
-	// limiter on with that rate, negative keeps it off.
-	if c.RateLimit != 0 {
-		return c.RateLimit
-	}
-	if c.RateLimitEnabled {
-		return defaultRateLimit
-	}
-
-	return rateLimitOff
-}
-
-// GetRateLimitBurst returns the bucket capacity for the built-in limiter.
-func (c *Config) GetRateLimitBurst() int {
-	if c.RateLimitBurst > 0 {
-		return c.RateLimitBurst
-	}
-
-	return defaultRateLimitBurst
 }

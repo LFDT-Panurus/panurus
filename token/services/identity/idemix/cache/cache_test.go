@@ -9,6 +9,8 @@ package cache
 import (
 	"context"
 	"errors"
+	"runtime"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -16,6 +18,7 @@ import (
 
 	"github.com/LFDT-Panurus/panurus/token/driver"
 	idriver "github.com/LFDT-Panurus/panurus/token/services/identity/driver"
+	"github.com/hyperledger-labs/fabric-smart-client/platform/view/services/metrics"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/services/metrics/disabled"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -29,6 +32,7 @@ func TestIdentityCache(t *testing.T) {
 			AuditInfo: []byte("audit"),
 		}, nil
 	}, 100, nil, NewMetrics(&disabled.Provider{}))
+	t.Cleanup(c.Close)
 	identityDescriptor, err := c.Identity(t.Context(), nil)
 	require.NoError(t, err)
 	assert.Equal(t, driver.Identity([]byte("hello world")), identityDescriptor.Identity)
@@ -48,6 +52,7 @@ func TestIdentityCacheForRace(t *testing.T) {
 			AuditInfo: []byte("audit"),
 		}, nil
 	}, 10000, nil, NewMetrics(&disabled.Provider{}))
+	t.Cleanup(c.Close)
 
 	numRoutines := 4
 	wg := sync.WaitGroup{}
@@ -77,6 +82,7 @@ func TestFetchIdentityFromBackend(t *testing.T) {
 	c := NewIdentityCache(func(ctx context.Context, auditInfo []byte) (*idriver.IdentityDescriptor, error) {
 		return expectedIdentity, nil
 	}, 10, []byte("cache audit"), NewMetrics(&disabled.Provider{}))
+	t.Cleanup(c.Close)
 
 	// Call with different audit info to trigger backend fetch
 	identityDescriptor, err := c.Identity(context.Background(), []byte("different audit"))
@@ -92,6 +98,7 @@ func TestFetchIdentityFromBackendError(t *testing.T) {
 	c := NewIdentityCache(func(ctx context.Context, auditInfo []byte) (*idriver.IdentityDescriptor, error) {
 		return nil, expectedErr
 	}, 10, []byte("cache audit"), NewMetrics(&disabled.Provider{}))
+	t.Cleanup(c.Close)
 
 	// Call with different audit info to trigger backend fetch
 	_, err := c.Identity(context.Background(), []byte("different audit"))
@@ -111,6 +118,7 @@ func TestFetchIdentityFromCacheTimeout(t *testing.T) {
 			AuditInfo: []byte("timeout audit"),
 		}, nil
 	}, 0, nil, NewMetrics(&disabled.Provider{})) // cache size 0 to force timeout
+	t.Cleanup(c.Close)
 
 	// Set short timeout to trigger timeout path
 	c.cacheTimeout = 1 * time.Millisecond
@@ -129,6 +137,7 @@ func TestFetchIdentityFromCacheTimeoutError(t *testing.T) {
 	c := NewIdentityCache(func(ctx context.Context, auditInfo []byte) (*idriver.IdentityDescriptor, error) {
 		return nil, expectedErr
 	}, 0, nil, NewMetrics(&disabled.Provider{}))
+	t.Cleanup(c.Close)
 
 	// Set short timeout to trigger timeout path
 	c.cacheTimeout = 1 * time.Millisecond
@@ -183,6 +192,7 @@ func TestFetchIdentityFromCacheNilEntry(t *testing.T) {
 			AuditInfo: []byte("backend audit"),
 		}, nil
 	}, 10, nil, NewMetrics(&disabled.Provider{}))
+	t.Cleanup(c.Close)
 
 	// Pre-populate the cache with nil before calling Identity()
 	// Since cache is buffered, this completes immediately
@@ -213,6 +223,7 @@ func TestIdentityCache_Close(t *testing.T) {
 	}
 
 	c := NewIdentityCache(backend, 10, nil, NewMetrics(&disabled.Provider{}))
+	t.Cleanup(c.Close)
 	// Set a very short timeout so we don't wait long if the cache is empty
 	c.cacheTimeout = 1 * time.Millisecond
 
@@ -239,3 +250,92 @@ func TestIdentityCache_Close(t *testing.T) {
 	// may complete a few in-flight iterations before observing the stop signal.
 	assert.LessOrEqual(t, callCount.Load(), countAfterClose+3)
 }
+
+// provisionGoroutineName is the symbol appearing in the stack trace of the background
+// provisioning goroutine.
+const provisionGoroutineName = "cache.(*IdentityCache).provisionIdentities"
+
+// provisioningGoroutines counts the running provisioning goroutines.
+func provisioningGoroutines() int {
+	buf := make([]byte, 1<<16)
+	for {
+		n := runtime.Stack(buf, true)
+		if n < len(buf) {
+			return strings.Count(string(buf[:n]), provisionGoroutineName)
+		}
+		buf = make([]byte, 2*len(buf))
+	}
+}
+
+// TestIdentityCache_CloseRacesFirstUse checks Close is safe to call concurrently with
+// the first Identity call, and that the cancellation is never missed.
+//
+// The cancel function used to be assigned inside once.Do, so Close read it without
+// synchronisation: a data race, and worse, a Close that observed the old nil value
+// silently skipped the cancellation and leaked the goroutine. Building the context in
+// the constructor makes the field write-once.
+func TestIdentityCache_CloseRacesFirstUse(t *testing.T) {
+	require.Eventually(t, func() bool {
+		return provisioningGoroutines() == 0
+	}, 5*time.Second, 10*time.Millisecond, "a previous test left a provisioning goroutine behind")
+
+	for range 300 {
+		c := NewIdentityCache(func(context.Context, []byte) (*idriver.IdentityDescriptor, error) {
+			return &idriver.IdentityDescriptor{Identity: []byte("id")}, nil
+		}, 4, nil, NewMetrics(&disabled.Provider{}))
+
+		var wg sync.WaitGroup
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			_, _ = c.Identity(context.Background(), nil)
+		}()
+		go func() {
+			defer wg.Done()
+			c.Close()
+		}()
+		wg.Wait()
+	}
+
+	// Every cache was closed, so no provisioning goroutine may survive.
+	require.Eventually(t, func() bool {
+		return provisioningGoroutines() == 0
+	}, 5*time.Second, 10*time.Millisecond, "Close missed the cancellation and leaked a goroutine")
+}
+
+// countingCounter is a minimal metrics.Counter that keeps a running total.
+type countingCounter struct {
+	total atomic.Int64
+}
+
+func (c *countingCounter) With(...string) metrics.Counter { return c }
+
+func (c *countingCounter) Add(delta float64) { c.total.Add(int64(delta)) }
+
+func (c *countingCounter) value() float64 { return float64(c.total.Load()) }
+
+// TestIdentityCache_CountsProvisionFailures checks a failing key manager is reported on a
+// counter, not only in the log, so the condition can be alerted on.
+func TestIdentityCache_CountsProvisionFailures(t *testing.T) {
+	failures := &countingCounter{}
+	c := NewIdentityCache(func(context.Context, []byte) (*idriver.IdentityDescriptor, error) {
+		return nil, errors.New("key manager is down")
+	}, 10, nil, &Metrics{CacheLevelGauge: &noopGauge{}, ProvisionFailuresCount: failures})
+	t.Cleanup(c.Close)
+
+	_, err := c.Identity(context.Background(), nil)
+	require.Error(t, err)
+
+	require.Eventually(t, func() bool {
+		return failures.value() >= 1
+	}, 2*time.Second, 5*time.Millisecond, "the failed provisioning attempt was not counted")
+}
+
+// noopGauge is a metrics.Gauge that discards everything.
+type noopGauge struct{}
+
+func (g *noopGauge) With(...string) metrics.Gauge { return g }
+
+func (g *noopGauge) Add(float64) {}
+
+func (g *noopGauge) Set(float64) {}

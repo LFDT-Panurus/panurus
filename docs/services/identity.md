@@ -162,6 +162,74 @@ func (d *Base) NewWalletService(...) (*wallet.Service, error) {
 
 > **Note:** `provider` here is a `NewTMSProvider`-wrapped `Provider` (see [Driver Metrics](../drivers/metrics.md#pitfall-labelnames-must-include-network-channel-namespace)), which binds `network`/`channel`/`namespace` on every metric via `.With(...)` before returning it. Every `CounterOpts`/`HistogramOpts` above must therefore declare those three as `LabelNames` in addition to its own label(s), or the metric panics with "inconsistent label cardinality" on first use. This is exactly the bug that crashed the DVP/DLog integration suite in `SignerRouter.Register` before it was fixed.
 
+## Wallet Lifecycle and Recipient Data Caching
+
+Anonymous owner wallets hand out a fresh pseudonym for every payment. Generating one is
+expensive (an Idemix pseudonym plus a registry binding), so `AnonymousOwnerWallet` keeps a
+pre-provisioned buffer of recipient data. Two caches implement that buffer:
+
+| Cache | Buffers | Sized by |
+|:------|:--------|:---------|
+| `role.RecipientDataCache` (`token/services/identity/role/cache.go`) | `driver.RecipientData` (pseudonym + audit info) for one wallet | `wallets.owners[].cacheSize`, falling back to `wallets.defaultCacheSize` (see [configuration](../configuration.md)) |
+| `idemix/cache.IdentityCache` (`token/services/identity/idemix/cache/cache.go`) | `idriver.IdentityDescriptor` for one Idemix key manager | same lookup, via `KeyManagerProvider.cacheSizeForID` |
+
+Both follow the same contract:
+
+*   **Provisioning is lazy.** The background goroutine is started by the first request, and
+    only when the configured size is greater than zero. With a size of zero the cache is
+    disabled and every request goes straight to the backend.
+*   **Requests never wait on the cache.** A request that does not find a buffered entry
+    within a short timeout (5 ms) generates the data on the spot instead of blocking, so a
+    slow backend degrades latency rather than stalling the caller. A cancelled caller
+    context aborts the request immediately.
+*   **A failing backend backs off, and is observable.** The provisioning loop logs the
+    failure, increments a counter and waits one second before retrying, so a broken
+    identity backend cannot turn pre-provisioning into a busy loop — and the condition can
+    be alerted on instead of only appearing in the logs.
+*   **`Close()` is mandatory and idempotent.** It cancels the background context, which
+    terminates the provisioning goroutine even while it is parked on a full buffer or
+    inside a retry backoff. A cache that is never closed keeps its goroutine, its channel
+    and its backend closure alive for the lifetime of the process. After `Close()` the
+    cache still serves requests from the backend; it simply stops pre-provisioning.
+
+### Cache metrics
+
+| Metric | Type | Cache | Purpose |
+|:-------|:-----|:------|:--------|
+| `recipient_data_cache_level` | Gauge | `RecipientDataCache` | Entries currently buffered. Counted only once an entry is really in the buffer, so it cannot drift upward when the producer is blocked. |
+| `recipient_data_provision_failures_total` | Counter | `RecipientDataCache` | Failed pre-provisioning attempts. A rising rate means the identity backend is failing and requests are falling back to the slower on-demand path. |
+| `cache_level` | Gauge | idemix `IdentityCache` | As above, for Idemix identities. |
+| `cache_provision_failures_total` | Counter | idemix `IdentityCache` | As above, for Idemix identities. |
+
+> **Note:** these providers are `NewTMSProvider`-wrapped, so every `GaugeOpts`/`CounterOpts`
+> above must declare `network`, `channel` and `namespace` in `LabelNames` — omitting them
+> panics with "inconsistent label cardinality" on first use. See
+> [Driver Metrics](../drivers/metrics.md#pitfall-labelnames-must-include-network-channel-namespace).
+
+### Who calls `Close()`
+
+Application code does not normally close these caches itself: they are released by the
+existing teardown chain when a token management service is unloaded, for instance when
+its public parameters are updated.
+
+```
+core.TMSProvider.Update            (token/core/tms.go)
+  └── Service.Done()               (token/core/common/tms.go)
+        └── wallet.Service.Done()  (token/services/identity/wallet/service.go)
+              └── role.Registry.Done()
+                    ├── Close() on every wallet it created that holds resources
+                    │     └── AnonymousOwnerWallet.Close() → RecipientDataCache.Close()
+                    └── Role.Done() → LocalMembership.Close()
+```
+
+`role.Registry.Done()` closes wallets through a local `interface{ Close() }` assertion
+rather than through `driver.Wallet`, so wallet types with nothing to release need not
+implement a no-op `Close()`. If you add a wallet type that owns a goroutine, a ticker or
+any other resource, give it a `Close()` method and it will be released automatically.
+
+> **Note:** tests that exercise an anonymous owner wallet should `t.Cleanup(w.Close)`,
+> otherwise each test leaves a provisioning goroutine behind for the rest of the run.
+
 ## Identity Types
 
 The Identity Service leverages a wrapper called **TypedIdentity** to support various identity schemes uniformly. 
@@ -268,6 +336,14 @@ To accommodate different deployment structures, the Key Manager performs directo
 1. It first attempts to load the files directly from the configured directory (`<dir>`).
 2. If this fails, it appends an extra `msp` path element to the directory (i.e., `<dir>/msp/`) and tries again (e.g. searching for `<dir>/msp/msp/IssuerPublicKey` and `<dir>/msp/user/SignerConfig`).
 
+##### Credential Verification at Load Time
+When the loaded signer configuration carries secret key material (user secret key plus credential),
+the Idemix Key Manager verifies the credential against the issuer public key while it is being
+constructed. A credential that does not verify — whether the underlying BCCSP reports the failure as
+an error or simply as a negative verification result — makes construction fail with
+`credential is not cryptographically valid`; no key manager is returned. Configurations without
+secret key material are loaded as verify-only (remote) key managers and skip this check.
+
 #### 3. IdemixNym (Idemix with Pseudonym-based Identity)
 An extension of Idemix that uses a **commitment to the Enrollment ID (EID)** as the identity instead of the full Idemix signature.
 *   **Identity (Payload)**: A small **Nym EID** (a cryptographic commitment to the enrollment ID, $g^{sk} \cdot h^{r_{eid}}$).
@@ -295,6 +371,45 @@ An extension of Idemix that uses a **commitment to the Enrollment ID (EID)** as 
 | **Signature Encoding** | Raw bytes | ASN.1 (Creator + Signature) |
 | **Identity Size** | Large (~several KB) | Small (~32-64 bytes) |
 | **Storage Overhead** | High | Low |
+
+#### Audit Info Deserialization (Idemix and IdemixNym)
+
+Audit info is JSON and can arrive from a counterparty (recipient registration, auditing
+flows), so both `crypto.AuditInfo.FromBytes`
+(`token/services/identity/idemix/crypto/audit.go`) and `nym.AuditInfo.FromBytes`
+(`token/services/identity/idemixnym/nym/audit.go`) treat their input as untrusted and reject
+malformed payloads with an error.
+
+`EidNymAuditData` and `RhNymAuditData` embed `mathlib` curve elements, which JSON-encode as
+a curve ID plus the raw element bytes:
+
+```json
+{"EidNymAuditData":{"Nym":{"curve":3,"element":"..."},"Rand":{...},"Attr":{...}}}
+```
+
+`mathlib`'s `UnmarshalJSON` uses that curve ID to index its internal curve table **without a
+bounds check**, so an out-of-range ID raises an `index out of range` panic from inside
+`encoding/json`. Both `FromBytes` implementations therefore run their decode through
+`crypto.UnmarshalAuditInfo`, which recovers that panic and returns it as an ordinary error:
+
+```go
+return crypto.UnmarshalAuditInfo(func() error {
+    return json.Unmarshal(raw, a)
+})
+```
+
+The guard wraps the real decode rather than pre-validating the payload's curve IDs, because
+`mathlib` runs *during* `encoding/json`'s traversal: a separate validation pass has to
+reproduce that traversal exactly to see every curve element the decode reaches, including
+ones that never appear in the decoded result (a duplicate key overwriting an earlier value,
+input after the first JSON value, a curve element following a type error). The same defect
+is contained the same way in `FromG1Proto`
+(`token/core/zkatdlog/nogh/protos-go/utils/proto.go`).
+
+Where curve IDs arrive as plain data rather than through a third-party unmarshaler, prefer an
+explicit bounds check instead — see `curveAt` in
+`token/core/common/encoding/asn1/asn1.go` and `PublicParams.Validate` in
+`token/core/zkatdlog/nogh/v1/setup/setup.go`.
 
 ### Other Identity Types
 
@@ -325,6 +440,7 @@ Located in `token/services/identity/boolpolicy`.
     - `identities` (SEQUENCE OF OCTET STRING): ordered list of raw component identity bytes; `$N` indexes into this list.
 *   **Audit Info**: JSON-encoded `AuditInfo` structure.
     - `IdentityAuditInfos` (array of `IdentityAuditInfo`): per-component audit info blobs in the same order as `identities`.
+*   **Enrollment ID**: When the audit-info deserializer is built with the parent multiplex deserializer (`NewAuditInfoDeserializer`), the policy identity reports the enrollment ID shared by all component identities. Components with no enrollment ID of their own (e.g. a nested composite spanning enrollments), components whose audit info is missing (e.g. an identity not registered locally), or disagreeing components yield an empty enrollment ID; a missing component audit info takes precedence over subtype resolution, so an unknown component identity type carrying no audit info also yields an empty enrollment ID. A non-empty component audit info that cannot be resolved, an invalid component identity, or a component count mismatch is an error.
 *   **Encoding**:
     - `TypedIdentity` payload: ASN.1 DER.
     - Audit Info: JSON.

@@ -128,8 +128,8 @@ func NewTransactionFromBytes(ctx view.Context, network, channel string, raw []by
 }
 
 // Outputs returns a new OutputStream of the transaction's outputs
-func (t *Transaction) Outputs() (*OutputStream, error) {
-	outs, err := t.TokenRequest.Outputs(t.Context)
+func (t *Transaction) Outputs(ctx context.Context) (*OutputStream, error) {
+	outs, err := t.TokenRequest.Outputs(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -191,7 +191,7 @@ func (t *Transaction) Lock(ctx context.Context, wallet *token.OwnerWallet, sende
 		return nil, err
 	}
 	_, err = t.TokenRequest.Transfer(
-		t.Context,
+		ctx,
 		wallet,
 		typ,
 		[]uint64{value},
@@ -206,7 +206,7 @@ func (t *Transaction) Lock(ctx context.Context, wallet *token.OwnerWallet, sende
 }
 
 // Reclaim appends a reclaim (transfer) action to the token request of the transaction
-func (t *Transaction) Reclaim(wallet *token.OwnerWallet, tok *token2.UnspentToken, opts ...token.TransferOption) error {
+func (t *Transaction) Reclaim(ctx context.Context, wallet *token.OwnerWallet, tok *token2.UnspentToken, opts ...token.TransferOption) error {
 	q, err := token2.ToQuantity(tok.Quantity, t.TokenRequest.TokenService.PublicParametersManager().PublicParameters().Precision())
 	if err != nil {
 		return errors.Wrapf(err, "failed to convert quantity [%s]", tok.Quantity)
@@ -226,17 +226,17 @@ func (t *Transaction) Reclaim(wallet *token.OwnerWallet, tok *token2.UnspentToke
 
 	// Register the signer for the reclaim
 	sigService := t.TokenService().SigService()
-	signer, err := sigService.GetSigner(t.Context, script.Sender)
+	signer, err := sigService.GetSigner(ctx, script.Sender)
 	if err != nil {
 		return err
 	}
-	verifier, err := sigService.OwnerVerifier(t.Context, script.Sender)
+	verifier, err := sigService.OwnerVerifier(ctx, script.Sender)
 	if err != nil {
 		return err
 	}
 	logger.Debugf("registering signer for reclaim for identity [%s] with sender [%s]", token.Identity(tok.Owner), script.Sender)
 	if err := sigService.RegisterEphemeralSigner(
-		t.Context,
+		ctx,
 		tok.Owner,
 		signer,
 		verifier,
@@ -244,11 +244,12 @@ func (t *Transaction) Reclaim(wallet *token.OwnerWallet, tok *token2.UnspentToke
 		return err
 	}
 
-	if err := t.Binder.Bind(t.Context, script.Sender, tok.Owner); err != nil {
+	if err := t.Binder.Bind(ctx, script.Sender, tok.Owner); err != nil {
 		return err
 	}
 
 	return t.Transfer(
+		ctx,
 		wallet,
 		tok.Type,
 		[]uint64{q.ToBigInt().Uint64()},
@@ -258,7 +259,7 @@ func (t *Transaction) Reclaim(wallet *token.OwnerWallet, tok *token2.UnspentToke
 }
 
 // Claim appends a claim (transfer) action to the token request of the transaction
-func (t *Transaction) Claim(wallet *token.OwnerWallet, tok *token2.UnspentToken, preImage []byte, opts ...token.TransferOption) error {
+func (t *Transaction) Claim(ctx context.Context, wallet *token.OwnerWallet, tok *token2.UnspentToken, preImage []byte, opts ...token.TransferOption) error {
 	if len(preImage) == 0 {
 		return errors.New("preImage is nil")
 	}
@@ -292,16 +293,16 @@ func (t *Transaction) Claim(wallet *token.OwnerWallet, tok *token2.UnspentToken,
 	// Register the signer for the claim
 	logger.Debugf("registering signer for claim...")
 	sigService := t.TokenService().SigService()
-	recipientSigner, err := sigService.GetSigner(t.Context, script.Recipient)
+	recipientSigner, err := sigService.GetSigner(ctx, script.Recipient)
 	if err != nil {
 		return err
 	}
-	recipientVerifier, err := sigService.OwnerVerifier(t.Context, script.Recipient)
+	recipientVerifier, err := sigService.OwnerVerifier(ctx, script.Recipient)
 	if err != nil {
 		return err
 	}
 	if err := sigService.RegisterEphemeralSigner(
-		t.Context,
+		ctx,
 		tok.Owner,
 		&ClaimSigner{
 			Recipient: recipientSigner,
@@ -319,11 +320,12 @@ func (t *Transaction) Claim(wallet *token.OwnerWallet, tok *token2.UnspentToken,
 		return err
 	}
 
-	if err := t.Binder.Bind(t.Context, script.Recipient, tok.Owner); err != nil {
+	if err := t.Binder.Bind(ctx, script.Recipient, tok.Owner); err != nil {
 		return err
 	}
 
 	return t.Transfer(
+		ctx,
 		wallet,
 		tok.Type,
 		[]uint64{q.ToBigInt().Uint64()},

@@ -99,7 +99,7 @@ func (i *TokensUpgradeInitiatorView) Call(context view.Context) (any, error) {
 			// The recipient can perform any check on the transaction as required by the business process
 			// In particular, here, the recipient checks that the transaction contains at least one output, and
 			// that there is at least one output that names the recipient.(The recipient is receiving something).
-			outputs, err := tx.Outputs()
+			outputs, err := tx.Outputs(context.Context())
 			assert.NoError(err, "failed getting outputs")
 			assert.True(outputs.Count() > 0, "expected at least one output")
 			assert.True(outputs.ByRecipient(id).Count() > 0, "expected at least one output assigned to [%s]", id)
@@ -176,6 +176,7 @@ func (p *TokensUpgradeResponderView) Call(context view.Context) (any, error) {
 
 		// The issuer adds a new issue operation to the transaction following the instruction received
 		err = tx.Upgrade(
+			context.Context(),
 			wallet,
 			upgradeRequest.RecipientData.Identity,
 			upgradeRequest.ID,
