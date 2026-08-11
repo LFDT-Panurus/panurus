@@ -70,6 +70,14 @@ func newMetrics(p metrics.Provider) *Metrics {
 	}
 }
 
+// NewMetrics creates a new Metrics instance with the given provider.
+// It is exported so that the metrics reference guard can instantiate the
+// auditor instrumentation without building a full Service; see
+// docs/development/metrics.md.
+func NewMetrics(p metrics.Provider) *Metrics {
+	return newMetrics(p)
+}
+
 // noopProvider discards all observations. Used when no provider is configured.
 type noopProvider struct{}
 

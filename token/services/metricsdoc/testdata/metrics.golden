@@ -1,0 +1,56 @@
+panurus_core_common_metrics_auditor_service_duration_seconds | histogram | network,channel,namespace,method | token/core/common/metrics/auditor.go | Duration of AuditorService method calls in seconds
+panurus_core_common_metrics_auditor_service_errors_total | counter | network,channel,namespace,method | token/core/common/metrics/auditor.go | Total number of AuditorService method errors
+panurus_core_common_metrics_auditor_service_operations_total | counter | network,channel,namespace,method | token/core/common/metrics/auditor.go | Total number of AuditorService method invocations
+panurus_core_common_metrics_cache_level | gauge | network,channel,namespace | token/services/identity/idemix/cache/metrics.go | Level of the idemix cache
+panurus_core_common_metrics_cache_provision_failures_total | counter | network,channel,namespace | token/services/identity/idemix/cache/metrics.go | Failed attempts to pre-provision idemix identities
+panurus_core_common_metrics_identity_get_signer_duration_seconds | histogram | network,channel,namespace,path | token/services/identity/metrics.go | Histogram of GetSigner wall-clock time in seconds, labeled by resolution path
+panurus_core_common_metrics_identity_signer_resolutions_total | counter | network,channel,namespace,outcome | token/services/identity/metrics.go | Total number of GetSigner calls by outcome (cache, routed, fallback)
+panurus_core_common_metrics_identity_signer_router_no_probe_errors_total | counter | network,channel,namespace | token/services/identity/metrics.go | Total number of errors from the SignerRouter's probe-free signer deserialization path
+panurus_core_common_metrics_identity_signer_router_registrations_total | counter | network,channel,namespace | token/services/identity/metrics.go | Total number of conf_id-to-KeyManager bindings registered with the SignerRouter
+panurus_core_common_metrics_issue_service_duration_seconds | histogram | network,channel,namespace,method | token/core/common/metrics/issue.go | Duration of IssueService method calls in seconds
+panurus_core_common_metrics_issue_service_errors_total | counter | network,channel,namespace,method | token/core/common/metrics/issue.go | Total number of IssueService method errors
+panurus_core_common_metrics_issue_service_operations_total | counter | network,channel,namespace,method | token/core/common/metrics/issue.go | Total number of IssueService method invocations
+panurus_core_common_metrics_recipient_data_cache_level | gauge | network,channel,namespace | token/services/identity/role/metrics.go | Level of the wallet recipient data cache
+panurus_core_common_metrics_recipient_data_provision_failures_total | counter | network,channel,namespace | token/services/identity/role/metrics.go | Failed attempts to pre-provision wallet recipient data
+panurus_core_common_metrics_tokens_service_duration_seconds | histogram | network,channel,namespace,method | token/core/common/metrics/tokens.go | Duration of TokensService method calls in seconds
+panurus_core_common_metrics_tokens_service_errors_total | counter | network,channel,namespace,method | token/core/common/metrics/tokens.go | Total number of TokensService method errors
+panurus_core_common_metrics_tokens_service_operations_total | counter | network,channel,namespace,method | token/core/common/metrics/tokens.go | Total number of TokensService method invocations
+panurus_core_common_metrics_tokens_upgrade_service_duration_seconds | histogram | network,channel,namespace,method | token/core/common/metrics/upgrade.go | Duration of TokensUpgradeService method calls in seconds
+panurus_core_common_metrics_tokens_upgrade_service_errors_total | counter | network,channel,namespace,method | token/core/common/metrics/upgrade.go | Total number of TokensUpgradeService method errors
+panurus_core_common_metrics_tokens_upgrade_service_operations_total | counter | network,channel,namespace,method | token/core/common/metrics/upgrade.go | Total number of TokensUpgradeService method invocations
+panurus_core_common_metrics_transfer_service_duration_seconds | histogram | network,channel,namespace,method | token/core/common/metrics/transfer.go | Duration of TransferService method calls in seconds
+panurus_core_common_metrics_transfer_service_errors_total | counter | network,channel,namespace,method | token/core/common/metrics/transfer.go | Total number of TransferService method errors
+panurus_core_common_metrics_transfer_service_operations_total | counter | network,channel,namespace,method | token/core/common/metrics/transfer.go | Total number of TransferService method invocations
+panurus_services_auditor_auditor_append_duration_seconds | histogram | - | token/services/auditor/metrics.go | Histogram of Append() processing time per transaction, in seconds
+panurus_services_auditor_auditor_append_errors_total | counter | - | token/services/auditor/metrics.go | Total number of Append() calls that failed to write to the audit database
+panurus_services_auditor_auditor_audit_duration_seconds | histogram | - | token/services/auditor/metrics.go | Histogram of Audit() processing time per transaction (including lock acquisition), in seconds
+panurus_services_auditor_auditor_audit_lock_conflicts_total | counter | - | token/services/auditor/metrics.go | Total number of Audit() calls that failed to acquire enrollment-ID locks
+panurus_services_auditor_auditor_releases_total | counter | - | token/services/auditor/metrics.go | Total number of Release() calls (explicit and deferred)
+panurus_services_certifier_interactive_certification_dropped_tokens_total | counter | channel,namespace | token/services/certifier/interactive/metrics.go | Total number of tokens dropped because the certification buffer was full.
+panurus_services_certifier_interactive_certification_errors_total | counter | channel,namespace | token/services/certifier/interactive/metrics.go | Total number of failed certification request attempts.
+panurus_services_certifier_interactive_certification_pending_tokens | gauge | channel,namespace | token/services/certifier/interactive/metrics.go | Current number of tokens waiting in the certification input buffer.
+panurus_services_certifier_interactive_certification_request_duration_seconds | histogram | channel,namespace | token/services/certifier/interactive/metrics.go | Histogram of certification batch request durations in seconds.
+panurus_services_certifier_interactive_certified_tokens | counter | network,channel,namespace | token/services/certifier/interactive/metrics.go | The number of tokens certified.
+panurus_services_network_fabricx_finality_queue_finality_queue_enqueue_drops_total | counter | - | token/services/network/fabricx/finality/queue/metrics.go | Total number of finality events dropped because the queue was full
+panurus_services_network_fabricx_finality_queue_finality_queue_pending_events | gauge | - | token/services/network/fabricx/finality/queue/metrics.go | Current number of finality events waiting in the queue buffer
+panurus_services_network_fabricx_finality_queue_finality_queue_processing_duration_seconds | histogram | - | token/services/network/fabricx/finality/queue/metrics.go | Histogram of successful event processing time in worker goroutines (seconds)
+panurus_services_network_fabricx_finality_queue_finality_queue_processing_errors_total | counter | - | token/services/network/fabricx/finality/queue/metrics.go | Total number of errors returned by event.Process in worker goroutines
+panurus_services_selector_sherdlock_selection_duration_seconds | histogram | - | token/services/selector/sherdlock/metrics.go | Duration of a token selection call in seconds
+panurus_services_selector_sherdlock_selection_immediate_retries | histogram | - | token/services/selector/sherdlock/metrics.go | Distribution of immediate retry counts per token selection call
+panurus_services_selector_sherdlock_selection_outcome_total | counter | outcome | token/services/selector/sherdlock/metrics.go | Total number of token selection outcomes by result type
+panurus_services_selector_sherdlock_unspent_tokens_invocations | counter | fetcher_type | token/services/selector/sherdlock/metrics.go | The number of invocations
+panurus_services_ttx_accepted_transactions | counter | network,channel,namespace | token/services/ttx/metrics.go | The number of accepted transactions.
+panurus_services_ttx_audit_approval_duration_seconds | histogram | network,channel,namespace | token/services/ttx/metrics.go | Duration of the auditor approval phase including validation, append, and signing.
+panurus_services_ttx_audit_approved_transactions | counter | network,channel,namespace | token/services/ttx/metrics.go | The number of approved transactions by the auditor.
+panurus_services_ttx_endorsed_transactions | counter | network,channel,namespace | token/services/ttx/metrics.go | The number of endorsed transactions.
+panurus_services_ttx_endorsement_duration_seconds | histogram | network,channel,namespace | token/services/ttx/metrics.go | Duration of the full endorsement collection phase including signatures, audit, and chaincode approval.
+panurus_services_ttx_finality_finality_listener_confirmed_total | counter | - | token/services/ttx/finality/metrics.go | Total number of transactions confirmed on the ledger and successfully committed to local storage
+panurus_services_ttx_finality_finality_listener_deleted_total | counter | - | token/services/ttx/finality/metrics.go | Total number of transactions marked as deleted due to an invalid ledger status or token-request hash mismatch
+panurus_services_ttx_finality_finality_listener_hash_mismatch_total | counter | - | token/services/ttx/finality/metrics.go | Total number of transactions rejected because the committed token-request hash did not match the locally stored one
+panurus_services_ttx_finality_finality_listener_on_status_duration_seconds | histogram | - | token/services/ttx/finality/metrics.go | Histogram of total OnStatus processing time per transaction (including retries), in seconds
+panurus_services_ttx_finality_finality_listener_retry_exhausted_total | counter | - | token/services/ttx/finality/metrics.go | Total number of transactions whose finality processing was abandoned after all retries were exhausted
+panurus_services_ttx_ordering_duration_seconds | histogram | network,channel,namespace | token/services/ttx/metrics.go | Duration of the transaction broadcast to the ordering service.
+panurus_services_utils_json_session_ttx_envelope_body_bytes | histogram | type | token/services/utils/json/session/metrics.go | Size of envelope body in bytes
+panurus_services_utils_json_session_ttx_envelope_errors_total | counter | error | token/services/utils/json/session/metrics.go | Total number of envelope validation errors
+panurus_services_utils_json_session_ttx_envelope_received_total | counter | version,type | token/services/utils/json/session/metrics.go | Total number of versioned envelopes received
+panurus_services_utils_json_session_ttx_envelope_sent_total | counter | version,type | token/services/utils/json/session/metrics.go | Total number of versioned envelopes sent

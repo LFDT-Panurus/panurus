@@ -68,6 +68,14 @@ type ClientMetrics struct {
 	DroppedTokens metrics.Counter
 }
 
+// NewClientMetrics creates a new ClientMetrics instance with the given provider.
+// It is exported so that the metrics reference guard can instantiate the
+// certification client instrumentation without building a full
+// CertificationClient; see docs/development/metrics.md.
+func NewClientMetrics(p metrics.Provider) *ClientMetrics {
+	return newClientMetrics(p)
+}
+
 func newClientMetrics(p metrics.Provider) *ClientMetrics {
 	return &ClientMetrics{
 		RequestDuration: p.NewHistogram(certificationRequestDuration),
