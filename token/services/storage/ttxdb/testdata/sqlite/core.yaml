@@ -22,3 +22,11 @@ token:
       namespace: ns
       ttxdb:
         persistence: token_persistence
+    # A channel name containing a digit is extremely common. See
+    # https://github.com/LFDT-Panurus/panurus/issues/2034.
+    mango1:
+      network: mango1
+      channel: channel1
+      namespace: ns2
+      ttxdb:
+        persistence: token_persistence

@@ -7,7 +7,6 @@ SPDX-License-Identifier: Apache-2.0
 package common
 
 import (
-	"fmt"
 	"regexp"
 	"strings"
 
@@ -17,8 +16,21 @@ import (
 )
 
 var (
-	validName = regexp.MustCompile(`^[a-zA-Z_]+$`) // Thread safe
-	replacers = []*replacer{
+	// validName accepts the SQL identifiers this package is allowed to generate:
+	// letters, digits and underscores, never starting with a digit (unquoted
+	// identifiers in both SQLite and PostgreSQL must start with a letter or an
+	// underscore). All regexps here are thread safe.
+	validName = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*$`)
+	// validEscapedParams accepts the result of escaping the table name
+	// parameters. Digits are allowed in any position, including the first: the
+	// composed table name is checked against validName afterwards, which is what
+	// decides whether a leading digit is acceptable there.
+	validEscapedParams = regexp.MustCompile(`^[a-zA-Z0-9_]+$`)
+	// validPrefix accepts the user-configured table prefix. It is deliberately
+	// stricter than validName: a prefix is a configuration value, and letters
+	// and underscores have always been its documented character set.
+	validPrefix = regexp.MustCompile(`^[a-zA-Z_]+$`)
+	replacers   = []*replacer{
 		newReplacer("_", "__"),
 		newReplacer("-", "_d"),
 		newReplacer("\\.", "_f"),
@@ -34,21 +46,20 @@ func NewTableNameCreator(defaultPrefix string) *TableNameCreator {
 		if len(prefix) > 100 {
 			return nil, errors.New("table prefix must be shorter than 100 characters")
 		}
-		r := regexp.MustCompile("^[a-zA-Z_]+$")
 		if len(prefix) == 0 {
 			prefix = defaultPrefix
 		}
 		if len(prefix) == 0 {
-			return &tableNameFormatter{r: r}, nil
+			return &tableNameFormatter{r: validName}, nil
 		}
 
-		if !r.MatchString(prefix) {
+		if !validPrefix.MatchString(prefix) {
 			return nil, errors.New("illegal character in table prefix, only letters and underscores allowed")
 		}
 
 		return &tableNameFormatter{
 			prefix: strings.ToLower(prefix) + "_",
-			r:      r,
+			r:      validName,
 		}, nil
 	})}
 }
@@ -85,26 +96,33 @@ func (c *tableNameFormatter) MustFormat(name string, params ...string) string {
 }
 
 func (c *tableNameFormatter) Format(name string, params ...string) (string, error) {
-	if len(params) > 0 {
-		name = fmt.Sprintf("%s_%s", escapeForTableName(params...), name)
-	}
-	if !c.r.MatchString(name) {
-		return "", fmt.Errorf("invalid table name [%s]: only letters and underscores allowed", name)
-	}
-
-	return fmt.Sprintf("%s%s", c.prefix, name), nil
+	return c.format(c.prefix, name, params...)
 }
 
 // FormatWithoutPrefix returns the table name without applying the prefix.
 func (c *tableNameFormatter) FormatWithoutPrefix(name string, params ...string) (string, error) {
+	return c.format("", name, params...)
+}
+
+// format composes prefix, the escaped params and name, and validates the result.
+// It validates the identifier it is about to emit, not just the name fragment,
+// so a param that starts with a digit is fine as long as a prefix precedes it —
+// and rejected when there is none. It returns an error, never panics, for any
+// input it cannot turn into a legal SQL identifier.
+func (c *tableNameFormatter) format(prefix, name string, params ...string) (string, error) {
 	if len(params) > 0 {
-		name = fmt.Sprintf("%s_%s", escapeForTableName(params...), name)
+		escaped, err := escapeForTableName(params...)
+		if err != nil {
+			return "", err
+		}
+		name = escaped + "_" + name
 	}
-	if !c.r.MatchString(name) {
-		return "", fmt.Errorf("invalid table name [%s]: only letters and underscores allowed", name)
+	tableName := prefix + name
+	if !c.r.MatchString(tableName) {
+		return "", errors.Errorf("invalid table name [%s]: only letters, digits and underscores are allowed, and it cannot start with a digit", tableName)
 	}
 
-	return name, nil
+	return tableName, nil
 }
 
 // MustFormatWithoutPrefix returns the table name without applying the prefix, panicking on error.
@@ -123,14 +141,19 @@ func (r *replacer) Escape(s string) string {
 	return r.regex.ReplaceAllString(s, r.repl)
 }
 
-func escapeForTableName(params ...string) string {
+// escapeForTableName joins params and escapes the characters that are legal in a
+// network/channel/namespace name but not in a SQL identifier. It returns an
+// error, rather than panicking, when a parameter contains a character it cannot
+// escape, so that a bad configuration value surfaces as a store-construction
+// error instead of crashing the node.
+func escapeForTableName(params ...string) (string, error) {
 	name := strings.Join(params, "_")
 	for _, r := range replacers {
 		name = r.Escape(name)
 	}
-	if len(name) > 0 && !validName.MatchString(name) {
-		panic("unsupported chars found: " + name)
+	if len(name) > 0 && !validEscapedParams.MatchString(name) {
+		return "", errors.Errorf("unsupported chars found in table name parameters [%s]: only letters, digits, underscores, dashes and dots are allowed", name)
 	}
 
-	return name
+	return name, nil
 }

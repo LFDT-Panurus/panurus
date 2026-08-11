@@ -94,13 +94,22 @@ func newTransactionStore(
 }
 
 // PrefixedTableName returns the formatted table name for the given logical name.
+// It falls back to the unformatted name if the prefix or the table parameters
+// cannot produce a valid identifier, rather than panicking: the store is already
+// constructed at this point and a crash here would take the node down.
 func (s *TransactionStore) PrefixedTableName(name string) string {
 	nc, err := ncProvider.GetFormatter(s.tablePrefix)
 	if err != nil {
 		return name
 	}
+	formatted, err := nc.Format(name, s.tableParams...)
+	if err != nil {
+		logger.Warnf("failed to format table name [%s]: %v — using it unformatted", name, err)
 
-	return nc.MustFormat(name, s.tableParams...)
+		return name
+	}
+
+	return formatted
 }
 
 func NewAuditTransactionStore(readDB, writeDB *sql.DB, tables TableNames, ci common3.CondInterpreter, pi common3.PagInterpreter) (*TransactionStore, error) {

@@ -46,6 +46,35 @@ func TestDB(t *testing.T) {
 	TEndorserAcks(t, db1, db2)
 }
 
+// TestDBWithDigitsInChannelName is a regression test for
+// https://github.com/LFDT-Panurus/panurus/issues/2034: building a store for a
+// TMS whose channel name contains a digit used to panic while deriving the SQL
+// table names, crashing the node instead of returning an error. It goes through
+// the real NewStoreServiceManager path, and nothing along that path recovers.
+func TestDBWithDigitsInChannelName(t *testing.T) {
+	cp, err := config.NewProvider("./testdata/sqlite")
+	require.NoError(t, err)
+
+	manager := ttxdb.NewStoreServiceManager(
+		tms.NewConfigServiceWrapper(config2.NewService(cp)),
+		multiplexed.NewDriver(cp, sqlite.NewNamedDriver(cp, sqlite2.NewDbProvider())),
+	)
+
+	var db *ttxdb.StoreService
+	require.NotPanics(t, func() {
+		db, err = manager.StoreServiceByTMSId(token.TMSID{Network: "mango1", Channel: "channel1", Namespace: "ns2"})
+	})
+	require.NoError(t, err)
+	require.NotNil(t, db)
+
+	// The tables must really exist and be usable, not just be well-named.
+	ctx := t.Context()
+	require.NoError(t, db.AddTransactionEndorsementAck(ctx, "1", []byte("alice"), []byte("sigma")))
+	acks, err := db.GetTransactionEndorsementAcks(ctx, "1")
+	require.NoError(t, err)
+	assert.Equal(t, []byte("sigma"), acks[token.Identity("alice").String()])
+}
+
 func TEndorserAcks(t *testing.T, db1, db2 *ttxdb.StoreService) {
 	t.Helper()
 	ctx := t.Context()

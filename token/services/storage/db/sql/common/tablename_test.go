@@ -25,9 +25,19 @@ func TestEscapeTableName(t *testing.T) {
 		{[]string{"alpha", "testchannel"}, "alpha__testchannel"},
 		{[]string{"alpha", "test-channel"}, "alpha__test_dchannel"},
 		{[]string{"alpha", "test-channel", "other.param"}, "alpha__test_dchannel__other_fparam"},
+		// Digits are legal in network/channel/namespace names and must survive
+		// escaping untouched. See https://github.com/LFDT-Panurus/panurus/issues/2034.
+		{[]string{"alpha", "channel1"}, "alpha__channel1"},
+		{[]string{"testnetwork", "channel1", "ns"}, "testnetwork__channel1__ns"},
+		{[]string{"alpha", "mychannel01", "ns2"}, "alpha__mychannel01__ns2"},
+		{[]string{"alpha", "test-channel1.0"}, "alpha__test_dchannel1_f0"},
+		{[]string{"1network", "channel1"}, "1network__channel1"},
+		{[]string{"0", "1", "2"}, "0__1__2"},
 	}
 	for _, c := range cases {
-		require.Equal(t, c.expectedOutput, escapeForTableName(c.input...))
+		got, err := escapeForTableName(c.input...)
+		require.NoError(t, err)
+		require.Equal(t, c.expectedOutput, got)
 	}
 }
 
@@ -36,9 +46,19 @@ func TestEscapeTableNameError(t *testing.T) {
 	cases := [][]string{
 		{"alpha", "testchannel!"},
 		{"alpha", "test-#channel"},
+		{"alpha", "channel 1"},
+		{"alpha", "channel/1"},
+		{"alpha", "channel;drop table x"},
 	}
 	for _, c := range cases {
-		require.Panics(t, func() { escapeForTableName(c...) })
+		// An unsupported character must be reported as an error, never as a
+		// panic: this call chain is reachable from ordinary store construction
+		// and nothing along it recovers.
+		require.NotPanics(t, func() {
+			_, err := escapeForTableName(c...)
+			require.Error(t, err)
+			require.Contains(t, err.Error(), "unsupported chars found in table name parameters")
+		})
 	}
 }
 
@@ -191,11 +211,36 @@ func TestTableNameCreator_CreateTableName(t *testing.T) {
 		require.Contains(t, err.Error(), "invalid table name")
 	})
 
-	t.Run("name with numbers is invalid", func(t *testing.T) {
+	t.Run("name with numbers is valid", func(t *testing.T) {
 		t.Parallel()
-		_, err := creator.CreateTableName("test", "users123")
-		require.Error(t, err)
-		require.Contains(t, err.Error(), "invalid table name")
+		name, err := creator.CreateTableName("test", "users123")
+		require.NoError(t, err)
+		require.Equal(t, "test_users123", name)
+	})
+
+	// The prefix precedes the name, so the emitted identifier is still legal.
+	t.Run("name starting with a number is valid behind a prefix", func(t *testing.T) {
+		t.Parallel()
+		name, err := creator.CreateTableName("test", "123users")
+		require.NoError(t, err)
+		require.Equal(t, "test_123users", name)
+	})
+
+	// Regression for https://github.com/LFDT-Panurus/panurus/issues/2034: a
+	// channel name containing a digit used to panic.
+	t.Run("params with numbers", func(t *testing.T) {
+		t.Parallel()
+		name, err := creator.CreateTableName("test", "users", "testnetwork", "channel1", "ns")
+		require.NoError(t, err)
+		require.Equal(t, "test_testnetwork__channel1__ns_users", name)
+	})
+
+	t.Run("params with unsupported chars return an error", func(t *testing.T) {
+		t.Parallel()
+		require.NotPanics(t, func() {
+			_, err := creator.CreateTableName("test", "users", "testnetwork", "channel!")
+			require.Error(t, err)
+		})
 	})
 }
 
@@ -290,15 +335,88 @@ func TestTableNameFormatter_Format(t *testing.T) {
 		require.Contains(t, err.Error(), "invalid table name")
 	})
 
-	t.Run("invalid name with number", func(t *testing.T) {
+	t.Run("valid name with number", func(t *testing.T) {
 		t.Parallel()
 		formatter := &tableNameFormatter{
 			prefix: "test_",
 			r:      validName,
 		}
-		_, err := formatter.Format("users123")
+		name, err := formatter.Format("users123")
+		require.NoError(t, err)
+		require.Equal(t, "test_users123", name)
+	})
+
+	// The check is on the identifier that is actually emitted, so a leading digit
+	// is fine behind a prefix and rejected without one.
+	t.Run("name starting with a number is valid behind a prefix", func(t *testing.T) {
+		t.Parallel()
+		formatter := &tableNameFormatter{
+			prefix: "test_",
+			r:      validName,
+		}
+		name, err := formatter.Format("123users")
+		require.NoError(t, err)
+		require.Equal(t, "test_123users", name)
+	})
+
+	t.Run("name starting with a number is invalid without a prefix", func(t *testing.T) {
+		t.Parallel()
+		formatter := &tableNameFormatter{
+			prefix: "",
+			r:      validName,
+		}
+		_, err := formatter.Format("123users")
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "invalid table name")
+	})
+
+	// Regression for https://github.com/LFDT-Panurus/panurus/issues/2034.
+	t.Run("params with numbers", func(t *testing.T) {
+		t.Parallel()
+		formatter := &tableNameFormatter{
+			prefix: "test_",
+			r:      validName,
+		}
+		name, err := formatter.Format("users", "testnetwork", "channel1", "ns")
+		require.NoError(t, err)
+		require.Equal(t, "test_testnetwork__channel1__ns_users", name)
+	})
+
+	t.Run("params starting with a number are valid behind a prefix", func(t *testing.T) {
+		t.Parallel()
+		formatter := &tableNameFormatter{
+			prefix: "test_",
+			r:      validName,
+		}
+		name, err := formatter.Format("users", "1network", "channel1")
+		require.NoError(t, err)
+		require.Equal(t, "test_1network__channel1_users", name)
+	})
+
+	t.Run("params starting with a number are rejected without a prefix", func(t *testing.T) {
+		t.Parallel()
+		formatter := &tableNameFormatter{
+			prefix: "",
+			r:      validName,
+		}
+		require.NotPanics(t, func() {
+			_, err := formatter.Format("users", "1network", "channel1")
+			require.Error(t, err)
+			require.Contains(t, err.Error(), "invalid table name")
+		})
+	})
+
+	t.Run("params with unsupported chars are rejected without a panic", func(t *testing.T) {
+		t.Parallel()
+		formatter := &tableNameFormatter{
+			prefix: "test_",
+			r:      validName,
+		}
+		require.NotPanics(t, func() {
+			_, err := formatter.Format("users", "testnetwork", "channel!")
+			require.Error(t, err)
+			require.Contains(t, err.Error(), "unsupported chars found")
+		})
 	})
 
 	t.Run("empty prefix", func(t *testing.T) {
@@ -363,6 +481,27 @@ func TestTableNameFormatter_FormatWithoutPrefix(t *testing.T) {
 		_, err := formatter.FormatWithoutPrefix("invalid-name")
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "invalid table name")
+	})
+
+	// Regression for https://github.com/LFDT-Panurus/panurus/issues/2034.
+	t.Run("params with numbers", func(t *testing.T) {
+		t.Parallel()
+		formatter := &tableNameFormatter{prefix: "test_", r: validName}
+		name, err := formatter.FormatWithoutPrefix("users", "testnetwork", "channel1", "ns")
+		require.NoError(t, err)
+		require.Equal(t, "testnetwork__channel1__ns_users", name)
+	})
+
+	// FormatWithoutPrefix puts the parameter first, so a leading digit would
+	// produce an identifier that is illegal in both SQLite and PostgreSQL.
+	t.Run("params starting with a number are rejected", func(t *testing.T) {
+		t.Parallel()
+		formatter := &tableNameFormatter{prefix: "test_", r: validName}
+		require.NotPanics(t, func() {
+			_, err := formatter.FormatWithoutPrefix("users", "1network")
+			require.Error(t, err)
+			require.Contains(t, err.Error(), "invalid table name")
+		})
 	})
 }
 
@@ -429,44 +568,64 @@ func TestEscapeForTableName_EdgeCases(t *testing.T) {
 
 	t.Run("single param", func(t *testing.T) {
 		t.Parallel()
-		result := escapeForTableName("alpha")
+		result, err := escapeForTableName("alpha")
+		require.NoError(t, err)
 		require.Equal(t, "alpha", result)
 	})
 
 	t.Run("param with all special chars", func(t *testing.T) {
 		t.Parallel()
-		result := escapeForTableName("test-channel.param_value")
+		result, err := escapeForTableName("test-channel.param_value")
+		require.NoError(t, err)
 		require.Equal(t, "test_dchannel_fparam__value", result)
 	})
 
 	t.Run("multiple params with special chars", func(t *testing.T) {
 		t.Parallel()
-		result := escapeForTableName("test-channel", "other.param", "value_name")
+		result, err := escapeForTableName("test-channel", "other.param", "value_name")
+		require.NoError(t, err)
 		require.Equal(t, "test_dchannel__other_fparam__value__name", result)
 	})
 
 	t.Run("param with consecutive underscores", func(t *testing.T) {
 		t.Parallel()
-		result := escapeForTableName("test__value")
+		result, err := escapeForTableName("test__value")
+		require.NoError(t, err)
 		require.Equal(t, "test____value", result)
 	})
 
 	t.Run("param with consecutive dashes", func(t *testing.T) {
 		t.Parallel()
-		result := escapeForTableName("test--value")
+		result, err := escapeForTableName("test--value")
+		require.NoError(t, err)
 		require.Equal(t, "test_d_dvalue", result)
 	})
 
 	t.Run("param with consecutive dots", func(t *testing.T) {
 		t.Parallel()
-		result := escapeForTableName("test..value")
+		result, err := escapeForTableName("test..value")
+		require.NoError(t, err)
 		require.Equal(t, "test_f_fvalue", result)
 	})
 
 	t.Run("uppercase letters", func(t *testing.T) {
 		t.Parallel()
-		result := escapeForTableName("TestValue")
+		result, err := escapeForTableName("TestValue")
+		require.NoError(t, err)
 		require.Equal(t, "TestValue", result)
+	})
+
+	// Digits must not be confused with the `_d` / `_f` escape markers, so
+	// escaping stays reversible after digits were allowed through.
+	t.Run("digits do not collide with escape markers", func(t *testing.T) {
+		t.Parallel()
+		distinct := map[string]string{}
+		for _, in := range []string{"a1", "a-1", "a.1", "a_1", "a1d", "a1f", "a_d1", "a-d1"} {
+			got, err := escapeForTableName(in)
+			require.NoError(t, err)
+			require.NotContains(t, distinct, got, "escaping is ambiguous: %q and %q both map to %q", distinct[got], in, got)
+			distinct[got] = in
+		}
 	})
 }
 
@@ -530,6 +689,10 @@ func TestValidNameRegex(t *testing.T) {
 			"a",
 			"A",
 			"_",
+			// Digits are legal anywhere but in first position.
+			"users123",
+			"channel1__ns_users",
+			"_1",
 		}
 		for _, name := range validNames {
 			require.True(t, validName.MatchString(name), "expected %s to be valid", name)
@@ -539,11 +702,11 @@ func TestValidNameRegex(t *testing.T) {
 	t.Run("invalid names", func(t *testing.T) {
 		t.Parallel()
 		invalidNames := []string{
-			"users123",
 			"user-data",
 			"user.data",
 			"user data",
 			"123users",
+			"1",
 			"user@data",
 			"",
 		}
