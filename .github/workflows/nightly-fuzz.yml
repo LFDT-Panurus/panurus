@@ -108,6 +108,12 @@ jobs:
           - name: storage-sql-table-names
             pkg: ./token/services/storage/db/sql/common
             func: FuzzGetTableNamesNoPanic
+          - name: driver-identity-configuration-unique-id
+            pkg: ./token/driver
+            func: FuzzIdentityConfigurationUniqueIDInjective
+          - name: driver-config-key-field-round-trip
+            pkg: ./token/driver
+            func: FuzzConfigKeyFieldRoundTrip
 
     steps:
       - name: Checkout code

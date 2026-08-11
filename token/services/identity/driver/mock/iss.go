@@ -93,6 +93,22 @@ type IdentityStoreService struct {
 		result1 *driver.IdentityConfiguration
 		result2 error
 	}
+	GetConfigurationIDStub        func(context.Context, string, string, string) (string, error)
+	getConfigurationIDMutex       sync.RWMutex
+	getConfigurationIDArgsForCall []struct {
+		arg1 context.Context
+		arg2 string
+		arg3 string
+		arg4 string
+	}
+	getConfigurationIDReturns struct {
+		result1 string
+		result2 error
+	}
+	getConfigurationIDReturnsOnCall map[int]struct {
+		result1 string
+		result2 error
+	}
 	GetExistingSignerInfoStub        func(context.Context, ...drivera.Identity) ([]string, error)
 	getExistingSignerInfoMutex       sync.RWMutex
 	getExistingSignerInfoArgsForCall []struct {
@@ -618,6 +634,73 @@ func (fake *IdentityStoreService) GetConfigurationReturnsOnCall(i int, result1 *
 	}
 	fake.getConfigurationReturnsOnCall[i] = struct {
 		result1 *driver.IdentityConfiguration
+		result2 error
+	}{result1, result2}
+}
+
+func (fake *IdentityStoreService) GetConfigurationID(arg1 context.Context, arg2 string, arg3 string, arg4 string) (string, error) {
+	fake.getConfigurationIDMutex.Lock()
+	ret, specificReturn := fake.getConfigurationIDReturnsOnCall[len(fake.getConfigurationIDArgsForCall)]
+	fake.getConfigurationIDArgsForCall = append(fake.getConfigurationIDArgsForCall, struct {
+		arg1 context.Context
+		arg2 string
+		arg3 string
+		arg4 string
+	}{arg1, arg2, arg3, arg4})
+	stub := fake.GetConfigurationIDStub
+	fakeReturns := fake.getConfigurationIDReturns
+	fake.recordInvocation("GetConfigurationID", []interface{}{arg1, arg2, arg3, arg4})
+	fake.getConfigurationIDMutex.Unlock()
+	if stub != nil {
+		return stub(arg1, arg2, arg3, arg4)
+	}
+	if specificReturn {
+		return ret.result1, ret.result2
+	}
+	return fakeReturns.result1, fakeReturns.result2
+}
+
+func (fake *IdentityStoreService) GetConfigurationIDCallCount() int {
+	fake.getConfigurationIDMutex.RLock()
+	defer fake.getConfigurationIDMutex.RUnlock()
+	return len(fake.getConfigurationIDArgsForCall)
+}
+
+func (fake *IdentityStoreService) GetConfigurationIDCalls(stub func(context.Context, string, string, string) (string, error)) {
+	fake.getConfigurationIDMutex.Lock()
+	defer fake.getConfigurationIDMutex.Unlock()
+	fake.GetConfigurationIDStub = stub
+}
+
+func (fake *IdentityStoreService) GetConfigurationIDArgsForCall(i int) (context.Context, string, string, string) {
+	fake.getConfigurationIDMutex.RLock()
+	defer fake.getConfigurationIDMutex.RUnlock()
+	argsForCall := fake.getConfigurationIDArgsForCall[i]
+	return argsForCall.arg1, argsForCall.arg2, argsForCall.arg3, argsForCall.arg4
+}
+
+func (fake *IdentityStoreService) GetConfigurationIDReturns(result1 string, result2 error) {
+	fake.getConfigurationIDMutex.Lock()
+	defer fake.getConfigurationIDMutex.Unlock()
+	fake.GetConfigurationIDStub = nil
+	fake.getConfigurationIDReturns = struct {
+		result1 string
+		result2 error
+	}{result1, result2}
+}
+
+func (fake *IdentityStoreService) GetConfigurationIDReturnsOnCall(i int, result1 string, result2 error) {
+	fake.getConfigurationIDMutex.Lock()
+	defer fake.getConfigurationIDMutex.Unlock()
+	fake.GetConfigurationIDStub = nil
+	if fake.getConfigurationIDReturnsOnCall == nil {
+		fake.getConfigurationIDReturnsOnCall = make(map[int]struct {
+			result1 string
+			result2 error
+		})
+	}
+	fake.getConfigurationIDReturnsOnCall[i] = struct {
+		result1 string
 		result2 error
 	}{result1, result2}
 }

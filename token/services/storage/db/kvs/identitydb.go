@@ -45,6 +45,15 @@ func NewIdentityStore(kvs KVS, tmsID token.TMSID) *IdentityStore {
 	return &IdentityStore{kvs: kvs, tmsID: tmsID}
 }
 
+// AddConfiguration stores the given identity configuration, overwriting any record previously
+// stored for the same (ID, Type, URL).
+//
+// It refuses to store a configuration whose row key is already occupied by a *different* one.
+// mergeIDURL keys a row by base64(id||url) with no separator, so distinct (id, url) pairs whose
+// concatenations agree share one key (see GetConfigurationID); this store simply cannot hold both.
+// Writing anyway would replace the stored configuration's record - its Config and Raw are gone,
+// and the configuration no longer reloads from the store - so the collision is reported to the
+// caller instead of silently resolving in favour of whoever wrote last.
 func (s *IdentityStore) AddConfiguration(ctx context.Context, wp storage.IdentityConfiguration) error {
 	k, err := kvs.CreateCompositeKey(
 		IdentityDBPrefix,
@@ -57,6 +66,18 @@ func (s *IdentityStore) AddConfiguration(ctx context.Context, wp storage.Identit
 	)
 	if err != nil {
 		return errors.Wrapf(err, "failed to create key")
+	}
+
+	stored, err := s.GetConfiguration(ctx, wp.ID, wp.Type, wp.URL)
+	if err != nil {
+		return errors.Wrapf(err, "failed to check for an existing configuration for [%s:%s:%s]", wp.ID, wp.Type, wp.URL)
+	}
+	if stored != nil && (stored.ID != wp.ID || stored.Type != wp.Type || stored.URL != wp.URL) {
+		return errors.Errorf(
+			"cannot store identity configuration [%s:%s:%s]: it shares a storage key with configuration [%s:%s:%s]; rename one of the two identities or move the path prefix",
+			wp.ID, wp.Type, wp.URL,
+			stored.ID, stored.Type, stored.URL,
+		)
 	}
 
 	return s.kvs.Put(ctx, k, &wp)
@@ -86,6 +107,38 @@ func (s *IdentityStore) GetConfiguration(ctx context.Context, id, typ, url strin
 	}
 
 	return &res, nil
+}
+
+// GetConfigurationID returns the conf_id of the stored configuration with the given id, type,
+// and url, or the empty string if that configuration is not stored yet.
+//
+// Unlike the SQL backend, this store serialises the whole IdentityConfiguration under a
+// composite key and keeps no separate conf_id, so the identifier is derived from the stored
+// value rather than read back. There is no foreign key here for a stale identifier to violate,
+// but the consequence is that a configuration stored under an earlier encoding is reported with
+// the current one, so SignerRouter lookups for its identities miss and fall back to probing.
+func (s *IdentityStore) GetConfigurationID(ctx context.Context, id, typ, url string) (string, error) {
+	c, err := s.GetConfiguration(ctx, id, typ, url)
+	if err != nil || c == nil {
+		return "", err
+	}
+
+	// mergeIDURL keys a row by base64(id||url) with no separator, so distinct (id, url) pairs
+	// whose concatenations agree share one key: {ID: "bob", URL: "/msp/alice"} and
+	// {ID: "bob/msp", URL: "/alice"} both key on base64("bob/msp/alice"). The lookup
+	// above returns whichever record is stored there, so confirm it is the one asked for.
+	// Reporting a colliding record's conf_id would make confIDFor treat this configuration as
+	// stored and bind its identities under the other one's conf_id, overwriting that
+	// configuration's SignerRouter entry - a wrong-KeyManager route with the probe skipped,
+	// which is what deriving the conf_id from the tuple exists to prevent. Reporting "not
+	// stored" instead falls back to this configuration's own UniqueID, and the AddConfiguration
+	// that follows in commitLocalIdentity refuses the colliding insert rather than overwriting
+	// the record that is there.
+	if c.ID != id || c.Type != typ || c.URL != url {
+		return "", nil
+	}
+
+	return c.UniqueID(), nil
 }
 
 func (s *IdentityStore) IteratorConfigurations(ctx context.Context, configurationType string) (idriver.IdentityConfigurationIterator, error) {
