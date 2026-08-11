@@ -693,6 +693,14 @@ to `<params>_<short_code>` (params still apply when provided; short-code overrid
 > will cause the node to look for tables under different names. Make sure the underlying
 > tables already exist under the unprefixed names before enabling this flag.
 
+> **Note:** `<params>` is the TMS identity (network, channel, namespace). `_`, `-` and `.`
+> in those values are escaped to `__`, `_d` and `_f`; letters, digits and underscores pass
+> through unchanged, so a channel named `channel1` is fine. The composed name must still be
+> a valid SQL identifier — it cannot start with a digit, which is only reachable with
+> `skipPrefix: true` and a network name starting with a digit. Any other character is a
+> configuration error and is reported as such, not a crash. See
+> [Table Name Customisation](services/storage.md#table-name-customisation).
+
 ---
 
 ### Optional: token.tms.<name>.services.storage.cleanup

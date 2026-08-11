@@ -105,6 +105,9 @@ jobs:
           - name: fabtoken-owner-verifier
             pkg: ./token/core/fabtoken/v1/driver
             func: FuzzOwnerVerifierNoPanic
+          - name: storage-sql-table-names
+            pkg: ./token/services/storage/db/sql/common
+            func: FuzzGetTableNamesNoPanic
 
     steps:
       - name: Checkout code

@@ -7,6 +7,7 @@ SPDX-License-Identifier: Apache-2.0
 package common_test
 
 import (
+	"strings"
 	"testing"
 
 	common "github.com/LFDT-Panurus/panurus/token/services/storage/db/sql/common"
@@ -241,6 +242,118 @@ func TestGetTableNamesWithOverridesSkipPrefix(t *testing.T) {
 	assert.NotContains(t, got.Transactions, "fsc_")
 	// Names still contain the param-based part.
 	assert.Contains(t, got.Transactions, "txs")
+}
+
+// TestGetTableNamesWithDigitsInParams is a regression test for
+// https://github.com/LFDT-Panurus/panurus/issues/2034: a network, channel or
+// namespace name containing a digit — e.g. the very common "channel1" — used to
+// panic while building the table names instead of producing a valid name.
+func TestGetTableNamesWithDigitsInParams(t *testing.T) {
+	for _, params := range [][]string{
+		{"testnetwork", "channel1", "ns"},
+		{"testnetwork", "testchannel1", "ns"},
+		{"testnetwork", "mychannel01", "ns"},
+		{"network1", "channel1", "namespace1"},
+		{"net0", "ch-1.2", "ns_3"},
+	} {
+		t.Run(strings.Join(params, "/"), func(t *testing.T) {
+			var got common.TableNames
+			var err error
+			require.NotPanics(t, func() {
+				got, err = common.GetTableNames("pfx", params...)
+			})
+			require.NoError(t, err)
+
+			for _, name := range allTableNames(got) {
+				assert.Regexp(t, `^[a-zA-Z_][a-zA-Z0-9_]*$`, name)
+			}
+		})
+	}
+
+	// Spot-check the exact name produced for the canonical case.
+	names, err := common.GetTableNames("pfx", "testnetwork", "channel1", "ns")
+	require.NoError(t, err)
+	assert.Equal(t, "pfx_testnetwork__channel1__ns_txs", names.Transactions)
+
+	// The same must hold when the prefix is skipped.
+	got, err := common.GetTableNamesWithOverridesSkipPrefix("pfx", nil, "testnetwork", "channel1", "ns")
+	require.NoError(t, err)
+	assert.Equal(t, "testnetwork__channel1__ns_txs", got.Transactions)
+}
+
+// TestGetTableNamesInvalidParamsReturnError checks that a param that cannot be
+// turned into a legal SQL identifier is reported as an error rather than
+// crashing the process: this call chain is reachable from ordinary store
+// construction and nothing along it recovers.
+func TestGetTableNamesInvalidParamsReturnError(t *testing.T) {
+	for _, params := range [][]string{
+		{"testnetwork", "channel!"},
+		{"testnetwork", "channel 1"},
+		{"testnetwork", "channel;drop table x"},
+	} {
+		t.Run(strings.Join(params, "/"), func(t *testing.T) {
+			require.NotPanics(t, func() {
+				names, err := common.GetTableNames("pfx", params...)
+				require.Error(t, err)
+				assert.Equal(t, common.TableNames{}, names)
+			})
+		})
+	}
+
+	// A param starting with a digit is fine behind a prefix, but not when the
+	// prefix is skipped: an unquoted identifier cannot start with a digit in
+	// either SQLite or PostgreSQL.
+	withPrefix, err := common.GetTableNames("pfx", "1network", "channel1")
+	require.NoError(t, err)
+	assert.Equal(t, "pfx_1network__channel1_txs", withPrefix.Transactions)
+
+	require.NotPanics(t, func() {
+		names, err := common.GetTableNamesWithOverridesSkipPrefix("pfx", nil, "1network", "channel1")
+		require.Error(t, err)
+		assert.Equal(t, common.TableNames{}, names)
+	})
+}
+
+// TestGetTableNamesInvalidOverridesReportEveryKey checks that every invalid
+// short-code override is reported, not just the first one. An override applies to
+// a single key, so reporting only one would make an operator fix that key, restart
+// the node, and hit the next one — once per bad key.
+func TestGetTableNamesInvalidOverridesReportEveryKey(t *testing.T) {
+	overrides := common.TableNamesConfig{
+		"txs":     "bad!name",
+		"tokens":  "worse name",
+		"wallets": "wrong;name",
+	}
+
+	names, err := common.GetTableNamesWithOverrides("pfx", overrides, "net", "ch", "ns")
+	require.Error(t, err)
+	assert.Equal(t, common.TableNames{}, names)
+	for _, badName := range overrides {
+		assert.Contains(t, err.Error(), badName,
+			"every invalid override must be reported, got: %s", err)
+	}
+}
+
+// TestGetTableNamesInvalidParamsReportedOnce checks that a problem in the part
+// every table name shares — the prefix and the params — is reported once instead
+// of repeated for each of the seventeen names it breaks.
+func TestGetTableNamesInvalidParamsReportedOnce(t *testing.T) {
+	names, err := common.GetTableNames("pfx", "net", "ch!")
+	require.Error(t, err)
+	assert.Equal(t, common.TableNames{}, names)
+	assert.Equal(t, 1, strings.Count(err.Error(), "unsupported chars"),
+		"a shared failure must be reported once, got: %s", err)
+}
+
+// allTableNames returns every generated table name in tn.
+func allTableNames(tn common.TableNames) []string {
+	return []string{
+		tn.Movements, tn.Transactions, tn.TransactionEndorseAck,
+		tn.Requests, tn.Validations, tn.Tokens, tn.Ownership,
+		tn.Certifications, tn.TokenLocks, tn.PublicParams,
+		tn.Wallets, tn.IdentityConfigurations, tn.IdentityInfo,
+		tn.Signers, tn.KeyStore, tn.EIDLeases, tn.TokenSKICleanups,
+	}
 }
 
 // TestGetTableNamesWithConfig_SkipPrefixFalse checks that GetTableNamesWithConfig

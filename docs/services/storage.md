@@ -74,6 +74,35 @@ Two independent options let you control how the final name is composed:
 | Override individual short codes | `token.storage.tableNames` | _(none)_ |
 | Skip the FSC-generated prefix entirely | `token.storage.skipPrefix` | `false` |
 
+### Allowed characters
+
+The `TableNameParams` are the TMS identity — **network**, **channel** and **namespace** —
+and they become part of every table name, so they must be reducible to a legal SQL
+identifier. The characters that are common in Fabric names but illegal in an identifier
+are escaped rather than rejected:
+
+| Character in a param | Becomes |
+|---|---|
+| `_` | `__` |
+| `-` | `_d` |
+| `.` | `_f` |
+
+Letters, digits and underscores pass through as-is, so a channel called `channel1` or
+`mychannel01` is fine. The **final composed name** — prefix included — must still be a
+valid identifier: only letters, digits and underscores, and it cannot **start** with a
+digit (unquoted identifiers in both SQLite and PostgreSQL must start with a letter or an
+underscore). Since the prefix comes first and can never start with a digit, this only
+bites when `skipPrefix` is enabled *and* the network name starts with a digit.
+
+Anything else — a space, `!`, `/`, `;`, … — is a **configuration error**: store
+construction returns an error naming the offending value, it does not crash the node.
+A bad prefix or param breaks every table name in the same way and is reported once;
+invalid [short-code overrides](#overriding-short-codes-tablenames) are per-key, so **all**
+of them are reported together and you do not have to fix them one restart at a time.
+
+The `TablePrefix` is stricter: only letters and underscores, at most 100 characters. It is
+lower-cased before use.
+
 ### Overriding short codes (`tableNames`)
 
 You can replace any short code globally (for all TMS instances on the node) via the
