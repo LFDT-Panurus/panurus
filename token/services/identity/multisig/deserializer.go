@@ -52,6 +52,12 @@ func (d *TypedIdentityDeserializer) GetAuditInfo(ctx context.Context, id driver.
 	if typ != Multisig {
 		return nil, errors.Errorf("invalid type, got [%s], expected [%s]", typ, Multisig)
 	}
+	// account for this level of nesting before recursing into the components; p may resolve a
+	// component's audit info by re-entering this deserializer for a nested multisig identity
+	ctx, err := driver.EnterCompositeIdentity(ctx)
+	if err != nil {
+		return nil, errors.Wrap(err, "cannot get audit info for multisig identity")
+	}
 
 	// if there is already some audit info for id, return it
 	auditInfoRaw, err := p.GetAuditInfo(ctx, id)
@@ -68,6 +74,12 @@ func (d *TypedIdentityDeserializer) GetAuditInfo(ctx context.Context, id driver.
 	if err != nil {
 		return nil, errors.Wrapf(err, "failed to unmarshal mid")
 	}
+	// the fan-out bound has to hold here too: this path resolves the audit info of every component
+	// in turn, which is one provider lookup each and, for a nested composite component, a further
+	// descent. The depth bound above does not cover a single level that fans out without limit.
+	if err := validateComponentIdentities(mid.Identities, driver.MaxIdentityComponentsFrom(ctx)); err != nil {
+		return nil, errors.Wrap(err, "invalid multisig identity")
+	}
 	auditInfo := &AuditInfo{}
 	auditInfo.IdentityAuditInfos = make([]IdentityAuditInfo, len(mid.Identities))
 	for k, identity := range mid.Identities {
@@ -81,9 +93,14 @@ func (d *TypedIdentityDeserializer) GetAuditInfo(ctx context.Context, id driver.
 }
 
 func (d *TypedIdentityDeserializer) GetAuditInfoMatcher(ctx context.Context, owner driver.Identity, auditInfo []byte) (driver.Matcher, error) {
-	ei := &AuditInfo{}
-	err := json.Unmarshal(auditInfo, ei)
+	// account for this level of nesting before recursing into the components, whose matchers are
+	// resolved through the parent multiplex and may be multisig identities in turn
+	ctx, err := driver.EnterCompositeIdentity(ctx)
 	if err != nil {
+		return nil, errors.Wrap(err, "cannot build a matcher for multisig identity")
+	}
+	ei := &AuditInfo{}
+	if err := json.Unmarshal(auditInfo, ei); err != nil {
 		return nil, err
 	}
 	id, err := identity.UnmarshalTypedIdentity(owner)
@@ -91,11 +108,10 @@ func (d *TypedIdentityDeserializer) GetAuditInfoMatcher(ctx context.Context, own
 		return nil, err
 	}
 	mid := MultiIdentity{}
-	err = mid.Deserialize(id.Identity)
-	if err != nil {
+	if err := mid.Deserialize(id.Identity); err != nil {
 		return nil, err
 	}
-	if err = validateComponentIdentities(mid.Identities); err != nil {
+	if err := validateComponentIdentities(mid.Identities, driver.MaxIdentityComponentsFrom(ctx)); err != nil {
 		return nil, errors.Wrap(err, "invalid multisig identity")
 	}
 	if len(mid.Identities) != len(ei.IdentityAuditInfos) {
@@ -113,15 +129,21 @@ func (d *TypedIdentityDeserializer) GetAuditInfoMatcher(ctx context.Context, own
 }
 
 func (d *TypedIdentityDeserializer) DeserializeVerifier(ctx context.Context, typ identity.Type, raw []byte) (driver.Verifier, error) {
-	multisigIdentity := &MultiIdentity{}
-	err := multisigIdentity.Deserialize(raw)
+	// account for this level of nesting before recursing into the components: the component
+	// deserializer is the parent multiplex, so a component may be a multisig identity in turn and
+	// this is the step an attacker-crafted identity drives, ahead of any signature check
+	ctx, err := driver.EnterCompositeIdentity(ctx)
 	if err != nil {
+		return nil, errors.Wrap(err, "cannot deserialize multisig identity")
+	}
+	multisigIdentity := &MultiIdentity{}
+	if err := multisigIdentity.Deserialize(raw); err != nil {
 		return nil, errors.New("failed to unmarshal multisig identity")
 	}
 	if len(multisigIdentity.Identities) == 0 {
 		return nil, errors.New("multisig identity has no members")
 	}
-	if err = validateComponentIdentities(multisigIdentity.Identities); err != nil {
+	if err := validateComponentIdentities(multisigIdentity.Identities, driver.MaxIdentityComponentsFrom(ctx)); err != nil {
 		return nil, errors.Wrap(err, "invalid multisig identity")
 	}
 	verifier := &Verifier{}

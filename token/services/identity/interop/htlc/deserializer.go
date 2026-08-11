@@ -58,20 +58,29 @@ func (t *TypedIdentityDeserializer) DeserializeVerifier(ctx context.Context, typ
 	if typ != ScriptType {
 		return nil, errors.Errorf("cannot deserializer type [%s], expected [%s]", typ, ScriptType)
 	}
+	// account for this level of nesting before recursing into the sender and recipient: the
+	// embedded Deserializer is the parent multiplex, so either may be an htlc script in turn and
+	// this is the step an attacker-crafted identity drives, ahead of any signature check
+	ctx, err := driver.EnterCompositeIdentity(ctx)
+	if err != nil {
+		return nil, errors.Wrap(err, "cannot deserialize htlc script identity")
+	}
 
 	script := &htlc.Script{}
-	err := json.Unmarshal(raw, script)
-	if err != nil {
+	if err := json.Unmarshal(raw, script); err != nil {
 		return nil, errors.Errorf("failed to unmarshal TypedIdentity as an htlc script")
 	}
 	v := &htlc.Verifier{}
 	v.Sender, err = t.deserializer.DeserializeVerifier(ctx, script.Sender)
 	if err != nil {
-		return nil, errors.Errorf("failed to unmarshal the identity of the sender in the htlc script")
+		// wrap rather than replace: the sender may itself be a composite identity, and the reason
+		// its deserialization failed - an over-nested identity in particular - has to stay testable
+		// with errors.Is by the caller
+		return nil, errors.Wrap(err, "failed to unmarshal the identity of the sender in the htlc script")
 	}
 	v.Recipient, err = t.deserializer.DeserializeVerifier(ctx, script.Recipient)
 	if err != nil {
-		return nil, errors.Errorf("failed to unmarshal the identity of the recipient in the htlc script")
+		return nil, errors.Wrap(err, "failed to unmarshal the identity of the recipient in the htlc script")
 	}
 	v.Deadline = script.Deadline
 	v.HashInfo.Hash = script.HashInfo.Hash
@@ -106,10 +115,14 @@ func (t *TypedIdentityDeserializer) GetAuditInfo(ctx context.Context, id driver.
 	if typ != ScriptType {
 		return nil, errors.Errorf("invalid type, got [%s], expected [%s]", typ, ScriptType)
 	}
-	script := &htlc.Script{}
-	var err error
-	err = json.Unmarshal(raw, script)
+	// account for this level of nesting before recursing into the components; p may resolve the
+	// sender's or recipient's audit info by re-entering this deserializer for a nested script
+	ctx, err := driver.EnterCompositeIdentity(ctx)
 	if err != nil {
+		return nil, errors.Wrap(err, "cannot get audit info for htlc script identity")
+	}
+	script := &htlc.Script{}
+	if err := json.Unmarshal(raw, script); err != nil {
 		return nil, errors.Wrapf(err, "failed to unmarshal htlc script")
 	}
 
@@ -194,7 +207,15 @@ type AuditInfoMatcher struct {
 // the stored audit info.
 // It unmarshals both the audit info and the script
 // and then delegates to the underlying Deserializer for sender and recipient matching.
+//
+// The delegation recurses: MatchIdentity resolves a matcher through the parent multiplex, and for a
+// nested script identity that lands back here. That recursion is independent of the one in
+// DeserializeVerifier, so it accounts for its own depth against ctx.
 func (a *AuditInfoMatcher) Match(ctx context.Context, id []byte) error {
+	ctx, err := driver.EnterCompositeIdentity(ctx)
+	if err != nil {
+		return errors.Wrap(err, "cannot match htlc script identity")
+	}
 	scriptInf := &ScriptInfo{}
 	if err := json.Unmarshal(a.AuditInfo, scriptInf); err != nil {
 		return errors.Wrapf(err, "failed to unmarshal script info")

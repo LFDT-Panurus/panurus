@@ -51,6 +51,8 @@ func TestEnvResourceLimitsProvider_AllOverridden(t *testing.T) {
 		EnvMaxMetadataKeyBytes:   "9",
 		EnvMaxMetadataValueBytes: "10",
 		EnvMaxProofBytes:         "11",
+		EnvMaxIdentityDepth:      "12",
+		EnvMaxIdentityComponents: "13",
 	}
 	p := &EnvResourceLimitsProvider{Getenv: func(key string) string { return env[key] }}
 
@@ -68,6 +70,8 @@ func TestEnvResourceLimitsProvider_AllOverridden(t *testing.T) {
 		MaxMetadataKeyBytes:   9,
 		MaxMetadataValueBytes: 10,
 		MaxProofBytes:         11,
+		MaxIdentityDepth:      12,
+		MaxIdentityComponents: 13,
 	}, limits)
 }
 

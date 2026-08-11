@@ -53,6 +53,12 @@ func (d *TypedIdentityDeserializer) GetAuditInfo(ctx context.Context, id driver.
 	if typ != Policy {
 		return nil, errors.Errorf("invalid type, got [%s], expected [%s]", typ, Policy)
 	}
+	// account for this level of nesting before recursing into the components; p may resolve a
+	// component's audit info by re-entering this deserializer for a nested policy identity
+	ctx, err := driver.EnterCompositeIdentity(ctx)
+	if err != nil {
+		return nil, errors.Wrap(err, "cannot get audit info for policy identity")
+	}
 
 	// return already-stored audit info when present
 	auditInfoRaw, err := p.GetAuditInfo(ctx, id)
@@ -68,6 +74,12 @@ func (d *TypedIdentityDeserializer) GetAuditInfo(ctx context.Context, id driver.
 	if err = pi.Deserialize(rawIdentity); err != nil {
 		return nil, errors.Wrapf(err, "failed to unmarshal policy identity")
 	}
+	// the fan-out bound has to hold here too: this path resolves the audit info of every component
+	// in turn, which is one provider lookup each and, for a nested composite component, a further
+	// descent. The depth bound above does not cover a single level that fans out without limit.
+	if err = validateComponentIdentities(pi.Identities, driver.MaxIdentityComponentsFrom(ctx)); err != nil {
+		return nil, errors.Wrap(err, "invalid policy identity")
+	}
 	ai := &AuditInfo{IdentityAuditInfos: make([]IdentityAuditInfo, len(pi.Identities))}
 	for k, compID := range pi.Identities {
 		ai.IdentityAuditInfos[k].AuditInfo, err = p.GetAuditInfo(ctx, compID)
@@ -82,6 +94,12 @@ func (d *TypedIdentityDeserializer) GetAuditInfo(ctx context.Context, id driver.
 // GetAuditInfoMatcher returns an InfoMatcher that checks each component
 // identity against its own per-component audit info.
 func (d *TypedIdentityDeserializer) GetAuditInfoMatcher(ctx context.Context, owner driver.Identity, auditInfo []byte) (driver.Matcher, error) {
+	// account for this level of nesting before recursing into the components, whose matchers are
+	// resolved through the parent multiplex and may be composite identities in turn
+	ctx, err := driver.EnterCompositeIdentity(ctx)
+	if err != nil {
+		return nil, errors.Wrap(err, "cannot build a matcher for policy identity")
+	}
 	ei := &AuditInfo{}
 	if err := json.Unmarshal(auditInfo, ei); err != nil {
 		return nil, err
@@ -94,7 +112,7 @@ func (d *TypedIdentityDeserializer) GetAuditInfoMatcher(ctx context.Context, own
 	if err = pi.Deserialize(tid.Identity); err != nil {
 		return nil, err
 	}
-	if err = validateComponentIdentities(pi.Identities); err != nil {
+	if err = validateComponentIdentities(pi.Identities, driver.MaxIdentityComponentsFrom(ctx)); err != nil {
 		return nil, errors.Wrap(err, "invalid policy identity")
 	}
 	if len(pi.Identities) != len(ei.IdentityAuditInfos) {
@@ -115,11 +133,18 @@ func (d *TypedIdentityDeserializer) GetAuditInfoMatcher(ctx context.Context, own
 // DeserializeVerifier deserialises raw (the inner PolicyIdentity bytes, not the
 // full envelope) into a PolicyVerifier that evaluates the stored policy AST.
 func (d *TypedIdentityDeserializer) DeserializeVerifier(ctx context.Context, typ identity.Type, raw []byte) (driver.Verifier, error) {
+	// account for this level of nesting before recursing into the components: the component
+	// deserializer is the parent multiplex, so a component may be a policy identity in turn and
+	// this is the step an attacker-crafted identity drives, ahead of any signature check
+	ctx, err := driver.EnterCompositeIdentity(ctx)
+	if err != nil {
+		return nil, errors.Wrap(err, "cannot deserialize policy identity")
+	}
 	pi := &PolicyIdentity{}
 	if err := pi.Deserialize(raw); err != nil {
 		return nil, errors.Wrap(err, "failed to unmarshal policy identity")
 	}
-	if err := validateComponentIdentities(pi.Identities); err != nil {
+	if err := validateComponentIdentities(pi.Identities, driver.MaxIdentityComponentsFrom(ctx)); err != nil {
 		return nil, errors.Wrap(err, "invalid policy identity")
 	}
 	node, err := Parse(pi.Policy)
@@ -189,11 +214,19 @@ func (a *AuditInfoDeserializer) commonEnrollmentID(ctx context.Context, id drive
 	if a.inner == nil {
 		return "", nil
 	}
+	// account for this level of nesting before resolving the components: inner is the parent
+	// multiplex, so a component's audit info may be a policy audit info in turn and re-enter here
+	ctx, err := driver.EnterCompositeIdentity(ctx)
+	if err != nil {
+		return "", errors.Wrap(err, "cannot derive the enrollment ID of a policy identity")
+	}
 	pi := PolicyIdentity{}
 	if err := pi.Deserialize(id); err != nil {
 		return "", errors.Wrapf(err, "failed to deserialize policy identity")
 	}
-	if err := validateComponentIdentities(pi.Identities); err != nil {
+	// the fan-out bound applies here too: every component's audit info is resolved through inner,
+	// which is one deserialization each and a further descent for a nested composite component
+	if err := validateComponentIdentities(pi.Identities, driver.MaxIdentityComponentsFrom(ctx)); err != nil {
 		return "", errors.Wrap(err, "invalid policy identity")
 	}
 	if len(pi.Identities) != len(ei.IdentityAuditInfos) {
