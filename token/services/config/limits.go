@@ -34,6 +34,9 @@ type resourceLimitsConfig struct {
 	MaxMetadataValueBytes int `yaml:"maxMetadataValueBytes,omitempty"`
 
 	MaxProofBytes int `yaml:"maxProofBytes,omitempty"`
+
+	MaxIdentityDepth      int `yaml:"maxIdentityDepth,omitempty"`
+	MaxIdentityComponents int `yaml:"maxIdentityComponents,omitempty"`
 }
 
 func (c resourceLimitsConfig) toResourceLimits() driver.ResourceLimits {
@@ -51,6 +54,9 @@ func (c resourceLimitsConfig) toResourceLimits() driver.ResourceLimits {
 		MaxMetadataValueBytes: c.MaxMetadataValueBytes,
 
 		MaxProofBytes: c.MaxProofBytes,
+
+		MaxIdentityDepth:      c.MaxIdentityDepth,
+		MaxIdentityComponents: c.MaxIdentityComponents,
 	}
 }
 

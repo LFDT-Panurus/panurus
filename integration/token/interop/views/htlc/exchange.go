@@ -118,7 +118,7 @@ func (v *FastExchangeInitiatorView) Call(context view.Context) (any, error) {
 			tx, err := htlc.ReceiveTransaction(context)
 			assert.NoError(err, "failed to receive tokens")
 
-			outputs, err := tx.Outputs()
+			outputs, err := tx.Outputs(context.Context())
 			assert.NoError(err, "failed getting outputs")
 			assert.True(outputs.Count() >= 1, "expected at least one output, got [%d]", outputs.Count())
 			outputs = outputs.ByScript()
@@ -187,7 +187,7 @@ func (v *FastExchangeResponderView) Call(ctx view.Context) (any, error) {
 		tx, err := htlc.ReceiveTransaction(ctx)
 		assert.NoError(err, "failed to receive tokens")
 
-		outputs, err := tx.Outputs()
+		outputs, err := tx.Outputs(ctx.Context())
 		assert.NoError(err, "failed getting outputs")
 		assert.True(outputs.Count() >= 1, "expected at least one output, got [%d]", outputs.Count())
 		outputs = outputs.ByScript()

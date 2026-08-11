@@ -536,6 +536,14 @@ func NewAnonymousOwnerWallet(
 	return w, nil
 }
 
+// Close releases the resources held by this wallet, stopping the background
+// recipient data provisioning started by its identity cache. It is idempotent.
+// The wallet remains usable afterwards, it simply no longer pre-provisions
+// pseudonyms. Registry.Done calls this for every wallet it created.
+func (w *AnonymousOwnerWallet) Close() {
+	w.IdentityCache.Close()
+}
+
 // Contains reports whether the provided identity is bound to this anonymous
 // owner wallet according to the wallet registry.
 func (w *AnonymousOwnerWallet) Contains(ctx context.Context, identity Identity) bool {

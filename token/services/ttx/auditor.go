@@ -57,8 +57,8 @@ func NewAuditor(sp token.ServiceProvider, w *token.AuditorWallet) (*Auditor, err
 
 // Validate checks if the token request in the transaction is valid according to audit rules.
 // It delegates to the underlying audit service for validation.
-func (a *Auditor) Validate(tx *Transaction) error {
-	return a.Service.Validate(tx.Context, tx.TokenRequest)
+func (a *Auditor) Validate(ctx context.Context, tx *Transaction) error {
+	return a.Service.Validate(ctx, tx.TokenRequest)
 }
 
 // Audit extracts the list of inputs and outputs from the passed transaction.
@@ -216,7 +216,7 @@ func (a *AuditingViewInitiator) startRemote(context view.Context) (view.Session,
 	}
 
 	// Send transaction
-	txRaw, err := a.tx.Bytes()
+	txRaw, err := a.tx.Bytes(context.Context())
 	if err != nil {
 		return nil, err
 	}
@@ -259,7 +259,7 @@ func (a *AuditingViewInitiator) startLocal(context view.Context) (view.Session, 
 	right := biChannel.RightSession()
 
 	// Send transaction
-	txRaw, err := a.tx.Bytes()
+	txRaw, err := a.tx.Bytes(context.Context())
 	if err != nil {
 		return nil, err
 	}

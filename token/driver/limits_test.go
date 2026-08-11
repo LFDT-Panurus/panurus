@@ -40,6 +40,8 @@ func TestResourceLimits_WithDefaults_FullyOverridden(t *testing.T) {
 		MaxMetadataKeyBytes:   9,
 		MaxMetadataValueBytes: 10,
 		MaxProofBytes:         11,
+		MaxIdentityDepth:      12,
+		MaxIdentityComponents: 13,
 	}
 	assert.Equal(t, l, l.WithDefaults())
 }
@@ -60,6 +62,8 @@ func TestResourceLimits_WithDefaults_NegativeValuesFallBackToDefault(t *testing.
 		MaxMetadataKeyBytes:   -1,
 		MaxMetadataValueBytes: -1,
 		MaxProofBytes:         -1,
+		MaxIdentityDepth:      -1,
+		MaxIdentityComponents: -1,
 	}
 	assert.Equal(t, DefaultResourceLimits(), l.WithDefaults())
 }

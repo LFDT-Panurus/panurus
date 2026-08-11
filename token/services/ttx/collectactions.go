@@ -74,7 +74,7 @@ func (c *collectActionsView) collectLocal(context view.Context, actionTransfer *
 	party := actionTransfer.From
 	logger.DebugfContext(context.Context(), "collect local from [%s]", party)
 
-	err := c.tx.Transfer(w, actionTransfer.Type, []uint64{actionTransfer.Amount}, []view.Identity{actionTransfer.Recipient})
+	err := c.tx.Transfer(context.Context(), w, actionTransfer.Type, []uint64{actionTransfer.Amount}, []view.Identity{actionTransfer.Recipient})
 	if err != nil {
 		return errors.Wrap(err, "failed creating transfer for action")
 	}
@@ -102,7 +102,7 @@ func (c *collectActionsView) collectRemote(context view.Context, actionTransfer 
 	}
 
 	// Send transaction, actions, action
-	txRaw, err := c.tx.Bytes()
+	txRaw, err := c.tx.Bytes(context.Context())
 	if err != nil {
 		return errors.Wrap(err, "failed marshalling transaction")
 	}
@@ -211,7 +211,7 @@ func NewCollectActionsResponderView(tx *Transaction, action *ActionTransfer) *co
 }
 
 func (s *collectActionsResponderView) Call(context view.Context) (any, error) {
-	response, err := s.tx.Bytes()
+	response, err := s.tx.Bytes(context.Context())
 	if err != nil {
 		return nil, errors.Wrap(err, "failed marshalling ephemeral transaction")
 	}

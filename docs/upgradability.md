@@ -74,6 +74,7 @@ tx, err := ttx.NewTransaction(context, nil, ttx.WithTMSID(upgradeRequest.TMSID))
 
 // The Upgrade call consumes old tokens and issues new ones in one atomic step
 err = tx.Upgrade(
+    context.Context(),
     issuerWallet,
     upgradeRequest.RecipientIdentity,
     upgradeRequest.Challenge,
