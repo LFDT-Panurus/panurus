@@ -13,6 +13,11 @@ Welcome to Panurus documentation.
 *   [**Upgradability**](upgradability.md): How to upgrade tokens, drivers, and storage.
 *   [**Public Parameters Lifecycle**](public_parameters.md): How public parameters are generated, published, and updated across the network.
 
+## Security
+
+*   [**HTLC Deadlines and Clock Synchronisation**](security/htlc_deadline_clock_assumptions.md): The clock-synchronisation assumption that the HTLC claim/reclaim deadline rests on, and the deadline margin it requires of a deployment.
+*   [**Selector Resource Limits**](security/selector_resource_limits.md): How to throttle token selection by supplying a custom `Locker`.
+
 ## Command-Line Tools
 
 Panurus ships several standalone CLI tools, each living in its own Go module under `cmd/`.

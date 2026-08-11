@@ -50,6 +50,12 @@ The service provides the `htlc` sub-package, which includes:
 *   **HTLC Deserialization**: Correctly parsing and verifying HTLC scripts from the ledger.
 *   **Signature Verification**: Ensuring that the party releasing the tokens provides a valid signature *and* the correct hash preimage.
 
+The claim-vs-reclaim decision hinges on the script's deadline, which each validating node evaluates
+against its own clock. Endorsers therefore agree on the verdict only insofar as their clocks agree,
+which makes clock synchronisation a deployment requirement and sets a lower bound on usable
+deadlines. See
+[HTLC Deadlines and Clock Synchronisation](../security/htlc_deadline_clock_assumptions.md).
+
 ### Cross-Network Finality
 The Interop Service coordinates with the **Network Service** across multiple DLT instances. It monitors the finality of "Lock" transactions on one network before initiating corresponding "Lock" transactions on another, ensuring that the atomic swap protocol can proceed safely.
 
