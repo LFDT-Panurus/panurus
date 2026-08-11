@@ -11,6 +11,7 @@ import (
 	"errors"
 	"sync"
 	"testing"
+	"time"
 
 	dbdriver "github.com/LFDT-Panurus/panurus/token/services/storage/db/driver"
 	"github.com/stretchr/testify/assert"
@@ -56,6 +57,44 @@ func (f *fakeStatusFetcher) callCount() int {
 	return len(f.calls)
 }
 
+// neverFlushWindow is a batch window long enough that the batcher's own timer
+// never fires during a test, leaving flushWhenJoined in sole control of when
+// the pending batch is resolved.
+const neverFlushWindow = time.Hour
+
+// flushWhenJoined waits until exactly n callers have joined the pending batch
+// and then flushes it. Together with neverFlushWindow this lets a test assert
+// that concurrent lookups coalesce without racing a wall-clock window: the
+// batch is resolved because every caller arrived, not because a timer expired
+// while the goroutines happened to be scheduled in time.
+func flushWhenJoined(t *testing.T, b *statusBatcher, n int) {
+	t.Helper()
+
+	var batch *statusBatch
+	require.Eventually(t, func() bool {
+		b.mu.Lock()
+		defer b.mu.Unlock()
+
+		if b.pending == nil || len(b.pending.ids) != n {
+			return false
+		}
+		// captured under the same lock acquisition that observed it, so it
+		// can never be nil by the time we flush it below
+		batch = b.pending
+
+		return true
+	}, 10*time.Second, 50*time.Microsecond, "callers never joined the pending batch")
+
+	b.flush(batch)
+}
+
+func TestStatusBatcher_UsesDefaultWindow(t *testing.T) {
+	// The coalescing tests drive the flush explicitly, so this is the only
+	// place the production default is checked. A zero or misconfigured window
+	// would disable batching entirely without failing anything else here.
+	assert.Equal(t, statusBatchWindow, newStatusBatcher(&fakeStatusFetcher{}).window)
+}
+
 func TestStatusBatcher_SingleLookup(t *testing.T) {
 	fetch := &fakeStatusFetcher{responses: map[string]dbdriver.TxStatus{"tx1": dbdriver.Confirmed}}
 	b := newStatusBatcher(fetch)
@@ -81,7 +120,7 @@ func TestStatusBatcher_CoalescesConcurrentLookups(t *testing.T) {
 		"tx2": dbdriver.Pending,
 		"tx3": dbdriver.Deleted,
 	}}
-	b := newStatusBatcher(fetch)
+	b := &statusBatcher{fetch: fetch, window: neverFlushWindow}
 
 	ids := []string{"tx1", "tx2", "tx3"}
 	results := make([]dbdriver.TxStatus, len(ids))
@@ -95,6 +134,7 @@ func TestStatusBatcher_CoalescesConcurrentLookups(t *testing.T) {
 			results[i] = s
 		}(i, id)
 	}
+	flushWhenJoined(t, b, len(ids))
 	wg.Wait()
 
 	assert.Equal(t, []dbdriver.TxStatus{dbdriver.Confirmed, dbdriver.Pending, dbdriver.Deleted}, results)
@@ -103,7 +143,7 @@ func TestStatusBatcher_CoalescesConcurrentLookups(t *testing.T) {
 
 func TestStatusBatcher_DuplicateTxIDInSameBatch(t *testing.T) {
 	fetch := &fakeStatusFetcher{responses: map[string]dbdriver.TxStatus{"tx1": dbdriver.Confirmed}}
-	b := newStatusBatcher(fetch)
+	b := &statusBatcher{fetch: fetch, window: neverFlushWindow}
 
 	results := make([]dbdriver.TxStatus, 2)
 	var wg sync.WaitGroup
@@ -116,6 +156,7 @@ func TestStatusBatcher_DuplicateTxIDInSameBatch(t *testing.T) {
 			results[i] = s
 		}(i)
 	}
+	flushWhenJoined(t, b, len(results))
 	wg.Wait()
 
 	assert.Equal(t, []dbdriver.TxStatus{dbdriver.Confirmed, dbdriver.Confirmed}, results)
