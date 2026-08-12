@@ -407,29 +407,131 @@ ref is a serial number that simply must not have been seen before, which reveals
 output is being consumed. One TMS runs one token driver, so the mode is chosen at deployment and never
 changes.
 
-#### The contracts
+#### The six files, and what each one is
+
+`contracts/src` holds six files, but only four of them become contracts at an address. The other two are
+libraries whose functions are all `internal`, which the Solidity compiler inlines into whoever calls them,
+so they never get deployed on their own.
 
 ```mermaid
 flowchart TB
-    F["TokenStateFactory"] -->|"creates and initializes<br/>in one transaction"| C
-    C["TokenState clone<br/>one per TMS"] -.->|"delegatecall, all logic"| I["TokenState implementation<br/>deployed once, locked"]
-    C -->|"verify"| V["EndorsementVerifier<br/>endorser set and threshold"]
+    subgraph dep ["Deployed to an address"]
+        direction TB
+        TSI["TokenState.sol<br/>implementation, deployed once"]
+        TSC["TokenState clone<br/>one per TMS, holds all storage"]
+        EV["EndorsementVerifier.sol<br/>endorser set and threshold"]
+        FAC["TokenStateFactory.sol<br/>deploy time only"]
+    end
 
-    style C fill:#ddf4ff,stroke:#54aeff,color:#1f2328
+    subgraph inl ["Libraries, inlined into the caller"]
+        direction TB
+        E712["EIP712.sol<br/>compiled into TokenState"]
+        CL["Clones.sol<br/>compiled into TokenStateFactory"]
+    end
+
+    subgraph typ ["Types only, no code"]
+        SD["StateDelta.sol<br/>two structs, field order frozen"]
+    end
+
+    style dep fill:#ddf4ff,stroke:#54aeff,color:#1f2328
+    style inl fill:#fff8c5,stroke:#d4a72c,color:#1f2328
+    style typ fill:#f6f8fa,stroke:#d1d9e0,color:#1f2328
+```
+
+`StateDelta.sol` is compiled into both `TokenState` and `EIP712`. Its field order is frozen because the
+EIP-712 hash is computed from it and every endorser signs that hash, so reordering a field would silently
+invalidate every signature.
+
+The two libraries are worth being explicit about, because their names suggest more than they are.
+`Clones.sol` is production code, not test scaffolding: `TokenStateFactory.create` calls
+`Clones.clone(implementation)` to create each per-TMS clone. It also appears in the contract tests, which
+clone directly so they exercise the same shape production uses.
+
+#### Phase 1, deployment
+
+Run once per network, from
+[`Deploy.s.sol`](../../x/token/services/network/evm/contracts/script/Deploy.s.sol). Three contracts are
+created, and then the factory produces the clone that a TMS will actually use.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant S as Deploy script
+    participant EV as EndorsementVerifier
+    participant I as TokenState implementation
+    participant F as TokenStateFactory
+    participant C as TokenState clone
+
+    S->>EV: new EndorsementVerifier(endorsers, threshold)
+    S->>I: new TokenState()
+    Note over I: locks itself in its constructor,<br/>so only a clone can be initialized
+    S->>F: new TokenStateFactory(implementation)
+
+    S->>F: create(verifier, deployer, pp0, graphHiding)
+    F->>C: Clones.clone deploys an EIP-1167 proxy
+    F->>C: initialize(verifier, deployer, pp0, graphHiding)
+    Note over F,C: both in one transaction, so an<br/>uninitialized clone is never reachable
+    F-->>S: clone address
+
+    S->>C: read back verifier, params hash, version, mode, deployer
+```
+
+Cloning and initializing in one call is deliberate. `initialize` is deliberately unguarded, because the
+implementation is locked and only a fresh clone can ever be initialized. Doing it in two transactions
+would leave a window in which anyone could seize the clone by initializing it first with their own
+verifier, and the honest deployer's call would then revert with `AlreadyInitialized`.
+
+Each TMS gets its own [EIP-1167](https://eips.ethereum.org/EIPS/eip-1167) minimal proxy, so a new TMS
+costs a proxy rather than a full deployment while sharing one copy of the logic. Every clone has its own
+storage.
+
+#### Phase 2, processing a transaction
+
+Three addresses take part, but only one of them holds any state.
+
+```mermaid
+flowchart LR
+    D["Driver"] -->|"applyStateDelta<br/>delta + signatures"| C
+
+    subgraph clone ["TokenState clone: the address, and all the storage"]
+        C["EIP-1167 proxy,<br/>almost no code of its own"]
+    end
+
+    subgraph impl ["TokenState implementation: the code, no storage of its own"]
+        direction TB
+        E["applyStateDelta,<br/>running on the clone's storage"] --> H["EIP712, inlined here:<br/>recompute the digest"]
+        H --> A["apply the writes"]
+    end
+
+    C -->|"delegatecall"| E
+    H -->|"verify(digest, signatures)"| V["EndorsementVerifier"]
+    V -->|"accepted, or revert"| H
+    A -->|"emit StateCommitted"| L["Logs, at the clone's address"]
+
+    style clone fill:#ddf4ff,stroke:#54aeff,color:#1f2328
+    style impl fill:#f6f8fa,stroke:#d1d9e0,color:#1f2328
     style V fill:#dafbe1,stroke:#4ac26b,color:#1f2328
 ```
 
-`TokenState` holds all token storage. `EndorsementVerifier` holds the endorser set and the threshold and
-has no token storage at all: it is a pure checker. Keeping them apart means the endorsement policy can be
-reviewed, and replaced, without touching the code that owns tokens.
+Two things there are easy to get wrong when reading the sources.
 
-Each TMS gets its own `TokenState`, created as an [EIP-1167](https://eips.ethereum.org/EIPS/eip-1167)
-minimal proxy so a new TMS costs a proxy rather than a full deployment. The shared implementation locks
-itself in its constructor, so only a clone can ever be initialized. The factory clones **and** initializes
-in a single transaction, which closes the window where an uninitialized clone would be sitting on chain
-for anyone to seize.
+**The code does not live where the storage lives.** The clone owns the address, the token map, the spent
+markers and the public parameters, but it is a minimal proxy and carries almost no logic. Every call to it
+`delegatecall`s the shared implementation, which then executes against the clone's storage. So
+`applyStateDelta` is the implementation's code running as though it were the clone.
 
-#### One transaction, end to end
+**`EIP712` is not a contract.** Its functions are all `internal`, so the compiler copies them into
+`TokenState` at build time. Recomputing the digest costs no external call, and there is no `EIP712`
+address to look up on a block explorer.
+
+That leaves exactly one call crossing an address boundary while a transaction is processed: `TokenState`
+asking `EndorsementVerifier` to check the quorum. `TokenStateFactory` and `Clones` play no part at all
+once deployment is over.
+
+Because the writes and the event happen in the clone's context, `StateCommitted` is emitted at the
+clone's address, and that is the address the finality layer filters `eth_getLogs` on.
+
+#### The same transaction, step by step
 
 ```mermaid
 sequenceDiagram
