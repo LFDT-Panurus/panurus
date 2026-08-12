@@ -139,6 +139,9 @@ type TokenVault interface {
 
 //go:generate counterfeiter -o mock/ledger_token.go -fake-name LedgerToken . LedgerToken
 
+// LedgerToken is a token as read back from the ledger.
+//
+//nolint:iface // See the note on Input: same method set, different concept, separate mocks.
 type LedgerToken interface {
 	GetOwner() []byte
 }

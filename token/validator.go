@@ -16,7 +16,7 @@ import (
 )
 
 // Ledger models a read-only ledger
-type Ledger = driver.ValidatorLedger
+type Ledger = driver.Ledger
 
 // Validator validates a token request
 type Validator struct {

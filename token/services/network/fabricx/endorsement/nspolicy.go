@@ -34,12 +34,7 @@ const ecdsaScheme = "ECDSA"
 // requestTimeout bounds the GetNamespacePolicies RPC call.
 const requestTimeout = 30 * time.Second
 
-// ChannelMSPManager provides MSP identifier resolution for a Fabric(x) channel.
-type ChannelMSPManager interface {
-	GetMSPIdentifier(sid []byte) (string, error)
-}
-
-// ChannelMSPManagerProvider resolves the ChannelMSPManager for a given network/channel.
+// ChannelMSPManagerProvider resolves the MSP manager for a given network/channel.
 type ChannelMSPManagerProvider interface {
 	GetMSPManager(network, channel string) (fsc.MSPManager, error)
 }

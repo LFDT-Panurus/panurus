@@ -70,7 +70,7 @@ func newSecurityTestEnv(t *testing.T) *testing2.Env {
 // ctx.Ledger.GetState() will cause a nil-function-pointer panic on the chaincode,
 // constituting a denial-of-service vector. The fix adds an explicit nil guard.
 func TestSecurityPanicNilBackendLedger(t *testing.T) {
-	backend := common.NewBackend(logging.MustGetLogger(), nil /*nil ledger*/, nil, nil)
+	backend := common.NewBackend(logging.MustGetLogger(), nil /* nil ledger */, nil, nil)
 
 	_, err := backend.GetState(token2.ID{TxId: "tx1", Index: 0})
 	require.Error(t, err, "GetState with nil ledger must return an error, not panic")

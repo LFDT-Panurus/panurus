@@ -21,10 +21,6 @@ import (
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/view"
 )
 
-type Vault interface {
-	DeleteTokens(ctx context.Context, toDelete ...*token2.ID) error
-}
-
 type QueryEngine interface {
 	// UnspentTokensIteratorBy returns an iterator over all unspent tokens by type and id. Type can be empty
 	UnspentTokensIteratorBy(ctx context.Context, id string, tokenType token2.Type) (driver.UnspentTokensIterator, error)

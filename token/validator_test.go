@@ -39,7 +39,7 @@ func TestValidator_UnmarshallAndVerify(t *testing.T) {
 	validator := &Validator{
 		backend: &mock.Validator{},
 	}
-	mockLedger := &mock.ValidatorLedger{}
+	mockLedger := &mock.Ledger{}
 	raw := []byte("some_raw_data")
 	anchor := "some_anchor"
 
@@ -58,7 +58,7 @@ func TestValidator_UnmarshallAndVerifyWithMetadata(t *testing.T) {
 	validator := &Validator{
 		backend: &mock.Validator{},
 	}
-	mockLedger := &mock.ValidatorLedger{}
+	mockLedger := &mock.Ledger{}
 	raw := []byte("some_raw_data")
 	anchor := "some_anchor"
 
@@ -95,7 +95,7 @@ func TestValidator_UnmarshallAndVerify_Error(t *testing.T) {
 	validator := &Validator{
 		backend: &mock.Validator{},
 	}
-	mockLedger := &mock.ValidatorLedger{}
+	mockLedger := &mock.Ledger{}
 	raw := []byte("some_raw_data")
 	anchor := "some_anchor"
 
@@ -112,7 +112,7 @@ func TestValidator_UnmarshallAndVerifyWithMetadata_Error(t *testing.T) {
 	validator := &Validator{
 		backend: &mock.Validator{},
 	}
-	mockLedger := &mock.ValidatorLedger{}
+	mockLedger := &mock.Ledger{}
 	raw := []byte("some_raw_data")
 	anchor := "some_anchor"
 

@@ -13,6 +13,7 @@ linters:
     - fatcontext # Detects nested contexts in loops and function literals. [auto-fix]
     - ginkgolinter # Enforces standards of using ginkgo and gomega. [auto-fix]
     - goheader # Check if file header matches to pattern. [fast, auto-fix]
+    - iface # Detects incorrect use of interfaces.
     - gosec # Inspects source code for security problems.
     - govet # Vet examines Go source code and reports suspicious constructs. It is roughly the same as 'go vet' and uses its passes. [auto-fix]
     - importas # Enforces consistent import aliases. [auto-fix]
@@ -29,6 +30,7 @@ linters:
     - nolintlint # Reports ill-formed or insufficient nolint directives. [fast, auto-fix]
     - perfsprint # Checks that fmt.Sprintf can be replaced with a faster alternative. [auto-fix]
     - reassign # Checks that package variables are not reassigned.
+    - revive # Fast, configurable, extensible, flexible, and beautiful linter for Go. [auto-fix]
     - rowserrcheck # Checks whether Rows.Err of rows is checked successfully.
     - sloglint # Ensure consistent code style when using log/slog. [auto-fix]
     - spancheck # Checks for mistakes with OpenTelemetry/Census spans.
@@ -74,10 +76,20 @@ linters:
       # Enable all analyzers.
       enable-all: false
     iface:
+      # Only "identical" is enabled. The other two checks do not fit this codebase:
+      #
+      # "unused" only looks inside the declaring package, and the driver pattern puts SPI
+      # interfaces in dedicated driver/api packages that are implemented and consumed from
+      # other modules, so they are unused at home by construction. It reported 66 of these;
+      # 61 had between 1 and 79 referencing files elsewhere in the tree. The 5 that had none
+      # were genuinely dead and have been deleted.
+      #
+      # "opaque" wants constructors to return their concrete type, but in 14 of its 17 reports
+      # that type is unexported, so callers could not name the result and revive's
+      # unexported-return rule below would reject it. One is impossible outright: the concrete
+      # type is an unexported generic in fabric-smart-client.
       enable:
         - identical # Identifies interfaces in the same package that have identical method sets.
-        - unused # Identifies interfaces that are not used anywhere in the same package where the interface is defined.
-        - opaque # Identifies functions that return interfaces, but the actual returned value is always a single concrete implementation.
     ireturn:
       # By default, it allows using errors, empty interfaces, anonymous interfaces,
       # and interfaces provided by the standard library.
@@ -115,47 +127,67 @@ linters:
     lll:
       # Max line length, lines longer will be reported.
       line-length: 240
-    maintidx:
-      under: 20
     nolintlint:
       require-specific: true
     revive:
-      enable-all-rules: true
+      # enable-all-rules was never on, because revive itself was never enabled. Turning it on
+      # as-is reports 3452 issues over 688 files, so instead of one unreviewable change this
+      # lists the rules explicitly. Everything below is already clean tree-wide, which makes
+      # revive a ratchet against new code rather than a backlog.
+      #
+      # Deliberately not listed yet, with their current counts, each wants its own change:
+      # exported (1568), unused-parameter (362), unused-receiver (334), import-shadowing (328),
+      # unchecked-type-assertion (125), argument-limit (103), unexported-naming (62),
+      # var-naming (59), defer (59), redundant-import-alias (51), function-result-limit (49).
+      #
+      # Not listed because another enabled linter already covers them: line-length-limit (lll),
+      # imports-blocklist (depguard), file-header (goheader). Omitted as no-ops at their default
+      # settings: comments-density, file-length-limit, enforce-map-style, enforce-slice-style,
+      # enforce-repeated-arg-type-style, string-format.
       rules:
-        - name: argument-limit
+        - name: atomic
+        - name: bool-literal-in-expr
+        - name: comment-spacings
           arguments:
-            - 5
-        - name: line-length-limit
-          arguments:
-            - 240
-        - name: file-header
-          disabled: true
-        - name: package-comments
-          disabled: true
-        - name: max-public-structs
-          disabled: true
-        - name: banned-characters
-          disabled: true
-        - name: cognitive-complexity
-          disabled: true
-        - name: cyclomatic
-          disabled: true
-        - name: function-length
-          disabled: true
-        - name: function-result-limit
-          arguments:
-            - 3
-        - name: add-constant
-          disabled: true
+            - 'nolint:'
+        - name: constant-logical-expr
+        - name: context-keys-type
+        - name: datarace
+        - name: deep-exit
+        - name: duplicated-imports
+        - name: epoch-naming
+        - name: error-return
+        - name: errorf
+        - name: filename-format
+        - name: forbidden-call-in-wg-go
+        - name: get-return
+        - name: identical-ifelseif-conditions
+        - name: identical-switch-conditions
+        - name: inefficient-map-lookup
+        - name: modifies-parameter
+        - name: modifies-value-receiver
+        - name: optimize-operands-order
+        - name: range
+        - name: range-val-address
+        - name: range-val-in-closure
+        - name: redundant-build-tag
+        - name: redundant-test-main-exit
+        - name: string-of-int
+        - name: time-date
+        - name: time-equal
+        - name: time-naming
+        - name: unconditional-recursion
         - name: unhandled-error
           arguments:
             - fmt.Printf
             - fmt.Println
-        - name: confusing-naming
-          disabled: true
-        - name: comment-spacings
-          arguments:
-            - 'nolint:'
+        - name: unnecessary-if
+        - name: unreachable-code
+        - name: unsecure-url-scheme
+        - name: use-any
+        - name: use-errors-new
+        - name: useless-break
+        - name: waitgroup-by-value
     rowserrcheck:
       packages:
         - github.com/jackc/pgx/v5

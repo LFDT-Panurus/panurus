@@ -103,10 +103,6 @@ func (l *Layout) PeersInOrg(orgName string) []Peer {
 	return peers
 }
 
-type FSCPlatform interface {
-	PeerOrgs() []*node.Organization
-}
-
 type CryptoMaterialGenerator struct {
 	TokenPlatform     generators.TokenPlatform
 	EventuallyTimeout time.Duration
