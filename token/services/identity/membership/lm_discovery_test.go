@@ -19,6 +19,7 @@ import (
 	"github.com/LFDT-Panurus/panurus/token/services/identity/membership/mock"
 	"github.com/LFDT-Panurus/panurus/token/services/logging"
 	"github.com/LFDT-Panurus/panurus/token/services/storage"
+	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -391,4 +392,35 @@ func TestLocalMembership_Close(t *testing.T) {
 
 	// Should be safe to call multiple times
 	lm.Close()
+}
+
+// TestLocalMembership_Close_NotifierError checks that Close does not panic when the
+// identity store fails to return a notifier with an error other than storage.ErrNotSupported.
+// In that case the notifier is nil and must not be used.
+func TestLocalMembership_Close_NotifierError(t *testing.T) {
+	ip := &mock.IdentityProvider{}
+	des := &mock.SignerDeserializerManager{}
+	iss := &mock.IdentityStoreService{}
+	iss.NotifierReturns(nil, errors.New("backend unavailable"))
+
+	kmp := &mock.KeyManagerProvider{}
+
+	lm := membership.NewLocalMembership(
+		logging.MustGetLogger("test"),
+		&mock.Config{},
+		[]byte("netid"),
+		des,
+		iss,
+		"testType",
+		false,
+		ip,
+		kmp,
+	)
+
+	// Load is not called on purpose: a failing Notifier makes Load fail, so Close must be
+	// safe on its own. A nil notifier dereference would panic and fail the test.
+	assert.NotPanics(t, lm.Close)
+
+	// Should be safe to call multiple times
+	assert.NotPanics(t, lm.Close)
 }
