@@ -276,11 +276,11 @@ func (l *LocalMembership) Close() {
 
 		notifier, err := l.identityDB.Notifier()
 		if err != nil {
-			if errors.Is(err, storage.ErrNotSupported) {
-				// notithing to close
-				return
+			if !errors.Is(err, storage.ErrNotSupported) {
+				logger.Errorf("failed to get identity notifier: [%s]", err)
 			}
-			logger.Errorf("failed to get identity notifier: [%s]", err)
+			// no notifier, nothing to close
+			return
 		}
 		if err := notifier.UnsubscribeAll(); err != nil {
 			logger.Errorf("failed to unsubscribe [%s]: [%s]", l.IdentityType, err)

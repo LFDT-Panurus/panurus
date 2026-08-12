@@ -222,6 +222,12 @@ core.TMSProvider.Update            (token/core/tms.go)
                     └── Role.Done() → LocalMembership.Close()
 ```
 
+`LocalMembership.Close()` is best-effort: it releases its key managers, then unsubscribes
+from the identity store's change notifier. If the store cannot supply a notifier — because
+it does not support one (`storage.ErrNotSupported`) or because it fails outright — the
+unsubscribe step is skipped and, in the failure case, logged. `Close()` returns no error and
+must never panic, since it runs on the shutdown path of an already-degraded node.
+
 `role.Registry.Done()` closes wallets through a local `interface{ Close() }` assertion
 rather than through `driver.Wallet`, so wallet types with nothing to release need not
 implement a no-op `Close()`. If you add a wallet type that owns a goroutine, a ticker or
