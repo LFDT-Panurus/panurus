@@ -10,6 +10,7 @@ import (
 	"context"
 	"time"
 
+	cdriver "github.com/LFDT-Panurus/panurus/token/core/common/driver"
 	"github.com/LFDT-Panurus/panurus/token/driver"
 	"github.com/LFDT-Panurus/panurus/token/driver/protos-go/v1/request"
 	"github.com/LFDT-Panurus/panurus/token/services/logging"
@@ -286,6 +287,11 @@ func ExtractTokenIDsAndCheckDuplicates(
 // numRetries and retryDelay control the tolerance for the pending-transaction
 // read-timing race (see DefaultAuditTokensNumRetries / DefaultAuditTokensRetryDelay).
 // A numRetries <= 0 is clamped to a single attempt.
+//
+// cache is an optional (nil-safe) requests-cache fast-fail gate. When wired, a
+// lookup miss for which none of the producing transactions are cached fails
+// immediately instead of spending the retry/backoff budget (see
+// listAuditTokensWithRetry). Passing nil preserves the IsPending-only behaviour.
 func RetrieveAuditTokens(
 	ctx context.Context,
 	logger logging.Logger,
@@ -294,6 +300,7 @@ func RetrieveAuditTokens(
 	anchor driver.TokenRequestAnchor,
 	numRetries int,
 	retryDelay time.Duration,
+	cache cdriver.RequestsCache,
 ) (map[string]*token.Token, error) {
 	if logger == nil {
 		return nil, errors.Errorf("logger cannot be nil for tx [%s]", anchor)
@@ -307,7 +314,7 @@ func RetrieveAuditTokens(
 	}
 
 	logger.DebugfContext(ctx, "[%s] retrieving [%d] audit tokens...", anchor, len(tokenIDs))
-	tokens, err := listAuditTokensWithRetry(ctx, logger, queryEngine, tokenIDs, anchor, numRetries, retryDelay)
+	tokens, err := listAuditTokensWithRetry(ctx, logger, queryEngine, tokenIDs, anchor, numRetries, retryDelay, cache)
 	if err != nil {
 		return nil, errors.WithMessagef(err, "failed to retrieve audit tokens for tx [%s]", anchor)
 	}
@@ -338,6 +345,21 @@ func RetrieveAuditTokens(
 // immediately instead of pinning a goroutine for the full grace window. A genuine
 // (non-pending) lookup failure, or a failure to determine pending status, is
 // returned rather than retried and never masked as "still pending".
+//
+// When a requests cache is wired (cache != nil), it is consulted on a miss as a
+// fast-fail gate: id.TxId is the producing transaction of a referenced input, and
+// its token request is held in the in-memory cache from audit-approval time until
+// it is persisted. If none of the producing transactions are cached, this node has
+// nothing pending to wait for, so the lookup fails immediately without spending the
+// backoff budget. A cache hit does not bypass the IsPending gate: retries still
+// require the producing transaction to be pending, so both gates apply. When no
+// cache is wired the behaviour is unchanged (IsPending-only gating).
+//
+// NOTE: the requests cache is per-process, so the gate assumes audit-approval and
+// this audit check run on the same node. In a multi-replica auditor topology a
+// producing transaction approved on another replica is absent here and the gate
+// fails fast rather than waiting; deployments that chain transactions across auditor
+// replicas should leave the cache unwired (see docs/services/auditor.md).
 func listAuditTokensWithRetry(
 	ctx context.Context,
 	logger logging.Logger,
@@ -346,6 +368,7 @@ func listAuditTokensWithRetry(
 	anchor driver.TokenRequestAnchor,
 	numRetries int,
 	retryDelay time.Duration,
+	cache cdriver.RequestsCache,
 ) ([]*token.Token, error) {
 	attempts := max(1, numRetries)
 
@@ -356,6 +379,16 @@ func listAuditTokensWithRetry(
 		tokens, err = queryEngine.ListAuditTokens(ctx, tokenIDs...)
 		if err == nil {
 			return tokens, nil
+		}
+
+		// Fast-fail gate: when a requests cache is wired, use membership as a
+		// short-circuit. If none of the producing transactions are cached there is
+		// nothing this node is waiting to persist, so retrying cannot help -- fail
+		// immediately instead of paying the backoff.
+		if cache != nil && !anyRequestCached(cache, tokenIDs) {
+			logger.Warnf("[%s] audit token lookup failed and none of the producing transactions are cached, failing fast: %v", anchor, err)
+
+			return nil, err
 		}
 
 		// The lookup failed. Check whether any requested token belongs to a

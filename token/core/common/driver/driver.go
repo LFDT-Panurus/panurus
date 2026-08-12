@@ -62,3 +62,20 @@ type VaultProvider interface {
 	// Vault returns the vault instance for the given network, channel, and namespace.
 	Vault(network, channel, namespace string) (driver.Vault, error)
 }
+
+// RequestsCache is the minimal, nil-safe view onto the per-TMS in-memory requests
+// cache that the audit-token lookup needs. Membership is keyed by the producing
+// transaction ID: a transaction is present iff its token request was cached at
+// audit-approval time (before commit) and not yet evicted after persistence.
+type RequestsCache interface {
+	// IsRequestCached reports whether a token request for the given transaction ID
+	// is currently held in the in-memory cache.
+	IsRequestCached(txID string) bool
+}
+
+// RequestsCacheProvider yields the RequestsCache for a TMS. It is optional: when no
+// provider is wired, the audit-token lookup falls back to IsPending-only gating.
+type RequestsCacheProvider interface {
+	// RequestsCache returns the RequestsCache for the given TMS.
+	RequestsCache(tmsID driver.TMSID) (RequestsCache, error)
+}
