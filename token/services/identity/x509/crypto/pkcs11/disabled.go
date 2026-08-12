@@ -9,6 +9,8 @@ SPDX-License-Identifier: Apache-2.0
 package pkcs11
 
 import (
+	"fmt"
+
 	"github.com/hyperledger/fabric-lib-go/bccsp"
 )
 
@@ -31,6 +33,15 @@ type PKCS11Opts struct {
 	AltID            string         `yaml:"AltId,omitempty"`
 	KeyIDs           []KeyIDMapping `mapstructure:"KeyIds"             yaml:"KeyIds,omitempty"`
 	SessionCacheSize uint           `yaml:"SessionCacheSize,omitempty"`
+}
+
+// String renders the PKCS11 With redacted Pin,
+// So interpolated (with %v/%s/%+v) doesn't reach a log line.
+func (o PKCS11Opts) String() string {
+	return fmt.Sprintf(
+		"{Security:%d Hash:%s Library:%s Label:%s Pin:[REDACTED] SoftwareVerify:%t Immutable:%t AltID:%s KeyIDs:%v SessionCacheSize:%d}",
+		o.Security, o.Hash, o.Library, o.Label, o.SoftwareVerify, o.Immutable, o.AltID, o.KeyIDs, o.SessionCacheSize,
+	)
 }
 
 func NewProvider(opts any, ks bccsp.KeyStore, mapper func(ski []byte) []byte) (bccsp.BCCSP, error) {

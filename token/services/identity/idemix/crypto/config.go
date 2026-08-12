@@ -173,7 +173,7 @@ func NewFabricCAIdemixConfig(issuerPublicKey []byte, dir string) (*Config, error
 func NewConfigFromRaw(issuerPublicKey []byte, configRaw []byte) (*Config, error) {
 	config := &config.IdemixConfig{}
 	if err := proto.Unmarshal(configRaw, config); err != nil {
-		return nil, errors.Wrapf(err, "failed to unmarshal idemix config at [%s]", string(configRaw))
+		return nil, errors.Wrapf(err, "failed to unmarshal idemix config of PK [%s]", utils.Hashable(issuerPublicKey))
 	}
 	// match public keys
 	if !bytes.Equal(issuerPublicKey, config.Ipk) {

@@ -14,6 +14,7 @@ import (
 	"github.com/LFDT-Panurus/panurus/token/services/identity"
 	idriver "github.com/LFDT-Panurus/panurus/token/services/identity/driver"
 	"github.com/LFDT-Panurus/panurus/token/services/interop/htlc"
+	"github.com/LFDT-Panurus/panurus/token/services/utils"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 )
 
@@ -182,14 +183,14 @@ func (a *AuditDeserializer) DeserializeAuditInfo(ctx context.Context, identity d
 	si := &ScriptInfo{}
 	err = json.Unmarshal(raw, si)
 	if err != nil || (len(si.Sender) == 0 && len(si.Recipient) == 0) {
-		return nil, errors.Errorf("invalid audit info, failed unmarshal [%s][%d][%d]", string(raw), len(si.Sender), len(si.Recipient))
+		return nil, errors.Errorf("invalid audit info, failed unmarshal [%s][%d][%d]", utils.Hashable(raw), len(si.Sender), len(si.Recipient))
 	}
 	if len(si.Recipient) == 0 {
 		return nil, errors.Errorf("no recipient defined")
 	}
 	ai, err := a.AuditInfoDeserializer.DeserializeAuditInfo(ctx, script.Recipient, si.Recipient)
 	if err != nil {
-		return nil, errors.Wrapf(err, "failed unmarshalling audit info [%s]", raw)
+		return nil, errors.Wrapf(err, "failed unmarshalling audit info [%s]", utils.Hashable(raw))
 	}
 
 	return ai, nil

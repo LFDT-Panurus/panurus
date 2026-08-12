@@ -7,6 +7,8 @@ SPDX-License-Identifier: Apache-2.0
 package crypto
 
 import (
+	"fmt"
+
 	"github.com/LFDT-Panurus/panurus/token/services/identity/x509/crypto/pkcs11"
 	"github.com/LFDT-Panurus/panurus/token/services/identity/x509/crypto/protos-go/v1/config"
 	"github.com/go-viper/mapstructure/v2"
@@ -73,6 +75,20 @@ type PKCS11 struct {
 type KeyIDMapping struct {
 	SKI string `yaml:"SKI,omitempty"`
 	ID  string `yaml:"ID,omitempty"`
+}
+
+// String renders the PKCS11 configuration for logging with the PIN redacted, so
+// the secret can never reach a log line or error string, even when a *PKCS11 is
+// interpolated directly or as a field of a *BCCSP. It is nil-safe.
+func (p *PKCS11) String() string {
+	if p == nil {
+		return "<nil>"
+	}
+
+	return fmt.Sprintf(
+		"{Security:%d Hash:%s Library:%s Label:%s Pin:[REDACTED] SoftwareVerify:%t Immutable:%t AltID:%s KeyIDs:%v SessionCacheSize:%d}",
+		p.Security, p.Hash, p.Library, p.Label, p.SoftwareVerify, p.Immutable, p.AltID, p.KeyIDs, p.SessionCacheSize,
+	)
 }
 
 // ToBCCSPOpts converts the passed opts to `config.BCCSP`

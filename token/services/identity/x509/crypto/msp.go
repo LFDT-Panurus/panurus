@@ -12,6 +12,7 @@ import (
 	"crypto/x509"
 	"encoding/pem"
 
+	"github.com/LFDT-Panurus/panurus/token/services/utils"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	"github.com/hyperledger/fabric-lib-go/bccsp"
 )
@@ -242,7 +243,7 @@ func (f *IdentityFactory) getCertFromPem(idBytes []byte) (*x509.Certificate, err
 	// Decode the pem bytes
 	pemCert, _ := pem.Decode(idBytes)
 	if pemCert == nil {
-		return nil, errors.Errorf("could not decode pem bytes [%v]", idBytes)
+		return nil, errors.Errorf("could not decode pem bytes [%v]", utils.Hashable(idBytes))
 	}
 
 	// get a cert
