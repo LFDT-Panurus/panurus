@@ -127,6 +127,9 @@ func (f *spentTokenFetcher) QuerySpentTokens(ctx context.Context, namespace stri
 	if err := json.Unmarshal(payloadBoxed, &spent); err != nil {
 		return nil, errors.Wrapf(err, "failed to unmarshal esponse")
 	}
+	if len(spent) != len(IDs) {
+		return nil, errors.Errorf("unexpected number of spent flags: got [%d], expected [%d]", len(spent), len(IDs))
+	}
 
 	return spent, nil
 }

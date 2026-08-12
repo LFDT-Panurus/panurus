@@ -338,6 +338,112 @@ func TestQuerySpentTokens_EmptyIDs(t *testing.T) {
 	e := newExecutor(qsp)
 	res, err := e.QuerySpentTokens(t.Context(), testNamespace, nil, nil)
 	require.NoError(t, err)
+	// Empty input returns nil without querying the provider. Contrast with
+	// TestQuerySpentTokens_AllNilIDs, which passes a non-empty slice of nil
+	// pointers and does exercise the query path.
 	require.Nil(t, res)
 	assert.Equal(t, 0, qsp.GetCallCount())
+}
+
+// TestQuerySpentTokens_NilIDPreservesAlignment is a regression guard: a nil id
+// must not shift the remaining flags or shorten the result. The returned slice
+// stays positionally aligned with ids (length == len(ids)); the nil position is
+// reported as not spent, and only the non-nil ids are looked up on the ledger.
+func TestQuerySpentTokens_NilIDPreservesAlignment(t *testing.T) {
+	ids := []*token.ID{nil, {TxId: "tx1", Index: 0}, {TxId: "tx2", Index: 1}}
+	k1 := outputKey(t, "tx1", 0)
+	k2 := outputKey(t, "tx2", 1)
+
+	qsp := &mock.QueryServiceProvider{}
+	qs := &mock.QueryService{}
+	qsp.GetReturns(qs, nil)
+	// tx1 is present (unspent) -> false; tx2 is missing (spent) -> true.
+	qs.GetStatesReturns(map[driver.Namespace]map[driver.PKey]driver.VaultValue{
+		testNamespace: {k1: {Raw: []byte("token1")}},
+	}, nil)
+
+	e := newExecutor(qsp)
+	res, err := e.QuerySpentTokens(t.Context(), testNamespace, ids, nil)
+	require.NoError(t, err)
+	// index 0 (nil) -> false, index 1 (tx1 present) -> false, index 2 (tx2 missing) -> true.
+	require.Equal(t, []bool{false, false, true}, res)
+
+	// Only the non-nil ids are queried on the ledger; the nil id is not.
+	queried := qs.GetStatesArgsForCall(0)
+	require.Equal(t, map[driver.Namespace][]driver.PKey{testNamespace: {k1, k2}}, queried)
+}
+
+// TestQuerySpentTokens_AllNilIDs is a regression guard: before the fix, an
+// all-nil ids slice returned (nil, nil) — length 0 — which made the callers'
+// spent[i] loop panic with index-out-of-range. It must now return a slice of
+// len(ids) with every position reported as not spent, without touching the
+// query service.
+func TestQuerySpentTokens_AllNilIDs(t *testing.T) {
+	ids := []*token.ID{nil, nil}
+
+	qsp := &mock.QueryServiceProvider{}
+
+	e := newExecutor(qsp)
+	res, err := e.QuerySpentTokens(t.Context(), testNamespace, ids, nil)
+	require.NoError(t, err)
+	require.Equal(t, []bool{false, false}, res)
+	assert.Equal(t, 0, qsp.GetCallCount())
+}
+
+// TestQuerySpentTokens_InteriorNilPreservesAlignment guards the index mapping
+// for a nil that sits between two non-nil ids (not just a leading nil): the
+// flag for each non-nil id must land at that id's original position, and the
+// nil slot stays not spent.
+func TestQuerySpentTokens_InteriorNilPreservesAlignment(t *testing.T) {
+	ids := []*token.ID{{TxId: "tx1", Index: 0}, nil, {TxId: "tx2", Index: 1}}
+	k1 := outputKey(t, "tx1", 0)
+	k2 := outputKey(t, "tx2", 1)
+
+	qsp := &mock.QueryServiceProvider{}
+	qs := &mock.QueryService{}
+	qsp.GetReturns(qs, nil)
+	// tx1 missing (spent) -> true; tx2 present (unspent) -> false.
+	qs.GetStatesReturns(map[driver.Namespace]map[driver.PKey]driver.VaultValue{
+		testNamespace: {k2: {Raw: []byte("token2")}},
+	}, nil)
+
+	e := newExecutor(qsp)
+	res, err := e.QuerySpentTokens(t.Context(), testNamespace, ids, nil)
+	require.NoError(t, err)
+	// index 0 (tx1 missing) -> true, index 1 (nil) -> false, index 2 (tx2 present) -> false.
+	require.Equal(t, []bool{true, false, false}, res)
+
+	// The nil id is not queried; only tx1 and tx2 are.
+	queried := qs.GetStatesArgsForCall(0)
+	require.Equal(t, map[driver.Namespace][]driver.PKey{testNamespace: {k1, k2}}, queried)
+}
+
+func TestQuerySpentTokens_ProviderError(t *testing.T) {
+	ids := []*token.ID{{TxId: "tx1", Index: 0}}
+
+	qsp := &mock.QueryServiceProvider{}
+	qsp.GetReturns(nil, errors.New("boom"))
+
+	e := newExecutor(qsp)
+	res, err := e.QuerySpentTokens(t.Context(), testNamespace, ids, nil)
+	require.Error(t, err)
+	assert.Nil(t, res)
+	assert.Contains(t, err.Error(), "failed getting qs")
+	assert.Contains(t, err.Error(), "boom")
+}
+
+func TestQuerySpentTokens_GetStatesError(t *testing.T) {
+	ids := []*token.ID{{TxId: "tx1", Index: 0}}
+
+	qsp := &mock.QueryServiceProvider{}
+	qs := &mock.QueryService{}
+	qsp.GetReturns(qs, nil)
+	qs.GetStatesReturns(nil, errors.New("rpc failed"))
+
+	e := newExecutor(qsp)
+	res, err := e.QuerySpentTokens(t.Context(), testNamespace, ids, nil)
+	require.Error(t, err)
+	assert.Nil(t, res)
+	assert.Contains(t, err.Error(), "failed getting states")
+	assert.Contains(t, err.Error(), "rpc failed")
 }
