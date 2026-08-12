@@ -28,6 +28,10 @@ type AuditorService struct {
 	QueryEngine             driver.QueryEngine
 	tracer                  trace.Tracer
 
+	// Limits are the configured resource limits threaded into the auditor so the
+	// audit path enforces the same policy as the validator (issue #2028).
+	Limits driver.ResourceLimits
+
 	// AuditTokensNumRetries and AuditTokensRetryDelay control how AuditorCheck's
 	// token lookup tolerates the pending-transaction read-timing race (issue #2105).
 	// They default to common.DefaultAuditTokensNumRetries / DefaultAuditTokensRetryDelay
@@ -41,6 +45,9 @@ type AuditorService struct {
 // retryConfig sets the audit-token retry/backoff behavior of AuditorCheck; pass
 // common.DefaultAuditRetryConfig() for the built-in defaults or
 // common.LoadAuditRetryConfig(tmsConfig) to honor the per-TMS configuration file.
+//
+// limits are the configured resource limits; they are threaded into the auditor
+// so the audit path enforces the same policy as the validator (issue #2028).
 func NewAuditorService(
 	logger logging.Logger,
 	publicParametersManager common.PublicParametersManager[*setup.PublicParams],
@@ -48,6 +55,7 @@ func NewAuditorService(
 	queryEngine driver.QueryEngine,
 	tracerProvider trace.TracerProvider,
 	retryConfig common.AuditRetryConfig,
+	limits driver.ResourceLimits,
 ) *AuditorService {
 	return &AuditorService{
 		Logger:                  logger,
@@ -57,6 +65,7 @@ func NewAuditorService(
 		tracer:                  tracerProvider.Tracer("auditor_service", tracing.WithMetricsOpts(tracing.MetricsOpts{})),
 		AuditTokensNumRetries:   retryConfig.NumRetries,
 		AuditTokensRetryDelay:   retryConfig.RetryDelay,
+		Limits:                  limits,
 	}
 }
 
@@ -79,7 +88,7 @@ func (s *AuditorService) AuditorCheck(ctx context.Context, request *driver.Token
 	}
 
 	pp := s.PublicParametersManager.PublicParams()
-	auditor := audit.NewAuditor(s.Logger, s.tracer, s.Deserializer, pp, pp.Precision())
+	auditor := audit.NewAuditor(s.Logger, s.tracer, s.Deserializer, pp, pp.Precision(), s.Limits)
 	s.Logger.DebugfContext(ctx, "Start auditor check")
 	err = auditor.Check(
 		ctx,
