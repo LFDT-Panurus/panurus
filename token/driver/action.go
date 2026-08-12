@@ -41,6 +41,12 @@ type IssueAction interface {
 }
 
 // Input represents a specific token that is being spent in a transaction.
+//
+// It shares a method set with LedgerToken by coincidence, not by design: an Input is a token
+// being spent by an action, a LedgerToken is a token read back from the ledger. They are
+// mocked separately and evolve independently.
+//
+//nolint:iface // distinct concept from LedgerToken, see above
 type Input interface {
 	// GetOwner returns the cryptographic owner of the token.
 	GetOwner() []byte

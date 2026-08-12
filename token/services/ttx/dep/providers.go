@@ -136,7 +136,12 @@ func GetNetworkIdentityProvider(sp token.ServiceProvider) (NetworkIdentityProvid
 
 // TransactionDB defines the subset of function of the transaction db needed by the ttx service.
 //
+// It has the same method set as AuditDB, but the two are distinct dependency-injection
+// bindings resolved by type; collapsing them would make the container unable to tell the
+// owner transaction store from the audit store.
+//
 //go:generate counterfeiter -o mock/transaction_db.go -fake-name TransactionDB . TransactionDB
+//nolint:iface // separate DI binding from AuditDB, see above
 type TransactionDB interface {
 	GetStatus(ctx context.Context, txID string) (token.TxStatus, string, error)
 	GetStatuses(ctx context.Context, txIDs []string) (map[string]token.TxStatus, error)
@@ -171,6 +176,7 @@ func GetTransactionDB(sp token.ServiceProvider, tmsID token.TMSID) (TransactionD
 // AuditDB defines the subset of function of the audit db needed by the ttx service.
 //
 //go:generate counterfeiter -o mock/audit_db.go -fake-name AuditDB . AuditDB
+//nolint:iface // See the note on TransactionDB: separate DI binding, resolved by type.
 type AuditDB interface {
 	GetStatus(ctx context.Context, txID string) (token.TxStatus, string, error)
 	GetStatuses(ctx context.Context, txIDs []string) (map[string]token.TxStatus, error)

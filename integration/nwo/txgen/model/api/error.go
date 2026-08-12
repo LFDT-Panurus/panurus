@@ -69,7 +69,7 @@ func NewBadRequestError(err error, message string) *AppError {
 		Code:    http.StatusBadRequest,
 		Message: message,
 		Cause:   err,
-		//Location: utils.FileWithLineNum(),
+		// Location: utils.FileWithLineNum(),
 
 	}
 }
@@ -83,7 +83,7 @@ func NewNotFoundError(err error, message string) *AppError {
 		Code:    http.StatusNotFound,
 		Message: message,
 		Cause:   err,
-		//Location: utils.FileWithLineNum(),
+		// Location: utils.FileWithLineNum(),
 	}
 }
 
@@ -96,7 +96,7 @@ func NewInternalServerError(err error, message string) *AppError {
 		Code:    http.StatusInternalServerError,
 		Message: message,
 		Cause:   err,
-		//Location: utils.FileWithLineNum(),
+		// Location: utils.FileWithLineNum(),
 	}
 }
 
@@ -109,7 +109,7 @@ func NewDBError(err error, message string) *AppError {
 		Code:    http.StatusInternalServerError,
 		Message: message,
 		Cause:   err,
-		//Location: utils.FileWithLineNum(),
+		// Location: utils.FileWithLineNum(),
 	}
 }
 
@@ -122,7 +122,7 @@ func NewAuthorizationError(err error, message string) *AppError {
 		Code:    http.StatusUnauthorized,
 		Message: message,
 		Cause:   err,
-		//Location: utils.FileWithLineNum(),
+		// Location: utils.FileWithLineNum(),
 	}
 }
 
@@ -135,6 +135,6 @@ func NewForbiddenError(err error, message string) *AppError {
 		Code:    http.StatusForbidden,
 		Message: message,
 		Cause:   err,
-		//Location: utils.FileWithLineNum(),
+		// Location: utils.FileWithLineNum(),
 	}
 }

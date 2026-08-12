@@ -12,7 +12,6 @@ import (
 	"math/big"
 	"time"
 
-	token2 "github.com/LFDT-Panurus/panurus/token"
 	"github.com/LFDT-Panurus/panurus/token/driver"
 	"github.com/LFDT-Panurus/panurus/token/services/utils/types/transaction"
 	"github.com/LFDT-Panurus/panurus/token/token"
@@ -132,6 +131,11 @@ type DeletedToken struct {
 
 // CleanupLeadership represents an acquired leadership session for keystore cleanup operations.
 // It uses the same pattern as RecoveryLeadership for consistency.
+//
+// It is deliberately parallel to RecoveryLeadership rather than shared with it: cleanup and
+// recovery take different advisory locks and must stay free to diverge.
+//
+//nolint:iface // deliberately parallel to RecoveryLeadership, see above
 type CleanupLeadership interface {
 	// Close releases the leadership and any associated resources
 	Close() error
@@ -320,12 +324,6 @@ type TokenNotifier interface {
 	Subscribe(callback func(Operation, TokenRecordReference)) error
 	// UnsubscribeAll unregisters all callbacks.
 	UnsubscribeAll() error
-}
-
-// TokenNotifierDriver is the interface for a token database driver
-type TokenNotifierDriver interface {
-	// Open opens a token database with its listeners
-	Open(cp ConfigProvider, tmsID token2.TMSID) (TokenNotifier, error)
 }
 
 // TokenLockStore enforces that a token be used only by one process

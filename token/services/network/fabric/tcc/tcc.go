@@ -39,10 +39,6 @@ const (
 	PublicParamsPathVarEnv = "PUBLIC_PARAMS_FILE_PATH"
 )
 
-type Agent interface {
-	EmitKey(val float32, event ...string)
-}
-
 type SetupAction struct {
 	SetupParameters []byte
 }

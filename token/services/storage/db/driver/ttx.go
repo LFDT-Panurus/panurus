@@ -115,6 +115,9 @@ type TransactionEndorsementAckStore interface {
 	GetTransactionEndorsementAcks(ctx context.Context, txID string) (map[string][]byte, error)
 }
 
+// RecoveryLeadership represents an acquired leadership session for recovery sweeps.
+//
+//nolint:iface // See the note on CleanupLeadership: deliberately parallel, not shared.
 type RecoveryLeadership interface {
 	Close() error
 }

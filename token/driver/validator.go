@@ -38,13 +38,6 @@ type SignatureProvider interface {
 	Signatures() [][]byte
 }
 
-//go:generate counterfeiter -o mock/validator.go -fake-name Validator . Validator
-//go:generate counterfeiter -o mock/validator_ledger.go -fake-name ValidatorLedger . ValidatorLedger
-
-type ValidatorLedger interface {
-	GetState(id token.ID) ([]byte, error)
-}
-
 // Validator provides stateless methods for validating token transaction requests.
 // It ensures that requests are well-formed and consistent with the cryptographic,
 // authorization, and policy rules defined by the token driver. Ledger existence
