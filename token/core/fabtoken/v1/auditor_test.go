@@ -112,7 +112,7 @@ func newAuditEnv(benchmarkCase *benchmark2.Case) (*auditEnv, error) {
 	queryEngine := &mockQueryEngine{}
 	tracerProvider := noop.NewTracerProvider()
 
-	as := v1.NewAuditorService(logger, publicParamsManager, deserializer, queryEngine, tracerProvider, common.DefaultAuditRetryConfig())
+	as := v1.NewAuditorService(logger, publicParamsManager, deserializer, queryEngine, tracerProvider, common.DefaultAuditRetryConfig(), driver.DefaultResourceLimits())
 
 	// Create test data structures
 	issueAction := &actions.IssueAction{

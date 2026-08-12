@@ -28,7 +28,11 @@ type ValidateTransferAuditFunc = common.ValidateTransferAuditFunc[*setup.PublicP
 type AuditContext = common.AuditContext[*setup.PublicParams, *actions.IssueAction, *actions.TransferAction, driver.Deserializer]
 
 // ActionDeserializer deserializes fabtoken actions.
-type ActionDeserializer struct{}
+type ActionDeserializer struct {
+	// Limits are the configured resource limits stamped onto each action before
+	// deserialization, so the audit path enforces the same policy as the validator.
+	Limits driver.ResourceLimits
+}
 
 // DeserializeActions deserializes issue and transfer actions from a token request.
 func (a *ActionDeserializer) DeserializeActions(tr *driver.TokenRequest) ([]*actions.IssueAction, []*actions.TransferAction, error) {
@@ -36,6 +40,7 @@ func (a *ActionDeserializer) DeserializeActions(tr *driver.TokenRequest) ([]*act
 	issueActions := make([]*actions.IssueAction, len(issues))
 	for i := range issues {
 		ia := &actions.IssueAction{}
+		ia.SetLimits(a.Limits)
 		if err := ia.Deserialize(issues[i]); err != nil {
 			return nil, nil, err
 		}
@@ -46,6 +51,7 @@ func (a *ActionDeserializer) DeserializeActions(tr *driver.TokenRequest) ([]*act
 	transferActions := make([]*actions.TransferAction, len(transfers))
 	for i := range transfers {
 		ta := &actions.TransferAction{}
+		ta.SetLimits(a.Limits)
 		if err := ta.Deserialize(transfers[i]); err != nil {
 			return nil, nil, err
 		}
@@ -59,7 +65,11 @@ func (a *ActionDeserializer) DeserializeActions(tr *driver.TokenRequest) ([]*act
 type Auditor = common.Auditor[*setup.PublicParams, *actions.IssueAction, *actions.TransferAction, driver.Deserializer]
 
 // NewAuditor creates a new Auditor for fabtoken validation.
-func NewAuditor(logger logging.Logger, tracer trace.Tracer, deserializer driver.Deserializer, pp *setup.PublicParams, precision uint64) *Auditor {
+//
+// limits are the configured resource limits; they are threaded into the
+// ActionDeserializer and applied to each action before deserialization so the
+// audit path enforces the same policy as the validator (see validator.go).
+func NewAuditor(logger logging.Logger, tracer trace.Tracer, deserializer driver.Deserializer, pp *setup.PublicParams, precision uint64, limits driver.ResourceLimits) *Auditor {
 	issueValidators := []ValidateIssueAuditFunc{
 		IssueAuditValidate(precision),
 	}
@@ -73,7 +83,7 @@ func NewAuditor(logger logging.Logger, tracer trace.Tracer, deserializer driver.
 		tracer,
 		pp,
 		deserializer,
-		&ActionDeserializer{},
+		&ActionDeserializer{Limits: limits},
 		issueValidators,
 		transferValidators,
 	)
