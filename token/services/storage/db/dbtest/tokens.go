@@ -1398,17 +1398,20 @@ func TGetDeletedTokensPendingSKICleanup(t *testing.T, db TestTokenDB) {
 
 	// Test 5: Time filtering - only tokens older than duration
 	t.Run("TimeFiltering", func(t *testing.T) {
+		const gap = 1 * time.Second
+		const duration = 500 * time.Millisecond
+
 		// Create an old token
 		createAndDeleteToken("old_token", 0, "idemix")
 
-		// Wait a bit to ensure time difference
-		time.Sleep(100 * time.Millisecond)
+		// Wait long enough that old_token is comfortably older than `duration`.
+		time.Sleep(gap)
 
 		// Create a recent token
 		createAndDeleteToken("recent_token", 0, "idemix")
 
 		// Query with duration that should exclude the recent token
-		tokens, err := db.GetDeletedTokensPendingSKICleanup(ctx, 50*time.Millisecond, 100)
+		tokens, err := db.GetDeletedTokensPendingSKICleanup(ctx, duration, 100)
 		require.NoError(t, err, "query should not error")
 
 		// Verify old token is in results
