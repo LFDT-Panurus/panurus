@@ -14,7 +14,9 @@ import (
 	"strings"
 	"text/template"
 
+	"github.com/LFDT-Panurus/panurus/token/services/network/fabric/tcc/ccpackage"
 	"github.com/hyperledger-labs/fabric-smart-client/integration/nwo/fabric/packager"
+	"github.com/hyperledger-labs/fabric-smart-client/integration/nwo/fabric/packager/replacer"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 )
 
@@ -33,21 +35,28 @@ func GeneratePackage(raw []byte, outputDir string) error {
 	}
 
 	err = packager.New().PackageChaincode(
-		"github.com/LFDT-Panurus/panurus/token/services/network/fabric/tcc/main",
+		ccpackage.ChaincodePath,
 		"golang",
 		"tcc",
 		filepath.Join(outputDir, "tcc.tar"),
-		func(s string, s2 string) (string, []byte) {
-			if strings.HasSuffix(s, "github.com/LFDT-Panurus/panurus/token/tcc/params.go") {
-				return "", paramsFile.Bytes()
-			}
-
-			return "", nil
-		},
+		paramsReplacer(paramsFile.Bytes()),
 	)
 	if err != nil {
 		return errors.Wrap(err, "failed creating chaincode package")
 	}
 
 	return nil
+}
+
+// paramsReplacer returns the replacer that swaps the public parameters file of
+// the token chaincode with params while it is packaged. The packager passes the
+// absolute path of each file it packages.
+func paramsReplacer(params []byte) replacer.Func {
+	return func(filePath string, fileName string) (string, []byte) {
+		if strings.HasSuffix(filePath, ccpackage.ParamsFileSuffix) {
+			return "", params
+		}
+
+		return "", nil
+	}
 }

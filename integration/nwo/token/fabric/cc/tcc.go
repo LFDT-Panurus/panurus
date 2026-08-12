@@ -21,6 +21,7 @@ import (
 	"github.com/LFDT-Panurus/panurus/integration/nwo/token/fabric"
 	topology3 "github.com/LFDT-Panurus/panurus/integration/nwo/token/topology"
 	"github.com/LFDT-Panurus/panurus/token/services/logging"
+	"github.com/LFDT-Panurus/panurus/token/services/network/fabric/tcc/ccpackage"
 	"github.com/hyperledger-labs/fabric-smart-client/integration/nwo/fabric/packager"
 	"github.com/hyperledger-labs/fabric-smart-client/integration/nwo/fabric/topology"
 	"github.com/onsi/gomega"
@@ -29,8 +30,10 @@ import (
 const (
 	// DefaultTokenChaincode is the default path to the token chaincode.
 	// #nosec G101 no passwords here
-	DefaultTokenChaincode                    = "github.com/LFDT-Panurus/panurus/token/services/network/fabric/tcc/main"
-	DefaultTokenChaincodeParamsReplaceSuffix = "/token/services/network/fabric/tcc/params.go"
+	DefaultTokenChaincode = ccpackage.ChaincodePath
+	// DefaultTokenChaincodeParamsReplaceSuffix is the path suffix of the file
+	// holding the public parameters of the token chaincode.
+	DefaultTokenChaincodeParamsReplaceSuffix = ccpackage.ParamsFileSuffix
 )
 
 var logger = logging.MustGetLogger()
