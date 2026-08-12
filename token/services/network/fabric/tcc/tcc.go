@@ -64,7 +64,11 @@ type PublicParameters interface {
 }
 
 type TokenChaincode struct {
-	initOnce         sync.Once
+	// initMutex serializes lazy initialization of Validator and PublicParameters.
+	initMutex sync.Mutex
+	// initialized reports whether a previous initialization attempt completed successfully.
+	// A failed attempt leaves it false so that a later call can retry.
+	initialized      bool
 	Validator        Validator
 	PublicParameters PublicParameters
 
@@ -169,16 +173,20 @@ func (cc *TokenChaincode) Params(builtInParams string) ([]byte, error) {
 	return ppRaw, nil
 }
 
+// GetValidator returns the validator, initializing the chaincode on first use.
+// Initialization runs at most once successfully; if an attempt fails, the error is returned to
+// the caller and a later call retries, so a transient failure (for example a momentarily
+// unreadable public parameters file) does not permanently disable the chaincode. In particular,
+// GetValidator never reports success with a nil validator.
 func (cc *TokenChaincode) GetValidator(builtInParams string) (Validator, error) {
-	var firstInitError error
-	cc.initOnce.Do(func() {
-		if err := cc.Initialize(builtInParams); err != nil {
-			firstInitError = err
-		}
-	})
+	cc.initMutex.Lock()
+	defer cc.initMutex.Unlock()
 
-	if firstInitError != nil {
-		return nil, firstInitError
+	if !cc.initialized {
+		if err := cc.Initialize(builtInParams); err != nil {
+			return nil, errors.WithMessage(err, "failed initializing token chaincode")
+		}
+		cc.initialized = true
 	}
 
 	return cc.Validator, nil
