@@ -14,6 +14,7 @@ import (
 	driver2 "github.com/LFDT-Panurus/panurus/token/services/identity/driver"
 	"github.com/LFDT-Panurus/panurus/token/services/identity/idemix"
 	"github.com/LFDT-Panurus/panurus/token/services/identity/idemixnym/nym"
+	"github.com/LFDT-Panurus/panurus/token/services/utils"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 )
 
@@ -103,7 +104,7 @@ type AuditInfoDeserializer struct{}
 func (c *AuditInfoDeserializer) DeserializeAuditInfo(ctx context.Context, identity driver.Identity, raw []byte) (driver2.AuditInfo, error) {
 	ai, err := nym.DeserializeAuditInfo(raw)
 	if err != nil {
-		return nil, errors.Wrapf(err, "failed deserializing audit info [%s]", string(raw))
+		return nil, errors.Wrapf(err, "failed deserializing audit info [%s]", utils.Hashable(raw))
 	}
 
 	return ai, nil

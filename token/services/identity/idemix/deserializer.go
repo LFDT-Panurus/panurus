@@ -181,7 +181,7 @@ type AuditInfoDeserializer struct{}
 func (c *AuditInfoDeserializer) DeserializeAuditInfo(ctx context.Context, identity driver.Identity, raw []byte) (driver2.AuditInfo, error) {
 	ai, err := crypto2.DeserializeAuditInfo(raw)
 	if err != nil {
-		return nil, errors.Wrapf(err, "failed deserializing audit info [%s]", string(raw))
+		return nil, errors.Wrapf(err, "failed deserializing audit info [%s]", utils.Hashable(raw))
 	}
 
 	return ai, nil

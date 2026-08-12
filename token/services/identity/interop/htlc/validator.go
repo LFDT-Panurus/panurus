@@ -13,6 +13,7 @@ import (
 
 	"github.com/LFDT-Panurus/panurus/token/services/identity"
 	"github.com/LFDT-Panurus/panurus/token/services/interop/htlc"
+	"github.com/LFDT-Panurus/panurus/token/services/utils"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 )
 
@@ -87,7 +88,7 @@ func MetadataClaimKeyCheck(action Action, script *htlc.Script, op OperationType,
 	// Unmarshal signature to ClaimSignature
 	claim := &htlc.ClaimSignature{}
 	if err := json.Unmarshal(sig, claim); err != nil {
-		return "", errors.Wrapf(err, "failed unmarshalling claim signature [%s]", string(sig))
+		return "", errors.Wrapf(err, "failed unmarshalling claim signature [%s]", utils.Hashable(sig))
 	}
 	// Check that it is well-formed
 	if len(claim.Preimage) == 0 || len(claim.RecipientSignature) == 0 {

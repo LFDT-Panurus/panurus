@@ -11,6 +11,7 @@ import (
 
 	bccsp "github.com/IBM/idemix/bccsp/types"
 	"github.com/LFDT-Panurus/panurus/token/services/identity/idemix/schema"
+	"github.com/LFDT-Panurus/panurus/token/services/utils"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/proto"
 )
@@ -112,7 +113,7 @@ func (d *Deserializer) DeserializeAgainstNymEID(identity []byte, nymEID []byte) 
 func (d *Deserializer) DeserializeAuditInfo(_ context.Context, raw []byte) (*AuditInfo, error) {
 	ai, err := DeserializeAuditInfo(raw)
 	if err != nil {
-		return nil, errors.Wrapf(err, "failed deserializing audit info [%s]", string(raw))
+		return nil, errors.Wrapf(err, "failed deserializing audit info [%s]", utils.Hashable(raw))
 	}
 	ai.Csp = d.Csp
 	ai.IssuerPublicKey = d.IssuerPublicKey
