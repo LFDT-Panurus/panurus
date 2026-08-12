@@ -104,6 +104,17 @@ func (cc *TokenChaincode) Init(stub shim.ChaincodeStubInterface) *pb.Response {
 }
 ```
 
+### Validator Initialization
+
+Writing the public parameters to the ledger is only part of the setup: to answer `invoke` and `areTokensSpent`, the chaincode also needs a validator and a public-parameters manager built from those parameters. These are created lazily, on the first request that needs them, by [`tcc.TokenChaincode.GetValidator()`](../../token/services/network/fabric/tcc/tcc.go), which resolves the parameters with the same precedence as `Init()` and then calls the `TokenServicesFactory` configured by the chaincode's [`main`](../../token/services/network/fabric/tcc/main/main.go).
+
+Initialization runs at most once *successfully*:
+
+- On success, the validator and public-parameters manager are cached for the lifetime of the chaincode container, and the factory is not invoked again.
+- On failure, the error is returned to the caller and reported as a failed invocation; nothing is cached, so the next request retries initialization. A transient cause — for example a momentarily unreadable `PUBLIC_PARAMS_FILE_PATH` — therefore does not permanently disable the chaincode.
+
+`GetValidator()` never reports success with a nil validator, so a request that reaches validation is always served by an initialized chaincode.
+
 ## Endorsement Service
 
 The Fabric implementation supports chaincode-based endorsement through the [`ChaincodeEndorsementService`](../../token/services/network/fabric/endorsement/chaincode.go).
