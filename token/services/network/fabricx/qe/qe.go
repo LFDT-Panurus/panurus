@@ -158,9 +158,16 @@ func (e *Executor) QuerySpentTokens(_ context.Context, namespace driver.Namespac
 	}
 
 	// This operation depends on the driver.
-	// Let's assume for now that the driver is non-graph hiding
+	// Let's assume for now that the driver is non-graph hiding.
+	//
+	// The returned slice is positionally aligned with ids: spentFlags[i]
+	// corresponds to ids[i], so its length always equals len(ids). Callers
+	// (e.g. tokens.Service.deleteTokens, htlc.OwnerWallet.deleteTokens) index
+	// the result by token position, so a shorter slice would panic. A nil id
+	// carries no ledger key and is reported as not spent.
 	keys := make([]driver.PKey, 0, len(ids))
-	for _, id := range ids {
+	keyIndex := make([]int, 0, len(ids))
+	for i, id := range ids {
 		if id == nil {
 			continue
 		}
@@ -169,9 +176,12 @@ func (e *Executor) QuerySpentTokens(_ context.Context, namespace driver.Namespac
 			return nil, errors.Wrapf(err, "error creating output id key [%s:%d]", id.TxId, id.Index)
 		}
 		keys = append(keys, outputID)
+		keyIndex = append(keyIndex, i)
 	}
+
+	spentFlags := make([]bool, len(ids))
 	if len(keys) == 0 {
-		return nil, nil
+		return spentFlags, nil
 	}
 
 	qs, err := e.qsProvider.Get(e.network, e.channel)
@@ -187,10 +197,9 @@ func (e *Executor) QuerySpentTokens(_ context.Context, namespace driver.Namespac
 
 	// map[driver.Namespace]map[driver.PKey]driver.VaultValue
 	ns := res[namespace]
-	spentFlags := make([]bool, len(keys))
-	for i, key := range keys {
+	for j, key := range keys {
 		value := ns[key]
-		spentFlags[i] = len(value.Raw) == 0
+		spentFlags[keyIndex[j]] = len(value.Raw) == 0
 	}
 
 	return spentFlags, nil
