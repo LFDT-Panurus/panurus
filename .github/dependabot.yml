@@ -1,0 +1,62 @@
+# Dependabot configuration
+# =============================================================================
+# WHY THIS FILE EXISTS
+#
+# Every external GitHub Action in .github/workflows/ is pinned to a full-length
+# commit SHA (e.g. actions/checkout@11d5960...) rather than a mutable tag like
+# @v4. SHA pinning is tamper-evident: the upstream owner cannot silently change
+# the code our CI executes by re-pointing a tag. See the OpenSSF Scorecard
+# "Pinned-Dependencies" check for the rationale.
+#
+# The trade-off is that a frozen SHA never picks up upstream fixes on its own.
+# This config closes that gap: Dependabot watches the pinned SHAs and, when a
+# newer release exists, opens a pull request that bumps BOTH the SHA and the
+# trailing "# vX.Y.Z" version comment.
+#
+# HOW UPDATES ARRIVE
+#
+# Nothing is auto-merged. Each update lands as an explicit, reviewable PR:
+#   actions/checkout@<old-sha> # v4.4.0  ->  actions/checkout@<new-sha> # v4.5.0
+# A human reviews the diff and the upstream release notes, then merges. This
+# preserves the security property of pinning (no silent tag-swaps) while still
+# keeping the pins current. The "# vX.Y.Z" comments are what let Dependabot
+# report the precise version each PR moves to, so keep them on every pin.
+#
+# CAVEAT: DCO SIGN-OFF
+#
+# This repo requires DCO sign-off ("Signed-off-by") on every commit, but
+# Dependabot's commits are NOT signed off by default, so its PRs may fail the
+# DCO check. Resolve per PR (the DCO app lets a maintainer mark it off) or
+# configure a bot exception in the DCO app settings. This does not affect the
+# pins themselves — only the merge step.
+#
+# EXTENDING
+#
+# This config only covers the "github-actions" ecosystem. Go module updates are
+# intentionally out of scope: the fabric-smart-client dependency is bumped by
+# the Nightly FSC Update workflow, and adding a "gomod" ecosystem here would
+# open competing PRs against the same go.mod files. Add one only if that
+# workflow is retired.
+# =============================================================================
+
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    # "/" makes Dependabot scan every workflow under .github/workflows/ as well
+    # as any composite action.yml in the repo.
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    # Collapse routine bumps into a single PR to keep review noise low; a major
+    # version bump (which may carry breaking changes) still gets its own PR.
+    groups:
+      github-actions:
+        update-types:
+          - "minor"
+          - "patch"
+    open-pull-requests-limit: 5
+    # Match the repo's conventional-commit style.
+    commit-message:
+      prefix: "ci"
+    labels:
+      - "dependencies"
