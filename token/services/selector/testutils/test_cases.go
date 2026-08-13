@@ -9,6 +9,7 @@ package testutils
 import (
 	"context"
 	"fmt"
+	"math/big"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -173,7 +174,7 @@ func (m *enhancedManager) UpdateTokens(deleted []*token.ID, added []token.Unspen
 				LedgerMetadata: []byte{},
 				Quantity:       t.Quantity,
 				Type:           t.Type,
-				Amount:         0,
+				Amount:         big.NewInt(0),
 				Owner:          true,
 				Auditor:        false,
 				Issuer:         false,

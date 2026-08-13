@@ -49,8 +49,9 @@ type TokenRecord struct {
 	Quantity string
 	// Type is the type of token
 	Type token.Type
-	// Amount is the Quantity converted to decimal
-	Amount uint64
+	// Amount is the Quantity converted to decimal as a big integer to support arbitrary
+	// precision. It must be non-nil and match Quantity.
+	Amount *big.Int
 	// Owner is used to mark the token as owned by this node
 	Owner bool
 	// Auditor is used to mark this token as audited by this node
@@ -371,4 +372,13 @@ var (
 	// ErrTokenAlreadyLocked is returned by TokenLockStore.Lock when the token is
 	// already locked by another transaction (primary-key conflict on the lock row).
 	ErrTokenAlreadyLocked = errors.New("token already locked")
+	// ErrAmountMissing is returned when a record carries no amount. The amount column is NOT NULL.
+	ErrAmountMissing = errors.New("no amount specified")
+	// ErrAmountOutOfRange is returned when an amount is too wide for the amount column to hold.
+	// Storing it would leave the amount disagreeing with the authoritative quantity.
+	ErrAmountOutOfRange = errors.New("amount exceeds maximum supported size")
+	// ErrAmountNegative is returned when a token record carries a negative amount. Token
+	// quantities are unsigned, so a negative amount means the record was built outside
+	// token.ToQuantity. Movement and transaction amounts are signed and are not affected.
+	ErrAmountNegative = errors.New("amount is negative")
 )

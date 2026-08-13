@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	errors2 "errors"
 	"fmt"
+	"math/big"
 	"strings"
 	"time"
 
@@ -36,6 +37,39 @@ import (
 // NUMERIC(78, 0) stores up to 10^78 values, fitting in ~259 bits.
 // 255 is used as a conservative safe upper bound.
 const maxAmountBits = 255
+
+// validateAmount reports whether amount can be stored in an amount column without loss.
+// Callers must run it before inserting, so that a value the column cannot hold surfaces as
+// an error instead of a row whose amount disagrees with its quantity.
+//
+// The check is on magnitude only: movement and transaction amounts are signed by design, a
+// negative one meaning tokens left the wallet (see dbdriver.MovementRecord.Amount). Callers
+// storing an amount that mirrors an unsigned token quantity must use validateTokenAmount.
+func validateAmount(amount *big.Int) error {
+	if amount == nil {
+		return dbdriver.ErrAmountMissing
+	}
+	if amount.BitLen() > maxAmountBits {
+		return errors.WithMessagef(dbdriver.ErrAmountOutOfRange, "amount [%s] does not fit in %d bits", amount, maxAmountBits)
+	}
+
+	return nil
+}
+
+// validateTokenAmount is validateAmount for an amount that mirrors a token's quantity, which
+// is unsigned. big.Int.BitLen is defined on the absolute value, so validateAmount alone would
+// accept a negative amount of small magnitude; rejecting the sign here keeps the invariant
+// enforced at the write instead of relying on every caller going through token.ToQuantity.
+func validateTokenAmount(amount *big.Int) error {
+	if err := validateAmount(amount); err != nil {
+		return err
+	}
+	if amount.Sign() < 0 {
+		return errors.WithMessagef(dbdriver.ErrAmountNegative, "amount [%s] is negative", amount)
+	}
+
+	return nil
+}
 
 type transactionTables struct {
 	Movements             string
@@ -637,8 +671,8 @@ func (w *TransactionStoreTransaction) AddTransaction(ctx context.Context, rs ...
 		if err != nil {
 			return errors.Wrapf(err, "error generating uuid")
 		}
-		if r.Amount.BitLen() > maxAmountBits {
-			return errors.Errorf("amount [%s] exceeds maximum supported size of %d bits", r.Amount, maxAmountBits)
+		if err := validateAmount(r.Amount); err != nil {
+			return errors.WithMessagef(err, "invalid amount for record [%s]", r.TxID)
 		}
 		rows[i] = common3.Tuple{id, r.TxID, int(r.ActionType), r.SenderEID, r.RecipientEID, r.TokenType, r.Amount.String(), r.Timestamp.UTC()}
 	}
@@ -703,8 +737,8 @@ func (w *TransactionStoreTransaction) AddMovement(ctx context.Context, rs ...dbd
 		if err != nil {
 			return errors.Wrapf(err, "error generating uuid")
 		}
-		if r.Amount.BitLen() > maxAmountBits {
-			return errors.Errorf("amount [%s] exceeds maximum supported size of %d bits", r.Amount, maxAmountBits)
+		if err := validateAmount(r.Amount); err != nil {
+			return errors.WithMessagef(err, "invalid amount for record [%s]", r.TxID)
 		}
 		rows[i] = common3.Tuple{id, r.TxID, r.EnrollmentID, r.TokenType, r.Amount.String(), now}
 	}

@@ -7,6 +7,7 @@ SPDX-License-Identifier: Apache-2.0
 package dbtest
 
 import (
+	"math/big"
 	"testing"
 	"time"
 
@@ -89,7 +90,7 @@ func TestFully(t *testing.T, tokenDB driver3.TokenStore, tokenLockDB driver3.Tok
 		LedgerMetadata: []byte{}, // Empty metadata
 		Quantity:       "0x64",   // 100 in hex
 		Type:           "USD",
-		Amount:         100,
+		Amount:         big.NewInt(100),
 		Owner:          true,
 	}
 	err = tokenTx.StoreToken(ctx, tokenRecord, []string{"owner1"})
@@ -252,7 +253,7 @@ func storeTokens(t *testing.T, tokenDB driver3.TokenStore, txID string, indices 
 			LedgerMetadata: []byte{},
 			Quantity:       "0x64",
 			Type:           "USD",
-			Amount:         100,
+			Amount:         big.NewInt(0x64),
 			Owner:          true,
 		}, []string{"owner1"}))
 	}
