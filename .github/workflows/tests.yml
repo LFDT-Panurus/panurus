@@ -15,6 +15,9 @@ on:
 env:
   GOFLAGS: -mod=mod
 
+permissions:
+  contents: read
+
 jobs:
 
   checks:
