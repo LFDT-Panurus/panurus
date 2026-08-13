@@ -56,6 +56,29 @@ which makes clock synchronisation a deployment requirement and sets a lower boun
 deadlines. See
 [HTLC Deadlines and Clock Synchronisation](../security/htlc_deadline_clock_assumptions.md).
 
+### HTLC Validation Rules
+Spending an HTLC-locked token is validated by each token driver's transfer validator
+(`TransferHTLCValidate` in `token/core/fabtoken/v1/validator` and
+`token/core/zkatdlog/nogh/v1/validator`). Both drivers enforce the same rules, so an action
+that is valid under one driver is valid under the other:
+
+*   **1-to-1 transfer only**: if *any* input of a transfer action is owned by an HTLC script,
+    the action must have **exactly one input and exactly one output**. An HTLC-owned input may
+    not be bundled with other inputs, and it may not fan out to several outputs. This matches
+    the `Claim` and `Reclaim` helpers in `token/services/interop/htlc`, which each spend a
+    single unspent token.
+*   **Per-input checks**: the type, quantity, and owner script of the input being spent are
+    checked against the single output; every input is validated on its own terms, never against
+    a fixed index.
+*   **No redeem**: the output corresponding to an HTLC spending must not be a redeem
+    (nil owner).
+*   **Deadline**: on a claim the script's deadline must not yet have passed; after the deadline
+    only the sender's reclaim branch is accepted. A newly created HTLC-locked output must carry
+    a deadline that is still in the future.
+*   **Metadata**: a claim must publish the preimage under the script's claim key; a lock must
+    publish the corresponding lock key. Both are counted so that a single action cannot reuse
+    one metadata entry for several HTLC operations.
+
 ### Cross-Network Finality
 The Interop Service coordinates with the **Network Service** across multiple DLT instances. It monitors the finality of "Lock" transactions on one network before initiating corresponding "Lock" transactions on another, ensuring that the atomic swap protocol can proceed safely.
 

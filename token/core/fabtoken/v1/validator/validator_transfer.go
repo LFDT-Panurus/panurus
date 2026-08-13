@@ -127,8 +127,13 @@ func TransferBalanceValidate(c context.Context, ctx *Context) error {
 			return errors.Errorf("input type %s does not match type %s", input.Type, typ)
 		}
 	}
-	for _, output := range ctx.TransferAction.GetOutputs() {
-		out := output.(*actions.Output)
+	for i, output := range ctx.TransferAction.GetOutputs() {
+		// A nil *actions.Output boxed in the driver.Output interface satisfies the type
+		// assertion, so the nil pointer must be rejected explicitly to avoid a panic.
+		out, ok := output.(*actions.Output)
+		if !ok || out == nil {
+			return errors.Errorf("invalid output at index [%d]", i)
+		}
 		q, err := token.ToQuantity(out.Quantity, ctx.PP.QuantityPrecision)
 		if err != nil {
 			return errors.Wrapf(err, "failed parsing quantity [%s]", out.Quantity)
@@ -151,11 +156,15 @@ func TransferBalanceValidate(c context.Context, ctx *Context) error {
 }
 
 // TransferHTLCValidate checks the validity of the HTLC scripts, if any.
-// A nil input token or a signature missing at the index of an HTLC-owned input
-// yields a validation error rather than a panic, regardless of the order in which
+// An HTLC-owned input may only be spent by a 1-to-1 transfer of ownership: exactly one
+// input and exactly one output. Every check below is performed against the input being
+// iterated (`in`), never against a fixed index, so no input can escape validation.
+// A nil input token, a nil output or a signature missing at the index of an HTLC-owned
+// input yields a validation error rather than a panic, regardless of the order in which
 // the validation steps of the pipeline are executed.
 func TransferHTLCValidate(c context.Context, ctx *Context) error {
 	now := time.Now()
+	outputs := ctx.TransferAction.GetOutputs()
 
 	for i, in := range ctx.InputTokens {
 		// guard: a nil token in the input slice must return an error, not panic
@@ -168,26 +177,35 @@ func TransferHTLCValidate(c context.Context, ctx *Context) error {
 		}
 		// is it owned by an htlc script?
 		if owner.Type == htlc.ScriptType {
-			// Then, the first output must be compatible with this input.
-			if len(ctx.TransferAction.GetOutputs()) != 1 {
+			// An htlc script must be a 1-to-1 transfer of ownership. The input count is
+			// restricted as well, mirroring zkatdlog's ErrInvalidHTLCAction check:
+			// without it, the outputs of a multi-input action could not be matched
+			// one-to-one against their inputs.
+			// Requiring both counts to be exactly 1 also bounds every indexed access
+			// below: outputs[0] and ctx.Signatures[i] (i == 0 here).
+			if len(ctx.InputTokens) != 1 || len(outputs) != 1 {
 				return errors.New("invalid transfer action: an htlc script only transfers the ownership of a token")
 			}
 
-			// check type and quantity
-			output := ctx.TransferAction.GetOutputs()[0].(*actions.Output)
-			tok := output
-			if ctx.InputTokens[0].Type != tok.Type {
+			// check type and quantity.
+			// A nil *actions.Output boxed in the driver.Output interface satisfies the type
+			// assertion, so the nil pointer must be rejected explicitly to avoid a panic.
+			tok, ok := outputs[0].(*actions.Output)
+			if !ok || tok == nil {
+				return errors.New("invalid transfer action: output has unexpected type")
+			}
+			if in.Type != tok.Type {
 				return errors.New("invalid transfer action: type of input does not match type of output")
 			}
-			if ctx.InputTokens[0].Quantity != tok.Quantity {
+			if in.Quantity != tok.Quantity {
 				return errors.New("invalid transfer action: quantity of input does not match quantity of output")
 			}
-			if output.IsRedeem() {
+			if tok.IsRedeem() {
 				return errors.New("invalid transfer action: the output corresponding to an htlc spending should not be a redeem")
 			}
 
 			// check owner field
-			script, op, err := htlc2.VerifyOwner(ctx.InputTokens[0].GetOwner(), tok.Owner, now)
+			script, op, err := htlc2.VerifyOwner(in.GetOwner(), tok.Owner, now)
 			if err != nil {
 				return errors.Wrap(err, "failed to verify transfer from htlc script")
 			}
@@ -209,10 +227,11 @@ func TransferHTLCValidate(c context.Context, ctx *Context) error {
 		}
 	}
 
-	for _, o := range ctx.TransferAction.GetOutputs() {
+	for i, o := range outputs {
+		// As above: guard the nil pointer as well as the failed assertion.
 		out, ok := o.(*actions.Output)
-		if !ok {
-			return errors.New("invalid output")
+		if !ok || out == nil {
+			return errors.Errorf("invalid output at index [%d]", i)
 		}
 		if out.IsRedeem() {
 			continue
