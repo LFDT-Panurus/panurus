@@ -29,6 +29,45 @@ func TransferActionValidate(c context.Context, ctx *Context) error {
 	return ctx.TransferAction.Validate()
 }
 
+// VerifierCache memoizes owner signature verifiers for the lifetime of a single
+// transfer validation. deserializing an owner verifier is expensive so,
+//
+// # VerifierCache deserializes each distinct owner at most once, so the cost
+//
+// scales with the number of distinct owners rather than with the number of inputs.
+//
+// A VerifierCache is discarded when validation invocation ends,
+// so it holds no cross-transaction state
+type VerifierCache struct {
+	deserializer driver.Deserializer
+	cache        map[string]driver.Verifier
+}
+
+// NewVerifierCache returns an empty VerifierCache that deserializes owner
+// verifiers through the given deserializer.
+func NewVerifierCache(deserializer driver.Deserializer) *VerifierCache {
+	return &VerifierCache{
+		deserializer: deserializer,
+		cache:        make(map[string]driver.Verifier),
+	}
+}
+
+// Get returns the signature verifier for owner, deserializing it on first
+// request only.
+func (c *VerifierCache) Get(ctx context.Context, owner driver.Identity) (driver.Verifier, error) {
+	key := string(owner)
+	if verifier, ok := c.cache[key]; ok {
+		return verifier, nil
+	}
+	verifier, err := c.deserializer.GetOwnerVerifier(ctx, owner)
+	if err != nil {
+		return nil, err
+	}
+	c.cache[key] = verifier
+
+	return verifier, nil
+}
+
 // TransferSignatureValidate validates the signatures of the transfer action.
 // It assumes TransferActionValidate has been called first; however it also
 // performs its own nil guards so that it cannot panic even when called in
@@ -49,6 +88,8 @@ func TransferSignatureValidate(c context.Context, ctx *Context) error {
 
 	var isRedeem bool
 	var inputToken []*token.Token
+
+	verifierCache := NewVerifierCache(ctx.Deserializer)
 	for i, in := range ctx.TransferAction.Inputs {
 		// Guard against a nil ActionInput or a nil Token inside it so that
 		// this function cannot panic even if TransferActionValidate was skipped.
@@ -61,7 +102,7 @@ func TransferSignatureValidate(c context.Context, ctx *Context) error {
 		// check sender signature
 		uniqueID := driver.Identity(tok.Owner).UniqueID()
 		ctx.Logger.Debugf("check sender [%d][%s]", i, uniqueID)
-		verifier, err := ctx.Deserializer.GetOwnerVerifier(c, tok.Owner)
+		verifier, err := verifierCache.Get(c, tok.Owner)
 		if err != nil {
 			return errors.Wrapf(err, "failed deserializing owner [%d][%s]", i, uniqueID)
 		}

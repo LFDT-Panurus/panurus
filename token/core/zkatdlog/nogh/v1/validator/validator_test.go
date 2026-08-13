@@ -14,12 +14,15 @@ import (
 	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/benchmark"
 	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/crypto/rp"
 	testing2 "github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/testutils"
+	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/validator"
 	"github.com/LFDT-Panurus/panurus/token/driver"
+	"github.com/LFDT-Panurus/panurus/token/driver/mock"
 	benchmark2 "github.com/LFDT-Panurus/panurus/token/services/benchmark"
 	"github.com/LFDT-Panurus/panurus/token/services/identity"
 	"github.com/LFDT-Panurus/panurus/token/services/identity/idemix"
 	"github.com/LFDT-Panurus/panurus/token/services/identity/idemixnym"
 	"github.com/hyperledger-labs/fabric-smart-client/node/start/profile"
+	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	"github.com/stretchr/testify/require"
 )
 
@@ -104,6 +107,83 @@ func TestValidator(t *testing.T) {
 			})
 		}
 	}
+}
+
+// TestVerifierCache verifies that VerifierCache deserializes each distinct owner
+// at most once (issue #2074): repeated lookups of the same owner reuse the
+// cached verifier, distinct owners are deserialized independently, and a
+// deserialization error is propagated without being cached so a later lookup
+// can retry.
+func TestVerifierCache(t *testing.T) {
+	ctx := context.Background()
+	ownerA := driver.Identity("owner-A")
+	ownerB := driver.Identity("owner-B")
+
+	t.Run("same owner is deserialized only once", func(t *testing.T) {
+		des := &mock.Deserializer{}
+		verifier := &mock.Verifier{}
+		des.GetOwnerVerifierReturns(verifier, nil)
+
+		cache := validator.NewVerifierCache(des)
+
+		first, err := cache.Get(ctx, ownerA)
+		require.NoError(t, err)
+		require.Same(t, verifier, first)
+
+		second, err := cache.Get(ctx, ownerA)
+		require.NoError(t, err)
+		require.Same(t, verifier, second)
+
+		require.Equal(t, 1, des.GetOwnerVerifierCallCount(), "owner should be deserialized exactly once")
+	})
+
+	t.Run("distinct owners are deserialized separately", func(t *testing.T) {
+		des := &mock.Deserializer{}
+		verifiers := map[string]driver.Verifier{
+			string(ownerA): &mock.Verifier{},
+			string(ownerB): &mock.Verifier{},
+		}
+		des.GetOwnerVerifierStub = func(_ context.Context, id driver.Identity) (driver.Verifier, error) {
+			return verifiers[string(id)], nil
+		}
+
+		cache := validator.NewVerifierCache(des)
+
+		gotA, err := cache.Get(ctx, ownerA)
+		require.NoError(t, err)
+		require.Same(t, verifiers[string(ownerA)], gotA)
+
+		gotB, err := cache.Get(ctx, ownerB)
+		require.NoError(t, err)
+		require.Same(t, verifiers[string(ownerB)], gotB)
+
+		// re-fetch the first owner: it is served from the cache, not re-deserialized.
+		gotAAgain, err := cache.Get(ctx, ownerA)
+		require.NoError(t, err)
+		require.Same(t, gotA, gotAAgain)
+
+		require.Equal(t, 2, des.GetOwnerVerifierCallCount(), "each distinct owner should be deserialized once")
+	})
+
+	t.Run("deserialization error propagates and is not cached", func(t *testing.T) {
+		des := &mock.Deserializer{}
+		boom := errors.New("boom")
+		verifier := &mock.Verifier{}
+		des.GetOwnerVerifierReturnsOnCall(0, nil, boom)
+		des.GetOwnerVerifierReturnsOnCall(1, verifier, nil)
+
+		cache := validator.NewVerifierCache(des)
+
+		_, err := cache.Get(ctx, ownerA)
+		require.ErrorIs(t, err, boom)
+
+		// The failed lookup was not cached, so a subsequent call retries and succeeds.
+		got, err := cache.Get(ctx, ownerA)
+		require.NoError(t, err)
+		require.Same(t, verifier, got)
+
+		require.Equal(t, 2, des.GetOwnerVerifierCallCount(), "a failed lookup must not be cached")
+	})
 }
 
 func BenchmarkValidatorTransfer(b *testing.B) {
