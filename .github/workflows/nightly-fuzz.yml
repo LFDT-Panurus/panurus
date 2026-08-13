@@ -75,6 +75,9 @@ jobs:
           - name: fabtoken-action-limits
             pkg: ./token/core/fabtoken/v1/validator
             func: FuzzActionResourceLimits
+          - name: fabtoken-transfer-htlc-validate
+            pkg: ./token/core/fabtoken/v1/validator
+            func: FuzzTransferHTLCValidateNoPanic
           - name: zkatdlog-issue-bulletproof-verifier
             pkg: ./token/core/zkatdlog/nogh/v1/issue
             func: FuzzBulletProofVerifierNoPanic

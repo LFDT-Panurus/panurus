@@ -677,6 +677,24 @@ func TestTransferBalanceValidate(t *testing.T) {
 		assert.Contains(t, err.Error(), "does not match output sum")
 	})
 
+	// A nil output must be a validation error, not a nil pointer dereference: the
+	// `.(*actions.Output)` assertion succeeds on a nil pointer boxed in the interface.
+	t.Run("NilOutput", func(t *testing.T) {
+		ta := &actions.TransferAction{
+			Outputs: []*actions.Output{nil},
+		}
+		c := &validator.Context{
+			TransferAction: ta,
+			PP:             pp,
+			InputTokens:    []*actions.Output{{Quantity: "100", Type: "ABC"}},
+		}
+		require.NotPanics(t, func() {
+			err := validator.TransferBalanceValidate(ctx, c)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "invalid output at index [0]")
+		})
+	})
+
 	t.Run("Success", func(t *testing.T) {
 		ta := &actions.TransferAction{
 			Outputs: []*actions.Output{{Quantity: "100", Type: "ABC"}, {Quantity: "50", Type: "ABC"}},
@@ -998,6 +1016,159 @@ func TestTransferHTLCValidate(t *testing.T) {
 		assert.Contains(t, err.Error(), "expiration date has already passed")
 	})
 
+	// Regression test for #2025: TransferHTLCValidate used to hardcode index 0 for every
+	// check inside the HTLC branch, so for a multi-input HTLC transfer only InputTokens[0]
+	// was ever validated. This is the exact reproduction from the issue: two HTLC-owned
+	// inputs where input[0] is a valid Reclaim-eligible match for the sole output and
+	// input[1] is arbitrary (wrong type, wrong quantity, unrelated script). It must be
+	// rejected, not accepted with a nil error.
+	t.Run("InputIsHTLC_TwoHTLCInputs_Rejected", func(t *testing.T) {
+		sender, _ := identity.WrapWithType(x509.IdentityType, []byte("sender"))
+		recipient, _ := identity.WrapWithType(x509.IdentityType, []byte("recipient"))
+		preimage := []byte("preimage")
+		hash := crypto.SHA256.New()
+		hash.Write(preimage)
+		img := hash.Sum(nil)
+
+		// input[0]: an expired (Reclaim-eligible) script that matches the sole output
+		script0 := &htlc.Script{
+			Sender:    sender,
+			Recipient: recipient,
+			Deadline:  time.Now().Add(-1 * time.Hour), // expired -> Reclaim
+			HashInfo: htlc.HashInfo{
+				Hash:         img,
+				HashFunc:     crypto.SHA256,
+				HashEncoding: encoding.Base64,
+			},
+		}
+		script0Bytes, err := json.Marshal(script0)
+		require.NoError(t, err)
+		htlcOwner0, err := identity.WrapWithType(htlc.ScriptType, script0Bytes)
+		require.NoError(t, err)
+
+		// input[1]: a completely unrelated script, wrong type and wrong quantity
+		attacker, _ := identity.WrapWithType(x509.IdentityType, []byte("attacker"))
+		script1 := &htlc.Script{
+			Sender:    attacker,
+			Recipient: attacker,
+			Deadline:  time.Now().Add(1 * time.Hour),
+			HashInfo: htlc.HashInfo{
+				Hash:         []byte("unrelated-hash"),
+				HashFunc:     crypto.SHA256,
+				HashEncoding: encoding.Base64,
+			},
+		}
+		script1Bytes, err := json.Marshal(script1)
+		require.NoError(t, err)
+		htlcOwner1, err := identity.WrapWithType(htlc.ScriptType, script1Bytes)
+		require.NoError(t, err)
+
+		ta := &actions.TransferAction{
+			Outputs: []*actions.Output{
+				{Owner: sender, Type: "ABC", Quantity: "100"},
+			},
+		}
+		c := &validator.Context{
+			TransferAction: ta,
+			InputTokens: []*actions.Output{
+				{Owner: htlcOwner0, Type: "ABC", Quantity: "100"},
+				{Owner: htlcOwner1, Type: "XYZ", Quantity: "999"},
+			},
+			Signatures:      [][]byte{[]byte("sig0"), []byte("sig1")},
+			MetadataCounter: make(map[string]int),
+		}
+		err = validator.TransferHTLCValidate(ctx, c)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "an htlc script only transfers the ownership of a token")
+	})
+
+	// Regression test for #2025: an HTLC-owned input smuggled in alongside an unrelated
+	// non-HTLC input. Before the fix the HTLC branch validated only InputTokens[0] — which
+	// matched the sole output — and the second input was never looked at, so the action was
+	// accepted even though its extra input is unaccounted for by any output.
+
+	t.Run("InputIsHTLC_ExtraNonHTLCInput_Rejected", func(t *testing.T) {
+		sender, _ := identity.WrapWithType(x509.IdentityType, []byte("sender"))
+		recipient, _ := identity.WrapWithType(x509.IdentityType, []byte("recipient"))
+		attacker, _ := identity.WrapWithType(x509.IdentityType, []byte("attacker"))
+		preimage := []byte("preimage")
+		hash := crypto.SHA256.New()
+		hash.Write(preimage)
+		img := hash.Sum(nil)
+
+		script := &htlc.Script{
+			Sender:    sender,
+			Recipient: recipient,
+			Deadline:  time.Now().Add(-1 * time.Hour), // expired -> Reclaim
+			HashInfo: htlc.HashInfo{
+				Hash:         img,
+				HashFunc:     crypto.SHA256,
+				HashEncoding: encoding.Base64,
+			},
+		}
+		scriptBytes, err := json.Marshal(script)
+		require.NoError(t, err)
+		htlcOwner, err := identity.WrapWithType(htlc.ScriptType, scriptBytes)
+		require.NoError(t, err)
+
+		ta := &actions.TransferAction{
+			Outputs: []*actions.Output{
+				{Owner: sender, Type: "ABC", Quantity: "100"},
+			},
+		}
+		c := &validator.Context{
+			TransferAction: ta,
+			InputTokens: []*actions.Output{
+				{Owner: htlcOwner, Type: "ABC", Quantity: "100"},
+				{Owner: attacker, Type: "ABC", Quantity: "50"},
+			},
+			Signatures:      [][]byte{[]byte("sig0"), []byte("sig1")},
+			MetadataCounter: make(map[string]int),
+		}
+		err = validator.TransferHTLCValidate(ctx, c)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "an htlc script only transfers the ownership of a token")
+	})
+
+	// The HTLC-owned input may appear at any index; it must be rejected wherever it sits,
+
+	// rather than only when it happens to be InputTokens[0].
+	t.Run("InputIsHTLC_HTLCInputAtNonZeroIndex_Rejected", func(t *testing.T) {
+		sender, _ := identity.WrapWithType(x509.IdentityType, []byte("sender"))
+		recipient, _ := identity.WrapWithType(x509.IdentityType, []byte("recipient"))
+		script := &htlc.Script{
+			Sender:    sender,
+			Recipient: recipient,
+			Deadline:  time.Now().Add(-1 * time.Hour),
+			HashInfo: htlc.HashInfo{
+				HashFunc:     crypto.SHA256,
+				HashEncoding: encoding.Base64,
+			},
+		}
+		scriptBytes, err := json.Marshal(script)
+		require.NoError(t, err)
+		htlcOwner, err := identity.WrapWithType(htlc.ScriptType, scriptBytes)
+		require.NoError(t, err)
+
+		ta := &actions.TransferAction{
+			Outputs: []*actions.Output{
+				{Owner: sender, Type: "ABC", Quantity: "150"},
+			},
+		}
+		c := &validator.Context{
+			TransferAction: ta,
+			InputTokens: []*actions.Output{
+				{Owner: sender, Type: "ABC", Quantity: "50"},
+				{Owner: htlcOwner, Type: "ABC", Quantity: "100"},
+			},
+			Signatures:      [][]byte{[]byte("sig0"), []byte("sig1")},
+			MetadataCounter: make(map[string]int),
+		}
+		err = validator.TransferHTLCValidate(ctx, c)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "an htlc script only transfers the ownership of a token")
+	})
+
 	t.Run("MissingSignature_NoPanic", func(t *testing.T) {
 		sender, _ := identity.WrapWithType(x509.IdentityType, []byte("sender"))
 		htlcOwner := newExpiredHTLCOwner(t, sender)
@@ -1027,8 +1198,11 @@ func TestTransferHTLCValidate(t *testing.T) {
 				{Owner: sender, Type: "ABC", Quantity: "100"},
 			},
 		}
-		// two htlc-owned inputs but only one signature: the second input must
-		// return an error instead of indexing past the end of ctx.Signatures
+		// Two htlc-owned inputs but only one signature. This used to reach the second
+		// iteration and be caught by the ctx.Signatures bound check; an htlc-owned input
+		// is now restricted to a 1-to-1 transfer, so the action is rejected before the
+		// signature of the second input is ever looked up. Either way it must be an
+		// error rather than an index past the end of ctx.Signatures.
 		c := &validator.Context{
 			TransferAction: ta,
 			InputTokens: []*actions.Output{
@@ -1038,9 +1212,11 @@ func TestTransferHTLCValidate(t *testing.T) {
 			Signatures:      [][]byte{[]byte("sig")},
 			MetadataCounter: make(map[string]int),
 		}
-		err := validator.TransferHTLCValidate(ctx, c)
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "missing signature for input at index [1]")
+		require.NotPanics(t, func() {
+			err := validator.TransferHTLCValidate(ctx, c)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "an htlc script only transfers the ownership of a token")
+		})
 	})
 
 	t.Run("NilInputToken_NoPanic", func(t *testing.T) {
@@ -1056,6 +1232,60 @@ func TestTransferHTLCValidate(t *testing.T) {
 		err := validator.TransferHTLCValidate(ctx, c)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "nil input token at index [0]")
+	})
+	// A nil *actions.Output boxed in the driver.Output interface satisfies the
+	// `.(*actions.Output)` type assertion, so `ok` is true while the pointer is nil.
+	// Dereferencing it panicked; it must be reported as a validation error instead.
+	t.Run("NilOutput_HTLCPath_Error", func(t *testing.T) {
+		sender, _ := identity.WrapWithType(x509.IdentityType, []byte("sender"))
+		recipient, _ := identity.WrapWithType(x509.IdentityType, []byte("recipient"))
+		script := &htlc.Script{
+			Sender:    sender,
+			Recipient: recipient,
+			Deadline:  time.Now().Add(1 * time.Hour),
+			HashInfo: htlc.HashInfo{
+				HashFunc:     crypto.SHA256,
+				HashEncoding: encoding.Base64,
+			},
+		}
+		scriptBytes, err := json.Marshal(script)
+		require.NoError(t, err)
+		htlcOwner, err := identity.WrapWithType(htlc.ScriptType, scriptBytes)
+		require.NoError(t, err)
+
+		// exactly one input and exactly one output, so the 1-to-1 check passes,
+		// but the single output is nil
+		ta := &actions.TransferAction{Outputs: []*actions.Output{nil}}
+		c := &validator.Context{
+			TransferAction:  ta,
+			InputTokens:     []*actions.Output{{Owner: htlcOwner, Type: "ABC", Quantity: "100"}},
+			Signatures:      [][]byte{[]byte("sig0")},
+			MetadataCounter: make(map[string]int),
+		}
+		require.NotPanics(t, func() {
+			err = validator.TransferHTLCValidate(ctx, c)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "output has unexpected type")
+		})
+	})
+
+	// Same nil output, but with no HTLC-owned input: the first loop matches nothing and
+	// the deadline-checking loop over the outputs is the one that must not panic.
+	t.Run("NilOutput_NoHTLCInput_Error", func(t *testing.T) {
+		sender, _ := identity.WrapWithType(x509.IdentityType, []byte("sender"))
+
+		ta := &actions.TransferAction{Outputs: []*actions.Output{nil}}
+		c := &validator.Context{
+			TransferAction:  ta,
+			InputTokens:     []*actions.Output{{Owner: sender, Type: "ABC", Quantity: "100"}},
+			Signatures:      [][]byte{[]byte("sig0")},
+			MetadataCounter: make(map[string]int),
+		}
+		require.NotPanics(t, func() {
+			err := validator.TransferHTLCValidate(ctx, c)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "invalid output at index [0]")
+		})
 	})
 }
 
