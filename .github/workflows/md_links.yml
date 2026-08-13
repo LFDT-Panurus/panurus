@@ -6,6 +6,10 @@ on:
   pull_request:
     branches: [ main, feature/evm-network-driver, feature/zkat-snark-driver ]
 
+permissions:
+  contents: read
+  pull-requests: write
+
 jobs:
   check-links:
     name: runner / linkspector

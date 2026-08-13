@@ -11,6 +11,9 @@ on:
 env:
   GOFLAGS: -mod=mod
 
+permissions:
+  contents: read
+
 jobs:
   guard-all-test-types:
     runs-on: ubuntu-latest
