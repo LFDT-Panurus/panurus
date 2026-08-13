@@ -12,6 +12,15 @@ The internal [Service](../../token/services/tokens/tokens.go) is responsible for
 *   **Lifecycle Monitoring**: Notifying local listeners (via `events.Publisher`) when tokens are added or removed.
 *   **Consistency**: Identifying and removing stale unspent tokens by cross-referencing local storage with the ledger via the [Network Service](../../token/services/network/network.go) (see `PruneInvalidUnspentTokens`).
 
+### Marking Spent Tokens
+
+`DBTransaction.DeleteToken` marks a spent token as deleted. Deletion is *idempotent*: a
+token that is not present in the local store — the ordinary case for inputs that are not
+mine, and for spent identifiers under graph hiding — is not an error, and no delete-token
+event is published for it. A failure reported by the underlying store is always returned,
+regardless of whether the token was found locally, so that a transaction is never recorded
+as processed while its spends were not applied.
+
 
 ## Token Representations
 

@@ -135,22 +135,22 @@ func NewTransaction(notifier events.Publisher, tx *tokendb.Transaction, tmsID to
 }
 
 // DeleteToken removes a single token from the database and notifies listeners.
+//
+// Delete is idempotent: marking an unknown token as spent is not an error, so a
+// failure returned by Delete always signals a real storage failure and is
+// propagated even when the token is not present in the local store. Swallowing
+// it there would let a lost spend be recorded as a processed transaction.
 func (t *DBTransaction) DeleteToken(ctx context.Context, tokenID token2.ID, deletedBy string) error {
 	tok, owners, err := t.Tx.GetToken(ctx, tokenID, true)
 	if err != nil {
 		return errors.WithMessagef(err, "failed to get token [%s]", tokenID)
 	}
 
-	err = t.Tx.Delete(ctx, tokenID, deletedBy)
-	if err != nil {
-		if tok == nil {
-			logger.DebugfContext(ctx, "nothing further to delete for [%s]", tokenID)
-
-			return nil
-		}
-
+	if err := t.Tx.Delete(ctx, tokenID, deletedBy); err != nil {
 		return errors.WithMessagef(err, "failed to delete token [%s]", tokenID)
 	}
+
+	// The token is not in the local store, so there are no owners to notify.
 	if tok == nil {
 		logger.DebugfContext(ctx, "nothing further to delete for [%s]", tokenID)
 

@@ -168,6 +168,44 @@ func TestTransaction_DeleteToken_Error(t *testing.T) {
 	assert.Error(t, err)
 }
 
+// TestTransaction_DeleteToken_DeleteErrorWhenTokenAbsent checks that a Delete
+// failure is reported even when the token is not present in the local store,
+// which is the ordinary case for inputs that are not mine. Swallowing it would
+// let a transaction be recorded as processed while the spend was never applied.
+func TestTransaction_DeleteToken_DeleteErrorWhenTokenAbsent(t *testing.T) {
+	ctx := context.Background()
+	tmsID := token.TMSID{Network: "net", Channel: "ch", Namespace: "ns"}
+	mockTx := &mock.FakeTokenStoreTransaction{}
+
+	tx, err := tokens.NewTransaction(nil, &tokendb.Transaction{TokenStoreTransaction: mockTx}, tmsID)
+	require.NoError(t, err)
+
+	// token absent locally, but Delete hits a genuine storage failure
+	mockTx.GetTokenReturns(nil, nil, nil)
+	mockTx.DeleteReturns(assert.AnError)
+
+	err = tx.DeleteToken(ctx, token2.ID{TxId: "tx1", Index: 0}, "me")
+	assert.ErrorIs(t, err, assert.AnError)
+}
+
+// TestTransaction_DeleteToken_AbsentTokenIsNotAnError checks that deleting a
+// token that is not in the local store succeeds without notifying any owner.
+func TestTransaction_DeleteToken_AbsentTokenIsNotAnError(t *testing.T) {
+	ctx := context.Background()
+	tmsID := token.TMSID{Network: "net", Channel: "ch", Namespace: "ns"}
+	mockTx := &mock.FakeTokenStoreTransaction{}
+	pub := &mock.FakePublisher{}
+
+	tx, err := tokens.NewTransaction(pub, &tokendb.Transaction{TokenStoreTransaction: mockTx}, tmsID)
+	require.NoError(t, err)
+
+	mockTx.GetTokenReturns(nil, nil, nil)
+
+	require.NoError(t, tx.DeleteToken(ctx, token2.ID{TxId: "tx1", Index: 0}, "me"))
+	assert.Equal(t, 1, mockTx.DeleteCallCount())
+	assert.Equal(t, 0, pub.PublishCallCount())
+}
+
 func TestTransaction_SetSpendableBySupportedTokenTypes(t *testing.T) {
 	ctx := context.Background()
 	tmsID := token.TMSID{Network: "net", Channel: "ch", Namespace: "ns"}
