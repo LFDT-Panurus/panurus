@@ -8,6 +8,7 @@ package dbtest
 
 import (
 	"fmt"
+	"math/big"
 	"strings"
 	"sync"
 	"testing"
@@ -29,15 +30,7 @@ type cfgProvider func(string) driver2.Driver
 func TokensTest(t *testing.T, cfgProvider cfgProvider) {
 	t.Helper()
 	for _, c := range tokensCases {
-		t.Run(c.Name, func(xt *testing.T) {
-			driver := cfgProvider(c.Name)
-			db, err := driver.NewToken("")
-			require.NoError(xt, err)
-			tokenDB, ok := db.(TestTokenDB)
-			assert.True(xt, ok)
-			defer utils.IgnoreError(tokenDB.Close)
-			c.Fn(xt, db.(TestTokenDB))
-		})
+		TokensTestCase(t, cfgProvider, c.Name, c.Fn)
 	}
 
 	for _, c := range TokenNotifierCases {
@@ -60,6 +53,22 @@ func TokensTest(t *testing.T, cfgProvider cfgProvider) {
 	}
 }
 
+// TokensTestCase runs a single token store test case against a store built by cfgProvider.
+// Use it for cases that only some backends can satisfy and that are therefore not part of
+// the shared tokensCases list.
+func TokensTestCase(t *testing.T, cfgProvider cfgProvider, name string, fn func(*testing.T, TestTokenDB)) {
+	t.Helper()
+	t.Run(name, func(xt *testing.T) {
+		driver := cfgProvider(name)
+		db, err := driver.NewToken("")
+		require.NoError(xt, err)
+		tokenDB, ok := db.(TestTokenDB)
+		assert.True(xt, ok)
+		defer utils.IgnoreError(tokenDB.Close)
+		fn(xt, tokenDB)
+	})
+}
+
 var tokensCases = []struct {
 	Name string
 	Fn   func(*testing.T, TestTokenDB)
@@ -75,6 +84,7 @@ var tokensCases = []struct {
 	{"PublicParams", TPublicParams},
 	{"Certification", TCertification},
 	{"QueryTokenDetails", TQueryTokenDetails},
+	{"AmountValidation", TAmountValidation},
 	{"TTokenTypes", TTokenTypes},
 	{"ListUnspentTokensByWallets", TListUnspentTokensByWallets},
 	{"GetDeletedTokensPendingSKICleanup", TGetDeletedTokensPendingSKICleanup},
@@ -97,7 +107,7 @@ func TTokenTransaction(t *testing.T, db TestTokenDB) {
 		LedgerMetadata: []byte{},
 		Quantity:       "0x02",
 		Type:           TST,
-		Amount:         2,
+		Amount:         big.NewInt(2),
 		Owner:          true,
 		Auditor:        false,
 		Issuer:         false,
@@ -162,7 +172,7 @@ func TSaveAndGetToken(t *testing.T, db TestTokenDB) {
 			LedgerMetadata: []byte{},
 			Quantity:       "0x02",
 			Type:           TST,
-			Amount:         2,
+			Amount:         big.NewInt(2),
 			Owner:          true,
 			Auditor:        false,
 			Issuer:         false,
@@ -180,7 +190,7 @@ func TSaveAndGetToken(t *testing.T, db TestTokenDB) {
 		LedgerMetadata: []byte{},
 		Quantity:       "0x02",
 		Type:           TST,
-		Amount:         2,
+		Amount:         big.NewInt(2),
 		Owner:          true,
 		Auditor:        false,
 		Issuer:         false,
@@ -198,7 +208,7 @@ func TSaveAndGetToken(t *testing.T, db TestTokenDB) {
 		LedgerMetadata: []byte{},
 		Quantity:       "0x02",
 		Type:           TST,
-		Amount:         2,
+		Amount:         big.NewInt(2),
 		Owner:          true,
 		Auditor:        false,
 		Issuer:         false,
@@ -216,7 +226,7 @@ func TSaveAndGetToken(t *testing.T, db TestTokenDB) {
 		LedgerMetadata: []byte{},
 		Quantity:       "0x02",
 		Type:           ABC,
-		Amount:         2,
+		Amount:         big.NewInt(2),
 		Owner:          true,
 		Auditor:        false,
 		Issuer:         false,
@@ -261,7 +271,7 @@ func TSaveAndGetToken(t *testing.T, db TestTokenDB) {
 		LedgerMetadata: []byte{},
 		Quantity:       "0x02",
 		Type:           ABC,
-		Amount:         2,
+		Amount:         big.NewInt(2),
 		Owner:          true,
 		Auditor:        false,
 		Issuer:         false,
@@ -303,7 +313,7 @@ func TDeleteAndMine(t *testing.T, db TestTokenDB) {
 		LedgerMetadata: []byte{},
 		Quantity:       "0x01",
 		Type:           ABC,
-		Amount:         0,
+		Amount:         big.NewInt(0),
 		Owner:          true,
 		Auditor:        false,
 		Issuer:         false,
@@ -320,7 +330,7 @@ func TDeleteAndMine(t *testing.T, db TestTokenDB) {
 		LedgerMetadata: []byte{},
 		Quantity:       "0x01",
 		Type:           ABC,
-		Amount:         0,
+		Amount:         big.NewInt(0),
 		Owner:          true,
 		Auditor:        false,
 		Issuer:         false,
@@ -337,7 +347,7 @@ func TDeleteAndMine(t *testing.T, db TestTokenDB) {
 		LedgerMetadata: []byte{},
 		Quantity:       "0x01",
 		Type:           ABC,
-		Amount:         0,
+		Amount:         big.NewInt(0),
 		Owner:          true,
 		Auditor:        false,
 		Issuer:         false,
@@ -384,7 +394,7 @@ func TListAuditTokens(t *testing.T, db TestTokenDB) {
 		LedgerMetadata: []byte{},
 		Quantity:       "0x01",
 		Type:           ABC,
-		Amount:         0,
+		Amount:         big.NewInt(0),
 		Owner:          false,
 		Auditor:        true,
 		Issuer:         false,
@@ -401,7 +411,7 @@ func TListAuditTokens(t *testing.T, db TestTokenDB) {
 		LedgerMetadata: []byte{},
 		Quantity:       "0x02",
 		Type:           ABC,
-		Amount:         0,
+		Amount:         big.NewInt(0),
 		Owner:          false,
 		Auditor:        true,
 		Issuer:         false,
@@ -418,7 +428,7 @@ func TListAuditTokens(t *testing.T, db TestTokenDB) {
 		LedgerMetadata: []byte{},
 		Quantity:       "0x03",
 		Type:           ABC,
-		Amount:         0,
+		Amount:         big.NewInt(0),
 		Owner:          false,
 		Auditor:        true,
 		Issuer:         false,
@@ -459,7 +469,7 @@ func TListIssuedTokens(t *testing.T, db TestTokenDB) {
 		LedgerMetadata: []byte{},
 		Quantity:       "0x01",
 		Type:           ABC,
-		Amount:         0,
+		Amount:         big.NewInt(0),
 		Owner:          false,
 		Auditor:        false,
 		Issuer:         true,
@@ -477,7 +487,7 @@ func TListIssuedTokens(t *testing.T, db TestTokenDB) {
 		LedgerMetadata: []byte{},
 		Quantity:       "0x02",
 		Type:           ABC,
-		Amount:         0,
+		Amount:         big.NewInt(0),
 		Owner:          false,
 		Auditor:        false,
 		Issuer:         true,
@@ -495,7 +505,7 @@ func TListIssuedTokens(t *testing.T, db TestTokenDB) {
 		LedgerMetadata: []byte{},
 		Quantity:       "0x03",
 		Type:           "DEF",
-		Amount:         0,
+		Amount:         big.NewInt(0),
 		Owner:          false,
 		Auditor:        false,
 		Issuer:         true,
@@ -560,7 +570,7 @@ func TIssuerBalance(t *testing.T, db TestTokenDB) {
 			LedgerMetadata: []byte{},
 			Quantity:       fmt.Sprintf("0x%02x", i.amount),
 			Type:           i.typ,
-			Amount:         i.amount,
+			Amount:         new(big.Int).SetUint64(i.amount),
 			Owner:          false,
 			Auditor:        false,
 			Issuer:         true,
@@ -589,7 +599,7 @@ func TIssuerBalance(t *testing.T, db TestTokenDB) {
 			LedgerMetadata: []byte{},
 			Quantity:       fmt.Sprintf("0x%02x", r.amount),
 			Type:           ABC,
-			Amount:         r.amount,
+			Amount:         new(big.Int).SetUint64(r.amount),
 			Owner:          false,
 			Auditor:        false,
 			Issuer:         true,
@@ -641,7 +651,7 @@ func TGetTokenInfos(t *testing.T, db TestTokenDB) {
 		LedgerMetadata: []byte("tx101"),
 		Quantity:       "0x01",
 		Type:           ABC,
-		Amount:         0,
+		Amount:         big.NewInt(0),
 		Owner:          true,
 		Auditor:        false,
 		Issuer:         false,
@@ -658,7 +668,7 @@ func TGetTokenInfos(t *testing.T, db TestTokenDB) {
 		LedgerMetadata: []byte("tx102"),
 		Quantity:       "0x01",
 		Type:           ABC,
-		Amount:         0,
+		Amount:         big.NewInt(0),
 		Owner:          true,
 		Auditor:        false,
 		Issuer:         false,
@@ -675,7 +685,7 @@ func TGetTokenInfos(t *testing.T, db TestTokenDB) {
 		LedgerMetadata: []byte("tx102"),
 		Quantity:       "0x01",
 		Type:           ABC,
-		Amount:         0,
+		Amount:         big.NewInt(0),
 		Owner:          true,
 		Auditor:        false,
 		Issuer:         false,
@@ -743,6 +753,7 @@ func TDeleteMultiple(t *testing.T, db TestTokenDB) {
 		LedgerMetadata: []byte{},
 		Quantity:       "0x01",
 		Type:           ABC,
+		Amount:         big.NewInt(1),
 		Owner:          true,
 	}
 	require.NoError(t, db.StoreToken(t.Context(), tr, []string{"alice"}))
@@ -756,6 +767,7 @@ func TDeleteMultiple(t *testing.T, db TestTokenDB) {
 		LedgerMetadata: []byte{},
 		Quantity:       "0x01",
 		Type:           ABC,
+		Amount:         big.NewInt(1),
 		Owner:          true,
 	}
 	require.NoError(t, db.StoreToken(t.Context(), tr, []string{"bob"}))
@@ -769,6 +781,7 @@ func TDeleteMultiple(t *testing.T, db TestTokenDB) {
 		LedgerMetadata: []byte{},
 		Quantity:       "0x01",
 		Type:           ABC,
+		Amount:         big.NewInt(1),
 		Owner:          true,
 	}
 	require.NoError(t, db.StoreToken(t.Context(), tr, []string{"alice"}))
@@ -845,6 +858,7 @@ func TCertification(t *testing.T, db TestTokenDB) {
 				Ledger:         []byte("ledger"),
 				LedgerMetadata: []byte{},
 				Type:           ABC,
+				Amount:         big.NewInt(1),
 				Owner:          true,
 			}, []string{"alice"})
 			if err != nil {
@@ -899,6 +913,81 @@ func TCertification(t *testing.T, db TestTokenDB) {
 	assert.Empty(t, certifications)
 }
 
+// bigAmountRecord returns a token record whose amount is 2^64 + 1, one more than the
+// largest value a uint64 can hold.
+func bigAmountRecord() driver2.TokenRecord {
+	amount := new(big.Int).Add(new(big.Int).Lsh(big.NewInt(1), 64), big.NewInt(1))
+
+	return driver2.TokenRecord{
+		TxID:           "txBig",
+		Index:          0,
+		IssuerRaw:      []byte{},
+		OwnerRaw:       []byte{1, 2, 3},
+		OwnerType:      "idemix",
+		OwnerIdentity:  []byte{},
+		Ledger:         []byte("ledger"),
+		LedgerMetadata: []byte{},
+		Quantity:       "0x" + amount.Text(16),
+		Type:           TST,
+		Amount:         amount,
+		Owner:          true,
+	}
+}
+
+// TAmountValidation verifies that an amount the amount column cannot hold is refused at
+// write time instead of being stored as a value that disagrees with the quantity column.
+func TAmountValidation(t *testing.T, db TestTokenDB) {
+	t.Helper()
+	ctx := t.Context()
+
+	// 2^256 does not fit in NUMERIC(78, 0) and must be refused.
+	tooBig := bigAmountRecord()
+	tooBig.TxID = "txTooBig"
+	tooBig.Amount = new(big.Int).Lsh(big.NewInt(1), 256)
+	tooBig.Quantity = "0x" + tooBig.Amount.Text(16)
+	require.ErrorIs(t, db.StoreToken(ctx, tooBig, []string{"alice"}), driver2.ErrAmountOutOfRange)
+
+	// A missing amount is refused as well: the column is NOT NULL.
+	noAmount := bigAmountRecord()
+	noAmount.TxID = "txNoAmount"
+	noAmount.Amount = nil
+	require.ErrorIs(t, db.StoreToken(ctx, noAmount, []string{"alice"}), driver2.ErrAmountMissing)
+
+	// A negative amount cannot come from token.ToQuantity, but a record built by hand could
+	// carry one: the magnitude alone would pass the range check, so the sign is refused too.
+	negative := bigAmountRecord()
+	negative.TxID = "txNegative"
+	negative.Amount = big.NewInt(-1)
+	require.ErrorIs(t, db.StoreToken(ctx, negative, []string{"alice"}), driver2.ErrAmountNegative)
+
+	// A record whose amount fits is accepted, and the authoritative quantity is preserved.
+	record := bigAmountRecord()
+	require.NoError(t, db.StoreToken(ctx, record, []string{"alice"}))
+	toks, err := db.ListUnspentTokens(ctx)
+	require.NoError(t, err)
+	require.Len(t, toks.Tokens, 1)
+	assert.Equal(t, record.Quantity, toks.Tokens[0].Quantity)
+}
+
+// TBigAmountRoundTrip verifies that an amount that does not fit in a uint64 survives a
+// write/read round-trip unchanged. It is not part of the shared tokensCases list because it
+// requires a backend that keeps full precision in the amount column: SQLite gives a
+// NUMERIC column NUMERIC affinity and silently converts an integer literal wider than
+// int64 to REAL, so only Postgres can honour it.
+func TBigAmountRoundTrip(t *testing.T, db TestTokenDB) {
+	t.Helper()
+	ctx := t.Context()
+
+	record := bigAmountRecord()
+	require.NoError(t, db.StoreToken(ctx, record, []string{"alice"}))
+
+	res, err := db.QueryTokenDetails(ctx, driver2.QueryTokenDetailsParams{WalletID: "alice"})
+	require.NoError(t, err)
+	require.Len(t, res, 1)
+	assert.Zero(t, res[0].Amount.Cmp(record.Amount),
+		"amount [%s] was not stored as-is, got [%s]", record.Amount, res[0].Amount)
+}
+
 func TQueryTokenDetails(t *testing.T, db TestTokenDB) {
 	t.Helper()
 	ctx := t.Context()
@@ -917,7 +1006,7 @@ func TQueryTokenDetails(t *testing.T, db TestTokenDB) {
 		LedgerMetadata: []byte{},
 		Quantity:       "0x01",
 		Type:           "TST1",
-		Amount:         2,
+		Amount:         big.NewInt(2),
 		Owner:          true,
 		Auditor:        false,
 		Issuer:         false,
@@ -933,7 +1022,7 @@ func TQueryTokenDetails(t *testing.T, db TestTokenDB) {
 		LedgerMetadata: []byte{},
 		Quantity:       "0x02",
 		Type:           TST,
-		Amount:         2,
+		Amount:         big.NewInt(2),
 		Owner:          true,
 		Auditor:        false,
 		Issuer:         false,
@@ -949,7 +1038,7 @@ func TQueryTokenDetails(t *testing.T, db TestTokenDB) {
 		LedgerMetadata: []byte{},
 		Quantity:       "0x02",
 		Type:           TST,
-		Amount:         2,
+		Amount:         big.NewInt(2),
 		Owner:          true,
 		Auditor:        false,
 		Issuer:         false,
@@ -1057,7 +1146,7 @@ func TTokenTypes(t *testing.T, db TestTokenDB) {
 		LedgerMetadata: []byte{},
 		Quantity:       "0x01",
 		Type:           TST,
-		Amount:         2,
+		Amount:         big.NewInt(2),
 		Owner:          true,
 		Auditor:        false,
 		Issuer:         false,
@@ -1074,7 +1163,7 @@ func TTokenTypes(t *testing.T, db TestTokenDB) {
 		LedgerMetadata: []byte{},
 		Quantity:       "0x02",
 		Type:           "TST1",
-		Amount:         2,
+		Amount:         big.NewInt(2),
 		Owner:          true,
 		Auditor:        false,
 		Issuer:         false,
@@ -1164,7 +1253,7 @@ func TListUnspentTokensByWallets(t *testing.T, db TestTokenDB) {
 			LedgerMetadata: []byte{},
 			Quantity:       "0x02",
 			Type:           typ,
-			Amount:         2,
+			Amount:         big.NewInt(2),
 			Owner:          true,
 		}, owners))
 	}
@@ -1180,7 +1269,7 @@ func TListUnspentTokensByWallets(t *testing.T, db TestTokenDB) {
 			LedgerMetadata: []byte{},
 			Quantity:       "0x02",
 			Type:           typ,
-			Amount:         2,
+			Amount:         big.NewInt(2),
 			Owner:          true,
 		}, nil))
 	}
@@ -1196,7 +1285,7 @@ func TListUnspentTokensByWallets(t *testing.T, db TestTokenDB) {
 			LedgerMetadata: []byte{},
 			Quantity:       "0x02",
 			Type:           typ,
-			Amount:         2,
+			Amount:         big.NewInt(2),
 			Owner:          true,
 		}, owners))
 	}
@@ -1284,7 +1373,7 @@ func assertEqual(t *testing.T, r driver2.TokenRecord, d driver2.TokenDetails) {
 	t.Helper()
 	assert.Equal(t, r.TxID, d.TxID)
 	assert.Equal(t, r.Index, d.Index)
-	assert.Equal(t, r.Amount, d.Amount.Uint64())
+	assert.Zero(t, r.Amount.Cmp(d.Amount), "amount [%s] != [%s]", r.Amount, d.Amount)
 	assert.Equal(t, r.OwnerType, d.OwnerType)
 }
 
@@ -1304,7 +1393,7 @@ func TGetDeletedTokensPendingSKICleanup(t *testing.T, db TestTokenDB) {
 			LedgerMetadata: []byte{},
 			Quantity:       "0x01",
 			Type:           ABC,
-			Amount:         1,
+			Amount:         big.NewInt(1),
 			Owner:          true,
 		}
 		require.NoError(t, db.StoreToken(ctx, tr, []string{"alice"}))
@@ -1330,7 +1419,7 @@ func TGetDeletedTokensPendingSKICleanup(t *testing.T, db TestTokenDB) {
 			LedgerMetadata: []byte{},
 			Quantity:       "0x01",
 			Type:           ABC,
-			Amount:         1,
+			Amount:         big.NewInt(1),
 			Owner:          true,
 		}
 		require.NoError(t, db.StoreToken(ctx, tr, []string{"alice"}))
@@ -1564,7 +1653,7 @@ func TGetDeletedTokensPendingSKICleanup(t *testing.T, db TestTokenDB) {
 				LedgerMetadata: []byte{},
 				Quantity:       "0x01",
 				Type:           ABC,
-				Amount:         1,
+				Amount:         big.NewInt(1),
 				Owner:          false,
 				Auditor:        auditor,
 				Issuer:         issuer,

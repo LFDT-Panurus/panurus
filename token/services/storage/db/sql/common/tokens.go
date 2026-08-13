@@ -1636,6 +1636,11 @@ func (t *TokenTransaction) StoreToken(ctx context.Context, tr driver.TokenRecord
 	if len(tr.OwnerWalletID) == 0 && len(owners) == 0 && tr.Owner {
 		return errors.Errorf("no owners specified [%s]", string(debug.Stack()))
 	}
+	// The amount column is NUMERIC(78, 0) NOT NULL: refuse a missing or over-range value
+	// rather than storing one that disagrees with the authoritative quantity column.
+	if err := validateTokenAmount(tr.Amount); err != nil {
+		return errors.WithMessagef(err, "invalid amount for token [%s:%d]", tr.TxID, tr.Index)
+	}
 
 	// Store token
 	query, args := q.InsertInto(t.table.Tokens).
@@ -1653,7 +1658,7 @@ func (t *TokenTransaction) StoreToken(ctx context.Context, tr driver.TokenRecord
 			tr.LedgerMetadata,
 			tr.Type,
 			tr.Quantity,
-			tr.Amount,
+			tr.Amount.String(),
 			time.Now().UTC(),
 			tr.Owner,
 			tr.Auditor,

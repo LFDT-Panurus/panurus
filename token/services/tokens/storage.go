@@ -220,7 +220,7 @@ func (t *DBTransaction) AppendToken(ctx context.Context, tta TokenToAppend) erro
 		LedgerMetadata: tta.TokenOnLedgerMetadata,
 		Quantity:       tta.Tok.Quantity,
 		Type:           tta.Tok.Type,
-		Amount:         q.ToBigInt().Uint64(),
+		Amount:         q.ToBigInt(),
 		Owner:          tta.Flags.Mine,
 		Auditor:        tta.Flags.Auditor,
 		Issuer:         tta.Flags.Issuer,
