@@ -164,7 +164,7 @@ func (s *Selector) selectInternal(ctx context.Context, owner token.OwnerFilter, 
 	}
 	sum, selected, tokensLockedByOthersExist, immediateRetries := token2.NewZeroQuantity(s.precision), collections.NewSet[*token2.ID](), true, 0
 	for {
-		if t, err := s.cache.Next(); err != nil {
+		if t, err := s.next(); err != nil {
 			return nil, nil, immediateRetries, errors.Wrapf(err, "failed to get tokens for [%s:%s]", owner.ID(), tokenType)
 		} else if t == nil {
 			if !tokensLockedByOthersExist {
@@ -189,8 +189,12 @@ func (s *Selector) selectInternal(ctx context.Context, owner token.OwnerFilter, 
 			}
 
 			s.logger.DebugfContext(ctx, "Fetch all non-deleted tokens from the DB and refresh the token cache.")
-			if s.cache, err = s.fetcher.UnspentTokensIteratorBy(ctx, owner.ID(), tokenType); err != nil {
+			it, err := s.fetcher.UnspentTokensIteratorBy(ctx, owner.ID(), tokenType)
+			if err != nil {
 				return nil, nil, immediateRetries, errors.Wrapf(err, "failed to reload tokens for retry %d [%s:%s]", immediateRetries, owner.ID(), tokenType)
+			}
+			if err := s.swapCache(it); err != nil {
+				return nil, nil, immediateRetries, err
 			}
 
 			immediateRetries++
@@ -220,6 +224,39 @@ func (s *Selector) selectInternal(ctx context.Context, owner token.OwnerFilter, 
 			}
 		}
 	}
+}
+
+// next returns the next token of the current cache. It holds s.mu for the whole
+// call so that a concurrent Close cannot swap the iterator out, or nil it, while
+// it is being read. It reports an error if the selector has already been closed.
+func (s *Selector) next() (*token2.UnspentTokenInWallet, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.cache == nil {
+		return nil, errors.New("selector is already closed")
+	}
+
+	return s.cache.Next()
+}
+
+// swapCache installs it as the new token cache and closes the iterator it
+// replaces, so a refresh on retry does not abandon a database cursor and its
+// pooled connection. If the selector was closed in the meantime, it closes it
+// too and reports an error: no iterator is ever left unclosed.
+func (s *Selector) swapCache(it Iterator[*token2.UnspentTokenInWallet]) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.cache == nil {
+		it.Close()
+
+		return errors.New("selector is already closed")
+	}
+	s.cache.Close()
+	s.cache = it
+
+	return nil
 }
 
 func (s *Selector) Close() error {

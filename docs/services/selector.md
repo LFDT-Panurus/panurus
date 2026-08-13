@@ -163,6 +163,14 @@ The selector uses a **Token Fetcher** to retrieve available tokens from the data
 5. Selector iterates through tokens, attempting to lock each one
 6. If insufficient tokens, selector requests fresh data and retries
 
+**Iterator lifecycle:** the iterator the fetcher hands out owns a resource — on the lazy
+path it wraps the query's `sql.Rows`, and therefore a database cursor and its pooled
+connection — so exactly one `Close()` per iterator is required. The selector holds at most
+one iterator at a time: step 6 above closes the iterator it displaces before installing the
+refreshed one, and `Selector.Close()` closes whichever is current. Both happen under the
+selector's mutex, so closing a selector while a retry is in flight neither leaks an iterator
+nor races with the retry.
+
 **Adaptive refresh strategy** with two triggers:
 - **Time-based**: Refreshes when data is older than `fetcherCacheRefresh`
 - **Query-based**: Refreshes after `fetcherCacheMaxQueries` queries to prevent serving stale data in high-throughput scenarios
