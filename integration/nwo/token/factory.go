@@ -36,5 +36,11 @@ func (p *platformFactory) New(ctx api.Context, t api.Topology, builder api.Build
 	}))
 	tp.AddNetworkHandler(tevm.TopologyName, tevm.NewNetworkHandler(tp, builder))
 
+	// The fabric-x-evm gateway backend reuses the EVM handler, differing only in which node it boots:
+	// NodeKind = GatewayTopologyName makes startNode launch the gateway container instead of Besu.
+	gatewayHandler := tevm.NewNetworkHandler(tp, builder)
+	gatewayHandler.NodeKind = tevm.GatewayTopologyName
+	tp.AddNetworkHandler(tevm.GatewayTopologyName, gatewayHandler)
+
 	return tp
 }
