@@ -67,6 +67,68 @@ func TestPublicParamsFollowsAnUpdate(t *testing.T) {
 	assert.EqualValues(t, 1, version, "the version must be the one those parameters are stored at")
 }
 
+// TestPublicParamsRetriesATornRead is the fix for a real bug: the bytes and the version were read as
+// two separate calls with nothing bracketing them, so an update landing in between produced an
+// internally inconsistent pair. The contract would reject it (it checks both fields together), so the
+// practical cost was a doomed, gas-spending transaction rather than data corruption, but it was a
+// deterministic gap in this function alone, closeable without touching the contract.
+func TestPublicParamsRetriesATornRead(t *testing.T) {
+	tokenState, err := client.HexToAddress("0x5FbDB2315678afecb367f032d93F642f64180aa3")
+	require.NoError(t, err)
+
+	// The version read returns 0, 1, 1, 1: the first attempt's bracket (before=0, after=1) straddles
+	// an update and must be retried; the second attempt's (before=1, after=1) does not.
+	versionReads := []uint64{0, 1, 1, 1}
+	calls := 0
+	evmClient := &mock.EVMClient{}
+	evmClient.CallStub = func(_ context.Context, _ client.Address, data []byte, _ string) ([]byte, error) {
+		switch string(data) {
+		case string(abi.MethodID("getPublicParameters()")):
+			return abiBytesFor([]byte("params")), nil
+		case string(abi.MethodID("getPublicParamsVersion()")):
+			v := versionReads[calls]
+			calls++
+
+			return abiUint64For(v), nil
+		}
+
+		return nil, nil
+	}
+
+	provider := NewChainProvider(evmClient, tokenState, "latest")
+	raw, version, err := provider.PublicParams(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, "params", string(raw))
+	assert.EqualValues(t, 1, version, "the torn first attempt must be discarded, not returned")
+	assert.Equal(t, 4, calls, "a torn bracket must be retried, not accepted")
+}
+
+// TestPublicParamsGivesUpAfterRepeatedTears checks the retry is bounded: a chain whose version never
+// settles between two reads must not spin PublicParams forever.
+func TestPublicParamsGivesUpAfterRepeatedTears(t *testing.T) {
+	tokenState, err := client.HexToAddress("0x5FbDB2315678afecb367f032d93F642f64180aa3")
+	require.NoError(t, err)
+
+	var version uint64
+	evmClient := &mock.EVMClient{}
+	evmClient.CallStub = func(_ context.Context, _ client.Address, data []byte, _ string) ([]byte, error) {
+		switch string(data) {
+		case string(abi.MethodID("getPublicParameters()")):
+			return abiBytesFor([]byte("params")), nil
+		case string(abi.MethodID("getPublicParamsVersion()")):
+			version++
+
+			return abiUint64For(version), nil
+		}
+
+		return nil, nil
+	}
+
+	provider := NewChainProvider(evmClient, tokenState, "latest")
+	_, _, err = provider.PublicParams(context.Background())
+	require.Error(t, err)
+}
+
 // TestPublicParamsIsConsistentAcrossRepeatedReads checks the pair stays matched over several updates,
 // since a version that lagged by one would still look right on the first read after each change.
 func TestPublicParamsIsConsistentAcrossRepeatedReads(t *testing.T) {

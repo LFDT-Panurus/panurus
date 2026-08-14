@@ -19,6 +19,12 @@ import (
 // stored parameters.
 const getPublicParametersMethod = "getPublicParameters()" // #nosec G101 -- ABI method signature
 
+// maxPublicParamsReadAttempts bounds the retry PublicParams performs when it detects a torn read. A
+// public-parameters update is a rare, isolated event (design §3.5), so a bracket almost always comes
+// back clean on the first attempt; the bound exists only so a chain updating on every single block
+// cannot spin this forever.
+const maxPublicParamsReadAttempts = 3
+
 // ChainProvider supplies the public parameters an endorser binds a StateDelta to, reading both the
 // bytes and the version from the contract.
 //
@@ -55,22 +61,48 @@ func NewChainProvider(evmClient client.EVMClient, tokenState client.Address, blo
 }
 
 // PublicParams returns the parameters currently stored on chain and their version.
+//
+// There is no single getter for both (getPublicParameters and getPublicParamsVersion are separate
+// calls), so an endorsed setup delta landing between them could tear the pair: bytes from before the
+// update paired with the version from after, or the reverse. The contract would catch this at apply
+// time, since it checks both fields together and reverts StalePublicParams unless they match exactly
+// what it currently holds, but that turns a purely local race in this function into a doomed,
+// gas-spending transaction rather than nothing happening at all.
+//
+// The version is read before and after the bytes, and the whole read is retried if it moved: version
+// and bytes only ever change together, in the same transaction (design §3.5), so two matching reads
+// bracketing the bytes read is proof nothing landed in between.
 func (p *ChainProvider) PublicParams(ctx context.Context) ([]byte, uint64, error) {
-	raw, err := p.client.Call(ctx, p.tokenState, abi.MethodID(getPublicParametersMethod), p.blockTag)
-	if err != nil {
-		return nil, 0, errors.Wrap(err, "failed to read the public parameters")
-	}
-	params, err := abi.DecodeBytes(raw)
-	if err != nil {
-		return nil, 0, errors.Wrap(err, "failed to decode the public parameters")
+	var lastVersion uint64
+	for range maxPublicParamsReadAttempts {
+		before, err := p.versions.Sync(ctx)
+		if err != nil {
+			return nil, 0, err
+		}
+
+		raw, err := p.client.Call(ctx, p.tokenState, abi.MethodID(getPublicParametersMethod), p.blockTag)
+		if err != nil {
+			return nil, 0, errors.Wrap(err, "failed to read the public parameters")
+		}
+		params, err := abi.DecodeBytes(raw)
+		if err != nil {
+			return nil, 0, errors.Wrap(err, "failed to decode the public parameters")
+		}
+
+		after, err := p.versions.Sync(ctx)
+		if err != nil {
+			return nil, 0, err
+		}
+		if after == before {
+			return params, after, nil
+		}
+		lastVersion = after
 	}
 
-	version, err := p.versions.Sync(ctx)
-	if err != nil {
-		return nil, 0, err
-	}
-
-	return params, version, nil
+	return nil, 0, errors.Errorf(
+		"evm pp: public parameters changed on every read attempt (%d), last observed version %d",
+		maxPublicParamsReadAttempts, lastVersion,
+	)
 }
 
 // Invalidate drops the cached version. PublicParams re-reads the version on every call, so there is

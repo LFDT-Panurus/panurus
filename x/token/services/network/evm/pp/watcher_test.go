@@ -178,22 +178,32 @@ func TestWatcherReportsEachUpdateOnce(t *testing.T) {
 // one bad read would leave the node on stale parameters forever, which is far worse than a late
 // notice.
 func TestWatcherSurvivesAFailedRead(t *testing.T) {
+	state := &chainState{}
+	state.set("params-v0", 0)
+
 	tokenState, err := client.HexToAddress("0x5FbDB2315678afecb367f032d93F642f64180aa3")
 	require.NoError(t, err)
 
+	// Only the version read errors, and only for the first four calls; everything after that, and
+	// every read of the bytes, falls through to the stable chain state below. Returning the raw call
+	// count as the version (the original shape of this test) does not work once PublicParams reads the
+	// version twice per attempt to detect a torn read: two different call counts a few lines apart
+	// would themselves look torn and the test would never get past that.
 	var calls atomic.Int64
 	evmClient := &mock.EVMClient{}
 	evmClient.CallStub = func(_ context.Context, _ client.Address, data []byte, _ string) ([]byte, error) {
-		n := calls.Add(1)
-		if string(data) == string(abi.MethodID("getPublicParamsVersion()")) {
-			if n <= 4 {
-				return nil, assert.AnError
-			}
-
-			return abiUint64For(uint64(n)), nil
+		if string(data) == string(abi.MethodID("getPublicParamsVersion()")) && calls.Add(1) <= 4 {
+			return nil, assert.AnError
+		}
+		raw, version := state.get()
+		switch string(data) {
+		case string(abi.MethodID("getPublicParameters()")):
+			return abiBytesFor(raw), nil
+		case string(abi.MethodID("getPublicParamsVersion()")):
+			return abiUint64For(version), nil
 		}
 
-		return abiBytesFor([]byte("params")), nil
+		return nil, nil
 	}
 
 	var mu sync.Mutex
@@ -210,6 +220,9 @@ func TestWatcherSurvivesAFailedRead(t *testing.T) {
 
 	w.Start(context.Background())
 	defer w.Stop()
+
+	require.Eventually(t, func() bool { return baselineSet(w) }, time.Second, 5*time.Millisecond)
+	state.set("params-v1", 1)
 
 	require.Eventually(t, func() bool {
 		mu.Lock()
