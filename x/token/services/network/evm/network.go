@@ -44,11 +44,15 @@ type Network struct {
 	// endorsementFor resolves the per-TMS endorsement service. It is preferred over the field above,
 	// which stays for tests that inject a stub directly.
 	endorsementFor func(tms *token2.ManagementService) (EndorsementService, error)
-	submitter      *Submitter
-	reader         *contractReader
-	finality       *finality.Manager
-	tokenState     client.Address
-	membership     driver.LocalMembership
+	// endorsementForID is endorsementFor's counterpart for callers that only have a TMSID, not an
+	// already-built management service: SetupPublicParams needs this, since first-time setup of a
+	// namespace runs before a management service can exist for it to have one at all.
+	endorsementForID func(tmsID token2.TMSID) (EndorsementService, error)
+	submitter        *Submitter
+	reader           *contractReader
+	finality         *finality.Manager
+	tokenState       client.Address
+	membership       driver.LocalMembership
 	// startRecovery starts the per-TMS transaction recovery sweep. It is installed by the driver,
 	// which owns the stores, and runs when a namespace binds rather than when the network is built.
 	startRecovery func(ns string) error
@@ -217,6 +221,26 @@ func (n *Network) SetEndorsementFactory(f func(tms *token2.ManagementService) (E
 	n.endorsementFor = f
 }
 
+// endorserForID is endorserFor's counterpart for a bare TMS id: the one injected directly if there is
+// one, otherwise the per-TMS service the factory builds. SetupPublicParams uses this rather than
+// endorserFor because it may run before a management service exists for the TMS at all.
+func (n *Network) endorserForID(tmsID token2.TMSID) (EndorsementService, error) {
+	if n.endorsement != nil {
+		return n.endorsement, nil
+	}
+	if n.endorsementForID == nil {
+		return nil, errors.New("evm network: no endorsement service configured")
+	}
+
+	return n.endorsementForID(tmsID)
+}
+
+// SetEndorsementFactoryByID installs the resolver endorserForID uses. It is SetEndorsementFactory's
+// counterpart for the id-only path.
+func (n *Network) SetEndorsementFactoryByID(f func(tmsID token2.TMSID) (EndorsementService, error)) {
+	n.endorsementForID = f
+}
+
 // SetRecoveryStarter installs the hook that starts transaction recovery for a namespace. Like the
 // endorsement factory it is set by the driver after construction, because the stores it sweeps
 // belong to the driver rather than to the network.
@@ -280,12 +304,13 @@ func (n *Network) SetupPublicParams(
 	signer view.Identity,
 	txID driver.TxID,
 ) (driver.Envelope, error) {
-	if n.endorsement == nil {
-		return nil, errors.New("evm network: no endorsement service configured")
+	endorser, err := n.endorserForID(tmsID)
+	if err != nil {
+		return nil, err
 	}
 
 	anchor := n.ComputeTxID(&txID)
-	result, err := n.endorsement.Endorse(context, &endorsement.EndorseRequest{
+	result, err := endorser.Endorse(context, &endorsement.EndorseRequest{
 		TokenRequest: publicParamsRaw,
 		TMSID:        tmsID,
 		Anchor:       anchor,

@@ -300,6 +300,11 @@ func (d *Driver) installEndorsement(n *Network, config *Config, evmClient client
 		// one is evicted and rebuilt whenever public parameters change.
 		return factory.ForTMS(tms.ID())
 	})
+	// SetupPublicParams goes through this instead: it may run before any management service exists for
+	// the TMS (first-time setup), so it only ever has the id, never the wrapper above requires.
+	n.SetEndorsementFactoryByID(func(tmsID token2.TMSID) (EndorsementService, error) {
+		return factory.ForTMS(tmsID)
+	})
 
 	// Registration happens now, not on the first approval. An endorser node answers requests without
 	// ever making one, so registering lazily on the approval path would mean it never registers at

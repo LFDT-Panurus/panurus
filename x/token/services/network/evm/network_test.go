@@ -267,6 +267,57 @@ func TestRequestApprovalWithoutEndorsementService(t *testing.T) {
 	require.Error(t, err)
 }
 
+// --- SetupPublicParams -----------------------------------------------------------------------------
+
+// TestSetupPublicParamsWithoutEndorsementService checks the same failure mode RequestApproval has:
+// nothing configured means a clear error, not a nil dereference further down.
+func TestSetupPublicParamsWithoutEndorsementService(t *testing.T) {
+	n := testNetwork(t, nil, nil)
+	_, err := n.SetupPublicParams(nil, token2.TMSID{Network: "evm", Namespace: "token"}, []byte("pp"), nil, driverTxID())
+	require.Error(t, err)
+}
+
+// TestSetupPublicParamsResolvesThroughTheIDBasedFactory is the fix for a real bug: SetupPublicParams
+// checked only the endorsement field tests inject directly, never the per-TMS factory the driver
+// actually installs in production (SetEndorsementFactory, keyed by a management service). Since
+// SetupPublicParams only ever has a bare TMSID, not a management service, it could never reach that
+// factory, and the call failed with "no endorsement service configured" on every real deployment
+// regardless of how correctly everything else was wired: first-time setup of a namespace, the one
+// thing this method exists to make possible, could not work at all.
+func TestSetupPublicParamsResolvesThroughTheIDBasedFactory(t *testing.T) {
+	n := testNetwork(t, nil, nil)
+	tmsID := token2.TMSID{Network: "evm", Namespace: "token"}
+	stub := &stubEndorser{result: &endorsement.Result{Anchor: "anchor", Endorsements: [][]byte{{0x01}}}}
+
+	var seenID token2.TMSID
+	n.SetEndorsementFactoryByID(func(id token2.TMSID) (EndorsementService, error) {
+		seenID = id
+
+		return stub, nil
+	})
+
+	env, err := n.SetupPublicParams(nil, tmsID, []byte("pp"), nil, driverTxID())
+	require.NoError(t, err)
+	assert.NotNil(t, env)
+	assert.Equal(t, tmsID, seenID, "the factory must be asked to resolve exactly the TMS being set up")
+	require.NotNil(t, stub.seen)
+	assert.Equal(t, tmsID, stub.seen.TMSID)
+}
+
+// TestSetupPublicParamsDoesNotTouchTheChain mirrors TestRequestApprovalDoesNotTouchTheChain: a failed
+// endorsement collection must not broadcast anything.
+func TestSetupPublicParamsDoesNotTouchTheChain(t *testing.T) {
+	evm := &mock.EVMClient{}
+	n := testNetwork(t, evm, nil)
+	n.SetEndorsementFactoryByID(func(token2.TMSID) (EndorsementService, error) {
+		return &stubEndorser{err: errors.New("no quorum")}, nil
+	})
+
+	_, err := n.SetupPublicParams(nil, token2.TMSID{Network: "evm", Namespace: "token"}, []byte("pp"), nil, driverTxID())
+	require.Error(t, err)
+	assert.Zero(t, evm.SendRawTransactionCallCount(), "a failed setup must not broadcast")
+}
+
 // --- Broadcast -----------------------------------------------------------------------------------
 
 func TestBroadcastRejectsBadInput(t *testing.T) {
