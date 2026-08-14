@@ -596,7 +596,7 @@ the table to reach for when a transaction reverts.
 |---|---|---|
 | `NotInitialized` | The clone was never seeded | Deployment did not go through the factory |
 | `AnchorAlreadyProcessed` | This anchor was applied before | A resubmitted transaction, or a genuine replay attempt |
-| `MetadataLengthMismatch` | Key and value lists differ in length | A malformed delta; the driver builds these aligned |
+| `MetadataLengthMismatch` | Key and value lists differ in length | A malformed delta; the endorser's translator builds these aligned |
 | `InsufficientEndorsements` | Fewer signatures than the threshold | An endorser was unreachable when the quorum was collected |
 | `UnauthorizedSigner` | A signature came from a non-endorser | The driver's endorser set has drifted from the contract's |
 | `DuplicateSigner` | The same endorser signed twice | A broken initiator; N signatures from one endorser are not N endorsements |
