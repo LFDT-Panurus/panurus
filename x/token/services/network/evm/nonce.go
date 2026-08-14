@@ -16,11 +16,11 @@ import (
 )
 
 // NonceManager hands out the submitter account's Ethereum transaction nonces. Ethereum requires them
-// to be strictly sequential per account, so concurrent broadcasts must not read the same value: the
-// manager serializes allocation and tracks the next nonce locally rather than asking the node each
-// time, which would hand the same nonce to two callers racing between the query and the send.
+// to be strictly sequential per account, so two broadcasts must never collide: WithNonce holds a lock
+// across the whole allocate-and-use step, not just the allocation, so nothing else can be mid-flight
+// when a failed attempt needs the sequence walked back.
 //
-// The chain is the source of truth, so there is nothing to persist. On a fresh start (or after a
+// The chain is the only source of truth, so nothing here is persisted. On a fresh start (or after a
 // restart) the first allocation recovers from eth_getTransactionCount at the pending tag, which
 // already accounts for transactions still in the mempool. That makes a node restart transparent, at
 // the cost of one round trip.
@@ -38,35 +38,37 @@ func NewNonceManager(evmClient client.EVMClient, submitter client.Address) *Nonc
 	return &NonceManager{client: evmClient, submitter: submitter}
 }
 
-// Next returns the nonce to use for the next transaction and advances the counter. The caller owns
-// the returned nonce: if it does not end up broadcasting, it should Reset so the sequence does not
-// develop a gap that stalls every later transaction.
-func (n *NonceManager) Next(ctx context.Context) (uint64, error) {
+// WithNonce allocates the next nonce and runs use with it, holding the manager's lock for the whole
+// step. The sequence advances only if use succeeds; on failure the nonce is left exactly where it
+// was, so the next call gets the same value, with no round trip to the chain needed to know that is
+// safe.
+//
+// It is safe because of what use's contract already is, not despite it: every caller in this driver
+// treats a failure as proof the transaction never reached the chain (gas estimation and fee
+// suggestion are read-only, signing is local, and a rejected broadcast is documented as never judged
+// by the chain), and while use runs, no other call can be allocating a nonce for this account at all.
+// A nonce handed out twice used to happen exactly in the gap between those two things: one call's
+// failure re-derived the whole sequence from the chain's current mempool view, which does not yet
+// include a nonce a different, still in-flight call already holds and has not broadcast yet.
+func (n *NonceManager) WithNonce(ctx context.Context, use func(nonce uint64) error) error {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 
 	if !n.initialized {
 		pending, err := n.client.PendingNonceAt(ctx, n.submitter)
 		if err != nil {
-			return 0, errors.Wrapf(err, "failed to recover the nonce for submitter [%s]", n.submitter)
+			return errors.Wrapf(err, "failed to recover the nonce for submitter [%s]", n.submitter)
 		}
 		n.next = pending
 		n.initialized = true
 	}
 
-	nonce := n.next
+	if err := use(n.next); err != nil {
+		return err
+	}
 	n.next++
 
-	return nonce, nil
-}
-
-// Reset drops the cached counter so the next allocation re-reads from the node. It is the recovery
-// path for a failed broadcast: rather than guess whether the node saw the transaction, re-derive the
-// sequence from the pending nonce, which is authoritative.
-func (n *NonceManager) Reset() {
-	n.mu.Lock()
-	n.initialized = false
-	n.mu.Unlock()
+	return nil
 }
 
 // Cached returns the next nonce the manager would hand out and whether it has been initialized,
