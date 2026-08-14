@@ -248,6 +248,16 @@ func (n *Network) SetRecoveryStarter(f func(ns string) error) { n.startRecovery 
 
 // Broadcast assembles the endorsed envelope into a signed transaction, sends it, and records the
 // resulting raw transaction and hash back into the envelope so the caller can follow its finality.
+//
+// It checks that the envelope's anchor and its delta's own anchor agree before spending any gas.
+// Under the normal flow they always do, since both are derived from the same anchor at the point an
+// Envelope is built (RequestApproval, SetupPublicParams), but Broadcast has no way to know how the
+// envelope it was actually handed got here, and a mismatch here is not hypothetical: it would mean
+// the local bookkeeping that tracks this transaction (finality listeners, the ttx store) is keyed on
+// one anchor while the chain applies and emits StateCommitted for a different one. A finality wait on
+// the anchor Broadcast was told about would then watch an anchor the chain never touches, and after
+// the timeout wrongly report a transaction that actually succeeded as failed, the same failure shape
+// as a persistent read error, just from a construction bug instead of a chain-connectivity one.
 func (n *Network) Broadcast(ctx context.Context, blob any) error {
 	env, ok := blob.(*Envelope)
 	if !ok {
@@ -258,6 +268,15 @@ func (n *Network) Broadcast(ctx context.Context, blob any) error {
 	}
 	if env.Delta == nil {
 		return errors.Errorf("evm network: envelope [%s] carries no state delta", env.Anchor)
+	}
+	anchor, err := keys.AnchorFromTxID(env.Anchor)
+	if err != nil {
+		return errors.Wrapf(err, "evm network: envelope carries an invalid anchor [%s]", env.Anchor)
+	}
+	if env.Delta.Anchor != anchor {
+		return errors.Errorf(
+			"evm network: envelope anchor [%s] does not match its delta's anchor [%x]; refusing to broadcast",
+			env.Anchor, env.Delta.Anchor)
 	}
 
 	rawTx, txHash, err := n.submitter.Submit(ctx, env.Delta, env.Endorsements)

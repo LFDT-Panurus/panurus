@@ -338,6 +338,74 @@ func TestBroadcastRejectsBadInput(t *testing.T) {
 	})
 }
 
+// networkWithSubmitter returns a Network wired with a real submitter over a ready mock client, for
+// Broadcast tests that need to get past the submitter/delta checks to exercise what follows them.
+func networkWithSubmitter(t *testing.T, evm *mock.EVMClient) *Network {
+	t.Helper()
+	c := validConfig()
+	c.applyDefaults()
+	require.NoError(t, c.Validate())
+	n, err := NewNetwork("evm-net", c, evm, nil, testSubmitter(t, evm, estimateGas()), nil)
+	require.NoError(t, err)
+
+	return n
+}
+
+// TestBroadcastRejectsMismatchedAnchor is the fix for a real gap: nothing checked that an envelope's
+// anchor and its delta's own anchor actually agreed before spending gas on it. Under the normal flow
+// they always do, since RequestApproval derives both from the same anchor, but Broadcast has no way
+// to know how the envelope it was actually handed was built, and the local finality tracking is keyed
+// on the envelope's anchor while the chain applies and emits StateCommitted for the delta's: a
+// mismatch here would mean waiting on an anchor the chain never touches.
+func TestBroadcastRejectsMismatchedAnchor(t *testing.T) {
+	evm := readySubmitterClient()
+	n := networkWithSubmitter(t, evm)
+
+	elsewhere, err := keys.AnchorFromTxID(anchorHex(0xEE))
+	require.NoError(t, err)
+	delta := testDelta()
+	delta.Anchor = elsewhere
+
+	err = n.Broadcast(t.Context(), &Envelope{
+		Anchor:       anchorHex(0x01),
+		Delta:        delta,
+		Endorsements: [][]byte{make([]byte, 65)},
+	})
+	require.Error(t, err)
+	assert.Zero(t, evm.SendRawTransactionCallCount(), "a mismatched envelope must not be broadcast")
+}
+
+// TestBroadcastRejectsAnUnparsableAnchor checks the envelope's own anchor is validated before it is
+// compared against anything, rather than producing a confusing failure further down.
+func TestBroadcastRejectsAnUnparsableAnchor(t *testing.T) {
+	evm := readySubmitterClient()
+	n := networkWithSubmitter(t, evm)
+
+	err := n.Broadcast(t.Context(), &Envelope{
+		Anchor:       "not-hex",
+		Delta:        testDelta(),
+		Endorsements: [][]byte{make([]byte, 65)},
+	})
+	require.Error(t, err)
+	assert.Zero(t, evm.SendRawTransactionCallCount())
+}
+
+// TestBroadcastAcceptsAConsistentEnvelope is the positive case: an envelope whose anchor and delta
+// agree, as every normal caller produces, must still broadcast.
+func TestBroadcastAcceptsAConsistentEnvelope(t *testing.T) {
+	evm := readySubmitterClient()
+	n := networkWithSubmitter(t, evm)
+
+	delta := testDelta()
+	err := n.Broadcast(t.Context(), &Envelope{
+		Anchor:       hex.EncodeToString(delta.Anchor[:]),
+		Delta:        delta,
+		Endorsements: [][]byte{make([]byte, 65)},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 1, evm.SendRawTransactionCallCount())
+}
+
 // --- queries -------------------------------------------------------------------------------------
 
 func TestQueryTokens(t *testing.T) {
