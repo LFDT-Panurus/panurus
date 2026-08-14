@@ -39,4 +39,14 @@ var (
 	// contract counts distinct signers only, so the initiator must not assemble a quorum that would be
 	// rejected on-chain.
 	ErrDuplicateSigner = errors.New("duplicate endorser signature")
+
+	// ErrDeltaMismatch is returned when an endorser's delta does not belong to the request it was
+	// asked about, or is not structurally well formed. The signature over it is not counted.
+	ErrDeltaMismatch = errors.New("state delta does not match the request")
+
+	// ErrDivergentDeltas accompanies ErrInsufficientEndorsements when endorsers answered but signed
+	// different deltas for the same request. Endorsers that validated the same request must translate
+	// it identically, so this means the translation is not deterministic, not that endorsers were
+	// unavailable.
+	ErrDivergentDeltas = errors.New("endorsers disagree on the state delta")
 )

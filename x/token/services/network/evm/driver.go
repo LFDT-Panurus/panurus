@@ -274,7 +274,6 @@ func (d *Driver) installEndorsement(n *Network, config *Config, evmClient client
 		BlockTag:     config.Finality.BlockTag,
 		PublicParams: pp.NewChainProvider(evmClient, tokenState, config.Finality.BlockTag),
 		ViewManager:  d.viewManager,
-		TMS:          d.resolveTMS,
 	})
 	if err != nil {
 		return err
