@@ -69,7 +69,9 @@ func (s *pipeSession) Close() {}
 // own session via Session. Everything the endorsement views do not touch panics, so an unexpected
 // dependency surfaces loudly rather than silently.
 type fakeContext struct {
-	ctx      context.Context
+	// view.Context is an interface whose Context() method returns one, so an implementation of it has
+	// to hold a context.
+	ctx      context.Context //nolint:containedctx
 	me       view.Identity
 	sessions map[string]view.Session // keyed by party UniqueID, for GetSession (initiator side)
 	own      view.Session            // for Session() (responder side)
