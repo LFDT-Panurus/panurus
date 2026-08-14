@@ -27,7 +27,16 @@ const (
 	// DefaultPollInterval is how often finality polls a transaction's status.
 	DefaultPollInterval = 2 * time.Second
 	// DefaultFinalityTimeout bounds how long a transaction is awaited before it is treated as failed.
-	DefaultFinalityTimeout = 5 * time.Minute
+	// It carries real margin over MinFinalizedTagTimeout (design §7.2, §7.5) so a deployment running
+	// on defaults alone is not sitting at the edge of normal PoS finalization variance.
+	DefaultFinalityTimeout = 20 * time.Minute
+	// MinFinalizedTagTimeout is the floor Validate enforces on Finality.Timeout when BlockTag is
+	// finalized. Real time-to-finality on a PoS chain is ~13 minutes (design §7.2); a shorter timeout
+	// cannot ever see a transaction finalize and condemns it regardless of whether it succeeded (design
+	// §7.5: "any deployment must configure finality.timeout above ... the chain's finality"). It bounds
+	// only the chain's own lag; a deployment that also delays broadcasting a signed transaction needs
+	// additional headroom on top of this, which Validate has no way to know and cannot enforce.
+	MinFinalizedTagTimeout = 13 * time.Minute
 	// DefaultGasMultiplier scales the node's gas estimate to absorb small state changes between
 	// estimation and execution.
 	DefaultGasMultiplier = 1.2
@@ -198,6 +207,13 @@ func (c *Config) Validate() error {
 	case client.BlockTagFinalized, client.BlockTagSafe, client.BlockTagLatest:
 	default:
 		return errors.Errorf("evm config: unsupported finality blockTag [%s]", c.Finality.BlockTag)
+	}
+	if c.Finality.BlockTag == client.BlockTagFinalized && c.Finality.Timeout < MinFinalizedTagTimeout {
+		return errors.Errorf(
+			"evm config: finality.timeout [%s] is shorter than the finalized tag's own time-to-finality "+
+				"(~%s); it would condemn every transaction regardless of whether it succeeded",
+			c.Finality.Timeout, MinFinalizedTagTimeout,
+		)
 	}
 	if err := c.validateGas(); err != nil {
 		return err

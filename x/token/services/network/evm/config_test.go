@@ -15,6 +15,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gopkg.in/yaml.v3"
+
+	"github.com/LFDT-Panurus/panurus/x/token/services/network/evm/client"
 )
 
 // yamlConfiguration is a Configuration backed by a real YAML document, so the tests exercise the
@@ -92,7 +94,7 @@ services:
       finality:
         blockTag: finalized
         pollInterval: 2s
-        timeout: 5m
+        timeout: 15m
       gas:
         strategy: estimate
         multiplier: 1.5
@@ -123,7 +125,7 @@ func TestLoadConfigFullDocument(t *testing.T) {
 	assert.Equal(t, int64(31337), c.ChainIDBig().Int64())
 	assert.Equal(t, "finalized", c.Finality.BlockTag)
 	assert.Equal(t, 2*time.Second, c.Finality.PollInterval)
-	assert.Equal(t, 5*time.Minute, c.Finality.Timeout)
+	assert.Equal(t, 15*time.Minute, c.Finality.Timeout)
 	assert.InEpsilon(t, 1.5, c.Gas.Multiplier, 1e-9)
 	assert.True(t, c.Endorser.Enabled)
 	assert.Equal(t, uint(2), c.Endorsement.Threshold)
@@ -190,13 +192,17 @@ func TestConfigValidationRejectsBadDocuments(t *testing.T) {
 	}
 
 	cases := map[string]func(*Config){
-		"empty endpoint":          func(c *Config) { c.Endpoint = "" },
-		"zero chain id":           func(c *Config) { c.ChainID = 0 },
-		"negative chain id":       func(c *Config) { c.ChainID = -1 },
-		"missing token state":     func(c *Config) { c.Contracts.TokenState = "" },
-		"malformed token state":   func(c *Config) { c.Contracts.TokenState = "0xdeadbeef" },
-		"malformed verifier":      func(c *Config) { c.Contracts.EndorsementVerifier = "not-an-address" },
-		"unsupported block tag":   func(c *Config) { c.Finality.BlockTag = "pending" },
+		"empty endpoint":        func(c *Config) { c.Endpoint = "" },
+		"zero chain id":         func(c *Config) { c.ChainID = 0 },
+		"negative chain id":     func(c *Config) { c.ChainID = -1 },
+		"missing token state":   func(c *Config) { c.Contracts.TokenState = "" },
+		"malformed token state": func(c *Config) { c.Contracts.TokenState = "0xdeadbeef" },
+		"malformed verifier":    func(c *Config) { c.Contracts.EndorsementVerifier = "not-an-address" },
+		"unsupported block tag": func(c *Config) { c.Finality.BlockTag = "pending" },
+		"finalized timeout shorter than real finality": func(c *Config) {
+			c.Finality.BlockTag = client.BlockTagFinalized
+			c.Finality.Timeout = MinFinalizedTagTimeout - time.Second
+		},
 		"unknown gas strategy":    func(c *Config) { c.Gas.Strategy = "guess" },
 		"multiplier below one":    func(c *Config) { c.Gas.Multiplier = 0.5 },
 		"fixed gas without limit": func(c *Config) { c.Gas.Strategy = GasStrategyFixed; c.Gas.Limit = 0 },
@@ -229,6 +235,33 @@ func TestFixedGasStrategyIsValid(t *testing.T) {
 	c.Gas.Strategy = GasStrategyFixed
 	c.Gas.Limit = 500_000
 	require.NoError(t, c.Validate())
+}
+
+// TestFinalizedTagRequiresLongEnoughTimeout pins the fix for the bug where the shipped default paired
+// the finalized tag with a timeout shorter than real PoS finality: a deployment running on defaults
+// alone would time out and report every transaction Invalid, whether or not it actually succeeded.
+// The floor applies only to the finalized tag; safe and latest resolve on their own faster schedules,
+// so a short timeout there is a legitimate choice, not a misconfiguration Validate can detect.
+func TestFinalizedTagRequiresLongEnoughTimeout(t *testing.T) {
+	c, err := LoadConfig(newYAMLConfiguration(t, fullConfigYAML))
+	require.NoError(t, err)
+
+	c.Finality.BlockTag = client.BlockTagFinalized
+	c.Finality.Timeout = MinFinalizedTagTimeout - time.Second
+	require.Error(t, c.Validate())
+
+	c.Finality.Timeout = MinFinalizedTagTimeout
+	require.NoError(t, c.Validate(), "the floor itself must be accepted")
+
+	c.Finality.BlockTag = client.BlockTagLatest
+	c.Finality.Timeout = time.Second
+	require.NoError(t, c.Validate(), "the floor must not apply to a tag it was not measured for")
+}
+
+// TestDefaultFinalityTimeoutClearsItsOwnFloor checks the shipped default is internally consistent: it
+// must satisfy MinFinalizedTagTimeout, since DefaultBlockTag is finalized.
+func TestDefaultFinalityTimeoutClearsItsOwnFloor(t *testing.T) {
+	assert.GreaterOrEqual(t, DefaultFinalityTimeout, MinFinalizedTagTimeout)
 }
 
 // TestThresholdEqualToSetSizeIsValid checks the boundary: an N-of-N policy is legitimate.
