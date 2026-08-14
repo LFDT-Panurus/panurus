@@ -208,8 +208,8 @@ func (d *Driver) watchPublicParams(network, channel string, config *Config, evmC
 
 	watcher, err := pp.NewWatcher(
 		evmClient, tokenState, config.Finality.BlockTag, config.Finality.PollInterval,
-		func(ctx context.Context, raw []byte, version uint64) {
-			d.applyPublicParams(ctx, tmsIDs, raw, version)
+		func(ctx context.Context, raw []byte, version uint64) error {
+			return d.applyPublicParams(ctx, tmsIDs, raw, version)
 		},
 	)
 	if err != nil {
@@ -224,10 +224,17 @@ func (d *Driver) watchPublicParams(network, channel string, config *Config, evmC
 // applyPublicParams reloads every TMS on the network with the new parameters and persists them. A
 // failure for one TMS does not stop the others: they are independent, and a node serving stale
 // parameters for one is better than for all of them.
-func (d *Driver) applyPublicParams(ctx context.Context, tmsIDs []token2.TMSID, raw []byte, version uint64) {
+//
+// It returns the combined error of every TMS that failed, if any, so the watcher knows this version
+// was not fully applied and retries it rather than treating it as handled. Retrying is safe: Update is
+// a no-op when the parameters it is given already match the TMS's current ones, so a TMS that already
+// succeeded is not disturbed by a retry covering the whole batch.
+func (d *Driver) applyPublicParams(ctx context.Context, tmsIDs []token2.TMSID, raw []byte, version uint64) error {
+	var errs []error
 	for _, tmsID := range tmsIDs {
 		if err := d.tmsProvider.Update(tmsID, raw); err != nil {
 			logger.Warnf("failed to update tms [%s] to public parameters version %d: %v", tmsID, version, err)
+			errs = append(errs, errors.Wrapf(err, "tms [%s]", tmsID))
 
 			continue
 		}
@@ -237,13 +244,17 @@ func (d *Driver) applyPublicParams(ctx context.Context, tmsIDs []token2.TMSID, r
 		service, err := d.tokensManager.ServiceByTMSId(tmsID)
 		if err != nil {
 			logger.Warnf("failed to get the token store for [%s]: %v", tmsID, err)
+			errs = append(errs, errors.Wrapf(err, "tms [%s]", tmsID))
 
 			continue
 		}
 		if err := service.StorePublicParams(ctx, raw); err != nil {
 			logger.Warnf("failed to store public parameters for [%s]: %v", tmsID, err)
+			errs = append(errs, errors.Wrapf(err, "tms [%s]", tmsID))
 		}
 	}
+
+	return errors.Join(errs...)
 }
 
 // installEndorsement builds the endorsement seam for this network and hands it to the network. The
