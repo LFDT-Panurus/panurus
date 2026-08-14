@@ -81,8 +81,11 @@ type Driver struct {
 	auditStores     auditdb.StoreServiceManager
 	metricsProvider metrics.Provider
 	recoveryTracer  trace.Tracer
-	// registerOnce guards the responder registration, which is per node rather than per network.
-	registerOnce sync.Once
+	// registerMu guards registeredFor: this node can register only one FSC-level endorsement responder
+	// for its whole lifetime (see registerEndorser), so a second, different network trying to claim it
+	// needs to be detected rather than silently discarded.
+	registerMu    sync.Mutex
+	registeredFor string
 	// watchers keeps one public-parameters watcher per network, so building a network twice does not
 	// leave two pollers on one contract.
 	watchersMu sync.Mutex
@@ -162,7 +165,7 @@ func (d *Driver) New(network, channel string) (driver.Network, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := d.installEndorsement(n, config, evmClient); err != nil {
+	if err := d.installEndorsement(n, config, evmClient, network, channel); err != nil {
 		return nil, err
 	}
 	d.watchPublicParams(network, channel, config, evmClient)
@@ -260,7 +263,7 @@ func (d *Driver) applyPublicParams(ctx context.Context, tmsIDs []token2.TMSID, r
 // installEndorsement builds the endorsement seam for this network and hands it to the network. The
 // service itself is per TMS, because it needs that TMS's validator, so what is installed is a factory
 // that resolves one when the network is given a TMS to approve for.
-func (d *Driver) installEndorsement(n *Network, config *Config, evmClient client.EVMClient) error {
+func (d *Driver) installEndorsement(n *Network, config *Config, evmClient client.EVMClient, network, channel string) error {
 	if d.viewManager == nil {
 		logger.Debugf("no view manager available; this node cannot collect endorsements")
 
@@ -309,7 +312,7 @@ func (d *Driver) installEndorsement(n *Network, config *Config, evmClient client
 	// Registration happens now, not on the first approval. An endorser node answers requests without
 	// ever making one, so registering lazily on the approval path would mean it never registers at
 	// all and every request to it times out.
-	d.registerEndorser(factory, config)
+	d.registerEndorser(network+":"+channel, factory, config)
 
 	return nil
 }
@@ -338,44 +341,66 @@ func (d *Driver) newSubmitter(config *Config, evmClient client.EVMClient) (*Subm
 // registerEndorser registers this node's responder so it can answer requests. A node that does not
 // endorse has no key and registers nothing.
 //
+// The registration is per node, not per network, because FSC routes an incoming session to a
+// responder by the initiating view's Go type alone: it has no notion of "this responder, but only for
+// network X". So only one Responder can ever be registered for endorsement.Initiator across this
+// process's whole lifetime, and whichever network happens to build it first has its factory, EIP-712
+// domain and chain client baked into it permanently. A second, differently configured network trying
+// to endorse through the same registration would validate against the right TMS but sign and read
+// against the wrong chain, so it is refused loudly here instead of silently discarded: an operator who
+// configures two endorsing networks on one node needs to see why the second one never answers.
+//
 // The TMS is resolved when a request arrives rather than now: resolving one here would ask the token
 // layer for a service that is still being built through this very driver.
-func (d *Driver) registerEndorser(factory *endorsement.ServiceFactory, config *Config) {
-	d.registerOnce.Do(func() {
-		if d.viewRegistry == nil || !config.Endorser.Enabled {
-			return
-		}
-		signer, err := config.EndorserSigner()
-		if err != nil || signer == nil {
-			logger.Errorf("this node is configured as an endorser but its key is unusable: %v", err)
+func (d *Driver) registerEndorser(networkKey string, factory *endorsement.ServiceFactory, config *Config) {
+	if d.viewRegistry == nil || !config.Endorser.Enabled {
+		return
+	}
 
-			return
+	d.registerMu.Lock()
+	defer d.registerMu.Unlock()
+	if d.registeredFor != "" {
+		if d.registeredFor != networkKey {
+			logger.Errorf(
+				"[%s] is configured to endorse, but this node is already registered as the endorser for [%s]; "+
+					"one node can endorse for only one EVM network at a time, [%s] will not answer endorsement requests",
+				networkKey, d.registeredFor, networkKey)
 		}
-		allowed, err := config.AllowedRequesters(d.resolveIdentity)
-		if err != nil {
-			logger.Errorf("failed to resolve the endorsement allowlist: %v", err)
 
-			return
-		}
-		authorizer, err := endorsement.NewAuthorizer(allowed)
-		if err != nil {
-			logger.Errorf("failed to build the endorsement allowlist: %v", err)
+		return
+	}
 
-			return
-		}
-		responder, err := factory.NewResponder(authorizer, signer, d.resolveTMS)
-		if err != nil {
-			logger.Errorf("failed to build the endorsement responder: %v", err)
+	signer, err := config.EndorserSigner()
+	if err != nil || signer == nil {
+		logger.Errorf("this node is configured as an endorser but its key is unusable: %v", err)
 
-			return
-		}
-		if err := endorsement.RegisterEndorser(d.viewRegistry, responder); err != nil {
-			logger.Errorf("failed to register the endorsement responder: %v", err)
+		return
+	}
+	allowed, err := config.AllowedRequesters(d.resolveIdentity)
+	if err != nil {
+		logger.Errorf("failed to resolve the endorsement allowlist: %v", err)
 
-			return
-		}
-		logger.Infof("registered as an endorser with address %s", signer.Address())
-	})
+		return
+	}
+	authorizer, err := endorsement.NewAuthorizer(allowed)
+	if err != nil {
+		logger.Errorf("failed to build the endorsement allowlist: %v", err)
+
+		return
+	}
+	responder, err := factory.NewResponder(authorizer, signer, d.resolveTMS)
+	if err != nil {
+		logger.Errorf("failed to build the endorsement responder: %v", err)
+
+		return
+	}
+	if err := endorsement.RegisterEndorser(d.viewRegistry, responder); err != nil {
+		logger.Errorf("failed to register the endorsement responder: %v", err)
+
+		return
+	}
+	d.registeredFor = networkKey
+	logger.Infof("registered as the endorser for [%s] with address %s", networkKey, signer.Address())
 }
 
 // resolveIdentity turns a configured node name into the identity that node speaks with.
