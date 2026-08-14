@@ -218,6 +218,9 @@ func TestConfigValidationRejectsBadDocuments(t *testing.T) {
 		},
 		"enabled endorser without address": func(c *Config) { c.Endorser.Address = "" },
 		"enabled endorser bad address":     func(c *Config) { c.Endorser.Address = "nope" },
+		"enabled endorser without allowlist": func(c *Config) {
+			c.Endorsement.Allowlist = nil
+		},
 	}
 	for name, mutate := range cases {
 		t.Run(name, func(t *testing.T) {

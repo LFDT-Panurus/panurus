@@ -131,8 +131,10 @@ type EndorsementConfig struct {
 	// Threshold is the number of distinct endorser signatures a transaction needs. It must match the
 	// threshold the EndorsementVerifier was constructed with.
 	Threshold uint `yaml:"threshold"`
-	// Allowlist is the FSC identities permitted to request endorsement. Empty means the policy is
-	// resolved from the TMS network's nodes at wiring time.
+	// Allowlist is the FSC identities permitted to request endorsement. It is fail-closed: when this
+	// node is configured to endorse, an empty allowlist is a validation error rather than a default
+	// that resolves to anyone. There is no automatic "the TMS network's nodes" fallback; every
+	// permitted requester has to be named.
 	Allowlist []string `yaml:"allowlist"`
 	// Endorsers binds each endorser's Ethereum address to its FSC identity.
 	Endorsers []EndorserBinding `yaml:"endorsers"`
@@ -277,6 +279,13 @@ func (c *Config) validateEndorsement() error {
 		}
 		if _, err := client.HexToAddress(c.Endorser.Address); err != nil {
 			return errors.Wrap(err, "evm config: invalid endorser address")
+		}
+		// The authorizer is deliberately fail-closed: it refuses to build from an empty allowlist
+		// rather than default to trusting everyone. Catching that here means a node left this way
+		// fails at startup rather than coming up looking healthy and silently never registering as an
+		// endorser, which is where this used to surface, as an error log easy to miss during wiring.
+		if len(c.Endorsement.Allowlist) == 0 {
+			return errors.New("evm config: endorsement.allowlist is required when endorser.enabled is set")
 		}
 	}
 
