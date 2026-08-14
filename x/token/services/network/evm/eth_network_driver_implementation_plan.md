@@ -405,11 +405,14 @@ container resolves the real driver.
       deployer) before recording the clone address. `TokenStateFactory.t.sol` pins both halves, including a
       test that runs the hijack against the two-transaction deploy it replaced.
 - [x] `Makefile` targets `integration-tests-evm` (zkatdlog) and `integration-tests-evm-fabtoken`.
-- [x] `integration/token/fungible/{evm,evmfabtoken}/evm_test.go` (Ginkgo) — **fabtoken on Besu**, reusing the
-      existing fungible `dlog` test bodies retargeted at the EVM topology: issue, transfer, double-spend
-      reject, sub-threshold reject, finality, recipient anchor→finality. Both suites exist and call
-      `fungible.TestAll` unmodified. **Green on 2026-08-08**: the whole body, 616s, including the
-      concurrent transfers and the parallel token selector that nothing had reached before.
+- [x] `integration/token/fungible/{evm,evmfabtoken}/evm_test.go` (Ginkgo) — **both the zkatdlog driver
+      (`evm`) and fabtoken (`evmfabtoken`) on Besu**, reusing the existing fungible `dlog` test bodies
+      retargeted at the EVM topology: issue, transfer, double-spend reject, sub-threshold reject,
+      finality, recipient anchor→finality. Both suites exist and call `fungible.TestAll` unmodified.
+      **Green on 2026-08-08**, and confirmed again by CI on this PR's pre-force-push tip (run
+      `31415800806`, commit `90020d19a`, 2026-08-10): `itest-evm (evm)` and `itest-evm (evm-fabtoken)`
+      both succeeded. This is also Week 7's zkatdlog gate — it landed here rather than there, which the
+      checkbox in that section did not reflect until now.
 - [x] **Recipient-side anchor→finality (design §7.4) — MOVED HERE from Week 7 (Angelo, sync 2026-08-06).**
       It is a *dependency* of the gate, not a later extra: the fungible bodies call
       `CheckFinality(network, bob, txID, …)`, and bob is a recipient who only ever holds the anchor, so the
@@ -554,9 +557,13 @@ Closing the gaps the work above left open, before the gate run:
       forward into Week 6**: the fungible bodies update parameters to authorise a new issuer wallet, so
       the Week-6 gate depends on it. `nwo.SetupUpdater` builds and submits the delta; `pp.Watcher` is how
       a node notices somebody else's update.
-- [ ] zkatdlog/nogh end-to-end on Besu (same path; opaque token bytes) added to the Ginkgo suite.
+- [x] zkatdlog/nogh end-to-end on Besu (same path; opaque token bytes) added to the Ginkgo suite.
+      **Pulled forward into Week 6**, same as the PP-update flow above: `integration/token/fungible/evm`
+      is the zkatdlog suite and it went green alongside fabtoken on 2026-08-08. The checkbox here was
+      just never flipped when it happened.
 
-Gate: endorsed PP update + version bump tested; zkatdlog suite green on Besu.
+Gate: endorsed PP update + version bump tested; zkatdlog suite green on Besu. **MET in Week 6** — see
+the `evm`/`evmfabtoken` bullet there.
 
 *(Recipient anchor→finality moved to Week 6: the fungible suite depends on it, so it cannot trail the gate.)*
 
