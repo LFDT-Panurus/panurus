@@ -8,6 +8,7 @@ package client
 
 import (
 	"bytes"
+	"encoding/json"
 	"strings"
 	"testing"
 )
@@ -91,5 +92,50 @@ func FuzzBytesToAddress(f *testing.F) {
 		if len(b) >= AddressLength && !bytes.Equal(address[:], b[len(b)-AddressLength:]) {
 			t.Fatalf("right-alignment dropped bytes: %x from %x", address, b)
 		}
+	})
+}
+
+// FuzzJSONLogToLog fuzzes the eth_getLogs record decoder. It is the point where a response body from
+// whatever node the driver was pointed at (a compromised, buggy, or simply mismatched one, per the
+// design's own framing of alternative EVM backends) turns into a driver type, so the property is that
+// a malformed record is rejected rather than panicking the caller.
+func FuzzJSONLogToLog(f *testing.F) {
+	f.Add(
+		`{"address":"0x5FbDB2315678afecb367f032d93F642f64180aa3",` +
+			`"topics":["0x853f272fffc6efc284fc16a254decca742d2347e05703e501c59968f78f81ffa"],"data":"0xabcd",` +
+			`"transactionHash":"0x853f272fffc6efc284fc16a254decca742d2347e05703e501c59968f78f81ffa","blockNumber":"0x1"}`,
+	)
+	f.Add(`{}`)
+	f.Add(`{"topics":[""]}`)
+	f.Add(`{"topics":["not hex"]}`)
+	f.Add(`{"data":"not hex"}`)
+	f.Add(`{"blockNumber":"not hex"}`)
+	f.Add(`not json at all`)
+
+	f.Fuzz(func(t *testing.T, raw string) {
+		var j jsonLog
+		if err := json.Unmarshal([]byte(raw), &j); err != nil {
+			return
+		}
+		_, _ = j.toLog()
+	})
+}
+
+// FuzzJSONReceiptToReceipt fuzzes the eth_getTransactionReceipt record decoder, the same node-supplied
+// boundary as FuzzJSONLogToLog, including the nested logs it decodes through jsonLog.toLog.
+func FuzzJSONReceiptToReceipt(f *testing.F) {
+	f.Add(`{"transactionHash":"0x853f272fffc6efc284fc16a254decca742d2347e05703e501c59968f78f81ffa","blockNumber":"0x1","status":"0x1","logs":[]}`)
+	f.Add(`{}`)
+	f.Add(`{"status":"not hex"}`)
+	f.Add(`{"blockNumber":null,"status":"0x0"}`)
+	f.Add(`{"logs":[{"data":"not hex"}]}`)
+	f.Add(`not json at all`)
+
+	f.Fuzz(func(t *testing.T, raw string) {
+		var j jsonReceipt
+		if err := json.Unmarshal([]byte(raw), &j); err != nil {
+			return
+		}
+		_, _ = j.toReceipt()
 	})
 }

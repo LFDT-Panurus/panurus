@@ -173,6 +173,14 @@ jobs:
             dir: ./x/token/services/network/evm
             pkg: ./client
             func: FuzzBytesToAddress
+          - name: evm-json-log-to-log
+            dir: ./x/token/services/network/evm
+            pkg: ./client
+            func: FuzzJSONLogToLog
+          - name: evm-json-receipt-to-receipt
+            dir: ./x/token/services/network/evm
+            pkg: ./client
+            func: FuzzJSONReceiptToReceipt
 
     steps:
       - name: Checkout code
