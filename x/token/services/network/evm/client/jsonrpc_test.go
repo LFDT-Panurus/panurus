@@ -120,6 +120,32 @@ func TestCallSurfacesRPCError(t *testing.T) {
 	assert.Contains(t, err.Error(), "method not found")
 }
 
+// TestCallClassifiesReverts mirrors TestEstimateGasClassifiesReverts: eth_call can revert against a
+// real node exactly as eth_estimateGas can, and a caller needs the same distinction between "the chain
+// rejected this" and "the node failed to answer" for either one.
+func TestCallClassifiesReverts(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		code     int
+		message  string
+		reverted bool
+	}{
+		{name: "geth wording", code: -32000, message: "execution reverted", reverted: true},
+		{name: "besu wording", code: -32000, message: "Execution reverted", reverted: true},
+		{name: "another server error", code: -32000, message: "header not found", reverted: false},
+		{name: "method not found", code: -32601, message: "method not found", reverted: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := newErrorServer(t, tc.code, tc.message)
+
+			_, err := c.Call(context.Background(), Address{}, nil, "latest")
+			require.Error(t, err)
+			assert.Equal(t, tc.reverted, errors.Is(err, ErrExecutionReverted))
+			assert.Contains(t, err.Error(), tc.message)
+		})
+	}
+}
+
 func TestPendingNonceAt(t *testing.T) {
 	c, calls := newTestServer(t, map[string]string{"eth_getTransactionCount": `"0x2a"`})
 

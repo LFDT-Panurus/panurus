@@ -72,14 +72,25 @@ func (c *JSONRPCClient) Ping(ctx context.Context) error {
 	return err
 }
 
-// Call performs a read-only contract call at the given block tag.
+// Call performs a read-only contract call at the given block tag. A revert is classified the same way
+// EstimateGas classifies one (ErrExecutionReverted), so a caller that later adds a Call against a
+// method capable of reverting does not have to rediscover this distinction: eth_call and
+// eth_estimateGas fail the same way against the same node.
 func (c *JSONRPCClient) Call(ctx context.Context, to Address, data []byte, blockTag string) ([]byte, error) {
 	if blockTag == "" {
 		blockTag = BlockTagFinalized
 	}
 	arg := map[string]any{"to": to.Hex(), "data": encodeHexBytes(data)}
 	var out string
-	if err := c.call(ctx, "eth_call", &out, arg, blockTag); err != nil {
+	rpcErr, err := c.invoke(ctx, "eth_call", &out, arg, blockTag)
+	if rpcErr != nil {
+		if isReverted(rpcErr) {
+			return nil, errors.Wrapf(ErrExecutionReverted, "eth_call failed: %s", rpcErr.Message)
+		}
+
+		return nil, errors.Wrap(rpcErr, "eth_call failed")
+	}
+	if err != nil {
 		return nil, err
 	}
 
