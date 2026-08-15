@@ -55,17 +55,33 @@ func NewSigner(key *secp256k1.PrivateKey) *Signer {
 }
 
 // NewSignerFromBytes returns a Signer over a raw 32-byte private-key scalar. It rejects scalars of
-// the wrong length and the zero scalar (whose public key is the point at infinity).
+// the wrong length, the zero scalar (whose public key is the point at infinity), and a scalar at or
+// above the curve order: secp256k1.PrivKeyFromBytes would silently reduce such a value modulo the
+// order rather than erroring, producing a signer for a different key than the raw bytes represent.
 func NewSignerFromBytes(raw []byte) (*Signer, error) {
 	if len(raw) != PrivateKeyLength {
 		return nil, errors.Errorf("invalid private key length: expected %d bytes, got %d", PrivateKeyLength, len(raw))
 	}
-	key := secp256k1.PrivKeyFromBytes(raw)
-	if key.Key.IsZero() {
-		return nil, errors.New("invalid private key: zero scalar")
+	key, err := DecodePrivateKeyScalar(raw)
+	if err != nil {
+		return nil, err
 	}
 
 	return NewSigner(key), nil
+}
+
+// DecodePrivateKeyScalar parses raw as a private-key scalar, rejecting the zero scalar and anything
+// that overflows the curve order instead of silently reducing it modulo the order.
+func DecodePrivateKeyScalar(raw []byte) (*secp256k1.PrivateKey, error) {
+	var scalar secp256k1.ModNScalar
+	if overflow := scalar.SetByteSlice(raw); overflow {
+		return nil, errors.New("invalid private key: scalar is not less than the curve order")
+	}
+	if scalar.IsZero() {
+		return nil, errors.New("invalid private key: zero scalar")
+	}
+
+	return secp256k1.NewPrivateKey(&scalar), nil
 }
 
 // Address returns the Ethereum address of the signer, as registered in the EndorsementVerifier.
