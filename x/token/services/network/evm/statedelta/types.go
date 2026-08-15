@@ -86,8 +86,8 @@ func (d *StateDelta) Validate() error {
 		}
 	}
 	if d.IsSetup {
-		if len(d.SpentRefs) != 0 || len(d.Outputs) != 0 {
-			return errors.Errorf("setup delta must carry no spent refs or outputs")
+		if len(d.SpentRefs) != 0 || len(d.Outputs) != 0 || len(d.MetadataKeys) != 0 {
+			return errors.Errorf("setup delta must carry no spent refs, outputs, or metadata")
 		}
 		if len(d.SetupParameters) == 0 {
 			return errors.Errorf("setup delta must carry the new public parameters")

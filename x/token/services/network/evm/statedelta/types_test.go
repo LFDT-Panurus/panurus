@@ -44,6 +44,18 @@ func TestStateDeltaValidate(t *testing.T) {
 		assert.Error(t, d.Validate())
 	})
 
+	t.Run("setup delta with metadata", func(t *testing.T) {
+		// TokenState.sol's _applySetup reverts MalformedSetupDelta on non-empty metadataKeys too;
+		// Validate must refuse this before an endorser ever signs it, not leave it to the contract.
+		d := &StateDelta{
+			IsSetup:         true,
+			SetupParameters: []byte("pp"),
+			MetadataKeys:    [][32]byte{{0x01}},
+			MetadataVals:    [][]byte{[]byte("v")},
+		}
+		assert.Error(t, d.Validate())
+	})
+
 	t.Run("non-setup delta smuggling setup parameters", func(t *testing.T) {
 		// SetupParameters is digest-covered: endorsers would sign bytes the contract ignores.
 		d := &StateDelta{SpentRefs: [][32]byte{{0x01}}, SetupParameters: []byte("pp")}
