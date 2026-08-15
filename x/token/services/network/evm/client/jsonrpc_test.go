@@ -273,6 +273,19 @@ func TestSuggestGasFeesOnAZeroFeeChain(t *testing.T) {
 	assert.Equal(t, big.NewInt(0), fees.MaxFeePerGas)
 }
 
+// TestSuggestGasFeesErrorsOnANullBlock covers a node that returns no block at all for "latest" (a
+// gateway hiccup or a malformed response), which must not be treated as the pre-London zero-base-fee
+// case: both look like an empty BaseFeePerGas field unless the two are told apart.
+func TestSuggestGasFeesErrorsOnANullBlock(t *testing.T) {
+	c, _ := newTestServer(t, map[string]string{
+		"eth_maxPriorityFeePerGas": `"0x1"`,
+		"eth_getBlockByNumber":     `null`,
+	})
+
+	_, err := c.SuggestGasFees(context.Background())
+	require.Error(t, err)
+}
+
 // TestSuggestGasFeesSurfacesRealFailures checks the fallback is only for an unimplemented method: a
 // node that implements neither is a failure rather than a silent zero fee.
 func TestSuggestGasFeesSurfacesRealFailures(t *testing.T) {

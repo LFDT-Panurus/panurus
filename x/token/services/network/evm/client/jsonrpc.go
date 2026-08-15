@@ -218,13 +218,19 @@ func (c *JSONRPCClient) SuggestGasFees(ctx context.Context) (GasFees, error) {
 }
 
 // baseFee reads the base fee of the latest block. A chain with no base fee at all (a pre-London or
-// zero-fee configuration) reports none, which is a base fee of zero rather than an error.
+// zero-fee configuration) reports the field absent, which is a base fee of zero rather than an error.
+// A null result, by contrast, means the node did not return a block at all and is an error: head is a
+// pointer so that case is distinguishable, since unmarshaling JSON null into a non-pointer target is a
+// silent no-op that would otherwise be indistinguishable from the legitimate absent-field case.
 func (c *JSONRPCClient) baseFee(ctx context.Context) (*big.Int, error) {
-	var head struct {
+	var head *struct {
 		BaseFeePerGas string `json:"baseFeePerGas"`
 	}
 	if err := c.call(ctx, "eth_getBlockByNumber", &head, "latest", false); err != nil {
 		return nil, err
+	}
+	if head == nil {
+		return nil, errors.New("evm client: eth_getBlockByNumber(\"latest\") returned no block")
 	}
 	if head.BaseFeePerGas == "" {
 		return new(big.Int), nil
