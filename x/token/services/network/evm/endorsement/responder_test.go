@@ -241,5 +241,37 @@ func TestResponderSurfacesPublicParamsFailure(t *testing.T) {
 	assert.Empty(t, resp.Signature)
 }
 
+// fakeSetup is a minimal SetupAction (the SDK ships no counterfeiter fake for it), mirroring
+// statedelta's own test double for the same interface.
+type fakeSetup struct {
+	params []byte
+}
+
+func (f *fakeSetup) GetSetupParameters() ([]byte, error) { return f.params, nil }
+
+// TestResponderEndorsesASetupAction drives a public-parameters update through the real endorsement
+// pipeline: authorize, validate, translate via Translator.writeSetup, sign. Nothing else in this
+// package's unit tests exercises a setup request this way, and the integration harness's own way of
+// bumping public parameters mid-test (nwo.SetupUpdater) hand-assembles and signs a StateDelta directly
+// rather than going through Responder/DeltaFactory - so this is that pipeline's first real exercise
+// against a genuine setup action.
+func TestResponderEndorsesASetupAction(t *testing.T) {
+	newPP := []byte("new-public-parameters")
+	actions := []any{&fakeSetup{params: newPP}}
+	meta := map[string][]byte{common.TokenRequestToSign: []byte(trsMessage)}
+	signer := newSigner(t, 1)
+	r := newResponder(t, &fakeValidator{actions: actions, meta: meta}, &fakePP{raw: []byte(testPPRaw), version: testPPVer}, signer)
+
+	req := validRequest()
+	resp := r.Handle(context.Background(), view.Identity(testCaller), req)
+	require.NoError(t, resp.Error())
+	require.NotEmpty(t, resp.Signature)
+
+	digest := recomputeDigest(t, req.Anchor, actions, meta)
+	got, err := eip712.RecoverAddress(digest, resp.Signature)
+	require.NoError(t, err)
+	assert.Equal(t, signer.Address(), got, "endorser must have signed the setup delta it built")
+}
+
 // compile-time check that the concrete signer satisfies the injected interface.
 var _ EndorserSigner = (*eip712.Signer)(nil)
