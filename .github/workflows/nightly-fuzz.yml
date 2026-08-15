@@ -141,6 +141,10 @@ jobs:
             dir: ./x/token/services/network/evm
             pkg: .
             func: FuzzComputeAnchor
+          - name: evm-anchor-from-txid
+            dir: ./x/token/services/network/evm
+            pkg: ./keys
+            func: FuzzAnchorFromTxID
           - name: evm-abi-decode-bytes
             dir: ./x/token/services/network/evm
             pkg: ./abi
