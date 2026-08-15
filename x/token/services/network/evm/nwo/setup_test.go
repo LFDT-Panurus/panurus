@@ -190,9 +190,13 @@ func TestUpdateRejectsEmptyParameters(t *testing.T) {
 }
 
 func TestNewSetupUpdaterValidatesItsInput(t *testing.T) {
+	validTokenState, err := client.HexToAddress("0x5FbDB2315678afecb367f032d93F642f64180aa3")
+	require.NoError(t, err)
+
 	base := func() SetupUpdaterConfig {
 		return SetupUpdaterConfig{
 			Client:       &mock.EVMClient{},
+			TokenState:   validTokenState,
 			ChainID:      big.NewInt(testChainID),
 			EndorserKeys: [][]byte{testKey(1)},
 			Submitter:    &evm.Submitter{},
@@ -200,11 +204,12 @@ func TestNewSetupUpdaterValidatesItsInput(t *testing.T) {
 	}
 
 	for name, broken := range map[string]func(*SetupUpdaterConfig){
-		"no client":    func(c *SetupUpdaterConfig) { c.Client = nil },
-		"no submitter": func(c *SetupUpdaterConfig) { c.Submitter = nil },
-		"no chain id":  func(c *SetupUpdaterConfig) { c.ChainID = nil },
-		"no endorsers": func(c *SetupUpdaterConfig) { c.EndorserKeys = nil },
-		"unusable key": func(c *SetupUpdaterConfig) { c.EndorserKeys = [][]byte{{0x01}} },
+		"no client":      func(c *SetupUpdaterConfig) { c.Client = nil },
+		"no token state": func(c *SetupUpdaterConfig) { c.TokenState = client.Address{} },
+		"no submitter":   func(c *SetupUpdaterConfig) { c.Submitter = nil },
+		"no chain id":    func(c *SetupUpdaterConfig) { c.ChainID = nil },
+		"no endorsers":   func(c *SetupUpdaterConfig) { c.EndorserKeys = nil },
+		"unusable key":   func(c *SetupUpdaterConfig) { c.EndorserKeys = [][]byte{{0x01}} },
 	} {
 		t.Run(name, func(t *testing.T) {
 			config := base()
