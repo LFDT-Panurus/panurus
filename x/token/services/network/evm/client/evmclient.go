@@ -43,6 +43,10 @@ type Log struct {
 	Data        []byte
 	TxHash      Hash
 	BlockNumber uint64
+	// Removed is true when the node is reporting that a reorg has undone the block this log was
+	// mined in. A caller treating a log as evidence of a committed, permanent effect must not trust
+	// one with Removed set.
+	Removed bool
 }
 
 // LogFilter selects logs by contract address, block range and indexed topics.

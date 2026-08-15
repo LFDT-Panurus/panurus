@@ -104,6 +104,36 @@ func TestTxHashByAnchorRejectsDuplicates(t *testing.T) {
 	assert.Contains(t, err.Error(), "replay guard")
 }
 
+// TestTxHashByAnchorIgnoresARemovedLog is the reorg regression test: a log the node reports as
+// removed was mined in a block that is no longer canonical and must not be trusted as evidence the
+// anchor was applied, nor counted against the replay-guard duplicate check.
+func TestTxHashByAnchorIgnoresARemovedLog(t *testing.T) {
+	want, err := client.HexToHash("0x853f272fffc6efc284fc16a254decca742d2347e05703e501c59968f78f81ffa")
+	require.NoError(t, err)
+
+	t.Run("a removed log alone is not found", func(t *testing.T) {
+		evm := &mock.EVMClient{}
+		evm.GetLogsReturns([]client.Log{{TxHash: want, BlockNumber: 12, Removed: true}}, nil)
+
+		_, found, err := logManager(evm).TxHashByAnchor(t.Context(), anchor(0x01))
+		require.NoError(t, err)
+		assert.False(t, found, "a reorged-out log is not evidence the anchor was applied")
+	})
+
+	t.Run("a removed log alongside the real one does not trip the duplicate guard", func(t *testing.T) {
+		evm := &mock.EVMClient{}
+		evm.GetLogsReturns([]client.Log{
+			{TxHash: want, BlockNumber: 12},
+			{TxHash: want, BlockNumber: 7, Removed: true},
+		}, nil)
+
+		got, found, err := logManager(evm).TxHashByAnchor(t.Context(), anchor(0x01))
+		require.NoError(t, err)
+		require.True(t, found)
+		assert.Equal(t, want, got)
+	})
+}
+
 func TestTxHashByAnchorSurfacesQueryFailure(t *testing.T) {
 	evm := &mock.EVMClient{}
 	evm.GetLogsReturns(nil, errors.New("node unavailable"))

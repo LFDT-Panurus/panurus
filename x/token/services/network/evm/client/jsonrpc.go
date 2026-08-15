@@ -430,6 +430,7 @@ type jsonLog struct {
 	Data        string   `json:"data"`
 	TxHash      string   `json:"transactionHash"`
 	BlockNumber string   `json:"blockNumber"`
+	Removed     bool     `json:"removed"`
 }
 
 func (j *jsonLog) toLog() (Log, error) {
@@ -458,7 +459,9 @@ func (j *jsonLog) toLog() (Log, error) {
 		return Log{}, errors.Wrap(err, "invalid log block number")
 	}
 
-	return Log{Address: addr, Topics: topics, Data: data, TxHash: txHash, BlockNumber: blockNumber}, nil
+	return Log{
+		Address: addr, Topics: topics, Data: data, TxHash: txHash, BlockNumber: blockNumber, Removed: j.Removed,
+	}, nil
 }
 
 type jsonReceipt struct {

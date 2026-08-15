@@ -440,6 +440,24 @@ func TestGetLogs(t *testing.T) {
 	assert.Equal(t, "0x64", arg["toBlock"])
 }
 
+// TestGetLogsCapturesRemoved checks a log the node marks as reorged-out decodes with Removed set,
+// rather than being indistinguishable from a canonical one.
+func TestGetLogsCapturesRemoved(t *testing.T) {
+	c, _ := newTestServer(t, map[string]string{
+		"eth_getLogs": `[{
+			"address":"0x5FbDB2315678afecb367f032d93F642f64180aa3",
+			"topics":["0x1111111111111111111111111111111111111111111111111111111111111111"],
+			"data":"0x","transactionHash":"0x853f272fffc6efc284fc16a254decca742d2347e05703e501c59968f78f81ffa",
+			"blockNumber":"0x2","removed":true
+		}]`,
+	})
+
+	logs, err := c.GetLogs(context.Background(), LogFilter{})
+	require.NoError(t, err)
+	require.Len(t, logs, 1)
+	assert.True(t, logs[0].Removed, "a reorged-out log must be reported as such")
+}
+
 // TestGetLogsWildcardTopic checks that an empty inner slice becomes a null (match-any) position,
 // which is the eth_getLogs convention.
 func TestGetLogsWildcardTopic(t *testing.T) {

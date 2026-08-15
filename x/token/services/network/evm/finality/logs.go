@@ -8,6 +8,7 @@ package finality
 
 import (
 	"context"
+	"slices"
 
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 
@@ -52,6 +53,10 @@ func (m *Manager) TxHashByAnchor(ctx context.Context, anchor [32]byte) (client.H
 	if err != nil {
 		return client.Hash{}, false, errors.Wrap(err, "finality: failed to search for the commit event")
 	}
+
+	// A log the node marks removed was mined in a block a reorg has since undone: it is no longer
+	// part of the canonical chain and must not be treated as evidence the anchor was applied.
+	logs = slices.DeleteFunc(logs, func(l client.Log) bool { return l.Removed })
 	if len(logs) == 0 {
 		return client.Hash{}, false, nil
 	}
