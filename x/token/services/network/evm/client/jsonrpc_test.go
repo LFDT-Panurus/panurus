@@ -501,4 +501,18 @@ func TestHexHelpers(t *testing.T) {
 		_, err = decodeHexBytes("0xodd")
 		require.Error(t, err)
 	})
+
+	t.Run("an uppercase 0X prefix is tolerated exactly like decodeHex accepts one", func(t *testing.T) {
+		got, err := parseHexUint("0X2a")
+		require.NoError(t, err)
+		assert.Equal(t, uint64(42), got)
+
+		gotBig, err := parseHexBig("0X2a")
+		require.NoError(t, err)
+		assert.Zero(t, gotBig.Cmp(big.NewInt(42)))
+
+		gotBytes, err := decodeHexBytes("0Xdead")
+		require.NoError(t, err)
+		assert.Equal(t, []byte{0xde, 0xad}, gotBytes)
+	})
 }

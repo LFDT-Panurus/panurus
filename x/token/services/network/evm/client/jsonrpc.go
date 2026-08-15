@@ -517,9 +517,9 @@ func encodeHexBytes(b []byte) string {
 	return "0x" + hex.EncodeToString(b)
 }
 
-// decodeHexBytes decodes 0x-prefixed hex data, tolerating an empty or bare "0x" value.
+// decodeHexBytes decodes 0x/0X-prefixed hex data, tolerating an empty or bare prefix value.
 func decodeHexBytes(s string) ([]byte, error) {
-	s = strings.TrimPrefix(strings.TrimSpace(s), "0x")
+	s = trimHexPrefix(s)
 	if s == "" {
 		return nil, nil
 	}
@@ -531,9 +531,9 @@ func decodeHexBytes(s string) ([]byte, error) {
 	return b, nil
 }
 
-// parseHexUint parses a 0x-prefixed hex quantity into a uint64.
+// parseHexUint parses a 0x/0X-prefixed hex quantity into a uint64.
 func parseHexUint(s string) (uint64, error) {
-	trimmed := strings.TrimPrefix(strings.TrimSpace(s), "0x")
+	trimmed := trimHexPrefix(s)
 	if trimmed == "" {
 		return 0, errors.Errorf("empty hex quantity")
 	}
@@ -545,9 +545,9 @@ func parseHexUint(s string) (uint64, error) {
 	return v, nil
 }
 
-// parseHexBig parses a 0x-prefixed hex quantity into a big.Int.
+// parseHexBig parses a 0x/0X-prefixed hex quantity into a big.Int.
 func parseHexBig(s string) (*big.Int, error) {
-	trimmed := strings.TrimPrefix(strings.TrimSpace(s), "0x")
+	trimmed := trimHexPrefix(s)
 	if trimmed == "" {
 		return nil, errors.Errorf("empty hex quantity")
 	}
