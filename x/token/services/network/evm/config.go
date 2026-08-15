@@ -80,7 +80,8 @@ type ContractsConfig struct {
 
 // FinalityConfig controls how transaction finality is observed.
 type FinalityConfig struct {
-	// BlockTag is the tag state is read at (finalized or safe).
+	// BlockTag is the tag state is read at: finalized (default, no reorg risk), safe, or latest (no
+	// reorg protection at all; only appropriate for a local, instant-mining chain).
 	BlockTag string `yaml:"blockTag"`
 	// PollInterval is the delay between status polls.
 	PollInterval time.Duration `yaml:"pollInterval"`
