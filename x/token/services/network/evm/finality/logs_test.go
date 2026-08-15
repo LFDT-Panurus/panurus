@@ -27,7 +27,7 @@ func testAddress(low byte) client.Address {
 }
 
 func logManager(evm client.EVMClient) *Manager {
-	return NewManager(evm, &stubState{}, testAddress(0xAA), 0, 5*time.Millisecond, time.Second)
+	return NewManager(evm, &stubState{}, testAddress(0xAA), 0, "", 5*time.Millisecond, time.Second)
 }
 
 // TestStateCommittedTopic pins topic 0 against the value any Ethereum tooling computes
@@ -63,7 +63,7 @@ func TestTxHashByAnchorFiltersCorrectly(t *testing.T) {
 	evm := &mock.EVMClient{}
 	evm.GetLogsReturns(nil, nil)
 
-	m := NewManager(evm, &stubState{}, testAddress(0xAA), 100, 5*time.Millisecond, time.Second)
+	m := NewManager(evm, &stubState{}, testAddress(0xAA), 100, "", 5*time.Millisecond, time.Second)
 	_, _, err := m.TxHashByAnchor(t.Context(), anchor(0x42))
 	require.NoError(t, err)
 
@@ -79,6 +79,21 @@ func TestTxHashByAnchorFiltersCorrectly(t *testing.T) {
 	assert.Equal(t, StateCommittedTopic(), filter.Topics[0][0])
 	require.Len(t, filter.Topics[1], 1)
 	assert.Equal(t, client.Hash(anchor(0x42)), filter.Topics[1][0], "the anchor is the indexed topic")
+}
+
+// TestTxHashByAnchorHonoursTheConfiguredBlockTag is the regression test for the finding that this
+// search always reached the chain head regardless of the operator's configured reorg-safety tag,
+// unlike every other reader in the module. A non-empty blockTag must reach the filter as ToBlockTag.
+func TestTxHashByAnchorHonoursTheConfiguredBlockTag(t *testing.T) {
+	evm := &mock.EVMClient{}
+	evm.GetLogsReturns(nil, nil)
+
+	m := NewManager(evm, &stubState{}, testAddress(0xAA), 0, client.BlockTagFinalized, 5*time.Millisecond, time.Second)
+	_, _, err := m.TxHashByAnchor(t.Context(), anchor(0x01))
+	require.NoError(t, err)
+
+	_, filter := evm.GetLogsArgsForCall(0)
+	assert.Equal(t, client.BlockTagFinalized, filter.ToBlockTag)
 }
 
 // TestTxHashByAnchorNotFound covers the ordinary case for a recipient still waiting: no event yet.
@@ -146,7 +161,7 @@ func TestTxHashByAnchorSurfacesQueryFailure(t *testing.T) {
 // querying the zero address, which would match nothing and look like "not committed yet".
 func TestTxHashByAnchorNeedsTheContract(t *testing.T) {
 	evm := &mock.EVMClient{}
-	m := NewManager(evm, &stubState{}, client.Address{}, 0, 5*time.Millisecond, time.Second)
+	m := NewManager(evm, &stubState{}, client.Address{}, 0, "", 5*time.Millisecond, time.Second)
 
 	_, _, err := m.TxHashByAnchor(t.Context(), anchor(0x01))
 	require.Error(t, err)

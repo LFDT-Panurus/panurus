@@ -53,14 +53,19 @@ type Log struct {
 // Topics follows the eth_getLogs convention: position i lists the acceptable values for topic i;
 // an empty inner slice matches any value at that position.
 //
-// ToBlock == 0 means "latest": a range ending at genesis is never a useful query, and searching up to
-// the head is what a caller looking for an event actually wants, so the zero value is spent on the
-// common case rather than requiring a separate round trip to read the current block number.
+// The upper end of the range is ToBlockTag when set, otherwise ToBlock, with ToBlock == 0 meaning
+// "latest": a range ending at genesis is never a useful query, and searching up to the head is what a
+// caller looking for an event actually wants, so the zero value is spent on the common case rather
+// than requiring a separate round trip to read the current block number. ToBlockTag lets a caller that
+// cares about reorg safety search only up to its configured tag (e.g. "finalized") instead.
 type LogFilter struct {
 	Address   Address
 	FromBlock uint64
 	ToBlock   uint64
-	Topics    [][]Hash
+	// ToBlockTag, when non-empty, is sent as the upper bound instead of ToBlock (e.g. BlockTagFinalized
+	// or BlockTagSafe).
+	ToBlockTag string
+	Topics     [][]Hash
 }
 
 // GasFees carries the EIP-1559 fee parameters suggested by the node.

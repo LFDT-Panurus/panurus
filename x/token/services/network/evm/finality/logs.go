@@ -43,12 +43,15 @@ func (m *Manager) TxHashByAnchor(ctx context.Context, anchor [32]byte) (client.H
 		return client.Hash{}, false, errors.New("finality: no token state address configured for log lookups")
 	}
 
-	// ToBlock is left at zero, which the filter reads as "latest": the anchor may have been applied at
-	// any point up to the head, and this avoids a second round trip just to learn the block number.
+	// ToBlockTag mirrors the configured tag every other reader in this module uses (finalized/safe by
+	// default in production), so a search here cannot see a block state reads elsewhere are configured
+	// not to trust yet. Left empty it reads as "latest": the anchor may have been applied at any point
+	// up to the head, and this avoids a second round trip just to learn the block number.
 	logs, err := m.client.GetLogs(ctx, client.LogFilter{
-		Address:   m.tokenState,
-		FromBlock: m.fromBlock,
-		Topics:    [][]client.Hash{{StateCommittedTopic()}, {anchor}},
+		Address:    m.tokenState,
+		FromBlock:  m.fromBlock,
+		ToBlockTag: m.blockTag,
+		Topics:     [][]client.Hash{{StateCommittedTopic()}, {anchor}},
 	})
 	if err != nil {
 		return client.Hash{}, false, errors.Wrap(err, "finality: failed to search for the commit event")

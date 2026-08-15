@@ -48,6 +48,7 @@ type Manager struct {
 	state        StateReader
 	tokenState   client.Address
 	fromBlock    uint64
+	blockTag     string
 	pollInterval time.Duration
 	timeout      time.Duration
 
@@ -57,13 +58,15 @@ type Manager struct {
 
 // NewManager returns a finality manager. Non-positive intervals fall back to sane defaults so a
 // partially filled configuration cannot produce a busy loop.
-// The tokenState address and fromBlock are only needed by the log-based lookup (TxHashByAnchor); the
-// status paths work without them.
+// The tokenState address, fromBlock and blockTag are only needed by the log-based lookup
+// (TxHashByAnchor); the status paths work without them. An empty blockTag searches up to the chain
+// head, matching client.LogFilter's own default.
 func NewManager(
 	evmClient client.EVMClient,
 	state StateReader,
 	tokenState client.Address,
 	fromBlock uint64,
+	blockTag string,
 	pollInterval, timeout time.Duration,
 ) *Manager {
 	if pollInterval <= 0 {
@@ -78,6 +81,7 @@ func NewManager(
 		state:        state,
 		tokenState:   tokenState,
 		fromBlock:    fromBlock,
+		blockTag:     blockTag,
 		pollInterval: pollInterval,
 		timeout:      timeout,
 		pending:      map[string]struct{}{},
