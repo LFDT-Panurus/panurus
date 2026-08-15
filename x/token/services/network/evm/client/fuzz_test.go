@@ -117,8 +117,47 @@ func FuzzJSONLogToLog(f *testing.F) {
 		if err := json.Unmarshal([]byte(raw), &j); err != nil {
 			return
 		}
-		_, _ = j.toLog()
+		log, err := j.toLog()
+		if err != nil {
+			return
+		}
+		assertLogMatchesRaw(t, log, j)
 	})
+}
+
+// assertLogMatchesRaw re-derives every field of log directly from j's raw strings and requires an
+// exact match. toLog is glue over the already-fuzzed HexToAddress/HexToHash/decodeHexBytes/
+// parseHexUint, so this does not re-implement hex parsing; it proves toLog actually wires each field
+// through its parser and propagates that parser's error, rather than, say, silently substituting a
+// zero value for a field it failed to parse.
+func assertLogMatchesRaw(t *testing.T, log Log, j jsonLog) {
+	t.Helper()
+
+	addr, err := HexToAddress(j.Address)
+	if err != nil || log.Address != addr {
+		t.Fatalf("toLog succeeded but Address does not match parsing j.Address directly (err=%v)", err)
+	}
+	txHash, err := HexToHash(j.TxHash)
+	if err != nil || log.TxHash != txHash {
+		t.Fatalf("toLog succeeded but TxHash does not match parsing j.TxHash directly (err=%v)", err)
+	}
+	data, err := decodeHexBytes(j.Data)
+	if err != nil || !bytes.Equal(log.Data, data) {
+		t.Fatalf("toLog succeeded but Data does not match parsing j.Data directly (err=%v)", err)
+	}
+	blockNumber, err := parseHexUint(j.BlockNumber)
+	if err != nil || log.BlockNumber != blockNumber {
+		t.Fatalf("toLog succeeded but BlockNumber does not match parsing j.BlockNumber directly (err=%v)", err)
+	}
+	if len(log.Topics) != len(j.Topics) {
+		t.Fatalf("toLog succeeded but topic count changed: got %d, raw had %d", len(log.Topics), len(j.Topics))
+	}
+	for i, raw := range j.Topics {
+		h, err := HexToHash(raw)
+		if err != nil || log.Topics[i] != h {
+			t.Fatalf("toLog succeeded but topic %d does not match parsing it directly (err=%v)", i, err)
+		}
+	}
 }
 
 // FuzzJSONReceiptToReceipt fuzzes the eth_getTransactionReceipt record decoder, the same node-supplied
@@ -136,6 +175,33 @@ func FuzzJSONReceiptToReceipt(f *testing.F) {
 		if err := json.Unmarshal([]byte(raw), &j); err != nil {
 			return
 		}
-		_, _ = j.toReceipt()
+		receipt, err := j.toReceipt()
+		if err != nil {
+			return
+		}
+
+		txHash, err := HexToHash(j.TxHash)
+		if err != nil || receipt.TxHash != txHash {
+			t.Fatalf("toReceipt succeeded but TxHash does not match parsing j.TxHash directly (err=%v)", err)
+		}
+		status, err := parseHexUint(j.Status)
+		if err != nil || receipt.Status != status {
+			t.Fatalf("toReceipt succeeded but Status does not match parsing j.Status directly (err=%v)", err)
+		}
+		if (j.BlockNumber == nil) != (receipt.BlockNumber == nil) {
+			t.Fatalf("toReceipt succeeded but BlockNumber presence does not match the raw field")
+		}
+		if j.BlockNumber != nil {
+			bn, err := parseHexUint(*j.BlockNumber)
+			if err != nil || *receipt.BlockNumber != bn {
+				t.Fatalf("toReceipt succeeded but BlockNumber does not match parsing it directly (err=%v)", err)
+			}
+		}
+		if len(receipt.Logs) != len(j.Logs) {
+			t.Fatalf("toReceipt succeeded but log count changed: got %d, raw had %d", len(receipt.Logs), len(j.Logs))
+		}
+		for i := range j.Logs {
+			assertLogMatchesRaw(t, receipt.Logs[i], j.Logs[i])
+		}
 	})
 }
