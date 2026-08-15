@@ -245,3 +245,22 @@ func TestRegisterEndorserSkipsANonEndorsingNetwork(t *testing.T) {
 	assert.Equal(t, 1, registry.calls)
 	assert.Equal(t, "network-a:", d.registeredFor)
 }
+
+// TestRegisterEndorserReturnsAnErrorForABrokenKey is the regression test for the finding that a node
+// explicitly configured as an endorser, but whose signing key cannot be loaded, used to register
+// nothing and only log the failure: nothing told the caller registration never happened, so
+// installEndorsement and Driver.New both reported success regardless. A broken endorser answers no
+// requests, which looks identical to ordinary network trouble from the outside and was otherwise
+// discoverable only once a quorum it was needed for timed out.
+func TestRegisterEndorserReturnsAnErrorForABrokenKey(t *testing.T) {
+	registry := &fakeViewRegistry{}
+	d := &Driver{viewRegistry: registry, identities: fakeIdentityProvider{}}
+	config := endorserConfig(t)
+	config.Endorser.Keystore = "" // unusable: LoadKey rejects an empty path
+	factory := testServiceFactory(t, config)
+
+	err := d.registerEndorser("network-a:", factory, config)
+	require.Error(t, err)
+	assert.Zero(t, registry.calls, "a broken key must not reach the view registry")
+	assert.Empty(t, d.registeredFor, "a failed attempt must not mark the network as registered")
+}
