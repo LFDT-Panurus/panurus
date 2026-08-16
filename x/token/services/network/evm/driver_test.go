@@ -206,11 +206,12 @@ func TestRegisterEndorserRefusesASecondNetwork(t *testing.T) {
 	config := endorserConfig(t)
 	factory := testServiceFactory(t, config)
 
-	d.registerEndorser("network-a:", factory, config)
+	require.NoError(t, d.registerEndorser("network-a:", factory, config))
 	assert.Equal(t, 1, registry.calls, "the first network must register")
 	assert.Equal(t, "network-a:", d.registeredFor)
 
-	d.registerEndorser("network-b:", factory, config)
+	require.NoError(t, d.registerEndorser("network-b:", factory, config),
+		"a second network is refused loudly via a log line, not an error - see registerEndorser's doc comment")
 	assert.Equal(t, 1, registry.calls, "a second, different network must not overwrite the registration")
 	assert.Equal(t, "network-a:", d.registeredFor, "the first network's registration must stand")
 }
@@ -223,8 +224,8 @@ func TestRegisterEndorserIsIdempotentForTheSameNetwork(t *testing.T) {
 	config := endorserConfig(t)
 	factory := testServiceFactory(t, config)
 
-	d.registerEndorser("network-a:", factory, config)
-	d.registerEndorser("network-a:", factory, config)
+	require.NoError(t, d.registerEndorser("network-a:", factory, config))
+	require.NoError(t, d.registerEndorser("network-a:", factory, config))
 
 	assert.Equal(t, 1, registry.calls, "registering the same network twice must not re-register")
 }
@@ -237,10 +238,10 @@ func TestRegisterEndorserSkipsANonEndorsingNetwork(t *testing.T) {
 	d := &Driver{viewRegistry: registry, identities: fakeIdentityProvider{}}
 	endorsing := endorserConfig(t)
 	factory := testServiceFactory(t, endorsing)
-	d.registerEndorser("network-a:", factory, endorsing)
+	require.NoError(t, d.registerEndorser("network-a:", factory, endorsing))
 
 	notEndorsing := validConfig() // Endorser.Enabled defaults to false
-	d.registerEndorser("network-b:", factory, notEndorsing)
+	require.NoError(t, d.registerEndorser("network-b:", factory, notEndorsing))
 
 	assert.Equal(t, 1, registry.calls)
 	assert.Equal(t, "network-a:", d.registeredFor)
