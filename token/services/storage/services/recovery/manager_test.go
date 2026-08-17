@@ -408,6 +408,63 @@ func TestManager_StopDuringFanOutDoesNotDeadlock(t *testing.T) {
 	require.NoError(t, manager.Stop())
 }
 
+// TestManager_PromoteOrphanOnNoSuchTransactionID verifies that the
+// "no such transaction ID" error message returned by the Fabric-X ledger
+// (fabric-smart-client/platform/fabricx/core/ledger/ledger.go) is recognised
+// as a NotFound error, so the manager promotes the tx to storage.Orphan after
+// the NotFoundGracePeriod has elapsed.
+func TestManager_PromoteOrphanOnNoSuchTransactionID(t *testing.T) {
+	logger := logging.MustGetLogger()
+	mockDB := &mock2.Storage{}
+	mockHandler := &mock2.Handler{}
+	config := recovery2.Config{
+		Enabled:             true,
+		TTL:                 100 * time.Millisecond,
+		ScanInterval:        100 * time.Millisecond,
+		BatchSize:           100,
+		WorkerCount:         1,
+		LeaseDuration:       time.Second,
+		AdvisoryLockID:      1,
+		InstanceID:          "test-instance",
+		NotFoundGracePeriod: 10 * time.Millisecond,
+	}
+
+	// stored_at well beyond the 10ms grace period so the promotion fires.
+	txRecord := &ttxdb.RecoveryClaim{
+		TxID:     "txNoSuchTx",
+		StoredAt: time.Now().Add(-time.Hour),
+	}
+
+	leadership1 := &mock2.Leadership{}
+	leadership1.CloseReturns(nil)
+	leadership2 := &mock2.Leadership{}
+	leadership2.CloseReturns(nil)
+
+	mockDB.AcquireRecoveryLeadershipReturnsOnCall(0, leadership1, true, nil)
+	mockDB.AcquireRecoveryLeadershipReturns(leadership2, true, nil)
+	mockDB.ClaimPendingTransactionsReturnsOnCall(0, []*ttxdb.RecoveryClaim{txRecord}, nil)
+	mockDB.ClaimPendingTransactionsReturns([]*ttxdb.RecoveryClaim{}, nil)
+	// Use the Fabric-X ledger sentinel substring directly.
+	mockHandler.RecoverReturns(errors.New("Failed to get transaction with id d48c4, error no such transaction ID [d48c] in index"))
+	mockDB.ReleaseRecoveryClaimReturns(nil)
+	mockDB.SetStatusReturns(nil)
+
+	manager := recovery2.NewManager(logger, mockDB, mockHandler, config)
+
+	require.NoError(t, manager.Start())
+	// Wait for the initial sweep (jitter up to 1s + handler invocation).
+	time.Sleep(1300 * time.Millisecond)
+	_ = manager.Stop()
+
+	require.GreaterOrEqual(t, mockHandler.RecoverCallCount(), 1)
+	require.Equal(t, 1, mockDB.SetStatusCallCount(), "expected exactly one SetStatus call for the orphan promotion")
+
+	_, gotTxID, gotStatus, gotMsg := mockDB.SetStatusArgsForCall(0)
+	assert.Equal(t, "txNoSuchTx", gotTxID)
+	assert.Equal(t, storage.Orphan, gotStatus, "orphan path must promote to storage.Orphan, not storage.Deleted")
+	assert.Contains(t, gotMsg, "tx never reached ledger")
+}
+
 func TestDefaultConfig(t *testing.T) {
 	config := recovery2.DefaultConfig()
 
