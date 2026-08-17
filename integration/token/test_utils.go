@@ -171,7 +171,10 @@ func (s *TestSuite) Setup() {
 	network, err := s.generator()
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	s.II = network
-	network.RegisterPlatformFactory(token.NewPlatformFactory(s.II))
+	tokenPlatformFactory := token.NewPlatformFactory(s.II)
+	network.RegisterPlatformFactory(tokenPlatformFactory)
 	network.Generate()
 	network.Start()
+	// the public parameters of the fabricx backend can only be installed once the FSC nodes are up
+	tokenPlatformFactory.InstallPendingPublicParams()
 }

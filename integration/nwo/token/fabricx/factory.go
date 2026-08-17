@@ -26,6 +26,15 @@ type ClientProvider interface {
 
 type Backend struct {
 	ClientProvider ClientProvider
+
+	// pending collects the public parameters to be installed once the FSC nodes are up.
+	pending []pendingPublicParams
+}
+
+// pendingPublicParams holds the public parameters of a TMS whose installation has been deferred.
+type pendingPublicParams struct {
+	tms   *tokentopology.TMS
+	ppRaw []byte
 }
 
 func (b *Backend) PrepareNamespace(tms *tokentopology.TMS) {
@@ -66,39 +75,31 @@ func addNamespace(n *fabrictopology.Topology, tms *tokentopology.TMS, orgs ...st
 	n.AddNamespace(tms.Namespace, policy, peers...)
 }
 
+// InstallPublicParams records the public parameters of the passed TMS for installation.
+// The installation cannot happen here: this runs in the token platform's post-run hook, which
+// executes before the FSC nodes are started, hence the issuer's view client does not exist yet.
+// Waiting for it in a background goroutine is not an option either, because the NWO context that
+// hands out the view clients is not safe for concurrent use while the FSC platform populates it.
+// The recorded public parameters are installed by InstallPendingPublicParams.
 func (b *Backend) InstallPublicParams(tms *tokentopology.TMS, ppRaw []byte) {
+	// give the backend network time to settle before the FSC nodes are started
 	time.Sleep(10 * time.Second)
 
-	go func() {
-		// let's wait for a maximum of one minute
-		for range 60 {
-			logger.Infof("installing public params on [%s:%s:%s:%s]...", tms.Network, tms.Channel, tms.Namespace, tms.Driver)
-			issuer := b.ClientProvider.Client("issuer")
-			if issuer != nil {
-				_, err := b.ClientProvider.Client("issuer").CallView("SetupPublicParams", common2.JSONMarshall(
-					&ppsetup.SetupPublicParams{
-						Network:         tms.Network,
-						Channel:         tms.Channel,
-						Namespace:       tms.Namespace,
-						PublicParamsRaw: ppRaw,
-						Timeout:         2 * time.Minute,
-					},
-				))
-				if err != nil {
-					logger.Error("installing public params on [%s:%s:%s:%s]...failed [%v]", tms.Network, tms.Channel, tms.Namespace, tms.Driver, err)
+	b.pending = append(b.pending, pendingPublicParams{tms: tms, ppRaw: ppRaw})
+}
 
-					panic("failed updating pps: " + err.Error())
-				}
-				logger.Infof("installing public params on [%s:%s:%s:%s]...done", tms.Network, tms.Channel, tms.Namespace, tms.Driver)
+// InstallPendingPublicParams installs the public parameters recorded by InstallPublicParams.
+// It must be called from the goroutine that started the network, once all FSC nodes are up.
+func (b *Backend) InstallPendingPublicParams() {
+	pending := b.pending
+	b.pending = nil
 
-				return
-			}
-
-			logger.Infof("installing public params on [%s:%s:%s:%s]...client not ready, wait a bit...", tms.Network, tms.Channel, tms.Namespace, tms.Driver)
-			time.Sleep(1 * time.Second)
-		}
-		panic("failed installing public params")
-	}()
+	for _, p := range pending {
+		logger.Infof("installing public params on [%s:%s:%s:%s]...", p.tms.Network, p.tms.Channel, p.tms.Namespace, p.tms.Driver)
+		gomega.Expect(b.ClientProvider.Client("issuer")).ToNot(gomega.BeNil(), "no view client for the issuer, is the network started?")
+		b.UpdatePublicParams(p.tms, p.ppRaw)
+		logger.Infof("installing public params on [%s:%s:%s:%s]...done", p.tms.Network, p.tms.Channel, p.tms.Namespace, p.tms.Driver)
+	}
 }
 
 func (b *Backend) UpdatePublicParams(tms *tokentopology.TMS, ppRaw []byte) {
