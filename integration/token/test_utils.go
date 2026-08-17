@@ -175,6 +175,7 @@ func (s *TestSuite) Setup() {
 	network.RegisterPlatformFactory(tokenPlatformFactory)
 	network.Generate()
 	network.Start()
-	// the public parameters of the fabricx backend can only be installed once the FSC nodes are up
+	// the public parameters of the fabricx backend can only be installed once the FSC nodes are
+	// up, and InstallPendingPublicParams fails the suite if any installation failed
 	tokenPlatformFactory.InstallPendingPublicParams()
 }
