@@ -10,7 +10,7 @@ import (
 )
 
 type TokensService struct {
-	AppendValidStub        func(context.Context, driver.Transaction, token.RequestAnchor, *token.Request) error
+	AppendValidStub        func(context.Context, driver.Transaction, token.RequestAnchor, *token.Request) (func(ctx context.Context), error)
 	appendValidMutex       sync.RWMutex
 	appendValidArgsForCall []struct {
 		arg1 context.Context
@@ -19,10 +19,12 @@ type TokensService struct {
 		arg4 *token.Request
 	}
 	appendValidReturns struct {
-		result1 error
+		result1 func(ctx context.Context)
+		result2 error
 	}
 	appendValidReturnsOnCall map[int]struct {
-		result1 error
+		result1 func(ctx context.Context)
+		result2 error
 	}
 	GetCachedTokenRequestStub        func(string) (*token.Request, []byte)
 	getCachedTokenRequestMutex       sync.RWMutex
@@ -41,7 +43,7 @@ type TokensService struct {
 	invocationsMutex sync.RWMutex
 }
 
-func (fake *TokensService) AppendValid(arg1 context.Context, arg2 driver.Transaction, arg3 token.RequestAnchor, arg4 *token.Request) error {
+func (fake *TokensService) AppendValid(arg1 context.Context, arg2 driver.Transaction, arg3 token.RequestAnchor, arg4 *token.Request) (func(ctx context.Context), error) {
 	fake.appendValidMutex.Lock()
 	ret, specificReturn := fake.appendValidReturnsOnCall[len(fake.appendValidArgsForCall)]
 	fake.appendValidArgsForCall = append(fake.appendValidArgsForCall, struct {
@@ -58,9 +60,9 @@ func (fake *TokensService) AppendValid(arg1 context.Context, arg2 driver.Transac
 		return stub(arg1, arg2, arg3, arg4)
 	}
 	if specificReturn {
-		return ret.result1
+		return ret.result1, ret.result2
 	}
-	return fakeReturns.result1
+	return fakeReturns.result1, fakeReturns.result2
 }
 
 func (fake *TokensService) AppendValidCallCount() int {
@@ -69,7 +71,7 @@ func (fake *TokensService) AppendValidCallCount() int {
 	return len(fake.appendValidArgsForCall)
 }
 
-func (fake *TokensService) AppendValidCalls(stub func(context.Context, driver.Transaction, token.RequestAnchor, *token.Request) error) {
+func (fake *TokensService) AppendValidCalls(stub func(context.Context, driver.Transaction, token.RequestAnchor, *token.Request) (func(ctx context.Context), error)) {
 	fake.appendValidMutex.Lock()
 	defer fake.appendValidMutex.Unlock()
 	fake.AppendValidStub = stub
@@ -82,27 +84,30 @@ func (fake *TokensService) AppendValidArgsForCall(i int) (context.Context, drive
 	return argsForCall.arg1, argsForCall.arg2, argsForCall.arg3, argsForCall.arg4
 }
 
-func (fake *TokensService) AppendValidReturns(result1 error) {
+func (fake *TokensService) AppendValidReturns(result1 func(ctx context.Context), result2 error) {
 	fake.appendValidMutex.Lock()
 	defer fake.appendValidMutex.Unlock()
 	fake.AppendValidStub = nil
 	fake.appendValidReturns = struct {
-		result1 error
-	}{result1}
+		result1 func(ctx context.Context)
+		result2 error
+	}{result1, result2}
 }
 
-func (fake *TokensService) AppendValidReturnsOnCall(i int, result1 error) {
+func (fake *TokensService) AppendValidReturnsOnCall(i int, result1 func(ctx context.Context), result2 error) {
 	fake.appendValidMutex.Lock()
 	defer fake.appendValidMutex.Unlock()
 	fake.AppendValidStub = nil
 	if fake.appendValidReturnsOnCall == nil {
 		fake.appendValidReturnsOnCall = make(map[int]struct {
-			result1 error
+			result1 func(ctx context.Context)
+			result2 error
 		})
 	}
 	fake.appendValidReturnsOnCall[i] = struct {
-		result1 error
-	}{result1}
+		result1 func(ctx context.Context)
+		result2 error
+	}{result1, result2}
 }
 
 func (fake *TokensService) GetCachedTokenRequest(arg1 string) (*token.Request, []byte) {

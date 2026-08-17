@@ -169,7 +169,8 @@ func TestAppendValid_SkipsWhenNoRequestOrMetadata(t *testing.T) {
 		cache := &mock.FakeCache{}
 		ts := &tokens.Service{Storage: &tokens.DBStorage{}, RequestsCache: cache}
 
-		require.NoError(t, ts.AppendValid(ctx, nil, "tx1", nil))
+		_, err := ts.AppendValid(ctx, nil, "tx1", nil)
+		require.NoError(t, err)
 		// getActions was never reached, so the cache was neither consulted nor invalidated.
 		assert.Equal(t, 0, cache.GetCallCount())
 		assert.Equal(t, 0, cache.DeleteCallCount())
@@ -180,7 +181,8 @@ func TestAppendValid_SkipsWhenNoRequestOrMetadata(t *testing.T) {
 		ts := &tokens.Service{Storage: &tokens.DBStorage{}, RequestsCache: cache}
 
 		req := &token.Request{Anchor: "tx1", Metadata: nil}
-		require.NoError(t, ts.AppendValid(ctx, nil, "tx1", req))
+		_, err := ts.AppendValid(ctx, nil, "tx1", req)
+		require.NoError(t, err)
 		assert.Equal(t, 0, cache.GetCallCount())
 		assert.Equal(t, 0, cache.DeleteCallCount())
 	})
@@ -199,7 +201,8 @@ func TestAppendValid_SkipsWhenTransactionExists(t *testing.T) {
 	ts := &tokens.Service{Storage: storage, RequestsCache: cache}
 
 	req := &token.Request{Anchor: "tx1", Metadata: &driver.TokenRequestMetadata{}}
-	require.NoError(t, ts.AppendValid(ctx, nil, "tx1", req))
+	_, err := ts.AppendValid(ctx, nil, "tx1", req)
+	require.NoError(t, err)
 
 	assert.Equal(t, 1, mockDB.TransactionExistsCallCount())
 	// getActions must not run for an already-known transaction.
@@ -218,7 +221,7 @@ func TestAppendValid_TransactionExistsError(t *testing.T) {
 	ts := &tokens.Service{Storage: storage, RequestsCache: &mock.FakeCache{}}
 
 	req := &token.Request{Anchor: "tx1", Metadata: &driver.TokenRequestMetadata{}}
-	err := ts.AppendValid(ctx, nil, "tx1", req)
+	_, err := ts.AppendValid(ctx, nil, "tx1", req)
 	assert.ErrorIs(t, err, assert.AnError)
 }
 
@@ -269,7 +272,7 @@ func TestAppendValid_DoesNotRollBackBorrowedTransaction(t *testing.T) {
 	borrowed := &borrowedTx{}
 	req := &token.Request{Anchor: "tx1", Metadata: &driver.TokenRequestMetadata{}}
 
-	err := ts.AppendValid(ctx, borrowed, "tx1", req)
+	_, err := ts.AppendValid(ctx, borrowed, "tx1", req)
 
 	// The failure is surfaced to the caller...
 	require.ErrorIs(t, err, assert.AnError)
@@ -392,4 +395,180 @@ func TestParseRedeem(t *testing.T) {
 	assert.True(t, store[0].Flags.Issuer)
 	assert.True(t, store[0].Flags.Redeemed)
 	assert.Empty(t, store[0].Owners)
+}
+
+// appendValidContext bundles the mocks needed to exercise AppendValid on a
+// transaction owned by the caller, as the finality listener does.
+type appendValidContext struct {
+	service *tokens.Service
+	store   *mock.FakeTokenStore
+	tx      *mock.FakeTokenStoreTransaction
+	pub     *mock.FakePublisher
+	request *token.Request
+	tmsID   token.TMSID
+}
+
+func setupAppendValid(t *testing.T) *appendValidContext {
+	t.Helper()
+
+	tmsID := token.TMSID{Network: "net", Channel: "ch", Namespace: "ns"}
+	store := &mock.FakeTokenStore{}
+	tx := &mock.FakeTokenStoreTransaction{}
+	pub := &mock.FakePublisher{}
+
+	store.TransactionExistsReturns(false, nil)
+	store.ContinueTokenDBTransactionReturns(tx, nil)
+	// the token to spend is known locally and owned by wallet2
+	tx.GetTokenReturns(&token2.Token{Type: "TOK"}, []string{"wallet2"}, nil)
+
+	cache := &mock.FakeCache{}
+	cache.GetReturns(&tokens.CacheEntry{
+		ToAppend: []tokens.TokenToAppend{{
+			TxID:      "tx1",
+			Index:     0,
+			Tok:       &token2.Token{Type: "TOK", Owner: []byte("alice"), Quantity: "0x64"},
+			Precision: 64,
+			Owners:    []string{"wallet1"},
+			Flags:     tokens.Flags{Mine: true},
+		}},
+		ToSpend: []*token2.ID{{TxId: "tx0", Index: 1}},
+	}, true)
+
+	storage, err := tokens.NewDBStorage(pub, &tokendb.StoreService{TokenStore: store}, tmsID)
+	require.NoError(t, err)
+
+	return &appendValidContext{
+		service: tokens.NewService(tmsID, nil, nil, storage, cache),
+		store:   store,
+		tx:      tx,
+		pub:     pub,
+		request: &token.Request{Anchor: "tx1", Metadata: &driver.TokenRequestMetadata{}},
+		tmsID:   tmsID,
+	}
+}
+
+// TestAppendValid_PublishesOnlyOnPostCommit checks the contract that fixes issue #2183:
+// AppendValid does not commit the caller's transaction, so it must not publish the token
+// events either. They are published by the returned PostCommit, which the owner of the
+// transaction invokes once its commit succeeded.
+func TestAppendValid_PublishesOnlyOnPostCommit(t *testing.T) {
+	ctx := context.Background()
+	c := setupAppendValid(t)
+
+	postCommit, err := c.service.AppendValid(ctx, nil, "tx1", c.request)
+	require.NoError(t, err)
+	require.NotNil(t, postCommit)
+
+	// the tokens were stored and deleted in the caller's still-open transaction
+	require.Equal(t, 1, c.tx.StoreTokenCallCount())
+	require.Equal(t, 1, c.tx.DeleteCallCount())
+	// ... but nothing was published: the caller may still roll back
+	require.Equal(t, 0, c.pub.PublishCallCount())
+	// AppendValid must not finish a transaction it does not own
+	assert.Equal(t, 0, c.tx.CommitCallCount())
+
+	postCommit(ctx)
+	require.Equal(t, 2, c.pub.PublishCallCount())
+	assert.Equal(t, tokens.AddToken, c.pub.PublishArgsForCall(0).Topic())
+	assert.Equal(t, tokens.TokenMessage{
+		TMSID:     c.tmsID,
+		WalletID:  "wallet1",
+		TokenType: "TOK",
+		TxID:      "tx1",
+		Index:     0,
+	}, c.pub.PublishArgsForCall(0).Message())
+	assert.Equal(t, tokens.DeleteToken, c.pub.PublishArgsForCall(1).Topic())
+	assert.Equal(t, tokens.TokenMessage{
+		TMSID:     c.tmsID,
+		WalletID:  "wallet2",
+		TokenType: "TOK",
+		TxID:      "tx0",
+		Index:     1,
+	}, c.pub.PublishArgsForCall(1).Message())
+}
+
+// TestAppendValid_NeverPublishingPostCommit checks that every path that applies nothing
+// still returns a usable PostCommit, so that callers can invoke it unconditionally on
+// their success path, and that invoking it publishes nothing.
+func TestAppendValid_NeverPublishingPostCommit(t *testing.T) {
+	ctx := context.Background()
+
+	tests := []struct {
+		name        string
+		setup       func(c *appendValidContext) *token.Request
+		expectedErr string
+	}{
+		{
+			name:  "no request",
+			setup: func(c *appendValidContext) *token.Request { return nil },
+		},
+		{
+			name: "no metadata",
+			setup: func(c *appendValidContext) *token.Request {
+				return &token.Request{Anchor: "tx1"}
+			},
+		},
+		{
+			name: "transaction already applied",
+			setup: func(c *appendValidContext) *token.Request {
+				c.store.TransactionExistsReturns(true, nil)
+
+				return c.request
+			},
+		},
+		{
+			name: "existence check fails",
+			setup: func(c *appendValidContext) *token.Request {
+				c.store.TransactionExistsReturns(false, assert.AnError)
+
+				return c.request
+			},
+			expectedErr: "failed to check existence in db",
+		},
+		{
+			name: "continuing the transaction fails",
+			setup: func(c *appendValidContext) *token.Request {
+				c.store.ContinueTokenDBTransactionReturns(nil, assert.AnError)
+
+				return c.request
+			},
+			expectedErr: "failed to continue db transaction",
+		},
+		{
+			name: "appending a token fails",
+			setup: func(c *appendValidContext) *token.Request {
+				c.tx.StoreTokenReturns(assert.AnError)
+
+				return c.request
+			},
+			expectedErr: "failed to append token",
+		},
+		{
+			name: "deleting a spent token fails",
+			setup: func(c *appendValidContext) *token.Request {
+				c.tx.DeleteReturns(assert.AnError)
+
+				return c.request
+			},
+			expectedErr: "failed to delete tokens",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			c := setupAppendValid(t)
+			request := test.setup(c)
+
+			postCommit, err := c.service.AppendValid(ctx, nil, "tx1", request)
+			if test.expectedErr != "" {
+				require.ErrorContains(t, err, test.expectedErr)
+			} else {
+				require.NoError(t, err)
+			}
+
+			require.NotNil(t, postCommit)
+			postCommit(ctx)
+			assert.Equal(t, 0, c.pub.PublishCallCount())
+		})
+	}
 }

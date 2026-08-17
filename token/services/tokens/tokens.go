@@ -92,19 +92,36 @@ func NewService(tmsID token.TMSID, TMSProvider TMSProvider, networkProvider Netw
 	return &Service{tmsID: tmsID, TMSProvider: TMSProvider, NetworkProvider: networkProvider, Storage: storage, RequestsCache: requestsCache}
 }
 
+// PostCommit publishes the token events recorded while the caller's transaction was open.
+//
+// The caller of AppendValid owns that transaction and therefore decides whether it is
+// committed or rolled back. It must invoke the returned PostCommit once its commit has
+// succeeded, and must not invoke it when the transaction is rolled back: only then do
+// subscribers observe exactly the tokens that were persisted. It is never nil, so it can
+// be called unconditionally on the success path.
+type PostCommit = func(ctx context.Context)
+
+// noPostCommit is the PostCommit returned when there is nothing to publish.
+func noPostCommit(context.Context) {}
+
 // AppendValid extracts actions from a token request, applies them to the local storage,
 // and sets the transaction status to Confirmed. This is a convenience function that combines
 // Append with SetStatus for valid/confirmed transactions.
-func (t *Service) AppendValid(ctx context.Context, tx dbdriver.Transaction, txID token.RequestAnchor, request *token.Request) (err error) {
+//
+// The passed transaction is owned by the caller and is neither committed nor finished here.
+// The add-token and delete-token events produced by the applied actions are therefore not
+// published either: they are buffered, and the returned PostCommit publishes them. The caller
+// must invoke it after committing tx, see PostCommit.
+func (t *Service) AppendValid(ctx context.Context, tx dbdriver.Transaction, txID token.RequestAnchor, request *token.Request) (postCommit PostCommit, err error) {
 	if request == nil {
 		logger.DebugfContext(ctx, "transaction [%s], no request found, skip it", txID)
 
-		return nil
+		return noPostCommit, nil
 	}
 	if request.Metadata == nil {
 		logger.DebugfContext(ctx, "transaction [%s], no metadata found, skip it", txID)
 
-		return nil
+		return noPostCommit, nil
 	}
 
 	logger.DebugfContext(ctx, "check transaction exists")
@@ -112,17 +129,17 @@ func (t *Service) AppendValid(ctx context.Context, tx dbdriver.Transaction, txID
 	if err != nil {
 		logger.ErrorfContext(ctx, "transaction [%s], failed to check existence in db [%s]", txID, err)
 
-		return errors.WithMessagef(err, "transaction [%s], failed to check existence in db", txID)
+		return noPostCommit, errors.WithMessagef(err, "transaction [%s], failed to check existence in db", txID)
 	}
 	if exists {
 		logger.DebugfContext(ctx, "transaction [%s], exists in db, skipping", txID)
 
-		return nil
+		return noPostCommit, nil
 	}
 
 	toSpend, toAppend, err := t.getActions(ctx, txID, request)
 	if err != nil {
-		return errors.WithMessagef(err, "transaction [%s], failed to extract actions", txID)
+		return noPostCommit, errors.WithMessagef(err, "transaction [%s], failed to extract actions", txID)
 	}
 	defer t.removeCachedTokenRequest(string(txID))
 
@@ -136,26 +153,26 @@ func (t *Service) AppendValid(ctx context.Context, tx dbdriver.Transaction, txID
 	// transaction. See issue #2184.
 	ts, err := t.Storage.ContinueTransaction(tx)
 	if err != nil {
-		return errors.WithMessagef(err, "transaction [%s], failed to continue db transaction", txID)
+		return noPostCommit, errors.WithMessagef(err, "transaction [%s], failed to continue db transaction", txID)
 	}
 
 	logger.DebugfContext(ctx, "append tokens")
 	for _, tta := range toAppend {
 		err = ts.AppendToken(ctx, tta)
 		if err != nil {
-			return errors.WithMessagef(err, "transaction [%s], failed to append token", txID)
+			return noPostCommit, errors.WithMessagef(err, "transaction [%s], failed to append token", txID)
 		}
 	}
 
 	logger.DebugfContext(ctx, "delete spend tokens")
 	err = ts.DeleteTokens(ctx, string(txID), toSpend)
 	if err != nil {
-		return errors.WithMessagef(err, "transaction [%s], failed to delete tokens", txID)
+		return noPostCommit, errors.WithMessagef(err, "transaction [%s], failed to delete tokens", txID)
 	}
 
 	logger.DebugfContext(ctx, "ready to commit")
 
-	return nil
+	return ts.FlushEvents, nil
 }
 
 // CacheRequest extracts actions from a token request and caches them locally to avoid redundant parsing during the commit phase.
@@ -223,7 +240,7 @@ func (t *Service) SetSpendableFlag(ctx context.Context, value bool, ids ...*toke
 		return errors.Wrapf(err, "failed setting spendable flag")
 	}
 
-	return tx.Commit()
+	return tx.Commit(ctx)
 }
 
 // SetSpendableBySupportedTokenTypes sets the spendable flag for all tokens that match the provided formats.
@@ -239,7 +256,7 @@ func (t *Service) SetSpendableBySupportedTokenTypes(ctx context.Context, types [
 
 		return errors.WithMessagef(err, "error setting supported tokens")
 	}
-	if err := tx.Commit(); err != nil {
+	if err := tx.Commit(ctx); err != nil {
 		return errors.WithMessagef(err, "error committing transaction")
 	}
 

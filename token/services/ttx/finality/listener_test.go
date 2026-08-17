@@ -249,6 +249,74 @@ func TestCommit_NoNotifyOnCommitFailure(t *testing.T) {
 	assert.Equal(t, 0, db.NotifyStatusCallCount(), "a failed commit must not wake waiters")
 }
 
+// TestCommit_PublishesTokenEventsAfterCommit verifies that the token events produced by
+// AppendValid are published by Commit, and only once the store transaction is committed:
+// before that, the tokens they refer to may still be rolled back.
+func TestCommit_PublishesTokenEventsAfterCommit(t *testing.T) {
+	db := &mock.TransactionDB{}
+	storeTx := &drivermock.TransactionStoreTransaction{}
+	db.NewTransactionReturns(storeTx, nil)
+
+	var publishedAfter []string
+	tokens := &mock.TokensService{}
+	tokens.AppendValidReturns(func(context.Context) {
+		publishedAfter = append(publishedAfter, "publish")
+	}, nil)
+	db.NotifyStatusCalls(func(context.Context, string, storage.TxStatus, string) {
+		publishedAfter = append(publishedAfter, "notify-status")
+	})
+	storeTx.CommitCalls(func() error {
+		publishedAfter = append(publishedAfter, "commit")
+
+		return nil
+	})
+
+	require.NoError(t, finality.Commit(t.Context(), logging.MustGetLogger(), tokens, db, "tx1", nil))
+
+	// the token events go out after the commit, and before waiters are woken
+	assert.Equal(t, []string{"commit", "publish", "notify-status"}, publishedAfter)
+}
+
+// TestCommit_NoTokenEventsWhenTransactionIsNotCommitted verifies that a transaction that
+// never reaches the store publishes no token events: a subscriber must not observe tokens
+// that were rolled back. This is the regression test for issue #2183 at the caller level.
+func TestCommit_NoTokenEventsWhenTransactionIsNotCommitted(t *testing.T) {
+	tests := []struct {
+		name  string
+		setup func(storeTx *drivermock.TransactionStoreTransaction)
+	}{
+		{
+			name: "commit fails",
+			setup: func(storeTx *drivermock.TransactionStoreTransaction) {
+				storeTx.CommitReturns(errors.New("commit failed"))
+			},
+		},
+		{
+			name: "setting the status fails",
+			setup: func(storeTx *drivermock.TransactionStoreTransaction) {
+				storeTx.SetStatusReturns(errors.New("set status failed"))
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			db := &mock.TransactionDB{}
+			storeTx := &drivermock.TransactionStoreTransaction{}
+			db.NewTransactionReturns(storeTx, nil)
+			test.setup(storeTx)
+
+			published := 0
+			tokens := &mock.TokensService{}
+			tokens.AppendValidReturns(func(context.Context) { published++ }, nil)
+
+			require.Error(t, finality.Commit(t.Context(), logging.MustGetLogger(), tokens, db, "tx1", nil))
+			assert.Equal(t, 0, published, "a transaction that was not committed must publish nothing")
+			assert.Equal(t, 1, storeTx.RollbackCallCount())
+		})
+	}
+}
+
 // TestOnError tests the OnError callback
 func TestOnError(t *testing.T) {
 	ctx := t.Context()

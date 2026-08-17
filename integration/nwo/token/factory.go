@@ -17,6 +17,9 @@ import (
 
 type platformFactory struct {
 	ClientProvider fabricx2.ClientProvider
+
+	// fabricxBackends collects the fabricx backends created by New
+	fabricxBackends []*fabricx2.Backend
 }
 
 func NewPlatformFactory(clientProvider fabricx2.ClientProvider) *platformFactory {
@@ -28,11 +31,21 @@ func (p *platformFactory) Name() string {
 }
 
 func (p *platformFactory) New(ctx api.Context, t api.Topology, builder api.Builder) api.Platform {
+	fabricxBackend := &fabricx2.Backend{ClientProvider: p.ClientProvider}
+	p.fabricxBackends = append(p.fabricxBackends, fabricxBackend)
+
 	tp := NewPlatform(ctx, t, builder)
 	tp.AddNetworkHandler(fabric.TopologyName, tfabric.NewNetworkHandler(tp, builder, cc.NewDefaultGenericBackend(tp)))
-	tp.AddNetworkHandler(fabricx.PlatformName, tfabric.NewNetworkHandler(tp, builder, &fabricx2.Backend{
-		ClientProvider: p.ClientProvider,
-	}))
+	tp.AddNetworkHandler(fabricx.PlatformName, tfabric.NewNetworkHandler(tp, builder, fabricxBackend))
 
 	return tp
+}
+
+// InstallPendingPublicParams installs the public parameters that the fabricx backends recorded
+// while the network was starting. It must be called once the network is fully up, from the same
+// goroutine that started it, and it is a no-op for the backends that recorded nothing.
+func (p *platformFactory) InstallPendingPublicParams() {
+	for _, backend := range p.fabricxBackends {
+		backend.InstallPendingPublicParams()
+	}
 }
