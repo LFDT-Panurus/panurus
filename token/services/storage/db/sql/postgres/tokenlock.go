@@ -15,6 +15,7 @@ import (
 	"github.com/hyperledger-labs/fabric-smart-client/platform/common/utils/collections/iterators"
 	common2 "github.com/hyperledger-labs/fabric-smart-client/platform/view/services/storage/driver/common"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/services/storage/driver/sql/common"
+	fscPostgres "github.com/hyperledger-labs/fabric-smart-client/platform/view/services/storage/driver/sql/postgres"
 
 	"github.com/LFDT-Panurus/panurus/token/services/storage/db/driver"
 	common5 "github.com/LFDT-Panurus/panurus/token/services/storage/db/sql/common"
@@ -59,7 +60,7 @@ func (s *TokenLockStore) CreateSchema() error {
 // NewTokenLockStore returns a new TokenLockStore for the given RWDB and table names.
 func NewTokenLockStore(dbs *common2.RWDB, tableNames common5.TableNames) (*TokenLockStore, error) {
 	ci := NewConditionInterpreter()
-	tldb, err := common5.NewTokenLockStore(dbs.ReadDB, dbs.WriteDB, tableNames, ci)
+	tldb, err := common5.NewTokenLockStore(dbs.ReadDB, dbs.WriteDB, tableNames, ci, &fscPostgres.ErrorMapper{})
 	if err != nil {
 		return nil, err
 	}
@@ -85,40 +86,20 @@ func (db *TokenLockStore) AcquireCleanupLeadership(ctx context.Context) (driver.
 	return db.cleanupLeaderFactory(ctx, db.writeDB, db.cleanupLockID)
 }
 
-// Cleanup removes stale token locks that have expired.
+// Cleanup removes stale token locks that have expired. The deletion itself is the
+// backend-independent one implemented by the embedded store; Postgres only adds the
+// logging of the rows that are about to go.
 func (db *TokenLockStore) Cleanup(ctx context.Context, leaseExpiry time.Duration) error {
 	if err := db.logStaleLocks(ctx, leaseExpiry); err != nil {
 		db.Logger.Warnf("Could not log stale locks: %v", err)
 	}
-	tokenLocks, tokenRequests := q.Table(db.Table.TokenLocks), q.Table(db.Table.Requests)
 
-	existsDeletedOrOrphan := cond.Exists(
-		q.Select().
-			Fields(common3.FieldName("1")).
-			From(tokenRequests).
-			Where(cond.And(
-				cond.Cmp(tokenRequests.Field("tx_id"), "=", tokenLocks.Field("consumer_tx_id")),
-				cond.FieldIn(tokenRequests.Field("status"), driver.Deleted, driver.Orphan),
-			)),
-	)
-
-	query, args := q.DeleteFrom(db.Table.TokenLocks).
-		Where(cond.Or(
-			cond.OlderThan(tokenLocks.Field("created_at"), leaseExpiry),
-			existsDeletedOrOrphan,
-		)).
-		Format(db.ci)
-
-	db.Logger.Debug(query)
-	_, err := db.WriteDB.ExecContext(ctx, query, args...)
-	if err != nil {
-		db.Logger.Errorf("query failed: %s", query)
-	}
-
-	return err
+	return db.TokenLockStore.Cleanup(ctx, leaseExpiry)
 }
 
 // logStaleLocks logs the token locks that are about to be deleted.
+// NOW() returns timestamptz; created_at is also TIMESTAMPTZ, so both sides of
+// the age comparison are timezone-consistent.
 func (db *TokenLockStore) logStaleLocks(ctx context.Context, leaseExpiry time.Duration) error {
 	if !db.Logger.IsEnabledFor(zapcore.InfoLevel) {
 		return nil

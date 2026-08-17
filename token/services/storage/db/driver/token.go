@@ -336,12 +336,22 @@ type TokenLockStore interface {
 	// the tokens are selected for). The built-in SQL store ignores walletID; a custom
 	// store may use it to apply per-wallet policies such as rate limiting, returning an
 	// error wrapping token.SelectorRateLimited to make the selection fail fast.
+	// The lock timestamp is set to the current time.
 	Lock(ctx context.Context, tokenID *token.ID, consumerTxID transaction.ID, walletID string) error
+	// LockAt is like Lock but records the supplied timestamp as the lock creation
+	// time instead of the current time. It is intended for testing (backdating locks
+	// to exercise the lease-age expiry path without sleeping).
+	LockAt(ctx context.Context, tokenID *token.ID, consumerTxID transaction.ID, walletID string, createdAt time.Time) error
 	// UnlockByTxID unlocks all tokens locked by the consumer TX
 	UnlockByTxID(ctx context.Context, consumerTxID transaction.ID) error
-	// Cleanup removes the locks such that either:
-	// 1. The transaction that locked that token is valid or invalid;
-	// 2. The lock is too old.
+	// Cleanup removes stale token locks. A lock is stale when either:
+	// 1. The *consuming* transaction (the one trying to spend the token,
+	//    identified by consumer_tx_id) has reached a terminal failure status
+	//    (Deleted or Orphan); or
+	// 2. The lock is older than leaseExpiry (covers consumers that crashed
+	//    before reaching any terminal status).
+	// The producer transaction (the one that created the token, identified by
+	// (tx_id, idx)) is irrelevant to expiry; see #2018.
 	Cleanup(ctx context.Context, leaseExpiry time.Duration) error
 	// AcquireCleanupLeadership attempts to acquire leadership for the
 	// cleanup tick, so only one replica runs Cleanup per tick. Non-distributed
@@ -353,4 +363,9 @@ type TokenLockStore interface {
 	Close() error
 }
 
-var ErrTokenDoesNotExist = errors.New("token does not exist")
+var (
+	ErrTokenDoesNotExist = errors.New("token does not exist")
+	// ErrTokenAlreadyLocked is returned by TokenLockStore.Lock when the token is
+	// already locked by another transaction (primary-key conflict on the lock row).
+	ErrTokenAlreadyLocked = errors.New("token already locked")
+)
