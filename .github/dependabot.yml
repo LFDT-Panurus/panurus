@@ -47,10 +47,20 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
-    # Collapse routine bumps into a single PR to keep review noise low; a major
-    # version bump (which may carry breaking changes) still gets its own PR.
+    # Split bumps into two group PRs: majors (which may carry breaking changes)
+    # get their own PR for careful review, while minor + patch bumps collapse
+    # into a separate low-risk PR. Dependabot evaluates groups top-to-bottom, so
+    # the major group claims major bumps first and the routine group takes the
+    # rest.
     groups:
-      github-actions:
+      github-actions-major:
+        patterns:
+          - "*"
+        update-types:
+          - "major"
+      github-actions-minor:
+        patterns:
+          - "*"
         update-types:
           - "minor"
           - "patch"
