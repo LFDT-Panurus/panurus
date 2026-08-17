@@ -76,7 +76,7 @@ type LocalMembership struct {
 		result1 []string
 		result2 error
 	}
-	IsMeStub        func(context.Context, driver.Identity) bool
+	IsMeStub        func(context.Context, driver.Identity) (bool, error)
 	isMeMutex       sync.RWMutex
 	isMeArgsForCall []struct {
 		arg1 context.Context
@@ -84,9 +84,11 @@ type LocalMembership struct {
 	}
 	isMeReturns struct {
 		result1 bool
+		result2 error
 	}
 	isMeReturnsOnCall map[int]struct {
 		result1 bool
+		result2 error
 	}
 	RegisterIdentityStub        func(context.Context, driver.IdentityConfiguration) error
 	registerIdentityMutex       sync.RWMutex
@@ -426,7 +428,7 @@ func (fake *LocalMembership) IDsReturnsOnCall(i int, result1 []string, result2 e
 	}{result1, result2}
 }
 
-func (fake *LocalMembership) IsMe(arg1 context.Context, arg2 driver.Identity) bool {
+func (fake *LocalMembership) IsMe(arg1 context.Context, arg2 driver.Identity) (bool, error) {
 	fake.isMeMutex.Lock()
 	ret, specificReturn := fake.isMeReturnsOnCall[len(fake.isMeArgsForCall)]
 	fake.isMeArgsForCall = append(fake.isMeArgsForCall, struct {
@@ -441,9 +443,9 @@ func (fake *LocalMembership) IsMe(arg1 context.Context, arg2 driver.Identity) bo
 		return stub(arg1, arg2)
 	}
 	if specificReturn {
-		return ret.result1
+		return ret.result1, ret.result2
 	}
-	return fakeReturns.result1
+	return fakeReturns.result1, fakeReturns.result2
 }
 
 func (fake *LocalMembership) IsMeCallCount() int {
@@ -452,7 +454,7 @@ func (fake *LocalMembership) IsMeCallCount() int {
 	return len(fake.isMeArgsForCall)
 }
 
-func (fake *LocalMembership) IsMeCalls(stub func(context.Context, driver.Identity) bool) {
+func (fake *LocalMembership) IsMeCalls(stub func(context.Context, driver.Identity) (bool, error)) {
 	fake.isMeMutex.Lock()
 	defer fake.isMeMutex.Unlock()
 	fake.IsMeStub = stub
@@ -465,27 +467,30 @@ func (fake *LocalMembership) IsMeArgsForCall(i int) (context.Context, driver.Ide
 	return argsForCall.arg1, argsForCall.arg2
 }
 
-func (fake *LocalMembership) IsMeReturns(result1 bool) {
+func (fake *LocalMembership) IsMeReturns(result1 bool, result2 error) {
 	fake.isMeMutex.Lock()
 	defer fake.isMeMutex.Unlock()
 	fake.IsMeStub = nil
 	fake.isMeReturns = struct {
 		result1 bool
-	}{result1}
+		result2 error
+	}{result1, result2}
 }
 
-func (fake *LocalMembership) IsMeReturnsOnCall(i int, result1 bool) {
+func (fake *LocalMembership) IsMeReturnsOnCall(i int, result1 bool, result2 error) {
 	fake.isMeMutex.Lock()
 	defer fake.isMeMutex.Unlock()
 	fake.IsMeStub = nil
 	if fake.isMeReturnsOnCall == nil {
 		fake.isMeReturnsOnCall = make(map[int]struct {
 			result1 bool
+			result2 error
 		})
 	}
 	fake.isMeReturnsOnCall[i] = struct {
 		result1 bool
-	}{result1}
+		result2 error
+	}{result1, result2}
 }
 
 func (fake *LocalMembership) RegisterIdentity(arg1 context.Context, arg2 driver.IdentityConfiguration) error {

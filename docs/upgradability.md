@@ -632,6 +632,55 @@ default: // res.Failed(), or a non-authoritative zero value
 `WalletID` only when `Bound()` is true and `Err` only when `Failed()` is true. See the
 type's Godoc in `token/services/identity/role/registry.go` for the full contract.
 
+### `IsMe` / `AreMe` gained an `error` return (issue #2066)
+
+> [!WARNING]
+> **Breaking change**: the ownership-check methods `IsMe` and `AreMe` changed their return
+> types to add a trailing `error`. Every direct caller must be updated before it compiles:
+>
+> | Symbol | Before | After |
+> | :--- | :--- | :--- |
+> | `driver.IdentityProvider.IsMe` | `IsMe(ctx, id) bool` | `IsMe(ctx, id) (bool, error)` |
+> | `driver.IdentityProvider.AreMe` | `AreMe(ctx, ids...) []string` | `AreMe(ctx, ids...) ([]string, error)` |
+> | `token.SignatureService.IsMe` / `.AreMe` | same | same |
+> | `role.LocalMembership.IsMe` | `IsMe(ctx, id) bool` | `IsMe(ctx, id) (bool, error)` |
+> | `membership.LocalMembership.IsMe` | `IsMe(ctx, id) bool` | `IsMe(ctx, id) (bool, error)` |
+> | `ttx/dep.SignatureService.IsMe` | `IsMe(ctx, id) bool` | `IsMe(ctx, id) (bool, error)` |
+>
+> `token.SignatureService` is the public facade, so `tms.SigService().IsMe(...)` /
+> `.AreMe(...)` call sites in downstream code are the most likely to break.
+
+**Why it changed.** The old signatures had no way to report *"I could not check"*. A storage
+failure while resolving ownership was swallowed and flattened into a confident `false` (for
+`IsMe`) or a cache-only partial slice (for `AreMe`). A caller then treated an owned identity
+as **not** owned — for example dropping an owned token from the vault during a restart when
+the signer cache is cold and the backing store briefly errors. The `error` return makes the
+"couldn't check" outcome explicit so it can no longer masquerade as an authoritative
+"not mine".
+
+**Migration.** Destructure the new `error` and stop on it rather than trusting the boolean or
+slice. On error, the boolean must be ignored and the slice is `nil` (not a partial answer):
+
+```go
+// Before
+if sigService.IsMe(ctx, id) {
+    use(id)
+}
+
+// After
+mine, err := sigService.IsMe(ctx, id)
+if err != nil {
+    return err // could not check — do NOT treat as "not mine"
+}
+if mine {
+    use(id)
+}
+```
+
+The error distinguishes a caller-driven abort (a cancelled or deadline-exceeded context —
+`errors.Is(err, context.Canceled)` / `context.DeadlineExceeded`) from a genuine storage
+failure, so a cancellation is not misread as a broken backend.
+
 ---
 
 ## Summary of Upgradability Responsibilities
@@ -641,4 +690,4 @@ type's Godoc in `token/services/identity/role/registry.go` for the full contract
 | **Tokens** | Owner / Issuer | `ttx.Transaction.Upgrade` (Burn & Re-issue) |
 | **Driver** | Admin / SDK | `PostInit` (Automatic Spendability Toggle) |
 | **Schema** | Developer / Admin | Manual SQL `ALTER` or Database Re-sync |
-| **SDK API (Go)** | Downstream Developer | Update call sites per release notes (e.g. `Registry.GetWalletID` → `WalletIDResolution`) |
+| **SDK API (Go)** | Downstream Developer | Update call sites per release notes (e.g. `Registry.GetWalletID` → `WalletIDResolution`; `IsMe`/`AreMe` → trailing `error`) |

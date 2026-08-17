@@ -94,6 +94,104 @@ func TestLookup_FallbackToViewIdentityFound(t *testing.T) {
 	require.Equal(t, "cached2", wallet.ID())
 }
 
+func TestLookup_MappingErrorResolvesFromCacheWhenStorageFails(t *testing.T) {
+	reg, storage, role, _ := newRegistryWithFakes()
+	ctx := t.Context()
+	w := &mock2.Wallet{}
+	w.IDReturns("cached3")
+	// wallet is resident in the in-memory cache under the raw identity string
+	reg.WalletMu.Lock()
+	reg.Wallets["id4"] = w
+	reg.WalletMu.Unlock()
+
+	// The mapping probe fails (e.g. a storage-touching IsMe error is now propagated)
+	role.MapToIdentityReturns(nil, "", errors.New("failed checking if identity is me"))
+	// The GetWalletID fallback reads the same failed storage, so it too fails to resolve
+	storage.GetWalletIDReturns("", errors.New("storage unavailable"))
+
+	// The lookup must still be satisfied straight from the in-memory cache
+	wallet, idInfo, wID, err := reg.Lookup(ctx, []byte("id4"))
+	require.NoError(t, err)
+	require.Equal(t, "id4", wID)
+	require.Nil(t, idInfo)
+	require.Equal(t, "cached3", wallet.ID())
+}
+
+func TestLookup_MappingErrorSurfacedWhenNothingCached(t *testing.T) {
+	reg, storage, role, _ := newRegistryWithFakes()
+	ctx := t.Context()
+
+	// Mapping fails and the storage fallback fails together, with nothing in the cache
+	role.MapToIdentityReturns(nil, "", errors.New("failed checking if identity is me"))
+	storage.GetWalletIDReturns("", errors.New("storage unavailable"))
+
+	_, _, _, err := reg.Lookup(ctx, []byte("id5"))
+	require.Error(t, err)
+}
+
+// TestLookup_MappingErrorRetriesIdentityInfoWhenUnbound is a regression test for the
+// asymmetry spotted in PR #2172 review (discussion r3893309205): when MapToIdentity fails
+// (a propagated IsMe error) but the wallet store answers authoritatively that the identity
+// is Unbound and identity-info resolution succeeds, the lookup must resolve — not hard-fail.
+// Before the fix this recovered only for a string label; a []byte-shaped lookup of the same
+// identity hard-failed, so the two lookup shapes disagreed. Both must now behave identically.
+func TestLookup_MappingErrorRetriesIdentityInfoWhenUnbound(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		id   driver.WalletLookupID
+	}{
+		{name: "byte-slice shape", id: []byte("alice")},
+		{name: "string label shape", id: "alice"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			reg, storage, role, _ := newRegistryWithFakes()
+			ctx := t.Context()
+
+			// The mapping probe fails because the IsMe/signer storage is down and the error
+			// is now propagated (fix-2066), not swallowed.
+			role.MapToIdentityReturns(nil, "", errors.New("failed checking if identity is me"))
+			// The wallet store is healthy and answers authoritatively: nothing is bound.
+			storage.GetWalletIDReturns("", nil)
+			// Identity-info resolution (a distinct, healthy backend) still succeeds.
+			role.GetIdentityInfoReturns(&mockIdentityInfo{id: "alice"}, nil)
+
+			wallet, idInfo, wID, err := reg.Lookup(ctx, tc.id)
+			require.NoError(t, err)
+			require.Nil(t, wallet)
+			require.NotNil(t, idInfo)
+			require.Equal(t, "alice", wID)
+		})
+	}
+}
+
+// TestLookup_MappingErrorSurfacedInTerminalError is a regression test for the observability
+// gap spotted in PR #2172 review (discussion r3893309214): on the fall-through path, when the
+// mapping probe fails, the wallet store is authoritatively Unbound, and identity-info
+// resolution ALSO fails, the terminal "failed to get wallet info" error must wrap the root
+// cause — the propagated IsMe/storage error (issue #2066) — rather than dropping it. Before the
+// fix the loop clobbered the mapping error and the terminal errors.Errorf wrapped nothing, so
+// the operator never saw why the lookup really failed.
+func TestLookup_MappingErrorSurfacedInTerminalError(t *testing.T) {
+	reg, storage, role, _ := newRegistryWithFakes()
+	ctx := t.Context()
+
+	// Mapping fails with the propagated IsMe/storage error this PR exists to surface.
+	role.MapToIdentityReturns(nil, "", errors.New("signer store unavailable"))
+	// The wallet store is healthy and authoritatively Unbound, so the []byte shape falls
+	// through to identity-info resolution.
+	storage.GetWalletIDReturns("", nil)
+	// Identity-info resolution also fails, so the lookup ends at the terminal error.
+	role.GetIdentityInfoReturns(nil, errors.New("no such identity info"))
+
+	_, _, _, err := reg.Lookup(ctx, []byte("alice"))
+	require.Error(t, err)
+	// The terminal message names the wallet, and the wrapped cause carries both the root
+	// mapping error and the identity-info failure.
+	require.ErrorContains(t, err, "failed to get wallet info for")
+	require.ErrorContains(t, err, "signer store unavailable")
+	require.ErrorContains(t, err, "no such identity info")
+}
+
 func TestLookup_ReturnsIdentityInfoWhenWalletMissing(t *testing.T) {
 	reg, _, role, _ := newRegistryWithFakes()
 	ctx := t.Context()
@@ -516,6 +614,30 @@ func TestLookup_WithUnknownType_Error(t *testing.T) {
 	r.MapToIdentityReturns(nil, "", errors.New("fail"))
 	_, _, _, err := reg.Lookup(t.Context(), struct{ X int }{1})
 	require.Error(t, err)
+}
+
+// TestLookup_StringLabel_MappingError_RecoversFromCache verifies that when
+// MapToIdentity fails on a string label — a "couldn't check" error, e.g. a
+// storage-touching IsMe probe failing — Lookup still resolves the wallet from
+// the in-memory Registry.Wallets cache instead of erroring out, since that
+// lookup never needed storage in the first place.
+func TestLookup_StringLabel_MappingError_RecoversFromCache(t *testing.T) {
+	reg, _, r, _ := newRegistryWithFakes()
+	ctx := t.Context()
+	w := &mock2.Wallet{}
+	w.IDReturns("alice")
+	reg.WalletMu.Lock()
+	reg.Wallets["alice"] = w
+	reg.WalletMu.Unlock()
+
+	// the resolver "couldn't check": mapping the label fails with a transient error
+	r.MapToIdentityReturns(nil, "", errors.New("signer store unavailable"))
+
+	wallet, _, wID, err := reg.Lookup(ctx, "alice")
+	require.NoError(t, err)
+	require.NotNil(t, wallet)
+	require.Equal(t, "alice", wID)
+	require.Equal(t, "alice", wallet.ID())
 }
 
 // TestLookup_ByIdentityBytesResolvesViaSharedStores pins the cross-replica

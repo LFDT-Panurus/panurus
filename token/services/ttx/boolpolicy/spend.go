@@ -150,7 +150,10 @@ func (c *RequestSpendView) Call(context view.Context) (any, error) {
 	if err != nil {
 		return nil, errors.Wrapf(err, "failed getting TMS for [%s]", c.options.TMSID())
 	}
-	areMe := tms.SigService().AreMe(context.Context(), c.parties...)
+	areMe, err := tms.SigService().AreMe(context.Context(), c.parties...)
+	if err != nil {
+		return nil, errors.Wrapf(err, "failed checking which parties are me")
+	}
 	collector := utils.NewAnswersCollector[string, *SpendResponse](len(c.parties), c.timeout)
 	counter := 0
 	for _, party := range c.parties {

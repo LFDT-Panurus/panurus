@@ -64,13 +64,18 @@ func (s *SignatureService) RegisterEphemeralSigner(ctx context.Context, identity
 	return s.identityProvider.RegisterSigner(ctx, identity, signer, verifier, nil, true)
 }
 
-// AreMe returns the hashes of the passed identities that have a signer registered before
-func (s *SignatureService) AreMe(ctx context.Context, identities ...Identity) []string {
+// AreMe returns the hashes of the passed identities that have a signer registered before.
+// A non-nil error means the ownership check could not be completed; in that case the returned
+// slice is nil, not a partial answer, and a caller must not mistake "couldn't check" for
+// "confirmed not mine".
+func (s *SignatureService) AreMe(ctx context.Context, identities ...Identity) ([]string, error) {
 	return s.identityProvider.AreMe(ctx, identities...)
 }
 
-// IsMe returns true if for the given identity there is a signer registered
-func (s *SignatureService) IsMe(ctx context.Context, party Identity) bool {
+// IsMe returns true if for the given identity there is a signer registered.
+// A non-nil error means ownership could not be determined; the boolean must be ignored in
+// that case rather than treated as an authoritative "not mine".
+func (s *SignatureService) IsMe(ctx context.Context, party Identity) (bool, error) {
 	return s.identityProvider.IsMe(ctx, party)
 }
 

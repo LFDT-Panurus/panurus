@@ -39,10 +39,15 @@ type IdentityProvider interface {
 	RegisterSigner(ctx context.Context, identity Identity, signer Signer, verifier Verifier, signerInfo []byte, ephemeral bool) error
 
 	// AreMe checks a list of identities and returns those that have signers registered with this provider.
-	AreMe(ctx context.Context, identities ...Identity) []string
+	// A non-nil error means the ownership check could not be completed (for example a storage failure);
+	// in that case the returned slice is nil, not a partial answer — a caller must not mistake
+	// "couldn't check" for "confirmed not mine".
+	AreMe(ctx context.Context, identities ...Identity) ([]string, error)
 
 	// IsMe returns true if a signer has been registered for the specified identity.
-	IsMe(ctx context.Context, party Identity) bool
+	// A non-nil error means ownership could not be determined and the boolean must be ignored;
+	// callers must not treat a false-with-error as an authoritative "not mine".
+	IsMe(ctx context.Context, party Identity) (bool, error)
 
 	// GetEnrollmentID extracts the enrollment identifier from the provided audit information for a specific identity.
 	GetEnrollmentID(ctx context.Context, identity Identity, auditInfo []byte) (string, error)
