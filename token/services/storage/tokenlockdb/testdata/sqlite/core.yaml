@@ -1,0 +1,24 @@
+fsc:
+  persistences:
+    token_persistence:
+      type: sqlite
+      opts:
+        dataSource: file:tmp?_pragma=journal_mode(WAL)&_pragma=busy_timeout(20000)&mode=memory&cache=shared
+        tablePrefix: tsdk
+        maxOpenConns: 10
+
+token:
+  enabled: true
+  tms:
+    pineapple:
+      network: pineapple
+      channel:
+      namespace: ns
+      tokenlockdb:
+        persistence: token_persistence
+    grapes:
+      network: grapes
+      channel:
+      namespace: ns
+      tokenlockdb:
+        persistence: token_persistence

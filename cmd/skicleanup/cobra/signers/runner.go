@@ -34,6 +34,8 @@ func Run(ctx context.Context, stores *Stores, batchSize int) error {
 	extractor := cleanup.NewSKIExtractor()
 	extractor.RegisterProvider(idemix.IdentityTypeString, idemix.NewSKIProvider())
 	extractor.RegisterProvider(idemixnym.IdentityTypeString, idemixnym.NewSKIProvider(stores.Identity))
+	// X.509 deliberately derives no SKIs, so orphaned X.509 signers report no keys to delete:
+	// an X.509 key belongs to the wallet, not to a single token. See cleanup.NoopSKIProvider.
 	extractor.RegisterProvider(x509.IdentityTypeString, cleanup.NewNoopSKIProvider())
 
 	var s stats

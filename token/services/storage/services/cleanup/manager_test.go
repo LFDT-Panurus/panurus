@@ -286,7 +286,7 @@ func TestManager_CleanupToken_KeyDeletionFailure(t *testing.T) {
 
 	// Should attempt to delete the key
 	assert.Equal(t, 1, mockKeystore.DeleteCallCount())
-	// Should NOT mark as cleaned if all deletions failed
+	// Should NOT mark as cleaned when a key deletion failed
 	assert.Equal(t, 0, mockStorage.MarkTokenCleanedCallCount())
 }
 
@@ -348,8 +348,9 @@ func TestManager_CleanupToken_PartialFailure(t *testing.T) {
 
 	// Should attempt to delete both keys
 	assert.Equal(t, 2, mockKeystore.DeleteCallCount())
-	// Should not mark as cleaned with partial failure
-	assert.GreaterOrEqual(t, mockStorage.MarkTokenCleanedCallCount(), 0)
+	// Cleanup is all-or-nothing: a partial failure must NOT mark the token as cleaned, so the
+	// next sweep retries the whole token (Keystore.Delete is idempotent).
+	assert.Equal(t, 0, mockStorage.MarkTokenCleanedCallCount())
 }
 
 func TestDefaultConfig(t *testing.T) {
