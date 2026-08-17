@@ -33,33 +33,26 @@ func mockTokenLockStore(db *sql.DB) *common3.TokenLockStore {
 	return store.TokenLockStore
 }
 
-func TestIsStale(t *testing.T) {
+// TestCleanupSQLShape guards the shape of the cleanup statement rendered with the
+// SQLite interpreter: the status branch must correlate on the consuming transaction
+// and the deletion must not be scoped by a partial-key IN on tx_id. It asserts the
+// parts that carry the semantics rather than the whole string - the string equality
+// this replaced encoded a join on the wrong column as the expected output. The
+// behaviour itself is covered by the shared suite in dbtest. See #2018.
+func TestCleanupSQLShape(t *testing.T) {
 	RegisterTestingT(t)
 
+	tokenLocks, requests := q.Table("TokenLocks"), q.Table("Requests")
 	query, args := q.DeleteFrom("TokenLocks").
-		Where(IsStale("TokenLocks", "Requests", 5*time.Second)).
+		Where(common3.IsStaleLock(requests, tokenLocks, 5*time.Second)).
 		Format(NewConditionInterpreter())
 
-	Expect(query).To(Equal("DELETE FROM TokenLocks WHERE tx_id IN (" +
-		"SELECT tl.tx_id " +
-		"FROM TokenLocks AS tl " +
-		"LEFT JOIN Requests AS tr " +
-		"ON tl.tx_id = tr.tx_id " +
-		"WHERE ((tr.status) IN (($1), ($2))) OR (tl.created_at < datetime('now', '-5 seconds'))" +
-		")"))
-	Expect(args).To(ConsistOf(driver.Deleted, driver.Orphan))
-}
-
-func TestIsStaleOrphan(t *testing.T) {
-	RegisterTestingT(t)
-
-	query, args := q.DeleteFrom("TokenLocks").
-		Where(IsStale("TokenLocks", "Requests", 10*time.Second)).
-		Format(NewConditionInterpreter())
-
-	// Verify the query includes both Deleted (3) and Orphan (4) statuses using IN syntax
-	Expect(query).To(ContainSubstring("(tr.status) IN"))
-	Expect(query).To(ContainSubstring("datetime('now', '-10 seconds')"))
+	Expect(query).To(ContainSubstring("Requests.tx_id = TokenLocks.consumer_tx_id"))
+	Expect(query).To(ContainSubstring("EXISTS (SELECT 1 FROM Requests WHERE"))
+	Expect(query).To(ContainSubstring("(Requests.status) IN"))
+	Expect(query).To(ContainSubstring("TokenLocks.created_at < datetime('now', '-5 seconds')"))
+	Expect(query).ToNot(ContainSubstring("tx_id IN ("))
+	Expect(query).ToNot(ContainSubstring("TokenLocks.tx_id = Requests.tx_id"))
 	Expect(args).To(ConsistOf(driver.Deleted, driver.Orphan))
 }
 

@@ -290,6 +290,30 @@ This table is shared by `TTXDB`, `AuditDB`, and `TokenDB` (each defines the same
 `CREATE TABLE IF NOT EXISTS` for `Requests`), so the migration only needs to run once
 against the physical table they share.
 
+### Database Schema Changes: `TokenLocks` `created_at` column type
+
+The `TokenLocks` table (`<prefix>_token_locks`) was created with `created_at
+TIMESTAMP` (without time zone) in earlier releases. The `GetSchema` definition in
+[`TokenLockStore`](../token/services/storage/db/sql/common/tokenlock.go) has since
+been updated to `TIMESTAMPTZ`. On **PostgreSQL** the two types are distinct — a
+`TIMESTAMP` column silently drops timezone information — so existing deployments keep
+a `TIMESTAMP` column and the time-zone-aware comparison logic introduced by the
+token-lock lease-expiry feature will produce skewed results until the column is
+migrated. `CREATE TABLE IF NOT EXISTS` does **not** update the column type of a
+pre-existing table.
+
+Migrate manually before upgrading:
+
+```sql
+ALTER TABLE <token_locks_table>
+  ALTER COLUMN created_at TYPE TIMESTAMPTZ
+  USING created_at AT TIME ZONE 'UTC';
+```
+
+Replace `<token_locks_table>` with the actual table name used by your deployment
+(e.g. `fsc_token_locks`). This migration is a no-op on **SQLite**, which stores all
+datetime values as text and is unaffected by the type name change.
+
 ---
 
 ## Serialization and Protocol Stability

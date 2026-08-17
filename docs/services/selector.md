@@ -119,6 +119,42 @@ To prevent double-spending *before* the transaction is committed to the ledger, 
 2.  **Concurrency Control**: If another concurrent process has already locked that token, the insertion fails, and the selector moves on to the next candidate.
 3.  **Lock Release**: Locks are released either when the transaction reaches finality (success/failure) or when a timeout occurs, ensuring that tokens do not remain permanently inaccessible due to crashed or abandoned transactions.
 
+#### Lease expiry
+
+Every `leaseCleanupTickPeriod`, `sherdlock` runs a cleanup pass over the `TokenLocks`
+table that releases a lock when **either** of the following holds.
+
+> **Both `leaseExpiry` and `leaseCleanupTickPeriod` must be non-zero for the cleanup
+> goroutine to start.** If either is zero the pass never runs, so locks held by
+> `Deleted` or `Orphan` consumers are never released and those tokens remain
+> permanently unselectable. Setting `leaseExpiry: 0` to disable time-based expiry
+> while relying on consumer-status release is therefore not supported.
+
+*   the **consuming** transaction — the one that took the lock, stored in
+    `consumer_tx_id` — has reached `Deleted` or `Orphan`, so it will never spend the
+    token; or
+*   the lease is older than `leaseExpiry`, which covers the consumer that crashed or was
+    abandoned without ever reaching a terminal status.
+
+Two properties of the pass are worth spelling out:
+
+*   **The status that matters is the consumer's, not the producer's.** A lock row is keyed
+    by `(tx_id, idx)`, which identifies the *locked token* and therefore the transaction
+    that created it. That transaction's status says nothing about whether the lock is
+    still live, so it is never used to expire a lease.
+*   **Expiry is per token, not per transaction.** Only the affected `(tx_id, idx)` rows are
+    deleted; the other outputs of the same transaction keep their locks.
+
+The pass is the same statement on every SQL backend (SQLite and Postgres), so lock
+expiry behaviour is identical across those backends. `created_at` is stored as
+`TIMESTAMPTZ`, so the comparison with the database-side `NOW()` expression is always
+timezone-consistent on Postgres regardless of the session `TimeZone` setting.
+On Postgres a single replica per TMS runs the pass per tick, elected through an advisory
+lock; SQLite is non-distributed and always runs it locally.
+
+The in-memory locker described below does not use the `TokenLocks` table and never
+expires locks via `Cleanup`; its lifecycle is entirely managed in process.
+
 ### In-Memory Locker Internals
 
 The `simple` driver keeps its locks in memory (`token/services/selector/simple/inmemory`)

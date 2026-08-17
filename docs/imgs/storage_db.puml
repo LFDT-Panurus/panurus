@@ -127,7 +127,7 @@ package "Token Store (TokenDB)" {
         * idx : INT <<PK, NOT NULL, FK>>
         --
         consumer_tx_id : TEXT <<NOT NULL>>
-        created_at : TIMESTAMP <<NOT NULL>>
+        created_at : TIMESTAMPTZ <<NOT NULL>>
     }
 
     entity "TokenSKICleanups" as tkn_ski_cleanups {
