@@ -14,6 +14,8 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -128,7 +130,7 @@ func NewNotifier(
 		Listener: &pgxlisten.Listener{
 			Connect: func(ctx context.Context) (*pgx.Conn, error) { return pgx.Connect(ctx, dataSource) },
 			LogError: func(ctx context.Context, err error) {
-				logger.Errorf("error encountered in [%s]: %s", dataSource, err.Error())
+				logger.Errorf("error encountered in [%s]: %s", redactDataSource(dataSource), err.Error())
 			},
 			ReconnectDelay: reconnectInterval,
 		},
@@ -488,4 +490,22 @@ func pgChannelName(input string) string {
 	sum := sha256.Sum256([]byte(input))
 
 	return prefix + hex.EncodeToString(sum[:])[:16] // 23 chars total
+}
+
+// redactDataSource removes the password from a PostgreSQL connection string before logging.
+func redactDataSource(dataSource string) string {
+	if strings.HasPrefix(dataSource, "postgres://") || strings.HasPrefix(dataSource, "postgresql://") {
+		if u, err := url.Parse(dataSource); err == nil {
+			if _, pwSet := u.User.Password(); pwSet {
+				u.User = url.UserPassword(u.User.Username(), "xxxxx")
+			}
+
+			return u.String()
+		}
+	}
+	quotedKV := regexp.MustCompile(`password='[^']*'`)
+	dataSource = quotedKV.ReplaceAllLiteralString(dataSource, "password=xxxxx")
+	plainKV := regexp.MustCompile(`password=[^ ]*`)
+
+	return plainKV.ReplaceAllLiteralString(dataSource, "password=xxxxx")
 }

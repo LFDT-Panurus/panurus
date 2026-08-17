@@ -591,3 +591,65 @@ func TestNotifierGetSchema(t *testing.T) {
 	require.Contains(t, schema, `CREATE OR REPLACE TRIGGER "trigger_public.test_table"`)
 	require.Contains(t, schema, `AFTER INSERT ON public.test_table`)
 }
+
+func TestRedactDataSource(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		// #nosec
+		{
+			name:     "classic URL",
+			input:    "postgres://alice:s3cr3t@localhost:5432/mydb",
+			expected: "postgres://alice:xxxxx@localhost:5432/mydb",
+		},
+		// #nosec
+		{
+			name:     "postgresql scheme with password",
+			input:    "postgresql://bob:hunter2@db.example.com/prod",
+			expected: "postgresql://bob:xxxxx@db.example.com/prod",
+		},
+		{
+			name:     "URL without password",
+			input:    "postgres://alice@localhost:5432/mydb",
+			expected: "postgres://alice@localhost:5432/mydb",
+		},
+		{
+			name:     "URL without user info",
+			input:    "postgres://localhost:5432/mydb",
+			expected: "postgres://localhost:5432/mydb",
+		},
+		{
+			name:     "DSN key=value with quoted password",
+			input:    "host=localhost user=alice password='s3cr3t' dbname=mydb",
+			expected: "host=localhost user=alice password=xxxxx dbname=mydb",
+		},
+		{
+			name:     "DSN key=value with unquoted password",
+			input:    "host=localhost user=alice password=s3cr3t dbname=mydb",
+			expected: "host=localhost user=alice password=xxxxx dbname=mydb",
+		},
+		{
+			name:     "DSN key=value without password",
+			input:    "host=localhost user=alice dbname=mydb",
+			expected: "host=localhost user=alice dbname=mydb",
+		},
+		{
+			name:     "empty string",
+			input:    "",
+			expected: "",
+		},
+		{
+			name:     "DSN with quoted password containing spaces",
+			input:    "host=localhost password='my secret pass' dbname=mydb",
+			expected: "host=localhost password=xxxxx dbname=mydb",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			require.Equal(t, tc.expected, redactDataSource(tc.input))
+		})
+	}
+}
