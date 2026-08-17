@@ -224,7 +224,7 @@ jobs:
           python-version: '3.12'
 
       - name: Install parser dependencies
-        run: pip install pandas
+        run: pip install pandas==3.0.5
 
       - name: Build comparison report
         id: report
