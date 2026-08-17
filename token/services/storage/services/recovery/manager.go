@@ -437,9 +437,10 @@ func (m *Manager) recoverTransaction(ctx context.Context, txID string, storedAt 
 //		"rpc error: code = NotFound desc = transaction ID [X]: not found in
 //		  index: tx not found"):
 //
-//	  - "code = NotFound"     — raw gRPC status text
-//	  - "not found in index"  — committer's gRPC status desc field
-//	  - "tx not found"        — FSC finality.TxNotFound sentinel appended
+//	  - "code = NotFound"         — raw gRPC status text
+//	  - "not found in index"      — committer's gRPC status desc field
+//	  - "tx not found"            — FSC finality.TxNotFound sentinel appended
+//	  - "no such transaction ID"  — direct return from fabric in common/ledger/blkstorage/blockindex.go
 //	    by fabric-x ledger.GetTransactionByID
 //	    (fabric-smart-client/platform/fabricx/core/ledger/ledger.go:64).
 //	    Stable across committer error format changes since the sentinel
@@ -455,6 +456,8 @@ func isNotFoundError(err error) bool {
 	case strings.Contains(msg, "not found in index"):
 		return true
 	case strings.Contains(msg, "tx not found"):
+		return true
+	case strings.Contains(msg, "no such transaction ID"):
 		return true
 	}
 
