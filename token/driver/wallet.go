@@ -245,9 +245,9 @@ func escapeConfigKeyField(field string) string {
 	b.Grow(len(field) + 8)
 	for i := range len(field) {
 		if field[i] == configKeySeparator || field[i] == configKeyEscape {
-			b.WriteByte(configKeyEscape)
+			_ = b.WriteByte(configKeyEscape)
 		}
-		b.WriteByte(field[i])
+		_ = b.WriteByte(field[i])
 	}
 
 	return b.String()
