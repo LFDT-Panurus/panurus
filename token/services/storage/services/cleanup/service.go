@@ -77,6 +77,9 @@ func NewServiceManager(
 		extractor := NewSKIExtractor()
 		extractor.RegisterProvider(idemix.IdentityTypeString, idemix.NewSKIProvider())
 		extractor.RegisterProvider(idemixnym.IdentityTypeString, idemixnym.NewSKIProvider(identityStore))
+		// X.509 is deliberately excluded: its key is the wallet's long-lived enrollment key,
+		// shared by every token that wallet owns, so it must survive token deletion.
+		// See NoopSKIProvider for the full rationale.
 		extractor.RegisterProvider(x509.IdentityTypeString, NewNoopSKIProvider())
 
 		manager := NewManager(

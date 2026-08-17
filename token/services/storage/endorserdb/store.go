@@ -112,7 +112,7 @@ func newStoreService(p dbdriver.EndorserStore) (*StoreService, error) {
 func (d *StoreService) ValidationRecords(ctx context.Context, params QueryValidationRecordsParams) (*ValidationRecordsIterator, error) {
 	it, err := d.db.QueryValidations(ctx, params)
 	if err != nil {
-		return nil, errors.Errorf("failed to query validation records: %s", err)
+		return nil, errors.Wrapf(err, "failed to query validation records")
 	}
 
 	return &ValidationRecordsIterator{it: it}, nil
@@ -152,9 +152,9 @@ func (d *StoreService) SetStatus(ctx context.Context, txID string, status dbdriv
 
 		return errors.Wrapf(err, "failed setting status [%s][%s]", txID, dbdriver.TxStatusMessage[status])
 	}
+	// No Rollback() here: once Commit() fails the driver transaction is already finalized, so
+	// rolling back is a guaranteed no-op. This matches AppendValidationRecord above and ttxdb.
 	if err := w.Commit(); err != nil {
-		w.Rollback()
-
 		return errors.Wrapf(err, "failed committing status [%s][%s]", txID, dbdriver.TxStatusMessage[status])
 	}
 

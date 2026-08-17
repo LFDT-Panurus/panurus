@@ -47,7 +47,7 @@ type Leadership interface {
 	Close() error
 }
 
-//go:generate counterfeiter -o mock/identity_provider.go -fake-name IdentityProvider . IdentityProvider
+//go:generate counterfeiter -o mock/identity_provider.go -fake-name IdentityProvider . SKIProvider
 
 // SKIProvider provides methods to derive SKIs from identities
 type SKIProvider interface {
@@ -326,7 +326,9 @@ func (m *Manager) cleanupToken(ctx context.Context, token DeletedToken) error {
 
 	if len(skis) == 0 {
 		m.logger.Warnf("no SKIs derived for token [%s:%d], skipping", token.TxID, token.Index)
-		// Still mark as cleaned to avoid retrying
+		// No SKIs means this owner type has no per-token key material to remove (for example
+		// X.509, see NoopSKIProvider). Mark the token as cleaned to avoid rescanning it on
+		// every sweep: "cleaned" here records "nothing to delete", not "keys were deleted".
 		if err := m.storage.MarkTokenCleaned(ctx, token.TxID, token.Index, m.config.InstanceID); err != nil {
 			return errors.Wrapf(err, "failed to mark token [%s:%d] as cleaned", token.TxID, token.Index)
 		}
@@ -347,12 +349,20 @@ func (m *Manager) cleanupToken(ctx context.Context, token DeletedToken) error {
 		}
 	}
 
-	// If all deletions failed, return error without marking as cleaned
+	// All-or-nothing: if *any* deletion failed, return an error without marking the token as
+	// cleaned, so the next sweep retries it. Marking a token cleaned while some of its key
+	// material is still in the keystore would turn a transient error into a permanent,
+	// un-retriable key-retention hole. Re-deleting the keys that did succeed is harmless,
+	// because Keystore.Delete is idempotent.
 	if len(deleteErrors) > 0 {
-		return errors.Errorf("failed to delete keys for token [%s:%d]: %v", token.TxID, token.Index, deleteErrors)
+		return errors.Wrapf(
+			errors.Join(deleteErrors...),
+			"failed to delete %d of %d key(s) for token [%s:%d]",
+			len(deleteErrors), len(skis), token.TxID, token.Index,
+		)
 	}
 
-	// Mark token as cleaned (even if some keys failed to delete)
+	// Every key was deleted: record the token as cleaned so it is not reprocessed.
 	if err := m.storage.MarkTokenCleaned(ctx, token.TxID, token.Index, m.config.InstanceID); err != nil {
 		return errors.Wrapf(err, "failed to mark token [%s:%d] as cleaned", token.TxID, token.Index)
 	}

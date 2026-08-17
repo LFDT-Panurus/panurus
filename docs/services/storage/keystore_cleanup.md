@@ -53,7 +53,8 @@ The SKI (Subject Key Identifier) extraction system uses a pluggable provider arc
 3. **Built-in Providers**:
    - **IdemixSKIProvider**: Extracts SKI from Idemix NymPublicKey
    - **IdemixNymSKIProvider**: Extracts SKI from Idemix pseudonym identities
-   - **NoopSKIProvider**: Returns empty SKI list (used for X.509)
+   - **NoopSKIProvider**: Derives no SKIs, marking an identity type as deliberately excluded from
+     cleanup. Registered for X.509 — see [X.509 is intentionally out of scope](#x509-is-intentionally-out-of-scope)
    - **FallbackSKIProvider**: Computes SHA256 hash of identity bytes as SKI (default)
 
 **Provider Registration:**
@@ -61,6 +62,7 @@ The SKI (Subject Key Identifier) extraction system uses a pluggable provider arc
 extractor := NewSKIExtractor()
 extractor.RegisterProvider("idemix", idemix.NewSKIProvider())
 extractor.RegisterProvider("idemixnym", idemixnym.NewSKIProvider(identityStore))
+// X.509 keys belong to the wallet, not to individual tokens: deliberately never cleaned up
 extractor.RegisterProvider("x509", NewNoopSKIProvider())
 // Fallback provider is used for any unregistered types
 ```
@@ -71,6 +73,28 @@ extractor.RegisterProvider("x509", NewNoopSKIProvider())
 3. If found, delegates to type-specific provider
 4. If not found, uses fallback provider (SHA256 hash)
 5. Returns list of SKI strings in hexadecimal format
+
+### X.509 is intentionally out of scope
+
+X.509 is registered with `NoopSKIProvider`, so **no keystore key is ever deleted for an
+X.509-owned token**. This is deliberate, not an unimplemented provider.
+
+An X.509 owner identity is a long-lived, non-anonymous certificate: `x509.KeyManager` reports
+`Anonymous() == false` and always serves the same identity descriptor. Its private key therefore
+belongs to the **wallet**, not to any individual token — the same key signs every token that
+wallet ever owns, and it remains in use long after those tokens are spent. A real X.509 SKI
+provider would make the cleanup sweep delete the wallet's own signing key as soon as the first of
+its tokens aged past the TTL, permanently breaking the wallet.
+
+The Idemix providers are the opposite case: their SKIs identify a one-shot pseudonym key created
+for a single recipient identity. That key is dead once its token is deleted, which is exactly what
+makes it safe to remove.
+
+**Consequence to be aware of:** a deleted X.509-owned token still gets a row in
+`token_ski_cleanups`, because the cleanup manager records "no key material to delete" the same way
+it records a completed deletion. For X.509 that row means *nothing to clean*, not *keys were
+removed*. Do not read the `token_ski_cleanups` table as evidence that X.509 key material was
+purged.
 
 ### Interfaces
 
@@ -264,7 +288,8 @@ cleanupManager := cleanup.NewServiceManager(
    - Get keystore for TMS
    - Derive SKIs from owner identity using appropriate provider
    - Delete each SKI from keystore
-   - Mark token as cleaned in database (even on partial success)
+   - Mark token as cleaned in database **only if every key was deleted** (or if the owner type has
+     no keys to delete at all)
 7. **Release Leadership**: Close leadership lock
 8. **Wait**: Sleep until next scan interval
 9. **Repeat**: Go to step 2
@@ -281,16 +306,26 @@ The cleanup service handles errors gracefully with specific retry behavior:
 
 ### Key Deletion Errors
 
-- **All keys fail to delete**: Token is NOT marked as cleaned; will retry on next sweep
-- **Some keys fail to delete**: Token IS marked as cleaned (partial success); logs warnings for failed keys
-- **No SKIs derived**: Token IS marked as cleaned to avoid infinite retries; logs warning
+Key deletion is **all-or-nothing** per token:
+
+- **Any key fails to delete**: Token is NOT marked as cleaned; the whole token is retried on the
+  next sweep. The returned error joins every per-key cause, so callers can inspect them with
+  `errors.Is`/`errors.As`
+- **All keys deleted**: Token IS marked as cleaned
+- **No SKIs derived**: Token IS marked as cleaned to avoid infinite retries; logs warning. This is
+  the normal path for X.509 — see
+  [X.509 is intentionally out of scope](#x509-is-intentionally-out-of-scope)
 
 ### Rationale
 
-This error handling strategy balances reliability with forward progress:
-- Complete failures trigger retries (transient errors may resolve)
-- Partial successes are recorded to avoid reprocessing successfully deleted keys
-- Empty SKI cases are marked complete to prevent infinite retry loops
+Marking a token cleaned while some of its key material is still in the keystore would turn a
+transient database error into a permanent, un-retriable key-retention hole: the token would never
+be selected again, so the surviving key would never be deleted. Retrying the whole token is safe
+and cheap because `Keystore.Delete` is idempotent — re-deleting the keys that already succeeded
+costs one no-op call each.
+
+Empty SKI cases are still marked complete, otherwise every sweep would rescan the same tokens
+forever.
 
 ### Other Errors
 
@@ -395,11 +430,12 @@ Key metrics to monitor:
 - **Error Rate**: Failed cleanup attempts (check logs for details)
 - **Leadership Changes**: Frequency of leader election (should be stable)
 - **Processing Time**: Duration of each cleanup sweep
-- **Partial Failures**: Tokens with some keys deleted but not all
+- **Retried Tokens**: Tokens that failed at least one key deletion and are still pending. A token
+  stuck here across many sweeps means a key deletion is failing persistently, not transiently
 
 **Log Levels:**
 - `INFO`: Successful cleanup operations, manager start/stop
-- `WARN`: Partial failures, key not found, leadership issues
+- `WARN`: Failed key deletions, key not found, leadership issues
 - `DEBUG`: Detailed sweep information, SKI derivation, leadership acquisition
 
 ## Security Considerations
@@ -408,7 +444,11 @@ Key metrics to monitor:
 - **Idempotency**: Safe to retry cleanup operations
 - **Audit Trail**: `token_ski_cleanups` table provides cleanup history with timestamps and instance tracking
 - **Key Isolation**: Only deletes keys for deleted tokens, never active tokens
-- **Partial Success Handling**: Prevents infinite retries while maintaining audit trail
+- **All-or-Nothing Marking**: A token is only recorded as cleaned once *all* of its keys are gone,
+  so a failed deletion can never be silently forgotten
+- **X.509 Exclusion**: X.509 key material is never deleted by design — a `token_ski_cleanups` row
+  for an X.509-owned token means "nothing to clean". See
+  [X.509 is intentionally out of scope](#x509-is-intentionally-out-of-scope)
 - **Instance Tracking**: `cleaned_by` field records which instance performed cleanup
 
 ## Comparison with Recovery Service
