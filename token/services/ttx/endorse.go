@@ -254,7 +254,11 @@ func extractRequiredSigners(ctx context.Context, sigService dep.SignatureService
 	}
 	subset := make([]token.Identity, 0, len(res))
 	for _, res := range res {
-		if sigService.IsMe(ctx, res) {
+		isMe, err := sigService.IsMe(ctx, res)
+		if err != nil {
+			return nil, errors.Wrapf(err, "failed checking if signer [%s] is me", res)
+		}
+		if isMe {
 			subset = append(subset, res)
 		}
 	}

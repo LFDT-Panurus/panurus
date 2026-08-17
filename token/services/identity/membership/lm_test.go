@@ -34,7 +34,7 @@ import (
 
 func TestNewLocalMembership_IsMe(t *testing.T) {
 	ip := &mock.IdentityProvider{}
-	ip.IsMeReturns(true)
+	ip.IsMeReturns(true, nil)
 
 	lm := membership.NewLocalMembership(
 		logging.MustGetLogger("test"),
@@ -47,8 +47,33 @@ func TestNewLocalMembership_IsMe(t *testing.T) {
 		ip,
 	)
 
-	assert.True(t, lm.IsMe(t.Context(), []byte("any")))
+	isMe, err := lm.IsMe(t.Context(), []byte("any"))
+	require.NoError(t, err)
+	assert.True(t, isMe)
 	assert.Equal(t, token.Identity("netid"), lm.DefaultNetworkIdentity())
+}
+
+// TestNewLocalMembership_IsMe_ErrorPropagated is a regression test for issue #2066: when the
+// underlying IdentityProvider cannot determine ownership, LocalMembership.IsMe must surface the
+// error rather than reporting a confident "not me". The boolean must be ignored on error.
+func TestNewLocalMembership_IsMe_ErrorPropagated(t *testing.T) {
+	ip := &mock.IdentityProvider{}
+	ip.IsMeReturns(false, stdErrors.New("storage unavailable"))
+
+	lm := membership.NewLocalMembership(
+		logging.MustGetLogger("test"),
+		&mock.Config{},
+		[]byte("netid"),
+		&mock.SignerDeserializerManager{},
+		&mock.IdentityStoreService{},
+		"testType",
+		false,
+		ip,
+	)
+
+	isMe, err := lm.IsMe(t.Context(), []byte("any"))
+	require.Error(t, err, "a provider failure must be propagated, not flattened into a 'not me'")
+	assert.False(t, isMe, "the boolean must not be trusted when an error is returned")
 }
 
 func TestRegisterIdentity_PersistsAndRegisters(t *testing.T) {

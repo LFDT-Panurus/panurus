@@ -56,7 +56,7 @@ func (d *dummyTMSProvider) ConfigurationFor(network, channel, namespace string) 
 // newSpendTestContext builds a mock.Context that resolves a real
 // token.ManagementServiceProvider (backed entirely by driver-level mocks), so
 // RequestSpendView.Call can run end-to-end without a live FSC network.
-func newSpendTestContext(t *testing.T, areMe []string, sessions map[string]view.Session) *dep_mock.Context {
+func newSpendTestContext(t *testing.T, areMe []string, areMeErr error, sessions map[string]view.Session) *dep_mock.Context {
 	t.Helper()
 
 	tms := &driver_mock.TokenManagerService{}
@@ -71,7 +71,7 @@ func newSpendTestContext(t *testing.T, areMe []string, sessions map[string]view.
 	tms.PublicParamsManagerReturns(ppm)
 
 	ip := &driver_mock.IdentityProvider{}
-	ip.AreMeReturns(areMe)
+	ip.AreMeReturns(areMe, areMeErr)
 	tms.IdentityProviderReturns(ip)
 	tms.DeserializerReturns(&driver_mock.Deserializer{})
 
@@ -140,7 +140,7 @@ func TestRequestSpendView_Call_TimesOutOnUnresponsiveParty(t *testing.T) {
 	unspentToken := &token2.UnspentToken{Owner: owner}
 
 	sessionB := newSilentSession(t)
-	ctx := newSpendTestContext(t, []string{partyA.UniqueID()}, map[string]view.Session{
+	ctx := newSpendTestContext(t, []string{partyA.UniqueID()}, nil, map[string]view.Session{
 		partyB.UniqueID(): sessionB,
 	})
 
@@ -175,11 +175,33 @@ func TestRequestSpendView_Call_AllPartiesRespond(t *testing.T) {
 	ch <- &view.Message{Payload: raw, Status: int32(view.OK)}
 	sessionB.ReceiveReturns(ch)
 
-	ctx := newSpendTestContext(t, []string{partyA.UniqueID()}, map[string]view.Session{
+	ctx := newSpendTestContext(t, []string{partyA.UniqueID()}, nil, map[string]view.Session{
 		partyB.UniqueID(): sessionB,
 	})
 
 	spendView := NewRequestSpendView(unspentToken).WithTimeout(2 * time.Second)
 	_, err = spendView.Call(ctx)
 	require.NoError(t, err)
+}
+
+// TestRequestSpendView_Call_AreMeErrorAborts is a regression test for issue #2066: when the
+// ownership check (AreMe) fails, RequestSpendView must surface that error and abort, rather than
+// treating the "couldn't check" outcome as "no party is me" and fanning spend requests out to
+// every party (including ones this node actually owns).
+func TestRequestSpendView_Call_AreMeErrorAborts(t *testing.T) {
+	partyA := view.Identity("party-a")
+	partyB := view.Identity("party-b")
+
+	owner, err := boolpolicy.WrapPolicyIdentity("$0 AND $1", partyA, partyB)
+	require.NoError(t, err)
+
+	unspentToken := &token2.UnspentToken{Owner: owner}
+
+	// AreMe fails before any session is used, so no sessions are needed.
+	ctx := newSpendTestContext(t, nil, errors.New("storage unavailable"), nil)
+
+	spendView := NewRequestSpendView(unspentToken).WithTimeout(2 * time.Second)
+	_, err = spendView.Call(ctx)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "failed checking which parties are me")
 }
