@@ -13,6 +13,7 @@ import (
 
 	"github.com/LFDT-Panurus/panurus/token/services/selector/config/mock"
 	"github.com/LFDT-Panurus/panurus/token/services/selector/driver"
+	"github.com/LFDT-Panurus/panurus/token/services/selector/ratelimit"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -226,6 +227,104 @@ func TestConfig_GetFetcherCacheMaxQueries(t *testing.T) {
 			assert.Equal(t, tt.expected, result)
 		})
 	}
+}
+
+// TestConfig_RateLimit verifies the built-in selection rate limiter is off unless it is enabled
+// explicitly or implied by a positive rate, and that the documented defaults apply once it is on.
+func TestConfig_RateLimit(t *testing.T) {
+	tests := []struct {
+		name            string
+		config          *Config
+		expectedEnabled bool
+		expectedRate    float64
+		expectedBurst   int
+	}{
+		{
+			name:            "disabled by default",
+			config:          &Config{},
+			expectedEnabled: false,
+			expectedRate:    0,
+			expectedBurst:   0,
+		},
+		{
+			name:            "enabled without values uses defaults",
+			config:          &Config{RateLimitEnabled: true},
+			expectedEnabled: true,
+			expectedRate:    defaultRateLimit,
+			expectedBurst:   defaultRateLimit * defaultRateLimitBurstFactor,
+		},
+		{
+			name:            "positive rate implies enabled",
+			config:          &Config{RateLimit: 20},
+			expectedEnabled: true,
+			expectedRate:    20,
+			expectedBurst:   40,
+		},
+		{
+			name:            "explicit burst is honoured",
+			config:          &Config{RateLimit: 20, RateLimitBurst: 5},
+			expectedEnabled: true,
+			expectedRate:    20,
+			expectedBurst:   5,
+		},
+		{
+			name:            "burst without rate defaults the rate",
+			config:          &Config{RateLimitEnabled: true, RateLimitBurst: 5},
+			expectedEnabled: true,
+			expectedRate:    defaultRateLimit,
+			expectedBurst:   5,
+		},
+		{
+			name:            "fractional rate rounds the burst up",
+			config:          &Config{RateLimit: 0.5},
+			expectedEnabled: true,
+			expectedRate:    0.5,
+			expectedBurst:   1,
+		},
+		{
+			name:            "non-positive rate alone does not enable",
+			config:          &Config{RateLimit: -1},
+			expectedEnabled: false,
+			expectedRate:    0,
+			expectedBurst:   0,
+		},
+		{
+			name:            "non-positive rate with explicit enable falls back to the default",
+			config:          &Config{RateLimitEnabled: true, RateLimit: -1},
+			expectedEnabled: true,
+			expectedRate:    defaultRateLimit,
+			expectedBurst:   defaultRateLimit * defaultRateLimitBurstFactor,
+		},
+		{
+			name:            "non-positive burst falls back to the default",
+			config:          &Config{RateLimit: 10, RateLimitBurst: -5},
+			expectedEnabled: true,
+			expectedRate:    10,
+			expectedBurst:   20,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.expectedEnabled, tt.config.IsRateLimitEnabled())
+			assert.InDelta(t, tt.expectedRate, tt.config.GetRateLimit(), 0)
+			assert.Equal(t, tt.expectedBurst, tt.config.GetRateLimitBurst())
+		})
+	}
+}
+
+// TestConfig_GetRateLimitMaxBuckets verifies the bucket cap defaults to zero, which lets the
+// limiter pick its own, and that a negative value is treated the same way.
+func TestConfig_GetRateLimitMaxBuckets(t *testing.T) {
+	assert.Equal(t, 0, (&Config{}).GetRateLimitMaxBuckets())
+	assert.Equal(t, 0, (&Config{RateLimitMaxBuckets: -1}).GetRateLimitMaxBuckets())
+	assert.Equal(t, 1024, (&Config{RateLimitMaxBuckets: 1024}).GetRateLimitMaxBuckets())
+}
+
+// TestConfig_ImplementsRateLimitConfiguration makes sure the parsed configuration keeps satisfying
+// the interface the limiter builds itself from.
+func TestConfig_ImplementsRateLimitConfiguration(t *testing.T) {
+	var _ ratelimit.Configuration = &Config{}
 }
 
 // TestNew verifies config parsing handles valid configs, empty configs, and unmarshal errors.

@@ -15,6 +15,7 @@ import (
 	"github.com/LFDT-Panurus/panurus/token/driver"
 	"github.com/LFDT-Panurus/panurus/token/services/logging"
 	"github.com/LFDT-Panurus/panurus/token/services/selector/config"
+	"github.com/LFDT-Panurus/panurus/token/services/selector/ratelimit"
 	token2 "github.com/LFDT-Panurus/panurus/token/token"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/common/utils/lazy"
@@ -41,10 +42,15 @@ type SelectorService struct {
 	lockers          []stoppable
 }
 
-func NewService(lockerProvider LockerProvider, c ConfigProvider) *SelectorService {
+// NewService returns a SelectorService for the simple driver.
+//
+// By default, selection is not rate limited. Passing ratelimit options, or enabling the
+// token.selector.rateLimit* configuration keys, meters every selection request per wallet.
+func NewService(lockerProvider LockerProvider, c ConfigProvider, opts ...ratelimit.Option) *SelectorService {
 	cfg, err := config.New(c)
 	if err != nil {
 		logger.Errorf("error getting selector config, using defaults. %s", err.Error())
+		cfg = &config.Config{}
 	}
 
 	svc := &SelectorService{}
@@ -53,7 +59,11 @@ func NewService(lockerProvider LockerProvider, c ConfigProvider) *SelectorServic
 		numRetries:           cfg.GetNumRetries(),
 		retryInterval:        cfg.GetRetryInterval(),
 		requestCertification: true,
+		limiter:              ratelimit.CompileOptions(opts...).Limiter(cfg),
 		onLockerCreated:      svc.trackLocker,
+	}
+	if loader.limiter != nil {
+		logger.Infof("per-wallet token selection rate limiting is enabled")
 	}
 	svc.managerLazyCache = lazy.NewProviderWithKeyMapper(key, loader.load)
 
@@ -69,6 +79,13 @@ func (s *SelectorService) SelectorManager(tms *token.ManagementService) (token.S
 }
 
 // Shutdown stops all background goroutines for every locker created by this service.
+//
+// It deliberately leaves the rate limiter alone. Shutdown also runs on routine public-parameter
+// reloads (see token.ManagementServiceProvider.Update), after which the service keeps serving
+// managers: resetting the wallet allowances there would let a throttled client wash out its debt
+// by triggering a reload, and a limiter supplied through ratelimit.WithLimiter belongs to the
+// caller in the first place. The built-in limiter runs no goroutines and prunes its own buckets,
+// so there is nothing to leak.
 func (s *SelectorService) Shutdown() {
 	s.mu.Lock()
 	lockers := s.lockers
@@ -117,7 +134,10 @@ type loader struct {
 	numRetries           int
 	retryInterval        time.Duration
 	requestCertification bool
-	onLockerCreated      func(Locker)
+	// limiter meters selection requests per wallet. It is nil when rate limiting is
+	// disabled, which is the default, and is shared by every manager the loader builds.
+	limiter         ratelimit.Limiter
+	onLockerCreated func(Locker)
 }
 
 func (s *loader) load(tms *token.ManagementService) (token.SelectorManager, error) {
@@ -135,14 +155,24 @@ func (s *loader) load(tms *token.ManagementService) (token.SelectorManager, erro
 		locker: locker,
 	}
 
-	return NewManager(
+	return s.newManager(locker, qe, tms.PublicParametersManager().PublicParameters().Precision(), tms.ID().String()), nil
+}
+
+// newManager builds the manager for one TMS and, when rate limiting is enabled, wraps it so that
+// every selection request is metered against the allowance of the wallet it selects for. scope is
+// the TMS id, which keeps the allowances of one network or namespace separate from the others.
+func (s *loader) newManager(locker Locker, qs QueryService, precision uint64, scope string) token.SelectorManager {
+	mgr := NewManager(
 		locker,
-		func() QueryService { return qe },
+		func() QueryService { return qs },
 		s.numRetries,
 		s.retryInterval,
 		s.requestCertification,
-		tms.PublicParametersManager().PublicParameters().Precision(),
-	), nil
+		precision,
+	)
+
+	// Decorate returns mgr unchanged when no limiter is configured, which is the default.
+	return ratelimit.Decorate(mgr, s.limiter, scope)
 }
 
 func key(tms *token.ManagementService) string {
