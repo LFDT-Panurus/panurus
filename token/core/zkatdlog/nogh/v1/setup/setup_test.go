@@ -289,8 +289,13 @@ func TestPublicParamsModification(t *testing.T) {
 
 	// Test SetAuditors
 	newAuditors := []driver.Identity{driver.Identity("newAuditor")}
-	pp.SetAuditors(newAuditors)
+	require.NoError(t, pp.SetAuditors(newAuditors))
 	assert.Equal(t, newAuditors, pp.Auditors())
+
+	// zkatdlog supports a list of auditors, so an empty/nil slice clears them
+	// without error (unlike fabtoken's single-auditor setter).
+	require.NoError(t, pp.SetAuditors(nil))
+	assert.Empty(t, pp.Auditors())
 
 	// Test AddIssuer
 	issuer1 := driver.Identity("issuer1")

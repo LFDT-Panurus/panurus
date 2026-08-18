@@ -1855,7 +1855,7 @@ func PrepareUpdatedPublicParams(network *integration.Infrastructure, auditor str
 		Validate() error
 		Serialize() ([]byte, error)
 		SetIssuers(identities []driver.Identity)
-		SetAuditors(identities []driver.Identity)
+		SetAuditors(identities []driver.Identity) error
 		AddAuditor(identity2 driver.Identity)
 		AddIssuer(identity2 driver.Identity)
 	}
@@ -1876,7 +1876,7 @@ func PrepareUpdatedPublicParams(network *integration.Infrastructure, auditor str
 		pp.AddAuditor(auditorId)
 		pp.AddIssuer(issuerId)
 	} else {
-		pp.SetAuditors([]driver.Identity{auditorId})
+		gomega.Expect(pp.SetAuditors([]driver.Identity{auditorId})).NotTo(gomega.HaveOccurred())
 		pp.SetIssuers([]driver.Identity{issuerId})
 	}
 

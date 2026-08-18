@@ -620,9 +620,13 @@ func (p *PublicParams) SetIssuers(ids []driver.Identity) {
 	p.IssuerIDs = ids
 }
 
-// SetAuditors sets the auditors to the passed identities
-func (p *PublicParams) SetAuditors(ids []driver.Identity) {
+// SetAuditors sets the auditors to the passed identities.
+// zkatdlog supports a list of auditors, so an empty or nil slice simply clears it.
+// It always returns a nil error; the signature matches the shared setter contract.
+func (p *PublicParams) SetAuditors(ids []driver.Identity) error {
 	p.AuditorIDs = ids
+
+	return nil
 }
 
 func (p *PublicParams) ComputeHash() ([]byte, error) {

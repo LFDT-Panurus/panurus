@@ -225,9 +225,16 @@ func (p *PublicParams) SetIssuers(ids []driver.Identity) {
 	p.IssuerIDs = ids
 }
 
-// SetAuditors sets the auditors to the passed identities
-func (p *PublicParams) SetAuditors(ids []driver.Identity) {
+// SetAuditors sets the auditor to the first of the passed identities.
+// fabtoken supports a single auditor, so it uses ids[0] and ignores the rest.
+// It returns an error if ids is empty or nil, leaving the current auditor untouched.
+func (p *PublicParams) SetAuditors(ids []driver.Identity) error {
+	if len(ids) == 0 {
+		return errors.New("no auditor identities provided")
+	}
 	p.Auditor = ids[0]
+
+	return nil
 }
 
 // Auditors returns the list of authorized auditors
