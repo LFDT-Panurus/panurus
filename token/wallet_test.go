@@ -247,6 +247,35 @@ func TestWalletManager_GetRevocationHandle(t *testing.T) {
 	assert.Equal(t, "revocation-handle", rh)
 }
 
+// TestWalletManager_GetEIDAndRH_DecodeErrorPassedThrough verifies an identity
+// layer error keeps its chain: the auditor classifies it by errors.Is.
+func TestWalletManager_GetEIDAndRH_DecodeErrorPassedThrough(t *testing.T) {
+	mockWS := &mock.WalletService{}
+	wm := &WalletManager{walletService: mockWS}
+
+	expectedErr := errors.New("no deserializer found for [legacy]")
+	mockWS.GetEIDAndRHReturns("", "", expectedErr)
+
+	_, _, err := wm.GetEIDAndRH(context.Background(), Identity("alice"), []byte("audit"))
+
+	require.ErrorIs(t, err, expectedErr)
+}
+
+// TestWalletManager_GetEIDAndRH_StorageErrorKeepsChain verifies an audit-info
+// storage failure propagates with its chain intact.
+func TestWalletManager_GetEIDAndRH_StorageErrorKeepsChain(t *testing.T) {
+	mockWS := &mock.WalletService{}
+	wm := &WalletManager{walletService: mockWS}
+
+	expectedErr := errors.New("storage failure")
+	mockWS.GetAuditInfoReturns(nil, expectedErr)
+
+	_, _, err := wm.GetEIDAndRH(context.Background(), Identity("alice"), nil)
+
+	require.ErrorIs(t, err, expectedErr)
+	assert.Contains(t, err.Error(), "failed to get audit info")
+}
+
 // TestWalletManager_SpentIDs verifies spent IDs retrieval
 func TestWalletManager_SpentIDs(t *testing.T) {
 	mockWS := &mock.WalletService{}

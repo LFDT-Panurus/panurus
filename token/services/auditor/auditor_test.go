@@ -122,14 +122,38 @@ func newFakeStore() *auditmock.AuditTransactionStore {
 	return fakeStore
 }
 
-// newTestService creates a Service with the given auditDB and checkService for testing.
-func newTestService(auditDB *auditdb.StoreService, checkService auditor.CheckService) *auditor.Service {
+// tmsWithExtensions adapts a ManagementService to the type the TMS provider
+// returns, rebinding requests to it the way the production wrapper does.
+type tmsWithExtensions struct{ *token.ManagementService }
+
+func (t tmsWithExtensions) SetTokenManagementService(req *token.Request) error {
+	req.SetTokenService(t.ManagementService)
+
+	return nil
+}
+
+// newTestTMSProvider returns a provider handing out a working TMS.
+func newTestTMSProvider(t *testing.T) *depmock.TokenManagementServiceProvider {
+	t.Helper()
+	tmsProv := &depmock.TokenManagementServiceProvider{}
+	tmsProv.TokenManagementServiceReturns(tmsWithExtensions{newTestManagementService(t)}, nil)
+
+	return tmsProv
+}
+
+// newTestService creates a Service with the given auditDB and checkService for
+// testing. Audit and Append resolve the TMS through the provider, so a working
+// one is always wired in.
+func newTestService(t *testing.T, auditDB *auditdb.StoreService, checkService auditor.CheckService) *auditor.Service {
+	t.Helper()
+	tmsProv := newTestTMSProvider(t)
+
 	return auditor.NewService(
 		token.TMSID{},
 		nil, // networkProvider
 		auditDB,
 		nil, // tokenDB
-		nil, // tmsProvider
+		tmsProv,
 		nil, // finalityTracer
 		nil, // metricsProvider
 		checkService,
@@ -149,7 +173,7 @@ func newStubNetwork() *network.Network {
 func TestService_Check_ReturnsIssues(t *testing.T) {
 	cs := &auditmock.CheckService{}
 	cs.CheckReturns([]string{"tx-aaa", "tx-bbb"}, nil)
-	svc := newTestService(newTestStoreService(t, newFakeStore()), cs)
+	svc := newTestService(t, newTestStoreService(t, newFakeStore()), cs)
 	got, err := svc.Check(context.Background())
 	require.NoError(t, err)
 	assert.Equal(t, []string{"tx-aaa", "tx-bbb"}, got)
@@ -159,7 +183,7 @@ func TestService_Check_ReturnsError(t *testing.T) {
 	expectedErr := errors.New("check failed")
 	cs := &auditmock.CheckService{}
 	cs.CheckReturns(nil, expectedErr)
-	svc := newTestService(newTestStoreService(t, newFakeStore()), cs)
+	svc := newTestService(t, newTestStoreService(t, newFakeStore()), cs)
 	_, err := svc.Check(context.Background())
 	assert.ErrorIs(t, err, expectedErr)
 }
@@ -167,7 +191,7 @@ func TestService_Check_ReturnsError(t *testing.T) {
 func TestService_Check_EmptyIssues(t *testing.T) {
 	cs := &auditmock.CheckService{}
 	cs.CheckReturns([]string{}, nil)
-	svc := newTestService(newTestStoreService(t, newFakeStore()), cs)
+	svc := newTestService(t, newTestStoreService(t, newFakeStore()), cs)
 	got, err := svc.Check(context.Background())
 	require.NoError(t, err)
 	assert.Empty(t, got)
@@ -194,7 +218,7 @@ func TestGetByTMSID_GetServiceError_ReturnsNil(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestService_Release_IncrementsCounter(t *testing.T) {
-	svc := newTestService(newTestStoreService(t, newFakeStore()), nil)
+	svc := newTestService(t, newTestStoreService(t, newFakeStore()), nil)
 	tx := &auditmock.Transaction{}
 	tx.IDReturns("tx-release")
 	tx.RequestReturns(&token.Request{Anchor: "tx-release"})
@@ -204,7 +228,7 @@ func TestService_Release_IncrementsCounter(t *testing.T) {
 }
 
 func TestService_SetStatus_Success(t *testing.T) {
-	svc := newTestService(newTestStoreService(t, newFakeStore()), nil)
+	svc := newTestService(t, newTestStoreService(t, newFakeStore()), nil)
 	err := svc.SetStatus(context.Background(), "tx-set", auditdb.Confirmed, "ok")
 	assert.NoError(t, err)
 }
@@ -213,7 +237,7 @@ func TestService_SetStatus_Error(t *testing.T) {
 	expectedErr := errors.New("db write error")
 	fakeStore := newFakeStore()
 	fakeStore.SetStatusReturns(expectedErr)
-	svc := newTestService(newTestStoreService(t, fakeStore), nil)
+	svc := newTestService(t, newTestStoreService(t, fakeStore), nil)
 	err := svc.SetStatus(context.Background(), "tx-set", auditdb.Confirmed, "ok")
 	assert.ErrorIs(t, err, expectedErr)
 }
@@ -221,7 +245,7 @@ func TestService_SetStatus_Error(t *testing.T) {
 func TestService_GetStatus_Success(t *testing.T) {
 	fakeStore := newFakeStore()
 	fakeStore.GetStatusReturns(auditdb.Confirmed, "done", nil)
-	svc := newTestService(newTestStoreService(t, fakeStore), nil)
+	svc := newTestService(t, newTestStoreService(t, fakeStore), nil)
 	status, msg, err := svc.GetStatus(context.Background(), "tx-get")
 	require.NoError(t, err)
 	assert.Equal(t, auditdb.Confirmed, status)
@@ -232,7 +256,7 @@ func TestService_GetStatus_Error(t *testing.T) {
 	expectedErr := errors.New("db read error")
 	fakeStore := newFakeStore()
 	fakeStore.GetStatusReturns(0, "", expectedErr)
-	svc := newTestService(newTestStoreService(t, fakeStore), nil)
+	svc := newTestService(t, newTestStoreService(t, fakeStore), nil)
 	_, _, err := svc.GetStatus(context.Background(), "tx-get")
 	assert.ErrorIs(t, err, expectedErr)
 }
@@ -241,7 +265,7 @@ func TestService_GetTokenRequest_Success(t *testing.T) {
 	data := []byte("raw-token-request")
 	fakeStore := newFakeStore()
 	fakeStore.GetTokenRequestReturns(data, nil)
-	svc := newTestService(newTestStoreService(t, fakeStore), nil)
+	svc := newTestService(t, newTestStoreService(t, fakeStore), nil)
 	got, err := svc.GetTokenRequest(context.Background(), "tx-tok")
 	require.NoError(t, err)
 	assert.Equal(t, data, got)
@@ -251,7 +275,7 @@ func TestService_GetTokenRequest_Error(t *testing.T) {
 	expectedErr := errors.New("not found")
 	fakeStore := newFakeStore()
 	fakeStore.GetTokenRequestReturns(nil, expectedErr)
-	svc := newTestService(newTestStoreService(t, fakeStore), nil)
+	svc := newTestService(t, newTestStoreService(t, fakeStore), nil)
 	_, err := svc.GetTokenRequest(context.Background(), "tx-tok")
 	assert.ErrorIs(t, err, expectedErr)
 }
@@ -261,7 +285,7 @@ func TestService_GetTokenRequest_Error(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestService_Validate(t *testing.T) {
-	svc := newTestService(nil, nil)
+	svc := newTestService(t, nil, nil)
 	assert.Panics(t, func() {
 		_ = svc.Validate(context.Background(), &token.Request{})
 	})
@@ -290,7 +314,15 @@ func TestService_Audit_AuditRecordError(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	svc := newTestService(newTestStoreService(t, newFakeStore()), nil)
+	// the record is computed over the provider-resolved TMS, so the failing
+	// TMS is routed through the provider
+	tmsProv := &depmock.TokenManagementServiceProvider{}
+	tmsProv.TokenManagementServiceReturns(tmsWithExtensions{badTMS}, nil)
+	svc := auditor.NewService(
+		token.TMSID{}, nil,
+		newTestStoreService(t, newFakeStore()),
+		nil, tmsProv, nil, nil, nil, nil,
+	)
 	tx := &auditmock.Transaction{}
 	tx.IDReturns("tx-err")
 	tx.RequestReturns(token.NewRequest(badTMS, token.RequestAnchor("tx-err")))
@@ -301,7 +333,7 @@ func TestService_Audit_AuditRecordError(t *testing.T) {
 }
 
 func TestService_Audit_Success(t *testing.T) {
-	svc := newTestService(newTestStoreService(t, newFakeStore()), nil)
+	svc := newTestService(t, newTestStoreService(t, newFakeStore()), nil)
 	tx := &auditmock.Transaction{}
 	tx.IDReturns("tx-audit-ok")
 	tx.RequestReturns(token.NewRequest(newTestManagementService(t), token.RequestAnchor("tx-audit-ok")))
@@ -316,7 +348,7 @@ func TestService_Audit_DBCleanSuccess(t *testing.T) {
 	fakeStore := newFakeStore()
 	fakeStore.GetStatusReturns(0, "", errors.New("db status err"))
 
-	svc := newTestService(newTestStoreService(t, fakeStore), nil)
+	svc := newTestService(t, newTestStoreService(t, fakeStore), nil)
 	tx := &auditmock.Transaction{}
 	tx.IDReturns("tx-aud-err")
 	tx.RequestReturns(token.NewRequest(newTestManagementService(t), token.RequestAnchor("tx-aud-err")))
@@ -331,7 +363,7 @@ func TestService_Audit_NotUnknown(t *testing.T) {
 	fakeStore := newFakeStore()
 	fakeStore.GetStatusReturns(dbdriver.Pending, "", nil)
 
-	svc := newTestService(newTestStoreService(t, fakeStore), nil)
+	svc := newTestService(t, newTestStoreService(t, fakeStore), nil)
 	tx := &auditmock.Transaction{}
 	tx.IDReturns("tx-aud-not-unknown")
 	tx.RequestReturns(token.NewRequest(newTestManagementService(t), token.RequestAnchor("tx-aud-not-unknown")))
@@ -342,7 +374,10 @@ func TestService_Audit_NotUnknown(t *testing.T) {
 	assert.NotNil(t, outputs)
 }
 
-func TestService_Audit_TMSProviderIrrelevant(t *testing.T) {
+// Audit resolves the TMS through the provider, as Append does, so the request
+// cannot influence which wallet service attributes the record: a provider
+// error fails the audit.
+func TestService_Audit_TMSProviderError(t *testing.T) {
 	tmsProv := &depmock.TokenManagementServiceProvider{}
 	tmsProv.TokenManagementServiceReturns(nil, errors.New("tms err"))
 
@@ -355,10 +390,9 @@ func TestService_Audit_TMSProviderIrrelevant(t *testing.T) {
 	tx.IDReturns("tx-aud-tms-err")
 	tx.RequestReturns(token.NewRequest(newTestManagementService(t), token.RequestAnchor("tx-aud-tms-err")))
 
-	inputs, outputs, err := svc.Audit(context.Background(), tx)
-	require.NoError(t, err)
-	assert.NotNil(t, inputs)
-	assert.NotNil(t, outputs)
+	_, _, err := svc.Audit(context.Background(), tx)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "tms err")
 }
 
 // ---------------------------------------------------------------------------
@@ -390,7 +424,7 @@ func TestService_Append_GetNetworkError(t *testing.T) {
 	svc := auditor.NewService(
 		token.TMSID{}, netProvider,
 		newTestStoreService(t, newFakeStore()),
-		nil, &depmock.TokenManagementServiceProvider{}, nil, nil, nil, nil,
+		nil, newTestTMSProvider(t), nil, nil, nil, nil,
 	)
 	tx := &auditmock.Transaction{}
 	tx.IDReturns("tx-net-err")
@@ -411,7 +445,7 @@ func TestService_Append_Success(t *testing.T) {
 	svc := auditor.NewService(
 		token.TMSID{}, netProvider,
 		newTestStoreService(t, newFakeStore()),
-		nil, &depmock.TokenManagementServiceProvider{}, nil, nil, nil, nil,
+		nil, newTestTMSProvider(t), nil, nil, nil, nil,
 	)
 	tx := &auditmock.Transaction{}
 	tx.IDReturns("tx-app-success")
@@ -434,7 +468,7 @@ func TestService_Append_AddFinalityListenerError(t *testing.T) {
 	svc := auditor.NewService(
 		token.TMSID{}, netProvider,
 		newTestStoreService(t, newFakeStore()),
-		nil, &depmock.TokenManagementServiceProvider{}, nil, nil, nil, nil,
+		nil, newTestTMSProvider(t), nil, nil, nil, nil,
 	)
 	tx := &auditmock.Transaction{}
 	tx.IDReturns("tx-listener-err")
@@ -463,7 +497,7 @@ func TestService_Append_AuditError(t *testing.T) {
 	svc := auditor.NewService(
 		token.TMSID{}, netProvider,
 		newTestStoreService(t, fakeStore),
-		nil, &depmock.TokenManagementServiceProvider{}, nil, nil, nil, nil,
+		nil, newTestTMSProvider(t), nil, nil, nil, nil,
 	)
 	tx := &auditmock.Transaction{}
 	tx.IDReturns("tx-app-err")
@@ -702,7 +736,14 @@ func TestService_Audit_LocksReleasedOnAuditRecordError(t *testing.T) {
 	require.NoError(t, err)
 
 	storeService := newTestStoreService(t, newFakeStore())
-	svc := newTestService(storeService, nil)
+	// the record is computed over the provider-resolved TMS, so the failing
+	// TMS is routed through the provider
+	tmsProv := &depmock.TokenManagementServiceProvider{}
+	tmsProv.TokenManagementServiceReturns(tmsWithExtensions{badTMS}, nil)
+	svc := auditor.NewService(
+		token.TMSID{}, nil, storeService,
+		nil, tmsProv, nil, nil, nil, nil,
+	)
 
 	tx := &auditmock.Transaction{}
 	tx.IDReturns("tx-audit-record-err")
@@ -729,7 +770,7 @@ func TestService_Audit_LocksReleasedOnAuditRecordError(t *testing.T) {
 // Release() frees them, and Release() is idempotent (safe to call multiple times).
 func TestService_Audit_LocksAcquiredOnSuccess(t *testing.T) {
 	storeService := newTestStoreService(t, newFakeStore())
-	svc := newTestService(storeService, nil)
+	svc := newTestService(t, storeService, nil)
 
 	tx := &auditmock.Transaction{}
 	tx.IDReturns("tx-audit-success")
@@ -759,7 +800,7 @@ func TestService_Audit_LocksAcquiredOnSuccess(t *testing.T) {
 // Release() is always safe regardless of Audit() outcome.
 func TestService_Audit_ContextCancellationBeforeLockAcquisition(t *testing.T) {
 	storeService := newTestStoreService(t, newFakeStore())
-	svc := newTestService(storeService, nil)
+	svc := newTestService(t, storeService, nil)
 
 	tx := &auditmock.Transaction{}
 	tx.IDReturns("tx-ctx-cancel")
@@ -790,7 +831,7 @@ func TestService_Audit_ContextCancellationBeforeLockAcquisition(t *testing.T) {
 // first Audit() acquires locks, Release() frees them, second Audit() succeeds.
 func TestService_Audit_MultipleAuditsSequential(t *testing.T) {
 	storeService := newTestStoreService(t, newFakeStore())
-	svc := newTestService(storeService, nil)
+	svc := newTestService(t, storeService, nil)
 
 	ctx := context.Background()
 
@@ -825,7 +866,7 @@ func TestService_Audit_MultipleAuditsSequential(t *testing.T) {
 // multiple times safely without panics (handles error paths, defer, retry logic).
 func TestService_Audit_ReleaseIdempotency(t *testing.T) {
 	storeService := newTestStoreService(t, newFakeStore())
-	svc := newTestService(storeService, nil)
+	svc := newTestService(t, storeService, nil)
 
 	tx := &auditmock.Transaction{}
 	tx.IDReturns("tx-release-idempotent")
@@ -857,7 +898,7 @@ func TestService_Audit_ReleaseIdempotency(t *testing.T) {
 // prior Audit() (handles defer in error paths where Audit() never ran or failed early).
 func TestService_Audit_ReleaseWithoutAudit(t *testing.T) {
 	storeService := newTestStoreService(t, newFakeStore())
-	svc := newTestService(storeService, nil)
+	svc := newTestService(t, storeService, nil)
 
 	tx := &auditmock.Transaction{}
 	tx.IDReturns("tx-no-audit")
@@ -875,7 +916,7 @@ func TestService_Audit_ReleaseWithoutAudit(t *testing.T) {
 //	defer auditor.Release(ctx, tx)  // MUST be after error check
 func TestService_Audit_PanicRecoveryReleasesLocks(t *testing.T) {
 	storeService := newTestStoreService(t, newFakeStore())
-	svc := newTestService(storeService, nil)
+	svc := newTestService(t, storeService, nil)
 
 	tx := &auditmock.Transaction{}
 	tx.IDReturns("tx-panic-recovery")
@@ -964,13 +1005,16 @@ func newTestServiceWithMockLocker(t *testing.T, mockLocker *mockAuditLocker) *au
 	storeService, err := auditdb.NewStoreService(fakeStore, auditdb.WithLocker(mockLocker))
 	require.NoError(t, err)
 
+	tmsProv := &depmock.TokenManagementServiceProvider{}
+	tmsProv.TokenManagementServiceReturns(tmsWithExtensions{newTestManagementService(t)}, nil)
+
 	// Create the auditor service with the store that uses our mock locker
 	return auditor.NewService(
 		token.TMSID{},
 		nil, // networkProvider
 		storeService,
 		nil, // tokenDB
-		nil, // tmsProvider
+		tmsProv,
 		nil, // finalityTracer
 		nil, // metricsProvider
 		nil, // checkService
