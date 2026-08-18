@@ -64,6 +64,10 @@ func (e *EIDRHDeserializer) GetEIDAndRH(ctx context.Context, identity driver.Ide
 	return ai.EnrollmentID(), ai.RevocationHandle(), nil
 }
 
+// DeserializeAuditInfo decodes the audit info matched to the passed identity.
+// A decoding failure — an identity that does not unmarshal, a type with no
+// deserializer, audit info the deserializer rejects — carries
+// identity.ErrUnresolvableIdentity along with its cause.
 func (e *EIDRHDeserializer) DeserializeAuditInfo(ctx context.Context, id driver.Identity, auditInfo []byte) (driver2.AuditInfo, error) {
 	if len(auditInfo) == 0 {
 		return nil, errors.Errorf("nil audit info")
@@ -71,17 +75,17 @@ func (e *EIDRHDeserializer) DeserializeAuditInfo(ctx context.Context, id driver.
 
 	si, err := identity.UnmarshalTypedIdentity(id)
 	if err != nil {
-		return nil, errors.Wrap(err, "failed to unmarshal to TypedIdentity")
+		return nil, errors.WithMessage(errors.Join(identity.ErrUnresolvableIdentity, err), "failed to unmarshal to TypedIdentity")
 	}
 	e.mutex.RLock()
 	d, ok := e.deserializers[si.Type]
 	e.mutex.RUnlock()
 	if !ok {
-		return nil, errors.Errorf("no deserializer found for [%v]", si.Type)
+		return nil, errors.Wrapf(identity.ErrUnresolvableIdentity, "no deserializer found for [%v]", si.Type)
 	}
 	res, err := d.DeserializeAuditInfo(ctx, si.Identity, auditInfo)
 	if err != nil {
-		return nil, errors.Wrapf(err, "failed to deserialize audit info for identity type [%v]", si.Type)
+		return nil, errors.WithMessagef(errors.Join(identity.ErrUnresolvableIdentity, err), "failed to deserialize audit info for identity type [%v]", si.Type)
 	}
 
 	return res, nil

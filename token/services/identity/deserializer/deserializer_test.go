@@ -186,7 +186,7 @@ func TestEIDRHDeserializer(t *testing.T) {
 		deserializer := NewEIDRHDeserializer()
 
 		_, err := deserializer.GetEnrollmentID(context.Background(), []byte("invalid"), []byte("audit-info"))
-		require.Error(t, err)
+		require.ErrorIs(t, err, identity.ErrUnresolvableIdentity)
 		assert.Contains(t, err.Error(), "failed to unmarshal to TypedIdentity")
 	})
 
@@ -197,24 +197,27 @@ func TestEIDRHDeserializer(t *testing.T) {
 		typedID := createTypedIdentity(t, identity.Type(98), []byte("raw-identity"))
 
 		_, err := deserializer.GetEnrollmentID(context.Background(), typedID, []byte("audit-info"))
-		require.Error(t, err)
+		require.ErrorIs(t, err, identity.ErrUnresolvableIdentity)
 		assert.Contains(t, err.Error(), "no deserializer found")
 	})
 
 	// test error when trying to deserialize and extract the EID
-	// when the NewEIDRHDeserializer returns with an arbitrary error
+	// when the NewEIDRHDeserializer returns with an arbitrary error;
+	// the error carries the unresolvable marker and keeps its cause
 	t.Run("DeserializeAuditInfoError", func(t *testing.T) {
 		deserializer := NewEIDRHDeserializer()
 
+		expectedErr := errors.New("deserialize error")
 		mockDeserializer := &identitydrivermock.AuditInfoDeserializer{}
-		mockDeserializer.DeserializeAuditInfoReturns(nil, errors.New("deserialize error"))
+		mockDeserializer.DeserializeAuditInfoReturns(nil, expectedErr)
 
 		deserializer.AddDeserializer(identity.Type(99), mockDeserializer)
 
 		typedID := createTypedIdentity(t, identity.Type(99), []byte("raw-identity"))
 		_, err := deserializer.GetEnrollmentID(context.Background(), typedID, []byte("audit-info"))
 
-		require.Error(t, err)
+		require.ErrorIs(t, err, identity.ErrUnresolvableIdentity)
+		require.ErrorIs(t, err, expectedErr)
 		assert.Contains(t, err.Error(), "failed to deserialize audit info")
 		assert.Equal(t, 1, mockDeserializer.DeserializeAuditInfoCallCount())
 	})

@@ -20,6 +20,11 @@ type (
 	Identity = driver.Identity
 )
 
+// ErrUnresolvableIdentity marks an identity this identity layer cannot decode —
+// an unknown identity type, a missing deserializer, undecodable audit info.
+// Errors carrying it keep the underlying cause in their chain.
+var ErrUnresolvableIdentity = errors.New("identity does not resolve")
+
 // TypedIdentity encodes an identity with a type.
 type TypedIdentity struct {
 	// Type encodes the type of the identity

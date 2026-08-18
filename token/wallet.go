@@ -162,6 +162,27 @@ func (wm *WalletManager) GetRevocationHandle(ctx context.Context, identity Ident
 	return wm.walletService.GetRevocationHandle(ctx, identity, auditInfo)
 }
 
+// GetEIDAndRH returns the enrollment ID and revocation handle bound to the
+// passed identity. When auditInfo is empty, the locally stored audit info of
+// the identity is used instead; when that is empty too, the identity carries
+// no audit info here and empty values are returned without an error. A
+// decoding failure carries identity.ErrUnresolvableIdentity, put there by the
+// identity layer; an audit-info storage failure does not.
+func (wm *WalletManager) GetEIDAndRH(ctx context.Context, identity Identity, auditInfo []byte) (string, string, error) {
+	if len(auditInfo) == 0 {
+		var err error
+		auditInfo, err = wm.walletService.GetAuditInfo(ctx, identity)
+		if err != nil {
+			return "", "", errors.WithMessagef(err, "failed to get audit info for identity %s", identity)
+		}
+		if len(auditInfo) == 0 {
+			return "", "", nil
+		}
+	}
+
+	return wm.walletService.GetEIDAndRH(ctx, identity, auditInfo)
+}
+
 // SpentIDs returns the spent keys corresponding to the passed token IDs
 func (wm *WalletManager) SpentIDs(ids []*token.ID) ([]string, error) {
 	return wm.walletService.SpendIDs(ids...)

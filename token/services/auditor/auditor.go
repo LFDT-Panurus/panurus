@@ -14,6 +14,7 @@ import (
 
 	"github.com/LFDT-Panurus/panurus/token"
 	"github.com/LFDT-Panurus/panurus/token/core/common/metrics"
+	"github.com/LFDT-Panurus/panurus/token/services/identity"
 	"github.com/LFDT-Panurus/panurus/token/services/logging"
 	"github.com/LFDT-Panurus/panurus/token/services/network"
 	"github.com/LFDT-Panurus/panurus/token/services/network/driver"
@@ -159,7 +160,13 @@ func (a *Service) Audit(ctx context.Context, tx Transaction) (*token.InputStream
 	start := time.Now()
 	logger.DebugfContext(ctx, "audit transaction [%s]....", tx.ID())
 	request := tx.Request()
-	record, err := request.AuditRecord(ctx)
+	tms, err := a.bindProviderTMS(request)
+	if err != nil {
+		return nil, nil, err
+	}
+	// the record is completed before the enrollment IDs are collected, so that
+	// the locks cover the enrollment ID every input is finally booked under
+	record, err := newRequestWrapper(request, tms).AuditRecord(ctx)
 	if err != nil {
 		return nil, nil, errors.WithMessagef(err, "failed getting transaction audit record")
 	}
@@ -217,7 +224,7 @@ func (a *Service) Append(ctx context.Context, tx Transaction) error {
 	defer func() { a.metrics.AppendDuration.Observe(time.Since(start).Seconds()) }()
 	defer a.Release(ctx, tx)
 
-	tms, err := a.tmsProvider.TokenManagementService(token.WithTMSID(a.tmsID))
+	tms, err := a.bindProviderTMS(tx.Request())
 	if err != nil {
 		return err
 	}
@@ -252,6 +259,22 @@ func (a *Service) Append(ctx context.Context, tx Transaction) error {
 	logger.DebugfContext(ctx, "append done for request [%s]", tx.ID())
 
 	return nil
+}
+
+// bindProviderTMS resolves the TMS for the service's TMS ID through the
+// provider and rebinds the request to it. The record computation runs through
+// request.TokenService, so this is what keeps the request from influencing
+// which TMS computes and attributes the record.
+func (a *Service) bindProviderTMS(request *token.Request) (dep.TokenManagementServiceWithExtensions, error) {
+	tms, err := a.tmsProvider.TokenManagementService(token.WithTMSID(a.tmsID))
+	if err != nil {
+		return nil, err
+	}
+	if err := tms.SetTokenManagementService(request); err != nil {
+		return nil, err
+	}
+
+	return tms, nil
 }
 
 // Release releases the lock acquired of the passed transaction and drops the
@@ -395,44 +418,93 @@ func (r *requestWrapper) PublicParamsHash() token.PPHash { return r.r.PublicPara
 
 // AuditRecord retrieves the audit record for the wrapped token request and completes any
 // inputs with missing enrollment IDs by querying the token vault.
-// The gap filling always runs, also on a cached record, because it depends on
-// the current vault state.
+// A record cached by Audit is returned as it stands: it was already attributed
+// there, and the locks were taken for the enrollment IDs it carries.
 func (r *requestWrapper) AuditRecord(ctx context.Context) (*token.AuditRecord, error) {
-	record := r.cached
-	if record == nil {
-		var err error
-		record, err = r.r.AuditRecord(ctx)
-		if err != nil {
-			return nil, err
-		}
+	// re-running the gap filling on a cached record could attribute an input
+	// Audit deliberately left empty, booking it under an enrollment ID that
+	// was never locked
+	if r.cached != nil {
+		return r.cached, nil
+	}
+
+	record, err := r.r.AuditRecord(ctx)
+	if err != nil {
+		return nil, err
 	}
 	if err := r.completeInputsWithEmptyEID(ctx, record); err != nil {
 		return nil, errors.WithMessagef(err, "failed filling gaps for request [%s]", r.r.Anchor)
+	}
+	if err := rejectMultiOwnerActions(record); err != nil {
+		return nil, err
 	}
 
 	return record, nil
 }
 
+// rejectMultiOwnerActions fails when one action spends tokens attributed to
+// more than one enrollment ID. A transaction record keeps a single sender per
+// action, so the store would reject such a record only at Append time, with
+// an error that does not name the cause. It mirrors the store's grouping:
+// unattributed inputs are skipped.
+func rejectMultiOwnerActions(record *token.AuditRecord) error {
+	firstEID := map[int]string{}
+	for _, in := range record.Inputs.Inputs() {
+		if in.EnrollmentID == "" {
+			continue
+		}
+		eID, ok := firstEID[in.ActionIndex]
+		if !ok {
+			firstEID[in.ActionIndex] = in.EnrollmentID
+
+			continue
+		}
+		if eID != in.EnrollmentID {
+			return errors.Errorf("action [%d] of request [%s] spends tokens of multiple enrollment IDs ([%s] and [%s]): a transaction record keeps a single sender per action", in.ActionIndex, record.Anchor, eID, in.EnrollmentID)
+		}
+	}
+
+	return nil
+}
+
 // completeInputsWithEmptyEID fills in missing enrollment ID information for inputs in the audit record
 // by querying the token vault. This is necessary when inputs don't have enrollment IDs explicitly set.
-// It uses the first output's enrollment ID as the target and retrieves token details from the vault.
+// Each input is attributed to the enrollment ID resolved from its own token
+// owner and the audit info the input carries — the locally stored audit info
+// of the owner where present, the one carried by the request otherwise (see
+// Request.AuditRecord). An owner the identity layer cannot decode counts as
+// resolving to nothing; any other resolution failure — a storage error, a
+// canceled context — fails the audit. An input the request describes no sender for is an
+// upgrade input, and falls back to the enrollment ID the request issues to;
+// an upgrade issued to a composite owner spanning enrollment IDs fails the
+// audit (see issuedToEIDAndRH). An owner that maps to no single enrollment ID
+// leaves its input unattributed rather than booked under a guessed enrollment
+// ID, so a record keeping such an input is not fully attributed on return.
 func (r *requestWrapper) completeInputsWithEmptyEID(ctx context.Context, record *token.AuditRecord) error {
 	filter := record.Inputs.ByEnrollmentID("")
 	if filter.Count() == 0 {
 		return nil
 	}
-	// TODO: extract from the audit tokens
-	targetEID := record.Outputs.EnrollmentIDs()[0]
 
 	// fetch all the tokens
 	tokens, err := r.tms.Vault().NewQueryEngine().ListAuditTokens(ctx, filter.IDs()...)
 	if err != nil {
 		return errors.WithMessagef(err, "failed listing tokens for [%s]", filter.IDs())
 	}
+	if filter.Count() != len(tokens) {
+		return errors.Errorf("expected %d audit tokens, got %d", filter.Count(), len(tokens))
+	}
 	precision := r.tms.PublicParametersManager().PublicParameters().Precision()
+	wm := r.tms.WalletManager()
 	for i := range filter.Count() {
 		item := filter.At(i)
-		item.EnrollmentID = targetEID
+		if tokens[i] == nil {
+			return errors.Errorf("failed to audit inputs: nil input at [%d]th input", i)
+		}
+		// an input the request describes no sender for: extractIssueInputs fills
+		// only the token id, so across the built-in drivers this is an upgrade
+		upgraded := len(item.Owner) == 0
+
 		item.Owner = tokens[i].Owner
 		item.Type = tokens[i].Type
 		q, err := token2.ToQuantity(tokens[i].Quantity, precision)
@@ -440,9 +512,101 @@ func (r *requestWrapper) completeInputsWithEmptyEID(ctx context.Context, record 
 			return errors.WithMessagef(err, "failed converting token quantity [%s]", tokens[i].Quantity)
 		}
 		item.Quantity = q
+
+		eID, rID, err := wm.GetEIDAndRH(ctx, item.Owner, item.OwnerAuditInfo)
+		if err != nil {
+			// only a decoding failure counts as "this owner does not resolve";
+			// anything else — a storage failure, a canceled context — fails the
+			// audit rather than silently leaving the input unattributed
+			if ctx.Err() != nil || !errors.Is(err, identity.ErrUnresolvableIdentity) {
+				return errors.WithMessagef(err, "failed resolving enrollment id for input [%v]", item.Id)
+			}
+			logger.DebugfContext(ctx, "owner of input [%v] does not resolve, treating it as unresolved: %v", item.Id, err)
+			eID, rID = "", ""
+		}
+		if eID == "" && upgraded {
+			// an upgrade re-issues the spent tokens to their owner under a fresh
+			// identity, so the outputs of the very same action carry the
+			// enrollment ID the input belongs to. The pre-upgrade identity
+			// itself often resolves to nothing here: it predates the current
+			// driver and the request metadata carries no audit info for it.
+			eID, rID, err = issuedToEIDAndRH(record.Outputs, item.ActionIndex)
+			if err != nil {
+				return err
+			}
+		}
+		if eID == "" {
+			// the owner maps to no single enrollment ID — a composite owner,
+			// or one whose audit info is unavailable. Leave the input
+			// unattributed: amount aggregations skip an empty enrollment ID,
+			// whereas a guessed one would be charged to the wrong party.
+			continue
+		}
+		item.EnrollmentID = eID
+		item.RevocationHandler = rID
 	}
 
 	return nil
+}
+
+// issuedToEIDAndRH returns the enrollment ID and revocation handle the given issue
+// action issues to, and empty values when it does not issue to exactly one party.
+// An issued output carries both an issuer and an owner; a redeem output carries an
+// issuer but no owner. Every issued output of the action must resolve to the same
+// enrollment ID. The handle is kept only while it stays paired with that ID.
+//
+// A composite owner issues one output row per member, all under one output index.
+// Members resolving to distinct enrollment IDs leave no single enrollment ID to
+// book the input under, and an unattributed input would credit the members
+// without debiting anyone: such an action fails the audit instead. Outputs that
+// only partly resolve fail the audit for the same reason; when none resolve,
+// nothing is credited and the input may stay unattributed.
+func issuedToEIDAndRH(outputs *token.OutputStream, actionIndex int) (string, string, error) {
+	issued := outputs.Filter(func(o *token.Output) bool {
+		return o.ActionIndex == actionIndex && len(o.Issuer) != 0 && len(o.Owner) != 0
+	}).Outputs()
+	if len(issued) == 0 {
+		return "", "", nil
+	}
+
+	unresolved := 0
+	eIDByIndex := map[uint64]string{}
+	for _, output := range issued {
+		if output.EnrollmentID == "" {
+			unresolved++
+
+			continue
+		}
+		if eID, ok := eIDByIndex[output.Index]; ok && eID != output.EnrollmentID {
+			return "", "", errors.Errorf(
+				"output [%d] of action [%d] is issued to a composite owner whose members span enrollment IDs ([%s] and [%s]): no single enrollment ID to attribute its input to",
+				output.Index, actionIndex, eID, output.EnrollmentID,
+			)
+		}
+		eIDByIndex[output.Index] = output.EnrollmentID
+	}
+	if unresolved == len(issued) {
+		// nothing is credited to anybody, so nothing needs debiting
+		return "", "", nil
+	}
+	if unresolved > 0 {
+		return "", "", errors.Errorf(
+			"action [%d] issues [%d] of [%d] outputs to owners resolving to no enrollment ID: crediting the resolved ones would leave the input undebited",
+			actionIndex, unresolved, len(issued),
+		)
+	}
+
+	eID, rH := issued[0].EnrollmentID, issued[0].RevocationHandler
+	for _, output := range issued[1:] {
+		if output.EnrollmentID != eID {
+			return "", "", nil
+		}
+		if output.RevocationHandler != rH {
+			rH = ""
+		}
+	}
+
+	return eID, rH, nil
 }
 
 // String returns a string representation of the wrapped token request.
