@@ -106,10 +106,31 @@ func (a *Service) GetTokenRequest(ctx context.Context, txID string) ([]byte, err
 	return a.ttxStoreService.GetTokenRequest(ctx, txID)
 }
 
+// AppendTransactionEndorseAck records the endorsement acknowledgement signature
+// produced by id over the transaction with the passed id.
+//
+// Verification: sigma is expected to have been verified against id before it
+// reaches this method — the only production writer,
+// CollectEndorsementsView.distributeTxToParty, verifies it against the exact
+// payload it sent to that party before returning it. This layer therefore
+// records the ack rather than re-establishing it, and the store refuses a
+// record no later check could act on (empty transaction id, endorser or
+// signature). See docs/security/store_integrity_verification.md.
 func (a *Service) AppendTransactionEndorseAck(ctx context.Context, txID string, id view.Identity, sigma []byte) error {
 	return a.ttxStoreService.AddTransactionEndorsementAck(ctx, txID, id, sigma)
 }
 
+// GetTransactionEndorsementAcks returns the endorsement acknowledgement
+// signatures recorded for the passed transaction id, keyed by the unique id of
+// the endorser.
+//
+// Verification: the signatures cannot be re-verified on read. The message each
+// ack was produced over is the per-party transaction payload, which is filtered
+// by the recipient's enrollment id and is not persisted, so the read side has
+// no message to verify against — only the fact that a verified ack was recorded
+// at dissemination time. Persisting a digest of the signed payload alongside
+// each ack would make read-side re-verification possible and is left to a
+// follow-up: it needs a schema change.
 func (a *Service) GetTransactionEndorsementAcks(ctx context.Context, id string) (map[string][]byte, error) {
 	return a.ttxStoreService.GetTransactionEndorsementAcks(ctx, id)
 }

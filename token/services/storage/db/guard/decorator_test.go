@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
+	tdriver "github.com/LFDT-Panurus/panurus/token/driver"
 	driver "github.com/LFDT-Panurus/panurus/token/services/storage/db/driver"
 	"github.com/LFDT-Panurus/panurus/token/services/storage/db/guard"
 	sqlcommon "github.com/LFDT-Panurus/panurus/token/services/storage/db/sql/common"
@@ -62,7 +63,7 @@ func TestGuardDisabledWritePassesThrough(t *testing.T) {
 	w, err := store.NewTransactionStoreTransaction()
 	require.NoError(t, err)
 
-	require.NoError(t, w.AddTokenRequest(t.Context(), "tx", make([]byte, 100), nil, nil, nil))
+	require.NoError(t, w.AddTokenRequest(t.Context(), "tx", make([]byte, 100), nil, nil, tdriver.PPHash("pp")))
 	require.NoError(t, mockDB.ExpectationsWereMet())
 }
 
