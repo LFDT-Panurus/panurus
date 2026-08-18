@@ -293,6 +293,38 @@ any other resource, give it a `Close()` method and it will be released automatic
 > **Note:** tests that exercise an anonymous owner wallet should `t.Cleanup(w.Close)`,
 > otherwise each test leaves a provisioning goroutine behind for the rest of the run.
 
+## Identity Registration Checks
+
+Every path that binds something to an identity — audit info, token metadata, signer info, a signer —
+first requires the identity to be **non-empty**, and refuses it outright otherwise. This is not
+input tidying. Identity rows and the provider's caches are keyed by `Identity.UniqueID()`, which maps
+the empty identity to the literal string `<empty>` rather than to a hash, so every empty identity
+would collapse onto one row and one cache entry: one caller's audit info would be readable by any
+other empty-identity lookup, and a signer registered for one would be handed back for another. The
+guard therefore also applies to ephemeral registrations, which write nothing to storage but populate
+the same caches.
+
+Two further checks apply where the information to make them exists:
+
+*   `wallet.Service.RegisterRecipientIdentity` matches the recipient identity against its audit info
+    (`Deserializer.MatchIdentity`) and requires that an **owner verifier can be derived from it**. An
+    identity no verifier can be built from is one whose tokens could never be spent, and both checks
+    route through the same typed-identity deserializer, so the second cannot reject an identity the
+    first accepts.
+*   `token.SignatureService.RegisterSigner` and `RegisterEphemeralSigner` require that a **verifier
+    is derivable** from the identity a signer is being bound to. The owner deserializer is the one
+    asked: every driver in the tree builds `common.NewDeserializer` from a single
+    `TypedVerifierDeserializerMultiplex`, so the owner, issuer and auditor deserializers are the same
+    object and route by identity type rather than by role. They deliberately do not compare a
+    supplied `Verifier` against the identity; `driver.Verifier` exposes only `Verify`, so there is no
+    canonical key to compare.
+
+On the read side, `GetAuditInfo`, `GetTokenInfo`, and (on the SQL backend) `GetSignerInfo` locate a
+row by identity hash and then compare the **stored** identity against the requested one before
+returning or caching anything, so a hash-addressed read cannot silently return another identity's
+data. For the full posture, including the KVS backend's inability to make the last comparison, see
+[**Store Integrity Verification**](../security/store_integrity_verification.md).
+
 ## Identity Types
 
 The Identity Service leverages a wrapper called **TypedIdentity** to support various identity schemes uniformly. 
