@@ -7,9 +7,6 @@ SPDX-License-Identifier: Apache-2.0
 package tcc_test
 
 import (
-	"encoding/base64"
-	"os"
-	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -25,10 +22,7 @@ import (
 // parameters, so that TokenChaincode.Params succeeds and initialization reaches the factory.
 func writePublicParamsFile(t *testing.T) {
 	t.Helper()
-
-	path := filepath.Join(t.TempDir(), "pp")
-	require.NoError(t, os.WriteFile(path, []byte(base64.StdEncoding.EncodeToString([]byte("public parameters"))), 0o600))
-	t.Setenv(tcc.PublicParamsPathVarEnv, path)
+	t.Setenv(tcc.PublicParamsPathVarEnv, publicParamsFile(t))
 }
 
 // TestGetValidatorRetriesAfterFailedInitialization checks that a failed initialization attempt is
