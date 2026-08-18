@@ -61,6 +61,9 @@ func main() {
 	limits, err := tcc.NewEnvResourceLimitsProvider().ResourceLimits()
 	assertNoError(err, "cannot resolve validation resource limits")
 
+	queryLimits, err := tcc.NewEnvQueryLimitsProvider().QueryLimits()
+	assertNoError(err, "cannot resolve query limits")
+
 	is := core.NewValidatorDriverService(
 		limits,
 		fabtoken.NewValidatorDriver(),
@@ -73,6 +76,7 @@ func main() {
 		}
 		err := shim.Start(
 			&tcc.TokenChaincode{
+				QueryLimits: queryLimits,
 				TokenServicesFactory: func(bytes []byte) (tcc.PublicParameters, tcc.Validator, error) {
 					ppm, err := is.PublicParametersFromBytes(bytes)
 					if err != nil {
@@ -118,6 +122,7 @@ func main() {
 			CCID:    config.CCID,
 			Address: config.CCaddress,
 			CC: &tcc.TokenChaincode{
+				QueryLimits: queryLimits,
 				TokenServicesFactory: func(bytes []byte) (tcc.PublicParameters, tcc.Validator, error) {
 					ppm, err := is.PublicParametersFromBytes(bytes)
 					if err != nil {

@@ -138,7 +138,10 @@ func (t *Translator) QueryTokens(ctx context.Context, ids []*token.ID) ([][]byte
 	var errs []error
 	for i, id := range ids {
 		if id == nil {
-			errs = append(errs, errors.Errorf("nil token id at position [%d]", i))
+			// The ids come from an untrusted caller (the chaincode decodes them straight from a
+			// JSON array, where a `null` element decodes to a nil pointer), so a nil entry is an
+			// invalid request, not a programming error to panic on.
+			errs = append(errs, errors.Errorf("nil token id at index [%d]", i))
 
 			continue
 		}

@@ -580,6 +580,25 @@ out as a coordinated configuration change before any peer relies on the new valu
 
 ---
 
+### Optional: token chaincode query limits (environment only)
+
+The read-only query functions of the token chaincode (`queryStates`, `queryTokens`,
+`areTokensSpent`) perform one ledger read per element of the caller-supplied array, so they are
+bounded independently of `token.validation.limits`. These limits live in the chaincode process, not
+in the FSC node's configuration file, and are read from the environment:
+
+| Environment variable | Default | Bounds |
+| --- | --- | --- |
+| `TOKEN_QUERY_MAX_REQUEST_BYTES` | 1048576 (1 MiB) | Raw size of the query argument, checked before it is decoded |
+| `TOKEN_QUERY_MAX_ITEMS` | 4096 | Number of elements, checked before the first ledger read |
+
+Both are optional; an unset variable resolves to its default, and an unparseable value is a startup
+error. Unlike `token.validation.limits` these values are **not** consensus-relevant — the query path
+performs no writes and is not an endorsement boundary — so they do not need to match across peers.
+See [Token Chaincode Query Limits](security/tcc_query_limits.md).
+
+---
+
 ### Optional: token.fabricx.lookup
 
 If not specified, the default configuration is:
