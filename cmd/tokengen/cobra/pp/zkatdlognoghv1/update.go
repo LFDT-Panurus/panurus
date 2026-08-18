@@ -99,7 +99,9 @@ func Update(args *UpdateArgs) error {
 	// Clear auditor and issuers if provided, and add them again.
 	// If not provided, do not change them.
 	if len(args.Auditors) > 0 {
-		pp.SetAuditors(nil)
+		if err := pp.SetAuditors(nil); err != nil {
+			return errors.Wrapf(err, "failed to clear auditors")
+		}
 	}
 	if len(args.Issuers) > 0 {
 		pp.SetIssuers(nil)

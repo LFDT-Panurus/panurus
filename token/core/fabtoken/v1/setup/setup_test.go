@@ -119,7 +119,13 @@ func TestPublicParams_Methods(t *testing.T) {
 
 		// Test SetAuditors
 		newAuditor := driver.Identity([]byte("auditor2"))
-		pp.SetAuditors([]driver.Identity{newAuditor})
+		require.NoError(t, pp.SetAuditors([]driver.Identity{newAuditor}))
+		assert.Equal(t, newAuditor, pp.AuditorIdentity())
+
+		// Test SetAuditors with an empty/nil slice returns an error and leaves
+		// the current auditor untouched (guards against the index-out-of-range panic).
+		require.Error(t, pp.SetAuditors(nil))
+		require.Error(t, pp.SetAuditors([]driver.Identity{}))
 		assert.Equal(t, newAuditor, pp.AuditorIdentity())
 	})
 
@@ -730,7 +736,7 @@ func TestPublicParams_SettersWithMultipleValues(t *testing.T) {
 		[]byte("auditor1"),
 		[]byte("auditor2"),
 	}
-	pp.SetAuditors(auditors)
+	require.NoError(t, pp.SetAuditors(auditors))
 	assert.Equal(t, driver.Identity([]byte("auditor1")), pp.AuditorIdentity())
 	assert.Equal(t, []driver.Identity{driver.Identity([]byte("auditor1"))}, pp.Auditors())
 }
