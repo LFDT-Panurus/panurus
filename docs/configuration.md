@@ -39,6 +39,24 @@ token:
     # fetcherCacheMaxQueries is the number of queries after which a soft refresh (non-blocking background update) is triggered.
     # This helps keep the cache fresh without blocking queries. If not specified or set to 0, defaults to 5 queries.
     fetcherCacheMaxQueries: 5
+    # Built-in per-wallet rate limiter for token selection (both drivers).
+    # It is disabled by default: without these keys, selection requests are not metered.
+    # One selection request (a Selector.Select call) costs one unit, no matter how many tokens it
+    # locks or how often it retries internally. Unlocking tokens is never throttled.
+    # A throttled request fails fast with an error wrapping token.SelectorRateLimited.
+    # See docs/security/selector_resource_limits.md.
+    # rateLimitEnabled turns the limiter on with the default rate and burst below.
+    rateLimitEnabled: true
+    # rateLimit is the maximum number of selection requests per second a single wallet may issue.
+    # A positive value implies rateLimitEnabled: true. If not specified or set to 0, defaults to 100.
+    rateLimit: 100
+    # rateLimitBurst is the maximum number of selection requests a single wallet may issue
+    # back-to-back. If not specified or set to 0, defaults to twice rateLimit.
+    rateLimitBurst: 200
+    # rateLimitMaxBuckets caps the number of per-wallet buckets kept in memory. When the cap is
+    # reached, idle buckets are pruned first and, if that is not enough, the least recently used
+    # ones are dropped. If not specified or set to 0, defaults to 4096.
+    rateLimitMaxBuckets: 4096
 
   # When we are interested in knowing when a transaction reaches finality, we subscribe to the Finality Listener Manager for the finality event of that transaction.
   # This configuration specifies the way the manager is instantiated (i.e., how it gets notified about the finality events, how often it checks).
@@ -471,6 +489,15 @@ Default values:
 - numRetries: 3
 - leaseExpiry: 3m
 - leaseCleanupTickPeriod: 90s
+- rateLimitEnabled: false (the built-in per-wallet selection rate limiter is opt-in)
+- rateLimit: 100 requests/s per wallet, when rate limiting is enabled
+- rateLimitBurst: 2 × rateLimit, so 200 requests, when rate limiting is enabled
+- rateLimitMaxBuckets: 4096
+
+Setting a positive `rateLimit` is enough to enable the limiter; `rateLimitEnabled: true` alone
+enables it with the defaults above. See
+[docs/security/selector_resource_limits.md](security/selector_resource_limits.md) for what is
+metered and how to plug in your own limiter instead.
 
 ---
 

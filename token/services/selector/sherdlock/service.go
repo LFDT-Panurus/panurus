@@ -13,6 +13,7 @@ import (
 	"github.com/LFDT-Panurus/panurus/token"
 	"github.com/LFDT-Panurus/panurus/token/core/common/metrics"
 	"github.com/LFDT-Panurus/panurus/token/services/selector/config"
+	"github.com/LFDT-Panurus/panurus/token/services/selector/ratelimit"
 	"github.com/LFDT-Panurus/panurus/token/services/storage/tokenlockdb"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	lazy2 "github.com/hyperledger-labs/fabric-smart-client/platform/common/utils/lazy"
@@ -24,15 +25,21 @@ type SelectorService struct {
 	managers         []*Manager
 }
 
+// NewService returns a SelectorService for the sherdlock driver.
+//
+// By default, selection is not rate limited. Passing ratelimit options, or enabling the
+// token.selector.rateLimit* configuration keys, meters every selection request per wallet.
 func NewService(
 	fetcherProvider FetcherProvider,
 	tokenLockStoreServiceManager tokenlockdb.StoreServiceManager,
 	c ConfigProvider,
 	metricsProvider metrics.Provider,
+	opts ...ratelimit.Option,
 ) *SelectorService {
 	cfg, err := config.New(c)
 	if err != nil {
 		logger.Errorf("error getting selector config, using defaults. %s", err.Error())
+		cfg = &config.Config{}
 	}
 
 	svc := &SelectorService{}
@@ -44,7 +51,11 @@ func NewService(
 		leaseExpiry:                  cfg.GetLeaseExpiry(),
 		leaseCleanupTickPeriod:       cfg.GetLeaseCleanupTickPeriod(),
 		metrics:                      NewMetrics(metricsProvider),
+		limiter:                      ratelimit.CompileOptions(opts...).Limiter(cfg),
 		onCreate:                     svc.trackManager,
+	}
+	if loader.limiter != nil {
+		logger.Infof("per-wallet token selection rate limiting is enabled")
 	}
 	svc.managerLazyCache = lazy2.NewProviderWithKeyMapper(key, loader.load)
 
@@ -60,6 +71,13 @@ func (s *SelectorService) SelectorManager(tms *token.ManagementService) (token.S
 }
 
 // Shutdown stops all background goroutines for every manager created by this service.
+//
+// It deliberately leaves the rate limiter alone. Shutdown also runs on routine public-parameter
+// reloads (see token.ManagementServiceProvider.Update), after which the service keeps serving
+// managers: resetting the wallet allowances there would let a throttled client wash out its debt
+// by triggering a reload, and a limiter supplied through ratelimit.WithLimiter belongs to the
+// caller in the first place. The built-in limiter runs no goroutines and prunes its own buckets,
+// so there is nothing to leak.
 func (s *SelectorService) Shutdown() {
 	s.mu.Lock()
 	managers := s.managers
@@ -94,7 +112,10 @@ type loader struct {
 	leaseExpiry                  time.Duration
 	leaseCleanupTickPeriod       time.Duration
 	metrics                      *Metrics
-	onCreate                     func(*Manager)
+	// limiter meters selection requests per wallet. It is nil when rate limiting is
+	// disabled, which is the default, and is shared by every manager the loader builds.
+	limiter  ratelimit.Limiter
+	onCreate func(*Manager)
 }
 
 func (s *loader) load(tms *token.ManagementService) (token.SelectorManager, error) {
@@ -129,7 +150,8 @@ func (s *loader) loadTMS(tms TMS) (token.SelectorManager, error) {
 		s.onCreate(mgr)
 	}
 
-	return mgr, nil
+	// Decorate returns mgr unchanged when no limiter is configured.
+	return ratelimit.Decorate(mgr, s.limiter, tms.ID().String()), nil
 }
 
 func key(tms *token.ManagementService) string {
