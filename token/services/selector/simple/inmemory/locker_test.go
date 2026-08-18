@@ -37,6 +37,27 @@ func TestLockEntry(t *testing.T) {
 	assert.Equal(t, "b", m[id2])
 }
 
+// TestNewLockerClampsNonPositiveTimeout verifies that NewLocker substitutes
+// defaultSleepTimeout for a non-positive timeout. The scan goroutine drives
+// time.NewTicker, which panics on a <= 0 interval; clamping in NewLocker keeps
+// that panic (which would crash the whole process from the goroutine) from
+// being reachable, while a positive timeout is passed through unchanged.
+func TestNewLockerClampsNonPositiveTimeout(t *testing.T) {
+	mock := newMockTXStatusProvider()
+
+	for _, timeout := range []time.Duration{0, -time.Second} {
+		d := NewLocker(mock, timeout, time.Minute).(*locker)
+		t.Cleanup(func() { _ = d.Stop() })
+		assert.Equal(t, defaultSleepTimeout, d.sleepTimeout,
+			"non-positive timeout %s should clamp to defaultSleepTimeout", timeout)
+	}
+
+	// A positive timeout must be preserved as-is.
+	d := NewLocker(mock, 42*time.Second, time.Minute).(*locker)
+	t.Cleanup(func() { _ = d.Stop() })
+	assert.Equal(t, 42*time.Second, d.sleepTimeout)
+}
+
 // mockTXStatusProvider is a thread-safe mock that allows tests to control
 // the status returned for each txID and to inject hooks.
 type mockTXStatusProvider struct {

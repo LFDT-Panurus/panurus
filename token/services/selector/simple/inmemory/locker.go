@@ -34,6 +34,10 @@ const (
 	// stopTimeout is the maximum time to wait for the scan goroutine to stop during shutdown.
 	// This prevents indefinite blocking if the goroutine fails to exit cleanly.
 	stopTimeout = 10 * time.Second
+	// defaultSleepTimeout is the fallback scan interval used when NewLocker is
+	// given a non-positive timeout, which would otherwise make the scan loop's
+	// timer fire immediately and spin without pause. It mirrors the production default.
+	defaultSleepTimeout = 2 * time.Second
 )
 
 var ErrTimeout = errors.New("timeout occurred")
@@ -81,6 +85,10 @@ type locker struct {
 
 func NewLocker(ttxdb TXStatusProvider, timeout time.Duration, validTxEvictionTimeout time.Duration) simple.Locker {
 	ctx, cancel := context.WithCancel(context.Background())
+
+	if timeout <= 0 {
+		timeout = defaultSleepTimeout
+	}
 
 	r := &locker{
 		ttxdb:                  ttxdb,
@@ -381,6 +389,16 @@ func (d *locker) lockedCount() int {
 
 func (d *locker) scan(ctx context.Context) {
 	defer close(d.scanDone)
+
+	// A single one-shot timer, re-armed after each scan, so every scan is
+	// followed by a full d.sleepTimeout pause regardless of how long the scan
+	// itself took. A time.Ticker fires on a fixed grid and would drop that pause
+	// once a scan exceeds the interval (leaving a stale tick already waiting);
+	// time.After would allocate a fresh timer on every pass. On Go 1.23+ Reset
+	// needs no channel-drain dance. NewTimer, unlike NewTicker, does not panic on
+	// a non-positive interval, but NewLocker still clamps it to avoid a spin.
+	timer := time.NewTimer(d.sleepTimeout)
+	defer timer.Stop()
 	for {
 		// Check for shutdown before starting a new scan cycle.
 		select {
@@ -461,8 +479,11 @@ func (d *locker) scan(ctx context.Context) {
 
 		for {
 			logger.DebugfContext(ctx, "token collector: sleep for some time...")
+			// Re-arm for a full interval measured from now, i.e. from the end of
+			// the scan just completed.
+			timer.Reset(d.sleepTimeout)
 			select {
-			case <-time.After(d.sleepTimeout):
+			case <-timer.C:
 			case <-ctx.Done():
 				logger.Debugf("token collector: stopping during sleep")
 
