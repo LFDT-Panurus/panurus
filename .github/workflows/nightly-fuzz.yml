@@ -111,6 +111,12 @@ jobs:
           - name: storage-sql-table-names
             pkg: ./token/services/storage/db/sql/common
             func: FuzzGetTableNamesNoPanic
+          - name: tokens-typed-token-unmarshal
+            pkg: ./token/services/tokens
+            func: FuzzUnmarshalTypedTokenNoPanic
+          - name: tokens-typed-metadata-unmarshal
+            pkg: ./token/services/tokens
+            func: FuzzUnmarshalTypedMetadataNoPanic
           - name: driver-identity-configuration-unique-id
             pkg: ./token/driver
             func: FuzzIdentityConfigurationUniqueIDInjective

@@ -30,9 +30,12 @@ func (i TypedToken) Bytes() ([]byte, error) {
 // UnmarshalTypedToken deserializes an ASN.1 encoded byte slice into a TypedToken structure.
 func UnmarshalTypedToken(token driver.Token) (*TypedToken, error) {
 	si := &TypedToken{}
-	_, err := asn1.Unmarshal(token, si)
+	rest, err := asn1.Unmarshal(token, si)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to unmarshal to TypedToken")
+	}
+	if len(rest) != 0 {
+		return nil, errors.Errorf("trailing bytes after TypedToken")
 	}
 
 	return si, nil
@@ -64,9 +67,12 @@ func (i TypedMetadata) Bytes() ([]byte, error) {
 // UnmarshalTypedMetadata deserializes an ASN.1 encoded byte slice into a TypedMetadata structure.
 func UnmarshalTypedMetadata(metadata driver.Metadata) (*TypedMetadata, error) {
 	si := &TypedMetadata{}
-	_, err := asn1.Unmarshal(metadata, si)
+	rest, err := asn1.Unmarshal(metadata, si)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to unmarshal to TypedMetadata")
+	}
+	if len(rest) != 0 {
+		return nil, errors.Errorf("trailing bytes after TypedMetadata")
 	}
 
 	return si, nil
