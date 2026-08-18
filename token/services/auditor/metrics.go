@@ -16,8 +16,11 @@ type Metrics struct {
 	// invocation (lock acquisition included), in seconds.
 	AuditDuration metrics.Histogram
 
-	// AuditLockConflicts counts calls to Audit() that failed because
-	// AcquireLocks returned an error (e.g. contention or timeout).
+	// AuditLockConflicts counts calls to Audit() that failed because another
+	// anchor held one of the enrollment IDs, i.e. those whose error carries
+	// ErrLockContention. Failures with no second holder involved — a cancelled
+	// caller, a database outage — are not conflicts and are deliberately not
+	// counted here, so that alerting on this metric measures contention only.
 	AuditLockConflicts metrics.Counter
 
 	// AppendDuration is a histogram of the total wall-clock time for each

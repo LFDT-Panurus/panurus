@@ -21,6 +21,7 @@ import (
 	q "github.com/LFDT-Panurus/panurus/token/services/storage/db/sql/query"
 	qcommon "github.com/LFDT-Panurus/panurus/token/services/storage/db/sql/query/common"
 	"github.com/LFDT-Panurus/panurus/token/services/storage/db/sql/query/cond"
+	"github.com/LFDT-Panurus/panurus/token/services/utils"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 )
 
@@ -109,49 +110,148 @@ func (p *Locker) createSchema() error {
 // Implementation: the IDs are deduplicated and sorted (dedup.AndSort) for the
 // same deadlock-free ordering the in-memory locker relies on. It then retries
 // tryAcquireAll — a single atomic upsert that succeeds only if it can claim
-// every ID — sleeping AcquireBackoff between attempts and giving up with a
-// contention error once AcquireDeadline passes (or ctx is cancelled). On
-// success it records the held IDs under anchor and starts a background
-// heartbeat that renews the leases before they expire, so a long-running audit
-// keeps its locks while a crashed replica's leases expire and become claimable
-// by others. Any partial state is released on the give-up/cancel paths.
+// every ID — until AcquireDeadline passes (or ctx is cancelled), backing off
+// between attempts with exponential growth and jitter. On success it records the
+// held IDs under anchor and starts a background heartbeat that renews the leases
+// before they expire, so a long-running audit keeps its locks while a crashed
+// replica's leases expire and become claimable by others. Any partial state is
+// released on the give-up/cancel paths, except over an anchor that already holds
+// a live session, whose leases are left alone.
+//
+// A failure caused by another holder joins ErrLockContention, and additionally
+// ErrLockAcquireTimeout once the waiting budget is spent, which tells callers
+// this locker already waited and the attempt should not simply be repeated (see
+// auditor.Service.acquireLocksWithRetry). AcquireDeadline is that budget.
+//
+// An empty eIDs set is a successful acquisition of nothing: there is no lease to
+// take, so no session is opened and AssertLocksHeld has nothing to verify.
+//
+// Re-acquiring under a live anchor may keep or shrink its set, never grow it: see
+// the Locker contract for why widening is refused with ErrLockSetWidened, and
+// releaseDropped for what shrinking has to clean up.
 func (p *Locker) AcquireLocks(ctx context.Context, anchor string, eIDs ...string) error {
 	deduped := dedup.AndSort(eIDs)
 	if len(deduped) == 0 {
 		return nil
 	}
 
-	deadline := time.Now().Add(p.cfg.AcquireDeadline)
-	for {
-		ok, err := p.tryAcquireAll(ctx, anchor, deduped)
+	held := p.sessionEIDs(anchor)
+	if added := dedup.Added(deduped, held); len(held) > 0 && len(added) > 0 {
+		return errors.Wrapf(errs.ErrLockSetWidened,
+			"anchor [%s] holds %v and cannot also take %v", anchor, held, added)
+	}
+
+	// The deadline is enforced through a derived context so it also bounds the
+	// backoff sleeps and the queries themselves, not just the attempt loop.
+	acquireCtx, cancelAcquire := context.WithTimeout(ctx, p.cfg.AcquireDeadline)
+	defer cancelAcquire()
+
+	// contended records whether any attempt actually lost a race for one of the
+	// IDs. The outcome is classified from this rather than from which context
+	// expired first: acquireCtx carries AcquireDeadline, a minute by default, so a
+	// request-scoped caller context is nearly always the shorter of the two.
+	// Keying off the caller's context meant that in production this backend
+	// reported genuine contention as a bare context error — no sentinel at all —
+	// while the in-memory locker reported it as contention, which is exactly the
+	// kind of divergence the Locker contract exists to prevent.
+	contended := false
+	err := p.acquireRunner().RunWithErrorsContext(acquireCtx, func() (bool, error) {
+		ok, err := p.tryAcquireAll(acquireCtx, anchor, deduped)
 		if err != nil {
+			return true, err
+		}
+		if !ok {
+			contended = true
+		}
+
+		return ok, nil
+	})
+	if err == nil {
+		// The upsert refreshed the leases named in this call, but a narrowing
+		// re-acquisition also has to give up the ones it dropped.
+		if err := p.releaseDropped(ctx, anchor, dedup.Dropped(held, deduped)); err != nil {
 			return err
 		}
-		if ok {
-			hbCtx, cancel := context.WithCancel(context.Background())
-			p.mu.Lock()
-			if prev, exists := p.sessions[anchor]; exists {
-				prev.cancel()
-			}
-			p.sessions[anchor] = &lockSession{eIDs: deduped, cancel: cancel}
-			p.mu.Unlock()
-			go p.heartbeatLoop(hbCtx, anchor, len(deduped))
+		p.startSession(anchor, deduped)
 
-			return nil
-		}
-		if time.Now().After(deadline) {
-			_ = p.releaseAnchor(ctx, anchor)
-
-			return errors.Join(errs.ErrLockAcquireTimeout, errs.ErrLockContention)
-		}
-		select {
-		case <-ctx.Done():
-			_ = p.releaseAnchor(ctx, anchor)
-
-			return ctx.Err()
-		case <-time.After(p.cfg.AcquireBackoff):
-		}
+		return nil
 	}
+
+	// A failed acquisition must leave a session the anchor already had intact.
+	// tryAcquireAll rolls back unless it claims every ID, so a failure normally
+	// leaves no rows behind at all and this cleanup only matters for a commit that
+	// was applied but reported as failed. Running it over a live session would
+	// delete that session's lease rows while its heartbeat kept going: the next
+	// renewal would match nothing, report the leases lost and exit, and the
+	// caller's next legitimate Append would fail its pre-write assertion even
+	// though no lock had been stolen.
+	if !p.hasSession(anchor) {
+		_ = p.releaseAnchor(ctx, anchor)
+	}
+
+	// Whether the waiting budget is spent. acquireCtx reaching its deadline means
+	// either AcquireDeadline elapsed or the caller's own deadline did, and in both
+	// cases an identical retry adds delay rather than a fresh chance. A loop ended
+	// by a database error leaves it un-expired, and an explicitly cancelled caller
+	// is a cancellation rather than a timeout — matching how the in-memory locker
+	// classifies the same two situations.
+	deadlineElapsed := errors.Is(acquireCtx.Err(), context.DeadlineExceeded)
+
+	switch {
+	case contended && deadlineElapsed:
+		// err is joined in rather than discarded: when the loop was ended by a query
+		// the deadline killed, it is the only record of what the database was doing.
+		return errors.Wrapf(
+			errors.Join(errs.ErrLockContention, errs.ErrLockAcquireTimeout, err),
+			"gave up acquiring eid leases for anchor [%s] after %v", anchor, p.cfg.AcquireDeadline)
+	case contended:
+		// The contention was real, but what ended the loop was a database failure or
+		// a cancelled caller, not the waiting budget. Reporting ErrLockAcquireTimeout
+		// here would tell the caller the budget was spent and stop it retrying a
+		// transient failure that a later attempt could get past.
+		return errors.Wrapf(errors.Join(errs.ErrLockContention, err),
+			"failed to acquire contended eid leases for anchor [%s]", anchor)
+	case ctx.Err() != nil:
+		return ctx.Err()
+	default:
+		return err
+	}
+}
+
+// acquireRunner builds the backoff policy for the acquisition loop: exponential
+// growth from AcquireBackoff, capped at AcquireMaxBackoff, with jitter.
+//
+// A fixed poll interval is the wrong shape here on two counts. It costs one
+// round trip per interval for the whole deadline — at the defaults, hundreds per
+// acquisition — and, being identical on every replica, it keeps contenders
+// phase-locked so they retry in lockstep and collide again. Jittered exponential
+// backoff spreads them out and cuts the round trips to a few dozen. The attempt
+// count is unbounded because the derived context, not a counter, is what ends
+// the loop.
+func (p *Locker) acquireRunner() utils.RetryRunner {
+	return utils.NewRetryRunnerWithJitter(
+		logger,
+		utils.Infinitely,
+		p.cfg.AcquireBackoff,
+		p.cfg.AcquireMaxBackoff,
+		acquireBackoffMultiplier,
+		acquireJitterFactor,
+	)
+}
+
+// startSession records the leases held under anchor and starts the heartbeat that
+// keeps them alive. Any session previously tracked for the anchor is cancelled
+// first so its heartbeat cannot outlive it.
+func (p *Locker) startSession(anchor string, eIDs []string) {
+	hbCtx, cancel := context.WithCancel(context.Background())
+	p.mu.Lock()
+	if prev, exists := p.sessions[anchor]; exists {
+		prev.cancel()
+	}
+	p.sessions[anchor] = &lockSession{eIDs: eIDs, cancel: cancel}
+	p.mu.Unlock()
+
+	go p.heartbeatLoop(hbCtx, anchor, len(eIDs))
 }
 
 // tryAcquireAll attempts to claim all eIDs in a single transaction. It runs the
@@ -253,21 +353,108 @@ func (p *Locker) ReleaseLocks(ctx context.Context, anchor string) {
 // owner so a replica only ever removes leases it still holds (never one that
 // expired and was since claimed by another replica), which makes it safe to
 // call even on the timeout/cancel paths of AcquireLocks.
+//
+// The delete runs on a context detached from the caller's but bounded by
+// releaseTimeout. Detaching matters because the common case is a deferred release
+// on a context that is already done, and a skipped delete leaves the enrollment
+// IDs locked against every replica until their TTL expires. The bound matters
+// just as much: a context that can neither be cancelled nor time out lets
+// database/sql block indefinitely waiting for a free pooled connection or a
+// conflicting row lock, which would leave AcquireLocks hanging past the very
+// deadline it promises to honour, and would leak the goroutine on shutdown.
 func (p *Locker) releaseAnchor(ctx context.Context, anchor string) error {
+	releaseCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), releaseTimeout)
+	defer cancel()
+
 	query, args := q.DeleteFrom(p.table).
 		Where(cond.And(cond.Eq("anchor", anchor), cond.Eq("owner", p.cfg.Owner))).
 		Format(p.ci)
-	_, err := p.db.ExecContext(ctx, query, args...)
+	_, err := p.db.ExecContext(releaseCtx, query, args...)
 
 	return errors.Wrap(err, "release eid leases")
+}
+
+// releaseDropped deletes this replica's lease rows for the enrollment IDs an
+// anchor no longer needs, so that a narrowing re-acquisition gives up the leases
+// it dropped instead of leaving them behind.
+//
+// Leaving them behind was not merely a leak. renewLeases and AssertLocksHeld both
+// count this replica's un-expired rows for the anchor and require exactly as many
+// as the session recorded, so every extra row made both fail: the heartbeat
+// reported the leases lost on its first tick and exited, StoreService.Append
+// rejected the next legitimate write with "locks lost before write", and once the
+// TTL passed the abandoned leases expired and became claimable by another replica
+// while this one still believed it held them. The in-memory backend released them,
+// so this was a divergence between two deployments of the same code as well.
+//
+// A failed delete leaves the previous session untouched and reports the error.
+// That state is consistent: the rows in the table are exactly the ones the old
+// session recorded (a narrowing set is a subset, and the upsert only refreshed
+// their expiry), so its heartbeat and assertions keep matching. Releasing the
+// anchor here instead would delete the live session's rows and break precisely
+// what the failure path below is careful to preserve.
+func (p *Locker) releaseDropped(ctx context.Context, anchor string, eIDs []string) error {
+	if len(eIDs) == 0 {
+		return nil
+	}
+
+	releaseCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), releaseTimeout)
+	defer cancel()
+
+	query, args := q.DeleteFrom(p.table).
+		Where(cond.And(
+			cond.Eq("anchor", anchor),
+			cond.Eq("owner", p.cfg.Owner),
+			cond.In[string]("eid", eIDs...),
+		)).
+		Format(p.ci)
+	if _, err := p.db.ExecContext(releaseCtx, query, args...); err != nil {
+		return errors.Wrapf(err, "failed to release eid leases dropped from anchor [%s]", anchor)
+	}
+
+	return nil
+}
+
+// sessionEIDs returns the enrollment IDs recorded for anchor, or nil when no live
+// session is tracked for it.
+func (p *Locker) sessionEIDs(anchor string) []string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if s, ok := p.sessions[anchor]; ok {
+		return s.eIDs
+	}
+
+	return nil
+}
+
+// hasSession reports whether a live lock session is tracked for anchor, i.e.
+// whether an earlier AcquireLocks succeeded for it and has not been released.
+func (p *Locker) hasSession(anchor string) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	_, ok := p.sessions[anchor]
+
+	return ok
 }
 
 // AssertLocksHeld verifies this replica still holds every lease it acquired for
 // anchor. It compares the number of IDs recorded locally at acquisition time
 // against the count of matching, non-expired, owner-scoped rows in the table.
-// A mismatch (or no local record) means a lease expired and may have been
-// taken over by another replica, so it returns ErrLockNotHeld. Callers use this
-// after long-running work to confirm their locks were not silently lost.
+// A mismatch means a lease expired and may have been taken over by another
+// replica, so it returns ErrLockNotHeld. Callers use this after long-running
+// work to confirm their locks were not silently lost.
+//
+// An anchor with no recorded session holds no leases, so there is nothing that
+// could have been lost and the assertion succeeds. Reporting ErrLockNotHeld
+// instead conflated "lost the locks I took" with "never took any", which failed
+// two legitimate flows under this backend while both succeeded under the
+// in-memory locker: a request whose inputs and outputs yield no enrollment IDs
+// at all, and an auditor that validates and appends without calling Audit (so
+// never acquires locks) — see the dvp and nft auditor views.
+//
+// A session that failed renewal is not affected: heartbeatLoop leaves the
+// session in place when it gives up, so its recorded IDs are still counted here
+// and the mismatch is still reported.
 func (p *Locker) AssertLocksHeld(ctx context.Context, anchor string) error {
 	p.mu.Lock()
 	s, ok := p.sessions[anchor]
@@ -277,8 +464,8 @@ func (p *Locker) AssertLocksHeld(ctx context.Context, anchor string) error {
 	}
 	p.mu.Unlock()
 
-	if !ok || expected == 0 {
-		return errs.ErrLockNotHeld
+	if expected == 0 {
+		return nil
 	}
 
 	var held int

@@ -9,6 +9,7 @@ package locker
 import (
 	"time"
 
+	"github.com/LFDT-Panurus/panurus/token/services/storage/auditdb/locker/memory"
 	lockerpostgres "github.com/LFDT-Panurus/panurus/token/services/storage/auditdb/locker/postgres"
 )
 
@@ -24,6 +25,7 @@ const (
 // It is read from the TMS configuration under the key "auditor.locker".
 type Config struct {
 	Backend  Backend               `yaml:"backend"`
+	Memory   memory.Config         `yaml:"memory"`
 	Postgres lockerpostgres.Config `yaml:"postgres"`
 }
 
@@ -32,6 +34,9 @@ type Config struct {
 func DefaultConfig() Config {
 	return Config{
 		Backend: BackendMemory,
+		Memory: memory.Config{
+			AcquireDeadline: memory.DefaultAcquireDeadline,
+		},
 		Postgres: lockerpostgres.Config{
 			TTL:             30 * time.Second,
 			AcquireBackoff:  100 * time.Millisecond,

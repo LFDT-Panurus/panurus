@@ -178,7 +178,13 @@ func (a *Service) Audit(ctx context.Context, tx Transaction) (*token.InputStream
 	// Acquire locks with retry and exponential backoff to prevent livelock
 	logger.DebugfContext(ctx, "audit transaction [%s], acquire locks with retry", tx.ID())
 	if err := a.acquireLocksWithRetry(ctx, string(request.Anchor), eids); err != nil {
-		a.metrics.AuditLockConflicts.Add(1)
+		// Only a genuine conflict counts towards the conflict metric. Counting every
+		// failure meant a graceful-shutdown cancellation or a database outage — neither
+		// of which involves a second holder — inflated the one signal operators are
+		// told to alert on for contention.
+		if errors.Is(err, auditdb.ErrLockContention) {
+			a.metrics.AuditLockConflicts.Add(1)
+		}
 
 		return nil, nil, err
 	}
@@ -193,6 +199,13 @@ func (a *Service) Audit(ctx context.Context, tx Transaction) (*token.InputStream
 // acquireLocksWithRetry attempts to acquire locks with exponential backoff and randomized jitter
 // to prevent livelock conditions when multiple auditors compete for the same enrollment IDs.
 // This implements the mitigation strategy for deadlock/livelock prevention.
+//
+// The locker owns the waiting policy and bounds it itself, so this loop must not
+// re-run an attempt that already spent that budget: an error carrying
+// ErrLockAcquireTimeout is final here. Retrying it anyway multiplied the locker's
+// deadline by MaxRetries — worst case, ten minutes of blocking for a single audit
+// against the Postgres backend, on top of the round trips each of those attempts
+// spent polling. Context errors are final for the same reason: the caller is gone.
 func (a *Service) acquireLocksWithRetry(ctx context.Context, anchor string, eids []string) error {
 	// Create a retry runner with jitter support
 	retryRunner := utils.NewRetryRunnerWithJitter(
@@ -204,16 +217,45 @@ func (a *Service) acquireLocksWithRetry(ctx context.Context, anchor string, eids
 		a.lockConfig.JitterFactor,
 	)
 
-	// Use the retry runner to acquire locks
-	err := retryRunner.RunWithContext(ctx, func() error {
-		return a.auditDB.AcquireLocks(ctx, anchor, eids...)
-	})
+	// Use the retry runner to acquire locks, stopping early on errors that another
+	// attempt cannot improve on.
+	err := retryRunner.RunWithErrorsContext(ctx, func() (bool, error) {
+		err := a.auditDB.AcquireLocks(ctx, anchor, eids...)
+		if err == nil {
+			return true, nil
+		}
 
+		return !isRetriableLockError(ctx, err), err
+	})
 	if err != nil {
 		return errors.WithMessagef(err, "failed to acquire locks for anchor [%s]", anchor)
 	}
 
 	return nil
+}
+
+// isRetriableLockError reports whether re-running AcquireLocks stands a chance of
+// a different outcome. Most failures do — a contended lock may be free by now, a
+// database blip may have passed — but three do not: ErrLockAcquireTimeout means
+// the locker already spent its whole waiting budget, so an identical attempt would
+// just spend it again; ErrLockSetWidened is a caller error that every attempt will
+// reproduce; and a caller whose own context is done is no longer waiting for an
+// answer.
+//
+// Whether the caller is gone is read from ctx, not from the error. The lockers
+// bound their own waiting, and a budget of their own that elapses with nothing
+// contending surfaces as a bare context.DeadlineExceeded — indistinguishable, by
+// the error alone, from the caller's deadline elapsing. Classifying it from the
+// error stopped the auditor after a single attempt at exactly the transient
+// database failures this retry exists to survive, while ctx was still perfectly
+// live.
+func isRetriableLockError(ctx context.Context, err error) bool {
+	if ctx.Err() != nil {
+		return false
+	}
+
+	return !errors.Is(err, auditdb.ErrLockAcquireTimeout) &&
+		!errors.Is(err, auditdb.ErrLockSetWidened)
 }
 
 // Append adds the passed transaction to the auditor database, reusing the

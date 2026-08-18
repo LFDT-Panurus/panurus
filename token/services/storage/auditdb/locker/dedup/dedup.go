@@ -26,3 +26,54 @@ func AndSort(source []string) []string {
 
 	return slice
 }
+
+// Added returns the members of want that do not already appear in held, keeping
+// want's order.
+//
+// Lockers use it to reconcile a re-acquisition against the set an anchor already
+// holds. A non-empty result over a non-empty held set is a widening: the caller
+// is asking to wait for new IDs while keeping the ones it holds, which is the
+// hold-and-wait the sorted ordering above cannot protect against, because the
+// held IDs were ordered against an earlier call's set rather than this one's.
+func Added(want, held []string) []string {
+	set := setOf(held)
+	added := make([]string, 0, len(want))
+	for _, id := range want {
+		if _, ok := set[id]; !ok {
+			added = append(added, id)
+		}
+	}
+
+	return added
+}
+
+// Dropped returns the members of held that no longer appear in want, keeping
+// held's order.
+//
+// These are the locks a narrowing re-acquisition must give up. Left in place they
+// are unreachable, since the caller's only handle on them was the record the
+// re-acquisition replaced.
+func Dropped(held, want []string) []string {
+	if len(held) == 0 {
+		return nil
+	}
+	set := setOf(want)
+	dropped := make([]string, 0, len(held))
+	for _, id := range held {
+		if _, ok := set[id]; !ok {
+			dropped = append(dropped, id)
+		}
+	}
+
+	return dropped
+}
+
+// setOf returns ids as a set for membership tests.
+func setOf(ids []string) map[string]struct{} {
+	set := make(map[string]struct{}, len(ids))
+	for _, id := range ids {
+		set[id] = struct{}{}
+	}
+
+	return set
+}
