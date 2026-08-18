@@ -29,6 +29,7 @@ var (
 	ErrLockAcquireTimeout  = locker.ErrLockAcquireTimeout
 	ErrLockLost            = locker.ErrLockLost
 	ErrLockNotHeld         = locker.ErrLockNotHeld
+	ErrLockSetWidened      = locker.ErrLockSetWidened
 	ErrLockerOwnerRequired = locker.ErrLockerOwnerRequired
 )
 

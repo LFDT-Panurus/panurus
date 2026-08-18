@@ -14,6 +14,8 @@ import (
 	"time"
 
 	"github.com/LFDT-Panurus/panurus/token"
+	commondrivermock "github.com/LFDT-Panurus/panurus/token/core/common/driver/mock"
+	"github.com/LFDT-Panurus/panurus/token/core/common/metrics"
 	drivermock "github.com/LFDT-Panurus/panurus/token/driver/mock"
 	tokenmock "github.com/LFDT-Panurus/panurus/token/mock"
 	"github.com/LFDT-Panurus/panurus/token/services/auditor"
@@ -1000,26 +1002,7 @@ func newMockAuditLocker(acquireFunc func(ctx context.Context, anchor string, eID
 func newTestServiceWithMockLocker(t *testing.T, mockLocker *mockAuditLocker) *auditor.Service {
 	t.Helper()
 
-	// Create a real store service with our mock locker
-	fakeStore := newFakeStore()
-	storeService, err := auditdb.NewStoreService(fakeStore, auditdb.WithLocker(mockLocker))
-	require.NoError(t, err)
-
-	tmsProv := &depmock.TokenManagementServiceProvider{}
-	tmsProv.TokenManagementServiceReturns(tmsWithExtensions{newTestManagementService(t)}, nil)
-
-	// Create the auditor service with the store that uses our mock locker
-	return auditor.NewService(
-		token.TMSID{},
-		nil, // networkProvider
-		storeService,
-		nil, // tokenDB
-		tmsProv,
-		nil, // finalityTracer
-		nil, // metricsProvider
-		nil, // checkService
-		nil, // lockConfig (uses defaults)
-	)
+	return newTestServiceWithMockLockerAndMetrics(t, mockLocker, nil)
 }
 
 func TestService_AcquireLocksWithRetry_Success_FirstAttempt(t *testing.T) {
@@ -1079,6 +1062,32 @@ func TestService_AcquireLocksWithRetry_Failure_MaxRetriesExceeded(t *testing.T) 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to acquire locks")
 	assert.Equal(t, 10, mockLocker.GetCallCount(), "Should retry max times (default is 10)")
+}
+
+// TestService_AcquireLocksWithRetry_NoRetryAfterLockerTimeout covers issue
+// #2040's third finding. A locker that reports ErrLockAcquireTimeout has already
+// spent its own acquisition deadline waiting out the contention, so repeating the
+// call spends that deadline again rather than giving the caller a fresh chance.
+// This loop used to retry it MaxRetries times regardless: nested inside the
+// Postgres locker's one-minute deadline that meant up to ten minutes of blocking
+// for a single audit, and thousands of database round trips.
+func TestService_AcquireLocksWithRetry_NoRetryAfterLockerTimeout(t *testing.T) {
+	mockLocker := newMockAuditLocker(func(ctx context.Context, anchor string, eIDs ...string) error {
+		return errors.Join(auditdb.ErrLockAcquireTimeout, auditdb.ErrLockContention)
+	})
+	svc := newTestServiceWithMockLocker(t, mockLocker)
+
+	_, _, err := svc.Audit(context.Background(), &auditmock.Transaction{
+		IDStub: func() string { return "tx-lock-timeout" },
+		RequestStub: func() *token.Request {
+			return token.NewRequest(newTestManagementService(t), token.RequestAnchor("tx-lock-timeout"))
+		},
+	})
+
+	require.Error(t, err)
+	require.ErrorIs(t, err, auditdb.ErrLockAcquireTimeout, "the locker's verdict must reach the caller intact")
+	assert.Equal(t, 1, mockLocker.GetCallCount(),
+		"a locker that already exhausted its acquire deadline must not be called again")
 }
 
 func TestService_AcquireLocksWithRetry_ContextCancelled_BeforeRetry(t *testing.T) {
@@ -1195,4 +1204,191 @@ func TestService_AcquireLocksWithRetry_EmptyEnrollmentIDs(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Equal(t, 1, mockLocker.GetCallCount())
+}
+
+// newTestServiceWithMockLockerAndMetrics builds a service over a real store
+// service wired to mockLocker, with a metrics provider the caller can read back.
+// Pass a nil provider for the cases that do not inspect metrics.
+func newTestServiceWithMockLockerAndMetrics(
+	t *testing.T, mockLocker *mockAuditLocker, mp metrics.Provider,
+) *auditor.Service {
+	t.Helper()
+
+	fakeStore := newFakeStore()
+	storeService, err := auditdb.NewStoreService(fakeStore, auditdb.WithLocker(mockLocker))
+	require.NoError(t, err)
+
+	// Audit binds the provider-resolved TMS before it reaches the locks, so the
+	// provider has to be a working one even for cases only interested in locking.
+	tmsProv := &depmock.TokenManagementServiceProvider{}
+	tmsProv.TokenManagementServiceReturns(tmsWithExtensions{newTestManagementService(t)}, nil)
+
+	return auditor.NewService(
+		token.TMSID{},
+		nil, // networkProvider
+		storeService,
+		nil, // tokenDB
+		tmsProv,
+		nil, // finalityTracer
+		mp,
+		nil, // checkService
+		nil, // lockConfig (uses defaults)
+	)
+}
+
+// countingCounter records the total added, so a test can assert on whether a
+// metric was touched at all.
+type countingCounter struct {
+	mu    sync.Mutex
+	total float64
+}
+
+func (c *countingCounter) With(...string) metrics.Counter { return c }
+
+func (c *countingCounter) Add(delta float64) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.total += delta
+}
+
+func (c *countingCounter) Total() float64 {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	return c.total
+}
+
+// lockConflictProvider hands out countingCounter for the lock-conflict metric and
+// discards everything else.
+func lockConflictProvider() (metrics.Provider, *countingCounter) {
+	conflicts := &countingCounter{}
+	mp := &commondrivermock.MetricsProvider{}
+	mp.NewCounterStub = func(opts metrics.CounterOpts) metrics.Counter {
+		if opts.Name == "auditor_audit_lock_conflicts_total" {
+			return conflicts
+		}
+
+		return &countingCounter{}
+	}
+	mp.NewHistogramStub = func(metrics.HistogramOpts) metrics.Histogram { return discardHistogram{} }
+	mp.NewGaugeStub = func(metrics.GaugeOpts) metrics.Gauge { return discardGauge{} }
+
+	return mp, conflicts
+}
+
+type discardHistogram struct{}
+
+func (discardHistogram) With(...string) metrics.Histogram { return discardHistogram{} }
+func (discardHistogram) Observe(float64)                  {}
+
+type discardGauge struct{}
+
+func (discardGauge) With(...string) metrics.Gauge { return discardGauge{} }
+func (discardGauge) Add(float64)                  {}
+func (discardGauge) Set(float64)                  {}
+
+// TestService_AcquireLocksWithRetry_RetriesTransientFailureWithLiveCaller covers
+// the classification of a failure that carries a context error but did not come
+// from the caller giving up. When a locker's own acquisition budget elapses with
+// nothing contending, it returns a bare context.DeadlineExceeded and no sentinel —
+// see the Postgres backend's default branch. Deciding from the error alone made
+// that final, so the auditor stopped after one attempt at exactly the transient
+// database failures this retry exists to survive, while its own context was still
+// perfectly live. Whether the caller is gone is a property of ctx, not of the
+// error.
+func TestService_AcquireLocksWithRetry_RetriesTransientFailureWithLiveCaller(t *testing.T) {
+	attempts := 0
+	mockLocker := newMockAuditLocker(func(context.Context, string, ...string) error {
+		attempts++
+		if attempts < 3 {
+			return errors.Wrap(context.DeadlineExceeded, "acquire eid leases")
+		}
+
+		return nil
+	})
+	svc := newTestServiceWithMockLocker(t, mockLocker)
+
+	_, _, err := svc.Audit(context.Background(), &auditmock.Transaction{
+		IDStub: func() string { return "tx-lock-transient" },
+		RequestStub: func() *token.Request {
+			return token.NewRequest(newTestManagementService(t), token.RequestAnchor("tx-lock-transient"))
+		},
+	})
+
+	require.NoError(t, err)
+	assert.Equal(t, 3, mockLocker.GetCallCount(),
+		"a locker whose own budget elapsed must be retried while the caller is still waiting")
+}
+
+// TestService_AcquireLocksWithRetry_StopsWhenCallerIsGone is the other half: once
+// the caller's context is done there is nobody left to hand the locks to, so the
+// loop must stop regardless of what the error says.
+func TestService_AcquireLocksWithRetry_StopsWhenCallerIsGone(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	// Contention is the most retriable failure there is, so this pins the decision on
+	// the caller having gone rather than on the error. The cancellation happens
+	// inside the first attempt, so the retry loop does reach the locker once.
+	mockLocker := newMockAuditLocker(func(context.Context, string, ...string) error {
+		cancel()
+
+		return auditdb.ErrLockContention
+	})
+	svc := newTestServiceWithMockLocker(t, mockLocker)
+
+	_, _, err := svc.Audit(ctx, &auditmock.Transaction{
+		IDStub: func() string { return "tx-lock-caller-gone" },
+		RequestStub: func() *token.Request {
+			return token.NewRequest(newTestManagementService(t), token.RequestAnchor("tx-lock-caller-gone"))
+		},
+	})
+
+	require.Error(t, err)
+	assert.Equal(t, 1, mockLocker.GetCallCount(), "a cancelled caller must not be retried for")
+}
+
+// TestService_Audit_CountsOnlyRealLockConflicts pins the lock-conflict metric to
+// what the error-classification table in docs/services/auditor.md promises: a
+// failure with no second holder involved is "not a conflict, and not counted as
+// one". The counter was incremented for every acquisition failure, so
+// graceful-shutdown cancellations and database outages inflated the one signal
+// operators are told to alert on for contention.
+func TestService_Audit_CountsOnlyRealLockConflicts(t *testing.T) {
+	t.Run("contention is counted", func(t *testing.T) {
+		mp, conflicts := lockConflictProvider()
+		mockLocker := newMockAuditLocker(func(context.Context, string, ...string) error {
+			return errors.Join(auditdb.ErrLockContention, auditdb.ErrLockAcquireTimeout)
+		})
+		svc := newTestServiceWithMockLockerAndMetrics(t, mockLocker, mp)
+
+		_, _, err := svc.Audit(context.Background(), &auditmock.Transaction{
+			IDStub: func() string { return "tx-conflict" },
+			RequestStub: func() *token.Request {
+				return token.NewRequest(newTestManagementService(t), token.RequestAnchor("tx-conflict"))
+			},
+		})
+
+		require.Error(t, err)
+		assert.InDelta(t, 1, conflicts.Total(), 0)
+	})
+
+	t.Run("a cancelled caller is not counted", func(t *testing.T) {
+		mp, conflicts := lockConflictProvider()
+		mockLocker := newMockAuditLocker(func(ctx context.Context, _ string, _ ...string) error {
+			return ctx.Err()
+		})
+		svc := newTestServiceWithMockLockerAndMetrics(t, mockLocker, mp)
+
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		_, _, err := svc.Audit(ctx, &auditmock.Transaction{
+			IDStub: func() string { return "tx-cancelled" },
+			RequestStub: func() *token.Request {
+				return token.NewRequest(newTestManagementService(t), token.RequestAnchor("tx-cancelled"))
+			},
+		})
+
+		require.Error(t, err)
+		assert.Zero(t, conflicts.Total(),
+			"nothing held the enrollment IDs, so the failure is not a lock conflict")
+	})
 }

@@ -338,9 +338,14 @@ func (d *StoreService) GetTokenRequests(ctx context.Context, txIDs []string) (ma
 // AcquireLocks acquires locks for the passed anchor and enrollment ids.
 // This can be used to prevent concurrent read/write access to the audit records of the passed enrollment ids.
 // The function respects context cancellation and deadlines, returning an error if the context is cancelled
-// or times out before all locks can be acquired. This prevents indefinite blocking and enables fast failure
-// in case of lock contention or deadlock scenarios.
-// The implementation provides deadlock prevention through deterministic lock ordering (sorted by enrollment ID).
+// or times out before all locks can be acquired, and the locker bounds the wait itself so a caller that
+// passes no deadline still gets an answer. This prevents indefinite blocking and enables fast failure
+// in case of lock contention.
+//
+// Deadlock freedom comes from the locker.Locker contract rather than from lock ordering alone: the
+// enrollment IDs of one call are taken in a canonical order, and the same anchor may not later add IDs to
+// the set it already holds, which is what would put held locks outside that order. See locker.Locker for
+// the full contract; re-acquiring a live anchor with a wider set fails with ErrLockSetWidened.
 // Livelock prevention is handled by the caller through retry logic with exponential backoff.
 func (d *StoreService) AcquireLocks(ctx context.Context, anchor string, eIDs ...string) error {
 	logger.DebugfContext(ctx, "Acquire locks for [%s:%v] enrollment ids", anchor, eIDs)
