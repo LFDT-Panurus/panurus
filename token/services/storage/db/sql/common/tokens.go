@@ -23,6 +23,7 @@ import (
 	q "github.com/LFDT-Panurus/panurus/token/services/storage/db/sql/query"
 	common3 "github.com/LFDT-Panurus/panurus/token/services/storage/db/sql/query/common"
 	"github.com/LFDT-Panurus/panurus/token/services/storage/db/sql/query/cond"
+	"github.com/LFDT-Panurus/panurus/token/services/storage/integrity"
 	"github.com/LFDT-Panurus/panurus/token/services/utils"
 	"github.com/LFDT-Panurus/panurus/token/token"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
@@ -1130,10 +1131,22 @@ func (db *TokenStore) TransactionExists(ctx context.Context, id string) (bool, e
 	return len(txID) > 0, err
 }
 
+// StorePublicParams stores the passed public parameters, keyed by their hash, if
+// they are not stored already.
+//
+// A read failure is propagated rather than swallowed: PublicParamsByHash
+// recomputes the hash of what it finds, so it is the one place where a row whose
+// raw and raw_hash columns disagree is detectable. Falling through to the INSERT
+// would turn that into an opaque primary-key violation and leave the operator
+// without the reason.
 func (db *TokenStore) StorePublicParams(ctx context.Context, raw []byte) error {
 	rawHash := utils.Hashable(raw).Raw()
 
-	if pps, err := db.PublicParamsByHash(ctx, rawHash); err == nil && len(pps) > 0 {
+	pps, err := db.PublicParamsByHash(ctx, rawHash)
+	if err != nil {
+		return errors.WithMessagef(err, "cannot store public parameters [%s]", logging.Base64(rawHash))
+	}
+	if len(pps) > 0 {
 		logger.DebugfContext(ctx, "public params [%s] already in the database", logging.Base64(rawHash))
 		// no need to update the public parameters
 
@@ -1145,9 +1158,11 @@ func (db *TokenStore) StorePublicParams(ctx context.Context, raw []byte) error {
 		Row(raw, rawHash, time.Now().UTC()).
 		Format()
 	logger.DebugfContext(ctx, query, fmt.Sprintf("store public parameters (%d bytes), hash [%s]", len(raw), logging.Base64(rawHash)))
-	_, err := db.writeDB.ExecContext(ctx, query, args...)
+	if _, err := db.writeDB.ExecContext(ctx, query, args...); err != nil {
+		return err
+	}
 
-	return err
+	return nil
 }
 
 func (db *TokenStore) PublicParams(ctx context.Context) ([]byte, error) {
@@ -1161,6 +1176,14 @@ func (db *TokenStore) PublicParams(ctx context.Context) ([]byte, error) {
 	return common.QueryUniqueContext[[]byte](ctx, db.readDB, query, args...)
 }
 
+// PublicParamsByHash returns the public parameters whose hash matches the passed
+// one, or nil if none are stored under it.
+//
+// Verification: the returned parameters are hashed and compared against rawHash
+// — see integrity.CheckPublicParamsHash. Callers fetch by hash in order to
+// re-validate a transaction against the setup it was created under, so
+// parameters that do not hash to the requested hash are reported rather than
+// returned.
 func (db *TokenStore) PublicParamsByHash(ctx context.Context, rawHash tdriver.PPHash) ([]byte, error) {
 	query, args := q.Select().
 		FieldsByName("raw").
@@ -1168,7 +1191,17 @@ func (db *TokenStore) PublicParamsByHash(ctx context.Context, rawHash tdriver.PP
 		Where(cond.Eq("raw_hash", rawHash)).
 		Format(db.ci)
 
-	return common.QueryUniqueContext[[]byte](ctx, db.readDB, query, args...)
+	raw, err := common.QueryUniqueContext[[]byte](ctx, db.readDB, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	if err := integrity.CheckPublicParamsHash(rawHash, raw); err != nil {
+		logger.ErrorfContext(ctx, "refusing to return public parameters: %v", err)
+
+		return nil, err
+	}
+
+	return raw, nil
 }
 
 func (db *TokenStore) StoreCertifications(ctx context.Context, certifications map[*token.ID][]byte) error {

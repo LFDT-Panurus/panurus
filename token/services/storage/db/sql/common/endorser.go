@@ -18,6 +18,7 @@ import (
 	q "github.com/LFDT-Panurus/panurus/token/services/storage/db/sql/query"
 	common3 "github.com/LFDT-Panurus/panurus/token/services/storage/db/sql/query/common"
 	"github.com/LFDT-Panurus/panurus/token/services/storage/db/sql/query/cond"
+	"github.com/LFDT-Panurus/panurus/token/services/storage/integrity"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/common/utils/collections/iterators"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/services/storage/driver/sql/common"
@@ -174,9 +175,19 @@ func (w *EndorserStoreTransaction) Rollback() {
 	_ = w.tx.Rollback()
 }
 
-// AddValidationRecord adds a validation record to the database
+// AddValidationRecord adds a validation record to the database.
+//
+// Verification: as for TransactionStoreTransaction.AddTokenRequest, this layer
+// does not interpret tokenRequest — the wire-format check lives in the
+// endorserdb service. What is refused here is a row no later check could act
+// on: an empty transaction id, empty request bytes, or an empty public
+// parameters hash.
 func (w *EndorserStoreTransaction) AddValidationRecord(ctx context.Context, txID string, tokenRequest []byte, meta map[string][]byte, ppHash driver2.PPHash) error {
 	logger.DebugfContext(ctx, "adding validation record [%s]", txID)
+
+	if err := integrity.CheckTokenRequestForStorage(txID, tokenRequest, ppHash); err != nil {
+		return errors.WithMessagef(err, "refusing to add validation record for txid [%s]", txID)
+	}
 
 	metaBytes, err := marshal(meta)
 	if err != nil {

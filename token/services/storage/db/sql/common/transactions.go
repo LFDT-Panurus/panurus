@@ -24,6 +24,7 @@ import (
 	common3 "github.com/LFDT-Panurus/panurus/token/services/storage/db/sql/query/common"
 	"github.com/LFDT-Panurus/panurus/token/services/storage/db/sql/query/cond"
 	_select "github.com/LFDT-Panurus/panurus/token/services/storage/db/sql/query/select"
+	"github.com/LFDT-Panurus/panurus/token/services/storage/integrity"
 	"github.com/hashicorp/go-uuid"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	driver3 "github.com/hyperledger-labs/fabric-smart-client/platform/common/driver"
@@ -426,8 +427,24 @@ func (db *TransactionStore) ReleaseRecoveryClaim(context.Context, string, string
 	return nil
 }
 
+// AddTransactionEndorsementAck records the signature of endorser over the
+// payload it was sent for txID.
+//
+// Verification: the signature cannot be verified here — the payload it was
+// produced over is not persisted, so the caller is the last holder of it. This
+// layer refuses a vacuous acknowledgement: one with no endorser identity, which
+// would collide with every other such row when read back into a map keyed by
+// endorser, or no signature, which would be indistinguishable from a genuine
+// acknowledgement to every consumer.
 func (db *TransactionStore) AddTransactionEndorsementAck(ctx context.Context, txID string, endorser token.Identity, sigma []byte) (err error) {
 	logger.DebugfContext(ctx, "adding transaction endorse ack record [%s]", txID)
+
+	if txID == "" {
+		return errors.WithMessage(integrity.ErrEmptyTxID, "refusing to add endorsement ack")
+	}
+	if err := integrity.CheckEndorsementAck(endorser, sigma); err != nil {
+		return errors.WithMessagef(err, "refusing to add endorsement ack for txid [%s]", txID)
+	}
 
 	now := time.Now().UTC()
 	id, err := uuid.GenerateUUID()
@@ -654,10 +671,21 @@ func (w *TransactionStoreTransaction) AddTransaction(ctx context.Context, rs ...
 	return ttxDBError(err)
 }
 
+// AddTokenRequest binds txID to the serialized token request tr.
+//
+// Verification: this layer is a byte store and does not interpret tr — the
+// wire-format and anchor checks live in the ttxdb and auditdb services, which
+// know which of the two token request formats they hold. What is refused here
+// is a row that no later check could act on: an empty transaction id, empty
+// request bytes, or an empty public parameters hash. See
+// docs/security/store_integrity_verification.md.
 func (w *TransactionStoreTransaction) AddTokenRequest(ctx context.Context, txID string, tr []byte, applicationMetadata, publicMetadata map[string][]byte, ppHash driver2.PPHash) error {
 	logger.DebugfContext(ctx, "adding token request [%s]", txID)
 	if w.txn == nil {
 		return errors.New("no db transaction in progress")
+	}
+	if err := integrity.CheckTokenRequestForStorage(txID, tr, ppHash); err != nil {
+		return errors.WithMessagef(err, "refusing to add token request for txid [%s]", txID)
 	}
 	if applicationMetadata == nil {
 		applicationMetadata = make(map[string][]byte)

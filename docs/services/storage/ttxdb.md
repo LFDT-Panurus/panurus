@@ -38,6 +38,21 @@ It is also possible to append just the transaction records corresponding to a gi
 	}
 ```
 
+### Integrity of appended requests
+
+Appending refuses a request that could not later be checked: an empty transaction id, empty request
+bytes, or an empty public parameters hash are all errors rather than rows. On the way back out,
+`GetTokenRequest` and `GetTokenRequests` deserialize the stored payload and require its **anchor to
+equal the transaction id it is filed under** — callers treat a retrieved request as authentic
+evidence about that transaction, so a payload that is truncated, encoded at an unsupported protocol
+version, or anchored to a different transaction is reported as an error instead of being returned. A
+transaction id with no stored request is still reported as "not found" (`nil`, no error), unchanged.
+
+Note that the `pp_hash` column is the hash of the *public parameters*, not of the request bytes, so it
+is not what makes the retrieved request checkable — the anchor is. See
+[**Store Integrity Verification**](../../security/store_integrity_verification.md) for the reasoning
+and for the endorsement-acknowledgement posture.
+
 ## Payments
 
 The following example shows how to retrieve the total amount of last 10 payments made by a given 

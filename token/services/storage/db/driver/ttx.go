@@ -30,6 +30,12 @@ type TransactionStoreTransaction interface {
 	Transaction
 
 	// AddTokenRequest binds the passed transaction id to the passed token request
+	//
+	// Verification: an implementation must refuse an empty txID, an empty token
+	// request, or an empty ppHash — see
+	// integrity.CheckTokenRequestForStorage. A stored request must remain
+	// retrievable as evidence about txID under the public parameters ppHash
+	// identifies, and none of the three is meaningful when empty.
 	AddTokenRequest(ctx context.Context, txID string, tr []byte, applicationMetadata, publicMetadata map[string][]byte, ppHash driver.PPHash) error
 
 	// AddMovement adds a movement record to the database transaction.
@@ -79,6 +85,13 @@ type TransactionStore interface {
 
 	// GetTokenRequest returns the token request bound to the passed transaction id, if available.
 	// It returns nil without error if the key is not found.
+	//
+	// Verification: a returned payload is a TokenRequestWithMetadata whose
+	// anchor is txID — see integrity.CheckStoredTokenRequest. Callers treat it
+	// as authentic evidence about txID (an auditor replays it, a recovery sweep
+	// resubmits it), so a payload that does not parse, that carries an
+	// unsupported version, or that is anchored to another transaction must be
+	// reported as an error rather than returned. Not-found stays nil, nil.
 	GetTokenRequest(ctx context.Context, txID string) ([]byte, error)
 
 	// GetTokenRequests returns the token requests bound to the given
@@ -87,6 +100,16 @@ type TransactionStore interface {
 	// treat a missing key identically to GetTokenRequest returning nil
 	// (no error, no record). An empty or nil txIDs slice returns an empty
 	// map without touching the database.
+	//
+	// Empty map values: a driver that does not omit the key for a zero-length
+	// request column scans it as a nil []byte on some drivers and as an empty
+	// slice on others. Either representation is treated identically to a
+	// missing key — the service layer skips it rather than treating it as a
+	// corrupt record.
+	//
+	// Verification: as for GetTokenRequest, applied to every non-empty entry.
+	// One failing entry fails the whole call: the caller cannot tell which
+	// entries were checked from a partially filled map.
 	GetTokenRequests(ctx context.Context, txIDs []string) (map[string][]byte, error)
 
 	// AcquireRecoveryLeadership tries to acquire the PostgreSQL advisory lock backing the sweeper leader election.
@@ -109,9 +132,23 @@ type TransactionStore interface {
 
 type TransactionEndorsementAckStore interface {
 	// AddTransactionEndorsementAck records the signature of a given endorser for a given transaction
+	//
+	// Verification: an implementation must refuse an empty txID, an empty
+	// endorser, or an empty sigma — see integrity.CheckEndorsementAck. The
+	// signature itself is verified by the caller against the payload it sent to
+	// that endorser; the store never sees that payload and cannot repeat the
+	// check. See token/services/ttx.Service.AppendTransactionEndorseAck.
 	AddTransactionEndorsementAck(ctx context.Context, txID string, endorser token.Identity, sigma []byte) error
 
 	// GetTransactionEndorsementAcks returns the endorsement signatures for the given transaction id
+	//
+	// Verification: the returned signatures are returned as stored. The message
+	// each one signs is the per-party filtered payload that was sent to that
+	// endorser, and it is not persisted, so neither the store nor the caller can
+	// re-verify a signature after the fact. The service layer above drops — with
+	// an ERROR log — any row that fails the non-vacuity check
+	// AddTransactionEndorsementAck applies, so that one bad row does not make a
+	// whole transaction unreadable.
 	GetTransactionEndorsementAcks(ctx context.Context, txID string) (map[string][]byte, error)
 }
 

@@ -260,6 +260,14 @@ type TokenStore interface {
 	PublicParams(ctx context.Context) ([]byte, error)
 	// PublicParamsByHash returns the public parameters whose hash matches the passed one.
 	// If not public parameters are available for that hash, it returns an error
+	//
+	// Verification: an implementation must hash the parameters it is about to
+	// return and compare against rawHash — see
+	// integrity.CheckPublicParamsHash. Public parameters carry the issuer and
+	// auditor keys and the cryptographic setup every action is validated against,
+	// and a caller fetching by hash is asking for the setup one specific
+	// transaction was created under. An empty rawHash is refused, since it makes
+	// the comparison vacuous.
 	PublicParamsByHash(ctx context.Context, rawHash driver.PPHash) ([]byte, error)
 	// NewTokenDBTransaction returns a new Transaction to commit atomically multiple operations
 	NewTokenDBTransaction() (TokenStoreTransaction, error)

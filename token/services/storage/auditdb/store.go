@@ -20,6 +20,7 @@ import (
 	"github.com/LFDT-Panurus/panurus/token/services/storage/db/common"
 	dbdriver "github.com/LFDT-Panurus/panurus/token/services/storage/db/driver"
 	"github.com/LFDT-Panurus/panurus/token/services/storage/db/multiplexed"
+	"github.com/LFDT-Panurus/panurus/token/services/storage/integrity"
 	"github.com/LFDT-Panurus/panurus/token/services/storage/ttxdb"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	cdriver "github.com/hyperledger-labs/fabric-smart-client/platform/common/driver"
@@ -219,7 +220,12 @@ func (d *StoreService) Append(ctx context.Context, req tokenRequest) error {
 	}
 
 	logger.DebugfContext(ctx, "storing new records... [%d,%d,%d]", len(raw), len(mov), len(txs))
-	if err := d.locker.AssertLocksHeld(ctx, string(record.Anchor)); err != nil {
+	anchor := string(record.Anchor)
+	ppHash := req.PublicParamsHash()
+	if err := integrity.CheckTokenRequestForStorage(anchor, raw, ppHash); err != nil {
+		return errors.WithMessagef(err, "refusing to append audit records for txid [%s]", record.Anchor)
+	}
+	if err := d.locker.AssertLocksHeld(ctx, anchor); err != nil {
 		return errors.WithMessagef(err, "locks lost before write for request [%s]", req)
 	}
 	w, err := d.db.NewTransactionStoreTransaction()
@@ -228,11 +234,11 @@ func (d *StoreService) Append(ctx context.Context, req tokenRequest) error {
 	}
 	if err := w.AddTokenRequest(
 		ctx,
-		string(record.Anchor),
+		anchor,
 		raw,
 		req.AllApplicationMetadata(),
 		record.Attributes,
-		req.PublicParamsHash(),
+		ppHash,
 	); err != nil {
 		w.Rollback()
 
@@ -324,15 +330,67 @@ func (d *StoreService) GetStatuses(ctx context.Context, txIDs []string) (map[str
 }
 
 // GetTokenRequest returns the token request bound to the passed transaction id, if available.
+// It returns nil without error if no request is stored for txID, which includes
+// the case of a row whose request column is present but zero-length: drivers
+// differ on whether such a column scans as nil or as an empty slice, and both
+// read as not-found here.
+//
+// Verification: the returned bytes are checked with
+// integrity.CheckStoredTokenRequest before they are handed back, so a request
+// that does not deserialize, declares an unsupported protocol version, or is
+// anchored to a transaction other than txID is reported as an error rather than
+// returned. This store is read by auditors, for whom a request attributed to
+// the wrong transaction is worse than no request at all.
 func (d *StoreService) GetTokenRequest(ctx context.Context, txID string) ([]byte, error) {
-	return d.db.GetTokenRequest(ctx, txID)
+	raw, err := d.db.GetTokenRequest(ctx, txID)
+	if err != nil {
+		return nil, err
+	}
+	if len(raw) == 0 {
+		// not found, which is not an error at this layer
+		return nil, nil
+	}
+	if err := integrity.CheckStoredTokenRequest(txID, raw); err != nil {
+		logger.ErrorfContext(ctx, "stored token request for [%s] failed the integrity check: %v", txID, err)
+
+		return nil, errors.WithMessagef(err, "stored token request for [%s] failed the integrity check", txID)
+	}
+
+	return raw, nil
 }
 
 // GetTokenRequests returns the token requests bound to the given tx ids in
-// a single query. See driver.TransactionStore.GetTokenRequests for details
-// about missing-key semantics.
+// a single query. See driver.AuditTransactionStore.GetTokenRequests for
+// details about missing-key semantics.
+//
+// Empty values: an empty map value is treated as not-found (skipped),
+// consistent with GetTokenRequest returning nil, nil for a missing key. A
+// driver that does not omit the key for a zero-length request column returns it
+// as nil on some drivers and as an empty slice on others; both are silently
+// removed from the returned map rather than failing the call.
+//
+// Verification: as for GetTokenRequest, every non-nil entry is checked with
+// integrity.CheckStoredTokenRequest against the transaction id it is keyed
+// under, and a single failing record fails the whole call.
 func (d *StoreService) GetTokenRequests(ctx context.Context, txIDs []string) (map[string][]byte, error) {
-	return d.db.GetTokenRequests(ctx, txIDs)
+	requests, err := d.db.GetTokenRequests(ctx, txIDs)
+	if err != nil {
+		return nil, err
+	}
+	for txID, raw := range requests {
+		if len(raw) == 0 {
+			delete(requests, txID)
+
+			continue
+		}
+		if err := integrity.CheckStoredTokenRequest(txID, raw); err != nil {
+			logger.ErrorfContext(ctx, "stored token request for [%s] failed the integrity check: %v", txID, err)
+
+			return nil, errors.WithMessagef(err, "stored token request for [%s] failed the integrity check", txID)
+		}
+	}
+
+	return requests, nil
 }
 
 // AcquireLocks acquires locks for the passed anchor and enrollment ids.
