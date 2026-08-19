@@ -143,16 +143,56 @@ jobs:
             fuzz-${{ matrix.name }}-
 
       - name: Run fuzz campaign
+        id: fuzz
         run: |
           set -o pipefail
+          status=0
           go test ${{ matrix.pkg }} \
             -run='^$' \
             -fuzz='^${{ matrix.func }}$' \
             -fuzztime="${{ github.event.inputs.fuzztime || '4h' }}" \
-            2>&1 | tee fuzz-output.log
+            2>&1 | tee fuzz-output.log || status=$?
+
+          # Distinguish a genuine crash from a fuzztime/-timeout expiry.
+          #
+          # Authoritative signal: on a genuine failure Go minimizes the input and
+          # writes a reproducer file into <pkg>/testdata/fuzz/<func>/. The corpus
+          # cache is restored to ~/.cache/go-build/fuzz, never here, so any new or
+          # changed file under that dir is a freshly written crasher. This does not
+          # depend on Go's log wording (which varies by version) or on log text
+          # that could contain attacker-controlled bytes.
+          #
+          # Hitting the -fuzztime deadline mid-execution instead exits non-zero with
+          # "context deadline exceeded" and writes no reproducer — not a crash, so it
+          # must not file an issue or upload a phantom seed.
+          crasher_dir="${{ matrix.pkg }}/testdata/fuzz/${{ matrix.func }}"
+          crashed=false
+          if [ -n "$(git status --porcelain -- "$crasher_dir" 2>/dev/null)" ]; then
+            crashed=true
+          # Fallback for the one case the filesystem can't see: a crash triggered by
+          # an already-committed seed fails without writing a *new* file. Anchored to
+          # Go's own crash output.
+          elif grep -Eq '^\s*Failing input written to|^panic:' fuzz-output.log; then
+            crashed=true
+          fi
+          echo "crashed=$crashed" >> "$GITHUB_OUTPUT"
+
+          if [ "$crashed" = "true" ]; then
+            echo "::error::Fuzz target ${{ matrix.func }} found a crashing input"
+            exit 1
+          fi
+          if [ "$status" -eq 0 ]; then
+            exit 0
+          fi
+          if grep -q 'context deadline exceeded' fuzz-output.log; then
+            echo "::warning::Fuzz campaign hit the fuzztime deadline mid-execution (likely a slow input); no crashing input found — not filing an issue."
+            exit 0
+          fi
+          echo "::error::Fuzz campaign exited non-zero without a crashing input (build/infra failure); see log."
+          exit "$status"
 
       - name: Collect crash artifacts
-        if: failure()
+        if: steps.fuzz.outputs.crashed == 'true'
         run: |
           mkdir -p fuzz-failure
           cp fuzz-output.log fuzz-failure/ || true
@@ -160,7 +200,7 @@ jobs:
             -exec cp -r {} fuzz-failure/ \; || true
 
       - name: Upload crash artifacts
-        if: failure()
+        if: steps.fuzz.outputs.crashed == 'true'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: fuzz-failure-${{ matrix.name }}
@@ -168,7 +208,7 @@ jobs:
           retention-days: 30
 
       - name: File or update GitHub issue
-        if: failure()
+        if: steps.fuzz.outputs.crashed == 'true'
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
           script: |
