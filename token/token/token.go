@@ -52,6 +52,18 @@ type Token struct {
 	Quantity string `json:"quantity,omitempty" protobuf:"bytes,3,opt,name=quantity,proto3"`
 }
 
+// Clone returns a full, independent copy of the token. The returned token
+// shares no mutable state with the receiver: the Owner byte slice is copied,
+// so mutating either token's Owner (or replacing any field) does not affect
+// the other. Type and Quantity are strings and are therefore immutable.
+func (t *Token) Clone() *Token {
+	return &Token{
+		Owner:    bytes.Clone(t.Owner),
+		Type:     t.Type,
+		Quantity: t.Quantity,
+	}
+}
+
 type IssuedToken struct {
 	// Id is used to uniquely identify the token in the ledger
 	Id ID `json:"id" protobuf:"bytes,1,opt,name=id,proto3"`

@@ -9,6 +9,7 @@ package tokens
 import (
 	"context"
 	"runtime/debug"
+	"slices"
 
 	"github.com/LFDT-Panurus/panurus/token"
 	"github.com/LFDT-Panurus/panurus/token/driver"
@@ -439,18 +440,20 @@ func (t *Service) Parse(
 				continue
 			}
 
+			// clone the token and the caller-owned byte slices so the cached entry does not
+			// alias the output stream, which may be reused or mutated after Parse returns
 			tta := TokenToAppend{
 				TxID:                  string(requestAnchor),
 				Index:                 output.Index,
-				Tok:                   &output.Token,
-				TokenOnLedger:         output.LedgerOutput,
+				Tok:                   output.Clone(),
+				TokenOnLedger:         slices.Clone(output.LedgerOutput),
 				TokenOnLedgerFormat:   output.LedgerOutputFormat,
-				TokenOnLedgerMetadata: output.LedgerOutputMetadata,
+				TokenOnLedgerMetadata: slices.Clone(output.LedgerOutputMetadata),
 				OwnerType:             "",
 				OwnerIdentity:         []byte{},
 				OwnerWalletID:         "",
 				Owners:                nil,
-				Issuer:                issuer,
+				Issuer:                slices.Clone(issuer),
 				Precision:             precision,
 				Flags: Flags{
 					Mine:     false,
@@ -489,18 +492,20 @@ func (t *Service) Parse(
 			return nil, nil, errors.Wrapf(err, "failed to extract owner type for token [%s:%d]", requestAnchor, output.Index)
 		}
 
+		// clone the token and the caller-owned byte slices so the cached entry does not
+		// alias the output stream, which may be reused or mutated after Parse returns
 		tta := TokenToAppend{
 			TxID:                  string(requestAnchor),
 			Index:                 output.Index,
-			Tok:                   &output.Token,
-			TokenOnLedger:         output.LedgerOutput,
+			Tok:                   output.Clone(),
+			TokenOnLedger:         slices.Clone(output.LedgerOutput),
 			TokenOnLedgerFormat:   output.LedgerOutputFormat,
-			TokenOnLedgerMetadata: output.LedgerOutputMetadata,
+			TokenOnLedgerMetadata: slices.Clone(output.LedgerOutputMetadata),
 			OwnerType:             identity.TypeToString(ownerType),
 			OwnerIdentity:         ownerIdentity,
 			OwnerWalletID:         ownerWalletID,
 			Owners:                ids,
-			Issuer:                output.Issuer,
+			Issuer:                slices.Clone(output.Issuer),
 			Precision:             precision,
 			Flags: Flags{
 				Mine:    mine,

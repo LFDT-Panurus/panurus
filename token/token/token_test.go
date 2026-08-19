@@ -195,6 +195,40 @@ func TestUnspentTokens_At(t *testing.T) {
 	assert.Equal(t, t1, ut.At(1))
 }
 
+func TestToken_Clone(t *testing.T) {
+	original := &token.Token{
+		Owner:    []byte("owner-1"),
+		Type:     "USD",
+		Quantity: "100",
+	}
+
+	clone := original.Clone()
+
+	// The clone is equal in value but is a distinct object with a distinct Owner slice.
+	assert.Equal(t, original, clone)
+	assert.NotSame(t, original, clone)
+	assert.NotSame(t, &original.Owner, &clone.Owner)
+
+	// Mutating the original's Owner bytes in place must not touch the clone,
+	// which is what a downstream cache holds onto after Parse returns.
+	original.Owner[0] = 'X'
+	assert.Equal(t, []byte("owner-1"), clone.Owner, "clone Owner must not alias the original")
+
+	// Replacing whole fields on the original must not leak into the clone either.
+	original.Owner = []byte("owner-2")
+	original.Type = "EUR"
+	original.Quantity = "200"
+	assert.Equal(t, []byte("owner-1"), clone.Owner)
+	assert.Equal(t, token.Type("USD"), clone.Type)
+	assert.Equal(t, "100", clone.Quantity)
+
+	// A nil Owner clones to nil without panicking.
+	nilOwner := (&token.Token{Type: "GBP", Quantity: "5"}).Clone()
+	assert.Nil(t, nilOwner.Owner)
+	assert.Equal(t, token.Type("GBP"), nilOwner.Type)
+	assert.Equal(t, "5", nilOwner.Quantity)
+}
+
 func TestIssuedTokens_Sum_Panic(t *testing.T) {
 	it := &token.IssuedTokens{
 		Tokens: []*token.IssuedToken{
