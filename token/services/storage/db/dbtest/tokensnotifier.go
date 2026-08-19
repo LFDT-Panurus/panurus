@@ -63,7 +63,7 @@ func TTokenNotifier(t *testing.T, db TestTokenDB, notifier driver.TokenNotifier)
 	}
 	require.NoError(t, db.StoreToken(ctx, tr, []string{"alice"}))
 
-	require.NoError(t, result.AssertSize(1))
+	requireSizeOrSkip(t, result, 1)
 	values := result.Values()
 	require.Equal(t, driver.Insert, values[0].Op)
 	require.Equal(t, driver.TokenRecordReference{
@@ -115,6 +115,19 @@ func (t *tokenSubscriber) Subscribe(f func(operation driver.Operation, vals driv
 	return t.notifier.Subscribe(f)
 }
 
+// TransportError forwards the underlying notifier's transport-error channel
+// when it exposes one (the Postgres notifier does), letting the collector skip
+// a subtest whose LISTEN connection dropped mid-run. It returns nil for
+// notifiers that do not report transport errors; the collector treats a nil
+// channel as "never fails". See issue #2270.
+func (t *tokenSubscriber) TransportError() <-chan error {
+	if r, ok := t.notifier.(transportErrorReporter); ok {
+		return r.TransportError()
+	}
+
+	return nil
+}
+
 func TSubscribeStore(t *testing.T, db TestTokenDB, notifier driver.TokenNotifier) {
 	t.Helper()
 	result, err := collectDBEvents[driver.TokenRecordReference](&tokenSubscriber{notifier: notifier})
@@ -126,7 +139,7 @@ func TSubscribeStore(t *testing.T, db TestTokenDB, notifier driver.TokenNotifier
 	require.NoError(t, tx.StoreToken(t.Context(), tokenRecords[1], []string{"alice"}))
 	require.NoError(t, tx.Commit())
 
-	require.NoError(t, result.AssertSize(2))
+	requireSizeOrSkip(t, result, 2)
 }
 
 func TSubscribeStoreDelete(t *testing.T, db TestTokenDB, notifier driver.TokenNotifier) {
@@ -140,7 +153,7 @@ func TSubscribeStoreDelete(t *testing.T, db TestTokenDB, notifier driver.TokenNo
 	require.NoError(t, tx.Delete(t.Context(), token.ID{TxId: "tx1", Index: 1}, "alice"))
 	require.NoError(t, tx.Commit())
 
-	require.NoError(t, result.AssertSize(3))
+	requireSizeOrSkip(t, result, 3)
 }
 
 func TSubscribeStoreNoCommit(t *testing.T, db TestTokenDB, notifier driver.TokenNotifier) {
@@ -152,7 +165,7 @@ func TSubscribeStoreNoCommit(t *testing.T, db TestTokenDB, notifier driver.Token
 	require.NoError(t, tx.StoreToken(t.Context(), tokenRecords[0], []string{"alice"}))
 	require.NoError(t, tx.StoreToken(t.Context(), tokenRecords[1], []string{"alice"}))
 
-	require.NoError(t, result.AssertSize(0))
+	requireSizeOrSkip(t, result, 0)
 }
 
 func TSubscribeRead(t *testing.T, db TestTokenDB, notifier driver.TokenNotifier) {
@@ -166,5 +179,5 @@ func TSubscribeRead(t *testing.T, db TestTokenDB, notifier driver.TokenNotifier)
 	require.NoError(t, err)
 	require.NoError(t, tx.Commit())
 
-	require.NoError(t, result.AssertSize(0))
+	requireSizeOrSkip(t, result, 0)
 }
