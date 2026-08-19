@@ -189,7 +189,7 @@ func TestDefaultManager_SignerOpts(t *testing.T) {
 		{
 			name:          "unsupported schema",
 			schema:        "unknown",
-			expectedError: "unsupported schema 'unknown' for NymSignerOpts",
+			expectedError: "unsupported schema 'unknown' for SignerOpts",
 		},
 	}
 
@@ -261,7 +261,7 @@ func TestDefaultManager_RhNymAuditOpts(t *testing.T) {
 			name:          "unsupported schema",
 			schema:        "invalid",
 			attrs:         [][]byte{},
-			expectedError: "unsupported schema 'invalid' for NymSignerOpts",
+			expectedError: "unsupported schema 'invalid' for RhNymAuditOpts",
 		},
 	}
 
@@ -331,7 +331,7 @@ func TestDefaultManager_EidNymAuditOpts(t *testing.T) {
 			name:          "unsupported schema",
 			schema:        "unknown-schema",
 			attrs:         [][]byte{},
-			expectedError: "unsupported schema 'unknown-schema' for NymSignerOpts",
+			expectedError: "unsupported schema 'unknown-schema' for EidNymAuditOpts",
 		},
 	}
 
