@@ -100,4 +100,8 @@ pair once (`OutputStream.UniquePerOutput`), so members sharing an enrollment
 ID do not multiply the recorded amount. A spent input is expanded the same
 way, one row per member carrying the token's full quantity; sent-amount
 aggregation counts each `(token ID, enrollment ID)` pair once
-(`InputStream.UniquePerInput`).
+(`InputStream.UniquePerInput`), falling back to
+`(action index, input index, enrollment ID)` when the token ID has been
+filtered out of the metadata. Positional deduplication applies only to inputs
+built through `token.NewInput`, which marks the position as known; a
+literal-built input without a token ID keeps the previous keep-all behavior.

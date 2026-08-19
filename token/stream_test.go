@@ -285,8 +285,17 @@ func TestOutputStream_UniquePerOutput(t *testing.T) {
 	}
 }
 
+// extractedInput builds an input the way the request's extraction path does,
+// so its position takes part in deduplication.
+func extractedInput(actionIndex, index int, id *token.ID, eID, rh string) *Input {
+	in := NewInput(actionIndex, index, id)
+	in.EnrollmentID = eID
+	in.RevocationHandler = rh
+
+	return in
+}
+
 func TestInputStream_UniquePerInput(t *testing.T) {
-	// distinct pointers to the same token ID value must collapse
 	cases := []struct {
 		name   string
 		inputs []*Input
@@ -312,7 +321,7 @@ func TestInputStream_UniquePerInput(t *testing.T) {
 			},
 		},
 		{
-			"different token IDs with the same enrollment ID both survive",
+			"different token IDs with the same enrollment ID both survive despite equal positions",
 			[]*Input{
 				{Id: &token.ID{TxId: "tx0", Index: 0}, EnrollmentID: "enroll1"},
 				{Id: &token.ID{TxId: "tx0", Index: 1}, EnrollmentID: "enroll1"},
@@ -323,9 +332,49 @@ func TestInputStream_UniquePerInput(t *testing.T) {
 			},
 		},
 		{
-			"inputs with no token ID are all kept",
-			[]*Input{{EnrollmentID: "enroll1"}, {EnrollmentID: "enroll1"}},
-			[]*Input{{EnrollmentID: "enroll1"}, {EnrollmentID: "enroll1"}},
+			"member rows with a filtered-out token ID collapse on action and input index",
+			[]*Input{
+				extractedInput(0, 0, nil, "enroll1", "first"),
+				extractedInput(0, 0, nil, "enroll1", "second"),
+			},
+			[]*Input{extractedInput(0, 0, nil, "enroll1", "first")},
+		},
+		{
+			"filtered rows with different positions or enrollment IDs all survive",
+			[]*Input{
+				extractedInput(0, 0, nil, "enroll1", ""),
+				extractedInput(0, 1, nil, "enroll1", ""),
+				extractedInput(1, 0, nil, "enroll1", ""),
+				extractedInput(0, 0, nil, "enroll2", ""),
+			},
+			[]*Input{
+				extractedInput(0, 0, nil, "enroll1", ""),
+				extractedInput(0, 1, nil, "enroll1", ""),
+				extractedInput(1, 0, nil, "enroll1", ""),
+				extractedInput(0, 0, nil, "enroll2", ""),
+			},
+		},
+		{
+			"a row with a token ID never collides with a positionally identical row without one",
+			[]*Input{
+				extractedInput(0, 0, &token.ID{TxId: "tx0", Index: 0}, "enroll1", ""),
+				extractedInput(0, 0, nil, "enroll1", ""),
+			},
+			[]*Input{
+				extractedInput(0, 0, &token.ID{TxId: "tx0", Index: 0}, "enroll1", ""),
+				extractedInput(0, 0, nil, "enroll1", ""),
+			},
+		},
+		{
+			"literal-built rows with no token ID never collapse on the zero-valued position",
+			[]*Input{
+				{EnrollmentID: "enroll1"},
+				{EnrollmentID: "enroll1"},
+			},
+			[]*Input{
+				{EnrollmentID: "enroll1"},
+				{EnrollmentID: "enroll1"},
+			},
 		},
 	}
 	for _, tc := range cases {
