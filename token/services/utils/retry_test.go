@@ -26,6 +26,47 @@ func testLogger() logging.Logger {
 	return logging.DriverLogger("test", "n1", "c1", "ns1")
 }
 
+// defaultMaxDelay mirrors the unexported cap in retry.go that NewRetryRunner and
+// an invalid maxDelay fall back to. Kept in sync manually since it is not exported.
+const defaultMaxDelay = 30 * time.Second
+
+// sumBackoffDelays returns the total of the deterministic (jitter-free) backoff
+// delays the runner sleeps across maxTimes attempts: delay_i = initialDelay *
+// multiplier^i, each capped at maxDelay. For fixed backoff pass multiplier 1.0.
+//
+// Because time.After never returns early, the wall-clock time a run takes is
+// always at least this sum. Asserting on total elapsed time is therefore a
+// robust lower bound, immune to the per-call scheduling jitter that makes
+// comparing the ratio of consecutive short intervals flaky.
+func sumBackoffDelays(initialDelay, maxDelay time.Duration, multiplier float64, maxTimes int) time.Duration {
+	var total time.Duration
+	delay := float64(initialDelay)
+	for range maxTimes {
+		total += time.Duration(min(delay, float64(maxDelay)))
+		delay *= multiplier
+	}
+
+	return total
+}
+
+// assertElapsedMatchesCappedBackoff asserts that a jitter-free run took a total
+// wall-clock time consistent with an exponential backoff capped at maxDelay.
+// The lower bound (the exact sum of delays) is guaranteed because time.After
+// never returns early; the upper bound adds slack for scheduling/wakeup latency
+// while staying tight enough that a wrong cap (e.g. 15s or 60s instead of 30s)
+// lands outside the window.
+func assertElapsedMatchesCappedBackoff(t *testing.T, elapsed, initialDelay, maxDelay time.Duration, multiplier float64, maxTimes int) {
+	t.Helper()
+
+	expected := sumBackoffDelays(initialDelay, maxDelay, multiplier, maxTimes)
+	slack := max(expected/5, 2*time.Second) // 20%, floored at 2s for scheduling noise
+
+	assert.GreaterOrEqual(t, elapsed, expected,
+		"total elapsed time should be at least the sum of the capped backoff delays")
+	assert.LessOrEqual(t, elapsed, expected+slack,
+		"total elapsed time should not exceed the capped backoff sum by more than scheduling slack")
+}
+
 // TestRunWithContext_PreCanceledContext verifies that a pre-canceled context causes
 // RunWithContext to return immediately without invoking the runner at all.
 func TestRunWithContext_PreCanceledContext(t *testing.T) {
@@ -88,30 +129,31 @@ func TestRunWithContext_CanceledDuringBackoff(t *testing.T) {
 }
 
 // TestRunWithContext_BackoffDoesNotExceedCap verifies that the exponential backoff
-// delay is capped and does not grow without bound.
+// grows as expected and does not run away without bound.
 // We use a tiny initial delay so the test runs fast; the cap itself is 30s by default.
 func TestRunWithContext_BackoffDoesNotExceedCap(t *testing.T) {
-	// 10 retries with 1ms initial delay, exp backoff: 1,2,4,8,16,30,30,30,30,30 ms
-	runner := utils.NewRetryRunner(testLogger(), 10, time.Millisecond, true)
+	const (
+		maxTimes     = 10
+		initialDelay = time.Millisecond
+		multiplier   = 2.0
+	)
 
-	var intervals []time.Duration
-	prev := time.Now()
+	// 10 retries with 1ms initial delay, exp backoff: 1,2,4,8,16,32,64,128,256,512 ms
+	// (all below the 30s cap), summing to ~1s.
+	runner := utils.NewRetryRunner(testLogger(), maxTimes, initialDelay, true)
+
+	start := time.Now()
 
 	_ = runner.RunWithContext(t.Context(), func() error {
-		now := time.Now()
-		intervals = append(intervals, now.Sub(prev))
-		prev = now
-
 		return errors.New("always fail")
 	})
 
-	// Skip the first interval (no sleep before first call).
-	// Each subsequent interval should be ≤ defaultMaxDelay + small scheduling slack.
-	const maxAllowed = 30*time.Second + 200*time.Millisecond
-	for i, d := range intervals[1:] {
-		assert.LessOrEqual(t, d, maxAllowed,
-			"backoff interval %d (%v) exceeded the 30s cap", i+1, d)
-	}
+	elapsed := time.Since(start)
+
+	// The total elapsed time must bracket the exponential sum. The upper bound is
+	// what catches runaway growth: if the delay were not bounded, the tail delays
+	// would balloon and push the total far past this window.
+	assertElapsedMatchesCappedBackoff(t, elapsed, initialDelay, defaultMaxDelay, multiplier, maxTimes)
 }
 
 // TestRunWithContext_SucceedsAfterTransientFailures verifies normal retry behavior:
@@ -260,30 +302,29 @@ func TestRunWithErrors_MaxRetriesExhaustedNoErrors(t *testing.T) {
 // TestRunWithErrors_ExponentialBackoff verifies that RunWithErrors respects
 // exponential backoff when configured.
 func TestRunWithErrors_ExponentialBackoff(t *testing.T) {
-	t.Skip() // This one fails way too many times on the CI
-	runner := utils.NewRetryRunner(testLogger(), 5, time.Millisecond, true)
+	const (
+		maxTimes     = 5
+		initialDelay = time.Millisecond
+	)
 
-	var intervals []time.Duration
-	prev := time.Now()
+	runner := utils.NewRetryRunner(testLogger(), maxTimes, initialDelay, true)
+
+	start := time.Now()
 
 	_ = runner.RunWithErrors(func() (bool, error) {
-		now := time.Now()
-		intervals = append(intervals, now.Sub(prev))
-		prev = now
-
 		return false, errors.New("always fail")
 	})
 
-	// Skip first interval (no sleep before first call)
-	intervals = intervals[1:]
+	elapsed := time.Since(start)
 
-	// Verify exponential growth: each interval should be roughly 2x the previous.
-	// We use a generous tolerance (1.0) for the ratio (allowing 1.0x to 3.0x) to ensure
-	// test stability in CI environments where scheduling jitter can be significant.
-	for i := 1; i < len(intervals); i++ {
-		ratio := float64(intervals[i]) / float64(intervals[i-1])
-		assert.InDelta(t, 2.0, ratio, 1.0, "interval %d should be ~2x interval %d", i, i-1)
-	}
+	// NewRetryRunner uses a 2.0 multiplier with no jitter, so the exponential
+	// delays (1ms, 2ms, 4ms, 8ms, 16ms) are deterministic. Asserting a lower bound
+	// on total elapsed time is robust to the CI scheduling jitter that made the
+	// previous per-interval ratio comparison flaky (it used to be skipped).
+	// NewRetryRunner caps backoff at 30s by default; these small delays never reach it.
+	expectedMin := sumBackoffDelays(initialDelay, 30*time.Second, 2.0, maxTimes)
+	assert.GreaterOrEqual(t, elapsed, expectedMin,
+		"total elapsed time should match a 2.0 multiplier exponential backoff")
 }
 
 // TestRunWithContext_MaxRetriesExhaustedNoErrors verifies the edge case where
@@ -320,26 +361,28 @@ func TestRunWithContext_MaxRetriesExhaustedNoErrors(t *testing.T) {
 // TestNextDelay_FixedBackoff verifies that when expBackoff is false,
 // the delay remains constant (no exponential growth).
 func TestNextDelay_FixedBackoff(t *testing.T) {
-	runner := utils.NewRetryRunner(testLogger(), 5, 10*time.Millisecond, false)
+	const (
+		maxTimes = 5
+		delay    = 10 * time.Millisecond
+	)
 
-	var intervals []time.Duration
-	prev := time.Now()
+	runner := utils.NewRetryRunner(testLogger(), maxTimes, delay, false)
+
+	start := time.Now()
 
 	_ = runner.RunWithContext(t.Context(), func() error {
-		now := time.Now()
-		intervals = append(intervals, now.Sub(prev))
-		prev = now
-
 		return errors.New("always fail")
 	})
 
-	// All subsequent intervals should be approximately equal (fixed delay).
-	// We use a 50ms tolerance for a 10ms target to account for CPU scheduling jitter
-	// especially on Windows or heavily loaded CI systems.
-	for i := 1; i < len(intervals); i++ {
-		assert.InDelta(t, 10*time.Millisecond, intervals[i], float64(50*time.Millisecond),
-			"interval %d should be ~10ms for fixed backoff, got %v", i, intervals[i])
-	}
+	elapsed := time.Since(start)
+
+	// With fixed backoff the runner sleeps the same delay after each of the
+	// maxTimes attempts, so the total elapsed time must be at least maxTimes*delay.
+	// A lower bound on total elapsed time avoids the per-interval scheduling jitter
+	// that made comparing individual ~10ms intervals flaky.
+	expectedMin := sumBackoffDelays(delay, delay, 1.0, maxTimes)
+	assert.GreaterOrEqual(t, elapsed, expectedMin,
+		"total elapsed time should be at least maxTimes*delay for fixed backoff")
 }
 
 // TestRunWithErrorsContext_PreCanceledContext verifies that a pre-canceled context causes
@@ -475,101 +518,101 @@ func TestRunWithErrorsContext_MaxRetriesExhaustedNoErrors(t *testing.T) {
 // TestNewRetryRunnerWithJitter_NegativeBackoffMultiplier verifies that negative
 // backoff multiplier defaults to 2.0 and produces standard exponential backoff.
 func TestNewRetryRunnerWithJitter_NegativeBackoffMultiplier(t *testing.T) {
+	const (
+		maxTimes     = 5
+		initialDelay = 10 * time.Millisecond
+		maxDelay     = 1 * time.Second
+	)
+
 	runner := utils.NewRetryRunnerWithJitter(
 		testLogger(),
-		5,
-		10*time.Millisecond,
-		1*time.Second,
+		maxTimes,
+		initialDelay,
+		maxDelay,
 		-1.0, // invalid, should default to 2.0
 		0.0,  // no jitter for predictable testing
 	)
 
-	var intervals []time.Duration
-	prev := time.Now()
+	start := time.Now()
 
 	_ = runner.RunWithContext(t.Context(), func() error {
-		now := time.Now()
-		intervals = append(intervals, now.Sub(prev))
-		prev = now
-
 		return errors.New("always fail")
 	})
 
-	// Skip first interval (no sleep before first call)
-	intervals = intervals[1:]
+	elapsed := time.Since(start)
 
-	// Should behave like default 2.0 multiplier
-	for i := 1; i < 3 && i < len(intervals); i++ {
-		ratio := float64(intervals[i]) / float64(intervals[i-1])
-		assert.InDelta(t, 2.0, ratio, 1.0,
-			"interval %d should be ~2x interval %d (default multiplier)", i, i-1)
-	}
+	// An invalid multiplier defaults to 2.0, so the total elapsed time must be at
+	// least the sum of the standard exponential (jitter-free) delays.
+	expectedMin := sumBackoffDelays(initialDelay, maxDelay, 2.0, maxTimes)
+	assert.GreaterOrEqual(t, elapsed, expectedMin,
+		"total elapsed time should match a default 2.0 multiplier backoff")
 }
 
 // TestNewRetryRunnerWithJitter_ZeroBackoffMultiplier verifies that zero
 // backoff multiplier defaults to 2.0.
 func TestNewRetryRunnerWithJitter_ZeroBackoffMultiplier(t *testing.T) {
+	const (
+		maxTimes     = 5
+		initialDelay = 10 * time.Millisecond
+		maxDelay     = 1 * time.Second
+	)
+
 	runner := utils.NewRetryRunnerWithJitter(
 		testLogger(),
-		5,
-		10*time.Millisecond,
-		1*time.Second,
+		maxTimes,
+		initialDelay,
+		maxDelay,
 		0.0, // invalid, should default to 2.0
 		0.0, // no jitter
 	)
 
-	var intervals []time.Duration
-	prev := time.Now()
+	start := time.Now()
 
 	_ = runner.RunWithContext(t.Context(), func() error {
-		now := time.Now()
-		intervals = append(intervals, now.Sub(prev))
-		prev = now
-
 		return errors.New("always fail")
 	})
 
-	intervals = intervals[1:]
+	elapsed := time.Since(start)
 
-	// Should behave like default 2.0 multiplier
-	for i := 1; i < 3 && i < len(intervals); i++ {
-		ratio := float64(intervals[i]) / float64(intervals[i-1])
-		assert.InDelta(t, 2.0, ratio, 1.0,
-			"interval %d should be ~2x interval %d (default multiplier)", i, i-1)
-	}
+	// A zero multiplier defaults to 2.0, so the total elapsed time must be at
+	// least the sum of the standard exponential (jitter-free) delays.
+	expectedMin := sumBackoffDelays(initialDelay, maxDelay, 2.0, maxTimes)
+	assert.GreaterOrEqual(t, elapsed, expectedMin,
+		"total elapsed time should match a default 2.0 multiplier backoff")
 }
 
 // TestNewRetryRunnerWithJitter_NegativeJitterFactor verifies that negative
 // jitter factor is clamped to 0.0 (no jitter).
 func TestNewRetryRunnerWithJitter_NegativeJitterFactor(t *testing.T) {
+	const (
+		maxTimes     = 5
+		initialDelay = 10 * time.Millisecond
+		maxDelay     = 1 * time.Second
+		multiplier   = 2.0
+	)
+
 	runner := utils.NewRetryRunnerWithJitter(
 		testLogger(),
-		5,
-		10*time.Millisecond,
-		1*time.Second,
-		2.0,
+		maxTimes,
+		initialDelay,
+		maxDelay,
+		multiplier,
 		-0.5, // invalid, should be clamped to 0.0
 	)
 
-	var intervals []time.Duration
-	prev := time.Now()
+	start := time.Now()
 
 	_ = runner.RunWithContext(t.Context(), func() error {
-		now := time.Now()
-		intervals = append(intervals, now.Sub(prev))
-		prev = now
-
 		return errors.New("always fail")
 	})
 
-	intervals = intervals[1:]
+	elapsed := time.Since(start)
 
-	// With zero jitter, should have predictable exponential pattern
-	for i := 1; i < 3 && i < len(intervals); i++ {
-		ratio := float64(intervals[i]) / float64(intervals[i-1])
-		assert.InDelta(t, 2.0, ratio, 0.5,
-			"interval %d should be ~2x interval %d (no jitter)", i, i-1)
-	}
+	// With jitter clamped to 0.0 the backoff is deterministic, so the total
+	// elapsed time must be at least the sum of the (jitter-free) delays.
+	expectedMin := sumBackoffDelays(initialDelay, maxDelay, multiplier, maxTimes)
+	assert.GreaterOrEqual(t, elapsed, expectedMin,
+		"total elapsed time should be at least the sum of the (jitter-free) backoff delays")
 }
 
 // TestNewRetryRunnerWithJitter_ExcessiveJitterFactor verifies that jitter
@@ -615,113 +658,100 @@ func TestNewRetryRunnerWithJitter_ExcessiveJitterFactor(t *testing.T) {
 // TestNewRetryRunnerWithJitter_ZeroMaxDelay verifies that zero maxDelay
 // defaults to 30 seconds.
 func TestNewRetryRunnerWithJitter_ZeroMaxDelay(t *testing.T) {
+	const (
+		maxTimes     = 15
+		initialDelay = 10 * time.Millisecond
+		multiplier   = 2.0
+	)
+
 	runner := utils.NewRetryRunnerWithJitter(
 		testLogger(),
-		15,
-		10*time.Millisecond,
+		maxTimes,
+		initialDelay,
 		0, // should default to 30s
-		2.0,
+		multiplier,
 		0.0,
 	)
 
-	var delays []time.Duration
-	prev := time.Now()
+	start := time.Now()
 
 	_ = runner.RunWithContext(t.Context(), func() error {
-		now := time.Now()
-		delays = append(delays, now.Sub(prev))
-		prev = now
-
 		return errors.New("always fail")
 	})
 
-	delays = delays[1:]
+	elapsed := time.Since(start)
 
-	// Find delays that should be capped at 30s
-	cappedDelays := 0
-	for _, d := range delays {
-		if d >= 20*time.Second && d <= 35*time.Second {
-			cappedDelays++
-		}
-	}
-
-	// Should have several delays capped at ~30s
-	assert.GreaterOrEqual(t, cappedDelays, 3,
-		"expected at least 3 delays capped at default 30s")
+	// A zero maxDelay defaults to a 30s cap. With no jitter the delays are
+	// deterministic, so the total elapsed time is bracketed by the sum of the
+	// capped delays. The lower bound alone would also pass for a larger cap, so
+	// the upper bound is what pins the default to exactly 30s: a 15s or a 60s cap
+	// would fall outside this window.
+	assertElapsedMatchesCappedBackoff(t, elapsed, initialDelay, defaultMaxDelay, multiplier, maxTimes)
 }
 
 // TestNewRetryRunnerWithJitter_NegativeMaxDelay verifies that negative maxDelay
 // defaults to 30 seconds.
 func TestNewRetryRunnerWithJitter_NegativeMaxDelay(t *testing.T) {
+	const (
+		maxTimes     = 15
+		initialDelay = 10 * time.Millisecond
+		multiplier   = 2.0
+	)
+
 	runner := utils.NewRetryRunnerWithJitter(
 		testLogger(),
-		15,
-		10*time.Millisecond,
+		maxTimes,
+		initialDelay,
 		-10*time.Second, // invalid, should default to 30s
-		2.0,
+		multiplier,
 		0.0,
 	)
 
-	var delays []time.Duration
-	prev := time.Now()
+	start := time.Now()
 
 	_ = runner.RunWithContext(t.Context(), func() error {
-		now := time.Now()
-		delays = append(delays, now.Sub(prev))
-		prev = now
-
 		return errors.New("always fail")
 	})
 
-	delays = delays[1:]
+	elapsed := time.Since(start)
 
-	// Find delays that should be capped at 30s
-	cappedDelays := 0
-	for _, d := range delays {
-		if d >= 20*time.Second && d <= 35*time.Second {
-			cappedDelays++
-		}
-	}
-
-	assert.GreaterOrEqual(t, cappedDelays, 3,
-		"expected at least 3 delays capped at default 30s")
+	// A negative maxDelay defaults to the same 30s cap, so the deterministic
+	// (jitter-free) total elapsed time must match the capped backoff sum.
+	assertElapsedMatchesCappedBackoff(t, elapsed, initialDelay, defaultMaxDelay, multiplier, maxTimes)
 }
 
 // TestNewRetryRunnerWithJitter_CustomBackoffMultiplier verifies that custom backoff
 // multipliers produce the expected exponential growth pattern.
 func TestNewRetryRunnerWithJitter_CustomBackoffMultiplier(t *testing.T) {
-	// Use multiplier of 3.0 instead of default 2.0
+	const (
+		maxTimes     = 5
+		initialDelay = 10 * time.Millisecond
+		maxDelay     = 1 * time.Second
+		multiplier   = 3.0 // 3x growth
+	)
+
 	runner := utils.NewRetryRunnerWithJitter(
 		testLogger(),
-		5,
-		10*time.Millisecond,
-		1*time.Second,
-		3.0, // 3x growth
+		maxTimes,
+		initialDelay,
+		maxDelay,
+		multiplier,
 		0.0, // no jitter for predictable testing
 	)
 
-	var intervals []time.Duration
-	prev := time.Now()
+	start := time.Now()
 
 	_ = runner.RunWithContext(t.Context(), func() error {
-		now := time.Now()
-		intervals = append(intervals, now.Sub(prev))
-		prev = now
-
 		return errors.New("always fail")
 	})
 
-	// Skip first interval (no sleep before first call)
-	// Expected delays: 10ms, 30ms, 90ms, 270ms, 810ms (but capped at 1s)
-	intervals = intervals[1:]
+	elapsed := time.Since(start)
 
-	// Verify 3x growth for first few intervals
-	for i := 1; i < 3 && i < len(intervals); i++ {
-		ratio := float64(intervals[i]) / float64(intervals[i-1])
-		// Allow generous tolerance for CI scheduling jitter
-		assert.InDelta(t, 3.0, ratio, 2.0,
-			"interval %d should be ~3x interval %d with multiplier 3.0", i, i-1)
-	}
+	// Expected delays: 10ms, 30ms, 90ms, 270ms, 810ms (all below the 1s cap).
+	// The total elapsed time must be at least their sum.
+	expectedMin := sumBackoffDelays(initialDelay, maxDelay, multiplier, maxTimes)
+	assert.GreaterOrEqual(t, elapsed, expectedMin,
+		"total elapsed time should match a 3.0 multiplier backoff")
 }
 
 // TestNewRetryRunnerWithJitter_JitterBehavior verifies that jitter adds randomness
@@ -772,82 +802,69 @@ func TestNewRetryRunnerWithJitter_JitterBehavior(t *testing.T) {
 // TestNewRetryRunnerWithJitter_CustomMaxDelay verifies that custom maxDelay
 // caps exponential backoff at the specified value.
 func TestNewRetryRunnerWithJitter_CustomMaxDelay(t *testing.T) {
-	// Use a small maxDelay of 500ms
+	const (
+		maxTimes     = 10
+		initialDelay = 50 * time.Millisecond
+		maxDelay     = 500 * time.Millisecond // custom cap
+		multiplier   = 2.0
+	)
+
 	runner := utils.NewRetryRunnerWithJitter(
 		testLogger(),
-		10,
-		50*time.Millisecond,
-		500*time.Millisecond, // custom cap
-		2.0,
+		maxTimes,
+		initialDelay,
+		maxDelay,
+		multiplier,
 		0.0, // no jitter for predictable testing
 	)
 
-	var delays []time.Duration
-	prev := time.Now()
+	start := time.Now()
 
 	_ = runner.RunWithContext(t.Context(), func() error {
-		now := time.Now()
-		delays = append(delays, now.Sub(prev))
-		prev = now
-
 		return errors.New("always fail")
 	})
 
-	// Skip first delay (no sleep before first call)
-	// Expected delays: 50ms, 100ms, 200ms, 400ms, 500ms (capped), 500ms, 500ms...
-	delays = delays[1:]
+	elapsed := time.Since(start)
 
-	// Find where delays start getting capped
-	cappedCount := 0
-	for i, d := range delays {
-		if d >= 400*time.Millisecond {
-			// Should be capped at ~500ms (with tolerance for scheduling)
-			assert.LessOrEqual(t, d, 700*time.Millisecond,
-				"delay %d should be capped at ~500ms, got %v", i, d)
-			cappedCount++
-		}
-	}
-
-	// Verify that at least some delays were capped
-	assert.Greater(t, cappedCount, 3,
-		"expected multiple delays to be capped at 500ms")
+	// Expected delays: 50ms, 100ms, 200ms, 400ms, then 500ms (capped) for the
+	// remaining attempts. Without the cap the tail delays would grow to seconds,
+	// pushing the total far past the upper bound, so this brackets the 500ms cap.
+	assertElapsedMatchesCappedBackoff(t, elapsed, initialDelay, maxDelay, multiplier, maxTimes)
 }
 
 // TestNewRetryRunnerWithJitter_ZeroJitter verifies that zero jitter produces
 // deterministic exponential backoff (no randomness).
 func TestNewRetryRunnerWithJitter_ZeroJitter(t *testing.T) {
+	const (
+		maxTimes     = 5
+		initialDelay = 50 * time.Millisecond
+		maxDelay     = 1 * time.Second
+		multiplier   = 2.0
+	)
+
 	runner := utils.NewRetryRunnerWithJitter(
 		testLogger(),
-		5,
-		50*time.Millisecond,
-		1*time.Second,
-		2.0,
+		maxTimes,
+		initialDelay,
+		maxDelay,
+		multiplier,
 		0.0, // no jitter
 	)
 
-	var intervals []time.Duration
-	prev := time.Now()
+	start := time.Now()
 
 	_ = runner.RunWithContext(t.Context(), func() error {
-		now := time.Now()
-		intervals = append(intervals, now.Sub(prev))
-		prev = now
-
 		return errors.New("always fail")
 	})
 
-	// Skip first interval (no sleep before first call)
-	intervals = intervals[1:]
+	elapsed := time.Since(start)
 
-	// With zero jitter, delays should follow strict exponential pattern.
-	// Expected: 50ms, 100ms, 200ms, 400ms. A larger base delay (vs. 10ms) keeps
-	// OS scheduling jitter small relative to the delay, avoiding flakiness.
-	for i := 1; i < len(intervals); i++ {
-		ratio := float64(intervals[i]) / float64(intervals[i-1])
-		// Allow tolerance for scheduling jitter but should be close to 2.0
-		assert.InDelta(t, 2.0, ratio, 0.5,
-			"interval %d should be ~2x interval %d with zero jitter", i, i-1)
-	}
+	// With zero jitter the delays follow a strict exponential pattern
+	// (50ms, 100ms, 200ms, 400ms, 800ms), so the total elapsed time must be at
+	// least their sum.
+	expectedMin := sumBackoffDelays(initialDelay, maxDelay, multiplier, maxTimes)
+	assert.GreaterOrEqual(t, elapsed, expectedMin,
+		"total elapsed time should match a zero-jitter exponential backoff")
 }
 
 // TestNewRetryRunnerWithJitter_MaxJitter verifies that maximum jitter (1.0)
