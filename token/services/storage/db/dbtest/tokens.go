@@ -36,7 +36,7 @@ func TokensTest(t *testing.T, cfgProvider cfgProvider) {
 			tokenDB, ok := db.(TestTokenDB)
 			assert.True(xt, ok)
 			defer utils.IgnoreError(tokenDB.Close)
-			c.Fn(t, db.(TestTokenDB))
+			c.Fn(xt, db.(TestTokenDB))
 		})
 	}
 
@@ -50,12 +50,12 @@ func TokensTest(t *testing.T, cfgProvider cfgProvider) {
 			defer utils.IgnoreError(tokenDB.Close)
 			notifier, err := db.Notifier()
 			if err != nil && errors.Is(err, storage.ErrNotSupported) {
-				t.Logf("notifier not supported, skip test")
+				xt.Logf("notifier not supported, skip test")
 
 				return
 			}
 			require.NoError(xt, err)
-			c.Fn(t, db.(TestTokenDB), notifier)
+			c.Fn(xt, db.(TestTokenDB), notifier)
 		})
 	}
 }

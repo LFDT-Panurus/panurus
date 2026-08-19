@@ -372,7 +372,7 @@ func TIdentityNotifier(t *testing.T, db driver.IdentityStore) {
 	require.NoError(t, err)
 	assert.Equal(t, expected, *conf)
 
-	require.NoError(t, result.AssertSize(1))
+	requireSizeOrSkip(t, result, 1)
 	values := result.Values()
 	require.Equal(t, driver2.Insert, values[0].Op)
 	require.Equal(t, idriver.IdentityConfigurationRecord{

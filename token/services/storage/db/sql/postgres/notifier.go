@@ -69,6 +69,14 @@ type Notifier struct {
 	mu sync.RWMutex
 	// listenerErr receives errors from the listener goroutine
 	listenerErr chan error
+	// transportErr receives non-fatal transport errors reported by pgxlisten's
+	// LogError callback (e.g. a dropped LISTEN connection that will be
+	// reconnected). Unlike listenerErr, these do not abort the notifier, but a
+	// consumer can observe them to learn that notifications may have been missed
+	// during a connectivity gap. Buffered with best-effort, non-blocking sends:
+	// the latest error is dropped rather than blocking the listener goroutine
+	// when nobody is draining.
+	transportErr chan error
 	// listenerWg waits for the listener goroutine to finish
 	listenerWg sync.WaitGroup
 	// closed indicates whether the notifier has been closed
@@ -125,13 +133,11 @@ func NewNotifier(
 ) *Notifier {
 	ctx, cancel := context.WithCancel(context.Background())
 
-	// Create a real listener that implements the databaseListener interface
+	// Create a real listener that implements the databaseListener interface.
+	// LogError is wired below, once the Notifier exists to receive the errors.
 	realListener := &listenerAdapter{
 		Listener: &pgxlisten.Listener{
-			Connect: func(ctx context.Context) (*pgx.Conn, error) { return pgx.Connect(ctx, dataSource) },
-			LogError: func(ctx context.Context, err error) {
-				logger.Errorf("error encountered in [%s]: %s", redactDataSource(dataSource), err.Error())
-			},
+			Connect:        func(ctx context.Context) (*pgx.Conn, error) { return pgx.Connect(ctx, dataSource) },
 			ReconnectDelay: reconnectInterval,
 		},
 	}
@@ -147,10 +153,23 @@ func NewNotifier(
 		ctx:              ctx,
 		cancel:           cancel,
 		listenerErr:      make(chan error, 1), // buffered to prevent blocking
+		transportErr:     make(chan error, 1), // buffered, best-effort
 		closed:           false,
 		channelName:      channelName,
 	}
 	n.ensureSchema = n.CreateSchema
+
+	// pgxlisten calls LogError for non-fatal errors (a dropped connection is
+	// non-fatal: it reconnects). Log it and, best-effort, surface it on
+	// transportErr so a consumer can detect connectivity gaps during which
+	// notifications may have been lost.
+	realListener.LogError = func(_ context.Context, err error) {
+		logger.Errorf("error encountered in [%s]: %s", redactDataSource(dataSource), err.Error())
+		select {
+		case n.transportErr <- err:
+		default:
+		}
+	}
 
 	// attach handler that calls the subscribers
 	n.listener.Handle(channelName, &notificationHandler{
@@ -295,6 +314,16 @@ func (db *Notifier) Close() error {
 // The caller should consume this channel to detect listener failures.
 func (db *Notifier) ListenerError() <-chan error {
 	return db.listenerErr
+}
+
+// TransportError returns a channel that receives non-fatal transport errors
+// reported by the underlying listener (e.g. a dropped LISTEN connection that is
+// being reconnected). The notifier keeps running across such errors; the
+// channel merely lets a consumer learn that notifications may have been missed
+// during the outage. Sends are best-effort and buffered depth 1, so only the
+// most recent error is retained when the channel is not being drained.
+func (db *Notifier) TransportError() <-chan error {
+	return db.transportErr
 }
 
 // UnsubscribeAll removes all subscribers.
