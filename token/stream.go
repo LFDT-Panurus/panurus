@@ -232,7 +232,10 @@ func (o *OutputStream) String() string {
 
 // Input models an input of a token action
 type Input struct {
-	ActionIndex       int
+	ActionIndex int
+	// Index is the position of this input within its action; it takes part in
+	// deduplication only on inputs built through NewInput
+	Index             int
 	Id                *token.ID
 	Owner             Identity
 	OwnerAuditInfo    []byte
@@ -240,6 +243,19 @@ type Input struct {
 	RevocationHandler string
 	Type              token.Type
 	Quantity          token.Quantity
+
+	// positionKnown records that (ActionIndex, Index) was set deliberately —
+	// NewInput stamps it — so UniquePerInput never collapses literal-built
+	// inputs on their zero-valued position
+	positionKnown bool
+}
+
+// NewInput returns an Input positioned within its action. The position stands
+// in for the token ID during deduplication when the metadata has the token ID
+// filtered out (see UniquePerInput), so inputs are built through here; an
+// input built as a literal keeps no position and never collapses on it.
+func NewInput(actionIndex, index int, id *token.ID) *Input {
+	return &Input{ActionIndex: actionIndex, Index: index, Id: id, positionKnown: true}
 }
 
 // InputStream models a stream over a set of inputs (Input).
@@ -391,26 +407,46 @@ func (is *InputStream) ByType(tokenType token.Type) *InputStream {
 	})
 }
 
-// UniquePerInput returns a stream keeping, for each (token ID, EnrollmentID)
-// pair, only the first input, so amount aggregation counts a composite
-// owner's members once. Inputs with no token ID are all kept. Identity
-// consumers use the full stream instead.
+// UniquePerInput returns a stream keeping, for each spent token and
+// EnrollmentID, only the first input, so amount aggregation counts a
+// composite owner's members once. The token is identified by its token ID,
+// or by (ActionIndex, Index) when the token ID has been filtered out of the
+// metadata; the two key spaces never mix, since only transfer inputs lose
+// their token ID. The position counts only for inputs built through NewInput:
+// a literal-built input without a token ID is kept as it stands, never
+// collapsed on a position nobody set. Identity consumers use the full stream
+// instead.
 func (is *InputStream) UniquePerInput() *InputStream {
-	type key struct {
+	type idKey struct {
 		id  token.ID
 		eID string
 	}
-	seen := map[key]bool{}
+	type posKey struct {
+		actionIndex int
+		index       int
+		eID         string
+	}
+	seenByID := map[idKey]bool{}
+	seenByPos := map[posKey]bool{}
 
 	return is.Filter(func(t *Input) bool {
-		if t.Id == nil {
+		if t.Id != nil {
+			k := idKey{id: *t.Id, eID: t.EnrollmentID}
+			if seenByID[k] {
+				return false
+			}
+			seenByID[k] = true
+
 			return true
 		}
-		k := key{id: *t.Id, eID: t.EnrollmentID}
-		if seen[k] {
+		if !t.positionKnown {
+			return true
+		}
+		k := posKey{actionIndex: t.ActionIndex, index: t.Index, eID: t.EnrollmentID}
+		if seenByPos[k] {
 			return false
 		}
-		seen[k] = true
+		seenByPos[k] = true
 
 		return true
 	})

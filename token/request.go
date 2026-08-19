@@ -907,11 +907,8 @@ func (r *Request) inputs(ctx context.Context, failOnMissing bool) (*InputStream,
 
 func (r *Request) extractIssueInputs(actionIndex int, metadata *IssueMetadata) ([]*Input, error) {
 	var inputs []*Input
-	for _, input := range metadata.Inputs {
-		inputs = append(inputs, &Input{
-			ActionIndex: actionIndex,
-			Id:          input.TokenID,
-		})
+	for j, input := range metadata.Inputs {
+		inputs = append(inputs, NewInput(actionIndex, j, input.TokenID))
 	}
 
 	return inputs, nil
@@ -938,14 +935,12 @@ func (r *Request) extractTransferInputs(ctx context.Context, actionIndex int, me
 				return nil, errors.Wrapf(err, "failed getting enrollment id and revocation handle [%d,%d]", actionIndex, j)
 			}
 
-			inputs = append(inputs, &Input{
-				ActionIndex:       actionIndex,
-				Id:                metadata.TokenIDAt(j),
-				Owner:             sender.Identity,
-				OwnerAuditInfo:    sender.AuditInfo,
-				EnrollmentID:      eID,
-				RevocationHandler: rID,
-			})
+			in := NewInput(actionIndex, j, metadata.TokenIDAt(j))
+			in.Owner = sender.Identity
+			in.OwnerAuditInfo = sender.AuditInfo
+			in.EnrollmentID = eID
+			in.RevocationHandler = rID
+			inputs = append(inputs, in)
 		}
 	}
 
