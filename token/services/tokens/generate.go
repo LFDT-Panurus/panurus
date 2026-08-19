@@ -10,7 +10,6 @@ package tokens
 //go:generate counterfeiter -o mock/tms_provider.go . TMSProvider
 //go:generate counterfeiter -o mock/network_provider.go . NetworkProvider
 //go:generate counterfeiter -o mock/metadata.go . MetaData
-//go:generate counterfeiter -o mock/transaction.go . Transaction
 //go:generate counterfeiter -o mock/cache.go . Cache
 
 // External and shared interfaces
