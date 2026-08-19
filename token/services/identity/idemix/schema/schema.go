@@ -7,10 +7,9 @@ SPDX-License-Identifier: Apache-2.0
 package schema
 
 import (
-	"fmt"
-
 	bccsp "github.com/IBM/idemix/bccsp/types"
 	"github.com/IBM/idemix/msp"
+	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 )
 
 // How to create counterfeiters in case the corresponding code changes
@@ -96,7 +95,7 @@ func (*DefaultManager) NymSignerOpts(schema string) (*bccsp.IdemixNymSignerOpts,
 		}, nil
 	}
 
-	return nil, fmt.Errorf("unsupported schema '%s' for NymSignerOpts", schema)
+	return nil, errors.Errorf("unsupported schema '%s' for NymSignerOpts", schema)
 }
 
 // Returns the options for importing issuer public keys (with the attribute names)
@@ -119,7 +118,7 @@ func (*DefaultManager) PublicKeyImportOpts(schema string) (*bccsp.IdemixIssuerPu
 		}, nil
 	}
 
-	return nil, fmt.Errorf("unsupported schema '%s' for PublicKeyImportOpts", schema)
+	return nil, errors.Errorf("unsupported schema '%s' for PublicKeyImportOpts", schema)
 }
 
 // Returns the options for creating signatures/proofs (specifying which attributes are hidden)
@@ -164,7 +163,7 @@ func (*DefaultManager) SignerOpts(schema string) (*bccsp.IdemixSignerOpts, error
 		}, nil
 	}
 
-	return nil, fmt.Errorf("unsupported schema '%s' for NymSignerOpts", schema)
+	return nil, errors.Errorf("unsupported schema '%s' for SignerOpts", schema)
 }
 
 // Returns the options for auditing revocation handle pseudonyms
@@ -184,7 +183,7 @@ func (*DefaultManager) RhNymAuditOpts(schema string, attrs [][]byte) (*bccsp.RhN
 		}, nil
 	}
 
-	return nil, fmt.Errorf("unsupported schema '%s' for NymSignerOpts", schema)
+	return nil, errors.Errorf("unsupported schema '%s' for RhNymAuditOpts", schema)
 }
 
 // Returns options for auditing enrollment ID pseudonyms
@@ -204,5 +203,5 @@ func (*DefaultManager) EidNymAuditOpts(schema string, attrs [][]byte) (*bccsp.Ei
 		}, nil
 	}
 
-	return nil, fmt.Errorf("unsupported schema '%s' for NymSignerOpts", schema)
+	return nil, errors.Errorf("unsupported schema '%s' for EidNymAuditOpts", schema)
 }
