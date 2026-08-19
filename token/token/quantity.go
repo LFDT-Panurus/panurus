@@ -205,20 +205,15 @@ func (q *BigQuantity) Cmp(b Quantity) int {
 	case *BigQuantity:
 		return q.Int.Cmp(b.Int)
 	case *UInt64Quantity:
-		// Optimize: check bit length first to avoid allocation in obvious cases
-		qBits := q.BitLen()
-		if qBits > 64 {
-			return 1 // q is definitely larger
+		// Fast path: a value needing more than 64 bits cannot fit in a uint64,
+		// so q is strictly larger (quantities are always non-negative, see
+		// validateBigIntForQuantity). This also avoids allocating a big.Int for
+		// b. Values of 64 bits or fewer fall through to an exact comparison.
+		if q.BitLen() > 64 {
+			return 1
 		}
-		if qBits < 64 && b.Value > 0 {
-			// q might be smaller, need to compare
-			if q.Sign() == 0 && b.Value > 0 {
-				return -1
-			}
-		}
-		bBig := big.NewInt(0).SetUint64(b.Value)
 
-		return q.Int.Cmp(bBig)
+		return q.Int.Cmp(big.NewInt(0).SetUint64(b.Value))
 	default:
 		panic(fmt.Sprintf("expected BigQuantity or UInt64Quantity, got [%T]", b))
 	}
@@ -290,20 +285,15 @@ func (q *UInt64Quantity) Cmp(b Quantity) int {
 
 		return 0
 	case *BigQuantity:
-		// Optimize: check bit length first to avoid allocation in obvious cases
-		bBits := b.BitLen()
-		if bBits > 64 {
-			return -1 // b is definitely larger
+		// Fast path: a value needing more than 64 bits cannot fit in a uint64,
+		// so b is strictly larger (quantities are always non-negative, see
+		// validateBigIntForQuantity). This also avoids allocating a big.Int for
+		// q. Values of 64 bits or fewer fall through to an exact comparison.
+		if b.BitLen() > 64 {
+			return -1
 		}
-		if bBits < 64 && q.Value > 0 {
-			// b might be smaller
-			if b.Sign() == 0 && q.Value > 0 {
-				return 1
-			}
-		}
-		qBig := big.NewInt(0).SetUint64(q.Value)
 
-		return qBig.Cmp(b.Int)
+		return big.NewInt(0).SetUint64(q.Value).Cmp(b.Int)
 	default:
 		panic(fmt.Sprintf("expected UInt64Quantity or BigQuantity, got [%T]", b))
 	}
