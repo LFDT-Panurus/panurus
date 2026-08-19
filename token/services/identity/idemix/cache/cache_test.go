@@ -239,16 +239,20 @@ func TestIdentityCache_Close(t *testing.T) {
 	// Close the cache
 	c.Close()
 
-	// Capture the count after close
-	countAfterClose := callCount.Load()
+	// Close must stop the background provisioning goroutine. Assert on the goroutine
+	// actually exiting rather than on a fixed bound of extra iterations: the fast
+	// provisioning loop (1ms timeout) may complete an arbitrary number of in-flight
+	// iterations before observing the stop signal on a loaded/slow runner (notably
+	// under -race), so any fixed margin is inherently timing-dependent and flaky.
+	assert.Eventually(t, func() bool {
+		return provisioningGoroutines() == 0
+	}, time.Second, 10*time.Millisecond)
 
-	// Wait a bit to ensure no more calls are made
-	time.Sleep(100 * time.Millisecond)
-
-	// Count should not have increased significantly after close.
-	// Allow a small margin because the fast provisioning loop (1ms timeout)
-	// may complete a few in-flight iterations before observing the stop signal.
-	assert.LessOrEqual(t, callCount.Load(), countAfterClose+3)
+	// Once the goroutine has exited, the call count must be stable: no further calls
+	// happen after provisioning has stopped.
+	countAfterStop := callCount.Load()
+	time.Sleep(50 * time.Millisecond)
+	assert.Equal(t, countAfterStop, callCount.Load())
 }
 
 // provisionGoroutineName is the symbol appearing in the stack trace of the background
