@@ -12,6 +12,7 @@ import (
 
 	"github.com/LFDT-Panurus/panurus/token"
 	"github.com/LFDT-Panurus/panurus/token/driver"
+	"github.com/LFDT-Panurus/panurus/token/services/storage/tokendb"
 	"github.com/LFDT-Panurus/panurus/token/services/tokens"
 	"github.com/LFDT-Panurus/panurus/token/services/tokens/mock"
 	token2 "github.com/LFDT-Panurus/panurus/token/token"
@@ -155,6 +156,128 @@ func TestParse(t *testing.T) {
 	assert.Equal(t, "tx2", store[1].TxID)
 	assert.Equal(t, output2.Index, store[1].Index)
 	assert.Equal(t, output2.Type, store[1].Tok.Type)
+}
+
+// TestAppendValid_SkipsWhenNoRequestOrMetadata verifies that AppendValid is a no-op
+// (returns nil without touching storage or the cache) when there is nothing to apply:
+// either the request itself or its metadata is absent.
+func TestAppendValid_SkipsWhenNoRequestOrMetadata(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("nil request", func(t *testing.T) {
+		cache := &mock.FakeCache{}
+		ts := &tokens.Service{Storage: &tokens.DBStorage{}, RequestsCache: cache}
+
+		require.NoError(t, ts.AppendValid(ctx, nil, "tx1", nil))
+		// getActions was never reached, so the cache was neither consulted nor invalidated.
+		assert.Equal(t, 0, cache.GetCallCount())
+		assert.Equal(t, 0, cache.DeleteCallCount())
+	})
+
+	t.Run("nil metadata", func(t *testing.T) {
+		cache := &mock.FakeCache{}
+		ts := &tokens.Service{Storage: &tokens.DBStorage{}, RequestsCache: cache}
+
+		req := &token.Request{Anchor: "tx1", Metadata: nil}
+		require.NoError(t, ts.AppendValid(ctx, nil, "tx1", req))
+		assert.Equal(t, 0, cache.GetCallCount())
+		assert.Equal(t, 0, cache.DeleteCallCount())
+	})
+}
+
+// TestAppendValid_SkipsWhenTransactionExists verifies that a transaction already recorded
+// in local storage is not processed a second time: AppendValid returns without extracting
+// actions from the request or invalidating its cache entry.
+func TestAppendValid_SkipsWhenTransactionExists(t *testing.T) {
+	ctx := context.Background()
+
+	mockDB := &mock.FakeTokenStore{}
+	mockDB.TransactionExistsReturns(true, nil)
+	cache := &mock.FakeCache{}
+	storage := &tokens.DBStorage{TokenDB: &tokendb.StoreService{TokenStore: mockDB}}
+	ts := &tokens.Service{Storage: storage, RequestsCache: cache}
+
+	req := &token.Request{Anchor: "tx1", Metadata: &driver.TokenRequestMetadata{}}
+	require.NoError(t, ts.AppendValid(ctx, nil, "tx1", req))
+
+	assert.Equal(t, 1, mockDB.TransactionExistsCallCount())
+	// getActions must not run for an already-known transaction.
+	assert.Equal(t, 0, cache.GetCallCount())
+	assert.Equal(t, 0, cache.DeleteCallCount())
+}
+
+// TestAppendValid_TransactionExistsError verifies that a storage failure while checking
+// for an existing transaction is propagated to the caller rather than swallowed.
+func TestAppendValid_TransactionExistsError(t *testing.T) {
+	ctx := context.Background()
+
+	mockDB := &mock.FakeTokenStore{}
+	mockDB.TransactionExistsReturns(false, assert.AnError)
+	storage := &tokens.DBStorage{TokenDB: &tokendb.StoreService{TokenStore: mockDB}}
+	ts := &tokens.Service{Storage: storage, RequestsCache: &mock.FakeCache{}}
+
+	req := &token.Request{Anchor: "tx1", Metadata: &driver.TokenRequestMetadata{}}
+	err := ts.AppendValid(ctx, nil, "tx1", req)
+	assert.ErrorIs(t, err, assert.AnError)
+}
+
+// TestGetCachedTokenRequest verifies that a cached request is returned together with its
+// serialized message on a hit, and that a miss yields two nil values.
+func TestGetCachedTokenRequest(t *testing.T) {
+	cache := &mock.FakeCache{}
+	ts := &tokens.Service{RequestsCache: cache}
+
+	// miss: nothing cached under this key
+	cache.GetReturns(nil, false)
+	req, msg := ts.GetCachedTokenRequest("missing")
+	assert.Nil(t, req)
+	assert.Nil(t, msg)
+
+	// hit: the stored request and its message-to-sign are returned
+	want := &token.Request{Anchor: "tx1"}
+	cache.GetReturns(&tokens.CacheEntry{Request: want, MsgToSign: []byte("sig")}, true)
+	req, msg = ts.GetCachedTokenRequest("tx1")
+	assert.Same(t, want, req)
+	assert.Equal(t, []byte("sig"), msg)
+}
+
+// TestSetSpendableFlag verifies that SetSpendableFlag commits the transaction on success and
+// rolls it back (propagating the error) when the underlying store rejects the update.
+func TestSetSpendableFlag(t *testing.T) {
+	ctx := context.Background()
+	tmsID := token.TMSID{Network: "net", Channel: "ch", Namespace: "ns"}
+
+	t.Run("commits when the store succeeds", func(t *testing.T) {
+		mockTx := &mock.FakeTokenStoreTransaction{}
+		mockDB := &mock.FakeTokenStore{}
+		mockDB.NewTokenDBTransactionReturns(mockTx, nil)
+		storage := &tokens.DBStorage{TokenDB: &tokendb.StoreService{TokenStore: mockDB}, TMSID: tmsID}
+		ts := &tokens.Service{Storage: storage}
+
+		id := &token2.ID{TxId: "tx1", Index: 0}
+		require.NoError(t, ts.SetSpendableFlag(ctx, true, id))
+
+		require.Equal(t, 1, mockTx.SetSpendableCallCount())
+		assert.Equal(t, 1, mockTx.CommitCallCount())
+		assert.Equal(t, 0, mockTx.RollbackCallCount())
+		_, gotID, gotVal := mockTx.SetSpendableArgsForCall(0)
+		assert.Equal(t, *id, gotID)
+		assert.True(t, gotVal)
+	})
+
+	t.Run("rolls back when the store fails", func(t *testing.T) {
+		mockTx := &mock.FakeTokenStoreTransaction{}
+		mockTx.SetSpendableReturns(assert.AnError)
+		mockDB := &mock.FakeTokenStore{}
+		mockDB.NewTokenDBTransactionReturns(mockTx, nil)
+		storage := &tokens.DBStorage{TokenDB: &tokendb.StoreService{TokenStore: mockDB}, TMSID: tmsID}
+		ts := &tokens.Service{Storage: storage}
+
+		err := ts.SetSpendableFlag(ctx, true, &token2.ID{TxId: "tx1", Index: 0})
+		require.Error(t, err)
+		assert.Equal(t, 1, mockTx.RollbackCallCount())
+		assert.Equal(t, 0, mockTx.CommitCallCount())
+	})
 }
 
 // TestParseRedeem verifies that a redeem output (empty owner) is stored as a redeemed token
