@@ -8,7 +8,7 @@ require (
 	github.com/IBM/mathlib v0.3.0
 	github.com/LFDT-Panurus/panurus v0.0.0-00010101000000-000000000000
 	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.4.1
-	github.com/hyperledger-labs/fabric-smart-client v0.16.0
+	github.com/hyperledger-labs/fabric-smart-client v0.17.0
 	github.com/stretchr/testify v1.11.1
 	go.opentelemetry.io/otel/trace v1.44.0
 	golang.org/x/crypto v0.54.0
