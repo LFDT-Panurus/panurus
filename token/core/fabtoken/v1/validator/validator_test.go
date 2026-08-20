@@ -549,6 +549,92 @@ func TestTransferSignatureValidate(t *testing.T) {
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "failed signature verification")
 	})
+	t.Run("NilInputEntry_NoPanic", func(t *testing.T) {
+		ta := &actions.TransferAction{
+			Inputs: []*actions.TransferActionInput{nil},
+		}
+		c := &validator.Context{
+			TransferAction: ta,
+			Deserializer:   &mock.Deserializer{},
+			Logger:         logger,
+			PP:             pp,
+		}
+		err := validator.TransferSignatureValidate(ctx, c)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "invalid input at index [0]: nil input or nil token")
+	})
+
+	t.Run("NilInputTokenInEntry_NoPanic", func(t *testing.T) {
+		// the nil token sits at index 1, so the guard must hold for every input, not just the first
+		ta := &actions.TransferAction{
+			Inputs: []*actions.TransferActionInput{
+				{Input: &actions.Output{Owner: []byte("owner1")}},
+				{ID: &token.ID{TxId: "tx1", Index: 0}, Input: nil},
+			},
+		}
+		deserializer := &mock.Deserializer{}
+		deserializer.GetOwnerVerifierReturns(&mock.Verifier{}, nil)
+		sigProvider := &mock.SignatureProvider{}
+		sigProvider.HasBeenSignedByReturns([]byte("sig"), nil)
+		c := &validator.Context{
+			TransferAction:    ta,
+			Deserializer:      deserializer,
+			SignatureProvider: sigProvider,
+			Logger:            logger,
+			PP:                pp,
+		}
+		err := validator.TransferSignatureValidate(ctx, c)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "invalid input at index [1]: nil input or nil token")
+	})
+
+	t.Run("NilOutput_NoPanic", func(t *testing.T) {
+		// the redeem-detection scan reads output.Owner, so a nil output entry must be rejected
+		deserializer := &mock.Deserializer{}
+		deserializer.GetOwnerVerifierReturns(&mock.Verifier{}, nil)
+		sigProvider := &mock.SignatureProvider{}
+		sigProvider.HasBeenSignedByReturns([]byte("sig"), nil)
+		ta := &actions.TransferAction{
+			Inputs: []*actions.TransferActionInput{
+				{Input: &actions.Output{Owner: []byte("owner1")}},
+			},
+			Outputs: []*actions.Output{{Owner: []byte("owner2")}, nil},
+		}
+		c := &validator.Context{
+			TransferAction:    ta,
+			Deserializer:      deserializer,
+			SignatureProvider: sigProvider,
+			Logger:            logger,
+			PP:                pp,
+		}
+		err := validator.TransferSignatureValidate(ctx, c)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "invalid output at index [1]")
+	})
+	t.Run("EmptyButNonNilOwnerIsRedeem", func(t *testing.T) {
+		// Output.IsRedeem() tests len(Owner) == 0, so an empty but non-nil owner is a redeem
+		// everywhere else in the code; the redeem scan must agree and demand the issuer signature
+		deserializer := &mock.Deserializer{}
+		deserializer.GetOwnerVerifierReturns(&mock.Verifier{}, nil)
+		sigProvider := &mock.SignatureProvider{}
+		sigProvider.HasBeenSignedByReturns([]byte("sig"), nil)
+		ta := &actions.TransferAction{
+			Inputs: []*actions.TransferActionInput{
+				{Input: &actions.Output{Owner: []byte("owner1")}},
+			},
+			Outputs: []*actions.Output{{Owner: []byte{}}},
+		}
+		c := &validator.Context{
+			TransferAction:    ta,
+			Deserializer:      deserializer,
+			SignatureProvider: sigProvider,
+			Logger:            logger,
+			PP:                pp,
+		}
+		err := validator.TransferSignatureValidate(ctx, c)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "must have at least one issuer")
+	})
 }
 
 func TestTransferBalanceValidate(t *testing.T) {

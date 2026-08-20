@@ -1,0 +1,3 @@
+go test fuzz v1
+byte('\x06')
+[]byte("\b\x01\x12\x040000")

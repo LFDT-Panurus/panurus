@@ -78,6 +78,9 @@ jobs:
           - name: fabtoken-transfer-htlc-validate
             pkg: ./token/core/fabtoken/v1/validator
             func: FuzzTransferHTLCValidateNoPanic
+          - name: fabtoken-transfer-validation-steps
+            pkg: ./token/core/fabtoken/v1/validator
+            func: FuzzTransferValidationStepsNoPanic
           - name: zkatdlog-issue-bulletproof-verifier
             pkg: ./token/core/zkatdlog/nogh/v1/issue
             func: FuzzBulletProofVerifierNoPanic
