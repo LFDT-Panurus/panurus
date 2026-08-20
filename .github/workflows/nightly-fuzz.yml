@@ -123,6 +123,9 @@ jobs:
           - name: driver-config-key-field-round-trip
             pkg: ./token/driver
             func: FuzzConfigKeyFieldRoundTrip
+          - name: tcc-query-tokens
+            pkg: ./token/services/network/fabric/tcc
+            func: FuzzQueryTokensNoPanic
 
     steps:
       - name: Checkout code
