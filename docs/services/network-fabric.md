@@ -168,7 +168,9 @@ The set of endorsers to contact is selected by `fsc_endorsement.policy.type`:
   discovery (`Channel.Chaincode(namespace).Discover()`) and contact a random subset of
   the configured endorsers that satisfies it. Discovery already returns the required
   MSPs; if none of the configured endorsers can cover them, endorsement fails with an
-  error rather than falling back to a weaker policy. See
+  error rather than falling back to a weaker policy. Where the policy requires more than
+  one signer from the same MSP, each of those signer slots is filled with a *distinct*
+  configured endorser, never the same endorser twice. See
   [FabricX FSC Endorsement Service](network-fabricx.md#fsc-endorsement-service) for
   the equivalent (query-service-based) mechanism on FabricX.
 

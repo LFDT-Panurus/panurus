@@ -201,8 +201,10 @@ token:
               #   - `all`: contact all the endorsers listed below.
               #   - `namespace`: fetch the real endorsement policy of the token namespace and contact a
               #     random subset of the endorsers below that satisfies it. On Fabric, the policy is
-              #     obtained via service discovery; on FabricX, via the query service. Endorsement fails
-              #     if the endorsers below cannot satisfy the namespace's policy.
+              #     obtained via service discovery; on FabricX, via the query service. A policy requiring
+              #     several signers from the same MSP is satisfied with that many *distinct* endorsers of
+              #     that MSP, never the same endorser twice. Endorsement fails if the endorsers below
+              #     cannot satisfy the namespace's policy.
               policy:
                 type: 1outn
               # A list of FSC node identifiers that must be contacted to obtain the endorsement.
