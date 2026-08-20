@@ -123,6 +123,84 @@ func TestSelectEndorsersForMSPSets(t *testing.T) {
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "failed to resolve MSP")
 	})
+
+	t.Run("same MSP required twice is filled with two distinct endorsers", func(t *testing.T) {
+		configured := []view.Identity{org1Endorser1, org1Endorser2}
+		candidates := [][]string{{"Org1MSP", "Org1MSP"}}
+
+		// Selection is randomized, so a single run proves little; a duplicate must never be
+		// observed, however many times the selection is repeated.
+		firstSlot := make(map[string]bool)
+		secondSlot := make(map[string]bool)
+		for range 200 {
+			selected, err := fsc.SelectEndorsersForMSPSets(configured, mspOf, candidates)
+			require.NoError(t, err)
+			require.Len(t, selected, 2)
+			require.False(t, selected[0].Equal(selected[1]), "the same endorser [%s] filled both required Org1MSP slots", selected[0])
+			firstSlot[selected[0].String()] = true
+			secondSlot[selected[1].String()] = true
+		}
+		// Both endorsers must be reachable in both slots: no fixed-order bias.
+		assert.Len(t, firstSlot, 2)
+		assert.Len(t, secondSlot, 2)
+	})
+
+	t.Run("same MSP required twice with a single endorser is unsatisfiable", func(t *testing.T) {
+		configured := []view.Identity{org1Endorser1}
+
+		_, err := fsc.SelectEndorsersForMSPSets(configured, mspOf, [][]string{{"Org1MSP", "Org1MSP"}})
+
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "no configured endorser covers")
+		// Error must name the short MSP and its required-vs-available counts.
+		assert.Contains(t, err.Error(), "Org1MSP")
+		assert.Contains(t, err.Error(), "requires 2")
+		assert.Contains(t, err.Error(), "only 1 configured")
+	})
+
+	t.Run("candidate not coverable by distinct endorsers falls through to the next one", func(t *testing.T) {
+		configured := []view.Identity{org1Endorser1, org2Endorser1}
+		candidates := [][]string{{"Org1MSP", "Org1MSP"}, {"Org2MSP"}}
+
+		// Candidate order is randomized, so repeat to cover the case where the
+		// non-coverable set is drawn first.
+		for range 20 {
+			selected, err := fsc.SelectEndorsersForMSPSets(configured, mspOf, candidates)
+			require.NoError(t, err)
+			require.Len(t, selected, 1)
+			assert.Equal(t, org2Endorser1.String(), selected[0].String())
+		}
+	})
+
+	t.Run("duplicate configured entries count as a single endorser", func(t *testing.T) {
+		configured := []view.Identity{org1Endorser1, org1Endorser1}
+
+		selected, err := fsc.SelectEndorsersForMSPSets(configured, mspOf, [][]string{{"Org1MSP"}})
+		require.NoError(t, err)
+		require.Len(t, selected, 1)
+		assert.Equal(t, org1Endorser1.String(), selected[0].String())
+
+		_, err = fsc.SelectEndorsersForMSPSets(configured, mspOf, [][]string{{"Org1MSP", "Org1MSP"}})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "no configured endorser covers")
+	})
+
+	t.Run("mixed candidate with a repeated and a single MSP", func(t *testing.T) {
+		configured := []view.Identity{org1Endorser1, org1Endorser2, org2Endorser1}
+		candidates := [][]string{{"Org1MSP", "Org1MSP", "Org2MSP"}}
+
+		for range 20 {
+			selected, err := fsc.SelectEndorsersForMSPSets(configured, mspOf, candidates)
+			require.NoError(t, err)
+			require.Len(t, selected, 3)
+			assert.ElementsMatch(t, []string{"Org1MSP", "Org1MSP", "Org2MSP"}, mspIDsOf(t, mspOf, selected))
+			assert.ElementsMatch(
+				t,
+				[]string{org1Endorser1.String(), org1Endorser2.String(), org2Endorser1.String()},
+				[]string{selected[0].String(), selected[1].String(), selected[2].String()},
+			)
+		}
+	})
 }
 
 func mspIDsOf(t *testing.T, mspOf func(view.Identity) (string, error), ids []view.Identity) []string {

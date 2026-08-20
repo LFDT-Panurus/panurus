@@ -19,14 +19,27 @@ import (
 // that set, one random configured endorser belonging to it. mspOf resolves a configured
 // identity to the MSP ID it belongs to.
 //
-// It returns an error if none of the candidate sets can be fully covered by the
-// configured endorsers.
+// A candidate set may list the same MSP ID more than once: a policy such as
+// AND(Org1MSP.member, Org1MSP.member) requires that many *distinct* signers from that MSP,
+// which is exactly the property protecting against a single misbehaving endorser within the
+// organization. Every returned identity is therefore distinct by identity bytes: a slot is
+// never filled with an identity already selected for an earlier slot of the same set, and
+// duplicate entries in configured collapse to a single candidate endorser. The result always
+// has exactly as many elements as the chosen candidate set.
+//
+// A candidate set requiring more distinct signers from an MSP than there are distinct
+// configured endorsers in it cannot be satisfied and is skipped, like one naming an MSP with
+// no configured endorser at all.
+//
+// It returns an error if none of the candidate sets can be fully covered by distinct
+// configured endorsers. The error names the first MSP that blocked each candidate set.
 func SelectEndorsersForMSPSets(configured []view.Identity, mspOf func(view.Identity) (string, error), candidates [][]string) ([]view.Identity, error) {
 	if len(candidates) == 0 {
 		return nil, errors.Errorf("no candidate MSP set to satisfy the namespace endorsement policy")
 	}
 	var skipped []error
 	byMSP := make(map[string][]view.Identity)
+	seen := make(map[string]struct{}, len(configured))
 	for _, id := range configured {
 		mspID, err := mspOf(id)
 		if err != nil {
@@ -35,29 +48,68 @@ func SelectEndorsersForMSPSets(configured []view.Identity, mspOf func(view.Ident
 
 			continue
 		}
+		if _, ok := seen[string(id)]; ok {
+			// configured may legitimately list the same endorser twice; it still provides a
+			// single endorsement, so bucket it once.
+			continue
+		}
+		seen[string(id)] = struct{}{}
 
 		byMSP[mspID] = append(byMSP[mspID], id)
 	}
 
+	var setFailures []error
 	for _, idx := range rand.Perm(len(candidates)) {
-		requiredMSPIDs := candidates[idx]
-		selected := make([]view.Identity, 0, len(requiredMSPIDs))
-		satisfied := true
-		for _, mspID := range requiredMSPIDs {
-			pool := byMSP[mspID]
-			if len(pool) == 0 {
-				satisfied = false
-
-				break
-			}
-			selected = append(selected, pool[rand.Intn(len(pool))])
-		}
-		if satisfied {
+		selected, failedMSP, ok := selectDistinctForMSPSet(byMSP, candidates[idx])
+		if ok {
 			return selected, nil
 		}
+		required := 0
+		for _, id := range candidates[idx] {
+			if id == failedMSP {
+				required++
+			}
+		}
+		available := len(byMSP[failedMSP])
+		setFailures = append(setFailures, errors.Errorf("MSP [%s] requires %d distinct endorser(s) but only %d configured", failedMSP, required, available))
 	}
 
-	return nil, errors.Join(errors.Errorf("no configured endorser covers any of the [%d] policy-satisfying MSP set(s)", len(candidates)),
+	return nil, errors.Join(
+		errors.Errorf("no configured endorser covers any of the [%d] policy-satisfying MSP set(s) with a distinct endorser per required signer", len(candidates)),
+		errors.Join(setFailures...),
 		errors.Join(skipped...),
-		errors.Errorf("failed to resolve MSP"))
+		errors.Errorf("failed to resolve MSP"),
+	)
+}
+
+// selectDistinctForMSPSet fills one slot per entry of requiredMSPIDs with a random
+// configured endorser of that MSP, never reusing an identity already selected for an
+// earlier slot of the same set. It returns (selected, "", true) on success, or
+// (nil, failedMSP, false) where failedMSP is the first MSP ID whose pool was exhausted,
+// meaning the set is not coverable by distinct endorsers.
+//
+// A greedy per-slot pick is complete here: every slot requiring a given MSP ID draws from
+// the same pool, so the only way this fails is that some MSP ID appears in requiredMSPIDs
+// more times than that MSP has distinct configured endorsers — genuinely unsatisfiable
+// whatever the order of the picks. No backtracking is needed.
+func selectDistinctForMSPSet(byMSP map[string][]view.Identity, requiredMSPIDs []string) ([]view.Identity, string, bool) {
+	used := make(map[string]struct{}, len(requiredMSPIDs))
+	selected := make([]view.Identity, 0, len(requiredMSPIDs))
+	for _, mspID := range requiredMSPIDs {
+		pool := byMSP[mspID]
+		available := make([]view.Identity, 0, len(pool))
+		for _, id := range pool {
+			if _, ok := used[string(id)]; !ok {
+				available = append(available, id)
+			}
+		}
+		if len(available) == 0 {
+			return nil, mspID, false
+		}
+		id := available[rand.Intn(len(available))]
+		used[string(id)] = struct{}{}
+		selected = append(selected, id)
+	}
+
+	return selected, "", true
 }

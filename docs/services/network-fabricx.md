@@ -244,6 +244,12 @@ On FabricX, the namespace's endorsement policy is fetched via the query service'
   onto MSP IDs, and a random subset of the configured `endorsers` that jointly satisfies
   it is selected — for example, given an `OR(Org1MSP, Org2MSP)` policy, either a
   configured Org1 endorser or a configured Org2 endorser is contacted, chosen at random.
+  A policy may require *several* signers from the same MSP (e.g.
+  `AND(Org1MSP.member, Org1MSP.member)`, meant to protect against a single misbehaving
+  endorser within that organization): each such signer slot is filled with a *distinct*
+  configured endorser of that MSP, so the policy's guarantee is never collapsed onto one
+  endorser signing twice. Duplicate entries in `endorsers` denote the same endorser and
+  count once.
 - **`threshold_rule`** (a single raw public key + signature scheme, *not* a k-of-n
   group despite the name): there is no MSP principal to satisfy, so the policy instead
   names one specific signer directly by key. The configured `endorsers` are searched for
@@ -258,7 +264,8 @@ On FabricX, the namespace's endorsement policy is fetched via the query service'
 The following are treated as hard errors, since correctness takes priority over
 availability:
 - for `msp_rule`: none of the configured `endorsers` can satisfy the namespace's policy
-  (e.g. no configured endorser belongs to a required MSP);
+  (e.g. no configured endorser belongs to a required MSP, or an MSP has fewer distinct
+  configured endorsers than the number of signers the policy requires from it);
 - for `threshold_rule`: the scheme is not `ECDSA`; the public key cannot be parsed; zero
   configured endorsers' identities carry the policy's key; or more than one *distinct*
   configured identity does (a duplicate entry for the same endorser is not an error; two
