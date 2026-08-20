@@ -185,9 +185,6 @@ func testServiceFactory(t *testing.T, config *Config) *endorsement.ServiceFactor
 		BlockTag:     config.Finality.BlockTag,
 		PublicParams: pp.NewChainProvider(evmClient, tokenState, config.Finality.BlockTag),
 		ViewManager:  fakeViewManager{},
-		TMS: func(token2.TMSID) (*token2.ManagementService, error) {
-			return nil, errors.New("not needed for this test")
-		},
 	})
 	require.NoError(t, err)
 
