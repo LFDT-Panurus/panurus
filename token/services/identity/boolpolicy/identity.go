@@ -39,6 +39,7 @@ import (
 	"github.com/LFDT-Panurus/panurus/token/core/common/encoding/json"
 	tdriver "github.com/LFDT-Panurus/panurus/token/driver"
 	"github.com/LFDT-Panurus/panurus/token/services/identity"
+	"github.com/LFDT-Panurus/panurus/token/services/identity/marshal"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 )
 
@@ -74,11 +75,13 @@ func (p *PolicyIdentity) Serialize() ([]byte, error) {
 	return asn1.Marshal(*p)
 }
 
-// Deserialize decodes raw DER bytes into the receiver.
+// Deserialize decodes raw DER bytes into the receiver. It rejects trailing
+// bytes after the encoded value: raw comes off the wire, and accepting a
+// non-canonical re-encoding of an identity would make two distinct byte
+// strings decode to the same PolicyIdentity while hashing to different
+// Identity.UniqueID()s. See marshal.UnmarshalCanonicalDER.
 func (p *PolicyIdentity) Deserialize(raw []byte) error {
-	_, err := asn1.Unmarshal(raw, p)
-
-	return err
+	return marshal.UnmarshalCanonicalDER(raw, p)
 }
 
 // Bytes is an alias for Serialize, provided for symmetry with MultiIdentity.
