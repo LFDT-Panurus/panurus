@@ -15,14 +15,18 @@ import (
 
 	fbactions "github.com/LFDT-Panurus/panurus/token/core/fabtoken/protos-go/v1/actions"
 	"github.com/LFDT-Panurus/panurus/token/core/fabtoken/v1/actions"
+	"github.com/LFDT-Panurus/panurus/token/core/fabtoken/v1/setup"
 	"github.com/LFDT-Panurus/panurus/token/core/fabtoken/v1/validator"
 	"github.com/LFDT-Panurus/panurus/token/driver"
+	"github.com/LFDT-Panurus/panurus/token/driver/mock"
 	driverv1 "github.com/LFDT-Panurus/panurus/token/driver/protos-go/v1"
 	"github.com/LFDT-Panurus/panurus/token/driver/protos-go/v1/request"
 	"github.com/LFDT-Panurus/panurus/token/services/identity"
 	"github.com/LFDT-Panurus/panurus/token/services/identity/x509"
 	"github.com/LFDT-Panurus/panurus/token/services/interop/encoding"
 	"github.com/LFDT-Panurus/panurus/token/services/interop/htlc"
+	"github.com/LFDT-Panurus/panurus/token/services/logging"
+	"github.com/LFDT-Panurus/panurus/token/token"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/proto"
 	"github.com/stretchr/testify/require"
 )
@@ -233,4 +237,105 @@ func FuzzTransferHTLCValidateNoPanic(f *testing.F) {
 			require.Error(t, err, "multi-input transfer with an htlc-owned input must be rejected")
 		}
 	})
+}
+
+// FuzzTransferValidationStepsNoPanic deserializes a transfer action from fuzzed bytes and runs the
+// four transfer validation steps in a fuzz-chosen order, asserting that no ordering of the steps
+// can panic. Deserializing attacker-controlled bytes can legitimately produce an action carrying
+// nil input tokens and nil output entries (a nil token inside a protobuf input or output is
+// preserved as a nil entry), so every step must guard those on its own rather than rely on
+// TransferActionValidate — which rejects them — having run first.
+func FuzzTransferValidationStepsNoPanic(f *testing.F) {
+	transferRaw, err := (&actions.TransferAction{
+		Inputs: []*actions.TransferActionInput{
+			{ID: &token.ID{TxId: "tx1"}, Input: &actions.Output{Owner: []byte("owner1"), Type: "ABC", Quantity: "0x64"}},
+		},
+		Outputs: []*actions.Output{{Owner: []byte("owner2"), Type: "ABC", Quantity: "0x64"}},
+	}).Serialize()
+	require.NoError(f, err)
+	f.Add(uint8(0), transferRaw)
+	f.Add(uint8(1), transferRaw)
+	// an input and an output both carrying a nil token: both deserialize to nil entries
+	f.Add(uint8(0), marshalFuzzedNilEntriesTransferAction())
+	f.Add(uint8(0), []byte{})
+	f.Add(uint8(0), []byte("malformed"))
+
+	// every permutation of the four transfer steps of the default pipeline, so that no step can
+	// assume any other one ran before it
+	steps := []validator.ValidateTransferFunc{
+		validator.TransferActionValidate,
+		validator.TransferSignatureValidate,
+		validator.TransferBalanceValidate,
+		validator.TransferHTLCValidate,
+	}
+	orders := permutations(len(steps))
+	logger := logging.MustGetLogger("fuzz")
+	limits := driver.DefaultResourceLimits()
+
+	f.Fuzz(func(t *testing.T, orderIdx uint8, raw []byte) {
+		if len(raw) > limits.MaxActionBytes {
+			t.Skip()
+		}
+		ta := &actions.TransferAction{}
+		ta.SetLimits(limits)
+		if err := ta.Deserialize(raw); err != nil {
+			t.Skip()
+		}
+
+		deserializer := &mock.Deserializer{}
+		deserializer.GetOwnerVerifierReturns(&mock.Verifier{}, nil)
+		deserializer.GetIssuerVerifierReturns(&mock.Verifier{}, nil)
+		sigProvider := &mock.SignatureProvider{}
+		sigProvider.HasBeenSignedByReturns([]byte("sig"), nil)
+		c := &validator.Context{
+			TransferAction:    ta,
+			Deserializer:      deserializer,
+			SignatureProvider: sigProvider,
+			Logger:            logger,
+			PP:                &setup.PublicParams{QuantityPrecision: 64, IssuerIDs: []driver.Identity{[]byte("issuer1")}},
+			MetadataCounter:   make(map[string]int),
+		}
+
+		order := orders[int(orderIdx)%len(orders)]
+		require.NotPanics(t, func() {
+			for _, i := range order {
+				if err := steps[i](context.Background(), c); err != nil {
+					// a validation error is a valid outcome for any step at any position
+					return
+				}
+			}
+		})
+	})
+}
+
+// marshalFuzzedNilEntriesTransferAction builds the raw bytes of a transfer action whose input and
+// output both carry a nil token, which Deserialize turns into nil entries in the action.
+func marshalFuzzedNilEntriesTransferAction() []byte {
+	ta := &fbactions.TransferAction{
+		Version: actions.ProtocolV1,
+		Inputs:  []*fbactions.TransferActionInput{{TokenId: &driverv1.TokenID{TxId: "tx1"}}},
+		Outputs: []*fbactions.TransferActionOutput{{}},
+	}
+	raw, _ := proto.Marshal(ta)
+
+	return raw
+}
+
+// permutations returns every permutation of the indices [0, n).
+func permutations(n int) [][]int {
+	if n <= 1 {
+		return [][]int{make([]int, n)}
+	}
+	var res [][]int
+	for _, sub := range permutations(n - 1) {
+		for pos := range n {
+			p := make([]int, 0, n)
+			p = append(p, sub[:pos]...)
+			p = append(p, n-1)
+			p = append(p, sub[pos:]...)
+			res = append(res, p)
+		}
+	}
+
+	return res
 }

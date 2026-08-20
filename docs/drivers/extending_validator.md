@@ -74,6 +74,25 @@ fields that earlier steps populate (`validator.Context.InputTokens`, `Context.Si
 may be empty or shorter than expected, so bound-check them and return an error instead of
 indexing blindly.
 
+The same applies to the action itself. Deserializing attacker-controlled bytes can yield an action
+whose input/output slices contain `nil` entries (a `nil` token inside a protobuf input or output is
+preserved as a `nil` entry), and the action-level `Validate()` step — which rejects those — is just
+one step of the pipeline: a pipeline that reorders the steps, adds an alternate entry point, or omits
+`Validate()` sees the raw shape. Every step must therefore nil-check the entries it touches. The
+built-in transfer steps of both drivers do, so they cannot panic in any pipeline order, and custom
+steps are expected to follow suit.
+
+Watch out for Go's typed-nil gotcha when a step reads outputs through the `driver.Output` interface:
+an interface value holding a *typed-nil* pointer still satisfies a type assertion with `ok == true`,
+so `ok` alone does not prove the value is usable. Check both:
+
+```go
+out, ok := o.(*actions.Output)
+if !ok || out == nil {
+	return errors.Errorf("invalid output at index [%d]", i)
+}
+```
+
 ### 2. Create a custom Validator Driver
 
 Implement the `driver.ValidatorDriver` interface by wrapping the standard one.

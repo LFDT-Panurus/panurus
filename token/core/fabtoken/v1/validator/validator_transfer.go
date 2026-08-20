@@ -27,7 +27,10 @@ func TransferActionValidate(c context.Context, ctx *Context) error {
 	return ctx.TransferAction.Validate()
 }
 
-// TransferSignatureValidate validates the signatures for the inputs spent by an action
+// TransferSignatureValidate validates the signatures for the inputs spent by an action.
+// A nil input entry, a nil token inside an input, or a nil output entry yields a validation
+// error rather than a panic, regardless of the order in which the validation steps of the
+// pipeline are executed.
 func TransferSignatureValidate(c context.Context, ctx *Context) error {
 	if len(ctx.TransferAction.Inputs) == 0 {
 		return errors.Errorf("invalid number of token inputs, expected at least 1")
@@ -36,6 +39,10 @@ func TransferSignatureValidate(c context.Context, ctx *Context) error {
 	verifierCache := make(map[string]driver.Verifier)
 	var inputToken []*actions.Output
 	for i, in := range ctx.TransferAction.Inputs {
+		// guard: a nil input entry, or a nil token inside it, must return an error, not panic
+		if in == nil || in.Input == nil {
+			return errors.Errorf("invalid input at index [%d]: nil input or nil token", i)
+		}
 		tok := in.Input
 
 		inputToken = append(inputToken, tok)
@@ -65,8 +72,15 @@ func TransferSignatureValidate(c context.Context, ctx *Context) error {
 	if len(ctx.PP.Issuers()) > 0 {
 		// In this case we must ensure that an issuer signed as well if the action redeems tokens as well
 		var isRedeem bool
-		for _, output := range ctx.TransferAction.Outputs {
-			if output.Owner == nil {
+		for i, output := range ctx.TransferAction.Outputs {
+			// guard: a nil output entry must return an error, not panic
+			if output == nil {
+				return errors.Errorf("invalid output at index [%d]", i)
+			}
+			// use the same definition of a redeem as the rest of the code (Output.IsRedeem,
+			// which tests len(Owner) == 0): an empty but non-nil owner is a redeem too, and
+			// checking `Owner == nil` here would let it skip the issuer signature
+			if output.IsRedeem() {
 				isRedeem = true
 
 				break
