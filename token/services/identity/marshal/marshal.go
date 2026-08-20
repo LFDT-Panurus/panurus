@@ -7,6 +7,7 @@ SPDX-License-Identifier: Apache-2.0
 package marshal
 
 import (
+	"bytes"
 	"encoding/asn1"
 	"errors"
 	"math"
@@ -32,7 +33,105 @@ var (
 	ErrUnexpectedTag = errors.New("asn1: unexpected tag")
 	ErrIntOverflow   = errors.New("asn1: integer overflows int32")
 	ErrInvalidLen    = errors.New("asn1: invalid length encoding")
+	ErrTrailingBytes = errors.New("asn1: trailing bytes after value")
+	ErrNonMinimalLen = errors.New("asn1: non-minimal length encoding")
+	ErrNonMinimalInt = errors.New("asn1: non-minimal integer encoding")
+	// ErrNonCanonical means the input is not the encoding asn1.Marshal produces
+	// for the destination type. For the four identity envelopes that is the same
+	// thing as "not canonical DER" — a property their field types guarantee and
+	// TestUnmarshalCanonicalDER_FourCallSitesHaveNoOptionalFields pins. For a type
+	// with an optional/omitempty/time.Time field the two would diverge, which is
+	// why UnmarshalCanonicalDER documents those as unsupported destinations.
+	ErrNonCanonical = errors.New("asn1: not the canonical encoding for this type")
+
+	// ErrInvalidDestination reports a caller programming error — a nil decode
+	// destination — as opposed to the Err* values above, which all report
+	// something wrong with the bytes being decoded. The *T parameter makes the
+	// other misuses (non-pointer, untyped nil) compile errors instead.
+	ErrInvalidDestination = errors.New("asn1: destination pointer is nil")
 )
+
+// UnmarshalCanonicalDER decodes DER-encoded data into val with encoding/asn1 and
+// accepts b only if b is the one canonical encoding of the value it decoded to.
+//
+// The destination is *T rather than any so that the compiler rejects the two
+// misuses that used to be runtime errors — a non-pointer, and an untyped nil.
+// A typed nil pointer is the only one left, and returns ErrInvalidDestination
+// without inspecting b. Every other error value this returns describes the
+// bytes, not the destination.
+//
+// This matters because Identity.UniqueID() hashes the *raw* identity bytes
+// rather than a canonicalised form of the decoded value, and it is the cache
+// key throughout the identity and wallet layers (role/registry.go's fast path,
+// provider.go's signer cache, …). Any two byte strings that decode to the same
+// logical identity but hash differently give that one identity two cache slots:
+// a token paid to the non-canonical spelling still verifies (the verifier works
+// on the decoded value) but never resolves to its owner's wallet (the lookup
+// works on UniqueID()). Use this instead of calling asn1.Unmarshal directly
+// whenever the bytes being decoded came off the wire.
+//
+// encoding/asn1.Unmarshal is lenient in two ways that both have to be closed:
+//
+//   - it reports bytes left over after the top-level value through its first
+//     return value and is happy to ignore them;
+//   - it silently discards SEQUENCE elements the destination struct has no
+//     field for. Those never appear in rest — the top-level TLV did consume the
+//     whole input — so checking rest alone leaves the SEQUENCE body itself as a
+//     free-form channel for garbage. It is similarly happy to accept
+//     T61String/IA5String/GeneralString where the struct asks for a UTF8String.
+//
+// The rest check catches the first. Re-encoding the decoded value and requiring
+// it to reproduce b byte-for-byte catches both, and generalises to any future
+// encoding/asn1 leniency, at the cost of one extra marshal of a small struct per
+// decode. The hot TypedIdentity envelope path does not come through here: it
+// uses DecodeIdentity, which walks the TLVs itself and pins every length.
+//
+// The property this establishes is precisely "b is something asn1.Marshal would
+// have emitted for this type". That is the right definition here because every
+// producer in this tree goes through asn1.Marshal, but it is narrower than "b is
+// valid DER", so it constrains what val may be:
+//
+//   - Do not use it on a type with an `asn1:"optional"` or `asn1:"omitempty"`
+//     field. asn1.Marshal omits such a field when it holds the zero value, while
+//     asn1.Unmarshal accepts it explicitly present — a legal encoding that the
+//     round-trip then rejects. (A field with `default:` is different: DER does
+//     require the default to be absent, so rejecting an explicit one is correct.)
+//   - Do not use it on a type with a time.Time field. UTCTime and
+//     GeneralizedTime both decode, but asn1.Marshal picks one by year, so the
+//     other is rejected.
+//
+// None of the four identity envelopes hit either case: they carry only int32,
+// string and [][]byte fields, with no optional, omitempty or default tags. Check
+// before adding a fifth caller.
+func UnmarshalCanonicalDER[T any](b []byte, val *T) error {
+	// asn1.Unmarshal would reject this too, but only as an untyped structure
+	// error that a caller cannot tell apart from "these bytes are malformed" —
+	// the one distinction this package's error values exist to make.
+	if val == nil {
+		return ErrInvalidDestination
+	}
+
+	rest, err := asn1.Unmarshal(b, val)
+	if err != nil {
+		return err
+	}
+	if len(rest) != 0 {
+		return ErrTrailingBytes
+	}
+
+	// asn1.Marshal takes the value, not a pointer to it. Typing val as *T makes
+	// this a plain dereference: no reflection, and no pointer-to-pointer case to
+	// reason about, because *T is exactly one level.
+	reencoded, err := asn1.Marshal(*val)
+	if err != nil {
+		return err
+	}
+	if !bytes.Equal(b, reencoded) {
+		return ErrNonCanonical
+	}
+
+	return nil
+}
 
 // Result holds the decoded payload. IsInt distinguishes the two variants.
 // Data is a zero-copy sub-slice of the input — do not modify input while using it.
@@ -52,9 +151,19 @@ func DecodeIdentity(b []byte) (Result, error) {
 	if len(b) == 0 || b[0] != tagSequence {
 		return r, ErrUnexpectedTag
 	}
-	_, pos, err := readLen(b, 1) // skip SEQUENCE length; we trust inner bounds checks
+	seqLen, pos, err := readLen(b, 1)
 	if err != nil {
 		return r, err
+	}
+	// The outer SEQUENCE must declare exactly the bytes it was given: no
+	// fewer (trailing garbage after the value) and no more (a truncated
+	// buffer). Without this, b and b+garbage decode identically while
+	// hashing to different Identity.UniqueID()s — see UnmarshalCanonicalDER.
+	if pos+seqLen > len(b) {
+		return r, ErrTruncated
+	}
+	if pos+seqLen < len(b) {
+		return r, ErrTrailingBytes
 	}
 
 	// Dispatch on first element's tag
@@ -111,6 +220,12 @@ func DecodeIdentity(b []byte) (Result, error) {
 	if np+l > len(b) {
 		return r, ErrTruncated
 	}
+	// The OCTET STRING is the last declared field, and the outer SEQUENCE's
+	// length was already pinned to len(b) above, so anything left over here
+	// is an undeclared extra field smuggled inside the SEQUENCE.
+	if np+l != len(b) {
+		return r, ErrTrailingBytes
+	}
 	r.Data = b[np : np+l] // zero-copy
 
 	if !r.IsInt {
@@ -151,6 +266,15 @@ func readLen(b []byte, pos int) (int, int, error) {
 		return 0, 0, ErrInvalidLen
 	}
 	pos++
+	// DER admits exactly one length encoding per length, and the long form
+	// must not carry leading zero bytes. Rejecting the alternatives keeps one
+	// logical identity to one byte string: a length written as 0x82 0x00 0x06
+	// instead of 0x06 decodes to the same identity but hashes to a different
+	// Identity.UniqueID(), which is the cache key across the identity and
+	// wallet layers. See UnmarshalCanonicalDER for the full reasoning.
+	if b[pos] == 0x00 {
+		return 0, 0, ErrNonMinimalLen
+	}
 	// Accumulate in uint64: at most 4 bytes, so l can never exceed
 	// 0xFFFFFFFF and this addition/shift can never overflow, regardless of
 	// the platform's native int width.
@@ -159,6 +283,14 @@ func readLen(b []byte, pos int) (int, int, error) {
 		l = l<<8 | uint64(b[pos+i])
 	}
 	pos += n
+	// ...and a length the short form could have carried must use it. Checked
+	// after accumulating so it also catches a multi-byte form whose bytes
+	// happen to encode a small value (e.g. 0x84 0x00 0x00 0x00 0x06), which
+	// the leading-zero check above already rejects but which would otherwise
+	// slip through for hypothetical wider forms.
+	if l < 0x80 {
+		return 0, 0, ErrNonMinimalLen
+	}
 	// Reject a declared length that claims more bytes than remain in the
 	// buffer here, in unsigned arithmetic, before ever converting it to
 	// int. Doing the equivalent check with a plain-int accumulator (as
@@ -174,9 +306,26 @@ func readLen(b []byte, pos int) (int, int, error) {
 }
 
 // parseInt32 decodes a DER big-endian signed integer into int32.
+//
+// Like readLen, it insists on the minimal encoding: DER admits exactly one
+// spelling per integer value, and accepting the alternatives would reintroduce
+// the malleability the length check closes one field over. 02 02 00 05 carries
+// the same 5 as 02 01 05 but hashes to a different Identity.UniqueID() — see
+// UnmarshalCanonicalDER for why that is the bug and not a cosmetic difference.
 func parseInt32(b []byte) (int32, error) {
 	if len(b) == 0 || len(b) > 5 {
 		return 0, ErrIntOverflow
+	}
+	// A leading 0x00 is redundant unless it is there to keep a positive value
+	// from being read as negative; a leading 0xFF is redundant unless it is
+	// there to keep a negative value negative.
+	if len(b) > 1 {
+		if b[0] == 0x00 && b[1]&0x80 == 0 {
+			return 0, ErrNonMinimalInt
+		}
+		if b[0] == 0xFF && b[1]&0x80 != 0 {
+			return 0, ErrNonMinimalInt
+		}
 	}
 	var v int64
 	if b[0]&0x80 != 0 {

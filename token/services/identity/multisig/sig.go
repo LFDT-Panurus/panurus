@@ -11,6 +11,7 @@ import (
 
 	"github.com/LFDT-Panurus/panurus/token"
 	"github.com/LFDT-Panurus/panurus/token/driver"
+	"github.com/LFDT-Panurus/panurus/token/services/identity/marshal"
 	"github.com/LFDT-Panurus/panurus/token/services/utils"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 )
@@ -26,10 +27,15 @@ func (m *MultiSignature) Bytes() ([]byte, error) {
 	return asn1.Marshal(*m)
 }
 
+// FromBytes deserialises raw ASN.1 DER into the receiver. It rejects trailing
+// bytes after the encoded value: raw is peer-supplied, and the envelope itself
+// is always produced by our own canonical asn1.Marshal, so leftover bytes only
+// ever mean a mangled or deliberately padded signature. (This tightens the
+// MultiSignature *envelope* only — the individual signatures it carries are
+// parsed by their own verifiers, which must stay lenient for external
+// signers/HSMs.)
 func (m *MultiSignature) FromBytes(raw []byte) error {
-	_, err := asn1.Unmarshal(raw, m)
-
-	return err
+	return marshal.UnmarshalCanonicalDER(raw, m)
 }
 
 // JoinSignatures joins the signatures of the given identities into a single signature

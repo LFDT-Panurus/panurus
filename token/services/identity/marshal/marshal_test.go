@@ -435,7 +435,10 @@ func TestDecodeErrors(t *testing.T) {
 		},
 		{
 			"readLen truncated (n=2 but only 1 byte left)",
-			[]byte{seqByte, 0x02, byte(asn1.TagInteger), 0x82, 0x01},
+			// The outer SEQUENCE length must agree with the buffer (0x03,
+			// not 0x02) or the outer-length check fires first and this
+			// stops exercising the inner readLen failure it is named for.
+			[]byte{seqByte, 0x03, byte(asn1.TagInteger), 0x82, 0x01},
 			marshal.ErrInvalidLen,
 		},
 		{
@@ -455,7 +458,9 @@ func TestDecodeErrors(t *testing.T) {
 		},
 		{
 			"wrong tag for OCTET STRING",
-			[]byte{seqByte, 0x05, byte(asn1.TagInteger), 0x01, 0x00, byte(asn1.TagInteger), 0x01, 0x00},
+			// Outer SEQUENCE length corrected to 0x06 so it matches the six
+			// bytes that follow; see the note on the readLen case above.
+			[]byte{seqByte, 0x06, byte(asn1.TagInteger), 0x01, 0x00, byte(asn1.TagInteger), 0x01, 0x00},
 			marshal.ErrUnexpectedTag,
 		},
 		{
