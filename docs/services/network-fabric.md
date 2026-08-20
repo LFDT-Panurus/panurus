@@ -48,6 +48,27 @@ The chaincode exposes the following functions:
 | `areTokensSpent` | Check if tokens are spent | Token IDs, metadata      | Boolean array |
 | `queryStates` | Query arbitrary state keys | State keys               | State values |
 
+### Input Validation
+
+The query functions are reachable by any client that can query the channel, so their
+arguments are treated as untrusted input:
+
+- `queryTokens` expects a JSON array of token ids (`{"tx_id": ..., "index": ...}`). Each
+  element is validated before any state is read:
+  - a `null` element decodes to a nil token id and is rejected with
+    `invalid token id at position [i]: null`, rather than being passed on to the translator,
+    which dereferences each id. `translator.QueryTokens` rejects nil ids as well, so an id
+    list assembled elsewhere in the codebase cannot panic it either;
+  - an element with an empty `tx_id` is rejected with
+    `invalid token id at position [i]: empty tx id`. It is not a valid token id, and letting
+    it through would spend a state read on a key that cannot exist.
+- `areTokensSpent` and `queryStates` expect a JSON array of strings; anything else fails to
+  unmarshal and returns an error response.
+
+Malformed arguments always produce an ordinary error response (status 500). `Invoke`'s
+top-level `recover()` remains as a last resort, but no supported input is expected to reach
+it.
+
 ### Chaincode Deployment
 
 The Token Chaincode must be deployed to the Fabric network before Panurus can operate:

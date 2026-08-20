@@ -131,10 +131,17 @@ func (t *Translator) AddPublicParamsDependency() error {
 	return nil
 }
 
+// QueryTokens returns the raw state of each of the passed token ids. It fails if any id is
+// nil, cannot be turned into an output key, or refers to a state that does not exist.
 func (t *Translator) QueryTokens(ctx context.Context, ids []*token.ID) ([][]byte, error) {
 	var res [][]byte
 	var errs []error
-	for _, id := range ids {
+	for i, id := range ids {
+		if id == nil {
+			errs = append(errs, errors.Errorf("nil token id at position [%d]", i))
+
+			continue
+		}
 		outputID, err := t.KeyTranslator.CreateOutputKey(id.TxId, id.Index)
 		if err != nil {
 			errs = append(errs, errors.Errorf("error creating output ID: %s", err))

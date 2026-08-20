@@ -282,12 +282,30 @@ func (cc *TokenChaincode) QueryPublicParams(stub shim.ChaincodeStubInterface) *p
 	return shim.Success(raw)
 }
 
+// QueryTokens returns the raw state of the tokens whose ids are JSON-encoded in idsRaw.
+// idsRaw is caller-controlled: it must be a JSON array of token ids, each of them non-null
+// and carrying a non-empty tx id, otherwise a validation error is returned.
 func (cc *TokenChaincode) QueryTokens(idsRaw []byte, stub shim.ChaincodeStubInterface) *pb.Response {
 	var ids []*token2.ID
 	if err := json.Unmarshal(idsRaw, &ids); err != nil {
 		logger.Errorf("failed unmarshalling tokens ids: [%s]", err)
 
 		return shim.Error(err.Error())
+	}
+
+	// A JSON array can carry null elements, which decode into nil *token2.ID pointers without
+	// error. The translator dereferences every element, so reject them here with a plain
+	// validation error instead of relying on Invoke's top-level recover. An empty tx id is
+	// never a valid token id either: it does not panic, but it costs a pointless state read
+	// and reports itself as a missing composite key, so reject it up front too.
+	// Invoke logs every non-200 response, so these do not log on their own.
+	for i, id := range ids {
+		switch {
+		case id == nil:
+			return shim.Error(fmt.Sprintf("invalid token id at position [%d]: null", i))
+		case len(id.TxId) == 0:
+			return shim.Error(fmt.Sprintf("invalid token id at position [%d]: empty tx id", i))
+		}
 	}
 
 	logger.Debugf("query tokens [%v]...", ids)
