@@ -211,6 +211,7 @@ For detailed information about the recovery mechanism, see [Storage Service - Tr
 
 - [Fabric Implementation Details](./network-fabric.md) - Chaincode-based endorsement
 - [FabricX Implementation Details](./network-fabricx.md) - FSC node endorsement
+- [Ethereum Implementation Details](./network-ethereum.md) - EVM endorsement quorum
 - [Storage Service - Transaction Recovery](./storage.md#transaction-recovery-service) - Recovery mechanism details
 - [Public Parameters](../public_parameters.md) - Cryptographic setup management
 - [TTX Service](./ttx.md) - Token transaction orchestration
