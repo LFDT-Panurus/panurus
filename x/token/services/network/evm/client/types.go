@@ -167,11 +167,17 @@ func (h *Hash) UnmarshalJSON(data []byte) error {
 	return h.UnmarshalText([]byte(s))
 }
 
-// decodeHex decodes a hex string, tolerating an optional 0x/0X prefix and surrounding whitespace.
-func decodeHex(s string) ([]byte, error) {
+// trimHexPrefix strips surrounding whitespace and an optional 0x/0X prefix. It is the one place that
+// decides what counts as a prefix, shared by every hex parser in this package so a JSON-RPC quantity
+// and an address/hash literal are never held to different rules for the same syntax.
+func trimHexPrefix(s string) string {
 	s = strings.TrimSpace(s)
 	s = strings.TrimPrefix(s, "0x")
-	s = strings.TrimPrefix(s, "0X")
 
-	return hex.DecodeString(s)
+	return strings.TrimPrefix(s, "0X")
+}
+
+// decodeHex decodes a hex string, tolerating an optional 0x/0X prefix and surrounding whitespace.
+func decodeHex(s string) ([]byte, error) {
+	return hex.DecodeString(trimHexPrefix(s))
 }

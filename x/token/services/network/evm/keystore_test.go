@@ -74,6 +74,14 @@ func TestLoadKeyRejectsBadMaterial(t *testing.T) {
 		_, err := LoadKey(writeKey(t, "00000000000000000000000000000000000000000000000000000000000000"+"00"))
 		require.Error(t, err, "the zero scalar has no valid public key")
 	})
+
+	t.Run("scalar exceeds the curve order", func(t *testing.T) {
+		// Must be rejected outright, not silently reduced modulo the curve order into a different,
+		// unrelated key that the rest of the file's hex bytes gave no hint of.
+		overflowing := "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+		_, err := LoadKey(writeKey(t, overflowing))
+		require.Error(t, err, "a scalar at or above the curve order must be rejected")
+	})
 }
 
 // TestLoadKeyForAddressCatchesMismatch is the configuration guard: pairing a key with the wrong

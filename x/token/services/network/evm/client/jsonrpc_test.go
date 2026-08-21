@@ -120,6 +120,32 @@ func TestCallSurfacesRPCError(t *testing.T) {
 	assert.Contains(t, err.Error(), "method not found")
 }
 
+// TestCallClassifiesReverts mirrors TestEstimateGasClassifiesReverts: eth_call can revert against a
+// real node exactly as eth_estimateGas can, and a caller needs the same distinction between "the chain
+// rejected this" and "the node failed to answer" for either one.
+func TestCallClassifiesReverts(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		code     int
+		message  string
+		reverted bool
+	}{
+		{name: "geth wording", code: -32000, message: "execution reverted", reverted: true},
+		{name: "besu wording", code: -32000, message: "Execution reverted", reverted: true},
+		{name: "another server error", code: -32000, message: "header not found", reverted: false},
+		{name: "method not found", code: -32601, message: "method not found", reverted: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := newErrorServer(t, tc.code, tc.message)
+
+			_, err := c.Call(context.Background(), Address{}, nil, "latest")
+			require.Error(t, err)
+			assert.Equal(t, tc.reverted, errors.Is(err, ErrExecutionReverted))
+			assert.Contains(t, err.Error(), tc.message)
+		})
+	}
+}
+
 func TestPendingNonceAt(t *testing.T) {
 	c, calls := newTestServer(t, map[string]string{"eth_getTransactionCount": `"0x2a"`})
 
@@ -273,6 +299,19 @@ func TestSuggestGasFeesOnAZeroFeeChain(t *testing.T) {
 	assert.Equal(t, big.NewInt(0), fees.MaxFeePerGas)
 }
 
+// TestSuggestGasFeesErrorsOnANullBlock covers a node that returns no block at all for "latest" (a
+// gateway hiccup or a malformed response), which must not be treated as the pre-London zero-base-fee
+// case: both look like an empty BaseFeePerGas field unless the two are told apart.
+func TestSuggestGasFeesErrorsOnANullBlock(t *testing.T) {
+	c, _ := newTestServer(t, map[string]string{
+		"eth_maxPriorityFeePerGas": `"0x1"`,
+		"eth_getBlockByNumber":     `null`,
+	})
+
+	_, err := c.SuggestGasFees(context.Background())
+	require.Error(t, err)
+}
+
 // TestSuggestGasFeesSurfacesRealFailures checks the fallback is only for an unimplemented method: a
 // node that implements neither is a failure rather than a silent zero fee.
 func TestSuggestGasFeesSurfacesRealFailures(t *testing.T) {
@@ -401,6 +440,24 @@ func TestGetLogs(t *testing.T) {
 	assert.Equal(t, "0x64", arg["toBlock"])
 }
 
+// TestGetLogsCapturesRemoved checks a log the node marks as reorged-out decodes with Removed set,
+// rather than being indistinguishable from a canonical one.
+func TestGetLogsCapturesRemoved(t *testing.T) {
+	c, _ := newTestServer(t, map[string]string{
+		"eth_getLogs": `[{
+			"address":"0x5FbDB2315678afecb367f032d93F642f64180aa3",
+			"topics":["0x1111111111111111111111111111111111111111111111111111111111111111"],
+			"data":"0x","transactionHash":"0x853f272fffc6efc284fc16a254decca742d2347e05703e501c59968f78f81ffa",
+			"blockNumber":"0x2","removed":true
+		}]`,
+	})
+
+	logs, err := c.GetLogs(context.Background(), LogFilter{})
+	require.NoError(t, err)
+	require.Len(t, logs, 1)
+	assert.True(t, logs[0].Removed, "a reorged-out log must be reported as such")
+}
+
 // TestGetLogsWildcardTopic checks that an empty inner slice becomes a null (match-any) position,
 // which is the eth_getLogs convention.
 func TestGetLogsWildcardTopic(t *testing.T) {
@@ -461,5 +518,19 @@ func TestHexHelpers(t *testing.T) {
 		require.Error(t, err)
 		_, err = decodeHexBytes("0xodd")
 		require.Error(t, err)
+	})
+
+	t.Run("an uppercase 0X prefix is tolerated exactly like decodeHex accepts one", func(t *testing.T) {
+		got, err := parseHexUint("0X2a")
+		require.NoError(t, err)
+		assert.Equal(t, uint64(42), got)
+
+		gotBig, err := parseHexBig("0X2a")
+		require.NoError(t, err)
+		assert.Zero(t, gotBig.Cmp(big.NewInt(42)))
+
+		gotBytes, err := decodeHexBytes("0Xdead")
+		require.NoError(t, err)
+		assert.Equal(t, []byte{0xde, 0xad}, gotBytes)
 	})
 }

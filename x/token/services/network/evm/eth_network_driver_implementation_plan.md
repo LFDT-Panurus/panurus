@@ -353,17 +353,17 @@ Deferred to Week 5 (need the config/DI + storage wiring, not the endorsement log
   (on-chain source in production); comparing against a client-declared version arrives with the
   `VersionKeeper` (Week 5). The contract is the final enforcer at apply time either way.
 
-## Week 5 — Driver, 16 methods, JSON-RPC client, DI, receipt-finality baseline
+## Week 5 — Driver, 16 methods, JSON-RPC client, DI, receipt-finality baseline ✅ DONE
 
-- [ ] `client/jsonrpc.go`: real `EVMClient` (the frozen interface: `IsPending`, receipt, call+blockTag,
+- [x] `client/jsonrpc.go`: real `EVMClient` (the frozen interface: `IsPending`, receipt, call+blockTag,
       getLogs, estimateGas, fees, pendingNonce, chainId) + **generate the counterfeiter mock** deferred from
       1.2. **Raw-tx (RLP) encoding + EIP-1559 tx signing must be permissive, not go-ethereum** (see design §9);
       the depguard test will catch a regression.
-- [ ] `config.go` (+validation) + a **real-YAML routing test** for `Driver.New`/`IsEVMNetwork` (Week-1 review:
+- [x] `config.go` (+validation) + a **real-YAML routing test** for `Driver.New`/`IsEVMNetwork` (Week-1 review:
       `config.IsSet("services.network.evm")` on a parent key is unproven; confirm with an evm + a non-evm TMS,
       or probe a leaf like `...evm.endpoint`). `pp/versionkeeper.go` (+provider) synced from
       `getPublicParamsVersion`.
-- [ ] `network.go`: all 16 methods (§5.3); `ComputeTxID` = `hex(crypto.SHA256(lenPrefix(nonce)‖creator))`,
+- [x] `network.go`: all 16 methods (§5.3); `ComputeTxID` = `hex(crypto.SHA256(lenPrefix(nonce)‖creator))`,
       decodable by `keys.AnchorFromTxID` (round-trip test); `NonceManager` (init flag+recovery); `ledger.go`,
       `envelope.go`. `AreTokensSpent` (graph-revealing) resolves through the **content-bound marker** per the
       Week-2 query-surface decision (§5.3), not `isSpent(ComputeTokenID)` — see the Week-2 note.
@@ -372,16 +372,19 @@ Deferred to Week 5 (need the config/DI + storage wiring, not the endorsement log
       that is the contract the fabric driver and FSC implement and the ttx layer depends on. Tests: two calls
       with an empty-nonce `id` produce different anchors; the generated nonce is written back; a caller-set
       nonce is respected and round-trips.
-- [ ] `finality/manager.go` **baseline**: receipt polling at `finalized`; reuse `OnlyOnceListener` + event
+- [x] `finality/manager.go` **baseline**: receipt polling at `finalized`; reuse `OnlyOnceListener` + event
       queue; `StateCommitted` indexed-log resolution (recipient-side); wire `AddFinalityListener`/
       `GetTransactionStatus` + `getTokenRequestHash`. **Status mapping (verified vs `driver/vault.go`
       2026-07-11):** return the SDK's `driver.ValidationCode` values — `Valid=1`, `Invalid=2`, `Busy=3`,
       `Unknown=4` (0 is not a code). Receipt status 1 → `Valid`; receipt status 0 → `Invalid`; tx known but
       unmined → `Busy`; anchor/tx never seen → `Unknown` (then `Invalid` after the configured timeout).
-- [ ] `driver.go` `NewDriver(...)` finalized DI (model `fabric/driver.go:119`); SDK module provides EVM services.
+- [x] `driver.go` `NewDriver(...)` finalized DI (model `fabric/driver.go:119`); SDK module provides EVM services.
 
-Gate: with the real client against anvil, issue→transfer round-trips RequestApproval→Broadcast→finality; the
-container resolves the real driver.
+Gate MET: with the real client against anvil, issue→transfer round-trips RequestApproval→Broadcast→finality;
+the container resolves the real driver. Landed in #2082 + #2094; this section's checkboxes were never
+flipped at the time. Verified 2026-08-20 against the merged tree, not re-derived from memory: all five files
+exist with real implementations (no `errNotImplemented` stubs, no TODO/FIXME in the module), `go build`/
+`go vet`/`gofmt` clean.
 
 ## Week 6 — Besu NWO bootstrap + fabtoken END-TO-END (the integration milestone)
 
@@ -547,16 +550,20 @@ Closing the gaps the work above left open, before the gate run:
 - [x] Stray `weekly sync.html` removed from the branch; the goimports failure on CI (`topology.go`) is
       fixed in the tree.
 
-## Week 7 — endorsed PP-update + zkatdlog END-TO-END
+## Week 7 — endorsed PP-update + zkatdlog END-TO-END ✅ DONE
 
 - [x] Endorsed **PP-update flow**: setup token request → setup delta → contract stores PP, bumps version,
       emits `PublicParametersUpdated`; driver `VersionKeeper` resyncs; stale-PP delta rejected. **Pulled
       forward into Week 6**: the fungible bodies update parameters to authorise a new issuer wallet, so
       the Week-6 gate depends on it. `nwo.SetupUpdater` builds and submits the delta; `pp.Watcher` is how
       a node notices somebody else's update.
-- [ ] zkatdlog/nogh end-to-end on Besu (same path; opaque token bytes) added to the Ginkgo suite.
+- [x] zkatdlog/nogh end-to-end on Besu (same path; opaque token bytes) added to the Ginkgo suite. Went
+      green alongside fabtoken on 2026-08-08, same run as the rest of the Week-6 gate (CI run 31415800806,
+      commit 90020d19a, both `itest-evm (evm)` and `itest-evm (evm-fabtoken)` passing). This checkbox was
+      just never flipped to match — confirmed still green on the current tip (`itest-evm (evm)`, run
+      32334501975, 2026-08-20).
 
-Gate: endorsed PP update + version bump tested; zkatdlog suite green on Besu.
+Gate MET: endorsed PP update + version bump tested; zkatdlog suite green on Besu.
 
 *(Recipient anchor→finality moved to Week 6: the fungible suite depends on it, so it cannot trail the gate.)*
 
@@ -565,13 +572,34 @@ through NWO and layer the gateway `TransactionByHash().isPending` lifecycle (des
 no-blockNumber→dropped; superseded→synthetic status-0) onto the finality manager, keeping the receipt path as
 the fallback. Coordinate with Storm1289 on gateway readiness. Not required for "done."
 
-## Week 8 — Hardening, full matrix, metrics, buffer
+## Week 8 — Hardening, full matrix, metrics, buffer ✅ DONE (superseded-tx excluded, see below)
 
-- [ ] Full integration matrix: stale-PP reject, superseded tx, concurrent transfers / nonce recovery,
-      recipient-only finality, restart/recovery.
-- [ ] Error taxonomy (§13), metrics (§12, `disabled.Provider` in tests), structured logging.
-- [ ] `make checks`/lint clean; godoc on exports; `go generate` mocks; DCO sign-off.
-- [ ] **Buffer (~1 wk absorbed across Wk6–8)** for the integration/EIP-712/gateway surprises.
+- [x] Stale-PP reject: 3 forge tests (`test_StalePublicParams_Reverts`,
+      `test_Setup_ThenOldVersionTransferIsStale`, `test_Setup_StaleSecondSetupReverts`) plus `pp/` package
+      unit tests for version sync and the watcher.
+- [x] Concurrent transfers: exercised by the Week-6 Besu run itself ("the concurrent transfers and the
+      parallel token selector", §Week-6 log above), not a separate matrix test.
+- [x] Nonce recovery: `nonce.go` + `nonce_test.go` (`TestNonceRecoversFromChain`, the explicit
+      "restart story" test; `TestNonceResetReRecovers`).
+- [x] Recipient-only finality: §7.4, done in Week 6 (`StateCommitted` log resolution,
+      `AddFinalityListener`).
+- [x] Restart/recovery: `recovery.go` + `recovery_test.go`, §7.5.
+- [ ] **Superseded tx: out of scope, not a gap.** Design §7.1 (dated 2026-07-08, same day as the
+      Besu-acceptance call) is explicit: "the fabric-x gateway-specific lifecycle (`isPending` semantics,
+      superseded-tx) is an efficiency layer added only for the fabric-x-evm stretch... not required for the
+      Besu acceptance path." Confirmed in code, not just the doc: `EVMClient.IsPending` is a plain
+      `(pending, found, err)` tri-state in both the interface and the real Besu client, with no third state
+      and no dangling hook for one. Writing a test for it today would mean fabricating a gateway that
+      doesn't exist in this codebase. Leave unchecked until fabric-x-evm (stretch) is picked up, not before.
+- [x] Error taxonomy (§13), metrics (§12, `disabled.Provider` in tests), structured logging. `errors.go` /
+      `endorsement/errors.go` (permanent-vs-transient split, §13); `metrics.Provider` threaded through
+      `driver.go` and `recovery.go`.
+- [x] `make checks`/lint clean; godoc on exports; `go generate` mocks; DCO sign-off. Verified 2026-08-20:
+      `golangci-lint run` on the module — 0 issues; `go test -race ./...` — all packages green; `forge
+      test` — 55/55 passing; `gofmt -l .` — clean.
+- [x] **Buffer (~1 wk absorbed across Wk6–8)** for the integration/EIP-712/gateway surprises. Consumed —
+      the actual gaps it covered (Besu JSON-RPC quirks, the six Week-6 log items, the zkatdlog audit-timing
+      bug) are all resolved in the tree as of this update.
 
 Gate (DONE): fabtoken + zkatdlog Ginkgo suites green **on Besu**; receipt-based finality exercised; endorsed
 PP update works; driver registered via the `evmdlog` SDK module; `make checks` clean. (Stretch, not required:
@@ -617,5 +645,16 @@ green. If contracts can't be parallelized in Week 2, expect to use the full 8 an
   (`dlogx`-style), so the `evm` topology mirrors `fabricx`'s public interface.
 - Deferred (additive, not demo cuts): EIP-1167 clones, ERC-4337, graph-hiding driver.
 - Status legend: `[ ] Pending`, `[x] Done`, `[~] In progress`, `[!] Blocked`.
+- **Status sync (2026-08-20):** Weeks 5–8's checkboxes had drifted well behind the actual merged tree —
+  Week 5 and Week 7's zkatdlog gate were fully built and green in CI but never flipped, and most of Week
+  8's hardening had also landed without the boxes being checked. Corrected against the real tree (file
+  presence, `go build`/`vet`/`gofmt`/`golangci-lint`/`go test -race`/`forge test`, and CI run history), not
+  against this file's own prior claims. The one remaining unchecked item, superseded-tx handling, is
+  confirmed out of scope (fabric-x-evm stretch only), not a gap. **This does not cover two things outside
+  this plan's scope**: a follow-on self-review bug-hunt found and fixed 26 issues across two PRs (#2231,
+  #2232, both open and unreviewed as of this update) on top of the Week-8 baseline, and three findings from
+  that hunt are deliberately deferred pending a design decision (floating block-tag in `Ledger.GetState`,
+  per-TMS endorser-policy/`Config` split, integration harness bypassing the real endorsement pipeline for
+  PP updates) — see the PRs for detail.
 
-✅ COMPLETE when the Week-8 gate is met.
+✅ COMPLETE — the Week-8 gate is met (superseded-tx excluded as out of scope). #2231/#2232 pending review.
