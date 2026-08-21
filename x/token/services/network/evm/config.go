@@ -27,7 +27,16 @@ const (
 	// DefaultPollInterval is how often finality polls a transaction's status.
 	DefaultPollInterval = 2 * time.Second
 	// DefaultFinalityTimeout bounds how long a transaction is awaited before it is treated as failed.
-	DefaultFinalityTimeout = 5 * time.Minute
+	// It carries real margin over MinFinalizedTagTimeout (design §7.2, §7.5) so a deployment running
+	// on defaults alone is not sitting at the edge of normal PoS finalization variance.
+	DefaultFinalityTimeout = 20 * time.Minute
+	// MinFinalizedTagTimeout is the floor Validate enforces on Finality.Timeout when BlockTag is
+	// finalized. Real time-to-finality on a PoS chain is ~13 minutes (design §7.2); a shorter timeout
+	// cannot ever see a transaction finalize and condemns it regardless of whether it succeeded (design
+	// §7.5: "any deployment must configure finality.timeout above ... the chain's finality"). It bounds
+	// only the chain's own lag; a deployment that also delays broadcasting a signed transaction needs
+	// additional headroom on top of this, which Validate has no way to know and cannot enforce.
+	MinFinalizedTagTimeout = 13 * time.Minute
 	// DefaultGasMultiplier scales the node's gas estimate to absorb small state changes between
 	// estimation and execution.
 	DefaultGasMultiplier = 1.2
@@ -71,7 +80,8 @@ type ContractsConfig struct {
 
 // FinalityConfig controls how transaction finality is observed.
 type FinalityConfig struct {
-	// BlockTag is the tag state is read at (finalized or safe).
+	// BlockTag is the tag state is read at: finalized (default, no reorg risk), safe, or latest (no
+	// reorg protection at all; only appropriate for a local, instant-mining chain).
 	BlockTag string `yaml:"blockTag"`
 	// PollInterval is the delay between status polls.
 	PollInterval time.Duration `yaml:"pollInterval"`
@@ -122,8 +132,10 @@ type EndorsementConfig struct {
 	// Threshold is the number of distinct endorser signatures a transaction needs. It must match the
 	// threshold the EndorsementVerifier was constructed with.
 	Threshold uint `yaml:"threshold"`
-	// Allowlist is the FSC identities permitted to request endorsement. Empty means the policy is
-	// resolved from the TMS network's nodes at wiring time.
+	// Allowlist is the FSC identities permitted to request endorsement. It is fail-closed: when this
+	// node is configured to endorse, an empty allowlist is a validation error rather than a default
+	// that resolves to anyone. There is no automatic "the TMS network's nodes" fallback; every
+	// permitted requester has to be named.
 	Allowlist []string `yaml:"allowlist"`
 	// Endorsers binds each endorser's Ethereum address to its FSC identity.
 	Endorsers []EndorserBinding `yaml:"endorsers"`
@@ -199,6 +211,13 @@ func (c *Config) Validate() error {
 	default:
 		return errors.Errorf("evm config: unsupported finality blockTag [%s]", c.Finality.BlockTag)
 	}
+	if c.Finality.BlockTag == client.BlockTagFinalized && c.Finality.Timeout < MinFinalizedTagTimeout {
+		return errors.Errorf(
+			"evm config: finality.timeout [%s] is shorter than the finalized tag's own time-to-finality "+
+				"(~%s); it would condemn every transaction regardless of whether it succeeded",
+			c.Finality.Timeout, MinFinalizedTagTimeout,
+		)
+	}
 	if err := c.validateGas(); err != nil {
 		return err
 	}
@@ -261,6 +280,13 @@ func (c *Config) validateEndorsement() error {
 		}
 		if _, err := client.HexToAddress(c.Endorser.Address); err != nil {
 			return errors.Wrap(err, "evm config: invalid endorser address")
+		}
+		// The authorizer is deliberately fail-closed: it refuses to build from an empty allowlist
+		// rather than default to trusting everyone. Catching that here means a node left this way
+		// fails at startup rather than coming up looking healthy and silently never registering as an
+		// endorser, which is where this used to surface, as an error log easy to miss during wiring.
+		if len(c.Endorsement.Allowlist) == 0 {
+			return errors.New("evm config: endorsement.allowlist is required when endorser.enabled is set")
 		}
 	}
 
