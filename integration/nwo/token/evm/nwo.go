@@ -245,7 +245,7 @@ func (p *NetworkHandler) startNode(tms *topology2.TMS) Node {
 	// unique by construction, which is exactly the property the name needs.
 	port := int(ctx.ReservePort())
 
-	if p.NodeKind == "fabricx-evm" {
+	if p.NodeKind == GatewayTopologyName {
 		node, err := startGatewayNode(context.Background(), p.Image, p.ChainID, port)
 		gomega.Expect(err).NotTo(gomega.HaveOccurred(), "failed to start the EVM node")
 

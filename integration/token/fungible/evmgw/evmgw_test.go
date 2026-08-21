@@ -7,8 +7,6 @@ SPDX-License-Identifier: Apache-2.0
 package evmgw
 
 import (
-	"os/exec"
-
 	"github.com/LFDT-Panurus/panurus/integration/nwo/token"
 	tevm "github.com/LFDT-Panurus/panurus/integration/nwo/token/evm"
 	"github.com/LFDT-Panurus/panurus/integration/nwo/token/generators/crypto/zkatdlognoghv1"
@@ -23,19 +21,10 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 )
 
-// gatewayImage is the published fabric-x-evm image the suite boots; the suite skips when it is absent locally.
-const gatewayImage = "ghcr.io/hyperledger/fabric-x-evm:0.1.3"
-
 // The EVM gateway suite runs the shared fungible test bodies against the fabric-x-evm gateway node.
 var _ = Describe("EndToEnd", func() {
 	Describe("Fungible with Auditor ne Issuer", func() {
 		ts, selector := newTestSuite(fsc.LibP2P, 0, "alice", "bob", "charlie")
-		// Runs before ts.Setup so the image check gates the whole spec.
-		BeforeEach(func() {
-			if err := exec.Command("docker", "image", "inspect", gatewayImage).Run(); err != nil {
-				Skip("gateway image not present locally; run `docker pull " + gatewayImage + "` to run this suite")
-			}
-		})
 		BeforeEach(ts.Setup)
 		AfterEach(ts.TearDown)
 		It("succeeded", Label("T1"), func() {
