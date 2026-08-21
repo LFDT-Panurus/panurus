@@ -2,8 +2,9 @@
 
 > Branch: `feature/evm-network-driver`. Module: `github.com/LFDT-Panurus/panurus`.
 > This is the finalized design. All previously-open decisions are resolved in §15 with rationale grounded in
-> the existing codebase; §16 lists the handful worth a non-blocking confirmation from Angelo. The detailed,
-> task-level build sequence lives in `eth_network_driver_implementation_plan.md`.
+> the existing codebase; §16 lists the handful worth a non-blocking confirmation from Angelo. The driver is
+> built; see [Network Service - Ethereum Implementation Guide](../../../../../docs/services/network-ethereum.md)
+> for the operator-facing walkthrough.
 
 ---
 
@@ -1035,5 +1036,6 @@ can proceed.
 ## 17. Implementation Phases (summary)
 
 Frozen-first: (1) StateDelta + evm key translator + on-chain check-list; (2) contracts; (3) StateDelta
-translator; (4) EIP-712 + endorsement; (5) driver + network methods + wiring; (6) finality. Task-level detail,
-file lists, and acceptance criteria are in `eth_network_driver_implementation_plan.md`.
+translator; (4) EIP-712 + endorsement; (5) driver + network methods + wiring; (6) finality. All phases shipped
+against the Besu acceptance backend; the fabric-x-evm gateway `isPending` lifecycle (§7.1) remains a stretch
+item, out of scope for v1.
