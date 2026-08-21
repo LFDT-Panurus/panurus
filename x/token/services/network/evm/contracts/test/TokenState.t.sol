@@ -344,6 +344,20 @@ contract TokenStateTest is Test {
         gh.applyStateDelta(d2, _signFor(gh, d2));
     }
 
+    function test_GraphHiding_IsSpentQueriesRevert() public {
+        TokenState gh = TokenState(Clones.clone(address(impl)));
+        gh.initialize(address(verifier), address(this), pp0, true);
+
+        bytes32[] memory ids = new bytes32[](1);
+        ids[0] = keccak256("whatever");
+
+        vm.expectRevert(TokenState.UnsupportedForGraphHiding.selector);
+        gh.isSpent(ids[0]);
+
+        vm.expectRevert(TokenState.UnsupportedForGraphHiding.selector);
+        gh.areTokensSpent(ids);
+    }
+
     // --- lifecycle guards --------------------------------------------------------------------------
 
     function test_DoubleInitialize_Reverts() public {

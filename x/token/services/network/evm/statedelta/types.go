@@ -12,6 +12,19 @@ import (
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 )
 
+// Size bounds Validate enforces on a StateDelta. They exist so that a delta received from an
+// untrusted party (an endorser's reply, over the wire, before its signature has been checked - see
+// endorsement.Initiator) cannot force unbounded decoding and EIP-712 hashing work on the receiver.
+// They are set generously above anything a real translated token request produces, not as a business
+// rule on transaction shape.
+const (
+	// maxDeltaEntries bounds SpentRefs, Outputs and the metadata key/value pairs, each independently.
+	maxDeltaEntries = 4096
+	// maxFieldBytes bounds each variable-length byte field: one output's TokenData, one metadata
+	// value, or SetupParameters.
+	maxFieldBytes = 1 << 20 // 1 MiB
+)
+
 // OutputToken is a newly created token. It carries two keys (both derived off-chain; the contract
 // treats them as opaque): the addressable id and the content-bound marker.
 type OutputToken struct {
@@ -76,7 +89,33 @@ type StateDelta struct {
 //   - MetadataKeys are strictly ascending (the frozen §4.4 canonicalization). Unsorted keys mean the
 //     emitting translator is broken (endorsers would produce different bytes and signatures would
 //     not assemble); duplicate keys would make the on-chain write order ambiguous.
+//
+// It also enforces the size bounds above before doing any per-element work, so a delta built from
+// untrusted bytes is rejected before it can force unbounded comparison or hashing work downstream.
 func (d *StateDelta) Validate() error {
+	if len(d.SpentRefs) > maxDeltaEntries {
+		return errors.Errorf("too many spent refs: %d exceeds the %d limit", len(d.SpentRefs), maxDeltaEntries)
+	}
+	if len(d.Outputs) > maxDeltaEntries {
+		return errors.Errorf("too many outputs: %d exceeds the %d limit", len(d.Outputs), maxDeltaEntries)
+	}
+	for i, out := range d.Outputs {
+		if len(out.TokenData) > maxFieldBytes {
+			return errors.Errorf("output %d token data too large: %d bytes exceeds the %d limit", i, len(out.TokenData), maxFieldBytes)
+		}
+	}
+	if len(d.MetadataKeys) > maxDeltaEntries {
+		return errors.Errorf("too many metadata entries: %d exceeds the %d limit", len(d.MetadataKeys), maxDeltaEntries)
+	}
+	for i, val := range d.MetadataVals {
+		if len(val) > maxFieldBytes {
+			return errors.Errorf("metadata value %d too large: %d bytes exceeds the %d limit", i, len(val), maxFieldBytes)
+		}
+	}
+	if len(d.SetupParameters) > maxFieldBytes {
+		return errors.Errorf("setup parameters too large: %d bytes exceeds the %d limit", len(d.SetupParameters), maxFieldBytes)
+	}
+
 	if len(d.MetadataKeys) != len(d.MetadataVals) {
 		return errors.Errorf("metadata keys/values length mismatch: %d != %d", len(d.MetadataKeys), len(d.MetadataVals))
 	}
@@ -86,8 +125,8 @@ func (d *StateDelta) Validate() error {
 		}
 	}
 	if d.IsSetup {
-		if len(d.SpentRefs) != 0 || len(d.Outputs) != 0 {
-			return errors.Errorf("setup delta must carry no spent refs or outputs")
+		if len(d.SpentRefs) != 0 || len(d.Outputs) != 0 || len(d.MetadataKeys) != 0 {
+			return errors.Errorf("setup delta must carry no spent refs, outputs, or metadata")
 		}
 		if len(d.SetupParameters) == 0 {
 			return errors.Errorf("setup delta must carry the new public parameters")

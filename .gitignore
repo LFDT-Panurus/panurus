@@ -15,6 +15,7 @@ cmd/token_validation_service/out/
 coverage.out
 /.codex/
 plan.md
+x/BUG_HUNT_PROMPT.md
 
 # The EVM integration suites generate a node binary tree and a network under out/ and testdata/.
 # Both hold real Go files, so a stray "git add -A" commits them and a linter then reports on them.

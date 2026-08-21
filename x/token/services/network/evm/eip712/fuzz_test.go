@@ -18,10 +18,14 @@ import (
 // endorser over an FSC session, and the initiator recovers a signer from it before it has any reason
 // to trust the peer. A panic here is reachable by any node that can open a session.
 //
-// The property is that RecoverAddress either returns an address or an error, never panics, and never
-// accepts a signature the EndorsementVerifier contract would reject. The second half matters as much
-// as the first: a signature accepted here but rejected on chain would let an initiator assemble a
-// quorum that cannot be applied.
+// The property this fuzz target checks is narrower than "never accepts a signature the contract would
+// reject": RecoverAddress calls checkSignatureFormat itself and returns before recovery on failure, so
+// re-checking format here on an accepted signature would only be asking the same pure function the
+// same question twice and could never fail. What this actually verifies is that RecoverAddress never
+// panics and, whenever it does accept a signature, recovers a real, non-zero address from it. That Go's
+// format rules match the EndorsementVerifier contract's is a real property, proven independently by
+// TestRecoverRejectsMalformed (signer_test.go) and the on-chain EndorsementVerifier.t.sol cases, plus
+// the golden-fixture cross-check in TestGoldenFixtureEndorsement / GoEndorsement.t.sol.
 func FuzzRecoverAddress(f *testing.F) {
 	signer, err := NewSignerFromBytes(testScalar(1))
 	if err != nil {
@@ -48,12 +52,6 @@ func FuzzRecoverAddress(f *testing.F) {
 		address, err := RecoverAddress(d, sig)
 		if err != nil {
 			return
-		}
-
-		// Anything accepted must have passed the contract's own format rules, since the two have to
-		// agree for an endorsement to be applyable.
-		if err := checkSignatureFormat(sig); err != nil {
-			t.Fatalf("accepted a signature the contract would reject: %v", err)
 		}
 		if address == (client.Address{}) {
 			t.Fatal("recovered the zero address without an error")
