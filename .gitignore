@@ -25,9 +25,12 @@ integration/token/fungible/evmfabtoken/out/
 integration/token/fungible/evmfabtoken/testdata/
 integration/token/fungible/evmgw/out/
 integration/token/fungible/evmgw/testdata/
+integration/token/fungible/evmgwfabtoken/out/
+integration/token/fungible/evmgwfabtoken/testdata/
 # ginkgo leaves its compiled suite binary behind when a run fails.
 integration/token/fungible/evm/evm.test
 integration/token/fungible/evmfabtoken/evmfabtoken.test
 integration/token/fungible/evmgw/evmgw.test
+integration/token/fungible/evmgwfabtoken/evmgwfabtoken.test
 # ginkgo -cover writes this next to the suite it ran.
 integration/token/fungible/*/coverprofile.out

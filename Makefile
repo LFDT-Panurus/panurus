@@ -143,6 +143,11 @@ integration-tests-evm-fabtoken: besu-docker-images
 integration-tests-evm-gateway: fabricx-evm-docker-images
 	cd ./integration/token/fungible/evmgw; ginkgo $(GINKGO_TEST_OPTS) .
 
+.PHONY: integration-tests-evm-gateway-fabtoken
+# run the fungible integration tests against the fabric-x-evm gateway backend with the fabtoken driver.
+integration-tests-evm-gateway-fabtoken: fabricx-evm-docker-images
+	cd ./integration/token/fungible/evmgwfabtoken; ginkgo $(GINKGO_TEST_OPTS) .
+
 .PHONY: integration-tests-nft-dlog
 # run nft integration tests with idemix
 integration-tests-nft-dlog:
@@ -188,6 +193,8 @@ clean:
 	rm -rf ./integration/token/fungible/evmfabtoken/testdata/
 	rm -rf ./integration/token/fungible/evmgw/out/
 	rm -rf ./integration/token/fungible/evmgw/testdata/
+	rm -rf ./integration/token/fungible/evmgwfabtoken/out/
+	rm -rf ./integration/token/fungible/evmgwfabtoken/testdata/
 	rm -rf ./integration/token/fungible/dloghsm/out/
 	rm -rf ./integration/token/fungible/dloghsm/testdata/
 	rm -rf ./integration/token/fungible/dlogstress/out/
