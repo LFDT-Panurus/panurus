@@ -136,7 +136,7 @@ func (c *gateContext) GetSession(_ view.View, party view.Identity, _ ...view.Vie
 // and asserts a 2-of-3 quorum is assembled whose signatures recover to distinct registered endorsers.
 func TestGateAssembleQuorumOverSessions(t *testing.T) {
 	reg, responders := gateEndorsers(t, 3)
-	initiator := NewInitiator(reg, gateThreshold, gateFactory(), gateDomain(t), gateRequest())
+	initiator := NewInitiator(reg, gateThreshold, gateDomain(t), gateRequest())
 
 	ctx := &gateContext{
 		fakeContext: fakeContext{ctx: context.Background(), me: view.Identity(gateInitiator)},
@@ -167,7 +167,7 @@ func TestGateAssembleQuorumOverSessions(t *testing.T) {
 // on-chain check exercises exactly what the initiator produces.
 func TestGateFixtureMatchesAssembly(t *testing.T) {
 	reg, responders := gateEndorsers(t, 3)
-	initiator := NewInitiator(reg, gateThreshold, gateFactory(), gateDomain(t), gateRequest())
+	initiator := NewInitiator(reg, gateThreshold, gateDomain(t), gateRequest())
 	ctx := &gateContext{
 		fakeContext: fakeContext{ctx: context.Background(), me: view.Identity(gateInitiator)},
 		responders:  responders,
