@@ -8,9 +8,7 @@ package evm
 
 import "context"
 
-// Node is the chain a TMS settles on, provisioned per backend. The handler only ever needs the
-// endpoint to reach it, the chain id to sign for it, and a way to tear it down, so the concrete
-// backend (Besu by default, the fabric-x-evm gateway otherwise) is hidden behind this interface.
+// Node is the chain a TMS settles on, provisioned per backend and hiding the concrete Besu/gateway node.
 type Node interface {
 	// Endpoint returns the node's JSON-RPC URL as reachable from the host.
 	Endpoint() string

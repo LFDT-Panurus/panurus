@@ -18,19 +18,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestLaunchLive boots a real EVM node container via the docker CLI, waits for
-// its JSON-RPC endpoint to become reachable, and then stops it. It is skipped
-// unless EVM_LAUNCHER_LIVE_IMAGE names a runnable EVM node image. Optional
-// environment variables tune the spec:
-//
-//   - EVM_LAUNCHER_LIVE_IMAGE      (required) docker image reference
-//   - EVM_LAUNCHER_LIVE_ENTRYPOINT (optional) --entrypoint override
-//   - EVM_LAUNCHER_LIVE_CMD        (optional) command args, split on spaces
-//   - EVM_LAUNCHER_LIVE_CHAINID    (optional) base-10 uint64 chain id to assert
-//
-// The container publishes its RPC port (8545) to an ephemeral host port. The
-// node is force-stopped via t.Cleanup so the container is removed even when an
-// assertion fails mid-test.
+// TestLaunchLive boots, reaches, and stops a real EVM node container; skipped unless EVM_LAUNCHER_LIVE_IMAGE is set.
 func TestLaunchLive(t *testing.T) {
 	image := os.Getenv("EVM_LAUNCHER_LIVE_IMAGE")
 	if image == "" {

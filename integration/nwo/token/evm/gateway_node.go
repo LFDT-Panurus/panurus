@@ -14,19 +14,13 @@ import (
 	"github.com/LFDT-Panurus/panurus/integration/nwo/token/evm/gateway"
 )
 
-// defaultGatewayImage is the published fabric-x-evm image booted when none is configured. It is the
-// first release that ships the self-contained testnode mode (--listen/--chain-id, embedded Hardhat
-// accounts); docker pulls it on demand, so no local build is needed.
+// defaultGatewayImage is the published fabric-x-evm image booted when none is configured.
 const defaultGatewayImage = "ghcr.io/hyperledger/fabric-x-evm:0.1.3"
 
-// defaultGatewayChainID is the chain id the gateway runs when none is configured. It mirrors the
-// gateway testnode's own default, so the value gatewayNode reports back (and that a node's config is
-// rendered with) matches the chain the container actually runs. Reporting an unset (zero) chain id
-// makes the funder reject its transactions with "chain id must be set and positive".
+// defaultGatewayChainID is the chain id the gateway runs when none is configured; it mirrors the testnode default.
 const defaultGatewayChainID int64 = 31337
 
-// gatewayNode adapts a gateway.Node to the Node interface. The gateway node has no ChainID method,
-// since the chain id is an input to the boot rather than something it reports, so it is carried here.
+// gatewayNode adapts a gateway.Node to the Node interface, carrying the boot-time chain id it cannot report.
 type gatewayNode struct {
 	inner   *gateway.Node
 	chainID int64
@@ -44,8 +38,7 @@ func (n *gatewayNode) ChainID() int64 { return n.chainID }
 // Stop tears the node down.
 func (n *gatewayNode) Stop(ctx context.Context) error { return n.inner.Stop(ctx) }
 
-// startGatewayNode boots a fabric-x-evm gateway testnode on the given host port and wraps it as a
-// Node. The image defaults to defaultGatewayImage when empty.
+// startGatewayNode boots a fabric-x-evm gateway testnode on the given host port and wraps it as a Node.
 func startGatewayNode(ctx context.Context, image string, chainID int64, port int) (Node, error) {
 	if image == "" {
 		image = defaultGatewayImage

@@ -71,8 +71,7 @@ type NetworkHandler struct {
 	Image string
 	// ChainID is the chain the network runs.
 	ChainID int64
-	// NodeKind selects which node to boot; empty or "besu" boots Besu (the default), "fabricx-evm"
-	// boots the fabric-x-evm gateway container.
+	// NodeKind selects the node to boot: empty/"besu" (default) or "fabricx-evm" gateway.
 	NodeKind string
 	// Threshold is the endorsement threshold; when zero every endorser must sign.
 	Threshold uint
@@ -181,9 +180,7 @@ func (p *NetworkHandler) GenerateArtifacts(tms *topology2.TMS) {
 	gomega.Expect(err).NotTo(gomega.HaveOccurred(), "failed to deploy the contracts for [%s]", tms.TmsID())
 	entry.Deployment = deployment
 
-	// The fabric-x-evm gateway is gasless (gas price zero, balances zero), so submitters need keys but
-	// not ether: an ETH value transfer to fund them is dropped by the chain. Besu, by contrast, charges
-	// gas, so its submitters must be funded out of the operator's pre-funded account.
+	// The gasless gateway needs submitter keys but no funding (funding txs are dropped); Besu charges gas.
 	if p.NodeKind == GatewayTopologyName {
 		p.provisionSubmitters(tms, entry, keyDir)
 	} else {
@@ -193,9 +190,7 @@ func (p *NetworkHandler) GenerateArtifacts(tms *topology2.TMS) {
 	_ = ctx
 }
 
-// provisionSubmitters gives every node of the TMS its own submitter key without funding it, for a
-// gasless chain where a transaction needs no ether. Each node gets its own account for the same
-// nonce reason funding does: nonces are per account and each node tracks its own.
+// provisionSubmitters gives every node its own submitter key without funding it, for the gasless gateway.
 func (p *NetworkHandler) provisionSubmitters(tms *topology2.TMS, entry *Entry, keyDir string) {
 	for _, node := range tms.FSCNodes {
 		if _, provisioned := entry.SubmitterOf[node.Name]; provisioned {

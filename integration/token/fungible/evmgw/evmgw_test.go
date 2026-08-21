@@ -23,22 +23,14 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 )
 
-// gatewayImage is the published fabric-x-evm image the suite boots: the first release that ships the
-// self-contained testnode mode. It is pullable (docker fetches it on demand), but the suite still
-// gates on the image being present locally so it skips in CI (which does not pre-pull it) instead of
-// running the full flow, whose token-transfer commit depends on the driver's gateway-finality support.
+// gatewayImage is the published fabric-x-evm image the suite boots; the suite skips when it is absent locally.
 const gatewayImage = "ghcr.io/hyperledger/fabric-x-evm:0.1.3"
 
 // The EVM gateway suite runs the shared fungible test bodies against the fabric-x-evm gateway node.
-// It is identical to the Besu EVM suite except for the backend it selects: the same functions that
-// validate the Fabric and Besu backends are called here, which is the whole claim being made. If they
-// pass with the bodies unchanged, the gateway genuinely carries the token flows.
 var _ = Describe("EndToEnd", func() {
 	Describe("Fungible with Auditor ne Issuer", func() {
 		ts, selector := newTestSuite(fsc.LibP2P, 0, "alice", "bob", "charlie")
-		// This BeforeEach runs before ts.Setup, so the image check gates the whole spec: ts.Setup boots
-		// the gateway container. The image is published, but CI does not pre-pull it, so the suite skips
-		// there; pull it locally to run this suite.
+		// Runs before ts.Setup so the image check gates the whole spec.
 		BeforeEach(func() {
 			if err := exec.Command("docker", "image", "inspect", gatewayImage).Run(); err != nil {
 				Skip("gateway image not present locally; run `docker pull " + gatewayImage + "` to run this suite")
@@ -64,10 +56,7 @@ func newTestSuite(commType fsc.P2PCommunicationType, factor int, names ...string
 		SDKs:            []node.SDK{&evmdlog.SDK{}},
 		ReplicationOpts: opts,
 		FSCLogSpec:      "info",
-		// This adds the endorser nodes to the topology and marks them with the token-level endorser
-		// role, which is what the EVM handler reads when it provisions endorser identities. The
-		// endorsement policy itself still lives in the evm configuration rather than in Fabric's
-		// endorser machinery.
+		// Adds endorser nodes marked with the token-level endorser role the EVM handler reads.
 		FSCBasedEndorsement: true,
 	}
 

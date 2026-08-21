@@ -12,9 +12,7 @@ import (
 	"testing"
 )
 
-// FuzzParseHexChainID exercises parseHexChainID with arbitrary input. It
-// asserts the parser never panics and that any value it accepts re-encodes to a
-// hex string consistent with the parsed number.
+// FuzzParseHexChainID asserts parseHexChainID never panics and that accepted values round-trip through hex.
 func FuzzParseHexChainID(f *testing.F) {
 	seeds := []string{
 		"0x1",
@@ -36,8 +34,7 @@ func FuzzParseHexChainID(f *testing.F) {
 		if err != nil {
 			return
 		}
-		// When accepted, the value must round-trip: re-encoding it as hex and
-		// re-parsing it must yield the same number.
+		// Re-encoding and re-parsing must yield the same number.
 		reencoded := "0x" + strconv.FormatUint(v, 16)
 		v2, err2 := parseHexChainID(reencoded)
 		if err2 != nil {

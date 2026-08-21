@@ -17,12 +17,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestReachabilityLive exercises Ping and WaitReachable against a real EVM node
-// instead of an in-memory server. It is skipped unless EVM_LIVE_ENDPOINT points
-// at a reachable JSON-RPC endpoint (e.g. a local anvil or the fabric-x-evm
-// gateway devnet at http://localhost:8545). Set EVM_LIVE_CHAINID to also assert
-// the reported chain id. Mirrors the driver's anvil reachability spike: present
-// as a permanent check, no-op when no node is available.
+// TestReachabilityLive exercises Ping and WaitReachable against a real EVM node; skipped unless EVM_LIVE_ENDPOINT is set.
 func TestReachabilityLive(t *testing.T) {
 	endpoint := os.Getenv("EVM_LIVE_ENDPOINT")
 	if endpoint == "" {

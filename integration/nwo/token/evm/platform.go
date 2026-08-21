@@ -51,15 +51,10 @@ func (f *PlatformFactory) New(ctx api2.Context, t api2.Topology, _ api2.Builder)
 	return &Platform{context: ctx, topology: topology}
 }
 
-// GatewayPlatformFactory builds the EVM platform for a fabric-x-evm gateway topology. The
-// infrastructure resolves a platform for every topology by matching this factory's Name to the
-// topology's Type, and the gateway topology's Type is GatewayTopologyName rather than TopologyName, so
-// it needs a factory answering to that name. The platform itself is backend-agnostic — it exists only
-// so a topology with no platform is not refused — so this reuses the same empty Platform.
+// GatewayPlatformFactory builds the EVM platform for a fabric-x-evm gateway topology (matched by Type = GatewayTopologyName).
 type GatewayPlatformFactory struct{}
 
-// NewGatewayPlatformFactory returns the factory the fabric-x-evm gateway suite registers with the
-// integration infrastructure.
+// NewGatewayPlatformFactory returns the platform factory for the fabric-x-evm gateway topology.
 func NewGatewayPlatformFactory() *GatewayPlatformFactory { return &GatewayPlatformFactory{} }
 
 // Name returns the platform type this factory serves.

@@ -18,8 +18,7 @@ import (
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 )
 
-// perRequestTimeout bounds a single Ping HTTP round-trip when the caller's
-// context has no earlier deadline.
+// perRequestTimeout bounds a single Ping HTTP round-trip when ctx has no earlier deadline.
 const perRequestTimeout = 5 * time.Second
 
 // rpcRequest is the JSON-RPC request body sent by Ping.
@@ -44,11 +43,7 @@ type rpcResponse struct {
 	Error   *rpcError `json:"error"`
 }
 
-// parseHexChainID parses an Ethereum eth_chainId hex result string such as
-// "0x1" or "0x7A69" (case-insensitive). It requires a "0x"/"0X" prefix and at
-// least one hex digit, and rejects empty input, a bare prefix, non-hex
-// characters, and values that overflow a uint64. It returns a wrapped error on
-// failure.
+// parseHexChainID parses a 0x-prefixed eth_chainId hex string into a uint64, rejecting malformed or overflowing input.
 func parseHexChainID(s string) (uint64, error) {
 	if len(s) < 2 || (s[0:2] != "0x" && s[0:2] != "0X") {
 		return 0, errors.Errorf("invalid chain id %q: missing 0x prefix", s)
@@ -65,11 +60,7 @@ func parseHexChainID(s string) (uint64, error) {
 	return v, nil
 }
 
-// Ping sends a JSON-RPC eth_chainId request to endpoint and returns the chain
-// id reported by the node. It uses an http.Client whose timeout is derived from
-// ctx (falling back to a short per-request timeout). A non-null JSON-RPC error
-// object, a transport failure, or a malformed/invalid response all yield a
-// wrapped error.
+// Ping sends a JSON-RPC eth_chainId request to endpoint and returns the chain id reported by the node.
 func Ping(ctx context.Context, endpoint string) (uint64, error) {
 	reqBody, err := json.Marshal(rpcRequest{
 		JSONRPC: "2.0",
@@ -117,9 +108,7 @@ func Ping(ctx context.Context, endpoint string) (uint64, error) {
 	return id, nil
 }
 
-// requestTimeout returns the per-request HTTP timeout: the time remaining until
-// the context deadline when one is set and sooner than perRequestTimeout,
-// otherwise perRequestTimeout.
+// requestTimeout returns the per-request HTTP timeout: the ctx deadline remaining when sooner, else perRequestTimeout.
 func requestTimeout(ctx context.Context) time.Duration {
 	if deadline, ok := ctx.Deadline(); ok {
 		if remaining := time.Until(deadline); remaining > 0 && remaining < perRequestTimeout {
@@ -130,13 +119,7 @@ func requestTimeout(ctx context.Context) time.Duration {
 	return perRequestTimeout
 }
 
-// WaitReachable polls the JSON-RPC endpoint until it answers with an acceptable
-// chain id or the wait is exhausted. It applies cfg.WithDefaults() and probes
-// every PollInterval. It returns nil once Ping succeeds and either
-// expectedChainID is 0 or the returned id matches expectedChainID. It returns a
-// wrapped error when StartTimeout elapses or ctx is cancelled, including the
-// last Ping error or a chain-id-mismatch message. ctx cancellation is honored
-// promptly.
+// WaitReachable polls endpoint until Ping succeeds with an acceptable chain id, or StartTimeout elapses or ctx is cancelled.
 func WaitReachable(ctx context.Context, endpoint string, expectedChainID uint64, cfg Config) error {
 	cfg = cfg.WithDefaults()
 
