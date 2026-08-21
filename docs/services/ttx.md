@@ -387,8 +387,10 @@ wallet (an "external wallet") by passing `RecipientData` directly to
 runs `Deserializer.MatchIdentity(Identity, AuditInfo)` before registering and binding the
 identity, so a caller-supplied `Identity`/`AuditInfo` pair that doesn't match is rejected with
 an error and the withdrawal request is never sent. For a `LongTermOwnerWallet`,
-`RegisterRecipient` is currently a no-op, so this check does not add protection when the
-caller's local wallet is long-term-identity-backed rather than anonymous.
+`RegisterRecipient` accepts exactly two shapes: the wallet's own long-term identity with its
+exact audit info, or a well-formed boolpolicy composite identity that lists the wallet's
+identity among its components (the rest recipient of a transfer spending policy-owned inputs).
+Anything else is rejected with an error.
 
 ## Token Upgrade Flow
 

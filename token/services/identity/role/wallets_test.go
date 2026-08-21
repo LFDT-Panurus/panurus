@@ -8,11 +8,15 @@ package role_test
 
 import (
 	"errors"
+	"fmt"
 	"math/big"
 	"testing"
 	"time"
 
+	token2 "github.com/LFDT-Panurus/panurus/token"
 	"github.com/LFDT-Panurus/panurus/token/driver"
+	"github.com/LFDT-Panurus/panurus/token/services/identity"
+	"github.com/LFDT-Panurus/panurus/token/services/identity/boolpolicy"
 	"github.com/LFDT-Panurus/panurus/token/services/identity/role"
 	"github.com/LFDT-Panurus/panurus/token/services/identity/role/mock"
 	"github.com/LFDT-Panurus/panurus/token/services/identity/wallet"
@@ -284,7 +288,7 @@ func TestLongTermOwnerWallet(t *testing.T) {
 	})
 
 	t.Run("RegisterRecipient", func(t *testing.T) {
-		w, _, _ := setup(t)
+		w, ip, _ := setup(t)
 
 		// Case 1: nil data
 		err := w.RegisterRecipient(t.Context(), nil)
@@ -312,6 +316,202 @@ func TestLongTermOwnerWallet(t *testing.T) {
 		})
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "audit info does not match")
+
+		// Case 5: a well-formed boolpolicy recipient listing the wallet's
+		// identity among its components, with the wallet's audit info at that
+		// component's entry, is accepted and registered as the rest recipient
+		// of a transfer spending policy-owned inputs
+		policyID, err := boolpolicy.WrapPolicyIdentity("$0 OR $1",
+			token2.Identity("ownerIdentity"), token2.Identity("member2"))
+		require.NoError(t, err)
+		policyInfo, err := boolpolicy.WrapAuditInfo([][]byte{[]byte("audit-info"), []byte("ai2")})
+		require.NoError(t, err)
+		acceptedData := &driver.RecipientData{
+			Identity:  policyID,
+			AuditInfo: policyInfo,
+		}
+		err = w.RegisterRecipient(t.Context(), acceptedData)
+		require.NoError(t, err)
+		require.Equal(t, 1, ip.RegisterRecipientDataCallCount())
+		_, gotData := ip.RegisterRecipientDataArgsForCall(0)
+		assert.Equal(t, acceptedData, gotData)
+
+		// Case 6: policy recipient whose audit info does not cover every
+		// component is rejected
+		shortInfo, err := boolpolicy.WrapAuditInfo([][]byte{[]byte("ai1")})
+		require.NoError(t, err)
+		err = w.RegisterRecipient(t.Context(), &driver.RecipientData{
+			Identity:  policyID,
+			AuditInfo: shortInfo,
+		})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "does not belong to this wallet")
+
+		// Case 7: garbage under the policy type tag is rejected
+		garbageID, err := identity.WrapWithType(boolpolicy.Policy, identity.Identity("garbage"))
+		require.NoError(t, err)
+		err = w.RegisterRecipient(t.Context(), &driver.RecipientData{
+			Identity:  garbageID,
+			AuditInfo: policyInfo,
+		})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "does not belong to this wallet")
+
+		// Case 8: a policy the wallet's identity is not a component of is
+		// rejected, however well-formed
+		foreignID, err := boolpolicy.WrapPolicyIdentity("$0 OR $1",
+			token2.Identity("member1"), token2.Identity("member2"))
+		require.NoError(t, err)
+		err = w.RegisterRecipient(t.Context(), &driver.RecipientData{
+			Identity:  foreignID,
+			AuditInfo: policyInfo,
+		})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "does not belong to this wallet")
+
+		// Case 9: a policy with no components is rejected even when the audit
+		// info is empty as well
+		emptyInner, err := (&boolpolicy.PolicyIdentity{Policy: "$0"}).Serialize()
+		require.NoError(t, err)
+		emptyID, err := identity.WrapWithType(boolpolicy.Policy, emptyInner)
+		require.NoError(t, err)
+		err = w.RegisterRecipient(t.Context(), &driver.RecipientData{
+			Identity:  emptyID,
+			AuditInfo: []byte(`{"IdentityAuditInfos":[]}`),
+		})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "does not belong to this wallet")
+
+		// Case 10: duplicate components are rejected
+		dupInner, err := (&boolpolicy.PolicyIdentity{
+			Policy:     "$0 OR $1",
+			Identities: [][]byte{[]byte("ownerIdentity"), []byte("ownerIdentity")},
+		}).Serialize()
+		require.NoError(t, err)
+		dupID, err := identity.WrapWithType(boolpolicy.Policy, dupInner)
+		require.NoError(t, err)
+		err = w.RegisterRecipient(t.Context(), &driver.RecipientData{
+			Identity:  dupID,
+			AuditInfo: policyInfo,
+		})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "does not belong to this wallet")
+
+		// Case 11: empty components are rejected
+		blankInner, err := (&boolpolicy.PolicyIdentity{
+			Policy:     "$0 OR $1",
+			Identities: [][]byte{[]byte("ownerIdentity"), {}},
+		}).Serialize()
+		require.NoError(t, err)
+		blankID, err := identity.WrapWithType(boolpolicy.Policy, blankInner)
+		require.NoError(t, err)
+		err = w.RegisterRecipient(t.Context(), &driver.RecipientData{
+			Identity:  blankID,
+			AuditInfo: policyInfo,
+		})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "does not belong to this wallet")
+
+		// Case 12: audit info carrying unknown fields is rejected
+		err = w.RegisterRecipient(t.Context(), &driver.RecipientData{
+			Identity:  policyID,
+			AuditInfo: []byte(`{"IdentityAuditInfos":[{"AuditInfo":"YQ=="},{"AuditInfo":"Yg=="}],"Extra":1}`),
+		})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "does not belong to this wallet")
+
+		// Case 13: a policy at the component fan-out limit is accepted
+		limit := driver.DefaultResourceLimits().MaxIdentityComponents
+		members := make([]token2.Identity, limit)
+		infos := make([][]byte, limit)
+		members[0] = token2.Identity("ownerIdentity")
+		infos[0] = []byte("audit-info")
+		for i := 1; i < limit; i++ {
+			members[i] = token2.Identity(fmt.Sprintf("member%d", i))
+			infos[i] = fmt.Appendf(nil, "ai%d", i)
+		}
+		limitID, err := boolpolicy.WrapPolicyIdentity("$0", members...)
+		require.NoError(t, err)
+		limitInfo, err := boolpolicy.WrapAuditInfo(infos)
+		require.NoError(t, err)
+		err = w.RegisterRecipient(t.Context(), &driver.RecipientData{
+			Identity:  limitID,
+			AuditInfo: limitInfo,
+		})
+		require.NoError(t, err)
+
+		// Case 14: one component above the fan-out limit is rejected
+		overRaw := make([][]byte, limit+1)
+		overInfos := make([][]byte, limit+1)
+		overRaw[0] = []byte("ownerIdentity")
+		overInfos[0] = []byte("ai0")
+		for i := 1; i <= limit; i++ {
+			overRaw[i] = fmt.Appendf(nil, "member%d", i)
+			overInfos[i] = fmt.Appendf(nil, "ai%d", i)
+		}
+		overInner, err := (&boolpolicy.PolicyIdentity{Policy: "$0", Identities: overRaw}).Serialize()
+		require.NoError(t, err)
+		overID, err := identity.WrapWithType(boolpolicy.Policy, overInner)
+		require.NoError(t, err)
+		overInfo, err := boolpolicy.WrapAuditInfo(overInfos)
+		require.NoError(t, err)
+		err = w.RegisterRecipient(t.Context(), &driver.RecipientData{
+			Identity:  overID,
+			AuditInfo: overInfo,
+		})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "does not belong to this wallet")
+
+		// Case 15: the fan-out bound follows the limits carried by the
+		// context, not just the defaults — the same two-component policy is
+		// rejected under a limit of 1 and accepted under a limit of 2
+		tightCtx := driver.WithIdentityNestingLimits(t.Context(), 0, 1)
+		err = w.RegisterRecipient(tightCtx, &driver.RecipientData{
+			Identity:  policyID,
+			AuditInfo: policyInfo,
+		})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "does not belong to this wallet")
+
+		exactCtx := driver.WithIdentityNestingLimits(t.Context(), 0, 2)
+		err = w.RegisterRecipient(exactCtx, &driver.RecipientData{
+			Identity:  policyID,
+			AuditInfo: policyInfo,
+		})
+		require.NoError(t, err)
+
+		// Case 16: an empty policy expression is rejected — no verifier can
+		// ever be built for it, so the rest would be unspendable
+		noPolicyInner, err := (&boolpolicy.PolicyIdentity{
+			Identities: [][]byte{[]byte("ownerIdentity"), []byte("member2")},
+		}).Serialize()
+		require.NoError(t, err)
+		noPolicyID, err := identity.WrapWithType(boolpolicy.Policy, noPolicyInner)
+		require.NoError(t, err)
+		err = w.RegisterRecipient(t.Context(), &driver.RecipientData{
+			Identity:  noPolicyID,
+			AuditInfo: policyInfo,
+		})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "does not belong to this wallet")
+
+		// Case 17: audit info of the right cardinality but carrying a foreign
+		// entry at the wallet's own component is rejected
+		foreignInfo, err := boolpolicy.WrapAuditInfo([][]byte{[]byte("ai1"), []byte("ai2")})
+		require.NoError(t, err)
+		err = w.RegisterRecipient(t.Context(), &driver.RecipientData{
+			Identity:  policyID,
+			AuditInfo: foreignInfo,
+		})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "does not belong to this wallet")
+
+		// Case 18: a registration failure surfaces to the caller
+		ip.RegisterRecipientDataReturns(errors.New("registration error"))
+		err = w.RegisterRecipient(t.Context(), acceptedData)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "failed registering audit info")
+		ip.RegisterRecipientDataReturns(nil)
 	})
 }
 
