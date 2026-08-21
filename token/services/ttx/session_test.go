@@ -10,6 +10,7 @@ package ttx_test
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 
@@ -443,4 +444,215 @@ func TestLocalBidirectionalChannel_UniqueSessionIDs(t *testing.T) {
 	id2 := channel2.LeftSession().Info().ID
 
 	assert.NotEqual(t, id1, id2, "session IDs should be unique")
+}
+
+// TestLocalBidirectionalChannel_CloseIsIdempotent verifies that closing a session twice does not panic.
+func TestLocalBidirectionalChannel_CloseIsIdempotent(t *testing.T) {
+	ctx := t.Context()
+	channel, err := ttx.NewLocalBidirectionalChannel(ctx, "caller", "ctx-id", "endpoint", []byte("pkid"))
+	require.NoError(t, err)
+
+	leftSession := channel.LeftSession()
+
+	assert.NotPanics(t, func() {
+		leftSession.Close()
+		leftSession.Close()
+	})
+	assert.True(t, leftSession.Info().Closed)
+}
+
+// TestLocalBidirectionalChannel_CloseBothSides verifies that both ends of the same channel can be closed.
+func TestLocalBidirectionalChannel_CloseBothSides(t *testing.T) {
+	ctx := t.Context()
+	channel, err := ttx.NewLocalBidirectionalChannel(ctx, "caller", "ctx-id", "endpoint", []byte("pkid"))
+	require.NoError(t, err)
+
+	assert.NotPanics(t, func() {
+		channel.LeftSession().Close()
+		channel.RightSession().Close()
+	})
+}
+
+// TestLocalBidirectionalChannel_ClosePeerSendStillSafe verifies that closing one side leaves the peer able to send.
+func TestLocalBidirectionalChannel_ClosePeerSendStillSafe(t *testing.T) {
+	ctx := t.Context()
+	channel, err := ttx.NewLocalBidirectionalChannel(ctx, "caller", "ctx-id", "endpoint", []byte("pkid"))
+	require.NoError(t, err)
+
+	leftSession := channel.LeftSession()
+	rightSession := channel.RightSession()
+
+	leftSession.Close()
+
+	assert.NotPanics(t, func() {
+		assert.NoError(t, rightSession.Send([]byte("still-open")))
+	})
+	assert.False(t, rightSession.Info().Closed, "closing one side must not close the other")
+}
+
+// TestLocalBidirectionalChannel_CloseUnblocksPeerReceive verifies that Close releases a peer blocked on Receive.
+func TestLocalBidirectionalChannel_CloseUnblocksPeerReceive(t *testing.T) {
+	ctx := t.Context()
+	channel, err := ttx.NewLocalBidirectionalChannel(ctx, "caller", "ctx-id", "endpoint", []byte("pkid"))
+	require.NoError(t, err)
+
+	leftSession := channel.LeftSession()
+	rightSession := channel.RightSession()
+
+	received := make(chan *view.Message, 1)
+	go func() {
+		received <- <-rightSession.Receive()
+	}()
+
+	leftSession.Close()
+
+	select {
+	case msg := <-received:
+		assert.Nil(t, msg, "a receive on a closed peer channel should yield a nil message")
+	case <-time.After(time.Second):
+		t.Fatal("timeout: Close did not unblock the peer's Receive")
+	}
+}
+
+// TestLocalBidirectionalChannel_BufferedMessagesSurviveClose verifies that already sent messages are still delivered after close.
+func TestLocalBidirectionalChannel_BufferedMessagesSurviveClose(t *testing.T) {
+	ctx := t.Context()
+	channel, err := ttx.NewLocalBidirectionalChannel(ctx, "caller", "ctx-id", "endpoint", []byte("pkid"))
+	require.NoError(t, err)
+
+	leftSession := channel.LeftSession()
+	rightSession := channel.RightSession()
+
+	require.NoError(t, leftSession.Send([]byte("buffered-1")))
+	require.NoError(t, leftSession.Send([]byte("buffered-2")))
+
+	receive := rightSession.Receive()
+	leftSession.Close()
+
+	for _, expected := range []string{"buffered-1", "buffered-2"} {
+		select {
+		case msg := <-receive:
+			require.NotNil(t, msg, "buffered message should survive the close")
+			assert.Equal(t, []byte(expected), msg.Payload)
+		case <-time.After(time.Second):
+			t.Fatalf("timeout waiting for buffered message %s", expected)
+		}
+	}
+}
+
+// TestLocalBidirectionalChannel_SendFullBufferContextDone verifies that a send blocked on a full buffer gives up when its context is done.
+func TestLocalBidirectionalChannel_SendFullBufferContextDone(t *testing.T) {
+	channel, err := ttx.NewLocalBidirectionalChannel(t.Context(), "caller", "ctx-id", "endpoint", []byte("pkid"))
+	require.NoError(t, err)
+
+	leftSession := channel.LeftSession()
+
+	// Fill the buffer; nothing reads from the right side.
+	sendCtx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	for i := range 10 {
+		require.NoError(t, leftSession.SendWithContext(sendCtx, []byte{byte(i)}))
+	}
+
+	sendErr := make(chan error, 1)
+	go func() {
+		sendErr <- leftSession.SendWithContext(sendCtx, []byte("overflow"))
+	}()
+
+	// The send is blocked on the full buffer until the context is cancelled.
+	select {
+	case err := <-sendErr:
+		t.Fatalf("send returned before the buffer drained or the context was cancelled: %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	cancel()
+
+	select {
+	case err := <-sendErr:
+		require.Error(t, err)
+		require.ErrorIs(t, err, context.Canceled)
+	case <-time.After(time.Second):
+		t.Fatal("timeout: send did not return after its context was cancelled")
+	}
+}
+
+// TestLocalBidirectionalChannel_ConcurrentSendAndClose verifies that Close racing with concurrent sends neither panics nor races.
+func TestLocalBidirectionalChannel_ConcurrentSendAndClose(t *testing.T) {
+	ctx := t.Context()
+	channel, err := ttx.NewLocalBidirectionalChannel(ctx, "caller", "ctx-id", "endpoint", []byte("pkid"))
+	require.NoError(t, err)
+
+	leftSession := channel.LeftSession()
+	rightSession := channel.RightSession()
+
+	// Drain the peer so senders are never blocked on a full buffer.
+	drained := make(chan struct{})
+	go func() {
+		defer close(drained)
+		for range rightSession.Receive() {
+		}
+	}()
+
+	// Let the senders get going first, so the close lands while sends are in flight.
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	for range 8 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			for range 2000 {
+				if err := leftSession.Send([]byte("concurrent")); err != nil {
+					assert.Contains(t, err.Error(), "session is closed")
+				}
+			}
+		}()
+	}
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		<-start
+		time.Sleep(time.Millisecond)
+		leftSession.Close()
+	}()
+
+	close(start)
+	wg.Wait()
+	<-drained
+
+	assert.True(t, leftSession.Info().Closed)
+	// A further close must still be safe once the racing sends are done.
+	assert.NotPanics(t, leftSession.Close)
+}
+
+// TestLocalBidirectionalChannel_ConcurrentInfoAndClose verifies that reading Info while another goroutine closes is race free.
+func TestLocalBidirectionalChannel_ConcurrentInfoAndClose(t *testing.T) {
+	ctx := t.Context()
+	channel, err := ttx.NewLocalBidirectionalChannel(ctx, "caller", "ctx-id", "endpoint", []byte("pkid"))
+	require.NoError(t, err)
+
+	leftSession := channel.LeftSession()
+
+	var wg sync.WaitGroup
+	for range 4 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for range 100 {
+				_ = leftSession.Info()
+				_ = leftSession.Receive()
+			}
+		}()
+	}
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		leftSession.Close()
+	}()
+
+	wg.Wait()
+	assert.True(t, leftSession.Info().Closed)
 }

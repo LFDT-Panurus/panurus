@@ -9,6 +9,7 @@ package ttx
 import (
 	"context"
 	"encoding/base64"
+	"sync"
 
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/view"
@@ -78,9 +79,13 @@ type localSession struct {
 	info         view.SessionInfo
 	readChannel  chan *view.Message
 	writeChannel chan *view.Message
+	mu           sync.RWMutex
 }
 
 func (s *localSession) Info() view.SessionInfo {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
 	return s.info
 }
 
@@ -93,11 +98,14 @@ func (s *localSession) SendError(ctx context.Context, payload []byte) error {
 }
 
 func (s *localSession) send(ctx context.Context, payload []byte, status int32) error {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
 	if s.info.Closed {
 		return errors.New("session is closed")
 	}
 
-	s.writeChannel <- &view.Message{
+	msg := &view.Message{
 		SessionID:    s.info.ID,
 		ContextID:    s.contextID,
 		Caller:       s.caller,
@@ -108,10 +116,24 @@ func (s *localSession) send(ctx context.Context, payload []byte, status int32) e
 		Ctx:          ctx,
 	}
 
-	return nil
+	select {
+	case s.writeChannel <- msg:
+		return nil
+	default:
+	}
+
+	select {
+	case s.writeChannel <- msg:
+		return nil
+	case <-ctx.Done():
+		return errors.Wrapf(ctx.Err(), "failed sending message on session [%s]", s.info.ID)
+	}
 }
 
 func (s *localSession) Receive() <-chan *view.Message {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
 	if s.info.Closed {
 		return nil
 	}
@@ -120,5 +142,12 @@ func (s *localSession) Receive() <-chan *view.Message {
 }
 
 func (s *localSession) Close() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.info.Closed {
+		return
+	}
 	s.info.Closed = true
+	close(s.writeChannel)
 }
