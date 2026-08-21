@@ -103,6 +103,40 @@ func TestIssueMapping(t *testing.T) {
 	assert.False(t, d.IsSetup)
 }
 
+// TestIssueGraphHidingReadOncePerAction guards against re-querying IsGraphHiding per output: if it
+// isn't idempotent across calls (nothing in the interface guarantees a pure getter), a per-output
+// re-query would let one action's outputs split across both marker styles, silently losing the real
+// SNMarker for whichever outputs saw the "wrong" answer.
+func TestIssueGraphHidingReadOncePerAction(t *testing.T) {
+	a := issueAction([][]byte{[]byte("out-0"), []byte("out-1")}, nil)
+	a.IsGraphHidingReturnsOnCall(0, false)
+	a.IsGraphHidingReturnsOnCall(1, true)
+
+	tr := NewTranslator(testAnchor(0x44), testPP, 0)
+	require.NoError(t, tr.Write(context.Background(), a))
+	d := finish(t, tr)
+
+	require.Len(t, d.Outputs, 2)
+	assert.Equal(t, d.Outputs[0].SNMarker == [32]byte{}, d.Outputs[1].SNMarker == [32]byte{},
+		"both outputs of one action must agree on graph-hiding mode")
+}
+
+// TestTransferGraphHidingReadOncePerAction is the transfer-side counterpart of
+// TestIssueGraphHidingReadOncePerAction.
+func TestTransferGraphHidingReadOncePerAction(t *testing.T) {
+	a := transferAction(nil, nil, [][]byte{[]byte("keep-0"), []byte("keep-1")}, nil, nil)
+	a.IsGraphHidingReturnsOnCall(0, false)
+	a.IsGraphHidingReturnsOnCall(1, true)
+
+	tr := NewTranslator(testAnchor(0x55), testPP, 0)
+	require.NoError(t, tr.Write(context.Background(), a))
+	d := finish(t, tr)
+
+	require.Len(t, d.Outputs, 2)
+	assert.Equal(t, d.Outputs[0].SNMarker == [32]byte{}, d.Outputs[1].SNMarker == [32]byte{},
+		"both outputs of one action must agree on graph-hiding mode")
+}
+
 // TestTransferMapping covers the content-bound spend refs and the redeem slot semantics: a redeem
 // output is skipped but its index is consumed, exactly as the Fabric translator enumerates outputs.
 func TestTransferMapping(t *testing.T) {

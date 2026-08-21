@@ -102,7 +102,21 @@ func FuzzDecodeUint64(f *testing.F) {
 	f.Add(make([]byte, wordLength*2))
 
 	f.Fuzz(func(t *testing.T, ret []byte) {
-		_, _ = DecodeUint64(ret)
+		got, err := DecodeUint64(ret)
+		if err != nil {
+			return
+		}
+		if len(ret) < wordLength {
+			t.Fatalf("decoded a uint64 from a %d byte response, shorter than one word", len(ret))
+		}
+		// The value must actually fit: every byte outside the low 8 has to be zero, checked here by an
+		// independent comparison rather than the same byte-loop DecodeUint64 itself uses.
+		if !bytes.Equal(ret[:wordLength-8], make([]byte, wordLength-8)) {
+			t.Fatalf("accepted a value whose high bytes are not zero: it does not fit in a uint64")
+		}
+		if want := binary.BigEndian.Uint64(ret[wordLength-8 : wordLength]); got != want {
+			t.Fatalf("decoded %d, but the low 8 bytes actually encode %d", got, want)
+		}
 	})
 }
 

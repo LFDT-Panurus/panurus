@@ -91,8 +91,11 @@ func NewNetwork(
 		submitter:   submitter,
 		reader:      reader,
 		membership:  membership,
-		finality:    finality.NewManager(evmClient, reader, tokenState, config.Finality.FromBlock, config.Finality.PollInterval, config.Finality.Timeout),
-		tokenState:  tokenState,
+		finality: finality.NewManager(
+			evmClient, reader, tokenState, config.Finality.FromBlock, config.Finality.BlockTag,
+			config.Finality.PollInterval, config.Finality.Timeout,
+		),
+		tokenState: tokenState,
 	}, nil
 }
 

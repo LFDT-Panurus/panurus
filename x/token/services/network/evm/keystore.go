@@ -45,9 +45,9 @@ func LoadKey(path string) (*secp256k1.PrivateKey, error) {
 		return nil, errors.Wrapf(err, "evm keystore: invalid key material at [%s]", path)
 	}
 
-	key := secp256k1.PrivKeyFromBytes(scalar)
-	if key.Key.IsZero() {
-		return nil, errors.Errorf("evm keystore: the key at [%s] is the zero scalar", path)
+	key, err := eip712.DecodePrivateKeyScalar(scalar)
+	if err != nil {
+		return nil, errors.Wrapf(err, "evm keystore: the key at [%s] is invalid: %v", path, err)
 	}
 
 	return key, nil

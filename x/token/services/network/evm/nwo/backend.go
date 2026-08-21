@@ -23,8 +23,12 @@ type TMSRef struct {
 // and the initial public parameters (version 0). Endorsers are Ethereum addresses here; the address
 // to FSC identity binding the driver's config carries is assembled by the harness alongside this.
 type DeploySpec struct {
-	TMS          TMSRef
-	Endorsers    []client.Address
+	TMS       TMSRef
+	Endorsers []client.Address
+	// Threshold is the quorum size the EndorsementVerifier is constructed with, baked into the
+	// contract for its whole life. Unlike SetupUpdaterConfig.Threshold in this same package, zero is
+	// not "use every endorser" here: a concrete Backend must reject it, since a deploy-time threshold
+	// is a security parameter that has to be stated explicitly, not defaulted.
 	Threshold    uint
 	GraphHiding  bool
 	PublicParams []byte

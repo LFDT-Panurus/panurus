@@ -154,6 +154,12 @@ func TestNewSignerFromBytesRejectsInvalid(t *testing.T) {
 
 	_, err = NewSignerFromBytes(make([]byte, PrivateKeyLength))
 	require.Error(t, err, "zero scalar must be rejected")
+
+	// A scalar at or above the curve order must be rejected rather than silently reduced modulo the
+	// order into a different, unrelated key.
+	overflowing := bytes.Repeat([]byte{0xff}, PrivateKeyLength)
+	_, err = NewSignerFromBytes(overflowing)
+	require.Error(t, err, "a scalar exceeding the curve order must be rejected")
 }
 
 // TestGoldenFixtureEndorsement pins the fixture endorsement (statedelta_digest_fixture.json): the

@@ -72,14 +72,25 @@ func (c *JSONRPCClient) Ping(ctx context.Context) error {
 	return err
 }
 
-// Call performs a read-only contract call at the given block tag.
+// Call performs a read-only contract call at the given block tag. A revert is classified the same way
+// EstimateGas classifies one (ErrExecutionReverted), so a caller that later adds a Call against a
+// method capable of reverting does not have to rediscover this distinction: eth_call and
+// eth_estimateGas fail the same way against the same node.
 func (c *JSONRPCClient) Call(ctx context.Context, to Address, data []byte, blockTag string) ([]byte, error) {
 	if blockTag == "" {
 		blockTag = BlockTagFinalized
 	}
 	arg := map[string]any{"to": to.Hex(), "data": encodeHexBytes(data)}
 	var out string
-	if err := c.call(ctx, "eth_call", &out, arg, blockTag); err != nil {
+	rpcErr, err := c.invoke(ctx, "eth_call", &out, arg, blockTag)
+	if rpcErr != nil {
+		if isReverted(rpcErr) {
+			return nil, errors.Wrapf(ErrExecutionReverted, "eth_call failed: %s", rpcErr.Message)
+		}
+
+		return nil, errors.Wrap(rpcErr, "eth_call failed")
+	}
+	if err != nil {
 		return nil, err
 	}
 
@@ -102,7 +113,10 @@ func (c *JSONRPCClient) GetLogs(ctx context.Context, q LogFilter) ([]Log, error)
 		topics = append(topics, values)
 	}
 	toBlock := any(encodeHexUint(q.ToBlock))
-	if q.ToBlock == 0 {
+	switch {
+	case q.ToBlockTag != "":
+		toBlock = q.ToBlockTag
+	case q.ToBlock == 0:
 		toBlock = BlockTagLatest
 	}
 	arg := map[string]any{
@@ -218,13 +232,19 @@ func (c *JSONRPCClient) SuggestGasFees(ctx context.Context) (GasFees, error) {
 }
 
 // baseFee reads the base fee of the latest block. A chain with no base fee at all (a pre-London or
-// zero-fee configuration) reports none, which is a base fee of zero rather than an error.
+// zero-fee configuration) reports the field absent, which is a base fee of zero rather than an error.
+// A null result, by contrast, means the node did not return a block at all and is an error: head is a
+// pointer so that case is distinguishable, since unmarshaling JSON null into a non-pointer target is a
+// silent no-op that would otherwise be indistinguishable from the legitimate absent-field case.
 func (c *JSONRPCClient) baseFee(ctx context.Context) (*big.Int, error) {
-	var head struct {
+	var head *struct {
 		BaseFeePerGas string `json:"baseFeePerGas"`
 	}
 	if err := c.call(ctx, "eth_getBlockByNumber", &head, "latest", false); err != nil {
 		return nil, err
+	}
+	if head == nil {
+		return nil, errors.New("evm client: eth_getBlockByNumber(\"latest\") returned no block")
 	}
 	if head.BaseFeePerGas == "" {
 		return new(big.Int), nil
@@ -413,6 +433,7 @@ type jsonLog struct {
 	Data        string   `json:"data"`
 	TxHash      string   `json:"transactionHash"`
 	BlockNumber string   `json:"blockNumber"`
+	Removed     bool     `json:"removed"`
 }
 
 func (j *jsonLog) toLog() (Log, error) {
@@ -441,7 +462,9 @@ func (j *jsonLog) toLog() (Log, error) {
 		return Log{}, errors.Wrap(err, "invalid log block number")
 	}
 
-	return Log{Address: addr, Topics: topics, Data: data, TxHash: txHash, BlockNumber: blockNumber}, nil
+	return Log{
+		Address: addr, Topics: topics, Data: data, TxHash: txHash, BlockNumber: blockNumber, Removed: j.Removed,
+	}, nil
 }
 
 type jsonReceipt struct {
@@ -500,9 +523,9 @@ func encodeHexBytes(b []byte) string {
 	return "0x" + hex.EncodeToString(b)
 }
 
-// decodeHexBytes decodes 0x-prefixed hex data, tolerating an empty or bare "0x" value.
+// decodeHexBytes decodes 0x/0X-prefixed hex data, tolerating an empty or bare prefix value.
 func decodeHexBytes(s string) ([]byte, error) {
-	s = strings.TrimPrefix(strings.TrimSpace(s), "0x")
+	s = trimHexPrefix(s)
 	if s == "" {
 		return nil, nil
 	}
@@ -514,9 +537,9 @@ func decodeHexBytes(s string) ([]byte, error) {
 	return b, nil
 }
 
-// parseHexUint parses a 0x-prefixed hex quantity into a uint64.
+// parseHexUint parses a 0x/0X-prefixed hex quantity into a uint64.
 func parseHexUint(s string) (uint64, error) {
-	trimmed := strings.TrimPrefix(strings.TrimSpace(s), "0x")
+	trimmed := trimHexPrefix(s)
 	if trimmed == "" {
 		return 0, errors.Errorf("empty hex quantity")
 	}
@@ -528,9 +551,9 @@ func parseHexUint(s string) (uint64, error) {
 	return v, nil
 }
 
-// parseHexBig parses a 0x-prefixed hex quantity into a big.Int.
+// parseHexBig parses a 0x/0X-prefixed hex quantity into a big.Int.
 func parseHexBig(s string) (*big.Int, error) {
-	trimmed := strings.TrimPrefix(strings.TrimSpace(s), "0x")
+	trimmed := trimHexPrefix(s)
 	if trimmed == "" {
 		return nil, errors.Errorf("empty hex quantity")
 	}
