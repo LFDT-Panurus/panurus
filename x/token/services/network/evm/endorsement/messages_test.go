@@ -11,9 +11,11 @@ import (
 	"strings"
 	"testing"
 
-	token2 "github.com/LFDT-Panurus/panurus/token"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	token2 "github.com/LFDT-Panurus/panurus/token"
+	"github.com/LFDT-Panurus/panurus/x/token/services/network/evm/statedelta"
 )
 
 func sampleRequest() *EndorseRequest {
@@ -66,7 +68,7 @@ func TestEndorseRequestValidate(t *testing.T) {
 
 func TestEndorseResponseError(t *testing.T) {
 	t.Run("success has no error", func(t *testing.T) {
-		require.NoError(t, (&EndorseResponse{Signature: []byte{0x01}}).Error())
+		require.NoError(t, (&EndorseResponse{Delta: &statedelta.StateDelta{}, Signature: []byte{0x01}}).Error())
 	})
 	t.Run("failure surfaces the reason", func(t *testing.T) {
 		err := (&EndorseResponse{Err: "unauthorized"}).Error()
@@ -76,4 +78,36 @@ func TestEndorseResponseError(t *testing.T) {
 	t.Run("empty response is an error", func(t *testing.T) {
 		require.Error(t, (&EndorseResponse{}).Error())
 	})
+	t.Run("a signature without a delta is an error", func(t *testing.T) {
+		// There would be nothing for the initiator to verify the signature against, and nothing to
+		// encode into the transaction.
+		require.Error(t, (&EndorseResponse{Signature: []byte{0x01}}).Error())
+	})
+}
+
+// TestEndorseResponseRoundTripsTheDelta is the wire-format guard for the other half of the flow: the
+// initiator builds no delta of its own, so a delta that does not survive the session unchanged means
+// no quorum can ever assemble.
+func TestEndorseResponseRoundTripsTheDelta(t *testing.T) {
+	want := &EndorseResponse{
+		Delta: &statedelta.StateDelta{
+			Anchor:              [32]byte{0xC1},
+			SpentRefs:           [][32]byte{{0x01}, {0x02}},
+			Outputs:             []statedelta.OutputToken{{TokenID: [32]byte{0x03}, SNMarker: [32]byte{0x04}, TokenData: []byte("tok")}},
+			MetadataKeys:        [][32]byte{{0x05}},
+			MetadataVals:        [][]byte{[]byte("meta")},
+			TokenRequestHash:    [32]byte{0x06},
+			PublicParamsHash:    [32]byte{0x07},
+			PublicParamsVersion: 9,
+		},
+		Signature:       []byte{0xAA, 0xBB},
+		EndorserAddress: "0x0000000000000000000000000000000000000001",
+	}
+
+	raw, err := json.Marshal(want)
+	require.NoError(t, err)
+
+	var got EndorseResponse
+	require.NoError(t, json.Unmarshal(raw, &got))
+	assert.Equal(t, *want, got)
 }

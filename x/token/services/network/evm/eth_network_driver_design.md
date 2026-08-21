@@ -106,8 +106,9 @@ sequenceDiagram
         E->>E: assert local ppHash/version == delta
         E->>E: persist validation record
         E->>E: sign EIP-712(StateDelta)
-        E-->>I: {signature, endorserAddress}
+        E-->>I: {stateDelta, signature, endorserAddress}
     end
+    I->>I: bind delta to anchor, recover signers, group by delta
     I->>I: verify threshold, ABI-encode typed applyStateDelta, sign eth tx
     I->>N: eth_sendRawTransaction
     N->>TS: applyStateDelta(delta, signatures)
@@ -557,7 +558,8 @@ type Envelope struct {
 ## 6. Endorsement (initiator + responder)
 
 Mirrors `fabric/endorsement/fsc` (initiator.go + responder.go); artifact is a `StateDelta`, signature is
-EIP-712. Wired as a lazy `ServiceProvider` keyed by `TMSID` (the `esp.go` pattern).
+EIP-712. Wired as a lazy `ServiceProvider` keyed by `TMSID` (the `esp.go` pattern). As in Fabric, the
+artifact is produced by the endorsers and travels back to the initiator with their signatures (§6.5).
 
 ### 6.1 Identity registry (address ↔ FSC identity)
 
@@ -569,7 +571,7 @@ the on-chain endorser set. The EndorsementVerifier set alone yields addresses, w
 
 ### 6.2 Responder (`evm/endorsement` responder view)
 
-`receive → authorize → validate → persist → translate → check pp → sign → reply`:
+`receive → authorize → validate → persist → translate → check pp → sign → reply {delta, signature}`:
 
 1. **Authorize** the requester by FSC identity (the FSC session authenticates the caller); require membership
    in the configured allowlist for the TMS (default: the TMS network's nodes). This is the EVM analog of the
@@ -582,22 +584,60 @@ the on-chain endorser set. The EndorsementVerifier set alone yields addresses, w
 4. **Translate** actions → `StateDelta` via the StateDelta translator; `AddPublicParamsDependency`;
    `CommitTokenRequest`.
 5. **Check pp**: assert `delta.publicParamsVersion == VersionKeeper.GetVersion()`; refuse otherwise.
-6. **Sign** the EIP-712 digest; reply `{signature, endorserAddress}`.
+6. **Sign** the EIP-712 digest; reply `{stateDelta, signature, endorserAddress}`.
 
 ### 6.3 Initiator (`evm/endorsement` initiator view)
 
-Collect signatures from the resolved FSC identities; verify threshold/policy; ABI-encode the **typed**
-`applyStateDelta(delta, signatures)`; build + sign the eth tx with the submitter key (nonce + gas per §8);
-wrap in `Envelope`; return to `Broadcast`.
+Collect from the resolved FSC identities; **take the delta from the replies** (§6.5); verify
+threshold/policy; ABI-encode the **typed** `applyStateDelta(delta, signatures)`; build + sign the eth tx
+with the submitter key (nonce + gas per §8); wrap in `Envelope`; return to `Broadcast`.
+
+Per reply, before a signature counts: the delta's anchor must be the anchor the initiator asked about,
+`StateDelta.Validate()` must hold, and the signature must recover to a registered endorser over **that
+delta's** digest. Signatures are grouped by delta; the quorum is the first delta reaching threshold
+distinct signers. Endorsers that answer with a different delta are ignored rather than fatal, so one
+divergent node cannot break every transaction it takes part in; a shortfall where more than one delta
+was seen is reported with `ErrDivergentDeltas` alongside `ErrInsufficientEndorsements`, since that is a
+determinism failure in the translator rather than an availability problem.
 
 ### 6.4 Messages
 
 ```go
 type EndorseRequest  struct { TokenRequest []byte; TMSID token.TMSID; Anchor string; Metadata map[string][]byte }
-type EndorseResponse struct { Signature []byte; EndorserAddress string; Err string }
+type EndorseResponse struct { Delta *statedelta.StateDelta; Signature []byte; EndorserAddress string; Err string }
 ```
 
-(No `EIP712Digest` field — endorsers recompute, §4.5.)
+(No `EIP712Digest` field — endorsers recompute, §4.5. The delta travels back, §6.5.)
+
+### 6.5 The initiator does not build a StateDelta
+
+The initiator neither validates nor translates. Producing a delta means running the validator against
+on-chain state, which is exactly the work this flow delegates to endorsers, so the endorsers return
+what they signed and the initiator relays it.
+
+This mirrors Fabric, where `RequestApprovalView` sends the request as transient data and the RWSet
+reaches the client inside the endorsers' proposal responses
+(`token/services/network/fabric/endorsement/fsc/initiator.go`). It was raised by Angelo in the sync of
+2026-08-14, against the first implementation, which had the initiator build the delta through the same
+`DeltaFactory` as the responder.
+
+Why the initiator's own copy was worth removing rather than keeping as a cross-check:
+
+- **It bought no security.** The contract's rule is that a threshold of registered endorsers signed the
+  digest. A quorum that wanted to apply something else would not need the initiator, so a local rebuild
+  cannot prevent it; it only stops the initiator from paying gas for a delta it disagrees with.
+- **It cost liveness.** The delta covers `PublicParamsHash` and `PublicParamsVersion`, and the digest
+  covers the whole struct, so an initiator reading public parameters on the other side of an update
+  from its endorsers computes a different digest, discards every signature as an unknown signer, and
+  reports a missing quorum. Its ledger read had the same shape: a client node lagging behind failed to
+  build a delta at all and never contacted an endorser, for a request every endorser would have signed.
+- **It cost work.** Every client ran the full validation of its own request, plus a `getToken` call per
+  input, duplicating what N endorsers were already doing.
+
+What the initiator keeps is what it can check without a validator: the anchor binding and the delta's
+structural invariants. It deliberately does not check `TokenRequestHash`, which covers the validator's
+`TokenRequestToSign` attribute rather than the marshalled request the initiator holds; reproducing it
+would mean running the validation again.
 
 ---
 

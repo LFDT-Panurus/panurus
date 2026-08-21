@@ -7,8 +7,10 @@ SPDX-License-Identifier: Apache-2.0
 package endorsement
 
 import (
-	token2 "github.com/LFDT-Panurus/panurus/token"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
+
+	token2 "github.com/LFDT-Panurus/panurus/token"
+	"github.com/LFDT-Panurus/panurus/x/token/services/network/evm/statedelta"
 )
 
 // Message types stamped on the endorsement envelopes exchanged over an FSC session. They travel in
@@ -17,7 +19,7 @@ import (
 const (
 	// TypeEndorseRequest is the initiator's request to an endorser.
 	TypeEndorseRequest = "evm.endorse.request"
-	// TypeEndorseResponse is the endorser's reply carrying its signature.
+	// TypeEndorseResponse is the endorser's reply carrying the delta it built and its signature.
 	TypeEndorseResponse = "evm.endorse.response"
 )
 
@@ -54,12 +56,22 @@ func (r *EndorseRequest) Validate() error {
 	return nil
 }
 
-// EndorseResponse is the endorser's reply. On success it carries the 65-byte {r,s,v} signature over
-// the EIP-712 digest the endorser recomputed, and the Ethereum address it signed with (a hint for
-// the initiator; the initiator still recovers the address from the signature and does not trust this
-// field for authorization). On failure Err carries the reason and Signature is empty.
+// EndorseResponse is the endorser's reply. On success it carries the StateDelta this endorser
+// translated the request into, the 65-byte {r,s,v} signature over that delta's EIP-712 digest, and
+// the Ethereum address it signed with (a hint for the initiator; the initiator still recovers the
+// address from the signature and does not trust this field for authorization). On failure Err
+// carries the reason and the rest is empty.
+//
+// The delta travels back rather than being rebuilt by the initiator, mirroring Fabric, where the
+// RWSet reaches the client inside the endorsers' proposal responses. Producing it is validation work,
+// and validation is what this flow delegates to the endorsers; an initiator that rebuilt it would be
+// repeating every endorser's job to learn something the quorum already decided.
 type EndorseResponse struct {
-	// Signature is the 65-byte {r,s,v} endorsement over the recomputed digest, empty on failure.
+	// Delta is the StateDelta this endorser built from the request it validated, and the message its
+	// signature covers. The initiator takes the delta from here, requires a threshold of endorsers to
+	// have signed the same one, and encodes that into the transaction.
+	Delta *statedelta.StateDelta `json:"delta,omitempty"`
+	// Signature is the 65-byte {r,s,v} endorsement over Delta's digest, empty on failure.
 	Signature []byte `json:"signature,omitempty"`
 	// EndorserAddress is the 0x-prefixed address the endorser signed with, for diagnostics.
 	EndorserAddress string `json:"endorser_address,omitempty"`
@@ -67,13 +79,18 @@ type EndorseResponse struct {
 	Err string `json:"err,omitempty"`
 }
 
-// Error returns the endorser's failure as an error, or nil when the response is a success.
+// Error returns the endorser's failure as an error, or nil when the response is a success. A reply
+// carrying a signature but no delta is a failure too: there is nothing for the initiator to verify
+// the signature against, so it cannot be counted toward a quorum.
 func (r *EndorseResponse) Error() error {
 	if len(r.Err) != 0 {
 		return errors.New(r.Err)
 	}
 	if len(r.Signature) == 0 {
 		return errors.New("endorse response: neither signature nor error present")
+	}
+	if r.Delta == nil {
+		return errors.New("endorse response: signature without a state delta")
 	}
 
 	return nil
