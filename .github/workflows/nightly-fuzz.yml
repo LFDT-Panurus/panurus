@@ -138,6 +138,9 @@ jobs:
           - name: tcc-query-tokens-limits
             pkg: ./token/services/network/fabric/tcc
             func: FuzzQueryTokensLedgerReadsAreBounded
+          - name: identity-role-register-recipient
+            pkg: ./token/services/identity/role
+            func: FuzzLongTermOwnerWalletRegisterRecipientNoPanic
 
     steps:
       - name: Checkout code
