@@ -18,15 +18,13 @@ import (
 
 // ServiceFactory builds the endorsement service for a TMS, and caches it.
 //
-// The service is per TMS rather than per network because validating a token request needs that TMS's
-// validator, which knows its token driver and public parameters. Everything else it needs (the
-// endorser set, the threshold, the chain, this node's signing key) is network-wide and is resolved
-// once, here.
+// The service is keyed by TMS because that is the unit RequestApproval works in, but it no longer
+// holds anything derived from a TMS: the initiator collects signatures and takes the delta from the
+// endorsers, so nothing on that side needs a validator. Validation lives entirely in the responder,
+// which resolves its TMS when a request arrives.
 //
-// The factory takes a TMS id and resolves the management service itself, per request. Holding the
-// service would be wrong: updating public parameters evicts the cached management service and the next
-// caller gets a rebuilt one, so a captured pointer keeps serving the parameters that were current when
-// it was captured, and no amount of re-asking it for a validator changes that.
+// What the factory does hold is network-wide and resolved once: the endorser set, the threshold, the
+// chain, the EIP-712 domain, and the parameters a delta is bound to.
 type ServiceFactory struct {
 	registry     *Registry
 	threshold    int
@@ -36,7 +34,6 @@ type ServiceFactory struct {
 	blockTag     string
 	publicParams PublicParamsProvider
 	viewManager  ViewManager
-	resolveTMS   TMSResolver
 
 	mu       sync.Mutex
 	services map[string]*Service
@@ -60,8 +57,6 @@ type FactoryConfig struct {
 	PublicParams PublicParamsProvider
 	// ViewManager runs the initiator.
 	ViewManager ViewManager
-	// TMS resolves a management service from its id, on every request rather than once.
-	TMS TMSResolver
 }
 
 // NewServiceFactory returns a factory for the given network.
@@ -78,9 +73,6 @@ func NewServiceFactory(cfg FactoryConfig) (*ServiceFactory, error) {
 	if cfg.PublicParams == nil {
 		return nil, errors.New("endorsement factory: nil public parameters provider")
 	}
-	if cfg.TMS == nil {
-		return nil, errors.New("endorsement factory: nil tms resolver")
-	}
 	if cfg.Threshold < 1 || cfg.Threshold > cfg.Registry.Len() {
 		return nil, errors.Errorf("endorsement factory: threshold %d out of range [1,%d]",
 			cfg.Threshold, cfg.Registry.Len())
@@ -95,7 +87,6 @@ func NewServiceFactory(cfg FactoryConfig) (*ServiceFactory, error) {
 		blockTag:     cfg.BlockTag,
 		publicParams: cfg.PublicParams,
 		viewManager:  cfg.ViewManager,
-		resolveTMS:   cfg.TMS,
 		services:     map[string]*Service{},
 	}, nil
 }
@@ -113,25 +104,7 @@ func (f *ServiceFactory) ForTMS(tmsID token2.TMSID) (*Service, error) {
 		return service, nil
 	}
 
-	// Both the management service and the validator are resolved per request. The service cached here
-	// lives for the life of the node, but an endorsed setup delta replaces the management service
-	// underneath it, and only a fresh one knows the new public parameters.
-	resolve := ResolveValidator(func() (RequestValidator, error) {
-		tms, err := f.resolveTMS(tmsID)
-		if err != nil {
-			return nil, errors.Wrapf(err, "failed to resolve tms [%s]", tmsID)
-		}
-
-		return tms.Validator()
-	})
-
-	service, err := NewService(
-		f.registry,
-		f.threshold,
-		NewDeltaFactory(resolve, f.publicParams, f.client, f.tokenState, f.blockTag),
-		f.domain,
-		f.viewManager,
-	)
+	service, err := NewService(f.registry, f.threshold, f.domain, f.viewManager)
 	if err != nil {
 		return nil, errors.Wrapf(err, "endorsement factory: failed to build the service for [%s]", tmsID)
 	}

@@ -323,21 +323,25 @@ Gate: deterministic delta bytes; a Go-signed delta verifies on the Week-2 contra
       go-ethereum. Selectors cross-checked with `cast sig`.
 - [x] `endorsement/registry.go`: address ↔ `view.Identity`, both directions; rejects duplicate address
       or identity (the distinct-signer rule starts at construction).
-- [x] `endorsement/messages.go`: `EndorseRequest`/`EndorseResponse`, **no digest field** (a wire-format
-      test guards it), carried in the versioned session envelope.
+- [x] `endorsement/messages.go`: `EndorseRequest`/`EndorseResponse`, **no digest field on the request**
+      and **the delta on the response** (wire-format tests guard both), carried in the versioned session
+      envelope.
 - [x] `endorsement/ledger.go`: `token.Ledger` backed by `getToken@finalized` via the mock/real EVMClient
       (the `EVMClient` counterfeiter mock, deferred since 1.2, is generated here).
 - [x] `endorsement/responder.go` (template `fabric/.../responder.go`): authorize (allowlist) → validate
       (`UnmarshallAndVerifyWithMetadata` + `eth_call` `getToken` ledger) → translate → sign. **No
       precomputed digest**: the endorser recomputes it from the validated actions.
-- [x] `endorsement/delta.go`: `DeltaFactory`, the single validate-and-translate path the responder and
-      the initiator both build through (byte-identical deltas by shared construction, §4.4).
-- [x] `endorsement/initiator.go`: collect over FSC sessions; recover each signature to a **distinct
-      registered** endorser over the locally-computed digest before counting it; threshold/uniqueness.
+- [x] `endorsement/delta.go`: `DeltaFactory`, the responder's validate-and-translate path, the one every
+      endorser runs (byte-identical deltas by shared construction, §4.4).
+- [x] `endorsement/initiator.go`: collect over FSC sessions; **take the delta from the replies** (§6.5),
+      bind it to the request anchor, then recover each signature to a **distinct registered** endorser
+      over that delta's digest before counting it; group by delta; threshold/uniqueness.
 - [x] `endorsement/service.go`: `Service.Endorse` entry point (initiates the initiator view) +
       `RegisterEndorser`; the driver envelope now carries the endorsed delta + collected signatures.
 - [x] Tests: tampered-delta refusal (no blind-sign), 2-of-3 assembly over in-memory sessions,
-      authorization reject, duplicate/unknown/wrong-digest signature rejection, ledger + ABI + registry.
+      authorization reject, duplicate/unknown/wrong-digest signature rejection, wrong-anchor and
+      malformed deltas discarded, a divergent endorser outvoted rather than fatal, ledger + ABI +
+      registry.
 
 Gate MET: `gate_test.go` drives the real initiator + responders over in-memory sessions to assemble a
 2-of-3 quorum and pins it to a committed fixture; `contracts/test/Endorsement2ofN.t.sol` verifies that
