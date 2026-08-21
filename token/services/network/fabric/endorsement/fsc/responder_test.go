@@ -403,6 +403,7 @@ func TestRequestApprovalResponderView(t *testing.T) {
 			expectErrContain: "creator is empty for tx",
 			verify: func(m *MockNewRequestApprovalResponderView, res any) {
 				assert.Equal(t, 1, m.rws.DoneCallCount())
+				assert.Equal(t, 0, m.replayGuard.CheckCallCount())
 			},
 		},
 		{
@@ -416,14 +417,14 @@ func TestRequestApprovalResponderView(t *testing.T) {
 
 				return m
 			},
-			// with nil proposal bytes, the replay-detection key extraction (which runs
-			// before validateProposal) fails to unpack a proposal, short-circuiting before
-			// validateProposal's own empty-bytes check is ever reached
+			// verifyProposalSignature's own empty-bytes check fires before the
+			// replay-detection key extraction (and thus the replay guard) ever runs
 			expectError:      true,
-			expectErrorType:  fsc.ErrInvalidProposal,
-			expectErrContain: "failed to unpack proposal for tx",
+			expectErrorType:  fsc.ErrValidateProposal,
+			expectErrContain: "proposal bytes are empty for tx",
 			verify: func(m *MockNewRequestApprovalResponderView, res any) {
 				assert.Equal(t, 1, m.rws.DoneCallCount())
+				assert.Equal(t, 0, m.replayGuard.CheckCallCount())
 			},
 		},
 		{
@@ -442,6 +443,7 @@ func TestRequestApprovalResponderView(t *testing.T) {
 			expectErrContain: "proposal signature is empty for tx",
 			verify: func(m *MockNewRequestApprovalResponderView, res any) {
 				assert.Equal(t, 1, m.rws.DoneCallCount())
+				assert.Equal(t, 0, m.replayGuard.CheckCallCount())
 			},
 		},
 		{
@@ -460,6 +462,7 @@ func TestRequestApprovalResponderView(t *testing.T) {
 			expectErrContain: "proposal header is empty for tx",
 			verify: func(m *MockNewRequestApprovalResponderView, res any) {
 				assert.Equal(t, 1, m.rws.DoneCallCount())
+				assert.Equal(t, 0, m.replayGuard.CheckCallCount())
 			},
 		},
 		{
@@ -478,6 +481,7 @@ func TestRequestApprovalResponderView(t *testing.T) {
 			expectErrContain: "proposal payload is empty for tx",
 			verify: func(m *MockNewRequestApprovalResponderView, res any) {
 				assert.Equal(t, 1, m.rws.DoneCallCount())
+				assert.Equal(t, 0, m.replayGuard.CheckCallCount())
 			},
 		},
 		{
@@ -493,6 +497,7 @@ func TestRequestApprovalResponderView(t *testing.T) {
 			expectErrContain: "failed to get MSP manager",
 			verify: func(m *MockNewRequestApprovalResponderView, res any) {
 				assert.Equal(t, 1, m.rws.DoneCallCount())
+				assert.Equal(t, 0, m.replayGuard.CheckCallCount())
 			},
 		},
 		{
@@ -508,6 +513,7 @@ func TestRequestApprovalResponderView(t *testing.T) {
 			expectErrContain: "failed to get verifier for creator",
 			verify: func(m *MockNewRequestApprovalResponderView, res any) {
 				assert.Equal(t, 1, m.rws.DoneCallCount())
+				assert.Equal(t, 0, m.replayGuard.CheckCallCount())
 			},
 		},
 		{
@@ -523,6 +529,8 @@ func TestRequestApprovalResponderView(t *testing.T) {
 			expectErrContain: "creator identity is not valid",
 			verify: func(m *MockNewRequestApprovalResponderView, res any) {
 				assert.Equal(t, 1, m.rws.DoneCallCount())
+				// IsValid is checked by validateProposal, which runs after the replay guard
+				assert.Equal(t, 1, m.replayGuard.CheckCallCount())
 			},
 		},
 		{
@@ -538,6 +546,8 @@ func TestRequestApprovalResponderView(t *testing.T) {
 			expectErrContain: "proposal signature verification failed",
 			verify: func(m *MockNewRequestApprovalResponderView, res any) {
 				assert.Equal(t, 1, m.rws.DoneCallCount())
+				// checked by verifyProposalSignature, which runs before the replay guard
+				assert.Equal(t, 0, m.replayGuard.CheckCallCount())
 			},
 		},
 		{
@@ -604,6 +614,7 @@ func TestRequestApprovalResponderView(t *testing.T) {
 			expectErrContain: "failed to get ACL provider",
 			verify: func(m *MockNewRequestApprovalResponderView, res any) {
 				assert.Equal(t, 1, m.rws.DoneCallCount())
+				assert.Equal(t, 1, m.replayGuard.CheckCallCount())
 			},
 		},
 		{
@@ -621,6 +632,7 @@ func TestRequestApprovalResponderView(t *testing.T) {
 			expectErrContain: "failed to check ACL",
 			verify: func(m *MockNewRequestApprovalResponderView, res any) {
 				assert.Equal(t, 1, m.rws.DoneCallCount())
+				assert.Equal(t, 1, m.replayGuard.CheckCallCount())
 			},
 		},
 		{

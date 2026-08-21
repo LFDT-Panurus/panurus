@@ -38,8 +38,14 @@ func WithClock(now func() time.Time) Option {
 // New returns an in-memory Guard that forgets a key ttl after it was first seen, keeping at
 // most maxEntries keys at a time (0 means unbounded). window bounds how far a key's claimed
 // Timestamp may lie from the guard's current time (in either direction) before Check rejects
-// it with replay.ErrOutOfWindow; window <= 0 disables the freshness check.
+// it with replay.ErrOutOfWindow; window <= 0 disables the freshness check. ttl is raised to
+// 2*window when lower, so an entry always survives the entire window during which its key
+// could still be replayed; callers should not rely on a shorter ttl actually taking effect.
 func New(window, ttl time.Duration, maxEntries int, opts ...Option) *Guard {
+	if floor := 2 * window; ttl < floor {
+		ttl = floor
+	}
+
 	g := &Guard{
 		cache:  expirable.NewLRU[string, struct{}](maxEntries, nil, ttl),
 		window: window,

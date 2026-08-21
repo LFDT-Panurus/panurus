@@ -188,6 +188,20 @@ func TestGuard_WindowMovesWithClock(t *testing.T) {
 	require.ErrorIs(t, err, replay.ErrOutOfWindow, "key's timestamp is now outside the window that moved forward with the clock")
 }
 
+func TestNew_TTLFloorEnforcedDirectly(t *testing.T) {
+	// ttl (1s) is shorter than 2*window (2m): New must raise it itself, not rely on a caller
+	// (e.g. factory.New) to clamp it first, so a key seen just inside the window is not
+	// forgotten while it is still replayable.
+	g := memory.New(time.Minute, time.Second, 0)
+	key := replay.Key{TxID: "tx1", Creator: []byte("c"), Nonce: []byte("n"), Timestamp: time.Now()}
+
+	require.NoError(t, g.Check(context.Background(), key))
+	time.Sleep(2 * time.Second)
+
+	err := g.Check(context.Background(), key)
+	require.ErrorIs(t, err, replay.ErrAlreadyProcessed)
+}
+
 func TestGuard_ZeroWindowDisablesFreshnessCheck(t *testing.T) {
 	g := memory.New(0, time.Minute, 0)
 

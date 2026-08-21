@@ -25,8 +25,10 @@ type Config struct {
 	// the guard's clock. Window <= 0 disables the freshness check.
 	Window time.Duration `yaml:"window"`
 	// TTL is how long a seen key is remembered before it can be forgotten. Only meaningful
-	// for backends whose entries expire (e.g. BackendMemory). Must be at least 2*Window so an
-	// entry survives its entire potential-replay lifetime; backends enforce this floor.
+	// for backends whose entries expire (e.g. BackendMemory). Should be at least 2*Window so
+	// an entry survives its entire potential-replay lifetime; each backend's constructor
+	// (e.g. memory.New) enforces this floor itself, raising TTL when it is set too low, so the
+	// floor holds however the backend is constructed, not just when going through New.
 	TTL time.Duration `yaml:"ttl"`
 	// MaxEntries caps the number of keys remembered at once (0 means unbounded). Only
 	// meaningful for backends with a bounded size (e.g. BackendMemory).

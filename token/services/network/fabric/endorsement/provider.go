@@ -147,7 +147,9 @@ func key(tmsID token2.TMSID) string {
 // FabricX reuses the same fsc_endorsement config namespace.
 func NewReplayGuard(configuration tdriver.Configuration, tmsID token2.TMSID) (replay.Guard, error) {
 	replayCfg := replay.DefaultConfig()
-	_ = configuration.UnmarshalKey(ReplayKey, &replayCfg)
+	if err := configuration.UnmarshalKey(ReplayKey, &replayCfg); err != nil {
+		return nil, errors.WithMessagef(err, "failed to unmarshal replay guard configuration for [%s]", tmsID)
+	}
 	replayGuard, err := factory.New(replayCfg)
 	if err != nil {
 		return nil, errors.WithMessagef(err, "failed to create replay guard for [%s]", tmsID)

@@ -19,12 +19,7 @@ import (
 func New(cfg replay.Config) (replay.Guard, error) {
 	switch cfg.Backend {
 	case replay.BackendMemory, "":
-		ttl := cfg.TTL
-		if floor := 2 * cfg.Window; ttl < floor {
-			ttl = floor
-		}
-
-		return memory.New(cfg.Window, ttl, cfg.MaxEntries), nil
+		return memory.New(cfg.Window, cfg.TTL, cfg.MaxEntries), nil
 	default:
 		return nil, errors.Errorf("unknown replay guard backend: %s", cfg.Backend)
 	}

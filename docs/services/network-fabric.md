@@ -257,30 +257,54 @@ write and updates the TMS.
 Both FSC responders — token-request approval and public-params setup — share a single
 `ResponderView.Call` entry point
 ([`fsc/responder.go`](../../token/services/network/fabric/endorsement/fsc/responder.go)).
-Immediately after receiving a proposal, and before any expensive validation (creator/MSP
-checks, signature verification, or behaviour-specific validation) runs, the responder checks
-that the proposal is fresh and whether an equivalent proposal has already been processed:
+Immediately after receiving a proposal, `Call` verifies the proposal's signature
+(`verifyProposalSignature`) before doing anything else. This check must come first because the
+replay guard's dedup cache is keyed on content taken from the unauthenticated proposal — the
+transaction ID, creator, nonce, and claimed timestamp — none of which is verified during
+`receive`. Only once the proposal is known to carry a valid signature from its claimed creator
+does `Call` extract the replay key and consult the guard for freshness/dedup; the remaining,
+more expensive checks (creator-known-to-MSP, ACL, and behaviour-specific validation) run last,
+after the guard has already rejected replayed or out-of-window requests:
 
 ```mermaid
 sequenceDiagram
     participant FSC as FSC Endorsement Service
+    participant Sig as verifyProposalSignature
     participant Guard as replay.Guard
     participant Val as validateProposal / behaviour.validate
 
     FSC->>FSC: receive(proposal)
-    FSC->>FSC: extract replay.Key (txID, creator, nonce, timestamp)
-    FSC->>Guard: Check(ctx, key)
-    alt timestamp outside freshness window
-        Guard-->>FSC: ErrOutOfWindow
-        FSC-->>FSC: abort, no validation/endorsement performed
-    else already seen
-        Guard-->>FSC: ErrAlreadyProcessed
-        FSC-->>FSC: abort, no validation/endorsement performed
-    else first time and fresh
-        Guard-->>FSC: nil
-        FSC->>Val: continue normal validation and endorsement
+    FSC->>Sig: verify signature against claimed creator
+    alt signature missing or invalid
+        Sig-->>FSC: error
+        FSC-->>FSC: abort, replay guard never consulted
+    else signature valid
+        Sig-->>FSC: nil
+        FSC->>FSC: extract replay.Key (txID, creator, nonce, timestamp)
+        FSC->>Guard: Check(ctx, key)
+        alt timestamp outside freshness window
+            Guard-->>FSC: ErrOutOfWindow
+            FSC-->>FSC: abort, no further validation/endorsement performed
+        else already seen
+            Guard-->>FSC: ErrAlreadyProcessed
+            FSC-->>FSC: abort, no further validation/endorsement performed
+        else first time and fresh
+            Guard-->>FSC: nil
+            FSC->>Val: continue with MSP/ACL/behaviour validation and endorsement
+        end
     end
 ```
+
+Verifying the signature ahead of the guard closes two problems that would otherwise exist if
+the guard ran first: an attacker who has never seen a valid proposal could flood the bounded
+dedup cache with unsigned garbage keys, evicting genuine in-flight entries; and admitting a key
+before checking who actually signed it would let anyone occupy a dedup slot without having
+produced a valid proposal at all. This does not, by itself, prevent a party that already holds a
+validly-signed proposal — for example a co-endorser in a multi-endorser flow, who legitimately
+receives the same signed proposal the initiator sends to every endorser — from forwarding it
+ahead of the initiator's own delivery to occupy the guard slot first. Closing that residual race
+would require binding a session to the identity that opened it at the transport layer, which is
+out of scope for a content-keyed replay guard.
 
 The replay-detection key
 ([`replay.Key`](../../token/services/network/common/replay/guard.go)) is derived entirely
