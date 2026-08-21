@@ -624,140 +624,126 @@ correctness setting rather than a tuning knob.
 
 ### Smart Contract Interface
 
-The sketch below predates the implementation and is kept for the shape of the idea. The contracts that
-were actually built live in
-[`contracts/src`](../../x/token/services/network/evm/contracts/src): the entry point is
-`TokenState.applyStateDelta(StateDelta, bytes[])`, described above.
+The interfaces as actually built, in
+[`contracts/src`](../../x/token/services/network/evm/contracts/src):
 
 ```solidity
-// Conceptual interface - not production code
-interface ITokenContractWithEndorsement {
-    // Apply a pre-validated state update
-    function applyStateUpdate(
-        bytes32 stateRoot,
-        bytes calldata stateDelta,
-        bytes[] calldata endorserSignatures
-    ) external returns (bool);
-    
-    // Endorser management
-    function addEndorser(address endorser) external;
-    function removeEndorser(address endorser) external;
-    function setThreshold(uint256 threshold) external;
-    
-    // Query functions
-    function getToken(bytes32 tokenId) external view returns (bytes memory);
-    function isSpent(bytes32 tokenId) external view returns (bool);
+interface ITokenState {
+    // delta is a typed struct, not opaque bytes, so the contract recomputes the EIP-712 hash itself.
+    function applyStateDelta(StateDelta calldata delta, bytes[] calldata signatures) external returns (bool);
+
+    function getToken(bytes32 tokenID) external view returns (bytes memory);
+    function isSpent(bytes32 tokenID) external view returns (bool);
+    function areTokensSpent(bytes32[] calldata tokenIDs) external view returns (bool[] memory);
+    function isSerialUsed(bytes32 serial) external view returns (bool);
+    function getPublicParameters() external view returns (bytes memory);
+    function getPublicParamsVersion() external view returns (uint64);
+    function getTransferMetadata(bytes32 key) external view returns (bytes memory);
+    function getTokenRequestHash(bytes32 anchor) external view returns (bytes32);
+
+    event StateCommitted(bytes32 indexed anchor, bool success, string message);
+    event PublicParametersUpdated(bytes32 indexed paramsHash, uint64 version);
+}
+
+interface IEndorsementVerifier {
+    function verify(bytes32 digest, bytes[] calldata signatures) external view returns (bool);
+
+    function isEndorser(address a) external view returns (bool);
     function getEndorsers() external view returns (address[] memory);
-    
-    // Events
-    event StateUpdate(bytes32 indexed stateRoot, bool success);
-    event EndorserAdded(address indexed endorser);
-    event EndorserRemoved(address indexed endorser);
+    function getThreshold() external view returns (uint256);
 }
 ```
 
-### Smart Contract Responsibilities
+There is deliberately no `setPublicParameters(address admin)`: parameters update through an endorsed
+setup delta, gated by the same threshold as any other state change (see "Phase 2" above). There is also
+no `addEndorser`/`removeEndorser`/`setThreshold` in v1 — the endorser set and threshold are fixed at
+construction. Runtime endorser-set changes are a quorum-gated feature for a later version, not a
+deployer privilege; none of the v1 flows (issue, transfer, redeem, parameters update) need to mutate the
+endorser set.
 
-1. **Signature Verification**
-   - Verify endorser signatures on state delta
-   - Check signature threshold is met
-   - Validate endorser authorization
+### The endorsement flow (driver side)
 
-2. **State Application**
-   - Apply pre-validated state delta
-   - Update token mappings
-   - Update spent token markers (double spending check)
+The contract side above is the small, cheap half of the system. The Go side does the actual work: by the
+time a transaction reaches the chain, a quorum has already validated it off chain. This is the
+responder/initiator pair in `evm/endorsement`, the same shape as the Fabric and FabricX endorsement
+views.
 
-3. **Endorser Management**
-   - Maintain list of authorized endorsers
-   - Enforce endorsement policies
-   - Support dynamic endorser updates
+**The responder** runs on every node that endorses, once per request:
 
-### FSC Endorser Implementation
-
-**Endorser Service:**
 ```go
-type EthereumEndorserService struct {
-    validator    TokenValidator
-    signer       crypto.Signer
-    stateManager StateManager
+type EndorseRequest struct {
+    TokenRequest []byte
+    TMSID        token.TMSID
+    Anchor       string
+    Metadata     map[string][]byte
 }
 
-func (e *EthereumEndorserService) Endorse(
-    ctx context.Context,
-    request []byte,
-) (*Endorsement, error) {
-    // 1. Validate token request
-    if err := e.validator.Validate(request); err != nil {
-        return nil, err
-    }
-    
-    // 2. Compute state delta
-    delta, err := e.stateManager.ComputeDelta(request)
-    if err != nil {
-        return nil, err
-    }
-    
-    // 3. Sign state delta
-    signature, err := e.signer.Sign(delta)
-    if err != nil {
-        return nil, err
-    }
-    
-    return &Endorsement{
-        Delta:     delta,
-        Signature: signature,
-    }, nil
+type EndorseResponse struct {
+    Delta           *statedelta.StateDelta
+    Signature       []byte
+    EndorserAddress string
+    Err             string
 }
 ```
 
-**Driver Implementation:**
-```go
-func (n *EthereumNetwork) RequestApproval(
-    ctx view.Context,
-    tms *token.ManagementService,
-    requestRaw []byte,
-    signer view.Identity,
-    txID driver.TxID,
-) (driver.Envelope, error) {
-    // 1. Collect endorsements from FSC nodes
-    endorsements := make([]*Endorsement, 0)
-    for _, endorser := range n.endorsers {
-        endorsement, err := endorser.Endorse(ctx, requestRaw)
-        if err != nil {
-            return nil, err
-        }
-        endorsements = append(endorsements, endorsement)
-    }
-    
-    // 2. Aggregate state deltas (should be identical)
-    stateDelta := endorsements[0].Delta
-    
-    // 3. Collect signatures
-    signatures := make([][]byte, len(endorsements))
-    for i, e := range endorsements {
-        signatures[i] = e.Signature
-    }
-    
-    // 4. Create Ethereum transaction
-    data := encodeContractCall(
-        "applyStateUpdate",
-        stateRoot,
-        stateDelta,
-        signatures,
-    )
-    
-    tx := types.NewTransaction(nonce, contractAddress, value, gasLimit, gasPrice, data)
-    signedTx, err := types.SignTx(tx, signer, chainID)
-    
-    return &EthereumEnvelope{tx: signedTx}, nil
-}
-```
+1. Authorize the caller by FSC identity, against the TMS's configured allowlist (the EVM analog of
+   Fabric's MSP/ACL creator check).
+2. Validate the token request against the ledger (`eth_call` at `finalized`), using the same Token SDK
+   validator a Fabric deployment uses.
+3. Persist a validation record, for audit.
+4. Translate the validated actions into a `StateDelta`.
+5. Check the delta's public-parameters version against this node's synced version; refuse to sign a
+   stale one.
+6. Sign the EIP-712 digest, and reply with the delta, the signature, and the endorser's address.
+
+**The initiator does not build a `StateDelta`.** Producing one means validating the request against
+on-chain state, which is exactly the work already delegated to endorsers, so the initiator relays what
+they signed rather than computing its own copy. For each reply it checks that the anchor matches what it
+asked about, the delta's structural invariants hold, and the signature recovers to a registered endorser
+over *that delta's* own digest, then groups signatures by delta. The quorum is the first delta to reach
+threshold distinct signers; a reply that disagrees with the rest is set aside rather than treated as
+fatal, so one node computing a different delta cannot break the transaction for everyone else.
+
+An earlier version of the driver had the initiator independently rebuild the delta as a cross-check
+before comparing it to what came back. It came out during review, for two reasons: rebuilding bought no
+security (a quorum willing to sign something bad does not need the initiator's agreement to apply it),
+and it cost liveness (an initiator that read public parameters on the other side of an update from its
+endorsers computed a different digest and discarded every valid signature as an unrecognized signer).
+What the initiator keeps is what it can check without running a validator: the anchor binding and the
+delta's shape.
+
+Once threshold is met, the initiator ABI-encodes `applyStateDelta(delta, signatures)`, signs the
+Ethereum transaction with the submitter's key, and broadcasts it.
 
 ## Operational Behaviour (Approach 2 driver)
 
 These are properties of the shipped Approach-2 driver that an operator has to know about. Bootstrapping
 steps live in the [Ethereum Deployment Runbook](./network-ethereum-deployment.md).
+
+### How finality resolves
+
+The primary signal is the transaction receipt, polled alongside `eth_getTransactionByHash`: known but no
+`blockNumber` yet means still pending; a receipt with status 1 means valid, status 0 means invalid; a
+hash the node has never seen means dropped. This works against any JSON-RPC node, Besu included. A
+fabric-x-evm gateway additionally exposes a `pending → in-progress → committed | failed | superseded`
+lifecycle, which the driver can use as a faster signal where available, but it is an efficiency layer,
+not a requirement — the receipt path is what the driver is built and accepted against.
+
+Reads happen at the PoS **`finalized`** block tag (about two epochs, roughly 13 minutes on Ethereum
+mainnet), which takes reorg handling out of scope for v1.
+
+A recipient who only saw the token request doesn't have the Ethereum transaction hash, only the anchor.
+That's deliberate: a contract has no way to read its own transaction hash, so the driver never relies on
+one. Recipient-side resolution instead scans `StateCommitted` logs filtered by the indexed anchor, which
+is also where the transaction hash comes from when it's needed (every log carries it as node-supplied
+metadata).
+
+This produces a real asymmetry, the same one noted above: a failed `applyStateDelta` reverts, so it never
+emits `StateCommitted`, and log scanning by anchor can only ever discover success. A recipient must treat
+"no event by the configured timeout" as failure, which makes `finality.timeout` a correctness setting,
+not a tuning knob. It has to exceed both the chain's real time-to-finality at the configured block tag
+and the longest gap an application leaves between preparing a transaction and broadcasting it — otherwise
+recovery condemns transactions that were merely slow to submit, not ones that were rejected.
 
 ### Error classification
 

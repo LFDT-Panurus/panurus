@@ -9,8 +9,8 @@ SPDX-License-Identifier: Apache-2.0
 // It follows Approach 2 (pre-order execution with FSC endorsers): FSC nodes validate token
 // requests off-chain in Go, sign the resulting state transition with secp256k1 keys (EIP-712),
 // and an on-chain contract verifies the endorser signatures plus spent/existence constraints
-// before applying the transition. See eth_network_driver_design.md for the full design and
-// eth_network_driver_implementation_plan.md for the build sequence.
+// before applying the transition. See eth_network_driver_design.md for the full design, and
+// docs/services/network-ethereum.md for the operator-facing walkthrough.
 //
 // The package is organized into focused sub-packages:
 //
