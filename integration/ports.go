@@ -104,4 +104,6 @@ const (
 	evmSkipAirPlay
 	EVMFungible
 	EVMFungibleFabToken
+	EVMFungibleGateway
+	EVMFungibleGatewayFabToken
 )

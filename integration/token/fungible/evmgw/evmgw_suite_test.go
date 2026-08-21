@@ -19,7 +19,8 @@ func TestEndToEnd(t *testing.T) {
 	RunSpecs(t, "EndToEnd EVM Gateway Suite")
 }
 
-// StartPortEVMGateway returns the port range this suite allocates from, shared with the Besu suite.
+// StartPortEVMGateway returns the port range this suite allocates from. It is its own range rather
+// than the Besu suite's, so the two can run side by side without their nodes colliding.
 func StartPortEVMGateway() int {
-	return integration.EVMFungible.StartPortForNode()
+	return integration.EVMFungibleGateway.StartPortForNode()
 }
