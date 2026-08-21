@@ -14,10 +14,13 @@ import (
 	token2 "github.com/LFDT-Panurus/panurus/token"
 	"github.com/LFDT-Panurus/panurus/token/core/common"
 	tdriver "github.com/LFDT-Panurus/panurus/token/driver"
+	"github.com/LFDT-Panurus/panurus/token/services/network/common/replay"
 	"github.com/LFDT-Panurus/panurus/token/services/network/common/rws/translator"
 	"github.com/LFDT-Panurus/panurus/token/token"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/fabric"
+	"github.com/hyperledger-labs/fabric-smart-client/platform/fabric/core/generic/transaction"
+	"github.com/hyperledger-labs/fabric-smart-client/platform/fabric/core/protoutil"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/fabric/services/endorser"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/view"
 )
@@ -83,12 +86,14 @@ type responderBehaviour interface {
 type ResponderView struct {
 	endorserService EndorserService
 	channelProvider ChannelProvider
+	replayGuard     replay.Guard
 	behaviours      map[string]responderBehaviour
 }
 
 func newResponderView(
 	endorserService EndorserService,
 	channelProvider ChannelProvider,
+	replayGuard replay.Guard,
 	behaviours ...responderBehaviour,
 ) *ResponderView {
 	m := make(map[string]responderBehaviour, len(behaviours))
@@ -99,6 +104,7 @@ func newResponderView(
 	return &ResponderView{
 		endorserService: endorserService,
 		channelProvider: channelProvider,
+		replayGuard:     replayGuard,
 		behaviours:      m,
 	}
 }
@@ -115,10 +121,12 @@ func NewResponderView(
 	storageProvider StorageProvider,
 	channelProvider ChannelProvider,
 	ppValidator PublicParamsValidator,
+	replayGuard replay.Guard,
 ) *ResponderView {
 	return newResponderView(
 		endorserService,
 		channelProvider,
+		replayGuard,
 		&approvalBehaviour{
 			keyTranslator:                 keyTranslator,
 			getTranslator:                 getTranslator,
@@ -141,6 +149,35 @@ func (r *ResponderView) Call(context view.Context) (any, error) {
 	}
 	defer request.Rws.Done()
 
+	// verify the proposal signature before the replay guard ever writes anything: the guard's
+	// cache is keyed on content taken from the unauthenticated proposal (receive/proposalKey
+	// perform no cryptographic check), so admitting a key without first checking that the
+	// proposal was actually signed by its claimed creator would let anyone occupy or evict a
+	// dedup slot with unsigned garbage. Verification is a single, cheap cryptographic
+	// operation, so the guard still runs ahead of the genuinely expensive steps below
+	// (MSP-validity, ACL, behaviour validation, translate, endorse) — it just no longer runs
+	// ahead of the one check that is unavoidable regardless of guard placement.
+	//
+	// This does not, by itself, stop a party that already possesses a validly-signed proposal
+	// (e.g. a co-endorser in a multi-endorser flow, who legitimately receives the same signed
+	// proposal the initiator sends to every endorser) from forwarding it to race the
+	// initiator's own delivery and occupy the guard slot first. Closing that residual race
+	// requires binding a session to the identity that opened it at the transport layer, which
+	// is out of scope for a content-keyed replay guard.
+	if err := verifyProposalSignature(context, r.channelProvider, request.Tx, request.TMSID, request.Anchor); err != nil {
+		return nil, errors.Join(ErrValidateProposal, err)
+	}
+
+	// replay check: reject a request that has already been seen before doing any further,
+	// more expensive validation of it
+	key, err := proposalKey(request.Tx)
+	if err != nil {
+		return nil, errors.Join(ErrInvalidProposal, err)
+	}
+	if err := r.replayGuard.Check(context.Context(), key); err != nil {
+		return nil, errors.WithMessagef(err, "replay guard rejected proposal for tx [%s]", key.TxID)
+	}
+
 	// validate proposal
 	if err := validateProposal(context, r.channelProvider, request.Tx, request.TMSID, request.Anchor); err != nil {
 		return nil, errors.Join(ErrValidateProposal, err)
@@ -158,6 +195,28 @@ func (r *ResponderView) Call(context view.Context) (any, error) {
 	}
 
 	return res, nil
+}
+
+// proposalKey extracts the replay-detection key carried by tx's underlying Fabric proposal:
+// the transaction ID, the creator, the nonce, and the claimed creation timestamp. All four
+// values are read from the content of the proposal itself, before any expensive verification
+// of the request is performed.
+func proposalKey(tx *endorser.Transaction) (replay.Key, error) {
+	proposal, err := protoutil.UnmarshalProposal(tx.Transaction.SignedProposal().ProposalBytes())
+	if err != nil {
+		return replay.Key{}, errors.WithMessagef(err, "failed to unmarshal proposal for tx [%s]", tx.ID())
+	}
+	up, err := transaction.UnpackProposal(proposal)
+	if err != nil {
+		return replay.Key{}, errors.WithMessagef(err, "failed to unpack proposal for tx [%s]", tx.ID())
+	}
+
+	return replay.Key{
+		TxID:      tx.ID(),
+		Creator:   tx.Transaction.Creator(),
+		Nonce:     tx.Transaction.Nonce(),
+		Timestamp: up.ChannelHeader.Timestamp.AsTime(),
+	}, nil
 }
 
 func (r *ResponderView) receive(ctx view.Context) (*Request, responderBehaviour, error) {
@@ -238,11 +297,13 @@ func (r *ResponderView) receive(ctx view.Context) (*Request, responderBehaviour,
 	return request, behaviour, nil
 }
 
-// validateProposal performs the common proposal-level validation shared by all responders in this
-// package: it checks that the creator identity is present and known to the network via MSP, that
-// ACL checks pass, and that the proposal signature verifies against the claimed creator.
-func validateProposal(ctx view.Context, channelProvider ChannelProvider, tx *endorser.Transaction, tmsID token2.TMSID, anchor string) error {
-	logger.DebugfContext(ctx.Context(), "Validate proposal for TX [%s]", anchor)
+// verifyProposalSignature checks that the proposal carried by tx is well-formed and that its
+// signature verifies against the identity it claims as creator. It deliberately does not check
+// that the creator is known to any MSP, nor run any ACL check (see validateProposal): those
+// checks run after the replay guard, whereas this one must run before it, since it is the one
+// thing standing between the guard and unauthenticated input.
+func verifyProposalSignature(ctx view.Context, channelProvider ChannelProvider, tx *endorser.Transaction, tmsID token2.TMSID, anchor string) error {
+	logger.DebugfContext(ctx.Context(), "Verify proposal signature for TX [%s]", anchor)
 
 	// Get the signed proposal from the underlying Fabric transaction
 	signedProposal := tx.Transaction.SignedProposal()
@@ -274,6 +335,35 @@ func validateProposal(ctx view.Context, channelProvider ChannelProvider, tx *end
 		return errors.Errorf("proposal payload is empty for tx [%s]", anchor)
 	}
 
+	mspManager, err := channelProvider.GetMSPManager(tmsID.Network, tmsID.Channel)
+	if err != nil {
+		return errors.Wrapf(err, "failed to get MSP manager for tx [%s]", anchor)
+	}
+
+	// Verify the proposal signature using the creator's verifier.
+	// This ensures the proposal was indeed signed by the claimed creator.
+	verifier, err := mspManager.GetVerifier(creator)
+	if err != nil {
+		return errors.Wrapf(err, "failed to get verifier for creator for tx [%s]", anchor)
+	}
+	if err := verifier.Verify(proposalBytes, signature); err != nil {
+		return errors.Wrapf(err, "proposal signature verification failed for tx [%s]", anchor)
+	}
+
+	logger.DebugfContext(ctx.Context(), "Proposal signature verified for TX [%s]", anchor)
+
+	return nil
+}
+
+// validateProposal performs the proposal-level validation that is not required to keep the
+// replay guard safe from unauthenticated input, and therefore runs after it: it checks that
+// the creator identity is known to the network via MSP and that ACL checks pass. Signature
+// verification has already been performed by verifyProposalSignature, before the replay guard.
+func validateProposal(ctx view.Context, channelProvider ChannelProvider, tx *endorser.Transaction, tmsID token2.TMSID, anchor string) error {
+	logger.DebugfContext(ctx.Context(), "Validate proposal for TX [%s]", anchor)
+
+	creator := tx.Transaction.Creator()
+
 	// Verify the creator is known to the network via MSP.
 	// In the Fabric protocol, the endorser is responsible for checking that the proposal signer
 	// is recognized by at least one MSP in the channel configuration.
@@ -291,16 +381,6 @@ func validateProposal(ctx view.Context, channelProvider ChannelProvider, tx *end
 	}
 	if err := acl.CheckACL(tx.SignedProposal()); err != nil {
 		return errors.Wrapf(err, "failed to check ACL for tx [%s]", anchor)
-	}
-
-	// Verify the proposal signature using the creator's verifier.
-	// This ensures the proposal was indeed signed by the claimed creator.
-	verifier, err := mspManager.GetVerifier(creator)
-	if err != nil {
-		return errors.Wrapf(err, "failed to get verifier for creator for tx [%s]", anchor)
-	}
-	if err := verifier.Verify(proposalBytes, signature); err != nil {
-		return errors.Wrapf(err, "proposal signature verification failed for tx [%s]", anchor)
 	}
 
 	logger.DebugfContext(ctx.Context(), "Proposal validated successfully for TX [%s]", anchor)

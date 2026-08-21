@@ -14,3 +14,4 @@ cmd/token_validation_service/out/
 /site/
 coverage.out
 /.codex/
+/plan.md

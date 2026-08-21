@@ -252,6 +252,107 @@ writing; the existing ledger setup-key listener (see
 [Public Parameters Management](#public-parameters-management)) detects the committed
 write and updates the TMS.
 
+### Replay Detection
+
+Both FSC responders — token-request approval and public-params setup — share a single
+`ResponderView.Call` entry point
+([`fsc/responder.go`](../../token/services/network/fabric/endorsement/fsc/responder.go)).
+Immediately after receiving a proposal, `Call` verifies the proposal's signature
+(`verifyProposalSignature`) before doing anything else. This check must come first because the
+replay guard's dedup cache is keyed on content taken from the unauthenticated proposal — the
+transaction ID, creator, nonce, and claimed timestamp — none of which is verified during
+`receive`. Only once the proposal is known to carry a valid signature from its claimed creator
+does `Call` extract the replay key and consult the guard for freshness/dedup; the remaining,
+more expensive checks (creator-known-to-MSP, ACL, and behaviour-specific validation) run last,
+after the guard has already rejected replayed or out-of-window requests:
+
+```mermaid
+sequenceDiagram
+    participant FSC as FSC Endorsement Service
+    participant Sig as verifyProposalSignature
+    participant Guard as replay.Guard
+    participant Val as validateProposal / behaviour.validate
+
+    FSC->>FSC: receive(proposal)
+    FSC->>Sig: verify signature against claimed creator
+    alt signature missing or invalid
+        Sig-->>FSC: error
+        FSC-->>FSC: abort, replay guard never consulted
+    else signature valid
+        Sig-->>FSC: nil
+        FSC->>FSC: extract replay.Key (txID, creator, nonce, timestamp)
+        FSC->>Guard: Check(ctx, key)
+        alt timestamp outside freshness window
+            Guard-->>FSC: ErrOutOfWindow
+            FSC-->>FSC: abort, no further validation/endorsement performed
+        else already seen
+            Guard-->>FSC: ErrAlreadyProcessed
+            FSC-->>FSC: abort, no further validation/endorsement performed
+        else first time and fresh
+            Guard-->>FSC: nil
+            FSC->>Val: continue with MSP/ACL/behaviour validation and endorsement
+        end
+    end
+```
+
+Verifying the signature ahead of the guard closes two problems that would otherwise exist if
+the guard ran first: an attacker who has never seen a valid proposal could flood the bounded
+dedup cache with unsigned garbage keys, evicting genuine in-flight entries; and admitting a key
+before checking who actually signed it would let anyone occupy a dedup slot without having
+produced a valid proposal at all. This does not, by itself, prevent a party that already holds a
+validly-signed proposal — for example a co-endorser in a multi-endorser flow, who legitimately
+receives the same signed proposal the initiator sends to every endorser — from forwarding it
+ahead of the initiator's own delivery to occupy the guard slot first. Closing that residual race
+would require binding a session to the identity that opened it at the transport layer, which is
+out of scope for a content-keyed replay guard.
+
+The replay-detection key
+([`replay.Key`](../../token/services/network/common/replay/guard.go)) is derived entirely
+from the content of the incoming proposal itself — `TxID`, `Creator`, `Nonce`, and the
+proposal's `ChannelHeader.Timestamp` — rather than from anything computed or cached
+server-side, so the guard rejects both a literal replay of a previously-seen proposal and a
+second, concurrent proposal carrying the same identity.
+
+Before performing the dedup check, the guard also enforces a **freshness window**: the
+proposal's claimed `Timestamp` must lie within `Window` of the guard's own current time, in
+either direction (`now-Window <= Timestamp <= now+Window`). The window moves continuously
+with the node's wall clock. This bounds how far in the past a proposal can be replayed —
+closing the gap once the dedup cache itself has forgotten a key that is still technically
+replayable — and rejects proposals whose claimed timestamp is skewed too far into the future.
+A proposal whose timestamp falls outside the window fails with `fsc.ErrOutOfWindow` (wrapping
+`replay.ErrOutOfWindow`) without ever reaching the dedup cache; a proposal that is fresh but
+already seen fails with `fsc.ErrAlreadyProcessed` (wrapping `replay.ErrAlreadyProcessed`). In
+neither case is the request idempotently replayed from a cached result — the caller must
+retry with a fresh proposal.
+
+This guard is implemented as a small, driver-agnostic component under
+[`token/services/network/common/replay`](../../token/services/network/common/replay), so
+other endorser-style network drivers (e.g. FabricX, and a future Ethereum/EVM driver) can
+reuse it instead of duplicating the check:
+
+- `replay.Guard` — the interface (`Check(ctx, key) error`), satisfied by any backend.
+- `replay/memory` — the default, in-memory implementation: a freshness-window check followed
+  by an LRU-backed dedup cache with a configurable TTL and max entry count
+  (`replay.DefaultConfig()`: a 5-minute window, a 10-minute TTL, 100,000 entries). Entries are
+  local to a single process — they do not survive a restart and are not shared across
+  replicas of the same node.
+- `replay/factory` — builds a `Guard` from a `replay.Config` (`Backend` + `Window` + `TTL` +
+  `MaxEntries`); `memory` is the only backend today, but additional backends (e.g. a
+  Postgres- or Redis-backed guard for multi-replica endorsers) can be added here without
+  changing any caller. The factory enforces `TTL >= 2*Window`, raising the effective TTL when
+  necessary, so a dedup entry always survives the entire window during which its key could
+  still be replayed. Setting `Window` to `0` disables the freshness check entirely, leaving
+  pure dedup behavior.
+
+The guard is built **per TMS**, not once per node: both the Fabric and FabricX endorsement
+loaders construct their own `Guard` inside `loader.load` from that TMS's
+`services.network.fabric.fsc_endorsement.replay` configuration (`endorsement.NewReplayGuard`,
+shared by both drivers since FabricX reuses the Fabric `fsc_endorsement` namespace), falling
+back to `replay.DefaultConfig()` field-for-field when the block is absent. This means each
+TMS an endorser serves gets its own dedup cache, sized and tuned independently — see
+[Optional: token.tms.\<name\>.services.network.fabric.fsc_endorsement.replay](../configuration.md#optional-tokentmsservicesnetworkfabricfsc_endorsementreplay)
+for the full configuration reference.
+
 #### Reachability
 
 `SetupPublicParamsView` is reachable from application code through the same layering

@@ -156,6 +156,8 @@ Before implementing any task:
 2. Update immediately when completing steps: `[x] Done` + brief change notes
 3. Log blockers/decisions under `## Notes & Decisions`
 4. Mark plan as `✅ COMPLETE` when finished
+5. **Never commit `plan.md`**: it is a local scratch file, listed in `.gitignore`. Do not `git add` it,
+   and if a commit accidentally includes it, remove it from the commit before pushing.
 
 ### Documentation Updates (Workflow Rule)
 Before marking a task complete, update or create the relevant documentation under `docs/`:

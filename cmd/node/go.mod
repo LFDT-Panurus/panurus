@@ -62,6 +62,7 @@ require (
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.29.0 // indirect
 	github.com/hashicorp/go-uuid v1.0.3 // indirect
 	github.com/hashicorp/golang-lru v1.0.2 // indirect
+	github.com/hashicorp/golang-lru/v2 v2.0.7 // indirect
 	github.com/huin/goupnp v1.3.0 // indirect
 	github.com/hyperledger-labs/fabric-smart-client/integration v0.17.0 // indirect
 	github.com/hyperledger-labs/fabric-smart-client/platform/view/services/comm/host/libp2p v0.16.0 // indirect

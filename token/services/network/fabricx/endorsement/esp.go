@@ -108,6 +108,11 @@ func (l *loader) load(tmsID token2.TMSID) (endorsement.Service, error) {
 		return nil, errors.Wrapf(err, "failed to get fabric network service for [%s]", tmsID.Network)
 	}
 
+	replayGuard, err := endorsement.NewReplayGuard(configuration, tmsID)
+	if err != nil {
+		return nil, err
+	}
+
 	return fsc.NewEndorsementService(
 		&NamespaceTxProcessor{},
 		tmsID,
@@ -129,6 +134,7 @@ func (l *loader) load(tmsID token2.TMSID) (endorsement.Service, error) {
 		endorsement.NewChannelProvider(l.fabricProvider),
 		NewQueryServiceEndorserSelector(l.grpcClientProvider, endorsement.NewChannelProvider(l.fabricProvider)),
 		l.ppValidator,
+		replayGuard,
 	)
 }
 

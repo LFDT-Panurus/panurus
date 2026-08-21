@@ -9,19 +9,26 @@ package fsc_test
 import (
 	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/LFDT-Panurus/panurus/token"
 	mock2 "github.com/LFDT-Panurus/panurus/token/driver/mock"
+	"github.com/LFDT-Panurus/panurus/token/services/network/common/replay"
+	replaymock "github.com/LFDT-Panurus/panurus/token/services/network/common/replay/mock"
 	"github.com/LFDT-Panurus/panurus/token/services/network/fabric/endorsement/fsc"
 	"github.com/LFDT-Panurus/panurus/token/services/network/fabric/endorsement/fsc/mock"
 	"github.com/LFDT-Panurus/panurus/token/services/ttx/dep/tokenapi"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
+	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/proto"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/common/driver"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/fabric"
 	fabricdriver "github.com/hyperledger-labs/fabric-smart-client/platform/fabric/driver"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/fabric/services/endorser"
+	cb "github.com/hyperledger/fabric-protos-go-apiv2/common"
+	pb "github.com/hyperledger/fabric-protos-go-apiv2/peer"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 // mockSignedProposal implements driver.SignedProposal for testing
@@ -51,6 +58,55 @@ var (
 	_ fabricdriver.Proposal       = &mockProposal{}
 )
 
+// newValidProposalBytes builds the marshalled bytes of a minimal, but valid, Fabric
+// *peer.Proposal carrying the given txID, creator, nonce, and timestamp in its header, so
+// that fsc.ResponderView's replay-detection key extraction (which unmarshals real proposal
+// bytes) succeeds against it.
+func newValidProposalBytes(t *testing.T, txID string, creator, nonce []byte, timestamp time.Time) []byte {
+	t.Helper()
+
+	channelHeader := &cb.ChannelHeader{
+		Type:      int32(cb.HeaderType_ENDORSER_TRANSACTION),
+		TxId:      txID,
+		ChannelId: "a_channel",
+		Timestamp: timestamppb.New(timestamp),
+		Extension: mustMarshalProto(t, &pb.ChaincodeHeaderExtension{
+			ChaincodeId: &pb.ChaincodeID{Name: "a_namespace", Version: "1.0"},
+		}),
+	}
+	signatureHeader := &cb.SignatureHeader{
+		Creator: creator,
+		Nonce:   nonce,
+	}
+	header := &cb.Header{
+		ChannelHeader:   mustMarshalProto(t, channelHeader),
+		SignatureHeader: mustMarshalProto(t, signatureHeader),
+	}
+	cis := &pb.ChaincodeInvocationSpec{
+		ChaincodeSpec: &pb.ChaincodeSpec{
+			ChaincodeId: &pb.ChaincodeID{Name: "a_namespace", Version: "1.0"},
+			Input:       &pb.ChaincodeInput{Args: [][]byte{[]byte("invoke")}},
+		},
+	}
+	proposalPayload := &pb.ChaincodeProposalPayload{
+		Input: mustMarshalProto(t, cis),
+	}
+	proposal := &pb.Proposal{
+		Header:  mustMarshalProto(t, header),
+		Payload: mustMarshalProto(t, proposalPayload),
+	}
+
+	return mustMarshalProto(t, proposal)
+}
+
+func mustMarshalProto(t *testing.T, msg proto.Message) []byte {
+	t.Helper()
+	raw, err := proto.Marshal(msg)
+	require.NoError(t, err)
+
+	return raw
+}
+
 // alwaysValidVerifier is a test verifier that always returns nil (valid)
 type alwaysValidVerifier struct{}
 
@@ -76,6 +132,7 @@ type MockNewRequestApprovalResponderView struct {
 	tmsp            *mock.TokenManagementSystemProvider
 	channelProvider *mock.ChannelProvider
 	mspManager      *mock.MSPManager
+	replayGuard     *replaymock.Guard
 }
 
 func mockNewRequestApprovalResponderView(t *testing.T, overrideTMSID *token.TMSID) *MockNewRequestApprovalResponderView {
@@ -87,8 +144,9 @@ func mockNewRequestApprovalResponderView(t *testing.T, overrideTMSID *token.TMSI
 	fabricTx := &mock.FabricTransaction{}
 	fabricTx.IDReturns("a_tx_id")
 	fabricTx.CreatorReturns([]byte("creator_identity"))
+	fabricTx.NonceReturns([]byte("a_nonce"))
 	fabricTx.SignedProposalReturns(&mockSignedProposal{
-		proposalBytes: []byte("proposal_bytes"),
+		proposalBytes: newValidProposalBytes(t, "a_tx_id", []byte("creator_identity"), []byte("a_nonce"), time.Now()),
 		signature:     []byte("proposal_signature"),
 	})
 	fabricTx.ProposalReturns(&mockProposal{
@@ -141,6 +199,8 @@ func mockNewRequestApprovalResponderView(t *testing.T, overrideTMSID *token.TMSI
 	channelProvider.GetMSPManagerReturns(mspManager, nil)
 	channelProvider.GetACLProviderReturns(aclProvider, nil)
 
+	replayGuard := &replaymock.Guard{}
+
 	view := fsc.NewResponderView(
 		nil,
 		func(txID string, namespace string, rws *fabric.RWSet) (fsc.Translator, error) {
@@ -151,6 +211,7 @@ func mockNewRequestApprovalResponderView(t *testing.T, overrideTMSID *token.TMSI
 		storageProvider,
 		channelProvider,
 		&mock.PublicParamsValidator{},
+		replayGuard,
 	)
 
 	return &MockNewRequestApprovalResponderView{
@@ -164,6 +225,7 @@ func mockNewRequestApprovalResponderView(t *testing.T, overrideTMSID *token.TMSI
 		tmsp:            tmsp,
 		channelProvider: channelProvider,
 		mspManager:      mspManager,
+		replayGuard:     replayGuard,
 	}
 }
 
@@ -341,6 +403,7 @@ func TestRequestApprovalResponderView(t *testing.T) {
 			expectErrContain: "creator is empty for tx",
 			verify: func(m *MockNewRequestApprovalResponderView, res any) {
 				assert.Equal(t, 1, m.rws.DoneCallCount())
+				assert.Equal(t, 0, m.replayGuard.CheckCallCount())
 			},
 		},
 		{
@@ -354,11 +417,14 @@ func TestRequestApprovalResponderView(t *testing.T) {
 
 				return m
 			},
+			// verifyProposalSignature's own empty-bytes check fires before the
+			// replay-detection key extraction (and thus the replay guard) ever runs
 			expectError:      true,
 			expectErrorType:  fsc.ErrValidateProposal,
 			expectErrContain: "proposal bytes are empty for tx",
 			verify: func(m *MockNewRequestApprovalResponderView, res any) {
 				assert.Equal(t, 1, m.rws.DoneCallCount())
+				assert.Equal(t, 0, m.replayGuard.CheckCallCount())
 			},
 		},
 		{
@@ -366,7 +432,7 @@ func TestRequestApprovalResponderView(t *testing.T) {
 			setup: func() *MockNewRequestApprovalResponderView {
 				m := mockNewRequestApprovalResponderView(t, nil)
 				m.fabricTx.SignedProposalReturns(&mockSignedProposal{
-					proposalBytes: []byte("proposal_bytes"),
+					proposalBytes: newValidProposalBytes(t, "a_tx_id", []byte("creator_identity"), []byte("a_nonce"), time.Now()),
 					signature:     nil,
 				})
 
@@ -377,6 +443,7 @@ func TestRequestApprovalResponderView(t *testing.T) {
 			expectErrContain: "proposal signature is empty for tx",
 			verify: func(m *MockNewRequestApprovalResponderView, res any) {
 				assert.Equal(t, 1, m.rws.DoneCallCount())
+				assert.Equal(t, 0, m.replayGuard.CheckCallCount())
 			},
 		},
 		{
@@ -395,6 +462,7 @@ func TestRequestApprovalResponderView(t *testing.T) {
 			expectErrContain: "proposal header is empty for tx",
 			verify: func(m *MockNewRequestApprovalResponderView, res any) {
 				assert.Equal(t, 1, m.rws.DoneCallCount())
+				assert.Equal(t, 0, m.replayGuard.CheckCallCount())
 			},
 		},
 		{
@@ -413,6 +481,7 @@ func TestRequestApprovalResponderView(t *testing.T) {
 			expectErrContain: "proposal payload is empty for tx",
 			verify: func(m *MockNewRequestApprovalResponderView, res any) {
 				assert.Equal(t, 1, m.rws.DoneCallCount())
+				assert.Equal(t, 0, m.replayGuard.CheckCallCount())
 			},
 		},
 		{
@@ -428,6 +497,7 @@ func TestRequestApprovalResponderView(t *testing.T) {
 			expectErrContain: "failed to get MSP manager",
 			verify: func(m *MockNewRequestApprovalResponderView, res any) {
 				assert.Equal(t, 1, m.rws.DoneCallCount())
+				assert.Equal(t, 0, m.replayGuard.CheckCallCount())
 			},
 		},
 		{
@@ -443,6 +513,7 @@ func TestRequestApprovalResponderView(t *testing.T) {
 			expectErrContain: "failed to get verifier for creator",
 			verify: func(m *MockNewRequestApprovalResponderView, res any) {
 				assert.Equal(t, 1, m.rws.DoneCallCount())
+				assert.Equal(t, 0, m.replayGuard.CheckCallCount())
 			},
 		},
 		{
@@ -458,6 +529,8 @@ func TestRequestApprovalResponderView(t *testing.T) {
 			expectErrContain: "creator identity is not valid",
 			verify: func(m *MockNewRequestApprovalResponderView, res any) {
 				assert.Equal(t, 1, m.rws.DoneCallCount())
+				// IsValid is checked by validateProposal, which runs after the replay guard
+				assert.Equal(t, 1, m.replayGuard.CheckCallCount())
 			},
 		},
 		{
@@ -473,6 +546,8 @@ func TestRequestApprovalResponderView(t *testing.T) {
 			expectErrContain: "proposal signature verification failed",
 			verify: func(m *MockNewRequestApprovalResponderView, res any) {
 				assert.Equal(t, 1, m.rws.DoneCallCount())
+				// checked by verifyProposalSignature, which runs before the replay guard
+				assert.Equal(t, 0, m.replayGuard.CheckCallCount())
 			},
 		},
 		{
@@ -539,6 +614,7 @@ func TestRequestApprovalResponderView(t *testing.T) {
 			expectErrContain: "failed to get ACL provider",
 			verify: func(m *MockNewRequestApprovalResponderView, res any) {
 				assert.Equal(t, 1, m.rws.DoneCallCount())
+				assert.Equal(t, 1, m.replayGuard.CheckCallCount())
 			},
 		},
 		{
@@ -556,6 +632,7 @@ func TestRequestApprovalResponderView(t *testing.T) {
 			expectErrContain: "failed to check ACL",
 			verify: func(m *MockNewRequestApprovalResponderView, res any) {
 				assert.Equal(t, 1, m.rws.DoneCallCount())
+				assert.Equal(t, 1, m.replayGuard.CheckCallCount())
 			},
 		},
 		{
@@ -649,6 +726,38 @@ func TestRequestApprovalResponderView(t *testing.T) {
 			},
 		},
 		{
+			name: "already processed",
+			setup: func() *MockNewRequestApprovalResponderView {
+				m := mockNewRequestApprovalResponderView(t, nil)
+				m.replayGuard.CheckReturns(replay.ErrAlreadyProcessed)
+
+				return m
+			},
+			expectError:      true,
+			expectErrorType:  fsc.ErrAlreadyProcessed,
+			expectErrContain: replay.ErrAlreadyProcessed.Error(),
+			verify: func(m *MockNewRequestApprovalResponderView, res any) {
+				assert.Equal(t, 1, m.rws.DoneCallCount())
+				assert.Equal(t, 1, m.replayGuard.CheckCallCount())
+			},
+		},
+		{
+			name: "out of window",
+			setup: func() *MockNewRequestApprovalResponderView {
+				m := mockNewRequestApprovalResponderView(t, nil)
+				m.replayGuard.CheckReturns(replay.ErrOutOfWindow)
+
+				return m
+			},
+			expectError:      true,
+			expectErrorType:  fsc.ErrOutOfWindow,
+			expectErrContain: replay.ErrOutOfWindow.Error(),
+			verify: func(m *MockNewRequestApprovalResponderView, res any) {
+				assert.Equal(t, 1, m.rws.DoneCallCount())
+				assert.Equal(t, 1, m.replayGuard.CheckCallCount())
+			},
+		},
+		{
 			name: "success",
 			setup: func() *MockNewRequestApprovalResponderView {
 				m := mockNewRequestApprovalResponderView(t, nil)
@@ -658,6 +767,11 @@ func TestRequestApprovalResponderView(t *testing.T) {
 			expectError: false,
 			verify: func(m *MockNewRequestApprovalResponderView, res any) {
 				assert.Equal(t, 1, m.rws.DoneCallCount())
+				require.Equal(t, 1, m.replayGuard.CheckCallCount())
+				_, key := m.replayGuard.CheckArgsForCall(0)
+				assert.Equal(t, "a_tx_id", key.TxID)
+				assert.Equal(t, []byte("creator_identity"), key.Creator)
+				assert.Equal(t, []byte("a_nonce"), key.Nonce)
 			},
 		},
 		{
