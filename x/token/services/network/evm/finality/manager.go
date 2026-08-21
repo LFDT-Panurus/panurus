@@ -185,6 +185,12 @@ func (m *Manager) watch(anchor [32]byte, anchorID string, listener driver.Finali
 	ticker := time.NewTicker(m.pollInterval)
 	defer ticker.Stop()
 
+	// observed becomes true the moment any poll actually reaches the chain, whether or not the anchor
+	// was found. It is what separates "checked repeatedly and it is genuinely absent" from "the chain
+	// was unreachable for the whole window": only the first is evidence the transaction is invalid, and
+	// conflating them would let a persistent connectivity failure masquerade as a revert.
+	observed := false
+
 	for {
 		select {
 		case <-ticker.C:
@@ -192,14 +198,23 @@ func (m *Manager) watch(anchor [32]byte, anchorID string, listener driver.Finali
 			if err != nil {
 				continue // a transient read failure is not a verdict; keep polling until the timeout
 			}
+			observed = true
 			if code == driver.Valid {
 				listener.OnStatus(ctx, anchorID, code, message, hash)
 
 				return
 			}
 		case <-ctx.Done():
-			// The anchor never appeared. A reverted apply emits nothing, so this is the only failure
-			// signal available by anchor.
+			if !observed {
+				// Every read attempt in the window errored: the chain was never actually reached, so
+				// there is no evidence the anchor is invalid, only that it could not be observed.
+				listener.OnError(context.Background(), anchorID,
+					errors.New("finality: could not reach the chain before the timeout"))
+
+				return
+			}
+			// The anchor never appeared, and at least one read genuinely confirmed its absence. A
+			// reverted apply emits nothing, so this is the only failure signal available by anchor.
 			listener.OnStatus(context.Background(), anchorID, driver.Invalid, "finality timeout", nil)
 
 			return

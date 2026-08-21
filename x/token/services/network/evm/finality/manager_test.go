@@ -42,14 +42,18 @@ func (s *stubState) apply(hash []byte) {
 	s.mu.Unlock()
 }
 
-// recordingListener captures the single notification a listener is allowed to receive.
+// recordingListener captures the single notification a listener is allowed to receive, through
+// whichever of OnStatus/OnError actually fires.
 type recordingListener struct {
-	mu       sync.Mutex
-	done     chan struct{}
-	status   int
-	message  string
-	trHash   []byte
-	notified int
+	mu           sync.Mutex
+	done         chan struct{}
+	status       int
+	message      string
+	trHash       []byte
+	err          error
+	notified     int
+	statusCalled bool
+	errorCalled  bool
 }
 
 func newRecordingListener() *recordingListener {
@@ -59,6 +63,7 @@ func newRecordingListener() *recordingListener {
 func (l *recordingListener) OnStatus(_ context.Context, _ string, status int, message string, trHash []byte) {
 	l.mu.Lock()
 	l.status, l.message, l.trHash = status, message, trHash
+	l.statusCalled = true
 	l.notified++
 	first := l.notified == 1
 	l.mu.Unlock()
@@ -67,7 +72,17 @@ func (l *recordingListener) OnStatus(_ context.Context, _ string, status int, me
 	}
 }
 
-func (l *recordingListener) OnError(context.Context, string, error) {}
+func (l *recordingListener) OnError(_ context.Context, _ string, err error) {
+	l.mu.Lock()
+	l.err = err
+	l.errorCalled = true
+	l.notified++
+	first := l.notified == 1
+	l.mu.Unlock()
+	if first {
+		close(l.done)
+	}
+}
 
 func (l *recordingListener) wait(t *testing.T) {
 	t.Helper()
@@ -243,14 +258,59 @@ func TestAddListenerRejectsNil(t *testing.T) {
 	require.Error(t, m.AddListener(t.Context(), anchor(0x01), "anchor-1", nil))
 }
 
-// TestTransientReadFailureDoesNotResolve checks that a flaky node does not produce a verdict: the
-// manager keeps polling rather than reporting a status it cannot support.
+// TestTransientReadFailureDoesNotResolve checks that a flaky node does not produce a verdict before
+// the timeout: the manager keeps polling rather than reporting a status it cannot support.
 func TestTransientReadFailureDoesNotResolve(t *testing.T) {
+	state := &stubState{err: errors.New("temporarily unavailable")}
+	m := fastManager(&mock.EVMClient{}, state, 500*time.Millisecond)
+	listener := newRecordingListener()
+
+	require.NoError(t, m.AddListener(t.Context(), anchor(0x01), "anchor-1", listener))
+	select {
+	case <-listener.done:
+		t.Fatal("listener notified before the timeout on a read failure alone")
+	case <-time.After(100 * time.Millisecond):
+	}
+}
+
+// TestPersistentReadFailureReportsErrorNotInvalid is the fix for a real bug: a chain the manager can
+// never reach used to resolve as Invalid at the timeout, which the shared ttx listener maps straight
+// to a deleted transaction. Nothing was ever actually observed here, so there is no evidence the
+// anchor is invalid, only that it could not be checked. That must surface as OnError, not a verdict.
+func TestPersistentReadFailureReportsErrorNotInvalid(t *testing.T) {
 	state := &stubState{err: errors.New("temporarily unavailable")}
 	m := fastManager(&mock.EVMClient{}, state, 100*time.Millisecond)
 	listener := newRecordingListener()
 
 	require.NoError(t, m.AddListener(t.Context(), anchor(0x01), "anchor-1", listener))
 	listener.wait(t)
-	assert.Equal(t, driver.Invalid, listener.status, "a persistent read failure resolves only at the timeout")
+
+	listener.mu.Lock()
+	defer listener.mu.Unlock()
+	assert.True(t, listener.errorCalled, "an unreachable chain must report OnError, not a verdict")
+	assert.False(t, listener.statusCalled, "OnStatus must not fire when nothing was ever observed")
+	require.Error(t, listener.err)
+}
+
+// TestOneCleanMissThenPersistentFailureStillResolvesInvalid pins the boundary of the fix above: once a
+// single read has actually reached the chain and found nothing, a later run of read failures does not
+// erase that evidence. The transaction still resolves Invalid at the timeout, as design §7.4 intends.
+func TestOneCleanMissThenPersistentFailureStillResolvesInvalid(t *testing.T) {
+	state := &stubState{}
+	m := fastManager(&mock.EVMClient{}, state, 200*time.Millisecond)
+	listener := newRecordingListener()
+
+	require.NoError(t, m.AddListener(t.Context(), anchor(0x01), "anchor-1", listener))
+	// Let at least one clean poll land (5ms interval) before the chain goes unreachable for the rest
+	// of the window.
+	time.Sleep(20 * time.Millisecond)
+	state.mu.Lock()
+	state.err = errors.New("node down")
+	state.mu.Unlock()
+
+	listener.wait(t)
+	listener.mu.Lock()
+	defer listener.mu.Unlock()
+	assert.True(t, listener.statusCalled)
+	assert.Equal(t, driver.Invalid, listener.status)
 }

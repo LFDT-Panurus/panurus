@@ -13,8 +13,9 @@ import (
 
 // Authorizer decides whether an FSC identity may request endorsement. It is the EVM analog of the
 // Fabric responder's MSP/ACL creator check: EVM has no MSP, so authorization is membership in an
-// allowlist of FSC identities configured per TMS (design §6.2, §15.7). The default policy (the TMS
-// network's nodes) is resolved at config load in Week 5; here the allowlist is supplied explicitly.
+// allowlist of FSC identities configured per TMS (design §6.2, §15.7). There is no automatic default;
+// the allowlist is always supplied explicitly, and Config.Validate refuses to let an endorsing node
+// start without one, rather than resolving an empty one to "the TMS network's nodes" here.
 //
 // It is fail-closed: an empty allowlist is rejected at construction, and an unknown or empty caller
 // is denied, so a misconfiguration cannot silently authorize everyone.

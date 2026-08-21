@@ -25,7 +25,12 @@ func TestNonceRecoversFromChain(t *testing.T) {
 	evm.PendingNonceAtReturns(42, nil)
 	n := NewNonceManager(evm, client.Address{})
 
-	got, err := n.Next(t.Context())
+	var got uint64
+	err := n.WithNonce(t.Context(), func(nonce uint64) error {
+		got = nonce
+
+		return nil
+	})
 	require.NoError(t, err)
 	assert.Equal(t, uint64(42), got, "the first nonce must come from the chain, not from zero")
 }
@@ -39,31 +44,46 @@ func TestNonceIsSequentialWithoutRefetching(t *testing.T) {
 	n := NewNonceManager(evm, client.Address{})
 
 	for want := uint64(7); want < 12; want++ {
-		got, err := n.Next(t.Context())
+		err := n.WithNonce(t.Context(), func(nonce uint64) error {
+			assert.Equal(t, want, nonce)
+
+			return nil
+		})
 		require.NoError(t, err)
-		assert.Equal(t, want, got)
 	}
 	assert.Equal(t, 1, evm.PendingNonceAtCallCount(), "the node is consulted once, not per transaction")
 }
 
-// TestNonceResetReRecovers checks the failed-broadcast path: after a reset the sequence is
-// re-derived from the node, which is authoritative about what it has actually seen.
-func TestNonceResetReRecovers(t *testing.T) {
+// TestNonceIsNotAdvancedOnFailure is the fix for a real bug. The manager used to have a separate
+// Reset that walked the whole sequence back and re-derived it from the chain's current mempool view,
+// which does not include a nonce a different, still in-flight call already holds and has not
+// broadcast yet: one call's failure could hand that nonce to somebody else. WithNonce closes the gap
+// by holding the lock for the whole allocate-and-use step, so a failed attempt simply leaves the
+// nonce where it was: nothing else could have raced in while use ran, so reusing the same value on
+// the next call needs no round trip to the chain to be safe.
+func TestNonceIsNotAdvancedOnFailure(t *testing.T) {
 	evm := &mock.EVMClient{}
-	evm.PendingNonceAtReturnsOnCall(0, 5, nil)
-	evm.PendingNonceAtReturnsOnCall(1, 9, nil)
+	evm.PendingNonceAtReturns(5, nil)
 	n := NewNonceManager(evm, client.Address{})
 
-	first, err := n.Next(t.Context())
-	require.NoError(t, err)
-	assert.Equal(t, uint64(5), first)
+	err := n.WithNonce(t.Context(), func(nonce uint64) error {
+		assert.Equal(t, uint64(5), nonce)
 
-	n.Reset()
+		return assert.AnError
+	})
+	require.Error(t, err)
 
-	second, err := n.Next(t.Context())
+	err = n.WithNonce(t.Context(), func(nonce uint64) error {
+		assert.Equal(t, uint64(5), nonce, "a failed attempt must not consume the nonce")
+
+		return nil
+	})
 	require.NoError(t, err)
-	assert.Equal(t, uint64(9), second, "after a reset the nonce must come from the node again")
-	assert.Equal(t, 2, evm.PendingNonceAtCallCount())
+	assert.Equal(t, 1, evm.PendingNonceAtCallCount(), "recovering from a failure needs no round trip to the chain")
+
+	next, initialized := n.Cached()
+	assert.True(t, initialized)
+	assert.Equal(t, uint64(6), next, "the sequence advances only past the attempt that actually succeeded")
 }
 
 func TestNonceSurfacesRecoveryFailure(t *testing.T) {
@@ -71,8 +91,14 @@ func TestNonceSurfacesRecoveryFailure(t *testing.T) {
 	evm.PendingNonceAtReturns(0, errors.New("node unavailable"))
 	n := NewNonceManager(evm, client.Address{})
 
-	_, err := n.Next(t.Context())
+	called := false
+	err := n.WithNonce(t.Context(), func(uint64) error {
+		called = true
+
+		return nil
+	})
 	require.Error(t, err)
+	assert.False(t, called, "use must not run when the nonce could not be recovered")
 
 	_, initialized := n.Cached()
 	assert.False(t, initialized, "a failed recovery must not leave the manager initialized")
@@ -93,16 +119,51 @@ func TestNonceConcurrentAllocationIsUnique(t *testing.T) {
 	)
 	for range callers {
 		wg.Go(func() {
-			nonce, err := n.Next(t.Context())
-			if err != nil {
-				return
-			}
-			mu.Lock()
-			got[nonce] = struct{}{}
-			mu.Unlock()
+			err := n.WithNonce(t.Context(), func(nonce uint64) error {
+				mu.Lock()
+				got[nonce] = struct{}{}
+				mu.Unlock()
+
+				return nil
+			})
+			assert.NoError(t, err)
 		})
 	}
 	wg.Wait()
 
 	assert.Len(t, got, callers, "every concurrent caller must receive a distinct nonce")
+}
+
+// TestNonceHandlesConcurrentFailuresWithoutDuplicating drives many goroutines against one manager,
+// roughly half of them failing, and checks every nonce a goroutine actually succeeded with is unique.
+// This is the scenario the old Reset-based design got wrong: a failure from one caller must not be
+// able to hand a still in-flight caller's nonce to somebody else.
+func TestNonceHandlesConcurrentFailuresWithoutDuplicating(t *testing.T) {
+	evm := &mock.EVMClient{}
+	evm.PendingNonceAtReturns(0, nil)
+	n := NewNonceManager(evm, client.Address{})
+
+	const callers = 200
+	var (
+		wg  sync.WaitGroup
+		mu  sync.Mutex
+		got = make(map[uint64]struct{}, callers)
+	)
+	for i := range callers {
+		wg.Go(func() {
+			_ = n.WithNonce(t.Context(), func(nonce uint64) error {
+				if i%2 == 0 {
+					return assert.AnError
+				}
+				mu.Lock()
+				got[nonce] = struct{}{}
+				mu.Unlock()
+
+				return nil
+			})
+		})
+	}
+	wg.Wait()
+
+	assert.Len(t, got, callers/2, "every successful attempt must have consumed a distinct nonce")
 }

@@ -7,14 +7,20 @@ SPDX-License-Identifier: Apache-2.0
 package evm
 
 import (
+	"context"
 	"testing"
 
 	token2 "github.com/LFDT-Panurus/panurus/token"
 	"github.com/LFDT-Panurus/panurus/token/services/config"
 	"github.com/LFDT-Panurus/panurus/token/services/network/driver"
 	"github.com/LFDT-Panurus/panurus/x/token/services/network/evm/client/mock"
+	"github.com/LFDT-Panurus/panurus/x/token/services/network/evm/eip712"
+	"github.com/LFDT-Panurus/panurus/x/token/services/network/evm/endorsement"
+	"github.com/LFDT-Panurus/panurus/x/token/services/network/evm/pp"
 
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
+	svcview "github.com/hyperledger-labs/fabric-smart-client/platform/view/services/view"
+	"github.com/hyperledger-labs/fabric-smart-client/platform/view/view"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -110,4 +116,132 @@ func TestNetworkRejectsMalformedTransactionID(t *testing.T) {
 
 	err = n.AddFinalityListener("token", "not-a-valid-anchor", nil)
 	require.Error(t, err)
+}
+
+// --- registerEndorser ------------------------------------------------------------------------------
+
+// fakeViewRegistry records every RegisterResponder call, so a test can tell whether a second
+// registration attempt actually reached FSC or was refused before getting there.
+type fakeViewRegistry struct {
+	calls int
+}
+
+func (f *fakeViewRegistry) RegisterResponder(view.View, any) error {
+	f.calls++
+
+	return nil
+}
+
+// fakeViewManager satisfies endorsement.ViewManager without ever running a view; registerEndorser
+// itself never calls InitiateView, only Service.Endorse does.
+type fakeViewManager struct{}
+
+func (fakeViewManager) InitiateView(context.Context, view.View) (any, error) { return nil, nil }
+
+// fakeIdentityProvider resolves every name to an identity carrying the same bytes, so
+// config.AllowedRequesters can turn the allowlist's names into identities the way d.resolveIdentity
+// does in production.
+type fakeIdentityProvider struct{}
+
+func (fakeIdentityProvider) Identity(name string) view.Identity { return view.Identity(name) }
+func (fakeIdentityProvider) DefaultIdentity() view.Identity     { return view.Identity("default") }
+
+var _ svcview.IdentityProvider = fakeIdentityProvider{}
+
+// endorserConfig returns a configuration for a node that endorses, backed by the well-known test key
+// keystore_test.go already writes, whose address matches validConfig's single endorser entry.
+func endorserConfig(t *testing.T) *Config {
+	t.Helper()
+	c := validConfig()
+	c.Endorser = EndorserConfig{
+		Enabled:  true,
+		Keystore: writeKey(t, testKeyHex),
+		Address:  testKeyAddress,
+	}
+	c.Endorsement.Allowlist = []string{"endorser-1"}
+
+	return c
+}
+
+// testServiceFactory builds a real *endorsement.ServiceFactory over config, the same shape
+// installEndorsement assembles, so registerEndorser is exercised with the collaborator it actually
+// gets in production.
+func testServiceFactory(t *testing.T, config *Config) *endorsement.ServiceFactory {
+	t.Helper()
+	registry, err := config.EndorserRegistry(func(name string) (view.Identity, error) {
+		return view.Identity(name), nil
+	})
+	require.NoError(t, err)
+	tokenState, err := config.TokenStateAddress()
+	require.NoError(t, err)
+	evmClient := &mock.EVMClient{}
+
+	factory, err := endorsement.NewServiceFactory(endorsement.FactoryConfig{
+		Registry:     registry,
+		Threshold:    int(config.Endorsement.Threshold),
+		Domain:       eip712.Domain{ChainID: config.ChainIDBig(), VerifyingContract: tokenState},
+		Client:       evmClient,
+		TokenState:   tokenState,
+		BlockTag:     config.Finality.BlockTag,
+		PublicParams: pp.NewChainProvider(evmClient, tokenState, config.Finality.BlockTag),
+		ViewManager:  fakeViewManager{},
+		TMS: func(token2.TMSID) (*token2.ManagementService, error) {
+			return nil, errors.New("not needed for this test")
+		},
+	})
+	require.NoError(t, err)
+
+	return factory
+}
+
+// TestRegisterEndorserRefusesASecondNetwork is the fix for a real bug. FSC registers a responder by
+// the initiating view's Go type alone, so only one Responder can ever be registered for
+// endorsement.Initiator across this node's whole process lifetime. Before this fix a sync.Once
+// silently discarded every network after the first one that reached registerEndorser, with no signal
+// at all that a second, differently configured network's endorsement requests would never be
+// answered, or worse, would be answered through the wrong network's chain client and EIP-712 domain.
+func TestRegisterEndorserRefusesASecondNetwork(t *testing.T) {
+	registry := &fakeViewRegistry{}
+	d := &Driver{viewRegistry: registry, identities: fakeIdentityProvider{}}
+	config := endorserConfig(t)
+	factory := testServiceFactory(t, config)
+
+	d.registerEndorser("network-a:", factory, config)
+	assert.Equal(t, 1, registry.calls, "the first network must register")
+	assert.Equal(t, "network-a:", d.registeredFor)
+
+	d.registerEndorser("network-b:", factory, config)
+	assert.Equal(t, 1, registry.calls, "a second, different network must not overwrite the registration")
+	assert.Equal(t, "network-a:", d.registeredFor, "the first network's registration must stand")
+}
+
+// TestRegisterEndorserIsIdempotentForTheSameNetwork checks Driver.New being called twice for the same
+// network (a network rebuilt over a node's life) does not trip the second-network refusal.
+func TestRegisterEndorserIsIdempotentForTheSameNetwork(t *testing.T) {
+	registry := &fakeViewRegistry{}
+	d := &Driver{viewRegistry: registry, identities: fakeIdentityProvider{}}
+	config := endorserConfig(t)
+	factory := testServiceFactory(t, config)
+
+	d.registerEndorser("network-a:", factory, config)
+	d.registerEndorser("network-a:", factory, config)
+
+	assert.Equal(t, 1, registry.calls, "registering the same network twice must not re-register")
+}
+
+// TestRegisterEndorserSkipsANonEndorsingNetwork checks a network that is not configured to endorse
+// never touches the registration state, so it cannot trigger the second-network refusal for a network
+// that never wanted to endorse in the first place.
+func TestRegisterEndorserSkipsANonEndorsingNetwork(t *testing.T) {
+	registry := &fakeViewRegistry{}
+	d := &Driver{viewRegistry: registry, identities: fakeIdentityProvider{}}
+	endorsing := endorserConfig(t)
+	factory := testServiceFactory(t, endorsing)
+	d.registerEndorser("network-a:", factory, endorsing)
+
+	notEndorsing := validConfig() // Endorser.Enabled defaults to false
+	d.registerEndorser("network-b:", factory, notEndorsing)
+
+	assert.Equal(t, 1, registry.calls)
+	assert.Equal(t, "network-a:", d.registeredFor)
 }
