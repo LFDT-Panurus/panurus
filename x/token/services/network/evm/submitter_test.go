@@ -115,10 +115,12 @@ func TestSubmitFixedGasStrategy(t *testing.T) {
 	assert.Zero(t, evm.EstimateGasCallCount(), "a fixed limit must not consult the node")
 }
 
-// TestSubmitResetsNonceOnFailure is the production trap: a nonce allocated for a transaction that
-// never reached the node would leave a gap, and every later transaction would sit unmineable behind
-// it. A failed submit must put the sequence back under the node's authority.
-func TestSubmitResetsNonceOnFailure(t *testing.T) {
+// TestSubmitDoesNotAdvanceTheNonceOnFailure is the production trap: a nonce allocated for a
+// transaction that never reached the node must not be lost, or every later transaction sits
+// unmineable behind the gap. Submit runs the whole attempt under the nonce manager's lock, so a
+// failure simply leaves the nonce exactly where it was, ready to be reused without asking the chain
+// again.
+func TestSubmitDoesNotAdvanceTheNonceOnFailure(t *testing.T) {
 	evm := readySubmitterClient()
 	evm.SendRawTransactionReturns(client.Hash{}, errors.New("broadcast rejected"))
 	s := testSubmitter(t, evm, estimateGas())
@@ -126,8 +128,9 @@ func TestSubmitResetsNonceOnFailure(t *testing.T) {
 	_, _, err := s.Submit(t.Context(), testDelta(), [][]byte{make([]byte, 65)})
 	require.Error(t, err)
 
-	_, initialized := s.nonces.Cached()
-	assert.False(t, initialized, "a failed broadcast must reset the nonce sequence")
+	next, initialized := s.nonces.Cached()
+	assert.True(t, initialized, "the manager still knows its sequence; there was nothing to lose")
+	assert.Equal(t, uint64(3), next, "the nonce this attempt held must still be the next one handed out")
 }
 
 // TestSubmitClassifiesARevertedEstimate covers the verdict the shared fungible bodies actually read.
@@ -189,17 +192,18 @@ func TestSubmitClassifiesARevertedEstimate(t *testing.T) {
 		require.NotErrorIs(t, err, ErrTransactionReverted)
 	})
 
-	// The nonce reset is what makes the retry advice usable: a rejected transaction that consumed a
-	// nonce locally would leave every later one stuck behind a gap.
-	t.Run("a rejected transaction leaves no nonce gap", func(t *testing.T) {
+	// Not consuming the nonce is what makes the retry advice usable: a rejected transaction that
+	// consumed a nonce locally would leave every later one stuck behind a gap.
+	t.Run("a rejected transaction leaves its nonce ready to reuse", func(t *testing.T) {
 		evm := readySubmitterClient()
 		evm.EstimateGasReturns(0, reverted)
 		s := testSubmitter(t, evm, estimateGas())
 
 		_, _, err := s.Submit(t.Context(), testDelta(), [][]byte{make([]byte, 65)})
 		require.Error(t, err)
-		_, initialized := s.nonces.Cached()
-		assert.False(t, initialized, "a rejected transaction must put the sequence back under the node")
+		next, initialized := s.nonces.Cached()
+		assert.True(t, initialized)
+		assert.Equal(t, uint64(3), next, "the rejected attempt's nonce must still be next in line")
 	})
 }
 

@@ -27,7 +27,12 @@ const DefaultWatchInterval = time.Second
 // UpdateHandler is called when the on-chain public parameters have changed, with the new parameters
 // and the version they were stored at. It is called from the watcher's own goroutine, one call at a
 // time, so a handler that blocks delays the next poll rather than racing with it.
-type UpdateHandler func(ctx context.Context, raw []byte, version uint64)
+//
+// A non-nil return means this version was not fully applied. The watcher does not advance past a
+// version its handler failed on, so the same version is retried on the next poll instead of being
+// silently treated as handled: nothing else will ever ask the chain about a version once the watcher
+// has moved on from it.
+type UpdateHandler func(ctx context.Context, raw []byte, version uint64) error
 
 // Watcher notices when a TMS's public parameters change on chain and hands the new ones to a handler.
 //
@@ -160,11 +165,20 @@ func (w *Watcher) poll(ctx context.Context) {
 		return
 	}
 
-	// Record what was actually read rather than what the version poll reported. They can differ if
+	// The handler runs before seen is advanced, and seen only advances once it succeeds. Advancing
+	// first would mean a failed reload is treated as handled anyway: the next poll only looks at what
+	// changed since seen, so a version it never actually applied would simply never be asked about
+	// again.
+	if err := w.handler(ctx, raw, actual); err != nil {
+		logger.Warnf("failed to apply public parameters version %d, will retry: %v", actual, err)
+
+		return
+	}
+
+	// Record what was actually applied rather than what the version poll reported. They can differ if
 	// another update landed in between, and the parameters are the thing that matters.
 	w.mu.Lock()
 	w.seen = actual
 	w.mu.Unlock()
 	logger.Infof("public parameters updated to version %d", actual)
-	w.handler(ctx, raw, actual)
 }

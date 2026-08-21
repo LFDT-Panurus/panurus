@@ -34,7 +34,9 @@ const getTokenMethod = "getToken(bytes32)" // #nosec G101 -- ABI method signatur
 // Ledger satisfies token.Ledger, so it can be passed straight to
 // Validator.UnmarshallAndVerifyWithMetadata.
 type Ledger struct {
-	ctx        context.Context
+	// GetState takes no context (driver.GetStateFnc has none), so the one to read the chain with is
+	// captured here. A Ledger is built per request and used only for it, so it stays short-lived.
+	ctx        context.Context //nolint:containedctx
 	client     client.EVMClient
 	tokenState client.Address
 	blockTag   string

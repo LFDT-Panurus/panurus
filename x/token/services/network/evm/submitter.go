@@ -71,8 +71,10 @@ func NewSubmitter(
 func (s *Submitter) Address() client.Address { return s.address }
 
 // Submit encodes applyStateDelta(delta, endorsements), signs it and broadcasts it, returning the raw
-// transaction and its hash. On any failure after a nonce was allocated it resets the sequence, so a
-// transaction that never reached the node does not leave a gap that would stall every later one.
+// transaction and its hash. The whole nonce-relevant sequence runs under the nonce manager's lock, so
+// a failure here (the delta reverts on estimation, the node rejects the broadcast) can never race a
+// different transaction's allocation: the nonce this attempt held is simply not consumed, and the next
+// caller, whether that is a retry of this same transaction or somebody else's, gets it instead.
 func (s *Submitter) Submit(
 	ctx context.Context,
 	delta *statedelta.StateDelta,
@@ -87,48 +89,47 @@ func (s *Submitter) Submit(
 
 	data := abi.EncodeApplyStateDelta(delta, endorsements)
 
-	nonce, err := s.nonces.Next(ctx)
-	if err != nil {
-		return nil, client.Hash{}, err
-	}
-	defer func() {
-		if err != nil {
-			// The nonce was allocated but never consumed on chain; re-derive the sequence.
-			s.nonces.Reset()
+	err = s.nonces.WithNonce(ctx, func(nonce uint64) error {
+		gasLimit, gasErr := s.gasLimit(ctx, data)
+		if gasErr != nil {
+			return gasErr
 		}
-	}()
+		fees, feeErr := s.client.SuggestGasFees(ctx)
+		if feeErr != nil {
+			return errors.Wrapf(ErrNetworkUnavailable, "submitter: failed to get gas fees: %v", feeErr)
+		}
 
-	gasLimit, err := s.gasLimit(ctx, data)
+		tx := &client.DynamicFeeTx{
+			ChainID:              s.chainID,
+			Nonce:                nonce,
+			MaxPriorityFeePerGas: fees.MaxPriorityFeePerGas,
+			MaxFeePerGas:         fees.MaxFeePerGas,
+			Gas:                  gasLimit,
+			To:                   &s.tokenState,
+			Value:                big.NewInt(0), // applyStateDelta is not payable
+			Data:                 data,
+		}
+
+		signed, signErr := client.SignTx(tx, s.key)
+		if signErr != nil {
+			return errors.Wrap(signErr, "submitter: failed to sign the transaction")
+		}
+
+		hash, sendErr := s.client.SendRawTransaction(ctx, signed)
+		if sendErr != nil {
+			// A transaction the node refused to accept was never judged by the chain, so this is the
+			// transient class: the delta is still valid and the caller should retry rather than
+			// re-derive it. A node that executed it and rejected it comes back through gasLimit instead.
+			return errors.Wrapf(
+				ErrNetworkUnavailable, "submitter: failed to broadcast the transaction: %v", sendErr)
+		}
+
+		rawTx, txHash = signed, hash
+
+		return nil
+	})
 	if err != nil {
 		return nil, client.Hash{}, err
-	}
-	fees, err := s.client.SuggestGasFees(ctx)
-	if err != nil {
-		return nil, client.Hash{}, errors.Wrapf(ErrNetworkUnavailable, "submitter: failed to get gas fees: %v", err)
-	}
-
-	tx := &client.DynamicFeeTx{
-		ChainID:              s.chainID,
-		Nonce:                nonce,
-		MaxPriorityFeePerGas: fees.MaxPriorityFeePerGas,
-		MaxFeePerGas:         fees.MaxFeePerGas,
-		Gas:                  gasLimit,
-		To:                   &s.tokenState,
-		Value:                big.NewInt(0), // applyStateDelta is not payable
-		Data:                 data,
-	}
-
-	rawTx, err = client.SignTx(tx, s.key)
-	if err != nil {
-		return nil, client.Hash{}, errors.Wrap(err, "submitter: failed to sign the transaction")
-	}
-	txHash, err = s.client.SendRawTransaction(ctx, rawTx)
-	if err != nil {
-		// A transaction the node refused to accept was never judged by the chain, so this is the
-		// transient class: the delta is still valid and the caller should retry rather than re-derive
-		// it. A node that executed it and rejected it comes back through gasLimit instead.
-		return nil, client.Hash{}, errors.Wrapf(
-			ErrNetworkUnavailable, "submitter: failed to broadcast the transaction: %v", err)
 	}
 
 	return rawTx, txHash, nil
