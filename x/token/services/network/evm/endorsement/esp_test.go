@@ -32,9 +32,6 @@ func testFactoryConfig(t *testing.T) FactoryConfig {
 		TokenState:   addr(0xAA),
 		PublicParams: &fakePP{raw: []byte("pp"), version: 1},
 		ViewManager:  &stubViewManager{},
-		TMS: func(token2.TMSID) (*token2.ManagementService, error) {
-			return nil, assert.AnError
-		},
 	}
 }
 
@@ -51,7 +48,6 @@ func TestNewServiceFactoryValidates(t *testing.T) {
 		"no client":            func(c *FactoryConfig) { c.Client = nil },
 		"no view manager":      func(c *FactoryConfig) { c.ViewManager = nil },
 		"no public parameters": func(c *FactoryConfig) { c.PublicParams = nil },
-		"no tms resolver":      func(c *FactoryConfig) { c.TMS = nil },
 		"zero threshold":       func(c *FactoryConfig) { c.Threshold = 0 },
 		"threshold too high":   func(c *FactoryConfig) { c.Threshold = 3 },
 	}
@@ -65,8 +61,8 @@ func TestNewServiceFactoryValidates(t *testing.T) {
 	}
 }
 
-// TestForTMSRejectsAnEmptyID checks the factory does not build a service it could never resolve a TMS
-// for, since the TMS is where the validator comes from.
+// TestForTMSRejectsAnEmptyID checks the factory does not build a service for an id it could not route
+// a request under.
 func TestForTMSRejectsAnEmptyID(t *testing.T) {
 	f, err := NewServiceFactory(testFactoryConfig(t))
 	require.NoError(t, err)
@@ -75,68 +71,53 @@ func TestForTMSRejectsAnEmptyID(t *testing.T) {
 	require.Error(t, err)
 }
 
-// TestForTMSResolvesTheTMSPerRequest pins the reason the initiator holds a TMS id and not a TMS.
+// TestForTMSCachesPerTMS checks the service is built once and reused. It holds nothing derived from a
+// TMS any more (the initiator collects signatures and takes the delta from the endorsers), so the
+// cache is only about not rebuilding the same collaborators on every approval.
+func TestForTMSCachesPerTMS(t *testing.T) {
+	f, err := NewServiceFactory(testFactoryConfig(t))
+	require.NoError(t, err)
+
+	tmsID := token2.TMSID{Network: "evm", Namespace: "token"}
+	service, err := f.ForTMS(tmsID)
+	require.NoError(t, err)
+	again, err := f.ForTMS(tmsID)
+	require.NoError(t, err)
+	assert.Same(t, service, again)
+}
+
+// TestResponderResolvesTheTMSPerRequest pins why the responder holds a TMS id and not a TMS.
 //
 // Updating public parameters evicts the cached management service, so the next caller gets a rebuilt
 // one and whoever kept the old pointer keeps its old parameters. Asking that stale service for a
-// validator again does not help, which is what made this worth a test: the earlier fix resolved the
+// validator again does not help, which is what made this worth a test: an earlier fix resolved the
 // validator per request but from a captured service, and the symptom did not move. After an update
 // that authorises a new issuer, that issuer's requests were still rejected as unauthorised on a node
 // that had already logged the new parameters.
-func TestForTMSResolvesTheTMSPerRequest(t *testing.T) {
-	cfg := testFactoryConfig(t)
+//
+// Endorsement is now the only place a validator is used at all, so this is the one path where it
+// matters.
+func TestResponderResolvesTheTMSPerRequest(t *testing.T) {
+	f, err := NewServiceFactory(testFactoryConfig(t))
+	require.NoError(t, err)
+
+	auth, err := NewAuthorizer([]view.Identity{view.Identity(testCaller)})
+	require.NoError(t, err)
+
 	calls := 0
-	cfg.TMS = func(token2.TMSID) (*token2.ManagementService, error) {
+	responder, err := f.NewResponder(auth, newSigner(t, 1), func(token2.TMSID) (*token2.ManagementService, error) {
 		calls++
 
 		return nil, assert.AnError
-	}
-	f, err := NewServiceFactory(cfg)
+	})
 	require.NoError(t, err)
-
-	service, err := f.ForTMS(token2.TMSID{Network: "evm", Namespace: "token"})
-	require.NoError(t, err)
-	assert.Equal(t, 0, calls, "building the service must not resolve a TMS")
-
-	// The same cached service, asked twice: it must go back to the resolver both times.
-	again, err := f.ForTMS(token2.TMSID{Network: "evm", Namespace: "token"})
-	require.NoError(t, err)
-	assert.Same(t, service, again, "the service itself is still cached per TMS")
+	assert.Equal(t, 0, calls, "building the responder must not resolve a TMS")
 
 	for range 2 {
-		_, err := service.factory.Build(t.Context(),
-			&EndorseRequest{Anchor: "anchor", TokenRequest: []byte("tr")})
-		require.Error(t, err)
+		resp := responder.Handle(t.Context(), view.Identity(testCaller), validRequest())
+		require.Error(t, resp.Error(), "an unresolvable TMS is refused, not signed for")
 	}
 	assert.Equal(t, 2, calls, "the TMS must be resolved per request, not captured once")
-}
-
-// TestResolveValidatorIsCalledPerBuild is the same invariant one layer down, on the adapter itself.
-func TestResolveValidatorIsCalledPerBuild(t *testing.T) {
-	calls := 0
-	resolve := ResolveValidator(func() (RequestValidator, error) {
-		calls++
-
-		return &fakeValidator{err: assert.AnError}, nil
-	})
-	factory := NewDeltaFactory(resolve, &fakePP{raw: []byte("pp"), version: 1}, nil, addr(0xAA), "")
-
-	for range 2 {
-		_, err := factory.Build(t.Context(), &EndorseRequest{Anchor: "anchor", TokenRequest: []byte("tr")})
-		require.Error(t, err)
-	}
-	assert.Equal(t, 2, calls, "the validator must be resolved per request, not captured once")
-}
-
-// TestResolveValidatorReportsResolutionFailure checks a validator that cannot be resolved surfaces as
-// an error rather than a nil dereference inside validation.
-func TestResolveValidatorReportsResolutionFailure(t *testing.T) {
-	resolve := ResolveValidator(func() (RequestValidator, error) { return nil, assert.AnError })
-	factory := NewDeltaFactory(resolve, &fakePP{raw: []byte("pp"), version: 1}, nil, addr(0xAA), "")
-
-	_, err := factory.Build(t.Context(), &EndorseRequest{Anchor: "anchor", TokenRequest: []byte("tr")})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to resolve the validator")
 }
 
 // TestNewResponderForNeedsAKey checks a node that does not endorse cannot be turned into a responder:

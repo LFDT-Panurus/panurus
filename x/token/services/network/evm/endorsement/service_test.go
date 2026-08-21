@@ -32,8 +32,7 @@ func (m *stubViewManager) InitiateView(context.Context, view.View) (any, error) 
 func newService(t *testing.T, vm ViewManager, threshold int) *Service {
 	t.Helper()
 	reg, _ := endorserSet(t, 3)
-	factory := NewDeltaFactory(&fakeValidator{}, &fakePP{}, nil, addr(0xAA), "")
-	s, err := NewService(reg, threshold, factory, testDomain(), vm)
+	s, err := NewService(reg, threshold, testDomain(), vm)
 	require.NoError(t, err)
 
 	return s
@@ -85,12 +84,11 @@ func TestServiceEndorseRejectsUnexpectedResultType(t *testing.T) {
 
 func TestNewServiceValidatesThreshold(t *testing.T) {
 	reg, _ := endorserSet(t, 3)
-	factory := NewDeltaFactory(&fakeValidator{}, &fakePP{}, nil, addr(0xAA), "")
 
 	for _, threshold := range []int{0, 4} {
-		_, err := NewService(reg, threshold, factory, testDomain(), &stubViewManager{})
+		_, err := NewService(reg, threshold, testDomain(), &stubViewManager{})
 		require.Error(t, err, "threshold %d must be rejected", threshold)
 	}
-	_, err := NewService(reg, 2, factory, testDomain(), &stubViewManager{})
+	_, err := NewService(reg, 2, testDomain(), &stubViewManager{})
 	require.NoError(t, err)
 }

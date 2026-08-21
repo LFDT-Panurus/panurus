@@ -36,7 +36,6 @@ type ViewRegistry interface {
 type Service struct {
 	registry    *Registry
 	threshold   int
-	factory     *DeltaFactory
 	domain      eip712.Domain
 	viewManager ViewManager
 }
@@ -47,7 +46,6 @@ type Service struct {
 func NewService(
 	registry *Registry,
 	threshold int,
-	factory *DeltaFactory,
 	domain eip712.Domain,
 	viewManager ViewManager,
 ) (*Service, error) {
@@ -57,9 +55,6 @@ func NewService(
 	if threshold < 1 || threshold > registry.Len() {
 		return nil, errors.Errorf("endorsement service: threshold %d out of range [1,%d]", threshold, registry.Len())
 	}
-	if factory == nil {
-		return nil, errors.New("endorsement service: nil delta factory")
-	}
 	if viewManager == nil {
 		return nil, errors.New("endorsement service: nil view manager")
 	}
@@ -67,7 +62,6 @@ func NewService(
 	return &Service{
 		registry:    registry,
 		threshold:   threshold,
-		factory:     factory,
 		domain:      domain,
 		viewManager: viewManager,
 	}, nil
@@ -81,7 +75,7 @@ func (s *Service) Endorse(context view.Context, req *EndorseRequest) (*Result, e
 	}
 	boxed, err := s.viewManager.InitiateView(
 		context.Context(),
-		NewInitiator(s.registry, s.threshold, s.factory, s.domain, req),
+		NewInitiator(s.registry, s.threshold, s.domain, req),
 	)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to run endorsement initiator")
