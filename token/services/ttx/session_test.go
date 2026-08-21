@@ -83,7 +83,7 @@ func TestLocalBidirectionalChannel_SendReceive(t *testing.T) {
 
 	// Send from left to right
 	payload := []byte("test-payload")
-	err = leftSession.Send(payload)
+	err = leftSession.Send(ctx, payload)
 	require.NoError(t, err)
 
 	// Receive on right
@@ -107,7 +107,7 @@ func TestLocalBidirectionalChannel_BidirectionalCommunication(t *testing.T) {
 
 	// Send from left to right
 	leftPayload := []byte("left-to-right")
-	err = leftSession.Send(leftPayload)
+	err = leftSession.Send(ctx, leftPayload)
 	require.NoError(t, err)
 
 	// Receive on right
@@ -120,7 +120,7 @@ func TestLocalBidirectionalChannel_BidirectionalCommunication(t *testing.T) {
 
 	// Send from right to left
 	rightPayload := []byte("right-to-left")
-	err = rightSession.Send(rightPayload)
+	err = rightSession.Send(ctx, rightPayload)
 	require.NoError(t, err)
 
 	// Receive on left
@@ -132,8 +132,9 @@ func TestLocalBidirectionalChannel_BidirectionalCommunication(t *testing.T) {
 	}
 }
 
-// TestLocalBidirectionalChannel_SendWithContext verifies SendWithContext functionality.
-func TestLocalBidirectionalChannel_SendWithContext(t *testing.T) {
+// TestLocalBidirectionalChannel_SendPropagatesContext verifies the context passed to
+// Send is propagated to the received message.
+func TestLocalBidirectionalChannel_SendPropagatesContext(t *testing.T) {
 	ctx := t.Context()
 	channel, err := ttx.NewLocalBidirectionalChannel(ctx, "caller", "ctx-id", "endpoint", []byte("pkid"))
 	require.NoError(t, err)
@@ -143,7 +144,7 @@ func TestLocalBidirectionalChannel_SendWithContext(t *testing.T) {
 
 	payload := []byte("test-payload")
 	sendCtx := context.WithValue(ctx, testKey, "value")
-	err = leftSession.SendWithContext(sendCtx, payload)
+	err = leftSession.Send(sendCtx, payload)
 	require.NoError(t, err)
 
 	select {
@@ -166,7 +167,7 @@ func TestLocalBidirectionalChannel_SendError(t *testing.T) {
 	rightSession := channel.RightSession()
 
 	errorPayload := []byte("error-message")
-	err = leftSession.SendError(errorPayload)
+	err = leftSession.SendError(ctx, errorPayload)
 	require.NoError(t, err)
 
 	select {
@@ -178,8 +179,9 @@ func TestLocalBidirectionalChannel_SendError(t *testing.T) {
 	}
 }
 
-// TestLocalBidirectionalChannel_SendErrorWithContext verifies error message with context.
-func TestLocalBidirectionalChannel_SendErrorWithContext(t *testing.T) {
+// TestLocalBidirectionalChannel_SendErrorPropagatesContext verifies the context passed
+// to SendError is propagated to the received message.
+func TestLocalBidirectionalChannel_SendErrorPropagatesContext(t *testing.T) {
 	ctx := t.Context()
 	channel, err := ttx.NewLocalBidirectionalChannel(ctx, "caller", "ctx-id", "endpoint", []byte("pkid"))
 	require.NoError(t, err)
@@ -189,7 +191,7 @@ func TestLocalBidirectionalChannel_SendErrorWithContext(t *testing.T) {
 
 	errorPayload := []byte("error-with-context")
 	sendCtx := context.WithValue(ctx, testErrorKey, "error-value")
-	err = leftSession.SendErrorWithContext(sendCtx, errorPayload)
+	err = leftSession.SendError(sendCtx, errorPayload)
 	require.NoError(t, err)
 
 	select {
@@ -219,7 +221,7 @@ func TestLocalBidirectionalChannel_MultipleMessages(t *testing.T) {
 	}
 
 	for _, msg := range messages {
-		err = leftSession.Send(msg)
+		err = leftSession.Send(ctx, msg)
 		require.NoError(t, err)
 	}
 
@@ -264,7 +266,7 @@ func TestLocalBidirectionalChannel_SendAfterClose(t *testing.T) {
 	leftSession.Close()
 
 	// Try to send after close
-	err = leftSession.Send([]byte("test"))
+	err = leftSession.Send(ctx, []byte("test"))
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "session is closed")
 }
@@ -300,7 +302,7 @@ func TestLocalBidirectionalChannel_MessageFields(t *testing.T) {
 	rightSession := channel.RightSession()
 
 	payload := []byte("test-payload")
-	err = leftSession.Send(payload)
+	err = leftSession.Send(ctx, payload)
 	require.NoError(t, err)
 
 	select {
@@ -328,7 +330,7 @@ func TestLocalBidirectionalChannel_EmptyPayload(t *testing.T) {
 	rightSession := channel.RightSession()
 
 	// Send empty payload
-	err = leftSession.Send([]byte{})
+	err = leftSession.Send(ctx, []byte{})
 	require.NoError(t, err)
 
 	select {
@@ -350,7 +352,7 @@ func TestLocalBidirectionalChannel_NilPayload(t *testing.T) {
 	rightSession := channel.RightSession()
 
 	// Send nil payload
-	err = leftSession.Send(nil)
+	err = leftSession.Send(ctx, nil)
 	require.NoError(t, err)
 
 	select {
@@ -377,7 +379,7 @@ func TestLocalBidirectionalChannel_LargePayload(t *testing.T) {
 		largePayload[i] = byte(i % 256)
 	}
 
-	err = leftSession.Send(largePayload)
+	err = leftSession.Send(ctx, largePayload)
 	require.NoError(t, err)
 
 	select {
@@ -405,7 +407,7 @@ func TestLocalBidirectionalChannel_ConcurrentSend(t *testing.T) {
 	go func() {
 		for i := range numMessages {
 			payload := []byte{byte(i)}
-			err := leftSession.Send(payload)
+			err := leftSession.Send(ctx, payload)
 			assert.NoError(t, err)
 		}
 		done <- true

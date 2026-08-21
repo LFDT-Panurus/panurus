@@ -24,13 +24,11 @@ type countingSession struct {
 	closes int
 }
 
-func (s *countingSession) Info() view.SessionInfo                             { return view.SessionInfo{} }
-func (s *countingSession) Send([]byte) error                                  { return nil }
-func (s *countingSession) SendWithContext(context.Context, []byte) error      { return nil }
-func (s *countingSession) SendError([]byte) error                             { return nil }
-func (s *countingSession) SendErrorWithContext(context.Context, []byte) error { return nil }
-func (s *countingSession) Receive() <-chan *view.Message                      { return nil }
-func (s *countingSession) Close()                                             { s.closes++ }
+func (s *countingSession) Info() view.SessionInfo                  { return view.SessionInfo{} }
+func (s *countingSession) Send(context.Context, []byte) error      { return nil }
+func (s *countingSession) SendError(context.Context, []byte) error { return nil }
+func (s *countingSession) Receive() <-chan *view.Message           { return nil }
+func (s *countingSession) Close()                                  { s.closes++ }
 
 // TestCleanupSessions_ClosesAllAndEmptiesMap verifies that cleanupSessions closes
 // every tracked session and clears the session map, so no session is leaked on any

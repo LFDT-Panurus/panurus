@@ -27,7 +27,7 @@ func TestVersionedSpendRequestRoundTrip(t *testing.T) {
 
 	var wire []byte
 	mockSession := &mock.Session{}
-	mockSession.SendWithContextStub = func(_ context.Context, payload []byte) error {
+	mockSession.SendStub = func(_ context.Context, payload []byte) error {
 		wire = append([]byte(nil), payload...)
 
 		return nil

@@ -162,7 +162,11 @@ func (p *deliveryBasedFLMProvider) NewManager(network, channel string) (Listener
 	}
 	mapper := p.newMapper(network, channel)
 	logger := logging.MustGetLogger()
+	// The manager has no higher-level context to derive from today, so its
+	// lifetime is rooted at context.Background(), matching FSC's own
+	// channelprovider.go for the same situation.
 	flm, err := events.NewListenerManager[TxInfo](
+		context.Background(),
 		logger,
 		p.config,
 		&Delivery{

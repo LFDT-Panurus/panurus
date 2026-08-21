@@ -143,7 +143,11 @@ func (p *deliveryBasedLLMProvider) NewManager(network, channel string) (Listener
 		return nil, err
 	}
 	logger := logging.MustGetLogger()
+	// The manager has no higher-level context to derive from today, so its
+	// lifetime is rooted at context.Background(), matching FSC's own
+	// channelprovider.go for the same situation.
 	flm, err := events.NewSequentialListenerManager[KeyInfo](
+		context.Background(),
 		logger,
 		p.config,
 		&finality2.Delivery{

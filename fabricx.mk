@@ -1,6 +1,7 @@
 .PHONY: fabricx-docker-images
 fabricx-docker-images: ## Pull fabric-x images
-	docker pull hyperledger/fabric-x-committer-test-node:$(FABRIC_X_COMMITTER_VERSION)
+	docker pull ghcr.io/hyperledger/fabric-x-committer-test-node:$(FABRIC_X_COMMITTER_VERSION)
+	docker tag ghcr.io/hyperledger/fabric-x-committer-test-node:$(FABRIC_X_COMMITTER_VERSION) hyperledger/fabric-x-committer-test-node:$(FABRIC_X_COMMITTER_VERSION)
 
 .PHONY: fxconfig
 fxconfig: ## Install fxconfig

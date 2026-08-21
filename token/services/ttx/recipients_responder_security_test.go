@@ -47,5 +47,5 @@ func TestRespondExchangeRecipientIdentitiesRejectsUnauthenticatedInitiator(t *te
 	_, err := (&ttx.RespondExchangeRecipientIdentitiesView{}).Call(ctx)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "missing initiator signature")
-	assert.Equal(t, 0, session.SendWithContextCallCount(), "unauthenticated initiator must receive no recipient data")
+	assert.Equal(t, 0, session.SendCallCount(), "unauthenticated initiator must receive no recipient data")
 }

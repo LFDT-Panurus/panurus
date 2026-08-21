@@ -203,7 +203,7 @@ func TestVersionError_Is(t *testing.T) {
 func TestSendTyped(t *testing.T) {
 	mockSession := &mock.Session{}
 	var captured []byte
-	mockSession.SendWithContextStub = func(_ context.Context, payload []byte) error {
+	mockSession.SendStub = func(_ context.Context, payload []byte) error {
 		captured = payload
 
 		return nil
@@ -363,7 +363,7 @@ func TestConcurrentSendReceive(t *testing.T) {
 	const goroutines = 20
 
 	mockSession := &mock.Session{}
-	mockSession.SendWithContextStub = func(_ context.Context, _ []byte) error {
+	mockSession.SendStub = func(_ context.Context, _ []byte) error {
 		return nil
 	}
 
