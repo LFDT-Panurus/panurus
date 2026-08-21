@@ -310,16 +310,16 @@ sequenceDiagram
         E1->>E1: Validate token request
         E1->>E1: Compute state delta
         E1->>E1: Sign state delta
-        E1-->>Driver: Signature 1
+        E1-->>Driver: State delta + signature 1
     and
         Driver->>E2: Request endorsement
         E2->>E2: Validate token request
         E2->>E2: Compute state delta
         E2->>E2: Sign state delta
-        E2-->>Driver: Signature 2
+        E2-->>Driver: State delta + signature 2
     end
     
-    Driver->>Driver: Assemble state update + signatures
+    Driver->>Driver: Check the deltas agree, assemble with signatures
     
     Note over Driver,State: On-Chain Execution Phase
     Driver->>Node: eth_sendRawTransaction

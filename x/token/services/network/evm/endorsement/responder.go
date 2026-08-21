@@ -16,6 +16,7 @@ import (
 	token2 "github.com/LFDT-Panurus/panurus/token"
 	session2 "github.com/LFDT-Panurus/panurus/token/services/utils/json/session"
 	"github.com/LFDT-Panurus/panurus/x/token/services/network/evm/eip712"
+	"github.com/LFDT-Panurus/panurus/x/token/services/network/evm/statedelta"
 )
 
 // receiveTimeout bounds how long a responder waits for the request on its session before giving up.
@@ -82,44 +83,56 @@ func (r *Responder) Call(context view.Context) (any, error) {
 }
 
 // Handle runs the endorsement decision for one request from the authenticated caller and returns the
-// response to send back. It never returns an error: a refusal is a well-formed EndorseResponse with
-// Err set, so the initiator always learns the outcome. Splitting it out from Call keeps the decision
+// response to send back: the delta this endorser translated the request into, and its signature over
+// that delta's digest. It never returns an error: a refusal is a well-formed EndorseResponse with Err
+// set, so the initiator always learns the outcome. Splitting it out from Call keeps the decision
 // testable without a session.
+//
+// The delta is part of the reply because the initiator does not build one. It has to encode a delta
+// into the transaction, and producing one means validating the request, which is precisely the work
+// this flow delegates to endorsers, so the endorsers hand back what they signed.
 func (r *Responder) Handle(ctx context.Context, caller view.Identity, req *EndorseRequest) *EndorseResponse {
-	sig, err := r.endorse(ctx, caller, req)
+	delta, sig, err := r.endorse(ctx, caller, req)
 	if err != nil {
 		return &EndorseResponse{Err: err.Error()}
 	}
 
-	return &EndorseResponse{Signature: sig, EndorserAddress: r.signer.Address().Hex()}
+	return &EndorseResponse{Delta: delta, Signature: sig, EndorserAddress: r.signer.Address().Hex()}
 }
 
 // endorse is the decision proper: authorize, then validate-and-translate through the shared factory,
-// then sign. It returns the signature or the first failure. The digest is derived here, from the
-// delta this endorser built, never taken from the request.
-func (r *Responder) endorse(ctx context.Context, caller view.Identity, req *EndorseRequest) ([]byte, error) {
+// then sign. It returns the delta and its signature, or the first failure. The digest is derived
+// here, from the delta this endorser built, never taken from the request.
+func (r *Responder) endorse(
+	ctx context.Context,
+	caller view.Identity,
+	req *EndorseRequest,
+) (*statedelta.StateDelta, []byte, error) {
 	if err := req.Validate(); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if err := r.authorizer.Authorize(caller); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	// A TMS this endorser cannot resolve is one it does not serve, so refusing here is the same check
 	// the fixed TMS identity used to make, expressed through what it can actually validate.
 	factory, err := r.factoryFor(req.TMSID)
 	if err != nil {
-		return nil, errors.Wrapf(err, "this endorser does not serve tms [%s]", req.TMSID)
+		return nil, nil, errors.Wrapf(err, "this endorser does not serve tms [%s]", req.TMSID)
 	}
 
 	delta, err := factory.Build(ctx, req)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
-	digest := eip712.Digest(r.domain, delta)
+	sig, err := r.signer.Sign(eip712.Digest(r.domain, delta))
+	if err != nil {
+		return nil, nil, err
+	}
 
-	return r.signer.Sign(digest)
+	return delta, sig, nil
 }
 
 // compile-time check that *token.Validator satisfies RequestValidator, so the production wiring
