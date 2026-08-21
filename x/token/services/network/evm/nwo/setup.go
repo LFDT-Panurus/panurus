@@ -69,6 +69,9 @@ func NewSetupUpdater(config SetupUpdaterConfig) (*SetupUpdater, error) {
 	if config.Client == nil {
 		return nil, errors.New("evm nwo: setup updater needs a client")
 	}
+	if config.TokenState == (client.Address{}) {
+		return nil, errors.New("evm nwo: setup updater needs the deployed TokenState address")
+	}
 	if config.Submitter == nil {
 		return nil, errors.New("evm nwo: setup updater needs a submitter to broadcast with")
 	}

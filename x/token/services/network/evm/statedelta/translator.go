@@ -162,8 +162,13 @@ func (t *Translator) writeIssue(action translator.IssueAction) error {
 	if err != nil {
 		return errors.Wrapf(err, "failed to get issue outputs")
 	}
+	// Read once, outside the loop: every output of one action shares one graph-hiding mode, and a
+	// per-output re-query would let an action whose IsGraphHiding answer isn't perfectly idempotent
+	// (an interface method, not a guaranteed-pure field) split its own outputs across both marker
+	// styles. Matches the Fabric reference translator's own cache-before-the-loop pattern.
+	graphHiding := action.IsGraphHiding()
 	for i, output := range outputs {
-		t.appendOutput(t.counter+uint64(i), output, action.IsGraphHiding()) // #nosec G115 -- i is a small slice index
+		t.appendOutput(t.counter+uint64(i), output, graphHiding) // #nosec G115 -- i is a small slice index
 	}
 	t.counter += uint64(len(outputs))
 
@@ -183,6 +188,8 @@ func (t *Translator) writeTransfer(action translator.TransferAction) error {
 	}
 	// Redeem outputs are skipped but their slot still consumes an output index, exactly as the
 	// Fabric translator enumerates them.
+	// Read once, outside the loop: see the matching comment in writeIssue.
+	graphHiding := action.IsGraphHiding()
 	for i := range action.NumOutputs() {
 		if action.IsRedeemAt(i) {
 			continue
@@ -191,7 +198,7 @@ func (t *Translator) writeTransfer(action translator.TransferAction) error {
 		if err != nil {
 			return errors.Wrapf(err, "failed to serialize transfer output at index %d", i)
 		}
-		t.appendOutput(t.counter+uint64(i), output, action.IsGraphHiding()) // #nosec G115 -- i is a small output index
+		t.appendOutput(t.counter+uint64(i), output, graphHiding) // #nosec G115 -- i is a small output index
 	}
 	t.counter += uint64(action.NumOutputs()) // #nosec G115 -- output counts are small
 

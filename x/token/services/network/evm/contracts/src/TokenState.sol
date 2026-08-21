@@ -71,6 +71,7 @@ contract TokenState {
     error MetadataKeyOccupied(bytes32 key);
     error MalformedSetupDelta();
     error MalformedTransferDelta();
+    error UnsupportedForGraphHiding();
 
     event StateCommitted(bytes32 indexed anchor, bool success, string message);
     event PublicParametersUpdated(bytes32 indexed paramsHash, uint64 version);
@@ -192,12 +193,19 @@ contract TokenState {
     }
 
     /// @notice Graph-revealing spent status by token id, resolved through the content-bound marker.
+    /// @dev    Reverts on a graph-hiding clone: that mode never records a marker (translator.go leaves
+    ///         SNMarker zero for it), so tokenMarker[tokenID] would always resolve to snSpent[0x0],
+    ///         which is never set here - a caller would silently get "not spent" for a token that was
+    ///         in fact spent via serialUsed. Use isSerialUsed for a graph-hiding clone instead.
     function isSpent(bytes32 tokenID) external view returns (bool) {
+        if (graphHiding) revert UnsupportedForGraphHiding();
         return snSpent[tokenMarker[tokenID]];
     }
 
     /// @notice Graph-revealing spent status for a batch of token ids, aligned with the input.
+    /// @dev    Reverts on a graph-hiding clone, for the same reason as isSpent.
     function areTokensSpent(bytes32[] calldata tokenIDs) external view returns (bool[] memory out) {
+        if (graphHiding) revert UnsupportedForGraphHiding();
         out = new bool[](tokenIDs.length);
         for (uint256 i = 0; i < tokenIDs.length; i++) {
             out[i] = snSpent[tokenMarker[tokenIDs[i]]];

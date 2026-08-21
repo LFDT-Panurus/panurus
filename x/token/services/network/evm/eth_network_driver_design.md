@@ -143,6 +143,12 @@ token/services/network/evm/
 
 ## 3. Smart Contracts
 
+This section is the specification: storage layout, semantics, and the reasoning behind each decision. For
+a reader meeting the contracts for the first time, the walkthrough in
+[Network Service - Ethereum Implementation Guide](../../../../../docs/services/network-ethereum.md#how-the-contracts-interact)
+covers the same ground with diagrams, a field-by-field tour of the `StateDelta`, and a table of every
+revert and what causes it.
+
 ### 3.1 Storage layout — TokenState
 
 ```solidity
