@@ -12,6 +12,7 @@ import (
 
 	"github.com/LFDT-Panurus/panurus/token"
 	"github.com/LFDT-Panurus/panurus/token/driver"
+	dbdriver "github.com/LFDT-Panurus/panurus/token/services/storage/db/driver"
 	"github.com/LFDT-Panurus/panurus/token/services/storage/tokendb"
 	"github.com/LFDT-Panurus/panurus/token/services/tokens"
 	"github.com/LFDT-Panurus/panurus/token/services/tokens/mock"
@@ -219,6 +220,67 @@ func TestAppendValid_TransactionExistsError(t *testing.T) {
 	req := &token.Request{Anchor: "tx1", Metadata: &driver.TokenRequestMetadata{}}
 	err := ts.AppendValid(ctx, nil, "tx1", req)
 	assert.ErrorIs(t, err, assert.AnError)
+}
+
+// borrowedTx stands in for the caller's own transaction handed to AppendValid.
+// AppendValid continues (wraps) this transaction rather than opening its own, so
+// it must never finish it: it records commit/rollback so the test can assert none
+// happen on the failure path.
+type borrowedTx struct {
+	committed  int
+	rolledBack int
+}
+
+func (b *borrowedTx) Impl() dbdriver.TransactionImpl { return nil }
+func (b *borrowedTx) Commit() error {
+	b.committed++
+
+	return nil
+}
+func (b *borrowedTx) Rollback() { b.rolledBack++ }
+
+// TestAppendValid_DoesNotRollBackBorrowedTransaction is the regression test for
+// issue #2184. When an operation inside AppendValid fails, AppendValid must
+// propagate the error WITHOUT rolling back the transaction it was handed: that
+// transaction belongs to the caller (ContinueTransaction wraps the caller's own
+// *sql.Tx rather than opening a new one), so finishing it here would discard the
+// caller's writes and leave the caller's own deferred finish double-rolling-back.
+func TestAppendValid_DoesNotRollBackBorrowedTransaction(t *testing.T) {
+	ctx := context.Background()
+	tmsID := token.TMSID{Network: "net", Channel: "ch", Namespace: "ns"}
+
+	// The continued transaction fails on the first storage operation (the token
+	// lookup during delete), driving AppendValid into its error path.
+	mockTx := &mock.FakeTokenStoreTransaction{}
+	mockTx.GetTokenReturns(nil, nil, assert.AnError)
+
+	mockDB := &mock.FakeTokenStore{}
+	mockDB.TransactionExistsReturns(false, nil)
+	mockDB.ContinueTokenDBTransactionReturns(mockTx, nil)
+
+	// Prime the cache so getActions returns a token to spend without needing a full
+	// TMS; deleting it exercises the failing GetToken above.
+	cache := &mock.FakeCache{}
+	cache.GetReturns(&tokens.CacheEntry{ToSpend: []*token2.ID{{TxId: "in", Index: 0}}}, true)
+
+	storage := &tokens.DBStorage{TokenDB: &tokendb.StoreService{TokenStore: mockDB}, TMSID: tmsID}
+	ts := &tokens.Service{Storage: storage, RequestsCache: cache}
+
+	borrowed := &borrowedTx{}
+	req := &token.Request{Anchor: "tx1", Metadata: &driver.TokenRequestMetadata{}}
+
+	err := ts.AppendValid(ctx, borrowed, "tx1", req)
+
+	// The failure is surfaced to the caller...
+	require.ErrorIs(t, err, assert.AnError)
+	// ...the transaction AppendValid continued is the caller's own borrowed one...
+	require.Equal(t, 1, mockDB.ContinueTokenDBTransactionCallCount())
+	assert.Same(t, dbdriver.Transaction(borrowed), mockDB.ContinueTokenDBTransactionArgsForCall(0))
+	// ...and AppendValid did NOT finish it — neither directly nor via the continued
+	// wrapper. The caller alone commits or rolls back, exactly once.
+	assert.Equal(t, 0, borrowed.rolledBack, "AppendValid must not roll back the caller's transaction")
+	assert.Equal(t, 0, borrowed.committed, "AppendValid must not commit the caller's transaction")
+	assert.Equal(t, 0, mockTx.RollbackCallCount(), "AppendValid must not roll back via the continued wrapper")
 }
 
 // TestGetCachedTokenRequest verifies that a cached request is returned together with its
