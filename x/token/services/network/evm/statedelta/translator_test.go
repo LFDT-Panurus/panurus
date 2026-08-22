@@ -9,6 +9,7 @@ package statedelta
 import (
 	"context"
 	"encoding/hex"
+	"strconv"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -299,7 +300,7 @@ func TestTransferReadsNumOutputsOnce(t *testing.T) {
 	first.NumOutputsReturns(99)
 	first.NumOutputsReturnsOnCall(0, 2)
 	first.IsRedeemAtCalls(func(int) bool { return false })
-	first.SerializeOutputAtCalls(func(i int) ([]byte, error) { return []byte{byte(i)}, nil })
+	first.SerializeOutputAtCalls(func(i int) ([]byte, error) { return []byte("out-" + strconv.Itoa(i)), nil })
 	first.IsGraphHidingReturns(false)
 
 	tr := NewTranslator(anchor, testPP, 1)
