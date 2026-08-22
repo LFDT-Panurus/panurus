@@ -143,6 +143,23 @@ func TestSettledNetworkResolvesAnAbsentAnchor(t *testing.T) {
 		assert.Equal(t, hash, got, "the token request hash must reach the handler intact")
 	})
 
+	// A record with no timestamp is the one input that reads as catastrophically old: time.Since of
+	// the zero time is two thousand years, which would clear the timeout on the very first sweep and
+	// condemn a transaction that may have been submitted seconds ago. "Not known" is the honest answer
+	// and the safe one, matching what an unreadable store already does.
+	t.Run("a record with no timestamp stays unknown", func(t *testing.T) {
+		evm := &mock.EVMClient{}
+		evm.ChainIDReturns(bigInt(testChainID), nil)
+		evm.CallReturns(absent, nil)
+		n := testNetwork(t, evm, nil)
+		settled := settledNetwork{Network: n, store: &agedStore{unset: true}, timeout: timeout}
+		txID := n.ComputeTxID(&driver.TxID{Creator: []byte("creator")})
+
+		status, _, _, err := settled.GetTransactionStatus(t.Context(), "token", txID)
+		require.NoError(t, err)
+		assert.Equal(t, driver.Unknown, status, "an unknown age must not be read as an infinite one")
+	})
+
 	// A node that could not be reached has established nothing about the transaction, so it stays a
 	// failure to be retried rather than becoming a verdict.
 	t.Run("an unreachable node is not a verdict", func(t *testing.T) {
@@ -171,6 +188,9 @@ type agedStore struct {
 	recoveryStore
 	age time.Duration
 	err error
+	// unset makes the record come back with no timestamp, the shape a store that never populated the
+	// column would produce.
+	unset bool
 }
 
 func (s *agedStore) Transactions(
@@ -182,8 +202,13 @@ func (s *agedStore) Transactions(
 		return nil, s.err
 	}
 
+	record := &dbdriver.TransactionRecord{Timestamp: time.Now().Add(-s.age)}
+	if s.unset {
+		record.Timestamp = time.Time{}
+	}
+
 	return &cdriver.PageIterator[*dbdriver.TransactionRecord]{
-		Items: iterators.Slice([]*dbdriver.TransactionRecord{{Timestamp: time.Now().Add(-s.age)}}),
+		Items: iterators.Slice([]*dbdriver.TransactionRecord{record}),
 	}, nil
 }
 
