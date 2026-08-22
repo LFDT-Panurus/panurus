@@ -34,7 +34,7 @@ import (
 // rendering each node's configuration.
 type Entry struct {
 	// Node is the chain this TMS settles on.
-	Node *Besu
+	Node Node
 	// Deployment holds the contract addresses the TMS was deployed with.
 	Deployment evmnwo.Deployment
 	// Endorsers is the endorser set, in the form the driver's configuration carries it.
@@ -71,6 +71,8 @@ type NetworkHandler struct {
 	Image string
 	// ChainID is the chain the network runs.
 	ChainID int64
+	// NodeKind selects the node to boot: empty/"besu" (default) or "fabricx-evm" gateway.
+	NodeKind string
 	// Threshold is the endorsement threshold; when zero every endorser must sign.
 	Threshold uint
 
@@ -178,9 +180,26 @@ func (p *NetworkHandler) GenerateArtifacts(tms *topology2.TMS) {
 	gomega.Expect(err).NotTo(gomega.HaveOccurred(), "failed to deploy the contracts for [%s]", tms.TmsID())
 	entry.Deployment = deployment
 
-	p.fundSubmitters(tms, entry, keyDir)
+	// The gasless gateway needs submitter keys but no funding (funding txs are dropped); Besu charges gas.
+	if p.NodeKind == GatewayTopologyName {
+		p.provisionSubmitters(tms, entry, keyDir)
+	} else {
+		p.fundSubmitters(tms, entry, keyDir)
+	}
 
 	_ = ctx
+}
+
+// provisionSubmitters gives every node its own submitter key without funding it, for the gasless gateway.
+func (p *NetworkHandler) provisionSubmitters(tms *topology2.TMS, entry *Entry, keyDir string) {
+	for _, node := range tms.FSCNodes {
+		if _, provisioned := entry.SubmitterOf[node.Name]; provisioned {
+			continue
+		}
+		identity, err := GenerateIdentity(keyDir, node.Name+"-submitter")
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), "failed to provision a submitter for [%s]", node.Name)
+		entry.SubmitterOf[node.Name] = identity
+	}
 }
 
 // fundSubmitters gives every node of the TMS its own account, paid for out of the operator's.
@@ -211,7 +230,7 @@ func (p *NetworkHandler) fundSubmitters(tms *topology2.TMS, entry *Entry, keyDir
 }
 
 // startNode boots the chain this TMS settles on, reusing one already started for the same network.
-func (p *NetworkHandler) startNode(tms *topology2.TMS) *Besu {
+func (p *NetworkHandler) startNode(tms *topology2.TMS) Node {
 	for id, e := range p.Entries {
 		if e.Node != nil && id != tms.TmsID() {
 			return e.Node
@@ -225,6 +244,13 @@ func (p *NetworkHandler) startNode(tms *topology2.TMS) *Besu {
 	// evm suites would fight over one container instead of getting one each. The reserved port is
 	// unique by construction, which is exactly the property the name needs.
 	port := int(ctx.ReservePort())
+
+	if p.NodeKind == GatewayTopologyName {
+		node, err := startGatewayNode(context.Background(), p.Image, p.ChainID, port)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), "failed to start the EVM node")
+
+		return node
+	}
 
 	node, err := StartBesu(context.Background(), BesuConfig{
 		Image:   p.Image,
