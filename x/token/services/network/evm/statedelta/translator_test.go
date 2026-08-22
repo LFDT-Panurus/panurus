@@ -281,3 +281,35 @@ func TestErrorPaths(t *testing.T) {
 		require.Error(t, err)
 	})
 }
+
+// TestTransferReadsNumOutputsOnce pins that writeTransfer consults NumOutputs() a single time.
+//
+// It is used twice, to bound the output loop and to advance the shared output counter. NumOutputs is
+// an interface method rather than a field, so an implementation whose answer moves between the two
+// reads would enumerate one range of indexes and advance the counter by another. Every later action
+// in the same request would then derive its token ids at the wrong offsets, and two endorsers that
+// happened to read different values would emit different deltas and never assemble a quorum.
+//
+// The fake answers 2 on the first call and 99 on any later one, so the second transfer's output must
+// land at index 2 for the counter to have followed the range actually enumerated.
+func TestTransferReadsNumOutputsOnce(t *testing.T) {
+	anchor := testAnchor(0x42)
+
+	first := &mock.TransferAction{}
+	first.NumOutputsReturns(99)
+	first.NumOutputsReturnsOnCall(0, 2)
+	first.IsRedeemAtCalls(func(int) bool { return false })
+	first.SerializeOutputAtCalls(func(i int) ([]byte, error) { return []byte{byte(i)}, nil })
+	first.IsGraphHidingReturns(false)
+
+	tr := NewTranslator(anchor, testPP, 1)
+	require.NoError(t, tr.Write(context.Background(), first))
+	require.NoError(t, tr.Write(context.Background(),
+		transferAction(nil, nil, [][]byte{[]byte("second")}, nil, nil)))
+
+	d := finish(t, tr)
+
+	require.Len(t, d.Outputs, 3)
+	assert.Equal(t, keys.ComputeTokenID(anchor, 2), d.Outputs[2].TokenID,
+		"the counter must advance by the output count the loop actually enumerated")
+}
