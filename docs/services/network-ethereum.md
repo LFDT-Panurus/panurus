@@ -786,6 +786,14 @@ The split is load-bearing. Collapsing the two leaves a caller choosing between r
 forever and giving up on a working one. A revert is detected during `eth_estimateGas`, which executes the
 transaction — so a rejected transaction is reported **before** any gas is paid for it.
 
+Recognising a revert is node-specific, which is worth knowing when adding support for a new one. Besu
+reports it as JSON-RPC code `-32000`, inside the range the spec reserves for implementations; geth and
+anvil use EIP-1474's code `3`. The driver accepts either, and anything else in the reserved range, always
+paired with `revert` appearing in the message — so a non-revert failure carrying one of those codes
+(`out of gas` on `3`, `header not found` on `-32000`) stays in the transient class. A node that reports a
+revert some other way would have its transactions classified transient, and callers would retry them
+forever, so that is the first thing to check against an unfamiliar client.
+
 ### Transaction recovery across restarts
 
 The ttx layer registers a finality listener **in memory** when it stores a transaction. A node that restarts
