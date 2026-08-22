@@ -534,3 +534,50 @@ func TestHexHelpers(t *testing.T) {
 		assert.Equal(t, []byte{0xde, 0xad}, gotBytes)
 	})
 }
+
+// TestResponseBodyIsBounded checks the client refuses a response larger than its cap instead of
+// buffering whatever the node decides to send. http.Client.Timeout bounds how long a response may
+// take, not how large it may be, so without the cap a node streaming an endless body makes the driver
+// allocate until it dies.
+func TestResponseBodyIsBounded(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":"0x`))
+		// Streamed rather than built up front: the point is that the client stops reading, so the test
+		// must not depend on the whole body being materialised anywhere.
+		chunk := make([]byte, 1024)
+		for i := range chunk {
+			chunk[i] = '0'
+		}
+		for range 64 {
+			if _, err := w.Write(chunk); err != nil {
+				return
+			}
+		}
+		_, _ = w.Write([]byte(`"}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	c, err := NewJSONRPCClient(srv.URL, srv.Client())
+	require.NoError(t, err)
+	c.maxResponse = 4096
+
+	_, err = c.ChainID(context.Background())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "exceeds the 4096 byte limit")
+}
+
+// TestResponseAtTheBoundIsAccepted checks the cap rejects only what is genuinely over it, so a large
+// but legitimate answer (getPublicParameters is the real one) still decodes.
+func TestResponseAtTheBoundIsAccepted(t *testing.T) {
+	big := make([]byte, 2048)
+	for i := range big {
+		big[i] = 'a'
+	}
+	c, _ := newTestServer(t, map[string]string{"eth_chainId": `"0x7a69"`})
+	c.maxResponse = len(big)
+
+	id, err := c.ChainID(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, int64(31337), id.Int64())
+}

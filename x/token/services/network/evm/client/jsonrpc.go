@@ -11,6 +11,7 @@ import (
 	"context"
 	"encoding/hex"
 	"encoding/json"
+	"io"
 	"math/big"
 	"net/http"
 	"strconv"
@@ -25,6 +26,20 @@ import (
 // deadline of its own.
 const DefaultRequestTimeout = 30 * time.Second
 
+// maxResponseBytes bounds the JSON-RPC response body this client will buffer.
+//
+// http.Client.Timeout bounds how long a response may take, not how large it may be, so without this a
+// node that streams an endless body makes the driver allocate until it dies. The node is ordinarily
+// operator-run infrastructure rather than an attacker, so this is defence in depth rather than a
+// closed hole; it is the same bound statedelta.Validate already puts on the other input the driver
+// reads from somebody else, and it costs nothing when the node behaves.
+//
+// The cap is set well above any legitimate answer. The largest of those by far is
+// getPublicParameters, whose bytes arrive ABI-encoded and then hex-encoded, so roughly twice their
+// size on the wire; 64 MiB leaves room for parameters an order of magnitude larger than the shipped
+// drivers produce.
+const maxResponseBytes = 64 << 20
+
 // JSONRPCClient is the EVMClient implementation over HTTP JSON-RPC. It speaks plain eth_* methods,
 // so it works against any standard node (Besu is the acceptance backend, anvil the inner loop, and
 // an fabric-x-evm gateway is just another endpoint).
@@ -37,6 +52,9 @@ type JSONRPCClient struct {
 	http     *http.Client
 	// id is the JSON-RPC request counter, incremented atomically so concurrent calls never reuse an id.
 	id atomic.Uint64
+	// maxResponse is the response-body bound, held as a field rather than read from the constant so a
+	// test can exercise the limit without moving 64 MiB over the loopback interface.
+	maxResponse int
 }
 
 // Compile-time assertion that the client satisfies the frozen interface.
@@ -52,7 +70,7 @@ func NewJSONRPCClient(endpoint string, httpClient *http.Client) (*JSONRPCClient,
 		httpClient = &http.Client{Timeout: DefaultRequestTimeout}
 	}
 
-	return &JSONRPCClient{endpoint: endpoint, http: httpClient}, nil
+	return &JSONRPCClient{endpoint: endpoint, http: httpClient, maxResponse: maxResponseBytes}, nil
 }
 
 // ChainID returns the chain id reported by the node.
@@ -408,8 +426,19 @@ func (c *JSONRPCClient) invoke(ctx context.Context, method string, out any, para
 		return nil, errors.Errorf("%s call returned http %d", method, resp.StatusCode)
 	}
 
+	// Read through a bound rather than handing the decoder the body directly: one extra byte is
+	// allowed so an over-long body is reported as such instead of arriving as a truncated,
+	// syntactically broken document that reads like a node returning nonsense.
+	respBody, err := io.ReadAll(io.LimitReader(resp.Body, int64(c.maxResponse)+1))
+	if err != nil {
+		return nil, errors.Wrapf(err, "failed to read %s response", method)
+	}
+	if len(respBody) > c.maxResponse {
+		return nil, errors.Errorf("%s response exceeds the %d byte limit", method, c.maxResponse)
+	}
+
 	var rpcResp rpcResponse
-	if err := json.NewDecoder(resp.Body).Decode(&rpcResp); err != nil {
+	if err := json.Unmarshal(respBody, &rpcResp); err != nil {
 		return nil, errors.Wrapf(err, "failed to decode %s response", method)
 	}
 	if rpcResp.Error != nil {
