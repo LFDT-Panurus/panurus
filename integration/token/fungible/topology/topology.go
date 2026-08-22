@@ -60,6 +60,11 @@ func Topology(opts common.Opts) []api.Topology {
 		evmTopology := tevm.NewTopology()
 		backendTopology = evmTopology
 		backendChannel = ""
+	case tevm.GatewayTopologyName:
+		// Same shape as the EVM backend; the topology type routes to the gateway handler, not Besu.
+		evmTopology := tevm.NewGatewayTopology()
+		backendTopology = evmTopology
+		backendChannel = ""
 	default:
 		panic("unknown backend: " + opts.Backend)
 	}
