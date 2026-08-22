@@ -126,21 +126,18 @@ func (t *Service) AppendValid(ctx context.Context, tx dbdriver.Transaction, txID
 	}
 	defer t.removeCachedTokenRequest(string(txID))
 
-	logger.DebugfContext(ctx, "transaction [%s] start db transaction", txID)
+	logger.DebugfContext(ctx, "transaction [%s] continue db transaction", txID)
+	// ContinueTransaction wraps the caller's own transaction (the same underlying
+	// *sql.Tx the caller started); it does NOT open a new one. Ownership therefore
+	// stays with the caller: on failure we only stop and propagate the error, and
+	// the caller commits or rolls back exactly once. Rolling back here would tear
+	// down the caller's transaction — discarding writes we do not own — and leave
+	// the caller's own deferred finish running against an already-finished
+	// transaction. See issue #2184.
 	ts, err := t.Storage.ContinueTransaction(tx)
 	if err != nil {
-		return errors.WithMessagef(err, "transaction [%s], failed to start db transaction", txID)
+		return errors.WithMessagef(err, "transaction [%s], failed to continue db transaction", txID)
 	}
-	defer func() {
-		if err == nil {
-			return
-		}
-		if err1 := ts.Rollback(); err1 != nil {
-			logger.ErrorfContext(ctx, "error rolling back [%s][%s]", err1, string(debug.Stack()))
-		} else {
-			logger.InfofContext(ctx, "transaction [%s] rolled back", txID)
-		}
-	}()
 
 	logger.DebugfContext(ctx, "append tokens")
 	for _, tta := range toAppend {
