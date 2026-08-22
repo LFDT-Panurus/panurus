@@ -130,10 +130,15 @@ func TestCallClassifiesReverts(t *testing.T) {
 		message  string
 		reverted bool
 	}{
-		{name: "geth wording", code: -32000, message: "execution reverted", reverted: true},
+		// Code 3 is EIP-1474's execution error, which is what geth, anvil and everything built on them
+		// actually return for a revert. Captured from a live anvil node, custom-error data and all.
+		{name: "geth/anvil code", code: 3, message: "execution reverted", reverted: true},
+		{name: "anvil custom error", code: 3, message: "execution reverted: custom error 0xe74c68bb:", reverted: true},
 		{name: "besu wording", code: -32000, message: "Execution reverted", reverted: true},
+		{name: "elsewhere in the implementation range", code: -32015, message: "VM Exception: revert", reverted: true},
 		{name: "another server error", code: -32000, message: "header not found", reverted: false},
 		{name: "method not found", code: -32601, message: "method not found", reverted: false},
+		{name: "a non-revert code 3", code: 3, message: "out of gas", reverted: false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			c := newErrorServer(t, tc.code, tc.message)
@@ -210,7 +215,16 @@ func TestEstimateGasClassifiesReverts(t *testing.T) {
 		message  string
 		reverted bool
 	}{
-		{name: "geth wording", code: -32000, message: "execution reverted", reverted: true},
+		// Code 3 is EIP-1474's execution error, what geth and anvil actually use for a revert. This is
+		// the case that matters most: misreading it makes the submitter tell the caller to retry a
+		// transaction the chain has permanently rejected.
+		{name: "geth/anvil code", code: 3, message: "execution reverted", reverted: true},
+		{
+			name:     "anvil custom error, as captured from a live node",
+			code:     3,
+			message:  "execution reverted: custom error 0xe74c68bb:",
+			reverted: true,
+		},
 		{name: "besu wording", code: -32000, message: "Execution reverted", reverted: true},
 		{
 			name:     "revert with a reason string",
@@ -218,6 +232,10 @@ func TestEstimateGasClassifiesReverts(t *testing.T) {
 			message:  "execution reverted: StalePublicParams",
 			reverted: true,
 		},
+		// Another node picking a different value from the same reserved range.
+		{name: "elsewhere in the implementation range", code: -32015, message: "VM Exception: revert", reverted: true},
+		// Code 3 without a revert: the code alone must not be enough to condemn a transaction.
+		{name: "a non-revert code 3", code: 3, message: "out of gas", reverted: false},
 		// Same implementation-defined code, a different server-side failure. Classifying this as a
 		// revert would make the submitter give up on a transaction the chain never judged.
 		{name: "another server error", code: -32000, message: "header not found", reverted: false},

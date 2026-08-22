@@ -209,10 +209,18 @@ func (c *JSONRPCClient) EstimateGas(ctx context.Context, msg CallMsg) (uint64, e
 // errMethodNotFound is the JSON-RPC code for a method the node does not implement.
 const errMethodNotFound = -32601
 
-// errServer is the code nodes use for an execution failure, which includes a reverted call. It is
-// not part of the JSON-RPC specification, which reserves -32000 to -32099 for implementations, so it
-// is paired with the message rather than trusted alone.
-const errServer = -32000
+// errExecutionReverted is EIP-1474's "execution error" code, which is what geth, anvil and everything
+// built on them return for a reverted call, with the revert data attached.
+const errExecutionReverted = 3
+
+// errServerMin and errServerMax bound the range JSON-RPC reserves for implementation-defined errors.
+// Besu reports a revert as -32000 inside it, and other nodes pick other values in the same range, so
+// the whole range is accepted and paired with the message rather than any single code being trusted
+// alone.
+const (
+	errServerMin = -32099
+	errServerMax = -32000
+)
 
 // ErrExecutionReverted marks the node reporting that the call it was given reverts against current
 // state, as opposed to failing to answer at all.
@@ -223,12 +231,26 @@ const errServer = -32000
 // malformed response - says nothing about the transaction and has to be retried instead.
 var ErrExecutionReverted = errors.New("execution reverted")
 
-// isReverted reports whether a JSON-RPC error is a revert. It pairs the implementation-defined code
-// with the message, because the code covers everything a node treats as a server-side execution error
-// and the wording differs between clients ("execution reverted" on geth, "Execution reverted" on
-// Besu).
+// isReverted reports whether a JSON-RPC error is a revert.
+//
+// Getting this wrong is not cosmetic. A revert is the chain rejecting the transaction, which is
+// permanent and has to be re-derived; everything else says nothing about the transaction and has to be
+// retried. The submitter maps the two onto ErrTransactionReverted and ErrNetworkUnavailable, so a
+// revert this function misses is handed to the caller as "retry with backoff" for a transaction that
+// will be rejected identically every time.
+//
+// Nodes disagree on both halves of the answer. Besu reports a revert as -32000, inside the range
+// JSON-RPC reserves for implementations; geth and anvil report it as EIP-1474's code 3. The wording
+// differs too ("execution reverted" on geth, "Execution reverted" on Besu, and anvil appends the
+// custom-error selector). So the code is accepted from either the reserved range or 3, and is always
+// paired with the message, which keeps a non-revert failure carrying one of those codes ("out of gas"
+// on 3, "header not found" on -32000) out of the permanent class.
 func isReverted(err *rpcError) bool {
-	return err != nil && err.Code == errServer && strings.Contains(strings.ToLower(err.Message), "revert")
+	if err == nil || !strings.Contains(strings.ToLower(err.Message), "revert") {
+		return false
+	}
+
+	return err.Code == errExecutionReverted || (err.Code >= errServerMin && err.Code <= errServerMax)
 }
 
 // SuggestGasFees returns the node's suggested EIP-1559 fees: the priority tip it reports, and a max

@@ -43,6 +43,9 @@ const (
 	// anvilKey1 is anvil's first well-known development account, used here as endorser and submitter.
 	anvilKey1 = "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
 	anvilPort = "18545"
+	// anvilStrangerKey is anvil's second well-known account, used where a test needs a real key the
+	// deployed contracts do not know.
+	anvilStrangerKey = "59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d"
 )
 
 // startAnvil boots a local anvil node and returns its endpoint, skipping the test if anvil is absent.
@@ -375,3 +378,78 @@ func (l *e2eListener) OnStatus(_ context.Context, _ string, status int, _ string
 }
 
 func (l *e2eListener) OnError(context.Context, string, error) {}
+
+// TestRevertClassificationAgainstAnvil pins the permanent/transient split against a real node.
+//
+// It exists because the split cannot be trusted to a fake: nodes disagree on how they report a
+// revert, and the driver got it wrong for geth and anvil, which use EIP-1474's code 3 rather than the
+// -32000 Besu uses. That misread sent a permanently rejected transaction back to the caller as
+// ErrNetworkUnavailable, whose documented meaning is "the transaction is untouched, retry with
+// backoff" -- so a caller following the contract would retry a doomed transaction forever.
+//
+// A unit test over a handwritten error body cannot catch a wrong assumption about what nodes actually
+// send, which is precisely what the bug was, so this drives a genuine revert out of a genuine node.
+func TestRevertClassificationAgainstAnvil(t *testing.T) {
+	endpoint := startAnvil(t)
+
+	deployedKeyBytes, err := hex.DecodeString(anvilKey1)
+	require.NoError(t, err)
+	deployedSigner, err := eip712.NewSignerFromBytes(deployedKeyBytes)
+	require.NoError(t, err)
+
+	// anvilStranger is a real key the deployed verifier does not know, so a bundle it signs is
+	// rejected on chain: a genuine revert, reached through the driver's ordinary submission path.
+	strangerBytes, err := hex.DecodeString(anvilStrangerKey)
+	require.NoError(t, err)
+	stranger, err := eip712.NewSignerFromBytes(strangerBytes)
+	require.NoError(t, err)
+
+	pp0 := []byte("revert-classification-params")
+	tokenState := deployContracts(t, endpoint, deployedSigner.Address(), pp0)
+
+	evmClient, err := client.NewJSONRPCClient(endpoint, nil)
+	require.NoError(t, err)
+
+	cfg := validConfig()
+	cfg.Endpoint = endpoint
+	cfg.Contracts.TokenState = tokenState.Hex()
+	cfg.Finality.BlockTag = client.BlockTagLatest
+	cfg.Endorsement.Endorsers[0].Address = deployedSigner.Address().Hex()
+	cfg.applyDefaults()
+	require.NoError(t, cfg.Validate())
+
+	submitter, err := NewSubmitter(
+		evmClient, secp256k1.PrivKeyFromBytes(deployedKeyBytes), tokenState, big.NewInt(testChainID), cfg.Gas)
+	require.NoError(t, err)
+	n, err := NewNetwork("evm-net", cfg, evmClient, nil, submitter, nil)
+	require.NoError(t, err)
+
+	anchorID := n.ComputeTxID(&driver.TxID{Creator: []byte("issuer")})
+	anchor, err := keys.AnchorFromTxID(anchorID)
+	require.NoError(t, err)
+	tokenData := []byte("rejected-token")
+	delta := &statedelta.StateDelta{
+		Anchor: anchor,
+		Outputs: []statedelta.OutputToken{{
+			TokenID:   keys.ComputeTokenID(anchor, 0),
+			SNMarker:  keys.OutputSNMarker(anchor, 0, tokenData),
+			TokenData: tokenData,
+		}},
+		TokenRequestHash:    sha256Of("issue-request"),
+		PublicParamsHash:    sha256Of(string(pp0)),
+		PublicParamsVersion: 0,
+	}
+	domain := eip712.Domain{ChainID: big.NewInt(testChainID), VerifyingContract: tokenState}
+
+	err = n.Broadcast(t.Context(), &Envelope{
+		Anchor:       anchorID,
+		Delta:        delta,
+		Endorsements: endorse(t, stranger, domain, delta),
+	})
+
+	require.Error(t, err, "the chain must reject a bundle from an unregistered endorser")
+	assert.ErrorIs(t, err, ErrTransactionReverted,
+		"a rejected transaction is permanent: the caller must re-derive it, not resend it")
+	assert.NotErrorIs(t, err, ErrNetworkUnavailable,
+		"classifying it as transient tells the caller to retry a transaction the chain will reject every time")
+}
