@@ -156,6 +156,9 @@ func TestEndToEndAgainstAnvil(t *testing.T) {
 	cfg := validConfig()
 	cfg.Endpoint = endpoint
 	cfg.Contracts.TokenState = tokenState.Hex()
+	// The endorser set has to be the one actually seeded into the deployed verifier. validConfig's
+	// placeholder address is not, and Connect's policy check reads the real thing off the chain.
+	cfg.Endorsement.Endorsers[0].Address = signer.Address().Hex()
 	cfg.Finality.BlockTag = client.BlockTagLatest // anvil mines instantly; there is no finalized tag
 	cfg.Finality.PollInterval = 50 * time.Millisecond
 	cfg.Finality.Timeout = 15 * time.Second
