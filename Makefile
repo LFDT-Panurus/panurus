@@ -86,9 +86,12 @@ install-softhsm:
 # The EVM integration suites run against this Besu image.
 BESU_IMAGE ?= hyperledger/besu:24.3.0
 
+# The EVM gateway integration suite runs against this fabric-x-evm image.
+FABRICX_EVM_IMAGE ?= ghcr.io/hyperledger/fabric-x-evm:0.1.3
+
 .PHONY: docker-images
 # build/pull docker images needed for testing
-docker-images: fabric-docker-images monitoring-docker-images testing-docker-images besu-docker-images
+docker-images: fabric-docker-images monitoring-docker-images testing-docker-images besu-docker-images fabricx-evm-docker-images
 
 .PHONY: testing-docker-images
 # pull docker images for testing (postgres, vault)
@@ -110,6 +113,11 @@ fabric-docker-images:
 besu-docker-images:
 	docker pull $(BESU_IMAGE)
 
+.PHONY: fabricx-evm-docker-images
+# pull the fabric-x-evm docker image the EVM gateway integration suite runs against
+fabricx-evm-docker-images:
+	docker pull $(FABRICX_EVM_IMAGE)
+
 .PHONY: monitoring-docker-images
 # pull monitoring docker images (explorer, prometheus, grafana, jaeger)
 monitoring-docker-images:
@@ -129,6 +137,16 @@ integration-tests-evm: besu-docker-images
 # run the fungible integration tests against an EVM backend with the fabtoken driver.
 integration-tests-evm-fabtoken: besu-docker-images
 	cd ./integration/token/fungible/evmfabtoken; ginkgo $(GINKGO_TEST_OPTS) .
+
+.PHONY: integration-tests-evm-gateway
+# run the fungible integration tests against the fabric-x-evm gateway backend.
+integration-tests-evm-gateway: fabricx-evm-docker-images
+	cd ./integration/token/fungible/evmgw; ginkgo $(GINKGO_TEST_OPTS) .
+
+.PHONY: integration-tests-evm-gateway-fabtoken
+# run the fungible integration tests against the fabric-x-evm gateway backend with the fabtoken driver.
+integration-tests-evm-gateway-fabtoken: fabricx-evm-docker-images
+	cd ./integration/token/fungible/evmgwfabtoken; ginkgo $(GINKGO_TEST_OPTS) .
 
 .PHONY: integration-tests-nft-dlog
 # run nft integration tests with idemix
@@ -173,6 +191,10 @@ clean:
 	rm -rf ./integration/token/fungible/evm/testdata/
 	rm -rf ./integration/token/fungible/evmfabtoken/out/
 	rm -rf ./integration/token/fungible/evmfabtoken/testdata/
+	rm -rf ./integration/token/fungible/evmgw/out/
+	rm -rf ./integration/token/fungible/evmgw/testdata/
+	rm -rf ./integration/token/fungible/evmgwfabtoken/out/
+	rm -rf ./integration/token/fungible/evmgwfabtoken/testdata/
 	rm -rf ./integration/token/fungible/dloghsm/out/
 	rm -rf ./integration/token/fungible/dloghsm/testdata/
 	rm -rf ./integration/token/fungible/dlogstress/out/

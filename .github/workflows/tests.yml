@@ -237,7 +237,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        tests: [ evm, evm-fabtoken ]
+        tests: [ evm, evm-fabtoken, evm-gateway, evm-gateway-fabtoken ]
 
     steps:
       - name: Checkout code

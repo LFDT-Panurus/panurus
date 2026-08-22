@@ -25,10 +25,11 @@ type Platform struct {
 	topology *Topology
 }
 
-// Compile-time checks that the platform and its factory satisfy the infrastructure's contracts.
+// Compile-time checks that the platform and its factories satisfy the infrastructure's contracts.
 var (
 	_ api2.Platform        = (*Platform)(nil)
 	_ api2.PlatformFactory = (*PlatformFactory)(nil)
+	_ api2.PlatformFactory = (*GatewayPlatformFactory)(nil)
 )
 
 // PlatformFactory builds the EVM platform for a topology.
@@ -45,6 +46,25 @@ func (f *PlatformFactory) New(ctx api2.Context, t api2.Topology, _ api2.Builder)
 	topology, ok := t.(*Topology)
 	if !ok {
 		panic("evm nwo: the topology passed to the evm platform is not an evm topology")
+	}
+
+	return &Platform{context: ctx, topology: topology}
+}
+
+// GatewayPlatformFactory builds the EVM platform for a fabric-x-evm gateway topology (matched by Type = GatewayTopologyName).
+type GatewayPlatformFactory struct{}
+
+// NewGatewayPlatformFactory returns the platform factory for the fabric-x-evm gateway topology.
+func NewGatewayPlatformFactory() *GatewayPlatformFactory { return &GatewayPlatformFactory{} }
+
+// Name returns the platform type this factory serves.
+func (f *GatewayPlatformFactory) Name() string { return GatewayTopologyName }
+
+// New returns the platform for the given topology.
+func (f *GatewayPlatformFactory) New(ctx api2.Context, t api2.Topology, _ api2.Builder) api2.Platform {
+	topology, ok := t.(*Topology)
+	if !ok {
+		panic("evm nwo: the topology passed to the evm gateway platform is not an evm topology")
 	}
 
 	return &Platform{context: ctx, topology: topology}
