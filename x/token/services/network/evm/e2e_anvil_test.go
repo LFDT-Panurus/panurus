@@ -8,13 +8,18 @@ package evm
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/hex"
 	"encoding/json"
+	"io"
 	"math/big"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"os/exec"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -452,4 +457,112 @@ func TestRevertClassificationAgainstAnvil(t *testing.T) {
 		"a rejected transaction is permanent: the caller must re-derive it, not resend it")
 	assert.NotErrorIs(t, err, ErrNetworkUnavailable,
 		"classifying it as transient tells the caller to retry a transaction the chain will reject every time")
+}
+
+// lossyProxy forwards every JSON-RPC call to the node but swallows the reply to the first
+// eth_sendRawTransaction: the node accepts and mines the transaction, the caller sees a failure.
+// That is what a client-side timeout or a dropped connection looks like from the driver's side, and
+// it is the one step where "the broadcast failed" is not evidence the chain never took it.
+type lossyProxy struct {
+	target  string
+	swallow atomic.Int32
+}
+
+func (p *lossyProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+
+		return
+	}
+	resp, err := http.Post(p.target, "application/json", bytes.NewReader(body))
+	if err != nil {
+		w.WriteHeader(http.StatusBadGateway)
+
+		return
+	}
+	defer func() { _ = resp.Body.Close() }()
+	out, err := io.ReadAll(resp.Body)
+	if err != nil {
+		w.WriteHeader(http.StatusBadGateway)
+
+		return
+	}
+
+	if strings.Contains(string(body), "eth_sendRawTransaction") && p.swallow.Add(-1) >= 0 {
+		// The node has the transaction. The caller will not hear that.
+		w.WriteHeader(http.StatusGatewayTimeout)
+
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_, _ = w.Write(out)
+}
+
+// TestSubmitterRecoversFromALostBroadcastReply is a production failure reproduced against a real node.
+//
+// One broadcast whose reply is lost, an ordinary timeout or a dropped connection, used to wedge the
+// submitting account permanently. The chain had mined the transaction, so the nonce was spent, but the
+// driver saw a failure and kept reissuing that same nonce. Every later transaction failed "nonce too
+// low", and because that is also a failed broadcast the manager never re-read the chain to find out.
+// Only restarting the process recovered, and the failures were reported as ErrNetworkUnavailable, so a
+// caller obeying the contract retried forever.
+//
+// It runs through a proxy rather than a fake so the node genuinely accepts and mines the transaction
+// the driver believes it failed to send. A fake cannot produce that disagreement, which is the whole
+// bug.
+func TestSubmitterRecoversFromALostBroadcastReply(t *testing.T) {
+	node := startAnvil(t)
+
+	proxy := &lossyProxy{target: node}
+	proxy.swallow.Store(1)
+	srv := httptest.NewServer(proxy)
+	t.Cleanup(srv.Close)
+
+	keyBytes, err := hex.DecodeString(anvilKey1)
+	require.NoError(t, err)
+
+	viaProxy, err := client.NewJSONRPCClient(srv.URL, nil)
+	require.NoError(t, err)
+	direct, err := client.NewJSONRPCClient(node, nil)
+	require.NoError(t, err)
+
+	// A plain account as the target, with a fixed gas limit so nothing is estimated: every call is a
+	// mined, successful transaction that consumes a nonce, which is all the nonce question needs.
+	target, err := client.HexToAddress("0x000000000000000000000000000000000000dEaD")
+	require.NoError(t, err)
+	submitter, err := NewSubmitter(viaProxy, secp256k1.PrivKeyFromBytes(keyBytes), target,
+		big.NewInt(testChainID), GasConfig{Strategy: GasStrategyFixed, Limit: 200_000})
+	require.NoError(t, err)
+
+	send := func(n byte) error {
+		var anchor [32]byte
+		anchor[31] = n
+		_, _, err := submitter.Submit(t.Context(), &statedelta.StateDelta{
+			Anchor: anchor,
+			Outputs: []statedelta.OutputToken{{
+				TokenID: keys.ComputeTokenID(anchor, 0), TokenData: []byte{n},
+			}},
+			TokenRequestHash:    sha256Of("request"),
+			PublicParamsHash:    sha256Of("pp"),
+			PublicParamsVersion: 0,
+		}, [][]byte{make([]byte, 65)})
+
+		return err
+	}
+	chainNonce := func() uint64 {
+		n, err := direct.PendingNonceAt(t.Context(), submitter.Address())
+		require.NoError(t, err)
+
+		return n
+	}
+
+	require.Error(t, send(0x01), "the swallowed reply must surface as a failed broadcast")
+	require.Equal(t, uint64(1), chainNonce(), "but the chain did take the transaction")
+
+	// The account has to keep working. Before the fix every one of these failed "nonce too low".
+	for _, n := range []byte{0x02, 0x03, 0x04} {
+		require.NoError(t, send(n), "the submitter must recover its nonce from the chain, not wedge")
+	}
+	assert.Equal(t, uint64(4), chainNonce(), "every later transaction reached the chain")
 }
