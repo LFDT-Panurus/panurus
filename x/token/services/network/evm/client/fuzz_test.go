@@ -9,6 +9,7 @@ package client
 import (
 	"bytes"
 	"encoding/json"
+	"math/big"
 	"strings"
 	"testing"
 )
@@ -202,6 +203,51 @@ func FuzzJSONReceiptToReceipt(f *testing.F) {
 		}
 		for i := range j.Logs {
 			assertLogMatchesRaw(t, receipt.Logs[i], j.Logs[i])
+		}
+	})
+}
+
+// FuzzParseHexQuantities fuzzes the two JSON-RPC hex-quantity decoders.
+//
+// Every numeric field a node reports arrives through one of these: chain id, base fee, suggested tip,
+// gas estimate, nonce, block number, receipt status. They are the driver's most-used wire decoders and
+// the node's answer is not something the driver gets to check first.
+//
+// The property is that they agree on what a quantity is. parseHexUint refuses a signed value through
+// strconv.ParseUint, but big.Int.SetString accepts one, so parseHexBig used to return a negative for
+// "0x-5". That mattered: a negative fee reaches rlpBigInt, which encodes magnitude and drops the sign,
+// so the transaction would be signed for a value the driver never computed. A parsed quantity must
+// therefore never be negative, and neither decoder may panic on anything.
+func FuzzParseHexQuantities(f *testing.F) {
+	for _, seed := range []string{
+		"0x0", "0x1", "0x7a69", "0xff",
+		"", "0x", "0X", "0x0000000000000000000000000000000000000000000000000000000000000005",
+		"0x-5", "0x+5", "0X-1", // signed: rejected by parseHexUint, once accepted by parseHexBig
+		"0xzz", "0x_5", "0x 5", "-0x5", "5", "0xffffffffffffffffff", // overflows uint64, fine for big
+	} {
+		f.Add(seed)
+	}
+
+	f.Fuzz(func(t *testing.T, raw string) {
+		if v, err := parseHexBig(raw); err == nil {
+			if v == nil {
+				t.Fatalf("parseHexBig(%q) returned no value and no error", raw)
+			}
+			if v.Sign() < 0 {
+				t.Fatalf("parseHexBig(%q) returned the negative quantity %s; quantities are unsigned", raw, v)
+			}
+		}
+
+		// Whatever parseHexUint accepts, parseHexBig must accept and agree on, since the two decode the
+		// same wire form and callers pick between them only by the width they need.
+		if u, err := parseHexUint(raw); err == nil {
+			b, err := parseHexBig(raw)
+			if err != nil {
+				t.Fatalf("parseHexUint(%q) accepted %d but parseHexBig rejected it: %v", raw, u, err)
+			}
+			if b.Cmp(new(big.Int).SetUint64(u)) != 0 {
+				t.Fatalf("parseHexUint(%q)=%d disagrees with parseHexBig=%s", raw, u, b)
+			}
 		}
 	})
 }

@@ -603,10 +603,19 @@ func parseHexUint(s string) (uint64, error) {
 }
 
 // parseHexBig parses a 0x/0X-prefixed hex quantity into a big.Int.
+//
+// A JSON-RPC quantity is an unsigned integer, so a leading sign is rejected rather than parsed.
+// big.Int.SetString accepts "-5" and "+5" happily, which would let a node hand back a negative base
+// fee or tip; those flow into the signed transaction, where rlpBigInt encodes a value's magnitude and
+// would drop the sign silently, signing a fee the driver did not compute. parseHexUint already
+// refuses both, via strconv.ParseUint, so this only brings the big.Int path to the same strictness.
 func parseHexBig(s string) (*big.Int, error) {
 	trimmed := trimHexPrefix(s)
 	if trimmed == "" {
 		return nil, errors.Errorf("empty hex quantity")
+	}
+	if trimmed[0] == '-' || trimmed[0] == '+' {
+		return nil, errors.Errorf("invalid hex quantity [%s]: quantities are unsigned", s)
 	}
 	v, ok := new(big.Int).SetString(trimmed, 16)
 	if !ok {
