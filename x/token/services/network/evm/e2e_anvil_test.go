@@ -448,7 +448,7 @@ func TestRevertClassificationAgainstAnvil(t *testing.T) {
 	})
 
 	require.Error(t, err, "the chain must reject a bundle from an unregistered endorser")
-	assert.ErrorIs(t, err, ErrTransactionReverted,
+	require.ErrorIs(t, err, ErrTransactionReverted,
 		"a rejected transaction is permanent: the caller must re-derive it, not resend it")
 	assert.NotErrorIs(t, err, ErrNetworkUnavailable,
 		"classifying it as transient tells the caller to retry a transaction the chain will reject every time")

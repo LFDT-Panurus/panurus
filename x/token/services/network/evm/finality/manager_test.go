@@ -244,13 +244,43 @@ func TestListenerNotifiedExactlyOnce(t *testing.T) {
 	assert.Equal(t, 1, listener.notified, "a listener must be notified exactly once")
 }
 
-// TestAddListenerRejectsDuplicateWatch checks the manager does not spawn two watchers for one anchor.
-func TestAddListenerRejectsDuplicateWatch(t *testing.T) {
-	m := fastManager(&mock.EVMClient{}, &stubState{}, time.Second)
+// TestAddListenerJoinsAnExistingWatch checks a second listener for one anchor joins the watch already
+// running: it is accepted, it is notified, and it does not start a second poller.
+//
+// The manager used to refuse it. That failed the caller outright, and both registration sites in the
+// token layer treat the failure as fatal, so a node that owns a transaction (registering through the
+// ttx store) and also audits it (registering again through the audit store) had its second Append
+// fail and never wrote the audit record. The Fabric driver's listener manager appends listeners for
+// exactly this reason.
+//
+// Not spawning a second watcher, which is what the refusal was really protecting, still holds: watch
+// is started only for an anchor that had no entry, so one entry holding both listeners is what "one
+// watcher" means here.
+func TestAddListenerJoinsAnExistingWatch(t *testing.T) {
+	state := &stubState{}
+	m := fastManager(&mock.EVMClient{}, state, 5*time.Second)
 
-	require.NoError(t, m.AddListener(t.Context(), anchor(0x01), "anchor-1", newRecordingListener()))
-	err := m.AddListener(t.Context(), anchor(0x01), "anchor-1", newRecordingListener())
-	require.Error(t, err)
+	owner, auditor := newRecordingListener(), newRecordingListener()
+	require.NoError(t, m.AddListener(t.Context(), anchor(0x01), "anchor-1", owner))
+	require.NoError(t, m.AddListener(t.Context(), anchor(0x01), "anchor-1", auditor),
+		"a node that both owns and audits one transaction registers for it twice")
+
+	m.mu.Lock()
+	waiting, entries := len(m.pending["anchor-1"]), len(m.pending)
+	m.mu.Unlock()
+	assert.Equal(t, 2, waiting, "both listeners must be waiting on the one anchor")
+	assert.Equal(t, 1, entries, "and there must be exactly one watch")
+
+	state.apply([]byte("tr-hash"))
+	owner.wait(t)
+	auditor.wait(t)
+
+	for name, l := range map[string]*recordingListener{"owner": owner, "auditor": auditor} {
+		l.mu.Lock()
+		assert.Equal(t, driver.Valid, l.status, "%s must see the transaction as valid", name)
+		assert.Equal(t, 1, l.notified, "%s must be notified exactly once", name)
+		l.mu.Unlock()
+	}
 }
 
 func TestAddListenerRejectsNil(t *testing.T) {
