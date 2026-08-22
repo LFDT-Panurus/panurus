@@ -53,3 +53,23 @@ func TestRemoveContainerToleratesAFailedStop(t *testing.T) {
 	assert.NotPanics(t, func() { removeContainer(node) })
 	assert.Equal(t, 1, node.stopped)
 }
+
+// TestCleanupStopsASharedNodeOnce pins that teardown removes each container once rather than once per
+// TMS. startNode hands every TMS on a network the same Node, so a per-entry Stop removes the same
+// container repeatedly and reports every removal past the first as a failure, which reads as a broken
+// teardown when the teardown in fact worked.
+func TestCleanupStopsASharedNodeOnce(t *testing.T) {
+	shared := &stubNode{}
+	handler := &NetworkHandler{Entries: map[string]*Entry{
+		"tms-a": {Node: shared},
+		"tms-b": {Node: shared},
+		"tms-c": {Node: shared},
+	}}
+
+	handler.Cleanup()
+
+	assert.Equal(t, 1, shared.stopped, "one container, one removal")
+	for id, entry := range handler.Entries {
+		assert.Nil(t, entry.Node, "entry [%s] must be cleared", id)
+	}
+}

@@ -359,13 +359,22 @@ func (p *NetworkHandler) UpdatePublicParams(tms *topology2.TMS, ppRaw []byte) {
 }
 
 // Cleanup stops the chain.
+//
+// Every TMS on one network shares a Node, because startNode reuses the first one brought up rather
+// than booting a container per TMS. Stopping per entry would therefore remove the same container once
+// per TMS and report every removal past the first as a failure, so a healthy multi-TMS teardown
+// printed warnings about a container that had in fact been removed correctly.
 func (p *NetworkHandler) Cleanup() {
+	stopped := make(map[Node]struct{}, len(p.Entries))
 	for _, entry := range p.Entries {
 		if entry.Node == nil {
 			continue
 		}
-		if err := entry.Node.Stop(context.Background()); err != nil {
-			logger.Warnf("failed to stop the EVM node: %v", err)
+		if _, done := stopped[entry.Node]; !done {
+			stopped[entry.Node] = struct{}{}
+			if err := entry.Node.Stop(context.Background()); err != nil {
+				logger.Warnf("failed to stop the EVM node: %v", err)
+			}
 		}
 		entry.Node = nil
 	}
