@@ -56,8 +56,8 @@ type Watcher struct {
 	mu      sync.Mutex
 	cancel  context.CancelFunc
 	stopped chan struct{}
-	// seen is the last version handed to the handler. It starts unset so the first observation
-	// establishes a baseline instead of replaying the parameters the node already started with.
+	// seen is the last version successfully applied by the handler. It starts unset, and the first
+	// observation is applied rather than merely recorded: see poll.
 	seen    uint64
 	hasSeen bool
 }
@@ -135,9 +135,18 @@ func (w *Watcher) run(ctx context.Context, stopped chan struct{}) {
 	}
 }
 
-// poll checks the version once and, if it moved, reads the new parameters and calls the handler. A
-// failed read is logged and retried on the next tick rather than ending the watch: the node is worse
-// off with stale parameters, but far worse off if a transient RPC error stopped it noticing forever.
+// poll checks the version and, if it is not the one already applied, reads the parameters and calls
+// the handler. A failed read is logged and retried on the next tick rather than ending the watch: the
+// node is worse off with stale parameters, but far worse off if a transient RPC error stopped it
+// noticing forever.
+//
+// The very first observation is applied rather than taken as a baseline. It used to be recorded
+// silently, on the reasoning that the node already has whatever the chain has, but that is exactly
+// what is not true after a restart: the token layer resolves public parameters from its own storage
+// before it ever asks the chain (see loadPublicParams), so a node that was down when an update landed
+// comes back holding the old parameters, and a watcher that only reports later changes would leave it
+// there indefinitely. Applying the first observation costs nothing when the two already agree, because
+// the handler is a no-op for parameters the node is already running.
 func (w *Watcher) poll(ctx context.Context) {
 	w.versions.Invalidate()
 	version, err := w.versions.GetVersion(ctx)
@@ -149,12 +158,9 @@ func (w *Watcher) poll(ctx context.Context) {
 
 	w.mu.Lock()
 	seen, hasSeen := w.seen, w.hasSeen
-	if !hasSeen {
-		w.seen, w.hasSeen = version, true
-	}
 	w.mu.Unlock()
 
-	if !hasSeen || version == seen {
+	if hasSeen && version == seen {
 		return
 	}
 
@@ -178,7 +184,7 @@ func (w *Watcher) poll(ctx context.Context) {
 	// Record what was actually applied rather than what the version poll reported. They can differ if
 	// another update landed in between, and the parameters are the thing that matters.
 	w.mu.Lock()
-	w.seen = actual
+	w.seen, w.hasSeen = actual, true
 	w.mu.Unlock()
 	logger.Infof("public parameters updated to version %d", actual)
 }
