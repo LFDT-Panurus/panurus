@@ -7,7 +7,6 @@ SPDX-License-Identifier: Apache-2.0
 package fabricx
 
 import (
-	"fmt"
 	"time"
 
 	"github.com/LFDT-Panurus/panurus/integration/nwo/token/fabric"
@@ -42,7 +41,7 @@ func (b *Backend) PrepareNamespace(tms *tokentopology.TMS) {
 
 		addNamespace(n.Topology, tms, orgs...)
 	default:
-		panic(fmt.Sprintf("unknown backend network type %T", n))
+		gomega.Expect(false).To(gomega.BeTrue(), "unknown backend network type %T", n)
 	}
 }
 
