@@ -239,6 +239,14 @@ const (
 // malformed response - says nothing about the transaction and has to be retried instead.
 var ErrExecutionReverted = errors.New("execution reverted")
 
+// ErrTransactionRejected marks a transaction the node refused to accept for submission at all: it
+// never entered the mempool, so it consumed no nonce and cost nothing.
+//
+// This is a permanent answer about this transaction, and the ordinary way to meet it in production is
+// the account that pays for gas running out of funds. It is separate from ErrExecutionReverted, which
+// is the chain judging what the transaction would do; this is the node declining to carry it.
+var ErrTransactionRejected = errors.New("transaction rejected by the node")
+
 // isReverted reports whether a JSON-RPC error is a revert.
 //
 // Getting this wrong is not cosmetic. A revert is the chain rejecting the transaction, which is
@@ -374,11 +382,44 @@ func (c *JSONRPCClient) suggestTip(ctx context.Context, baseFee *big.Int) (*big.
 // SendRawTransaction submits a signed, RLP-encoded transaction and returns its hash.
 func (c *JSONRPCClient) SendRawTransaction(ctx context.Context, rawTx []byte) (Hash, error) {
 	var out string
-	if err := c.call(ctx, "eth_sendRawTransaction", &out, encodeHexBytes(rawTx)); err != nil {
+	rpcErr, err := c.invoke(ctx, "eth_sendRawTransaction", &out, encodeHexBytes(rawTx))
+	if rpcErr != nil {
+		// A JSON-RPC error response is the node telling us it looked at the transaction and would not
+		// take it. That is a different thing from failing to reach the node, which arrives as a
+		// transport error instead, and the two want opposite responses from the caller: one is worth
+		// retrying and the other never will be.
+		//
+		// The nonce is the exception. "nonce too low", a replacement that is underpriced, or a
+		// transaction the pool already holds are all refusals that say the local nonce is wrong rather
+		// than the transaction is, and re-reading it from the chain is exactly what fixes them. Those
+		// stay in the retryable class so the nonce manager gets its chance.
+		if isNonceRelated(rpcErr.Message) {
+			return Hash{}, errors.Wrapf(rpcErr, "eth_sendRawTransaction failed")
+		}
+
+		return Hash{}, errors.Wrapf(ErrTransactionRejected,
+			"eth_sendRawTransaction failed: %s", rpcErr.Message)
+	}
+	if err != nil {
 		return Hash{}, err
 	}
 
 	return HexToHash(out)
+}
+
+// isNonceRelated reports whether a refusal is about the nonce rather than the transaction.
+//
+// Matching on the message is unavoidable: nodes return these under the same implementation-defined
+// codes they use for everything else, so the code cannot separate them. Getting it wrong in this
+// direction is the safe one, because it only means a refusal is retried a few times before the
+// caller gives up rather than being reported as permanent immediately.
+func isNonceRelated(message string) bool {
+	m := strings.ToLower(message)
+
+	return strings.Contains(m, "nonce") ||
+		strings.Contains(m, "already known") ||
+		strings.Contains(m, "already imported") ||
+		strings.Contains(m, "replacement transaction underpriced")
 }
 
 // GetTransactionReceipt returns the receipt for txHash, or (nil, nil) if it is not yet mined.

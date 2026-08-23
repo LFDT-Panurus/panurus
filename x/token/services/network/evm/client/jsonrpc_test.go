@@ -669,3 +669,53 @@ func TestSuggestGasFeesStopsWaitingOnACancelledContext(t *testing.T) {
 	require.Error(t, err)
 	assert.LessOrEqual(t, *calls, 1, "a cancelled caller should not be kept waiting through the retries")
 }
+
+// TestSendRawTransactionClassifiesARefusal pins the split that matters at broadcast time: a node that
+// judged the transaction and refused it is permanent, and a transaction that never entered the pool
+// consumed no nonce.
+func TestSendRawTransactionClassifiesARefusal(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		message  string
+		rejected bool
+	}{
+		{"insufficient funds", "insufficient funds for gas * price + value", true},
+		{"intrinsic gas too low", "intrinsic gas too low", true},
+		{"exceeds block gas limit", "exceeds block gas limit", true},
+		{"oversized data", "oversized data", true},
+		// The nonce cases stay retryable: they say the local nonce is wrong rather than the
+		// transaction is, and re-reading it from the chain is what fixes them.
+		{"nonce too low", "nonce too low", false},
+		{"nonce too high", "nonce too high", false},
+		{"already known", "already known", false},
+		{"replacement underpriced", "replacement transaction underpriced", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, _ := newTestServer(t, nil)
+			c.endpoint = errorServer(t, -32000, tc.message)
+
+			_, err := c.SendRawTransaction(context.Background(), []byte{0x02, 0x01})
+			require.Error(t, err)
+			assert.Equal(t, tc.rejected, errors.Is(err, ErrTransactionRejected),
+				"a refusal the node will repeat is permanent; one about the nonce is not")
+			assert.Contains(t, err.Error(), tc.message, "the node's own words are what a human debugs from")
+		})
+	}
+}
+
+// errorServer starts a server that answers every request with one JSON-RPC error.
+func errorServer(t *testing.T, code int, message string) string {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		body, err := json.Marshal(map[string]any{
+			"jsonrpc": "2.0", "id": 1,
+			"error": map[string]any{"code": code, "message": message},
+		})
+		assert.NoError(t, err)
+		_, _ = w.Write(body)
+	}))
+	t.Cleanup(srv.Close)
+
+	return srv.URL
+}

@@ -10,6 +10,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
 	"io"
@@ -24,6 +25,7 @@ import (
 	"time"
 
 	"github.com/decred/dcrd/dcrec/secp256k1/v4"
+	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -565,4 +567,65 @@ func TestSubmitterRecoversFromALostBroadcastReply(t *testing.T) {
 		require.NoError(t, send(n), "the submitter must recover its nonce from the chain, not wedge")
 	}
 	assert.Equal(t, uint64(4), chainNonce(), "every later transaction reached the chain")
+}
+
+// TestBroadcastRejectionIsClassifiedAgainstAnvil covers the other half of the classification the
+// revert test covers for gas estimation: a node that refuses the transaction outright.
+//
+// A broadcast can fail for two very different reasons. The node may be unreachable, in which case the
+// transaction is still good and the caller should retry. Or the node may have looked at the
+// transaction and refused it permanently, as it does when the sender cannot pay for the gas. Retrying
+// that second kind never succeeds, so reporting it as transient asks the caller to loop forever on a
+// transaction the chain will never take.
+//
+// The submitting account here holds nothing at all, which is the ordinary way this happens in
+// production: the account that pays for gas runs dry.
+func TestBroadcastRejectionIsClassifiedAgainstAnvil(t *testing.T) {
+	node := startAnvil(t)
+
+	evmClient, err := client.NewJSONRPCClient(node, nil)
+	require.NoError(t, err)
+
+	// A key anvil has never heard of, so the account holds a zero balance.
+	var brokeKey [32]byte
+	_, err = rand.Read(brokeKey[:])
+	require.NoError(t, err)
+	key := secp256k1.PrivKeyFromBytes(brokeKey[:])
+
+	target, err := client.HexToAddress("0x000000000000000000000000000000000000dEaD")
+	require.NoError(t, err)
+
+	// A fixed gas limit keeps estimation out of it: the only thing under test is how the node's
+	// refusal at broadcast time is classified.
+	submitter, err := NewSubmitter(evmClient, key, target, big.NewInt(testChainID),
+		GasConfig{Strategy: GasStrategyFixed, Limit: 200_000})
+	require.NoError(t, err)
+
+	var anchor [32]byte
+	anchor[31] = 0x01
+	_, _, err = submitter.Submit(t.Context(), &statedelta.StateDelta{
+		Anchor: anchor,
+		Outputs: []statedelta.OutputToken{{
+			TokenID: keys.ComputeTokenID(anchor, 0), TokenData: []byte{0x01},
+		}},
+		TokenRequestHash:    sha256Of("request"),
+		PublicParamsHash:    sha256Of("pp"),
+		PublicParamsVersion: 0,
+	}, [][]byte{make([]byte, 65)})
+
+	require.Error(t, err)
+	t.Logf("node said: %v", err)
+
+	assert.False(t, errors.Is(err, ErrNetworkUnavailable),
+		"an account that cannot pay for gas is a permanent refusal, not an unreachable node: "+
+			"reporting it as transient makes the caller retry a transaction the chain will never take")
+	assert.True(t, errors.Is(err, ErrTransactionRejected), "and it is the node declining to carry it")
+	assert.True(t, errors.Is(err, ErrTransactionReverted),
+		"joined with the original permanent class, so a caller that knows only those two still maps it to Invalid")
+	assert.False(t, errors.Is(err, ErrNonceMayBeConsumed),
+		"a transaction the node never accepted cannot have consumed a nonce")
+
+	// The node's own words have to survive: they are what an operator debugs from, and "insufficient
+	// funds" is the difference between topping up an account and looking for a bug.
+	assert.Contains(t, strings.ToLower(err.Error()), "insufficient funds")
 }
