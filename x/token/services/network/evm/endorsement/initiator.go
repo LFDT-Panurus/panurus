@@ -8,6 +8,8 @@ package endorsement
 
 import (
 	"context"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
@@ -21,6 +23,9 @@ import (
 
 // responseTimeout bounds how long the initiator waits for one endorser's reply.
 const responseTimeout = 30 * time.Second
+
+// maxReportedDeclines bounds how many per-endorser reasons a failed collection spells out.
+const maxReportedDeclines = 5
 
 // Result is what a completed endorsement yields: the delta to apply and the collected quorum of
 // signatures over its EIP-712 digest. The driver's RequestApproval wraps it into the network
@@ -124,6 +129,10 @@ func (i *Initiator) Collect(ctx context.Context, endorse func(view.Identity) (*E
 	}
 
 	agreed := make(map[[32]byte]*agreement, 1)
+	// Why each endorser did not contribute, kept so a failed collection can say what went wrong
+	// rather than only how many were missing. The five paths below are five different operational
+	// problems and they are indistinguishable from the count alone.
+	declined := make([]string, 0, len(i.registry.Identities()))
 	for _, party := range i.registry.Identities() {
 		if err := ctx.Err(); err != nil {
 			return nil, errors.Wrap(err, "endorsement collection interrupted")
@@ -132,16 +141,19 @@ func (i *Initiator) Collect(ctx context.Context, endorse func(view.Identity) (*E
 		resp, err := endorse(party)
 		if err != nil {
 			logger.Debugf("endorser [%s] did not respond: %v", party, err)
+			declined = append(declined, party.String()+" did not respond: "+err.Error())
 
 			continue
 		}
 		if err := resp.Error(); err != nil {
 			logger.Debugf("endorser [%s] declined: %v", party, err)
+			declined = append(declined, party.String()+" declined: "+err.Error())
 
 			continue
 		}
 		if err := i.bind(anchor, resp.Delta); err != nil {
 			logger.Debugf("discarding delta from [%s]: %v", party, err)
+			declined = append(declined, party.String()+" returned an unusable delta: "+err.Error())
 
 			continue
 		}
@@ -150,6 +162,7 @@ func (i *Initiator) Collect(ctx context.Context, endorse func(view.Identity) (*E
 		signer, err := i.verify(digest, resp.Signature)
 		if err != nil {
 			logger.Debugf("discarding signature from [%s]: %v", party, err)
+			declined = append(declined, party.String()+" returned an unusable signature: "+err.Error())
 
 			continue
 		}
@@ -168,6 +181,7 @@ func (i *Initiator) Collect(ctx context.Context, endorse func(view.Identity) (*E
 		}
 		if _, dup := quorum.signers[signer]; dup {
 			logger.Debugf("discarding duplicate signature recovered to [%s]", signer)
+			declined = append(declined, party.String()+" signed as already-counted endorser "+signer)
 
 			continue
 		}
@@ -179,7 +193,7 @@ func (i *Initiator) Collect(ctx context.Context, endorse func(view.Identity) (*E
 		}
 	}
 
-	return nil, noQuorum(agreed, i.threshold)
+	return nil, noQuorum(agreed, i.threshold, declined)
 }
 
 // bind checks that a returned delta belongs to the request this initiator sent, using only what can be
@@ -219,7 +233,13 @@ func (i *Initiator) verify(digest [32]byte, sig []byte) (string, error) {
 // noQuorum reports why the collection ended without one. It separates too few endorsements from
 // endorsers that answered but disagreed on the delta, because the second is a determinism failure in
 // the translator and needs a different fix than an endorser that was simply unavailable.
-func noQuorum(agreed map[[32]byte]*agreement, threshold int) error {
+//
+// The per-endorser reasons are carried into the message rather than left in debug logs. "collected 0
+// of 3" is the same sentence whether the endorsers were unreachable, declined the request, returned a
+// delta for a different anchor, or signed with a key the registry does not know, and those are four
+// different things to go and fix. An operator reading this error is usually not in a position to
+// reproduce it at debug level.
+func noQuorum(agreed map[[32]byte]*agreement, threshold int, declined []string) error {
 	best := 0
 	for _, quorum := range agreed {
 		if len(quorum.signatures) > best {
@@ -228,9 +248,29 @@ func noQuorum(agreed map[[32]byte]*agreement, threshold int) error {
 	}
 	if len(agreed) > 1 {
 		return errors.Wrapf(errors.Join(ErrInsufficientEndorsements, ErrDivergentDeltas),
-			"endorsers signed %d distinct deltas, the largest agreement had %d of %d required",
-			len(agreed), best, threshold)
+			"endorsers signed %d distinct deltas, the largest agreement had %d of %d required%s",
+			len(agreed), best, threshold, because(declined))
 	}
 
-	return errors.Wrapf(ErrInsufficientEndorsements, "collected %d of %d required", best, threshold)
+	return errors.Wrapf(ErrInsufficientEndorsements,
+		"collected %d of %d required%s", best, threshold, because(declined))
+}
+
+// because renders the collected decline reasons as a suffix, or nothing at all when there are none.
+//
+// The list is bounded: a large endorser set that is failing wholesale would otherwise put an
+// unbounded, highly repetitive string into an error that gets wrapped and logged repeatedly. The
+// first few reasons are what identifies the problem; the rest are almost always the same again.
+func because(declined []string) string {
+	if len(declined) == 0 {
+		return ""
+	}
+	shown := declined
+	suffix := ""
+	if len(shown) > maxReportedDeclines {
+		shown = shown[:maxReportedDeclines]
+		suffix = ", and " + strconv.Itoa(len(declined)-maxReportedDeclines) + " more"
+	}
+
+	return " (" + strings.Join(shown, "; ") + suffix + ")"
 }
