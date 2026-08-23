@@ -9,7 +9,9 @@ package identity_test
 import (
 	"context"
 	"errors"
+	"reflect"
 	"testing"
+	"unsafe"
 
 	"github.com/LFDT-Panurus/panurus/token/driver"
 	drvmock "github.com/LFDT-Panurus/panurus/token/driver/mock"
@@ -206,6 +208,73 @@ func TestProvider_GetAuditInfo(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, audit, ai)
 	require.Equal(t, 1, storage.GetAuditInfoCallCount())
+}
+
+// tombstoneSigner reproduces the state FSC's secondcache.Delete leaves behind: the signers-cache
+// key for id survives, but its stored *SignerEntry is zeroed to nil, so a later Get returns
+// (nil, true). The signers cache is an unexported field of Provider with no public invalidation
+// API, so from this black-box test package the only way to create the tombstone is to reach the
+// field via reflection and invoke its exported Delete. The reflect.NewAt+UnsafeAddr dance strips
+// the read-only flag that reflection puts on values read from unexported fields, making the
+// interface value callable.
+func tombstoneSigner(t *testing.T, p *identity.Provider, id driver.Identity) {
+	t.Helper()
+	field := reflect.ValueOf(p).Elem().FieldByName("signers")
+	field = reflect.NewAt(field.Type(), unsafe.Pointer(field.UnsafeAddr())).Elem()
+	field.MethodByName("Delete").Call([]reflect.Value{reflect.ValueOf(id.UniqueID())})
+}
+
+// TestProvider_GetSigner_TombstonedCacheEntryIsMiss reproduces the latent nil-pointer footgun
+// behind issue #2065: FSC's secondcache.Delete does not remove the key, it zeroes the stored value
+// in place, so a later Get returns (nil, true). getSignerAndCache must treat that nil entry as a
+// cache miss and re-resolve, rather than dereferencing entry.Signer on a nil *SignerEntry (which
+// panicked before the fix).
+func TestProvider_GetSigner_TombstonedCacheEntryIsMiss(t *testing.T) {
+	storage := &idmock.Storage{}
+	des := &idmock.Deserializer{}
+	nbs := &idmock.NetworkBinderService{}
+	eidu := &idmock.EnrollmentIDUnmarshaler{}
+
+	p := identity.NewProvider(logging.MustGetLogger(), storage, des, nbs, eidu, nil)
+
+	id := driver.Identity("an_identity")
+	expected := &drvmock.Signer{}
+	des.DeserializeSignerReturns(expected, nil)
+	storage.StoreSignerInfoReturns(nil)
+
+	// first resolution caches the signer under id
+	s, err := p.GetSigner(t.Context(), id)
+	require.NoError(t, err)
+	require.Equal(t, expected, s)
+
+	// simulate FSC secondcache.Delete: the key survives with a nil value, so the next Get is a
+	// (nil, true) tombstone
+	tombstoneSigner(t, p, id)
+
+	// must not panic; the tombstone is treated as a miss and the signer is re-resolved
+	s, err = p.GetSigner(t.Context(), id)
+	require.NoError(t, err)
+	require.Equal(t, expected, s)
+}
+
+// TestProvider_GetSigner_NilSignerReturnsError checks the defense-in-depth guard: when resolution
+// yields a nil signer without an error (e.g. a deserializer that returns (nil, nil)), GetSigner
+// returns an error instead of propagating a nil signer that would panic on the caller's first Sign.
+func TestProvider_GetSigner_NilSignerReturnsError(t *testing.T) {
+	storage := &idmock.Storage{}
+	des := &idmock.Deserializer{}
+	nbs := &idmock.NetworkBinderService{}
+	eidu := &idmock.EnrollmentIDUnmarshaler{}
+
+	p := identity.NewProvider(logging.MustGetLogger(), storage, des, nbs, eidu, nil)
+
+	// deserializer succeeds but hands back a nil signer
+	des.DeserializeSignerReturns(nil, nil)
+	storage.StoreSignerInfoReturns(nil)
+
+	s, err := p.GetSigner(t.Context(), driver.Identity("an_identity"))
+	require.Error(t, err)
+	assert.Nil(t, s)
 }
 
 // fakeSignerDeserializer is a minimal idriver.SignerDeserializer for router registration in

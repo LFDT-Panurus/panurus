@@ -176,6 +176,13 @@ func (p *Provider) GetSigner(ctx context.Context, identity driver.Identity) (dri
 	if err != nil {
 		return nil, errors.Wrapf(err, "failed to get signer for identity [%s], it is neither register nor deserialazable", identity.String())
 	}
+	if signer == nil {
+		// Defense in depth: no resolution path may report success with a nil signer. Returning
+		// (nil, nil) here would defer the failure to the caller's first Sign() call, panicking far
+		// from the actual cause. See getSignerAndCache for the cache-tombstone case that makes a
+		// nil signer reachable.
+		return nil, errors.Errorf("no signer available for identity [%s]", identity.String())
+	}
 
 	return signer, nil
 }
@@ -296,8 +303,11 @@ func (p *Provider) getSigner(ctx context.Context, identity driver.Identity, idHa
 // unchanged rather than overwritten, since that recursion is an implementation detail of the
 // fallback resolution, not a resolution of its own.
 func (p *Provider) getSignerAndCache(ctx context.Context, identity driver.Identity, idHash string, shouldCache bool) (driver.Signer, bool, string, error) {
-	// check cache
-	if entry, ok := p.signers.Get(idHash); ok {
+	// check cache. A cache hit carrying a nil entry is a tombstone left by secondcache.Delete,
+	// which zeroes the stored value in place rather than removing the key, so a later Get returns
+	// (nil, true). Treat that as a miss and re-resolve, instead of dereferencing entry.Signer on a
+	// nil *SignerEntry and panicking.
+	if entry, ok := p.signers.Get(idHash); ok && entry != nil {
 		p.Logger.DebugfContext(ctx, "signer for [%s] found", idHash)
 
 		return entry.Signer, false, "cache", nil
