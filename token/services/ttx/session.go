@@ -41,7 +41,6 @@ func NewLocalBidirectionalChannel(ctx context.Context, caller string, contextID 
 
 	return &LocalBidirectionalChannel{
 		left: &localSession{
-			ctx:          ctx,
 			name:         "left",
 			contextID:    contextID,
 			caller:       caller,
@@ -50,7 +49,6 @@ func NewLocalBidirectionalChannel(ctx context.Context, caller string, contextID 
 			writeChannel: lr,
 		},
 		right: &localSession{
-			ctx:          ctx,
 			name:         "right",
 			contextID:    contextID,
 			caller:       caller,
@@ -74,8 +72,6 @@ func (c *LocalBidirectionalChannel) RightSession() view.Session {
 // localSession is a local session that is used to simulate a session between two views.
 // It has a read channel and a write channel.
 type localSession struct {
-	//nolint:containedctx // default context for the Send/SendError convenience wrappers; explicit *WithContext variants exist alongside
-	ctx          context.Context
 	name         string
 	contextID    string
 	caller       string
@@ -88,19 +84,11 @@ func (s *localSession) Info() view.SessionInfo {
 	return s.info
 }
 
-func (s *localSession) Send(payload []byte) error {
-	return s.SendWithContext(s.ctx, payload)
-}
-
-func (s *localSession) SendWithContext(ctx context.Context, payload []byte) error {
+func (s *localSession) Send(ctx context.Context, payload []byte) error {
 	return s.send(ctx, payload, view.OK)
 }
 
-func (s *localSession) SendError(payload []byte) error {
-	return s.SendErrorWithContext(s.ctx, payload)
-}
-
-func (s *localSession) SendErrorWithContext(ctx context.Context, payload []byte) error {
+func (s *localSession) SendError(ctx context.Context, payload []byte) error {
 	return s.send(ctx, payload, view.ERROR)
 }
 

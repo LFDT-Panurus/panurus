@@ -206,7 +206,7 @@ func TestRequestWithdrawalView_Call(t *testing.T) {
 		wr := out[0].(*ttx.WithdrawalRequest)
 		assert.Equal(t, uint64(10), wr.Amount)
 		assert.Same(t, session, out[1])
-		require.Equal(t, 2, session.SendWithContextCallCount())
+		require.Equal(t, 2, session.SendCallCount())
 	})
 
 	t.Run("success external wallet", func(t *testing.T) {
@@ -263,7 +263,7 @@ func TestRequestWithdrawalView_Call(t *testing.T) {
 	t.Run("send request fails", func(t *testing.T) {
 		ws := newLocalWalletService(t, false, false)
 		ctx, session := newWithdrawalCallTestContext(t, withdrawalCallTestInput{WalletService: ws})
-		session.SendWithContextReturns(errors.New("network down"))
+		session.SendReturns(errors.New("network down"))
 
 		r := ttx.NewRequestWithdrawalView(view.Identity("an-issuer"), "TOK", 10, false, "local-wallet", token.TMSID{}, nil, nil)
 
@@ -326,7 +326,7 @@ func TestRequestWithdrawalView_Call(t *testing.T) {
 		ch := make(chan *view.Message, 1)
 		ch <- withdrawalEnvelope(t, ttx.TypeWithdrawalChallenge, &ttx.WithdrawalChallenge{Nonce: []byte("a-fresh-nonce")})
 		session.ReceiveReturns(ch)
-		session.SendWithContextReturnsOnCall(1, errors.New("network down"))
+		session.SendReturnsOnCall(1, errors.New("network down"))
 
 		r := ttx.NewRequestWithdrawalView(view.Identity("an-issuer"), "TOK", 10, false, "local-wallet", token.TMSID{}, nil, nil)
 
@@ -334,7 +334,7 @@ func TestRequestWithdrawalView_Call(t *testing.T) {
 
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "failed to send withdrawal response")
-		require.Equal(t, 2, session.SendWithContextCallCount())
+		require.Equal(t, 2, session.SendCallCount())
 	})
 
 	t.Run("local signer fails", func(t *testing.T) {
@@ -405,8 +405,8 @@ func TestReceiveWithdrawalRequestView_Call(t *testing.T) {
 		require.Equal(t, 1, ws.RegisterRecipientIdentityCallCount())
 		require.Equal(t, 1, bindingStore.PutBindingsCallCount())
 
-		require.Equal(t, 1, session.SendWithContextCallCount())
-		_, sentChallenge := session.SendWithContextArgsForCall(0)
+		require.Equal(t, 1, session.SendCallCount())
+		_, sentChallenge := session.SendArgsForCall(0)
 		nonceBody := mustUnwrapBody(t, sentChallenge, ttx.TypeWithdrawalChallenge)
 		var challenge ttx.WithdrawalChallenge
 		require.NoError(t, json.Unmarshal(nonceBody, &challenge))
@@ -457,7 +457,7 @@ func TestReceiveWithdrawalRequestView_Call(t *testing.T) {
 		ch := make(chan *view.Message, 1)
 		ch <- newRequestMsg()
 		session.ReceiveReturns(ch)
-		session.SendWithContextReturns(errors.New("network down"))
+		session.SendReturns(errors.New("network down"))
 
 		r := ttx.NewReceiveIssuanceRequestView()
 
@@ -481,7 +481,7 @@ func TestReceiveWithdrawalRequestView_Call(t *testing.T) {
 		ch <- newRequestMsg()
 		close(ch)
 		session.ReceiveReturns(ch)
-		session.SendWithContextReturns(nil)
+		session.SendReturns(nil)
 
 		r := ttx.NewReceiveIssuanceRequestView()
 

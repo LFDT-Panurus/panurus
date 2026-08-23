@@ -98,7 +98,7 @@ func TestReceiveRawWithTimeout_ErrorMessage(t *testing.T) {
 
 func TestSend_Success(t *testing.T) {
 	mockSession := &mock.Session{}
-	mockSession.SendWithContextReturns(nil)
+	mockSession.SendReturns(nil)
 
 	m := &mock.Marshaller{}
 	m.MarshalReturns([]byte(`"data"`), nil)

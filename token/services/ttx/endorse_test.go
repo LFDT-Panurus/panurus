@@ -227,7 +227,7 @@ func TestEndorseView(t *testing.T) {
 			errorContains: "transaction is nil",
 			expectErr:     ttx.ErrInvalidInput,
 			verify: func(ctx *TestEndorseViewContext, _ any) {
-				assert.Equal(t, 0, ctx.session.SendWithContextCallCount())
+				assert.Equal(t, 0, ctx.session.SendCallCount())
 			},
 		},
 		{
@@ -239,12 +239,12 @@ func TestEndorseView(t *testing.T) {
 			},
 			expectError: false,
 			verify: func(ctx *TestEndorseViewContext, _ any) {
-				assert.Equal(t, 2, ctx.session.SendWithContextCallCount())
-				_, msg := ctx.session.SendWithContextArgsForCall(0)
+				assert.Equal(t, 2, ctx.session.SendCallCount())
+				_, msg := ctx.session.SendArgsForCall(0)
 				var signaturePayload ttx.SignaturePayload
 				require.NoError(t, json.Unmarshal(mustUnwrapBody(t, msg, ttx.TypeSignature), &signaturePayload))
 				assert.Equal(t, []byte("a_token_sigma"), signaturePayload.Signature)
-				_, msg = ctx.session.SendWithContextArgsForCall(1)
+				_, msg = ctx.session.SendArgsForCall(1)
 				require.NoError(t, json.Unmarshal(mustUnwrapBody(t, msg, ttx.TypeSignature), &signaturePayload))
 				assert.Equal(t, []byte("an_ack_signature"), signaturePayload.Signature)
 			},
@@ -261,7 +261,7 @@ func TestEndorseView(t *testing.T) {
 			errorContains: "pineapple",
 			expectErr:     ttx.ErrStorage,
 			verify: func(ctx *TestEndorseViewContext, _ any) {
-				assert.Equal(t, 0, ctx.session.SendWithContextCallCount())
+				assert.Equal(t, 0, ctx.session.SendCallCount())
 			},
 		},
 		{
@@ -277,7 +277,7 @@ func TestEndorseView(t *testing.T) {
 			errorContains: "signature request's signer does not match the expected signer",
 			expectErr:     ttx.ErrSignerIdentityMismatch,
 			verify: func(ctx *TestEndorseViewContext, _ any) {
-				assert.Equal(t, 0, ctx.session.SendWithContextCallCount())
+				assert.Equal(t, 0, ctx.session.SendCallCount())
 			},
 		},
 		{
@@ -293,7 +293,7 @@ func TestEndorseView(t *testing.T) {
 			errorContains: "signature request's signer does not match the expected signer",
 			expectErr:     ttx.ErrSignerIdentityMismatch,
 			verify: func(ctx *TestEndorseViewContext, _ any) {
-				assert.Equal(t, 0, ctx.session.SendWithContextCallCount())
+				assert.Equal(t, 0, ctx.session.SendCallCount())
 			},
 		},
 		// --- Timeout / context-cancellation tests ---
@@ -319,7 +319,7 @@ func TestEndorseView(t *testing.T) {
 			expectErr: ttx.ErrHandlingSignatureRequests,
 			verify: func(ctx *TestEndorseViewContext, _ any) {
 				// No signature was sent back because the receive failed before signing.
-				assert.Equal(t, 0, ctx.session.SendWithContextCallCount())
+				assert.Equal(t, 0, ctx.session.SendCallCount())
 			},
 		},
 	}
@@ -377,7 +377,7 @@ func TestEndorseView_EndorsedTxContextCancellation(t *testing.T) {
 	// mock session.  We watch the call count from a goroutine and cancel as soon
 	// as phase 1 completes; phase 2 will then find a done context.
 	go func() {
-		for testCtx.session.SendWithContextCallCount() == 0 {
+		for testCtx.session.SendCallCount() == 0 {
 			// busy-spin with a yield so the main goroutine can progress
 			// (in practice this exits after microseconds)
 		}
@@ -392,6 +392,6 @@ func TestEndorseView_EndorsedTxContextCancellation(t *testing.T) {
 	assert.Contains(t, err.Error(), "failed receiving transaction",
 		"error should indicate failure during endorsed-tx receive phase")
 	// Phase 1 signature was sent before the context was cancelled.
-	assert.GreaterOrEqual(t, testCtx.session.SendWithContextCallCount(), 1,
+	assert.GreaterOrEqual(t, testCtx.session.SendCallCount(), 1,
 		"token signature must have been sent before context cancellation")
 }

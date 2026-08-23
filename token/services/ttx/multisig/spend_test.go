@@ -104,7 +104,7 @@ func newSpendTestContext(t *testing.T, areMe []string, sessions map[string]view.
 func newSilentSession(t *testing.T) *dep_mock.Session {
 	t.Helper()
 	s := &dep_mock.Session{}
-	s.SendWithContextReturns(nil)
+	s.SendReturns(nil)
 	s.ReceiveReturns(make(chan *view.Message))
 
 	return s
@@ -166,7 +166,7 @@ func TestRequestSpendView_Call_AllPartiesRespond(t *testing.T) {
 
 	// party A is "me" and is skipped; party B answers promptly.
 	sessionB := &dep_mock.Session{}
-	sessionB.SendWithContextReturns(nil)
+	sessionB.SendReturns(nil)
 	ch := make(chan *view.Message, 1)
 	env, err := jsession.WrapEnvelope(&SpendResponse{}, ttx.TypeSpendResponse)
 	require.NoError(t, err)

@@ -118,13 +118,13 @@ func (j *S) SendWithContext(ctx context.Context, state any) error {
 
 	logger.DebugfContext(ctx, "session, send message [%s]", logging.SHA256Base64(v))
 
-	return j.s.SendWithContext(ctx, v)
+	return j.s.Send(ctx, v)
 }
 
 func (j *S) SendRaw(ctx context.Context, raw []byte) error {
 	logger.DebugfContext(ctx, "session, send raw message [%s]", logging.SHA256Base64(raw))
 
-	return j.s.SendWithContext(ctx, raw)
+	return j.s.Send(ctx, raw)
 }
 
 func (j *S) SendError(err string) error {
@@ -134,7 +134,7 @@ func (j *S) SendError(err string) error {
 func (j *S) SendErrorWithContext(ctx context.Context, err string) error {
 	logger.ErrorfContext(ctx, "session, send error: %w", err)
 
-	return j.s.SendErrorWithContext(ctx, []byte(err))
+	return j.s.SendError(ctx, []byte(err))
 }
 
 func (j *S) Session() Session {

@@ -97,10 +97,10 @@ testing-docker-images:
 .PHONY: fabric-docker-images
 # pull fabric docker images
 fabric-docker-images:
-	docker pull hyperledger/fabric-baseos:$(FABRIC_TWO_DIGIT_VERSION)
-	docker image tag hyperledger/fabric-baseos:$(FABRIC_TWO_DIGIT_VERSION) hyperledger/fabric-baseos:latest
-	docker pull hyperledger/fabric-ccenv:$(FABRIC_TWO_DIGIT_VERSION)
-	docker image tag hyperledger/fabric-ccenv:$(FABRIC_TWO_DIGIT_VERSION) hyperledger/fabric-ccenv:latest
+	docker pull ghcr.io/hyperledger/fabric-baseos:$(FABRIC_TWO_DIGIT_VERSION)
+	docker image tag ghcr.io/hyperledger/fabric-baseos:$(FABRIC_TWO_DIGIT_VERSION) hyperledger/fabric-baseos:latest
+	docker pull ghcr.io/hyperledger/fabric-ccenv:$(FABRIC_TWO_DIGIT_VERSION)
+	docker image tag ghcr.io/hyperledger/fabric-ccenv:$(FABRIC_TWO_DIGIT_VERSION) hyperledger/fabric-ccenv:latest
 
 .PHONY: monitoring-docker-images
 # pull monitoring docker images (explorer, prometheus, grafana, jaeger)
