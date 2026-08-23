@@ -720,6 +720,31 @@ Ethereum transaction with the submitter's key, and broadcasts it.
 These are properties of the shipped Approach-2 driver that an operator has to know about. Bootstrapping
 steps live in the [Ethereum Deployment Runbook](./network-ethereum-deployment.md).
 
+### Startup checks
+
+`Connect` refuses to bind a TMS to a network whose configuration contradicts the chain, so a
+misconfiguration surfaces at startup rather than as failing transactions later. It checks two things.
+
+The first is the chain id: the node has to report the chain the driver is configured to sign for,
+otherwise every signature would be produced for a chain nobody is running.
+
+The second is the endorsement policy. `contracts.tokenState` names the verifier it delegates signature
+checking to, and the driver reads the threshold and endorser set back from it. The configured
+`endorsement.threshold` has to equal the one the `EndorsementVerifier` was constructed with, and every
+address in `endorsement.endorsers` has to be registered in it. Getting either wrong is expensive to
+diagnose without this check, because it does not look like a configuration problem: the node collects
+what it believes is a quorum, spends a full endorsement round trip doing it, and the contract then
+rejects the bundle, which arrives as a revert. One stale endorser address is enough to fail every
+transaction, because the initiator counts its reply toward the quorum and the contract rejects the whole
+bundle as an unauthorized signer.
+
+Only a contradiction the driver actually observed is fatal. If the verifier cannot be read at all — the
+contract is not deployed yet, or the node is briefly unhappy — the check is logged and skipped rather
+than refusing the connection. These reads use the `latest` block tag rather than the configured one:
+the endorser set and threshold are immutable after the verifier is constructed, so there is nothing a
+later block can change, and reading at `finalized` would leave a freshly deployed network unable to see
+its own verifier for the whole finalization window.
+
 ### How finality resolves
 
 The primary signal is the transaction receipt, polled alongside `eth_getTransactionByHash`: known but no
@@ -760,6 +785,14 @@ distinction that matters — whether the chain has judged the transaction — as
 The split is load-bearing. Collapsing the two leaves a caller choosing between retrying a doomed transaction
 forever and giving up on a working one. A revert is detected during `eth_estimateGas`, which executes the
 transaction — so a rejected transaction is reported **before** any gas is paid for it.
+
+Recognising a revert is node-specific, which is worth knowing when adding support for a new one. Besu
+reports it as JSON-RPC code `-32000`, inside the range the spec reserves for implementations; geth and
+anvil use EIP-1474's code `3`. The driver accepts either, and anything else in the reserved range, always
+paired with `revert` appearing in the message — so a non-revert failure carrying one of those codes
+(`out of gas` on `3`, `header not found` on `-32000`) stays in the transient class. A node that reports a
+revert some other way would have its transactions classified transient, and callers would retry them
+forever, so that is the first thing to check against an unfamiliar client.
 
 ### Transaction recovery across restarts
 

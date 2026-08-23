@@ -210,6 +210,13 @@ func (n settledNetwork) age(ctx context.Context, txID string) (time.Duration, bo
 	if record == nil {
 		return 0, false, nil
 	}
+	// An unset timestamp would read as an age of two thousand years and condemn the transaction on the
+	// very first sweep. "Not known" is the honest answer and the safe one: the caller leaves the
+	// transaction Unknown and looks again, which is what it already does when the store cannot be read
+	// at all.
+	if record.Timestamp.IsZero() {
+		return 0, false, nil
+	}
 
 	return time.Since(record.Timestamp), true, nil
 }

@@ -115,12 +115,16 @@ func TestSubmitFixedGasStrategy(t *testing.T) {
 	assert.Zero(t, evm.EstimateGasCallCount(), "a fixed limit must not consult the node")
 }
 
-// TestSubmitDoesNotAdvanceTheNonceOnFailure is the production trap: a nonce allocated for a
-// transaction that never reached the node must not be lost, or every later transaction sits
-// unmineable behind the gap. Submit runs the whole attempt under the nonce manager's lock, so a
-// failure simply leaves the nonce exactly where it was, ready to be reused without asking the chain
-// again.
-func TestSubmitDoesNotAdvanceTheNonceOnFailure(t *testing.T) {
+// TestSubmitDoesNotSkipTheNonceOnAFailedBroadcast is the production trap: a nonce allocated for a
+// transaction the chain never took must not be lost, or every later transaction sits unmineable
+// behind the gap.
+//
+// The assertion is on the nonce the next attempt actually gets, not on how the submitter arrived at
+// it. A failed broadcast is the one step that may have reached the chain, so the manager re-reads the
+// node rather than trusting its own count; when the chain never took the transaction, as here, that
+// read returns the same nonce and no gap appears. The recovery direction, where the chain did take it,
+// is TestNonceReReadsAfterAnAmbiguousBroadcast.
+func TestSubmitDoesNotSkipTheNonceOnAFailedBroadcast(t *testing.T) {
 	evm := readySubmitterClient()
 	evm.SendRawTransactionReturns(client.Hash{}, errors.New("broadcast rejected"))
 	s := testSubmitter(t, evm, estimateGas())
@@ -128,9 +132,14 @@ func TestSubmitDoesNotAdvanceTheNonceOnFailure(t *testing.T) {
 	_, _, err := s.Submit(t.Context(), testDelta(), [][]byte{make([]byte, 65)})
 	require.Error(t, err)
 
-	next, initialized := s.nonces.Cached()
-	assert.True(t, initialized, "the manager still knows its sequence; there was nothing to lose")
-	assert.Equal(t, uint64(3), next, "the nonce this attempt held must still be the next one handed out")
+	// The chain never took it, so its pending nonce has not moved.
+	var reused uint64
+	evm.SendRawTransactionReturns(client.Hash{}, nil)
+	_, _, err = s.Submit(t.Context(), testDelta(), [][]byte{make([]byte, 65)})
+	require.NoError(t, err)
+	reused, _ = s.nonces.Cached()
+
+	assert.Equal(t, uint64(4), reused, "the retry must consume the nonce the failed attempt held, leaving no gap")
 }
 
 // TestSubmitClassifiesARevertedEstimate covers the verdict the shared fungible bodies actually read.
