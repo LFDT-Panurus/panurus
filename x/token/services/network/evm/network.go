@@ -134,9 +134,10 @@ func (n *Network) Normalize(opt *token2.ServiceOptions) (*token2.ServiceOptions,
 	return opt, nil
 }
 
-// Connect validates that the configured backend is reachable and is the chain the driver signs for,
-// then returns the service options that bind a TMS to this network. Checking here means a
-// misconfigured endpoint or chain id fails at startup rather than at the first transaction.
+// Connect validates that the configured backend is reachable, is the chain the driver signs for, and
+// enforces the endorsement policy this node is configured with, then returns the service options that
+// bind a TMS to this network. Checking here means a misconfigured endpoint, chain id or endorser set
+// fails at startup rather than at the first transaction.
 func (n *Network) Connect(ns string) ([]token2.ServiceOption, error) {
 	ctx := context.Background()
 	chainID, err := n.client.ChainID(ctx)
@@ -146,6 +147,9 @@ func (n *Network) Connect(ns string) ([]token2.ServiceOption, error) {
 	if chainID.Cmp(n.config.ChainIDBig()) != 0 {
 		return nil, errors.Errorf("evm network: node reports chain id %s, configuration says %d",
 			chainID, n.config.ChainID)
+	}
+	if err := n.verifyEndorsementPolicy(ctx); err != nil {
+		return nil, err
 	}
 
 	// Recovery completes transactions this node left Pending when it last stopped. Failing to start

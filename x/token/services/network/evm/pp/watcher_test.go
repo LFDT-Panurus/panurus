@@ -82,13 +82,13 @@ func newWatcherHarness(t *testing.T, state *chainState) (*Watcher, *[]update, *s
 	return w, &got, &mu
 }
 
-// baselineSet reports whether the watcher has observed the chain at least once, which is when it
-// starts treating a version change as an update rather than as its starting point. Tests wait on it
-// before changing the chain, so that the change is seen as an update and not as the baseline.
+// applied reports whether the watcher has successfully applied a version. Tests wait on it before
+// moving the chain, so the move is observed as a change from a settled state rather than racing the
+// watcher's first read.
 //
 // It lives here rather than on Watcher because only tests need it, and it takes the lock because the
 // polling goroutine is what writes the fields.
-func baselineSet(w *Watcher) bool {
+func applied(w *Watcher) bool {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 
@@ -105,39 +105,50 @@ func TestWatcherReportsAnUpdate(t *testing.T) {
 	w.Start(context.Background())
 	defer w.Stop()
 
-	// let it establish a baseline, then move the chain on
-	require.Eventually(t, func() bool { return baselineSet(w) }, time.Second, 5*time.Millisecond)
+	// let it settle on what the chain already has, then move the chain on
+	require.Eventually(t, func() bool { return applied(w) }, time.Second, 5*time.Millisecond)
 	state.set("params-v1", 1)
 
 	require.Eventually(t, func() bool {
 		mu.Lock()
 		defer mu.Unlock()
 
-		return len(*got) == 1
+		return len(*got) == 2
 	}, 2*time.Second, 5*time.Millisecond)
 
 	mu.Lock()
 	defer mu.Unlock()
-	assert.Equal(t, update{raw: "params-v1", version: 1}, (*got)[0])
+	assert.Equal(t, update{raw: "params-v0", version: 0}, (*got)[0], "the startup state is applied first")
+	assert.Equal(t, update{raw: "params-v1", version: 1}, (*got)[1], "then the change is reported")
 }
 
-// TestWatcherDoesNotReplayTheStartingParameters checks the first observation only establishes a
-// baseline. A node already holds the parameters it started with, so announcing them as an update
-// would reload every TMS for nothing on every start.
-func TestWatcherDoesNotReplayTheStartingParameters(t *testing.T) {
+// TestWatcherAppliesWhatTheChainHasAtStartup covers the restart a node does not otherwise recover
+// from.
+//
+// The first observation used to be recorded as a baseline and not applied, on the reasoning that a
+// node already holds whatever the chain holds. That is exactly what is false after a restart: the
+// token layer resolves public parameters from its own storage before it ever asks the chain
+// (loadPublicParams priorities 2 and 4), so a node that was down when an update landed comes back
+// holding the old parameters. Reporting only later changes left it there indefinitely, endorsing and
+// validating against parameters the chain had already replaced.
+//
+// A chain sitting at version 3 makes the point: this node cannot have been present for versions 1 to
+// 3, so treating what it finds as "what we already have" is not a safe assumption.
+func TestWatcherAppliesWhatTheChainHasAtStartup(t *testing.T) {
 	state := &chainState{}
-	state.set("params-v0", 3)
+	state.set("params-v3", 3)
 
 	w, got, mu := newWatcherHarness(t, state)
 	w.Start(context.Background())
 	defer w.Stop()
 
-	require.Eventually(t, func() bool { return baselineSet(w) }, time.Second, 5*time.Millisecond)
+	require.Eventually(t, func() bool { return applied(w) }, time.Second, 5*time.Millisecond)
 	time.Sleep(50 * time.Millisecond)
 
 	mu.Lock()
 	defer mu.Unlock()
-	assert.Empty(t, *got, "a steady chain must produce no updates")
+	require.Len(t, *got, 1, "the chain's current parameters must be applied exactly once at startup")
+	assert.Equal(t, update{raw: "params-v3", version: 3}, (*got)[0])
 }
 
 // TestWatcherReportsEachUpdateOnce checks a version that stays put is not re-reported, so a handler
@@ -150,7 +161,7 @@ func TestWatcherReportsEachUpdateOnce(t *testing.T) {
 	w.Start(context.Background())
 	defer w.Stop()
 
-	require.Eventually(t, func() bool { return baselineSet(w) }, time.Second, 5*time.Millisecond)
+	require.Eventually(t, func() bool { return applied(w) }, time.Second, 5*time.Millisecond)
 	state.set("params-v1", 1)
 	require.Eventually(t, func() bool {
 		mu.Lock()
@@ -221,7 +232,7 @@ func TestWatcherSurvivesAFailedRead(t *testing.T) {
 	w.Start(context.Background())
 	defer w.Stop()
 
-	require.Eventually(t, func() bool { return baselineSet(w) }, time.Second, 5*time.Millisecond)
+	require.Eventually(t, func() bool { return applied(w) }, time.Second, 5*time.Millisecond)
 	state.set("params-v1", 1)
 
 	require.Eventually(t, func() bool {
@@ -239,12 +250,11 @@ func TestWatcherRetriesAFailedHandler(t *testing.T) {
 	state := &chainState{}
 	state.set("params-v0", 0)
 
+	state.set("params-v1", 1)
+
 	w, attempts, mu := newFailingWatcherHarness(t, state, 3)
 	w.Start(context.Background())
 	defer w.Stop()
-
-	require.Eventually(t, func() bool { return baselineSet(w) }, time.Second, 5*time.Millisecond)
-	state.set("params-v1", 1)
 
 	require.Eventually(t, func() bool {
 		mu.Lock()
@@ -308,17 +318,21 @@ func TestWatcherStopIsIdempotentAndBlocks(t *testing.T) {
 	w, got, mu := newWatcherHarness(t, state)
 	w.Start(context.Background())
 	w.Start(context.Background()) // second start must be a no-op
-	require.Eventually(t, func() bool { return baselineSet(w) }, time.Second, 5*time.Millisecond)
+	require.Eventually(t, func() bool { return applied(w) }, time.Second, 5*time.Millisecond)
 
 	w.Stop()
 	w.Stop() // stopping twice must not panic
+
+	mu.Lock()
+	before := len(*got)
+	mu.Unlock()
 
 	state.set("params-v1", 1)
 	time.Sleep(50 * time.Millisecond)
 
 	mu.Lock()
 	defer mu.Unlock()
-	assert.Empty(t, *got, "a stopped watcher must not report anything")
+	assert.Len(t, *got, before, "a stopped watcher must not report anything further")
 }
 
 func TestNewWatcherValidatesItsInput(t *testing.T) {

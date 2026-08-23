@@ -8,13 +8,18 @@ package evm
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/hex"
 	"encoding/json"
+	"io"
 	"math/big"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"os/exec"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -43,6 +48,9 @@ const (
 	// anvilKey1 is anvil's first well-known development account, used here as endorser and submitter.
 	anvilKey1 = "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
 	anvilPort = "18545"
+	// anvilStrangerKey is anvil's second well-known account, used where a test needs a real key the
+	// deployed contracts do not know.
+	anvilStrangerKey = "59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d"
 )
 
 // startAnvil boots a local anvil node and returns its endpoint, skipping the test if anvil is absent.
@@ -156,6 +164,9 @@ func TestEndToEndAgainstAnvil(t *testing.T) {
 	cfg := validConfig()
 	cfg.Endpoint = endpoint
 	cfg.Contracts.TokenState = tokenState.Hex()
+	// The endorser set has to be the one actually seeded into the deployed verifier. validConfig's
+	// placeholder address is not, and Connect's policy check reads the real thing off the chain.
+	cfg.Endorsement.Endorsers[0].Address = signer.Address().Hex()
 	cfg.Finality.BlockTag = client.BlockTagLatest // anvil mines instantly; there is no finalized tag
 	cfg.Finality.PollInterval = 50 * time.Millisecond
 	cfg.Finality.Timeout = 15 * time.Second
@@ -372,3 +383,186 @@ func (l *e2eListener) OnStatus(_ context.Context, _ string, status int, _ string
 }
 
 func (l *e2eListener) OnError(context.Context, string, error) {}
+
+// TestRevertClassificationAgainstAnvil pins the permanent/transient split against a real node.
+//
+// It exists because the split cannot be trusted to a fake: nodes disagree on how they report a
+// revert, and the driver got it wrong for geth and anvil, which use EIP-1474's code 3 rather than the
+// -32000 Besu uses. That misread sent a permanently rejected transaction back to the caller as
+// ErrNetworkUnavailable, whose documented meaning is "the transaction is untouched, retry with
+// backoff" -- so a caller following the contract would retry a doomed transaction forever.
+//
+// A unit test over a handwritten error body cannot catch a wrong assumption about what nodes actually
+// send, which is precisely what the bug was, so this drives a genuine revert out of a genuine node.
+func TestRevertClassificationAgainstAnvil(t *testing.T) {
+	endpoint := startAnvil(t)
+
+	deployedKeyBytes, err := hex.DecodeString(anvilKey1)
+	require.NoError(t, err)
+	deployedSigner, err := eip712.NewSignerFromBytes(deployedKeyBytes)
+	require.NoError(t, err)
+
+	// anvilStranger is a real key the deployed verifier does not know, so a bundle it signs is
+	// rejected on chain: a genuine revert, reached through the driver's ordinary submission path.
+	strangerBytes, err := hex.DecodeString(anvilStrangerKey)
+	require.NoError(t, err)
+	stranger, err := eip712.NewSignerFromBytes(strangerBytes)
+	require.NoError(t, err)
+
+	pp0 := []byte("revert-classification-params")
+	tokenState := deployContracts(t, endpoint, deployedSigner.Address(), pp0)
+
+	evmClient, err := client.NewJSONRPCClient(endpoint, nil)
+	require.NoError(t, err)
+
+	cfg := validConfig()
+	cfg.Endpoint = endpoint
+	cfg.Contracts.TokenState = tokenState.Hex()
+	cfg.Finality.BlockTag = client.BlockTagLatest
+	cfg.Endorsement.Endorsers[0].Address = deployedSigner.Address().Hex()
+	cfg.applyDefaults()
+	require.NoError(t, cfg.Validate())
+
+	submitter, err := NewSubmitter(
+		evmClient, secp256k1.PrivKeyFromBytes(deployedKeyBytes), tokenState, big.NewInt(testChainID), cfg.Gas)
+	require.NoError(t, err)
+	n, err := NewNetwork("evm-net", cfg, evmClient, nil, submitter, nil)
+	require.NoError(t, err)
+
+	anchorID := n.ComputeTxID(&driver.TxID{Creator: []byte("issuer")})
+	anchor, err := keys.AnchorFromTxID(anchorID)
+	require.NoError(t, err)
+	tokenData := []byte("rejected-token")
+	delta := &statedelta.StateDelta{
+		Anchor: anchor,
+		Outputs: []statedelta.OutputToken{{
+			TokenID:   keys.ComputeTokenID(anchor, 0),
+			SNMarker:  keys.OutputSNMarker(anchor, 0, tokenData),
+			TokenData: tokenData,
+		}},
+		TokenRequestHash:    sha256Of("issue-request"),
+		PublicParamsHash:    sha256Of(string(pp0)),
+		PublicParamsVersion: 0,
+	}
+	domain := eip712.Domain{ChainID: big.NewInt(testChainID), VerifyingContract: tokenState}
+
+	err = n.Broadcast(t.Context(), &Envelope{
+		Anchor:       anchorID,
+		Delta:        delta,
+		Endorsements: endorse(t, stranger, domain, delta),
+	})
+
+	require.Error(t, err, "the chain must reject a bundle from an unregistered endorser")
+	require.ErrorIs(t, err, ErrTransactionReverted,
+		"a rejected transaction is permanent: the caller must re-derive it, not resend it")
+	assert.NotErrorIs(t, err, ErrNetworkUnavailable,
+		"classifying it as transient tells the caller to retry a transaction the chain will reject every time")
+}
+
+// lossyProxy forwards every JSON-RPC call to the node but swallows the reply to the first
+// eth_sendRawTransaction: the node accepts and mines the transaction, the caller sees a failure.
+// That is what a client-side timeout or a dropped connection looks like from the driver's side, and
+// it is the one step where "the broadcast failed" is not evidence the chain never took it.
+type lossyProxy struct {
+	target  string
+	swallow atomic.Int32
+}
+
+func (p *lossyProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+
+		return
+	}
+	resp, err := http.Post(p.target, "application/json", bytes.NewReader(body))
+	if err != nil {
+		w.WriteHeader(http.StatusBadGateway)
+
+		return
+	}
+	defer func() { _ = resp.Body.Close() }()
+	out, err := io.ReadAll(resp.Body)
+	if err != nil {
+		w.WriteHeader(http.StatusBadGateway)
+
+		return
+	}
+
+	if strings.Contains(string(body), "eth_sendRawTransaction") && p.swallow.Add(-1) >= 0 {
+		// The node has the transaction. The caller will not hear that.
+		w.WriteHeader(http.StatusGatewayTimeout)
+
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_, _ = w.Write(out)
+}
+
+// TestSubmitterRecoversFromALostBroadcastReply is a production failure reproduced against a real node.
+//
+// One broadcast whose reply is lost, an ordinary timeout or a dropped connection, used to wedge the
+// submitting account permanently. The chain had mined the transaction, so the nonce was spent, but the
+// driver saw a failure and kept reissuing that same nonce. Every later transaction failed "nonce too
+// low", and because that is also a failed broadcast the manager never re-read the chain to find out.
+// Only restarting the process recovered, and the failures were reported as ErrNetworkUnavailable, so a
+// caller obeying the contract retried forever.
+//
+// It runs through a proxy rather than a fake so the node genuinely accepts and mines the transaction
+// the driver believes it failed to send. A fake cannot produce that disagreement, which is the whole
+// bug.
+func TestSubmitterRecoversFromALostBroadcastReply(t *testing.T) {
+	node := startAnvil(t)
+
+	proxy := &lossyProxy{target: node}
+	proxy.swallow.Store(1)
+	srv := httptest.NewServer(proxy)
+	t.Cleanup(srv.Close)
+
+	keyBytes, err := hex.DecodeString(anvilKey1)
+	require.NoError(t, err)
+
+	viaProxy, err := client.NewJSONRPCClient(srv.URL, nil)
+	require.NoError(t, err)
+	direct, err := client.NewJSONRPCClient(node, nil)
+	require.NoError(t, err)
+
+	// A plain account as the target, with a fixed gas limit so nothing is estimated: every call is a
+	// mined, successful transaction that consumes a nonce, which is all the nonce question needs.
+	target, err := client.HexToAddress("0x000000000000000000000000000000000000dEaD")
+	require.NoError(t, err)
+	submitter, err := NewSubmitter(viaProxy, secp256k1.PrivKeyFromBytes(keyBytes), target,
+		big.NewInt(testChainID), GasConfig{Strategy: GasStrategyFixed, Limit: 200_000})
+	require.NoError(t, err)
+
+	send := func(n byte) error {
+		var anchor [32]byte
+		anchor[31] = n
+		_, _, err := submitter.Submit(t.Context(), &statedelta.StateDelta{
+			Anchor: anchor,
+			Outputs: []statedelta.OutputToken{{
+				TokenID: keys.ComputeTokenID(anchor, 0), TokenData: []byte{n},
+			}},
+			TokenRequestHash:    sha256Of("request"),
+			PublicParamsHash:    sha256Of("pp"),
+			PublicParamsVersion: 0,
+		}, [][]byte{make([]byte, 65)})
+
+		return err
+	}
+	chainNonce := func() uint64 {
+		n, err := direct.PendingNonceAt(t.Context(), submitter.Address())
+		require.NoError(t, err)
+
+		return n
+	}
+
+	require.Error(t, send(0x01), "the swallowed reply must surface as a failed broadcast")
+	require.Equal(t, uint64(1), chainNonce(), "but the chain did take the transaction")
+
+	// The account has to keep working. Before the fix every one of these failed "nonce too low".
+	for _, n := range []byte{0x02, 0x03, 0x04} {
+		require.NoError(t, send(n), "the submitter must recover its nonce from the chain, not wedge")
+	}
+	assert.Equal(t, uint64(4), chainNonce(), "every later transaction reached the chain")
+}
