@@ -599,3 +599,73 @@ func TestResponseAtTheBoundIsAccepted(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, int64(31337), id.Int64())
 }
+
+// headSequenceServer serves eth_getBlockByNumber from a scripted sequence of raw results, so a test
+// can express "the head is missing, then it is there". Once the sequence runs out the last entry
+// repeats, which is what makes a persistently null head expressible. Everything else answers a fixed
+// tip so the fee derivation itself stays out of the way.
+func headSequenceServer(t *testing.T, heads ...string) (*JSONRPCClient, *int) {
+	t.Helper()
+	calls := 0
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Method string `json:"method"`
+		}
+		if !assert.NoError(t, json.NewDecoder(r.Body).Decode(&req)) {
+			w.WriteHeader(http.StatusBadRequest)
+
+			return
+		}
+		result := `"0x1"`
+		if req.Method == "eth_getBlockByNumber" {
+			result = heads[min(calls, len(heads)-1)]
+			calls++
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":` + result + `}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	// #nosec G107 -- httptest local test server URL
+	c, err := NewJSONRPCClient(srv.URL, srv.Client())
+	require.NoError(t, err)
+
+	return c, &calls
+}
+
+// TestSuggestGasFeesRetriesANullHead pins the reason the retry exists. "latest" is not a fixed block,
+// and a node whose head is moving may answer that it has no block for it just then. That travels up
+// as ErrNetworkUnavailable and aborts a whole token transaction, so a condition that clears by itself
+// within a block time must not be reported on the first look.
+func TestSuggestGasFeesRetriesANullHead(t *testing.T) {
+	c, calls := headSequenceServer(t, `null`, `{"baseFeePerGas":"0x7"}`)
+
+	fees, err := c.SuggestGasFees(context.Background())
+	require.NoError(t, err, "a head that is momentarily absent must not fail the caller")
+	assert.Equal(t, big.NewInt(2*7+1), fees.MaxFeePerGas)
+	assert.Equal(t, 2, *calls, "it should have looked again exactly once")
+}
+
+// TestSuggestGasFeesGivesUpOnAPersistentlyNullHead keeps the retry bounded: a node that is genuinely
+// not serving its head still has to fail, rather than the driver spinning on it.
+func TestSuggestGasFeesGivesUpOnAPersistentlyNullHead(t *testing.T) {
+	c, calls := headSequenceServer(t, `null`)
+
+	_, err := c.SuggestGasFees(context.Background())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "returned no block")
+	assert.Equal(t, maxHeadReadAttempts, *calls, "the retry has to stop, not spin")
+}
+
+// TestSuggestGasFeesStopsWaitingOnACancelledContext covers the caller giving up mid-retry. A delay
+// that ignored the context would hold a cancelled caller for the full wait.
+func TestSuggestGasFeesStopsWaitingOnACancelledContext(t *testing.T) {
+	c, calls := headSequenceServer(t, `null`)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err := c.SuggestGasFees(ctx)
+	require.Error(t, err)
+	assert.LessOrEqual(t, *calls, 1, "a cancelled caller should not be kept waiting through the retries")
+}

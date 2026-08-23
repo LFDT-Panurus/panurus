@@ -26,6 +26,14 @@ import (
 // deadline of its own.
 const DefaultRequestTimeout = 30 * time.Second
 
+// maxHeadReadAttempts bounds the retry baseFee performs when the node reports no block for "latest".
+const maxHeadReadAttempts = 3
+
+// headReadRetryDelay is how long baseFee waits before re-reading a head that was momentarily absent.
+// It is well under a block time on every chain the driver targets, so the retries stay inside the
+// window where the head is expected to settle rather than stretching the caller's deadline.
+const headReadRetryDelay = 100 * time.Millisecond
+
 // maxResponseBytes bounds the JSON-RPC response body this client will buffer.
 //
 // http.Client.Timeout bounds how long a response may take, not how large it may be, so without this a
@@ -273,24 +281,59 @@ func (c *JSONRPCClient) SuggestGasFees(ctx context.Context) (GasFees, error) {
 
 // baseFee reads the base fee of the latest block. A chain with no base fee at all (a pre-London or
 // zero-fee configuration) reports the field absent, which is a base fee of zero rather than an error.
-// A null result, by contrast, means the node did not return a block at all and is an error: head is a
-// pointer so that case is distinguishable, since unmarshaling JSON null into a non-pointer target is a
-// silent no-op that would otherwise be indistinguishable from the legitimate absent-field case.
+// A null result, by contrast, means the node did not return a block at all: head is a pointer so that
+// case is distinguishable, since unmarshaling JSON null into a non-pointer target is a silent no-op
+// that would otherwise be indistinguishable from the legitimate absent-field case.
+//
+// A null head is retried rather than reported straight away. "latest" is not a fixed block: it is
+// whatever the node's head is at the instant it looks, and a node whose head is moving underneath the
+// request is entitled to answer that it has no block for that tag just then. The condition clears by
+// itself within a block time, but the caller cannot treat it that way, because this error travels up
+// as ErrNetworkUnavailable and aborts the whole token transaction. Two of those aborts were observed
+// against Besu during the integration suites, each one killing a transaction over a condition that
+// would have resolved on the next call.
+//
+// The retry is bounded, so a node that is genuinely not serving its head still fails, and it costs
+// nothing when the node behaves: the loop returns on the first attempt unless the answer was null.
 func (c *JSONRPCClient) baseFee(ctx context.Context) (*big.Int, error) {
-	var head *struct {
-		BaseFeePerGas string `json:"baseFeePerGas"`
-	}
-	if err := c.call(ctx, "eth_getBlockByNumber", &head, "latest", false); err != nil {
-		return nil, err
-	}
-	if head == nil {
-		return nil, errors.New("evm client: eth_getBlockByNumber(\"latest\") returned no block")
-	}
-	if head.BaseFeePerGas == "" {
-		return new(big.Int), nil
+	for attempt := range maxHeadReadAttempts {
+		var head *struct {
+			BaseFeePerGas string `json:"baseFeePerGas"`
+		}
+		if err := c.call(ctx, "eth_getBlockByNumber", &head, "latest", false); err != nil {
+			return nil, err
+		}
+		if head != nil {
+			if head.BaseFeePerGas == "" {
+				return new(big.Int), nil
+			}
+
+			return parseHexBig(head.BaseFeePerGas)
+		}
+		if attempt == maxHeadReadAttempts-1 {
+			break
+		}
+		if err := wait(ctx, headReadRetryDelay); err != nil {
+			return nil, err
+		}
 	}
 
-	return parseHexBig(head.BaseFeePerGas)
+	return nil, errors.Errorf(
+		"evm client: eth_getBlockByNumber(\"latest\") returned no block in %d attempts", maxHeadReadAttempts)
+}
+
+// wait sleeps for d, or returns early if the context is done first. A retry that ignored the context
+// would keep a cancelled caller waiting for the full delay.
+func wait(ctx context.Context, d time.Duration) error {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+
+	select {
+	case <-ctx.Done():
+		return errors.Wrap(ctx.Err(), "evm client: interrupted while waiting to re-read the chain head")
+	case <-timer.C:
+		return nil
+	}
 }
 
 // suggestTip asks the node what priority fee to pay.
