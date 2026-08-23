@@ -19,6 +19,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os/exec"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -1030,4 +1031,219 @@ func TestMinedButRevertedAgainstAnvil(t *testing.T) {
 
 	_, err = n.QueryTokens(t.Context(), "token", []*token.ID{{TxId: anchorID, Index: 0}})
 	assert.Error(t, err, "the output of a reverted apply must not be readable")
+}
+
+// TestDigestAgreesWithTheContractAgainstAnvil is a differential test of the two EIP-712
+// implementations. The endorsers sign a digest Go computes; the contract recomputes it from the
+// calldata and checks the signatures against its own. If the two ever disagree about how a delta
+// hashes, the contract rejects a perfectly good quorum with InvalidSignatures, and the only symptom
+// is that transactions of that shape stop working.
+//
+// The end-to-end test agrees for the one shape it builds. These are the shapes it does not: a delta
+// carrying transfer metadata, which is what an HTLC claim looks like, several metadata entries in
+// canonical order, and an output with empty token data. Each is submitted for real, so the contract
+// is the judge of whether the digests match.
+func TestDigestAgreesWithTheContractAgainstAnvil(t *testing.T) {
+	endpoint := startAnvil(t)
+
+	keyBytes, err := hex.DecodeString(anvilKey1)
+	require.NoError(t, err)
+	signer, err := eip712.NewSignerFromBytes(keyBytes)
+	require.NoError(t, err)
+
+	pp0 := []byte("digest-public-params")
+	tokenState := deployContracts(t, endpoint, signer.Address(), pp0)
+
+	evmClient, err := client.NewJSONRPCClient(endpoint, nil)
+	require.NoError(t, err)
+
+	cfg := validConfig()
+	cfg.Endpoint = endpoint
+	cfg.Contracts.TokenState = tokenState.Hex()
+	cfg.Endorsement.Endorsers[0].Address = signer.Address().Hex()
+	cfg.Finality.BlockTag = client.BlockTagLatest
+	cfg.Finality.PollInterval = 50 * time.Millisecond
+	cfg.Finality.Timeout = 15 * time.Second
+	cfg.applyDefaults()
+	require.NoError(t, cfg.Validate())
+
+	submitter, err := NewSubmitter(evmClient, secp256k1.PrivKeyFromBytes(keyBytes), tokenState,
+		big.NewInt(testChainID), cfg.Gas)
+	require.NoError(t, err)
+	n, err := NewNetwork("evm-net", cfg, evmClient, nil, submitter, nil)
+	require.NoError(t, err)
+	_, err = n.Connect("token")
+	require.NoError(t, err)
+
+	domain := eip712.Domain{ChainID: big.NewInt(testChainID), VerifyingContract: tokenState}
+
+	for _, tc := range []struct {
+		name  string
+		build func(anchor [32]byte) *statedelta.StateDelta
+	}{
+		{
+			name: "one metadata entry",
+			build: func(anchor [32]byte) *statedelta.StateDelta {
+				data := []byte("owns-10")
+
+				return &statedelta.StateDelta{
+					Anchor: anchor,
+					Outputs: []statedelta.OutputToken{{
+						TokenID:   keys.ComputeTokenID(anchor, 0),
+						SNMarker:  keys.OutputSNMarker(anchor, 0, data),
+						TokenData: data,
+					}},
+					MetadataKeys: [][32]byte{keys.TransferMetadataKey("htlc-claim-1")},
+					MetadataVals: [][]byte{[]byte("preimage")},
+				}
+			},
+		},
+		{
+			name: "several metadata entries in canonical order",
+			build: func(anchor [32]byte) *statedelta.StateDelta {
+				keysOut := [][32]byte{
+					keys.TransferMetadataKey("a"),
+					keys.TransferMetadataKey("b"),
+					keys.TransferMetadataKey("c"),
+				}
+				slices.SortFunc(keysOut, func(x, y [32]byte) int { return bytes.Compare(x[:], y[:]) })
+
+				return &statedelta.StateDelta{
+					Anchor:       anchor,
+					MetadataKeys: keysOut,
+					MetadataVals: [][]byte{[]byte("one"), []byte(""), []byte("three")},
+				}
+			},
+		},
+		{
+			name: "an output with empty token data",
+			build: func(anchor [32]byte) *statedelta.StateDelta {
+				return &statedelta.StateDelta{
+					Anchor: anchor,
+					Outputs: []statedelta.OutputToken{{
+						TokenID:  keys.ComputeTokenID(anchor, 0),
+						SNMarker: keys.OutputSNMarker(anchor, 0, nil),
+					}},
+				}
+			},
+		},
+		{
+			name: "no outputs and no spends at all",
+			build: func(anchor [32]byte) *statedelta.StateDelta {
+				return &statedelta.StateDelta{Anchor: anchor}
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			anchorID := n.ComputeTxID(&driver.TxID{Creator: []byte(tc.name)})
+			anchor, err := keys.AnchorFromTxID(anchorID)
+			require.NoError(t, err)
+
+			delta := tc.build(anchor)
+			delta.TokenRequestHash = sha256Of(tc.name)
+			delta.PublicParamsHash = sha256Of(string(pp0))
+			delta.PublicParamsVersion = 0
+			require.NoError(t, delta.Validate(), "the test itself must build a well-formed delta")
+
+			env := &Envelope{
+				Anchor:       anchorID,
+				Delta:        delta,
+				Endorsements: endorse(t, signer, domain, delta),
+			}
+			require.NoError(t, n.Broadcast(t.Context(), env),
+				"the contract must recompute the same digest Go signed")
+			require.Equal(t, uint64(1), waitMined(t, evmClient, env.EthTxHash),
+				"an InvalidSignatures revert here means the two EIP-712 implementations disagree")
+		})
+	}
+}
+
+// TestTransferMetadataRoundTripAgainstAnvil follows a metadata entry all the way out and back: the
+// endorsed delta writes it, and the reader the token layer uses finds it again. This is the path an
+// HTLC claim takes, and nothing exercised it against a real contract.
+func TestTransferMetadataRoundTripAgainstAnvil(t *testing.T) {
+	endpoint := startAnvil(t)
+
+	keyBytes, err := hex.DecodeString(anvilKey1)
+	require.NoError(t, err)
+	signer, err := eip712.NewSignerFromBytes(keyBytes)
+	require.NoError(t, err)
+
+	pp0 := []byte("metadata-public-params")
+	tokenState := deployContracts(t, endpoint, signer.Address(), pp0)
+
+	evmClient, err := client.NewJSONRPCClient(endpoint, nil)
+	require.NoError(t, err)
+
+	cfg := validConfig()
+	cfg.Endpoint = endpoint
+	cfg.Contracts.TokenState = tokenState.Hex()
+	cfg.Endorsement.Endorsers[0].Address = signer.Address().Hex()
+	cfg.Finality.BlockTag = client.BlockTagLatest
+	cfg.Finality.PollInterval = 50 * time.Millisecond
+	cfg.Finality.Timeout = 15 * time.Second
+	cfg.applyDefaults()
+	require.NoError(t, cfg.Validate())
+
+	submitter, err := NewSubmitter(evmClient, secp256k1.PrivKeyFromBytes(keyBytes), tokenState,
+		big.NewInt(testChainID), cfg.Gas)
+	require.NoError(t, err)
+	n, err := NewNetwork("evm-net", cfg, evmClient, nil, submitter, nil)
+	require.NoError(t, err)
+	_, err = n.Connect("token")
+	require.NoError(t, err)
+
+	domain := eip712.Domain{ChainID: big.NewInt(testChainID), VerifyingContract: tokenState}
+
+	anchorID := n.ComputeTxID(&driver.TxID{Creator: []byte("metadata-writer")})
+	anchor, err := keys.AnchorFromTxID(anchorID)
+	require.NoError(t, err)
+
+	present, absent := "htlc-claim-present", "htlc-claim-empty"
+
+	// Canonical order is by key, and each value travels with its own key, exactly as the translator
+	// sorts them.
+	type entry struct {
+		key [32]byte
+		val []byte
+	}
+	pairs := []entry{
+		{keys.TransferMetadataKey(present), []byte("the-preimage")},
+		{keys.TransferMetadataKey(absent), []byte{}},
+	}
+	slices.SortStableFunc(pairs, func(a, b entry) int { return bytes.Compare(a.key[:], b.key[:]) })
+
+	delta := &statedelta.StateDelta{
+		Anchor:              anchor,
+		MetadataKeys:        [][32]byte{pairs[0].key, pairs[1].key},
+		MetadataVals:        [][]byte{pairs[0].val, pairs[1].val},
+		TokenRequestHash:    sha256Of("metadata-request"),
+		PublicParamsHash:    sha256Of(string(pp0)),
+		PublicParamsVersion: 0,
+	}
+	require.NoError(t, delta.Validate())
+
+	env := &Envelope{Anchor: anchorID, Delta: delta, Endorsements: endorse(t, signer, domain, delta)}
+	require.NoError(t, n.Broadcast(t.Context(), env))
+	require.Equal(t, uint64(1), waitMined(t, evmClient, env.EthTxHash), "the metadata write must not revert")
+
+	value, err := n.LookupTransferMetadataKey("token", present, 3*time.Second)
+	require.NoError(t, err, "a metadata value written on chain must be readable by the key it was written under")
+	assert.Equal(t, []byte("the-preimage"), value)
+
+	// A metadata entry written with an empty value cannot be read back. The apply above did not
+	// revert, so the contract accepted the entry and set metadataExists for its key, but that mapping
+	// has no getter: getTransferMetadata returns the value alone, and an empty one is what an unset
+	// key returns too. LookupTransferMetadataKey therefore polls until it gives up.
+	//
+	// No shipped token driver writes an empty metadata value, so nothing hits this today. It is pinned
+	// here because the failure is silent on the write side and only shows up as a reader timeout much
+	// later, and because closing it properly means exposing metadataExists from the contract rather
+	// than anything that can be done in Go.
+	// The message is deliberately not asserted. LookupTransferMetadataKey shares one deadline between
+	// the poll loop and the calls it makes, so whether the caller sees "not found within ..." or the
+	// underlying call's own deadline error depends on which side of the loop the timeout lands on.
+	_, err = n.LookupTransferMetadataKey("token", absent, 2*time.Second)
+	require.Error(t, err, "an empty metadata value is indistinguishable from an absent key on the read path")
+	t.Logf("reading back the empty-valued key gave: %v", err)
 }
