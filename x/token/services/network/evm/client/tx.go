@@ -94,6 +94,22 @@ func SignTx(tx *DynamicFeeTx, key *secp256k1.PrivateKey) ([]byte, error) {
 	if tx.ChainID == nil || tx.ChainID.Sign() <= 0 {
 		return nil, errors.New("transaction chain id must be set and positive")
 	}
+	// rlpBigInt encodes a value's magnitude, so a negative field would be signed as its positive
+	// counterpart: the broadcast transaction would carry a fee the driver never computed, and nothing
+	// downstream would show the two had diverged. None of these fields has a meaningful negative
+	// value, so refusing one is strictly better than silently reinterpreting it.
+	for _, f := range []struct {
+		name  string
+		value *big.Int
+	}{
+		{"maxPriorityFeePerGas", tx.MaxPriorityFeePerGas},
+		{"maxFeePerGas", tx.MaxFeePerGas},
+		{"value", tx.Value},
+	} {
+		if f.value != nil && f.value.Sign() < 0 {
+			return nil, errors.Errorf("transaction %s must not be negative, got %s", f.name, f.value)
+		}
+	}
 
 	hash := tx.SigningHash()
 	// SignCompact returns {v, r, s} with v = 27 + recovery id, the same layout the endorsement

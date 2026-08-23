@@ -52,8 +52,12 @@ type Manager struct {
 	pollInterval time.Duration
 	timeout      time.Duration
 
+	// mu guards pending, which holds the listeners waiting on each anchor. A transaction can be
+	// waited on by more than one party at once - a node that both owns and audits a transaction
+	// registers a listener from each path - so this is a list per anchor rather than a set of anchors,
+	// matching what the Fabric driver's listener manager does.
 	mu      sync.Mutex
-	pending map[string]struct{}
+	pending map[string][]driver.FinalityListener
 }
 
 // NewManager returns a finality manager. Non-positive intervals fall back to sane defaults so a
@@ -84,7 +88,7 @@ func NewManager(
 		blockTag:     blockTag,
 		pollInterval: pollInterval,
 		timeout:      timeout,
-		pending:      map[string]struct{}{},
+		pending:      map[string][]driver.FinalityListener{},
 	}
 }
 
@@ -158,32 +162,51 @@ func (m *Manager) AddListener(ctx context.Context, anchor [32]byte, anchorID str
 		return nil
 	}
 
+	// A second listener for the same anchor joins the watch already running rather than being refused.
+	// Refusing it used to fail the caller outright, and both callers in the token layer treat that as
+	// fatal: a node that owns a transaction registers one listener through the ttx store and, if it
+	// also audits it, another through the audit store, so the second registration failed and took the
+	// whole Append with it.
 	m.mu.Lock()
-	if _, watching := m.pending[anchorID]; watching {
-		m.mu.Unlock()
-
-		return errors.Errorf("finality: already watching [%s]", anchorID)
-	}
-	m.pending[anchorID] = struct{}{}
+	_, watching := m.pending[anchorID]
+	m.pending[anchorID] = append(m.pending[anchorID], once(listener))
 	m.mu.Unlock()
+	if watching {
+		return nil
+	}
 
 	// The watcher deliberately outlives the caller's context: a listener registered during a
 	// short-lived request must still be notified when the transaction settles, typically long after
 	// that request returns. Its lifetime is bounded by the finality timeout instead.
-	go m.watch(anchor, anchorID, once(listener)) // #nosec G118 -- detached by design, bounded by the timeout
+	go m.watch(anchor, anchorID) // #nosec G118 -- detached by design, bounded by the timeout
 
 	return nil
 }
 
+// take removes and returns the listeners waiting on an anchor. Removing them under the same lock that
+// reads them is what makes each one fire exactly once: a listener registered after this point finds no
+// entry and starts a fresh watch rather than joining one that has already decided.
+func (m *Manager) take(anchorID string) []driver.FinalityListener {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	listeners := m.pending[anchorID]
+	delete(m.pending, anchorID)
+
+	return listeners
+}
+
 // watch polls until the anchor is applied or the timeout expires. It runs detached from the caller's
 // context so a listener registered during a short-lived request still gets its notification.
-func (m *Manager) watch(anchor [32]byte, anchorID string, listener driver.FinalityListener) {
+func (m *Manager) watch(anchor [32]byte, anchorID string) {
 	ctx, cancel := context.WithTimeout(context.Background(), m.timeout)
 	defer cancel()
+	// Anything still registered when this returns is dropped, so a watch that exits by a path which
+	// did not notify cannot leave a listener waiting forever on an anchor nobody is watching.
 	defer func() {
-		m.mu.Lock()
-		delete(m.pending, anchorID)
-		m.mu.Unlock()
+		for _, l := range m.take(anchorID) {
+			l.OnError(context.Background(), anchorID,
+				errors.New("finality: the watch ended without a verdict"))
+		}
 	}()
 
 	ticker := time.NewTicker(m.pollInterval)
@@ -204,7 +227,9 @@ func (m *Manager) watch(anchor [32]byte, anchorID string, listener driver.Finali
 			}
 			observed = true
 			if code == driver.Valid {
-				listener.OnStatus(ctx, anchorID, code, message, hash)
+				for _, l := range m.take(anchorID) {
+					l.OnStatus(ctx, anchorID, code, message, hash)
+				}
 
 				return
 			}
@@ -212,14 +237,18 @@ func (m *Manager) watch(anchor [32]byte, anchorID string, listener driver.Finali
 			if !observed {
 				// Every read attempt in the window errored: the chain was never actually reached, so
 				// there is no evidence the anchor is invalid, only that it could not be observed.
-				listener.OnError(context.Background(), anchorID,
-					errors.New("finality: could not reach the chain before the timeout"))
+				for _, l := range m.take(anchorID) {
+					l.OnError(context.Background(), anchorID,
+						errors.New("finality: could not reach the chain before the timeout"))
+				}
 
 				return
 			}
 			// The anchor never appeared, and at least one read genuinely confirmed its absence. A
 			// reverted apply emits nothing, so this is the only failure signal available by anchor.
-			listener.OnStatus(context.Background(), anchorID, driver.Invalid, "finality timeout", nil)
+			for _, l := range m.take(anchorID) {
+				l.OnStatus(context.Background(), anchorID, driver.Invalid, "finality timeout", nil)
+			}
 
 			return
 		}

@@ -120,8 +120,15 @@ func (s *Submitter) Submit(
 			// A transaction the node refused to accept was never judged by the chain, so this is the
 			// transient class: the delta is still valid and the caller should retry rather than
 			// re-derive it. A node that executed it and rejected it comes back through gasLimit instead.
+			//
+			// It also carries ErrNonceMayBeConsumed. This is the one step that can fail after the node
+			// has the transaction, so "the broadcast failed" is not proof the chain never took it: a
+			// timeout or a dropped connection looks identical to a node that accepted and mined it and
+			// then lost the reply. The nonce manager re-reads the chain rather than reissuing a nonce
+			// that may already be spent.
 			return errors.Wrapf(
-				ErrNetworkUnavailable, "submitter: failed to broadcast the transaction: %v", sendErr)
+				errors.Join(ErrNetworkUnavailable, ErrNonceMayBeConsumed),
+				"submitter: failed to broadcast the transaction: %v", sendErr)
 		}
 
 		rawTx, txHash = signed, hash

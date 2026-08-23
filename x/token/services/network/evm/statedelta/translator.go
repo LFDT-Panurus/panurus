@@ -188,9 +188,15 @@ func (t *Translator) writeTransfer(action translator.TransferAction) error {
 	}
 	// Redeem outputs are skipped but their slot still consumes an output index, exactly as the
 	// Fabric translator enumerates them.
-	// Read once, outside the loop: see the matching comment in writeIssue.
+	// Read once, outside the loop: see the matching comment in writeIssue. numOutputs is read once
+	// for the same reason and additionally because it is used twice, to bound the loop and to advance
+	// the counter: reading it again for the second use would let an action whose NumOutputs() is not
+	// perfectly idempotent enumerate one range of indexes and advance the counter by another, so every
+	// later action in the request would derive its token ids at the wrong offsets, and two endorsers
+	// reading different values would emit different deltas and never assemble a quorum.
 	graphHiding := action.IsGraphHiding()
-	for i := range action.NumOutputs() {
+	numOutputs := action.NumOutputs()
+	for i := range numOutputs {
 		if action.IsRedeemAt(i) {
 			continue
 		}
@@ -200,7 +206,7 @@ func (t *Translator) writeTransfer(action translator.TransferAction) error {
 		}
 		t.appendOutput(t.counter+uint64(i), output, graphHiding) // #nosec G115 -- i is a small output index
 	}
-	t.counter += uint64(action.NumOutputs()) // #nosec G115 -- output counts are small
+	t.counter += uint64(numOutputs) // #nosec G115 -- output counts are small
 
 	if err := t.appendSpentRefs(action); err != nil {
 		return err

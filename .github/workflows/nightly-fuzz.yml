@@ -161,6 +161,10 @@ jobs:
             dir: ./x/token/services/network/evm
             pkg: ./abi
             func: FuzzDecodeBytes32
+          - name: evm-parse-hex-quantities
+            dir: ./x/token/services/network/evm
+            pkg: ./client
+            func: FuzzParseHexQuantities
           - name: evm-hex-to-address
             dir: ./x/token/services/network/evm
             pkg: ./client

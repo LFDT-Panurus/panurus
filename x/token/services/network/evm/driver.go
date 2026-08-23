@@ -380,8 +380,14 @@ func (d *Driver) registerEndorser(networkKey string, factory *endorsement.Servic
 	}
 
 	signer, err := config.EndorserSigner()
-	if err != nil || signer == nil {
+	if err != nil {
 		return errors.Wrap(err, "this node is configured as an endorser but its key is unusable")
+	}
+	// Separately from the error: errors.Wrap(nil, ...) is nil, so folding this into the branch above
+	// would report success and leave the node unregistered, which is the exact silent-endorser failure
+	// the comment above says must not happen.
+	if signer == nil {
+		return errors.New("this node is configured as an endorser but no signing key was loaded")
 	}
 	allowed, err := config.AllowedRequesters(d.resolveIdentity)
 	if err != nil {

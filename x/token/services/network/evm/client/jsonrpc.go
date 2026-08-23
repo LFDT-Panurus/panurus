@@ -11,6 +11,7 @@ import (
 	"context"
 	"encoding/hex"
 	"encoding/json"
+	"io"
 	"math/big"
 	"net/http"
 	"strconv"
@@ -25,6 +26,20 @@ import (
 // deadline of its own.
 const DefaultRequestTimeout = 30 * time.Second
 
+// maxResponseBytes bounds the JSON-RPC response body this client will buffer.
+//
+// http.Client.Timeout bounds how long a response may take, not how large it may be, so without this a
+// node that streams an endless body makes the driver allocate until it dies. The node is ordinarily
+// operator-run infrastructure rather than an attacker, so this is defence in depth rather than a
+// closed hole; it is the same bound statedelta.Validate already puts on the other input the driver
+// reads from somebody else, and it costs nothing when the node behaves.
+//
+// The cap is set well above any legitimate answer. The largest of those by far is
+// getPublicParameters, whose bytes arrive ABI-encoded and then hex-encoded, so roughly twice their
+// size on the wire; 64 MiB leaves room for parameters an order of magnitude larger than the shipped
+// drivers produce.
+const maxResponseBytes = 64 << 20
+
 // JSONRPCClient is the EVMClient implementation over HTTP JSON-RPC. It speaks plain eth_* methods,
 // so it works against any standard node (Besu is the acceptance backend, anvil the inner loop, and
 // an fabric-x-evm gateway is just another endpoint).
@@ -37,6 +52,9 @@ type JSONRPCClient struct {
 	http     *http.Client
 	// id is the JSON-RPC request counter, incremented atomically so concurrent calls never reuse an id.
 	id atomic.Uint64
+	// maxResponse is the response-body bound, held as a field rather than read from the constant so a
+	// test can exercise the limit without moving 64 MiB over the loopback interface.
+	maxResponse int
 }
 
 // Compile-time assertion that the client satisfies the frozen interface.
@@ -52,7 +70,7 @@ func NewJSONRPCClient(endpoint string, httpClient *http.Client) (*JSONRPCClient,
 		httpClient = &http.Client{Timeout: DefaultRequestTimeout}
 	}
 
-	return &JSONRPCClient{endpoint: endpoint, http: httpClient}, nil
+	return &JSONRPCClient{endpoint: endpoint, http: httpClient, maxResponse: maxResponseBytes}, nil
 }
 
 // ChainID returns the chain id reported by the node.
@@ -191,10 +209,18 @@ func (c *JSONRPCClient) EstimateGas(ctx context.Context, msg CallMsg) (uint64, e
 // errMethodNotFound is the JSON-RPC code for a method the node does not implement.
 const errMethodNotFound = -32601
 
-// errServer is the code nodes use for an execution failure, which includes a reverted call. It is
-// not part of the JSON-RPC specification, which reserves -32000 to -32099 for implementations, so it
-// is paired with the message rather than trusted alone.
-const errServer = -32000
+// errExecutionReverted is EIP-1474's "execution error" code, which is what geth, anvil and everything
+// built on them return for a reverted call, with the revert data attached.
+const errExecutionReverted = 3
+
+// errServerMin and errServerMax bound the range JSON-RPC reserves for implementation-defined errors.
+// Besu reports a revert as -32000 inside it, and other nodes pick other values in the same range, so
+// the whole range is accepted and paired with the message rather than any single code being trusted
+// alone.
+const (
+	errServerMin = -32099
+	errServerMax = -32000
+)
 
 // ErrExecutionReverted marks the node reporting that the call it was given reverts against current
 // state, as opposed to failing to answer at all.
@@ -205,12 +231,26 @@ const errServer = -32000
 // malformed response - says nothing about the transaction and has to be retried instead.
 var ErrExecutionReverted = errors.New("execution reverted")
 
-// isReverted reports whether a JSON-RPC error is a revert. It pairs the implementation-defined code
-// with the message, because the code covers everything a node treats as a server-side execution error
-// and the wording differs between clients ("execution reverted" on geth, "Execution reverted" on
-// Besu).
+// isReverted reports whether a JSON-RPC error is a revert.
+//
+// Getting this wrong is not cosmetic. A revert is the chain rejecting the transaction, which is
+// permanent and has to be re-derived; everything else says nothing about the transaction and has to be
+// retried. The submitter maps the two onto ErrTransactionReverted and ErrNetworkUnavailable, so a
+// revert this function misses is handed to the caller as "retry with backoff" for a transaction that
+// will be rejected identically every time.
+//
+// Nodes disagree on both halves of the answer. Besu reports a revert as -32000, inside the range
+// JSON-RPC reserves for implementations; geth and anvil report it as EIP-1474's code 3. The wording
+// differs too ("execution reverted" on geth, "Execution reverted" on Besu, and anvil appends the
+// custom-error selector). So the code is accepted from either the reserved range or 3, and is always
+// paired with the message, which keeps a non-revert failure carrying one of those codes ("out of gas"
+// on 3, "header not found" on -32000) out of the permanent class.
 func isReverted(err *rpcError) bool {
-	return err != nil && err.Code == errServer && strings.Contains(strings.ToLower(err.Message), "revert")
+	if err == nil || !strings.Contains(strings.ToLower(err.Message), "revert") {
+		return false
+	}
+
+	return err.Code == errExecutionReverted || (err.Code >= errServerMin && err.Code <= errServerMax)
 }
 
 // SuggestGasFees returns the node's suggested EIP-1559 fees: the priority tip it reports, and a max
@@ -408,8 +448,19 @@ func (c *JSONRPCClient) invoke(ctx context.Context, method string, out any, para
 		return nil, errors.Errorf("%s call returned http %d", method, resp.StatusCode)
 	}
 
+	// Read through a bound rather than handing the decoder the body directly: one extra byte is
+	// allowed so an over-long body is reported as such instead of arriving as a truncated,
+	// syntactically broken document that reads like a node returning nonsense.
+	respBody, err := io.ReadAll(io.LimitReader(resp.Body, int64(c.maxResponse)+1))
+	if err != nil {
+		return nil, errors.Wrapf(err, "failed to read %s response", method)
+	}
+	if len(respBody) > c.maxResponse {
+		return nil, errors.Errorf("%s response exceeds the %d byte limit", method, c.maxResponse)
+	}
+
 	var rpcResp rpcResponse
-	if err := json.NewDecoder(resp.Body).Decode(&rpcResp); err != nil {
+	if err := json.Unmarshal(respBody, &rpcResp); err != nil {
 		return nil, errors.Wrapf(err, "failed to decode %s response", method)
 	}
 	if rpcResp.Error != nil {
@@ -552,10 +603,19 @@ func parseHexUint(s string) (uint64, error) {
 }
 
 // parseHexBig parses a 0x/0X-prefixed hex quantity into a big.Int.
+//
+// A JSON-RPC quantity is an unsigned integer, so a leading sign is rejected rather than parsed.
+// big.Int.SetString accepts "-5" and "+5" happily, which would let a node hand back a negative base
+// fee or tip; those flow into the signed transaction, where rlpBigInt encodes a value's magnitude and
+// would drop the sign silently, signing a fee the driver did not compute. parseHexUint already
+// refuses both, via strconv.ParseUint, so this only brings the big.Int path to the same strictness.
 func parseHexBig(s string) (*big.Int, error) {
 	trimmed := trimHexPrefix(s)
 	if trimmed == "" {
 		return nil, errors.Errorf("empty hex quantity")
+	}
+	if trimmed[0] == '-' || trimmed[0] == '+' {
+		return nil, errors.Errorf("invalid hex quantity [%s]: quantities are unsigned", s)
 	}
 	v, ok := new(big.Int).SetString(trimmed, 16)
 	if !ok {

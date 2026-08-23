@@ -15,6 +15,16 @@ import (
 	"github.com/LFDT-Panurus/panurus/x/token/services/network/evm/client"
 )
 
+// ErrNonceMayBeConsumed marks a failure that happened once the transaction had already been handed to
+// the node, where the failure is not evidence that the chain never took it. A broadcast that times out
+// or loses its connection is the case that matters: the node may well have accepted and mined the
+// transaction, and only the reply was lost.
+//
+// Everything before that point (gas estimation, fee suggestion, signing) either does not reach the
+// node or cannot consume a nonce, so those failures leave the sequence provably untouched and must not
+// carry this.
+var ErrNonceMayBeConsumed = errors.New("the nonce may have been consumed on chain")
+
 // NonceManager hands out the submitter account's Ethereum transaction nonces. Ethereum requires them
 // to be strictly sequential per account, so two broadcasts must never collide: WithNonce holds a lock
 // across the whole allocate-and-use step, not just the allocation, so nothing else can be mid-flight
@@ -64,6 +74,20 @@ func (n *NonceManager) WithNonce(ctx context.Context, use func(nonce uint64) err
 	}
 
 	if err := use(n.next); err != nil {
+		// A failure that reached the node leaves the local sequence unverifiable: the transaction may
+		// have been accepted and only the reply lost, in which case this nonce is spent and every later
+		// one derived from it is too low. Dropping the cached value makes the next allocation re-read
+		// the chain, which settles the question either way.
+		//
+		// Without this a single lost broadcast reply wedges the account permanently: the manager keeps
+		// reissuing a nonce the chain has already used, every send fails "nonce too low", and nothing
+		// ever re-reads the chain to notice. Re-reading is safe precisely because this lock is held
+		// across the whole step, so there is no other in-flight broadcast whose nonce a fresh read
+		// could fail to account for.
+		if errors.Is(err, ErrNonceMayBeConsumed) {
+			n.initialized = false
+		}
+
 		return err
 	}
 	n.next++

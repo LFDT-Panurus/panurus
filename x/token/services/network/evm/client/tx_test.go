@@ -162,3 +162,50 @@ func TestSignTxContractCreation(t *testing.T) {
 	assert.NotEqual(t, tx.SigningHash(), withZero.SigningHash(),
 		"contract creation must not encode like a call to the zero address")
 }
+
+// TestSignTxRejectsNegativeFields checks a negative fee or value is refused rather than signed.
+//
+// rlpBigInt encodes a value's magnitude, so a negative field would be signed as its positive
+// counterpart: the broadcast transaction would carry a fee the driver never computed, and nothing
+// downstream would reveal that the two had diverged. The reachable source is a node answering
+// eth_gasPrice or eth_getBlockByNumber with a signed quantity, which parseHexBig now also refuses;
+// this is the second half of the same guard, at the point the value is actually committed to.
+func TestSignTxRejectsNegativeFields(t *testing.T) {
+	key, err := secp256k1.GeneratePrivateKey()
+	require.NoError(t, err)
+	to := Address{0x01}
+
+	base := func() *DynamicFeeTx {
+		return &DynamicFeeTx{
+			ChainID:              big.NewInt(31337),
+			Nonce:                1,
+			MaxPriorityFeePerGas: big.NewInt(1),
+			MaxFeePerGas:         big.NewInt(2),
+			Gas:                  21000,
+			To:                   &to,
+			Value:                big.NewInt(0),
+		}
+	}
+
+	// The control: the same transaction with every field non-negative signs fine.
+	_, err = SignTx(base(), key)
+	require.NoError(t, err)
+
+	for _, tc := range []struct {
+		field string
+		set   func(*DynamicFeeTx)
+	}{
+		{"maxPriorityFeePerGas", func(tx *DynamicFeeTx) { tx.MaxPriorityFeePerGas = big.NewInt(-1) }},
+		{"maxFeePerGas", func(tx *DynamicFeeTx) { tx.MaxFeePerGas = big.NewInt(-2) }},
+		{"value", func(tx *DynamicFeeTx) { tx.Value = big.NewInt(-3) }},
+	} {
+		t.Run(tc.field, func(t *testing.T) {
+			tx := base()
+			tc.set(tx)
+
+			_, err := SignTx(tx, key)
+			require.Error(t, err, "a negative %s must not be signed as its magnitude", tc.field)
+			assert.Contains(t, err.Error(), tc.field)
+		})
+	}
+}
