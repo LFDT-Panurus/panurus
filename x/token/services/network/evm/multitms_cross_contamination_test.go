@@ -222,14 +222,18 @@ func TestMultiTMSCrossContamination_Live(t *testing.T) {
 	// QueryTokens takes a namespace argument (network.go:359) but never uses it to pick a
 	// TokenState: it reads through n.reader, built once in NewNetwork from whichever config ConfigFor
 	// resolved. Ask for TMS B's namespace and see whose contract actually gets called.
+	// Connect's endorsement-policy check reads the chain too, so the read under observation is counted
+	// from where that left off rather than from zero.
+	beforeQuery := evmClient.CallCallCount()
+
 	evmClient.CallReturns(abiBytes([]byte("owned-by-a")), nil)
 	out, err := n.QueryTokens(t.Context(), tmsB.Namespace, []*token.ID{{TxId: anchorHex(0x01), Index: 0}})
 	require.NoError(t, err)
 	require.Len(t, out, 1)
 	assert.Equal(t, []byte("owned-by-a"), out[0])
 
-	require.Equal(t, 1, evmClient.CallCallCount())
-	_, calledTo, _, _ := evmClient.CallArgsForCall(0)
+	require.Equal(t, beforeQuery+1, evmClient.CallCallCount())
+	_, calledTo, _, _ := evmClient.CallArgsForCall(beforeQuery)
 	assert.Equal(t, addrA, calledTo,
 		"QueryTokens for the tms-b namespace silently reads through TMS A's TokenState clone")
 	assert.NotEqual(t, addrB, calledTo, "it must not be tms-b's own configured TokenState")

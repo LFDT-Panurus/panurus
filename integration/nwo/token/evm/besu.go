@@ -155,6 +155,11 @@ func StartBesu(ctx context.Context, cfg BesuConfig) (*Besu, error) {
 		endpoint:    "http://127.0.0.1:" + strconv.Itoa(cfg.Port),
 	}
 	if err := node.waitReady(ctx); err != nil {
+		// The container is running but unusable, and the caller is handed no Node to stop it with, so
+		// nothing else will ever remove it. The next run will not reap it either: the name embeds a
+		// freshly reserved host port, so it never collides with the name that run cleans up.
+		removeContainer(node)
+
 		return nil, err
 	}
 	logger.Infof("besu is up at %s (chain %d)", node.endpoint, cfg.ChainID)

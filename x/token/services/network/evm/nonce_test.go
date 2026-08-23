@@ -167,3 +167,63 @@ func TestNonceHandlesConcurrentFailuresWithoutDuplicating(t *testing.T) {
 
 	assert.Len(t, got, callers/2, "every successful attempt must have consumed a distinct nonce")
 }
+
+// TestNonceReReadsAfterAnAmbiguousBroadcast covers the one failure that is not proof the chain never
+// saw the transaction.
+//
+// Everything before the broadcast (gas estimation, fee suggestion, signing) either never reaches the
+// node or cannot consume a nonce, so those failures leave the sequence provably untouched and the
+// manager reuses the nonce with no round trip, which TestNonceIsNotAdvancedOnFailure pins. A broadcast
+// that times out or loses its connection is different: the node may have accepted and mined the
+// transaction and only the reply was lost, in which case the nonce is spent.
+//
+// Reusing it there wedges the account for good. Every later send fails "nonce too low", and since that
+// is also a failed broadcast, nothing ever re-reads the chain to notice. Only a restart recovers.
+func TestNonceReReadsAfterAnAmbiguousBroadcast(t *testing.T) {
+	evm := &mock.EVMClient{}
+	evm.PendingNonceAtReturns(5, nil)
+	n := NewNonceManager(evm, client.Address{})
+
+	// The broadcast fails, but the chain took the transaction: its pending nonce has moved on.
+	err := n.WithNonce(t.Context(), func(nonce uint64) error {
+		assert.Equal(t, uint64(5), nonce)
+
+		return errors.Wrapf(ErrNonceMayBeConsumed, "the reply was lost")
+	})
+	require.Error(t, err)
+	evm.PendingNonceAtReturns(6, nil)
+
+	err = n.WithNonce(t.Context(), func(nonce uint64) error {
+		assert.Equal(t, uint64(6), nonce, "the manager must take the chain's word, not its own stale count")
+
+		return nil
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 2, evm.PendingNonceAtCallCount(), "an ambiguous broadcast has to cost one re-read")
+
+	next, initialized := n.Cached()
+	assert.True(t, initialized)
+	assert.Equal(t, uint64(7), next)
+}
+
+// TestNonceKeepsItsSequenceWhenTheChainDidNotTakeIt is the other half: the same ambiguous failure when
+// the transaction really was not accepted must not skip a nonce, or the account is left with a gap
+// that stalls every transaction queued behind it.
+func TestNonceKeepsItsSequenceWhenTheChainDidNotTakeIt(t *testing.T) {
+	evm := &mock.EVMClient{}
+	evm.PendingNonceAtReturns(5, nil)
+	n := NewNonceManager(evm, client.Address{})
+
+	err := n.WithNonce(t.Context(), func(uint64) error {
+		return errors.Wrapf(ErrNonceMayBeConsumed, "the reply was lost")
+	})
+	require.Error(t, err)
+
+	// The chain never took it, so its pending nonce is unchanged and the re-read returns the same value.
+	err = n.WithNonce(t.Context(), func(nonce uint64) error {
+		assert.Equal(t, uint64(5), nonce, "a nonce the chain never consumed must be reused, not skipped")
+
+		return nil
+	})
+	require.NoError(t, err)
+}
