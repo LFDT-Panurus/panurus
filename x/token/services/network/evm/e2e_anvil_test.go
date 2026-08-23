@@ -19,7 +19,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os/exec"
+	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -98,6 +100,25 @@ func waitForPort(t *testing.T, address string) {
 func deployContracts(t *testing.T, endpoint string, endorser client.Address, pp0 []byte) client.Address {
 	t.Helper()
 
+	return deployContractsWithQuorum(t, endpoint, []client.Address{endorser}, 1, pp0)
+}
+
+// deployContractsWithQuorum is deployContracts for an endorser set of any size, so a test can run the
+// configuration production actually uses: a threshold above one.
+func deployContractsWithQuorum(
+	t *testing.T,
+	endpoint string,
+	endorsers []client.Address,
+	threshold int,
+	pp0 []byte,
+) client.Address {
+	t.Helper()
+
+	addresses := make([]string, len(endorsers))
+	for i, e := range endorsers {
+		addresses[i] = e.Hex()
+	}
+
 	// vm.startBroadcast() takes its sender from the CLI, so the key is passed as a flag rather than
 	// through the environment.
 	cmd := exec.Command("forge", "script", "script/Deploy.s.sol:Deploy",
@@ -105,8 +126,8 @@ func deployContracts(t *testing.T, endpoint string, endorser client.Address, pp0
 		"--private-key", "0x"+anvilKey1)
 	cmd.Dir = "contracts"
 	cmd.Env = append(cmd.Environ(),
-		"EVM_ENDORSERS="+endorser.Hex(),
-		"EVM_THRESHOLD=1",
+		"EVM_ENDORSERS="+strings.Join(addresses, ","),
+		"EVM_THRESHOLD="+strconv.Itoa(threshold),
 		"EVM_PP0=0x"+hex.EncodeToString(pp0),
 		"EVM_GRAPH_HIDING=false",
 	)
@@ -749,4 +770,264 @@ func TestConnectRejectsAnUndeployedTokenStateAgainstAnvil(t *testing.T) {
 		"a node whose tokenState address holds no contract cannot serve this TMS, and saying so at "+
 			"startup is the whole point of having startup checks")
 	t.Logf("Connect said: %v", err)
+}
+
+// anvilKey3 is anvil's third well-known development account, needed once a test wants an endorser set
+// bigger than two.
+const anvilKey3 = "5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a"
+
+// TestQuorumEndorsementAgainstAnvil runs the configuration production actually uses and the single
+// end-to-end test does not: a threshold above one, and a delta carrying more than one output.
+//
+// Both are places where an encoding mistake hides. applyStateDelta takes the signatures as a dynamic
+// array of dynamic bytes, and an array of length one is the case where a wrong offset still happens to
+// land correctly; the same is true of the delta's own output array. A quorum of two over two outputs
+// is the smallest shape that would expose either, and the contract is the judge.
+func TestQuorumEndorsementAgainstAnvil(t *testing.T) {
+	endpoint := startAnvil(t)
+
+	signers := make([]*eip712.Signer, 0, 3)
+	addresses := make([]client.Address, 0, 3)
+	for _, k := range []string{anvilKey1, anvilStrangerKey, anvilKey3} {
+		raw, err := hex.DecodeString(k)
+		require.NoError(t, err)
+		signer, err := eip712.NewSignerFromBytes(raw)
+		require.NoError(t, err)
+		signers = append(signers, signer)
+		addresses = append(addresses, signer.Address())
+	}
+
+	pp0 := []byte("quorum-public-params")
+	tokenState := deployContractsWithQuorum(t, endpoint, addresses, 2, pp0)
+
+	evmClient, err := client.NewJSONRPCClient(endpoint, nil)
+	require.NoError(t, err)
+
+	keyBytes, err := hex.DecodeString(anvilKey1)
+	require.NoError(t, err)
+
+	cfg := validConfig()
+	cfg.Endpoint = endpoint
+	cfg.Contracts.TokenState = tokenState.Hex()
+	cfg.Endorsement.Threshold = 2
+	cfg.Endorsement.Endorsers = []EndorserBinding{
+		{Address: addresses[0].Hex(), FSCIdentity: "endorser-1"},
+		{Address: addresses[1].Hex(), FSCIdentity: "endorser-2"},
+		{Address: addresses[2].Hex(), FSCIdentity: "endorser-3"},
+	}
+	cfg.Finality.BlockTag = client.BlockTagLatest
+	cfg.Finality.PollInterval = 50 * time.Millisecond
+	cfg.Finality.Timeout = 15 * time.Second
+	cfg.applyDefaults()
+	require.NoError(t, cfg.Validate())
+
+	submitter, err := NewSubmitter(evmClient, secp256k1.PrivKeyFromBytes(keyBytes), tokenState,
+		big.NewInt(testChainID), cfg.Gas)
+	require.NoError(t, err)
+	n, err := NewNetwork("evm-net", cfg, evmClient, nil, submitter, nil)
+	require.NoError(t, err)
+
+	// Connect also proves the policy check reads a three-endorser set and a threshold of two off the
+	// deployed verifier and agrees with the configuration.
+	_, err = n.Connect("token")
+	require.NoError(t, err, "the configured quorum must match the one the verifier was deployed with")
+
+	domain := eip712.Domain{ChainID: big.NewInt(testChainID), VerifyingContract: tokenState}
+
+	anchorID := n.ComputeTxID(&driver.TxID{Creator: []byte("quorum-issuer")})
+	anchor, err := keys.AnchorFromTxID(anchorID)
+	require.NoError(t, err)
+
+	firstData, secondData := []byte("alice-owns-60"), []byte("bob-owns-40")
+	delta := &statedelta.StateDelta{
+		Anchor: anchor,
+		Outputs: []statedelta.OutputToken{
+			{
+				TokenID:   keys.ComputeTokenID(anchor, 0),
+				SNMarker:  keys.OutputSNMarker(anchor, 0, firstData),
+				TokenData: firstData,
+			},
+			{
+				TokenID:   keys.ComputeTokenID(anchor, 1),
+				SNMarker:  keys.OutputSNMarker(anchor, 1, secondData),
+				TokenData: secondData,
+			},
+		},
+		TokenRequestHash:    sha256Of("quorum-request"),
+		PublicParamsHash:    sha256Of(string(pp0)),
+		PublicParamsVersion: 0,
+	}
+
+	digest := eip712.Digest(domain, delta)
+	first, err := signers[0].Sign(digest)
+	require.NoError(t, err)
+	third, err := signers[2].Sign(digest)
+	require.NoError(t, err)
+
+	env := &Envelope{Anchor: anchorID, Delta: delta, Endorsements: [][]byte{first, third}}
+	require.NoError(t, n.Broadcast(t.Context(), env), "a genuine 2-of-3 quorum must be accepted")
+	require.Equal(t, uint64(1), waitMined(t, evmClient, env.EthTxHash), "and must not revert")
+
+	// Both outputs have to have landed, in the right order: a wrong offset in the output array would
+	// show up here as swapped or truncated token bytes rather than as a revert.
+	stored, err := n.QueryTokens(t.Context(), "token", []*token.ID{
+		{TxId: anchorID, Index: 0},
+		{TxId: anchorID, Index: 1},
+	})
+	require.NoError(t, err)
+	require.Len(t, stored, 2)
+	assert.Equal(t, firstData, stored[0])
+	assert.Equal(t, secondData, stored[1])
+}
+
+// TestConcurrentSubmissionsAgainstAnvil drives the submitter the way a busy node does: several token
+// transactions in flight at once, all paying gas from the one account.
+//
+// Nonces are the thing that breaks here. They are per account and strictly sequential, so two
+// transactions that pick the same one mean the second is refused, and a gap means every transaction
+// after it sits in the mempool unmined. Neither shows up in a test that submits one at a time.
+func TestConcurrentSubmissionsAgainstAnvil(t *testing.T) {
+	node := startAnvil(t)
+
+	evmClient, err := client.NewJSONRPCClient(node, nil)
+	require.NoError(t, err)
+
+	keyBytes, err := hex.DecodeString(anvilKey1)
+	require.NoError(t, err)
+
+	target, err := client.HexToAddress("0x000000000000000000000000000000000000dEaD")
+	require.NoError(t, err)
+	submitter, err := NewSubmitter(evmClient, secp256k1.PrivKeyFromBytes(keyBytes), target,
+		big.NewInt(testChainID), GasConfig{Strategy: GasStrategyFixed, Limit: 200_000})
+	require.NoError(t, err)
+
+	// Marked by byte rather than by loop index so each anchor is distinct without converting an int.
+	markers := []byte{1, 2, 3, 4, 5, 6, 7, 8}
+	parallel := len(markers)
+	var wg sync.WaitGroup
+	hashes := make([]client.Hash, parallel)
+	errs := make([]error, parallel)
+
+	for i, marker := range markers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			var anchor [32]byte
+			anchor[31] = marker
+			_, hash, err := submitter.Submit(t.Context(), &statedelta.StateDelta{
+				Anchor: anchor,
+				Outputs: []statedelta.OutputToken{{
+					TokenID: keys.ComputeTokenID(anchor, 0), TokenData: []byte{marker},
+				}},
+				TokenRequestHash:    sha256Of("concurrent-request"),
+				PublicParamsHash:    sha256Of("pp"),
+				PublicParamsVersion: 0,
+			}, [][]byte{make([]byte, 65)})
+			hashes[i], errs[i] = hash, err
+		}()
+	}
+	wg.Wait()
+
+	for i, err := range errs {
+		require.NoError(t, err, "submission %d failed", i)
+	}
+
+	// Every one has to be a distinct transaction that the chain actually took. A reused nonce would
+	// show up as two identical hashes, or as one of these never being mined.
+	seen := make(map[client.Hash]struct{}, parallel)
+	for i, h := range hashes {
+		_, dup := seen[h]
+		require.False(t, dup, "submission %d reused another transaction's hash", i)
+		seen[h] = struct{}{}
+		assert.Equal(t, uint64(1), waitMined(t, evmClient, h.Hex()), "submission %d must be mined", i)
+	}
+
+	// And the account's nonce has to have advanced by exactly the number of transactions: a gap would
+	// mean the chain is holding a nonce nothing will ever fill.
+	next, err := evmClient.PendingNonceAt(t.Context(), submitter.Address())
+	require.NoError(t, err)
+	assert.Equal(t, uint64(len(markers)), next, "the nonce sequence must be dense, with no gaps")
+}
+
+// TestMinedButRevertedAgainstAnvil covers the race the estimate cannot close. Gas estimation runs
+// against the state at the time it is asked; the transaction executes against the state when it is
+// mined. Anything that changes in between, another spend of the same input above all, means a
+// transaction that estimated cleanly reverts on chain.
+//
+// A fixed gas limit reproduces that deterministically by skipping estimation entirely, which is also
+// a supported production configuration. What must never happen is the driver reporting such a
+// transaction as applied: the apply reverted, so nothing was written, and a caller told otherwise
+// would credit tokens the chain does not have.
+func TestMinedButRevertedAgainstAnvil(t *testing.T) {
+	endpoint := startAnvil(t)
+
+	keyBytes, err := hex.DecodeString(anvilKey1)
+	require.NoError(t, err)
+	signer, err := eip712.NewSignerFromBytes(keyBytes)
+	require.NoError(t, err)
+
+	pp0 := []byte("reverted-public-params")
+	tokenState := deployContracts(t, endpoint, signer.Address(), pp0)
+
+	evmClient, err := client.NewJSONRPCClient(endpoint, nil)
+	require.NoError(t, err)
+
+	cfg := validConfig()
+	cfg.Endpoint = endpoint
+	cfg.Contracts.TokenState = tokenState.Hex()
+	cfg.Endorsement.Endorsers[0].Address = signer.Address().Hex()
+	cfg.Finality.BlockTag = client.BlockTagLatest
+	cfg.Finality.PollInterval = 50 * time.Millisecond
+	cfg.Finality.Timeout = 2 * time.Second
+	// Fixed gas skips estimation, so the transaction reaches the chain and reverts there rather than
+	// being caught before it is sent.
+	cfg.Gas = GasConfig{Strategy: GasStrategyFixed, Limit: 500_000}
+	cfg.applyDefaults()
+	require.NoError(t, cfg.Validate())
+
+	submitter, err := NewSubmitter(evmClient, secp256k1.PrivKeyFromBytes(keyBytes), tokenState,
+		big.NewInt(testChainID), cfg.Gas)
+	require.NoError(t, err)
+	n, err := NewNetwork("evm-net", cfg, evmClient, nil, submitter, nil)
+	require.NoError(t, err)
+	_, err = n.Connect("token")
+	require.NoError(t, err)
+
+	anchorID := n.ComputeTxID(&driver.TxID{Creator: []byte("doomed")})
+	anchor, err := keys.AnchorFromTxID(anchorID)
+	require.NoError(t, err)
+
+	tokenData := []byte("never-applied")
+	delta := &statedelta.StateDelta{
+		Anchor: anchor,
+		Outputs: []statedelta.OutputToken{{
+			TokenID:   keys.ComputeTokenID(anchor, 0),
+			SNMarker:  keys.OutputSNMarker(anchor, 0, tokenData),
+			TokenData: tokenData,
+		}},
+		TokenRequestHash:    sha256Of("doomed-request"),
+		PublicParamsHash:    sha256Of(string(pp0)),
+		PublicParamsVersion: 0,
+	}
+
+	// A signature from a key the verifier does not know: the contract rejects it at apply time, which
+	// stands in for any reason the state moved under the transaction.
+	strangerBytes, err := hex.DecodeString(anvilStrangerKey)
+	require.NoError(t, err)
+	stranger, err := eip712.NewSignerFromBytes(strangerBytes)
+	require.NoError(t, err)
+	domain := eip712.Domain{ChainID: big.NewInt(testChainID), VerifyingContract: tokenState}
+
+	env := &Envelope{Anchor: anchorID, Delta: delta, Endorsements: endorse(t, stranger, domain, delta)}
+	require.NoError(t, n.Broadcast(t.Context(), env), "with a fixed gas limit nothing rejects it before it is sent")
+	require.Equal(t, uint64(0), waitMined(t, evmClient, env.EthTxHash), "the apply must revert on chain")
+
+	// The chain wrote nothing, so the anchor must not read as applied, and the token must not exist.
+	code, _, _, err := n.GetTransactionStatus(t.Context(), "token", anchorID)
+	require.NoError(t, err)
+	assert.NotEqual(t, driver.Valid, code,
+		"a reverted apply wrote nothing: reporting it as valid would credit tokens the chain does not have")
+
+	_, err = n.QueryTokens(t.Context(), "token", []*token.ID{{TxId: anchorID, Index: 0}})
+	assert.Error(t, err, "the output of a reverted apply must not be readable")
 }
