@@ -288,12 +288,53 @@ func (n *Network) Broadcast(ctx context.Context, blob any) error {
 
 	rawTx, txHash, err := n.submitter.Submit(ctx, env.Delta, env.Endorsements)
 	if err != nil {
+		// A permanent rejection is not the whole story while the anchor is already on chain.
+		//
+		// The ordinary way to arrive here is a retry after a broadcast whose reply went missing: the
+		// first attempt was mined, the caller never learned that, and the contract now refuses the
+		// anchor for exactly the right reason, that applying it twice would be a double spend. The
+		// rejection is about this second attempt. The transaction the caller is asking about
+		// succeeded, so answering "invalid" would have it discard a transfer that is final.
+		//
+		// Only a permanent rejection is worth this second look. A transient failure leaves the caller
+		// retrying anyway, which is the correct outcome whether or not the anchor ever landed.
+		if errors.Is(err, ErrTransactionReverted) && n.anchorApplied(ctx, anchor) {
+			logger.Infof(
+				"the apply for [%s] was refused because the anchor is already on chain; "+
+					"treating the transaction as the success it is", env.Anchor)
+
+			return nil
+		}
+
 		return errors.Wrapf(err, "failed to broadcast [%s]", env.Anchor)
 	}
 	env.RawTx = rawTx
 	env.EthTxHash = txHash.Hex()
 
 	return nil
+}
+
+// anchorApplied reports whether the chain has already recorded this anchor.
+//
+// It answers false when the status cannot be read, which keeps the original rejection: a node that
+// cannot be asked is no reason to convert a refusal into a success, and the caller is better served
+// by the error it would have had anyway.
+//
+// The envelope keeps no transaction hash in this case, because the hash belongs to the attempt that
+// landed and this process never saw it. Nothing downstream needs it: finality is waited on by anchor,
+// and that anchor resolves immediately.
+func (n *Network) anchorApplied(ctx context.Context, anchor [32]byte) bool {
+	if n.finality == nil {
+		return false
+	}
+	code, _, _, err := n.finality.StatusByAnchor(ctx, anchor)
+	if err != nil {
+		logger.Debugf("could not check whether [%x] is already applied: %v", anchor, err)
+
+		return false
+	}
+
+	return code == driver.Valid
 }
 
 // ComputeTxID returns the token-request anchor for the transaction.

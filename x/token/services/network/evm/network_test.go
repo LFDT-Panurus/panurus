@@ -528,3 +528,42 @@ func bigInt(v int64) *big.Int { return big.NewInt(v) }
 func driverTxID() driver.TxID {
 	return driver.TxID{Creator: []byte("alice")}
 }
+
+// TestBroadcastKeepsARevertWhenTheAnchorIsNotApplied is the other half of the already-applied case:
+// a genuine rejection must still be reported. The chain here has no record of the anchor, so the
+// refusal is about a transaction that never landed and the caller has to hear about it.
+func TestBroadcastKeepsARevertWhenTheAnchorIsNotApplied(t *testing.T) {
+	evm := readySubmitterClient()
+	evm.EstimateGasReturns(0, errors.Wrap(client.ErrExecutionReverted, "eth_estimateGas failed"))
+	// getTokenRequestHash returns bytes32(0), which is how the contract says it has no such anchor.
+	evm.CallReturns(make([]byte, 32), nil)
+	n := networkWithSubmitter(t, evm)
+
+	delta := testDelta()
+	err := n.Broadcast(t.Context(), &Envelope{
+		Anchor:       hex.EncodeToString(delta.Anchor[:]),
+		Delta:        delta,
+		Endorsements: [][]byte{make([]byte, 65)},
+	})
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrTransactionReverted,
+		"a refusal of an anchor the chain has never recorded is exactly the permanent failure it looks like")
+}
+
+// TestBroadcastKeepsARevertWhenTheStatusCannotBeRead pins the fail-closed direction. A node that
+// cannot be asked whether the anchor landed is no reason to convert a refusal into a success.
+func TestBroadcastKeepsARevertWhenTheStatusCannotBeRead(t *testing.T) {
+	evm := readySubmitterClient()
+	evm.EstimateGasReturns(0, errors.Wrap(client.ErrExecutionReverted, "eth_estimateGas failed"))
+	evm.CallReturns(nil, errors.New("node unreachable"))
+	n := networkWithSubmitter(t, evm)
+
+	delta := testDelta()
+	err := n.Broadcast(t.Context(), &Envelope{
+		Anchor:       hex.EncodeToString(delta.Anchor[:]),
+		Delta:        delta,
+		Endorsements: [][]byte{make([]byte, 65)},
+	})
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrTransactionReverted, "an unreadable status keeps the original rejection")
+}

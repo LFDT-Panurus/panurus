@@ -629,3 +629,88 @@ func TestBroadcastRejectionIsClassifiedAgainstAnvil(t *testing.T) {
 	// funds" is the difference between topping up an account and looking for a bug.
 	assert.Contains(t, strings.ToLower(err.Error()), "insufficient funds")
 }
+
+// TestResubmittingAnAppliedAnchorAgainstAnvil covers what happens after the failure the lost-reply
+// test recovers from: the broadcast reply went missing, the caller does not know the transaction
+// landed, and it retries the same delta.
+//
+// The second attempt has to be refused, because the anchor is already applied and applying it twice
+// would be a double spend. What matters is the answer the caller is given for it. The transaction it
+// was actually asking about succeeded, so telling it the request is invalid would have it discard a
+// token transfer that is on chain and final.
+func TestResubmittingAnAppliedAnchorAgainstAnvil(t *testing.T) {
+	endpoint := startAnvil(t)
+
+	keyBytes, err := hex.DecodeString(anvilKey1)
+	require.NoError(t, err)
+	key := secp256k1.PrivKeyFromBytes(keyBytes)
+	signer, err := eip712.NewSignerFromBytes(keyBytes)
+	require.NoError(t, err)
+
+	pp0 := []byte("replay-public-params")
+	tokenState := deployContracts(t, endpoint, signer.Address(), pp0)
+
+	evmClient, err := client.NewJSONRPCClient(endpoint, nil)
+	require.NoError(t, err)
+
+	cfg := validConfig()
+	cfg.Endpoint = endpoint
+	cfg.Contracts.TokenState = tokenState.Hex()
+	cfg.Endorsement.Endorsers[0].Address = signer.Address().Hex()
+	cfg.Finality.BlockTag = client.BlockTagLatest
+	cfg.Finality.PollInterval = 50 * time.Millisecond
+	cfg.Finality.Timeout = 15 * time.Second
+	cfg.applyDefaults()
+	require.NoError(t, cfg.Validate())
+
+	submitter, err := NewSubmitter(evmClient, key, tokenState, big.NewInt(testChainID), cfg.Gas)
+	require.NoError(t, err)
+	n, err := NewNetwork("evm-net", cfg, evmClient, nil, submitter, nil)
+	require.NoError(t, err)
+	_, err = n.Connect("token")
+	require.NoError(t, err)
+
+	domain := eip712.Domain{ChainID: big.NewInt(testChainID), VerifyingContract: tokenState}
+
+	anchorID := n.ComputeTxID(&driver.TxID{Creator: []byte("issuer-replay")})
+	anchor, err := keys.AnchorFromTxID(anchorID)
+	require.NoError(t, err)
+
+	tokenData := []byte("alice-owns-100")
+	delta := &statedelta.StateDelta{
+		Anchor: anchor,
+		Outputs: []statedelta.OutputToken{{
+			TokenID:   keys.ComputeTokenID(anchor, 0),
+			SNMarker:  keys.OutputSNMarker(anchor, 0, tokenData),
+			TokenData: tokenData,
+		}},
+		TokenRequestHash:    sha256Of("replay-request"),
+		PublicParamsHash:    sha256Of(string(pp0)),
+		PublicParamsVersion: 0,
+	}
+
+	first := &Envelope{Anchor: anchorID, Delta: delta, Endorsements: endorse(t, signer, domain, delta)}
+	require.NoError(t, n.Broadcast(t.Context(), first), "the first apply must land")
+	require.Equal(t, uint64(1), waitMined(t, evmClient, first.EthTxHash), "and must not revert")
+
+	// The anchor is now on chain. This is the state the caller cannot see when its reply was lost.
+	code, _, _, err := n.GetTransactionStatus(t.Context(), "token", anchorID)
+	require.NoError(t, err)
+	require.Equal(t, driver.Valid, code, "the chain considers this transaction applied")
+
+	// Now the retry the caller would make.
+	second := &Envelope{Anchor: anchorID, Delta: delta, Endorsements: endorse(t, signer, domain, delta)}
+	require.NoError(t, n.Broadcast(t.Context(), second),
+		"the anchor this caller asked about is applied and final, so its transaction succeeded: "+
+			"reporting the request as invalid would have it discard a transfer that is on chain")
+
+	// The chain must be untouched by the retry: refusing the second apply is what stops the double
+	// spend, and treating it as a success must not paper over an apply that actually went through.
+	code, _, _, err = n.GetTransactionStatus(t.Context(), "token", anchorID)
+	require.NoError(t, err)
+	assert.Equal(t, driver.Valid, code)
+
+	spent, err := n.AreTokensSpent(t.Context(), "token", []*token.ID{{TxId: anchorID, Index: 0}}, nil)
+	require.NoError(t, err)
+	assert.Equal(t, []bool{false}, spent, "the token must still be unspent: the retry applied nothing")
+}
