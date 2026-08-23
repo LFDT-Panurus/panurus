@@ -64,6 +64,28 @@ func (f *PublicParametersService) Fetch(network driver.Network, channel driver.C
 	return value.Raw, nil
 }
 
+// FetchNamespaceVersion retrieves the current namespace version from the query service
+// for the specified network, channel, and namespace.
+func (f *PublicParametersService) FetchNamespaceVersion(network driver.Network, channel driver.Channel, namespace driver.Namespace) (uint64, error) {
+	qs, err := f.qsProvider.Get(network, channel)
+	if err != nil {
+		return 0, errors.Wrapf(err, "failed getting query service")
+	}
+	policies, err := qs.GetNamespacePolicies()
+	if err != nil {
+		return 0, errors.Wrapf(err, "failed getting namespace policies")
+	}
+	if policies != nil {
+		for _, p := range policies.GetPolicies() {
+			if p.GetNamespace() == namespace {
+				return p.GetVersion(), nil
+			}
+		}
+	}
+
+	return 0, nil
+}
+
 // Loader models a loader for public parameters.
 type Loader interface {
 	// LoadPublicParams loads the public parameters for the given TMS ID.

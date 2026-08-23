@@ -122,7 +122,19 @@ func (s *deployerService) deployPublicParameters(tmsID token.TMSID) error {
 // deployPublicParametersRaw constructs a public parameters transaction and
 // submits it to the network.
 func (s *deployerService) deployPublicParametersRaw(tmsID token.TMSID, ppRaw []byte) error {
-	tx, err := s.createPublicParametersTx(ppRaw, tmsID.Namespace)
+	var nsVersion uint64
+	if fetcher, ok := s.ppFetcher.(interface {
+		FetchNamespaceVersion(network cdriver.Network, channel cdriver.Channel, namespace cdriver.Namespace) (uint64, error)
+	}); ok {
+		ver, err := fetcher.FetchNamespaceVersion(tmsID.Network, tmsID.Channel, tmsID.Namespace)
+		if err != nil {
+			logger.Warnf("Failed fetching namespace version for [%s], defaulting to 0: %v", tmsID, err)
+		} else {
+			nsVersion = ver
+		}
+	}
+
+	tx, err := s.createPublicParametersTx(ppRaw, tmsID.Namespace, nsVersion)
 	if err != nil {
 		return err
 	}
@@ -132,7 +144,7 @@ func (s *deployerService) deployPublicParametersRaw(tmsID token.TMSID, ppRaw []b
 
 // createPublicParametersTx builds a FabricX transaction that writes the raw
 // public parameters and their SHA256 hash to the ledger using the setup keys.
-func (s *deployerService) createPublicParametersTx(ppRaw []byte, namespaceID cdriver.Namespace) (*applicationpb.Tx, error) {
+func (s *deployerService) createPublicParametersTx(ppRaw []byte, namespaceID cdriver.Namespace, nsVersion uint64) (*applicationpb.Tx, error) {
 	key, err := s.keyTranslator.CreateSetupKey()
 	if err != nil {
 		return nil, err
@@ -146,7 +158,7 @@ func (s *deployerService) createPublicParametersTx(ppRaw []byte, namespaceID cdr
 	tx := &applicationpb.Tx{
 		Namespaces: []*applicationpb.TxNamespace{{
 			NsId:        namespaceID,
-			NsVersion:   0,
+			NsVersion:   nsVersion,
 			ReadsOnly:   []*applicationpb.Read{{Key: []byte("initialized")}},
 			BlindWrites: []*applicationpb.Write{{Key: []byte(key), Value: ppRaw}, {Key: []byte(keyHash), Value: valueHash[:]}},
 		}},
