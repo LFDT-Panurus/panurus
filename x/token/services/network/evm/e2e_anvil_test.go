@@ -910,9 +910,7 @@ func TestConcurrentSubmissionsAgainstAnvil(t *testing.T) {
 	errs := make([]error, parallel)
 
 	for i, marker := range markers {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			var anchor [32]byte
 			anchor[31] = marker
 			_, hash, err := submitter.Submit(t.Context(), &statedelta.StateDelta{
@@ -925,7 +923,7 @@ func TestConcurrentSubmissionsAgainstAnvil(t *testing.T) {
 				PublicParamsVersion: 0,
 			}, [][]byte{make([]byte, 65)})
 			hashes[i], errs[i] = hash, err
-		}()
+		})
 	}
 	wg.Wait()
 
