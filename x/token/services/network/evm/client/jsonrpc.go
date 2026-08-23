@@ -123,6 +123,25 @@ func (c *JSONRPCClient) Call(ctx context.Context, to Address, data []byte, block
 	return decodeHexBytes(out)
 }
 
+// CodeAt returns the contract code deployed at address, or empty if the address holds none.
+//
+// This is what separates a deployed contract from an address that merely parses as one. Every other
+// read the driver makes goes through eth_call, and a call against an address with no code is not an
+// error on any node: it returns empty data. A misconfigured contract address therefore makes every
+// read come back empty instead of failing, which is indistinguishable from a contract that had
+// nothing to say.
+func (c *JSONRPCClient) CodeAt(ctx context.Context, address Address, blockTag string) ([]byte, error) {
+	if blockTag == "" {
+		blockTag = BlockTagLatest
+	}
+	var out string
+	if err := c.call(ctx, "eth_getCode", &out, address.Hex(), blockTag); err != nil {
+		return nil, err
+	}
+
+	return decodeHexBytes(out)
+}
+
 // GetLogs returns the logs matching the filter.
 func (c *JSONRPCClient) GetLogs(ctx context.Context, q LogFilter) ([]Log, error) {
 	topics := make([]any, 0, len(q.Topics))

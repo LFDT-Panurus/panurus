@@ -719,3 +719,28 @@ func errorServer(t *testing.T, code int, message string) string {
 
 	return srv.URL
 }
+
+// TestCodeAt covers the read the deployment check depends on: an address with a contract reports its
+// code, and one without reports nothing rather than failing.
+func TestCodeAt(t *testing.T) {
+	addr, err := HexToAddress("0x00000000000000000000000000000000deadbeef")
+	require.NoError(t, err)
+
+	t.Run("a deployed contract reports its code", func(t *testing.T) {
+		c, calls := newTestServer(t, map[string]string{"eth_getCode": `"0x6080604052"`})
+
+		code, err := c.CodeAt(context.Background(), addr, BlockTagLatest)
+		require.NoError(t, err)
+		assert.Equal(t, []byte{0x60, 0x80, 0x60, 0x40, 0x52}, code)
+		require.Len(t, *calls, 1)
+		assert.Equal(t, []any{addr.Hex(), BlockTagLatest}, (*calls)[0].Params)
+	})
+
+	t.Run("an address with no contract reports nothing", func(t *testing.T) {
+		c, _ := newTestServer(t, map[string]string{"eth_getCode": `"0x"`})
+
+		code, err := c.CodeAt(context.Background(), addr, BlockTagLatest)
+		require.NoError(t, err, "an address with no code is an answer, not a failure")
+		assert.Empty(t, code)
+	})
+}

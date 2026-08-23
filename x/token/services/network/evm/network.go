@@ -148,6 +148,9 @@ func (n *Network) Connect(ns string) ([]token2.ServiceOption, error) {
 		return nil, errors.Errorf("evm network: node reports chain id %s, configuration says %d",
 			chainID, n.config.ChainID)
 	}
+	if err := n.verifyTokenStateDeployed(ctx); err != nil {
+		return nil, err
+	}
 	if err := n.verifyEndorsementPolicy(ctx); err != nil {
 		return nil, err
 	}
@@ -165,6 +168,37 @@ func (n *Network) Connect(ns string) ([]token2.ServiceOption, error) {
 		token2.WithChannel(n.Channel()),
 		token2.WithNamespace(ns),
 	}, nil
+}
+
+// verifyTokenStateDeployed refuses to connect when contracts.tokenState holds no contract.
+//
+// This is the most ordinary way an EVM deployment is misconfigured: a typo, a configuration copied
+// between environments, or a node pointed at a chain where the deploy has not happened. None of it is
+// visible without asking, because eth_call against an address with no code is not an error on any
+// node, it returns empty data. Every read the driver makes therefore comes back empty rather than
+// failing, the startup checks that read through eth_call find nothing to contradict, and the node
+// comes up looking healthy. The cost is paid one transaction at a time, as failures that do not look
+// like configuration problems.
+//
+// A failed read is not treated as a missing contract. It says the node could not be asked, which is
+// the same reason the policy check below tolerates one, and taking a node down over a momentarily
+// unhappy endpoint would be worse than the problem being guarded against.
+func (n *Network) verifyTokenStateDeployed(ctx context.Context) error {
+	code, err := n.client.CodeAt(ctx, n.tokenState, client.BlockTagLatest)
+	if err != nil {
+		logger.Warnf("could not read the code at tokenState [%s]; skipping the deployment check: %v",
+			n.tokenState, err)
+
+		return nil
+	}
+	if len(code) == 0 {
+		return errors.Errorf(
+			"evm network: no contract is deployed at tokenState [%s] on chain %d; "+
+				"check contracts.tokenState against the chain this endpoint serves",
+			n.tokenState, n.config.ChainID)
+	}
+
+	return nil
 }
 
 // NewEnvelope returns a new, empty EVM envelope.

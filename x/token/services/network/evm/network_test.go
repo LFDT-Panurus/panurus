@@ -57,6 +57,7 @@ func testNetwork(t *testing.T, evmClient client.EVMClient, endorser EndorsementS
 	if evmClient == nil {
 		evmClient = &mock.EVMClient{}
 	}
+	deployedTokenState(evmClient)
 	c := validConfig()
 	c.applyDefaults()
 	require.NoError(t, c.Validate())
@@ -342,6 +343,7 @@ func TestBroadcastRejectsBadInput(t *testing.T) {
 // Broadcast tests that need to get past the submitter/delta checks to exercise what follows them.
 func networkWithSubmitter(t *testing.T, evm *mock.EVMClient) *Network {
 	t.Helper()
+	deployedTokenState(evm)
 	c := validConfig()
 	c.applyDefaults()
 	require.NoError(t, c.Validate())
@@ -566,4 +568,39 @@ func TestBroadcastKeepsARevertWhenTheStatusCannotBeRead(t *testing.T) {
 	})
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrTransactionReverted, "an unreadable status keeps the original rejection")
+}
+
+// deployedTokenState makes a mock node report code at every address, which is the ordinary case and
+// what Connect's deployment check looks for. Tests about that check set their own answer afterwards;
+// everything else would otherwise have to restate "yes, the contract exists" to get past startup.
+func deployedTokenState(evmClient client.EVMClient) {
+	if m, ok := evmClient.(*mock.EVMClient); ok {
+		m.CodeAtReturns([]byte{0x60, 0x00}, nil)
+	}
+}
+
+// TestConnectChecksTheTokenStateIsDeployed pins both directions of the deployment guard, including
+// the one that matters most: a node that cannot be asked must not be treated as a node without the
+// contract, or a momentarily unhappy endpoint would take the driver down.
+func TestConnectChecksTheTokenStateIsDeployed(t *testing.T) {
+	t.Run("no code at the address is refused", func(t *testing.T) {
+		evm := &mock.EVMClient{}
+		evm.ChainIDReturns(bigInt(testChainID), nil)
+		n := testNetwork(t, evm, nil)
+		evm.CodeAtReturns(nil, nil)
+
+		_, err := n.Connect("token")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "no contract is deployed")
+	})
+
+	t.Run("an unreadable node still connects", func(t *testing.T) {
+		evm := &mock.EVMClient{}
+		evm.ChainIDReturns(bigInt(testChainID), nil)
+		n := testNetwork(t, evm, nil)
+		evm.CodeAtReturns(nil, errors.New("node briefly unhappy"))
+
+		_, err := n.Connect("token")
+		require.NoError(t, err, "a failed read says the node could not be asked, not that the contract is missing")
+	})
 }

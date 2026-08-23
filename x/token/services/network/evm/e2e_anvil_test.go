@@ -714,3 +714,39 @@ func TestResubmittingAnAppliedAnchorAgainstAnvil(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, []bool{false}, spent, "the token must still be unspent: the retry applied nothing")
 }
+
+// TestConnectRejectsAnUndeployedTokenStateAgainstAnvil covers the most ordinary way an EVM
+// deployment is misconfigured: contracts.tokenState points somewhere there is no contract. A typo, a
+// config copied between environments, or a node pointed at a chain where the deploy has not happened
+// yet all land here.
+//
+// eth_call against an address with no code is not an error on any node: it returns empty data. Every
+// read the driver makes therefore comes back empty rather than failing, so nothing on the startup
+// path notices, and the node comes up looking healthy. The cost is paid later, once per transaction,
+// as failures that do not look like configuration problems from the outside.
+func TestConnectRejectsAnUndeployedTokenStateAgainstAnvil(t *testing.T) {
+	endpoint := startAnvil(t)
+
+	evmClient, err := client.NewJSONRPCClient(endpoint, nil)
+	require.NoError(t, err)
+
+	// A well-formed address that anvil has never deployed anything to.
+	empty, err := client.HexToAddress("0x00000000000000000000000000000000deadbeef")
+	require.NoError(t, err)
+
+	cfg := validConfig()
+	cfg.Endpoint = endpoint
+	cfg.Contracts.TokenState = empty.Hex()
+	cfg.Finality.BlockTag = client.BlockTagLatest
+	cfg.applyDefaults()
+	require.NoError(t, cfg.Validate(), "the configuration is well formed; only the chain disagrees")
+
+	n, err := NewNetwork("evm-net", cfg, evmClient, nil, nil, nil)
+	require.NoError(t, err)
+
+	_, err = n.Connect("token")
+	require.Error(t, err,
+		"a node whose tokenState address holds no contract cannot serve this TMS, and saying so at "+
+			"startup is the whole point of having startup checks")
+	t.Logf("Connect said: %v", err)
+}

@@ -39,6 +39,21 @@ type EVMClient struct {
 		result1 *big.Int
 		result2 error
 	}
+	CodeAtStub        func(context.Context, client.Address, string) ([]byte, error)
+	codeAtMutex       sync.RWMutex
+	codeAtArgsForCall []struct {
+		arg1 context.Context
+		arg2 client.Address
+		arg3 string
+	}
+	codeAtReturns struct {
+		result1 []byte
+		result2 error
+	}
+	codeAtReturnsOnCall map[int]struct {
+		result1 []byte
+		result2 error
+	}
 	EstimateGasStub        func(context.Context, client.CallMsg) (uint64, error)
 	estimateGasMutex       sync.RWMutex
 	estimateGasArgsForCall []struct {
@@ -285,6 +300,72 @@ func (fake *EVMClient) ChainIDReturnsOnCall(i int, result1 *big.Int, result2 err
 	}
 	fake.chainIDReturnsOnCall[i] = struct {
 		result1 *big.Int
+		result2 error
+	}{result1, result2}
+}
+
+func (fake *EVMClient) CodeAt(arg1 context.Context, arg2 client.Address, arg3 string) ([]byte, error) {
+	fake.codeAtMutex.Lock()
+	ret, specificReturn := fake.codeAtReturnsOnCall[len(fake.codeAtArgsForCall)]
+	fake.codeAtArgsForCall = append(fake.codeAtArgsForCall, struct {
+		arg1 context.Context
+		arg2 client.Address
+		arg3 string
+	}{arg1, arg2, arg3})
+	stub := fake.CodeAtStub
+	fakeReturns := fake.codeAtReturns
+	fake.recordInvocation("CodeAt", []interface{}{arg1, arg2, arg3})
+	fake.codeAtMutex.Unlock()
+	if stub != nil {
+		return stub(arg1, arg2, arg3)
+	}
+	if specificReturn {
+		return ret.result1, ret.result2
+	}
+	return fakeReturns.result1, fakeReturns.result2
+}
+
+func (fake *EVMClient) CodeAtCallCount() int {
+	fake.codeAtMutex.RLock()
+	defer fake.codeAtMutex.RUnlock()
+	return len(fake.codeAtArgsForCall)
+}
+
+func (fake *EVMClient) CodeAtCalls(stub func(context.Context, client.Address, string) ([]byte, error)) {
+	fake.codeAtMutex.Lock()
+	defer fake.codeAtMutex.Unlock()
+	fake.CodeAtStub = stub
+}
+
+func (fake *EVMClient) CodeAtArgsForCall(i int) (context.Context, client.Address, string) {
+	fake.codeAtMutex.RLock()
+	defer fake.codeAtMutex.RUnlock()
+	argsForCall := fake.codeAtArgsForCall[i]
+	return argsForCall.arg1, argsForCall.arg2, argsForCall.arg3
+}
+
+func (fake *EVMClient) CodeAtReturns(result1 []byte, result2 error) {
+	fake.codeAtMutex.Lock()
+	defer fake.codeAtMutex.Unlock()
+	fake.CodeAtStub = nil
+	fake.codeAtReturns = struct {
+		result1 []byte
+		result2 error
+	}{result1, result2}
+}
+
+func (fake *EVMClient) CodeAtReturnsOnCall(i int, result1 []byte, result2 error) {
+	fake.codeAtMutex.Lock()
+	defer fake.codeAtMutex.Unlock()
+	fake.CodeAtStub = nil
+	if fake.codeAtReturnsOnCall == nil {
+		fake.codeAtReturnsOnCall = make(map[int]struct {
+			result1 []byte
+			result2 error
+		})
+	}
+	fake.codeAtReturnsOnCall[i] = struct {
+		result1 []byte
 		result2 error
 	}{result1, result2}
 }
