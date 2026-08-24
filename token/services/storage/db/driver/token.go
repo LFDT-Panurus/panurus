@@ -42,7 +42,10 @@ type TokenRecord struct {
 	// LedgerMetadata is the metadata associated to the content of Ledger
 	LedgerMetadata []byte
 	// Quantity is the number of units of Type carried in the token.
-	// It is encoded as a string containing a number in base 16. The string has prefix ``0x''.
+	// It is encoded as a string containing a non-negative integer. The value is parsed
+	// with big.Int base-0 auto-detection, so the base is inferred from the string's prefix:
+	// decimal by default, hexadecimal with a "0x"/"0X" prefix, octal with a "0o"/"0O" prefix
+	// (or a leading "0"), and binary with a "0b"/"0B" prefix.
 	Quantity string
 	// Type is the type of token
 	Type token.Type
