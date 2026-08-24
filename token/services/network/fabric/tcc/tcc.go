@@ -337,6 +337,15 @@ func (cc *TokenChaincode) AreTokensSpent(idsRaw []byte, stub shim.ChaincodeStubI
 		return shim.Error(err.Error())
 	}
 
+	// GetValidator guarantees a non-nil validator, but not non-nil public parameters: a
+	// TokenServicesFactory may report a successful initialization while handing back a nil
+	// PublicParameters.
+	if cc.PublicParameters == nil {
+		logger.Errorf("public parameters not initialized")
+
+		return shim.Error("public parameters not initialized")
+	}
+
 	var ids []string
 	if err := json.Unmarshal(idsRaw, &ids); err != nil {
 		logger.Errorf("failed unmarshalling tokens ids: [%s]", err)

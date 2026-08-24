@@ -142,6 +142,29 @@ func TestInvokeReportsInitializationErrorOnEveryCall(t *testing.T) {
 	}
 }
 
+// TestAreTokensSpentFailsGracefullyOnNilPublicParameters checks that AreTokensSpent refuses to
+// dereference a nil PublicParameters: a TokenServicesFactory may report a successful initialization
+// (non-nil validator, nil error) while handing back a nil PublicParameters, and the GraphHiding()
+// call must not dereference it. Instead of panicking, it answers with an error response.
+func TestAreTokensSpentFailsGracefullyOnNilPublicParameters(t *testing.T) {
+	writePublicParamsFile(t)
+
+	cc := &tcc.TokenChaincode{
+		TokenServicesFactory: func([]byte) (tcc.PublicParameters, tcc.Validator, error) {
+			return nil, &mock.Validator{}, nil // "successful" init, nil PublicParameters
+		},
+	}
+
+	stub := &mock.ChaincodeStubInterface{}
+	stub.GetTxIDReturns("txid")
+
+	require.NotPanics(t, func() {
+		resp := cc.AreTokensSpent([]byte(`["id1"]`), stub)
+		require.Equal(t, int32(500), resp.Status)
+		require.Contains(t, resp.Message, "public parameters not initialized")
+	})
+}
+
 // TestGetValidatorConcurrentInitialization checks that concurrent callers initialize once and all
 // observe the same validator.
 func TestGetValidatorConcurrentInitialization(t *testing.T) {
