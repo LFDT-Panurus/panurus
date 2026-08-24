@@ -45,7 +45,10 @@ type Token struct {
 	// Type is the type of the token
 	Type Type `json:"type,omitempty" protobuf:"bytes,2,opt,name=type,proto3"`
 	// Quantity is the number of units of Type carried in the token.
-	// It is encoded as a string containing a number in base 16. The string has prefix ``0x''.
+	// It is encoded as a string containing a non-negative integer. The value is parsed
+	// with big.Int base-0 auto-detection, so the base is inferred from the string's prefix:
+	// decimal by default, hexadecimal with a "0x"/"0X" prefix, octal with a "0o"/"0O" prefix
+	// (or a leading "0"), and binary with a "0b"/"0B" prefix.
 	Quantity string `json:"quantity,omitempty" protobuf:"bytes,3,opt,name=quantity,proto3"`
 }
 
