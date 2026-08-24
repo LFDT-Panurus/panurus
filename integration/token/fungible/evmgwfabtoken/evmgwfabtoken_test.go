@@ -167,7 +167,7 @@ func newTestSuite(
 		if integration.WithRaceDetection {
 			i.EnableRaceDetector()
 		}
-		i.RegisterPlatformFactory(tevm.NewPlatformFactory())
+		i.RegisterPlatformFactory(tevm.NewGatewayPlatformFactory())
 		i.RegisterPlatformFactory(token.NewPlatformFactory(i))
 		i.Generate()
 
