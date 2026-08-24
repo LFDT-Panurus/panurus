@@ -9,6 +9,7 @@ package fabric
 import (
 	"context"
 
+	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	driver2 "github.com/hyperledger-labs/fabric-smart-client/platform/common/driver"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/fabric/services/chaincode"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/services/view"
@@ -31,5 +32,10 @@ func (f *chaincodePublicParamsFetcher) Fetch(network driver2.Network, channel dr
 		return nil, err
 	}
 
-	return ppBoxed.([]byte), nil
+	pp, ok := ppBoxed.([]byte)
+	if !ok {
+		return pp, errors.Errorf("unexpected public params type %T, expected []byte", ppBoxed)
+	}
+
+	return pp, nil
 }
