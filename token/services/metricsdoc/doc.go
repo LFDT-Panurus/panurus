@@ -20,9 +20,11 @@ SPDX-License-Identifier: Apache-2.0
 // test until the documentation is updated.
 //
 // Which provider a constructor receives is as much a part of the exported name
-// as the opts are, so it is checked rather than assumed: the token drivers are
-// pinned as the only place a TMS-scoped provider is built, and every production
-// call site listed for a constructor must still contain that call. Removing the
-// wrapper, or moving a call site, therefore fails here instead of quietly
-// renaming twenty-one metrics.
+// as the opts are, so it is checked rather than assumed, from three directions:
+// the token drivers are pinned as the only place a TMS-scoped provider is built,
+// the container's own provider is required to reach nothing but that wrapper, and
+// every production call site listed for a constructor must still contain that
+// call. Removing the wrapper, routing the plain provider past it, or moving a
+// call site therefore fails here instead of quietly renaming twenty-one
+// metrics.
 package metricsdoc

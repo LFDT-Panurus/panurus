@@ -73,6 +73,12 @@ func TestDashboardQueriesReferenceRegisteredMetrics(t *testing.T) {
 	referenced := make(map[string]struct{})
 	for _, s := range values {
 		for _, match := range metricNamePattern.FindAllStringSubmatch(s, -1) {
+			if strings.HasSuffix(match[2], "_") {
+				// A bare namespace prefix: prose in a panel description, or the
+				// alternation inside a __name__ matcher. Not a metric, exactly as
+				// extractMetricNames treats it in the reference page.
+				continue
+			}
 			name := foldPromQLSuffix(match[2], registered)
 			referenced[name] = struct{}{}
 			assert.Contains(t, registered, name,

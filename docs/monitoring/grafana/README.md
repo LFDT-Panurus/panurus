@@ -14,10 +14,15 @@ queue).
    `DS_PROMETHEUS`.
 
 The dashboard declares four template variables — `network`, `channel`, `namespace` and `method` — whose
-values are discovered with `label_values` against
-`panurus_core_common_metrics_transfer_service_operations_total`. A node that has never issued or
-transferred a token exports no series for that metric, so the pickers stay empty until the first
-transaction; the unfiltered panels still work.
+values are discovered with `label_values`. `network`, `channel` and `namespace` come from
+`panurus_core_common_metrics_transfer_service_operations_total`; `method` is unioned across all five
+driver services with a `__name__` matcher, because each service reports a disjoint set of method names
+and a `method` list taken from one of them would filter the other four down to nothing.
+
+All four set `allValue: ".*"`, so the default “All” selection matches every series rather than
+interpolating to an empty string. This matters on a node that has never transferred a token: it exports
+no series for the source metric, the pickers stay empty, and without `allValue` a selector such as
+`network=~""` would match nothing and blank every filtered panel.
 
 Requires Grafana 9.0 or later (`schemaVersion` 37).
 
