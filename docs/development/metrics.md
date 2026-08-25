@@ -8,8 +8,10 @@ in the SDK the way production wiring does, reads the resulting names back out of
 and compares them against `token/services/metricsdoc/testdata/metrics.golden` and against this page.
 Adding, renaming or moving a metric fails that test until this page is updated. Because a name also
 depends on *which* provider production hands the constructor, the same test pins that wiring: it
-asserts that the token drivers are the only place a TMS-scoped provider is built, so dropping or
-relocating the wrapper fails too rather than silently invalidating the names below.
+asserts that the token drivers are the only place a TMS-scoped provider is built, and that the provider
+they get from the dependency-injection container reaches nothing but that wrapper. Dropping the wrapper,
+or routing the plain provider past it, therefore fails too rather than silently invalidating the names
+below.
 
 See [Monitoring](./monitoring.md) for the wider monitoring setup and [Driver Metrics](../drivers/metrics.md)
 for how the driver instrumentation is wired. Every metric below already has a panel in the importable
@@ -52,7 +54,7 @@ Two consequences are worth internalising before writing a query or a dashboard:
 - **Some names stutter**, because the metric name repeats its package: hence
   `panurus_services_auditor_auditor_audit_duration_seconds` and
   `panurus_services_network_fabricx_finality_queue_finality_queue_pending_events`. They are correct as
-  listed; see [Coverage gaps](#metric-hygiene) for why they are not renamed here.
+  listed; see [Metric hygiene](#metric-hygiene) for why they are not renamed here.
 
 ### The TMS-scoped provider changes the prefix
 
@@ -160,7 +162,7 @@ Source: `token/services/utils/json/session/metrics.go`. Wired in `token/sdk/dig/
 
 Recorded by the auditor around `Audit()`, `Append()` and `Release()`. These metrics carry **no TMS
 labels**, so a node auditing several TMSs reports them aggregated; see
-[Coverage gaps](#metric-hygiene).
+[Metric hygiene](#metric-hygiene).
 
 | Metric | Type | Labels | Description |
 |---|---|---|---|

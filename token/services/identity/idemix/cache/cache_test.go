@@ -338,6 +338,7 @@ func TestIdentityCache_CountsProvisionFailures(t *testing.T) {
 // noopGauge is a metrics.Gauge that discards everything.
 type noopGauge struct{}
 
+//nolint:ireturn // implements metrics.Gauge; the interface fixes the return type
 func (g *noopGauge) With(...string) metrics.Gauge { return g }
 
 func (g *noopGauge) Add(float64) {}

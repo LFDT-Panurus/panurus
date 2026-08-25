@@ -198,27 +198,27 @@
       "targets": [
         {
           "refId": "issue",
-          "expr": "histogram_quantile(0.95, sum by (le, method) (rate(panurus_core_common_metrics_issue_service_duration_seconds_bucket{network=~\"$network\",channel=~\"$channel\",namespace=~\"$namespace\",method=~\"$method\"}[5m])))",
+          "expr": "histogram_quantile(0.95, sum by (le, method) (rate(panurus_core_common_metrics_issue_service_duration_seconds_bucket{network=~\"$network\",channel=~\"$channel\",namespace=~\"$namespace\",method=~\"$method\"}[$__rate_interval])))",
           "legendFormat": "issue.{{method}}"
         },
         {
           "refId": "transfer",
-          "expr": "histogram_quantile(0.95, sum by (le, method) (rate(panurus_core_common_metrics_transfer_service_duration_seconds_bucket{network=~\"$network\",channel=~\"$channel\",namespace=~\"$namespace\",method=~\"$method\"}[5m])))",
+          "expr": "histogram_quantile(0.95, sum by (le, method) (rate(panurus_core_common_metrics_transfer_service_duration_seconds_bucket{network=~\"$network\",channel=~\"$channel\",namespace=~\"$namespace\",method=~\"$method\"}[$__rate_interval])))",
           "legendFormat": "transfer.{{method}}"
         },
         {
           "refId": "tokens",
-          "expr": "histogram_quantile(0.95, sum by (le, method) (rate(panurus_core_common_metrics_tokens_service_duration_seconds_bucket{network=~\"$network\",channel=~\"$channel\",namespace=~\"$namespace\",method=~\"$method\"}[5m])))",
+          "expr": "histogram_quantile(0.95, sum by (le, method) (rate(panurus_core_common_metrics_tokens_service_duration_seconds_bucket{network=~\"$network\",channel=~\"$channel\",namespace=~\"$namespace\",method=~\"$method\"}[$__rate_interval])))",
           "legendFormat": "tokens.{{method}}"
         },
         {
           "refId": "auditor",
-          "expr": "histogram_quantile(0.95, sum by (le, method) (rate(panurus_core_common_metrics_auditor_service_duration_seconds_bucket{network=~\"$network\",channel=~\"$channel\",namespace=~\"$namespace\",method=~\"$method\"}[5m])))",
+          "expr": "histogram_quantile(0.95, sum by (le, method) (rate(panurus_core_common_metrics_auditor_service_duration_seconds_bucket{network=~\"$network\",channel=~\"$channel\",namespace=~\"$namespace\",method=~\"$method\"}[$__rate_interval])))",
           "legendFormat": "auditor.{{method}}"
         },
         {
           "refId": "upgrade",
-          "expr": "histogram_quantile(0.95, sum by (le, method) (rate(panurus_core_common_metrics_tokens_upgrade_service_duration_seconds_bucket{network=~\"$network\",channel=~\"$channel\",namespace=~\"$namespace\",method=~\"$method\"}[5m])))",
+          "expr": "histogram_quantile(0.95, sum by (le, method) (rate(panurus_core_common_metrics_tokens_upgrade_service_duration_seconds_bucket{network=~\"$network\",channel=~\"$channel\",namespace=~\"$namespace\",method=~\"$method\"}[$__rate_interval])))",
           "legendFormat": "upgrade.{{method}}"
         }
       ]
@@ -309,17 +309,17 @@
       "targets": [
         {
           "refId": "e",
-          "expr": "histogram_quantile(0.95, sum by (le) (rate(panurus_services_ttx_endorsement_duration_seconds_bucket{network=~\"$network\",channel=~\"$channel\",namespace=~\"$namespace\"}[5m])))",
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(panurus_services_ttx_endorsement_duration_seconds_bucket{network=~\"$network\",channel=~\"$channel\",namespace=~\"$namespace\"}[$__rate_interval])))",
           "legendFormat": "endorsement p95"
         },
         {
           "refId": "a",
-          "expr": "histogram_quantile(0.95, sum by (le) (rate(panurus_services_ttx_audit_approval_duration_seconds_bucket{network=~\"$network\",channel=~\"$channel\",namespace=~\"$namespace\"}[5m])))",
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(panurus_services_ttx_audit_approval_duration_seconds_bucket{network=~\"$network\",channel=~\"$channel\",namespace=~\"$namespace\"}[$__rate_interval])))",
           "legendFormat": "audit_approval p95"
         },
         {
           "refId": "o",
-          "expr": "histogram_quantile(0.95, sum by (le) (rate(panurus_services_ttx_ordering_duration_seconds_bucket{network=~\"$network\",channel=~\"$channel\",namespace=~\"$namespace\"}[5m])))",
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(panurus_services_ttx_ordering_duration_seconds_bucket{network=~\"$network\",channel=~\"$channel\",namespace=~\"$namespace\"}[$__rate_interval])))",
           "legendFormat": "ordering p95"
         }
       ]
@@ -415,12 +415,12 @@
       "targets": [
         {
           "refId": "p50",
-          "expr": "histogram_quantile(0.50, sum by (le) (rate(panurus_services_ttx_finality_finality_listener_on_status_duration_seconds_bucket[5m])))",
+          "expr": "histogram_quantile(0.50, sum by (le) (rate(panurus_services_ttx_finality_finality_listener_on_status_duration_seconds_bucket[$__rate_interval])))",
           "legendFormat": "p50"
         },
         {
           "refId": "p95",
-          "expr": "histogram_quantile(0.95, sum by (le) (rate(panurus_services_ttx_finality_finality_listener_on_status_duration_seconds_bucket[5m])))",
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(panurus_services_ttx_finality_finality_listener_on_status_duration_seconds_bucket[$__rate_interval])))",
           "legendFormat": "p95"
         }
       ]
@@ -495,7 +495,36 @@
         "defaults": {
           "unit": "short"
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "err"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "ops"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "size"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "bytes"
+              },
+              {
+                "id": "custom.axisPlacement",
+                "value": "right"
+              }
+            ]
+          }
+        ]
       },
       "options": {
         "legend": {
@@ -511,7 +540,7 @@
         },
         {
           "refId": "size",
-          "expr": "histogram_quantile(0.95, sum by (le, type) (rate(panurus_services_utils_json_session_ttx_envelope_body_bytes_bucket[5m])))",
+          "expr": "histogram_quantile(0.95, sum by (le, type) (rate(panurus_services_utils_json_session_ttx_envelope_body_bytes_bucket[$__rate_interval])))",
           "legendFormat": "body p95 {{type}} (bytes)"
         }
       ]
@@ -547,7 +576,56 @@
         "defaults": {
           "unit": "s"
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "lc"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "ops"
+              },
+              {
+                "id": "custom.axisPlacement",
+                "value": "right"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "ae"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "ops"
+              },
+              {
+                "id": "custom.axisPlacement",
+                "value": "right"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "rl"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "ops"
+              },
+              {
+                "id": "custom.axisPlacement",
+                "value": "right"
+              }
+            ]
+          }
+        ]
       },
       "options": {
         "legend": {
@@ -558,12 +636,12 @@
       "targets": [
         {
           "refId": "ad",
-          "expr": "histogram_quantile(0.95, sum by (le) (rate(panurus_services_auditor_auditor_audit_duration_seconds_bucket[5m])))",
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(panurus_services_auditor_auditor_audit_duration_seconds_bucket[$__rate_interval])))",
           "legendFormat": "audit p95"
         },
         {
           "refId": "ap",
-          "expr": "histogram_quantile(0.95, sum by (le) (rate(panurus_services_auditor_auditor_append_duration_seconds_bucket[5m])))",
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(panurus_services_auditor_auditor_append_duration_seconds_bucket[$__rate_interval])))",
           "legendFormat": "append p95"
         },
         {
@@ -614,7 +692,24 @@
         "defaults": {
           "unit": "s"
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "out"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "ops"
+              },
+              {
+                "id": "custom.axisPlacement",
+                "value": "right"
+              }
+            ]
+          }
+        ]
       },
       "options": {
         "legend": {
@@ -625,7 +720,7 @@
       "targets": [
         {
           "refId": "p95",
-          "expr": "histogram_quantile(0.95, sum by (le) (rate(panurus_services_selector_sherdlock_selection_duration_seconds_bucket[5m])))",
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(panurus_services_selector_sherdlock_selection_duration_seconds_bucket[$__rate_interval])))",
           "legendFormat": "duration p95"
         },
         {
@@ -653,7 +748,36 @@
         "defaults": {
           "unit": "short"
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "f"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "ops"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "r"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "short"
+              },
+              {
+                "id": "custom.axisPlacement",
+                "value": "right"
+              }
+            ]
+          }
+        ]
       },
       "options": {
         "legend": {
@@ -669,7 +793,7 @@
         },
         {
           "refId": "r",
-          "expr": "histogram_quantile(0.95, sum by (le) (rate(panurus_services_selector_sherdlock_selection_immediate_retries_bucket[5m])))",
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(panurus_services_selector_sherdlock_selection_immediate_retries_bucket[$__rate_interval])))",
           "legendFormat": "retries p95"
         }
       ]
@@ -705,7 +829,24 @@
         "defaults": {
           "unit": "ops"
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "p"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "s"
+              },
+              {
+                "id": "custom.axisPlacement",
+                "value": "right"
+              }
+            ]
+          }
+        ]
       },
       "options": {
         "legend": {
@@ -731,7 +872,7 @@
         },
         {
           "refId": "p",
-          "expr": "histogram_quantile(0.95, sum by (le) (rate(panurus_services_certifier_interactive_certification_request_duration_seconds_bucket{channel=~\"$channel\",namespace=~\"$namespace\"}[5m])))",
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(panurus_services_certifier_interactive_certification_request_duration_seconds_bucket{channel=~\"$channel\",namespace=~\"$namespace\"}[$__rate_interval])))",
           "legendFormat": "request p95 (s)"
         }
       ]
@@ -766,12 +907,12 @@
         {
           "refId": "ic",
           "expr": "panurus_core_common_metrics_cache_level{network=~\"$network\",channel=~\"$channel\",namespace=~\"$namespace\"}",
-          "legendFormat": "idemix panurus_core_common_metrics_cache_level"
+          "legendFormat": "idemix cache"
         },
         {
           "refId": "rc",
           "expr": "panurus_core_common_metrics_recipient_data_cache_level{network=~\"$network\",channel=~\"$channel\",namespace=~\"$namespace\"}",
-          "legendFormat": "panurus_core_common_metrics_recipient_data_cache_level"
+          "legendFormat": "recipient data cache"
         },
         {
           "refId": "pt",
@@ -854,7 +995,7 @@
       "targets": [
         {
           "refId": "p95",
-          "expr": "histogram_quantile(0.95, sum by (le, path) (rate(panurus_core_common_metrics_identity_get_signer_duration_seconds_bucket{network=~\"$network\",channel=~\"$channel\",namespace=~\"$namespace\"}[5m])))",
+          "expr": "histogram_quantile(0.95, sum by (le, path) (rate(panurus_core_common_metrics_identity_get_signer_duration_seconds_bucket{network=~\"$network\",channel=~\"$channel\",namespace=~\"$namespace\"}[$__rate_interval])))",
           "legendFormat": "p95 {{path}}"
         }
       ]
@@ -1008,7 +1149,7 @@
       "targets": [
         {
           "refId": "p",
-          "expr": "histogram_quantile(0.95, sum by (le) (rate(panurus_services_network_fabricx_finality_queue_finality_queue_processing_duration_seconds_bucket[5m])))",
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(panurus_services_network_fabricx_finality_queue_finality_queue_processing_duration_seconds_bucket[$__rate_interval])))",
           "legendFormat": "p95"
         }
       ]
@@ -1018,7 +1159,6 @@
   "schemaVersion": 37,
   "style": "dark",
   "tags": [
-    "panurus",
     "panurus",
     "lfdt"
   ],
@@ -1045,6 +1185,7 @@
           "query": "label_values(panurus_core_common_metrics_transfer_service_operations_total, network)",
           "refId": "v"
         },
+        "allValue": ".*",
         "includeAll": true,
         "multi": true,
         "current": {
@@ -1067,6 +1208,7 @@
           "query": "label_values(panurus_core_common_metrics_transfer_service_operations_total{network=~\"$network\"}, channel)",
           "refId": "v"
         },
+        "allValue": ".*",
         "includeAll": true,
         "multi": true,
         "current": {
@@ -1089,6 +1231,7 @@
           "query": "label_values(panurus_core_common_metrics_transfer_service_operations_total{network=~\"$network\",channel=~\"$channel\"}, namespace)",
           "refId": "v"
         },
+        "allValue": ".*",
         "includeAll": true,
         "multi": true,
         "current": {
@@ -1106,11 +1249,12 @@
           "type": "prometheus",
           "uid": "${DS_PROMETHEUS}"
         },
-        "definition": "label_values(panurus_core_common_metrics_transfer_service_operations_total{network=~\"$network\",channel=~\"$channel\",namespace=~\"$namespace\"}, method)",
+        "definition": "label_values({__name__=~\"panurus_core_common_metrics_(issue|transfer|tokens|tokens_upgrade|auditor)_service_operations_total\",network=~\"$network\",channel=~\"$channel\",namespace=~\"$namespace\"}, method)",
         "query": {
-          "query": "label_values(panurus_core_common_metrics_transfer_service_operations_total{network=~\"$network\",channel=~\"$channel\",namespace=~\"$namespace\"}, method)",
+          "query": "label_values({__name__=~\"panurus_core_common_metrics_(issue|transfer|tokens|tokens_upgrade|auditor)_service_operations_total\",network=~\"$network\",channel=~\"$channel\",namespace=~\"$namespace\"}, method)",
           "refId": "v"
         },
+        "allValue": ".*",
         "includeAll": true,
         "multi": true,
         "current": {

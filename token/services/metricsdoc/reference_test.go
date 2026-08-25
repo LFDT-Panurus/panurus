@@ -175,6 +175,9 @@ var groups = []group{
 		wiring: []wiringSite{
 			{file: "token/core/fabtoken/v1/driver/ws.go", call: "identity.NewMetrics(metricsProvider)"},
 			{file: "token/core/zkatdlog/nogh/v1/driver/ws.go", call: "identity.NewMetrics(metricsProvider)"},
+			// the hop that carries the TMS-scoped provider into the wallet service
+			{file: "token/core/fabtoken/v1/driver/driver.go", call: "ws, err := d.newWalletService("},
+			{file: "token/core/zkatdlog/nogh/v1/driver/driver.go", call: "ws, err := d.NewWalletService("},
 		},
 		build: func(p metrics.Provider) { identity.NewMetrics(p) },
 	},
@@ -422,6 +425,29 @@ func TestTMSScopedProviderWiringIsIntact(t *testing.T) {
 	}
 }
 
+// plainProviderRef is how a token driver names the provider it receives from the
+// dependency-injection container.
+const plainProviderRef = "d.metricsProvider"
+
+// TestPlainProviderDoesNotBypassTheWrapper closes the gap that pinning the
+// wrapper alone leaves open. TestTMSScopedProviderWiringIsIntact establishes that
+// a TMS-scoped provider is *built* in the token drivers and nowhere else, which is
+// not the same as the tmsScoped groups actually *receiving* it: handing
+// d.metricsProvider to the wallet service instead would export the six identity
+// and cache metrics under their own package prefixes, blank six dashboard panels,
+// and leave every other check in this package green. The container's provider is
+// therefore required to appear exactly once per driver - as the argument to
+// NewTMSProvider - so any second use of it fails here.
+func TestPlainProviderDoesNotBypassTheWrapper(t *testing.T) {
+	for _, driver := range tokenDrivers {
+		assert.Equal(t, 1, strings.Count(readRepoFile(t, driver), plainProviderRef),
+			"%s uses %s more than once. The container's provider must reach nothing but %s, "+
+				"otherwise the metrics created from what it is handed to are exported under their "+
+				"own package prefixes instead of %q, and those names in %s are wrong.",
+			driver, plainProviderRef, tmsProviderCall, tmsWrapperPrefix, referenceDoc)
+	}
+}
+
 // TestWiringSitesArePresent checks that every call site listed in a group's
 // wiring still exists and still builds that group's metrics, so the pointers a
 // reviewer follows stay honest.
@@ -609,12 +635,14 @@ func (p *recordingProvider) NewCounter(o metrics.CounterOpts) metrics.Counter {
 	return p.inner.NewCounter(o)
 }
 
+//nolint:ireturn // implements metrics.Provider; the interface fixes the return type
 func (p *recordingProvider) NewGauge(o metrics.GaugeOpts) metrics.Gauge {
 	p.record("gauge", o.Name, o.Help, o.LabelNames)
 
 	return p.inner.NewGauge(o)
 }
 
+//nolint:ireturn // implements metrics.Provider; the interface fixes the return type
 func (p *recordingProvider) NewHistogram(o metrics.HistogramOpts) metrics.Histogram {
 	p.record("histogram", o.Name, o.Help, o.LabelNames)
 
@@ -663,13 +691,24 @@ func newCapturingRegisterer(t *testing.T) *capturingRegisterer {
 }
 
 func (c *capturingRegisterer) Register(collector prom.Collector) error {
+	// Describe is driven from this goroutine and the channel drained by the
+	// helper, so the pair always terminates. Draining here instead - with
+	// Describe in a goroutine - would leave that goroutine blocked on send
+	// forever if one of the assertions below aborted the test mid-loop.
 	descs := make(chan *prom.Desc, 1)
+	var collected []*prom.Desc
+	drained := make(chan struct{})
 	go func() {
-		defer close(descs)
-		collector.Describe(descs)
+		defer close(drained)
+		for desc := range descs {
+			collected = append(collected, desc)
+		}
 	}()
+	collector.Describe(descs)
+	close(descs)
+	<-drained
 
-	for desc := range descs {
+	for _, desc := range collected {
 		match := fqNamePattern.FindStringSubmatch(desc.String())
 		require.Len(c.t, match, 2, "cannot read the metric name out of %s", desc)
 		c.names = append(c.names, match[1])

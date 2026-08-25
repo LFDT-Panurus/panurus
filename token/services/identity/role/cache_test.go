@@ -311,6 +311,7 @@ type countingGauge struct {
 	total atomic.Int64
 }
 
+//nolint:ireturn // implements metrics.Gauge; the interface fixes the return type
 func (g *countingGauge) With(...string) metrics.Gauge { return g }
 
 func (g *countingGauge) Add(delta float64) { g.total.Add(int64(delta)) }
