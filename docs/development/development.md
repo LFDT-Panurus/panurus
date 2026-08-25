@@ -8,6 +8,8 @@ This page contains link to the development guidelines and more.
 - [Development Tools](./tools.md)
 - [Linting](./linting.md)
 - [Monitoring](./monitoring.md)
+- [Metrics Reference](./metrics.md)
+- [Grafana dashboards](../monitoring/grafana/README.md)
 - [Mock Files Generation](./mock.md)
 - [AI Agents Best Practices](./ai_agents.md)
 - [Tools: tokengen](./tokengen.md)

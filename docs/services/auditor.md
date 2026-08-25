@@ -83,6 +83,37 @@ When multiple auditor replicas share the same AuditDB (PostgreSQL), concurrent p
 
 The locker is injected into `auditdb.StoreService` at startup. Before appending audit records, the store calls `AssertLocksHeld` to verify leases are still valid.
 
+Both backends implement the same contract, defined on the `Locker` interface, because the backend is chosen from configuration — a behavioural difference between them would be a correctness difference between two deployments running the same code. The shared expectations are exercised against every backend by `locker/conformance_test.go`.
+
+**`AssertLocksHeld` detects lost locks, not absent ones.** It fails only when a lease this replica held has since expired or been taken over. An anchor that holds nothing succeeds — whether because the request yielded no enrollment IDs, or because the caller never locked anything for it. The latter is a supported flow: an auditor may call `Validate` (which takes no locks) and then `Append`, as the dvp and nft sample views do.
+
+**`AcquireLocks` is all-or-nothing, and never gives up ground.** A failed call holds none of the EIDs it had reached for, and leaves untouched whatever the anchor already held from an earlier successful call. Acquiring an *empty* set is a successful acquisition of nothing — it must not, and does not, release what the anchor is already holding.
+
+**Re-acquiring a live anchor may shrink its EID set, never grow it.** A refresh keeps the EIDs still named and releases the ones dropped from the set; naming an EID the anchor does not already hold fails with `ErrLockSetWidened`. That restriction is what keeps the lockers deadlock-free. Deadlock freedom rests on every caller taking shared EIDs in one canonical order, and that order can only be imposed over the EIDs of a single call — an anchor that keeps earlier locks while waiting for new ones is holding locks outside it, so two anchors widening into each other's EIDs wait on each other indefinitely. `Audit` acquires once per anchor and releases when done, so no caller needs to widen.
+
+**Each backend bounds its own waiting.** A caller that passes no deadline still gets an answer: the Postgres backend stops after `acquireDeadline`, and the in-memory backend after its own `acquireDeadline`. Without a budget of its own a backend could only ever stop when the caller's context did, and could never report `ErrLockAcquireTimeout` — the signal `auditor.Service` reads to tell "already waited in full" from "worth another attempt".
+
+**Release always runs.** `ReleaseLocks` is idempotent, safe on an anchor that never acquired anything, and safe to `defer`. Its statement is deliberately detached from the caller's context, since the usual case is a deferred release on a context that is already cancelled and a skipped release would leave the EIDs locked against every replica until the lease TTL expired. It carries its own short internal deadline so a stuck release cannot outlive the call that issued it.
+
+### Error classification
+
+Callers act on the outcome of a failed acquisition, so both backends classify it the same way:
+
+| Outcome | Sentinels | Meaning |
+|---------|-----------|---------|
+| Another anchor holds an EID and the waiting budget ran out | `ErrLockContention` + `ErrLockAcquireTimeout` | A real conflict, already waited out in full; retrying only adds delay |
+| Another anchor holds an EID, but a transient failure or a cancelled caller ended the wait | `ErrLockContention` | A real conflict, not yet waited out; a later attempt may succeed |
+| The caller cancelled or ran out of time while nothing held the EIDs | neither (plain context error) | Not a conflict, and not counted as one |
+| The backend's own waiting budget elapsed while nothing held the EIDs | neither (plain context error) | Not a conflict; worth retrying while the caller's context is still live |
+| The anchor asked for an EID it does not already hold | `ErrLockSetWidened` | A caller error, not a conflict: every attempt reproduces it |
+| The database failed | neither; the underlying error is preserved | An infrastructure fault, reported as itself rather than as contention |
+
+The distinction is drawn from whether an attempt actually lost a race for an EID — not from which context expired first. `acquireDeadline` defaults to a minute, so a request-scoped caller context is almost always the shorter of the two, and keying off it would mean the Postgres backend hardly ever reported contention in production.
+
+Only the two `ErrLockContention` rows count towards `auditor_audit_lock_conflicts_total`. The rows that are not conflicts are not counted as ones, so a graceful-shutdown cancellation or a database outage does not inflate the metric operators alert on for contention.
+
+Whether another attempt is worth making is read from the caller's context rather than from the error, because the two rows carrying a plain context error are indistinguishable by the error alone: the caller having given up is final, whereas the backend's own budget elapsing is exactly the transient case `auditor.lock` exists to retry. See `isRetriableLockError`.
+
 ### Configuration
 
 Configure under `token.tms.<name>.auditor.locker` (see [Configuration](../configuration.md#optional-tokentmsauditorlocker)):
@@ -96,8 +127,9 @@ token:
           backend: postgres   # use "memory" (default) for single replica
           postgres:
             ttl: 30s
-            acquireBackoff: 100ms
-            acquireDeadline: 1m
+            acquireBackoff: 100ms     # initial wait; grows exponentially, jittered
+            acquireMaxBackoff: 2s     # cap on that growth
+            acquireDeadline: 1m       # whole budget for waiting out contention
             heartbeat: 10s
             owner:            # required; defaults to the FSC node ID
 ```
@@ -112,6 +144,12 @@ token:
 The Postgres backend creates an `eid_leases` table (prefixed per TMS persistence settings) and uses lease rows with heartbeat renewal.
 
 **Lease ownership:** each row is keyed by EID and carries the holding replica (`owner`) plus the request it was taken for (`anchor`). An acquisition may only take over an existing row when the lease has expired, or when the row is the same replica's lease for the *same* anchor — a re-acquisition, which just refreshes the deadline. Two different anchors therefore never hold the same EID at once, including two concurrent audits on a single replica; the second one is contended and retried until `acquireDeadline`.
+
+### Waiting under contention
+
+`acquireDeadline` is the **entire** budget for waiting out a contended EID, and one layer does the waiting. Within it, the locker retries the atomic acquisition starting at `acquireBackoff`, doubling up to `acquireMaxBackoff`, with jitter on every sleep. The jitter matters as much as the growth: a fixed interval is identical on every replica, so contenders retry in lockstep and keep colliding, and at the defaults it also costs one round trip per interval for the whole deadline — hundreds per acquisition.
+
+`auditor.Service` wraps `AcquireLocks` in its own retry (`token.tms.<name>.auditor.lock`) for transient failures, but it does **not** retry an error carrying `ErrLockAcquireTimeout`: the locker reporting one means it already spent `acquireDeadline`, so calling it again would spend that deadline afresh rather than improve the odds. Worst-case blocking for one audit is therefore about `acquireDeadline`, not `maxRetries × acquireDeadline`.
 
 ### Replica owner identity
 

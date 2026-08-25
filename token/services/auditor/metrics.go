@@ -16,8 +16,11 @@ type Metrics struct {
 	// invocation (lock acquisition included), in seconds.
 	AuditDuration metrics.Histogram
 
-	// AuditLockConflicts counts calls to Audit() that failed because
-	// AcquireLocks returned an error (e.g. contention or timeout).
+	// AuditLockConflicts counts calls to Audit() that failed because another
+	// anchor held one of the enrollment IDs, i.e. those whose error carries
+	// ErrLockContention. Failures with no second holder involved — a cancelled
+	// caller, a database outage — are not conflicts and are deliberately not
+	// counted here, so that alerting on this metric measures contention only.
 	AuditLockConflicts metrics.Counter
 
 	// AppendDuration is a histogram of the total wall-clock time for each
@@ -68,6 +71,14 @@ func newMetrics(p metrics.Provider) *Metrics {
 			Help: "Total number of Release() calls (explicit and deferred)",
 		}),
 	}
+}
+
+// NewMetrics creates a new Metrics instance with the given provider.
+// It is exported so that the metrics reference guard can instantiate the
+// auditor instrumentation without building a full Service; see
+// docs/development/metrics.md.
+func NewMetrics(p metrics.Provider) *Metrics {
+	return newMetrics(p)
 }
 
 // noopProvider discards all observations. Used when no provider is configured.

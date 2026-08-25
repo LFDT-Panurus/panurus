@@ -65,7 +65,8 @@ func TestTTXRecoveryHandler_Recover_ValidTransaction_CachedRequest(t *testing.T)
 	mockNetwork.GetTransactionStatusReturns(network.Valid, tokenRequestHash, "", nil)
 	mockTokens.GetCachedTokenRequestReturns(mockRequest, msgToSign)
 	mockTTXDB.NewTransactionReturns(mockTx, nil)
-	mockTokens.AppendValidReturns(nil)
+	publishedAfterCommits := -1
+	mockTokens.AppendValidReturns(func(context.Context) { publishedAfterCommits = mockTx.CommitCallCount() }, nil)
 	mockTx.SetStatusReturns(nil)
 	mockTx.CommitReturns(nil)
 	mockTTXDB.SetStatusReturns(nil)
@@ -82,6 +83,8 @@ func TestTTXRecoveryHandler_Recover_ValidTransaction_CachedRequest(t *testing.T)
 	require.Equal(t, 1, mockTx.SetStatusCallCount())
 	require.Equal(t, 1, mockTx.CommitCallCount())
 	require.Equal(t, 0, mockTTXDB.SetStatusCallCount())
+	// the token events must be published, and only once the transaction was committed
+	require.Equal(t, 1, publishedAfterCommits)
 }
 
 func TestTTXRecoveryHandler_Recover_ValidTransaction_LoadFromDB(t *testing.T) {
@@ -127,7 +130,8 @@ func TestTTXRecoveryHandler_Recover_ValidTransaction_LoadFromDB(t *testing.T) {
 	mockTTXDB.GetTokenRequestReturns(tokenRequestRaw, nil)
 	mockHasher.ProcessTokenRequestReturns(mockRequest, msgToSign, nil)
 	mockTTXDB.NewTransactionReturns(mockTx, nil)
-	mockTokens.AppendValidReturns(nil)
+	publishedAfterCommits := -1
+	mockTokens.AppendValidReturns(func(context.Context) { publishedAfterCommits = mockTx.CommitCallCount() }, nil)
 	mockTx.SetStatusReturns(nil)
 	mockTx.CommitReturns(nil)
 	mockTTXDB.SetStatusReturns(nil)
@@ -146,6 +150,8 @@ func TestTTXRecoveryHandler_Recover_ValidTransaction_LoadFromDB(t *testing.T) {
 	require.Equal(t, 1, mockTx.SetStatusCallCount())
 	require.Equal(t, 1, mockTx.CommitCallCount())
 	require.Equal(t, 0, mockTTXDB.SetStatusCallCount())
+	// the token events must be published, and only once the transaction was committed
+	require.Equal(t, 1, publishedAfterCommits)
 }
 
 func TestTTXRecoveryHandler_Recover_InvalidTransaction(t *testing.T) {
@@ -420,7 +426,7 @@ func TestTTXRecoveryHandler_Recover_AppendError(t *testing.T) {
 	mockTokens.GetCachedTokenRequestReturns(mockRequest, msgToSign)
 	mockTTXDB.NewTransactionReturns(mockTx, nil)
 	expectedErr := errors.New("append failed")
-	mockTokens.AppendValidReturns(expectedErr)
+	mockTokens.AppendValidReturns(nil, expectedErr)
 
 	// Execute
 	recoverErr := handler.Recover(ctx, txID)

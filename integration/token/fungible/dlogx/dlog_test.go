@@ -152,7 +152,26 @@ var _ = Describe("EndToEnd", func() {
 	}
 })
 
-func newTestSuite(commType fsc.P2PCommunicationType, mask int, factor int, tokenSelector string, names ...string) (*integration.TestSuite, *token2.ReplicaSelector) {
+// publicParamsInstaller installs the public parameters that the token platform recorded while the
+// network was starting.
+type publicParamsInstaller interface {
+	InstallPendingPublicParams()
+}
+
+// testSuite starts the network as the embedded suite does, and then installs the public parameters
+// of the fabricx backend, which requires the FSC nodes to be up.
+type testSuite struct {
+	*integration.TestSuite
+	installer publicParamsInstaller
+}
+
+// Setup starts the network and installs the public parameters.
+func (s *testSuite) Setup() {
+	s.TestSuite.Setup()
+	s.installer.InstallPendingPublicParams()
+}
+
+func newTestSuite(commType fsc.P2PCommunicationType, mask int, factor int, tokenSelector string, names ...string) (*testSuite, *token2.ReplicaSelector) {
 	opts, selector := token2.NewReplicationOptions(factor, names...)
 	tmsOpts := common.Opts{
 		Backend:  fabricx.PlatformName, // select fabricx platform for NWO
@@ -178,7 +197,8 @@ func newTestSuite(commType fsc.P2PCommunicationType, mask int, factor int, token
 		tmsOpts.NamespacePolicy = namespacePolicy2of3
 	}
 
-	ts := integration.NewTestSuite(func() (*integration.Infrastructure, error) {
+	ts := &testSuite{}
+	ts.TestSuite = integration.NewTestSuite(func() (*integration.Infrastructure, error) {
 		i, err := integration.New(StartPortDlog(), "./testdata", topology.Topology(tmsOpts)...)
 		i.DeleteOnStart = true
 		i.DeleteOnStop = false
@@ -186,8 +206,10 @@ func newTestSuite(commType fsc.P2PCommunicationType, mask int, factor int, token
 			i.EnableRaceDetector()
 		}
 		i.RegisterPlatformFactory(fabricx.NewPlatformFactory())
-		i.RegisterPlatformFactory(token.NewPlatformFactory(i))
+		tokenPlatformFactory := token.NewPlatformFactory(i)
+		i.RegisterPlatformFactory(tokenPlatformFactory)
 		i.Generate()
+		ts.installer = tokenPlatformFactory
 
 		return i, err
 	})

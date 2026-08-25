@@ -94,21 +94,23 @@ func TestTransaction_Commit(t *testing.T) {
 	tmsID := token.TMSID{Network: "net", Channel: "ch", Namespace: "ns"}
 
 	t.Run("delegates to the underlying transaction", func(t *testing.T) {
+		ctx := context.Background()
 		mockTx := &mock.FakeTokenStoreTransaction{}
 		tx, err := tokens.NewTransaction(nil, &tokendb.Transaction{TokenStoreTransaction: mockTx}, tmsID)
 		require.NoError(t, err)
 
-		require.NoError(t, tx.Commit())
+		require.NoError(t, tx.Commit(ctx))
 		assert.Equal(t, 1, mockTx.CommitCallCount())
 	})
 
 	t.Run("propagates a commit failure", func(t *testing.T) {
+		ctx := context.Background()
 		mockTx := &mock.FakeTokenStoreTransaction{}
 		mockTx.CommitReturns(assert.AnError)
 		tx, err := tokens.NewTransaction(nil, &tokendb.Transaction{TokenStoreTransaction: mockTx}, tmsID)
 		require.NoError(t, err)
 
-		err = tx.Commit()
+		err = tx.Commit(ctx)
 		require.ErrorIs(t, err, assert.AnError)
 		assert.Equal(t, 1, mockTx.CommitCallCount())
 	})

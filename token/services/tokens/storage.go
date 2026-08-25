@@ -116,6 +116,11 @@ type TokenToAppend struct {
 }
 
 // DBTransaction encapsulates a single atomic update to the token database.
+//
+// Events recorded while the transaction is open are buffered and published only
+// once the transaction has been committed, so that a subscriber never observes a
+// token that is later rolled back. A DBTransaction is not safe for concurrent
+// use, like the underlying database transaction it wraps.
 type DBTransaction struct {
 	// Notifier is used to publish events upon successful deletion or addition.
 	Notifier events.Publisher
@@ -123,6 +128,10 @@ type DBTransaction struct {
 	Tx *tokendb.Transaction
 	// TMSID is the TMS identifier for the transaction.
 	TMSID token.TMSID
+
+	// pending holds the events recorded so far, in the order they were recorded.
+	// They are published by FlushEvents and discarded by Rollback.
+	pending []*TokenProcessorEvent
 }
 
 // NewTransaction creates a new transaction wrapper.
@@ -134,7 +143,9 @@ func NewTransaction(notifier events.Publisher, tx *tokendb.Transaction, tmsID to
 	}, nil
 }
 
-// DeleteToken removes a single token from the database and notifies listeners.
+// DeleteToken removes a single token from the database and records a delete-token
+// event for each of its owners. The events are published only after the transaction
+// commits, see Notify and FlushEvents.
 //
 // Delete is idempotent: marking an unknown token as spent is not an error, so a
 // failure returned by Delete always signals a real storage failure and is
@@ -176,7 +187,9 @@ func (t *DBTransaction) DeleteTokens(ctx context.Context, deletedBy string, ids 
 	return nil
 }
 
-// AppendToken records a new token in the database and notifies listeners.
+// AppendToken records a new token in the database and records an add-token event for
+// each of its owners. The events are published only after the transaction commits,
+// see Notify and FlushEvents.
 func (t *DBTransaction) AppendToken(ctx context.Context, tta TokenToAppend) error {
 	q, err := token2.ToQuantity(tta.Tok.Quantity, tta.Precision)
 	if err != nil {
@@ -228,7 +241,11 @@ func (t *DBTransaction) AppendToken(ctx context.Context, tta TokenToAppend) erro
 	return nil
 }
 
-// Notify publishes a token-related event to the system's notification bus.
+// Notify records a token-related event for publication on the system's notification
+// bus. The event is not published here: it is buffered until the transaction that
+// produced it has been committed, and then published by FlushEvents. Publishing
+// inside the open transaction would let subscribers observe tokens that are never
+// persisted.
 func (t *DBTransaction) Notify(ctx context.Context, topic string, tmsID token.TMSID, walletID string, tokenType token2.Type, txID string, index uint64) {
 	if t.Notifier == nil {
 		logger.WarnfContext(ctx, "cannot notify others!")
@@ -244,18 +261,45 @@ func (t *DBTransaction) Notify(ctx context.Context, topic string, tmsID token.TM
 		Index:     index,
 	})
 
-	logger.DebugfContext(ctx, "publish new event %v", e)
-	t.Notifier.Publish(e)
+	logger.DebugfContext(ctx, "record new event %v", e)
+	t.pending = append(t.pending, e)
 }
 
-// Rollback cancels all changes made in the transaction.
+// FlushEvents publishes the events recorded so far, in the order they were recorded,
+// and empties the buffer.
+//
+// It must be called only after the transaction that produced the events has been
+// successfully committed. Commit does this for transactions owned by this type; when
+// the transaction is owned by the caller (see DBStorage.ContinueTransaction), the
+// caller is responsible for calling FlushEvents after its own commit succeeds.
+// Calling it more than once is safe: the buffer is empty after the first call.
+func (t *DBTransaction) FlushEvents(ctx context.Context) {
+	pending := t.pending
+	t.pending = nil
+	for _, e := range pending {
+		logger.DebugfContext(ctx, "publish new event %v", e)
+		t.Notifier.Publish(e)
+	}
+}
+
+// Rollback cancels all changes made in the transaction and discards the events
+// recorded for it, so that nothing is published for a transaction that never
+// reached the store.
 func (t *DBTransaction) Rollback() error {
+	t.pending = nil
+
 	return t.Tx.Rollback()
 }
 
-// Commit persists all changes made in the transaction.
-func (t *DBTransaction) Commit() error {
-	return t.Tx.Commit()
+// Commit persists all changes made in the transaction and, only if that succeeds,
+// publishes the events recorded for it.
+func (t *DBTransaction) Commit(ctx context.Context) error {
+	if err := t.Tx.Commit(); err != nil {
+		return err
+	}
+	t.FlushEvents(ctx)
+
+	return nil
 }
 
 // SetSpendableFlag updates the spendable status for the given tokens in the database.

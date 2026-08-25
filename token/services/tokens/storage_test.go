@@ -61,6 +61,8 @@ func TestTransaction_AppendToken(t *testing.T) {
 	}
 	err = tx.AppendToken(ctx, tta)
 	require.NoError(t, err)
+	// commit to flush the (empty) event buffer — without this the assertion is vacuous
+	require.NoError(t, tx.Commit(ctx))
 	assert.Equal(t, 0, pub.PublishCallCount())
 }
 
@@ -79,7 +81,12 @@ func TestTransaction_Notify(t *testing.T) {
 	mockTx.GetTokenReturns(&token2.Token{Type: "TOK"}, []string{"alice"}, nil)
 	err = tx.DeleteTokens(ctx, "me", ids)
 	require.NoError(t, err)
+	// the transaction is still open, nothing may be published yet
+	assert.Equal(t, 0, pub.PublishCallCount())
+
+	require.NoError(t, tx.Commit(ctx))
 	assert.Equal(t, 1, pub.PublishCallCount())
+	assert.Equal(t, tokens.DeleteToken, pub.PublishArgsForCall(0).Topic())
 }
 
 func TestTransaction_AppendToken_Notify(t *testing.T) {
@@ -101,6 +108,146 @@ func TestTransaction_AppendToken_Notify(t *testing.T) {
 	}
 	err = tx.AppendToken(ctx, tta)
 	require.NoError(t, err)
+	// the transaction is still open, nothing may be published yet
+	assert.Equal(t, 0, pub.PublishCallCount())
+
+	require.NoError(t, tx.Commit(ctx))
+	require.Equal(t, 1, pub.PublishCallCount())
+	e := pub.PublishArgsForCall(0)
+	assert.Equal(t, tokens.AddToken, e.Topic())
+	assert.Equal(t, tokens.TokenMessage{
+		TMSID:     tmsID,
+		WalletID:  "wallet1",
+		TokenType: "TOK",
+		TxID:      "tx1",
+		Index:     0,
+	}, e.Message())
+}
+
+// TestTransaction_AppendToken_NoEventBeforeCommit is the reproduction reported in
+// issue #2183: an add-token event must not escape while the transaction that stored
+// the token is still open, because the owner of that transaction may still roll it
+// back — and a published event cannot be retracted.
+func TestTransaction_AppendToken_NoEventBeforeCommit(t *testing.T) {
+	ctx := context.Background()
+	tmsID := token.TMSID{Network: "net", Channel: "ch", Namespace: "ns"}
+	mockTx := &mock.FakeTokenStoreTransaction{}
+	pub := &mock.FakePublisher{}
+
+	tx, err := tokens.NewTransaction(pub, &tokendb.Transaction{TokenStoreTransaction: mockTx}, tmsID)
+	require.NoError(t, err)
+
+	tta := tokens.TokenToAppend{
+		TxID:      "tx1",
+		Index:     0,
+		Tok:       &token2.Token{Type: "TOK", Owner: []byte("alice"), Quantity: "0x64"},
+		Precision: 64,
+		Owners:    []string{"wallet1"},
+		Flags:     tokens.Flags{Mine: true},
+	}
+	require.NoError(t, tx.AppendToken(ctx, tta))
+	require.Equal(t, 0, pub.PublishCallCount())
+
+	// the owner of the transaction decides to roll back
+	require.NoError(t, tx.Rollback())
+	assert.Equal(t, 1, mockTx.RollbackCallCount())
+	assert.Equal(t, 0, pub.PublishCallCount())
+}
+
+// TestTransaction_Commit_PublishesRecordedEventsInOrder checks that every event
+// recorded by the transaction is published on commit, once per owner, in the order
+// in which it was recorded.
+func TestTransaction_Commit_PublishesRecordedEventsInOrder(t *testing.T) {
+	ctx := context.Background()
+	tmsID := token.TMSID{Network: "net", Channel: "ch", Namespace: "ns"}
+	mockTx := &mock.FakeTokenStoreTransaction{}
+	pub := &mock.FakePublisher{}
+
+	tx, err := tokens.NewTransaction(pub, &tokendb.Transaction{TokenStoreTransaction: mockTx}, tmsID)
+	require.NoError(t, err)
+
+	require.NoError(t, tx.AppendToken(ctx, tokens.TokenToAppend{
+		TxID:      "tx1",
+		Index:     0,
+		Tok:       &token2.Token{Type: "TOK", Owner: []byte("alice"), Quantity: "0x64"},
+		Precision: 64,
+		Owners:    []string{"wallet1", "wallet2"},
+		Flags:     tokens.Flags{Mine: true},
+	}))
+	mockTx.GetTokenReturns(&token2.Token{Type: "TOK"}, []string{"wallet3"}, nil)
+	require.NoError(t, tx.DeleteTokens(ctx, "me", []*token2.ID{{TxId: "tx0", Index: 3}}))
+	require.Equal(t, 0, pub.PublishCallCount())
+
+	require.NoError(t, tx.Commit(ctx))
+	require.Equal(t, 3, pub.PublishCallCount())
+
+	expected := []tokens.TokenMessage{
+		{TMSID: tmsID, WalletID: "wallet1", TokenType: "TOK", TxID: "tx1", Index: 0},
+		{TMSID: tmsID, WalletID: "wallet2", TokenType: "TOK", TxID: "tx1", Index: 0},
+		{TMSID: tmsID, WalletID: "wallet3", TokenType: "TOK", TxID: "tx0", Index: 3},
+	}
+	expectedTopics := []string{tokens.AddToken, tokens.AddToken, tokens.DeleteToken}
+	for i, msg := range expected {
+		e := pub.PublishArgsForCall(i)
+		assert.Equal(t, expectedTopics[i], e.Topic())
+		assert.Equal(t, msg, e.Message())
+	}
+}
+
+// TestTransaction_Commit_Error_PublishesNothing checks that a failed commit publishes
+// nothing: the tokens were not persisted, so no subscriber may learn about them.
+func TestTransaction_Commit_Error_PublishesNothing(t *testing.T) {
+	ctx := context.Background()
+	tmsID := token.TMSID{Network: "net", Channel: "ch", Namespace: "ns"}
+	mockTx := &mock.FakeTokenStoreTransaction{}
+	pub := &mock.FakePublisher{}
+
+	tx, err := tokens.NewTransaction(pub, &tokendb.Transaction{TokenStoreTransaction: mockTx}, tmsID)
+	require.NoError(t, err)
+
+	require.NoError(t, tx.AppendToken(ctx, tokens.TokenToAppend{
+		TxID:      "tx1",
+		Index:     0,
+		Tok:       &token2.Token{Type: "TOK", Owner: []byte("alice"), Quantity: "0x64"},
+		Precision: 64,
+		Owners:    []string{"wallet1"},
+		Flags:     tokens.Flags{Mine: true},
+	}))
+
+	mockTx.CommitReturns(assert.AnError)
+	require.ErrorIs(t, tx.Commit(ctx), assert.AnError)
+	assert.Equal(t, 0, pub.PublishCallCount())
+}
+
+// TestTransaction_FlushEvents_Idempotent checks that publishing the recorded events
+// twice does not duplicate them. The owner of a continued transaction may hold on to
+// the flush returned by AppendValid, so a second call must be harmless.
+func TestTransaction_FlushEvents_Idempotent(t *testing.T) {
+	ctx := context.Background()
+	tmsID := token.TMSID{Network: "net", Channel: "ch", Namespace: "ns"}
+	mockTx := &mock.FakeTokenStoreTransaction{}
+	pub := &mock.FakePublisher{}
+
+	tx, err := tokens.NewTransaction(pub, &tokendb.Transaction{TokenStoreTransaction: mockTx}, tmsID)
+	require.NoError(t, err)
+
+	require.NoError(t, tx.AppendToken(ctx, tokens.TokenToAppend{
+		TxID:      "tx1",
+		Index:     0,
+		Tok:       &token2.Token{Type: "TOK", Owner: []byte("alice"), Quantity: "0x64"},
+		Precision: 64,
+		Owners:    []string{"wallet1"},
+		Flags:     tokens.Flags{Mine: true},
+	}))
+
+	tx.FlushEvents(ctx)
+	require.Equal(t, 1, pub.PublishCallCount())
+
+	tx.FlushEvents(ctx)
+	assert.Equal(t, 1, pub.PublishCallCount())
+
+	// committing afterwards must not publish the events again either
+	require.NoError(t, tx.Commit(ctx))
 	assert.Equal(t, 1, pub.PublishCallCount())
 }
 
@@ -128,6 +275,8 @@ func TestTransaction_AppendToken_NoNotify(t *testing.T) {
 	}
 	err = tx.AppendToken(ctx, tta)
 	require.NoError(t, err)
+	// commit to flush the (empty) event buffer — without this the assertion is vacuous
+	require.NoError(t, tx.Commit(ctx))
 	assert.Equal(t, 0, pub.PublishCallCount())
 }
 
@@ -140,6 +289,10 @@ func TestTransaction_Notify_NoPublisher(t *testing.T) {
 	tx, err := tokens.NewTransaction(nil, &tokendb.Transaction{TokenStoreTransaction: mockTx}, tmsID)
 	require.NoError(t, err)
 	tx.Notify(ctx, tokens.AddToken, tmsID, "wallet1", "TOK", "tx1", 0)
+
+	// nothing was recorded, so the commit has nothing to publish either
+	require.NoError(t, tx.Commit(ctx))
+	assert.Equal(t, 1, mockTx.CommitCallCount())
 }
 
 func TestTransaction_Rollback(t *testing.T) {
@@ -203,6 +356,8 @@ func TestTransaction_DeleteToken_AbsentTokenIsNotAnError(t *testing.T) {
 
 	require.NoError(t, tx.DeleteToken(ctx, token2.ID{TxId: "tx1", Index: 0}, "me"))
 	assert.Equal(t, 1, mockTx.DeleteCallCount())
+	// commit to flush the (empty) event buffer — without this the assertion is vacuous
+	require.NoError(t, tx.Commit(ctx))
 	assert.Equal(t, 0, pub.PublishCallCount())
 }
 

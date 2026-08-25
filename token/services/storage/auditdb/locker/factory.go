@@ -42,7 +42,7 @@ func NewFromConfig(cfg Config, store any, replicaID id.ReplicaIDProvider) (Locke
 			replicaID,
 		)
 	case BackendMemory, "":
-		return memory.New(), nil
+		return memory.NewWithConfig(cfg.Memory), nil
 	default:
 		return nil, errors.Errorf("unknown locker backend: %s", cfg.Backend)
 	}

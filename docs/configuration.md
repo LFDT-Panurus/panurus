@@ -339,13 +339,30 @@ token:
           #   "memory"   – in-process mutex (default, single-replica only)
           #   "postgres" – PostgreSQL lease-table (multi-replica)
           backend: memory
+          # memory section is read only when backend == "memory".
+          memory:
+            # acquireDeadline bounds how long one acquisition waits for an EID held
+            # by another anchor. Every backend bounds its own waiting so that a
+            # caller which passes no deadline still gets an answer, and so that
+            # spending the whole budget can be reported as such; auditor.lock does
+            # not retry an acquisition that already exhausted it. Defaults to the
+            # same 1m as the postgres backend, so switching backends does not
+            # silently change how long an audit can block.
+            acquireDeadline: 1m
           # postgres section is read only when backend == "postgres".
           postgres:
             # ttl is the lease duration for each EID lock row.
             ttl: 30s
-            # acquireBackoff is the wait between retry attempts when a lock is contended.
+            # acquireBackoff is the initial wait between retry attempts when a lock
+            # is contended. Successive waits grow exponentially and are jittered,
+            # so this is the floor rather than a fixed poll interval.
             acquireBackoff: 100ms
-            # acquireDeadline is the total time allowed to acquire all EID locks.
+            # acquireMaxBackoff caps that growth. Raised to acquireBackoff if set
+            # below it.
+            acquireMaxBackoff: 2s
+            # acquireDeadline is the total time allowed to acquire all EID locks,
+            # and the whole budget for waiting out contention: auditor.lock does
+            # not retry an acquisition that already exhausted it.
             acquireDeadline: 1m
             # heartbeat is the interval at which held leases are renewed (~TTL/3).
             heartbeat: 10s
@@ -577,6 +594,25 @@ channel/namespace — and the chaincode process, if it enforces limits independe
 configured with the identical value, or endorsement determinism silently breaks (one peer accepts
 a request another rejects). Treat a limits change like a `driver.MaxAnchorSize` change: roll it
 out as a coordinated configuration change before any peer relies on the new value.
+
+---
+
+### Optional: token chaincode query limits (environment only)
+
+The read-only query functions of the token chaincode (`queryStates`, `queryTokens`,
+`areTokensSpent`) perform one ledger read per element of the caller-supplied array, so they are
+bounded independently of `token.validation.limits`. These limits live in the chaincode process, not
+in the FSC node's configuration file, and are read from the environment:
+
+| Environment variable | Default | Bounds |
+| --- | --- | --- |
+| `TOKEN_QUERY_MAX_REQUEST_BYTES` | 1048576 (1 MiB) | Raw size of the query argument, checked before it is decoded |
+| `TOKEN_QUERY_MAX_ITEMS` | 4096 | Number of elements, checked before the first ledger read |
+
+Both are optional; an unset variable resolves to its default, and an unparseable value is a startup
+error. Unlike `token.validation.limits` these values are **not** consensus-relevant — the query path
+performs no writes and is not an endorsement boundary — so they do not need to match across peers.
+See [Token Chaincode Query Limits](security/tcc_query_limits.md).
 
 ---
 
@@ -839,6 +875,14 @@ Default values:
 - **backoffMultiplier**: Factor by which the backoff delay increases after each retry (exponential growth)
 - **jitterFactor**: Randomization factor (0.0 to 1.0) added to backoff delays to prevent multiple auditors from retrying simultaneously (prevents thundering herd problem)
 
+**Relationship to `auditor.locker`:** this retry covers failures that another attempt
+might survive, such as a transient database error. It deliberately does **not** retry
+an acquisition that failed with `ErrLockAcquireTimeout`, because that means the locker
+already spent its own `acquireDeadline` waiting out the contention — retrying would
+spend it again. Waiting under contention is configured once, in
+[`auditor.locker`](#optional-tokentmsauditorlocker), so `maxRetries` here does not
+multiply `acquireDeadline` there.
+
 **Tuning Recommendations:**
 
 1. **For High-Contention Environments:**
@@ -953,6 +997,7 @@ token:
           postgres:
             ttl: 30s
             acquireBackoff: 100ms
+            acquireMaxBackoff: 2s
             acquireDeadline: 1m
             heartbeat: 10s
             owner:
@@ -962,8 +1007,9 @@ Default values:
 
 - backend: `memory` (in-process mutex, single-replica only)
 - postgres.ttl: 30s
-- postgres.acquireBackoff: 100ms
-- postgres.acquireDeadline: 1m
+- postgres.acquireBackoff: 100ms (initial wait; grows exponentially, jittered)
+- postgres.acquireMaxBackoff: 2s (cap on that growth; raised to `acquireBackoff` if set below it)
+- postgres.acquireDeadline: 1m (the whole budget for waiting out contention)
 - postgres.heartbeat: 10s
 - postgres.owner: empty, defaults to the FSC node ID (`config.Provider.ID()`). Required
   when `backend: postgres` — if both this value and `fsc.id` are empty or blank, the

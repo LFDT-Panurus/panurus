@@ -202,11 +202,12 @@ func TestLocker_SameOwnerDifferentAnchorsCannotShareEID(t *testing.T) {
 	assert.Equal(t, "owner-1", owner)
 	require.NoError(t, l.AssertLocksHeld(ctx, "anchor1"))
 
-	// The failed attempt left nothing behind.
+	// The failed attempt left nothing behind. This is asserted on the table rather
+	// than through AssertLocksHeld, which reports lost locks and not absent ones:
+	// an anchor holding nothing has nothing to lose, so it succeeds by contract.
 	var count int
 	require.NoError(t, db.QueryRow("SELECT COUNT(*) FROM "+table+" WHERE anchor = $1", "anchor2").Scan(&count))
 	assert.Equal(t, 0, count)
-	require.ErrorIs(t, l.AssertLocksHeld(ctx, "anchor2"), errs.ErrLockNotHeld)
 
 	l.ReleaseLocks(ctx, "anchor1")
 
@@ -328,6 +329,238 @@ func TestLocker_ConcurrentSharedEIDSingleWinner(t *testing.T) {
 	l.ReleaseLocks(ctx, winners[0])
 }
 
+// TestLocker_NoLocksHeldAssertsSuccessfully is the regression test for the
+// backend divergence in issue #2040. AssertLocksHeld reports locks that were
+// lost, not locks that were never taken, so an anchor holding nothing must
+// succeed. It used to return ErrLockNotHeld for any anchor without a session,
+// which failed StoreService.Append with "locks lost before write" for two
+// legitimate flows — a request whose inputs and outputs yield no enrollment IDs,
+// and an auditor that validates and appends without calling Audit — while both
+// succeeded under the in-memory locker.
+func TestLocker_NoLocksHeldAssertsSuccessfully(t *testing.T) {
+	db := startPostgres(t)
+	table := "test_eid_lease_nolocks"
+	cleanTable(t, db, table)
+	t.Cleanup(func() { cleanTable(t, db, table) })
+
+	l := newLocker(t, db, table, lockerpostgres.Config{
+		TTL: 5 * time.Second, Heartbeat: 2 * time.Second, Owner: "owner-1",
+	})
+	ctx := context.Background()
+
+	require.NoError(t, l.AssertLocksHeld(ctx, "never-acquired"),
+		"an anchor that never locked anything has nothing to lose")
+
+	require.NoError(t, l.AcquireLocks(ctx, "empty-anchor"), "acquiring no enrollment IDs must succeed")
+	require.NoError(t, l.AssertLocksHeld(ctx, "empty-anchor"),
+		"an empty enrollment-ID set must not look like a lost lease")
+
+	var count int
+	require.NoError(t, db.QueryRow("SELECT COUNT(*) FROM "+table).Scan(&count))
+	assert.Equal(t, 0, count, "an empty acquisition must not write lease rows")
+
+	l.ReleaseLocks(ctx, "empty-anchor")
+	require.NoError(t, l.AssertLocksHeld(ctx, "empty-anchor"))
+
+	// A real acquisition still tracks its leases, and losing one is still reported.
+	require.NoError(t, l.AcquireLocks(ctx, "anchor1", "alice"))
+	require.NoError(t, l.AssertLocksHeld(ctx, "anchor1"))
+	_, err := db.Exec("DELETE FROM "+table+" WHERE eid = $1", "alice")
+	require.NoError(t, err)
+	require.ErrorIs(t, l.AssertLocksHeld(ctx, "anchor1"), errs.ErrLockNotHeld,
+		"a lease that vanished must still be reported as lost")
+}
+
+// TestLocker_ContentionBacksOffWithoutBusyPolling checks the shape of the retry
+// loop, not just its outcome. A contended acquisition used to poll at a fixed
+// AcquireBackoff for the whole deadline — hundreds of round trips per attempt, on
+// an interval identical across replicas so contenders stayed in lockstep. With
+// exponential backoff the same wait costs a fraction of the attempts, while the
+// deadline is still honoured.
+func TestLocker_ContentionBacksOffWithoutBusyPolling(t *testing.T) {
+	db := startPostgres(t)
+	table := "test_eid_lease_backoff"
+	cleanTable(t, db, table)
+	t.Cleanup(func() { cleanTable(t, db, table) })
+
+	l := newLocker(t, db, table, lockerpostgres.Config{
+		TTL: 30 * time.Second, Heartbeat: time.Hour, Owner: "owner-1",
+		AcquireBackoff:  10 * time.Millisecond,
+		AcquireDeadline: 700 * time.Millisecond,
+	})
+
+	ctx := context.Background()
+	require.NoError(t, l.AcquireLocks(ctx, "holder", "alice"))
+	t.Cleanup(func() { l.ReleaseLocks(ctx, "holder") })
+
+	start := time.Now()
+	err := l.AcquireLocks(ctx, "waiter", "alice")
+	elapsed := time.Since(start)
+
+	require.ErrorIs(t, err, errs.ErrLockAcquireTimeout)
+	require.ErrorIs(t, err, errs.ErrLockContention)
+	assert.GreaterOrEqual(t, elapsed, 700*time.Millisecond, "the acquire deadline must be spent before giving up")
+	assert.Less(t, elapsed, 3*time.Second,
+		"the deadline bounds the whole wait, including a backoff sleep that would overrun it")
+
+	// The failed attempt must leave the holder's lease untouched.
+	var anchor string
+	require.NoError(t, db.QueryRow("SELECT anchor FROM "+table+" WHERE eid = $1", "alice").Scan(&anchor))
+	assert.Equal(t, "holder", anchor)
+}
+
+// TestLocker_ContentionReportedWhenCallerDeadlineIsShorter pins the sentinel on
+// the shape production actually has. AcquireDeadline defaults to a minute, so a
+// request-scoped caller context is nearly always the shorter of the two, and the
+// classification used to be decided by whichever expired first: when the caller's
+// did, the contention sentinels were skipped entirely and a bare
+// context.DeadlineExceeded came back. The effect was that this backend almost
+// never reported contention in production — while the in-memory locker always did
+// — so auditor.Service could not tell a lock conflict from a dead caller.
+func TestLocker_ContentionReportedWhenCallerDeadlineIsShorter(t *testing.T) {
+	db := startPostgres(t)
+	table := "test_eid_lease_shortcaller"
+	cleanTable(t, db, table)
+	t.Cleanup(func() { cleanTable(t, db, table) })
+
+	l := newLocker(t, db, table, lockerpostgres.Config{
+		TTL: 30 * time.Second, Heartbeat: time.Hour, Owner: "owner-1",
+		AcquireBackoff: 10 * time.Millisecond,
+		// Far longer than the caller's context below, as in a default deployment.
+		AcquireDeadline: 30 * time.Second,
+	})
+
+	ctx := context.Background()
+	require.NoError(t, l.AcquireLocks(ctx, "holder", "alice"))
+	t.Cleanup(func() { l.ReleaseLocks(ctx, "holder") })
+
+	waitCtx, cancel := context.WithTimeout(ctx, 300*time.Millisecond)
+	defer cancel()
+	err := l.AcquireLocks(waitCtx, "waiter", "alice")
+
+	require.Error(t, err)
+	require.ErrorIs(t, err, errs.ErrLockContention,
+		"alice was held by another anchor, which is contention however the wait ended")
+	require.ErrorIs(t, err, errs.ErrLockAcquireTimeout,
+		"the caller's budget is spent, so repeating the call adds delay rather than a fresh chance")
+}
+
+// TestLocker_UncontendedTimeoutIsNotContention is the other side of that
+// classification. A deadline that elapses while nothing holds the IDs is not a
+// lock conflict, and reporting one hid the real cause: the outcome was derived
+// from the error merely containing context.DeadlineExceeded, so a query the
+// deadline killed on an overloaded database came back as ErrLockContention with
+// the original error discarded — an infrastructure failure permanently labelled
+// as contention, with no diagnostics, and one auditor.Service refuses to retry.
+func TestLocker_UncontendedTimeoutIsNotContention(t *testing.T) {
+	db := startPostgres(t)
+	table := "test_eid_lease_uncontended"
+	cleanTable(t, db, table)
+	t.Cleanup(func() { cleanTable(t, db, table) })
+
+	l := newLocker(t, db, table, lockerpostgres.Config{
+		TTL: 30 * time.Second, Heartbeat: time.Hour, Owner: "owner-1",
+		AcquireBackoff: time.Millisecond,
+		// Too short to complete a round trip, so the attempt fails on the deadline
+		// while "alice" is free and nothing is contending for it.
+		AcquireDeadline: time.Nanosecond,
+	})
+
+	err := l.AcquireLocks(context.Background(), "anchor1", "alice")
+	require.Error(t, err)
+	require.NotErrorIs(t, err, errs.ErrLockContention,
+		"no other anchor held alice, so this is a timeout and not a lock conflict")
+
+	// Nothing was left behind, and the ID is still claimable.
+	var count int
+	require.NoError(t, db.QueryRow("SELECT COUNT(*) FROM "+table).Scan(&count))
+	assert.Equal(t, 0, count)
+}
+
+// TestLocker_RejectedReacquireKeepsLiveSession covers what a re-acquisition that
+// cannot be granted must leave behind. The failure path used to release the anchor
+// unconditionally, so a re-acquisition that lost a race deleted the lease rows of
+// the *live* session it was re-acquiring for — and left that session's record and
+// heartbeat in place. The next renewal then matched none of its rows, logged the
+// leases as lost and exited, and the caller's next legitimate Append failed its
+// pre-write assertion with "locks lost before write" even though nothing had been
+// stolen.
+//
+// Widening a live anchor is now refused outright (see the Locker contract), which
+// is how the case below is turned away, so the release-on-failure path is reached
+// only by a database error. The outcome under test is the same either way, and the
+// one that matters: a re-acquisition this locker did not grant must leave the
+// session's leases exactly as they were.
+func TestLocker_RejectedReacquireKeepsLiveSession(t *testing.T) {
+	db := startPostgres(t)
+	table := "test_eid_lease_reacquire_fail"
+	cleanTable(t, db, table)
+	t.Cleanup(func() { cleanTable(t, db, table) })
+
+	cfg := lockerpostgres.Config{
+		TTL: 30 * time.Second, Heartbeat: time.Hour,
+		AcquireBackoff:  10 * time.Millisecond,
+		AcquireDeadline: 300 * time.Millisecond,
+	}
+	cfg.Owner = "owner-1"
+	mine := newLocker(t, db, table, cfg)
+	cfg.Owner = "owner-2"
+	theirs := newLocker(t, db, table, cfg)
+
+	ctx := context.Background()
+	require.NoError(t, mine.AcquireLocks(ctx, "anchor1", "alice"))
+	t.Cleanup(func() { mine.ReleaseLocks(ctx, "anchor1") })
+
+	// Another replica holds "bob", so widening anchor1 to {alice, bob} could not have
+	// succeeded on its merits either.
+	require.NoError(t, theirs.AcquireLocks(ctx, "other-anchor", "bob"))
+	t.Cleanup(func() { theirs.ReleaseLocks(ctx, "other-anchor") })
+
+	err := mine.AcquireLocks(ctx, "anchor1", "alice", "bob")
+	require.Error(t, err, "anchor1 already holds alice, so it cannot also take bob")
+	require.ErrorIs(t, err, errs.ErrLockSetWidened)
+
+	// The live session is intact: its lease row survived and the assertion passes.
+	var count int
+	require.NoError(t, db.QueryRow(
+		"SELECT COUNT(*) FROM "+table+" WHERE anchor = $1 AND owner = $2", "anchor1", "owner-1").Scan(&count))
+	assert.Equal(t, 1, count, "the failed re-acquisition must not delete the live session's lease")
+	require.NoError(t, mine.AssertLocksHeld(ctx, "anchor1"),
+		"a failed re-acquisition must not make the session's existing locks look lost")
+}
+
+// TestLocker_ReleaseWithCancelledContextStillDeletes covers the common shape of a
+// release: it is deferred, so by the time it runs the caller's context is often
+// already done. Passing that context straight to the DELETE made the statement
+// fail silently, leaving the enrollment IDs locked against every replica until
+// their TTL expired — a 30-second stall by default for a lock that was released
+// on time.
+func TestLocker_ReleaseWithCancelledContextStillDeletes(t *testing.T) {
+	db := startPostgres(t)
+	table := "test_eid_lease_release_cancelled"
+	cleanTable(t, db, table)
+	t.Cleanup(func() { cleanTable(t, db, table) })
+
+	l := newLocker(t, db, table, lockerpostgres.Config{
+		TTL: 30 * time.Second, Heartbeat: time.Hour, Owner: "owner-1",
+		AcquireBackoff:  10 * time.Millisecond,
+		AcquireDeadline: 300 * time.Millisecond,
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	require.NoError(t, l.AcquireLocks(ctx, "anchor1", "alice"))
+	cancel()
+
+	l.ReleaseLocks(ctx, "anchor1")
+
+	var count int
+	require.NoError(t, db.QueryRow("SELECT COUNT(*) FROM "+table).Scan(&count))
+	assert.Equal(t, 0, count, "a release on an already-cancelled context must still delete the leases")
+	require.NoError(t, l.AcquireLocks(context.Background(), "anchor2", "alice"),
+		"alice must be claimable again immediately, not only once the lease TTL expires")
+	l.ReleaseLocks(context.Background(), "anchor2")
+}
+
 func TestLocker_NilDB(t *testing.T) {
 	_, err := lockerpostgres.New(nil, "t", lockerpostgres.Config{}, stubReplicaID{id: "owner"})
 	require.Error(t, err)
@@ -377,4 +610,48 @@ func TestLocker_OwnerFromReplicaID(t *testing.T) {
 	var owner string
 	require.NoError(t, db.QueryRow("SELECT owner FROM "+table+" WHERE eid = $1", "alice").Scan(&owner))
 	assert.Equal(t, "replica-7", owner)
+}
+
+// TestLocker_NarrowingDeletesDroppedLeaseRows pins the row-level outcome the
+// conformance suite checks through the interface. The acquisition statement only
+// ever inserted, so an enrollment ID dropped from a live anchor kept its lease row.
+// Both AssertLocksHeld and renewLeases count this replica's un-expired rows for the
+// anchor and require exactly as many as the session recorded, so a single leftover
+// row failed both: writes were rejected with "locks lost before write", the
+// heartbeat gave up on its first tick, and once the TTL elapsed the abandoned lease
+// expired and became claimable by another replica while this one still believed it
+// held it.
+func TestLocker_NarrowingDeletesDroppedLeaseRows(t *testing.T) {
+	db := startPostgres(t)
+	table := "test_eid_lease_narrowing"
+	cleanTable(t, db, table)
+	t.Cleanup(func() { cleanTable(t, db, table) })
+
+	cfg := lockerpostgres.Config{
+		TTL: 30 * time.Second, Heartbeat: time.Hour,
+		AcquireBackoff:  10 * time.Millisecond,
+		AcquireDeadline: 300 * time.Millisecond,
+		Owner:           "owner-1",
+	}
+	l := newLocker(t, db, table, cfg)
+
+	ctx := context.Background()
+	require.NoError(t, l.AcquireLocks(ctx, "anchor1", "alice", "bob"))
+	t.Cleanup(func() { l.ReleaseLocks(ctx, "anchor1") })
+	require.NoError(t, l.AcquireLocks(ctx, "anchor1", "bob"))
+
+	var eids []string
+	rows, err := db.Query("SELECT eid FROM "+table+" WHERE anchor = $1 AND owner = $2", "anchor1", "owner-1")
+	require.NoError(t, err)
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var eid string
+		require.NoError(t, rows.Scan(&eid))
+		eids = append(eids, eid)
+	}
+	require.NoError(t, rows.Err())
+	assert.Equal(t, []string{"bob"}, eids, "the lease dropped from the anchor must be deleted, not left behind")
+
+	// The counts the session, its heartbeat and its assertions all rely on now agree.
+	require.NoError(t, l.AssertLocksHeld(ctx, "anchor1"))
 }

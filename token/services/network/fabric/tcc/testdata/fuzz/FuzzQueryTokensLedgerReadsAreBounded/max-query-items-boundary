@@ -1,0 +1,2 @@
+go test fuzz v1
+[]byte("[{\"tx_id\":\"tx0\",\"index\":0},{\"tx_id\":\"tx1\",\"index\":1},{\"tx_id\":\"tx2\",\"index\":2},{\"tx_id\":\"tx3\",\"index\":3},{\"tx_id\":\"tx4\",\"index\":4},{\"tx_id\":\"tx5\",\"index\":5},{\"tx_id\":\"tx6\",\"index\":6},{\"tx_id\":\"tx7\",\"index\":7}]")

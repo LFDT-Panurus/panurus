@@ -35,6 +35,8 @@ If you are developing *using* Panurus or contributing *to* Panurus, check out th
 *   [General Guidelines](development/general.md)
 *   [Idiomatic Go](development/idiomatic.md)
 *   [Testing](development/testing.md)
+*   [Monitoring](development/monitoring.md), the [Metrics Reference](development/metrics.md) and the
+    [Grafana dashboards](monitoring/grafana/README.md)
 *   [Test & Benchmark Profiler](../cmd/profiler/README.md)
 
 ## Evolution

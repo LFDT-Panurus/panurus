@@ -9,10 +9,13 @@ package role
 import (
 	"bytes"
 	"context"
+	"encoding/asn1"
 	"math/big"
 
+	"github.com/LFDT-Panurus/panurus/token/core/common/encoding/json"
 	"github.com/LFDT-Panurus/panurus/token/core/common/metrics"
 	"github.com/LFDT-Panurus/panurus/token/driver"
+	"github.com/LFDT-Panurus/panurus/token/services/identity"
 	idriver "github.com/LFDT-Panurus/panurus/token/services/identity/driver"
 	"github.com/LFDT-Panurus/panurus/token/services/identity/wallet"
 	"github.com/LFDT-Panurus/panurus/token/services/logging"
@@ -473,11 +476,23 @@ func (w *LongTermOwnerWallet) EnrollmentID() string {
 // because the wallet's identity is already resolved and bound at
 // construction time (see NewLongTermOwnerWallet); this is purely a guard
 // against mismatched recipient data.
+// A boolpolicy composite identity listing this wallet's identity among its
+// components is also accepted and registered: the rest of a transfer that
+// spends policy-owned inputs goes back to the policy identity, which by
+// construction differs from the wallet's own long-term identity.
 func (w *LongTermOwnerWallet) RegisterRecipient(ctx context.Context, data *driver.RecipientData) error {
 	if data == nil {
 		return errors.Wrapf(wallet.ErrNilRecipientData, "invalid recipient data")
 	}
 	if !w.Contains(ctx, data.Identity) {
+		if w.isMemberPolicyRecipient(ctx, data) {
+			if err := w.IdentityProvider.RegisterRecipientData(ctx, data); err != nil {
+				return errors.Wrapf(err, "failed registering audit info for owner [%s]", data.Identity)
+			}
+
+			return nil
+		}
+
 		return errors.Errorf("identity [%s] does not belong to this wallet [%s]", data.Identity, w.ID())
 	}
 	if !bytes.Equal(data.AuditInfo, w.OwnerAuditInfo) {
@@ -485,6 +500,73 @@ func (w *LongTermOwnerWallet) RegisterRecipient(ctx context.Context, data *drive
 	}
 
 	return nil
+}
+
+// policyIdentityWire and policyAuditInfoWire mirror the stable wire formats
+// of boolpolicy.PolicyIdentity and boolpolicy.AuditInfo; role cannot import
+// boolpolicy (import cycle through membership's test chain).
+type policyIdentityWire struct {
+	Policy     string `asn1:"utf8"`
+	Identities [][]byte
+}
+
+type policyAuditInfoWire struct {
+	IdentityAuditInfos []struct {
+		AuditInfo []byte
+	}
+}
+
+// isMemberPolicyRecipient reports whether data carries a well-formed
+// boolpolicy composite identity that lists this wallet's identity among its
+// components and whose audit info provides one entry per component, with the
+// entry for the wallet's own component equal to the wallet's audit info.
+// Component well-formedness (non-empty, no duplicates, bounded fan-out)
+// mirrors boolpolicy's validateComponentIdentities, which otherwise rejects
+// the identity only later, in GetAuditInfoMatcher.
+func (w *LongTermOwnerWallet) isMemberPolicyRecipient(ctx context.Context, data *driver.RecipientData) bool {
+	ti, err := identity.UnmarshalTypedIdentity(data.Identity)
+	if err != nil || ti.Type != driver.PolicyIdentityType {
+		return false
+	}
+	pi := &policyIdentityWire{}
+	if rest, err := asn1.Unmarshal(ti.Identity, pi); err != nil || len(rest) > 0 {
+		return false
+	}
+	if len(pi.Policy) == 0 {
+		return false
+	}
+	// TODO: also validate that every $N reference in pi.Policy is in range;
+	// that needs boolpolicy's parser, which the import cycle documented on
+	// the wire types keeps out of reach from here.
+	if n := len(pi.Identities); n == 0 || n > driver.MaxIdentityComponentsFrom(ctx) {
+		return false
+	}
+	memberIdx := -1
+	seen := make(map[string]struct{}, len(pi.Identities))
+	for k, component := range pi.Identities {
+		if len(component) == 0 {
+			return false
+		}
+		if _, dup := seen[string(component)]; dup {
+			return false
+		}
+		seen[string(component)] = struct{}{}
+		if w.Contains(ctx, component) {
+			memberIdx = k
+		}
+	}
+	if memberIdx < 0 {
+		return false
+	}
+	ai := &policyAuditInfoWire{}
+	if err := json.Unmarshal(data.AuditInfo, ai); err != nil {
+		return false
+	}
+	if len(ai.IdentityAuditInfos) != len(pi.Identities) {
+		return false
+	}
+
+	return bytes.Equal(ai.IdentityAuditInfos[memberIdx].AuditInfo, w.OwnerAuditInfo)
 }
 
 // Remote reports whether the underlying identity info is remote.

@@ -129,6 +129,18 @@ jobs:
           - name: tcc-query-tokens
             pkg: ./token/services/network/fabric/tcc
             func: FuzzQueryTokensNoPanic
+          - name: tcc-query-states-limits
+            pkg: ./token/services/network/fabric/tcc
+            func: FuzzQueryStatesLedgerReadsAreBounded
+          - name: tcc-are-tokens-spent-limits
+            pkg: ./token/services/network/fabric/tcc
+            func: FuzzAreTokensSpentLedgerReadsAreBounded
+          - name: tcc-query-tokens-limits
+            pkg: ./token/services/network/fabric/tcc
+            func: FuzzQueryTokensLedgerReadsAreBounded
+          - name: identity-role-register-recipient
+            pkg: ./token/services/identity/role
+            func: FuzzLongTermOwnerWalletRegisterRecipientNoPanic
 
     steps:
       - name: Checkout code

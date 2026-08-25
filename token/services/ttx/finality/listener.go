@@ -46,7 +46,10 @@ type tokenRequestHasher interface {
 //go:generate counterfeiter -o mock/tokens_service.go -fake-name TokensService . tokensService
 type tokensService interface {
 	GetCachedTokenRequest(txID string) (*token.Request, []byte)
-	AppendValid(ctx context.Context, tx dbdriver.Transaction, anchor token.RequestAnchor, tr *token.Request) error
+	// AppendValid applies the token request to the passed transaction, which it does not
+	// commit. The returned function publishes the token events produced by the request and
+	// must be invoked by the owner of the transaction, and only once the commit succeeded.
+	AppendValid(ctx context.Context, tx dbdriver.Transaction, anchor token.RequestAnchor, tr *token.Request) (func(ctx context.Context), error)
 }
 
 type Listener struct {
@@ -206,7 +209,8 @@ func Commit(
 		}
 	}()
 
-	if err := tokens.AppendValid(ctx, tx, token.RequestAnchor(txID), tr); err != nil {
+	publishTokenEvents, err := tokens.AppendValid(ctx, tx, token.RequestAnchor(txID), tr)
+	if err != nil {
 		logger.ErrorfContext(ctx, "failed to append valid token request to token db [%s]: [%s]", txID, err)
 
 		return errors.Wrapf(err, "failed to append valid token request to token db [%s]", txID)
@@ -224,6 +228,16 @@ func Commit(
 	}
 
 	tx = nil
+
+	// The tokens are durably stored only now, so this is the first point at which
+	// the add-token and delete-token events they produced may be observed. Publish
+	// them before the status event, so that a woken finality waiter does not see a
+	// confirmed transaction whose token events are still pending. The nil check
+	// guards against an implementation that returns none: a missing publication is
+	// preferable to panicking in the listener's goroutine.
+	if publishTokenEvents != nil {
+		publishTokenEvents(ctx)
+	}
 
 	// The transactional SetStatus above bypasses the store service, so push
 	// the status event explicitly — otherwise finality waiters only wake on
