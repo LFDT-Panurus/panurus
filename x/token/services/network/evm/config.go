@@ -260,6 +260,7 @@ func (c *Config) validateEndorsement() error {
 	}
 
 	seen := make(map[client.Address]struct{}, len(e.Endorsers))
+	named := make(map[string]struct{}, len(e.Endorsers))
 	for i, b := range e.Endorsers {
 		if b.FSCIdentity == "" {
 			return errors.Errorf("evm config: endorser %d has no fscIdentity", i)
@@ -271,7 +272,19 @@ func (c *Config) validateEndorsement() error {
 		if _, dup := seen[addr]; dup {
 			return errors.Errorf("evm config: duplicate endorser address [%s]", b.Address)
 		}
+		// A repeated fscIdentity inflates the apparent quorum the same way a repeated address does,
+		// one level up. An endorser node signs with the one key it is configured with, so two bindings
+		// naming it cannot yield two distinct signatures, and the contract counts distinct signers.
+		// The set then looks larger than it is: a threshold the endorsers can never reach passes
+		// validation here, matches the deployed verifier's address set, and fails at every
+		// transaction instead of at startup.
+		if _, dup := named[b.FSCIdentity]; dup {
+			return errors.Errorf(
+				"evm config: endorser identity [%s] is bound twice; one node cannot supply two of the "+
+					"distinct signatures a quorum needs", b.FSCIdentity)
+		}
 		seen[addr] = struct{}{}
+		named[b.FSCIdentity] = struct{}{}
 	}
 
 	if c.Endorser.Enabled {

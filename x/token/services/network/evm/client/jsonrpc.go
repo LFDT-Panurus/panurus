@@ -26,6 +26,14 @@ import (
 // deadline of its own.
 const DefaultRequestTimeout = 30 * time.Second
 
+// maxHeadReadAttempts bounds the retry baseFee performs when the node reports no block for "latest".
+const maxHeadReadAttempts = 3
+
+// headReadRetryDelay is how long baseFee waits before re-reading a head that was momentarily absent.
+// It is well under a block time on every chain the driver targets, so the retries stay inside the
+// window where the head is expected to settle rather than stretching the caller's deadline.
+const headReadRetryDelay = 100 * time.Millisecond
+
 // maxResponseBytes bounds the JSON-RPC response body this client will buffer.
 //
 // http.Client.Timeout bounds how long a response may take, not how large it may be, so without this a
@@ -109,6 +117,25 @@ func (c *JSONRPCClient) Call(ctx context.Context, to Address, data []byte, block
 		return nil, errors.Wrap(rpcErr, "eth_call failed")
 	}
 	if err != nil {
+		return nil, err
+	}
+
+	return decodeHexBytes(out)
+}
+
+// CodeAt returns the contract code deployed at address, or empty if the address holds none.
+//
+// This is what separates a deployed contract from an address that merely parses as one. Every other
+// read the driver makes goes through eth_call, and a call against an address with no code is not an
+// error on any node: it returns empty data. A misconfigured contract address therefore makes every
+// read come back empty instead of failing, which is indistinguishable from a contract that had
+// nothing to say.
+func (c *JSONRPCClient) CodeAt(ctx context.Context, address Address, blockTag string) ([]byte, error) {
+	if blockTag == "" {
+		blockTag = BlockTagLatest
+	}
+	var out string
+	if err := c.call(ctx, "eth_getCode", &out, address.Hex(), blockTag); err != nil {
 		return nil, err
 	}
 
@@ -231,6 +258,14 @@ const (
 // malformed response - says nothing about the transaction and has to be retried instead.
 var ErrExecutionReverted = errors.New("execution reverted")
 
+// ErrTransactionRejected marks a transaction the node refused to accept for submission at all: it
+// never entered the mempool, so it consumed no nonce and cost nothing.
+//
+// This is a permanent answer about this transaction, and the ordinary way to meet it in production is
+// the account that pays for gas running out of funds. It is separate from ErrExecutionReverted, which
+// is the chain judging what the transaction would do; this is the node declining to carry it.
+var ErrTransactionRejected = errors.New("transaction rejected by the node")
+
 // isReverted reports whether a JSON-RPC error is a revert.
 //
 // Getting this wrong is not cosmetic. A revert is the chain rejecting the transaction, which is
@@ -273,24 +308,59 @@ func (c *JSONRPCClient) SuggestGasFees(ctx context.Context) (GasFees, error) {
 
 // baseFee reads the base fee of the latest block. A chain with no base fee at all (a pre-London or
 // zero-fee configuration) reports the field absent, which is a base fee of zero rather than an error.
-// A null result, by contrast, means the node did not return a block at all and is an error: head is a
-// pointer so that case is distinguishable, since unmarshaling JSON null into a non-pointer target is a
-// silent no-op that would otherwise be indistinguishable from the legitimate absent-field case.
+// A null result, by contrast, means the node did not return a block at all: head is a pointer so that
+// case is distinguishable, since unmarshaling JSON null into a non-pointer target is a silent no-op
+// that would otherwise be indistinguishable from the legitimate absent-field case.
+//
+// A null head is retried rather than reported straight away. "latest" is not a fixed block: it is
+// whatever the node's head is at the instant it looks, and a node whose head is moving underneath the
+// request is entitled to answer that it has no block for that tag just then. The condition clears by
+// itself within a block time, but the caller cannot treat it that way, because this error travels up
+// as ErrNetworkUnavailable and aborts the whole token transaction. Two of those aborts were observed
+// against Besu during the integration suites, each one killing a transaction over a condition that
+// would have resolved on the next call.
+//
+// The retry is bounded, so a node that is genuinely not serving its head still fails, and it costs
+// nothing when the node behaves: the loop returns on the first attempt unless the answer was null.
 func (c *JSONRPCClient) baseFee(ctx context.Context) (*big.Int, error) {
-	var head *struct {
-		BaseFeePerGas string `json:"baseFeePerGas"`
-	}
-	if err := c.call(ctx, "eth_getBlockByNumber", &head, "latest", false); err != nil {
-		return nil, err
-	}
-	if head == nil {
-		return nil, errors.New("evm client: eth_getBlockByNumber(\"latest\") returned no block")
-	}
-	if head.BaseFeePerGas == "" {
-		return new(big.Int), nil
+	for attempt := range maxHeadReadAttempts {
+		var head *struct {
+			BaseFeePerGas string `json:"baseFeePerGas"`
+		}
+		if err := c.call(ctx, "eth_getBlockByNumber", &head, "latest", false); err != nil {
+			return nil, err
+		}
+		if head != nil {
+			if head.BaseFeePerGas == "" {
+				return new(big.Int), nil
+			}
+
+			return parseHexBig(head.BaseFeePerGas)
+		}
+		if attempt == maxHeadReadAttempts-1 {
+			break
+		}
+		if err := wait(ctx, headReadRetryDelay); err != nil {
+			return nil, err
+		}
 	}
 
-	return parseHexBig(head.BaseFeePerGas)
+	return nil, errors.Errorf(
+		"evm client: eth_getBlockByNumber(\"latest\") returned no block in %d attempts", maxHeadReadAttempts)
+}
+
+// wait sleeps for d, or returns early if the context is done first. A retry that ignored the context
+// would keep a cancelled caller waiting for the full delay.
+func wait(ctx context.Context, d time.Duration) error {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+
+	select {
+	case <-ctx.Done():
+		return errors.Wrap(ctx.Err(), "evm client: interrupted while waiting to re-read the chain head")
+	case <-timer.C:
+		return nil
+	}
 }
 
 // suggestTip asks the node what priority fee to pay.
@@ -331,11 +401,44 @@ func (c *JSONRPCClient) suggestTip(ctx context.Context, baseFee *big.Int) (*big.
 // SendRawTransaction submits a signed, RLP-encoded transaction and returns its hash.
 func (c *JSONRPCClient) SendRawTransaction(ctx context.Context, rawTx []byte) (Hash, error) {
 	var out string
-	if err := c.call(ctx, "eth_sendRawTransaction", &out, encodeHexBytes(rawTx)); err != nil {
+	rpcErr, err := c.invoke(ctx, "eth_sendRawTransaction", &out, encodeHexBytes(rawTx))
+	if rpcErr != nil {
+		// A JSON-RPC error response is the node telling us it looked at the transaction and would not
+		// take it. That is a different thing from failing to reach the node, which arrives as a
+		// transport error instead, and the two want opposite responses from the caller: one is worth
+		// retrying and the other never will be.
+		//
+		// The nonce is the exception. "nonce too low", a replacement that is underpriced, or a
+		// transaction the pool already holds are all refusals that say the local nonce is wrong rather
+		// than the transaction is, and re-reading it from the chain is exactly what fixes them. Those
+		// stay in the retryable class so the nonce manager gets its chance.
+		if isNonceRelated(rpcErr.Message) {
+			return Hash{}, errors.Wrapf(rpcErr, "eth_sendRawTransaction failed")
+		}
+
+		return Hash{}, errors.Wrapf(ErrTransactionRejected,
+			"eth_sendRawTransaction failed: %s", rpcErr.Message)
+	}
+	if err != nil {
 		return Hash{}, err
 	}
 
 	return HexToHash(out)
+}
+
+// isNonceRelated reports whether a refusal is about the nonce rather than the transaction.
+//
+// Matching on the message is unavoidable: nodes return these under the same implementation-defined
+// codes they use for everything else, so the code cannot separate them. Getting it wrong in this
+// direction is the safe one, because it only means a refusal is retried a few times before the
+// caller gives up rather than being reported as permanent immediately.
+func isNonceRelated(message string) bool {
+	m := strings.ToLower(message)
+
+	return strings.Contains(m, "nonce") ||
+		strings.Contains(m, "already known") ||
+		strings.Contains(m, "already imported") ||
+		strings.Contains(m, "replacement transaction underpriced")
 }
 
 // GetTransactionReceipt returns the receipt for txHash, or (nil, nil) if it is not yet mined.

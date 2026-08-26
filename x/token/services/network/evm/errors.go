@@ -24,4 +24,13 @@ var (
 	// ErrNetworkUnavailable marks a failure to reach or be understood by the node. Transient - the
 	// transaction is untouched and the call should be retried with backoff (§13).
 	ErrNetworkUnavailable = errors.New("evm node unavailable")
+
+	// ErrTransactionRejected marks a transaction the node refused to accept for submission: it never
+	// entered the mempool, so it consumed no nonce. Permanent, for the same reason a revert is: every
+	// resend of the same transaction is refused the same way.
+	//
+	// It is always joined with ErrTransactionReverted, so a caller that only knows the two original
+	// classes still reads it as the permanent one and maps it to Invalid. A caller that wants to tell
+	// "the chain rejected what this would do" from "the node would not carry it" can ask for this.
+	ErrTransactionRejected = errors.New("transaction rejected by the node")
 )

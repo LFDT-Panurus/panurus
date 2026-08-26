@@ -181,6 +181,10 @@ func TestMultiTMSCrossContamination_Live(t *testing.T) {
 
 	evmClient := &mock.EVMClient{}
 	evmClient.ChainIDReturns(big.NewInt(testChainID), nil)
+	// Both TokenState addresses in this test are placeholders that no chain has ever seen. What is
+	// under observation here is which of them the shared *Network routes through, not whether either
+	// is deployed, so the node reports code at every address and Connect's deployment check passes.
+	evmClient.CodeAtReturns([]byte{0x60, 0x00}, nil)
 
 	d := &Driver{
 		resolver:    resolver,

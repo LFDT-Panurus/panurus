@@ -57,6 +57,7 @@ func testNetwork(t *testing.T, evmClient client.EVMClient, endorser EndorsementS
 	if evmClient == nil {
 		evmClient = &mock.EVMClient{}
 	}
+	deployedTokenState(evmClient)
 	c := validConfig()
 	c.applyDefaults()
 	require.NoError(t, c.Validate())
@@ -342,6 +343,7 @@ func TestBroadcastRejectsBadInput(t *testing.T) {
 // Broadcast tests that need to get past the submitter/delta checks to exercise what follows them.
 func networkWithSubmitter(t *testing.T, evm *mock.EVMClient) *Network {
 	t.Helper()
+	deployedTokenState(evm)
 	c := validConfig()
 	c.applyDefaults()
 	require.NoError(t, c.Validate())
@@ -527,4 +529,78 @@ func bigInt(v int64) *big.Int { return big.NewInt(v) }
 // driverTxID returns a TxID with a creator and an empty nonce, the shape callers pass in.
 func driverTxID() driver.TxID {
 	return driver.TxID{Creator: []byte("alice")}
+}
+
+// TestBroadcastKeepsARevertWhenTheAnchorIsNotApplied is the other half of the already-applied case:
+// a genuine rejection must still be reported. The chain here has no record of the anchor, so the
+// refusal is about a transaction that never landed and the caller has to hear about it.
+func TestBroadcastKeepsARevertWhenTheAnchorIsNotApplied(t *testing.T) {
+	evm := readySubmitterClient()
+	evm.EstimateGasReturns(0, errors.Wrap(client.ErrExecutionReverted, "eth_estimateGas failed"))
+	// getTokenRequestHash returns bytes32(0), which is how the contract says it has no such anchor.
+	evm.CallReturns(make([]byte, 32), nil)
+	n := networkWithSubmitter(t, evm)
+
+	delta := testDelta()
+	err := n.Broadcast(t.Context(), &Envelope{
+		Anchor:       hex.EncodeToString(delta.Anchor[:]),
+		Delta:        delta,
+		Endorsements: [][]byte{make([]byte, 65)},
+	})
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrTransactionReverted,
+		"a refusal of an anchor the chain has never recorded is exactly the permanent failure it looks like")
+}
+
+// TestBroadcastKeepsARevertWhenTheStatusCannotBeRead pins the fail-closed direction. A node that
+// cannot be asked whether the anchor landed is no reason to convert a refusal into a success.
+func TestBroadcastKeepsARevertWhenTheStatusCannotBeRead(t *testing.T) {
+	evm := readySubmitterClient()
+	evm.EstimateGasReturns(0, errors.Wrap(client.ErrExecutionReverted, "eth_estimateGas failed"))
+	evm.CallReturns(nil, errors.New("node unreachable"))
+	n := networkWithSubmitter(t, evm)
+
+	delta := testDelta()
+	err := n.Broadcast(t.Context(), &Envelope{
+		Anchor:       hex.EncodeToString(delta.Anchor[:]),
+		Delta:        delta,
+		Endorsements: [][]byte{make([]byte, 65)},
+	})
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrTransactionReverted, "an unreadable status keeps the original rejection")
+}
+
+// deployedTokenState makes a mock node report code at every address, which is the ordinary case and
+// what Connect's deployment check looks for. Tests about that check set their own answer afterwards;
+// everything else would otherwise have to restate "yes, the contract exists" to get past startup.
+func deployedTokenState(evmClient client.EVMClient) {
+	if m, ok := evmClient.(*mock.EVMClient); ok {
+		m.CodeAtReturns([]byte{0x60, 0x00}, nil)
+	}
+}
+
+// TestConnectChecksTheTokenStateIsDeployed pins both directions of the deployment guard, including
+// the one that matters most: a node that cannot be asked must not be treated as a node without the
+// contract, or a momentarily unhappy endpoint would take the driver down.
+func TestConnectChecksTheTokenStateIsDeployed(t *testing.T) {
+	t.Run("no code at the address is refused", func(t *testing.T) {
+		evm := &mock.EVMClient{}
+		evm.ChainIDReturns(bigInt(testChainID), nil)
+		n := testNetwork(t, evm, nil)
+		evm.CodeAtReturns(nil, nil)
+
+		_, err := n.Connect("token")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "no contract is deployed")
+	})
+
+	t.Run("an unreadable node still connects", func(t *testing.T) {
+		evm := &mock.EVMClient{}
+		evm.ChainIDReturns(bigInt(testChainID), nil)
+		n := testNetwork(t, evm, nil)
+		evm.CodeAtReturns(nil, errors.New("node briefly unhappy"))
+
+		_, err := n.Connect("token")
+		require.NoError(t, err, "a failed read says the node could not be asked, not that the contract is missing")
+	})
 }
