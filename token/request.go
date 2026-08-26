@@ -663,7 +663,7 @@ func (r *Request) extractIssueOutputs(ctx context.Context, i int, counter uint64
 		if err != nil {
 			return nil, 0, errors.Wrapf(err, "failed getting issue action output in the clear [%d,%d]", i, j)
 		}
-		if !issuer.Equal(issueAction.GetIssuer()) {
+		if len(issuer) != 0 && !issuer.Equal(issueAction.GetIssuer()) {
 			return nil, 0, errors.Errorf("invalid issuer [%d,%d]", i, j)
 		}
 		if len(recipients) == 0 {

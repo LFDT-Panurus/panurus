@@ -8,10 +8,14 @@ package validator
 import (
 	"context"
 	"math/big"
+	"slices"
 
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 
+	"github.com/LFDT-Panurus/panurus/token/core/common"
+	"github.com/LFDT-Panurus/panurus/token/driver"
+	"github.com/LFDT-Panurus/panurus/token/services/utils"
 	snarktoken "github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/token"
 )
 
@@ -67,4 +71,34 @@ func (v *Validator) IssueZKValidate(_ context.Context, ctx *Context) error {
 		nil, decodedOutputs,
 		action.BindingSignature, totalValue,
 	)
+}
+
+// IssueSignatureValidate validates the issuer's identity signature on the
+// issue action. The common validator framework requires every signature
+// attached to an action to be consumed via SignatureProvider.HasBeenSignedBy;
+// without this step the Backend reports "unconsumed signatures".
+//
+// Open-policy issuer behaviour: when PP.IssuerIdentities is empty, the issuer
+// authorization check is skipped and any identity may issue tokens.
+func IssueSignatureValidate(c context.Context, ctx *Context) error {
+	action := ctx.IssueAction
+	issuer := driver.Identity(action.GetIssuer())
+
+	// Check the issuer is among those known (open-policy if list is empty)
+	if issuers := ctx.PP.Issuers(); len(issuers) != 0 && !slices.ContainsFunc(issuers, issuer.Equal) {
+		return errors.New("issuer not authorized")
+	}
+
+	verifier, err := ctx.Deserializer.GetIssuerVerifier(c, issuer)
+	if err != nil {
+		return errors.Wrapf(err, "failed getting verifier for issuer [%s]", issuer)
+	}
+	if utils.IsNil(ctx.SignatureProvider) {
+		return common.ErrNilSignatureProvider
+	}
+	if _, err := ctx.SignatureProvider.HasBeenSignedBy(c, issuer, verifier); err != nil {
+		return errors.Wrapf(err, "failed verifying issuer signature")
+	}
+
+	return nil
 }

@@ -42,5 +42,33 @@ func NewAuditorService(
 }
 
 func (s *AuditorService) AuditorCheck(ctx context.Context, tokenRequest *driver.TokenRequest, tokenRequestMetadata *driver.TokenRequestMetadata, anchor driver.TokenRequestAnchor) error {
-	return errors.New("auditor check not fully implemented for zkatsnark")
+	tokenIDs, err := common.ExtractTokenIDsAndCheckDuplicates(tokenRequestMetadata, anchor)
+	if err != nil {
+		return err
+	}
+
+	auditTokens, err := common.RetrieveAuditTokens(ctx, s.Logger, s.QueryEngine, tokenIDs, anchor)
+	if err != nil {
+		return err
+	}
+
+	if err := common.ValidateStructure(tokenRequest, tokenRequestMetadata, anchor); err != nil {
+		return err
+	}
+
+	for i, action := range tokenRequestMetadata.Actions {
+		if action.IssueMetadata != nil {
+			err := common.ValidateIssueActionTokenTypes(action.IssueMetadata, auditTokens)
+			if err != nil {
+				return errors.Wrapf(err, "invalid issue action at index %d", i)
+			}
+		} else if action.TransferMetadata != nil {
+			err := common.ValidateTransferActionTokenTypes(action.TransferMetadata, auditTokens, false, 0)
+			if err != nil {
+				return errors.Wrapf(err, "invalid transfer action at index %d", i)
+			}
+		}
+	}
+
+	return nil
 }
