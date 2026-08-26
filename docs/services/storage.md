@@ -60,6 +60,21 @@ Manages the cryptographic identities and logical wallet groupings used by the no
 *   **IdentityInfo**: Stores sensitive identity-related data, including audit information and PII required for transaction processing.
 *   **IdentitySigners**: Tracks which identities have locally available signing keys and their associated metadata.
 
+#### Idempotent identity registration
+
+`RegisterIdentityDescriptor` writes up to four rows in a single transaction: the signer info and
+the audit info of the identity, plus the same two for its alias. The operation is **idempotent and
+safe to retry**. Registering the same descriptor twice succeeds without error, and a registration
+that was only partially persisted — for example because a previous attempt was interrupted by a
+crash — is completed by the retry rather than rejected.
+
+Each of those inserts is individually idempotent (a duplicate key means "already registered"), but
+they share one transaction, so each one is isolated by its own `SAVEPOINT`. Without it, the first
+duplicate key would abort the whole transaction on PostgreSQL and every following statement would
+fail with a generic `current transaction is aborted` error (`SQLSTATE 25P02`) that no longer
+identifies itself as a unique-key violation. Rolling back to the savepoint clears that state, so
+the rows that are still missing are written and only genuine errors abort the registration.
+
 ### Generic Store
 *   **KeyStore**: A secure, generic key-value store used for persisting various cryptographic materials and small sensitive states. The keystore uses identifiers that are expected to be the hexadecimal representation of the key's Subject Key Identifier (SKI). This convention is relied upon by other packages, particularly for operations like keystore cleanup where SKIs are derived from owner identities to locate and manage keys.
 

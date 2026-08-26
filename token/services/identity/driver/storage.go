@@ -194,7 +194,9 @@ type IdentityStoreService interface {
 	SignerInfoExists(ctx context.Context, id []byte) (bool, error)
 	// GetSignerInfo returns the signer info bound to the given identity
 	GetSignerInfo(ctx context.Context, id []byte) ([]byte, error)
-	// RegisterIdentityDescriptor registers a descriptor for an identity and associates it with an alias
+	// RegisterIdentityDescriptor registers a descriptor for an identity and associates it with an alias.
+	// The operation is idempotent and safe to retry: registering the same descriptor again succeeds
+	// without error, and a registration that was only partially persisted is completed by the retry.
 	RegisterIdentityDescriptor(ctx context.Context, descriptor *IdentityDescriptor, alias driver.Identity) error
 	// IterateSigners returns a page of SignerEntry values from the Signers table ordered by
 	// identity_hash, starting at the given offset and returning at most limit entries.
