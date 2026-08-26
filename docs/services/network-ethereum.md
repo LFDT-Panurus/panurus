@@ -752,7 +752,7 @@ a second TMS silently talking to the first TMS's chain.
 
 ### Multiple TMS on one network
 
-More than one TMS can declare the same EVM `network` — there is no `channel` to separate them by, so the
+More than one TMS can declare the same EVM `network`. There is no `channel` to separate them by, so the
 network name is the only sharing key. Each TMS still keeps its own `services.network.evm` block in full:
 its own `contracts.tokenState` (and therefore its own `EndorsementVerifier` and EIP-712 domain), its own
 `endorsement` policy, `submitter` account and `gas` policy. Only the JSON-RPC connection itself
