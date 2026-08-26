@@ -271,16 +271,6 @@ func (p *ipaProver) reduce(X, com *mathlib.G1) (*mathlib.Zr, *mathlib.Zr, []*mat
 
 		// reduce the vectors by 1/2, a function of the old vectors and x and 1/x
 		left, right = reduceVectors(left, right, x, xInv, p.Curve)
-
-		xSquare := p.Curve.ModMul(x, x, p.Curve.GroupOrder)
-		xSquareInv := xSquare.Copy()
-		xSquareInv.InvModOrder()
-
-		// compute the commitment to left, right and their inner product
-		CPrime := LArray[i].Mul2(xSquare, RArray[i], xSquareInv)
-		CPrime.Add(com)
-		// com = L^{x^2}*com*R^{1/x^2}
-		com = CPrime
 	}
 
 	return left[0], right[0], LArray, RArray, nil
