@@ -12,10 +12,14 @@ import (
 	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/crypto/common"
 	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/crypto/math"
 	executor "github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/crypto/rp/executor"
-	bls12381fr "github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
 	bn254fr "github.com/consensys/gnark-crypto/ecc/bn254/fr"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 )
+
+// DisableNativeIPA when set to true bypasses the gnark-crypto fast path in ipaProver.reduce,
+// forcing execution of the standard fallback mathlib path.
+// This is primarily used for testing and benchmarking to compare the two paths side by side.
+var DisableNativeIPA bool
 
 // IPA contains the proof for the inner product argument.
 type IPA struct {
@@ -186,10 +190,11 @@ func (p *ipaProver) Prove() (*IPA, error) {
 // of the left vector and right is a function of right vector.
 // Both vectors are committed in com which is passed as a parameter to reduce
 func (p *ipaProver) reduce(X, com *mathlib.G1) (*mathlib.Zr, *mathlib.Zr, []*mathlib.G1, []*mathlib.G1, error) {
-	isBLS, isBN254 := math.DispatchCurve(p.Curve)
-	if isBLS {
-		return nativeIPAReduce[bls12381fr.Element, *bls12381fr.Element](p, X, com)
-	} else if isBN254 {
+	_, isBN254 := math.DispatchCurve(p.Curve)
+	// The native gnark-crypto path is only beneficial for BN254. Benchmarking showed
+	// that for BLS12-381 the 48-byte field element size makes BigInt conversion overhead
+	// outweigh the arithmetic savings, yielding no speedup and more allocations.
+	if isBN254 && !DisableNativeIPA {
 		return nativeIPAReduce[bn254fr.Element, *bn254fr.Element](p, X, com)
 	}
 
