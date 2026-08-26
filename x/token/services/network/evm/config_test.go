@@ -216,6 +216,12 @@ func TestConfigValidationRejectsBadDocuments(t *testing.T) {
 		"duplicate endorser address": func(c *Config) {
 			c.Endorsement.Endorsers[1].Address = c.Endorsement.Endorsers[0].Address
 		},
+		// One node signs with the one key it holds, so two bindings naming it cannot supply two of
+		// the distinct signatures the contract counts. Left unchecked, the set looks larger than it
+		// is and a threshold the endorsers can never reach passes validation.
+		"duplicate endorser identity": func(c *Config) {
+			c.Endorsement.Endorsers[1].FSCIdentity = c.Endorsement.Endorsers[0].FSCIdentity
+		},
 		"enabled endorser without address": func(c *Config) { c.Endorser.Address = "" },
 		"enabled endorser bad address":     func(c *Config) { c.Endorser.Address = "nope" },
 		"enabled endorser without allowlist": func(c *Config) {

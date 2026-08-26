@@ -8,8 +8,10 @@ package endorsement
 
 import (
 	"context"
+	"strings"
 	"testing"
 
+	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/view"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -358,4 +360,39 @@ func TestInitiatorStopsOnCancellation(t *testing.T) {
 	})
 	require.Error(t, err)
 	assert.Equal(t, 1, asked, "collection stops at the first check after cancellation")
+}
+
+// TestInitiatorReportsWhyEndorsersDeclined pins the property that a failed collection explains
+// itself. The count alone is the same sentence for an unreachable endorser and for one that
+// declined, and those are different things to go and fix; an operator who reads the error is rarely
+// able to reproduce it at debug level, which is where the reasons used to stay.
+func TestInitiatorReportsWhyEndorsersDeclined(t *testing.T) {
+	reg, _ := endorserSet(t, 3)
+	init := newTestInitiator(reg, 2)
+
+	refuse := func(view.Identity) (*EndorseResponse, error) {
+		return nil, errors.New("dial tcp: connection refused")
+	}
+
+	_, err := init.Collect(context.Background(), refuse)
+	require.Error(t, err)
+	require.ErrorIs(t, err, ErrInsufficientEndorsements)
+	assert.Contains(t, err.Error(), "connection refused",
+		"the reason each endorser failed has to survive into the returned error")
+}
+
+// TestInitiatorBoundsTheReportedDeclines keeps a wholesale failure from putting an unbounded,
+// repetitive string into an error that is then wrapped and logged repeatedly.
+func TestInitiatorBoundsTheReportedDeclines(t *testing.T) {
+	reg, _ := endorserSet(t, maxReportedDeclines+3)
+	init := newTestInitiator(reg, 2)
+
+	refuse := func(view.Identity) (*EndorseResponse, error) {
+		return nil, errors.New("connection refused")
+	}
+
+	_, err := init.Collect(context.Background(), refuse)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "and 3 more", "the surplus reasons should be summarised, not spelled out")
+	assert.Equal(t, maxReportedDeclines, strings.Count(err.Error(), "connection refused"))
 }
