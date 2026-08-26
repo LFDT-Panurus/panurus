@@ -66,6 +66,9 @@ var IdentityCases = []struct {
 	{"SignerInfoConcurrent", TSignerInfoConcurrent},
 	{"GetExistingSignerInfo", TGetExistingSignerInfo},
 	{"RegisterIdentityDescriptor", TRegisterIdentityDescriptor},
+	// Keep the name short: it is used as a SQL table prefix and PostgreSQL truncates
+	// identifiers at 63 characters, which would collide the store's tables.
+	{"RegisterPartialConflict", TRegisterIdentityDescriptorPartialConflict},
 }
 
 var IdentityNotificationCases = []struct {
@@ -338,7 +341,83 @@ func TRegisterIdentityDescriptor(t *testing.T, db driver.IdentityStore) {
 		Verifier:   verifier,
 	}
 	require.NoError(t, db.RegisterIdentityDescriptor(ctx, descriptor, aliasID))
+	assertIdentityDescriptorRegistered(t, db, id, aliasID, SignerInfo, auditInfo)
+
+	// registering the very same descriptor again must be a no-op success
 	require.NoError(t, db.RegisterIdentityDescriptor(ctx, descriptor, aliasID))
+	assertIdentityDescriptorRegistered(t, db, id, aliasID, SignerInfo, auditInfo)
+}
+
+// TRegisterIdentityDescriptorPartialConflict covers the retry-after-partial-write scenarios: only
+// some of the rows a descriptor registration writes are already present, as would be left behind by
+// a crash in the middle of a previous attempt. All those writes share one transaction, so a
+// duplicate key on any of them must neither fail the registration nor stop the still-missing rows
+// from being written.
+func TRegisterIdentityDescriptorPartialConflict(t *testing.T, db driver.IdentityStore) {
+	t.Helper()
+	ctx := t.Context()
+	auditInfo := []byte("audit_info")
+	signerInfo := []byte("signer_info")
+
+	descriptorFor := func(id []byte) *idriver.IdentityDescriptor {
+		return &idriver.IdentityDescriptor{
+			Identity:   id,
+			AuditInfo:  auditInfo,
+			Signer:     &mock.Signer{},
+			SignerInfo: signerInfo,
+			Verifier:   &mock.Verifier{},
+		}
+	}
+
+	// The audit info of the identity is already there, everything else is missing. On PostgreSQL
+	// this is the case where the duplicate key aborts the shared transaction and, unless it is
+	// isolated, makes the following alias writes fail with a generic error.
+	id, alias := []byte("bob"), []byte("banana")
+	require.NoError(t, db.StoreIdentityData(ctx, id, auditInfo, nil, nil))
+	require.NoError(t, db.RegisterIdentityDescriptor(ctx, descriptorFor(id), alias))
+	assertIdentityDescriptorRegistered(t, db, id, alias, signerInfo, auditInfo)
+
+	// The signer info of the identity is already there, everything else is missing.
+	id, alias = []byte("carol"), []byte("cherry")
+	require.NoError(t, db.StoreSignerInfo(ctx, id, signerInfo))
+	require.NoError(t, db.RegisterIdentityDescriptor(ctx, descriptorFor(id), alias))
+	assertIdentityDescriptorRegistered(t, db, id, alias, signerInfo, auditInfo)
+
+	// Only the alias' rows are already there.
+	id, alias = []byte("dave"), []byte("date")
+	require.NoError(t, db.StoreSignerInfo(ctx, alias, signerInfo))
+	require.NoError(t, db.StoreIdentityData(ctx, alias, auditInfo, nil, nil))
+	require.NoError(t, db.RegisterIdentityDescriptor(ctx, descriptorFor(id), alias))
+	assertIdentityDescriptorRegistered(t, db, id, alias, signerInfo, auditInfo)
+
+	// Both the identity's signer info and the alias' audit info are already there.
+	id, alias = []byte("erin"), []byte("elderberry")
+	require.NoError(t, db.StoreSignerInfo(ctx, id, signerInfo))
+	require.NoError(t, db.StoreIdentityData(ctx, alias, auditInfo, nil, nil))
+	require.NoError(t, db.RegisterIdentityDescriptor(ctx, descriptorFor(id), alias))
+	assertIdentityDescriptorRegistered(t, db, id, alias, signerInfo, auditInfo)
+}
+
+// assertIdentityDescriptorRegistered checks that both the identity and its alias carry the expected
+// signer info and audit info. GetSignerInfo is asserted on as well as SignerInfoExists because the
+// former bypasses the store's in-memory caches, which would otherwise report a row as present even
+// when the registration never wrote it.
+func assertIdentityDescriptorRegistered(t *testing.T, db driver.IdentityStore, id, alias, signerInfo, auditInfo []byte) {
+	t.Helper()
+	ctx := t.Context()
+	for _, identity := range [][]byte{id, alias} {
+		exists, err := db.SignerInfoExists(ctx, identity)
+		require.NoError(t, err)
+		assert.True(t, exists, "signer info missing for [%s]", identity)
+
+		storedSignerInfo, err := db.GetSignerInfo(ctx, identity)
+		require.NoError(t, err, "failed reading signer info for [%s]", identity)
+		assert.Equal(t, signerInfo, storedSignerInfo, "signer info mismatch for [%s]", identity)
+
+		storedAuditInfo, err := db.GetAuditInfo(ctx, identity)
+		require.NoError(t, err)
+		assert.Equal(t, auditInfo, storedAuditInfo, "audit info mismatch for [%s]", identity)
+	}
 }
 
 func TIdentityNotifier(t *testing.T, db driver.IdentityStore) {

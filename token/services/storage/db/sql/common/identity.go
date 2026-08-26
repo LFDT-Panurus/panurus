@@ -42,6 +42,15 @@ type dbTransaction interface {
 	ExecContext(ctx context.Context, query string, args ...common3.Param) (sql.Result, error)
 }
 
+// Savepoint names used by registerIdentityDescriptor to isolate each of its individually
+// idempotent inserts. They are compile-time constants, never derived from caller input.
+const (
+	savepointIdentitySignerInfo = "sp_identity_signer_info"
+	savepointIdentityAuditInfo  = "sp_identity_audit_info"
+	savepointAliasSignerInfo    = "sp_alias_signer_info"
+	savepointAliasAuditInfo     = "sp_alias_audit_info"
+)
+
 type identityTables struct {
 	IdentityConfigurations string
 	IdentityInfo           string
@@ -306,7 +315,9 @@ func (db *IdentityStore) Notifier() (idriver.IdentityConfigurationNotifier, erro
 }
 
 func (db *IdentityStore) StoreIdentityData(ctx context.Context, id []byte, identityAudit []byte, tokenMetadata []byte, tokenMetadataAudit []byte) error {
-	return db.storeIdentityData(ctx, db.writeDB, tdriver.Identity(id).UniqueID(), id, identityAudit, tokenMetadata, tokenMetadataAudit, true)
+	_, err := db.storeIdentityData(ctx, db.writeDB, tdriver.Identity(id).UniqueID(), id, identityAudit, tokenMetadata, tokenMetadataAudit, true)
+
+	return err
 }
 
 func (db *IdentityStore) GetAuditInfo(ctx context.Context, id []byte) ([]byte, error) {
@@ -454,6 +465,11 @@ func (db *IdentityStore) IterateSigners(ctx context.Context, offset, limit int) 
 	return entries, rows.Err()
 }
 
+// RegisterIdentityDescriptor stores the signer info and audit info of the descriptor's identity
+// and of the given alias, and refreshes the corresponding caches. All writes happen in a single
+// transaction. The operation is idempotent and safe to retry: rows that are already present are
+// left untouched and the missing ones are written, so both a full re-registration and the retry
+// of a registration that was only partially persisted succeed.
 func (db *IdentityStore) RegisterIdentityDescriptor(ctx context.Context, descriptor *idriver.IdentityDescriptor, alias tdriver.Identity) error {
 	// store
 	logger.DebugfContext(ctx, "register identity descriptor...")
@@ -505,32 +521,39 @@ func (db *IdentityStore) registerIdentityDescriptor(
 
 	h := descriptor.Identity.UniqueID()
 
-	exists, err := db.storeSignerInfo(ctx, tx, h, descriptor.Identity, descriptor.SignerInfo, false)
-	if err != nil {
+	// Each insert below is individually idempotent, and they all run on the same
+	// transaction, so each one is isolated by its own savepoint. Without it, the first
+	// duplicate key would abort the whole transaction on PostgreSQL and every following
+	// statement would fail with a generic "current transaction is aborted" error that no
+	// longer matches UniqueKeyViolation - turning an idempotent re-registration into a hard
+	// failure. Rolling back to the savepoint clears that state, so a registration that was
+	// only partially written (e.g. interrupted by a crash) is completed by the retry
+	// instead of being rejected.
+	if err := db.insertIdempotently(ctx, tx, savepointIdentitySignerInfo, func() (bool, error) {
+		return db.storeSignerInfo(ctx, tx, h, descriptor.Identity, descriptor.SignerInfo, false)
+	}); err != nil {
 		return errors.Wrapf(err, "failed to store signer info for descriptor's identity")
-	}
-	if exists {
-		// no need to continue
-
-		return nil
 	}
 
 	if len(descriptor.AuditInfo) != 0 {
-		err = db.storeIdentityData(ctx, tx, h, descriptor.Identity, descriptor.AuditInfo, nil, nil, false)
-		if err != nil {
+		if err := db.insertIdempotently(ctx, tx, savepointIdentityAuditInfo, func() (bool, error) {
+			return db.storeIdentityData(ctx, tx, h, descriptor.Identity, descriptor.AuditInfo, nil, nil, false)
+		}); err != nil {
 			return errors.Wrapf(err, "failed to store audit info for descriptor's identity")
 		}
 	}
 
 	if !alias.IsNone() && !descriptor.Identity.Equal(alias) {
-		h = alias.UniqueID()
-		_, err = db.storeSignerInfo(ctx, tx, h, alias, descriptor.SignerInfo, false)
-		if err != nil {
+		aliasHash := alias.UniqueID()
+		if err := db.insertIdempotently(ctx, tx, savepointAliasSignerInfo, func() (bool, error) {
+			return db.storeSignerInfo(ctx, tx, aliasHash, alias, descriptor.SignerInfo, false)
+		}); err != nil {
 			return errors.Wrapf(err, "failed to store signer info for alias")
 		}
 		if len(descriptor.AuditInfo) != 0 {
-			err = db.storeIdentityData(ctx, tx, h, alias, descriptor.AuditInfo, nil, nil, false)
-			if err != nil {
+			if err := db.insertIdempotently(ctx, tx, savepointAliasAuditInfo, func() (bool, error) {
+				return db.storeIdentityData(ctx, tx, aliasHash, alias, descriptor.AuditInfo, nil, nil, false)
+			}); err != nil {
 				return errors.Wrapf(err, "failed to store audit info for alias")
 			}
 		}
@@ -541,6 +564,36 @@ func (db *IdentityStore) registerIdentityDescriptor(
 
 	// no rollback to be performed
 	tx = nil
+
+	return nil
+}
+
+// insertIdempotently runs insert inside a nested savepoint on tx. insert must report whether
+// the row it writes was already present, that is, whether it swallowed a duplicate-key error.
+// When it was - or when insert failed outright - the savepoint is rolled back. On PostgreSQL a
+// duplicate key aborts the enclosing transaction, and rolling back to the savepoint is what
+// clears that state so the remaining statements of the transaction can still be executed. On
+// success the savepoint is released.
+//
+// savepoint must be a fixed identifier, never a value derived from caller input, as it is
+// interpolated into the statement.
+func (db *IdentityStore) insertIdempotently(ctx context.Context, tx dbTransaction, savepoint string, insert func() (bool, error)) error {
+	if _, err := tx.ExecContext(ctx, "SAVEPOINT "+savepoint); err != nil {
+		return errors.Wrapf(err, "failed to set savepoint [%s]", savepoint)
+	}
+
+	exists, insertErr := insert()
+	if insertErr != nil || exists {
+		if _, err := tx.ExecContext(ctx, "ROLLBACK TO SAVEPOINT "+savepoint); err != nil {
+			return errors.Join(insertErr, errors.Wrapf(err, "failed to roll back to savepoint [%s]", savepoint))
+		}
+
+		return insertErr
+	}
+
+	if _, err := tx.ExecContext(ctx, "RELEASE SAVEPOINT "+savepoint); err != nil {
+		return errors.Wrapf(err, "failed to release savepoint [%s]", savepoint)
+	}
 
 	return nil
 }
@@ -587,6 +640,10 @@ func (db *IdentityStore) GetSchema() string {
 	)
 }
 
+// storeSignerInfo inserts the signer info for the identity hashed to h. A duplicate key is
+// not an error: the insert is idempotent and the returned boolean reports whether the row was
+// already there. Callers running on a shared transaction must react to that boolean, see
+// insertIdempotently.
 func (db *IdentityStore) storeSignerInfo(ctx context.Context, tx dbTransaction, h string, id tdriver.Identity, info []byte, updateCache bool) (bool, error) {
 	logger.DebugfContext(ctx, "store signer info for [%s]", h)
 	query, args := q.InsertInto(db.table.Signers).
@@ -613,7 +670,11 @@ func (db *IdentityStore) storeSignerInfo(ctx context.Context, tx dbTransaction, 
 	return exists, nil
 }
 
-func (db *IdentityStore) storeIdentityData(ctx context.Context, tx dbTransaction, h string, id []byte, identityAudit []byte, tokenMetadata []byte, tokenMetadataAudit []byte, updateCache bool) error {
+// storeIdentityData inserts the identity data for the identity hashed to h. A duplicate key
+// is not an error: the insert is idempotent and the returned boolean reports whether the row
+// was already there. Callers running on a shared transaction must react to that boolean, see
+// insertIdempotently.
+func (db *IdentityStore) storeIdentityData(ctx context.Context, tx dbTransaction, h string, id []byte, identityAudit []byte, tokenMetadata []byte, tokenMetadataAudit []byte, updateCache bool) (bool, error) {
 	logger.DebugfContext(ctx, "store identity data for [%s]", h)
 	query, args := q.InsertInto(db.table.IdentityInfo).
 		Fields("identity_hash", "identity", "identity_audit_info", "token_metadata", "token_metadata_audit_info").
@@ -621,12 +682,13 @@ func (db *IdentityStore) storeIdentityData(ctx context.Context, tx dbTransaction
 		Format()
 	logging.Debug(logger, query, args)
 
-	_, err := tx.ExecContext(ctx, query, args...)
-	if err != nil {
+	exists := false
+	if _, err := tx.ExecContext(ctx, query, args...); err != nil {
 		if !errors.Is(db.errorWrapper.WrapError(err), driver2.UniqueKeyViolation) {
-			return err
+			return exists, err
 		}
 		logger.DebugfContext(ctx, "identity data [%s] exists, no error to return", h)
+		exists = true
 	}
 
 	if updateCache {
@@ -636,5 +698,5 @@ func (db *IdentityStore) storeIdentityData(ctx context.Context, tx dbTransaction
 	}
 	logger.DebugfContext(ctx, "store identity data for [%s] done", h)
 
-	return nil
+	return exists, nil
 }
