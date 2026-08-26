@@ -103,6 +103,7 @@ func (p policyChain) install(t *testing.T, evm *mock.EVMClient) {
 func policyNetwork(t *testing.T, evm *mock.EVMClient, tweak func(*Config)) *Network {
 	t.Helper()
 	evm.ChainIDReturns(big.NewInt(testChainID), nil)
+	deployedTokenState(evm)
 
 	c := validConfig()
 	if tweak != nil {
@@ -273,6 +274,7 @@ func TestConnectRefusesTheSameContradictionsWhenTheyAreReadable(t *testing.T) {
 func TestConnectSkipsAnUninitializedTokenState(t *testing.T) {
 	evm := &mock.EVMClient{}
 	evm.ChainIDReturns(big.NewInt(testChainID), nil)
+	deployedTokenState(evm)                // the clone is deployed; it just has not been initialized
 	evm.CallReturns(make([]byte, 32), nil) // the zero address
 
 	c := validConfig()

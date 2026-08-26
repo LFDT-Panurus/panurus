@@ -116,6 +116,14 @@ func (s *Submitter) Submit(
 		}
 
 		hash, sendErr := s.client.SendRawTransaction(ctx, signed)
+		if errors.Is(sendErr, client.ErrTransactionRejected) {
+			// The node looked at the transaction and would not take it, so it never entered the pool:
+			// the nonce is untouched and every resend is refused the same way. Reporting this as
+			// transient asks the caller to loop forever on a transaction the chain will never accept,
+			// which is what an account that has run out of gas money would otherwise do.
+			return errors.Wrapf(errors.Join(ErrTransactionReverted, ErrTransactionRejected),
+				"submitter: the node refused the transaction: %v", sendErr)
+		}
 		if sendErr != nil {
 			// A transaction the node refused to accept was never judged by the chain, so this is the
 			// transient class: the delta is still valid and the caller should retry rather than
