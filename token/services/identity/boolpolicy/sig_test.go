@@ -234,3 +234,61 @@ func TestPolicyVerify_Memoisation_FailingRefVerifiedOnce(t *testing.T) {
 	require.Error(t, pv.Verify([]byte(testMsg), buildPolicySig(t, "wrong")))
 	assert.Equal(t, 1, counter.calls, "failing verifier for $0 must be invoked exactly once")
 }
+
+// ---------------------------------------------------------------------------
+// Bounds checks at the point of use (issue #2073)
+// ---------------------------------------------------------------------------
+
+// TestEvalRef_ShorterVerifiersThanSignatures calls the AST evaluation directly with more signature
+// slots than Verifiers. Verify rejects that mismatch before evalNode ever runs, so this exercises
+// evalRef's own guard: a reference past the end of Verifiers must evaluate to false rather than
+// panic with an index-out-of-range.
+func TestEvalRef_ShorterVerifiersThanSignatures(t *testing.T) {
+	stubs := makeVerifiers(testMsg, "s0")
+
+	node, err := Parse("$0 OR $1")
+	require.NoError(t, err)
+	pv := &PolicyVerifier{
+		Policy: node,
+		// Two signature slots below, only one Verifier here.
+		Verifiers: []tdriver.Verifier{stubs[0]},
+	}
+
+	sigs := [][]byte{[]byte("s0"), []byte("s1")}
+	memo := make([]refResult, len(sigs))
+
+	// $0 is in range and its signature verifies, so the OR is satisfied without reaching $1.
+	assert.True(t, pv.evalNode(pv.Policy, []byte(testMsg), sigs, memo))
+
+	// $1 alone is out of range for Verifiers and must simply not be satisfied.
+	node, err = Parse("$1")
+	require.NoError(t, err)
+	pv.Policy = node
+	memo = make([]refResult, len(sigs))
+	assert.False(t, pv.evalNode(pv.Policy, []byte(testMsg), sigs, memo))
+}
+
+// TestEvalRef_ShorterMemoThanSignatures exercises the memo bounds check: memo is documented to have
+// one entry per signature slot, and a shorter one must not panic.
+func TestEvalRef_ShorterMemoThanSignatures(t *testing.T) {
+	stubs := makeVerifiers(testMsg, "s0", "s1")
+
+	node, err := Parse("$1")
+	require.NoError(t, err)
+	pv := &PolicyVerifier{Policy: node, Verifiers: []tdriver.Verifier{stubs[0], stubs[1]}}
+
+	sigs := [][]byte{[]byte("s0"), []byte("s1")}
+	assert.False(t, pv.evalNode(pv.Policy, []byte(testMsg), sigs, make([]refResult, 1)))
+}
+
+// TestEvalRef_NilVerifier covers a Verifiers slot left nil: the reference must fail instead of
+// nil-dereferencing on Verify.
+func TestEvalRef_NilVerifier(t *testing.T) {
+	node, err := Parse("$0")
+	require.NoError(t, err)
+	pv := &PolicyVerifier{Policy: node, Verifiers: []tdriver.Verifier{nil}}
+
+	sigs := [][]byte{[]byte("s0")}
+	assert.False(t, pv.evalNode(pv.Policy, []byte(testMsg), sigs, make([]refResult, 1)))
+	require.Error(t, pv.Verify([]byte(testMsg), buildPolicySig(t, "s0")))
+}

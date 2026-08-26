@@ -17,8 +17,6 @@ import (
 	"go.uber.org/zap/zapcore"
 )
 
-var logger = logging.MustGetLogger()
-
 // provisionRetryDelay is how long the background provisioning loop waits after a
 // backend failure before trying again. Without it, a persistently failing identity
 // backend would turn the loop into a busy spin.
@@ -81,8 +79,12 @@ func (c *RecipientDataCache) RecipientData(ctx context.Context) (*driver.Recipie
 		}
 	})
 
+	// start is only meaningful when the timing is actually going to be logged, so every read of
+	// it is guarded by the same check that sets it: time.Since and the argument boxing it feeds
+	// are evaluated eagerly, before Debugf gets to decide whether to format anything.
+	debug := c.Logger.IsEnabledFor(zapcore.DebugLevel)
 	var start time.Time
-	if c.Logger.IsEnabledFor(zapcore.DebugLevel) {
+	if debug {
 		start = time.Now()
 	}
 	timeout := time.NewTimer(c.cacheTimeout)
@@ -90,24 +92,27 @@ func (c *RecipientDataCache) RecipientData(ctx context.Context) (*driver.Recipie
 
 	var identity *driver.RecipientData
 	var err error
-	logger.DebugfContext(ctx, "fetching wallet recipient data")
+	c.Logger.DebugfContext(ctx, "fetching wallet recipient data")
 	select {
 	case entry := <-c.cache:
 		c.metrics.CacheLevelGauge.Add(-1)
-		logger.DebugfContext(ctx, "fetched wallet recipient data from cache")
 		identity = entry
-		c.Logger.DebugfContext(ctx, "fetching wallet identity from cache [%s] took [%v]", identity, time.Since(start))
+		if debug {
+			c.Logger.DebugfContext(ctx, "fetched wallet recipient data from cache [%s], took [%v]", identity, time.Since(start))
+		}
 	case <-timeout.C:
-		logger.DebugfContext(ctx, "generating wallet recipient data on the spot")
+		c.Logger.DebugfContext(ctx, "generating wallet recipient data on the spot")
 		identity, err = c.backed(ctx)
 		if err != nil {
 			return nil, errors.Wrap(err, "failed fetching wallet identity")
 		}
-		c.Logger.DebugfContext(ctx, "fetching wallet identity from backend after a timeout [%s] took [%v]", identity, time.Since(start))
+		if debug {
+			c.Logger.DebugfContext(ctx, "fetching wallet identity from backend after a timeout [%s] took [%v]", identity, time.Since(start))
+		}
 	case <-ctx.Done():
 		return nil, errors.New("context is done")
 	}
-	logger.DebugfContext(ctx, "fetching wallet recipient data done")
+	c.Logger.DebugfContext(ctx, "fetching wallet recipient data done")
 
 	return identity, nil
 }

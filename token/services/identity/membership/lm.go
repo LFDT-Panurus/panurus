@@ -270,11 +270,29 @@ func (l *LocalMembership) Close() {
 		l.localIdentitiesMutex.Lock()
 		keyManagers := l.keyManagers
 		l.keyManagers = nil
+		// The conf_ids this membership registered with the router. conf_id is derived from
+		// (ID, Type, URL) with Type being this membership's IdentityType, so these are only ever
+		// this membership's own entries - closing one role's membership cannot unpin another's.
+		var confIDs []string
+		if l.signerRouter != nil {
+			confIDs = make([]string, 0, len(l.localIdentities))
+			for _, li := range l.localIdentities {
+				if len(li.ConfigurationID) != 0 {
+					confIDs = append(confIDs, li.ConfigurationID)
+				}
+			}
+		}
 		l.localIdentitiesMutex.Unlock()
 		for _, keyManager := range keyManagers {
 			if c, ok := keyManager.(closer); ok {
 				c.Close()
 			}
+		}
+		// Drop the routes to the key managers just closed: byConfID otherwise keeps them
+		// reachable - and alive - for the lifetime of the router, and Resolve would hand out
+		// signers from a closed key manager with the cryptographic probe skipped.
+		if l.signerRouter != nil {
+			l.signerRouter.Unregister(confIDs...)
 		}
 
 		notifier, err := l.identityDB.Notifier()
@@ -391,6 +409,10 @@ func (l *LocalMembership) Load(ctx context.Context, identities []idriver.Configu
 	l.cachedDefaultIdentifier = ""
 	l.localIdentitiesByName = make(map[string][]LocalIdentityWithPriority, 0)
 	l.localIdentitiesByConfig = make(map[string]*LocalIdentity, 0)
+	// localIdentitiesByIdentity must be reset with the other three: it is the map both lookup
+	// and getLocalIdentity consult after a miss on localIdentitiesByName, so an entry left over
+	// from a previous Load would be served as if it were part of the set just loaded.
+	l.localIdentitiesByIdentity = make(map[string]*LocalIdentity, 0)
 
 	// prepare all identity configurations
 	identityConfigurations, defaults, err := l.toIdentityConfiguration(identities)

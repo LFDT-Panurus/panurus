@@ -98,6 +98,15 @@ The `LocalMembership` component (`token/services/identity/membership`) plays a p
     each returned `KeyManager` must either be independently owned by the caller or safe for concurrent `EnrollmentID` calls — and the results
     are committed to the in-memory indices sequentially in the original store order, so identity ordering (e.g. fallback default selection,
     same-name tie-breaks) is deterministic.
+*   **Reloading replaces, it does not merge**: `Load` may be called more than once on the same `LocalMembership`, and each call is a full
+    replacement of the in-memory view. It resets **all four** indices — `localIdentities`, `localIdentitiesByName`,
+    `localIdentitiesByConfig` and `localIdentitiesByIdentity` — plus the cached default identifier, so an identity that was present only in an
+    earlier `Load` no longer resolves. `localIdentitiesByIdentity` is the map consulted after a miss on `localIdentitiesByName` (by both
+    `lookup` and `getLocalIdentity`, reached from `GetIdentifier` and `GetIdentityInfo`); leaving it unreset was the stale-read fixed for
+    [#2073](https://github.com/LFDT-Panurus/panurus/issues/2073). Anything added to `LocalMembership` that indexes identities must be reset
+    there too.
+*   **Teardown**: `Close` releases every `KeyManager` this membership loaded (those implementing `Close`), unregisters its own `conf_id`s from
+    the `SignerRouter` (see below), and unsubscribes from the identity-store notifier. It is idempotent.
 
 ### Example: Wiring Services
 
@@ -148,6 +157,11 @@ func (d *Base) NewWalletService(...) (*wallet.Service, error) {
 *   **Wiring**: a driver builds a `SignerRouter` with `identity.NewSignerRouter(m *Metrics)`, registers `KeyManager`s against their `conf_id` with `Register`, sets a `ConfIDResolver` with `SetConfIDResolver`, and attaches it to the `Provider` with `Provider.SetSignerRouter`. See `token/core/fabtoken/v1/driver/ws.go` and the zkatdlog equivalent.
 *   **Fallback semantics**: `Resolve` returns `ok=false` (never an error) whenever routing cannot be attempted (no resolver set, no `conf_id` mapping, no `KeyManager` registered for it) or the routed `KeyManager` itself fails — callers always fall back to the probing deserializer in that case, never treating it as a hard failure.
 *   **Probe-free deserialization**: when the registered `KeyManager` also implements `idriver.ProbeFreeSignerDeserializer`, `Resolve` calls `DeserializeSignerNoProbe` directly, skipping the cryptographic probe that the fallback path relies on to catch a mismatched `KeyManager`. This is only safe because the `conf_id` already pins the identity to exactly one `KeyManager`.
+*   **Teardown**: a registration pins its `KeyManager` — and, for idemix, the BCCSP instance and `IdentityCache` behind it — for as long as the entry lives, so registrations have an explicit lifecycle:
+    *   `Unregister(confIDs ...string)` drops specific entries. `LocalMembership.Close` calls it with the `conf_id`s of its own local identities right after closing their `KeyManager`s, so a released `KeyManager` is never left routable with the probe skipped. Because `conf_id` is derived from `(ID, Type, URL)` with `Type` being the membership's identity type, one role's teardown cannot unpin another's entries.
+    *   `Close()` drops every entry, for tearing down a whole router. It does not close the `KeyManager`s themselves — the router borrows them; `LocalMembership` owns them. The router stays usable afterwards.
+    *   `Len()` reports how many bindings are currently held.
+    *   Both are idempotent, and unregistering an unknown `conf_id` is a no-op. After either, `Resolve` reports `ok=false` for the affected identities and callers fall back to the probing deserializer — correct, just without the fast path.
 
 #### conf_id must be collision-free
 
@@ -404,6 +418,22 @@ flows), so both `crypto.AuditInfo.FromBytes`
 (`token/services/identity/idemixnym/nym/audit.go`) treat their input as untrusted and reject
 malformed payloads with an error.
 
+Both decode through the project's strict JSON wrapper
+(`token/core/common/encoding/json`, which sets `DisallowUnknownFields`) — the same logical type
+must not be parsed more leniently just because it arrived through a different entry point.
+`nym.AuditInfo` additionally rejects a payload that carries none of the promoted
+`crypto.AuditInfo` fields: `encoding/json` leaves the embedded pointer nil in that case, and
+`FromBytes` returning success there would hand the caller a value whose promoted methods and
+fields nil-dereference. Both strictness gaps were closed for
+[#2073](https://github.com/LFDT-Panurus/panurus/issues/2073).
+
+`crypto.AuditInfo.Validate` guarantees only the four `Attributes` entries the default schema
+needs, while the schema string travels in the same payload and selects the positions
+`schema.DefaultManager` indexes — up to `Attributes[27]` for `w3c-v0.0.1`. `EidNymAuditOpts` and
+`RhNymAuditOpts` therefore bounds-check before indexing and return an error for an
+attribute-count/schema mismatch, rather than relying on callers to overwrite `Schema` with a
+trusted value first (which `idemixnym.KeyManager.DeserializeAuditInfo` does do today).
+
 `EidNymAuditData` and `RhNymAuditData` embed `mathlib` curve elements, which JSON-encode as
 a curve ID plus the raw element bytes:
 
@@ -469,6 +499,7 @@ Located in `token/services/identity/boolpolicy`.
     - `TypedIdentity` payload: ASN.1 DER.
     - Audit Info: JSON.
 *   **Signature Representation**: An ASN.1 `PolicySignature` (`SEQUENCE OF OCTET STRING`) where each slot corresponds to one component identity. A slot may be nil/empty when that component does not need to sign (valid for OR branches).
+*   **Verification**: `PolicyVerifier.Verify` rejects a `PolicySignature` whose slot count differs from `len(Verifiers)`, then walks the AST memoising each `$N`'s outcome so a repeated reference verifies at most once. Every `$N` is additionally bounds-checked against the signature slots, the memo and `Verifiers` at the point each is indexed, and a nil `Verifiers` entry fails the reference: an out-of-range or unset slot is an unsatisfied reference, never a panic, independently of the length check in `Verify`.
 *   **Implementation**: `token/services/identity/boolpolicy`.
 
 #### HTLC (Hashed Time Lock Contract)
@@ -486,6 +517,8 @@ Located in `token/services/identity/interop/htlc`.
     - `TypedIdentity` payload: JSON.
     - Audit Info: JSON.
 *   **Behavior**: Validation involves satisfying the script conditions (e.g., providing the hash preimage).
+*   **Parsing strictness**: the `Script` in a `TypedIdentity`, the `ScriptInfo` audit info and the `ClaimSignature` are all parsed with the strict JSON wrapper (`DisallowUnknownFields`), in `validator.go` and `info.go` as well as in `deserializer.go` — the validator must not accept a payload the deserializer would reject.
+*   **Preimage comparison**: `MetadataClaimKeyCheck` compares the claim's preimage against the action's metadata entry with `subtle.ConstantTimeCompare`. Not a practical timing oracle today (the same transaction reveals the preimage in the clear), but the property costs nothing to keep.
 
 ## Extending the Identity Service
 

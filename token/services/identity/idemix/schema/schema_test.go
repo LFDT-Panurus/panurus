@@ -383,3 +383,87 @@ func TestAttributeNames(t *testing.T) {
 	assert.Contains(t, attributeNames[25], "cbdccard:4_eid")
 	assert.Contains(t, attributeNames[26], "cbdccard:5_rh")
 }
+
+// TestAuditOpts_ShortAttributesRejected covers the unchecked attribute indexing reported in issue
+// #2073. The audit-opts builders index attrs at positions fixed by the schema name - up to
+// attrs[27] for W3CSchema - while crypto.AuditInfo.Validate only guarantees the four entries the
+// default schema needs, and the schema string travels alongside the attributes in the serialized
+// audit info with nothing making the two consistent. A short slice must therefore come back as an
+// error rather than an index-out-of-range panic.
+func TestAuditOpts_ShortAttributesRejected(t *testing.T) {
+	manager := NewDefaultManager()
+
+	fourAttrs := [][]byte{[]byte("ou"), []byte("role"), []byte("eid"), []byte("rh")}
+
+	for _, tc := range []struct {
+		name   string
+		schema string
+		attrs  [][]byte
+	}{
+		{"default schema, nil attributes", DefaultSchema, nil},
+		{"default schema, empty attributes", DefaultSchema, [][]byte{}},
+		{"default schema, two attributes", DefaultSchema, fourAttrs[:2]},
+		// The pairing an unvalidated Schema makes reachable: enough attributes for the default
+		// schema, but the payload declares the w3c one, which indexes far past the end.
+		{"w3c schema, default-schema attribute count", W3CSchema, fourAttrs},
+		{"w3c schema, nil attributes", W3CSchema, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			eidOpts, err := manager.EidNymAuditOpts(tc.schema, tc.attrs)
+			require.Error(t, err)
+			assert.Nil(t, eidOpts)
+			assert.Contains(t, err.Error(), "requires at least")
+
+			rhOpts, err := manager.RhNymAuditOpts(tc.schema, tc.attrs)
+			require.Error(t, err)
+			assert.Nil(t, rhOpts)
+			assert.Contains(t, err.Error(), "requires at least")
+		})
+	}
+}
+
+// TestRhNymAuditOpts_ThreeAttributesRejected covers the boundary case where the enrollment-id index
+// is in range but the revocation-handle index is one past the end.
+func TestRhNymAuditOpts_ThreeAttributesRejected(t *testing.T) {
+	manager := NewDefaultManager()
+	attrs := [][]byte{[]byte("ou"), []byte("role"), []byte("eid")}
+
+	eidOpts, err := manager.EidNymAuditOpts(DefaultSchema, attrs)
+	require.NoError(t, err)
+	assert.Equal(t, "eid", eidOpts.EnrollmentID)
+
+	rhOpts, err := manager.RhNymAuditOpts(DefaultSchema, attrs)
+	require.Error(t, err)
+	assert.Nil(t, rhOpts)
+	assert.Contains(t, err.Error(), "requires at least")
+}
+
+// TestAuditOpts_SufficientAttributesAccepted pins that the bounds checks do not reject the
+// attribute counts each schema actually expects.
+func TestAuditOpts_SufficientAttributesAccepted(t *testing.T) {
+	manager := NewDefaultManager()
+
+	defaultAttrs := [][]byte{[]byte("ou"), []byte("role"), []byte("eid"), []byte("rh")}
+	eidOpts, err := manager.EidNymAuditOpts(DefaultSchema, defaultAttrs)
+	require.NoError(t, err)
+	assert.Equal(t, "eid", eidOpts.EnrollmentID)
+	rhOpts, err := manager.RhNymAuditOpts(DefaultSchema, defaultAttrs)
+	require.NoError(t, err)
+	assert.Equal(t, "rh", rhOpts.RevocationHandle)
+
+	// W3CSchema: one entry per attribute name plus the hidden usk attribute prepended by
+	// PublicKeyImportOpts.
+	w3cAttrs := make([][]byte, len(attributeNames)+1)
+	for i := range w3cAttrs {
+		w3cAttrs[i] = []byte("attr")
+	}
+	w3cAttrs[w3cEidIdx] = []byte("w3c-eid")
+	w3cAttrs[w3cRhIdx] = []byte("w3c-rh")
+
+	eidOpts, err = manager.EidNymAuditOpts(W3CSchema, w3cAttrs)
+	require.NoError(t, err)
+	assert.Equal(t, "w3c-eid", eidOpts.EnrollmentID)
+	rhOpts, err = manager.RhNymAuditOpts(W3CSchema, w3cAttrs)
+	require.NoError(t, err)
+	assert.Equal(t, "w3c-rh", rhOpts.RevocationHandle)
+}

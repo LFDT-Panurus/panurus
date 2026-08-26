@@ -141,6 +141,12 @@ jobs:
           - name: identity-role-register-recipient
             pkg: ./token/services/identity/role
             func: FuzzLongTermOwnerWalletRegisterRecipientNoPanic
+          - name: identity-htlc-verify-owner
+            pkg: ./token/services/identity/interop/htlc
+            func: FuzzVerifyOwnerNoPanic
+          - name: identity-htlc-metadata-claim-key-check
+            pkg: ./token/services/identity/interop/htlc
+            func: FuzzMetadataClaimKeyCheckNoPanic
 
     steps:
       - name: Checkout code

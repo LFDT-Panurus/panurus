@@ -8,9 +8,10 @@ package htlc
 
 import (
 	"bytes"
-	"encoding/json"
+	"crypto/subtle"
 	"time"
 
+	"github.com/LFDT-Panurus/panurus/token/core/common/encoding/json"
 	"github.com/LFDT-Panurus/panurus/token/services/identity"
 	"github.com/LFDT-Panurus/panurus/token/services/interop/htlc"
 	"github.com/LFDT-Panurus/panurus/token/services/utils"
@@ -109,7 +110,10 @@ func MetadataClaimKeyCheck(action Action, script *htlc.Script, op OperationType,
 	if !ok {
 		return "", errors.New("cannot find htlc pre-image, missing metadata entry")
 	}
-	if !bytes.Equal(value, claim.Preimage) {
+	// Constant-time: the preimage is a secret until the claim reveals it, and this comparison is
+	// the only place a candidate is checked against it. Not a practical oracle today - the same
+	// transaction carries claim.Preimage in the clear - but the property is free to keep.
+	if subtle.ConstantTimeCompare(value, claim.Preimage) != 1 {
 		return "", errors.Errorf("invalid action, cannot match htlc pre-image with metadata [%x]!=[%x]", value, claim.Preimage)
 	}
 
