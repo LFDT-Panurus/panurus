@@ -571,3 +571,31 @@ The recovery service is part of the **Storage Service** and is instantiated by t
 For detailed information about the recovery mechanism, see:
 - [Storage Service - Transaction Recovery](storage.md#transaction-recovery-service)
 - [Configuration Guide - Recovery Parameters](../configuration.md), Section `Optional: token.tms.<name>.services.network.fabric.recovery`
+
+### Interactive Protocol Timeout Budget
+
+`ReceiveTransactionView` (and the `boolpolicy`/`multisig` spend responders) wait up to a fixed
+timeout for the full endorsement round-trip to complete. That budget must exceed the sum of
+every wait it depends on, or the responder times out on a transaction that was still legitimately
+in progress.
+
+**Invariant:** `responder receive > sig fan-out + audit + approval + slack`
+
+| Leg | File:Line | Value |
+|---|---|---|
+| Responder receive (the budget) | `token/services/ttx/receivetx.go:42` | 4 min |
+| Signature fan-out (per endorser) | `token/services/ttx/endorse.go:111` | 1 min |
+| Signature collection (path 1) | `token/services/ttx/collectendorsements.go:373` | 1 min |
+| Signature collection (path 2) | `token/services/ttx/collectendorsements.go:566` | 1 min |
+| Auditor signature | `token/services/ttx/auditor.go:189` | 1 min |
+| FSC-endorsement approval | `token/services/network/fabric/endorsement/fsc/initiator.go:99` | 2 min |
+
+**Known issue:** as of this writing, the responder budget (4 min) equals but does not exceed the
+sum of the legs it must cover in FSC-endorsement mode (1 min sig fan-out + 1 min audit + 2 min
+approval = 4 min minimum, with zero slack). This is a timeout-budget inversion — the invariant
+above does not hold. See issue #1266. The unit test in `receivetx_timeout_test.go` asserts this
+invariant directly so the gap is caught by CI rather than by hand.
+
+The budget is intentionally a single named constant rather than an operator-configurable value:
+exposing it independently invites recreating this same inversion. If the budget needs to be
+tunable, it should be one endorsement budget per TMS with the individual waits derived from it.
