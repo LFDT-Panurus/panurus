@@ -585,10 +585,9 @@ in progress.
 |---|---|---|
 | Responder receive (the budget) | `token/services/ttx/receivetx.go:42` | 4 min |
 | Signature fan-out (per endorser) | `token/services/ttx/endorse.go:111` | 1 min |
-| Signature collection (path 1) | `token/services/ttx/collectendorsements.go:373` | 1 min |
-| Signature collection (path 2) | `token/services/ttx/collectendorsements.go:566` | 1 min |
 | Auditor signature | `token/services/ttx/auditor.go:189` | 1 min |
 | FSC-endorsement approval | `token/services/network/fabric/endorsement/fsc/initiator.go:99` | 2 min |
+
 
 **Known issue:** as of this writing, the responder budget (4 min) equals but does not exceed the
 sum of the legs it must cover in FSC-endorsement mode (1 min sig fan-out + 1 min audit + 2 min
