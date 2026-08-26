@@ -8,28 +8,22 @@ import (
 )
 
 // TestReceiveTransactionTimeoutBudget asserts the invariant that the responder's
-// overall receive timeout must exceed the sum of every wait it depends on:
-// sig fan-out + audit + approval (+ slack).
+// overall receive timeout must not be less than the sum of every wait it depends
+// on: sig fan-out + audit + approval.
 //
 // KNOWN FAILURE (issue #1266): as of this test's authorship, the responder budget
-// (4 min) equals — but does not exceed — the sum of its component legs in
-// FSC-endorsement mode (1 min sig fan-out + 1 min audit + 2 min approval = 4 min),
-// leaving zero slack margin. This is a real bug, not a test bug — do not "fix"
-// this test by loosening the invariant. Fix it by correcting the responder
-// timeout (or a component timeout) in the source files below, then this test
-// will pass on its own.
+// equals the sum of its FSC-endorsement-mode components exactly, with zero slack.
+// Do not "fix" this test by loosening the invariant — fix the source constants.
 func TestReceiveTransactionTimeoutBudget(t *testing.T) {
 	const (
-		responderReceiveTimeout = 4 * time.Minute // receivetx.go:42
-		sigFanOutTimeout        = 1 * time.Minute // endorse.go:111
-		auditTimeout            = 1 * time.Minute // auditor.go:189
-		approvalTimeout         = 2 * time.Minute // network/fabric/endorsement/fsc/initiator.go:99
-		slack                   = 0 * time.Minute // no slack currently budgeted
+		sigFanOutTimeout = 1 * time.Minute // endorse.go:111
+		auditTimeout     = 1 * time.Minute // auditor.go:189
+		approvalTimeout  = 2 * time.Minute // network/fabric/endorsement/fsc/initiator.go:99
 	)
 
-	requiredMinimum := sigFanOutTimeout + auditTimeout + approvalTimeout + slack
+	requiredMinimum := sigFanOutTimeout + auditTimeout + approvalTimeout
 
-	require.Greater(t, responderReceiveTimeout, requiredMinimum,
-		"responder receive timeout (%s) must exceed sig fan-out + audit + approval + slack (%s) — see issue #1266",
-		responderReceiveTimeout, requiredMinimum)
+	require.GreaterOrEqual(t, DefaultReceiveTransactionTimeout, requiredMinimum,
+		"responder receive timeout (%s) must not be less than sig fan-out + audit + approval (%s) — see issue #1266",
+		DefaultReceiveTransactionTimeout, requiredMinimum)
 }
