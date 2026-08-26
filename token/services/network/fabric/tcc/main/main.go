@@ -16,7 +16,6 @@ import (
 	dlog "github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/driver"
 	"github.com/LFDT-Panurus/panurus/token/services/logging"
 	"github.com/LFDT-Panurus/panurus/token/services/network/fabric/tcc"
-	zkatsnark "github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/driver"
 	"github.com/hyperledger/fabric-chaincode-go/v2/shim"
 )
 
@@ -66,7 +65,6 @@ func main() {
 		limits,
 		fabtoken.NewValidatorDriver(),
 		dlog.NewValidatorDriver(),
-		zkatsnark.NewValidatorDriver(),
 	)
 	if config.CCID == "" || config.CCaddress == "" {
 		fmt.Println("CC ID or CC address is empty... Running as usual...")

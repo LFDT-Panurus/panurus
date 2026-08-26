@@ -37,17 +37,6 @@ require (
 )
 
 require (
-	github.com/blang/semver/v4 v4.0.0 // indirect
-	github.com/consensys/gnark v0.15.0 // indirect
-	github.com/fxamacker/cbor/v2 v2.9.0 // indirect
-	github.com/mattn/go-colorable v0.1.14 // indirect
-	github.com/ronanh/intcomp v1.1.1 // indirect
-	github.com/rs/zerolog v1.34.0 // indirect
-	github.com/x448/float16 v0.8.4 // indirect
-)
-
-require (
-	github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark v0.0.0-00010101000000-000000000000
 	github.com/Masterminds/semver/v3 v3.5.0 // indirect
 	github.com/Masterminds/squirrel v1.5.4 // indirect
 	github.com/Microsoft/go-winio v0.6.2 // indirect
