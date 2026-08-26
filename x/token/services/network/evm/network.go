@@ -148,6 +148,9 @@ func (n *Network) Connect(ns string) ([]token2.ServiceOption, error) {
 		return nil, errors.Errorf("evm network: node reports chain id %s, configuration says %d",
 			chainID, n.config.ChainID)
 	}
+	if err := n.verifyTokenStateDeployed(ctx); err != nil {
+		return nil, err
+	}
 	if err := n.verifyEndorsementPolicy(ctx); err != nil {
 		return nil, err
 	}
@@ -165,6 +168,37 @@ func (n *Network) Connect(ns string) ([]token2.ServiceOption, error) {
 		token2.WithChannel(n.Channel()),
 		token2.WithNamespace(ns),
 	}, nil
+}
+
+// verifyTokenStateDeployed refuses to connect when contracts.tokenState holds no contract.
+//
+// This is the most ordinary way an EVM deployment is misconfigured: a typo, a configuration copied
+// between environments, or a node pointed at a chain where the deploy has not happened. None of it is
+// visible without asking, because eth_call against an address with no code is not an error on any
+// node, it returns empty data. Every read the driver makes therefore comes back empty rather than
+// failing, the startup checks that read through eth_call find nothing to contradict, and the node
+// comes up looking healthy. The cost is paid one transaction at a time, as failures that do not look
+// like configuration problems.
+//
+// A failed read is not treated as a missing contract. It says the node could not be asked, which is
+// the same reason the policy check below tolerates one, and taking a node down over a momentarily
+// unhappy endpoint would be worse than the problem being guarded against.
+func (n *Network) verifyTokenStateDeployed(ctx context.Context) error {
+	code, err := n.client.CodeAt(ctx, n.tokenState, client.BlockTagLatest)
+	if err != nil {
+		logger.Warnf("could not read the code at tokenState [%s]; skipping the deployment check: %v",
+			n.tokenState, err)
+
+		return nil
+	}
+	if len(code) == 0 {
+		return errors.Errorf(
+			"evm network: no contract is deployed at tokenState [%s] on chain %d; "+
+				"check contracts.tokenState against the chain this endpoint serves",
+			n.tokenState, n.config.ChainID)
+	}
+
+	return nil
 }
 
 // NewEnvelope returns a new, empty EVM envelope.
@@ -288,12 +322,53 @@ func (n *Network) Broadcast(ctx context.Context, blob any) error {
 
 	rawTx, txHash, err := n.submitter.Submit(ctx, env.Delta, env.Endorsements)
 	if err != nil {
+		// A permanent rejection is not the whole story while the anchor is already on chain.
+		//
+		// The ordinary way to arrive here is a retry after a broadcast whose reply went missing: the
+		// first attempt was mined, the caller never learned that, and the contract now refuses the
+		// anchor for exactly the right reason, that applying it twice would be a double spend. The
+		// rejection is about this second attempt. The transaction the caller is asking about
+		// succeeded, so answering "invalid" would have it discard a transfer that is final.
+		//
+		// Only a permanent rejection is worth this second look. A transient failure leaves the caller
+		// retrying anyway, which is the correct outcome whether or not the anchor ever landed.
+		if errors.Is(err, ErrTransactionReverted) && n.anchorApplied(ctx, anchor) {
+			logger.Infof(
+				"the apply for [%s] was refused because the anchor is already on chain; "+
+					"treating the transaction as the success it is", env.Anchor)
+
+			return nil
+		}
+
 		return errors.Wrapf(err, "failed to broadcast [%s]", env.Anchor)
 	}
 	env.RawTx = rawTx
 	env.EthTxHash = txHash.Hex()
 
 	return nil
+}
+
+// anchorApplied reports whether the chain has already recorded this anchor.
+//
+// It answers false when the status cannot be read, which keeps the original rejection: a node that
+// cannot be asked is no reason to convert a refusal into a success, and the caller is better served
+// by the error it would have had anyway.
+//
+// The envelope keeps no transaction hash in this case, because the hash belongs to the attempt that
+// landed and this process never saw it. Nothing downstream needs it: finality is waited on by anchor,
+// and that anchor resolves immediately.
+func (n *Network) anchorApplied(ctx context.Context, anchor [32]byte) bool {
+	if n.finality == nil {
+		return false
+	}
+	code, _, _, err := n.finality.StatusByAnchor(ctx, anchor)
+	if err != nil {
+		logger.Debugf("could not check whether [%x] is already applied: %v", anchor, err)
+
+		return false
+	}
+
+	return code == driver.Valid
 }
 
 // ComputeTxID returns the token-request anchor for the transaction.

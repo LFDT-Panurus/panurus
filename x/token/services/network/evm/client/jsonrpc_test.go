@@ -599,3 +599,148 @@ func TestResponseAtTheBoundIsAccepted(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, int64(31337), id.Int64())
 }
+
+// headSequenceServer serves eth_getBlockByNumber from a scripted sequence of raw results, so a test
+// can express "the head is missing, then it is there". Once the sequence runs out the last entry
+// repeats, which is what makes a persistently null head expressible. Everything else answers a fixed
+// tip so the fee derivation itself stays out of the way.
+func headSequenceServer(t *testing.T, heads ...string) (*JSONRPCClient, *int) {
+	t.Helper()
+	calls := 0
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Method string `json:"method"`
+		}
+		if !assert.NoError(t, json.NewDecoder(r.Body).Decode(&req)) {
+			w.WriteHeader(http.StatusBadRequest)
+
+			return
+		}
+		result := `"0x1"`
+		if req.Method == "eth_getBlockByNumber" {
+			result = heads[min(calls, len(heads)-1)]
+			calls++
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":` + result + `}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	// #nosec G107 -- httptest local test server URL
+	c, err := NewJSONRPCClient(srv.URL, srv.Client())
+	require.NoError(t, err)
+
+	return c, &calls
+}
+
+// TestSuggestGasFeesRetriesANullHead pins the reason the retry exists. "latest" is not a fixed block,
+// and a node whose head is moving may answer that it has no block for it just then. That travels up
+// as ErrNetworkUnavailable and aborts a whole token transaction, so a condition that clears by itself
+// within a block time must not be reported on the first look.
+func TestSuggestGasFeesRetriesANullHead(t *testing.T) {
+	c, calls := headSequenceServer(t, `null`, `{"baseFeePerGas":"0x7"}`)
+
+	fees, err := c.SuggestGasFees(context.Background())
+	require.NoError(t, err, "a head that is momentarily absent must not fail the caller")
+	assert.Equal(t, big.NewInt(2*7+1), fees.MaxFeePerGas)
+	assert.Equal(t, 2, *calls, "it should have looked again exactly once")
+}
+
+// TestSuggestGasFeesGivesUpOnAPersistentlyNullHead keeps the retry bounded: a node that is genuinely
+// not serving its head still has to fail, rather than the driver spinning on it.
+func TestSuggestGasFeesGivesUpOnAPersistentlyNullHead(t *testing.T) {
+	c, calls := headSequenceServer(t, `null`)
+
+	_, err := c.SuggestGasFees(context.Background())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "returned no block")
+	assert.Equal(t, maxHeadReadAttempts, *calls, "the retry has to stop, not spin")
+}
+
+// TestSuggestGasFeesStopsWaitingOnACancelledContext covers the caller giving up mid-retry. A delay
+// that ignored the context would hold a cancelled caller for the full wait.
+func TestSuggestGasFeesStopsWaitingOnACancelledContext(t *testing.T) {
+	c, calls := headSequenceServer(t, `null`)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err := c.SuggestGasFees(ctx)
+	require.Error(t, err)
+	assert.LessOrEqual(t, *calls, 1, "a cancelled caller should not be kept waiting through the retries")
+}
+
+// TestSendRawTransactionClassifiesARefusal pins the split that matters at broadcast time: a node that
+// judged the transaction and refused it is permanent, and a transaction that never entered the pool
+// consumed no nonce.
+func TestSendRawTransactionClassifiesARefusal(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		message  string
+		rejected bool
+	}{
+		{"insufficient funds", "insufficient funds for gas * price + value", true},
+		{"intrinsic gas too low", "intrinsic gas too low", true},
+		{"exceeds block gas limit", "exceeds block gas limit", true},
+		{"oversized data", "oversized data", true},
+		// The nonce cases stay retryable: they say the local nonce is wrong rather than the
+		// transaction is, and re-reading it from the chain is what fixes them.
+		{"nonce too low", "nonce too low", false},
+		{"nonce too high", "nonce too high", false},
+		{"already known", "already known", false},
+		{"replacement underpriced", "replacement transaction underpriced", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, _ := newTestServer(t, nil)
+			c.endpoint = errorServer(t, -32000, tc.message)
+
+			_, err := c.SendRawTransaction(context.Background(), []byte{0x02, 0x01})
+			require.Error(t, err)
+			assert.Equal(t, tc.rejected, errors.Is(err, ErrTransactionRejected),
+				"a refusal the node will repeat is permanent; one about the nonce is not")
+			assert.Contains(t, err.Error(), tc.message, "the node's own words are what a human debugs from")
+		})
+	}
+}
+
+// errorServer starts a server that answers every request with one JSON-RPC error.
+func errorServer(t *testing.T, code int, message string) string {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		body, err := json.Marshal(map[string]any{
+			"jsonrpc": "2.0", "id": 1,
+			"error": map[string]any{"code": code, "message": message},
+		})
+		assert.NoError(t, err)
+		_, _ = w.Write(body)
+	}))
+	t.Cleanup(srv.Close)
+
+	return srv.URL
+}
+
+// TestCodeAt covers the read the deployment check depends on: an address with a contract reports its
+// code, and one without reports nothing rather than failing.
+func TestCodeAt(t *testing.T) {
+	addr, err := HexToAddress("0x00000000000000000000000000000000deadbeef")
+	require.NoError(t, err)
+
+	t.Run("a deployed contract reports its code", func(t *testing.T) {
+		c, calls := newTestServer(t, map[string]string{"eth_getCode": `"0x6080604052"`})
+
+		code, err := c.CodeAt(context.Background(), addr, BlockTagLatest)
+		require.NoError(t, err)
+		assert.Equal(t, []byte{0x60, 0x80, 0x60, 0x40, 0x52}, code)
+		require.Len(t, *calls, 1)
+		assert.Equal(t, []any{addr.Hex(), BlockTagLatest}, (*calls)[0].Params)
+	})
+
+	t.Run("an address with no contract reports nothing", func(t *testing.T) {
+		c, _ := newTestServer(t, map[string]string{"eth_getCode": `"0x"`})
+
+		code, err := c.CodeAt(context.Background(), addr, BlockTagLatest)
+		require.NoError(t, err, "an address with no code is an answer, not a failure")
+		assert.Empty(t, code)
+	})
+}

@@ -94,6 +94,10 @@ type EVMClient interface {
 
 	// Call performs a read-only contract call at the given block tag and returns the raw result.
 	Call(ctx context.Context, to Address, data []byte, blockTag string) ([]byte, error)
+	// CodeAt returns the contract code deployed at address, empty if there is none. A call against an
+	// address with no code succeeds and returns nothing rather than failing, so this is the only way
+	// to tell a contract apart from an address that merely looks like one.
+	CodeAt(ctx context.Context, address Address, blockTag string) ([]byte, error)
 	// GetLogs returns the logs matching the filter.
 	GetLogs(ctx context.Context, q LogFilter) ([]Log, error)
 
