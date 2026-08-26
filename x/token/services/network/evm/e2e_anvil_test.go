@@ -200,7 +200,7 @@ func TestEndToEndAgainstAnvil(t *testing.T) {
 	submitter, err := NewSubmitter(evmClient, key, tokenState, big.NewInt(testChainID), cfg.Gas)
 	require.NoError(t, err)
 
-	n, err := NewNetwork("evm-net", cfg, evmClient, nil, submitter, nil)
+	n, err := NewNetwork("evm-net", evmClient, []NamespaceConfig{{Namespace: "token", Config: cfg, Submitter: submitter}}, nil, nil)
 	require.NoError(t, err)
 
 	// The node must be the chain we signed for.
@@ -227,7 +227,7 @@ func TestEndToEndAgainstAnvil(t *testing.T) {
 		PublicParamsHash:    sha256Of(string(pp0)),
 		PublicParamsVersion: 0,
 	}
-	issueEnv := &Envelope{Anchor: issueAnchorID, Delta: issued, Endorsements: endorse(t, signer, domain, issued)}
+	issueEnv := &Envelope{Anchor: issueAnchorID, Namespace: "token", Delta: issued, Endorsements: endorse(t, signer, domain, issued)}
 
 	require.NoError(t, n.Broadcast(t.Context(), issueEnv), "issue must be accepted on chain")
 	require.NotEmpty(t, issueEnv.EthTxHash, "Broadcast must record the transaction hash")
@@ -271,6 +271,7 @@ func TestEndToEndAgainstAnvil(t *testing.T) {
 	}
 	transferEnv := &Envelope{
 		Anchor:       spendAnchorID,
+		Namespace:    "token",
 		Delta:        transferred,
 		Endorsements: endorse(t, signer, domain, transferred),
 	}
@@ -305,6 +306,7 @@ func TestEndToEndAgainstAnvil(t *testing.T) {
 	}
 	doubleEnv := &Envelope{
 		Anchor:       doubleAnchorID,
+		Namespace:    "token",
 		Delta:        doubleSpend,
 		Endorsements: endorse(t, signer, domain, doubleSpend),
 	}
@@ -324,14 +326,16 @@ func TestEndToEndAgainstAnvil(t *testing.T) {
 
 	// Bob only ever holds the anchor. He must be able to find the transaction that applied it, which is
 	// what the fungible suite's CheckFinality does for a recipient.
-	recipientHash, found, err := n.finality.TxHashByAnchor(t.Context(), issueAnchor)
+	nsBinding, err := n.binding("token")
+	require.NoError(t, err)
+	recipientHash, found, err := nsBinding.finality.TxHashByAnchor(t.Context(), issueAnchor)
 	require.NoError(t, err)
 	require.True(t, found, "a recipient must be able to resolve an applied anchor from the chain alone")
 	assert.Equal(t, issueEnv.EthTxHash, recipientHash.Hex(),
 		"the hash from the log metadata must be the transaction that applied the anchor")
 
 	// An anchor that was never applied yields nothing, rather than an error: it may simply be pending.
-	_, found, err = n.finality.TxHashByAnchor(t.Context(), anchorOf(t, n, "never-submitted"))
+	_, found, err = nsBinding.finality.TxHashByAnchor(t.Context(), anchorOf(t, n, "never-submitted"))
 	require.NoError(t, err)
 	assert.False(t, found)
 
@@ -450,7 +454,7 @@ func TestRevertClassificationAgainstAnvil(t *testing.T) {
 	submitter, err := NewSubmitter(
 		evmClient, secp256k1.PrivKeyFromBytes(deployedKeyBytes), tokenState, big.NewInt(testChainID), cfg.Gas)
 	require.NoError(t, err)
-	n, err := NewNetwork("evm-net", cfg, evmClient, nil, submitter, nil)
+	n, err := NewNetwork("evm-net", evmClient, []NamespaceConfig{{Namespace: "token", Config: cfg, Submitter: submitter}}, nil, nil)
 	require.NoError(t, err)
 
 	anchorID := n.ComputeTxID(&driver.TxID{Creator: []byte("issuer")})
@@ -472,6 +476,7 @@ func TestRevertClassificationAgainstAnvil(t *testing.T) {
 
 	err = n.Broadcast(t.Context(), &Envelope{
 		Anchor:       anchorID,
+		Namespace:    "token",
 		Delta:        delta,
 		Endorsements: endorse(t, stranger, domain, delta),
 	})
@@ -687,7 +692,7 @@ func TestResubmittingAnAppliedAnchorAgainstAnvil(t *testing.T) {
 
 	submitter, err := NewSubmitter(evmClient, key, tokenState, big.NewInt(testChainID), cfg.Gas)
 	require.NoError(t, err)
-	n, err := NewNetwork("evm-net", cfg, evmClient, nil, submitter, nil)
+	n, err := NewNetwork("evm-net", evmClient, []NamespaceConfig{{Namespace: "token", Config: cfg, Submitter: submitter}}, nil, nil)
 	require.NoError(t, err)
 	_, err = n.Connect("token")
 	require.NoError(t, err)
@@ -711,7 +716,7 @@ func TestResubmittingAnAppliedAnchorAgainstAnvil(t *testing.T) {
 		PublicParamsVersion: 0,
 	}
 
-	first := &Envelope{Anchor: anchorID, Delta: delta, Endorsements: endorse(t, signer, domain, delta)}
+	first := &Envelope{Anchor: anchorID, Namespace: "token", Delta: delta, Endorsements: endorse(t, signer, domain, delta)}
 	require.NoError(t, n.Broadcast(t.Context(), first), "the first apply must land")
 	require.Equal(t, uint64(1), waitMined(t, evmClient, first.EthTxHash), "and must not revert")
 
@@ -721,7 +726,7 @@ func TestResubmittingAnAppliedAnchorAgainstAnvil(t *testing.T) {
 	require.Equal(t, driver.Valid, code, "the chain considers this transaction applied")
 
 	// Now the retry the caller would make.
-	second := &Envelope{Anchor: anchorID, Delta: delta, Endorsements: endorse(t, signer, domain, delta)}
+	second := &Envelope{Anchor: anchorID, Namespace: "token", Delta: delta, Endorsements: endorse(t, signer, domain, delta)}
 	require.NoError(t, n.Broadcast(t.Context(), second),
 		"the anchor this caller asked about is applied and final, so its transaction succeeded: "+
 			"reporting the request as invalid would have it discard a transfer that is on chain")
@@ -763,7 +768,7 @@ func TestConnectRejectsAnUndeployedTokenStateAgainstAnvil(t *testing.T) {
 	cfg.applyDefaults()
 	require.NoError(t, cfg.Validate(), "the configuration is well formed; only the chain disagrees")
 
-	n, err := NewNetwork("evm-net", cfg, evmClient, nil, nil, nil)
+	n, err := NewNetwork("evm-net", evmClient, []NamespaceConfig{{Namespace: "token", Config: cfg, Submitter: nil}}, nil, nil)
 	require.NoError(t, err)
 
 	_, err = n.Connect("token")
@@ -825,7 +830,7 @@ func TestQuorumEndorsementAgainstAnvil(t *testing.T) {
 	submitter, err := NewSubmitter(evmClient, secp256k1.PrivKeyFromBytes(keyBytes), tokenState,
 		big.NewInt(testChainID), cfg.Gas)
 	require.NoError(t, err)
-	n, err := NewNetwork("evm-net", cfg, evmClient, nil, submitter, nil)
+	n, err := NewNetwork("evm-net", evmClient, []NamespaceConfig{{Namespace: "token", Config: cfg, Submitter: submitter}}, nil, nil)
 	require.NoError(t, err)
 
 	// Connect also proves the policy check reads a three-endorser set and a threshold of two off the
@@ -865,7 +870,7 @@ func TestQuorumEndorsementAgainstAnvil(t *testing.T) {
 	third, err := signers[2].Sign(digest)
 	require.NoError(t, err)
 
-	env := &Envelope{Anchor: anchorID, Delta: delta, Endorsements: [][]byte{first, third}}
+	env := &Envelope{Anchor: anchorID, Namespace: "token", Delta: delta, Endorsements: [][]byte{first, third}}
 	require.NoError(t, n.Broadcast(t.Context(), env), "a genuine 2-of-3 quorum must be accepted")
 	require.Equal(t, uint64(1), waitMined(t, evmClient, env.EthTxHash), "and must not revert")
 
@@ -987,7 +992,7 @@ func TestMinedButRevertedAgainstAnvil(t *testing.T) {
 	submitter, err := NewSubmitter(evmClient, secp256k1.PrivKeyFromBytes(keyBytes), tokenState,
 		big.NewInt(testChainID), cfg.Gas)
 	require.NoError(t, err)
-	n, err := NewNetwork("evm-net", cfg, evmClient, nil, submitter, nil)
+	n, err := NewNetwork("evm-net", evmClient, []NamespaceConfig{{Namespace: "token", Config: cfg, Submitter: submitter}}, nil, nil)
 	require.NoError(t, err)
 	_, err = n.Connect("token")
 	require.NoError(t, err)
@@ -1017,7 +1022,7 @@ func TestMinedButRevertedAgainstAnvil(t *testing.T) {
 	require.NoError(t, err)
 	domain := eip712.Domain{ChainID: big.NewInt(testChainID), VerifyingContract: tokenState}
 
-	env := &Envelope{Anchor: anchorID, Delta: delta, Endorsements: endorse(t, stranger, domain, delta)}
+	env := &Envelope{Anchor: anchorID, Namespace: "token", Delta: delta, Endorsements: endorse(t, stranger, domain, delta)}
 	require.NoError(t, n.Broadcast(t.Context(), env), "with a fixed gas limit nothing rejects it before it is sent")
 	require.Equal(t, uint64(0), waitMined(t, evmClient, env.EthTxHash), "the apply must revert on chain")
 
@@ -1068,7 +1073,7 @@ func TestDigestAgreesWithTheContractAgainstAnvil(t *testing.T) {
 	submitter, err := NewSubmitter(evmClient, secp256k1.PrivKeyFromBytes(keyBytes), tokenState,
 		big.NewInt(testChainID), cfg.Gas)
 	require.NoError(t, err)
-	n, err := NewNetwork("evm-net", cfg, evmClient, nil, submitter, nil)
+	n, err := NewNetwork("evm-net", evmClient, []NamespaceConfig{{Namespace: "token", Config: cfg, Submitter: submitter}}, nil, nil)
 	require.NoError(t, err)
 	_, err = n.Connect("token")
 	require.NoError(t, err)
@@ -1145,6 +1150,7 @@ func TestDigestAgreesWithTheContractAgainstAnvil(t *testing.T) {
 
 			env := &Envelope{
 				Anchor:       anchorID,
+				Namespace:    "token",
 				Delta:        delta,
 				Endorsements: endorse(t, signer, domain, delta),
 			}
@@ -1186,7 +1192,7 @@ func TestTransferMetadataRoundTripAgainstAnvil(t *testing.T) {
 	submitter, err := NewSubmitter(evmClient, secp256k1.PrivKeyFromBytes(keyBytes), tokenState,
 		big.NewInt(testChainID), cfg.Gas)
 	require.NoError(t, err)
-	n, err := NewNetwork("evm-net", cfg, evmClient, nil, submitter, nil)
+	n, err := NewNetwork("evm-net", evmClient, []NamespaceConfig{{Namespace: "token", Config: cfg, Submitter: submitter}}, nil, nil)
 	require.NoError(t, err)
 	_, err = n.Connect("token")
 	require.NoError(t, err)
@@ -1221,7 +1227,7 @@ func TestTransferMetadataRoundTripAgainstAnvil(t *testing.T) {
 	}
 	require.NoError(t, delta.Validate())
 
-	env := &Envelope{Anchor: anchorID, Delta: delta, Endorsements: endorse(t, signer, domain, delta)}
+	env := &Envelope{Anchor: anchorID, Namespace: "token", Delta: delta, Endorsements: endorse(t, signer, domain, delta)}
 	require.NoError(t, n.Broadcast(t.Context(), env))
 	require.Equal(t, uint64(1), waitMined(t, evmClient, env.EthTxHash), "the metadata write must not revert")
 

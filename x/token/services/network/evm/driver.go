@@ -44,8 +44,15 @@ const EVMConfigKey = "services.network.evm"
 type networkResolver interface {
 	// IsEVMNetwork reports whether the given network/channel has an EVM network configuration.
 	IsEVMNetwork(network, channel string) bool
-	// ConfigFor returns the EVM configuration for the given network/channel.
+	// ConfigFor returns the EVM configuration of the first TMS declaring the given network/channel.
+	// It is used only to bootstrap the one thing every TMS on a network must agree on - the endpoint
+	// and chain id, checked for agreement across every TMS in Driver.New - never for anything per-TMS,
+	// since two TMS sharing a network are not required to share their contracts, endorsement policy,
+	// submitter or gas policy. ConfigForTMS is what resolves those.
 	ConfigFor(network, channel string) (*Config, error)
+	// ConfigForTMS returns one TMS's own EVM configuration, read from its own services.network.evm
+	// block rather than whichever TMS happened to declare the network first.
+	ConfigForTMS(tmsID token2.TMSID) (*Config, error)
 	// TMSIDsFor returns every TMS configured on the given network/channel. Unlike ConfigFor, which
 	// takes the first match because the endpoint and chain are network-wide, a public-parameters
 	// update has to reach each TMS individually.
@@ -86,8 +93,9 @@ type Driver struct {
 	// needs to be detected rather than silently discarded.
 	registerMu    sync.Mutex
 	registeredFor string
-	// watchers keeps one public-parameters watcher per network, so building a network twice does not
-	// leave two pollers on one contract.
+	// watchers keeps one public-parameters watcher per distinct TokenState contract (not per network:
+	// two TMS on one network can point at two different contracts and need two watchers), so building
+	// a network twice, or two TMS sharing one contract, does not leave two pollers on one contract.
 	watchersMu sync.Mutex
 	watchers   map[string]*pp.Watcher
 	// recoveries keeps the sweeps started per TMS, for the same reason.
@@ -138,37 +146,72 @@ func NewDriver(
 // New returns an EVM Network for the given network/channel, or an error if that network is not
 // configured for EVM (so the network provider falls through to the next registered driver).
 //
-// It builds what is network-scoped: the client, and the submitter from the configured key. The
-// endorsement service is per-TMS, because it needs that TMS's validator, so it is supplied separately
-// by the SDK wiring; likewise local membership, whose identities the driver does not own.
+// The chain client is genuinely network-scoped: one endpoint, shared by every TMS declaring this
+// network/channel. Everything else this method builds - the submitter, the reader inside NewNetwork,
+// the endorsement domain - is resolved per TMS instead, from that TMS's own configuration, because
+// token/services/network.Provider memoizes one *Network per (network, channel) and reuses it for
+// every TMS sharing that pair: building only one, network-wide instance of anything TMS-specific
+// would make every TMS after the first one silently read, write and sign through whichever TMS's
+// configuration happened to be resolved first. Local membership is supplied separately by the SDK
+// wiring, whose identities the driver does not own.
 func (d *Driver) New(network, channel string) (driver.Network, error) {
 	if !d.resolver.IsEVMNetwork(network, channel) {
 		return nil, errors.Errorf("evm: no evm network configuration for [%s:%s]", network, channel)
 	}
 	logger.Debugf("creating evm network [%s:%s]", network, channel)
 
-	config, err := d.resolver.ConfigFor(network, channel)
+	tmsIDs := d.resolver.TMSIDsFor(network, channel)
+	if len(tmsIDs) == 0 {
+		return nil, errors.Errorf("evm: no tms declares network [%s:%s]", network, channel)
+	}
+
+	networkConfig, err := d.resolver.ConfigFor(network, channel)
 	if err != nil {
 		return nil, err
 	}
-	evmClient, err := client.NewJSONRPCClient(config.Endpoint, nil)
+	evmClient, err := client.NewJSONRPCClient(networkConfig.Endpoint, nil)
 	if err != nil {
 		return nil, errors.Wrapf(err, "evm: failed to create a client for [%s:%s]", network, channel)
 	}
 
-	submitter, err := d.newSubmitter(config, evmClient)
-	if err != nil {
-		return nil, err
+	namespaces := make([]NamespaceConfig, 0, len(tmsIDs))
+	for _, tmsID := range tmsIDs {
+		tmsConfig, err := d.resolver.ConfigForTMS(tmsID)
+		if err != nil {
+			return nil, errors.Wrapf(err, "evm: failed to load the configuration for [%s]", tmsID)
+		}
+		// The chain client above is built once, for the whole network, so every TMS sharing it has to
+		// actually agree on what it connects to. Catching a disagreement here, at startup, is the same
+		// contract this driver already holds for a bad endpoint or chain id on a single TMS; without
+		// it a second TMS configuring a different endpoint would silently keep talking to the first
+		// TMS's chain instead.
+		if tmsConfig.Endpoint != networkConfig.Endpoint || tmsConfig.ChainID != networkConfig.ChainID {
+			return nil, errors.Errorf(
+				"evm: tms [%s] configures endpoint [%s] and chain id %d, but [%s:%s] is already serving "+
+					"endpoint [%s] and chain id %d; every TMS on one EVM network must agree on the chain "+
+					"it connects to", tmsID, tmsConfig.Endpoint, tmsConfig.ChainID, network, channel,
+				networkConfig.Endpoint, networkConfig.ChainID)
+		}
+
+		submitter, err := d.newSubmitter(tmsConfig, evmClient)
+		if err != nil {
+			return nil, err
+		}
+		namespaces = append(namespaces, NamespaceConfig{
+			Namespace: tmsID.Namespace,
+			Config:    tmsConfig,
+			Submitter: submitter,
+		})
 	}
 
-	n, err := NewNetwork(network, config, evmClient, nil, submitter, d.membership)
+	n, err := NewNetwork(network, evmClient, namespaces, nil, d.membership)
 	if err != nil {
 		return nil, err
 	}
-	if err := d.installEndorsement(n, config, evmClient, network, channel); err != nil {
+	if err := d.installEndorsement(n, namespaces, evmClient, network, channel); err != nil {
 		return nil, err
 	}
-	d.watchPublicParams(network, channel, config, evmClient)
+	d.watchPublicParams(network, channel, namespaces, evmClient)
 
 	// Recovery starts when a namespace binds to the network rather than here, because it is per TMS
 	// and the namespace is only known then. Mirrors the Fabric driver, which starts it in connect.
@@ -179,49 +222,63 @@ func (d *Driver) New(network, channel string) (driver.Network, error) {
 	return n, nil
 }
 
-// watchPublicParams starts watching the chain for public-parameters updates on this network.
+// watchPublicParams starts watching the chain for public-parameters updates, one watcher per distinct
+// TokenState contract among namespaces, each fanning its updates out only to the TMS actually
+// deployed against that contract.
 //
 // Parameters change through an endorsed setup delta that some other node submits, so there is nothing
 // local to trigger off: without this a node keeps serving whatever it started with. Fabric gets the
 // same signal from a listener on the setup key.
-func (d *Driver) watchPublicParams(network, channel string, config *Config, evmClient client.EVMClient) {
+//
+// Grouping by contract rather than watching once per network matters because two TMS sharing a
+// network are not required to share a TokenState: fanning every update out to every TMS on the
+// network (as if they all watched the same contract) would push one TMS's parameters into another
+// TMS's store the moment their contracts diverge. Two TMS that do happen to point at the very same
+// contract are grouped together and correctly share one watcher and one fan-out.
+func (d *Driver) watchPublicParams(network, channel string, namespaces []NamespaceConfig, evmClient client.EVMClient) {
 	if d.tmsProvider == nil {
 		logger.Debugf("no token management service provider; this node cannot reload public parameters")
 
 		return
 	}
 
-	key := network + ":" + channel
+	byContract := map[client.Address][]token2.TMSID{}
+	configByContract := map[client.Address]*Config{}
+	for _, nc := range namespaces {
+		tokenState, err := nc.Config.TokenStateAddress()
+		if err != nil {
+			logger.Errorf("cannot watch public parameters for [%s:%s:%s]: %v", network, channel, nc.Namespace, err)
+
+			continue
+		}
+		tmsID := token2.TMSID{Network: network, Channel: channel, Namespace: nc.Namespace}
+		byContract[tokenState] = append(byContract[tokenState], tmsID)
+		configByContract[tokenState] = nc.Config
+	}
+
 	d.watchersMu.Lock()
 	defer d.watchersMu.Unlock()
-	if _, running := d.watchers[key]; running {
-		return
-	}
+	for tokenState, tmsIDs := range byContract {
+		key := network + ":" + channel + ":" + tokenState.Hex()
+		if _, running := d.watchers[key]; running {
+			continue
+		}
+		cfg := configByContract[tokenState]
 
-	tokenState, err := config.TokenStateAddress()
-	if err != nil {
-		logger.Errorf("cannot watch public parameters for [%s]: %v", key, err)
+		watcher, err := pp.NewWatcher(
+			evmClient, tokenState, cfg.Finality.BlockTag, cfg.Finality.PollInterval,
+			func(ctx context.Context, raw []byte, version uint64) error {
+				return d.applyPublicParams(ctx, tmsIDs, raw, version)
+			},
+		)
+		if err != nil {
+			logger.Errorf("cannot watch public parameters for [%s]: %v", key, err)
 
-		return
+			continue
+		}
+		watcher.Start(context.Background())
+		d.watchers[key] = watcher
 	}
-	tmsIDs := d.resolver.TMSIDsFor(network, channel)
-	if len(tmsIDs) == 0 {
-		return
-	}
-
-	watcher, err := pp.NewWatcher(
-		evmClient, tokenState, config.Finality.BlockTag, config.Finality.PollInterval,
-		func(ctx context.Context, raw []byte, version uint64) error {
-			return d.applyPublicParams(ctx, tmsIDs, raw, version)
-		},
-	)
-	if err != nil {
-		logger.Errorf("cannot watch public parameters for [%s]: %v", key, err)
-
-		return
-	}
-	watcher.Start(context.Background())
-	d.watchers[key] = watcher
 }
 
 // applyPublicParams reloads every TMS on the network with the new parameters and persists them. A
@@ -261,36 +318,64 @@ func (d *Driver) applyPublicParams(ctx context.Context, tmsIDs []token2.TMSID, r
 }
 
 // installEndorsement builds the endorsement seam for this network and hands it to the network. The
-// service itself is per TMS, because it needs that TMS's validator, so what is installed is a factory
-// that resolves one when the network is given a TMS to approve for.
-func (d *Driver) installEndorsement(n *Network, config *Config, evmClient client.EVMClient, network, channel string) error {
+// service itself is per TMS, because it needs that TMS's validator, so the factory is given every
+// TMS's own registry, threshold, domain and TokenState (Register) instead of one set shared by the
+// whole network, and what is installed on the network is a resolver that asks the factory for the
+// right one when it is given a TMS to approve for.
+func (d *Driver) installEndorsement(n *Network, namespaces []NamespaceConfig, evmClient client.EVMClient, network, channel string) error {
 	if d.viewManager == nil {
 		logger.Debugf("no view manager available; this node cannot collect endorsements")
 
 		return nil
 	}
 
-	registry, err := config.EndorserRegistry(d.resolveIdentity)
-	if err != nil {
-		return err
-	}
-	tokenState, err := config.TokenStateAddress()
+	factory, err := endorsement.NewServiceFactory(endorsement.FactoryConfig{
+		Client:      evmClient,
+		ViewManager: d.viewManager,
+	})
 	if err != nil {
 		return err
 	}
 
-	factory, err := endorsement.NewServiceFactory(endorsement.FactoryConfig{
-		Registry:     registry,
-		Threshold:    int(config.Endorsement.Threshold),
-		Domain:       eip712.Domain{ChainID: config.ChainIDBig(), VerifyingContract: tokenState},
-		Client:       evmClient,
-		TokenState:   tokenState,
-		BlockTag:     config.Finality.BlockTag,
-		PublicParams: pp.NewChainProvider(evmClient, tokenState, config.Finality.BlockTag),
-		ViewManager:  d.viewManager,
-	})
-	if err != nil {
-		return err
+	// endorserConfig is the configuration that governs this node's own role as an endorser, which is
+	// registered once for the whole node process (see registerEndorser's doc comment). It defaults to
+	// the first TMS's configuration, matching this driver's pre-existing choice of "the first TMS
+	// declaring the network" as the network-wide representative; if any TMS actually enables
+	// endorsing, that TMS's configuration takes over instead, and every other TMS that also enables it
+	// must name the same key, since one node signs endorsements with one key for the whole network.
+	endorserConfig := namespaces[0].Config
+	for _, nc := range namespaces {
+		registry, err := nc.Config.EndorserRegistry(d.resolveIdentity)
+		if err != nil {
+			return errors.Wrapf(err, "evm: tms [%s]", nc.Namespace)
+		}
+		tokenState, err := nc.Config.TokenStateAddress()
+		if err != nil {
+			return errors.Wrapf(err, "evm: tms [%s]", nc.Namespace)
+		}
+		tmsID := token2.TMSID{Network: network, Channel: channel, Namespace: nc.Namespace}
+		if err := factory.Register(tmsID, endorsement.TMSConfig{
+			Registry:     registry,
+			Threshold:    int(nc.Config.Endorsement.Threshold),
+			Domain:       eip712.Domain{ChainID: nc.Config.ChainIDBig(), VerifyingContract: tokenState},
+			TokenState:   tokenState,
+			BlockTag:     nc.Config.Finality.BlockTag,
+			PublicParams: pp.NewChainProvider(evmClient, tokenState, nc.Config.Finality.BlockTag),
+		}); err != nil {
+			return errors.Wrapf(err, "evm: tms [%s]", nc.Namespace)
+		}
+
+		if nc.Config.Endorser.Enabled {
+			if !endorserConfig.Endorser.Enabled {
+				endorserConfig = nc.Config
+			} else if endorserConfig.Endorser.Keystore != nc.Config.Endorser.Keystore ||
+				endorserConfig.Endorser.Address != nc.Config.Endorser.Address {
+				return errors.Errorf(
+					"evm: tms [%s] configures this node as an endorser with a different key than "+
+						"another tms on [%s:%s]; one node endorses with one key for the whole network",
+					nc.Namespace, network, channel)
+			}
+		}
 	}
 
 	n.SetEndorsementFactory(func(tms *token2.ManagementService) (EndorsementService, error) {
@@ -311,7 +396,7 @@ func (d *Driver) installEndorsement(n *Network, config *Config, evmClient client
 	// Registration happens now, not on the first approval. An endorser node answers requests without
 	// ever making one, so registering lazily on the approval path would mean it never registers at
 	// all and every request to it times out.
-	if err := d.registerEndorser(network+":"+channel, factory, config); err != nil {
+	if err := d.registerEndorser(network+":"+channel, factory, endorserConfig); err != nil {
 		return errors.Wrap(err, "evm: failed to register this node as an endorser")
 	}
 
@@ -499,4 +584,18 @@ func (r *configNetworkResolver) ConfigFor(network, channel string) (*Config, err
 // ConfigurationFor returns the token-sdk configuration of one TMS.
 func (r *configNetworkResolver) ConfigurationFor(tmsID token2.TMSID) (*config.Configuration, error) {
 	return r.cs.ConfigurationFor(tmsID.Network, tmsID.Channel, tmsID.Namespace)
+}
+
+// ConfigForTMS loads and validates one TMS's own EVM configuration, from its own services.network.evm
+// block.
+func (r *configNetworkResolver) ConfigForTMS(tmsID token2.TMSID) (*Config, error) {
+	c, err := r.cs.ConfigurationFor(tmsID.Network, tmsID.Channel, tmsID.Namespace)
+	if err != nil {
+		return nil, errors.Wrapf(err, "evm: failed to load the token-sdk configuration for [%s]", tmsID)
+	}
+	if !c.IsSet(EVMConfigKey) {
+		return nil, errors.Errorf("evm: tms [%s] has no evm network configuration", tmsID)
+	}
+
+	return LoadConfig(c)
 }

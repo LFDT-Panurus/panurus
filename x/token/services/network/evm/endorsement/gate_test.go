@@ -101,7 +101,7 @@ func gateEndorsers(t *testing.T, n int) (*Registry, map[string]*Responder) {
 			auth,
 			func(token2.TMSID) (*DeltaFactory, error) { return factory, nil },
 			signer,
-			gateDomain(t),
+			func(token2.TMSID) (eip712.Domain, error) { return gateDomain(t), nil },
 		)
 	}
 	reg, err := NewRegistry(entries)

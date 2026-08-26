@@ -40,22 +40,29 @@ type Responder struct {
 	// network driver, so a responder that demanded one up front could not be registered at all.
 	factoryFor func(tmsID token2.TMSID) (*DeltaFactory, error)
 	signer     EndorserSigner
-	domain     eip712.Domain
+	// domainFor resolves the EIP-712 domain to sign against, per TMS. This node registers exactly one
+	// Responder for its whole process lifetime (see registerEndorser's doc comment), but every TMS
+	// this node endorses for can carry its own TokenState clone and therefore its own domain, so the
+	// domain a signature is computed against has to be looked up per request just like the delta
+	// factory is: a fixed domain would sign every request with the first TMS's VerifyingContract, and
+	// the resulting signature would not verify against any other TMS's EndorsementVerifier.
+	domainFor func(tmsID token2.TMSID) (eip712.Domain, error)
 }
 
-// NewResponder assembles a Responder for one TMS from its collaborators. The DeltaFactory carries the
-// validator, public-parameters provider and the ledger this endorser validates and translates with.
+// NewResponder assembles a Responder for this node from its collaborators. The DeltaFactory carries
+// the validator, public-parameters provider and the ledger this endorser validates and translates
+// with, per TMS; domainFor resolves the EIP-712 domain that TMS's delta is signed against.
 func NewResponder(
 	authorizer *Authorizer,
 	factoryFor func(tmsID token2.TMSID) (*DeltaFactory, error),
 	signer EndorserSigner,
-	domain eip712.Domain,
+	domainFor func(tmsID token2.TMSID) (eip712.Domain, error),
 ) *Responder {
 	return &Responder{
 		authorizer: authorizer,
 		factoryFor: factoryFor,
 		signer:     signer,
-		domain:     domain,
+		domainFor:  domainFor,
 	}
 }
 
@@ -127,7 +134,12 @@ func (r *Responder) endorse(
 		return nil, nil, err
 	}
 
-	sig, err := r.signer.Sign(eip712.Digest(r.domain, delta))
+	domain, err := r.domainFor(req.TMSID)
+	if err != nil {
+		return nil, nil, errors.Wrapf(err, "this endorser does not serve tms [%s]", req.TMSID)
+	}
+
+	sig, err := r.signer.Sign(eip712.Digest(domain, delta))
 	if err != nil {
 		return nil, nil, err
 	}

@@ -45,6 +45,12 @@ func (f fakeResolver) ConfigFor(network, channel string) (*Config, error) {
 	return c, c.Validate()
 }
 
+// ConfigForTMS mirrors ConfigFor: the routing tests only ever exercise a single TMS, so both return
+// the same fixture.
+func (f fakeResolver) ConfigForTMS(tmsID token2.TMSID) (*Config, error) {
+	return f.ConfigFor(tmsID.Network, tmsID.Channel)
+}
+
 // TMSIDsFor reports one TMS per configured network, enough for the routing tests: they never exercise
 // the public-parameters watcher, which needs a TMS provider the fake does not have.
 func (f fakeResolver) TMSIDsFor(network, channel string) []token2.TMSID {
@@ -165,7 +171,9 @@ func endorserConfig(t *testing.T) *Config {
 
 // testServiceFactory builds a real *endorsement.ServiceFactory over config, the same shape
 // installEndorsement assembles, so registerEndorser is exercised with the collaborator it actually
-// gets in production.
+// gets in production. It registers config under a single fixed TMS id, which is all these tests need:
+// registerEndorser never resolves a TMS itself, it only builds the responder factory.NewResponder
+// hands back.
 func testServiceFactory(t *testing.T, config *Config) *endorsement.ServiceFactory {
 	t.Helper()
 	registry, err := config.EndorserRegistry(func(name string) (view.Identity, error) {
@@ -177,16 +185,18 @@ func testServiceFactory(t *testing.T, config *Config) *endorsement.ServiceFactor
 	evmClient := &mock.EVMClient{}
 
 	factory, err := endorsement.NewServiceFactory(endorsement.FactoryConfig{
+		Client:      evmClient,
+		ViewManager: fakeViewManager{},
+	})
+	require.NoError(t, err)
+	require.NoError(t, factory.Register(token2.TMSID{Network: "evm", Namespace: "token"}, endorsement.TMSConfig{
 		Registry:     registry,
 		Threshold:    int(config.Endorsement.Threshold),
 		Domain:       eip712.Domain{ChainID: config.ChainIDBig(), VerifyingContract: tokenState},
-		Client:       evmClient,
 		TokenState:   tokenState,
 		BlockTag:     config.Finality.BlockTag,
 		PublicParams: pp.NewChainProvider(evmClient, tokenState, config.Finality.BlockTag),
-		ViewManager:  fakeViewManager{},
-	})
-	require.NoError(t, err)
+	}))
 
 	return factory
 }
