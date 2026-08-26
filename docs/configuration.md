@@ -71,23 +71,28 @@ token:
     #   c) The transaction reached finality long ago, so we query the whole ledger for this specific transaction. If the query returns no result, we proceed to step d.
     #   d) The transaction will reach finality at some point beyond the timeout or never, so we return Unknown. Then it is up to the client to either append another listener or accept that the transaction will never reach finality.  
     delivery:
-      # mapperParallelism is the number of goroutines that process incoming transactions in parallel. Defaults to 1.
+      # mapperParallelism is the number of goroutines that process incoming transactions in parallel.
+      # A non-positive or unset value falls back to the default (10).
       mapperParallelism: 10
       # blockProcessParallelism is the number of blocks we can process in parallel when they arrive from the delivery service.
-      # If the value is <= 1, then blocks are processed sequentially.
-      # This is the suggested configuration if we are not sure about the dependencies between blocks.
+      # Set it to 1 (and only 1) to process blocks sequentially; this is the suggested
+      # configuration if we are not sure about the dependencies between blocks.
+      # A non-positive or unset value falls back to the default (10), NOT sequential mode.
       # The total go routines processing transactions will be blockProcessParallelism * mapperParallelism.
       blockProcessParallelism: 1
       # lruSize detects how many transactions we should guarantee to keep in our recent cache.
       # If the transaction is not among these elements, we proceed to step b, as described above.
-      # If lruSize and lruBuffer are not set, then we will never evict past transactions (the cache will grow infinitely).
+      # Set it to 0 to disable the bound and never evict past transactions (the cache grows without limit).
+      # An unset or negative value falls back to the default (30).
       lruSize: 30
       # eviction will happen when the cache size exceeds lruSize + lruBuffer.
+      # Set it to 0 to disable the bound and never evict (same effect as lruSize: 0).
+      # An unset or negative value falls back to the default (15).
       lruBuffer: 15
       # listenerTimeout is the duration to listen when we can't find a transaction in the cache (most probably it is about to become final).
       # We will listen for this amount of time and then we will query the whole ledger, as described in step c.
-      # If the timeout is not set, then the listener will never be evicted and we will never proceed to step c.
-      # We will wait forever for the transaction to return (as is done for the 'committer' type).
+      # Set it to 0 to disable the timeout and wait forever for the transaction (as is done for the 'committer' type).
+      # An unset or negative value falls back to the default (10s).
       listenerTimeout: 10s
     # Only applicable for fabricx networks
     # notification: The manager is notified about finality events via a notification service (e.g. for FabricX).
