@@ -198,6 +198,23 @@ func TestNativeRPTamperedProofRejected(t *testing.T) {
 				bad.Data.T2 = ctx.curve.GenG1.Mul(ctx.curve.NewRandomZr(rand))
 				assert.Error(t, ctx.verify(t, bad))
 			})
+
+			// tampered_C: replacing C (commitment to bit-decomposition vectors) with a
+			// random point must be rejected. C enters the challenge hash y = H(C, D, com)
+			// so swapping it shifts all subsequent challenges and breaks the IPA check.
+			t.Run("tampered_C", func(t *testing.T) {
+				bad := copyRangeProof(t, proof)
+				bad.Data.C = ctx.curve.GenG1.Mul(ctx.curve.NewRandomZr(rand))
+				assert.Error(t, ctx.verify(t, bad))
+			})
+
+			// tampered_D: replacing D (commitment to the blinding vectors) must be
+			// rejected for the same reason as tampered_C.
+			t.Run("tampered_D", func(t *testing.T) {
+				bad := copyRangeProof(t, proof)
+				bad.Data.D = ctx.curve.GenG1.Mul(ctx.curve.NewRandomZr(rand))
+				assert.Error(t, ctx.verify(t, bad))
+			})
 		})
 	}
 }

@@ -520,8 +520,9 @@ func CloneGenerators(LeftGenerators, RightGenerators []*mathlib.G1) ([]*mathlib.
 //	  sInv[i + 2^r] = sInv[i] · x_{k-1-r}^{-1}   (swapped)
 //	  sInv[i]       = sInv[i] · x_{k-1-r}         (swapped)
 //
-// This replaces the previous O(n·log n) nested-loop implementation and
-// eliminates the final BatchInverse call for sInv.
+// This replaces the previous O(n·log n) nested-loop implementation.
+// One BatchInverse call computes challenge inverses up front; the butterfly
+// then builds s and sInv together without a second BatchInverse pass.
 //
 // Input: n, challenges = [x_0, …, x_{k-1}] where n = 2^k.
 // Returns (s, sInv) where sInv[i] = s[i]^{-1}.

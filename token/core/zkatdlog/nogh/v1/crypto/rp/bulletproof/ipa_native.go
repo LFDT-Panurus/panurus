@@ -147,6 +147,11 @@ func nativeIPAReduce[T any, E math.GnarkFr[T]](p *ipaProver, X, com *mathlib.G1)
 		E(&xSquareInvE).Inverse(E(&xSquareE))
 		xSquareInv := math.NativeToZr[T, E](E(&xSquareInvE), p.Curve)
 
+		// Update the running commitment: com = L^{x²} · com · R^{1/x²}.
+		// Note: this updated com is never hashed — the round challenge x is derived
+		// solely from Hash(L[i], R[i]) — so this folding does not affect the
+		// Fiat-Shamir transcript. It is required for the algebraic consistency check
+		// in the verifier (see ipaVerifier.Verify).
 		CPrime := LArray[i].Mul2(xSquare, RArray[i], xSquareInv)
 		CPrime.Add(com)
 		com = CPrime
