@@ -47,7 +47,7 @@ func (s *AuditorService) AuditorCheck(ctx context.Context, tokenRequest *driver.
 		return err
 	}
 
-	auditTokens, err := common.RetrieveAuditTokens(ctx, s.Logger, s.QueryEngine, tokenIDs, anchor)
+	auditTokens, err := common.RetrieveAuditTokens(ctx, s.Logger, s.QueryEngine, tokenIDs, anchor, common.DefaultAuditTokensNumRetries, common.DefaultAuditTokensRetryDelay)
 	if err != nil {
 		return err
 	}

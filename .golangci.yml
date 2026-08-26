@@ -124,6 +124,12 @@ linters:
         - github.com/hyperledger-labs/fabric-smart-client/integration/nwo/api.ViewClient
         - github.com/hyperledger-labs/fabric-smart-client/integration/nwo/api.Platform
         - github.com/hyperledger-labs/fabric-smart-client/integration/nwo/api.Context
+        - github.com/consensys/gnark/frontend.Variable
+        - github.com/consensys/gnark/backend/groth16.Proof
+        - github.com/consensys/gnark/backend/witness.Witness
+        - github.com/consensys/gnark/constraint.ConstraintSystem
+        - github.com/consensys/gnark/backend/groth16.ProvingKey
+        - github.com/consensys/gnark/backend/groth16.VerifyingKey
     lll:
       # Max line length, lines longer will be reported.
       line-length: 240
