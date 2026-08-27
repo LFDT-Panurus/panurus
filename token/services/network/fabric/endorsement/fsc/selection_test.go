@@ -101,6 +101,24 @@ func TestSelectEndorsersForMSPSets(t *testing.T) {
 		assert.Contains(t, err.Error(), "no candidate MSP set")
 	})
 
+	t.Run("empty candidate set is rejected as malformed, not vacuously satisfied", func(t *testing.T) {
+		selected, err := fsc.SelectEndorsersForMSPSets([]view.Identity{org1Endorser1}, mspOf, [][]string{{}})
+
+		require.Error(t, err)
+		assert.Nil(t, selected)
+		assert.Contains(t, err.Error(), "requires no endorser")
+	})
+
+	t.Run("empty candidate set alongside a satisfiable one is still rejected", func(t *testing.T) {
+		configured := []view.Identity{org1Endorser1}
+
+		selected, err := fsc.SelectEndorsersForMSPSets(configured, mspOf, [][]string{{"Org1MSP"}, {}})
+
+		require.Error(t, err)
+		assert.Nil(t, selected)
+		assert.Contains(t, err.Error(), "requires no endorser")
+	})
+
 	t.Run("unsatisfiable - stale endorser check", func(t *testing.T) {
 		configured := []view.Identity{org1Endorser1, staleEndorser}
 		_, err := fsc.SelectEndorsersForMSPSets(configured, mspOf, [][]string{{"Org1MSP", "Org2MSP"}})
