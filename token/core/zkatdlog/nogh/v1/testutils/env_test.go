@@ -74,6 +74,30 @@ func TestNewEnv(t *testing.T) {
 	}
 }
 
+// TestNewEnvManyInputs is a regression guard for issue #2024: prepareRedeemRequest
+// (built unconditionally by NewEnv) used to allocate a fixed 2-element owners slice
+// and index it by NumInputs, panicking for NumInputs > 2. The default benchmark
+// configuration pins NumInputs=2, so the standard run never exercised this. Here we
+// deliberately construct NewEnv with a 4-input case, which panics before the fix.
+func TestNewEnvManyInputs(t *testing.T) {
+	bits, err := sbenchmark.Bits(32)
+	require.NoError(t, err)
+	curves := sbenchmark.Curves(math.BN254)
+	configurations, err := benchmark.NewSetupConfigurations("./../testdata", bits, curves, idemixnym.IdentityType)
+	require.NoError(t, err)
+
+	for _, configuration := range configurations.Configurations {
+		_, err := NewEnv(&sbenchmark.Case{
+			Bits:       configuration.Bits,
+			CurveID:    configuration.CurveID,
+			NumInputs:  4,
+			NumOutputs: 1,
+		}, configurations)
+		require.NoError(t, err, "NewEnv must not panic or error for NumInputs > 2 [bits=%d,curveID=%d]",
+			configuration.Bits, configuration.CurveID)
+	}
+}
+
 func TestSaveTransferToFile(t *testing.T) {
 	metadata := &driver.TokenRequestMetadata{
 		Actions: []*driver.ActionMetadataEntry{
