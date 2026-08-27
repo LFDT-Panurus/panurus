@@ -704,11 +704,16 @@ func prepareRedeemRequest(
 		NumInputs:  benchCase.NumInputs,
 		NumOutputs: 2,
 	}
-	owners := make([][]byte, 2)
-	for i := range benchCase.NumInputs {
+	// owners holds the output owners: prepareTransferWithOpts consumes it indexed
+	// by NumOutputs (not NumInputs), so it must be sized by benchCaseRedeem.NumOutputs.
+	// The first output is the redeemed (nil-owner) output.
+	owners := make([][]byte, benchCaseRedeem.NumOutputs)
+	for i := range benchCaseRedeem.NumOutputs {
 		owners[i] = setupConfig.OwnerIdentity.ID
 	}
-	owners[0] = nil
+	if len(owners) > 0 {
+		owners[0] = nil
+	}
 
 	issuer := issue2.NewIssuer("ABC", setupConfig.IssuerSigner, pp)
 	issuerIdentity, err := setupConfig.IssuerSigner.Serialize()
@@ -755,11 +760,17 @@ func prepareOpenPolicyRedeemRequest(
 		NumInputs:  benchCase.NumInputs,
 		NumOutputs: 2,
 	}
-	owners := make([][]byte, 2)
-	for i := range benchCase.NumInputs {
+	// owners holds the output owners: prepareTransferWithOpts consumes it indexed
+	// by NumOutputs (not NumInputs), so it must be sized by benchCaseRedeem.NumOutputs.
+	// The first output is the redeemed (nil-owner) output.
+	owners := make([][]byte, benchCaseRedeem.NumOutputs)
+	for i := range benchCaseRedeem.NumOutputs {
 		owners[i] = setupConfig.OwnerIdentity.ID
 	}
-	owners[0] = nil
+
+	if len(owners) > 0 { // defensive
+		owners[0] = nil
+	}
 
 	return prepareTransfer(
 		benchCaseRedeem,
