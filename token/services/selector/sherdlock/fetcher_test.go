@@ -686,63 +686,72 @@ func TestCachedFetcher_UpdateCache(t *testing.T) {
 	// Race condition test: verifies cache never appears empty to concurrent readers during updates.
 	// This validates the fix where new entries are added BEFORE stale ones are removed.
 	t.Run("no empty cache during concurrent updates", func(t *testing.T) {
-		ctx := t.Context()
+		checkNoEmptyCacheDuringConcurrentUpdates(t, fetcher)
+	})
+}
 
-		// Initial cache population
-		initialTokens := map[string][]*token2.UnspentTokenInWallet{
-			tokenKey("wallet1", "USD"): {
-				{WalletID: "wallet1", Type: "USD", Quantity: "100"},
-			},
-		}
-		fetcher.updateCache(ctx, initialTokens)
+// checkNoEmptyCacheDuringConcurrentUpdates populates fetcher's cache, starts
+// 10 goroutines that continuously read one key from it, then performs
+// several updates while the readers are active, failing the test if any
+// reader ever observes the key missing.
+func checkNoEmptyCacheDuringConcurrentUpdates(t *testing.T, fetcher *cachedFetcher) {
+	t.Helper()
+	ctx := t.Context()
 
-		// Start concurrent readers
-		stopReading := make(chan struct{})
-		readErrors := make(chan error, 10)
+	// Initial cache population
+	initialTokens := map[string][]*token2.UnspentTokenInWallet{
+		tokenKey("wallet1", "USD"): {
+			{WalletID: "wallet1", Type: "USD", Quantity: "100"},
+		},
+	}
+	fetcher.updateCache(ctx, initialTokens)
 
-		for range 10 {
-			go func() {
-				for {
-					select {
-					case <-stopReading:
+	// Start concurrent readers
+	stopReading := make(chan struct{})
+	readErrors := make(chan error, 10)
+
+	for range 10 {
+		go func() {
+			for {
+				select {
+				case <-stopReading:
+					return
+				default:
+					// Try to read from cache
+					_, ok := fetcher.cache.Get(tokenKey("wallet1", "USD"))
+					if !ok {
+						// Cache should never be empty during update
+						readErrors <- errors.New("cache was empty during concurrent read")
+
 						return
-					default:
-						// Try to read from cache
-						_, ok := fetcher.cache.Get(tokenKey("wallet1", "USD"))
-						if !ok {
-							// Cache should never be empty during update
-							readErrors <- errors.New("cache was empty during concurrent read")
-
-							return
-						}
 					}
 				}
-			}()
-		}
-
-		// Perform multiple updates while readers are active
-		for range 5 {
-			newTokens := map[string][]*token2.UnspentTokenInWallet{
-				tokenKey("wallet1", "USD"): {
-					{WalletID: "wallet1", Type: "USD", Quantity: "200"},
-				},
 			}
-			fetcher.updateCache(ctx, newTokens)
-			time.Sleep(20 * time.Millisecond)
-		}
+		}()
+	}
 
-		// Stop readers
-		close(stopReading)
-		time.Sleep(100 * time.Millisecond)
-
-		// Check for errors
-		select {
-		case err := <-readErrors:
-			t.Fatalf("Race condition detected: %v", err)
-		default:
-			// No errors - race condition fix is working
+	// Perform multiple updates while readers are active
+	for range 5 {
+		newTokens := map[string][]*token2.UnspentTokenInWallet{
+			tokenKey("wallet1", "USD"): {
+				{WalletID: "wallet1", Type: "USD", Quantity: "200"},
+			},
 		}
-	})
+		fetcher.updateCache(ctx, newTokens)
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	// Stop readers
+	close(stopReading)
+	time.Sleep(100 * time.Millisecond)
+
+	// Check for errors
+	select {
+	case err := <-readErrors:
+		t.Fatalf("Race condition detected: %v", err)
+	default:
+		// No errors - race condition fix is working
+	}
 }
 
 func TestCachedFetcher_SoftRefresh(t *testing.T) {

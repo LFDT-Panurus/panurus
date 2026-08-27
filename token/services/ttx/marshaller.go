@@ -13,6 +13,7 @@ import (
 
 	"github.com/LFDT-Panurus/panurus/token"
 	"github.com/LFDT-Panurus/panurus/token/core/common/encoding/json"
+	"github.com/LFDT-Panurus/panurus/token/services/network"
 	"github.com/LFDT-Panurus/panurus/token/services/ttx/dep"
 	"github.com/LFDT-Panurus/panurus/token/services/utils"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
@@ -109,41 +110,19 @@ func marshal(ctx context.Context, t *Transaction, eIDs ...string) ([]byte, error
 		return nil, ErrNamespaceNotSet
 	}
 
-	var err error
-
-	var transientRaw []byte
-	if len(t.Transient) != 0 {
-		transientRaw, err = MarshalMeta(t.Transient)
-		if err != nil {
-			return nil, errors.Wrap(err, "failed to marshal transient")
-		}
+	transientRaw, err := marshalTransient(t.Transient)
+	if err != nil {
+		return nil, err
 	}
 
-	var tokenRequestRaw []byte
-	if t.TokenRequest != nil {
-		req := t.TokenRequest
-		// If eIDs are specified, we only marshal the metadata for the passed eIDs
-		if len(eIDs) != 0 {
-			req, err = t.TokenRequest.FilterMetadataBy(ctx, eIDs...)
-			if err != nil {
-				return nil, errors.Wrap(err, "failed to filter metadata")
-			}
-		}
-		tokenRequestRaw, err = req.Bytes()
-		if err != nil {
-			return nil, errors.Wrap(err, "failed to marshal token request")
-		}
+	tokenRequestRaw, err := marshalTokenRequest(ctx, t.TokenRequest, eIDs)
+	if err != nil {
+		return nil, err
 	}
 
-	var envRaw []byte
-	if t.Envelope != nil {
-		envRaw, err = t.Envelope.Bytes()
-		if err != nil {
-			return nil, errors.Wrap(err, "failed to marshal envelope")
-		}
-		if logger.IsEnabledFor(zapcore.DebugLevel) {
-			logger.Debugf("transaction envelope [%s]", utils.Hashable(t.Envelope.String()))
-		}
+	envRaw, err := marshalEnvelope(t.Envelope)
+	if err != nil {
+		return nil, err
 	}
 
 	res, err := asn1.Marshal(TransactionSer{
@@ -163,6 +142,60 @@ func marshal(ctx context.Context, t *Transaction, eIDs ...string) ([]byte, error
 	}
 
 	return res, nil
+}
+
+// marshalTransient serializes transient, or returns nil if it's empty.
+func marshalTransient(transient network.TransientMap) ([]byte, error) {
+	if len(transient) == 0 {
+		return nil, nil
+	}
+
+	raw, err := MarshalMeta(transient)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to marshal transient")
+	}
+
+	return raw, nil
+}
+
+// marshalTokenRequest serializes req, or returns nil if it's nil. If eIDs are
+// specified, only the metadata for those eIDs is marshaled.
+func marshalTokenRequest(ctx context.Context, req *token.Request, eIDs []string) ([]byte, error) {
+	if req == nil {
+		return nil, nil
+	}
+
+	if len(eIDs) != 0 {
+		var err error
+		req, err = req.FilterMetadataBy(ctx, eIDs...)
+		if err != nil {
+			return nil, errors.Wrap(err, "failed to filter metadata")
+		}
+	}
+
+	raw, err := req.Bytes()
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to marshal token request")
+	}
+
+	return raw, nil
+}
+
+// marshalEnvelope serializes env, or returns nil if it's nil.
+func marshalEnvelope(env *network.Envelope) ([]byte, error) {
+	if env == nil {
+		return nil, nil
+	}
+
+	raw, err := env.Bytes()
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to marshal envelope")
+	}
+	if logger.IsEnabledFor(zapcore.DebugLevel) {
+		logger.Debugf("transaction envelope [%s]", utils.Hashable(env.String()))
+	}
+
+	return raw, nil
 }
 
 func unmarshal(getNetwork GetNetworkFunc, p *Payload, raw []byte) error {
@@ -191,19 +224,40 @@ func unmarshal(getNetwork GetNetworkFunc, p *Payload, raw []byte) error {
 		Namespace: ser.Namespace,
 	}
 	p.Signer = ser.Signer
-	p.Transient = make(map[string][]byte)
-	if len(ser.Transient) != 0 {
-		meta, err := UnmarshalMeta(ser.Transient)
-		if err != nil {
-			return errors.Wrap(err, "failed unmarshalling transient")
-		}
-		p.Transient = meta
+
+	if err := unmarshalTransientInto(p, ser.Transient); err != nil {
+		return err
 	}
 	if len(ser.TokenRequest) != 0 {
 		if err := p.TokenRequest.FromBytes(ser.TokenRequest); err != nil {
 			return errors.Wrap(err, "failed unmarshalling token request")
 		}
 	}
+
+	return unmarshalEnvelopeInto(getNetwork, p, ser.Envelope)
+}
+
+// unmarshalTransientInto populates p.Transient from raw, defaulting to an
+// empty (non-nil) map when raw is empty.
+func unmarshalTransientInto(p *Payload, raw []byte) error {
+	p.Transient = make(map[string][]byte)
+	if len(raw) == 0 {
+		return nil
+	}
+
+	meta, err := UnmarshalMeta(raw)
+	if err != nil {
+		return errors.Wrap(err, "failed unmarshalling transient")
+	}
+	p.Transient = meta
+
+	return nil
+}
+
+// unmarshalEnvelopeInto ensures p.Envelope exists (building a fresh one for
+// p's network/channel if it's still nil), then unmarshals raw into it if raw
+// carries any bytes.
+func unmarshalEnvelopeInto(getNetwork GetNetworkFunc, p *Payload, raw []byte) error {
 	if p.Envelope == nil {
 		nws, err := getNetwork(p.tmsID.Network, p.tmsID.Channel)
 		if err != nil {
@@ -211,10 +265,12 @@ func unmarshal(getNetwork GetNetworkFunc, p *Payload, raw []byte) error {
 		}
 		p.Envelope = nws.NewEnvelope()
 	}
-	if len(ser.Envelope) != 0 {
-		if err := p.Envelope.FromBytes(ser.Envelope); err != nil {
-			return errors.Wrapf(err, "failed unmarshalling envelope [%d]", len(ser.Envelope))
-		}
+	if len(raw) == 0 {
+		return nil
+	}
+
+	if err := p.Envelope.FromBytes(raw); err != nil {
+		return errors.Wrapf(err, "failed unmarshalling envelope [%d]", len(raw))
 	}
 
 	return nil

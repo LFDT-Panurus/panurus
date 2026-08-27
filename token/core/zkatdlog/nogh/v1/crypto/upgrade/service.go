@@ -219,6 +219,7 @@ func (s *Service) ProcessTokens(ledgerTokens []token.LedgerToken) ([]token.Token
 	return tokens, nil
 }
 
+//nolint:gocognit // sequential validation of the upgrade proof against the ledger tokens; splitting would not reduce real complexity, only hide it behind indirection
 func (s *Service) checkUpgradeProof(ctx context.Context, ch driver.TokensUpgradeChallenge, proofRaw driver.TokensUpgradeProof, ledgerTokens []token.LedgerToken) ([]token.Token, bool, error) {
 	if len(ch) != ChallengeSize {
 		return nil, false, errors.Errorf("invalid challenge size, got [%d], expected [%d]", len(ch), ChallengeSize)

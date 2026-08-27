@@ -30,7 +30,9 @@ type serverConfig struct {
 	TLSCACertsFilePath string
 }
 
-func main() {
+// loadServerConfig reads the chaincode server configuration from the
+// environment, filling in defaults for anything left unset.
+func loadServerConfig() serverConfig {
 	config := serverConfig{
 		CCID:               os.Getenv("CHAINCODE_ID"),
 		CCaddress:          os.Getenv("CHAINCODE_SERVER_ADDRESS"),
@@ -52,6 +54,90 @@ func main() {
 		config.LogFormat = "%{color}%{time:2006-01-02 15:04:05.000 MST} [%{module}] %{shortfunc} -> %{level:.4s} %{id:03x}%{color:reset} %{message}"
 	}
 
+	return config
+}
+
+// newTokenServicesFactory builds the PublicParameters/Validator pair the
+// chaincode resolves for a given TMS's public parameters bytes.
+func newTokenServicesFactory(is *core.ValidatorDriverService) func([]byte) (tcc.PublicParameters, tcc.Validator, error) {
+	return func(bytes []byte) (tcc.PublicParameters, tcc.Validator, error) {
+		ppm, err := is.PublicParametersFromBytes(bytes)
+		if err != nil {
+			return nil, nil, err
+		}
+		v, err := is.NewValidator(ppm)
+		if err != nil {
+			return nil, nil, err
+		}
+
+		return ppm, token.NewValidator(v), nil
+	}
+}
+
+// runEmbedded starts the chaincode as a process shim starts and manages
+// directly (no CCID/CCaddress configured for the external-service mode).
+func runEmbedded(queryLimits tcc.QueryLimits, factory func([]byte) (tcc.PublicParameters, tcc.Validator, error)) {
+	fmt.Println("CC ID or CC address is empty... Running as usual...")
+	if os.Getenv("DEVMODE_ENABLED") != "" {
+		fmt.Println("starting up in devmode...")
+	}
+	err := shim.Start(
+		&tcc.TokenChaincode{
+			QueryLimits:          queryLimits,
+			TokenServicesFactory: factory,
+		},
+	)
+	assertNoError(err, "cannot start chaincode")
+}
+
+// runAsService starts the chaincode as an external service the peer connects
+// to at config.CCaddress, with TLS if config.TLS enables it.
+func runAsService(config serverConfig, queryLimits tcc.QueryLimits, factory func([]byte) (tcc.PublicParameters, tcc.Validator, error)) {
+	fmt.Println("Token Chaincode CCID : " + config.CCID)
+	fmt.Println("Token Chaincode address : " + config.CCaddress)
+	fmt.Println("Running Token Chaincode as service ...")
+
+	server := &shim.ChaincodeServer{
+		CCID:    config.CCID,
+		Address: config.CCaddress,
+		CC: &tcc.TokenChaincode{
+			QueryLimits:          queryLimits,
+			TokenServicesFactory: factory,
+		},
+		TLSProps: loadTLSProperties(config),
+	}
+	err := server.Start()
+	assertNoError(err, "Error starting Token Chaincode")
+}
+
+// loadTLSProperties reads the TLS key/cert/CA-certs files config.TLS enables,
+// or reports TLS as disabled when it does not. Panics (via assertNoError) on
+// any read failure, since there is no way to run as a service without them.
+func loadTLSProperties(config serverConfig) shim.TLSProperties {
+	enabled, err := strconv.ParseBool(config.TLS)
+	assertNoError(err, "cannot parse [%s]", config.TLS)
+	if !enabled {
+		return shim.TLSProperties{Disabled: true}
+	}
+
+	tlsKeyRaw, err := os.ReadFile(config.TLSKey)
+	assertNoError(err, "cannot read tls key at [%s]", config.TLSKey)
+	tlsCertRaw, err := os.ReadFile(config.TLSCert)
+	assertNoError(err, "cannot read tls cert at [%s]", config.TLSKey)
+	tlsCACertsRaw, err := os.ReadFile(config.TLSCACertsFilePath)
+	assertNoError(err, "cannot read tls ca certs at [%s]", config.TLSCACertsFilePath)
+
+	return shim.TLSProperties{
+		Disabled:      false,
+		Key:           tlsKeyRaw,
+		Cert:          tlsCertRaw,
+		ClientCACerts: tlsCACertsRaw,
+	}
+}
+
+func main() {
+	config := loadServerConfig()
+
 	logging.Init(logging.Config{
 		Format:  config.LogFormat,
 		LogSpec: config.LogLevel,
@@ -69,77 +155,11 @@ func main() {
 		fabtoken.NewValidatorDriver(),
 		dlog.NewValidatorDriver(),
 	)
+	factory := newTokenServicesFactory(is)
 	if config.CCID == "" || config.CCaddress == "" {
-		fmt.Println("CC ID or CC address is empty... Running as usual...")
-		if os.Getenv("DEVMODE_ENABLED") != "" {
-			fmt.Println("starting up in devmode...")
-		}
-		err := shim.Start(
-			&tcc.TokenChaincode{
-				QueryLimits: queryLimits,
-				TokenServicesFactory: func(bytes []byte) (tcc.PublicParameters, tcc.Validator, error) {
-					ppm, err := is.PublicParametersFromBytes(bytes)
-					if err != nil {
-						return nil, nil, err
-					}
-					v, err := is.NewValidator(ppm)
-					if err != nil {
-						return nil, nil, err
-					}
-
-					return ppm, token.NewValidator(v), nil
-				},
-			},
-		)
-		assertNoError(err, "cannot start chaincode")
+		runEmbedded(queryLimits, factory)
 	} else {
-		fmt.Println("Token Chaincode CCID : " + config.CCID)
-		fmt.Println("Token Chaincode address : " + config.CCaddress)
-		fmt.Println("Running Token Chaincode as service ...")
-
-		// prepare TLS properties
-		tlsProps := shim.TLSProperties{
-			Disabled: false,
-		}
-		enabled, err := strconv.ParseBool(config.TLS)
-		assertNoError(err, "cannot parse [%s]", config.TLS)
-		if enabled {
-			tlsKeyRaw, err := os.ReadFile(config.TLSKey) //nolint:gosec
-			assertNoError(err, "cannot read tls key at [%s]", config.TLSKey)
-			tlsCertRaw, err := os.ReadFile(config.TLSCert) //nolint:gosec
-			assertNoError(err, "cannot read tls cert at [%s]", config.TLSKey)
-			tlsCACertsRaw, err := os.ReadFile(config.TLSCACertsFilePath) //nolint:gosec
-			assertNoError(err, "cannot read tls ca certs at [%s]", config.TLSCACertsFilePath)
-
-			tlsProps.Key = tlsKeyRaw
-			tlsProps.Cert = tlsCertRaw
-			tlsProps.ClientCACerts = tlsCACertsRaw
-		} else {
-			tlsProps.Disabled = true
-		}
-
-		server := &shim.ChaincodeServer{
-			CCID:    config.CCID,
-			Address: config.CCaddress,
-			CC: &tcc.TokenChaincode{
-				QueryLimits: queryLimits,
-				TokenServicesFactory: func(bytes []byte) (tcc.PublicParameters, tcc.Validator, error) {
-					ppm, err := is.PublicParametersFromBytes(bytes)
-					if err != nil {
-						return nil, nil, err
-					}
-					v, err := is.NewValidator(ppm)
-					if err != nil {
-						return nil, nil, err
-					}
-
-					return ppm, token.NewValidator(v), nil
-				},
-			},
-			TLSProps: tlsProps,
-		}
-		err = server.Start()
-		assertNoError(err, "Error starting Token Chaincode")
+		runAsService(config, queryLimits, factory)
 	}
 }
 

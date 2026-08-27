@@ -59,6 +59,47 @@ type Certification struct {
 	ResponseTimeout time.Duration `yaml:"responseTimeout,omitempty"`
 }
 
+// withDefaults returns c's tunables, substituting the package default for any
+// that were left at their zero value.
+func (c *Certification) withDefaults() (maxAttempts int, waitTime time.Duration, batchSize, bufferSize int, flushInterval time.Duration, workers int, responseTimeout time.Duration) {
+	maxAttempts = c.MaxAttempts
+	if maxAttempts <= 0 {
+		maxAttempts = DefaultMaxAttempts
+	}
+
+	waitTime = c.WaitTime
+	if waitTime <= 0 {
+		waitTime = DefaultWaitTime
+	}
+
+	batchSize = c.BatchSize
+	if batchSize <= 0 {
+		batchSize = DefaultBatchSize
+	}
+
+	bufferSize = c.BufferSize
+	if bufferSize <= 0 {
+		bufferSize = DefaultBufferSize
+	}
+
+	flushInterval = c.FlushInterval
+	if flushInterval <= 0 {
+		flushInterval = DefaultFlushInterval
+	}
+
+	workers = c.Workers
+	if workers <= 0 {
+		workers = DefaultWorkers
+	}
+
+	responseTimeout = c.ResponseTimeout
+	if responseTimeout <= 0 {
+		responseTimeout = DefaultResponseTimeout
+	}
+
+	return maxAttempts, waitTime, batchSize, bufferSize, flushInterval, workers, responseTimeout
+}
+
 type BackendFactory func(tms *token.ManagementService, wallet string) (Backend, error)
 
 type Resolver interface {
@@ -115,40 +156,7 @@ func (d *Driver) NewCertificationClient(ctx context.Context, tms *token.Manageme
 			return nil, errors.Errorf("no certifier id configured")
 		}
 
-		maxAttempts := certification.MaxAttempts
-		if maxAttempts <= 0 {
-			maxAttempts = DefaultMaxAttempts
-		}
-
-		waitTime := certification.WaitTime
-		if waitTime <= 0 {
-			waitTime = DefaultWaitTime
-		}
-
-		batchSize := certification.BatchSize
-		if batchSize <= 0 {
-			batchSize = DefaultBatchSize
-		}
-
-		bufferSize := certification.BufferSize
-		if bufferSize <= 0 {
-			bufferSize = DefaultBufferSize
-		}
-
-		flushInterval := certification.FlushInterval
-		if flushInterval <= 0 {
-			flushInterval = DefaultFlushInterval
-		}
-
-		workers := certification.Workers
-		if workers <= 0 {
-			workers = DefaultWorkers
-		}
-
-		responseTimeout := certification.ResponseTimeout
-		if responseTimeout <= 0 {
-			responseTimeout = DefaultResponseTimeout
-		}
+		maxAttempts, waitTime, batchSize, bufferSize, flushInterval, workers, responseTimeout := certification.withDefaults()
 
 		certificationClient := NewCertificationClient(
 			ctx,

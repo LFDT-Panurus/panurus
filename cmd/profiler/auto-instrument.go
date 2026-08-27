@@ -81,24 +81,63 @@ func instrumentFile(filename string) error {
 		return err
 	}
 
+	hasTracerImport, tracerAlias := findExistingTracerImport(node)
+
+	if !fileNeedsInstrumentation(node) {
+		return nil
+	}
+
 	modified := false
-	hasTracerImport := false
+
+	// Add tracer import if needed
+	if !hasTracerImport {
+		tracerAlias = findUniqueAlias(node, "tracer")
+		addTracerImport(node, tracerAlias)
+		modified = true
+	}
+
+	// Add tracer calls to functions
+	if instrumentFunctions(node, tracerAlias) {
+		modified = true
+	}
+
+	if !modified {
+		return nil
+	}
+
+	// Write the modified file
+	var buf bytes.Buffer
+	if err := format.Node(&buf, fset, node); err != nil {
+		return err
+	}
+
+	return os.WriteFile(filename, buf.Bytes(), 0644)
+}
+
+// findExistingTracerImport reports whether the tracer package is already
+// imported by the file, and the alias it is imported under (defaulting to
+// "tracer" when it is not yet imported).
+func findExistingTracerImport(node *ast.File) (bool, string) {
 	tracerAlias := "tracer"
 
-	// Check if tracer is already imported
 	for _, imp := range node.Imports {
 		if imp.Path.Value == `"github.com/LFDT-Panurus/panurus/tools/profiler/tracer"` {
-			hasTracerImport = true
 			if imp.Name != nil {
 				tracerAlias = imp.Name.Name
 			}
 
-			break
+			return true, tracerAlias
 		}
 	}
 
-	// Check if any functions need instrumentation
+	return false, tracerAlias
+}
+
+// fileNeedsInstrumentation reports whether the file contains any function
+// that is eligible for tracer instrumentation.
+func fileNeedsInstrumentation(node *ast.File) bool {
 	needsTracer := false
+
 	ast.Inspect(node, func(n ast.Node) bool {
 		fn, ok := n.(*ast.FuncDecl)
 		if !ok {
@@ -114,18 +153,14 @@ func instrumentFile(filename string) error {
 		return true
 	})
 
-	if !needsTracer {
-		return nil
-	}
+	return needsTracer
+}
 
-	// Add tracer import if needed
-	if !hasTracerImport {
-		tracerAlias = findUniqueAlias(node, "tracer")
-		addTracerImport(node, tracerAlias)
-		modified = true
-	}
+// instrumentFunctions adds a tracer call to every eligible function in the
+// file that does not already have one. It reports whether it modified anything.
+func instrumentFunctions(node *ast.File, tracerAlias string) bool {
+	modified := false
 
-	// Add tracer calls to functions
 	ast.Inspect(node, func(n ast.Node) bool {
 		fn, ok := n.(*ast.FuncDecl)
 		if !ok {
@@ -144,17 +179,7 @@ func instrumentFile(filename string) error {
 		return true
 	})
 
-	if !modified {
-		return nil
-	}
-
-	// Write the modified file
-	var buf bytes.Buffer
-	if err := format.Node(&buf, fset, node); err != nil {
-		return err
-	}
-
-	return os.WriteFile(filename, buf.Bytes(), 0644)
+	return modified
 }
 
 // findUniqueAlias finds a unique identifier name to avoid conflicts.

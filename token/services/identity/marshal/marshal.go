@@ -144,6 +144,8 @@ type Result struct {
 
 // DecodeIdentity parses a DER SEQUENCE containing either
 // [INTEGER, OCTET STRING] or [UTF8String, OCTET STRING].
+//
+//nolint:gocognit // hand-rolled DER parser threading a byte offset sequentially across fields on untrusted input; splitting would risk a subtle offset bug for no real complexity reduction
 func DecodeIdentity(b []byte) (Result, error) {
 	var r Result
 

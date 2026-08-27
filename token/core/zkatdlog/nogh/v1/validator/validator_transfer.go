@@ -40,6 +40,8 @@ func TransferActionValidate(c context.Context, ctx *Context) error {
 // This mirrors the open-policy issuer behaviour in IssueValidate and is intentional for
 // deployments that do not restrict which identities may authorize redemptions.
 // When issuer restriction is required for redemptions, populate PP.IssuerIDs.
+//
+//nolint:gocognit // sequential signature-policy checks (redeem vs non-redeem, open vs restricted issuer policy) that are security-sensitive; splitting would not reduce real complexity, only hide it behind indirection
 func TransferSignatureValidate(c context.Context, ctx *Context) error {
 	var signatures [][]byte
 
@@ -121,6 +123,8 @@ func TransferSignatureValidate(c context.Context, ctx *Context) error {
 // Owner check: both the input token owner and the FabToken owner are required to be
 // non-empty. An empty (nil or zero-length) owner on either side is rejected with
 // ErrOwnersMismatch to prevent a free-claim of ownerless tokens via upgrade.
+//
+//nolint:gocognit // per-input upgrade-witness recomputation and comparison with several security-sensitive guards; splitting would not reduce real complexity, only hide it behind indirection
 func TransferUpgradeWitnessValidate(c context.Context, ctx *Context) error {
 	// recall that TransferActionValidate has been called before this function
 
@@ -190,6 +194,8 @@ func TransferZKProofValidate(c context.Context, ctx *Context) error {
 // It ensures that HTLC scripts only transfer ownership of a single token and that the script conditions are met.
 // Nil entries in ctx.InputTokens and ctx.TransferAction.Outputs are guarded against explicitly
 // so that this function never panics, regardless of pipeline order.
+//
+//nolint:gocognit // sequential HTLC script validation across inputs and outputs with several security-sensitive guards; splitting would not reduce real complexity, only hide it behind indirection
 func TransferHTLCValidate(c context.Context, ctx *Context) error {
 	now := time.Now()
 

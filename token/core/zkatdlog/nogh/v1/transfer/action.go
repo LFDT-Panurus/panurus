@@ -347,6 +347,8 @@ func (t *Action) GetIssuer() driver.Identity {
 }
 
 // Validate ensures the Action is well-formed
+//
+//nolint:gocognit // sequential structural checks of the transfer action's independent fields; splitting would not reduce real complexity, only hide it behind indirection
 func (t *Action) Validate() error {
 	if len(t.Inputs) == 0 {
 		return ErrInvalidInputs
@@ -482,6 +484,8 @@ func (t *Action) Serialize() ([]byte, error) {
 }
 
 // Deserialize un-marshals a TransferAction from bytes
+//
+//nolint:gocognit // sequential field-by-field reconstruction and validation from the protobuf wire format; splitting would not reduce real complexity, only hide it behind indirection
 func (t *Action) Deserialize(raw []byte) error {
 	action := &actions.TransferAction{}
 	err := proto.Unmarshal(raw, action)

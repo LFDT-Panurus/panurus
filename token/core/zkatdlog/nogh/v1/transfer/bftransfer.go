@@ -139,6 +139,8 @@ type BulletProofProver struct {
 }
 
 // NewBulletProofProver returns a new BulletProofProver instance.
+//
+//nolint:gocognit // sequential construction of independent proof sub-components (type-and-sum, range correctness); splitting would not reduce real complexity, only hide it behind indirection
 func NewBulletProofProver(inputWitness, outputWitness []*token.Metadata, inputs, outputs []*math.G1, pp *v1.PublicParams) (*BulletProofProver, error) {
 	if len(inputWitness) == 0 {
 		return nil, errors.Wrap(ErrInvalidInputs, "cannot create bulletproof prover: no input witnesses")

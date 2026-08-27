@@ -38,13 +38,7 @@ var (
 //
 // This behavior matches the semantics implemented by current token drivers.
 func AuditingSignaturesValidate[P driver.PublicParameters, T driver.Input, TA driver.TransferAction, IA driver.IssueAction, DS driver.Deserializer](c context.Context, ctx *Context[P, T, TA, IA, DS]) error {
-	auditorSignatures := make([]*driver.AuditorSignature, 0)
-	for _, signature := range ctx.TokenRequest.Signatures {
-		if signature == nil || signature.Auditor == nil {
-			continue
-		}
-		auditorSignatures = append(auditorSignatures, signature.Auditor)
-	}
+	auditorSignatures := collectAuditorSignatures(ctx.TokenRequest)
 	if len(ctx.PP.Auditors()) == 0 {
 		// enforce no auditor signatures are attached
 		if len(auditorSignatures) != 0 {
@@ -65,23 +59,49 @@ func AuditingSignaturesValidate[P driver.PublicParameters, T driver.Input, TA dr
 	// to satisfy the auditing requirement (1-of-N policy).
 
 	for _, auditorSignature := range auditorSignatures {
-		auditor := auditorSignature.Identity
-		// check that issuer of this issue action is authorized
-		if !slices.ContainsFunc(auditors, auditorSignature.Identity.Equal) {
-			return errors.Errorf("auditor [%s] is not in auditors", auditor)
+		if err := verifyAuditorSignature(c, ctx, auditors, auditorSignature); err != nil {
+			return err
 		}
+	}
 
-		verifier, err := ctx.Deserializer.GetAuditorVerifier(c, auditor)
-		if err != nil {
-			return errors.Wrapf(err, "failed to deserialize auditor's public key")
+	return nil
+}
+
+// collectAuditorSignatures returns the auditor signatures attached to a token
+// request, in the order they appear.
+func collectAuditorSignatures(tr *driver.TokenRequest) []*driver.AuditorSignature {
+	var auditorSignatures []*driver.AuditorSignature
+	for _, signature := range tr.Signatures {
+		if signature == nil || signature.Auditor == nil {
+			continue
 		}
-		if utils.IsNil(ctx.SignatureProvider) {
-			return ErrNilSignatureProvider
-		}
-		_, err = ctx.SignatureProvider.HasBeenSignedBy(c, auditor, verifier)
-		if err != nil {
-			return errors.Wrap(err, "failed to verify auditor's signature")
-		}
+		auditorSignatures = append(auditorSignatures, signature.Auditor)
+	}
+
+	return auditorSignatures
+}
+
+// verifyAuditorSignature checks that one auditor signature was produced by a
+// configured auditor and is valid.
+func verifyAuditorSignature[P driver.PublicParameters, T driver.Input, TA driver.TransferAction, IA driver.IssueAction, DS driver.Deserializer](
+	c context.Context, ctx *Context[P, T, TA, IA, DS], auditors []driver.Identity, auditorSignature *driver.AuditorSignature,
+) error {
+	auditor := auditorSignature.Identity
+	// check that issuer of this issue action is authorized
+	if !slices.ContainsFunc(auditors, auditorSignature.Identity.Equal) {
+		return errors.Errorf("auditor [%s] is not in auditors", auditor)
+	}
+
+	verifier, err := ctx.Deserializer.GetAuditorVerifier(c, auditor)
+	if err != nil {
+		return errors.Wrapf(err, "failed to deserialize auditor's public key")
+	}
+	if utils.IsNil(ctx.SignatureProvider) {
+		return ErrNilSignatureProvider
+	}
+	_, err = ctx.SignatureProvider.HasBeenSignedBy(c, auditor, verifier)
+	if err != nil {
+		return errors.Wrap(err, "failed to verify auditor's signature")
 	}
 
 	return nil

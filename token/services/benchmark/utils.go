@@ -41,22 +41,31 @@ func GenerateCases(bits []uint64, curves []math.CurveID, inputs []int, outputs [
 	for _, w := range workers {
 		for _, b := range bits {
 			for _, c := range curves {
-				for _, ni := range inputs {
-					for _, no := range outputs {
-						name := fmt.Sprintf("Setup(bits %d, curve %s, #i %d, #o %d) with %d workers", b, math2.CurveIDToString(c), ni, no, w)
-						cases = append(cases, TestCase{
-							Name: name,
-							BenchmarkCase: &Case{
-								Workers:    w,
-								Bits:       b,
-								CurveID:    c,
-								NumInputs:  ni,
-								NumOutputs: no,
-							},
-						})
-					}
-				}
+				cases = append(cases, casesForCurve(w, b, c, inputs, outputs)...)
 			}
+		}
+	}
+
+	return cases
+}
+
+// casesForCurve generates the TestCases for one (workers, bits, curve)
+// combination, across every requested input/output count pair.
+func casesForCurve(w int, b uint64, c math.CurveID, inputs, outputs []int) []TestCase {
+	var cases []TestCase
+	for _, ni := range inputs {
+		for _, no := range outputs {
+			name := fmt.Sprintf("Setup(bits %d, curve %s, #i %d, #o %d) with %d workers", b, math2.CurveIDToString(c), ni, no, w)
+			cases = append(cases, TestCase{
+				Name: name,
+				BenchmarkCase: &Case{
+					Workers:    w,
+					Bits:       b,
+					CurveID:    c,
+					NumInputs:  ni,
+					NumOutputs: no,
+				},
+			})
 		}
 	}
 

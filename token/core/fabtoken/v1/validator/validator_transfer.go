@@ -31,6 +31,8 @@ func TransferActionValidate(c context.Context, ctx *Context) error {
 // A nil input entry, a nil token inside an input, or a nil output entry yields a validation
 // error rather than a panic, regardless of the order in which the validation steps of the
 // pipeline are executed.
+//
+//nolint:gocognit // sequential per-input signature/ownership checks that are security-sensitive; splitting would not reduce real complexity, only hide it behind indirection
 func TransferSignatureValidate(c context.Context, ctx *Context) error {
 	if len(ctx.TransferAction.Inputs) == 0 {
 		return errors.Errorf("invalid number of token inputs, expected at least 1")
@@ -111,6 +113,8 @@ func TransferSignatureValidate(c context.Context, ctx *Context) error {
 }
 
 // TransferBalanceValidate checks that the sum of the inputs is equal to the sum of the outputs
+//
+//nolint:gocognit // input/output value-conservation and type-consistency checks that are security-sensitive; splitting would not reduce real complexity, only hide it behind indirection
 func TransferBalanceValidate(c context.Context, ctx *Context) error {
 	if ctx.TransferAction.NumOutputs() == 0 {
 		return errors.New("there is no output")
@@ -176,6 +180,8 @@ func TransferBalanceValidate(c context.Context, ctx *Context) error {
 // A nil input token, a nil output or a signature missing at the index of an HTLC-owned
 // input yields a validation error rather than a panic, regardless of the order in which
 // the validation steps of the pipeline are executed.
+//
+//nolint:gocognit // sequential HTLC script validation across inputs and outputs with several security-sensitive guards; splitting would not reduce real complexity, only hide it behind indirection
 func TransferHTLCValidate(c context.Context, ctx *Context) error {
 	now := time.Now()
 	outputs := ctx.TransferAction.GetOutputs()

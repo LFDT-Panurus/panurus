@@ -137,6 +137,42 @@ func (t *Transaction) Outputs(ctx context.Context) (*OutputStream, error) {
 	return NewOutputStream(outs), nil
 }
 
+// htlcHashOptions extracts the optional htlc.hash, htlc.hashFunc and
+// htlc.hashEncoding transfer attributes, defaulting hashFunc to crypto.SHA256
+// when it is absent or explicitly zero.
+func htlcHashOptions(attributes map[string]any) ([]byte, crypto.Hash, encoding.Encoding, error) {
+	hashFunc := crypto.SHA256 // default hash function
+	if attributes == nil {
+		return nil, hashFunc, 0, nil
+	}
+
+	var hash []byte
+	if boxed, ok := attributes["htlc.hash"]; ok {
+		hash, ok = boxed.([]byte)
+		if !ok {
+			return nil, 0, 0, errors.Errorf("expected htlc.hash attribute to be []byte, got [%T]", boxed)
+		}
+	}
+	if boxed, ok := attributes["htlc.hashFunc"]; ok {
+		hashFunc, ok = boxed.(crypto.Hash)
+		if !ok {
+			return nil, 0, 0, errors.Errorf("expected htlc.hashFunc attribute to be crypto.Hash, got [%T]", boxed)
+		}
+		if hashFunc == 0 {
+			hashFunc = crypto.SHA256 // default hash function
+		}
+	}
+	var hashEncoding encoding.Encoding
+	if boxed, ok := attributes["htlc.hashEncoding"]; ok {
+		hashEncoding, ok = boxed.(encoding.Encoding)
+		if !ok {
+			return nil, 0, 0, errors.Errorf("expected htlc.hashEncoding attribute to be Encoding, got [%T]", boxed)
+		}
+	}
+
+	return hash, hashFunc, hashEncoding, nil
+}
+
 // Lock appends a lock action to the token request of the transaction
 func (t *Transaction) Lock(ctx context.Context, wallet *token.OwnerWallet, sender view.Identity, typ token2.Type, value uint64, recipient view.Identity, deadline time.Duration, opts ...token.TransferOption) ([]byte, error) {
 	options, err := compileTransferOptions(opts...)
@@ -157,34 +193,9 @@ func (t *Transaction) Lock(ctx context.Context, wallet *token.OwnerWallet, sende
 		}
 	}
 
-	var hash []byte
-	hashFunc := crypto.SHA256 // default hash function
-	var hashEncoding encoding.Encoding
-	if options.Attributes != nil {
-		boxed, ok := options.Attributes["htlc.hash"]
-		if ok {
-			hash, ok = boxed.([]byte)
-			if !ok {
-				return nil, errors.Errorf("expected htlc.hash attribute to be []byte, got [%T]", boxed)
-			}
-		}
-		boxed, ok = options.Attributes["htlc.hashFunc"]
-		if ok {
-			hashFunc, ok = boxed.(crypto.Hash)
-			if !ok {
-				return nil, errors.Errorf("expected htlc.hashFunc attribute to be crypto.Hash, got [%T]", boxed)
-			}
-			if hashFunc == 0 {
-				hashFunc = crypto.SHA256 // default hash function
-			}
-		}
-		boxed, ok = options.Attributes["htlc.hashEncoding"]
-		if ok {
-			hashEncoding, ok = boxed.(encoding.Encoding)
-			if !ok {
-				return nil, errors.Errorf("expected htlc.hashEncoding attribute to be Encoding, got [%T]", boxed)
-			}
-		}
+	hash, hashFunc, hashEncoding, err := htlcHashOptions(options.Attributes)
+	if err != nil {
+		return nil, err
 	}
 	scriptID, preImage, script, err := t.recipientAsScript(sender, recipient, deadline, hash, hashFunc, hashEncoding)
 	if err != nil {

@@ -21,6 +21,7 @@ import (
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	driver2 "github.com/hyperledger-labs/fabric-smart-client/platform/common/driver"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/common/utils/collections"
+	"github.com/hyperledger-labs/fabric-smart-client/platform/common/utils/collections/sets"
 )
 
 var (
@@ -137,40 +138,46 @@ func (a *DefaultCheckers) CheckTransactions(ctx context.Context) ([]string, erro
 			return nil, errors.Errorf("token request [%s] is nil", transactionRecord.TxID)
 		}
 
-		// check the ledger
-		lVC, _, err := l.Status(transactionRecord.TxID)
-		if err != nil {
-			lVC = network.Unknown
-		}
-		switch {
-		case transactionRecord.Status == driver.Confirmed && lVC != network.Valid:
-			if err != nil {
-				errorMessages = append(errorMessages, fmt.Sprintf("failed to get ledger transaction status for [%s]: [%s]", transactionRecord.TxID, err))
-			}
-			errorMessages = append(errorMessages, fmt.Sprintf("transaction record [%s] is valid for vault but not for the ledger [%d]", transactionRecord.TxID, lVC))
-		case transactionRecord.Status == driver.Deleted && lVC != network.Invalid:
-			if lVC != network.Unknown || transactionRecord.Status != driver.Deleted {
-				if err != nil {
-					errorMessages = append(errorMessages, fmt.Sprintf("failed to get ledger transaction status for [%s]: [%s]", transactionRecord.TxID, err))
-				}
-				errorMessages = append(errorMessages, fmt.Sprintf("transaction record [%s] is invalid for vault but not for the ledger [%d]", transactionRecord.TxID, lVC))
-			}
-		case transactionRecord.Status == driver.Unknown && lVC != network.Unknown:
-			errorMessages = append(errorMessages, fmt.Sprintf("transaction record [%s] is unknown for vault but not for the ledger [%d]", transactionRecord.TxID, lVC))
-		case transactionRecord.Status == driver.Pending && lVC == network.Busy:
-			// this is fine, let's continue
-		case transactionRecord.Status == driver.Pending && lVC != network.Unknown:
-			errorMessages = append(errorMessages, fmt.Sprintf("transaction record [%s] is busy for vault but not for the ledger [%d]", transactionRecord.TxID, lVC))
-		}
+		errorMessages = append(errorMessages, compareTransactionStatus(l, transactionRecord)...)
 	}
 
 	return errorMessages, nil
 }
 
+// compareTransactionStatus resolves one local transaction record against the
+// ledger, returning any mismatch as a plain message.
+func compareTransactionStatus(l *network.Ledger, transactionRecord *driver.TransactionRecord) []string {
+	var errorMessages []string
+	lVC, _, err := l.Status(transactionRecord.TxID)
+	if err != nil {
+		lVC = network.Unknown
+	}
+	switch {
+	case transactionRecord.Status == driver.Confirmed && lVC != network.Valid:
+		if err != nil {
+			errorMessages = append(errorMessages, fmt.Sprintf("failed to get ledger transaction status for [%s]: [%s]", transactionRecord.TxID, err))
+		}
+		errorMessages = append(errorMessages, fmt.Sprintf("transaction record [%s] is valid for vault but not for the ledger [%d]", transactionRecord.TxID, lVC))
+	case transactionRecord.Status == driver.Deleted && lVC != network.Invalid:
+		if lVC != network.Unknown || transactionRecord.Status != driver.Deleted {
+			if err != nil {
+				errorMessages = append(errorMessages, fmt.Sprintf("failed to get ledger transaction status for [%s]: [%s]", transactionRecord.TxID, err))
+			}
+			errorMessages = append(errorMessages, fmt.Sprintf("transaction record [%s] is invalid for vault but not for the ledger [%d]", transactionRecord.TxID, lVC))
+		}
+	case transactionRecord.Status == driver.Unknown && lVC != network.Unknown:
+		errorMessages = append(errorMessages, fmt.Sprintf("transaction record [%s] is unknown for vault but not for the ledger [%d]", transactionRecord.TxID, lVC))
+	case transactionRecord.Status == driver.Pending && lVC == network.Busy:
+		// this is fine, let's continue
+	case transactionRecord.Status == driver.Pending && lVC != network.Unknown:
+		errorMessages = append(errorMessages, fmt.Sprintf("transaction record [%s] is busy for vault but not for the ledger [%d]", transactionRecord.TxID, lVC))
+	}
+
+	return errorMessages
+}
+
 // CheckUnspentTokens checks that for each unspent token, the content of the local database matches the ledger
 func (a *DefaultCheckers) CheckUnspentTokens(ctx context.Context) ([]string, error) {
-	var errorMessages []string
-
 	tms, err := a.tmsProvider.GetManagementService(token.WithTMSID(a.tmsID))
 	if err != nil {
 		return nil, errors.WithMessagef(err, "failed getting tms [%s]", a.tmsID)
@@ -180,11 +187,30 @@ func (a *DefaultCheckers) CheckUnspentTokens(ctx context.Context) ([]string, err
 		return nil, errors.WithMessagef(err, "failed to get network [%s]", tms.ID())
 	}
 	qe := tms.Vault().NewQueryEngine()
+	unspentTokenIDs, err := collectUnspentTokenIDs(ctx, qe)
+	if err != nil {
+		return nil, err
+	}
+
+	ledgerTokenContent, err := net.QueryTokens(ctx, tms.Namespace(), unspentTokenIDs)
+	if err != nil {
+		return []string{fmt.Sprintf("failed to query tokens: [%s]", err)}, nil
+	}
+	if len(unspentTokenIDs) != len(ledgerTokenContent) {
+		return nil, errors.Errorf("length diffrence")
+	}
+
+	return matchTokenContent(ctx, qe, unspentTokenIDs, ledgerTokenContent)
+}
+
+// collectUnspentTokenIDs drains qe's unspent-token iterator into a slice of IDs.
+func collectUnspentTokenIDs(ctx context.Context, qe *token.QueryEngine) ([]*token2.ID, error) {
 	uit, err := qe.UnspentTokensIterator(ctx)
 	if err != nil {
 		return nil, errors.WithMessagef(err, "failed querying utxo engine")
 	}
 	defer uit.Close()
+
 	var unspentTokenIDs []*token2.ID
 	for {
 		tok, err := uit.Next()
@@ -196,28 +222,28 @@ func (a *DefaultCheckers) CheckUnspentTokens(ctx context.Context) ([]string, err
 		}
 		unspentTokenIDs = append(unspentTokenIDs, &tok.Id)
 	}
-	ledgerTokenContent, err := net.QueryTokens(ctx, tms.Namespace(), unspentTokenIDs)
-	if err != nil {
-		errorMessages = append(errorMessages, fmt.Sprintf("failed to query tokens: [%s]", err))
-	} else {
-		if len(unspentTokenIDs) != len(ledgerTokenContent) {
-			return nil, errors.Errorf("length diffrence")
-		}
-		index := 0
-		if err := qe.GetTokenOutputs(ctx, unspentTokenIDs, func(id *token2.ID, tokenRaw []byte) error {
-			for _, content := range ledgerTokenContent {
-				if bytes.Equal(content, tokenRaw) {
-					return nil
-				}
+
+	return unspentTokenIDs, nil
+}
+
+// matchTokenContent compares each local unspent token's raw content against
+// its ledger counterpart, returning a message for each mismatch.
+func matchTokenContent(ctx context.Context, qe *token.QueryEngine, unspentTokenIDs []*token2.ID, ledgerTokenContent [][]byte) ([]string, error) {
+	var errorMessages []string
+	index := 0
+	if err := qe.GetTokenOutputs(ctx, unspentTokenIDs, func(id *token2.ID, tokenRaw []byte) error {
+		for _, content := range ledgerTokenContent {
+			if bytes.Equal(content, tokenRaw) {
+				return nil
 			}
-
-			errorMessages = append(errorMessages, fmt.Sprintf("token content does not match at [%s][%d], [%s]", id, index, utils.Hashable(tokenRaw)))
-			index++
-
-			return nil
-		}); err != nil {
-			return nil, errors.WithMessagef(err, "failed to match ledger token content with local")
 		}
+
+		errorMessages = append(errorMessages, fmt.Sprintf("token content does not match at [%s][%d], [%s]", id, index, utils.Hashable(tokenRaw)))
+		index++
+
+		return nil
+	}); err != nil {
+		return nil, errors.WithMessagef(err, "failed to match ledger token content with local")
 	}
 
 	return errorMessages, nil
@@ -256,36 +282,44 @@ func (a *DefaultCheckers) CheckTokenSpendability(ctx context.Context) ([]string,
 		if tok == nil {
 			break
 		}
-		// is the token's format supported?
-		if !supportedTokenFormatsSet.Contains(tok.Format) {
-			errorMessages = append(errorMessages, fmt.Sprintf("token format not supported [%s][%s]", tok.ID, tok.Format))
-
-			continue
-		}
-
-		logger.DebugfContext(ctx, "deobfuscating token [%s][%s]...", tok.ID, tok.Format)
-		// extract the token's recipients and try to get a verifier for it
-		_, _, recipients, _, err := ts.Deobfuscate(ctx, tok.Token, tok.TokenMetadata)
-		if err != nil {
-			errorMessages = append(errorMessages, fmt.Sprintf("failed to deobfuscate token [%s][%s], [%s]", tok.ID, tok.Format, err))
-
-			continue
-		}
-		logger.DebugfContext(ctx, "deobfuscated token [%s][%s][%v]...", tok.ID, tok.Format, recipients)
-		if len(recipients) == 0 {
-			errorMessages = append(errorMessages, fmt.Sprintf("token recipient list is empty for [%s][%s]", tok.ID, tok.Format))
-
-			continue
-		}
-		for _, recipient := range recipients {
-			_, err = sigService.OwnerVerifier(ctx, recipient)
-			if err != nil {
-				errorMessages = append(errorMessages, fmt.Sprintf("failed to verify recipient [%s][%s][%s], [%s]", tok.ID, recipient, tok.Format, err))
-			}
-		}
+		errorMessages = append(errorMessages, checkTokenSpendability(ctx, ts, sigService, supportedTokenFormatsSet, tok)...)
 	}
 
 	logger.DebugfContext(ctx, "finished checks with [%d] error messages", len(errorMessages))
 
 	return errorMessages, nil
+}
+
+// checkTokenSpendability verifies that one unspent ledger token has a
+// supported format, can be deobfuscated, and that a verifier can be resolved
+// for each of its recipients - the conditions under which this node can
+// actually spend it later.
+func checkTokenSpendability(
+	ctx context.Context, ts *token.TokensService, sigService *token.SignatureService,
+	supportedTokenFormatsSet sets.Set[token2.Format], tok *token2.LedgerToken,
+) []string {
+	// is the token's format supported?
+	if !supportedTokenFormatsSet.Contains(tok.Format) {
+		return []string{fmt.Sprintf("token format not supported [%s][%s]", tok.ID, tok.Format)}
+	}
+
+	logger.DebugfContext(ctx, "deobfuscating token [%s][%s]...", tok.ID, tok.Format)
+	// extract the token's recipients and try to get a verifier for it
+	_, _, recipients, _, err := ts.Deobfuscate(ctx, tok.Token, tok.TokenMetadata)
+	if err != nil {
+		return []string{fmt.Sprintf("failed to deobfuscate token [%s][%s], [%s]", tok.ID, tok.Format, err)}
+	}
+	logger.DebugfContext(ctx, "deobfuscated token [%s][%s][%v]...", tok.ID, tok.Format, recipients)
+	if len(recipients) == 0 {
+		return []string{fmt.Sprintf("token recipient list is empty for [%s][%s]", tok.ID, tok.Format)}
+	}
+
+	var errorMessages []string
+	for _, recipient := range recipients {
+		if _, err := sigService.OwnerVerifier(ctx, recipient); err != nil {
+			errorMessages = append(errorMessages, fmt.Sprintf("failed to verify recipient [%s][%s][%s], [%s]", tok.ID, recipient, tok.Format, err))
+		}
+	}
+
+	return errorMessages
 }

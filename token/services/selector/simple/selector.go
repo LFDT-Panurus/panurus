@@ -65,6 +65,14 @@ func (s *selector) concurrencyCheck(ctx context.Context, ids []*token2.ID) error
 	return err
 }
 
+// greedy token-selection/locking loop whose branches share mutable state
+// (sum, potentialSumWithLocked, toBeSpent/toBeCertified, retry count) across
+// iterations, with several early-return paths that must each unlock what was
+// locked so far; splitting risks missing one of those unlocks or otherwise
+// changing this security-sensitive selection/locking logic, for no real
+// complexity reduction.
+//
+//nolint:gocognit
 func (s *selector) selectByID(ctx context.Context, ownerFilter token.OwnerFilter, q string, tokenType token2.Type) ([]*token2.ID, token2.Quantity, error) {
 	var toBeSpent []*token2.ID
 	var sum token2.Quantity

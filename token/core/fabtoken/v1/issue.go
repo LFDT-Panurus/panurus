@@ -30,6 +30,8 @@ func NewIssueService(publicParamsManager driver.PublicParamsManager, walletServi
 // Issue returns an IssueAction as a function of the passed arguments
 // Issue also returns a serialization OutputMetadata associated with issued tokens
 // and the identity of the issuer
+//
+//nolint:gocognit // sequential construction and validation of an issue action across independent components; splitting would not reduce real complexity, only hide it behind indirection
 func (s *IssueService) Issue(ctx context.Context, issuerIdentity driver.Identity, tokenType token2.Type, values []uint64, owners [][]byte, opts *driver.IssueOptions) (driver.IssueAction, *driver.IssueMetadata, error) {
 	for _, owner := range owners {
 		// a recipient cannot be empty
@@ -110,6 +112,8 @@ func (s *IssueService) Issue(ctx context.Context, issuerIdentity driver.Identity
 }
 
 // VerifyIssue checks if the outputs of an IssueAction match the passed tokenInfos
+//
+//nolint:gocognit // sequential validation of issue action outputs against metadata; splitting would not reduce real complexity, only hide it behind indirection
 func (s *IssueService) VerifyIssue(ctx context.Context, ia driver.IssueAction, metadata []*driver.IssueOutputMetadata) error {
 	if ia == nil {
 		return errors.Errorf("nil issue action")

@@ -499,6 +499,30 @@ func (db *IdentityStore) RegisterIdentityDescriptor(ctx context.Context, descrip
 	return nil
 }
 
+// storeIdentityWithAuditInfo stores id's signer info and, if present, its audit
+// info, both keyed by id's unique hash. label names id in error messages
+// ("descriptor's identity" vs "alias"). Each insert is individually idempotent,
+// isolated by its own savepoint (signerInfoSavepoint, auditInfoSavepoint) -
+// see registerIdentityDescriptor for why that matters on PostgreSQL.
+func (db *IdentityStore) storeIdentityWithAuditInfo(ctx context.Context, tx dbTransaction, id tdriver.Identity, signerInfo, auditInfo []byte, label, signerInfoSavepoint, auditInfoSavepoint string) error {
+	h := id.UniqueID()
+	if err := db.insertIdempotently(ctx, tx, signerInfoSavepoint, func() (bool, error) {
+		return db.storeSignerInfo(ctx, tx, h, id, signerInfo, false)
+	}); err != nil {
+		return errors.Wrapf(err, "failed to store signer info for %s", label)
+	}
+
+	if len(auditInfo) != 0 {
+		if err := db.insertIdempotently(ctx, tx, auditInfoSavepoint, func() (bool, error) {
+			return db.storeIdentityData(ctx, tx, h, id, auditInfo, nil, nil, false)
+		}); err != nil {
+			return errors.Wrapf(err, "failed to store audit info for %s", label)
+		}
+	}
+
+	return nil
+}
+
 func (db *IdentityStore) registerIdentityDescriptor(
 	ctx context.Context,
 	descriptor *idriver.IdentityDescriptor,
@@ -519,8 +543,6 @@ func (db *IdentityStore) registerIdentityDescriptor(
 		}
 	}()
 
-	h := descriptor.Identity.UniqueID()
-
 	// Each insert below is individually idempotent, and they all run on the same
 	// transaction, so each one is isolated by its own savepoint. Without it, the first
 	// duplicate key would abort the whole transaction on PostgreSQL and every following
@@ -529,33 +551,13 @@ func (db *IdentityStore) registerIdentityDescriptor(
 	// failure. Rolling back to the savepoint clears that state, so a registration that was
 	// only partially written (e.g. interrupted by a crash) is completed by the retry
 	// instead of being rejected.
-	if err := db.insertIdempotently(ctx, tx, savepointIdentitySignerInfo, func() (bool, error) {
-		return db.storeSignerInfo(ctx, tx, h, descriptor.Identity, descriptor.SignerInfo, false)
-	}); err != nil {
-		return errors.Wrapf(err, "failed to store signer info for descriptor's identity")
-	}
-
-	if len(descriptor.AuditInfo) != 0 {
-		if err := db.insertIdempotently(ctx, tx, savepointIdentityAuditInfo, func() (bool, error) {
-			return db.storeIdentityData(ctx, tx, h, descriptor.Identity, descriptor.AuditInfo, nil, nil, false)
-		}); err != nil {
-			return errors.Wrapf(err, "failed to store audit info for descriptor's identity")
-		}
+	if err := db.storeIdentityWithAuditInfo(ctx, tx, descriptor.Identity, descriptor.SignerInfo, descriptor.AuditInfo, "descriptor's identity", savepointIdentitySignerInfo, savepointIdentityAuditInfo); err != nil {
+		return err
 	}
 
 	if !alias.IsNone() && !descriptor.Identity.Equal(alias) {
-		aliasHash := alias.UniqueID()
-		if err := db.insertIdempotently(ctx, tx, savepointAliasSignerInfo, func() (bool, error) {
-			return db.storeSignerInfo(ctx, tx, aliasHash, alias, descriptor.SignerInfo, false)
-		}); err != nil {
-			return errors.Wrapf(err, "failed to store signer info for alias")
-		}
-		if len(descriptor.AuditInfo) != 0 {
-			if err := db.insertIdempotently(ctx, tx, savepointAliasAuditInfo, func() (bool, error) {
-				return db.storeIdentityData(ctx, tx, aliasHash, alias, descriptor.AuditInfo, nil, nil, false)
-			}); err != nil {
-				return errors.Wrapf(err, "failed to store audit info for alias")
-			}
+		if err := db.storeIdentityWithAuditInfo(ctx, tx, alias, descriptor.SignerInfo, descriptor.AuditInfo, "alias", savepointAliasSignerInfo, savepointAliasAuditInfo); err != nil {
+			return err
 		}
 	}
 	if err := tx.Commit(); err != nil {

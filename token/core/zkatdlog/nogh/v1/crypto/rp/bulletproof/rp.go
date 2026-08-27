@@ -283,6 +283,8 @@ func (p *rangeProver) Prove() (*RangeProof, error) {
 }
 
 // preprocess prepares data for the inner product argument
+//
+//nolint:gocognit // sequential bit-decomposition and commitment math for the bulletproof range proof; splitting would not reduce real complexity, only hide it behind indirection
 func (p *rangeProver) preprocess() ([]*math.Zr, []*math.Zr, *math.Zr, *RangeProof, error) {
 	left := make([]*math.Zr, p.BitLength)
 	right := make([]*math.Zr, p.BitLength)
@@ -501,6 +503,8 @@ func NewRangeVerifier(
 
 // Verify enables a rangeVerifier to check the validity of a RangeProof.
 // It returns nil if the proof is valid, or an error otherwise.
+//
+//nolint:gocognit // sequential structural and cryptographic checks of the bulletproof range proof; splitting would not reduce real complexity, only hide it behind indirection
 func (v *rangeVerifier) Verify(rp *RangeProof) error {
 	// check that the proof is well-formed
 	if rp.Data.InnerProduct == nil || rp.Data.C == nil || rp.Data.D == nil {

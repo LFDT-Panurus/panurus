@@ -166,6 +166,143 @@ func (r *Registry) RegisterIdentity(ctx context.Context, config driver.IdentityC
 	return r.Role.RegisterIdentity(ctx, config)
 }
 
+// resolveIdentity maps id to an (identity, walletID) pair via the role
+// provider, falling back to resolving id as a plain identity and looking up
+// its wallet id directly when the role provider's own mapping fails. The
+// returned error, when non-nil, is already the fully-formatted error Lookup
+// must return as-is.
+func (r *Registry) resolveIdentity(ctx context.Context, id driver.WalletLookupID) (driver.Identity, idriver.WalletID, error) {
+	ident, walletID, err := r.Role.MapToIdentity(ctx, id)
+	if err == nil {
+		return ident, walletID, nil
+	}
+
+	r.Logger.Errorf("failed to map wallet [%T] to identity [%s], use a fallback strategy", id, err)
+	// give it a second change
+	passedIdentity, ok := toViewIdentity(id)
+	if !ok {
+		return nil, "", errors.WithMessagef(err, "failed to lookup wallet [%s]", id)
+	}
+
+	r.Logger.DebugfContext(ctx, "lookup failed, check if there is a wallet for identity [%s]", passedIdentity)
+	// is this identity registered
+	res := r.GetWalletID(ctx, passedIdentity)
+	if !res.authoritative() {
+		// A storage failure — or a resolution that never went through GetWalletID —
+		// leaves the binding unknown; it must not be treated as "not registered", or
+		// a transient blip would fall through to wallet creation and duplicate state.
+		return nil, "", res.abortError(id)
+	}
+	if !res.Bound() {
+		return nil, "", errors.WithMessagef(err, "failed to lookup wallet [%s]", id)
+	}
+
+	r.Logger.DebugfContext(ctx, "lookup failed, there is a wallet for identity [%s]: [%s]", passedIdentity, res.WalletID)
+	// we got a hit
+	return passedIdentity, res.WalletID, nil
+}
+
+// cachedWallet returns the wallet cached under walletID, if any. The lock is
+// held only for the map read, never while calling external services.
+func (r *Registry) cachedWallet(walletID idriver.WalletID) (driver.Wallet, bool) {
+	r.WalletMu.RLock()
+	defer r.WalletMu.RUnlock()
+	w, ok := r.Wallets[walletID]
+
+	return w, ok
+}
+
+// tryPassedIdentity resolves id as a plain identity and checks whether it has
+// its own registered, cached wallet. A non-nil wallet means the caller can
+// return immediately with the returned walletID; otherwise walletIdentifiers
+// is returned with the resolved wallet id appended (if any), for the
+// caller's later GetIdentityInfo fallback. passedIdentity is returned for
+// logging even on a miss, so the caller's own log line stays consistent with
+// the pre-split version. wID is the wallet id already found by the caller,
+// used only in the Warnf fallback message on a failed probe.
+func (r *Registry) tryPassedIdentity(
+	ctx context.Context,
+	id driver.WalletLookupID,
+	wID idriver.WalletID,
+	walletIdentifiers []string,
+) (driver.Wallet, idriver.WalletID, driver.Identity, []string) {
+	passedIdentity, ok := toViewIdentity(id)
+	if !ok {
+		return nil, "", nil, walletIdentifiers
+	}
+
+	r.Logger.DebugfContext(ctx, "no wallet found, check if there is a wallet for identity [%s]", passedIdentity)
+	// is this identity registered
+	res := r.GetWalletID(ctx, passedIdentity)
+	if res.Failed() {
+		// This probe is only an optimization: MapToIdentity already succeeded (or the
+		// fallback above recovered a binding), so wID is an authoritative candidate and
+		// is already in walletIdentifiers. A failed lookup here therefore costs at most
+		// a reuse opportunity, not correctness — log and continue with the mapped
+		// candidate rather than aborting the whole lookup on a transient blip. Failing
+		// closed belongs only at the branch above, where MapToIdentity failed and this
+		// probe is the sole signal for whether a wallet already exists (issue #2063).
+		r.Logger.Warnf("failed to check wallet binding for identity [%s], continuing with mapped wallet [%s]: %v", passedIdentity, wID, res.Err)
+
+		return nil, "", passedIdentity, walletIdentifiers
+	}
+	if !res.Bound() {
+		return nil, "", passedIdentity, walletIdentifiers
+	}
+
+	r.Logger.DebugfContext(ctx, "no wallet found, there is a wallet for identity [%s]: [%s]", passedIdentity, res.WalletID)
+	// we got a hit
+	if w, ok := r.cachedWallet(res.WalletID); ok {
+		return w, res.WalletID, passedIdentity, walletIdentifiers
+	}
+	r.Logger.DebugfContext(ctx, "no wallet found, there is a wallet for identity [%s]: [%s] but it has not been recreated yet", passedIdentity, res.WalletID)
+
+	// Only a Bound resolution carries a wallet id; an Unbound one has WalletID == ""
+	// and must not be appended (the consuming loop skips empties anyway).
+	return nil, "", passedIdentity, append(walletIdentifiers, res.WalletID)
+}
+
+// tryResolvedIdentity checks whether ident (the identity resolveIdentity
+// settled on) has its own registered, cached wallet. A non-nil wallet means
+// the caller can return immediately with the returned walletID; otherwise
+// walletIdentifiers is returned with the resolved wallet id appended (if
+// any), for the caller's later GetIdentityInfo fallback. walletID is used
+// only for the found-wallet log line, wID only for the Warnf fallback
+// message on a failed probe.
+func (r *Registry) tryResolvedIdentity(
+	ctx context.Context,
+	ident driver.Identity,
+	walletID, wID idriver.WalletID,
+	walletIdentifiers []string,
+) (driver.Wallet, idriver.WalletID, []string) {
+	if len(ident) == 0 {
+		return nil, "", walletIdentifiers
+	}
+
+	res := r.GetWalletID(ctx, ident)
+	r.Logger.DebugfContext(ctx, "wallet for identity [%s] -> [%s:%d]", ident, res.WalletID, res.Status)
+	if res.Failed() {
+		// Optimization probe only (see the probe above): ident came from an
+		// authoritative MapToIdentity, and its wallet id is already a candidate, so a
+		// failed lookup here is not decisive. Log and continue rather than aborting the
+		// lookup on a transient blip (issue #2063).
+		r.Logger.Warnf("failed to check wallet binding for identity [%s], continuing with mapped wallet [%s]: %v", ident, wID, res.Err)
+
+		return nil, "", walletIdentifiers
+	}
+	if !res.Bound() {
+		return nil, "", walletIdentifiers
+	}
+
+	if w, ok := r.cachedWallet(res.WalletID); ok {
+		r.Logger.DebugfContext(ctx, "found wallet [%s:%s:%s:%s]", ident, walletID, w.ID(), res.WalletID)
+
+		return w, res.WalletID, walletIdentifiers
+	}
+
+	return nil, "", append(walletIdentifiers, res.WalletID)
+}
+
 // Lookup searches the wallet corresponding to the passed id.
 // If a wallet is found, Lookup returns the wallet and its identifier.
 // If no wallet is found, Lookup returns the identity info and a potential wallet identifier for the passed id, if anything is found
@@ -180,97 +317,27 @@ func (r *Registry) Lookup(ctx context.Context, id driver.WalletLookupID) (driver
 	r.Logger.DebugfContext(ctx, "lookup wallet by [%T]", id)
 	var walletIdentifiers []string
 
-	ident, walletID, err := r.Role.MapToIdentity(ctx, id)
+	ident, walletID, err := r.resolveIdentity(ctx, id)
 	if err != nil {
-		r.Logger.Errorf("failed to map wallet [%T] to identity [%s], use a fallback strategy", id, err)
-		fail := true
-		// give it a second change
-		passedIdentity, ok := toViewIdentity(id)
-		if ok {
-			r.Logger.DebugfContext(ctx, "lookup failed, check if there is a wallet for identity [%s]", passedIdentity)
-			// is this identity registered
-			res := r.GetWalletID(ctx, passedIdentity)
-			if !res.authoritative() {
-				// A storage failure — or a resolution that never went through GetWalletID —
-				// leaves the binding unknown; it must not be treated as "not registered", or
-				// a transient blip would fall through to wallet creation and duplicate state.
-				return nil, nil, "", res.abortError(id)
-			}
-			if res.Bound() {
-				r.Logger.DebugfContext(ctx, "lookup failed, there is a wallet for identity [%s]: [%s]", passedIdentity, res.WalletID)
-				// we got a hit
-				walletID = res.WalletID
-				ident = passedIdentity
-				fail = false
-			}
-		}
-		if fail {
-			return nil, nil, "", errors.WithMessagef(err, "failed to lookup wallet [%s]", id)
-		}
+		return nil, nil, "", err
 	}
 	r.Logger.DebugfContext(ctx, "looked-up identifier [%s:%s]", ident, logging.Prefix(walletID))
 	wID := walletID
-	// Short RLock while reading from the map cache. Do not hold while calling external services.
-	r.WalletMu.RLock()
-	walletEntry, ok := r.Wallets[wID]
-	r.WalletMu.RUnlock()
-	if ok {
-		return walletEntry, nil, wID, nil
+	if w, ok := r.cachedWallet(wID); ok {
+		return w, nil, wID, nil
 	}
 	walletIdentifiers = append(walletIdentifiers, wID)
 
 	// give it a second chance
-	passedIdentity, ok := toViewIdentity(id)
-	if ok {
-		r.Logger.DebugfContext(ctx, "no wallet found, check if there is a wallet for identity [%s]", passedIdentity)
-		// is this identity registered
-		res := r.GetWalletID(ctx, passedIdentity)
-		if res.Failed() {
-			// This probe is only an optimization: MapToIdentity already succeeded (or the
-			// fallback above recovered a binding), so wID is an authoritative candidate and
-			// is already in walletIdentifiers. A failed lookup here therefore costs at most
-			// a reuse opportunity, not correctness — log and continue with the mapped
-			// candidate rather than aborting the whole lookup on a transient blip. Failing
-			// closed belongs only at the branch above, where MapToIdentity failed and this
-			// probe is the sole signal for whether a wallet already exists (issue #2063).
-			r.Logger.Warnf("failed to check wallet binding for identity [%s], continuing with mapped wallet [%s]: %v", passedIdentity, wID, res.Err)
-		} else if res.Bound() {
-			r.Logger.DebugfContext(ctx, "no wallet found, there is a wallet for identity [%s]: [%s]", passedIdentity, res.WalletID)
-			// we got a hit
-			r.WalletMu.RLock()
-			walletEntry, ok = r.Wallets[res.WalletID]
-			r.WalletMu.RUnlock()
-			if ok {
-				return walletEntry, nil, res.WalletID, nil
-			}
-			r.Logger.DebugfContext(ctx, "no wallet found, there is a wallet for identity [%s]: [%s] but it has not been recreated yet", passedIdentity, res.WalletID)
-			// Only a Bound resolution carries a wallet id; an Unbound one has WalletID == ""
-			// and must not be appended (the consuming loop skips empties anyway).
-			walletIdentifiers = append(walletIdentifiers, res.WalletID)
-		}
+	w, passedWalletID, passedIdentity, walletIdentifiers := r.tryPassedIdentity(ctx, id, wID, walletIdentifiers)
+	if w != nil {
+		return w, nil, passedWalletID, nil
 	}
 
 	r.Logger.DebugfContext(ctx, "no wallet found for [%s] at [%s]", passedIdentity, logging.Prefix(wID))
-	if len(ident) != 0 {
-		res := r.GetWalletID(ctx, ident)
-		r.Logger.DebugfContext(ctx, "wallet for identity [%s] -> [%s:%d]", ident, res.WalletID, res.Status)
-		if res.Failed() {
-			// Optimization probe only (see the probe above): ident came from an
-			// authoritative MapToIdentity, and its wallet id is already a candidate, so a
-			// failed lookup here is not decisive. Log and continue rather than aborting the
-			// lookup on a transient blip (issue #2063).
-			r.Logger.Warnf("failed to check wallet binding for identity [%s], continuing with mapped wallet [%s]: %v", ident, wID, res.Err)
-		} else if res.Bound() {
-			r.WalletMu.RLock()
-			w, ok := r.Wallets[res.WalletID]
-			r.WalletMu.RUnlock()
-			if ok {
-				r.Logger.DebugfContext(ctx, "found wallet [%s:%s:%s:%s]", ident, walletID, w.ID(), res.WalletID)
-
-				return w, nil, res.WalletID, nil
-			}
-			walletIdentifiers = append(walletIdentifiers, res.WalletID)
-		}
+	w, identityWID, walletIdentifiers := r.tryResolvedIdentity(ctx, ident, walletID, wID, walletIdentifiers)
+	if w != nil {
+		return w, nil, identityWID, nil
 	}
 
 	for _, walletIdentifier := range walletIdentifiers {
@@ -458,6 +525,14 @@ const walletCreationJoinRetries = 3
 // than when the winner's is, and a flight that failed only because another caller's context
 // was cancelled is retried rather than reported: one abandoned transaction must not fail
 // the healthy ones resolving the same wallet.
+//
+// The select/retry logic here is the one place that actually reasons about that ownership
+// distinction (whose context failed, whether this caller ran the creation itself, how many
+// times to retry an inherited cancellation). Splitting it would only move the same shared
+// state (ranCreation, attempt, ctx) into a helper's parameter list, for no real complexity
+// reduction and a real risk of getting the retry-vs-report distinction wrong.
+//
+//nolint:gocognit
 func (r *Registry) createWallet(
 	ctx context.Context,
 	role idriver.IdentityRoleType,

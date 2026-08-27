@@ -191,36 +191,44 @@ func TestDecodePrintableVariant(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			enc := marshalPrintable(t, tt.value, tt.data)
-
-			// Dynamically find where the first field's tag starts
-			// by skipping the SEQUENCE length encoding.
-			tagIdx := 2
-			if len(enc) > 1 && enc[1] > 0x80 {
-				// enc[1] & 0x7F gives the number of length bytes
-				tagIdx += int(enc[1] & 0x7F)
-			}
-
-			wantTag := byte(asn1.TagPrintableString) // 0x13
-			if len(enc) > tagIdx && enc[tagIdx] != wantTag {
-				t.Fatalf("encoding/asn1 did not emit PrintableString: got tag 0x%02x at index %d, want 0x%02x",
-					enc[tagIdx], tagIdx, wantTag)
-			}
-
-			got, err := marshal.DecodeIdentity(enc)
-			if err != nil {
-				t.Fatalf("Decode(): %v", err)
-			}
-			if got.IsInt {
-				t.Fatal("IsInt = true, want false")
-			}
-			if got.Str != tt.value {
-				t.Errorf("Str = %q, want %q", got.Str, tt.value)
-			}
-			if !dataEq(got.Data, tt.data) {
-				t.Errorf("Data = %x, want %x", got.Data, tt.data)
-			}
+			checkDecodePrintableVariant(t, tt.value, tt.data)
 		})
+	}
+}
+
+// checkDecodePrintableVariant encodes (value, data) as a PrintableString
+// identity, confirms encoding/asn1 actually emitted a PrintableString tag,
+// then decodes it back and checks the round trip.
+func checkDecodePrintableVariant(t *testing.T, value string, data []byte) {
+	t.Helper()
+	enc := marshalPrintable(t, value, data)
+
+	// Dynamically find where the first field's tag starts
+	// by skipping the SEQUENCE length encoding.
+	tagIdx := 2
+	if len(enc) > 1 && enc[1] > 0x80 {
+		// enc[1] & 0x7F gives the number of length bytes
+		tagIdx += int(enc[1] & 0x7F)
+	}
+
+	wantTag := byte(asn1.TagPrintableString) // 0x13
+	if len(enc) > tagIdx && enc[tagIdx] != wantTag {
+		t.Fatalf("encoding/asn1 did not emit PrintableString: got tag 0x%02x at index %d, want 0x%02x",
+			enc[tagIdx], tagIdx, wantTag)
+	}
+
+	got, err := marshal.DecodeIdentity(enc)
+	if err != nil {
+		t.Fatalf("Decode(): %v", err)
+	}
+	if got.IsInt {
+		t.Fatal("IsInt = true, want false")
+	}
+	if got.Str != value {
+		t.Errorf("Str = %q, want %q", got.Str, value)
+	}
+	if !dataEq(got.Data, data) {
+		t.Errorf("Data = %x, want %x", got.Data, data)
 	}
 }
 

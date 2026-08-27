@@ -85,48 +85,63 @@ func (h *TTXRecoveryHandler) Recover(ctx context.Context, txID string) error {
 }
 
 // applyFinalityLogic implements the same logic as the finality listener's runOnStatus method
+// applyValidFinalityLogic processes a network.Valid status: it loads (or
+// reuses the cached) token request, verifies its hash against
+// tokenRequestHash, and on success commits it. It returns the resulting
+// transaction status (storage.Confirmed on success, storage.Deleted on a hash
+// mismatch, with message replaced by the mismatch reason) and an error only
+// for failures that abort recovery entirely (load/process/commit failures).
+func (h *TTXRecoveryHandler) applyValidFinalityLogic(ctx context.Context, txID string, message string, tokenRequestHash []byte) (storage.TxStatus, string, error) {
+	h.logger.DebugfContext(ctx, "transaction [%s] is valid, processing token request", txID)
+
+	// Get token request
+	tr, msgToSign := h.tokens.GetCachedTokenRequest(txID)
+	if tr == nil {
+		// Load from database
+		tokenRequestRaw, err := h.transactionDB.GetTokenRequest(ctx, txID)
+		if err != nil {
+			h.logger.ErrorfContext(ctx, "failed retrieving token request [%s]: [%s]", txID, err)
+
+			return 0, message, errors.Wrapf(err, "failed retrieving token request [%s]", txID)
+		}
+
+		h.logger.DebugfContext(ctx, "loaded token request from database for [%s]", txID)
+
+		// Process token request using the hasher
+		tr, msgToSign, err = h.hasher.ProcessTokenRequest(ctx, tokenRequestRaw)
+		if err != nil {
+			return 0, message, errors.Wrapf(err, "failed to process token request [%s]", txID)
+		}
+	}
+
+	// Verify token request hash
+	h.logger.DebugfContext(ctx, "verifying token request hash for [%s]", txID)
+	if err := h.checkTokenRequest(txID, msgToSign, tokenRequestHash); err != nil {
+		h.logger.ErrorfContext(ctx, "tx [%s], %s", txID, err)
+		h.metrics.HashMismatches.Add(1)
+
+		return storage.Deleted, err.Error(), nil
+	}
+
+	if err := Commit(ctx, h.logger, h.tokens, h.transactionDB, txID, tr); err != nil {
+		h.logger.ErrorfContext(ctx, "tx [%s], %s", txID, err)
+
+		return 0, message, err
+	}
+
+	return storage.Confirmed, message, nil
+}
+
 func (h *TTXRecoveryHandler) applyFinalityLogic(ctx context.Context, txID string, status int, message string, tokenRequestHash []byte) error {
 	h.logger.DebugfContext(ctx, "applying finality logic for tx [%s] with status [%d]", txID, status)
 
 	var txStatus storage.TxStatus
 	switch status {
 	case network.Valid:
-		txStatus = storage.Confirmed
-		h.logger.DebugfContext(ctx, "transaction [%s] is valid, processing token request", txID)
-
-		// Get token request
-		tr, msgToSign := h.tokens.GetCachedTokenRequest(txID)
-		if tr == nil {
-			// Load from database
-			tokenRequestRaw, err := h.transactionDB.GetTokenRequest(ctx, txID)
-			if err != nil {
-				h.logger.ErrorfContext(ctx, "failed retrieving token request [%s]: [%s]", txID, err)
-
-				return errors.Wrapf(err, "failed retrieving token request [%s]", txID)
-			}
-
-			h.logger.DebugfContext(ctx, "loaded token request from database for [%s]", txID)
-
-			// Process token request using the hasher
-			tr, msgToSign, err = h.hasher.ProcessTokenRequest(ctx, tokenRequestRaw)
-			if err != nil {
-				return errors.Wrapf(err, "failed to process token request [%s]", txID)
-			}
-		}
-
-		// Verify token request hash
-		h.logger.DebugfContext(ctx, "verifying token request hash for [%s]", txID)
-		if err := h.checkTokenRequest(txID, msgToSign, tokenRequestHash); err != nil {
-			h.logger.ErrorfContext(ctx, "tx [%s], %s", txID, err)
-			h.metrics.HashMismatches.Add(1)
-			txStatus = storage.Deleted
-			message = err.Error()
-		} else {
-			if err := Commit(ctx, h.logger, h.tokens, h.transactionDB, txID, tr); err != nil {
-				h.logger.ErrorfContext(ctx, "tx [%s], %s", txID, err)
-
-				return err
-			}
+		var err error
+		txStatus, message, err = h.applyValidFinalityLogic(ctx, txID, message, tokenRequestHash)
+		if err != nil {
+			return err
 		}
 
 	case network.Invalid:

@@ -176,6 +176,7 @@ func (rp *rangeProver) WithTranscriptHeader(h []byte) *rangeProver {
 	return rp
 }
 
+//nolint:gocognit // sequential transcript-driven folding rounds of the CSP range proof; splitting would not reduce real complexity, only hide it behind indirection
 func (rp *rangeProver) Prove() (*RangeProof, error) {
 	// Validate all inputs
 	if err := validateRangeProverInputs(rp.Curve, rp); err != nil {
@@ -480,6 +481,8 @@ func (rv *rangeVerifier) WithTranscriptHeader(h []byte) *rangeVerifier {
 // Verify checks that proof is a valid CSP range proof against the public statement.
 // It mirrors the prover transcript exactly, reconstructs all challenges, rebuilds
 // the aggregated linear form, and delegates the final check to cspVerifier.
+//
+//nolint:gocognit // mirrors the prover's transcript reconstruction step by step; splitting would not reduce real complexity, only hide it behind indirection
 func (rv *rangeVerifier) Verify(proof *RangeProof) error {
 	// Validate all inputs
 	if err := validateRangeVerifierInputs(rv.Curve, rv); err != nil {

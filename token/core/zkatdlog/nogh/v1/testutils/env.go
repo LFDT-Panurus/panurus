@@ -109,43 +109,6 @@ type Env struct {
 }
 
 func NewEnv(benchCase *benchmark2.Case, configurations *benchmark.SetupConfigurations) (*Env, error) {
-	var (
-		engine *validator.Validator
-
-		sender  *transfer.Sender
-		auditor *audit.Auditor
-
-		ir         *driver.TokenRequest         // regular issue request
-		irMetadata *driver.TokenRequestMetadata // issue metadata
-		irInputs   map[string]*token2.Token     // issue inputs (empty for issues)
-		rr         *driver.TokenRequest         // redeem request
-		rrMetadata *driver.TokenRequestMetadata // redeem metadata
-		rrInputs   map[string]*token2.Token     // redeem inputs
-		tr         *driver.TokenRequest         // transfer request
-		trMetadata *driver.TokenRequestMetadata // transfer metadata
-		trInputs   map[string]*token2.Token     // transfer inputs
-		uwtr       *driver.TokenRequest         // upgrade-witness transfer request
-		uwtrMeta   *driver.TokenRequestMetadata // upgrade-witness transfer metadata
-		uwtrInputs map[string]*token2.Token     // upgrade-witness transfer inputs
-		pmir       *driver.TokenRequest         // public-metadata issue request
-		pmirMeta   *driver.TokenRequestMetadata // public-metadata issue metadata
-		pmtr       *driver.TokenRequest         // public-metadata transfer request
-		pmtrMeta   *driver.TokenRequestMetadata // public-metadata transfer metadata
-		pmtrInputs map[string]*token2.Token     // public-metadata transfer inputs
-		umtr       *driver.TokenRequest         // unclaimed-metadata transfer request (negative)
-		umtrMeta   *driver.TokenRequestMetadata // unclaimed-metadata transfer metadata
-		umtrInputs map[string]*token2.Token     // unclaimed-metadata transfer inputs
-		matr       *driver.TokenRequest         // multi-auditor transfer request
-		matrMeta   *driver.TokenRequestMetadata // multi-auditor transfer metadata
-		matrInputs map[string]*token2.Token     // multi-auditor transfer inputs
-		estr       *driver.TokenRequest         // extra-signature transfer request (negative)
-		estrMeta   *driver.TokenRequestMetadata // extra-signature transfer metadata
-		estrInputs map[string]*token2.Token     // extra-signature transfer inputs
-		ar         *driver.TokenRequest         // atomic action request
-		arMetadata *driver.TokenRequestMetadata // swap metadata
-		arInputs   map[string]*token2.Token     // swap inputs
-	)
-
 	// prepare public parameters
 	setupConfiguration, err := configurations.GetSetupConfiguration(benchCase.Bits, benchCase.CurveID)
 	if err != nil {
@@ -160,9 +123,9 @@ func NewEnv(benchCase *benchmark2.Case, configurations *benchmark.SetupConfigura
 	if err != nil {
 		return nil, err
 	}
-	auditor = audit.NewAuditor(logging.MustGetLogger(), &noop.Tracer{}, deserializer, pp.PedersenGenerators, c, 64, pp.IssuerIDs)
+	auditor := audit.NewAuditor(logging.MustGetLogger(), &noop.Tracer{}, deserializer, pp.PedersenGenerators, c, 64, pp.IssuerIDs)
 
-	engine = validator.New(
+	engine := validator.New(
 		logging.MustGetLogger(),
 		pp,
 		deserializer,
@@ -173,103 +136,61 @@ func NewEnv(benchCase *benchmark2.Case, configurations *benchmark.SetupConfigura
 	)
 
 	// non-anonymous issue
-	_, ir, irMetadata, err = prepareIssueRequest(pp, auditor, setupConfiguration)
-	if err != nil {
-		return nil, err
-	}
-	irInputs = map[string]*token2.Token{}
-	irRaw, err := ir.Bytes()
+	ir, irMetadata, irInputs, irRaw, err := prepareIssueEnv(pp, auditor, setupConfiguration)
 	if err != nil {
 		return nil, err
 	}
 
 	// prepare redeem
-	_, rr, rrMetadata, rrInputs, err = prepareRedeemRequest(benchCase, pp, auditor, setupConfiguration)
-	if err != nil {
-		return nil, err
-	}
-	rrRaw, err := rr.Bytes()
+	rr, rrMetadata, rrInputs, rrRaw, err := prepareRedeemEnv(benchCase, pp, auditor, setupConfiguration)
 	if err != nil {
 		return nil, err
 	}
 
 	// prepare transfer
-	_, tr, trMetadata, trInputs, err = prepareTransferRequest(benchCase, pp, auditor, setupConfiguration.AuditorSigner, oID)
-	if err != nil {
-		return nil, err
-	}
-	transferRaw, err := tr.Bytes()
+	tr, trMetadata, trInputs, transferRaw, err := prepareTransferEnv(benchCase, pp, auditor, setupConfiguration.AuditorSigner, oID)
 	if err != nil {
 		return nil, err
 	}
 
 	// prepare upgrade-witness transfer (first input loaded as a Fabtoken output)
-	_, uwtr, uwtrMeta, uwtrInputs, err = prepareUpgradeWitnessTransferRequest(pp, auditor, setupConfiguration.AuditorSigner, oID)
-	if err != nil {
-		return nil, err
-	}
-	upgradeWitnessTransferRaw, err := uwtr.Bytes()
+	uwtr, uwtrMeta, uwtrInputs, upgradeWitnessTransferRaw, err := prepareUpgradeWitnessTransferEnv(pp, auditor, setupConfiguration.AuditorSigner, oID)
 	if err != nil {
 		return nil, err
 	}
 
 	// prepare public-metadata issue
-	_, pmir, pmirMeta, err = preparePublicMetadataIssueRequest(pp, auditor, setupConfiguration)
-	if err != nil {
-		return nil, err
-	}
-	publicMetadataIssueRaw, err := pmir.Bytes()
+	pmir, pmirMeta, publicMetadataIssueRaw, err := preparePublicMetadataIssueEnv(pp, auditor, setupConfiguration)
 	if err != nil {
 		return nil, err
 	}
 
 	// prepare public-metadata transfer
-	_, pmtr, pmtrMeta, pmtrInputs, err = preparePublicMetadataTransferRequest(pp, auditor, setupConfiguration.AuditorSigner, oID)
-	if err != nil {
-		return nil, err
-	}
-	publicMetadataTransferRaw, err := pmtr.Bytes()
+	pmtr, pmtrMeta, pmtrInputs, publicMetadataTransferRaw, err := preparePublicMetadataTransferEnv(pp, auditor, setupConfiguration.AuditorSigner, oID)
 	if err != nil {
 		return nil, err
 	}
 
 	// prepare unclaimed-metadata transfer (negative fixture)
-	_, umtr, umtrMeta, umtrInputs, err = prepareUnclaimedMetadataTransferRequest(pp, auditor, setupConfiguration.AuditorSigner, oID)
-	if err != nil {
-		return nil, err
-	}
-	unclaimedMetadataTransferRaw, err := umtr.Bytes()
+	umtr, umtrMeta, umtrInputs, unclaimedMetadataTransferRaw, err := prepareUnclaimedMetadataTransferEnv(pp, auditor, setupConfiguration.AuditorSigner, oID)
 	if err != nil {
 		return nil, err
 	}
 
 	// prepare multi-auditor transfer
-	_, matr, matrMeta, matrInputs, err = prepareMultiAuditorTransferRequest(pp, auditor, setupConfiguration.SecondAuditorSigner, oID)
-	if err != nil {
-		return nil, err
-	}
-	multiAuditorTransferRaw, err := matr.Bytes()
+	matr, matrMeta, matrInputs, multiAuditorTransferRaw, err := prepareMultiAuditorTransferEnv(pp, auditor, setupConfiguration.SecondAuditorSigner, oID)
 	if err != nil {
 		return nil, err
 	}
 
 	// prepare extra-signature transfer (negative fixture)
-	_, estr, estrMeta, estrInputs, err = prepareExtraSignatureTransferRequest(benchCase, pp, auditor, setupConfiguration.AuditorSigner, oID)
-	if err != nil {
-		return nil, err
-	}
-	extraSignatureTransferRaw, err := estr.Bytes()
+	estr, estrMeta, estrInputs, extraSignatureTransferRaw, err := prepareExtraSignatureTransferEnv(benchCase, pp, auditor, setupConfiguration.AuditorSigner, oID)
 	if err != nil {
 		return nil, err
 	}
 
 	// atomic action request
-	sender, ar, arMetadata, arInputs, err = prepareSwapRequest(benchCase, pp, auditor, setupConfiguration.AuditorSigner, oID)
-	if err != nil {
-		return nil, err
-	}
-	// arInputs is already [][]*tokn.Token from prepareSwapRequest
-	arRaw, err := ar.Bytes()
+	sender, ar, arMetadata, arInputs, arRaw, err := prepareSwapEnv(benchCase, pp, auditor, setupConfiguration.AuditorSigner, oID)
 	if err != nil {
 		return nil, err
 	}
@@ -338,6 +259,187 @@ func NewEnv(benchCase *benchmark2.Case, configurations *benchmark.SetupConfigura
 		TRWithSwapMetadata: arMetadata,
 		TRWithSwapInputs:   arInputs,
 	}, nil
+}
+
+// prepareIssueEnv prepares the non-anonymous issue fixture for NewEnv.
+func prepareIssueEnv(pp *v1setup.PublicParams, auditor *audit.Auditor, setupConfiguration *benchmark.SetupConfiguration) (*driver.TokenRequest, *driver.TokenRequestMetadata, map[string]*token2.Token, []byte, error) {
+	_, ir, irMetadata, err := prepareIssueRequest(pp, auditor, setupConfiguration)
+	if err != nil {
+		return nil, nil, nil, nil, err
+	}
+	irInputs := map[string]*token2.Token{}
+	irRaw, err := ir.Bytes()
+	if err != nil {
+		return nil, nil, nil, nil, err
+	}
+
+	return ir, irMetadata, irInputs, irRaw, nil
+}
+
+// prepareRedeemEnv prepares the redeem fixture for NewEnv.
+func prepareRedeemEnv(
+	benchCase *benchmark2.Case,
+	pp *v1setup.PublicParams,
+	auditor *audit.Auditor,
+	setupConfiguration *benchmark.SetupConfiguration,
+) (*driver.TokenRequest, *driver.TokenRequestMetadata, map[string]*token2.Token, []byte, error) {
+	_, rr, rrMetadata, rrInputs, err := prepareRedeemRequest(benchCase, pp, auditor, setupConfiguration)
+	if err != nil {
+		return nil, nil, nil, nil, err
+	}
+	rrRaw, err := rr.Bytes()
+	if err != nil {
+		return nil, nil, nil, nil, err
+	}
+
+	return rr, rrMetadata, rrInputs, rrRaw, nil
+}
+
+// prepareTransferEnv prepares the transfer fixture for NewEnv.
+func prepareTransferEnv(
+	benchCase *benchmark2.Case,
+	pp *v1setup.PublicParams,
+	auditor *audit.Auditor,
+	signer *benchmark.Signer,
+	oID *benchmark.OwnerIdentity,
+) (*driver.TokenRequest, *driver.TokenRequestMetadata, map[string]*token2.Token, []byte, error) {
+	_, tr, trMetadata, trInputs, err := prepareTransferRequest(benchCase, pp, auditor, signer, oID)
+	if err != nil {
+		return nil, nil, nil, nil, err
+	}
+	transferRaw, err := tr.Bytes()
+	if err != nil {
+		return nil, nil, nil, nil, err
+	}
+
+	return tr, trMetadata, trInputs, transferRaw, nil
+}
+
+// prepareUpgradeWitnessTransferEnv prepares the upgrade-witness transfer
+// fixture for NewEnv (first input loaded as a Fabtoken output).
+func prepareUpgradeWitnessTransferEnv(pp *v1setup.PublicParams, auditor *audit.Auditor, signer *benchmark.Signer, oID *benchmark.OwnerIdentity) (*driver.TokenRequest, *driver.TokenRequestMetadata, map[string]*token2.Token, []byte, error) {
+	_, uwtr, uwtrMeta, uwtrInputs, err := prepareUpgradeWitnessTransferRequest(pp, auditor, signer, oID)
+	if err != nil {
+		return nil, nil, nil, nil, err
+	}
+	upgradeWitnessTransferRaw, err := uwtr.Bytes()
+	if err != nil {
+		return nil, nil, nil, nil, err
+	}
+
+	return uwtr, uwtrMeta, uwtrInputs, upgradeWitnessTransferRaw, nil
+}
+
+// preparePublicMetadataIssueEnv prepares the public-metadata issue fixture
+// for NewEnv.
+func preparePublicMetadataIssueEnv(pp *v1setup.PublicParams, auditor *audit.Auditor, setupConfiguration *benchmark.SetupConfiguration) (*driver.TokenRequest, *driver.TokenRequestMetadata, []byte, error) {
+	_, pmir, pmirMeta, err := preparePublicMetadataIssueRequest(pp, auditor, setupConfiguration)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	publicMetadataIssueRaw, err := pmir.Bytes()
+	if err != nil {
+		return nil, nil, nil, err
+	}
+
+	return pmir, pmirMeta, publicMetadataIssueRaw, nil
+}
+
+// preparePublicMetadataTransferEnv prepares the public-metadata transfer
+// fixture for NewEnv.
+func preparePublicMetadataTransferEnv(pp *v1setup.PublicParams, auditor *audit.Auditor, signer *benchmark.Signer, oID *benchmark.OwnerIdentity) (*driver.TokenRequest, *driver.TokenRequestMetadata, map[string]*token2.Token, []byte, error) {
+	_, pmtr, pmtrMeta, pmtrInputs, err := preparePublicMetadataTransferRequest(pp, auditor, signer, oID)
+	if err != nil {
+		return nil, nil, nil, nil, err
+	}
+	publicMetadataTransferRaw, err := pmtr.Bytes()
+	if err != nil {
+		return nil, nil, nil, nil, err
+	}
+
+	return pmtr, pmtrMeta, pmtrInputs, publicMetadataTransferRaw, nil
+}
+
+// prepareUnclaimedMetadataTransferEnv prepares the unclaimed-metadata
+// transfer negative fixture for NewEnv.
+func prepareUnclaimedMetadataTransferEnv(
+	pp *v1setup.PublicParams,
+	auditor *audit.Auditor,
+	signer *benchmark.Signer,
+	oID *benchmark.OwnerIdentity,
+) (*driver.TokenRequest, *driver.TokenRequestMetadata, map[string]*token2.Token, []byte, error) {
+	_, umtr, umtrMeta, umtrInputs, err := prepareUnclaimedMetadataTransferRequest(pp, auditor, signer, oID)
+	if err != nil {
+		return nil, nil, nil, nil, err
+	}
+	unclaimedMetadataTransferRaw, err := umtr.Bytes()
+	if err != nil {
+		return nil, nil, nil, nil, err
+	}
+
+	return umtr, umtrMeta, umtrInputs, unclaimedMetadataTransferRaw, nil
+}
+
+// prepareMultiAuditorTransferEnv prepares the multi-auditor transfer fixture
+// for NewEnv.
+func prepareMultiAuditorTransferEnv(
+	pp *v1setup.PublicParams,
+	auditor *audit.Auditor,
+	secondAuditorSigner *benchmark.Signer,
+	oID *benchmark.OwnerIdentity,
+) (*driver.TokenRequest, *driver.TokenRequestMetadata, map[string]*token2.Token, []byte, error) {
+	_, matr, matrMeta, matrInputs, err := prepareMultiAuditorTransferRequest(pp, auditor, secondAuditorSigner, oID)
+	if err != nil {
+		return nil, nil, nil, nil, err
+	}
+	multiAuditorTransferRaw, err := matr.Bytes()
+	if err != nil {
+		return nil, nil, nil, nil, err
+	}
+
+	return matr, matrMeta, matrInputs, multiAuditorTransferRaw, nil
+}
+
+// prepareExtraSignatureTransferEnv prepares the extra-signature transfer
+// negative fixture for NewEnv.
+func prepareExtraSignatureTransferEnv(
+	benchCase *benchmark2.Case,
+	pp *v1setup.PublicParams,
+	auditor *audit.Auditor,
+	auditorSigner *benchmark.Signer,
+	oID *benchmark.OwnerIdentity,
+) (*driver.TokenRequest, *driver.TokenRequestMetadata, map[string]*token2.Token, []byte, error) {
+	_, estr, estrMeta, estrInputs, err := prepareExtraSignatureTransferRequest(benchCase, pp, auditor, auditorSigner, oID)
+	if err != nil {
+		return nil, nil, nil, nil, err
+	}
+	extraSignatureTransferRaw, err := estr.Bytes()
+	if err != nil {
+		return nil, nil, nil, nil, err
+	}
+
+	return estr, estrMeta, estrInputs, extraSignatureTransferRaw, nil
+}
+
+// prepareSwapEnv prepares the atomic-action (swap) fixture for NewEnv.
+func prepareSwapEnv(
+	benchCase *benchmark2.Case,
+	pp *v1setup.PublicParams,
+	auditor *audit.Auditor,
+	auditorSigner *benchmark.Signer,
+	oID *benchmark.OwnerIdentity,
+) (*transfer.Sender, *driver.TokenRequest, *driver.TokenRequestMetadata, map[string]*token2.Token, []byte, error) {
+	sender, ar, arMetadata, arInputs, err := prepareSwapRequest(benchCase, pp, auditor, auditorSigner, oID)
+	if err != nil {
+		return nil, nil, nil, nil, nil, err
+	}
+	// arInputs is already [][]*tokn.Token from prepareSwapRequest
+	arRaw, err := ar.Bytes()
+	if err != nil {
+		return nil, nil, nil, nil, nil, err
+	}
+
+	return sender, ar, arMetadata, arInputs, arRaw, nil
 }
 
 // SaveTransferToFile writes TRWithTransferTxID, TRWithTransferRaw, TRWithTransferMetadata,
@@ -1117,6 +1219,18 @@ const fabtokenUpgradeWitnessPrecision = 16
 // auto-upgrade path (see token/core/zkatdlog/nogh/v1/token/service.go) then
 // derives the input's commitment, metadata, and UpgradeWitness all from the
 // same underlying Fabtoken data, so no further reconciliation is required.
+//
+// This builds one TokenRequest through a single, tightly-coupled pipeline
+// (input/output amounts -> token loader -> TransferService.Transfer ->
+// serialize/sign/audit-endorse), threading over a dozen intermediate values
+// (inValues, inBF, ids, tokens, inputInf, tokenLoader, transferMetadata,
+// sender, ...) from one stage into the next. Splitting it would only move
+// that same shared state into larger parameter/return lists on artificial
+// helper boundaries, for no real complexity reduction and a real risk of
+// mis-threading a value between stages in this widely-used test fixture
+// builder.
+//
+//nolint:gocognit
 func prepareTransferWithOpts(
 	benchCase *benchmark2.Case,
 	pp *v1setup.PublicParams,

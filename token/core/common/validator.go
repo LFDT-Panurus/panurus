@@ -170,30 +170,9 @@ func (v *Validator[P, T, TA, IA, DS]) VerifyTokenRequestFromRaw(ctx context.Cont
 	if err != nil {
 		return nil, nil, errors.Wrap(err, "failed to marshal signed token request")
 	}
-	auditorSignatures := make([][]byte, 0, len(tr.Signatures))
-	actionSignatures := make([][]byte, 0, len(tr.Signatures))
-	actionSignaturesByID := make(map[uint32][][]byte)
-	for _, sig := range tr.Signatures {
-		if sig == nil {
-			continue
-		}
-		if sig.Auditor != nil {
-			auditorSignatures = append(auditorSignatures, sig.Auditor.Signature)
-
-			continue
-		}
-		if sig.Action != nil {
-			if uint64(sig.Action.ActionID) >= uint64(len(tr.Actions)) {
-				return nil, nil, errors.Wrapf(
-					ErrActionSignatureIDOutOfRange,
-					"action signature ID [%d], number of actions [%d]",
-					sig.Action.ActionID,
-					len(tr.Actions),
-				)
-			}
-			actionSignatures = append(actionSignatures, sig.Action.Signature)
-			actionSignaturesByID[sig.Action.ActionID] = append(actionSignaturesByID[sig.Action.ActionID], sig.Action.Signature)
-		}
+	auditorSignatures, actionSignatures, actionSignaturesByID, err := partitionRequestSignatures(tr)
+	if err != nil {
+		return nil, nil, err
 	}
 	// Merge signatures with auditor signatures first
 	signatures := make([][]byte, 0, len(auditorSignatures)+len(actionSignatures))
@@ -216,6 +195,40 @@ func (v *Validator[P, T, TA, IA, DS]) VerifyTokenRequestFromRaw(ctx context.Cont
 	}
 
 	return v.verifyTokenRequestWithScopedSignatures(ctx, ledger, auditorProvider, actionProviders, anchor, tr, attributes)
+}
+
+// partitionRequestSignatures splits a token request's signatures into the
+// auditor signatures and the per-action signatures, both as a flat slice
+// (order: auditor first) and grouped by ActionID. Errors if an action
+// signature references an ActionID with no corresponding action.
+func partitionRequestSignatures(tr *driver.TokenRequest) (auditorSignatures, actionSignatures [][]byte, actionSignaturesByID map[uint32][][]byte, err error) {
+	auditorSignatures = make([][]byte, 0, len(tr.Signatures))
+	actionSignatures = make([][]byte, 0, len(tr.Signatures))
+	actionSignaturesByID = make(map[uint32][][]byte)
+	for _, sig := range tr.Signatures {
+		if sig == nil {
+			continue
+		}
+		if sig.Auditor != nil {
+			auditorSignatures = append(auditorSignatures, sig.Auditor.Signature)
+
+			continue
+		}
+		if sig.Action != nil {
+			if uint64(sig.Action.ActionID) >= uint64(len(tr.Actions)) {
+				return nil, nil, nil, errors.Wrapf(
+					ErrActionSignatureIDOutOfRange,
+					"action signature ID [%d], number of actions [%d]",
+					sig.Action.ActionID,
+					len(tr.Actions),
+				)
+			}
+			actionSignatures = append(actionSignatures, sig.Action.Signature)
+			actionSignaturesByID[sig.Action.ActionID] = append(actionSignaturesByID[sig.Action.ActionID], sig.Action.Signature)
+		}
+	}
+
+	return auditorSignatures, actionSignatures, actionSignaturesByID, nil
 }
 
 // VerifyTokenRequest verifies a token request.
@@ -442,29 +455,11 @@ func (v *Validator[P, T, TA, IA, DS]) deserializeActionsInRequestOrder(tr *drive
 	issueIndex := 0
 	transferIndex := 0
 	for index, typedAction := range tr.Actions {
-		if typedAction == nil {
-			return nil, errors.Wrapf(ErrNilAction, "action at request index [%d]", index)
-		}
-		action := deserializedAction[TA, IA]{
-			index:    index,
-			actionID: uint32(index), // #nosec G115 -- bounded by the in-memory slice length
-			typeID:   typedAction.Type,
-		}
-		switch typedAction.Type {
-		case request2.ActionType_ACTION_TYPE_ISSUE:
-			if issueIndex >= len(issues) || utils.IsNil(issues[issueIndex]) {
-				return nil, errors.Wrapf(ErrNilAction, "issue action at request index [%d]", index)
-			}
-			action.issue = issues[issueIndex]
-			issueIndex++
-		case request2.ActionType_ACTION_TYPE_TRANSFER:
-			if transferIndex >= len(transfers) || utils.IsNil(transfers[transferIndex]) {
-				return nil, errors.Wrapf(ErrNilAction, "transfer action at request index [%d]", index)
-			}
-			action.transfer = transfers[transferIndex]
-			transferIndex++
-		default:
-			return nil, errors.Errorf("unknown action type [%s] at request index [%d]", typedAction.Type, index)
+		var action deserializedAction[TA, IA]
+		var err error
+		action, issueIndex, transferIndex, err = deserializeOneAction(index, typedAction, issues, transfers, issueIndex, transferIndex)
+		if err != nil {
+			return nil, err
 		}
 		actions = append(actions, action)
 	}
@@ -479,6 +474,41 @@ func (v *Validator[P, T, TA, IA, DS]) deserializeActionsInRequestOrder(tr *drive
 	}
 
 	return actions, nil
+}
+
+// deserializeOneAction pairs the typed action at index with the next
+// not-yet-consumed deserialized issue or transfer action, in the order
+// DeserializeActions returned them. Returns the advanced issue/transfer
+// indices so the caller can thread them through the next call.
+func deserializeOneAction[TA driver.TransferAction, IA driver.IssueAction](
+	index int, typedAction *driver.TypedAction, issues []IA, transfers []TA, issueIndex, transferIndex int,
+) (deserializedAction[TA, IA], int, int, error) {
+	if typedAction == nil {
+		return deserializedAction[TA, IA]{}, issueIndex, transferIndex, errors.Wrapf(ErrNilAction, "action at request index [%d]", index)
+	}
+	action := deserializedAction[TA, IA]{
+		index:    index,
+		actionID: uint32(index), // #nosec G115 -- bounded by the in-memory slice length
+		typeID:   typedAction.Type,
+	}
+	switch typedAction.Type {
+	case request2.ActionType_ACTION_TYPE_ISSUE:
+		if issueIndex >= len(issues) || utils.IsNil(issues[issueIndex]) {
+			return deserializedAction[TA, IA]{}, issueIndex, transferIndex, errors.Wrapf(ErrNilAction, "issue action at request index [%d]", index)
+		}
+		action.issue = issues[issueIndex]
+		issueIndex++
+	case request2.ActionType_ACTION_TYPE_TRANSFER:
+		if transferIndex >= len(transfers) || utils.IsNil(transfers[transferIndex]) {
+			return deserializedAction[TA, IA]{}, issueIndex, transferIndex, errors.Wrapf(ErrNilAction, "transfer action at request index [%d]", index)
+		}
+		action.transfer = transfers[transferIndex]
+		transferIndex++
+	default:
+		return deserializedAction[TA, IA]{}, issueIndex, transferIndex, errors.Errorf("unknown action type [%s] at request index [%d]", typedAction.Type, index)
+	}
+
+	return action, issueIndex, transferIndex, nil
 }
 
 func (v *Validator[P, T, TA, IA, DS]) verifyDeserializedAction(

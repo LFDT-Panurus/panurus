@@ -16,6 +16,7 @@ import (
 	"text/tabwriter"
 
 	"github.com/google/pprof/profile"
+	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 )
 
 const (
@@ -75,8 +76,24 @@ func printUnifiedReport(stats []*FuncStat, labels []*LabelStat, lines []*LineSta
 	writef(w, "Total Allocated: %s | Total In-Use: %s\n\n", formatBytes(totalAlloc), formatBytes(totalInUse))
 
 	detectAntiPatterns(stats, w)
+	printHotLinesSection(w, lines, totalAlloc)
+	printLabelsSection(w, labels, totalAlloc)
+	printTopAllocatorsSection(w, stats, totalAlloc)
+	printLeaksSection(w, stats, totalAlloc, totalInUse)
+	printRootCauseTraceSection(w, stats, stacks, totalAlloc)
 
-	// --- SECTION 2: HOT LINES ---
+	writef(w, "\n## 7. ASCII FLAME GRAPH (Call Tree)\n")
+	writef(w, " Showing paths consuming >1%% of total memory.\n\n")
+	printFlameGraph(w, stacks, totalAlloc)
+
+	if err := w.Flush(); err != nil {
+		_, _ = fmt.Fprintln(os.Stderr, "benchmark: flush error:", err)
+	}
+}
+
+// printHotLinesSection prints section 2: the source lines responsible for the
+// most allocated bytes.
+func printHotLinesSection(w *tabwriter.Writer, lines []*LineStat, totalAlloc int64) {
 	writef(w, "\n## 2. HOT LINES (Exact Source Location)\n")
 	writeLine(w, "FILE:LINE\tFUNCTION\tALLOC BYTES\t% TOTAL")
 	writeLine(w, "---------\t--------\t-----------\t-------")
@@ -88,20 +105,28 @@ func printUnifiedReport(stats []*FuncStat, labels []*LabelStat, lines []*LineSta
 		}
 		writef(w, "%s:%d\t%s\t%s\t%.1f%%\n", shortenPath(l.File), l.Line, shortenName(l.Function), formatBytes(l.AllocBytes), ratio*100)
 	}
+}
 
-	// --- SECTION 3: LABELS ---
-	if len(labels) > 0 {
-		writef(w, "\n## 3. BUSINESS LOGIC CONTEXT (Labels)\n")
-		writeLine(w, "LABEL\tALLOC %\tALLOC BYTES\tIN-USE BYTES")
-		writeLine(w, "-----\t-------\t-----------\t------------")
-		for i := 0; i < 10 && i < len(labels); i++ {
-			l := labels[i]
-			ratio := float64(l.AllocBytes) / float64(totalAlloc)
-			writef(w, "%s\t%.1f%%\t%s\t%s\n", l.Name, ratio*100, formatBytes(l.AllocBytes), formatBytes(l.InUseBytes))
-		}
+// printLabelsSection prints section 3: allocation broken down by pprof label,
+// when the profile carries any.
+func printLabelsSection(w *tabwriter.Writer, labels []*LabelStat, totalAlloc int64) {
+	if len(labels) == 0 {
+		return
 	}
 
-	// --- SECTION 4: TOP ALLOCATORS ---
+	writef(w, "\n## 3. BUSINESS LOGIC CONTEXT (Labels)\n")
+	writeLine(w, "LABEL\tALLOC %\tALLOC BYTES\tIN-USE BYTES")
+	writeLine(w, "-----\t-------\t-----------\t------------")
+	for i := 0; i < 10 && i < len(labels); i++ {
+		l := labels[i]
+		ratio := float64(l.AllocBytes) / float64(totalAlloc)
+		writef(w, "%s\t%.1f%%\t%s\t%s\n", l.Name, ratio*100, formatBytes(l.AllocBytes), formatBytes(l.InUseBytes))
+	}
+}
+
+// printTopAllocatorsSection prints section 4: the functions responsible for
+// the most allocated bytes, sorted in place by that metric.
+func printTopAllocatorsSection(w *tabwriter.Writer, stats []*FuncStat, totalAlloc int64) {
 	writef(w, "\n## 4. TOP OBJECT PRODUCERS (GC Pressure)\n")
 	writeLine(w, "NAME\tFLAT %\tFLAT BYTES\tAVG SIZE\tIMMEDIATE CALLER")
 	writeLine(w, "----\t------\t----------\t--------\t----------------")
@@ -118,8 +143,11 @@ func printUnifiedReport(stats []*FuncStat, labels []*LabelStat, lines []*LineSta
 		}
 		writef(w, "%s\t%.1f%%\t%s\t%d B\t%s\n", shortenName(s.Name), ratio*100, formatBytes(s.FlatAllocBytes), avgSize, getTopCallers(s.Callers, s.FlatAllocBytes))
 	}
+}
 
-	// --- SECTION 5: LEAKS ---
+// printLeaksSection prints section 5: functions holding onto the most
+// still-in-use memory, sorted in place by that metric.
+func printLeaksSection(w *tabwriter.Writer, stats []*FuncStat, totalAlloc, totalInUse int64) {
 	writef(w, "\n## 5. PERSISTENT MEMORY (Leak Candidates)\n")
 	writeLine(w, "NAME\tIN-USE %\tIN-USE BYTES\tALLOC %\tSUGGESTION/DIAGNOSIS")
 	writeLine(w, "----\t--------\t------------\t-------\t--------------------")
@@ -133,30 +161,26 @@ func printUnifiedReport(stats []*FuncStat, labels []*LabelStat, lines []*LineSta
 		}
 		writef(w, "%s\t%.1f%%\t%s\t%.1f%%\t%s\n", shortenName(s.Name), inUseRatio*100, formatBytes(s.FlatInUseBytes), allocRatio*100, suggestFix(s, inUseRatio, allocRatio))
 	}
+}
 
-	// --- SECTION 6: TRACES ---
-	if len(stats) > 0 {
-		writef(w, "\n## 6. ROOT CAUSE TRACE (Top 5 Allocators)\n")
-		sort.Slice(stats, func(i, j int) bool { return stats[i].FlatAllocBytes > stats[j].FlatAllocBytes })
-		count := 0
-		for i := 0; i < len(stats) && count < 5; i++ {
-			s := stats[i]
-			if float64(s.FlatAllocBytes)/float64(totalAlloc) < NoiseFloor {
-				continue
-			}
-			writef(w, "\n [Rank #%d] Offender: %s\n", count+1, shortenName(s.Name))
-			printHotStackWithBlame(w, s.Name, stacks)
-			count++
-		}
+// printRootCauseTraceSection prints section 6: the call stacks behind the top
+// five allocators, sorted in place by allocated bytes.
+func printRootCauseTraceSection(w *tabwriter.Writer, stats []*FuncStat, stacks []StackRecord, totalAlloc int64) {
+	if len(stats) == 0 {
+		return
 	}
 
-	// --- SECTION 7: ASCII FLAME GRAPH ---
-	writef(w, "\n## 7. ASCII FLAME GRAPH (Call Tree)\n")
-	writef(w, " Showing paths consuming >1%% of total memory.\n\n")
-	printFlameGraph(w, stacks, totalAlloc)
-
-	if err := w.Flush(); err != nil {
-		_, _ = fmt.Fprintln(os.Stderr, "benchmark: flush error:", err)
+	writef(w, "\n## 6. ROOT CAUSE TRACE (Top 5 Allocators)\n")
+	sort.Slice(stats, func(i, j int) bool { return stats[i].FlatAllocBytes > stats[j].FlatAllocBytes })
+	count := 0
+	for i := 0; i < len(stats) && count < 5; i++ {
+		s := stats[i]
+		if float64(s.FlatAllocBytes)/float64(totalAlloc) < NoiseFloor {
+			continue
+		}
+		writef(w, "\n [Rank #%d] Offender: %s\n", count+1, shortenName(s.Name))
+		printHotStackWithBlame(w, s.Name, stacks)
+		count++
 	}
 }
 
@@ -243,6 +267,74 @@ func printFlameNode(w *tabwriter.Writer, node *FlameNode, prefix string, totalAl
 
 // --- Existing Heuristics & Helpers ---
 
+// antiPatternRule describes one heuristic memory anti-pattern: a predicate
+// over a (lowercased) function name plus its stats, and the issue/advice
+// text to report when it matches.
+type antiPatternRule struct {
+	issue   string
+	matches func(name string, s *FuncStat) bool
+	advice  func(s *FuncStat) string
+}
+
+var antiPatternRules = []antiPatternRule{
+	{
+		issue:   "Loop Timer Leak",
+		matches: func(name string, s *FuncStat) bool { return strings.Contains(name, "time.after") },
+		advice:  func(s *FuncStat) string { return "Use time.NewTicker or time.Timer + Stop()" },
+	},
+	{
+		issue: "Repeated RegEx",
+		matches: func(name string, s *FuncStat) bool {
+			return strings.Contains(name, "regexp.compile") && s.FlatAllocObj > 50
+		},
+		advice: func(s *FuncStat) string { return "Compile once in global var or init()" },
+	},
+	{
+		issue: "Heavy JSON",
+		matches: func(name string, s *FuncStat) bool {
+			return strings.Contains(name, "json.unmarshal") && s.FlatAllocBytes > 1024*1024*10
+		},
+		advice: func(s *FuncStat) string { return "Use json.Decoder or easyjson" },
+	},
+	{
+		issue: "Type Conv (Safe)",
+		matches: func(name string, s *FuncStat) bool {
+			return (strings.Contains(name, "slicebytetostring") || strings.Contains(name, "stringtoslicebyte")) && s.FlatAllocBytes > 1024*1024
+		},
+		advice: func(s *FuncStat) string { return "Heavy []byte <-> string." },
+	},
+	{
+		issue: "Interface Boxing",
+		matches: func(name string, s *FuncStat) bool {
+			return strings.Contains(name, "runtime.convt") && s.FlatAllocBytes > 1024*1024
+		},
+		advice: func(s *FuncStat) string { return "Concrete -> interface{}. Generics?" },
+	},
+	{
+		issue: "Slice Append",
+		matches: func(name string, s *FuncStat) bool {
+			return strings.Contains(name, "growslice") && s.FlatAllocBytes > 1024*1024
+		},
+		advice: func(s *FuncStat) string { return "Pre-allocate: make([], 0, cap)" },
+	},
+	{
+		issue: "Map Growth",
+		matches: func(name string, s *FuncStat) bool {
+			return (strings.Contains(name, "mapassign") || strings.Contains(name, "evacuate")) && s.FlatAllocBytes > 1024*1024
+		},
+		advice: func(s *FuncStat) string { return "Pre-allocate: make(map, cap)" },
+	},
+	{
+		issue: "Goroutine Churn",
+		matches: func(name string, s *FuncStat) bool {
+			return strings.Contains(name, "runtime.malg") && s.FlatAllocObj > 1000
+		},
+		advice: func(s *FuncStat) string {
+			return fmt.Sprintf("Starting %d+ goroutines. Worker Pool?", s.FlatAllocObj)
+		},
+	},
+}
+
 func detectAntiPatterns(stats []*FuncStat, w *tabwriter.Writer) {
 	writef(w, "## 1. DETECTED ANTI-PATTERNS & HEURISTICS\n")
 	writeLine(w, "FUNCTION\tISSUE\tADVICE")
@@ -251,37 +343,11 @@ func detectAntiPatterns(stats []*FuncStat, w *tabwriter.Writer) {
 	found := false
 	for _, s := range stats {
 		name := strings.ToLower(s.Name)
-
-		if strings.Contains(name, "time.after") {
-			writef(w, "%s\tLoop Timer Leak\tUse time.NewTicker or time.Timer + Stop()\n", shortenName(s.Name))
-			found = true
-		}
-		if strings.Contains(name, "regexp.compile") && s.FlatAllocObj > 50 {
-			writef(w, "%s\tRepeated RegEx\tCompile once in global var or init()\n", shortenName(s.Name))
-			found = true
-		}
-		if strings.Contains(name, "json.unmarshal") && s.FlatAllocBytes > 1024*1024*10 {
-			writef(w, "%s\tHeavy JSON\tUse json.Decoder or easyjson\n", shortenName(s.Name))
-			found = true
-		}
-		if (strings.Contains(name, "slicebytetostring") || strings.Contains(name, "stringtoslicebyte")) && s.FlatAllocBytes > 1024*1024 {
-			writef(w, "%s\tType Conv (Safe)\tHeavy []byte <-> string.\n", shortenName(s.Name))
-			found = true
-		}
-		if strings.Contains(name, "runtime.convt") && s.FlatAllocBytes > 1024*1024 {
-			writef(w, "%s\tInterface Boxing\tConcrete -> interface{}. Generics?\n", shortenName(s.Name))
-			found = true
-		}
-		if strings.Contains(name, "growslice") && s.FlatAllocBytes > 1024*1024 {
-			writef(w, "%s\tSlice Append\tPre-allocate: make([], 0, cap)\n", shortenName(s.Name))
-			found = true
-		}
-		if (strings.Contains(name, "mapassign") || strings.Contains(name, "evacuate")) && s.FlatAllocBytes > 1024*1024 {
-			writef(w, "%s\tMap Growth\tPre-allocate: make(map, cap)\n", shortenName(s.Name))
-			found = true
-		}
-		if strings.Contains(name, "runtime.malg") && s.FlatAllocObj > 1000 {
-			writef(w, "%s\tGoroutine Churn\tStarting %d+ goroutines. Worker Pool?\n", shortenName(s.Name), s.FlatAllocObj)
+		for _, rule := range antiPatternRules {
+			if !rule.matches(name, s) {
+				continue
+			}
+			writef(w, "%s\t%s\t%s\n", shortenName(s.Name), rule.issue, rule.advice(s))
 			found = true
 		}
 	}
@@ -309,36 +375,13 @@ func suggestFix(s *FuncStat, inUseRatio, allocRatio float64) string {
 }
 
 func printHotStackWithBlame(w *tabwriter.Writer, targetFunc string, stacks []StackRecord) {
-	stackSums := make(map[string]int64)
-	stackDefinitions := make(map[string][]string)
-
-	for _, rec := range stacks {
-		if len(rec.Stack) == 0 {
-			continue
-		}
-		if rec.Stack[0] == targetFunc {
-			sig := strings.Join(rec.Stack, ";")
-			stackSums[sig] += rec.Bytes
-			stackDefinitions[sig] = rec.Stack
-		}
-	}
-
-	var maxSig string
-	var maxBytes int64
-	for sig, b := range stackSums {
-		if b > maxBytes {
-			maxBytes = b
-			maxSig = sig
-		}
-	}
-
-	if maxSig == "" {
+	trace := heaviestStackFor(targetFunc, stacks)
+	if trace == nil {
 		writeLine(w, " (No trace found)")
 
 		return
 	}
 
-	trace := stackDefinitions[maxSig]
 	writeLine(w, " Trace (Leaf -> Root):")
 	blameFound := false
 	for i, fn := range trace {
@@ -358,6 +401,36 @@ func printHotStackWithBlame(w *tabwriter.Writer, targetFunc string, stacks []Sta
 			break
 		}
 	}
+}
+
+// heaviestStackFor returns the stack trace rooted at targetFunc that accounts
+// for the most allocated bytes, or nil if targetFunc allocates nothing.
+func heaviestStackFor(targetFunc string, stacks []StackRecord) []string {
+	stackSums := make(map[string]int64)
+	stackDefinitions := make(map[string][]string)
+
+	for _, rec := range stacks {
+		if len(rec.Stack) == 0 || rec.Stack[0] != targetFunc {
+			continue
+		}
+		sig := strings.Join(rec.Stack, ";")
+		stackSums[sig] += rec.Bytes
+		stackDefinitions[sig] = rec.Stack
+	}
+
+	var maxSig string
+	var maxBytes int64
+	for sig, b := range stackSums {
+		if b > maxBytes {
+			maxBytes = b
+			maxSig = sig
+		}
+	}
+	if maxSig == "" {
+		return nil
+	}
+
+	return stackDefinitions[maxSig]
 }
 
 func isStdLib(funcName string) bool {
@@ -445,10 +518,29 @@ func main() {
 		log.Fatal("Usage: memcheck <pprof_file>")
 	}
 
-	filename := flag.Arg(0)
+	p, err := parseProfile(flag.Arg(0))
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	idxAllocSpace, idxAllocObj, idxInUseSpace, idxInUseObj, err := identifySampleIndices(p)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	stats, lineStats, labelStats, totalAllocBytes, totalInUseBytes, topStacks :=
+		aggregateSamples(p, idxAllocSpace, idxAllocObj, idxInUseSpace, idxInUseObj)
+
+	statList, labelList, lineList := sortedLists(stats, labelStats, lineStats)
+
+	printUnifiedReport(statList, labelList, lineList, topStacks, totalAllocBytes, totalInUseBytes)
+}
+
+// parseProfile opens and parses the pprof file at filename.
+func parseProfile(filename string) (*profile.Profile, error) {
 	f, err := os.Open(filename)
 	if err != nil {
-		log.Fatalf("Failed to open file: %v", err)
+		return nil, errors.Wrapf(err, "failed to open file")
 	}
 	defer func() {
 		_ = f.Close()
@@ -456,36 +548,49 @@ func main() {
 
 	p, err := profile.Parse(f)
 	if err != nil {
-		log.Fatalf("Failed to parse profile: %v", err)
+		return nil, errors.Wrapf(err, "failed to parse profile")
 	}
 
-	// 1. Identify Metrics
-	idxAllocSpace, idxAllocObj := -1, -1
-	idxInUseSpace, idxInUseObj := -1, -1
+	return p, nil
+}
+
+// identifySampleIndices locates the alloc/inuse space and object columns in
+// the profile's sample types, since their order is not fixed across the
+// different kinds of heap profile pprof produces.
+func identifySampleIndices(p *profile.Profile) (allocSpace, allocObj, inUseSpace, inUseObj int, err error) {
+	allocSpace, allocObj, inUseSpace, inUseObj = -1, -1, -1, -1
 
 	for i, st := range p.SampleType {
 		switch st.Type {
 		case "alloc_space", "alloc_bytes":
-			idxAllocSpace = i
+			allocSpace = i
 		case "alloc_objects", "alloc_count":
-			idxAllocObj = i
+			allocObj = i
 		case "inuse_space", "inuse_bytes":
-			idxInUseSpace = i
+			inUseSpace = i
 		case "inuse_objects", "inuse_count":
-			idxInUseObj = i
+			inUseObj = i
 		}
 	}
 
-	if idxAllocSpace == -1 {
-		log.Fatal("Profile missing 'alloc_space'. Ensure this is a heap profile.")
+	if allocSpace == -1 {
+		return 0, 0, 0, 0, errors.New("profile missing 'alloc_space'; ensure this is a heap profile")
 	}
 
-	// 2. Aggregate Data
-	stats := make(map[string]*FuncStat)
-	lineStats := make(map[string]*LineStat)
-	labelStats := make(map[string]*LabelStat)
-	var totalAllocBytes, totalInUseBytes int64
-	var topStacks []StackRecord
+	return allocSpace, allocObj, inUseSpace, inUseObj, nil
+}
+
+// aggregateSamples walks every sample in the profile once, building the
+// per-function, per-line and per-label statistics the report sections read,
+// plus the raw allocating stack traces the flame graph and root-cause trace
+// sections need.
+func aggregateSamples(p *profile.Profile, idxAllocSpace, idxAllocObj, idxInUseSpace, idxInUseObj int) (
+	stats map[string]*FuncStat, lineStats map[string]*LineStat, labelStats map[string]*LabelStat,
+	totalAllocBytes, totalInUseBytes int64, topStacks []StackRecord,
+) {
+	stats = make(map[string]*FuncStat)
+	lineStats = make(map[string]*LineStat)
+	labelStats = make(map[string]*LabelStat)
 
 	for _, s := range p.Sample {
 		allocBytes := s.Value[idxAllocSpace]
@@ -496,100 +601,129 @@ func main() {
 		totalAllocBytes += allocBytes
 		totalInUseBytes += inUseBytes
 
-		// A. Function Analysis
-		seen := make(map[string]bool)
-		if len(s.Location) > 0 {
-			leafLoc := s.Location[0]
-			if len(leafLoc.Line) > 0 {
-				fn := leafLoc.Line[0].Function
-				lineNo := int(leafLoc.Line[0].Line)
-
-				if fn != nil {
-					key := funcKey(fn)
-					if _, ok := stats[key]; !ok {
-						stats[key] = NewFuncStat(fn.Name, fn.Filename, lineNo)
-					}
-					stats[key].FlatAllocBytes += allocBytes
-					stats[key].FlatAllocObj += allocObj
-					stats[key].FlatInUseBytes += inUseBytes
-					stats[key].FlatInUseObj += inUseObj
-
-					if len(s.Location) > 1 {
-						parentLoc := s.Location[1]
-						if len(parentLoc.Line) > 0 {
-							pFn := parentLoc.Line[0].Function
-							if pFn != nil {
-								stats[key].Callers[pFn.Name] += allocBytes
-							}
-						}
-					}
-
-					// Line Stat
-					lineKey := fmt.Sprintf("%s:%d", fn.Filename, lineNo)
-					if _, ok := lineStats[lineKey]; !ok {
-						lineStats[lineKey] = &LineStat{File: fn.Filename, Line: lineNo, Function: fn.Name}
-					}
-					lineStats[lineKey].AllocBytes += allocBytes
-				}
-			}
-		}
-
-		// B. Stack Trace Collection (Cumulative & Tree)
-		var currentStack []string
-		for _, loc := range s.Location {
-			for _, line := range loc.Line {
-				fn := line.Function
-				if fn == nil {
-					continue
-				}
-				currentStack = append(currentStack, fn.Name)
-
-				key := funcKey(fn)
-				if seen[key] {
-					continue
-				}
-				seen[key] = true
-
-				if _, ok := stats[key]; !ok {
-					stats[key] = NewFuncStat(fn.Name, fn.Filename, int(line.Line))
-				}
-				stats[key].CumAllocBytes += allocBytes
-			}
-		}
-
-		// C. Label Analysis
-		for key, values := range s.Label {
-			for _, val := range values {
-				labelID := fmt.Sprintf("%s:%s", key, val)
-				if _, ok := labelStats[labelID]; !ok {
-					labelStats[labelID] = &LabelStat{Name: labelID}
-				}
-				labelStats[labelID].AllocBytes += allocBytes
-				labelStats[labelID].InUseBytes += inUseBytes
-			}
-		}
+		currentStack := aggregateSampleFunctions(s, allocBytes, allocObj, inUseBytes, inUseObj, stats, lineStats)
+		aggregateSampleLabels(s, allocBytes, inUseBytes, labelStats)
 
 		if allocBytes > 0 {
 			topStacks = append(topStacks, StackRecord{Stack: currentStack, Bytes: allocBytes})
 		}
 	}
 
-	// 3. Sorting
-	var statList []*FuncStat
+	return stats, lineStats, labelStats, totalAllocBytes, totalInUseBytes, topStacks
+}
+
+// aggregateSampleFunctions folds one profile sample's leaf-function flat stats
+// and per-line stats into stats/lineStats, then walks the sample's full call
+// stack to update every frame's cumulative allocation total. Returns the stack
+// in leaf-to-root order for the caller's flame-graph/trace bookkeeping.
+func aggregateSampleFunctions(
+	s *profile.Sample, allocBytes, allocObj, inUseBytes, inUseObj int64,
+	stats map[string]*FuncStat, lineStats map[string]*LineStat,
+) []string {
+	aggregateLeafStats(s, allocBytes, allocObj, inUseBytes, inUseObj, stats, lineStats)
+
+	return aggregateStackStats(s, allocBytes, stats)
+}
+
+// aggregateLeafStats updates the flat (leaf-only) allocation totals, immediate
+// caller and per-line stats for the function that actually performed the
+// allocation in this sample.
+func aggregateLeafStats(
+	s *profile.Sample, allocBytes, allocObj, inUseBytes, inUseObj int64,
+	stats map[string]*FuncStat, lineStats map[string]*LineStat,
+) {
+	if len(s.Location) == 0 || len(s.Location[0].Line) == 0 {
+		return
+	}
+	leafLoc := s.Location[0]
+	fn := leafLoc.Line[0].Function
+	if fn == nil {
+		return
+	}
+	lineNo := int(leafLoc.Line[0].Line)
+
+	key := funcKey(fn)
+	if _, ok := stats[key]; !ok {
+		stats[key] = NewFuncStat(fn.Name, fn.Filename, lineNo)
+	}
+	stats[key].FlatAllocBytes += allocBytes
+	stats[key].FlatAllocObj += allocObj
+	stats[key].FlatInUseBytes += inUseBytes
+	stats[key].FlatInUseObj += inUseObj
+
+	if len(s.Location) > 1 && len(s.Location[1].Line) > 0 {
+		if pFn := s.Location[1].Line[0].Function; pFn != nil {
+			stats[key].Callers[pFn.Name] += allocBytes
+		}
+	}
+
+	lineKey := fmt.Sprintf("%s:%d", fn.Filename, lineNo)
+	if _, ok := lineStats[lineKey]; !ok {
+		lineStats[lineKey] = &LineStat{File: fn.Filename, Line: lineNo, Function: fn.Name}
+	}
+	lineStats[lineKey].AllocBytes += allocBytes
+}
+
+// aggregateStackStats updates the cumulative allocation total for every
+// distinct function in the sample's call stack, and returns the stack in
+// leaf-to-root order.
+func aggregateStackStats(s *profile.Sample, allocBytes int64, stats map[string]*FuncStat) []string {
+	seen := make(map[string]bool)
+	var currentStack []string
+	for _, loc := range s.Location {
+		for _, line := range loc.Line {
+			fn := line.Function
+			if fn == nil {
+				continue
+			}
+			currentStack = append(currentStack, fn.Name)
+
+			key := funcKey(fn)
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+
+			if _, ok := stats[key]; !ok {
+				stats[key] = NewFuncStat(fn.Name, fn.Filename, int(line.Line))
+			}
+			stats[key].CumAllocBytes += allocBytes
+		}
+	}
+
+	return currentStack
+}
+
+// aggregateSampleLabels folds one profile sample's pprof labels into labelStats.
+func aggregateSampleLabels(s *profile.Sample, allocBytes, inUseBytes int64, labelStats map[string]*LabelStat) {
+	for key, values := range s.Label {
+		for _, val := range values {
+			labelID := fmt.Sprintf("%s:%s", key, val)
+			if _, ok := labelStats[labelID]; !ok {
+				labelStats[labelID] = &LabelStat{Name: labelID}
+			}
+			labelStats[labelID].AllocBytes += allocBytes
+			labelStats[labelID].InUseBytes += inUseBytes
+		}
+	}
+}
+
+// sortedLists flattens the aggregation maps into slices, sorted (where the
+// report needs it) by allocated bytes.
+func sortedLists(stats map[string]*FuncStat, labelStats map[string]*LabelStat, lineStats map[string]*LineStat) (
+	statList []*FuncStat, labelList []*LabelStat, lineList []*LineStat,
+) {
 	for _, s := range stats {
 		statList = append(statList, s)
 	}
-	var labelList []*LabelStat
 	for _, s := range labelStats {
 		labelList = append(labelList, s)
 	}
 	sort.Slice(labelList, func(i, j int) bool { return labelList[i].AllocBytes > labelList[j].AllocBytes })
-	var lineList []*LineStat
 	for _, s := range lineStats {
 		lineList = append(lineList, s)
 	}
 	sort.Slice(lineList, func(i, j int) bool { return lineList[i].AllocBytes > lineList[j].AllocBytes })
 
-	// 5. Generate Report
-	printUnifiedReport(statList, labelList, lineList, topStacks, totalAllocBytes, totalInUseBytes)
+	return statList, labelList, lineList
 }

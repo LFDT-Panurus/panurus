@@ -42,55 +42,64 @@ func TestNativeComputeSVector_CrossCurve(t *testing.T) {
 	for _, tc := range nativeIPACurves() {
 		t.Run(tc.name, func(t *testing.T) {
 			curve := math.Curves[tc.id]
-			rand, err := curve.Rand()
-			require.NoError(t, err)
-
-			one := math2.One(curve)
-
 			for _, rounds := range []int{1, 2, 3, 4, 5, 6} {
 				n := 1 << rounds
 				t.Run(strconv.Itoa(n), func(t *testing.T) {
-					challenges := make([]*math.Zr, rounds)
-					challengeInvs := make([]*math.Zr, rounds)
-					for j := range challenges {
-						challenges[j] = curve.NewRandomZr(rand)
-						challengeInvs[j] = challenges[j].Copy()
-						challengeInvs[j].InvModOrder()
-					}
-
-					s, sInv := bulletproof.ComputeSVector(n, challenges, curve)
-					require.Len(t, s, n)
-					require.Len(t, sInv, n)
-
-					// Inverse property: s[i] * sInv[i] == 1
-					for i := range n {
-						product := curve.ModMul(s[i], sInv[i], curve.GroupOrder)
-						assert.True(t, product.Equals(one),
-							"s[%d]*sInv[%d] should be 1", i, i)
-					}
-
-					// Definition consistency: compare against naive O(n log n) oracle.
-					for i := range n {
-						expected := math2.One(curve)
-						expectedInv := math2.One(curve)
-						for r := range rounds {
-							bitPos := rounds - 1 - r
-							if (i>>bitPos)&1 == 1 {
-								expected = curve.ModMul(expected, challenges[r], curve.GroupOrder)
-								expectedInv = curve.ModMul(expectedInv, challengeInvs[r], curve.GroupOrder)
-							} else {
-								expected = curve.ModMul(expected, challengeInvs[r], curve.GroupOrder)
-								expectedInv = curve.ModMul(expectedInv, challenges[r], curve.GroupOrder)
-							}
-						}
-						assert.True(t, s[i].Equals(expected),
-							"s[%d] mismatch for n=%d curve=%s", i, n, tc.name)
-						assert.True(t, sInv[i].Equals(expectedInv),
-							"sInv[%d] mismatch for n=%d curve=%s", i, n, tc.name)
-					}
+					checkComputeSVectorCrossCurve(t, curve, tc.name, rounds, n)
 				})
 			}
 		})
+	}
+}
+
+// checkComputeSVectorCrossCurve checks, for a single curve and round count, that
+// ComputeSVector satisfies the inverse property (s[i]*sInv[i] == 1) and matches a
+// naive O(n log n) oracle computed directly from the challenges.
+func checkComputeSVectorCrossCurve(t *testing.T, curve *math.Curve, curveName string, rounds, n int) {
+	t.Helper()
+
+	rand, err := curve.Rand()
+	require.NoError(t, err)
+
+	one := math2.One(curve)
+
+	challenges := make([]*math.Zr, rounds)
+	challengeInvs := make([]*math.Zr, rounds)
+	for j := range challenges {
+		challenges[j] = curve.NewRandomZr(rand)
+		challengeInvs[j] = challenges[j].Copy()
+		challengeInvs[j].InvModOrder()
+	}
+
+	s, sInv := bulletproof.ComputeSVector(n, challenges, curve)
+	require.Len(t, s, n)
+	require.Len(t, sInv, n)
+
+	// Inverse property: s[i] * sInv[i] == 1
+	for i := range n {
+		product := curve.ModMul(s[i], sInv[i], curve.GroupOrder)
+		assert.True(t, product.Equals(one),
+			"s[%d]*sInv[%d] should be 1", i, i)
+	}
+
+	// Definition consistency: compare against naive O(n log n) oracle.
+	for i := range n {
+		expected := math2.One(curve)
+		expectedInv := math2.One(curve)
+		for r := range rounds {
+			bitPos := rounds - 1 - r
+			if (i>>bitPos)&1 == 1 {
+				expected = curve.ModMul(expected, challenges[r], curve.GroupOrder)
+				expectedInv = curve.ModMul(expectedInv, challengeInvs[r], curve.GroupOrder)
+			} else {
+				expected = curve.ModMul(expected, challengeInvs[r], curve.GroupOrder)
+				expectedInv = curve.ModMul(expectedInv, challenges[r], curve.GroupOrder)
+			}
+		}
+		assert.True(t, s[i].Equals(expected),
+			"s[%d] mismatch for n=%d curve=%s", i, n, curveName)
+		assert.True(t, sInv[i].Equals(expectedInv),
+			"sInv[%d] mismatch for n=%d curve=%s", i, n, curveName)
 	}
 }
 

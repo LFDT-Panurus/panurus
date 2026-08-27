@@ -67,6 +67,8 @@ type CSPBasedProver struct {
 }
 
 // NewCSPBasedProver returns a new CSPBasedProver instance.
+//
+//nolint:gocognit // sequential construction of independent proof sub-components (type-and-sum, range correctness); splitting would not reduce real complexity, only hide it behind indirection
 func NewCSPBasedProver(inputWitness, outputWitness []*token.Metadata, inputs, outputs []*math.G1, pp *v1.PublicParams) (*CSPBasedProver, error) {
 	if len(inputWitness) == 0 {
 		return nil, errors.Wrap(ErrInvalidInputs, "cannot create CSP-based prover: no input witnesses")

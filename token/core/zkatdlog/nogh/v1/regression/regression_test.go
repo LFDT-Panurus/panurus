@@ -504,34 +504,46 @@ func validateSwaps(actions []any, metadata map[string][]byte) error {
 	}
 
 	for i, action := range actions {
-		transferAction, ok := action.(driver.TransferAction)
-		if !ok {
-			return errors.Errorf("action %d does not implement driver.TransferAction interface, got type %T", i, action)
-		}
-		if transferAction.NumInputs() == 0 {
-			return errors.Errorf("swap action %d has 0 inputs, expected at least 1", i)
-		}
-		if transferAction.NumOutputs() == 0 {
-			return errors.Errorf("swap action %d has 0 outputs, expected at least 1", i)
-		}
-		if transferAction.IsGraphHiding() {
-			return errors.Errorf("expected swap action %d to be non-graph-hiding", i)
-		}
-		if transferAction.GetIssuer() != nil {
-			return errors.Errorf("expected swap action %d issuer to be nil", i)
-		}
-		for j := range transferAction.NumOutputs() {
-			if transferAction.IsRedeemAt(j) {
-				return errors.Errorf("swap action %d output %d unexpectedly marked as redeem", i, j)
-			}
-		}
-		if err := validateOutputs(transferAction.GetOutputs(), transferAction.NumOutputs(), 0); err != nil {
-			return errors.Errorf("invalid swap outputs for action %d: %w", i, err)
+		if err := validateSwapAction(i, action); err != nil {
+			return err
 		}
 	}
 
 	if err := validateMetadata(metadata); err != nil {
 		return errors.Errorf("invalid swap metadata: %w", err)
+	}
+
+	return nil
+}
+
+// validateSwapAction validates a single swap action at index i: it must
+// implement driver.TransferAction, have at least one input and output, be
+// non-graph-hiding, have no issuer, mark no output as redeem, and have valid
+// outputs.
+func validateSwapAction(i int, action any) error {
+	transferAction, ok := action.(driver.TransferAction)
+	if !ok {
+		return errors.Errorf("action %d does not implement driver.TransferAction interface, got type %T", i, action)
+	}
+	if transferAction.NumInputs() == 0 {
+		return errors.Errorf("swap action %d has 0 inputs, expected at least 1", i)
+	}
+	if transferAction.NumOutputs() == 0 {
+		return errors.Errorf("swap action %d has 0 outputs, expected at least 1", i)
+	}
+	if transferAction.IsGraphHiding() {
+		return errors.Errorf("expected swap action %d to be non-graph-hiding", i)
+	}
+	if transferAction.GetIssuer() != nil {
+		return errors.Errorf("expected swap action %d issuer to be nil", i)
+	}
+	for j := range transferAction.NumOutputs() {
+		if transferAction.IsRedeemAt(j) {
+			return errors.Errorf("swap action %d output %d unexpectedly marked as redeem", i, j)
+		}
+	}
+	if err := validateOutputs(transferAction.GetOutputs(), transferAction.NumOutputs(), 0); err != nil {
+		return errors.Errorf("invalid swap outputs for action %d: %w", i, err)
 	}
 
 	return nil

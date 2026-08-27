@@ -198,6 +198,8 @@ func (i *Action) IsGraphHiding() bool {
 }
 
 // Validate ensures the Action is well-formed.
+//
+//nolint:gocognit // sequential structural checks of the issue action's independent fields; splitting would not reduce real complexity, only hide it behind indirection
 func (i *Action) Validate() error {
 	if i.Issuer.IsNone() {
 		return ErrIssuerNotSet
@@ -311,6 +313,8 @@ func (i *Action) Serialize() ([]byte, error) {
 }
 
 // Deserialize unmarshals the Action from its protobuf-encoded byte representation.
+//
+//nolint:gocognit // sequential field-by-field reconstruction and validation from the protobuf wire format; splitting would not reduce real complexity, only hide it behind indirection
 func (i *Action) Deserialize(raw []byte) error {
 	issueAction := &actions.IssueAction{}
 	err := proto.Unmarshal(raw, issueAction)

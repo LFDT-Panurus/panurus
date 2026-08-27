@@ -22,6 +22,7 @@ import (
 	session2 "github.com/LFDT-Panurus/panurus/token/services/utils/json/session"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/common/utils/collections"
+	"github.com/hyperledger-labs/fabric-smart-client/platform/common/utils/collections/sets"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/services/endpoint"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/services/id"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/services/sig"
@@ -193,6 +194,136 @@ func (c *CollectEndorsementsView) requestSignaturesOnTransfers(context view.Cont
 	)
 }
 
+// resolveMultiSigSignature recursively collects and joins signatures from a
+// multi-sig identity's components. ok is false when signerIdentity is not a
+// multi-sig identity.
+func (c *CollectEndorsementsView) resolveMultiSigSignature(
+	context view.Context,
+	signerIdentity view.Identity,
+	verifierGetter verifierGetterFunc,
+	externalWallets map[string]ExternalWalletSigner,
+) (sigma []byte, ok bool, err error) {
+	multiSigners, ok, err := multisig.Unwrap(signerIdentity)
+	if err != nil {
+		return nil, false, errors.Wrapf(err, "failed unwrapping multi-sig identity [%s]", signerIdentity)
+	}
+	if !ok {
+		return nil, false, nil
+	}
+
+	logger.DebugfContext(context.Context(), "found multi-sig identity [%s], request multi-sig signature to [%d] parties", signerIdentity, len(multiSigners))
+	// collect the signatures from multiSigners
+	multiSignersSigmas, err := c.requestSignatures(multiSigners, verifierGetter, context, externalWallets)
+	if err != nil {
+		return nil, false, errors.WithMessagef(err, "failed requesting signatures")
+	}
+	logger.DebugfContext(context.Context(), "collected [%d] signatures for multi-sig identity [%s]", len(multiSignersSigmas), signerIdentity)
+	sigma, err = multisig.JoinSignatures(multiSigners, multiSignersSigmas)
+	if err != nil {
+		return nil, false, errors.WithMessagef(err, "failed joining multi-sig signatures")
+	}
+
+	return sigma, true, nil
+}
+
+// resolvePolicySignature recursively collects and joins signatures from a
+// policy identity's components (respecting WithPolicySigners if set). ok is
+// false when signerIdentity is not a policy identity.
+func (c *CollectEndorsementsView) resolvePolicySignature(
+	context view.Context,
+	signerIdentity view.Identity,
+	verifierGetter verifierGetterFunc,
+	externalWallets map[string]ExternalWalletSigner,
+) (sigma []byte, ok bool, err error) {
+	pi, ok, err := boolpolicy.Unwrap(signerIdentity)
+	if err != nil {
+		return nil, false, errors.Wrapf(err, "failed unwrapping policy identity [%s]", signerIdentity)
+	}
+	if !ok {
+		return nil, false, nil
+	}
+
+	componentIDs := make([]token.Identity, len(pi.Identities))
+	for idx, b := range pi.Identities {
+		componentIDs[idx] = b
+	}
+	// collectIDs is the subset we actually request signatures from.
+	// If the caller supplied WithPolicySigners, only contact those
+	// components; the absent slots stay nil in the PolicySignature,
+	// which satisfies OR branches without unnecessary network calls.
+	collectIDs := c.policyCollectIDs(componentIDs)
+	logger.DebugfContext(context.Context(), "found policy identity [%s], collecting signatures from [%d/%d] components", signerIdentity, len(collectIDs), len(componentIDs))
+	componentSigmas, err := c.requestSignatures(collectIDs, verifierGetter, context, externalWallets)
+	if err != nil {
+		return nil, false, errors.WithMessagef(err, "failed requesting policy signatures")
+	}
+	sigma, err = boolpolicy.JoinSignatures(componentIDs, componentSigmas)
+	if err != nil {
+		return nil, false, errors.WithMessagef(err, "failed joining policy signatures")
+	}
+
+	return sigma, true, nil
+}
+
+// resolveSignerSignature attempts to resolve one signer's signature without a
+// network round trip: recursing into multi-sig/policy composites, signing
+// externally via a registered ExternalWalletSigner, or signing locally when
+// this node holds the key. handled is false when none of those apply, meaning
+// the signer must be contacted remotely by the caller.
+func (c *CollectEndorsementsView) resolveSignerSignature(
+	context view.Context,
+	signerIdentity view.Identity,
+	verifierGetter verifierGetterFunc,
+	externalWallets map[string]ExternalWalletSigner,
+	requestRaw []byte,
+) (sigma []byte, handled bool, err error) {
+	sigma, ok, err := c.resolveMultiSigSignature(context, signerIdentity, verifierGetter, externalWallets)
+	if err != nil || ok {
+		return sigma, ok, err
+	}
+
+	sigma, ok, err = c.resolvePolicySignature(context, signerIdentity, verifierGetter, externalWallets)
+	if err != nil || ok {
+		return sigma, ok, err
+	}
+
+	// Case: there is a wallet bound to the party with an external signer registered,
+	// the signature is generated externally. Probing the wallet first lets callers
+	// who have explicitly registered an ExternalWalletSigner short-circuit in O(1),
+	// avoiding the x509 parse + BCCSP key load that GetSigner runs for identities
+	// whose private key is held outside the local BCCSP (e.g. in an external KMS).
+	if w, err := c.tx.TokenService().WalletManager().OwnerWallet(context.Context(), signerIdentity); err == nil {
+		if ews := c.Opts.ExternalWalletSigner(w.ID()); ews != nil {
+			logger.DebugfContext(context.Context(), "found wallet for party [%s], request external signature", signerIdentity)
+			externalWallets[w.ID()] = ews
+			sigma, err := c.signExternal(context.Context(), signerIdentity, ews, requestRaw)
+			if err != nil {
+				return nil, false, errors.WithMessagef(err, "failed signing external for party [%s]", signerIdentity)
+			}
+
+			return sigma, true, nil
+		}
+		// wallet exists but no ExternalWalletSigner registered; fall through to the
+		// local-signer path. ExternalWalletSigner registration is an explicit opt-in,
+		// not a strict requirement.
+	}
+
+	// Case: there is a signer locally bound to the party, use it to generate the signature
+	if signer, err := c.tx.TokenService().SigService().GetSigner(context.Context(), signerIdentity); err == nil {
+		logger.DebugfContext(context.Context(), "found signer for party [%s], request local signature", signerIdentity)
+		sigma, err := c.signLocal(context.Context(), signerIdentity, signer, requestRaw)
+		if err != nil {
+			return nil, false, errors.WithMessagef(err, "failed signing local for party [%s]", signerIdentity)
+		}
+
+		return sigma, true, nil
+	} else {
+		logger.DebugfContext(context.Context(), "failed to find a signer for party [%s]: [%s]", signerIdentity, err)
+	}
+
+	return nil, false, nil
+}
+
 // requestSignatures collects signatures from the specified signers for the token request.
 // It handles multiple signature scenarios:
 // - Multi-signature identities: recursively collects signatures from all component signers
@@ -224,91 +355,14 @@ func (c *CollectEndorsementsView) requestSignatures(signers []view.Identity, ver
 
 		logger.DebugfContext(context.Context(), "collecting signature [%d] on request from [%s]", i, signerIdentity)
 
-		// Case: the identity is a multi-sig identity
-		multiSigners, ok, err := multisig.Unwrap(signerIdentity)
+		sigma, handled, err := c.resolveSignerSignature(context, signerIdentity, verifierGetter, externalWallets, requestRaw)
 		if err != nil {
-			return nil, errors.Wrapf(err, "failed unwrapping multi-sig identity [%s]", signerIdentity)
+			return nil, err
 		}
-		if ok {
-			logger.DebugfContext(context.Context(), "found multi-sig identity [%s], request multi-sig signature to [%d] parties", signerIdentity, len(multiSigners))
-			// collect the signatures from multiSigners
-			multiSignersSigmas, err := c.requestSignatures(multiSigners, verifierGetter, context, externalWallets)
-			if err != nil {
-				return nil, errors.WithMessagef(err, "failed requesting signatures")
-			}
-			logger.DebugfContext(context.Context(), "collected [%d] signatures for multi-sig identity [%s]", len(multiSignersSigmas), signerIdentity)
-			sigma, err := multisig.JoinSignatures(multiSigners, multiSignersSigmas)
-			if err != nil {
-				return nil, errors.WithMessagef(err, "failed joining multi-sig signatures")
-			}
+		if handled {
 			sigmas[signerIdentity.UniqueID()] = sigma
 
 			continue
-		}
-
-		// Case: the identity is a policy identity
-		pi, ok, err := boolpolicy.Unwrap(signerIdentity)
-		if err != nil {
-			return nil, errors.Wrapf(err, "failed unwrapping policy identity [%s]", signerIdentity)
-		}
-		if ok {
-			componentIDs := make([]token.Identity, len(pi.Identities))
-			for idx, b := range pi.Identities {
-				componentIDs[idx] = b
-			}
-			// collectIDs is the subset we actually request signatures from.
-			// If the caller supplied WithPolicySigners, only contact those
-			// components; the absent slots stay nil in the PolicySignature,
-			// which satisfies OR branches without unnecessary network calls.
-			collectIDs := c.policyCollectIDs(componentIDs)
-			logger.DebugfContext(context.Context(), "found policy identity [%s], collecting signatures from [%d/%d] components", signerIdentity, len(collectIDs), len(componentIDs))
-			componentSigmas, err := c.requestSignatures(collectIDs, verifierGetter, context, externalWallets)
-			if err != nil {
-				return nil, errors.WithMessagef(err, "failed requesting policy signatures")
-			}
-			sigma, err := boolpolicy.JoinSignatures(componentIDs, componentSigmas)
-			if err != nil {
-				return nil, errors.WithMessagef(err, "failed joining policy signatures")
-			}
-			sigmas[signerIdentity.UniqueID()] = sigma
-
-			continue
-		}
-
-		// Case: there is a wallet bound to the party with an external signer registered,
-		// the signature is generated externally. Probing the wallet first lets callers
-		// who have explicitly registered an ExternalWalletSigner short-circuit in O(1),
-		// avoiding the x509 parse + BCCSP key load that GetSigner runs for identities
-		// whose private key is held outside the local BCCSP (e.g. in an external KMS).
-		if w, err := c.tx.TokenService().WalletManager().OwnerWallet(context.Context(), signerIdentity); err == nil {
-			if ews := c.Opts.ExternalWalletSigner(w.ID()); ews != nil {
-				logger.DebugfContext(context.Context(), "found wallet for party [%s], request external signature", signerIdentity)
-				externalWallets[w.ID()] = ews
-				sigma, err := c.signExternal(context.Context(), signerIdentity, ews, requestRaw)
-				if err != nil {
-					return nil, errors.WithMessagef(err, "failed signing external for party [%s]", signerIdentity)
-				}
-				sigmas[signerIdentity.UniqueID()] = sigma
-
-				continue
-			}
-			// wallet exists but no ExternalWalletSigner registered; fall through to the
-			// local-signer path. ExternalWalletSigner registration is an explicit opt-in,
-			// not a strict requirement.
-		}
-
-		// Case: there is a signer locally bound to the party, use it to generate the signature
-		if signer, err := c.tx.TokenService().SigService().GetSigner(context.Context(), signerIdentity); err == nil {
-			logger.DebugfContext(context.Context(), "found signer for party [%s], request local signature", signerIdentity)
-			sigma, err := c.signLocal(context.Context(), signerIdentity, signer, requestRaw)
-			if err != nil {
-				return nil, errors.WithMessagef(err, "failed signing local for party [%s]", signerIdentity)
-			}
-			sigmas[signerIdentity.UniqueID()] = sigma
-
-			continue
-		} else {
-			logger.DebugfContext(context.Context(), "failed to find a signer for party [%s]: [%s]", signerIdentity, err)
 		}
 
 		// Case: the signature must be generated by a remote party.
@@ -321,30 +375,46 @@ func (c *CollectEndorsementsView) requestSignatures(signers []view.Identity, ver
 		}
 	}
 
-	// Remote parties are independent, fan out their round-trips so total latency
-	// tracks the slowest party instead of the sum. Workers share no state: the
-	// sigmas map is populated here from the collected answers.
-	if len(remoteSigners) > 0 {
-		logger.DebugfContext(context.Context(), "request [%d] remote signatures concurrently", len(remoteSigners))
-		remoteSigmas, err := fanOut(context.Context(), len(remoteSigners), func(i int) ([]byte, error) {
-			party := remoteSigners[i]
-			sigma, err := c.signRemote(context, party, &SignatureRequest{TX: txRaw, Signer: party}, requestRaw, verifierGetter)
-			if err != nil {
-				return nil, errors.WithMessagef(err, "failed signing remote for party [%s]", party)
-			}
-
-			return sigma, nil
-		})
-		if err != nil {
-			return nil, err
-		}
-		for i, party := range remoteSigners {
-			sigmas[party.UniqueID()] = remoteSigmas[i]
-		}
+	if err := c.resolveRemoteSignatures(context, remoteSigners, verifierGetter, requestRaw, txRaw, sigmas); err != nil {
+		return nil, err
 	}
 	logger.DebugfContext(context.Context(), "Done signing")
 
 	return sigmas, nil
+}
+
+// resolveRemoteSignatures contacts every remote party in remoteSigners,
+// fanning out their round-trips so total latency tracks the slowest party
+// instead of the sum, and writes the results into sigmas.
+func (c *CollectEndorsementsView) resolveRemoteSignatures(
+	context view.Context,
+	remoteSigners []view.Identity,
+	verifierGetter verifierGetterFunc,
+	requestRaw, txRaw []byte,
+	sigmas map[string][]byte,
+) error {
+	if len(remoteSigners) == 0 {
+		return nil
+	}
+
+	logger.DebugfContext(context.Context(), "request [%d] remote signatures concurrently", len(remoteSigners))
+	remoteSigmas, err := fanOut(context.Context(), len(remoteSigners), func(i int) ([]byte, error) {
+		party := remoteSigners[i]
+		sigma, err := c.signRemote(context, party, &SignatureRequest{TX: txRaw, Signer: party}, requestRaw, verifierGetter)
+		if err != nil {
+			return nil, errors.WithMessagef(err, "failed signing remote for party [%s]", party)
+		}
+
+		return sigma, nil
+	})
+	if err != nil {
+		return err
+	}
+	for i, party := range remoteSigners {
+		sigmas[party.UniqueID()] = remoteSigmas[i]
+	}
+
+	return nil
 }
 
 // signLocal generates a signature using a locally available signer for the given party.
@@ -529,6 +599,22 @@ func (c *CollectEndorsementsView) distributeTxToParties(context view.Context, di
 	// If the party is an auditor, then send the full set of metadata.
 	// Otherwise, filter the metadata by Enrollment ID.
 	logger.DebugfContext(context.Context(), "start distributing to %d parties", len(finalDistributionList))
+	remote, payloads, err := c.preparePayloads(context, finalDistributionList)
+	if err != nil {
+		return err
+	}
+
+	// TODO:
+	// This operation might be retried, but this requires a change of protocol to make sure the recipient can always receive.
+	// It could be done by using a new context.
+	return c.distributeToRemoteParties(context, remote, payloads, owner)
+}
+
+// preparePayloads filters finalDistributionList down to the parties that need
+// a remote round trip (skipping entries that are me and not an auditor), and
+// marshals each one's transaction payload: full metadata for auditors,
+// EID-filtered metadata otherwise.
+func (c *CollectEndorsementsView) preparePayloads(context view.Context, finalDistributionList []distributionListEntry) ([]distributionListEntry, [][]byte, error) {
 	remote := make([]distributionListEntry, 0, len(finalDistributionList))
 	payloads := make([][]byte, 0, len(finalDistributionList))
 	for i, entry := range finalDistributionList {
@@ -550,18 +636,19 @@ func (c *CollectEndorsementsView) distributeTxToParties(context view.Context, di
 			txRaw, err = c.tx.Bytes(context.Context(), entry.EID)
 		}
 		if err != nil {
-			return errors.Wrap(err, "failed marshalling transaction content")
+			return nil, nil, errors.Wrap(err, "failed marshalling transaction content")
 		}
 		remote = append(remote, entry)
 		payloads = append(payloads, txRaw)
 	}
 
-	// TODO:
-	// This operation might be retried, but this requires a change of protocol to make sure the recipient can always receive.
-	// It could be done by using a new context.
-	// Remote parties are independent, fan out the round-trips so total latency
-	// tracks the slowest party. Workers only do network I/O and verification;
-	// the acks are recorded on this goroutine from the collected answers.
+	return remote, payloads, nil
+}
+
+// distributeToRemoteParties fans out sending the transaction to each remote
+// party in remote so total latency tracks the slowest party instead of the
+// sum, then records their acknowledgment signatures via owner.
+func (c *CollectEndorsementsView) distributeToRemoteParties(context view.Context, remote []distributionListEntry, payloads [][]byte, owner *TxOwner) error {
 	sigmas, err := fanOut(context.Context(), len(remote), func(i int) ([]byte, error) {
 		entry := &remote[i]
 		logger.DebugfContext(context.Context(), "Distribute to %s", entry.EID)
@@ -647,7 +734,50 @@ func (c *CollectEndorsementsView) prepareDistributionList(context view.Context, 
 	// Compress distributionList by removing duplicates
 
 	// check if there are multisig identities, if yes, unwrap them
-	allIds := make([]view.Identity, 0, len(distributionList)+len(auditors))
+	allIds, err := c.unwrapDistributionIdentities(distributionList)
+	if err != nil {
+		return nil, err
+	}
+	distributionList = allIds
+	allIds = append(allIds, auditors...)
+
+	mine, err := c.resolveMineSet(context, allIds)
+	if err != nil {
+		return nil, err
+	}
+
+	// For each party in the distribution list:
+	// - check if it is me
+	// - check if it is an auditor
+	// - extract the corresponding long term identity
+	// If the long term identity has not been added yet, add it to the list.
+	// If the party is me or an auditor, no need to extract the enrollment ID.
+	var distributionListCompressed []distributionListEntry
+	for _, party := range distributionList {
+		distributionListCompressed, err = c.appendDistributionEntry(context, distributionListCompressed, party, mine)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	// check the auditors
+	for _, party := range auditors {
+		distributionListCompressed, err = c.appendAuditorEntry(context, distributionListCompressed, party, mine)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	logger.DebugfContext(context.Context(), "distributed tx to num parties [%d]", len(distributionListCompressed))
+
+	return distributionListCompressed, nil
+}
+
+// unwrapDistributionIdentities expands distributionList's multi-sig and
+// policy identities into their component identities, and drops any redeem
+// (IsNone) entries.
+func (c *CollectEndorsementsView) unwrapDistributionIdentities(distributionList []view.Identity) ([]view.Identity, error) {
+	allIds := make([]view.Identity, 0, len(distributionList))
 	for _, id := range distributionList {
 		if id.IsNone() {
 			// This is a redeem, nothing to do here.
@@ -677,9 +807,14 @@ func (c *CollectEndorsementsView) prepareDistributionList(context view.Context, 
 
 		allIds = append(allIds, id)
 	}
-	distributionList = allIds
-	allIds = append(allIds, auditors...)
 
+	return allIds, nil
+}
+
+// resolveMineSet determines which of allIds' unique IDs resolve to identities
+// local to this node. It re-checks the token service's sig service on the
+// remainder after the first pass, mirroring the original two-pass AreMe call.
+func (c *CollectEndorsementsView) resolveMineSet(context view.Context, allIds []view.Identity) (sets.Set[string], error) {
 	sigService, err := sig.GetService(context)
 	if err != nil {
 		return nil, errors.Wrapf(err, "failed getting sig service for [%s]", c.tx.Opts.Auditor)
@@ -694,98 +829,103 @@ func (c *CollectEndorsementsView) prepareDistributionList(context view.Context, 
 	mine.Add(c.tx.TokenService().SigService().AreMe(context.Context(), remainingIds...)...)
 	logger.DebugfContext(context.Context(), "%d/%d ids were mine", mine.Length(), len(allIds))
 
-	var distributionListCompressed []distributionListEntry
-	for _, party := range distributionList {
-		// For each party in the distribution list:
-		// - check if it is me
-		// - check if it is an auditor
-		// - extract the corresponding long term identity
-		// If the long term identity has not been added yet, add it to the list.
-		// If the party is me or an auditor, no need to extract the enrollment ID.
-		logger.DebugfContext(context.Context(), "distribute tx to [%s]?", party)
+	return mine, nil
+}
 
-		isMe := mine.Contains(party.UniqueID())
-		if !isMe {
-			// check if there is a wallet that contains that identity
-			_, err = c.tx.TokenService().WalletManager().OwnerWallet(context.Context(), party)
-			isMe = err == nil
+// resolveLongTermIdentity resolves party's long-term identity: the node's own
+// default identity when isMe, otherwise the endpoint-resolved identity.
+// errLabel customizes the resolution failure message.
+func (c *CollectEndorsementsView) resolveLongTermIdentity(context view.Context, party view.Identity, isMe bool, errLabel string) (view.Identity, error) {
+	if isMe {
+		idProvider, err := id.GetProvider(context)
+		if err != nil {
+			return nil, errors.Wrapf(err, "failed getting identity provider")
 		}
-		logger.DebugfContext(context.Context(), "distribute tx to [%s], it is me [%v].", party, isMe)
-		var longTermIdentity view.Identity
-		var err error
-		// if it is me, no need to resolve, get directly the default identity
-		if isMe {
-			idProvider, err := id.GetProvider(context)
-			if err != nil {
-				return nil, errors.Wrapf(err, "failed getting identity provider")
-			}
-			longTermIdentity = idProvider.DefaultIdentity()
-		} else {
-			longTermIdentity, _, _, err = endpoint.GetService(context).Resolve(context.Context(), party)
-			if err != nil {
-				return nil, errors.Wrapf(err, "cannot resolve long term identity for [%s]", party.UniqueID())
-			}
-		}
-		logger.DebugfContext(context.Context(), "searching for long term identity [%s]", longTermIdentity)
-		found := false
-		for _, entry := range distributionListCompressed {
-			if longTermIdentity.Equal(entry.LongTerm) {
-				found = true
 
-				break
-			}
-		}
-		if !found {
-			logger.DebugfContext(context.Context(), "adding [%s] to distribution list", party)
-			eID := ""
-			if !isMe {
-				eID, err = c.tx.TokenService().WalletManager().GetEnrollmentID(context.Context(), party)
-				if err != nil {
-					return nil, errors.Wrapf(err, "failed getting enrollment ID for [%s]", party.UniqueID())
-				}
-			}
-			distributionListCompressed = append(distributionListCompressed, distributionListEntry{
-				IsMe:     isMe,
-				LongTerm: longTermIdentity,
-				ID:       party,
-				EID:      eID,
-				Auditor:  false,
-			})
-		} else {
+		return idProvider.DefaultIdentity(), nil
+	}
+
+	longTermIdentity, _, _, err := endpoint.GetService(context).Resolve(context.Context(), party)
+	if err != nil {
+		return nil, errors.Wrapf(err, "cannot resolve long term %s for [%s]", errLabel, party.UniqueID())
+	}
+
+	return longTermIdentity, nil
+}
+
+// appendDistributionEntry resolves party's long-term identity and, unless one
+// with the same long-term identity is already present in compressed, appends
+// a new distributionListEntry for it.
+func (c *CollectEndorsementsView) appendDistributionEntry(
+	context view.Context,
+	compressed []distributionListEntry,
+	party view.Identity,
+	mine sets.Set[string],
+) ([]distributionListEntry, error) {
+	logger.DebugfContext(context.Context(), "distribute tx to [%s]?", party)
+
+	isMe := mine.Contains(party.UniqueID())
+	if !isMe {
+		// check if there is a wallet that contains that identity
+		_, err := c.tx.TokenService().WalletManager().OwnerWallet(context.Context(), party)
+		isMe = err == nil
+	}
+	logger.DebugfContext(context.Context(), "distribute tx to [%s], it is me [%v].", party, isMe)
+
+	longTermIdentity, err := c.resolveLongTermIdentity(context, party, isMe, "identity")
+	if err != nil {
+		return nil, err
+	}
+
+	logger.DebugfContext(context.Context(), "searching for long term identity [%s]", longTermIdentity)
+	for _, entry := range compressed {
+		if longTermIdentity.Equal(entry.LongTerm) {
 			logger.DebugfContext(context.Context(), "skip adding [%s] to distribution list, already added", party)
+
+			return compressed, nil
 		}
 	}
 
-	// check the auditors
-	for _, party := range auditors {
-		isMe := mine.Contains(party.UniqueID())
-		logger.DebugfContext(context.Context(), "distribute tx to auditor [%s], it is me [%v].", party, isMe)
-		var longTermIdentity view.Identity
-		var err error
-		// if it is me, no need to resolve, get directly the default identity
-		if isMe {
-			idProvider, err := id.GetProvider(context)
-			if err != nil {
-				return nil, errors.Wrapf(err, "failed getting identity provider")
-			}
-			longTermIdentity = idProvider.DefaultIdentity()
-		} else {
-			longTermIdentity, _, _, err = endpoint.GetService(context).Resolve(context.Context(), party)
-			if err != nil {
-				return nil, errors.Wrapf(err, "cannot resolve long term auditor identity for [%s]", party.UniqueID())
-			}
+	logger.DebugfContext(context.Context(), "adding [%s] to distribution list", party)
+	eID := ""
+	if !isMe {
+		eID, err = c.tx.TokenService().WalletManager().GetEnrollmentID(context.Context(), party)
+		if err != nil {
+			return nil, errors.Wrapf(err, "failed getting enrollment ID for [%s]", party.UniqueID())
 		}
-		distributionListCompressed = append(distributionListCompressed, distributionListEntry{
-			IsMe:     isMe,
-			ID:       party,
-			Auditor:  true,
-			LongTerm: longTermIdentity,
-		})
 	}
 
-	logger.DebugfContext(context.Context(), "distributed tx to num parties [%d]", len(distributionListCompressed))
+	return append(compressed, distributionListEntry{
+		IsMe:     isMe,
+		LongTerm: longTermIdentity,
+		ID:       party,
+		EID:      eID,
+		Auditor:  false,
+	}), nil
+}
 
-	return distributionListCompressed, nil
+// appendAuditorEntry resolves party's long-term identity and appends a new
+// auditor distributionListEntry for it.
+func (c *CollectEndorsementsView) appendAuditorEntry(
+	context view.Context,
+	compressed []distributionListEntry,
+	party view.Identity,
+	mine sets.Set[string],
+) ([]distributionListEntry, error) {
+	isMe := mine.Contains(party.UniqueID())
+	logger.DebugfContext(context.Context(), "distribute tx to auditor [%s], it is me [%v].", party, isMe)
+
+	longTermIdentity, err := c.resolveLongTermIdentity(context, party, isMe, "auditor identity")
+	if err != nil {
+		return nil, err
+	}
+
+	return append(compressed, distributionListEntry{
+		IsMe:     isMe,
+		ID:       party,
+		Auditor:  true,
+		LongTerm: longTermIdentity,
+	}), nil
 }
 
 // getSession retrieves an existing session for the given party from the cache,

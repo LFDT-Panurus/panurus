@@ -12,6 +12,7 @@ linters:
     - exptostd # Detects functions from golang.org/x/exp/ that can be replaced by std functions. [auto-fix]
     - fatcontext # Detects nested contexts in loops and function literals. [auto-fix]
     - ginkgolinter # Enforces standards of using ginkgo and gomega. [auto-fix]
+    - gocognit # Computes and checks the cognitive complexity of functions.
     - goheader # Check if file header matches to pattern. [fast, auto-fix]
     - iface # Detects incorrect use of interfaces.
     - gosec # Inspects source code for security problems.

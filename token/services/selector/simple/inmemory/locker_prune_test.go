@@ -77,33 +77,41 @@ func TestPruningDoesNotLoseConcurrentLocks(t *testing.T) {
 	for w := range workers {
 		owner := fmt.Sprintf("owner-%d", w)
 		wg.Go(func() {
-			ctx := context.Background()
-			for i := range iterations {
-				id := &token.ID{TxId: fmt.Sprintf("tok-%s-%d", owner, i), Index: 0}
-				txID := fmt.Sprintf("tx-%s-%d", owner, i)
-				mock.setStatus(txID, ttxdb.Pending)
-				if _, err := d.Lock(ctx, owner, id, txID, false); err != nil {
-					t.Errorf("lock failed: %v", err)
-
-					return
-				}
-				// The invariant pruning must not break: a token locked a
-				// moment ago is visible as locked. An orphaned shard would
-				// make IsLocked return false here.
-				if !d.IsLocked(id) {
-					t.Errorf("lock for %s lost: shard was pruned while holding a live lock", id)
-
-					return
-				}
-				if notFound := d.UnlockIDs(ctx, owner, id); len(notFound) != 0 {
-					t.Errorf("unlock missed %v: lock ended up in an orphaned shard", notFound)
-
-					return
-				}
-			}
+			runPruningRaceWorker(t, d, mock, owner, iterations)
 		})
 	}
 	wg.Wait()
+}
+
+// runPruningRaceWorker repeatedly locks, checks IsLocked, then unlocks a
+// fresh token id for owner, failing t if any step observes a lock lost to a
+// pruning race.
+func runPruningRaceWorker(t *testing.T, d *locker, mock *mockTXStatusProvider, owner string, iterations int) {
+	t.Helper()
+	ctx := context.Background()
+	for i := range iterations {
+		id := &token.ID{TxId: fmt.Sprintf("tok-%s-%d", owner, i), Index: 0}
+		txID := fmt.Sprintf("tx-%s-%d", owner, i)
+		mock.setStatus(txID, ttxdb.Pending)
+		if _, err := d.Lock(ctx, owner, id, txID, false); err != nil {
+			t.Errorf("lock failed: %v", err)
+
+			return
+		}
+		// The invariant pruning must not break: a token locked a
+		// moment ago is visible as locked. An orphaned shard would
+		// make IsLocked return false here.
+		if !d.IsLocked(id) {
+			t.Errorf("lock for %s lost: shard was pruned while holding a live lock", id)
+
+			return
+		}
+		if notFound := d.UnlockIDs(ctx, owner, id); len(notFound) != 0 {
+			t.Errorf("unlock missed %v: lock ended up in an orphaned shard", notFound)
+
+			return
+		}
+	}
 }
 
 // TestLockSurvivesConcurrentShardPruning pins down the stale-shard-reference
@@ -189,24 +197,7 @@ func TestLockedCountDoesNotDeadlockWithPruning(t *testing.T) {
 		for w := range workers {
 			owner := fmt.Sprintf("owner-%d", w)
 			wg.Go(func() {
-				ctx := context.Background()
-				for i := range iterations {
-					id := &token.ID{TxId: fmt.Sprintf("tok-%s-%d", owner, i), Index: 0}
-					txID := fmt.Sprintf("tx-%s-%d", owner, i)
-					mock.setStatus(txID, ttxdb.Pending)
-					if _, err := d.Lock(ctx, owner, id, txID, false); err != nil {
-						errCh <- errors.Wrapf(err, "lock of [%s] failed", id)
-
-						return
-					}
-					// racing the scanner's own lockedCount from the caller side
-					_ = d.lockedCount()
-					if notFound := d.UnlockIDs(ctx, owner, id); len(notFound) != 0 {
-						errCh <- errors.Errorf("unlock missed %v", notFound)
-
-						return
-					}
-				}
+				runDeadlockRaceWorker(d, mock, errCh, owner, iterations)
 			})
 		}
 		wg.Wait()
@@ -222,4 +213,29 @@ func TestLockedCountDoesNotDeadlockWithPruning(t *testing.T) {
 		t.Error(err)
 	}
 	require.Zero(t, d.lockedCount())
+}
+
+// runDeadlockRaceWorker repeatedly locks, races the scanner's lockedCount,
+// then unlocks a fresh token id for owner, reporting any failure on errCh
+// rather than failing t directly (the test may already have returned on
+// timeout by the time a worker finishes).
+func runDeadlockRaceWorker(d *locker, mock *mockTXStatusProvider, errCh chan error, owner string, iterations int) {
+	ctx := context.Background()
+	for i := range iterations {
+		id := &token.ID{TxId: fmt.Sprintf("tok-%s-%d", owner, i), Index: 0}
+		txID := fmt.Sprintf("tx-%s-%d", owner, i)
+		mock.setStatus(txID, ttxdb.Pending)
+		if _, err := d.Lock(ctx, owner, id, txID, false); err != nil {
+			errCh <- errors.Wrapf(err, "lock of [%s] failed", id)
+
+			return
+		}
+		// racing the scanner's own lockedCount from the caller side
+		_ = d.lockedCount()
+		if notFound := d.UnlockIDs(ctx, owner, id); len(notFound) != 0 {
+			errCh <- errors.Errorf("unlock missed %v", notFound)
+
+			return
+		}
+	}
 }

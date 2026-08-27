@@ -543,6 +543,10 @@ func (r *Request) Outputs(ctx context.Context) (*OutputStream, error) {
 	return r.outputs(ctx, false)
 }
 
+//nolint:gocognit // sequential per-action-type extraction and metadata matching over a token
+// request's issues and transfers; splitting further would move the complexity around rather
+// than reduce it, in code where a mistake in the matching logic risks accepting a malformed
+// output.
 func (r *Request) outputs(ctx context.Context, failOnMissing bool) (*OutputStream, error) {
 	tms := r.TokenService.tms
 	pp := tms.PublicParamsManager().PublicParameters()
@@ -611,6 +615,10 @@ func (r *Request) outputs(ctx context.Context, failOnMissing bool) (*OutputStrea
 	return NewOutputStream(outputs, tms.PublicParamsManager().PublicParameters().Precision()), nil
 }
 
+//nolint:gocognit // per-output deobfuscation, issuer/recipient identity checks against
+// declared metadata, and quantity extraction; this is exactly the validation that stops a
+// malformed or misattributed output from being accepted, so it is kept as one auditable
+// sequence rather than split behind indirection.
 func (r *Request) extractIssueOutputs(ctx context.Context, i int, counter uint64, issueAction driver.IssueAction, issueMeta *IssueMetadata, failOnMissing, noOutputForRecipient bool) ([]*Output, uint64, error) {
 	if len(issueAction.GetOutputs()) != len(issueMeta.Outputs) {
 		return nil, 0, errors.Errorf("failed matching issue action with its metadata [%d]: invalid metadata, the number of outputs does not match", i)
@@ -723,6 +731,9 @@ func (r *Request) extractIssueOutputs(ctx context.Context, i int, counter uint64
 	return outputs, counter, nil
 }
 
+//nolint:gocognit // the transfer-side twin of extractIssueOutputs, with the same reasoning:
+// per-output identity and quantity validation against declared metadata, kept as one
+// auditable sequence given the cost of getting it wrong.
 func (r *Request) extractTransferOutputs(ctx context.Context, i int, counter uint64, transferAction driver.TransferAction, transferMeta *TransferMetadata, failOnMissing, noOutputForRecipient bool) ([]*Output, uint64, error) {
 	tms := r.TokenService.tms
 	if tms.PublicParamsManager() == nil || tms.PublicParamsManager().PublicParameters() == nil {
@@ -959,6 +970,9 @@ func (r *Request) InputsAndOutputsNoRecipients(ctx context.Context) (*InputStrea
 	return is, os, err
 }
 
+//nolint:gocognit // resolves a request's full input/output/action-metadata view, the shared
+// core several public accessors delegate to; the branching mirrors the token model's own
+// action-type and verification-mode distinctions rather than accidental complexity.
 func (r *Request) inputsAndOutputs(ctx context.Context, failOnMissing, verifyActions, noOutputForRecipient bool) (*InputStream, *OutputStream, ActionMetadata, error) {
 	tms := r.TokenService.tms
 	if tms.PublicParamsManager() == nil || tms.PublicParamsManager().PublicParameters() == nil {
@@ -1312,6 +1326,9 @@ func (r *Request) SetTokenService(service *ManagementService) {
 
 // BindTo binds all external identities (senders/receivers not owned by caller) to the specified identity.
 // Used for privacy-preserving transactions to link ephemeral identities.
+//nolint:gocognit // walks every action's senders/recipients to bind each identity found to
+// the passed-in identity; a security-sensitive traversal where splitting it up would obscure
+// which identities actually get bound rather than clarify it.
 func (r *Request) BindTo(ctx context.Context, binder Binder, identity Identity) error {
 	for _, action := range r.Metadata.Actions {
 		if action.TransferMetadata == nil {
@@ -1573,6 +1590,10 @@ func (r *Request) parseInputIDs(ctx context.Context, inputs []*token.ID) ([]*tok
 	return inputs, sum, typ, nil
 }
 
+//nolint:gocognit // assembles the inputs and change for a transfer/redeem across selector
+// modes, HTLC and pledge options, and change handling; the branching tracks real transfer
+// variants rather than accidental structure, and a mistake here risks selecting or spending
+// the wrong tokens.
 func (r *Request) prepareTransfer(ctx context.Context, redeem bool, wallet *OwnerWallet, tokenType token.Type, values []uint64, owners []Identity, transferOpts *TransferOptions) ([]*token.ID, []*token.Token, error) {
 	for _, owner := range owners {
 		if redeem {

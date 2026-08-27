@@ -7,6 +7,7 @@ SPDX-License-Identifier: Apache-2.0
 package dbtest
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"sync"
@@ -1292,8 +1293,278 @@ func TGetDeletedTokensPendingSKICleanup(t *testing.T, db TestTokenDB) {
 	t.Helper()
 	ctx := t.Context()
 
-	// Helper function to create and delete a token
-	createAndDeleteToken := func(txID string, index uint64, ownerType string) {
+	t.Run("EmptyDatabase", func(t *testing.T) { checkGetDeletedTokensEmptyDatabase(t, ctx, db) })
+	t.Run("NoDeletedTokens", func(t *testing.T) { checkGetDeletedTokensNoDeletedTokens(t, ctx, db) })
+	t.Run("BasicFunctionality", func(t *testing.T) { checkGetDeletedTokensBasicFunctionality(t, ctx, db) })
+	t.Run("ExcludeCleanedTokens", func(t *testing.T) { checkGetDeletedTokensExcludeCleanedTokens(t, ctx, db) })
+	t.Run("TimeFiltering", func(t *testing.T) { checkGetDeletedTokensTimeFiltering(t, ctx, db) })
+	t.Run("LimitParameter", func(t *testing.T) { checkGetDeletedTokensLimitParameter(t, ctx, db) })
+	t.Run("OrderingBySpentAt", func(t *testing.T) { checkGetDeletedTokensOrderingBySpentAt(t, ctx, db) })
+	t.Run("MultipleOwnerTypes", func(t *testing.T) { checkGetDeletedTokensMultipleOwnerTypes(t, ctx, db) })
+	t.Run("ZeroLimit", func(t *testing.T) { checkGetDeletedTokensZeroLimit(t, ctx, db) })
+	t.Run("AllTokensCleaned", func(t *testing.T) { checkGetDeletedTokensAllTokensCleaned(t, ctx, db) })
+	t.Run("MultipleIndices", func(t *testing.T) { checkGetDeletedTokensMultipleIndices(t, ctx, db) })
+	t.Run("ExcludeNonOwnedTokens", func(t *testing.T) { checkGetDeletedTokensExcludeNonOwnedTokens(t, ctx, db) })
+}
+
+// createAndDeleteToken stores an owned token and immediately marks it
+// deleted - the setup every GetDeletedTokensPendingSKICleanup scenario below
+// needs a token in that state for.
+func createAndDeleteToken(t *testing.T, ctx context.Context, db TestTokenDB, txID string, index uint64, ownerType string) {
+	t.Helper()
+	tr := driver2.TokenRecord{
+		TxID:           txID,
+		Index:          index,
+		OwnerRaw:       []byte{1, 2, 3},
+		OwnerType:      ownerType,
+		OwnerIdentity:  fmt.Appendf(nil, "owner_%s_%d", txID, index),
+		Ledger:         []byte("ledger"),
+		LedgerMetadata: []byte{},
+		Quantity:       "0x01",
+		Type:           ABC,
+		Amount:         1,
+		Owner:          true,
+	}
+	require.NoError(t, db.StoreToken(ctx, tr, []string{"alice"}))
+	require.NoError(t, db.DeleteTokens(ctx, "deleter_tx", &token.ID{TxId: txID, Index: index}))
+}
+
+// EmptyDatabase: a query on an empty database returns an empty slice.
+func checkGetDeletedTokensEmptyDatabase(t *testing.T, ctx context.Context, db TestTokenDB) {
+	t.Helper()
+	tokens, err := db.GetDeletedTokensPendingSKICleanup(ctx, 0, 10)
+	require.NoError(t, err, "query on empty database should not error")
+	assert.Empty(t, tokens, "empty database should return empty slice")
+}
+
+// NoDeletedTokens: only active (non-deleted) tokens are present.
+func checkGetDeletedTokensNoDeletedTokens(t *testing.T, ctx context.Context, db TestTokenDB) {
+	t.Helper()
+	tr := driver2.TokenRecord{
+		TxID:           "active1",
+		Index:          0,
+		OwnerRaw:       []byte{1, 2, 3},
+		OwnerType:      "idemix",
+		OwnerIdentity:  []byte("active_owner"),
+		Ledger:         []byte("ledger"),
+		LedgerMetadata: []byte{},
+		Quantity:       "0x01",
+		Type:           ABC,
+		Amount:         1,
+		Owner:          true,
+	}
+	require.NoError(t, db.StoreToken(ctx, tr, []string{"alice"}))
+
+	tokens, err := db.GetDeletedTokensPendingSKICleanup(ctx, 0, 10)
+	require.NoError(t, err, "query with only active tokens should not error")
+	assert.Empty(t, tokens, "active tokens should not be returned")
+}
+
+// BasicFunctionality: deleted tokens without cleanup records are returned
+// with their fields populated.
+func checkGetDeletedTokensBasicFunctionality(t *testing.T, ctx context.Context, db TestTokenDB) {
+	t.Helper()
+	createAndDeleteToken(t, ctx, db, "basic1", 0, "idemix")
+	createAndDeleteToken(t, ctx, db, "basic2", 0, "x509")
+
+	tokens, err := db.GetDeletedTokensPendingSKICleanup(ctx, 0, 10)
+	require.NoError(t, err, "query should not error")
+
+	found := make(map[string]bool)
+	for _, tok := range tokens {
+		if tok.TxID == "basic1" || tok.TxID == "basic2" {
+			found[tok.TxID] = true
+			assert.NotEmpty(t, tok.TxID, "TxID should be populated")
+			assert.NotEmpty(t, tok.OwnerIdentity, "OwnerIdentity should be populated")
+			assert.NotEmpty(t, tok.OwnerType, "OwnerType should be populated")
+			assert.False(t, tok.DeletedAt.IsZero(), "DeletedAt should be populated")
+		}
+	}
+
+	assert.True(t, found["basic1"], "basic1 token should be found")
+	assert.True(t, found["basic2"], "basic2 token should be found")
+}
+
+// ExcludeCleanedTokens: tokens with a cleanup record are excluded.
+func checkGetDeletedTokensExcludeCleanedTokens(t *testing.T, ctx context.Context, db TestTokenDB) {
+	t.Helper()
+	createAndDeleteToken(t, ctx, db, "cleaned1", 0, "idemix")
+	createAndDeleteToken(t, ctx, db, "uncleaned1", 0, "idemix")
+
+	require.NoError(t, db.MarkTokenCleaned(ctx, "cleaned1", 0, "test_cleaner"))
+
+	tokens, err := db.GetDeletedTokensPendingSKICleanup(ctx, 0, 100)
+	require.NoError(t, err, "query should not error")
+
+	for _, tok := range tokens {
+		assert.NotEqual(t, "cleaned1", tok.TxID, "cleaned token should not be returned")
+	}
+
+	found := false
+	for _, tok := range tokens {
+		if tok.TxID == "uncleaned1" && tok.Index == 0 {
+			found = true
+
+			break
+		}
+	}
+	assert.True(t, found, "uncleaned token should be in results")
+}
+
+// TimeFiltering: only tokens older than the given duration are returned.
+func checkGetDeletedTokensTimeFiltering(t *testing.T, ctx context.Context, db TestTokenDB) {
+	t.Helper()
+	const gap = 1 * time.Second
+	const duration = 500 * time.Millisecond
+
+	createAndDeleteToken(t, ctx, db, "old_token", 0, "idemix")
+
+	// Wait long enough that old_token is comfortably older than `duration`.
+	time.Sleep(gap)
+
+	createAndDeleteToken(t, ctx, db, "recent_token", 0, "idemix")
+
+	tokens, err := db.GetDeletedTokensPendingSKICleanup(ctx, duration, 100)
+	require.NoError(t, err, "query should not error")
+
+	foundOld := false
+	foundRecent := false
+	for _, tok := range tokens {
+		if tok.TxID == "old_token" {
+			foundOld = true
+		}
+		if tok.TxID == "recent_token" {
+			foundRecent = true
+		}
+	}
+
+	assert.True(t, foundOld, "old token should be in results")
+	assert.False(t, foundRecent, "recent token should not be in results")
+}
+
+// LimitParameter: the limit parameter bounds the number of results.
+func checkGetDeletedTokensLimitParameter(t *testing.T, ctx context.Context, db TestTokenDB) {
+	t.Helper()
+	for i := range 10 {
+		createAndDeleteToken(t, ctx, db, fmt.Sprintf("limit_test_%d", i), 0, "idemix")
+	}
+
+	tokens, err := db.GetDeletedTokensPendingSKICleanup(ctx, 0, 5)
+	require.NoError(t, err, "query should not error")
+
+	count := 0
+	for _, tok := range tokens {
+		if strings.HasPrefix(tok.TxID, "limit_test_") {
+			count++
+		}
+	}
+	assert.LessOrEqual(t, count, 5, "should respect limit parameter")
+}
+
+// OrderingBySpentAt: results are ordered by spent_at ascending.
+func checkGetDeletedTokensOrderingBySpentAt(t *testing.T, ctx context.Context, db TestTokenDB) {
+	t.Helper()
+	createAndDeleteToken(t, ctx, db, "order1", 0, "idemix")
+	time.Sleep(10 * time.Millisecond)
+	createAndDeleteToken(t, ctx, db, "order2", 0, "idemix")
+	time.Sleep(10 * time.Millisecond)
+	createAndDeleteToken(t, ctx, db, "order3", 0, "idemix")
+
+	tokens, err := db.GetDeletedTokensPendingSKICleanup(ctx, 0, 100)
+	require.NoError(t, err, "query should not error")
+
+	var testTokens []driver2.DeletedToken
+	for _, tok := range tokens {
+		if tok.TxID == "order1" || tok.TxID == "order2" || tok.TxID == "order3" {
+			testTokens = append(testTokens, tok)
+		}
+	}
+
+	require.GreaterOrEqual(t, len(testTokens), 3, "should find all test tokens")
+
+	for i := 1; i < len(testTokens); i++ {
+		assert.True(t, testTokens[i-1].DeletedAt.Before(testTokens[i].DeletedAt) ||
+			testTokens[i-1].DeletedAt.Equal(testTokens[i].DeletedAt),
+			"tokens should be ordered by DeletedAt ascending")
+	}
+}
+
+// MultipleOwnerTypes: tokens across owner types are all returned.
+func checkGetDeletedTokensMultipleOwnerTypes(t *testing.T, ctx context.Context, db TestTokenDB) {
+	t.Helper()
+	createAndDeleteToken(t, ctx, db, "idemix_token", 0, "idemix")
+	createAndDeleteToken(t, ctx, db, "x509_token", 0, "x509")
+	createAndDeleteToken(t, ctx, db, "htlc_token", 0, "htlc")
+
+	tokens, err := db.GetDeletedTokensPendingSKICleanup(ctx, 0, 100)
+	require.NoError(t, err, "query should not error")
+
+	ownerTypes := make(map[string]bool)
+	for _, tok := range tokens {
+		if tok.TxID == "idemix_token" || tok.TxID == "x509_token" || tok.TxID == "htlc_token" {
+			ownerTypes[tok.OwnerType] = true
+		}
+	}
+
+	assert.True(t, ownerTypes["idemix"], "idemix owner type should be present")
+	assert.True(t, ownerTypes["x509"], "x509 owner type should be present")
+	assert.True(t, ownerTypes["htlc"], "htlc owner type should be present")
+}
+
+// ZeroLimit: a limit of zero returns no results.
+func checkGetDeletedTokensZeroLimit(t *testing.T, ctx context.Context, db TestTokenDB) {
+	t.Helper()
+	createAndDeleteToken(t, ctx, db, "zero_limit", 0, "idemix")
+
+	tokens, err := db.GetDeletedTokensPendingSKICleanup(ctx, 0, 0)
+	require.NoError(t, err, "query with zero limit should not error")
+	assert.Empty(t, tokens, "zero limit should return empty results")
+}
+
+// AllTokensCleaned: every deleted token already has a cleanup record.
+func checkGetDeletedTokensAllTokensCleaned(t *testing.T, ctx context.Context, db TestTokenDB) {
+	t.Helper()
+	createAndDeleteToken(t, ctx, db, "all_cleaned1", 0, "idemix")
+	createAndDeleteToken(t, ctx, db, "all_cleaned2", 0, "idemix")
+
+	require.NoError(t, db.MarkTokenCleaned(ctx, "all_cleaned1", 0, "cleaner"))
+	require.NoError(t, db.MarkTokenCleaned(ctx, "all_cleaned2", 0, "cleaner"))
+
+	tokens, err := db.GetDeletedTokensPendingSKICleanup(ctx, 0, 100)
+	require.NoError(t, err, "query should not error")
+
+	for _, tok := range tokens {
+		assert.NotEqual(t, "all_cleaned1", tok.TxID, "cleaned token should not be returned")
+		assert.NotEqual(t, "all_cleaned2", tok.TxID, "cleaned token should not be returned")
+	}
+}
+
+// MultipleIndices: multiple indices of the same transaction are all returned.
+func checkGetDeletedTokensMultipleIndices(t *testing.T, ctx context.Context, db TestTokenDB) {
+	t.Helper()
+	createAndDeleteToken(t, ctx, db, "multi_idx", 0, "idemix")
+	createAndDeleteToken(t, ctx, db, "multi_idx", 1, "idemix")
+	createAndDeleteToken(t, ctx, db, "multi_idx", 2, "idemix")
+
+	tokens, err := db.GetDeletedTokensPendingSKICleanup(ctx, 0, 100)
+	require.NoError(t, err, "query should not error")
+
+	count := 0
+	for _, tok := range tokens {
+		if tok.TxID == "multi_idx" {
+			count++
+		}
+	}
+
+	assert.Equal(t, 3, count, "should return all indices for the same transaction")
+}
+
+// ExcludeNonOwnedTokens: non-owned tokens (auditor-only, issuer-only) must be
+// excluded, since this node never holds the secret keys for tokens it does
+// not own.
+func checkGetDeletedTokensExcludeNonOwnedTokens(t *testing.T, ctx context.Context, db TestTokenDB) {
+	t.Helper()
+	createAndDeleteNonOwnedToken := func(txID string, index uint64, ownerType string, auditor, issuer bool) {
 		tr := driver2.TokenRecord{
 			TxID:           txID,
 			Index:          index,
@@ -1305,289 +1576,28 @@ func TGetDeletedTokensPendingSKICleanup(t *testing.T, db TestTokenDB) {
 			Quantity:       "0x01",
 			Type:           ABC,
 			Amount:         1,
-			Owner:          true,
+			Owner:          false,
+			Auditor:        auditor,
+			Issuer:         issuer,
 		}
-		require.NoError(t, db.StoreToken(ctx, tr, []string{"alice"}))
+		require.NoError(t, db.StoreToken(ctx, tr, nil))
 		require.NoError(t, db.DeleteTokens(ctx, "deleter_tx", &token.ID{TxId: txID, Index: index}))
 	}
 
-	// Test 1: Empty database - should return empty slice
-	t.Run("EmptyDatabase", func(t *testing.T) {
-		tokens, err := db.GetDeletedTokensPendingSKICleanup(ctx, 0, 10)
-		require.NoError(t, err, "query on empty database should not error")
-		assert.Empty(t, tokens, "empty database should return empty slice")
-	})
+	createAndDeleteNonOwnedToken("auditor_only", 0, "idemix", true, false)
+	createAndDeleteNonOwnedToken("issuer_only", 0, "idemix", false, true)
+	createAndDeleteToken(t, ctx, db, "owned_control", 0, "idemix")
 
-	// Test 2: No deleted tokens - only active tokens
-	t.Run("NoDeletedTokens", func(t *testing.T) {
-		tr := driver2.TokenRecord{
-			TxID:           "active1",
-			Index:          0,
-			OwnerRaw:       []byte{1, 2, 3},
-			OwnerType:      "idemix",
-			OwnerIdentity:  []byte("active_owner"),
-			Ledger:         []byte("ledger"),
-			LedgerMetadata: []byte{},
-			Quantity:       "0x01",
-			Type:           ABC,
-			Amount:         1,
-			Owner:          true,
+	tokens, err := db.GetDeletedTokensPendingSKICleanup(ctx, 0, 100)
+	require.NoError(t, err, "query should not error")
+
+	foundOwnedControl := false
+	for _, tok := range tokens {
+		assert.NotEqual(t, "auditor_only", tok.TxID, "auditor-only token should not be returned")
+		assert.NotEqual(t, "issuer_only", tok.TxID, "issuer-only token should not be returned")
+		if tok.TxID == "owned_control" {
+			foundOwnedControl = true
 		}
-		require.NoError(t, db.StoreToken(ctx, tr, []string{"alice"}))
-
-		tokens, err := db.GetDeletedTokensPendingSKICleanup(ctx, 0, 10)
-		require.NoError(t, err, "query with only active tokens should not error")
-		assert.Empty(t, tokens, "active tokens should not be returned")
-	})
-
-	// Test 3: Basic functionality - deleted tokens without cleanup records
-	t.Run("BasicFunctionality", func(t *testing.T) {
-		// Create deleted tokens
-		createAndDeleteToken("basic1", 0, "idemix")
-		createAndDeleteToken("basic2", 0, "x509")
-
-		// Query with very short duration to get recently deleted tokens
-		tokens, err := db.GetDeletedTokensPendingSKICleanup(ctx, 0, 10)
-		require.NoError(t, err, "query should not error")
-
-		// Find our test tokens
-		found := make(map[string]bool)
-		for _, tok := range tokens {
-			if tok.TxID == "basic1" || tok.TxID == "basic2" {
-				found[tok.TxID] = true
-				// Verify token fields are populated correctly
-				assert.NotEmpty(t, tok.TxID, "TxID should be populated")
-				assert.NotEmpty(t, tok.OwnerIdentity, "OwnerIdentity should be populated")
-				assert.NotEmpty(t, tok.OwnerType, "OwnerType should be populated")
-				assert.False(t, tok.DeletedAt.IsZero(), "DeletedAt should be populated")
-			}
-		}
-
-		assert.True(t, found["basic1"], "basic1 token should be found")
-		assert.True(t, found["basic2"], "basic2 token should be found")
-	})
-
-	// Test 4: Exclusion logic - tokens with cleanup records should be excluded
-	t.Run("ExcludeCleanedTokens", func(t *testing.T) {
-		// Create two deleted tokens
-		createAndDeleteToken("cleaned1", 0, "idemix")
-		createAndDeleteToken("uncleaned1", 0, "idemix")
-
-		// Mark one as cleaned
-		require.NoError(t, db.MarkTokenCleaned(ctx, "cleaned1", 0, "test_cleaner"))
-
-		tokens, err := db.GetDeletedTokensPendingSKICleanup(ctx, 0, 100)
-		require.NoError(t, err, "query should not error")
-
-		// Verify cleaned token is not in results
-		for _, tok := range tokens {
-			assert.NotEqual(t, "cleaned1", tok.TxID, "cleaned token should not be returned")
-		}
-
-		// Verify uncleaned token is in results
-		found := false
-		for _, tok := range tokens {
-			if tok.TxID == "uncleaned1" && tok.Index == 0 {
-				found = true
-
-				break
-			}
-		}
-		assert.True(t, found, "uncleaned token should be in results")
-	})
-
-	// Test 5: Time filtering - only tokens older than duration
-	t.Run("TimeFiltering", func(t *testing.T) {
-		const gap = 1 * time.Second
-		const duration = 500 * time.Millisecond
-
-		// Create an old token
-		createAndDeleteToken("old_token", 0, "idemix")
-
-		// Wait long enough that old_token is comfortably older than `duration`.
-		time.Sleep(gap)
-
-		// Create a recent token
-		createAndDeleteToken("recent_token", 0, "idemix")
-
-		// Query with duration that should exclude the recent token
-		tokens, err := db.GetDeletedTokensPendingSKICleanup(ctx, duration, 100)
-		require.NoError(t, err, "query should not error")
-
-		// Verify old token is in results
-		foundOld := false
-		foundRecent := false
-		for _, tok := range tokens {
-			if tok.TxID == "old_token" {
-				foundOld = true
-			}
-			if tok.TxID == "recent_token" {
-				foundRecent = true
-			}
-		}
-
-		assert.True(t, foundOld, "old token should be in results")
-		assert.False(t, foundRecent, "recent token should not be in results")
-	})
-
-	// Test 6: Limit parameter
-	t.Run("LimitParameter", func(t *testing.T) {
-		// Create more tokens than limit
-		for i := range 10 {
-			createAndDeleteToken(fmt.Sprintf("limit_test_%d", i), 0, "idemix")
-		}
-
-		tokens, err := db.GetDeletedTokensPendingSKICleanup(ctx, 0, 5)
-		require.NoError(t, err, "query should not error")
-
-		// Count our test tokens in results
-		count := 0
-		for _, tok := range tokens {
-			if strings.HasPrefix(tok.TxID, "limit_test_") {
-				count++
-			}
-		}
-		assert.LessOrEqual(t, count, 5, "should respect limit parameter")
-	})
-
-	// Test 7: Ordering - results should be ordered by spent_at ascending
-	t.Run("OrderingBySpentAt", func(t *testing.T) {
-		// Create tokens with time delays to ensure different spent_at times
-		createAndDeleteToken("order1", 0, "idemix")
-		time.Sleep(10 * time.Millisecond)
-		createAndDeleteToken("order2", 0, "idemix")
-		time.Sleep(10 * time.Millisecond)
-		createAndDeleteToken("order3", 0, "idemix")
-
-		tokens, err := db.GetDeletedTokensPendingSKICleanup(ctx, 0, 100)
-		require.NoError(t, err, "query should not error")
-
-		// Find our test tokens in results
-		var testTokens []driver2.DeletedToken
-		for _, tok := range tokens {
-			if tok.TxID == "order1" || tok.TxID == "order2" || tok.TxID == "order3" {
-				testTokens = append(testTokens, tok)
-			}
-		}
-
-		require.GreaterOrEqual(t, len(testTokens), 3, "should find all test tokens")
-
-		// Verify ordering (oldest first)
-		for i := 1; i < len(testTokens); i++ {
-			assert.True(t, testTokens[i-1].DeletedAt.Before(testTokens[i].DeletedAt) ||
-				testTokens[i-1].DeletedAt.Equal(testTokens[i].DeletedAt),
-				"tokens should be ordered by DeletedAt ascending")
-		}
-	})
-
-	// Test 8: Multiple owner types
-	t.Run("MultipleOwnerTypes", func(t *testing.T) {
-		createAndDeleteToken("idemix_token", 0, "idemix")
-		createAndDeleteToken("x509_token", 0, "x509")
-		createAndDeleteToken("htlc_token", 0, "htlc")
-
-		tokens, err := db.GetDeletedTokensPendingSKICleanup(ctx, 0, 100)
-		require.NoError(t, err, "query should not error")
-
-		// Verify all owner types are present
-		ownerTypes := make(map[string]bool)
-		for _, tok := range tokens {
-			if tok.TxID == "idemix_token" || tok.TxID == "x509_token" || tok.TxID == "htlc_token" {
-				ownerTypes[tok.OwnerType] = true
-			}
-		}
-
-		assert.True(t, ownerTypes["idemix"], "idemix owner type should be present")
-		assert.True(t, ownerTypes["x509"], "x509 owner type should be present")
-		assert.True(t, ownerTypes["htlc"], "htlc owner type should be present")
-	})
-
-	// Test 9: Zero limit
-	t.Run("ZeroLimit", func(t *testing.T) {
-		createAndDeleteToken("zero_limit", 0, "idemix")
-
-		tokens, err := db.GetDeletedTokensPendingSKICleanup(ctx, 0, 0)
-		require.NoError(t, err, "query with zero limit should not error")
-		assert.Empty(t, tokens, "zero limit should return empty results")
-	})
-
-	// Test 10: All tokens already cleaned
-	t.Run("AllTokensCleaned", func(t *testing.T) {
-		// Create and immediately mark as cleaned
-		createAndDeleteToken("all_cleaned1", 0, "idemix")
-		createAndDeleteToken("all_cleaned2", 0, "idemix")
-
-		require.NoError(t, db.MarkTokenCleaned(ctx, "all_cleaned1", 0, "cleaner"))
-		require.NoError(t, db.MarkTokenCleaned(ctx, "all_cleaned2", 0, "cleaner"))
-
-		tokens, err := db.GetDeletedTokensPendingSKICleanup(ctx, 0, 100)
-		require.NoError(t, err, "query should not error")
-
-		// Verify our cleaned tokens are not in results
-		for _, tok := range tokens {
-			assert.NotEqual(t, "all_cleaned1", tok.TxID, "cleaned token should not be returned")
-			assert.NotEqual(t, "all_cleaned2", tok.TxID, "cleaned token should not be returned")
-		}
-	})
-
-	// Test 11: Multiple indices for same transaction
-	t.Run("MultipleIndices", func(t *testing.T) {
-		createAndDeleteToken("multi_idx", 0, "idemix")
-		createAndDeleteToken("multi_idx", 1, "idemix")
-		createAndDeleteToken("multi_idx", 2, "idemix")
-
-		tokens, err := db.GetDeletedTokensPendingSKICleanup(ctx, 0, 100)
-		require.NoError(t, err, "query should not error")
-
-		// Count how many indices we found
-		count := 0
-		for _, tok := range tokens {
-			if tok.TxID == "multi_idx" {
-				count++
-			}
-		}
-
-		assert.Equal(t, 3, count, "should return all indices for the same transaction")
-	})
-
-	// Test 12: Non-owned tokens (auditor-only, issuer-only) must be excluded,
-	// since this node never holds the secret keys for tokens it does not own.
-	t.Run("ExcludeNonOwnedTokens", func(t *testing.T) {
-		createAndDeleteNonOwnedToken := func(txID string, index uint64, ownerType string, auditor, issuer bool) {
-			tr := driver2.TokenRecord{
-				TxID:           txID,
-				Index:          index,
-				OwnerRaw:       []byte{1, 2, 3},
-				OwnerType:      ownerType,
-				OwnerIdentity:  fmt.Appendf(nil, "owner_%s_%d", txID, index),
-				Ledger:         []byte("ledger"),
-				LedgerMetadata: []byte{},
-				Quantity:       "0x01",
-				Type:           ABC,
-				Amount:         1,
-				Owner:          false,
-				Auditor:        auditor,
-				Issuer:         issuer,
-			}
-			require.NoError(t, db.StoreToken(ctx, tr, nil))
-			require.NoError(t, db.DeleteTokens(ctx, "deleter_tx", &token.ID{TxId: txID, Index: index}))
-		}
-
-		createAndDeleteNonOwnedToken("auditor_only", 0, "idemix", true, false)
-		createAndDeleteNonOwnedToken("issuer_only", 0, "idemix", false, true)
-		createAndDeleteToken("owned_control", 0, "idemix")
-
-		tokens, err := db.GetDeletedTokensPendingSKICleanup(ctx, 0, 100)
-		require.NoError(t, err, "query should not error")
-
-		foundOwnedControl := false
-		for _, tok := range tokens {
-			assert.NotEqual(t, "auditor_only", tok.TxID, "auditor-only token should not be returned")
-			assert.NotEqual(t, "issuer_only", tok.TxID, "issuer-only token should not be returned")
-			if tok.TxID == "owned_control" {
-				foundOwnedControl = true
-			}
-		}
-		assert.True(t, foundOwnedControl, "owned token should still be returned")
-	})
+	}
+	assert.True(t, foundOwnedControl, "owned token should still be returned")
 }

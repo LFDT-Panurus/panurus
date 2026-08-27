@@ -218,6 +218,47 @@ func (db *Notifier) Subscribe(callback driver.TriggerCallback) error {
 	db.mu.Unlock()
 
 	// Start the listener if this is the first subscription
+	justStarted := db.startListenerOnce()
+
+	// startOnce.Do guarantees the write inside the closure is visible here.
+	// A startup failure is final: every subscription returns the same error.
+	if db.startupErr != nil {
+		return db.startupErr
+	}
+
+	if justStarted {
+		// Wait a bit to see if it fails immediately
+		timer := time.NewTimer(100 * time.Millisecond)
+		defer timer.Stop()
+		select {
+		case err := <-db.listenerErr:
+			db.putBackListenerErr(err)
+
+			return err
+		case <-timer.C:
+		case <-db.ctx.Done():
+
+			return db.ctx.Err()
+		}
+	}
+
+	// Check if there was an error starting the listener (async errors)
+	select {
+	case err := <-db.listenerErr:
+		db.putBackListenerErr(err)
+
+		return err
+	default:
+		// No error, return nil
+
+		return nil
+	}
+}
+
+// startListenerOnce starts the pg_notify listener goroutine on the first
+// call; later calls are no-ops. Returns whether this call was the one that
+// started it.
+func (db *Notifier) startListenerOnce() bool {
 	var justStarted bool
 	db.startOnce.Do(func() {
 		justStarted = true
@@ -252,46 +293,16 @@ func (db *Notifier) Subscribe(callback driver.TriggerCallback) error {
 		})
 	})
 
-	// startOnce.Do guarantees the write inside the closure is visible here.
-	// A startup failure is final: every subscription returns the same error.
-	if db.startupErr != nil {
-		return db.startupErr
-	}
+	return justStarted
+}
 
-	if justStarted {
-		// Wait a bit to see if it fails immediately
-		timer := time.NewTimer(100 * time.Millisecond)
-		defer timer.Stop()
-		select {
-		case err := <-db.listenerErr:
-			// Put it back
-			select {
-			case db.listenerErr <- err:
-			default:
-			}
-
-			return err
-		case <-timer.C:
-		case <-db.ctx.Done():
-
-			return db.ctx.Err()
-		}
-	}
-
-	// Check if there was an error starting the listener (async errors)
+// putBackListenerErr returns err to db.listenerErr so other concurrent
+// Subscribe calls can also observe it, without blocking if the channel
+// already holds one.
+func (db *Notifier) putBackListenerErr(err error) {
 	select {
-	case err := <-db.listenerErr:
-		// Put it back so other concurrent Subscribe calls can see it
-		select {
-		case db.listenerErr <- err:
-		default:
-		}
-
-		return err
+	case db.listenerErr <- err:
 	default:
-		// No error, return nil
-
-		return nil
 	}
 }
 

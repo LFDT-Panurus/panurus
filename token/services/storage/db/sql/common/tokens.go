@@ -587,11 +587,6 @@ func (db *TokenStore) ListUnspentTokensByWallets(ctx context.Context, walletIDs 
 	}
 	defer Close(rows)
 
-	// The WHERE clause matches rows where EITHER ownership.wallet_id OR
-	// tokens.owner_wallet_id is in walletIDs, but the two columns are not
-	// constrained to agree (StoreToken writes them independently). Bucket
-	// under whichever column is actually in the requested set, preferring
-	// ownership.wallet_id so a single input id always maps to a single key.
 	walletIDSet := make(map[string]struct{}, len(walletIDs))
 	for _, id := range walletIDs {
 		walletIDSet[id] = struct{}{}
@@ -599,38 +594,56 @@ func (db *TokenStore) ListUnspentTokensByWallets(ctx context.Context, walletIDs 
 
 	result := make(map[string]*token.UnspentTokens, len(walletIDs))
 	for rows.Next() {
-		var walletCol, ownerWalletCol sql.NullString
-		ut := &token.UnspentToken{}
-		if err := rows.Scan(
-			&walletCol,
-			&ownerWalletCol,
-			&ut.Id.TxId, &ut.Id.Index, &ut.Owner, &ut.Type, &ut.Quantity,
-		); err != nil {
+		if err := scanUnspentTokenIntoWalletBucket(rows, walletIDSet, result); err != nil {
 			return nil, err
 		}
-		walletID := ""
-		if walletCol.Valid && walletCol.String != "" {
-			if _, ok := walletIDSet[walletCol.String]; ok {
-				walletID = walletCol.String
-			}
-		}
-		if walletID == "" && ownerWalletCol.Valid && ownerWalletCol.String != "" {
-			if _, ok := walletIDSet[ownerWalletCol.String]; ok {
-				walletID = ownerWalletCol.String
-			}
-		}
-		if walletID == "" {
-			continue
-		}
-		bucket, ok := result[walletID]
-		if !ok {
-			bucket = &token.UnspentTokens{}
-			result[walletID] = bucket
-		}
-		bucket.Tokens = append(bucket.Tokens, ut)
 	}
 
 	return result, rows.Err()
+}
+
+// scanUnspentTokenIntoWalletBucket scans one row and, if it resolves to one
+// of the requested wallet ids, appends it to that wallet's bucket in result.
+//
+// The WHERE clause matches rows where EITHER ownership.wallet_id OR
+// tokens.owner_wallet_id is in walletIDSet, but the two columns are not
+// constrained to agree (StoreToken writes them independently). Bucket under
+// whichever column is actually in the requested set, preferring
+// ownership.wallet_id so a single input id always maps to a single key.
+func scanUnspentTokenIntoWalletBucket(rows *sql.Rows, walletIDSet map[string]struct{}, result map[string]*token.UnspentTokens) error {
+	var walletCol, ownerWalletCol sql.NullString
+	ut := &token.UnspentToken{}
+	if err := rows.Scan(
+		&walletCol,
+		&ownerWalletCol,
+		&ut.Id.TxId, &ut.Id.Index, &ut.Owner, &ut.Type, &ut.Quantity,
+	); err != nil {
+		return err
+	}
+
+	walletID := ""
+	if walletCol.Valid && walletCol.String != "" {
+		if _, ok := walletIDSet[walletCol.String]; ok {
+			walletID = walletCol.String
+		}
+	}
+	if walletID == "" && ownerWalletCol.Valid && ownerWalletCol.String != "" {
+		if _, ok := walletIDSet[ownerWalletCol.String]; ok {
+			walletID = ownerWalletCol.String
+		}
+	}
+	if walletID == "" {
+		return nil
+	}
+
+	bucket, ok := result[walletID]
+	if !ok {
+		bucket = &token.UnspentTokens{}
+		result[walletID] = bucket
+	}
+	bucket.Tokens = append(bucket.Tokens, ut)
+
+	return nil
 }
 
 // ListAuditTokens returns the audited tokens associated to the passed ids
@@ -655,8 +668,22 @@ func (db *TokenStore) ListAuditTokens(ctx context.Context, ids ...*token.ID) ([]
 	}
 	defer Close(rows)
 
+	tokens, found, err := scanAuditTokensInOrder(rows, ids)
+	if err != nil {
+		return tokens, err
+	}
+	if rows.Err() != nil {
+		return nil, rows.Err()
+	}
+
+	return validateAllTokensFound(tokens, found, ids)
+}
+
+// scanAuditTokensInOrder scans query results into a slice aligned with ids
+// (tokens[i] is the token for ids[i]), and returns how many were matched.
+func scanAuditTokensInOrder(rows *sql.Rows, ids []*token.ID) ([]*token.Token, int, error) {
 	tokens := make([]*token.Token, len(ids))
-	counter := 0
+	found := 0
 	for rows.Next() {
 		id := token.ID{}
 		tok := token.Token{
@@ -665,30 +692,33 @@ func (db *TokenStore) ListAuditTokens(ctx context.Context, ids ...*token.ID) ([]
 			Quantity: "",
 		}
 		if err := rows.Scan(&id.TxId, &id.Index, &tok.Owner, &tok.Type, &tok.Quantity); err != nil {
-			return tokens, err
+			return tokens, found, err
 		}
 
 		// the result is expected to be in order of the ids
-		found := false
+		matched := false
 		for i := range ids {
 			if ids[i].Equal(id) {
 				tokens[i] = &tok
-				found = true
-				counter++
+				matched = true
+				found++
 			}
 		}
-		if !found {
-			return nil, errors.Errorf("retrieved wrong token [%s]", id)
+		if !matched {
+			return nil, found, errors.Errorf("retrieved wrong token [%s]", id)
 		}
 	}
 
-	if rows.Err() != nil {
-		return nil, rows.Err()
-	}
-	if counter == 0 {
+	return tokens, found, nil
+}
+
+// validateAllTokensFound checks that scanAuditTokensInOrder matched every id,
+// reporting the first one it did not.
+func validateAllTokensFound(tokens []*token.Token, found int, ids []*token.ID) ([]*token.Token, error) {
+	if found == 0 {
 		return nil, errors.Errorf("token not found for key [%s:%d]", ids[0].TxId, ids[0].Index)
 	}
-	if counter != len(ids) {
+	if found != len(ids) {
 		for j, t := range tokens {
 			if t == nil {
 				return nil, errors.Errorf("token not found for key [%s:%d]", ids[j].TxId, ids[j].Index)
@@ -945,10 +975,26 @@ func (db *TokenStore) GetTokens(ctx context.Context, inputs ...*token.ID) ([]*to
 	it := common.NewIterator(rows, func(tok *token.UnspentToken) error {
 		return rows.Scan(&tok.Id.TxId, &tok.Id.Index, &tok.Owner, &tok.Type, &tok.Quantity)
 	})
-	counter := 0
+
 	tokens := make([]*token.Token, len(inputs))
-	err = iterators.ForEach(it, func(tok *token.UnspentToken) error {
-		// put in the right position
+	counter, err := placeTokensInOrder(ctx, it, inputs, tokens)
+	if err != nil {
+		return nil, err
+	}
+
+	logger.DebugfContext(ctx, "found [%d] tokens, expected [%d]", counter, len(inputs))
+	if err = rows.Err(); err != nil {
+		return tokens, err
+	}
+
+	return validateAllTokensFound(tokens, counter, inputs)
+}
+
+// placeTokensInOrder consumes it, placing each token at the position of its
+// matching input id in tokens. Returns how many were matched.
+func placeTokensInOrder(ctx context.Context, it iterators.Iterator[*token.UnspentToken], inputs []*token.ID, tokens []*token.Token) (int, error) {
+	counter := 0
+	err := iterators.ForEach(it, func(tok *token.UnspentToken) error {
 		found := false
 		for j := range inputs {
 			if inputs[j].Equal(tok.Id) {
@@ -970,27 +1016,8 @@ func (db *TokenStore) GetTokens(ctx context.Context, inputs ...*token.ID) ([]*to
 
 		return nil
 	})
-	if err != nil {
-		return nil, err
-	}
 
-	logger.DebugfContext(ctx, "found [%d] tokens, expected [%d]", counter, len(inputs))
-	if err = rows.Err(); err != nil {
-		return tokens, err
-	}
-	if counter == 0 {
-		return nil, errors.Errorf("token not found for key [%s:%d]", inputs[0].TxId, inputs[0].Index)
-	}
-	if counter != len(inputs) {
-		for j, t := range tokens {
-			if t == nil {
-				return nil, errors.Errorf("token not found for key [%s:%d]", inputs[j].TxId, inputs[j].Index)
-			}
-		}
-		panic("programming error: should not reach this point")
-	}
-
-	return tokens, nil
+	return counter, err
 }
 
 // HasTokenForIdentity returns true if any token in the Tokens table has the given owner identity
@@ -1054,6 +1081,37 @@ func (db *TokenStore) QueryTokenDetails(ctx context.Context, params driver.Query
 }
 
 // WhoDeletedTokens returns information about which transaction deleted the passed tokens.
+// scanDeletionStatusInOrder scans query results into spentBy/isSpent slices
+// aligned with inputs, with found[i] tracking whether inputs[i] was matched
+// by some row (rows are not necessarily returned in the same order).
+func scanDeletionStatusInOrder(rows *sql.Rows, inputs []*token.ID) (spentBy []string, isSpent, found []bool, counter int, err error) {
+	spentBy = make([]string, len(inputs))
+	isSpent = make([]bool, len(inputs))
+	found = make([]bool, len(inputs))
+
+	for rows.Next() {
+		var txID string
+		var idx uint64
+		var spBy string
+		var isSp bool
+		if err := rows.Scan(&txID, &idx, &spBy, &isSp); err != nil {
+			return spentBy, isSpent, found, counter, err
+		}
+		for i, inp := range inputs {
+			if inp.TxId == txID && inp.Index == idx {
+				isSpent[i] = isSp
+				spentBy[i] = spBy
+				found[i] = true
+
+				break // stop searching for this id but continue looping over rows
+			}
+		}
+		counter++
+	}
+
+	return spentBy, isSpent, found, counter, nil
+}
+
 // The bool array is an indicator used to tell if the token at a given position has been deleted or not
 func (db *TokenStore) WhoDeletedTokens(ctx context.Context, inputs ...*token.ID) ([]string, []bool, error) {
 	if len(inputs) == 0 {
@@ -1073,30 +1131,9 @@ func (db *TokenStore) WhoDeletedTokens(ctx context.Context, inputs ...*token.ID)
 	}
 	defer Close(rows)
 
-	spentBy := make([]string, len(inputs))
-	isSpent := make([]bool, len(inputs))
-	found := make([]bool, len(inputs))
-
-	counter := 0
-	for rows.Next() {
-		var txID string
-		var idx uint64
-		var spBy string
-		var isSp bool
-		if err := rows.Scan(&txID, &idx, &spBy, &isSp); err != nil {
-			return spentBy, isSpent, err
-		}
-		// order is not necessarily the same, so we have to set it in a loop
-		for i, inp := range inputs {
-			if inp.TxId == txID && inp.Index == idx {
-				isSpent[i] = isSp
-				spentBy[i] = spBy
-				found[i] = true
-
-				break // stop searching for this id but continue looping over rows
-			}
-		}
-		counter++
+	spentBy, isSpent, found, counter, err := scanDeletionStatusInOrder(rows, inputs)
+	if err != nil {
+		return spentBy, isSpent, err
 	}
 	logger.DebugfContext(ctx, "found [%d] records, expected [%d]", counter, len(inputs))
 	if err = rows.Err(); err != nil {

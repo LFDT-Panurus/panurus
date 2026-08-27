@@ -114,6 +114,8 @@ func NewTransferService(
 
 // Transfer generates a new TransferAction based on the provided arguments.
 // It returns the TransferAction, the corresponding TransferMetadata, or an error if the operation fails.
+//
+//nolint:gocognit // sequential construction and validation of a transfer action across independent proof components; splitting would not reduce real complexity, only hide it behind indirection
 func (s *TransferService) Transfer(
 	ctx context.Context,
 	anchor driver.TokenRequestAnchor,

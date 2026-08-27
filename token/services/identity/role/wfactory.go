@@ -73,78 +73,94 @@ func NewDefaultFactory(
 func (w *DefaultFactory) NewWallet(ctx context.Context, id idriver.WalletID, role idriver.IdentityRoleType, wr IdentitySupport, info idriver.IdentityInfo) (driver.Wallet, error) {
 	switch role {
 	case idriver.OwnerRole:
-		if info.Anonymous() {
-			newWallet, err := NewAnonymousOwnerWallet(
-				w.Logger,
-				w.IdentityProvider,
-				w.TokenVault,
-				w.Deserializer,
-				wr,
-				id,
-				info,
-				w.WalletsConfiguration.CacheSizeForOwnerID(id),
-				w.MetricsProvider,
-			)
-			if err != nil {
-				return nil, errors.WithMessagef(err, "failed to create new owner wallet [%s]", id)
-			}
-			w.Logger.DebugfContext(
-				ctx,
-				"created owner wallet [%s] for identity [%s:%s:%v]",
-				id,
-				info.ID(),
-				info.EnrollmentID(),
-				info.Remote(),
-			)
-
-			return newWallet, nil
-		}
-
-		// non-anonymous
-		newWallet, err := NewLongTermOwnerWallet(ctx, w.IdentityProvider, w.TokenVault, id, info)
-		if err != nil {
-			return nil, errors.WithMessagef(err, "failed to create owner wallet [%s]", id)
-		}
-
-		return newWallet, nil
+		return w.newOwnerWallet(ctx, id, wr, info)
 	case idriver.IssuerRole:
-		idInfoIdentity, _, err := info.Get(ctx)
-		if err != nil {
-			return nil, errors.WithMessagef(err, "failed to get issuer wallet identity for [%s]", id)
-		}
-		signer, err := w.IdentityProvider.GetSigner(ctx, idInfoIdentity)
-		if err != nil {
-			return nil, errors.WithMessagef(err, "failed to get issuer signer [%s]", id)
-		}
-
-		newWallet := NewIssuerWallet(w.Logger, w.TokenVault, id, idInfoIdentity, signer)
-		if err := wr.BindIdentity(ctx, idInfoIdentity, info.EnrollmentID(), id, nil, info.ConfigurationID()); err != nil {
-			return nil, errors.WithMessagef(err, "programming error, failed to register recipient identity [%s]", id)
-		}
-		w.Logger.DebugfContext(ctx, "created issuer wallet [%s]", id)
-
-		return newWallet, nil
+		return w.newIssuerWallet(ctx, id, wr, info)
 	case idriver.AuditorRole:
-		w.Logger.DebugfContext(ctx, "no wallet found, create it [%s]", id)
-		idInfoIdentity, _, err := info.Get(ctx)
-		if err != nil {
-			return nil, errors.WithMessagef(err, "failed to get auditor wallet identity for [%s]", id)
-		}
-		signer, err := w.IdentityProvider.GetSigner(ctx, idInfoIdentity)
-		if err != nil {
-			return nil, errors.WithMessagef(err, "failed to get auditor signer [%s]", id)
-		}
-
-		newWallet := NewAuditorWallet(id, idInfoIdentity, signer)
-		if err := wr.BindIdentity(ctx, idInfoIdentity, info.EnrollmentID(), id, nil, info.ConfigurationID()); err != nil {
-			return nil, errors.WithMessagef(err, "programming error, failed to register recipient identity [%s]", id)
-		}
-		w.Logger.DebugfContext(ctx, "created auditor wallet [%s]", id)
-
-		return newWallet, nil
+		return w.newAuditorWallet(ctx, id, wr, info)
 	case idriver.CertifierRole:
 		return nil, errors.Errorf("certifiers are not supported by this driver")
 	default:
 		return nil, errors.Errorf("role [%d] not supported", role)
 	}
+}
+
+// newOwnerWallet builds an anonymous (pseudonym-based) or long-term owner
+// wallet depending on info's anonymity.
+func (w *DefaultFactory) newOwnerWallet(ctx context.Context, id idriver.WalletID, wr IdentitySupport, info idriver.IdentityInfo) (driver.Wallet, error) {
+	if info.Anonymous() {
+		newWallet, err := NewAnonymousOwnerWallet(
+			w.Logger,
+			w.IdentityProvider,
+			w.TokenVault,
+			w.Deserializer,
+			wr,
+			id,
+			info,
+			w.WalletsConfiguration.CacheSizeForOwnerID(id),
+			w.MetricsProvider,
+		)
+		if err != nil {
+			return nil, errors.WithMessagef(err, "failed to create new owner wallet [%s]", id)
+		}
+		w.Logger.DebugfContext(
+			ctx,
+			"created owner wallet [%s] for identity [%s:%s:%v]",
+			id,
+			info.ID(),
+			info.EnrollmentID(),
+			info.Remote(),
+		)
+
+		return newWallet, nil
+	}
+
+	// non-anonymous
+	newWallet, err := NewLongTermOwnerWallet(ctx, w.IdentityProvider, w.TokenVault, id, info)
+	if err != nil {
+		return nil, errors.WithMessagef(err, "failed to create owner wallet [%s]", id)
+	}
+
+	return newWallet, nil
+}
+
+// newIssuerWallet builds an issuer wallet and binds its identity.
+func (w *DefaultFactory) newIssuerWallet(ctx context.Context, id idriver.WalletID, wr IdentitySupport, info idriver.IdentityInfo) (driver.Wallet, error) {
+	idInfoIdentity, _, err := info.Get(ctx)
+	if err != nil {
+		return nil, errors.WithMessagef(err, "failed to get issuer wallet identity for [%s]", id)
+	}
+	signer, err := w.IdentityProvider.GetSigner(ctx, idInfoIdentity)
+	if err != nil {
+		return nil, errors.WithMessagef(err, "failed to get issuer signer [%s]", id)
+	}
+
+	newWallet := NewIssuerWallet(w.Logger, w.TokenVault, id, idInfoIdentity, signer)
+	if err := wr.BindIdentity(ctx, idInfoIdentity, info.EnrollmentID(), id, nil, info.ConfigurationID()); err != nil {
+		return nil, errors.WithMessagef(err, "programming error, failed to register recipient identity [%s]", id)
+	}
+	w.Logger.DebugfContext(ctx, "created issuer wallet [%s]", id)
+
+	return newWallet, nil
+}
+
+// newAuditorWallet builds an auditor wallet and binds its identity.
+func (w *DefaultFactory) newAuditorWallet(ctx context.Context, id idriver.WalletID, wr IdentitySupport, info idriver.IdentityInfo) (driver.Wallet, error) {
+	w.Logger.DebugfContext(ctx, "no wallet found, create it [%s]", id)
+	idInfoIdentity, _, err := info.Get(ctx)
+	if err != nil {
+		return nil, errors.WithMessagef(err, "failed to get auditor wallet identity for [%s]", id)
+	}
+	signer, err := w.IdentityProvider.GetSigner(ctx, idInfoIdentity)
+	if err != nil {
+		return nil, errors.WithMessagef(err, "failed to get auditor signer [%s]", id)
+	}
+
+	newWallet := NewAuditorWallet(id, idInfoIdentity, signer)
+	if err := wr.BindIdentity(ctx, idInfoIdentity, info.EnrollmentID(), id, nil, info.ConfigurationID()); err != nil {
+		return nil, errors.WithMessagef(err, "programming error, failed to register recipient identity [%s]", id)
+	}
+	w.Logger.DebugfContext(ctx, "created auditor wallet [%s]", id)
+
+	return newWallet, nil
 }

@@ -8,6 +8,7 @@ package bulletproof_test
 
 import (
 	"context"
+	"io"
 	"math/bits"
 	"math/rand"
 	"strconv"
@@ -253,36 +254,44 @@ func TestComputeSVector_DefinitionConsistency(t *testing.T) {
 	for _, rounds := range []int{1, 2, 3, 4, 5} {
 		n := 1 << rounds
 		t.Run(strconv.Itoa(n), func(t *testing.T) {
-			challenges := make([]*math.Zr, rounds)
-			challengeInvs := make([]*math.Zr, rounds)
-			for j := range challenges {
-				challenges[j] = curve.NewRandomZr(rand)
-				challengeInvs[j] = challenges[j].Copy()
-				challengeInvs[j].InvModOrder()
-			}
-
-			s, sInv := bulletproof.ComputeSVector(n, challenges, curve)
-
-			// Check each entry against the definition.
-			for i := range n {
-				expected := math2.One(curve)
-				expectedInv := math2.One(curve)
-				for r := range rounds {
-					bitPos := rounds - 1 - r
-					if (i>>bitPos)&1 == 1 {
-						expected = curve.ModMul(expected, challenges[r], curve.GroupOrder)
-						expectedInv = curve.ModMul(expectedInv, challengeInvs[r], curve.GroupOrder)
-					} else {
-						expected = curve.ModMul(expected, challengeInvs[r], curve.GroupOrder)
-						expectedInv = curve.ModMul(expectedInv, challenges[r], curve.GroupOrder)
-					}
-				}
-				assert.True(t, s[i].Equals(expected),
-					"s[%d] mismatch for n=%d", i, n)
-				assert.True(t, sInv[i].Equals(expectedInv),
-					"sInv[%d] mismatch for n=%d", i, n)
-			}
+			checkSVectorDefinition(t, curve, rand, n, rounds)
 		})
+	}
+}
+
+// checkSVectorDefinition verifies each entry of the s vector, for a random
+// set of rounds challenges, against its mathematical definition, computed
+// independently and naively as a test oracle.
+func checkSVectorDefinition(t *testing.T, curve *math.Curve, rnd io.Reader, n, rounds int) {
+	t.Helper()
+	challenges := make([]*math.Zr, rounds)
+	challengeInvs := make([]*math.Zr, rounds)
+	for j := range challenges {
+		challenges[j] = curve.NewRandomZr(rnd)
+		challengeInvs[j] = challenges[j].Copy()
+		challengeInvs[j].InvModOrder()
+	}
+
+	s, sInv := bulletproof.ComputeSVector(n, challenges, curve)
+
+	// Check each entry against the definition.
+	for i := range n {
+		expected := math2.One(curve)
+		expectedInv := math2.One(curve)
+		for r := range rounds {
+			bitPos := rounds - 1 - r
+			if (i>>bitPos)&1 == 1 {
+				expected = curve.ModMul(expected, challenges[r], curve.GroupOrder)
+				expectedInv = curve.ModMul(expectedInv, challengeInvs[r], curve.GroupOrder)
+			} else {
+				expected = curve.ModMul(expected, challengeInvs[r], curve.GroupOrder)
+				expectedInv = curve.ModMul(expectedInv, challenges[r], curve.GroupOrder)
+			}
+		}
+		assert.True(t, s[i].Equals(expected),
+			"s[%d] mismatch for n=%d", i, n)
+		assert.True(t, sInv[i].Equals(expectedInv),
+			"sInv[%d] mismatch for n=%d", i, n)
 	}
 }
 
@@ -307,44 +316,52 @@ func TestComputeSVector_ConsistencyWithFoldReduction(t *testing.T) {
 	for _, rounds := range []int{1, 2, 3, 4} {
 		n := 1 << rounds
 		t.Run(strconv.Itoa(n), func(t *testing.T) {
-			// Generate random generators and challenges.
-			generators := make([]*math.G1, n)
-			for i := range generators {
-				generators[i] = curve.HashToG1([]byte(strconv.Itoa(i * 17)))
-			}
-			challenges := make([]*math.Zr, rounds)
-			for j := range challenges {
-				challenges[j] = curve.NewRandomZr(rand)
-			}
-
-			// Method 1: MSM with s-vector
-			s, _ := bulletproof.ComputeSVector(n, challenges, curve)
-			resultMSM := curve.MultiScalarMul(generators, s)
-
-			// Method 2: iterative fold reduction
-			gens := make([]*math.G1, n)
-			for i := range gens {
-				gens[i] = generators[i].Copy()
-			}
-			for r := range rounds {
-				half := len(gens) / 2
-				x := challenges[r]
-				xInv := x.Copy()
-				xInv.InvModOrder()
-				folded := make([]*math.G1, half)
-				for i := range half {
-					// G_i' = G_i · xInv + G_{i+half} · x
-					folded[i] = gens[i].Mul2(xInv, gens[i+half], x)
-				}
-				gens = folded
-			}
-			require.Len(t, gens, 1, "fold should reduce to a single generator")
-			resultFold := gens[0]
-
-			assert.True(t, resultMSM.Equals(resultFold),
-				"MSM(s, G) must equal the iteratively folded generator for n=%d", n)
+			checkSVectorFoldConsistency(t, curve, rand, n, rounds)
 		})
 	}
+}
+
+// checkSVectorFoldConsistency verifies that reducing n random generators via
+// the s-vector-based MSM yields the same result as iteratively halving them
+// with the fold recurrence, across rounds random challenges.
+func checkSVectorFoldConsistency(t *testing.T, curve *math.Curve, rnd io.Reader, n, rounds int) {
+	t.Helper()
+	// Generate random generators and challenges.
+	generators := make([]*math.G1, n)
+	for i := range generators {
+		generators[i] = curve.HashToG1([]byte(strconv.Itoa(i * 17)))
+	}
+	challenges := make([]*math.Zr, rounds)
+	for j := range challenges {
+		challenges[j] = curve.NewRandomZr(rnd)
+	}
+
+	// Method 1: MSM with s-vector
+	s, _ := bulletproof.ComputeSVector(n, challenges, curve)
+	resultMSM := curve.MultiScalarMul(generators, s)
+
+	// Method 2: iterative fold reduction
+	gens := make([]*math.G1, n)
+	for i := range gens {
+		gens[i] = generators[i].Copy()
+	}
+	for r := range rounds {
+		half := len(gens) / 2
+		x := challenges[r]
+		xInv := x.Copy()
+		xInv.InvModOrder()
+		folded := make([]*math.G1, half)
+		for i := range half {
+			// G_i' = G_i · xInv + G_{i+half} · x
+			folded[i] = gens[i].Mul2(xInv, gens[i+half], x)
+		}
+		gens = folded
+	}
+	require.Len(t, gens, 1, "fold should reduce to a single generator")
+	resultFold := gens[0]
+
+	assert.True(t, resultMSM.Equals(resultFold),
+		"MSM(s, G) must equal the iteratively folded generator for n=%d", n)
 }
 
 // TestCloneGenerators_EmptySlices verifies CloneGenerators works correctly

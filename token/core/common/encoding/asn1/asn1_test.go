@@ -83,6 +83,14 @@ func (a *MathContainer) Deserialize(bytes []byte) error {
 	if err != nil {
 		return errors.Wrap(err, "failed to deserialize g1Array")
 	}
+
+	return expectExhausted(unmarshaller)
+}
+
+// expectExhausted checks that reading further from unmarshaller in every
+// value form yields no more values, matching the field order deserialized by
+// (*MathContainer).Deserialize.
+func expectExhausted(unmarshaller *unmarshaller) error {
 	zr, err := unmarshaller.NextZr()
 	if zr != nil {
 		return errors.Wrap(err, "no more values expected")
@@ -504,27 +512,35 @@ func FuzzUnmarshallerNoPanic(f *testing.F) {
 		}
 
 		require.NotPanics(t, func() {
-			u, err := NewUnmarshaller(raw)
-			if err != nil {
-				return
-			}
-			for range 8 {
-				if _, err := u.NextZr(); err != nil {
-					return
-				}
-				if _, err := u.NextG1(); err != nil {
-					return
-				}
-				if _, err := u.NextG2(); err != nil {
-					return
-				}
-				if _, err := u.NextZrArray(); err != nil {
-					return
-				}
-				if _, err := u.NextG1Array(); err != nil {
-					return
-				}
-			}
+			probeUnmarshaller(raw)
 		})
 	})
+}
+
+// probeUnmarshaller exercises every Next* accessor on raw's unmarshaller (or
+// the error from constructing one), stopping at the first error. It is meant
+// to be driven by a fuzzer under require.NotPanics: any panic here is itself
+// the finding.
+func probeUnmarshaller(raw []byte) {
+	u, err := NewUnmarshaller(raw)
+	if err != nil {
+		return
+	}
+	for range 8 {
+		if _, err := u.NextZr(); err != nil {
+			return
+		}
+		if _, err := u.NextG1(); err != nil {
+			return
+		}
+		if _, err := u.NextG2(); err != nil {
+			return
+		}
+		if _, err := u.NextZrArray(); err != nil {
+			return
+		}
+		if _, err := u.NextG1Array(); err != nil {
+			return
+		}
+	}
 }

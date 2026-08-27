@@ -77,15 +77,8 @@ func (f *finalityView) Call(ctx view.Context) (any, error) {
 }
 
 func (f *finalityView) call(ctx view.Context, txID string, tmsID token.TMSID, timeout time.Duration) (any, error) {
-	// Validate inputs
-	if txID == "" {
-		return nil, errors.Wrapf(ErrInvalidInput, "transaction ID cannot be empty")
-	}
-	if timeout < 0 {
-		return nil, errors.Wrapf(ErrInvalidInput, "timeout cannot be negative")
-	}
-	if timeout > 24*time.Hour {
-		return nil, errors.Wrapf(ErrInvalidInput, "timeout cannot exceed 24 hours")
+	if err := validateFinalityCallInput(txID, timeout); err != nil {
+		return nil, err
 	}
 
 	logger.DebugfContext(ctx.Context(), "Listen to finality of [%s]", txID)
@@ -108,14 +101,9 @@ func (f *finalityView) call(ctx view.Context, txID string, tmsID token.TMSID, ti
 
 	// Check if transaction is known in at least one database
 	// Note: We check both databases to determine which ones to monitor
-	statusTTXDB, _, errTTXDB := transactionDB.GetStatus(ctx.Context(), txID)
-	knownInTTXDB := errTTXDB == nil && statusTTXDB != ttxdb.Unknown
-
-	statusAuditDB, _, errAuditDB := auditDB.GetStatus(ctx.Context(), txID)
-	knownInAuditDB := errAuditDB == nil && statusAuditDB != ttxdb.Unknown
-
-	if !knownInTTXDB && !knownInAuditDB {
-		return nil, errors.Wrapf(ErrTransactionUnknown, "transaction [%s] is unknown for [%s]", txID, tmsID)
+	knownInTTXDB, knownInAuditDB, err := checkKnownInDBs(ctx, txID, tmsID, transactionDB, auditDB)
+	if err != nil {
+		return nil, err
 	}
 
 	logger.DebugfContext(ctx.Context(), "Listen for DB finality")
@@ -133,6 +121,38 @@ func (f *finalityView) call(ctx view.Context, txID string, tmsID token.TMSID, ti
 	}
 
 	return nil, nil
+}
+
+// validateFinalityCallInput validates the inputs to (*finalityView).call.
+func validateFinalityCallInput(txID string, timeout time.Duration) error {
+	if txID == "" {
+		return errors.Wrapf(ErrInvalidInput, "transaction ID cannot be empty")
+	}
+	if timeout < 0 {
+		return errors.Wrapf(ErrInvalidInput, "timeout cannot be negative")
+	}
+	if timeout > 24*time.Hour {
+		return errors.Wrapf(ErrInvalidInput, "timeout cannot exceed 24 hours")
+	}
+
+	return nil
+}
+
+// checkKnownInDBs reports whether txID is known (status != Unknown) in each of
+// transactionDB and auditDB, returning ErrTransactionUnknown if it is known in
+// neither.
+func checkKnownInDBs(ctx view.Context, txID string, tmsID token.TMSID, transactionDB, auditDB finalityDB) (knownInTTXDB, knownInAuditDB bool, err error) {
+	statusTTXDB, _, errTTXDB := transactionDB.GetStatus(ctx.Context(), txID)
+	knownInTTXDB = errTTXDB == nil && statusTTXDB != ttxdb.Unknown
+
+	statusAuditDB, _, errAuditDB := auditDB.GetStatus(ctx.Context(), txID)
+	knownInAuditDB = errAuditDB == nil && statusAuditDB != ttxdb.Unknown
+
+	if !knownInTTXDB && !knownInAuditDB {
+		return false, false, errors.Wrapf(ErrTransactionUnknown, "transaction [%s] is unknown for [%s]", txID, tmsID)
+	}
+
+	return knownInTTXDB, knownInAuditDB, nil
 }
 
 // dbFinality waits for a transaction to reach finality in a specific database.

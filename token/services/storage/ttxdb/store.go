@@ -18,6 +18,7 @@ import (
 	"github.com/LFDT-Panurus/panurus/token/services/storage/db/common"
 	dbdriver "github.com/LFDT-Panurus/panurus/token/services/storage/db/driver"
 	"github.com/LFDT-Panurus/panurus/token/services/storage/db/multiplexed"
+	tokentype "github.com/LFDT-Panurus/panurus/token/token"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	cdriver "github.com/hyperledger-labs/fabric-smart-client/platform/common/driver"
 )
@@ -369,54 +370,79 @@ func TransactionRecords(ctx context.Context, record *token.AuditRecord, timestam
 		}
 
 		// create a transaction record from ins and ous
-
-		// All ins should be for same EID, check this
-		inEIDs := ins.EnrollmentIDs()
-		if len(inEIDs) > 1 {
-			return nil, errors.Errorf("expected at most 1 input enrollment id, got %d, [%v]", len(inEIDs), inEIDs)
+		actionTxs, err := actionTransactionRecords(record, timestamp, ins, ous)
+		if err != nil {
+			return nil, err
 		}
-		inEID := ""
-		if len(inEIDs) == 1 {
-			inEID = inEIDs[0]
-		}
-
-		outEIDs := ous.EnrollmentIDs()
-		outEIDs = append(outEIDs, "")
-		outTT := ous.TokenTypes()
-		for _, outEID := range outEIDs {
-			for _, tokenType := range outTT {
-				received := ous.ByEnrollmentID(outEID).ByType(tokenType).UniquePerOutput().Sum()
-				if received.Cmp(big.NewInt(0)) <= 0 {
-					continue
-				}
-
-				tt := dbdriver.Issue
-				if len(inEIDs) != 0 {
-					if len(outEID) == 0 {
-						tt = dbdriver.Redeem
-					} else {
-						tt = dbdriver.Transfer
-					}
-				}
-
-				txs = append(txs, dbdriver.TransactionRecord{
-					TxID:         string(record.Anchor),
-					SenderEID:    inEID,
-					RecipientEID: outEID,
-					TokenType:    tokenType,
-					Amount:       received,
-					Status:       dbdriver.Pending,
-					ActionType:   tt,
-					Timestamp:    timestamp,
-				})
-			}
-		}
+		txs = append(txs, actionTxs...)
 
 		actionIndex++
 	}
 	logger.DebugfContext(ctx, "parsed transactions for tx [%s]", record.Anchor)
 
 	return txs, err
+}
+
+// actionTransactionRecords builds the transaction records for one action's
+// inputs and outputs: one row per (recipient enrollment ID, token type) pair
+// that actually received a positive amount.
+func actionTransactionRecords(record *token.AuditRecord, timestamp time.Time, ins *token.InputStream, ous *token.OutputStream) ([]dbdriver.TransactionRecord, error) {
+	// All ins should be for same EID, check this
+	inEIDs := ins.EnrollmentIDs()
+	if len(inEIDs) > 1 {
+		return nil, errors.Errorf("expected at most 1 input enrollment id, got %d, [%v]", len(inEIDs), inEIDs)
+	}
+	inEID := ""
+	if len(inEIDs) == 1 {
+		inEID = inEIDs[0]
+	}
+
+	var txs []dbdriver.TransactionRecord
+	outEIDs := ous.EnrollmentIDs()
+	outEIDs = append(outEIDs, "")
+	outTT := ous.TokenTypes()
+	for _, outEID := range outEIDs {
+		for _, tokenType := range outTT {
+			if rec, ok := recipientTransactionRecord(record, timestamp, ous, inEID, outEID, tokenType, len(inEIDs) != 0); ok {
+				txs = append(txs, rec)
+			}
+		}
+	}
+
+	return txs, nil
+}
+
+// recipientTransactionRecord builds the transaction record for one
+// (recipient enrollment ID, token type) pair of an action's outputs, if that
+// pair actually received a positive amount. hasInputs distinguishes an issue
+// (no inputs) from a transfer or redeem (outEID empty).
+func recipientTransactionRecord(
+	record *token.AuditRecord, timestamp time.Time, ous *token.OutputStream, inEID, outEID string, tokenType tokentype.Type, hasInputs bool,
+) (dbdriver.TransactionRecord, bool) {
+	received := ous.ByEnrollmentID(outEID).ByType(tokenType).UniquePerOutput().Sum()
+	if received.Cmp(big.NewInt(0)) <= 0 {
+		return dbdriver.TransactionRecord{}, false
+	}
+
+	tt := dbdriver.Issue
+	if hasInputs {
+		if len(outEID) == 0 {
+			tt = dbdriver.Redeem
+		} else {
+			tt = dbdriver.Transfer
+		}
+	}
+
+	return dbdriver.TransactionRecord{
+		TxID:         string(record.Anchor),
+		SenderEID:    inEID,
+		RecipientEID: outEID,
+		TokenType:    tokenType,
+		Amount:       received,
+		Status:       dbdriver.Pending,
+		ActionType:   tt,
+		Timestamp:    timestamp,
+	}, true
 }
 
 // Movements converts an AuditRecord to MovementRecords for storage in the database.

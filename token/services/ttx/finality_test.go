@@ -79,15 +79,36 @@ func newTestFinalityViewContext(t *testing.T) *testFinalityViewContext {
 	}
 }
 
+type finalityViewTestCase struct {
+	name          string
+	prepare       func(*testFinalityViewContext)
+	opts          []ttx.TxOption
+	expectError   bool
+	errorContains string
+	expectErr     error
+}
+
+// assertFinalityViewResult checks tc's expectations against the result of
+// running its view: error matching when tc.expectError, otherwise no error.
+func assertFinalityViewResult(t *testing.T, tc finalityViewTestCase, err error) {
+	t.Helper()
+	if tc.expectError {
+		require.Error(t, err)
+		if len(tc.errorContains) != 0 {
+			assert.Contains(t, err.Error(), tc.errorContains)
+		}
+		if tc.expectErr != nil {
+			require.ErrorIs(t, err, tc.expectErr)
+		}
+
+		return
+	}
+
+	require.NoError(t, err)
+}
+
 func TestFinalityView(t *testing.T) {
-	testCases := []struct {
-		name          string
-		prepare       func(*testFinalityViewContext)
-		opts          []ttx.TxOption
-		expectError   bool
-		errorContains string
-		expectErr     error
-	}{
+	testCases := []finalityViewTestCase{
 		{
 			name: "transaction unknown",
 			prepare: func(c *testFinalityViewContext) {
@@ -346,18 +367,7 @@ func TestFinalityView(t *testing.T) {
 			v := ttx.NewFinalityWithOpts(opts...)
 
 			_, err := v.Call(testCtx.ctx)
-
-			if tc.expectError {
-				require.Error(t, err)
-				if len(tc.errorContains) != 0 {
-					assert.Contains(t, err.Error(), tc.errorContains)
-				}
-				if tc.expectErr != nil {
-					require.ErrorIs(t, err, tc.expectErr)
-				}
-			} else {
-				require.NoError(t, err)
-			}
+			assertFinalityViewResult(t, tc, err)
 		})
 	}
 }
