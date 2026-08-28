@@ -9,6 +9,7 @@ package kvs
 import (
 	"context"
 	"strconv"
+	"strings"
 
 	"github.com/LFDT-Panurus/panurus/token"
 	driver2 "github.com/LFDT-Panurus/panurus/token/driver"
@@ -85,12 +86,40 @@ func (s *WalletStore) GetWalletID(ctx context.Context, identity driver2.Identity
 	if err != nil {
 		return "", errors.Wrapf(err, "failed to create key")
 	}
+	// The WalletStoreService contract requires that "no binding" be reported as ("", nil)
+	// so callers can tell it apart from a transient storage error (see issue #2063). We must
+	// NOT probe with kvs.Exists first: FSC implements Exists as len(GetExisting(...)) > 0, and
+	// GetExisting drops the underlying store error and returns an empty result, so a genuine
+	// failure (timeout, connection reset, ...) would masquerade as "not found" and let a
+	// transient blip create a duplicate wallet — the exact #2063 failure mode.
+	//
+	// kvs.Get is the only method on the KVS surface that propagates the store error, but it
+	// reports a missing key as an error too. Until FSC exposes a proper absence sentinel (an
+	// error-returning Exists/GetIfExists or kvs.ErrNotFound), we call Get and classify only the
+	// "not found" case as an authoritative miss, propagating every other error.
+	// TODO(#2063): replace isNotFoundErr message-matching with the FSC sentinel once it lands.
 	var wID storage.WalletID
 	if err := s.kvs.Get(ctx, k, &wID); err != nil {
-		return "", err
+		if isNotFoundErr(err) {
+			return "", nil
+		}
+
+		return "", errors.Wrapf(err, "failed to get wallet id for identity [%v]", idHash)
 	}
 
 	return wID, nil
+}
+
+// isNotFoundErr reports whether err is a KVS "key not found" error, as opposed to a real
+// store failure. FSC has no absence sentinel yet, so both the memory/sql KVS
+// (errors.Errorf("state [%s,%s] does not exist", ...)) and the hashicorp vault KVS
+// (errors.Errorf("state of id [%s] does not exist", ...)) signal absence only through their
+// error message. Matching the shared "does not exist" substring is deliberately conservative:
+// a store failure surfaces as a "failed retrieving state ..." wrap and is therefore
+// propagated, never mistaken for a miss. This is fragile by nature — see the TODO in
+// GetWalletID and issue #2063 — and must be replaced once FSC exposes a typed sentinel.
+func isNotFoundErr(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "does not exist")
 }
 
 func (s *WalletStore) GetWalletIDs(ctx context.Context, roleID int) ([]storage.WalletID, error) {

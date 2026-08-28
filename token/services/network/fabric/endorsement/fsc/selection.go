@@ -33,9 +33,18 @@ import (
 //
 // It returns an error if none of the candidate sets can be fully covered by distinct
 // configured endorsers. The error names the first MSP that blocked each candidate set.
+//
+// An empty (but present) candidate set — one requiring no MSP at all — is rejected as
+// malformed policy input rather than treated as vacuously satisfied: a policy satisfiable
+// by zero endorsers would let a transaction be endorsed by nobody, so it must fail loudly.
 func SelectEndorsersForMSPSets(configured []view.Identity, mspOf func(view.Identity) (string, error), candidates [][]string) ([]view.Identity, error) {
 	if len(candidates) == 0 {
 		return nil, errors.Errorf("no candidate MSP set to satisfy the namespace endorsement policy")
+	}
+	for _, candidate := range candidates {
+		if len(candidate) == 0 {
+			return nil, errors.Errorf("malformed endorsement policy: a candidate MSP set requires no endorser, which would be satisfied by an empty selection")
+		}
 	}
 	var skipped []error
 	byMSP := make(map[string][]view.Identity)

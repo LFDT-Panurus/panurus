@@ -84,6 +84,45 @@ classDiagram
     note for wallet_Service "High-level management<br/>of wallets and roles"
 ```
 
+### Wallet Registry concurrency
+
+`role.Registry` (`token/services/identity/role/registry.go`) is the per-role wallet cache behind
+`wallet.Service`. Its contract:
+
+*   **`WalletMu` guards the `Wallets` map only.** It is taken as a short `RLock` for map reads and a
+    short `Lock` for map writes. It is never held while calling out to the identity provider, the
+    wallet store, or the wallet factory.
+*   **`WalletFactory.NewWallet` is always called with no registry lock held.** The factory receives the
+    registry itself as `IdentitySupport`, so it may call back into it (e.g. `BindIdentity`, or
+    registering the wallet it is building) while the wallet is under construction. `sync.RWMutex` is
+    not reentrant, so holding `WalletMu` across `NewWallet` would deadlock such a factory. Wallet
+    construction is also expensive (idemix pseudonym generation, store reads and writes), so holding
+    the lock across it would serialize every wallet creation for the role.
+*   **Concurrent creations of the *same* wallet identifier are coalesced**, not serialized:
+    `WalletByID` wraps construction in a `golang.org/x/sync/singleflight` group keyed by wallet id, so
+    exactly one `NewWallet` call runs per wallet and all concurrent callers receive the same wallet
+    instance. Creations for *distinct* wallet identifiers run in parallel.
+*   **A caller is never failed by another caller's cancellation.** `singleflight` is not
+    context-aware: it hands the winning goroutine's value *and* error to everyone who joined the same
+    flight, and the winner builds the wallet with its own context. `WalletByID` therefore waits on its
+    own context rather than the winner's — a caller whose context is cancelled while it waits returns
+    that cancellation immediately, and the creation carries on for whoever else is waiting on it — and
+    a flight that failed only because *another* caller's context was cancelled is retried instead of
+    reported, up to a small bound. What a caller still shares with the flight is the wallet itself:
+    the instance handed to every caller is the one the winner built.
+*   **Nothing is cached once `Done` has run.** Because construction happens outside `WalletMu`, it can
+    overlap `Done`, which drops the cache and closes the wallets it held. A creation that completes
+    after that point releases the wallet it built (closing it, if it holds resources) and returns an
+    error rather than repopulating the cache, since a wallet added afterwards would be closed by
+    nobody.
+
+A `WalletFactory` implementation must therefore be safe to call concurrently for distinct wallet
+identifiers, and may assume no registry lock is held when it is invoked.
+
+A wallet identifier registered with a `nil` wallet counts as absent, both on the fast path and when
+creation double-checks the cache; a factory that returns no wallet and no error is reported as an
+error.
+
 ### LocalMembership
 
 The `LocalMembership` component (`token/services/identity/membership`) plays a pivotal role in managing local identities for a specific role (e.g., Owner, Issuer).
@@ -268,6 +307,46 @@ It wraps the raw identity bytes with a type label, enabling the system to verify
 *   **Structure**:
     - `Type` (string): The identifier of the identity scheme (e.g., `"x509"`, `"idemix"`).
     - `Identity` (bytes): The raw payload of the identity, specific to the key manager.
+
+#### Canonical encoding requirement
+
+The **DER envelopes** of an identity must be the canonical encoding of the value they decode to — exactly one byte string per logical envelope:
+
+*   `marshal.DecodeIdentity` (the `TypedIdentity` envelope decoder in `token/services/identity/marshal`) pins the outer `SEQUENCE`'s declared length to the end of the buffer, requires the read position to land exactly on the last byte after the final field (`ErrTrailingBytes`), rejects non-minimal DER length encodings — a length that fits the short form written in the long form, or a long form with leading zero bytes (`ErrNonMinimalLen`) — and rejects non-minimal `INTEGER` contents, i.e. a redundant leading `0x00`/`0xFF` in the type field (`ErrNonMinimalInt`).
+*   Envelopes decoded with `encoding/asn1` (`MultiIdentity`, `PolicyIdentity`, `MultiSignature`, `PolicySignature`) go through `marshal.UnmarshalCanonicalDER`, which rejects any bytes left over after the top-level value **and** re-encodes the decoded value to require it reproduces the input byte-for-byte (`ErrNonCanonical`). The second check is the load-bearing one: `asn1.Unmarshal`'s `rest` return only reports bytes *after* the top-level TLV, while `encoding/asn1` silently discards `SEQUENCE` elements the destination struct has no field for and accepts `T61String`/`IA5String`/`GeneralString` where a `UTF8String` was declared — neither of which leaves anything in `rest`.
+
+The reason is `Identity.UniqueID()`: it hashes the **raw** identity bytes rather than a canonicalised form of the decoded value, and it is the cache key throughout the identity and wallet layers (`role/registry.go`'s fast-path cache, `provider.go`'s signer cache, and so on). Any two byte strings that decode to the same logical identity but hash differently give that one identity two cache slots — a token paid to the second spelling still verifies, because verification works on the decoded value, but never resolves to its owner's wallet, because the lookup works on `UniqueID()`. Both producers of these bytes — `appendTLV` in the `marshal` package and `encoding/asn1.Marshal` for legacy encodings — already emit minimal lengths, minimal integers and no undeclared elements, so the stricter decode rejects nothing this tree ever writes. That last statement is about data written by *this* encoder — see **Upgrade considerations** below for bytes that are already persisted.
+
+**What this does not cover.** The guarantee is about the envelopes, not about everything reachable through them:
+
+*   **The legacy type spellings remain a `UniqueID()` split, and it is the same class of problem as the one above.** `DecodeIdentity` folds `INTEGER 2`, `UTF8String "x509"` and `PrintableString "x509"` onto the same type for compatibility with identities written by older versions of this SDK. For one x509 identity that is three accepted byte strings and therefore three `UniqueID()`s:
+
+    ```
+    3006 020102       040150   -> {Type: 2, "P"}   uid NQ5fFHOcay5c
+    3009 0c0478353039 040150   -> {Type: 2, "P"}   uid FK3RQ1kfFhZG
+    3009 1304783530 39 040150  -> {Type: 2, "P"}   uid f4VvsY1uwzTB
+    ```
+
+    A token paid to the second or third spelling of a victim's identity verifies — validation decodes type 2 and checks the payload's cert — but does not resolve to that owner's wallet. The checks above reduce this set from unbounded to exactly three; closing it to one cannot be done in the decoder, because the older spellings may exist in persisted data. It needs a rule at the validator boundary: require the `INTEGER` spelling for identities in *new* transactions while still decoding the others for reads. Out of scope here, tracked separately.
+*   **The HTLC script payload is JSON, and it is the widest remaining `UniqueID()` split.** An `htlc.Script` is JSON-encoded into the `TypedIdentity` payload and decoded with `json.Unmarshal` (`interop/htlc/deserializer.go`). That wrapper (`token/core/common/encoding/json`) does set `DisallowUnknownFields`, so an injected member is rejected — but it decodes with a single `Decoder.Decode`, which reads one value and **ignores every byte after it**. Insignificant whitespace, member reordering, equivalent string escapes, alternate `time.Time` spellings for `Deadline`, and arbitrary trailing junk all decode to the identical logical `Script` under a different `UniqueID()`:
+
+    ```
+    canonical        {"Sender":"c2VuZGVy…",…}           -> uid HtE0njeLZx3b…
+    leading space    <SP>{"Sender":"c2VuZGVy…",…}       -> uid F5+Z6ceT5HPM…
+    trailing space   {"Sender":"c2VuZGVy…",…}<SP>       -> uid awLaNBD0sGt/…
+    trailing junk    {"Sender":"c2VuZGVy…",…}GARBAGE    -> uid NA8HzwEzfcQT…
+    pretty-printed   json.MarshalIndent of that Script  -> uid xQHjVL91jwdh…
+    ```
+
+    Unlike the legacy type spellings above, this set is **unbounded** rather than capped at three, because any suffix yields another accepted spelling. The `TypedIdentity` envelope wrapping the script is covered by the checks above; its payload is not. Closing it needs the JSON equivalent of `UnmarshalCanonicalDER` — reject trailing bytes after the top-level value, and re-encode-and-compare — applied at the five `*Script` decode sites in `interop/htlc/deserializer.go` (lines 71, 103, 126, 178, 244) and the two `ScriptInfo` ones (184, 221). Out of scope here, tracked separately.
+*   The payload inside the `TypedIdentity` `OCTET STRING` is **protobuf** for x509 and idemix identities (`x509/crypto/config.go`, `idemix/crypto/deserializer.go`), not DER. Protobuf permits field reordering and redundant varints, so those payload bytes remain malleable and the checks above say nothing about them.
+
+**Upgrade considerations.** `DecodeIdentity` runs on every owner identity during validation, and `MultiSignature`/`PolicySignature.FromBytes` run inside `Verifier.Verify`, so tightening them changes *which transactions are valid*. The tightening is deliberately **ungated** — there is no public-parameters or capability flag for it, matching the precedent set by the nesting-depth and fan-out limits added alongside it. Two consequences follow from that choice:
+
+*   During a rolling upgrade, an upgraded and a non-upgraded validator can reach opposite decisions on the same transaction. For commit-time validation that is a divergence, not a fail-safe, so validators should be upgraded together rather than incrementally.
+*   A token already committed to a non-canonically-encoded owner identity becomes unspendable, because its verifier can no longer be deserialized. Before this change such bytes decoded successfully and merely resolved to the wrong `UniqueID()`. Only a producer outside this tree emits them — every encoder here is already minimal — so no token written by this SDK is affected.
+
+This applies to identity decoding only. Signature parsing (`x509/crypto/ecdsa.go`, `idemixnym/nym/signer.go`) stays deliberately lenient: those bytes come from external signers and HSMs whose DER encoders are routinely non-minimal in ways that are still valid for signature purposes. The `MultiSignature` / `PolicySignature` *envelopes* are strict, because we always produce them ourselves; the individual signatures they carry are not.
 
 ### Default Key Managers
 
@@ -528,10 +607,16 @@ type MyNewIdentity struct {
 
 func (m *MyNewIdentity) Serialize() ([]byte, error) { return asn1.Marshal(*m) }
 func (m *MyNewIdentity) Deserialize(raw []byte) error {
-    _, err := asn1.Unmarshal(raw, m)
-    return err
+    // Never `_, err := asn1.Unmarshal(raw, m)`: discarding the "rest" return
+    // accepts trailing garbage, which breaks the canonical encoding
+    // requirement described under TypedIdentity above.
+    return marshal.UnmarshalCanonicalDER(raw, m)
 }
 ```
+
+`UnmarshalCanonicalDER` separates the two ways a decode can fail. `ErrNonCanonical`, `ErrTrailingBytes`, `ErrNonMinimalLen` and `ErrNonMinimalInt` all mean *the bytes are wrong* and are the ones worth surfacing or counting as a rejected identity. `ErrInvalidDestination` means the destination pointer was nil — a caller bug, checked before the input is looked at, and never something a peer can provoke. Branch on the first group; treat the second as a programming error.
+
+The destination is typed `*T`, not `any`, so passing a non-pointer or an untyped `nil` does not compile at all. Note also what `ErrNonCanonical` does and does not claim: the check is that the input is what `asn1.Marshal` emits for the destination type, which coincides with "canonical DER" only because the envelope types carry no `optional`, `omitempty` or `time.Time` fields. Do not point the helper at a type that does — the constraint is spelled out on the function and pinned by a test.
 
 Expose `Wrap` / `Unwrap` helpers (see `boolpolicy.WrapPolicyIdentity` / `boolpolicy.Unwrap`) that embed the serialized struct inside a `TypedIdentity` envelope with the new type tag.
 
