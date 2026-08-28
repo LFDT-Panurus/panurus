@@ -5,8 +5,8 @@ go 1.26.5
 replace github.com/LFDT-Panurus/panurus => ../
 
 require (
-	github.com/IBM/idemix v0.3.1-0.20260828092026-03b20615e817
-	github.com/IBM/mathlib v0.3.2-0.20260828091719-85443f8df688
+	github.com/IBM/idemix v0.3.1-0.20260828145428-1895a96e2b48
+	github.com/IBM/mathlib v0.3.2-0.20260828145246-354ac146cc41
 	github.com/LFDT-Panurus/panurus v0.0.0
 	github.com/bytedance/gopkg v0.1.3
 	github.com/gin-gonic/gin v1.12.0
