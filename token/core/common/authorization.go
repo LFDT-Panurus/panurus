@@ -12,7 +12,10 @@ import (
 	"github.com/LFDT-Panurus/panurus/token"
 	"github.com/LFDT-Panurus/panurus/token/driver"
 	"github.com/LFDT-Panurus/panurus/token/services/identity"
+	"github.com/LFDT-Panurus/panurus/token/services/interop/htlc"
 	"github.com/LFDT-Panurus/panurus/token/services/logging"
+	"github.com/LFDT-Panurus/panurus/token/services/ttx/boolpolicy"
+	"github.com/LFDT-Panurus/panurus/token/services/ttx/multisig"
 	token2 "github.com/LFDT-Panurus/panurus/token/token"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 )
@@ -88,6 +91,19 @@ type AuthorizationMultiplexer struct {
 // NewAuthorizationMultiplexer returns a new AuthorizationMultiplexer for the passed ownership checkers
 func NewAuthorizationMultiplexer(ownerships ...Authorization) *AuthorizationMultiplexer {
 	return &AuthorizationMultiplexer{authorizations: ownerships}
+}
+
+// NewStandardAuthorization returns the authorization chain used by the token
+// drivers. Type-gated authorizations go first: the wallet-based one resolves
+// any identity bound to a wallet, so it would claim escrow-typed tokens under
+// the wrong wallet id and drop their ownership entries.
+func NewStandardAuthorization(logger logging.Logger, publicParameters driver.PublicParameters, walletService driver.WalletService) *AuthorizationMultiplexer {
+	return NewAuthorizationMultiplexer(
+		htlc.NewScriptAuth(walletService),
+		multisig.NewEscrowAuth(walletService),
+		boolpolicy.NewEscrowAuth(walletService),
+		NewTMSAuthorization(logger, publicParameters, walletService),
+	)
 }
 
 // IsMine returns true it there exists an authorization checker that returns true
