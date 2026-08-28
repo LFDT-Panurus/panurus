@@ -262,74 +262,7 @@ func (t *TransferWithSelectorView) Call(context view.Context) (any, error) {
 	assert.NoError(err, "failed to convert to quantity")
 
 	if len(t.TokenIDs) == 0 {
-		// The sender uses the default token selector each transaction comes equipped with
-		selector, err := tx.Selector()
-		defer func() {
-			if err := tx.CloseSelector(); err != nil {
-				logger.Errorf("failed closing selector [%s]", err)
-			}
-		}()
-		assert.NoError(err, "failed getting token selector")
-
-		// The sender tries to select the requested amount of tokens of the passed type.
-		// If a failure happens, the sender retries up to 5 times, waiting 10 seconds after each failure.
-		// This is just an example, any other policy can be implemented.
-		var ids []*token.ID
-		var sum token.Quantity
-
-		for range 5 {
-			// Select the request amount of tokens of the given type
-			ids, sum, err = selector.Select(context.Context(), ttx.GetWallet(context, t.Wallet), amount.Decimal(), t.Type)
-			// If an error occurs and retry has been asked, then wait first a bit
-			if err != nil && t.Retry {
-				time.Sleep(10 * time.Second)
-
-				continue
-			}
-
-			break
-		}
-		if err != nil {
-			// If finally not enough tokens were available, the sender can check what was the cause of the error:
-			switch {
-			case errors.HasCause(err, token2.SelectorInsufficientFunds):
-				assert.NoError(err, "pineapple")
-			case errors.HasCause(err, token2.SelectorSufficientButLockedFunds):
-				assert.NoError(err, "lemonade")
-			case errors.HasCause(err, token2.SelectorSufficientButNotCertifiedFunds):
-				assert.NoError(err, "mandarin")
-			case errors.HasCause(err, token2.SelectorSufficientFundsButConcurrencyIssue):
-				assert.NoError(err, "peach")
-			default:
-				assert.NoError(err, "system failure")
-			}
-		}
-
-		// If the sender reaches this point, it means that tokens are available.
-		// The sender can further inspect these tokens, if the business logic requires to do so.
-		// Here is an example. The sender double checks that the tokens selected are the expected
-
-		// First, the sender queries the vault to get the tokens
-		tokens, err := tx.TokenService().Vault().NewQueryEngine().GetTokens(context.Context(), ids...)
-		assert.NoError(err, "failed getting tokens from ids")
-
-		// Then, the sender double check that what returned by the selector is correct
-		recomputedSum := token.NewZeroQuantity(precision)
-		for _, tok := range tokens {
-			// Is the token of the right type?
-			assert.Equal(t.Type, tok.Type, "expected token of type [%s], got [%s]", t.Type, tok.Type)
-			// Add the quantity to the total
-			q, err := token.ToQuantity(tok.Quantity, precision)
-			assert.NoError(err, "failed converting quantity")
-			recomputedSum, err = recomputedSum.Add(q)
-			assert.NoError(err, "failed adding quantity")
-		}
-		// Is the recomputed sum correct?
-		assert.True(sum.Cmp(recomputedSum) == 0, "sums do not match")
-		// Is the amount selected equal or larger than what requested?
-		assert.False(sum.Cmp(amount) < 0, "if this point is reached, funds are sufficient")
-
-		t.TokenIDs = ids
+		t.TokenIDs = selectTokenIDs(context, tx, t, amount, precision)
 	}
 
 	// The sender adds a new transfer operation to the transaction following the instruction received.
@@ -377,6 +310,81 @@ func (t *TransferWithSelectorView) Call(context view.Context) (any, error) {
 	assert.Equal(ttx.Confirmed, vc, "transaction [%s] should be in valid state", tx.ID())
 
 	return tx.ID(), nil
+}
+
+// selectTokenIDs selects the token ids to satisfy t's transfer using the transaction's
+// default token selector, retrying up to 5 times (with a 10s backoff) if t.Retry is
+// set, then double-checks the vault's tokens against what the selector reported before
+// returning their ids.
+func selectTokenIDs(context view.Context, tx *ttx.Transaction, t *TransferWithSelectorView, amount token.Quantity, precision uint64) []*token.ID {
+	// The sender uses the default token selector each transaction comes equipped with
+	selector, err := tx.Selector()
+	defer func() {
+		if err := tx.CloseSelector(); err != nil {
+			logger.Errorf("failed closing selector [%s]", err)
+		}
+	}()
+	assert.NoError(err, "failed getting token selector")
+
+	// The sender tries to select the requested amount of tokens of the passed type.
+	// If a failure happens, the sender retries up to 5 times, waiting 10 seconds after each failure.
+	// This is just an example, any other policy can be implemented.
+	var ids []*token.ID
+	var sum token.Quantity
+
+	for range 5 {
+		// Select the request amount of tokens of the given type
+		ids, sum, err = selector.Select(context.Context(), ttx.GetWallet(context, t.Wallet), amount.Decimal(), t.Type)
+		// If an error occurs and retry has been asked, then wait first a bit
+		if err != nil && t.Retry {
+			time.Sleep(10 * time.Second)
+
+			continue
+		}
+
+		break
+	}
+	if err != nil {
+		// If finally not enough tokens were available, the sender can check what was the cause of the error:
+		switch {
+		case errors.HasCause(err, token2.SelectorInsufficientFunds):
+			assert.NoError(err, "pineapple")
+		case errors.HasCause(err, token2.SelectorSufficientButLockedFunds):
+			assert.NoError(err, "lemonade")
+		case errors.HasCause(err, token2.SelectorSufficientButNotCertifiedFunds):
+			assert.NoError(err, "mandarin")
+		case errors.HasCause(err, token2.SelectorSufficientFundsButConcurrencyIssue):
+			assert.NoError(err, "peach")
+		default:
+			assert.NoError(err, "system failure")
+		}
+	}
+
+	// If the sender reaches this point, it means that tokens are available.
+	// The sender can further inspect these tokens, if the business logic requires to do so.
+	// Here is an example. The sender double checks that the tokens selected are the expected
+
+	// First, the sender queries the vault to get the tokens
+	tokens, err := tx.TokenService().Vault().NewQueryEngine().GetTokens(context.Context(), ids...)
+	assert.NoError(err, "failed getting tokens from ids")
+
+	// Then, the sender double check that what returned by the selector is correct
+	recomputedSum := token.NewZeroQuantity(precision)
+	for _, tok := range tokens {
+		// Is the token of the right type?
+		assert.Equal(t.Type, tok.Type, "expected token of type [%s], got [%s]", t.Type, tok.Type)
+		// Add the quantity to the total
+		q, err := token.ToQuantity(tok.Quantity, precision)
+		assert.NoError(err, "failed converting quantity")
+		recomputedSum, err = recomputedSum.Add(q)
+		assert.NoError(err, "failed adding quantity")
+	}
+	// Is the recomputed sum correct?
+	assert.True(sum.Cmp(recomputedSum) == 0, "sums do not match")
+	// Is the amount selected equal or larger than what requested?
+	assert.False(sum.Cmp(amount) < 0, "if this point is reached, funds are sufficient")
+
+	return ids
 }
 
 type TransferWithSelectorViewFactory struct{}
