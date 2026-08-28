@@ -19,7 +19,7 @@ require (
 )
 
 require (
-	github.com/IBM/mathlib v0.3.2-0.20260828091719-85443f8df688 // indirect
+	github.com/IBM/mathlib v0.3.2-0.20260828145246-354ac146cc41 // indirect
 	github.com/Masterminds/squirrel v1.5.4 // indirect
 	github.com/Microsoft/go-winio v0.6.2 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
