@@ -17,10 +17,7 @@ import (
 	v1token "github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/token"
 	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/validator"
 	"github.com/LFDT-Panurus/panurus/token/driver"
-	"github.com/LFDT-Panurus/panurus/token/services/interop/htlc"
 	"github.com/LFDT-Panurus/panurus/token/services/logging"
-	"github.com/LFDT-Panurus/panurus/token/services/ttx/boolpolicy"
-	"github.com/LFDT-Panurus/panurus/token/services/ttx/multisig"
 	"github.com/LFDT-Panurus/panurus/token/services/utils"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 )
@@ -152,12 +149,7 @@ func (d *Driver) NewTokenService(tmsID driver.TMSID, publicParams []byte) (drive
 	deserializer := ws.Deserializer
 	ip := ws.IdentityProvider
 
-	authorization := common.NewAuthorizationMultiplexer(
-		common.NewTMSAuthorization(logger, ppm.PublicParams(), ws),
-		htlc.NewScriptAuth(ws),
-		multisig.NewEscrowAuth(ws),
-		boolpolicy.NewEscrowAuth(ws),
-	)
+	authorization := common.NewStandardAuthorization(logger, ppm.PublicParams(), ws)
 
 	tokensService, err := v1token.NewTokensService(logger, ppm, deserializer)
 	if err != nil {
