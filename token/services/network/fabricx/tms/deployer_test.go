@@ -20,9 +20,9 @@ import (
 // mockPPService stubs pp.PublicParametersService for tests.
 // It records the last submitted tx so tests can assert on NsVersion.
 type mockPPService struct {
-	fetchErr     error
+	fetchErr        error
 	versionToReturn uint64
-	versionErr  error
+	versionErr      error
 }
 
 func (m *mockPPService) Fetch(_ cdriver.Network, _ cdriver.Channel, _ cdriver.Namespace) ([]byte, error) {
