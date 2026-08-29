@@ -57,6 +57,12 @@ jobs:
           - name: identity-multisig-signature-from-bytes
             pkg: ./token/services/identity/multisig
             func: FuzzMultiSignatureFromBytesNoPanic
+          - name: identity-boolpolicy-identity-deserializer
+            pkg: ./token/services/identity/boolpolicy
+            func: FuzzPolicyIdentityDeserializeNoPanic
+          - name: identity-boolpolicy-signature-from-bytes
+            pkg: ./token/services/identity/boolpolicy
+            func: FuzzPolicySignatureFromBytesNoPanic
           - name: identity-idemix-audit-info-deserializer
             pkg: ./token/services/identity/idemix/crypto
             func: FuzzDeserializeAuditInfoNoPanic

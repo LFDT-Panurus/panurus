@@ -352,6 +352,71 @@ For more details on the specific Protobuf messages used by each driver, see:
 
 ---
 
+## SDK API Changes (Go)
+
+Panurus is a `v0.x` module (`github.com/LFDT-Panurus/panurus`), so under
+[SemVer](development/versioning.md) its exported Go API is not yet frozen and may change
+between minor releases. Even so, source-level breaking changes to exported symbols are
+called out here so downstream code that imports the SDK can adapt during an upgrade.
+
+### `role.Registry.GetWalletID` return type (issue #2063)
+
+> [!WARNING]
+> **Breaking change**: `(*Registry).GetWalletID` in
+> `token/services/identity/role` changed its return type from `(string, error)` to the
+> new `WalletIDResolution` struct. Code that calls this method directly on a
+> `*role.Registry` will not compile until it is updated. Nothing inside the SDK breaks
+> (the only in-tree callers are `Registry.Lookup` and the package's own tests; the
+> `wallet.RoleRegistry` interface does not include `GetWalletID`), so this affects only
+> downstream code that holds a concrete `*Registry` and calls `.GetWalletID` itself.
+
+**Why it changed.** The old signature swallowed *every* storage error and returned
+`("", nil)`, which callers read as *"no wallet is bound to this identity yet."* A
+transient storage failure (timeout, connection reset) therefore masqueraded as an
+unregistered identity and fell through the lookup chain to **create a duplicate wallet**
+for an identity that already had one. The `(string, error)` shape was ambiguous by
+design — `("", nil)`, `("", err)` and `("id", nil)` each mean something different and the
+difference was easy to get wrong. `WalletIDResolution` makes the three outcomes explicit
+so the "not found" vs "could not check" distinction is decided once and cannot collapse
+into a silent miss.
+
+Note that any downstream caller was already getting the **buggy** behaviour on the error
+path (`("", nil)` instead of a real error); the new type is what surfaces that error
+honestly.
+
+**Migration.** Replace the `(string, error)` destructuring with an explicit branch on the
+resolution's state. Treat anything that is neither `Bound()` nor `Unbound()` — i.e.
+`Failed()`, or a zero-value resolution — as "binding unknown, do not fall through to
+creation":
+
+```go
+// Before
+wID, err := reg.GetWalletID(ctx, identity)
+if err != nil {
+    return err // NOTE: pre-fix this was unreachable — storage errors were swallowed
+}
+if len(wID) != 0 {
+    use(wID) // a wallet is bound
+}
+
+// After
+res := reg.GetWalletID(ctx, identity)
+switch {
+case res.Bound():
+    use(res.WalletID) // a wallet is bound
+case res.Unbound():
+    // authoritative miss: safe to fall through and, ultimately, create a wallet
+default: // res.Failed(), or a non-authoritative zero value
+    return res.Err // storage failure — must NOT be treated as "no binding"
+}
+```
+
+`WalletIDResolution` exposes `Bound()`, `Unbound()` and `Failed()` predicates; read
+`WalletID` only when `Bound()` is true and `Err` only when `Failed()` is true. See the
+type's Godoc in `token/services/identity/role/registry.go` for the full contract.
+
+---
+
 ## Summary of Upgradability Responsibilities
 
 | Component | Responsibility | Mechanism |
@@ -359,3 +424,4 @@ For more details on the specific Protobuf messages used by each driver, see:
 | **Tokens** | Owner / Issuer | `ttx.Transaction.Upgrade` (Burn & Re-issue) |
 | **Driver** | Admin / SDK | `PostInit` (Automatic Spendability Toggle) |
 | **Schema** | Developer / Admin | Manual SQL `ALTER` or Database Re-sync |
+| **SDK API (Go)** | Downstream Developer | Update call sites per release notes (e.g. `Registry.GetWalletID` → `WalletIDResolution`) |

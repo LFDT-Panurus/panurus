@@ -10,16 +10,99 @@ import (
 	"context"
 	"encoding/json"
 	"sync"
+	"sync/atomic"
 
 	"github.com/LFDT-Panurus/panurus/token/driver"
 	idriver "github.com/LFDT-Panurus/panurus/token/services/identity/driver"
 	"github.com/LFDT-Panurus/panurus/token/services/logging"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
+	"golang.org/x/sync/singleflight"
 )
 
 //go:generate counterfeiter -o mock/wf.go -fake-name WalletFactory . WalletFactory
 type WalletFactory interface {
 	NewWallet(ctx context.Context, id idriver.WalletID, role idriver.IdentityRoleType, is IdentitySupport, info idriver.IdentityInfo) (driver.Wallet, error)
+}
+
+// WalletIDStatus classifies the outcome of resolving an identity to the wallet id
+// bound to it. It exists so callers branch on an explicit, named state instead of
+// re-deriving intent from the ambiguous "(string, error)" shape — where ("", nil),
+// ("", err) and ("id", nil) each mean something different and the difference is easy
+// to get wrong (see issue #2063).
+type WalletIDStatus int
+
+const (
+	// WalletIDUnknown is the zero value and never returned by GetWalletID. It is the
+	// guard against a WalletIDResolution constructed without going through GetWalletID
+	// (a mock, or a future constructor that forgets to set Status): because callers act
+	// on a fallthrough only when authoritative() is true — Bound or Unbound — this zero
+	// value is treated as a lookup failure, not as a safe "no binding" that would create
+	// a duplicate wallet.
+	WalletIDUnknown WalletIDStatus = iota
+	// WalletIDBound means storage holds a wallet id for the identity. WalletID is set.
+	WalletIDBound
+	// WalletIDUnbound means storage answered authoritatively that the identity has no
+	// wallet binding. This is a definitive, successful miss: it is safe to fall through
+	// to the next resolution step and, ultimately, to create a wallet.
+	WalletIDUnbound
+	// WalletIDFailed means the storage lookup itself failed (timeout, connection reset,
+	// ...), so whether a binding exists is UNKNOWN. Err carries the cause. Callers MUST
+	// NOT treat this as WalletIDUnbound: doing so lets a transient blip masquerade as an
+	// unregistered identity and triggers the creation of a duplicate wallet.
+	WalletIDFailed
+)
+
+// WalletIDResolution is the explicit result of resolving an identity to its bound
+// wallet id. It is the single shared value every wallet-lookup fallback branches on,
+// so the "not found" vs "could not check" distinction is decided once (in GetWalletID)
+// rather than re-inferred at each call site.
+type WalletIDResolution struct {
+	// Status is the outcome of the lookup. Always inspect it via Bound/Unbound/Failed
+	// before reading the other fields, and branch exhaustively: any status that is
+	// neither Bound nor Unbound (Failed, or the WalletIDUnknown zero value) is not
+	// authoritative and must abort the lookup rather than fall through to creation.
+	Status WalletIDStatus
+	// WalletID is the bound wallet id; meaningful only when Status is WalletIDBound.
+	WalletID idriver.WalletID
+	// Err is the underlying storage failure; set only when Status is WalletIDFailed.
+	Err error
+}
+
+// Bound reports whether the identity has a wallet id bound to it.
+func (r WalletIDResolution) Bound() bool { return r.Status == WalletIDBound }
+
+// Unbound reports whether storage answered authoritatively that the identity has no
+// wallet binding. This is the ONLY non-Bound state that a caller may act on by falling
+// through to the next resolution step and, ultimately, wallet creation. Every other
+// state — Failed, or the zero value produced by a WalletIDResolution built without
+// going through GetWalletID — leaves the binding unknown and must abort the lookup.
+func (r WalletIDResolution) Unbound() bool { return r.Status == WalletIDUnbound }
+
+// Failed reports whether the storage lookup failed, leaving the binding unknown.
+// A failed resolution must abort the enclosing lookup, never fall through to creation.
+func (r WalletIDResolution) Failed() bool { return r.Status == WalletIDFailed }
+
+// authoritative reports whether the resolution definitively answers whether a wallet is
+// bound — i.e. it came back from GetWalletID as Bound or Unbound. Any other status
+// (Failed, or the zero-value WalletIDUnknown of a resolution built outside GetWalletID)
+// is non-authoritative: the binding is unknown and the caller MUST abort rather than
+// fall through to wallet creation. This is the guard the WalletIDUnknown zero value was
+// introduced to provide.
+func (r WalletIDResolution) authoritative() bool { return r.Bound() || r.Unbound() }
+
+// abortError returns the error a non-authoritative resolution must abort a wallet lookup
+// with. It preserves the storage cause for a WalletIDFailed and synthesizes one for a
+// zero-value / unknown resolution (whose Err is nil), so an unknown status can never
+// collapse into a nil error — via errors.WithMessagef(nil, ...) returning nil — and be
+// silently mistaken for a successful lookup. It must only be called once Bound and
+// Unbound have been ruled out (i.e. authoritative() is false).
+func (r WalletIDResolution) abortError(id driver.WalletLookupID) error {
+	cause := r.Err
+	if cause == nil {
+		cause = errors.Errorf("non-authoritative wallet id resolution status [%d]", r.Status)
+	}
+
+	return errors.WithMessagef(cause, "failed to lookup wallet [%s]", id)
 }
 
 // Registry manages wallets whose long-term identities have a given role.
@@ -31,6 +114,15 @@ type WalletFactory interface {
 //     RLocks for map reads and never holding locks while calling out to external
 //     services (identity provider, storage, wallet factory) to avoid blocking and
 //     potential deadlocks.
+//   - In particular, WalletMu MUST NOT be held while calling WalletFactory.NewWallet:
+//     wallet construction is expensive (pseudonym generation, storage access) and the
+//     factory receives the registry itself as IdentitySupport, so it may legitimately
+//     call back into it. sync.RWMutex is not reentrant, so any such callback would
+//     deadlock. Concurrent creations of the same wallet are instead coalesced with
+//     walletCreationGroup (see WalletByID).
+//   - Because construction runs outside the lock, it can overlap Done. Nothing may be
+//     written to the Wallets map once closed is set: Done has already dropped the cache
+//     and closed what it held, so a later entry would never be closed by anyone.
 type Registry struct {
 	Logger  logging.Logger
 	Role    idriver.Role
@@ -39,7 +131,22 @@ type Registry struct {
 	WalletFactory WalletFactory
 	WalletMu      sync.RWMutex
 	Wallets       map[string]driver.Wallet
+
+	// walletCreationGroup coalesces concurrent WalletFactory.NewWallet calls for the same
+	// wallet identifier, so that a wallet is built at most once without holding
+	// WalletMu across the construction.
+	walletCreationGroup singleflight.Group
+
+	// closed is set by Done. It is guarded by WalletMu and exists because construction
+	// no longer runs under that lock: a creation still in flight when Done runs must not
+	// repopulate the cache Done has just dropped.
+	closed bool
 }
+
+// errRegistryClosed is returned by wallet creation once Done has run. The cache has been
+// dropped and its wallets closed, so a wallet created afterwards would be released by
+// nobody.
+var errRegistryClosed = errors.New("wallet registry is closed")
 
 // NewRegistry returns a new registry for the passed parameters.
 // A registry is bound to a given role, and it is persistent.
@@ -82,11 +189,17 @@ func (r *Registry) Lookup(ctx context.Context, id driver.WalletLookupID) (driver
 		if ok {
 			r.Logger.DebugfContext(ctx, "lookup failed, check if there is a wallet for identity [%s]", passedIdentity)
 			// is this identity registered
-			wID, err := r.GetWalletID(ctx, passedIdentity)
-			if err == nil && len(wID) != 0 {
-				r.Logger.DebugfContext(ctx, "lookup failed, there is a wallet for identity [%s]: [%s]", passedIdentity, wID)
+			res := r.GetWalletID(ctx, passedIdentity)
+			if !res.authoritative() {
+				// A storage failure — or a resolution that never went through GetWalletID —
+				// leaves the binding unknown; it must not be treated as "not registered", or
+				// a transient blip would fall through to wallet creation and duplicate state.
+				return nil, nil, "", res.abortError(id)
+			}
+			if res.Bound() {
+				r.Logger.DebugfContext(ctx, "lookup failed, there is a wallet for identity [%s]: [%s]", passedIdentity, res.WalletID)
 				// we got a hit
-				walletID = wID
+				walletID = res.WalletID
 				ident = passedIdentity
 				fail = false
 			}
@@ -111,36 +224,53 @@ func (r *Registry) Lookup(ctx context.Context, id driver.WalletLookupID) (driver
 	if ok {
 		r.Logger.DebugfContext(ctx, "no wallet found, check if there is a wallet for identity [%s]", passedIdentity)
 		// is this identity registered
-		passedWalletID, err := r.GetWalletID(ctx, passedIdentity)
-		if err == nil && len(passedWalletID) != 0 {
-			r.Logger.DebugfContext(ctx, "no wallet found, there is a wallet for identity [%s]: [%s]", passedIdentity, passedWalletID)
+		res := r.GetWalletID(ctx, passedIdentity)
+		if res.Failed() {
+			// This probe is only an optimization: MapToIdentity already succeeded (or the
+			// fallback above recovered a binding), so wID is an authoritative candidate and
+			// is already in walletIdentifiers. A failed lookup here therefore costs at most
+			// a reuse opportunity, not correctness — log and continue with the mapped
+			// candidate rather than aborting the whole lookup on a transient blip. Failing
+			// closed belongs only at the branch above, where MapToIdentity failed and this
+			// probe is the sole signal for whether a wallet already exists (issue #2063).
+			r.Logger.Warnf("failed to check wallet binding for identity [%s], continuing with mapped wallet [%s]: %v", passedIdentity, wID, res.Err)
+		} else if res.Bound() {
+			r.Logger.DebugfContext(ctx, "no wallet found, there is a wallet for identity [%s]: [%s]", passedIdentity, res.WalletID)
 			// we got a hit
 			r.WalletMu.RLock()
-			walletEntry, ok = r.Wallets[passedWalletID]
+			walletEntry, ok = r.Wallets[res.WalletID]
 			r.WalletMu.RUnlock()
 			if ok {
-				return walletEntry, nil, passedWalletID, nil
+				return walletEntry, nil, res.WalletID, nil
 			}
-			r.Logger.DebugfContext(ctx, "no wallet found, there is a wallet for identity [%s]: [%s] but it has not been recreated yet", passedIdentity, passedWalletID)
+			r.Logger.DebugfContext(ctx, "no wallet found, there is a wallet for identity [%s]: [%s] but it has not been recreated yet", passedIdentity, res.WalletID)
+			// Only a Bound resolution carries a wallet id; an Unbound one has WalletID == ""
+			// and must not be appended (the consuming loop skips empties anyway).
+			walletIdentifiers = append(walletIdentifiers, res.WalletID)
 		}
-		walletIdentifiers = append(walletIdentifiers, passedWalletID)
 	}
 
 	r.Logger.DebugfContext(ctx, "no wallet found for [%s] at [%s]", passedIdentity, logging.Prefix(wID))
 	if len(ident) != 0 {
-		identityWID, err := r.GetWalletID(ctx, ident)
-		r.Logger.DebugfContext(ctx, "wallet for identity [%s] -> [%s:%s]", ident, identityWID, err)
-		if err == nil && len(identityWID) != 0 {
+		res := r.GetWalletID(ctx, ident)
+		r.Logger.DebugfContext(ctx, "wallet for identity [%s] -> [%s:%d]", ident, res.WalletID, res.Status)
+		if res.Failed() {
+			// Optimization probe only (see the probe above): ident came from an
+			// authoritative MapToIdentity, and its wallet id is already a candidate, so a
+			// failed lookup here is not decisive. Log and continue rather than aborting the
+			// lookup on a transient blip (issue #2063).
+			r.Logger.Warnf("failed to check wallet binding for identity [%s], continuing with mapped wallet [%s]: %v", ident, wID, res.Err)
+		} else if res.Bound() {
 			r.WalletMu.RLock()
-			w, ok := r.Wallets[identityWID]
+			w, ok := r.Wallets[res.WalletID]
 			r.WalletMu.RUnlock()
 			if ok {
-				r.Logger.DebugfContext(ctx, "found wallet [%s:%s:%s:%s]", ident, walletID, w.ID(), identityWID)
+				r.Logger.DebugfContext(ctx, "found wallet [%s:%s:%s:%s]", ident, walletID, w.ID(), res.WalletID)
 
-				return w, nil, identityWID, nil
+				return w, nil, res.WalletID, nil
 			}
+			walletIdentifiers = append(walletIdentifiers, res.WalletID)
 		}
-		walletIdentifiers = append(walletIdentifiers, identityWID)
 	}
 
 	for _, walletIdentifier := range walletIdentifiers {
@@ -233,18 +363,39 @@ func (r *Registry) GetIdentityMetadata(ctx context.Context, identity driver.Iden
 	return json.Unmarshal(raw, &meta)
 }
 
-// GetWalletID returns the wallet identifier bound to the passed identity
-func (r *Registry) GetWalletID(ctx context.Context, identity driver.Identity) (string, error) {
+// GetWalletID resolves the wallet identifier bound to the passed identity.
+//
+// It is the single point that translates the storage layer's (WalletID, error)
+// convention into an explicit WalletIDResolution, so no caller has to re-derive the
+// meaning of ("", nil) vs ("", err). The storage contract reports an unbound identity
+// as ("", nil); a non-nil error is a genuine storage failure (timeout, connection
+// reset, ...) whose result is therefore WalletIDFailed, never WalletIDUnbound. Keeping
+// the two apart here is what prevents a transient blip from looking like an
+// unregistered identity and triggering the creation of a duplicate wallet (issue #2063).
+func (r *Registry) GetWalletID(ctx context.Context, identity driver.Identity) WalletIDResolution {
 	wID, err := r.Storage.GetWalletID(ctx, identity, int(r.Role.ID()))
 	if err != nil {
-		//nolint:nilerr
-		return "", nil
+		return WalletIDResolution{
+			Status: WalletIDFailed,
+			Err:    errors.Wrapf(err, "failed to get wallet id for identity [%s]", identity),
+		}
+	}
+	if len(wID) == 0 {
+		r.Logger.DebugfContext(ctx, "no wallet bound to identity [%s]", identity)
+
+		return WalletIDResolution{Status: WalletIDUnbound}
 	}
 	r.Logger.DebugfContext(ctx, "wallet [%s] is bound to identity [%s]", wID, identity)
 
-	return wID, nil
+	return WalletIDResolution{Status: WalletIDBound, WalletID: wID}
 }
 
+// WalletByID returns the wallet bound to the passed lookup id, creating and registering it
+// on first use.
+//
+// Locking: WalletMu is only taken for short map reads/writes. WalletFactory.NewWallet is
+// always called with no lock held, so a factory may safely call back into the registry;
+// concurrent callers for the same wallet identifier are coalesced so the wallet is built once.
 func (r *Registry) WalletByID(ctx context.Context, role idriver.IdentityRoleType, id driver.WalletLookupID) (driver.Wallet, error) {
 	r.Logger.DebugfContext(ctx, "role [%d] lookup wallet by [%T]", role, id)
 	defer r.Logger.DebugfContext(ctx, "role [%d] lookup wallet by [%T] done", role, id)
@@ -281,21 +432,130 @@ func (r *Registry) WalletByID(ctx context.Context, role idriver.IdentityRoleType
 	}
 	r.Logger.DebugfContext(ctx, "no")
 
-	// Register the newly created wallet but check if another goroutine already created it.
-	r.WalletMu.Lock()
-	defer r.WalletMu.Unlock()
-	if existing, ok := r.Wallets[wID]; ok {
-		// Another goroutine created and registered the wallet in the meantime; prefer it.
+	// Create the wallet without holding the registry lock (avoid holding locks while calling
+	// external code). singleflight guarantees that concurrent callers asking for the same
+	// wallet identifier share a single NewWallet call, so dropping the lock does not lead to
+	// duplicate wallets; creations for distinct identifiers proceed in parallel.
+	r.Logger.DebugfContext(ctx, "create wallet [%s]", wID)
+
+	return r.createWallet(ctx, role, wID, idInfo)
+}
+
+// walletCreationJoinRetries bounds how many times a caller re-runs a creation that failed
+// with a context error it did not cause. Each retry either makes this caller the winner,
+// in which case only its own context can fail it, or joins a newer flight; the bound is
+// there so that an unbroken stream of cancelled callers cannot keep a caller with no
+// deadline of its own waiting forever.
+const walletCreationJoinRetries = 3
+
+// createWallet builds the wallet identified by wID, coalescing concurrent creations of the
+// same identifier into a single WalletFactory.NewWallet call so that dropping WalletMu
+// cannot produce duplicate wallets.
+//
+// singleflight hands the winning goroutine's value *and* error to everyone who joined the
+// same flight, and the winner builds the wallet with its own context. Neither may leak into
+// an unrelated caller, so this caller stops waiting when its own context is done rather
+// than when the winner's is, and a flight that failed only because another caller's context
+// was cancelled is retried rather than reported: one abandoned transaction must not fail
+// the healthy ones resolving the same wallet.
+func (r *Registry) createWallet(
+	ctx context.Context,
+	role idriver.IdentityRoleType,
+	wID idriver.WalletID,
+	idInfo idriver.IdentityInfo,
+) (driver.Wallet, error) {
+	for attempt := 0; ; attempt++ {
+		// ranCreation records whether this caller won the flight and ran the creation
+		// itself, which is what distinguishes its own context error from an inherited one.
+		// It is only read after receiving from ch, which happens after the creation
+		// returned.
+		var ranCreation atomic.Bool
+		ch := r.walletCreationGroup.DoChan(wID, func() (any, error) {
+			ranCreation.Store(true)
+
+			return r.newWallet(ctx, role, wID, idInfo)
+		})
+
+		select {
+		case <-ctx.Done():
+			// The flight carries on for whoever else is waiting on it; this caller is done.
+			return nil, errors.Wrapf(ctx.Err(), "failed to create wallet [%s]", wID)
+		case res := <-ch:
+			if res.Err == nil {
+				wallet, ok := res.Val.(driver.Wallet)
+				if !ok || wallet == nil {
+					return nil, errors.Errorf("wallet creation for [%s] yielded %T, not a wallet", wID, res.Val)
+				}
+
+				return wallet, nil
+			}
+
+			// A context error this caller neither caused nor shares says nothing about
+			// whether the wallet can be built, so try again instead of reporting it.
+			// singleflight removes a flight from the group before handing out its result,
+			// so the retry either starts a fresh creation or joins one another caller has
+			// since started. Forget must not be called here: the failed flight is already
+			// gone, so it could only evict that newer flight and let two wallets be built
+			// for wID, one of which nobody would ever close.
+			// Anything else - including a context error from the creation this caller ran
+			// itself - is its own error to report.
+			inherited := !ranCreation.Load() && ctx.Err() == nil &&
+				(errors.Is(res.Err, context.Canceled) || errors.Is(res.Err, context.DeadlineExceeded))
+			if !inherited || attempt >= walletCreationJoinRetries {
+				return nil, res.Err
+			}
+			r.Logger.DebugfContext(ctx,
+				"wallet [%s] creation failed with another caller's cancellation, retrying", wID)
+		}
+	}
+}
+
+// newWallet builds one wallet and puts it in the cache. It runs inside walletCreationGroup, so
+// at most one goroutine executes it per wallet identifier at a time.
+func (r *Registry) newWallet(
+	ctx context.Context,
+	role idriver.IdentityRoleType,
+	wID idriver.WalletID,
+	idInfo idriver.IdentityInfo,
+) (any, error) {
+	// Another goroutine may have created and registered the wallet in the meantime; prefer
+	// it. An entry holding a nil wallet counts as absent, exactly as the fast path in
+	// WalletByID treats it, rather than being handed back as a wallet.
+	r.WalletMu.RLock()
+	existing, closed := r.Wallets[wID], r.closed
+	r.WalletMu.RUnlock()
+	if closed {
+		return nil, errRegistryClosed
+	}
+	if existing != nil {
 		return existing, nil
 	}
-	// Create the wallet without holding the registry lock (avoid holding locks while calling external code).
-	r.Logger.DebugfContext(ctx, "create wallet [%s]", wID)
+
 	newWallet, err := r.WalletFactory.NewWallet(ctx, wID, role, r, idInfo)
 	if err != nil {
 		return nil, err
 	}
+	if newWallet == nil {
+		return nil, errors.Errorf("wallet factory returned no wallet for [%s]", wID)
+	}
 	r.Logger.DebugfContext(ctx, "register wallet [%s:%s] with label [%s]", newWallet.ID(), wID, wID)
+
+	// Only the map write needs the write lock. Done may have run while the wallet was being
+	// built: caching it now would resurrect a cache Done has already dropped and leave this
+	// wallet's resources - for an anonymous owner wallet, a provisioning goroutine - running
+	// with nothing left to close them. Close it here instead.
+	r.WalletMu.Lock()
+	if r.closed {
+		r.WalletMu.Unlock()
+		r.Logger.DebugfContext(ctx, "registry closed while creating wallet [%s], releasing it", wID)
+		if c, ok := newWallet.(closer); ok {
+			c.Close()
+		}
+
+		return nil, errRegistryClosed
+	}
 	r.Wallets[wID] = newWallet
+	r.WalletMu.Unlock()
 
 	return newWallet, nil
 }
@@ -315,6 +575,9 @@ type closer interface {
 // lifetime of the process.
 func (r *Registry) Done() error {
 	r.WalletMu.Lock()
+	// Set before dropping the cache, so a creation that completes after this point sees
+	// the registry as closed and releases the wallet it built instead of caching it.
+	r.closed = true
 	wallets := make([]driver.Wallet, 0, len(r.Wallets))
 	for _, w := range r.Wallets {
 		wallets = append(wallets, w)

@@ -24,6 +24,10 @@ func TestGetWalletID(t *testing.T) {
 	common2.TestGetWalletID(t, mockWalletStore)
 }
 
+func TestGetWalletIDNotFound(t *testing.T) {
+	common2.TestGetWalletIDNotFound(t, mockWalletStore)
+}
+
 func TestGetWalletIDs(t *testing.T) {
 	common2.TestGetWalletIDs(t, mockWalletStore)
 }

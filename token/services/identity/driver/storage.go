@@ -83,7 +83,10 @@ type WalletID = string
 //
 //go:generate counterfeiter -o mock/wss.go -fake-name WalletStoreService . WalletStoreService
 type WalletStoreService interface {
-	// GetWalletID fetches a walletID that is bound to the identity passed
+	// GetWalletID fetches a walletID that is bound to the identity passed.
+	// It returns an empty WalletID and no error if the identity has no stored
+	// binding; a non-nil error indicates a genuine storage failure and must not
+	// be interpreted by callers as "no binding".
 	GetWalletID(ctx context.Context, identity token.Identity, roleID int) (WalletID, error)
 	// GetWalletIDs fetches all walletID's that have been stored so far without duplicates
 	GetWalletIDs(ctx context.Context, roleID int) ([]WalletID, error)
@@ -191,7 +194,9 @@ type IdentityStoreService interface {
 	SignerInfoExists(ctx context.Context, id []byte) (bool, error)
 	// GetSignerInfo returns the signer info bound to the given identity
 	GetSignerInfo(ctx context.Context, id []byte) ([]byte, error)
-	// RegisterIdentityDescriptor registers a descriptor for an identity and associates it with an alias
+	// RegisterIdentityDescriptor registers a descriptor for an identity and associates it with an alias.
+	// The operation is idempotent and safe to retry: registering the same descriptor again succeeds
+	// without error, and a registration that was only partially persisted is completed by the retry.
 	RegisterIdentityDescriptor(ctx context.Context, descriptor *IdentityDescriptor, alias driver.Identity) error
 	// IterateSigners returns a page of SignerEntry values from the Signers table ordered by
 	// identity_hash, starting at the given offset and returning at most limit entries.
