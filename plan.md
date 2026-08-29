@@ -42,6 +42,9 @@ All code lives under `cmd/benchmarking/perflab/` (Python, reuses `bench_parse.py
 10. [x] `docs/development/perflab.md`; link from dlognogh benchmark doc and `AGENTS.md`
     — runbook written; linked from `dlognogh.md`'s "Related Documentation" and from AGENTS.md's
     Automation Runbooks list.
+11. [x] `perflab status` CLI command — point-in-time snapshot of queue depth, the running job's
+    elapsed time, the actual `go test`/`taskset` process line on the host, and how many result
+    files have landed in the most recent `runs/<run_id>/`; documented in `perflab.md`.
 
 ## Notes & Decisions
 
