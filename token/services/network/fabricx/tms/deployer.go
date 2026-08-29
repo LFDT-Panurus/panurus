@@ -15,7 +15,6 @@ import (
 	"github.com/LFDT-Panurus/panurus/token/services/logging"
 	"github.com/LFDT-Panurus/panurus/token/services/network/common/rws/keys"
 	"github.com/LFDT-Panurus/panurus/token/services/network/common/rws/translator"
-	"github.com/LFDT-Panurus/panurus/token/services/network/fabric"
 	"github.com/LFDT-Panurus/panurus/token/services/network/fabricx/pp"
 	cdriver "github.com/hyperledger-labs/fabric-smart-client/platform/common/driver"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/services"
@@ -50,7 +49,9 @@ func NewTMSDeployerService(
 }
 
 type deployerService struct {
-	ppFetcher     fabric.NetworkPublicParamsFetcher
+	// ppFetcher is stored as the concrete type so the compiler guarantees
+	// FetchNamespaceVersion is always available — no type assertion needed.
+	ppFetcher     *pp.PublicParametersService
 	configService *config.Service
 	nsSubmitter   Submitter
 	keyTranslator translator.KeyTranslator
@@ -120,18 +121,12 @@ func (s *deployerService) deployPublicParameters(tmsID token.TMSID) error {
 }
 
 // deployPublicParametersRaw constructs a public parameters transaction and
-// submits it to the network.
+// submits it to the network. It fetches the current namespace policy version
+// so the committer can validate the transaction against the correct policy epoch.
 func (s *deployerService) deployPublicParametersRaw(tmsID token.TMSID, ppRaw []byte) error {
-	var nsVersion uint64
-	if fetcher, ok := s.ppFetcher.(interface {
-		FetchNamespaceVersion(network cdriver.Network, channel cdriver.Channel, namespace cdriver.Namespace) (uint64, error)
-	}); ok {
-		ver, err := fetcher.FetchNamespaceVersion(tmsID.Network, tmsID.Channel, tmsID.Namespace)
-		if err != nil {
-			logger.Warnf("Failed fetching namespace version for [%s], defaulting to 0: %v", tmsID, err)
-		} else {
-			nsVersion = ver
-		}
+	nsVersion, err := s.ppFetcher.FetchNamespaceVersion(tmsID.Network, tmsID.Channel, tmsID.Namespace)
+	if err != nil {
+		return err
 	}
 
 	tx, err := s.createPublicParametersTx(ppRaw, tmsID.Namespace, nsVersion)
