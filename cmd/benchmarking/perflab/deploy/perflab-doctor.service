@@ -1,0 +1,16 @@
+[Unit]
+Description=PerfLab: host health check (governor/turbo/load/toolchain) into www/health.html
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=perflab
+Environment=PERFLAB_HOME=/opt/perflab
+Environment=PATH=/usr/local/go/bin:/usr/bin:/bin
+CPUAffinity=0 1
+# doctor's non-zero exit (FAIL) is expected and must not be treated as a
+# unit failure -- it's informational, surfaced on www/health.html by the
+# command itself before the exit code is returned.
+ExecStart=/usr/bin/python3 -m perflab.cli doctor
+SuccessExitStatus=0 1
+WorkingDirectory=/opt/perflab/src/cmd/benchmarking

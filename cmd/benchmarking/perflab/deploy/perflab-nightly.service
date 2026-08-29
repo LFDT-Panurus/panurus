@@ -1,0 +1,13 @@
+[Unit]
+Description=PerfLab: enqueue Tier-2 deep sweep on current main HEAD
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=perflab
+Environment=PERFLAB_HOME=/opt/perflab
+Environment=PATH=/usr/local/go/bin:/usr/bin:/bin
+CPUAffinity=0 1
+ExecStart=/usr/bin/python3 -m perflab.cli nightly
+WorkingDirectory=/opt/perflab/src/cmd/benchmarking
