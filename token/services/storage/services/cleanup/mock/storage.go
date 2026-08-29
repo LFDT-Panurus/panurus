@@ -10,11 +10,10 @@ import (
 )
 
 type Storage struct {
-	AcquireCleanupLeadershipStub        func(context.Context, int64) (cleanup.Leadership, bool, error)
+	AcquireCleanupLeadershipStub        func(context.Context) (cleanup.Leadership, bool, error)
 	acquireCleanupLeadershipMutex       sync.RWMutex
 	acquireCleanupLeadershipArgsForCall []struct {
 		arg1 context.Context
-		arg2 int64
 	}
 	acquireCleanupLeadershipReturns struct {
 		result1 cleanup.Leadership
@@ -59,19 +58,18 @@ type Storage struct {
 	invocationsMutex sync.RWMutex
 }
 
-func (fake *Storage) AcquireCleanupLeadership(arg1 context.Context, arg2 int64) (cleanup.Leadership, bool, error) {
+func (fake *Storage) AcquireCleanupLeadership(arg1 context.Context) (cleanup.Leadership, bool, error) {
 	fake.acquireCleanupLeadershipMutex.Lock()
 	ret, specificReturn := fake.acquireCleanupLeadershipReturnsOnCall[len(fake.acquireCleanupLeadershipArgsForCall)]
 	fake.acquireCleanupLeadershipArgsForCall = append(fake.acquireCleanupLeadershipArgsForCall, struct {
 		arg1 context.Context
-		arg2 int64
-	}{arg1, arg2})
+	}{arg1})
 	stub := fake.AcquireCleanupLeadershipStub
 	fakeReturns := fake.acquireCleanupLeadershipReturns
-	fake.recordInvocation("AcquireCleanupLeadership", []interface{}{arg1, arg2})
+	fake.recordInvocation("AcquireCleanupLeadership", []interface{}{arg1})
 	fake.acquireCleanupLeadershipMutex.Unlock()
 	if stub != nil {
-		return stub(arg1, arg2)
+		return stub(arg1)
 	}
 	if specificReturn {
 		return ret.result1, ret.result2, ret.result3
@@ -85,17 +83,17 @@ func (fake *Storage) AcquireCleanupLeadershipCallCount() int {
 	return len(fake.acquireCleanupLeadershipArgsForCall)
 }
 
-func (fake *Storage) AcquireCleanupLeadershipCalls(stub func(context.Context, int64) (cleanup.Leadership, bool, error)) {
+func (fake *Storage) AcquireCleanupLeadershipCalls(stub func(context.Context) (cleanup.Leadership, bool, error)) {
 	fake.acquireCleanupLeadershipMutex.Lock()
 	defer fake.acquireCleanupLeadershipMutex.Unlock()
 	fake.AcquireCleanupLeadershipStub = stub
 }
 
-func (fake *Storage) AcquireCleanupLeadershipArgsForCall(i int) (context.Context, int64) {
+func (fake *Storage) AcquireCleanupLeadershipArgsForCall(i int) context.Context {
 	fake.acquireCleanupLeadershipMutex.RLock()
 	defer fake.acquireCleanupLeadershipMutex.RUnlock()
 	argsForCall := fake.acquireCleanupLeadershipArgsForCall[i]
-	return argsForCall.arg1, argsForCall.arg2
+	return argsForCall.arg1
 }
 
 func (fake *Storage) AcquireCleanupLeadershipReturns(result1 cleanup.Leadership, result2 bool, result3 error) {

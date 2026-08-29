@@ -28,14 +28,13 @@ func TestNewManager(t *testing.T) {
 	mockDB := &mock2.Storage{}
 	mockHandler := &mock2.Handler{}
 	config := recovery2.Config{
-		Enabled:        true,
-		TTL:            30 * time.Second,
-		ScanInterval:   30 * time.Second,
-		BatchSize:      100,
-		WorkerCount:    1,
-		LeaseDuration:  30 * time.Second,
-		AdvisoryLockID: 1,
-		InstanceID:     "test-instance",
+		Enabled:       true,
+		TTL:           30 * time.Second,
+		ScanInterval:  30 * time.Second,
+		BatchSize:     100,
+		WorkerCount:   1,
+		LeaseDuration: 30 * time.Second,
+		InstanceID:    "test-instance",
 	}
 
 	manager := recovery2.NewManager(
@@ -53,14 +52,13 @@ func TestManager_StartStop(t *testing.T) {
 	mockDB := &mock2.Storage{}
 	mockHandler := &mock2.Handler{}
 	config := recovery2.Config{
-		Enabled:        true,
-		TTL:            100 * time.Millisecond,
-		ScanInterval:   100 * time.Millisecond,
-		BatchSize:      100,
-		WorkerCount:    1,
-		LeaseDuration:  time.Second,
-		AdvisoryLockID: 1,
-		InstanceID:     "test-instance",
+		Enabled:       true,
+		TTL:           100 * time.Millisecond,
+		ScanInterval:  100 * time.Millisecond,
+		BatchSize:     100,
+		WorkerCount:   1,
+		LeaseDuration: time.Second,
+		InstanceID:    "test-instance",
 	}
 
 	leadership := &mock2.Leadership{}
@@ -99,14 +97,13 @@ func TestManager_RecoverTransaction(t *testing.T) {
 	mockDB := &mock2.Storage{}
 	mockHandler := &mock2.Handler{}
 	config := recovery2.Config{
-		Enabled:        true,
-		TTL:            100 * time.Millisecond,
-		ScanInterval:   100 * time.Millisecond,
-		BatchSize:      100,
-		WorkerCount:    1,
-		LeaseDuration:  time.Second,
-		AdvisoryLockID: 1,
-		InstanceID:     "test-instance",
+		Enabled:       true,
+		TTL:           100 * time.Millisecond,
+		ScanInterval:  100 * time.Millisecond,
+		BatchSize:     100,
+		WorkerCount:   1,
+		LeaseDuration: time.Second,
+		InstanceID:    "test-instance",
 	}
 
 	// Create a pending transaction claim
@@ -155,14 +152,13 @@ func TestManager_SkipAlreadyRecovered(t *testing.T) {
 	mockDB := &mock2.Storage{}
 	mockHandler := &mock2.Handler{}
 	config := recovery2.Config{
-		Enabled:        true,
-		TTL:            50 * time.Millisecond,
-		ScanInterval:   50 * time.Millisecond,
-		BatchSize:      100,
-		WorkerCount:    1,
-		LeaseDuration:  time.Second,
-		AdvisoryLockID: 1,
-		InstanceID:     "test-instance",
+		Enabled:       true,
+		TTL:           50 * time.Millisecond,
+		ScanInterval:  50 * time.Millisecond,
+		BatchSize:     100,
+		WorkerCount:   1,
+		LeaseDuration: time.Second,
+		InstanceID:    "test-instance",
 	}
 
 	// Create a pending transaction claim
@@ -222,7 +218,6 @@ func TestManager_PromoteOrphanOnNotFoundPastGracePeriod(t *testing.T) {
 		BatchSize:           100,
 		WorkerCount:         1,
 		LeaseDuration:       time.Second,
-		AdvisoryLockID:      1,
 		InstanceID:          "test-instance",
 		NotFoundGracePeriod: 10 * time.Millisecond,
 	}
@@ -278,7 +273,6 @@ func TestManager_NoPromotionWhenGracePeriodDisabled(t *testing.T) {
 		BatchSize:           100,
 		WorkerCount:         1,
 		LeaseDuration:       time.Second,
-		AdvisoryLockID:      1,
 		InstanceID:          "test-instance",
 		NotFoundGracePeriod: 0,
 	}
@@ -334,14 +328,13 @@ func TestManager_StopDuringFanOutDoesNotDeadlock(t *testing.T) {
 	mockDB := &mock2.Storage{}
 	mockHandler := &mock2.Handler{}
 	config := recovery2.Config{
-		Enabled:        true,
-		TTL:            10 * time.Millisecond,
-		ScanInterval:   10 * time.Millisecond,
-		BatchSize:      100,
-		WorkerCount:    1,
-		LeaseDuration:  time.Second,
-		AdvisoryLockID: 1,
-		InstanceID:     "test-instance",
+		Enabled:       true,
+		TTL:           10 * time.Millisecond,
+		ScanInterval:  10 * time.Millisecond,
+		BatchSize:     100,
+		WorkerCount:   1,
+		LeaseDuration: time.Second,
+		InstanceID:    "test-instance",
 	}
 
 	// Step 1: many more claims than workers, so the fan-out loop is guaranteed to
@@ -424,7 +417,6 @@ func TestManager_PromoteOrphanOnNoSuchTransactionID(t *testing.T) {
 		BatchSize:           100,
 		WorkerCount:         1,
 		LeaseDuration:       time.Second,
-		AdvisoryLockID:      1,
 		InstanceID:          "test-instance",
 		NotFoundGracePeriod: 10 * time.Millisecond,
 	}
