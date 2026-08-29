@@ -124,7 +124,27 @@ perflab work [--once]                            # drain the queue, one job at a
 perflab backfill [--since-days N] [--stride N]
 perflab enqueue --pr N | (--sha SHA [--baseline SHA]) [--suite tier1|tier2]
 perflab nightly                                  # enqueue a Tier-2 sweep on main HEAD
+perflab status [--limit N]                       # show queue depth, the running job, and progress
 ```
+
+### Inspecting an in-progress run: `perflab status`
+
+`runner.py` buffers each `go test` invocation's output until it exits, so
+there is no line-by-line log tail while a benchmark is executing. `perflab
+status` gives the next-best thing — a point-in-time snapshot of:
+
+- the queue depth and the job(s) currently `running`, with elapsed time since
+  they were claimed;
+- the exact `go test`/`taskset` process line currently executing on the host
+  (best-effort — only meaningful when run on the PerfLab host itself);
+- how many `<bench>.<tag>.txt` result files have landed so far in the most
+  recent `runs/<run_id>/` directory (one per completed benchmark spec — this
+  is the real granularity "real-time" progress is visible at);
+- a tail of recent job history (`done`/`failed`/`pending`), including any
+  stored error.
+
+For a literal log tail instead, `tail -f` a specific in-progress result file
+directly, or `watch -n2 ls runs/<run_id>/` on the host.
 
 ## systemd units (`perflab/deploy/`)
 

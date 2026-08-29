@@ -10,6 +10,7 @@
     perflab backfill [--since-days N] [--stride N]
     perflab enqueue --pr N | (--sha SHA [--baseline SHA])
     perflab nightly
+    perflab status [--limit N]
 
 See docs/development/perflab.md for the operator runbook.
 """
@@ -18,8 +19,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import subprocess
 import sys
 import traceback
+from datetime import datetime, timezone
 from pathlib import Path
 
 from . import capability, db, gitutil, ingest, poll, queue, report, runner, tier2, verdict
@@ -278,6 +281,83 @@ def cmd_enqueue(args: argparse.Namespace) -> int:
     return 0
 
 
+def _fmt_elapsed(iso_ts: str | None) -> str:
+    if not iso_ts:
+        return "n/a"
+    started = datetime.fromisoformat(iso_ts)
+    delta = datetime.now(timezone.utc) - started
+    total = int(delta.total_seconds())
+    hh, rem = divmod(total, 3600)
+    mm, ss = divmod(rem, 60)
+    return f"{hh:d}h{mm:02d}m{ss:02d}s" if hh else f"{mm:d}m{ss:02d}s"
+
+
+def _current_bench_process() -> str | None:
+    """Best-effort: the `go test`/`taskset` command line currently executing
+    on this host, as seen by `ps`. Only meaningful when run on the PerfLab
+    host itself, and silently returns None if `ps` isn't available or no
+    matching process is found."""
+    try:
+        out = subprocess.run(
+            ["ps", "-eo", "pid,etime,args"], capture_output=True, text=True, timeout=5
+        ).stdout
+    except (OSError, subprocess.SubprocessError):
+        return None
+    for line in out.splitlines():
+        if ("go test" in line or "taskset" in line) and "ps -eo" not in line:
+            return line.strip()
+    return None
+
+
+def _latest_run_dir(layout: Layout) -> Path | None:
+    if not layout.runs.exists():
+        return None
+    run_dirs = [d for d in layout.runs.iterdir() if d.is_dir()]
+    if not run_dirs:
+        return None
+    return max(run_dirs, key=lambda d: d.name)
+
+
+def cmd_status(args: argparse.Namespace) -> int:
+    """Print the current PerfLab execution status: queue depth, the job(s)
+    currently running (with elapsed time), the OS process actually executing
+    right now, the result files landed so far in the active run directory,
+    and a tail of recent job history."""
+    _, layout = _cfg_and_layout()
+    q = queue.Queue(layout.queue_db_path)
+    pending = q.pending_count()
+    rows = q.recent(limit=args.limit)
+    q.close()
+
+    running = [r for r in rows if r["status"] == "running"]
+    print(f"pending jobs: {pending}")
+    if running:
+        for r in running:
+            print(f"running: job#{r['id']} {r['kind']} {r['sha'][:9]} suite={r['suite']} "
+                  f"claimed_at={r['claimed_at']} elapsed={_fmt_elapsed(r['claimed_at'])}")
+    else:
+        print("running: (none)")
+
+    proc = _current_bench_process()
+    print(f"current process: {proc if proc else '(none found)'}")
+
+    run_dir = _latest_run_dir(layout)
+    if run_dir is not None:
+        result_files = sorted(p.name for p in run_dir.glob("*.txt"))
+        print(f"latest run dir: {run_dir} ({len(result_files)} result file(s) so far)")
+        for name in result_files:
+            print(f"  {name}")
+    else:
+        print("latest run dir: (none)")
+
+    print(f"\nrecent jobs (last {len(rows)}):")
+    for r in rows:
+        err = f" error={r['error'][:80]!r}" if r["error"] else ""
+        print(f"  #{r['id']:<5} {r['status']:8s} {r['kind']:8s} {r['sha'][:9]} suite={r['suite']:5s} "
+              f"created={r['created_at']} finished={r['finished_at'] or '-'}{err}")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="perflab")
     sub = p.add_subparsers(dest="command", required=True)
@@ -321,6 +401,10 @@ def build_parser() -> argparse.ArgumentParser:
     pe.set_defaults(func=cmd_enqueue)
 
     sub.add_parser("nightly").set_defaults(func=cmd_nightly)
+
+    ps_ = sub.add_parser("status")
+    ps_.add_argument("--limit", type=int, default=10, help="number of recent jobs to show")
+    ps_.set_defaults(func=cmd_status)
 
     return p
 
