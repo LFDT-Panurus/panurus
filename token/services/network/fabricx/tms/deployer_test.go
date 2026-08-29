@@ -39,14 +39,31 @@ func (m *mockPPService) FetchNamespaceVersion(_ cdriver.Network, _ cdriver.Chann
 
 // captureSubmitter captures the submitted tx so tests can assert on it.
 type captureSubmitter struct {
-	capturedTx  *applicationpb.Tx
-	submitErr   error
+	capturedTx *applicationpb.Tx
+	submitErr  error
+	submitFn   func(tx *applicationpb.Tx) error
 }
 
 func (c *captureSubmitter) Submit(_ string, _ string, tx *applicationpb.Tx) error {
 	c.capturedTx = tx
+	if c.submitFn != nil {
+		return c.submitFn(tx)
+	}
 
 	return c.submitErr
+}
+
+// mockPPServiceFn is a variant of mockPPService that uses a function for FetchNamespaceVersion.
+type mockPPServiceFn struct {
+	versionFn func() (uint64, error)
+}
+
+func (m *mockPPServiceFn) Fetch(_ cdriver.Network, _ cdriver.Channel, _ cdriver.Namespace) ([]byte, error) {
+	return []byte("pp-data"), nil
+}
+
+func (m *mockPPServiceFn) FetchNamespaceVersion(_ cdriver.Network, _ cdriver.Channel, _ cdriver.Namespace) (uint64, error) {
+	return m.versionFn()
 }
 
 // newTestDeployer builds a deployerService wired with the given mocks.
@@ -117,26 +134,83 @@ func TestDeployPublicParametersRaw_FetchVersionError(t *testing.T) {
 	require.Nil(t, sub.capturedTx, "transaction must not be submitted when version fetch fails")
 }
 
-// deployerServiceShim mirrors deployerService but accepts mockPPService
+// TestDeployPublicParametersRaw_RetryOnSubmitFailure verifies that a single retry
+// is attempted after a submit failure, re-fetching the namespace version each time.
+// This covers the TOCTOU window where a policy update commits between version fetch
+// and submit.
+func TestDeployPublicParametersRaw_RetryOnSubmitFailure(t *testing.T) {
+	submitCount := 0
+	sub := &captureSubmitter{
+		submitFn: func(tx *applicationpb.Tx) error {
+			submitCount++
+			if submitCount == 1 {
+				return errors.New("version mismatch")
+			}
+
+			return nil
+		},
+	}
+	// Return different versions on each call to simulate a policy update between retries.
+	callCount := 0
+	mock := &mockPPServiceFn{
+		versionFn: func() (uint64, error) {
+			callCount++
+			return uint64(callCount), nil //nolint:gosec
+		},
+	}
+	shim := &deployerServiceShim{
+		mock:          mock,
+		sub:           sub,
+		keyTranslator: &keys.Translator{},
+	}
+
+	err := shim.deployPublicParametersRaw(token.TMSID{Network: "net", Channel: "ch", Namespace: "ns"}, []byte("pp"))
+	require.NoError(t, err)
+	require.Equal(t, 2, submitCount, "should have retried once")
+	require.Equal(t, 2, callCount, "should have fetched version twice")
+	require.Equal(t, uint64(2), sub.capturedTx.Namespaces[0].NsVersion, "retry should use the refreshed version")
+}
+
+// ppVersionFetcher is the minimal interface the shim needs from the mock.
+type ppVersionFetcher interface {
+	FetchNamespaceVersion(cdriver.Network, cdriver.Channel, cdriver.Namespace) (uint64, error)
+}
+
+// deployerServiceShim mirrors deployerService but accepts a ppVersionFetcher
 // directly, allowing tests to drive deployPublicParametersRaw without needing
 // a real *pp.PublicParametersService (which requires a live qsProvider).
 type deployerServiceShim struct {
-	mock          *mockPPService
+	mock          ppVersionFetcher
 	sub           Submitter
 	keyTranslator *keys.Translator
 }
 
 func (s *deployerServiceShim) deployPublicParametersRaw(tmsID token.TMSID, ppRaw []byte) error {
-	nsVersion, err := s.mock.FetchNamespaceVersion(tmsID.Network, tmsID.Channel, tmsID.Namespace)
-	if err != nil {
+	const maxAttempts = 2
+
+	for attempt := range maxAttempts {
+		nsVersion, err := s.mock.FetchNamespaceVersion(tmsID.Network, tmsID.Channel, tmsID.Namespace)
+		if err != nil {
+			return err
+		}
+
+		ds := &deployerService{keyTranslator: s.keyTranslator, nsSubmitter: s.sub}
+		tx, err := ds.createPublicParametersTx(ppRaw, tmsID.Namespace, nsVersion)
+		if err != nil {
+			return err
+		}
+
+		err = s.sub.Submit(tmsID.Network, tmsID.Channel, tx)
+		if err == nil {
+			return nil
+		}
+
+		if attempt < maxAttempts-1 {
+			continue
+		}
+
 		return err
 	}
 
-	ds := &deployerService{keyTranslator: s.keyTranslator, nsSubmitter: s.sub}
-	tx, err := ds.createPublicParametersTx(ppRaw, tmsID.Namespace, nsVersion)
-	if err != nil {
-		return err
-	}
-
-	return s.sub.Submit(tmsID.Network, tmsID.Channel, tx)
+	return nil
 }
