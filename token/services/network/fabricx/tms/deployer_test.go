@@ -63,22 +63,9 @@ func (m *mockPPServiceFn) Fetch(_ cdriver.Network, _ cdriver.Channel, _ cdriver.
 }
 
 func (m *mockPPServiceFn) FetchNamespaceVersion(_ cdriver.Network, _ cdriver.Channel, _ cdriver.Namespace) (uint64, error) {
-	return m.versionFn()
-}
+	v, err := m.versionFn()
 
-// newTestDeployer builds a deployerService wired with the given mocks.
-// The ppFetcher field is *pp.PublicParametersService in production, but here we use
-// a hand-rolled struct that mirrors the methods under test, injected via a thin
-// wrapper that satisfies the concrete type requirement.
-func newTestDeployerWithMocks(mock *mockPPService, sub *captureSubmitter) *deployerService {
-	return &deployerService{
-		// Use a nil pp.PublicParametersService pointer and override via embedding
-		// is not possible since pp.PublicParametersService is a struct, not an interface.
-		// Instead the test calls createPublicParametersTx and deployPublicParametersRaw
-		// directly through a thin shim that avoids needing a real qsProvider.
-		keyTranslator: &keys.Translator{},
-		nsSubmitter:   sub,
-	}
+	return v, err
 }
 
 // TestCreatePublicParametersTx_NsVersionCopied verifies that the NsVersion passed
@@ -155,6 +142,7 @@ func TestDeployPublicParametersRaw_RetryOnSubmitFailure(t *testing.T) {
 	mock := &mockPPServiceFn{
 		versionFn: func() (uint64, error) {
 			callCount++
+
 			return uint64(callCount), nil //nolint:gosec
 		},
 	}
