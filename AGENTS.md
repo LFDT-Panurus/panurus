@@ -178,6 +178,10 @@ needs a `/slash-command` trigger for one, add a symlink at
 - **Debugging Integration Tests**: [docs/development/debug-integration-tests.md](docs/development/debug-integration-tests.md)
   (Claude Code: `/debug-integration-tests`). Log locations, Docker/network inspection, and
   Ginkgo focus/skip techniques for diagnosing failing integration tests.
+- **PerfLab (continuous ZK benchmark regression tracking)**: [docs/development/perflab.md](docs/development/perflab.md).
+  Standalone daemon (`cmd/benchmarking/perflab/`) that benchmarks every `main` commit and open
+  PR head for the `dlognogh` ZK suite, report-only (no PR comments, no failing checks). Deploy
+  with `cmd/benchmarking/perflab/deploy/bootstrap.sh`.
 
 ## 🔍 Debugging & Advanced Testing
 

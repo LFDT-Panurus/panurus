@@ -1,0 +1,10 @@
+[Unit]
+Description=Run perflab-doctor.service hourly
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=1h
+AccuracySec=2min
+
+[Install]
+WantedBy=timers.target
