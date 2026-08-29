@@ -306,8 +306,8 @@ func (d *StoreService) GetTransactionEndorsementAcks(ctx context.Context, txID s
 }
 
 // AcquireRecoveryLeadership tries to acquire the DB-backed recovery leadership lease.
-func (d *StoreService) AcquireRecoveryLeadership(ctx context.Context, lockID int64) (dbdriver.RecoveryLeadership, bool, error) {
-	leadership, acquired, err := d.db.AcquireRecoveryLeadership(ctx, lockID)
+func (d *StoreService) AcquireRecoveryLeadership(ctx context.Context) (dbdriver.RecoveryLeadership, bool, error) {
+	leadership, acquired, err := d.db.AcquireRecoveryLeadership(ctx)
 	if err != nil {
 		return nil, false, errors.Wrapf(err, "failed to acquire recovery leadership")
 	}

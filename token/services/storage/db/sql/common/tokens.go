@@ -47,7 +47,7 @@ type TokenStore struct {
 	table                tokenTables
 	ci                   common3.CondInterpreter
 	notifier             driver.TokenNotifier
-	cleanupLeaderFactory func(context.Context, *sql.DB, int64) (driver.CleanupLeadership, bool, error)
+	cleanupLeaderFactory func(context.Context, *sql.DB) (driver.CleanupLeadership, bool, error)
 
 	sttMutex              sync.RWMutex
 	supportedTokenFormats []token.Format
@@ -68,7 +68,7 @@ type TokenStore struct {
 	balanceStmts PreparedStmtHolder[string]
 }
 
-func newTokenStore(readDB, writeDB *sql.DB, tables tokenTables, ci common3.CondInterpreter, notifier driver.TokenNotifier, cleanupLeaderFactory func(context.Context, *sql.DB, int64) (driver.CleanupLeadership, bool, error)) *TokenStore {
+func newTokenStore(readDB, writeDB *sql.DB, tables tokenTables, ci common3.CondInterpreter, notifier driver.TokenNotifier, cleanupLeaderFactory func(context.Context, *sql.DB) (driver.CleanupLeadership, bool, error)) *TokenStore {
 	ts := &TokenStore{
 		readDB:               readDB,
 		writeDB:              writeDB,
@@ -100,7 +100,7 @@ func NewTokenStoreWithNotifierAndCleanup(
 	tables TableNames,
 	ci common3.CondInterpreter,
 	notifier driver.TokenNotifier,
-	cleanupLeaderFactory func(context.Context, *sql.DB, int64) (driver.CleanupLeadership, bool, error),
+	cleanupLeaderFactory func(context.Context, *sql.DB) (driver.CleanupLeadership, bool, error),
 ) (*TokenStore, error) {
 	return newTokenStore(readDB, writeDB, tokenTables{
 		Tokens:           tables.Tokens,
@@ -1359,12 +1359,12 @@ func (db *TokenStore) MarkTokenCleaned(ctx context.Context, txID string, index u
 // In distributed deployments (PostgreSQL), this uses advisory locks to ensure only one instance performs cleanup.
 // AcquireCleanupLeadership returns a leadership handle for cleanup sweeping.
 // When no leader factory is configured, leadership is granted locally.
-func (db *TokenStore) AcquireCleanupLeadership(ctx context.Context, lockID int64) (driver.CleanupLeadership, bool, error) {
+func (db *TokenStore) AcquireCleanupLeadership(ctx context.Context) (driver.CleanupLeadership, bool, error) {
 	if db.cleanupLeaderFactory == nil {
 		return noopCleanupLeadership{}, true, nil
 	}
 
-	return db.cleanupLeaderFactory(ctx, db.writeDB, lockID)
+	return db.cleanupLeaderFactory(ctx, db.writeDB)
 }
 
 // noopCleanupLeadership is a no-op implementation for non-distributed deployments

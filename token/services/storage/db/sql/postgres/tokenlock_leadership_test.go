@@ -59,8 +59,9 @@ func TestTokenLockStore_AcquireCleanupLeadership_ConcurrentReplicas(t *testing.T
 	require.NoError(t, err)
 	require.NoError(t, replicaA.CreateSchema())
 
-	require.Equal(t, replicaA.cleanupLockID, replicaB.cleanupLockID,
-		"replicas for the same TMS must derive the same cleanup lock id")
+	// The cleanup lock id is bound into the leader factory at construction and is no longer a
+	// field, so the assertion that both replicas share it is the concurrent acquire below:
+	// exactly one of them can win only if they are contending over the same lock.
 
 	var wg sync.WaitGroup
 	results := make([]bool, 2)
@@ -141,14 +142,14 @@ func TestTokenLockStore_AcquireCleanupLeadership_DistinctTMS(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, tmsB.CreateSchema())
 
-	require.NotEqual(t, tmsA.cleanupLockID, tmsB.cleanupLockID,
+	require.NotEqual(t, tokenLockCleanupLockID(tablesA), tokenLockCleanupLockID(tablesB),
 		"distinct TMSes must derive distinct cleanup lock ids, or one TMS's cleanup would starve the other's")
 	require.NotEqual(t, tmsA.lockID, tmsB.lockID,
 		"distinct TMSes must derive distinct schema-creation lock ids too - a regression back to a "+
-			"prefix-only or global constant would pass the cleanupLockID check above but not this one")
-	require.NotEqual(t, tmsA.lockID, tmsA.cleanupLockID,
+			"prefix-only or global constant would pass the cleanup lock id check above but not this one")
+	require.NotEqual(t, tmsA.lockID, tokenLockCleanupLockID(tablesA),
 		"schema-creation and cleanup locks on the same store must be distinct")
-	require.NotEqual(t, tmsB.lockID, tmsB.cleanupLockID,
+	require.NotEqual(t, tmsB.lockID, tokenLockCleanupLockID(tablesB),
 		"schema-creation and cleanup locks on the same store must be distinct")
 
 	// both should acquire leadership independently and concurrently, since

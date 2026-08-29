@@ -10,12 +10,15 @@ import (
 	"time"
 
 	"github.com/LFDT-Panurus/panurus/token/services/config"
+	"github.com/LFDT-Panurus/panurus/token/services/logging"
 )
 
 const (
 	// ConfigKeyRecovery is the configuration key for recovery settings
 	ConfigKeyRecovery = "services.network.fabric.recovery"
 )
+
+var logger = logging.MustGetLogger()
 
 // Config holds the configuration for the recovery manager
 type Config struct {
@@ -31,8 +34,6 @@ type Config struct {
 	WorkerCount int
 	// LeaseDuration is the duration of the recovery claim lease.
 	LeaseDuration time.Duration
-	// AdvisoryLockID is the PostgreSQL advisory lock ID used for leader election.
-	AdvisoryLockID int64
 	// InstanceID identifies the current replica as the lease owner.
 	InstanceID string
 	// NotFoundGracePeriod: when GetTransactionStatus returns a NotFound error and
@@ -52,7 +53,6 @@ func DefaultConfig() Config {
 		BatchSize:           defaultBatchSize,
 		WorkerCount:         defaultWorkers,
 		LeaseDuration:       defaultLeaseDuration,
-		AdvisoryLockID:      defaultLockID,
 		NotFoundGracePeriod: 30 * time.Minute,
 	}
 }
@@ -90,9 +90,6 @@ func LoadConfig(cfg *config.Configuration) (Config, error) {
 	if config.LeaseDuration > 0 {
 		result.LeaseDuration = config.LeaseDuration
 	}
-	if config.AdvisoryLockID != 0 {
-		result.AdvisoryLockID = config.AdvisoryLockID
-	}
 	if config.InstanceID != "" {
 		result.InstanceID = config.InstanceID
 	}
@@ -102,6 +99,15 @@ func LoadConfig(cfg *config.Configuration) (Config, error) {
 	// to the 30 min default and the documented opt-out would be unreachable.
 	if cfg.IsSet(ConfigKeyRecovery + ".notFoundGracePeriod") {
 		result.NotFoundGracePeriod = config.NotFoundGracePeriod
+	}
+	// advisoryLockID used to let an operator keep multiple independent recovery
+	// managers on the same database from colliding. The lock id is now derived
+	// per TMS automatically, so the key is silently ignored rather than failing
+	// the load - warn so an operator who relied on it to isolate managers
+	// notices the setting stopped doing anything, instead of finding out only
+	// when leases start colliding.
+	if cfg.IsSet(ConfigKeyRecovery + ".advisoryLockID") {
+		logger.Warnf("%s.advisoryLockID is no longer used; the recovery lock id is now derived per TMS", ConfigKeyRecovery)
 	}
 
 	return result, nil

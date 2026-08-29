@@ -105,7 +105,7 @@ The Storage interface abstracts database operations needed for cleanup:
 ```go
 type Storage interface {
     // AcquireCleanupLeadership obtains distributed lock for leader election
-    AcquireCleanupLeadership(ctx context.Context, lockID int64) (Leadership, bool, error)
+    AcquireCleanupLeadership(ctx context.Context) (Leadership, bool, error)
     
     // GetDeletedTokensPendingSKICleanup queries deleted, owned tokens older than TTL that haven't been cleaned.
     // Tokens for which this node is only an auditor or issuer are excluded, since this node
@@ -168,7 +168,6 @@ services:
       scanInterval: 1h           # How often to scan
       batchSize: 100            # Max tokens per scan
       workerCount: 1            # Parallel workers (default: 1)
-      advisoryLockID: 0x74746b636c65616e  # Lock ID for leader election ("ttkclean" in hex)
       instanceID: "cleanup-1"   # Instance identifier (auto-generated if empty)
 ```
 
@@ -179,8 +178,12 @@ services:
 - **scanInterval**: How frequently the manager scans for eligible tokens
 - **batchSize**: Maximum number of tokens processed in a single sweep
 - **workerCount**: Number of parallel workers processing tokens within a sweep (default: 1)
-- **advisoryLockID**: PostgreSQL advisory lock ID for distributed coordination
 - **instanceID**: Identifies the cleanup instance; auto-generated as `cleanup-<pointer>` if not provided
+
+Leader election uses a PostgreSQL advisory lock whose identifier is not configurable. It is derived
+from the TMS's own token SKI cleanup table name, which already carries network, channel and
+namespace, so it is unique per TMS automatically and several TMSes sharing one database no longer
+compete for a single lock.
 
 **Configuration Loading:**
 
@@ -203,7 +206,6 @@ config := cleanup.Config{
     ScanInterval:    1 * time.Hour,
     BatchSize:       100,
     WorkerCount:     4,
-    AdvisoryLockID:  0x74746b636c65616e,
     InstanceID:      "cleanup-instance-1",
 }
 
@@ -390,7 +392,6 @@ The `token_ski_cleanups` table is automatically created by the schema initializa
 - **Scan Interval**: 1 hour (less aggressive than recovery's 5 seconds)
 - **Batch Size**: 100 tokens per sweep
 - **Worker Count**: 1 parallel worker (conservative default)
-- **Advisory Lock ID**: `0x74746b636c65616e` ("ttkclean" in hex)
 - **Instance ID**: Auto-generated as `cleanup-<pointer>` if not provided
 
 ### Tuning Recommendations
@@ -412,7 +413,6 @@ The `token_ski_cleanups` table is automatically created by the schema initializa
 
 4. **For Multi-Instance Deployments:**
    - **PostgreSQL Required**: Multi-instance deployments require PostgreSQL for distributed coordination
-   - Keep default `advisoryLockID` unless running multiple independent cleanup systems
    - Consider setting explicit `instanceID` values for easier debugging and monitoring
 
 ### Performance Considerations

@@ -69,8 +69,12 @@ func (s *TransactionStore) CreateSchema() error {
 
 // NewTransactionStoreWithNotifier creates a new TransactionStore with the provided notifier and recovery support.
 func NewTransactionStoreWithNotifier(dbs *scommon.RWDB, tableNames sqlcommon.TableNames, notifier *TransactionNotifier) (*TransactionStore, error) {
-	// Create recovery leader factory using PostgreSQL advisory locks
-	recoveryLeaderFactory := NewAdvisoryLockFactory()
+	// Derive the recovery lock id from the fully qualified requests table name, which already
+	// carries the network, channel and namespace that tell one TMS from another. Deriving it from
+	// the table prefix would not be enough: several TMSes normally share one persistence
+	// configuration and are distinguished only by those params, so they would all land on the same
+	// id and every TMS but one would skip its sweep. See #1798 for the same bug on the token locks.
+	recoveryLeaderFactory := NewAdvisoryLockFactoryForID(recoveryLockID(tableNames))
 
 	commonStore, err := sqlcommon.NewTransactionStoreWithNotifierAndRecovery(
 		dbs.ReadDB,

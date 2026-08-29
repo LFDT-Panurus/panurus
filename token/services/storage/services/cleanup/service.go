@@ -112,7 +112,7 @@ func (p *tmsKeystoreProvider) Keystore(tmsID token.TMSID) (Keystore, error) {
 }
 
 type cleanupStorage interface {
-	AcquireCleanupLeadership(ctx context.Context, lockID int64) (dbdriver.CleanupLeadership, bool, error)
+	AcquireCleanupLeadership(ctx context.Context) (dbdriver.CleanupLeadership, bool, error)
 	GetDeletedTokensPendingSKICleanup(ctx context.Context, olderThan time.Duration, limit int) ([]dbdriver.DeletedToken, error)
 	MarkTokenCleaned(ctx context.Context, txID string, index uint64, cleanedBy string) error
 }
@@ -122,8 +122,8 @@ type cleanupStorageAdapter struct {
 	storage cleanupStorage
 }
 
-func (a *cleanupStorageAdapter) AcquireCleanupLeadership(ctx context.Context, lockID int64) (Leadership, bool, error) {
-	leadership, acquired, err := a.storage.AcquireCleanupLeadership(ctx, lockID)
+func (a *cleanupStorageAdapter) AcquireCleanupLeadership(ctx context.Context) (Leadership, bool, error) {
+	leadership, acquired, err := a.storage.AcquireCleanupLeadership(ctx)
 	if err != nil || !acquired {
 		return nil, acquired, err
 	}

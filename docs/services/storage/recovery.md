@@ -68,7 +68,6 @@ recovery:
   batchSize: 100             # Max transactions per scan
   workerCount: 4             # Parallel workers
   leaseDuration: 30s         # Claim lease duration
-  advisoryLockID: 8389...    # PostgreSQL lock ID
   instanceID: ""             # Instance identifier
   notFoundGracePeriod: 30m   # Promote NotFound rows to Orphan after this age (0 disables)
 ```
@@ -85,7 +84,6 @@ config := recovery.Config{
     BatchSize:           100,
     WorkerCount:         4,
     LeaseDuration:       30 * time.Second,
-    AdvisoryLockID:      8389190333894887286,
     NotFoundGracePeriod: 30 * time.Minute,
 }
 

@@ -253,14 +253,6 @@ token:
               # Relationship: Should be greater than the expected network latency + processing time for transaction status queries.
               leaseDuration: 30s
               
-              # advisoryLockID is the PostgreSQL advisory lock identifier used for recovery leader election.
-              # This ensures only one replica performs recovery sweeps at a time in multi-instance deployments.
-              # Default: 8389190333894887286 (hex: 0x74746b7265636f76, ASCII: "ttkrecov")
-              # The default value is derived from the ASCII encoding of "ttkrecov" (Token Transaction Recovery).
-              # Only change this if you need to run multiple independent recovery managers on the same database.
-              # Note: PostgreSQL advisory locks use 64-bit integers. This value must be unique across your application.
-              advisoryLockID: 8389190333894887286
-              
               # instanceID identifies this replica as the owner of recovery claims.
               # If empty, a process-local identifier is generated automatically at startup using a UUID.
               # Set this explicitly in containerized environments to maintain consistent identity across restarts.
@@ -314,14 +306,6 @@ token:
             # Decrease to reduce resource consumption on constrained systems.
             # Performance impact: More workers increase CPU utilization during cleanup sweeps.
             workerCount: 1
-            
-            # advisoryLockID is the PostgreSQL advisory lock identifier used for cleanup leader election.
-            # This ensures only one replica performs cleanup sweeps at a time in multi-instance deployments.
-            # Default: 8389190333894887277 (hex: 0x74746b636c65616e, ASCII: "ttkclean")
-            # The default value is derived from the ASCII encoding of "ttkclean" (Token Transaction Keystore Cleanup).
-            # Only change this if you need to run multiple independent cleanup managers on the same database.
-            # Note: PostgreSQL advisory locks use 64-bit integers. This value must be unique across your application.
-            advisoryLockID: 8389190333894887277
             
             # instanceID identifies this replica in logs and monitoring.
             # If empty, a unique identifier is generated automatically at startup.
@@ -657,7 +641,6 @@ token:
               batchSize: 100
               workerCount: 4
               leaseDuration: 30s
-              advisoryLockID: 8389190333894887286
               instanceID:
               notFoundGracePeriod: 30m
 ```
@@ -670,7 +653,6 @@ Default values:
 - batchSize: 100
 - workerCount: 4
 - leaseDuration: 30s
-- advisoryLockID: 8389190333894887286 (`0x74746b7265636f76`)
 - instanceID: empty, auto-generated when the recovery manager starts
 - notFoundGracePeriod: 30m (set to 0 to disable promotion to Orphan)
 
@@ -679,7 +661,7 @@ Default values:
 - **Recovery is enabled by default** to ensure automatic recovery of lost finality listeners.
 - **Only pending transactions older than `ttl` are considered for recovery** to avoid interfering with active transaction processing.
 - **The manager validates** that `ttl`, `scanInterval`, `batchSize`, `workerCount`, and `leaseDuration` are all greater than zero.
-- **`advisoryLockID`** is used to acquire PostgreSQL advisory-lock leadership so that only one replica performs a recovery sweep at a time. The default value (8389190333894887286 or 0x74746b7265636f76) represents the ASCII string "ttkrecov" (Token Transaction Recovery) encoded as a 64-bit integer.
+- **Recovery leadership** uses a PostgreSQL advisory lock so that only one replica performs a recovery sweep at a time, on the owner transaction path. The lock identifier is no longer configurable: it is derived from the TMS's own `requests` table name, which already carries the network, channel and namespace. That makes it unique per TMS automatically, so several TMSes sharing one PostgreSQL database no longer compete for a single lock, and there is nothing left for an operator to keep unique by hand. The audit transaction store does not yet participate in this coordination — its recovery leader factory is nil, so every replica is granted leadership and the audit sweep runs redundantly on each of them; see [#2143](https://github.com/LFDT-Panurus/panurus/issues/2143).
 - **`instanceID`** is used as the lease owner identifier for claimed transactions; if omitted, the manager generates a unique UUID automatically at startup.
 - **`notFoundGracePeriod`** controls how long a transaction whose status query keeps returning `NotFound` is left in `Pending` before being promoted to the terminal `Orphan` status. This protects the recovery sweep from being permanently blocked by transactions whose audit log was persisted but whose broadcast never reached the ledger. The promoted row is marked `Orphan` rather than `Deleted` so operators can distinguish broadcast failures from ledger-rejected transactions. Raise the default if your network has long catch-up windows after committer/orderer restarts; set it to `0` to disable the promotion entirely.
 
@@ -784,7 +766,6 @@ token:
             scanInterval: 1h
             batchSize: 100
             workerCount: 1
-            advisoryLockID: 8389190333894887277
             instanceID:
 ```
 
@@ -795,7 +776,6 @@ Default values:
 - scanInterval: 1h
 - batchSize: 100
 - workerCount: 1
-- advisoryLockID: 8389190333894887277 (`0x74746b636c65616e`)
 - instanceID: empty, auto-generated when the cleanup manager starts
 
 **Parameter Relationships and Tuning:**
@@ -803,7 +783,7 @@ Default values:
 - **Cleanup is disabled by default** and must be explicitly enabled. This is a conservative default to prevent unexpected key deletion in existing deployments.
 - **Only deleted tokens older than `ttl` are considered for cleanup** to ensure tokens are truly finalized before key deletion.
 - **The manager validates** that `ttl`, `scanInterval`, `batchSize`, and `workerCount` are all greater than zero.
-- **`advisoryLockID`** is used to acquire PostgreSQL advisory-lock leadership so that only one replica performs a cleanup sweep at a time. The default value (8389190333894887277 or 0x74746b636c65616e) represents the ASCII string "ttkclean" (Token Transaction Keystore Cleanup) encoded as a 64-bit integer.
+- **Cleanup leadership** uses a PostgreSQL advisory lock so only one replica sweeps at a time. The identifier is not configurable: it is derived from the TMS's own token SKI cleanup table name, which already carries network, channel and namespace, so it is unique per TMS automatically.
 - **`instanceID`** is used to identify this replica in logs and monitoring; if omitted, the manager generates a unique identifier automatically at startup.
 
 **Tuning Recommendations:**
@@ -825,7 +805,6 @@ Default values:
 
 4. **For Multi-Instance Deployments:**
    - **PostgreSQL Required**: Multi-instance deployments require PostgreSQL for distributed coordination via advisory locks
-   - Keep default `advisoryLockID` unless running multiple independent cleanup systems
    - Consider setting explicit `instanceID` values for easier debugging and monitoring
 
 5. **For Single-Node Deployments:**
@@ -910,7 +889,6 @@ multiply `acquireDeadline` there.
 
 4. **For Multi-Instance Deployments:**
    - **PostgreSQL Required**: Multi-instance deployments require PostgreSQL for distributed coordination via advisory locks
-   - Keep default `advisoryLockID` unless running multiple independent recovery systems
    - Consider setting explicit `instanceID` values for easier debugging and monitoring
    - Ensure all instances share the same PostgreSQL database for proper coordination
 

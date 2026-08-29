@@ -22,17 +22,16 @@ import (
 )
 
 const (
-	defaultLockID        int64 = 0x74746b7265636f76
-	defaultBatchSize           = 100
-	defaultWorkers             = 4
-	defaultLeaseDuration       = 30 * time.Second
+	defaultBatchSize     = 100
+	defaultWorkers       = 4
+	defaultLeaseDuration = 30 * time.Second
 )
 
 //go:generate counterfeiter -o mock/storage.go -fake-name Storage . Storage
 
 // Storage defines the interface for querying pending transactions and transaction details
 type Storage interface {
-	AcquireRecoveryLeadership(ctx context.Context, lockID int64) (Leadership, bool, error)
+	AcquireRecoveryLeadership(ctx context.Context) (Leadership, bool, error)
 	ClaimPendingTransactions(ctx context.Context, olderThan time.Duration, leaseDuration time.Duration, limit int, owner string) ([]*ttxdb.RecoveryClaim, error)
 	ReleaseRecoveryClaim(ctx context.Context, txID string, owner string, message string) error
 	// SetStatus updates a transaction's status row. Used by the recovery loop to
@@ -117,8 +116,8 @@ func (m *Manager) Start() error {
 	m.wg.Add(1)
 	go m.recoveryLoop()
 
-	m.logger.Infof("transaction recovery manager started (TTL: %s, Scan Interval: %s, Batch Size: %d, Workers: %d, Lease Duration: %s, Lock ID: %d, Instance ID: %s)",
-		m.config.TTL, m.config.ScanInterval, m.config.BatchSize, m.config.WorkerCount, m.config.LeaseDuration, m.config.AdvisoryLockID, m.config.InstanceID)
+	m.logger.Infof("transaction recovery manager started (TTL: %s, Scan Interval: %s, Batch Size: %d, Workers: %d, Lease Duration: %s, Instance ID: %s)",
+		m.config.TTL, m.config.ScanInterval, m.config.BatchSize, m.config.WorkerCount, m.config.LeaseDuration, m.config.InstanceID)
 
 	return nil
 }
@@ -214,7 +213,7 @@ func (m *Manager) validateConfig() error {
 }
 
 func (m *Manager) runSweep(ctx context.Context) error {
-	leadership, acquired, err := m.storage.AcquireRecoveryLeadership(ctx, m.config.AdvisoryLockID)
+	leadership, acquired, err := m.storage.AcquireRecoveryLeadership(ctx)
 	if err != nil {
 		return errors.Wrapf(err, "failed to acquire recovery leadership")
 	}

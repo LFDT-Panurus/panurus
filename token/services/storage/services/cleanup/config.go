@@ -29,25 +29,18 @@ type Config struct {
 	BatchSize int
 	// WorkerCount is the number of local workers processing tokens
 	WorkerCount int
-	// AdvisoryLockID is the PostgreSQL advisory lock ID used for leader election
-	AdvisoryLockID int64
 	// InstanceID identifies the current replica as the cleanup owner
 	InstanceID string
 }
 
-const (
-	defaultLockID int64 = 0x74746b636c65616e // "ttkclean" in hex
-)
-
 // DefaultConfig returns the default cleanup configuration
 func DefaultConfig() Config {
 	return Config{
-		Enabled:        false,          // Disabled by default - must be explicitly enabled
-		TTL:            24 * time.Hour, // Wait 24 hours before cleaning up keys
-		ScanInterval:   1 * time.Hour,  // Scan every hour
-		BatchSize:      100,
-		WorkerCount:    1,
-		AdvisoryLockID: defaultLockID,
+		Enabled:      false,          // Disabled by default - must be explicitly enabled
+		TTL:          24 * time.Hour, // Wait 24 hours before cleaning up keys
+		ScanInterval: 1 * time.Hour,  // Scan every hour
+		BatchSize:    100,
+		WorkerCount:  1,
 	}
 }
 
@@ -81,11 +74,17 @@ func LoadConfig(cfg *config.Configuration) (Config, error) {
 	if config.WorkerCount > 0 {
 		result.WorkerCount = config.WorkerCount
 	}
-	if config.AdvisoryLockID != 0 {
-		result.AdvisoryLockID = config.AdvisoryLockID
-	}
 	if config.InstanceID != "" {
 		result.InstanceID = config.InstanceID
+	}
+	// advisoryLockID used to let an operator keep multiple independent cleanup
+	// managers on the same database from colliding. The lock id is now derived
+	// per TMS automatically, so the key is silently ignored rather than failing
+	// the load - warn so an operator who relied on it to isolate managers
+	// notices the setting stopped doing anything, instead of finding out only
+	// when leases start colliding.
+	if cfg.IsSet(ConfigKeyCleanup + ".advisoryLockID") {
+		logger.Warnf("%s.advisoryLockID is no longer used; the cleanup lock id is now derived per TMS", ConfigKeyCleanup)
 	}
 
 	return result, nil
