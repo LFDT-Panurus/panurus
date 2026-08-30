@@ -13,6 +13,7 @@ import (
 	"github.com/LFDT-Panurus/panurus/token/services/identity"
 	idriver "github.com/LFDT-Panurus/panurus/token/services/identity/driver"
 	"github.com/LFDT-Panurus/panurus/token/services/logging"
+	"github.com/LFDT-Panurus/panurus/token/services/storage/integrity"
 	"github.com/LFDT-Panurus/panurus/token/services/utils"
 	"github.com/LFDT-Panurus/panurus/token/token"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
@@ -101,21 +102,42 @@ func (s *Service) GetEIDAndRH(ctx context.Context, identity tdriver.Identity, au
 // RegisterRecipientIdentity registers the passed identity as a third-party recipient identity.
 // The function performs these steps:
 //   - validate the input
+//   - reject an empty identity
 //   - match the identity against the provided audit info using the Deserializer (before any provider registration)
+//   - require the identity to deserialize into an owner verifier
 //   - ask the IdentityProvider to register the recipient identity
 //   - store the recipient data via the IdentityProvider
 //
 // If RegisterRecipientData fails after RegisterRecipientIdentity succeeds, the IdentityProvider
 // may implement identity.RecipientRegistrationRollback so partial registration can be undone.
+//
+// Verification: the identity arrives from a remote party over the recipient
+// exchange, so the two checks around the audit-info match are what stop a
+// well-formed-looking but unusable identity from being recorded as a recipient.
+// An empty identity is refused because identities are keyed by unique id and
+// every empty identity shares one key. Requiring GetOwnerVerifier to succeed
+// refuses an identity no verifier can ever be built for: such an identity
+// cannot validate a signature, so tokens sent to it could never be spent, and
+// the same call is what a validator performs on the owner of every transfer
+// input. Both checks run against the same typed-identity deserializer
+// multiplex that MatchIdentity already uses, so they accept exactly the
+// identity types this driver supports.
+// See docs/security/store_integrity_verification.md.
 func (s *Service) RegisterRecipientIdentity(ctx context.Context, data *tdriver.RecipientData) error {
 	if data == nil {
 		return errors.Wrapf(ErrNilRecipientData, "invalid recipient data")
+	}
+	if err := integrity.CheckIdentity(data.Identity); err != nil {
+		return errors.WithMessage(err, "invalid recipient data")
 	}
 
 	s.Logger.DebugfContext(ctx, "register recipient identity [%s] with audit info [%s]", data.Identity, utils.Hashable(data.AuditInfo))
 
 	if err := s.Deserializer.MatchIdentity(ctx, data.Identity, data.AuditInfo); err != nil {
 		return errors.Wrapf(err, "failed to match identity to audit information for [%s]:[%s]", data.Identity, utils.Hashable(data.AuditInfo))
+	}
+	if _, err := s.Deserializer.GetOwnerVerifier(ctx, data.Identity); err != nil {
+		return errors.Wrapf(err, "failed to derive an owner verifier for recipient identity [%s]", data.Identity)
 	}
 
 	if err := s.IdentityProvider.RegisterRecipientIdentity(ctx, data.Identity); err != nil {

@@ -192,9 +192,9 @@ func TMovements(t *testing.T, db driver3.TokenTransactionStore) {
 	ctx := t.Context()
 	w, err := db.NewTransactionStoreTransaction()
 	require.NoError(t, err)
-	require.NoError(t, w.AddTokenRequest(ctx, "0", []byte{}, map[string][]byte{}, nil, driver2.PPHash("tr")))
-	require.NoError(t, w.AddTokenRequest(ctx, "1", []byte{}, map[string][]byte{}, nil, driver2.PPHash("tr")))
-	require.NoError(t, w.AddTokenRequest(ctx, "2", []byte{}, map[string][]byte{}, nil, driver2.PPHash("tr")))
+	require.NoError(t, w.AddTokenRequest(ctx, "0", []byte("token request for 0"), map[string][]byte{}, nil, driver2.PPHash("tr")))
+	require.NoError(t, w.AddTokenRequest(ctx, "1", []byte("token request for 1"), map[string][]byte{}, nil, driver2.PPHash("tr")))
+	require.NoError(t, w.AddTokenRequest(ctx, "2", []byte("token request for 2"), map[string][]byte{}, nil, driver2.PPHash("tr")))
 	require.NoError(t, w.AddMovement(ctx, driver3.MovementRecord{
 		TxID:         "0",
 		EnrollmentID: "alice",
@@ -560,7 +560,7 @@ func TAllowsSameTxID(t *testing.T, db driver3.TokenTransactionStore) {
 	}
 	w, err := db.NewTransactionStoreTransaction()
 	require.NoError(t, err)
-	require.NoError(t, w.AddTokenRequest(ctx, tr1.TxID, []byte{}, map[string][]byte{}, nil, driver2.PPHash("tr")))
+	require.NoError(t, w.AddTokenRequest(ctx, tr1.TxID, []byte("token request for "+tr1.TxID), map[string][]byte{}, nil, driver2.PPHash("tr")))
 	require.NoError(t, w.AddTransaction(ctx, tr1))
 	require.NoError(t, w.AddTransaction(ctx, tr2))
 	require.NoError(t, w.Commit())
@@ -823,7 +823,7 @@ func TTransactionQueries(t *testing.T, db driver3.TokenTransactionStore) {
 	var previous string
 	for _, r := range tr {
 		if r.TxID != previous {
-			require.NoError(t, w.AddTokenRequest(ctx, r.TxID, []byte{}, map[string][]byte{}, nil, driver2.PPHash("tr")))
+			require.NoError(t, w.AddTokenRequest(ctx, r.TxID, []byte("token request for "+r.TxID), map[string][]byte{}, nil, driver2.PPHash("tr")))
 		}
 		require.NoError(t, w.AddTransaction(ctx, r))
 		previous = r.TxID
@@ -907,7 +907,7 @@ func createTestTransaction(t *testing.T, db driver3.TokenTransactionStore, txID 
 	if err != nil {
 		t.Fatalf("error creating transaction while trying to test something else: %s", err)
 	}
-	if err := w.AddTokenRequest(t.Context(), txID, []byte{}, map[string][]byte{}, nil, driver2.PPHash("tr")); err != nil {
+	if err := w.AddTokenRequest(t.Context(), txID, []byte("token request for "+txID), map[string][]byte{}, nil, driver2.PPHash("tr")); err != nil {
 		t.Fatalf("error creating token request while trying to test something else: %s", err)
 	}
 	tr1 := driver3.TransactionRecord{

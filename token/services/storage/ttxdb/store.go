@@ -18,6 +18,7 @@ import (
 	"github.com/LFDT-Panurus/panurus/token/services/storage/db/common"
 	dbdriver "github.com/LFDT-Panurus/panurus/token/services/storage/db/driver"
 	"github.com/LFDT-Panurus/panurus/token/services/storage/db/multiplexed"
+	"github.com/LFDT-Panurus/panurus/token/services/storage/integrity"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	cdriver "github.com/hyperledger-labs/fabric-smart-client/platform/common/driver"
 )
@@ -209,18 +210,22 @@ func (d *StoreService) AppendTransactionRecord(ctx context.Context, req *token.R
 	}
 
 	logger.DebugfContext(ctx, "storing new records... [%d,%d]", len(raw), len(txs))
+	anchor := string(record.Anchor)
+	ppHash := req.PublicParamsHash()
+	if err := integrity.CheckTokenRequestForStorage(anchor, raw, ppHash); err != nil {
+		return errors.WithMessagef(err, "refusing to append transaction record for txid [%s]", record.Anchor)
+	}
 	w, err := d.db.NewTransactionStoreTransaction()
 	if err != nil {
 		return errors.WithMessagef(err, "begin update for txid [%s] failed", record.Anchor)
 	}
-	anchor := string(record.Anchor)
 	if err := w.AddTokenRequest(
 		ctx,
 		anchor,
 		raw,
 		req.AllApplicationMetadata(),
 		record.Attributes,
-		req.PublicParamsHash(),
+		ppHash,
 	); err != nil {
 		w.Rollback()
 
@@ -284,25 +289,129 @@ func (d *StoreService) GetStatuses(ctx context.Context, txIDs []string) (map[str
 }
 
 // GetTokenRequest returns the token request bound to the passed transaction id, if available.
+// It returns nil without error if no request is stored for txID, which includes
+// the case of a row whose request column is present but zero-length: drivers
+// differ on whether such a column scans as nil or as an empty slice, and both
+// read as not-found here.
+//
+// Verification: the returned bytes are checked with
+// integrity.CheckStoredTokenRequest before they are handed back, so a request
+// that does not deserialize, declares an unsupported protocol version, or is
+// anchored to a transaction other than txID is reported as an error rather than
+// returned. Callers treat the result as authentic evidence about txID — they
+// hash it against the ledger, re-broadcast it, or show it to an auditor — so a
+// record that cannot be bound to txID must not reach them.
 func (d *StoreService) GetTokenRequest(ctx context.Context, txID string) ([]byte, error) {
-	return d.db.GetTokenRequest(ctx, txID)
+	raw, err := d.db.GetTokenRequest(ctx, txID)
+	if err != nil {
+		return nil, err
+	}
+	if len(raw) == 0 {
+		// not found, which is not an error at this layer
+		return nil, nil
+	}
+	if err := integrity.CheckStoredTokenRequest(txID, raw); err != nil {
+		logger.ErrorfContext(ctx, "stored token request for [%s] failed the integrity check: %v", txID, err)
+
+		return nil, errors.WithMessagef(err, "stored token request for [%s] failed the integrity check", txID)
+	}
+
+	return raw, nil
 }
 
 // GetTokenRequests returns the token requests bound to the given tx ids in
 // a single query. See driver.TransactionStore.GetTokenRequests for details
 // about missing-key semantics.
+//
+// Empty values: an empty map value is treated as not-found (skipped),
+// consistent with GetTokenRequest returning nil, nil for a missing key. A
+// driver that does not omit the key for a zero-length request column returns it
+// as nil on some drivers and as an empty slice on others; both are silently
+// removed from the returned map rather than failing the call.
+//
+// Verification: as for GetTokenRequest, every non-nil entry is checked with
+// integrity.CheckStoredTokenRequest against the transaction id it is keyed
+// under. A single failing record fails the whole call: the caller asked for a
+// set of requests and cannot be expected to notice that one key silently went
+// missing.
 func (d *StoreService) GetTokenRequests(ctx context.Context, txIDs []string) (map[string][]byte, error) {
-	return d.db.GetTokenRequests(ctx, txIDs)
+	requests, err := d.db.GetTokenRequests(ctx, txIDs)
+	if err != nil {
+		return nil, err
+	}
+	for txID, raw := range requests {
+		if len(raw) == 0 {
+			delete(requests, txID)
+
+			continue
+		}
+		if err := integrity.CheckStoredTokenRequest(txID, raw); err != nil {
+			logger.ErrorfContext(ctx, "stored token request for [%s] failed the integrity check: %v", txID, err)
+
+			return nil, errors.WithMessagef(err, "stored token request for [%s] failed the integrity check", txID)
+		}
+	}
+
+	return requests, nil
 }
 
-// AddTransactionEndorsementAck records the signature of a given endorser for a given transaction
+// AddTransactionEndorsementAck records the signature of a given endorser for a given transaction.
+//
+// Verification: the caller must have verified sigma against the payload the
+// endorser signed before calling this — that payload is not persisted, so it is
+// the last point at which the signature can be checked. What this method
+// enforces is that the acknowledgement is not vacuous: an empty endorser or an
+// empty signature is rejected, because consumers read acknowledgements as a map
+// keyed by endorser and never inspect the values, so such a row would be
+// indistinguishable from a genuine acknowledgement.
 func (d *StoreService) AddTransactionEndorsementAck(ctx context.Context, txID string, id token.Identity, sigma []byte) error {
+	if txID == "" {
+		return errors.WithMessage(integrity.ErrEmptyTxID, "refusing to store endorsement ack")
+	}
+	if err := integrity.CheckEndorsementAck(id, sigma); err != nil {
+		return errors.WithMessagef(err, "refusing to store endorsement ack for txid [%s]", txID)
+	}
+
 	return d.db.AddTransactionEndorsementAck(ctx, txID, id, sigma)
 }
 
-// GetTransactionEndorsementAcks returns the endorsement signatures for the given transaction id
+// GetTransactionEndorsementAcks returns the endorsement signatures for the given transaction id.
+//
+// Verification: the signatures cannot be re-verified here, because the payload
+// they were produced over is not persisted alongside them. Each row is held to
+// the same non-vacuity AddTransactionEndorsementAck enforces — a non-empty
+// endorser and a non-empty signature — so a row that carries no signature is not
+// passed off as an acknowledgement.
+//
+// A row that fails the check is logged at ERROR and dropped from the result
+// rather than failing the call. Dropping keeps the damage to the offending row:
+// this map is read through ttx.TransactionInfo together with the transaction's
+// token request, so failing the call would make the transaction's *valid* acks
+// and its request unreadable too, and there is no API to remove the bad row.
+//
+// The map is keyed by the endorser's unique id, and the unique id of the empty
+// identity is a fixed sentinel rather than a hash, so a row with an empty
+// endorser is recognised by its key.
 func (d *StoreService) GetTransactionEndorsementAcks(ctx context.Context, txID string) (map[string][]byte, error) {
-	return d.db.GetTransactionEndorsementAcks(ctx, txID)
+	acks, err := d.db.GetTransactionEndorsementAcks(ctx, txID)
+	if err != nil {
+		return nil, err
+	}
+	emptyEndorserKey := token.Identity(nil).UniqueID()
+	for endorser, sigma := range acks {
+		if endorser == emptyEndorserKey {
+			logger.ErrorfContext(ctx, "dropping stored endorsement ack for [%s]: %v", txID, integrity.ErrEmptyEndorser)
+			delete(acks, endorser)
+
+			continue
+		}
+		if len(sigma) == 0 {
+			logger.ErrorfContext(ctx, "dropping stored endorsement ack of [%s] for [%s]: %v", endorser, txID, integrity.ErrEmptySignature)
+			delete(acks, endorser)
+		}
+	}
+
+	return acks, nil
 }
 
 // AcquireRecoveryLeadership tries to acquire the DB-backed recovery leadership lease.

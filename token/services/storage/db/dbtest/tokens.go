@@ -16,6 +16,7 @@ import (
 	tdriver "github.com/LFDT-Panurus/panurus/token/driver"
 	"github.com/LFDT-Panurus/panurus/token/services/storage"
 	driver2 "github.com/LFDT-Panurus/panurus/token/services/storage/db/driver"
+	"github.com/LFDT-Panurus/panurus/token/services/storage/integrity"
 	"github.com/LFDT-Panurus/panurus/token/services/utils"
 	"github.com/LFDT-Panurus/panurus/token/token"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
@@ -822,6 +823,18 @@ func TPublicParams(t *testing.T, db TestTokenDB) {
 	res, err = db.PublicParamsByHash(ctx, b1Hash)
 	require.NoError(t, err)
 	assert.Equal(t, res, b1)
+
+	// A hash nothing was stored under must report nothing, not whichever row the
+	// query happened to reach. Public parameters carry the issuer and auditor
+	// keys every action is validated against, and a caller asking by hash is
+	// asking for the setup a specific transaction was created under.
+	res, err = db.PublicParamsByHash(ctx, utils.Hashable([]byte("never stored")).Raw())
+	require.NoError(t, err)
+	assert.Nil(t, res)
+
+	// An empty hash must be rejected: it would make the hash comparison vacuous.
+	_, err = db.PublicParamsByHash(ctx, nil)
+	require.ErrorIs(t, err, integrity.ErrEmptyPublicParamsHash)
 }
 
 func TCertification(t *testing.T, db TestTokenDB) {

@@ -229,6 +229,7 @@ func newInternalTestTMS(t *testing.T, toks []*token2.Token) (*token.ManagementSe
 	mockPP := &drivermock.PublicParameters{}
 	mockPP.PrecisionReturns(64)
 	mockPPM.PublicParametersReturns(mockPP)
+	mockPPM.PublicParamsHashReturns([]byte("pp-hash"))
 
 	mockWS := &drivermock.WalletService{}
 	mockTMS.PublicParamsManagerReturns(mockPPM)
@@ -846,6 +847,7 @@ func TestCompleteInputsWithEmptyEID_ListTokensError(t *testing.T) {
 	mockPP := &drivermock.PublicParameters{}
 	mockPP.PrecisionReturns(64)
 	mockPPM.PublicParametersReturns(mockPP)
+	mockPPM.PublicParamsHashReturns([]byte("pp-hash"))
 	mockTMS.PublicParamsManagerReturns(mockPPM)
 	mockTMS.ValidatorReturns(&drivermock.Validator{}, nil)
 	mockTMS.TokensServiceReturns(&drivermock.TokensService{})
@@ -881,6 +883,7 @@ func TestCompleteInputsWithEmptyEID_ToQuantityError(t *testing.T) {
 	mockPP := &drivermock.PublicParameters{}
 	mockPP.PrecisionReturns(64)
 	mockPPM.PublicParametersReturns(mockPP)
+	mockPPM.PublicParamsHashReturns([]byte("pp-hash"))
 	mockWS := &drivermock.WalletService{}
 	mockWS.GetAuditInfoReturns([]byte("owner1-audit-info"), nil)
 	mockWS.GetEIDAndRHReturns("owner1-eid", "owner1-rh", nil)
@@ -1266,6 +1269,7 @@ func newExactSpendTMS(t *testing.T, payer, recipient driver.Identity, payerEID, 
 	mockPP.PrecisionReturns(64)
 	mockPPM := &drivermock.PublicParamsManager{}
 	mockPPM.PublicParametersReturns(mockPP)
+	mockPPM.PublicParamsHashReturns([]byte("pp-hash"))
 
 	mockTS := &drivermock.TokensService{}
 	mockTS.DeobfuscateReturns(

@@ -14,6 +14,7 @@ import (
 	"github.com/LFDT-Panurus/panurus/token/driver"
 	idriver "github.com/LFDT-Panurus/panurus/token/services/identity/driver"
 	"github.com/LFDT-Panurus/panurus/token/services/logging"
+	"github.com/LFDT-Panurus/panurus/token/services/storage/integrity"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/common/utils/cache/secondcache"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/common/utils/collections"
@@ -124,7 +125,20 @@ func (p *Provider) SetSignerRouter(router *SignerRouter) {
 }
 
 // RegisterRecipientData stores the passed recipient data in the configured storage.
+//
+// Verification: the identity must be non-empty. Identities are keyed by their
+// unique id, and the unique id of an empty identity is a fixed string rather
+// than a hash of any content, so every empty identity collides on one key: the
+// audit info registered for one of them is what a later lookup for any other
+// returns. See docs/security/store_integrity_verification.md.
 func (p *Provider) RegisterRecipientData(ctx context.Context, data *driver.RecipientData) error {
+	if data == nil {
+		return errors.New("cannot register nil recipient data")
+	}
+	if err := integrity.CheckIdentity(data.Identity); err != nil {
+		return errors.WithMessage(err, "refusing to register recipient data")
+	}
+
 	return p.storage.StoreIdentityData(ctx, data.Identity, data.AuditInfo, data.TokenMetadata, data.TokenMetadataAuditInfo)
 }
 
@@ -234,7 +248,21 @@ func (p *Provider) RollbackPartialRecipientRegistration(ctx context.Context, id 
 
 // RegisterIdentityDescriptor stores the given identity descriptor in the configured storage.
 // If alias is not nil, the alias can be used as an alternative to `idriver.IdentityDescriptor#Identity`.
+//
+// Verification: the descriptor's identity must be non-empty. This is checked
+// here rather than only in the storage layer because an ephemeral descriptor
+// never reaches storage and yet still populates the signer cache, which is
+// keyed the same way — an empty identity would install a signer under the key
+// shared by every empty identity. See
+// docs/security/store_integrity_verification.md.
 func (p *Provider) RegisterIdentityDescriptor(ctx context.Context, identityDescriptor *idriver.IdentityDescriptor, alias driver.Identity) error {
+	if identityDescriptor == nil {
+		return errors.New("cannot register nil identity descriptor")
+	}
+	if err := integrity.CheckIdentity(identityDescriptor.Identity); err != nil {
+		return errors.WithMessage(err, "refusing to register identity descriptor")
+	}
+
 	// register in the Storage
 	if !identityDescriptor.Ephemeral {
 		if err := p.storage.RegisterIdentityDescriptor(ctx, identityDescriptor, alias); err != nil {
