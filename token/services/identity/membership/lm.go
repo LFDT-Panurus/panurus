@@ -404,27 +404,66 @@ func (l *LocalMembership) Load(ctx context.Context, identities []idriver.Configu
 
 	// merge identityConfigurations and storedIdentityConfigurations
 	// filter out stored configuration that are already in identityConfigurations
-	var filtered []IdentityConfiguration
-	if len(storedIdentityConfigurations) != 0 {
-		for _, stored := range storedIdentityConfigurations {
-			found := false
-			// if stored is in identityConfigurations, skip it
-			for _, ic := range identityConfigurations {
-				if stored.ID == ic.ID && stored.URL == ic.URL {
-					// we don't need this configuration
-					found = true
-				}
-			}
-			if !found {
-				// keep this
-				filtered = append(filtered, stored)
-			}
-		}
-	}
+	filtered := filterAlreadyConfigured(identityConfigurations, storedIdentityConfigurations)
 
 	// load identities from configuration.
 	// Configured identities (few, may carry the default flag) are registered
 	// sequentially to preserve default-identity semantics.
+	l.registerConfiguredIdentitiesSequentially(ctx, identityConfigurations, defaults)
+
+	// Stored identity configurations (potentially hundreds of thousands, all
+	// non-default) are prepared in parallel: the expensive KeyManager
+	// construction runs concurrently, then the results are committed to the
+	// shared indices sequentially in the original iterator order, so identity
+	// ordering (fallback default selection, same-name tie-breaks) matches the
+	// sequential behaviour. Errors are logged and skipped, as above.
+	l.registerStoredIdentitiesConcurrently(ctx, filtered)
+
+	// if no default identity, use the first one
+	l.ensureDefaultIdentitySet()
+
+	l.logger.Debugf("load identities [%s] done", l.IdentityType)
+
+	if err := l.subscribeNotifier(); err != nil {
+		return errors.Wrap(err, "failed to subscribe notifier")
+	}
+
+	return nil
+}
+
+// filterAlreadyConfigured returns the stored identity configurations that are
+// not already present in identityConfigurations (matched by ID and URL), so
+// the stored set only contributes configurations the caller did not already
+// register directly.
+func filterAlreadyConfigured(identityConfigurations, storedIdentityConfigurations []IdentityConfiguration) []IdentityConfiguration {
+	if len(storedIdentityConfigurations) == 0 {
+		return nil
+	}
+
+	var filtered []IdentityConfiguration
+	for _, stored := range storedIdentityConfigurations {
+		found := false
+		// if stored is in identityConfigurations, skip it
+		for _, ic := range identityConfigurations {
+			if stored.ID == ic.ID && stored.URL == ic.URL {
+				// we don't need this configuration
+				found = true
+			}
+		}
+		if !found {
+			// keep this
+			filtered = append(filtered, stored)
+		}
+	}
+
+	return filtered
+}
+
+// registerConfiguredIdentitiesSequentially registers each configured identity
+// in order, since a few of them may carry the default flag and default-identity
+// selection depends on registration order. A failure to register one identity
+// is logged and skipped rather than aborting the load.
+func (l *LocalMembership) registerConfiguredIdentitiesSequentially(ctx context.Context, identityConfigurations []IdentityConfiguration, defaults []bool) {
 	for i, identityConfiguration := range identityConfigurations {
 		l.logger.Debugf("load identity configuration [%+v]", identityConfiguration)
 		if err := l.registerIdentityConfiguration(ctx, &identityConfiguration, defaults[i]); err != nil {
@@ -434,84 +473,89 @@ func (l *LocalMembership) Load(ctx context.Context, identities []idriver.Configu
 			l.logger.Debugf("load wallet for identity [%+v] done.", identityConfiguration)
 		}
 	}
+}
 
-	// Stored identity configurations (potentially hundreds of thousands, all
-	// non-default) are prepared in parallel: the expensive KeyManager
-	// construction runs concurrently, then the results are committed to the
-	// shared indices sequentially in the original iterator order, so identity
-	// ordering (fallback default selection, same-name tie-breaks) matches the
-	// sequential behaviour. Errors are logged and skipped, as above.
-	if len(filtered) > 0 {
-		l.logger.Infof("loading [%d] stored identity configurations with up to [%d] workers", len(filtered), runtime.NumCPU())
-		// translate paths serially: Config does not promise concurrency safety
-		for i := range filtered {
-			filtered[i].URL = l.config.TranslatePath(filtered[i].URL)
-		}
-		type prepared struct {
-			keyManager KeyManager
-			priority   int
-			err        error
-		}
-		results := make([]prepared, len(filtered))
-		var g errgroup.Group
-		g.SetLimit(runtime.NumCPU())
-		for i := range filtered {
-			g.Go(func() error {
-				identityConfiguration := &filtered[i]
-				l.logger.Debugf("load identity configuration [%+v]", identityConfiguration)
-				keyManager, priority, err := l.resolveKeyManager(ctx, identityConfiguration)
-				results[i] = prepared{keyManager: keyManager, priority: priority, err: err}
+// registerStoredIdentitiesConcurrently resolves the KeyManager for every
+// filtered stored identity configuration in parallel, then commits the results
+// to the shared indices sequentially in the original order (so identity
+// ordering - fallback default selection, same-name tie-breaks - matches
+// sequential registration). A configuration whose resolved KeyManager fails to
+// commit gets a second chance via registerLocalIdentities (mirroring
+// registerIdentityConfiguration's own folder fallback); a failure there is
+// logged and skipped, not fatal to the load.
+func (l *LocalMembership) registerStoredIdentitiesConcurrently(ctx context.Context, filtered []IdentityConfiguration) {
+	if len(filtered) == 0 {
+		return
+	}
 
-				return nil
-			})
-		}
-		_ = g.Wait() // workers never return errors; Wait only synchronises completion
-
-		for i := range filtered {
+	l.logger.Infof("loading [%d] stored identity configurations with up to [%d] workers", len(filtered), runtime.NumCPU())
+	// translate paths serially: Config does not promise concurrency safety
+	for i := range filtered {
+		filtered[i].URL = l.config.TranslatePath(filtered[i].URL)
+	}
+	type prepared struct {
+		keyManager KeyManager
+		priority   int
+		err        error
+	}
+	results := make([]prepared, len(filtered))
+	var g errgroup.Group
+	g.SetLimit(runtime.NumCPU())
+	for i := range filtered {
+		g.Go(func() error {
 			identityConfiguration := &filtered[i]
-			err1 := results[i].err
+			l.logger.Debugf("load identity configuration [%+v]", identityConfiguration)
+			keyManager, priority, err := l.resolveKeyManager(ctx, identityConfiguration)
+			results[i] = prepared{keyManager: keyManager, priority: priority, err: err}
+
+			return nil
+		})
+	}
+	_ = g.Wait() // workers never return errors; Wait only synchronises completion
+
+	for i := range filtered {
+		identityConfiguration := &filtered[i]
+		err1 := results[i].err
+		if err1 == nil {
+			err1 = l.commitLocalIdentity(ctx, identityConfiguration, results[i].keyManager, results[i].priority, false)
 			if err1 == nil {
-				err1 = l.commitLocalIdentity(ctx, identityConfiguration, results[i].keyManager, results[i].priority, false)
-				if err1 == nil {
-					continue
-				}
-			}
-			// second chance, load the path as folder (mirrors registerIdentityConfiguration)
-			l.logger.Warnf("failed to load local identity at [%s]:[%s]", identityConfiguration.URL, err1)
-			if err2 := l.registerLocalIdentities(ctx, identityConfiguration); err2 != nil {
-				l.logger.Errorf("failed loading identity with err [%s]", errors.Wrapf(errors.Join(err1, err2), "failed to register local identity"))
+				continue
 			}
 		}
+		// second chance, load the path as folder (mirrors registerIdentityConfiguration)
+		l.logger.Warnf("failed to load local identity at [%s]:[%s]", identityConfiguration.URL, err1)
+		if err2 := l.registerLocalIdentities(ctx, identityConfiguration); err2 != nil {
+			l.logger.Errorf("failed loading identity with err [%s]", errors.Wrapf(errors.Join(err1, err2), "failed to register local identity"))
+		}
 	}
+}
 
-	// if no default identity, use the first one
+// ensureDefaultIdentitySet picks the first available identity as the default
+// when none of the loaded identities carries the default flag.
+func (l *LocalMembership) ensureDefaultIdentitySet() {
 	defaultIdentifier := l.getDefaultIdentifier()
-	if len(defaultIdentifier) == 0 {
-		l.logger.Warnf("no default identity, use the first one available")
-		if len(l.localIdentities) > 0 {
-			defaultIdentity := l.firstDefaultIdentifier()
-			if defaultIdentity == nil {
-				l.logger.Warnf("no default identity can be set among the available identities [%d]", len(l.localIdentities))
-			} else {
-				defaultIdentity.Default = true
-				// firstDefaultIdentifier already honors the anonymity mode, so this is selectable.
-				l.cachedDefaultIdentifier = defaultIdentity.Name
-			}
-			l.logger.Warnf("default identity is [%s]", l.getDefaultIdentifier())
-		} else {
-			l.logger.Warnf("cannot set default identity, no identity available")
-		}
-	} else {
+	if len(defaultIdentifier) != 0 {
 		l.logger.Debugf("default identifier is [%s]", defaultIdentifier)
+
+		return
 	}
 
-	l.logger.Debugf("load identities [%s] done", l.IdentityType)
+	l.logger.Warnf("no default identity, use the first one available")
+	if len(l.localIdentities) == 0 {
+		l.logger.Warnf("cannot set default identity, no identity available")
 
-	if err := l.subscribeNotifier(); err != nil {
-		return errors.Wrap(err, "failed to subscribe notifier")
+		return
 	}
 
-	return nil
+	defaultIdentity := l.firstDefaultIdentifier()
+	if defaultIdentity == nil {
+		l.logger.Warnf("no default identity can be set among the available identities [%d]", len(l.localIdentities))
+	} else {
+		defaultIdentity.Default = true
+		// firstDefaultIdentifier already honors the anonymity mode, so this is selectable.
+		l.cachedDefaultIdentifier = defaultIdentity.Name
+	}
+	l.logger.Warnf("default identity is [%s]", l.getDefaultIdentifier())
 }
 
 func (l *LocalMembership) subscribeNotifier() error {
@@ -803,10 +847,13 @@ func (l *LocalMembership) registerLocalIdentities(ctx context.Context, configura
 // conf_id this configuration's identities are bound under, as resolved by confIDFor: it is
 // carried on LocalIdentity.ConfigurationID and used as the SignerRouter key, which must be the
 // same value WalletStore.GetConfID returns for those identities.
-func (l *LocalMembership) addLocalIdentity(ctx context.Context, config *IdentityConfiguration, confID string, keyManager KeyManager, defaultID bool, priority int) error {
-	var getIdentity GetIdentityFunc
-	var resolvedIdentity token.Identity
-
+// resolveIdentityGetter builds the GetIdentityFunc a LocalIdentity resolves
+// through, and returns the identity too when it could be eagerly resolved.
+// Anonymous key managers keep a live provider function, so the identity can be
+// obtained later with arbitrary audit info; the returned identity is then the
+// zero value. Non-anonymous key managers are resolved once here and cached, to
+// avoid repeated remote calls.
+func (l *LocalMembership) resolveIdentityGetter(ctx context.Context, keyManager KeyManager) (GetIdentityFunc, token.Identity, error) {
 	typedIdentityInfo := &TypedIdentityInfo{
 		GetIdentity:      keyManager.Identity,
 		IdentityType:     keyManager.IdentityType(),
@@ -815,35 +862,52 @@ func (l *LocalMembership) addLocalIdentity(ctx context.Context, config *Identity
 		IdentityProvider: l.IdentityProvider,
 	}
 	if keyManager.Anonymous() {
-		// For anonymous key managers we keep the provider function so the identity
-		// can be obtained later with arbitrary audit info.
-		getIdentity = typedIdentityInfo.Get
-	} else {
-		// For non-anonymous key managers we eagerly fetch the identity and audit
-		// info now and cache it to avoid repeated remote calls.
-		var auditInfo []byte
-		var err error
-		resolvedIdentity, auditInfo, err = typedIdentityInfo.Get(ctx, nil)
-		if err != nil {
-			return errors.WithMessagef(err, "failed to get identity")
-		}
-		getIdentity = func(context.Context, []byte) (token.Identity, []byte, error) {
-			return resolvedIdentity, auditInfo, nil
-		}
+		return typedIdentityInfo.Get, nil, nil
+	}
+
+	resolvedIdentity, auditInfo, err := typedIdentityInfo.Get(ctx, nil)
+	if err != nil {
+		return nil, nil, errors.WithMessagef(err, "failed to get identity")
+	}
+	getIdentity := func(context.Context, []byte) (token.Identity, []byte, error) {
+		return resolvedIdentity, auditInfo, nil
+	}
+
+	return getIdentity, resolvedIdentity, nil
+}
+
+// priorityForTarget raises priority to MaxPriority when resolvedIdentity is
+// one of the target identities given higher priority for this load, since a
+// match means this is the identity the caller specifically asked to prefer.
+// Anonymous key managers and a load with no target identities keep the given
+// priority unchanged - there is nothing to compare resolvedIdentity against.
+func (l *LocalMembership) priorityForTarget(config *IdentityConfiguration, keyManager KeyManager, resolvedIdentity token.Identity, priority int) int {
+	name := config.ID
+	if keyManager.Anonymous() || len(l.targetIdentities) == 0 {
+		l.logger.Debugf("no target identity check needed, skip it")
+
+		return priority
+	}
+	if !slices.ContainsFunc(l.targetIdentities, resolvedIdentity.Equal) {
+		l.logger.Debugf("identity [%s:%s] not in target identities", name, config.URL)
+
+		return priority
+	}
+
+	l.logger.Debugf("identity [%s:%s][%s] in target identities", name, config.URL, resolvedIdentity)
+
+	return MaxPriority
+}
+
+func (l *LocalMembership) addLocalIdentity(ctx context.Context, config *IdentityConfiguration, confID string, keyManager KeyManager, defaultID bool, priority int) error {
+	getIdentity, resolvedIdentity, err := l.resolveIdentityGetter(ctx, keyManager)
+	if err != nil {
+		return err
 	}
 
 	// check for duplicates
 	name := config.ID
-	if keyManager.Anonymous() || len(l.targetIdentities) == 0 {
-		l.logger.Debugf("no target identity check needed, skip it")
-	} else if found := slices.ContainsFunc(l.targetIdentities, resolvedIdentity.Equal); !found {
-		// the identity is not in the target identities, we should give it a lower priority
-		l.logger.Debugf("identity [%s:%s] not in target identities", name, config.URL)
-	} else {
-		// give it high priority
-		priority = MaxPriority
-		l.logger.Debugf("identity [%s:%s][%s] in target identities", name, config.URL, resolvedIdentity)
-	}
+	priority = l.priorityForTarget(config, keyManager, resolvedIdentity, priority)
 
 	eID := keyManager.EnrollmentID()
 	localIdentity := &LocalIdentity{

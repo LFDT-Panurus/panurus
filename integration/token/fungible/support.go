@@ -1435,21 +1435,7 @@ func Restart(network *integration.Infrastructure, deleteVault bool, onRestart On
 	}
 	time.Sleep(10 * time.Second)
 	if deleteVault {
-		for _, id := range ids {
-			for name, platform := range network.NWOCtx.PlatformsByName {
-				if dv, ok := platform.(deleteVaultPlatform); ok {
-					logger.Infof("Platform %d supports delete vault. Deleting...", name)
-					dv.DeleteVault(id.Id())
-				}
-			}
-
-			// delete token dbs as well
-			tokenPlatform := tplatform.GetPlatform(network.NWOCtx, "token")
-			gomega.Expect(tokenPlatform).ToNot(gomega.BeNil(), "cannot find token platform in context")
-			for _, tms := range tokenPlatform.GetTopology().TMSs {
-				tokenPlatform.DeleteDBs(tms, id.Id())
-			}
-		}
+		deleteVaultData(network, ids)
 	}
 	for _, id := range ids {
 		network.StartFSCNode(id.Id())
@@ -1463,6 +1449,26 @@ func Restart(network *integration.Infrastructure, deleteVault bool, onRestart On
 		for _, id := range ids {
 			logger.Infof("Calling on restart for [%s]", id.Id())
 			onRestart(network, id.Id())
+		}
+	}
+}
+
+// deleteVaultData deletes each id's vault on every platform that supports it, and
+// deletes its token DBs across every TMS in the token platform's topology.
+func deleteVaultData(network *integration.Infrastructure, ids []*token3.NodeReference) {
+	for _, id := range ids {
+		for name, platform := range network.NWOCtx.PlatformsByName {
+			if dv, ok := platform.(deleteVaultPlatform); ok {
+				logger.Infof("Platform %d supports delete vault. Deleting...", name)
+				dv.DeleteVault(id.Id())
+			}
+		}
+
+		// delete token dbs as well
+		tokenPlatform := tplatform.GetPlatform(network.NWOCtx, "token")
+		gomega.Expect(tokenPlatform).ToNot(gomega.BeNil(), "cannot find token platform in context")
+		for _, tms := range tokenPlatform.GetTopology().TMSs {
+			tokenPlatform.DeleteDBs(tms, id.Id())
 		}
 	}
 }

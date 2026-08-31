@@ -266,33 +266,38 @@ func TestCSPSVector(t *testing.T) {
 	curves := []math.CurveID{math.BN254, math.BLS12_381_BBS_GURVY}
 	for _, curveID := range curves {
 		t.Run(fmt.Sprintf("curveID=%d", curveID), func(t *testing.T) {
-			curve := math.Curves[curveID]
-			rand, err := curve.Rand()
-			require.NoError(t, err)
-
-			k := 3
-			n := 1 << k
-			challenges := make([]*math.Zr, k)
-			for i := range challenges {
-				challenges[i] = curve.NewRandomZr(rand)
-			}
-
-			s := sVector(n, challenges, curve)
-			require.Len(t, s, n)
-
-			// Naive check: s[i] = prod_{r=0}^{k-1} c_r^{bit(i, k-1-r)}
-			for i := range n {
-				expected := curve.NewZrFromInt(1)
-				for r := range k {
-					bit := (i >> (k - 1 - r)) & 1
-					if bit == 1 {
-						expected = curve.ModMul(expected, challenges[r], curve.GroupOrder)
-					}
-				}
-				require.True(t, s[i].Equals(expected),
-					"s[%d] mismatch: got %s, want %s", i, s[i], expected)
-			}
+			checkCSPSVector(t, math.Curves[curveID])
 		})
+	}
+}
+
+// checkCSPSVector verifies sVector's output against its naive mathematical
+// definition: s[i] = prod_{r=0}^{k-1} c_r^{bit(i, k-1-r)}.
+func checkCSPSVector(t *testing.T, curve *math.Curve) {
+	t.Helper()
+	rand, err := curve.Rand()
+	require.NoError(t, err)
+
+	k := 3
+	n := 1 << k
+	challenges := make([]*math.Zr, k)
+	for i := range challenges {
+		challenges[i] = curve.NewRandomZr(rand)
+	}
+
+	s := sVector(n, challenges, curve)
+	require.Len(t, s, n)
+
+	for i := range n {
+		expected := curve.NewZrFromInt(1)
+		for r := range k {
+			bit := (i >> (k - 1 - r)) & 1
+			if bit == 1 {
+				expected = curve.ModMul(expected, challenges[r], curve.GroupOrder)
+			}
+		}
+		require.True(t, s[i].Equals(expected),
+			"s[%d] mismatch: got %s, want %s", i, s[i], expected)
 	}
 }
 

@@ -145,113 +145,139 @@ func NewOpenIssuerPolicySetupConfigurations(params SetupParams) (*SetupConfigura
 	return newSetupConfigurationsWithParams(params, false)
 }
 
+// curveIdemixSubdir returns the idemix testdata subdirectory name for the given curveID.
+func curveIdemixSubdir(curveID math.CurveID) (string, error) {
+	switch curveID {
+	case math.BN254:
+		return "bn254", nil
+	case math.BLS12_381_BBS_GURVY, math2.BLS12_381_BBS_GURVY_FAST_RNG:
+		return "bls12_381_bbs", nil
+	default:
+		return "", errors.Errorf("curveID [%d] not found", curveID)
+	}
+}
+
+// buildSetupConfiguration builds a single SetupConfiguration for the given bit size,
+// reusing the curve-level ipk/owner identity and signers computed once per curveID.
+func buildSetupConfiguration(
+	params SetupParams,
+	registerIssuer bool,
+	bit uint64,
+	curveID math.CurveID,
+	ipk []byte,
+	oID *OwnerIdentity,
+	auditorSigner, secondAuditorSigner, issuerSigner *Signer,
+) (*SetupConfiguration, error) {
+	var pp *setup.PublicParams
+	var err error
+	// Use the proof type to determine which setup method to call
+	switch params.ProofType {
+	case rp.RangeProofType:
+		pp, err = setup.Setup(bit, ipk, curveID)
+	case rp.CSPRangeProofType:
+		pp, err = setup.NewWith(setup.SetupParams{
+			DriverName:     setup.DLogNoGHDriverName,
+			DriverVersion:  setup.ProtocolV1,
+			BitLength:      bit,
+			IdemixIssuerPK: ipk,
+			ProofType:      rp.CSPRangeProofType,
+			CurveID:        curveID,
+		})
+	default:
+		return nil, errors.Errorf("unrecognized proof type: %d", params.ProofType)
+	}
+	if err != nil {
+		return nil, err
+	}
+	if registerIssuer {
+		issuerID, err := issuerSigner.Serialize()
+		if err != nil {
+			return nil, err
+		}
+		pp.AddIssuer(issuerID)
+	}
+	auditorID, err := auditorSigner.Serialize()
+	if err != nil {
+		return nil, err
+	}
+	pp.AddAuditor(auditorID)
+	secondAuditorID, err := secondAuditorSigner.Serialize()
+	if err != nil {
+		return nil, err
+	}
+	pp.AddAuditor(secondAuditorID)
+
+	provider := params.ExecutorProvider
+	if provider == nil {
+		provider = executor.SerialProvider{}
+	}
+	pp.ExecutorProvider = provider
+
+	return &SetupConfiguration{
+		Bits:                bit,
+		CurveID:             curveID,
+		PP:                  pp,
+		OwnerIdentity:       oID,
+		AuditorSigner:       auditorSigner,
+		SecondAuditorSigner: secondAuditorSigner,
+		IssuerSigner:        issuerSigner,
+		ExecutorProvider:    provider,
+	}, nil
+}
+
 func newSetupConfigurationsWithParams(params SetupParams, registerIssuer bool) (*SetupConfigurations, error) {
 	configurations := map[string]*SetupConfiguration{}
 	for _, curveID := range params.CurveIDs {
-		var ipk []byte
-		var err error
-		var oID *OwnerIdentity
-		switch curveID {
-		case math.BN254:
-			idemixPath := filepath.Join(params.IdemixTestdataPath, "bn254", "idemix")
-			ipk, err = os.ReadFile(filepath.Join(idemixPath, "msp", "IssuerPublicKey"))
-			if err != nil {
-				return nil, err
-			}
-			oID, err = loadOwnerIdentityByType(context.Background(), idemixPath, curveID, params.OwnerIdentityType)
-			if err != nil {
-				return nil, err
-			}
-		case math.BLS12_381_BBS_GURVY:
-			fallthrough
-		case math2.BLS12_381_BBS_GURVY_FAST_RNG:
-			idemixPath := filepath.Join(params.IdemixTestdataPath, "bls12_381_bbs", "idemix")
-			ipk, err = os.ReadFile(filepath.Join(idemixPath, "msp", "IssuerPublicKey"))
-			if err != nil {
-				return nil, err
-			}
-			oID, err = loadOwnerIdentityByType(context.Background(), idemixPath, curveID, params.OwnerIdentityType)
-			if err != nil {
-				return nil, err
-			}
-		default:
-			return nil, errors.Errorf("curveID [%d] not found", curveID)
-		}
-
-		auditorSigner, err := PrepareECDSASigner()
-		if err != nil {
+		if err := addCurveConfigurations(params, registerIssuer, curveID, configurations); err != nil {
 			return nil, err
-		}
-		secondAuditorSigner, err := PrepareECDSASigner()
-		if err != nil {
-			return nil, err
-		}
-		issuerSigner, err := PrepareECDSASigner()
-		if err != nil {
-			return nil, err
-		}
-
-		for _, bit := range params.Bits {
-			var pp *setup.PublicParams
-			// Use the proof type to determine which setup method to call
-			switch params.ProofType {
-			case rp.RangeProofType:
-				pp, err = setup.Setup(bit, ipk, curveID)
-			case rp.CSPRangeProofType:
-				pp, err = setup.NewWith(setup.SetupParams{
-					DriverName:     setup.DLogNoGHDriverName,
-					DriverVersion:  setup.ProtocolV1,
-					BitLength:      bit,
-					IdemixIssuerPK: ipk,
-					ProofType:      rp.CSPRangeProofType,
-					CurveID:        curveID,
-				})
-			default:
-				return nil, errors.Errorf("unrecognized proof type: %d", params.ProofType)
-			}
-			if err != nil {
-				return nil, err
-			}
-			if registerIssuer {
-				issuerID, err := issuerSigner.Serialize()
-				if err != nil {
-					return nil, err
-				}
-				pp.AddIssuer(issuerID)
-			}
-			auditorID, err := auditorSigner.Serialize()
-			if err != nil {
-				return nil, err
-			}
-			pp.AddAuditor(auditorID)
-			secondAuditorID, err := secondAuditorSigner.Serialize()
-			if err != nil {
-				return nil, err
-			}
-			pp.AddAuditor(secondAuditorID)
-
-			provider := params.ExecutorProvider
-			if provider == nil {
-				provider = executor.SerialProvider{}
-			}
-			pp.ExecutorProvider = provider
-
-			configurations[key(bit, curveID)] = &SetupConfiguration{
-				Bits:                bit,
-				CurveID:             curveID,
-				PP:                  pp,
-				OwnerIdentity:       oID,
-				AuditorSigner:       auditorSigner,
-				SecondAuditorSigner: secondAuditorSigner,
-				IssuerSigner:        issuerSigner,
-				ExecutorProvider:    provider,
-			}
 		}
 	}
 
 	return &SetupConfigurations{
 		Configurations: configurations,
 	}, nil
+}
+
+// addCurveConfigurations builds the shared per-curve inputs (issuer public
+// key, owner identity, signers) once, then a SetupConfiguration for every
+// requested bit size, writing each into configurations.
+func addCurveConfigurations(params SetupParams, registerIssuer bool, curveID math.CurveID, configurations map[string]*SetupConfiguration) error {
+	subdir, err := curveIdemixSubdir(curveID)
+	if err != nil {
+		return err
+	}
+	idemixPath := filepath.Join(params.IdemixTestdataPath, subdir, "idemix")
+	ipk, err := os.ReadFile(filepath.Join(idemixPath, "msp", "IssuerPublicKey"))
+	if err != nil {
+		return err
+	}
+	oID, err := loadOwnerIdentityByType(context.Background(), idemixPath, curveID, params.OwnerIdentityType)
+	if err != nil {
+		return err
+	}
+
+	auditorSigner, err := PrepareECDSASigner()
+	if err != nil {
+		return err
+	}
+	secondAuditorSigner, err := PrepareECDSASigner()
+	if err != nil {
+		return err
+	}
+	issuerSigner, err := PrepareECDSASigner()
+	if err != nil {
+		return err
+	}
+
+	for _, bit := range params.Bits {
+		cfg, err := buildSetupConfiguration(params, registerIssuer, bit, curveID, ipk, oID, auditorSigner, secondAuditorSigner, issuerSigner)
+		if err != nil {
+			return err
+		}
+		configurations[key(bit, curveID)] = cfg
+	}
+
+	return nil
 }
 
 // GetPublicParams returns the public parameters associated with the given
@@ -296,51 +322,61 @@ func (c *SetupConfigurations) SaveTo(dir string) error {
 	}
 
 	for k, cfg := range c.Configurations {
-		if strings.ContainsAny(k, "/\\") {
-			return errors.Errorf("invalid configuration key: %s", k)
+		if err := saveConfiguration(dir, k, cfg); err != nil {
+			return err
 		}
-		if cfg == nil {
-			return errors.Errorf("nil configuration for key: %s", k)
-		}
-		if cfg.PP == nil {
-			return errors.Errorf("nil public parameters for key: %s", k)
-		}
+	}
 
-		// serialize public params
-		ppBytes, err := cfg.PP.Serialize()
-		if err != nil {
-			return errors.WithMessagef(err, "failed serializing public params for key: %s", k)
-		}
+	return nil
+}
 
-		// prepare JSON payload
-		payload := &SetupConfigurationSer{
-			PP:      base64.StdEncoding.EncodeToString(ppBytes),
-			Bits:    cfg.Bits,
-			CurveID: int(cfg.CurveID),
-		}
-		data, err := json.MarshalIndent(payload, "", "  ")
-		if err != nil {
-			return errors.Wrap(err, "failed marshalling json payload")
-		}
+// saveConfiguration serializes a single SetupConfiguration and writes its
+// params.txt and pp.json files under dir/<k>.
+func saveConfiguration(dir, k string, cfg *SetupConfiguration) error {
+	if strings.ContainsAny(k, "/\\") {
+		return errors.Errorf("invalid configuration key: %s", k)
+	}
+	if cfg == nil {
+		return errors.Errorf("nil configuration for key: %s", k)
+	}
+	if cfg.PP == nil {
+		return errors.Errorf("nil public parameters for key: %s", k)
+	}
 
-		// create target directory and write
-		targetDir := filepath.Join(dir, filepath.Base(k))
-		if err := os.MkdirAll(targetDir, 0o750); err != nil {
-			return errors.WithMessagef(err, "failed creating dir for key: %s", k)
-		}
+	// serialize public params
+	ppBytes, err := cfg.PP.Serialize()
+	if err != nil {
+		return errors.WithMessagef(err, "failed serializing public params for key: %s", k)
+	}
 
-		// Write params.txt containing base64(ppBytes)
-		paramsEncoded := payload.PP
-		finalParamsPath := filepath.Join(targetDir, "params.txt")
-		if err := os.WriteFile(finalParamsPath, []byte(paramsEncoded), 0o644); err != nil {
-			return errors.WithMessagef(err, "failed writing params file for key: %s", k)
-		}
+	// prepare JSON payload
+	payload := &SetupConfigurationSer{
+		PP:      base64.StdEncoding.EncodeToString(ppBytes),
+		Bits:    cfg.Bits,
+		CurveID: int(cfg.CurveID),
+	}
+	data, err := json.MarshalIndent(payload, "", "  ")
+	if err != nil {
+		return errors.Wrap(err, "failed marshalling json payload")
+	}
 
-		// Write pp.json file
-		finalPath := filepath.Join(targetDir, "pp.json")
-		if err := os.WriteFile(finalPath, data, 0o644); err != nil {
-			return errors.WithMessagef(err, "failed writing pp.json for key: %s", k)
-		}
+	// create target directory and write
+	targetDir := filepath.Join(dir, filepath.Base(k))
+	if err := os.MkdirAll(targetDir, 0o750); err != nil {
+		return errors.WithMessagef(err, "failed creating dir for key: %s", k)
+	}
+
+	// Write params.txt containing base64(ppBytes)
+	paramsEncoded := payload.PP
+	finalParamsPath := filepath.Join(targetDir, "params.txt")
+	if err := os.WriteFile(finalParamsPath, []byte(paramsEncoded), 0o644); err != nil {
+		return errors.WithMessagef(err, "failed writing params file for key: %s", k)
+	}
+
+	// Write pp.json file
+	finalPath := filepath.Join(targetDir, "pp.json")
+	if err := os.WriteFile(finalPath, data, 0o644); err != nil {
+		return errors.WithMessagef(err, "failed writing pp.json for key: %s", k)
 	}
 
 	return nil

@@ -57,49 +57,7 @@ func (r *ClaimView) Call(ctx view.Context) (res any, err error) {
 		}
 	}()
 
-	preImage := r.PreImage
-	if len(preImage) == 0 && r.Script != nil {
-		// Scan for the pre-image
-		var err error
-		preImage, err = htlc.ScanForPreImage(
-			ctx,
-			r.Script.HashInfo.Hash,
-			r.Script.HashInfo.HashFunc,
-			r.Script.HashInfo.HashEncoding,
-			5*time.Minute,
-			token.WithTMSID(r.ScriptTMSID),
-		)
-		assert.NoError(err, "failed to receive the preImage")
-
-		// double-check the value of the key
-		tms, err := token.GetManagementService(ctx, token.WithTMSID(r.ScriptTMSID))
-		assert.NoError(err, "failed getting management service")
-		network := network.GetInstance(ctx, tms.Network(), tms.Channel())
-		assert.NotNil(network, "failed getting network")
-		ledger, err := network.Ledger()
-		assert.NoError(err, "failed getting ledger")
-		transferMetadataKey, err := ledger.TransferMetadataKey(htlc.ClaimKey(r.Script.HashInfo.Hash))
-		assert.NoError(err, "failed getting transfer metadata key")
-
-		// double-check the content of the ledger, retry a few time to give time to the committer
-		runner := utils.NewRetryRunner(logger, 3, 1*time.Second, true)
-		assert.NoError(err, runner.RunWithContext(ctx.Context(), func() error {
-			logger.Debugf("check transfer metadata key [%s]...", transferMetadataKey)
-			stateValues, err := ledger.GetStates(ctx.Context(), tms.Namespace(), transferMetadataKey)
-			if err != nil {
-				return err
-			}
-			logger.Debugf("check transfer metadata key [%s], got [%v]", transferMetadataKey, stateValues)
-			if len(stateValues) != 1 {
-				return errors.Errorf("expected 1 state, found %d", len(stateValues))
-			}
-			if !bytes.Equal(stateValues[0], r.PreImage) {
-				return errors.Errorf("pre-image mismatch [%s] vs [%s]", utils.Hashable(preImage), utils.Hashable(stateValues[0]))
-			}
-
-			return nil
-		}))
-	}
+	preImage := resolvePreImage(ctx, r.Claim)
 
 	claimWallet := htlc.GetWallet(ctx, r.Wallet, token.WithTMSID(r.TMSID))
 	assert.NotNil(claimWallet, "wallet [%s] not found", r.Wallet)
@@ -125,6 +83,59 @@ func (r *ClaimView) Call(ctx view.Context) (res any, err error) {
 	assert.NoError(err, "failed to commit htlc transaction")
 
 	return tx.ID(), nil
+}
+
+// resolvePreImage returns r.PreImage if it is already set, or scans the ledger for it
+// using r.Script's hash info, then double-checks the ledger's transfer metadata key
+// matches it, retrying a few times to give the committer time to catch up.
+func resolvePreImage(ctx view.Context, r *Claim) []byte {
+	preImage := r.PreImage
+	if len(preImage) != 0 || r.Script == nil {
+		return preImage
+	}
+
+	// Scan for the pre-image
+	var err error
+	preImage, err = htlc.ScanForPreImage(
+		ctx,
+		r.Script.HashInfo.Hash,
+		r.Script.HashInfo.HashFunc,
+		r.Script.HashInfo.HashEncoding,
+		5*time.Minute,
+		token.WithTMSID(r.ScriptTMSID),
+	)
+	assert.NoError(err, "failed to receive the preImage")
+
+	// double-check the value of the key
+	tms, err := token.GetManagementService(ctx, token.WithTMSID(r.ScriptTMSID))
+	assert.NoError(err, "failed getting management service")
+	network := network.GetInstance(ctx, tms.Network(), tms.Channel())
+	assert.NotNil(network, "failed getting network")
+	ledger, err := network.Ledger()
+	assert.NoError(err, "failed getting ledger")
+	transferMetadataKey, err := ledger.TransferMetadataKey(htlc.ClaimKey(r.Script.HashInfo.Hash))
+	assert.NoError(err, "failed getting transfer metadata key")
+
+	// double-check the content of the ledger, retry a few time to give time to the committer
+	runner := utils.NewRetryRunner(logger, 3, 1*time.Second, true)
+	assert.NoError(err, runner.RunWithContext(ctx.Context(), func() error {
+		logger.Debugf("check transfer metadata key [%s]...", transferMetadataKey)
+		stateValues, err := ledger.GetStates(ctx.Context(), tms.Namespace(), transferMetadataKey)
+		if err != nil {
+			return err
+		}
+		logger.Debugf("check transfer metadata key [%s], got [%v]", transferMetadataKey, stateValues)
+		if len(stateValues) != 1 {
+			return errors.Errorf("expected 1 state, found %d", len(stateValues))
+		}
+		if !bytes.Equal(stateValues[0], r.PreImage) {
+			return errors.Errorf("pre-image mismatch [%s] vs [%s]", utils.Hashable(preImage), utils.Hashable(stateValues[0]))
+		}
+
+		return nil
+	}))
+
+	return preImage
 }
 
 type ClaimViewFactory struct{}

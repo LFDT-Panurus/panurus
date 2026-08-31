@@ -36,25 +36,32 @@ func BenchmarkLockerContention(b *testing.B) {
 			for w := range workers {
 				owner := fmt.Sprintf("owner-%d", w%owners)
 				wg.Go(func() {
-					ctx := context.Background()
-					for {
-						i := next.Add(1) - 1
-						if i >= int64(b.N) {
-							return
-						}
-						id := &token.ID{TxId: fmt.Sprintf("tok-%s-%d", owner, i), Index: 0}
-						txID := fmt.Sprintf("tx-%d", i)
-						if _, err := d.Lock(ctx, owner, id, txID, false); err != nil {
-							b.Error(err)
-
-							return
-						}
-						d.UnlockIDs(ctx, owner, id)
-					}
+					runContentionWorker(b, d, owner, &next, int64(b.N))
 				})
 			}
 			wg.Wait()
 		})
+	}
+}
+
+// runContentionWorker repeatedly claims the next work index via next and
+// performs one lock/unlock cycle for it, until the index reaches n.
+func runContentionWorker(b *testing.B, d *locker, owner string, next *atomic.Int64, n int64) {
+	b.Helper()
+	ctx := context.Background()
+	for {
+		i := next.Add(1) - 1
+		if i >= n {
+			return
+		}
+		id := &token.ID{TxId: fmt.Sprintf("tok-%s-%d", owner, i), Index: 0}
+		txID := fmt.Sprintf("tx-%d", i)
+		if _, err := d.Lock(ctx, owner, id, txID, false); err != nil {
+			b.Error(err)
+
+			return
+		}
+		d.UnlockIDs(ctx, owner, id)
 	}
 }
 
@@ -91,19 +98,26 @@ func BenchmarkLockerContentionWithSlowReclaim(b *testing.B) {
 			var wg sync.WaitGroup
 			for w := range workers {
 				wg.Go(func() {
-					ctx := context.Background()
-					for {
-						i := next.Add(1) - 1
-						if i >= int64(b.N) {
-							return
-						}
-						// reclaim fails (holder is Pending) after paying the
-						// status lookup under the shard lock
-						_, _ = d.Lock(ctx, ownersOf[w], ids[w], fmt.Sprintf("tx-%d", i), true)
-					}
+					runSlowReclaimWorker(d, ownersOf[w], ids[w], &next, int64(b.N))
 				})
 			}
 			wg.Wait()
 		})
+	}
+}
+
+// runSlowReclaimWorker repeatedly claims the next work index via next and
+// attempts a reclaiming Lock on id (which always fails, since its holder tx
+// stays Pending), until the index reaches n.
+func runSlowReclaimWorker(d *locker, owner string, id *token.ID, next *atomic.Int64, n int64) {
+	ctx := context.Background()
+	for {
+		i := next.Add(1) - 1
+		if i >= n {
+			return
+		}
+		// reclaim fails (holder is Pending) after paying the
+		// status lookup under the shard lock
+		_, _ = d.Lock(ctx, owner, id, fmt.Sprintf("tx-%d", i), true)
 	}
 }

@@ -186,6 +186,8 @@ func (a *AuditorWrapper) InspectIdentity(ctx context.Context, matcher InfoMatche
 }
 
 // IssueAuditValidate returns a validation function for issue actions.
+//
+//nolint:gocognit // sequential validation of independent issue-action components; splitting would not reduce real complexity, only hide it behind indirection
 func IssueAuditValidate(infoMatcher InfoMatcher, pedersenParams []*math.G1, curve *math.Curve) ValidateIssueAuditFunc {
 	return func(ctx context.Context, auditCtx *AuditContext) error {
 		// Get the issue action
@@ -236,6 +238,8 @@ func IssueAuditValidate(infoMatcher InfoMatcher, pedersenParams []*math.G1, curv
 }
 
 // TransferAuditValidate returns a validation function for transfer actions.
+//
+//nolint:gocognit // sequential validation of independent transfer-action components; splitting would not reduce real complexity, only hide it behind indirection
 func TransferAuditValidate(infoMatcher InfoMatcher, pedersenParams []*math.G1, curve *math.Curve, precision uint64) ValidateTransferAuditFunc {
 	return func(ctx context.Context, auditCtx *AuditContext) error {
 		// Get the transfer action
@@ -336,6 +340,8 @@ func validateIssueInputs(inputs []*issue.ActionInput, inputsMetadata []*driver.I
 }
 
 // validateIssueOutputs validates issue action outputs against metadata.
+//
+//nolint:gocognit // per-output validation loop with several independent checks; splitting would not reduce real complexity, only hide it behind indirection
 func validateIssueOutputs(ctx context.Context, infoMatcher InfoMatcher, pedersenParams []*math.G1, curve *math.Curve, outputs []*token.Token, outputsMetadata []*driver.IssueOutputMetadata) error {
 	for i, output := range outputs {
 		if output == nil {
@@ -407,6 +413,8 @@ func validateIssuer(ctx context.Context, infoMatcher InfoMatcher, issuers []driv
 }
 
 // validateTransferInputs validates transfer action inputs against metadata.
+//
+//nolint:gocognit // per-input validation loop with several independent checks; splitting would not reduce real complexity, only hide it behind indirection
 func validateTransferInputs(ctx context.Context, infoMatcher InfoMatcher, inputs []*transfer.ActionInput, inputsMetadata []*driver.TransferInputMetadata) error {
 	for i, actionInput := range inputs {
 		if actionInput == nil || actionInput.Token == nil {
@@ -476,6 +484,8 @@ func validateTransferInputs(ctx context.Context, infoMatcher InfoMatcher, inputs
 }
 
 // validateTransferOutputs validates transfer action outputs against metadata.
+//
+//nolint:gocognit // per-output validation loop with several independent checks; splitting would not reduce real complexity, only hide it behind indirection
 func validateTransferOutputs(ctx context.Context, infoMatcher InfoMatcher, pedersenParams []*math.G1, curve *math.Curve, outputs []*token.Token, outputsMetadata []*driver.TransferOutputMetadata) error {
 	for i, output := range outputs {
 		if output == nil {
@@ -526,6 +536,8 @@ func validateTransferOutputs(ctx context.Context, infoMatcher InfoMatcher, peder
 
 // validateOutputReceivers validates that output receivers in metadata match recipients extracted from the owner.
 // The requireNonEmpty parameter controls whether empty receiver identities are allowed (issue vs transfer).
+//
+//nolint:gocognit // sequential structural checks plus a receiver-matching loop with two mutually-exclusive branches; splitting would not reduce real complexity, only hide it behind indirection
 func validateOutputReceivers(
 	ctx context.Context,
 	infoMatcher InfoMatcher,

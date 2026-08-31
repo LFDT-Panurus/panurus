@@ -45,6 +45,8 @@ func NewTransferService(
 
 // Transfer returns a TransferAction as a function of the passed arguments
 // It also returns the corresponding TransferMetadata
+//
+//nolint:gocognit // sequential construction and validation of a transfer action across independent components; splitting would not reduce real complexity, only hide it behind indirection
 func (s *TransferService) Transfer(
 	ctx context.Context,
 	anchor driver.TokenRequestAnchor,
@@ -192,6 +194,8 @@ func (s *TransferService) Transfer(
 }
 
 // VerifyTransfer checks the outputs in the TransferAction against the passed tokenInfos
+//
+//nolint:gocognit // input/output value-conservation, type-consistency and receiver-matching checks that are security-sensitive; splitting would not reduce real complexity, only hide it behind indirection
 func (s *TransferService) VerifyTransfer(ctx context.Context, tr driver.TransferAction, outputMetadata []*driver.TransferOutputMetadata) error {
 	if tr == nil {
 		return errors.Errorf("nil transfer action")

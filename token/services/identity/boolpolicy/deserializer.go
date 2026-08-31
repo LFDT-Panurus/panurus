@@ -238,23 +238,9 @@ func (a *AuditInfoDeserializer) commonEnrollmentID(ctx context.Context, id drive
 	}
 	// resolve every component before declaring a result so corruption in a
 	// later component is not masked by an earlier "no common EID" outcome
-	eids := make([]string, len(ei.IdentityAuditInfos))
-	for k, info := range ei.IdentityAuditInfos {
-		if len(info.AuditInfo) == 0 {
-			// missing audit info is legal (e.g. an identity not registered
-			// locally): the component contributes no enrollment ID
-			continue
-		}
-		memberAuditInfo, err := a.inner.DeserializeAuditInfo(ctx, pi.Identities[k], info.AuditInfo)
-		if err != nil {
-			return "", errors.Wrapf(err, "failed to deserialize audit info of component [%d]", k)
-		}
-		if memberAuditInfo == nil {
-			// an inner deserializer may report neither audit info nor error:
-			// treat it like missing audit info rather than panicking
-			continue
-		}
-		eids[k] = memberAuditInfo.EnrollmentID()
+	eids, err := a.resolveComponentEIDs(ctx, pi.Identities, ei.IdentityAuditInfos)
+	if err != nil {
+		return "", err
 	}
 	for _, memberEID := range eids {
 		if memberEID == "" || memberEID != eids[0] {
@@ -265,4 +251,31 @@ func (a *AuditInfoDeserializer) commonEnrollmentID(ctx context.Context, id drive
 	}
 
 	return eids[0], nil
+}
+
+// resolveComponentEIDs resolves the enrollment ID contributed by each policy
+// identity component, in the same order as identities/auditInfos. A component
+// with no audit info, or whose inner deserializer reports neither audit info
+// nor an error, contributes an empty enrollment ID rather than aborting.
+func (a *AuditInfoDeserializer) resolveComponentEIDs(ctx context.Context, identities [][]byte, auditInfos []IdentityAuditInfo) ([]string, error) {
+	eids := make([]string, len(auditInfos))
+	for k, info := range auditInfos {
+		if len(info.AuditInfo) == 0 {
+			// missing audit info is legal (e.g. an identity not registered
+			// locally): the component contributes no enrollment ID
+			continue
+		}
+		memberAuditInfo, err := a.inner.DeserializeAuditInfo(ctx, identities[k], info.AuditInfo)
+		if err != nil {
+			return nil, errors.Wrapf(err, "failed to deserialize audit info of component [%d]", k)
+		}
+		if memberAuditInfo == nil {
+			// an inner deserializer may report neither audit info nor error:
+			// treat it like missing audit info rather than panicking
+			continue
+		}
+		eids[k] = memberAuditInfo.EnrollmentID()
+	}
+
+	return eids, nil
 }

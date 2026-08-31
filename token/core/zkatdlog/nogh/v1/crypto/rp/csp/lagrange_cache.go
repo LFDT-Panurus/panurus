@@ -93,6 +93,8 @@ func getOrComputeDenomInvsBN254(n uint64, partial bool) []*bn254fr.Element {
 //	total = 2n+1 evaluation points {0,...,2n}
 //	relevant indices = {0, n+1, ..., 2n}  (n+1 entries)
 //	d_k = ∏_{j=0, j≠relevant[k]}^{2n} (relevant[k]-j)
+//
+//nolint:gocognit // two closely-related but distinct denominator computations (full vs partial variant); splitting would not reduce real complexity, only hide it behind indirection
 func computeDenomInvs[T any, E math2.GnarkFr[T]](n uint64, partial bool) []E {
 	if !partial {
 		m := int(n) + 1 // #nosec G115

@@ -523,6 +523,8 @@ type policyAuditInfoWire struct {
 // Component well-formedness (non-empty, no duplicates, bounded fan-out)
 // mirrors boolpolicy's validateComponentIdentities, which otherwise rejects
 // the identity only later, in GetAuditInfoMatcher.
+//
+//nolint:gocognit // sequential well-formedness and membership guards over untrusted wire data that are security-sensitive; splitting would not reduce real complexity, only hide it behind indirection
 func (w *LongTermOwnerWallet) isMemberPolicyRecipient(ctx context.Context, data *driver.RecipientData) bool {
 	ti, err := identity.UnmarshalTypedIdentity(data.Identity)
 	if err != nil || ti.Type != driver.PolicyIdentityType {

@@ -208,6 +208,56 @@ func TestTokensService_GenUpgradeProof(t *testing.T) {
 	}
 }
 
+type checkUpgradeProofTestCase struct {
+	name            string
+	ch              driver.TokensUpgradeChallenge
+	ledgerTokens    []token.LedgerToken
+	proof           func() driver.TokensUpgradeProof
+	wantErr         bool
+	errMsg          string
+	expected        bool
+	wantErrProcess  bool
+	processErrMsg   string
+	getDeserializer func() upgrade.Deserializer
+}
+
+// assertCheckUpgradeProofResult checks tt's expectations against the result
+// of CheckUpgradeProof.
+func assertCheckUpgradeProofResult(t *testing.T, tt checkUpgradeProofTestCase, res bool, err error) {
+	t.Helper()
+	if tt.wantErr {
+		require.Error(t, err)
+		require.EqualError(t, err, tt.errMsg)
+
+		return
+	}
+
+	require.NoError(t, err)
+	assert.Equal(t, tt.expected, res)
+}
+
+// assertProcessTokensUpgradeResult checks tt's expectations against the
+// error from ProcessTokensUpgradeRequest.
+func assertProcessTokensUpgradeResult(t *testing.T, tt checkUpgradeProofTestCase, err error) {
+	t.Helper()
+	if tt.wantErrProcess {
+		require.Error(t, err)
+		if len(tt.processErrMsg) != 0 {
+			require.EqualError(t, err, tt.processErrMsg)
+		}
+
+		return
+	}
+
+	if tt.wantErr {
+		require.Error(t, err)
+
+		return
+	}
+
+	require.NoError(t, err)
+}
+
 func TestTokensService_CheckUpgradeProof(t *testing.T) {
 	ts, err := upgrade.NewService(nil, 16, nil, nil)
 	require.NoError(t, err)
@@ -242,18 +292,7 @@ func TestTokensService_CheckUpgradeProof(t *testing.T) {
 		Format:        formatFabtoken16,
 	}}
 
-	tests := []struct {
-		name            string
-		ch              driver.TokensUpgradeChallenge
-		ledgerTokens    []token.LedgerToken
-		proof           func() driver.TokensUpgradeProof
-		wantErr         bool
-		errMsg          string
-		expected        bool
-		wantErrProcess  bool
-		processErrMsg   string
-		getDeserializer func() upgrade.Deserializer
-	}{
+	tests := []checkUpgradeProofTestCase{
 		{
 			name:            "challenge size mismatch",
 			ch:              []byte{0, 1, 2},
@@ -514,31 +553,14 @@ func TestTokensService_CheckUpgradeProof(t *testing.T) {
 			require.NoError(t, err)
 			proof := tt.proof()
 			res, err := ts.CheckUpgradeProof(t.Context(), tt.ch, proof, tt.ledgerTokens)
-			if tt.wantErr {
-				require.Error(t, err)
-				require.EqualError(t, err, tt.errMsg)
-			} else {
-				require.NoError(t, err)
-				assert.Equal(t, tt.expected, res)
-			}
+			assertCheckUpgradeProofResult(t, tt, res, err)
 
 			_, err = ts.ProcessTokensUpgradeRequest(t.Context(), &driver.TokenUpgradeRequest{
 				Challenge: tt.ch,
 				Tokens:    tt.ledgerTokens,
 				Proof:     proof,
 			})
-			if tt.wantErrProcess {
-				require.Error(t, err)
-				if len(tt.processErrMsg) != 0 {
-					require.EqualError(t, err, tt.processErrMsg)
-				}
-			} else {
-				if tt.wantErr {
-					require.Error(t, err)
-				} else {
-					require.NoError(t, err)
-				}
-			}
+			assertProcessTokensUpgradeResult(t, tt, err)
 		})
 	}
 

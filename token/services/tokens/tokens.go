@@ -444,95 +444,120 @@ func (t *Service) Parse(
 		// if this is a redeem (empty owner), store it only if it was redeemed against
 		// an issuer known to this node; otherwise skip it.
 		if len(output.Token.Owner) == 0 {
-			logger.DebugfContext(ctx, "output [%s:%d] is a redeem", requestAnchor, output.Index)
-
-			issuer := output.Issuer
-			redeemedMine := !issuer.IsNone() && auth.Issued(ctx, issuer, &output.Token)
-			if !redeemedMine {
-				logger.DebugfContext(ctx, "transaction [%s], discarding redeem, issuer is not mine", requestAnchor)
-
-				continue
+			if tta, ok := parseRedeemOutput(ctx, auth, requestAnchor, output, auditorFlag, precision); ok {
+				toAppend = append(toAppend, tta)
 			}
-
-			// clone the token and the caller-owned byte slices so the cached entry does not
-			// alias the output stream, which may be reused or mutated after Parse returns
-			tta := TokenToAppend{
-				TxID:                  string(requestAnchor),
-				Index:                 output.Index,
-				Tok:                   output.Clone(),
-				TokenOnLedger:         slices.Clone(output.LedgerOutput),
-				TokenOnLedgerFormat:   output.LedgerOutputFormat,
-				TokenOnLedgerMetadata: slices.Clone(output.LedgerOutputMetadata),
-				OwnerType:             "",
-				OwnerIdentity:         []byte{},
-				OwnerWalletID:         "",
-				Owners:                nil,
-				Issuer:                slices.Clone(issuer),
-				Precision:             precision,
-				Flags: Flags{
-					Mine:     false,
-					Auditor:  auditorFlag,
-					Issuer:   true,
-					Redeemed: true,
-				},
-			}
-			toAppend = append(toAppend, tta)
 
 			continue
 		}
 
-		// process the output to identify the relations with the current TMS
-		issuerFlag := !output.Issuer.IsNone() && auth.Issued(ctx, output.Issuer, &output.Token)
-		ownerWalletID, ids, mine := auth.IsMine(ctx, &output.Token)
-		if logger.IsEnabledFor(zapcore.DebugLevel) {
-			if mine {
-				logger.DebugfContext(ctx, "transaction [%s], found a token and it is mine with [%s][%v]", requestAnchor, ownerWalletID, ids)
-			} else {
-				logger.DebugfContext(ctx, "transaction [%s], found a token and it is NOT mine", requestAnchor)
-			}
-			if issuerFlag {
-				logger.DebugfContext(ctx, "transaction [%s], found a token and I have issued it", requestAnchor)
-			}
-			logger.DebugfContext(ctx, "store token [%s:%d][%s]", requestAnchor, output.Index, utils.Hashable(output.LedgerOutput))
-		}
-		if !mine && !auditorFlag && !issuerFlag {
-			logger.DebugfContext(ctx, "transaction [%s], discarding token, not mine, not an auditor, not an issuer", requestAnchor)
-
-			continue
-		}
-
-		ownerType, ownerIdentity, err := auth.OwnerType(output.Token.Owner)
+		tta, ok, err := parseOwnedOutput(ctx, auth, requestAnchor, output, auditorFlag, precision)
 		if err != nil {
-			return nil, nil, errors.Wrapf(err, "failed to extract owner type for token [%s:%d]", requestAnchor, output.Index)
+			return nil, nil, err
 		}
-
-		// clone the token and the caller-owned byte slices so the cached entry does not
-		// alias the output stream, which may be reused or mutated after Parse returns
-		tta := TokenToAppend{
-			TxID:                  string(requestAnchor),
-			Index:                 output.Index,
-			Tok:                   output.Clone(),
-			TokenOnLedger:         slices.Clone(output.LedgerOutput),
-			TokenOnLedgerFormat:   output.LedgerOutputFormat,
-			TokenOnLedgerMetadata: slices.Clone(output.LedgerOutputMetadata),
-			OwnerType:             identity.TypeToString(ownerType),
-			OwnerIdentity:         ownerIdentity,
-			OwnerWalletID:         ownerWalletID,
-			Owners:                ids,
-			Issuer:                slices.Clone(output.Issuer),
-			Precision:             precision,
-			Flags: Flags{
-				Mine:    mine,
-				Auditor: auditorFlag,
-				Issuer:  issuerFlag,
-			},
-		}
-		toAppend = append(toAppend, tta)
-
-		if logger.IsEnabledFor(zapcore.DebugLevel) {
-			logger.DebugfContext(ctx, "done parsing write key [%s]", output.ID(requestAnchor))
+		if ok {
+			toAppend = append(toAppend, tta)
 		}
 	}
 
 	return toSpend, toAppend, err
+}
+
+// parseRedeemOutput builds the append record for a redeem output (empty
+// owner), if it was redeemed against an issuer this node knows.
+func parseRedeemOutput(
+	ctx context.Context, auth driver.Authorization, requestAnchor token.RequestAnchor, output *token.Output, auditorFlag bool, precision uint64,
+) (TokenToAppend, bool) {
+	logger.DebugfContext(ctx, "output [%s:%d] is a redeem", requestAnchor, output.Index)
+
+	issuer := output.Issuer
+	redeemedMine := !issuer.IsNone() && auth.Issued(ctx, issuer, &output.Token)
+	if !redeemedMine {
+		logger.DebugfContext(ctx, "transaction [%s], discarding redeem, issuer is not mine", requestAnchor)
+
+		return TokenToAppend{}, false
+	}
+
+	// clone the token and the caller-owned byte slices so the cached entry does not
+	// alias the output stream, which may be reused or mutated after Parse returns
+	return TokenToAppend{
+		TxID:                  string(requestAnchor),
+		Index:                 output.Index,
+		Tok:                   output.Clone(),
+		TokenOnLedger:         slices.Clone(output.LedgerOutput),
+		TokenOnLedgerFormat:   output.LedgerOutputFormat,
+		TokenOnLedgerMetadata: slices.Clone(output.LedgerOutputMetadata),
+		OwnerType:             "",
+		OwnerIdentity:         []byte{},
+		OwnerWalletID:         "",
+		Owners:                nil,
+		Issuer:                slices.Clone(issuer),
+		Precision:             precision,
+		Flags: Flags{
+			Mine:     false,
+			Auditor:  auditorFlag,
+			Issuer:   true,
+			Redeemed: true,
+		},
+	}, true
+}
+
+// parseOwnedOutput builds the append record for a non-redeem output, if this
+// node has some relation to it (owner, auditor or issuer); otherwise it is
+// discarded as not relevant to this TMS.
+func parseOwnedOutput(
+	ctx context.Context, auth driver.Authorization, requestAnchor token.RequestAnchor, output *token.Output, auditorFlag bool, precision uint64,
+) (TokenToAppend, bool, error) {
+	// process the output to identify the relations with the current TMS
+	issuerFlag := !output.Issuer.IsNone() && auth.Issued(ctx, output.Issuer, &output.Token)
+	ownerWalletID, ids, mine := auth.IsMine(ctx, &output.Token)
+	if logger.IsEnabledFor(zapcore.DebugLevel) {
+		if mine {
+			logger.DebugfContext(ctx, "transaction [%s], found a token and it is mine with [%s][%v]", requestAnchor, ownerWalletID, ids)
+		} else {
+			logger.DebugfContext(ctx, "transaction [%s], found a token and it is NOT mine", requestAnchor)
+		}
+		if issuerFlag {
+			logger.DebugfContext(ctx, "transaction [%s], found a token and I have issued it", requestAnchor)
+		}
+		logger.DebugfContext(ctx, "store token [%s:%d][%s]", requestAnchor, output.Index, utils.Hashable(output.LedgerOutput))
+	}
+	if !mine && !auditorFlag && !issuerFlag {
+		logger.DebugfContext(ctx, "transaction [%s], discarding token, not mine, not an auditor, not an issuer", requestAnchor)
+
+		return TokenToAppend{}, false, nil
+	}
+
+	ownerType, ownerIdentity, err := auth.OwnerType(output.Token.Owner)
+	if err != nil {
+		return TokenToAppend{}, false, errors.Wrapf(err, "failed to extract owner type for token [%s:%d]", requestAnchor, output.Index)
+	}
+
+	// clone the token and the caller-owned byte slices so the cached entry does not
+	// alias the output stream, which may be reused or mutated after Parse returns
+	tta := TokenToAppend{
+		TxID:                  string(requestAnchor),
+		Index:                 output.Index,
+		Tok:                   output.Clone(),
+		TokenOnLedger:         slices.Clone(output.LedgerOutput),
+		TokenOnLedgerFormat:   output.LedgerOutputFormat,
+		TokenOnLedgerMetadata: slices.Clone(output.LedgerOutputMetadata),
+		OwnerType:             identity.TypeToString(ownerType),
+		OwnerIdentity:         ownerIdentity,
+		OwnerWalletID:         ownerWalletID,
+		Owners:                ids,
+		Issuer:                slices.Clone(output.Issuer),
+		Precision:             precision,
+		Flags: Flags{
+			Mine:    mine,
+			Auditor: auditorFlag,
+			Issuer:  issuerFlag,
+		},
+	}
+
+	if logger.IsEnabledFor(zapcore.DebugLevel) {
+		logger.DebugfContext(ctx, "done parsing write key [%s]", output.ID(requestAnchor))
+	}
+
+	return tta, true, nil
 }

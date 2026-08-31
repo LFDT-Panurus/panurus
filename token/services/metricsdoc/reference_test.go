@@ -833,16 +833,11 @@ func isNestedCheckout(dir string) bool {
 
 // grepRepo returns the repository-relative paths of the non-test Go files that
 // match pattern, sorted.
-func grepRepo(t *testing.T, pattern *regexp.Regexp) []string {
-	t.Helper()
-
-	root, err := filepath.Abs(repoRoot)
-	require.NoError(t, err)
-
-	// The walk only collects candidate paths; the files are read afterwards, so
-	// no filesystem operation happens inside the callback.
+// collectGoFileCandidates walks root and returns every non-test .go file
+// path, skipping directories in skippedDirs and nested checkouts.
+func collectGoFileCandidates(root string) ([]string, error) {
 	var candidates []string
-	require.NoError(t, filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -861,7 +856,21 @@ func grepRepo(t *testing.T, pattern *regexp.Regexp) []string {
 		}
 
 		return nil
-	}))
+	})
+
+	return candidates, err
+}
+
+func grepRepo(t *testing.T, pattern *regexp.Regexp) []string {
+	t.Helper()
+
+	root, err := filepath.Abs(repoRoot)
+	require.NoError(t, err)
+
+	// The walk only collects candidate paths; the files are read afterwards, so
+	// no filesystem operation happens inside the callback.
+	candidates, err := collectGoFileCandidates(root)
+	require.NoError(t, err)
 
 	found := make([]string, 0, len(candidates))
 	for _, path := range candidates {

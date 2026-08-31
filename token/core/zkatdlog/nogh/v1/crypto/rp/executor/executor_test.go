@@ -166,38 +166,46 @@ func TestAllProviders_ConcurrentBatches(t *testing.T) {
 	for _, tc := range providers {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			const numGoroutines = 8
-			const tasksPerBatch = 32
-
-			results := make([][]int, numGoroutines)
-			for i := range numGoroutines {
-				results[i] = make([]int, tasksPerBatch)
-			}
-
-			var wg sync.WaitGroup
-			wg.Add(numGoroutines)
-			for g := range numGoroutines {
-				go func() {
-					defer wg.Done()
-					// Each goroutine gets its own executor
-					exec := tc.provider.New()
-					for i := range tasksPerBatch {
-						exec.Submit(func() {
-							results[g][i] = g*tasksPerBatch + i
-						})
-					}
-					exec.Wait()
-				}()
-			}
-			wg.Wait()
-
-			for g := range numGoroutines {
-				for i := range tasksPerBatch {
-					expected := g*tasksPerBatch + i
-					assert.Equal(t, expected, results[g][i],
-						"goroutine %d task %d", g, i)
-				}
-			}
+			checkConcurrentBatches(t, tc.provider)
 		})
+	}
+}
+
+// checkConcurrentBatches runs numGoroutines goroutines, each with its own
+// executor from provider, submitting tasksPerBatch tasks concurrently, and
+// verifies every task's result lands in its expected slot with no races.
+func checkConcurrentBatches(t *testing.T, provider ExecutorProvider) {
+	t.Helper()
+	const numGoroutines = 8
+	const tasksPerBatch = 32
+
+	results := make([][]int, numGoroutines)
+	for i := range numGoroutines {
+		results[i] = make([]int, tasksPerBatch)
+	}
+
+	var wg sync.WaitGroup
+	wg.Add(numGoroutines)
+	for g := range numGoroutines {
+		go func() {
+			defer wg.Done()
+			// Each goroutine gets its own executor
+			exec := provider.New()
+			for i := range tasksPerBatch {
+				exec.Submit(func() {
+					results[g][i] = g*tasksPerBatch + i
+				})
+			}
+			exec.Wait()
+		}()
+	}
+	wg.Wait()
+
+	for g := range numGoroutines {
+		for i := range tasksPerBatch {
+			expected := g*tasksPerBatch + i
+			assert.Equal(t, expected, results[g][i],
+				"goroutine %d task %d", g, i)
+		}
 	}
 }

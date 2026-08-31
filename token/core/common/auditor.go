@@ -224,6 +224,8 @@ func (a *Auditor[P, IA, TA, DS]) CheckTransfer(
 //
 // This function is used by auditors to ensure that no token is spent multiple times within
 // a single transaction.
+//
+//nolint:gocognit // sequential duplicate-token-ID scan across transfer and issue metadata guarding against double-spend within a tx; splitting would only hide the linear scan behind indirection
 func ExtractTokenIDsAndCheckDuplicates(
 	metadata *driver.TokenRequestMetadata,
 	anchor driver.TokenRequestAnchor,
@@ -361,21 +363,12 @@ func listAuditTokensWithRetry(
 		// The lookup failed. Check whether any requested token belongs to a
 		// transaction that is still pending; if so, the row is expected to appear
 		// once the finality listener persists it, so wait a bit and retry.
-		retry := false
-		for _, id := range tokenIDs {
-			pending, pErr := queryEngine.IsPending(ctx, id)
-			if pErr != nil {
-				// We could not even determine the pending status: this is a hard
-				// failure, not a pending transaction. Surface both errors instead
-				// of masking them as "still pending".
-				return nil, errors.Wrapf(errors.Join(err, pErr), "failed to retrieve audit tokens, tx [%s]: cannot determine pending status of token [%s]", anchor, id)
-			}
-			if pending {
-				logger.Warnf("[%s] cannot get audit token for id [%s] because the relative transaction is pending, retry [%d/%d]: with err [%v]", anchor, id, i+1, attempts, err)
-				retry = true
-
-				break
-			}
+		retry, failedID, pErr := anyTokenPending(ctx, logger, queryEngine, tokenIDs, anchor, i, attempts, err)
+		if pErr != nil {
+			// We could not even determine the pending status: this is a hard
+			// failure, not a pending transaction. Surface both errors instead
+			// of masking them as "still pending".
+			return nil, errors.Wrapf(errors.Join(err, pErr), "failed to retrieve audit tokens, tx [%s]: cannot determine pending status of token [%s]", anchor, failedID)
 		}
 
 		if !retry {
@@ -404,6 +397,34 @@ func listAuditTokensWithRetry(
 	}
 
 	return nil, err
+}
+
+// anyTokenPending reports whether any of tokenIDs belongs to a transaction that
+// is still pending, logging a retry note for the first one it finds. A non-nil
+// error means the pending status itself could not be determined for the
+// returned id, which is a hard failure distinct from "not pending".
+func anyTokenPending(
+	ctx context.Context,
+	logger logging.Logger,
+	queryEngine driver.QueryEngine,
+	tokenIDs []*token.ID,
+	anchor driver.TokenRequestAnchor,
+	attempt, attempts int,
+	lookupErr error,
+) (retry bool, failedID *token.ID, err error) {
+	for _, id := range tokenIDs {
+		pending, pErr := queryEngine.IsPending(ctx, id)
+		if pErr != nil {
+			return false, id, pErr
+		}
+		if pending {
+			logger.Warnf("[%s] cannot get audit token for id [%s] because the relative transaction is pending, retry [%d/%d]: with err [%v]", anchor, id, attempt+1, attempts, lookupErr)
+
+			return true, nil, nil
+		}
+	}
+
+	return false, nil, nil
 }
 
 // ValidateStructure ensures complete structural correspondence between TokenRequest and TokenRequestMetadata.
@@ -439,67 +460,76 @@ func ValidateStructure(
 
 	// Validate each action has corresponding metadata with correct type
 	for i, action := range tokenRequest.Actions {
-		if action == nil {
-			return errors.Errorf("action at index [%d] is nil for tx [%s]", i, txID)
+		if err := validateActionStructure(i, action, tokenRequestMetadata.Actions[i], txID); err != nil {
+			return err
 		}
+	}
 
-		metadata := tokenRequestMetadata.Actions[i]
-		if metadata == nil {
-			return errors.Errorf("metadata at index [%d] is nil for tx [%s]", i, txID)
-		}
+	return nil
+}
 
-		// Verify ActionID matches position
-		if metadata.ActionID != uint32(i) {
+// validateActionStructure validates one request action against its metadata
+// counterpart: both present, the metadata's ActionID matches its position, and
+// the metadata's populated field (Issue vs Transfer) matches the action's type.
+func validateActionStructure(i int, action *driver.TypedAction, metadata *driver.ActionMetadataEntry, txID driver.TokenRequestAnchor) error {
+	if action == nil {
+		return errors.Errorf("action at index [%d] is nil for tx [%s]", i, txID)
+	}
+	if metadata == nil {
+		return errors.Errorf("metadata at index [%d] is nil for tx [%s]", i, txID)
+	}
+
+	// Verify ActionID matches position
+	if metadata.ActionID != uint32(i) { //nolint:gosec // i is a slice range index, always within uint32 range
+		return errors.Errorf(
+			"metadata at index [%d] has incorrect ActionID [%d] for tx [%s]",
+			i,
+			metadata.ActionID,
+			txID,
+		)
+	}
+
+	// Verify action type matches metadata type
+	switch action.Type {
+	case request.ActionType_ACTION_TYPE_ISSUE:
+		if metadata.IssueMetadata == nil {
 			return errors.Errorf(
-				"metadata at index [%d] has incorrect ActionID [%d] for tx [%s]",
+				"action at index [%d] is ISSUE but metadata has no IssueMetadata for tx [%s]",
 				i,
-				metadata.ActionID,
+				txID,
+			)
+		}
+		if metadata.TransferMetadata != nil {
+			return errors.Errorf(
+				"action at index [%d] is ISSUE but metadata also has TransferMetadata for tx [%s]",
+				i,
 				txID,
 			)
 		}
 
-		// Verify action type matches metadata type
-		switch action.Type {
-		case request.ActionType_ACTION_TYPE_ISSUE:
-			if metadata.IssueMetadata == nil {
-				return errors.Errorf(
-					"action at index [%d] is ISSUE but metadata has no IssueMetadata for tx [%s]",
-					i,
-					txID,
-				)
-			}
-			if metadata.TransferMetadata != nil {
-				return errors.Errorf(
-					"action at index [%d] is ISSUE but metadata also has TransferMetadata for tx [%s]",
-					i,
-					txID,
-				)
-			}
-
-		case request.ActionType_ACTION_TYPE_TRANSFER:
-			if metadata.TransferMetadata == nil {
-				return errors.Errorf(
-					"action at index [%d] is TRANSFER but metadata has no TransferMetadata for tx [%s]",
-					i,
-					txID,
-				)
-			}
-			if metadata.IssueMetadata != nil {
-				return errors.Errorf(
-					"action at index [%d] is TRANSFER but metadata also has IssueMetadata for tx [%s]",
-					i,
-					txID,
-				)
-			}
-
-		default:
+	case request.ActionType_ACTION_TYPE_TRANSFER:
+		if metadata.TransferMetadata == nil {
 			return errors.Errorf(
-				"action at index [%d] has unknown type [%s] for tx [%s]",
+				"action at index [%d] is TRANSFER but metadata has no TransferMetadata for tx [%s]",
 				i,
-				action.Type,
 				txID,
 			)
 		}
+		if metadata.IssueMetadata != nil {
+			return errors.Errorf(
+				"action at index [%d] is TRANSFER but metadata also has IssueMetadata for tx [%s]",
+				i,
+				txID,
+			)
+		}
+
+	default:
+		return errors.Errorf(
+			"action at index [%d] has unknown type [%s] for tx [%s]",
+			i,
+			action.Type,
+			txID,
+		)
 	}
 
 	return nil
@@ -529,29 +559,14 @@ func ValidateIssueActionTokenTypes(
 
 	// Validate and extract token type from inputs (if any exist)
 	for i, inputMetadata := range metadata.Inputs {
-		if inputMetadata == nil {
+		if inputMetadata == nil || inputMetadata.TokenID == nil {
 			continue
 		}
 
-		// Verify input token exists in auditTokens map
-		if inputMetadata.TokenID != nil {
-			inputToken, exists := auditTokens[inputMetadata.TokenID.String()]
-			if !exists {
-				return errors.Errorf("input token [%s:%d] at index [%d] not found in audit tokens",
-					inputMetadata.TokenID.TxId, inputMetadata.TokenID.Index, i)
-			}
-
-			// For issue inputs (token upgrades/conversions), we get the type from the audit token
-			if inputToken != nil && inputToken.Type != "" {
-				if actionTokenType == "" {
-					actionTokenType = inputToken.Type
-				} else if actionTokenType != inputToken.Type {
-					return errors.Errorf(
-						"token type mismatch in issue action: input [%d] has type [%s] but expected [%s]",
-						i, inputToken.Type, actionTokenType,
-					)
-				}
-			}
+		var err error
+		actionTokenType, err = checkIssueInputType(i, inputMetadata.TokenID, auditTokens, actionTokenType)
+		if err != nil {
+			return err
 		}
 	}
 
@@ -559,6 +574,34 @@ func ValidateIssueActionTokenTypes(
 	// action deserialization and Match() methods. This function only validates input consistency.
 
 	return nil
+}
+
+// checkIssueInputType verifies that the issue input at index i exists in
+// auditTokens and, for issue inputs that carry a real token type (token
+// upgrades/conversions), agrees with actionTokenType. Returns the token type
+// the action has settled on so far.
+func checkIssueInputType(i int, tokenID *token.ID, auditTokens map[string]*token.Token, actionTokenType token.Type) (token.Type, error) {
+	inputToken, exists := auditTokens[tokenID.String()]
+	if !exists {
+		return "", errors.Errorf("input token [%s:%d] at index [%d] not found in audit tokens",
+			tokenID.TxId, tokenID.Index, i)
+	}
+
+	// For issue inputs (token upgrades/conversions), we get the type from the audit token
+	if inputToken == nil || inputToken.Type == "" {
+		return actionTokenType, nil
+	}
+	if actionTokenType == "" {
+		return inputToken.Type, nil
+	}
+	if actionTokenType != inputToken.Type {
+		return "", errors.Errorf(
+			"token type mismatch in issue action: input [%d] has type [%s] but expected [%s]",
+			i, inputToken.Type, actionTokenType,
+		)
+	}
+
+	return actionTokenType, nil
 }
 
 // ValidateTransferActionTokenTypes ensures all inputs and outputs in a transfer action have the same token type.
@@ -599,49 +642,13 @@ func ValidateTransferActionTokenTypes(
 		inputSum = token.NewZeroQuantity(precision)
 	}
 
-	// Validate and extract token type from inputs
+	// Validate and extract token type from inputs, accumulating their value if
+	// requested.
+	var err error
 	for i, inputMetadata := range metadata.Inputs {
-		if inputMetadata == nil {
-			return errors.Errorf("input metadata at index [%d] is nil", i)
-		}
-
-		// TokenID is required
-		if inputMetadata.TokenID == nil {
-			return errors.Errorf("input at index [%d] has nil TokenID", i)
-		}
-
-		// Verify input token exists and validate type
-		inputToken, exists := auditTokens[inputMetadata.TokenID.String()]
-		if !exists {
-			return errors.Errorf("input token [%s:%d] at index [%d] not found in audit tokens",
-				inputMetadata.TokenID.TxId, inputMetadata.TokenID.Index, i)
-		}
-
-		if inputToken == nil {
-			return errors.Errorf("input token [%s:%d] at index [%d] is nil in audit tokens",
-				inputMetadata.TokenID.TxId, inputMetadata.TokenID.Index, i)
-		}
-
-		// Validate and accumulate token type
-		if actionTokenType == "" {
-			actionTokenType = inputToken.Type
-		} else if actionTokenType != inputToken.Type {
-			return errors.Errorf(
-				"token type mismatch in transfer action: input [%d] has type [%s] but expected [%s]",
-				i, inputToken.Type, actionTokenType,
-			)
-		}
-
-		// Accumulate input value if validation is requested
-		if validateValueSum {
-			inputQty, err := token.ToQuantity(inputToken.Quantity, precision)
-			if err != nil {
-				return errors.Wrapf(err, "failed to convert input quantity at index [%d]", i)
-			}
-			inputSum, err = inputSum.Add(inputQty)
-			if err != nil {
-				return errors.Wrapf(err, "failed to add input quantity at index [%d]", i)
-			}
+		actionTokenType, inputSum, err = validateTransferInput(i, inputMetadata, auditTokens, actionTokenType, inputSum, validateValueSum, precision)
+		if err != nil {
+			return err
 		}
 	}
 
@@ -651,4 +658,85 @@ func ValidateTransferActionTokenTypes(
 	// which is handled by the driver-specific auditor.
 
 	return nil
+}
+
+// validateTransferInput validates one transfer input against auditTokens:
+// well-formed metadata, existence and type agreement with actionTokenType, and
+// (when validateValueSum) accumulates its value onto inputSum. Returns the
+// action's settled token type and running input sum.
+func validateTransferInput(
+	i int, inputMetadata *driver.TransferInputMetadata, auditTokens map[string]*token.Token,
+	actionTokenType token.Type, inputSum token.Quantity, validateValueSum bool, precision uint64,
+) (token.Type, token.Quantity, error) {
+	if inputMetadata == nil {
+		return "", nil, errors.Errorf("input metadata at index [%d] is nil", i)
+	}
+	if inputMetadata.TokenID == nil {
+		return "", nil, errors.Errorf("input at index [%d] has nil TokenID", i)
+	}
+
+	inputToken, err := lookupTransferInput(i, inputMetadata.TokenID, auditTokens)
+	if err != nil {
+		return "", nil, err
+	}
+
+	actionTokenType, err = checkTransferInputType(i, inputToken, actionTokenType)
+	if err != nil {
+		return "", nil, err
+	}
+
+	if validateValueSum {
+		inputSum, err = accumulateTransferInputValue(i, inputToken, inputSum, precision)
+		if err != nil {
+			return "", nil, err
+		}
+	}
+
+	return actionTokenType, inputSum, nil
+}
+
+// lookupTransferInput resolves the audit token for a transfer input, erroring
+// if it is missing or nil.
+func lookupTransferInput(i int, tokenID *token.ID, auditTokens map[string]*token.Token) (*token.Token, error) {
+	inputToken, exists := auditTokens[tokenID.String()]
+	if !exists {
+		return nil, errors.Errorf("input token [%s:%d] at index [%d] not found in audit tokens",
+			tokenID.TxId, tokenID.Index, i)
+	}
+	if inputToken == nil {
+		return nil, errors.Errorf("input token [%s:%d] at index [%d] is nil in audit tokens",
+			tokenID.TxId, tokenID.Index, i)
+	}
+
+	return inputToken, nil
+}
+
+// checkTransferInputType validates that inputToken's type agrees with
+// actionTokenType, returning the type the action has settled on so far.
+func checkTransferInputType(i int, inputToken *token.Token, actionTokenType token.Type) (token.Type, error) {
+	if actionTokenType == "" {
+		return inputToken.Type, nil
+	}
+	if actionTokenType != inputToken.Type {
+		return "", errors.Errorf(
+			"token type mismatch in transfer action: input [%d] has type [%s] but expected [%s]",
+			i, inputToken.Type, actionTokenType,
+		)
+	}
+
+	return actionTokenType, nil
+}
+
+// accumulateTransferInputValue adds inputToken's quantity onto inputSum.
+func accumulateTransferInputValue(i int, inputToken *token.Token, inputSum token.Quantity, precision uint64) (token.Quantity, error) {
+	inputQty, err := token.ToQuantity(inputToken.Quantity, precision)
+	if err != nil {
+		return nil, errors.Wrapf(err, "failed to convert input quantity at index [%d]", i)
+	}
+	inputSum, err = inputSum.Add(inputQty)
+	if err != nil {
+		return nil, errors.Wrapf(err, "failed to add input quantity at index [%d]", i)
+	}
+
+	return inputSum, nil
 }

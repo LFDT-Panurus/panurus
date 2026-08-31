@@ -22,6 +22,19 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// endorsersUnmarshalKeyStub returns a mock2.Configuration.UnmarshalKeyStub
+// that populates the fsc.EndorsersKey key with endorsers and leaves every
+// other key untouched.
+func endorsersUnmarshalKeyStub(endorsers []string) func(key string, rawVal any) error {
+	return func(key string, rawVal any) error {
+		if key == fsc.EndorsersKey {
+			*rawVal.(*[]string) = endorsers
+		}
+
+		return nil
+	}
+}
+
 func TestNewEndorsementService(t *testing.T) {
 	tmsID := token.TMSID{
 		Network:   "test_network",
@@ -33,13 +46,7 @@ func TestNewEndorsementService(t *testing.T) {
 		config := &mock2.Configuration{}
 		config.GetBoolReturns(true)
 		config.GetStringReturns(fsc.AllPolicy)
-		config.UnmarshalKeyStub = func(key string, rawVal any) error {
-			if key == fsc.EndorsersKey {
-				*rawVal.(*[]string) = []string{"endorser1", "endorser2"}
-			}
-
-			return nil
-		}
+		config.UnmarshalKeyStub = endorsersUnmarshalKeyStub([]string{"endorser1", "endorser2"})
 
 		namespaceProcessor := &mockNamespaceTxProcessor{}
 		viewRegistry := &mockViewRegistry{}
@@ -85,13 +92,7 @@ func TestNewEndorsementService(t *testing.T) {
 		config := &mock2.Configuration{}
 		config.GetBoolReturns(false)
 		config.GetStringReturns(fsc.OneOutNPolicy)
-		config.UnmarshalKeyStub = func(key string, rawVal any) error {
-			if key == fsc.EndorsersKey {
-				*rawVal.(*[]string) = []string{"endorser1"}
-			}
-
-			return nil
-		}
+		config.UnmarshalKeyStub = endorsersUnmarshalKeyStub([]string{"endorser1"})
 
 		namespaceProcessor := &mockNamespaceTxProcessor{}
 		viewRegistry := &mockViewRegistry{}
@@ -134,13 +135,7 @@ func TestNewEndorsementService(t *testing.T) {
 		config := &mock2.Configuration{}
 		config.GetBoolReturns(false)
 		config.GetStringReturns("")
-		config.UnmarshalKeyStub = func(key string, rawVal any) error {
-			if key == fsc.EndorsersKey {
-				*rawVal.(*[]string) = []string{"endorser1"}
-			}
-
-			return nil
-		}
+		config.UnmarshalKeyStub = endorsersUnmarshalKeyStub([]string{"endorser1"})
 
 		identityProvider := &mockIdentityProvider{
 			identities: map[string]view.Identity{
@@ -172,13 +167,7 @@ func TestNewEndorsementService(t *testing.T) {
 	t.Run("failed to enable tx processing", func(t *testing.T) {
 		config := &mock2.Configuration{}
 		config.GetBoolReturns(true)
-		config.UnmarshalKeyStub = func(key string, rawVal any) error {
-			if key == fsc.EndorsersKey {
-				*rawVal.(*[]string) = []string{"endorser1"}
-			}
-
-			return nil
-		}
+		config.UnmarshalKeyStub = endorsersUnmarshalKeyStub([]string{"endorser1"})
 
 		namespaceProcessor := &mockNamespaceTxProcessor{
 			enableTxProcessingError: errors.New("failed to enable"),
@@ -208,13 +197,7 @@ func TestNewEndorsementService(t *testing.T) {
 	t.Run("failed to register responder", func(t *testing.T) {
 		config := &mock2.Configuration{}
 		config.GetBoolReturns(true)
-		config.UnmarshalKeyStub = func(key string, rawVal any) error {
-			if key == fsc.EndorsersKey {
-				*rawVal.(*[]string) = []string{"endorser1"}
-			}
-
-			return nil
-		}
+		config.UnmarshalKeyStub = endorsersUnmarshalKeyStub([]string{"endorser1"})
 
 		viewRegistry := &mockViewRegistry{
 			registerResponderError: errors.New("failed to register"),
@@ -244,13 +227,7 @@ func TestNewEndorsementService(t *testing.T) {
 	t.Run("failed to register approval responder", func(t *testing.T) {
 		config := &mock2.Configuration{}
 		config.GetBoolReturns(true)
-		config.UnmarshalKeyStub = func(key string, rawVal any) error {
-			if key == fsc.EndorsersKey {
-				*rawVal.(*[]string) = []string{"endorser1"}
-			}
-
-			return nil
-		}
+		config.UnmarshalKeyStub = endorsersUnmarshalKeyStub([]string{"endorser1"})
 
 		viewRegistry := &mockViewRegistry{
 			registerResponderError:       errors.New("failed to register"),
@@ -307,13 +284,7 @@ func TestNewEndorsementService(t *testing.T) {
 	t.Run("no endorsers found", func(t *testing.T) {
 		config := &mock2.Configuration{}
 		config.GetBoolReturns(false)
-		config.UnmarshalKeyStub = func(key string, rawVal any) error {
-			if key == fsc.EndorsersKey {
-				*rawVal.(*[]string) = []string{}
-			}
-
-			return nil
-		}
+		config.UnmarshalKeyStub = endorsersUnmarshalKeyStub([]string{})
 
 		_, err := fsc.NewEndorsementService(
 			&mockNamespaceTxProcessor{},
@@ -339,13 +310,7 @@ func TestNewEndorsementService(t *testing.T) {
 	t.Run("endorser identity not found", func(t *testing.T) {
 		config := &mock2.Configuration{}
 		config.GetBoolReturns(false)
-		config.UnmarshalKeyStub = func(key string, rawVal any) error {
-			if key == fsc.EndorsersKey {
-				*rawVal.(*[]string) = []string{"unknown_endorser"}
-			}
-
-			return nil
-		}
+		config.UnmarshalKeyStub = endorsersUnmarshalKeyStub([]string{"unknown_endorser"})
 
 		identityProvider := &mockIdentityProvider{
 			identities: map[string]view.Identity{},

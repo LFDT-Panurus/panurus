@@ -471,6 +471,7 @@ func (p *PublicParams) Serialize() ([]byte, error) {
 	})
 }
 
+//nolint:gocognit // sequential field-by-field reconstruction and validation of public parameters from the wire format; splitting would not reduce real complexity, only hide it behind indirection
 func (p *PublicParams) Deserialize(raw []byte) error {
 	container, err := pp3.Unmarshal(raw)
 	if err != nil {
@@ -685,6 +686,8 @@ func (p *PublicParams) String() string {
 
 // Validate validates the public parameters.
 // The list of issuers can be empty meaning that anyone can create tokens.
+//
+//nolint:gocognit // sequential validation of independent public-parameter fields; splitting would not reduce real complexity, only hide it behind indirection
 func (p *PublicParams) Validate() error {
 	if int(p.Curve) > len(mathlib.Curves)-1 {
 		return errors.Errorf("invalid public parameters: invalid curveID [%d > %d]", int(p.Curve), len(mathlib.Curves)-1)

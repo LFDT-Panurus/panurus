@@ -206,6 +206,9 @@ func (t *TransferAction) GetIssuer() driver.Identity {
 	return t.Issuer
 }
 
+// Validate ensures the Action is well-formed
+//
+//nolint:gocognit // sequential structural checks of the transfer action's independent fields; splitting would not reduce real complexity, only hide it behind indirection
 func (t *TransferAction) Validate() error {
 	if len(t.Inputs) == 0 {
 		return errors.Errorf("invalid number of token inputs, expected at least 1")

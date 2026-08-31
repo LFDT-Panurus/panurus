@@ -61,14 +61,7 @@ func (m *StubbornSelector) Select(ctx context.Context, ownerFilter token.OwnerFi
 	start := time.Now()
 	for retriesAfterBackoff := 0; retriesAfterBackoff <= m.maxRetriesAfterBackoff; retriesAfterBackoff++ {
 		if tokens, quantity, err := m.selectWithoutMetrics(ctx, ownerFilter, q, tokenType); err == nil || !errors.Is(err, token.SelectorSufficientButLockedFunds) {
-			m.metrics.SelectionDuration.Observe(time.Since(start).Seconds())
-			if err == nil {
-				m.metrics.SelectionOutcome.With(outcomeLabel, "success").Add(1)
-			} else if errors.Is(err, token.SelectorInsufficientFunds) {
-				m.metrics.SelectionOutcome.With(outcomeLabel, "insufficient_funds").Add(1)
-			} else {
-				m.metrics.SelectionOutcome.With(outcomeLabel, "error").Add(1)
-			}
+			m.recordSelectionOutcome(start, err)
 
 			return tokens, quantity, err
 		}
@@ -86,8 +79,7 @@ func (m *StubbornSelector) Select(ctx context.Context, ownerFilter token.OwnerFi
 			if err := m.locker.UnlockAll(ctx); err != nil {
 				m.logger.Errorf("failed to unlock tokens on context cancellation: %s", err)
 			}
-			m.metrics.SelectionDuration.Observe(time.Since(start).Seconds())
-			m.metrics.SelectionOutcome.With(outcomeLabel, "error").Add(1)
+			m.recordSelectionOutcome(start, ctx.Err())
 
 			return nil, nil, ctx.Err()
 		}
@@ -98,6 +90,20 @@ func (m *StubbornSelector) Select(ctx context.Context, ownerFilter token.OwnerFi
 	m.metrics.SelectionOutcome.With(outcomeLabel, "locked_funds").Add(1)
 
 	return nil, nil, errors.Wrapf(token.SelectorInsufficientFunds, "aborted too many times and no other process unlocked or added tokens")
+}
+
+// recordSelectionOutcome observes the elapsed duration since start and
+// increments the outcome counter matching err.
+func (m *StubbornSelector) recordSelectionOutcome(start time.Time, err error) {
+	m.metrics.SelectionDuration.Observe(time.Since(start).Seconds())
+	switch {
+	case err == nil:
+		m.metrics.SelectionOutcome.With(outcomeLabel, "success").Add(1)
+	case errors.Is(err, token.SelectorInsufficientFunds):
+		m.metrics.SelectionOutcome.With(outcomeLabel, "insufficient_funds").Add(1)
+	default:
+		m.metrics.SelectionOutcome.With(outcomeLabel, "error").Add(1)
+	}
 }
 
 func NewStubbornSelector(logger logging.Logger, tokenDB TokenFetcher, lockDB TokenLocker, precision uint64, backoff time.Duration, retries int, m *Metrics) *StubbornSelector {
@@ -154,6 +160,13 @@ func (s *Selector) selectWithoutMetrics(ctx context.Context, owner token.OwnerFi
 	return ids, quantity, err
 }
 
+// greedy token-selection loop whose branches mutate shared loop state (sum,
+// selected, retry/lock bookkeeping) feeding the next iteration; splitting
+// would require threading that state through several return values for no
+// real complexity reduction, and risks a subtle bug in this security-sensitive
+// selection/locking logic.
+//
+//nolint:gocognit
 func (s *Selector) selectInternal(ctx context.Context, owner token.OwnerFilter, q string, tokenType token2.Type) ([]*token2.ID, token2.Quantity, int, error) {
 	if s.isClosed() {
 		return nil, nil, 0, errors.Errorf("selector is already closed")

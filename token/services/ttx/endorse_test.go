@@ -205,15 +205,39 @@ func newTestEndorseViewContext(t *testing.T, input *TestEndorseViewContextInput)
 	return c
 }
 
+type endorseViewTestCase struct {
+	name          string
+	prepare       func() *TestEndorseViewContext
+	expectError   bool
+	errorContains string
+	expectErr     error
+	verify        func(*TestEndorseViewContext, any)
+}
+
+// assertEndorseViewResult checks tc's expectations against the result of
+// running its view: error matching when tc.expectError, otherwise tc.verify.
+func assertEndorseViewResult(t *testing.T, tc endorseViewTestCase, testCtx *TestEndorseViewContext, txBoxed any, err error) {
+	t.Helper()
+	if tc.expectError {
+		require.Error(t, err)
+		if len(tc.errorContains) != 0 {
+			assert.Contains(t, err.Error(), tc.errorContains)
+		}
+		if tc.expectErr != nil {
+			require.ErrorIs(t, err, tc.expectErr)
+		}
+
+		return
+	}
+
+	require.NoError(t, err)
+	if tc.verify != nil {
+		tc.verify(testCtx, txBoxed)
+	}
+}
+
 func TestEndorseView(t *testing.T) {
-	testCases := []struct {
-		name          string
-		prepare       func() *TestEndorseViewContext
-		expectError   bool
-		errorContains string
-		expectErr     error
-		verify        func(*TestEndorseViewContext, any)
-	}{
+	testCases := []endorseViewTestCase{
 		{
 			name: "transaction is nil",
 			prepare: func() *TestEndorseViewContext {
@@ -329,20 +353,7 @@ func TestEndorseView(t *testing.T) {
 			testCtx := tc.prepare()
 			v := ttx.NewEndorseView(testCtx.tx)
 			txBoxed, err := v.Call(testCtx.ctx)
-			if tc.expectError {
-				require.Error(t, err)
-				if len(tc.errorContains) != 0 {
-					assert.Contains(t, err.Error(), tc.errorContains)
-				}
-				if tc.expectErr != nil {
-					require.ErrorIs(t, err, tc.expectErr)
-				}
-			} else {
-				require.NoError(t, err)
-				if tc.verify != nil {
-					tc.verify(testCtx, txBoxed)
-				}
-			}
+			assertEndorseViewResult(t, tc, testCtx, txBoxed, err)
 		})
 	}
 }

@@ -328,6 +328,26 @@ func TestConfig_ImplementsRateLimitConfiguration(t *testing.T) {
 }
 
 // TestNew verifies config parsing handles valid configs, empty configs, and unmarshal errors.
+// configUnmarshalKeyStub returns a mock.ConfigService.UnmarshalKeyStub that
+// fails with unmarshalErr if set, otherwise copies the *Config value stored
+// at key in mockConfig into rawVal when both are present and well-typed.
+func configUnmarshalKeyStub(mockConfig map[string]any, unmarshalErr error) func(key string, rawVal any) error {
+	return func(key string, rawVal any) error {
+		if unmarshalErr != nil {
+			return unmarshalErr
+		}
+		if val, ok := mockConfig[key]; ok {
+			if c, ok := rawVal.(*Config); ok {
+				if cfg, ok := val.(*Config); ok {
+					*c = *cfg
+				}
+			}
+		}
+
+		return nil
+	}
+}
+
 func TestNew(t *testing.T) {
 	tests := []struct {
 		name         string
@@ -365,20 +385,7 @@ func TestNew(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			mockSvc := &mock.ConfigService{}
-			mockSvc.UnmarshalKeyStub = func(key string, rawVal any) error {
-				if tt.unmarshalErr != nil {
-					return tt.unmarshalErr
-				}
-				if val, ok := tt.mockConfig[key]; ok {
-					if c, ok := rawVal.(*Config); ok {
-						if cfg, ok := val.(*Config); ok {
-							*c = *cfg
-						}
-					}
-				}
-
-				return nil
-			}
+			mockSvc.UnmarshalKeyStub = configUnmarshalKeyStub(tt.mockConfig, tt.unmarshalErr)
 
 			cfg, err := New(mockSvc)
 

@@ -349,172 +349,177 @@ func TestManager_Close(t *testing.T) {
 }
 
 func TestManager_Cleaner(t *testing.T) {
-	t.Run("cleaner calls Cleanup periodically", func(t *testing.T) {
-		mockFetcher := &mockTokenFetcher{}
-		mockLocker := &mockLocker{}
+	t.Run("cleaner calls Cleanup periodically", checkCleanerCallsCleanupPeriodically)
+	t.Run("cleaner handles cleanup errors gracefully", checkCleanerHandlesCleanupErrorsGracefully)
+	t.Run("cleanup skipped when leadership not acquired", checkCleanupSkippedWhenLeadershipNotAcquired)
+	t.Run("leadership released after cleanup ran", checkLeadershipReleasedAfterCleanupRan)
+}
 
-		cleanupCalled := make(chan struct{}, 2)
-		mockLocker.cleanupFunc = func(ctx context.Context, expiry time.Duration) error {
-			cleanupCalled <- struct{}{}
+func checkCleanerCallsCleanupPeriodically(t *testing.T) {
+	mockFetcher := &mockTokenFetcher{}
+	mockLocker := &mockLocker{}
 
-			return nil
+	cleanupCalled := make(chan struct{}, 2)
+	mockLocker.cleanupFunc = func(ctx context.Context, expiry time.Duration) error {
+		cleanupCalled <- struct{}{}
+
+		return nil
+	}
+
+	// Short tick period for testing
+	m := NewManager(
+		mockFetcher,
+		mockLocker,
+		100,
+		time.Second,
+		5,
+		10*time.Minute,
+		50*time.Millisecond, // Short period for testing
+		NewMetrics(&disabled.Provider{}),
+	)
+
+	// Wait for at least 2 cleanup calls
+	select {
+	case <-cleanupCalled:
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("cleanup not called in time")
+	}
+
+	select {
+	case <-cleanupCalled:
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("cleanup not called second time")
+	}
+
+	// Verify manager is still functional
+	assert.NotNil(t, m)
+}
+
+func checkCleanerHandlesCleanupErrorsGracefully(t *testing.T) {
+	mockFetcher := &mockTokenFetcher{}
+	mockLocker := &mockLocker{}
+
+	cleanupCalled := make(chan struct{}, 1)
+	mockLocker.cleanupFunc = func(ctx context.Context, expiry time.Duration) error {
+		cleanupCalled <- struct{}{}
+
+		return errors.New("cleanup error")
+	}
+
+	m := NewManager(
+		mockFetcher,
+		mockLocker,
+		100,
+		time.Second,
+		5,
+		10*time.Minute,
+		50*time.Millisecond,
+		NewMetrics(&disabled.Provider{}),
+	)
+
+	// Wait for cleanup call (should not panic despite error)
+	select {
+	case <-cleanupCalled:
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("cleanup not called")
+	}
+
+	// Manager should still be functional
+	assert.NotNil(t, m)
+}
+
+func checkCleanupSkippedWhenLeadershipNotAcquired(t *testing.T) {
+	mockFetcher := &mockTokenFetcher{}
+	mockLocker := &mockLocker{}
+
+	cleanupCalled := make(chan struct{}, 1)
+	mockLocker.cleanupFunc = func(ctx context.Context, expiry time.Duration) error {
+		cleanupCalled <- struct{}{}
+
+		return nil
+	}
+	leadershipAttempted := make(chan struct{}, 1)
+	mockLocker.acquireCleanupLeadershipFunc = func(ctx context.Context) (driver.CleanupLeadership, bool, error) {
+		// Non-blocking: the ticker keeps calling this every tick, but
+		// the test only reads once. A blocking send here would leave
+		// the cleaner goroutine stuck inside this call on the second
+		// tick, past the point where it can react to Stop().
+		select {
+		case leadershipAttempted <- struct{}{}:
+		default:
 		}
 
-		// Short tick period for testing
-		m := NewManager(
-			mockFetcher,
-			mockLocker,
-			100,
-			time.Second,
-			5,
-			10*time.Minute,
-			50*time.Millisecond, // Short period for testing
-			NewMetrics(&disabled.Provider{}),
-		)
+		return nil, false, nil
+	}
 
-		// Wait for at least 2 cleanup calls
+	m := NewManager(
+		mockFetcher,
+		mockLocker,
+		100,
+		time.Second,
+		5,
+		10*time.Minute,
+		50*time.Millisecond,
+		NewMetrics(&disabled.Provider{}),
+	)
+
+	select {
+	case <-leadershipAttempted:
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("leadership was never attempted")
+	}
+
+	select {
+	case <-cleanupCalled:
+		t.Fatal("Cleanup should not be called when leadership is not acquired")
+	case <-time.After(150 * time.Millisecond):
+		// expected: no cleanup call
+	}
+
+	require.NoError(t, m.Stop())
+}
+
+func checkLeadershipReleasedAfterCleanupRan(t *testing.T) {
+	mockFetcher := &mockTokenFetcher{}
+	mockLocker := &mockLocker{}
+
+	// events records "cleanup" then "closed" in order, so the test
+	// verifies Cleanup actually ran (not just that Close was called),
+	// and that release happens after Cleanup completes, not before or
+	// concurrently with it.
+	events := make(chan string, 2)
+	mockLocker.cleanupFunc = func(ctx context.Context, expiry time.Duration) error {
+		events <- "cleanup"
+
+		return nil
+	}
+	mockLocker.acquireCleanupLeadershipFunc = func(ctx context.Context) (driver.CleanupLeadership, bool, error) {
+		return &fakeLeadership{events: events}, true, nil
+	}
+
+	m := NewManager(
+		mockFetcher,
+		mockLocker,
+		100,
+		time.Second,
+		5,
+		10*time.Minute,
+		50*time.Millisecond,
+		NewMetrics(&disabled.Provider{}),
+	)
+
+	var got []string
+	for range 2 {
 		select {
-		case <-cleanupCalled:
+		case e := <-events:
+			got = append(got, e)
 		case <-time.After(200 * time.Millisecond):
-			t.Fatal("cleanup not called in time")
+			t.Fatalf("timed out waiting for events, got so far: %v", got)
 		}
+	}
+	require.Equal(t, []string{"cleanup", "closed"}, got, "Cleanup must run, and leadership must release only after it completes")
 
-		select {
-		case <-cleanupCalled:
-		case <-time.After(200 * time.Millisecond):
-			t.Fatal("cleanup not called second time")
-		}
-
-		// Verify manager is still functional
-		assert.NotNil(t, m)
-	})
-
-	t.Run("cleaner handles cleanup errors gracefully", func(t *testing.T) {
-		mockFetcher := &mockTokenFetcher{}
-		mockLocker := &mockLocker{}
-
-		cleanupCalled := make(chan struct{}, 1)
-		mockLocker.cleanupFunc = func(ctx context.Context, expiry time.Duration) error {
-			cleanupCalled <- struct{}{}
-
-			return errors.New("cleanup error")
-		}
-
-		m := NewManager(
-			mockFetcher,
-			mockLocker,
-			100,
-			time.Second,
-			5,
-			10*time.Minute,
-			50*time.Millisecond,
-			NewMetrics(&disabled.Provider{}),
-		)
-
-		// Wait for cleanup call (should not panic despite error)
-		select {
-		case <-cleanupCalled:
-		case <-time.After(200 * time.Millisecond):
-			t.Fatal("cleanup not called")
-		}
-
-		// Manager should still be functional
-		assert.NotNil(t, m)
-	})
-
-	t.Run("cleanup skipped when leadership not acquired", func(t *testing.T) {
-		mockFetcher := &mockTokenFetcher{}
-		mockLocker := &mockLocker{}
-
-		cleanupCalled := make(chan struct{}, 1)
-		mockLocker.cleanupFunc = func(ctx context.Context, expiry time.Duration) error {
-			cleanupCalled <- struct{}{}
-
-			return nil
-		}
-		leadershipAttempted := make(chan struct{}, 1)
-		mockLocker.acquireCleanupLeadershipFunc = func(ctx context.Context) (driver.CleanupLeadership, bool, error) {
-			// Non-blocking: the ticker keeps calling this every tick, but
-			// the test only reads once. A blocking send here would leave
-			// the cleaner goroutine stuck inside this call on the second
-			// tick, past the point where it can react to Stop().
-			select {
-			case leadershipAttempted <- struct{}{}:
-			default:
-			}
-
-			return nil, false, nil
-		}
-
-		m := NewManager(
-			mockFetcher,
-			mockLocker,
-			100,
-			time.Second,
-			5,
-			10*time.Minute,
-			50*time.Millisecond,
-			NewMetrics(&disabled.Provider{}),
-		)
-
-		select {
-		case <-leadershipAttempted:
-		case <-time.After(200 * time.Millisecond):
-			t.Fatal("leadership was never attempted")
-		}
-
-		select {
-		case <-cleanupCalled:
-			t.Fatal("Cleanup should not be called when leadership is not acquired")
-		case <-time.After(150 * time.Millisecond):
-			// expected: no cleanup call
-		}
-
-		require.NoError(t, m.Stop())
-	})
-
-	t.Run("leadership released after cleanup ran", func(t *testing.T) {
-		mockFetcher := &mockTokenFetcher{}
-		mockLocker := &mockLocker{}
-
-		// events records "cleanup" then "closed" in order, so the test
-		// verifies Cleanup actually ran (not just that Close was called),
-		// and that release happens after Cleanup completes, not before or
-		// concurrently with it.
-		events := make(chan string, 2)
-		mockLocker.cleanupFunc = func(ctx context.Context, expiry time.Duration) error {
-			events <- "cleanup"
-
-			return nil
-		}
-		mockLocker.acquireCleanupLeadershipFunc = func(ctx context.Context) (driver.CleanupLeadership, bool, error) {
-			return &fakeLeadership{events: events}, true, nil
-		}
-
-		m := NewManager(
-			mockFetcher,
-			mockLocker,
-			100,
-			time.Second,
-			5,
-			10*time.Minute,
-			50*time.Millisecond,
-			NewMetrics(&disabled.Provider{}),
-		)
-
-		var got []string
-		for range 2 {
-			select {
-			case e := <-events:
-				got = append(got, e)
-			case <-time.After(200 * time.Millisecond):
-				t.Fatalf("timed out waiting for events, got so far: %v", got)
-			}
-		}
-		require.Equal(t, []string{"cleanup", "closed"}, got, "Cleanup must run, and leadership must release only after it completes")
-
-		require.NoError(t, m.Stop())
-	})
+	require.NoError(t, m.Stop())
 }
 
 // fakeLeadership is a minimal driver.CleanupLeadership for tests, signaling

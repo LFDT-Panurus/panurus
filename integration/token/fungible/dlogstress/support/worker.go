@@ -26,6 +26,14 @@ type Pool struct {
 	stop   atomic.Bool
 }
 
+// NewPool starts numWorkers goroutines pulling tasks off the queue until the pool's
+// context is cancelled; each worker's counter, task-duration slice, and start time are
+// goroutine-local closures accumulated for the shutdown summary in its deferred stats
+// block. Splitting the loop out would mean threading all of that worker-local state
+// through a helper's parameters instead of reducing the actual branching, and risks
+// breaking the closures' happens-before ordering with the atomics they read.
+//
+//nolint:gocognit // worker-loop goroutine closing over per-worker atomics and stats state
 func NewPool(label string, numWorkers int) *Pool {
 	ctx, cancel := context.WithCancel(context.Background())
 	pool := &Pool{

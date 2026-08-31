@@ -117,44 +117,57 @@ func TestDashboardLabelFiltersMatchDeclaredLabels(t *testing.T) {
 	registered, declaredLabels := registeredMetrics(t)
 
 	for _, query := range dashboardQueries(t) {
-		selectors := dashboardSelector.FindAllStringSubmatch(query, -1)
-		for _, selector := range selectors {
-			name := foldPromQLSuffix(selector[1], registered)
-			labels, ok := declaredLabels[name]
-			if !ok {
-				continue // reported by TestDashboardQueriesReferenceRegisteredMetrics
-			}
-			for _, matcher := range labelMatcherName.FindAllStringSubmatch(selector[2], -1) {
-				assert.Contains(t, labels, matcher[1],
-					"%s filters %s on label %q, which that metric does not declare (it has %v). "+
-						"The selector matches no series and the panel renders \"No data\".",
-					dashboardFile, name, matcher[1], labels)
-			}
-		}
+		checkQueryLabelSelectors(t, query, registered, declaredLabels)
+		checkQueryGroupByLabels(t, query, registered, declaredLabels)
+	}
+}
 
-		// A "by (...)" clause groups the result of a subexpression, so it can only
-		// be attributed to a metric when the query names exactly one. The names are
-		// taken from the whole query rather than from the selectors above: a metric
-		// queried with a range but no label filter has no selector block at all.
-		names := distinctMetricNames(query, registered)
-		if len(names) != 1 {
-			continue
-		}
-		labels, ok := declaredLabels[names[0]]
+// checkQueryLabelSelectors checks every label selector in query against the
+// labels its metric declares.
+func checkQueryLabelSelectors(t *testing.T, query string, registered map[string]string, declaredLabels map[string][]string) {
+	t.Helper()
+	selectors := dashboardSelector.FindAllStringSubmatch(query, -1)
+	for _, selector := range selectors {
+		name := foldPromQLSuffix(selector[1], registered)
+		labels, ok := declaredLabels[name]
 		if !ok {
-			continue
+			continue // reported by TestDashboardQueriesReferenceRegisteredMetrics
 		}
-		for _, clause := range groupByClause.FindAllStringSubmatch(query, -1) {
-			for label := range strings.SplitSeq(clause[1], ",") {
-				label = strings.TrimSpace(label)
-				if label == "" || slices.Contains(syntheticLabels, label) {
-					continue
-				}
-				assert.Contains(t, labels, label,
-					"%s groups %s by label %q, which that metric does not declare (it has %v). "+
-						"Grouping by an absent label collapses every series into one.",
-					dashboardFile, names[0], label, labels)
+		for _, matcher := range labelMatcherName.FindAllStringSubmatch(selector[2], -1) {
+			assert.Contains(t, labels, matcher[1],
+				"%s filters %s on label %q, which that metric does not declare (it has %v). "+
+					"The selector matches no series and the panel renders \"No data\".",
+				dashboardFile, name, matcher[1], labels)
+		}
+	}
+}
+
+// checkQueryGroupByLabels checks a query's "by (...)" clauses against the
+// labels its single named metric declares. A "by (...)" clause groups the
+// result of a subexpression, so it can only be attributed to a metric when
+// the query names exactly one. The names are taken from the whole query
+// rather than from the selectors above: a metric queried with a range but no
+// label filter has no selector block at all.
+func checkQueryGroupByLabels(t *testing.T, query string, registered map[string]string, declaredLabels map[string][]string) {
+	t.Helper()
+	names := distinctMetricNames(query, registered)
+	if len(names) != 1 {
+		return
+	}
+	labels, ok := declaredLabels[names[0]]
+	if !ok {
+		return
+	}
+	for _, clause := range groupByClause.FindAllStringSubmatch(query, -1) {
+		for label := range strings.SplitSeq(clause[1], ",") {
+			label = strings.TrimSpace(label)
+			if label == "" || slices.Contains(syntheticLabels, label) {
+				continue
 			}
+			assert.Contains(t, labels, label,
+				"%s groups %s by label %q, which that metric does not declare (it has %v). "+
+					"Grouping by an absent label collapses every series into one.",
+				dashboardFile, names[0], label, labels)
 		}
 	}
 }

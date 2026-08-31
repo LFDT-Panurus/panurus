@@ -152,6 +152,35 @@ type transferEnv struct {
 }
 
 // newTransferEnv creates a new transfer environment for a given benchmark case and configuration.
+// buildLoadedInputToken serializes the i-th base token (a Pedersen
+// commitment) and its metadata into a v1.LoadedToken, and derives its ID.
+func buildLoadedInputToken(i int, tok *math.G1, md *v1token.Metadata, tokenFormat token.Format) (v1.LoadedToken, *token.ID, error) {
+	ownerID, err := identity.WrapWithType(idemix.IdentityType, []byte("alice"))
+	if err != nil {
+		return v1.LoadedToken{}, nil, err
+	}
+	v1Token := &v1token.Token{
+		Owner: ownerID,
+		Data:  tok,
+	}
+	tokenRaw, err := v1Token.Serialize()
+	if err != nil {
+		return v1.LoadedToken{}, nil, err
+	}
+
+	// metadata
+	mdRaw, err := md.Serialize()
+	if err != nil {
+		return v1.LoadedToken{}, nil, err
+	}
+
+	return v1.LoadedToken{
+		TokenFormat: tokenFormat,
+		Token:       tokenRaw,
+		Metadata:    mdRaw,
+	}, &token.ID{TxId: strconv.Itoa(i)}, nil
+}
+
 func newTransferEnv(benchmarkCase *benchmark2.Case, configurations *benchmark.SetupConfigurations) (*transferEnv, error) {
 	pp, err := configurations.GetPublicParams(benchmarkCase.Bits, benchmarkCase.CurveID)
 	if err != nil {
@@ -201,31 +230,12 @@ func newTransferEnv(benchmarkCase *benchmark2.Case, configurations *benchmark.Se
 	}
 
 	for i, tok := range baseTokens {
-		ownerID, err := identity.WrapWithType(idemix.IdentityType, []byte("alice"))
+		loadedToken, id, err := buildLoadedInputToken(i, tok, metadata[i], tokenFormat)
 		if err != nil {
 			return nil, err
 		}
-		v1Token := &v1token.Token{
-			Owner: ownerID,
-			Data:  tok,
-		}
-		tokenRaw, err := v1Token.Serialize()
-		if err != nil {
-			return nil, err
-		}
-
-		// metadata
-		mdRaw, err := metadata[i].Serialize()
-		if err != nil {
-			return nil, err
-		}
-
-		loadedTokens = append(loadedTokens, v1.LoadedToken{
-			TokenFormat: tokenFormat,
-			Token:       tokenRaw,
-			Metadata:    mdRaw,
-		})
-		ids[i] = &token.ID{TxId: strconv.Itoa(i)}
+		loadedTokens = append(loadedTokens, loadedToken)
+		ids[i] = id
 	}
 	tokenLoader := &mock.TokenLoader{}
 	tokenLoader.LoadTokensReturns(loadedTokens, nil)

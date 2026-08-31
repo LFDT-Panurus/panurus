@@ -83,6 +83,14 @@ func LoadLockConfig(cp ConfigProvider) *LockConfig {
 		return cfg
 	}
 
+	applyLockConfigOverrides(cfg, &raw)
+
+	return cfg
+}
+
+// applyLockConfigOverrides overlays the valid fields of raw onto cfg, leaving
+// cfg's existing (default) value in place for any field that is unset or invalid.
+func applyLockConfigOverrides(cfg *LockConfig, raw *LockConfigRaw) {
 	// Apply max retries if valid
 	if raw.MaxRetries > 0 {
 		cfg.MaxRetries = raw.MaxRetries
@@ -115,8 +123,6 @@ func LoadLockConfig(cp ConfigProvider) *LockConfig {
 	if raw.JitterFactor >= 0 && raw.JitterFactor <= 1.0 {
 		cfg.JitterFactor = raw.JitterFactor
 	}
-
-	return cfg
 }
 
 // Adapter to make config.Configuration compatible with ConfigProvider interface

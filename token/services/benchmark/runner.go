@@ -120,6 +120,18 @@ const (
 )
 
 // RunBenchmark executes the benchmark.
+//
+// This is a single concurrent harness: worker goroutines close over shared
+// mutable state (running/recording atomics, opsCounter, startGlobal,
+// peakGoroutines) whose visibility across goroutines depends on the ordering
+// of the atomic Store/Load pairs around them (e.g. startGlobal is written
+// before recording.Store(true), and workers only read it after observing
+// recording.Load()==true). Splitting the worker loop, the monitor goroutine,
+// or the barrier/start sequencing into separate functions would turn that
+// closure-captured shared state into explicit parameters and risks breaking
+// those happens-before relationships for no real complexity reduction.
+//
+//nolint:gocognit
 func RunBenchmark[T any](
 	cfg Config,
 	setup func() T,
@@ -328,6 +340,74 @@ func measureMemory[T any](setup func() T, work func(T) error) (bytes, allocs uin
 	return totalBytes / samples, totalAllocs / samples
 }
 
+// aggregateWorkerStats flattens every worker's chunked latency samples into
+// totals and a single sorted-later slice, skipping zero (unrecorded) slots
+// and computing the average absolute delta between consecutive samples
+// within each worker as jitter.
+// aggregateOneWorker flattens one worker's chunked latency samples, skipping
+// zero (unrecorded) slots, and returns its op count, total latency time,
+// individual latencies, and jitter accumulator: the sum of absolute deltas
+// between consecutive samples, plus the sample count to average it by.
+func aggregateOneWorker(w workerStats) (ops uint64, totalTimeNs int64, latencies []time.Duration, jitterSum float64, jitterSamples uint64) {
+	curr := w.head
+	var prevLat time.Duration
+	first := true
+
+	for curr != nil {
+		limit := curr.idx
+		ops += uint64(limit) // #nosec G115
+		for k := range limit {
+			lat := curr.data[k]
+			if lat == 0 {
+				continue
+			}
+
+			totalTimeNs += int64(lat)
+			latencies = append(latencies, lat)
+
+			if !first {
+				diff := float64(lat - prevLat)
+				if diff < 0 {
+					diff = -diff
+				}
+				jitterSum += diff
+				jitterSamples++
+			}
+			prevLat = lat
+			first = false
+		}
+		curr = curr.next
+	}
+
+	return ops, totalTimeNs, latencies, jitterSum, jitterSamples
+}
+
+// aggregateWorkerStats combines every worker's aggregateOneWorker result into
+// the totals analyzeResults needs.
+func aggregateWorkerStats(workers []workerStats) (totalOps, totalErrors uint64, totalTimeNs int64, allLatencies []time.Duration, jitter time.Duration) {
+	estimatedOps := uint64(len(workers)) * uint64(chunkSize) * 2
+	allLatencies = make([]time.Duration, 0, estimatedOps)
+
+	var totalJitter float64
+	var jitterSamples uint64
+
+	for _, w := range workers {
+		totalErrors += w.errors
+		ops, timeNs, latencies, jitterSum, samples := aggregateOneWorker(w)
+		totalOps += ops
+		totalTimeNs += timeNs
+		allLatencies = append(allLatencies, latencies...)
+		totalJitter += jitterSum
+		jitterSamples += samples
+	}
+
+	if jitterSamples > 0 {
+		jitter = time.Duration(totalJitter / float64(jitterSamples))
+	}
+
+	return totalOps, totalErrors, totalTimeNs, allLatencies, jitter
+}
+
 func analyzeResults(
 	cfg Config,
 	workers []workerStats,
@@ -337,48 +417,7 @@ func analyzeResults(
 	timeline []TimePoint,
 	goroutinesCreated int64,
 ) Result {
-	var totalOps uint64
-	var totalErrors uint64
-	var totalTimeNs int64
-
-	estimatedOps := uint64(len(workers)) * uint64(chunkSize) * 2
-	allLatencies := make([]time.Duration, 0, estimatedOps)
-
-	var totalJitter float64
-	var jitterSamples uint64
-
-	for _, w := range workers {
-		totalErrors += w.errors
-		curr := w.head
-		var prevLat time.Duration
-		first := true
-
-		for curr != nil {
-			limit := curr.idx
-			totalOps += uint64(limit) // #nosec G115
-			for k := range limit {
-				lat := curr.data[k]
-				if lat == 0 {
-					continue
-				}
-
-				totalTimeNs += int64(lat)
-				allLatencies = append(allLatencies, lat)
-
-				if !first {
-					diff := float64(lat - prevLat)
-					if diff < 0 {
-						diff = -diff
-					}
-					totalJitter += diff
-					jitterSamples++
-				}
-				prevLat = lat
-				first = false
-			}
-			curr = curr.next
-		}
-	}
+	totalOps, totalErrors, totalTimeNs, allLatencies, jitter := aggregateWorkerStats(workers)
 
 	if totalOps == 0 {
 		return Result{Config: cfg, ErrorRate: 100.0}
@@ -407,11 +446,6 @@ func analyzeResults(
 
 	// Stats
 	iqr := p75 - p25
-
-	jitter := time.Duration(0)
-	if jitterSamples > 0 {
-		jitter = time.Duration(totalJitter / float64(jitterSamples))
-	}
 
 	meanNs := float64(avgLatency.Nanoseconds())
 	var sumSqDiff float64
@@ -620,53 +654,60 @@ func (r Result) printHeatmap(w *tabwriter.Writer) {
 	}
 
 	for _, b := range r.Histogram {
-		if b.Count == 0 {
-			continue
-		}
-
-		// 1. Draw Bar
-		barLen := 0
-		if maxCount > 0 {
-			barLen = (b.Count * 40) / maxCount
-		}
-
-		ratio := 0.0
-		if maxCount > 0 {
-			ratio = float64(b.Count) / float64(maxCount)
-		}
-
-		// Heat Color Logic (RESTORED)
-		color := ColorBlue
-		if ratio > 0.75 {
-			color = ColorRed
-		} else if ratio > 0.3 {
-			color = ColorYellow
-		} else if ratio > 0.1 {
-			color = ColorGreen
-		}
-
-		bar := ""
-		var barSb619 strings.Builder
-		for range barLen {
-			barSb619.WriteString("█")
-		}
-		bar += barSb619.String()
-
-		// 2. Format Label
-		label := fmt.Sprintf("%v-%v", b.LowBound, b.HighBound)
-		if b.HighBound-b.LowBound < time.Microsecond {
-			label = fmt.Sprintf("%dns-%dns", b.LowBound.Nanoseconds(), b.HighBound.Nanoseconds())
-		}
-
-		percentage := 0.0
-		if r.OpsTotal > 0 {
-			percentage = (float64(b.Count) / float64(r.OpsTotal)) * 100
-		}
-
-		writef(w, " %s\t%d\t%s%s %s(%.1f%%)\n",
-			label, b.Count, color, bar, ColorReset, percentage,
-		)
+		printHeatmapBucket(w, b, maxCount, r.OpsTotal)
 	}
+}
+
+// printHeatmapBucket renders one histogram bucket's heatmap row: a
+// proportionally-sized, heat-colored bar plus its percentage of opsTotal.
+// Empty buckets are skipped.
+func printHeatmapBucket(w *tabwriter.Writer, b Bucket, maxCount int, opsTotal uint64) {
+	if b.Count == 0 {
+		return
+	}
+
+	// 1. Draw Bar
+	barLen := 0
+	if maxCount > 0 {
+		barLen = (b.Count * 40) / maxCount
+	}
+
+	ratio := 0.0
+	if maxCount > 0 {
+		ratio = float64(b.Count) / float64(maxCount)
+	}
+
+	// Heat Color Logic (RESTORED)
+	color := ColorBlue
+	if ratio > 0.75 {
+		color = ColorRed
+	} else if ratio > 0.3 {
+		color = ColorYellow
+	} else if ratio > 0.1 {
+		color = ColorGreen
+	}
+
+	bar := ""
+	var barSb619 strings.Builder
+	for range barLen {
+		barSb619.WriteString("█")
+	}
+	bar += barSb619.String()
+
+	// 2. Format Label
+	label := fmt.Sprintf("%v-%v", b.LowBound, b.HighBound)
+	if b.HighBound-b.LowBound < time.Microsecond {
+		label = fmt.Sprintf("%dns-%dns", b.LowBound.Nanoseconds(), b.HighBound.Nanoseconds())
+	}
+
+	percentage := 0.0
+	if opsTotal > 0 {
+		percentage = (float64(b.Count) / float64(opsTotal)) * 100
+	}
+
+	writef(w, " %s\t%d\t%s%s %s(%.1f%%)\n",
+		label, b.Count, color, bar, ColorReset, percentage,
+	)
 }
 
 // printAnalysis prints the analysis and recommendations section.

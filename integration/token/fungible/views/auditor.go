@@ -67,6 +67,42 @@ func (a *AuditView) Call(context view.Context) (any, error) {
 	eIDs := inputs.EnrollmentIDs()
 	tokenTypes := inputs.TokenTypes()
 	fmt.Printf("Limits on inputs [%v][%v]\n", eIDs, tokenTypes)
+	checkPaymentLimit(inputs, outputs, eIDs, tokenTypes)
+
+	// R2: Default cumulative payment limit is set to 2000.
+	checkCumulativePaymentLimit(context, auditor, inputs, outputs, eIDs, tokenTypes)
+
+	// R4: Default holding limit is set to 3000.
+	eIDs = outputs.EnrollmentIDs()
+	tokenTypes = outputs.TokenTypes()
+	checkHoldingLimit(context, auditor, inputs, outputs, eIDs, tokenTypes)
+
+	kvsInstance := GetKVS(context)
+
+	// R5: identify redeemed outputs and the issuer that approved each of them, and reject any
+	// redeem whose approving issuer is not on the auditor's allow-list.
+	if err := checkAuthorizedRedeemIssuers(context, kvsInstance, tx, outputs); err != nil {
+		return nil, err
+	}
+
+	if err := checkNotRevoked(context, kvsInstance, inputs.RevocationHandles(), "input"); err != nil {
+		return nil, err
+	}
+
+	if err := checkNotRevoked(context, kvsInstance, outputs.RevocationHandles(), "output"); err != nil {
+		return nil, err
+	}
+
+	logger.Debugf("AuditView: Approve... [%s]", tx.ID())
+	res, err := context.RunView(ttx.NewAuditApproveView(w, tx))
+	logger.Debugf("AuditView: Approve...done [%s]", tx.ID())
+
+	return res, err
+}
+
+// checkPaymentLimit enforces R1: default payment limit is 200, no single payment in
+// the transaction may exceed it, checked per (enrollment ID, token type) pair.
+func checkPaymentLimit(inputs *token.InputStream, outputs *token.OutputStream, eIDs []string, tokenTypes []token2.Type) {
 	for _, eID := range eIDs {
 		assert.NotEmpty(eID, "enrollment id should not be empty")
 		for _, tokenType := range tokenTypes {
@@ -88,8 +124,11 @@ func (a *AuditView) Call(context view.Context) (any, error) {
 			// R3: The default configuration is customized by a specific organisation (Guarantor)
 		}
 	}
+}
 
-	// R2: Default cumulative payment limit is set to 2000.
+// checkCumulativePaymentLimit enforces R2: default cumulative payment limit is 2000,
+// checked against the sum of the last 10 payments plus this transaction's payment.
+func checkCumulativePaymentLimit(context view.Context, auditor *ttx.Auditor, inputs *token.InputStream, outputs *token.OutputStream, eIDs []string, tokenTypes []token2.Type) {
 	for _, eID := range eIDs {
 		assert.NotEmpty(eID, "enrollment id should not be empty")
 		for _, tokenType := range tokenTypes {
@@ -118,10 +157,11 @@ func (a *AuditView) Call(context view.Context) (any, error) {
 			assert.True(total.Cmp(big.NewInt(2000)) < 0, "cumulative payment limit reached [%s][%s][%s]", eID, tokenType, total.Text(10))
 		}
 	}
+}
 
-	// R4: Default holding limit is set to 3000.
-	eIDs = outputs.EnrollmentIDs()
-	tokenTypes = outputs.TokenTypes()
+// checkHoldingLimit enforces R4: default holding limit is 3000, checked against the
+// enrollment id's current holding plus what this transaction adds to it.
+func checkHoldingLimit(context view.Context, auditor *ttx.Auditor, inputs *token.InputStream, outputs *token.OutputStream, eIDs []string, tokenTypes []token2.Type) {
 	for _, eID := range eIDs {
 		assert.NotEmpty(eID, "enrollment id should not be empty")
 		for _, tokenType := range tokenTypes {
@@ -151,49 +191,41 @@ func (a *AuditView) Call(context view.Context) (any, error) {
 			assert.True(total.Cmp(big.NewInt(3000)) < 0, "holding limit reached [%s][%s][%s]", eID, tokenType, total.Text(10))
 		}
 	}
+}
 
-	kvsInstance := GetKVS(context)
-
-	// R5: identify redeemed outputs and the issuer that approved each of them, and reject any
-	// redeem whose approving issuer is not on the auditor's allow-list.
+// checkAuthorizedRedeemIssuers enforces R5: every redeemed output's approving issuer
+// must be on the auditor's allow-list.
+func checkAuthorizedRedeemIssuers(context view.Context, kvsInstance *kvs.KVS, tx *ttx.Transaction, outputs *token.OutputStream) error {
 	for _, redeem := range outputs.ByRedeem().Outputs() {
 		if redeem.Issuer.IsNone() {
-			return nil, errors.Errorf("redeemed output [%s:%d] has no approving issuer", tx.ID(), redeem.Index)
+			return errors.Errorf("redeemed output [%s:%d] has no approving issuer", tx.ID(), redeem.Index)
 		}
 		issuerKey := utils.Hashable(redeem.Issuer).String()
 		fmt.Printf("Redeem: [%s:%d] type [%s] quantity [%s] approved by issuer [%s]\n", tx.ID(), redeem.Index, redeem.Type, redeem.Quantity, issuerKey)
 
 		k := kvs.CreateCompositeKeyOrPanic("authorizedRedeemIssuers", []string{issuerKey})
 		if !kvsInstance.Exists(context.Context(), k) {
-			return nil, errors.Errorf("redeem [%s:%d] approved by issuer [%s] which is not on the authorized issuers list", tx.ID(), redeem.Index, issuerKey)
+			return errors.Errorf("redeem [%s:%d] approved by issuer [%s] which is not on the authorized issuers list", tx.ID(), redeem.Index, issuerKey)
 		}
 	}
 
-	for _, rID := range inputs.RevocationHandles() {
+	return nil
+}
+
+// checkNotRevoked returns an error if any of the given revocation handles (labelled
+// side "input" or "output" for the assertion message) appear in the auditor's
+// revocation list.
+func checkNotRevoked(context view.Context, kvsInstance *kvs.KVS, handles []string, side string) error {
+	for _, rID := range handles {
 		rh := utils.Hashable(rID).String()
-		// logger.Infof("input RH [%s]", rh)
-		assert.NotNil(rID, "found an input with empty RH")
+		assert.NotNil(rID, "found an %s with empty RH", side)
 		k := kvs.CreateCompositeKeyOrPanic("revocationList", []string{rh})
 		if kvsInstance.Exists(context.Context(), k) {
-			return nil, errors.Errorf("%s Identity is in revoked state", rh)
+			return errors.Errorf("%s Identity is in revoked state", rh)
 		}
 	}
 
-	for _, rID := range outputs.RevocationHandles() {
-		rh := utils.Hashable(rID).String()
-		// logger.Infof("output RH [%s]", rh)
-		assert.NotNil(rID, "found an output with empty RH")
-		k := kvs.CreateCompositeKeyOrPanic("revocationList", []string{rh})
-		if kvsInstance.Exists(context.Context(), k) {
-			return nil, errors.Errorf("%s Identity is in revoked state", rh)
-		}
-	}
-
-	logger.Debugf("AuditView: Approve... [%s]", tx.ID())
-	res, err := context.RunView(ttx.NewAuditApproveView(w, tx))
-	logger.Debugf("AuditView: Approve...done [%s]", tx.ID())
-
-	return res, err
+	return nil
 }
 
 // AuthorizeRedeemIssuer adds the passed issuer identity to the auditor's allow-list of issuers

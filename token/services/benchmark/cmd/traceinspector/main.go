@@ -138,35 +138,50 @@ func (r *Result) printBlockingSummary() {
 	}
 }
 
-func (r *Result) printCPUSummary() {
-	type cpuEntry struct {
-		ID              trace.GoID
-		CPUTime         time.Duration
-		RunningTime     time.Duration
-		SyscallTime     time.Duration
-		Lifetime        time.Duration
-		AvgRunnableWait time.Duration
-		CreationStack   string
+// cpuStatEntry is one goroutine's row in printCPUSummary's top-CPU-consumers
+// summary.
+type cpuStatEntry struct {
+	ID              trace.GoID
+	CPUTime         time.Duration
+	RunningTime     time.Duration
+	SyscallTime     time.Duration
+	Lifetime        time.Duration
+	AvgRunnableWait time.Duration
+	CreationStack   string
+}
+
+// buildCPUStatEntry builds a cpuStatEntry from stat, computing its lifetime
+// (falling back to traceEndTime when the goroutine never exited) and average
+// runnable-wait latency. ok is false when stat has no measurable CPU time,
+// in which case it should be excluded from the summary.
+func buildCPUStatEntry(stat *GoroutineStats, traceEndTime trace.Time) (entry cpuStatEntry, ok bool) {
+	if stat.CPUTime <= 0 {
+		return cpuStatEntry{}, false
 	}
 
-	var cpuList []cpuEntry
+	var lifetime time.Duration
+	if stat.StartTime != 0 {
+		end := stat.EndTime
+		if end == 0 && traceEndTime != 0 {
+			end = traceEndTime
+		}
+		if end > stat.StartTime {
+			lifetime = time.Duration(end - stat.StartTime)
+		}
+	}
+	var avgWait time.Duration
+	if stat.RunnableWaitCount > 0 {
+		avgWait = stat.RunnableWait / time.Duration(stat.RunnableWaitCount)
+	}
+
+	return cpuStatEntry{stat.ID, stat.CPUTime, stat.RunningTime, stat.SyscallTime, lifetime, avgWait, stat.CreationStack}, true
+}
+
+func (r *Result) printCPUSummary() {
+	var cpuList []cpuStatEntry
 	for _, stat := range r.GoroutineStats {
-		if stat.CPUTime > 0 {
-			var lifetime time.Duration
-			if stat.StartTime != 0 {
-				end := stat.EndTime
-				if end == 0 && r.TraceEndTime != 0 {
-					end = r.TraceEndTime
-				}
-				if end > stat.StartTime {
-					lifetime = time.Duration(end - stat.StartTime)
-				}
-			}
-			var avgWait time.Duration
-			if stat.RunnableWaitCount > 0 {
-				avgWait = stat.RunnableWait / time.Duration(stat.RunnableWaitCount)
-			}
-			cpuList = append(cpuList, cpuEntry{stat.ID, stat.CPUTime, stat.RunningTime, stat.SyscallTime, lifetime, avgWait, stat.CreationStack})
+		if entry, ok := buildCPUStatEntry(stat, r.TraceEndTime); ok {
+			cpuList = append(cpuList, entry)
 		}
 	}
 

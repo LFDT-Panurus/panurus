@@ -16,6 +16,7 @@ import (
 	slices2 "github.com/LFDT-Panurus/panurus/token/services/utils/slices"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/common/driver"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/common/utils/collections"
+	"github.com/hyperledger-labs/fabric-smart-client/platform/common/utils/collections/sets"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/fabric"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/fabric/core/generic/events"
 )
@@ -72,74 +73,138 @@ func (q *DeliveryScanQueryByID) QueryByID(ctx context.Context, startingBlock dri
 	return ch, nil
 }
 
+// queryNamespace queries the chaincode for the current values of keys, all in
+// one namespace. needsFallback is true when the query itself failed (in which
+// case notFound is the full keys list, so the caller's bookkeeping is a no-op)
+// or when at least one key came back empty, meaning that namespace's
+// still-missing keys must fall back to the block scan.
+//
+// A failure here concerns this namespace only. The caller leaves its keys in
+// keysByNS and keySet and falls back to the block scan, rather than dropping
+// every other namespace in the batch along with it (see #1990, and #1426 for
+// the same fix on the finality path).
+// groupKeysByNamespace buckets the keys of evicted entries by the namespace
+// their listener was registered against.
+func groupKeysByNamespace(evicted map[driver.PKey][]events.ListenerEntry[KeyInfo]) map[driver.Namespace][]driver.PKey {
+	keysByNS := map[driver.Namespace][]driver.PKey{}
+	for k, v := range evicted {
+		ns := slices2.GetAny(v).Namespace()
+		keysByNS[ns] = append(keysByNS[ns], k)
+	}
+
+	return keysByNS
+}
+
+// scanTransactionForKeys inspects one delivered transaction's read-write set
+// for writes to any of the still-outstanding keys in keysByNS, forwarding any
+// it finds on ch and removing them from keySet. The returned bool tells the
+// block scanner (ScanFromBlock) whether it can stop: true once every key has
+// been found.
+func (q *DeliveryScanQueryByID) scanTransactionForKeys(
+	ctx context.Context, tx *fabric.ProcessedTransaction, keysByNS map[driver.Namespace][]driver.PKey, keySet sets.Set[driver.PKey], ch chan []KeyInfo,
+) (bool, error) {
+	rws, err := q.Vault.InspectRWSet(ctx, tx.Results())
+	if err != nil {
+		return false, err
+	}
+
+	var txInfos []KeyInfo
+	for namespace, keys := range keysByNS {
+		if !slices.Contains(rws.Namespaces(), namespace) {
+			logger.DebugfContext(ctx, "scanning [%s] does not contain namespace [%s]", tx.TxID(), namespace)
+
+			continue
+		}
+
+		//nolint:intrange
+		for i := 0; i < rws.NumWrites(namespace); i++ {
+			k, v, err := rws.GetWriteAt(namespace, i)
+			if err != nil {
+				logger.DebugfContext(ctx, "scanning [%s]: failed to get key [%s]", tx.TxID(), err)
+
+				return false, err
+			}
+			if !slices.Contains(keys, k) {
+				continue
+			}
+			logger.DebugfContext(ctx, "scanning [%s]: found key [%s]", tx.TxID(), k)
+			txInfos = append(txInfos, KeyInfo{
+				Namespace: namespace,
+				Key:       k,
+				Value:     v,
+			})
+			logger.DebugfContext(ctx, "removing [%s] from searching list, remaining keys [%d]", k, keySet.Length())
+			keySet.Remove(k)
+		}
+	}
+	if len(txInfos) != 0 {
+		ch <- txInfos
+	}
+
+	return keySet.Length() == 0, nil
+}
+
+func (q *DeliveryScanQueryByID) queryNamespace(ctx context.Context, ns driver.Namespace, keys []driver.PKey) (found []KeyInfo, notFound []driver.PKey, needsFallback bool) {
+	arg, err := json.Marshal(keys)
+	if err != nil {
+		logger.Errorf("failed marshalling args for query by ids [%v]: [%s], falling back to block scan", keys, err)
+
+		return nil, keys, true
+	}
+
+	logger.DebugfContext(ctx, "querying chaincode [%s] for the states of ids [%v]", ns, keys)
+	res, err := q.Querier.QueryStates(ns, arg)
+	if err != nil {
+		logger.Errorf("failed querying by ids [%v]: [%s], falling back to block scan", keys, err)
+
+		return nil, keys, true
+	}
+	values := make([][]byte, 0, len(keys))
+	if err := json.Unmarshal(res, &values); err != nil {
+		logger.Errorf("failed unmarshalling results for query by ids [%v]: [%s], falling back to block scan", keys, err)
+
+		return nil, keys, true
+	}
+	if len(values) != len(keys) {
+		logger.Errorf("peer returned %d values for %d keys in ns [%s]; falling back to block scan",
+			len(values), len(keys), ns)
+
+		return nil, keys, true // treat as a per-namespace failure (=> fall back to the slow block scan)
+	}
+
+	found = make([]KeyInfo, 0, len(values))
+	for i, value := range values {
+		if len(value) == 0 {
+			needsFallback = true
+			notFound = append(notFound, keys[i])
+
+			continue
+		}
+		found = append(found, KeyInfo{
+			Namespace: ns,
+			Key:       keys[i],
+			Value:     value,
+		})
+	}
+
+	return found, notFound, needsFallback
+}
+
 func (q *DeliveryScanQueryByID) queryByID(ctx context.Context, keys []driver.PKey, ch chan []KeyInfo, lastBlock uint64, evicted map[driver.PKey][]events.ListenerEntry[KeyInfo]) {
 	defer close(ch)
 
 	keySet := collections.NewSet(keys...)
-
-	// group keys by namespace
-	keysByNS := map[driver.Namespace][]driver.PKey{}
-	for k, v := range evicted {
-		ns := slices2.GetAny(v).Namespace()
-		_, ok := keysByNS[ns]
-		if !ok {
-			keysByNS[ns] = []string{}
-		}
-		keysByNS[ns] = append(keysByNS[ns], k)
-	}
+	keysByNS := groupKeysByNamespace(evicted)
 
 	// for each namespace, have a call to the token chaincode
 	startDelivery := false
 	for ns, keys := range keysByNS {
-		// A failure here concerns this namespace only. Leave its keys in keysByNS and keySet and
-		// fall back to the block scan, rather than returning and dropping every other namespace
-		// in the batch along with it (see #1990, and #1426 for the same fix on the finality path).
-		arg, err := json.Marshal(keys)
-		if err != nil {
-			logger.Errorf("failed marshalling args for query by ids [%v]: [%s], falling back to block scan", keys, err)
+		found, notFound, needsFallback := q.queryNamespace(ctx, ns, keys)
+		if needsFallback {
 			startDelivery = true
-
-			continue
 		}
-
-		logger.DebugfContext(ctx, "querying chaincode [%s] for the states of ids [%v]", ns, keys)
-		res, err := q.Querier.QueryStates(ns, arg)
-		if err != nil {
-			logger.Errorf("failed querying by ids [%v]: [%s], falling back to block scan", keys, err)
-			startDelivery = true
-
-			continue
-		}
-		values := make([][]byte, 0, len(keys))
-		err = json.Unmarshal(res, &values)
-		if err != nil {
-			logger.Errorf("failed unmarshalling results for query by ids [%v]: [%s], falling back to block scan", keys, err)
-			startDelivery = true
-
-			continue
-		}
-		if len(values) != len(keys) {
-			logger.Errorf("peer returned %d values for %d keys in ns [%s]; falling back to block scan",
-				len(values), len(keys), ns)
-			startDelivery = true
-
-			continue // treat as a per-namespace failure (=> fall back to the slow block scan)
-		}
-		found := make([]KeyInfo, 0, len(values))
-		var notFound []string
-		for i, value := range values {
-			if len(value) == 0 {
-				startDelivery = true
-				notFound = append(notFound, keys[i])
-
-				continue
-			}
-			found = append(found, KeyInfo{
-				Namespace: ns,
-				Key:       keys[i],
-				Value:     value,
-			})
-			keySet.Remove(keys[i])
+		for _, k := range found {
+			keySet.Remove(k.Key)
 		}
 		if len(notFound) == 0 {
 			delete(keysByNS, ns)
@@ -157,49 +222,11 @@ func (q *DeliveryScanQueryByID) queryByID(ctx context.Context, keys []driver.PKe
 	logger.DebugfContext(ctx, "start scanning blocks starting from [%d], looking for remaining keys [%s]", startingBlock, keySet)
 
 	// start delivery for the future
-	v := q.Vault
 	err := q.Delivery.ScanFromBlock(
 		ctx,
 		startingBlock,
 		func(tx *fabric.ProcessedTransaction) (bool, error) {
-			rws, err := v.InspectRWSet(ctx, tx.Results())
-			if err != nil {
-				return false, err
-			}
-
-			var txInfos []KeyInfo
-			for namespace, keys := range keysByNS {
-				if !slices.Contains(rws.Namespaces(), namespace) {
-					logger.DebugfContext(ctx, "scanning [%s] does not contain namespace [%s]", tx.TxID(), namespace)
-
-					continue
-				}
-
-				//nolint:intrange
-				for i := 0; i < rws.NumWrites(namespace); i++ {
-					k, v, err := rws.GetWriteAt(namespace, i)
-					if err != nil {
-						logger.DebugfContext(ctx, "scanning [%s]: failed to get key [%s]", tx.TxID(), err)
-
-						return false, err
-					}
-					if slices.Contains(keys, k) {
-						logger.DebugfContext(ctx, "scanning [%s]: found key [%s]", tx.TxID(), k)
-						txInfos = append(txInfos, KeyInfo{
-							Namespace: namespace,
-							Key:       k,
-							Value:     v,
-						})
-						logger.DebugfContext(ctx, "removing [%s] from searching list, remaining keys [%d]", k, keySet.Length())
-						keySet.Remove(k)
-					}
-				}
-			}
-			if len(txInfos) != 0 {
-				ch <- txInfos
-			}
-
-			return keySet.Length() == 0, nil
+			return q.scanTransactionForKeys(ctx, tx, keysByNS, keySet, ch)
 		},
 	)
 	if err != nil {

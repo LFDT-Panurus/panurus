@@ -701,44 +701,7 @@ func TestAll(network *integration.Infrastructure, auditorId string, onRestart On
 	CheckBalanceAndHolding(network, bob, "bob.id1", "EUR", 10, auditor)
 
 	// Concurrent transfers
-	transferErrors := make([]chan error, 5)
-	var sum uint64
-	for i := range transferErrors {
-		transferErrors[i] = make(chan error, 1)
-
-		transfer := transferErrors[i]
-		r, err := rand.Int(rand.Reader, big.NewInt(200))
-		gomega.Expect(err).ToNot(gomega.HaveOccurred())
-		v := r.Uint64() + 1
-		sum += v
-		go func() {
-			_, err := network.Client(bob.ReplicaName()).CallView("transferWithSelector", common.JSONMarshall(&views.Transfer{
-				Auditor:      auditor.Id(),
-				Wallet:       "",
-				Type:         "EUR",
-				Amount:       v,
-				Recipient:    network.Identity(alice.Id()),
-				RecipientEID: alice.Id(),
-				Retry:        true,
-			}))
-			if err != nil {
-				transfer <- err
-
-				return
-			}
-			transfer <- nil
-		}()
-	}
-	for _, transfer := range transferErrors {
-		var err error
-		select {
-		case err = <-transfer:
-			// Received transfer result
-		case <-time.After(transferTimeout):
-			gomega.Expect(false).To(gomega.BeTrue(), "timeout waiting for transfer to complete")
-		}
-		gomega.Expect(err).ToNot(gomega.HaveOccurred())
-	}
+	sum := runConcurrentEURTransfers(network, bob, alice, auditor)
 	CheckBalanceAndHolding(network, bob, "", "EUR", 2820-sum, auditor)
 
 	// Transfer With TokenSelector
@@ -751,55 +714,7 @@ func TestAll(network *integration.Infrastructure, auditorId string, onRestart On
 	// Now, the tests asks Bob to transfer to Charlie 14 YUAN split in two parallel transactions each one transferring 7 YUAN.
 	// Notice that Bob has only 10 YUAN, therefore bob will be able to assemble only one transfer.
 	// We use two channels to collect the results of the two transfers.
-	transferErrors2 := make([]chan error, 2)
-	for i := range transferErrors2 {
-		transferErrors2[i] = make(chan error, 1)
-
-		transferError := transferErrors2[i]
-		go func() {
-			txid, err := network.Client(bob.ReplicaName()).CallView("transferWithSelector", common.JSONMarshall(&views.Transfer{
-				Auditor:      auditor.Id(),
-				Wallet:       "",
-				Type:         "YUAN",
-				Amount:       7,
-				Recipient:    network.Identity(charlie.Id()),
-				RecipientEID: charlie.Id(),
-				Retry:        false,
-			}))
-			if err != nil {
-				// The transaction failed, we return the error to the caller.
-				transferError <- err
-
-				return
-			}
-			// The transaction didn't fail, let's wait for it to be confirmed, and return no error
-			common2.CheckFinality(network, charlie, common.JSONUnmarshalString(txid), nil, false)
-			common2.CheckFinality(network, auditor, common.JSONUnmarshalString(txid), nil, false)
-			transferError <- nil
-		}()
-	}
-	// collect the errors, and check that they are all nil, and one of them is the error we expect.
-	var errs []error
-	for _, transfer := range transferErrors2 {
-		var err error
-		select {
-		case err = <-transfer:
-			// Received transfer result
-		case <-time.After(transferTimeout):
-			gomega.Expect(false).To(gomega.BeTrue(), "timeout waiting for transfer to complete")
-		}
-		errs = append(errs, err)
-	}
-	gomega.Expect((errs[0] == nil && errs[1] != nil) || (errs[0] != nil && errs[1] == nil)).To(gomega.BeTrue())
-	var errStr string
-	if errs[0] == nil {
-		errStr = errs[1].Error()
-	} else {
-		errStr = errs[0].Error()
-	}
-	v := strings.Contains(errStr, "pineapple") || strings.Contains(errStr, "lemonade")
-	gomega.Expect(v).To(gomega.BeEquivalentTo(true), "error [%s] does not contain either 'pineapple' or 'lemonade'", errStr)
-	gomega.Expect(errStr).NotTo(gomega.BeEmpty())
+	runRacingYUANTransfers(network, bob, charlie, auditor)
 
 	CheckBalanceAndHolding(network, bob, "", "YUAN", 3, auditor)
 	CheckBalanceAndHolding(network, alice, "", "YUAN", 7, auditor)
@@ -876,6 +791,108 @@ func TestAll(network *integration.Infrastructure, auditorId string, onRestart On
 	CheckBalanceAndHolding(network, alice, "", "Spendable", 1, auditor)
 	CheckBalanceAndHolding(network, bob, "", "Spendable", 2, auditor)
 	CheckAuditorStore(network, auditor, "", nil)
+}
+
+// runConcurrentEURTransfers fires 5 concurrent EUR transfers of random amounts from
+// bob to alice, waits for all of them to complete (failing the test on error or
+// timeout), and returns the total amount transferred.
+func runConcurrentEURTransfers(network *integration.Infrastructure, bob, alice, auditor *token3.NodeReference) uint64 {
+	transferErrors := make([]chan error, 5)
+	var sum uint64
+	for i := range transferErrors {
+		transferErrors[i] = make(chan error, 1)
+
+		transfer := transferErrors[i]
+		r, err := rand.Int(rand.Reader, big.NewInt(200))
+		gomega.Expect(err).ToNot(gomega.HaveOccurred())
+		v := r.Uint64() + 1
+		sum += v
+		go func() {
+			_, err := network.Client(bob.ReplicaName()).CallView("transferWithSelector", common.JSONMarshall(&views.Transfer{
+				Auditor:      auditor.Id(),
+				Wallet:       "",
+				Type:         "EUR",
+				Amount:       v,
+				Recipient:    network.Identity(alice.Id()),
+				RecipientEID: alice.Id(),
+				Retry:        true,
+			}))
+			if err != nil {
+				transfer <- err
+
+				return
+			}
+			transfer <- nil
+		}()
+	}
+	for _, transfer := range transferErrors {
+		var err error
+		select {
+		case err = <-transfer:
+			// Received transfer result
+		case <-time.After(transferTimeout):
+			gomega.Expect(false).To(gomega.BeTrue(), "timeout waiting for transfer to complete")
+		}
+		gomega.Expect(err).ToNot(gomega.HaveOccurred())
+	}
+
+	return sum
+}
+
+// runRacingYUANTransfers fires two concurrent transfers of 7 YUAN each from bob to
+// charlie. Bob only has 10 YUAN, so exactly one of the two must fail on a token
+// lock conflict ("pineapple"/"lemonade" are the test lock IDs used to force it);
+// the other is waited for finality. Asserts that shape of outcome.
+func runRacingYUANTransfers(network *integration.Infrastructure, bob, charlie, auditor *token3.NodeReference) {
+	transferErrors := make([]chan error, 2)
+	for i := range transferErrors {
+		transferErrors[i] = make(chan error, 1)
+
+		transferError := transferErrors[i]
+		go func() {
+			txid, err := network.Client(bob.ReplicaName()).CallView("transferWithSelector", common.JSONMarshall(&views.Transfer{
+				Auditor:      auditor.Id(),
+				Wallet:       "",
+				Type:         "YUAN",
+				Amount:       7,
+				Recipient:    network.Identity(charlie.Id()),
+				RecipientEID: charlie.Id(),
+				Retry:        false,
+			}))
+			if err != nil {
+				// The transaction failed, we return the error to the caller.
+				transferError <- err
+
+				return
+			}
+			// The transaction didn't fail, let's wait for it to be confirmed, and return no error
+			common2.CheckFinality(network, charlie, common.JSONUnmarshalString(txid), nil, false)
+			common2.CheckFinality(network, auditor, common.JSONUnmarshalString(txid), nil, false)
+			transferError <- nil
+		}()
+	}
+	// collect the errors, and check that they are all nil, and one of them is the error we expect.
+	var errs []error
+	for _, transfer := range transferErrors {
+		var err error
+		select {
+		case err = <-transfer:
+			// Received transfer result
+		case <-time.After(transferTimeout):
+			gomega.Expect(false).To(gomega.BeTrue(), "timeout waiting for transfer to complete")
+		}
+		errs = append(errs, err)
+	}
+	gomega.Expect((errs[0] == nil && errs[1] != nil) || (errs[0] != nil && errs[1] == nil)).To(gomega.BeTrue())
+	var errStr string
+	if errs[0] == nil {
+		errStr = errs[1].Error()
+	} else {
+		errStr = errs[0].Error()
+	}
+	v := strings.Contains(errStr, "pineapple") || strings.Contains(errStr, "lemonade")
+	gomega.Expect(v).To(gomega.BeEquivalentTo(true), "error [%s] does not contain either 'pineapple' or 'lemonade'", errStr)
+	gomega.Expect(errStr).NotTo(gomega.BeEmpty())
 }
 
 func TestSelector(network *integration.Infrastructure, auditorId string, sel *token3.ReplicaSelector) {

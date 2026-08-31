@@ -422,24 +422,9 @@ func printNodeWithHighlight(node *CallNode, prefix string, isLast bool, rootDura
 		return
 	}
 
-	connector := "├── "
-	if isLast {
-		connector = "└── "
-	}
-
-	callInfo := ""
-	if opts.AggregateLoops && node.CallCount > 1 {
-		callInfo = fmt.Sprintf(" x%d", node.CallCount)
-	}
-
-	timeInfo := ""
-	if opts.ShowAbsolute && opts.ShowPercent {
-		timeInfo = fmt.Sprintf(" [%v, %.2f%%]", node.Duration, percent)
-	} else if opts.ShowAbsolute {
-		timeInfo = fmt.Sprintf(" [%v]", node.Duration)
-	} else if opts.ShowPercent {
-		timeInfo = fmt.Sprintf(" [%.2f%%]", percent)
-	}
+	connector := treeConnector(isLast)
+	callInfo := callCountSuffix(node, opts)
+	timeInfo := durationSuffix(node, opts, percent)
 
 	// Highlight entire line if in top functions with >>> marker
 	if topFunctions[node.Name] {
@@ -457,6 +442,41 @@ func printNodeWithHighlight(node *CallNode, prefix string, isLast bool, rootDura
 
 	for i, child := range node.Children {
 		printNodeWithHighlight(child, childPrefix, i == len(node.Children)-1, rootDuration, opts, topFunctions)
+	}
+}
+
+// treeConnector returns the tree-drawing prefix for a node, depending on
+// whether it is the last child of its parent.
+func treeConnector(isLast bool) string {
+	if isLast {
+		return "└── "
+	}
+
+	return "├── "
+}
+
+// callCountSuffix returns the " xN" suffix shown when loop aggregation is
+// enabled and the node was called more than once.
+func callCountSuffix(node *CallNode, opts PrintOptions) string {
+	if opts.AggregateLoops && node.CallCount > 1 {
+		return fmt.Sprintf(" x%d", node.CallCount)
+	}
+
+	return ""
+}
+
+// durationSuffix returns the "[duration, percent]" style suffix for a node,
+// according to which of the absolute/percent display options are enabled.
+func durationSuffix(node *CallNode, opts PrintOptions, percent float64) string {
+	switch {
+	case opts.ShowAbsolute && opts.ShowPercent:
+		return fmt.Sprintf(" [%v, %.2f%%]", node.Duration, percent)
+	case opts.ShowAbsolute:
+		return fmt.Sprintf(" [%v]", node.Duration)
+	case opts.ShowPercent:
+		return fmt.Sprintf(" [%.2f%%]", percent)
+	default:
+		return ""
 	}
 }
 

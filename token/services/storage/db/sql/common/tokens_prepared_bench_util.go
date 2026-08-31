@@ -33,70 +33,79 @@ func RunUnspentTokensIteratorByPreparedComparison(b *testing.B, store *TokenStor
 	tokenType := tokentype.Type("GOLD")
 
 	b.Run("UnspentTokensIteratorBy_Dynamic", func(b *testing.B) {
-		SeedBenchTokens(b, store, 1000)
-		cfg := benchmark.NewConfig(4, 5*time.Second, 500*time.Millisecond)
-		result := benchmark.RunBenchmark(
-			cfg,
-			func() *TokenStore { return store },
-			func(s *TokenStore) error {
-				it, err := s.UnspentTokensIteratorBy(context.Background(), walletID, tokenType)
-				if err != nil {
-					return err
-				}
-				defer it.Close()
-				for {
-					tok, err := it.Next()
-					if err != nil {
-						return err
-					}
-					if tok == nil {
-						break
-					}
-				}
-
-				return nil
-			},
-		)
-		result.Print()
+		benchmarkUnspentTokensIteratorByDynamic(b, store, walletID, tokenType)
 	})
-
 	b.Run("UnspentTokensIteratorBy_Prepared", func(b *testing.B) {
-		SeedBenchTokens(b, store, 1000)
+		benchmarkUnspentTokensIteratorByPrepared(b, store, walletID, tokenType)
+	})
+}
 
-		query, args := buildUnspentTokensIteratorByQuery(store, walletID, tokenType)
-
-		stmt, err := store.readDB.PrepareContext(context.Background(), query)
-		if err != nil {
-			b.Fatalf("failed preparing statement: %v", err)
-		}
-		defer func() { _ = stmt.Close() }()
-
-		cfg := benchmark.NewConfig(4, 5*time.Second, 500*time.Millisecond)
-		result := benchmark.RunBenchmark(
-			cfg,
-			func() *sql.Stmt { return stmt },
-			func(s *sql.Stmt) error {
-				//nolint:rowserrcheck // rows.Err is checked by dedupedTokenRowsIterator.Next below
-				rows, err := s.QueryContext(context.Background(), args...)
+func benchmarkUnspentTokensIteratorByDynamic(b *testing.B, store *TokenStore, walletID string, tokenType tokentype.Type) {
+	b.Helper()
+	SeedBenchTokens(b, store, 1000)
+	cfg := benchmark.NewConfig(4, 5*time.Second, 500*time.Millisecond)
+	result := benchmark.RunBenchmark(
+		cfg,
+		func() *TokenStore { return store },
+		func(s *TokenStore) error {
+			it, err := s.UnspentTokensIteratorBy(context.Background(), walletID, tokenType)
+			if err != nil {
+				return err
+			}
+			defer it.Close()
+			for {
+				tok, err := it.Next()
 				if err != nil {
 					return err
 				}
-				defer func() { _ = rows.Close() }()
-
-				it := &dedupedTokenRowsIterator{rows: rows, seen: make(map[string]struct{})}
-				for {
-					tok, err := it.Next()
-					if err != nil {
-						return err
-					}
-					if tok == nil {
-						break
-					}
+				if tok == nil {
+					break
 				}
+			}
 
-				return nil
-			},
-		)
-		result.Print()
-	})
+			return nil
+		},
+	)
+	result.Print()
+}
+
+func benchmarkUnspentTokensIteratorByPrepared(b *testing.B, store *TokenStore, walletID string, tokenType tokentype.Type) {
+	b.Helper()
+	SeedBenchTokens(b, store, 1000)
+
+	query, args := buildUnspentTokensIteratorByQuery(store, walletID, tokenType)
+
+	stmt, err := store.readDB.PrepareContext(context.Background(), query)
+	if err != nil {
+		b.Fatalf("failed preparing statement: %v", err)
+	}
+	defer func() { _ = stmt.Close() }()
+
+	cfg := benchmark.NewConfig(4, 5*time.Second, 500*time.Millisecond)
+	result := benchmark.RunBenchmark(
+		cfg,
+		func() *sql.Stmt { return stmt },
+		func(s *sql.Stmt) error {
+			//nolint:rowserrcheck // rows.Err is checked by dedupedTokenRowsIterator.Next below
+			rows, err := s.QueryContext(context.Background(), args...)
+			if err != nil {
+				return err
+			}
+			defer func() { _ = rows.Close() }()
+
+			it := &dedupedTokenRowsIterator{rows: rows, seen: make(map[string]struct{})}
+			for {
+				tok, err := it.Next()
+				if err != nil {
+					return err
+				}
+				if tok == nil {
+					break
+				}
+			}
+
+			return nil
+		},
+	)
+	result.Print()
 }

@@ -108,6 +108,8 @@ func (p *prover) WithTranscriptHeader(h []byte) *prover {
 //	gen'_j = gen_L[j] + c · gen_R[j]
 //	f'_j   = f_L[j]   + c · f_R[j]
 //	w'_j   = c · w_L[j] + w_R[j]
+//
+//nolint:gocognit // sequential per-round folding of the CSP inner-product proof; splitting would not reduce real complexity, only hide it behind indirection
 func (p *prover) Prove() (*Proof, error) {
 	// Validate all inputs
 	if err := validateCSPProverInputs(p.Curve, p); err != nil {
