@@ -84,8 +84,7 @@ func NewAuditCheckSetup(conf *SetupConfiguration) (*AuditCheckSetup, error) {
 					},
 					Outputs: []*driver.IssueOutputMetadata{
 						{
-							OutputMetadata:  metaBytes,
-							OutputAuditInfo: conf.OwnerIdentity.AuditInfo,
+							OutputMetadata: metaBytes,
 							Receivers: []*driver.AuditableIdentity{
 								{
 									Identity:  conf.OwnerIdentity.ID,

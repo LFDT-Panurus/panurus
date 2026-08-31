@@ -7,12 +7,15 @@ SPDX-License-Identifier: Apache-2.0
 package endorserdb_test
 
 import (
+	"context"
 	"testing"
+	"time"
 
 	"github.com/LFDT-Panurus/panurus/token"
 	driver2 "github.com/LFDT-Panurus/panurus/token/driver"
 	"github.com/LFDT-Panurus/panurus/token/sdk/tms"
 	config2 "github.com/LFDT-Panurus/panurus/token/services/config"
+	dbcommon "github.com/LFDT-Panurus/panurus/token/services/storage/db/common"
 	"github.com/LFDT-Panurus/panurus/token/services/storage/db/multiplexed"
 	"github.com/LFDT-Panurus/panurus/token/services/storage/db/sql/sqlite"
 	"github.com/LFDT-Panurus/panurus/token/services/storage/endorserdb"
@@ -97,6 +100,78 @@ func TestValidationRecordsLifecycle(t *testing.T) {
 	status, _, err = store.GetStatus(ctx, "lifecycle-2")
 	require.NoError(t, err)
 	assert.Equal(t, endorserdb.Pending, status)
+}
+
+// TestSetStatus_NotifyNotDroppedByCallerCanceledContext is a regression test for
+// #2316 on the endorserdb path: SetStatus's notification must not be lost just
+// because the caller's own context has already expired by the time the status
+// write succeeded. Mirrors ttxdb's TestNotifyStatus_NotDroppedByCallerCanceledContext.
+func TestSetStatus_NotifyNotDroppedByCallerCanceledContext(t *testing.T) {
+	manager := newStoreServiceManager(t)
+	store, err := manager.StoreServiceByTMSId(token.TMSID{Network: "pineapple", Namespace: "ns"})
+	require.NoError(t, err)
+
+	txID := "tx-2316"
+	require.NoError(t, store.AppendValidationRecord(t.Context(), txID, []byte("tr"), nil, driver2.PPHash("pp")))
+
+	ch := make(chan dbcommon.StatusEvent, 1)
+	store.AddStatusListener(txID, ch)
+	defer store.DeleteStatusListener(txID, ch)
+
+	// Fill the buffer so a send cannot complete immediately: this is what makes
+	// safeSend's ctx branch the only other option, and is the condition under
+	// which the issue says the drop happens deterministically.
+	ch <- dbcommon.StatusEvent{TxID: "filler"}
+
+	ctx, cancel := context.WithCancel(t.Context())
+
+	done := make(chan error, 1)
+	go func() {
+		done <- store.SetStatus(ctx, txID, endorserdb.Confirmed, "all good")
+	}()
+
+	// The write itself needs a live context, so cancel only once it has actually
+	// landed - polled with an unrelated context so this wait doesn't race the
+	// cancellation it is about to apply. This simulates the deadline firing right
+	// after the write commits, which is exactly the #2316 scenario: the status
+	// change already succeeded by the time the caller's context expires.
+	require.Eventually(t, func() bool {
+		status, _, err := store.GetStatus(t.Context(), txID)
+
+		return err == nil && status == endorserdb.Confirmed
+	}, 2*time.Second, 5*time.Millisecond, "status write did not land in time")
+	cancel()
+
+	// Give safeSend's select a chance to run against the still-full buffer,
+	// which is deliberately left untouched here. If the notification is still
+	// tied to the canceled ctx, that select has exactly one ready case
+	// (ctx.Done()) and returns almost immediately without sending; the fixed
+	// version has no ready case yet and stays blocked, waiting for room.
+	select {
+	case err := <-done:
+		t.Fatalf("SetStatus returned (err=%v) without waiting for room in the listener buffer: "+
+			"the notification was dropped because the caller's context was canceled", err)
+	case <-time.After(200 * time.Millisecond):
+		// still blocked, as expected once the notification isn't tied to ctx
+	}
+
+	// Free the buffer slot so the still-pending send can complete.
+	<-ch
+
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(2 * time.Second):
+		t.Fatal("SetStatus did not return after the buffer freed up")
+	}
+
+	select {
+	case event := <-ch:
+		assert.Equal(t, txID, event.TxID)
+		assert.Equal(t, endorserdb.Confirmed, event.ValidationCode)
+	default:
+		t.Fatal("notification was dropped despite the caller's context being canceled")
+	}
 }
 
 func readValidationRecords(t *testing.T, store *endorserdb.StoreService, params endorserdb.QueryValidationRecordsParams) []*endorserdb.ValidationRecord {

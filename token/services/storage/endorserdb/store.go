@@ -158,9 +158,14 @@ func (d *StoreService) SetStatus(ctx context.Context, txID string, status dbdriv
 		return errors.Wrapf(err, "failed committing status [%s][%s]", txID, dbdriver.TxStatusMessage[status])
 	}
 
-	// notify the listeners
+	// notify the listeners with a context detached from ctx's cancellation: by
+	// this point the status is already durably written, and safeSend only uses
+	// the context to give up on a stuck listener. Keeping ctx as-is would let a
+	// caller-side deadline that has nothing to do with the listener silently
+	// drop a notification for a status change that did succeed, the same bug
+	// fixed for ttxdb and auditdb. See issue #2316.
 	d.Notify(common.StatusEvent{
-		Ctx:            ctx,
+		Ctx:            context.WithoutCancel(ctx),
 		TxID:           txID,
 		ValidationCode: status,
 	})
