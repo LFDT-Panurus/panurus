@@ -128,8 +128,17 @@ func (v *PolicyVerifier) evalNode(node Node, msg []byte, sigs [][]byte, memo []r
 
 // evalRef verifies the component identity at index i, reusing a previously
 // computed result for the same index when one is available.
+//
+// i is bounds-checked against sigs, memo and Verifiers independently. Verify already rejects a
+// signature whose slot count differs from len(Verifiers), which makes the three lengths equal
+// today, but that is an invariant held by convention in a different function: checking each slice
+// at the point it is indexed keeps an out-of-range index a rejected reference rather than a panic
+// if that equality check is ever loosened.
 func (v *PolicyVerifier) evalRef(i int, msg []byte, sigs [][]byte, memo []refResult) bool {
-	if i < 0 || i >= len(sigs) || len(sigs[i]) == 0 {
+	if i < 0 || i >= len(sigs) || i >= len(memo) || i >= len(v.Verifiers) {
+		return false
+	}
+	if len(sigs[i]) == 0 || v.Verifiers[i] == nil {
 		return false
 	}
 	if memo[i] != refUnknown {

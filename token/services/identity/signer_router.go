@@ -67,6 +67,40 @@ func (r *SignerRouter) Register(confID string, deserializer idriver.SignerDeseri
 	r.metrics.SignerRouterRegistrations.Add(1)
 }
 
+// Unregister drops the entries for the given conf_ids. Callers releasing the KeyManagers behind
+// those conf_ids (LocalMembership.Close) must unregister them: a released KeyManager left in the
+// map stays routable, and Resolve would dispatch to it with the cryptographic probe skipped.
+// conf_ids that were never registered are ignored.
+func (r *SignerRouter) Unregister(confIDs ...string) {
+	if len(confIDs) == 0 {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, confID := range confIDs {
+		delete(r.byConfID, confID)
+	}
+}
+
+// Close drops every registration, so the router pins no KeyManager and Resolve reports ok=false
+// for every identity until KeyManagers are registered again. It is the teardown counterpart of
+// Register for a whole router, where Unregister covers a single membership's share of it, and is
+// idempotent. Close does not close the KeyManagers themselves: the router borrows them, their
+// owner (LocalMembership) releases them.
+func (r *SignerRouter) Close() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.byConfID = map[string]idriver.SignerDeserializer{}
+}
+
+// Len returns the number of conf_id->KeyManager bindings currently held.
+func (r *SignerRouter) Len() int {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	return len(r.byConfID)
+}
+
 // Resolve attempts to reconstruct a Signer for id via conf_id-based routing. ok is false, with a
 // nil error, whenever routing cannot be attempted (no resolver set, no conf_id mapping, no
 // KeyManager registered for that conf_id) or the routed KeyManager itself fails to reconstruct

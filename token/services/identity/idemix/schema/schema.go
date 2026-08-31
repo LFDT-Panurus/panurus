@@ -32,8 +32,31 @@ const (
 	rhIdx  = 3
 	skIdx  = 0
 
+	// w3cEidIdx and w3cRhIdx are the enrollment-id and revocation-handle positions in the
+	// W3CSchema attribute list (see attributeNames, offset by one for the hidden usk attribute
+	// PublicKeyImportOpts prepends).
+	w3cEidIdx = 26
+	w3cRhIdx  = 27
+	w3cSkIdx  = 24
+
 	DefaultSchema = ""
+	// W3CSchema is the identifier of the W3C Verifiable Credentials schema.
+	W3CSchema = "w3c-v0.0.1"
 )
+
+// attributeAt returns attrs[i], or an error when attrs is too short for the schema that selected
+// that index. The audit-opts builders index attrs at positions fixed by the schema name, and the
+// schema travels alongside the attributes in a serialized AuditInfo: nothing in the wire format
+// makes the two consistent, and callers (crypto.AuditInfo.Validate) only guarantee the four
+// entries the default schema needs. Returning an error keeps a mismatched pair a rejected audit
+// info instead of an index-out-of-range panic.
+func attributeAt(schema string, attrs [][]byte, i int) ([]byte, error) {
+	if i < 0 || i >= len(attrs) {
+		return nil, errors.Errorf("schema '%s' requires at least %d attributes, got %d", schema, i+1, len(attrs))
+	}
+
+	return attrs[i], nil
+}
 
 // attributeNames are the attribute names for the `w3c` schema
 var attributeNames = []string{
@@ -87,11 +110,11 @@ func NewDefaultManager() *DefaultManager {
 // Returns the options for signing with pseudonyms
 func (*DefaultManager) NymSignerOpts(schema string) (*bccsp.IdemixNymSignerOpts, error) {
 	switch schema {
-	case "":
+	case DefaultSchema:
 		return &bccsp.IdemixNymSignerOpts{}, nil
-	case "w3c-v0.0.1":
+	case W3CSchema:
 		return &bccsp.IdemixNymSignerOpts{
-			SKIndex: 24,
+			SKIndex: w3cSkIdx,
 		}, nil
 	}
 
@@ -101,7 +124,7 @@ func (*DefaultManager) NymSignerOpts(schema string) (*bccsp.IdemixNymSignerOpts,
 // Returns the options for importing issuer public keys (with the attribute names)
 func (*DefaultManager) PublicKeyImportOpts(schema string) (*bccsp.IdemixIssuerPublicKeyImportOpts, error) {
 	switch schema {
-	case "":
+	case DefaultSchema:
 		return &bccsp.IdemixIssuerPublicKeyImportOpts{
 			Temporary: true,
 			AttributeNames: []string{
@@ -111,7 +134,7 @@ func (*DefaultManager) PublicKeyImportOpts(schema string) (*bccsp.IdemixIssuerPu
 				msp.AttributeNameRevocationHandle,
 			},
 		}, nil
-	case "w3c-v0.0.1":
+	case W3CSchema:
 		return &bccsp.IdemixIssuerPublicKeyImportOpts{
 			Temporary:      true,
 			AttributeNames: append([]string{""}, attributeNames...),
@@ -124,7 +147,7 @@ func (*DefaultManager) PublicKeyImportOpts(schema string) (*bccsp.IdemixIssuerPu
 // Returns the options for creating signatures/proofs (specifying which attributes are hidden)
 func (*DefaultManager) SignerOpts(schema string) (*bccsp.IdemixSignerOpts, error) {
 	switch schema {
-	case "":
+	case DefaultSchema:
 		return &bccsp.IdemixSignerOpts{
 			Attributes: []bccsp.IdemixAttribute{
 				{Type: bccsp.IdemixHiddenAttribute},
@@ -135,7 +158,7 @@ func (*DefaultManager) SignerOpts(schema string) (*bccsp.IdemixSignerOpts, error
 			RhIndex:  rhIdx,
 			EidIndex: eidIdx,
 		}, nil
-	case "w3c-v0.0.1":
+	case W3CSchema:
 		var idemixAttrs []bccsp.IdemixAttribute
 		for i := range attributeNames {
 			switch i {
@@ -156,9 +179,9 @@ func (*DefaultManager) SignerOpts(schema string) (*bccsp.IdemixSignerOpts, error
 
 		return &bccsp.IdemixSignerOpts{
 			Attributes:       idemixAttrs,
-			RhIndex:          27,
-			EidIndex:         26,
-			SKIndex:          24,
+			RhIndex:          w3cRhIdx,
+			EidIndex:         w3cEidIdx,
+			SKIndex:          w3cSkIdx,
 			VerificationType: bccsp.ExpectEidNymRhNym,
 		}, nil
 	}
@@ -169,17 +192,27 @@ func (*DefaultManager) SignerOpts(schema string) (*bccsp.IdemixSignerOpts, error
 // Returns the options for auditing revocation handle pseudonyms
 func (*DefaultManager) RhNymAuditOpts(schema string, attrs [][]byte) (*bccsp.RhNymAuditOpts, error) {
 	switch schema {
-	case "":
+	case DefaultSchema:
+		rh, err := attributeAt(schema, attrs, rhIdx)
+		if err != nil {
+			return nil, errors.Wrap(err, "cannot build RhNymAuditOpts")
+		}
+
 		return &bccsp.RhNymAuditOpts{
 			RhIndex:          rhIdx,
 			SKIndex:          skIdx,
-			RevocationHandle: string(attrs[rhIdx]),
+			RevocationHandle: string(rh),
 		}, nil
-	case "w3c-v0.0.1":
+	case W3CSchema:
+		rh, err := attributeAt(schema, attrs, w3cRhIdx)
+		if err != nil {
+			return nil, errors.Wrap(err, "cannot build RhNymAuditOpts")
+		}
+
 		return &bccsp.RhNymAuditOpts{
-			RhIndex:          27,
-			SKIndex:          24,
-			RevocationHandle: string(attrs[27]),
+			RhIndex:          w3cRhIdx,
+			SKIndex:          w3cSkIdx,
+			RevocationHandle: string(rh),
 		}, nil
 	}
 
@@ -189,17 +222,27 @@ func (*DefaultManager) RhNymAuditOpts(schema string, attrs [][]byte) (*bccsp.RhN
 // Returns options for auditing enrollment ID pseudonyms
 func (*DefaultManager) EidNymAuditOpts(schema string, attrs [][]byte) (*bccsp.EidNymAuditOpts, error) {
 	switch schema {
-	case "":
+	case DefaultSchema:
+		eid, err := attributeAt(schema, attrs, eidIdx)
+		if err != nil {
+			return nil, errors.Wrap(err, "cannot build EidNymAuditOpts")
+		}
+
 		return &bccsp.EidNymAuditOpts{
 			EidIndex:     eidIdx,
 			SKIndex:      skIdx,
-			EnrollmentID: string(attrs[eidIdx]),
+			EnrollmentID: string(eid),
 		}, nil
-	case "w3c-v0.0.1":
+	case W3CSchema:
+		eid, err := attributeAt(schema, attrs, w3cEidIdx)
+		if err != nil {
+			return nil, errors.Wrap(err, "cannot build EidNymAuditOpts")
+		}
+
 		return &bccsp.EidNymAuditOpts{
-			EidIndex:     26,
-			SKIndex:      24,
-			EnrollmentID: string(attrs[26]),
+			EidIndex:     w3cEidIdx,
+			SKIndex:      w3cSkIdx,
+			EnrollmentID: string(eid),
 		}, nil
 	}
 
