@@ -24,7 +24,12 @@ import (
 // signed and the quorum of signatures over its EIP-712 digest. Broadcast (Week 5) ABI-encodes
 // applyStateDelta(Delta, Endorsements) into a signed transaction and fills RawTx and EthTxHash.
 type Envelope struct {
-	Anchor       string                 `json:"anchor"`
+	Anchor string `json:"anchor"`
+	// Namespace is the TMS this envelope belongs to. Broadcast has no namespace argument of its own
+	// (driver.Network.Broadcast takes only the envelope), so this is the only way it can tell which
+	// TMS's submitter and TokenState to use once more than one TMS shares this network -
+	// RequestApproval and SetupPublicParams both fill it in from the TMS they were called for.
+	Namespace    string                 `json:"namespace"`
 	Delta        *statedelta.StateDelta `json:"delta,omitempty"`
 	Endorsements [][]byte               `json:"endorsements,omitempty"`
 	EthTxHash    string                 `json:"eth_tx_hash,omitempty"`

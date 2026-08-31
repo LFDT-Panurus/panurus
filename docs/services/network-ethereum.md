@@ -745,6 +745,31 @@ the endorser set and threshold are immutable after the verifier is constructed, 
 later block can change, and reading at `finalized` would leave a freshly deployed network unable to see
 its own verifier for the whole finalization window.
 
+A third check runs once, when the driver builds the network rather than per TMS: every TMS declaring the
+same `network` name has to agree on `endpoint` and `chainID`. One `network` name means one JSON-RPC
+connection, shared by every TMS on it, so a disagreement here is refused at startup rather than leaving
+a second TMS silently talking to the first TMS's chain.
+
+### Multiple TMS on one network
+
+More than one TMS can declare the same EVM `network`. There is no `channel` to separate them by, so the
+network name is the only sharing key. Each TMS still keeps its own `services.network.evm` block in full:
+its own `contracts.tokenState` (and therefore its own `EndorsementVerifier` and EIP-712 domain), its own
+`endorsement` policy, `submitter` account and `gas` policy. Only the JSON-RPC connection itself
+(`endpoint`, `chainID`) is actually shared, and the startup check above enforces that every TMS on the
+network agrees on it.
+
+A public-parameters watcher is started per distinct `contracts.tokenState`, not per network: two TMS with
+different TokenState clones get independent watchers, so an update to one TMS's contract is never applied
+to another TMS's public parameters. Two TMS that are deliberately configured to point at the very same
+`contracts.tokenState` do share one watcher and see the same updates, which is the intended behaviour for
+that setup.
+
+This node's own role as an endorser (`endorser.enabled`, `endorser.keystore`, `endorser.address`) is the
+one thing that stays node-wide rather than per TMS, because FSC can register only one endorsement
+responder per process (see `registerEndorser`'s doc comment in `driver.go`). If more than one TMS on the
+network enables endorsing, they must all name the same key; the driver refuses to start otherwise.
+
 ### How finality resolves
 
 The primary signal is the transaction receipt, polled alongside `eth_getTransactionByHash`: known but no

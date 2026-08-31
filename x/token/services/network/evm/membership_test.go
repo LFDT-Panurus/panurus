@@ -54,7 +54,7 @@ func TestNetworkExposesMembership(t *testing.T) {
 	require.NoError(t, c.Validate())
 
 	want := view2.Identity("node-identity")
-	n, err := NewNetwork("evm-net", c, &mock.EVMClient{}, nil, nil,
+	n, err := NewNetwork("evm-net", &mock.EVMClient{}, []NamespaceConfig{{Namespace: "token", Config: c}}, nil,
 		newLocalMembership(&stubIdentityProvider{def: want}))
 	require.NoError(t, err)
 

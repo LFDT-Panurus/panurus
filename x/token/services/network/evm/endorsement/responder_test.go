@@ -101,7 +101,7 @@ func newResponder(t *testing.T, v RequestValidator, pp PublicParamsProvider, sig
 		auth,
 		func(token2.TMSID) (*DeltaFactory, error) { return factory, nil },
 		signer,
-		testDomain(),
+		func(token2.TMSID) (eip712.Domain, error) { return testDomain(), nil },
 	)
 }
 
@@ -194,7 +194,7 @@ func TestResponderRejectsUnservedTMS(t *testing.T) {
 			return nil, errors.Errorf("no such tms [%s]", tmsID)
 		},
 		newSigner(t, 1),
-		testDomain(),
+		func(token2.TMSID) (eip712.Domain, error) { return testDomain(), nil },
 	)
 
 	resp := r.Handle(context.Background(), view.Identity(testCaller), validRequest())
