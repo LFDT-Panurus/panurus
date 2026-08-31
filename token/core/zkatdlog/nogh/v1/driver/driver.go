@@ -18,6 +18,7 @@ import (
 	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/validator"
 	"github.com/LFDT-Panurus/panurus/token/driver"
 	"github.com/LFDT-Panurus/panurus/token/services/logging"
+	"github.com/LFDT-Panurus/panurus/token/services/observability"
 	"github.com/LFDT-Panurus/panurus/token/services/utils"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 )
@@ -148,8 +149,9 @@ func (d *Driver) NewTokenService(tmsID driver.TMSID, publicParams []byte) (drive
 	}
 	deserializer := ws.Deserializer
 	ip := ws.IdentityProvider
+	decoratedWS := observability.NewWalletServiceDecorator(ws, metricsProvider, nil)
 
-	authorization := common.NewStandardAuthorization(logger, ppm.PublicParams(), ws)
+	authorization := common.NewStandardAuthorization(logger, ppm.PublicParams(), decoratedWS)
 
 	tokensService, err := v1token.NewTokensService(logger, ppm, deserializer)
 	if err != nil {
@@ -184,16 +186,16 @@ func (d *Driver) NewTokenService(tmsID driver.TMSID, publicParams []byte) (drive
 	)
 	service, err := v1.NewTokenService(
 		logger,
-		ws,
+		decoratedWS,
 		ppm,
 		ip,
 		deserializer,
 		tmsConfig,
-		metrics.NewIssueService(v1.NewIssueService(logger, ppm, ws, deserializer, tokensService, tokensUpgradeService), metricsProvider),
+		metrics.NewIssueService(v1.NewIssueService(logger, ppm, decoratedWS, deserializer, tokensService, tokensUpgradeService), metricsProvider),
 		metrics.NewTransferService(v1.NewTransferService(
 			logger,
 			ppm,
-			ws,
+			decoratedWS,
 			common.NewVaultLedgerTokenAndMetadataLoader[[]byte, []byte](qe, &common.IdentityTokenAndMetadataDeserializer{}),
 			deserializer,
 			d.tracerProvider,
