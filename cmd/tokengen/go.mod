@@ -11,7 +11,7 @@ replace (
 
 require (
 	github.com/IBM/idemix v0.2.0
-	github.com/IBM/mathlib v0.3.0
+	github.com/IBM/mathlib v0.3.2-0.20260828145246-354ac146cc41
 	github.com/LFDT-Panurus/panurus v0.10.1
 	github.com/LFDT-Panurus/panurus/integration v0.0.0
 	github.com/hyperledger-labs/fabric-smart-client v0.18.0
