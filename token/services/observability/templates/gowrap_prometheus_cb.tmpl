@@ -1,0 +1,34 @@
+import (
+	"context"
+	"time"
+
+	"github.com/LFDT-Panurus/panurus/token/core/common/metrics"
+	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
+)
+
+// {{.Comment}}
+type {{.DecoratorName}} struct {
+	base {{.Interface.Name}}
+	cb   *CircuitBreaker
+}
+
+// New{{.DecoratorName}} creates a new decorator for {{.Interface.Name}}
+func New{{.DecoratorName}}(base {{.Interface.Name}}, cb *CircuitBreaker) *{{.DecoratorName}} {
+	if cb == nil {
+		cb = NewCircuitBreaker(DefaultCircuitBreakerConfig())
+	}
+	return &{{.DecoratorName}}{
+		base: base,
+		cb:   cb,
+	}
+}
+
+{{range $m := .Interface.Methods}}
+// {{$m.Name}} implements {{$.Interface.Name}}
+func (d *{{$.DecoratorName}}) {{$m.Declaration}} {
+	err = d.cb.Execute(func() error {
+		{{if $m.HasError}}return d.base.{{$m.Call}}{{else}}d.base.{{$m.Call}}; return nil{{end}}
+	})
+	return
+}
+{{end}}

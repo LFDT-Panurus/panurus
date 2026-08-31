@@ -21,6 +21,7 @@ import (
 	"github.com/LFDT-Panurus/panurus/token/services/identity/wallet"
 	"github.com/LFDT-Panurus/panurus/token/services/identity/x509"
 	"github.com/LFDT-Panurus/panurus/token/services/logging"
+	"github.com/LFDT-Panurus/panurus/token/services/observability"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/services/metrics/disabled"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/view"
@@ -147,15 +148,25 @@ type WalletServiceFactory struct {
 	*BaseWalletServiceFactory
 
 	storageProvider identity.StorageProvider
+	metricsProvider metrics.Provider
 }
 
 // NewWalletServiceFactory returns a new factory for the zkatdlog wallet service.
-func NewWalletServiceFactory(storageProvider identity.StorageProvider) core.NamedFactory[driver.WalletServiceFactory] {
+// An optional metrics.Provider can be passed to enable telemetry reporting; if omitted or nil,
+// &disabled.Provider{} is used as a fallback.
+func NewWalletServiceFactory(storageProvider identity.StorageProvider, metricsProvider ...metrics.Provider) core.NamedFactory[driver.WalletServiceFactory] {
+	var mp metrics.Provider
+	if len(metricsProvider) > 0 {
+		mp = metricsProvider[0]
+	}
+
 	return core.NamedFactory[driver.WalletServiceFactory]{
 		Name: core.DriverIdentifier(v1.DLogNoGHDriverName, v1.ProtocolV1),
 		Driver: &WalletServiceFactory{
 			BaseWalletServiceFactory: &BaseWalletServiceFactory{},
-			storageProvider:          storageProvider},
+			storageProvider:          storageProvider,
+			metricsProvider:          mp,
+		},
 	}
 }
 
@@ -169,7 +180,13 @@ func (d *WalletServiceFactory) NewWalletService(tmsConfig driver.Configuration, 
 		return nil, errors.Errorf("invalid public parameters type [%T]", params)
 	}
 
-	return d.BaseWalletServiceFactory.NewWalletService(
+	mp := d.metricsProvider
+	if mp == nil {
+		mp = &disabled.Provider{}
+	}
+	tmsMetricsProvider := metrics.NewTMSProvider(tmsID, mp)
+
+	ws, err := d.BaseWalletServiceFactory.NewWalletService(
 		tmsConfig,
 		&membership.NoBinder{},
 		d.storageProvider,
@@ -179,6 +196,11 @@ func (d *WalletServiceFactory) NewWalletService(tmsConfig driver.Configuration, 
 		nil,
 		pp,
 		true,
-		&disabled.Provider{},
+		tmsMetricsProvider,
 	)
+	if err != nil {
+		return nil, err
+	}
+
+	return observability.NewWalletServiceDecorator(ws, tmsMetricsProvider, nil), nil
 }

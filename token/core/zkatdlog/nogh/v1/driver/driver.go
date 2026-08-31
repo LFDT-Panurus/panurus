@@ -18,6 +18,7 @@ import (
 	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/validator"
 	"github.com/LFDT-Panurus/panurus/token/driver"
 	"github.com/LFDT-Panurus/panurus/token/services/logging"
+	"github.com/LFDT-Panurus/panurus/token/services/observability"
 	"github.com/LFDT-Panurus/panurus/token/services/utils"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 )
@@ -131,7 +132,7 @@ func (d *Driver) NewTokenService(tmsID driver.TMSID, publicParams []byte) (drive
 
 	metricsProvider := metrics.NewTMSProvider(tmsConfig.ID(), d.metricsProvider)
 	qe := vault.QueryEngine()
-	ws, err := d.NewWalletService(
+	rawWS, err := d.NewWalletService(
 		tmsConfig,
 		d.endpointService,
 		d.storageProvider,
@@ -146,8 +147,9 @@ func (d *Driver) NewTokenService(tmsID driver.TMSID, publicParams []byte) (drive
 	if err != nil {
 		return nil, errors.Wrapf(err, "failed to initiliaze wallet service for [%s:%s]", tmsID.Network, tmsID.Namespace)
 	}
-	deserializer := ws.Deserializer
-	ip := ws.IdentityProvider
+	ws := observability.NewWalletServiceDecorator(rawWS, metricsProvider, nil)
+	deserializer := rawWS.Deserializer
+	ip := rawWS.IdentityProvider
 
 	authorization := common.NewStandardAuthorization(logger, ppm.PublicParams(), ws)
 
