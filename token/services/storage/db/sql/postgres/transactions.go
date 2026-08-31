@@ -46,6 +46,12 @@ func (s *AuditTransactionStore) CreateSchema() error {
 	return common.InitSchema(s.writeDB, s.GetSchema())
 }
 
+// AcquireLeadership overrides the base no-op to take a real PostgreSQL advisory
+// lock for lockID, independent of the recovery lock bound at construction.
+func (s *AuditTransactionStore) AcquireLeadership(ctx context.Context, lockID int64) (tokensdriver.RecoveryLeadership, bool, error) {
+	return acquireLeadership(ctx, s.writeDB, lockID)
+}
+
 // TransactionStore extends the common TransactionStore with PostgreSQL-specific atomic claim operations.
 type TransactionStore struct {
 	*sqlcommon.TransactionStore
@@ -65,6 +71,12 @@ func (s *TransactionStore) GetSchema() string {
 // CreateSchema overrides the base CreateSchema to ensure GetSchema is called on the correct receiver
 func (s *TransactionStore) CreateSchema() error {
 	return common.InitSchema(s.writeDB, s.GetSchema())
+}
+
+// AcquireLeadership overrides the base no-op to take a real PostgreSQL advisory
+// lock for lockID, independent of the recovery lock bound at construction.
+func (s *TransactionStore) AcquireLeadership(ctx context.Context, lockID int64) (tokensdriver.RecoveryLeadership, bool, error) {
+	return acquireLeadership(ctx, s.writeDB, lockID)
 }
 
 // NewTransactionStoreWithNotifier creates a new TransactionStore with the provided notifier and recovery support.
@@ -100,12 +112,26 @@ func NewTransactionStoreWithNotifier(dbs *scommon.RWDB, tableNames sqlcommon.Tab
 
 // NewAuditTransactionStore creates a new AuditTransactionStore.
 func NewAuditTransactionStore(dbs *scommon.RWDB, tableNames sqlcommon.TableNames) (*AuditTransactionStore, error) {
-	baseStore, err := sqlcommon.NewAuditTransactionStore(
+	// Wire the same PostgreSQL advisory-lock leadership the owner store gets from
+	// NewTransactionStoreWithNotifier, rather than going through
+	// sqlcommon.NewAuditTransactionStore, which leaves recoveryLeaderFactory nil.
+	// Without a real factory, AcquireRecoveryLeadership falls back to a no-op that
+	// always "wins" (see TransactionStore.AcquireRecoveryLeadership), so every
+	// replica sharing this database runs the audit store's recovery and checks
+	// sweeps in full instead of just one of them, multiplying ledger traffic and
+	// letting a slower replica's ResolveFindingsNotSeenSince race a faster one's. The lock id is
+	// derived the same way NewTransactionStoreWithNotifier derives the owner store's, from this
+	// store's own requests table name, so the two stores never collide on the same lock.
+	recoveryLeaderFactory := NewAdvisoryLockFactoryForID(recoveryLockID(tableNames))
+
+	baseStore, err := sqlcommon.NewTransactionStoreWithNotifierAndRecovery(
 		dbs.ReadDB,
 		dbs.WriteDB,
 		tableNames,
 		NewConditionInterpreter(),
 		NewPaginationInterpreter(),
+		nil,
+		recoveryLeaderFactory,
 	)
 	if err != nil {
 		return nil, err

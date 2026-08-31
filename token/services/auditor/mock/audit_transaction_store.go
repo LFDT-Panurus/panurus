@@ -4,12 +4,29 @@ package mock
 import (
 	"context"
 	"sync"
+	"time"
 
 	"github.com/LFDT-Panurus/panurus/token/services/storage/db/driver"
 	drivera "github.com/hyperledger-labs/fabric-smart-client/platform/common/driver"
 )
 
 type AuditTransactionStore struct {
+	AcquireLeadershipStub        func(context.Context, int64) (driver.RecoveryLeadership, bool, error)
+	acquireLeadershipMutex       sync.RWMutex
+	acquireLeadershipArgsForCall []struct {
+		arg1 context.Context
+		arg2 int64
+	}
+	acquireLeadershipReturns struct {
+		result1 driver.RecoveryLeadership
+		result2 bool
+		result3 error
+	}
+	acquireLeadershipReturnsOnCall map[int]struct {
+		result1 driver.RecoveryLeadership
+		result2 bool
+		result3 error
+	}
 	AcquireRecoveryLeadershipStub        func(context.Context) (driver.RecoveryLeadership, bool, error)
 	acquireRecoveryLeadershipMutex       sync.RWMutex
 	acquireRecoveryLeadershipArgsForCall []struct {
@@ -130,6 +147,20 @@ type AuditTransactionStore struct {
 	prefixedTableNameReturnsOnCall map[int]struct {
 		result1 string
 	}
+	QueryFindingsStub        func(context.Context, driver.QueryFindingsParams) ([]*driver.FindingRecord, error)
+	queryFindingsMutex       sync.RWMutex
+	queryFindingsArgsForCall []struct {
+		arg1 context.Context
+		arg2 driver.QueryFindingsParams
+	}
+	queryFindingsReturns struct {
+		result1 []*driver.FindingRecord
+		result2 error
+	}
+	queryFindingsReturnsOnCall map[int]struct {
+		result1 []*driver.FindingRecord
+		result2 error
+	}
 	QueryMovementsStub        func(context.Context, driver.QueryMovementsParams) ([]*driver.MovementRecord, error)
 	queryMovementsMutex       sync.RWMutex
 	queryMovementsArgsForCall []struct {
@@ -187,6 +218,21 @@ type AuditTransactionStore struct {
 	releaseRecoveryClaimReturnsOnCall map[int]struct {
 		result1 error
 	}
+	ResolveFindingsNotSeenSinceStub        func(context.Context, []string, time.Time) (int64, error)
+	resolveFindingsNotSeenSinceMutex       sync.RWMutex
+	resolveFindingsNotSeenSinceArgsForCall []struct {
+		arg1 context.Context
+		arg2 []string
+		arg3 time.Time
+	}
+	resolveFindingsNotSeenSinceReturns struct {
+		result1 int64
+		result2 error
+	}
+	resolveFindingsNotSeenSinceReturnsOnCall map[int]struct {
+		result1 int64
+		result2 error
+	}
 	SetStatusStub        func(context.Context, string, driver.TxStatus, string) error
 	setStatusMutex       sync.RWMutex
 	setStatusArgsForCall []struct {
@@ -201,8 +247,89 @@ type AuditTransactionStore struct {
 	setStatusReturnsOnCall map[int]struct {
 		result1 error
 	}
+	UpsertFindingsStub        func(context.Context, []driver.FindingRecord, time.Time) error
+	upsertFindingsMutex       sync.RWMutex
+	upsertFindingsArgsForCall []struct {
+		arg1 context.Context
+		arg2 []driver.FindingRecord
+		arg3 time.Time
+	}
+	upsertFindingsReturns struct {
+		result1 error
+	}
+	upsertFindingsReturnsOnCall map[int]struct {
+		result1 error
+	}
 	invocations      map[string][][]interface{}
 	invocationsMutex sync.RWMutex
+}
+
+func (fake *AuditTransactionStore) AcquireLeadership(arg1 context.Context, arg2 int64) (driver.RecoveryLeadership, bool, error) {
+	fake.acquireLeadershipMutex.Lock()
+	ret, specificReturn := fake.acquireLeadershipReturnsOnCall[len(fake.acquireLeadershipArgsForCall)]
+	fake.acquireLeadershipArgsForCall = append(fake.acquireLeadershipArgsForCall, struct {
+		arg1 context.Context
+		arg2 int64
+	}{arg1, arg2})
+	stub := fake.AcquireLeadershipStub
+	fakeReturns := fake.acquireLeadershipReturns
+	fake.recordInvocation("AcquireLeadership", []interface{}{arg1, arg2})
+	fake.acquireLeadershipMutex.Unlock()
+	if stub != nil {
+		return stub(arg1, arg2)
+	}
+	if specificReturn {
+		return ret.result1, ret.result2, ret.result3
+	}
+	return fakeReturns.result1, fakeReturns.result2, fakeReturns.result3
+}
+
+func (fake *AuditTransactionStore) AcquireLeadershipCallCount() int {
+	fake.acquireLeadershipMutex.RLock()
+	defer fake.acquireLeadershipMutex.RUnlock()
+	return len(fake.acquireLeadershipArgsForCall)
+}
+
+func (fake *AuditTransactionStore) AcquireLeadershipCalls(stub func(context.Context, int64) (driver.RecoveryLeadership, bool, error)) {
+	fake.acquireLeadershipMutex.Lock()
+	defer fake.acquireLeadershipMutex.Unlock()
+	fake.AcquireLeadershipStub = stub
+}
+
+func (fake *AuditTransactionStore) AcquireLeadershipArgsForCall(i int) (context.Context, int64) {
+	fake.acquireLeadershipMutex.RLock()
+	defer fake.acquireLeadershipMutex.RUnlock()
+	argsForCall := fake.acquireLeadershipArgsForCall[i]
+	return argsForCall.arg1, argsForCall.arg2
+}
+
+func (fake *AuditTransactionStore) AcquireLeadershipReturns(result1 driver.RecoveryLeadership, result2 bool, result3 error) {
+	fake.acquireLeadershipMutex.Lock()
+	defer fake.acquireLeadershipMutex.Unlock()
+	fake.AcquireLeadershipStub = nil
+	fake.acquireLeadershipReturns = struct {
+		result1 driver.RecoveryLeadership
+		result2 bool
+		result3 error
+	}{result1, result2, result3}
+}
+
+func (fake *AuditTransactionStore) AcquireLeadershipReturnsOnCall(i int, result1 driver.RecoveryLeadership, result2 bool, result3 error) {
+	fake.acquireLeadershipMutex.Lock()
+	defer fake.acquireLeadershipMutex.Unlock()
+	fake.AcquireLeadershipStub = nil
+	if fake.acquireLeadershipReturnsOnCall == nil {
+		fake.acquireLeadershipReturnsOnCall = make(map[int]struct {
+			result1 driver.RecoveryLeadership
+			result2 bool
+			result3 error
+		})
+	}
+	fake.acquireLeadershipReturnsOnCall[i] = struct {
+		result1 driver.RecoveryLeadership
+		result2 bool
+		result3 error
+	}{result1, result2, result3}
 }
 
 func (fake *AuditTransactionStore) AcquireRecoveryLeadership(arg1 context.Context) (driver.RecoveryLeadership, bool, error) {
@@ -780,6 +907,71 @@ func (fake *AuditTransactionStore) PrefixedTableNameReturnsOnCall(i int, result1
 	}{result1}
 }
 
+func (fake *AuditTransactionStore) QueryFindings(arg1 context.Context, arg2 driver.QueryFindingsParams) ([]*driver.FindingRecord, error) {
+	fake.queryFindingsMutex.Lock()
+	ret, specificReturn := fake.queryFindingsReturnsOnCall[len(fake.queryFindingsArgsForCall)]
+	fake.queryFindingsArgsForCall = append(fake.queryFindingsArgsForCall, struct {
+		arg1 context.Context
+		arg2 driver.QueryFindingsParams
+	}{arg1, arg2})
+	stub := fake.QueryFindingsStub
+	fakeReturns := fake.queryFindingsReturns
+	fake.recordInvocation("QueryFindings", []interface{}{arg1, arg2})
+	fake.queryFindingsMutex.Unlock()
+	if stub != nil {
+		return stub(arg1, arg2)
+	}
+	if specificReturn {
+		return ret.result1, ret.result2
+	}
+	return fakeReturns.result1, fakeReturns.result2
+}
+
+func (fake *AuditTransactionStore) QueryFindingsCallCount() int {
+	fake.queryFindingsMutex.RLock()
+	defer fake.queryFindingsMutex.RUnlock()
+	return len(fake.queryFindingsArgsForCall)
+}
+
+func (fake *AuditTransactionStore) QueryFindingsCalls(stub func(context.Context, driver.QueryFindingsParams) ([]*driver.FindingRecord, error)) {
+	fake.queryFindingsMutex.Lock()
+	defer fake.queryFindingsMutex.Unlock()
+	fake.QueryFindingsStub = stub
+}
+
+func (fake *AuditTransactionStore) QueryFindingsArgsForCall(i int) (context.Context, driver.QueryFindingsParams) {
+	fake.queryFindingsMutex.RLock()
+	defer fake.queryFindingsMutex.RUnlock()
+	argsForCall := fake.queryFindingsArgsForCall[i]
+	return argsForCall.arg1, argsForCall.arg2
+}
+
+func (fake *AuditTransactionStore) QueryFindingsReturns(result1 []*driver.FindingRecord, result2 error) {
+	fake.queryFindingsMutex.Lock()
+	defer fake.queryFindingsMutex.Unlock()
+	fake.QueryFindingsStub = nil
+	fake.queryFindingsReturns = struct {
+		result1 []*driver.FindingRecord
+		result2 error
+	}{result1, result2}
+}
+
+func (fake *AuditTransactionStore) QueryFindingsReturnsOnCall(i int, result1 []*driver.FindingRecord, result2 error) {
+	fake.queryFindingsMutex.Lock()
+	defer fake.queryFindingsMutex.Unlock()
+	fake.QueryFindingsStub = nil
+	if fake.queryFindingsReturnsOnCall == nil {
+		fake.queryFindingsReturnsOnCall = make(map[int]struct {
+			result1 []*driver.FindingRecord
+			result2 error
+		})
+	}
+	fake.queryFindingsReturnsOnCall[i] = struct {
+		result1 []*driver.FindingRecord
+		result2 error
+	}{result1, result2}
+}
+
 func (fake *AuditTransactionStore) QueryMovements(arg1 context.Context, arg2 driver.QueryMovementsParams) ([]*driver.MovementRecord, error) {
 	fake.queryMovementsMutex.Lock()
 	ret, specificReturn := fake.queryMovementsReturnsOnCall[len(fake.queryMovementsArgsForCall)]
@@ -1040,6 +1232,77 @@ func (fake *AuditTransactionStore) ReleaseRecoveryClaimReturnsOnCall(i int, resu
 	}{result1}
 }
 
+func (fake *AuditTransactionStore) ResolveFindingsNotSeenSince(arg1 context.Context, arg2 []string, arg3 time.Time) (int64, error) {
+	var arg2Copy []string
+	if arg2 != nil {
+		arg2Copy = make([]string, len(arg2))
+		copy(arg2Copy, arg2)
+	}
+	fake.resolveFindingsNotSeenSinceMutex.Lock()
+	ret, specificReturn := fake.resolveFindingsNotSeenSinceReturnsOnCall[len(fake.resolveFindingsNotSeenSinceArgsForCall)]
+	fake.resolveFindingsNotSeenSinceArgsForCall = append(fake.resolveFindingsNotSeenSinceArgsForCall, struct {
+		arg1 context.Context
+		arg2 []string
+		arg3 time.Time
+	}{arg1, arg2Copy, arg3})
+	stub := fake.ResolveFindingsNotSeenSinceStub
+	fakeReturns := fake.resolveFindingsNotSeenSinceReturns
+	fake.recordInvocation("ResolveFindingsNotSeenSince", []interface{}{arg1, arg2Copy, arg3})
+	fake.resolveFindingsNotSeenSinceMutex.Unlock()
+	if stub != nil {
+		return stub(arg1, arg2, arg3)
+	}
+	if specificReturn {
+		return ret.result1, ret.result2
+	}
+	return fakeReturns.result1, fakeReturns.result2
+}
+
+func (fake *AuditTransactionStore) ResolveFindingsNotSeenSinceCallCount() int {
+	fake.resolveFindingsNotSeenSinceMutex.RLock()
+	defer fake.resolveFindingsNotSeenSinceMutex.RUnlock()
+	return len(fake.resolveFindingsNotSeenSinceArgsForCall)
+}
+
+func (fake *AuditTransactionStore) ResolveFindingsNotSeenSinceCalls(stub func(context.Context, []string, time.Time) (int64, error)) {
+	fake.resolveFindingsNotSeenSinceMutex.Lock()
+	defer fake.resolveFindingsNotSeenSinceMutex.Unlock()
+	fake.ResolveFindingsNotSeenSinceStub = stub
+}
+
+func (fake *AuditTransactionStore) ResolveFindingsNotSeenSinceArgsForCall(i int) (context.Context, []string, time.Time) {
+	fake.resolveFindingsNotSeenSinceMutex.RLock()
+	defer fake.resolveFindingsNotSeenSinceMutex.RUnlock()
+	argsForCall := fake.resolveFindingsNotSeenSinceArgsForCall[i]
+	return argsForCall.arg1, argsForCall.arg2, argsForCall.arg3
+}
+
+func (fake *AuditTransactionStore) ResolveFindingsNotSeenSinceReturns(result1 int64, result2 error) {
+	fake.resolveFindingsNotSeenSinceMutex.Lock()
+	defer fake.resolveFindingsNotSeenSinceMutex.Unlock()
+	fake.ResolveFindingsNotSeenSinceStub = nil
+	fake.resolveFindingsNotSeenSinceReturns = struct {
+		result1 int64
+		result2 error
+	}{result1, result2}
+}
+
+func (fake *AuditTransactionStore) ResolveFindingsNotSeenSinceReturnsOnCall(i int, result1 int64, result2 error) {
+	fake.resolveFindingsNotSeenSinceMutex.Lock()
+	defer fake.resolveFindingsNotSeenSinceMutex.Unlock()
+	fake.ResolveFindingsNotSeenSinceStub = nil
+	if fake.resolveFindingsNotSeenSinceReturnsOnCall == nil {
+		fake.resolveFindingsNotSeenSinceReturnsOnCall = make(map[int]struct {
+			result1 int64
+			result2 error
+		})
+	}
+	fake.resolveFindingsNotSeenSinceReturnsOnCall[i] = struct {
+		result1 int64
+		result2 error
+	}{result1, result2}
+}
+
 func (fake *AuditTransactionStore) SetStatus(arg1 context.Context, arg2 string, arg3 driver.TxStatus, arg4 string) error {
 	fake.setStatusMutex.Lock()
 	ret, specificReturn := fake.setStatusReturnsOnCall[len(fake.setStatusArgsForCall)]
@@ -1100,6 +1363,74 @@ func (fake *AuditTransactionStore) SetStatusReturnsOnCall(i int, result1 error) 
 		})
 	}
 	fake.setStatusReturnsOnCall[i] = struct {
+		result1 error
+	}{result1}
+}
+
+func (fake *AuditTransactionStore) UpsertFindings(arg1 context.Context, arg2 []driver.FindingRecord, arg3 time.Time) error {
+	var arg2Copy []driver.FindingRecord
+	if arg2 != nil {
+		arg2Copy = make([]driver.FindingRecord, len(arg2))
+		copy(arg2Copy, arg2)
+	}
+	fake.upsertFindingsMutex.Lock()
+	ret, specificReturn := fake.upsertFindingsReturnsOnCall[len(fake.upsertFindingsArgsForCall)]
+	fake.upsertFindingsArgsForCall = append(fake.upsertFindingsArgsForCall, struct {
+		arg1 context.Context
+		arg2 []driver.FindingRecord
+		arg3 time.Time
+	}{arg1, arg2Copy, arg3})
+	stub := fake.UpsertFindingsStub
+	fakeReturns := fake.upsertFindingsReturns
+	fake.recordInvocation("UpsertFindings", []interface{}{arg1, arg2Copy, arg3})
+	fake.upsertFindingsMutex.Unlock()
+	if stub != nil {
+		return stub(arg1, arg2, arg3)
+	}
+	if specificReturn {
+		return ret.result1
+	}
+	return fakeReturns.result1
+}
+
+func (fake *AuditTransactionStore) UpsertFindingsCallCount() int {
+	fake.upsertFindingsMutex.RLock()
+	defer fake.upsertFindingsMutex.RUnlock()
+	return len(fake.upsertFindingsArgsForCall)
+}
+
+func (fake *AuditTransactionStore) UpsertFindingsCalls(stub func(context.Context, []driver.FindingRecord, time.Time) error) {
+	fake.upsertFindingsMutex.Lock()
+	defer fake.upsertFindingsMutex.Unlock()
+	fake.UpsertFindingsStub = stub
+}
+
+func (fake *AuditTransactionStore) UpsertFindingsArgsForCall(i int) (context.Context, []driver.FindingRecord, time.Time) {
+	fake.upsertFindingsMutex.RLock()
+	defer fake.upsertFindingsMutex.RUnlock()
+	argsForCall := fake.upsertFindingsArgsForCall[i]
+	return argsForCall.arg1, argsForCall.arg2, argsForCall.arg3
+}
+
+func (fake *AuditTransactionStore) UpsertFindingsReturns(result1 error) {
+	fake.upsertFindingsMutex.Lock()
+	defer fake.upsertFindingsMutex.Unlock()
+	fake.UpsertFindingsStub = nil
+	fake.upsertFindingsReturns = struct {
+		result1 error
+	}{result1}
+}
+
+func (fake *AuditTransactionStore) UpsertFindingsReturnsOnCall(i int, result1 error) {
+	fake.upsertFindingsMutex.Lock()
+	defer fake.upsertFindingsMutex.Unlock()
+	fake.UpsertFindingsStub = nil
+	if fake.upsertFindingsReturnsOnCall == nil {
+		fake.upsertFindingsReturnsOnCall = make(map[int]struct {
+			result1 error
+		})
+	}
+	fake.upsertFindingsReturnsOnCall[i] = struct {
 		result1 error
 	}{result1}
 }

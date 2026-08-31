@@ -27,7 +27,7 @@ func TestNewAuditorCheckServiceProvider(t *testing.T) {
 		{Name: "checker2", Checker: func(ctx context.Context) ([]string, error) { return nil, nil }},
 	}
 
-	provider := NewAuditorCheckServiceProvider(tmsProvider, networkProvider, checkers)
+	provider := NewAuditorCheckServiceProvider(tmsProvider, networkProvider, checkers, nil, nil)
 
 	assert.NotNil(t, provider)
 	assert.Equal(t, tmsProvider, provider.tmsProvider)
@@ -44,7 +44,7 @@ func TestAuditorCheckServiceProvider_CheckService(t *testing.T) {
 		{Name: "checker1", Checker: func(ctx context.Context) ([]string, error) { return nil, nil }},
 	}
 
-	provider := NewAuditorCheckServiceProvider(tmsProvider, networkProvider, checkers)
+	provider := NewAuditorCheckServiceProvider(tmsProvider, networkProvider, checkers, nil, nil)
 
 	tmsID := token.TMSID{
 		Network:   "test-network",
@@ -72,7 +72,7 @@ func TestNewOwnerCheckServiceProvider(t *testing.T) {
 		{Name: "checker2", Checker: func(ctx context.Context) ([]string, error) { return nil, nil }},
 	}
 
-	provider := NewOwnerCheckServiceProvider(tmsProvider, networkProvider, checkers)
+	provider := NewOwnerCheckServiceProvider(tmsProvider, networkProvider, checkers, nil, nil)
 
 	assert.NotNil(t, provider)
 	assert.Equal(t, tmsProvider, provider.tmsProvider)
@@ -89,7 +89,7 @@ func TestOwnerCheckServiceProvider_CheckService(t *testing.T) {
 		{Name: "checker1", Checker: func(ctx context.Context) ([]string, error) { return nil, nil }},
 	}
 
-	provider := NewOwnerCheckServiceProvider(tmsProvider, networkProvider, checkers)
+	provider := NewOwnerCheckServiceProvider(tmsProvider, networkProvider, checkers, nil, nil)
 
 	tmsID := token.TMSID{
 		Network:   "test-network",
@@ -118,7 +118,7 @@ func TestAuditorCheckServiceProvider_WithMultipleCheckers(t *testing.T) {
 		{Name: "checker3", Checker: func(ctx context.Context) ([]string, error) { return nil, nil }},
 	}
 
-	provider := NewAuditorCheckServiceProvider(tmsProvider, networkProvider, checkers)
+	provider := NewAuditorCheckServiceProvider(tmsProvider, networkProvider, checkers, nil, nil)
 	require.NotNil(t, provider)
 	assert.Len(t, provider.checkers, 3)
 }
@@ -136,7 +136,7 @@ func TestOwnerCheckServiceProvider_WithMultipleCheckers(t *testing.T) {
 		{Name: "checker3", Checker: func(ctx context.Context) ([]string, error) { return nil, nil }},
 	}
 
-	provider := NewOwnerCheckServiceProvider(tmsProvider, networkProvider, checkers)
+	provider := NewOwnerCheckServiceProvider(tmsProvider, networkProvider, checkers, nil, nil)
 	require.NotNil(t, provider)
 	assert.Len(t, provider.checkers, 3)
 }
@@ -148,7 +148,7 @@ func TestAuditorCheckServiceProvider_WithEmptyCheckers(t *testing.T) {
 	networkProvider := &mock.NetworkProvider{}
 	checkers := []common.NamedChecker{}
 
-	provider := NewAuditorCheckServiceProvider(tmsProvider, networkProvider, checkers)
+	provider := NewAuditorCheckServiceProvider(tmsProvider, networkProvider, checkers, nil, nil)
 	require.NotNil(t, provider)
 	assert.Empty(t, provider.checkers)
 }
@@ -160,7 +160,7 @@ func TestOwnerCheckServiceProvider_WithEmptyCheckers(t *testing.T) {
 	networkProvider := &mock.NetworkProvider{}
 	checkers := []common.NamedChecker{}
 
-	provider := NewOwnerCheckServiceProvider(tmsProvider, networkProvider, checkers)
+	provider := NewOwnerCheckServiceProvider(tmsProvider, networkProvider, checkers, nil, nil)
 	require.NotNil(t, provider)
 	assert.Empty(t, provider.checkers)
 }
@@ -173,7 +173,7 @@ func TestAuditorCheckServiceProvider_WithNilProviders(t *testing.T) {
 	}
 
 	// Test with nil providers - should still create the provider
-	provider := NewAuditorCheckServiceProvider(nil, nil, checkers)
+	provider := NewAuditorCheckServiceProvider(nil, nil, checkers, nil, nil)
 	require.NotNil(t, provider)
 	assert.Nil(t, provider.tmsProvider)
 	assert.Nil(t, provider.networkProvider)
@@ -188,7 +188,7 @@ func TestOwnerCheckServiceProvider_WithNilProviders(t *testing.T) {
 	}
 
 	// Test with nil providers - should still create the provider
-	provider := NewOwnerCheckServiceProvider(nil, nil, checkers)
+	provider := NewOwnerCheckServiceProvider(nil, nil, checkers, nil, nil)
 	require.NotNil(t, provider)
 	assert.Nil(t, provider.tmsProvider)
 	assert.Nil(t, provider.networkProvider)

@@ -43,6 +43,7 @@ import (
 	"github.com/LFDT-Panurus/panurus/token/services/storage/endorserdb"
 	"github.com/LFDT-Panurus/panurus/token/services/storage/identitydb"
 	"github.com/LFDT-Panurus/panurus/token/services/storage/keystoredb"
+	"github.com/LFDT-Panurus/panurus/token/services/storage/services/checks"
 	"github.com/LFDT-Panurus/panurus/token/services/storage/services/cleanup"
 	"github.com/LFDT-Panurus/panurus/token/services/storage/tokendb"
 	"github.com/LFDT-Panurus/panurus/token/services/storage/tokenlockdb"
@@ -115,7 +116,7 @@ func (p *SDK) Install() error {
 		p.Container().Provide(ftsconfig.NewService),
 		p.Container().Provide(
 			digutils.Identity[*ftsconfig.Service](),
-			dig.As(new(cleanup.Configuration)),
+			dig.As(new(cleanup.Configuration), new(checks.Configuration)),
 		),
 		p.Container().Provide(tms.NewConfigServiceWrapper),
 		p.Container().Provide(
@@ -315,6 +316,30 @@ func (p *SDK) Start(ctx context.Context) error {
 	logger.Infof("Token platform enabled, starting...done")
 
 	return nil
+}
+
+// Stop stops the token platform services, including the background ledger
+// drift checks sweeps started as a side effect of building each TMS's check
+// service in Start, before stopping the underlying SDK.
+//
+// Without this, a running sweep - and on Postgres its dedicated advisory-lock
+// connection - outlives an in-process SDK restart: the old sweep keeps
+// holding the lock and the new one never acquires leadership.
+func (p *SDK) Stop() error {
+	if !p.TokenEnabled() {
+		return p.SDK.Stop()
+	}
+
+	var stopErrs []error
+	if err := p.Container().Invoke(func(a *db.AuditorCheckServiceProvider, o *db.OwnerCheckServiceProvider) error {
+		return errors2.Join(a.Stop(), o.Stop())
+	}); err != nil {
+		stopErrs = append(stopErrs, errors.WithMessagef(err, "failed stopping the drift checks sweeps"))
+	}
+
+	stopErrs = append(stopErrs, p.SDK.Stop())
+
+	return errors2.Join(stopErrs...)
 }
 
 // connectNetworks establishes connections to all configured networks.
