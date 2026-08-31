@@ -112,7 +112,7 @@ func policyNetwork(t *testing.T, evm *mock.EVMClient, tweak func(*Config)) *Netw
 	c.applyDefaults()
 	require.NoError(t, c.Validate())
 
-	n, err := NewNetwork("evm-net", c, evm, nil, nil, nil)
+	n, err := NewNetwork("evm-net", evm, []NamespaceConfig{{Namespace: testNamespace, Config: c}}, nil, nil)
 	require.NoError(t, err)
 
 	return n
@@ -280,7 +280,7 @@ func TestConnectSkipsAnUninitializedTokenState(t *testing.T) {
 	c := validConfig()
 	c.applyDefaults()
 	require.NoError(t, c.Validate())
-	n, err := NewNetwork("evm-net", c, evm, nil, nil, nil)
+	n, err := NewNetwork("evm-net", evm, []NamespaceConfig{{Namespace: testNamespace, Config: c}}, nil, nil)
 	require.NoError(t, err)
 
 	_, err = n.Connect("token")

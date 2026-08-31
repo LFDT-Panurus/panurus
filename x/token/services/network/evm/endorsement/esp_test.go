@@ -21,22 +21,30 @@ import (
 
 func testFactoryConfig(t *testing.T) FactoryConfig {
 	t.Helper()
-	registry, err := NewRegistry([]Endorser{endorser("alice", 1), endorser("bob", 2)})
-	require.NoError(t, err)
 
 	return FactoryConfig{
-		Registry:     registry,
-		Threshold:    2,
-		Domain:       eip712.Domain{ChainID: big.NewInt(31337), VerifyingContract: addr(0x99)},
-		Client:       &mock.EVMClient{},
-		TokenState:   addr(0xAA),
-		PublicParams: &fakePP{raw: []byte("pp"), version: 1},
-		ViewManager:  &stubViewManager{},
+		Client:      &mock.EVMClient{},
+		ViewManager: &stubViewManager{},
 	}
 }
 
-// TestNewServiceFactoryValidates checks the quorum invariants are caught when the factory is built,
-// rather than at the first endorsement.
+// testTMSConfig returns a sound per-TMS configuration to Register against a factory.
+func testTMSConfig(t *testing.T) TMSConfig {
+	t.Helper()
+	registry, err := NewRegistry([]Endorser{endorser("alice", 1), endorser("bob", 2)})
+	require.NoError(t, err)
+
+	return TMSConfig{
+		Registry:     registry,
+		Threshold:    2,
+		Domain:       eip712.Domain{ChainID: big.NewInt(31337), VerifyingContract: addr(0x99)},
+		TokenState:   addr(0xAA),
+		PublicParams: &fakePP{raw: []byte("pp"), version: 1},
+	}
+}
+
+// TestNewServiceFactoryValidates checks the collaborators genuinely shared by every TMS are caught
+// when the factory is built, rather than at the first endorsement.
 func TestNewServiceFactoryValidates(t *testing.T) {
 	t.Run("accepts a sound configuration", func(t *testing.T) {
 		_, err := NewServiceFactory(testFactoryConfig(t))
@@ -44,12 +52,8 @@ func TestNewServiceFactoryValidates(t *testing.T) {
 	})
 
 	bad := map[string]func(*FactoryConfig){
-		"no registry":          func(c *FactoryConfig) { c.Registry = nil },
-		"no client":            func(c *FactoryConfig) { c.Client = nil },
-		"no view manager":      func(c *FactoryConfig) { c.ViewManager = nil },
-		"no public parameters": func(c *FactoryConfig) { c.PublicParams = nil },
-		"zero threshold":       func(c *FactoryConfig) { c.Threshold = 0 },
-		"threshold too high":   func(c *FactoryConfig) { c.Threshold = 3 },
+		"no client":       func(c *FactoryConfig) { c.Client = nil },
+		"no view manager": func(c *FactoryConfig) { c.ViewManager = nil },
 	}
 	for name, mutate := range bad {
 		t.Run(name, func(t *testing.T) {
@@ -59,6 +63,41 @@ func TestNewServiceFactoryValidates(t *testing.T) {
 			require.Error(t, err)
 		})
 	}
+}
+
+// TestRegisterValidatesTheQuorumInvariants checks the per-TMS invariants (registry, threshold,
+// public parameters) are caught when a TMS is registered, the same way they used to be caught at
+// factory construction when the factory only ever served one TMS.
+func TestRegisterValidatesTheQuorumInvariants(t *testing.T) {
+	tmsID := token2.TMSID{Network: "evm", Namespace: "token"}
+
+	t.Run("accepts a sound configuration", func(t *testing.T) {
+		f, err := NewServiceFactory(testFactoryConfig(t))
+		require.NoError(t, err)
+		require.NoError(t, f.Register(tmsID, testTMSConfig(t)))
+	})
+
+	bad := map[string]func(*TMSConfig){
+		"no registry":          func(c *TMSConfig) { c.Registry = nil },
+		"no public parameters": func(c *TMSConfig) { c.PublicParams = nil },
+		"zero threshold":       func(c *TMSConfig) { c.Threshold = 0 },
+		"threshold too high":   func(c *TMSConfig) { c.Threshold = 3 },
+	}
+	for name, mutate := range bad {
+		t.Run(name, func(t *testing.T) {
+			f, err := NewServiceFactory(testFactoryConfig(t))
+			require.NoError(t, err)
+			cfg := testTMSConfig(t)
+			mutate(&cfg)
+			require.Error(t, f.Register(tmsID, cfg))
+		})
+	}
+
+	t.Run("rejects an id without a network", func(t *testing.T) {
+		f, err := NewServiceFactory(testFactoryConfig(t))
+		require.NoError(t, err)
+		require.Error(t, f.Register(token2.TMSID{}, testTMSConfig(t)))
+	})
 }
 
 // TestForTMSRejectsAnEmptyID checks the factory does not build a service for an id it could not route
@@ -71,6 +110,16 @@ func TestForTMSRejectsAnEmptyID(t *testing.T) {
 	require.Error(t, err)
 }
 
+// TestForTMSRejectsAnUnregisteredTMS checks a TMS that was never Register-ed is refused rather than
+// silently built from another TMS's configuration.
+func TestForTMSRejectsAnUnregisteredTMS(t *testing.T) {
+	f, err := NewServiceFactory(testFactoryConfig(t))
+	require.NoError(t, err)
+
+	_, err = f.ForTMS(token2.TMSID{Network: "evm", Namespace: "unregistered"})
+	require.Error(t, err)
+}
+
 // TestForTMSCachesPerTMS checks the service is built once and reused. It holds nothing derived from a
 // TMS any more (the initiator collects signatures and takes the delta from the endorsers), so the
 // cache is only about not rebuilding the same collaborators on every approval.
@@ -79,11 +128,46 @@ func TestForTMSCachesPerTMS(t *testing.T) {
 	require.NoError(t, err)
 
 	tmsID := token2.TMSID{Network: "evm", Namespace: "token"}
+	require.NoError(t, f.Register(tmsID, testTMSConfig(t)))
 	service, err := f.ForTMS(tmsID)
 	require.NoError(t, err)
 	again, err := f.ForTMS(tmsID)
 	require.NoError(t, err)
 	assert.Same(t, service, again)
+}
+
+// TestForTMSIsolatesTwoTMS checks two TMS registered on one factory get two independent services,
+// each carrying its own domain and threshold rather than either one's overwriting the other - the
+// regression test for the factory's own root cause of the multi-TMS cross-contamination bug.
+func TestForTMSIsolatesTwoTMS(t *testing.T) {
+	f, err := NewServiceFactory(testFactoryConfig(t))
+	require.NoError(t, err)
+
+	tmsA := token2.TMSID{Network: "evm", Namespace: "a"}
+	cfgA := testTMSConfig(t)
+	require.NoError(t, f.Register(tmsA, cfgA))
+
+	registryB, err := NewRegistry([]Endorser{endorser("carol", 3)})
+	require.NoError(t, err)
+	tmsB := token2.TMSID{Network: "evm", Namespace: "b"}
+	cfgB := TMSConfig{
+		Registry:     registryB,
+		Threshold:    1,
+		Domain:       eip712.Domain{ChainID: big.NewInt(31337), VerifyingContract: addr(0xBB)},
+		TokenState:   addr(0xBB),
+		PublicParams: &fakePP{raw: []byte("pp-b"), version: 1},
+	}
+	require.NoError(t, f.Register(tmsB, cfgB))
+
+	svcA, err := f.ForTMS(tmsA)
+	require.NoError(t, err)
+	svcB, err := f.ForTMS(tmsB)
+	require.NoError(t, err)
+
+	assert.NotSame(t, svcA, svcB)
+	assert.Equal(t, cfgA.Domain, svcA.domain)
+	assert.Equal(t, cfgB.Domain, svcB.domain)
+	assert.NotEqual(t, svcA.domain, svcB.domain)
 }
 
 // TestResponderResolvesTheTMSPerRequest pins why the responder holds a TMS id and not a TMS.

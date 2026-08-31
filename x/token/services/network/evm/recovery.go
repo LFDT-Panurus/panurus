@@ -84,12 +84,17 @@ func (d *Driver) startRecovery(tmsID token2.TMSID, network *Network) error {
 		return errors.Wrapf(err, "evm: failed to get the audit store for [%s]", tmsID)
 	}
 
+	binding, err := network.binding(tmsID.Namespace)
+	if err != nil {
+		return err
+	}
+
 	config := d.recoveryConfig(tmsID)
 	started := make([]*recovery.Manager, 0, 2)
 	for _, store := range []recoveryStore{ttxStore, auditStore} {
 		handler := ttxfinality.NewTTXRecoveryHandler(
 			logger,
-			settledNetwork{Network: network, store: store, timeout: network.config.Finality.Timeout},
+			settledNetwork{Network: network, store: store, timeout: binding.config.Finality.Timeout},
 			tmsID.Namespace,
 			ttxfinality.NewTokenRequestHasher(wrapper.NewTokenManagementServiceProvider(d.tmsProvider), tmsID),
 			tmsID,
