@@ -99,7 +99,7 @@ func TestAWAddValidationRecord(t *testing.T, store endorserStoreConstructor) {
 	// Expect the INSERT into VALIDATIONS table
 	mockDB.
 		ExpectExec("INSERT INTO VALIDATIONS \\(tx_id, request, metadata, pp_hash, status, status_message, stored_at\\) "+
-			"VALUES \\(\\$1, \\$2, \\$3, \\$4, \\$5, \\$6, \\$7\\)").
+			"VALUES \\(\\$1, \\$2, \\$3, \\$4, \\$5, \\$6, \\$7\\) ON CONFLICT DO NOTHING").
 		WithArgs(txID, tokenRequest, "null", ppHash, driver.Pending, "", now).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mockDB.ExpectCommit()

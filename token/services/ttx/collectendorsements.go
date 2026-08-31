@@ -260,7 +260,7 @@ func (c *CollectEndorsementsView) requestSignatures(signers []view.Identity, ver
 			// If the caller supplied WithPolicySigners, only contact those
 			// components; the absent slots stay nil in the PolicySignature,
 			// which satisfies OR branches without unnecessary network calls.
-			collectIDs := c.policyCollectIDs(componentIDs)
+			collectIDs := c.policyCollectIDs(context.Context(), componentIDs)
 			logger.DebugfContext(context.Context(), "found policy identity [%s], collecting signatures from [%d/%d] components", signerIdentity, len(collectIDs), len(componentIDs))
 			componentSigmas, err := c.requestSignatures(collectIDs, verifierGetter, context, externalWallets)
 			if err != nil {
@@ -635,20 +635,16 @@ func (c *CollectEndorsementsView) distributeTxToParty(
 	return sigma, nil
 }
 
-// prepareDistributionList processes the raw distribution list and auditors list to create
-// a compressed list of unique parties to distribute the transaction to. It:
-// - Unwraps multi-signature and policy identities into their component identities
-// - Resolves long-term identities for remote parties
-// - Extracts enrollment IDs for non-local parties
-// - Removes duplicates based on long-term identity
-// - Marks which parties are local (isMe) and which are auditors
-// Returns a deduplicated list of distribution entries with all necessary metadata.
-func (c *CollectEndorsementsView) prepareDistributionList(context view.Context, auditors []view.Identity, distributionList []view.Identity) ([]distributionListEntry, error) {
-	// Compress distributionList by removing duplicates
-
-	// check if there are multisig identities, if yes, unwrap them
-	allIds := make([]view.Identity, 0, len(distributionList)+len(auditors))
-	for _, id := range distributionList {
+// unwrapDistributionIDs expands multi-sig and policy identities in ids into
+// their component identities. Policy components are filtered through
+// policyCollectIDs, mirroring requestSignatures: a co-owner excluded from an
+// OR-policy spend (e.g. WithPolicySigners restricts to one signer) never
+// opens a session expecting the assembled transaction, so sending it to them
+// anyway makes their RespondRequestRecipientIdentityView fail with "expected
+// recipient_req, got transaction".
+func (c *CollectEndorsementsView) unwrapDistributionIDs(ctx context.Context, ids []view.Identity) ([]view.Identity, error) {
+	allIds := make([]view.Identity, 0, len(ids))
+	for _, id := range ids {
 		if id.IsNone() {
 			// This is a redeem, nothing to do here.
 			continue
@@ -668,14 +664,35 @@ func (c *CollectEndorsementsView) prepareDistributionList(context view.Context, 
 			return nil, errors.Wrapf(err, "failed unwrapping policy identity [%s]", id)
 		}
 		if ok {
-			for _, b := range pi.Identities {
-				allIds = append(allIds, token.Identity(b))
+			componentIDs := make([]token.Identity, len(pi.Identities))
+			for idx, b := range pi.Identities {
+				componentIDs[idx] = b
 			}
+			allIds = append(allIds, c.policyCollectIDs(ctx, componentIDs)...)
 
 			continue
 		}
 
 		allIds = append(allIds, id)
+	}
+
+	return allIds, nil
+}
+
+// prepareDistributionList processes the raw distribution list and auditors list to create
+// a compressed list of unique parties to distribute the transaction to. It:
+// - Unwraps multi-signature and policy identities into their component identities
+// - Resolves long-term identities for remote parties
+// - Extracts enrollment IDs for non-local parties
+// - Removes duplicates based on long-term identity
+// - Marks which parties are local (isMe) and which are auditors
+// Returns a deduplicated list of distribution entries with all necessary metadata.
+func (c *CollectEndorsementsView) prepareDistributionList(context view.Context, auditors []view.Identity, distributionList []view.Identity) ([]distributionListEntry, error) {
+	// Compress distributionList by removing duplicates
+
+	allIds, err := c.unwrapDistributionIDs(context.Context(), distributionList)
+	if err != nil {
+		return nil, err
 	}
 	distributionList = allIds
 	allIds = append(allIds, auditors...)
@@ -873,7 +890,17 @@ func TransferDistributionList(r *token.Request) []view.Identity {
 // policyCollectIDs returns the subset of componentIDs to collect signatures from.
 // When WithPolicySigners was supplied, only those matching identities are returned;
 // otherwise all components are returned (the default, AND-safe behaviour).
-func (c *CollectEndorsementsView) policyCollectIDs(componentIDs []token.Identity) []token.Identity {
+//
+// A component matches a requested signer either by exact identity bytes, or,
+// failing that, when the local node can sign for the component (SigService().IsMe).
+// The exact-bytes check alone is not sufficient for anonymous/pseudonymous owner
+// wallets (e.g. dlog/zkatdlog): the caller of WithPolicySigners typically only
+// knows the party's raw network identity, while the component identity recorded
+// in the PolicyIdentity is a wallet-derived pseudonym with different bytes. The
+// IsMe fallback lets "restrict to this party" work regardless of which identity
+// representation the caller happened to supply, mirroring the membership check
+// already used for composite owners in OutputStream.ByRecipientOrMember.
+func (c *CollectEndorsementsView) policyCollectIDs(ctx context.Context, componentIDs []token.Identity) []token.Identity {
 	if len(c.Opts.PolicySigners) == 0 {
 		return componentIDs
 	}
@@ -881,9 +908,15 @@ func (c *CollectEndorsementsView) policyCollectIDs(componentIDs []token.Identity
 	for _, id := range c.Opts.PolicySigners {
 		allowed[id.UniqueID()] = struct{}{}
 	}
+	sigService := c.tx.TokenService().SigService()
 	filtered := make([]token.Identity, 0, len(c.Opts.PolicySigners))
 	for _, id := range componentIDs {
 		if _, ok := allowed[id.UniqueID()]; ok {
+			filtered = append(filtered, id)
+
+			continue
+		}
+		if sigService.IsMe(ctx, id) {
 			filtered = append(filtered, id)
 		}
 	}
