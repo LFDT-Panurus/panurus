@@ -32,6 +32,9 @@ import (
 const (
 	testTokenState = "0x5FbDB2315678afecb367f032d93F642f64180aa3" // #nosec G101 -- contract address, not a credential
 	testChainID    = 31337
+	// testNamespace is the namespace every single-TMS test in this file binds its Network under -
+	// matches the "token" namespace string those tests already pass to QueryTokens, Connect and so on.
+	testNamespace = "token"
 )
 
 // validConfig returns a minimal configuration that passes validation, for tests that need a Network
@@ -62,7 +65,7 @@ func testNetwork(t *testing.T, evmClient client.EVMClient, endorser EndorsementS
 	c.applyDefaults()
 	require.NoError(t, c.Validate())
 
-	n, err := NewNetwork("evm-net", c, evmClient, endorser, nil, nil)
+	n, err := NewNetwork("evm-net", evmClient, []NamespaceConfig{{Namespace: testNamespace, Config: c}}, endorser, nil)
 	require.NoError(t, err)
 
 	return n
@@ -329,12 +332,17 @@ func TestBroadcastRejectsBadInput(t *testing.T) {
 	})
 
 	t.Run("no submitter configured", func(t *testing.T) {
-		err := n.Broadcast(t.Context(), &Envelope{Anchor: "a", Delta: &statedelta.StateDelta{}})
+		err := n.Broadcast(t.Context(), &Envelope{Anchor: "a", Namespace: testNamespace, Delta: &statedelta.StateDelta{}})
 		require.Error(t, err)
 	})
 
 	t.Run("envelope without a delta", func(t *testing.T) {
-		err := n.Broadcast(t.Context(), &Envelope{Anchor: "a"})
+		err := n.Broadcast(t.Context(), &Envelope{Anchor: "a", Namespace: testNamespace})
+		require.Error(t, err)
+	})
+
+	t.Run("unbound namespace", func(t *testing.T) {
+		err := n.Broadcast(t.Context(), &Envelope{Anchor: "a", Namespace: "no-such-tms", Delta: &statedelta.StateDelta{}})
 		require.Error(t, err)
 	})
 }
@@ -347,7 +355,9 @@ func networkWithSubmitter(t *testing.T, evm *mock.EVMClient) *Network {
 	c := validConfig()
 	c.applyDefaults()
 	require.NoError(t, c.Validate())
-	n, err := NewNetwork("evm-net", c, evm, nil, testSubmitter(t, evm, estimateGas()), nil)
+	n, err := NewNetwork("evm-net", evm, []NamespaceConfig{
+		{Namespace: testNamespace, Config: c, Submitter: testSubmitter(t, evm, estimateGas())},
+	}, nil, nil)
 	require.NoError(t, err)
 
 	return n
@@ -370,6 +380,7 @@ func TestBroadcastRejectsMismatchedAnchor(t *testing.T) {
 
 	err = n.Broadcast(t.Context(), &Envelope{
 		Anchor:       anchorHex(0x01),
+		Namespace:    testNamespace,
 		Delta:        delta,
 		Endorsements: [][]byte{make([]byte, 65)},
 	})
@@ -385,6 +396,7 @@ func TestBroadcastRejectsAnUnparsableAnchor(t *testing.T) {
 
 	err := n.Broadcast(t.Context(), &Envelope{
 		Anchor:       "not-hex",
+		Namespace:    testNamespace,
 		Delta:        testDelta(),
 		Endorsements: [][]byte{make([]byte, 65)},
 	})
@@ -401,6 +413,7 @@ func TestBroadcastAcceptsAConsistentEnvelope(t *testing.T) {
 	delta := testDelta()
 	err := n.Broadcast(t.Context(), &Envelope{
 		Anchor:       hex.EncodeToString(delta.Anchor[:]),
+		Namespace:    testNamespace,
 		Delta:        delta,
 		Endorsements: [][]byte{make([]byte, 65)},
 	})
@@ -441,8 +454,10 @@ func TestQueryTokens(t *testing.T) {
 		_, err := n.QueryTokens(t.Context(), "token", []*token.ID{{TxId: txID, Index: 3}})
 		require.NoError(t, err)
 
+		binding, err := n.binding(testNamespace)
+		require.NoError(t, err)
 		_, to, data, tag := evm.CallArgsForCall(0)
-		assert.Equal(t, n.tokenState, to)
+		assert.Equal(t, binding.tokenState, to)
 		assert.Equal(t, client.BlockTagFinalized, tag)
 
 		anchor, err := keys.AnchorFromTxID(txID)
@@ -506,9 +521,11 @@ func TestLookupTransferMetadataKeyTimesOut(t *testing.T) {
 	evm := &mock.EVMClient{}
 	evm.CallReturns(abiBytes(nil), nil) // never appears
 	n := testNetwork(t, evm, nil)
-	n.config.Finality.PollInterval = 10 * time.Millisecond
+	binding, err := n.binding(testNamespace)
+	require.NoError(t, err)
+	binding.config.Finality.PollInterval = 10 * time.Millisecond
 
-	_, err := n.LookupTransferMetadataKey("token", "key", 50*time.Millisecond)
+	_, err = n.LookupTransferMetadataKey("token", "key", 50*time.Millisecond)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "not found")
 }
@@ -544,6 +561,7 @@ func TestBroadcastKeepsARevertWhenTheAnchorIsNotApplied(t *testing.T) {
 	delta := testDelta()
 	err := n.Broadcast(t.Context(), &Envelope{
 		Anchor:       hex.EncodeToString(delta.Anchor[:]),
+		Namespace:    testNamespace,
 		Delta:        delta,
 		Endorsements: [][]byte{make([]byte, 65)},
 	})
@@ -563,6 +581,7 @@ func TestBroadcastKeepsARevertWhenTheStatusCannotBeRead(t *testing.T) {
 	delta := testDelta()
 	err := n.Broadcast(t.Context(), &Envelope{
 		Anchor:       hex.EncodeToString(delta.Anchor[:]),
+		Namespace:    testNamespace,
 		Delta:        delta,
 		Endorsements: [][]byte{make([]byte, 65)},
 	})

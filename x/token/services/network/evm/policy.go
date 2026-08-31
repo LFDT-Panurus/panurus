@@ -48,13 +48,13 @@ const (
 // block can change and no reorg exposure to speak of; reading at "finalized" instead would leave a
 // freshly deployed network unable to see its own verifier for the whole finalization window, turning
 // the common case into the one that gets no checking.
-func (n *Network) verifyEndorsementPolicy(ctx context.Context) error {
-	verifier, ok := n.endorsementVerifierAddress(ctx)
+func (n *Network) verifyEndorsementPolicy(ctx context.Context, nsBinding *namespaceBinding) error {
+	verifier, ok := n.endorsementVerifierAddress(ctx, nsBinding)
 	if !ok {
 		return nil
 	}
 
-	if configured := n.config.Contracts.EndorsementVerifier; configured != "" {
+	if configured := nsBinding.config.Contracts.EndorsementVerifier; configured != "" {
 		want, err := client.HexToAddress(configured)
 		if err != nil {
 			return errors.Wrap(err, "evm network: invalid endorsementVerifier address")
@@ -62,37 +62,38 @@ func (n *Network) verifyEndorsementPolicy(ctx context.Context) error {
 		if want != verifier {
 			return errors.Errorf(
 				"evm network: tokenState [%s] calls verifier %s, configuration says %s",
-				n.tokenState, verifier, want)
+				nsBinding.tokenState, verifier, want)
 		}
 	}
 
-	if err := n.verifyThreshold(ctx, verifier); err != nil {
+	if err := n.verifyThreshold(ctx, nsBinding, verifier); err != nil {
 		return err
 	}
 
-	return n.verifyEndorserSet(ctx, verifier)
+	return n.verifyEndorserSet(ctx, nsBinding, verifier)
 }
 
 // endorsementVerifierAddress reads the verifier the TokenState delegates signature checking to. The
 // TokenState holds the authoritative reference, which is why the configuration may leave it out
 // entirely, so it is read from there rather than taken from configuration. It reports false when the
 // answer could not be obtained, which is not an error: see verifyEndorsementPolicy.
-func (n *Network) endorsementVerifierAddress(ctx context.Context) (client.Address, bool) {
-	raw, err := n.client.Call(ctx, n.tokenState, abi.MethodID(endorsementVerifierMethod), client.BlockTagLatest)
+func (n *Network) endorsementVerifierAddress(ctx context.Context, nsBinding *namespaceBinding) (client.Address, bool) {
+	tokenState := nsBinding.tokenState
+	raw, err := n.client.Call(ctx, tokenState, abi.MethodID(endorsementVerifierMethod), client.BlockTagLatest)
 	if err != nil {
-		logger.Warnf("could not read the endorsement verifier of [%s]; skipping the policy check: %v", n.tokenState, err)
+		logger.Warnf("could not read the endorsement verifier of [%s]; skipping the policy check: %v", tokenState, err)
 
 		return client.Address{}, false
 	}
 	word, err := abi.DecodeBytes32(raw)
 	if err != nil {
-		logger.Warnf("could not decode the endorsement verifier of [%s]; skipping the policy check: %v", n.tokenState, err)
+		logger.Warnf("could not decode the endorsement verifier of [%s]; skipping the policy check: %v", tokenState, err)
 
 		return client.Address{}, false
 	}
 	verifier := client.BytesToAddress(word[12:])
 	if verifier == (client.Address{}) {
-		logger.Warnf("tokenState [%s] names no endorsement verifier yet; skipping the policy check", n.tokenState)
+		logger.Warnf("tokenState [%s] names no endorsement verifier yet; skipping the policy check", tokenState)
 
 		return client.Address{}, false
 	}
@@ -101,7 +102,7 @@ func (n *Network) endorsementVerifierAddress(ctx context.Context) (client.Addres
 }
 
 // verifyThreshold checks the configured quorum size is the one the contract enforces.
-func (n *Network) verifyThreshold(ctx context.Context, verifier client.Address) error {
+func (n *Network) verifyThreshold(ctx context.Context, nsBinding *namespaceBinding, verifier client.Address) error {
 	raw, err := n.client.Call(ctx, verifier, abi.MethodID(getThresholdMethod), client.BlockTagLatest)
 	if err != nil {
 		logger.Warnf("could not read the on-chain endorsement threshold from %s: %v", verifier, err)
@@ -114,11 +115,11 @@ func (n *Network) verifyThreshold(ctx context.Context, verifier client.Address) 
 
 		return nil
 	}
-	if onChain != uint64(n.config.Endorsement.Threshold) {
+	if onChain != uint64(nsBinding.config.Endorsement.Threshold) {
 		return errors.Errorf(
 			"evm network: verifier %s requires %d endorsements, configuration says %d; "+
 				"every transaction would collect a quorum this contract rejects",
-			verifier, onChain, n.config.Endorsement.Threshold)
+			verifier, onChain, nsBinding.config.Endorsement.Threshold)
 	}
 
 	return nil
@@ -134,13 +135,13 @@ func (n *Network) verifyThreshold(ctx context.Context, verifier client.Address) 
 // static-word decode of the codec this driver keeps deliberately minimal. The opposite direction, an
 // endorser on chain that this node does not know about, needs no check: the threshold comparison
 // above already catches the case where it matters.
-func (n *Network) verifyEndorserSet(ctx context.Context, verifier client.Address) error {
-	for _, binding := range n.config.Endorsement.Endorsers {
-		address, err := client.HexToAddress(binding.Address)
+func (n *Network) verifyEndorserSet(ctx context.Context, nsBinding *namespaceBinding, verifier client.Address) error {
+	for _, endorser := range nsBinding.config.Endorsement.Endorsers {
+		address, err := client.HexToAddress(endorser.Address)
 		if err != nil {
 			// Validate already rejected this at load time; reaching it here means the configuration was
 			// not loaded through LoadConfig, which is not this check's business to police.
-			return errors.Wrapf(err, "evm network: endorser [%s] has an invalid address", binding.FSCIdentity)
+			return errors.Wrapf(err, "evm network: endorser [%s] has an invalid address", endorser.FSCIdentity)
 		}
 
 		var arg [32]byte
@@ -161,7 +162,7 @@ func (n *Network) verifyEndorserSet(ctx context.Context, verifier client.Address
 			return errors.Errorf(
 				"evm network: endorser [%s] at %s is not registered in verifier %s; "+
 					"the contract rejects any bundle carrying its signature",
-				binding.FSCIdentity, address, verifier)
+				endorser.FSCIdentity, address, verifier)
 		}
 	}
 
