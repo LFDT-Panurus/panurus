@@ -84,7 +84,9 @@ func (f *PublicParametersService) FetchNamespaceVersion(network driver.Network, 
 		return 0, errors.Wrapf(err, "failed reading _meta version for namespace [%s]", namespace)
 	}
 	if value == nil {
-		return 0, errors.Errorf("namespace [%s] has no _meta entry on [%s/%s] — namespace not registered on this channel", namespace, network, channel)
+		logger.Debugf("namespace [%s] has no _meta entry on [%s/%s] — returning initial version 0", namespace, network, channel)
+
+		return 0, nil
 	}
 
 	// Version bytes are encoded as a protobuf varint — same as UnmarshalVersion in
