@@ -49,6 +49,36 @@ jobs:
       - name: Run checks
         run: make checks
 
+  # Style linting (golangci-lint) is independent of correctness, so it runs as
+  # its own job in parallel with utest/itest/bench-check rather than sitting on
+  # their critical path. Nothing depends on it: the compile-heavy linter no
+  # longer delays the start of the ~70-job integration matrix.
+  lint:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: "go.mod"
+          cache-dependency-path: "**/*.sum"
+
+      - name: Replace FSC dep
+        run: |
+          if [ -n "${{ github.event.inputs.fsc-version }}" ]; then
+            echo "Replace FSC dependency"
+            go mod edit -replace=github.com/hyperledger-labs/fabric-smart-client=${{ github.event.inputs.fsc-version }}
+            go mod tidy || true
+          else
+            echo "Skipping FSC dependency replacement"
+          fi
+
+      - name: Set up tools
+        run: make install-tools
+
       - name: Run linter
         run: make lint
 
