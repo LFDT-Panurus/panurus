@@ -196,4 +196,3 @@ func TestBuildIssueAction_Valid(t *testing.T) {
 		require.NoError(t, err, "output %d: proof does not verify", j)
 	}
 }
-

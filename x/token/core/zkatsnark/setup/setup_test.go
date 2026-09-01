@@ -35,6 +35,7 @@ func setupSharedPP(t *testing.T) *pp.PublicParams {
 		p, err = setup.SetupAll(p)
 		if err != nil {
 			setupErr = fmt.Errorf("shared setup.SetupAll: %w", err)
+
 			return
 		}
 		sharedPP = p
@@ -42,6 +43,7 @@ func setupSharedPP(t *testing.T) *pp.PublicParams {
 	if setupErr != nil {
 		t.Fatalf("shared setup failed: %v", setupErr)
 	}
+
 	return sharedPP
 }
 
@@ -52,6 +54,7 @@ func setupSharedPP(t *testing.T) *pp.PublicParams {
 // for compilation tests. Do not use these for proof generation.
 func dummyGens() setup.PedersenGeneratorCoords {
 	one := new(big.Int).SetInt64(1)
+
 	return setup.PedersenGeneratorCoords{
 		G0X: one, G0Y: one,
 		G1X: one, G1Y: one,
@@ -63,14 +66,14 @@ func TestCompileSpendCircuit_Success(t *testing.T) {
 	p := pp.DefaultPublicParams()
 	cs, err := setup.CompileSpendCircuit(p)
 	require.NoError(t, err)
-	require.Greater(t, cs.GetNbConstraints(), 0, "SpendCircuit must have constraints")
+	require.Positive(t, cs.GetNbConstraints(), "SpendCircuit must have constraints")
 }
 
 func TestCompileOutputCircuit_Success(t *testing.T) {
 	p := pp.DefaultPublicParams()
 	cs, err := setup.CompileOutputCircuit(p)
 	require.NoError(t, err)
-	require.Greater(t, cs.GetNbConstraints(), 0, "OutputCircuit must have constraints")
+	require.Positive(t, cs.GetNbConstraints(), "OutputCircuit must have constraints")
 }
 
 func TestCompileOutputCircuit_ZeroMaxBits_Error(t *testing.T) {
@@ -91,7 +94,7 @@ func TestCompileMigrationCircuit_Success(t *testing.T) {
 	p := pp.DefaultPublicParams()
 	cs, err := setup.CompileMigrationCircuit(p, dummyGens())
 	require.NoError(t, err)
-	require.Greater(t, cs.GetNbConstraints(), 0, "MigrationCircuit must have constraints")
+	require.Positive(t, cs.GetNbConstraints(), "MigrationCircuit must have constraints")
 }
 
 func TestCompileMigrationCircuit_ZeroMaxBits_Error(t *testing.T) {

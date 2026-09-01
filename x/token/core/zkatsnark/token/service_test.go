@@ -104,7 +104,7 @@ func TestTokensService_Deobfuscate_Success(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "zkatsnark", string(format))
 	require.Equal(t, "USD", string(tok.Type))
-	require.Equal(t, []byte("alice"), []byte(tok.Owner))
+	require.Equal(t, []byte("alice"), tok.Owner)
 	require.Equal(t, []byte("issuer-1"), []byte(issuer))
 	require.Len(t, recipients, 1)
 }

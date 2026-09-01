@@ -31,6 +31,7 @@ func (c *hashCircuit1) Define(api frontend.API) error {
 		return err
 	}
 	api.AssertIsEqual(c.Output, h)
+
 	return nil
 }
 
@@ -46,6 +47,7 @@ func (c *hashCircuit2) Define(api frontend.API) error {
 		return err
 	}
 	api.AssertIsEqual(c.Output, h)
+
 	return nil
 }
 
@@ -61,6 +63,7 @@ func (c *hashCircuit3) Define(api frontend.API) error {
 		return err
 	}
 	api.AssertIsEqual(c.Output, h)
+
 	return nil
 }
 
@@ -71,7 +74,7 @@ func TestHashCircuit_OneInput_Compiles(t *testing.T) {
 		&hashCircuit1{},
 	)
 	require.NoError(t, err)
-	require.Greater(t, cs.GetNbConstraints(), 0, "compiled circuit must have constraints")
+	require.Positive(t, cs.GetNbConstraints(), "compiled circuit must have constraints")
 }
 
 func TestHashCircuit_TwoInputs_Compiles(t *testing.T) {
@@ -81,7 +84,7 @@ func TestHashCircuit_TwoInputs_Compiles(t *testing.T) {
 		&hashCircuit2{},
 	)
 	require.NoError(t, err)
-	require.Greater(t, cs.GetNbConstraints(), 0)
+	require.Positive(t, cs.GetNbConstraints())
 }
 
 func TestHashCircuit_ThreeInputs_Compiles(t *testing.T) {
@@ -91,7 +94,7 @@ func TestHashCircuit_ThreeInputs_Compiles(t *testing.T) {
 		&hashCircuit3{},
 	)
 	require.NoError(t, err)
-	require.Greater(t, cs.GetNbConstraints(), 0)
+	require.Positive(t, cs.GetNbConstraints())
 }
 
 // ── ValueCommitCircuit ────────────────────────────────────────────────────────
@@ -99,12 +102,12 @@ func TestHashCircuit_ThreeInputs_Compiles(t *testing.T) {
 // valueCommitCircuit is a minimal gnark circuit that calls ValueCommitCircuit
 // and exposes the resulting point coordinates as public outputs.
 type valueCommitCircuit struct {
-	Value  frontend.Variable    `gnark:",secret"`
-	RCV    frontend.Variable    `gnark:",secret"`
-	OutX   frontend.Variable    `gnark:",public"`
-	OutY   frontend.Variable    `gnark:",public"`
-	GenV   twistededwards.Point // compile-time constant
-	GenR   twistededwards.Point // compile-time constant
+	Value frontend.Variable    `gnark:",secret"`
+	RCV   frontend.Variable    `gnark:",secret"`
+	OutX  frontend.Variable    `gnark:",public"`
+	OutY  frontend.Variable    `gnark:",public"`
+	GenV  twistededwards.Point // compile-time constant
+	GenR  twistededwards.Point // compile-time constant
 }
 
 func (c *valueCommitCircuit) Define(api frontend.API) error {
@@ -114,6 +117,7 @@ func (c *valueCommitCircuit) Define(api frontend.API) error {
 	}
 	api.AssertIsEqual(c.OutX, pt.X)
 	api.AssertIsEqual(c.OutY, pt.Y)
+
 	return nil
 }
 
@@ -124,6 +128,6 @@ func TestValueCommitCircuit_Compiles(t *testing.T) {
 		&valueCommitCircuit{},
 	)
 	require.NoError(t, err)
-	require.Greater(t, cs.GetNbConstraints(), 0,
+	require.Positive(t, cs.GetNbConstraints(),
 		"ValueCommitCircuit must introduce constraints (scalar-mul + point add)")
 }

@@ -28,6 +28,7 @@ func onCurveG1Bytes(t *testing.T) []byte {
 	t.Helper()
 	_, _, g1, _ := bls12381.Generators()
 	raw := g1.RawBytes()
+
 	return raw[:]
 }
 
@@ -39,10 +40,12 @@ func randomCanonicalFr(t *testing.T) []byte {
 	_, err := e.SetRandom()
 	require.NoError(t, err)
 	b := e.Bytes()
+
 	return b[:]
 }
 
 func computeValidPedersenCommit(t *testing.T, value uint64, tokenType string, blindingFactor []byte) []byte {
+	t.Helper()
 	gens := prover.DefaultPedersenGeneratorCoords()
 
 	var g0, g1, g2 bls12381.G1Affine
@@ -76,6 +79,7 @@ func computeValidPedersenCommit(t *testing.T, value uint64, tokenType string, bl
 	resAffine.FromJacobian(&result)
 
 	raw := resAffine.RawBytes()
+
 	return raw[:]
 }
 

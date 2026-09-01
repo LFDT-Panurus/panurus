@@ -178,7 +178,7 @@ func TestPublicParams_Validate_GrothAndPlonkBothAccepted(t *testing.T) {
 
 func TestPublicParams_Validate_UnsupportedCurve(t *testing.T) {
 	p := defaultValidPP()
-	p.Curve = ecc.BN254 // BN254 is actually accepted, so use something else
+	p.Curve = ecc.BN254              // BN254 is actually accepted, so use something else
 	require.NoError(t, p.Validate()) // BN254 is valid per code
 
 	p.Curve = ecc.BLS12_377 // not in the allowed set
