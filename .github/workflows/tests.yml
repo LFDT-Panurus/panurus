@@ -47,12 +47,13 @@ jobs:
         run: make install-tools
 
       - name: Run checks
-        run: make checks
+        run: make checks-fast
 
-  # Style linting (golangci-lint) is independent of correctness, so it runs as
-  # its own job in parallel with utest/itest/bench-check rather than sitting on
-  # their critical path. Nothing depends on it: the compile-heavy linter no
-  # longer delays the start of the ~70-job integration matrix.
+  # Compile-heavy analysis (staticcheck, go vet, go fix, golangci-lint) is
+  # independent of correctness, so it runs as its own job in parallel with
+  # utest/itest/bench-check rather than sitting on their critical path. Nothing
+  # depends on it: these ~5m of type-checking no longer delay the start of the
+  # ~70-job integration matrix, which now gates only on the fast textual checks.
   lint:
     runs-on: ubuntu-latest
 
@@ -78,6 +79,9 @@ jobs:
 
       - name: Set up tools
         run: make install-tools
+
+      - name: Run heavy checks
+        run: make checks-heavy
 
       - name: Run linter
         run: make lint

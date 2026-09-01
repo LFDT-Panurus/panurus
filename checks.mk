@@ -1,5 +1,16 @@
 .PHONY: checks
-checks: licensecheck gofmt goimports govet gofix misspell ineffassign staticcheck protos-lint buf-format tidy-check
+checks: checks-fast checks-heavy
+
+.PHONY: checks-fast
+# fast, purely textual checks (no compilation) — cheap enough to gate the
+# integration-test matrix on. Run in CI's 'checks' job.
+checks-fast: licensecheck gofmt goimports misspell ineffassign protos-lint buf-format tidy-check
+
+.PHONY: checks-heavy
+# compile-heavy static analysis (invokes the Go type-checker across all
+# modules). Kept off the integration-test critical path — run in CI's parallel
+# 'lint' job alongside golangci-lint.
+checks-heavy: govet gofix staticcheck
 
 .PHONY: checks-no-tidy
 # same as 'checks' but without tidy-check; for use after a workflow step that
