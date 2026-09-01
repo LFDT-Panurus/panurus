@@ -166,3 +166,34 @@ func TestBuildTransferAction_Valid(t *testing.T) {
 	err = jubjub.Verify(bvk, actionHash, sig, jubjub.R)
 	require.NoError(t, err, "binding signature reconstructed from wire-format bytes must verify")
 }
+
+func TestBuildIssueAction_Valid(t *testing.T) {
+	setupProvers(t)
+
+	o := prover.NewOrchestrator(spendProver, outputProver)
+
+	action, outputs, err := o.BuildIssueAction(
+		context.Background(),
+		[]byte("issuer"),
+		[]prover.OutputRequest{
+			{Value: 150, TokenType: "USD", Recipient: []byte("alice")},
+		},
+		"USD",
+		testPP,
+	)
+	require.NoError(t, err)
+	require.Len(t, action.Outputs, 1)
+	require.Len(t, outputs, 1)
+
+	// Outputs must verify
+	for j, output := range action.Outputs {
+		proof, err := setup.DeserializeProof(output.OutputProof, testPP.Curve)
+		require.NoError(t, err, "output %d: proof deserialize", j)
+
+		pw := publicWitnessFromOutputDescription(t, output)
+
+		err = groth16.Verify(proof, outputVK, pw)
+		require.NoError(t, err, "output %d: proof does not verify", j)
+	}
+}
+
