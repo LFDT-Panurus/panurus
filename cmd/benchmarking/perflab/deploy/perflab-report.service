@@ -1,0 +1,15 @@
+[Unit]
+Description=PerfLab: regenerate the static www/ dashboard
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=perflab
+Environment=PERFLAB_HOME=/opt/perflab
+Environment=PATH=/usr/local/go/bin:/usr/bin:/bin
+# Idempotent -- also invoked directly after every ingest by perflab-worker
+# (cli.py cmd_work); this timer just guarantees the dashboard doesn't go
+# stale if the worker has been idle (empty queue) for a while.
+CPUAffinity=0 1
+ExecStart=/usr/bin/python3 -m perflab.cli report
+WorkingDirectory=/opt/perflab/src/cmd/benchmarking

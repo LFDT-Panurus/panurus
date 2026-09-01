@@ -4,6 +4,7 @@
 > - [Testing Architecture](./dlognogh_architecture.md) - Understanding the test layers
 > - [Regression Tests](./dlognogh_regression.md) - Backwards compatibility testing
 > - [Driver Specification](../../../dlogwogh.md) - Complete driver documentation including CSP range proofs
+> - [PerfLab](../../../development/perflab.md) - Continuous, host-based tracking of these benchmarks across every `main` commit and open PR, with a static dashboard and report-only regression detection
 
 ## Range Proof Systems
 

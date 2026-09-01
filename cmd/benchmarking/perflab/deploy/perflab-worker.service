@@ -1,0 +1,21 @@
+[Unit]
+Description=PerfLab: drain the job queue one job at a time (holds the run mutex)
+After=network-online.target
+
+[Service]
+Type=simple
+User=perflab
+Environment=PERFLAB_HOME=/opt/perflab
+Environment=PATH=/usr/local/go/bin:/usr/bin:/bin
+Environment=GOGC=10000
+# Housekeeping (this process) stays off the reserved benchmark cores -- the
+# benchmarks themselves are pinned separately via `taskset` inside runner.py
+# using cfg.bench_cpuset (see etc/perflab.yaml, set by bootstrap.sh).
+CPUAffinity=0 1
+ExecStart=/usr/bin/python3 -m perflab.cli work
+WorkingDirectory=/opt/perflab/src/cmd/benchmarking
+Restart=always
+RestartSec=10s
+
+[Install]
+WantedBy=multi-user.target
