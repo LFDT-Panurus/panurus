@@ -55,7 +55,7 @@ type AuditTransactionStore interface {
 
 	// AcquireRecoveryLeadership tries to acquire the PostgreSQL advisory lock backing the sweeper leader election.
 	// If acquired is false, leadership was not obtained and the returned lease must be nil.
-	AcquireRecoveryLeadership(ctx context.Context, lockID int64) (RecoveryLeadership, bool, error)
+	AcquireRecoveryLeadership(ctx context.Context) (RecoveryLeadership, bool, error)
 
 	// ClaimPendingTransactions atomically claims a batch of Pending transactions for recovery processing.
 	// Transactions whose recovery lease expired are eligible again.

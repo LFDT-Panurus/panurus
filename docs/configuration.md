@@ -71,23 +71,28 @@ token:
     #   c) The transaction reached finality long ago, so we query the whole ledger for this specific transaction. If the query returns no result, we proceed to step d.
     #   d) The transaction will reach finality at some point beyond the timeout or never, so we return Unknown. Then it is up to the client to either append another listener or accept that the transaction will never reach finality.  
     delivery:
-      # mapperParallelism is the number of goroutines that process incoming transactions in parallel. Defaults to 1.
+      # mapperParallelism is the number of goroutines that process incoming transactions in parallel.
+      # A non-positive or unset value falls back to the default (10).
       mapperParallelism: 10
       # blockProcessParallelism is the number of blocks we can process in parallel when they arrive from the delivery service.
-      # If the value is <= 1, then blocks are processed sequentially.
-      # This is the suggested configuration if we are not sure about the dependencies between blocks.
+      # Set it to 1 (and only 1) to process blocks sequentially; this is the suggested
+      # configuration if we are not sure about the dependencies between blocks.
+      # A non-positive or unset value falls back to the default (10), NOT sequential mode.
       # The total go routines processing transactions will be blockProcessParallelism * mapperParallelism.
       blockProcessParallelism: 1
       # lruSize detects how many transactions we should guarantee to keep in our recent cache.
       # If the transaction is not among these elements, we proceed to step b, as described above.
-      # If lruSize and lruBuffer are not set, then we will never evict past transactions (the cache will grow infinitely).
+      # Set it to 0 to disable the bound and never evict past transactions (the cache grows without limit).
+      # An unset or negative value falls back to the default (30).
       lruSize: 30
       # eviction will happen when the cache size exceeds lruSize + lruBuffer.
+      # Set it to 0 to disable the bound and never evict (same effect as lruSize: 0).
+      # An unset or negative value falls back to the default (15).
       lruBuffer: 15
       # listenerTimeout is the duration to listen when we can't find a transaction in the cache (most probably it is about to become final).
       # We will listen for this amount of time and then we will query the whole ledger, as described in step c.
-      # If the timeout is not set, then the listener will never be evicted and we will never proceed to step c.
-      # We will wait forever for the transaction to return (as is done for the 'committer' type).
+      # Set it to 0 to disable the timeout and wait forever for the transaction (as is done for the 'committer' type).
+      # An unset or negative value falls back to the default (10s).
       listenerTimeout: 10s
     # Only applicable for fabricx networks
     # notification: The manager is notified about finality events via a notification service (e.g. for FabricX).
@@ -235,31 +240,59 @@ token:
               # Performance impact: Each scan queries the transaction database for pending transactions.
               scanInterval: 5s
               
-              # batchSize is the maximum number of pending transactions claimed per scan. Default: 100.
+              # batchSize is the maximum number of pending transactions claimed per scan. Default: 16.
               # Limits the number of transactions processed in a single recovery sweep to prevent
               # overwhelming the system. Increase for high-throughput environments with many pending transactions.
               # Performance impact: Larger batches reduce scan overhead but increase memory usage and processing time per sweep.
-              batchSize: 100
+              batchSize: 16
               
-              # workerCount is the number of local workers that process claimed transactions in parallel. Default: 4.
+              # workerCount is the number of local workers that process claimed transactions in parallel. Default: 8.
               # Increase to improve recovery throughput in high-volume scenarios.
               # Decrease to reduce resource consumption on constrained systems.
               # Performance impact: More workers increase CPU and network utilization but improve recovery speed.
-              workerCount: 4
+              workerCount: 8
               
-              # leaseDuration is how long a claimed transaction remains leased to this instance before it can be reclaimed. Default: 30s.
+              # leaseDuration is how long a claimed transaction remains leased to this instance before it can be reclaimed. Default: 5m.
               # This prevents stuck transactions from blocking recovery indefinitely if a worker crashes.
               # Should be longer than the typical time to query and process a single transaction.
               # Relationship: Should be greater than the expected network latency + processing time for transaction status queries.
-              leaseDuration: 30s
-              
-              # advisoryLockID is the PostgreSQL advisory lock identifier used for recovery leader election.
-              # This ensures only one replica performs recovery sweeps at a time in multi-instance deployments.
-              # Default: 8389190333894887286 (hex: 0x74746b7265636f76, ASCII: "ttkrecov")
-              # The default value is derived from the ASCII encoding of "ttkrecov" (Token Transaction Recovery).
-              # Only change this if you need to run multiple independent recovery managers on the same database.
-              # Note: PostgreSQL advisory locks use 64-bit integers. This value must be unique across your application.
-              advisoryLockID: 8389190333894887286
+              leaseDuration: 5m
+
+              # transactionTimeout bounds a single transaction's recovery attempt: the
+              # handler's Recover call, which queries the ledger for status and applies
+              # finality logic. Default: 60s. If set explicitly (and non-zero), rejected
+              # below a 10s floor: a shorter deadline risks abandoning recoveries that were
+              # merely slow, not genuinely stuck.
+              # Without this, a hung status query blocks the worker indefinitely, and this
+              # instance holds recovery leadership for as long as anything is abandoned in
+              # the background (see the leadership note further down), so a permanently
+              # hung status query stalls recovery on every replica.
+              # Relationship: workerCount workers can each be stuck for the full
+              # transactionTimeout at once, so size leaseDuration against
+              # leaseDuration > (batchSize / workerCount) x transactionTimeout. Also keep
+              # scanInterval comfortably below leaseDuration: a stuck transaction's claim
+              # is kept alive only by this instance's own next sweep reclaiming it, so a
+              # scanInterval close to or above leaseDuration risks the claim lapsing
+              # between sweeps. The manager Warns at startup (does not fail to start) when
+              # either does not hold: an attempt still in flight when this happens keeps
+              # its claim rather than releasing it, so this is a throughput concern, not a
+              # correctness one.
+              # Set to 0 to disable the deadline entirely. Do this only if you accept the
+              # tradeoff: a Recover call that ignores its context can then block Stop()
+              # indefinitely, since a deadline is the only thing that can interrupt a call
+              # the callee itself never reads.
+              transactionTimeout: 60s
+
+              # stuckTransactionAlertThreshold escalates the per-attempt failure log from
+              # Warn to Error once the same transaction has hit transactionTimeout this many
+              # consecutive times, so a persistently-unresponsive peer is visible to alerting
+              # instead of blending into routine sweep failures. Default: 5.
+              # Log-severity only: it never changes the transaction's status, and it never
+              # changes when the manager skips a re-attempt (that happens independently,
+              # whenever an earlier attempt for the same tx hasn't returned yet). Past the
+              # threshold, the log backs off by doubling rather than firing every sweep.
+              # Set to 0 to disable the escalation.
+              stuckTransactionAlertThreshold: 5
               
               # instanceID identifies this replica as the owner of recovery claims.
               # If empty, a process-local identifier is generated automatically at startup using a UUID.
@@ -314,14 +347,6 @@ token:
             # Decrease to reduce resource consumption on constrained systems.
             # Performance impact: More workers increase CPU utilization during cleanup sweeps.
             workerCount: 1
-            
-            # advisoryLockID is the PostgreSQL advisory lock identifier used for cleanup leader election.
-            # This ensures only one replica performs cleanup sweeps at a time in multi-instance deployments.
-            # Default: 8389190333894887277 (hex: 0x74746b636c65616e, ASCII: "ttkclean")
-            # The default value is derived from the ASCII encoding of "ttkclean" (Token Transaction Keystore Cleanup).
-            # Only change this if you need to run multiple independent cleanup managers on the same database.
-            # Note: PostgreSQL advisory locks use 64-bit integers. This value must be unique across your application.
-            advisoryLockID: 8389190333894887277
             
             # instanceID identifies this replica in logs and monitoring.
             # If empty, a unique identifier is generated automatically at startup.
@@ -654,12 +679,13 @@ token:
               enabled: true
               ttl: 30s
               scanInterval: 5s
-              batchSize: 100
-              workerCount: 4
-              leaseDuration: 30s
-              advisoryLockID: 8389190333894887286
+              batchSize: 16
+              workerCount: 8
+              leaseDuration: 5m
+              transactionTimeout: 60s
               instanceID:
               notFoundGracePeriod: 30m
+              stuckTransactionAlertThreshold: 5
 ```
 
 Default values:
@@ -667,28 +693,32 @@ Default values:
 - enabled: true
 - ttl: 30s
 - scanInterval: 5s
-- batchSize: 100
-- workerCount: 4
-- leaseDuration: 30s
-- advisoryLockID: 8389190333894887286 (`0x74746b7265636f76`)
+- batchSize: 16
+- workerCount: 8
+- leaseDuration: 5m
+- transactionTimeout: 60s (set to 0 to disable the per-transaction deadline; an explicit non-zero value below 10s is rejected)
 - instanceID: empty, auto-generated when the recovery manager starts
 - notFoundGracePeriod: 30m (set to 0 to disable promotion to Orphan)
+- stuckTransactionAlertThreshold: 5 (set to 0 to disable the log escalation)
 
 **Parameter Relationships and Tuning:**
 
 - **Recovery is enabled by default** to ensure automatic recovery of lost finality listeners.
 - **Only pending transactions older than `ttl` are considered for recovery** to avoid interfering with active transaction processing.
-- **The manager validates** that `ttl`, `scanInterval`, `batchSize`, `workerCount`, and `leaseDuration` are all greater than zero.
-- **`advisoryLockID`** is used to acquire PostgreSQL advisory-lock leadership so that only one replica performs a recovery sweep at a time. The default value (8389190333894887286 or 0x74746b7265636f76) represents the ASCII string "ttkrecov" (Token Transaction Recovery) encoded as a 64-bit integer.
+- **The manager validates** that `ttl`, `scanInterval`, `batchSize`, and `workerCount` are all greater than zero, that `leaseDuration` is greater than zero, and that `transactionTimeout` is not negative (`0` means unbounded; any positive value is accepted without an upper bound, though loading the configuration separately rejects an explicit non-zero value below a 10s floor, see the next bullet). It additionally **Warns at startup, without failing to start,** when `leaseDuration > (batchSize / workerCount) x transactionTimeout` or `scanInterval < leaseDuration` do not hold, see the next bullet.
+- **Recovery leadership** uses a PostgreSQL advisory lock so that only one replica performs a recovery sweep at a time, on the owner transaction path. The lock identifier is no longer configurable: it is derived from the TMS's own `requests` table name, which already carries the network, channel and namespace. That makes it unique per TMS automatically, so several TMSes sharing one PostgreSQL database no longer compete for a single lock, and there is nothing left for an operator to keep unique by hand. Leadership is normally released at the end of each sweep, but held across sweeps for as long as any transaction is still abandoned in the background from a previous sweep (see `transactionTimeout` below), so this instance keeps winning it — and thereby keeps its own reclaim renewing that transaction's lease — instead of leaving that to chance; `Stop()` always releases it regardless. The audit transaction store does not yet participate in this coordination — its recovery leader factory is nil, so every replica is granted leadership and the audit sweep runs redundantly on each of them; see [#2143](https://github.com/LFDT-Panurus/panurus/issues/2143).
+- **`transactionTimeout`** bounds a single `Handler.Recover()` call, not the whole sweep. The call runs in its own goroutine so the worker can give up on the deadline even if the call itself never honours the context. A per-transaction bound does not bound the sweep: a batch of `batchSize` claims split across `workerCount` workers can take up to `(batchSize / workerCount) × transactionTimeout` worst case, so the invariant that actually matters is `leaseDuration > (batchSize / workerCount) × transactionTimeout`. With the shipped defaults that worst case is `2 × 60s = 120s`, comfortably inside the default 5m `leaseDuration`. Separately, `scanInterval` should stay comfortably below `leaseDuration`: a stuck transaction's claim is kept alive only by this instance's own next sweep reclaiming the still-`Pending` row (which refreshes the claim as a side effect), and this instance holds recovery leadership across sweeps for as long as any transaction stays abandoned specifically so that reclaim keeps happening on this instance rather than depending on it winning leadership again by chance, but a `scanInterval` close to or above `leaseDuration` still risks that renewal arriving too late between this instance's own sweeps. If you only set `leaseDuration` and leave `transactionTimeout` unset, the manager automatically lowers the 60s default below whatever `leaseDuration` you configured (floored at 10s) rather than leaving it at a disproportionate default. An explicit, non-zero `transactionTimeout` below 10s is rejected when the configuration is loaded: a deadline that tight is likely to abandon recoveries that were merely slow on a loaded network, not genuinely stuck. `transactionTimeout: 0` disables the deadline entirely, but `Stop()` does **not** bound a ctx-blind call the way the deadline does; disabling it can leave `Stop()` blocked indefinitely on a hung `Recover` call (the manager logs a Warn at startup when this is set). Note the bound stops at `Handler.Recover()`: `ClaimPendingTransactions`, `ReleaseRecoveryClaim`, and `SetStatus` still run on the sweep's own context, which carries no deadline, so a wedged database connection in any of those still blocks the worker and, since leadership is held for as long as anything is abandoned, every replica of the TMS in the meantime, the same stall `transactionTimeout` was added to fix for the ledger side. `transactionTimeout` is a bound on the handler call only, not a general no-stall guarantee for the sweep. A `recoverCtx.Done()` firing because `Stop()` cancelled the manager, rather than because `transactionTimeout` actually elapsed, is not counted or alerted on as a timeout.
 - **`instanceID`** is used as the lease owner identifier for claimed transactions; if omitted, the manager generates a unique UUID automatically at startup.
 - **`notFoundGracePeriod`** controls how long a transaction whose status query keeps returning `NotFound` is left in `Pending` before being promoted to the terminal `Orphan` status. This protects the recovery sweep from being permanently blocked by transactions whose audit log was persisted but whose broadcast never reached the ledger. The promoted row is marked `Orphan` rather than `Deleted` so operators can distinguish broadcast failures from ledger-rejected transactions. Raise the default if your network has long catch-up windows after committer/orderer restarts; set it to `0` to disable the promotion entirely.
+- **`stuckTransactionAlertThreshold`** escalates the per-attempt failure log from Warn to Error once the same transaction has hit `transactionTimeout` this many consecutive times, so a persistently-unresponsive peer surfaces to alerting instead of blending into routine sweep-failure logs. Past the threshold, the log backs off by doubling (at the threshold, then `2×`, `4×`, `8×`, ...) rather than firing on every sweep, so a transaction stuck for hours does not flood alerting. It is log-severity only: a timeout means the status query didn't answer in time, not that the transaction failed. Unlike `notFoundGracePeriod`, it never changes the transaction's status. The row is still reclaimed every sweep, but while an earlier attempt is still running past its own `transactionTimeout`, the manager skips starting a second one for the same transaction, without releasing its claim, rather than running duplicate concurrent `Recover` calls; the claim is released once that earlier attempt actually returns, whenever that is. Set to `0` to disable the escalation.
 
 **Tuning Recommendations:**
 
 1. **For High-Throughput Environments:**
-   - Increase `batchSize` to 200-500 to process more transactions per sweep
-   - Increase `workerCount` to 8-16 to improve parallel processing
+   - Increase `batchSize` to 100-500 to process more transactions per sweep
+   - Increase `workerCount` to 16-32 to improve parallel processing
    - Decrease `scanInterval` to 2-3s for faster recovery detection
+   - Raise `leaseDuration` alongside `batchSize`/`workerCount` to keep `leaseDuration > (batchSize / workerCount) x transactionTimeout`
 
 
 ### Optional: token.storage.tableNames
@@ -784,7 +814,6 @@ token:
             scanInterval: 1h
             batchSize: 100
             workerCount: 1
-            advisoryLockID: 8389190333894887277
             instanceID:
 ```
 
@@ -795,7 +824,6 @@ Default values:
 - scanInterval: 1h
 - batchSize: 100
 - workerCount: 1
-- advisoryLockID: 8389190333894887277 (`0x74746b636c65616e`)
 - instanceID: empty, auto-generated when the cleanup manager starts
 
 **Parameter Relationships and Tuning:**
@@ -803,7 +831,7 @@ Default values:
 - **Cleanup is disabled by default** and must be explicitly enabled. This is a conservative default to prevent unexpected key deletion in existing deployments.
 - **Only deleted tokens older than `ttl` are considered for cleanup** to ensure tokens are truly finalized before key deletion.
 - **The manager validates** that `ttl`, `scanInterval`, `batchSize`, and `workerCount` are all greater than zero.
-- **`advisoryLockID`** is used to acquire PostgreSQL advisory-lock leadership so that only one replica performs a cleanup sweep at a time. The default value (8389190333894887277 or 0x74746b636c65616e) represents the ASCII string "ttkclean" (Token Transaction Keystore Cleanup) encoded as a 64-bit integer.
+- **Cleanup leadership** uses a PostgreSQL advisory lock so only one replica sweeps at a time. The identifier is not configurable: it is derived from the TMS's own token SKI cleanup table name, which already carries network, channel and namespace, so it is unique per TMS automatically.
 - **`instanceID`** is used to identify this replica in logs and monitoring; if omitted, the manager generates a unique identifier automatically at startup.
 
 **Tuning Recommendations:**
@@ -825,7 +853,6 @@ Default values:
 
 4. **For Multi-Instance Deployments:**
    - **PostgreSQL Required**: Multi-instance deployments require PostgreSQL for distributed coordination via advisory locks
-   - Keep default `advisoryLockID` unless running multiple independent cleanup systems
    - Consider setting explicit `instanceID` values for easier debugging and monitoring
 
 5. **For Single-Node Deployments:**
@@ -900,7 +927,7 @@ multiply `acquireDeadline` there.
    - Keep default backoff settings to balance retry attempts with resource usage
 
 2. **For Resource-Constrained Environments:**
-   - Decrease `batchSize` to 50 to reduce memory usage
+   - Decrease `batchSize` to 8 to reduce memory usage
    - Decrease `workerCount` to 2 to reduce CPU load
    - Increase `scanInterval` to 10-15s to reduce database queries
 
@@ -910,7 +937,6 @@ multiply `acquireDeadline` there.
 
 4. **For Multi-Instance Deployments:**
    - **PostgreSQL Required**: Multi-instance deployments require PostgreSQL for distributed coordination via advisory locks
-   - Keep default `advisoryLockID` unless running multiple independent recovery systems
    - Consider setting explicit `instanceID` values for easier debugging and monitoring
    - Ensure all instances share the same PostgreSQL database for proper coordination
 

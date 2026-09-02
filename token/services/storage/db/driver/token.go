@@ -294,7 +294,7 @@ type TokenStore interface {
 	// Returns (leadership, true, nil) if leadership was acquired.
 	// Returns (nil, false, nil) if leadership is held by another instance.
 	// Returns (nil, false, error) if an error occurred.
-	AcquireCleanupLeadership(ctx context.Context, lockID int64) (CleanupLeadership, bool, error)
+	AcquireCleanupLeadership(ctx context.Context) (CleanupLeadership, bool, error)
 }
 
 type (

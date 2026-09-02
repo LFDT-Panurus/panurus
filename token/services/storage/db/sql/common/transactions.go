@@ -53,7 +53,7 @@ type TransactionStore struct {
 	ci                    common3.CondInterpreter
 	pi                    common3.PagInterpreter
 	notifier              dbdriver.TransactionNotifier
-	recoveryLeaderFactory func(context.Context, *sql.DB, int64) (dbdriver.RecoveryLeadership, bool, error)
+	recoveryLeaderFactory func(context.Context, *sql.DB) (dbdriver.RecoveryLeadership, bool, error)
 
 	// getStatusStmt caches the single prepared statement for GetStatus.
 	// Unlike the token-store queries, this query has exactly one shape
@@ -74,7 +74,7 @@ func newTransactionStore(
 	ci common3.CondInterpreter,
 	pi common3.PagInterpreter,
 	notifier dbdriver.TransactionNotifier,
-	recoveryLeaderFactory func(context.Context, *sql.DB, int64) (dbdriver.RecoveryLeadership, bool, error),
+	recoveryLeaderFactory func(context.Context, *sql.DB) (dbdriver.RecoveryLeadership, bool, error),
 ) *TransactionStore {
 	ts := &TransactionStore{
 		readDB:                readDB,
@@ -131,7 +131,7 @@ func NewTransactionStoreWithNotifierAndRecovery(
 	ci common3.CondInterpreter,
 	pi common3.PagInterpreter,
 	notifier dbdriver.TransactionNotifier,
-	recoveryLeaderFactory func(context.Context, *sql.DB, int64) (dbdriver.RecoveryLeadership, bool, error),
+	recoveryLeaderFactory func(context.Context, *sql.DB) (dbdriver.RecoveryLeadership, bool, error),
 ) (*TransactionStore, error) {
 	return newTransactionStore(readDB, writeDB, tables.Prefix, tables.Params, transactionTables{
 		Movements:             tables.Movements,
@@ -381,12 +381,12 @@ func (db *TransactionStore) QueryTokenRequests(ctx context.Context, params dbdri
 
 // AcquireRecoveryLeadership returns a leadership handle for recovery sweeping.
 // When no leader factory is configured, leadership is granted locally.
-func (db *TransactionStore) AcquireRecoveryLeadership(ctx context.Context, lockID int64) (dbdriver.RecoveryLeadership, bool, error) {
+func (db *TransactionStore) AcquireRecoveryLeadership(ctx context.Context) (dbdriver.RecoveryLeadership, bool, error) {
 	if db.recoveryLeaderFactory == nil {
 		return noopRecoveryLeadership{}, true, nil
 	}
 
-	return db.recoveryLeaderFactory(ctx, db.writeDB, lockID)
+	return db.recoveryLeaderFactory(ctx, db.writeDB)
 }
 
 // ClaimPendingTransactions returns a claimed batch of Pending transactions.

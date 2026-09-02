@@ -34,15 +34,14 @@ type TokenLockStore struct {
 	ci      common3.CondInterpreter
 	lockID  int64
 
-	// cleanupLockID is derived from the fully-qualified table name (not the
-	// prefix alone, which is not unique per TMS - see review discussion on
+	// cleanupLeaderFactory is bound at construction to an id derived from the fully-qualified
+	// table name (not the prefix alone, which is not unique per TMS - see review discussion on
 	// #1982), so it is unique per TMS - distinct from lockID (schema-creation
 	// lock) and from other TMSes' cleanup locks on the same node. A single global constant here
 	// was a real bug: it caused every TMS on a node to compete for the
 	// exact same advisory lock, so only one TMS across the whole fleet
 	// ever won cleanup on any tick. See #1798.
-	cleanupLockID        int64
-	cleanupLeaderFactory func(context.Context, *sql.DB, int64) (driver.CleanupLeadership, bool, error)
+	cleanupLeaderFactory func(context.Context, *sql.DB) (driver.CleanupLeadership, bool, error)
 }
 
 // GetSchema overrides the base GetSchema to prefix with advisory lock
@@ -70,8 +69,7 @@ func NewTokenLockStore(dbs *common2.RWDB, tableNames common5.TableNames) (*Token
 		writeDB:              dbs.WriteDB,
 		ci:                   ci,
 		lockID:               createTableLockID(tableNames.TokenLocks),
-		cleanupLockID:        createTableLockID(tableNames.TokenLocks + "_cleanup"),
-		cleanupLeaderFactory: NewCleanupLeaderFactory(),
+		cleanupLeaderFactory: NewCleanupLeaderFactoryForID(tokenLockCleanupLockID(tableNames)),
 	}, nil
 }
 
@@ -80,10 +78,16 @@ func NewTokenLockStore(dbs *common2.RWDB, tableNames common5.TableNames) (*Token
 // and release no held resources, so contention is limited to the acquire
 // attempt itself. The lock id and factory are fixed at construction. Note
 // the winner holds a dedicated connection off writeDB for the tick's
-// duration (see NewAdvisoryLock), so writeDB's connection pool needs at
-// least one spare connection beyond normal write traffic. See #1798.
+// duration (see NewAdvisoryLock). This lock, the recovery lock and the
+// keystore-cleanup lock are all now derived per TMS rather than shared
+// node-wide, and FSC keys connection pools by data source alone, so TMSes
+// sharing one database share one *sql.DB. A node running N such TMSes can
+// therefore have up to 3N connections pinned by lock holders at once, before
+// counting the further connections winners need for their own work (e.g.
+// recovery's ClaimPendingTransactions). Size writeDB's maxOpenConns against
+// that floor, not a single spare connection. See #1798.
 func (db *TokenLockStore) AcquireCleanupLeadership(ctx context.Context) (driver.CleanupLeadership, bool, error) {
-	return db.cleanupLeaderFactory(ctx, db.writeDB, db.cleanupLockID)
+	return db.cleanupLeaderFactory(ctx, db.writeDB)
 }
 
 // Cleanup removes stale token locks that have expired. The deletion itself is the

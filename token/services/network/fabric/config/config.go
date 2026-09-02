@@ -64,60 +64,57 @@ type serviceListenerManagerConfig struct {
 	c driver.ConfigService
 }
 
-func (c *serviceListenerManagerConfig) DeliveryMapperParallelism() int {
-	if v := c.c.GetInt(DeliveryMapperParallelism); v > 0 {
+// positiveOrDefault returns v when it is strictly positive, otherwise def. Use it
+// for knobs with no "disabled" state, where 0 is meaningless and indistinguishable
+// from an unset key: a non-positive or unset value is always the documented default.
+func positiveOrDefault[T int | time.Duration](v, def T) T {
+	if v > 0 {
 		return v
 	}
 
-	return DefaultDeliveryMapperParallelism
+	return def
+}
+
+// configuredOrDefault preserves an explicit, non-negative value the operator wrote
+// — including 0, which the delivery layer reads as "remove this bound" (an unbounded
+// cache, or a listener that never times out). isSet distinguishes a deliberate 0
+// from an absent key, which GetInt/GetDuration also report as 0: only an unset key
+// or a negative typo fall back to def. Contrast positiveOrDefault, which also
+// replaces 0 and so cannot express that disabled mode.
+func configuredOrDefault[T int | time.Duration](isSet bool, v, def T) T {
+	if isSet && v >= 0 {
+		return v // explicit 0 -> disabled mode, positive -> honoured as-is
+	}
+
+	return def // unset key or negative typo -> documented default
+}
+
+func (c *serviceListenerManagerConfig) DeliveryMapperParallelism() int {
+	return positiveOrDefault(c.c.GetInt(DeliveryMapperParallelism), DefaultDeliveryMapperParallelism)
 }
 
 func (c *serviceListenerManagerConfig) DeliveryBlockProcessParallelism() int {
-	if v := c.c.GetInt(DeliveryBlockProcessParallelism); v >= 0 {
-		return v
-	}
-
-	return DefaultDeliveryBlockProcessParallelism
+	return positiveOrDefault(c.c.GetInt(DeliveryBlockProcessParallelism), DefaultDeliveryBlockProcessParallelism)
 }
 
 func (c *serviceListenerManagerConfig) DeliveryLRUSize() int {
-	if v := c.c.GetInt(DeliveryLRUSize); v >= 0 {
-		return v
-	}
-
-	return DefaultDeliveryLRUSize
+	return configuredOrDefault(c.c.IsSet(DeliveryLRUSize), c.c.GetInt(DeliveryLRUSize), DefaultDeliveryLRUSize)
 }
 
 func (c *serviceListenerManagerConfig) DeliveryLRUBuffer() int {
-	if v := c.c.GetInt(DeliveryLRUBuffer); v >= 0 {
-		return v
-	}
-
-	return DefaultDeliveryLRUBuffer
+	return configuredOrDefault(c.c.IsSet(DeliveryLRUBuffer), c.c.GetInt(DeliveryLRUBuffer), DefaultDeliveryLRUBuffer)
 }
 
 func (c *serviceListenerManagerConfig) DeliveryListenerTimeout() time.Duration {
-	if v := c.c.GetDuration(DeliveryListenerTimeout); v >= 0 {
-		return v
-	}
-
-	return DefaultDeliveryListenerTimeout
+	return configuredOrDefault(c.c.IsSet(DeliveryListenerTimeout), c.c.GetDuration(DeliveryListenerTimeout), DefaultDeliveryListenerTimeout)
 }
 
 func (c *serviceListenerManagerConfig) DeliveryLedgerInfoAttempts() int {
-	if v := c.c.GetInt(DeliveryLedgerInfoAttempts); v > 0 {
-		return v
-	}
-
-	return DefaultDeliveryLedgerInfoAttempts
+	return positiveOrDefault(c.c.GetInt(DeliveryLedgerInfoAttempts), DefaultDeliveryLedgerInfoAttempts)
 }
 
 func (c *serviceListenerManagerConfig) DeliveryLedgerInfoRetryDelay() time.Duration {
-	if v := c.c.GetDuration(DeliveryLedgerInfoRetryDelay); v > 0 {
-		return v
-	}
-
-	return DefaultDeliveryLedgerInfoRetryDelay
+	return positiveOrDefault(c.c.GetDuration(DeliveryLedgerInfoRetryDelay), DefaultDeliveryLedgerInfoRetryDelay)
 }
 
 func (c *serviceListenerManagerConfig) String() string {

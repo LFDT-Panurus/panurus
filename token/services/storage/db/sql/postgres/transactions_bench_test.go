@@ -36,7 +36,7 @@ func openBenchTransactionStore(b *testing.B) (*sqlcommon.TransactionStore, func(
 	}
 
 	store, err := sqlcommon.NewTransactionStoreWithNotifierAndRecovery(
-		db, db, tables, NewConditionInterpreter(), NewPaginationInterpreter(), nil, NewAdvisoryLockFactory(),
+		db, db, tables, NewConditionInterpreter(), NewPaginationInterpreter(), nil, NewAdvisoryLockFactoryForID(createTableLockID(tables.Requests+"_recovery")),
 	)
 	if err != nil {
 		b.Fatal(err)

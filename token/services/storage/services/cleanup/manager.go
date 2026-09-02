@@ -31,7 +31,7 @@ type DeletedToken struct {
 // Storage defines the interface for querying deleted tokens
 type Storage interface {
 	// AcquireCleanupLeadership acquires an advisory lock for cleanup leadership
-	AcquireCleanupLeadership(ctx context.Context, lockID int64) (Leadership, bool, error)
+	AcquireCleanupLeadership(ctx context.Context) (Leadership, bool, error)
 	// GetDeletedTokensPendingSKICleanup returns deleted tokens older than the specified duration that haven't had their SKI keys cleaned.
 	// Only tokens owned by this node are returned, since this node only holds the secret keys for tokens it owns.
 	GetDeletedTokensPendingSKICleanup(ctx context.Context, olderThan time.Duration, limit int) ([]DeletedToken, error)
@@ -140,8 +140,8 @@ func (m *Manager) Start() error {
 	m.wg.Add(1)
 	go m.cleanupLoop()
 
-	m.logger.Infof("keystore cleanup manager started (TTL: %s, Scan Interval: %s, Batch Size: %d, Workers: %d, Lock ID: %d, Instance ID: %s)",
-		m.config.TTL, m.config.ScanInterval, m.config.BatchSize, m.config.WorkerCount, m.config.AdvisoryLockID, m.config.InstanceID)
+	m.logger.Infof("keystore cleanup manager started (TTL: %s, Scan Interval: %s, Batch Size: %d, Workers: %d, Instance ID: %s)",
+		m.config.TTL, m.config.ScanInterval, m.config.BatchSize, m.config.WorkerCount, m.config.InstanceID)
 
 	return nil
 }
@@ -206,7 +206,7 @@ func (m *Manager) validateConfig() error {
 }
 
 func (m *Manager) runSweep(ctx context.Context) error {
-	leadership, acquired, err := m.storage.AcquireCleanupLeadership(ctx, m.config.AdvisoryLockID)
+	leadership, acquired, err := m.storage.AcquireCleanupLeadership(ctx)
 	if err != nil {
 		return errors.Wrapf(err, "failed to acquire cleanup leadership")
 	}

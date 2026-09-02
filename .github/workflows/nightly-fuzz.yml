@@ -147,6 +147,9 @@ jobs:
           - name: identity-role-register-recipient
             pkg: ./token/services/identity/role
             func: FuzzLongTermOwnerWalletRegisterRecipientNoPanic
+          - name: identity-wallet-register-recipient-guard
+            pkg: ./token/services/identity/wallet
+            func: FuzzRegisterRecipientIdentityStructuralGuard
 
     steps:
       - name: Checkout code

@@ -73,7 +73,7 @@ func (n *TokenNotifier) Subscribe(callback func(tokensdriver.Operation, tokensdr
 
 func NewTokenStoreWithNotifier(dbs *scommon.RWDB, tableNames sqlcommon.TableNames, notifier *TokenNotifier) (*TokenStore, error) {
 	// Create cleanup leader factory using PostgreSQL advisory locks
-	cleanupLeaderFactory := NewCleanupLeaderFactory()
+	cleanupLeaderFactory := NewCleanupLeaderFactoryForID(keystoreCleanupLockID(tableNames))
 
 	baseStore, err := sqlcommon.NewTokenStoreWithNotifierAndCleanup(
 		dbs.ReadDB,

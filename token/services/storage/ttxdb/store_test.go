@@ -17,6 +17,7 @@ import (
 	"github.com/LFDT-Panurus/panurus/token"
 	"github.com/LFDT-Panurus/panurus/token/sdk/tms"
 	config2 "github.com/LFDT-Panurus/panurus/token/services/config"
+	dbcommon "github.com/LFDT-Panurus/panurus/token/services/storage/db/common"
 	"github.com/LFDT-Panurus/panurus/token/services/storage/db/driver"
 	"github.com/LFDT-Panurus/panurus/token/services/storage/db/multiplexed"
 	"github.com/LFDT-Panurus/panurus/token/services/storage/db/sql/sqlite"
@@ -460,4 +461,63 @@ func TestTransactionRecords_CompositePolicySpend(t *testing.T) {
 			Status:       driver.Pending,
 		},
 	}, recs)
+}
+
+// TestNotifyStatus_NotDroppedByCallerCanceledContext is a regression test for
+// #2316: a status notification must not be lost just because the caller's own
+// context (for example a recovery attempt's per-transaction timeout) has
+// already expired by the time the underlying write succeeded and NotifyStatus
+// runs. The context passed in only bounded the write; it says nothing about
+// whether the listener is still worth waiting for.
+func TestNotifyStatus_NotDroppedByCallerCanceledContext(t *testing.T) {
+	store := ttxdb.StoreService{StatusSupport: dbcommon.NewStatusSupport()}
+	txID := "tx-2316"
+
+	ch := make(chan dbcommon.StatusEvent, 1)
+	store.AddStatusListener(txID, ch)
+	defer store.DeleteStatusListener(txID, ch)
+
+	// Fill the buffer so a send cannot complete immediately: this is what makes
+	// safeSend's ctx branch the only other option, and is the condition under
+	// which the issue says the drop happens deterministically.
+	ch <- dbcommon.StatusEvent{TxID: "filler"}
+
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel() // simulate the deadline having already fired by the time we notify
+
+	done := make(chan struct{})
+	go func() {
+		store.NotifyStatus(ctx, txID, driver.Confirmed, "")
+		close(done)
+	}()
+
+	// Give safeSend's select a chance to run against the still-full buffer,
+	// which is deliberately left untouched here. If the notification is still
+	// tied to the canceled ctx, that select has exactly one ready case
+	// (ctx.Done()) and returns almost immediately without sending; the fixed
+	// version has no ready case yet and stays blocked, waiting for room.
+	select {
+	case <-done:
+		t.Fatal("NotifyStatus returned without waiting for room in the listener buffer: " +
+			"the notification was dropped because the caller's context was canceled")
+	case <-time.After(200 * time.Millisecond):
+		// still blocked, as expected once the notification isn't tied to ctx
+	}
+
+	// Free the buffer slot so the still-pending send can complete.
+	<-ch
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("NotifyStatus did not return after the buffer freed up")
+	}
+
+	select {
+	case event := <-ch:
+		assert.Equal(t, txID, event.TxID)
+		assert.Equal(t, driver.Confirmed, event.ValidationCode)
+	default:
+		t.Fatal("notification was dropped despite the caller's context being canceled")
+	}
 }
