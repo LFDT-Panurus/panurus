@@ -67,14 +67,14 @@ func TestCleanup(t *testing.T) {
 	mockDB.
 		ExpectQuery("SELECT TOKEN_LOCKS.consumer_tx_id, TOKEN_LOCKS.tx_id, TOKEN_LOCKS.idx, REQUESTS.status, TOKEN_LOCKS.created_at, NOW\\(\\) AS now "+
 			"FROM TOKEN_LOCKS LEFT JOIN REQUESTS ON TOKEN_LOCKS.consumer_tx_id = REQUESTS.tx_id "+
-			"WHERE \\(\\(\\(REQUESTS.status = \\$1\\)\\) OR \\(\\(REQUESTS.status = \\$2\\)\\)\\) OR \\(TOKEN_LOCKS.created_at < NOW\\(\\) - INTERVAL '1 seconds'\\)").
+			"WHERE \\(\\(REQUESTS.status\\) IN \\(\\(\\$1\\), \\(\\$2\\)\\)\\) OR \\(TOKEN_LOCKS.created_at < NOW\\(\\) - INTERVAL '1 seconds'\\)").
 		WithArgs(driver.Deleted, driver.Orphan).
 		WillReturnRows(mockDB.NewRows([]string{"consumer_tx_id", "tx_id", "idx", "status", "created_at", "now"}).AddRow(output...))
 
 	mockDB.ExpectExec("DELETE FROM TOKEN_LOCKS WHERE "+
 		"\\(TOKEN_LOCKS\\.created_at < NOW\\(\\) - INTERVAL '1 seconds'\\)"+
 		" OR "+
-		"\\(EXISTS \\(SELECT 1 FROM REQUESTS WHERE \\(REQUESTS\\.tx_id = TOKEN_LOCKS\\.consumer_tx_id\\) AND \\(\\(\\(REQUESTS\\.status = \\$1\\)\\) OR \\(\\(REQUESTS\\.status = \\$2\\)\\)\\)\\)\\)").
+		"\\(EXISTS \\(SELECT 1 FROM REQUESTS WHERE \\(REQUESTS\\.tx_id = TOKEN_LOCKS\\.consumer_tx_id\\) AND \\(\\(REQUESTS\\.status\\) IN \\(\\(\\$1\\), \\(\\$2\\)\\)\\)\\)\\)").
 		WithArgs(driver.Deleted, driver.Orphan).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 
@@ -113,7 +113,7 @@ func TestCleanupOrphan(t *testing.T) {
 	mockDB.
 		ExpectQuery("SELECT TOKEN_LOCKS.consumer_tx_id, TOKEN_LOCKS.tx_id, TOKEN_LOCKS.idx, REQUESTS.status, TOKEN_LOCKS.created_at, NOW\\(\\) AS now "+
 			"FROM TOKEN_LOCKS LEFT JOIN REQUESTS ON TOKEN_LOCKS.consumer_tx_id = REQUESTS.tx_id "+
-			"WHERE \\(\\(\\(REQUESTS.status = \\$1\\)\\) OR \\(\\(REQUESTS.status = \\$2\\)\\)\\) OR \\(TOKEN_LOCKS.created_at < NOW\\(\\) - INTERVAL '1 seconds'\\)").
+			"WHERE \\(\\(REQUESTS.status\\) IN \\(\\(\\$1\\), \\(\\$2\\)\\)\\) OR \\(TOKEN_LOCKS.created_at < NOW\\(\\) - INTERVAL '1 seconds'\\)").
 		WithArgs(driver.Deleted, driver.Orphan).
 		WillReturnRows(mockDB.NewRows([]string{"consumer_tx_id", "tx_id", "idx", "status", "created_at", "now"}).AddRow(output...))
 
@@ -121,7 +121,7 @@ func TestCleanupOrphan(t *testing.T) {
 	mockDB.ExpectExec("DELETE FROM TOKEN_LOCKS WHERE "+
 		"\\(TOKEN_LOCKS\\.created_at < NOW\\(\\) - INTERVAL '1 seconds'\\)"+
 		" OR "+
-		"\\(EXISTS \\(SELECT 1 FROM REQUESTS WHERE \\(REQUESTS\\.tx_id = TOKEN_LOCKS\\.consumer_tx_id\\) AND \\(\\(\\(REQUESTS\\.status = \\$1\\)\\) OR \\(\\(REQUESTS\\.status = \\$2\\)\\)\\)\\)\\)").
+		"\\(EXISTS \\(SELECT 1 FROM REQUESTS WHERE \\(REQUESTS\\.tx_id = TOKEN_LOCKS\\.consumer_tx_id\\) AND \\(\\(REQUESTS\\.status\\) IN \\(\\(\\$1\\), \\(\\$2\\)\\)\\)\\)\\)").
 		WithArgs(driver.Deleted, driver.Orphan).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 

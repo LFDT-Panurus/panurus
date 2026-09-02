@@ -26,11 +26,6 @@ import (
 
 type transactionsStoreConstructor func(*sql.DB) *TransactionStore
 
-type QueryConstructorTraits struct {
-	SupportsIN          bool
-	MultipleParenthesis bool
-}
-
 func TestGetTokenRequest(t *testing.T, store transactionsStoreConstructor) {
 	gomega.RegisterTestingT(t)
 	db, mockDB, err := sqlmock.New()
@@ -50,7 +45,7 @@ func TestGetTokenRequest(t *testing.T, store transactionsStoreConstructor) {
 	gomega.Expect(info).To(gomega.Equal(output))
 }
 
-func TestQueryMovements(t *testing.T, store transactionsStoreConstructor, traits QueryConstructorTraits) {
+func TestQueryMovements(t *testing.T, store transactionsStoreConstructor) {
 	gomega.RegisterTestingT(t)
 	db, mockDB, err := sqlmock.New()
 	gomega.Expect(err).ToNot(gomega.HaveOccurred())
@@ -65,20 +60,11 @@ func TestQueryMovements(t *testing.T, store transactionsStoreConstructor, traits
 	output := []driver2.Value{
 		record.TxID, record.EnrollmentID, record.TokenType, int(record.Amount.Int64()), record.Status,
 	}
-	var query string
-	if traits.MultipleParenthesis {
-		query = "SELECT MOVEMENTS.tx_id, enrollment_id, token_type, amount, REQUESTS.status " +
-			"FROM MOVEMENTS LEFT JOIN REQUESTS ON MOVEMENTS.tx_id = REQUESTS.tx_id " +
-			"WHERE \\(\\(\\(enrollment_id = \\$1\\)\\)\\) AND \\(\\(\\(token_type = \\$2\\)\\)\\) AND \\(\\(\\(status = \\$3\\)\\)\\) AND \\(amount < \\$4\\) " +
-			"ORDER BY MOVEMENTS.stored_at DESC " +
-			"LIMIT \\$5"
-	} else {
-		query = "SELECT MOVEMENTS.tx_id, enrollment_id, token_type, amount, REQUESTS.status " +
-			"FROM MOVEMENTS LEFT JOIN REQUESTS ON MOVEMENTS.tx_id = REQUESTS.tx_id " +
-			"WHERE \\(enrollment_id = \\$1\\) AND \\(token_type = \\$2\\) AND \\(status = \\$3\\) AND \\(amount < \\$4\\) " +
-			"ORDER BY MOVEMENTS.stored_at DESC " +
-			"LIMIT \\$5"
-	}
+	query := "SELECT MOVEMENTS.tx_id, enrollment_id, token_type, amount, REQUESTS.status " +
+		"FROM MOVEMENTS LEFT JOIN REQUESTS ON MOVEMENTS.tx_id = REQUESTS.tx_id " +
+		"WHERE \\(enrollment_id = \\$1\\) AND \\(token_type = \\$2\\) AND \\(status = \\$3\\) AND \\(amount < \\$4\\) " +
+		"ORDER BY MOVEMENTS.stored_at DESC " +
+		"LIMIT \\$5"
 	mockDB.
 		ExpectQuery(query).
 		WithArgs(record.EnrollmentID, record.TokenType, record.Status, 0, 1).
@@ -157,7 +143,7 @@ func TestGetStatus(t *testing.T, store transactionsStoreConstructor) {
 	gomega.Expect(statusMessage).To(gomega.Equal(output[1]))
 }
 
-func TestQueryTokenRequests(t *testing.T, store transactionsStoreConstructor, traits QueryConstructorTraits) {
+func TestQueryTokenRequests(t *testing.T, store transactionsStoreConstructor) {
 	gomega.RegisterTestingT(t)
 	db, mockDB, err := sqlmock.New()
 	gomega.Expect(err).ToNot(gomega.HaveOccurred())
@@ -170,12 +156,7 @@ func TestQueryTokenRequests(t *testing.T, store transactionsStoreConstructor, tr
 	output := []driver2.Value{
 		record.TxID, record.TokenRequest, record.Status,
 	}
-	var statusClause string
-	if traits.SupportsIN {
-		statusClause = "\\(status\\) IN \\(\\(\\$1\\), \\(\\$2\\)\\)"
-	} else {
-		statusClause = "\\(\\(status = \\$1\\)\\) OR \\(\\(status = \\$2\\)\\)"
-	}
+	statusClause := "\\(status\\) IN \\(\\(\\$1\\), \\(\\$2\\)\\)"
 	mockDB.
 		ExpectQuery("SELECT tx_id, request, status FROM REQUESTS WHERE "+statusClause).
 		WithArgs(driver.Deleted, driver.Unknown).
