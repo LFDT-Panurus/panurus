@@ -82,6 +82,9 @@ func (s *EndorseView) Call(context view.Context) (any, error) {
 	return s.tx, nil
 }
 
+// SigFanOutTimeout bounds how long the endorser waits for a signature request.
+const SigFanOutTimeout = 1 * time.Minute
+
 // handleSignatureRequests processes the signature requests for the transaction this view has been constructed with.
 // It expects to deal with messages coming from CollectEndorsementsView.
 func (s *EndorseView) handleSignatureRequests(context view.Context) error {
@@ -108,7 +111,7 @@ func (s *EndorseView) handleSignatureRequests(context view.Context) error {
 			signatureRequest = s.tx.FromSignatureRequest
 		} else {
 			logger.DebugfContext(context.Context(), "receiving signature request...")
-			if err := typedSession.ReceiveTypedWithTimeout(TypeSignatureRequest, signatureRequest, time.Minute); err != nil {
+			if err := typedSession.ReceiveTypedWithTimeout(TypeSignatureRequest, signatureRequest, SigFanOutTimeout); err != nil {
 				return errors.Wrap(err, "failed reading signature request")
 			}
 		}

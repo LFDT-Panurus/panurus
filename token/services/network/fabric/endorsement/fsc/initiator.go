@@ -61,6 +61,9 @@ func NewRequestApprovalView(
 	}
 }
 
+// ApprovalTimeout bounds how long the initiator waits for endorsement collection.
+const ApprovalTimeout = 2 * time.Minute
+
 func (r *RequestApprovalView) Call(ctx view.Context) (any, error) {
 	logger.DebugfContext(ctx.Context(), "request approval from tms id [%s]", r.TMSID)
 
@@ -96,7 +99,7 @@ func (r *RequestApprovalView) Call(ctx view.Context) (any, error) {
 	}
 
 	logger.DebugfContext(ctx.Context(), "request endorsement on tx [%s] to [%v]...", tx.ID(), r.Endorsers)
-	err = r.EndorserService.CollectEndorsements(ctx, tx, 2*time.Minute, r.Endorsers...)
+	err = r.EndorserService.CollectEndorsements(ctx, tx, ApprovalTimeout, r.Endorsers...)
 	if err != nil {
 		return nil, errors.WithMessagef(err, "failed to collect endorsements")
 	}
