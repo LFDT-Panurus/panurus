@@ -34,6 +34,17 @@ func NewDeserializer(ppp *pp.PublicParams) (*Deserializer, error) {
 
 	des := deserializer.NewTypedVerifierDeserializerMultiplex()
 
+	for _, idemixIssuerPublicKey := range ppp.IdemixIssuerPublicKeys {
+		idemixDes, err := idemix.NewDeserializer(idemixIssuerPublicKey.PublicKey, idemixIssuerPublicKey.Curve)
+		if err != nil {
+			return nil, errors.Wrapf(err, "failed getting idemix deserializer for curve [%d]", idemixIssuerPublicKey.Curve)
+		}
+		des.AddTypedVerifierDeserializer(idemix.IdentityType, deserializer.NewTypedIdentityVerifierDeserializer(idemixDes, idemixDes))
+
+		idemixNymDes := idemixnym.NewDeserializer(idemixDes)
+		des.AddTypedVerifierDeserializer(idemixnym.IdentityType, deserializer.NewTypedIdentityVerifierDeserializer(idemixNymDes, idemixNymDes))
+	}
+
 	des.AddTypedVerifierDeserializer(x509.IdentityType, deserializer.NewTypedIdentityVerifierDeserializer(&x509.IdentityDeserializer{}, &x509.AuditMatcherDeserializer{}))
 	des.AddTypedVerifierDeserializer(htlc2.ScriptType, htlc.NewTypedIdentityDeserializer(des))
 	des.AddTypedVerifierDeserializer(multisig.Multisig, multisig.NewTypedIdentityDeserializer(des, des))

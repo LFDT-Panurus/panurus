@@ -16,6 +16,8 @@ import (
 	mathlib "github.com/IBM/mathlib"
 	"github.com/stretchr/testify/require"
 
+	"github.com/LFDT-Panurus/panurus/token/driver"
+
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
 
 	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/pp"
@@ -71,7 +73,7 @@ func setupEndToEnd(t *testing.T) {
 
 		testOrch = prover.NewOrchestrator(spendProver, outputProver)
 
-		testVal, err = validator.NewValidator(testPP)
+		testVal, err = validator.NewValidator(testPP, nil, driver.ResourceLimits{}.WithDefaults())
 		if err != nil {
 			panic(err)
 		}
@@ -155,7 +157,7 @@ func setupMigrationEndToEnd(t *testing.T) {
 		// Rebuild the Validator so it picks up the now-populated
 		// vkMigration — testVal was originally constructed by
 		// setupEndToEnd before migration setup ever ran.
-		testVal, err = validator.NewValidator(testPP)
+		testVal, err = validator.NewValidator(testPP, nil, driver.ResourceLimits{}.WithDefaults())
 		if err != nil {
 			panic(err)
 		}
@@ -363,7 +365,7 @@ func TestValidateMigration_NotConfiguredWithoutSetup(t *testing.T) {
 	freshPP, err := setup.SetupAll(freshPP) // Spend/Output only — no migration
 	require.NoError(t, err)
 
-	freshVal, err := validator.NewValidator(freshPP)
+	freshVal, err := validator.NewValidator(freshPP, nil, driver.ResourceLimits{}.WithDefaults())
 	require.NoError(t, err)
 
 	err = freshVal.ValidateMigration(&snarktoken.MigrationAction{})
