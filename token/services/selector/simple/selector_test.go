@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/LFDT-Panurus/panurus/token"
-	"github.com/LFDT-Panurus/panurus/token/driver"
 	token2 "github.com/LFDT-Panurus/panurus/token/token"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	"github.com/stretchr/testify/assert"
@@ -30,44 +29,8 @@ type ownerFilter struct{ id string }
 func (o *ownerFilter) ID() string                                { return o.id }
 func (o *ownerFilter) ContainsToken(_ *token2.UnspentToken) bool { return true }
 
-// sliceIterator walks a fixed slice of UnspentTokens.
-type sliceIterator struct {
-	tokens []*token2.UnspentToken
-	pos    int
-}
-
-func (s *sliceIterator) Close() {}
-func (s *sliceIterator) Next() (*token2.UnspentToken, error) {
-	if s.pos >= len(s.tokens) {
-		return nil, nil
-	}
-	t := s.tokens[s.pos]
-	s.pos++
-
-	return t, nil
-}
-
-// mockQueryService returns the iterator and optionally fails GetTokens.
-type mockQueryService struct {
-	tokens         []*token2.UnspentToken
-	getTokensError error
-}
-
-func (m *mockQueryService) UnspentTokensIterator(_ context.Context) (*token.UnspentTokensIterator, error) {
-	panic("not used")
-}
-
-func (m *mockQueryService) UnspentTokensIteratorBy(_ context.Context, _ string, _ token2.Type) (driver.UnspentTokensIterator, error) {
-	return &sliceIterator{tokens: m.tokens}, nil
-}
-
-func (m *mockQueryService) GetTokens(_ context.Context, _ ...*token2.ID) ([]*token2.Token, error) {
-	if m.getTokensError != nil {
-		return nil, m.getTokensError
-	}
-
-	return nil, nil
-}
+// mockQueryService (and the mockIterator it returns) is shared with
+// selector_limits_test.go, which declares it.
 
 // recordingLocker records every call to Lock and UnlockIDs.
 type recordingLocker struct {
@@ -133,15 +96,19 @@ func makeTokens(n int, typ token2.Type, badQuantityAt int) []*token2.UnspentToke
 	return tokens
 }
 
-// newSelector is a convenience constructor.
+// newSelector is a convenience constructor. The resource limits are set high
+// enough that they never trip in these tests; selector_limits_test.go covers them.
 func newSelector(locker Locker, qs QueryService, numRetry int) *selector {
 	return &selector{
-		txID:         "testTx",
-		locker:       locker,
-		queryService: qs,
-		precision:    precision,
-		numRetry:     numRetry,
-		timeout:      0,
+		txID:                  "testTx",
+		locker:                locker,
+		queryService:          qs,
+		precision:             precision,
+		maxRetries:            numRetry,
+		timeout:               0,
+		maxTokensPerSelection: 10000,
+		maxLockAttempts:       50000,
+		selectionTimeout:      30 * time.Second,
 	}
 }
 
@@ -226,8 +193,10 @@ func TestSelectByID_InsufficientFunds(t *testing.T) {
 	_, _, err := sel.Select(context.Background(), &ownerFilter{id: "wallet1"}, "0x2", "USD")
 	require.ErrorIs(t, err, token.SelectorInsufficientFunds)
 
-	// The token must have been unlocked once per retry attempt (2 retries × 1 token)
-	assert.Len(t, locker.unlocked, 2, "token must be unlocked after each retry")
+	// Funds are clearly insufficient and nothing is locked by anyone else, so the
+	// selector fails on the first pass instead of burning its retries; the single
+	// token it locked must still be unlocked.
+	assert.Len(t, locker.unlocked, 1, "token must be unlocked on the fail-fast path")
 }
 
 // TestSelectByID_HappyPath: enough tokens exist and locking succeeds.

@@ -219,13 +219,20 @@ Configure the selector service in your `core.yaml`:
 token:
   selector:
     driver: sherdlock                    # Selector implementation and locking backend: sherdlock | simple (default: sherdlock)
-    numRetries: 3                        # Retry attempts for token selection (default: 3)
     retryInterval: 5s                    # Wait time between retries (default: 5s)
     leaseExpiry: 3m                      # Lock expiration time (default: 3m)
     leaseCleanupTickPeriod: 1m           # Lock cleanup interval (default: 1m)
     fetcherCacheSize: 1000               # Cache size in entries (default: 0 = use fetcher default)
     fetcherCacheRefresh: 30s             # Cache refresh interval (default: 0 = use fetcher default)
     fetcherCacheMaxQueries: 100          # Max queries before cache refresh (default: 0 = use fetcher default)
+    
+    # Security: Resource limits to prevent algorithmic attacks
+    limits:
+      maxTokensPerSelection: 10000       # Max tokens to examine per selection (default: 10000)
+      maxLockAttempts: 50000             # Max lock operations per selection (default: 50000)
+      maxRetries: 3                     # Max retry cycles before giving up (default: 3)
+      maxLocksPerTransaction: 5000       # Max concurrent locks per transaction (default: 5000)
+      selectionTimeout: 30s              # Wall-clock timeout for selection (default: 30s)
 ```
 
 ### Driver
@@ -245,6 +252,19 @@ on first cover, but they diverge in several ways beyond the shuffle:
 - `simple` runs a `GetTokens` concurrency check after a successful cover and can return a
   fourth error sentinel, `token.SelectorSufficientFundsButConcurrencyIssue`, which
   `sherdlock` does not produce.
+
+### Security Limits
+
+The selector enforces hard resource limits to prevent denial-of-service attacks. See [Security: Selector Resource Limits](../security/selector_resource_limits.md) for detailed information on:
+
+- Threat model and attack vectors
+- Detailed explanation of each limit
+- Configuration examples for different environments
+- Monitoring and alerting guidance
+- Operational procedures and tuning
+- Plugging in your own per-wallet rate limiting via a custom `Locker`
+
+**Important**: All limits are enforced by default with secure values. Review the security guide before adjusting limits in production.
 
 ### Cache Configuration
 

@@ -8,11 +8,11 @@ import (
 )
 
 type FakeConfigProvider struct {
-	UnmarshalKeyStub        func(string, interface{}) error
+	UnmarshalKeyStub        func(string, any) error
 	unmarshalKeyMutex       sync.RWMutex
 	unmarshalKeyArgsForCall []struct {
 		arg1 string
-		arg2 interface{}
+		arg2 any
 	}
 	unmarshalKeyReturns struct {
 		result1 error
@@ -24,12 +24,12 @@ type FakeConfigProvider struct {
 	invocationsMutex sync.RWMutex
 }
 
-func (fake *FakeConfigProvider) UnmarshalKey(arg1 string, arg2 interface{}) error {
+func (fake *FakeConfigProvider) UnmarshalKey(arg1 string, arg2 any) error {
 	fake.unmarshalKeyMutex.Lock()
 	ret, specificReturn := fake.unmarshalKeyReturnsOnCall[len(fake.unmarshalKeyArgsForCall)]
 	fake.unmarshalKeyArgsForCall = append(fake.unmarshalKeyArgsForCall, struct {
 		arg1 string
-		arg2 interface{}
+		arg2 any
 	}{arg1, arg2})
 	stub := fake.UnmarshalKeyStub
 	fakeReturns := fake.unmarshalKeyReturns
@@ -50,13 +50,13 @@ func (fake *FakeConfigProvider) UnmarshalKeyCallCount() int {
 	return len(fake.unmarshalKeyArgsForCall)
 }
 
-func (fake *FakeConfigProvider) UnmarshalKeyCalls(stub func(string, interface{}) error) {
+func (fake *FakeConfigProvider) UnmarshalKeyCalls(stub func(string, any) error) {
 	fake.unmarshalKeyMutex.Lock()
 	defer fake.unmarshalKeyMutex.Unlock()
 	fake.UnmarshalKeyStub = stub
 }
 
-func (fake *FakeConfigProvider) UnmarshalKeyArgsForCall(i int) (string, interface{}) {
+func (fake *FakeConfigProvider) UnmarshalKeyArgsForCall(i int) (string, any) {
 	fake.unmarshalKeyMutex.RLock()
 	defer fake.unmarshalKeyMutex.RUnlock()
 	argsForCall := fake.unmarshalKeyArgsForCall[i]

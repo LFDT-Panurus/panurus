@@ -181,9 +181,17 @@ func Topology(opts common.Opts) []api.Topology {
 		}
 	}
 
+	// Create the bootstrap node before the token topology is assembled, but
+	// keep it out of the TMS member lists below: it only performs libp2p
+	// bootstrapping and has no token role, so giving it TMS membership would
+	// generate crypto material and wallet configuration it never uses.
+	bootstrapNode := fscTopology.AddNodeByName("lib-p2p-bootstrap-node")
+	fscTopology.SetBootstrapNode(bootstrapNode)
+	tmsNodes := nodesExcluding(fscTopology.ListNodes(), bootstrapNode)
+
 	tokenTopology := token.NewTopology()
 	tokenTopology.TokenSelector = opts.TokenSelector
-	tms := tokenTopology.AddTMS(fscTopology.ListNodes(), backendTopology, backendChannel, opts.DefaultTMSOpts.TokenSDKDriver)
+	tms := tokenTopology.AddTMS(tmsNodes, backendTopology, backendChannel, opts.DefaultTMSOpts.TokenSDKDriver)
 	tms.SetNamespace("token_chaincode")
 	common.SetDefaultParams(tms, opts.DefaultTMSOpts)
 	if !opts.DefaultTMSOpts.Aries {
@@ -204,8 +212,7 @@ func Topology(opts common.Opts) []api.Topology {
 	} else {
 		fabric2.SetOrgs(tms, "Org1")
 	}
-	nodeList := fscTopology.ListNodes()
-	fscTopology.SetBootstrapNode(fscTopology.AddNodeByName("lib-p2p-bootstrap-node"))
+	nodeList := tmsNodes
 
 	if !opts.NoAuditor {
 		tms.AddAuditor(auditor)
@@ -281,4 +288,18 @@ func Topology(opts common.Opts) []api.Topology {
 	}
 
 	return []api.Topology{backendTopology, tokenTopology, fscTopology}
+}
+
+// nodesExcluding returns nodes without the given one. Used to keep the libp2p
+// bootstrap node out of TMS membership: it is part of the FSC topology so that
+// peers can bootstrap through it, but it plays no token role.
+func nodesExcluding(nodes []*node.Node, excluded *node.Node) []*node.Node {
+	kept := make([]*node.Node, 0, len(nodes))
+	for _, n := range nodes {
+		if n != excluded {
+			kept = append(kept, n)
+		}
+	}
+
+	return kept
 }

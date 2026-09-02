@@ -94,9 +94,9 @@ func (t *TransferView) Call(context view.Context) (txID any, err error) {
 	for _, action := range t.TransferAction {
 		actionRecipient, err := ttx.RequestRecipientIdentity(context, action.Recipient, ServiceOpts(t.TMSID)...)
 		assert.NoError(err, "failed getting recipient")
-		eID, err := wm.GetEnrollmentID(context.Context(), recipient)
-		assert.NoError(err, "failed to get enrollment id for recipient [%s]", recipient)
-		assert.True(strings.HasPrefix(eID, t.RecipientEID), "recipient EID [%s] does not match the expected one [%s]", eID, t.RecipientEID)
+		eID, err := wm.GetEnrollmentID(context.Context(), actionRecipient)
+		assert.NoError(err, "failed to get enrollment id for recipient [%s]", actionRecipient)
+		assert.True(strings.HasPrefix(eID, action.RecipientEID), "recipient EID [%s] does not match the expected one [%s]", eID, action.RecipientEID)
 		additionalRecipients = append(additionalRecipients, actionRecipient)
 	}
 
@@ -150,7 +150,9 @@ func (t *TransferView) Call(context view.Context) (txID any, err error) {
 		token2.WithTokenIDs(t.TokenIDs...),
 		token2.WithRestRecipientIdentity(t.SenderChangeRecipientData),
 	)
-	assert.NoError(err, "failed adding transfer action [%d:%s]", t.Amount, t.Recipient)
+	if err != nil {
+		return nil, errors.Wrapf(err, "failed adding transfer action [amount: %d, recipient: %s]", t.Amount, recipient.String())
+	}
 
 	// add additional transfers
 	logger.DebugfContext(context.Context(), "Append additional actions")
@@ -168,7 +170,9 @@ func (t *TransferView) Call(context view.Context) (txID any, err error) {
 			[]view.Identity{additionalRecipients[i]},
 			opts...,
 		)
-		assert.NoError(err, "failed adding transfer action [%d:%s]", action.Amount, action.Recipient)
+		if err != nil {
+			return nil, errors.Wrapf(err, "failed adding transfer action [amount: %d, recipient: %s]", action.Amount, additionalRecipients[i].String())
+		}
 	}
 
 	if t.FailToRelease {
@@ -280,8 +284,16 @@ func (t *TransferWithSelectorView) Call(context view.Context) (any, error) {
 		for range 5 {
 			// Select the request amount of tokens of the given type
 			ids, sum, err = selector.Select(context.Context(), ttx.GetWallet(context, t.Wallet), amount.Decimal(), t.Type)
-			// If an error occurs and retry has been asked, then wait first a bit
-			if err != nil && t.Retry {
+			// Retry only for transient contention-style failures.
+			// Permanent failures such as insufficient funds must surface immediately,
+			// otherwise this view can loop until the test times out.
+			if err != nil && t.Retry &&
+				(errors.HasCause(err, token2.SelectorSufficientButLockedFunds) ||
+					errors.HasCause(err, token2.SelectorSufficientButNotCertifiedFunds) ||
+					errors.HasCause(err, token2.SelectorSufficientFundsButConcurrencyIssue) ||
+					// A selection that ran out of wall-clock time under
+					// contention is transient in exactly the same way.
+					errors.HasCause(err, token2.SelectorTimedOut)) {
 				time.Sleep(10 * time.Second)
 
 				continue
@@ -300,6 +312,8 @@ func (t *TransferWithSelectorView) Call(context view.Context) (any, error) {
 				assert.NoError(err, "mandarin")
 			case errors.HasCause(err, token2.SelectorSufficientFundsButConcurrencyIssue):
 				assert.NoError(err, "peach")
+			case errors.HasCause(err, token2.SelectorTimedOut):
+				assert.NoError(err, "papaya")
 			default:
 				assert.NoError(err, "system failure")
 			}
@@ -636,7 +650,7 @@ func (t *MaliciousTransferView) Call(context view.Context) (txID any, err error)
 		token2.WithTokenIDs(t.TokenIDs...),
 		token2.WithRestRecipientIdentity(t.SenderChangeRecipientData),
 	)
-	assert.NoError(err, "failed adding transfer action [%d:%s]", t.Amount, t.Recipient)
+	assert.NoError(err, "failed adding transfer action [amount: %d, recipient: %s]", t.Amount, recipient.String())
 
 	// The sender is ready to collect all the required signatures.
 	// In this case, the sender's and the auditor's signatures.
@@ -681,7 +695,7 @@ func (t *MaliciousTransferView) Call(context view.Context) (txID any, err error)
 		[]uint64{t.Amount},
 		[]view.Identity{self},
 	)
-	assert.NoError(err, "failed adding transfer action [%d:%s]", t.Amount, t.Recipient)
+	assert.NoError(err, "failed adding transfer action [amount: %d, recipient: %s]", t.Amount, self.String())
 
 	endorserOpts = append(endorserOpts, ttx.WithSkipDistributeEnv())
 	_, err = context.RunView(ttx.NewCollectEndorsementsView(tx2, endorserOpts...))

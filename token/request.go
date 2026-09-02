@@ -1619,10 +1619,10 @@ func (r *Request) prepareTransfer(ctx context.Context, redeem bool, wallet *Owne
 				return nil, nil, errors.Wrapf(err, "failed to get selector manager")
 			}
 			selector, err = sm.NewSelector(string(r.Anchor))
-			defer utils.IgnoreErrorWithOneArg(sm.Close, string(r.Anchor))
 			if err != nil {
 				return nil, nil, errors.Wrapf(err, "failed getting default selector")
 			}
+			defer utils.IgnoreErrorWithOneArg(sm.Close, string(r.Anchor))
 		}
 		tokenIDs, inputSum, err = selector.Select(ctx, wallet, outputSum.Decimal(), tokenType)
 		if err != nil {

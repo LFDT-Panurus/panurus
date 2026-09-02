@@ -89,7 +89,7 @@ func RunTokenStoreBenchmarks(b *testing.B, store *TokenStore) {
 			cfg,
 			func() *TokenStore { return store },
 			func(s *TokenStore) error {
-				it, err := s.UnspentTokensIteratorBy(context.Background(), "wallet0", tokentype.Type("GOLD"))
+				it, err := s.UnspentTokensIteratorBy(context.Background(), "wallet0", tokentype.Type("GOLD"), 0)
 				if err != nil {
 					return err
 				}

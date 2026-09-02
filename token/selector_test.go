@@ -36,3 +36,9 @@ func TestSelectorSufficientFundsButConcurrencyIssue(t *testing.T) {
 	require.Error(t, SelectorSufficientFundsButConcurrencyIssue)
 	assert.Contains(t, SelectorSufficientFundsButConcurrencyIssue.Error(), "sufficient funds but concurrency issue")
 }
+
+// TestSelectorTimedOut verifies the error constant is defined
+func TestSelectorTimedOut(t *testing.T) {
+	require.Error(t, SelectorTimedOut)
+	assert.Contains(t, SelectorTimedOut.Error(), "timed out")
+}

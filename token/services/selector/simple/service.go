@@ -53,14 +53,28 @@ func NewService(lockerProvider LockerProvider, c ConfigProvider, opts ...ratelim
 		cfg = &config.Config{}
 	}
 
+	// Validate configuration. A rejected configuration must actually fall back
+	// to defaults: applying the values we just reported as invalid is worse
+	// than ignoring them (e.g. maxLockAttempts below maxTokensPerSelection
+	// aborts every selection partway through).
+	if err := cfg.Validate(); err != nil {
+		logger.Errorf("invalid selector configuration: %s, using defaults", err.Error())
+		cfg = &config.Config{}
+	}
+
+	limits := cfg.GetLimits()
+
 	svc := &SelectorService{}
 	loader := &loader{
-		lockerProvider:       lockerProvider,
-		numRetries:           cfg.GetNumRetries(),
-		retryInterval:        cfg.GetRetryInterval(),
-		requestCertification: true,
-		limiter:              ratelimit.CompileOptions(opts...).Limiter(cfg),
-		onLockerCreated:      svc.trackLocker,
+		lockerProvider:        lockerProvider,
+		maxRetries:            limits.MaxRetries,
+		retryInterval:         cfg.GetRetryInterval(),
+		requestCertification:  true,
+		limiter:               ratelimit.CompileOptions(opts...).Limiter(cfg),
+		onLockerCreated:       svc.trackLocker,
+		maxTokensPerSelection: limits.MaxTokensPerSelection,
+		maxLockAttempts:       limits.MaxLockAttempts,
+		selectionTimeout:      limits.SelectionTimeout,
 	}
 	if loader.limiter != nil {
 		logger.Infof("per-wallet token selection rate limiting is enabled")
@@ -121,8 +135,8 @@ func (q *queryService) UnspentTokensIterator(ctx context.Context) (*token.Unspen
 	return q.qe.UnspentTokensIterator(ctx)
 }
 
-func (q *queryService) UnspentTokensIteratorBy(ctx context.Context, id string, tokenType token2.Type) (driver.UnspentTokensIterator, error) {
-	return q.qe.UnspentTokensIteratorBy(ctx, id, tokenType)
+func (q *queryService) UnspentTokensIteratorBy(ctx context.Context, id string, tokenType token2.Type, limit int) (driver.UnspentTokensIterator, error) {
+	return q.qe.UnspentTokensIteratorBy(ctx, id, tokenType, limit)
 }
 
 func (q *queryService) GetTokens(ctx context.Context, inputs ...*token2.ID) ([]*token2.Token, error) {
@@ -131,13 +145,18 @@ func (q *queryService) GetTokens(ctx context.Context, inputs ...*token2.ID) ([]*
 
 type loader struct {
 	lockerProvider       LockerProvider
-	numRetries           int
+	maxRetries           int
 	retryInterval        time.Duration
 	requestCertification bool
 	// limiter meters selection requests per wallet. It is nil when rate limiting is
 	// disabled, which is the default, and is shared by every manager the loader builds.
 	limiter         ratelimit.Limiter
 	onLockerCreated func(Locker)
+
+	// Resource limits
+	maxTokensPerSelection int
+	maxLockAttempts       int
+	selectionTimeout      time.Duration
 }
 
 func (s *loader) load(tms *token.ManagementService) (token.SelectorManager, error) {
@@ -165,10 +184,13 @@ func (s *loader) newManager(locker Locker, qs QueryService, precision uint64, sc
 	mgr := NewManager(
 		locker,
 		func() QueryService { return qs },
-		s.numRetries,
+		s.maxRetries,
 		s.retryInterval,
 		s.requestCertification,
 		precision,
+		s.maxTokensPerSelection,
+		s.maxLockAttempts,
+		s.selectionTimeout,
 	)
 
 	// Decorate returns mgr unchanged when no limiter is configured, which is the default.

@@ -42,6 +42,14 @@ func NewService(
 		cfg = &config.Config{}
 	}
 
+	// Validate configuration. This is the default selector driver, so a
+	// rejected configuration would otherwise be applied silently, with no
+	// warning at all.
+	if err := cfg.Validate(); err != nil {
+		logger.Errorf("invalid selector configuration: %s, using defaults", err.Error())
+		cfg = &config.Config{}
+	}
+
 	svc := &SelectorService{}
 	loader := &loader{
 		tokenLockStoreServiceManager: tokenLockStoreServiceManager,
@@ -50,6 +58,10 @@ func NewService(
 		numRetries:                   cfg.GetNumRetries(),
 		leaseExpiry:                  cfg.GetLeaseExpiry(),
 		leaseCleanupTickPeriod:       cfg.GetLeaseCleanupTickPeriod(),
+		maxTokensPerSelection:        cfg.GetMaxTokensPerSelection(),
+		maxLockAttempts:              cfg.GetMaxLockAttempts(),
+		maxLocksPerTx:                cfg.GetMaxLocksPerTransaction(),
+		selectionTimeout:             cfg.GetSelectionTimeout(),
 		metrics:                      NewMetrics(metricsProvider),
 		limiter:                      ratelimit.CompileOptions(opts...).Limiter(cfg),
 		onCreate:                     svc.trackManager,
@@ -111,6 +123,10 @@ type loader struct {
 	retryInterval                time.Duration
 	leaseExpiry                  time.Duration
 	leaseCleanupTickPeriod       time.Duration
+	maxTokensPerSelection        int
+	maxLockAttempts              int
+	maxLocksPerTx                int
+	selectionTimeout             time.Duration
 	metrics                      *Metrics
 	// limiter meters selection requests per wallet. It is nil when rate limiting is
 	// disabled, which is the default, and is shared by every manager the loader builds.
@@ -136,16 +152,19 @@ func (s *loader) loadTMS(tms TMS) (token.SelectorManager, error) {
 		return nil, errors.Errorf("failed to create token fetcher: %v", err)
 	}
 
-	mgr := NewManager(
-		fetcher,
-		tokenLockStoreService,
-		pp.Precision(),
-		s.retryInterval,
-		s.numRetries,
-		s.leaseExpiry,
-		s.leaseCleanupTickPeriod,
-		s.metrics,
-	)
+	mgr := NewManager(&Config{
+		Fetcher:                fetcher,
+		Locker:                 NewBoundedLocker(tokenLockStoreService, s.maxLocksPerTx),
+		Precision:              pp.Precision(),
+		Backoff:                s.retryInterval,
+		MaxRetriesAfterBackOff: s.numRetries,
+		LeaseExpiry:            s.leaseExpiry,
+		LeaseCleanupTickPeriod: s.leaseCleanupTickPeriod,
+		MaxTokensPerSelection:  s.maxTokensPerSelection,
+		MaxLockAttempts:        s.maxLockAttempts,
+		SelectionTimeout:       s.selectionTimeout,
+		Metrics:                s.metrics,
+	})
 	if s.onCreate != nil {
 		s.onCreate(mgr)
 	}
