@@ -28,6 +28,7 @@ type Note struct {
 	Value      uint64
 	TokenType  string
 	Randomness fr.Element
+	Issuer     []byte
 }
 
 // EncodeTokenType maps a token type string to a canonical BLS12-381 field
@@ -79,7 +80,7 @@ func NewRandomNote(value uint64, tokenType string) (*Note, error) {
 		return nil, fmt.Errorf("note: randomness generation failed: %w", err)
 	}
 
-	return &Note{Value: value, TokenType: tokenType, Randomness: r}, nil
+	return &Note{Value: value, TokenType: tokenType, Randomness: r, Issuer: nil}, nil
 }
 
 // Serialize encodes the Note as CLEARTEXT bytes: 8-byte big-endian Value,
@@ -99,6 +100,11 @@ func (n *Note) Serialize() ([]byte, error) {
 	rBytes := n.Randomness.Bytes()
 	out = append(out, rBytes[:]...)
 
+	var issuerLenBuf [8]byte
+	binary.BigEndian.PutUint64(issuerLenBuf[:], uint64(len(n.Issuer)))
+	out = append(out, issuerLenBuf[:]...)
+	out = append(out, n.Issuer...)
+
 	return out, nil
 }
 
@@ -112,8 +118,8 @@ func Deserialize(raw []byte) (*Note, error) {
 	typeLen := binary.BigEndian.Uint64(raw[8:16])
 
 	expectedLen := 16 + typeLen + 32
-	if uint64(len(raw)) != expectedLen {
-		return nil, fmt.Errorf("note: length mismatch, expected %d got %d", expectedLen, len(raw))
+	if uint64(len(raw)) < expectedLen {
+		return nil, fmt.Errorf("note: length mismatch, expected at least %d got %d", expectedLen, len(raw))
 	}
 
 	tokenType := string(raw[16 : 16+typeLen])
@@ -123,5 +129,17 @@ func Deserialize(raw []byte) (*Note, error) {
 		return nil, fmt.Errorf("note: invalid randomness bytes: %w", err)
 	}
 
-	return &Note{Value: value, TokenType: tokenType, Randomness: r}, nil
+	offset := 16 + typeLen + 32
+	var issuer []byte
+	if uint64(len(raw)) >= offset+8 {
+		issuerLen := binary.BigEndian.Uint64(raw[offset : offset+8])
+		if uint64(len(raw)) != offset+8+issuerLen {
+			return nil, fmt.Errorf("note: length mismatch, expected %d got %d", offset+8+issuerLen, len(raw))
+		}
+		issuer = raw[offset+8:]
+	} else if uint64(len(raw)) != offset {
+		return nil, fmt.Errorf("note: length mismatch, expected %d got %d", offset, len(raw))
+	}
+
+	return &Note{Value: value, TokenType: tokenType, Randomness: r, Issuer: issuer}, nil
 }

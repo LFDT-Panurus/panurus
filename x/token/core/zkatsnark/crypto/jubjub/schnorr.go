@@ -93,7 +93,7 @@ func Verify(pk twistededwards.PointAffine, msg []byte, sig Signature, base twist
 	ePk.ScalarMultiplication(&pk, eBig)
 	negEPk := NegatePoint(ePk)
 
-	//var rhs twistededwards.PointAffine
+	// var rhs twistededwards.PointAffine
 	rhs := sig.R
 	rhs.Add(&rhs, &negEPk)
 

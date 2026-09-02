@@ -28,7 +28,7 @@ func NewValidatorDriver() core.NamedFactory[driver.ValidatorDriver] {
 }
 
 // NewValidator returns a new zkatsnark validator for the passed public parameters.
-func (d ValidatorDriver) NewValidator(params driver.PublicParameters) (driver.Validator, error) {
+func (d ValidatorDriver) NewValidator(params driver.PublicParameters, limits driver.ResourceLimits) (driver.Validator, error) {
 	ppp, ok := params.(*pp.PublicParams)
 	if !ok {
 		return nil, errors.Errorf("invalid public parameters type [%T]", params)
@@ -36,6 +36,10 @@ func (d ValidatorDriver) NewValidator(params driver.PublicParameters) (driver.Va
 	if err := ppp.Validate(); err != nil {
 		return nil, errors.Wrapf(err, "failed validating public parameters")
 	}
+	deserializer, err := NewDeserializer(ppp)
+	if err != nil {
+		return nil, errors.Errorf("failed to create token service deserializer: %v", err)
+	}
 	// Returns the validator for zkatsnark
-	return validator.NewValidator(ppp)
+	return validator.NewValidator(ppp, deserializer, limits)
 }

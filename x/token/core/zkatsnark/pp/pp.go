@@ -21,10 +21,14 @@ import (
 	"errors"
 	"fmt"
 
+	mathlib "github.com/IBM/mathlib"
 	"github.com/consensys/gnark-crypto/ecc"
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/twistededwards"
 
+	"github.com/LFDT-Panurus/panurus/token/core"
+	pp3 "github.com/LFDT-Panurus/panurus/token/core/common/encoding/pp"
 	driver "github.com/LFDT-Panurus/panurus/token/driver"
+	pp2 "github.com/LFDT-Panurus/panurus/token/driver/protos-go/v1/pp"
 	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/crypto/jubjub"
 	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/crypto/params"
 )
@@ -35,6 +39,13 @@ import (
 // thing that mechanically guarantees this struct stays a valid
 // driver.PublicParameters as the interface or this struct evolves.
 var _ driver.PublicParameters = (*PublicParams)(nil)
+
+// IdemixIssuerPublicKey contains the public key and curve of an Idemix issuer.
+// This is used for pseudonymous owner identities in the wallet service.
+type IdemixIssuerPublicKey struct {
+	PublicKey []byte
+	Curve     mathlib.CurveID
+}
 
 // PublicParams holds every parameter shared between the prover and the
 // validator for the zkatsnark driver.
@@ -110,6 +121,13 @@ type PublicParams struct {
 	// fresh setup and new keys. Defaults to 64.
 	MaxBits int
 
+	// ── Idemix identity keys ──────────────────────────────────────────────
+
+	// IdemixIssuerPublicKeys lists the Idemix issuer public keys used for
+	// pseudonymous owner identities. Wallets prefer keys earlier in the
+	// slice.
+	IdemixIssuerPublicKeys []*IdemixIssuerPublicKey
+
 	// ── Driver-specific extras ─────────────────────────────────────────────
 
 	// ExtraParams carries any additional parameters not covered by the
@@ -170,6 +188,26 @@ func (pp *PublicParams) Extras() driver.Extras {
 	return pp.ExtraParams
 }
 
+// AddIssuer appends an issuer identity to the public parameters.
+func (pp *PublicParams) AddIssuer(id driver.Identity) {
+	pp.IssuerIdentities = append(pp.IssuerIdentities, id)
+}
+
+// AddAuditor appends an auditor identity to the public parameters.
+func (pp *PublicParams) AddAuditor(id driver.Identity) {
+	pp.AuditorIdentities = append(pp.AuditorIdentities, id)
+}
+
+// SetIssuers sets the issuers to the passed identities.
+func (pp *PublicParams) SetIssuers(ids []driver.Identity) {
+	pp.IssuerIdentities = ids
+}
+
+// SetAuditors sets the auditors to the passed identities.
+func (pp *PublicParams) SetAuditors(ids []driver.Identity) {
+	pp.AuditorIdentities = ids
+}
+
 func (pp *PublicParams) String() string {
 	return fmt.Sprintf(
 		"zkatsnark public params [label=%s version=%d proofSystem=%s curve=%s "+
@@ -190,15 +228,22 @@ func (pp *PublicParams) Serialize() ([]byte, error) {
 		return nil, fmt.Errorf("pp: serialize failed: %w", err)
 	}
 
-	return raw, nil
+	return pp3.Marshal(&pp2.PublicParameters{
+		Identifier: string(core.DriverIdentifier(pp.TokenDriverName(), pp.TokenDriverVersion())),
+		Raw:        raw,
+	})
 }
 
 // DeserializePublicParams reconstructs a PublicParams from bytes produced
 // by Serialize, and validates the result before returning it. A caller
 // never receives a PublicParams that failed Validate() from this function.
 func DeserializePublicParams(raw []byte) (*PublicParams, error) {
+	container, err := pp3.Unmarshal(raw)
+	if err != nil {
+		return nil, fmt.Errorf("pp: deserialize failed: %w", err)
+	}
 	var p PublicParams
-	if err := json.Unmarshal(raw, &p); err != nil {
+	if err := json.Unmarshal(container.Raw, &p); err != nil {
 		return nil, fmt.Errorf("pp: deserialize failed: %w", err)
 	}
 	if err := p.Validate(); err != nil {
@@ -237,6 +282,17 @@ func (pp *PublicParams) Validate() error {
 	if !pp.R.IsOnCurve() {
 		return errors.New("pp: R is not a valid point on the Jubjub curve")
 	}
+	if len(pp.IdemixIssuerPublicKeys) == 0 {
+		return errors.New("pp: expected at least one idemix issuer public key")
+	}
+	for i, key := range pp.IdemixIssuerPublicKeys {
+		if key == nil {
+			return fmt.Errorf("pp: idemix issuer public key at index %d is nil", i)
+		}
+		if len(key.PublicKey) == 0 {
+			return fmt.Errorf("pp: idemix issuer public key at index %d has empty public key", i)
+		}
+	}
 
 	return nil
 }
@@ -273,6 +329,12 @@ func DefaultPublicParams() *PublicParams {
 		MaxBits:            params.DefaultMaxBits,
 		GraphHidingEnabled: false,
 		CertifierID:        "",
-		PrecisionValue:     0,
+		PrecisionValue:     64,
+		IdemixIssuerPublicKeys: []*IdemixIssuerPublicKey{
+			{
+				PublicKey: []byte("dummy-idemix-pk"),
+				Curve:     mathlib.BN254,
+			},
+		},
 	}
 }
