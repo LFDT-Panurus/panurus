@@ -5,14 +5,15 @@ go 1.26.5
 replace (
 	github.com/LFDT-Panurus/panurus => ./../../
 	github.com/LFDT-Panurus/panurus/integration => ./../../integration
+	github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark => ./../../x/token/core/zkatsnark
 	github.com/hyperledger-labs/fabric-smart-client/platform/fabric/services/state/cc/query => github.com/hyperledger-labs/fabric-smart-client/platform/fabric/services/state/cc/query v0.16.0
 	github.com/hyperledger-labs/fabric-smart-client/platform/view/services/comm/host/libp2p => github.com/hyperledger-labs/fabric-smart-client/platform/view/services/comm/host/libp2p v0.16.0
 )
 
 require (
 	github.com/IBM/idemix v0.2.0
-	github.com/IBM/mathlib v0.3.0
-	github.com/LFDT-Panurus/panurus v0.10.1
+	github.com/IBM/mathlib v0.3.1
+	github.com/LFDT-Panurus/panurus v0.14.2
 	github.com/LFDT-Panurus/panurus/integration v0.0.0
 	github.com/hyperledger-labs/fabric-smart-client v0.17.0
 	github.com/hyperledger-labs/fabric-smart-client/integration v0.17.0
@@ -97,7 +98,7 @@ require (
 	github.com/prometheus/common v0.70.1 // indirect
 	github.com/prometheus/procfs v0.21.1 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
-	github.com/rogpeppe/go-internal v1.14.1 // indirect
+	github.com/rogpeppe/go-internal v1.15.0 // indirect
 	github.com/sagikazarmark/locafero v0.12.0 // indirect
 	github.com/spf13/afero v1.15.0 // indirect
 	github.com/spf13/cast v1.10.0 // indirect

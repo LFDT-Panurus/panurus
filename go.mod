@@ -5,7 +5,7 @@ go 1.26.5
 require (
 	github.com/DATA-DOG/go-sqlmock v1.5.2
 	github.com/IBM/idemix v0.2.0
-	github.com/IBM/mathlib v0.3.0
+	github.com/IBM/mathlib v0.3.1
 	github.com/consensys/gnark-crypto v0.20.1
 	github.com/dgraph-io/badger/v4 v4.9.4
 	github.com/dgraph-io/ristretto/v2 v2.4.2
@@ -107,7 +107,7 @@ require (
 	github.com/prometheus/procfs v0.21.1 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	github.com/robfig/cron/v3 v3.0.1 // indirect
-	github.com/rogpeppe/go-internal v1.14.1 // indirect
+	github.com/rogpeppe/go-internal v1.15.0 // indirect
 	github.com/sagikazarmark/locafero v0.12.0 // indirect
 	github.com/stretchr/objx v0.5.2 // indirect
 	github.com/tedsuo/ifrit v0.0.0-20260418191334-846868129986 // indirect
@@ -142,3 +142,5 @@ require (
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect
 )
+
+replace github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark => ./x/token/core/zkatsnark

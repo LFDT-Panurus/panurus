@@ -22,6 +22,7 @@ import (
 	tplatform "github.com/LFDT-Panurus/panurus/integration/nwo/token"
 	gfabtokenv1 "github.com/LFDT-Panurus/panurus/integration/nwo/token/generators/crypto/fabtokenv1"
 	"github.com/LFDT-Panurus/panurus/integration/nwo/token/generators/crypto/zkatdlognoghv1"
+	gzkatsnarkv1 "github.com/LFDT-Panurus/panurus/integration/nwo/token/generators/crypto/zkatsnarkv1"
 	"github.com/LFDT-Panurus/panurus/integration/nwo/token/topology"
 	token3 "github.com/LFDT-Panurus/panurus/integration/token"
 	common2 "github.com/LFDT-Panurus/panurus/integration/token/common"
@@ -30,6 +31,7 @@ import (
 	"github.com/LFDT-Panurus/panurus/token/core/common/encoding/pp"
 	fabtokenv1 "github.com/LFDT-Panurus/panurus/token/core/fabtoken/v1/setup"
 	dlognoghv1 "github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/setup"
+	zkatsnarkpp "github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/pp"
 	"github.com/LFDT-Panurus/panurus/token/driver"
 	"github.com/LFDT-Panurus/panurus/token/services/identity"
 	"github.com/LFDT-Panurus/panurus/token/services/identity/x509"
@@ -1867,6 +1869,9 @@ func PrepareUpdatedPublicParams(network *integration.Infrastructure, auditor str
 	case gfabtokenv1.DriverIdentifier:
 		pp, err = fabtokenv1.NewPublicParamsFromBytes(ppBytes, fabtokenv1.FabTokenDriverName, fabtokenv1.ProtocolV1)
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+	case gzkatsnarkv1.DriverIdentifier:
+		pp, err = zkatsnarkpp.DeserializePublicParams(ppBytes)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	default:
 		gomega.Expect(false).To(gomega.BeTrue(), "unknown pp identifier [%s]", genericPP.Identifier)
 	}
@@ -1919,6 +1924,9 @@ func PreparePublicParamsWithNewIssuer(network *integration.Infrastructure, issue
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	case gfabtokenv1.DriverIdentifier:
 		pp, err = fabtokenv1.NewPublicParamsFromBytes(ppBytes, fabtokenv1.FabTokenDriverName, fabtokenv1.ProtocolV1)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+	case gzkatsnarkv1.DriverIdentifier:
+		pp, err = zkatsnarkpp.DeserializePublicParams(ppBytes)
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	default:
 		gomega.Expect(false).To(gomega.BeTrue(), "unknown pp identitfier [%s]", genericPP.Identifier)

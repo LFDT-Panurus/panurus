@@ -19,6 +19,7 @@ import (
 	"github.com/LFDT-Panurus/panurus/integration/nwo/token/generators"
 	"github.com/LFDT-Panurus/panurus/integration/nwo/token/generators/crypto/fabtokenv1"
 	"github.com/LFDT-Panurus/panurus/integration/nwo/token/generators/crypto/zkatdlognoghv1"
+	"github.com/LFDT-Panurus/panurus/integration/nwo/token/generators/crypto/zkatsnarkv1"
 	topology2 "github.com/LFDT-Panurus/panurus/integration/nwo/token/topology"
 	"github.com/LFDT-Panurus/panurus/token"
 	"github.com/LFDT-Panurus/panurus/token/services/logging"
@@ -56,9 +57,11 @@ func NewNetworkHandler(tokenPlatform common2.TokenPlatform, builder api2.Builder
 			CryptoMaterialGenerators: map[string]generators.CryptoMaterialGenerator{
 				fabtokenv1.DriverIdentifier:     fabtokenv1.NewCryptoMaterialGenerator(tokenPlatform, builder),
 				zkatdlognoghv1.DriverIdentifier: zkatdlognoghv1.NewCryptoMaterialGenerator(tokenPlatform, math3.BN254, builder),
+				zkatsnarkv1.DriverIdentifier:    zkatsnarkv1.NewCryptoMaterialGenerator(tokenPlatform, math3.BN254, builder),
 			},
 			CASupports: map[string]common2.CAFactory{
 				zkatdlognoghv1.DriverIdentifier: common2.NewIdemixCASupport,
+				zkatsnarkv1.DriverIdentifier:    common2.NewIdemixCASupport,
 			},
 		},
 		Entries: map[string]*Entry{},

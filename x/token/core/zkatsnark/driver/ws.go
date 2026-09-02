@@ -13,6 +13,8 @@ import (
 	"github.com/LFDT-Panurus/panurus/token/services/identity"
 	"github.com/LFDT-Panurus/panurus/token/services/identity/config"
 	"github.com/LFDT-Panurus/panurus/token/services/identity/deserializer"
+	msp2 "github.com/LFDT-Panurus/panurus/token/services/identity/idemix/crypto"
+	"github.com/LFDT-Panurus/panurus/token/services/identity/idemixnym"
 	"github.com/LFDT-Panurus/panurus/token/services/identity/membership"
 	"github.com/LFDT-Panurus/panurus/token/services/identity/role"
 	"github.com/LFDT-Panurus/panurus/token/services/identity/wallet"
@@ -53,7 +55,10 @@ func (d *BaseWalletServiceFactory) NewWalletService(
 	if err != nil {
 		return nil, errors.Wrapf(err, "failed to open keystore for tms [%s]", tmsID)
 	}
-	identityProvider := identity.NewProvider(logger.Named("identity"), identityDB, deserializerManager, binder, NewEIDRHDeserializer())
+	identityMetrics := identity.NewMetrics(metricsProvider)
+	signerRouter := identity.NewSignerRouter(identityMetrics)
+	identityProvider := identity.NewProvider(logger.Named("identity"), identityDB, deserializerManager, binder, NewEIDRHDeserializer(), identityMetrics)
+	identityProvider.SetSignerRouter(signerRouter)
 	identityConfig, err := config.NewIdentityConfig(tmsConfig)
 	if err != nil {
 		return nil, errors.WithMessagef(err, "failed to create identity config")
@@ -70,8 +75,26 @@ func (d *BaseWalletServiceFactory) NewWalletService(
 		storageProvider,
 		deserializerManager,
 	)
+	roleFactory.SetSignerRouter(signerRouter)
 
-	kmps := make([]membership.KeyManagerProvider, 0, 1)
+	kmps := make([]membership.KeyManagerProvider, 0, len(ppp.IdemixIssuerPublicKeys)+1)
+	for _, key := range ppp.IdemixIssuerPublicKeys {
+		idemixKeyStore, err := msp2.NewKeyStore(key.Curve, baseKeyStore)
+		if err != nil {
+			return nil, errors.Wrapf(err, "failed to instantiate idemix key store")
+		}
+		kmp := idemixnym.NewKeyManagerProvider(
+			key.PublicKey,
+			key.Curve,
+			idemixKeyStore,
+			identityConfig,
+			identityConfig.DefaultCacheSize(),
+			ignoreRemote,
+			metricsProvider,
+			identityDB,
+		)
+		kmps = append(kmps, kmp)
+	}
 	keyStore := x509.NewKeyStore(baseKeyStore)
 	kmps = append(kmps, x509.NewKeyManagerProvider(identityConfig, keyStore, ignoreRemote))
 
@@ -101,6 +124,7 @@ func (d *BaseWalletServiceFactory) NewWalletService(
 	if err != nil {
 		return nil, errors.Wrapf(err, "failed to get identity storage provider")
 	}
+	signerRouter.SetConfIDResolver(walletDB)
 	deser, err := NewDeserializer(ppp)
 	if err != nil {
 		return nil, errors.Wrapf(err, "failed to instantiate the deserializer")
