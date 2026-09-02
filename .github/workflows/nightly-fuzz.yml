@@ -150,6 +150,9 @@ jobs:
           - name: identity-wallet-register-recipient-guard
             pkg: ./token/services/identity/wallet
             func: FuzzRegisterRecipientIdentityStructuralGuard
+          - name: storage-pagination-keyset-from-raw
+            pkg: ./token/services/storage/db/sql/query/pagination
+            func: FuzzKeysetFromRawNoPanic
 
     steps:
       - name: Checkout code

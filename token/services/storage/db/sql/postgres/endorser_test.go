@@ -25,13 +25,8 @@ func mockEndorserStore(db *sql.DB) *common2.EndorserStore {
 	return store
 }
 
-var endorserQueryConstructorTraits = common2.QueryConstructorTraits{
-	SupportsIN:          false,
-	MultipleParenthesis: true,
-}
-
 func TestQueryValidationsEndorser(t *testing.T) {
-	common2.TestQueryValidations(t, mockEndorserStore, endorserQueryConstructorTraits)
+	common2.TestQueryValidations(t, mockEndorserStore)
 }
 
 func TestGetStatusEndorser(t *testing.T) {
