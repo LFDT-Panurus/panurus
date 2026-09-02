@@ -73,6 +73,8 @@ const (
 	ZKATDLogFungibleHSM
 	ZKATDLogFungibleCSP
 
+	ZkatsnarkFungible
+
 	FabTokenFungible
 
 	ZKATDLogDVP

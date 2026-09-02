@@ -11,6 +11,7 @@ import (
 
 	"github.com/LFDT-Panurus/panurus/integration/nwo/token/generators/crypto/fabtokenv1"
 	"github.com/LFDT-Panurus/panurus/integration/nwo/token/generators/crypto/zkatdlognoghv1"
+	"github.com/LFDT-Panurus/panurus/integration/nwo/token/generators/crypto/zkatsnarkv1"
 	"github.com/LFDT-Panurus/panurus/integration/nwo/token/topology"
 	"github.com/LFDT-Panurus/panurus/token/services/ttx"
 	"github.com/hyperledger-labs/fabric-smart-client/integration/nwo/fsc"
@@ -24,7 +25,7 @@ const (
 )
 
 var (
-	Drivers = []string{zkatdlognoghv1.DriverIdentifier, fabtokenv1.DriverIdentifier}
+	Drivers = []string{zkatdlognoghv1.DriverIdentifier, fabtokenv1.DriverIdentifier, zkatsnarkv1.DriverIdentifier}
 )
 
 type BackedTopology interface {

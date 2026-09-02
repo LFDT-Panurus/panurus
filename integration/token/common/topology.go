@@ -9,6 +9,7 @@ package common
 import (
 	"github.com/LFDT-Panurus/panurus/integration/nwo/token/generators/crypto/fabtokenv1"
 	"github.com/LFDT-Panurus/panurus/integration/nwo/token/generators/crypto/zkatdlognoghv1"
+	"github.com/LFDT-Panurus/panurus/integration/nwo/token/generators/crypto/zkatsnarkv1"
 	"github.com/LFDT-Panurus/panurus/integration/nwo/token/topology"
 	"github.com/hyperledger-labs/fabric-smart-client/integration/nwo/fsc"
 	"github.com/hyperledger-labs/fabric-smart-client/integration/nwo/fsc/node"
@@ -68,6 +69,10 @@ func SetDefaultParams(tms *topology.TMS, opts TMSOpts) {
 		}
 	case fabtokenv1.DriverIdentifier:
 		// no nothig
+	case zkatsnarkv1.DriverIdentifier:
+		if opts.Aries {
+			zkatsnarkv1.WithAries(tms)
+		}
 	default:
 		gomega.Expect(false).To(gomega.BeTrue(), "expected token driver in (dlog,fabtoken), got [%s]", opts.TokenSDKDriver)
 	}

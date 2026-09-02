@@ -136,7 +136,7 @@ func TestHashKnownVector(t *testing.T) {
 			"check state initialization and output element index in hash.go")
 }
 
-//--------------------------------------Cross Consistency Tests-------------------------------------//
+// --------------------------------------Cross Consistency Tests-------------------------------------//
 
 // mimcTestCircuit is a minimal circuit that computes MiMC over its inputs
 // and constrains the result to equal a public output variable.

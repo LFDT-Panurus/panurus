@@ -52,10 +52,8 @@ type Validator struct {
 	keys *zkKeys
 }
 
-// NewValidator constructs a Validator from PublicParams, loading the Spend
-// and Output verification keys eagerly. The Migration verification key is
-// loaded best-effort.
-func NewValidator(p *pp.PublicParams) (*Validator, error) {
+// NewValidator creates a new Validator using the provided public parameters and verifier deserializer.
+func NewValidator(p *pp.PublicParams, deserializer driver.Deserializer, limits driver.ResourceLimits) (*Validator, error) {
 	vkSpend, err := setup.LoadVerifyingKey(p, setup.CircuitSpend)
 	if err != nil {
 		return nil, errors.Wrapf(err, "validator: loading spend verifying key")
@@ -79,6 +77,7 @@ func NewValidator(p *pp.PublicParams) (*Validator, error) {
 
 	issueValidators := []ValidateIssueFunc{
 		v.IssueZKValidate,
+		IssueSignatureValidate,
 	}
 
 	auditingValidators := []ValidateAuditingFunc{
@@ -88,7 +87,8 @@ func NewValidator(p *pp.PublicParams) (*Validator, error) {
 	v.CommonValidator = common.NewValidator(
 		logger,
 		p,
-		nil, // DS (Deserializer), not required for zkatsnark ZK-only validation
+		deserializer,
+		limits,
 		&ActionDeserializer{},
 		transferValidators,
 		issueValidators,
