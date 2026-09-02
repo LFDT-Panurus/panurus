@@ -81,9 +81,9 @@ func (p *GenericBackend) PrepareNamespace(tms *topology3.TMS) {
 	var policySb77 strings.Builder
 	for i, org := range orgs {
 		if i > 0 {
-			policySb77.WriteString(",")
+			_, _ = policySb77.WriteString(",")
 		}
-		policySb77.WriteString("'" + org + "MSP.member'")
+		_, _ = policySb77.WriteString("'" + org + "MSP.member'")
 	}
 	policy += policySb77.String()
 	policy += ")"

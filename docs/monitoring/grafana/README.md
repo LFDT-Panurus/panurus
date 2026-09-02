@@ -2,10 +2,11 @@
 
 ## `panurus.json` — Panurus Overview
 
-A single overview dashboard covering every metric Panurus exports: 20 panels across 9 rows, one row per
-subsystem (driver services, transaction lifecycle, finality listener, envelope sessions, auditor, token
-selection, certification and identity caches, signer resolution and cache provisioning, Fabric-X finality
-queue).
+A single overview dashboard: 20 panels across 9 rows, one row per subsystem (driver services,
+transaction lifecycle, finality listener, envelope sessions, auditor, token selection, certification and
+identity caches, signer resolution and cache provisioning, Fabric-X finality queue). It covers every
+metric Panurus exports except the signature and throttle series described in
+[Signature observability](../../security/signature_observability.md), which have no panel yet.
 
 ### Import
 

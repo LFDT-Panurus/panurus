@@ -100,18 +100,18 @@ func (t *TMS) SetTokenGenPublicParams(publicParamsGenArgs ...string) {
 
 func (t *TMS) ID() string {
 	b := strings.Builder{}
-	b.WriteString(t.Network)
+	_, _ = b.WriteString(t.Network)
 	if len(t.Channel) != 0 {
-		b.WriteRune('-')
-		b.WriteString(t.Channel)
+		_, _ = b.WriteRune('-')
+		_, _ = b.WriteString(t.Channel)
 	}
 	if len(t.Namespace) != 0 {
-		b.WriteRune('-')
-		b.WriteString(t.Namespace)
+		_, _ = b.WriteRune('-')
+		_, _ = b.WriteString(t.Namespace)
 	}
 	if len(t.Alias) != 0 {
-		b.WriteRune('-')
-		b.WriteString(string(t.Alias))
+		_, _ = b.WriteRune('-')
+		_, _ = b.WriteString(string(t.Alias))
 	}
 
 	return b.String()
@@ -119,14 +119,14 @@ func (t *TMS) ID() string {
 
 func (t *TMS) TmsID() string {
 	b := strings.Builder{}
-	b.WriteString(t.Network)
+	_, _ = b.WriteString(t.Network)
 	if len(t.Channel) != 0 {
-		b.WriteRune('-')
-		b.WriteString(t.Channel)
+		_, _ = b.WriteRune('-')
+		_, _ = b.WriteString(t.Channel)
 	}
 	if len(t.Namespace) != 0 {
-		b.WriteRune('-')
-		b.WriteString(t.Namespace)
+		_, _ = b.WriteRune('-')
+		_, _ = b.WriteString(t.Namespace)
 	}
 
 	return b.String()

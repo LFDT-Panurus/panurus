@@ -16,6 +16,7 @@ import (
 	"github.com/LFDT-Panurus/panurus/token/services/identity/deserializer"
 	"github.com/LFDT-Panurus/panurus/token/services/identity/membership"
 	"github.com/LFDT-Panurus/panurus/token/services/identity/role"
+	"github.com/LFDT-Panurus/panurus/token/services/identity/sigpolicy"
 	"github.com/LFDT-Panurus/panurus/token/services/identity/wallet"
 	"github.com/LFDT-Panurus/panurus/token/services/identity/x509"
 	"github.com/LFDT-Panurus/panurus/token/services/logging"
@@ -27,8 +28,10 @@ type BaseWalletServiceFactory struct {
 	PublicParametersDeserializer
 }
 
-// newWalletService returns a new wallet service for the passed configuration and parameters.
-// newWalletService returns a new wallet service for the passed configuration and parameters.
+// newWalletService returns a new wallet service for the passed configuration and parameters,
+// together with the signature observability stack its identity provider and deserializer report
+// to. The caller owns the stack: it must install it on the token service (so that the
+// client-facing signature service is gated by it and it is stopped with the service) or stop it.
 func (d BaseWalletServiceFactory) newWalletService(
 	tmsConfig core.Config,
 	binder identity.NetworkBinderService,
@@ -40,25 +43,30 @@ func (d BaseWalletServiceFactory) newWalletService(
 	pp driver.PublicParameters,
 	ignoreRemote bool,
 	metricsProvider metrics.Provider,
-) (*wallet.Service, error) {
+) (*wallet.Service, *sigpolicy.Stack, error) {
 	tmsID := tmsConfig.ID()
 
 	deserializerManager := deserializer.NewTypedSignerDeserializerMultiplex()
 	identityDB, err := storageProvider.IdentityStore(tmsID)
 	if err != nil {
-		return nil, errors.Wrapf(err, "failed to open identity db for tms [%s]", tmsID)
+		return nil, nil, errors.Wrapf(err, "failed to open identity db for tms [%s]", tmsID)
 	}
 	baseKeyStore, err := storageProvider.Keystore(tmsID)
 	if err != nil {
-		return nil, errors.Wrapf(err, "failed to open keystore for tms [%s]", tmsID)
+		return nil, nil, errors.Wrapf(err, "failed to open keystore for tms [%s]", tmsID)
 	}
 	identityMetrics := identity.NewMetrics(metricsProvider)
+	sigStack, err := sigpolicy.New(logger.Named("signature"), tmsConfig, identityMetrics)
+	if err != nil {
+		return nil, nil, errors.WithMessagef(err, "failed to create signature policy for tms [%s]", tmsID)
+	}
 	signerRouter := identity.NewSignerRouter(identityMetrics)
 	identityProvider := identity.NewProvider(logger.Named("identity"), identityDB, deserializerManager, binder, NewEIDRHDeserializer(), identityMetrics)
 	identityProvider.SetSignerRouter(signerRouter)
+	identityProvider.SetObserver(sigStack.Observer())
 	identityConfig, err := config.NewIdentityConfig(tmsConfig)
 	if err != nil {
-		return nil, errors.WithMessagef(err, "failed to create identity config")
+		return nil, nil, errors.WithMessagef(err, "failed to create identity config")
 	}
 
 	// Prepare roles
@@ -76,33 +84,34 @@ func (d BaseWalletServiceFactory) newWalletService(
 	roleFactory.SetSignerRouter(signerRouter)
 	newRole, err := roleFactory.NewRole(identity.OwnerRole, false, nil, x509.NewKeyManagerProvider(identityConfig, keyStore, ignoreRemote))
 	if err != nil {
-		return nil, errors.WithMessagef(err, "failed to create owner role")
+		return nil, nil, errors.WithMessagef(err, "failed to create owner role")
 	}
 	roles := role.NewRoles()
 	roles.Register(identity.OwnerRole, newRole)
 	newRole, err = roleFactory.NewRole(identity.IssuerRole, false, pp.Issuers(), x509.NewKeyManagerProvider(identityConfig, keyStore, ignoreRemote))
 	if err != nil {
-		return nil, errors.WithMessagef(err, "failed to create issuer role")
+		return nil, nil, errors.WithMessagef(err, "failed to create issuer role")
 	}
 	roles.Register(identity.IssuerRole, newRole)
 	newRole, err = roleFactory.NewRole(identity.AuditorRole, false, pp.Auditors(), x509.NewKeyManagerProvider(identityConfig, keyStore, ignoreRemote))
 	if err != nil {
-		return nil, errors.WithMessagef(err, "failed to create auditor role")
+		return nil, nil, errors.WithMessagef(err, "failed to create auditor role")
 	}
 	roles.Register(identity.AuditorRole, newRole)
 	newRole, err = roleFactory.NewRole(identity.CertifierRole, false, nil, x509.NewKeyManagerProvider(identityConfig, keyStore, ignoreRemote))
 	if err != nil {
-		return nil, errors.WithMessagef(err, "failed to create certifier role")
+		return nil, nil, errors.WithMessagef(err, "failed to create certifier role")
 	}
 	roles.Register(identity.CertifierRole, newRole)
 
 	// Instantiate the wallet service
 	walletDB, err := storageProvider.WalletStore(tmsID)
 	if err != nil {
-		return nil, errors.Wrapf(err, "failed to get identity storage provider")
+		return nil, nil, errors.Wrapf(err, "failed to get identity storage provider")
 	}
 	signerRouter.SetConfIDResolver(walletDB)
 	deserializer := NewDeserializer()
+	deserializer.SetObserver(sigStack.Observer())
 	ws := wallet.NewService(
 		logger,
 		identityProvider,
@@ -110,7 +119,7 @@ func (d BaseWalletServiceFactory) newWalletService(
 		wallet.Convert(roles.Registries(logger, walletDB, role.NewDefaultFactory(logger, identityProvider, qe, identityConfig, deserializer, metricsProvider))),
 	)
 
-	return ws, nil
+	return ws, sigStack, nil
 }
 
 // WalletServiceFactory is a factory for fabtoken wallet services.
@@ -133,7 +142,7 @@ func (d *WalletServiceFactory) NewWalletService(tmsConfig driver.Configuration, 
 	tmsID := tmsConfig.ID()
 	logger := logging.DriverLogger("panurus.driver.fabtoken", tmsID.Network, tmsID.Channel, tmsID.Namespace)
 
-	return d.newWalletService(
+	ws, sigStack, err := d.newWalletService(
 		tmsConfig,
 		&membership.NoBinder{},
 		d.storageProvider,
@@ -145,4 +154,13 @@ func (d *WalletServiceFactory) NewWalletService(tmsConfig driver.Configuration, 
 		true,
 		&disabled.Provider{},
 	)
+	if err != nil {
+		return nil, err
+	}
+	// This factory builds a standalone wallet service with no client-facing signature service to
+	// gate, so the policy's background eviction has nothing to serve. Instrumentation keeps
+	// working: stopping the stack only releases its goroutine.
+	sigStack.Stop()
+
+	return ws, nil
 }
