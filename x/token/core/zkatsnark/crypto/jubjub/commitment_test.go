@@ -107,7 +107,7 @@ func TestNegatePoint(t *testing.T) {
 	require.True(t, sum.IsZero(), "p + (-p) must be the identity")
 }
 
-//--------------------------------------Cross Consistency Tests-------------------------------------//
+// --------------------------------------Cross Consistency Tests-------------------------------------//
 
 type valueCommitTestCircuit struct {
 	V    frontend.Variable
