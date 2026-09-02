@@ -285,13 +285,13 @@ func TestErrorNestingTooDeep(t *testing.T) {
 	policy := ""
 	var policySb285 strings.Builder
 	for range depth {
-		policySb285.WriteString("(")
+		_, _ = policySb285.WriteString("(")
 	}
 	policy += policySb285.String()
 	policy += "$0"
 	var policySb289 strings.Builder
 	for range depth {
-		policySb289.WriteString(")")
+		_, _ = policySb289.WriteString(")")
 	}
 	policy += policySb289.String()
 	_, err := Parse(policy)
@@ -305,9 +305,9 @@ func TestErrorNestingTooDeep(t *testing.T) {
 // `refs-1` OrNodes, i.e. 2*refs-1 AST nodes, all at nesting depth 0.
 func orChain(refs int) string {
 	var sb strings.Builder
-	sb.WriteString("$0")
+	_, _ = sb.WriteString("$0")
 	for i := 1; i < refs; i++ {
-		sb.WriteString("OR$0")
+		_, _ = sb.WriteString("OR$0")
 	}
 
 	return sb.String()
@@ -342,13 +342,13 @@ func TestNestingAtLimitIsAllowed(t *testing.T) {
 	policy := ""
 	var policySb300 strings.Builder
 	for range maxParseDepth {
-		policySb300.WriteString("(")
+		_, _ = policySb300.WriteString("(")
 	}
 	policy += policySb300.String()
 	policy += "$0"
 	var policySb304 strings.Builder
 	for range maxParseDepth {
-		policySb304.WriteString(")")
+		_, _ = policySb304.WriteString(")")
 	}
 	policy += policySb304.String()
 	_, err := Parse(policy)

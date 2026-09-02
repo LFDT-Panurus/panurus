@@ -176,12 +176,10 @@ func (p *Platform) PostRun(load bool) {
 }
 
 func (p *Platform) Cleanup() {
-	// loop over TMS and generate artifacts
-	for _, tms := range p.Topology.TMSs {
-		// get the network handler for this TMS
-		targetNetwork := p.NetworkHandlers[p.Context.TopologyByName(tms.Network).Type()]
-		// generate artifacts
-		targetNetwork.Cleanup()
+	// Each handler owns all entries for its network type, so call it once rather than
+	// once per TMS to avoid the inner Cleanup loop running M×N times.
+	for _, handler := range p.NetworkHandlers {
+		handler.Cleanup()
 	}
 }
 

@@ -648,7 +648,7 @@ func (r Result) printHeatmap(w *tabwriter.Writer) {
 		bar := ""
 		var barSb619 strings.Builder
 		for range barLen {
-			barSb619.WriteString("█")
+			_, _ = barSb619.WriteString("█")
 		}
 		bar += barSb619.String()
 
@@ -822,7 +822,7 @@ func printSparkline(w *tabwriter.Writer, timeline []TimePoint) {
 	}
 
 	blocks := []string{" ", "▂", "▃", "▄", "▅", "▆", "▇", "█"}
-	fmt.Print("Timeline: [")
+	_, _ = fmt.Fprint(os.Stdout, "Timeline: [")
 	for _, p := range timeline {
 		if maxOps == 0 {
 			writef(w, " ")

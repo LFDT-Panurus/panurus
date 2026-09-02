@@ -50,12 +50,12 @@ func (t *Translator) CreateSetupHashKey() (translator.Key, error) {
 
 func (t *Translator) CreateOutputSNKey(id string, index uint64, output []byte) (translator.Key, error) {
 	hf := sha256.New()
-	hf.Write([]byte(OutputSNKeyPrefix))
-	hf.Write([]byte(id))
+	_, _ = hf.Write([]byte(OutputSNKeyPrefix))
+	_, _ = hf.Write([]byte(id))
 	indexBytes := make([]byte, 8)
 	binary.LittleEndian.PutUint64(indexBytes, index)
-	hf.Write(indexBytes)
-	hf.Write(output)
+	_, _ = hf.Write(indexBytes)
+	_, _ = hf.Write(output)
 
 	return createCompositeKey(OutputSNKeyPrefix, []string{hex.EncodeToString(hf.Sum(nil))})
 }
@@ -106,7 +106,7 @@ func createCompositeKey(objectType string, attributes []string) (translator.Key,
 		if err := validateCompositeKeyAttribute(att); err != nil {
 			return "", err
 		}
-		ckSb103.WriteString(att + string(rune(minUnicodeRuneValue)))
+		_, _ = ckSb103.WriteString(att + string(rune(minUnicodeRuneValue)))
 	}
 	ck += ckSb103.String()
 
