@@ -15,6 +15,7 @@ import (
 	dlog "github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/driver"
 	"github.com/LFDT-Panurus/panurus/token/services/logging"
 	"github.com/LFDT-Panurus/panurus/token/services/network"
+	zkatsnark "github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/driver"
 	"github.com/LFDT-Panurus/panurus/token/services/ttx"
 	"github.com/LFDT-Panurus/panurus/token/services/utils"
 	token2 "github.com/LFDT-Panurus/panurus/token/token"
@@ -76,7 +77,7 @@ func (p *CheckPublicParamsMatchView) Call(context view.Context) (any, error) {
 
 	fetchedPPRaw, err := network.GetInstance(context, tms.Network(), tms.Channel()).FetchPublicParameters(tms.Namespace())
 	assert.NoError(err, "failed to fetch public params")
-	is := core.NewPPManagerFactoryService(fabtoken.NewPPMFactory(), dlog.NewPPMFactory())
+	is := core.NewPPManagerFactoryService(fabtoken.NewPPMFactory(), dlog.NewPPMFactory(), zkatsnark.NewPPMFactory())
 	pp, err := is.PublicParametersFromBytes(fetchedPPRaw)
 	assert.NoError(err, "failed deserializing public parameters")
 	assert.NotNil(pp)

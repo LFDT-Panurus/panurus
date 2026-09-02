@@ -116,6 +116,14 @@ integration-tests-dlog-fabric-t14:
 integration-tests-dlog-fabric:
 	cd ./integration/token/fungible/dlog; export FAB_BINS=$(FAB_BINS); ginkgo $(GINKGO_TEST_OPTS) --label-filter="$(TEST_FILTER)" .
 
+.PHONY: integration-tests-zkatsnark-fabric-t1
+integration-tests-zkatsnark-fabric-t1:
+	make integration-tests-zkatsnark-fabric TEST_FILTER="T1"
+
+.PHONY: integration-tests-zkatsnark-fabric
+integration-tests-zkatsnark-fabric:
+	cd ./integration/token/fungible/zkatsnark; export FAB_BINS=$(FAB_BINS); ginkgo $(GINKGO_TEST_OPTS) --label-filter="$(TEST_FILTER)" .
+
 .PHONY: integration-tests-fabtoken-dlog-fabric
 integration-tests-fabtoken-dlog-fabric:
 	cd ./integration/token/fungible/mixed; export FAB_BINS=$(FAB_BINS); ginkgo $(GINKGO_TEST_OPTS) .

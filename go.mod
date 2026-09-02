@@ -105,7 +105,7 @@ require (
 	github.com/prometheus/procfs v0.21.1 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	github.com/robfig/cron/v3 v3.0.1 // indirect
-	github.com/rogpeppe/go-internal v1.14.1 // indirect
+	github.com/rogpeppe/go-internal v1.15.0 // indirect
 	github.com/sagikazarmark/locafero v0.12.0 // indirect
 	github.com/stretchr/objx v0.5.3 // indirect
 	github.com/tedsuo/ifrit v0.0.0-20260418191334-846868129986 // indirect
@@ -139,3 +139,5 @@ require (
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect
 )
+
+replace github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark => ./x/token/core/zkatsnark

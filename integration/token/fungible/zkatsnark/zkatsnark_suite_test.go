@@ -1,0 +1,28 @@
+/*
+Copyright IBM Corp All Rights Reserved.
+
+SPDX-License-Identifier: Apache-2.0
+*/
+
+package zkatsnark
+
+import (
+	"testing"
+
+	"github.com/LFDT-Panurus/panurus/integration"
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
+)
+
+func TestEndToEnd(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping test in short mode.")
+	}
+
+	RegisterFailHandler(Fail)
+	RunSpecs(t, "EndToEnd Fungible (ZKatsnark) Suite")
+}
+
+func StartPortZkatsnark() int {
+	return integration.ZkatsnarkFungible.StartPortForNode()
+}
