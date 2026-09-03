@@ -120,6 +120,131 @@ func TestManager_StartStop(t *testing.T) {
 	assert.GreaterOrEqual(t, mockDB.ClaimPendingTransactionsCallCount(), 1)
 }
 
+// TestManager_AutoInstanceIDIsUnique verifies that leaving InstanceID unset generates a
+// distinct id per manager, not a value that can collide across replicas of the same
+// process (a heap pointer via %p, for instance).
+func TestManager_AutoInstanceIDIsUnique(t *testing.T) {
+	newStarted := func() (*mock2.Storage, func()) {
+		logger := logging.MustGetLogger()
+		mockDB := &mock2.Storage{}
+		mockHandler := &mock2.Handler{}
+		config := recovery2.Config{
+			Enabled:       true,
+			TTL:           100 * time.Millisecond,
+			ScanInterval:  100 * time.Millisecond,
+			BatchSize:     100,
+			WorkerCount:   1,
+			LeaseDuration: time.Second,
+		}
+
+		leadership := &mock2.Leadership{}
+		leadership.CloseReturns(nil)
+		mockDB.AcquireRecoveryLeadershipReturns(leadership, true, nil)
+		mockDB.ClaimPendingTransactionsReturns([]*ttxdb.RecoveryClaim{}, nil)
+
+		manager := recovery2.NewManager(logger, mockDB, mockHandler, config)
+		require.NoError(t, manager.Start())
+
+		return mockDB, func() { _ = manager.Stop() }
+	}
+
+	mockDB1, stop1 := newStarted()
+	defer stop1()
+	mockDB2, stop2 := newStarted()
+	defer stop2()
+
+	require.Eventually(t, func() bool {
+		return mockDB1.ClaimPendingTransactionsCallCount() >= 1 && mockDB2.ClaimPendingTransactionsCallCount() >= 1
+	}, 2*time.Second, 20*time.Millisecond)
+
+	_, _, _, _, owner1 := mockDB1.ClaimPendingTransactionsArgsForCall(0)
+	_, _, _, _, owner2 := mockDB2.ClaimPendingTransactionsArgsForCall(0)
+
+	assert.NotEmpty(t, owner1)
+	assert.NotEmpty(t, owner2)
+	assert.NotEqual(t, owner1, owner2, "two managers with unset InstanceID must not derive the same owner id")
+}
+
+// TestManager_ConfiguredInstanceIDIsSuffixed verifies that two managers sharing the same
+// explicitly configured InstanceID still end up with distinct claim owner ids.
+//
+// The claim query's self-reclaim clause (recovery_claimed_by = $owner) treats two replicas
+// presenting the same owner string as one and the same, and the audit path has no
+// advisory-lock backstop to catch that. An operator can trivially cause a collision by
+// baking one instanceID into a shared ConfigMap applied to every replica pod (which
+// docs/configuration.md explicitly suggested doing "for easier debugging and monitoring"),
+// so Start must never use the configured value verbatim as the owner id.
+func TestManager_ConfiguredInstanceIDIsSuffixed(t *testing.T) {
+	const sharedConfiguredID = "shared-configmap-value"
+
+	newStarted := func() (*mock2.Storage, func()) {
+		logger := logging.MustGetLogger()
+		mockDB := &mock2.Storage{}
+		mockHandler := &mock2.Handler{}
+		config := recovery2.Config{
+			Enabled:       true,
+			TTL:           100 * time.Millisecond,
+			ScanInterval:  100 * time.Millisecond,
+			BatchSize:     100,
+			WorkerCount:   1,
+			LeaseDuration: time.Second,
+			InstanceID:    sharedConfiguredID,
+		}
+
+		leadership := &mock2.Leadership{}
+		leadership.CloseReturns(nil)
+		mockDB.AcquireRecoveryLeadershipReturns(leadership, true, nil)
+		mockDB.ClaimPendingTransactionsReturns([]*ttxdb.RecoveryClaim{}, nil)
+
+		manager := recovery2.NewManager(logger, mockDB, mockHandler, config)
+		require.NoError(t, manager.Start())
+
+		return mockDB, func() { _ = manager.Stop() }
+	}
+
+	mockDB1, stop1 := newStarted()
+	defer stop1()
+	mockDB2, stop2 := newStarted()
+	defer stop2()
+
+	require.Eventually(t, func() bool {
+		return mockDB1.ClaimPendingTransactionsCallCount() >= 1 && mockDB2.ClaimPendingTransactionsCallCount() >= 1
+	}, 2*time.Second, 20*time.Millisecond)
+
+	_, _, _, _, owner1 := mockDB1.ClaimPendingTransactionsArgsForCall(0)
+	_, _, _, _, owner2 := mockDB2.ClaimPendingTransactionsArgsForCall(0)
+
+	assert.NotEqual(t, owner1, owner2, "two managers sharing a configured InstanceID must not derive the same owner id")
+	assert.Contains(t, owner1, sharedConfiguredID, "the configured value should still be recognizable in the derived owner id")
+	assert.Contains(t, owner2, sharedConfiguredID, "the configured value should still be recognizable in the derived owner id")
+	assert.NotEqual(t, sharedConfiguredID, owner1, "the configured value must not be used verbatim as the owner id")
+	assert.NotEqual(t, sharedConfiguredID, owner2, "the configured value must not be used verbatim as the owner id")
+}
+
+// TestManager_Start_RejectsSubSecondLeaseDuration verifies validateConfig rejects a lease
+// duration under one second, rather than accept a value that the PostgreSQL claim (which
+// formats the lease with millisecond resolution) can render as an already-expired interval.
+func TestManager_Start_RejectsSubSecondLeaseDuration(t *testing.T) {
+	logger := logging.MustGetLogger()
+	mockDB := &mock2.Storage{}
+	mockHandler := &mock2.Handler{}
+	config := recovery2.Config{
+		Enabled:       true,
+		TTL:           30 * time.Second,
+		ScanInterval:  30 * time.Second,
+		BatchSize:     100,
+		WorkerCount:   1,
+		LeaseDuration: 900 * time.Millisecond,
+		InstanceID:    "test-instance",
+	}
+
+	manager := recovery2.NewManager(logger, mockDB, mockHandler, config)
+
+	err := manager.Start()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid recovery lease duration")
+}
+
 func TestManager_RecoverTransaction(t *testing.T) {
 	logger := logging.MustGetLogger()
 	mockDB := &mock2.Storage{}
