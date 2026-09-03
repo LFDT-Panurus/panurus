@@ -1161,6 +1161,31 @@ func (db *TokenStore) PublicParams(ctx context.Context) ([]byte, error) {
 	return common.QueryUniqueContext[[]byte](ctx, db.readDB, query, args...)
 }
 
+// PublicParamsHashes returns the hashes of every public parameters version stored so far,
+// most recently stored first. StorePublicParams never overwrites an existing row, so this is
+// the full history of public parameters this node has observed.
+func (db *TokenStore) PublicParamsHashes(ctx context.Context) ([]tdriver.PPHash, error) {
+	query, args := q.Select().
+		FieldsByName("raw_hash").
+		From(q.Table(db.table.PublicParams)).
+		OrderBy(q.Desc(common3.FieldName("stored_at"))).
+		Format(db.ci)
+
+	logging.Debug(logger, query, args)
+	rows, err := db.readDB.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, errors.Wrapf(err, "error querying db")
+	}
+	defer Close(rows)
+	if err := rows.Err(); err != nil {
+		return nil, errors.Wrapf(err, "error querying db")
+	}
+
+	it := common.NewIterator(rows, func(h *tdriver.PPHash) error { return rows.Scan(h) })
+
+	return iterators.ReadAllValues(it)
+}
+
 func (db *TokenStore) PublicParamsByHash(ctx context.Context, rawHash tdriver.PPHash) ([]byte, error) {
 	query, args := q.Select().
 		FieldsByName("raw").

@@ -262,6 +262,10 @@ type TokenStore interface {
 	// PublicParamsByHash returns the public parameters whose hash matches the passed one.
 	// If not public parameters are available for that hash, it returns an error
 	PublicParamsByHash(ctx context.Context, rawHash driver.PPHash) ([]byte, error)
+	// PublicParamsHashes returns the hashes of all the public parameters stored so far,
+	// most recently stored first. It is used to trace a token back to the public parameters
+	// that produced its format, for example when upgrading tokens whose format changed.
+	PublicParamsHashes(ctx context.Context) ([]driver.PPHash, error)
 	// NewTokenDBTransaction returns a new Transaction to commit atomically multiple operations
 	NewTokenDBTransaction() (TokenStoreTransaction, error)
 	// ContinueTokenDBTransaction returns a new TokenStoreTransaction building upon the passed transaction.

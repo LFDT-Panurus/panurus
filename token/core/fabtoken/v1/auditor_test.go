@@ -257,6 +257,14 @@ func (m *mockQueryEngine) PublicParams(ctx context.Context) ([]byte, error) {
 	return nil, nil
 }
 
+func (m *mockQueryEngine) PublicParamsByHash(ctx context.Context, hash driver.PPHash) ([]byte, error) {
+	return nil, nil
+}
+
+func (m *mockQueryEngine) PublicParamsHashes(ctx context.Context) ([]driver.PPHash, error) {
+	return nil, nil
+}
+
 // mockAuditorPublicParamsManager wraps the generated mock to provide the PublicParams method
 type mockAuditorPublicParamsManager struct {
 	*mock.PublicParamsManager

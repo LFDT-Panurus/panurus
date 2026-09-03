@@ -128,6 +128,16 @@ func (q *QueryEngine) PublicParams(ctx context.Context) ([]byte, error) {
 	return q.qe.PublicParams(ctx)
 }
 
+// PublicParamsByHash returns the public parameters stored in the vault whose hash matches the passed one
+func (q *QueryEngine) PublicParamsByHash(ctx context.Context, hash driver.PPHash) ([]byte, error) {
+	return q.qe.PublicParamsByHash(ctx, hash)
+}
+
+// PublicParamsHashes returns the hashes of all the public parameters stored in the vault, most recent first
+func (q *QueryEngine) PublicParamsHashes(ctx context.Context) ([]driver.PPHash, error) {
+	return q.qe.PublicParamsHashes(ctx)
+}
+
 // GetTokens returns the tokens stored in the vault matching the given ids
 func (q *QueryEngine) GetTokens(ctx context.Context, inputs ...*token.ID) ([]*token.Token, error) {
 	tokens, err := q.qe.GetTokens(ctx, inputs...)

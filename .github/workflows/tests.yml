@@ -201,6 +201,7 @@ jobs:
           update-t1,
           update-t2,
           update-t3,
+          update-t4,
           nft-dlog,
           nft-fabtoken,
           dvp-fabtoken,
