@@ -13,6 +13,7 @@ import (
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/common/driver"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/fabricx/core/committer/queryservice"
+	"google.golang.org/protobuf/encoding/protowire"
 )
 
 var logger = logging.MustGetLogger()
@@ -62,6 +63,37 @@ func (f *PublicParametersService) Fetch(network driver.Network, channel driver.C
 	}
 
 	return value.Raw, nil
+}
+
+// FetchNamespaceVersion retrieves the current namespace policy version from the
+// ledger using qs.GetState("_meta", namespace). This is the same key and encoding
+// used by the fabricx vault marshaller (platform/fabricx/core/vault/marshal.go) to
+// derive NsVersion for ordinary token transactions — a single source of truth.
+//
+// Returns an error when the namespace has no "_meta" entry so a misconfigured or
+// unregistered namespace is surfaced at deploy time rather than silently submitting
+// a NsVersion: 0 transaction that the committer will reject.
+func (f *PublicParametersService) FetchNamespaceVersion(network driver.Network, channel driver.Channel, namespace driver.Namespace) (uint64, error) {
+	qs, err := f.qsProvider.Get(network, channel)
+	if err != nil {
+		return 0, errors.Wrapf(err, "failed getting query service for [%s/%s]", network, channel)
+	}
+
+	value, err := qs.GetState("_meta", namespace)
+	if err != nil {
+		return 0, errors.Wrapf(err, "failed reading _meta version for namespace [%s]", namespace)
+	}
+	if value == nil {
+		logger.Debugf("namespace [%s] has no _meta entry on [%s/%s] — returning initial version 0", namespace, network, channel)
+
+		return 0, nil
+	}
+
+	// Version bytes are encoded as a protobuf varint — same as UnmarshalVersion in
+	// platform/fabricx/core/vault/marshal.go.
+	version, _ := protowire.ConsumeVarint(value.Version)
+
+	return version, nil
 }
 
 // Loader models a loader for public parameters.
