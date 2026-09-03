@@ -579,21 +579,24 @@ timeout for the full endorsement round-trip to complete. That budget must exceed
 every wait it depends on, or the responder times out on a transaction that was still legitimately
 in progress.
 
+**Invariant:** `ReceiveTransactionView` (and the `boolpolicy`/`multisig` spend responders) wait up to a fixed
+timeout for the full endorsement round-trip to complete. That budget must exceed the sum of
+every wait it depends on, or the responder times out on a transaction that was still legitimately
+in progress.
+
 **Invariant:** `responder receive > sig fan-out + audit + approval + slack`
 
-| Leg | File:Line | Value |
+| Leg | Constant | Value |
 |---|---|---|
-| Responder receive (the budget) | `token/services/ttx/receivetx.go:42` | 4 min |
-| Signature fan-out (per endorser) | `token/services/ttx/endorse.go:111` | 1 min |
-| Auditor signature | `token/services/ttx/auditor.go:189` | 1 min |
-| FSC-endorsement approval | `token/services/network/fabric/endorsement/fsc/initiator.go:99` | 2 min |
+| Responder receive (the budget) | `DefaultReceiveTransactionTimeout` (`receivetx.go`) | 6 min |
+| Signature fan-out (per endorser) | `SigFanOutTimeout` (`endorse.go`) | 1 min |
+| Auditor signature | `AuditTimeout` (`auditor.go`) | 1 min |
+| FSC-endorsement approval | `fsc.ApprovalTimeout` (`network/fabric/endorsement/fsc/initiator.go`) | 2 min |
 
-
-**Known issue:** as of this writing, the responder budget (4 min) equals but does not exceed the
-sum of the legs it must cover in FSC-endorsement mode (1 min sig fan-out + 1 min audit + 2 min
-approval = 4 min minimum, with zero slack). This is a timeout-budget inversion — the invariant
-above does not hold. See issue #1266. The unit test in `receivetx_timeout_test.go` asserts this
-invariant directly so the gap is caught by CI rather than by hand.
+**Known issue:** The budget carries an explicit 1-minute slack margin above the sum of its legs (1 min sig
+fan-out + 1 min audit + 2 min approval = 4 min, against a 6 min budget). The unit test in
+`receivetx_timeout_test.go` asserts this invariant directly against the real constants, so any
+change that erodes the margin is caught by CI rather than by hand. See issue #1266.
 
 The budget is intentionally a single named constant rather than an operator-configurable value:
 exposing it independently invites recreating this same inversion. If the budget needs to be

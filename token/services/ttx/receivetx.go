@@ -31,7 +31,7 @@ func NewReceiveTransactionView(opts ...TxOption) *ReceiveTransactionView {
 }
 
 // DefaultReceiveTransactionTimeout is used when no timeout is specified via the opts.
-const DefaultReceiveTransactionTimeout = 4 * time.Minute
+const DefaultReceiveTransactionTimeout = 6 * time.Minute
 
 // Call listens to a versioned envelope from the context's session and returns a transaction.
 // Supported message types are TypeTransaction, TypeTransactionResponse, and TypeSignatureRequest.
