@@ -85,7 +85,7 @@ func TestFinishAbandonedRecovery_ClearsInFlightOnlyAfterReleaseCompletes(t *test
 
 	done := make(chan struct{})
 	go func() {
-		m.finishAbandonedRecovery(m.ctx, txID, time.Time{}, resultCh, cancelRecover)
+		m.finishAbandonedRecovery(m.ctx, "inst", txID, time.Time{}, resultCh, cancelRecover)
 		close(done)
 	}()
 
@@ -144,7 +144,7 @@ func TestFinishAbandonedRecovery_SkipsOrphanPromotionAfterStop(t *testing.T) {
 
 	storedAt := time.Now().Add(-time.Hour) // well past the 1ms grace period
 
-	m.finishAbandonedRecovery(m.ctx, txID, storedAt, resultCh, cancelRecover)
+	m.finishAbandonedRecovery(m.ctx, "inst", txID, storedAt, resultCh, cancelRecover)
 
 	assert.Equal(t, 0, setStatusCalls,
 		"must not promote to Orphan once Stop() has already run: a live peer may have since resolved txID and SetStatus has no owner/status guard to protect that outcome")

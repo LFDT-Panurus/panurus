@@ -48,6 +48,38 @@ PostgreSQL is the recommended database for production multi-instance deployments
 - Supports horizontal scaling with multiple replicas
 - Leader election prevents conflicting recovery attempts
 
+A recovery manager is started per TMS for both owner and audit storage. Both stores use the
+same atomic claim: at any instant, a pending row is claimed by at most one replica, and
+`ReleaseRecoveryClaim` frees it again as soon as the sweep is done with it. Claims live in the
+`recovery_claimed_by` and `recovery_claim_expires_at` columns of each store's own requests
+table, so an audit claim never hides a row from the owner sweep or the other way round.
+
+The claim does not by itself reduce how many times a still-pending row gets processed: a row
+that is not yet finalized is released unchanged at the end of the sweep that claimed it, so the
+next tick claims and processes it again, on this replica or another. What the atomic claim
+removes is *concurrent* processing of the same row: no two replicas ever run finality logic
+for the same transaction at the same moment. That matters once a sweep's processing time
+approaches or exceeds the scan interval, or a backlog spans more than one tick.
+
+Leader election currently differs between the two. The owner store elects a leader through a
+PostgreSQL advisory lock; the audit store is built without a leader factory, so
+`AcquireRecoveryLeadership` grants leadership locally to every replica. Audit sweeps therefore
+run everywhere at once, and it is the atomic claim rather than leader election that keeps each
+pending audit transaction from being claimed by more than one replica at a time.
+
+The claim query also treats a row as free if it is already claimed by the calling replica's own
+`instanceID` (`recovery_claimed_by`). Nothing in the recovery manager renews a lease or
+re-claims a row it already holds: `runSweep` claims, processes, and releases a row
+sequentially within one manager, so this case does not occur in normal operation. It exists so
+the store-level claim API stays safe to call twice with the same owner; the risk it creates is
+that if two replicas ever presented the same `instanceID`, this clause would let both claim the
+same rows, and the audit path has no advisory-lock backstop to catch it. `Manager.Start()`
+closes this: it appends a fresh per-process id to `instanceID` every time it starts, whether the
+value was left empty (auto-generated) or configured explicitly, so a shared config value can
+never collide across replicas. The owner string actually stored is therefore always
+`<instanceID>-<generated suffix>`, not the configured value verbatim, so expect that suffix
+when reading `recovery_claimed_by` off a row.
+
 ### SQLite (Development and Single-Node)
 
 SQLite is supported for single-node deployments and development:

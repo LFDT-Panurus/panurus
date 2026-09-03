@@ -18,6 +18,7 @@ import (
 	"github.com/LFDT-Panurus/panurus/token/services/storage"
 	dbdriver "github.com/LFDT-Panurus/panurus/token/services/storage/db/driver"
 	"github.com/LFDT-Panurus/panurus/token/services/storage/ttxdb"
+	"github.com/hashicorp/go-uuid"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 )
 
@@ -98,6 +99,11 @@ type Manager struct {
 	storage Storage
 	handler Handler
 	config  Config
+	// configuredInstanceID is the InstanceID as supplied to NewManager, kept aside from
+	// config.InstanceID (which Start mutates with a per-process suffix, see Start) so a
+	// Stop/Start restart re-derives from the original value instead of stacking another
+	// suffix onto the one from the previous run.
+	configuredInstanceID string
 	//nolint:containedctx // long-running service lifecycle, not a per-request context
 	ctx     context.Context
 	cancel  context.CancelFunc
@@ -174,12 +180,13 @@ func NewManager(
 	config Config,
 ) *Manager {
 	return &Manager{
-		logger:        logger,
-		storage:       storage,
-		handler:       handler,
-		config:        config,
-		timeoutCounts: make(map[string]timeoutEntry),
-		inFlight:      make(map[string]struct{}),
+		logger:               logger,
+		storage:              storage,
+		handler:              handler,
+		config:               config,
+		configuredInstanceID: config.InstanceID,
+		timeoutCounts:        make(map[string]timeoutEntry),
+		inFlight:             make(map[string]struct{}),
 	}
 }
 
@@ -213,8 +220,23 @@ func (m *Manager) Start() error {
 		m.logger.Warnf("recovery: transactionTimeout is disabled (0); a Recover call that ignores its context can block Stop() indefinitely")
 	}
 
-	if m.config.InstanceID == "" {
-		m.config.InstanceID = fmt.Sprintf("recovery-%p", m)
+	// Always suffix with a fresh per-process id, even when InstanceID was explicitly
+	// configured. claimPending's WHERE clause treats a row already claimed by the calling
+	// owner string as free (needed so a manager can re-claim its own in-flight rows), which
+	// means two replicas presenting the same configured InstanceID silently defeat claim
+	// exclusivity, and the audit path has no advisory-lock backstop to catch it, unlike the
+	// owner path. Suffixing keeps a configured value's prefix recognizable in logs while
+	// guaranteeing every process's owner string is unique, so a shared config value (e.g. one
+	// InstanceID baked into a Deployment's ConfigMap and applied to every replica pod) can
+	// never collide.
+	suffix, err := uuid.GenerateUUID()
+	if err != nil {
+		return errors.Wrapf(err, "failed to generate instance id suffix")
+	}
+	if m.configuredInstanceID == "" {
+		m.config.InstanceID = "recovery-" + suffix
+	} else {
+		m.config.InstanceID = m.configuredInstanceID + "-" + suffix
 	}
 
 	// The context is deliberately held on the manager: it scopes the background recovery loop
@@ -316,8 +338,14 @@ func (m *Manager) validateConfig() error {
 		return errors.Errorf("invalid recovery batch size [%d]", m.config.BatchSize)
 	case m.config.WorkerCount <= 0:
 		return errors.Errorf("invalid recovery worker count [%d]", m.config.WorkerCount)
-	case m.config.LeaseDuration <= 0:
-		return errors.Errorf("invalid recovery lease duration [%s]", m.config.LeaseDuration)
+	case m.config.LeaseDuration < time.Second:
+		// The PostgreSQL claim formats the lease with millisecond resolution (see
+		// claimPending in sql/postgres/transactions.go), so a sub-millisecond value would
+		// still render as a zero-length interval and be born expired. Reject anything below
+		// a full second rather than let an operator express a value that close to that edge:
+		// a lease is meant to cover a sweep's expected worst-case processing time, and no
+		// realistic deployment needs one shorter than a second.
+		return errors.Errorf("invalid recovery lease duration [%s]: must be at least 1s", m.config.LeaseDuration)
 	case m.config.TransactionTimeout < 0:
 		return errors.Errorf("invalid recovery transaction timeout [%s]", m.config.TransactionTimeout)
 	default:
@@ -432,15 +460,24 @@ func (m *Manager) releaseLeadership() {
 
 // recoverTransactions claims pending transactions and re-registers finality listeners using local workers.
 func (m *Manager) recoverTransactions(ctx context.Context) error {
+	// Captured once and threaded through the whole sweep (workers, callHandler,
+	// and any finishAbandonedRecovery goroutine it spawns) instead of read live
+	// off m.config.InstanceID later: Start() rewrites that field on every
+	// restart (see Start), and a finishAbandonedRecovery goroutine from this
+	// sweep can still be running after a later Start() has already done so,
+	// which would release the claim under the wrong owner. Same hazard, same
+	// fix shape as sweepCtx on finishAbandonedRecovery.
+	ownerID := m.config.InstanceID
+
 	m.logger.Debugf("claiming pending transactions older than %s (batch size: %d, lease duration: %s, owner: %s)",
-		m.config.TTL, m.config.BatchSize, m.config.LeaseDuration, m.config.InstanceID)
+		m.config.TTL, m.config.BatchSize, m.config.LeaseDuration, ownerID)
 
 	records, err := m.storage.ClaimPendingTransactions(
 		ctx,
 		m.config.TTL,
 		m.config.LeaseDuration,
 		m.config.BatchSize,
-		m.config.InstanceID,
+		ownerID,
 	)
 	if err != nil {
 		return errors.Wrapf(err, "failed to claim pending transactions")
@@ -460,7 +497,7 @@ func (m *Manager) recoverTransactions(ctx context.Context) error {
 
 	for range m.config.WorkerCount {
 		workerWG.Add(1)
-		go m.worker(ctx, &workerWG, work, errCh)
+		go m.worker(ctx, ownerID, &workerWG, work, errCh)
 	}
 
 	dispatched, skippedNil, fanOutErr := m.fanOut(ctx, records, work)
@@ -575,7 +612,7 @@ func (m *Manager) fanOut(ctx context.Context, records []*ttxdb.RecoveryClaim, wo
 	return dispatched, skippedNil, nil
 }
 
-func (m *Manager) worker(ctx context.Context, wg *sync.WaitGroup, work <-chan *ttxdb.RecoveryClaim, errCh chan<- error) {
+func (m *Manager) worker(ctx context.Context, ownerID string, wg *sync.WaitGroup, work <-chan *ttxdb.RecoveryClaim, errCh chan<- error) {
 	defer wg.Done()
 
 	for {
@@ -586,7 +623,7 @@ func (m *Manager) worker(ctx context.Context, wg *sync.WaitGroup, work <-chan *t
 			if !ok {
 				return
 			}
-			if err := m.recoverTransaction(ctx, claim.TxID, claim.StoredAt); err != nil {
+			if err := m.recoverTransaction(ctx, ownerID, claim.TxID, claim.StoredAt); err != nil {
 				errCh <- err
 			}
 		}
@@ -632,7 +669,7 @@ func (m *Manager) worker(ctx context.Context, wg *sync.WaitGroup, work <-chan *t
 // in-flight guard, and no extra goroutine, so a ctx-blind call can block
 // Stop() indefinitely (Start logs a Warn about this when the timeout is
 // disabled).
-func (m *Manager) callHandler(ctx context.Context, txID string, storedAt time.Time) (finished bool, err error) {
+func (m *Manager) callHandler(ctx context.Context, ownerID string, txID string, storedAt time.Time) (finished bool, err error) {
 	if m.config.TransactionTimeout <= 0 {
 		return true, m.handler.Recover(ctx, txID)
 	}
@@ -663,7 +700,7 @@ func (m *Manager) callHandler(ctx context.Context, txID string, storedAt time.Ti
 		}
 
 		//nolint:gosec // G118: deliberate, not an oversight, finishAbandonedRecovery's doc comment explains why it cannot use ctx or m.ctx for the release call itself; ctx is passed only as a stable snapshot to check against later.
-		go m.finishAbandonedRecovery(ctx, txID, storedAt, resultCh, cancel)
+		go m.finishAbandonedRecovery(ctx, ownerID, txID, storedAt, resultCh, cancel)
 
 		return false, recoverCtx.Err()
 	}
@@ -723,13 +760,18 @@ func preferResult(resultCh <-chan error) (ok bool, err error) {
 // of inFlight, see the leadership field). finishRecovery uses that to decide
 // whether the Orphan-promotion heuristic is still safe to apply (round 8
 // review, finding 3).
-func (m *Manager) finishAbandonedRecovery(sweepCtx context.Context, txID string, storedAt time.Time, resultCh <-chan error, cancel context.CancelFunc) {
+//
+// ownerID is likewise captured by callHandler from m.config.InstanceID at
+// claim time rather than read live here, for the identical reason: Start()
+// rewrites that field on every restart, and this goroutine can still be
+// running after a later Start() has already done so.
+func (m *Manager) finishAbandonedRecovery(sweepCtx context.Context, ownerID string, txID string, storedAt time.Time, resultCh <-chan error, cancel context.CancelFunc) {
 	err := <-resultCh
 	cancel()
 	stoppedBeforeReturn := sweepCtx.Err() != nil
 	m.logger.Infof("recovery: tx [%s] finished after previously timing out; finalizing now", txID)
 
-	if releaseErr := m.finishRecovery(context.Background(), txID, storedAt, err, !stoppedBeforeReturn); releaseErr != nil {
+	if releaseErr := m.finishRecovery(context.Background(), txID, storedAt, err, !stoppedBeforeReturn, ownerID); releaseErr != nil {
 		m.logger.Warnf("recovery: abandoned attempt for transaction [%s] finished with an error: %v", txID, releaseErr)
 	}
 
@@ -820,10 +862,15 @@ func isPowerOfTwo(n int) bool {
 // for whichever of two paths actually produces a final result first: here,
 // synchronously, if the handler returns within TransactionTimeout, or later,
 // asynchronously by finishAbandonedRecovery, if it does not (see callHandler).
-func (m *Manager) recoverTransaction(ctx context.Context, txID string, storedAt time.Time) error {
+//
+// ownerID is the InstanceID this sweep claimed with (see recoverTransactions),
+// threaded through rather than read live off m.config.InstanceID so it stays
+// correct even if a finishAbandonedRecovery goroutine spawned from this call
+// outlives a later Start().
+func (m *Manager) recoverTransaction(ctx context.Context, ownerID string, txID string, storedAt time.Time) error {
 	m.logger.Debugf("recovering transaction [%s]", txID)
 
-	finished, err := m.callHandler(ctx, txID, storedAt)
+	finished, err := m.callHandler(ctx, ownerID, txID, storedAt)
 
 	if !finished {
 		// A goroutine is still running unsupervised by this call, for one of
@@ -872,7 +919,7 @@ func (m *Manager) recoverTransaction(ctx context.Context, txID string, storedAt 
 		m.clearTimeoutCount(txID)
 	}
 
-	return m.finishRecovery(ctx, txID, storedAt, err, true)
+	return m.finishRecovery(ctx, txID, storedAt, err, true, ownerID)
 }
 
 // finishRecovery applies the Orphan-promotion policy and releases the claim
@@ -907,7 +954,14 @@ func (m *Manager) recoverTransaction(ctx context.Context, txID string, storedAt 
 // still releases the claim and logs the real outcome; a true fix needs an
 // owner/status-scoped CAS at the SQL layer, filed as a follow-up rather than
 // widening this PR into the storage driver.
-func (m *Manager) finishRecovery(ctx context.Context, txID string, storedAt time.Time, err error, allowOrphanPromotion bool) error {
+//
+// ownerID is the InstanceID that made the claim, captured by the caller at
+// claim time rather than read live off m.config.InstanceID here: Start()
+// rewrites that field on every restart (see Start), and finishAbandonedRecovery's
+// caller can run long after a later Start() has already done so, which would
+// release the claim under the wrong owner. See sweepCtx's doc comment on
+// finishAbandonedRecovery for the identical hazard with m.ctx.
+func (m *Manager) finishRecovery(ctx context.Context, txID string, storedAt time.Time, err error, allowOrphanPromotion bool, ownerID string) error {
 	markedOrphan := false
 	if allowOrphanPromotion && err != nil && m.config.NotFoundGracePeriod > 0 && !storedAt.IsZero() && isNotFoundError(err) {
 		age := time.Since(storedAt)
@@ -933,7 +987,7 @@ func (m *Manager) finishRecovery(ctx context.Context, txID string, storedAt time
 		message = "recovered successfully"
 	}
 
-	if releaseErr := m.releaseClaim(ctx, txID, message); releaseErr != nil {
+	if releaseErr := m.releaseClaim(ctx, txID, ownerID, message); releaseErr != nil {
 		m.logger.Warnf("failed to release recovery claim for transaction [%s]: %v", txID, releaseErr)
 	}
 
@@ -991,6 +1045,6 @@ func isNotFoundError(err error) bool {
 	return false
 }
 
-func (m *Manager) releaseClaim(ctx context.Context, txID string, message string) error {
-	return m.storage.ReleaseRecoveryClaim(ctx, txID, m.config.InstanceID, message)
+func (m *Manager) releaseClaim(ctx context.Context, txID string, ownerID string, message string) error {
+	return m.storage.ReleaseRecoveryClaim(ctx, txID, ownerID, message)
 }
