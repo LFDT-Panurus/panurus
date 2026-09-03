@@ -9,6 +9,7 @@ package ttx
 import (
 	"context"
 	"encoding/base64"
+	"sync"
 
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/view"
@@ -47,6 +48,7 @@ func NewLocalBidirectionalChannel(ctx context.Context, caller string, contextID 
 			info:         info,
 			readChannel:  rl,
 			writeChannel: lr,
+			closedChan:   make(chan struct{}),
 		},
 		right: &localSession{
 			name:         "right",
@@ -55,6 +57,7 @@ func NewLocalBidirectionalChannel(ctx context.Context, caller string, contextID 
 			info:         info,
 			readChannel:  lr,
 			writeChannel: rl,
+			closedChan:   make(chan struct{}),
 		},
 	}, nil
 }
@@ -78,9 +81,18 @@ type localSession struct {
 	info         view.SessionInfo
 	readChannel  chan *view.Message
 	writeChannel chan *view.Message
+
+	mu          sync.RWMutex
+	closed      bool
+	closedChan  chan struct{}
+	inFlight    int
+	writeClosed bool
 }
 
 func (s *localSession) Info() view.SessionInfo {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
 	return s.info
 }
 
@@ -93,26 +105,52 @@ func (s *localSession) SendError(ctx context.Context, payload []byte) error {
 }
 
 func (s *localSession) send(ctx context.Context, payload []byte, status int32) error {
-	if s.info.Closed {
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+
 		return errors.New("session is closed")
 	}
+	s.inFlight++
+	info := s.info
+	s.mu.Unlock()
 
-	s.writeChannel <- &view.Message{
-		SessionID:    s.info.ID,
+	defer func() {
+		s.mu.Lock()
+		s.inFlight--
+		if s.inFlight == 0 && s.closed && !s.writeClosed {
+			s.writeClosed = true
+			close(s.writeChannel)
+		}
+		s.mu.Unlock()
+	}()
+
+	msg := &view.Message{
+		SessionID:    info.ID,
 		ContextID:    s.contextID,
 		Caller:       s.caller,
-		FromEndpoint: s.info.RemoteEndpoint,
-		FromPKID:     s.info.RemotePKID,
+		FromEndpoint: info.RemoteEndpoint,
+		FromPKID:     info.RemotePKID,
 		Status:       status,
 		Payload:      payload,
 		Ctx:          ctx,
 	}
 
-	return nil
+	select {
+	case s.writeChannel <- msg:
+		return nil
+	case <-s.closedChan:
+		return errors.New("session is closed")
+	case <-ctx.Done():
+		return errors.Wrap(ctx.Err(), "context cancelled while sending message")
+	}
 }
 
 func (s *localSession) Receive() <-chan *view.Message {
-	if s.info.Closed {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if s.closed {
 		return nil
 	}
 
@@ -120,5 +158,18 @@ func (s *localSession) Receive() <-chan *view.Message {
 }
 
 func (s *localSession) Close() {
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+
+		return
+	}
+	s.closed = true
 	s.info.Closed = true
+	close(s.closedChan)
+	if s.inFlight == 0 && !s.writeClosed {
+		s.writeClosed = true
+		close(s.writeChannel)
+	}
+	s.mu.Unlock()
 }
