@@ -1103,12 +1103,12 @@ func (db *TokenStore) WhoDeletedTokens(ctx context.Context, inputs ...*token.ID)
 		return nil, isSpent, err
 	}
 	if counter == 0 {
-		return nil, nil, errors.Errorf("token not found for key [%s:%d]", inputs[0].TxId, inputs[0].Index)
+		return nil, nil, errors.Wrapf(tdriver.ErrTokenNotFound, "token not found for key [%s:%d]", inputs[0].TxId, inputs[0].Index)
 	}
 	if counter != len(inputs) {
 		for j, f := range found {
 			if !f {
-				return nil, nil, errors.Errorf("token not found for key [%s:%d]", inputs[j].TxId, inputs[j].Index)
+				return nil, nil, errors.Wrapf(tdriver.ErrTokenNotFound, "token not found for key [%s:%d]", inputs[j].TxId, inputs[j].Index)
 			}
 		}
 		panic("programming error: should not reach this point")

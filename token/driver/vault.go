@@ -12,8 +12,17 @@ import (
 	"time"
 
 	"github.com/LFDT-Panurus/panurus/token/token"
+	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/common/utils/collections/iterators"
 )
+
+// ErrTokenNotFound is the sentinel WhoDeletedTokens wraps its returned error
+// with when a requested id has no snapshot in the local store at all - as
+// opposed to any other failure (a connection error, a timeout) that kept the
+// query from answering. A caller that needs to tell "genuinely absent" apart
+// from "could not find out" must check for this with errors.Is rather than
+// treat every non-nil error the same way.
+var ErrTokenNotFound = errors.New("token not found")
 
 type QueryCallbackFunc func(*token.ID, []byte) error
 
@@ -100,6 +109,8 @@ type QueryEngine interface {
 	// GetTokens returns the de-obfuscated token data for the specified token IDs.
 	GetTokens(ctx context.Context, inputs ...*token.ID) ([]*token.Token, error)
 	// WhoDeletedTokens identifies which transaction deleted the specified tokens.
+	// An id with no local snapshot at all fails with an error wrapping
+	// ErrTokenNotFound; any other error means the query could not answer.
 	WhoDeletedTokens(ctx context.Context, inputs ...*token.ID) ([]string, []bool, error)
 	// Balance calculates the total value of unspent tokens of a specific type owned by a wallet.
 	// The result is returned as a *big.Int to support arbitrary precision and prevent overflow.

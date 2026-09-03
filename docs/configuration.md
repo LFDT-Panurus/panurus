@@ -354,6 +354,51 @@ token:
             # This helps with debugging and tracking which instance performed cleanup operations.
             instanceID:
 
+          # checks config controls the background ledger drift checks: a periodic
+          # comparison of what this node has stored against what the ledger says.
+          # If omitted, the checks run with their built-in defaults.
+          # See docs/services/storage/checks.md for what each check looks at.
+          checks:
+            # enabled determines whether the background drift sweep runs. Default: true.
+            # Set to false to keep only the on-demand Check call on the auditor and
+            # owner services, which is what a node did before this service existed.
+            enabled: true
+
+            # scanInterval is how often a sweep runs. Default: 1h.
+            # Drift is not a high-frequency event, and a sweep reads the whole
+            # transaction history by default, so this is deliberately far longer
+            # than the recovery scan interval.
+            scanInterval: 1h
+
+            # timeout bounds running the checks themselves. Default: 30m. It must not
+            # exceed scanInterval, or sweeps would run back to back.
+            # A sweep that runs past it is cancelled and the next one starts from
+            # scratch on the following interval. A sweep approaching this value is
+            # the signal to narrow transactionWindow or lengthen scanInterval;
+            # storage_checks_sweep_duration_seconds shows how close it is.
+            # Persisting the results (recording and resolving findings) is not part
+            # of this budget: it gets its own short deadline off the parent context,
+            # so a sweep that used nearly all of timeout checking still gets a real
+            # chance to record what it found.
+            timeout: 30m
+
+            # batchSize is how many tokens a check resolves against the ledger per
+            # round trip. Default: 50.
+            # Larger batches mean fewer ledger queries but a coarser fallback: when
+            # a batch fails, its tokens are resolved one at a time to find out which
+            # one the ledger is unhappy about.
+            batchSize: 50
+
+            # transactionWindow restricts the checks that walk the transaction
+            # history to transactions stored within this duration of now.
+            # Default: 0s, meaning the whole history.
+            # Setting it bounds the cost of a sweep on a node with a long history,
+            # but those checks then no longer see everything, so their findings are
+            # never closed automatically: a sweep that did not look at a transaction
+            # has learned nothing about it. Leave it at zero unless sweeps are
+            # approaching their timeout.
+            transactionWindow: 0s
+
       # auditor-specific settings
       auditor:
         # locker configures the distributed locking strategy for the auditor's

@@ -50,6 +50,12 @@ func SetValue(field common2.FieldName, value common2.Param) _insert2.OnConflict 
 // OverwriteValue creates a SET within an ON CONFLICT clause to overwrite the field
 func OverwriteValue(field common2.FieldName) _insert2.OnConflict { return _insert2.Overwrite(field) }
 
+// IncrementValue creates a SET within an ON CONFLICT clause that adds delta to the
+// value already stored in the field. table must be the table the INSERT targets.
+func IncrementValue(table string, field common2.FieldName, delta common2.Param) _insert2.OnConflict {
+	return _insert2.Increment(common2.TableName(table), field, delta)
+}
+
 // ExcludedValue references the proposed insertion row in an ON CONFLICT DO UPDATE clause.
 func ExcludedValue(field common2.FieldName) common2.Serializable { return _insert2.Excluded(field) }
 
