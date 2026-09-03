@@ -27,14 +27,91 @@ The current driver determines compatibility based on several criteria:
 
 When in-place upgrade is not possible (e.g., moving to a completely incompatible cryptographic curve or increasing precision beyond limits), Panurus implements an atomic "Burn and Re-issue" protocol.
 
+Two disjoint families of formats reach this path:
+
+*   **Fabtoken outputs above `maxPrecision`** — cleartext outputs whose value range the current driver cannot represent.
+*   **ZKAT-DLOG outputs created under earlier public parameters** — see [Upgrading DLog tokens whose format changed](#upgrading-dlog-tokens-whose-format-changed) below.
+
 > [!NOTE]
-> **Eligibility is the complement of in-place support, by design.** For Fabtoken-to-DLog upgrades, a token's precision is either `<= maxPrecision` (in-place support, criterion 2 above — no issuer needed) or `> maxPrecision` (this path — issuer sign-off required because the value cannot be safely reinterpreted in a lower-precision format). These two ranges must never overlap: a driver that also accepted `<= maxPrecision` tokens into the Burn-and-Re-issue eligibility list would leave no token that ever needs this path, since every upgrade-eligible token would already be directly spendable. See the `Service` doc comment in `token/core/zkatdlog/nogh/v1/crypto/upgrade/service.go` for the implementation-level invariant.
+> **Eligibility is the complement of in-place support, by design.** For Fabtoken-to-DLog upgrades, a token's precision is either `<= maxPrecision` (in-place support, criterion 2 above — no issuer needed) or `> maxPrecision` (this path — issuer sign-off required because the value cannot be safely reinterpreted in a lower-precision format). These two ranges must never overlap: a driver that also accepted `<= maxPrecision` tokens into the Burn-and-Re-issue eligibility list would leave no token that ever needs this path, since every upgrade-eligible token would already be directly spendable. Whichever family a format belongs to, a format the driver already reports in `SupportedTokenFormats()` is always rejected here: burning a token that is perfectly spendable and minting a replacement would be pure loss. See the `Service` doc comment in `token/core/zkatdlog/nogh/v1/crypto/upgrade/service.go` for the implementation-level invariant.
 
 #### Step-by-Step Flow:
 1.  **Identification**: The owner identifies tokens that are no longer supported.
 2.  **Challenge-Response**: The owner requests a "challenge" from an authorized issuer.
 3.  **Proof Generation**: The owner generates an "upgrade proof" showing they own the old tokens and that the values match the intended new tokens.
 4.  **Atomic Transaction**: The issuer verifies the proof and submits a transaction that consumes the old tokens and issues new ones.
+
+### Upgrading DLog tokens whose format changed
+
+A ZKAT-DLOG output is a Pedersen commitment, and its `token.Format` is a digest that covers the
+Pedersen generators of the public parameters that produced it (`SupportedTokenFormat` in
+`token/core/zkatdlog/nogh/v1/token/service.go`). Regenerating the public parameters with different
+generators — or on a different curve — therefore **renames every token created before**: the driver
+no longer lists those formats in `SupportedTokenFormats()`, transfers skip the tokens, and they show
+up as unspendable even though they are perfectly safe and unspent on the ledger.
+
+Such a token cannot be reinterpreted in place: its commitment only opens under the bases of the
+generation that created it. It goes through the issuer-mediated path instead, and the issuer needs
+those old bases to learn what to re-issue.
+
+#### Protocol
+
+1.  The owner lists its unsupported tokens (`UnsupportedTokensIteratorBy`). For a DLog token, the
+    ledger entry it gets back carries both the **commitment** (`LedgerToken.Token`) and its
+    **opening** — type, value, blinding factor — in `LedgerToken.TokenMetadata`.
+2.  The owner resolves the **generation of public parameters** that produced the token's format by
+    matching the format against the public parameters it has stored locally
+    (`upgrade.PublicParamsHistory.ByFormat`), and puts that hash in the upgrade proof
+    (`Proof.PublicParamsHashes`, one entry per token, empty for Fabtoken entries).
+3.  The issuer looks the hash up in its own store (`PublicParamsByHash`), **re-checks that those
+    public parameters actually generate the format the token was recorded with**, and only then
+    opens the commitment with their Pedersen bases (`upgrade.PublicParamsHistory.ByHashAndFormat`
+    followed by `Token.ToClear`). This recovers the type and the value to re-issue. If the issuer
+    does not store that generation at all, it falls back to resolving the generation by format
+    (`ByFormat`); a generation it *does* store but which does not generate the token's format is
+    still refused. The opening is validated against the curve of the retrieved public parameters
+    before any commitment arithmetic runs.
+4.  The issuer assembles the usual upgrade transaction (`ttx.Transaction.Upgrade`). The ledger side
+    is format-agnostic: the issue action's inputs must exist and are deleted atomically with the new
+    issuance, so no old-format validation logic is needed on the ledger.
+
+The declared hash is only a lookup hint that saves the issuer a scan — it is never trusted on its
+own. Because the format digest is recomputed from the retrieved public parameters and compared with
+the format recorded on the ledger, the only bases the issuer will ever use are the ones that
+demonstrably produced that token; and because the opening must match the commitment, the owner
+cannot inflate the type or the value it gets back.
+
+An upgrade request is processed before its signatures are verified, so its size is bounded: at most
+`upgrade.MaxUpgradeRequestTokens` (256, matching `driver.DefaultResourceLimits().MaxInputs`) tokens
+per request, and each distinct format is resolved once per request rather than once per token.
+
+#### Tracing a token back to its public parameters
+
+Panurus records the public parameters in two places, and both matter for this flow:
+
+*   **`PublicParams` table (TokenDB)** — every generation of public parameters the node ever
+    observed. `StorePublicParams` never overwrites an existing row, so the table is a history, and
+    `PublicParamsByHash` / `PublicParamsHashes` expose it (surfaced to drivers through
+    `driver.QueryEngine`). This is what makes the upgrade possible at all.
+*   **`Requests.pp_hash` (TTXDB / AuditDB)** — the hash of the public parameters in force when each
+    transaction was recorded, i.e. a per-`txID` trace of which generation created a token.
+
+> [!IMPORTANT]
+> **The issuer must retain the old public parameters.** An issuer whose `PublicParams` table no
+> longer holds the generation that created a token cannot open its commitment and will refuse the
+> upgrade (`failed to resolve the public parameters of token …`). Never prune that table, and when
+> rebuilding an issuer's TokenDB from scratch, re-import every historical public parameters version
+> before running upgrades. A node that joined the network after a regeneration only has the
+> generations published since it joined.
+
+> [!WARNING]
+> **Regenerate public parameters deliberately.** Since Pedersen generators are derived
+> deterministically from the driver name, driver version and curve
+> (`PublicParams.GeneratePedersenParameters`), re-running `tokengen` for the same driver, version and
+> curve reproduces the same bases and therefore the same formats — no upgrade needed. Formats only
+> change when the curve, the driver version, or the generation procedure itself changes. Before
+> publishing new public parameters, compare `SupportedTokenFormats()` before and after: if the set
+> changes, every existing token needs this upgrade path, and owners must be online to run it.
 
 ### Code Example: Identifying Unsupported Tokens
 
@@ -83,8 +160,148 @@ err = tx.Upgrade(
 )
 ```
 
+### Recovery Runbook: Tokens Stranded by a Public Parameters Regeneration
+
+Symptom: a wallet's balance still counts tokens, but transfers silently leave them behind, and they
+are reported as unspendable. The tokens are safe and unspent on the ledger — the driver simply no
+longer recognises their format. Recover them as follows.
+
+**Step 1 — Confirm the diagnosis.** Compare the formats the driver supports now with the format
+recorded on a stranded token. If the token's format is absent from `SupportedTokenFormats()`, and
+the public parameters were regenerated (or the curve or driver version changed), this is the case
+this runbook covers. `UnsupportedTokensIteratorBy` (see
+[Identifying Unsupported Tokens](#code-example-identifying-unsupported-tokens)) lists exactly the
+affected tokens for a wallet and token type.
+
+**Step 2 — Pre-flight: check that both sides still hold the old generation.** The upgrade cannot
+succeed if the `PublicParams` table no longer contains the generation that created the tokens, and
+this applies to the owner and to the issuer, for different reasons and with different error
+messages:
+
+*   **Issuer.** It opens the commitments, so without those bases it refuses the upgrade with
+    `failed to resolve the public parameters of token …`.
+*   **Owner.** It has to name the generation in the proof, so it cannot even build the request:
+    `GenUpgradeProof` fails with `unsupported token format …: no stored public parameters generate
+    token format …`. There is no fallback — nothing resolves the generation from the ledger or from
+    the counterparty on the owner's behalf.
+
+Verify on both nodes before starting: list the stored hashes with `QueryEngine.PublicParamsHashes`
+and confirm that one of them produces the stranded format. If a generation is missing, re-import it
+first (Step 5). An owner's node usually has it, because it observed those public parameters while
+the tokens were being created — but a rebuilt owner database, or a wallet restored onto a node that
+joined after the regeneration, is in exactly the same position as a pruned issuer.
+
+**Step 3 — Owner side: request the upgrade.** This is the step that starts the protocol. The owner
+sends the stranded tokens to the issuer and then acts as the recipient of the replacement
+transaction:
+
+```go
+// Inside the owner's initiator view
+tms, err := token.GetManagementService(context, token.WithTMSID(myTMSID))
+wallet, err := tms.WalletManager().OwnerWallet(context.Context(), myWalletID)
+tokensService, err := tokens.GetService(context, tms.ID())
+
+// the stranded tokens, from Step 1
+it, err := tokensService.UnsupportedTokensIteratorBy(context.Context(), wallet.ID(), "USD")
+stranded, err := collections.ReadAll(it)
+
+// ask the issuer to burn them and re-issue the equivalent value
+recipient, session, err := ttx.RequestTokensUpgrade(
+    context,
+    issuerIdentity,
+    myWalletID,
+    stranded,
+    false, // notAnonymous
+    token.WithTMSID(tms.ID()),
+)
+if err != nil {
+    return nil, err
+}
+
+// the owner now becomes the responder: receive the transaction the issuer assembled,
+// check that it pays the recipient identity above, accept it, and wait for finality
+return context.RunView(nil, view.AsResponder(session), view.WithViewCall(
+    func(context view.Context) (any, error) {
+        tx, err := ttx.ReceiveTransaction(context)
+        if err != nil {
+            return nil, err
+        }
+        outputs, err := tx.Outputs(context.Context())
+        if err != nil {
+            return nil, err
+        }
+        if outputs.ByRecipient(recipient).Count() == 0 {
+            return nil, errors.Errorf("no output assigned to [%s]", recipient)
+        }
+        if _, err := context.RunView(ttx.NewAcceptView(tx)); err != nil {
+            return nil, err
+        }
+        _, err = context.RunView(ttx.NewFinalityView(tx, ttx.WithTimeout(1*time.Minute)))
+
+        return tx.ID(), nil
+    },
+))
+```
+
+Use `ttx.RequestTokensUpgradeForRecipient` instead when the owner already holds the recipient data
+and has registered it with `wallet.RegisterRecipient`.
+
+**Step 4 — Issuer side: respond.** The issuer receives the request with
+`ttx.ReceiveTokensUpgradeRequest(context)`, then assembles the atomic burn-and-re-issue transaction
+as shown in
+[The Upgrade Transaction (Issuer Side)](#code-example-the-upgrade-transaction-issuer-side). The
+issuer verifies the proof, opens each commitment with the bases of the generation that produced it,
+and re-issues the recovered type and value.
+
+**Step 5 — If a TokenDB was rebuilt, re-import the history first.** This applies to whichever node
+is missing the generation, owner or issuer; the procedure is the same on both. A node only learns
+the *current* generation of public parameters from the ledger, so older generations must be restored
+from an operator-held copy — the `tokengen` output, or a backup of the previous public parameters
+file. Store each historical generation before running any upgrade:
+
+```go
+tokensService, err := tokens.GetService(context, tms.ID())
+for _, raw := range historicalPublicParams { // oldest first
+    if err := tokensService.StorePublicParams(context.Context(), raw); err != nil {
+        return err
+    }
+}
+```
+
+`StorePublicParams` never overwrites an existing row, so re-importing a generation the node already
+has is harmless and the call is safe to repeat. After re-importing, re-run the Step 2 check: the
+stranded format must now be produced by one of the stored hashes.
+
+**Step 6 — Verify.** The upgraded tokens carry a format the driver supports, so they leave
+`UnsupportedTokensIteratorBy` and become transferable; the balance for the wallet is unchanged,
+because the re-issued outputs carry the same type and value. Re-run Step 1 and expect an empty
+iterator.
+
+> [!NOTE]
+> **After a node restart or a database rebuild, re-run the Step 2 check before anything else.** The
+> whole flow depends on the `PublicParams` table still holding every generation the node observed;
+> a table restored from a partial backup, or a node that joined the network after the regeneration,
+> silently lacks the bases needed to open older commitments.
+
+### Test Coverage
+
+The commitment upgrade path is covered at two levels.
+
+*   **Unit** — `token/core/zkatdlog/nogh/v1/crypto/upgrade/service_comm_test.go` covers the driver
+    side: the round trip, an issuer that dropped the historical parameters, proof tampering (wrong
+    hash, no hash, bad opening), an already-supported format, batches mixing fabtoken and dlog
+    inputs, and tokens from several generations in one request. The format derivation the path
+    depends on is pinned in `token/core/zkatdlog/nogh/v1/token/service_formats_test.go`.
+*   **Integration** — `fungible.TestDLogTokensUpgrade`, wired as label `T4` of the `update` suite
+    (`make integration-tests-update-t4`), runs the whole flow on a real Fabric network: tokens are
+    issued under one generation of public parameters, the parameters are regenerated with different
+    Pedersen bases, the tokens become unspendable exactly as described in Step 1 of the runbook
+    above, the issuer-mediated upgrade recovers them, and they are transferred again afterwards. It
+    also covers a wallet that holds a stranded token next to a current one, so only the stranded one
+    is upgraded.
+
 ### Recommendations for Token Upgrades
-*   **Batching**: Upgrade tokens in batches (e.g., 10-20 at a time). Large upgrades can exceed the maximum transaction or block size limits of the underlying ledger (e.g., Fabric's 10MB limit).
+*   **Batching**: Upgrade tokens in batches (e.g., 10-20 at a time). Large upgrades can exceed the maximum transaction or block size limits of the underlying ledger (e.g., Fabric's 10MB limit). A single request is also capped at `upgrade.MaxUpgradeRequestTokens` (256) tokens, but that ceiling is a denial-of-service bound, not a batch size to aim for: the ledger limits bite first.
 *   **Offline Owners**: Owners must be online to initiate an upgrade. Consider providing a UI notification when "Unspendable" tokens are detected.
 *   **Verification**: Always verify the `PublicParameters` of the new driver before initiating a mass upgrade to ensure the target format is correct.
 

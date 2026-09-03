@@ -835,6 +835,17 @@ func TPublicParams(t *testing.T, db TestTokenDB) {
 	res, err = db.PublicParamsByHash(ctx, b1Hash)
 	require.NoError(t, err)
 	assert.Equal(t, res, b1)
+
+	// the full history is kept, newest first
+	hashes, err := db.PublicParamsHashes(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, []tdriver.PPHash{b1Hash, bHash}, hashes)
+
+	// storing the same public parameters twice does not add a new entry
+	require.NoError(t, db.StorePublicParams(ctx, b1))
+	hashes, err = db.PublicParamsHashes(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, []tdriver.PPHash{b1Hash, bHash}, hashes)
 }
 
 func TCertification(t *testing.T, db TestTokenDB) {

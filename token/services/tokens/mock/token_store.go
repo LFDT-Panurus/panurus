@@ -343,6 +343,19 @@ type FakeTokenStore struct {
 		result1 []byte
 		result2 error
 	}
+	PublicParamsHashesStub        func(context.Context) ([]drivera.PPHash, error)
+	publicParamsHashesMutex       sync.RWMutex
+	publicParamsHashesArgsForCall []struct {
+		arg1 context.Context
+	}
+	publicParamsHashesReturns struct {
+		result1 []drivera.PPHash
+		result2 error
+	}
+	publicParamsHashesReturnsOnCall map[int]struct {
+		result1 []drivera.PPHash
+		result2 error
+	}
 	QueryTokenDetailsStub        func(context.Context, driver.QueryTokenDetailsParams) ([]driver.TokenDetails, error)
 	queryTokenDetailsMutex       sync.RWMutex
 	queryTokenDetailsArgsForCall []struct {
@@ -2063,6 +2076,70 @@ func (fake *FakeTokenStore) PublicParamsByHashReturnsOnCall(i int, result1 []byt
 	}
 	fake.publicParamsByHashReturnsOnCall[i] = struct {
 		result1 []byte
+		result2 error
+	}{result1, result2}
+}
+
+func (fake *FakeTokenStore) PublicParamsHashes(arg1 context.Context) ([]drivera.PPHash, error) {
+	fake.publicParamsHashesMutex.Lock()
+	ret, specificReturn := fake.publicParamsHashesReturnsOnCall[len(fake.publicParamsHashesArgsForCall)]
+	fake.publicParamsHashesArgsForCall = append(fake.publicParamsHashesArgsForCall, struct {
+		arg1 context.Context
+	}{arg1})
+	stub := fake.PublicParamsHashesStub
+	fakeReturns := fake.publicParamsHashesReturns
+	fake.recordInvocation("PublicParamsHashes", []interface{}{arg1})
+	fake.publicParamsHashesMutex.Unlock()
+	if stub != nil {
+		return stub(arg1)
+	}
+	if specificReturn {
+		return ret.result1, ret.result2
+	}
+	return fakeReturns.result1, fakeReturns.result2
+}
+
+func (fake *FakeTokenStore) PublicParamsHashesCallCount() int {
+	fake.publicParamsHashesMutex.RLock()
+	defer fake.publicParamsHashesMutex.RUnlock()
+	return len(fake.publicParamsHashesArgsForCall)
+}
+
+func (fake *FakeTokenStore) PublicParamsHashesCalls(stub func(context.Context) ([]drivera.PPHash, error)) {
+	fake.publicParamsHashesMutex.Lock()
+	defer fake.publicParamsHashesMutex.Unlock()
+	fake.PublicParamsHashesStub = stub
+}
+
+func (fake *FakeTokenStore) PublicParamsHashesArgsForCall(i int) context.Context {
+	fake.publicParamsHashesMutex.RLock()
+	defer fake.publicParamsHashesMutex.RUnlock()
+	argsForCall := fake.publicParamsHashesArgsForCall[i]
+	return argsForCall.arg1
+}
+
+func (fake *FakeTokenStore) PublicParamsHashesReturns(result1 []drivera.PPHash, result2 error) {
+	fake.publicParamsHashesMutex.Lock()
+	defer fake.publicParamsHashesMutex.Unlock()
+	fake.PublicParamsHashesStub = nil
+	fake.publicParamsHashesReturns = struct {
+		result1 []drivera.PPHash
+		result2 error
+	}{result1, result2}
+}
+
+func (fake *FakeTokenStore) PublicParamsHashesReturnsOnCall(i int, result1 []drivera.PPHash, result2 error) {
+	fake.publicParamsHashesMutex.Lock()
+	defer fake.publicParamsHashesMutex.Unlock()
+	fake.PublicParamsHashesStub = nil
+	if fake.publicParamsHashesReturnsOnCall == nil {
+		fake.publicParamsHashesReturnsOnCall = make(map[int]struct {
+			result1 []drivera.PPHash
+			result2 error
+		})
+	}
+	fake.publicParamsHashesReturnsOnCall[i] = struct {
+		result1 []drivera.PPHash
 		result2 error
 	}{result1, result2}
 }

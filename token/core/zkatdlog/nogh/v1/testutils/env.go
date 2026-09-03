@@ -577,7 +577,7 @@ func prepareIssueRequestWithAttrs(pp *v1setup.PublicParams, auditor *audit.Audit
 	}
 
 	// Create TokensUpgradeService
-	tokensUpgradeService, err := upgrade.NewService(logging.MustGetLogger(), pp.QuantityPrecision, deserializer, ip)
+	tokensUpgradeService, err := upgrade.NewService(logging.MustGetLogger(), pp.QuantityPrecision, deserializer, ip, tokensService.SupportedTokenFormats(), nil)
 	if err != nil {
 		return nil, nil, nil, errors.Wrap(err, "failed to create tokens upgrade service")
 	}

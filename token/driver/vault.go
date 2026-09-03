@@ -91,6 +91,13 @@ type QueryEngine interface {
 	ListHistoryIssuedTokens(ctx context.Context) (*token.IssuedTokens, error)
 	// PublicParams returns the serialized public parameters used by the driver.
 	PublicParams(ctx context.Context) ([]byte, error)
+	// PublicParamsByHash returns the serialized public parameters whose hash matches the passed one.
+	// It returns an error if no public parameters are stored for that hash.
+	PublicParamsByHash(ctx context.Context, hash PPHash) ([]byte, error)
+	// PublicParamsHashes returns the hashes of every public parameters version stored so far,
+	// most recently stored first. Drivers use it to trace a token back to the public parameters
+	// that produced its format, for example when upgrading tokens whose format changed.
+	PublicParamsHashes(ctx context.Context) ([]PPHash, error)
 	// GetTokenMetadata retrieves the private information (metadata) for the given token IDs.
 	GetTokenMetadata(ctx context.Context, ids []*token.ID) ([][]byte, error)
 	// GetTokenOutputs retrieves the raw token outputs as stored on the ledger for the specified token IDs.
