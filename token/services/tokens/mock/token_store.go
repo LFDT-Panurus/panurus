@@ -13,11 +13,10 @@ import (
 )
 
 type FakeTokenStore struct {
-	AcquireCleanupLeadershipStub        func(context.Context, int64) (driver.CleanupLeadership, bool, error)
+	AcquireCleanupLeadershipStub        func(context.Context) (driver.CleanupLeadership, bool, error)
 	acquireCleanupLeadershipMutex       sync.RWMutex
 	acquireCleanupLeadershipArgsForCall []struct {
 		arg1 context.Context
-		arg2 int64
 	}
 	acquireCleanupLeadershipReturns struct {
 		result1 driver.CleanupLeadership
@@ -344,6 +343,19 @@ type FakeTokenStore struct {
 		result1 []byte
 		result2 error
 	}
+	PublicParamsHashesStub        func(context.Context) ([]drivera.PPHash, error)
+	publicParamsHashesMutex       sync.RWMutex
+	publicParamsHashesArgsForCall []struct {
+		arg1 context.Context
+	}
+	publicParamsHashesReturns struct {
+		result1 []drivera.PPHash
+		result2 error
+	}
+	publicParamsHashesReturnsOnCall map[int]struct {
+		result1 []drivera.PPHash
+		result2 error
+	}
 	QueryTokenDetailsStub        func(context.Context, driver.QueryTokenDetailsParams) ([]driver.TokenDetails, error)
 	queryTokenDetailsMutex       sync.RWMutex
 	queryTokenDetailsArgsForCall []struct {
@@ -512,19 +524,18 @@ type FakeTokenStore struct {
 	invocationsMutex sync.RWMutex
 }
 
-func (fake *FakeTokenStore) AcquireCleanupLeadership(arg1 context.Context, arg2 int64) (driver.CleanupLeadership, bool, error) {
+func (fake *FakeTokenStore) AcquireCleanupLeadership(arg1 context.Context) (driver.CleanupLeadership, bool, error) {
 	fake.acquireCleanupLeadershipMutex.Lock()
 	ret, specificReturn := fake.acquireCleanupLeadershipReturnsOnCall[len(fake.acquireCleanupLeadershipArgsForCall)]
 	fake.acquireCleanupLeadershipArgsForCall = append(fake.acquireCleanupLeadershipArgsForCall, struct {
 		arg1 context.Context
-		arg2 int64
-	}{arg1, arg2})
+	}{arg1})
 	stub := fake.AcquireCleanupLeadershipStub
 	fakeReturns := fake.acquireCleanupLeadershipReturns
-	fake.recordInvocation("AcquireCleanupLeadership", []interface{}{arg1, arg2})
+	fake.recordInvocation("AcquireCleanupLeadership", []interface{}{arg1})
 	fake.acquireCleanupLeadershipMutex.Unlock()
 	if stub != nil {
-		return stub(arg1, arg2)
+		return stub(arg1)
 	}
 	if specificReturn {
 		return ret.result1, ret.result2, ret.result3
@@ -538,17 +549,17 @@ func (fake *FakeTokenStore) AcquireCleanupLeadershipCallCount() int {
 	return len(fake.acquireCleanupLeadershipArgsForCall)
 }
 
-func (fake *FakeTokenStore) AcquireCleanupLeadershipCalls(stub func(context.Context, int64) (driver.CleanupLeadership, bool, error)) {
+func (fake *FakeTokenStore) AcquireCleanupLeadershipCalls(stub func(context.Context) (driver.CleanupLeadership, bool, error)) {
 	fake.acquireCleanupLeadershipMutex.Lock()
 	defer fake.acquireCleanupLeadershipMutex.Unlock()
 	fake.AcquireCleanupLeadershipStub = stub
 }
 
-func (fake *FakeTokenStore) AcquireCleanupLeadershipArgsForCall(i int) (context.Context, int64) {
+func (fake *FakeTokenStore) AcquireCleanupLeadershipArgsForCall(i int) context.Context {
 	fake.acquireCleanupLeadershipMutex.RLock()
 	defer fake.acquireCleanupLeadershipMutex.RUnlock()
 	argsForCall := fake.acquireCleanupLeadershipArgsForCall[i]
-	return argsForCall.arg1, argsForCall.arg2
+	return argsForCall.arg1
 }
 
 func (fake *FakeTokenStore) AcquireCleanupLeadershipReturns(result1 driver.CleanupLeadership, result2 bool, result3 error) {
@@ -2065,6 +2076,70 @@ func (fake *FakeTokenStore) PublicParamsByHashReturnsOnCall(i int, result1 []byt
 	}
 	fake.publicParamsByHashReturnsOnCall[i] = struct {
 		result1 []byte
+		result2 error
+	}{result1, result2}
+}
+
+func (fake *FakeTokenStore) PublicParamsHashes(arg1 context.Context) ([]drivera.PPHash, error) {
+	fake.publicParamsHashesMutex.Lock()
+	ret, specificReturn := fake.publicParamsHashesReturnsOnCall[len(fake.publicParamsHashesArgsForCall)]
+	fake.publicParamsHashesArgsForCall = append(fake.publicParamsHashesArgsForCall, struct {
+		arg1 context.Context
+	}{arg1})
+	stub := fake.PublicParamsHashesStub
+	fakeReturns := fake.publicParamsHashesReturns
+	fake.recordInvocation("PublicParamsHashes", []interface{}{arg1})
+	fake.publicParamsHashesMutex.Unlock()
+	if stub != nil {
+		return stub(arg1)
+	}
+	if specificReturn {
+		return ret.result1, ret.result2
+	}
+	return fakeReturns.result1, fakeReturns.result2
+}
+
+func (fake *FakeTokenStore) PublicParamsHashesCallCount() int {
+	fake.publicParamsHashesMutex.RLock()
+	defer fake.publicParamsHashesMutex.RUnlock()
+	return len(fake.publicParamsHashesArgsForCall)
+}
+
+func (fake *FakeTokenStore) PublicParamsHashesCalls(stub func(context.Context) ([]drivera.PPHash, error)) {
+	fake.publicParamsHashesMutex.Lock()
+	defer fake.publicParamsHashesMutex.Unlock()
+	fake.PublicParamsHashesStub = stub
+}
+
+func (fake *FakeTokenStore) PublicParamsHashesArgsForCall(i int) context.Context {
+	fake.publicParamsHashesMutex.RLock()
+	defer fake.publicParamsHashesMutex.RUnlock()
+	argsForCall := fake.publicParamsHashesArgsForCall[i]
+	return argsForCall.arg1
+}
+
+func (fake *FakeTokenStore) PublicParamsHashesReturns(result1 []drivera.PPHash, result2 error) {
+	fake.publicParamsHashesMutex.Lock()
+	defer fake.publicParamsHashesMutex.Unlock()
+	fake.PublicParamsHashesStub = nil
+	fake.publicParamsHashesReturns = struct {
+		result1 []drivera.PPHash
+		result2 error
+	}{result1, result2}
+}
+
+func (fake *FakeTokenStore) PublicParamsHashesReturnsOnCall(i int, result1 []drivera.PPHash, result2 error) {
+	fake.publicParamsHashesMutex.Lock()
+	defer fake.publicParamsHashesMutex.Unlock()
+	fake.PublicParamsHashesStub = nil
+	if fake.publicParamsHashesReturnsOnCall == nil {
+		fake.publicParamsHashesReturnsOnCall = make(map[int]struct {
+			result1 []drivera.PPHash
+			result2 error
+		})
+	}
+	fake.publicParamsHashesReturnsOnCall[i] = struct {
+		result1 []drivera.PPHash
 		result2 error
 	}{result1, result2}
 }

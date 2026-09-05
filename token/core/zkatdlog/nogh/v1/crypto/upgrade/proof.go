@@ -24,6 +24,13 @@ type Proof struct {
 	Tokens []token.LedgerToken
 	// Signatures is the list of signatures for each token in the list.
 	Signatures []Signature
+	// PublicParamsHashes carries, for each token in the list, the hash of the public
+	// parameters that produced it. It is set only for commitment tokens, whose opening
+	// requires the Pedersen bases of the generation that created them; fabtoken entries are
+	// left nil because they carry their content in the clear. The hash is a lookup hint, not
+	// a claim to be trusted: the verifier always re-checks that the referenced public
+	// parameters generate the format the token was recorded with on the ledger.
+	PublicParamsHashes []driver.PPHash
 }
 
 // Serialize marshals the Proof into a JSON byte slice.

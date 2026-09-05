@@ -39,6 +39,12 @@ Please refer to the [Development Guidelines](docs/development/development.md) fo
 *   **Linear History**: We use rebase workflow, not merge commits.
 *   **Coding Standards**: See [docs/development/general.md](docs/development/general.md) and [docs/development/idiomatic.md](docs/development/idiomatic.md) for Go coding standards.
 
+## Security
+
+Vulnerabilities must not be reported through public issues — follow the [Security Policy](SECURITY.md) instead.
+
+The security practices the project holds itself to are recorded as a self-assessment against the [OpenSSF Security Baseline](docs/openssf/README.md), including the controls that are still unmet. If your contribution closes one of those gaps, reference the corresponding `OSPS-*` control in the pull request.
+
 ## Reporting Issues
 
 If you find a bug or have a feature request, please search the [Issues](https://github.com/LFDT-Panurus/panurus/issues) to see if it has already been reported. If not, please open a new issue.

@@ -32,11 +32,11 @@ on:
   # code, so this workflow runs on `pull_request`, NOT `pull_request_target`:
   # fork PRs run in the fork's untrusted context with a read-only GITHUB_TOKEN
   # and no access to secrets, and `actions/checkout` pulls the fork's PR code
-  # directly (no `allow-unsafe-pr-checkout` needed). This workflow only produces
-  # artifacts; posting the PR comment happens in the companion
-  # `token-validation-benchmark-comment.yml`, which runs on `workflow_run` in the
-  # trusted base-repo context and therefore has `pull-requests: write` even for
-  # fork PRs.
+  # directly (no `allow-unsafe-pr-checkout` needed). For same-repo PRs the
+  # compare job posts the PR comment itself (it runs trusted base-repo code with
+  # a write-capable token). For fork PRs the token is read-only, so no comment
+  # can be posted: the compare job's comment step fails harmlessly and the
+  # benchmark report is only available in the job log.
   pull_request:
   workflow_dispatch:
 
@@ -44,8 +44,8 @@ on:
 # have a write-capable token. pull-requests: write is scoped per-job on the
 # compare job (below). Under `pull_request` that write scope is effective only
 # for same-repo PRs; for fork PRs the token stays read-only, so the compare
-# job's comment step fails harmlessly (it is continue-on-error) and the
-# companion workflow_run workflow posts the comment from the trusted context.
+# job's comment step fails harmlessly (it is continue-on-error) and no comment
+# is posted — the report is available only in the compare job's log.
 permissions:
   contents: read
 
@@ -199,9 +199,10 @@ jobs:
     # trusted base-repo code (it never checks out or executes PR head code). The
     # benchmark job keeps the read-only default token. On fork PRs the token is
     # read-only regardless, so the comment step below cannot post — that is why
-    # the comment step itself is continue-on-error and the companion workflow_run
-    # workflow handles commenting for forks. The job as a whole is NOT
-    # continue-on-error: a detected regression fails it (see the final step).
+    # the comment step itself is continue-on-error; no comment is posted for fork
+    # PRs and the report is available only in this job's log. The job as a whole
+    # is NOT continue-on-error: a detected regression fails it (see the final
+    # step).
     permissions:
       contents: read
       pull-requests: write
@@ -252,8 +253,8 @@ jobs:
           esac
 
       # Only comment when there is a regression to report. On fork PRs the token
-      # is read-only and this step cannot post, so it is continue-on-error; the
-      # companion workflow_run workflow handles commenting for forks.
+      # is read-only and this step cannot post, so it is continue-on-error; no
+      # comment is posted for fork PRs (the report stays in this job's log).
       - name: Post comparison comment
         if: steps.report.outputs.degraded == 'true'
         continue-on-error: true

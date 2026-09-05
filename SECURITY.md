@@ -87,6 +87,10 @@ Panurus uses GitHub's private vulnerability patching features, which allow the f
 and reviewed in a private fork associated with the advisory. Maintainers needing access or
 assistance can contact <community-architects@lfdecentralizedtrust.org>.
 
+## Security Practices
+
+Panurus keeps a self-assessment against the [OpenSSF Security Baseline](https://baseline.openssf.org) under [docs/openssf](docs/openssf/README.md). It records the baseline level the project targets, which controls are already satisfied, and which gaps remain. It also explains how that posture maps to the EU Cyber Resilience Act (CRA) steward obligations that LF Decentralized Trust carries for Panurus.
+
 ---
 
 This policy borrows heavily from the recommendations of the OpenSSF Vulnerability Disclosure

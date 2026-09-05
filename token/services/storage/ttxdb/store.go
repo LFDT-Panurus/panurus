@@ -259,8 +259,16 @@ func (d *StoreService) SetStatus(ctx context.Context, txID string, status dbdriv
 // NotifyStatus pushes a status event to the in-process listeners without
 // touching the database. Used after a transaction-scoped status update,
 // which bypasses SetStatus.
+//
+// The event carries a context detached from ctx's cancellation: by the time
+// this runs, the status is already durably written, and safeSend only uses
+// the context to give up on a stuck listener. Keeping ctx as-is would let a
+// caller-side deadline that has nothing to do with the listener (for example
+// a recovery attempt's per-transaction timeout, expiring right after its
+// write commits) silently drop a notification for a status change that did
+// succeed. See issue #2316.
 func (d *StoreService) NotifyStatus(ctx context.Context, txID string, status dbdriver.TxStatus, message string) {
-	d.Notify(common.StatusEvent{Ctx: ctx, TxID: txID, ValidationCode: status, ValidationMessage: message})
+	d.Notify(common.StatusEvent{Ctx: context.WithoutCancel(ctx), TxID: txID, ValidationCode: status, ValidationMessage: message})
 }
 
 // GetStatus return the status of the given transaction id.
@@ -306,8 +314,8 @@ func (d *StoreService) GetTransactionEndorsementAcks(ctx context.Context, txID s
 }
 
 // AcquireRecoveryLeadership tries to acquire the DB-backed recovery leadership lease.
-func (d *StoreService) AcquireRecoveryLeadership(ctx context.Context, lockID int64) (dbdriver.RecoveryLeadership, bool, error) {
-	leadership, acquired, err := d.db.AcquireRecoveryLeadership(ctx, lockID)
+func (d *StoreService) AcquireRecoveryLeadership(ctx context.Context) (dbdriver.RecoveryLeadership, bool, error) {
+	leadership, acquired, err := d.db.AcquireRecoveryLeadership(ctx)
 	if err != nil {
 		return nil, false, errors.Wrapf(err, "failed to acquire recovery leadership")
 	}

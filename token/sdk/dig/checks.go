@@ -9,6 +9,7 @@ package sdk
 import (
 	"github.com/LFDT-Panurus/panurus/token/sdk/db"
 	"github.com/LFDT-Panurus/panurus/token/services/storage/db/common"
+	"github.com/LFDT-Panurus/panurus/token/services/storage/db/guard"
 	"go.uber.org/dig"
 )
 
@@ -19,8 +20,12 @@ func NewAuditorCheckServiceProvider(in struct {
 	TMSProvider     common.TokenManagementServiceProvider
 	NetworkProvider common.NetworkProvider
 	Checkers        []common.NamedChecker `group:"auditdb-checkers"`
+	Policy          guard.Policy
 }) *db.AuditorCheckServiceProvider {
-	return db.NewAuditorCheckServiceProvider(in.TMSProvider, in.NetworkProvider, in.Checkers)
+	provider := db.NewAuditorCheckServiceProvider(in.TMSProvider, in.NetworkProvider, in.Checkers)
+	provider.MaxPageSize = in.Policy.MaxPageSize
+
+	return provider
 }
 
 // NewOwnerCheckServiceProvider creates an owner check service provider using dependency injection.
@@ -30,6 +35,10 @@ func NewOwnerCheckServiceProvider(in struct {
 	TMSProvider     common.TokenManagementServiceProvider
 	NetworkProvider common.NetworkProvider
 	Checkers        []common.NamedChecker `group:"ttxdb-checkers"`
+	Policy          guard.Policy
 }) *db.OwnerCheckServiceProvider {
-	return db.NewOwnerCheckServiceProvider(in.TMSProvider, in.NetworkProvider, in.Checkers)
+	provider := db.NewOwnerCheckServiceProvider(in.TMSProvider, in.NetworkProvider, in.Checkers)
+	provider.MaxPageSize = in.Policy.MaxPageSize
+
+	return provider
 }

@@ -113,12 +113,22 @@ func (c *StatusSupport) Notify(event StatusEvent) {
 	}
 }
 
-// safeSend sends the event to the listener channel without blocking indefinitely
-// and without panicking if the channel has been concurrently closed by its consumer.
-// After the RLock in Notify is released, a consumer may call DeleteStatusListener
-// followed by close(ch). A bare send would panic on a closed channel, and a blocking
-// send without a context guard could block forever if the buffer is full and the
-// consumer has departed. This method handles both cases.
+// safeSend sends the event to the listener channel without panicking if the
+// channel has been concurrently closed by its consumer. After the RLock in
+// Notify is released, a consumer may call DeleteStatusListener followed by
+// close(ch); a bare send would panic on a closed channel, which the deferred
+// recover below turns into a log line instead of a crash.
+//
+// event.Ctx.Done() is a second escape hatch for a stuck listener, but every
+// current caller of Notify (ttxdb, auditdb and endorserdb's NotifyStatus/
+// SetStatus) passes a context.WithoutCancel-derived Ctx, specifically so a
+// caller's own expiring deadline cannot drop a notification for a write that
+// already succeeded - see #2316. That context is therefore never Done, so for
+// these callers the Done() case never fires: the only thing that unblocks a
+// send stuck on a departed consumer is DeleteStatusListener followed by
+// close(ch), which the sole consumer (finalityView.dbFinality) always does in
+// a defer. The Done() case remains for a caller with a genuine reason to bound
+// how long it waits here with a live context instead.
 func (c *StatusSupport) safeSend(event StatusEvent, listener chan StatusEvent) {
 	defer func() {
 		if r := recover(); r != nil {

@@ -217,8 +217,12 @@ func (m *PolicyAcceptSpendView) Call(context view.Context) (any, error) {
 
 			continue
 		}
-		if len(in.Owner) != 0 && sigService.IsMe(context.Context(), in.Owner) {
-			assert.Fail("received tx consumes additional token [%s] owned by this responder", in.Id)
+		if len(in.Owner) != 0 {
+			isMe, err := sigService.IsMe(context.Context(), in.Owner)
+			assert.NoError(err, "failed to check ownership of input [%s]", in.Id)
+			if isMe {
+				assert.Fail("received tx consumes additional token [%s] owned by this responder", in.Id)
+			}
 		}
 	}
 	assert.True(matched, "received tx does not consume the token named in SpendRequest")

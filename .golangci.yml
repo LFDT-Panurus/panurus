@@ -100,7 +100,6 @@ linters:
         - stdlib
         - generic
         - (or|er)$
-        - T
         - github.com/prometheus/client_golang/prometheus.Counter
         - github.com/prometheus/client_golang/prometheus.Gauge
         - github.com/prometheus/client_golang/prometheus.Histogram
@@ -123,6 +122,64 @@ linters:
         - github.com/hyperledger-labs/fabric-smart-client/integration/nwo/api.ViewClient
         - github.com/hyperledger-labs/fabric-smart-client/integration/nwo/api.Platform
         - github.com/hyperledger-labs/fabric-smart-client/integration/nwo/api.Context
+        # Our own driver-pattern packages: every package literally named "driver" (token/driver
+        # itself plus its per-service siblings under identity, network, certifier, and storage/db)
+        # exists to define the swappable interface a token technology or storage backend
+        # implements. Naming a concrete type instead of the interface here would defeat the point
+        # of the pattern, and the interface set grows with every new driver method, so this is a
+        # package match rather than an enumerated type list. Anchored to our own module: unanchored,
+        # this also matches any third-party package that happens to be named "driver" (fsc's
+        # platform/common/driver among them, allowed explicitly above instead).
+        - ^github.com/LFDT-Panurus/panurus/.*driver\.[A-Z]
+        # The SQL query builder DSL (token/services/storage/db/sql/query/...): conditions, table
+        # references and clause fragments compose polymorphically (And/Or combine heterogeneous
+        # Condition implementations, for example). Several of the fluent builders are staged
+        # (each method returns an unexported interface exposing only the next legal calls), so
+        # this matches both exported and unexported types in the tree. Anchored to our own module
+        # for the same reason as the driver pattern above.
+        - ^github.com/LFDT-Panurus/panurus/.*db/sql/query/.*\.[A-Za-z]
+        - github.com/LFDT-Panurus/panurus/token/token.Quantity
+        - github.com/LFDT-Panurus/panurus/token/core/common/metrics.Gauge
+        - github.com/LFDT-Panurus/panurus/token/core/common/metrics.Histogram
+        # services/ttx/dep (and its auditor sub-package) exists purely to give ttx a dependency
+        # inversion seam onto storage/network/tms internals, mirroring the third-party interfaces
+        # allowed above. \b anchors the match to a path boundary (a following "." or "/"): without
+        # it this also matches the unrelated services/ttx/deps package (counterfeiter mocks), since
+        # "ttx/dep" is a literal prefix of "ttx/deps".
+        - github.com/LFDT-Panurus/panurus/token/services/ttx/dep\b
+        - github.com/LFDT-Panurus/panurus/token/services/ttx.CheckService
+        - github.com/LFDT-Panurus/panurus/token/services/ttx.Storage
+        - github.com/LFDT-Panurus/panurus/token/services/identity/boolpolicy.Node
+        - github.com/LFDT-Panurus/panurus/token/services/storage/services/cleanup.Keystore
+        - github.com/LFDT-Panurus/panurus/token/services/storage/services/cleanup.Leadership
+        # recovery.Leadership is a type alias for the driver-pattern package's own interface
+        # (`type Leadership = dbdriver.RecoveryLeadership` in storage/services/recovery/manager.go),
+        # so it reads as "our own driver-pattern packages" at the declaration site but doesn't
+        # textually match the driver\.[A-Z] pattern above: call sites that use the alias name
+        # report it as recovery.Leadership, not storage/db/driver.RecoveryLeadership.
+        - github.com/LFDT-Panurus/panurus/token/services/storage/services/recovery.Leadership
+        - github.com/LFDT-Panurus/panurus/token/services/network/fabric/endorsement.Service
+        - github.com/LFDT-Panurus/panurus/token/services/network/fabric/endorsement/fsc
+        # Single-site swappable abstractions: same rationale as the driver-pattern packages above
+        # (an injectable strategy behind a small consumer-side interface), just not living under a
+        # package named "driver".
+        - github.com/LFDT-Panurus/panurus/token/services/utils/session.Session
+        - github.com/LFDT-Panurus/panurus/token/services/storage/db/kvs.KVS
+        - github.com/LFDT-Panurus/panurus/token/services/network/fabricx/tms.DeployerService
+        - github.com/LFDT-Panurus/panurus/token/services/network/fabricx/finality/queue.Event
+        - github.com/LFDT-Panurus/panurus/token/services/network/fabric/tcc.PublicParameters
+        - github.com/LFDT-Panurus/panurus/token/services/interop/encoding.EncodingFunc
+        - github.com/LFDT-Panurus/panurus/token/services/identity/x509/crypto.KeyStore
+        - github.com/LFDT-Panurus/panurus/token/services/certifier/interactive.Backend
+        - github.com/LFDT-Panurus/panurus/token/services/auditor.CheckService
+        - github.com/LFDT-Panurus/panurus/token/core/common/encoding/asn1.element
+        # The integration module (separate go.mod) has the same swappable-backend shape for its
+        # test topology: one platform/CA/client abstraction per network technology (fabric,
+        # fabricx, EVM, ...).
+        - github.com/LFDT-Panurus/panurus/integration/nwo/runner.viewClient
+        - github.com/LFDT-Panurus/panurus/integration/nwo/token/common.CA
+        - github.com/LFDT-Panurus/panurus/integration/nwo/token/fabric/cc.fabricPlatform
+        - github.com/LFDT-Panurus/panurus/integration/nwo/token.PF
     lll:
       # Max line length, lines longer will be reported.
       line-length: 240

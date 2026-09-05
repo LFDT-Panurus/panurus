@@ -640,17 +640,19 @@ func (a *EscrowAuth) Issued(_ context.Context, _ driver.Identity, _ *token.Token
 func (a *EscrowAuth) OwnerType(raw []byte) (driver.IdentityType, []byte, error)        { ... }
 ```
 
-Register it in **both** driver files inside `NewAuthorizationMultiplexer`:
+Register it in `common.NewStandardAuthorization` (`token/core/common/authorization.go`), the chain both drivers use. Order matters: the multiplexer is first-match-wins and `NewTMSAuthorization` resolves *any* identity bound to a wallet — including composite identities — so it would claim the token under the wrong wallet id and drop its ownership entries. Every type-gated authorization must therefore be registered **before** the trailing `NewTMSAuthorization` catch-all (regression: `TestAuthorizationOrder_BoundPolicyIdentity` in `token/services/ttx/boolpolicy/auth_test.go`).
 
 ```go
-// token/core/fabtoken/v1/driver/driver.go  (and the zkatdlog equivalent)
-authorization := common.NewAuthorizationMultiplexer(
-    common.NewTMSAuthorization(...),
-    htlc.NewScriptAuth(ws),
-    multisig.NewEscrowAuth(ws),
-    boolpolicy.NewEscrowAuth(ws),
-    mynew.NewEscrowAuth(ws),   // ← add here
-)
+// token/core/common/authorization.go
+func NewStandardAuthorization(logger logging.Logger, publicParameters driver.PublicParameters, walletService driver.WalletService) *AuthorizationMultiplexer {
+	return NewAuthorizationMultiplexer(
+		htlc.NewScriptAuth(walletService),
+		multisig.NewEscrowAuth(walletService),
+		boolpolicy.NewEscrowAuth(walletService),
+		mynew.NewEscrowAuth(walletService), // ← add here, before the wallet-based catch-all
+		NewTMSAuthorization(logger, publicParameters, walletService),
+	)
+}
 ```
 
 #### Step 6 — Add a wallet wrapper

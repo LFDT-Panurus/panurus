@@ -100,7 +100,7 @@ type IdentityStoreService interface {
 //
 //go:generate counterfeiter -o mock/ip.go -fake-name IdentityProvider . IdentityProvider
 type IdentityProvider interface {
-	IsMe(context.Context, idriver.Identity) bool
+	IsMe(context.Context, idriver.Identity) (bool, error)
 	// Bind an ephemeral identity to another identity
 	Bind(ctx context.Context, longTerm idriver.Identity, ephemeralIdentities ...idriver.Identity) error
 	// RegisterIdentityDescriptor register the passed identity descriptor with an alias
@@ -293,7 +293,8 @@ func (l *LocalMembership) Close() {
 
 // IsMe reports whether the given identity belongs to this local membership set.
 // It delegates to the configured IdentityProvider to determine membership.
-func (l *LocalMembership) IsMe(ctx context.Context, id token.Identity) bool {
+// A non-nil error means membership could not be determined (the boolean must be ignored).
+func (l *LocalMembership) IsMe(ctx context.Context, id token.Identity) (bool, error) {
 	return l.IdentityProvider.IsMe(ctx, id)
 }
 

@@ -10,11 +10,10 @@ import (
 )
 
 type AuditTransactionStore struct {
-	AcquireRecoveryLeadershipStub        func(context.Context, int64) (driver.RecoveryLeadership, bool, error)
+	AcquireRecoveryLeadershipStub        func(context.Context) (driver.RecoveryLeadership, bool, error)
 	acquireRecoveryLeadershipMutex       sync.RWMutex
 	acquireRecoveryLeadershipArgsForCall []struct {
 		arg1 context.Context
-		arg2 int64
 	}
 	acquireRecoveryLeadershipReturns struct {
 		result1 driver.RecoveryLeadership
@@ -206,19 +205,18 @@ type AuditTransactionStore struct {
 	invocationsMutex sync.RWMutex
 }
 
-func (fake *AuditTransactionStore) AcquireRecoveryLeadership(arg1 context.Context, arg2 int64) (driver.RecoveryLeadership, bool, error) {
+func (fake *AuditTransactionStore) AcquireRecoveryLeadership(arg1 context.Context) (driver.RecoveryLeadership, bool, error) {
 	fake.acquireRecoveryLeadershipMutex.Lock()
 	ret, specificReturn := fake.acquireRecoveryLeadershipReturnsOnCall[len(fake.acquireRecoveryLeadershipArgsForCall)]
 	fake.acquireRecoveryLeadershipArgsForCall = append(fake.acquireRecoveryLeadershipArgsForCall, struct {
 		arg1 context.Context
-		arg2 int64
-	}{arg1, arg2})
+	}{arg1})
 	stub := fake.AcquireRecoveryLeadershipStub
 	fakeReturns := fake.acquireRecoveryLeadershipReturns
-	fake.recordInvocation("AcquireRecoveryLeadership", []interface{}{arg1, arg2})
+	fake.recordInvocation("AcquireRecoveryLeadership", []interface{}{arg1})
 	fake.acquireRecoveryLeadershipMutex.Unlock()
 	if stub != nil {
-		return stub(arg1, arg2)
+		return stub(arg1)
 	}
 	if specificReturn {
 		return ret.result1, ret.result2, ret.result3
@@ -232,17 +230,17 @@ func (fake *AuditTransactionStore) AcquireRecoveryLeadershipCallCount() int {
 	return len(fake.acquireRecoveryLeadershipArgsForCall)
 }
 
-func (fake *AuditTransactionStore) AcquireRecoveryLeadershipCalls(stub func(context.Context, int64) (driver.RecoveryLeadership, bool, error)) {
+func (fake *AuditTransactionStore) AcquireRecoveryLeadershipCalls(stub func(context.Context) (driver.RecoveryLeadership, bool, error)) {
 	fake.acquireRecoveryLeadershipMutex.Lock()
 	defer fake.acquireRecoveryLeadershipMutex.Unlock()
 	fake.AcquireRecoveryLeadershipStub = stub
 }
 
-func (fake *AuditTransactionStore) AcquireRecoveryLeadershipArgsForCall(i int) (context.Context, int64) {
+func (fake *AuditTransactionStore) AcquireRecoveryLeadershipArgsForCall(i int) context.Context {
 	fake.acquireRecoveryLeadershipMutex.RLock()
 	defer fake.acquireRecoveryLeadershipMutex.RUnlock()
 	argsForCall := fake.acquireRecoveryLeadershipArgsForCall[i]
-	return argsForCall.arg1, argsForCall.arg2
+	return argsForCall.arg1
 }
 
 func (fake *AuditTransactionStore) AcquireRecoveryLeadershipReturns(result1 driver.RecoveryLeadership, result2 bool, result3 error) {

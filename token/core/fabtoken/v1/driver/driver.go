@@ -15,10 +15,7 @@ import (
 	v1setup "github.com/LFDT-Panurus/panurus/token/core/fabtoken/v1/setup"
 	"github.com/LFDT-Panurus/panurus/token/core/fabtoken/v1/validator"
 	"github.com/LFDT-Panurus/panurus/token/driver"
-	"github.com/LFDT-Panurus/panurus/token/services/interop/htlc"
 	"github.com/LFDT-Panurus/panurus/token/services/logging"
-	"github.com/LFDT-Panurus/panurus/token/services/ttx/boolpolicy"
-	"github.com/LFDT-Panurus/panurus/token/services/ttx/multisig"
 	"github.com/LFDT-Panurus/panurus/token/services/utils"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 )
@@ -150,12 +147,7 @@ func (d *Driver) NewTokenService(tmsID driver.TMSID, publicParams []byte) (drive
 	deserializer := ws.Deserializer
 	ip := ws.IdentityProvider
 
-	authorization := common.NewAuthorizationMultiplexer(
-		common.NewTMSAuthorization(logger, publicParamsManager.PublicParams(), ws),
-		htlc.NewScriptAuth(ws),
-		multisig.NewEscrowAuth(ws),
-		boolpolicy.NewEscrowAuth(ws),
-	)
+	authorization := common.NewStandardAuthorization(logger, publicParamsManager.PublicParams(), ws)
 	tokensService, err := v1.NewTokensService(publicParamsManager.PublicParams(), deserializer)
 	if err != nil {
 		return nil, errors.Wrapf(err, "failed to initialize token service for [%s:%s]", tmsID.Network, tmsID.Namespace)

@@ -17,6 +17,7 @@ import (
 	"github.com/LFDT-Panurus/panurus/token"
 	driver2 "github.com/LFDT-Panurus/panurus/token/driver"
 	driver3 "github.com/LFDT-Panurus/panurus/token/services/storage/db/driver"
+	"github.com/LFDT-Panurus/panurus/token/services/storage/db/sql/query/pagination"
 	"github.com/LFDT-Panurus/panurus/token/services/utils"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/common/utils/collections/iterators"
 	"github.com/stretchr/testify/assert"
@@ -309,7 +310,9 @@ func TTransaction(t *testing.T, db driver3.TokenTransactionStore) {
 
 	// get all except last year's
 	t1 := time.Now().Add(time.Second * 3)
-	it, err := db.QueryTransactions(ctx, driver3.QueryTransactionsParams{From: &t0, To: &t1, SearchDirection: driver3.FromBeginning}, nil)
+	page, err := pagination.Offset(0, 100)
+	require.NoError(t, err)
+	it, err := db.QueryTransactions(ctx, driver3.QueryTransactionsParams{From: &t0, To: &t1, SearchDirection: driver3.FromBeginning}, page)
 	require.NoError(t, err)
 	for _, exp := range txs {
 		act, err := it.Items.Next()
@@ -320,7 +323,9 @@ func TTransaction(t *testing.T, db driver3.TokenTransactionStore) {
 
 	// get all tx from before the first
 	yesterday := t0.AddDate(0, 0, -1).Local().UTC().Truncate(time.Second)
-	it, err = db.QueryTransactions(ctx, driver3.QueryTransactionsParams{To: &yesterday}, nil)
+	page, err = pagination.Offset(0, 100)
+	require.NoError(t, err)
+	it, err = db.QueryTransactions(ctx, driver3.QueryTransactionsParams{To: &yesterday}, page)
 	require.NoError(t, err)
 	defer it.Items.Close()
 
@@ -867,7 +872,9 @@ func TTransactionQueries(t *testing.T, db driver3.TokenTransactionStore) {
 
 func getTransactions(t *testing.T, db driver3.TokenTransactionStore, params driver3.QueryTransactionsParams) []*driver3.TransactionRecord {
 	t.Helper()
-	records, err := db.QueryTransactions(t.Context(), params, nil)
+	page, err := pagination.Offset(0, 100)
+	require.NoError(t, err)
+	records, err := db.QueryTransactions(t.Context(), params, page)
 	require.NoError(t, err)
 	txs, err := iterators.ReadAllPointers(records.Items)
 	require.NoError(t, err)

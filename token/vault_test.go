@@ -222,6 +222,64 @@ func TestQueryEngine_PublicParams_Error(t *testing.T) {
 	assert.Equal(t, expectedErr, err)
 }
 
+// TestQueryEngine_PublicParamsByHash verifies retrieval of a specific generation of public parameters
+func TestQueryEngine_PublicParamsByHash(t *testing.T) {
+	mockQE := &mock.QueryEngine{}
+	expectedParams := []byte("public parameters")
+	hash := PPHash("a hash")
+	mockQE.PublicParamsByHashReturns(expectedParams, nil)
+
+	queryEngine := NewQueryEngine(logging.MustGetLogger(), mockQE, 3, time.Second)
+	params, err := queryEngine.PublicParamsByHash(t.Context(), hash)
+
+	require.NoError(t, err)
+	assert.Equal(t, expectedParams, params)
+	require.Equal(t, 1, mockQE.PublicParamsByHashCallCount())
+	_, passedHash := mockQE.PublicParamsByHashArgsForCall(0)
+	assert.Equal(t, hash, passedHash)
+}
+
+// TestQueryEngine_PublicParamsByHash_Error verifies error handling when the generation is not stored
+func TestQueryEngine_PublicParamsByHash_Error(t *testing.T) {
+	mockQE := &mock.QueryEngine{}
+	expectedErr := errors.New("mock error")
+	mockQE.PublicParamsByHashReturns(nil, expectedErr)
+
+	queryEngine := NewQueryEngine(logging.MustGetLogger(), mockQE, 3, time.Second)
+	params, err := queryEngine.PublicParamsByHash(t.Context(), PPHash("a hash"))
+
+	require.Error(t, err)
+	assert.Nil(t, params)
+	assert.Equal(t, expectedErr, err)
+}
+
+// TestQueryEngine_PublicParamsHashes verifies retrieval of the stored public parameters history
+func TestQueryEngine_PublicParamsHashes(t *testing.T) {
+	mockQE := &mock.QueryEngine{}
+	expected := []PPHash{PPHash("newest"), PPHash("oldest")}
+	mockQE.PublicParamsHashesReturns(expected, nil)
+
+	queryEngine := NewQueryEngine(logging.MustGetLogger(), mockQE, 3, time.Second)
+	hashes, err := queryEngine.PublicParamsHashes(t.Context())
+
+	require.NoError(t, err)
+	assert.Equal(t, expected, hashes)
+}
+
+// TestQueryEngine_PublicParamsHashes_Error verifies error handling when listing the history fails
+func TestQueryEngine_PublicParamsHashes_Error(t *testing.T) {
+	mockQE := &mock.QueryEngine{}
+	expectedErr := errors.New("mock error")
+	mockQE.PublicParamsHashesReturns(nil, expectedErr)
+
+	queryEngine := NewQueryEngine(logging.MustGetLogger(), mockQE, 3, time.Second)
+	hashes, err := queryEngine.PublicParamsHashes(t.Context())
+
+	require.Error(t, err)
+	assert.Nil(t, hashes)
+	assert.Equal(t, expectedErr, err)
+}
+
 // TestQueryEngine_GetTokens verifies retrieval of specific tokens by IDs
 func TestQueryEngine_GetTokens(t *testing.T) {
 	mockQE := &mock.QueryEngine{}

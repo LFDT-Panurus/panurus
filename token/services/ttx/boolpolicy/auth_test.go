@@ -9,17 +9,20 @@ SPDX-License-Identifier: Apache-2.0
 package boolpolicy_test
 
 import (
+	"bytes"
 	"context"
-	"errors"
 	"testing"
 
 	"github.com/LFDT-Panurus/panurus/token"
+	"github.com/LFDT-Panurus/panurus/token/core/common"
 	"github.com/LFDT-Panurus/panurus/token/driver"
 	drivermock "github.com/LFDT-Panurus/panurus/token/driver/mock"
 	"github.com/LFDT-Panurus/panurus/token/services/identity"
 	identityboolpolicy "github.com/LFDT-Panurus/panurus/token/services/identity/boolpolicy"
+	"github.com/LFDT-Panurus/panurus/token/services/logging"
 	"github.com/LFDT-Panurus/panurus/token/services/ttx/boolpolicy"
 	token2 "github.com/LFDT-Panurus/panurus/token/token"
+	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -169,4 +172,55 @@ func TestEscrowAuth_IsMine_AllComponentsMine(t *testing.T) {
 	assert.Contains(t, ids, "policyw1")
 	assert.Contains(t, ids, "policyw2")
 	assert.True(t, isMine)
+}
+
+// ---------------------------------------------------------------------------
+// Authorization order — regression for bound policy identities
+// ---------------------------------------------------------------------------
+
+// TestAuthorizationOrder_BoundPolicyIdentity checks that the drivers' chain
+// (common.NewStandardAuthorization) still attributes a policy token to the
+// member's policy wallet once its composite identity is bound to a wallet.
+func TestAuthorizationOrder_BoundPolicyIdentity(t *testing.T) {
+	tok := makePolicyToken(t, "$0", []byte("alice"))
+
+	memberOW := &drivermock.OwnerWallet{}
+	memberOW.IDReturns("w1")
+	boundOW := &drivermock.OwnerWallet{}
+	boundOW.IDReturns("baseWallet")
+
+	mockWS := &drivermock.WalletService{}
+	mockWS.OwnerWalletCalls(func(_ context.Context, id driver.WalletLookupID) (driver.OwnerWallet, error) {
+		raw, ok := id.([]byte)
+		if !ok {
+			return nil, errors.New("not found")
+		}
+		switch {
+		case string(raw) == "alice":
+			return memberOW, nil
+		case bytes.Equal(raw, tok.Owner):
+			// The bound composite identity resolves to the base wallet.
+			return boundOW, nil
+		}
+
+		return nil, errors.New("not found")
+	})
+
+	pp := &drivermock.PublicParameters{}
+	pp.AuditorsReturns(nil)
+
+	auth := common.NewStandardAuthorization(logging.MustGetLogger(), pp, mockWS)
+
+	walletID, ids, isMine := auth.IsMine(t.Context(), tok)
+	assert.True(t, isMine)
+	assert.Empty(t, walletID)
+	require.Len(t, ids, 1)
+	assert.Equal(t, "policyw1", ids[0])
+
+	// The wallet-based authorization alone would claim the token under the
+	// base wallet id with no ownership ids.
+	walletID, ids, isMine = common.NewTMSAuthorization(logging.MustGetLogger(), pp, mockWS).IsMine(t.Context(), tok)
+	assert.True(t, isMine)
+	assert.Equal(t, "baseWallet", walletID)
+	assert.Empty(t, ids)
 }

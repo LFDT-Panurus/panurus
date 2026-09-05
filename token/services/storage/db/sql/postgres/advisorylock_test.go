@@ -164,20 +164,19 @@ func TestAdvisoryLockFactory(t *testing.T) {
 	defer utils.IgnoreErrorFunc(db.Close)
 
 	ctx := context.Background()
-	lockID := int64(77777)
 
-	// Test factory function
-	factory := NewAdvisoryLockFactory()
+	// The factory binds its lock id at construction, so callers cannot pass one in.
+	factory := NewAdvisoryLockFactoryForID(int64(77777))
 	require.NotNil(t, factory)
 
 	// Use factory to create lock
-	lock, acquired, err := factory(ctx, db, lockID)
+	lock, acquired, err := factory(ctx, db)
 	require.NoError(t, err)
 	require.True(t, acquired)
 	require.NotNil(t, lock)
 
 	// Verify it's actually locked
-	lock2, acquired, err := factory(ctx, db, lockID)
+	lock2, acquired, err := factory(ctx, db)
 	require.NoError(t, err)
 	require.False(t, acquired)
 	require.Nil(t, lock2)
@@ -240,14 +239,13 @@ func TestRecoveryIntegration(t *testing.T) {
 	require.NoError(t, err)
 
 	// Test advisory lock acquisition through the store
-	lockID := int64(0x74746b7265636f76) // Default recovery lock ID
-	leadership, acquired, err := store.AcquireRecoveryLeadership(ctx, lockID)
+	leadership, acquired, err := store.AcquireRecoveryLeadership(ctx)
 	require.NoError(t, err)
 	require.True(t, acquired, "Should acquire leadership")
 	require.NotNil(t, leadership)
 
 	// Try to acquire again (should fail)
-	leadership2, acquired, err := store.AcquireRecoveryLeadership(ctx, lockID)
+	leadership2, acquired, err := store.AcquireRecoveryLeadership(ctx)
 	require.NoError(t, err)
 	require.False(t, acquired, "Should not acquire leadership when already held")
 	require.Nil(t, leadership2)
@@ -257,7 +255,7 @@ func TestRecoveryIntegration(t *testing.T) {
 	require.NoError(t, err)
 
 	// Should be able to acquire again
-	leadership3, acquired, err := store.AcquireRecoveryLeadership(ctx, lockID)
+	leadership3, acquired, err := store.AcquireRecoveryLeadership(ctx)
 	require.NoError(t, err)
 	require.True(t, acquired, "Should acquire leadership after release")
 	require.NotNil(t, leadership3)

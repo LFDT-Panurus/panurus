@@ -55,7 +55,7 @@ type AuditTransactionStore interface {
 
 	// AcquireRecoveryLeadership tries to acquire the PostgreSQL advisory lock backing the sweeper leader election.
 	// If acquired is false, leadership was not obtained and the returned lease must be nil.
-	AcquireRecoveryLeadership(ctx context.Context, lockID int64) (RecoveryLeadership, bool, error)
+	AcquireRecoveryLeadership(ctx context.Context) (RecoveryLeadership, bool, error)
 
 	// ClaimPendingTransactions atomically claims a batch of Pending transactions for recovery processing.
 	// Transactions whose recovery lease expired are eligible again.
@@ -64,7 +64,11 @@ type AuditTransactionStore interface {
 	ClaimPendingTransactions(ctx context.Context, params RecoveryClaimParams) ([]*RecoveryClaim, error)
 
 	// ReleaseRecoveryClaim clears the recovery claim metadata for the given transaction if owned by owner.
-	// The message parameter is stored for audit/debugging purposes.
+	// Unlike the owner-side TransactionStore, an implementation of this interface may
+	// deliberately ignore message rather than persist it: the audit trail's status_message
+	// is authoritative ledger-status text set via SetStatus, and a claim-release message is
+	// generic recovery-loop bookkeeping ("recovered successfully", "recovery failed: …") that
+	// would overwrite it. See postgres.AuditTransactionStore.ReleaseRecoveryClaim.
 	ReleaseRecoveryClaim(ctx context.Context, txID string, owner string, message string) error
 
 	// PrefixedTableName returns the formatted table name for the given logical table name,

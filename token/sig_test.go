@@ -125,12 +125,41 @@ func TestSignatureService_IsMe(t *testing.T) {
 		identityProvider: ip,
 	}
 
-	ip.IsMeReturns(true)
+	ip.IsMeReturns(true, nil)
 
 	id := []byte("identity")
-	isMe := service.IsMe(t.Context(), id)
+	isMe, err := service.IsMe(t.Context(), id)
 
+	require.NoError(t, err)
 	assert.True(t, isMe)
+}
+
+// TestSignatureService_IsMe_ErrorPropagated is a regression test for issue #2066: when the
+// underlying provider cannot determine ownership, SignatureService.IsMe must surface the error
+// rather than reporting a confident "not mine". The boolean must be ignored on error.
+func TestSignatureService_IsMe_ErrorPropagated(t *testing.T) {
+	ip := &mock.IdentityProvider{}
+	service := &SignatureService{deserializer: &mock.Deserializer{}, identityProvider: ip}
+
+	ip.IsMeReturns(false, assert.AnError)
+
+	isMe, err := service.IsMe(t.Context(), []byte("identity"))
+	require.Error(t, err, "a provider failure must be propagated, not flattened into a 'not mine'")
+	assert.False(t, isMe, "the boolean must not be trusted when an error is returned")
+}
+
+// TestSignatureService_AreMe_ErrorPropagated is a regression test for issue #2066: on a provider
+// failure AreMe must return the error alongside a nil slice, so a caller cannot mistake a
+// cache-only partial for "these and only these are mine".
+func TestSignatureService_AreMe_ErrorPropagated(t *testing.T) {
+	ip := &mock.IdentityProvider{}
+	service := &SignatureService{deserializer: &mock.Deserializer{}, identityProvider: ip}
+
+	ip.AreMeReturns(nil, assert.AnError)
+
+	hashes, err := service.AreMe(t.Context(), []byte("id1"), []byte("id2"))
+	require.Error(t, err, "a provider failure must be propagated")
+	assert.Nil(t, hashes, "the slice must be nil on error, not a partial answer")
 }
 
 // TestNewSignatureService verifies SignatureService constructor initializes fields correctly
@@ -181,10 +210,11 @@ func TestSignatureService_AreMe(t *testing.T) {
 	id2 := []byte("identity2")
 	expectedHashes := []string{"hash1", "hash2"}
 
-	ip.AreMeReturns(expectedHashes)
+	ip.AreMeReturns(expectedHashes, nil)
 
-	hashes := service.AreMe(t.Context(), id1, id2)
+	hashes, err := service.AreMe(t.Context(), id1, id2)
 
+	require.NoError(t, err)
 	assert.Equal(t, expectedHashes, hashes)
 	assert.Equal(t, 1, ip.AreMeCallCount())
 }

@@ -47,7 +47,7 @@ type TokenStore struct {
 	table                tokenTables
 	ci                   common3.CondInterpreter
 	notifier             driver.TokenNotifier
-	cleanupLeaderFactory func(context.Context, *sql.DB, int64) (driver.CleanupLeadership, bool, error)
+	cleanupLeaderFactory func(context.Context, *sql.DB) (driver.CleanupLeadership, bool, error)
 
 	sttMutex              sync.RWMutex
 	supportedTokenFormats []token.Format
@@ -68,7 +68,7 @@ type TokenStore struct {
 	balanceStmts PreparedStmtHolder[string]
 }
 
-func newTokenStore(readDB, writeDB *sql.DB, tables tokenTables, ci common3.CondInterpreter, notifier driver.TokenNotifier, cleanupLeaderFactory func(context.Context, *sql.DB, int64) (driver.CleanupLeadership, bool, error)) *TokenStore {
+func newTokenStore(readDB, writeDB *sql.DB, tables tokenTables, ci common3.CondInterpreter, notifier driver.TokenNotifier, cleanupLeaderFactory func(context.Context, *sql.DB) (driver.CleanupLeadership, bool, error)) *TokenStore {
 	ts := &TokenStore{
 		readDB:               readDB,
 		writeDB:              writeDB,
@@ -100,7 +100,7 @@ func NewTokenStoreWithNotifierAndCleanup(
 	tables TableNames,
 	ci common3.CondInterpreter,
 	notifier driver.TokenNotifier,
-	cleanupLeaderFactory func(context.Context, *sql.DB, int64) (driver.CleanupLeadership, bool, error),
+	cleanupLeaderFactory func(context.Context, *sql.DB) (driver.CleanupLeadership, bool, error),
 ) (*TokenStore, error) {
 	return newTokenStore(readDB, writeDB, tokenTables{
 		Tokens:           tables.Tokens,
@@ -1161,6 +1161,31 @@ func (db *TokenStore) PublicParams(ctx context.Context) ([]byte, error) {
 	return common.QueryUniqueContext[[]byte](ctx, db.readDB, query, args...)
 }
 
+// PublicParamsHashes returns the hashes of every public parameters version stored so far,
+// most recently stored first. StorePublicParams never overwrites an existing row, so this is
+// the full history of public parameters this node has observed.
+func (db *TokenStore) PublicParamsHashes(ctx context.Context) ([]tdriver.PPHash, error) {
+	query, args := q.Select().
+		FieldsByName("raw_hash").
+		From(q.Table(db.table.PublicParams)).
+		OrderBy(q.Desc(common3.FieldName("stored_at"))).
+		Format(db.ci)
+
+	logging.Debug(logger, query, args)
+	rows, err := db.readDB.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, errors.Wrapf(err, "error querying db")
+	}
+	defer Close(rows)
+	if err := rows.Err(); err != nil {
+		return nil, errors.Wrapf(err, "error querying db")
+	}
+
+	it := common.NewIterator(rows, func(h *tdriver.PPHash) error { return rows.Scan(h) })
+
+	return iterators.ReadAllValues(it)
+}
+
 func (db *TokenStore) PublicParamsByHash(ctx context.Context, rawHash tdriver.PPHash) ([]byte, error) {
 	query, args := q.Select().
 		FieldsByName("raw").
@@ -1359,12 +1384,12 @@ func (db *TokenStore) MarkTokenCleaned(ctx context.Context, txID string, index u
 // In distributed deployments (PostgreSQL), this uses advisory locks to ensure only one instance performs cleanup.
 // AcquireCleanupLeadership returns a leadership handle for cleanup sweeping.
 // When no leader factory is configured, leadership is granted locally.
-func (db *TokenStore) AcquireCleanupLeadership(ctx context.Context, lockID int64) (driver.CleanupLeadership, bool, error) {
+func (db *TokenStore) AcquireCleanupLeadership(ctx context.Context) (driver.CleanupLeadership, bool, error) {
 	if db.cleanupLeaderFactory == nil {
 		return noopCleanupLeadership{}, true, nil
 	}
 
-	return db.cleanupLeaderFactory(ctx, db.writeDB, lockID)
+	return db.cleanupLeaderFactory(ctx, db.writeDB)
 }
 
 // noopCleanupLeadership is a no-op implementation for non-distributed deployments
@@ -1636,6 +1661,11 @@ func (t *TokenTransaction) StoreToken(ctx context.Context, tr driver.TokenRecord
 	if len(tr.OwnerWalletID) == 0 && len(owners) == 0 && tr.Owner {
 		return errors.Errorf("no owners specified [%s]", string(debug.Stack()))
 	}
+	// The amount column is NUMERIC(78, 0) NOT NULL: refuse a missing or over-range value
+	// rather than storing one that disagrees with the authoritative quantity column.
+	if err := validateTokenAmount(tr.Amount); err != nil {
+		return errors.WithMessagef(err, "invalid amount for token [%s:%d]", tr.TxID, tr.Index)
+	}
 
 	// Store token
 	query, args := q.InsertInto(t.table.Tokens).
@@ -1653,7 +1683,7 @@ func (t *TokenTransaction) StoreToken(ctx context.Context, tr driver.TokenRecord
 			tr.LedgerMetadata,
 			tr.Type,
 			tr.Quantity,
-			tr.Amount,
+			tr.Amount.String(),
 			time.Now().UTC(),
 			tr.Owner,
 			tr.Auditor,

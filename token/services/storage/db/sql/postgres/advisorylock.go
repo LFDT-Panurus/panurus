@@ -12,6 +12,7 @@ import (
 
 	"github.com/LFDT-Panurus/panurus/token/services/logging"
 	tokensdriver "github.com/LFDT-Panurus/panurus/token/services/storage/db/driver"
+	common5 "github.com/LFDT-Panurus/panurus/token/services/storage/db/sql/common"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/common/utils"
 )
@@ -103,9 +104,19 @@ func (l *AdvisoryLock) Close() error {
 	return nil
 }
 
-// NewAdvisoryLockFactory returns a recovery leader factory function that uses PostgreSQL advisory locks.
-func NewAdvisoryLockFactory() func(context.Context, *sql.DB, int64) (tokensdriver.RecoveryLeadership, bool, error) {
-	return func(ctx context.Context, db *sql.DB, lockID int64) (tokensdriver.RecoveryLeadership, bool, error) {
+// recoveryLockID derives the advisory lock id guarding a TMS's recovery sweep from its fully
+// qualified requests table name, which already carries the network, channel and namespace. The
+// table prefix alone is not enough: TMSes normally share one persistence configuration and are
+// distinguished only by those params, so a prefix-derived id would collide across them.
+func recoveryLockID(tables common5.TableNames) int64 {
+	return createTableLockID(tables.Requests + "_recovery")
+}
+
+// NewAdvisoryLockFactoryForID returns a recovery leader factory bound to lockID. Binding the id
+// at construction keeps it out of the call path, so no caller has to know how a lock id is made
+// unique and none can accidentally pass one that is shared with another TMS.
+func NewAdvisoryLockFactoryForID(lockID int64) func(context.Context, *sql.DB) (tokensdriver.RecoveryLeadership, bool, error) {
+	return func(ctx context.Context, db *sql.DB) (tokensdriver.RecoveryLeadership, bool, error) {
 		lock, acquired, err := NewAdvisoryLock(ctx, db, lockID)
 		if err != nil || !acquired {
 			return nil, acquired, err
@@ -115,9 +126,23 @@ func NewAdvisoryLockFactory() func(context.Context, *sql.DB, int64) (tokensdrive
 	}
 }
 
-// NewCleanupLeaderFactory returns a cleanup leader factory function that uses PostgreSQL advisory locks.
-func NewCleanupLeaderFactory() func(context.Context, *sql.DB, int64) (tokensdriver.CleanupLeadership, bool, error) {
-	return func(ctx context.Context, db *sql.DB, lockID int64) (tokensdriver.CleanupLeadership, bool, error) {
+// tokenLockCleanupLockID derives the advisory lock id guarding a TMS's token lock cleanup sweep
+// from its fully qualified token locks table name. Same reasoning as recoveryLockID.
+func tokenLockCleanupLockID(tables common5.TableNames) int64 {
+	return createTableLockID(tables.TokenLocks + "_cleanup")
+}
+
+// keystoreCleanupLockID derives the advisory lock id guarding a TMS's keystore cleanup sweep from
+// its fully qualified token SKI cleanup table name, for the same reason as recoveryLockID: the
+// table prefix alone is shared by every TMS on one persistence configuration.
+func keystoreCleanupLockID(tables common5.TableNames) int64 {
+	return createTableLockID(tables.TokenSKICleanups + "_cleanup")
+}
+
+// NewCleanupLeaderFactoryForID returns a cleanup leader factory bound to lockID, so the id is
+// fixed when the store is built rather than supplied per call.
+func NewCleanupLeaderFactoryForID(lockID int64) func(context.Context, *sql.DB) (tokensdriver.CleanupLeadership, bool, error) {
+	return func(ctx context.Context, db *sql.DB) (tokensdriver.CleanupLeadership, bool, error) {
 		lock, acquired, err := NewAdvisoryLock(ctx, db, lockID)
 		if err != nil || !acquired {
 			return nil, acquired, err

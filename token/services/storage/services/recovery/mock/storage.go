@@ -12,11 +12,10 @@ import (
 )
 
 type Storage struct {
-	AcquireRecoveryLeadershipStub        func(context.Context, int64) (recovery.Leadership, bool, error)
+	AcquireRecoveryLeadershipStub        func(context.Context) (recovery.Leadership, bool, error)
 	acquireRecoveryLeadershipMutex       sync.RWMutex
 	acquireRecoveryLeadershipArgsForCall []struct {
 		arg1 context.Context
-		arg2 int64
 	}
 	acquireRecoveryLeadershipReturns struct {
 		result1 recovery.Leadership
@@ -77,19 +76,18 @@ type Storage struct {
 	invocationsMutex sync.RWMutex
 }
 
-func (fake *Storage) AcquireRecoveryLeadership(arg1 context.Context, arg2 int64) (recovery.Leadership, bool, error) {
+func (fake *Storage) AcquireRecoveryLeadership(arg1 context.Context) (recovery.Leadership, bool, error) {
 	fake.acquireRecoveryLeadershipMutex.Lock()
 	ret, specificReturn := fake.acquireRecoveryLeadershipReturnsOnCall[len(fake.acquireRecoveryLeadershipArgsForCall)]
 	fake.acquireRecoveryLeadershipArgsForCall = append(fake.acquireRecoveryLeadershipArgsForCall, struct {
 		arg1 context.Context
-		arg2 int64
-	}{arg1, arg2})
+	}{arg1})
 	stub := fake.AcquireRecoveryLeadershipStub
 	fakeReturns := fake.acquireRecoveryLeadershipReturns
-	fake.recordInvocation("AcquireRecoveryLeadership", []interface{}{arg1, arg2})
+	fake.recordInvocation("AcquireRecoveryLeadership", []interface{}{arg1})
 	fake.acquireRecoveryLeadershipMutex.Unlock()
 	if stub != nil {
-		return stub(arg1, arg2)
+		return stub(arg1)
 	}
 	if specificReturn {
 		return ret.result1, ret.result2, ret.result3
@@ -103,17 +101,17 @@ func (fake *Storage) AcquireRecoveryLeadershipCallCount() int {
 	return len(fake.acquireRecoveryLeadershipArgsForCall)
 }
 
-func (fake *Storage) AcquireRecoveryLeadershipCalls(stub func(context.Context, int64) (recovery.Leadership, bool, error)) {
+func (fake *Storage) AcquireRecoveryLeadershipCalls(stub func(context.Context) (recovery.Leadership, bool, error)) {
 	fake.acquireRecoveryLeadershipMutex.Lock()
 	defer fake.acquireRecoveryLeadershipMutex.Unlock()
 	fake.AcquireRecoveryLeadershipStub = stub
 }
 
-func (fake *Storage) AcquireRecoveryLeadershipArgsForCall(i int) (context.Context, int64) {
+func (fake *Storage) AcquireRecoveryLeadershipArgsForCall(i int) context.Context {
 	fake.acquireRecoveryLeadershipMutex.RLock()
 	defer fake.acquireRecoveryLeadershipMutex.RUnlock()
 	argsForCall := fake.acquireRecoveryLeadershipArgsForCall[i]
-	return argsForCall.arg1, argsForCall.arg2
+	return argsForCall.arg1
 }
 
 func (fake *Storage) AcquireRecoveryLeadershipReturns(result1 recovery.Leadership, result2 bool, result3 error) {
