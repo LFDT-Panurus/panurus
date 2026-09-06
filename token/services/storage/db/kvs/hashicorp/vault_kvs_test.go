@@ -70,7 +70,8 @@ func testRound(t *testing.T, client *vault.Client) {
 	require.NoError(t, err)
 	assert.Equal(t, &stuff{"claws", 2}, val)
 
-	results := kvstore.GetExisting(ctx, k1, k2)
+	results, err := kvstore.GetExisting(ctx, k1, k2)
+	require.NoError(t, err)
 	assert.Len(t, results, 2)
 
 	it, err := kvstore.GetByPartialCompositeID(ctx, "k", []string{})
@@ -96,7 +97,8 @@ func testRound(t *testing.T, client *vault.Client) {
 	require.NoError(t, kvstore.Delete(t.Context(), k2))
 	assert.False(t, kvstore.Exists(ctx, k2))
 
-	results = kvstore.GetExisting(ctx, k1, k2)
+	results, err = kvstore.GetExisting(ctx, k1, k2)
+	require.NoError(t, err)
 	assert.Len(t, results, 1)
 	assert.Equal(t, results[0], k1)
 
@@ -152,7 +154,8 @@ func testRound(t *testing.T, client *vault.Client) {
 	require.NoError(t, kvstore.Get(ctx, k, val2))
 	assert.Equal(t, val, val2)
 
-	results = kvstore.GetExisting(ctx, k)
+	results, err = kvstore.GetExisting(ctx, k)
+	require.NoError(t, err)
 	assert.Len(t, results, 1)
 
 	it, err = kvstore.GetByPartialCompositeID(ctx, k, []string{})
@@ -208,7 +211,8 @@ func testRound(t *testing.T, client *vault.Client) {
 	k4, _ := kvs.CreateCompositeKey("k", []string{"4"})
 	require.NoError(t, kvstore.Delete(t.Context(), k4))
 
-	results = kvstore.GetExisting(ctx)
+	results, err = kvstore.GetExisting(ctx)
+	require.NoError(t, err)
 	assert.Empty(t, results)
 }
 
@@ -355,7 +359,10 @@ func testWithVaultDown(t *testing.T, client *vault.Client) {
 
 	assert.False(t, kvstore.Exists(ctx, k2))
 
-	results := kvstore.GetExisting(ctx, k1, k2)
+	// With the store down, existence cannot be determined: GetExisting must surface the
+	// error rather than fold the unreachable ids into an empty "none exist" slice (#2066).
+	results, err := kvstore.GetExisting(ctx, k1, k2)
+	assert.Error(t, err)
 	assert.Empty(t, results)
 
 	assert.Error(t, kvstore.Delete(t.Context(), k1))

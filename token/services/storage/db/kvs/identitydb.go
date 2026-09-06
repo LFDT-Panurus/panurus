@@ -294,22 +294,38 @@ func (s *IdentityStore) StoreSignerInfo(ctx context.Context, id tdriver.Identity
 
 func (s *IdentityStore) GetExistingSignerInfo(ctx context.Context, identities ...tdriver.Identity) ([]string, error) {
 	keys := make([]string, len(identities))
+	// The driver contract (and the SQL backend) reports existence by identity hash,
+	// not by the internal composite key, so keep a key -> hash mapping to translate
+	// GetExisting's result back.
+	keyToHash := make(map[string]string, len(identities))
 	for i, id := range identities {
+		idHash := id.UniqueID()
 		k, err := kvs.CreateCompositeKey(
 			IdentityDBPrefix,
 			[]string{
 				IdentityDBSigner,
 				s.tmsID.String(),
-				id.UniqueID(),
+				idHash,
 			},
 		)
 		if err != nil {
 			return nil, err
 		}
 		keys[i] = k
+		keyToHash[k] = idHash
 	}
 
-	return s.kvs.GetExisting(ctx, keys...), nil
+	existingKeys, err := s.kvs.GetExisting(ctx, keys...)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed checking existing signer info")
+	}
+
+	result := make([]string, 0, len(existingKeys))
+	for _, k := range existingKeys {
+		result = append(result, keyToHash[k])
+	}
+
+	return result, nil
 }
 
 func (s *IdentityStore) SignerInfoExists(ctx context.Context, id []byte) (bool, error) {
