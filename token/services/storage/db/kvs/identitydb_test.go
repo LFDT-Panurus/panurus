@@ -7,10 +7,13 @@ SPDX-License-Identifier: Apache-2.0
 package kvs
 
 import (
+	"context"
 	"testing"
 
 	"github.com/LFDT-Panurus/panurus/token"
+	tdriver "github.com/LFDT-Panurus/panurus/token/driver"
 	"github.com/LFDT-Panurus/panurus/token/services/storage"
+	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -95,4 +98,55 @@ func TestIdentityStoreGetConfigurationID(t *testing.T) {
 	all, err := db.ConfigurationsByID(ctx, first.ID, first.Type)
 	require.NoError(t, err)
 	assert.Equal(t, []storage.IdentityConfiguration{first}, all)
+}
+
+// errKVS wraps a real KVS but forces GetExisting to fail, standing in for a briefly
+// unavailable backing store.
+type errKVS struct {
+	KVS
+	err error
+}
+
+func (e *errKVS) GetExisting(context.Context, ...string) ([]string, error) {
+	return nil, e.err
+}
+
+// TestIdentityStore_GetExistingSignerInfo_ReturnsHashesNotKeys pins the driver contract for the
+// KVS backend: existence is reported by identity hash (as the SQL backend does), not by the
+// internal composite key. Before the key -> hash mapping fix, GetExisting's composite keys
+// leaked out and Provider.areMe could never match them against an identity's UniqueID.
+func TestIdentityStore_GetExistingSignerInfo_ReturnsHashesNotKeys(t *testing.T) {
+	backend, err := NewInMemory()
+	require.NoError(t, err)
+	tmsID := token.TMSID{Network: "apple", Channel: "pears", Namespace: "strawberries"}
+	db := NewIdentityStore(backend, tmsID)
+	ctx := t.Context()
+
+	id := tdriver.Identity("owned-identity")
+	require.NoError(t, db.StoreSignerInfo(ctx, id, []byte("signer-info")))
+
+	existing, err := db.GetExistingSignerInfo(ctx, id)
+	require.NoError(t, err)
+	require.Equal(t, []string{id.UniqueID()}, existing,
+		"GetExistingSignerInfo must report the identity hash, not the internal composite key")
+
+	// an unknown identity is a confirmed absence, not an error
+	missing, err := db.GetExistingSignerInfo(ctx, tdriver.Identity("unknown"))
+	require.NoError(t, err)
+	assert.Empty(t, missing)
+}
+
+// TestIdentityStore_GetExistingSignerInfo_PropagatesStoreError is a regression test for the
+// KVS-backed half of issue #2066: a backing-store failure while checking signer existence must be
+// surfaced, not flattened into a shorter/empty slice that Provider.areMe would read as "not mine"
+// for an owned identity.
+func TestIdentityStore_GetExistingSignerInfo_PropagatesStoreError(t *testing.T) {
+	backend, err := NewInMemory()
+	require.NoError(t, err)
+	tmsID := token.TMSID{Network: "apple", Channel: "pears", Namespace: "strawberries"}
+	db := NewIdentityStore(&errKVS{KVS: backend, err: errors.New("boom")}, tmsID)
+
+	existing, err := db.GetExistingSignerInfo(t.Context(), tdriver.Identity("owned-but-unreachable"))
+	require.Error(t, err, "a store failure must be propagated, not reported as a confident 'not mine'")
+	assert.Nil(t, existing, "no slice may be returned when existence could not be determined")
 }
