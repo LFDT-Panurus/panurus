@@ -571,3 +571,33 @@ The recovery service is part of the **Storage Service** and is instantiated by t
 For detailed information about the recovery mechanism, see:
 - [Storage Service - Transaction Recovery](storage.md#transaction-recovery-service)
 - [Configuration Guide - Recovery Parameters](../configuration.md), Section `Optional: token.tms.<name>.services.network.fabric.recovery`
+
+### Interactive Protocol Timeout Budget
+
+`ReceiveTransactionView` (and the `boolpolicy`/`multisig` spend responders) wait up to a fixed
+timeout for the full endorsement round-trip to complete. That budget must exceed the sum of
+every wait it depends on, or the responder times out on a transaction that was still legitimately
+in progress.
+
+**Invariant:** `ReceiveTransactionView` (and the `boolpolicy`/`multisig` spend responders) wait up to a fixed
+timeout for the full endorsement round-trip to complete. That budget must exceed the sum of
+every wait it depends on, or the responder times out on a transaction that was still legitimately
+in progress.
+
+**Invariant:** `responder receive > sig fan-out + audit + approval + slack`
+
+| Leg | Constant | Value |
+|---|---|---|
+| Responder receive (the budget) | `DefaultReceiveTransactionTimeout` (`receivetx.go`) | 6 min |
+| Signature fan-out (per endorser) | `SigFanOutTimeout` (`endorse.go`) | 1 min |
+| Auditor signature | `AuditTimeout` (`auditor.go`) | 1 min |
+| FSC-endorsement approval | `fsc.ApprovalTimeout` (`network/fabric/endorsement/fsc/initiator.go`) | 2 min |
+
+**Known issue:** The budget carries an explicit 1-minute slack margin above the sum of its legs (1 min sig
+fan-out + 1 min audit + 2 min approval = 4 min, against a 6 min budget). The unit test in
+`receivetx_timeout_test.go` asserts this invariant directly against the real constants, so any
+change that erodes the margin is caught by CI rather than by hand. See issue #1266.
+
+The budget is intentionally a single named constant rather than an operator-configurable value:
+exposing it independently invites recreating this same inversion. If the budget needs to be
+tunable, it should be one endorsement budget per TMS with the individual waits derived from it.

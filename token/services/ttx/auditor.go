@@ -166,6 +166,9 @@ func newAuditingViewInitiator(tx *Transaction, local, skipAuditorSignatureVerifi
 	return &AuditingViewInitiator{tx: tx, local: local, skipAuditorSignatureVerification: skipAuditorSignatureVerification}
 }
 
+// AuditTimeout bounds how long the initiator waits for the auditor's signature.
+const AuditTimeout = 1 * time.Minute
+
 // Call initiates an auditing session (local or remote), sends the transaction to the auditor,
 // receives the auditor's signature, verifies it, and adds it to the transaction.
 // Returns the session used for communication.
@@ -186,7 +189,7 @@ func (a *AuditingViewInitiator) Call(context view.Context) (any, error) {
 	logger.DebugfContext(context.Context(), "Receiving signature for [%s]", a.tx.ID())
 
 	var signaturePayload SignaturePayload
-	if err := session2.NewTypedSession(context, session).ReceiveTypedWithTimeout(TypeSignature, &signaturePayload, time.Minute); err != nil {
+	if err := session2.NewTypedSession(context, session).ReceiveTypedWithTimeout(TypeSignature, &signaturePayload, AuditTimeout); err != nil {
 		logger.ErrorfContext(context.Context(), "failed to read audit event: %s", err)
 
 		return nil, errors.WithMessagef(err, "failed to read audit event")
