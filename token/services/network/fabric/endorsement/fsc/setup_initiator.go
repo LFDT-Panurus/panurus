@@ -7,7 +7,6 @@ package fsc
 
 import (
 	"encoding/json"
-	"time"
 
 	"github.com/LFDT-Panurus/panurus/token"
 	"github.com/LFDT-Panurus/panurus/token/services/network/driver"
@@ -104,7 +103,7 @@ func (s *SetupPublicParamsView) Call(ctx view.Context) (any, error) {
 	}
 
 	logger.DebugfContext(ctx.Context(), "request endorsement on tx [%s] to [%v]...", tx.ID(), s.Endorsers)
-	err = s.EndorserService.CollectEndorsements(ctx, tx, 2*time.Minute, s.Endorsers...)
+	err = s.EndorserService.CollectEndorsements(ctx, tx, ApprovalTimeout, s.Endorsers...)
 	if err != nil {
 		return nil, errors.WithMessagef(err, "failed to collect endorsements")
 	}

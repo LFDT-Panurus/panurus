@@ -575,28 +575,26 @@ For detailed information about the recovery mechanism, see:
 ### Interactive Protocol Timeout Budget
 
 `ReceiveTransactionView` (and the `boolpolicy`/`multisig` spend responders) wait up to a fixed
-timeout for the full endorsement round-trip to complete. That budget must exceed the sum of
+timeout for the full endorsement round-trip to complete. That budget must be at least the sum of
 every wait it depends on, or the responder times out on a transaction that was still legitimately
 in progress.
 
-**Invariant:** `ReceiveTransactionView` (and the `boolpolicy`/`multisig` spend responders) wait up to a fixed
-timeout for the full endorsement round-trip to complete. That budget must exceed the sum of
-every wait it depends on, or the responder times out on a transaction that was still legitimately
-in progress.
-
-**Invariant:** `responder receive > sig fan-out + audit + approval + slack`
+**Invariant:** `responder receive >= signature collection + audit + approval + slack`
 
 | Leg | Constant | Value |
 |---|---|---|
 | Responder receive (the budget) | `DefaultReceiveTransactionTimeout` (`receivetx.go`) | 6 min |
-| Signature fan-out (per endorser) | `SigFanOutTimeout` (`endorse.go`) | 1 min |
+| Signature collection (fan-out, all endorsers) | `AnswerCollectionTimeout` (`collectendorsements.go`) | 2 min |
 | Auditor signature | `AuditTimeout` (`auditor.go`) | 1 min |
 | FSC-endorsement approval | `fsc.ApprovalTimeout` (`network/fabric/endorsement/fsc/initiator.go`) | 2 min |
 
-**Known issue:** The budget carries an explicit 1-minute slack margin above the sum of its legs (1 min sig
-fan-out + 1 min audit + 2 min approval = 4 min, against a 6 min budget). The unit test in
-`receivetx_timeout_test.go` asserts this invariant directly against the real constants, so any
-change that erodes the margin is caught by CI rather than by hand. See issue #1266.
+The unit test in `receivetx_timeout_test.go` asserts this invariant directly against the real
+constants — `AnswerCollectionTimeout` + `AuditTimeout` + `fsc.ApprovalTimeout` + `requiredSlack`,
+so any change that erodes the margin is caught by CI rather than by hand. The legs sum to 5
+minutes (2 + 1 + 2), and `requiredSlack` adds a 1-minute floor on top, landing exactly on the
+6-minute budget — there is no headroom beyond the declared slack. The test therefore checks
+`budget >= requiredMinimum`, not a strict inequality: the invariant is that the budget must never
+fall *below* this floor, not that it must exceed it with room to spare. See issue #1266.
 
 The budget is intentionally a single named constant rather than an operator-configurable value:
 exposing it independently invites recreating this same inversion. If the budget needs to be
