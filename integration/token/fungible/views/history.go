@@ -17,10 +17,49 @@ import (
 	"github.com/LFDT-Panurus/panurus/token/services/ttx"
 	token2 "github.com/LFDT-Panurus/panurus/token/token"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
+	driver2 "github.com/hyperledger-labs/fabric-smart-client/platform/common/driver"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/common/utils/assert"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/common/utils/collections/iterators"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/view"
 )
+
+// historyPageSize is the number of rows fetched per page when listing all
+// transactions. It must stay <= the store's max page size.
+const historyPageSize = 100
+
+// collectAllTransactions pages through queryPage (one page per call) and returns
+// every record. queryPage runs the underlying query for the given pagination.
+//
+// The storage layer now rejects unlimited queries, so these trusted views can no
+// longer fetch everything in one call. This helper is only that adaptation: it
+// still accumulates the full result set in memory, so it is not itself a memory
+// safeguard. The actual DoS protection (rejecting unlimited scans, hard LIMITs)
+// lives in the storage layer; these views legitimately need the complete list.
+func collectAllTransactions(queryPage func(driver2.Pagination) (iterators.Iterator[*ttxdb.TransactionRecord], error)) ([]*ttxdb.TransactionRecord, error) {
+	var page driver2.Pagination
+	page, err := pagination.Offset(0, historyPageSize)
+	if err != nil {
+		return nil, errors.Wrapf(err, "failed to create pagination")
+	}
+	var all []*ttxdb.TransactionRecord
+	for {
+		items, err := queryPage(page)
+		if err != nil {
+			return nil, errors.Wrapf(err, "failed querying transactions")
+		}
+		records, err := iterators.ReadAllPointers(items)
+		if err != nil {
+			return nil, errors.Wrapf(err, "failed reading transactions")
+		}
+		all = append(all, records...)
+		if len(records) < historyPageSize {
+			return all, nil
+		}
+		if page, err = page.Next(); err != nil {
+			return nil, errors.Wrapf(err, "failed advancing pagination")
+		}
+	}
+}
 
 // ListIssuedTokens contains the input to query the list of issued tokens
 type ListIssuedTokens struct {
@@ -143,12 +182,14 @@ func (p *ListAuditedTransactionsView) Call(context view.Context) (any, error) {
 		return nil, errors.Wrapf(err, "failed to get auditor instance")
 	}
 
-	it, err := auditor.Transactions(context.Context(), ttxdb.QueryTransactionsParams{From: p.From, To: p.To, SearchDirection: p.SearchDirection}, pagination.None())
-	if err != nil {
-		return nil, errors.Wrapf(err, "failed querying transactions")
-	}
+	return collectAllTransactions(func(page driver2.Pagination) (iterators.Iterator[*ttxdb.TransactionRecord], error) {
+		it, err := auditor.Transactions(context.Context(), ttxdb.QueryTransactionsParams{From: p.From, To: p.To, SearchDirection: p.SearchDirection}, page)
+		if err != nil {
+			return nil, err
+		}
 
-	return iterators.ReadAllPointers(it.Items)
+		return it.Items, nil
+	})
 }
 
 type ListAuditedTransactionsViewFactory struct{}
@@ -184,21 +225,24 @@ func (p *ListAcceptedTransactionsView) Call(context view.Context) (any, error) {
 	tms, err := token.GetManagementService(context, ServiceOpts(p.TMSID)...)
 	assert.NoError(err, "failed getting management service")
 	owner := ttx.NewOwner(context, tms)
-	it, err := owner.Transactions(context.Context(), ttxdb.QueryTransactionsParams{
-		SenderWallet:    p.SenderWallet,
-		RecipientWallet: p.RecipientWallet,
-		From:            p.From,
-		To:              p.To,
-		ActionTypes:     p.ActionTypes,
-		Statuses:        p.Statuses,
-		IDs:             p.IDs,
-		SearchDirection: p.SearchDirection,
-	}, pagination.None())
-	if err != nil {
-		return nil, errors.Wrapf(err, "failed querying transactions")
-	}
 
-	return iterators.ReadAllPointers(it.Items)
+	return collectAllTransactions(func(page driver2.Pagination) (iterators.Iterator[*ttxdb.TransactionRecord], error) {
+		it, err := owner.Transactions(context.Context(), ttxdb.QueryTransactionsParams{
+			SenderWallet:    p.SenderWallet,
+			RecipientWallet: p.RecipientWallet,
+			From:            p.From,
+			To:              p.To,
+			ActionTypes:     p.ActionTypes,
+			Statuses:        p.Statuses,
+			IDs:             p.IDs,
+			SearchDirection: p.SearchDirection,
+		}, page)
+		if err != nil {
+			return nil, err
+		}
+
+		return it.Items, nil
+	})
 }
 
 type ListAcceptedTransactionsViewFactory struct{}

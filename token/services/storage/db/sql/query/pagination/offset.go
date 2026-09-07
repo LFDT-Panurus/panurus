@@ -72,6 +72,9 @@ func (p *offset) GoBack(numOfpages int) (driver.Pagination, error) {
 func (p *offset) Prev() (driver.Pagination, error) { return p.GoBack(1) }
 func (p *offset) Next() (driver.Pagination, error) { return p.GoForward(1) }
 
+// pageSize implements pageSized so ValidateLimited can bound the page uniformly.
+func (p *offset) pageSize() int { return p.PageSize }
+
 func (o *offset) Equal(other driver.Pagination) bool {
 	otherOffset, ok := other.(*offset)
 	if !ok {

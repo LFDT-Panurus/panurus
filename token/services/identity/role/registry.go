@@ -184,25 +184,80 @@ func (r *Registry) Lookup(ctx context.Context, id driver.WalletLookupID) (driver
 	if err != nil {
 		r.Logger.Errorf("failed to map wallet [%T] to identity [%s], use a fallback strategy", id, err)
 		fail := true
-		// give it a second change
+		// A mapping error means the resolver "couldn't check" (e.g. a speculative,
+		// storage-touching IsMe probe failed), not that the wallet is "not found" —
+		// a not-found resolution returns no error. Try to recover from state that does
+		// not depend on the failed check before giving up.
 		passedIdentity, ok := toViewIdentity(id)
 		if ok {
 			r.Logger.DebugfContext(ctx, "lookup failed, check if there is a wallet for identity [%s]", passedIdentity)
 			// is this identity registered
 			res := r.GetWalletID(ctx, passedIdentity)
-			if !res.authoritative() {
-				// A storage failure — or a resolution that never went through GetWalletID —
-				// leaves the binding unknown; it must not be treated as "not registered", or
-				// a transient blip would fall through to wallet creation and duplicate state.
-				return nil, nil, "", res.abortError(id)
-			}
 			if res.Bound() {
 				r.Logger.DebugfContext(ctx, "lookup failed, there is a wallet for identity [%s]: [%s]", passedIdentity, res.WalletID)
 				// we got a hit
 				walletID = res.WalletID
 				ident = passedIdentity
 				fail = false
+			} else {
+				// Bound is ruled out: GetWalletID either failed (a storage blip, the
+				// same failure that produced the mapping error) or answered Unbound.
+				candidate := string(passedIdentity)
+				r.WalletMu.RLock()
+				cached := r.Wallets[candidate] != nil
+				r.WalletMu.RUnlock()
+				switch {
+				case cached:
+					// Recoverable directly from the in-memory Wallets cache under the raw
+					// identity string — it does not touch the failed storage, exactly as the
+					// pre-error-propagation fall-through did.
+					r.Logger.DebugfContext(ctx, "lookup failed, but identity [%s] is cached under [%s]", passedIdentity, candidate)
+					walletID = candidate
+					ident = passedIdentity
+					fail = false
+				case res.Unbound():
+					// The wallet store answered authoritatively that nothing is bound, so the
+					// binding state is known despite the mapping error (which came from the
+					// separate IsMe probe, not this healthy lookup). Fall through to the
+					// identity-info resolution below under the raw identity, exactly as a
+					// string label does (see the branch below) and as the pre-error-propagation
+					// code did. Without this the []byte and string lookup shapes disagree: the
+					// former hard-fails while the latter resolves. It is safe w.r.t. issue #2063
+					// precisely because Unbound is authoritative — a transient blip surfaces as
+					// a non-authoritative status and is caught by the branch below instead.
+					//
+					// As with the string-label branch below, if resolution then succeeds this
+					// lookup succeeds and the mapping error (the IsMe probe failure) is not
+					// surfaced; it is reported only if resolution also fails, via the joined
+					// cause at the terminal return.
+					r.Logger.DebugfContext(ctx, "lookup failed, but wallet store reports identity [%s] unbound; retry identity-info resolution", passedIdentity)
+					walletID = candidate
+					ident = passedIdentity
+					fail = false
+				case !res.authoritative():
+					// A storage failure — or a resolution that never went through
+					// GetWalletID — leaves the binding unknown, and nothing is cached to
+					// recover from. It must not be treated as "not registered", or a
+					// transient blip would fall through to wallet creation and duplicate
+					// state (issue #2063).
+					return nil, nil, "", res.abortError(id)
+				}
 			}
+		} else if label, isString := id.(string); isString && len(label) != 0 {
+			// A string label can hit the in-memory Registry.Wallets cache directly,
+			// without the resolution that just failed. Fall back to the label as the
+			// wallet identifier, exactly as a "not a local member" resolution would
+			// have, and let the cache lookup below decide whether it actually exists.
+			//
+			// Note the deliberate asymmetry with the identity path above: if the label
+			// then resolves (from cache or via GetIdentityInfo), this lookup succeeds and
+			// the mapping error — including an IsMe/storage failure — is intentionally NOT
+			// surfaced. That preserves label lookups across a transient blip rather than
+			// failing every one of them; the mapping error is surfaced only when resolution
+			// also fails, via the joined cause at the terminal return below.
+			r.Logger.DebugfContext(ctx, "lookup failed, retry string label [%s] against the registry cache", label)
+			walletID = label
+			fail = false
 		}
 		if fail {
 			return nil, nil, "", errors.WithMessagef(err, "failed to lookup wallet [%s]", id)
@@ -273,20 +328,34 @@ func (r *Registry) Lookup(ctx context.Context, id driver.WalletLookupID) (driver
 		}
 	}
 
+	// infoErr is kept separate from err so the identity-info failure does not clobber the
+	// mapping error captured above: on a fall-through recovery, err still holds the
+	// IsMe/storage error this lookup propagates, and both are worth surfacing.
+	var infoErr error
 	for _, walletIdentifier := range walletIdentifiers {
 		if len(walletIdentifier) == 0 {
 			continue
 		}
 		// give it a second chance
 		var idInfo idriver.IdentityInfo
-		idInfo, err = r.Role.GetIdentityInfo(ctx, walletIdentifier)
-		if err == nil {
+		idInfo, infoErr = r.Role.GetIdentityInfo(ctx, walletIdentifier)
+		if infoErr == nil {
 			r.Logger.DebugfContext(ctx, "identity info found at [%s]", logging.Prefix(walletIdentifier))
 
 			return nil, idInfo, walletIdentifier, nil
 		} else {
 			r.Logger.DebugfContext(ctx, "identity info not found at [%s]", logging.Prefix(walletIdentifier))
 		}
+	}
+
+	// Surface the underlying cause rather than a bare "failed to get wallet info". On a
+	// mapping-failure fall-through, err carries the IsMe/storage error this lookup exists to
+	// propagate (issue #2066); infoErr carries the last identity-info failure. Join whatever
+	// is present so the operator sees the root cause, and only wrap when non-nil — wrapping a
+	// nil cause would collapse to a nil error (errors.WithMessagef(nil, ...) == nil) and turn
+	// this failure path into a silent success.
+	if cause := errors.Join(err, infoErr); cause != nil {
+		return nil, nil, "", errors.WithMessagef(cause, "failed to get wallet info for [%s]", logging.Prefix(walletID))
 	}
 
 	return nil, nil, "", errors.Errorf(

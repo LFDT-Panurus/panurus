@@ -26,7 +26,7 @@ import (
 //go:generate counterfeiter -o mock/lm.go -fake-name LocalMembership . LocalMembership
 type LocalMembership interface {
 	DefaultNetworkIdentity() driver.Identity
-	IsMe(ctx context.Context, id driver.Identity) bool
+	IsMe(ctx context.Context, id driver.Identity) (bool, error)
 	GetIdentityInfo(ctx context.Context, label string, auditInfo []byte) (idriver.IdentityInfo, error)
 	GetIdentifier(ctx context.Context, id driver.Identity) (string, error)
 	GetDefaultIdentifier() string
@@ -170,7 +170,15 @@ func (r *Role) mapStringToID(ctx context.Context, v string) (driver.Identity, st
 		r.logger.DebugfContext(ctx, "passed node identity as view identity")
 
 		return nil, defaultIdentifier, nil
-	case r.localMembership.IsMe(ctx, labelAsIdentity):
+	}
+
+	// IsMe can fail (e.g. a storage error); a failure must not be silently treated as
+	// "not a local member", so propagate it instead of folding it into the fallthrough.
+	isMe, err := r.localMembership.IsMe(ctx, labelAsIdentity)
+	if err != nil {
+		return nil, "", errors.Wrapf(err, "failed checking if label [%s] is a local member", label)
+	}
+	if isMe {
 		r.logger.DebugfContext(ctx, "passed a local member")
 		id := labelAsIdentity
 		if idIdentifier, err := r.localMembership.GetIdentifier(ctx, id); err == nil {
@@ -220,7 +228,15 @@ func (r *Role) mapIdentityToID(ctx context.Context, v driver.Identity) (driver.I
 		r.logger.DebugfContext(ctx, "passed identity is the node identity (same bytes)")
 
 		return nil, defaultIdentifier, nil
-	case r.localMembership.IsMe(ctx, id):
+	}
+
+	// IsMe can fail (e.g. a storage error); a failure must not be silently treated as
+	// "not me", so propagate it instead of falling through to label resolution.
+	isMe, err := r.localMembership.IsMe(ctx, id)
+	if err != nil {
+		return nil, "", errors.Wrapf(err, "failed checking if identity [%s] is me", id)
+	}
+	if isMe {
 		r.logger.DebugfContext(ctx, "passed identity is me")
 		if idIdentifier, err := r.localMembership.GetIdentifier(ctx, id); err == nil {
 			return id, idIdentifier, nil

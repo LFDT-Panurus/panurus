@@ -72,8 +72,102 @@ func TestProvider_RegisterSigner_And_IsMe(t *testing.T) {
 	require.Equal(t, 1, storage.RegisterIdentityDescriptorCallCount())
 
 	// provider should now consider this identity as "me"
-	isMe := p.IsMe(t.Context(), id)
+	isMe, err := p.IsMe(t.Context(), id)
+	require.NoError(t, err)
 	assert.True(t, isMe)
+}
+
+// TestProvider_IsMe_StorageErrorIsPropagated is a regression test for issue #2066: a storage
+// failure while checking ownership of an uncached identity must be surfaced, not silently
+// flattened into a "not mine" answer.
+func TestProvider_IsMe_StorageErrorIsPropagated(t *testing.T) {
+	storage := &idmock.Storage{}
+	des := &idmock.Deserializer{}
+	nbs := &idmock.NetworkBinderService{}
+	eidu := &idmock.EnrollmentIDUnmarshaler{}
+
+	p := identity.NewProvider(logging.MustGetLogger(), storage, des, nbs, eidu, nil)
+
+	// The identity is not warm in the cache, so areMe must consult storage, which fails.
+	storage.GetExistingSignerInfoReturns(nil, errors.New("boom"))
+
+	id := driver.Identity("owned_but_uncached")
+
+	isMe, err := p.IsMe(t.Context(), id)
+	require.Error(t, err, "a storage failure must be propagated, not reported as a confident 'not mine'")
+	assert.False(t, isMe, "the boolean must not be trusted when an error is returned")
+
+	// On a storage failure AreMe returns a nil slice alongside the error, so callers cannot
+	// mistake "couldn't check" for "confirmed not mine".
+	me, err := p.AreMe(t.Context(), id)
+	require.Error(t, err)
+	assert.Nil(t, me)
+}
+
+// TestProvider_AreMe_StorageErrorIsPropagated verifies the fix for issue #2066: when some
+// identities are cache hits and the storage lookup for the rest fails, AreMe must surface the
+// error so the caller does not treat the cache-only partial slice as authoritative. On error the
+// returned slice is nil — the cache-only partial is deliberately not handed back, so a caller
+// cannot mistake "couldn't check" for "confirmed not mine".
+func TestProvider_AreMe_StorageErrorIsPropagated(t *testing.T) {
+	storage := &idmock.Storage{}
+	des := &idmock.Deserializer{}
+	nbs := &idmock.NetworkBinderService{}
+	eidu := &idmock.EnrollmentIDUnmarshaler{}
+
+	p := identity.NewProvider(logging.MustGetLogger(), storage, des, nbs, eidu, nil)
+
+	// Warm the cache for `cached` by registering a signer for it.
+	cached := driver.Identity("cached")
+	storage.RegisterIdentityDescriptorReturns(nil)
+	require.NoError(t, p.RegisterSigner(t.Context(), cached, &drvmock.Signer{}, &drvmock.Verifier{}, nil, false))
+
+	// The storage lookup for the remaining (uncached) identity fails.
+	storage.GetExistingSignerInfoReturns(nil, errors.New("boom"))
+
+	me, err := p.AreMe(t.Context(), cached, driver.Identity("uncached"))
+	require.Error(t, err, "a storage failure must be propagated so the cache-only partial is not trusted")
+	// On error the slice is nil: the cache-only partial (the cached hit) is deliberately not
+	// returned, so a caller cannot treat it as an authoritative answer.
+	assert.Nil(t, me)
+}
+
+// TestProvider_AreMe_DistinguishesAbortFromStorageFailure checks that AreMe tells a
+// caller-driven abort ("we gave up": a cancelled/deadline-exceeded context) apart from a
+// genuine backend failure ("storage is broken"). Both return a nil slice, but the context
+// error must stay errors.Is-checkable so a cancellation is not misread as a broken backend.
+func TestProvider_AreMe_DistinguishesAbortFromStorageFailure(t *testing.T) {
+	newProvider := func() (*identity.Provider, *idmock.Storage) {
+		storage := &idmock.Storage{}
+
+		return identity.NewProvider(
+			logging.MustGetLogger(), storage,
+			&idmock.Deserializer{}, &idmock.NetworkBinderService{}, &idmock.EnrollmentIDUnmarshaler{}, nil,
+		), storage
+	}
+	id := driver.Identity("uncached")
+
+	t.Run("context cancellation is 'we gave up'", func(t *testing.T) {
+		p, storage := newProvider()
+		storage.GetExistingSignerInfoReturns(nil, context.Canceled)
+
+		me, err := p.AreMe(t.Context(), id)
+		require.Error(t, err)
+		assert.Nil(t, me)
+		require.ErrorIs(t, err, context.Canceled, "context cancellation must stay checkable")
+		assert.Contains(t, err.Error(), "gave up")
+	})
+
+	t.Run("storage failure is 'storage is broken'", func(t *testing.T) {
+		p, storage := newProvider()
+		storage.GetExistingSignerInfoReturns(nil, errors.New("connection reset"))
+
+		me, err := p.AreMe(t.Context(), id)
+		require.Error(t, err)
+		assert.Nil(t, me)
+		require.NotErrorIs(t, err, context.Canceled)
+		assert.Contains(t, err.Error(), "storage")
+	})
 }
 
 func TestProvider_GetSigner_Deserializable(t *testing.T) {

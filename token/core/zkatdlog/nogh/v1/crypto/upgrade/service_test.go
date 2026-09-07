@@ -42,31 +42,31 @@ func TestTokensService_UpgradeSupportedTokenFormatList(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		ts, err := upgrade.NewService(nil, tt.maxPrecision, nil, nil)
+		ts, err := upgrade.NewService(nil, tt.maxPrecision, nil, nil, nil, nil)
 		require.NoError(t, err)
 		assert.ElementsMatch(t, tt.expected, ts.UpgradeSupportedTokenFormatList)
 	}
 }
 
 func TestTokensService_NewUpgradeChallenge(t *testing.T) {
-	ts, err := upgrade.NewService(nil, 16, nil, nil)
+	ts, err := upgrade.NewService(nil, 16, nil, nil, nil, nil)
 	require.NoError(t, err)
 	challenge, err := ts.NewUpgradeChallenge()
 	require.NoError(t, err)
 	assert.Len(t, challenge, upgrade.ChallengeSize)
 
 	// Test with different maxPrecision
-	ts32, err := upgrade.NewService(nil, 32, nil, nil)
+	ts32, err := upgrade.NewService(nil, 32, nil, nil, nil, nil)
 	require.NoError(t, err)
 	require.NotNil(t, ts32)
 
-	ts64, err := upgrade.NewService(nil, 64, nil, nil)
+	ts64, err := upgrade.NewService(nil, 64, nil, nil, nil, nil)
 	require.NoError(t, err)
 	require.NotNil(t, ts64)
 }
 
 func TestTokensService_GenUpgradeProof(t *testing.T) {
-	ts, err := upgrade.NewService(nil, 16, nil, nil)
+	ts, err := upgrade.NewService(nil, 16, nil, nil, nil, nil)
 	require.NoError(t, err)
 	ch, err := ts.NewUpgradeChallenge()
 	require.NoError(t, err)
@@ -194,7 +194,7 @@ func TestTokensService_GenUpgradeProof(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			ts, err := upgrade.NewService(nil, 16, nil, tt.getIdentityProvider())
+			ts, err := upgrade.NewService(nil, 16, nil, tt.getIdentityProvider(), nil, nil)
 			require.NoError(t, err)
 			res, err := ts.GenUpgradeProof(t.Context(), tt.ch, tt.ledgerTokens, tt.witness)
 			if tt.wantErr {
@@ -209,7 +209,7 @@ func TestTokensService_GenUpgradeProof(t *testing.T) {
 }
 
 func TestTokensService_CheckUpgradeProof(t *testing.T) {
-	ts, err := upgrade.NewService(nil, 16, nil, nil)
+	ts, err := upgrade.NewService(nil, 16, nil, nil, nil, nil)
 	require.NoError(t, err)
 	ch, err := ts.NewUpgradeChallenge()
 	require.NoError(t, err)
@@ -510,7 +510,7 @@ func TestTokensService_CheckUpgradeProof(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			ts, err := upgrade.NewService(nil, 16, tt.getDeserializer(), nil)
+			ts, err := upgrade.NewService(nil, 16, tt.getDeserializer(), nil, nil, nil)
 			require.NoError(t, err)
 			proof := tt.proof()
 			res, err := ts.CheckUpgradeProof(t.Context(), tt.ch, proof, tt.ledgerTokens)
@@ -543,7 +543,7 @@ func TestTokensService_CheckUpgradeProof(t *testing.T) {
 	}
 
 	t.Run("nil token upgrade request", func(t *testing.T) {
-		ts, err := upgrade.NewService(nil, 16, nil, nil)
+		ts, err := upgrade.NewService(nil, 16, nil, nil, nil, nil)
 		require.NoError(t, err)
 		_, err = ts.ProcessTokensUpgradeRequest(t.Context(), nil)
 		require.Error(t, err)
@@ -551,9 +551,9 @@ func TestTokensService_CheckUpgradeProof(t *testing.T) {
 	})
 
 	t.Run("ProcessTokens unsupported format", func(t *testing.T) {
-		ts, err := upgrade.NewService(nil, 16, nil, nil)
+		ts, err := upgrade.NewService(nil, 16, nil, nil, nil, nil)
 		require.NoError(t, err)
-		_, err = ts.ProcessTokens([]token.LedgerToken{{Format: "invalid"}})
+		_, _, err = ts.ProcessTokens(t.Context(), []token.LedgerToken{{Format: "invalid"}})
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "unsupported token format [invalid]")
 	})

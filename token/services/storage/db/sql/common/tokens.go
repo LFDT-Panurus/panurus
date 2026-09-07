@@ -1161,6 +1161,31 @@ func (db *TokenStore) PublicParams(ctx context.Context) ([]byte, error) {
 	return common.QueryUniqueContext[[]byte](ctx, db.readDB, query, args...)
 }
 
+// PublicParamsHashes returns the hashes of every public parameters version stored so far,
+// most recently stored first. StorePublicParams never overwrites an existing row, so this is
+// the full history of public parameters this node has observed.
+func (db *TokenStore) PublicParamsHashes(ctx context.Context) ([]tdriver.PPHash, error) {
+	query, args := q.Select().
+		FieldsByName("raw_hash").
+		From(q.Table(db.table.PublicParams)).
+		OrderBy(q.Desc(common3.FieldName("stored_at"))).
+		Format(db.ci)
+
+	logging.Debug(logger, query, args)
+	rows, err := db.readDB.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, errors.Wrapf(err, "error querying db")
+	}
+	defer Close(rows)
+	if err := rows.Err(); err != nil {
+		return nil, errors.Wrapf(err, "error querying db")
+	}
+
+	it := common.NewIterator(rows, func(h *tdriver.PPHash) error { return rows.Scan(h) })
+
+	return iterators.ReadAllValues(it)
+}
+
 func (db *TokenStore) PublicParamsByHash(ctx context.Context, rawHash tdriver.PPHash) ([]byte, error) {
 	query, args := q.Select().
 		FieldsByName("raw").
@@ -1636,6 +1661,11 @@ func (t *TokenTransaction) StoreToken(ctx context.Context, tr driver.TokenRecord
 	if len(tr.OwnerWalletID) == 0 && len(owners) == 0 && tr.Owner {
 		return errors.Errorf("no owners specified [%s]", string(debug.Stack()))
 	}
+	// The amount column is NUMERIC(78, 0) NOT NULL: refuse a missing or over-range value
+	// rather than storing one that disagrees with the authoritative quantity column.
+	if err := validateTokenAmount(tr.Amount); err != nil {
+		return errors.WithMessagef(err, "invalid amount for token [%s:%d]", tr.TxID, tr.Index)
+	}
 
 	// Store token
 	query, args := q.InsertInto(t.table.Tokens).
@@ -1653,7 +1683,7 @@ func (t *TokenTransaction) StoreToken(ctx context.Context, tr driver.TokenRecord
 			tr.LedgerMetadata,
 			tr.Type,
 			tr.Quantity,
-			tr.Amount,
+			tr.Amount.String(),
 			time.Now().UTC(),
 			tr.Owner,
 			tr.Auditor,

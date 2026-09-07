@@ -97,10 +97,10 @@ func TestRole_MapToIdentity_mapStringToID_branches(t *testing.T) {
 			return "", errors.New("no")
 		}
 	})
-	m.IsMeCalls(func(ctx context.Context, id driver.Identity) bool {
+	m.IsMeCalls(func(ctx context.Context, id driver.Identity) (bool, error) {
 		s := string(id)
 
-		return s == "member" || s == "member2"
+		return s == "member" || s == "member2", nil
 	})
 
 	// If GetIdentifier succeeds immediately
@@ -160,20 +160,51 @@ func TestRole_MapToIdentity_mapStringToID_branches(t *testing.T) {
 
 	// fallback: return label as identifier
 	// make IsMe return false for unknown
-	m.IsMeCalls(func(ctx context.Context, id driver.Identity) bool { return false })
+	m.IsMeCalls(func(ctx context.Context, id driver.Identity) (bool, error) { return false, nil })
 	id, ident, err = r.MapToIdentity(ctx, "unknown")
 	require.NoError(t, err)
 	require.Nil(t, id)
 	require.Equal(t, "unknown", ident)
 }
 
+// TestRole_MapToIdentity_IsMeErrorPropagated is a regression test for issue #2066: a failure
+// while checking local membership must not be silently treated as "not a local member" and folded
+// into the label fallthrough. Both the string-label path (mapStringToID) and the driver.Identity
+// path (mapIdentityToID) must surface the error.
+func TestRole_MapToIdentity_IsMeErrorPropagated(t *testing.T) {
+	t.Run("string label path", func(t *testing.T) {
+		ctx, r, m := setup(t)
+		// GetIdentifier must miss (the early "is there a label?" probe) and the label must match
+		// none of the default/node special cases, so resolution reaches IsMe.
+		m.GetIdentifierReturns("", errors.New("no such label"))
+		m.IsMeReturns(false, errors.New("storage unavailable"))
+
+		id, ident, err := r.MapToIdentity(ctx, "member")
+		require.Error(t, err, "an IsMe failure must be propagated, not folded into the fallthrough")
+		assert.Contains(t, err.Error(), "is a local member")
+		require.Nil(t, id)
+		require.Empty(t, ident)
+	})
+
+	t.Run("driver.Identity path", func(t *testing.T) {
+		ctx, r, m := setup(t)
+		m.IsMeReturns(false, errors.New("storage unavailable"))
+
+		id, ident, err := r.MapToIdentity(ctx, driver.Identity("someIdentity"))
+		require.Error(t, err, "an IsMe failure must be propagated, not folded into label resolution")
+		assert.Contains(t, err.Error(), "is me")
+		require.Nil(t, id)
+		require.Empty(t, ident)
+	})
+}
+
 func TestRole_MapToIdentity_mapIdentityToID_branches(t *testing.T) {
 	ctx, r, m := setup(t)
 	// Use stubs for IsMe, GetIdentifier and GetIdentityInfo
-	m.IsMeCalls(func(ctx context.Context, id driver.Identity) bool {
+	m.IsMeCalls(func(ctx context.Context, id driver.Identity) (bool, error) {
 		s := string(id)
 
-		return s == "me" || s == "me2"
+		return s == "me" || s == "me2", nil
 	})
 	m.GetIdentifierCalls(func(ctx context.Context, id driver.Identity) (string, error) {
 		s := string(id)

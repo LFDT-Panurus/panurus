@@ -188,7 +188,7 @@ func TestGetIdentityInfo_NotFoundDoesNotLeakOtherIdentities(t *testing.T) {
 
 	ip := &mock.IdentityProvider{}
 	ip.BindReturns(nil)
-	ip.IsMeReturns(false)
+	ip.IsMeReturns(false, nil)
 
 	iss := &mock.IdentityStoreService{}
 	iss.ConfigurationExistsReturns(false, nil)

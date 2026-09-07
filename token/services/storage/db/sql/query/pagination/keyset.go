@@ -161,6 +161,10 @@ func (p *keyset[I, V]) Prev() (driver.Pagination, error) { return p.GoBack(1) }
 
 func (p *keyset[I, V]) Next() (driver.Pagination, error) { return p.GoForward(1) }
 
+// pageSize implements pageSized so ValidateLimited can bound every keyset[I, V]
+// instantiation uniformly, regardless of its type parameters.
+func (p *keyset[I, V]) pageSize() int { return p.PageSize }
+
 func (k *keyset[I, V]) Equal(other driver.Pagination) bool {
 	otherKeyset, ok := other.(*keyset[I, V])
 	if !ok {

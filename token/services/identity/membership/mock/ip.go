@@ -23,7 +23,7 @@ type IdentityProvider struct {
 	bindReturnsOnCall map[int]struct {
 		result1 error
 	}
-	IsMeStub        func(context.Context, driver.Identity) bool
+	IsMeStub        func(context.Context, driver.Identity) (bool, error)
 	isMeMutex       sync.RWMutex
 	isMeArgsForCall []struct {
 		arg1 context.Context
@@ -31,9 +31,11 @@ type IdentityProvider struct {
 	}
 	isMeReturns struct {
 		result1 bool
+		result2 error
 	}
 	isMeReturnsOnCall map[int]struct {
 		result1 bool
+		result2 error
 	}
 	RegisterIdentityDescriptorStub        func(context.Context, *driver.IdentityDescriptor, driver.Identity) error
 	registerIdentityDescriptorMutex       sync.RWMutex
@@ -115,7 +117,7 @@ func (fake *IdentityProvider) BindReturnsOnCall(i int, result1 error) {
 	}{result1}
 }
 
-func (fake *IdentityProvider) IsMe(arg1 context.Context, arg2 driver.Identity) bool {
+func (fake *IdentityProvider) IsMe(arg1 context.Context, arg2 driver.Identity) (bool, error) {
 	fake.isMeMutex.Lock()
 	ret, specificReturn := fake.isMeReturnsOnCall[len(fake.isMeArgsForCall)]
 	fake.isMeArgsForCall = append(fake.isMeArgsForCall, struct {
@@ -130,9 +132,9 @@ func (fake *IdentityProvider) IsMe(arg1 context.Context, arg2 driver.Identity) b
 		return stub(arg1, arg2)
 	}
 	if specificReturn {
-		return ret.result1
+		return ret.result1, ret.result2
 	}
-	return fakeReturns.result1
+	return fakeReturns.result1, fakeReturns.result2
 }
 
 func (fake *IdentityProvider) IsMeCallCount() int {
@@ -141,7 +143,7 @@ func (fake *IdentityProvider) IsMeCallCount() int {
 	return len(fake.isMeArgsForCall)
 }
 
-func (fake *IdentityProvider) IsMeCalls(stub func(context.Context, driver.Identity) bool) {
+func (fake *IdentityProvider) IsMeCalls(stub func(context.Context, driver.Identity) (bool, error)) {
 	fake.isMeMutex.Lock()
 	defer fake.isMeMutex.Unlock()
 	fake.IsMeStub = stub
@@ -154,27 +156,30 @@ func (fake *IdentityProvider) IsMeArgsForCall(i int) (context.Context, driver.Id
 	return argsForCall.arg1, argsForCall.arg2
 }
 
-func (fake *IdentityProvider) IsMeReturns(result1 bool) {
+func (fake *IdentityProvider) IsMeReturns(result1 bool, result2 error) {
 	fake.isMeMutex.Lock()
 	defer fake.isMeMutex.Unlock()
 	fake.IsMeStub = nil
 	fake.isMeReturns = struct {
 		result1 bool
-	}{result1}
+		result2 error
+	}{result1, result2}
 }
 
-func (fake *IdentityProvider) IsMeReturnsOnCall(i int, result1 bool) {
+func (fake *IdentityProvider) IsMeReturnsOnCall(i int, result1 bool, result2 error) {
 	fake.isMeMutex.Lock()
 	defer fake.isMeMutex.Unlock()
 	fake.IsMeStub = nil
 	if fake.isMeReturnsOnCall == nil {
 		fake.isMeReturnsOnCall = make(map[int]struct {
 			result1 bool
+			result2 error
 		})
 	}
 	fake.isMeReturnsOnCall[i] = struct {
 		result1 bool
-	}{result1}
+		result2 error
+	}{result1, result2}
 }
 
 func (fake *IdentityProvider) RegisterIdentityDescriptor(arg1 context.Context, arg2 *driver.IdentityDescriptor, arg3 driver.Identity) error {

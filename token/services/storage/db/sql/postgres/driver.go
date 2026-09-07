@@ -58,10 +58,11 @@ func NewDriver(config driver3.Config) *Driver {
 
 // NewDriverWithDbProvider returns a new Driver for Postgres using the given database provider.
 func NewDriverWithDbProvider(config driver3.Config, dbProvider fscPostgres.DbProvider) *Driver {
-	tableNamesConfig, err := common3.LoadTableNamesConfig(config)
+	storageConfig, err := common3.LoadStorageConfig(config)
 	if err != nil {
-		logger.Warnf("failed to load table name overrides: %v — using defaults", err)
+		logger.Warnf("failed to load storage config: %v — using defaults", err)
 	}
+	tableNamesConfig := storageConfig.TableNames
 
 	d := &Driver{
 		cp:               fscPostgres.NewConfigProvider(common.NewConfig(config)),

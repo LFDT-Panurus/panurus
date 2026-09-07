@@ -71,7 +71,7 @@ func TestClaimPendingTransactions_Atomic(t *testing.T) {
 
 	err = aw.Commit()
 	require.NoError(t, err)
-	ageRequests(t, ctx, store1, oldTime, txIDs...)
+	ageRequests(t, ctx, store1.claims, oldTime, txIDs...)
 
 	// Both instances try to claim the same transactions
 	params := tokensdriver.RecoveryClaimParams{
@@ -132,7 +132,7 @@ func TestClaimPendingTransactions_Lease(t *testing.T) {
 
 	err = aw.Commit()
 	require.NoError(t, err)
-	ageRequests(t, ctx, store, oldTime, txID)
+	ageRequests(t, ctx, store.claims, oldTime, txID)
 
 	// Claim with very short lease
 	params := tokensdriver.RecoveryClaimParams{
@@ -159,6 +159,68 @@ func TestClaimPendingTransactions_Lease(t *testing.T) {
 	claimed, err = store.ClaimPendingTransactions(ctx, params)
 	require.NoError(t, err)
 	require.Len(t, claimed, 1, "Should re-claim after lease expires")
+}
+
+// TestClaimPendingTransactions_SubSecondLease verifies a lease under one second is not born
+// expired. leaseInterval used to truncate to whole seconds, so a 900ms lease became "0 seconds"
+// and a second owner could claim the row immediately.
+func TestClaimPendingTransactions_SubSecondLease(t *testing.T) {
+	terminate, pgConnStr := startContainer(t)
+	defer terminate()
+
+	ctx := context.Background()
+
+	driver := NewDriver(postgresCfg(pgConnStr, "claim_subsecond_lease_test"))
+	storeInterface, err := driver.NewOwnerTransaction("test", "claim_subsecond_lease_test")
+	require.NoError(t, err)
+	store, ok := storeInterface.(*TransactionStore)
+	require.True(t, ok)
+
+	err = store.CreateSchema()
+	require.NoError(t, err)
+
+	aw, err := store.NewTransactionStoreTransaction()
+	require.NoError(t, err)
+
+	now := time.Now().UTC()
+	oldTime := now.Add(-10 * time.Minute)
+
+	txID := "tx1"
+	err = aw.AddTokenRequest(ctx, txID, []byte("request"), nil, nil, []byte("hash"))
+	require.NoError(t, err)
+
+	err = aw.AddTransaction(ctx, tokensdriver.TransactionRecord{
+		TxID:         txID,
+		ActionType:   tokensdriver.Transfer,
+		SenderEID:    "sender",
+		RecipientEID: "recipient",
+		TokenType:    "USD",
+		Amount:       big.NewInt(100),
+		Timestamp:    oldTime,
+	})
+	require.NoError(t, err)
+
+	err = aw.Commit()
+	require.NoError(t, err)
+	ageRequests(t, ctx, store.claims, oldTime, txID)
+
+	params := tokensdriver.RecoveryClaimParams{
+		OlderThan:     now,
+		LeaseDuration: 900 * time.Millisecond,
+		Limit:         10,
+		Owner:         "instance1",
+	}
+
+	claimed, err := store.ClaimPendingTransactions(ctx, params)
+	require.NoError(t, err)
+	require.Len(t, claimed, 1)
+
+	// A different owner claiming right away must get nothing: the lease should
+	// still have ~900ms left, not have already expired at claim time.
+	params.Owner = "instance2"
+	claimed, err = store.ClaimPendingTransactions(ctx, params)
+	require.NoError(t, err)
+	require.Empty(t, claimed, "sub-second lease must not be born expired")
 }
 
 // TestClaimPendingTransactions_Idempotent verifies same owner can re-claim
@@ -201,7 +263,7 @@ func TestClaimPendingTransactions_Idempotent(t *testing.T) {
 
 	err = aw.Commit()
 	require.NoError(t, err)
-	ageRequests(t, ctx, store, oldTime, txID)
+	ageRequests(t, ctx, store.claims, oldTime, txID)
 
 	// Claim transaction
 	params := tokensdriver.RecoveryClaimParams{
@@ -266,7 +328,7 @@ func TestClaimPendingTransactions_Limit(t *testing.T) {
 	err = aw.Commit()
 	require.NoError(t, err)
 	for i, txID := range txIDs {
-		ageRequests(t, ctx, store, oldTime.Add(time.Duration(i)*time.Second), txID)
+		ageRequests(t, ctx, store.claims, oldTime.Add(time.Duration(i)*time.Second), txID)
 	}
 
 	// Claim with limit of 3
@@ -328,7 +390,7 @@ func TestReleaseRecoveryClaim(t *testing.T) {
 
 	err = aw.Commit()
 	require.NoError(t, err)
-	ageRequests(t, ctx, store, oldTime, txID)
+	ageRequests(t, ctx, store.claims, oldTime, txID)
 
 	// Claim transaction
 	params := tokensdriver.RecoveryClaimParams{
@@ -393,7 +455,7 @@ func TestReleaseRecoveryClaim_WrongOwner(t *testing.T) {
 
 	err = aw.Commit()
 	require.NoError(t, err)
-	ageRequests(t, ctx, store, oldTime, txID)
+	ageRequests(t, ctx, store.claims, oldTime, txID)
 
 	// Claim transaction
 	params := tokensdriver.RecoveryClaimParams{
@@ -461,7 +523,7 @@ func TestCleanupExpiredClaims(t *testing.T) {
 
 	err = aw.Commit()
 	require.NoError(t, err)
-	ageRequests(t, ctx, store, oldTime, txIDs...)
+	ageRequests(t, ctx, store.claims, oldTime, txIDs...)
 
 	// Claim with very short lease
 	params := tokensdriver.RecoveryClaimParams{
@@ -490,13 +552,16 @@ func TestCleanupExpiredClaims(t *testing.T) {
 	require.Len(t, claimed, 3, "Should be able to claim after cleanup")
 }
 
-func ageRequests(t *testing.T, ctx context.Context, store *TransactionStore, storedAt time.Time, txIDs ...string) {
+// ageRequests backdates stored_at so the rows fall inside the recovery claim window.
+// It takes the claim store rather than a concrete store type so the owner and audit
+// tests can share it.
+func ageRequests(t *testing.T, ctx context.Context, claims *recoveryClaimStore, storedAt time.Time, txIDs ...string) {
 	t.Helper()
 
 	// #nosec G201 -- table name comes from the test-created store.
-	query := fmt.Sprintf("UPDATE %s SET stored_at = $1 WHERE tx_id = $2", store.tables.Requests)
+	query := fmt.Sprintf("UPDATE %s SET stored_at = $1 WHERE tx_id = $2", claims.tables.Requests)
 	for _, txID := range txIDs {
-		result, err := store.writeDB.ExecContext(ctx, query, storedAt, txID)
+		result, err := claims.writeDB.ExecContext(ctx, query, storedAt, txID)
 		require.NoError(t, err)
 
 		rowsAffected, err := result.RowsAffected()

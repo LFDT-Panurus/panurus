@@ -111,6 +111,9 @@ jobs:
           - name: zkatdlog-upgrade-proof-deserialize
             pkg: ./token/core/zkatdlog/nogh/v1/crypto/upgrade
             func: FuzzProofDeserializeNoPanic
+          - name: zkatdlog-upgrade-process-comm-token
+            pkg: ./token/core/zkatdlog/nogh/v1/crypto/upgrade
+            func: FuzzProcessCommTokenNoPanic
           - name: fabricx-endorser-for-threshold-rule
             pkg: ./token/services/network/fabricx/endorsement
             func: FuzzEndorserForThresholdRuleNoPanic

@@ -356,3 +356,64 @@ The cleanup service supports both PostgreSQL and SQLite backends, with different
 Cleanup behavior is controlled by the configuration section. See the [Configuration Guide](../configuration.md) for detailed parameter descriptions and tuning recommendations.
 
 See the [Configuration Guide](../configuration.md), Section `Optional: token.tms.<name>.services.network.fabric.recovery`, for detailed parameter descriptions and tuning recommendations.
+
+## Storage API Limits
+
+The storage service limits its writes and reads so one huge write or one runaway
+query can't exhaust the database (issue #1630, CWE-400 / CWE-770). The limits are
+enforced by a single, stackable **guard** decorator layer
+(`token/services/storage/db/guard/`) applied once at the multiplexed driver
+(`token/services/storage/db/multiplexed/driver.go`) as each store is created, so
+every backing driver (SQLite, PostgreSQL) and every store is covered by the same
+mechanism. The decorators embed the store interfaces and override only the methods
+that need a check, delegating everything else — new layers (metrics, tracing) can be
+stacked the same way, with the concrete SQL store at the bottom.
+
+A single `Policy` (`MaxPayloadSize`, `MaxPageSize`) drives every check. It is loaded
+once from configuration; absent keys fall back to the built-in defaults, and an
+explicit `0` disables that check.
+
+**Write size limit.** Writes whose serialised payload exceeds `maxPayloadSize`
+(default 4 MiB; `0` disables) are rejected before reaching the database. Covered
+writes include the transaction store's `AddTokenRequest` / `AddTransaction` /
+`AddMovement` / `AddTransactionEndorsementAck`, the token store's `StoreToken` /
+`StorePublicParams` / `StoreCertifications`, the endorser store's
+`AddValidationRecord`, the identity store's `StoreIdentityData` / `StoreSignerInfo` /
+`RegisterIdentityDescriptor` / `AddConfiguration`, and the wallet store's
+`StoreIdentity`.
+
+**Read size limit.** `maxPageSize` (default 1000) bounds the paginated reads —
+currently `QueryTransactions` on the owner and audit transaction stores. Those
+reads require a bounded page: `nil` and `pagination.None()` are rejected, as is a
+page size larger than `maxPageSize`. Callers page through the full result set.
+
+Rejecting the request is only a safe way to bound a read when the caller has a way
+to comply, so the cap is applied exactly to the reads that accept a pagination
+argument. Streaming iterator reads are **not** row-capped:
+
+- The token store's unspent/spendable/unsupported iterators, the endorser store's
+  `QueryValidations`, the transaction store's `QueryTokenRequests`, and the identity
+  store's `IteratorConfigurations` all take no page size or cursor, and their
+  consumers drain them in full — the selectors and integrity checks for the token
+  iterators, and `LocalMembership.storedIdentityConfigurations` on the identity
+  `Load` path for `IteratorConfigurations`. Capping any of them would turn a large
+  but legitimate dataset into a hard failure that the caller cannot page around.
+- `QueryMovements` is uncapped for a second reason: it feeds balance totals, so
+  dropping rows would quietly return wrong balances. It is already narrowed by its
+  required filters.
+
+You can override the limits in configuration (`token.storage.maxPayloadSize` /
+`token.storage.maxPageSize`) — see the [Configuration Guide](../configuration.md).
+
+**Not yet covered (tracked follow-up).** Two groups of reads cannot be bounded by a
+wrapper at all, and need query-level work instead:
+
+- The streaming iterators listed above. Bounding them requires a SQL-level `LIMIT`
+  on the query (with a defined order and documented truncation) or adding paging to
+  their signatures, so the caller can ask for the next page rather than fail.
+- Reads that materialise a full slice or map before returning (e.g.
+  `ListUnspentTokens`, `QueryTokenDetails`, `ConfigurationsByID`, `GetWalletIDs`) —
+  the SQL has already loaded everything by the time the decorator sees the result.
+
+The opaque `Keystore.Put` value and input-size caps for variadic id lists
+(`DeleteTokens`, `GetTokens`) are in the same follow-up.

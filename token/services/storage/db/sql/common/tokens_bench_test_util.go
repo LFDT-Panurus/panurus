@@ -7,6 +7,7 @@ package common
 import (
 	"context"
 	"fmt"
+	"math/big"
 	"testing"
 	"time"
 
@@ -30,6 +31,7 @@ func SeedBenchTokens(b *testing.B, store *TokenStore, n int) {
 			LedgerMetadata: []byte("meta"),
 			Quantity:       "0x64",
 			Type:           tokentype.Type("GOLD"),
+			Amount:         big.NewInt(100),
 		}
 		if err := store.StoreToken(ctx, rec, []string{"wallet0"}); err != nil {
 			b.Fatalf("seed failed at i=%d: %v", i, err)

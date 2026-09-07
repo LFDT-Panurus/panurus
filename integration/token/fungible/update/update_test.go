@@ -50,6 +50,19 @@ var _ = Describe("EndToEnd", func() {
 			It("succeeded", Label("T2"), func() { fungible.TestLocalTokensUpgrade(ts.II, "auditor", nil, selector) })
 		})
 
+		Describe("Tokens Upgrade after Public Parameters Regeneration", t.Label, func() {
+			ts, selector := newTestSuite(t.CommType, 32, []common.TMSOpts{
+				{
+					Alias:               "dlog-32bits",
+					TokenSDKDriver:      zkatdlognoghv1.DriverIdentifier,
+					PublicParamsGenArgs: []string{"32"},
+				},
+			}, t.ReplicationFactor, "alice", "bob", "charlie")
+			BeforeEach(ts.Setup)
+			AfterEach(ts.TearDown)
+			It("succeeded", Label("T4"), func() { fungible.TestDLogTokensUpgrade(ts.II, "auditor", nil, selector) })
+		})
+
 		Describe("Rotate Idemix Issuer", t.Label, func() {
 			ts, selector := newTestSuite(t.CommType, 32, []common.TMSOpts{
 				{

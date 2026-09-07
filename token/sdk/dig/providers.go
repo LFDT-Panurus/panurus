@@ -10,6 +10,7 @@ import (
 	"github.com/LFDT-Panurus/panurus/token/core"
 	"github.com/LFDT-Panurus/panurus/token/driver"
 	dbdriver "github.com/LFDT-Panurus/panurus/token/services/storage/db/driver"
+	"github.com/LFDT-Panurus/panurus/token/services/storage/db/guard"
 	"github.com/LFDT-Panurus/panurus/token/services/storage/db/multiplexed"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	driver2 "github.com/hyperledger-labs/fabric-smart-client/platform/common/driver"
@@ -25,6 +26,23 @@ func newMultiplexedDriver(in struct {
 },
 ) multiplexed.Driver {
 	return multiplexed.NewDriver(in.ConfigProvider, in.Drivers...)
+}
+
+// newStoragePolicy loads the storage guard policy from configuration. It is the
+// single source of the storage resource limits (max payload / max page size) so
+// consumers such as the integrity checkers page within the same cap the guard
+// layer enforces. Falls back to the built-in defaults if the config is unreadable.
+func newStoragePolicy(in struct {
+	dig.In
+	ConfigProvider driver2.ConfigService
+},
+) guard.Policy {
+	policy, err := guard.LoadPolicy(in.ConfigProvider)
+	if err != nil {
+		return guard.DefaultPolicy()
+	}
+
+	return policy
 }
 
 // newTokenDriverService creates a token driver service from registered token drivers.

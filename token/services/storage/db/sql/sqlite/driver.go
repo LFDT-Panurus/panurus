@@ -53,10 +53,11 @@ func NewDriver(config driver3.Config) *Driver {
 }
 
 func NewDriverWithDbProvider(config driver3.Config, dbProvider fscSqlite.DbProvider) *Driver {
-	tableNamesConfig, err := common2.LoadTableNamesConfig(config)
+	storageConfig, err := common2.LoadStorageConfig(config)
 	if err != nil {
-		logger.Warnf("failed to load table name overrides: %v — using defaults", err)
+		logger.Warnf("failed to load storage config: %v — using defaults", err)
 	}
+	tableNamesConfig := storageConfig.TableNames
 
 	d := &Driver{
 		cp:               fscSqlite.NewConfigProvider(common.NewConfig(config)),

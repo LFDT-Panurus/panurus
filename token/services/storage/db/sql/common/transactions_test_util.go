@@ -121,10 +121,12 @@ func TestQueryTransactions(t *testing.T, store transactionsStoreConstructor) {
 			"FROM TRANSACTIONS LEFT JOIN REQUESTS ON TRANSACTIONS.tx_id = REQUESTS.tx_id ORDER BY TRANSACTIONS.stored_at DESC").
 		WillReturnRows(mockDB.NewRows([]string{"tx_id", "action_type", "sender_eid", "recipient_eid", "token_type", "amount", "status", "application_metadata", "public_metadata", "stored_at"}).AddRow(output...))
 
+	page, err := pagination.Offset(0, 10)
+	gomega.Expect(err).ToNot(gomega.HaveOccurred())
 	info, err := store(db).QueryTransactions(t.Context(),
 		driver.QueryTransactionsParams{
 			IDs: []string{},
-		}, pagination.None())
+		}, page)
 
 	gomega.Expect(mockDB.ExpectationsWereMet()).To(gomega.Succeed())
 	gomega.Expect(err).ToNot(gomega.HaveOccurred())

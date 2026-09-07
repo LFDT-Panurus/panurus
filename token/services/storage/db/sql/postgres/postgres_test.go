@@ -22,7 +22,11 @@ func TestTokens(t *testing.T) {
 	terminate, pgConnStr := startContainer(t)
 	defer terminate()
 
-	dbtest2.TokensTest(t, func(name string) driver.Driver { return NewDriver(postgresCfg(pgConnStr, name)) })
+	cfg := func(name string) driver.Driver { return NewDriver(postgresCfg(pgConnStr, name)) }
+	dbtest2.TokensTest(t, cfg)
+	// Only NUMERIC(78, 0) on Postgres keeps full precision for amounts wider than int64,
+	// so this case is not part of the shared suite.
+	dbtest2.TokensTestCase(t, cfg, "BigAmountRoundTrip", dbtest2.TBigAmountRoundTrip)
 }
 
 func TestTransactions(t *testing.T) {

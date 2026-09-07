@@ -155,7 +155,17 @@ func (d *Driver) NewTokenService(tmsID driver.TMSID, publicParams []byte) (drive
 	if err != nil {
 		return nil, errors.Wrapf(err, "failed to initiliaze token service for [%s:%s]", tmsID.Network, tmsID.Namespace)
 	}
-	tokensUpgradeService, err := upgrade.NewService(logger, ppm.PublicParams().QuantityPrecision, deserializer, ip)
+	// the query engine gives access to every generation of public parameters this node has
+	// stored, which is what lets the upgrade service open commitments created before the
+	// public parameters were regenerated
+	tokensUpgradeService, err := upgrade.NewService(
+		logger,
+		ppm.PublicParams().QuantityPrecision,
+		deserializer,
+		ip,
+		tokensService.SupportedTokenFormats(),
+		upgrade.NewPublicParamsHistory(logger, qe),
+	)
 	if err != nil {
 		return nil, errors.Wrapf(err, "failed to initiliaze token upgrade service for [%s:%s]", tmsID.Network, tmsID.Namespace)
 	}

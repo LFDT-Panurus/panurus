@@ -8,6 +8,7 @@ package dbtest
 
 import (
 	"context"
+	"math/big"
 	"testing"
 
 	"github.com/LFDT-Panurus/panurus/token/services/storage/db/driver"
@@ -56,7 +57,7 @@ func TTokenNotifier(t *testing.T, db TestTokenDB, notifier driver.TokenNotifier)
 		LedgerMetadata: []byte{},
 		Quantity:       "0x02",
 		Type:           TST,
-		Amount:         2,
+		Amount:         big.NewInt(2),
 		Owner:          true,
 		Auditor:        false,
 		Issuer:         false,
@@ -84,7 +85,7 @@ var tokenRecords = []driver.TokenRecord{
 		LedgerMetadata: []byte{},
 		Quantity:       "0x01",
 		Type:           ABC,
-		Amount:         0,
+		Amount:         big.NewInt(0),
 		Owner:          true,
 		Auditor:        false,
 		Issuer:         false,
@@ -100,7 +101,7 @@ var tokenRecords = []driver.TokenRecord{
 		LedgerMetadata: []byte{},
 		Quantity:       "0x01",
 		Type:           ABC,
-		Amount:         0,
+		Amount:         big.NewInt(0),
 		Owner:          true,
 		Auditor:        false,
 		Issuer:         false,

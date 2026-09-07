@@ -58,7 +58,8 @@ func GetNetworkProvider(sp token.ServiceProvider) (NetworkProvider, error) {
 // SignatureService defines the subset of function of the signature service needed by the ttx service.
 type SignatureService interface {
 	// IsMe checks if the given party is a local party meaning that a signer is bound to that identity.
-	IsMe(ctx context.Context, party token.Identity) bool
+	// A non-nil error means ownership could not be determined and the boolean must be ignored.
+	IsMe(ctx context.Context, party token.Identity) (bool, error)
 }
 
 // TokenManagementService defines the interface of a token management service needed by ttx service.

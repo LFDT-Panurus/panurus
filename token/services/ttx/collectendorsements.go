@@ -691,7 +691,11 @@ func (c *CollectEndorsementsView) prepareDistributionList(context view.Context, 
 			remainingIds = append(remainingIds, id)
 		}
 	}
-	mine.Add(c.tx.TokenService().SigService().AreMe(context.Context(), remainingIds...)...)
+	remainingMine, err := c.tx.TokenService().SigService().AreMe(context.Context(), remainingIds...)
+	if err != nil {
+		return nil, errors.Wrapf(err, "failed checking which of the remaining [%d] identities are me", len(remainingIds))
+	}
+	mine.Add(remainingMine...)
 	logger.DebugfContext(context.Context(), "%d/%d ids were mine", mine.Length(), len(allIds))
 
 	var distributionListCompressed []distributionListEntry

@@ -9,7 +9,7 @@ require (
 	github.com/hyperledger-labs/fabric-smart-client v0.18.0
 	github.com/hyperledger-labs/fabric-smart-client/integration v0.18.0
 	github.com/stretchr/testify v1.12.0
-	google.golang.org/grpc v1.83.0
+	google.golang.org/grpc v1.83.1
 )
 
 require (

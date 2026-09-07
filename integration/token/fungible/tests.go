@@ -1394,6 +1394,135 @@ func TestLocalTokensUpgrade(network *integration.Infrastructure, auditorId strin
 	CheckBalanceAndHolding(network, bob, "", "EUR", 110, auditor)
 }
 
+// TestDLogTokensUpgrade covers the recovery of commitment tokens whose format changed
+// because the public parameters were regenerated.
+//
+// A zkatdlog token format digests the Pedersen generators, so regenerating the public
+// parameters with different generators renames every output created before: the driver stops
+// listing those formats as supported, the tokens cannot be transferred or redeemed, and they
+// cannot be reinterpreted locally either, because their commitment only opens under the bases
+// of the generation that created them. The only way out is the issuer-mediated upgrade: the
+// owner tells the issuer which generation produced the token, the issuer verifies that claim
+// against the format recorded on the ledger, opens the commitment with the old bases, and
+// atomically burns the old token and re-issues it under the current format.
+//
+// The test walks the whole life of such a token -- issued under the first generation,
+// unspendable after the regeneration, upgraded, spendable again -- for two owners: alice, whose
+// wallet holds nothing but stale tokens, and bob, whose wallet holds a stale token next to a
+// current one, so that the upgrade has to pick exactly the stale one.
+func TestDLogTokensUpgrade(network *integration.Infrastructure, auditorId string, onRestart OnRestartFunc, sel *token3.ReplicaSelector) {
+	auditor := sel.Get(auditorId)
+	issuer := sel.Get("issuer")
+	alice := sel.Get("alice")
+	bob := sel.Get("bob")
+	charlie := sel.Get("charlie")
+	manager := sel.Get("manager")
+	endorsers := GetEndorsers(network, sel)
+	RegisterAuditor(network, auditor)
+	tokenPlatform, ok := network.NWOCtx.PlatformsByName["token"].(*token.Platform)
+	gomega.Expect(ok).To(gomega.BeTrue())
+
+	// unsupportedFormats builds a store check that expects exactly the passed number of
+	// unspendable tokens, each rejected because its format is not supported. The check runs
+	// per token, so the count is the number of stale tokens the wallet holds.
+	unsupportedFormats := func(expected int) func([]string) error {
+		return func(errMsgs []string) error {
+			if len(errMsgs) != expected {
+				return errors.Errorf("expected [%d] errors but got %v", expected, errMsgs)
+			}
+			for _, errMsg := range errMsgs {
+				if !strings.Contains(errMsg, "token format not supported [") {
+					return errors.Errorf("expected error format not supported [%v]", errMsgs)
+				}
+			}
+
+			return nil
+		}
+	}
+
+	// give some time to the nodes to get the public parameters
+	time.Sleep(10 * time.Second)
+
+	SetKVSEntry(network, issuer, "auditor", auditor.Id())
+	CheckPublicParams(network, issuer, auditor, alice, bob, charlie, manager)
+
+	// move the network to the first generation of dlog public parameters. Nothing has been
+	// issued yet, so this switch is only the starting point: what matters is that the tokens
+	// issued next are commitments, and that this generation ends up in the public parameters
+	// history of every node, the issuer's included.
+	tms := GetTMSByAlias(network, "dlog-32bits")
+	firstGeneration, err := os.ReadFile(tokenPlatform.PublicParametersFile(tms))
+	gomega.Expect(err).NotTo(gomega.HaveOccurred())
+	gomega.Expect(firstGeneration).NotTo(gomega.BeNil())
+	UpdatePublicParamsAndWait(network, firstGeneration, tms, issuer, auditor, alice, bob, charlie, manager)
+
+	gomega.Eventually(DoesWalletExist).WithArguments(network, issuer, "", views.IssuerWallet).WithTimeout(1 * time.Minute).WithPolling(15 * time.Second).Should(gomega.BeTrue())
+	gomega.Eventually(DoesWalletExist).WithArguments(network, alice, "", views.OwnerWallet).WithTimeout(1 * time.Minute).WithPolling(15 * time.Second).Should(gomega.BeTrue())
+	gomega.Eventually(DoesWalletExist).WithArguments(network, auditor, "", views.AuditorWallet).WithTimeout(1 * time.Minute).WithPolling(15 * time.Second).Should(gomega.BeTrue())
+
+	// issue commitment tokens under the first generation: two to alice, one to bob
+	IssueSuccessfulCash(network, "", "EUR", 60, alice, auditor, true, issuer, endorsers...)
+	IssueSuccessfulCash(network, "", "EUR", 50, alice, auditor, true, issuer, endorsers...)
+	IssueSuccessfulCash(network, "", "EUR", 10, bob, auditor, true, issuer, endorsers...)
+	CheckBalanceAndHolding(network, alice, "", "EUR", 110, auditor)
+	CheckBalanceAndHolding(network, bob, "", "EUR", 10, auditor)
+	CheckOwnerStore(network, nil, issuer, alice, bob, charlie, manager)
+	CheckAuditorStore(network, auditor, "", nil)
+
+	// regenerate the public parameters with different Pedersen bases. Same curve, same
+	// precision, same idemix issuer keys, so every identity, issuer and auditor stays valid,
+	// but every token created so far now carries a format the driver no longer recognises.
+	secondGeneration := RegeneratePedersenGenerators(firstGeneration, "lfdt-panurus.itest.dlog-32bits.second-generation")
+	UpdatePublicParamsAndWait(network, secondGeneration, tms, issuer, auditor, alice, bob, charlie, manager)
+
+	gomega.Eventually(DoesWalletExist).WithArguments(network, issuer, "", views.IssuerWallet).WithTimeout(1 * time.Minute).WithPolling(15 * time.Second).Should(gomega.BeTrue())
+	gomega.Eventually(DoesWalletExist).WithArguments(network, alice, "", views.OwnerWallet).WithTimeout(1 * time.Minute).WithPolling(15 * time.Second).Should(gomega.BeTrue())
+	gomega.Eventually(DoesWalletExist).WithArguments(network, auditor, "", views.AuditorWallet).WithTimeout(1 * time.Minute).WithPolling(15 * time.Second).Should(gomega.BeTrue())
+
+	// this is the bug from #2282: alice and bob still hold their tokens and the balance still
+	// counts them, but the driver cannot spend them any more
+	CheckBalanceAndHolding(network, alice, "", "EUR", 110, auditor)
+	CheckBalanceAndHolding(network, bob, "", "EUR", 10, auditor)
+	CheckOwnerStore(network, unsupportedFormats(2), alice)
+	CheckOwnerStore(network, unsupportedFormats(1), bob)
+	CheckOwnerStore(network, nil, issuer, charlie, manager)
+	CheckAuditorStore(network, auditor, "", nil)
+
+	TransferCash(network, alice, "", "EUR", 110, bob, auditor, "insufficient funds, only [0] tokens of type [EUR] are available, but [110] were requested and no other process has any tokens locked")
+	CheckBalanceAndHolding(network, alice, "", "EUR", 110, auditor)
+	CheckBalanceAndHolding(network, bob, "", "EUR", 10, auditor)
+
+	// the issuer resolves the generation that produced the format from its own public
+	// parameters history, opens the commitments with those bases, and re-issues the tokens
+	// under the current format while the old ones are burnt in the same transaction
+	TokensUpgrade(network, nil, alice, "", "EUR", auditor, issuer)
+	CheckBalanceAndHolding(network, alice, "", "EUR", 110, auditor)
+	CheckBalanceAndHolding(network, bob, "", "EUR", 10, auditor)
+	CheckOwnerStore(network, nil, issuer, alice, charlie, manager)
+	CheckAuditorStore(network, auditor, "", nil)
+
+	// and the recovered tokens spend like any other
+	TransferCash(network, alice, "", "EUR", 110, bob, auditor)
+	CheckBalanceAndHolding(network, alice, "", "EUR", 0, auditor)
+	CheckBalanceAndHolding(network, bob, "", "EUR", 120, auditor)
+	CheckOwnerStore(network, nil, issuer, alice, charlie, manager)
+	CheckAuditorStore(network, auditor, "", nil)
+
+	// alice's upgrade left bob's stale token alone: he now holds it next to the current token
+	// he has just received, and only the stale one needs to be upgraded
+	CheckOwnerStore(network, unsupportedFormats(1), bob)
+	TokensUpgrade(network, nil, bob, "", "EUR", auditor, issuer)
+	CheckBalanceAndHolding(network, bob, "", "EUR", 120, auditor)
+	CheckOwnerStore(network, nil, issuer, alice, bob, charlie, manager)
+	CheckAuditorStore(network, auditor, "", nil)
+
+	TransferCash(network, bob, "", "EUR", 120, alice, auditor)
+	CheckBalanceAndHolding(network, alice, "", "EUR", 120, auditor)
+	CheckBalanceAndHolding(network, bob, "", "EUR", 0, auditor)
+	CheckOwnerStore(network, nil, issuer, alice, bob, charlie, manager)
+	CheckAuditorStore(network, auditor, "", nil)
+}
+
 func TestIdemixIssuerPublicKeyRotation(network *integration.Infrastructure, auditorId string, onRestart OnRestartFunc, sel *token3.ReplicaSelector) {
 	// we start with fabtoken 16bits, performs a few operation, and then switch
 	auditor := sel.Get(auditorId)

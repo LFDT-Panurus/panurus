@@ -22,6 +22,10 @@ type AuditorCheckServiceProvider struct {
 	tmsProvider     common.TokenManagementServiceProvider
 	networkProvider common.NetworkProvider
 	checkers        []common.NamedChecker
+	// MaxPageSize is the storage layer's configured max read page size, passed to
+	// the default checkers so they page within the guard layer's cap. 0 means the
+	// built-in default is used.
+	MaxPageSize int
 }
 
 // NewAuditorCheckServiceProvider creates a new auditor check service provider.
@@ -36,7 +40,7 @@ func NewAuditorCheckServiceProvider(tmsProvider common.TokenManagementServicePro
 // CheckService creates a check service for the given TMS ID and databases.
 // It combines default checkers with custom checkers provided during initialization.
 func (a *AuditorCheckServiceProvider) CheckService(id token.TMSID, adb *auditdb.StoreService, tdb *tokens.Service) (auditor.CheckService, error) {
-	return common.NewChecksService(append(common.NewDefaultCheckers(a.tmsProvider, a.networkProvider, adb, tdb, id), a.checkers...)), nil
+	return common.NewChecksService(append(common.NewDefaultCheckers(a.tmsProvider, a.networkProvider, adb, tdb, id, a.MaxPageSize), a.checkers...)), nil
 }
 
 // OwnerCheckServiceProvider creates check services for token owners.
@@ -45,6 +49,10 @@ type OwnerCheckServiceProvider struct {
 	tmsProvider     common.TokenManagementServiceProvider
 	networkProvider common.NetworkProvider
 	checkers        []common.NamedChecker
+	// MaxPageSize is the storage layer's configured max read page size, passed to
+	// the default checkers so they page within the guard layer's cap. 0 means the
+	// built-in default is used.
+	MaxPageSize int
 }
 
 // NewOwnerCheckServiceProvider creates a new owner check service provider.
@@ -59,5 +67,5 @@ func NewOwnerCheckServiceProvider(tmsProvider common.TokenManagementServiceProvi
 // CheckService creates a check service for the given TMS ID and databases.
 // It combines default checkers with custom checkers provided during initialization.
 func (a *OwnerCheckServiceProvider) CheckService(id token.TMSID, txdb *ttxdb.StoreService, tdb *tokens.Service) (ttx.CheckService, error) {
-	return common.NewChecksService(append(common.NewDefaultCheckers(a.tmsProvider, a.networkProvider, txdb, tdb, id), a.checkers...)), nil
+	return common.NewChecksService(append(common.NewDefaultCheckers(a.tmsProvider, a.networkProvider, txdb, tdb, id, a.MaxPageSize), a.checkers...)), nil
 }

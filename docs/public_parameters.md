@@ -49,6 +49,35 @@ When an FSC node starts or connects to a TMS, it must fetch the current public p
 - **Fetching**: The node uses the `PublicParamsFetcher` (provided by the **Network Service**) to query the ledger (via TCC or the Query Service).
 - **Local Cache**: Fetched parameters are cached in the node's local `PublicParametersStorage` to ensure they are available even if the network is temporarily unreachable.
 
+### Resolution Order
+
+`TMSProvider` (`token/core/tms.go`) resolves the public parameters of a TMS from four sources, in priority order:
+
+| # | Source | Description |
+| :--- | :--- | :--- |
+| 1 | `options` | The public parameters passed by the caller in `driver.ServiceOptions.PublicParams` (for example, the new parameters delivered by an update event). |
+| 2 | `storage` | The node's local `PublicParametersStorage`. |
+| 3 | `configuration` | The file referenced by `publicParameters.path` in the TMS configuration. |
+| 4 | `fetcher` | The `PublicParamsFetcher`, which reads the parameters from the ledger. This is the authoritative source. |
+
+For each source, the provider retrieves the parameters **and immediately tries to instantiate the token service with them**. The first source whose parameters the driver accepts wins, and its parameters become the ones the TMS runs with. A source is skipped, and the next one is given its chance, when it:
+
+- holds no public parameters, or fails to return them (storage error, missing file, …); or
+- holds public parameters the driver rejects — driver name/version skew (`invalid identifier, expecting [dlog.v1], got [dlog.v2]`), an unparsable container, an invalid curve id, or any other field-level validation failure; or
+- holds public parameters byte-identical to those a higher-priority source already tried (they are not deserialized twice).
+
+This is what lets a node recover on its own during an upgrade: when the local copy of the parameters is stale or malformed, it does not shadow the authoritative parameters on the ledger — the provider simply falls through to the fetcher. Note that source 4 is only available when the caller supplied a `PublicParamsFetcher` in the service options.
+
+### Resolution vs. update
+
+The walk above applies when a TMS is being **resolved** (`GetTokenManagerService`, `NewTokenManagerService`). It does **not** apply to `Update`, which resolves from source 1 only.
+
+`Update` carries the public parameters the TMS is to adopt — typically the new parameters just committed to the ledger. If the driver rejects them, `Update` fails and the currently cached service is left running and cached, untouched. Falling back to another source would report success while the node kept running on an older copy, after having already unloaded the service it had; and since the service options an update is built from carry no `PublicParamsFetcher`, such a fallback could only ever land on a stale local copy — the opposite of what the walk exists for.
+
+If no source produces usable public parameters, the returned error aggregates the failure of every source, each tagged with the source name, so the offending copy can be identified. The error wraps `ErrTMSNotFound` if, and only if, no source produced any parameters at all, which means the TMS has not been set up yet — as opposed to being set up with parameters this node cannot use.
+
+Note that both resolution and update hold a single provider-wide lock for the whole walk, not one lock per TMS, so a slow source — a driver deserialization or, on the resolution path, the ledger fetch — blocks lookups for every other network/channel/namespace on the node. Tracked in [#2306](https://github.com/LFDT-Panurus/panurus/issues/2306).
+
 ---
 
 ## Dynamic Updates and Synchronization

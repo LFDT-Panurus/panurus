@@ -35,6 +35,9 @@ type TestEndorseViewContextInput struct {
 	// endorsed-transaction message.  Used to simulate the case where the initiator
 	// goes silent after the responder has already signed.
 	SigRequestOnly bool
+	// IsMeErr makes the token IdentityProvider's IsMe return this error, simulating a
+	// storage failure while resolving ownership of a required signer (issue #2066).
+	IsMeErr error
 }
 
 type TestEndorseViewContext struct {
@@ -70,7 +73,13 @@ func newTestEndorseViewContext(t *testing.T, input *TestEndorseViewContextInput)
 	tms.IDReturns(tmsID)
 	tokenDes := &mock.Deserializer{}
 	tokenIP := &mock.IdentityProvider{}
-	tokenIP.IsMeReturns(true)
+	if input.IsMeErr != nil {
+		// On a storage failure the boolean is untrusted; extractRequiredSigners must
+		// propagate the error rather than reading it as "not a required signer".
+		tokenIP.IsMeReturns(false, input.IsMeErr)
+	} else {
+		tokenIP.IsMeReturns(true, nil)
+	}
 	tokenSigner := &mock.Signer{}
 	tokenSigner.SignReturns([]byte("a_token_sigma"), nil)
 	tokenIP.GetSignerReturns(tokenSigner, nil)
@@ -260,6 +269,22 @@ func TestEndorseView(t *testing.T) {
 			expectError:   true,
 			errorContains: "pineapple",
 			expectErr:     ttx.ErrStorage,
+			verify: func(ctx *TestEndorseViewContext, _ any) {
+				assert.Equal(t, 0, ctx.session.SendCallCount())
+			},
+		},
+		{
+			// Regression test for issue #2066: a storage failure while checking whether a
+			// required signer is "me" must abort endorsement, not be flattened into a
+			// confident "not me" that silently drops the signer from the required set.
+			name: "IsMe storage failure aborts endorsement",
+			prepare: func() *TestEndorseViewContext {
+				return newTestEndorseViewContext(t, &TestEndorseViewContextInput{
+					IsMeErr: errors.New("storage unavailable"),
+				})
+			},
+			expectError:   true,
+			errorContains: "failed checking if signer",
 			verify: func(ctx *TestEndorseViewContext, _ any) {
 				assert.Equal(t, 0, ctx.session.SendCallCount())
 			},

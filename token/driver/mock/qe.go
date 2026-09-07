@@ -196,6 +196,33 @@ type QueryEngine struct {
 		result1 []byte
 		result2 error
 	}
+	PublicParamsByHashStub        func(context.Context, driver.PPHash) ([]byte, error)
+	publicParamsByHashMutex       sync.RWMutex
+	publicParamsByHashArgsForCall []struct {
+		arg1 context.Context
+		arg2 driver.PPHash
+	}
+	publicParamsByHashReturns struct {
+		result1 []byte
+		result2 error
+	}
+	publicParamsByHashReturnsOnCall map[int]struct {
+		result1 []byte
+		result2 error
+	}
+	PublicParamsHashesStub        func(context.Context) ([]driver.PPHash, error)
+	publicParamsHashesMutex       sync.RWMutex
+	publicParamsHashesArgsForCall []struct {
+		arg1 context.Context
+	}
+	publicParamsHashesReturns struct {
+		result1 []driver.PPHash
+		result2 error
+	}
+	publicParamsHashesReturnsOnCall map[int]struct {
+		result1 []driver.PPHash
+		result2 error
+	}
 	RedeemedBalanceStub        func(context.Context, driver.IssuerBalanceQuery) (*big.Int, error)
 	redeemedBalanceMutex       sync.RWMutex
 	redeemedBalanceArgsForCall []struct {
@@ -1132,6 +1159,135 @@ func (fake *QueryEngine) PublicParamsReturnsOnCall(i int, result1 []byte, result
 	}
 	fake.publicParamsReturnsOnCall[i] = struct {
 		result1 []byte
+		result2 error
+	}{result1, result2}
+}
+
+func (fake *QueryEngine) PublicParamsByHash(arg1 context.Context, arg2 driver.PPHash) ([]byte, error) {
+	fake.publicParamsByHashMutex.Lock()
+	ret, specificReturn := fake.publicParamsByHashReturnsOnCall[len(fake.publicParamsByHashArgsForCall)]
+	fake.publicParamsByHashArgsForCall = append(fake.publicParamsByHashArgsForCall, struct {
+		arg1 context.Context
+		arg2 driver.PPHash
+	}{arg1, arg2})
+	stub := fake.PublicParamsByHashStub
+	fakeReturns := fake.publicParamsByHashReturns
+	fake.recordInvocation("PublicParamsByHash", []interface{}{arg1, arg2})
+	fake.publicParamsByHashMutex.Unlock()
+	if stub != nil {
+		return stub(arg1, arg2)
+	}
+	if specificReturn {
+		return ret.result1, ret.result2
+	}
+	return fakeReturns.result1, fakeReturns.result2
+}
+
+func (fake *QueryEngine) PublicParamsByHashCallCount() int {
+	fake.publicParamsByHashMutex.RLock()
+	defer fake.publicParamsByHashMutex.RUnlock()
+	return len(fake.publicParamsByHashArgsForCall)
+}
+
+func (fake *QueryEngine) PublicParamsByHashCalls(stub func(context.Context, driver.PPHash) ([]byte, error)) {
+	fake.publicParamsByHashMutex.Lock()
+	defer fake.publicParamsByHashMutex.Unlock()
+	fake.PublicParamsByHashStub = stub
+}
+
+func (fake *QueryEngine) PublicParamsByHashArgsForCall(i int) (context.Context, driver.PPHash) {
+	fake.publicParamsByHashMutex.RLock()
+	defer fake.publicParamsByHashMutex.RUnlock()
+	argsForCall := fake.publicParamsByHashArgsForCall[i]
+	return argsForCall.arg1, argsForCall.arg2
+}
+
+func (fake *QueryEngine) PublicParamsByHashReturns(result1 []byte, result2 error) {
+	fake.publicParamsByHashMutex.Lock()
+	defer fake.publicParamsByHashMutex.Unlock()
+	fake.PublicParamsByHashStub = nil
+	fake.publicParamsByHashReturns = struct {
+		result1 []byte
+		result2 error
+	}{result1, result2}
+}
+
+func (fake *QueryEngine) PublicParamsByHashReturnsOnCall(i int, result1 []byte, result2 error) {
+	fake.publicParamsByHashMutex.Lock()
+	defer fake.publicParamsByHashMutex.Unlock()
+	fake.PublicParamsByHashStub = nil
+	if fake.publicParamsByHashReturnsOnCall == nil {
+		fake.publicParamsByHashReturnsOnCall = make(map[int]struct {
+			result1 []byte
+			result2 error
+		})
+	}
+	fake.publicParamsByHashReturnsOnCall[i] = struct {
+		result1 []byte
+		result2 error
+	}{result1, result2}
+}
+
+func (fake *QueryEngine) PublicParamsHashes(arg1 context.Context) ([]driver.PPHash, error) {
+	fake.publicParamsHashesMutex.Lock()
+	ret, specificReturn := fake.publicParamsHashesReturnsOnCall[len(fake.publicParamsHashesArgsForCall)]
+	fake.publicParamsHashesArgsForCall = append(fake.publicParamsHashesArgsForCall, struct {
+		arg1 context.Context
+	}{arg1})
+	stub := fake.PublicParamsHashesStub
+	fakeReturns := fake.publicParamsHashesReturns
+	fake.recordInvocation("PublicParamsHashes", []interface{}{arg1})
+	fake.publicParamsHashesMutex.Unlock()
+	if stub != nil {
+		return stub(arg1)
+	}
+	if specificReturn {
+		return ret.result1, ret.result2
+	}
+	return fakeReturns.result1, fakeReturns.result2
+}
+
+func (fake *QueryEngine) PublicParamsHashesCallCount() int {
+	fake.publicParamsHashesMutex.RLock()
+	defer fake.publicParamsHashesMutex.RUnlock()
+	return len(fake.publicParamsHashesArgsForCall)
+}
+
+func (fake *QueryEngine) PublicParamsHashesCalls(stub func(context.Context) ([]driver.PPHash, error)) {
+	fake.publicParamsHashesMutex.Lock()
+	defer fake.publicParamsHashesMutex.Unlock()
+	fake.PublicParamsHashesStub = stub
+}
+
+func (fake *QueryEngine) PublicParamsHashesArgsForCall(i int) context.Context {
+	fake.publicParamsHashesMutex.RLock()
+	defer fake.publicParamsHashesMutex.RUnlock()
+	argsForCall := fake.publicParamsHashesArgsForCall[i]
+	return argsForCall.arg1
+}
+
+func (fake *QueryEngine) PublicParamsHashesReturns(result1 []driver.PPHash, result2 error) {
+	fake.publicParamsHashesMutex.Lock()
+	defer fake.publicParamsHashesMutex.Unlock()
+	fake.PublicParamsHashesStub = nil
+	fake.publicParamsHashesReturns = struct {
+		result1 []driver.PPHash
+		result2 error
+	}{result1, result2}
+}
+
+func (fake *QueryEngine) PublicParamsHashesReturnsOnCall(i int, result1 []driver.PPHash, result2 error) {
+	fake.publicParamsHashesMutex.Lock()
+	defer fake.publicParamsHashesMutex.Unlock()
+	fake.PublicParamsHashesStub = nil
+	if fake.publicParamsHashesReturnsOnCall == nil {
+		fake.publicParamsHashesReturnsOnCall = make(map[int]struct {
+			result1 []driver.PPHash
+			result2 error
+		})
+	}
+	fake.publicParamsHashesReturnsOnCall[i] = struct {
+		result1 []driver.PPHash
 		result2 error
 	}{result1, result2}
 }
