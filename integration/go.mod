@@ -5,19 +5,19 @@ go 1.26.5
 replace github.com/LFDT-Panurus/panurus => ../
 
 require (
-	github.com/IBM/idemix v0.3.1-0.20260828145428-1895a96e2b48
-	github.com/IBM/mathlib v0.3.2-0.20260828145246-354ac146cc41
+	github.com/IBM/idemix v0.3.1
+	github.com/IBM/mathlib v0.3.2
 	github.com/LFDT-Panurus/panurus v0.0.0
 	github.com/gin-gonic/gin v1.12.0
 	github.com/hyperledger-labs/fabric-smart-client v0.18.0
 	github.com/hyperledger-labs/fabric-smart-client/integration v0.18.0
 	github.com/hyperledger/fabric-lib-go v1.1.5-0.20260708100132-163bcc919208
-	github.com/onsi/ginkgo/v2 v2.32.1
-	github.com/onsi/gomega v1.42.1
+	github.com/onsi/ginkgo/v2 v2.32.2
+	github.com/onsi/gomega v1.43.0
 	github.com/prometheus/common v0.70.1
 	github.com/sourcegraph/conc v0.3.1-0.20240121214520-5f936abd7ae8
 	github.com/spf13/viper v1.21.0
-	github.com/stretchr/testify v1.12.0
+	github.com/stretchr/testify v1.12.1
 	github.com/tedsuo/ifrit v0.0.0-20260418191334-846868129986
 	go.opentelemetry.io/otel/trace v1.45.0
 	go.uber.org/dig v1.19.0
@@ -35,8 +35,7 @@ require (
 	github.com/alecthomas/units v0.0.0-20240927000941-0f3dac36c52b // indirect
 	github.com/benbjohnson/clock v1.3.5 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
-	github.com/bits-and-blooms/bitset v1.24.4 // indirect
-	github.com/bytedance/gopkg v0.1.3 // indirect
+	github.com/bits-and-blooms/bitset v1.24.6 // indirect
 	github.com/bytedance/sonic v1.15.0 // indirect
 	github.com/bytedance/sonic/loader v0.5.0 // indirect
 	github.com/cenkalti/backoff/v5 v5.0.3 // indirect
@@ -45,7 +44,7 @@ require (
 	github.com/cockroachdb/errors v1.14.0 // indirect
 	github.com/cockroachdb/logtags v0.0.0-20230118201751-21c54148d20b // indirect
 	github.com/cockroachdb/redact v1.1.5 // indirect
-	github.com/consensys/gnark-crypto v0.20.1 // indirect
+	github.com/consensys/gnark-crypto v0.21.0 // indirect
 	github.com/containerd/errdefs v1.0.0 // indirect
 	github.com/containerd/errdefs/pkg v0.3.0 // indirect
 	github.com/davidlazar/go-crypto v0.0.0-20200604182044-b73af7476f6c // indirect
@@ -245,7 +244,6 @@ require (
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260817212433-ac3dfec99bb1 // indirect
 	google.golang.org/grpc v1.83.2 // indirect
 	google.golang.org/protobuf v1.36.12 // indirect
-	gopkg.in/yaml.v3 v3.0.1 // indirect
 	lukechampine.com/blake3 v1.4.1 // indirect
 	modernc.org/libc v1.74.4 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
