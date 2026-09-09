@@ -16,6 +16,7 @@ import (
 	"github.com/LFDT-Panurus/panurus/token/core/fabtoken/v1/validator"
 	"github.com/LFDT-Panurus/panurus/token/driver"
 	"github.com/LFDT-Panurus/panurus/token/services/logging"
+	"github.com/LFDT-Panurus/panurus/token/services/observability"
 	"github.com/LFDT-Panurus/panurus/token/services/utils"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 )
@@ -129,7 +130,7 @@ func (d *Driver) NewTokenService(tmsID driver.TMSID, publicParams []byte) (drive
 	networkLocalMembership := n.LocalMembership()
 	qe := vault.QueryEngine()
 	metricsProvider := metrics.NewTMSProvider(tmsConfig.ID(), d.metricsProvider)
-	ws, err := d.newWalletService(
+	rawWS, err := d.newWalletService(
 		tmsConfig,
 		d.endpointService,
 		d.storageProvider,
@@ -144,8 +145,9 @@ func (d *Driver) NewTokenService(tmsID driver.TMSID, publicParams []byte) (drive
 	if err != nil {
 		return nil, errors.Wrapf(err, "failed to initiliaze wallet service for [%s:%s]", tmsID.Network, tmsID.Namespace)
 	}
-	deserializer := ws.Deserializer
-	ip := ws.IdentityProvider
+	deserializer := rawWS.Deserializer
+	ip := rawWS.IdentityProvider
+	ws := observability.NewWalletServiceDecorator(rawWS, metricsProvider, nil)
 
 	authorization := common.NewStandardAuthorization(logger, publicParamsManager.PublicParams(), ws)
 	tokensService, err := v1.NewTokensService(publicParamsManager.PublicParams(), deserializer)
