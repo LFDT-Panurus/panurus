@@ -914,8 +914,8 @@ github.com/hashicorp/golang-lru/v2 v2.0.7/go.mod h1:QeFd9opnmA6QUJc5vARoKUSoFhyf
 github.com/hpcloud/tail v1.0.0/go.mod h1:ab1qPbhIpdTxEkNHXyeSf5vhxWSCs/tWer42PpOxQnU=
 github.com/huin/goupnp v1.3.0 h1:UvLUlWDNpoUdYzb2TCn+MuTWtcjXKSza2n6CBdQ0xXc=
 github.com/huin/goupnp v1.3.0/go.mod h1:gnGPsThkYa7bFi/KWmEysQRf48l2dvR5bxr2OFckNX8=
-github.com/hyperledger-labs/fabric-smart-client v0.18.0 h1:5IZNvk3Odr7iNyVN5FC/mkjmzkiSFwbLOMXTVUhHHe8=
-github.com/hyperledger-labs/fabric-smart-client v0.18.0/go.mod h1:i6ux/6pBs6YM1XlQ4ZeD2l58CQDD8yvjX4Fp2EmAGCg=
+github.com/hyperledger-labs/fabric-smart-client v0.19.0 h1:cTZ2iig1skXqBPmF2VZoBQVi393vwirNXZbb9JX7igE=
+github.com/hyperledger-labs/fabric-smart-client v0.19.0/go.mod h1:i6ux/6pBs6YM1XlQ4ZeD2l58CQDD8yvjX4Fp2EmAGCg=
 github.com/hyperledger-labs/fabric-smart-client/integration v0.18.0 h1:w8IKKo/CdBVltfgUx1SedRfIfFWBX7AXsXO0Q0/3tu0=
 github.com/hyperledger-labs/fabric-smart-client/integration v0.18.0/go.mod h1:uVw5cm5pm066RWZhhaq3plwTZzp0AaZKilea4EO0QEw=
 github.com/hyperledger-labs/fabric-smart-client/platform/fabric/services/state/cc/query v0.16.0 h1:tTFhG33qwbKB2Ia0OZ9x0dqmafNWh4OqcD5BcYzS9q4=
