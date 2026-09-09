@@ -10,6 +10,7 @@ package ttx_test
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 
@@ -443,4 +444,123 @@ func TestLocalBidirectionalChannel_UniqueSessionIDs(t *testing.T) {
 	id2 := channel2.LeftSession().Info().ID
 
 	assert.NotEqual(t, id1, id2, "session IDs should be unique")
+}
+
+// TestLocalBidirectionalChannel_CloseReleasesPeerReceive verifies that closing one side of the session
+// immediately releases a peer blocked on Receive on the other side.
+func TestLocalBidirectionalChannel_CloseReleasesPeerReceive(t *testing.T) {
+	ctx := t.Context()
+	channel, err := ttx.NewLocalBidirectionalChannel(ctx, "caller", "ctx-id", "endpoint", []byte("pkid"))
+	require.NoError(t, err)
+
+	leftSession := channel.LeftSession()
+	rightSession := channel.RightSession()
+
+	done := make(chan struct{})
+
+	// Peer (rightSession) waits on Receive
+	go func() {
+		defer close(done)
+		ch := rightSession.Receive()
+		msg := <-ch
+		assert.Nil(t, msg, "expected nil message on channel closure")
+	}()
+
+	// Give goroutine time to block on Receive
+	time.Sleep(10 * time.Millisecond)
+
+	// Close initiator (leftSession)
+	leftSession.Close()
+
+	select {
+	case <-done:
+		// Peer unblocked immediately
+	case <-time.After(time.Second):
+		t.Fatal("peer on Receive was not released after session Close")
+	}
+}
+
+// TestLocalBidirectionalChannel_ConcurrentCloseAndOperations tests concurrent usage of session methods
+// to ensure there are no data races or panics.
+func TestLocalBidirectionalChannel_ConcurrentCloseAndOperations(t *testing.T) {
+	ctx := t.Context()
+	channel, err := ttx.NewLocalBidirectionalChannel(ctx, "caller", "ctx-id", "endpoint", []byte("pkid"))
+	require.NoError(t, err)
+
+	leftSession := channel.LeftSession()
+	rightSession := channel.RightSession()
+
+	var wg sync.WaitGroup
+
+	// Goroutine 1: Continually calling Info() on left
+	wg.Go(func() {
+		for range 100 {
+			_ = leftSession.Info()
+		}
+	})
+
+	// Goroutine 2: Continually calling Receive() on left
+	wg.Go(func() {
+		for range 100 {
+			_ = leftSession.Receive()
+		}
+	})
+
+	// Goroutine 3: Sending messages on left
+	wg.Go(func() {
+		for i := range 100 {
+			_ = leftSession.Send(ctx, []byte{byte(i)})
+		}
+	})
+
+	// Goroutine 4: Continually calling Receive() and reading on right
+	wg.Go(func() {
+		for range 100 {
+			ch := rightSession.Receive()
+			if ch != nil {
+				select {
+				case <-ch:
+				default:
+				}
+			}
+		}
+	})
+
+	// Goroutine 5: Close left session concurrently
+	wg.Go(func() {
+		time.Sleep(1 * time.Millisecond)
+		leftSession.Close()
+	})
+
+	// Goroutine 6: Close right session concurrently
+	wg.Go(func() {
+		time.Sleep(2 * time.Millisecond)
+		rightSession.Close()
+	})
+
+	wg.Wait()
+}
+
+// TestLocalBidirectionalChannel_BothSidesClosed verifies closing both left and right sessions
+// does not panic with close of closed channel or cause any errors.
+func TestLocalBidirectionalChannel_BothSidesClosed(t *testing.T) {
+	ctx := t.Context()
+	channel, err := ttx.NewLocalBidirectionalChannel(ctx, "caller", "ctx-id", "endpoint", []byte("pkid"))
+	require.NoError(t, err)
+
+	leftSession := channel.LeftSession()
+	rightSession := channel.RightSession()
+
+	// Close both sessions multiple times
+	leftSession.Close()
+	leftSession.Close()
+	rightSession.Close()
+	rightSession.Close()
+
+	assert.True(t, leftSession.Info().Closed)
+	assert.True(t, rightSession.Info().Closed)
+	assert.Nil(t, leftSession.Receive())
+	assert.Nil(t, rightSession.Receive())
+	require.Error(t, leftSession.Send(ctx, []byte("data")))
+	require.Error(t, rightSession.Send(ctx, []byte("data")))
 }
