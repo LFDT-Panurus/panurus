@@ -609,25 +609,21 @@ func TestLocalBidirectionalChannel_ConcurrentSendAndClose(t *testing.T) {
 	start := make(chan struct{})
 	var wg sync.WaitGroup
 	for range 8 {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			<-start
 			for range 2000 {
 				if err := leftSession.Send(ctx, []byte("concurrent")); err != nil {
 					assert.Contains(t, err.Error(), "session is closed")
 				}
 			}
-		}()
+		})
 	}
 
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		<-start
 		time.Sleep(time.Millisecond)
 		leftSession.Close()
-	}()
+	})
 
 	close(start)
 	wg.Wait()
@@ -648,21 +644,17 @@ func TestLocalBidirectionalChannel_ConcurrentInfoAndClose(t *testing.T) {
 
 	var wg sync.WaitGroup
 	for range 4 {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			for range 100 {
 				_ = leftSession.Info()
 				_ = leftSession.Receive()
 			}
-		}()
+		})
 	}
 
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		leftSession.Close()
-	}()
+	})
 
 	wg.Wait()
 	assert.True(t, leftSession.Info().Closed)
@@ -747,11 +739,9 @@ func TestLocalBidirectionalChannel_ConcurrentCloseBothSides(t *testing.T) {
 	assert.NotPanics(t, func() {
 		var wg sync.WaitGroup
 		for _, session := range []view.Session{leftSession, rightSession, leftSession, rightSession} {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
+			wg.Go(func() {
 				session.Close()
-			}()
+			})
 		}
 		wg.Wait()
 	})
