@@ -4,9 +4,9 @@ go 1.26.5
 
 require (
 	github.com/DATA-DOG/go-sqlmock v1.5.2
-	github.com/IBM/idemix v0.3.1-0.20260828145428-1895a96e2b48
-	github.com/IBM/mathlib v0.3.2-0.20260828145246-354ac146cc41
-	github.com/consensys/gnark-crypto v0.20.1
+	github.com/IBM/idemix v0.3.1
+	github.com/IBM/mathlib v0.3.2
+	github.com/consensys/gnark-crypto v0.21.0
 	github.com/dgraph-io/badger/v4 v4.9.4
 	github.com/dgraph-io/ristretto/v2 v2.4.2
 	github.com/go-co-op/gocron/v2 v2.22.0
@@ -20,10 +20,10 @@ require (
 	github.com/hyperledger/fabric-x-common v0.2.8
 	github.com/jackc/pgx/v5 v5.10.0
 	github.com/jackc/pgxlisten v0.0.0-20250802141604-12b92425684c
-	github.com/onsi/ginkgo/v2 v2.32.1
-	github.com/onsi/gomega v1.42.1
+	github.com/onsi/ginkgo/v2 v2.32.2
+	github.com/onsi/gomega v1.43.0
 	github.com/prometheus/client_golang v1.24.1
-	github.com/stretchr/testify v1.12.0
+	github.com/stretchr/testify v1.12.1
 	github.com/tidwall/gjson v1.19.0
 	go.opentelemetry.io/otel/trace v1.45.0
 	go.uber.org/dig v1.19.0
@@ -44,7 +44,7 @@ require (
 	github.com/alecthomas/kingpin/v2 v2.4.0 // indirect
 	github.com/alecthomas/units v0.0.0-20240927000941-0f3dac36c52b // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
-	github.com/bits-and-blooms/bitset v1.24.4 // indirect
+	github.com/bits-and-blooms/bitset v1.24.6 // indirect
 	github.com/cenkalti/backoff/v5 v5.0.3 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/cockroachdb/errors v1.14.0 // indirect
@@ -135,7 +135,6 @@ require (
 	google.golang.org/genproto/googleapis/api v0.0.0-20260803160001-6ac0973c030d // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260803160001-6ac0973c030d // indirect
 	google.golang.org/grpc v1.83.2 // indirect
-	gopkg.in/yaml.v3 v3.0.1 // indirect
 	modernc.org/libc v1.74.4 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect
