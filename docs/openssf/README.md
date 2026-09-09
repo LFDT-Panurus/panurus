@@ -40,7 +40,7 @@ and only the first one is assessed here.
 | Program | Identifiers | Levels | Used here |
 |---------|-------------|--------|-----------|
 | [OSPS Baseline](https://baseline.openssf.org) | `OSPS-<CATEGORY>-<NN>.<NN>` | Level 1, Level 2, Level 3 | Yes — the pages below |
-| [Best Practices Badge](https://www.bestpractices.dev) | free-form criteria | passing, silver, gold | No — tracked separately in the project's [badge entry](https://www.bestpractices.dev/en/projects/7176) |
+| [Best Practices Badge](https://www.bestpractices.dev) | free-form criteria | passing, silver, gold | No — tracked separately in the project's [badge entry](https://www.bestpractices.dev/en/projects/14554) |
 
 The OSPS Baseline levels are *not* named "passing", "silver" or "gold" — those are Best Practices
 Badge tiers. Baseline levels are scoped by project size instead:
@@ -141,7 +141,7 @@ The assessment converges on a small number of themes rather than 20 unrelated it
 5. Open a GitHub issue for every control that moves to, or stays at, **Not Met**, and reference the
    control identifier in the issue so progress stays traceable.
 6. If the project also wants credit on the Best Practices Badge, update
-   [project 7176](https://www.bestpractices.dev/en/projects/7176) separately — the two programs do
+   [project 14554](https://www.bestpractices.dev/en/projects/14554) separately — the two programs do
    not share data.
 
 ## Related documentation
