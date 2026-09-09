@@ -4,7 +4,7 @@
 
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache%202-blue" alt="License"></a>
-  <a href="https://www.bestpractices.dev/projects/7176"><img src="https://www.bestpractices.dev/projects/7176/badge" alt="OpenSSF Best Practices"></a>
+  <a href="https://www.bestpractices.dev/projects/14554"><img src="https://www.bestpractices.dev/projects/14554/badge" alt="OpenSSF Best Practices"></a>
   <a href="https://goreportcard.com/badge/github.com/LFDT-Panurus/panurus"><img src="https://goreportcard.com/badge/github.com/LFDT-Panurus/panurus" alt="Go Report Card"></a>
   <a href="https://github.com/LFDT-Panurus/panurus/actions/workflows/tests.yml"><img src="https://github.com/LFDT-Panurus/panurus/actions/workflows/tests.yml/badge.svg?branch=main" alt="Tests"></a>
   <a href="https://github.com/LFDT-Panurus/panurus/actions/workflows/codeql-analysis.yml"><img src="https://github.com/LFDT-Panurus/panurus/actions/workflows/codeql-analysis.yml/badge.svg?branch=main" alt="CodeQL"></a>
