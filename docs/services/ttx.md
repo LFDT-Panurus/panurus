@@ -456,6 +456,21 @@ sequenceDiagram
     I->>I: Verify auditor signature
 ```
 
+### Local Sessions and Close Semantics
+
+When the auditor is also the initiator of the transaction — an issuer that audits its own transactions, for example — FSC cannot open a communication session to the node itself. `startLocal` (`auditor.go`) therefore wires the initiator and its registered responder together with `NewLocalBidirectionalChannel` (`session.go`), which hands out two `view.Session` ends — `LeftSession` for the initiator, `RightSession` for the responder — backed by one buffered channel per direction (capacity `messageBufferSize`, 10 messages).
+
+The two ends share their closed state, so **`Close()` on either end terminates the conversation in both directions**; both message channels are closed. Concretely:
+
+- A peer parked on `Receive()` is released and observes a `nil` message instead of blocking until its context expires. `Receive()` always returns a usable channel — it never returns `nil`.
+- Messages already buffered when the close happens stay readable: closing does not discard what was sent before it.
+- Any later `Send`/`SendError` on **either** end fails with `session is closed` instead of silently succeeding into a buffer nobody drains. A send already parked on a full buffer is released with that same error.
+- `Info().Closed` reports `true` on both ends once either one has been closed.
+
+`Close()` is idempotent and safe to call concurrently from both ends; it returns only once the message channels really are closed. A `Send` parked on a full buffer also honours its context: if the context is cancelled first, the send returns the wrapped `ctx.Err()` rather than the close error.
+
+This is a behaviour change for callers written against the previous implementation, where `Close()` marked only the closing end and a `Send` after the peer had closed reported success. Closing one end and continuing to use the other, or treating a post-close `Send` as delivered, is now an error.
+
 ## Collect Actions Flow
 
 `collectActionsView` (`collectactions.go`) drives a transfer where the action originates with a remote party: it ships the transaction and the requested actions, and receives the assembled transaction back.

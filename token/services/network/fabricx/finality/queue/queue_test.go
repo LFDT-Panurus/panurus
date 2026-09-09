@@ -76,11 +76,11 @@ func (g *noopMetricGauge) Set(_ float64)                  {}
 // mockEvent is a test implementation of the Event interface
 type mockEvent struct {
 	processFunc func(ctx context.Context) error
-	processed   int32
+	processed   atomic.Int32
 }
 
 func (m *mockEvent) Process(ctx context.Context) error {
-	atomic.AddInt32(&m.processed, 1)
+	m.processed.Add(1)
 	if m.processFunc != nil {
 		return m.processFunc(ctx)
 	}
@@ -89,7 +89,7 @@ func (m *mockEvent) Process(ctx context.Context) error {
 }
 
 func (m *mockEvent) wasProcessed() bool {
-	return atomic.LoadInt32(&m.processed) > 0
+	return m.processed.Load() > 0
 }
 
 // TestNewEventQueue_ValidConfig tests successful queue creation
@@ -400,7 +400,7 @@ func TestEventProcessing_WithError(t *testing.T) {
 	// Wait for processing
 	time.Sleep(100 * time.Millisecond)
 	// Queue does not retry — event is processed exactly once
-	assert.Equal(t, int32(1), atomic.LoadInt32(&event.processed))
+	assert.Equal(t, int32(1), event.processed.Load())
 }
 
 // TestEventProcessing_WithPanic tests worker recovery from panic
@@ -631,7 +631,7 @@ func TestWorkerContextCancellation(t *testing.T) {
 	require.NoError(t, err)
 
 	// Enqueue events that check context
-	var processedAfterCancel int32
+	var processedAfterCancel atomic.Int32
 	for range 5 {
 		event := &mockEvent{
 			processFunc: func(ctx context.Context) error {
@@ -639,7 +639,7 @@ func TestWorkerContextCancellation(t *testing.T) {
 				case <-ctx.Done():
 					return ctx.Err()
 				case <-time.After(100 * time.Millisecond):
-					atomic.AddInt32(&processedAfterCancel, 1)
+					processedAfterCancel.Add(1)
 
 					return nil
 				}
@@ -655,7 +655,7 @@ func TestWorkerContextCancellation(t *testing.T) {
 	_ = err
 
 	// Some events may not have completed
-	count := atomic.LoadInt32(&processedAfterCancel)
+	count := processedAfterCancel.Load()
 	assert.True(t, count >= 0 && count <= 5)
 }
 
@@ -704,10 +704,10 @@ func TestProcessingDuration_NotObservedOnError(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { _ = eq.Shutdown(time.Second) }()
 
-	var processed int32
+	var processed atomic.Int32
 	failingEvent := &mockEvent{
 		processFunc: func(ctx context.Context) error {
-			atomic.AddInt32(&processed, 1)
+			processed.Add(1)
 
 			return errors.New("deliberate failure")
 		},
@@ -716,7 +716,7 @@ func TestProcessingDuration_NotObservedOnError(t *testing.T) {
 	require.NoError(t, err)
 
 	require.Eventually(t, func() bool {
-		return atomic.LoadInt32(&processed) == 1
+		return processed.Load() == 1
 	}, time.Second, 10*time.Millisecond)
 
 	assert.Equal(t, 0, provider.histogram.count(), "duration must not be recorded for failed events")
@@ -729,12 +729,12 @@ func TestQueueDraining(t *testing.T) {
 	require.NoError(t, err)
 
 	const numEvents = 5
-	var processedCount int32
+	var processedCount atomic.Int32
 	events := make([]*mockEvent, numEvents)
 	for i := range numEvents {
 		events[i] = &mockEvent{
 			processFunc: func(ctx context.Context) error {
-				atomic.AddInt32(&processedCount, 1)
+				processedCount.Add(1)
 				time.Sleep(10 * time.Millisecond)
 
 				return nil
@@ -752,6 +752,6 @@ func TestQueueDraining(t *testing.T) {
 	require.NoError(t, err)
 
 	// Check that all events were processed
-	count := atomic.LoadInt32(&processedCount)
+	count := processedCount.Load()
 	assert.Equal(t, int32(numEvents), count, "Expected %d events to be processed, got %d", numEvents, count)
 }

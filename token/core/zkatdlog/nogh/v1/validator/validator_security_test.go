@@ -16,6 +16,7 @@ package validator_test
 
 import (
 	"context"
+	"slices"
 	"testing"
 
 	math "github.com/IBM/mathlib"
@@ -952,8 +953,8 @@ func TestSecurityFA_RedeemAcceptedWithoutIssuerWhenIssuersEmpty(t *testing.T) {
 	env.Engine.PublicParams.IssuerIDs = nil
 	// The fixture is initially built with an issuer policy and appends the issuer
 	// signature last. Remove it so the request reflects the open-policy signer plan.
-	for i := len(env.TRWithRedeem.Signatures) - 1; i >= 0; i-- {
-		if env.TRWithRedeem.Signatures[i] != nil && env.TRWithRedeem.Signatures[i].Action != nil {
+	for i, v := range slices.Backward(env.TRWithRedeem.Signatures) {
+		if v != nil && v.Action != nil {
 			env.TRWithRedeem.Signatures = append(env.TRWithRedeem.Signatures[:i], env.TRWithRedeem.Signatures[i+1:]...)
 
 			break
