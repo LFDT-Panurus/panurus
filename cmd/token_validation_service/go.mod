@@ -6,7 +6,7 @@ replace github.com/LFDT-Panurus/panurus => ./../../
 
 require (
 	github.com/LFDT-Panurus/panurus v0.0.0
-	github.com/hyperledger-labs/fabric-smart-client v0.18.0
+	github.com/hyperledger-labs/fabric-smart-client v0.19.0
 	github.com/hyperledger-labs/fabric-smart-client/integration v0.18.0
 	github.com/stretchr/testify v1.12.0
 	google.golang.org/grpc v1.83.2

@@ -9,7 +9,7 @@ require (
 	github.com/IBM/mathlib v0.3.0
 	github.com/LFDT-Panurus/panurus v0.0.0
 	github.com/gin-gonic/gin v1.12.0
-	github.com/hyperledger-labs/fabric-smart-client v0.18.0
+	github.com/hyperledger-labs/fabric-smart-client v0.19.0
 	github.com/hyperledger-labs/fabric-smart-client/integration v0.18.0
 	github.com/hyperledger/fabric-lib-go v1.1.5-0.20260708100132-163bcc919208
 	github.com/onsi/ginkgo/v2 v2.32.1

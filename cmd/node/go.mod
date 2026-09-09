@@ -9,7 +9,7 @@ replace (
 
 require (
 	github.com/LFDT-Panurus/panurus/integration v0.0.0
-	github.com/hyperledger-labs/fabric-smart-client v0.18.0
+	github.com/hyperledger-labs/fabric-smart-client v0.19.0
 )
 
 require (
