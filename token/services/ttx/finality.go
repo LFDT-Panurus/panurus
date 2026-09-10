@@ -76,16 +76,36 @@ func (f *finalityView) Call(ctx view.Context) (any, error) {
 	return f.call(ctx, txID, tmsID, timeout)
 }
 
-func (f *finalityView) call(ctx view.Context, txID string, tmsID token.TMSID, timeout time.Duration) (any, error) {
-	// Validate inputs
+// validateFinalityCallInputs checks that txID and timeout are within accepted bounds.
+func validateFinalityCallInputs(txID string, timeout time.Duration) error {
 	if txID == "" {
-		return nil, errors.Wrapf(ErrInvalidInput, "transaction ID cannot be empty")
+		return errors.Wrapf(ErrInvalidInput, "transaction ID cannot be empty")
 	}
 	if timeout < 0 {
-		return nil, errors.Wrapf(ErrInvalidInput, "timeout cannot be negative")
+		return errors.Wrapf(ErrInvalidInput, "timeout cannot be negative")
 	}
 	if timeout > 24*time.Hour {
-		return nil, errors.Wrapf(ErrInvalidInput, "timeout cannot exceed 24 hours")
+		return errors.Wrapf(ErrInvalidInput, "timeout cannot exceed 24 hours")
+	}
+
+	return nil
+}
+
+// checkTransactionKnown reports whether txID is already known (has a non-Unknown status) in the
+// transaction DB and/or the audit DB.
+func checkTransactionKnown(ctx view.Context, txID string, transactionDB, auditDB finalityDB) (knownInTTXDB, knownInAuditDB bool) {
+	statusTTXDB, _, errTTXDB := transactionDB.GetStatus(ctx.Context(), txID)
+	knownInTTXDB = errTTXDB == nil && statusTTXDB != ttxdb.Unknown
+
+	statusAuditDB, _, errAuditDB := auditDB.GetStatus(ctx.Context(), txID)
+	knownInAuditDB = errAuditDB == nil && statusAuditDB != ttxdb.Unknown
+
+	return knownInTTXDB, knownInAuditDB
+}
+
+func (f *finalityView) call(ctx view.Context, txID string, tmsID token.TMSID, timeout time.Duration) (any, error) {
+	if err := validateFinalityCallInputs(txID, timeout); err != nil {
+		return nil, err
 	}
 
 	logger.DebugfContext(ctx.Context(), "Listen to finality of [%s]", txID)
@@ -108,12 +128,7 @@ func (f *finalityView) call(ctx view.Context, txID string, tmsID token.TMSID, ti
 
 	// Check if transaction is known in at least one database
 	// Note: We check both databases to determine which ones to monitor
-	statusTTXDB, _, errTTXDB := transactionDB.GetStatus(ctx.Context(), txID)
-	knownInTTXDB := errTTXDB == nil && statusTTXDB != ttxdb.Unknown
-
-	statusAuditDB, _, errAuditDB := auditDB.GetStatus(ctx.Context(), txID)
-	knownInAuditDB := errAuditDB == nil && statusAuditDB != ttxdb.Unknown
-
+	knownInTTXDB, knownInAuditDB := checkTransactionKnown(ctx, txID, transactionDB, auditDB)
 	if !knownInTTXDB && !knownInAuditDB {
 		return nil, errors.Wrapf(ErrTransactionUnknown, "transaction [%s] is unknown for [%s]", txID, tmsID)
 	}

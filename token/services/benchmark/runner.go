@@ -119,19 +119,57 @@ const (
 	ColorCyan   = "\033[36m"
 )
 
-// RunBenchmark executes the benchmark.
-func RunBenchmark[T any](
-	cfg Config,
-	setup func() T,
-	work func(T) error,
-) Result {
-	// Sanity defaults
+// runState holds the concurrency primitives and shared mutable state coordinating
+// RunBenchmark's worker goroutines and its timeline monitor goroutine. It must only
+// ever be accessed through a single shared *runState (never copied), since it embeds
+// sync.WaitGroup and atomic values.
+//
+// startGlobal is written once by RunBenchmark's own goroutine before recording is
+// flipped to true via the recording atomic; workers only ever read startGlobal after
+// observing recording.Load() == true, so the atomic Store/Load pair establishes the
+// happens-before edge that makes that unsynchronized read of startGlobal safe. Keep
+// that ordering intact if this is touched again.
+type runState struct {
+	running        atomic.Bool
+	recording      atomic.Bool
+	opsCounter     atomic.Uint64
+	startWg        sync.WaitGroup
+	endWg          sync.WaitGroup
+	startGlobal    time.Time
+	peakGoroutines atomic.Int64
+}
+
+// applyDefaults fills in sane defaults for unset Config fields.
+func applyDefaults(cfg *Config) {
 	if cfg.Workers <= 0 {
 		cfg.Workers = 1
 	}
 	if cfg.Duration <= 0 {
 		cfg.Duration = 1 * time.Second
 	}
+}
+
+// computeRateLimitInterval returns the per-worker sleep interval that together
+// achieves cfg.RateLimit total ops/sec, or 0 for closed-loop (unlimited) execution.
+func computeRateLimitInterval(cfg Config) time.Duration {
+	if cfg.RateLimit <= 0 {
+		return 0
+	}
+	ratePerWorker := cfg.RateLimit / float64(cfg.Workers)
+	if ratePerWorker <= 0 {
+		return 0
+	}
+
+	return time.Duration(float64(time.Second) / ratePerWorker)
+}
+
+// RunBenchmark executes the benchmark.
+func RunBenchmark[T any](
+	cfg Config,
+	setup func() T,
+	work func(T) error,
+) Result {
+	applyDefaults(&cfg)
 
 	// ---------------------------------------------------------
 	// PHASE 1: Memory Analysis (Serial & Isolated)
@@ -144,31 +182,15 @@ func RunBenchmark[T any](
 	runtime.GC()
 	time.Sleep(50 * time.Millisecond)
 
-	var (
-		running        atomic.Bool
-		recording      atomic.Bool
-		opsCounter     atomic.Uint64
-		startWg        sync.WaitGroup
-		endWg          sync.WaitGroup
-		startGlobal    time.Time
-		peakGoroutines atomic.Int64
-	)
-
-	running.Store(true)
-	recording.Store(false)
+	st := &runState{}
+	st.running.Store(true)
+	st.recording.Store(false)
 	workerResults := make([]workerStats, cfg.Workers)
 
-	// Rate Limiter Calculation
-	var intervalPerOp time.Duration
-	if cfg.RateLimit > 0 {
-		ratePerWorker := cfg.RateLimit / float64(cfg.Workers)
-		if ratePerWorker > 0 {
-			intervalPerOp = time.Duration(float64(time.Second) / ratePerWorker)
-		}
-	}
+	intervalPerOp := computeRateLimitInterval(cfg)
 
-	startWg.Add(cfg.Workers)
-	endWg.Add(cfg.Workers)
+	st.startWg.Add(cfg.Workers)
+	st.endWg.Add(cfg.Workers)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -176,64 +198,12 @@ func RunBenchmark[T any](
 	for i := range cfg.Workers {
 		workerID := i
 		go func() {
-			defer endWg.Done()
-
-			currentChunk := &chunk{}
-			headChunk := currentChunk
-			var localErrors uint64
-			var nextTick time.Time
-
-			if intervalPerOp > 0 {
-				nextTick = time.Now()
-			}
-
-			// This acts as a "starting gun" (Barrier pattern).
-			// It ensures that all worker goroutines are spawned, initialized, and ready to go before any of them begin execution.
-			startWg.Done()
-			startWg.Wait()
-
-			d := setup()
-
-			for running.Load() {
-				// Open-Loop Throttling
-				if intervalPerOp > 0 {
-					now := time.Now()
-					if now.Before(nextTick) {
-						time.Sleep(nextTick.Sub(now))
-					}
-					nextTick = nextTick.Add(intervalPerOp)
-					if time.Since(nextTick) > intervalPerOp*10 {
-						nextTick = time.Now()
-					}
-				}
-
-				tStart := time.Now()
-				err := work(d)
-				dur := time.Since(tStart)
-
-				if recording.Load() {
-					// STRICT CHECK: Ensure op started AFTER recording began
-					if tStart.After(startGlobal) {
-						opsCounter.Add(1)
-						if err != nil {
-							localErrors++
-						}
-
-						if currentChunk.idx >= chunkSize {
-							newC := &chunk{}
-							currentChunk.next = newC
-							currentChunk = newC
-						}
-						currentChunk.data[currentChunk.idx] = dur
-						currentChunk.idx++
-					}
-				}
-			}
-			workerResults[workerID] = workerStats{head: headChunk, errors: localErrors}
+			defer st.endWg.Done()
+			runWorker(workerID, setup, work, intervalPerOp, st, workerResults)
 		}()
 	}
 
-	startWg.Wait()
+	st.startWg.Wait()
 
 	if cfg.WarmupDuration > 0 {
 		time.Sleep(cfg.WarmupDuration)
@@ -242,8 +212,8 @@ func RunBenchmark[T any](
 	var memBefore, memAfter runtime.MemStats
 	runtime.ReadMemStats(&memBefore)
 
-	startGlobal = time.Now()
-	recording.Store(true)
+	st.startGlobal = time.Now()
+	st.recording.Store(true)
 
 	// Timeline Monitor
 	timeline := make([]TimePoint, 0, int(cfg.Duration.Seconds())+1)
@@ -254,59 +224,146 @@ func RunBenchmark[T any](
 	// Baseline goroutine count: workers + monitor + main + any framework goroutines.
 	// Captured just before recording so executor goroutines are not yet active.
 	goroutineBaseline := int64(runtime.NumGoroutine())
-	peakGoroutines.Store(goroutineBaseline)
+	st.peakGoroutines.Store(goroutineBaseline)
 
 	go func() {
 		defer monitorWg.Done()
-		ticker := time.NewTicker(1 * time.Second)
-		defer ticker.Stop()
-		var prevOps uint64
-		startTime := time.Now()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case t := <-ticker.C:
-				if !running.Load() {
-					return
-				}
-				currOps := opsCounter.Load()
-				delta := currOps - prevOps
-				prevOps = currOps
-				pt := TimePoint{Timestamp: t.Sub(startTime), OpsSec: float64(delta)}
-				timeline = append(timeline, pt)
-
-				// Track peak goroutine count during recording.
-				// Unbounded executors spawn goroutines per proof that live
-				// microseconds — we sample every tick to catch their peak.
-				current := int64(runtime.NumGoroutine())
-				for {
-					old := peakGoroutines.Load()
-					if current <= old {
-						break
-					}
-					if peakGoroutines.CompareAndSwap(old, current) {
-						break
-					}
-				}
-			}
-		}
+		monitorTimeline(ctx, st, &timeline)
 	}()
 
 	time.Sleep(cfg.Duration)
 
-	running.Store(false)
-	endWg.Wait()
+	st.running.Store(false)
+	st.endWg.Wait()
 	cancel()
 
-	globalDuration := time.Since(startGlobal)
+	globalDuration := time.Since(st.startGlobal)
 	monitorWg.Wait() // BLOCK here until monitor goroutine returns
 
 	runtime.ReadMemStats(&memAfter)
 
-	goroutinesCreated := max(peakGoroutines.Load()-goroutineBaseline, 0)
+	goroutinesCreated := max(st.peakGoroutines.Load()-goroutineBaseline, 0)
 
 	return analyzeResults(cfg, workerResults, memBytes, memAllocs, memBefore, memAfter, globalDuration, timeline, goroutinesCreated)
+}
+
+// runWorker is one benchmark worker's full lifecycle: it waits at the start barrier,
+// then repeatedly calls work(d) until st.running goes false, recording latencies (via
+// recordLatency) for operations that both start after recording began and observe
+// st.recording == true. Its result is stored into results[workerID].
+func runWorker[T any](workerID int, setup func() T, work func(T) error, intervalPerOp time.Duration, st *runState, results []workerStats) {
+	currentChunk := &chunk{}
+	headChunk := currentChunk
+	var localErrors uint64
+	var nextTick time.Time
+
+	if intervalPerOp > 0 {
+		nextTick = time.Now()
+	}
+
+	// This acts as a "starting gun" (Barrier pattern).
+	// It ensures that all worker goroutines are spawned, initialized, and ready to go before any of them begin execution.
+	st.startWg.Done()
+	st.startWg.Wait()
+
+	d := setup()
+
+	for st.running.Load() {
+		nextTick = applyThrottle(nextTick, intervalPerOp)
+
+		tStart := time.Now()
+		err := work(d)
+		dur := time.Since(tStart)
+
+		if st.recording.Load() {
+			// STRICT CHECK: Ensure op started AFTER recording began
+			if tStart.After(st.startGlobal) {
+				st.opsCounter.Add(1)
+				if err != nil {
+					localErrors++
+				}
+				currentChunk = recordLatency(currentChunk, dur)
+			}
+		}
+	}
+	results[workerID] = workerStats{head: headChunk, errors: localErrors}
+}
+
+// applyThrottle implements open-loop throttling: it sleeps until nextTick if needed,
+// then returns the following tick. intervalPerOp <= 0 means closed-loop (no throttle).
+func applyThrottle(nextTick time.Time, intervalPerOp time.Duration) time.Time {
+	if intervalPerOp <= 0 {
+		return nextTick
+	}
+
+	now := time.Now()
+	if now.Before(nextTick) {
+		time.Sleep(nextTick.Sub(now))
+	}
+	nextTick = nextTick.Add(intervalPerOp)
+	if time.Since(nextTick) > intervalPerOp*10 {
+		nextTick = time.Now()
+	}
+
+	return nextTick
+}
+
+// recordLatency appends dur onto currentChunk, allocating and linking a new chunk
+// first if the current one is full, and returns the (possibly new) current chunk.
+func recordLatency(currentChunk *chunk, dur time.Duration) *chunk {
+	if currentChunk.idx >= chunkSize {
+		newC := &chunk{}
+		currentChunk.next = newC
+		currentChunk = newC
+	}
+	currentChunk.data[currentChunk.idx] = dur
+	currentChunk.idx++
+
+	return currentChunk
+}
+
+// monitorTimeline samples throughput and peak goroutine count once per second,
+// appending TimePoints to *timeline, until ctx is cancelled or st.running goes false.
+func monitorTimeline(ctx context.Context, st *runState, timeline *[]TimePoint) {
+	ticker := time.NewTicker(1 * time.Second)
+	defer ticker.Stop()
+	var prevOps uint64
+	startTime := time.Now()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case t := <-ticker.C:
+			if !st.running.Load() {
+				return
+			}
+			currOps := st.opsCounter.Load()
+			delta := currOps - prevOps
+			prevOps = currOps
+			pt := TimePoint{Timestamp: t.Sub(startTime), OpsSec: float64(delta)}
+			*timeline = append(*timeline, pt)
+
+			updatePeakGoroutines(st)
+		}
+	}
+}
+
+// updatePeakGoroutines updates st.peakGoroutines to the current goroutine count if it
+// is higher than the previously recorded peak.
+//
+// Track peak goroutine count during recording. Unbounded executors spawn goroutines
+// per proof that live microseconds — we sample every tick to catch their peak.
+func updatePeakGoroutines(st *runState) {
+	current := int64(runtime.NumGoroutine())
+	for {
+		old := st.peakGoroutines.Load()
+		if current <= old {
+			break
+		}
+		if st.peakGoroutines.CompareAndSwap(old, current) {
+			break
+		}
+	}
 }
 
 func measureMemory[T any](setup func() T, work func(T) error) (bytes, allocs uint64) {
@@ -328,62 +385,105 @@ func measureMemory[T any](setup func() T, work func(T) error) (bytes, allocs uin
 	return totalBytes / samples, totalAllocs / samples
 }
 
-func analyzeResults(
-	cfg Config,
-	workers []workerStats,
-	memBytes, memAllocs uint64,
-	mStart, mEnd runtime.MemStats,
-	duration time.Duration,
-	timeline []TimePoint,
-	goroutinesCreated int64,
-) Result {
-	var totalOps uint64
-	var totalErrors uint64
-	var totalTimeNs int64
+// latencyStats holds the derived throughput/latency/distribution metrics computed
+// from a sorted slice of recorded per-op latencies.
+type latencyStats struct {
+	opsPerSecReal                   float64
+	opsPerSecPure                   float64
+	avgLatency                      time.Duration
+	stdDev                          time.Duration
+	variance                        float64
+	p50, p75, p95, p99, p999, p9999 time.Duration
+	minLat, maxLat                  time.Duration
+	iqr                             time.Duration
+	coeffVar                        float64
+}
 
-	estimatedOps := uint64(len(workers)) * uint64(chunkSize) * 2
-	allLatencies := make([]time.Duration, 0, estimatedOps)
+// gcStats holds the GC/memory-pressure metrics observed between two MemStats
+// snapshots taken before and after the recording window.
+type gcStats struct {
+	numGC      uint32
+	pauseTotal time.Duration
+	gcOverhead float64
+	allocRate  float64
+}
+
+// chunkAggregate holds one worker's contribution to the aggregated latency totals.
+type chunkAggregate struct {
+	totalOps      uint64
+	totalTimeNs   int64
+	jitterSum     float64
+	jitterSamples uint64
+}
+
+// aggregateWorkerChunks walks one worker's linked list of latency chunks, appending
+// every recorded (non-zero) latency onto allLatencies and returning that worker's op
+// count, total latency time, and jitter sum/count alongside the extended slice.
+func aggregateWorkerChunks(head *chunk, allLatencies []time.Duration) (chunkAggregate, []time.Duration) {
+	var agg chunkAggregate
+	curr := head
+	var prevLat time.Duration
+	first := true
+
+	for curr != nil {
+		limit := curr.idx
+		agg.totalOps += uint64(limit) // #nosec G115
+		for k := range limit {
+			lat := curr.data[k]
+			if lat == 0 {
+				continue
+			}
+
+			agg.totalTimeNs += int64(lat)
+			allLatencies = append(allLatencies, lat)
+
+			if !first {
+				diff := float64(lat - prevLat)
+				if diff < 0 {
+					diff = -diff
+				}
+				agg.jitterSum += diff
+				agg.jitterSamples++
+			}
+			prevLat = lat
+			first = false
+		}
+		curr = curr.next
+	}
+
+	return agg, allLatencies
+}
+
+// aggregateWorkerLatencies flattens every worker's chunked latency samples into a
+// single slice, alongside the running totals (ops, errors, total latency time) and
+// the average absolute jitter between consecutive recorded latencies within a worker.
+func aggregateWorkerLatencies(workers []workerStats, estimatedOps uint64) (totalOps, totalErrors uint64, totalTimeNs int64, allLatencies []time.Duration, jitter time.Duration) {
+	allLatencies = make([]time.Duration, 0, estimatedOps)
 
 	var totalJitter float64
 	var jitterSamples uint64
 
 	for _, w := range workers {
 		totalErrors += w.errors
-		curr := w.head
-		var prevLat time.Duration
-		first := true
 
-		for curr != nil {
-			limit := curr.idx
-			totalOps += uint64(limit) // #nosec G115
-			for k := range limit {
-				lat := curr.data[k]
-				if lat == 0 {
-					continue
-				}
-
-				totalTimeNs += int64(lat)
-				allLatencies = append(allLatencies, lat)
-
-				if !first {
-					diff := float64(lat - prevLat)
-					if diff < 0 {
-						diff = -diff
-					}
-					totalJitter += diff
-					jitterSamples++
-				}
-				prevLat = lat
-				first = false
-			}
-			curr = curr.next
-		}
+		var agg chunkAggregate
+		agg, allLatencies = aggregateWorkerChunks(w.head, allLatencies)
+		totalOps += agg.totalOps
+		totalTimeNs += agg.totalTimeNs
+		totalJitter += agg.jitterSum
+		jitterSamples += agg.jitterSamples
 	}
 
-	if totalOps == 0 {
-		return Result{Config: cfg, ErrorRate: 100.0}
+	if jitterSamples > 0 {
+		jitter = time.Duration(totalJitter / float64(jitterSamples))
 	}
 
+	return totalOps, totalErrors, totalTimeNs, allLatencies, jitter
+}
+
+// computeLatencyStats sorts allLatencies in place and derives throughput, percentile,
+// spread and variability metrics from it.
+func computeLatencyStats(cfg Config, allLatencies []time.Duration, totalOps uint64, totalTimeNs int64, duration time.Duration) latencyStats {
 	opsPerSecReal := float64(totalOps) / duration.Seconds()
 	avgLatency := time.Duration(totalTimeNs / int64(totalOps)) // #nosec G115
 	opsPerSecPure := 0.0
@@ -408,11 +508,6 @@ func analyzeResults(
 	// Stats
 	iqr := p75 - p25
 
-	jitter := time.Duration(0)
-	if jitterSamples > 0 {
-		jitter = time.Duration(totalJitter / float64(jitterSamples))
-	}
-
 	meanNs := float64(avgLatency.Nanoseconds())
 	var sumSqDiff float64
 	for _, lat := range allLatencies {
@@ -427,42 +522,90 @@ func analyzeResults(
 		coeffVar = float64(stdDev) / float64(avgLatency)
 	}
 
-	// GC Stats
+	return latencyStats{
+		opsPerSecReal: opsPerSecReal,
+		opsPerSecPure: opsPerSecPure,
+		avgLatency:    avgLatency,
+		stdDev:        stdDev,
+		variance:      variance,
+		p50:           p50,
+		p75:           p75,
+		p95:           p95,
+		p99:           p99,
+		p999:          p999,
+		p9999:         p9999,
+		minLat:        minLat,
+		maxLat:        maxLat,
+		iqr:           iqr,
+		coeffVar:      coeffVar,
+	}
+}
+
+// computeGCStats derives GC pause/overhead and allocation-rate metrics from the
+// MemStats snapshots taken immediately before and after the recording window.
+func computeGCStats(mStart, mEnd runtime.MemStats, duration time.Duration) gcStats {
 	numGC := mEnd.NumGC - mStart.NumGC
 	pauseNs := mEnd.PauseTotalNs - mStart.PauseTotalNs
 	gcOverhead := (float64(pauseNs) / float64(duration.Nanoseconds())) * 100
 	allocRate := (float64(mEnd.TotalAlloc-mStart.TotalAlloc) / 1024 / 1024) / duration.Seconds()
+
+	return gcStats{
+		numGC:      numGC,
+		pauseTotal: time.Duration(pauseNs), // #nosec G115
+		gcOverhead: gcOverhead,
+		allocRate:  allocRate,
+	}
+}
+
+func analyzeResults(
+	cfg Config,
+	workers []workerStats,
+	memBytes, memAllocs uint64,
+	mStart, mEnd runtime.MemStats,
+	duration time.Duration,
+	timeline []TimePoint,
+	goroutinesCreated int64,
+) Result {
+	estimatedOps := uint64(len(workers)) * uint64(chunkSize) * 2
+	totalOps, totalErrors, totalTimeNs, allLatencies, jitter := aggregateWorkerLatencies(workers, estimatedOps)
+
+	if totalOps == 0 {
+		return Result{Config: cfg, ErrorRate: 100.0}
+	}
+
+	ls := computeLatencyStats(cfg, allLatencies, totalOps, totalTimeNs, duration)
+	gc := computeGCStats(mStart, mEnd, duration)
 
 	return Result{
 		Config:            cfg,
 		GoRoutines:        cfg.Workers,
 		OpsTotal:          totalOps,
 		Duration:          duration,
-		OpsPerSecReal:     opsPerSecReal,
-		OpsPerSecPure:     opsPerSecPure,
-		AvgLatency:        avgLatency,
-		StdDevLatency:     stdDev,
-		Variance:          variance,
-		P50Latency:        p50,
-		P75Latency:        p75,
-		P95Latency:        p95,
-		P99Latency:        p99,
-		P999Latency:       p999,
-		P9999Latency:      p9999,
-		MinLatency:        minLat,
-		MaxLatency:        maxLat,
-		IQR:               iqr,
+		OpsPerSecReal:     ls.opsPerSecReal,
+		OpsPerSecPure:     ls.opsPerSecPure,
+		AvgLatency:        ls.avgLatency,
+		StdDevLatency:     ls.stdDev,
+		Variance:          ls.variance,
+		P50Latency:        ls.p50,
+		P75Latency:        ls.p75,
+		P95Latency:        ls.p95,
+		P99Latency:        ls.p99,
+		P999Latency:       ls.p999,
+		P9999Latency:      ls.p9999,
+		MinLatency:        ls.minLat,
+		MaxLatency:        ls.maxLat,
+		IQR:               ls.iqr,
 		Jitter:            jitter,
-		CoeffVar:          coeffVar,
+		CoeffVar:          ls.coeffVar,
 		BytesPerOp:        memBytes,
 		AllocsPerOp:       memAllocs,
-		AllocRateMBPS:     allocRate,
-		NumGC:             numGC,
-		GCPauseTotal:      time.Duration(pauseNs), // #nosec G115
-		GCOverhead:        gcOverhead,
+		AllocRateMBPS:     gc.allocRate,
+		NumGC:             gc.numGC,
+		GCPauseTotal:      gc.pauseTotal,
+		GCOverhead:        gc.gcOverhead,
 		ErrorCount:        totalErrors,
 		ErrorRate:         (float64(totalErrors) / float64(totalOps)) * 100,
-		Histogram:         calcHistogramImproved(allLatencies, minLat, maxLat, 20),
+		Histogram:         calcHistogramImproved(allLatencies, ls.minLat, ls.maxLat, 20),
 		Timeline:          timeline,
 		GoRoutinesCreated: goroutinesCreated,
 	}
@@ -612,61 +755,80 @@ func (r Result) printHeatmap(w *tabwriter.Writer) {
 	writeLine(w, "Latency Heatmap (Dynamic Range):")
 	writeLine(w, "Range\tFreq\tDistribution Graph")
 
-	maxCount := 0
-	for _, b := range r.Histogram {
-		if b.Count > maxCount {
-			maxCount = b.Count
-		}
-	}
+	maxCount := heatmapMaxCount(r.Histogram)
 
 	for _, b := range r.Histogram {
 		if b.Count == 0 {
 			continue
 		}
-
-		// 1. Draw Bar
-		barLen := 0
-		if maxCount > 0 {
-			barLen = (b.Count * 40) / maxCount
-		}
-
-		ratio := 0.0
-		if maxCount > 0 {
-			ratio = float64(b.Count) / float64(maxCount)
-		}
-
-		// Heat Color Logic (RESTORED)
-		color := ColorBlue
-		if ratio > 0.75 {
-			color = ColorRed
-		} else if ratio > 0.3 {
-			color = ColorYellow
-		} else if ratio > 0.1 {
-			color = ColorGreen
-		}
-
-		bar := ""
-		var barSb619 strings.Builder
-		for range barLen {
-			barSb619.WriteString("█")
-		}
-		bar += barSb619.String()
-
-		// 2. Format Label
-		label := fmt.Sprintf("%v-%v", b.LowBound, b.HighBound)
-		if b.HighBound-b.LowBound < time.Microsecond {
-			label = fmt.Sprintf("%dns-%dns", b.LowBound.Nanoseconds(), b.HighBound.Nanoseconds())
-		}
-
-		percentage := 0.0
-		if r.OpsTotal > 0 {
-			percentage = (float64(b.Count) / float64(r.OpsTotal)) * 100
-		}
-
-		writef(w, " %s\t%d\t%s%s %s(%.1f%%)\n",
-			label, b.Count, color, bar, ColorReset, percentage,
-		)
+		printHeatmapBucket(w, b, maxCount, r.OpsTotal)
 	}
+}
+
+// heatmapMaxCount returns the highest bucket count, used to scale bar lengths.
+func heatmapMaxCount(histogram []Bucket) int {
+	maxCount := 0
+	for _, b := range histogram {
+		if b.Count > maxCount {
+			maxCount = b.Count
+		}
+	}
+
+	return maxCount
+}
+
+// heatmapColor picks the bar color for a bucket based on its share of maxCount.
+func heatmapColor(ratio float64) string {
+	switch {
+	case ratio > 0.75:
+		return ColorRed
+	case ratio > 0.3:
+		return ColorYellow
+	case ratio > 0.1:
+		return ColorGreen
+	default:
+		return ColorBlue
+	}
+}
+
+// printHeatmapBucket renders one non-empty histogram bucket: its range label, count,
+// a proportional bar, and its share of opsTotal.
+func printHeatmapBucket(w *tabwriter.Writer, b Bucket, maxCount int, opsTotal uint64) {
+	// 1. Draw Bar
+	barLen := 0
+	if maxCount > 0 {
+		barLen = (b.Count * 40) / maxCount
+	}
+
+	ratio := 0.0
+	if maxCount > 0 {
+		ratio = float64(b.Count) / float64(maxCount)
+	}
+
+	// Heat Color Logic (RESTORED)
+	color := heatmapColor(ratio)
+
+	bar := ""
+	var barSb619 strings.Builder
+	for range barLen {
+		barSb619.WriteString("█")
+	}
+	bar += barSb619.String()
+
+	// 2. Format Label
+	label := fmt.Sprintf("%v-%v", b.LowBound, b.HighBound)
+	if b.HighBound-b.LowBound < time.Microsecond {
+		label = fmt.Sprintf("%dns-%dns", b.LowBound.Nanoseconds(), b.HighBound.Nanoseconds())
+	}
+
+	percentage := 0.0
+	if opsTotal > 0 {
+		percentage = (float64(b.Count) / float64(opsTotal)) * 100
+	}
+
+	writef(w, " %s\t%d\t%s%s %s(%.1f%%)\n",
+		label, b.Count, color, bar, ColorReset, percentage,
+	)
 }
 
 // printAnalysis prints the analysis and recommendations section.

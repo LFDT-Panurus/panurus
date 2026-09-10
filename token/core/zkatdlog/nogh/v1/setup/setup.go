@@ -471,6 +471,38 @@ func (p *PublicParams) Serialize() ([]byte, error) {
 	})
 }
 
+// deserializeIdentities converts a slice of protobuf identities into driver identities, passing
+// through a nil entry as a nil identity.
+func deserializeIdentities(raw []*protosv1.Identity) ([]driver.Identity, error) {
+	return protos.FromProtosSliceFunc2(raw, func(id *protosv1.Identity) (driver.Identity, error) {
+		if id == nil {
+			return nil, nil
+		}
+
+		return id.Raw, nil
+	})
+}
+
+// deserializeRangeProofParams deserializes the optional (mutually non-exclusive) range-proof and
+// CSP-range-proof parameters from publicParams into p.
+func (p *PublicParams) deserializeRangeProofParams(publicParams *pp.PublicParameters) error {
+	if publicParams.GetRangeProofParams() != nil {
+		p.RangeProofParams = &RangeProofParams{}
+		if err := p.RangeProofParams.FromProto(publicParams.GetRangeProofParams()); err != nil {
+			return errors.Wrapf(err, "failed to deserialize range proof parameters")
+		}
+	}
+
+	if publicParams.GetCspRangeProofParams() != nil {
+		p.CSPRangeProofParams = &CSPRangeProofParams{}
+		if err := p.CSPRangeProofParams.FromProto(publicParams.GetCspRangeProofParams()); err != nil {
+			return errors.Wrapf(err, "failed to deserialize csp range proof parameters")
+		}
+	}
+
+	return nil
+}
+
 func (p *PublicParams) Deserialize(raw []byte) error {
 	container, err := pp3.Unmarshal(raw)
 	if err != nil {
@@ -506,24 +538,12 @@ func (p *PublicParams) Deserialize(raw []byte) error {
 		return errors.Wrapf(err, "failed to deserialize public parameters")
 	}
 	p.PedersenGenerators = pg
-	issuers, err := protos.FromProtosSliceFunc2(publicParams.Issuers, func(id *protosv1.Identity) (driver.Identity, error) {
-		if id == nil {
-			return nil, nil
-		}
-
-		return id.Raw, nil
-	})
+	issuers, err := deserializeIdentities(publicParams.Issuers)
 	if err != nil {
 		return errors.Wrapf(err, "failed to deserialize issuers")
 	}
 	p.IssuerIDs = issuers
-	auditors, err := protos.FromProtosSliceFunc2(publicParams.Auditors, func(id *protosv1.Identity) (driver.Identity, error) {
-		if id == nil {
-			return nil, nil
-		}
-
-		return id.Raw, nil
-	})
+	auditors, err := deserializeIdentities(publicParams.Auditors)
 	if err != nil {
 		return errors.Wrapf(err, "failed to deserialize issuers")
 	}
@@ -535,18 +555,8 @@ func (p *PublicParams) Deserialize(raw []byte) error {
 		return errors.Wrapf(err, "failed to deserialize idemix issuer public keys")
 	}
 
-	if publicParams.GetRangeProofParams() != nil {
-		p.RangeProofParams = &RangeProofParams{}
-		if err := p.RangeProofParams.FromProto(publicParams.GetRangeProofParams()); err != nil {
-			return errors.Wrapf(err, "failed to deserialize range proof parameters")
-		}
-	}
-
-	if publicParams.GetCspRangeProofParams() != nil {
-		p.CSPRangeProofParams = &CSPRangeProofParams{}
-		if err := p.CSPRangeProofParams.FromProto(publicParams.GetCspRangeProofParams()); err != nil {
-			return errors.Wrapf(err, "failed to deserialize csp range proof parameters")
-		}
+	if err := p.deserializeRangeProofParams(publicParams); err != nil {
+		return err
 	}
 
 	p.ExtraData = publicParams.Metadata
@@ -685,14 +695,9 @@ func (p *PublicParams) String() string {
 
 // Validate validates the public parameters.
 // The list of issuers can be empty meaning that anyone can create tokens.
-func (p *PublicParams) Validate() error {
-	if int(p.Curve) > len(mathlib.Curves)-1 {
-		return errors.Errorf("invalid public parameters: invalid curveID [%d > %d]", int(p.Curve), len(mathlib.Curves)-1)
-	}
-	if len(p.IdemixIssuerPublicKeys) == 0 {
-		return errors.Errorf("expected at least one idemix issuer public key, found [%d]", len(p.IdemixIssuerPublicKeys))
-	}
-
+// validateIdemixIssuerPublicKeys checks that every idemix issuer public key is present,
+// non-empty, and uses a supported curve.
+func (p *PublicParams) validateIdemixIssuerPublicKeys() error {
 	for _, issuer := range p.IdemixIssuerPublicKeys {
 		if issuer == nil {
 			return errors.Errorf("invalid idemix issuer public key, it is nil")
@@ -704,6 +709,63 @@ func (p *PublicParams) Validate() error {
 			return errors.Errorf("invalid public parameters: invalid idemix curveID [%d > %d]", int(p.Curve), len(mathlib.Curves)-1)
 		}
 	}
+
+	return nil
+}
+
+// validateRangeProofParams checks p.RangeProofParams, if set: supported bit length, internal
+// validity, and that it matches p.QuantityPrecision.
+func (p *PublicParams) validateRangeProofParams() error {
+	if p.RangeProofParams == nil {
+		return nil
+	}
+	bitLength := p.RangeProofParams.BitLength
+	supportedPrecisions := collections.NewSet(SupportedPrecisions...)
+	if !supportedPrecisions.Contains(bitLength) {
+		return errors.Errorf("invalid bit length [%d], should be one of [%v]", bitLength, supportedPrecisions.ToSlice())
+	}
+	if err := p.RangeProofParams.Validate(p.Curve); err != nil {
+		return errors.Wrap(err, "invalid public parameters")
+	}
+	if p.QuantityPrecision != p.RangeProofParams.BitLength {
+		return errors.Errorf("invalid public parameters: quantity precision should be [%d] instead it is [%d]", p.RangeProofParams.BitLength, p.QuantityPrecision)
+	}
+
+	return nil
+}
+
+// validateCSPRangeProofParams checks p.CSPRangeProofParams, if set: supported bit length,
+// internal validity, and that it matches p.QuantityPrecision.
+func (p *PublicParams) validateCSPRangeProofParams() error {
+	if p.CSPRangeProofParams == nil {
+		return nil
+	}
+	bitLength := p.CSPRangeProofParams.BitLength
+	supportedPrecisions := collections.NewSet(SupportedPrecisions...)
+	if !supportedPrecisions.Contains(bitLength) {
+		return errors.Errorf("invalid bit length [%d], should be one of [%v]", bitLength, supportedPrecisions.ToSlice())
+	}
+	if err := p.CSPRangeProofParams.Validate(p.Curve); err != nil {
+		return errors.Wrap(err, "invalid public parameters")
+	}
+	if p.QuantityPrecision != p.CSPRangeProofParams.BitLength {
+		return errors.Errorf("invalid public parameters: quantity precision should be [%d] instead it is [%d]", p.CSPRangeProofParams.BitLength, p.QuantityPrecision)
+	}
+
+	return nil
+}
+
+func (p *PublicParams) Validate() error {
+	if int(p.Curve) > len(mathlib.Curves)-1 {
+		return errors.Errorf("invalid public parameters: invalid curveID [%d > %d]", int(p.Curve), len(mathlib.Curves)-1)
+	}
+	if len(p.IdemixIssuerPublicKeys) == 0 {
+		return errors.Errorf("expected at least one idemix issuer public key, found [%d]", len(p.IdemixIssuerPublicKeys))
+	}
+
+	if err := p.validateIdemixIssuerPublicKeys(); err != nil {
+		return err
+	}
 	if err := math.CheckElements(p.PedersenGenerators, p.Curve, 3); err != nil {
 		return errors.Wrapf(err, "invalid pedersen generators")
 	}
@@ -712,34 +774,11 @@ func (p *PublicParams) Validate() error {
 		return errors.New("invalid public parameters: nil range proof parameters")
 	}
 
-	if p.RangeProofParams != nil {
-		bitLength := p.RangeProofParams.BitLength
-		supportedPrecisions := collections.NewSet(SupportedPrecisions...)
-		if !supportedPrecisions.Contains(bitLength) {
-			return errors.Errorf("invalid bit length [%d], should be one of [%v]", bitLength, supportedPrecisions.ToSlice())
-		}
-		err := p.RangeProofParams.Validate(p.Curve)
-		if err != nil {
-			return errors.Wrap(err, "invalid public parameters")
-		}
-		if p.QuantityPrecision != p.RangeProofParams.BitLength {
-			return errors.Errorf("invalid public parameters: quantity precision should be [%d] instead it is [%d]", p.RangeProofParams.BitLength, p.QuantityPrecision)
-		}
+	if err := p.validateRangeProofParams(); err != nil {
+		return err
 	}
-
-	if p.CSPRangeProofParams != nil {
-		bitLength := p.CSPRangeProofParams.BitLength
-		supportedPrecisions := collections.NewSet(SupportedPrecisions...)
-		if !supportedPrecisions.Contains(bitLength) {
-			return errors.Errorf("invalid bit length [%d], should be one of [%v]", bitLength, supportedPrecisions.ToSlice())
-		}
-		err := p.CSPRangeProofParams.Validate(p.Curve)
-		if err != nil {
-			return errors.Wrap(err, "invalid public parameters")
-		}
-		if p.QuantityPrecision != p.CSPRangeProofParams.BitLength {
-			return errors.Errorf("invalid public parameters: quantity precision should be [%d] instead it is [%d]", p.CSPRangeProofParams.BitLength, p.QuantityPrecision)
-		}
+	if err := p.validateCSPRangeProofParams(); err != nil {
+		return err
 	}
 
 	maxToken := p.ComputeMaxTokenValue()

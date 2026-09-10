@@ -185,53 +185,59 @@ func (a *AuditorWrapper) InspectIdentity(ctx context.Context, matcher InfoMatche
 	return InspectIdentity(ctx, matcher, identity, index)
 }
 
+// validateIssueAuditAction validates auditCtx's issue action and its metadata: structural
+// correspondence, inputs, outputs, token types, and the issuer identity.
+func validateIssueAuditAction(ctx context.Context, infoMatcher InfoMatcher, pedersenParams []*math.G1, curve *math.Curve, auditCtx *AuditContext) error {
+	// Get the issue action
+	action := auditCtx.IssueAction
+	if action == nil {
+		return errors.Errorf("issue action is nil")
+	}
+
+	// Get the metadata for this specific action using ActionIndex
+	if auditCtx.ActionIndex >= len(auditCtx.TokenRequestMetadata.Actions) {
+		return errors.Errorf("action index %d out of range (have %d actions)", auditCtx.ActionIndex, len(auditCtx.TokenRequestMetadata.Actions))
+	}
+
+	actionMeta := auditCtx.TokenRequestMetadata.Actions[auditCtx.ActionIndex]
+	if actionMeta.IssueMetadata == nil {
+		return errors.Errorf("issue metadata not found at action index %d", auditCtx.ActionIndex)
+	}
+
+	metadata := actionMeta.IssueMetadata
+
+	// Use IssueMetadata.Match to validate structural correspondence
+	if err := metadata.Match(action); err != nil {
+		return errors.Wrapf(err, "issue action does not match metadata")
+	}
+
+	// Validate inputs (for token upgrades)
+	if err := validateIssueInputs(action.Inputs, metadata.Inputs); err != nil {
+		return err
+	}
+
+	// Validate outputs
+	if err := validateIssueOutputs(ctx, infoMatcher, pedersenParams, curve, action.Outputs, metadata.Outputs); err != nil {
+		return err
+	}
+
+	// Validate that all inputs and outputs have the same token type
+	if err := common.ValidateIssueActionTokenTypes(metadata, auditCtx.AuditTokens); err != nil {
+		return errors.Wrapf(err, "token type validation failed for issue action")
+	}
+
+	// Validate issuer identity
+	if err := validateIssuer(ctx, infoMatcher, auditCtx.PP.Issuers(), action.Issuer, &metadata.Issuer); err != nil {
+		return err
+	}
+
+	return nil
+}
+
 // IssueAuditValidate returns a validation function for issue actions.
 func IssueAuditValidate(infoMatcher InfoMatcher, pedersenParams []*math.G1, curve *math.Curve) ValidateIssueAuditFunc {
 	return func(ctx context.Context, auditCtx *AuditContext) error {
-		// Get the issue action
-		action := auditCtx.IssueAction
-		if action == nil {
-			return errors.Errorf("issue action is nil")
-		}
-
-		// Get the metadata for this specific action using ActionIndex
-		if auditCtx.ActionIndex >= len(auditCtx.TokenRequestMetadata.Actions) {
-			return errors.Errorf("action index %d out of range (have %d actions)", auditCtx.ActionIndex, len(auditCtx.TokenRequestMetadata.Actions))
-		}
-
-		actionMeta := auditCtx.TokenRequestMetadata.Actions[auditCtx.ActionIndex]
-		if actionMeta.IssueMetadata == nil {
-			return errors.Errorf("issue metadata not found at action index %d", auditCtx.ActionIndex)
-		}
-
-		metadata := actionMeta.IssueMetadata
-
-		// Use IssueMetadata.Match to validate structural correspondence
-		if err := metadata.Match(action); err != nil {
-			return errors.Wrapf(err, "issue action does not match metadata")
-		}
-
-		// Validate inputs (for token upgrades)
-		if err := validateIssueInputs(action.Inputs, metadata.Inputs); err != nil {
-			return err
-		}
-
-		// Validate outputs
-		if err := validateIssueOutputs(ctx, infoMatcher, pedersenParams, curve, action.Outputs, metadata.Outputs); err != nil {
-			return err
-		}
-
-		// Validate that all inputs and outputs have the same token type
-		if err := common.ValidateIssueActionTokenTypes(metadata, auditCtx.AuditTokens); err != nil {
-			return errors.Wrapf(err, "token type validation failed for issue action")
-		}
-
-		// Validate issuer identity
-		if err := validateIssuer(ctx, infoMatcher, auditCtx.PP.Issuers(), action.Issuer, &metadata.Issuer); err != nil {
-			return err
-		}
-
-		return nil
+		return validateIssueAuditAction(ctx, infoMatcher, pedersenParams, curve, auditCtx)
 	}
 }
 
@@ -406,70 +412,122 @@ func validateIssuer(ctx context.Context, infoMatcher InfoMatcher, issuers []driv
 	return nil
 }
 
+// validateTransferInput validates the i-th transfer action input against its metadata.
+func validateTransferInput(ctx context.Context, infoMatcher InfoMatcher, i int, actionInput *transfer.ActionInput, inputMetadata *driver.TransferInputMetadata) error {
+	if actionInput == nil || actionInput.Token == nil {
+		return errors.Errorf("input at index [%d] is nil", i)
+	}
+	if actionInput.ID == nil {
+		return errors.Errorf("input at index [%d] has nil ID", i)
+	}
+	if inputMetadata == nil {
+		return errors.Errorf("metadata for input at index [%d] is nil", i)
+	}
+
+	// Validate exactly one sender in metadata
+	if len(inputMetadata.Senders) != 1 {
+		return errors.Errorf(
+			"input metadata at index [%d] must have exactly one sender, found [%d]",
+			i,
+			len(inputMetadata.Senders),
+		)
+	}
+
+	if inputMetadata.Senders[0] == nil {
+		return errors.Errorf("sender at index [%d] is nil", i)
+	}
+
+	// Validate sender identity matches token owner
+	if !bytes.Equal(inputMetadata.Senders[0].Identity, actionInput.Token.Owner) {
+		return errors.Errorf(
+			"sender identity at index [%d] does not match token owner",
+			i,
+		)
+	}
+
+	// Validate TokenID matches the actual input token ID
+	if inputMetadata.TokenID != nil && !inputMetadata.TokenID.Equal(*actionInput.ID) {
+		return errors.Errorf(
+			"token ID mismatch at input [%d]: metadata has [%s:%d] but action has [%s:%d]",
+			i,
+			inputMetadata.TokenID.TxId, inputMetadata.TokenID.Index,
+			actionInput.ID.TxId, actionInput.ID.Index,
+		)
+	}
+
+	// Create inspectable token for input (only need audit info for sender)
+	inspectable, err := NewInspectableToken(
+		actionInput.Token,
+		inputMetadata.Senders[0].AuditInfo,
+		tokenTypeNotNeeded,
+		nil, // Value not needed for input validation
+		nil, // BlindingFactor not needed for input validation
+	)
+	if err != nil {
+		return errors.Wrapf(err, "failed to create inspectable token for input at index [%d]", i)
+	}
+
+	// Validate sender identity
+	if !inspectable.Identity.Identity.IsNone() {
+		if err := InspectIdentity(ctx, infoMatcher, &inspectable.Identity, i); err != nil {
+			return errors.Wrapf(err, "failed inspecting input sender at index [%d]", i)
+		}
+	}
+
+	return nil
+}
+
 // validateTransferInputs validates transfer action inputs against metadata.
 func validateTransferInputs(ctx context.Context, infoMatcher InfoMatcher, inputs []*transfer.ActionInput, inputsMetadata []*driver.TransferInputMetadata) error {
 	for i, actionInput := range inputs {
-		if actionInput == nil || actionInput.Token == nil {
-			return errors.Errorf("input at index [%d] is nil", i)
+		if err := validateTransferInput(ctx, infoMatcher, i, actionInput, inputsMetadata[i]); err != nil {
+			return err
 		}
-		if actionInput.ID == nil {
-			return errors.Errorf("input at index [%d] has nil ID", i)
-		}
+	}
 
-		inputMetadata := inputsMetadata[i]
-		if inputMetadata == nil {
-			return errors.Errorf("metadata for input at index [%d] is nil", i)
-		}
+	return nil
+}
 
-		// Validate exactly one sender in metadata
-		if len(inputMetadata.Senders) != 1 {
-			return errors.Errorf(
-				"input metadata at index [%d] must have exactly one sender, found [%d]",
-				i,
-				len(inputMetadata.Senders),
-			)
-		}
+// validateTransferOutput validates the i-th transfer action output against its metadata.
+func validateTransferOutput(ctx context.Context, infoMatcher InfoMatcher, pedersenParams []*math.G1, curve *math.Curve, i int, output *token.Token, outputMetadata *driver.TransferOutputMetadata) error {
+	if output == nil {
+		return errors.Errorf("output at index [%d] is nil", i)
+	}
+	if outputMetadata == nil {
+		return errors.Errorf("output metadata at index [%d] is nil", i)
+	}
 
-		if inputMetadata.Senders[0] == nil {
-			return errors.Errorf("sender at index [%d] is nil", i)
+	// Validate receivers for non-redeem outputs
+	if !output.IsRedeem() {
+		if err := validateOutputReceivers(ctx, infoMatcher, output.Owner, outputMetadata.Receivers, i, false); err != nil {
+			return err
 		}
+	}
 
-		// Validate sender identity matches token owner
-		if !bytes.Equal(inputMetadata.Senders[0].Identity, actionInput.Token.Owner) {
-			return errors.Errorf(
-				"sender identity at index [%d] does not match token owner",
-				i,
-			)
-		}
+	// Deserialize token metadata
+	tokenMetadata := &token.Metadata{}
+	if err := tokenMetadata.Deserialize(outputMetadata.OutputMetadata); err != nil {
+		return errors.Wrapf(err, "failed to deserialize token metadata at index [%d]", i)
+	}
+	if err := tokenMetadata.Validate(false); err != nil {
+		return errors.Wrapf(err, "invalid token metadata at index [%d]", i)
+	}
 
-		// Validate TokenID matches the actual input token ID
-		if inputMetadata.TokenID != nil && !inputMetadata.TokenID.Equal(*actionInput.ID) {
-			return errors.Errorf(
-				"token ID mismatch at input [%d]: metadata has [%s:%d] but action has [%s:%d]",
-				i,
-				inputMetadata.TokenID.TxId, inputMetadata.TokenID.Index,
-				actionInput.ID.TxId, actionInput.ID.Index,
-			)
-		}
+	// Create inspectable token using OutputAuditInfo (primary audit info for transfer outputs)
+	inspectable, err := NewInspectableToken(
+		output,
+		outputMetadata.OutputAuditInfo,
+		tokenMetadata.Type,
+		tokenMetadata.Value,
+		tokenMetadata.BlindingFactor,
+	)
+	if err != nil {
+		return errors.Wrapf(err, "failed to create inspectable token at index [%d]", i)
+	}
 
-		// Create inspectable token for input (only need audit info for sender)
-		inspectable, err := NewInspectableToken(
-			actionInput.Token,
-			inputMetadata.Senders[0].AuditInfo,
-			tokenTypeNotNeeded,
-			nil, // Value not needed for input validation
-			nil, // BlindingFactor not needed for input validation
-		)
-		if err != nil {
-			return errors.Wrapf(err, "failed to create inspectable token for input at index [%d]", i)
-		}
-
-		// Validate sender identity
-		if !inspectable.Identity.Identity.IsNone() {
-			if err := InspectIdentity(ctx, infoMatcher, &inspectable.Identity, i); err != nil {
-				return errors.Wrapf(err, "failed inspecting input sender at index [%d]", i)
-			}
-		}
+	// Validate output commitment and identity
+	if err := InspectOutput(ctx, infoMatcher, pedersenParams, curve, inspectable, i); err != nil {
+		return errors.Wrapf(err, "failed inspecting output at index [%d]", i)
 	}
 
 	return nil
@@ -478,46 +536,8 @@ func validateTransferInputs(ctx context.Context, infoMatcher InfoMatcher, inputs
 // validateTransferOutputs validates transfer action outputs against metadata.
 func validateTransferOutputs(ctx context.Context, infoMatcher InfoMatcher, pedersenParams []*math.G1, curve *math.Curve, outputs []*token.Token, outputsMetadata []*driver.TransferOutputMetadata) error {
 	for i, output := range outputs {
-		if output == nil {
-			return errors.Errorf("output at index [%d] is nil", i)
-		}
-
-		outputMetadata := outputsMetadata[i]
-		if outputMetadata == nil {
-			return errors.Errorf("output metadata at index [%d] is nil", i)
-		}
-
-		// Validate receivers for non-redeem outputs
-		if !output.IsRedeem() {
-			if err := validateOutputReceivers(ctx, infoMatcher, output.Owner, outputMetadata.Receivers, i, false); err != nil {
-				return err
-			}
-		}
-
-		// Deserialize token metadata
-		tokenMetadata := &token.Metadata{}
-		if err := tokenMetadata.Deserialize(outputMetadata.OutputMetadata); err != nil {
-			return errors.Wrapf(err, "failed to deserialize token metadata at index [%d]", i)
-		}
-		if err := tokenMetadata.Validate(false); err != nil {
-			return errors.Wrapf(err, "invalid token metadata at index [%d]", i)
-		}
-
-		// Create inspectable token using OutputAuditInfo (primary audit info for transfer outputs)
-		inspectable, err := NewInspectableToken(
-			output,
-			outputMetadata.OutputAuditInfo,
-			tokenMetadata.Type,
-			tokenMetadata.Value,
-			tokenMetadata.BlindingFactor,
-		)
-		if err != nil {
-			return errors.Wrapf(err, "failed to create inspectable token at index [%d]", i)
-		}
-
-		// Validate output commitment and identity
-		if err := InspectOutput(ctx, infoMatcher, pedersenParams, curve, inspectable, i); err != nil {
-			return errors.Wrapf(err, "failed inspecting output at index [%d]", i)
+		if err := validateTransferOutput(ctx, infoMatcher, pedersenParams, curve, i, output, outputsMetadata[i]); err != nil {
+			return err
 		}
 	}
 
@@ -555,37 +575,48 @@ func validateOutputReceivers(
 
 	// Validate all receivers and their identities
 	for j, receiver := range receivers {
-		if receiver == nil {
-			return errors.Errorf("receiver at index [%d] for output [%d] is nil", j, outputIndex)
+		if err := validateOutputReceiver(ctx, infoMatcher, receiver, recipients[j], j, outputIndex, requireNonEmpty); err != nil {
+			return err
 		}
+	}
 
-		// Validate that the recipient from owner matches the receiver identity in metadata
-		// For issue actions, identity must be non-empty and match
-		// For transfer actions, empty identity is allowed (optional validation)
-		if requireNonEmpty {
-			if len(receiver.Identity) == 0 || !bytes.Equal(recipients[j], receiver.Identity) {
-				return errors.Errorf(
-					"recipient at index [%d] for output [%d] does not match receiver identity in metadata",
-					j, outputIndex,
-				)
-			}
-		} else {
-			if len(receiver.Identity) > 0 && !bytes.Equal(recipients[j], receiver.Identity) {
-				return errors.Errorf(
-					"recipient at index [%d] for output [%d] does not match receiver identity in metadata",
-					j, outputIndex,
-				)
-			}
-		}
+	return nil
+}
 
-		// Inspect receiver identity
-		receiverInspectable := InspectableIdentity{
-			Identity:  receiver.Identity,
-			AuditInfo: receiver.AuditInfo,
+// validateOutputReceiver validates the j-th receiver (of output outputIndex) against the
+// recipient extracted from the output owner, then inspects the receiver identity.
+//
+// requireNonEmpty controls whether an empty receiver identity is allowed (issue vs transfer):
+// for issue actions, identity must be non-empty and match; for transfer actions, an empty
+// identity is allowed (optional validation).
+func validateOutputReceiver(ctx context.Context, infoMatcher InfoMatcher, receiver *driver.AuditableIdentity, recipient driver.Identity, j, outputIndex int, requireNonEmpty bool) error {
+	if receiver == nil {
+		return errors.Errorf("receiver at index [%d] for output [%d] is nil", j, outputIndex)
+	}
+
+	if requireNonEmpty {
+		if len(receiver.Identity) == 0 || !bytes.Equal(recipient, receiver.Identity) {
+			return errors.Errorf(
+				"recipient at index [%d] for output [%d] does not match receiver identity in metadata",
+				j, outputIndex,
+			)
 		}
-		if err := InspectIdentity(ctx, infoMatcher, &receiverInspectable, outputIndex); err != nil {
-			return errors.Wrapf(err, "failed inspecting receiver [%d] at output [%d]", j, outputIndex)
+	} else {
+		if len(receiver.Identity) > 0 && !bytes.Equal(recipient, receiver.Identity) {
+			return errors.Errorf(
+				"recipient at index [%d] for output [%d] does not match receiver identity in metadata",
+				j, outputIndex,
+			)
 		}
+	}
+
+	// Inspect receiver identity
+	receiverInspectable := InspectableIdentity{
+		Identity:  receiver.Identity,
+		AuditInfo: receiver.AuditInfo,
+	}
+	if err := InspectIdentity(ctx, infoMatcher, &receiverInspectable, outputIndex); err != nil {
+		return errors.Wrapf(err, "failed inspecting receiver [%d] at output [%d]", j, outputIndex)
 	}
 
 	return nil

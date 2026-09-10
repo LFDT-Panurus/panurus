@@ -21,6 +21,7 @@ import (
 	"github.com/LFDT-Panurus/panurus/token/driver"
 	"github.com/LFDT-Panurus/panurus/token/services/identity"
 	"github.com/LFDT-Panurus/panurus/token/services/identity/x509"
+	"github.com/LFDT-Panurus/panurus/token/services/identity/x509/crypto"
 	"github.com/LFDT-Panurus/panurus/token/services/storage/db/kvs"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/common/utils/collections"
@@ -41,15 +42,33 @@ func NewDLogPublicParamsGenerator(defaultCurveID math3.CurveID, version driver.T
 	}
 }
 
-func (d *DLogPublicParamsGenerator) Generate(tms *topology.TMS, wallets *topology.Wallets, args ...any) ([]byte, error) {
+// parseGenerateArgs validates and extracts Generate's two required arguments: the idemix root
+// path (args[0]) and the token-value bit width (args[1]).
+func parseGenerateArgs(args []any) (idemixRootPath string, bits uint64, err error) {
 	if len(args) != 2 {
-		return nil, errors.Errorf("invalid number of arguments, expected 2, got %d", len(args))
+		return "", 0, errors.Errorf("invalid number of arguments, expected 2, got %d", len(args))
 	}
-	// first argument is the idemix root path
 	idemixRootPath, ok := args[0].(string)
 	if !ok {
-		return nil, errors.Errorf("invalid argument type, expected string, got %T", args[0])
+		return "", 0, errors.Errorf("invalid argument type, expected string, got %T", args[0])
 	}
+	baseArg, ok := args[1].(string)
+	if !ok {
+		return "", 0, errors.Errorf("invalid argument type, expected string, got %T", args[1])
+	}
+	bits, err = strconv.ParseUint(baseArg, 10, 32)
+	if err != nil {
+		return "", 0, err
+	}
+
+	return idemixRootPath, bits, nil
+}
+
+// buildPublicParams reads the idemix issuer public key from idemixRootPath, selects the curve
+// (an Aries TMS always uses BLS12_381_BBS_GURVY regardless of the generator's default) and range
+// proof type (CSP or the standard range proof, depending on the TMS), and constructs the
+// versioned public parameters.
+func (d *DLogPublicParamsGenerator) buildPublicParams(tms *topology.TMS, idemixRootPath string, bits uint64) (*setup.PublicParams, error) {
 	path := filepath.Join(idemixRootPath, msp.IdemixConfigDirMsp, msp.IdemixConfigFileIssuerPublicKey)
 	ipkBytes, err := os.ReadFile(path)
 	if err != nil {
@@ -61,22 +80,45 @@ func (d *DLogPublicParamsGenerator) Generate(tms *topology.TMS, wallets *topolog
 		curveID = math3.BLS12_381_BBS_GURVY
 	}
 
-	bits := uint64(64)
-	if len(args) > 1 {
-		baseArg, ok := args[1].(string)
-		if !ok {
-			return nil, errors.Errorf("invalid argument type, expected string, got %T", args[1])
-		}
-		bits, err = strconv.ParseUint(baseArg, 10, 32)
-		if err != nil {
-			return nil, err
-		}
-	}
 	proofType := rp.RangeProofType
 	if zkatdlognoghv1.IsCSP(tms) {
 		proofType = rp.CSPRangeProofType
 	}
-	pp, err := setup.WithVersionAndProofType(bits, ipkBytes, curveID, d.DriverVersion, proofType)
+
+	return setup.WithVersionAndProofType(bits, ipkBytes, curveID, d.DriverVersion, proofType)
+}
+
+// addX509Identities builds an MSP x509 identity for each entry in wallet and, for any whose ID
+// satisfies matches, wraps it and passes it to add. Shared by the auditor/issuer identity-building
+// blocks in Generate, which otherwise repeat this build-and-conditionally-wrap loop identically.
+func addX509Identities(keyStore crypto.KeyStore, wallet []topology.Identity, matches func(id string) bool, roleLabel string, add func(driver.Identity)) error {
+	for _, w := range wallet {
+		km, _, err := x509.NewKeyManager(w.Path, w.Opts, keyStore)
+		if err != nil {
+			return errors.WithMessagef(err, "failed to create x509 km")
+		}
+		identityDescriptor, err := km.Identity(context.Background(), nil)
+		if err != nil {
+			return errors.WithMessagef(err, "failed to get identity")
+		}
+		if matches(w.ID) {
+			wrap, err := identity.WrapWithType(x509.IdentityType, identityDescriptor.Identity)
+			if err != nil {
+				return errors.WithMessagef(err, "failed to create x509 identity for %s [%v]", roleLabel, w)
+			}
+			add(wrap)
+		}
+	}
+
+	return nil
+}
+
+func (d *DLogPublicParamsGenerator) Generate(tms *topology.TMS, wallets *topology.Wallets, args ...any) ([]byte, error) {
+	idemixRootPath, bits, err := parseGenerateArgs(args)
+	if err != nil {
+		return nil, err
+	}
+	pp, err := d.buildPublicParams(tms, idemixRootPath, bits)
 	if err != nil {
 		return nil, err
 	}
@@ -86,23 +128,9 @@ func (d *DLogPublicParamsGenerator) Generate(tms *topology.TMS, wallets *topolog
 		if len(wallets.Auditors) == 0 {
 			return nil, errors.Errorf("no auditor wallets provided")
 		}
-		for _, auditor := range wallets.Auditors {
-			// Build an MSP Identity
-			km, _, err := x509.NewKeyManager(auditor.Path, auditor.Opts, keyStore)
-			if err != nil {
-				return nil, errors.WithMessagef(err, "failed to create x509 km")
-			}
-			identityDescriptor, err := km.Identity(context.Background(), nil)
-			if err != nil {
-				return nil, errors.WithMessagef(err, "failed to get identity")
-			}
-			if tms.Auditors[0] == auditor.ID {
-				wrap, err := identity.WrapWithType(x509.IdentityType, identityDescriptor.Identity)
-				if err != nil {
-					return nil, errors.WithMessagef(err, "failed to create x509 identity for auditor [%v]", auditor)
-				}
-				pp.AddAuditor(wrap)
-			}
+		matchesFirstAuditor := func(id string) bool { return tms.Auditors[0] == id }
+		if err := addX509Identities(keyStore, wallets.Auditors, matchesFirstAuditor, "auditor", pp.AddAuditor); err != nil {
+			return nil, err
 		}
 	}
 
@@ -111,23 +139,8 @@ func (d *DLogPublicParamsGenerator) Generate(tms *topology.TMS, wallets *topolog
 			return nil, errors.Errorf("no issuer wallets provided")
 		}
 		issuersSet := collections.NewSet(tms.Issuers...)
-		for _, issuer := range wallets.Issuers {
-			// Build an MSP Identity
-			km, _, err := x509.NewKeyManager(issuer.Path, issuer.Opts, keyStore)
-			if err != nil {
-				return nil, errors.WithMessagef(err, "failed to create x509 km")
-			}
-			identityDescriptor, err := km.Identity(context.Background(), nil)
-			if err != nil {
-				return nil, errors.WithMessagef(err, "failed to get identity")
-			}
-			if issuersSet.Contains(issuer.ID) {
-				wrap, err := identity.WrapWithType(x509.IdentityType, identityDescriptor.Identity)
-				if err != nil {
-					return nil, errors.WithMessagef(err, "failed to create x509 identity for issuer [%v]", issuer)
-				}
-				pp.AddIssuer(wrap)
-			}
+		if err := addX509Identities(keyStore, wallets.Issuers, issuersSet.Contains, "issuer", pp.AddIssuer); err != nil {
+			return nil, err
 		}
 	}
 

@@ -79,15 +79,17 @@ func newTestFinalityViewContext(t *testing.T) *testFinalityViewContext {
 	}
 }
 
+type finalityViewTestCase struct {
+	name          string
+	prepare       func(*testFinalityViewContext)
+	opts          []ttx.TxOption
+	expectError   bool
+	errorContains string
+	expectErr     error
+}
+
 func TestFinalityView(t *testing.T) {
-	testCases := []struct {
-		name          string
-		prepare       func(*testFinalityViewContext)
-		opts          []ttx.TxOption
-		expectError   bool
-		errorContains string
-		expectErr     error
-	}{
+	testCases := []finalityViewTestCase{
 		{
 			name: "transaction unknown",
 			prepare: func(c *testFinalityViewContext) {
@@ -329,35 +331,42 @@ func TestFinalityView(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			testCtx := newTestFinalityViewContext(t)
-			if tc.prepare != nil {
-				tc.prepare(testCtx)
-			}
-
-			opts := []ttx.TxOption{
-				ttx.WithTxID("tx_id"),
-				ttx.WithTMSID(token.TMSID{Network: "network", Channel: "channel", Namespace: "namespace"}),
-				ttx.WithTimeout(100 * time.Millisecond),
-			}
-			if len(tc.opts) > 0 {
-				opts = append(opts, tc.opts...)
-			}
-
-			v := ttx.NewFinalityWithOpts(opts...)
-
-			_, err := v.Call(testCtx.ctx)
-
-			if tc.expectError {
-				require.Error(t, err)
-				if len(tc.errorContains) != 0 {
-					assert.Contains(t, err.Error(), tc.errorContains)
-				}
-				if tc.expectErr != nil {
-					require.ErrorIs(t, err, tc.expectErr)
-				}
-			} else {
-				require.NoError(t, err)
-			}
+			runFinalityViewTestCase(t, tc)
 		})
 	}
+}
+
+func runFinalityViewTestCase(t *testing.T, tc finalityViewTestCase) {
+	t.Helper()
+	testCtx := newTestFinalityViewContext(t)
+	if tc.prepare != nil {
+		tc.prepare(testCtx)
+	}
+
+	opts := []ttx.TxOption{
+		ttx.WithTxID("tx_id"),
+		ttx.WithTMSID(token.TMSID{Network: "network", Channel: "channel", Namespace: "namespace"}),
+		ttx.WithTimeout(100 * time.Millisecond),
+	}
+	if len(tc.opts) > 0 {
+		opts = append(opts, tc.opts...)
+	}
+
+	v := ttx.NewFinalityWithOpts(opts...)
+
+	_, err := v.Call(testCtx.ctx)
+
+	if tc.expectError {
+		require.Error(t, err)
+		if len(tc.errorContains) != 0 {
+			assert.Contains(t, err.Error(), tc.errorContains)
+		}
+		if tc.expectErr != nil {
+			require.ErrorIs(t, err, tc.expectErr)
+		}
+
+		return
+	}
+
+	require.NoError(t, err)
 }

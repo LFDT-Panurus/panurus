@@ -63,6 +63,17 @@ func (a *MathContainer) Deserialize(bytes []byte) error {
 	if err != nil {
 		return errors.Wrap(err, "failed to deserialize")
 	}
+	if err := a.deserializeFields(unmarshaller); err != nil {
+		return err
+	}
+
+	return checkNoMoreValues(unmarshaller)
+}
+
+// deserializeFields reads the expected sequence of fields from the unmarshaller
+// into the container.
+func (a *MathContainer) deserializeFields(unmarshaller *unmarshaller) error {
+	var err error
 	a.Zr, err = unmarshaller.NextZr()
 	if err != nil {
 		return errors.Wrap(err, "failed to deserialize zr")
@@ -83,6 +94,13 @@ func (a *MathContainer) Deserialize(bytes []byte) error {
 	if err != nil {
 		return errors.Wrap(err, "failed to deserialize g1Array")
 	}
+
+	return nil
+}
+
+// checkNoMoreValues asserts that the unmarshaller has no further values left
+// to read, for any of the supported element kinds.
+func checkNoMoreValues(unmarshaller *unmarshaller) error {
 	zr, err := unmarshaller.NextZr()
 	if zr != nil {
 		return errors.Wrap(err, "no more values expected")

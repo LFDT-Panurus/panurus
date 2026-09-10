@@ -1148,137 +1148,32 @@ func prepareTransferWithOpts(
 	}
 	c := math.Curves[pp.Curve]
 
-	// prepare inputs
-	inValues := make([]*math.Zr, benchCase.NumInputs)
-	inValuesUint64 := make([]uint64, benchCase.NumInputs)
-	sumInputs := uint64(0)
-	for i := range inValues {
-		v := uint64(i*10 + 500)
-		sumInputs += v
-		inValuesUint64[i] = v
-		inValues[i] = math2.NewCachedZrFromInt(c, v)
-	}
-
-	if benchCase.NumOutputs <= 0 {
-		return nil, nil, nil, nil, errors.Errorf("invalid number of outputs [%d]", benchCase.NumOutputs)
-	}
-	outputValue := sumInputs / uint64(benchCase.NumOutputs)
-	sumOutputs := uint64(0)
-	outValues := make([]uint64, benchCase.NumOutputs)
-	for i := range benchCase.NumOutputs {
-		outValues[i] = outputValue
-		sumOutputs += outputValue
-	}
-	// add any adjustment to the last output
-	delta := sumInputs - sumOutputs
-	if delta > 0 {
-		outValues[0] += delta
-	}
-
-	inBF := make([]*math.Zr, benchCase.NumInputs)
-	rand, err := c.Rand()
+	inValues, inValuesUint64, outValues, err := computeTransferValues(benchCase, c)
 	if err != nil {
 		return nil, nil, nil, nil, err
 	}
-	for i := range benchCase.NumInputs {
-		inBF[i] = c.NewRandomZr(rand)
-	}
 
-	ids := make([]*token2.ID, benchCase.NumInputs)
-	for i := range benchCase.NumInputs {
-		ids[i] = &token2.ID{TxId: "0", Index: uint64(i)}
-	}
-	inputs := prepareTokens(inValues, inBF, "ABC", pp.PedersenGenerators, c)
-
-	tokens := make([]*tokn.Token, benchCase.NumInputs)
-	inputInf := make([]*tokn.Metadata, benchCase.NumInputs)
-	for i := range benchCase.NumInputs {
-		tokens[i] = &tokn.Token{Data: inputs[i], Owner: id}
-		inputInf[i] = &tokn.Metadata{Type: "ABC", Value: inValues[i], BlindingFactor: inBF[i]}
-	}
-
-	// Create PublicParametersManager
-	ppm := &testPublicParamsManager{pp: pp}
-
-	// Create deserializer
-	deserializer, err := zkatdlog.NewDeserializer(pp)
+	inBF, err := generateInputBlindingFactors(c, benchCase.NumInputs)
 	if err != nil {
-		return nil, nil, nil, nil, errors.Wrap(err, "failed to create deserializer")
+		return nil, nil, nil, nil, err
 	}
 
-	// Create TokensService first to get the proper token format
-	tokensService, err := tokn.NewTokensService(
-		logging.MustGetLogger(),
-		ppm,
-		deserializer,
-	)
+	ids, tokens, inputInf := buildInputTokens(benchCase.NumInputs, inValues, inBF, pp, c, id)
+
+	// Create PublicParametersManager, deserializer and TokensService (for the token format)
+	ppm, deserializer, tokensService, tokenFormat, err := newTestTokensService(pp)
 	if err != nil {
-		return nil, nil, nil, nil, errors.Wrap(err, "failed to create tokens service")
+		return nil, nil, nil, nil, err
 	}
-
-	// Get the proper token format from TokensService
-	tokenFormat := tokensService.OutputTokenFormat
 
 	// Prepare token loader with the input tokens
-	tokenLoaderMap := make(map[string]v1.LoadedToken)
-	for i, tok := range tokens {
-		key := ids[i].String()
-
-		if upgradeFirstInput && i == 0 {
-			// Load this input as a Fabtoken output instead of a zkatdlog commitment
-			// token, so TokensService.DeserializeToken exercises its auto-upgrade
-			// path and populates ActionInput.UpgradeWitness.
-			fabtokenFormat, err := fabtokenv1.SupportedTokenFormat(fabtokenUpgradeWitnessPrecision)
-			if err != nil {
-				return nil, nil, nil, nil, errors.Wrap(err, "failed to compute fabtoken token format")
-			}
-			fabtokenOutput := &fabtokenactions.Output{
-				Owner:    tok.Owner,
-				Type:     inputInf[i].Type,
-				Quantity: token2.NewQuantityFromUInt64(inValuesUint64[i]).Hex(),
-			}
-			tokenRaw, err := fabtokenOutput.Serialize()
-			if err != nil {
-				return nil, nil, nil, nil, errors.Wrap(err, "failed to serialize fabtoken output for loader")
-			}
-			tokenLoaderMap[key] = v1.LoadedToken{
-				Token:       tokenRaw,
-				Metadata:    nil,
-				TokenFormat: fabtokenFormat,
-			}
-
-			continue
-		}
-
-		tokenRaw, err := tok.Serialize()
-		if err != nil {
-			return nil, nil, nil, nil, errors.Wrap(err, "failed to serialize token for loader")
-		}
-		metadataRaw, err := inputInf[i].Serialize()
-		if err != nil {
-			return nil, nil, nil, nil, errors.Wrap(err, "failed to serialize metadata for loader")
-		}
-		tokenLoaderMap[key] = v1.LoadedToken{
-			Token:       tokenRaw,
-			Metadata:    metadataRaw,
-			TokenFormat: tokenFormat,
-		}
+	tokenLoader, err := buildTestTokenLoader(ids, tokens, inputInf, inValuesUint64, tokenFormat, upgradeFirstInput)
+	if err != nil {
+		return nil, nil, nil, nil, err
 	}
-	tokenLoader := &testTokenLoader{tokens: tokenLoaderMap}
 
-	// Create WalletService with audit info
-	// Add audit info for all token owners (inputs and outputs)
-	auditInfoMap := make(map[string][]byte)
-	for _, tok := range tokens {
-		auditInfoMap[string(tok.Owner)] = auditInfo
-	}
-	// Also add audit info for output owners
-	for _, owner := range owners {
-		auditInfoMap[string(owner)] = auditInfo
-	}
-	ws := &testWalletService{
-		auditInfoMap: auditInfoMap,
-	}
+	// Create WalletService with audit info for all token owners (inputs and outputs)
+	ws := buildTestWalletService(tokens, owners, auditInfo)
 
 	// Create TransferService - this is the production stack instantiation
 	transferService := v1.NewTransferService(
@@ -1291,9 +1186,222 @@ func prepareTransferWithOpts(
 		tokensService,
 	)
 
-	// Prepare output tokens in the format expected by TransferService.Transfer()
-	outputTokens := make([]*token2.Token, benchCase.NumOutputs)
+	transferRaw, transferMetadata, err := runOwnerTransfer(transferService, signer, ids, outValues, owners, issuerIdentity, attrs)
+	if err != nil {
+		return nil, nil, nil, nil, err
+	}
+
+	tr := &driver.TokenRequest{
+		Actions: []*driver.TypedAction{
+			{Type: request.ActionType_ACTION_TYPE_TRANSFER, Raw: transferRaw},
+		},
+	}
+	raw, err := tr.MarshalToMessageToSign([]byte("1"))
+	if err != nil {
+		return nil, nil, nil, nil, err
+	}
+
+	// Create sender for backward compatibility (still needed for signing)
+	sender, err := transfer.NewSender(signers, tokens, ids, inputInf, pp)
+	if err != nil {
+		return nil, nil, nil, nil, err
+	}
+
+	tokenRequestMetadata := &driver.TokenRequestMetadata{
+		Actions: []*driver.ActionMetadataEntry{
+			{ActionID: 0, TransferMetadata: transferMetadata},
+		},
+	}
+
+	// Build auditTokens map from input tokens
+	auditTokens := buildAuditTokens(ids, tokens, inValuesUint64)
+
+	if err := auditAndSignTransfer(tr, raw, auditor, tokenRequestMetadata, auditTokens, auditorSigner, sender, issuer); err != nil {
+		return nil, nil, nil, nil, err
+	}
+
+	return sender, tr, tokenRequestMetadata, auditTokens, nil
+}
+
+// computeTransferValues computes the deterministic input values used by the
+// benchmark and the corresponding output value distribution: an even split
+// of the input sum across outputs, with any rounding remainder added to the
+// first output.
+func computeTransferValues(benchCase *benchmark2.Case, c *math.Curve) (inValues []*math.Zr, inValuesUint64 []uint64, outValues []uint64, err error) {
+	inValues = make([]*math.Zr, benchCase.NumInputs)
+	inValuesUint64 = make([]uint64, benchCase.NumInputs)
+	sumInputs := uint64(0)
+	for i := range inValues {
+		v := uint64(i*10 + 500)
+		sumInputs += v
+		inValuesUint64[i] = v
+		inValues[i] = math2.NewCachedZrFromInt(c, v)
+	}
+
+	if benchCase.NumOutputs <= 0 {
+		return nil, nil, nil, errors.Errorf("invalid number of outputs [%d]", benchCase.NumOutputs)
+	}
+	outputValue := sumInputs / uint64(benchCase.NumOutputs)
+	sumOutputs := uint64(0)
+	outValues = make([]uint64, benchCase.NumOutputs)
 	for i := range benchCase.NumOutputs {
+		outValues[i] = outputValue
+		sumOutputs += outputValue
+	}
+	// add any adjustment to the last output
+	delta := sumInputs - sumOutputs
+	if delta > 0 {
+		outValues[0] += delta
+	}
+
+	return inValues, inValuesUint64, outValues, nil
+}
+
+// generateInputBlindingFactors draws n random blinding factors from curve c.
+func generateInputBlindingFactors(c *math.Curve, n int) ([]*math.Zr, error) {
+	inBF := make([]*math.Zr, n)
+	rand, err := c.Rand()
+	if err != nil {
+		return nil, err
+	}
+	for i := range n {
+		inBF[i] = c.NewRandomZr(rand)
+	}
+
+	return inBF, nil
+}
+
+// buildInputTokens builds the Pedersen-committed input tokens for the
+// transfer/redeem/swap benchmarks: one *token2.ID, *tokn.Token and
+// *tokn.Metadata per input value.
+func buildInputTokens(numInputs int, inValues, inBF []*math.Zr, pp *v1setup.PublicParams, c *math.Curve, id []byte) ([]*token2.ID, []*tokn.Token, []*tokn.Metadata) {
+	ids := make([]*token2.ID, numInputs)
+	for i := range numInputs {
+		ids[i] = &token2.ID{TxId: "0", Index: uint64(i)}
+	}
+	inputs := prepareTokens(inValues, inBF, "ABC", pp.PedersenGenerators, c)
+
+	tokens := make([]*tokn.Token, numInputs)
+	inputInf := make([]*tokn.Metadata, numInputs)
+	for i := range numInputs {
+		tokens[i] = &tokn.Token{Data: inputs[i], Owner: id}
+		inputInf[i] = &tokn.Metadata{Type: "ABC", Value: inValues[i], BlindingFactor: inBF[i]}
+	}
+
+	return ids, tokens, inputInf
+}
+
+// newTestTokensService wires up the test PublicParametersManager, the
+// deserializer and the TokensService for pp, returning the output token
+// format they agree on.
+func newTestTokensService(pp *v1setup.PublicParams) (*testPublicParamsManager, *zkatdlog.Deserializer, *tokn.TokensService, token2.Format, error) {
+	// Create PublicParametersManager
+	ppm := &testPublicParamsManager{pp: pp}
+
+	// Create deserializer
+	deserializer, err := zkatdlog.NewDeserializer(pp)
+	if err != nil {
+		return nil, nil, nil, "", errors.Wrap(err, "failed to create deserializer")
+	}
+
+	// Create TokensService first to get the proper token format
+	tokensService, err := tokn.NewTokensService(
+		logging.MustGetLogger(),
+		ppm,
+		deserializer,
+	)
+	if err != nil {
+		return nil, nil, nil, "", errors.Wrap(err, "failed to create tokens service")
+	}
+
+	// Get the proper token format from TokensService
+	return ppm, deserializer, tokensService, tokensService.OutputTokenFormat, nil
+}
+
+// buildTestTokenLoader serializes the given input tokens and metadata into a
+// testTokenLoader keyed by token ID, ready to back a TokenLoader for the
+// transfer service under test.
+func buildTestTokenLoader(ids []*token2.ID, tokens []*tokn.Token, inputInf []*tokn.Metadata, inValuesUint64 []uint64, tokenFormat token2.Format, upgradeFirstInput bool) (*testTokenLoader, error) {
+	tokenLoaderMap := make(map[string]v1.LoadedToken)
+	for i, tok := range tokens {
+		key := ids[i].String()
+
+		if upgradeFirstInput && i == 0 {
+			// Load this input as a Fabtoken output instead of a zkatdlog commitment
+			// token, so TokensService.DeserializeToken exercises its auto-upgrade
+			// path and populates ActionInput.UpgradeWitness.
+			fabtokenFormat, err := fabtokenv1.SupportedTokenFormat(fabtokenUpgradeWitnessPrecision)
+			if err != nil {
+				return nil, errors.Wrap(err, "failed to compute fabtoken token format")
+			}
+			fabtokenOutput := &fabtokenactions.Output{
+				Owner:    tok.Owner,
+				Type:     inputInf[i].Type,
+				Quantity: token2.NewQuantityFromUInt64(inValuesUint64[i]).Hex(),
+			}
+			tokenRaw, err := fabtokenOutput.Serialize()
+			if err != nil {
+				return nil, errors.Wrap(err, "failed to serialize fabtoken output for loader")
+			}
+			tokenLoaderMap[key] = v1.LoadedToken{
+				Token:       tokenRaw,
+				Metadata:    nil,
+				TokenFormat: fabtokenFormat,
+			}
+
+			continue
+		}
+
+		tokenRaw, err := tok.Serialize()
+		if err != nil {
+			return nil, errors.Wrap(err, "failed to serialize token for loader")
+		}
+		metadataRaw, err := inputInf[i].Serialize()
+		if err != nil {
+			return nil, errors.Wrap(err, "failed to serialize metadata for loader")
+		}
+		tokenLoaderMap[key] = v1.LoadedToken{
+			Token:       tokenRaw,
+			Metadata:    metadataRaw,
+			TokenFormat: tokenFormat,
+		}
+	}
+
+	return &testTokenLoader{tokens: tokenLoaderMap}, nil
+}
+
+// buildTestWalletService builds a testWalletService whose audit info map
+// covers both the input token owners and the requested output owners.
+func buildTestWalletService(tokens []*tokn.Token, owners [][]byte, auditInfo []byte) *testWalletService {
+	auditInfoMap := make(map[string][]byte)
+	for _, tok := range tokens {
+		auditInfoMap[string(tok.Owner)] = auditInfo
+	}
+	// Also add audit info for output owners
+	for _, owner := range owners {
+		auditInfoMap[string(owner)] = auditInfo
+	}
+
+	return &testWalletService{
+		auditInfoMap: auditInfoMap,
+	}
+}
+
+// runOwnerTransfer builds the requested output tokens, invokes
+// transferService.Transfer to produce the transfer action, attaches the
+// issuer identity for the redeem case, and serializes the resulting action.
+func runOwnerTransfer(
+	transferService *v1.TransferService,
+	signer driver.SigningIdentity,
+	ids []*token2.ID,
+	outValues []uint64,
+	owners [][]byte,
+	issuerIdentity []byte,
+	attrs map[string]any,
+) ([]byte, *driver.TransferMetadata, error) {
+	// Prepare output tokens in the format expected by TransferService.Transfer()
+	outputTokens := make([]*token2.Token, len(outValues))
+	for i := range outValues {
 		outputTokens[i] = &token2.Token{
 			Type:     "ABC",
 			Quantity: token2.NewQuantityFromUInt64(outValues[i]).Hex(),
@@ -1322,7 +1430,7 @@ func prepareTransferWithOpts(
 		transferOpts,
 	)
 	if err != nil {
-		return nil, nil, nil, nil, errors.Wrap(err, "failed to generate transfer using TransferService")
+		return nil, nil, errors.Wrap(err, "failed to generate transfer using TransferService")
 	}
 
 	// Handle issuer for redeem case
@@ -1339,32 +1447,15 @@ func prepareTransferWithOpts(
 	// Serialize the transfer action
 	transferRaw, err := transfer2.Serialize()
 	if err != nil {
-		return nil, nil, nil, nil, err
+		return nil, nil, err
 	}
 
-	tr := &driver.TokenRequest{
-		Actions: []*driver.TypedAction{
-			{Type: request.ActionType_ACTION_TYPE_TRANSFER, Raw: transferRaw},
-		},
-	}
-	raw, err := tr.MarshalToMessageToSign([]byte("1"))
-	if err != nil {
-		return nil, nil, nil, nil, err
-	}
+	return transferRaw, transferMetadata, nil
+}
 
-	// Create sender for backward compatibility (still needed for signing)
-	sender, err := transfer.NewSender(signers, tokens, ids, inputInf, pp)
-	if err != nil {
-		return nil, nil, nil, nil, err
-	}
-
-	tokenRequestMetadata := &driver.TokenRequestMetadata{
-		Actions: []*driver.ActionMetadataEntry{
-			{ActionID: 0, TransferMetadata: transferMetadata},
-		},
-	}
-
-	// Build auditTokens map from input tokens
+// buildAuditTokens builds the audit-view token map (input tokens keyed by
+// ID) passed to the auditor's Check.
+func buildAuditTokens(ids []*token2.ID, tokens []*tokn.Token, inValuesUint64 []uint64) map[string]*token2.Token {
 	auditTokens := make(map[string]*token2.Token)
 	for i, tok := range tokens {
 		auditTokens[ids[i].String()] = &token2.Token{
@@ -1374,18 +1465,33 @@ func prepareTransferWithOpts(
 		}
 	}
 
-	err = auditor.Check(context.Background(), tr, tokenRequestMetadata, "1", auditTokens)
-	if err != nil {
-		return nil, nil, nil, nil, err
+	return auditTokens
+}
+
+// auditAndSignTransfer runs the auditor's check over tr, attaches the
+// auditor's endorsement signature, the sender's per-action signatures and,
+// for the redeem case, the issuer's signature.
+func auditAndSignTransfer(
+	tr *driver.TokenRequest,
+	raw []byte,
+	auditor *audit.Auditor,
+	tokenRequestMetadata *driver.TokenRequestMetadata,
+	auditTokens map[string]*token2.Token,
+	auditorSigner *benchmark.Signer,
+	sender *transfer.Sender,
+	issuer *issue2.Issuer,
+) error {
+	if err := auditor.Check(context.Background(), tr, tokenRequestMetadata, "1", auditTokens); err != nil {
+		return err
 	}
 
 	sigma, err := auditorEndorse(auditorSigner, tr, "1")
 	if err != nil {
-		return nil, nil, nil, nil, err
+		return err
 	}
 	araw, err := auditorSigner.Serialize()
 	if err != nil {
-		return nil, nil, nil, nil, err
+		return err
 	}
 	tr.Signatures = append(tr.Signatures, &driver.RequestSignature{
 		Auditor: &driver.AuditorSignature{
@@ -1396,7 +1502,7 @@ func prepareTransferWithOpts(
 
 	signatures, err := sender.SignTokenActions(raw)
 	if err != nil {
-		return nil, nil, nil, nil, err
+		return err
 	}
 	for _, signature := range signatures {
 		tr.Signatures = append(tr.Signatures, &driver.RequestSignature{
@@ -1411,7 +1517,7 @@ func prepareTransferWithOpts(
 	if issuer != nil {
 		issuerSignature, err := issuer.Signer.Sign(raw)
 		if err != nil {
-			return nil, nil, nil, nil, err
+			return err
 		}
 		tr.Signatures = append(tr.Signatures, &driver.RequestSignature{
 			Action: &driver.ActionSignature{
@@ -1421,7 +1527,7 @@ func prepareTransferWithOpts(
 		})
 	}
 
-	return sender, tr, tokenRequestMetadata, auditTokens, nil
+	return nil
 }
 
 func auditorEndorse(signer driver.Signer, tokenRequest *driver.TokenRequest, txID string) ([]byte, error) {

@@ -281,6 +281,59 @@ func (r *TokenRequest) ToProtos() (*request.TokenRequest, error) {
 	}, nil
 }
 
+// typedActionFromProto converts a single protobuf action (which must carry a TypedAction, the
+// only oneof variant currently supported) into a *TypedAction.
+func typedActionFromProto(action *request.Action) (*TypedAction, error) {
+	if action == nil {
+		return nil, errors.New("nil action found")
+	}
+
+	// Handle the Action oneof - currently only TypedAction is supported
+	typedAction := action.GetTypedAction()
+	if typedAction == nil {
+		// HashedAction is not yet supported in this implementation
+		return nil, errors.New("only TypedAction is currently supported")
+	}
+
+	// Validate that action type is explicitly set (not UNSPECIFIED)
+	if typedAction.Type == request.ActionType_ACTION_TYPE_UNSPECIFIED {
+		return nil, errors.New("action type must be explicitly specified (ACTION_TYPE_UNSPECIFIED is not allowed)")
+	}
+
+	// Validate action type is known
+	switch typedAction.Type {
+	case request.ActionType_ACTION_TYPE_ISSUE, request.ActionType_ACTION_TYPE_TRANSFER:
+		// Valid types
+	default:
+		return nil, errors.Errorf("unknown action type [%s]", typedAction.Type)
+	}
+
+	return &TypedAction{
+		Type: typedAction.Type,
+		Raw:  typedAction.Raw,
+	}, nil
+}
+
+// requestSignatureFromProto converts a single protobuf signature into a *RequestSignature,
+// checking that it carries a non-empty action or auditor signature.
+func requestSignatureFromProto(signature *request.RequestSignature) (*RequestSignature, error) {
+	if signature == nil {
+		return nil, errors.New("nil signature found")
+	}
+	requestSignature := &RequestSignature{}
+	if err := requestSignature.FromProtos(signature); err != nil {
+		return nil, errors.Wrap(err, "failed converting request signature")
+	}
+	switch {
+	case requestSignature.Action != nil && len(requestSignature.Action.Signature) == 0:
+		return nil, errors.New("nil action signature found")
+	case requestSignature.Auditor != nil && len(requestSignature.Auditor.Signature) == 0:
+		return nil, errors.New("nil auditor signature found")
+	}
+
+	return requestSignature, nil
+}
+
 func (r *TokenRequest) FromProtos(tr *request.TokenRequest) error {
 	// Validate version - only ProtocolV1 (structured format) is supported
 	if tr.Version != uint32(ProtocolV1) {
@@ -293,49 +346,17 @@ func (r *TokenRequest) FromProtos(tr *request.TokenRequest) error {
 	// Convert protobuf Actions to TypedActions
 	r.Actions = make([]*TypedAction, 0, len(tr.Actions))
 	for _, action := range tr.Actions {
-		if action == nil {
-			return errors.New("nil action found")
+		typedAction, err := typedActionFromProto(action)
+		if err != nil {
+			return err
 		}
-
-		// Handle the Action oneof - currently only TypedAction is supported
-		typedAction := action.GetTypedAction()
-		if typedAction == nil {
-			// HashedAction is not yet supported in this implementation
-			return errors.New("only TypedAction is currently supported")
-		}
-
-		// Validate that action type is explicitly set (not UNSPECIFIED)
-		if typedAction.Type == request.ActionType_ACTION_TYPE_UNSPECIFIED {
-			return errors.New("action type must be explicitly specified (ACTION_TYPE_UNSPECIFIED is not allowed)")
-		}
-
-		// Validate action type is known
-		switch typedAction.Type {
-		case request.ActionType_ACTION_TYPE_ISSUE, request.ActionType_ACTION_TYPE_TRANSFER:
-			// Valid types
-		default:
-			return errors.Errorf("unknown action type [%s]", typedAction.Type)
-		}
-
-		r.Actions = append(r.Actions, &TypedAction{
-			Type: typedAction.Type,
-			Raw:  typedAction.Raw,
-		})
+		r.Actions = append(r.Actions, typedAction)
 	}
 
 	for _, signature := range tr.Signatures {
-		if signature == nil {
-			return errors.New("nil signature found")
-		}
-		requestSignature := &RequestSignature{}
-		if err := requestSignature.FromProtos(signature); err != nil {
-			return errors.Wrap(err, "failed converting request signature")
-		}
-		switch {
-		case requestSignature.Action != nil && len(requestSignature.Action.Signature) == 0:
-			return errors.New("nil action signature found")
-		case requestSignature.Auditor != nil && len(requestSignature.Auditor.Signature) == 0:
-			return errors.New("nil auditor signature found")
+		requestSignature, err := requestSignatureFromProto(signature)
+		if err != nil {
+			return err
 		}
 		r.Signatures = append(r.Signatures, requestSignature)
 	}
@@ -361,36 +382,55 @@ func (r *TokenRequest) FromProtos(tr *request.TokenRequest) error {
 //   - Any action has empty Raw bytes
 //   - Any signature in Signatures is nil
 //   - Any signature has empty signature bytes
+//
+// validateTypedAction validates the i-th typed action: non-nil with non-empty Raw bytes.
+func validateTypedAction(i int, action *TypedAction) error {
+	if action == nil {
+		return errors.Errorf("action at index %d is nil", i)
+	}
+	if len(action.Raw) == 0 {
+		return errors.Errorf("action at index %d has empty Raw bytes", i)
+	}
+
+	return nil
+}
+
+// validateRequestSignature validates the i-th request signature: non-nil, with either a
+// non-empty Action or Auditor signature.
+func validateRequestSignature(i int, sig *RequestSignature) error {
+	if sig == nil {
+		return errors.Errorf("signature at index %d is nil", i)
+	}
+
+	// Check that signature has either Action or Auditor signature with non-empty bytes
+	switch {
+	case sig.Action != nil:
+		if len(sig.Action.Signature) == 0 {
+			return errors.Errorf("action signature at index %d has empty signature bytes", i)
+		}
+	case sig.Auditor != nil:
+		if len(sig.Auditor.Signature) == 0 {
+			return errors.Errorf("auditor signature at index %d has empty signature bytes", i)
+		}
+	default:
+		return errors.Errorf("signature at index %d has neither action nor auditor signature", i)
+	}
+
+	return nil
+}
+
 func (r *TokenRequest) Validate() error {
 	// If we have actions, validate them
-
 	for i, action := range r.Actions {
-		if action == nil {
-			return errors.Errorf("action at index %d is nil", i)
-		}
-		if len(action.Raw) == 0 {
-			return errors.Errorf("action at index %d has empty Raw bytes", i)
+		if err := validateTypedAction(i, action); err != nil {
+			return err
 		}
 	}
 
 	// Validate signatures (if present)
 	for i, sig := range r.Signatures {
-		if sig == nil {
-			return errors.Errorf("signature at index %d is nil", i)
-		}
-
-		// Check that signature has either Action or Auditor signature with non-empty bytes
-		switch {
-		case sig.Action != nil:
-			if len(sig.Action.Signature) == 0 {
-				return errors.Errorf("action signature at index %d has empty signature bytes", i)
-			}
-		case sig.Auditor != nil:
-			if len(sig.Auditor.Signature) == 0 {
-				return errors.Errorf("auditor signature at index %d has empty signature bytes", i)
-			}
-		default:
-			return errors.Errorf("signature at index %d has neither action nor auditor signature", i)
+		if err := validateRequestSignature(i, sig); err != nil {
+			return err
 		}
 	}
 

@@ -48,89 +48,45 @@ type TestCaseRunner struct {
 func (r *TestCaseRunner) Run(scenario *model.TestCase, customers map[string]*customerState, settings *TestCaseSettings) *TestCaseResult {
 	r.logger.Infof("Starting case %s", scenario.Name)
 	payer := customers[scenario.Payer]
-	funds := scenario.Issue.Total
 
-	if settings.UseExistingFunds {
-		r.logger.Infof("Use existing funds enabled. Check the balance of %s", payer.Name)
-		currentBalance, err := r.intermediary.GetBalance(payer.Name)
-		if err != nil {
-			return &TestCaseResult{
-				Success:   false,
-				Name:      scenario.Name,
-				Iteration: settings.Iteration,
-				Error:     err,
-			}
-		}
-		funds = currentBalance
-		r.logger.Infof("User [%s] has balance: [%d]", payer.Name, currentBalance)
+	funds, err := r.resolveFunds(scenario, payer, settings)
+	if err != nil {
+		return &TestCaseResult{Success: false, Name: scenario.Name, Iteration: settings.Iteration, Error: err}
 	}
 
 	withdrawAmnts, err := scenario.Issue.Distribution.GetAmounts(funds)
 	if err != nil {
 		r.logger.Errorf("Can't generate withdraw amounts: %s", err.GetMessage())
 
-		return &TestCaseResult{
-			Success:   false,
-			Name:      scenario.Name,
-			Iteration: settings.Iteration,
-			Error:     err,
-		}
+		return &TestCaseResult{Success: false, Name: scenario.Name, Iteration: settings.Iteration, Error: err}
 	}
 	r.logger.Infof("%d withdrawal amounts: %v", len(withdrawAmnts), withdrawAmnts)
 
 	start := time.Now()
 	r.logger.Infof("============= Start test case %s, iter %d =============", scenario.Name, settings.Iteration)
 
-	if scenario.Issue.Execute && !settings.UseExistingFunds {
-		r.logger.Infof("Starting withdrawals")
-		execErr := r.doWithdrawals(payer, withdrawAmnts, settings)
-
-		if execErr != nil {
-			r.logger.Warnf("Some withdrawals failed: %v", execErr)
-			funds, err = r.intermediary.GetBalance(payer.Name)
-			if err != nil {
-				return &TestCaseResult{
-					Success:   false,
-					Name:      scenario.Name,
-					Iteration: settings.Iteration,
-					Error:     err,
-				}
-			}
-			r.logger.Warnf("Will proceed with transfers of successfully withdrawn amount [%v]", funds)
-		}
+	funds, err = r.executeWithdrawals(scenario, payer, funds, withdrawAmnts, settings)
+	if err != nil {
+		return &TestCaseResult{Success: false, Name: scenario.Name, Iteration: settings.Iteration, Error: err}
 	}
 
 	transferAmnts, err := scenario.Transfer.Distribution.GetAmounts(funds)
 	if err != nil {
 		r.logger.Errorf("Can't generate transfer amounts: %s", err.GetMessage())
 
-		return &TestCaseResult{
-			Success:   false,
-			Name:      scenario.Name,
-			Iteration: settings.Iteration,
-			Error:     err,
-		}
+		return &TestCaseResult{Success: false, Name: scenario.Name, Iteration: settings.Iteration, Error: err}
 	}
 	r.logger.Infof("%d transfer amounts: %v", len(transferAmnts), transferAmnts)
 
-	if scenario.Transfer.Execute {
-		payees := make([]*customerState, 0, len(scenario.Payees))
-		for _, p := range scenario.Payees {
-			// TODO introduce verification check
-			payees = append(payees, customers[p])
-		}
+	if execErr := r.executeTransfers(scenario, payer, customers, transferAmnts, settings); execErr != nil {
+		r.logger.Error(execErr)
 
-		execErr := r.doPayments(payer, payees, transferAmnts, settings)
-		if execErr != nil {
-			r.logger.Error(execErr)
-
-			return &TestCaseResult{
-				Name:      scenario.Name,
-				Success:   false,
-				Duration:  time.Since(start),
-				Iteration: settings.Iteration,
-				Error:     execErr,
-			}
+		return &TestCaseResult{
+			Name:      scenario.Name,
+			Success:   false,
+			Duration:  time.Since(start),
+			Iteration: settings.Iteration,
+			Error:     execErr,
 		}
 	}
 
@@ -143,6 +99,62 @@ func (r *TestCaseRunner) Run(scenario *model.TestCase, customers map[string]*cus
 		Duration:  duration,
 		Iteration: settings.Iteration,
 	}
+}
+
+// resolveFunds returns the scenario's configured issuance total, or the payer's current
+// on-chain balance when the scenario is set to reuse existing funds instead of issuing new ones.
+func (r *TestCaseRunner) resolveFunds(scenario *model.TestCase, payer *customerState, settings *TestCaseSettings) (api.Amount, api.Error) {
+	if !settings.UseExistingFunds {
+		return scenario.Issue.Total, nil
+	}
+
+	r.logger.Infof("Use existing funds enabled. Check the balance of %s", payer.Name)
+	currentBalance, err := r.intermediary.GetBalance(payer.Name)
+	if err != nil {
+		return 0, err
+	}
+	r.logger.Infof("User [%s] has balance: [%d]", payer.Name, currentBalance)
+
+	return currentBalance, nil
+}
+
+// executeWithdrawals runs the scenario's withdrawal step, if configured, and returns the funds
+// to carry into the transfer step: unchanged on success, or the payer's re-fetched balance if
+// some withdrawals failed and the run proceeds with only what was actually withdrawn.
+func (r *TestCaseRunner) executeWithdrawals(scenario *model.TestCase, payer *customerState, funds api.Amount, withdrawAmnts []api.Amount, settings *TestCaseSettings) (api.Amount, api.Error) {
+	if !scenario.Issue.Execute || settings.UseExistingFunds {
+		return funds, nil
+	}
+
+	r.logger.Infof("Starting withdrawals")
+	if execErr := r.doWithdrawals(payer, withdrawAmnts, settings); execErr != nil {
+		r.logger.Warnf("Some withdrawals failed: %v", execErr)
+		newFunds, err := r.intermediary.GetBalance(payer.Name)
+		if err != nil {
+			return 0, err
+		}
+		r.logger.Warnf("Will proceed with transfers of successfully withdrawn amount [%v]", newFunds)
+
+		return newFunds, nil
+	}
+
+	return funds, nil
+}
+
+// executeTransfers runs the scenario's transfer step, if configured, paying transferAmnts out
+// from payer to each of the scenario's resolved payees.
+func (r *TestCaseRunner) executeTransfers(scenario *model.TestCase, payer *customerState, customers map[string]*customerState, transferAmnts []api.Amount, settings *TestCaseSettings) error {
+	if !scenario.Transfer.Execute {
+		return nil
+	}
+
+	payees := make([]*customerState, 0, len(scenario.Payees))
+	for _, p := range scenario.Payees {
+		// TODO introduce verification check
+		payees = append(payees, customers[p])
+	}
+
+	return r.doPayments(payer, payees, transferAmnts, settings)
 }
 
 func (r *TestCaseRunner) doWithdrawals(customer *customerState, amounts []api.Amount, settings *TestCaseSettings) error {

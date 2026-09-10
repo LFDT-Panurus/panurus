@@ -176,6 +176,13 @@ func (rp *rangeProver) WithTranscriptHeader(h []byte) *rangeProver {
 	return rp
 }
 
+// Prove generates a CSP range proof. This is a Fiat-Shamir transcript protocol: the
+// absorb/squeeze sequence, native-curve dispatch branches, and linear-form construction must
+// stay in this exact order and shape to match Verify's replay below; extracting pieces risks
+// silently reordering the transcript or mis-threading shared challenge state, which would break
+// proof soundness.
+//
+//nolint:gocognit // see the transcript-ordering rationale above
 func (rp *rangeProver) Prove() (*RangeProof, error) {
 	// Validate all inputs
 	if err := validateRangeProverInputs(rp.Curve, rp); err != nil {
@@ -479,7 +486,11 @@ func (rv *rangeVerifier) WithTranscriptHeader(h []byte) *rangeVerifier {
 
 // Verify checks that proof is a valid CSP range proof against the public statement.
 // It mirrors the prover transcript exactly, reconstructs all challenges, rebuilds
-// the aggregated linear form, and delegates the final check to cspVerifier.
+// the aggregated linear form, and delegates the final check to cspVerifier. It must exactly
+// mirror rangeProver.Prove's absorb/squeeze sequence and linear-form construction (see that
+// function's waiver comment); extracting pieces risks the two sides silently diverging.
+//
+//nolint:gocognit // see the transcript-mirroring rationale above
 func (rv *rangeVerifier) Verify(proof *RangeProof) error {
 	// Validate all inputs
 	if err := validateRangeVerifierInputs(rv.Curve, rv); err != nil {

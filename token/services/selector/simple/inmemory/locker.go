@@ -357,6 +357,17 @@ func (d *locker) start(ctx context.Context) {
 	go d.scan(ctx)
 }
 
+// observedEntry is a snapshot of a shard's locked entry, taken while the
+// shard's RLock is held, so the (potentially slow) status lookup and the
+// delete phase never need to hold the shard's lock. txID and lastAccess are
+// kept so the delete phase can re-validate the entry (prevents a TOCTOU race
+// with Lock/reclaim).
+type observedEntry struct {
+	id         token2.ID
+	txID       string
+	lastAccess time.Time
+}
+
 // lockedCount returns the total number of locked tokens across all owners.
 // It snapshots the shards and releases shardsMu before taking any shard lock:
 // holding shardsMu here would invert the shard-then-registry lock order of
@@ -379,6 +390,104 @@ func (d *locker) lockedCount() int {
 	return total
 }
 
+// snapshotShards returns a copy of the current shard registry, taken under
+// shardsMu, so scanning them for expired locks never holds shardsMu during
+// the (potentially slow) status lookups that follow.
+func (d *locker) snapshotShards() map[string]*shard {
+	d.shardsMu.RLock()
+	defer d.shardsMu.RUnlock()
+
+	shardsCopy := make(map[string]*shard, len(d.shards))
+	maps.Copy(shardsCopy, d.shards)
+
+	return shardsCopy
+}
+
+// scanShardForRemoval snapshots s's locked entries (under RLock) and returns the ones that
+// should be removed: ones whose transaction status could not be determined, is Deleted, or is
+// Confirmed long enough ago to be safely evicted.
+func (d *locker) scanShardForRemoval(ctx context.Context, s *shard) []observedEntry {
+	s.mu.RLock()
+	observed := make([]observedEntry, 0, len(s.locked))
+	for id, entry := range s.locked {
+		observed = append(observed, observedEntry{id: id, txID: entry.TxID, lastAccess: entry.LastAccess})
+	}
+	s.mu.RUnlock()
+
+	removeList := make([]observedEntry, 0, len(observed))
+	for _, entry := range observed {
+		status, _, err := d.ttxdb.GetStatus(ctx, entry.txID)
+		if err != nil {
+			logger.Warnf("failed getting status for token [%s] locked by [%s], remove", entry.id, entry.txID)
+			removeList = append(removeList, entry)
+
+			continue
+		}
+		switch status {
+		case ttxdb.Confirmed:
+			// remove only if elapsed enough time from last access, to avoid concurrency issue
+			if time.Since(entry.lastAccess) > d.validTxEvictionTimeout {
+				removeList = append(removeList, entry)
+				logger.DebugfContext(ctx, "token [%s] locked by [%s] in status [%s], time elapsed, remove", entry.id, entry.txID, ttxdb.TxStatusMessage[status])
+			}
+		case ttxdb.Deleted:
+			removeList = append(removeList, entry)
+			logger.DebugfContext(ctx, "token [%s] locked by [%s] in status [%s], remove", entry.id, entry.txID, ttxdb.TxStatusMessage[status])
+		default:
+			logger.DebugfContext(ctx, "token [%s] locked by [%s] in status [%s], skip", entry.id, entry.txID, ttxdb.TxStatusMessage[status])
+		}
+	}
+
+	return removeList
+}
+
+// removeScannedShardEntries deletes removeList's entries from s.locked (under Lock),
+// re-validating that each entry still belongs to the same transaction (and last-access time) that
+// was inspected during the RLock scan phase. Between RUnlock and Lock, a Lock(reclaim=true) call
+// may have reclaimed a token and re-locked it, or refreshed its last access time; such entries
+// must not be deleted. It also prunes the shard from the registry if it ends up empty.
+func (d *locker) removeScannedShardEntries(ctx context.Context, owner string, s *shard, removeList []observedEntry) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	logger.DebugfContext(ctx, "token collector: freeing [%d] items from shard [%s]", len(removeList), owner)
+	for _, entry := range removeList {
+		if e, ok := s.locked[entry.id]; ok && e.TxID == entry.txID && e.LastAccess.Equal(entry.lastAccess) {
+			delete(s.locked, entry.id)
+		}
+	}
+	d.pruneEmptyShard(owner, s)
+}
+
+// collectExpiredLocks scans every shard for expired lock entries and removes them.
+func (d *locker) collectExpiredLocks(ctx context.Context) {
+	for owner, s := range d.snapshotShards() {
+		removeList := d.scanShardForRemoval(ctx, s)
+		d.removeScannedShardEntries(ctx, owner, s, removeList)
+	}
+}
+
+// waitForWork sleeps until there is at least one locked token to scan again, reporting false if
+// ctx is done in the meantime (the caller should stop).
+func (d *locker) waitForWork(ctx context.Context) bool {
+	for {
+		logger.DebugfContext(ctx, "token collector: sleep for some time...")
+		select {
+		case <-time.After(d.sleepTimeout):
+		case <-ctx.Done():
+			logger.Debugf("token collector: stopping during sleep")
+
+			return false
+		}
+		if l := d.lockedCount(); l > 0 {
+			// time to do some token collection
+			logger.DebugfContext(ctx, "token collector: time to do some token collection, [%d] locked", l)
+
+			return true
+		}
+	}
+}
+
 func (d *locker) scan(ctx context.Context) {
 	defer close(d.scanDone)
 	for {
@@ -392,88 +501,10 @@ func (d *locker) scan(ctx context.Context) {
 		}
 		logger.DebugfContext(ctx, "token collector: scan locked tokens")
 
-		// Snapshot the current shards so we don't hold shardsMu during the
-		// (potentially slow) status lookups.
-		d.shardsMu.RLock()
-		shardsCopy := make(map[string]*shard, len(d.shards))
-		maps.Copy(shardsCopy, d.shards)
-		d.shardsMu.RUnlock()
+		d.collectExpiredLocks(ctx)
 
-		// Snapshot of an entry as observed during the inspection phase. The
-		// txID and last access time are kept so the delete phase can
-		// re-validate the entry (prevents a TOCTOU race with Lock/reclaim).
-		type observedEntry struct {
-			id         token2.ID
-			txID       string
-			lastAccess time.Time
-		}
-
-		for owner, s := range shardsCopy {
-			// Copy the entries and release the shard lock before looking their
-			// status up: the lookups may be slow, and no Lock/UnlockIDs of this
-			// owner must ever wait behind the collector on the status provider.
-			s.mu.RLock()
-			observed := make([]observedEntry, 0, len(s.locked))
-			for id, entry := range s.locked {
-				observed = append(observed, observedEntry{id: id, txID: entry.TxID, lastAccess: entry.LastAccess})
-			}
-			s.mu.RUnlock()
-
-			removeList := make([]observedEntry, 0, len(observed))
-			for _, entry := range observed {
-				status, _, err := d.ttxdb.GetStatus(ctx, entry.txID)
-				if err != nil {
-					logger.Warnf("failed getting status for token [%s] locked by [%s], remove", entry.id, entry.txID)
-					removeList = append(removeList, entry)
-
-					continue
-				}
-				switch status {
-				case ttxdb.Confirmed:
-					// remove only if elapsed enough time from last access, to avoid concurrency issue
-					if time.Since(entry.lastAccess) > d.validTxEvictionTimeout {
-						removeList = append(removeList, entry)
-						logger.DebugfContext(ctx, "token [%s] locked by [%s] in status [%s], time elapsed, remove", entry.id, entry.txID, ttxdb.TxStatusMessage[status])
-					}
-				case ttxdb.Deleted:
-					removeList = append(removeList, entry)
-					logger.DebugfContext(ctx, "token [%s] locked by [%s] in status [%s], remove", entry.id, entry.txID, ttxdb.TxStatusMessage[status])
-				default:
-					logger.DebugfContext(ctx, "token [%s] locked by [%s] in status [%s], skip", entry.id, entry.txID, ttxdb.TxStatusMessage[status])
-				}
-			}
-
-			s.mu.Lock()
-			logger.DebugfContext(ctx, "token collector: freeing [%d] items from shard [%s]", len(removeList), owner)
-			for _, entry := range removeList {
-				// Re-validate: only delete if the entry is still the one that
-				// was inspected. While the shard was unlocked, a
-				// Lock(reclaim=true) may have re-locked the token for another
-				// transaction, or a plain Lock may have refreshed its last
-				// access time; either way the entry must be kept.
-				if e, ok := s.locked[entry.id]; ok && e.TxID == entry.txID && e.LastAccess.Equal(entry.lastAccess) {
-					delete(s.locked, entry.id)
-				}
-			}
-			d.pruneEmptyShard(owner, s)
-			s.mu.Unlock()
-		}
-
-		for {
-			logger.DebugfContext(ctx, "token collector: sleep for some time...")
-			select {
-			case <-time.After(d.sleepTimeout):
-			case <-ctx.Done():
-				logger.Debugf("token collector: stopping during sleep")
-
-				return
-			}
-			if l := d.lockedCount(); l > 0 {
-				// time to do some token collection
-				logger.DebugfContext(ctx, "token collector: time to do some token collection, [%d] locked", l)
-
-				break
-			}
+		if !d.waitForWork(ctx) {
+			return
 		}
 	}
 }

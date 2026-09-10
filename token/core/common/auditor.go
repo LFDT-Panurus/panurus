@@ -224,6 +224,64 @@ func (a *Auditor[P, IA, TA, DS]) CheckTransfer(
 //
 // This function is used by auditors to ensure that no token is spent multiple times within
 // a single transaction.
+// recordTokenID adds id to tokenIDMap/tokenIDs, or returns an error if id was already recorded
+// (a duplicate token ID within the same token request).
+func recordTokenID(tokenIDMap map[string]*token.ID, tokenIDs *[]*token.ID, id *token.ID, actionIndex int, anchor driver.TokenRequestAnchor) error {
+	idKey := id.String()
+	if _, exists := tokenIDMap[idKey]; exists {
+		return errors.Errorf("duplicate token ID [%s] found in metadata at action index [%d] for tx [%s]", idKey, actionIndex, anchor)
+	}
+	tokenIDMap[idKey] = id
+	*tokenIDs = append(*tokenIDs, id)
+
+	return nil
+}
+
+// extractTransferActionTokenIDs records the token IDs spent by a transfer action's inputs.
+func extractTransferActionTokenIDs(action *driver.ActionMetadataEntry, tokenIDMap map[string]*token.ID, tokenIDs *[]*token.ID, i int, anchor driver.TokenRequestAnchor) error {
+	if action.TransferMetadata == nil {
+		return nil
+	}
+	for _, id := range action.TransferMetadata.TokenIDs() {
+		if id == nil {
+			continue
+		}
+		if err := recordTokenID(tokenIDMap, tokenIDs, id, i, anchor); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// extractIssueActionTokenIDs records the token IDs spent by an issue action's inputs (for token
+// upgrades/conversions).
+func extractIssueActionTokenIDs(action *driver.ActionMetadataEntry, tokenIDMap map[string]*token.ID, tokenIDs *[]*token.ID, i int, anchor driver.TokenRequestAnchor) error {
+	if action.IssueMetadata == nil {
+		return nil
+	}
+	for _, input := range action.IssueMetadata.Inputs {
+		if input == nil || input.TokenID == nil {
+			continue
+		}
+		if err := recordTokenID(tokenIDMap, tokenIDs, input.TokenID, i, anchor); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// extractActionTokenIDs records the token IDs spent by a single action (transfer inputs, and
+// issue inputs for token upgrades/conversions) into tokenIDMap/tokenIDs.
+func extractActionTokenIDs(action *driver.ActionMetadataEntry, tokenIDMap map[string]*token.ID, tokenIDs *[]*token.ID, i int, anchor driver.TokenRequestAnchor) error {
+	if err := extractTransferActionTokenIDs(action, tokenIDMap, tokenIDs, i, anchor); err != nil {
+		return err
+	}
+
+	return extractIssueActionTokenIDs(action, tokenIDMap, tokenIDs, i, anchor)
+}
+
 func ExtractTokenIDsAndCheckDuplicates(
 	metadata *driver.TokenRequestMetadata,
 	anchor driver.TokenRequestAnchor,
@@ -236,38 +294,8 @@ func ExtractTokenIDsAndCheckDuplicates(
 	var tokenIDs []*token.ID
 
 	for i, action := range metadata.Actions {
-		// Extract TokenIDs from transfer actions
-		if action.TransferMetadata != nil {
-			ids := action.TransferMetadata.TokenIDs()
-			for _, id := range ids {
-				if id == nil {
-					continue
-				}
-				// Check for duplicates using string representation as key
-				idKey := id.String()
-				if _, exists := tokenIDMap[idKey]; exists {
-					return nil, errors.Errorf("duplicate token ID [%s] found in metadata at action index [%d] for tx [%s]", idKey, i, anchor)
-				}
-				tokenIDMap[idKey] = id
-				tokenIDs = append(tokenIDs, id)
-			}
-		}
-
-		// Extract TokenIDs from issue action inputs (for token upgrades/conversions)
-		if action.IssueMetadata != nil {
-			for _, input := range action.IssueMetadata.Inputs {
-				if input == nil || input.TokenID == nil {
-					continue
-				}
-				id := input.TokenID
-				// Check for duplicates using string representation as key
-				idKey := id.String()
-				if _, exists := tokenIDMap[idKey]; exists {
-					return nil, errors.Errorf("duplicate token ID [%s] found in metadata at action index [%d] for tx [%s]", idKey, i, anchor)
-				}
-				tokenIDMap[idKey] = id
-				tokenIDs = append(tokenIDs, id)
-			}
+		if err := extractActionTokenIDs(action, tokenIDMap, &tokenIDs, i, anchor); err != nil {
+			return nil, err
 		}
 	}
 
@@ -439,67 +467,76 @@ func ValidateStructure(
 
 	// Validate each action has corresponding metadata with correct type
 	for i, action := range tokenRequest.Actions {
-		if action == nil {
-			return errors.Errorf("action at index [%d] is nil for tx [%s]", i, txID)
-		}
-
 		metadata := tokenRequestMetadata.Actions[i]
-		if metadata == nil {
-			return errors.Errorf("metadata at index [%d] is nil for tx [%s]", i, txID)
+		if err := validateActionStructure(action, metadata, i, txID); err != nil {
+			return err
 		}
+	}
 
-		// Verify ActionID matches position
-		if metadata.ActionID != uint32(i) {
+	return nil
+}
+
+// validateActionStructure validates that the i-th request action has corresponding metadata of
+// the matching type (exactly one of IssueMetadata/TransferMetadata, matching action.Type).
+func validateActionStructure(action *driver.TypedAction, metadata *driver.ActionMetadataEntry, i int, txID driver.TokenRequestAnchor) error {
+	if action == nil {
+		return errors.Errorf("action at index [%d] is nil for tx [%s]", i, txID)
+	}
+	if metadata == nil {
+		return errors.Errorf("metadata at index [%d] is nil for tx [%s]", i, txID)
+	}
+
+	// Verify ActionID matches position
+	if metadata.ActionID != uint32(i) { // #nosec G115 -- i is a range-loop index over tokenRequest.Actions, always small
+		return errors.Errorf(
+			"metadata at index [%d] has incorrect ActionID [%d] for tx [%s]",
+			i,
+			metadata.ActionID,
+			txID,
+		)
+	}
+
+	// Verify action type matches metadata type
+	switch action.Type {
+	case request.ActionType_ACTION_TYPE_ISSUE:
+		if metadata.IssueMetadata == nil {
 			return errors.Errorf(
-				"metadata at index [%d] has incorrect ActionID [%d] for tx [%s]",
+				"action at index [%d] is ISSUE but metadata has no IssueMetadata for tx [%s]",
 				i,
-				metadata.ActionID,
+				txID,
+			)
+		}
+		if metadata.TransferMetadata != nil {
+			return errors.Errorf(
+				"action at index [%d] is ISSUE but metadata also has TransferMetadata for tx [%s]",
+				i,
 				txID,
 			)
 		}
 
-		// Verify action type matches metadata type
-		switch action.Type {
-		case request.ActionType_ACTION_TYPE_ISSUE:
-			if metadata.IssueMetadata == nil {
-				return errors.Errorf(
-					"action at index [%d] is ISSUE but metadata has no IssueMetadata for tx [%s]",
-					i,
-					txID,
-				)
-			}
-			if metadata.TransferMetadata != nil {
-				return errors.Errorf(
-					"action at index [%d] is ISSUE but metadata also has TransferMetadata for tx [%s]",
-					i,
-					txID,
-				)
-			}
-
-		case request.ActionType_ACTION_TYPE_TRANSFER:
-			if metadata.TransferMetadata == nil {
-				return errors.Errorf(
-					"action at index [%d] is TRANSFER but metadata has no TransferMetadata for tx [%s]",
-					i,
-					txID,
-				)
-			}
-			if metadata.IssueMetadata != nil {
-				return errors.Errorf(
-					"action at index [%d] is TRANSFER but metadata also has IssueMetadata for tx [%s]",
-					i,
-					txID,
-				)
-			}
-
-		default:
+	case request.ActionType_ACTION_TYPE_TRANSFER:
+		if metadata.TransferMetadata == nil {
 			return errors.Errorf(
-				"action at index [%d] has unknown type [%s] for tx [%s]",
+				"action at index [%d] is TRANSFER but metadata has no TransferMetadata for tx [%s]",
 				i,
-				action.Type,
 				txID,
 			)
 		}
+		if metadata.IssueMetadata != nil {
+			return errors.Errorf(
+				"action at index [%d] is TRANSFER but metadata also has IssueMetadata for tx [%s]",
+				i,
+				txID,
+			)
+		}
+
+	default:
+		return errors.Errorf(
+			"action at index [%d] has unknown type [%s] for tx [%s]",
+			i,
+			action.Type,
+			txID,
+		)
 	}
 
 	return nil
@@ -532,31 +569,40 @@ func ValidateIssueActionTokenTypes(
 		if inputMetadata == nil {
 			continue
 		}
-
-		// Verify input token exists in auditTokens map
-		if inputMetadata.TokenID != nil {
-			inputToken, exists := auditTokens[inputMetadata.TokenID.String()]
-			if !exists {
-				return errors.Errorf("input token [%s:%d] at index [%d] not found in audit tokens",
-					inputMetadata.TokenID.TxId, inputMetadata.TokenID.Index, i)
-			}
-
-			// For issue inputs (token upgrades/conversions), we get the type from the audit token
-			if inputToken != nil && inputToken.Type != "" {
-				if actionTokenType == "" {
-					actionTokenType = inputToken.Type
-				} else if actionTokenType != inputToken.Type {
-					return errors.Errorf(
-						"token type mismatch in issue action: input [%d] has type [%s] but expected [%s]",
-						i, inputToken.Type, actionTokenType,
-					)
-				}
-			}
+		if err := checkIssueInputTokenType(inputMetadata, auditTokens, i, &actionTokenType); err != nil {
+			return err
 		}
 	}
 
 	// Note: Output token type validation is driver-specific and handled by the driver's
 	// action deserialization and Match() methods. This function only validates input consistency.
+
+	return nil
+}
+
+// checkIssueInputTokenType verifies that the i-th issue input's audit token exists, and updates
+// *actionTokenType with (or checks it against) that token's type.
+func checkIssueInputTokenType(inputMetadata *driver.IssueInputMetadata, auditTokens map[string]*token.Token, i int, actionTokenType *token.Type) error {
+	if inputMetadata.TokenID == nil {
+		return nil
+	}
+	inputToken, exists := auditTokens[inputMetadata.TokenID.String()]
+	if !exists {
+		return errors.Errorf("input token [%s:%d] at index [%d] not found in audit tokens",
+			inputMetadata.TokenID.TxId, inputMetadata.TokenID.Index, i)
+	}
+
+	// For issue inputs (token upgrades/conversions), we get the type from the audit token
+	if inputToken != nil && inputToken.Type != "" {
+		if *actionTokenType == "" {
+			*actionTokenType = inputToken.Type
+		} else if *actionTokenType != inputToken.Type {
+			return errors.Errorf(
+				"token type mismatch in issue action: input [%d] has type [%s] but expected [%s]",
+				i, inputToken.Type, *actionTokenType,
+			)
+		}
+	}
 
 	return nil
 }
@@ -575,6 +621,56 @@ func ValidateIssueActionTokenTypes(
 // - (Optional) Sum of input values equals sum of output values
 //
 // This ensures token type consistency and value conservation within a transfer action.
+// checkTransferInputTokenType verifies that the i-th transfer input's audit token exists and is
+// non-nil, updates (or checks) *actionTokenType against its type, and, if validateValueSum, adds
+// its quantity to inputSum, returning the (possibly updated) sum.
+func checkTransferInputTokenType(inputMetadata *driver.TransferInputMetadata, auditTokens map[string]*token.Token, i int, actionTokenType *token.Type, inputSum token.Quantity, validateValueSum bool, precision uint64) (token.Quantity, error) {
+	if inputMetadata == nil {
+		return inputSum, errors.Errorf("input metadata at index [%d] is nil", i)
+	}
+
+	// TokenID is required
+	if inputMetadata.TokenID == nil {
+		return inputSum, errors.Errorf("input at index [%d] has nil TokenID", i)
+	}
+
+	// Verify input token exists and validate type
+	inputToken, exists := auditTokens[inputMetadata.TokenID.String()]
+	if !exists {
+		return inputSum, errors.Errorf("input token [%s:%d] at index [%d] not found in audit tokens",
+			inputMetadata.TokenID.TxId, inputMetadata.TokenID.Index, i)
+	}
+
+	if inputToken == nil {
+		return inputSum, errors.Errorf("input token [%s:%d] at index [%d] is nil in audit tokens",
+			inputMetadata.TokenID.TxId, inputMetadata.TokenID.Index, i)
+	}
+
+	// Validate and accumulate token type
+	if *actionTokenType == "" {
+		*actionTokenType = inputToken.Type
+	} else if *actionTokenType != inputToken.Type {
+		return inputSum, errors.Errorf(
+			"token type mismatch in transfer action: input [%d] has type [%s] but expected [%s]",
+			i, inputToken.Type, *actionTokenType,
+		)
+	}
+
+	// Accumulate input value if validation is requested
+	if validateValueSum {
+		inputQty, err := token.ToQuantity(inputToken.Quantity, precision)
+		if err != nil {
+			return inputSum, errors.Wrapf(err, "failed to convert input quantity at index [%d]", i)
+		}
+		inputSum, err = inputSum.Add(inputQty)
+		if err != nil {
+			return inputSum, errors.Wrapf(err, "failed to add input quantity at index [%d]", i)
+		}
+	}
+
+	return inputSum, nil
+}
+
 func ValidateTransferActionTokenTypes(
 	metadata *driver.TransferMetadata,
 	auditTokens map[string]*token.Token,
@@ -601,48 +697,11 @@ func ValidateTransferActionTokenTypes(
 
 	// Validate and extract token type from inputs
 	for i, inputMetadata := range metadata.Inputs {
-		if inputMetadata == nil {
-			return errors.Errorf("input metadata at index [%d] is nil", i)
+		newSum, err := checkTransferInputTokenType(inputMetadata, auditTokens, i, &actionTokenType, inputSum, validateValueSum, precision)
+		if err != nil {
+			return err
 		}
-
-		// TokenID is required
-		if inputMetadata.TokenID == nil {
-			return errors.Errorf("input at index [%d] has nil TokenID", i)
-		}
-
-		// Verify input token exists and validate type
-		inputToken, exists := auditTokens[inputMetadata.TokenID.String()]
-		if !exists {
-			return errors.Errorf("input token [%s:%d] at index [%d] not found in audit tokens",
-				inputMetadata.TokenID.TxId, inputMetadata.TokenID.Index, i)
-		}
-
-		if inputToken == nil {
-			return errors.Errorf("input token [%s:%d] at index [%d] is nil in audit tokens",
-				inputMetadata.TokenID.TxId, inputMetadata.TokenID.Index, i)
-		}
-
-		// Validate and accumulate token type
-		if actionTokenType == "" {
-			actionTokenType = inputToken.Type
-		} else if actionTokenType != inputToken.Type {
-			return errors.Errorf(
-				"token type mismatch in transfer action: input [%d] has type [%s] but expected [%s]",
-				i, inputToken.Type, actionTokenType,
-			)
-		}
-
-		// Accumulate input value if validation is requested
-		if validateValueSum {
-			inputQty, err := token.ToQuantity(inputToken.Quantity, precision)
-			if err != nil {
-				return errors.Wrapf(err, "failed to convert input quantity at index [%d]", i)
-			}
-			inputSum, err = inputSum.Add(inputQty)
-			if err != nil {
-				return errors.Wrapf(err, "failed to add input quantity at index [%d]", i)
-			}
-		}
+		inputSum = newSum
 	}
 
 	// Note: Output token type and value validation is driver-specific.

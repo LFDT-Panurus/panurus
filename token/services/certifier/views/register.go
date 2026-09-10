@@ -40,46 +40,55 @@ func (r *RegisterView) Call(context view.Context) (any, error) {
 	if err != nil {
 		return nil, errors.Wrapf(err, "tms not found [%s:%s:%s]", r.Network, r.Channel, r.Namespace)
 	}
+
 	pp := tms.PublicParametersManager().PublicParameters()
 	if pp == nil {
 		logger.Debugf("public parameters not yet available, start a background task...")
 
-		// Use the view's context for cancellation.
-		// Keep trying until parameters are ready or the context is cancelled.
-		ctx := context.Context()
+		// Use the view's context for cancellation. Keep trying until parameters
+		// are ready or the context is cancelled.
+		go r.pollForPublicParameters(context, tms)
 
-		go func() {
-			ticker := time.NewTicker(500 * time.Millisecond)
-			defer ticker.Stop()
+		return nil, nil
+	}
 
-			for {
-				select {
-				case <-ctx.Done():
-					logger.Debugf("context cancelled (reason: %v), stopping certification service setup", ctx.Err())
-
-					return
-				case <-ticker.C:
-					pp := tms.PublicParametersManager().PublicParameters()
-					if pp != nil {
-						logger.Debugf("public parameters available, set certification service...")
-						if err := r.startCertificationService(context, tms, pp); err != nil {
-							logger.Errorf("failed to start certification service [%s]", err)
-						}
-
-						return
-					}
-					logger.Debugf("public parameters not yet available, wait...")
-				}
-			}
-		}()
-	} else {
-		logger.Debugf("public parameters available, set certification service...")
-		if err := r.startCertificationService(context, tms, pp); err != nil {
-			return nil, err
-		}
+	logger.Debugf("public parameters available, set certification service...")
+	if err := r.startCertificationService(context, tms, pp); err != nil {
+		return nil, err
 	}
 
 	return nil, nil
+}
+
+// pollForPublicParameters retries on a ticker until tms's public parameters become
+// available or context's Context is cancelled, then starts the certification service.
+func (r *RegisterView) pollForPublicParameters(context view.Context, tms *token.ManagementService) {
+	ctx := context.Context()
+	ticker := time.NewTicker(500 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			logger.Debugf("context cancelled (reason: %v), stopping certification service setup", ctx.Err())
+
+			return
+		case <-ticker.C:
+			pp := tms.PublicParametersManager().PublicParameters()
+			if pp == nil {
+				logger.Debugf("public parameters not yet available, wait...")
+
+				continue
+			}
+
+			logger.Debugf("public parameters available, set certification service...")
+			if err := r.startCertificationService(context, tms, pp); err != nil {
+				logger.Errorf("failed to start certification service [%s]", err)
+			}
+
+			return
+		}
+	}
 }
 
 func (r *RegisterView) startCertificationService(context view.Context, tms *token.ManagementService, pp *token.PublicParameters) error {

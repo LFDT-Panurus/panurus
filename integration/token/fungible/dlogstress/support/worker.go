@@ -26,6 +26,7 @@ type Pool struct {
 	stop   atomic.Bool
 }
 
+//nolint:gocognit // worker-loop goroutine closes over per-worker atomics/stats state; splitting it out would only move that state into a helper's parameters, not reduce the real complexity.
 func NewPool(label string, numWorkers int) *Pool {
 	ctx, cancel := context.WithCancel(context.Background())
 	pool := &Pool{

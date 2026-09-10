@@ -142,8 +142,12 @@ type Result struct {
 	Data  []byte // zero-copy reference into input
 }
 
-// DecodeIdentity parses a DER SEQUENCE containing either
-// [INTEGER, OCTET STRING] or [UTF8String, OCTET STRING].
+// DecodeIdentity parses a DER SEQUENCE containing either [INTEGER, OCTET STRING] or [UTF8String,
+// OCTET STRING]. This is a hand-rolled zero-copy DER parser with interleaved bounds checks;
+// splitting it would only move the bounds-checking logic behind indirection, risking an
+// off-by-one.
+//
+//nolint:gocognit // see the parser-structure rationale above
 func DecodeIdentity(b []byte) (Result, error) {
 	var r Result
 
