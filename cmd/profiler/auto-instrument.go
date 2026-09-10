@@ -33,19 +33,19 @@ func run(args []string) int {
 	dir := fs.String("dir", "", "Directory to instrument (required)")
 
 	if err := fs.Parse(args); err != nil {
-		fmt.Fprintf(os.Stderr, "Error parsing flags: %v\n", err)
+		_, _ = fmt.Fprintf(os.Stderr, "Error parsing flags: %v\n", err)
 
 		return 1
 	}
 
 	if *dir == "" {
-		fmt.Fprintln(os.Stderr, "Usage: auto-instrument -dir <directory>")
+		_, _ = fmt.Fprintln(os.Stderr, "Usage: auto-instrument -dir <directory>")
 
 		return 1
 	}
 
 	if err := instrumentDirectory(*dir); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		_, _ = fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 
 		return 1
 	}

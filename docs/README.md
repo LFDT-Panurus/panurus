@@ -17,6 +17,7 @@ Welcome to Panurus documentation.
 
 *   [**OpenSSF Security Baseline**](openssf/README.md): Which OpenSSF Baseline level Panurus targets, what is already satisfied, and what is still pending.
 *   [**HTLC Deadlines and Clock Synchronisation**](security/htlc_deadline_clock_assumptions.md): The clock-synchronisation assumption that the HTLC claim/reclaim deadline rests on, and the deadline margin it requires of a deployment.
+*   [**Signature Observability and Throttling**](security/signature_observability.md): Metrics, the audit trail, and the escalating throttle policy on the signer/verifier surface.
 *   [**Selector Resource Limits**](security/selector_resource_limits.md): How to throttle token selection, either with the opt-in built-in per-wallet rate limiter or by supplying your own limiter or `Locker`.
 *   [**Security Policy**](../SECURITY.md): How to report a vulnerability.
 

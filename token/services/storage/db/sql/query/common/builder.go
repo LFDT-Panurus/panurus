@@ -28,7 +28,7 @@ func NewBuilderWithOffset(pc *int) *builder {
 }
 
 func (b *builder) WriteParam(v Param) Builder {
-	b.sb.WriteRune('$')
+	_, _ = b.sb.WriteRune('$')
 	_, _ = b.sb.WriteString(strconv.Itoa(*b.pc))
 	*b.pc++
 	b.params = append(b.params, v)
@@ -47,7 +47,7 @@ func (b *builder) BindParams(vs ...Param) Builder {
 }
 
 func (b *builder) WriteParamRef(n int) Builder {
-	b.sb.WriteRune('$')
+	_, _ = b.sb.WriteRune('$')
 	_, _ = b.sb.WriteString(strconv.Itoa(n))
 
 	return b
@@ -85,7 +85,7 @@ func (b *builder) WriteString(s string) Builder {
 }
 
 func (b *builder) WriteRune(r rune) Builder {
-	b.sb.WriteRune(r)
+	_, _ = b.sb.WriteRune(r)
 
 	return b
 }

@@ -580,7 +580,7 @@ func buildHierarchy(node *CallNode, prefix string, isLast bool, sb *strings.Buil
 		connector = "└── "
 	}
 
-	fmt.Fprintf(sb, "%s%s%s\n", prefix, connector, node.Name)
+	_, _ = fmt.Fprintf(sb, "%s%s%s\n", prefix, connector, node.Name)
 
 	childPrefix := prefix
 	if isLast {
