@@ -16,7 +16,9 @@ import (
 	"github.com/LFDT-Panurus/panurus/token"
 	commondrivermock "github.com/LFDT-Panurus/panurus/token/core/common/driver/mock"
 	"github.com/LFDT-Panurus/panurus/token/core/common/metrics"
+	"github.com/LFDT-Panurus/panurus/token/driver"
 	drivermock "github.com/LFDT-Panurus/panurus/token/driver/mock"
+	"github.com/LFDT-Panurus/panurus/token/driver/protos-go/v1/request"
 	tokenmock "github.com/LFDT-Panurus/panurus/token/mock"
 	"github.com/LFDT-Panurus/panurus/token/services/auditor"
 	auditmock "github.com/LFDT-Panurus/panurus/token/services/auditor/mock"
@@ -25,6 +27,7 @@ import (
 	"github.com/LFDT-Panurus/panurus/token/services/storage/auditdb"
 	auditdbmock "github.com/LFDT-Panurus/panurus/token/services/storage/auditdb/mock"
 	dbdriver "github.com/LFDT-Panurus/panurus/token/services/storage/db/driver"
+	"github.com/LFDT-Panurus/panurus/token/services/storage/integrity"
 	"github.com/LFDT-Panurus/panurus/token/services/tokens"
 	depmock "github.com/LFDT-Panurus/panurus/token/services/ttx/dep/mock"
 	token2 "github.com/LFDT-Panurus/panurus/token/token"
@@ -32,6 +35,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/otel/trace/noop"
+	"google.golang.org/protobuf/proto"
 )
 
 // fakeServiceProvider is a simple test stub implementing token.ServiceProvider.
@@ -59,6 +63,7 @@ func newTestManagementService(t *testing.T) *token.ManagementService {
 	mockPP := &drivermock.PublicParameters{}
 	mockPP.PrecisionReturns(64)
 	mockPPM.PublicParametersReturns(mockPP)
+	mockPPM.PublicParamsHashReturns([]byte("pp-hash"))
 
 	mockTMS.PublicParamsManagerReturns(mockPPM)
 	mockTMS.TokensServiceReturns(&drivermock.TokensService{})
@@ -263,14 +268,51 @@ func TestService_GetStatus_Error(t *testing.T) {
 	assert.ErrorIs(t, err, expectedErr)
 }
 
+// storedTokenRequest builds the wire format the audit store holds: a
+// TokenRequestWithMetadata anchored to the passed anchor.
+func storedTokenRequest(t *testing.T, anchor string) []byte {
+	t.Helper()
+	raw, err := proto.Marshal(&request.TokenRequestWithMetadata{
+		Version: uint32(driver.ProtocolV1),
+		Anchor:  anchor,
+		Request: &request.TokenRequest{Version: uint32(driver.ProtocolV1)},
+	})
+	require.NoError(t, err)
+
+	return raw
+}
+
 func TestService_GetTokenRequest_Success(t *testing.T) {
-	data := []byte("raw-token-request")
+	data := storedTokenRequest(t, "tx-tok")
 	fakeStore := newFakeStore()
 	fakeStore.GetTokenRequestReturns(data, nil)
 	svc := newTestService(t, newTestStoreService(t, fakeStore), nil)
 	got, err := svc.GetTokenRequest(context.Background(), "tx-tok")
 	require.NoError(t, err)
 	assert.Equal(t, data, got)
+}
+
+// TestService_GetTokenRequest_AnchorMismatch checks that a stored request
+// belonging to another transaction is reported as an error rather than returned
+// as this transaction's request.
+func TestService_GetTokenRequest_AnchorMismatch(t *testing.T) {
+	fakeStore := newFakeStore()
+	fakeStore.GetTokenRequestReturns(storedTokenRequest(t, "tx-other"), nil)
+	svc := newTestService(t, newTestStoreService(t, fakeStore), nil)
+	got, err := svc.GetTokenRequest(context.Background(), "tx-tok")
+	require.ErrorIs(t, err, integrity.ErrAnchorMismatch)
+	assert.Nil(t, got)
+}
+
+// TestService_GetTokenRequest_Malformed checks that bytes that are not a token
+// request at all are refused rather than handed to the caller.
+func TestService_GetTokenRequest_Malformed(t *testing.T) {
+	fakeStore := newFakeStore()
+	fakeStore.GetTokenRequestReturns([]byte("raw-token-request"), nil)
+	svc := newTestService(t, newTestStoreService(t, fakeStore), nil)
+	got, err := svc.GetTokenRequest(context.Background(), "tx-tok")
+	require.ErrorIs(t, err, integrity.ErrMalformedTokenRequest)
+	assert.Nil(t, got)
 }
 
 func TestService_GetTokenRequest_Error(t *testing.T) {

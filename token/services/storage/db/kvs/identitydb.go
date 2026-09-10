@@ -15,6 +15,7 @@ import (
 	tdriver "github.com/LFDT-Panurus/panurus/token/driver"
 	idriver "github.com/LFDT-Panurus/panurus/token/services/identity/driver"
 	"github.com/LFDT-Panurus/panurus/token/services/storage"
+	"github.com/LFDT-Panurus/panurus/token/services/storage/integrity"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/services/storage/kvs"
 )
@@ -28,6 +29,12 @@ const (
 
 // RecipientData contains information about the identity of a token owner
 type RecipientData struct {
+	// Identity is the identity this record belongs to. Rows are keyed by the
+	// hash of the identity, so this field is what lets a read verify that the
+	// row it landed on is the one it asked for. It is absent in rows written by
+	// releases before the check was introduced; such rows are read back without
+	// the verification rather than rejected.
+	Identity []byte
 	// AuditInfo contains private information Identity
 	AuditInfo []byte
 	// TokenMetadata contains public information related to the token to be assigned to this Recipient.
@@ -205,7 +212,18 @@ func (s *IdentityStore) Notifier() (idriver.IdentityConfigurationNotifier, error
 	return nil, storage.ErrNotSupported
 }
 
+// StoreIdentityData binds id to its audit info and token metadata.
+//
+// Verification: an empty id is refused. Rows are keyed by
+// tdriver.Identity.String, which maps the empty identity to the constant
+// "<empty>" rather than to a hash, so an empty identity would write to a
+// well-known key that any later empty-identity lookup reads back as its own.
+// The identity is stored in the record so that GetAuditInfo can verify the row
+// it reads belongs to the identity that was asked for.
 func (s *IdentityStore) StoreIdentityData(ctx context.Context, id []byte, identityAudit []byte, tokenMetadata []byte, tokenMetadataAudit []byte) error {
+	if err := integrity.CheckIdentity(id); err != nil {
+		return errors.WithMessage(err, "refusing to store identity data")
+	}
 	k := kvs.CreateCompositeKeyOrPanic(
 		IdentityDBPrefix,
 		[]string{
@@ -215,6 +233,7 @@ func (s *IdentityStore) StoreIdentityData(ctx context.Context, id []byte, identi
 		},
 	)
 	if err := s.kvs.Put(ctx, k, &RecipientData{
+		Identity:               id,
 		AuditInfo:              identityAudit,
 		TokenMetadata:          tokenMetadata,
 		TokenMetadataAuditInfo: tokenMetadataAudit,
@@ -225,7 +244,20 @@ func (s *IdentityStore) StoreIdentityData(ctx context.Context, id []byte, identi
 	return nil
 }
 
+// GetAuditInfo returns the audit info stored for identity, or nil if none is
+// stored.
+//
+// Verification: the row is addressed by identity hash, so the identity stored
+// in the record is compared against the requested one before the audit info is
+// returned. Audit info is what an auditor uses to attribute a transaction to a
+// party, so handing back audit info belonging to a different identity than the
+// caller asked for would misattribute it. Records written before the identity
+// was stored alongside the audit info carry no identity and are returned
+// unverified; see docs/security/store_integrity_verification.md.
 func (s *IdentityStore) GetAuditInfo(ctx context.Context, identity []byte) ([]byte, error) {
+	if err := integrity.CheckIdentity(identity); err != nil {
+		return nil, errors.WithMessage(err, "refusing to look up audit info")
+	}
 	k := kvs.CreateCompositeKeyOrPanic(
 		IdentityDBPrefix,
 		[]string{
@@ -241,11 +273,24 @@ func (s *IdentityStore) GetAuditInfo(ctx context.Context, identity []byte) ([]by
 	if err := s.kvs.Get(ctx, k, &res); err != nil {
 		return nil, err
 	}
+	if len(res.Identity) != 0 {
+		if err := integrity.CheckIdentityMatch(identity, res.Identity); err != nil {
+			return nil, errors.WithMessagef(err, "identity data record under [%s]", tdriver.Identity(identity).String())
+		}
+	}
 
 	return res.AuditInfo, nil
 }
 
+// GetTokenInfo returns the token metadata and its audit info stored for
+// identity, or nil if none is stored.
+//
+// Verification: as for GetAuditInfo, the identity stored in the record is
+// compared against the requested one.
 func (s *IdentityStore) GetTokenInfo(ctx context.Context, identity []byte) ([]byte, []byte, error) {
+	if err := integrity.CheckIdentity(identity); err != nil {
+		return nil, nil, errors.WithMessage(err, "refusing to look up token info")
+	}
 	k := kvs.CreateCompositeKeyOrPanic(
 		IdentityDBPrefix,
 		[]string{
@@ -261,11 +306,27 @@ func (s *IdentityStore) GetTokenInfo(ctx context.Context, identity []byte) ([]by
 	if err := s.kvs.Get(ctx, k, &res); err != nil {
 		return nil, nil, err
 	}
+	if len(res.Identity) != 0 {
+		if err := integrity.CheckIdentityMatch(identity, res.Identity); err != nil {
+			return nil, nil, errors.WithMessagef(err, "identity data record under [%s]", tdriver.Identity(identity).String())
+		}
+	}
 
 	return res.TokenMetadata, res.TokenMetadataAuditInfo, nil
 }
 
+// StoreSignerInfo binds id to the signer info a key manager resolves into a
+// signer.
+//
+// Verification: an empty id is refused, for the reason given on
+// StoreIdentityData — the empty identity does not hash, it maps to the shared
+// "<empty>" row key. Note that unlike the SQL backend this store keeps only the
+// signer info under the identity hash, so GetSignerInfo cannot verify the
+// identity a record belongs to; see docs/security/store_integrity_verification.md.
 func (s *IdentityStore) StoreSignerInfo(ctx context.Context, id tdriver.Identity, info []byte) error {
+	if err := integrity.CheckIdentity(id); err != nil {
+		return errors.WithMessage(err, "refusing to store signer info")
+	}
 	idHash := id.UniqueID()
 	k, err := kvs.CreateCompositeKey(
 		IdentityDBPrefix,
@@ -292,9 +353,25 @@ func (s *IdentityStore) StoreSignerInfo(ctx context.Context, id tdriver.Identity
 	return nil
 }
 
+// GetExistingSignerInfo returns the keys of the passed identities for which signer
+// info is stored.
+//
+// Verification: an empty identity is excluded from the lookup rather than looked
+// up, for the reason given on StoreSignerInfo — its unique id is the shared
+// "<empty>" key, so consulting it would report a record written for one caller as
+// the signer info of any other empty identity, and identity.Provider.AreMe would
+// answer that the empty identity is mine. It is excluded rather than rejected
+// because this is an existence query over a batch: an empty entry is simply not an
+// identity signer info can exist for, and failing the batch would also lose the
+// answer for the caller's other identities.
 func (s *IdentityStore) GetExistingSignerInfo(ctx context.Context, identities ...tdriver.Identity) ([]string, error) {
-	keys := make([]string, len(identities))
-	for i, id := range identities {
+	keys := make([]string, 0, len(identities))
+	for _, id := range identities {
+		if err := integrity.CheckIdentity(id); err != nil {
+			// the empty identity shares one key with every other empty identity;
+			// it is never consulted
+			continue
+		}
 		k, err := kvs.CreateCompositeKey(
 			IdentityDBPrefix,
 			[]string{
@@ -306,12 +383,20 @@ func (s *IdentityStore) GetExistingSignerInfo(ctx context.Context, identities ..
 		if err != nil {
 			return nil, err
 		}
-		keys[i] = k
+		keys = append(keys, k)
+	}
+	if len(keys) == 0 {
+		return []string{}, nil
 	}
 
 	return s.kvs.GetExisting(ctx, keys...), nil
 }
 
+// SignerInfoExists returns true if signer info is stored for id.
+//
+// Verification: as for GetExistingSignerInfo, which this delegates to — an empty
+// id is never looked up, so it reads as "no signer info" and the shared "<empty>"
+// key stays unconsulted.
 func (s *IdentityStore) SignerInfoExists(ctx context.Context, id []byte) (bool, error) {
 	existing, err := s.GetExistingSignerInfo(ctx, id)
 	if err != nil {
@@ -321,7 +406,17 @@ func (s *IdentityStore) SignerInfoExists(ctx context.Context, id []byte) (bool, 
 	return len(existing) > 0, nil
 }
 
+// GetSignerInfo returns the signer info stored for identity, or nil if none is
+// stored.
+//
+// Verification: an empty identity is refused. This store does not keep the
+// identity alongside the signer info, so — unlike the SQL backend — it cannot
+// verify that the record found under the identity hash belongs to the requested
+// identity. See docs/security/store_integrity_verification.md.
 func (s *IdentityStore) GetSignerInfo(ctx context.Context, identity []byte) ([]byte, error) {
+	if err := integrity.CheckIdentity(identity); err != nil {
+		return nil, errors.WithMessage(err, "refusing to look up signer info")
+	}
 	idHash := tdriver.Identity(identity).UniqueID()
 	k, err := kvs.CreateCompositeKey(
 		IdentityDBPrefix,
@@ -342,14 +437,31 @@ func (s *IdentityStore) GetSignerInfo(ctx context.Context, identity []byte) ([]b
 	return res, nil
 }
 
+// RegisterIdentityDescriptor stores the descriptor's signer info and audit info
+// under its own identity and, when one is given, under alias.
+//
+// Verification: an empty descriptor identity is refused, as it is by
+// StoreSignerInfo and StoreIdentityData. An empty alias is skipped rather than
+// refused — callers legitimately pass none — which also matches the SQL
+// backend, where the alias is only written when it is set and differs from the
+// descriptor's identity.
 func (s *IdentityStore) RegisterIdentityDescriptor(ctx context.Context, descriptor *idriver.IdentityDescriptor, alias tdriver.Identity) error {
+	if descriptor == nil {
+		return errors.New("identity descriptor is nil")
+	}
+	if err := integrity.CheckIdentity(descriptor.Identity); err != nil {
+		return errors.WithMessage(err, "refusing to register identity descriptor")
+	}
 	if err := s.StoreSignerInfo(ctx, descriptor.Identity, descriptor.SignerInfo); err != nil {
 		return err
 	}
-	if err := s.StoreSignerInfo(ctx, alias, descriptor.SignerInfo); err != nil {
+	if err := s.StoreIdentityData(ctx, descriptor.Identity, descriptor.AuditInfo, nil, nil); err != nil {
 		return err
 	}
-	if err := s.StoreIdentityData(ctx, descriptor.Identity, descriptor.AuditInfo, nil, nil); err != nil {
+	if alias.IsNone() || descriptor.Identity.Equal(alias) {
+		return nil
+	}
+	if err := s.StoreSignerInfo(ctx, alias, descriptor.SignerInfo); err != nil {
 		return err
 	}
 	if err := s.StoreIdentityData(ctx, alias, descriptor.AuditInfo, nil, nil); err != nil {

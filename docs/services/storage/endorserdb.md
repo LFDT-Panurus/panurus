@@ -77,6 +77,22 @@ err := store.AppendValidationRecord(
 )
 ```
 
+Unlike TTXDB and AuditDB, which are handed an already-deserialised `*token.Request`, this store
+receives **raw token request bytes taken off the wire**. It therefore checks them before filing them
+as a validated request: `txID`, `tokenRequest`, and `ppHash` must all be non-empty, and
+`tokenRequest` must deserialise at a supported protocol version and carry **at least one action**. A
+validation record asserting that a request was validated is worthless if the request it names carries
+nothing to validate.
+
+The check is not a substitute for validation. The caller
+(`token/services/network/fabric/endorsement/fsc/responder.go`) must still run
+`validator.UnmarshallAndVerifyWithMetadata` and take `ppHash` from its **own** TMS rather than from
+the peer that sent the request. The store's checks narrow what a skipped validation can look like;
+they cannot tell whether the actions are legal. Note also that this format is the bare
+actions-and-signatures encoding, which carries no anchor, so — unlike TTXDB — a record here cannot be
+bound to its transaction id by a structural check. See
+[**Store Integrity Verification**](../../security/store_integrity_verification.md).
+
 ### Querying Validation Records
 
 ```go
@@ -210,3 +226,4 @@ If you're migrating code that previously used ttxdb for validation records:
 
 - [Storage Services Overview](../storage.md)
 - [TTXDB/AuditDB Documentation](ttxdb.md)
+- [Store Integrity Verification](../../security/store_integrity_verification.md)

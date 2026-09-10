@@ -69,6 +69,7 @@ var IdentityCases = []struct {
 	// Keep the name short: it is used as a SQL table prefix and PostgreSQL truncates
 	// identifiers at 63 characters, which would collide the store's tables.
 	{"RegisterPartialConflict", TRegisterIdentityDescriptorPartialConflict},
+	{"EmptyIdentityRejected", TEmptyIdentityRejected},
 }
 
 var IdentityNotificationCases = []struct {
@@ -418,6 +419,50 @@ func assertIdentityDescriptorRegistered(t *testing.T, db driver.IdentityStore, i
 		require.NoError(t, err)
 		assert.Equal(t, auditInfo, storedAuditInfo, "audit info mismatch for [%s]", identity)
 	}
+}
+
+// TEmptyIdentityRejected holds both backends to the same spec on empty
+// identities. Identity rows are keyed by unique id, and the unique id of the
+// empty identity is a fixed string rather than a hash, so every empty identity
+// shares one key: a store that accepted them would let one caller's audit info
+// or signer info be read back by any other empty-identity lookup. Every write
+// and read path must therefore refuse an empty identity outright — except the
+// existence queries over a batch, GetExistingSignerInfo and SignerInfoExists,
+// which exclude it from the lookup and report it as not existing — and the
+// well-known key must stay unoccupied.
+func TEmptyIdentityRejected(t *testing.T, db driver.IdentityStore) {
+	t.Helper()
+	ctx := t.Context()
+	empty := []byte(nil)
+	auditInfo := []byte("audit_info")
+
+	require.Error(t, db.StoreIdentityData(ctx, empty, auditInfo, []byte("tok_meta"), []byte("tok_meta_audit")))
+	require.Error(t, db.StoreIdentityData(ctx, []byte{}, auditInfo, []byte("tok_meta"), []byte("tok_meta_audit")))
+	require.Error(t, db.StoreSignerInfo(ctx, empty, []byte("signer_info")))
+
+	_, err := db.GetAuditInfo(ctx, empty)
+	require.Error(t, err)
+	_, _, err = db.GetTokenInfo(ctx, empty)
+	require.Error(t, err)
+	_, err = db.GetSignerInfo(ctx, empty)
+	require.Error(t, err)
+
+	require.Error(t, db.RegisterIdentityDescriptor(ctx, &idriver.IdentityDescriptor{
+		Identity:   empty,
+		AuditInfo:  auditInfo,
+		Signer:     &mock.Signer{},
+		SignerInfo: []byte("signer_info"),
+		Verifier:   &mock.Verifier{},
+	}, nil))
+
+	// the shared key is never consulted, so it reads as unoccupied
+	exists, err := db.SignerInfoExists(ctx, empty)
+	require.NoError(t, err)
+	assert.False(t, exists, "the empty-identity key must stay unoccupied")
+
+	existing, err := db.GetExistingSignerInfo(ctx, empty)
+	require.NoError(t, err)
+	assert.Empty(t, existing, "an empty identity must never be reported as having signer info")
 }
 
 func TIdentityNotifier(t *testing.T, db driver.IdentityStore) {

@@ -20,6 +20,7 @@ import (
 	q "github.com/LFDT-Panurus/panurus/token/services/storage/db/sql/query"
 	common3 "github.com/LFDT-Panurus/panurus/token/services/storage/db/sql/query/common"
 	"github.com/LFDT-Panurus/panurus/token/services/storage/db/sql/query/cond"
+	"github.com/LFDT-Panurus/panurus/token/services/storage/integrity"
 	"github.com/LFDT-Panurus/panurus/token/services/utils"
 	cache2 "github.com/LFDT-Panurus/panurus/token/services/utils/cache"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
@@ -314,45 +315,95 @@ func (db *IdentityStore) Notifier() (idriver.IdentityConfigurationNotifier, erro
 	return db.notifier, nil
 }
 
+// StoreIdentityData binds id to its audit info and token metadata.
+//
+// Verification: an empty id is refused. Rows are keyed by
+// tdriver.Identity.UniqueID, which maps the empty identity to the constant
+// "<empty>" rather than to a hash, so an empty identity would write to a
+// well-known key that any later empty-identity lookup reads back as its own.
 func (db *IdentityStore) StoreIdentityData(ctx context.Context, id []byte, identityAudit []byte, tokenMetadata []byte, tokenMetadataAudit []byte) error {
+	if err := integrity.CheckIdentity(id); err != nil {
+		return errors.WithMessage(err, "refusing to store identity data")
+	}
+
 	_, err := db.storeIdentityData(ctx, db.writeDB, tdriver.Identity(id).UniqueID(), id, identityAudit, tokenMetadata, tokenMetadataAudit, true)
 
 	return err
 }
 
+// GetAuditInfo returns the audit info stored for id, or nil if none is stored.
+//
+// Verification: the row is addressed by identity hash, so the identity stored
+// alongside the audit info is compared against id before the audit info is
+// returned or cached. Audit info is what an auditor uses to attribute a
+// transaction to a party, so handing back audit info belonging to a different
+// identity than the caller asked for would misattribute it. A row whose
+// identity and identity_hash columns disagree is reported rather than returned.
 func (db *IdentityStore) GetAuditInfo(ctx context.Context, id []byte) ([]byte, error) {
+	if err := integrity.CheckIdentity(id); err != nil {
+		return nil, errors.WithMessage(err, "refusing to look up audit info")
+	}
 	h := token.Identity(id).String()
 	logger.DebugfContext(ctx, "get audit info for [%s]", h)
 
 	value, _, err := db.auditInfoCache.GetOrLoad(h, func() ([]byte, error) {
 		logger.DebugfContext(ctx, "load from backend identity data for [%s]", view.Identity(id))
 		query, args := q.Select().
-			FieldsByName("identity_audit_info").
+			FieldsByName("identity", "identity_audit_info").
 			From(q.Table(db.table.IdentityInfo)).
 			Where(cond.Eq("identity_hash", h)).
 			Format(db.ci)
+		logging.Debug(logger, query, args)
 
-		return common.QueryUniqueContext[[]byte](ctx, db.readDB, query, args...)
+		row := db.readDB.QueryRowContext(ctx, query, args...)
+		var storedIdentity []byte
+		var auditInfo []byte
+		if err := row.Scan(&storedIdentity, &auditInfo); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return nil, nil
+			}
+
+			return nil, errors.Wrapf(err, "error querying db")
+		}
+		if err := integrity.CheckIdentityMatch(id, storedIdentity); err != nil {
+			logger.ErrorfContext(ctx, "identity data row under [%s] does not belong to the requested identity: %v", h, err)
+
+			return nil, errors.WithMessagef(err, "identity data row under [%s]", h)
+		}
+
+		return auditInfo, nil
 	})
 
 	return value, err
 }
 
+// GetTokenInfo returns the token metadata stored for id, or nil if none is
+// stored.
+//
+// Verification: as for GetAuditInfo — an empty id is refused, and the identity
+// stored alongside the metadata is compared against id before the metadata is
+// returned. Token metadata is what the owner of a token uses to recognise and
+// spend it, so metadata belonging to a different identity is not a usable
+// substitute for the caller's own.
 func (db *IdentityStore) GetTokenInfo(ctx context.Context, id []byte) ([]byte, []byte, error) {
+	if err := integrity.CheckIdentity(id); err != nil {
+		return nil, nil, errors.WithMessage(err, "refusing to look up token info")
+	}
 	h := token.Identity(id).String()
 	logger.DebugfContext(ctx, "get identity data for [%s]", h)
 
 	query, args := q.Select().
-		FieldsByName("token_metadata", "token_metadata_audit_info").
+		FieldsByName("identity", "token_metadata", "token_metadata_audit_info").
 		From(q.Table(db.table.IdentityInfo)).
 		Where(cond.Eq("identity_hash", h)).
 		Format(db.ci)
 	logging.Debug(logger, query, args)
 
 	row := db.readDB.QueryRowContext(ctx, query, args...)
+	var storedIdentity []byte
 	var tokenMetadata []byte
 	var tokenMetadataAuditInfo []byte
-	err := row.Scan(&tokenMetadata, &tokenMetadataAuditInfo)
+	err := row.Scan(&storedIdentity, &tokenMetadata, &tokenMetadataAuditInfo)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil, nil
@@ -360,20 +411,53 @@ func (db *IdentityStore) GetTokenInfo(ctx context.Context, id []byte) ([]byte, [
 
 		return nil, nil, errors.Wrapf(err, "error querying db")
 	}
+	if err := integrity.CheckIdentityMatch(id, storedIdentity); err != nil {
+		logger.ErrorfContext(ctx, "identity data row under [%s] does not belong to the requested identity: %v", h, err)
+
+		return nil, nil, errors.WithMessagef(err, "identity data row under [%s]", h)
+	}
 
 	return tokenMetadata, tokenMetadataAuditInfo, nil
 }
 
+// StoreSignerInfo binds id to the signer info a key manager resolves into a
+// signer.
+//
+// Verification: an empty id is refused, for the reason given on
+// StoreIdentityData — the empty identity does not hash, it maps to the shared
+// "<empty>" row key.
 func (db *IdentityStore) StoreSignerInfo(ctx context.Context, id tdriver.Identity, info []byte) error {
+	if err := integrity.CheckIdentity(id); err != nil {
+		return errors.WithMessage(err, "refusing to store signer info")
+	}
 	_, err := db.storeSignerInfo(ctx, db.writeDB, id.UniqueID(), id, info, true)
 
 	return err
 }
 
+// GetExistingSignerInfo returns the unique ids of the passed identities for which
+// signer info is stored.
+//
+// Verification: an empty identity is excluded from the lookup rather than looked
+// up, for the reason given on StoreSignerInfo — its unique id is the shared
+// "<empty>" row key, so consulting it would report a row written for one caller
+// as the signer info of any other empty identity, and identity.Provider.AreMe
+// would answer that the empty identity is mine. It is excluded rather than
+// rejected because this is an existence query over a batch: an empty entry is
+// simply not an identity signer info can exist for, and failing the batch would
+// also lose the answer for the caller's other identities.
 func (db *IdentityStore) GetExistingSignerInfo(ctx context.Context, ids ...tdriver.Identity) ([]string, error) {
-	idHashes := make([]string, len(ids))
-	for i, id := range ids {
-		idHashes[i] = id.UniqueID()
+	idHashes := make([]string, 0, len(ids))
+	for _, id := range ids {
+		if err := integrity.CheckIdentity(id); err != nil {
+			logger.DebugfContext(ctx, "excluding an identity from the signer info lookup: %v", err)
+
+			continue
+		}
+		idHashes = append(idHashes, id.UniqueID())
+	}
+	if len(idHashes) == 0 {
+		return []string{}, nil
 	}
 
 	result := make([]string, 0)
@@ -416,6 +500,11 @@ func (db *IdentityStore) GetExistingSignerInfo(ctx context.Context, ids ...tdriv
 	return append(result, found.ToSlice()...), nil
 }
 
+// SignerInfoExists returns true if signer info is stored for id.
+//
+// Verification: as for GetExistingSignerInfo, which this delegates to — an empty
+// id is never looked up, so it reads as "no signer info" and the shared "<empty>"
+// row key stays unconsulted.
 func (db *IdentityStore) SignerInfoExists(ctx context.Context, id []byte) (bool, error) {
 	existing, err := db.GetExistingSignerInfo(ctx, id)
 	if err != nil {
@@ -425,14 +514,44 @@ func (db *IdentityStore) SignerInfoExists(ctx context.Context, id []byte) (bool,
 	return len(existing) > 0, nil
 }
 
+// GetSignerInfo returns the signer info stored for identity, or nil if none is
+// stored.
+//
+// Verification: the row is addressed by identity hash, so the identity stored
+// alongside the signer info is compared against the requested one before the
+// info is returned. Signer info is what a key manager resolves into a signer, so
+// returning the info of a different identity than the caller named would route
+// signing to the wrong key. A row whose identity and identity_hash columns
+// disagree is reported rather than returned.
 func (db *IdentityStore) GetSignerInfo(ctx context.Context, identity []byte) ([]byte, error) {
+	if err := integrity.CheckIdentity(identity); err != nil {
+		return nil, errors.WithMessage(err, "refusing to look up signer info")
+	}
+	h := token.Identity(identity).UniqueID()
 	query, args := q.Select().
-		FieldsByName("info").
+		FieldsByName("identity", "info").
 		From(q.Table(db.table.Signers)).
-		Where(cond.Eq("identity_hash", token.Identity(identity).UniqueID())).
+		Where(cond.Eq("identity_hash", h)).
 		Format(db.ci)
+	logging.Debug(logger, query, args)
 
-	return common.QueryUniqueContext[[]byte](ctx, db.readDB, query, args...)
+	row := db.readDB.QueryRowContext(ctx, query, args...)
+	var storedIdentity []byte
+	var info []byte
+	if err := row.Scan(&storedIdentity, &info); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+
+		return nil, errors.Wrapf(err, "error querying db")
+	}
+	if err := integrity.CheckIdentityMatch(identity, storedIdentity); err != nil {
+		logger.ErrorfContext(ctx, "signer row under [%s] does not belong to the requested identity: %v", h, err)
+
+		return nil, errors.WithMessagef(err, "signer row under [%s]", h)
+	}
+
+	return info, nil
 }
 
 // IterateSigners returns a page of SignerEntry values from the Signers table, ordered by
@@ -506,6 +625,9 @@ func (db *IdentityStore) registerIdentityDescriptor(
 ) error {
 	if descriptor == nil {
 		return errors.New("identity descriptor is nil")
+	}
+	if err := integrity.CheckIdentity(descriptor.Identity); err != nil {
+		return errors.WithMessage(err, "refusing to register identity descriptor")
 	}
 	tx, err := db.writeDB.BeginTx(ctx, nil)
 	if err != nil {

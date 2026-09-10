@@ -181,22 +181,57 @@ type IdentityStoreService interface {
 	// Notifier returns an IdentityConfigurationNotifier for this store to subscribe to configuration changes.
 	Notifier() (IdentityConfigurationNotifier, error)
 	// StoreIdentityData stores the passed identity and token information
+	//
+	// Verification: an implementation must refuse an empty id — see
+	// integrity.CheckIdentity. Rows are addressed by driver.Identity.UniqueID,
+	// which maps the empty identity to the constant "<empty>" rather than to a
+	// hash, so every empty identity shares one row: one caller's audit info
+	// would be readable by any other empty-identity lookup.
 	StoreIdentityData(ctx context.Context, id []byte, identityAudit []byte, tokenMetadata []byte, tokenMetadataAudit []byte) error
 	// GetAuditInfo retrieves the audit info bounded to the given identity
+	//
+	// Verification: an empty id is refused, and — because the row is addressed
+	// by identity hash rather than by the identity itself — the identity stored
+	// alongside the audit info must be compared against id before the audit info
+	// is returned or cached (see integrity.CheckIdentityMatch). Audit info is
+	// what attributes a transaction to a party, so audit info belonging to a
+	// different identity misattributes it.
 	GetAuditInfo(ctx context.Context, id []byte) ([]byte, error)
 	// GetTokenInfo returns the token information related to the passed identity
+	//
+	// Verification: as for GetAuditInfo.
 	GetTokenInfo(ctx context.Context, id []byte) ([]byte, []byte, error)
 	// StoreSignerInfo stores the passed signer info and bound it to the given identity
+	//
+	// Verification: an empty id is refused, for the reason given on
+	// StoreIdentityData.
 	StoreSignerInfo(ctx context.Context, id driver.Identity, info []byte) error
 	// GetExistingSignerInfo returns the hashes of the identities for which StoreSignerInfo was called
+	//
+	// Verification: an implementation must not consult the shared "<empty>" key
+	// an empty identity hashes to — see integrity.CheckIdentity. Because this is
+	// an existence query over a batch, an empty identity is excluded from the
+	// lookup and reported as not existing, rather than failing the call and with
+	// it the answer for the caller's other identities.
 	GetExistingSignerInfo(ctx context.Context, ids ...driver.Identity) ([]string, error)
 	// SignerInfoExists returns true if StoreSignerInfo was called on input the given identity
+	//
+	// Verification: as for GetExistingSignerInfo. An empty id reads as false.
 	SignerInfoExists(ctx context.Context, id []byte) (bool, error)
 	// GetSignerInfo returns the signer info bound to the given identity
+	//
+	// Verification: as for GetAuditInfo. Signer info is what a key manager
+	// resolves into a signer, so returning another identity's signer info would
+	// route signing to the wrong key.
 	GetSignerInfo(ctx context.Context, id []byte) ([]byte, error)
 	// RegisterIdentityDescriptor registers a descriptor for an identity and associates it with an alias.
 	// The operation is idempotent and safe to retry: registering the same descriptor again succeeds
 	// without error, and a registration that was only partially persisted is completed by the retry.
+	//
+	// Verification: a nil descriptor and an empty descriptor.Identity are
+	// refused, for the reason given on StoreIdentityData. This holds even for an
+	// ephemeral descriptor, which writes nothing to storage but still populates
+	// the in-memory caches, which are keyed the same way.
 	RegisterIdentityDescriptor(ctx context.Context, descriptor *IdentityDescriptor, alias driver.Identity) error
 	// IterateSigners returns a page of SignerEntry values from the Signers table ordered by
 	// identity_hash, starting at the given offset and returning at most limit entries.

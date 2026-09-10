@@ -39,6 +39,15 @@ type EndorserStoreTransaction interface {
 
 	// AddValidationRecord adds a new validation record for the given params.
 	// The token request is stored directly in the validation table.
+	//
+	// Verification: an implementation must refuse an empty txID, an empty
+	// tokenRequest, or an empty ppHash. Unlike the ttx and audit stores, this one
+	// holds the bare actions-and-signatures format rather than
+	// TokenRequestWithMetadata, so there is no anchor to bind to txID; what is
+	// checked instead is that the payload deserializes at a supported version and
+	// carries at least one action — see integrity.CheckTokenRequestActions. A
+	// validation record asserting that a request was validated is worthless if
+	// the request it names carries nothing to validate.
 	AddValidationRecord(ctx context.Context, txID string, tokenRequest []byte, meta map[string][]byte, ppHash driver.PPHash) error
 
 	// SetStatus sets the status of a validation record

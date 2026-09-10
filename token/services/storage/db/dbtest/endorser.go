@@ -54,7 +54,7 @@ func EValidationRecordQueries(t *testing.T, db driver3.EndorserStore) {
 		},
 		{
 			TxID:         "2",
-			TokenRequest: []byte{},
+			TokenRequest: []byte("tr2"),
 			Metadata:     nil,
 		},
 		{
