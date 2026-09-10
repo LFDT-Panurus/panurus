@@ -62,6 +62,80 @@ graph TB
     Listener -->|"SetStatus / AppendValid"| Storage["ttxdb / tokendb / auditdb"]
 ```
 
+The same path, drawn linearly end-to-end (peer down to the caller), with each hop's actual driver:
+
+```
+HLF Peer (e.g. peer0.org1.example.com:7051)   ← selected via config `usage: delivery` → PeerForDelivery
+  │  gRPC DeliverResponse_Block
+  ▼
+FSC gRPC delivery client                     [FSC] platform/fabric/core/generic/delivery
+  │  self-healing reconnect on stream errors, fixed `Delivery.SleepAfterFailure` interval (§6.2, §8)
+  │  no committer/IsFinal() step here — the legacy Fabric committer wait
+  │  (FSC's own committer.WaitForEventTimeout/IsFinal) is a separate,
+  │  unrelated FSC code path that token-sdk's finality flow never touches
+  ▼
+events.ListenerManager[TxInfo]                [FSC] platform/fabric/core/generic/events
+  │  ScanBlock callback → LRU + timeout-cache eviction
+  │  eviction governed by token-sdk's `listenerTimeout` config key (§6.1,
+  │  default 10s) → FSC's `ListenerTimeout`; on eviction, falls back to
+  │  token-sdk's DeliveryScanQueryByID (§3 step 7) — not a blocking wait
+  ▼
+EndorserTxInfoMapper                          [token-sdk] network/fabric/finality/deliveryflm.go
+  │  pluggable events.EventInfoMapper[TxInfo] injected into the manager above
+  │  (not "inside" the FLM below) — parses rwset, extracts namespace / txID /
+  │  RequestHash / validation code (via committer.MapValidationCode, a pure
+  │  mapping helper — not the committer service itself)
+  ▼
+deliveryBasedFLM                              [token-sdk] network/fabric/finality/deliveryflm.go
+  │  thin façade over the events.ListenerManager[TxInfo] above (AddFinalityListener)
+  │  per-tx TxInfo{Status, RequestHash} → dispatched to registered FinalityListeners
+  ▼
+ttx/finality.Listener.OnStatus() → runOnStatus()   [token-sdk]
+  │  network.Valid   → check cached/stored token request hash against RequestHash
+  │                     → match: Commit() → SetStatus(Confirmed) + AppendValid, atomically
+  │                     → mismatch: SetStatus(Deleted)
+  │  network.Invalid → SetStatus(Deleted) directly, no hash check
+  ▼
+ttxdb.StoreService.SetStatus()      auditdb.StoreService.SetStatus()
+  (independent — owner-side store)    (independent — audit-side store, if any)
+  │  each Notify()s its own StatusEvent to its own in-memory listener registry
+  ▼                                    ▼
+finalityView.dbFinality()   ← dbChannel per store ← AddStatusListener()
+  │  Confirmed → return nil ✓
+  │  Deleted   → return ErrFinalityInvalidTransaction ✗
+  ▼
+finalityView.Call() — runs dbFinality against ttxdb, then auditdb (if known
+to both), and returns to the business flow only once both have settled
+```
+
+Corrections versus an earlier draft of this diagram: there is no "FSC Committer /
+`IsFinal()`" step anywhere in this flow — that's a distinct, legacy FSC code path
+this SDK doesn't use (see §6.2). `EndorserTxInfoMapper` is a mapper *plugged into*
+FSC's generic listener manager, not a component nested inside `deliveryBasedFLM`.
+And `ttxdb`/`auditdb` never talk to each other directly — they're two fully
+independent stores that the caller waits on sequentially, not a bidirectional pair.
+
+Collapsing the same path into just its timeout-relevant hops:
+
+```
+finalityView (FTS)                          default 5m (10m via NewOrderingAndFinalityView)
+  └─ waits for ttxdb/auditdb Confirmed/Deleted
+       └─ written by ttx/finality.Listener.OnStatus()  [token-sdk]
+            └─ triggered by deliveryBasedFLM            [token-sdk facade]
+                 └─ fed by FSC events.ListenerManager[TxInfo]
+                      ├─ listenerTimeout (token-sdk key → FSC ListenerTimeout) = 10s   (LRU eviction → DeliveryScanQueryByID fallback, §3 step 7)
+                      └─ Delivery.SleepAfterFailure (FSC)                      = 10s   (stream reconnect interval, §8)
+```
+
+There is no committer hop in this stack, and no 120s value anywhere in it: FSC's
+`Committer.WaitForEventTimeout` (default 300s) and `Finality.WaitForEventTimeout`
+(default 20s) belong to FSC's own committer-based/delivery-based finality listener
+managers (`platform/fabric/core/generic/finality`), which token-sdk never
+constructs — the only thing token-sdk imports from that FSC package is the
+`TxNotFound` sentinel used for error normalization (§3 step 7). The `finalityView`
+budget only needs to comfortably exceed `listenerTimeout` + `Delivery.SleepAfterFailure`
+(20s total by default), not any multiple of 120s.
+
 - **Layer 1 (Fabric-specific, token-sdk driving FSC):** `driver.FinalityListenerManager`, implemented by
   `deliveryBasedFLM` in
   [`network/fabric/finality/deliveryflm.go`](../../token/services/network/fabric/finality/deliveryflm.go).
