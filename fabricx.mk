@@ -109,3 +109,12 @@ integration-tests-fabricx-dlog-t16-replicas:
 .PHONY: integration-tests-fabricx-dlog
 integration-tests-fabricx-dlog:
 	cd ./integration/token/fungible/dlogx; export FAB_BINS=$(FAB_BINS); ginkgo $(GINKGO_TEST_OPTS) --label-filter="$(TEST_FILTER)" .
+
+.PHONY: integration-tests-fabricx-zkatsnark-t1
+integration-tests-fabricx-zkatsnark-t1:
+	make integration-tests-fabricx-zkatsnark TEST_FILTER="T1"
+
+.PHONY: integration-tests-fabricx-zkatsnark
+integration-tests-fabricx-zkatsnark:
+	cd ./integration/token/fungible/zkatsnark; export FAB_BINS=$(FAB_BINS); ginkgo $(GINKGO_TEST_OPTS) --label-filter="$(TEST_FILTER)" .
+

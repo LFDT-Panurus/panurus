@@ -45,10 +45,10 @@ func mustHashToCurve(seed string) twistededwards.PointAffine {
 
 	for counter := uint64(0); ; counter++ {
 		h := sha256.New()
-		h.Write([]byte(seed))
+		_, _ = h.Write([]byte(seed))
 		var cb [8]byte
 		binary.BigEndian.PutUint64(cb[:], counter)
-		h.Write(cb[:])
+		_, _ = h.Write(cb[:])
 		digest := h.Sum(nil)
 
 		var x fr.Element

@@ -63,8 +63,8 @@ func sortedByCommitment(results []ProofResult) []ProofResult {
 func writeLengthPrefixed(h hash.Hash, b []byte) {
 	var lenBuf [8]byte
 	binary.BigEndian.PutUint64(lenBuf[:], uint64(len(b)))
-	h.Write(lenBuf[:])
-	h.Write(b)
+	_, _ = h.Write(lenBuf[:])
+	_, _ = h.Write(b)
 }
 
 // ComputeActionHash computes the canonical, deterministic message the
@@ -75,22 +75,22 @@ func writeLengthPrefixed(h hash.Hash, b []byte) {
 // diagnostic.
 func ComputeActionHash(actionType string, typeCommitment fr.Element, inputs, outputs []ProofResult) []byte {
 	h := sha256.New()
-	h.Write([]byte(domainSeparator))
+	_, _ = h.Write([]byte(domainSeparator))
 	writeLengthPrefixed(h, []byte(actionType))
 
 	// TypeCommitment is a fixed-length field element (32 bytes), so no
 	// length prefix is needed — there is no concatenation ambiguity.
 	tcBytes := typeCommitment.Bytes()
-	h.Write(tcBytes[:])
+	_, _ = h.Write(tcBytes[:])
 
 	for _, r := range sortedByCommitment(inputs) {
 		cm := r.Commitment.Bytes()
 		cmx := r.ValueCommit.X.Bytes()
 		cmy := r.ValueCommit.Y.Bytes()
 
-		h.Write(cm[:])
-		h.Write(cmx[:])
-		h.Write(cmy[:])
+		_, _ = h.Write(cm[:])
+		_, _ = h.Write(cmx[:])
+		_, _ = h.Write(cmy[:])
 	}
 
 	for _, r := range sortedByCommitment(outputs) {
@@ -98,9 +98,9 @@ func ComputeActionHash(actionType string, typeCommitment fr.Element, inputs, out
 		cmx := r.ValueCommit.X.Bytes()
 		cmy := r.ValueCommit.Y.Bytes()
 
-		h.Write(cm[:])
-		h.Write(cmx[:])
-		h.Write(cmy[:])
+		_, _ = h.Write(cm[:])
+		_, _ = h.Write(cmx[:])
+		_, _ = h.Write(cmy[:])
 	}
 
 	return h.Sum(nil)
