@@ -1,0 +1,26 @@
+/*
+Copyright IBM Corp All Rights Reserved.
+
+SPDX-License-Identifier: Apache-2.0
+*/
+
+package fzkatsnark
+
+import (
+	"testing"
+
+	tokensdk "github.com/LFDT-Panurus/panurus/token/sdk/dig"
+	dig2 "github.com/hyperledger-labs/fabric-smart-client/platform/common/sdk/dig"
+	fabricsdk "github.com/hyperledger-labs/fabric-smart-client/platform/fabric/sdk/dig"
+	fabricx "github.com/hyperledger-labs/fabric-smart-client/platform/fabricx/sdk/dig"
+	sdk "github.com/hyperledger-labs/fabric-smart-client/platform/view/sdk/dig"
+	"github.com/stretchr/testify/require"
+)
+
+func TestFabricWiring(t *testing.T) {
+	require.NoError(t, sdk.DryRunWiring(
+		func(sdk dig2.SDK) *SDK { return NewFrom(tokensdk.NewFrom(fabricx.NewFrom(fabricsdk.NewFrom(sdk)))) },
+		sdk.WithBool("token.enabled", true),
+		sdk.WithBool("fabric.enabled", true),
+	))
+}
