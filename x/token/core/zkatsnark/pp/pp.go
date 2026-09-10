@@ -204,8 +204,10 @@ func (pp *PublicParams) SetIssuers(ids []driver.Identity) {
 }
 
 // SetAuditors sets the auditors to the passed identities.
-func (pp *PublicParams) SetAuditors(ids []driver.Identity) {
+// It always returns a nil error; the signature matches the shared setter contract.
+func (pp *PublicParams) SetAuditors(ids []driver.Identity) error {
 	pp.AuditorIdentities = ids
+	return nil
 }
 
 func (pp *PublicParams) String() string {
