@@ -146,7 +146,9 @@ Example policy: `"OR('Org1MSP.peer', 'Org2MSP.peer')"` - requires endorsement fr
 
 ## Finality Management
 
-The Fabric implementation supports two modes for monitoring transaction finality:
+The Fabric implementation supports two modes for monitoring transaction finality. For a full
+step-by-step trace of the mechanism — including how it propagates into the TTX service layer and
+exactly what changes in each local store — see [Token Transaction Finality on Fabric](./finality.md).
 
 ### Delivery Mode
 
@@ -353,6 +355,7 @@ func (n *Network) ComputeTxID(id *driver.TxID) string {
 ## See Also
 
 - [Network Service Overview](./network.md) - Generic network service concepts
+- [Token Transaction Finality on Fabric](./finality.md) - Step-by-step finality mechanism
 - [FabricX Implementation](./network-fabricx.md) - FSC-based endorsement
 - [Token Chaincode](../../token/services/network/fabric/tcc/) - Chaincode implementation
 - [TTX Service](./ttx.md) - Token transaction orchestration

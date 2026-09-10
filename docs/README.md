@@ -12,6 +12,7 @@ Welcome to the Fabric Token SDK documentation.
 *   [**Services**](services.md): Additional services like transaction assembly.
 *   [**Upgradability**](upgradability.md): How to upgrade tokens, drivers, and storage.
 *   [**Public Parameters Lifecycle**](public_parameters.md): How public parameters are generated, published, and updated across the network.
+*   [**Token Transaction Finality on Fabric**](services/finality.md): Step-by-step walkthrough of how finality is detected and reflected in local storage.
 
 ## Development
 

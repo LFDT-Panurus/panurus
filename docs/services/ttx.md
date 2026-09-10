@@ -454,11 +454,14 @@ Once fully endorsed, the transaction metadata is distributed to all recipients s
 
 The `FinalityView` allows applications to wait for a transaction to be committed to the ledger. Internally, the SDK's **Network Service** listens for ledger events. When a transaction reaches finality, the Network Service notifies the SDK, which then updates the local `Transactions DB` and `Tokens DB` to reflect the new state.
 
+For a step-by-step trace of this mechanism on Fabric — the two-layer listener architecture, and exactly what changes in each store on success vs. failure — see [Token Transaction Finality on Fabric](./finality.md).
+
 ### Transaction Recovery
 
 The SDK includes an automatic recovery mechanism to handle pending transactions that may have lost their finality listeners due to node restarts, network interruptions, or other failures. 
 The recovery service is part of the **Storage Service** and is instantiated by the **Network Service** to recover transactions from either `TTXDB` (for regular transactions) or `AuditDB` (for auditor nodes).
 
 For detailed information about the recovery mechanism, see:
+- [Token Transaction Finality on Fabric](finality.md#5-recovery--when-the-listener-is-lost)
 - [Storage Service - Transaction Recovery](storage.md#transaction-recovery-service)
 - [Configuration Guide - Recovery Parameters](../configuration.md), Section `Optional: token.tms.<name>.services.network.fabric.recovery`
