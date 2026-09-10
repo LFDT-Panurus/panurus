@@ -92,6 +92,11 @@ func (q *QueryEngine) IsMine(ctx context.Context, id *token.ID) (bool, error) {
 	return q.StoreService.IsMine(ctx, id.TxId, id.Index)
 }
 
+// UnspentTokensIteratorBy returns an iterator over unspent tokens owned by a wallet and optionally limited in size.
+func (q *QueryEngine) UnspentTokensIteratorBy(ctx context.Context, id string, tokenType token.Type, limit int) (driver.UnspentTokensIterator, error) {
+	return q.StoreService.UnspentTokensIteratorBy(ctx, id, tokenType, limit)
+}
+
 // CertificationStorage manages token certifications in the database.
 type CertificationStorage struct {
 	*tokendb.StoreService

@@ -10,6 +10,7 @@ import (
 	"context"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/LFDT-Panurus/panurus/token"
 	"github.com/LFDT-Panurus/panurus/token/driver"
@@ -26,7 +27,7 @@ import (
 // quantity on every call, so repeated selections all see the same funds.
 func newFetcherOf(quantity string) *mocks.FakeTokenFetcher {
 	fetcher := &mocks.FakeTokenFetcher{}
-	fetcher.UnspentTokensIteratorByStub = func(context.Context, string, token2.Type) (sherdlock.Iterator[*token2.UnspentTokenInWallet], error) {
+	fetcher.UnspentTokensIteratorByStub = func(context.Context, string, token2.Type, int) (sherdlock.Iterator[*token2.UnspentTokenInWallet], error) {
 		it := &mocks.FakeIterator[*token2.UnspentTokenInWallet]{}
 		it.NextReturnsOnCall(0, &token2.UnspentTokenInWallet{
 			Id:       token2.ID{TxId: "tx1", Index: 0},
@@ -50,7 +51,16 @@ func TestRateLimitedManager(t *testing.T) {
 	locker := &mocks.FakeLocker{}
 	ctx := t.Context()
 
-	mgr := sherdlock.NewManager(fetcher, locker, 64, 0, 0, 0, 0, metrics)
+	mgr := sherdlock.NewManager(&sherdlock.Config{
+		Fetcher:                fetcher,
+		Locker:                 locker,
+		Precision:              64,
+		MaxTokensPerSelection:  10000,
+		MaxLockAttempts:        50000,
+		MaxRetriesAfterBackOff: 3,
+		SelectionTimeout:       30 * time.Second,
+		Metrics:                metrics,
+	})
 	t.Cleanup(func() { require.NoError(t, mgr.Stop()) })
 
 	// A burst of one request, and a rate slow enough that nothing refills during the test.

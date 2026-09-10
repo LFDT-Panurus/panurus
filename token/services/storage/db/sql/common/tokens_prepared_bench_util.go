@@ -39,7 +39,7 @@ func RunUnspentTokensIteratorByPreparedComparison(b *testing.B, store *TokenStor
 			cfg,
 			func() *TokenStore { return store },
 			func(s *TokenStore) error {
-				it, err := s.UnspentTokensIteratorBy(context.Background(), walletID, tokenType)
+				it, err := s.UnspentTokensIteratorBy(context.Background(), walletID, tokenType, 0)
 				if err != nil {
 					return err
 				}
@@ -63,7 +63,7 @@ func RunUnspentTokensIteratorByPreparedComparison(b *testing.B, store *TokenStor
 	b.Run("UnspentTokensIteratorBy_Prepared", func(b *testing.B) {
 		SeedBenchTokens(b, store, 1000)
 
-		query, args := buildUnspentTokensIteratorByQuery(store, walletID, tokenType)
+		query, args := buildUnspentTokensIteratorByQuery(store, walletID, tokenType, 0)
 
 		stmt, err := store.readDB.PrepareContext(context.Background(), query)
 		if err != nil {

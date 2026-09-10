@@ -12,8 +12,25 @@ import (
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
+	q "github.com/LFDT-Panurus/panurus/token/services/storage/db/sql/query"
 	"github.com/stretchr/testify/require"
 )
+
+// unspentTokenTestColumns mirrors the projection of both UnspentTokensIteratorBy
+// branches, in the order dedupedTokenRowsIterator.Next scans them. amount sits
+// between quantity and wallet_id: it is selected only so the UNION result can be
+// ordered numerically, and is scanned into a discarded destination.
+var unspentTokenTestColumns = []string{"tx_id", "idx", "owner", "token_type", "quantity", "amount", "wallet_id"}
+
+// The fixture below hard-codes the column list, so a projection change that does
+// not reach it would make every row fail with "expected N destination arguments
+// in Scan" — a shape mismatch that says nothing about the behaviour under test.
+// Fail loudly and specifically instead.
+func TestUnspentTokenFixtureMatchesProjection(t *testing.T) {
+	tokenTable, ownershipTable := q.Table("tokens"), q.Table("ownership")
+	require.Len(t, unspentTokenTestColumns, len(unspentTokenFields(tokenTable, ownershipTable)),
+		"unspentTokenTestColumns is out of sync with unspentTokenFields: update the fixture and the Scan in dedupedTokenRowsIterator.Next")
+}
 
 // tokenRows opens a sqlmock-backed *sql.Rows shaped like the query behind
 // dedupedTokenRowsIterator.
@@ -23,7 +40,7 @@ func tokenRows(t *testing.T, build func(*sqlmock.Rows) *sqlmock.Rows) *sql.Rows 
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = db.Close() })
 
-	cols := sqlmock.NewRows([]string{"tx_id", "idx", "owner", "token_type", "quantity", "wallet_id"})
+	cols := sqlmock.NewRows(unspentTokenTestColumns)
 	mockDB.ExpectQuery("SELECT").WillReturnRows(build(cols))
 
 	rows, err := db.Query("SELECT")
@@ -44,8 +61,8 @@ func TestDedupedTokenRowsIterator_MidIterationErrorSurfaces(t *testing.T) {
 	boom := errors.New("connection lost")
 	rows := tokenRows(t, func(r *sqlmock.Rows) *sqlmock.Rows {
 		return r.
-			AddRow("tx1", 0, []byte("owner1"), "TOK", "10", "w1").
-			AddRow("tx2", 0, []byte("owner2"), "TOK", "20", "w1").
+			AddRow("tx1", 0, []byte("owner1"), "TOK", "10", "10", "w1").
+			AddRow("tx2", 0, []byte("owner2"), "TOK", "20", "20", "w1").
 			RowError(1, boom)
 	})
 	it := newDedupedIterator(rows)
@@ -63,7 +80,7 @@ func TestDedupedTokenRowsIterator_MidIterationErrorSurfaces(t *testing.T) {
 // Exhausting the rows cleanly still reports the end of iteration as (nil, nil).
 func TestDedupedTokenRowsIterator_CleanExhaustion(t *testing.T) {
 	rows := tokenRows(t, func(r *sqlmock.Rows) *sqlmock.Rows {
-		return r.AddRow("tx1", 0, []byte("owner1"), "TOK", "10", "w1")
+		return r.AddRow("tx1", 0, []byte("owner1"), "TOK", "10", "10", "w1")
 	})
 	it := newDedupedIterator(rows)
 
@@ -80,8 +97,8 @@ func TestDedupedTokenRowsIterator_CleanExhaustion(t *testing.T) {
 func TestDedupedTokenRowsIterator_DropsDuplicates(t *testing.T) {
 	rows := tokenRows(t, func(r *sqlmock.Rows) *sqlmock.Rows {
 		return r.
-			AddRow("tx1", 0, []byte("owner1"), "TOK", "10", "w1").
-			AddRow("tx1", 0, []byte("owner1"), "TOK", "10", "w1")
+			AddRow("tx1", 0, []byte("owner1"), "TOK", "10", "10", "w1").
+			AddRow("tx1", 0, []byte("owner1"), "TOK", "10", "10", "w1")
 	})
 	it := newDedupedIterator(rows)
 

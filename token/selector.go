@@ -35,6 +35,11 @@ var (
 	// infrastructure (e.g. a Redis-backed limiter) can either supply a Limiter to that
 	// package or return this error from a custom Locker implementation.
 	SelectorRateLimited = errors.New("selection rate limit exceeded")
+	// SelectorTimedOut is returned when token selection is aborted because the
+	// configured selection timeout was exceeded.  Unlike SelectorSufficientButLockedFunds
+	// it does not imply that funds were present; callers should treat it as a load-shedding
+	// signal and back off rather than immediately retrying.
+	SelectorTimedOut = errors.New("token selection timed out")
 )
 
 // OwnerFilter tells if a passed identity is recognized

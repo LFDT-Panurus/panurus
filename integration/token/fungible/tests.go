@@ -900,11 +900,11 @@ func TestSelector(network *integration.Infrastructure, auditorId string, sel *to
 
 	IssueCash(network, "", "USD", 100, alice, auditor, true, issuer)
 	IssueCash(network, "", "USD", 50, alice, auditor, true, issuer)
-	TransferCash(network, alice, "", "USD", 160, bob, auditor, "insufficient funds, only [150] tokens of type [USD] are available")
+	TransferCash(network, alice, "", "USD", 160, bob, auditor, "insufficient funds", "only [150] tokens of type [USD] are available", "but [160] were requested", "no other process has any tokens locked")
 	time.Sleep(10 * time.Second)
-	TransferCash(network, alice, "", "USD", 160, bob, auditor, "insufficient funds, only [150] tokens of type [USD] are available")
+	TransferCash(network, alice, "", "USD", 160, bob, auditor, "insufficient funds", "only [150] tokens of type [USD] are available", "but [160] were requested", "no other process has any tokens locked")
 	time.Sleep(2 * time.Minute)
-	TransferCash(network, alice, "", "USD", 160, bob, auditor, "insufficient funds, only [150] tokens of type [USD] are available")
+	TransferCash(network, alice, "", "USD", 160, bob, auditor, "insufficient funds", "only [150] tokens of type [USD] are available", "but [160] were requested", "no other process has any tokens locked")
 }
 
 func TestPublicParamsUpdate(network *integration.Infrastructure, newAuditorID string, ppBytes []byte, networkName string, issuerAsAuditor bool, sel *token3.ReplicaSelector, updateWithAppend bool) {
