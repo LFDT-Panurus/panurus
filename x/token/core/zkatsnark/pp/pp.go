@@ -27,7 +27,7 @@ import (
 
 	"github.com/LFDT-Panurus/panurus/token/core"
 	pp3 "github.com/LFDT-Panurus/panurus/token/core/common/encoding/pp"
-	driver "github.com/LFDT-Panurus/panurus/token/driver"
+	"github.com/LFDT-Panurus/panurus/token/driver"
 	pp2 "github.com/LFDT-Panurus/panurus/token/driver/protos-go/v1/pp"
 	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/crypto/jubjub"
 	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/crypto/params"
@@ -207,6 +207,7 @@ func (pp *PublicParams) SetIssuers(ids []driver.Identity) {
 // It always returns a nil error; the signature matches the shared setter contract.
 func (pp *PublicParams) SetAuditors(ids []driver.Identity) error {
 	pp.AuditorIdentities = ids
+
 	return nil
 }
 
