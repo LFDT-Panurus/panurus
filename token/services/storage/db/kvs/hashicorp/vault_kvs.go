@@ -68,42 +68,57 @@ func (v *KVS) deNormalizeID(id string) string {
 	return normilzedId
 }
 
-func (v *KVS) GetExisting(ctx context.Context, ids ...string) []string {
+func (v *KVS) GetExisting(ctx context.Context, ids ...string) ([]string, error) {
 	results := make([]string, 0)
 
 	for _, id := range ids {
-		if v.Exists(ctx, id) {
+		ok, err := v.existsE(ctx, id)
+		if err != nil {
+			return nil, errors.Wrapf(err, "failed checking existence of id [%s]", id)
+		}
+		if ok {
 			results = append(results, id)
 		}
 	}
 
-	return results
+	return results, nil
 }
 
-func (v *KVS) Exists(_ context.Context, id string) bool {
+// existsE reports whether id holds a value, distinguishing a genuine vault read
+// failure (returned as an error) from a confirmed absence (false, nil). A read
+// error must not be reported as "absent": callers such as Provider.areMe would
+// otherwise treat an owned identity as not-owned (see #2066).
+func (v *KVS) existsE(_ context.Context, id string) (bool, error) {
 	id = v.NormalizeID(id)
 
 	secret, err := v.client.Logical().Read(id)
+	if err != nil {
+		return false, errors.Wrapf(err, "failed to read state of id [%s]", id)
+	}
+
+	if secret == nil || secret.Data == nil {
+		return false, nil
+	}
+
+	data, ok := secret.Data[Data].(map[string]any)
+	if !ok || len(data) == 0 {
+		return false, nil
+	}
+
+	return true, nil
+}
+
+// Exists reports whether id holds a value, treating an unreachable store as
+// "absent". Prefer GetExisting where a store failure must be observable.
+func (v *KVS) Exists(ctx context.Context, id string) bool {
+	ok, err := v.existsE(ctx, id)
 	if err != nil {
 		logger.Debugf("failed to check existence of id [%s]: %v", id, err)
 
 		return false
 	}
 
-	if secret == nil || secret.Data == nil {
-		logger.Debugf("state of id [%s] does not exist", id)
-
-		return false
-	}
-
-	data, ok := secret.Data[Data].(map[string]any)
-	if !ok || len(data) == 0 {
-		logger.Debugf("state of id [%s] does not exist", id)
-
-		return false
-	}
-
-	return true
+	return ok
 }
 
 func (v *KVS) Delete(_ context.Context, id string) error {
