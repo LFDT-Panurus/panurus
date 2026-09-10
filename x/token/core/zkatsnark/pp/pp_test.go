@@ -136,7 +136,7 @@ func TestPublicParams_SetAuditors(t *testing.T) {
 	p := defaultValidPP()
 	p.AddAuditor([]byte("old"))
 	newList := []driver.Identity{[]byte("x")}
-	p.SetAuditors(newList)
+	require.NoError(t, p.SetAuditors(newList))
 	require.Equal(t, newList, p.Auditors())
 }
 
