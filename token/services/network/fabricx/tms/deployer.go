@@ -15,7 +15,6 @@ import (
 	"github.com/LFDT-Panurus/panurus/token/services/logging"
 	"github.com/LFDT-Panurus/panurus/token/services/network/common/rws/keys"
 	"github.com/LFDT-Panurus/panurus/token/services/network/common/rws/translator"
-	"github.com/LFDT-Panurus/panurus/token/services/network/fabric"
 	"github.com/LFDT-Panurus/panurus/token/services/network/fabricx/pp"
 	cdriver "github.com/hyperledger-labs/fabric-smart-client/platform/common/driver"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/services"
@@ -50,7 +49,9 @@ func NewTMSDeployerService(
 }
 
 type deployerService struct {
-	ppFetcher     fabric.NetworkPublicParamsFetcher
+	// ppFetcher is stored as the concrete type so the compiler guarantees
+	// FetchNamespaceVersion is always available — no type assertion needed.
+	ppFetcher     *pp.PublicParametersService
 	configService *config.Service
 	nsSubmitter   Submitter
 	keyTranslator translator.KeyTranslator
@@ -120,19 +121,45 @@ func (s *deployerService) deployPublicParameters(tmsID token.TMSID) error {
 }
 
 // deployPublicParametersRaw constructs a public parameters transaction and
-// submits it to the network.
+// submits it to the network. It fetches the current namespace policy version
+// so the committer can validate the transaction against the correct policy epoch.
+// A single retry is performed on submit failure to handle the TOCTOU window
+// where a namespace policy update commits between the version fetch and the submit.
 func (s *deployerService) deployPublicParametersRaw(tmsID token.TMSID, ppRaw []byte) error {
-	tx, err := s.createPublicParametersTx(ppRaw, tmsID.Namespace)
-	if err != nil {
+	const maxAttempts = 2
+
+	for attempt := range maxAttempts {
+		nsVersion, err := s.ppFetcher.FetchNamespaceVersion(tmsID.Network, tmsID.Channel, tmsID.Namespace)
+		if err != nil {
+			return err
+		}
+
+		tx, err := s.createPublicParametersTx(ppRaw, tmsID.Namespace, nsVersion)
+		if err != nil {
+			return err
+		}
+
+		err = s.nsSubmitter.Submit(tmsID.Network, tmsID.Channel, tx)
+		if err == nil {
+			return nil
+		}
+
+		if attempt < maxAttempts-1 {
+			logger.Warnf("PP deployment submit failed for [%s] (attempt %d/%d), retrying with fresh namespace version: %v",
+				tmsID, attempt+1, maxAttempts, err)
+
+			continue
+		}
+
 		return err
 	}
 
-	return s.nsSubmitter.Submit(tmsID.Network, tmsID.Channel, tx)
+	return nil
 }
 
 // createPublicParametersTx builds a FabricX transaction that writes the raw
 // public parameters and their SHA256 hash to the ledger using the setup keys.
-func (s *deployerService) createPublicParametersTx(ppRaw []byte, namespaceID cdriver.Namespace) (*applicationpb.Tx, error) {
+func (s *deployerService) createPublicParametersTx(ppRaw []byte, namespaceID cdriver.Namespace, nsVersion uint64) (*applicationpb.Tx, error) {
 	key, err := s.keyTranslator.CreateSetupKey()
 	if err != nil {
 		return nil, err
@@ -146,7 +173,7 @@ func (s *deployerService) createPublicParametersTx(ppRaw []byte, namespaceID cdr
 	tx := &applicationpb.Tx{
 		Namespaces: []*applicationpb.TxNamespace{{
 			NsId:        namespaceID,
-			NsVersion:   0,
+			NsVersion:   nsVersion,
 			ReadsOnly:   []*applicationpb.Read{{Key: []byte("initialized")}},
 			BlindWrites: []*applicationpb.Write{{Key: []byte(key), Value: ppRaw}, {Key: []byte(keyHash), Value: valueHash[:]}},
 		}},

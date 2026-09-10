@@ -83,6 +83,10 @@ unit-tests-regression:
 install-softhsm:
 	./ci/scripts/install_softhsm.sh
 
+define pull_docker_image
+	@for i in 1 2 3; do docker pull $(1) && break || { if [ $$i -eq 3 ]; then exit 1; fi; echo "Retrying docker pull $(1)..."; sleep 3; }; done
+endef
+
 .PHONY: docker-images
 # build/pull docker images needed for testing
 docker-images: fabric-docker-images monitoring-docker-images testing-docker-images
@@ -90,26 +94,26 @@ docker-images: fabric-docker-images monitoring-docker-images testing-docker-imag
 .PHONY: testing-docker-images
 # pull docker images for testing (postgres, vault)
 testing-docker-images:
-	docker pull postgres:16.2-alpine
+	$(call pull_docker_image,postgres:16.2-alpine)
 	docker tag postgres:16.2-alpine fsc.itests/postgres:latest
-	docker pull hashicorp/vault
+	$(call pull_docker_image,hashicorp/vault)
 
 .PHONY: fabric-docker-images
 # pull fabric docker images
 fabric-docker-images:
-	docker pull ghcr.io/hyperledger/fabric-baseos:$(FABRIC_TWO_DIGIT_VERSION)
+	$(call pull_docker_image,ghcr.io/hyperledger/fabric-baseos:$(FABRIC_TWO_DIGIT_VERSION))
 	docker image tag ghcr.io/hyperledger/fabric-baseos:$(FABRIC_TWO_DIGIT_VERSION) hyperledger/fabric-baseos:latest
-	docker pull ghcr.io/hyperledger/fabric-ccenv:$(FABRIC_TWO_DIGIT_VERSION)
+	$(call pull_docker_image,ghcr.io/hyperledger/fabric-ccenv:$(FABRIC_TWO_DIGIT_VERSION))
 	docker image tag ghcr.io/hyperledger/fabric-ccenv:$(FABRIC_TWO_DIGIT_VERSION) hyperledger/fabric-ccenv:latest
 
 .PHONY: monitoring-docker-images
 # pull monitoring docker images (explorer, prometheus, grafana, jaeger)
 monitoring-docker-images:
-	docker pull ghcr.io/hyperledger-labs/explorer-db:latest
-	docker pull ghcr.io/hyperledger-labs/explorer:latest
-	docker pull prom/prometheus:latest
-	docker pull grafana/grafana:latest
-	docker pull cr.jaegertracing.io/jaegertracing/jaeger:2.12.0
+	$(call pull_docker_image,ghcr.io/hyperledger-labs/explorer-db:latest)
+	$(call pull_docker_image,ghcr.io/hyperledger-labs/explorer:latest)
+	$(call pull_docker_image,prom/prometheus:latest)
+	$(call pull_docker_image,grafana/grafana:latest)
+	$(call pull_docker_image,cr.jaegertracing.io/jaegertracing/jaeger:2.12.0)
 
 .PHONY: integration-tests-nft-dlog
 # run nft integration tests with idemix
