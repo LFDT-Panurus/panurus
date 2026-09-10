@@ -395,7 +395,7 @@ func (c *CollectEndorsementsView) signRemote(
 	}
 
 	var signaturePayload SignaturePayload
-	if err := ts.ReceiveTypedWithTimeout(TypeSignature, &signaturePayload, time.Minute); err != nil {
+	if err := ts.ReceiveTypedWithTimeout(TypeSignature, &signaturePayload, RemoteSignatureTimeout); err != nil {
 		return nil, errors.Wrap(err, "failed reading message")
 	}
 	sigma := signaturePayload.Signature
@@ -609,7 +609,7 @@ func (c *CollectEndorsementsView) distributeTxToParty(
 
 	logger.DebugfContext(context.Context(), "Wait for ack")
 	var signaturePayload SignaturePayload
-	if err := ts.ReceiveTypedWithTimeout(TypeSignature, &signaturePayload, time.Minute); err != nil {
+	if err := ts.ReceiveTypedWithTimeout(TypeSignature, &signaturePayload, RemoteSignatureTimeout); err != nil {
 		return nil, errors.Wrapf(err, "failed reading message on session [%s]", session.Info().ID)
 	}
 	sigma := signaturePayload.Signature
@@ -808,15 +808,19 @@ func (c *CollectEndorsementsView) getSession(context view.Context, p view.Identi
 	return context.GetSession(context.Initiator(), p)
 }
 
-// answerCollectionTimeout bounds the wait for each fan-out answer. It is a
+// RemoteSignatureTimeout bounds how long the initiator waits for a single
+// remote party's signature response during signature collection.
+const RemoteSignatureTimeout = 1 * time.Minute
+
+// AnswerCollectionTimeout bounds the wait for each fan-out answer. It is a
 // backstop only: workers are already bounded by their own per-receive timeouts.
-const answerCollectionTimeout = 2 * time.Minute
+const AnswerCollectionTimeout = 2 * time.Minute
 
 // fanOut runs work(i) for each i in [0, n) on its own goroutine and returns the
 // results in index order. It returns on the first error without waiting for the
 // remaining workers; those drain into the collector's buffered channel and exit.
 func fanOut[T any](ctx context.Context, n int, work func(i int) (T, error)) ([]T, error) {
-	collector := utils.NewAnswersCollector[int, T](n, answerCollectionTimeout)
+	collector := utils.NewAnswersCollector[int, T](n, AnswerCollectionTimeout)
 	for i := range n {
 		go func() {
 			value, err := work(i)
