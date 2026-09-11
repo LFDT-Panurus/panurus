@@ -182,6 +182,11 @@ func TestCachedFetcher_UnspentTokensIteratorBy_CacheHit(t *testing.T) {
 	assert.NotNil(t, it)
 	assert.True(t, cached, "the key is in the cache")
 
+	// A cache hit must yield tokens, not just report the key was present.
+	tok, err := it.Next()
+	require.NoError(t, err)
+	assert.NotNil(t, tok, "a cache hit yields at least one token")
+
 	// Verify query counter incremented
 	assert.Equal(t, uint32(1), atomic.LoadUint32(&fetcher.queriesResponded))
 

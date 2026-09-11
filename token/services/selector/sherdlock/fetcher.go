@@ -316,6 +316,17 @@ func (f *cachedFetcher) updateCache(ctx context.Context, tokensByKey map[string]
 	// Step 1: Add/update new entries first
 	newKeys := make(map[string]struct{}, len(tokensByKey))
 	for key, toks := range tokensByKey {
+		// A cached key must always map to a non-empty slice: callers take a
+		// cache hit to mean there are tokens, and mixedFetcher skips its lazy
+		// fallback on one. groupTokensByKey only creates a key when it finds a
+		// token, so this should be unreachable -- enforce it here rather than
+		// leaving it implicit, since permutatableIterator offers no way to
+		// check emptiness at the read side without consuming the iterator.
+		if len(toks) == 0 {
+			logger.Warnf("refusing to cache an empty entry for key [%s]", key)
+
+			continue
+		}
 		f.cache.Add(key, iterators.Slice(toks))
 		newKeys[key] = struct{}{}
 	}

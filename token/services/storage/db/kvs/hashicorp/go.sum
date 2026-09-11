@@ -113,8 +113,8 @@ github.com/hashicorp/vault/api v1.23.0 h1:gXgluBsSECfRWTSW9niY2jwg2e9mMJc4WoHNv4
 github.com/hashicorp/vault/api v1.23.0/go.mod h1:zransKiB9ftp+kgY8ydjnvCU7Wk8i9L0DYWpXeMj9ko=
 github.com/hyperledger-labs/fabric-smart-client v0.20.0 h1:TT+63cMxOIVYx/2/9xZUNSwH1X72k05+2sTfJ7+z8ho=
 github.com/hyperledger-labs/fabric-smart-client v0.20.0/go.mod h1:qffmNO6jHjqlcrF19Wk/CSb/b7KbsvApkXLod0MKYd0=
-github.com/hyperledger-labs/fabric-smart-client/integration v0.18.0 h1:w8IKKo/CdBVltfgUx1SedRfIfFWBX7AXsXO0Q0/3tu0=
-github.com/hyperledger-labs/fabric-smart-client/integration v0.18.0/go.mod h1:uVw5cm5pm066RWZhhaq3plwTZzp0AaZKilea4EO0QEw=
+github.com/hyperledger-labs/fabric-smart-client/integration v0.20.0 h1:VYLNnoF+p2FWLTVMjRiZA9Fwj9kCJl1fj7i4h5FtD44=
+github.com/hyperledger-labs/fabric-smart-client/integration v0.20.0/go.mod h1:6V313gHz/KSJynUroDock1qTyKSsP1CqvK0A49Nw6sY=
 github.com/hyperledger/fabric-amcl v0.0.0-20230602173724-9e02669dceb2 h1:B1Nt8hKb//KvgGRprk0h1t4lCnwhE9/ryb1WqfZbV+M=
 github.com/hyperledger/fabric-amcl v0.0.0-20230602173724-9e02669dceb2/go.mod h1:X+DIyUsaTmalOpmpQfIvFZjKHQedrURQ5t4YqquX7lE=
 github.com/hyperledger/fabric-lib-go v1.1.5-0.20260708100132-163bcc919208 h1:qA49XOMwyNPxggVyW+HSDAg7I3GdtlGWDTbh40/rwZk=
