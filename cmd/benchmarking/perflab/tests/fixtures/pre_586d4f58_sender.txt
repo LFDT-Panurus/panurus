@@ -1,0 +1,18 @@
+goos: darwin
+goarch: arm64
+pkg: github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/transfer
+cpu: Apple M1 Max
+BenchmarkSender/Setup(bits_32,_curve_BN254,_#i_1,_#o_1)_with_1_workers         	    2047	    577777 ns/op	   24095 B/op	     436 allocs/op
+BenchmarkSender/Setup(bits_32,_curve_BN254,_#i_1,_#o_1)_with_1_workers         	    2109	    580222 ns/op	   24096 B/op	     436 allocs/op
+BenchmarkSender/Setup(bits_32,_curve_BN254,_#i_1,_#o_1)_with_1_workers         	    2127	    581260 ns/op	   24094 B/op	     436 allocs/op
+BenchmarkSender/Setup(bits_32,_curve_BN254,_#i_1,_#o_1)_with_1_workers         	    2094	    556676 ns/op	   24095 B/op	     436 allocs/op
+BenchmarkSender/Setup(bits_32,_curve_BN254,_#i_1,_#o_1)_with_1_workers         	    2120	    543132 ns/op	   24095 B/op	     436 allocs/op
+BenchmarkSender/Setup(bits_32,_curve_BN254,_#i_1,_#o_1)_with_1_workers         	    2222	    543205 ns/op	   24094 B/op	     436 allocs/op
+BenchmarkSender/Setup(bits_32,_curve_BN254,_#i_1,_#o_1)_with_1_workers         	    2259	    547375 ns/op	   24095 B/op	     436 allocs/op
+BenchmarkSender/Setup(bits_32,_curve_BN254,_#i_1,_#o_1)_with_1_workers         	    2200	    547104 ns/op	   24094 B/op	     436 allocs/op
+BenchmarkSender/Setup(bits_32,_curve_BN254,_#i_1,_#o_1)_with_1_workers         	    2264	    545437 ns/op	   24095 B/op	     436 allocs/op
+BenchmarkSender/Setup(bits_32,_curve_BN254,_#i_1,_#o_1)_with_1_workers         	    2269	    546652 ns/op	   24095 B/op	     436 allocs/op
+BenchmarkSender/Setup(bits_32,_curve_BN254,_#i_1,_#o_2)_with_1_workers         	      20	  56165506 ns/op	 1220484 B/op	   17510 allocs/op
+BenchmarkSender/Setup(bits_32,_curve_BN254,_#i_1,_#o_2)_with_1_workers         	      20	  56069721 ns/op	 1220482 B/op	   17506 allocs/op
+BenchmarkSender/Setup(bits_32,_curve_BN254,_#i_1,_#o_2)_with_1_workers         	      20	  56262669 ns/op	 1220492 B/op	   17509 allocs/op
+BenchmarkSender/Setup(bits_32,_curve_BN254,_#i_1,_#o_2)_with_1_workers    
