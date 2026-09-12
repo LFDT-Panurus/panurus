@@ -113,6 +113,8 @@ func TestDashboardQueriesUseExportedNames(t *testing.T) {
 // filters or groups on is declared by the metric it is applied to. Filtering on a
 // label a metric does not carry silently matches nothing, so this is the second
 // way a panel goes blank without anyone noticing.
+//
+//nolint:gocognit // cross-checks every dashboard query's label filters against the declared metric labels in one pass; splitting the checks would scatter which query failed which assertion.
 func TestDashboardLabelFiltersMatchDeclaredLabels(t *testing.T) {
 	registered, declaredLabels := registeredMetrics(t)
 

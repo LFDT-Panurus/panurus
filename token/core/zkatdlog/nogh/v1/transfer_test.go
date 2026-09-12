@@ -185,7 +185,6 @@ func newTransferEnv(benchmarkCase *benchmark2.Case, configurations *benchmark.Se
 
 	// prepare inputs
 	numInputs := benchmarkCase.NumInputs
-	ids := make([]*token.ID, numInputs)
 	values := make([]uint64, numInputs)
 	for i := range values {
 		values[i] = uint64(i)*10 + 10
@@ -194,39 +193,16 @@ func newTransferEnv(benchmarkCase *benchmark2.Case, configurations *benchmark.Se
 	if err != nil {
 		return nil, err
 	}
-	var loadedTokens []v1.LoadedToken
 	tokenFormat, err := v1token.SupportedTokenFormat(pp, benchmarkCase.Bits)
 	if err != nil {
 		return nil, err
 	}
 
-	for i, tok := range baseTokens {
-		ownerID, err := identity.WrapWithType(idemix.IdentityType, []byte("alice"))
-		if err != nil {
-			return nil, err
-		}
-		v1Token := &v1token.Token{
-			Owner: ownerID,
-			Data:  tok,
-		}
-		tokenRaw, err := v1Token.Serialize()
-		if err != nil {
-			return nil, err
-		}
-
-		// metadata
-		mdRaw, err := metadata[i].Serialize()
-		if err != nil {
-			return nil, err
-		}
-
-		loadedTokens = append(loadedTokens, v1.LoadedToken{
-			TokenFormat: tokenFormat,
-			Token:       tokenRaw,
-			Metadata:    mdRaw,
-		})
-		ids[i] = &token.ID{TxId: strconv.Itoa(i)}
+	ids, loadedTokens, err := buildTransferEnvInputTokens(baseTokens, metadata, tokenFormat)
+	if err != nil {
+		return nil, err
 	}
+
 	tokenLoader := &mock.TokenLoader{}
 	tokenLoader.LoadTokensReturns(loadedTokens, nil)
 
@@ -248,6 +224,44 @@ func newTransferEnv(benchmarkCase *benchmark2.Case, configurations *benchmark.Se
 		outputs: outputs,
 		ids:     ids,
 	}, nil
+}
+
+// buildTransferEnvInputTokens serializes each of the given base Pedersen
+// tokens (owned by a fresh idemix-wrapped "alice" identity) into a
+// v1.LoadedToken carrying the matching metadata and tokenFormat, and assigns
+// each a deterministic token.ID.
+func buildTransferEnvInputTokens(baseTokens []*math.G1, metadata []*v1token.Metadata, tokenFormat token.Format) ([]*token.ID, []v1.LoadedToken, error) {
+	ids := make([]*token.ID, len(baseTokens))
+	var loadedTokens []v1.LoadedToken
+	for i, tok := range baseTokens {
+		ownerID, err := identity.WrapWithType(idemix.IdentityType, []byte("alice"))
+		if err != nil {
+			return nil, nil, err
+		}
+		v1Token := &v1token.Token{
+			Owner: ownerID,
+			Data:  tok,
+		}
+		tokenRaw, err := v1Token.Serialize()
+		if err != nil {
+			return nil, nil, err
+		}
+
+		// metadata
+		mdRaw, err := metadata[i].Serialize()
+		if err != nil {
+			return nil, nil, err
+		}
+
+		loadedTokens = append(loadedTokens, v1.LoadedToken{
+			TokenFormat: tokenFormat,
+			Token:       tokenRaw,
+			Metadata:    mdRaw,
+		})
+		ids[i] = &token.ID{TxId: strconv.Itoa(i)}
+	}
+
+	return ids, loadedTokens, nil
 }
 
 // benchmarkTransferEnv holds a collection of transfer environments for benchmarking.

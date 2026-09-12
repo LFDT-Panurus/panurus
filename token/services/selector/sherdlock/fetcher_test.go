@@ -640,109 +640,124 @@ func TestCachedFetcher_UpdateCache(t *testing.T) {
 	fetcher := NewCachedFetcher(mockDB, 0, 1*time.Second, 100)
 
 	t.Run("removes stale keys", func(t *testing.T) {
-		ctx := t.Context()
-
-		// First update with 2 keys
-		tokensByKey1 := map[string][]*token2.UnspentTokenInWallet{
-			tokenKey("wallet1", "USD"): {
-				{WalletID: "wallet1", Type: "USD", Quantity: "100"},
-			},
-			tokenKey("wallet2", "EUR"): {
-				{WalletID: "wallet2", Type: "EUR", Quantity: "50"},
-			},
-		}
-		fetcher.updateCache(ctx, tokensByKey1)
-
-		// Verify both keys exist
-		_, ok1 := fetcher.cache.Get(tokenKey("wallet1", "USD"))
-		assert.True(t, ok1)
-		_, ok2 := fetcher.cache.Get(tokenKey("wallet2", "EUR"))
-		assert.True(t, ok2)
-
-		// Second update with only 1 key
-		tokensByKey2 := map[string][]*token2.UnspentTokenInWallet{
-			tokenKey("wallet1", "USD"): {
-				{WalletID: "wallet1", Type: "USD", Quantity: "200"},
-			},
-		}
-		fetcher.updateCache(ctx, tokensByKey2)
-
-		// First key should still exist, second should be removed
-		_, ok1 = fetcher.cache.Get(tokenKey("wallet1", "USD"))
-		assert.True(t, ok1)
+		testCachedFetcherRemovesStaleKeys(t, fetcher)
 	})
 
 	t.Run("handles empty update", func(t *testing.T) {
-		ctx := t.Context()
-
-		// Update with empty map
-		tokensByKey := map[string][]*token2.UnspentTokenInWallet{}
-		fetcher.updateCache(ctx, tokensByKey)
-
-		// Should not panic
-		assert.NotNil(t, fetcher.prevKeys)
+		testCachedFetcherHandlesEmptyUpdate(t, fetcher)
 	})
 
 	// Race condition test: verifies cache never appears empty to concurrent readers during updates.
 	// This validates the fix where new entries are added BEFORE stale ones are removed.
 	t.Run("no empty cache during concurrent updates", func(t *testing.T) {
-		ctx := t.Context()
+		testCachedFetcherNoEmptyCacheDuringConcurrentUpdates(t, fetcher)
+	})
+}
 
-		// Initial cache population
-		initialTokens := map[string][]*token2.UnspentTokenInWallet{
-			tokenKey("wallet1", "USD"): {
-				{WalletID: "wallet1", Type: "USD", Quantity: "100"},
-			},
-		}
-		fetcher.updateCache(ctx, initialTokens)
+func testCachedFetcherRemovesStaleKeys(t *testing.T, fetcher *cachedFetcher) {
+	t.Helper()
+	ctx := t.Context()
 
-		// Start concurrent readers
-		stopReading := make(chan struct{})
-		readErrors := make(chan error, 10)
+	// First update with 2 keys
+	tokensByKey1 := map[string][]*token2.UnspentTokenInWallet{
+		tokenKey("wallet1", "USD"): {
+			{WalletID: "wallet1", Type: "USD", Quantity: "100"},
+		},
+		tokenKey("wallet2", "EUR"): {
+			{WalletID: "wallet2", Type: "EUR", Quantity: "50"},
+		},
+	}
+	fetcher.updateCache(ctx, tokensByKey1)
 
-		for range 10 {
-			go func() {
-				for {
-					select {
-					case <-stopReading:
+	// Verify both keys exist
+	_, ok1 := fetcher.cache.Get(tokenKey("wallet1", "USD"))
+	assert.True(t, ok1)
+	_, ok2 := fetcher.cache.Get(tokenKey("wallet2", "EUR"))
+	assert.True(t, ok2)
+
+	// Second update with only 1 key
+	tokensByKey2 := map[string][]*token2.UnspentTokenInWallet{
+		tokenKey("wallet1", "USD"): {
+			{WalletID: "wallet1", Type: "USD", Quantity: "200"},
+		},
+	}
+	fetcher.updateCache(ctx, tokensByKey2)
+
+	// First key should still exist, second should be removed
+	_, ok1 = fetcher.cache.Get(tokenKey("wallet1", "USD"))
+	assert.True(t, ok1)
+}
+
+func testCachedFetcherHandlesEmptyUpdate(t *testing.T, fetcher *cachedFetcher) {
+	t.Helper()
+	ctx := t.Context()
+
+	// Update with empty map
+	tokensByKey := map[string][]*token2.UnspentTokenInWallet{}
+	fetcher.updateCache(ctx, tokensByKey)
+
+	// Should not panic
+	assert.NotNil(t, fetcher.prevKeys)
+}
+
+func testCachedFetcherNoEmptyCacheDuringConcurrentUpdates(t *testing.T, fetcher *cachedFetcher) {
+	t.Helper()
+	ctx := t.Context()
+
+	// Initial cache population
+	initialTokens := map[string][]*token2.UnspentTokenInWallet{
+		tokenKey("wallet1", "USD"): {
+			{WalletID: "wallet1", Type: "USD", Quantity: "100"},
+		},
+	}
+	fetcher.updateCache(ctx, initialTokens)
+
+	// Start concurrent readers
+	stopReading := make(chan struct{})
+	readErrors := make(chan error, 10)
+
+	for range 10 {
+		go func() {
+			for {
+				select {
+				case <-stopReading:
+					return
+				default:
+					// Try to read from cache
+					_, ok := fetcher.cache.Get(tokenKey("wallet1", "USD"))
+					if !ok {
+						// Cache should never be empty during update
+						readErrors <- errors.New("cache was empty during concurrent read")
+
 						return
-					default:
-						// Try to read from cache
-						_, ok := fetcher.cache.Get(tokenKey("wallet1", "USD"))
-						if !ok {
-							// Cache should never be empty during update
-							readErrors <- errors.New("cache was empty during concurrent read")
-
-							return
-						}
 					}
 				}
-			}()
-		}
-
-		// Perform multiple updates while readers are active
-		for range 5 {
-			newTokens := map[string][]*token2.UnspentTokenInWallet{
-				tokenKey("wallet1", "USD"): {
-					{WalletID: "wallet1", Type: "USD", Quantity: "200"},
-				},
 			}
-			fetcher.updateCache(ctx, newTokens)
-			time.Sleep(20 * time.Millisecond)
-		}
+		}()
+	}
 
-		// Stop readers
-		close(stopReading)
-		time.Sleep(100 * time.Millisecond)
-
-		// Check for errors
-		select {
-		case err := <-readErrors:
-			t.Fatalf("Race condition detected: %v", err)
-		default:
-			// No errors - race condition fix is working
+	// Perform multiple updates while readers are active
+	for range 5 {
+		newTokens := map[string][]*token2.UnspentTokenInWallet{
+			tokenKey("wallet1", "USD"): {
+				{WalletID: "wallet1", Type: "USD", Quantity: "200"},
+			},
 		}
-	})
+		fetcher.updateCache(ctx, newTokens)
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	// Stop readers
+	close(stopReading)
+	time.Sleep(100 * time.Millisecond)
+
+	// Check for errors
+	select {
+	case err := <-readErrors:
+		t.Fatalf("Race condition detected: %v", err)
+	default:
+		// No errors - race condition fix is working
+	}
 }
 
 func TestCachedFetcher_SoftRefresh(t *testing.T) {

@@ -210,6 +210,8 @@ func (a *AuditInfoDeserializer) DeserializeAuditInfo(ctx context.Context, id dri
 // "" when a component has none (e.g. a nested composite), its audit info is
 // missing, or they disagree; an error on an invalid component identity,
 // unresolvable audit info or a component count mismatch.
+//
+//nolint:gocognit // resolves the enrollment ID auditing relies on to trace a composite identity; extraction risks disturbing the component-by-component agreement check this exists to get right.
 func (a *AuditInfoDeserializer) commonEnrollmentID(ctx context.Context, id driver.Identity, ei *AuditInfo) (string, error) {
 	if a.inner == nil {
 		return "", nil

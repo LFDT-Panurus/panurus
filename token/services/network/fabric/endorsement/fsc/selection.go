@@ -37,6 +37,8 @@ import (
 // An empty (but present) candidate set — one requiring no MSP at all — is rejected as
 // malformed policy input rather than treated as vacuously satisfied: a policy satisfiable
 // by zero endorsers would let a transaction be endorsed by nobody, so it must fail loudly.
+//
+//nolint:gocognit // endorser selection tries candidate MSP sets in random order and reports which MSP blocked each failed set; splitting the selection loop from the failure accounting risks losing that per-set diagnostic.
 func SelectEndorsersForMSPSets(configured []view.Identity, mspOf func(view.Identity) (string, error), candidates [][]string) ([]view.Identity, error) {
 	if len(candidates) == 0 {
 		return nil, errors.Errorf("no candidate MSP set to satisfy the namespace endorsement policy")

@@ -125,41 +125,11 @@ func LoadConfig(cfg *config.Configuration) (Config, error) {
 	if config.LeaseDuration > 0 {
 		result.LeaseDuration = config.LeaseDuration
 	}
-	// TransactionTimeout accepts an explicit zero to mean "unbounded" (opt out
-	// of the per-transaction deadline entirely), so check IsSet rather than
-	// the Go zero value, same reasoning as NotFoundGracePeriod below. Without
-	// this gate, transactionTimeout: 0 would silently fall back to the
-	// package default and the opt-out would be unreachable.
-	if cfg.IsSet(ConfigKeyRecovery + ".transactionTimeout") {
-		if config.TransactionTimeout > 0 && config.TransactionTimeout < minTransactionTimeout {
-			return Config{}, errors.Errorf("recovery transactionTimeout [%s] is below the %s floor: a shorter deadline risks abandoning recoveries that were about to succeed", config.TransactionTimeout, minTransactionTimeout)
-		}
-		result.TransactionTimeout = config.TransactionTimeout
-	} else if result.TransactionTimeout >= result.LeaseDuration {
-		// The operator never touched transactionTimeout, so it is still
-		// sitting at the package default here. If they configured a smaller
-		// leaseDuration, a transactionTimeout that size makes little
-		// operational sense next to it (round 7 no longer hard-fails Start()
-		// over this specific relationship, see warnIfLeaseMayExpireMidSweep,
-		// but there is still no reason to leave an operator at a default this
-		// disproportionate to a lease they explicitly chose). Clamp the
-		// default down instead; a transactionTimeout the operator set
-		// explicitly is left exactly as they wrote it.
-		//
-		// Floored at minTransactionTimeout rather than left at
-		// leaseDuration/2: the explicit-value floor check above only fires
-		// when IsSet is true, so a clamped default landing below it would
-		// otherwise slip through unrejected, and 0 here would silently land
-		// the operator in the "unbounded" opt-out (see the IsSet gate above
-		// and callHandler) rather than the bounded default this clamp exists
-		// to keep them on. For a leaseDuration small enough that half of it
-		// undercuts the floor, the clamped default ends up at or above
-		// leaseDuration itself; that is exactly the disproportionate
-		// relationship warnIfLeaseMayExpireMidSweep and
-		// warnIfLeaseMayExpireBetweenSweeps Warn about at Start(), which is
-		// the right severity for a lease this small, not a hard failure.
-		result.TransactionTimeout = max(result.LeaseDuration/2, minTransactionTimeout)
+	transactionTimeout, err := resolveTransactionTimeout(cfg, config, result)
+	if err != nil {
+		return Config{}, err
 	}
+	result.TransactionTimeout = transactionTimeout
 	if config.InstanceID != "" {
 		result.InstanceID = config.InstanceID
 	}
@@ -187,4 +157,48 @@ func LoadConfig(cfg *config.Configuration) (Config, error) {
 	}
 
 	return result, nil
+}
+
+// resolveTransactionTimeout applies the transactionTimeout override, or clamps the
+// package default to LeaseDuration when the operator never set it.
+//
+// TransactionTimeout accepts an explicit zero to mean "unbounded" (opt out of the
+// per-transaction deadline entirely), so check IsSet rather than the Go zero value,
+// same reasoning as NotFoundGracePeriod below. Without this gate, transactionTimeout: 0
+// would silently fall back to the package default and the opt-out would be unreachable.
+func resolveTransactionTimeout(cfg *config.Configuration, loaded, result Config) (time.Duration, error) {
+	if cfg.IsSet(ConfigKeyRecovery + ".transactionTimeout") {
+		if loaded.TransactionTimeout > 0 && loaded.TransactionTimeout < minTransactionTimeout {
+			return 0, errors.Errorf("recovery transactionTimeout [%s] is below the %s floor: a shorter deadline risks abandoning recoveries that were about to succeed", loaded.TransactionTimeout, minTransactionTimeout)
+		}
+
+		return loaded.TransactionTimeout, nil
+	}
+
+	if result.TransactionTimeout < result.LeaseDuration {
+		// The operator never touched transactionTimeout, and the package default is
+		// already proportionate to the (possibly overridden) leaseDuration.
+		return result.TransactionTimeout, nil
+	}
+
+	// The operator never touched transactionTimeout, so it is still sitting at the
+	// package default here. If they configured a smaller leaseDuration, a
+	// transactionTimeout that size makes little operational sense next to it (round 7
+	// no longer hard-fails Start() over this specific relationship, see
+	// warnIfLeaseMayExpireMidSweep, but there is still no reason to leave an operator
+	// at a default this disproportionate to a lease they explicitly chose). Clamp the
+	// default down instead; a transactionTimeout the operator set explicitly is left
+	// exactly as they wrote it.
+	//
+	// Floored at minTransactionTimeout rather than left at leaseDuration/2: the
+	// explicit-value floor check above only fires when IsSet is true, so a clamped
+	// default landing below it would otherwise slip through unrejected, and 0 here
+	// would silently land the operator in the "unbounded" opt-out (see the IsSet gate
+	// above and callHandler) rather than the bounded default this clamp exists to keep
+	// them on. For a leaseDuration small enough that half of it undercuts the floor,
+	// the clamped default ends up at or above leaseDuration itself; that is exactly the
+	// disproportionate relationship warnIfLeaseMayExpireMidSweep and
+	// warnIfLeaseMayExpireBetweenSweeps Warn about at Start(), which is the right
+	// severity for a lease this small, not a hard failure.
+	return max(result.LeaseDuration/2, minTransactionTimeout), nil
 }

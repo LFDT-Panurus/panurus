@@ -346,7 +346,36 @@ func (t *Action) GetIssuer() driver.Identity {
 	return t.Issuer
 }
 
+// validateActionInput validates the i-th transfer input, including its upgrade witness if any.
+func validateActionInput(i int, in *ActionInput) error {
+	if in == nil {
+		return errors.Wrapf(ErrEmptyInput, "invalid input at index [%d], empty input", i)
+	}
+	if in.ID == nil {
+		return errors.Wrapf(ErrEmptyInputID, "invalid input's ID at index [%d], it is empty", i)
+	}
+	if len(in.ID.TxId) == 0 {
+		return errors.Wrapf(ErrEmptyInputTxID, "invalid input's ID at index [%d], tx id is empty", i)
+	}
+	if in.Token == nil {
+		return errors.Wrapf(ErrEmptyInputToken, "invalid input's token at index [%d], empty token", i)
+	}
+	if err := in.Token.Validate(true); err != nil {
+		return errors.Wrapf(err, "invalid input token at index [%d]", i)
+	}
+
+	if in.UpgradeWitness != nil {
+		if err := in.UpgradeWitness.Validate(); err != nil {
+			return errors.Wrapf(err, "invalid input's upgrade witness at index [%d]", i)
+		}
+	}
+
+	return nil
+}
+
 // Validate ensures the Action is well-formed
+//
+//nolint:gocognit // ZK transfer action validation against the public parameters; same commitment-ordering risk as the issue action's Validate.
 func (t *Action) Validate() error {
 	if len(t.Inputs) == 0 {
 		return ErrInvalidInputs
@@ -356,26 +385,8 @@ func (t *Action) Validate() error {
 		return errors.Wrapf(ErrTooManyInputs, "limit [%d]", limits.MaxInputs)
 	}
 	for i, in := range t.Inputs {
-		if in == nil {
-			return errors.Wrapf(ErrEmptyInput, "invalid input at index [%d], empty input", i)
-		}
-		if in.ID == nil {
-			return errors.Wrapf(ErrEmptyInputID, "invalid input's ID at index [%d], it is empty", i)
-		}
-		if len(in.ID.TxId) == 0 {
-			return errors.Wrapf(ErrEmptyInputTxID, "invalid input's ID at index [%d], tx id is empty", i)
-		}
-		if in.Token == nil {
-			return errors.Wrapf(ErrEmptyInputToken, "invalid input's token at index [%d], empty token", i)
-		}
-		if err := in.Token.Validate(true); err != nil {
-			return errors.Wrapf(err, "invalid input token at index [%d]", i)
-		}
-
-		if in.UpgradeWitness != nil {
-			if err := in.UpgradeWitness.Validate(); err != nil {
-				return errors.Wrapf(err, "invalid input's upgrade witness at index [%d]", i)
-			}
+		if err := validateActionInput(i, in); err != nil {
+			return err
 		}
 	}
 	if len(t.Outputs) == 0 {
@@ -482,6 +493,8 @@ func (t *Action) Serialize() ([]byte, error) {
 }
 
 // Deserialize un-marshals a TransferAction from bytes
+//
+//nolint:gocognit // parses raw bytes directly into the crypto structures Validate depends on; same mis-split risk as the issue action's Deserialize.
 func (t *Action) Deserialize(raw []byte) error {
 	action := &actions.TransferAction{}
 	err := proto.Unmarshal(raw, action)

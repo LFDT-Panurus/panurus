@@ -129,6 +129,8 @@ func (v *Validator[P, T, TA, IA, DS]) SetMinProtocolVersion(version uint32) {
 }
 
 // VerifyTokenRequestFromRaw verifies a token request from its raw representation.
+//
+//nolint:gocognit // core token-request validation pipeline; the steps share local state (deserialized actions, metadata) that extraction would turn into wide parameter lists without lowering real risk.
 func (v *Validator[P, T, TA, IA, DS]) VerifyTokenRequestFromRaw(ctx context.Context, getState driver.GetStateFnc, anchor driver.TokenRequestAnchor, raw []byte) ([]any, driver.ValidationAttributes, error) {
 	logger.DebugfContext(ctx, "Verify token request from raw")
 	if len(raw) == 0 {
@@ -426,6 +428,7 @@ func (a deserializedAction[TA, IA]) value() any {
 	return a.transfer
 }
 
+//nolint:gocognit // action-index bookkeeping (issueIndex/transferIndex) is threaded through the whole loop; splitting it risks desynchronizing the two counters.
 func (v *Validator[P, T, TA, IA, DS]) deserializeActionsInRequestOrder(tr *driver.TokenRequest) ([]deserializedAction[TA, IA], error) {
 	if tr == nil {
 		return nil, ErrNilTokenRequest

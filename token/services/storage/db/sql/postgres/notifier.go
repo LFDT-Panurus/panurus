@@ -221,35 +221,7 @@ func (db *Notifier) Subscribe(callback driver.TriggerCallback) error {
 	var justStarted bool
 	db.startOnce.Do(func() {
 		justStarted = true
-		logger.Debugf("First subscription for notifier of [%s]. Notifier starts listening...", db.table)
-		// The notification trigger is installed on first subscription rather
-		// than at store creation: tables nobody subscribes to must not pay
-		// the per-row pg_notify cost (NOTIFY serializes transaction commits
-		// on a global queue lock).
-		if db.ensureSchema != nil {
-			if err := db.ensureSchema(); err != nil {
-				db.startupErr = errors.Wrapf(err, "failed creating notification schema for [%s]", db.table)
-
-				return
-			}
-		}
-		// the notifier may have been closed while the schema was installing
-		if err := db.ctx.Err(); err != nil {
-			db.startupErr = err
-
-			return
-		}
-		db.listenerWg.Go(func() {
-			if err := db.listener.Listen(db.ctx); err != nil {
-				// Send error to both the error channel and log it
-				select {
-				case db.listenerErr <- err:
-				default:
-					// If the error channel is full, just log it
-				}
-				logger.Errorf("notifier listen for [%s] failed: %s", db.table, err.Error())
-			}
-		})
+		db.startListener()
 	})
 
 	// startOnce.Do guarantees the write inside the closure is visible here.
@@ -259,26 +231,71 @@ func (db *Notifier) Subscribe(callback driver.TriggerCallback) error {
 	}
 
 	if justStarted {
-		// Wait a bit to see if it fails immediately
-		timer := time.NewTimer(100 * time.Millisecond)
-		defer timer.Stop()
-		select {
-		case err := <-db.listenerErr:
-			// Put it back
-			select {
-			case db.listenerErr <- err:
-			default:
-			}
-
+		if err := db.awaitInitialListenerError(); err != nil {
 			return err
-		case <-timer.C:
-		case <-db.ctx.Done():
-
-			return db.ctx.Err()
 		}
 	}
 
-	// Check if there was an error starting the listener (async errors)
+	return db.checkListenerError()
+}
+
+// startListener installs the notification schema (if not already installed) and launches the
+// background goroutine that runs the notifier's Listen loop, logging and surfacing any error it
+// returns via db.listenerErr. The notification trigger is installed on first subscription rather
+// than at store creation: tables nobody subscribes to must not pay the per-row pg_notify cost
+// (NOTIFY serializes transaction commits on a global queue lock).
+func (db *Notifier) startListener() {
+	logger.Debugf("First subscription for notifier of [%s]. Notifier starts listening...", db.table)
+	if db.ensureSchema != nil {
+		if err := db.ensureSchema(); err != nil {
+			db.startupErr = errors.Wrapf(err, "failed creating notification schema for [%s]", db.table)
+
+			return
+		}
+	}
+	// the notifier may have been closed while the schema was installing
+	if err := db.ctx.Err(); err != nil {
+		db.startupErr = err
+
+		return
+	}
+	db.listenerWg.Go(func() {
+		if err := db.listener.Listen(db.ctx); err != nil {
+			// Send error to both the error channel and log it
+			select {
+			case db.listenerErr <- err:
+			default:
+				// If the error channel is full, just log it
+			}
+			logger.Errorf("notifier listen for [%s] failed: %s", db.table, err.Error())
+		}
+	})
+}
+
+// awaitInitialListenerError waits briefly to see if the just-started listener fails immediately.
+func (db *Notifier) awaitInitialListenerError() error {
+	timer := time.NewTimer(100 * time.Millisecond)
+	defer timer.Stop()
+	select {
+	case err := <-db.listenerErr:
+		// Put it back
+		select {
+		case db.listenerErr <- err:
+		default:
+		}
+
+		return err
+	case <-timer.C:
+	case <-db.ctx.Done():
+		return db.ctx.Err()
+	}
+
+	return nil
+}
+
+// checkListenerError checks for an already-pending async error from the listener, without
+// blocking.
+func (db *Notifier) checkListenerError() error {
 	select {
 	case err := <-db.listenerErr:
 		// Put it back so other concurrent Subscribe calls can see it

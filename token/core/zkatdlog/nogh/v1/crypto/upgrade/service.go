@@ -330,6 +330,8 @@ func (s *Service) ProcessTokens(ctx context.Context, ledgerTokens []token.Ledger
 // upgrade proof. Every commitment token must come with the hash of the public parameters
 // that produced it, and those public parameters must generate the token's format, otherwise
 // the token is rejected.
+//
+//nolint:gocognit // token-upgrade re-issuance path; splitting it risks decoupling the per-token decisions from the ledger/local-store bookkeeping they must stay consistent with.
 func (s *Service) processTokensWith(ctx context.Context, ledgerTokens []token.LedgerToken, ppHashes []driver.PPHash) ([]token.Token, error) {
 	if len(ppHashes) != 0 && len(ppHashes) != len(ledgerTokens) {
 		return nil, errors.Errorf(
@@ -391,6 +393,37 @@ func (s *Service) processTokensWith(ctx context.Context, ledgerTokens []token.Le
 	}
 
 	return tokens, nil
+}
+
+// matchProofTokens checks that proof's tokens match ledgerTokens one-to-one, in order.
+func matchProofTokens(proofTokens []token.LedgerToken, ledgerTokens []token.LedgerToken) error {
+	if len(proofTokens) != len(ledgerTokens) {
+		return errors.Errorf("proof with invalid token count")
+	}
+	for i, tok := range proofTokens {
+		// check that token is equal to ledgerToken[i]
+		if !tok.Equal(ledgerTokens[i]) {
+			return errors.Errorf("tokens do not match at index [%d]", i)
+		}
+	}
+
+	return nil
+}
+
+// verifyProofSignatures checks that each of tokens' owners signed digest, using the
+// corresponding signature from proof.Signatures.
+func (s *Service) verifyProofSignatures(ctx context.Context, digest []byte, proof *Proof, tokens []token.Token) error {
+	for i, tok := range tokens {
+		verifier, err := s.Deserializer.GetOwnerVerifier(ctx, tok.Owner)
+		if err != nil {
+			return errors.Wrapf(err, "failed to get owner verifier")
+		}
+		if err := verifier.Verify(digest, proof.Signatures[i]); err != nil {
+			return errors.Wrapf(err, "failed to verify signature at index [%d]", i)
+		}
+	}
+
+	return nil
 }
 
 // processFabtoken extracts the content of a cleartext fabtoken output.
@@ -469,15 +502,8 @@ func (s *Service) checkUpgradeProof(ctx context.Context, ch driver.TokensUpgrade
 	if err := proof.Deserialize(proofRaw); err != nil {
 		return nil, false, errors.Wrapf(err, "failed to deserialize proof")
 	}
-	// match tokens
-	if len(proof.Tokens) != len(ledgerTokens) {
-		return nil, false, errors.Errorf("proof with invalid token count")
-	}
-	for i, token := range proof.Tokens {
-		// check that token is equal to ledgerToken[i]
-		if !token.Equal(ledgerTokens[i]) {
-			return nil, false, errors.Errorf("tokens do not match at index [%d]", i)
-		}
+	if err := matchProofTokens(proof.Tokens, ledgerTokens); err != nil {
+		return nil, false, err
 	}
 	// match challenge
 	if !bytes.Equal(proof.Challenge, ch) {
@@ -498,15 +524,8 @@ func (s *Service) checkUpgradeProof(ctx context.Context, ch driver.TokensUpgrade
 	if err != nil {
 		return nil, false, errors.Wrap(err, "failed to process ledgerTokens")
 	}
-	for i, token := range tokens {
-		verifier, err := s.Deserializer.GetOwnerVerifier(ctx, token.Owner)
-		if err != nil {
-			return nil, false, errors.Wrapf(err, "failed to get owner verifier")
-		}
-		err = verifier.Verify(digest, proof.Signatures[i])
-		if err != nil {
-			return nil, false, errors.Wrapf(err, "failed to verify signature at index [%d]", i)
-		}
+	if err := s.verifyProofSignatures(ctx, digest, proof, tokens); err != nil {
+		return nil, false, err
 	}
 
 	// all good

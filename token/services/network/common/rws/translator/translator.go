@@ -314,6 +314,48 @@ func (t *Translator) commitSetupAction(setup SetupAction) error {
 	return nil
 }
 
+// storeOutputWithSN stores output at index idx, and, if graphNonHiding, also stores its serial
+// number key (used to check that the token exists at time of spending).
+func (t *Translator) storeOutputWithSN(idx uint64, output []byte, graphNonHiding bool) error {
+	outputID, err := t.KeyTranslator.CreateOutputKey(t.TxID, idx) // #nosec G115
+	if err != nil {
+		return errors.Errorf("error creating output ID: %s", err)
+	}
+	if err := t.RWSet.SetState(outputID, output); err != nil {
+		return err
+	}
+	if !graphNonHiding {
+		return nil
+	}
+	// store also the serial number of this output.
+	// the serial number is used to check that the token exists at time of spending
+	sn, err := t.KeyTranslator.CreateOutputSNKey(t.TxID, idx, output) // #nosec G115
+	if err != nil {
+		return errors.Errorf("error creating output ID: %s", err)
+	}
+
+	return t.RWSet.SetState(sn, NotEmpty)
+}
+
+// storeActionMetadata stores every entry of metadata under a key built by createKey, erroring
+// (via duplicateMsgFmt, a one-%s format string) if the key already exists.
+func (t *Translator) storeActionMetadata(metadata map[string][]byte, createKey func(string) (string, error), duplicateMsgFmt string) error {
+	for key, value := range metadata {
+		k, err := createKey(key)
+		if err != nil {
+			return errors.Wrapf(err, "failed constructing metadata key")
+		}
+		if err := t.RWSet.StateMustNotExist(k); err != nil {
+			return errors.Errorf(duplicateMsgFmt, key)
+		}
+		if err := t.RWSet.SetState(k, value); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
 func (t *Translator) commitIssueAction(ctx context.Context, issueAction IssueAction) error {
 	base := t.counter
 	graphNonHiding := !issueAction.IsGraphHiding()
@@ -324,51 +366,38 @@ func (t *Translator) commitIssueAction(ctx context.Context, issueAction IssueAct
 		return err
 	}
 	for i, output := range outputs {
-		// store output
-		outputID, err := t.KeyTranslator.CreateOutputKey(t.TxID, base+uint64(i)) // #nosec G115
-		if err != nil {
-			return errors.Errorf("error creating output ID: %s", err)
-		}
-		if err := t.RWSet.SetState(outputID, output); err != nil {
+		if err := t.storeOutputWithSN(base+uint64(i), output, graphNonHiding); err != nil { // #nosec G115
 			return err
-		}
-		if graphNonHiding {
-			// store also the serial number of this output.
-			// the serial number is used to check that the token exists at time of spending
-			sn, err := t.KeyTranslator.CreateOutputSNKey(t.TxID, base+uint64(i), output) // #nosec G115
-			if err != nil {
-				return errors.Errorf("error creating output ID: %s", err)
-			}
-			if err := t.RWSet.SetState(sn, NotEmpty); err != nil {
-				return err
-			}
 		}
 	}
 
 	// spend inputs
-	err = t.spendInputs(ctx, issueAction)
-	if err != nil {
+	if err := t.spendInputs(ctx, issueAction); err != nil {
 		return err
 	}
 
 	// store metadata
-	metadata := issueAction.GetMetadata()
-	for key, value := range metadata {
-		k, err := t.KeyTranslator.CreateIssueActionMetadataKey(key)
-		if err != nil {
-			return errors.Wrapf(err, "failed constructing metadata key")
-		}
-		if err := t.RWSet.StateMustNotExist(k); err != nil {
-			return errors.Errorf("entry with issue metadata key [%s] is already occupied", key)
-		}
-		if err := t.RWSet.SetState(k, value); err != nil {
-			return err
-		}
+	if err := t.storeActionMetadata(issueAction.GetMetadata(), t.KeyTranslator.CreateIssueActionMetadataKey, "entry with issue metadata key [%s] is already occupied"); err != nil {
+		return err
 	}
 
 	t.counter = t.counter + uint64(len(outputs))
 
 	return nil
+}
+
+// storeTransferOutputAt stores the i-th transfer output (skipping redeem outputs, which have no
+// on-chain output to store).
+func (t *Translator) storeTransferOutputAt(transferAction TransferAction, base uint64, i int, graphNonHiding bool) error {
+	if transferAction.IsRedeemAt(i) {
+		return nil
+	}
+	output, err := transferAction.SerializeOutputAt(i)
+	if err != nil {
+		return errors.Wrapf(err, "error serializing transfer output at index [%d]", i)
+	}
+
+	return t.storeOutputWithSN(base+uint64(i), output, graphNonHiding) // #nosec G115
 }
 
 // commitTransferAction is called for both transfer and redeem transactions
@@ -379,53 +408,19 @@ func (t *Translator) commitTransferAction(ctx context.Context, transferAction Tr
 
 	// store outputs
 	for i := range transferAction.NumOutputs() {
-		if !transferAction.IsRedeemAt(i) {
-			// store output
-			output, err := transferAction.SerializeOutputAt(i)
-			if err != nil {
-				return errors.Wrapf(err, "error serializing transfer output at index [%d]", i)
-			}
-			outputID, err := t.KeyTranslator.CreateOutputKey(t.TxID, base+uint64(i)) // #nosec G115
-			if err != nil {
-				return errors.Errorf("error creating output ID: %s", err)
-			}
-			err = t.RWSet.SetState(outputID, output)
-			if err != nil {
-				return err
-			}
-			if graphNonHiding {
-				// store also the serial number of this output.
-				// the serial number is used to check that the token exists at time of spending
-				sn, err := t.KeyTranslator.CreateOutputSNKey(t.TxID, base+uint64(i), output) // #nosec G115
-				if err != nil {
-					return errors.Errorf("error creating output ID: %s", err)
-				}
-				if err := t.RWSet.SetState(sn, NotEmpty); err != nil {
-					return err
-				}
-			}
+		if err := t.storeTransferOutputAt(transferAction, base, i, graphNonHiding); err != nil {
+			return err
 		}
 	}
 
 	// spend inputs
-	err := t.spendInputs(ctx, transferAction)
-	if err != nil {
+	if err := t.spendInputs(ctx, transferAction); err != nil {
 		return err
 	}
 
 	// store metadata
-	metadata := transferAction.GetMetadata()
-	for key, value := range metadata {
-		k, err := t.KeyTranslator.CreateTransferActionMetadataKey(key)
-		if err != nil {
-			return errors.Wrapf(err, "failed constructing metadata key")
-		}
-		if err := t.RWSet.StateMustNotExist(k); err != nil {
-			return errors.Errorf("entry with transfer metadata key [%s] is already occupied", key)
-		}
-		if err := t.RWSet.SetState(k, value); err != nil {
-			return err
-		}
+	if err := t.storeActionMetadata(transferAction.GetMetadata(), t.KeyTranslator.CreateTransferActionMetadataKey, "entry with transfer metadata key [%s] is already occupied"); err != nil {
+		return err
 	}
 
 	t.counter = t.counter + uint64(transferAction.NumOutputs()) // #nosec G115
@@ -463,6 +458,50 @@ func (t *Translator) checkInputs(action ActionWithInputs) error {
 	return nil
 }
 
+// deleteSpentInput deletes the serial-number and token keys for a single spent input, and
+// records it as spent.
+func (t *Translator) deleteSpentInput(ctx context.Context, input *token.ID, serializedInput []byte) error {
+	// delete serial number
+	id, err := t.KeyTranslator.CreateOutputSNKey(input.TxId, input.Index, serializedInput)
+	if err != nil {
+		return errors.Wrapf(err, "invalid transfer: failed creating output ID [%v]", input)
+	}
+	logger.DebugfContext(ctx, "delete serial number [%s]\n", id)
+	if err := t.RWSet.DeleteState(id); err != nil {
+		return errors.Wrapf(err, "failed to delete output %s", id)
+	}
+	// delete token
+	id, err = t.KeyTranslator.CreateOutputKey(input.TxId, input.Index)
+	if err != nil {
+		return errors.Wrapf(err, "invalid transfer: failed creating output ID [%v]", input)
+	}
+	logger.DebugfContext(ctx, "delete serial number [%s]\n", id)
+	if err := t.RWSet.DeleteState(id); err != nil {
+		return errors.Wrapf(err, "failed to delete output %s", id)
+	}
+
+	// finalize
+	if err := t.appendSpentID(id); err != nil {
+		return errors.Wrapf(err, "failed to append spent id [%s]", id)
+	}
+
+	return nil
+}
+
+// writeSerialNumber writes a new input serial number key and records it as spent.
+func (t *Translator) writeSerialNumber(ctx context.Context, id string) error {
+	logger.DebugfContext(ctx, "add serial number %s\n", id)
+	k, err := t.KeyTranslator.CreateInputSNKey(id)
+	if err != nil {
+		return errors.Wrapf(err, "failed to generate key for id [%s]", id)
+	}
+	if err := t.RWSet.SetState(k, NotEmpty); err != nil {
+		return errors.Wrapf(err, "failed to add serial number %s", id)
+	}
+
+	return t.appendSpentID(id)
+}
+
 func (t *Translator) spendInputs(ctx context.Context, action ActionWithInputs) error {
 	// we need to delete the serial numbers and the outputs, if any
 	// recall that the read dependencies are added during the checking phase
@@ -473,45 +512,16 @@ func (t *Translator) spendInputs(ctx context.Context, action ActionWithInputs) e
 			return errors.Wrap(err, "error serializing transfer inputs")
 		}
 		for i, input := range ids {
-			// delete serial number
-			id, err := t.KeyTranslator.CreateOutputSNKey(input.TxId, input.Index, serializedInputs[i])
-			if err != nil {
-				return errors.Wrapf(err, "invalid transfer: failed creating output ID [%v]", input)
-			}
-			logger.DebugfContext(ctx, "delete serial number [%s]\n", id)
-			if err := t.RWSet.DeleteState(id); err != nil {
-				return errors.Wrapf(err, "failed to delete output %s", id)
-			}
-			// delete token
-			id, err = t.KeyTranslator.CreateOutputKey(input.TxId, input.Index)
-			if err != nil {
-				return errors.Wrapf(err, "invalid transfer: failed creating output ID [%v]", input)
-			}
-			logger.DebugfContext(ctx, "delete serial number [%s]\n", id)
-			if err := t.RWSet.DeleteState(id); err != nil {
-				return errors.Wrapf(err, "failed to delete output %s", id)
-			}
-
-			// finalize
-			if err := t.appendSpentID(id); err != nil {
-				return errors.Wrapf(err, "failed to append spent id [%s]", id)
+			if err := t.deleteSpentInput(ctx, input, serializedInputs[i]); err != nil {
+				return err
 			}
 		}
 	}
 
 	// we must also write any serial number
-	sns := action.GetSerialNumbers()
-	for _, id := range sns {
-		logger.DebugfContext(ctx, "add serial number %s\n", id)
-		k, err := t.KeyTranslator.CreateInputSNKey(id)
-		if err != nil {
-			return errors.Wrapf(err, "failed to generate key for id [%s]", id)
-		}
-		if err := t.RWSet.SetState(k, NotEmpty); err != nil {
-			return errors.Wrapf(err, "failed to add serial number %s", id)
-		}
-		if err := t.appendSpentID(id); err != nil {
-			return errors.Wrapf(err, "failed to append spent id [%s]", id)
+	for _, id := range action.GetSerialNumbers() {
+		if err := t.writeSerialNumber(ctx, id); err != nil {
+			return err
 		}
 	}
 

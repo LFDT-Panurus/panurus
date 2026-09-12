@@ -12,6 +12,7 @@ import (
 	math "github.com/IBM/mathlib"
 	"github.com/LFDT-Panurus/panurus/token/core/common"
 	"github.com/LFDT-Panurus/panurus/token/core/common/meta"
+	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/setup"
 	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/token"
 	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/transfer"
 	"github.com/LFDT-Panurus/panurus/token/driver"
@@ -112,6 +113,120 @@ func NewTransferService(
 	}
 }
 
+// extractTransferValuesAndOwners extracts, for each requested output, its value and owner, and
+// reports whether any output redeems (has an empty owner).
+func extractTransferValuesAndOwners(pp *setup.PublicParams, outputs []*token2.Token) (values []uint64, owners [][]byte, isRedeem bool, err error) {
+	values = make([]uint64, 0, len(outputs))
+	owners = make([][]byte, 0, len(outputs))
+	for i, output := range outputs {
+		q, err := token2.ToQuantity(output.Quantity, pp.Precision())
+		if err != nil {
+			return nil, nil, false, errors.Wrapf(err, "failed to get value for %dth output", i)
+		}
+		values = append(values, q.ToBigInt().Uint64())
+		owners = append(owners, output.Owner)
+
+		if len(output.Owner) == 0 {
+			isRedeem = true
+		}
+	}
+
+	return values, owners, isRedeem, nil
+}
+
+// buildZKTransferInputsMetadata builds the per-input transfer metadata (sender identity + audit
+// info) for each prepared input token.
+func (s *TransferService) buildZKTransferInputsMetadata(ctx context.Context, ws driver.AuditInfoProvider, ids []*token2.ID, tokens []*token.Token) ([]*driver.TransferInputMetadata, error) {
+	var transferInputsMetadata []*driver.TransferInputMetadata
+	for i, t := range tokens {
+		auditInfo, err := s.IdentityDeserializer.GetAuditInfo(ctx, t.Owner, ws)
+		if err != nil {
+			return nil, errors.Wrapf(err, "failed getting audit info for sender identity [%s]", driver.Identity(t.Owner))
+		}
+		if len(auditInfo) == 0 {
+			s.Logger.ErrorfContext(ctx, "empty audit info for the owner [%s] of the i^th token [%s]", ids[i], driver.Identity(t.Owner))
+		}
+		transferInputsMetadata = append(transferInputsMetadata, &driver.TransferInputMetadata{
+			TokenID: ids[i],
+			Senders: []*driver.AuditableIdentity{
+				{
+					Identity:  t.Owner,
+					AuditInfo: auditInfo,
+				},
+			},
+		})
+	}
+
+	return transferInputsMetadata, nil
+}
+
+// buildZKTransferOutputMetadata builds the transfer metadata (audit info + receivers) for a
+// single output, handling the redeem (no owner) case separately from the normal
+// recipient-lookup case, and attaches the corresponding serialized token metadata.
+func (s *TransferService) buildZKTransferOutputMetadata(ctx context.Context, ws driver.AuditInfoProvider, output *token2.Token, outputMeta *token.Metadata) (*driver.TransferOutputMetadata, error) {
+	var outputAudiInfo []byte
+	var receivers []driver.Identity
+	var receiversAuditInfo [][]byte
+	var outputReceivers []*driver.AuditableIdentity
+
+	if len(output.Owner) == 0 { // redeem
+		outputAudiInfo = nil
+		receivers = append(receivers, output.Owner)
+		receiversAuditInfo = append(receiversAuditInfo, []byte{})
+		outputReceivers = make([]*driver.AuditableIdentity, 0, 1)
+	} else {
+		var err error
+		outputAudiInfo, err = s.IdentityDeserializer.GetAuditInfo(ctx, output.Owner, ws)
+		if err != nil {
+			return nil, errors.Wrapf(err, "failed getting audit info for sender identity [%s]", driver.Identity(output.Owner))
+		}
+		recipients, err := s.IdentityDeserializer.Recipients(output.Owner)
+		if err != nil {
+			return nil, errors.Wrap(err, "failed getting recipients")
+		}
+		receivers = append(receivers, recipients...)
+		for _, receiver := range receivers {
+			receiverAudiInfo, err := s.IdentityDeserializer.GetAuditInfo(ctx, receiver, ws)
+			if err != nil {
+				return nil, errors.Wrapf(err, "failed getting audit info for receiver identity [%s]", receiver)
+			}
+			receiversAuditInfo = append(receiversAuditInfo, receiverAudiInfo)
+		}
+		outputReceivers = make([]*driver.AuditableIdentity, 0, len(recipients))
+	}
+	for i, receiver := range receivers {
+		outputReceivers = append(outputReceivers, &driver.AuditableIdentity{
+			Identity:  receiver,
+			AuditInfo: receiversAuditInfo[i],
+		})
+	}
+
+	outputMetadataRaw, err := outputMeta.Serialize()
+	if err != nil {
+		return nil, errors.WithMessagef(err, "failed serializing token info for zkatdlog transfer action")
+	}
+
+	return &driver.TransferOutputMetadata{
+		OutputMetadata:  outputMetadataRaw,
+		OutputAuditInfo: outputAudiInfo,
+		Receivers:       outputReceivers,
+	}, nil
+}
+
+// buildZKTransferOutputsMetadata builds the transfer metadata for every requested output.
+func (s *TransferService) buildZKTransferOutputsMetadata(ctx context.Context, ws driver.AuditInfoProvider, outputs []*token2.Token, outputsMetadata []*token.Metadata) ([]*driver.TransferOutputMetadata, error) {
+	var transferOutputsMetadata []*driver.TransferOutputMetadata
+	for i, output := range outputs {
+		om, err := s.buildZKTransferOutputMetadata(ctx, ws, output, outputsMetadata[i])
+		if err != nil {
+			return nil, err
+		}
+		transferOutputsMetadata = append(transferOutputsMetadata, om)
+	}
+
+	return transferOutputsMetadata, nil
+}
+
 // Transfer generates a new TransferAction based on the provided arguments.
 // It returns the TransferAction, the corresponding TransferMetadata, or an error if the operation fails.
 func (s *TransferService) Transfer(
@@ -149,22 +264,11 @@ func (s *TransferService) Transfer(
 	if err != nil {
 		return nil, nil, err
 	}
-	values := make([]uint64, 0, len(outputs))
-	owners := make([][]byte, 0, len(outputs))
-	var isRedeem bool
 	// 4. Extract target values and owners from the requested outputs.
 	s.Logger.DebugfContext(ctx, "Prepare %d output tokens", len(outputs))
-	for i, output := range outputs {
-		q, err := token2.ToQuantity(output.Quantity, pp.Precision())
-		if err != nil {
-			return nil, nil, errors.Wrapf(err, "failed to get value for %dth output", i)
-		}
-		values = append(values, q.ToBigInt().Uint64())
-		owners = append(owners, output.Owner)
-
-		if len(output.Owner) == 0 {
-			isRedeem = true
-		}
+	values, owners, isRedeem, err := extractTransferValuesAndOwners(pp, outputs)
+	if err != nil {
+		return nil, nil, err
 	}
 	// 5. Generate the ZK-SNARK transfer action and the metadata for the new outputs.
 	s.Logger.DebugfContext(ctx, "Generate zk transfer")
@@ -186,79 +290,20 @@ func (s *TransferService) Transfer(
 	// 7. Prepare the TransferMetadata which contains audit information for auditors.
 	ws := s.AuditInfoProvider
 
-	var transferInputsMetadata []*driver.TransferInputMetadata
 	tokens := prepareInputs.Tokens()
-	senderAuditInfos := make([][]byte, 0, len(tokens))
-	for i, t := range tokens {
-		auditInfo, err := s.IdentityDeserializer.GetAuditInfo(ctx, t.Owner, ws)
-		if err != nil {
-			return nil, nil, errors.Wrapf(err, "failed getting audit info for sender identity [%s]", driver.Identity(t.Owner))
-		}
-		if len(auditInfo) == 0 {
-			s.Logger.ErrorfContext(ctx, "empty audit info for the owner [%s] of the i^th token [%s]", ids[i], driver.Identity(t.Owner))
-		}
-		transferInputsMetadata = append(transferInputsMetadata, &driver.TransferInputMetadata{
-			TokenID: ids[i],
-			Senders: []*driver.AuditableIdentity{
-				{
-					Identity:  t.Owner,
-					AuditInfo: auditInfo,
-				},
-			},
-		})
+	transferInputsMetadata, err := s.buildZKTransferInputsMetadata(ctx, ws, ids, tokens)
+	if err != nil {
+		return nil, nil, err
 	}
 
-	var transferOutputsMetadata []*driver.TransferOutputMetadata
-	for i, output := range outputs {
-		var outputAudiInfo []byte
-		var receivers []driver.Identity
-		var receiversAuditInfo [][]byte
-		var outputReceivers []*driver.AuditableIdentity
-
-		if len(output.Owner) == 0 { // redeem
-			outputAudiInfo = nil
-			receivers = append(receivers, output.Owner)
-			receiversAuditInfo = append(receiversAuditInfo, []byte{})
-			outputReceivers = make([]*driver.AuditableIdentity, 0, 1)
-		} else {
-			outputAudiInfo, err = s.IdentityDeserializer.GetAuditInfo(ctx, output.Owner, ws)
-			if err != nil {
-				return nil, nil, errors.Wrapf(err, "failed getting audit info for sender identity [%s]", driver.Identity(output.Owner))
-			}
-			recipients, err := s.IdentityDeserializer.Recipients(output.Owner)
-			if err != nil {
-				return nil, nil, errors.Wrap(err, "failed getting recipients")
-			}
-			receivers = append(receivers, recipients...)
-			for _, receiver := range receivers {
-				receiverAudiInfo, err := s.IdentityDeserializer.GetAuditInfo(ctx, receiver, ws)
-				if err != nil {
-					return nil, nil, errors.Wrapf(err, "failed getting audit info for receiver identity [%s]", receiver)
-				}
-				receiversAuditInfo = append(receiversAuditInfo, receiverAudiInfo)
-			}
-			outputReceivers = make([]*driver.AuditableIdentity, 0, len(recipients))
-		}
-		for i, receiver := range receivers {
-			outputReceivers = append(outputReceivers, &driver.AuditableIdentity{
-				Identity:  receiver,
-				AuditInfo: receiversAuditInfo[i],
-			})
-		}
-
-		outputMetadata, err := outputsMetadata[i].Serialize()
-		if err != nil {
-			return nil, nil, errors.WithMessagef(err, "failed serializing token info for zkatdlog transfer action")
-		}
-
-		transferOutputsMetadata = append(transferOutputsMetadata, &driver.TransferOutputMetadata{
-			OutputMetadata:  outputMetadata,
-			OutputAuditInfo: outputAudiInfo,
-			Receivers:       outputReceivers,
-		})
+	transferOutputsMetadata, err := s.buildZKTransferOutputsMetadata(ctx, ws, outputs, outputsMetadata)
+	if err != nil {
+		return nil, nil, err
 	}
 
-	s.Logger.DebugfContext(ctx, "Transfer Action Prepared [id:%s,ins:%d:%d,outs:%d]", anchor, len(ids), len(senderAuditInfos), transfer.NumOutputs())
+	// the ins:%d field was always 0 pre-refactor too (it read a sender-audit-info slice that was
+	// declared with len 0 and never appended to before this log line)
+	s.Logger.DebugfContext(ctx, "Transfer Action Prepared [id:%s,ins:%d:%d,outs:%d]", anchor, len(ids), 0, transfer.NumOutputs())
 
 	transferMetadata := &driver.TransferMetadata{
 		Inputs:       transferInputsMetadata,

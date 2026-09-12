@@ -283,6 +283,22 @@ func (p *NetworkHandler) SetCryptoMaterialGenerator(driver string, generator gen
 	p.CryptoMaterialGenerators[driver] = generator
 }
 
+// resolveDefaultIndex finds ids's entry matching node.ID() or the "_default_" placeholder and
+// pins it to node.ID(), returning its index; if none matches, node.ID() is appended and its
+// index returned. Shared by the issuer/owner identity blocks in GenerateCryptoMaterial, which
+// otherwise repeat this find-or-append logic identically.
+func resolveDefaultIndex(ids []string, nodeID string) ([]string, int) {
+	for i, id := range ids {
+		if id == nodeID || id == "_default_" {
+			ids[i] = nodeID
+
+			return ids, i
+		}
+	}
+
+	return append(ids, nodeID), len(ids)
+}
+
 func (p *NetworkHandler) GenerateCryptoMaterial(cmGenerator generators.CryptoMaterialGenerator, tms *topology2.TMS, node *sfcnode.Node) {
 	entry := p.GetEntry(tms)
 	o := node.PlatformOpts()
@@ -297,24 +313,8 @@ func (p *NetworkHandler) GenerateCryptoMaterial(cmGenerator generators.CryptoMat
 	entry.Wallets[node.Name] = wallet
 
 	// Issuer identities
-	issuers := opts.Issuers()
-	if len(issuers) != 0 {
-		var index int
-		found := false
-		for i, issuer := range issuers {
-			if issuer == node.ID() || issuer == "_default_" {
-				index = i
-				found = true
-				issuers[i] = node.ID()
-
-				break
-			}
-		}
-		if !found {
-			issuers = append(issuers, node.ID())
-			index = len(issuers) - 1
-		}
-
+	if issuers := opts.Issuers(); len(issuers) != 0 {
+		issuers, index := resolveDefaultIndex(issuers, node.ID())
 		ids := cmGenerator.GenerateIssuerIdentities(tms, node, issuers...)
 		if len(ids) > 0 {
 			wallet.Issuers = append(wallet.Issuers, ids...)
@@ -323,23 +323,8 @@ func (p *NetworkHandler) GenerateCryptoMaterial(cmGenerator generators.CryptoMat
 	}
 
 	// Owner identities
-	owners := opts.Owners()
-	if len(owners) != 0 {
-		var index int
-		found := false
-		for i, owner := range owners {
-			if owner == node.ID() || owner == "_default_" {
-				index = i
-				found = true
-				owners[i] = node.ID()
-
-				break
-			}
-		}
-		if !found {
-			owners = append(owners, node.ID())
-			index = len(owners) - 1
-		}
+	if owners := opts.Owners(); len(owners) != 0 {
+		owners, index := resolveDefaultIndex(owners, node.ID())
 		ids := cmGenerator.GenerateOwnerIdentities(tms, node, owners...)
 		if len(ids) > 0 {
 			wallet.Owners = append(wallet.Owners, ids...)
@@ -409,33 +394,27 @@ func (p *NetworkHandler) getCombinedWallets(tms *topology2.TMS, nodeName string)
 		if w == nil {
 			continue
 		}
-		for _, id := range w.Issuers {
-			if k := "i:" + id.ID + ":" + id.Path; !seen[k] {
-				seen[k] = true
-				combined.Issuers = append(combined.Issuers, id)
-			}
-		}
-		for _, id := range w.Owners {
-			if k := "o:" + id.ID + ":" + id.Path; !seen[k] {
-				seen[k] = true
-				combined.Owners = append(combined.Owners, id)
-			}
-		}
-		for _, id := range w.Auditors {
-			if k := "a:" + id.ID + ":" + id.Path; !seen[k] {
-				seen[k] = true
-				combined.Auditors = append(combined.Auditors, id)
-			}
-		}
-		for _, id := range w.Certifiers {
-			if k := "c:" + id.ID + ":" + id.Path; !seen[k] {
-				seen[k] = true
-				combined.Certifiers = append(combined.Certifiers, id)
-			}
-		}
+		combined.Issuers = appendUniqueIdentity(combined.Issuers, w.Issuers, "i:", seen)
+		combined.Owners = appendUniqueIdentity(combined.Owners, w.Owners, "o:", seen)
+		combined.Auditors = appendUniqueIdentity(combined.Auditors, w.Auditors, "a:", seen)
+		combined.Certifiers = appendUniqueIdentity(combined.Certifiers, w.Certifiers, "c:", seen)
 	}
 
 	return combined
+}
+
+// appendUniqueIdentity appends each of src's identities to dst that isn't already present, per
+// seen, keyed by prefix+ID+Path. Shared by getCombinedWallets's four role blocks (issuers,
+// owners, auditors, certifiers), which otherwise repeat this dedupe-and-append loop identically.
+func appendUniqueIdentity(dst, src []topology2.Identity, prefix string, seen map[string]bool) []topology2.Identity {
+	for _, id := range src {
+		if k := prefix + id.ID + ":" + id.Path; !seen[k] {
+			seen[k] = true
+			dst = append(dst, id)
+		}
+	}
+
+	return dst
 }
 
 func (p *NetworkHandler) GetEntry(tms *topology2.TMS) *Entry {

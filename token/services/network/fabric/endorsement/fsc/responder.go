@@ -178,7 +178,6 @@ func (r *ResponderView) receive(ctx view.Context) (*Request, responderBehaviour,
 	}
 
 	// validate transient
-
 	if err := behaviour.checkTransientCount(tx); err != nil {
 		return nil, nil, err
 	}

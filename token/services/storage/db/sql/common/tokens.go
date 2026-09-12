@@ -587,11 +587,6 @@ func (db *TokenStore) ListUnspentTokensByWallets(ctx context.Context, walletIDs 
 	}
 	defer Close(rows)
 
-	// The WHERE clause matches rows where EITHER ownership.wallet_id OR
-	// tokens.owner_wallet_id is in walletIDs, but the two columns are not
-	// constrained to agree (StoreToken writes them independently). Bucket
-	// under whichever column is actually in the requested set, preferring
-	// ownership.wallet_id so a single input id always maps to a single key.
 	walletIDSet := make(map[string]struct{}, len(walletIDs))
 	for _, id := range walletIDs {
 		walletIDSet[id] = struct{}{}
@@ -599,25 +594,9 @@ func (db *TokenStore) ListUnspentTokensByWallets(ctx context.Context, walletIDs 
 
 	result := make(map[string]*token.UnspentTokens, len(walletIDs))
 	for rows.Next() {
-		var walletCol, ownerWalletCol sql.NullString
-		ut := &token.UnspentToken{}
-		if err := rows.Scan(
-			&walletCol,
-			&ownerWalletCol,
-			&ut.Id.TxId, &ut.Id.Index, &ut.Owner, &ut.Type, &ut.Quantity,
-		); err != nil {
+		walletID, ut, err := scanUnspentTokenForWallet(rows, walletIDSet)
+		if err != nil {
 			return nil, err
-		}
-		walletID := ""
-		if walletCol.Valid && walletCol.String != "" {
-			if _, ok := walletIDSet[walletCol.String]; ok {
-				walletID = walletCol.String
-			}
-		}
-		if walletID == "" && ownerWalletCol.Valid && ownerWalletCol.String != "" {
-			if _, ok := walletIDSet[ownerWalletCol.String]; ok {
-				walletID = ownerWalletCol.String
-			}
 		}
 		if walletID == "" {
 			continue
@@ -631,6 +610,64 @@ func (db *TokenStore) ListUnspentTokensByWallets(ctx context.Context, walletIDs 
 	}
 
 	return result, rows.Err()
+}
+
+// scanUnspentTokenForWallet scans a single result row of
+// ListUnspentTokensByWallets into an *token.UnspentToken and determines
+// which requested wallet ID it should be bucketed under.
+//
+// The WHERE clause matches rows where EITHER ownership.wallet_id OR
+// tokens.owner_wallet_id is in walletIDs, but the two columns are not
+// constrained to agree (StoreToken writes them independently). Bucket
+// under whichever column is actually in the requested set, preferring
+// ownership.wallet_id so a single input id always maps to a single key. An
+// empty walletID is returned if the row does not belong to any requested
+// wallet.
+func scanUnspentTokenForWallet(rows *sql.Rows, walletIDSet map[string]struct{}) (string, *token.UnspentToken, error) {
+	var walletCol, ownerWalletCol sql.NullString
+	ut := &token.UnspentToken{}
+	if err := rows.Scan(
+		&walletCol,
+		&ownerWalletCol,
+		&ut.Id.TxId, &ut.Id.Index, &ut.Owner, &ut.Type, &ut.Quantity,
+	); err != nil {
+		return "", nil, err
+	}
+	walletID := ""
+	if walletCol.Valid && walletCol.String != "" {
+		if _, ok := walletIDSet[walletCol.String]; ok {
+			walletID = walletCol.String
+		}
+	}
+	if walletID == "" && ownerWalletCol.Valid && ownerWalletCol.String != "" {
+		if _, ok := walletIDSet[ownerWalletCol.String]; ok {
+			walletID = ownerWalletCol.String
+		}
+	}
+
+	return walletID, ut, nil
+}
+
+// checkAllFound validates that all len(ids) tokens were matched against
+// query results, as counted by counter. If none matched, it returns a
+// "not found" error naming the first id. If some but not all matched, it
+// returns a "not found" error for the first index j for which missing(j)
+// reports true. It panics if counter and missing disagree (a programming
+// error in the caller's bookkeeping).
+func checkAllFound(ids []*token.ID, counter int, missing func(j int) bool) error {
+	if counter == 0 {
+		return errors.Errorf("token not found for key [%s:%d]", ids[0].TxId, ids[0].Index)
+	}
+	if counter != len(ids) {
+		for j := range ids {
+			if missing(j) {
+				return errors.Errorf("token not found for key [%s:%d]", ids[j].TxId, ids[j].Index)
+			}
+		}
+		panic("programming error: should not reach this point")
+	}
+
+	return nil
 }
 
 // ListAuditTokens returns the audited tokens associated to the passed ids
@@ -685,16 +722,8 @@ func (db *TokenStore) ListAuditTokens(ctx context.Context, ids ...*token.ID) ([]
 	if rows.Err() != nil {
 		return nil, rows.Err()
 	}
-	if counter == 0 {
-		return nil, errors.Errorf("token not found for key [%s:%d]", ids[0].TxId, ids[0].Index)
-	}
-	if counter != len(ids) {
-		for j, t := range tokens {
-			if t == nil {
-				return nil, errors.Errorf("token not found for key [%s:%d]", ids[j].TxId, ids[j].Index)
-			}
-		}
-		panic("programming error: should not reach this point")
+	if err := checkAllFound(ids, counter, func(j int) bool { return tokens[j] == nil }); err != nil {
+		return nil, err
 	}
 
 	return tokens, nil
@@ -978,16 +1007,8 @@ func (db *TokenStore) GetTokens(ctx context.Context, inputs ...*token.ID) ([]*to
 	if err = rows.Err(); err != nil {
 		return tokens, err
 	}
-	if counter == 0 {
-		return nil, errors.Errorf("token not found for key [%s:%d]", inputs[0].TxId, inputs[0].Index)
-	}
-	if counter != len(inputs) {
-		for j, t := range tokens {
-			if t == nil {
-				return nil, errors.Errorf("token not found for key [%s:%d]", inputs[j].TxId, inputs[j].Index)
-			}
-		}
-		panic("programming error: should not reach this point")
+	if err := checkAllFound(inputs, counter, func(j int) bool { return tokens[j] == nil }); err != nil {
+		return nil, err
 	}
 
 	return tokens, nil
@@ -1102,16 +1123,8 @@ func (db *TokenStore) WhoDeletedTokens(ctx context.Context, inputs ...*token.ID)
 	if err = rows.Err(); err != nil {
 		return nil, isSpent, err
 	}
-	if counter == 0 {
-		return nil, nil, errors.Errorf("token not found for key [%s:%d]", inputs[0].TxId, inputs[0].Index)
-	}
-	if counter != len(inputs) {
-		for j, f := range found {
-			if !f {
-				return nil, nil, errors.Errorf("token not found for key [%s:%d]", inputs[j].TxId, inputs[j].Index)
-			}
-		}
-		panic("programming error: should not reach this point")
+	if err := checkAllFound(inputs, counter, func(j int) bool { return !found[j] }); err != nil {
+		return nil, nil, err
 	}
 
 	return spentBy, isSpent, nil
