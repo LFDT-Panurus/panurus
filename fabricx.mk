@@ -5,11 +5,11 @@ fabricx-docker-images: ## Pull fabric-x images
 
 .PHONY: fxconfig
 fxconfig: ## Install fxconfig
-	@env GOBIN=$(FAB_BINS) go install $(GO_FLAGS) github.com/hyperledger/fabric-x/tools/fxconfig@$(FABRIC_X_TOOLS_VERSION)
+	@env GOBIN=$(FABRIC_X_BINS) go install $(GO_FLAGS) github.com/hyperledger/fabric-x/tools/fxconfig@$(FABRIC_X_TOOLS_VERSION)
 
 .PHONY: configtxgen
 configtxgen: ## Install configtxgen
-	@env GOBIN=$(FAB_BINS) go install $(GO_FLAGS) github.com/hyperledger/fabric-x/tools/configtxgen@$(FABRIC_X_TOOLS_VERSION)
+	@env GOBIN=$(FABRIC_X_BINS) go install $(GO_FLAGS) github.com/hyperledger/fabric-x/tools/configtxgen@$(FABRIC_X_TOOLS_VERSION)
 
 # See the note in fungible.mk: these suites loop over integration.AllTestTypes, so
 # the specs calling fungible.TestAll also get per-infra targets that CI runs as
