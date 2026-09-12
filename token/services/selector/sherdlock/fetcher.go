@@ -105,9 +105,9 @@ func NewMixedFetcher(tokenDB TokenDB, m *Metrics, cacheSize int64, freshnessInte
 // UnspentTokensIteratorBy returns an iterator for unspent tokens, trying cached results first, falling back to database query.
 func (f *mixedFetcher) UnspentTokensIteratorBy(ctx context.Context, walletID string, currency token2.Type) (Iterator[*token2.UnspentTokenInWallet], error) {
 	logger.DebugfContext(ctx, "call unspent tokens iterator")
-	it, err := f.eagerFetcher.UnspentTokensIteratorBy(ctx, walletID, currency)
+	it, cached, err := f.eagerFetcher.unspentTokensIteratorBy(ctx, walletID, currency)
 	logger.DebugfContext(ctx, "fetched eager iterator")
-	if err == nil && it.(interface{ HasNext() bool }).HasNext() {
+	if err == nil && cached {
 		logger.DebugfContext(ctx, "eager iterator had tokens. Returning iterator")
 		f.m.UnspentTokensInvocations.With(fetcherTypeLabel, eager).Add(1)
 
@@ -316,6 +316,17 @@ func (f *cachedFetcher) updateCache(ctx context.Context, tokensByKey map[string]
 	// Step 1: Add/update new entries first
 	newKeys := make(map[string]struct{}, len(tokensByKey))
 	for key, toks := range tokensByKey {
+		// A cached key must always map to a non-empty slice: callers take a
+		// cache hit to mean there are tokens, and mixedFetcher skips its lazy
+		// fallback on one. groupTokensByKey only creates a key when it finds a
+		// token, so this should be unreachable -- enforce it here rather than
+		// leaving it implicit, since permutatableIterator offers no way to
+		// check emptiness at the read side without consuming the iterator.
+		if len(toks) == 0 {
+			logger.Warnf("refusing to cache an empty entry for key [%s]", key)
+
+			continue
+		}
 		f.cache.Add(key, iterators.Slice(toks))
 		newKeys[key] = struct{}{}
 	}
@@ -335,6 +346,17 @@ func (f *cachedFetcher) updateCache(ctx context.Context, tokensByKey map[string]
 
 // UnspentTokensIteratorBy returns cached unspent tokens, triggering a refresh if the cache is stale or overused.
 func (f *cachedFetcher) UnspentTokensIteratorBy(ctx context.Context, walletID string, currency token2.Type) (Iterator[*token2.UnspentTokenInWallet], error) {
+	it, _, err := f.unspentTokensIteratorBy(ctx, walletID, currency)
+
+	return it, err
+}
+
+// unspentTokensIteratorBy is UnspentTokensIteratorBy with the cache outcome
+// reported alongside the iterator. Callers that need to distinguish a hit from
+// a miss use this rather than inspecting the returned iterator: Iterator only
+// guarantees Next and Close, so there is no portable way to ask an iterator
+// whether it is empty without consuming from it.
+func (f *cachedFetcher) unspentTokensIteratorBy(ctx context.Context, walletID string, currency token2.Type) (Iterator[*token2.UnspentTokenInWallet], bool, error) {
 	defer atomic.AddUint32(&f.queriesResponded, 1)
 	if f.isCacheOverused() {
 		logger.DebugfContext(ctx, "Overused data. Soft refresh (in the background)...")
@@ -351,11 +373,11 @@ func (f *cachedFetcher) UnspentTokensIteratorBy(ctx context.Context, walletID st
 	it, ok := f.cache.Get(tokenKey(walletID, currency))
 	f.mu.RUnlock()
 	if ok {
-		return it.NewPermutation(), nil
+		return it.NewPermutation(), true, nil
 	}
 	logger.DebugfContext(ctx, "No tokens found in cache for [%s]. Returning empty iterator.", tokenKey(walletID, currency))
 
-	return collections.NewEmptyIterator[*token2.UnspentTokenInWallet](), nil
+	return collections.NewEmptyIterator[*token2.UnspentTokenInWallet](), false, nil
 }
 
 // isCacheOverused checks if the cache has been queried too many times since the last refresh.

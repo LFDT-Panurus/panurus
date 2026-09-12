@@ -176,11 +176,16 @@ func TestCachedFetcher_UnspentTokensIteratorBy_CacheHit(t *testing.T) {
 	fetcher.update(ctx)
 
 	// Query cache
-	it, err := fetcher.UnspentTokensIteratorBy(ctx, "wallet1", "USD")
+	it, cached, err := fetcher.unspentTokensIteratorBy(ctx, "wallet1", "USD")
 
 	require.NoError(t, err)
 	assert.NotNil(t, it)
-	assert.True(t, it.(interface{ HasNext() bool }).HasNext())
+	assert.True(t, cached, "the key is in the cache")
+
+	// A cache hit must yield tokens, not just report the key was present.
+	tok, err := it.Next()
+	require.NoError(t, err)
+	assert.NotNil(t, tok, "a cache hit yields at least one token")
 
 	// Verify query counter incremented
 	assert.Equal(t, uint32(1), atomic.LoadUint32(&fetcher.queriesResponded))
@@ -207,12 +212,12 @@ func TestCachedFetcher_UnspentTokensIteratorBy_CacheMiss(t *testing.T) {
 	fetcher.update(ctx)
 
 	// Query for non-existent key
-	it, err := fetcher.UnspentTokensIteratorBy(ctx, "wallet2", "EUR")
+	it, cached, err := fetcher.unspentTokensIteratorBy(ctx, "wallet2", "EUR")
 
 	require.NoError(t, err)
 	assert.NotNil(t, it)
 	// Should return empty iterator
-	assert.False(t, it.(interface{ HasNext() bool }).HasNext())
+	assert.False(t, cached, "the key is not in the cache")
 
 	mockDB.AssertExpectations(t)
 }

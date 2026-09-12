@@ -9,6 +9,12 @@ FABRIC_X_COMMITTER_VERSION ?= 1.0.4
 # need to install fabric binaries outside of panuru's  tree for now (due to chaincode packaging issues)
 FABRIC_BINARY_BASE=$(PWD)/../fabric
 FAB_BINS ?= $(FABRIC_BINARY_BASE)/bin
+# The fabric-x tools ship a configtxgen of their own. Installing it into
+# $(FAB_BINS) would overwrite fabric's, so they get their own subdirectory
+# there and both toolchains can be installed at once. FSC looks them up under
+# this subdirectory rather than falling back to $(FAB_BINS), so keep it in sync
+# with fxconfig.BinSubdir.
+FABRIC_X_BINS ?= $(FAB_BINS)/fabric-x
 
 # integration test options
 GINKGO_TEST_OPTS ?=
