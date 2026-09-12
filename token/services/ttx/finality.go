@@ -90,7 +90,14 @@ func (f *finalityView) call(ctx view.Context, txID string, tmsID token.TMSID, ti
 
 	logger.DebugfContext(ctx.Context(), "Listen to finality of [%s]", txID)
 
-	c := ctx.Context()
+	// The view context's underlying Go context is rooted in the P2P stream that
+	// delivered the message that created it (see view.Manager.NewResponderContext).
+	// That stream can be closed/released for reasons unrelated to this wait (refcount
+	// hitting zero, a read error on a different message, session teardown), which would
+	// otherwise cancel c below and surface as a false "finality timeout" even though the
+	// real timeout is far from expired. Detach from that lineage and rely solely on the
+	// explicit timeout deadline set here.
+	c := context.WithoutCancel(ctx.Context())
 	if timeout != 0 {
 		var cancel context.CancelFunc
 		c, cancel = context.WithTimeout(c, timeout)
