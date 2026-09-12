@@ -79,6 +79,12 @@ func LoadConfig(cfg *config.Configuration) (Config, error) {
 	}
 	if loaded.Timeout > 0 {
 		result.Timeout = loaded.Timeout
+	} else if result.Timeout > result.ScanInterval {
+		// The default timeout (30m) outlives a shorter scanInterval-only override,
+		// which would otherwise fail validation for a config that never touched
+		// timeout at all. Scale it down instead of rejecting a perfectly
+		// reasonable config.
+		result.Timeout = result.ScanInterval
 	}
 	if loaded.BatchSize > 0 {
 		result.BatchSize = loaded.BatchSize

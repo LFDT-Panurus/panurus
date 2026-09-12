@@ -120,6 +120,47 @@ token:
 	assert.Equal(t, 2*time.Hour, loaded.ScanInterval)
 }
 
+func TestLoadConfig_ScanIntervalOnlyClampsDefaultTimeout(t *testing.T) {
+	// scanInterval below the default 30m timeout must not leave a config that
+	// fails validation: an operator who never touched timeout should not have
+	// to know it exists.
+	cfg := loadConfig(t, `
+token:
+  tms:
+    n1c1ns1:
+      services:
+        storage:
+          checks:
+            scanInterval: 10m
+`)
+
+	loaded, err := checks.LoadConfig(cfg)
+	require.NoError(t, err)
+	assert.Equal(t, 10*time.Minute, loaded.ScanInterval)
+	assert.Equal(t, 10*time.Minute, loaded.Timeout)
+}
+
+func TestLoadConfig_ExplicitTimeoutExceedingScanIntervalIsKept(t *testing.T) {
+	// An explicit timeout is left alone even if it exceeds scanInterval:
+	// validateConfig rejects that combination rather than LoadConfig silently
+	// second-guessing a value the operator set on purpose.
+	cfg := loadConfig(t, `
+token:
+  tms:
+    n1c1ns1:
+      services:
+        storage:
+          checks:
+            scanInterval: 10m
+            timeout: 20m
+`)
+
+	loaded, err := checks.LoadConfig(cfg)
+	require.NoError(t, err)
+	assert.Equal(t, 10*time.Minute, loaded.ScanInterval)
+	assert.Equal(t, 20*time.Minute, loaded.Timeout)
+}
+
 func TestLoadConfig_EnabledExplicitFalseIsRespected(t *testing.T) {
 	cfg := loadConfig(t, `
 token:

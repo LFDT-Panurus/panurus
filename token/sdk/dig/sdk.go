@@ -332,14 +332,14 @@ func (p *SDK) Stop() error {
 
 	var stopErrs []error
 	if err := p.Container().Invoke(func(a *db.AuditorCheckServiceProvider, o *db.OwnerCheckServiceProvider) error {
-		return errors2.Join(a.Stop(), o.Stop())
+		return errors.Join(a.Stop(), o.Stop())
 	}); err != nil {
 		stopErrs = append(stopErrs, errors.WithMessagef(err, "failed stopping the drift checks sweeps"))
 	}
 
 	stopErrs = append(stopErrs, p.SDK.Stop())
 
-	return errors2.Join(stopErrs...)
+	return errors.Join(stopErrs...)
 }
 
 // connectNetworks establishes connections to all configured networks.
