@@ -22,6 +22,8 @@ import (
 // load. Workers are spread over a varying number of owners: owners=1 puts
 // every worker on one shard — approximating the old single global mutex —
 // while owners=workers gives every worker its own shard.
+//
+//nolint:gocognit // benchmark drives concurrent workers across a matrix of shapes; splitting the driver loop would only move goroutine/timing state into helper parameters.
 func BenchmarkLockerContention(b *testing.B) {
 	const workers = 32
 	for _, owners := range []int{1, 8, 32} {
@@ -63,6 +65,8 @@ func BenchmarkLockerContention(b *testing.B) {
 // (e.g. a database round trip), while other owners keep locking. With one
 // shared lock, everybody waits behind the slow reclaim; with per-owner
 // shards, only the slow owner does.
+//
+//nolint:gocognit // same concurrent-driver shape as BenchmarkLockerContention above.
 func BenchmarkLockerContentionWithSlowReclaim(b *testing.B) {
 	const workers = 8
 	const statusDelay = 100 * time.Microsecond

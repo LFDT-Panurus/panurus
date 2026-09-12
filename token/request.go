@@ -624,7 +624,18 @@ func (r *Request) outputs(ctx context.Context, failOnMissing bool) (*OutputStrea
 
 // expandIssueOutputRecipients builds one *Output per recipient of the j-th issue output (already
 // deobfuscated as tok/issuer/recipients), validating each recipient against its metadata.
-func (r *Request) expandIssueOutputRecipients(ctx context.Context, i, j int, tok *token.Token, issuer Identity, recipients []Identity, q token.Quantity, raw []byte, format token.Format, issueMeta *IssueMetadata, counter uint64) ([]*Output, error) {
+func (r *Request) expandIssueOutputRecipients(
+	ctx context.Context,
+	i, j int,
+	tok *token.Token,
+	issuer Identity,
+	recipients []Identity,
+	q token.Quantity,
+	raw []byte,
+	format token.Format,
+	issueMeta *IssueMetadata,
+	counter uint64,
+) ([]*Output, error) {
 	var outputs []*Output
 	for k, recipient := range recipients {
 		metaRecipient := issueMeta.Outputs[j].RecipientAt(k)
@@ -662,7 +673,16 @@ func (r *Request) expandIssueOutputRecipients(ctx context.Context, i, j int, tok
 // extractIssueOutput extracts (as zero or more *Output) the j-th output of issue action i. It
 // returns no outputs (and no error) when the output's metadata was filtered out and
 // failOnMissing is false.
-func (r *Request) extractIssueOutput(ctx context.Context, i, j int, output driver.Output, issueAction driver.IssueAction, issueMeta *IssueMetadata, precision uint64, counter uint64, failOnMissing, noOutputForRecipient bool) ([]*Output, error) {
+func (r *Request) extractIssueOutput(
+	ctx context.Context,
+	i, j int,
+	output driver.Output,
+	issueAction driver.IssueAction,
+	issueMeta *IssueMetadata,
+	precision uint64,
+	counter uint64,
+	failOnMissing, noOutputForRecipient bool,
+) ([]*Output, error) {
 	if output == nil {
 		return nil, errors.Errorf("%d^th output in issue action [%d] is nil", j, i)
 	}
@@ -752,7 +772,15 @@ type deobfuscatedTransferOutput struct {
 // deobfuscateTransferOutputAt serializes and deobfuscates the j-th transfer output. absent is
 // true (with a nil result and error) when the output's metadata was filtered out and
 // failOnMissing is false — the caller should skip it.
-func (r *Request) deobfuscateTransferOutputAt(ctx context.Context, i, j int, output driver.Output, transferAction driver.TransferAction, transferMeta *TransferMetadata, precision uint64, failOnMissing bool) (result *deobfuscatedTransferOutput, absent bool, err error) {
+func (r *Request) deobfuscateTransferOutputAt(
+	ctx context.Context,
+	i, j int,
+	output driver.Output,
+	transferAction driver.TransferAction,
+	transferMeta *TransferMetadata,
+	precision uint64,
+	failOnMissing bool,
+) (result *deobfuscatedTransferOutput, absent bool, err error) {
 	if output == nil {
 		return nil, false, errors.Errorf("%d^th output in transfer action [%d] is nil", j, i)
 	}
@@ -876,7 +904,17 @@ func (r *Request) buildTransferOutputsPerRecipient(ctx context.Context, i, j int
 
 // extractTransferOutputAt extracts (as zero or more *Output) the j-th output of transfer action
 // i, returning the updated recipientCounter.
-func (r *Request) extractTransferOutputAt(ctx context.Context, i, j int, output driver.Output, transferAction driver.TransferAction, transferMeta *TransferMetadata, precision uint64, counter uint64, recipientCounter int, failOnMissing, noOutputForRecipient bool) ([]*Output, int, error) {
+func (r *Request) extractTransferOutputAt(
+	ctx context.Context,
+	i, j int,
+	output driver.Output,
+	transferAction driver.TransferAction,
+	transferMeta *TransferMetadata,
+	precision uint64,
+	counter uint64,
+	recipientCounter int,
+	failOnMissing, noOutputForRecipient bool,
+) ([]*Output, int, error) {
 	d, absent, err := r.deobfuscateTransferOutputAt(ctx, i, j, output, transferAction, transferMeta, precision, failOnMissing)
 	if err != nil {
 		return nil, recipientCounter, err
@@ -1023,7 +1061,15 @@ func (r *Request) InputsAndOutputsNoRecipients(ctx context.Context) (*InputStrea
 // processIssueInputsAndOutputsAt deserializes and matches the i-th issue action against its
 // metadata, optionally verifies it, then extracts its inputs and outputs, merging its metadata
 // attributes into attributes.
-func (r *Request) processIssueInputsAndOutputsAt(ctx context.Context, meta *Metadata, i int, issue []byte, counter uint64, attributes map[string][]byte, failOnMissing, verifyActions, noOutputForRecipient bool) ([]*Input, []*Output, uint64, error) {
+func (r *Request) processIssueInputsAndOutputsAt(
+	ctx context.Context,
+	meta *Metadata,
+	i int,
+	issue []byte,
+	counter uint64,
+	attributes map[string][]byte,
+	failOnMissing, verifyActions, noOutputForRecipient bool,
+) ([]*Input, []*Output, uint64, error) {
 	issueService := r.TokenService.tms.IssueService()
 	issueAction, err := issueService.DeserializeIssueAction(issue)
 	if err != nil {
@@ -1061,7 +1107,15 @@ func (r *Request) processIssueInputsAndOutputsAt(ctx context.Context, meta *Meta
 // processTransferInputsAndOutputsAt deserializes and matches the i-th transfer action against its
 // metadata, optionally verifies it, then extracts its inputs and outputs, merging its metadata
 // attributes into attributes.
-func (r *Request) processTransferInputsAndOutputsAt(ctx context.Context, meta *Metadata, i int, transfer []byte, counter uint64, attributes map[string][]byte, failOnMissing, verifyActions, noOutputForRecipient bool) ([]*Input, []*Output, uint64, error) {
+func (r *Request) processTransferInputsAndOutputsAt(
+	ctx context.Context,
+	meta *Metadata,
+	i int,
+	transfer []byte,
+	counter uint64,
+	attributes map[string][]byte,
+	failOnMissing, verifyActions, noOutputForRecipient bool,
+) ([]*Input, []*Output, uint64, error) {
 	ts := r.TokenService.tms.TransferService()
 	transferAction, err := ts.DeserializeTransferAction(transfer)
 	if err != nil {

@@ -122,6 +122,8 @@ func (s *IssueService) Issue(ctx context.Context, issuerIdentity driver.Identity
 }
 
 // VerifyIssue checks if the outputs of an IssueAction match the passed tokenInfos
+//
+//nolint:gocognit // fabtoken issue-action verification; a mis-split here risks silently accepting an invalid issuance.
 func (s *IssueService) VerifyIssue(ctx context.Context, ia driver.IssueAction, metadata []*driver.IssueOutputMetadata) error {
 	if ia == nil {
 		return errors.Errorf("nil issue action")

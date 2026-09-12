@@ -513,6 +513,7 @@ func resolveRecipientData(context view.Context, w *token.OwnerWallet, wallet str
 	return recipientData, recipientData.Identity, false, nil
 }
 
+//nolint:gocognit // view handshake that both derives a wallet identity and decides which response to sign and send back; splitting the decision from the response risks sending a response that does not match what was decided.
 func (s *RespondRequestRecipientIdentityView) Call(context view.Context) (any, error) {
 	session := session2.NewTypedSessionFromContext(context)
 	recipientRequest := &RecipientRequest{}
@@ -1003,6 +1004,7 @@ func RespondExchangeRecipientIdentities(context view.Context, opts ...token.Serv
 	return ids.([]view.Identity)[0], ids.([]view.Identity)[1], nil
 }
 
+//nolint:gocognit // same view-handshake shape as RespondRequestRecipientIdentityView.Call above.
 func (s *RespondExchangeRecipientIdentitiesView) Call(context view.Context) (any, error) {
 	session := session2.NewTypedSessionFromContext(context)
 

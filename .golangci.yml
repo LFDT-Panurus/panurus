@@ -123,6 +123,7 @@ linters:
         - github.com/hyperledger-labs/fabric-smart-client/integration/nwo/api.ViewClient
         - github.com/hyperledger-labs/fabric-smart-client/integration/nwo/api.Platform
         - github.com/hyperledger-labs/fabric-smart-client/integration/nwo/api.Context
+        - github.com/hyperledger-labs/fabric-smart-client/integration/nwo/api.Topology
         # Our own driver-pattern packages: every package literally named "driver" (token/driver
         # itself plus its per-service siblings under identity, network, certifier, and storage/db)
         # exists to define the swappable interface a token technology or storage backend

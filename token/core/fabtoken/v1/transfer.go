@@ -214,6 +214,8 @@ func (s *TransferService) Transfer(
 }
 
 // VerifyTransfer checks the outputs in the TransferAction against the passed tokenInfos
+//
+//nolint:gocognit // fabtoken transfer-action verification, the core conservation-of-value check; extraction risks disturbing which values are summed and compared.
 func (s *TransferService) VerifyTransfer(ctx context.Context, tr driver.TransferAction, outputMetadata []*driver.TransferOutputMetadata) error {
 	if tr == nil {
 		return errors.Errorf("nil transfer action")

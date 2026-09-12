@@ -195,6 +195,7 @@ func marshal(ctx context.Context, t *Transaction, eIDs ...string) ([]byte, error
 	return res, nil
 }
 
+//nolint:gocognit // reconstructs a Payload's fields from wire bytes in a fixed order that later code depends on; extraction risks a field landing in the wrong place with no compiler error to catch it.
 func unmarshal(getNetwork GetNetworkFunc, p *Payload, raw []byte) error {
 	var ser TransactionSer
 	rest, err := asn1.Unmarshal(raw, &ser)

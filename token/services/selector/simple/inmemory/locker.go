@@ -155,6 +155,8 @@ func (d *locker) Lock(ctx context.Context, owner string, id *token2.ID, txID str
 // lockInShard performs the actual locking inside s, the shard of owner. It
 // returns errShardPruned if s left the registry before the entry could be
 // written, meaning the caller must retry with the current shard of owner.
+//
+//nolint:gocognit // sharded in-memory locker's core critical section; extraction risks moving a lock/unlock pair or a state mutation across the boundary it must stay inside.
 func (d *locker) lockInShard(ctx context.Context, s *shard, owner string, id *token2.ID, txID string, reclaim bool) (string, error) {
 	k := *id
 

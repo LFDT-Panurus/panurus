@@ -312,7 +312,14 @@ func (c *CollectEndorsementsView) tryLocalSignature(context view.Context, signer
 // tryNonRemoteSignature tries each local signing strategy in order (multi-sig, policy, external
 // wallet, local signer) for a single signer identity. handled is false when none applied and the
 // caller should fall back to a remote signature request.
-func (c *CollectEndorsementsView) tryNonRemoteSignature(i int, signerIdentity view.Identity, verifierGetter verifierGetterFunc, context view.Context, externalWallets map[string]ExternalWalletSigner, requestRaw []byte) ([]byte, bool, error) {
+func (c *CollectEndorsementsView) tryNonRemoteSignature(
+	i int,
+	signerIdentity view.Identity,
+	verifierGetter verifierGetterFunc,
+	context view.Context,
+	externalWallets map[string]ExternalWalletSigner,
+	requestRaw []byte,
+) ([]byte, bool, error) {
 	logger.DebugfContext(context.Context(), "collecting signature [%d] on request from [%s]", i, signerIdentity)
 
 	if sigma, handled, err := c.tryMultiSigSignature(signerIdentity, verifierGetter, context, externalWallets); handled || err != nil {
@@ -338,6 +345,8 @@ func (c *CollectEndorsementsView) tryNonRemoteSignature(i int, signerIdentity vi
 // - External wallet signers: delegates signing to external wallet providers
 // - Remote signers: requests signatures from remote parties via network sessions
 // Returns a map of signer identity unique IDs to their signatures.
+//
+//nolint:gocognit // collects signatures from remote and local signers over the same request bytes; splitting risks a signer being asked to sign something other than what every other signer saw.
 func (c *CollectEndorsementsView) requestSignatures(signers []view.Identity, verifierGetter verifierGetterFunc, context view.Context, externalWallets map[string]ExternalWalletSigner) (map[string][]byte, error) {
 	logger.DebugfContext(context.Context(), "Request %d signatures", len(signers))
 	requestRaw, err := c.tx.TokenRequest.MarshalToSign()
@@ -547,6 +556,8 @@ func (c *CollectEndorsementsView) cleanupSessions(ctx context.Context) {
 // distributeTxToParties distributes the endorsed transaction to all parties in the distribution list.
 // It filters metadata by enrollment ID for each recipient (except auditors who receive full metadata),
 // stores transaction records locally, and collects acknowledgment signatures from each party.
+//
+//nolint:gocognit // distributes the finalized transaction to auditors and parties with different delivery rules per recipient kind; a split risks a recipient silently falling through the wrong path.
 func (c *CollectEndorsementsView) distributeTxToParties(context view.Context, distributionList []view.Identity, auditors []view.Identity) error {
 	logger.DebugfContext(context.Context(), "Start distribute to parties")
 	if c.Opts.SkipDistributeEnv {

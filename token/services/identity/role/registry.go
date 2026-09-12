@@ -587,6 +587,8 @@ const walletCreationJoinRetries = 3
 // than when the winner's is, and a flight that failed only because another caller's context
 // was cancelled is retried rather than reported: one abandoned transaction must not fail
 // the healthy ones resolving the same wallet.
+//
+//nolint:gocognit // singleflight-coordinated wallet creation; the comments around ranCreation/Forget document specific race conditions that a split risks reintroducing.
 func (r *Registry) createWallet(
 	ctx context.Context,
 	role idriver.IdentityRoleType,

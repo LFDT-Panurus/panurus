@@ -492,6 +492,8 @@ func unmarshallerWithCurveID(t *testing.T, curveID int, raw []byte) *unmarshalle
 // and CSP range proofs). Element.CurveID is decoded straight from these
 // bytes and was, prior to the curveAt bounds check, used to index
 // math.Curves unchecked - the exact class of bug this fuzzer targets.
+//
+//nolint:gocognit // fuzz harness enumerates one seed per malformed-encoding shape on purpose; splitting it would scatter the corpus across helpers without reducing what each seed checks.
 func FuzzUnmarshallerNoPanic(f *testing.F) {
 	curve := math.Curves[math.BN254]
 	container, err := NewRandomMathContainer(curve)

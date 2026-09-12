@@ -108,6 +108,7 @@ type Env struct {
 	TRWithExtraSignatureTransferInputs   map[string]*token2.Token
 }
 
+//nolint:gocognit // shared test-environment constructor used across the zkatdlog benchmark suite; a subtly wrong split would silently change what every benchmark that calls it measures.
 func NewEnv(benchCase *benchmark2.Case, configurations *benchmark.SetupConfigurations) (*Env, error) {
 	var (
 		engine *validator.Validator

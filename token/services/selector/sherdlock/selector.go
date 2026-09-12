@@ -165,7 +165,14 @@ func (s *Selector) selectWithoutMetrics(ctx context.Context, owner token.OwnerFi
 // insufficient funds (no tokens are locked elsewhere), aborts with
 // token.SelectorSufficientButLockedFunds after too many immediate retries, or reloads the token
 // cache and reports the next immediateRetries count for another pass.
-func (s *Selector) handleExhaustedCache(ctx context.Context, owner token.OwnerFilter, tokenType token2.Type, sum, quantity token2.Quantity, tokensLockedByOthersExist bool, immediateRetries int) (newCache Iterator[*token2.UnspentTokenInWallet], newImmediateRetries int, err error) {
+func (s *Selector) handleExhaustedCache(
+	ctx context.Context,
+	owner token.OwnerFilter,
+	tokenType token2.Type,
+	sum, quantity token2.Quantity,
+	tokensLockedByOthersExist bool,
+	immediateRetries int,
+) (newCache Iterator[*token2.UnspentTokenInWallet], newImmediateRetries int, err error) {
 	if !tokensLockedByOthersExist {
 		return nil, immediateRetries, errors.Wrapf(
 			token.SelectorInsufficientFunds,
@@ -199,7 +206,13 @@ func (s *Selector) handleExhaustedCache(ctx context.Context, owner token.OwnerFi
 // tryAddToken attempts to lock and add token t to the selection. It reports whether t was
 // locked by another process (in which case it wasn't added), the updated running sum, and
 // whether enough has now been selected (done).
-func (s *Selector) tryAddToken(ctx context.Context, owner token.OwnerFilter, t *token2.UnspentTokenInWallet, sum, quantity token2.Quantity, selected collections.Set[*token2.ID]) (lockedByOther bool, newSum token2.Quantity, done bool, err error) {
+func (s *Selector) tryAddToken(
+	ctx context.Context,
+	owner token.OwnerFilter,
+	t *token2.UnspentTokenInWallet,
+	sum, quantity token2.Quantity,
+	selected collections.Set[*token2.ID],
+) (lockedByOther bool, newSum token2.Quantity, done bool, err error) {
 	locked, lockErr := s.locker.TryLock(ctx, &t.Id, owner.ID())
 	if !locked {
 		// A rate-limit denial from the locker is a hard stop: abort instead of retrying.
@@ -250,7 +263,16 @@ type selectLoopStep struct {
 
 // stepSelectLoop runs a single iteration of the token-selection loop: it pulls the next token
 // from s.cache (refreshing the cache if it's exhausted) and, if found, tries to lock and add it.
-func (s *Selector) stepSelectLoop(ctx context.Context, owner token.OwnerFilter, quantity token2.Quantity, tokenType token2.Type, sum token2.Quantity, selected collections.Set[*token2.ID], tokensLockedByOthersExist bool, immediateRetries int) selectLoopStep {
+func (s *Selector) stepSelectLoop(
+	ctx context.Context,
+	owner token.OwnerFilter,
+	quantity token2.Quantity,
+	tokenType token2.Type,
+	sum token2.Quantity,
+	selected collections.Set[*token2.ID],
+	tokensLockedByOthersExist bool,
+	immediateRetries int,
+) selectLoopStep {
 	t, err := s.next()
 	if err != nil {
 		return selectLoopStep{err: errors.Wrapf(err, "failed to get tokens for [%s:%s]", owner.ID(), tokenType)}
@@ -277,7 +299,16 @@ func (s *Selector) stepSelectLoop(ctx context.Context, owner token.OwnerFilter, 
 }
 
 // runSelectLoop drives stepSelectLoop until enough tokens are selected or an error occurs.
-func (s *Selector) runSelectLoop(ctx context.Context, owner token.OwnerFilter, quantity token2.Quantity, tokenType token2.Type, sum token2.Quantity, selected collections.Set[*token2.ID], tokensLockedByOthersExist bool, immediateRetries int) ([]*token2.ID, token2.Quantity, int, error) {
+func (s *Selector) runSelectLoop(
+	ctx context.Context,
+	owner token.OwnerFilter,
+	quantity token2.Quantity,
+	tokenType token2.Type,
+	sum token2.Quantity,
+	selected collections.Set[*token2.ID],
+	tokensLockedByOthersExist bool,
+	immediateRetries int,
+) ([]*token2.ID, token2.Quantity, int, error) {
 	for {
 		step := s.stepSelectLoop(ctx, owner, quantity, tokenType, sum, selected, tokensLockedByOthersExist, immediateRetries)
 		if step.err != nil {

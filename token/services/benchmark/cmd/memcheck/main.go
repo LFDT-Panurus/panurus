@@ -504,7 +504,15 @@ func writeLine(w *tabwriter.Writer, s string) {
 }
 
 func main() {
-	p := loadProfile()
+	flag.Parse()
+	if flag.NArg() < 1 {
+		log.Fatal("Usage: memcheck <pprof_file>")
+	}
+
+	p, err := loadProfile(flag.Arg(0))
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	idxAllocSpace, idxAllocObj, idxInUseSpace, idxInUseObj := findSampleTypeIndices(p)
 	if idxAllocSpace == -1 {
@@ -518,18 +526,11 @@ func main() {
 	printUnifiedReport(statList, labelList, lineList, data.topStacks, data.totalAllocBytes, data.totalInUseBytes)
 }
 
-// loadProfile parses the pprof file named by the command's single positional argument,
-// exiting the process via log.Fatal on any usage or parse error.
-func loadProfile() *profile.Profile {
-	flag.Parse()
-	if flag.NArg() < 1 {
-		log.Fatal("Usage: memcheck <pprof_file>")
-	}
-
-	filename := flag.Arg(0)
+// loadProfile opens and parses the pprof file at the given path.
+func loadProfile(filename string) (*profile.Profile, error) {
 	f, err := os.Open(filename)
 	if err != nil {
-		log.Fatalf("Failed to open file: %v", err)
+		return nil, fmt.Errorf("failed to open file: %w", err)
 	}
 	defer func() {
 		_ = f.Close()
@@ -537,10 +538,10 @@ func loadProfile() *profile.Profile {
 
 	p, err := profile.Parse(f)
 	if err != nil {
-		log.Fatalf("Failed to parse profile: %v", err)
+		return nil, fmt.Errorf("failed to parse profile: %w", err)
 	}
 
-	return p
+	return p, nil
 }
 
 // findSampleTypeIndices locates the sample-value indices for alloc/in-use bytes and

@@ -330,6 +330,8 @@ func (s *Service) ProcessTokens(ctx context.Context, ledgerTokens []token.Ledger
 // upgrade proof. Every commitment token must come with the hash of the public parameters
 // that produced it, and those public parameters must generate the token's format, otherwise
 // the token is rejected.
+//
+//nolint:gocognit // token-upgrade re-issuance path; splitting it risks decoupling the per-token decisions from the ledger/local-store bookkeeping they must stay consistent with.
 func (s *Service) processTokensWith(ctx context.Context, ledgerTokens []token.LedgerToken, ppHashes []driver.PPHash) ([]token.Token, error) {
 	if len(ppHashes) != 0 && len(ppHashes) != len(ledgerTokens) {
 		return nil, errors.Errorf(

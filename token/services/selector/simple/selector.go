@@ -70,7 +70,15 @@ func (s *selector) concurrencyCheck(ctx context.Context, ids []*token2.ID) error
 // potentialSumWithLocked (for diagnostics). On any internal error, it unlocks everything
 // accumulated so far (including t, if it was just locked) before returning. done reports whether
 // target has now been reached.
-func (s *selector) lockAndAccumulateToken(ctx context.Context, owner string, t *token2.UnspentToken, q, sum, potentialSumWithLocked, target token2.Quantity, tokenType token2.Type, reclaim bool, toBeSpent, toBeCertified []*token2.ID) (newToBeSpent []*token2.ID, newSum, newPotentialSumWithLocked token2.Quantity, done bool, err error) {
+func (s *selector) lockAndAccumulateToken(
+	ctx context.Context,
+	owner string,
+	t *token2.UnspentToken,
+	q, sum, potentialSumWithLocked, target token2.Quantity,
+	tokenType token2.Type,
+	reclaim bool,
+	toBeSpent, toBeCertified []*token2.ID,
+) (newToBeSpent []*token2.ID, newSum, newPotentialSumWithLocked token2.Quantity, done bool, err error) {
 	if _, lockErr := s.locker.Lock(ctx, owner, &t.Id, s.txID, reclaim); lockErr != nil {
 		// A rate-limit denial from the Locker is a hard stop: abort instead of retrying.
 		if errors.Is(lockErr, token.SelectorRateLimited) {
@@ -118,7 +126,14 @@ func (s *selector) lockAndAccumulateToken(ctx context.Context, owner string, t *
 // aren't already locked by someone else, until target is reached or the iterator is exhausted.
 // It also tracks the potential sum including tokens found locked by others (for diagnostics on
 // failure), and unlocks everything it locked so far before returning an error.
-func (s *selector) collectTokensForTarget(ctx context.Context, owner string, unspentTokens driver.UnspentTokensIterator, target token2.Quantity, tokenType token2.Type, reclaim bool) (toBeSpent, toBeCertified []*token2.ID, sum, potentialSumWithLocked token2.Quantity, err error) {
+func (s *selector) collectTokensForTarget(
+	ctx context.Context,
+	owner string,
+	unspentTokens driver.UnspentTokensIterator,
+	target token2.Quantity,
+	tokenType token2.Type,
+	reclaim bool,
+) (toBeSpent, toBeCertified []*token2.ID, sum, potentialSumWithLocked token2.Quantity, err error) {
 	sum = token2.NewZeroQuantity(s.precision)
 	potentialSumWithLocked = token2.NewZeroQuantity(s.precision)
 	numNext := 0

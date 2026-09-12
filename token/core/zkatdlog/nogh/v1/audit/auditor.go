@@ -242,6 +242,8 @@ func IssueAuditValidate(infoMatcher InfoMatcher, pedersenParams []*math.G1, curv
 }
 
 // TransferAuditValidate returns a validation function for transfer actions.
+//
+//nolint:gocognit // ZK transfer audit validation; the Pedersen commitment openings and matched metadata are threaded through in a fixed order that extraction risks disturbing.
 func TransferAuditValidate(infoMatcher InfoMatcher, pedersenParams []*math.G1, curve *math.Curve, precision uint64) ValidateTransferAuditFunc {
 	return func(ctx context.Context, auditCtx *AuditContext) error {
 		// Get the transfer action
@@ -342,6 +344,8 @@ func validateIssueInputs(inputs []*issue.ActionInput, inputsMetadata []*driver.I
 }
 
 // validateIssueOutputs validates issue action outputs against metadata.
+//
+//nolint:gocognit // ZK issue-output audit validation against Pedersen commitments; same commitment-ordering risk as TransferAuditValidate above.
 func validateIssueOutputs(ctx context.Context, infoMatcher InfoMatcher, pedersenParams []*math.G1, curve *math.Curve, outputs []*token.Token, outputsMetadata []*driver.IssueOutputMetadata) error {
 	for i, output := range outputs {
 		if output == nil {

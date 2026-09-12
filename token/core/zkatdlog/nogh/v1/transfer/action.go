@@ -374,6 +374,8 @@ func validateActionInput(i int, in *ActionInput) error {
 }
 
 // Validate ensures the Action is well-formed
+//
+//nolint:gocognit // ZK transfer action validation against the public parameters; same commitment-ordering risk as the issue action's Validate.
 func (t *Action) Validate() error {
 	if len(t.Inputs) == 0 {
 		return ErrInvalidInputs
@@ -491,6 +493,8 @@ func (t *Action) Serialize() ([]byte, error) {
 }
 
 // Deserialize un-marshals a TransferAction from bytes
+//
+//nolint:gocognit // parses raw bytes directly into the crypto structures Validate depends on; same mis-split risk as the issue action's Deserialize.
 func (t *Action) Deserialize(raw []byte) error {
 	action := &actions.TransferAction{}
 	err := proto.Unmarshal(raw, action)

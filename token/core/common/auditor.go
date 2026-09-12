@@ -389,21 +389,9 @@ func listAuditTokensWithRetry(
 		// The lookup failed. Check whether any requested token belongs to a
 		// transaction that is still pending; if so, the row is expected to appear
 		// once the finality listener persists it, so wait a bit and retry.
-		retry := false
-		for _, id := range tokenIDs {
-			pending, pErr := queryEngine.IsPending(ctx, id)
-			if pErr != nil {
-				// We could not even determine the pending status: this is a hard
-				// failure, not a pending transaction. Surface both errors instead
-				// of masking them as "still pending".
-				return nil, errors.Wrapf(errors.Join(err, pErr), "failed to retrieve audit tokens, tx [%s]: cannot determine pending status of token [%s]", anchor, id)
-			}
-			if pending {
-				logger.Warnf("[%s] cannot get audit token for id [%s] because the relative transaction is pending, retry [%d/%d]: with err [%v]", anchor, id, i+1, attempts, err)
-				retry = true
-
-				break
-			}
+		retry, pendingCheckErr := anyTokenPending(ctx, logger, queryEngine, tokenIDs, anchor, err, i+1, attempts)
+		if pendingCheckErr != nil {
+			return nil, pendingCheckErr
 		}
 
 		if !retry {
@@ -432,6 +420,37 @@ func listAuditTokensWithRetry(
 	}
 
 	return nil, err
+}
+
+// anyTokenPending reports whether any of tokenIDs belongs to a still-pending
+// transaction, in which case the caller should retry rather than treat lookupErr
+// as final. It returns a non-nil error only when the pending status itself could
+// not be determined, which is a hard failure distinct from "still pending".
+func anyTokenPending(
+	ctx context.Context,
+	logger logging.Logger,
+	queryEngine driver.QueryEngine,
+	tokenIDs []*token.ID,
+	anchor driver.TokenRequestAnchor,
+	lookupErr error,
+	attempt, attempts int,
+) (bool, error) {
+	for _, id := range tokenIDs {
+		pending, err := queryEngine.IsPending(ctx, id)
+		if err != nil {
+			// We could not even determine the pending status: this is a hard
+			// failure, not a pending transaction. Surface both errors instead
+			// of masking them as "still pending".
+			return false, errors.Wrapf(errors.Join(lookupErr, err), "failed to retrieve audit tokens, tx [%s]: cannot determine pending status of token [%s]", anchor, id)
+		}
+		if pending {
+			logger.Warnf("[%s] cannot get audit token for id [%s] because the relative transaction is pending, retry [%d/%d]: with err [%v]", anchor, id, attempt, attempts, lookupErr)
+
+			return true, nil
+		}
+	}
+
+	return false, nil
 }
 
 // ValidateStructure ensures complete structural correspondence between TokenRequest and TokenRequestMetadata.
@@ -624,7 +643,15 @@ func checkIssueInputTokenType(inputMetadata *driver.IssueInputMetadata, auditTok
 // checkTransferInputTokenType verifies that the i-th transfer input's audit token exists and is
 // non-nil, updates (or checks) *actionTokenType against its type, and, if validateValueSum, adds
 // its quantity to inputSum, returning the (possibly updated) sum.
-func checkTransferInputTokenType(inputMetadata *driver.TransferInputMetadata, auditTokens map[string]*token.Token, i int, actionTokenType *token.Type, inputSum token.Quantity, validateValueSum bool, precision uint64) (token.Quantity, error) {
+func checkTransferInputTokenType(
+	inputMetadata *driver.TransferInputMetadata,
+	auditTokens map[string]*token.Token,
+	i int,
+	actionTokenType *token.Type,
+	inputSum token.Quantity,
+	validateValueSum bool,
+	precision uint64,
+) (token.Quantity, error) {
 	if inputMetadata == nil {
 		return inputSum, errors.Errorf("input metadata at index [%d] is nil", i)
 	}

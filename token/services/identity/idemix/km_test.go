@@ -208,11 +208,11 @@ func testIdentityWithEidRhNymPolicy(t *testing.T, configPath string, curveID mat
 	_, err = keyManager.DeserializeSigner(t.Context(), []byte{0, 1, 2})
 	require.Error(t, err)
 	assert.Equal(t, 3, tracker.GetCounter)
-	// deserialize a valid signer — no key-store lookups happen in DeserializeSigningIdentity
-	// now that the ephemeral sign-and-verify liveness check has been removed.
+	// deserialize a valid signer
 	signer, err := keyManager.DeserializeSigner(t.Context(), id)
 	require.NoError(t, err)
-	assert.Equal(t, 3, tracker.GetCounter)
+	assert.Equal(t, 5, tracker.GetCounter) // this is due the call to Sign used to test if the signer belong to this key manager
+	assert.Equal(t, hex.EncodeToString(keyManager.userKeySKI), tracker.GetHistory[4].Key)
 
 	// deserialize an invalid verifier
 	_, err = keyManager.DeserializeVerifier(t.Context(), nil)
@@ -225,12 +225,15 @@ func testIdentityWithEidRhNymPolicy(t *testing.T, configPath string, curveID mat
 	verifier, err := keyManager.DeserializeVerifier(t.Context(), id)
 	require.NoError(t, err)
 
-	// sign and verify — Sign fetches NymKey + UserKey (2 gets), Verify uses held Key objects (0 gets).
+	// sign and verify
 	sigma, err := signer.Sign([]byte("hello world!!!"))
 	require.NoError(t, err)
 	require.NoError(t, verifier.Verify([]byte("hello world!!!"), sigma))
-	assert.Equal(t, 5, tracker.GetCounter)
-	assert.Equal(t, hex.EncodeToString(keyManager.userKeySKI), tracker.GetHistory[4].Key)
+	assert.Equal(t, 7, tracker.GetCounter)
+	assert.Equal(t, tracker.GetHistory[3].Key, tracker.GetHistory[5].Key)
+	assert.Equal(t, tracker.GetHistory[3].Value, tracker.GetHistory[5].Value)
+	assert.Equal(t, hex.EncodeToString(keyManager.userKeySKI), tracker.GetHistory[6].Key)
+	assert.Equal(t, tracker.GetHistory[4].Value, tracker.GetHistory[6].Value)
 }
 
 func TestIdentityStandard(t *testing.T) {
@@ -440,11 +443,9 @@ func testKeyManager_DeserializeSigner(t *testing.T, configPath string, curveID m
 	require.NoError(t, err)
 	require.NoError(t, verifier.Verify(msg, sigma))
 
-	// DeserializeSigner for a same-issuer identity now succeeds: the issuer-proof check in
-	// Deserialize passes, and ownership of the nym key is not verified here. Callers that
-	// need to distinguish locally-owned identities must use the IsMe / signer-cache path.
+	// Try to deserialize id2 with provider for id, it should fail
 	_, err = keyManager.DeserializeSigner(t.Context(), id2)
-	require.NoError(t, err)
+	require.Error(t, err)
 	_, err = keyManager.DeserializeVerifier(t.Context(), id2)
 	require.NoError(t, err)
 
@@ -456,49 +457,6 @@ func testKeyManager_DeserializeSigner(t *testing.T, configPath string, curveID m
 	sigma, err = signer.Sign(msg)
 	require.NoError(t, err)
 	require.NoError(t, verifier.Verify(msg, sigma))
-}
-
-// TestDeserialize_RejectsDifferentIssuerIdentity verifies that p.Deserialize (and therefore
-// DeserializeSigningIdentity) rejects an identity issued by a different idemix issuer.
-// The sameissuer/ testdata directory contains a separate CA with a distinct IssuerPublicKey,
-// so identities it issues will fail the ZK association-proof check against the local issuer key.
-func TestDeserialize_RejectsDifferentIssuerIdentity(t *testing.T) {
-	backend, err := kvs2.NewInMemory()
-	require.NoError(t, err)
-	keyStore, err := crypto.NewKeyStore(math.FP256BN_AMCL, kvs2.Keystore(backend))
-	require.NoError(t, err)
-	csp, err := crypto.NewBCCSP(keyStore, math.FP256BN_AMCL)
-	require.NoError(t, err)
-
-	config, err := crypto.NewConfig("./testdata/fp256bn_amcl/idemix")
-	require.NoError(t, err)
-	keyManager, err := NewKeyManager(config, types.EidNymRhNym, csp)
-	require.NoError(t, err)
-
-	// Build a key manager under a genuinely different issuer (separate key store so no shared state).
-	foreignBackend, err := kvs2.NewInMemory()
-	require.NoError(t, err)
-	foreignKeyStore, err := crypto.NewKeyStore(math.FP256BN_AMCL, kvs2.Keystore(foreignBackend))
-	require.NoError(t, err)
-	foreignCSP, err := crypto.NewBCCSP(foreignKeyStore, math.FP256BN_AMCL)
-	require.NoError(t, err)
-	foreignConfig, err := crypto.NewConfig("./testdata/fp256bn_amcl/sameissuer/idemix")
-	require.NoError(t, err)
-	foreignKM, err := NewKeyManager(foreignConfig, types.EidNymRhNym, foreignCSP)
-	require.NoError(t, err)
-
-	foreignDesc, err := foreignKM.Identity(t.Context(), nil)
-	require.NoError(t, err)
-
-	// p.Deserialize verifies the ZK association proof; a different issuer's proof is invalid here.
-	_, err = keyManager.Deserialize(t.Context(), foreignDesc.Identity)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "cannot deserialize, invalid identity")
-
-	// DeserializeSigningIdentity must also fail — it delegates to Deserialize first.
-	_, err = keyManager.DeserializeSigningIdentity(t.Context(), foreignDesc.Identity)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "cannot deserialize, invalid identity")
 }
 
 func TestIdentityFromFabricCA(t *testing.T) {
@@ -773,27 +731,24 @@ func testKeyManagerErrorPaths(t *testing.T, configPath string, curveID math.Curv
 	_, err = keyManager.Info(context.Background(), []byte("test-id"), []byte{0, 1, 2})
 	require.Error(t, err)
 
-	// Create a key manager backed by a genuinely different issuer key.
-	// fp256bn_amcl sameissuer/ testdata uses a distinct IssuerPublicKey from the main idemix/ fixtures.
-	// For curves without a sameissuer fixture this block is skipped.
-	foreignConfigPath := filepath.Join(filepath.Dir(configPath), "sameissuer", filepath.Base(configPath))
-	if foreignConfig, ferr := crypto.NewConfig(foreignConfigPath); ferr == nil {
-		foreignStore, ferr := crypto.NewKeyStore(curveID, kvs2.Keystore(backend))
-		require.NoError(t, ferr)
-		foreignCSP, ferr := crypto.NewBCCSP(foreignStore, curveID)
-		require.NoError(t, ferr)
-		foreignKM, ferr := NewKeyManager(foreignConfig, types.EidNymRhNym, foreignCSP)
-		require.NoError(t, ferr)
+	// Create another valid key manager with a different config
+	config2, err := crypto.NewConfig(configPath + "2")
+	require.NoError(t, err)
+	keyStore2, err := crypto.NewKeyStore(curveID, kvs2.Keystore(backend))
+	require.NoError(t, err)
+	cryptoProvider2, err := crypto.NewBCCSP(keyStore2, curveID)
+	require.NoError(t, err)
+	keyManager2, err := NewKeyManager(config2, types.EidNymRhNym, cryptoProvider2)
+	require.NoError(t, err)
 
-		foreignDesc, ferr := foreignKM.Identity(context.Background(), nil)
-		require.NoError(t, ferr)
+	// create a valid identity descriptor using keyManager2
+	// then fail when trying to deserialize it using keyManager
+	identityDescriptor2, err := keyManager2.Identity(context.Background(), nil)
+	require.NoError(t, err)
 
-		// p.Deserialize verifies the ZK association proof against the local issuer public key;
-		// an identity from a different issuer must be rejected before the signing identity is built.
-		_, err = keyManager.DeserializeSigningIdentity(context.Background(), foreignDesc.Identity)
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "cannot deserialize, invalid identity")
-	}
+	_, err = keyManager.DeserializeSigningIdentity(context.Background(), identityDescriptor2.Identity)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed verifying verification signature")
 }
 
 // TestKeyManagerInfoErrorCases tests error cases in Info method
