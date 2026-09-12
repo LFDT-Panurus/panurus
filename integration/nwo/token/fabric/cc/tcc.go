@@ -41,7 +41,7 @@ var logger = logging.MustGetLogger()
 
 type fabricPlatform interface {
 	Topology() *topology.Topology
-	UpdateChaincode(name string, version string, path string, file string)
+	UpdateChaincode(name string, version string, opts ...topology.NamespaceOption)
 }
 
 type TCC struct {
@@ -185,7 +185,8 @@ func (p *GenericBackend) UpdatePublicParams(tms *topology3.TMS, ppRaw []byte) er
 	cc.Chaincode.PackageFile = packageFile
 	p.Fabric(tms).UpdateChaincode(cc.Chaincode.Name,
 		newChaincodeVersion,
-		cc.Chaincode.Path, cc.Chaincode.PackageFile)
+		topology.WithLegacyChaincode(cc.Chaincode.Path),
+		topology.WithPackageFile(cc.Chaincode.PackageFile))
 
 	return nil
 }
