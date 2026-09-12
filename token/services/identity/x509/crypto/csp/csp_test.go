@@ -182,7 +182,7 @@ func TestHashOperations(t *testing.T) {
 		assert.NotEmpty(t, hash)
 		// Verify the hash matches the expected SHA3-256 value
 		h := hash0.Hash(sha30.New256())
-		h.Write(msg)
+		_, _ = h.Write(msg)
 		expectedHash := h.Sum(nil)
 		assert.Equal(t, expectedHash, hash)
 	})
@@ -194,7 +194,7 @@ func TestHashOperations(t *testing.T) {
 		assert.NotEmpty(t, hash)
 		// Verify the hash matches the expected SHA3-384 value
 		h := hash0.Hash(sha30.New384())
-		h.Write(msg)
+		_, _ = h.Write(msg)
 		expectedHash := h.Sum(nil)
 		assert.Equal(t, expectedHash, hash)
 	})
@@ -207,7 +207,7 @@ func TestHashOperations(t *testing.T) {
 		require.NoError(t, err)
 		assert.NotNil(t, h)
 
-		h.Write(msg)
+		_, _ = h.Write(msg)
 		hash := h.Sum(nil)
 		assert.NotEmpty(t, hash)
 		// Verify the hash matches the expected SHA256 value

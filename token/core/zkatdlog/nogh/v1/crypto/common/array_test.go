@@ -89,8 +89,8 @@ func TestHashG1Array(t *testing.T) {
 	// compute expected by hand
 	h2 := sha256.New()
 	h2.Reset()
-	h2.Write(g1.Bytes())
-	h2.Write(g2.Bytes())
+	_, _ = h2.Write(g1.Bytes())
+	_, _ = h2.Write(g2.Bytes())
 	exp := h2.Sum(nil)
 	require.Equal(t, exp, hRes)
 }

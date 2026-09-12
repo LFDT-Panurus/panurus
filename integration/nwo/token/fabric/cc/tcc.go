@@ -107,7 +107,6 @@ func (p *GenericBackend) PrepareNamespace(tms *topology3.TMS) {
 			Path:            p.TokenChaincodePath,
 			Lang:            "golang",
 			Label:           tms.Namespace,
-			Policy:          policy,
 			SignaturePolicy: policy,
 		},
 		Channel: tms.Channel,

@@ -130,7 +130,7 @@ func (b *Backend) PrepareNamespace(tms *tokentopology.TMS) {
 func addNamespace(n *fabrictopology.Topology, tms *tokentopology.TMS, orgs ...string) {
 	policy := fabric.GetNamespacePolicy(tms)
 	if len(policy) == 0 {
-		n.AddNamespaceWithUnanimity(tms.Namespace, orgs...)
+		n.AddNamespace(tms.Namespace, fabrictopology.Unanimity(orgs...))
 
 		return
 	}
@@ -143,7 +143,7 @@ func addNamespace(n *fabrictopology.Topology, tms *tokentopology.TMS, orgs ...st
 			}
 		}
 	}
-	n.AddNamespace(tms.Namespace, policy, peers...)
+	n.AddNamespace(tms.Namespace, fabrictopology.Signature(policy), fabrictopology.WithPeers(peers...))
 }
 
 // InstallPublicParams records the public parameters of the passed TMS for installation.

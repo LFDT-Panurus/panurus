@@ -104,11 +104,11 @@ func main() {
 		enabled, err := strconv.ParseBool(config.TLS)
 		assertNoError(err, "cannot parse [%s]", config.TLS)
 		if enabled {
-			tlsKeyRaw, err := os.ReadFile(config.TLSKey) //nolint:gosec
+			tlsKeyRaw, err := os.ReadFile(config.TLSKey)
 			assertNoError(err, "cannot read tls key at [%s]", config.TLSKey)
-			tlsCertRaw, err := os.ReadFile(config.TLSCert) //nolint:gosec
+			tlsCertRaw, err := os.ReadFile(config.TLSCert)
 			assertNoError(err, "cannot read tls cert at [%s]", config.TLSKey)
-			tlsCACertsRaw, err := os.ReadFile(config.TLSCACertsFilePath) //nolint:gosec
+			tlsCACertsRaw, err := os.ReadFile(config.TLSCACertsFilePath)
 			assertNoError(err, "cannot read tls ca certs at [%s]", config.TLSCACertsFilePath)
 
 			tlsProps.Key = tlsKeyRaw
