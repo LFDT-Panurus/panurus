@@ -57,7 +57,7 @@ func (b *builder) WriteValueTuples(tuples [][]Serializable) Builder {
 	if len(tuples) == 0 {
 		return b
 	}
-	cols := len(tuples[0])
+	assertRectangular(tuples)
 	for i, tuple := range tuples {
 		if i > 0 {
 			b.WriteString(", ")
@@ -70,9 +70,6 @@ func (b *builder) WriteValueTuples(tuples [][]Serializable) Builder {
 			cell.WriteString(b)
 		}
 		b.WriteRune(')')
-		if len(tuple) != cols {
-			panic("wrong length")
-		}
 	}
 
 	return b
@@ -117,6 +114,7 @@ func (b *builder) WriteTuples(tuples []Tuple) Builder {
 	if len(tuples) == 0 {
 		return b
 	}
+	assertRectangular(tuples)
 	rows, cols := len(tuples), len(tuples[0])
 	b.WriteString("($")
 	b.WriteString(strconv.Itoa(*b.pc))
@@ -142,6 +140,44 @@ func (b *builder) WriteTuples(tuples []Tuple) Builder {
 	}
 
 	return b
+}
+
+// assertRectangular panics unless every row holds the same number of cells as
+// the first one. Callers invoke it before writing anything, so a ragged input
+// can never leave a half-built fragment behind in the builder.
+func assertRectangular[C any](rows [][]C) {
+	cols := len(rows[0])
+	for i, row := range rows {
+		if len(row) != cols {
+			panic("wrong length: row " + strconv.Itoa(i) + " has " +
+				strconv.Itoa(len(row)) + " cells, expected " + strconv.Itoa(cols))
+		}
+	}
+}
+
+// WriteInTuple renders the tuple membership test `(fields...) IN (vals...)`
+// using the SQL standard row-value form, which both SQLite (>= 3.15) and
+// Postgres support natively. A single field compared against a single value
+// collapses to plain equality.
+//
+// Callers must have already ruled out empty input (see cond.InTuple, which
+// returns a sentinel in that case); the guard here is defensive only.
+func WriteInTuple(fields []Serializable, vals []Tuple, sb Builder) {
+	if len(fields) == 0 || len(vals) == 0 {
+		return
+	}
+	if len(fields) == 1 && len(vals) == 1 {
+		sb.WriteSerializables(fields[0]).
+			WriteString(" = ").
+			WriteParam(vals[0][0])
+
+		return
+	}
+	sb.WriteString("(").
+		WriteSerializables(ToSerializables(fields)...).
+		WriteString(") IN (").
+		WriteTuples(vals).
+		WriteString(")")
 }
 
 func ToSerializables[S Serializable](vs []S) []Serializable {

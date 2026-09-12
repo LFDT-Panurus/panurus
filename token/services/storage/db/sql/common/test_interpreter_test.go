@@ -10,7 +10,6 @@ import (
 	"time"
 
 	common2 "github.com/LFDT-Panurus/panurus/token/services/storage/db/sql/query/common"
-	"github.com/LFDT-Panurus/panurus/token/services/storage/db/sql/query/cond"
 )
 
 var signs = map[bool]rune{true: '+', false: '-'}
@@ -35,17 +34,5 @@ func (i *testInterpreter) TimeOffset(duration time.Duration, sb common2.Builder)
 }
 
 func (i *testInterpreter) InTuple(fields []common2.Serializable, vals []common2.Tuple, sb common2.Builder) {
-	if len(vals) == 0 || len(fields) == 0 {
-		return
-	}
-	if len(vals) == 1 && len(fields) == 1 {
-		sb.WriteConditionSerializable(cond.CmpVal(fields[0], "=", vals[0][0]), i)
-
-		return
-	}
-	sb.WriteString("(").
-		WriteSerializables(common2.ToSerializables(fields)...).
-		WriteString(") IN (").
-		WriteTuples(vals).
-		WriteString(")")
+	common2.WriteInTuple(fields, vals, sb)
 }

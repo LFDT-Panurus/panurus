@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/LFDT-Panurus/panurus/token/services/storage/db/sql/query/common"
-	cond2 "github.com/LFDT-Panurus/panurus/token/services/storage/db/sql/query/cond"
 )
 
 var signs = map[bool]rune{true: '+', false: '-'}
@@ -33,17 +32,10 @@ func (i *interpreter) TimeOffset(duration time.Duration, sb common.Builder) {
 		WriteString(" seconds'")
 }
 
+// InTuple renders a tuple membership test with Postgres' native row-value IN,
+// e.g. `(tx_id, idx) IN (($1, $2), ($3, $4))`. The previous OR-of-ANDs
+// expansion was equivalent but produced far more SQL text for large id lists
+// and hid the composite comparison from the planner.
 func (i *interpreter) InTuple(fields []common.Serializable, vals []common.Tuple, sb common.Builder) {
-	if len(vals) == 0 || len(fields) == 0 {
-		return
-	}
-	ors := make([]cond2.Condition, len(vals))
-	for j, tuple := range vals {
-		ands := make([]cond2.Condition, len(tuple))
-		for k, val := range tuple {
-			ands[k] = cond2.CmpVal(fields[k], "=", val)
-		}
-		ors[j] = cond2.And(ands...)
-	}
-	sb.WriteConditionSerializable(cond2.Or(ors...), i)
+	common.WriteInTuple(fields, vals, sb)
 }

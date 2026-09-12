@@ -25,17 +25,12 @@ func mockTransactionsStore(db *sql.DB) *common2.TransactionStore {
 	return store
 }
 
-var queryConstructorTraits = common2.QueryConstructorTraits{
-	SupportsIN:          false,
-	MultipleParenthesis: true,
-}
-
 func TestGetTokenRequest(t *testing.T) {
 	common2.TestGetTokenRequest(t, mockTransactionsStore)
 }
 
 func TestQueryMovements(t *testing.T) {
-	common2.TestQueryMovements(t, mockTransactionsStore, queryConstructorTraits)
+	common2.TestQueryMovements(t, mockTransactionsStore)
 }
 
 func TestQueryTransactions(t *testing.T) {
@@ -47,7 +42,7 @@ func TestGetStatus(t *testing.T) {
 }
 
 func TestQueryTokenRequests(t *testing.T) {
-	common2.TestQueryTokenRequests(t, mockTransactionsStore, queryConstructorTraits)
+	common2.TestQueryTokenRequests(t, mockTransactionsStore)
 }
 
 func TestGetTransactionEndorsementAcks(t *testing.T) {

@@ -8,8 +8,8 @@ package pagination
 
 import (
 	"encoding/json"
-	"fmt"
 
+	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/common/driver"
 )
 
@@ -18,13 +18,18 @@ type offset struct {
 	PageSize int `json:"pageSize"`
 }
 
-// Offset creates a pagination using OFFSET
+// Offset creates a pagination using LIMIT/OFFSET.
+//
+// Note that `OFFSET n` makes the database scan and discard n rows on every page,
+// so the cost of fetching a page grows with its distance from the start. It is
+// the right choice for random access into a small number of pages; for walking a
+// large result set from beginning to end, prefer Keyset.
 func Offset(os, pageSize int) (*offset, error) {
 	if os < 0 {
-		return nil, fmt.Errorf("offset shoud be grater than zero. Offset: %d", os)
+		return nil, errors.Errorf("offset must not be negative. Offset: %d", os)
 	}
 	if pageSize < 0 {
-		return nil, fmt.Errorf("page size shoud be grater than zero. pageSize: %d", pageSize)
+		return nil, errors.Errorf("page size must not be negative. pageSize: %d", pageSize)
 	}
 
 	return &offset{Offset: os, PageSize: pageSize}, nil
