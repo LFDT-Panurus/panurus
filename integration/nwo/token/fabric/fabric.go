@@ -67,16 +67,14 @@ type NetworkHandler struct {
 
 func NewNetworkHandler(tokenPlatform common2.TokenPlatform, builder api2.Builder, backend Backend) *NetworkHandler {
 	return &NetworkHandler{
-		NetworkHandler: common2.NetworkHandler{
-			TokenPlatform:     tokenPlatform,
-			EventuallyTimeout: 10 * time.Minute,
-			CryptoMaterialGenerators: map[string]generators.CryptoMaterialGenerator{
-				fabtokenv1.DriverIdentifier:     fabtokenv1.NewCryptoMaterialGenerator(tokenPlatform, builder),
-				zkatdlognoghv1.DriverIdentifier: zkatdlognoghv1.NewCryptoMaterialGenerator(tokenPlatform, math3.BN254, builder),
-			},
-			CASupports: map[string]common2.CAFactory{
-				zkatdlognoghv1.DriverIdentifier: common2.NewIdemixCASupport,
-			},
+		TokenPlatform:     tokenPlatform,
+		EventuallyTimeout: 10 * time.Minute,
+		CryptoMaterialGenerators: map[string]generators.CryptoMaterialGenerator{
+			fabtokenv1.DriverIdentifier:     fabtokenv1.NewCryptoMaterialGenerator(tokenPlatform, builder),
+			zkatdlognoghv1.DriverIdentifier: zkatdlognoghv1.NewCryptoMaterialGenerator(tokenPlatform, math3.BN254, builder),
+		},
+		CASupports: map[string]common2.CAFactory{
+			zkatdlognoghv1.DriverIdentifier: common2.NewIdemixCASupport,
 		},
 		Entries: map[string]*Entry{},
 		Backend: backend,
