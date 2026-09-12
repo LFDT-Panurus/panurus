@@ -33,6 +33,7 @@ import (
 	_ "github.com/LFDT-Panurus/panurus/token/services/logging" // registers the "panurus" metric namespace replacer
 	fabricxqueue "github.com/LFDT-Panurus/panurus/token/services/network/fabricx/finality/queue"
 	"github.com/LFDT-Panurus/panurus/token/services/selector/sherdlock"
+	"github.com/LFDT-Panurus/panurus/token/services/storage/services/checks"
 	"github.com/LFDT-Panurus/panurus/token/services/ttx"
 	ttxfinality "github.com/LFDT-Panurus/panurus/token/services/ttx/finality"
 	jsession "github.com/LFDT-Panurus/panurus/token/services/utils/json/session"
@@ -107,11 +108,41 @@ type group struct {
 	build func(metrics.Provider)
 }
 
-// tokenDrivers are the two files that turn the container's metrics provider into
-// a TMS-scoped one. Every tmsScoped group is reached from here.
-var tokenDrivers = []string{
-	"token/core/fabtoken/v1/driver/driver.go",
-	"token/core/zkatdlog/nogh/v1/driver/driver.go",
+// tmsProviderSite is one production file that turns the container's plain
+// metrics provider into a TMS-scoped one.
+type tmsProviderSite struct {
+	// file is repository-relative.
+	file string
+	// call is the exact commonmetrics.NewTMSProvider(...) invocation this file
+	// uses. Pinned rather than inferred: passing the plain provider straight to a
+	// constructor instead would re-export its metrics under their own package
+	// prefix and invalidate the scope column silently.
+	call string
+	// providerRef is how this file names the plain provider it received from the
+	// dependency-injection container. It must reach nothing but call, or metrics
+	// built from what it is handed to are exported under their own package
+	// prefix instead of the wrapper's - see TestPlainProviderDoesNotBypassTheWrapper.
+	providerRef string
+}
+
+// tokenDrivers are the files that build a TMS-scoped metrics provider. Every
+// tmsScoped group is reached from here.
+var tokenDrivers = []tmsProviderSite{
+	{
+		file:        "token/core/fabtoken/v1/driver/driver.go",
+		call:        "metrics.NewTMSProvider(tmsConfig.ID(), d.metricsProvider)",
+		providerRef: "d.metricsProvider",
+	},
+	{
+		file:        "token/core/zkatdlog/nogh/v1/driver/driver.go",
+		call:        "metrics.NewTMSProvider(tmsConfig.ID(), d.metricsProvider)",
+		providerRef: "d.metricsProvider",
+	},
+	{
+		file:        "token/sdk/db/checks.go",
+		call:        "metrics.NewTMSProvider(tmsID, s.metricsProvider)",
+		providerRef: "s.metricsProvider",
+	},
 }
 
 // groups enumerates every metrics constructor in the SDK. A new constructor must
@@ -198,6 +229,15 @@ var groups = []group{
 			{file: "token/services/identity/role/wallets.go", call: "NewMetrics(metricsProvider)"},
 		},
 		build: func(p metrics.Provider) { role.NewMetrics(p) },
+	},
+	{
+		subsystem: "Checks: ledger drift",
+		source:    "token/services/storage/services/checks/metrics.go",
+		scope:     tmsScoped,
+		wiring: []wiringSite{
+			{file: "token/sdk/db/checks.go", call: "checks.NewMetrics(metrics.NewTMSProvider(tmsID, s.metricsProvider))"},
+		},
+		build: func(p metrics.Provider) { checks.NewMetrics(p) },
 	},
 	{
 		subsystem: "TTX: transaction lifecycle",
@@ -389,20 +429,13 @@ func TestExportedNamesCarryPackagePrefix(t *testing.T) {
 // under, because commonmetrics.tmsProvider is the caller Prometheus sees.
 const tmsWrapperPrefix = "panurus_core_common_metrics_"
 
-// tmsProviderCall is the expression that puts the TMS-scoped groups behind the
-// wrapper. Passing d.metricsProvider directly instead would re-export all of
-// them under their own package prefixes and invalidate most of the reference
-// page - the exact failure this package exists to prevent - so the expression is
-// pinned rather than inferred.
-const tmsProviderCall = "metrics.NewTMSProvider(tmsConfig.ID(), d.metricsProvider)"
-
 // tmsProviderPattern matches a call to commonmetrics.NewTMSProvider under any
 // import alias ending in "metrics". It deliberately does not match the unrelated
 // ftscore.NewTMSProvider in token/core/tms.go.
 var tmsProviderPattern = regexp.MustCompile(`\b\w*metrics\.NewTMSProvider\(`)
 
 // TestTMSScopedProviderWiringIsIntact pins the wiring the scope column depends
-// on. The column claims that eight groups are exported under the wrapper's
+// on. The column claims that nine groups are exported under the wrapper's
 // package and eight are not, and nothing in the constructors themselves says so:
 // it is decided entirely by which provider production hands in. This test
 // establishes it by exhaustion - the token drivers are the only files that build
@@ -410,41 +443,42 @@ var tmsProviderPattern = regexp.MustCompile(`\b\w*metrics\.NewTMSProvider\(`)
 // group reached from anywhere else cannot be TMS-scoped.
 func TestTMSScopedProviderWiringIsIntact(t *testing.T) {
 	found := grepRepo(t, tmsProviderPattern)
-	assert.ElementsMatch(t, tokenDrivers, found,
+
+	wantFiles := make([]string, len(tokenDrivers))
+	for i, d := range tokenDrivers {
+		wantFiles[i] = d.file
+	}
+	assert.ElementsMatch(t, wantFiles, found,
 		"the set of files building a TMS-scoped metrics provider has changed. "+
 			"Every metric reached from a new call site is exported under %q instead of its own package, "+
 			"so re-check the scope column and the names in %s, then update tokenDrivers.",
 		tmsWrapperPrefix, referenceDoc)
 
-	for _, driver := range tokenDrivers {
-		assertFileContains(t, driver, tmsProviderCall,
+	for _, d := range tokenDrivers {
+		assertFileContains(t, d.file, d.call,
 			"%s no longer wraps the container's metrics provider with %s. "+
-				"Without the wrapper the driver and identity metrics are exported under their own "+
-				"package prefixes, and every %s* name in %s is wrong.",
-			driver, tmsProviderCall, tmsWrapperPrefix, referenceDoc)
+				"Without the wrapper its metrics are exported under their own "+
+				"package prefix, and every %s* name in %s built from it is wrong.",
+			d.file, d.call, tmsWrapperPrefix, referenceDoc)
 	}
 }
-
-// plainProviderRef is how a token driver names the provider it receives from the
-// dependency-injection container.
-const plainProviderRef = "d.metricsProvider"
 
 // TestPlainProviderDoesNotBypassTheWrapper closes the gap that pinning the
 // wrapper alone leaves open. TestTMSScopedProviderWiringIsIntact establishes that
 // a TMS-scoped provider is *built* in the token drivers and nowhere else, which is
-// not the same as the tmsScoped groups actually *receiving* it: handing
-// d.metricsProvider to the wallet service instead would export the six identity
-// and cache metrics under their own package prefixes, blank six dashboard panels,
-// and leave every other check in this package green. The container's provider is
-// therefore required to appear exactly once per driver - as the argument to
-// NewTMSProvider - so any second use of it fails here.
+// not the same as the tmsScoped groups actually *receiving* it: handing the plain
+// provider to the wallet service instead would export the six identity and cache
+// metrics under their own package prefixes, blank six dashboard panels, and leave
+// every other check in this package green. The container's provider is therefore
+// required to appear exactly once per driver - as the argument to NewTMSProvider -
+// so any second use of it fails here.
 func TestPlainProviderDoesNotBypassTheWrapper(t *testing.T) {
-	for _, driver := range tokenDrivers {
-		assert.Equal(t, 1, strings.Count(readRepoFile(t, driver), plainProviderRef),
+	for _, d := range tokenDrivers {
+		assert.Equal(t, 1, strings.Count(readRepoFile(t, d.file), d.providerRef),
 			"%s uses %s more than once. The container's provider must reach nothing but %s, "+
 				"otherwise the metrics created from what it is handed to are exported under their "+
 				"own package prefixes instead of %q, and those names in %s are wrong.",
-			driver, plainProviderRef, tmsProviderCall, tmsWrapperPrefix, referenceDoc)
+			d.file, d.providerRef, d.call, tmsWrapperPrefix, referenceDoc)
 	}
 }
 

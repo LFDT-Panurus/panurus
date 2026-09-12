@@ -53,6 +53,7 @@ var tokenTransactionDBCases = []struct {
 	{"Rollback", TRollback},
 	{"TransactionQueries", TTransactionQueries},
 	{"TEndorserAcks", TEndorserAcks},
+	{"Findings", TFindings},
 }
 
 func TFailsIfRequestDoesNotExist(t *testing.T, db driver3.TokenTransactionStore) {
@@ -933,4 +934,100 @@ func createTestTransaction(t *testing.T, db driver3.TokenTransactionStore, txID 
 	if err := w.Commit(); err != nil {
 		t.Fatalf("error committing transaction while trying to test something else: %s", err)
 	}
+}
+
+// TFindings exercises the drift findings table: a repeated finding is aged rather
+// than stored twice, a finding a sweep stops reporting is closed, and one that
+// comes back is reopened.
+func TFindings(t *testing.T, db driver3.TokenTransactionStore) {
+	t.Helper()
+	ctx := t.Context()
+
+	first := time.Now().UTC()
+	findings := []driver3.FindingRecord{
+		{Key: "critical-one", Checker: "Check A", Code: "code_a", Severity: 2, TxID: "tx1", TokenID: "tx1:0", Message: "bad"},
+		{Key: "warning-one", Checker: "Check B", Code: "code_b", Severity: 1, TxID: "tx2", Message: "meh"},
+	}
+	require.NoError(t, db.UpsertFindings(ctx, findings, first))
+
+	stored, err := db.QueryFindings(ctx, driver3.QueryFindingsParams{})
+	require.NoError(t, err)
+	require.Len(t, stored, 2)
+	// worst first
+	assert.Equal(t, "critical-one", stored[0].Key)
+	assert.Equal(t, "Check A", stored[0].Checker)
+	assert.Equal(t, "tx1:0", stored[0].TokenID)
+	assert.Equal(t, int64(1), stored[0].Occurrences)
+	assert.Nil(t, stored[0].ResolvedAt)
+	assert.Equal(t, "warning-one", stored[1].Key)
+
+	// the same problem seen again ages the row instead of adding one
+	second := first.Add(time.Minute)
+	aged := []driver3.FindingRecord{findings[0]}
+	aged[0].Message = "still bad"
+	require.NoError(t, db.UpsertFindings(ctx, aged, second))
+
+	stored, err = db.QueryFindings(ctx, driver3.QueryFindingsParams{Checkers: []string{"Check A"}})
+	require.NoError(t, err)
+	require.Len(t, stored, 1)
+	assert.Equal(t, int64(2), stored[0].Occurrences)
+	assert.Equal(t, "still bad", stored[0].Message)
+	assert.WithinDuration(t, first, stored[0].FirstSeen, time.Second)
+	assert.WithinDuration(t, second, stored[0].LastSeen, time.Second)
+
+	// the second sweep did not report Check B's finding, so it is closed
+	resolved, err := db.ResolveFindingsNotSeenSince(ctx, []string{"Check A", "Check B"}, second)
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), resolved)
+
+	stored, err = db.QueryFindings(ctx, driver3.QueryFindingsParams{})
+	require.NoError(t, err)
+	require.Len(t, stored, 1)
+	assert.Equal(t, "critical-one", stored[0].Key)
+
+	stored, err = db.QueryFindings(ctx, driver3.QueryFindingsParams{IncludeResolved: true})
+	require.NoError(t, err)
+	require.Len(t, stored, 2)
+
+	// a checker that did not run may not close anything
+	resolved, err = db.ResolveFindingsNotSeenSince(ctx, nil, second.Add(time.Minute))
+	require.NoError(t, err)
+	assert.Equal(t, int64(0), resolved)
+
+	// a closed finding that comes back is reopened, not duplicated
+	third := second.Add(2 * time.Minute)
+	require.NoError(t, db.UpsertFindings(ctx, []driver3.FindingRecord{findings[1]}, third))
+	stored, err = db.QueryFindings(ctx, driver3.QueryFindingsParams{Checkers: []string{"Check B"}})
+	require.NoError(t, err)
+	require.Len(t, stored, 1)
+	assert.Nil(t, stored[0].ResolvedAt)
+	assert.Equal(t, int64(2), stored[0].Occurrences)
+
+	// filters
+	stored, err = db.QueryFindings(ctx, driver3.QueryFindingsParams{MinSeverity: 2})
+	require.NoError(t, err)
+	require.Len(t, stored, 1)
+	assert.Equal(t, "critical-one", stored[0].Key)
+
+	stored, err = db.QueryFindings(ctx, driver3.QueryFindingsParams{Codes: []string{"code_b"}})
+	require.NoError(t, err)
+	require.Len(t, stored, 1)
+	assert.Equal(t, "warning-one", stored[0].Key)
+
+	stored, err = db.QueryFindings(ctx, driver3.QueryFindingsParams{Limit: 1})
+	require.NoError(t, err)
+	require.Len(t, stored, 1)
+
+	// an empty sweep is a no-op rather than an error
+	require.NoError(t, db.UpsertFindings(ctx, nil, third))
+
+	// the same key twice in one sweep must not make the insert conflict with itself
+	duplicate := driver3.FindingRecord{Key: "dup", Checker: "Check C", Code: "code_c", Severity: 1, Message: "one"}
+	other := duplicate
+	other.Message = "two"
+	require.NoError(t, db.UpsertFindings(ctx, []driver3.FindingRecord{duplicate, other}, third))
+	stored, err = db.QueryFindings(ctx, driver3.QueryFindingsParams{Checkers: []string{"Check C"}})
+	require.NoError(t, err)
+	require.Len(t, stored, 1)
+	assert.Equal(t, "two", stored[0].Message)
 }

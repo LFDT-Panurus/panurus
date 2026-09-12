@@ -109,3 +109,13 @@ func TestTMSProvider(t *testing.T) {
 		assert.Equal(t, expectedLabels, mp.histogram.labels)
 	})
 }
+
+// TestTMSProvider_NilProviderStaysNil guards against the typed-nil trap: were
+// NewTMSProvider to return *tmsProvider instead of Provider, a nil input would
+// come back as a non-nil interface value wrapping a nil pointer, and any
+// caller's `== nil` check downstream (checks.NewMetrics's disabled-metrics
+// fallback, for one) would silently miss it and panic on the first metric.
+func TestTMSProvider_NilProviderStaysNil(t *testing.T) {
+	p := NewTMSProvider(token.TMSID{Network: "n1"}, nil)
+	assert.Nil(t, p)
+}

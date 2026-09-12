@@ -76,6 +76,7 @@ type transactionTables struct {
 	Transactions          string
 	Requests              string
 	TransactionEndorseAck string
+	Findings              string
 }
 
 type TransactionStore struct {
@@ -156,6 +157,7 @@ func NewOwnerTransactionStore(readDB, writeDB *sql.DB, tables TableNames, ci com
 		Transactions:          tables.Transactions,
 		Requests:              tables.Requests,
 		TransactionEndorseAck: tables.TransactionEndorseAck,
+		Findings:              tables.Findings,
 	}, ci, pi, nil, nil), nil
 }
 
@@ -172,6 +174,7 @@ func NewTransactionStoreWithNotifierAndRecovery(
 		Transactions:          tables.Transactions,
 		Requests:              tables.Requests,
 		TransactionEndorseAck: tables.TransactionEndorseAck,
+		Findings:              tables.Findings,
 	}, ci, pi, notifier, recoveryLeaderFactory), nil
 }
 
@@ -423,6 +426,16 @@ func (db *TransactionStore) AcquireRecoveryLeadership(ctx context.Context) (dbdr
 	return db.recoveryLeaderFactory(ctx, db.writeDB)
 }
 
+// AcquireLeadership returns a leadership handle for an arbitrary caller-chosen
+// lockID, independent of the recovery lock bound at construction. It exists for
+// callers that need their own leader election - such as the ledger drift checks
+// sweep - so they never contend with the recovery sweep for the same lock.
+// The default implementation grants leadership locally: backends that support
+// real distributed locking (e.g. postgres) override it.
+func (db *TransactionStore) AcquireLeadership(context.Context, int64) (dbdriver.RecoveryLeadership, bool, error) {
+	return noopRecoveryLeadership{}, true, nil
+}
+
 // ClaimPendingTransactions returns a claimed batch of Pending transactions.
 // The default SQL implementation is permissive and does not persist recovery claims.
 // tx_id and stored_at are projected directly from the requests table — the
@@ -613,7 +626,7 @@ func (db *TransactionStore) GetSchema() string {
 		db.table.Transactions, db.table.Requests, db.table.Transactions, db.table.Transactions, db.table.Transactions, db.table.Transactions, db.table.Transactions, db.table.Transactions, db.table.Transactions, db.table.Transactions,
 		db.table.Movements, db.table.Requests, db.table.Movements, db.table.Movements, db.table.Movements, db.table.Movements,
 		db.table.TransactionEndorseAck, db.table.TransactionEndorseAck, db.table.TransactionEndorseAck,
-	)
+	) + db.getFindingsSchema()
 }
 
 func (db *TransactionStore) NewTransactionStoreTransaction() (dbdriver.TransactionStoreTransaction, error) {

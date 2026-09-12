@@ -417,3 +417,30 @@ wrapper at all, and need query-level work instead:
 
 The opaque `Keystore.Put` value and input-size caps for variadic id lists
 (`DeleteTokens`, `GetTokens`) are in the same follow-up.
+
+## Ledger Drift Checks
+
+The Storage Service includes **Ledger Drift Checks**, a background sweep that compares what the node has stored against what the ledger says and reports every place the two disagree.
+
+For detailed documentation on the checks, their findings, configuration and metrics, see [**Ledger Drift Checks**](storage/checks.md).
+
+### Architecture
+
+The sweep is started by the check service provider, which the auditor and owner services already ask for a check service once per TMS. A node therefore runs one sweep per store it owns: `owner` over the `TTXDB` and `auditor` over the `AuditDB`. Like recovery and cleanup it elects a leader through a PostgreSQL advisory lock, on a lock id of its own so the sweeps do not wait on each other.
+
+### What It Checks
+
+- **Transaction Check**: the status of every locally stored transaction against the ledger's
+- **Unspent Tokens Check**: the content of every locally held unspent token against the ledger's copy
+- **Token Spendability Check**: whether every locally held unspent token can still be spent by the current TMS
+- **Local Completeness Check**: the outputs every confirmed transaction should have written locally against what is actually stored. This is the ledger-to-local direction the other checks cannot see, and the one that costs the owner money when it goes wrong
+
+The first three are also what the on-demand `Check` call on the auditor and owner services runs. The fourth rebuilds every confirmed transaction, so it runs in the background sweep only.
+
+### Findings
+
+Each divergence is recorded as a finding with a stable key, a code and a severity, in a findings table on the transaction store. A sweep ages a finding it sees again rather than storing it twice, and closes one it stops seeing, so the open findings are always the current state rather than a growing log. A check that could not complete never closes its own findings, so an unreachable ledger cannot be mistaken for a clean bill of health.
+
+### Configuration
+
+Drift check behavior is controlled by the `token.tms.<name>.services.storage.checks` configuration section. See [**Ledger Drift Checks**](storage/checks.md) for the parameters.

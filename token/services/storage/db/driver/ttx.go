@@ -93,6 +93,11 @@ type TransactionStore interface {
 	// If acquired is false, leadership was not obtained and the returned lease must be nil.
 	AcquireRecoveryLeadership(ctx context.Context) (RecoveryLeadership, bool, error)
 
+	// AcquireLeadership tries to acquire the PostgreSQL advisory lock identified by lockID,
+	// for a leader election independent of the recovery sweep's own lock.
+	// If acquired is false, leadership was not obtained and the returned lease must be nil.
+	AcquireLeadership(ctx context.Context, lockID int64) (RecoveryLeadership, bool, error)
+
 	// ClaimPendingTransactions atomically claims a batch of Pending transactions for recovery processing.
 	// Transactions whose recovery lease expired are eligible again.
 	// Returns the minimal projection (TxID + StoredAt) needed by the recovery loop;
@@ -105,6 +110,8 @@ type TransactionStore interface {
 
 	// Notifier returns a TransactionNotifier for this store to subscribe to transaction status changes.
 	Notifier() (TransactionNotifier, error)
+
+	FindingsStore
 }
 
 type TransactionEndorsementAckStore interface {
