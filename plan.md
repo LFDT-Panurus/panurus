@@ -74,11 +74,11 @@ absorb any resulting API/lint breakage, align pinned infra versions, and get
   this "workflow step already rewrote go.mod/go.sum and ran `make tidy` itself"
   scenario), after confirming `make tidy` had already been run and produced no further
   diff.
-- **Open item**: golangci-lint needed locally is v2.13.2 (to satisfy the go1.27.1
-  language-version check), while `Makefile:260` still pins v2.12.2. CI will hit the same
-  incompatibility with the pinned version. Flagging for the user to decide: bump the
-  Makefile pin, or confirm CI's runner already has a newer golangci-lint. Not changed in
-  this branch since it's outside the scope of the FSC bump itself.
+- **Resolved**: bumped `Makefile:260`'s golangci-lint install pin from v2.12.2 to
+  v2.13.2 (matches both the version already installed locally and the current latest
+  upstream release), since v2.12.2 can't satisfy the go1.27.1 language-version check
+  this FSC bump requires. Re-ran `make checks-no-tidy` and `make lint-auto-fix` after
+  the bump — both clean (9/9 modules report "0 issues.").
 - **Bugfix beyond the mechanical bump**: `token/services/selector/sherdlock/fetcher.go`'s
   `mixedFetcher.UnspentTokensIteratorBy` did an unchecked type assertion
   `it.(interface{ HasNext() bool }).HasNext()` on the iterator returned by the eager
