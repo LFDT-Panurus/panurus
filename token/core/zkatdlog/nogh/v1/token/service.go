@@ -203,16 +203,16 @@ func (s *TokensService) DeserializeToken(ctx context.Context, outputFormat token
 	}
 
 	return &Token{
-		Owner: fabToken.Owner,
-		Data:  tokens[0],
-	}, &Metadata{
-		Type:           fabToken.Type,
-		Value:          math.NewCachedZrFromInt(curve, value),
-		BlindingFactor: meta[0].BlindingFactor,
-	}, &UpgradeWitness{
-		FabToken:       fabToken,
-		BlindingFactor: meta[0].BlindingFactor,
-	}, nil
+			Owner: fabToken.Owner,
+			Data:  tokens[0],
+		}, &Metadata{
+			Type:           fabToken.Type,
+			Value:          math.NewCachedZrFromInt(curve, value),
+			BlindingFactor: meta[0].BlindingFactor,
+		}, &UpgradeWitness{
+			FabToken:       fabToken,
+			BlindingFactor: meta[0].BlindingFactor,
+		}, nil
 }
 
 // deserializeTokenWithOutputTokenFormat deserializes the token using the default ZKAT-DLOG format.

@@ -90,6 +90,46 @@ reported are worth knowing when a suite goes red:
   [network:channel:namespace:driver]`). A process that dies with
   `panic: failed updating pps` is running an old build.
 
+## Chaincode Build Path: Go External Builder
+
+Legacy (non-CCaaS) Go chaincode is compiled by a Fabric **external builder**
+(`ci/external-builders/golang`), not by the peer's built-in ccenv Docker
+build. `integration/nwo/fabricbuilder.NewPlatformFactory` wraps NWO's default
+`"fabric"` platform factory and appends this builder to every generated
+network's `core.yaml` (`chaincode.externalBuilders`); it is registered in
+`integration/token/test_utils.go`'s `TestSuite.Setup`. This exists because
+`hyperledger/fabric-ccenv:3.1` bundles an older Go toolchain than
+`fabric-smart-client` requires — building with the external builder uses the
+*host's* `go` instead, avoiding the version mismatch.
+
+Practical implications for debugging:
+
+- **No `fabric-ccenv`/chaincode container is created** for this chaincode.
+  `docker ps`/`docker logs` on a ccenv-style container will show nothing —
+  the compiled chaincode runs as a plain host process launched by
+  `ci/external-builders/golang/bin/run`.
+- **Build/run output goes to the peer's own log**, inline with the rest of
+  that peer's log lines (same log file/location as in "Log Locations"
+  above), not to a separate container log. A chaincode compile failure shows
+  up as a `go build` error captured by the peer's builder invocation.
+- **To debug the builder scripts themselves**, run them by hand: `detect`
+  takes `<chaincode-source-dir> <chaincode-metadata-dir>`, `build` takes
+  `<chaincode-source-dir> <chaincode-metadata-dir> <build-output-dir>`,
+  `release` takes `<build-output-dir> <release-output-dir>`, and `run` takes
+  `<build-output-dir> <run-metadata-dir>` — the peer always calls them with
+  these positional arguments, so pointing them at a real packaged chaincode
+  directory (extracted `code.tar.gz` + `metadata.json`) reproduces the exact
+  failure outside the test run.
+- **`GOCACHE`/`GOPATH`/`GOMODCACHE`/`PATH`/etc. are explicitly propagated**
+  from the host environment into the builder via `PropagateEnvironment` in
+  `fabricbuilder.propagatedEnv` — if the build fails only in CI, check
+  whether a needed Go env var is missing from that list rather than assuming
+  a code problem.
+- A `Header.DataHash is different from Hash(block.Data)` failure during
+  channel join is unrelated to this builder — it means the local `$FAB_BINS`
+  binaries are a mismatched set (e.g. `configtxgen` built separately from
+  `peer`/`orderer`). Re-run `make download-fabric` to get a consistent set.
+
 ## Debugging Techniques
 - **Manual Inspection**: Use `time.Sleep()` or pause loops in tests to inspect Docker state
 - **Network Preservation**: Check for `no-cleanup` option or manually comment test suite cleanup

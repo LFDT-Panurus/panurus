@@ -1,0 +1,42 @@
+#!/bin/bash
+#
+# Copyright IBM Corp. All Rights Reserved.
+#
+# SPDX-License-Identifier: Apache-2.0
+#
+# Fabric external builder "run" phase: launches the chaincode binary built by
+# bin/build as a local process, wiring up the mTLS material and peer address
+# the peer hands us in chaincode.json.
+set -euo pipefail
+
+BUILD_OUTPUT_DIR="$1"
+RUN_METADATA_DIR="$2"
+
+CHAINCODE_JSON="$RUN_METADATA_DIR/chaincode.json"
+
+CORE_CHAINCODE_ID_NAME="$(jq -r '.chaincode_id' "$CHAINCODE_JSON")"
+CORE_PEER_LOCALMSPID="$(jq -r '.mspid' "$CHAINCODE_JSON")"
+PEER_ADDRESS="$(jq -r '.peer_address' "$CHAINCODE_JSON")"
+CLIENT_CERT="$(jq -r '.client_cert // empty' "$CHAINCODE_JSON")"
+
+export CORE_CHAINCODE_ID_NAME
+export CORE_PEER_LOCALMSPID
+
+if [ -n "$CLIENT_CERT" ]; then
+    CORE_TLS_CLIENT_CERT_FILE="$RUN_METADATA_DIR/client.crt"
+    CORE_TLS_CLIENT_KEY_FILE="$RUN_METADATA_DIR/client.key"
+    CORE_PEER_TLS_ROOTCERT_FILE="$RUN_METADATA_DIR/root.crt"
+
+    printf '%s' "$CLIENT_CERT" >"$CORE_TLS_CLIENT_CERT_FILE"
+    jq -r '.client_key' "$CHAINCODE_JSON" >"$CORE_TLS_CLIENT_KEY_FILE"
+    jq -r '.root_cert' "$CHAINCODE_JSON" >"$CORE_PEER_TLS_ROOTCERT_FILE"
+
+    export CORE_PEER_TLS_ENABLED="true"
+    export CORE_TLS_CLIENT_CERT_FILE
+    export CORE_TLS_CLIENT_KEY_FILE
+    export CORE_PEER_TLS_ROOTCERT_FILE
+else
+    export CORE_PEER_TLS_ENABLED="false"
+fi
+
+exec "$BUILD_OUTPUT_DIR/chaincode" -peer.address="$PEER_ADDRESS"
