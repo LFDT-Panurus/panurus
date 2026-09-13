@@ -16,6 +16,7 @@ import (
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/services/events"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/services/storage/driver"
+	"go.uber.org/zap/zapcore"
 )
 
 const (
@@ -190,7 +191,7 @@ func (t *DBTransaction) DeleteTokens(ctx context.Context, deletedBy string, ids 
 // AppendToken records a new token in the database and records an add-token event for
 // each of its owners. The events are published only after the transaction commits,
 // see Notify and FlushEvents.
-func (t *DBTransaction) AppendToken(ctx context.Context, tta TokenToAppend) error {
+func (t *DBTransaction) AppendToken(ctx context.Context, tta *TokenToAppend) error {
 	q, err := token2.ToQuantity(tta.Tok.Quantity, tta.Precision)
 	if err != nil {
 		return errors.Wrapf(err, "cannot covert [%s] with precision [%d]", tta.Tok.Quantity, tta.Precision)
@@ -230,7 +231,9 @@ func (t *DBTransaction) AppendToken(ctx context.Context, tta TokenToAppend) erro
 		return errors.Wrapf(err, "cannot store token in db")
 	}
 
-	logger.DebugfContext(ctx, "Notify owners")
+	if logger.IsEnabledFor(zapcore.DebugLevel) {
+		logger.DebugfContext(ctx, "Notify owners")
+	}
 	for _, id := range tta.Owners {
 		if len(id) == 0 {
 			continue
@@ -261,7 +264,9 @@ func (t *DBTransaction) Notify(ctx context.Context, topic string, tmsID token.TM
 		Index:     index,
 	})
 
-	logger.DebugfContext(ctx, "record new event %v", e)
+	if logger.IsEnabledFor(zapcore.DebugLevel) {
+		logger.DebugfContext(ctx, "record new event %v", e)
+	}
 	t.pending = append(t.pending, e)
 }
 
@@ -275,9 +280,11 @@ func (t *DBTransaction) Notify(ctx context.Context, topic string, tmsID token.TM
 // Calling it more than once is safe: the buffer is empty after the first call.
 func (t *DBTransaction) FlushEvents(ctx context.Context) {
 	pending := t.pending
-	t.pending = nil
+	t.pending = t.pending[:0]
 	for _, e := range pending {
-		logger.DebugfContext(ctx, "publish new event %v", e)
+		if logger.IsEnabledFor(zapcore.DebugLevel) {
+			logger.DebugfContext(ctx, "publish new event %v", e)
+		}
 		t.Notifier.Publish(e)
 	}
 }
@@ -286,7 +293,7 @@ func (t *DBTransaction) FlushEvents(ctx context.Context) {
 // recorded for it, so that nothing is published for a transaction that never
 // reached the store.
 func (t *DBTransaction) Rollback() error {
-	t.pending = nil
+	t.pending = t.pending[:0]
 
 	return t.Tx.Rollback()
 }

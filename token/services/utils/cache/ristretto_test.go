@@ -31,6 +31,7 @@ func TestAddAndGet(t *testing.T) {
 	require.False(t, found)
 
 	c.Add(key, value)
+	c.Wait()
 	retrieved, found := c.Get(key)
 	require.True(t, found)
 	require.Equal(t, value, retrieved)
@@ -46,6 +47,7 @@ func TestDelete(t *testing.T) {
 
 	c.Add(key, value)
 	c.Delete(key)
+	c.Wait()
 
 	_, found := c.Get(key)
 	require.False(t, found)
@@ -72,6 +74,7 @@ func TestGetOrLoad(t *testing.T) {
 	require.False(t, found)
 	require.Equal(t, expectedValue, val)
 	require.Equal(t, 1, loaderCalls)
+	c.Wait()
 
 	// 2. Second call: should NOT trigger the loader, return the value, and report a cache hit.
 	val, found, err = c.GetOrLoad(key, loader)
