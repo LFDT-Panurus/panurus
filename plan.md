@@ -1,100 +1,115 @@
-# Update fabric-smart-client to v0.21.0
+# Plan: switch legacy chaincode builds to a Go external builder
+
+Fixes #2363
 
 ## Goal
-Bump the `github.com/hyperledger-labs/fabric-smart-client` dependency (currently
-`v0.18.0`) to the tagged release `v0.21.0` across every Go module in the repo,
-absorb any resulting API/lint breakage, align pinned infra versions, and get
-`make checks` / `make unit-tests` green. Adapts the `/update-fsc` runbook
-(normally targets latest `main`) to a fixed tagged version instead.
 
-## Implementation Steps
-1. [x] Branch off `main` as `fsc-update-v0.21.0`. (main == fsc_v_0_12_0 branch tip)
-2. [x] Bump dependency in all modules: `make update-dep DEP=github.com/hyperledger-labs/fabric-smart-client VER=v0.21.0`
-   and same for the `/integration` submodule path. Go toolchain bumped 1.26.5 -> 1.27.1
-   (FSC v0.21.0 requires go >= 1.27.1); several transitive deps upgraded too.
-3. [x] Diff FSC's Makefile-pinned infra versions (FABRIC_VERSION, FABRIC_TWO_DIGIT_VERSION,
-   FABRIC_X_TOOLS_VERSION, FABRIC_X_COMMITTER_VERSION) and Docker image refs against
-   Panurus's root `Makefile` / `fabricx.mk` — all already match, no drift.
-4. [x] Build + vet every module in `GO_MODULES` to detect API breakage. Breakage found
-   in `integration` module (+ `cmd/artifactgen`, which imports it) and in
-   `token/services/network/fabric/config` test file.
-5. [x] Fixed compile errors:
-   - `integration/nwo/token/fabric/cc/tcc.go`: removed the removed `Chaincode.Policy`
-     field (kept `SignaturePolicy`, which carries the same value).
-   - `integration/nwo/token/fabricx/factory.go`: `Topology.AddNamespaceWithUnanimity`
-     was removed and `AddNamespace` now takes an `EndorsementPolicy` + `NamespaceOption`s
-     instead of `(name, policy string, peers ...string)`. Switched to
-     `fabrictopology.Unanimity(orgs...)` / `fabrictopology.Signature(policy)` +
-     `fabrictopology.WithPeers(peers...)`.
-   - `integration/nwo/runner/rpc/user_provider.go`: `grpc.ConnectionConfig` dropped
-     `TLSEnabled`/`TLSRootCertFile` in favor of a `TLS SecureOptions` field taking raw
-     PEM bytes; `webclient.Config` dropped `TLSCertPath`/`TLSKeyPath` in favor of
-     `TLSCertRaw`/`TLSKeyRaw`. Read the cert/key files with `os.ReadFile` at the call
-     site and pass the bytes through.
-   - `token/services/network/fabric/config/config_test.go`: `driver.ConfigService`
-     gained `RawSubtree`/`RawSubtrees`; added no-op stubs to the test's
-     `mapConfigService`.
-   No counterfeiter mock regeneration was needed (`go generate ./...` not required —
-   no mocked interface implementing `ConfigService`, `Chaincode`, etc. exists).
-6. [x] `make lint-auto-fix` and `make checks-no-tidy` until clean (see notes on `checks`
-   vs `checks-no-tidy` and the `gofix` modernization pass below).
-7. [x] `make unit-tests`; fixed one regression (sherdlock iterator bug, see below).
-   `unit-tests-race` not run (time-boxed; no concurrency-sensitive code changed beyond
-   the pre-existing sherdlock locking, which `gofix` also touched mechanically).
-8. [ ] Commit (signed off) with old→new version noted in body.
-9. [ ] Stop and report; wait for user go-ahead before pushing / opening PR.
+Integration tests currently package/build Go chaincode via Fabric's legacy
+path, which lets the peer build it inside a `hyperledger/fabric-ccenv:3.1`
+container. That image bundles Go 1.26.0, which cannot compile code that
+requires Go 1.27 language features (as introduced by the `fabric-smart-client`
+v0.21.0 bump). Switch to Fabric's External Builder mechanism so the peer
+compiles chaincode using the *host's* Go toolchain (already pinned to 1.27.1
+via `go.mod` + `actions/setup-go`) instead of the ccenv container's fixed,
+older one.
+
+## Findings
+
+- FSC's `integration` module (`nwo/fabric`) already supports registering
+  external builders generically via `network.Network.ExternalBuilders
+  []fabricconfig.ExternalBuilder` (rendered into `core.yaml`'s
+  `chaincode.externalBuilders`), and already uses this mechanism for CCaaS
+  chaincode (`ccaasBuilderPath()` in `nwo/fabric/platform.go`, keyed off
+  `$FAB_BINS/../builders/ccaas`). There is no such wiring for legacy
+  (non-CCaaS) Go chaincode — `fabric.NewPlatform` only appends the `ccaas`
+  builder when found.
+- `integration.Infrastructure.RegisterPlatformFactory` (in the top-level
+  `integration` module) lets a caller override the platform factory
+  registered under a given name — the default `"fabric"` factory is
+  `fabric.NewPlatformFactory()`, calling `fabric.NewPlatform`. Panurus's own
+  `integration/nwo/token/factory.go` already calls
+  `network.RegisterPlatformFactory` for the `"token"` platform, so the same
+  call is available to override `"fabric"` too.
+- No FSC/upstream change is required: panurus can register its own `"fabric"`
+  `api.PlatformFactory` that wraps `fabric.NewPlatform` and appends a
+  panurus-owned external builder (name e.g. `golang`) to
+  `platform.Network.ExternalBuilders`, pointing at build/detect/release
+  scripts shipped in this repo that invoke the host's `go build` directly
+  (no Docker).
+- Fabric's builder protocol (`detect`/`build`/`release` executables under
+  `<builder>/bin/`) is documented upstream; there's a reference sample at
+  `hyperledger/fabric-samples/chaincode-external-builders/golang`. Our
+  scripts only need to handle the `golang` chaincode type used by panurus's
+  own chaincode, not the general case.
+- `requiredImagesFor` in `nwo/fabric/platform.go` still requests the
+  `ccenv`/`baseos` docker images whenever any non-CCaaS chaincode is present,
+  regardless of external builders — pulling those images is harmless (they
+  just go unused), so no change needed there; `make fabric-docker-images` can
+  stay as-is (kept as a fallback / for anyone not using the external
+  builder).
+
+## Steps
+
+1. [x] Write the external builder scripts (`detect`, `build`, `release`)
+   under a new `ci/external-builders/golang/bin/` directory:
+   - `detect`: exit 0 only when `metadata.json`'s `type` is `golang`.
+   - `build`: unpack the chaincode source, run `go build` using the host
+     toolchain (respecting `GOCACHE`/`GOPATH`/module proxy env so it works
+     offline in CI), producing the `chaincode` binary and a
+     `connection.json`-free release layout matching what the peer's built-in
+     `chaincode-launcher` expects for non-CCaaS chaincode (a `bin/chaincode`
+     executable at minimum).
+   - `release`: copy the built binary into the release output directory.
+   - Make all three scripts executable.
+2. [x] Add a Go type implementing `api.PlatformFactory` (new package under
+   `integration/nwo/token/fabric/` or similar) that wraps
+   `fabric.NewPlatform`, then appends
+   `fabricconfig.ExternalBuilder{Name: "golang", Path: <abs path to
+   ci/external-builders/golang>}` to the returned `*fabric.Platform`'s
+   `Network.ExternalBuilders` before returning it.
+3. [x] Call `network.RegisterPlatformFactory` with the new factory in the
+   same place panurus registers its `"token"` platform factory
+   (`integration/token/test_utils.go`), so every integration-test suite picks
+   it up.
+4. [x] Confirm `topology.Chaincode.Lang`/`Path`/packaging metadata already
+   produce a `metadata.json` with `type: golang` (native `peer lifecycle
+   chaincode package` behavior) — no topology changes expected, since we're
+   only changing which builder handles what's already packaged.
+5. [x] Run one legacy (non-CCaaS) integration test locally end-to-end
+   (`make integration-tests-dlog-fabric-t1 TEST_FILTER="T1"` or similar) to
+   confirm the peer picks the `golang` external builder over ccenv Docker,
+   and chaincode compiles/starts successfully.
+6. [x] Update `docs/development/debug-integration-tests.md` (or a new
+   `docs/development/` page) describing the external-builder chaincode build
+   path, in case build failures need debugging differently than before
+   (e.g. logs come from the peer's builder invocation, not `docker logs` on
+   a ccenv container).
+7. [x] Run `make checks`, `make lint-auto-fix`, `make unit-tests-race`.
+8. [ ] Stop and get the user's explicit go-ahead before pushing/opening a PR.
 
 ## Implementation Progress
-- [x] Dependency bumped, all modules build/vet clean.
-- [x] Lint (`make lint-auto-fix`) clean across all `GO_MODULES` — many pre-existing
-  revive `unhandled-error` findings surfaced by golangci-lint's rescan after the go1.27.1
-  bump; fixed the unwrapped `strings.Builder`/`hash.Write`/`fmt.Fprintf` calls it flagged,
-  plus one `time-naming` rename (`PayerAccessTokenExpMin` -> `PayerAccessTokenExp`).
-- [x] `make checks-no-tidy` clean, including a `make gofix-apply` pass (go1.27 automated
-  modernizations: manual atomic int fields -> `atomic.Int32/Uint32/Int64` methods in
-  `token/services/utils/cache` tests and `token/services/selector/sherdlock/fetcher.go`;
-  a manual reverse loop -> `slices.Backward` in
-  `token/core/zkatdlog/nogh/v1/validator/validator_security_test.go`; a struct-literal
-  simplification in `token/services/ttx/dep/wrapper/dbs_test.go`).
-- [x] `make unit-tests`: all packages pass except
-  `token/services/identity/storage/kvs/hashicorp`, which fails locally with
-  "missing required image: hashicorp/vault:latest" — a Docker-image-availability gap in
-  this sandbox, not a code regression (only `go.mod`/`go.sum` changed in that module;
-  confirmed no `hashicorp/vault` image is present locally). Expected to pass in CI where
-  the image is pulled.
+
+- [x] Steps 1-5 done: builder scripts written, `fabricbuilder.NewPlatformFactory`
+  added, wired into `integration/token/test_utils.go`, packaging metadata
+  confirmed to need no changes, and `make integration-tests-dlog-fabric-t2.1`
+  passes end-to-end locally (3/3 specs, `TestEndToEnd` PASS) using the new
+  `golang` external builder — no ccenv Docker build involved.
+- [ ] Step 6 (docs update), Step 7 (`make checks`/`lint-auto-fix`/
+  `unit-tests-race`), Step 8 (go-ahead before push/PR) remain.
 
 ## Notes & Decisions
-- Target is a tagged release (v0.21.0), not latest main — skipped the SHA-resolution
-  step from the runbook and used the tag directly with `go get ...@v0.21.0`.
-- Left replace-pinned FSC submodules (`state/cc/query`, `comm/host/libp2p`) untouched
-  unless a build error demands otherwise.
-- **`checks` vs `checks-no-tidy`**: `make checks`'s `tidy-check` step fails whenever
-  go.mod/go.sum differ from git HEAD at all — which they legitimately do after this
-  bump. Used `checks-no-tidy` instead (already documented in `checks.mk` for exactly
-  this "workflow step already rewrote go.mod/go.sum and ran `make tidy` itself"
-  scenario), after confirming `make tidy` had already been run and produced no further
-  diff.
-- **Resolved**: bumped `Makefile:260`'s golangci-lint install pin from v2.12.2 to
-  v2.13.2 (matches both the version already installed locally and the current latest
-  upstream release), since v2.12.2 can't satisfy the go1.27.1 language-version check
-  this FSC bump requires. Re-ran `make checks-no-tidy` and `make lint-auto-fix` after
-  the bump — both clean (9/9 modules report "0 issues.").
-- **Bugfix beyond the mechanical bump**: `token/services/selector/sherdlock/fetcher.go`'s
-  `mixedFetcher.UnspentTokensIteratorBy` did an unchecked type assertion
-  `it.(interface{ HasNext() bool }).HasNext()` on the iterator returned by the eager
-  (cached) fetcher. FSC v0.21.0's `Iterator[V]` contract only ever guaranteed
-  `Next()`/`Close()` — it never guaranteed `HasNext()` — and the concrete empty-iterator
-  type returned on a cache miss (`iterators.Empty[K]()`) doesn't implement it, so this
-  panicked in production on every cache-miss request through the mixed-fetcher strategy,
-  not just in tests. Confirmed via `make unit-tests`
-  (`TestCachedFetcher_UnspentTokensIteratorBy_CacheMiss` panicked with "interface
-  conversion: ... missing method HasNext"). Fixed by adding a generic
-  `peekIterator`/`peekedIterator[T]` helper that determines emptiness by consuming and
-  replaying the first `Next()` result, matching FSC's actual (and this repo's own
-  `sherdlock.Iterator[k]`) interface contract. Updated the two dependent tests in
-  `fetcher_test.go` to assert via `it.Next()` against the real contract instead of the
-  fragile concrete-type assertion. Repo-wide grep (`grep -rn "interface{ HasNext"`)
-  confirmed this was the only occurrence of the pattern.
-- Checked `docs/` for impact: this is an internal dependency bump plus an internal
-  bugfix in `sherdlock` (unexported-behavior-preserving; no public API/protocol/CLI
-  surface changed), so no `docs/` updates are required.
+
+- Chose to override the `"fabric"` platform factory from panurus's own code
+  rather than patching FSC upstream, since the extension point
+  (`RegisterPlatformFactory` + public `Network.ExternalBuilders` field)
+  already exists and needs no upstream change.
+- Keeping `fabric-docker-images` / `FABRIC_VERSION` pins untouched — they are
+  no longer load-bearing for legacy chaincode once the external builder is in
+  place, but removing them is out of scope for this fix.
+- Step 5's first two local runs failed with `Header.DataHash is different
+  from Hash(block.Data)` during channel join, before any chaincode building
+  happened. Root cause: the local `$FAB_BINS` had a mismatched `configtxgen`
+  (separately built, arm64/dev-build) alongside v3.1.4 darwin/amd64
+  peer/orderer/cryptogen binaries. Re-ran `make download-fabric` to get a
+  matched v3.1.4 set; unrelated to this fix, but blocked local validation
+  until fixed.

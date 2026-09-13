@@ -1,0 +1,32 @@
+#!/bin/bash
+#
+# Copyright IBM Corp. All Rights Reserved.
+#
+# SPDX-License-Identifier: Apache-2.0
+#
+# Fabric external builder "build" phase: compiles Go chaincode with the
+# host's own `go` toolchain (whatever is on PATH/GOCACHE via
+# propagateEnvironment in core.yaml), instead of the peer building it inside
+# a hyperledger/fabric-ccenv Docker image pinned to an older Go release.
+set -euo pipefail
+
+CHAINCODE_SOURCE_DIR="$1"
+CHAINCODE_METADATA_DIR="$2"
+BUILD_OUTPUT_DIR="$3"
+
+GO_PACKAGE_PATH="$(jq -r '.path' "$CHAINCODE_METADATA_DIR/metadata.json")"
+
+mkdir -p "$BUILD_OUTPUT_DIR"
+
+if [ -f "$CHAINCODE_SOURCE_DIR/src/go.mod" ]; then
+    cd "$CHAINCODE_SOURCE_DIR/src"
+    go build -mod=readonly -o "$BUILD_OUTPUT_DIR/chaincode" "$GO_PACKAGE_PATH"
+else
+    cd "$CHAINCODE_SOURCE_DIR"
+    GO111MODULE=off go build -o "$BUILD_OUTPUT_DIR/chaincode" "$GO_PACKAGE_PATH"
+fi
+
+# carry over statedb index metadata (if any) for the release phase
+if [ -d "$CHAINCODE_SOURCE_DIR/META-INF" ]; then
+    cp -a "$CHAINCODE_SOURCE_DIR/META-INF" "$BUILD_OUTPUT_DIR/"
+fi
