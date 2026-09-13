@@ -85,7 +85,11 @@ older one.
    (e.g. logs come from the peer's builder invocation, not `docker logs` on
    a ccenv container).
 7. [x] Run `make checks`, `make lint-auto-fix`, `make unit-tests-race`.
-8. [ ] Stop and get the user's explicit go-ahead before pushing/opening a PR.
+8. [x] Stop and get the user's explicit go-ahead before pushing/opening a PR.
+   Committed as `a906e33a9`, pushed to `fsc-update-v0.21.0`, PR #2360's
+   description updated.
+
+✅ COMPLETE
 
 ## Implementation Progress
 
