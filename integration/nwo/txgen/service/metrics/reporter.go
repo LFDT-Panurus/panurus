@@ -59,12 +59,12 @@ func (c *reporter) Summary() string {
 	b := strings.Builder{}
 
 	if c.RequestsSent.(gettable).Get() != 0 {
-		fmt.Fprintf(&b, "Total requests %d, average duration of the request %v\n",
+		_, _ = fmt.Fprintf(&b, "Total requests %d, average duration of the request %v\n",
 			int(c.RequestsSent.(gettable).Get()),
 			time.Duration(c.RequestDuration.(retrievable).Avg()))
-		fmt.Fprintf(&b, "Success ratio %.2f%%\n",
+		_, _ = fmt.Fprintf(&b, "Success ratio %.2f%%\n",
 			c.RequestsReceived.(gettable).Get()/c.RequestsSent.(gettable).Get()*100)
-		fmt.Fprintf(&b, "Minimum request took %v, maximum %v\n",
+		_, _ = fmt.Fprintf(&b, "Minimum request took %v, maximum %v\n",
 			time.Duration(c.RequestDuration.(retrievable).Min()),
 			time.Duration(c.RequestDuration.(retrievable).Max()))
 	}

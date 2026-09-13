@@ -49,7 +49,7 @@ func SKIFromIdentity(id view.Identity) ([]byte, error) {
 	}
 
 	hash := sha256.New()
-	hash.Write(serialized.NymPublicKey)
+	_, _ = hash.Write(serialized.NymPublicKey)
 
 	return hash.Sum(nil), nil
 }

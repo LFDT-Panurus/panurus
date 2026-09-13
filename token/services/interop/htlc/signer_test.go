@@ -64,7 +64,7 @@ func validClaimSigBytes(t *testing.T, preImage, recipientSig []byte) []byte {
 
 func claimHashInfo(preImage []byte) htlc.HashInfo {
 	h := crypto.SHA256.New()
-	h.Write(preImage)
+	_, _ = h.Write(preImage)
 
 	return htlc.HashInfo{
 		Hash:         []byte(encoding.Base64.New().EncodeToString(h.Sum(nil))),

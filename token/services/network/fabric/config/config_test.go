@@ -35,10 +35,12 @@ func (c *mapConfigService) IsSet(key string) bool {
 
 	return ok
 }
-func (c *mapConfigService) UnmarshalKey(string, any) error   { return nil }
-func (c *mapConfigService) ConfigFileUsed() string           { return "" }
-func (c *mapConfigService) GetPath(string) string            { return "" }
-func (c *mapConfigService) TranslatePath(path string) string { return path }
+func (c *mapConfigService) UnmarshalKey(string, any) error           { return nil }
+func (c *mapConfigService) ConfigFileUsed() string                   { return "" }
+func (c *mapConfigService) GetPath(string) string                    { return "" }
+func (c *mapConfigService) TranslatePath(path string) string         { return path }
+func (c *mapConfigService) RawSubtree(string) (map[string]any, bool) { return nil, false }
+func (c *mapConfigService) RawSubtrees(string) []map[string]any      { return nil }
 
 // TestLedgerInfoRetryDefaults pins the defaults an unconfigured deployment gets.
 // The attempt budget matters beyond taste: nothing retries the block scan, so a

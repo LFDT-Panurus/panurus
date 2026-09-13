@@ -15,7 +15,7 @@ import (
 // intermediary specific configuration
 
 const IntermediaryRequestTimeout = 10 * time.Second
-const PayerAccessTokenExpMin = 60 * time.Minute
+const PayerAccessTokenExp = 60 * time.Minute
 const ApplicationJson = "application/json"
 const ApplicationUrlEncoded = "application/x-www-form-urlencoded"
 const HeaderContentType = "Content-Type"

@@ -53,10 +53,10 @@ func (f *fakeStatusStore) NotifyStatus(_ context.Context, txID string, _ dbdrive
 }
 
 func TestBatchingStatusDB_CoalescesConcurrentGetStatus(t *testing.T) {
-	store := &fakeStatusStore{fakeStatusFetcher: fakeStatusFetcher{responses: map[string]dbdriver.TxStatus{
+	store := &fakeStatusStore{responses: map[string]dbdriver.TxStatus{
 		"tx1": dbdriver.Confirmed,
 		"tx2": dbdriver.Pending,
-	}}}
+	}}
 	d := newBatchingStatusDB(store)
 
 	ids := []string{"tx1", "tx2"}
@@ -78,7 +78,7 @@ func TestBatchingStatusDB_CoalescesConcurrentGetStatus(t *testing.T) {
 }
 
 func TestBatchingStatusDB_MissingTxIsUnknown(t *testing.T) {
-	store := &fakeStatusStore{fakeStatusFetcher: fakeStatusFetcher{responses: map[string]dbdriver.TxStatus{}}}
+	store := &fakeStatusStore{responses: map[string]dbdriver.TxStatus{}}
 	d := newBatchingStatusDB(store)
 
 	status, msg, err := d.GetStatus(t.Context(), "missing")
@@ -104,9 +104,9 @@ func TestBatchingStatusDB_ListenersPassThrough(t *testing.T) {
 }
 
 func TestBatchingStatusDB_GetStatusesBypassesBatcher(t *testing.T) {
-	store := &fakeStatusStore{fakeStatusFetcher: fakeStatusFetcher{responses: map[string]dbdriver.TxStatus{
+	store := &fakeStatusStore{responses: map[string]dbdriver.TxStatus{
 		"tx1": dbdriver.Confirmed,
-	}}}
+	}}
 	d := newBatchingStatusDB(store)
 
 	statuses, err := d.GetStatuses(t.Context(), []string{"tx1"})

@@ -1,0 +1,18 @@
+#!/bin/bash
+#
+# Copyright IBM Corp. All Rights Reserved.
+#
+# SPDX-License-Identifier: Apache-2.0
+#
+# Fabric external builder "release" phase: hands statedb index metadata (if
+# any) to the peer's release output directory. The built binary itself stays
+# in BUILD_OUTPUT_DIR and is launched directly by bin/run.
+set -euo pipefail
+
+BUILD_OUTPUT_DIR="$1"
+RELEASE_OUTPUT_DIR="$2"
+
+if [ -d "$BUILD_OUTPUT_DIR/META-INF" ]; then
+    mkdir -p "$RELEASE_OUTPUT_DIR"
+    cp -a "$BUILD_OUTPUT_DIR/META-INF/." "$RELEASE_OUTPUT_DIR/"
+fi

@@ -817,7 +817,7 @@ func TestTransferHTLCValidate(t *testing.T) {
 		recipient, _ := identity.WrapWithType(x509.IdentityType, []byte("recipient"))
 		preimage := []byte("preimage")
 		hash := crypto.SHA256.New()
-		hash.Write(preimage)
+		_, _ = hash.Write(preimage)
 		img := hash.Sum(nil)
 
 		script := &htlc.Script{
@@ -855,7 +855,7 @@ func TestTransferHTLCValidate(t *testing.T) {
 		recipient, _ := identity.WrapWithType(x509.IdentityType, []byte("recipient"))
 		preimage := []byte("preimage")
 		hash := crypto.SHA256.New()
-		hash.Write(preimage)
+		_, _ = hash.Write(preimage)
 		img := hash.Sum(nil)
 		// encoded image for claim key
 		imgEncoded := []byte(encoding.Base64.New().EncodeToString(img))
@@ -906,7 +906,7 @@ func TestTransferHTLCValidate(t *testing.T) {
 		recipient, _ := identity.WrapWithType(x509.IdentityType, []byte("recipient"))
 		preimage := []byte("preimage")
 		hash := crypto.SHA256.New()
-		hash.Write(preimage)
+		_, _ = hash.Write(preimage)
 		img := hash.Sum(nil)
 
 		script := &htlc.Script{
@@ -1113,7 +1113,7 @@ func TestTransferHTLCValidate(t *testing.T) {
 		recipient, _ := identity.WrapWithType(x509.IdentityType, []byte("recipient"))
 		preimage := []byte("preimage")
 		hash := crypto.SHA256.New()
-		hash.Write(preimage)
+		_, _ = hash.Write(preimage)
 		img := hash.Sum(nil)
 
 		// input[0]: an expired (Reclaim-eligible) script that matches the sole output
@@ -1179,7 +1179,7 @@ func TestTransferHTLCValidate(t *testing.T) {
 		attacker, _ := identity.WrapWithType(x509.IdentityType, []byte("attacker"))
 		preimage := []byte("preimage")
 		hash := crypto.SHA256.New()
-		hash.Write(preimage)
+		_, _ = hash.Write(preimage)
 		img := hash.Sum(nil)
 
 		script := &htlc.Script{
@@ -1383,7 +1383,7 @@ func newExpiredHTLCOwner(t *testing.T, sender driver.Identity) driver.Identity {
 	recipient, err := identity.WrapWithType(x509.IdentityType, []byte("recipient"))
 	require.NoError(t, err)
 	hash := crypto.SHA256.New()
-	hash.Write([]byte("preimage"))
+	_, _ = hash.Write([]byte("preimage"))
 	script := &htlc.Script{
 		Sender:    sender,
 		Recipient: recipient,

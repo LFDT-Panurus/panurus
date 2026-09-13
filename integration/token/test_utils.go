@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/LFDT-Panurus/panurus/integration/nwo/fabricbuilder"
 	"github.com/LFDT-Panurus/panurus/integration/nwo/token"
 	"github.com/hyperledger-labs/fabric-smart-client/integration"
 	"github.com/hyperledger-labs/fabric-smart-client/integration/nwo/api"
@@ -171,6 +172,7 @@ func (s *TestSuite) Setup() {
 	network, err := s.generator()
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	s.II = network
+	network.RegisterPlatformFactory(fabricbuilder.NewPlatformFactory())
 	tokenPlatformFactory := token.NewPlatformFactory(s.II)
 	network.RegisterPlatformFactory(tokenPlatformFactory)
 	network.Generate()

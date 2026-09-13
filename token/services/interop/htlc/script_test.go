@@ -61,7 +61,7 @@ func TestHashInfoImage(t *testing.T) {
 		require.NoError(t, err)
 
 		h := crypto.SHA256.New()
-		h.Write(preImage)
+		_, _ = h.Write(preImage)
 		require.Equal(t, h.Sum(nil), image)
 	})
 
