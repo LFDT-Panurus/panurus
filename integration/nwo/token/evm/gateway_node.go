@@ -63,12 +63,12 @@ func (g *Gateway) Endpoint() string { return g.endpoint }
 func (g *Gateway) ChainID() int64 { return g.cfg.ChainID }
 
 // startGatewayNode boots a fabric-x-evm gateway testnode on the given host port and waits until it
-// answers JSON-RPC, returning it as a Node.
+// answers JSON-RPC.
 //
 // The testnode is the self-contained fabric-x-evm chain: it runs a gasless gateway that mines
 // instantly, which is what a test network wants. The driver exercises the same client behaviour it
 // will see in a deployment; only the consensus and gas policy are shortcut.
-func startGatewayNode(ctx context.Context, image string, chainID int64, port int) (Node, error) {
+func startGatewayNode(ctx context.Context, image string, chainID int64, port int) (*Gateway, error) {
 	cfg := gatewayConfig{
 		Image:        image,
 		Name:         "fabricx-evm-" + strconv.Itoa(port),

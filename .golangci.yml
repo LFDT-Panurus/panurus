@@ -172,7 +172,18 @@ linters:
         - github.com/LFDT-Panurus/panurus/token/services/identity/x509/crypto.KeyStore
         - github.com/LFDT-Panurus/panurus/token/services/certifier/interactive.Backend
         - github.com/LFDT-Panurus/panurus/token/services/auditor.CheckService
+        # EndorsementService is injected directly or built by a factory function stored on
+        # *Network (SetEndorsementFactory/-ByID), so the field and the factory's own return type
+        # are the interface, not endorsement.Service: same single-site swappable abstraction
+        # shape as the entries above.
+        - github.com/LFDT-Panurus/panurus/x/token/services/network/evm.EndorsementService
         - github.com/LFDT-Panurus/panurus/token/core/common/encoding/asn1.element
+        # abi.Value is a tiny closed value model (wordValue/bytesValue/arrayValue/tupleValue, all
+        # unexported) that lets the ABI head/tail encoder compose nested static and dynamic values
+        # uniformly; the exported constructors (Bytes32, Uint64, Tuple, ...) hand back the shared
+        # interface rather than one of those unexported types on purpose, same shape as the SQL
+        # query builder DSL above.
+        - github.com/LFDT-Panurus/panurus/x/token/services/network/evm/abi.Value
         # The integration module (separate go.mod) has the same swappable-backend shape for its
         # test topology: one platform/CA/client abstraction per network technology (fabric,
         # fabricx, EVM, ...).
@@ -180,6 +191,11 @@ linters:
         - github.com/LFDT-Panurus/panurus/integration/nwo/token/common.CA
         - github.com/LFDT-Panurus/panurus/integration/nwo/token/fabric/cc.fabricPlatform
         - github.com/LFDT-Panurus/panurus/integration/nwo/token.PF
+        # evm.Node abstracts over the two EVM chains a test topology can boot (the fabric-x-evm
+        # gateway testnode or Besu). NetworkHandler.startNode picks the concrete type at runtime
+        # from topology config, so its return is genuinely polymorphic, not a missed opportunity
+        # to return a concrete type.
+        - github.com/LFDT-Panurus/panurus/integration/nwo/token/evm.Node
     lll:
       # Max line length, lines longer will be reported.
       line-length: 240
