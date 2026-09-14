@@ -200,7 +200,7 @@ func (t *Service) CacheRequest(ctx context.Context, request *token.Request) erro
 // GetCachedTokenRequest retrieves a cached token request and its serialized message.
 func (t *Service) GetCachedTokenRequest(txID string) (*token.Request, []byte) {
 	res, ok := t.RequestsCache.Get(txID)
-	if !ok {
+	if !ok || res == nil {
 		return nil, nil
 	}
 
