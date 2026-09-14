@@ -87,9 +87,15 @@ type NetworkHandler struct {
 // without it trying to prepare a Fabric namespace.
 type noopBackend struct{}
 
-func (noopBackend) PrepareNamespace(*topology2.TMS)            {}
-func (noopBackend) UpdatePublicParams(*topology2.TMS, []byte)  {}
-func (noopBackend) InstallPublicParams(*topology2.TMS, []byte) {}
+func (noopBackend) PrepareNamespace(*topology2.TMS) {}
+
+func (noopBackend) UpdatePublicParams(*topology2.TMS, []byte) error {
+	return nil
+}
+
+func (noopBackend) InstallPublicParams(*topology2.TMS, []byte) error {
+	return nil
+}
 
 // NewNetworkHandler returns a handler for EVM-backed TMSs.
 func NewNetworkHandler(tokenPlatform common.TokenPlatform, builder api2.Builder) *NetworkHandler {
