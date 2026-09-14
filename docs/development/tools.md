@@ -56,6 +56,19 @@ Reference: https://github.com/google/addlicense
 go install github.com/google/addlicense
 ```
 
+### govulncheck
+Scans a module's dependencies for known vulnerabilities (from the Go vulnerability database) and reports only the ones actually reachable from the module's code, via call-graph analysis.
+Reference: https://pkg.go.dev/golang.org/x/vuln/cmd/govulncheck
+```bash
+go install golang.org/x/vuln/cmd/govulncheck
+```
+
+To run it, use:
+```bash
+make govulncheck
+```
+Findings with no upstream fix that have been reviewed as not exploitable in Panurus's usage are listed, with justification, in `ci/govulncheck-allowlist.txt` — see that file before adding or removing an entry.
+
 ### golangci-lint
 A fast, all-in-one Go linter that runs multiple linters in parallel. It aggregates the output of many popular static analysis tools.
 Reference: https://golangci-lint.run
