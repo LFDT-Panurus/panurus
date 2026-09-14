@@ -189,6 +189,33 @@ One consequence worth knowing before debugging a graph-hiding integration: the t
 serial number, not token ID — both calls **revert** with `UnsupportedForGraphHiding` rather than returning a
 value that would be wrong. Use `isSerialUsed` instead.
 
+## Public parameters: binding and block tag
+
+An endorser's `DeltaFactory` (`evm/endorsement/delta.go`) touches public parameters from two distinct
+sources, and both distinctions matter enough to have caused real bugs:
+
+- **What it validates with vs. what it signs.** `Build` validates the request with the TMS's own
+  `token.PublicParametersManager` (`f.validator`, resolved by `esp.go`'s `TMSResolver`), but the
+  `StateDelta` it produces is stamped with parameters read fresh from the chain (`f.pp`, a
+  `pp.ChainProvider`). Those two can disagree: an endorsed setup delta updates the contract
+  immediately, but this node's `pp.Watcher` only applies the new parameters locally on its next poll
+  (see `driver.go`'s documented "keep serving the old TMS" tradeoff). Signing regardless would produce
+  a delta whose `PublicParamsHash` asserts this endorser validated under parameters it never actually
+  used. `Build` therefore cross-checks `SHA-256(chain bytes)` against
+  `f.localPP.PublicParamsHash()` before doing anything else, and refuses with `ErrStalePublicParams`
+  on a mismatch rather than signing a false statement. This costs the requester a retry; it never signs
+  a lie.
+- **Which block tag the chain read uses.** `TokenState.applyStateDelta` enforces
+  `publicParamsVersion`/`publicParamsHash` against its **current (head)** storage, not against what is
+  finalized. `driver.go` therefore constructs the endorsement path's `pp.ChainProvider` at
+  `client.BlockTagLatest`, explicitly, regardless of `Finality.BlockTag` — reading it at `finalized`
+  instead would mean every endorsement signed in the finalization lag after a setup update reverts
+  `StalePublicParams` on chain, since the endorser would keep seeing the pre-update pair the whole time.
+  `TMSConfig.BlockTag` (which feeds `endorsement/ledger.go`'s token-existence reads, and `pp.Watcher`'s
+  own polling) is a separate value and correctly stays at `Finality.BlockTag`: a reorg there risks a
+  double spend, which the pp read does not, so the two uses are allowed to differ and are kept
+  independent by construction (each is a distinct constructor argument, not a shared default).
+
 ## Signing: byte formats that bite
 
 - **Address derivation.** An endorser or submitter's Ethereum address is

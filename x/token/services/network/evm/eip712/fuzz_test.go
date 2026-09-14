@@ -7,9 +7,12 @@ SPDX-License-Identifier: Apache-2.0
 package eip712
 
 import (
+	"encoding/json"
+	"math/big"
 	"testing"
 
 	"github.com/LFDT-Panurus/panurus/x/token/services/network/evm/client"
+	"github.com/LFDT-Panurus/panurus/x/token/services/network/evm/statedelta"
 )
 
 // FuzzRecoverAddress fuzzes the endorsement signature parser.
@@ -82,6 +85,44 @@ func FuzzNewSignerFromBytes(f *testing.F) {
 		var digest [32]byte
 		if _, err := signer.Sign(digest); err != nil {
 			t.Fatalf("accepted a key that cannot sign: %v", err)
+		}
+	})
+}
+
+// FuzzHashStructNoPanic fuzzes HashStruct (via Digest) over an arbitrary StateDelta.
+//
+// HashStruct runs on the same peer-supplied delta statedelta.FuzzStateDeltaValidate exercises: an
+// endorser's reply, decoded and structurally validated, but its EIP-712 digest is computed
+// (initiator.go's Collect calls eip712.Digest right after bind succeeds) before any signature has
+// been checked. The property is that hashing never panics on any shape Validate could plausibly let
+// through, and that it is a pure function of the delta's bytes: the same delta must always hash to
+// the same digest, since a non-deterministic hash would break the "every endorser produces
+// byte-identical deltas" quorum-assembly invariant this package's digest exists to check.
+func FuzzHashStructNoPanic(f *testing.F) {
+	f.Add([]byte(`{}`))
+	f.Add([]byte(`{"IsSetup":true,"SetupParameters":"cHA="}`))
+	f.Add([]byte(`{"Outputs":[{"TokenID":null,"SNMarker":null,"TokenData":"AA=="}]}`))
+	f.Add([]byte(`{"MetadataKeys":[[1,2,3]],"MetadataVals":["AA==","AQ=="]}`)) // asymmetric, malformed key
+	f.Add([]byte(`{"SpentRefs":[null,null,null]}`))
+	f.Add([]byte(``))
+
+	domain := Domain{ChainID: big.NewInt(31337), VerifyingContract: client.Address{}}
+
+	f.Fuzz(func(t *testing.T, raw []byte) {
+		var d statedelta.StateDelta
+		if err := json.Unmarshal(raw, &d); err != nil {
+			return
+		}
+
+		got := HashStruct(&d)
+		again := HashStruct(&d)
+		if got != again {
+			t.Fatalf("HashStruct is not deterministic for the same delta: %x then %x", got, again)
+		}
+
+		digest := Digest(domain, &d)
+		if digest != Digest(domain, &d) {
+			t.Fatalf("Digest is not deterministic for the same delta and domain")
 		}
 	})
 }

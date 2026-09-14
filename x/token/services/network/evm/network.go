@@ -374,6 +374,11 @@ func (n *Network) Broadcast(ctx context.Context, blob any) error {
 	if !ok {
 		return errors.Errorf("evm network: expected *Envelope, got [%T]", blob)
 	}
+	if env == nil {
+		// A typed nil satisfies the assertion above, so ok alone is not enough: without this check
+		// every dereference below would panic instead of returning the same "bad input" error.
+		return errors.New("evm network: expected *Envelope, got a nil *Envelope")
+	}
 	binding, err := n.binding(env.Namespace)
 	if err != nil {
 		return err

@@ -225,6 +225,27 @@ func TestAddListenerTimesOutAsInvalid(t *testing.T) {
 	assert.Contains(t, listener.message, "timeout")
 }
 
+// TestAddListenerPollsImmediatelyBeforeTheFirstTick guards against a watch that only reads at the end
+// of each pollInterval: without an immediate poll, an anchor that becomes final before the first tick
+// is invisible to observed, and a pollInterval at or above the timeout makes the watch time out
+// without ever reading the chain, reporting a connectivity error for a transaction that is already
+// final.
+func TestAddListenerPollsImmediatelyBeforeTheFirstTick(t *testing.T) {
+	state := &stubState{}
+	// pollInterval well above timeout: without an immediate poll inside watch, ctx.Done() always wins
+	// the race against the first tick, so the anchor is never actually read before the timeout fires.
+	m := NewManager(&mock.EVMClient{}, state, client.Address{}, 0, "", time.Second, 50*time.Millisecond)
+	listener := newRecordingListener()
+
+	require.NoError(t, m.AddListener(t.Context(), anchor(0x01), "anchor-1", listener))
+	// Apply immediately, before the (much later) first tick would ever fire.
+	state.apply([]byte("tr-hash"))
+
+	listener.wait(t)
+	assert.Equal(t, driver.Valid, listener.status, "an immediate poll must catch the anchor before the timeout")
+	assert.Equal(t, []byte("tr-hash"), listener.trHash)
+}
+
 // TestListenerNotifiedExactlyOnce checks the exactly-once contract, which matters because the driver
 // removes a listener when it fires.
 func TestListenerNotifiedExactlyOnce(t *testing.T) {

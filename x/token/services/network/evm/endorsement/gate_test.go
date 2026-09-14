@@ -72,7 +72,9 @@ func gateFactory() *DeltaFactory {
 		meta: map[string][]byte{common.TokenRequestToSign: []byte(gateTRS)},
 	}
 
-	return NewDeltaFactory(validator, &fakePP{raw: []byte(gatePPRaw), version: gatePPVersion}, &mock.EVMClient{}, addr(0xAA), "")
+	pp := &fakePP{raw: []byte(gatePPRaw), version: gatePPVersion}
+
+	return NewDeltaFactory(validator, pp, pp, &mock.EVMClient{}, addr(0xAA), "")
 }
 
 func gateRequest() *EndorseRequest {

@@ -33,6 +33,18 @@ type PublicParamsProvider interface {
 	PublicParams(ctx context.Context) (raw []byte, version uint64, err error)
 }
 
+// LocalPublicParams exposes the SHA-256 hash of the public parameters a validator actually validated
+// a request with. *token2.PublicParametersManager satisfies it: its PublicParamsHash is already
+// SHA-256 of the raw bytes (token/services/utils.Hashable), exactly as statedelta.Translator computes
+// StateDelta.PublicParamsHash from the raw bytes it is given.
+//
+// DeltaFactory uses it to refuse to endorse rather than sign a delta binding parameters this node
+// never validated against: see the ErrStalePublicParams check in Build.
+type LocalPublicParams interface {
+	// PublicParamsHash returns the SHA-256 hash of the public parameters currently in effect locally.
+	PublicParamsHash() token2.PPHash
+}
+
 // EndorserSigner signs an EIP-712 digest with the endorser's secp256k1 key and exposes the Ethereum
 // address that key recovers to. *eip712.Signer satisfies it.
 type EndorserSigner interface {

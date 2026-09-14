@@ -192,7 +192,7 @@ func (f *ServiceFactory) NewResponder(
 				return nil, err
 			}
 
-			return NewDeltaFactory(validator, cfg.PublicParams, f.client, cfg.TokenState, cfg.BlockTag), nil
+			return NewDeltaFactory(validator, tms.PublicParametersManager(), cfg.PublicParams, f.client, cfg.TokenState, cfg.BlockTag), nil
 		},
 		signer,
 		func(tmsID token2.TMSID) (eip712.Domain, error) {
