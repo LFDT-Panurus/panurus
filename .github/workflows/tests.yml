@@ -275,16 +275,16 @@ jobs:
           parallel: true
           fail-on-error: false
 
-  # The evm suites run on the feature branch rather than on main, because that is where the driver
-  # lives until it graduates. They are their own job for two reasons: they need foundry, which nothing
-  # else in this workflow does, and they need no fabric binaries at all.
+  # The evm suites are their own job for two reasons: they need foundry, which nothing else in this
+  # workflow does, and they need no fabric binaries at all. They run on main and on the feature branch
+  # so that both the graduated driver and any further feature-branch work stay covered.
   #
   # No coverage upload here on purpose. The other jobs upload with parallel: true and publish-coverage
   # closes the set; adding this one would either make that job wait on a run that is skipped on main,
   # or leave a parallel report that never finishes.
   itest-evm:
     needs: checks
-    if: github.ref == 'refs/heads/feature/evm-network-driver' || github.base_ref == 'feature/evm-network-driver'
+    if: github.ref == 'refs/heads/main' || github.base_ref == 'main' || github.ref == 'refs/heads/feature/evm-network-driver' || github.base_ref == 'feature/evm-network-driver'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
