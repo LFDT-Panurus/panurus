@@ -21,8 +21,45 @@ A local transaction status, `storage.TxStatus` (aliased as `ttx.TxStatus`,
 | `Unknown` | No local record of this transaction. |
 | `Pending` | Recorded locally and submitted to the ledger; outcome not yet known. |
 | `Confirmed` | The ledger validated the transaction; local token state has been updated. |
-| `Deleted` | The ledger rejected the transaction, or the on-ledger request didn't match what was submitted locally. |
+| `Deleted` | The ledger (chaincode/ordering) actively rejected the transaction — a definitive, expected verdict. |
 | `Orphan` | The transaction never reached the ledger at all (e.g. a broadcast failure), discovered by the recovery sweep. |
+
+> **Proposed change — not yet implemented.** Today, a token-request hash mismatch (the ledger
+> validated a transaction whose committed `RequestHash` doesn't match what this node submitted)
+> is folded into `Deleted` alongside ordinary chaincode/ordering rejection (§3 step 8,
+> `checkTokenRequest`). These are not the same kind of event: an ordinary `Deleted` is an expected
+> outcome of normal operation (a losing race for a locked input, a stale endorsement, etc.), while
+> a hash mismatch means the ledger accepted *something* under this transaction ID that doesn't
+> match what was locally requested — in a correct, non-buggy, non-adversarial system this should
+> never happen at all. Conflating the two into one status makes it impossible to alert on the
+> latter without re-deriving the distinction from the `HashMismatches` metric or log message after
+> the fact.
+>
+> The recommendation is to introduce a distinct status — tentatively `Compromised` — reserved for
+> the hash-mismatch case, so it is queryable and alertable independently of routine `Deleted`
+> verdicts, and to treat every occurrence as a candidate for immediate investigation (see
+> **Forensics** below). This requires a code change (`storage.TxStatus` currently only defines
+> `Unknown/Pending/Confirmed/Deleted/Orphan` — see
+> [`token/services/ttx/status.go`](../../token/services/ttx/status.go)) and is not yet
+> implemented; this note documents the intended direction, not current behavior.
+>
+> **Forensics.** Because this case is expected to be rare-to-never, tooling for it doesn't need to
+> optimize for volume — it needs to preserve everything a post-incident investigation would want,
+> since the local mismatching copy of the request may itself be evidence:
+> - Both hashes: the locally-held `RequestHash` (from `ttxdb`/cache) and the on-ledger
+>   `RequestHash` actually committed (§3 step 7, read from `KeyTranslator.CreateTokenRequestKey`).
+> - The full on-ledger RWSet for the transaction, and the full local token request bytes, both
+>   preserved verbatim (not just their hashes) so a diff is possible after the fact.
+> - Block/tx coordinates (block number, tx index, channel) and the identity of the peer the block
+>   was delivered from.
+> - Whether any other participant (auditor, other owner) on the same transaction independently
+>   observed the same mismatch, or only this node did — this distinguishes a local bug/corruption
+>   from something wrong on the ledger itself.
+>
+> Given the severity, a mismatch should escalate beyond a metric increment — at minimum a
+> dedicated alert distinct from ordinary `DeletedTransactions`, and ideally an automatic dump of
+> the artifacts above to a quarantined location for investigation, rather than allowing the
+> details to age out with normal log/metric retention.
 
 A network-level validation code, `network.ValidationCode`
 ([`token/services/network/network.go`](../../token/services/network/network.go)): `Valid`, `Invalid`,
@@ -108,12 +145,12 @@ finalityView.Call() — runs dbFinality against ttxdb, then auditdb (if known
 to both), and returns to the business flow only once both have settled
 ```
 
-Corrections versus an earlier draft of this diagram: there is no "FSC Committer /
-`IsFinal()`" step anywhere in this flow — that's a distinct, legacy FSC code path
-this SDK doesn't use (see §6.2). `EndorserTxInfoMapper` is a mapper *plugged into*
-FSC's generic listener manager, not a component nested inside `deliveryBasedFLM`.
-And `ttxdb`/`auditdb` never talk to each other directly — they're two fully
-independent stores that the caller waits on sequentially, not a bidirectional pair.
+There is no "FSC Committer / `IsFinal()`" step anywhere in this flow — that's a
+distinct, legacy FSC code path this SDK doesn't use (see §6.2). `EndorserTxInfoMapper`
+is a mapper *plugged into* FSC's generic listener manager, not a component nested
+inside `deliveryBasedFLM`. `ttxdb`/`auditdb` never talk to each other directly —
+they're two fully independent stores that the caller waits on sequentially, not a
+bidirectional pair.
 
 Collapsing the same path into just its timeout-relevant hops:
 
@@ -127,7 +164,7 @@ finalityView (FTS)                          default 5m (10m via NewOrderingAndFi
                       └─ Delivery.SleepAfterFailure (FSC)                      = 10s   (stream reconnect interval, §8)
 ```
 
-There is no committer hop in this stack, and no 120s value anywhere in it: FSC's
+This stack has no committer hop, and no 120s value anywhere in it: FSC's
 `Committer.WaitForEventTimeout` (default 300s) and `Finality.WaitForEventTimeout`
 (default 20s) belong to FSC's own committer-based/delivery-based finality listener
 managers (`platform/fabric/core/generic/finality`), which token-sdk never
@@ -136,11 +173,39 @@ constructs — the only thing token-sdk imports from that FSC package is the
 budget only needs to comfortably exceed `listenerTimeout` + `Delivery.SleepAfterFailure`
 (20s total by default), not any multiple of 120s.
 
+> **Is the `listenerTimeout` (10s) → fallback handoff actually observable, given it's much
+> shorter than the 5m `finalityView` budget?** Yes, though verbosity varies by stage. FSC's
+> `events.ListenerManager` logs a `Warnf` the moment a listener times out and the fallback is
+> about to be invoked (`listenermanager.go:132-143`: *"listeners for TXs [...] timed out ... will
+> be queried directly from ledger"*) — visible at a typical Warn/Info log level. What happens
+> next is quieter: `DeliveryScanQueryByID`'s own success path
+> ([`network/fabric/finality/deliveryqs.go`](../../token/services/network/fabric/finality/deliveryqs.go))
+> only logs at Debug, and only escalates to `Errorf` if the fallback itself fails (e.g. the
+> transaction genuinely isn't found yet). So an operator watching default-level logs will see the
+> "listener timed out, falling back" warning, but not an explicit "fallback succeeded" line —
+> silence after that warning means it resolved, not that it's stuck.
+>
+> On sizing: the 10s `listenerTimeout` isn't competing with the 5m `finalityView` budget the way
+> two independent SLAs might — it's an internal cache-eviction threshold that hands off to a
+> synchronous, still-fast fallback query, not a failure boundary. A `finalityView` timeout this
+> short would be aggressive; a `listenerTimeout` this short mainly controls how much memory the
+> LRU listener cache holds versus how often the (cheap) query fallback fires. That said, on an
+> undersized or overloaded stack where block delivery itself is slow, a 10s timeout can fire
+> before a block that's merely running late arrives, pushing more traffic onto the fallback query
+> path than intended — if that's a concern for your deployment, `listenerTimeout` is the key to
+> raise (§6.1), not `finalityView`.
+
+> **Note:** a dedicated FSC-focused document covering `ch.Delivery`, `ch.Ledger`, and FSC's own
+> committer-based/delivery-based finality managers in depth — with diagrams — is planned as a
+> follow-up, separate from this token-sdk-focused document. The bullets below stay scoped to how
+> token-sdk plugs into FSC; the "why FSC's block-delivery approach is resilient to network glitches
+> in general" discussion, and FSC-internal risk items (e.g. a delivery stream that stops without
+> self-healing, §8), belong in that future doc rather than here.
+
 - **Layer 1 (Fabric-specific, token-sdk driving FSC):** `driver.FinalityListenerManager`, implemented by
   `deliveryBasedFLM` in
   [`network/fabric/finality/deliveryflm.go`](../../token/services/network/fabric/finality/deliveryflm.go).
-  It does **not** use chaincode events. token-sdk supplies three small adapters that plug directly into
-  an **[FSC]** generic engine:
+  token-sdk supplies three small adapters that plug directly into an **[FSC]** generic engine:
   - `Delivery` ([`network/fabric/finality/delivery.go`](../../token/services/network/fabric/finality/delivery.go))
     — a token-sdk struct that embeds FSC's own `*fabric.Delivery` and `*fabric.Ledger`
     (`platform/fabric/delivery.go`, `platform/fabric/ledger.go`, obtained via `ch.Delivery()`/`ch.Ledger()`
@@ -176,17 +241,53 @@ budget only needs to comfortably exceed `listenerTimeout` + `Delivery.SleepAfter
   `Append` path — this is why every participant independently reaches finality rather than trusting the
   initiator's word for it.
 
-The Fabric **committer** — **[FSC]** `platform/fabric/core/generic/committer` — is used only in two
-narrow, indirect ways:
-- `committer.MapValidationCode` (`platform/fabric/core/generic/committer/endorsertx.go`) — maps a raw
-  `peer.TxValidationCode` to `driver.ValidationCode` (`VALID` → `Valid`, anything else → `Invalid`), plus
-  the human-readable code name used as the status message.
-- `committer.ProcessNamespace` — invoked once at network setup by
-  `endorsement.NamespaceTxProcessor.EnableTxProcessing`
-  ([`network/fabric/endorsement/provider.go`](../../token/services/network/fabric/endorsement/provider.go)),
-  telling the local **[FSC]** committer/vault to process the token namespace at all.
+The finality path's only touch-point with the Fabric **committer**
+(**[FSC]** `platform/fabric/core/generic/committer`) is `committer.MapValidationCode`
+(`platform/fabric/core/generic/committer/endorsertx.go`) — a pure mapping function (raw
+`peer.TxValidationCode` → `driver.ValidationCode`, plus the human-readable code name used as the
+status message). It has no other dependency on the committer/vault; a full explanation of what the
+committer package does belongs in the planned FSC-focused doc noted above.
+
+(A separate call, `committer.ProcessNamespace`, is invoked once at network setup by
+`endorsement.NamespaceTxProcessor.EnableTxProcessing`
+([`network/fabric/endorsement/provider.go`](../../token/services/network/fabric/endorsement/provider.go)).
+This only gates FSC's own vault auto-commit pipeline for envelopes this node didn't endorse — the
+finality listener path described in this document reads RWSets independently and does not depend
+on it, so it isn't discussed further here.)
 
 ## 3. Step-by-step walkthrough
+
+Before the prose walkthrough, here is the `TxStatus` state machine itself. Per §2's
+"Registration" note, the debtor (initiator/owner submitting the request) and every creditor
+(counterparty reached via `EndorseView`/`AcceptView`) each run this **same** state machine
+independently, driven by their own locally-registered `finality.Listener` — there is no shared
+state or hand-off between the two legs, only the same on-ledger fact that both react to:
+
+```mermaid
+stateDiagram-v2
+    [*] --> Pending: Append (step 4)<br/>debtor & every creditor,<br/>each on its own Append call
+
+    state "Debtor leg" as Debtor {
+        Pending --> Confirmed: Valid + hash match<br/>(Commit, step 8/9)
+        Pending --> Deleted: Invalid, or<br/>Valid + hash mismatch (step 8)
+        Pending --> Orphan: broadcast never<br/>reached ordering (recovery, §5)
+    }
+
+    state "Creditor leg (independent instance)" as Creditor {
+        Pending --> Confirmed: Valid + hash match<br/>(Commit, step 8/9)
+        Pending --> Deleted: Invalid, or<br/>Valid + hash mismatch (step 8)
+        Pending --> Orphan: broadcast never<br/>reached ordering (recovery, §5)
+    }
+
+    Confirmed --> [*]
+    Deleted --> [*]
+    Orphan --> [*]
+```
+
+Both legs observe the same ledger commit, so in the absence of bugs/faults they converge on the
+same terminal status — but they can do so at different wall-clock times (§1's core principle), and
+one leg reaching `Confirmed` never causes or implies the other leg's transition; each is watching
+the ledger for itself.
 
 1. **Selection & locking.** The Selector locks the chosen input tokens in `tokenlockdb`
    (`Lock(ctx, tokenID, consumerTxID)`,
@@ -287,7 +388,9 @@ narrow, indirect ways:
      `ttxDB.GetTokenRequest` + `hasher.ProcessTokenRequest`. Either way, the result is compared against
      `RequestHash` from the ledger (`checkTokenRequest`). **Match** → proceed to `Commit` (§4). **Mismatch**
      → `Deleted` + `HashMismatches` metric — this guards against a node accepting a status for a
-     transaction whose on-ledger content diverged from what it holds locally.
+     transaction whose on-ledger content diverged from what it holds locally. As noted in §1, this
+     specific case is a candidate for a dedicated status (proposed `Compromised`) rather than plain
+     `Deleted`, since it is not an expected outcome the way an ordinary rejection is.
    - `network.Invalid` → `Deleted` directly (chaincode/ordering-level rejection).
    - Anything else (`Busy`/`Unknown`) is treated as an error at this layer, and so is retried per the
      paragraph above (it's the recovery path, §5, that tolerates those as transient across sweeps instead
@@ -487,7 +590,7 @@ For the YAML example and the Notification-mode alternative, see
 | Scenario | Observed status | Recovery path |
 |---|---|---|
 | Chaincode/ordering rejects the tx | `Invalid` → `Deleted` | none needed — verdict is definitive |
-| On-ledger request hash ≠ local request | `Valid` but hash mismatch → `Deleted` | none needed — verdict is definitive |
+| On-ledger request hash ≠ local request | `Valid` but hash mismatch → `Deleted` today (proposed: dedicated `Compromised` status, §1) | none needed for the transaction itself, but this case warrants investigation — see **Forensics** in §1 |
 | Listener registered but node crashes/restarts before a verdict | still `Pending` | recovery sweep (§5) re-derives status directly from the ledger |
 | Listener evicted from the delivery LRU before its block arrives | still `Pending` locally, but detectable | `DeliveryScanQueryByID` fallback (§3 step 7), and/or the recovery sweep |
 | Broadcast never reached the ordering service | permanently `Pending` (ledger never sees it) | recovery sweep marks it `Orphan` after `NotFoundGracePeriod` |
