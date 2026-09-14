@@ -107,10 +107,10 @@ func TestGetOrLoadConcurrency(t *testing.T) {
 
 	key := "pineapple"
 	expectedValue := 42
-	var loaderCalls int32
+	var loaderCalls atomic.Int32
 
 	loader := func() (int, error) {
-		atomic.AddInt32(&loaderCalls, 1)
+		loaderCalls.Add(1)
 		// Simulate a slow data source.
 		time.Sleep(100 * time.Millisecond)
 
@@ -133,5 +133,5 @@ func TestGetOrLoadConcurrency(t *testing.T) {
 	wg.Wait()
 
 	// the loader should have been called exactly once still.
-	require.Equal(t, 1, int(atomic.LoadInt32(&loaderCalls)))
+	require.Equal(t, 1, int(loaderCalls.Load()))
 }

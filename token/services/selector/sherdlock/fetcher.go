@@ -168,8 +168,8 @@ type cachedFetcher struct {
 	maxQueriesBeforeRefresh uint32
 
 	// TODO: A better strategy is to keep following variables per cache key (type/owner combination) and lock/fetch only the 'expired' entry
-	lastFetched      int64
-	queriesResponded uint32
+	lastFetched      atomic.Int64
+	queriesResponded atomic.Uint32
 	// prevKeys tracks cache keys from the previous update cycle to identify stale entries that need removal.
 	prevKeys map[string]struct{}
 	// isUpdating indicates if a cache refresh is currently in progress.
@@ -284,8 +284,8 @@ func (f *cachedFetcher) update(ctx context.Context) {
 	}
 
 	f.updateCache(ctx, m)
-	atomic.StoreInt64(&f.lastFetched, time.Now().UnixNano())
-	atomic.StoreUint32(&f.queriesResponded, 0)
+	f.lastFetched.Store(time.Now().UnixNano())
+	f.queriesResponded.Store(0)
 	f.finishUpdate()
 }
 
@@ -335,7 +335,7 @@ func (f *cachedFetcher) updateCache(ctx context.Context, tokensByKey map[string]
 
 // UnspentTokensIteratorBy returns cached unspent tokens, triggering a refresh if the cache is stale or overused.
 func (f *cachedFetcher) UnspentTokensIteratorBy(ctx context.Context, walletID string, currency token2.Type) (Iterator[*token2.UnspentTokenInWallet], error) {
-	defer atomic.AddUint32(&f.queriesResponded, 1)
+	defer f.queriesResponded.Add(1)
 	if f.isCacheOverused() {
 		logger.DebugfContext(ctx, "Overused data. Soft refresh (in the background)...")
 		go f.update(ctx)
@@ -360,12 +360,12 @@ func (f *cachedFetcher) UnspentTokensIteratorBy(ctx context.Context, walletID st
 
 // isCacheOverused checks if the cache has been queried too many times since the last refresh.
 func (f *cachedFetcher) isCacheOverused() bool {
-	return atomic.LoadUint32(&f.queriesResponded) >= f.maxQueriesBeforeRefresh
+	return f.queriesResponded.Load() >= f.maxQueriesBeforeRefresh
 }
 
 // isCacheStale checks if the cache has exceeded its freshness interval.
 func (f *cachedFetcher) isCacheStale() bool {
-	lastFetched := atomic.LoadInt64(&f.lastFetched)
+	lastFetched := f.lastFetched.Load()
 	if lastFetched == 0 {
 		return true
 	}
