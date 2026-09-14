@@ -85,8 +85,7 @@ type FinalityConfig struct {
 	// PollInterval is the delay between status polls.
 	PollInterval time.Duration `yaml:"pollInterval"`
 	// Timeout bounds how long a transaction is awaited. It is also a recipient's only failure signal:
-	// a failed apply reverts and emits no log, so "no event by the timeout" is what makes it Invalid
-	//.
+	// a failed apply reverts and emits no log, so "no event by the timeout" is what makes it Invalid.
 	Timeout time.Duration `yaml:"timeout"`
 	// FromBlock is where log searches start when resolving an anchor to its transaction hash. It
 	// defaults to zero, the whole chain, which is right for a freshly bootstrapped network; on a chain

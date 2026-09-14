@@ -216,11 +216,12 @@ func (u *SetupUpdater) awaitReceipt(ctx context.Context, txHash client.Hash) err
 // update a distinct one without needing any state on this side.
 func setupAnchor(ppRaw []byte, supersedes uint64) [32]byte {
 	h := sha256.New()
-	h.Write([]byte("evm-nwo-setup"))
+	// hash.Hash.Write never returns an error; ignoring it here is documented, not unchecked.
+	_, _ = h.Write([]byte("evm-nwo-setup"))
 	var version [8]byte
 	binary.BigEndian.PutUint64(version[:], supersedes)
-	h.Write(version[:])
-	h.Write(ppRaw)
+	_, _ = h.Write(version[:])
+	_, _ = h.Write(ppRaw)
 
 	var out [32]byte
 	copy(out[:], h.Sum(nil))
