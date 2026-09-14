@@ -570,11 +570,18 @@ For more details on the specific Protobuf messages used by each driver, see:
 ### Automated Enforcement (`buf breaking`)
 
 These recommendations are enforced automatically. `buf.yaml` declares a `breaking:`
-ruleset (`FILE`), and the `proto-breaking` job in
+ruleset, and the `proto-breaking` job in
 [`.github/workflows/tests.yml`](../.github/workflows/tests.yml) runs `buf breaking`
-against the pull request's base branch on every PR. Wire-incompatible changes — changing
-a field's type, reusing or renumbering a field, deleting a message, and so on — fail CI
-before they can merge.
+against the pull request's base branch on every PR. Binary-wire-incompatible changes —
+changing a field's type, reusing or renumbering a field, deleting a field without
+reserving its number, changing cardinality, and so on — fail CI before they can merge.
+
+The ruleset is `WIRE` (binary wire compatibility) rather than the stricter `FILE` or
+`WIRE_JSON`. Panurus serializes these messages only as binary protobuf — there is no
+`protojson` use anywhere in the tree — so only binary compatibility affects node interop.
+`WIRE` deliberately permits wire-neutral refactors such as **renaming a field** (the
+binary format keys off field *numbers*, not names), keeping the gate focused on changes
+that actually break cross-version deserialization.
 
 To run the same check locally against your `main` branch (or any other base ref):
 
