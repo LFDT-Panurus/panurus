@@ -141,8 +141,8 @@ func TestGateAssembleQuorumOverSessions(t *testing.T) {
 	initiator := NewInitiator(reg, gateThreshold, gateDomain(t), gateRequest())
 
 	ctx := &gateContext{
-		fakeContext: fakeContext{ctx: context.Background(), me: view.Identity(gateInitiator)},
-		responders:  responders,
+		ctx: context.Background(), me: view.Identity(gateInitiator),
+		responders: responders,
 	}
 	boxed, err := initiator.Call(ctx)
 	require.NoError(t, err)
@@ -171,8 +171,8 @@ func TestGateFixtureMatchesAssembly(t *testing.T) {
 	reg, responders := gateEndorsers(t, 3)
 	initiator := NewInitiator(reg, gateThreshold, gateDomain(t), gateRequest())
 	ctx := &gateContext{
-		fakeContext: fakeContext{ctx: context.Background(), me: view.Identity(gateInitiator)},
-		responders:  responders,
+		ctx: context.Background(), me: view.Identity(gateInitiator),
+		responders: responders,
 	}
 	boxed, err := initiator.Call(ctx)
 	require.NoError(t, err)

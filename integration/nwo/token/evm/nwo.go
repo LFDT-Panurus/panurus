@@ -100,13 +100,11 @@ func (noopBackend) InstallPublicParams(*topology2.TMS, []byte) error {
 // NewNetworkHandler returns a handler for EVM-backed TMSs.
 func NewNetworkHandler(tokenPlatform common.TokenPlatform, builder api2.Builder) *NetworkHandler {
 	return &NetworkHandler{
-		NetworkHandler: common.NetworkHandler{
-			TokenPlatform:     tokenPlatform,
-			EventuallyTimeout: 10 * time.Minute,
-			CryptoMaterialGenerators: map[string]generators.CryptoMaterialGenerator{
-				fabtokenv1.DriverIdentifier:     fabtokenv1.NewCryptoMaterialGenerator(tokenPlatform, builder),
-				zkatdlognoghv1.DriverIdentifier: zkatdlognoghv1.NewCryptoMaterialGenerator(tokenPlatform, math3.BN254, builder),
-			},
+		TokenPlatform:     tokenPlatform,
+		EventuallyTimeout: 10 * time.Minute,
+		CryptoMaterialGenerators: map[string]generators.CryptoMaterialGenerator{
+			fabtokenv1.DriverIdentifier:     fabtokenv1.NewCryptoMaterialGenerator(tokenPlatform, builder),
+			zkatdlognoghv1.DriverIdentifier: zkatdlognoghv1.NewCryptoMaterialGenerator(tokenPlatform, math3.BN254, builder),
 		},
 		Entries:   map[string]*Entry{},
 		materials: tfabric.NewNetworkHandler(tokenPlatform, builder, noopBackend{}),
