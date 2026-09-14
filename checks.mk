@@ -160,6 +160,23 @@ buf-format:
 	@echo "Checking protobuf formatting..."
 	@buf format -d --exit-code
 
+# literal '#': Make treats a bare '#' as a comment, and buf's git-input syntax
+# (.git#branch=...) needs one, so build it via an escaped-hash variable.
+BUF_HASH := \#
+# base git ref to diff the working tree's protos against, using buf.yaml's
+# `breaking:` ruleset. Defaults to the local 'main' branch for local runs; CI's
+# 'proto-breaking' job overrides it with the pull request's base ref.
+BUF_BREAKING_AGAINST ?= .git$(BUF_HASH)branch=main
+
+.PHONY: protos-breaking
+# detect backward-incompatible protobuf changes (wire-format breaks) against a
+# base ref. Not part of 'checks-fast'/'checks': it is comparative (needs a base
+# ref) and so has no meaning for a plain push — it runs PR-only in CI. Requires
+# the base ref to be present in .git.
+protos-breaking:
+	@echo "Checking protobuf backward compatibility against '$(BUF_BREAKING_AGAINST)'..."
+	@buf breaking --against '$(BUF_BREAKING_AGAINST)'
+
 .PHONY: tidy-check
 # check that go modules are tidy (run 'make tidy' to fix)
 tidy-check:
