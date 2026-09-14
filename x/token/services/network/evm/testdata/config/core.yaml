@@ -1,0 +1,23 @@
+token:
+  enabled: true
+  tms:
+    ns1:
+      network: evm-net
+      channel: chan1
+      namespace: ns1
+      services:
+        network:
+          evm:
+            endpoint: http://localhost:8545
+            chainID: 31337
+            contracts:
+              tokenState: "0x5FbDB2315678afecb367f032d93F642f64180aa3"
+            endorsement:
+              threshold: 1
+              endorsers:
+                - address: "0x7e5f4552091a69125d5dfcb7b8c2659029395bdf"
+                  fscIdentity: endorser-1
+    ns2:
+      network: fabric-net
+      channel: chanF
+      namespace: ns2
