@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"slices"
 	"sort"
 	"strings"
 	"text/tabwriter"
@@ -173,8 +174,7 @@ func printFlameGraph(w *tabwriter.Writer, stacks []StackRecord, totalAlloc int64
 		current := root
 		root.Total += rec.Bytes
 
-		for i := len(rec.Stack) - 1; i >= 0; i-- {
-			fnName := rec.Stack[i]
+		for _, fnName := range slices.Backward(rec.Stack) {
 			if _, exists := current.Children[fnName]; !exists {
 				current.Children[fnName] = &FlameNode{
 					Name:     fnName,

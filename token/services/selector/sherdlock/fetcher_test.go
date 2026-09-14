@@ -79,11 +79,11 @@ func TestCachedFetcher_IsCacheStale(t *testing.T) {
 	assert.True(t, fetcher.isCacheStale())
 
 	// Update lastFetched to now
-	atomic.StoreInt64(&fetcher.lastFetched, time.Now().UnixNano())
+	fetcher.lastFetched.Store(time.Now().UnixNano())
 	assert.False(t, fetcher.isCacheStale())
 
 	// Manually set lastFetched to the past instead of sleeping
-	atomic.StoreInt64(&fetcher.lastFetched, time.Now().Add(-fetcher.freshnessInterval*2).UnixNano())
+	fetcher.lastFetched.Store(time.Now().Add(-fetcher.freshnessInterval * 2).UnixNano())
 	assert.True(t, fetcher.isCacheStale())
 }
 
@@ -97,12 +97,12 @@ func TestCachedFetcher_IsCacheOverused(t *testing.T) {
 
 	// Simulate queries
 	for range maxQueries - 1 {
-		atomic.AddUint32(&fetcher.queriesResponded, 1)
+		fetcher.queriesResponded.Add(1)
 	}
 	assert.False(t, fetcher.isCacheOverused())
 
 	// One more query should make it overused
-	atomic.AddUint32(&fetcher.queriesResponded, 1)
+	fetcher.queriesResponded.Add(1)
 	assert.True(t, fetcher.isCacheOverused())
 }
 
@@ -141,7 +141,7 @@ func TestCachedFetcher_Update(t *testing.T) {
 
 	// Verify cache was updated
 	assert.False(t, fetcher.isCacheStale())
-	assert.Equal(t, uint32(0), atomic.LoadUint32(&fetcher.queriesResponded))
+	assert.Equal(t, uint32(0), fetcher.queriesResponded.Load())
 
 	// Verify tokens are in cache
 	key1 := tokenKey("wallet1", "USD")
@@ -180,10 +180,12 @@ func TestCachedFetcher_UnspentTokensIteratorBy_CacheHit(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.NotNil(t, it)
-	assert.True(t, it.(interface{ HasNext() bool }).HasNext())
+	item, err := it.Next()
+	require.NoError(t, err)
+	assert.NotNil(t, item)
 
 	// Verify query counter incremented
-	assert.Equal(t, uint32(1), atomic.LoadUint32(&fetcher.queriesResponded))
+	assert.Equal(t, uint32(1), fetcher.queriesResponded.Load())
 
 	mockDB.AssertExpectations(t)
 }
@@ -212,7 +214,9 @@ func TestCachedFetcher_UnspentTokensIteratorBy_CacheMiss(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotNil(t, it)
 	// Should return empty iterator
-	assert.False(t, it.(interface{ HasNext() bool }).HasNext())
+	item, err := it.Next()
+	require.NoError(t, err)
+	assert.Nil(t, item)
 
 	mockDB.AssertExpectations(t)
 }
@@ -237,7 +241,7 @@ func TestCachedFetcher_UnspentTokensIteratorBy_StaleCache(t *testing.T) {
 	fetcher.update(ctx)
 
 	// Trigger hard refresh by setting lastFetched to the past
-	atomic.StoreInt64(&fetcher.lastFetched, time.Now().Add(-fetcher.freshnessInterval*2).UnixNano())
+	fetcher.lastFetched.Store(time.Now().Add(-fetcher.freshnessInterval * 2).UnixNano())
 	assert.True(t, fetcher.isCacheStale())
 
 	// Setup second call expectation
@@ -301,7 +305,7 @@ func TestCachedFetcher_CacheClear(t *testing.T) {
 	mockDB.On("SpendableTokensIteratorBy", mock.Anything, "", token2.Type("")).Return(mockIterator2, nil).Once()
 
 	// Force cache to be stale so update will actually run
-	atomic.StoreInt64(&fetcher.lastFetched, time.Now().Add(-20*time.Second).UnixNano())
+	fetcher.lastFetched.Store(time.Now().Add(-20 * time.Second).UnixNano())
 
 	fetcher.update(ctx)
 
@@ -798,7 +802,7 @@ func TestCachedFetcher_Update_ThunderingHerd(t *testing.T) {
 
 	// Trigger staleness manually
 	fetcher.mu.Lock()
-	atomic.StoreInt64(&fetcher.lastFetched, time.Now().Add(-10*time.Second).UnixNano())
+	fetcher.lastFetched.Store(time.Now().Add(-10 * time.Second).UnixNano())
 	fetcher.mu.Unlock()
 
 	// Block the next DB call with a mock that waits
@@ -1050,7 +1054,7 @@ func TestCachedFetcher_UpdateDoesNotBlockReaders(t *testing.T) {
 	fetcher.update(ctx)
 
 	// Make cache stale so update() will be called
-	atomic.StoreInt64(&fetcher.lastFetched, time.Now().Add(-20*time.Second).UnixNano())
+	fetcher.lastFetched.Store(time.Now().Add(-20 * time.Second).UnixNano())
 
 	// Use channels to synchronize instead of Sleep
 	dbStarted := make(chan struct{})
@@ -1109,7 +1113,7 @@ func TestCachedFetcher_UpdateReacquiresLockAfterDB(t *testing.T) {
 	fetcher := NewCachedFetcher(mockDB, 0, 1*time.Second, 100)
 
 	// Pre-populate to make cache appear stale
-	atomic.StoreInt64(&fetcher.lastFetched, time.Now().Add(-20*time.Second).UnixNano())
+	fetcher.lastFetched.Store(time.Now().Add(-20 * time.Second).UnixNano())
 
 	tokens := []*token2.UnspentTokenInWallet{
 		{WalletID: "wallet1", Type: "USD", Quantity: "300"},
@@ -1122,7 +1126,7 @@ func TestCachedFetcher_UpdateReacquiresLockAfterDB(t *testing.T) {
 
 	// After update completes, cache should be refreshed (not stale)
 	assert.False(t, fetcher.isCacheStale())
-	assert.Equal(t, uint32(0), atomic.LoadUint32(&fetcher.queriesResponded))
+	assert.Equal(t, uint32(0), fetcher.queriesResponded.Load())
 
 	// Token should be in cache
 	fetcher.mu.RLock()

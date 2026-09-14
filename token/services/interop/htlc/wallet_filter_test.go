@@ -104,7 +104,7 @@ func TestExpiredAndHashSelectorNotExpired(t *testing.T) {
 
 func computeHash(preImage []byte) []byte {
 	h := crypto.SHA256.New()
-	h.Write(preImage)
+	_, _ = h.Write(preImage)
 
 	return []byte(encoding.Base64.New().EncodeToString(h.Sum(nil)))
 }

@@ -3,13 +3,20 @@ fabricx-docker-images: ## Pull fabric-x images
 	docker pull ghcr.io/hyperledger/fabric-x-committer-test-node:$(FABRIC_X_COMMITTER_VERSION)
 	docker tag ghcr.io/hyperledger/fabric-x-committer-test-node:$(FABRIC_X_COMMITTER_VERSION) hyperledger/fabric-x-committer-test-node:$(FABRIC_X_COMMITTER_VERSION)
 
+# The fabric-x tools live in their own subdirectory of $(FAB_BINS): FSC's
+# fabricx network (nwo/fabricx/network.New) sets BinSubdir = "fabric-x" so it
+# looks up fxconfig/configtxgen there instead of at the top level of FAB_BINS.
+FAB_BINS_FABRIC_X = $(FAB_BINS)/fabric-x
+
 .PHONY: fxconfig
 fxconfig: ## Install fxconfig
-	@env GOBIN=$(FAB_BINS) go install $(GO_FLAGS) github.com/hyperledger/fabric-x/tools/fxconfig@$(FABRIC_X_TOOLS_VERSION)
+	@mkdir -p $(FAB_BINS_FABRIC_X)
+	@env GOBIN=$(FAB_BINS_FABRIC_X) go install $(GO_FLAGS) github.com/hyperledger/fabric-x/tools/fxconfig@$(FABRIC_X_TOOLS_VERSION)
 
 .PHONY: configtxgen
 configtxgen: ## Install configtxgen
-	@env GOBIN=$(FAB_BINS) go install $(GO_FLAGS) github.com/hyperledger/fabric-x/tools/configtxgen@$(FABRIC_X_TOOLS_VERSION)
+	@mkdir -p $(FAB_BINS_FABRIC_X)
+	@env GOBIN=$(FAB_BINS_FABRIC_X) go install $(GO_FLAGS) github.com/hyperledger/fabric-x/tools/configtxgen@$(FABRIC_X_TOOLS_VERSION)
 
 # See the note in fungible.mk: these suites loop over integration.AllTestTypes, so
 # the specs calling fungible.TestAll also get per-infra targets that CI runs as
