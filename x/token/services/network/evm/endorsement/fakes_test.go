@@ -40,21 +40,13 @@ func newPipe(initiatorID, endorserID view.Identity) (initiatorEnd, endorserEnd *
 
 func (s *pipeSession) Info() view.SessionInfo { return view.SessionInfo{ID: "pipe", Caller: s.caller} }
 
-func (s *pipeSession) Send(payload []byte) error {
-	return s.SendWithContext(context.Background(), payload)
-}
-
-func (s *pipeSession) SendWithContext(_ context.Context, payload []byte) error {
+func (s *pipeSession) Send(_ context.Context, payload []byte) error {
 	s.peerBox <- &view.Message{Status: view.OK, Payload: payload}
 
 	return nil
 }
 
-func (s *pipeSession) SendError(payload []byte) error {
-	return s.SendErrorWithContext(context.Background(), payload)
-}
-
-func (s *pipeSession) SendErrorWithContext(_ context.Context, payload []byte) error {
+func (s *pipeSession) SendError(_ context.Context, payload []byte) error {
 	s.peerBox <- &view.Message{Status: view.ERROR, Payload: payload}
 
 	return nil
