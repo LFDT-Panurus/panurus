@@ -129,6 +129,19 @@ Practical implications for debugging:
   channel join is unrelated to this builder — it means the local `$FAB_BINS`
   binaries are a mismatched set (e.g. `configtxgen` built separately from
   `peer`/`orderer`). Re-run `make download-fabric` to get a consistent set.
+- **The repo must be checked out under a GOPATH-style
+  `github.com/LFDT-Panurus/panurus` path** — this is why local development
+  happens under `$GOPATH/src/github.com/LFDT-Panurus/panurus` (see AGENTS.md)
+  and why the `itest` job in `.github/workflows/tests.yml` checks out to
+  `go/src/github.com/LFDT-Panurus/panurus` instead of `$GITHUB_WORKSPACE`
+  directly. FSC's Go-chaincode packager
+  (`integration/nwo/fabric/packager/golang.moduleInfo`) detects the
+  chaincode's module root by string-slicing `go env GOMOD`'s directory
+  around a literal `"github."` substring; without that substring in the
+  checkout path it silently mis-detects a go-modules chaincode as legacy
+  GOPATH chaincode, drops `go.mod` from the package, and the `golang`
+  external builder then fails with
+  `cannot find package ... in any of: ... (from $GOPATH)`.
 
 ## Debugging Techniques
 - **Manual Inspection**: Use `time.Sleep()` or pause loops in tests to inspect Docker state

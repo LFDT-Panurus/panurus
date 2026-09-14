@@ -117,3 +117,48 @@ older one.
   peer/orderer/cryptogen binaries. Re-ran `make download-fabric` to get a
   matched v3.1.4 set; unrelated to this fix, but blocked local validation
   until fixed.
+
+## Follow-up: CI still failing after merge to PR #2360 (all `itest` jobs)
+
+All `itest` matrix jobs on PR #2360 failed with the same error, even though
+Step 5 passed locally:
+
+```
+[chaincode.externalbuilder.golang] cannot find package "github.com/LFDT-Panurus/panurus/token/services/network/fabric/tcc/main" in any of: ... (from $GOPATH)
+Error: chaincode install failed ... external builder 'golang' failed: exit status 1
+```
+
+Root cause (confirmed by reading FSC v0.21.0's
+`integration/nwo/fabric/packager/golang/platform.go`, function `moduleInfo`):
+the packager decides whether chaincode is a Go module (and therefore whether
+to include `go.mod`/`go.sum` in the packaged tarball) by running
+`go env GOMOD`, then reconstructing the on-disk module directory via
+`strings.Cut(moduleRootDir, "github.")` — i.e. it assumes the checkout lives
+under a path containing the literal substring `github.` (a GOPATH-style
+`.../github.com/<org>/<repo>` layout). Local dev already satisfies this by
+convention (`/Users/adc/go/src/github.com/LFDT-Panurus/panurus...`, per
+AGENTS.md), which is why Step 5 passed. CI's `actions/checkout` puts the repo
+at `$GITHUB_WORKSPACE` (`/home/runner/work/panurus/panurus` — no `github.`
+substring), so the heuristic's `strings.Cut` fails, `moduleInfo` returns nil,
+and the packager falls back to treating this go-modules chaincode as legacy
+GOPATH chaincode — dropping `go.mod` and breaking the `golang` external
+builder from Step 1-4 (a symlink to a GOPATH-style path does not work here:
+`go env GOMOD`/`os.Getwd()` resolve through symlinks to the physical path via
+the kernel's `getcwd()`, so the checkout must *physically* live under
+`github.com/LFDT-Panurus/panurus`).
+
+Fix: `.github/workflows/tests.yml`'s `itest` job now checks out to
+`go/src/github.com/LFDT-Panurus/panurus` (via `actions/checkout`'s `path:`
+input) instead of `$GITHUB_WORKSPACE` directly, and sets
+`defaults.run.working-directory` to that path so every `run:` step
+(`make install-tools`, `make download-fabric`, `make docker-images`,
+the ginkgo run) executes from there — mirroring the local dev layout. The
+coverage step writes `coverage.profile` back to `$GITHUB_WORKSPACE`
+explicitly (its consumer, the Coveralls `uses:` step, isn't affected by
+`defaults.run.working-directory`, which only applies to `run:` steps).
+Documented in `docs/development/debug-integration-tests.md`. Not yet applied
+to `nightly-fsc.yml`'s equivalent `itest` job — out of scope for unblocking
+PR #2360, and that workflow's `Bump FSC dependency` step references a local
+action (`./.github/actions/bump-fsc`) that resolves relative to
+`$GITHUB_WORKSPACE`, needing separate care before the same change is safe
+there.
