@@ -22,9 +22,18 @@ GINKGO_TEST_OPTS += --keep-going -cover
 # -coverpkg the main-module (`token/...`) packages are NOT instrumented and their
 # end-to-end coverage is lost from the report. FSC's builder forwards the environment
 # to `go build`, so exporting GOFLAGS with a targeted -coverpkg restores it.
+#
+# -covermode=atomic is pinned for the same reason: some suites call
+# EnableRaceDetector() (see integration/token/test_utils.go), which makes FSC's
+# node builder (gexec.Build with -race) require -covermode=atomic for those
+# binaries specifically. `go tool covdata` refuses to merge meta-data files that
+# don't all share the same counter mode, so every cover-instrumented binary in a
+# run -- FSC nodes, the ginkgo suite itself, and the chaincode built by
+# ci/external-builders/golang/bin/build -- must agree on one mode; atomic is
+# valid with or without -race, so it's the one choice that works everywhere.
 COVERPKG ?= github.com/LFDT-Panurus/panurus/...
 ifdef GOCOVERDIR
-export GOFLAGS := -coverpkg=$(COVERPKG)
+export GOFLAGS := -coverpkg=$(COVERPKG) -covermode=atomic
 endif
 
 TOP = .
