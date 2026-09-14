@@ -1,6 +1,6 @@
 # Network Service
 
-The **Network Service** ([`token/services/network`](../../token/services/network/network.go)) is the **bridge layer** of Panurus. It provides a consistent, backend-agnostic interface that translates generic token operations into the specific formats and protocols required by the underlying Distributed Ledger Technology (DLT), such as Hyperledger Fabric or FabricX.
+The **Network Service** ([`token/services/network`](../../token/services/network/network.go)) is the **bridge layer** of Panurus. It provides a consistent, backend-agnostic interface that translates generic token operations into the specific formats and protocols required by the underlying Distributed Ledger Technology (DLT), such as Hyperledger Fabric, FabricX, or Ethereum/EVM.
 
 ## Overview
 
@@ -21,11 +21,13 @@ graph TB
     subgraph "Driver Layer"
         FabricD[Fabric Driver]
         FabricXD[FabricX Driver]
+        EVMD[EVM Driver]
     end
 
     subgraph "DLT Backends"
         Fabric[Hyperledger Fabric<br/>with Token Chaincode]
         FabricX[FabricX<br/>with FSC Endorsers]
+        EVM[Ethereum/EVM<br/>with FSC Endorsers]
     end
 
     TTX --> NS
@@ -33,8 +35,10 @@ graph TB
     NS --> Provider
     Provider --> FabricD
     Provider --> FabricXD
+    Provider --> EVMD
     FabricD --> Fabric
     FabricXD --> FabricX
+    EVMD --> EVM
 ```
 
 ## Driver-Based Architecture
@@ -112,14 +116,20 @@ The [`driver.Network`](../../token/services/network/driver/network.go) interface
 
 - **`Name() string`** - Returns the network identifier
 - **`Channel() string`** - Returns the channel/partition name
+- **`Normalize(opt) (*ServiceOptions, error)`** - Populates default service options from network configuration
+- **`Connect(ns) ([]ServiceOption, error)`** - Initializes the connection to the backend for a namespace
 - **`Broadcast(ctx, blob) error`** - Submits transactions to ordering service
-- **`RequestApproval(...) (Envelope, error)`** - Requests transaction endorsement
 - **`NewEnvelope() Envelope`** - Creates a new transaction envelope
+- **`RequestApproval(...) (Envelope, error)`** - Requests transaction endorsement
+- **`SetupPublicParams(...) (Envelope, error)`** - Submits new/updated public parameters, including first-time namespace setup
 - **`ComputeTxID(*TxID) string`** - Calculates transaction identifiers
 - **`FetchPublicParameters(namespace) ([]byte, error)`** - Retrieves public parameters
 - **`QueryTokens(...) ([][]byte, error)`** - Queries token state
 - **`AreTokensSpent(...) ([]bool, error)`** - Checks token spent status
+- **`LocalMembership() LocalMembership`** - Returns the local membership service for node identities
 - **`AddFinalityListener(...) error`** - Registers finality notifications
+- **`GetTransactionStatus(...) (status, hash, message, error)`** - Retrieves current status and token request hash for a transaction
+- **`LookupTransferMetadataKey(...) ([]byte, error)`** - Scans the ledger for transfer-action metadata
 - **`Ledger() (Ledger, error)`** - Provides ledger access
 
 ## Available Implementations
@@ -148,15 +158,24 @@ Optimized Fabric variant where FSC nodes act as endorsers, eliminating the need 
 - Async finality processing with event queues
 - Optimized for high-performance scenarios
 
-### Ethereum (Implementation Guide)
-Guide for implementing a network driver for Ethereum and EVM-compatible blockchains.
+### Ethereum / EVM
+Network driver for Ethereum and EVM-compatible blockchains, implemented in
+[`x/token/services/network/evm`](../../x/token/services/network/evm).
 
-**Documentation**: [Network Service - Ethereum Implementation Guide](./network-ethereum.md),
-[Ethereum Deployment Runbook](./network-ethereum-deployment.md)
+The design document describes two architectural approaches; only **Approach 2 (Pre-Order Execution
+with FSC Endorsers)** is implemented and shipped today. It supports both the `fabtoken` and
+`zkatdlog/nogh` token drivers.
 
-**Approaches**:
-- **Smart Contract Validation**: Full validation logic in smart contract (similar to Fabric)
-- **Pre-Order Execution**: FSC endorsers with on-chain signature verification (similar to FabricX)
+**Documentation**:
+- [Network Service - Ethereum Implementation Guide](./network-ethereum.md) - Architecture, both approaches, and the Approach-2 contract walkthrough
+- [Ethereum Driver Internals](./network-ethereum-internals.md) - Derivations, invariants, and traps for implementers/debuggers
+- [Ethereum Deployment Runbook](./network-ethereum-deployment.md) - Bootstrapping a TMS with the Approach-2 driver
+
+**Key Features (Approach 2, shipped)**:
+- FSC endorsers validate off-chain and sign a `StateDelta` with EIP-712; the chain only checks endorser signatures, public-parameters version, and spend legality
+- One `TokenState` clone per TMS; one Ethereum transaction per token request
+- Speaks plain JSON-RPC (no go-ethereum dependency), so it works against any EVM node (e.g. geth, Besu)
+- Graph-hiding token drivers are supported by the contracts/translator but none ship yet (`fabtoken` and `zkatdlog/nogh` are both graph-revealing)
 
 **Key Considerations**:
 - Account-based ledger model vs UTXO
@@ -212,6 +231,7 @@ For detailed information about the recovery mechanism, see [Storage Service - Tr
 - [Fabric Implementation Details](./network-fabric.md) - Chaincode-based endorsement
 - [FabricX Implementation Details](./network-fabricx.md) - FSC node endorsement
 - [Ethereum Implementation Details](./network-ethereum.md) - EVM endorsement quorum
+- [Ethereum Driver Internals](./network-ethereum-internals.md) - Derivations, invariants and traps for implementers
 - [Storage Service - Transaction Recovery](./storage.md#transaction-recovery-service) - Recovery mechanism details
 - [Public Parameters](../public_parameters.md) - Cryptographic setup management
 - [TTX Service](./ttx.md) - Token transaction orchestration
