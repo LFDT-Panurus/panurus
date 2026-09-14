@@ -13,14 +13,14 @@ import csv
 import html
 import sqlite3
 import statistics
-from pathlib import Path
 
 import jinja2
 
 from .paths import Layout
 from .svg_chart import Point, line_chart, sparkline
 
-_ENV = jinja2.Environment(autoescape=True, trim_blocks=True, lstrip_blocks=True)
+_ENV = jinja2.Environment(
+    autoescape=True, trim_blocks=True, lstrip_blocks=True)
 
 _BASE_CSS = """
 :root {
@@ -77,7 +77,8 @@ _PAGE = _ENV.from_string("""<!doctype html><html lang="en"><head>
 def _write(layout: Layout, rel_path: str, title: str, body: str) -> None:
     out = layout.www / rel_path
     out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(_PAGE.render(title=title, css=_BASE_CSS, nav=_NAV, body=body))
+    out.write_text(_PAGE.render(
+        title=title, css=_BASE_CSS, nav=_NAV, body=body))
 
 
 def _badge(status: str) -> str:
@@ -93,7 +94,7 @@ def _bench_names(conn: sqlite3.Connection) -> list[str]:
 
 
 def _main_series(conn: sqlite3.Connection, bench: str, metric: str = "ns/op",
-                  limit: int = 60) -> list[tuple[str, str, float, str]]:
+                 limit: int = 60) -> list[tuple[str, str, float, str]]:
     """[(run_id, commit_short, median_value, verdict_status)] oldest-first, for
     the last `limit` non-noisy solo `main` runs of one series."""
     rows = conn.execute(
@@ -112,7 +113,8 @@ def _main_series(conn: sqlite3.Connection, bench: str, metric: str = "ns/op",
             (r["run_id"], bench, metric),
         ).fetchone()
         status = vrow["status"] if vrow else "neutral"
-        out.append((r["run_id"], r["commit_sha"][:9], statistics.median(values), status))
+        out.append((r["run_id"], r["commit_sha"][:9],
+                   statistics.median(values), status))
     return out
 
 
@@ -126,7 +128,8 @@ def _index_body(conn: sqlite3.Connection) -> str:
         latest_status = series[-1][3]
         latest_value = series[-1][2]
         oldest_value = series[0][2]
-        pct = 0.0 if oldest_value == 0 else (latest_value - oldest_value) / oldest_value * 100.0
+        pct = 0.0 if oldest_value == 0 else (
+            latest_value - oldest_value) / oldest_value * 100.0
         entries.append((bench, series, latest_status, latest_value, pct))
     # worst-delta first: slowdowns (positive pct) sorted to the top.
     entries.sort(key=lambda e: -e[4])
@@ -152,7 +155,8 @@ def _bench_body(conn: sqlite3.Connection, bench: str) -> str:
         series = _main_series(conn, bench, metric=metric, limit=120)
         if not series:
             continue
-        points = [Point(x_label=short, value=v, status=st) for _, short, v, st in series]
+        points = [Point(x_label=short, value=v, status=st)
+                  for _, short, v, st in series]
         svg = line_chart(points, unit=metric, title=f"{bench} {metric}")
         sections.append(f"<h2>{html.escape(metric)}</h2>{svg}")
     body = f"<h1>{html.escape(bench)}</h1>"
@@ -162,7 +166,7 @@ def _bench_body(conn: sqlite3.Connection, bench: str) -> str:
 
 def _prs_body(conn: sqlite3.Connection) -> str:
     rows = conn.execute(
-        "SELECT run_id, pr_number, commit_sha, baseline_sha, started_at, noisy "
+        "SELECT run_id, pr_number, commit_sha, baseline_sha, started_at, noisy " +
         "FROM runs WHERE kind IN ('pr','confirm') ORDER BY started_at DESC LIMIT 100"
     ).fetchall()
     out = ['<h1>Pull requests &amp; confirmations</h1>',
@@ -183,7 +187,7 @@ def _prs_body(conn: sqlite3.Connection) -> str:
 
 def _runs_body(conn: sqlite3.Connection) -> str:
     rows = conn.execute(
-        "SELECT run_id, kind, commit_sha, started_at, status, noisy FROM runs "
+        "SELECT run_id, kind, commit_sha, started_at, status, noisy FROM runs " +
         "ORDER BY started_at DESC LIMIT 300"
     ).fetchall()
     out = ['<h1>Run index</h1>',
@@ -202,7 +206,7 @@ def _runs_body(conn: sqlite3.Connection) -> str:
 
 def write_health(layout: Layout, checks: dict[str, str], ok: bool) -> None:
     rows = "".join(f"<tr><td>{html.escape(k)}</td><td class=\"mono\">{html.escape(str(v))}</td></tr>"
-                    for k, v in checks.items())
+                   for k, v in checks.items())
     body = (f"<h1>Host health {'✅' if ok else '❌'}</h1>"
             f"<table><tbody>{rows}</tbody></table>")
     _write(layout, "health.html", "Host health", body)
@@ -219,7 +223,7 @@ def _export_csv(layout: Layout, conn: sqlite3.Connection) -> None:
     with out_path.open("w", newline="") as f:
         writer = csv.writer(f)
         writer.writerow(["run_id", "kind", "commit_sha", "started_at", "side", "bench",
-                          "params_json", "workers", "metric", "sample_idx", "value"])
+                         "params_json", "workers", "metric", "sample_idx", "value"])
         for r in rows:
             writer.writerow(list(r))
 
@@ -231,5 +235,6 @@ def generate(layout: Layout, conn: sqlite3.Connection) -> None:
     for bench in _bench_names(conn):
         _write(layout, f"bench/{bench}.html", bench, _bench_body(conn, bench))
     if not (layout.www / "health.html").exists():
-        write_health(layout, {"status": "perflab doctor has not run yet"}, ok=False)
+        write_health(
+            layout, {"status": "perflab doctor has not run yet"}, ok=False)
     _export_csv(layout, conn)

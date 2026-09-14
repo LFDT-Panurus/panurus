@@ -11,7 +11,7 @@ import json
 import os
 import platform
 import subprocess
-import time
+
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -84,7 +84,7 @@ def doctor(cfg: PerflabConfig) -> DoctorReport:
         checks["turbo_disabled"] = "unavailable"
 
     for name, cmd in (("go", ["go", "version"]), ("git", ["git", "--version"]),
-                       ("taskset", ["taskset", "-V"])):
+                      ("taskset", ["taskset", "-V"])):
         proc = subprocess.run(cmd, capture_output=True, text=True)
         checks[name] = proc.stdout.strip() or proc.stderr.strip()
         if proc.returncode != 0:
@@ -94,8 +94,8 @@ def doctor(cfg: PerflabConfig) -> DoctorReport:
 
 
 def _bench_cmd(worktree: Path, spec: BenchmarkSpec, cfg: PerflabConfig,
-                caps: capability.Capabilities, count: int, benchtime: str,
-                cpu: int, extra_params: dict[str, str] | None = None) -> list[str]:
+               caps: capability.Capabilities, count: int, benchtime: str,
+               cpu: int, extra_params: dict[str, str] | None = None) -> list[str]:
     cmd = [
         "go", "test", f"./{spec.package}",
         "-run=^$", f"-bench={spec.name}", "-benchmem",
@@ -116,20 +116,22 @@ def _bench_cmd(worktree: Path, spec: BenchmarkSpec, cfg: PerflabConfig,
 def _run_one(worktree: Path, cmd: list[str], out_path: Path, cpuset: str,
              timeout: int = 1800) -> tuple[int, str]:
     full = ["taskset", "-c", cpuset, *cmd]
-    proc = subprocess.run(full, cwd=worktree, capture_output=True, text=True, timeout=timeout)
-    out_path.write_text(proc.stdout + "\n" + proc.stderr if proc.returncode != 0 else proc.stdout)
+    proc = subprocess.run(full, cwd=worktree,
+                          capture_output=True, text=True, timeout=timeout)
+    out_path.write_text(proc.stdout + "\n" +
+                        proc.stderr if proc.returncode != 0 else proc.stdout)
     return proc.returncode, proc.stderr
 
 
 def _probe_for_package(worktree: Path, package: str,
-                        cache: dict[str, capability.Capabilities]) -> capability.Capabilities:
+                       cache: dict[str, capability.Capabilities]) -> capability.Capabilities:
     if package not in cache:
         cache[package] = capability.probe(worktree, package)
     return cache[package]
 
 
 def run_tier1_into(worktree: Path, out_dir: Path, cfg: PerflabConfig, tag: str,
-                    count: int | None = None) -> dict[str, Path]:
+                   count: int | None = None) -> dict[str, Path]:
     """Run every Tier-1 benchmark in `worktree`, writing `<bench>.<tag>.txt`
     files into out_dir. Returns {bench_name: file_path}. `tag` is 'solo',
     'base', or 'head' -- the same filename-substring convention
@@ -141,7 +143,8 @@ def run_tier1_into(worktree: Path, out_dir: Path, cfg: PerflabConfig, tag: str,
     canaries_seen = 0
     for spec in cfg.tier1.benchmarks:
         caps = _probe_for_package(worktree, spec.package, caps_cache)
-        cmd = _bench_cmd(worktree, spec, cfg, caps, n, cfg.tier1.benchtime, cfg.tier1.cpu)
+        cmd = _bench_cmd(worktree, spec, cfg, caps, n,
+                         cfg.tier1.benchtime, cfg.tier1.cpu)
         bench_id = spec.name.strip("^$")
         if spec.is_canary:
             # The canary runs first AND last (config.TIER1_BENCHMARKS lists it
@@ -154,7 +157,8 @@ def run_tier1_into(worktree: Path, out_dir: Path, cfg: PerflabConfig, tag: str,
         out_path = out_dir / f"{bench_id}{suffix}.{tag}.txt"
         rc, stderr = _run_one(worktree, cmd, out_path, cfg.bench_cpuset)
         if rc != 0:
-            raise RuntimeError(f"benchmark {bench_id} failed (rc={rc}): {stderr[-2000:]}")
+            raise RuntimeError(
+                f"benchmark {bench_id} failed (rc={rc}): {stderr[-2000:]}")
         files[f"{bench_id}{suffix}"] = out_path
     return files
 
@@ -204,8 +208,10 @@ def run_ab(cfg: PerflabConfig, layout, base_sha: str, head_sha: str, *,
         gitutil.add_worktree(layout.repo, base_sha, base_wt)
         gitutil.add_worktree(layout.repo, head_sha, head_wt)
         for round_idx in range(n_rounds):
-            run_tier1_into(base_wt, run_dir, cfg, tag=f"base_{round_idx}", count=1)
-            run_tier1_into(head_wt, run_dir, cfg, tag=f"head_{round_idx}", count=1)
+            run_tier1_into(base_wt, run_dir, cfg,
+                           tag=f"base_{round_idx}", count=1)
+            run_tier1_into(head_wt, run_dir, cfg,
+                           tag=f"head_{round_idx}", count=1)
         meta = {
             "run_id": run_id, "kind": kind, "suite": "tier1", "commit": head_sha,
             "baseline": base_sha, "pr_number": pr_number,

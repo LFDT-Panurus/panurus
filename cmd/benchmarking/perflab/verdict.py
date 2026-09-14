@@ -19,7 +19,6 @@ docs/development/perflab.md:
 
 from __future__ import annotations
 
-import json
 import sqlite3
 import statistics
 from dataclasses import dataclass
@@ -78,7 +77,7 @@ def canary_values(conn: sqlite3.Connection, run_id: str, side: str = "solo") -> 
 
 
 def check_canary(conn: sqlite3.Connection, run_id: str, thresholds: Thresholds,
-                  side: str = "solo") -> tuple[bool, str]:
+                 side: str = "solo") -> tuple[bool, str]:
     """Compare this run's before/after canary against the rolling median of
     the last `history_window` non-noisy runs' canary. Returns (noisy, reason).
     """
@@ -121,7 +120,7 @@ class VerdictRow:
 
 
 def pairwise_verdicts(conn: sqlite3.Connection, run_id: str, thresholds: Thresholds,
-                       harness_changed: bool) -> list[VerdictRow]:
+                      harness_changed: bool) -> list[VerdictRow]:
     """Classify a PR/confirmation run's head side against its base side."""
     base = _series_of(conn, run_id, "base")
     head = _series_of(conn, run_id, "head")
@@ -132,11 +131,11 @@ def pairwise_verdicts(conn: sqlite3.Connection, run_id: str, thresholds: Thresho
         b_vals, h_vals = base.get(key), head.get(key)
         if b_vals is None:
             out.append(VerdictRow(bench, params_json, metric, None,
-                                   statistics.mean(h_vals), None, NEW))
+                                  statistics.mean(h_vals), None, NEW))
             continue
         if h_vals is None:
             out.append(VerdictRow(bench, params_json, metric, statistics.mean(b_vals),
-                                   None, None, REMOVED))
+                                  None, None, REMOVED))
             continue
         b_mean, h_mean = statistics.mean(b_vals), statistics.mean(h_vals)
         pct = _pct(b_mean, h_mean)
@@ -147,12 +146,13 @@ def pairwise_verdicts(conn: sqlite3.Connection, run_id: str, thresholds: Thresho
         else:
             improved = (pct < 0) == _LOWER_IS_BETTER
             status = IMPROVED if improved else REGRESSED
-        out.append(VerdictRow(bench, params_json, metric, b_mean, h_mean, pct, status))
+        out.append(VerdictRow(bench, params_json,
+                   metric, b_mean, h_mean, pct, status))
     return out
 
 
 def historical_verdicts(conn: sqlite3.Connection, run_id: str, thresholds: Thresholds,
-                         harness_changed: bool) -> list[VerdictRow]:
+                        harness_changed: bool) -> list[VerdictRow]:
     """Classify a solo `main` run against the median/MAD of recent non-noisy
     `main` runs on the same series. Never returns REGRESSED directly -- only
     NEUTRAL or SUSPECTED; a suspected series must be confirmed by an
@@ -167,10 +167,12 @@ def historical_verdicts(conn: sqlite3.Connection, run_id: str, thresholds: Thres
             "WHERE r.kind='main' AND r.noisy=0 AND m.side='solo' AND m.bench=? "
             "AND m.params_json=? AND m.workers=? AND m.metric=? AND r.run_id != ? "
             "GROUP BY r.run_id ORDER BY r.started_at DESC LIMIT ?",
-            (bench, params_json, workers, metric, run_id, thresholds.history_window),
+            (bench, params_json, workers, metric,
+             run_id, thresholds.history_window),
         ).fetchall()
         if len(history) < 5:
-            out.append(VerdictRow(bench, params_json, metric, None, new_value, None, NEUTRAL))
+            out.append(VerdictRow(bench, params_json, metric,
+                       None, new_value, None, NEUTRAL))
             continue
         hist_vals = [h["value"] for h in history]
         baseline = statistics.median(hist_vals)
@@ -185,7 +187,8 @@ def historical_verdicts(conn: sqlite3.Connection, run_id: str, thresholds: Thres
             status = SUSPECTED if (pct > 0) == _LOWER_IS_BETTER else IMPROVED
         else:
             status = NEUTRAL
-        out.append(VerdictRow(bench, params_json, metric, baseline, new_value, pct, status))
+        out.append(VerdictRow(bench, params_json, metric,
+                   baseline, new_value, pct, status))
     return out
 
 
@@ -206,12 +209,12 @@ def render_summary_md(run_id: str, kind: str, rows: list[VerdictRow]) -> str:
              SUSPECTED: "\U0001F7E1", HARNESS_CHANGED: "❓", NEW: "ℹ️",
              REMOVED: "ℹ️"}
     lines = [f"# PerfLab summary: `{run_id}` ({kind})", "",
-              "| Benchmark | Metric | Base | New | Δ | Status |",
-              "|---|---|---|---|---|---|"]
+             "| Benchmark | Metric | Base | New | Δ | Status |",
+             "|---|---|---|---|---|---|"]
     for r in rows:
         base_s = f"{r.base_value:,.0f}" if r.base_value is not None else "n/a"
         new_s = f"{r.new_value:,.0f}" if r.new_value is not None else "n/a"
         pct_s = f"{r.pct_change:+.1f}%" if r.pct_change is not None else "n/a"
         lines.append(f"| {r.bench} | {r.metric} | {base_s} | {new_s} | {pct_s} | "
-                      f"{emoji.get(r.status, '')} {r.status} |")
+                     f"{emoji.get(r.status, '')} {r.status} |")
     return "\n".join(lines) + "\n"
