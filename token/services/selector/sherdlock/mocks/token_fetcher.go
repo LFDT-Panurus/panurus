@@ -10,12 +10,13 @@ import (
 )
 
 type FakeTokenFetcher struct {
-	UnspentTokensIteratorByStub        func(context.Context, string, token.Type) (sherdlock.Iterator[*token.UnspentTokenInWallet], error)
+	UnspentTokensIteratorByStub        func(context.Context, string, token.Type, int) (sherdlock.Iterator[*token.UnspentTokenInWallet], error)
 	unspentTokensIteratorByMutex       sync.RWMutex
 	unspentTokensIteratorByArgsForCall []struct {
 		arg1 context.Context
 		arg2 string
 		arg3 token.Type
+		arg4 int
 	}
 	unspentTokensIteratorByReturns struct {
 		result1 sherdlock.Iterator[*token.UnspentTokenInWallet]
@@ -29,20 +30,21 @@ type FakeTokenFetcher struct {
 	invocationsMutex sync.RWMutex
 }
 
-func (fake *FakeTokenFetcher) UnspentTokensIteratorBy(arg1 context.Context, arg2 string, arg3 token.Type) (sherdlock.Iterator[*token.UnspentTokenInWallet], error) {
+func (fake *FakeTokenFetcher) UnspentTokensIteratorBy(arg1 context.Context, arg2 string, arg3 token.Type, arg4 int) (sherdlock.Iterator[*token.UnspentTokenInWallet], error) {
 	fake.unspentTokensIteratorByMutex.Lock()
 	ret, specificReturn := fake.unspentTokensIteratorByReturnsOnCall[len(fake.unspentTokensIteratorByArgsForCall)]
 	fake.unspentTokensIteratorByArgsForCall = append(fake.unspentTokensIteratorByArgsForCall, struct {
 		arg1 context.Context
 		arg2 string
 		arg3 token.Type
-	}{arg1, arg2, arg3})
+		arg4 int
+	}{arg1, arg2, arg3, arg4})
 	stub := fake.UnspentTokensIteratorByStub
 	fakeReturns := fake.unspentTokensIteratorByReturns
-	fake.recordInvocation("UnspentTokensIteratorBy", []interface{}{arg1, arg2, arg3})
+	fake.recordInvocation("UnspentTokensIteratorBy", []interface{}{arg1, arg2, arg3, arg4})
 	fake.unspentTokensIteratorByMutex.Unlock()
 	if stub != nil {
-		return stub(arg1, arg2, arg3)
+		return stub(arg1, arg2, arg3, arg4)
 	}
 	if specificReturn {
 		return ret.result1, ret.result2
@@ -56,17 +58,17 @@ func (fake *FakeTokenFetcher) UnspentTokensIteratorByCallCount() int {
 	return len(fake.unspentTokensIteratorByArgsForCall)
 }
 
-func (fake *FakeTokenFetcher) UnspentTokensIteratorByCalls(stub func(context.Context, string, token.Type) (sherdlock.Iterator[*token.UnspentTokenInWallet], error)) {
+func (fake *FakeTokenFetcher) UnspentTokensIteratorByCalls(stub func(context.Context, string, token.Type, int) (sherdlock.Iterator[*token.UnspentTokenInWallet], error)) {
 	fake.unspentTokensIteratorByMutex.Lock()
 	defer fake.unspentTokensIteratorByMutex.Unlock()
 	fake.UnspentTokensIteratorByStub = stub
 }
 
-func (fake *FakeTokenFetcher) UnspentTokensIteratorByArgsForCall(i int) (context.Context, string, token.Type) {
+func (fake *FakeTokenFetcher) UnspentTokensIteratorByArgsForCall(i int) (context.Context, string, token.Type, int) {
 	fake.unspentTokensIteratorByMutex.RLock()
 	defer fake.unspentTokensIteratorByMutex.RUnlock()
 	argsForCall := fake.unspentTokensIteratorByArgsForCall[i]
-	return argsForCall.arg1, argsForCall.arg2, argsForCall.arg3
+	return argsForCall.arg1, argsForCall.arg2, argsForCall.arg3, argsForCall.arg4
 }
 
 func (fake *FakeTokenFetcher) UnspentTokensIteratorByReturns(result1 sherdlock.Iterator[*token.UnspentTokenInWallet], result2 error) {

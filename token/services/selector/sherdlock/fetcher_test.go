@@ -176,7 +176,7 @@ func TestCachedFetcher_UnspentTokensIteratorBy_CacheHit(t *testing.T) {
 	fetcher.update(ctx)
 
 	// Query cache
-	it, err := fetcher.UnspentTokensIteratorBy(ctx, "wallet1", "USD")
+	it, err := fetcher.UnspentTokensIteratorBy(ctx, "wallet1", "USD", 0)
 
 	require.NoError(t, err)
 	assert.NotNil(t, it)
@@ -207,7 +207,7 @@ func TestCachedFetcher_UnspentTokensIteratorBy_CacheMiss(t *testing.T) {
 	fetcher.update(ctx)
 
 	// Query for non-existent key
-	it, err := fetcher.UnspentTokensIteratorBy(ctx, "wallet2", "EUR")
+	it, err := fetcher.UnspentTokensIteratorBy(ctx, "wallet2", "EUR", 0)
 
 	require.NoError(t, err)
 	assert.NotNil(t, it)
@@ -252,7 +252,7 @@ func TestCachedFetcher_UnspentTokensIteratorBy_StaleCache(t *testing.T) {
 	mockDB.On("SpendableTokensIteratorBy", mock.Anything, "", token2.Type("")).Return(mockIterator2, nil).Once()
 
 	// Query should trigger hard refresh
-	it, err := fetcher.UnspentTokensIteratorBy(ctx, "wallet1", "USD")
+	it, err := fetcher.UnspentTokensIteratorBy(ctx, "wallet1", "USD", 0)
 
 	require.NoError(t, err)
 	assert.NotNil(t, it)
@@ -451,7 +451,7 @@ func TestLazyFetcher_UnspentTokensIteratorBy_ErrorHandling(t *testing.T) {
 			Return(nil, expectedErr).Once()
 
 		ctx := t.Context()
-		it, err := fetcher.UnspentTokensIteratorBy(ctx, "wallet1", "USD")
+		it, err := fetcher.UnspentTokensIteratorBy(ctx, "wallet1", "USD", 0)
 
 		require.Error(t, err)
 		assert.Nil(t, it)
@@ -473,7 +473,7 @@ func TestLazyFetcher_UnspentTokensIteratorBy_ErrorHandling(t *testing.T) {
 			Return(mockIterator, nil).Once()
 
 		ctx := t.Context()
-		it, err := fetcher.UnspentTokensIteratorBy(ctx, "", "USD")
+		it, err := fetcher.UnspentTokensIteratorBy(ctx, "", "USD", 0)
 
 		require.NoError(t, err)
 		assert.NotNil(t, it)
@@ -504,7 +504,7 @@ func TestMixedFetcher_FallbackBehavior(t *testing.T) {
 			Return(mockIterator, nil).Once()
 
 		ctx := t.Context()
-		it, err := fetcher.UnspentTokensIteratorBy(ctx, "wallet1", "USD")
+		it, err := fetcher.UnspentTokensIteratorBy(ctx, "wallet1", "USD", 0)
 
 		require.NoError(t, err)
 		assert.NotNil(t, it)
@@ -540,7 +540,7 @@ func TestMixedFetcher_FallbackBehavior(t *testing.T) {
 		mockDB.On("SpendableTokensIteratorBy", mock.Anything, "wallet1", token2.Type("USD")).
 			Return(mockIterator2, nil).Once()
 
-		it, err := fetcher.UnspentTokensIteratorBy(ctx, "wallet1", "USD")
+		it, err := fetcher.UnspentTokensIteratorBy(ctx, "wallet1", "USD", 0)
 
 		require.NoError(t, err)
 		assert.NotNil(t, it)
@@ -573,7 +573,7 @@ func TestCachedFetcher_ConcurrentAccess(t *testing.T) {
 		done := make(chan bool, 10)
 		for range 10 {
 			go func() {
-				_, err := fetcher.UnspentTokensIteratorBy(ctx, "wallet1", "USD")
+				_, err := fetcher.UnspentTokensIteratorBy(ctx, "wallet1", "USD", 0)
 				assert.NoError(t, err)
 				done <- true
 			}()
@@ -764,7 +764,7 @@ func TestCachedFetcher_SoftRefresh(t *testing.T) {
 
 		// Query multiple times to trigger overuse
 		for range maxQueries {
-			_, err := fetcher.UnspentTokensIteratorBy(ctx, "wallet1", "USD")
+			_, err := fetcher.UnspentTokensIteratorBy(ctx, "wallet1", "USD", 0)
 			require.NoError(t, err)
 		}
 
@@ -774,7 +774,7 @@ func TestCachedFetcher_SoftRefresh(t *testing.T) {
 			Return(mockIterator2, nil).Once()
 
 		// Next query should trigger soft refresh
-		_, err := fetcher.UnspentTokensIteratorBy(ctx, "wallet1", "USD")
+		_, err := fetcher.UnspentTokensIteratorBy(ctx, "wallet1", "USD", 0)
 		require.NoError(t, err)
 
 		// Give background goroutine time to run
@@ -816,7 +816,7 @@ func TestCachedFetcher_Update_ThunderingHerd(t *testing.T) {
 	var wg sync.WaitGroup
 	for range 10 {
 		wg.Go(func() {
-			_, _ = fetcher.UnspentTokensIteratorBy(ctx, "wallet1", "USD")
+			_, _ = fetcher.UnspentTokensIteratorBy(ctx, "wallet1", "USD", 0)
 		})
 	}
 
@@ -994,7 +994,7 @@ func TestMixedFetcher_MetricsTracking(t *testing.T) {
 		fetcher.eagerFetcher.update(ctx)
 
 		// Query should use eager fetcher
-		_, err := fetcher.UnspentTokensIteratorBy(ctx, "wallet1", "USD")
+		_, err := fetcher.UnspentTokensIteratorBy(ctx, "wallet1", "USD", 0)
 		require.NoError(t, err)
 
 		mockDB.AssertExpectations(t)
@@ -1010,7 +1010,7 @@ func TestMixedFetcher_MetricsTracking(t *testing.T) {
 			Return(mockIterator, nil).Once()
 
 		ctx := t.Context()
-		_, err := fetcher.UnspentTokensIteratorBy(ctx, "wallet2", "EUR")
+		_, err := fetcher.UnspentTokensIteratorBy(ctx, "wallet2", "EUR", 0)
 		require.NoError(t, err)
 
 		mockDB.AssertExpectations(t)

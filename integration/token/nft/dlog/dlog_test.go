@@ -34,7 +34,7 @@ func newTestSuite(commType fsc.P2PCommunicationType, factor int, names ...string
 	ts := token.NewTestSuite(StartPortDlog, nft.Topology(common.Opts{
 		Backend:         "fabric",
 		CommType:        commType,
-		DefaultTMSOpts:  common.TMSOpts{TokenSDKDriver: zkatdlognoghv1.DriverIdentifier},
+		DefaultTMSOpts:  common.TMSOpts{TokenSDKDriver: zkatdlognoghv1.DriverIdentifier, Aries: true},
 		SDKs:            []nodepkg.SDK{&fdlog.SDK{}},
 		ReplicationOpts: opts,
 	}))
