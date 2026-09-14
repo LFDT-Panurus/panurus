@@ -14,8 +14,8 @@ import (
 // write path (building the raw transaction to broadcast); nothing in the driver decodes RLP, so this
 // is deliberately encode-only.
 //
-// It is hand-rolled because go-ethereum's license is a hard blocker for the project (design §9,
-// §15.6). The encoding follows the Ethereum yellow paper: a byte string under 56 bytes is prefixed
+// It is hand-rolled because go-ethereum's license is a hard blocker for the project. The encoding
+// follows the Ethereum yellow paper: a byte string under 56 bytes is prefixed
 // with 0x80+len, longer strings with 0xb7+lenOfLen followed by the big-endian length; lists use
 // 0xc0/0xf7 the same way. A single byte below 0x80 encodes as itself.
 

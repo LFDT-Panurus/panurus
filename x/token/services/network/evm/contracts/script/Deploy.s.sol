@@ -7,7 +7,7 @@ import {TokenStateFactory} from "../src/TokenStateFactory.sol";
 import {EndorsementVerifier} from "../src/EndorsementVerifier.sol";
 
 /// @title Deploy
-/// @notice Deploys the EVM token contracts for one TMS (design §3.8): the EndorsementVerifier holding the
+/// @notice Deploys the EVM token contracts for one TMS: the EndorsementVerifier holding the
 ///         endorser set and threshold, a shared TokenState implementation, and a per-TMS TokenState clone
 ///         seeded with public parameters v0 and the graphHiding mode. This is the admin bootstrap the
 ///         Week-6 NWO topology automates.
@@ -29,7 +29,7 @@ contract Deploy is Script {
         EndorsementVerifier v = new EndorsementVerifier(endorsers, threshold);
         TokenState impl = new TokenState();
         // The clone is created and seeded by the factory in one transaction, so there is no window in
-        // which an uninitialized clone is reachable (design §3.8).
+        // which an uninitialized clone is reachable.
         TokenStateFactory factory = new TokenStateFactory(address(impl));
         TokenState ts = TokenState(factory.create(address(v), msg.sender, pp0, graphHiding));
 

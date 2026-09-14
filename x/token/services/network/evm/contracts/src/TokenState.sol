@@ -17,7 +17,7 @@ interface IEndorsementVerifier {
 ///         is established off-chain by the endorser quorum.
 ///
 /// @dev    Deployed per TMS as an EIP-1167 clone of a shared implementation and set up via `initialize`
-///         (design §3.8). The implementation is meant to be cloned; the clone's `initialize` seeds the
+///. The implementation is meant to be cloned; the clone's `initialize` seeds the
 ///         initial public parameters (version 0), the verifier, and the graphHiding mode, and computes
 ///         the EIP-712 domain separator over `address(this)`.
 contract TokenState {
@@ -84,7 +84,7 @@ contract TokenState {
 
     /// @notice Seeds this clone: verifier, deployer, public parameters at version 0, and the graphHiding
     ///         mode. Can be called once. Public parameters thereafter change only through an endorsed
-    ///         setup delta (§3.5).
+    ///         setup delta.
     function initialize(address verifier, address deployer_, bytes calldata pp0, bool graphHiding_) external {
         if (initialized) revert AlreadyInitialized();
         if (verifier == address(0)) revert ZeroVerifier();
@@ -99,8 +99,8 @@ contract TokenState {
         emit PublicParametersUpdated(publicParamsHash, 0);
     }
 
-    /// @notice Verifies the endorser quorum over the EIP-712 digest of `delta`, enforces the §3.4
-    ///         check-list, and applies the transition atomically. Reverts (whole tx) with a typed reason
+    /// @notice Verifies the endorser quorum over the EIP-712 digest of `delta`, enforces the checks
+    ///         below, and applies the transition atomically. Reverts (whole tx) with a typed reason
     ///         on any failure; the finality layer maps the revert to Invalid via the receipt status.
     function applyStateDelta(StateDelta calldata delta, bytes[] calldata signatures) external returns (bool) {
         if (!initialized) revert NotInitialized();
@@ -170,7 +170,7 @@ contract TokenState {
     }
 
     /// @dev Endorsed public-parameters update: stores the new PP, bumps the version, emits. Setup deltas
-    ///      carry only the new params (no spends, outputs, or metadata, per §3.5). Every field is
+    ///      carry only the new params (no spends, outputs, or metadata). Every field is
     ///      digest-covered, so a malformed setup delta is rejected rather than partially ignored (R6).
     function _applySetup(StateDelta calldata delta) private {
         if (

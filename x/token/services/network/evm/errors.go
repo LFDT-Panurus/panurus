@@ -8,7 +8,7 @@ package evm
 
 import "github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 
-// The driver's error classes (design §13). A caller decides what to do with a failure by class, not
+// The driver's error classes. A caller decides what to do with a failure by class, not
 // by reading a message, so the ones the driver can actually tell apart are sentinels it wraps with.
 //
 // The distinction that earns its keep here is permanent versus transient. A transaction the chain has
@@ -18,11 +18,11 @@ import "github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 var (
 	// ErrTransactionReverted marks a transaction the chain has rejected: it reverted, either when the
 	// node executed it for an estimate or once it was mined. Permanent - the request has to be
-	// re-derived against current state, not resent (§13, "map to Invalid").
+	// re-derived against current state, not resent.
 	ErrTransactionReverted = errors.New("transaction is not valid: reverted on chain")
 
 	// ErrNetworkUnavailable marks a failure to reach or be understood by the node. Transient - the
-	// transaction is untouched and the call should be retried with backoff (§13).
+	// transaction is untouched and the call should be retried with backoff.
 	ErrNetworkUnavailable = errors.New("evm node unavailable")
 
 	// ErrTransactionRejected marks a transaction the node refused to accept for submission: it never

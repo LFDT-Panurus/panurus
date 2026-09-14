@@ -28,7 +28,7 @@ const (
 // deliberately NO digest field: an endorser must recompute the StateDelta and its EIP-712 digest
 // from the validated actions itself and sign that, never a digest handed to it, or a malicious
 // initiator could get honest endorsers to sign a delta that does not match the request they
-// validated (design §4.5, §6.4; the property @atharrva01 raised on the PR).
+// validated.
 type EndorseRequest struct {
 	// TokenRequest is the marshalled token request the endorser validates and translates.
 	TokenRequest []byte `json:"token_request"`

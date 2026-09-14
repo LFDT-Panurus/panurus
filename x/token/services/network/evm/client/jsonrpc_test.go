@@ -401,7 +401,7 @@ func TestGetTransactionReceiptReverted(t *testing.T) {
 	assert.Equal(t, uint64(0), got.Status, "a reverted transaction reports status 0")
 }
 
-// TestIsPending covers the three states the finality resolver distinguishes (design §7.1).
+// TestIsPending covers the three states the finality resolver distinguishes.
 func TestIsPending(t *testing.T) {
 	t.Run("pending: known but unmined", func(t *testing.T) {
 		c, _ := newTestServer(t, map[string]string{"eth_getTransactionByHash": `{"blockNumber":null}`})

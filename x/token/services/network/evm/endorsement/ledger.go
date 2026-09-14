@@ -25,9 +25,9 @@ const getTokenMethod = "getToken(bytes32)" // #nosec G101 -- ABI method signatur
 // SDK validator is stateless: it validates the input tokens a request carries against the ledger's
 // record of what exists, calling GetState for each consumed token id. On the EVM backend that record
 // lives in the TokenState contract, so GetState resolves a token.ID to its addressable on-chain id
-// and reads getToken at a fixed block tag (design §6.2).
+// and reads getToken at a fixed block tag.
 //
-// It reads at BlockTag (default "finalized", design §7.2) so an endorser validates against settled
+// It reads at BlockTag (default "finalized") so an endorser validates against settled
 // state and reorg handling stays out of v1. It captures a context at construction because the SDK's
 // ledger contract (driver.GetStateFnc) carries none.
 //

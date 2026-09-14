@@ -564,6 +564,16 @@ binding: they signed the same typed structure the contract is about to apply. Th
 domain separator bound to this chain id and this contract address, so signatures gathered for one TMS
 cannot be replayed against another.
 
+#### Why the contract re-checks at all
+
+On Fabric, the read-dependencies gathered during validation (`checkInputs`, `AddPublicParamsDependency`)
+are re-validated at commit time by MVCC: if a spent token or the public-parameters version changed between
+validation and commit, the block's own read-set conflict check catches it. The EVM chain has no read-set —
+there is nothing between "the endorsers signed this" and "the chain applies it" that would catch a change
+in the meantime on its own. `applyStateDelta` is that missing re-validation, made explicit: it re-checks
+spend state and the public-parameters version itself, in the contract, at apply time. The gates below are
+what that re-validation looks like.
+
 #### The checks, in order
 
 `applyStateDelta` runs these gates in sequence. There is no partial success: any failure reverts the whole
@@ -607,6 +617,7 @@ the table to reach for when a transaction reverts.
 | `MetadataKeyOccupied` | A metadata key was already written | A reused key, for example an HTLC claim seen twice |
 | `MalformedSetupDelta` | A setup delta carried spends, outputs or metadata, or no parameters | A driver bug; setup deltas carry only new parameters |
 | `MalformedTransferDelta` | A transfer delta carried setup parameters | A driver bug |
+| `UnsupportedForGraphHiding` | `isSpent`/`areTokensSpent` called on a graph-hiding clone | Spend state there is keyed by serial number, not token ID; use `isSerialUsed` instead |
 
 Metadata keys being write-once is worth calling out. A reused key reverts rather than overwriting, which
 matches Fabric's `StateMustNotExist`. Silently overwriting something like an HTLC claim key would be a
@@ -633,11 +644,14 @@ interface ITokenState {
     function applyStateDelta(StateDelta calldata delta, bytes[] calldata signatures) external returns (bool);
 
     function getToken(bytes32 tokenID) external view returns (bytes memory);
+    // isSpent/areTokensSpent revert with UnsupportedForGraphHiding on a graph-hiding clone: spend
+    // state there is keyed by serial number, not token ID. Use isSerialUsed instead.
     function isSpent(bytes32 tokenID) external view returns (bool);
     function areTokensSpent(bytes32[] calldata tokenIDs) external view returns (bool[] memory);
     function isSerialUsed(bytes32 serial) external view returns (bool);
     function getPublicParameters() external view returns (bytes memory);
     function getPublicParamsVersion() external view returns (uint64);
+    function getPublicParamsHash() external view returns (bytes32);
     function getTransferMetadata(bytes32 key) external view returns (bytes memory);
     function getTokenRequestHash(bytes32 anchor) external view returns (bytes32);
 
@@ -723,12 +737,17 @@ steps live in the [Ethereum Deployment Runbook](./network-ethereum-deployment.md
 ### Startup checks
 
 `Connect` refuses to bind a TMS to a network whose configuration contradicts the chain, so a
-misconfiguration surfaces at startup rather than as failing transactions later. It checks two things.
+misconfiguration surfaces at startup rather than as failing transactions later. It checks three things.
 
 The first is the chain id: the node has to report the chain the driver is configured to sign for,
 otherwise every signature would be produced for a chain nobody is running.
 
-The second is the endorsement policy. `contracts.tokenState` names the verifier it delegates signature
+The second is that `contracts.tokenState` actually has code deployed at it (`eth_getCode`, i.e. `CodeAt`).
+This one exists because the alternative failure mode is silent: an `eth_call` against an address with no
+code at all does not revert, it just returns empty data, so a typo'd or not-yet-deployed address would
+otherwise look connected right up until the first real transaction.
+
+The third is the endorsement policy. `contracts.tokenState` names the verifier it delegates signature
 checking to, and the driver reads the threshold and endorser set back from it. The configured
 `endorsement.threshold` has to equal the one the `EndorsementVerifier` was constructed with, and every
 address in `endorsement.endorsers` has to be registered in it. Getting either wrong is expensive to
@@ -776,17 +795,28 @@ The primary signal is the transaction receipt, polled alongside `eth_getTransact
 `blockNumber` yet means still pending; a receipt with status 1 means valid, status 0 means invalid; a
 hash the node has never seen means dropped. This works against any JSON-RPC node, Besu included. A
 fabric-x-evm gateway additionally exposes a `pending → in-progress → committed | failed | superseded`
-lifecycle, which the driver can use as a faster signal where available, but it is an efficiency layer,
-not a requirement — the receipt path is what the driver is built and accepted against.
+lifecycle, which the driver can use as a faster signal where available. This is not a hypothetical
+alternative: it ships with its own integration suites (`integration-tests-evm-gateway`,
+`integration-tests-evm-gateway-fabtoken`), separate from the plain-node suites. The receipt path stays
+primary because it works against any JSON-RPC node, gateway or not.
 
 Reads happen at the PoS **`finalized`** block tag (about two epochs, roughly 13 minutes on Ethereum
 mainnet), which takes reorg handling out of scope for v1.
 
-A recipient who only saw the token request doesn't have the Ethereum transaction hash, only the anchor.
-That's deliberate: a contract has no way to read its own transaction hash, so the driver never relies on
-one. Recipient-side resolution instead scans `StateCommitted` logs filtered by the indexed anchor, which
-is also where the transaction hash comes from when it's needed (every log carries it as node-supplied
-metadata).
+**Mapping onto the SDK's status codes.** The receipt's own status integer and the SDK's `ValidationCode`
+are not the same numbering, which is easy to conflate since both use small integers: a receipt status of
+`1` maps to `driver.Valid` (`1`), and status `0` maps to `driver.Invalid` (`2`) — those two happen to line
+up at `1` and diverge at `0`/`2`. A transaction the node has seen but not yet mined maps to `driver.Busy`
+(`3`); one the node has never seen maps to `driver.Unknown` (`4`), which escalates to `driver.Invalid` once
+it has been absent past `finality.timeout` (see "Transaction recovery across restarts" below).
+
+**Two resolution paths, deliberately.** `getTokenRequestHash(anchor)` is the cheap check for "is this
+anchor committed at all": one `eth_call`, no block range to search, works at any block tag. Recipient-side
+resolution — scanning `StateCommitted` logs filtered by the indexed anchor — is the richer path, used when
+the caller also needs the Ethereum transaction hash (every log carries it as node-supplied metadata), since
+a contract has no way to read its own transaction hash and the driver never relies on having one from any
+other source. Log scanning needs a block range, and log retention varies by node, so the common "is it
+committed" case is built on the cheap call and does not depend on it.
 
 This produces a real asymmetry, the same one noted above: a failed `applyStateDelta` reverts, so it never
 emits `StateCommitted`, and log scanning by anchor can only ever discover success. A recipient must treat
@@ -806,6 +836,12 @@ distinction that matters — whether the chain has judged the transaction — as
 | `evm.ErrTransactionReverted` | permanent | the node executed the transaction and it reverted: a double spend, stale public parameters, a quorum the contract will not accept | re-derive the request against current state; do **not** resend |
 | `evm.ErrNetworkUnavailable` | transient | the node could not be reached, timed out, or refused the transaction without executing it | retry with backoff; the request is untouched |
 | `client.ErrExecutionReverted` | permanent | the JSON-RPC layer's view of the same revert, before the driver wraps it | classified by the driver |
+| `evm.ErrTransactionRejected` / `client.ErrTransactionRejected` | permanent | the node rejected the transaction outright (e.g. nonce too low, underpriced) rather than executing and reverting it | re-derive or re-sign as appropriate; do **not** blind-resend |
+| `endorsement.ErrUnauthorized` | permanent | the caller is not on the endorsement allowlist | fix the allowlist; do not retry |
+| `endorsement.ErrInsufficientEndorsements` | transient-ish | fewer distinct signers replied than the threshold | retry endorsement; check which endorsers were unreachable |
+| `endorsement.ErrUnknownSigner` | permanent | a signature recovered to an address outside the configured endorser set | the driver's endorser set has drifted from the contract's |
+| `endorsement.ErrDuplicateSigner` | permanent | the same endorser's signature was counted twice | an initiator bug; N signatures from one endorser are not N endorsements |
+| `endorsement.ErrDeltaMismatch` / `endorsement.ErrDivergentDeltas` | permanent | endorsers disagreed on the delta itself | usually a public-parameters version race between endorsement and read; re-endorse |
 
 The split is load-bearing. Collapsing the two leaves a caller choosing between retrying a doomed transaction
 forever and giving up on a working one. A revert is detected during `eth_estimateGas`, which executes the
@@ -830,10 +866,34 @@ The driver therefore starts the SDK's recovery manager over both the transaction
 when a namespace connects. It periodically re-asks the chain about transactions that have been `Pending`
 longer than the configured TTL, using the same anchor lookup a fresh listener would have performed.
 
-- Settings come from the standard `recovery` block of the TMS configuration; a TMS with none uses the SDK
-  defaults (enabled, 30s TTL, 5s scan interval).
+- Settings load from `services.network.fabric.recovery` — the same key the Fabric and FabricX drivers use,
+  not an EVM-specific one; a TMS with none uses the SDK defaults (enabled, 30s TTL, 5s scan interval).
 - A failure to start recovery is logged, not fatal — the node still works, it just cannot rescue
   transactions left over from a previous run.
+
+**Absence still needs an answer.** A failed `applyStateDelta` reverts and writes nothing, so an anchor the
+recovery sweep asks about is either "not yet mined" or "was rejected" — both look identical as
+`driver.Unknown` from a plain chain lookup, and the shared recovery handler treats `Unknown` as "ask again
+next sweep" forever. The driver resolves this by wrapping the network in `settledNetwork` for the recovery
+path only: an anchor still `Unknown` once its transaction row has been `Pending` longer than
+`finality.timeout` is reported as `driver.Invalid` instead.
+
+The age comes from the transaction store's own `Timestamp` column, not from the recovery TTL or the sweep
+schedule. Those answer two different questions: the TTL is "how soon is it worth asking again", the
+timeout is "how long before absence means rejection". Raising the TTL to the finality timeout would seem
+like the obvious shortcut, but it conflates them — it also stops recovery from confirming a transaction
+that *did* commit until that same timeout has passed, which is exactly the case where the chain already had
+the answer. Reading the row's timestamp keeps the sweep frequent and the verdict patient, and it survives
+the restart recovery exists to clean up after, which an in-memory timer would not.
+
+### Broadcast idempotency
+
+Rebroadcasting a transaction whose earlier attempt was actually mined is a normal retry path — the caller's
+reply went missing, not the transaction. `Broadcast` treats this case as success rather than as a failure:
+if the contract rejects a resubmission with `AnchorAlreadyProcessed` and the anchor is confirmed on chain,
+the driver reports the transaction as committed rather than surfacing the rejection. The rejection really is
+about the second attempt; the transfer itself already succeeded, and answering anything else would have the
+caller discard a transaction that is final.
 
 ### One funded account per submitting node
 
@@ -876,6 +936,7 @@ contracts build for `paris`; a `shanghai` build reverts every contract creation.
 
 ## See Also
 
+- [Ethereum Driver Internals](./network-ethereum-internals.md) - Derivations, invariants and traps for implementers
 - [Ethereum Deployment Runbook](./network-ethereum-deployment.md) - Bootstrapping a TMS with the Approach-2 driver
 - [Network Service Overview](./network.md) - Generic network service concepts
 - [Fabric Implementation](./network-fabric.md) - Chaincode-based validation

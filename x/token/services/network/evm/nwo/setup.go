@@ -30,7 +30,7 @@ const setupReceiptTimeout = 30 * time.Second
 // SetupUpdater changes a TMS's on-chain public parameters.
 //
 // The TokenState contract has no administrative setter: the only way parameters change is an endorsed
-// setup delta (design §3.5), which is what this builds and submits. That is not a detour around the
+// setup delta, which is what this builds and submits. That is not a detour around the
 // test network's needs, it is the same authority the update would need in production. A harness
 // standing up its own network holds every endorser key, so it can act as the operator that would
 // otherwise collect those signatures.

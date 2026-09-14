@@ -20,7 +20,7 @@ import (
 const getPublicParametersMethod = "getPublicParameters()" // #nosec G101 -- ABI method signature
 
 // maxPublicParamsReadAttempts bounds the retry PublicParams performs when it detects a torn read. A
-// public-parameters update is a rare, isolated event (design §3.5), so a bracket almost always comes
+// public-parameters update is a rare, isolated event, so a bracket almost always comes
 // back clean on the first attempt; the bound exists only so a chain updating on every single block
 // cannot spin this forever.
 const maxPublicParamsReadAttempts = 3
@@ -70,7 +70,7 @@ func NewChainProvider(evmClient client.EVMClient, tokenState client.Address, blo
 // gas-spending transaction rather than nothing happening at all.
 //
 // The version is read before and after the bytes, and the whole read is retried if it moved: version
-// and bytes only ever change together, in the same transaction (design §3.5), so two matching reads
+// and bytes only ever change together, in the same transaction, so two matching reads
 // bracketing the bytes read is proof nothing landed in between.
 func (p *ChainProvider) PublicParams(ctx context.Context) ([]byte, uint64, error) {
 	var lastVersion uint64

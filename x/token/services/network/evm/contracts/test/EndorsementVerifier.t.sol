@@ -4,7 +4,7 @@ pragma solidity 0.8.24;
 import {Test} from "forge-std/Test.sol";
 import {EndorsementVerifier} from "../src/EndorsementVerifier.sol";
 
-/// @title EndorsementVerifier tests (Week 2, PR 2a Phase B)
+/// @title EndorsementVerifier tests
 /// @notice Exercises the signature-verification core: threshold, distinct-signer uniqueness, low-s / v
 ///         malleability rejection, malformed-signature handling, and constructor invariants.
 contract EndorsementVerifierTest is Test {

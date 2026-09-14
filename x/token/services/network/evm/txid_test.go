@@ -18,7 +18,7 @@ import (
 	"github.com/LFDT-Panurus/panurus/x/token/services/network/evm/keys"
 )
 
-// TestComputeTxIDGeneratesAndWritesBackNonce is the critical mutating contract (design §5.3): callers
+// TestComputeTxIDGeneratesAndWritesBackNonce is the critical mutating contract: callers
 // pass a TxID with an empty nonce and rely on the driver to fill it in. A read-only implementation
 // would derive the same anchor for every transaction of a creator, and the second one submitted would
 // revert on chain as an already-processed anchor.
@@ -92,7 +92,7 @@ func TestComputeTxIDGoldenVector(t *testing.T) {
 }
 
 // TestComputeTxIDLengthPrefixPreventsAmbiguity checks the reason the nonce is length prefixed rather
-// than plainly concatenated (design §5.3): without it, a different split of the same bytes between
+// than plainly concatenated: without it, a different split of the same bytes between
 // nonce and creator would collide, and since the anchor is the contract's replay key a collision
 // makes a legitimate transaction revert.
 func TestComputeTxIDLengthPrefixPreventsAmbiguity(t *testing.T) {

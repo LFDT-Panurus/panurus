@@ -21,7 +21,7 @@ import (
 // broadcast, the signed raw transaction and its Ethereum hash.
 //
 // The lifecycle is two stages. RequestApproval fills Delta and Endorsements: the delta every endorser
-// signed and the quorum of signatures over its EIP-712 digest. Broadcast (Week 5) ABI-encodes
+// signed and the quorum of signatures over its EIP-712 digest. Broadcast ABI-encodes
 // applyStateDelta(Delta, Endorsements) into a signed transaction and fills RawTx and EthTxHash.
 type Envelope struct {
 	Anchor string `json:"anchor"`

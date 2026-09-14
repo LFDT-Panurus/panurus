@@ -6,20 +6,19 @@ Solidity sources for the EVM network driver (Approach 2), built with [Foundry](h
 
 - `src/StateDelta.sol` — the FROZEN `StateDelta`/`OutputToken` structs. Field names, types, and order
   mirror the Go types (`../statedelta`) and the EIP-712 type (`../eip712`) byte-for-byte; do not
-  reorder or retype without a re-freeze (see the plan's working rules).
+  reorder or retype without a re-freeze.
 - `src/EIP712.sol` — domain separator, type hashes, `hashStruct`, digest. Byte-for-byte mirror of the
   Go `eip712` package.
 - `src/EndorsementVerifier.sol` — the authorized endorser set + threshold; verifies a quorum of
   EIP-712 signatures over a digest (ecrecover, low-s, `v ∈ {27,28}`, signer uniqueness, strict
-  all-provided-valid semantics — design §3.2). Landed in PR 2a.
+  all-provided-valid semantics).
 - `src/TokenState.sol` - stores token state and applies endorsed `StateDelta`s: verifies signatures,
   checks the public-parameters version, enforces spent/existence per the `graphHiding` flag, then
   applies the transition. Deployed per TMS as an EIP-1167 clone; the shared implementation is locked.
-  Landed in PR 2b.
 - `src/Clones.sol` - minimal EIP-1167 proxy deployment for the per-TMS `TokenState` clones.
 - `script/Deploy.s.sol` - deploys the verifier, the `TokenState` implementation, and an initialized
   clone for one TMS (endorsers, threshold, PP v0, and graphHiding come from the environment). This is
-  the admin bootstrap the Week-6 NWO topology automates.
+  the admin bootstrap the NWO topology automates.
 
 ## The cross-impl gate
 

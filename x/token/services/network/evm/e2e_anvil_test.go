@@ -322,7 +322,7 @@ func TestEndToEndAgainstAnvil(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotEqual(t, driver.Valid, status, "a double spend must never be recorded as valid")
 
-	// --- recipient path (design §7.4) --------------------------------------------------------------
+	// --- recipient path --------------------------------------------------------------
 
 	// Bob only ever holds the anchor. He must be able to find the transaction that applied it, which is
 	// what the fungible suite's CheckFinality does for a recipient.

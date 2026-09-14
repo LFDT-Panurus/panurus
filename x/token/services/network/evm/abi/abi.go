@@ -9,10 +9,10 @@ SPDX-License-Identifier: Apache-2.0
 // the decoding of the two return shapes the TokenState reads use, a dynamic `bytes` and a `uint64`.
 //
 // It exists so the endorser's validation ledger can read on-chain state (getToken, getPublicParameters,
-// getPublicParamsVersion) without go-ethereum, whose license is a hard blocker for the project (design
-// §9, §15.5). It deliberately covers only the static-argument reads the driver needs; general ABI
-// (tuples, dynamic arguments, arrays) is not implemented because nothing here calls for it. The
-// write-side encoding of applyStateDelta's typed tuple lands with the driver in Week 5.
+// getPublicParamsVersion) without go-ethereum, whose license is a hard blocker for the project. It
+// deliberately covers only the static-argument reads the driver needs; general ABI (tuples, dynamic
+// arguments, arrays) is not implemented because nothing here calls for it. The write-side encoding of
+// applyStateDelta's typed tuple lives with the driver's transaction submission path instead.
 package abi
 
 import (

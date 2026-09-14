@@ -4,7 +4,7 @@ pragma solidity 0.8.24;
 /// @title Clones
 /// @notice Minimal EIP-1167 proxy deployment. A clone is a tiny contract that delegatecalls a fixed
 ///         implementation, so each per-TMS TokenState is cheap to deploy while sharing one code copy
-///         (design §3.8). Each clone has its own storage and is initialized independently.
+///. Each clone has its own storage and is initialized independently.
 library Clones {
     error CloneFailed();
 

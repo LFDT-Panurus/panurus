@@ -5,7 +5,7 @@ import {TokenState} from "./TokenState.sol";
 import {Clones} from "./Clones.sol";
 
 /// @title TokenStateFactory
-/// @notice Creates a per-TMS TokenState clone and seeds it in a single transaction (design §3.8).
+/// @notice Creates a per-TMS TokenState clone and seeds it in a single transaction.
 ///
 /// @dev    `initialize` is unguarded by design: the implementation is locked in its constructor, so only
 ///         a fresh clone can ever be initialized, and whoever creates the clone is expected to seed it.
