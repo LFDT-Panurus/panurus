@@ -7,7 +7,7 @@ import {TokenStateFactory} from "../src/TokenStateFactory.sol";
 import {EndorsementVerifier} from "../src/EndorsementVerifier.sol";
 import {Clones} from "../src/Clones.sol";
 
-/// @title TokenStateFactory tests (Week 6 deploy hardening, design §3.8)
+/// @title TokenStateFactory tests (deploy hardening)
 /// @notice The factory exists to make clone creation and initialization one transaction. These tests
 ///         pin both halves of that claim: the clone comes back fully seeded, and the two-transaction
 ///         deploy the factory replaces really was hijackable, so the test that proves the attack also

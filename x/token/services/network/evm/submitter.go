@@ -22,7 +22,7 @@ import (
 
 // Submitter turns an endorsed StateDelta into a signed Ethereum transaction and sends it. It owns the
 // submitter key, the nonce sequence and the gas policy, which are the three things that make a
-// transaction acceptable to the node (design §8).
+// transaction acceptable to the node.
 //
 // It is deliberately separate from endorsement: the endorsers authorize *what* is applied, the
 // submitter only decides *how* it reaches the chain (nonce, gas, fees). Paying for a transaction

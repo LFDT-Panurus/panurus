@@ -5,11 +5,11 @@ import {Test} from "forge-std/Test.sol";
 import {EIP712} from "../src/EIP712.sol";
 import {StateDelta, OutputToken} from "../src/StateDelta.sol";
 
-/// @title Go <-> Solidity EIP-712 cross-impl gate (Week 2, PR 2a Phase A)
+/// @title Go <-> Solidity EIP-712 cross-impl gate
 /// @notice Proves the Solidity EIP712 library reproduces the golden values the Go side froze in
-///         Phase 1.4 (`contracts/test/statedelta_digest_fixture.json`), which were independently validated
+///         `contracts/test/statedelta_digest_fixture.json`, which were independently validated
 ///         against ethers v6 (`eip712_check.js`). Three independent implementations agreeing on the digest
-///         is the gate that unblocks the rest of Week 2. Two vectors are gated: the transfer-shaped delta
+///         is the gate this suite exists to hold. Two vectors are gated: the transfer-shaped delta
 ///         (non-empty arrays) and the setup/PP-update delta (empty arrays + setupParameters), the only two
 ///         shapes endorsers ever sign.
 ///
@@ -107,8 +107,8 @@ contract EIP712Test is Test {
     }
 
     /// @dev Second cross-impl vector: the setup (PP-update) delta. Covers the empty-array and
-    ///      setupParameters encodings, which the transfer-shaped vector cannot (found in the 2026-07-08
-    ///      review: no cross-impl coverage existed for the shape Week 7's PP-update flow signs).
+    ///      setupParameters encodings, which the transfer-shaped vector cannot: without it, no
+    ///      cross-impl coverage exists for the shape the PP-update flow signs.
     function test_SetupHashStruct_matchesFixture() public view {
         assertEq(
             EIP712.hashStruct(_fixtureSetupDelta()),

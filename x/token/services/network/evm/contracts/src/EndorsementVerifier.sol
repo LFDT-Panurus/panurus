@@ -7,18 +7,17 @@ pragma solidity 0.8.24;
 ///         Approach-2 trust model, correctness is established off-chain by the endorser quorum; the chain
 ///         only checks that a threshold of authorized, distinct endorsers signed the exact digest.
 ///
-/// @dev    Design deviation from design §3.2 (production-correctness): `verify` takes the final EIP-712
-///         `digest`, not a `structHash`. The digest binds the domain separator, which includes
-///         `verifyingContract = TokenState`; TokenState is a per-TMS clone, so it (not this verifier)
-///         owns the domain and computes the digest. Keeping the verifier a pure digest-checker decouples
-///         it from any specific TokenState address and avoids a verifier<->TokenState address
-///         chicken-and-egg. See EIP712.digest / TokenState (PR 2b).
+/// @dev    `verify` takes the final EIP-712 `digest`, not a `structHash`. The digest binds the domain
+///         separator, which includes `verifyingContract = TokenState`; TokenState is a per-TMS clone,
+///         so it (not this verifier) owns the domain and computes the digest. Keeping the verifier a
+///         pure digest-checker decouples it from any specific TokenState address and avoids a
+///         verifier<->TokenState address chicken-and-egg. See EIP712.digest / TokenState.
 ///
-///         Governance: the deployer seeds the initial endorser set + threshold at construction. Per
-///         design §15.3 the quorum owns everything post-bootstrap; runtime endorser-set / threshold
-///         changes are a quorum-gated governance feature deferred beyond v1 (none of the v1 acceptance
-///         flows, issue/transfer/redeem/PP-update, mutate the endorser set), so the set is immutable
-///         after construction for now.
+///         Governance: the deployer seeds the initial endorser set + threshold at construction. The
+///         quorum owns everything post-bootstrap; runtime endorser-set / threshold changes are a
+///         quorum-gated governance feature deferred beyond v1 (none of the v1 acceptance flows,
+///         issue/transfer/redeem/PP-update, mutate the endorser set), so the set is immutable after
+///         construction for now.
 contract EndorsementVerifier {
     /// @dev secp256k1 group-order / 2. Signatures with `s` above this are malleable (EIP-2) and rejected.
     uint256 private constant SECP256K1_N_HALF = 0x7FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF5D576E7357A4501DDFE92F46681B20A0;
@@ -58,10 +57,10 @@ contract EndorsementVerifier {
 
     /// @notice Reverts unless `signatures` contains at least `threshold` signatures AND every provided
     ///         signature is a valid signature over `digest` from a distinct current endorser (strict
-    ///         semantics, design §3.2: the contract does not scan for "threshold valid among garbage".
-    ///         The initiator curates the bundle, and a partially-invalid one signals a broken or
-    ///         malicious initiator). Returns true on success (never false; failures revert with a typed
-    ///         reason so callers/receipts get a precise cause per the §13 error taxonomy).
+    ///         semantics: the contract does not scan for "threshold valid among garbage". The initiator
+    ///         curates the bundle, and a partially-invalid one signals a broken or malicious initiator).
+    ///         Returns true on success (never false; failures revert with a typed reason so
+    ///         callers/receipts get a precise cause).
     /// @param digest the EIP-712 signing digest (computed by TokenState from the typed StateDelta).
     /// @param signatures 65-byte {r,s,v} signatures; low-s and v in {27,28} enforced.
     function verify(bytes32 digest, bytes[] calldata signatures) external view returns (bool) {

@@ -450,7 +450,7 @@ func (n *Network) anchorApplied(ctx context.Context, binding *namespaceBinding, 
 // It MUTATES id: when the nonce is empty it generates a fresh random one and writes it back, which is
 // the contract FSC and the Fabric driver implement and the ttx layer relies on. A read-only
 // implementation would derive the same anchor for every transaction of a creator, and the second one
-// submitted would revert as an already-processed anchor (design §5.3).
+// submitted would revert as an already-processed anchor.
 func (n *Network) ComputeTxID(id *driver.TxID) string {
 	if id == nil {
 		return ""
@@ -615,7 +615,7 @@ func (n *Network) AddFinalityListener(namespace string, txID string, listener dr
 //
 // Only success is observable by anchor: the contract records the anchor as the last step of a
 // successful apply, while a failure reverts and leaves nothing behind. An unrecorded anchor is
-// therefore Unknown, not Invalid; resolving it as failed is the finality timeout's job (design §7.4).
+// therefore Unknown, not Invalid; resolving it as failed is the finality timeout's job.
 func (n *Network) GetTransactionStatus(ctx context.Context, namespace, txID string) (int, []byte, string, error) {
 	binding, err := n.binding(namespace)
 	if err != nil {

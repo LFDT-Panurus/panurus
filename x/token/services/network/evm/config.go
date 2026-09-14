@@ -22,18 +22,17 @@ import (
 // contracts, endorsement) is enough to run, and every unset knob has a documented, safe value.
 const (
 	// DefaultBlockTag is the block tag state reads use: the PoS finalized tag, which removes reorg
-	// handling from v1 (design §7.2). It aliases the canonical value in the client package.
+	// handling from v1. It aliases the canonical value in the client package.
 	DefaultBlockTag = client.BlockTagFinalized
 	// DefaultPollInterval is how often finality polls a transaction's status.
 	DefaultPollInterval = 2 * time.Second
 	// DefaultFinalityTimeout bounds how long a transaction is awaited before it is treated as failed.
-	// It carries real margin over MinFinalizedTagTimeout (design §7.2, §7.5) so a deployment running
+	// It carries real margin over MinFinalizedTagTimeout so a deployment running
 	// on defaults alone is not sitting at the edge of normal PoS finalization variance.
 	DefaultFinalityTimeout = 20 * time.Minute
 	// MinFinalizedTagTimeout is the floor Validate enforces on Finality.Timeout when BlockTag is
-	// finalized. Real time-to-finality on a PoS chain is ~13 minutes (design §7.2); a shorter timeout
-	// cannot ever see a transaction finalize and condemns it regardless of whether it succeeded (design
-	// §7.5: "any deployment must configure finality.timeout above ... the chain's finality"). It bounds
+	// finalized. Real time-to-finality on a PoS chain is ~13 minutes; a shorter timeout
+	// cannot ever see a transaction finalize and condemns it regardless of whether it succeeded. It bounds
 	// only the chain's own lag; a deployment that also delays broadcasting a signed transaction needs
 	// additional headroom on top of this, which Validate has no way to know and cannot enforce.
 	MinFinalizedTagTimeout = 13 * time.Minute
@@ -53,7 +52,7 @@ const (
 )
 
 // Config is the EVM network configuration for one TMS, read from
-// token.tms.<tms-id>.services.network.evm (design §10).
+// token.tms.<tms-id>.services.network.evm.
 type Config struct {
 	// Endpoint is the node's JSON-RPC URL.
 	Endpoint string `yaml:"endpoint"`
@@ -87,7 +86,7 @@ type FinalityConfig struct {
 	PollInterval time.Duration `yaml:"pollInterval"`
 	// Timeout bounds how long a transaction is awaited. It is also a recipient's only failure signal:
 	// a failed apply reverts and emits no log, so "no event by the timeout" is what makes it Invalid
-	// (design §7.4).
+	//.
 	Timeout time.Duration `yaml:"timeout"`
 	// FromBlock is where log searches start when resolving an anchor to its transaction hash. It
 	// defaults to zero, the whole chain, which is right for a freshly bootstrapped network; on a chain
@@ -127,7 +126,7 @@ type SubmitterConfig struct {
 }
 
 // EndorsementConfig is the endorsement policy: the quorum, who may ask for endorsement, and the
-// endorser set with the address to FSC identity binding the initiator routes on (design §6.1).
+// endorser set with the address to FSC identity binding the initiator routes on.
 type EndorsementConfig struct {
 	// Threshold is the number of distinct endorser signatures a transaction needs. It must match the
 	// threshold the EndorsementVerifier was constructed with.
@@ -148,7 +147,7 @@ type EndorserBinding struct {
 }
 
 // LoadConfig reads the EVM configuration from the TMS configuration, applies defaults, and validates
-// it. It fails fast: a bad configuration is a startup error (design §13), never a surprise at the
+// it. It fails fast: a bad configuration is a startup error, never a surprise at the
 // first transaction.
 func LoadConfig(configuration Configuration) (*Config, error) {
 	var c Config
@@ -244,7 +243,7 @@ func (c *Config) validateGas() error {
 
 // validateEndorsement enforces the quorum invariants: a positive threshold no larger than the
 // endorser set, and every endorser carrying both an address and an FSC identity (one without the
-// other cannot be routed to or recovered from, design §6.1). Duplicate addresses are rejected because
+// other cannot be routed to or recovered from). Duplicate addresses are rejected because
 // the contract counts distinct signers, so a duplicate would inflate an apparent quorum.
 func (c *Config) validateEndorsement() error {
 	e := c.Endorsement
@@ -328,7 +327,7 @@ func (c *Config) TokenStateAddress() (client.Address, error) {
 type IdentityResolver func(name string) (view.Identity, error)
 
 // EndorserRegistry builds the address to identity registry the endorsement flow routes on, from the
-// configured endorser set (design §6.1). Names are resolved through the identity provider, the way
+// configured endorser set. Names are resolved through the identity provider, the way
 // the fabric endorsement service resolves its own.
 func (c *Config) EndorserRegistry(resolve IdentityResolver) (*endorsement.Registry, error) {
 	if resolve == nil {

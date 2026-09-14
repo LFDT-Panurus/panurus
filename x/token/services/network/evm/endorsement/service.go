@@ -16,7 +16,7 @@ import (
 )
 
 // ViewManager initiates a view and returns its result. It is the slice of the FSC view manager the
-// service uses; declared locally so the lean module does not import the fabric platform (rule R7).
+// service uses; declared locally so the lean module does not import the fabric platform.
 type ViewManager interface {
 	// InitiateView runs v as an initiator and returns its result.
 	InitiateView(ctx context.Context, v view.View) (any, error)
@@ -31,7 +31,7 @@ type ViewRegistry interface {
 
 // Service is the endorsement entry point for one TMS: it starts an initiator to collect a quorum for
 // a request, and, on an endorsing node, registers the responder that answers those requests. It is
-// the EVM analog of the Fabric endorsement Service (design §6), built once per TMS by the lazy
+// the EVM analog of the Fabric endorsement Service, built once per TMS by the lazy
 // provider and reused thereafter.
 type Service struct {
 	registry    *Registry
@@ -89,7 +89,7 @@ func (s *Service) Endorse(context view.Context, req *EndorseRequest) (*Result, e
 }
 
 // RegisterEndorser registers responder as the view that answers this node's endorsement requests.
-// Called by the wiring only when this node is configured as an endorser (design §6.2); a
+// Called by the wiring only when this node is configured as an endorser; a
 // non-endorsing node never registers one.
 func RegisterEndorser(registry ViewRegistry, responder *Responder) error {
 	if err := registry.RegisterResponder(responder, &Initiator{}); err != nil {

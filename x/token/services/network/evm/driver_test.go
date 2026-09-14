@@ -12,8 +12,8 @@ import (
 
 	token2 "github.com/LFDT-Panurus/panurus/token"
 	tokendriver "github.com/LFDT-Panurus/panurus/token/driver"
-	networkpkg "github.com/LFDT-Panurus/panurus/token/services/network"
 	"github.com/LFDT-Panurus/panurus/token/services/config"
+	networkpkg "github.com/LFDT-Panurus/panurus/token/services/network"
 	"github.com/LFDT-Panurus/panurus/token/services/network/driver"
 	tokendbmock "github.com/LFDT-Panurus/panurus/token/services/storage/tokendb/mock"
 	"github.com/LFDT-Panurus/panurus/token/services/tokens"
@@ -303,13 +303,13 @@ func TestNewDriver(t *testing.T) {
 // config.Service that NewDriver can wrap without reading any real file.
 type fakeConfigProvider struct{}
 
-func (fakeConfigProvider) UnmarshalKey(string, any) error                      { return nil }
-func (fakeConfigProvider) GetString(string) string                             { return "" }
-func (fakeConfigProvider) IsSet(string) bool                                   { return false }
-func (fakeConfigProvider) TranslatePath(path string) string                    { return path }
-func (fakeConfigProvider) GetBool(string) bool                                 { return false }
-func (fakeConfigProvider) MergeConfig([]byte) error                            { return nil }
-func (fakeConfigProvider) ProvideFromRaw([]byte) (*fscconfig.Provider, error)  { return nil, nil }
+func (fakeConfigProvider) UnmarshalKey(string, any) error                     { return nil }
+func (fakeConfigProvider) GetString(string) string                            { return "" }
+func (fakeConfigProvider) IsSet(string) bool                                  { return false }
+func (fakeConfigProvider) TranslatePath(path string) string                   { return path }
+func (fakeConfigProvider) GetBool(string) bool                                { return false }
+func (fakeConfigProvider) MergeConfig([]byte) error                           { return nil }
+func (fakeConfigProvider) ProvideFromRaw([]byte) (*fscconfig.Provider, error) { return nil, nil }
 
 // --- resolveTMS ----------------------------------------------------------------------------------
 

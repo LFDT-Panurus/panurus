@@ -8,12 +8,12 @@ import {EIP712} from "../src/EIP712.sol";
 import {StateDelta, OutputToken} from "../src/StateDelta.sol";
 import {Clones} from "../src/Clones.sol";
 
-/// @title TokenState core tests (Week 2, PR 2b Phase A)
+/// @title TokenState core tests
 /// @notice Exercises applyStateDelta end to end with real endorser signatures (forge vm.sign over the
 ///         EIP-712 digest TokenState itself computes): issue, spend, double-spend, forged-content
 ///         rejection via the content-bound marker, stale public params, replay, tampering, and the
-///         setup-delta guard. The Go<->Solidity signer cross-check comes in Week 3; here endorsers are
-///         simulated with vm.sign, which is enough to prove the on-chain check-list.
+///         setup-delta guard. The Go<->Solidity signer cross-check lives in GoEndorsement.t.sol; here
+///         endorsers are simulated with vm.sign, which is enough to prove the on-chain check-list.
 contract TokenStateTest is Test {
     TokenState private impl;
     TokenState private ts;

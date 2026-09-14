@@ -86,7 +86,8 @@ type StateDelta struct {
 //   - SetupParameters is present iff IsSetup. The field is covered by the EIP-712 digest, so a
 //     non-setup delta smuggling setup bytes would be signed by endorsers while the contract ignores
 //     it, so refuse it instead.
-//   - MetadataKeys are strictly ascending (the frozen §4.4 canonicalization). Unsorted keys mean the
+//   - MetadataKeys are strictly ascending (see "StateDelta determinism" in
+//     docs/services/network-ethereum-internals.md). Unsorted keys mean the
 //     emitting translator is broken (endorsers would produce different bytes and signatures would
 //     not assemble); duplicate keys would make the on-chain write order ambiguous.
 //

@@ -44,7 +44,7 @@ type Result struct {
 }
 
 // Initiator collects a threshold of endorser signatures over one request and assembles them into a
-// Result. It is the EVM analog of the Fabric RequestApprovalView (design §6.3): it opens a session to
+// Result. It is the EVM analog of the Fabric RequestApprovalView: it opens a session to
 // each registered endorser, sends the request, and gathers the replies.
 //
 // It does no validation and builds no StateDelta of its own. Validating a token request and
@@ -105,9 +105,10 @@ func (i *Initiator) requestFrom(context view.Context, party view.Identity) (*End
 }
 
 // agreement accumulates the signatures collected over one delta. Endorsers that validated the same
-// request must translate it into byte-identical deltas (the §4.4 determinism guarantee), so a healthy
-// network produces exactly one of these. Keying them by digest is what makes a divergent endorser
-// merely ignored rather than able to break every transaction it takes part in.
+// request must translate it into byte-identical deltas (see "StateDelta determinism" in
+// docs/services/network-ethereum-internals.md), so a healthy network produces exactly one of these.
+// Keying them by digest is what makes a divergent endorser merely ignored rather than able to break
+// every transaction it takes part in.
 type agreement struct {
 	delta      *statedelta.StateDelta
 	signatures [][]byte

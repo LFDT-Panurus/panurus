@@ -70,9 +70,9 @@ func TestGoldenDigest(t *testing.T) {
 }
 
 // fixtureSetupDelta is the second cross-impl vector: a setup (PP-update) delta with empty dynamic
-// arrays and non-empty setupParameters, the other shape endorsers will ever sign in production
-// (Week 7). It pins the empty-array and setup-path encodings, which the transfer-shaped fixture
-// cannot cover. Keep in sync with contracts/test/statedelta_digest_fixture.json (setupDelta).
+// arrays and non-empty setupParameters, the other shape endorsers will ever sign in production. It
+// pins the empty-array and setup-path encodings, which the transfer-shaped fixture cannot cover. Keep
+// in sync with contracts/test/statedelta_digest_fixture.json (setupDelta).
 func fixtureSetupDelta() *statedelta.StateDelta {
 	return &statedelta.StateDelta{
 		Anchor:              b32(0x77),

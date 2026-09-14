@@ -170,7 +170,7 @@ func TestTransferMapping(t *testing.T) {
 }
 
 // TestCounterAcrossActions pins the cross-action counter: issue advances by len(outputs), transfer
-// by NumOutputs() including redeem slots (verified against the Fabric translator, plan Week 3).
+// by NumOutputs() including redeem slots (verified against the Fabric translator).
 func TestCounterAcrossActions(t *testing.T) {
 	anchor := testAnchor(0x44)
 	tr := NewTranslator(anchor, testPP, 0)

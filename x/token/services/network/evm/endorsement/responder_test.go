@@ -134,7 +134,7 @@ func recomputeDigest(t *testing.T, anchor string, actions []any, meta map[string
 
 // --- tests ----------------------------------------------------------------------------------------
 
-// TestResponderSignsWhatItBuilds is the no-blind-sign property (design §4.5): the endorser's
+// TestResponderSignsWhatItBuilds is the no-blind-sign property: the endorser's
 // signature verifies against the digest recomputed from the validated actions, and NOT against a
 // digest for different actions. Because the request carries no digest, the endorser can only have
 // signed the delta it built itself.

@@ -109,7 +109,10 @@ evm:
         fscIdentity: endorser-1
       - address: "0xBBB..."
         fscIdentity: endorser-2
-    allowlist: []                  # empty resolves to the TMS network's nodes
+    allowlist:                      # FSC identities allowed to request endorsement - required, see below
+      - endorser-1
+      - endorser-2
+      - initiator-1
   endorser:                        # only on an endorsing node
     enabled: true
     keystore: /path/to/endorser.key
@@ -117,12 +120,21 @@ evm:
   submitter:                       # only on a node that broadcasts
     keystore: /path/to/submitter.key
     address: "0xSUB..."
+  finality:
+    blockTag: finalized            # finalized (default) | safe | latest
+    timeout: 20m                   # default 20m; must be >= 13m when blockTag is finalized
+    pollInterval: 2s               # default 2s
+    fromBlock: 0                   # default 0 (search from genesis); set to the deploy block on an older chain
 ```
 
-Three things are easy to get wrong here:
+Four things are easy to get wrong here:
 
 - **Every node needs the full `endorsers` list**, not just the endorsers. It is how a requesting node
   routes to them and how it checks that a returned signature came from someone entitled to give it.
+- **`allowlist` is fail-closed, not a default-open list.** There is no fallback to "the TMS network's
+  nodes" - an endorsing node (`endorser.enabled: true`) with an empty allowlist fails at startup rather
+  than accepting requests from anyone. Every identity permitted to request endorsement, including the
+  node's own initiators, has to be named explicitly.
 - **`fscIdentity` is resolved to an identity, and the allowlist is compared against the identity a
   session authenticated with**, not against the name. A name that the identity provider cannot resolve
   produces requests that are refused as unauthorised.
@@ -151,7 +163,7 @@ cast call "$TOKEN_STATE" "graphHiding()(bool)"               --rpc-url "$RPC_URL
 ## Updating public parameters
 
 **There is no administrative setter.** After `initialize`, the only thing that changes public
-parameters is an endorsed setup delta (design §3.5): a delta with `isSetup` set, carrying the new
+parameters is an endorsed setup delta: a delta with `isSetup` set, carrying the new
 parameters and nothing else - no spends, no outputs, no metadata - signed by the same endorser quorum
 that authorises a transfer. The contract stores the parameters, increments the version, and emits
 `PublicParametersUpdated`.
@@ -185,13 +197,29 @@ Two consequences worth knowing before you debug one of them:
   in the endorsement path has, a request from the new issuer can be endorsed by some and rejected by
   others.
 
+Recovery for transactions left `Pending` across a restart is not configured under `evm` at all: settings
+load from `services.network.fabric.recovery`, the same key the Fabric and FabricX drivers read, with the
+SDK's defaults (enabled, 30s TTL, 5s scan interval) applying when a TMS sets none. See "Transaction recovery
+across restarts" in the [implementation guide](./network-ethereum.md#transaction-recovery-across-restarts)
+for what it does.
+
 ## Bootstrapping the test network
 
-`make integration-tests-evm` (zkatdlog) and `make integration-tests-evm-fabtoken` (fabtoken) run the
-shared fungible suite against a Besu node. They need docker and forge, pull the Besu image if it is
-missing, and need no `FAB_BINS`.
+Four suites exercise this runbook, against two different backends:
 
-The topology performs this runbook: boots Besu, runs the deploy script above, generates an endorser
+- `make integration-tests-evm` (zkatdlog) and `make integration-tests-evm-fabtoken` (fabtoken) run the
+  shared fungible suite against a plain Besu node. They need `besu-docker-images`, docker and forge, and
+  need no `FAB_BINS`.
+- `make integration-tests-evm-gateway` and `make integration-tests-evm-gateway-fabtoken` run the same
+  suite against a fabric-x-evm gateway instead, which need `fabricx-evm-docker-images`. The gateway
+  exposes its own pending/in-progress/committed lifecycle as a faster finality signal (see "How finality
+  resolves" in the [implementation guide](./network-ethereum.md#how-finality-resolves)); the driver is
+  built and accepted against the plain-node path first, so run those suites too when changing anything
+  finality-related.
+
+All four pull their respective docker image if it is missing.
+
+The topology performs this runbook: boots the node, runs the deploy script above, generates an endorser
 key per endorsing node plus a funded submitter, and writes each node the configuration from step 3.
 The rendered configuration is parsed back by the driver's own `LoadConfig` in a test, so a harness
 that writes something the driver cannot read fails there rather than halfway through a suite.
@@ -211,8 +239,9 @@ A container left over from an interrupted run holds its published port too. `doc
 finds it; the suites remove a stale container by name on startup, but only the one they are about to
 create.
 
-## See also
+## See Also
 
 - [Ethereum implementation guide](./network-ethereum.md) - the two approaches and why this one
+- [Ethereum Driver Internals](./network-ethereum-internals.md) - derivations, invariants and traps for implementers
 - [Network Service](./network.md) - the driver interface being implemented
 - [Contracts README](../../x/token/services/network/evm/contracts/README.md) - building and testing the contracts

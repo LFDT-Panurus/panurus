@@ -150,8 +150,8 @@ func (d *Driver) recoveryConfig(tmsID token2.TMSID) recovery.Config {
 // A failed applyStateDelta reverts, so it emits no StateCommitted event and stores no token request
 // hash. Nothing about a rejected transaction is ever written to the chain, which means an absent
 // anchor is indistinguishable from one that was never submitted, and StatusByAnchor can only answer
-// Unknown for both. Time is the sole remaining signal, exactly as the design says (§7.1, "Unknown,
-// then Invalid after the configured timeout"; §7.4, the recipient's only failure signal).
+// Unknown for both. Time is the sole remaining signal: unknown, then invalid after the configured
+// timeout, the same asymmetry a recipient resolving finality by anchor already lives with.
 //
 // The finality listener already implements that escalation, because it knows when it started
 // waiting. The status path did not, and the two disagreeing is the defect this fixes: the shared

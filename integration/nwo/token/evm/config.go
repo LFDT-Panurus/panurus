@@ -28,7 +28,7 @@ const (
 	//
 	//   - Lower bound, and the binding one: a transaction is condemned when its record is older than
 	//     this and its anchor is absent from the chain. A transaction that has been *prepared but not
-	//     yet broadcast* looks exactly like that, because absence is absence (design §7.4). The shared
+	//     yet broadcast* looks exactly like that, because absence is absence. The shared
 	//     bodies prepare two transfers, restart two nodes, and only then broadcast, so this must
 	//     comfortably exceed that whole gap or recovery deletes transfers that were never sent. At 45s
 	//     it does, and bob's holding reads 0 instead of 110 at tests.go:565.
@@ -44,7 +44,7 @@ const (
 
 // EndorserBinding pairs an endorser's Ethereum address with the FSC identity that speaks for it. The
 // driver needs both: the address to recover a signature to, the identity to route a request to
-// (design §6.1).
+// .
 type EndorserBinding struct {
 	Address     string
 	FSCIdentity string

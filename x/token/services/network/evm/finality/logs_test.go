@@ -42,7 +42,7 @@ func TestStateCommittedTopic(t *testing.T) {
 
 // TestTxHashByAnchorFindsTheCommit is the recipient path: from an anchor alone, find the transaction
 // that applied it. The hash comes from the log's metadata, since a contract cannot know its own
-// transaction hash (design §7.4).
+// transaction hash.
 func TestTxHashByAnchorFindsTheCommit(t *testing.T) {
 	want, err := client.HexToHash("0x853f272fffc6efc284fc16a254decca742d2347e05703e501c59968f78f81ffa")
 	require.NoError(t, err)

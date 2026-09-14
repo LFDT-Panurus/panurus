@@ -11,7 +11,7 @@ package evm
 // and wallets are token-level concerns), and swaps the one block that is not: where fabric emits
 // services.network.fabric, this emits services.network.evm.
 //
-// The evm block is the schema the driver's LoadConfig reads (design §10). The two must not drift, so
+// The evm block is the schema the driver's LoadConfig reads. The two must not drift, so
 // a round-trip test renders this template and loads the result through the driver's own parser.
 const Extension = `
 token:

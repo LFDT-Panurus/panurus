@@ -4,7 +4,7 @@ pragma solidity 0.8.24;
 import {Test} from "forge-std/Test.sol";
 import {EndorsementVerifier} from "../src/EndorsementVerifier.sol";
 
-/// @title Week 4 gate: an assembled 2-of-N quorum verifies on-chain
+/// @title An assembled 2-of-N quorum verifies on-chain
 /// @notice The Go initiator collects a threshold of endorser signatures over a StateDelta's EIP-712
 ///         digest, exchanged with the endorsers over FSC sessions. This suite closes the loop the Go
 ///         side (gate_test.go) proves off-chain: the exact quorum the initiator assembles is accepted
