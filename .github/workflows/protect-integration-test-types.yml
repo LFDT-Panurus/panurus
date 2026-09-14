@@ -2,7 +2,7 @@ name: Protect Integration Test Types
 
 on:
   pull_request:
-    branches: [ main, feature/evm-network-driver, feature/zkat-snark-driver ]
+    branches: [ main, feature/zkat-snark-driver ]
     paths:
       - 'integration/ports.go'
       - 'integration/ports_test.go'
