@@ -540,6 +540,94 @@ func TestLookupTransferMetadataKeyFound(t *testing.T) {
 	assert.Equal(t, []byte("value"), out)
 }
 
+// --- ledgerView ------------------------------------------------------------------------------------
+
+// TestLedgerViewGetTransactionStatus checks the interface method delegates to the network's own
+// GetTransactionStatus rather than duplicating its logic.
+func TestLedgerViewGetTransactionStatus(t *testing.T) {
+	evm := &mock.EVMClient{}
+	evm.CallReturns(make([]byte, 32), nil)
+	n := testNetwork(t, evm, nil)
+	l := &ledgerView{network: n}
+
+	status, hash, _, err := l.GetTransactionStatus(t.Context(), "token", anchorHex(0x01))
+	require.NoError(t, err)
+	assert.Equal(t, driver.Unknown, status)
+	assert.Nil(t, hash)
+}
+
+// TestLedgerViewGetStates checks a found key returns the stored bytes, a key with no state returns a
+// nil entry rather than an error, and a malformed key is rejected before any lookup.
+func TestLedgerViewGetStates(t *testing.T) {
+	t.Run("returns bytes for a found key and nil for a missing one", func(t *testing.T) {
+		evm := &mock.EVMClient{}
+		evm.CallReturnsOnCall(0, abiBytes([]byte("token-bytes")), nil)
+		evm.CallReturnsOnCall(1, abiBytes(nil), nil)
+		n := testNetwork(t, evm, nil)
+		l := &ledgerView{network: n}
+
+		key := anchorHex(0x01) + ":0"
+		missing := anchorHex(0x02) + ":1"
+		out, err := l.GetStates(t.Context(), "token", key, missing)
+		require.NoError(t, err)
+		require.Len(t, out, 2)
+		assert.Equal(t, []byte("token-bytes"), out[0])
+		assert.Nil(t, out[1])
+	})
+
+	t.Run("a malformed key is rejected", func(t *testing.T) {
+		n := testNetwork(t, nil, nil)
+		l := &ledgerView{network: n}
+
+		_, err := l.GetStates(t.Context(), "token", "not-a-key")
+		require.Error(t, err)
+	})
+
+	t.Run("an unbound namespace is rejected", func(t *testing.T) {
+		n := testNetwork(t, nil, nil)
+		l := &ledgerView{network: n}
+
+		_, err := l.GetStates(t.Context(), "no-such-tms", anchorHex(0x01)+":0")
+		require.Error(t, err)
+	})
+}
+
+// TestLedgerViewTransferMetadataKey checks the derivation is pure and hex-encoded, matching what
+// LookupTransferMetadataKey expects to poll for.
+func TestLedgerViewTransferMetadataKey(t *testing.T) {
+	n := testNetwork(t, nil, nil)
+	l := &ledgerView{network: n}
+
+	out, err := l.TransferMetadataKey("some-sub-key")
+	require.NoError(t, err)
+	assert.NotEmpty(t, out)
+	decoded, err := hex.DecodeString(out)
+	require.NoError(t, err)
+	expected := keys.TransferMetadataKey("some-sub-key")
+	assert.Equal(t, expected[:], decoded)
+}
+
+// TestParseTokenKey checks the "<anchor>:<index>" token key format is parsed, and that malformed
+// input is rejected rather than silently producing a wrong lookup.
+func TestParseTokenKey(t *testing.T) {
+	t.Run("a valid key parses", func(t *testing.T) {
+		id, err := parseTokenKey(anchorHex(0x01) + ":3")
+		require.NoError(t, err)
+		assert.Equal(t, anchorHex(0x01), id.TxId)
+		assert.Equal(t, uint64(3), id.Index)
+	})
+
+	t.Run("missing separator is rejected", func(t *testing.T) {
+		_, err := parseTokenKey("no-separator-here")
+		require.Error(t, err)
+	})
+
+	t.Run("a non-numeric index is rejected", func(t *testing.T) {
+		_, err := parseTokenKey(anchorHex(0x01) + ":not-a-number")
+		require.Error(t, err)
+	})
+}
+
 // bigInt is a small helper for chain ids in tests.
 func bigInt(v int64) *big.Int { return big.NewInt(v) }
 
