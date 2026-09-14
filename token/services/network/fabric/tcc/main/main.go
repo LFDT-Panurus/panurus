@@ -169,7 +169,7 @@ func installCoverageFlushHandler() {
 	go func() {
 		<-sigCh
 		flushCoverage()
-		os.Exit(0)
+		os.Exit(0) //nolint:revive // deep-exit: main never returns (blocked in server.Start()), so this goroutine must exit the process itself after flushing coverage on signal
 	}()
 
 	go func() {
