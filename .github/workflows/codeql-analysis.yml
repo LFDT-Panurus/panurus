@@ -2,9 +2,9 @@ name: "CodeQL"
 
 on:
   push:
-    branches: [ "main", "feature/evm-network-driver", "feature/zkat-snark-driver" ]
+    branches: [ "main", "feature/zkat-snark-driver" ]
   pull_request:
-    branches: [ "main", "feature/evm-network-driver", "feature/zkat-snark-driver" ]
+    branches: [ "main", "feature/zkat-snark-driver" ]
   schedule:
     - cron: '39 22 * * 5'
 
