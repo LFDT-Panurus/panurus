@@ -4,12 +4,12 @@ pragma solidity 0.8.24;
 import {Test} from "forge-std/Test.sol";
 import {EndorsementVerifier} from "../src/EndorsementVerifier.sol";
 
-/// @title Go -> Solidity endorsement gate (Week 3, PR 3a Phase B)
+/// @title Go -> Solidity endorsement gate
 /// @notice Verifies REAL signatures produced by the Go eip712.Signer (committed in the fixture,
 ///         RFC 6979 deterministic, independently validated with ethers v6) against the
 ///         EndorsementVerifier's on-chain rules. This closes the signature loop the other forge
 ///         suites simulate with vm.sign: the exact bytes the Go endorser will emit in production
-///         are accepted by the contract. Signers and signatures are parsed from the fixture (R4).
+///         are accepted by the contract. Signers and signatures are parsed from the fixture.
 contract GoEndorsementTest is Test {
     string internal fixture;
     bytes32 internal digest;

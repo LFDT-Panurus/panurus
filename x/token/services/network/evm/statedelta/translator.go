@@ -19,11 +19,11 @@ import (
 )
 
 // Translator turns validated token actions into a StateDelta, the EVM analog of the Fabric RWSet
-// translator (design §5.2). Its surface matches what the endorsement responder drives on the Fabric
+// translator. Its surface matches what the endorsement responder drives on the Fabric
 // side (fsc/responder.go: Write per action, then AddPublicParamsDependency, then CommitTokenRequest),
 // plus a StateDelta() finalizer.
 //
-// Every endorser must produce a byte-identical delta for the same request (§4.4), so the translator
+// Every endorser must produce a byte-identical delta for the same request, so the translator
 // is deterministic by construction: outputs and spent refs are appended in action/counter order (the
 // validator yields actions in request order), and metadata, collected from Go maps with random
 // iteration order, is sorted by key at finalization.
@@ -86,7 +86,7 @@ func (t *Translator) Write(_ context.Context, action any) error {
 }
 
 // AddPublicParamsDependency records the public parameters the delta depends on: the contract rejects
-// the delta unless its hash and version match the on-chain ones at apply time (§3.4).
+// the delta unless its hash and version match the on-chain ones at apply time.
 func (t *Translator) AddPublicParamsDependency() error {
 	if len(t.pp) == 0 {
 		return errors.New("no public parameters set")

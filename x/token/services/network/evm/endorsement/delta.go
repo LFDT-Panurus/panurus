@@ -20,8 +20,9 @@ import (
 
 // DeltaFactory turns a validated token request into the StateDelta an endorser signs and returns. It
 // belongs to the responder alone: the initiator neither validates nor translates, it takes the delta
-// from the endorsers' replies. The §4.4 determinism guarantee (every endorser produces byte-identical
-// deltas) is met by them all running this one construction path, rather than by trusting independent
+// from the endorsers' replies. The determinism guarantee (see "StateDelta determinism" in
+// docs/services/network-ethereum-internals.md) that every endorser produces byte-identical deltas is
+// met by them all running this one construction path, rather than by trusting independent
 // reimplementations to agree.
 //
 // Build validates the request against on-chain state (read through the getToken ledger at blockTag),

@@ -37,9 +37,9 @@ var secp256k1HalfN = [32]byte{
 
 // Signer produces the endorsement signatures the EndorsementVerifier contract accepts: 65-byte
 // {r,s,v} with v in {27,28} and low-s, over an EIP-712 digest. It wraps a secp256k1 private key
-// (decred implementation; go-ethereum must not be linked, design §15.6).
+// (decred implementation; go-ethereum must not be linked).
 //
-// Byte-format notes (design §8): decred's SignCompact returns the recovery byte FIRST ({v,r,s}),
+// Byte-format notes: decred's SignCompact returns the recovery byte FIRST ({v,r,s}),
 // so Sign reorders to the Ethereum wire format {r,s,v}; signing always uses the uncompressed-pubkey
 // recovery convention so v stays in {27,28}; and dcrd signatures are canonical (low-s) by
 // construction, but Sign asserts it anyway so a library change cannot silently reintroduce

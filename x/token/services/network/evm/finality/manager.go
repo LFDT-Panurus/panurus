@@ -31,7 +31,7 @@ type StateReader interface {
 
 // Manager resolves the finality of EVM token transactions and notifies listeners.
 //
-// The chain is the only source of truth, which shapes what can be observed (design §7.1, §7.4):
+// The chain is the only source of truth, which shapes what can be observed:
 //
 //   - By eth transaction hash, the full lifecycle is visible: a receipt with status 1 is Valid,
 //     status 0 is Invalid, a known but unmined transaction is Busy, and one the node has never seen

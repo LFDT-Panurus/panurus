@@ -36,7 +36,7 @@ func testSigner(t *testing.T, scalarLowByte byte) *Signer {
 
 // TestGoldenAddresses pins the address derivation against the well-known addresses of private keys
 // 1 and 2. These are independently reproducible with any Ethereum tooling, so a wrong pubkey
-// serialization (for example hashing the 0x04 prefix byte, design §8) cannot pass unnoticed.
+// serialization (for example hashing the 0x04 prefix byte) cannot pass unnoticed.
 func TestGoldenAddresses(t *testing.T) {
 	// client.Address.Hex() is plain lowercase hex (no EIP-55 checksum casing).
 	assert.Equal(t, "0x7e5f4552091a69125d5dfcb7b8c2659029395bdf", testSigner(t, 1).Address().Hex())

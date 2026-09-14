@@ -15,7 +15,7 @@ import (
 
 // Endorser binds one endorser's two identities: its FSC view.Identity, used to route the
 // endorsement request over an authenticated session, and its Ethereum address, the value the
-// contract recovers from the signature. Both come from config (design §6.1, §10).
+// contract recovers from the signature. Both come from config.
 type Endorser struct {
 	Identity view.Identity
 	Address  client.Address
@@ -24,12 +24,12 @@ type Endorser struct {
 // Registry resolves between an endorser's Ethereum address and its FSC identity, both directions.
 // The EndorsementVerifier's on-chain set alone yields only addresses, which cannot address an FSC
 // call, so the initiator needs address→identity to route requests and the contract-facing side
-// needs identity→address to know which recovered address a responder speaks for (design §6.1).
+// needs identity→address to know which recovered address a responder speaks for.
 //
 // It is immutable after construction: the endorser set is fixed at contract-construction time in v1
-// (runtime mutation is a quorum-gated feature deferred beyond v1, design §3.8), so a Registry is
-// built once from config and only read thereafter, which also makes it safe to share across
-// goroutines without locking.
+// (runtime mutation is a quorum-gated feature deferred beyond v1), so a Registry is built once from
+// config and only read thereafter, which also makes it safe to share across goroutines without
+// locking.
 type Registry struct {
 	byAddress map[client.Address]view.Identity
 	endorsers []Endorser
@@ -38,7 +38,7 @@ type Registry struct {
 // NewRegistry builds a Registry from the endorser set. It rejects a set that could not form a sound
 // quorum: an empty set, an endorser missing either identity, or two endorsers sharing an address
 // (which would let one key be counted under two identities, defeating the distinct-signer rule the
-// contract enforces on-chain, design §3.6). Duplicate identities are likewise rejected.
+// contract enforces on-chain). Duplicate identities are likewise rejected.
 func NewRegistry(endorsers []Endorser) (*Registry, error) {
 	if len(endorsers) == 0 {
 		return nil, errors.New("endorsement registry: no endorsers configured")

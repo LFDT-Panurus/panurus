@@ -106,7 +106,7 @@ func fastManager(evm client.EVMClient, state StateReader, timeout time.Duration)
 
 // --- resolution by eth transaction hash ------------------------------------------------------------
 
-// TestStatusByTxHash covers the lifecycle visible to whoever submitted the transaction (design §7.1).
+// TestStatusByTxHash covers the lifecycle visible to whoever submitted the transaction.
 func TestStatusByTxHash(t *testing.T) {
 	blockNumber := uint64(10)
 
@@ -164,7 +164,7 @@ func TestStatusByAnchorSuccessIsObservable(t *testing.T) {
 	assert.Equal(t, []byte("tr-hash"), hash)
 }
 
-// TestStatusByAnchorFailureIsNotObservable pins the asymmetry the design calls out (§7.4): a failed
+// TestStatusByAnchorFailureIsNotObservable pins the asymmetry the design calls out: a failed
 // apply reverts and leaves nothing on chain, so an absent anchor is Unknown, never Invalid. Reporting
 // Invalid here would make a merely-pending transaction look permanently failed.
 func TestStatusByAnchorFailureIsNotObservable(t *testing.T) {
@@ -324,7 +324,7 @@ func TestPersistentReadFailureReportsErrorNotInvalid(t *testing.T) {
 
 // TestOneCleanMissThenPersistentFailureStillResolvesInvalid pins the boundary of the fix above: once a
 // single read has actually reached the chain and found nothing, a later run of read failures does not
-// erase that evidence. The transaction still resolves Invalid at the timeout, as design §7.4 intends.
+// erase that evidence. The transaction still resolves Invalid at the timeout, as intended.
 func TestOneCleanMissThenPersistentFailureStillResolvesInvalid(t *testing.T) {
 	state := &stubState{}
 	m := fastManager(&mock.EVMClient{}, state, 200*time.Millisecond)

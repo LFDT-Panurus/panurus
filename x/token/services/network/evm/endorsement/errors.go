@@ -15,7 +15,7 @@ import (
 // logger is the package logger, used for the initiator's per-endorser diagnostics.
 var logger = logging.MustGetLogger()
 
-// Sentinel errors for the endorsement flow, classifiable with errors.Is (design §13). They are all
+// Sentinel errors for the endorsement flow, classifiable with errors.Is. They are all
 // permanent: none is worth retrying, because each means the request itself is unacceptable, not that
 // the network was briefly unavailable.
 var (

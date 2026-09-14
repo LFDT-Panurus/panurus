@@ -23,7 +23,7 @@ import (
 	"github.com/LFDT-Panurus/panurus/token/token"
 )
 
-// TestDeterminismShuffledMetadata is the byte-identical guarantee across endorsers (§4.4): two
+// TestDeterminismShuffledMetadata is the byte-identical guarantee across endorsers: two
 // independent translations of the same actions must produce deeply equal deltas even though action
 // metadata lives in Go maps, whose iteration order changes between ranges. Repeated to give map
 // randomization room to bite.

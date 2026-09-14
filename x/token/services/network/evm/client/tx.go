@@ -18,7 +18,7 @@ import (
 
 // TxTypeDynamicFee is the EIP-2718 type byte of an EIP-1559 (dynamic-fee) transaction. The driver
 // only ever sends type-2 transactions: they are the current standard and are supported by Besu and
-// every modern node (design §8).
+// every modern node.
 const TxTypeDynamicFee byte = 0x02
 
 // signatureLength is the length of the compact secp256k1 signature decred returns: {v, r, s}.
@@ -80,7 +80,7 @@ func (t *DynamicFeeTx) toBytes() []byte {
 // SignTx signs the transaction with the submitter's secp256k1 key and returns the raw, broadcastable
 // transaction: 0x02 || rlp([...signed fields, yParity, r, s]).
 //
-// Signature format differs from the endorsement signatures (design §8): a typed transaction carries
+// Signature format differs from the endorsement signatures: a typed transaction carries
 // yParity as 0 or 1, NOT the legacy v of 27/28, and r and s are encoded as minimal big-endian RLP
 // integers rather than fixed 32-byte words. s is normalized to the lower half of the group order
 // (EIP-2); decred already produces canonical signatures, and this asserts it rather than assuming.

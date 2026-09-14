@@ -54,7 +54,7 @@ const maxResponseBytes = 64 << 20
 //
 // It is deliberately dependency-free: the requests and the hex-quantity encoding the Ethereum JSON-RPC
 // spec mandates are handled here rather than pulled from go-ethereum, whose license is a hard blocker
-// (design §9, §15.6).
+// .
 type JSONRPCClient struct {
 	endpoint string
 	http     *http.Client
@@ -456,7 +456,7 @@ func (c *JSONRPCClient) GetTransactionReceipt(ctx context.Context, txHash Hash) 
 
 // IsPending reports whether txHash is still pending. found is false when the node does not know the
 // transaction at all (dropped or never seen), which the finality resolver uses to distinguish
-// "pending" from "dropped" (design §7.1).
+// "pending" from "dropped".
 func (c *JSONRPCClient) IsPending(ctx context.Context, txHash Hash) (bool, bool, error) {
 	var tx *struct {
 		BlockNumber *string `json:"blockNumber"`

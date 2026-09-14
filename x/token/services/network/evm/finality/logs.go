@@ -32,7 +32,7 @@ func StateCommittedTopic() client.Hash {
 //
 // The hash comes from the log record's transactionHash, which the node supplies as metadata: a
 // contract cannot read its own transaction hash, so it is not, and cannot be, in the event payload
-// (design §7.4). That is why this is a log query rather than a plain call.
+// . That is why this is a log query rather than a plain call.
 //
 // This is the richer of the two recipient paths and deliberately not the default one. It needs a
 // block range, and log retention varies between nodes, so StatusByAnchor answers the common "is it

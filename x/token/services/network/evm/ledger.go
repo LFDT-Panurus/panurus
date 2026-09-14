@@ -64,7 +64,7 @@ func (r *contractReader) tokenData(ctx context.Context, id *token.ID) ([]byte, e
 // so a wallet checking many tokens costs one round trip.
 //
 // The contract resolves spent status through the content-bound marker recorded when the output was
-// created (design §5.3), so the caller does not need the token's bytes, only its id.
+// created, so the caller does not need the token's bytes, only its id.
 func (r *contractReader) spent(ctx context.Context, ids []*token.ID) ([]bool, error) {
 	tokenIDs := make([][32]byte, len(ids))
 	for i, id := range ids {

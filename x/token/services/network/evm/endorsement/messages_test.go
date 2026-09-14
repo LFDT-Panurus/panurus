@@ -36,9 +36,9 @@ func TestEndorseRequestRoundTrips(t *testing.T) {
 	assert.Equal(t, *sampleRequest(), got)
 }
 
-// TestEndorseRequestCarriesNoDigest is the wire-format guard for the no-blind-sign rule (design
-// §4.5): the request must not carry a precomputed digest field an endorser could be tricked into
-// signing without recomputing it. This fails loudly if someone adds one.
+// TestEndorseRequestCarriesNoDigest is the wire-format guard for the no-blind-sign rule: the request
+// must not carry a precomputed digest field an endorser could be tricked into signing without
+// recomputing it. This fails loudly if someone adds one.
 func TestEndorseRequestCarriesNoDigest(t *testing.T) {
 	raw, err := json.Marshal(sampleRequest())
 	require.NoError(t, err)

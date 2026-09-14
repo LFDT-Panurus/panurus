@@ -22,7 +22,7 @@ const getPublicParamsVersionMethod = "getPublicParamsVersion()"
 
 // VersionKeeper tracks the public-parameters version of one TMS. Endorsers refuse to sign a
 // StateDelta whose version does not match, and the contract rejects one that does not match its own
-// at apply time, so this is the driver's cached view of that value (design §3.5, §6.2).
+// at apply time, so this is the driver's cached view of that value.
 //
 // The on-chain convention: initialize sets version 0, and each endorsed setup delta increments it.
 // The keeper mirrors that, and is safe for concurrent use because the driver reads it from every

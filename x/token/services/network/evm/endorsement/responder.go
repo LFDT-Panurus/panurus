@@ -23,7 +23,7 @@ import (
 const receiveTimeout = 30 * time.Second
 
 // Responder endorses a token request for one TMS. It is the EVM analog of the Fabric
-// RequestApprovalResponderView, running the flow of design §6.2:
+// RequestApprovalResponderView, running the flow:
 //
 //	receive → authorize → validate → translate → sign → reply
 //
@@ -31,7 +31,7 @@ const receiveTimeout = 30 * time.Second
 // and so one Responder serves exactly one TMS (multi-TMS routing is the Service's job, keyed by
 // TMSID). The responder never signs a digest handed to it: it recomputes the StateDelta from the
 // validated actions and signs that, so a malicious initiator cannot get it to endorse a delta that
-// does not match the request it validated (design §4.5).
+// does not match the request it validated.
 type Responder struct {
 	authorizer *Authorizer
 	// factoryFor resolves the delta factory for the TMS a request names. It is resolved per request

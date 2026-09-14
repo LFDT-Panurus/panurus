@@ -20,7 +20,7 @@ import (
 const NonceLength = 24
 
 // computeAnchor derives the token-request anchor from a nonce and a creator identity:
-// SHA-256(len(nonce) ‖ nonce ‖ creator), hex encoded (design §5.3).
+// SHA-256(len(nonce) ‖ nonce ‖ creator), hex encoded.
 //
 // The nonce is length prefixed rather than plainly concatenated, which is a deliberate deviation from
 // Fabric's protoutil.ComputeTxID (it appends the two directly). Plain concatenation is ambiguous: a

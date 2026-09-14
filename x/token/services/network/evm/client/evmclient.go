@@ -18,7 +18,7 @@ import (
 // keeper must all read at the same tag, or they would validate against different views of the chain.
 const (
 	// BlockTagFinalized is the PoS finalized tag, the default everywhere: reading at it removes reorg
-	// handling from v1 (design §7.2).
+	// handling from v1.
 	BlockTagFinalized = "finalized"
 	// BlockTagSafe is the weaker "safe head" tag, available for deployments that accept reorg risk in
 	// exchange for lower latency.
