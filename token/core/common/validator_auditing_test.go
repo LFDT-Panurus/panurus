@@ -156,27 +156,27 @@ func TestAuditingSignaturesValidate(t *testing.T) {
 				sp.HasBeenSignedByReturns(nil, errors.New("signature is not valid"))
 
 				return &TestContext{
-					PP: pp,
-					TokenRequest: &driver.TokenRequest{
-						Signatures: []*driver.RequestSignature{
-							{
-								Auditor: &driver.AuditorSignature{
-									Identity:  auditor,
-									Signature: []byte("auditor's signature"),
+						PP: pp,
+						TokenRequest: &driver.TokenRequest{
+							Signatures: []*driver.RequestSignature{
+								{
+									Auditor: &driver.AuditorSignature{
+										Identity:  auditor,
+										Signature: []byte("auditor's signature"),
+									},
 								},
 							},
 						},
-					},
-					Deserializer:      des,
-					SignatureProvider: sp,
-				}, func() bool {
-					_, id, ver2 := sp.HasBeenSignedByArgsForCall(0)
-					if ver2 != ver {
-						return false
-					}
+						Deserializer:      des,
+						SignatureProvider: sp,
+					}, func() bool {
+						_, id, ver2 := sp.HasBeenSignedByArgsForCall(0)
+						if ver2 != ver {
+							return false
+						}
 
-					return auditor.Equal(id)
-				}
+						return auditor.Equal(id)
+					}
 			},
 		},
 		{
@@ -194,27 +194,27 @@ func TestAuditingSignaturesValidate(t *testing.T) {
 				sp.HasBeenSignedByReturns(nil, nil)
 
 				return &TestContext{
-					PP: pp,
-					TokenRequest: &driver.TokenRequest{
-						Signatures: []*driver.RequestSignature{
-							{
-								Auditor: &driver.AuditorSignature{
-									Identity:  auditor,
-									Signature: []byte("auditor's signature"),
+						PP: pp,
+						TokenRequest: &driver.TokenRequest{
+							Signatures: []*driver.RequestSignature{
+								{
+									Auditor: &driver.AuditorSignature{
+										Identity:  auditor,
+										Signature: []byte("auditor's signature"),
+									},
 								},
 							},
 						},
-					},
-					Deserializer:      des,
-					SignatureProvider: sp,
-				}, func() bool {
-					_, id, ver2 := sp.HasBeenSignedByArgsForCall(0)
-					if ver2 != ver {
-						return false
-					}
+						Deserializer:      des,
+						SignatureProvider: sp,
+					}, func() bool {
+						_, id, ver2 := sp.HasBeenSignedByArgsForCall(0)
+						if ver2 != ver {
+							return false
+						}
 
-					return auditor.Equal(id)
-				}
+						return auditor.Equal(id)
+					}
 			},
 		},
 	}
