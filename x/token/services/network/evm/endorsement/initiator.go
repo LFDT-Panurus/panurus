@@ -134,6 +134,12 @@ func (i *Initiator) Collect(ctx context.Context, endorse func(view.Identity) (*E
 	// rather than only how many were missing. The five paths below are five different operational
 	// problems and they are indistinguishable from the count alone.
 	declined := make([]string, 0, len(i.registry.Identities()))
+	// causes carries the classifiable sentinel behind each decline, so a caller can tell "no endorser
+	// recognized this signer" from "the responder rejected this delta" via errors.Is instead of
+	// string-matching the message. Two paths have no sentinel to add: a transport failure (no
+	// response), and resp.Error(), which crosses the wire as a plain string and so cannot carry a
+	// sentinel's identity back to the initiator even if the responder raised one locally.
+	causes := make([]error, 0, len(i.registry.Identities()))
 	for _, party := range i.registry.Identities() {
 		if err := ctx.Err(); err != nil {
 			return nil, errors.Wrap(err, "endorsement collection interrupted")
@@ -155,6 +161,7 @@ func (i *Initiator) Collect(ctx context.Context, endorse func(view.Identity) (*E
 		if err := i.bind(anchor, resp.Delta); err != nil {
 			logger.Debugf("discarding delta from [%s]: %v", party, err)
 			declined = append(declined, party.String()+" returned an unusable delta: "+err.Error())
+			causes = append(causes, err)
 
 			continue
 		}
@@ -164,6 +171,7 @@ func (i *Initiator) Collect(ctx context.Context, endorse func(view.Identity) (*E
 		if err != nil {
 			logger.Debugf("discarding signature from [%s]: %v", party, err)
 			declined = append(declined, party.String()+" returned an unusable signature: "+err.Error())
+			causes = append(causes, err)
 
 			continue
 		}
@@ -183,6 +191,7 @@ func (i *Initiator) Collect(ctx context.Context, endorse func(view.Identity) (*E
 		if _, dup := quorum.signers[signer]; dup {
 			logger.Debugf("discarding duplicate signature recovered to [%s]", signer)
 			declined = append(declined, party.String()+" signed as already-counted endorser "+signer)
+			causes = append(causes, errors.Wrapf(ErrDuplicateSigner, "signer [%s]", signer))
 
 			continue
 		}
@@ -194,7 +203,7 @@ func (i *Initiator) Collect(ctx context.Context, endorse func(view.Identity) (*E
 		}
 	}
 
-	return nil, noQuorum(agreed, i.threshold, declined)
+	return nil, noQuorum(agreed, i.threshold, declined, causes)
 }
 
 // bind checks that a returned delta belongs to the request this initiator sent, using only what can be
@@ -240,20 +249,34 @@ func (i *Initiator) verify(digest [32]byte, sig []byte) (string, error) {
 // delta for a different anchor, or signed with a key the registry does not know, and those are four
 // different things to go and fix. An operator reading this error is usually not in a position to
 // reproduce it at debug level.
-func noQuorum(agreed map[[32]byte]*agreement, threshold int, declined []string) error {
+//
+// causes joins in the classifiable sentinel behind each per-endorser decline (ErrDeltaMismatch,
+// ErrUnknownSigner, ErrDuplicateSigner), alongside ErrInsufficientEndorsements and, when the
+// collection split across more than one delta, ErrDivergentDeltas. errors.Is on the result finds any
+// of them: cockroachdb/errors' Join node is itself unwrapped by errors.Is, so wrapping it with Wrapf
+// for the human-readable message does not hide what it wraps.
+func noQuorum(agreed map[[32]byte]*agreement, threshold int, declined []string, causes []error) error {
 	best := 0
 	for _, quorum := range agreed {
 		if len(quorum.signatures) > best {
 			best = len(quorum.signatures)
 		}
 	}
+
+	joined := make([]error, 0, len(causes)+2)
+	joined = append(joined, ErrInsufficientEndorsements)
 	if len(agreed) > 1 {
-		return errors.Wrapf(errors.Join(ErrInsufficientEndorsements, ErrDivergentDeltas),
+		joined = append(joined, ErrDivergentDeltas)
+	}
+	joined = append(joined, causes...)
+
+	if len(agreed) > 1 {
+		return errors.Wrapf(errors.Join(joined...),
 			"endorsers signed %d distinct deltas, the largest agreement had %d of %d required%s",
 			len(agreed), best, threshold, because(declined))
 	}
 
-	return errors.Wrapf(ErrInsufficientEndorsements,
+	return errors.Wrapf(errors.Join(joined...),
 		"collected %d of %d required%s", best, threshold, because(declined))
 }
 

@@ -217,6 +217,16 @@ func (c *Config) Validate() error {
 			c.Finality.Timeout, MinFinalizedTagTimeout,
 		)
 	}
+	if c.Finality.PollInterval >= c.Finality.Timeout {
+		// A watch never polls before its first tick, so a poll interval at or above the timeout means
+		// the timeout always fires first: the watch times out without ever reading the chain, and a
+		// transaction that is already final gets reported as unreachable instead.
+		return errors.Errorf(
+			"evm config: finality.pollInterval [%s] must be shorter than finality.timeout [%s]; "+
+				"otherwise the watch never gets a chance to poll before the timeout fires",
+			c.Finality.PollInterval, c.Finality.Timeout,
+		)
+	}
 	if err := c.validateGas(); err != nil {
 		return err
 	}
@@ -253,7 +263,10 @@ func (c *Config) validateEndorsement() error {
 	if e.Threshold == 0 {
 		return errors.New("evm config: endorsement threshold must be positive")
 	}
-	if int(e.Threshold) > len(e.Endorsers) {
+	// Compared in uint space deliberately: converting e.Threshold to int would wrap a value above
+	// math.MaxInt negative, and a negative "threshold" would then pass this bound check instead of
+	// failing it.
+	if e.Threshold > uint(len(e.Endorsers)) {
 		return errors.Errorf("evm config: endorsement threshold %d exceeds the %d configured endorsers",
 			e.Threshold, len(e.Endorsers))
 	}

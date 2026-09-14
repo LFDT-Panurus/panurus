@@ -218,6 +218,20 @@ func (m *Manager) watch(anchor [32]byte, anchorID string) {
 	// conflating them would let a persistent connectivity failure masquerade as a revert.
 	observed := false
 
+	// Poll once before waiting for the first tick. Without this, a poll interval at or above the
+	// timeout means ctx.Done() always wins the race against ticker.C, so the chain is never actually
+	// read and a transaction that is already final gets reported as unreachable instead.
+	if code, hash, message, err := m.StatusByAnchor(ctx, anchor); err == nil {
+		observed = true
+		if code == driver.Valid {
+			for _, l := range m.take(anchorID) {
+				l.OnStatus(ctx, anchorID, code, message, hash)
+			}
+
+			return
+		}
+	}
+
 	for {
 		select {
 		case <-ticker.C:

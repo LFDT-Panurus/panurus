@@ -49,4 +49,10 @@ var (
 	// it identically, so this means the translation is not deterministic, not that endorsers were
 	// unavailable.
 	ErrDivergentDeltas = errors.New("endorsers disagree on the state delta")
+
+	// ErrStalePublicParams is returned by a responder's DeltaFactory when the public parameters it
+	// validated the request with do not hash to what the chain currently holds. This is expected to be
+	// transient: it means this node's pp.Watcher has not yet caught up with an update someone else
+	// already submitted, and it is retried rather than fatal.
+	ErrStalePublicParams = errors.New("local public parameters are stale, refusing to endorse")
 )

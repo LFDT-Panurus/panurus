@@ -50,12 +50,23 @@ type Watcher struct {
 	interval time.Duration
 	handler  UpdateHandler
 
-	// mu guards everything below it. seen and hasSeen are only written by the polling goroutine, but
-	// they are read from tests as well, so they are locked rather than left to a
-	// happens-before argument that a later change could quietly break.
-	mu      sync.Mutex
-	cancel  context.CancelFunc
-	stopped chan struct{}
+	// lifecycleMu serializes Start against Stop, and Stop against a concurrent Stop. Stop holds it for
+	// the full cancel-and-wait, not just the field swap: that is what stops a concurrent Start from
+	// observing a half-stopped watcher (cancel == nil while the previous poller is still finishing) and
+	// spawning a second poller alongside it, and what stops a second concurrent Stop from reading a
+	// cleared cancel and returning early without actually having waited for anything.
+	//
+	// It must never be held while poll (or anything poll calls) is running, or Stop's wait on <-stopped
+	// would deadlock against run() blocking to acquire the same lock. poll only ever takes stateMu, so
+	// that never happens.
+	lifecycleMu sync.Mutex
+	cancel      context.CancelFunc
+	stopped     chan struct{}
+
+	// stateMu guards seen and hasSeen below. They are written by the polling goroutine and read from
+	// tests as well, so they are locked rather than left to a happens-before argument that a later
+	// change could quietly break.
+	stateMu sync.Mutex
 	// seen is the last version successfully applied by the handler. It starts unset, and the first
 	// observation is applied rather than merely recorded: see poll.
 	seen    uint64
@@ -91,8 +102,8 @@ func NewWatcher(
 // Start begins watching in the background. Calling it twice is a no-op, so a driver that builds the
 // same network more than once does not end up with two pollers on one contract.
 func (w *Watcher) Start(ctx context.Context) {
-	w.mu.Lock()
-	defer w.mu.Unlock()
+	w.lifecycleMu.Lock()
+	defer w.lifecycleMu.Unlock()
 	if w.cancel != nil {
 		return
 	}
@@ -106,17 +117,26 @@ func (w *Watcher) Start(ctx context.Context) {
 
 // Stop ends the watch and waits for the goroutine to finish, so a stopped watcher is guaranteed not
 // to call the handler again.
+//
+// lifecycleMu is held for the entire cancel-and-wait, not released after reading cancel/stopped: see
+// its doc comment for why that is what makes this safe against a concurrent Start or Stop.
 func (w *Watcher) Stop() {
-	w.mu.Lock()
-	cancel, stopped := w.cancel, w.stopped
-	w.cancel, w.stopped = nil, nil
-	w.mu.Unlock()
-
-	if cancel == nil {
+	w.lifecycleMu.Lock()
+	defer w.lifecycleMu.Unlock()
+	if w.cancel == nil {
 		return
 	}
-	cancel()
-	<-stopped
+
+	w.cancel()
+	<-w.stopped
+	w.cancel, w.stopped = nil, nil
+
+	// Reset the applied-version bookkeeping so a Stop followed by a Start re-applies the first
+	// observation, matching a freshly constructed watcher rather than silently skipping a version that
+	// happens to match what was seen before the stop.
+	w.stateMu.Lock()
+	w.seen, w.hasSeen = 0, false
+	w.stateMu.Unlock()
 }
 
 func (w *Watcher) run(ctx context.Context, stopped chan struct{}) {
@@ -156,9 +176,9 @@ func (w *Watcher) poll(ctx context.Context) {
 		return
 	}
 
-	w.mu.Lock()
+	w.stateMu.Lock()
 	seen, hasSeen := w.seen, w.hasSeen
-	w.mu.Unlock()
+	w.stateMu.Unlock()
 
 	if hasSeen && version == seen {
 		return
@@ -183,8 +203,8 @@ func (w *Watcher) poll(ctx context.Context) {
 
 	// Record what was actually applied rather than what the version poll reported. They can differ if
 	// another update landed in between, and the parameters are the thing that matters.
-	w.mu.Lock()
+	w.stateMu.Lock()
 	w.seen, w.hasSeen = actual, true
-	w.mu.Unlock()
+	w.stateMu.Unlock()
 	logger.Infof("public parameters updated to version %d", actual)
 }

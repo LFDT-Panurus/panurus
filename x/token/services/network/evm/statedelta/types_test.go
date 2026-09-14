@@ -107,6 +107,14 @@ func TestStateDeltaValidate(t *testing.T) {
 		assert.ErrorContains(t, d.Validate(), "too many metadata entries")
 	})
 
+	t.Run("too many metadata values with no keys", func(t *testing.T) {
+		// MetadataKeys is count-bounded on its own, but a delta with zero keys and an oversized
+		// MetadataVals slice must still be rejected on the count, not walked element-by-element
+		// until the keys/values length mismatch is finally noticed.
+		d := &StateDelta{MetadataVals: make([][]byte, maxDeltaEntries+1)}
+		assert.ErrorContains(t, d.Validate(), "too many metadata entries")
+	})
+
 	t.Run("output token data too large", func(t *testing.T) {
 		d := &StateDelta{Outputs: []OutputToken{{TokenData: make([]byte, maxFieldBytes+1)}}}
 		assert.ErrorContains(t, d.Validate(), "token data too large")

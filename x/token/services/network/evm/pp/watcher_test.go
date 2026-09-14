@@ -89,8 +89,8 @@ func newWatcherHarness(t *testing.T, state *chainState) (*Watcher, *[]update, *s
 // It lives here rather than on Watcher because only tests need it, and it takes the lock because the
 // polling goroutine is what writes the fields.
 func applied(w *Watcher) bool {
-	w.mu.Lock()
-	defer w.mu.Unlock()
+	w.stateMu.Lock()
+	defer w.stateMu.Unlock()
 
 	return w.hasSeen
 }
@@ -263,9 +263,9 @@ func TestWatcherRetriesAFailedHandler(t *testing.T) {
 		return *attempts >= 3
 	}, 2*time.Second, 5*time.Millisecond, "a failed handler must be retried on the same version, not skipped")
 
-	w.mu.Lock()
+	w.stateMu.Lock()
 	seen, hasSeen := w.seen, w.hasSeen
-	w.mu.Unlock()
+	w.stateMu.Unlock()
 	assert.True(t, hasSeen)
 	assert.Equal(t, uint64(1), seen, "seen only advances once the handler actually succeeds")
 }
@@ -333,6 +333,84 @@ func TestWatcherStopIsIdempotentAndBlocks(t *testing.T) {
 	mu.Lock()
 	defer mu.Unlock()
 	assert.Len(t, *got, before, "a stopped watcher must not report anything further")
+}
+
+// TestConcurrentStopAndStartNeverRunTwoPollers guards the fix for a race in Stop: it used to clear
+// cancel/stopped and release the lock before actually cancelling and waiting, so a Start racing in
+// during that window would see cancel == nil and spawn a second poller while the first was still
+// finishing, and a second concurrent Stop would see the cleared fields and return early without ever
+// waiting on anything. Both would break the "one call at a time" contract on the handler.
+//
+// This only actually exercises anything under -race: without it, the racy window is small enough that
+// the bug can pass silently.
+func TestConcurrentStopAndStartNeverRunTwoPollers(t *testing.T) {
+	state := &chainState{}
+	state.set("params-v0", 0)
+
+	var inHandler atomic.Int32
+	var concurrent atomic.Bool
+	tokenState, err := client.HexToAddress("0x5FbDB2315678afecb367f032d93F642f64180aa3")
+	require.NoError(t, err)
+
+	evmClient := &mock.EVMClient{}
+	evmClient.CallStub = func(_ context.Context, _ client.Address, data []byte, _ string) ([]byte, error) {
+		raw, version := state.get()
+		switch string(data) {
+		case string(abi.MethodID("getPublicParameters()")):
+			return abiBytesFor(raw), nil
+		case string(abi.MethodID("getPublicParamsVersion()")):
+			return abiUint64For(version), nil
+		}
+
+		return nil, nil
+	}
+
+	w, err := NewWatcher(evmClient, tokenState, "latest", time.Millisecond,
+		func(context.Context, []byte, uint64) error {
+			if inHandler.Add(1) > 1 {
+				concurrent.Store(true)
+			}
+			time.Sleep(2 * time.Millisecond) // widen the window a concurrent second poller would race into
+			inHandler.Add(-1)
+
+			return nil
+		})
+	require.NoError(t, err)
+
+	// Hammer Start/Stop concurrently for a stretch of wall-clock time rather than firing a fixed batch
+	// of goroutines: the racy window in the old Stop (between clearing cancel/stopped and actually
+	// cancelling-and-waiting) is tiny, so it needs many independent attempts spread over real time to
+	// land reliably, especially under the scheduling perturbation -race itself introduces.
+	deadline := time.Now().Add(200 * time.Millisecond)
+	var wg sync.WaitGroup
+	wg.Add(3)
+	go func() {
+		defer wg.Done()
+		for time.Now().Before(deadline) {
+			w.Start(context.Background())
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		for time.Now().Before(deadline) {
+			w.Stop()
+		}
+	}()
+	// Keep the version moving so a running poller actually has something to apply on every tick,
+	// rather than idling after its first observation.
+	go func() {
+		defer wg.Done()
+		version := uint64(0)
+		for time.Now().Before(deadline) {
+			version++
+			state.set("params-vX", version)
+			time.Sleep(time.Millisecond)
+		}
+	}()
+	wg.Wait()
+	w.Stop() // leave nothing running behind the test
+
+	assert.False(t, concurrent.Load(), "the handler must never be entered by two pollers at once")
 }
 
 func TestNewWatcherValidatesItsInput(t *testing.T) {

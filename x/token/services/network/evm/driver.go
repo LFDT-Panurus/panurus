@@ -354,13 +354,19 @@ func (d *Driver) installEndorsement(n *Network, namespaces []NamespaceConfig, ev
 			return errors.Wrapf(err, "evm: tms [%s]", nc.Namespace)
 		}
 		tmsID := token2.TMSID{Network: network, Channel: channel, Namespace: nc.Namespace}
+		// PublicParams deliberately reads at BlockTagLatest, not nc.Config.Finality.BlockTag:
+		// TokenState.applyStateDelta enforces publicParamsVersion/publicParamsHash against its current
+		// (head) storage, not against what is finalized. Binding a delta to the finalized value would
+		// make every endorsement revert with StalePublicParams for the whole finalization lag after any
+		// setup update. BlockTag below is unrelated - it governs the token-existence reads in
+		// endorsement/ledger.go, where finalized is the correct, reorg-safe choice.
 		if err := factory.Register(tmsID, endorsement.TMSConfig{
 			Registry:     registry,
 			Threshold:    int(nc.Config.Endorsement.Threshold),
 			Domain:       eip712.Domain{ChainID: nc.Config.ChainIDBig(), VerifyingContract: tokenState},
 			TokenState:   tokenState,
 			BlockTag:     nc.Config.Finality.BlockTag,
-			PublicParams: pp.NewChainProvider(evmClient, tokenState, nc.Config.Finality.BlockTag),
+			PublicParams: pp.NewChainProvider(evmClient, tokenState, client.BlockTagLatest),
 		}); err != nil {
 			return errors.Wrapf(err, "evm: tms [%s]", nc.Namespace)
 		}

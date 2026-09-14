@@ -20,6 +20,7 @@ import (
 	"github.com/LFDT-Panurus/panurus/token/core/common"
 	fabactions "github.com/LFDT-Panurus/panurus/token/core/fabtoken/v1/actions"
 	"github.com/LFDT-Panurus/panurus/x/token/services/network/evm/client/mock"
+	"github.com/LFDT-Panurus/panurus/x/token/services/network/evm/crypto"
 	"github.com/LFDT-Panurus/panurus/x/token/services/network/evm/eip712"
 	"github.com/LFDT-Panurus/panurus/x/token/services/network/evm/keys"
 	"github.com/LFDT-Panurus/panurus/x/token/services/network/evm/statedelta"
@@ -47,6 +48,14 @@ type fakePP struct {
 
 func (f *fakePP) PublicParams(context.Context) ([]byte, uint64, error) {
 	return f.raw, f.version, f.err
+}
+
+// PublicParamsHash lets fakePP double as the local pp source too: real usage always resolves
+// validator and localPP from the same TMS, so a test double that always agrees with itself is the
+// faithful stand-in. TestDeltaFactoryRefusesStalePublicParams below constructs a genuine disagreement
+// with two distinct fakePPs instead.
+func (f *fakePP) PublicParamsHash() token2.PPHash {
+	return crypto.SHA256(f.raw)
 }
 
 // --- fixtures -------------------------------------------------------------------------------------
@@ -91,11 +100,11 @@ func validRequest() *EndorseRequest {
 	}
 }
 
-func newResponder(t *testing.T, v RequestValidator, pp PublicParamsProvider, signer EndorserSigner) *Responder {
+func newResponder(t *testing.T, v RequestValidator, pp *fakePP, signer EndorserSigner) *Responder {
 	t.Helper()
 	auth, err := NewAuthorizer([]view.Identity{view.Identity(testCaller)})
 	require.NoError(t, err)
-	factory := NewDeltaFactory(v, pp, &mock.EVMClient{}, addr(0xAA), "")
+	factory := NewDeltaFactory(v, pp, pp, &mock.EVMClient{}, addr(0xAA), "")
 
 	return NewResponder(
 		auth,

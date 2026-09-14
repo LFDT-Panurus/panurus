@@ -7,6 +7,7 @@ SPDX-License-Identifier: Apache-2.0
 package evm
 
 import (
+	"math"
 	"testing"
 	"time"
 
@@ -203,6 +204,14 @@ func TestConfigValidationRejectsBadDocuments(t *testing.T) {
 			c.Finality.BlockTag = client.BlockTagFinalized
 			c.Finality.Timeout = MinFinalizedTagTimeout - time.Second
 		},
+		// A watch never polls before its first tick, so a poll interval at or above the timeout means
+		// the timeout always fires first: the watch times out without ever reading the chain, and a
+		// transaction that is already final gets reported as unreachable.
+		"poll interval at or above the finality timeout": func(c *Config) {
+			c.Finality.BlockTag = client.BlockTagLatest
+			c.Finality.Timeout = 2 * time.Second
+			c.Finality.PollInterval = 2 * time.Second
+		},
 		"unknown gas strategy":    func(c *Config) { c.Gas.Strategy = "guess" },
 		"multiplier below one":    func(c *Config) { c.Gas.Multiplier = 0.5 },
 		"fixed gas without limit": func(c *Config) { c.Gas.Strategy = GasStrategyFixed; c.Gas.Limit = 0 },
@@ -210,6 +219,11 @@ func TestConfigValidationRejectsBadDocuments(t *testing.T) {
 		"zero threshold":          func(c *Config) { c.Endorsement.Threshold = 0 },
 		"threshold above set": func(c *Config) {
 			c.Endorsement.Threshold = uint(len(c.Endorsement.Endorsers)) + 1
+		},
+		// Threshold is uint; comparing via int(e.Threshold) wraps a large enough value negative and
+		// the bound check passes despite the threshold being nonsensical for the configured set.
+		"threshold overflows int": func(c *Config) {
+			c.Endorsement.Threshold = math.MaxUint64
 		},
 		"endorser without identity": func(c *Config) { c.Endorsement.Endorsers[0].FSCIdentity = "" },
 		"endorser with bad address": func(c *Config) { c.Endorsement.Endorsers[0].Address = "0x1234" },
@@ -263,6 +277,7 @@ func TestFinalizedTagRequiresLongEnoughTimeout(t *testing.T) {
 	require.NoError(t, c.Validate(), "the floor itself must be accepted")
 
 	c.Finality.BlockTag = client.BlockTagLatest
+	c.Finality.PollInterval = 100 * time.Millisecond
 	c.Finality.Timeout = time.Second
 	require.NoError(t, c.Validate(), "the floor must not apply to a tag it was not measured for")
 }
