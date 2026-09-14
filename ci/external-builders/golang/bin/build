@@ -18,9 +18,22 @@ GO_PACKAGE_PATH="$(jq -r '.path' "$CHAINCODE_METADATA_DIR/metadata.json")"
 
 mkdir -p "$BUILD_OUTPUT_DIR"
 
+# Build with coverage profiling when the caller (see integration-tests target
+# in the Makefile) has requested it via GOCOVERDIR, mirroring the convention
+# fabric-smart-client itself uses for its own node binaries: -cover alone only
+# instruments the chaincode's own packages under integration/, so also set
+# -coverpkg unless the caller already supplied one via GOFLAGS.
+COVER_ARGS=()
+if [ -n "${GOCOVERDIR:-}" ]; then
+    COVER_ARGS+=(-cover)
+    if [[ "${GOFLAGS:-}" != *-coverpkg=* ]]; then
+        COVER_ARGS+=(-coverpkg=github.com/LFDT-Panurus/panurus/...)
+    fi
+fi
+
 if [ -f "$CHAINCODE_SOURCE_DIR/src/go.mod" ]; then
     cd "$CHAINCODE_SOURCE_DIR/src"
-    go build -mod=readonly -o "$BUILD_OUTPUT_DIR/chaincode" "$GO_PACKAGE_PATH"
+    go build -mod=readonly ${COVER_ARGS[@]+"${COVER_ARGS[@]}"} -o "$BUILD_OUTPUT_DIR/chaincode" "$GO_PACKAGE_PATH"
 else
     cd "$CHAINCODE_SOURCE_DIR"
     GO111MODULE=off go build -o "$BUILD_OUTPUT_DIR/chaincode" "$GO_PACKAGE_PATH"

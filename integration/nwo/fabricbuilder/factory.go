@@ -28,6 +28,11 @@ import (
 var propagatedEnv = []string{
 	"GOCACHE", "GOPATH", "GOMODCACHE", "GOENV", "GOPROXY", "GOSUMDB",
 	"GOFLAGS", "GOTOOLCHAIN", "HOME", "PATH",
+	// GOCOVERDIR is what makes go build -cover instrumented chaincode binaries
+	// flush coverage counters on exit; without propagating it here, the peer
+	// never forwards the host's GOCOVERDIR into bin/build or bin/run, so the
+	// chaincode process has nowhere to write coverage data even if instrumented.
+	"GOCOVERDIR",
 }
 
 type platformFactory struct {

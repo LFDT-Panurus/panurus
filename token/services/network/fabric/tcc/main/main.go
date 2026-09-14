@@ -8,7 +8,11 @@ package main
 import (
 	"fmt"
 	"os"
+	"os/signal"
+	"runtime/coverage"
 	"strconv"
+	"syscall"
+	"time"
 
 	"github.com/LFDT-Panurus/panurus/token"
 	"github.com/LFDT-Panurus/panurus/token/core"
@@ -31,6 +35,8 @@ type serverConfig struct {
 }
 
 func main() {
+	installCoverageFlushHandler()
+
 	config := serverConfig{
 		CCID:               os.Getenv("CHAINCODE_ID"),
 		CCaddress:          os.Getenv("CHAINCODE_SERVER_ADDRESS"),
@@ -143,8 +149,52 @@ func main() {
 	}
 }
 
+// installCoverageFlushHandler makes -cover instrumented builds of this
+// binary keep flushing their coverage counters to GOCOVERDIR while running,
+// instead of only on exit. shim.Start/server.Start never return during
+// normal operation, and the peer tears this process down at the end of a
+// test run by killing it outright (observed empirically: no SIGTERM/error
+// return reaches this process, and Go's coverage runtime only persists
+// counters on a normal return from main or an explicit write, never on an
+// unhandled signal) -- so without periodic flushing here, the chaincode's
+// own packages would never show up in integration test coverage.
+func installCoverageFlushHandler() {
+	dir := os.Getenv("GOCOVERDIR")
+	if dir == "" {
+		return
+	}
+
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
+	go func() {
+		<-sigCh
+		flushCoverage()
+		os.Exit(0)
+	}()
+
+	go func() {
+		ticker := time.NewTicker(2 * time.Second)
+		defer ticker.Stop()
+		for range ticker.C {
+			flushCoverage()
+		}
+	}()
+}
+
+// assertNoError panics on err, but first flushes any accumulated -cover
+// counters: shim.Start/server.Start return with an error as soon as the
+// peer closes its chaincode support connection during shutdown, which is
+// the normal way this process ends -- if we panicked straight away the
+// counters gathered during the test run would never reach GOCOVERDIR.
 func assertNoError(err error, s string, args ...string) {
 	if err != nil {
+		flushCoverage()
 		panic(fmt.Sprintf(s+": [%s]", append(args, err.Error())))
+	}
+}
+
+func flushCoverage() {
+	if dir := os.Getenv("GOCOVERDIR"); dir != "" {
+		_ = coverage.WriteCountersDir(dir)
 	}
 }

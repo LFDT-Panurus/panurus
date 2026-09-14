@@ -121,7 +121,11 @@ func newGrpcClient(configProvider driver.ConfigService, host string) (api2.ViewC
 		return nil, errors.Wrap(err, "failed to parse address")
 	}
 
-	rootCert, err := os.ReadFile(configProvider.GetStringSlice("fsc.web.tls.clientRootCAs.files")[0])
+	rootCAFiles := configProvider.GetStringSlice("fsc.web.tls.clientRootCAs.files")
+	if len(rootCAFiles) == 0 {
+		return nil, errors.New("no TLS root CA files configured under fsc.web.tls.clientRootCAs.files")
+	}
+	rootCert, err := os.ReadFile(rootCAFiles[0])
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to read TLS root cert")
 	}
@@ -160,9 +164,14 @@ func newWebClient(configProvider driver.ConfigService, host string) (api2.ViewCl
 		return nil, errors.Wrap(err, "failed to read TLS key")
 	}
 
+	rootCAFiles := configProvider.GetStringSlice("fsc.web.tls.clientRootCAs.files")
+	if len(rootCAFiles) == 0 {
+		return nil, errors.New("no TLS root CA files configured under fsc.web.tls.clientRootCAs.files")
+	}
+
 	return webclient.NewClient(&webclient.Config{
 		Host:       fmt.Sprintf("%s:%s", host, port),
-		CACertPath: configProvider.GetStringSlice("fsc.web.tls.clientRootCAs.files")[0],
+		CACertPath: rootCAFiles[0],
 		TLSCertRaw: tlsCert,
 		TLSKeyRaw:  tlsKey,
 	})
