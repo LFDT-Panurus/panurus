@@ -206,6 +206,11 @@ func (n settledNetwork) age(ctx context.Context, txID string) (time.Duration, bo
 	if err != nil {
 		return 0, false, err
 	}
+	if it == nil || it.Items == nil {
+		// A store bug that returns success with nothing to read from is treated the same as a failed
+		// read: not known, left for the next sweep, rather than dereferenced.
+		return 0, false, nil
+	}
 	defer it.Items.Close()
 
 	record, err := it.Items.Next()

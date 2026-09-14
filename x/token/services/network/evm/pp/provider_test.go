@@ -129,6 +129,53 @@ func TestPublicParamsGivesUpAfterRepeatedTears(t *testing.T) {
 	require.Error(t, err)
 }
 
+// TestPublicParamsReadsAtTheGivenBlockTag is the regression test for F2: a provider constructed with
+// blockTag "latest" must see an update the instant it lands, not only once it finalizes.
+// TokenState.applyStateDelta enforces publicParamsVersion/publicParamsHash against its current (head)
+// storage, so an endorser's ChainProvider reading at "finalized" would keep signing the pre-update
+// value for the whole finalization lag, and every one of its endorsements would revert
+// StalePublicParams until the update finalized. driver.go now constructs the endorsement path's
+// ChainProvider with client.BlockTagLatest for exactly this reason; this test pins the underlying
+// mechanism (ChainProvider honours whichever tag it is given) so that choice cannot regress silently.
+func TestPublicParamsReadsAtTheGivenBlockTag(t *testing.T) {
+	tokenState, err := client.HexToAddress("0x5FbDB2315678afecb367f032d93F642f64180aa3")
+	require.NoError(t, err)
+
+	// The chain has just accepted an update: "finalized" still reports the old pair, "latest" already
+	// reports the new one.
+	byTag := map[string]struct {
+		raw     string
+		version uint64
+	}{
+		"finalized": {"params-v1", 1},
+		"latest":    {"params-v2", 2},
+	}
+	evmClient := &mock.EVMClient{}
+	evmClient.CallStub = func(_ context.Context, _ client.Address, data []byte, tag string) ([]byte, error) {
+		tc := byTag[tag]
+		switch string(data) {
+		case string(abi.MethodID("getPublicParameters()")):
+			return abiBytesFor([]byte(tc.raw)), nil
+		case string(abi.MethodID("getPublicParamsVersion()")):
+			return abiUint64For(tc.version), nil
+		}
+
+		return nil, nil
+	}
+
+	latestProvider := NewChainProvider(evmClient, tokenState, "latest")
+	raw, version, err := latestProvider.PublicParams(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, "params-v2", string(raw), "a provider reading at latest must see the update immediately")
+	assert.EqualValues(t, 2, version)
+
+	finalizedProvider := NewChainProvider(evmClient, tokenState, "finalized")
+	raw, version, err = finalizedProvider.PublicParams(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, "params-v1", string(raw), "a provider reading at finalized must not see the update yet")
+	assert.EqualValues(t, 1, version)
+}
+
 // TestPublicParamsIsConsistentAcrossRepeatedReads checks the pair stays matched over several updates,
 // since a version that lagged by one would still look right on the first read after each change.
 func TestPublicParamsIsConsistentAcrossRepeatedReads(t *testing.T) {

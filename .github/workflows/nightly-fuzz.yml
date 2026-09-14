@@ -215,6 +215,18 @@ jobs:
             dir: ./x/token/services/network/evm
             pkg: ./client
             func: FuzzJSONReceiptToReceipt
+          - name: evm-statedelta-validate
+            dir: ./x/token/services/network/evm
+            pkg: ./statedelta
+            func: FuzzStateDeltaValidate
+          - name: evm-eip712-hashstruct
+            dir: ./x/token/services/network/evm
+            pkg: ./eip712
+            func: FuzzHashStructNoPanic
+          - name: evm-endorse-response-decode
+            dir: ./x/token/services/network/evm
+            pkg: ./endorsement
+            func: FuzzEndorseResponseDecode
 
     steps:
       - name: Checkout code

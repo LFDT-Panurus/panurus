@@ -183,8 +183,8 @@ func TestInitiatorIgnoresDuplicateSigner(t *testing.T) {
 	}
 
 	_, err := init.Collect(context.Background(), sameKey)
-	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrInsufficientEndorsements)
+	require.ErrorIs(t, err, ErrInsufficientEndorsements)
+	assert.ErrorIs(t, err, ErrDuplicateSigner, "the sentinel behind the duplicate must be classifiable, not just logged")
 }
 
 func TestInitiatorDiscardsUnknownSigner(t *testing.T) {
@@ -204,8 +204,8 @@ func TestInitiatorDiscardsUnknownSigner(t *testing.T) {
 	}
 
 	_, err := init.Collect(context.Background(), answer)
-	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrInsufficientEndorsements)
+	require.ErrorIs(t, err, ErrInsufficientEndorsements)
+	assert.ErrorIs(t, err, ErrUnknownSigner, "the sentinel behind the discard must be classifiable, not just logged")
 }
 
 // TestInitiatorDiscardsSignatureOverAnotherDelta covers an endorser whose signature does not cover the
@@ -224,8 +224,7 @@ func TestInitiatorDiscardsSignatureOverAnotherDelta(t *testing.T) {
 	}
 
 	_, err := init.Collect(context.Background(), answer)
-	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrInsufficientEndorsements)
+	require.ErrorIs(t, err, ErrInsufficientEndorsements)
 }
 
 // TestInitiatorRejectsDeltaForAnotherAnchor is the binding check: an endorser could return a
@@ -241,8 +240,8 @@ func TestInitiatorRejectsDeltaForAnotherAnchor(t *testing.T) {
 	elsewhere.Anchor = other
 
 	_, err = init.Collect(context.Background(), answerWith(t, byAddress(signers), elsewhere))
-	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrInsufficientEndorsements)
+	require.ErrorIs(t, err, ErrInsufficientEndorsements)
+	assert.ErrorIs(t, err, ErrDeltaMismatch, "the sentinel behind the binding check must be classifiable, not just logged")
 }
 
 // TestInitiatorRejectsMalformedDelta checks the initiator will not encode a delta that breaks the
@@ -256,8 +255,8 @@ func TestInitiatorRejectsMalformedDelta(t *testing.T) {
 	malformed.MetadataVals = [][]byte{{0xAA}, {0xBB}}
 
 	_, err := init.Collect(context.Background(), answerWith(t, byAddress(signers), malformed))
-	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrInsufficientEndorsements)
+	require.ErrorIs(t, err, ErrInsufficientEndorsements)
+	assert.ErrorIs(t, err, ErrDeltaMismatch, "the sentinel behind the binding check must be classifiable, not just logged")
 }
 
 // TestInitiatorRejectsResponseWithoutADelta covers an endorser that signs but sends nothing to verify
@@ -274,8 +273,7 @@ func TestInitiatorRejectsResponseWithoutADelta(t *testing.T) {
 	}
 
 	_, err := init.Collect(context.Background(), answer)
-	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrInsufficientEndorsements)
+	require.ErrorIs(t, err, ErrInsufficientEndorsements)
 }
 
 // TestInitiatorIgnoresADivergentEndorser is the fault-tolerance property that keying by delta buys.

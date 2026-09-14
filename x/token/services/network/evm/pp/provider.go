@@ -45,8 +45,17 @@ type ChainProvider struct {
 	versions   *VersionKeeper
 }
 
-// NewChainProvider returns a provider reading the given TokenState clone. An empty blockTag defaults
-// to the finalized tag.
+// NewChainProvider returns a provider reading the given TokenState clone at blockTag. An empty
+// blockTag defaults to the finalized tag.
+//
+// Callers must pick blockTag deliberately, not reuse whatever tag they use elsewhere for the same
+// TMS. TokenState.applyStateDelta enforces publicParamsVersion/publicParamsHash against its current
+// (head) storage, so a ChainProvider feeding a delta an endorser is about to sign or a caller
+// re-deriving what the contract will check must read at client.BlockTagLatest - reading at finalized
+// instead reproduces every setup update as a StalePublicParams revert for the whole finalization lag.
+// A ChainProvider used only to notice that an update happened (e.g. driving a local TMS refresh) can
+// still read at the finalized tag; that use is about eventually catching up, not about matching what
+// the contract checks at apply time.
 func NewChainProvider(evmClient client.EVMClient, tokenState client.Address, blockTag string) *ChainProvider {
 	if blockTag == "" {
 		blockTag = client.BlockTagFinalized

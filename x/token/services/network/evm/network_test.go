@@ -331,6 +331,13 @@ func TestBroadcastRejectsBadInput(t *testing.T) {
 		require.Error(t, n.Broadcast(t.Context(), "not an envelope"))
 	})
 
+	t.Run("typed-nil envelope", func(t *testing.T) {
+		// A typed nil satisfies the *Envelope type assertion, so the ok check alone does not catch
+		// it; env == nil must be checked explicitly before anything on env is dereferenced.
+		var env *Envelope
+		require.Error(t, n.Broadcast(t.Context(), env))
+	})
+
 	t.Run("no submitter configured", func(t *testing.T) {
 		err := n.Broadcast(t.Context(), &Envelope{Anchor: "a", Namespace: testNamespace, Delta: &statedelta.StateDelta{}})
 		require.Error(t, err)

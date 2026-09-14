@@ -108,6 +108,12 @@ func (d *StateDelta) Validate() error {
 	if len(d.MetadataKeys) > maxDeltaEntries {
 		return errors.Errorf("too many metadata entries: %d exceeds the %d limit", len(d.MetadataKeys), maxDeltaEntries)
 	}
+	// MetadataVals is bounded on its own, independently of MetadataKeys, so a delta with few or no
+	// keys and an oversized MetadataVals cannot force the per-element loop below to run over more
+	// than maxDeltaEntries entries before the keys/values length mismatch is caught.
+	if len(d.MetadataVals) > maxDeltaEntries {
+		return errors.Errorf("too many metadata entries: %d exceeds the %d limit", len(d.MetadataVals), maxDeltaEntries)
+	}
 	for i, val := range d.MetadataVals {
 		if len(val) > maxFieldBytes {
 			return errors.Errorf("metadata value %d too large: %d bytes exceeds the %d limit", i, len(val), maxFieldBytes)

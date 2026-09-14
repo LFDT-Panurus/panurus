@@ -179,6 +179,18 @@ func TestSettledNetworkResolvesAnAbsentAnchor(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, driver.Unknown, status)
 	})
+
+	// A store that returns a nil iterator with no error must not be dereferenced: it is treated the
+	// same as an unreadable store, leaving the transaction for the next sweep instead of panicking the
+	// sweep goroutine.
+	t.Run("a nil iterator leaves it for the next sweep", func(t *testing.T) {
+		n, txID := settled(t, absent, nil, 2*timeout)
+		n.store = &agedStore{nilIterator: true}
+
+		status, _, _, err := n.GetTransactionStatus(t.Context(), "token", txID)
+		require.NoError(t, err)
+		assert.Equal(t, driver.Unknown, status)
+	})
 }
 
 // agedStore is a recoveryStore that only answers the age question, which is all settledNetwork asks
@@ -191,6 +203,9 @@ type agedStore struct {
 	// unset makes the record come back with no timestamp, the shape a store that never populated the
 	// column would produce.
 	unset bool
+	// nilIterator makes Transactions return (nil, nil), the shape a store implementation bug would
+	// produce: success, but nothing to read from.
+	nilIterator bool
 }
 
 func (s *agedStore) Transactions(
@@ -200,6 +215,9 @@ func (s *agedStore) Transactions(
 ) (*cdriver.PageIterator[*dbdriver.TransactionRecord], error) {
 	if s.err != nil {
 		return nil, s.err
+	}
+	if s.nilIterator {
+		return nil, nil
 	}
 
 	record := &dbdriver.TransactionRecord{Timestamp: time.Now().Add(-s.age)}
