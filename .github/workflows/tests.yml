@@ -230,6 +230,10 @@ jobs:
           interop-dlog-t4,
           interop-dlog-t5,
           dlogstress-t1,
+          evm,
+          evm-fabtoken,
+          evm-gateway,
+          evm-gateway-fabtoken,
         ]
 
     steps:
@@ -237,6 +241,10 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           path: go/src/github.com/LFDT-Panurus/panurus
+          # forge-std is a submodule of the contracts project, and the evm suites' deploy
+          # script imports it. Without this the checkout is missing lib/forge-std and forge
+          # fails to compile.
+          submodules: recursive
 
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
@@ -247,7 +255,14 @@ jobs:
       - name: Set up tools
         run: make install-tools
 
+      - name: Set up foundry
+        if: startsWith(matrix.tests, 'evm')
+        uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: stable
+
       - name: Download fabric binaries
+        if: ${{ !startsWith(matrix.tests, 'evm') }}
         run: make download-fabric
 
       - name: Docker
@@ -274,47 +289,6 @@ jobs:
           flag-name: itest-${{ matrix.tests }}
           parallel: true
           fail-on-error: false
-
-  # The evm suites are their own job for two reasons: they need foundry, which nothing else in this
-  # workflow does, and they need no fabric binaries at all. They run on main and on the feature branch
-  # so that both the graduated driver and any further feature-branch work stay covered.
-  #
-  # No coverage upload here on purpose. The other jobs upload with parallel: true and publish-coverage
-  # closes the set; adding this one would either make that job wait on a run that is skipped on main,
-  # or leave a parallel report that never finishes.
-  itest-evm:
-    needs: checks
-    if: github.ref == 'refs/heads/main' || github.base_ref == 'main' || github.ref == 'refs/heads/feature/evm-network-driver' || github.base_ref == 'feature/evm-network-driver'
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        tests: [ evm, evm-fabtoken, evm-gateway, evm-gateway-fabtoken ]
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          # forge-std is a submodule of the contracts project, and the deploy script imports it.
-          # Without this the checkout is missing lib/forge-std and forge fails to compile.
-          submodules: recursive
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version-file: "go.mod"
-          cache-dependency-path: "**/*.sum"
-
-      - name: Set up tools
-        run: make install-tools
-
-      - name: Set up foundry
-        uses: foundry-rs/foundry-toolchain@v1
-        with:
-          version: stable
-
-      - name: Run ${{ matrix.tests }}
-        run: make integration-tests-${{ matrix.tests }}
 
   publish-coverage:
     needs: [ utest, itest ]
