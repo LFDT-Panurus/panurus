@@ -15,6 +15,7 @@ import (
 	"fmt"
 
 	"github.com/LFDT-Panurus/panurus/token/driver"
+	"github.com/LFDT-Panurus/panurus/token/services/identity/sigobserve"
 	"github.com/LFDT-Panurus/panurus/token/services/logging"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 )
@@ -72,16 +73,48 @@ func NewManagementService(
 		vaultProvider:               vaultProvider,
 		certificationClientProvider: certificationClientProvider,
 		selectorManagerProvider:     selectorManagerProvider,
-		signatureService: &SignatureService{
-			deserializer:     tms.Deserializer(),
-			identityProvider: tms.IdentityProvider(),
-		},
+		signatureService: NewSignatureService(
+			tms.Deserializer(),
+			tms.IdentityProvider(),
+			signatureServiceOptions(tms)...,
+		),
 	}
 	if err := ms.init(); err != nil {
 		return nil, err
 	}
 
 	return ms, nil
+}
+
+// signatureInstrumented is the optional capability a driver token service implements to hand the
+// signature service the observer denials are reported to and the gate that produces them. It is
+// probed rather than required so that a driver, or a test double, that installs no policy keeps
+// working unchanged.
+type signatureInstrumented interface {
+	// SignatureObserver returns the observer denied operations are reported to.
+	SignatureObserver() sigobserve.Observer
+	// SignatureGate returns the gate consulted before each operation, or nil for none.
+	SignatureGate() SignatureGate
+}
+
+// signatureServiceOptions derives the signature service's options from the driver token service.
+func signatureServiceOptions(tms driver.TokenManagerService) []SignatureServiceOption {
+	instrumented, ok := tms.(signatureInstrumented)
+	if !ok {
+		return nil
+	}
+
+	gate := instrumented.SignatureGate()
+	if gate == nil {
+		// Without a gate there is nothing to report: the operations themselves are instrumented
+		// at the identity provider and the deserializer, not here.
+		return nil
+	}
+
+	return []SignatureServiceOption{
+		WithSignatureObserver(instrumented.SignatureObserver()),
+		WithSignatureGate(gate),
+	}
 }
 
 // GetManagementService retrieves a TMS instance using the provided options.

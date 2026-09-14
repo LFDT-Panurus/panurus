@@ -60,7 +60,7 @@ func (u *restUser) hasTokenExpired() bool {
 
 func (u *restUser) updateToken(token string) {
 	u.accessToken = token
-	u.accessTokenExp = time.Now().Add(c.PayerAccessTokenExpMin)
+	u.accessTokenExp = time.Now().Add(c.PayerAccessTokenExpiry)
 }
 
 func (u *restUser) refreshAuthToken() txgen.Error {

@@ -13,6 +13,7 @@ import (
 
 	"github.com/LFDT-Panurus/panurus/token/driver"
 	idriver "github.com/LFDT-Panurus/panurus/token/services/identity/driver"
+	"github.com/LFDT-Panurus/panurus/token/services/identity/sigobserve"
 	"github.com/LFDT-Panurus/panurus/token/services/logging"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/common/utils/cache/secondcache"
@@ -87,6 +88,7 @@ type Provider struct {
 	deserializer            Deserializer
 	signerRouter            *SignerRouter
 	metrics                 *Metrics
+	observer                sigobserve.Observer
 
 	signers cache[*SignerEntry]
 }
@@ -113,7 +115,18 @@ func NewProvider(
 		storage:                 storage,
 		signers:                 secondcache.NewTyped[*SignerEntry](50),
 		metrics:                 m,
+		observer:                sigobserve.Nop,
 	}
+}
+
+// SetObserver installs the observer that this provider's operations, and the signers it hands
+// out, are reported to. Passing nil restores the no-op observer, which is the default and costs
+// nothing on the signing path.
+func (p *Provider) SetObserver(o sigobserve.Observer) {
+	if o == nil {
+		o = sigobserve.Nop
+	}
+	p.observer = o
 }
 
 // SetSignerRouter sets the router consulted for conf_id-pinned signer resolution before falling
@@ -131,7 +144,20 @@ func (p *Provider) RegisterRecipientData(ctx context.Context, data *driver.Recip
 // RegisterSigner registers a Signer and a Verifier for passed identity.
 // This is implemented via an invocation of  RegisterIdentityDescriptor using an IdentityDescriptor with empty AuditInfo.
 // The audit info might or might not be already stored.
+//
+// Because of that delegation, an observed RegisterSigner call also produces a
+// register_identity_descriptor event; the two ops are reported separately so that direct
+// descriptor registrations remain distinguishable from signer registrations.
 func (p *Provider) RegisterSigner(ctx context.Context, identity driver.Identity, signer driver.Signer, verifier driver.Verifier, signerInfo []byte, ephemeral bool) error {
+	t := sigobserve.Start(p.observer, sigobserve.OpRegisterSigner, identity.UniqueID(), sigobserve.RoleUnknown)
+	err := p.registerSigner(ctx, identity, signer, verifier, signerInfo, ephemeral)
+	t.Done(ctx, err)
+
+	return err
+}
+
+// registerSigner performs the registration RegisterSigner reports on.
+func (p *Provider) registerSigner(ctx context.Context, identity driver.Identity, signer driver.Signer, verifier driver.Verifier, signerInfo []byte, ephemeral bool) error {
 	identityDescriptor := &idriver.IdentityDescriptor{
 		Identity:   identity,
 		AuditInfo:  nil,
@@ -157,7 +183,11 @@ func (p *Provider) RegisterSigner(ctx context.Context, identity driver.Identity,
 func (p *Provider) AreMe(ctx context.Context, identities ...driver.Identity) ([]string, error) {
 	p.Logger.DebugfContext(ctx, "identity [%s] is me?", identities)
 
-	return p.areMe(ctx, identities...)
+	t := sigobserve.Start(p.observer, sigobserve.OpIsMe, batchPrincipal(identities), sigobserve.RoleUnknown)
+	result, err := p.areMe(ctx, identities...)
+	t.Done(ctx, err)
+
+	return result, err
 }
 
 // IsMe returns true if a signer was ever registered for the passed identity.
@@ -175,7 +205,11 @@ func (p *Provider) IsMe(ctx context.Context, identity driver.Identity) (bool, er
 // GetAuditInfo returns the audit information associated to the passed identity, nil otherwise.
 // The audit info is retrieved from the configured storage.
 func (p *Provider) GetAuditInfo(ctx context.Context, identity driver.Identity) ([]byte, error) {
-	return p.storage.GetAuditInfo(ctx, identity)
+	t := sigobserve.Start(p.observer, sigobserve.OpGetAuditInfo, identity.UniqueID(), sigobserve.RoleUnknown)
+	auditInfo, err := p.storage.GetAuditInfo(ctx, identity)
+	t.Done(ctx, err)
+
+	return auditInfo, err
 }
 
 // GetSigner returns a Signer for passed identity.
@@ -217,6 +251,15 @@ func (p *Provider) GetRevocationHandler(ctx context.Context, identity driver.Ide
 
 // Bind binds longTerm to the passed ephemeral identities.
 func (p *Provider) Bind(ctx context.Context, longTerm driver.Identity, ephemeralIdentities ...driver.Identity) error {
+	t := sigobserve.Start(p.observer, sigobserve.OpBind, longTerm.UniqueID(), sigobserve.RoleUnknown)
+	err := p.bind(ctx, longTerm, ephemeralIdentities...)
+	t.Done(ctx, err)
+
+	return err
+}
+
+// bind performs the binding Bind reports on.
+func (p *Provider) bind(ctx context.Context, longTerm driver.Identity, ephemeralIdentities ...driver.Identity) error {
 	for _, identity := range ephemeralIdentities {
 		if identity.Equal(longTerm) {
 			// no action required
@@ -248,6 +291,15 @@ func (p *Provider) RollbackPartialRecipientRegistration(ctx context.Context, id 
 // RegisterIdentityDescriptor stores the given identity descriptor in the configured storage.
 // If alias is not nil, the alias can be used as an alternative to `idriver.IdentityDescriptor#Identity`.
 func (p *Provider) RegisterIdentityDescriptor(ctx context.Context, identityDescriptor *idriver.IdentityDescriptor, alias driver.Identity) error {
+	t := sigobserve.Start(p.observer, sigobserve.OpRegisterIdentityDescriptor, identityDescriptor.Identity.UniqueID(), sigobserve.RoleUnknown)
+	err := p.registerIdentityDescriptor(ctx, identityDescriptor, alias)
+	t.Done(ctx, err)
+
+	return err
+}
+
+// registerIdentityDescriptor performs the registration RegisterIdentityDescriptor reports on.
+func (p *Provider) registerIdentityDescriptor(ctx context.Context, identityDescriptor *idriver.IdentityDescriptor, alias driver.Identity) error {
 	// register in the Storage
 	if !identityDescriptor.Ephemeral {
 		if err := p.storage.RegisterIdentityDescriptor(ctx, identityDescriptor, alias); err != nil {
@@ -306,15 +358,30 @@ func (p *Provider) areMe(ctx context.Context, identities ...driver.Identity) ([]
 	return result.ToSlice(), nil
 }
 
+// batchPrincipal attributes an operation performed over a set of identities. A single identity
+// is attributed to itself; a batch is left unattributed, since charging a whole batch to one of
+// its members would let unrelated identities throttle each other.
+func batchPrincipal(identities []driver.Identity) string {
+	if len(identities) != 1 {
+		return ""
+	}
+
+	return identities[0].UniqueID()
+}
+
+// getSigner resolves the signer for identity, reporting the resolution and wrapping the result so
+// that the signatures it produces are observed too.
 func (p *Provider) getSigner(ctx context.Context, identity driver.Identity, idHash string) (driver.Signer, error) {
+	t := sigobserve.Start(p.observer, sigobserve.OpGetSigner, idHash, sigobserve.RoleUnknown)
 	start := time.Now()
 	signer, _, path, err := p.getSignerAndCache(ctx, identity, idHash, true)
 	p.metrics.GetSignerDuration.With("path", path).Observe(time.Since(start).Seconds())
 	if err == nil {
 		p.metrics.SignerResolutions.With("outcome", path).Add(1)
 	}
+	t.DoneResolution(ctx, path, err)
 
-	return signer, err
+	return sigobserve.InstrumentSigner(signer, p.observer, idHash, sigobserve.RoleUnknown), err
 }
 
 // getSignerAndCache resolves the signer for identity. The returned path reports how the signer
@@ -330,7 +397,7 @@ func (p *Provider) getSignerAndCache(ctx context.Context, identity driver.Identi
 	if entry, ok := p.signers.Get(idHash); ok && entry != nil {
 		p.Logger.DebugfContext(ctx, "signer for [%s] found", idHash)
 
-		return entry.Signer, false, "cache", nil
+		return entry.Signer, false, sigobserve.PathCache, nil
 	}
 
 	p.Logger.DebugfContext(ctx, "signer for [%s] not found, attempting to deserialize", idHash)
@@ -342,24 +409,24 @@ func (p *Provider) getSignerAndCache(ctx context.Context, identity driver.Identi
 		if signer, ok := p.signerRouter.Resolve(ctx, identity); ok {
 			signer, shouldCache, err := p.cacheAndPersistSigner(ctx, identity, idHash, signer, shouldCache)
 
-			return signer, shouldCache, "routed", err
+			return signer, shouldCache, sigobserve.PathRouted, err
 		}
 	}
 
 	// check that we have a deserializer
 	if p.deserializer == nil {
-		return nil, false, "fallback", errors.Errorf("cannot find signer for [%s], no deserializer set", identity)
+		return nil, false, sigobserve.PathFallback, errors.Errorf("cannot find signer for [%s], no deserializer set", identity)
 	}
 
 	// try direct deserialization
 	signer, err := p.deserializer.DeserializeSigner(ctx, identity)
-	path := "fallback"
+	path := sigobserve.PathFallback
 	if err != nil {
 		// second chance: try a TypedIdentity
 		typed, err2 := UnmarshalTypedIdentity(identity)
 		if err2 != nil {
 			// neither deserializable nor a typed wrapper
-			return nil, false, "fallback", errors.Wrapf(
+			return nil, false, sigobserve.PathFallback, errors.Wrapf(
 				err2,
 				"failed to unmarshal typed identity for [%s] and failed deserialization [%s]",
 				identity.String(), err,

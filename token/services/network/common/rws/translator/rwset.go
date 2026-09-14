@@ -221,8 +221,8 @@ func (h *HashedKeyTranslator) TransferActionMetadataKeyPrefix() (Key, error) {
 
 func (h *HashedKeyTranslator) hash(code byte, k string) (Key, error) {
 	hf := sha256.New()
-	hf.Write([]byte{code})
-	hf.Write([]byte(k))
+	_, _ = hf.Write([]byte{code})
+	_, _ = hf.Write([]byte(k))
 
 	return hex.EncodeToString(hf.Sum(nil)), nil
 }

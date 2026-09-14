@@ -301,6 +301,13 @@ func (a *AuditingViewInitiator) verifyAuditorSignature(context view.Context, sig
 	for _, auditorID := range a.tx.TokenService().PublicParametersManager().PublicParameters().Auditors() {
 		v, err := a.tx.TokenService().SigService().AuditorVerifier(context.Context(), auditorID)
 		if err != nil {
+			if errors.Is(err, token.SignatureThrottled) {
+				// The signature service is rate-limiting this node's own auditor lookup.
+				// Propagate as-is so the caller can distinguish a throttle from a verification
+				// failure and back off rather than logging a misleading "failed verifying auditor
+				// signature" error.
+				return nil, errors.Wrapf(err, "auditor verifier for [%s] rate-limited", auditorID)
+			}
 			logger.DebugfContext(context.Context(), "failed to get auditor verifier for [%s]", auditorID)
 
 			continue

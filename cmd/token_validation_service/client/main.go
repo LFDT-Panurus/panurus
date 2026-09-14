@@ -62,7 +62,7 @@ func main() {
 
 	paramsSlice, err := bench.NewTokenValidationParamsSlice(*bench.TestRoot)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to load test parameters: %v\n", err)
+		_, _ = fmt.Fprintf(os.Stderr, "Failed to load test parameters: %v\n", err)
 		os.Exit(1)
 	}
 	params := paramsSlice[0]

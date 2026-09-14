@@ -1383,7 +1383,7 @@ func newExpiredHTLCOwner(t *testing.T, sender driver.Identity) driver.Identity {
 	recipient, err := identity.WrapWithType(x509.IdentityType, []byte("recipient"))
 	require.NoError(t, err)
 	hash := crypto.SHA256.New()
-	hash.Write([]byte("preimage"))
+	_, _ = hash.Write([]byte("preimage"))
 	script := &htlc.Script{
 		Sender:    sender,
 		Recipient: recipient,
