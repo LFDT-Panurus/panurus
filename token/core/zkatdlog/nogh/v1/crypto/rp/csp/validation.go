@@ -246,6 +246,12 @@ func validateRangeProof(curve *mathlib.Curve, proof *RangeProof) error {
 	if proof.u == nil {
 		return errors.Wrap(ErrNilValue, "proof.u cannot be nil")
 	}
+	// proof.u is deserialized with an attacker-controlled CurveID; without this
+	// check a foreign-curve element reaches rv.Curve.ModSub(proof.u, ...) and
+	// panics via a cross-curve backend type assertion (unauthenticated DoS).
+	if proof.u.CurveID() != curve.ID() {
+		return errors.Wrapf(ErrWrongCurveID, "proof.u")
+	}
 	if proof.sComm == nil {
 		return errors.Wrap(ErrNilCommitment, "proof.sComm cannot be nil")
 	}
@@ -254,6 +260,10 @@ func validateRangeProof(curve *mathlib.Curve, proof *RangeProof) error {
 	}
 	if proof.sEval == nil {
 		return errors.Wrap(ErrNilValue, "proof.sEval cannot be nil")
+	}
+	// Same cross-curve hazard as proof.u: sEval is used in curve arithmetic.
+	if proof.sEval.CurveID() != curve.ID() {
+		return errors.Wrapf(ErrWrongCurveID, "proof.sEval")
 	}
 
 	return validateCSPProof(curve, &proof.cspProof, uint64(len(proof.cspProof.Left)))
