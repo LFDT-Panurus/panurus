@@ -283,7 +283,14 @@ jobs:
         if: startsWith(matrix.tests, 'evm')
         uses: foundry-rs/foundry-toolchain@v1
         with:
-          version: stable
+          # Pinned rather than "stable": forge 1.8.1 fails to deploy the contracts against the
+          # fabric-x-evm gateway backend (evm-gateway/evm-gateway-fabtoken suites) with "Failed to
+          # decode return value: 0x" while simulating the script's env-var cheatcode reads -
+          # reproduced locally, and confirmed absent on 1.7.1 against the same gateway and on 1.8.1
+          # against Besu, so it is a forge/fabric-x-evm incompatibility rather than a bug in the
+          # contracts or the deploy script. Bump this once a newer forge release is confirmed to
+          # deploy cleanly against the gateway again.
+          version: v1.7.1
 
       - name: Download fabric binaries
         if: ${{ !startsWith(matrix.tests, 'evm') }}
