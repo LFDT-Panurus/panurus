@@ -51,6 +51,8 @@ include $(TOP)/fabricx.mk
 include $(TOP)/interop.mk
 # include the fungible target
 include $(TOP)/fungible.mk
+# include the evm targets
+include $(TOP)/evm.mk
 
 all: install-tools install-softhsm checks unit-tests #integration-tests
 
@@ -117,16 +119,6 @@ fabric-docker-images:
 	docker pull ghcr.io/hyperledger/fabric-ccenv:$(FABRIC_TWO_DIGIT_VERSION)
 	docker image tag ghcr.io/hyperledger/fabric-ccenv:$(FABRIC_TWO_DIGIT_VERSION) hyperledger/fabric-ccenv:latest
 
-.PHONY: besu-docker-images
-# pull the besu docker image the EVM integration suites run against
-besu-docker-images:
-	docker pull $(BESU_IMAGE)
-
-.PHONY: fabricx-evm-docker-images
-# pull the fabric-x-evm docker image the EVM gateway integration suite runs against
-fabricx-evm-docker-images:
-	docker pull $(FABRICX_EVM_IMAGE)
-
 .PHONY: monitoring-docker-images
 # pull monitoring docker images (explorer, prometheus, grafana, jaeger)
 monitoring-docker-images:
@@ -135,27 +127,6 @@ monitoring-docker-images:
 	docker pull prom/prometheus:latest
 	docker pull grafana/grafana:latest
 	docker pull cr.jaegertracing.io/jaegertracing/jaeger:2.12.0
-
-.PHONY: integration-tests-evm
-# run the fungible integration tests against an EVM backend (Besu).
-# Unlike the fabric suites this needs no FAB_BINS, but it does need docker and forge.
-integration-tests-evm: besu-docker-images
-	cd ./integration/token/fungible/evm; ginkgo $(GINKGO_TEST_OPTS) .
-
-.PHONY: integration-tests-evm-fabtoken
-# run the fungible integration tests against an EVM backend with the fabtoken driver.
-integration-tests-evm-fabtoken: besu-docker-images
-	cd ./integration/token/fungible/evmfabtoken; ginkgo $(GINKGO_TEST_OPTS) .
-
-.PHONY: integration-tests-evm-gateway
-# run the fungible integration tests against the fabric-x-evm gateway backend.
-integration-tests-evm-gateway: fabricx-evm-docker-images
-	cd ./integration/token/fungible/evmgw; ginkgo $(GINKGO_TEST_OPTS) .
-
-.PHONY: integration-tests-evm-gateway-fabtoken
-# run the fungible integration tests against the fabric-x-evm gateway backend with the fabtoken driver.
-integration-tests-evm-gateway-fabtoken: fabricx-evm-docker-images
-	cd ./integration/token/fungible/evmgwfabtoken; ginkgo $(GINKGO_TEST_OPTS) .
 
 .PHONY: integration-tests-nft-dlog
 # run nft integration tests with idemix
