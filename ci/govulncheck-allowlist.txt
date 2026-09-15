@@ -1,0 +1,16 @@
+# Vulnerabilities that `make govulncheck` (ci/scripts/govulncheck.sh) is
+# allowed to report as reachable without failing the build.
+#
+# Add an entry ONLY when the OSV report has no fix available (Fixed in: N/A)
+# or a fix cannot be adopted yet, AND the reachable call path has been
+# reviewed and judged not exploitable in Panurus's usage. Include the OSV ID,
+# the module it comes from, and why it's safe to ignore here. Re-review (and
+# ideally drop) each entry whenever the pulling-in dependency is upgraded.
+
+# GO-2024-3218: Content Censorship in IPFS via Kademlia DHT abuse, in
+# github.com/libp2p/go-libp2p-kad-dht. No fix is published upstream. Reached
+# only through fabric-smart-client's libp2p-based peer discovery, used here
+# for FSC-node-to-node communication in a permissioned Fabric network — not
+# exposed to the public IPFS DHT this advisory concerns. Re-review when FSC's
+# go-libp2p-kad-dht dependency is upgraded past this advisory.
+GO-2024-3218

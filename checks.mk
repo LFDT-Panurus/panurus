@@ -9,14 +9,15 @@ checks-fast: licensecheck gofmt goimports misspell ineffassign protos-lint buf-f
 .PHONY: checks-heavy
 # compile-heavy static analysis (invokes the Go type-checker across all
 # modules). Kept off the integration-test critical path — run in CI's parallel
-# 'lint' job alongside golangci-lint.
-checks-heavy: govet gofix staticcheck
+# 'lint' job alongside golangci-lint. govulncheck also needs network access to
+# fetch the vuln database, another reason to keep it off that critical path.
+checks-heavy: govet gofix staticcheck govulncheck
 
 .PHONY: checks-no-tidy
 # same as 'checks' but without tidy-check; for use after a workflow step that
 # already rewrote go.mod/go.sum to a new dependency version and ran 'make tidy'
 # itself, where tidy-check's git-diff-against-HEAD heuristic would always fail
-checks-no-tidy: licensecheck gofmt goimports govet gofix misspell ineffassign staticcheck protos-lint buf-format
+checks-no-tidy: licensecheck gofmt goimports govet gofix misspell ineffassign staticcheck govulncheck protos-lint buf-format
 
 .PHONY: licensecheck
 licensecheck:
@@ -121,6 +122,19 @@ staticcheck:
 				exit 1; \
 			fi; \
 		}) || exit 1; \
+	done
+
+.PHONY: govulncheck
+# scan for known vulnerabilities in the module's dependencies, restricted to
+# vulnerabilities reachable from actually-called code (govulncheck's call-graph
+# analysis, as opposed to a plain dependency-version scan). Findings listed in
+# ci/govulncheck-allowlist.txt (e.g. no fix published upstream) don't fail the
+# build; see that file for the reasoning behind each entry.
+govulncheck:
+	@echo Running govulncheck
+	@for dir in $(GO_MODULES); do \
+		echo "  Checking module: $$dir"; \
+		(cd $$dir && $(CURDIR)/ci/scripts/govulncheck.sh) || exit 1; \
 	done
 
 .PHONY: gocyclo
