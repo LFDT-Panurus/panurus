@@ -585,6 +585,7 @@ func (n *Network) ComputeTxID(id *driver.TxID) string {
 
 ## See Also
 
+- [Token Transaction Finality](./finality.md) - Deep-dive into finality detection and storage effects, including the delivery-based listener manager and the ledger-height retry above
 - [Network Service Overview](./network.md) - Generic network service concepts
 - [FabricX Implementation](./network-fabricx.md) - FSC-based endorsement
 - [Token Chaincode](../../token/services/network/fabric/tcc/) - Chaincode implementation
