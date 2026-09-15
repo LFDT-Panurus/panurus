@@ -65,16 +65,19 @@ func (c *ristrettoCache[T]) Get(key string) (T, bool) {
 
 func (c *ristrettoCache[T]) Add(key string, value T) {
 	c.cache.Set(key, value, ZeroCost)
-	c.cache.Wait()
 }
 
 func (c *ristrettoCache[T]) Delete(key string) {
 	c.cache.Del(key)
-	c.cache.Wait()
 }
 
 func (c *ristrettoCache[T]) Clear() {
 	c.cache.Clear()
+}
+
+// Wait blocks until all buffered writes and deletes are applied to the cache.
+// Useful for testing and deterministic cache state assertions.
+func (c *ristrettoCache[T]) Wait() {
 	c.cache.Wait()
 }
 

@@ -423,7 +423,7 @@ func setupAppendValid(t *testing.T) *appendValidContext {
 
 	cache := &mock.FakeCache{}
 	cache.GetReturns(&tokens.CacheEntry{
-		ToAppend: []tokens.TokenToAppend{{
+		ToAppend: []*tokens.TokenToAppend{{
 			TxID:      "tx1",
 			Index:     0,
 			Tok:       &token2.Token{Type: "TOK", Owner: []byte("alice"), Quantity: "0x64"},
