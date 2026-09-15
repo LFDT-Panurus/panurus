@@ -72,6 +72,7 @@ func NewValidator(p *pp.PublicParams, deserializer driver.Deserializer, limits d
 	v := &Validator{pp: p, keys: keys}
 
 	transferValidators := []ValidateTransferFunc{
+		TransferSignatureValidate,
 		v.TransferZKValidate,
 	}
 

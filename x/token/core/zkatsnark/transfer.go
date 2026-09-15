@@ -148,6 +148,15 @@ func (s *TransferService) Transfer(
 		return nil, nil, errors.Wrapf(err, "failed to generate zk transfer")
 	}
 
+	// Populate InputIDs and InputTokens so the validator can look up input token owners
+	// and correctly generate osn keys for ledger validation.
+	action.InputIDs = tokenIDs
+	var inputTokens [][]byte
+	for _, loadedToken := range loadedTokens {
+		inputTokens = append(inputTokens, loadedToken.Token)
+	}
+	action.InputTokens = inputTokens
+
 	var transferOutputsMetadata []*driver.TransferOutputMetadata
 	for i, output := range outputTokens {
 		var outputAuditInfo []byte
@@ -209,6 +218,7 @@ func (s *TransferService) Transfer(
 		if err != nil {
 			return nil, nil, errors.Wrap(err, "failed to select issuer for redeem")
 		}
+		action.Issuer = issuer
 		transferMetadata.Issuer = driver.AuditableIdentity{
 			Identity: issuer,
 		}
