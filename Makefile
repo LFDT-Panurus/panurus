@@ -77,6 +77,9 @@ GO_PACKAGES = $(shell go list ./... | grep -v '/integration/' | grep -v 'regress
 unit-tests:
 	@go test $(GO_TEST_PARAMS) $(GO_PACKAGES)
 	cd token/services/storage/db/kvs/hashicorp/; go test -cover ./...
+	cd x/token/services/network/evm; go test -coverpkg=./... -coverprofile=profile.cov ./...
+	@tail -n +2 x/token/services/network/evm/profile.cov >> profile.cov
+	@rm -f x/token/services/network/evm/profile.cov
 
 .PHONY: unit-tests-race
 # run unit tests with race detection
