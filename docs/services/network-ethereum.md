@@ -886,6 +886,50 @@ that *did* commit until that same timeout has passed, which is exactly the case 
 the answer. Reading the row's timestamp keeps the sweep frequent and the verdict patient, and it survives
 the restart recovery exists to clean up after, which an in-memory timer would not.
 
+**Condemning on evidence, not just on elapsed time.** `finality.timeout` alone can take many minutes to
+resolve a permanently-rejected transfer, because a reverted `applyStateDelta` emits no event and, when it
+reverts at gas-estimation time, no transaction is ever sent — so there is no receipt either, and `Unknown`
+is the only answer the chain gives until the timeout elapses. Waiting that long is wasteful when the chain
+already has proof the transaction can never apply: `snSpent` (`contracts/src/TokenState.sol`) only ever
+moves from unspent to spent, never back, so if the anchor is absent **and** any of the transaction's input
+tokens is already spent by some other transaction, that other transaction is the one that consumed the
+input and this one can never succeed. The verdict is permanent, not a confidence interval.
+
+The recovery sweep checks this before falling back to the age gate: it parses the transaction's stored
+request into its input token ids and asks the chain, via `AreTokensSpent`, whether any of them are already
+spent. This runs identically over the ttx store and the audit store, so the **auditor** — which never
+observes the broadcaster's synchronous `Submit` error — converges on `driver.Invalid` through the same
+evidence, not only through its own multi-minute timeout.
+
+Two things keep this from being either premature or racy:
+
+- **`finality.conflictGrace`** (default 30s) delays the verdict from the moment the conflict is first
+  observed, not from the transaction row's own age. The evidence appears the instant the *competing*
+  transaction lands, which can be well before this transaction is even broadcast — a transaction that was
+  merely prepared and held is indistinguishable, at that instant, from one already rejected. The grace
+  window gives it a chance to either land (clearing the conflict) or genuinely fail before it is condemned.
+  While a conflict is pending but has not yet cleared the grace window, the transaction is reported as
+  `Unknown` even if its row is already older than `finality.timeout` — the age gate is deliberately not
+  allowed to race ahead and condemn it on an unrelated basis while the evidence path is still waiting out
+  the grace window.
+- **The anchor is re-read after positive evidence.** The anchor read and the spent read are two separate
+  `eth_call`s against a moving block tag; if the transaction under suspicion itself applies in the block
+  between them, the first read says absent and the second says spent — spent by *this very transaction*.
+  Re-reading the anchor immediately before condemning closes that gap: the re-read runs at a block at least
+  as recent as the spent read, so if the transaction landed in between, it is reported committed instead of
+  being deleted as a transfer that just went final.
+
+A revert while checking spent status — expected under graph hiding, where `areTokensSpent` is unsupported
+by design — is never treated as evidence; it degrades to the pre-existing age-gate behavior rather than
+failing the sweep. The same is true of any store or chain read error along this path: an error is never
+evidence, only ever "ask again next sweep".
+
+This condemns faster only through the recovery sweep. `finality.Manager`, which serves the synchronous
+finality watch (`AddFinalityListener`), is deliberately left unchanged: it holds only the anchor and a
+`StateReader`, with no store and no persisted state by design, so it has no input ids to check against.
+A recipient waiting on the finality watch still resolves at `finality.timeout`; only the recovery path —
+which does have a store to read the request from — condemns early.
+
 ### Broadcast idempotency
 
 Rebroadcasting a transaction whose earlier attempt was actually mined is a normal retry path — the caller's

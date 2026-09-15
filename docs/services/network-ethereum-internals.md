@@ -69,7 +69,8 @@ x/token/services/network/evm/
 ├── errors.go                  # sentinel errors and their permanent/transient classification
 ├── txid.go                    # ComputeTxID and the anchor derivation
 ├── submitter.go               # signs and submits the Ethereum transaction
-├── recovery.go                # the SDK recovery manager wiring, and settledNetwork
+├── recovery.go                # the SDK recovery manager wiring, settledNetwork, and its conflictWatch
+                              #   tracker (evidence-based invalidation ahead of the age gate)
 ├── nonce.go, keystore.go, membership.go, policy.go   # signing identity, nonce tracking, local membership
 ├── client/                    # EVMClient interface, JSON-RPC implementation, local Address/Hash types
 ├── crypto/                    # keccak256 and SHA-256 primitives

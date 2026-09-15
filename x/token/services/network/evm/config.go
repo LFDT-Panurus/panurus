@@ -36,6 +36,9 @@ const (
 	// only the chain's own lag; a deployment that also delays broadcasting a signed transaction needs
 	// additional headroom on top of this, which Validate has no way to know and cannot enforce.
 	MinFinalizedTagTimeout = 13 * time.Minute
+	// DefaultConflictGrace is how long a transaction whose inputs are already spent on chain is left
+	// alone before it is condemned. See FinalityConfig.ConflictGrace for why it is not zero.
+	DefaultConflictGrace = 30 * time.Second
 	// DefaultGasMultiplier scales the node's gas estimate to absorb small state changes between
 	// estimation and execution.
 	DefaultGasMultiplier = 1.2
@@ -87,6 +90,27 @@ type FinalityConfig struct {
 	// Timeout bounds how long a transaction is awaited. It is also a recipient's only failure signal:
 	// a failed apply reverts and emits no log, so "no event by the timeout" is what makes it Invalid.
 	Timeout time.Duration `yaml:"timeout"`
+	// ConflictGrace is how long recovery waits, after it first observes that a transaction's inputs
+	// have already been spent by someone else, before recording it as invalid. Absence plus a spent
+	// input is proof the transaction can never apply, so this is not a confidence interval - it is a
+	// deliberate delay, and it is needed twice over:
+	//
+	//   - The evidence appears the moment the *competing* transaction lands, which can be well before
+	//     this one is broadcast. A transaction prepared, held, and broadcast later is indistinguishable
+	//     from one already rejected, so condemning on sight would delete transfers still on their way.
+	//     The shared fungible bodies do exactly this: they prepare two conflicting transfers, land the
+	//     first, and then assert the second is *still* pending (integration/token/fungible/tests.go,
+	//     the alice -55 / bob 110 holding checks) before broadcasting it.
+	//   - Bounded from above by the same suite: the holding a rejected transfer reserved has to be
+	//     released inside a 30-second Eventually a few lines later, so the verdict cannot be deferred
+	//     much past this either.
+	//
+	// Thirty seconds sits in that window with margin on both sides. Like every other duration in this
+	// struct, an unset or non-positive value defaults rather than disabling the behaviour it controls.
+	// A value above Timeout is not rejected - Timeout can legitimately be edited after load without
+	// this being re-derived - but it is effectively dead: the age gate always condemns first, so the
+	// consumer of this field clamps the value it actually waits to min(ConflictGrace, Timeout).
+	ConflictGrace time.Duration `yaml:"conflictGrace"`
 	// FromBlock is where log searches start when resolving an anchor to its transaction hash. It
 	// defaults to zero, the whole chain, which is right for a freshly bootstrapped network; on a chain
 	// where the TokenState was deployed much later, set it to the deployment block so the search does
@@ -179,6 +203,12 @@ func (c *Config) applyDefaults() {
 	}
 	if c.Finality.Timeout <= 0 {
 		c.Finality.Timeout = DefaultFinalityTimeout
+	}
+	if c.Finality.ConflictGrace <= 0 {
+		// Clamped to Timeout: a deployment or test that configures a short timeout (there are several
+		// well under 30s) gets a grace no longer than that timeout, rather than a default that Validate
+		// would then have to reject.
+		c.Finality.ConflictGrace = min(DefaultConflictGrace, c.Finality.Timeout)
 	}
 	if c.Gas.Strategy == "" {
 		c.Gas.Strategy = DefaultGasStrategy
