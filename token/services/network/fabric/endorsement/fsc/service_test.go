@@ -29,348 +29,379 @@ func TestNewEndorsementService(t *testing.T) {
 		Namespace: "test_namespace",
 	}
 
-	t.Run("success - node is endorser", func(t *testing.T) {
-		config := &mock2.Configuration{}
-		config.GetBoolReturns(true)
-		config.GetStringReturns(fsc.AllPolicy)
-		config.UnmarshalKeyStub = func(key string, rawVal any) error {
-			if key == fsc.EndorsersKey {
-				*rawVal.(*[]string) = []string{"endorser1", "endorser2"}
-			}
+	t.Run("success - node is endorser", func(t *testing.T) { testNewEndorsementServiceIsEndorser(t, tmsID) })
+	t.Run("success - node is not endorser", func(t *testing.T) { testNewEndorsementServiceNotEndorser(t, tmsID) })
+	t.Run("success - default policy type", func(t *testing.T) { testNewEndorsementServiceDefaultPolicy(t, tmsID) })
+	t.Run("failed to enable tx processing", func(t *testing.T) { testNewEndorsementServiceEnableTxProcessingFails(t, tmsID) })
+	t.Run("failed to register responder", func(t *testing.T) { testNewEndorsementServiceRegisterResponderFails(t, tmsID) })
+	t.Run("failed to register approval responder", func(t *testing.T) { testNewEndorsementServiceRegisterApprovalResponderFails(t, tmsID) })
+	t.Run("failed to unmarshal endorsers", func(t *testing.T) { testNewEndorsementServiceUnmarshalEndorsersFails(t, tmsID) })
+	t.Run("no endorsers found", func(t *testing.T) { testNewEndorsementServiceNoEndorsersFound(t, tmsID) })
+	t.Run("endorser identity not found", func(t *testing.T) { testNewEndorsementServiceEndorserIdentityNotFound(t, tmsID) })
+}
 
-			return nil
+func testNewEndorsementServiceIsEndorser(t *testing.T, tmsID token.TMSID) {
+	t.Helper()
+
+	config := &mock2.Configuration{}
+	config.GetBoolReturns(true)
+	config.GetStringReturns(fsc.AllPolicy)
+	config.UnmarshalKeyStub = func(key string, rawVal any) error {
+		if key == fsc.EndorsersKey {
+			*rawVal.(*[]string) = []string{"endorser1", "endorser2"}
 		}
 
-		namespaceProcessor := &mockNamespaceTxProcessor{}
-		viewRegistry := &mockViewRegistry{}
-		viewManager := &mockViewManager{}
-		identityProvider := &mockIdentityProvider{
-			identities: map[string]view.Identity{
-				"endorser1": []byte("identity1"),
-				"endorser2": []byte("identity2"),
-			},
-		}
-		endorserService := &mock.EndorserService{}
-		tmsp := &mock.TokenManagementSystemProvider{}
-		storageProvider := &mock.StorageProvider{}
-		channelProvider := &mock.ChannelProvider{}
+		return nil
+	}
 
-		service, err := fsc.NewEndorsementService(
-			namespaceProcessor,
-			tmsID,
-			config,
-			viewRegistry,
-			viewManager,
-			identityProvider,
-			nil,
-			nil,
-			endorserService,
-			tmsp,
-			storageProvider,
-			channelProvider,
-			&mock.EndorserSelector{},
-			&mock.PublicParamsValidator{},
-		)
+	namespaceProcessor := &mockNamespaceTxProcessor{}
+	viewRegistry := &mockViewRegistry{}
+	viewManager := &mockViewManager{}
+	identityProvider := &mockIdentityProvider{
+		identities: map[string]view.Identity{
+			"endorser1": []byte("identity1"),
+			"endorser2": []byte("identity2"),
+		},
+	}
+	endorserService := &mock.EndorserService{}
+	tmsp := &mock.TokenManagementSystemProvider{}
+	storageProvider := &mock.StorageProvider{}
+	channelProvider := &mock.ChannelProvider{}
 
-		require.NoError(t, err)
-		require.NotNil(t, service)
-		assert.Equal(t, tmsID, service.TmsID)
-		assert.Len(t, service.Endorsers, 2)
-		assert.Equal(t, fsc.AllPolicy, service.PolicyType)
-		assert.True(t, namespaceProcessor.enableTxProcessingCalled)
-		assert.True(t, viewRegistry.registerResponderCalled)
-	})
+	service, err := fsc.NewEndorsementService(
+		namespaceProcessor,
+		tmsID,
+		config,
+		viewRegistry,
+		viewManager,
+		identityProvider,
+		nil,
+		nil,
+		endorserService,
+		tmsp,
+		storageProvider,
+		channelProvider,
+		&mock.EndorserSelector{},
+		&mock.PublicParamsValidator{},
+	)
 
-	t.Run("success - node is not endorser", func(t *testing.T) {
-		config := &mock2.Configuration{}
-		config.GetBoolReturns(false)
-		config.GetStringReturns(fsc.OneOutNPolicy)
-		config.UnmarshalKeyStub = func(key string, rawVal any) error {
-			if key == fsc.EndorsersKey {
-				*rawVal.(*[]string) = []string{"endorser1"}
-			}
+	require.NoError(t, err)
+	require.NotNil(t, service)
+	assert.Equal(t, tmsID, service.TmsID)
+	assert.Len(t, service.Endorsers, 2)
+	assert.Equal(t, fsc.AllPolicy, service.PolicyType)
+	assert.True(t, namespaceProcessor.enableTxProcessingCalled)
+	assert.True(t, viewRegistry.registerResponderCalled)
+}
 
-			return nil
-		}
+func testNewEndorsementServiceNotEndorser(t *testing.T, tmsID token.TMSID) {
+	t.Helper()
 
-		namespaceProcessor := &mockNamespaceTxProcessor{}
-		viewRegistry := &mockViewRegistry{}
-		viewManager := &mockViewManager{}
-		identityProvider := &mockIdentityProvider{
-			identities: map[string]view.Identity{
-				"endorser1": []byte("identity1"),
-			},
-		}
-		endorserService := &mock.EndorserService{}
-		tmsp := &mock.TokenManagementSystemProvider{}
-		storageProvider := &mock.StorageProvider{}
-		channelProvider := &mock.ChannelProvider{}
-
-		service, err := fsc.NewEndorsementService(
-			namespaceProcessor,
-			tmsID,
-			config,
-			viewRegistry,
-			viewManager,
-			identityProvider,
-			nil,
-			nil,
-			endorserService,
-			tmsp,
-			storageProvider,
-			channelProvider,
-			&mock.EndorserSelector{},
-			&mock.PublicParamsValidator{},
-		)
-
-		require.NoError(t, err)
-		require.NotNil(t, service)
-		assert.Equal(t, fsc.OneOutNPolicy, service.PolicyType)
-		assert.False(t, namespaceProcessor.enableTxProcessingCalled)
-		assert.False(t, viewRegistry.registerResponderCalled)
-	})
-
-	t.Run("success - default policy type", func(t *testing.T) {
-		config := &mock2.Configuration{}
-		config.GetBoolReturns(false)
-		config.GetStringReturns("")
-		config.UnmarshalKeyStub = func(key string, rawVal any) error {
-			if key == fsc.EndorsersKey {
-				*rawVal.(*[]string) = []string{"endorser1"}
-			}
-
-			return nil
+	config := &mock2.Configuration{}
+	config.GetBoolReturns(false)
+	config.GetStringReturns(fsc.OneOutNPolicy)
+	config.UnmarshalKeyStub = func(key string, rawVal any) error {
+		if key == fsc.EndorsersKey {
+			*rawVal.(*[]string) = []string{"endorser1"}
 		}
 
-		identityProvider := &mockIdentityProvider{
-			identities: map[string]view.Identity{
-				"endorser1": []byte("identity1"),
-			},
+		return nil
+	}
+
+	namespaceProcessor := &mockNamespaceTxProcessor{}
+	viewRegistry := &mockViewRegistry{}
+	viewManager := &mockViewManager{}
+	identityProvider := &mockIdentityProvider{
+		identities: map[string]view.Identity{
+			"endorser1": []byte("identity1"),
+		},
+	}
+	endorserService := &mock.EndorserService{}
+	tmsp := &mock.TokenManagementSystemProvider{}
+	storageProvider := &mock.StorageProvider{}
+	channelProvider := &mock.ChannelProvider{}
+
+	service, err := fsc.NewEndorsementService(
+		namespaceProcessor,
+		tmsID,
+		config,
+		viewRegistry,
+		viewManager,
+		identityProvider,
+		nil,
+		nil,
+		endorserService,
+		tmsp,
+		storageProvider,
+		channelProvider,
+		&mock.EndorserSelector{},
+		&mock.PublicParamsValidator{},
+	)
+
+	require.NoError(t, err)
+	require.NotNil(t, service)
+	assert.Equal(t, fsc.OneOutNPolicy, service.PolicyType)
+	assert.False(t, namespaceProcessor.enableTxProcessingCalled)
+	assert.False(t, viewRegistry.registerResponderCalled)
+}
+
+func testNewEndorsementServiceDefaultPolicy(t *testing.T, tmsID token.TMSID) {
+	t.Helper()
+
+	config := &mock2.Configuration{}
+	config.GetBoolReturns(false)
+	config.GetStringReturns("")
+	config.UnmarshalKeyStub = func(key string, rawVal any) error {
+		if key == fsc.EndorsersKey {
+			*rawVal.(*[]string) = []string{"endorser1"}
 		}
 
-		service, err := fsc.NewEndorsementService(
-			&mockNamespaceTxProcessor{},
-			tmsID,
-			config,
-			&mockViewRegistry{},
-			&mockViewManager{},
-			identityProvider,
-			nil,
-			nil,
-			&mock.EndorserService{},
-			&mock.TokenManagementSystemProvider{},
-			&mock.StorageProvider{},
-			&mock.ChannelProvider{},
-			&mock.EndorserSelector{},
-			&mock.PublicParamsValidator{},
-		)
+		return nil
+	}
 
-		require.NoError(t, err)
-		assert.Equal(t, fsc.AllPolicy, service.PolicyType)
-	})
+	identityProvider := &mockIdentityProvider{
+		identities: map[string]view.Identity{
+			"endorser1": []byte("identity1"),
+		},
+	}
 
-	t.Run("failed to enable tx processing", func(t *testing.T) {
-		config := &mock2.Configuration{}
-		config.GetBoolReturns(true)
-		config.UnmarshalKeyStub = func(key string, rawVal any) error {
-			if key == fsc.EndorsersKey {
-				*rawVal.(*[]string) = []string{"endorser1"}
-			}
+	service, err := fsc.NewEndorsementService(
+		&mockNamespaceTxProcessor{},
+		tmsID,
+		config,
+		&mockViewRegistry{},
+		&mockViewManager{},
+		identityProvider,
+		nil,
+		nil,
+		&mock.EndorserService{},
+		&mock.TokenManagementSystemProvider{},
+		&mock.StorageProvider{},
+		&mock.ChannelProvider{},
+		&mock.EndorserSelector{},
+		&mock.PublicParamsValidator{},
+	)
 
-			return nil
+	require.NoError(t, err)
+	assert.Equal(t, fsc.AllPolicy, service.PolicyType)
+}
+
+func testNewEndorsementServiceEnableTxProcessingFails(t *testing.T, tmsID token.TMSID) {
+	t.Helper()
+
+	config := &mock2.Configuration{}
+	config.GetBoolReturns(true)
+	config.UnmarshalKeyStub = func(key string, rawVal any) error {
+		if key == fsc.EndorsersKey {
+			*rawVal.(*[]string) = []string{"endorser1"}
 		}
 
-		namespaceProcessor := &mockNamespaceTxProcessor{
-			enableTxProcessingError: errors.New("failed to enable"),
+		return nil
+	}
+
+	namespaceProcessor := &mockNamespaceTxProcessor{
+		enableTxProcessingError: errors.New("failed to enable"),
+	}
+
+	_, err := fsc.NewEndorsementService(
+		namespaceProcessor,
+		tmsID,
+		config,
+		&mockViewRegistry{},
+		&mockViewManager{},
+		&mockIdentityProvider{},
+		nil,
+		nil,
+		&mock.EndorserService{},
+		&mock.TokenManagementSystemProvider{},
+		&mock.StorageProvider{},
+		&mock.ChannelProvider{},
+		&mock.EndorserSelector{},
+		&mock.PublicParamsValidator{},
+	)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to add namespace to committer")
+}
+
+func testNewEndorsementServiceRegisterResponderFails(t *testing.T, tmsID token.TMSID) {
+	t.Helper()
+
+	config := &mock2.Configuration{}
+	config.GetBoolReturns(true)
+	config.UnmarshalKeyStub = func(key string, rawVal any) error {
+		if key == fsc.EndorsersKey {
+			*rawVal.(*[]string) = []string{"endorser1"}
 		}
 
-		_, err := fsc.NewEndorsementService(
-			namespaceProcessor,
-			tmsID,
-			config,
-			&mockViewRegistry{},
-			&mockViewManager{},
-			&mockIdentityProvider{},
-			nil,
-			nil,
-			&mock.EndorserService{},
-			&mock.TokenManagementSystemProvider{},
-			&mock.StorageProvider{},
-			&mock.ChannelProvider{},
-			&mock.EndorserSelector{},
-			&mock.PublicParamsValidator{},
-		)
+		return nil
+	}
 
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "failed to add namespace to committer")
-	})
+	viewRegistry := &mockViewRegistry{
+		registerResponderError: errors.New("failed to register"),
+	}
 
-	t.Run("failed to register responder", func(t *testing.T) {
-		config := &mock2.Configuration{}
-		config.GetBoolReturns(true)
-		config.UnmarshalKeyStub = func(key string, rawVal any) error {
-			if key == fsc.EndorsersKey {
-				*rawVal.(*[]string) = []string{"endorser1"}
-			}
+	_, err := fsc.NewEndorsementService(
+		&mockNamespaceTxProcessor{},
+		tmsID,
+		config,
+		viewRegistry,
+		&mockViewManager{},
+		&mockIdentityProvider{},
+		nil,
+		nil,
+		&mock.EndorserService{},
+		&mock.TokenManagementSystemProvider{},
+		&mock.StorageProvider{},
+		&mock.ChannelProvider{},
+		&mock.EndorserSelector{},
+		&mock.PublicParamsValidator{},
+	)
 
-			return nil
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to register public params setup view")
+}
+
+// testNewEndorsementServiceRegisterApprovalResponderFails covers the second RegisterResponder
+// call (for RequestApprovalView): the first call (for SetupPublicParamsView) must succeed so this
+// exercises a distinct failure path from testNewEndorsementServiceRegisterResponderFails.
+func testNewEndorsementServiceRegisterApprovalResponderFails(t *testing.T, tmsID token.TMSID) {
+	t.Helper()
+
+	config := &mock2.Configuration{}
+	config.GetBoolReturns(true)
+	config.UnmarshalKeyStub = func(key string, rawVal any) error {
+		if key == fsc.EndorsersKey {
+			*rawVal.(*[]string) = []string{"endorser1"}
 		}
 
-		viewRegistry := &mockViewRegistry{
-			registerResponderError: errors.New("failed to register"),
+		return nil
+	}
+
+	viewRegistry := &mockViewRegistry{
+		registerResponderError:       errors.New("failed to register"),
+		registerResponderErrorOnCall: 2,
+	}
+
+	_, err := fsc.NewEndorsementService(
+		&mockNamespaceTxProcessor{},
+		tmsID,
+		config,
+		viewRegistry,
+		&mockViewManager{},
+		&mockIdentityProvider{},
+		nil,
+		nil,
+		&mock.EndorserService{},
+		&mock.TokenManagementSystemProvider{},
+		&mock.StorageProvider{},
+		&mock.ChannelProvider{},
+		&mock.EndorserSelector{},
+		&mock.PublicParamsValidator{},
+	)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to register approval view")
+}
+
+func testNewEndorsementServiceUnmarshalEndorsersFails(t *testing.T, tmsID token.TMSID) {
+	t.Helper()
+
+	config := &mock2.Configuration{}
+	config.GetBoolReturns(false)
+	config.UnmarshalKeyReturns(errors.New("unmarshal error"))
+
+	_, err := fsc.NewEndorsementService(
+		&mockNamespaceTxProcessor{},
+		tmsID,
+		config,
+		&mockViewRegistry{},
+		&mockViewManager{},
+		&mockIdentityProvider{},
+		nil,
+		nil,
+		&mock.EndorserService{},
+		&mock.TokenManagementSystemProvider{},
+		&mock.StorageProvider{},
+		&mock.ChannelProvider{},
+		&mock.EndorserSelector{},
+		&mock.PublicParamsValidator{},
+	)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to load endorsers")
+}
+
+func testNewEndorsementServiceNoEndorsersFound(t *testing.T, tmsID token.TMSID) {
+	t.Helper()
+
+	config := &mock2.Configuration{}
+	config.GetBoolReturns(false)
+	config.UnmarshalKeyStub = func(key string, rawVal any) error {
+		if key == fsc.EndorsersKey {
+			*rawVal.(*[]string) = []string{}
 		}
 
-		_, err := fsc.NewEndorsementService(
-			&mockNamespaceTxProcessor{},
-			tmsID,
-			config,
-			viewRegistry,
-			&mockViewManager{},
-			&mockIdentityProvider{},
-			nil,
-			nil,
-			&mock.EndorserService{},
-			&mock.TokenManagementSystemProvider{},
-			&mock.StorageProvider{},
-			&mock.ChannelProvider{},
-			&mock.EndorserSelector{},
-			&mock.PublicParamsValidator{},
-		)
+		return nil
+	}
 
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "failed to register public params setup view")
-	})
+	_, err := fsc.NewEndorsementService(
+		&mockNamespaceTxProcessor{},
+		tmsID,
+		config,
+		&mockViewRegistry{},
+		&mockViewManager{},
+		&mockIdentityProvider{},
+		nil,
+		nil,
+		&mock.EndorserService{},
+		&mock.TokenManagementSystemProvider{},
+		&mock.StorageProvider{},
+		&mock.ChannelProvider{},
+		&mock.EndorserSelector{},
+		&mock.PublicParamsValidator{},
+	)
 
-	t.Run("failed to register approval responder", func(t *testing.T) {
-		config := &mock2.Configuration{}
-		config.GetBoolReturns(true)
-		config.UnmarshalKeyStub = func(key string, rawVal any) error {
-			if key == fsc.EndorsersKey {
-				*rawVal.(*[]string) = []string{"endorser1"}
-			}
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no endorsers found")
+}
 
-			return nil
+func testNewEndorsementServiceEndorserIdentityNotFound(t *testing.T, tmsID token.TMSID) {
+	t.Helper()
+
+	config := &mock2.Configuration{}
+	config.GetBoolReturns(false)
+	config.UnmarshalKeyStub = func(key string, rawVal any) error {
+		if key == fsc.EndorsersKey {
+			*rawVal.(*[]string) = []string{"unknown_endorser"}
 		}
 
-		viewRegistry := &mockViewRegistry{
-			registerResponderError:       errors.New("failed to register"),
-			registerResponderErrorOnCall: 2,
-		}
+		return nil
+	}
 
-		_, err := fsc.NewEndorsementService(
-			&mockNamespaceTxProcessor{},
-			tmsID,
-			config,
-			viewRegistry,
-			&mockViewManager{},
-			&mockIdentityProvider{},
-			nil,
-			nil,
-			&mock.EndorserService{},
-			&mock.TokenManagementSystemProvider{},
-			&mock.StorageProvider{},
-			&mock.ChannelProvider{},
-			&mock.EndorserSelector{},
-			&mock.PublicParamsValidator{},
-		)
+	identityProvider := &mockIdentityProvider{
+		identities: map[string]view.Identity{},
+	}
 
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "failed to register approval view")
-	})
+	_, err := fsc.NewEndorsementService(
+		&mockNamespaceTxProcessor{},
+		tmsID,
+		config,
+		&mockViewRegistry{},
+		&mockViewManager{},
+		identityProvider,
+		nil,
+		nil,
+		&mock.EndorserService{},
+		&mock.TokenManagementSystemProvider{},
+		&mock.StorageProvider{},
+		&mock.ChannelProvider{},
+		&mock.EndorserSelector{},
+		&mock.PublicParamsValidator{},
+	)
 
-	t.Run("failed to unmarshal endorsers", func(t *testing.T) {
-		config := &mock2.Configuration{}
-		config.GetBoolReturns(false)
-		config.UnmarshalKeyReturns(errors.New("unmarshal error"))
-
-		_, err := fsc.NewEndorsementService(
-			&mockNamespaceTxProcessor{},
-			tmsID,
-			config,
-			&mockViewRegistry{},
-			&mockViewManager{},
-			&mockIdentityProvider{},
-			nil,
-			nil,
-			&mock.EndorserService{},
-			&mock.TokenManagementSystemProvider{},
-			&mock.StorageProvider{},
-			&mock.ChannelProvider{},
-			&mock.EndorserSelector{},
-			&mock.PublicParamsValidator{},
-		)
-
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "failed to load endorsers")
-	})
-
-	t.Run("no endorsers found", func(t *testing.T) {
-		config := &mock2.Configuration{}
-		config.GetBoolReturns(false)
-		config.UnmarshalKeyStub = func(key string, rawVal any) error {
-			if key == fsc.EndorsersKey {
-				*rawVal.(*[]string) = []string{}
-			}
-
-			return nil
-		}
-
-		_, err := fsc.NewEndorsementService(
-			&mockNamespaceTxProcessor{},
-			tmsID,
-			config,
-			&mockViewRegistry{},
-			&mockViewManager{},
-			&mockIdentityProvider{},
-			nil,
-			nil,
-			&mock.EndorserService{},
-			&mock.TokenManagementSystemProvider{},
-			&mock.StorageProvider{},
-			&mock.ChannelProvider{},
-			&mock.EndorserSelector{},
-			&mock.PublicParamsValidator{},
-		)
-
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "no endorsers found")
-	})
-
-	t.Run("endorser identity not found", func(t *testing.T) {
-		config := &mock2.Configuration{}
-		config.GetBoolReturns(false)
-		config.UnmarshalKeyStub = func(key string, rawVal any) error {
-			if key == fsc.EndorsersKey {
-				*rawVal.(*[]string) = []string{"unknown_endorser"}
-			}
-
-			return nil
-		}
-
-		identityProvider := &mockIdentityProvider{
-			identities: map[string]view.Identity{},
-		}
-
-		_, err := fsc.NewEndorsementService(
-			&mockNamespaceTxProcessor{},
-			tmsID,
-			config,
-			&mockViewRegistry{},
-			&mockViewManager{},
-			identityProvider,
-			nil,
-			nil,
-			&mock.EndorserService{},
-			&mock.TokenManagementSystemProvider{},
-			&mock.StorageProvider{},
-			&mock.ChannelProvider{},
-			&mock.EndorserSelector{},
-			&mock.PublicParamsValidator{},
-		)
-
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "cannot find identity for endorser")
-	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "cannot find identity for endorser")
 }
 
 func TestEndorsementService_Endorse(t *testing.T) {

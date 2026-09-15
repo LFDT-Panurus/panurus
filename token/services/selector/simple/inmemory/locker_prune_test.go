@@ -65,6 +65,8 @@ func TestScannerPrunesEmptyShards(t *testing.T) {
 // scanner pruning an empty shard and a concurrent Lock on the same owner:
 // a lock taken through a stale shard reference must never end up in an
 // orphaned shard invisible to IsLocked/UnlockIDs.
+//
+//nolint:gocognit // coordinates concurrent workers against the pruning scanner; the goroutines and the assertions on their outcome share state that a split would only relocate.
 func TestPruningDoesNotLoseConcurrentLocks(t *testing.T) {
 	mock := newMockTXStatusProvider()
 	// aggressive scan cadence so pruning races with the workers below
@@ -170,6 +172,8 @@ func TestPruningEmptyShardKeepsNewerShard(t *testing.T) {
 // scanner's lockedCount used to hold shardsMu while taking a shard lock, while
 // pruneEmptyShard takes shardsMu with a shard lock already held. Under load
 // the two orders deadlock and every locker operation stalls forever.
+//
+//nolint:gocognit // same concurrent-driver shape as TestPruningDoesNotLoseConcurrentLocks above.
 func TestLockedCountDoesNotDeadlockWithPruning(t *testing.T) {
 	mock := newMockTXStatusProvider()
 	// aggressive cadence so the scanner's lockedCount overlaps the prunes

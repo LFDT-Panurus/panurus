@@ -67,6 +67,8 @@ type CSPBasedProver struct {
 }
 
 // NewCSPBasedProver returns a new CSPBasedProver instance.
+//
+//nolint:gocognit // wires witnesses and commitments into a CSP-based prover; same pairing risk as NewBulletProofProver.
 func NewCSPBasedProver(inputWitness, outputWitness []*token.Metadata, inputs, outputs []*math.G1, pp *v1.PublicParams) (*CSPBasedProver, error) {
 	if len(inputWitness) == 0 {
 		return nil, errors.Wrap(ErrInvalidInputs, "cannot create CSP-based prover: no input witnesses")

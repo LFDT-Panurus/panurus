@@ -523,6 +523,8 @@ type policyAuditInfoWire struct {
 // Component well-formedness (non-empty, no duplicates, bounded fan-out)
 // mirrors boolpolicy's validateComponentIdentities, which otherwise rejects
 // the identity only later, in GetAuditInfoMatcher.
+//
+//nolint:gocognit // policy-identity membership check that decides whether an incoming recipient is trusted; a mis-split here is a security bug, not just a style one.
 func (w *LongTermOwnerWallet) isMemberPolicyRecipient(ctx context.Context, data *driver.RecipientData) bool {
 	ti, err := identity.UnmarshalTypedIdentity(data.Identity)
 	if err != nil || ti.Type != driver.PolicyIdentityType {

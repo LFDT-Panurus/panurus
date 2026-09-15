@@ -102,43 +102,53 @@ func (s *EndorseView) handleSignatureRequests(context view.Context) error {
 	}
 
 	for i, signerIdentity := range requiredSigners {
-		signatureRequest := &SignatureRequest{}
+		if err := s.handleSignatureRequestFor(context, typedSession, i, signerIdentity, len(requiredSigners), tokenRequestToSign); err != nil {
+			return err
+		}
+	}
 
-		if i == 0 && s.tx.FromSignatureRequest != nil {
-			signatureRequest = s.tx.FromSignatureRequest
-		} else {
-			logger.DebugfContext(context.Context(), "receiving signature request...")
-			if err := typedSession.ReceiveTypedWithTimeout(TypeSignatureRequest, signatureRequest, time.Minute); err != nil {
-				return errors.Wrap(err, "failed reading signature request")
-			}
-		}
+	return nil
+}
 
-		// check for the expected identity
-		if !signatureRequest.Signer.Equal(signerIdentity) {
-			return errors.Wrapf(
-				ErrSignerIdentityMismatch,
-				"signature request's signer does not match the expected signer, [%s] != [%s], required signatures [%d]",
-				signatureRequest.Signer,
-				signerIdentity,
-				len(requiredSigners),
-			)
-		}
+// handleSignatureRequestFor handles the i-th expected signer's request: it receives (or reuses,
+// for the first request already carried by s.tx.FromSignatureRequest) the signature request,
+// checks it names the expected signer, signs tokenRequestToSign, and sends the signature back.
+func (s *EndorseView) handleSignatureRequestFor(context view.Context, typedSession *jsession.TypedSession, i int, signerIdentity view.Identity, numRequiredSigners int, tokenRequestToSign []byte) error {
+	signatureRequest := &SignatureRequest{}
 
-		// sign the token request with the expected identity
-		sigService := s.tx.TokenService().SigService()
-		signer, err := sigService.GetSigner(context.Context(), signerIdentity)
-		if err != nil {
-			return errors.Wrapf(err, "cannot find signer for [%s]", signerIdentity)
+	if i == 0 && s.tx.FromSignatureRequest != nil {
+		signatureRequest = s.tx.FromSignatureRequest
+	} else {
+		logger.DebugfContext(context.Context(), "receiving signature request...")
+		if err := typedSession.ReceiveTypedWithTimeout(TypeSignatureRequest, signatureRequest, time.Minute); err != nil {
+			return errors.Wrap(err, "failed reading signature request")
 		}
-		sigma, err := signer.Sign(tokenRequestToSign)
-		if err != nil {
-			return errors.Wrapf(err, "failed signing request")
-		}
-		logger.DebugfContext(context.Context(), "Send back signature [%s][%s]", signerIdentity, utils.Hashable(sigma))
-		err = typedSession.SendTyped(context.Context(), &SignaturePayload{Signature: sigma}, TypeSignature)
-		if err != nil {
-			return errors.Wrapf(err, "failed sending signature back")
-		}
+	}
+
+	// check for the expected identity
+	if !signatureRequest.Signer.Equal(signerIdentity) {
+		return errors.Wrapf(
+			ErrSignerIdentityMismatch,
+			"signature request's signer does not match the expected signer, [%s] != [%s], required signatures [%d]",
+			signatureRequest.Signer,
+			signerIdentity,
+			numRequiredSigners,
+		)
+	}
+
+	// sign the token request with the expected identity
+	sigService := s.tx.TokenService().SigService()
+	signer, err := sigService.GetSigner(context.Context(), signerIdentity)
+	if err != nil {
+		return errors.Wrapf(err, "cannot find signer for [%s]", signerIdentity)
+	}
+	sigma, err := signer.Sign(tokenRequestToSign)
+	if err != nil {
+		return errors.Wrapf(err, "failed signing request")
+	}
+	logger.DebugfContext(context.Context(), "Send back signature [%s][%s]", signerIdentity, utils.Hashable(sigma))
+	if err := typedSession.SendTyped(context.Context(), &SignaturePayload{Signature: sigma}, TypeSignature); err != nil {
+		return errors.Wrapf(err, "failed sending signature back")
 	}
 
 	return nil

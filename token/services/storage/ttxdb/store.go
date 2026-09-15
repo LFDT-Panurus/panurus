@@ -18,6 +18,7 @@ import (
 	"github.com/LFDT-Panurus/panurus/token/services/storage/db/common"
 	dbdriver "github.com/LFDT-Panurus/panurus/token/services/storage/db/driver"
 	"github.com/LFDT-Panurus/panurus/token/services/storage/db/multiplexed"
+	token2 "github.com/LFDT-Panurus/panurus/token/token"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	cdriver "github.com/hyperledger-labs/fabric-smart-client/platform/common/driver"
 )
@@ -356,6 +357,63 @@ func (d *StoreService) ReleaseRecoveryClaim(ctx context.Context, txID string, ow
 	return nil
 }
 
+// actionTransactionRecords builds the transaction records for a single action's inputs (ins) and
+// outputs (ous): one record per (recipient EID, token type) pair with a positive received amount.
+func actionTransactionRecords(record *token.AuditRecord, ins *token.InputStream, ous *token.OutputStream, timestamp time.Time) ([]TransactionRecord, error) {
+	// All ins should be for same EID, check this
+	inEIDs := ins.EnrollmentIDs()
+	if len(inEIDs) > 1 {
+		return nil, errors.Errorf("expected at most 1 input enrollment id, got %d, [%v]", len(inEIDs), inEIDs)
+	}
+	inEID := ""
+	if len(inEIDs) == 1 {
+		inEID = inEIDs[0]
+	}
+
+	var txs []TransactionRecord
+	outEIDs := ous.EnrollmentIDs()
+	outEIDs = append(outEIDs, "")
+	for _, outEID := range outEIDs {
+		for _, tokenType := range ous.TokenTypes() {
+			if tr, ok := recipientTransactionRecord(record, ous, inEID, outEID, tokenType, len(inEIDs) != 0, timestamp); ok {
+				txs = append(txs, tr)
+			}
+		}
+	}
+
+	return txs, nil
+}
+
+// recipientTransactionRecord builds the transaction record for a single (recipient EID, token
+// type) pair of an action's outputs, if there was a positive amount received. ok is false when
+// there was nothing to record.
+func recipientTransactionRecord(record *token.AuditRecord, ous *token.OutputStream, inEID, outEID string, tokenType token2.Type, hasInputs bool, timestamp time.Time) (tr TransactionRecord, ok bool) {
+	received := ous.ByEnrollmentID(outEID).ByType(tokenType).UniquePerOutput().Sum()
+	if received.Cmp(big.NewInt(0)) <= 0 {
+		return TransactionRecord{}, false
+	}
+
+	tt := dbdriver.Issue
+	if hasInputs {
+		if len(outEID) == 0 {
+			tt = dbdriver.Redeem
+		} else {
+			tt = dbdriver.Transfer
+		}
+	}
+
+	return dbdriver.TransactionRecord{
+		TxID:         string(record.Anchor),
+		SenderEID:    inEID,
+		RecipientEID: outEID,
+		TokenType:    tokenType,
+		Amount:       received,
+		Status:       dbdriver.Pending,
+		ActionType:   tt,
+		Timestamp:    timestamp,
+	}, true
+}
+
 // TransactionRecords is a pure function that converts an AuditRecord for storage in the database.
 func TransactionRecords(ctx context.Context, record *token.AuditRecord, timestamp time.Time) (txs []TransactionRecord, err error) {
 	inputs := record.Inputs
@@ -377,48 +435,11 @@ func TransactionRecords(ctx context.Context, record *token.AuditRecord, timestam
 		}
 
 		// create a transaction record from ins and ous
-
-		// All ins should be for same EID, check this
-		inEIDs := ins.EnrollmentIDs()
-		if len(inEIDs) > 1 {
-			return nil, errors.Errorf("expected at most 1 input enrollment id, got %d, [%v]", len(inEIDs), inEIDs)
+		actionTxs, err := actionTransactionRecords(record, ins, ous, timestamp)
+		if err != nil {
+			return nil, err
 		}
-		inEID := ""
-		if len(inEIDs) == 1 {
-			inEID = inEIDs[0]
-		}
-
-		outEIDs := ous.EnrollmentIDs()
-		outEIDs = append(outEIDs, "")
-		outTT := ous.TokenTypes()
-		for _, outEID := range outEIDs {
-			for _, tokenType := range outTT {
-				received := ous.ByEnrollmentID(outEID).ByType(tokenType).UniquePerOutput().Sum()
-				if received.Cmp(big.NewInt(0)) <= 0 {
-					continue
-				}
-
-				tt := dbdriver.Issue
-				if len(inEIDs) != 0 {
-					if len(outEID) == 0 {
-						tt = dbdriver.Redeem
-					} else {
-						tt = dbdriver.Transfer
-					}
-				}
-
-				txs = append(txs, dbdriver.TransactionRecord{
-					TxID:         string(record.Anchor),
-					SenderEID:    inEID,
-					RecipientEID: outEID,
-					TokenType:    tokenType,
-					Amount:       received,
-					Status:       dbdriver.Pending,
-					ActionType:   tt,
-					Timestamp:    timestamp,
-				})
-			}
-		}
+		txs = append(txs, actionTxs...)
 
 		actionIndex++
 	}

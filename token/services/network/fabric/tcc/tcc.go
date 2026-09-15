@@ -100,6 +100,56 @@ func (cc *TokenChaincode) Init(stub shim.ChaincodeStubInterface) *pb.Response {
 	return shim.Success(nil)
 }
 
+// invokeProcessRequest handles the InvokeFunction chaincode call: it extracts the token request
+// from the transient map and processes it.
+func (cc *TokenChaincode) invokeProcessRequest(args [][]byte, stub shim.ChaincodeStubInterface) *pb.Response {
+	if len(args) != 1 {
+		return shim.Error("empty token request")
+	}
+	// extract token request from transient
+	t, err := stub.GetTransient()
+	if err != nil {
+		return shim.Error("failed getting transient")
+	}
+	tokenRequest, ok := t["token_request"]
+	if !ok {
+		return shim.Error("failed getting token request, entry not found")
+	}
+
+	return cc.ProcessRequest(tokenRequest, stub)
+}
+
+// dispatchInvoke dispatches a single chaincode function call to the appropriate handler.
+func (cc *TokenChaincode) dispatchInvoke(txID string, args [][]byte, stub shim.ChaincodeStubInterface) *pb.Response {
+	logger.Debugf("[%s] %s", txID, string(args[0]))
+	switch f := string(args[0]); f {
+	case InvokeFunction:
+		return cc.invokeProcessRequest(args, stub)
+	case QueryPublicParamsFunction:
+		return cc.QueryPublicParams(stub)
+	case QueryTokensFunctions:
+		if len(args) != 2 {
+			return shim.Error("request to retrieve tokens is empty")
+		}
+
+		return cc.QueryTokens(args[1], stub)
+	case AreTokensSpent:
+		if len(args) != 2 {
+			return shim.Error("request to check if tokens are spent is empty")
+		}
+
+		return cc.AreTokensSpent(args[1], stub)
+	case QueryStates:
+		if len(args) != 2 {
+			return shim.Error("request to query states is empty")
+		}
+
+		return cc.QueryStates(args[1], stub)
+	default:
+		return shim.Error(fmt.Sprintf("function [%s] not recognized", f))
+	}
+}
+
 func (cc *TokenChaincode) Invoke(stub shim.ChaincodeStubInterface) (res *pb.Response) {
 	txID := stub.GetTxID()
 	defer func() {
@@ -116,51 +166,11 @@ func (cc *TokenChaincode) Invoke(stub shim.ChaincodeStubInterface) (res *pb.Resp
 	}()
 
 	args := stub.GetArgs()
-	switch l := len(args); l {
-	case 0:
+	if len(args) == 0 {
 		return shim.Error("missing parameters")
-	default:
-		logger.Debugf("[%s] %s", txID, string(args[0]))
-		switch f := string(args[0]); f {
-		case InvokeFunction:
-			if len(args) != 1 {
-				return shim.Error("empty token request")
-			}
-			// extract token request from transient
-			t, err := stub.GetTransient()
-			if err != nil {
-				return shim.Error("failed getting transient")
-			}
-			tokenRequest, ok := t["token_request"]
-			if !ok {
-				return shim.Error("failed getting token request, entry not found")
-			}
-
-			return cc.ProcessRequest(tokenRequest, stub)
-		case QueryPublicParamsFunction:
-			return cc.QueryPublicParams(stub)
-		case QueryTokensFunctions:
-			if len(args) != 2 {
-				return shim.Error("request to retrieve tokens is empty")
-			}
-
-			return cc.QueryTokens(args[1], stub)
-		case AreTokensSpent:
-			if len(args) != 2 {
-				return shim.Error("request to check if tokens are spent is empty")
-			}
-
-			return cc.AreTokensSpent(args[1], stub)
-		case QueryStates:
-			if len(args) != 2 {
-				return shim.Error("request to query states is empty")
-			}
-
-			return cc.QueryStates(args[1], stub)
-		default:
-			return shim.Error(fmt.Sprintf("function [%s] not recognized", f))
-		}
 	}
+
+	return cc.dispatchInvoke(txID, args, stub)
 }
 
 func (cc *TokenChaincode) Params(builtInParams string) ([]byte, error) {

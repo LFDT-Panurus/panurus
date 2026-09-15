@@ -76,6 +76,8 @@ func NewKeyManager(
 }
 
 // NewKeyManagerWithSchema creates a new KeyManager with the passed schema manager and schema name
+//
+//nolint:gocognit // idemix key import/credential-verification setup; extraction risks disturbing crypto key material handling.
 func NewKeyManagerWithSchema(
 	conf *crypto.Config,
 	sigType bccsp.SignatureType,

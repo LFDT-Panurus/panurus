@@ -83,27 +83,27 @@ func LoadLockConfig(cp ConfigProvider) *LockConfig {
 		return cfg
 	}
 
+	applyLockConfigRaw(cfg, raw)
+
+	return cfg
+}
+
+// applyLockConfigRaw overlays the values from raw onto cfg, skipping any field that
+// is unset or fails validation so that the corresponding default is kept.
+func applyLockConfigRaw(cfg *LockConfig, raw LockConfigRaw) {
 	// Apply max retries if valid
 	if raw.MaxRetries > 0 {
 		cfg.MaxRetries = raw.MaxRetries
 	}
 
 	// Apply initial backoff if valid
-	if raw.InitialBackoff != "" {
-		if duration, err := time.ParseDuration(raw.InitialBackoff); err == nil && duration > 0 {
-			cfg.InitialBackoff = duration
-		} else {
-			logging.MustGetLogger().Warnf("invalid initialBackoff value [%s], using default", raw.InitialBackoff)
-		}
+	if duration, ok := parseLockBackoffDuration("initialBackoff", raw.InitialBackoff); ok {
+		cfg.InitialBackoff = duration
 	}
 
 	// Apply max backoff if valid
-	if raw.MaxBackoff != "" {
-		if duration, err := time.ParseDuration(raw.MaxBackoff); err == nil && duration > 0 {
-			cfg.MaxBackoff = duration
-		} else {
-			logging.MustGetLogger().Warnf("invalid maxBackoff value [%s], using default", raw.MaxBackoff)
-		}
+	if duration, ok := parseLockBackoffDuration("maxBackoff", raw.MaxBackoff); ok {
+		cfg.MaxBackoff = duration
 	}
 
 	// Apply backoff multiplier if valid
@@ -115,8 +115,23 @@ func LoadLockConfig(cp ConfigProvider) *LockConfig {
 	if raw.JitterFactor >= 0 && raw.JitterFactor <= 1.0 {
 		cfg.JitterFactor = raw.JitterFactor
 	}
+}
 
-	return cfg
+// parseLockBackoffDuration parses raw as a duration for the named lock config field.
+// It returns ok=false (and logs a warning, except when raw is empty) if raw is empty,
+// malformed, or non-positive, so the caller can fall back to the current default.
+func parseLockBackoffDuration(fieldName, raw string) (time.Duration, bool) {
+	if raw == "" {
+		return 0, false
+	}
+
+	if duration, err := time.ParseDuration(raw); err == nil && duration > 0 {
+		return duration, true
+	}
+
+	logging.MustGetLogger().Warnf("invalid %s value [%s], using default", fieldName, raw)
+
+	return 0, false
 }
 
 // Adapter to make config.Configuration compatible with ConfigProvider interface

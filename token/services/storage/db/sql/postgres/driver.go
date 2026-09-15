@@ -84,130 +84,106 @@ func NewDriverWithDbProvider(config driver3.Config, dbProvider fscPostgres.DbPro
 // newTokenStoreProvider returns a lazy provider for TokenStore.
 func newTokenStoreProvider(dbProvider fscPostgres.DbProvider, tableNamesConfig common3.TableNamesConfig) lazy.Provider[fscPostgres.Config, *TokenStore] {
 	return lazy.NewProviderWithKeyMapper(key, func(o fscPostgres.Config) (*TokenStore, error) {
-		opts := fscPostgres.Opts{
-			DataSource:      o.DataSource,
-			MaxOpenConns:    o.MaxOpenConns,
-			MaxIdleConns:    *o.MaxIdleConns,
-			MaxIdleTime:     *o.MaxIdleTime,
-			TablePrefix:     o.TablePrefix,
-			TableNameParams: o.TableNameParams,
-			Tracing:         o.Tracing,
-		}
-		dbs, err := dbProvider.Get(opts)
-		if err != nil {
-			return nil, err
-		}
-		tableNames, err := common3.GetTableNamesWithOverrides(o.TablePrefix, tableNamesConfig, o.TableNameParams...)
-		if err != nil {
-			return nil, err
-		}
-
-		// notifier
-		notifier, err := NewTokenNotifier(dbs, tableNames, o.DataSource)
-		if err != nil {
-			return nil, err
-		}
-		if o.SkipCreateTable {
-			notifier.skipSchemaManagement()
-		}
-
-		// db
-		p, err := NewTokenStoreWithNotifier(dbs, tableNames, notifier)
-		if err != nil {
-			return nil, err
-		}
-		if !o.SkipCreateTable {
-			if err := p.CreateSchema(); err != nil {
-				return nil, err
-			}
-		}
-
-		return p, nil
+		return newTokenStoreFromConfig(dbProvider, tableNamesConfig, o)
 	})
+}
+
+// newTokenStoreFromConfig builds a TokenStore and its change notifier for
+// the given Postgres configuration, creating their schemas unless
+// o.SkipCreateTable is set.
+func newTokenStoreFromConfig(dbProvider fscPostgres.DbProvider, tableNamesConfig common3.TableNamesConfig, o fscPostgres.Config) (*TokenStore, error) {
+	opts := fscPostgres.Opts{
+		DataSource:      o.DataSource,
+		MaxOpenConns:    o.MaxOpenConns,
+		MaxIdleConns:    *o.MaxIdleConns,
+		MaxIdleTime:     *o.MaxIdleTime,
+		TablePrefix:     o.TablePrefix,
+		TableNameParams: o.TableNameParams,
+		Tracing:         o.Tracing,
+	}
+	dbs, err := dbProvider.Get(opts)
+	if err != nil {
+		return nil, err
+	}
+	tableNames, err := common3.GetTableNamesWithOverrides(o.TablePrefix, tableNamesConfig, o.TableNameParams...)
+	if err != nil {
+		return nil, err
+	}
+
+	// notifier
+	notifier, err := NewTokenNotifier(dbs, tableNames, o.DataSource)
+	if err != nil {
+		return nil, err
+	}
+	if o.SkipCreateTable {
+		notifier.skipSchemaManagement()
+	}
+
+	// db
+	p, err := NewTokenStoreWithNotifier(dbs, tableNames, notifier)
+	if err != nil {
+		return nil, err
+	}
+	if !o.SkipCreateTable {
+		if err := p.CreateSchema(); err != nil {
+			return nil, err
+		}
+	}
+
+	return p, nil
 }
 
 // newIdentityStoreProvider returns a lazy provider for IdentityStore.
 func newIdentityStoreProvider(dbProvider fscPostgres.DbProvider, tableNamesConfig common3.TableNamesConfig) lazy.Provider[fscPostgres.Config, *IdentityStore] {
 	return lazy.NewProviderWithKeyMapper(key, func(o fscPostgres.Config) (*IdentityStore, error) {
-		opts := fscPostgres.Opts{
-			DataSource:      o.DataSource,
-			MaxOpenConns:    o.MaxOpenConns,
-			MaxIdleConns:    *o.MaxIdleConns,
-			MaxIdleTime:     *o.MaxIdleTime,
-			TablePrefix:     o.TablePrefix,
-			TableNameParams: o.TableNameParams,
-			Tracing:         o.Tracing,
-		}
-		dbs, err := dbProvider.Get(opts)
-		if err != nil {
-			return nil, err
-		}
-		tableNames, err := common3.GetTableNamesWithOverrides(o.TablePrefix, tableNamesConfig, o.TableNameParams...)
-		if err != nil {
-			return nil, err
-		}
-
-		// Create identity store with notifier (includes advisory lock)
-		p, err := NewIdentityStore(dbs, tableNames, o.DataSource)
-		if err != nil {
-			return nil, err
-		}
-		if o.SkipCreateTable {
-			p.notifier.skipSchemaManagement()
-		}
-
-		if !o.SkipCreateTable {
-			if err := p.CreateSchema(); err != nil {
-				return nil, err
-			}
-		}
-
-		return p, nil
+		return newIdentityStoreFromConfig(dbProvider, tableNamesConfig, o)
 	})
+}
+
+// newIdentityStoreFromConfig builds an IdentityStore (with its advisory-lock
+// notifier) for the given Postgres configuration, creating their schemas
+// unless o.SkipCreateTable is set.
+func newIdentityStoreFromConfig(dbProvider fscPostgres.DbProvider, tableNamesConfig common3.TableNamesConfig, o fscPostgres.Config) (*IdentityStore, error) {
+	opts := fscPostgres.Opts{
+		DataSource:      o.DataSource,
+		MaxOpenConns:    o.MaxOpenConns,
+		MaxIdleConns:    *o.MaxIdleConns,
+		MaxIdleTime:     *o.MaxIdleTime,
+		TablePrefix:     o.TablePrefix,
+		TableNameParams: o.TableNameParams,
+		Tracing:         o.Tracing,
+	}
+	dbs, err := dbProvider.Get(opts)
+	if err != nil {
+		return nil, err
+	}
+	tableNames, err := common3.GetTableNamesWithOverrides(o.TablePrefix, tableNamesConfig, o.TableNameParams...)
+	if err != nil {
+		return nil, err
+	}
+
+	// Create identity store with notifier (includes advisory lock)
+	p, err := NewIdentityStore(dbs, tableNames, o.DataSource)
+	if err != nil {
+		return nil, err
+	}
+	if o.SkipCreateTable {
+		p.notifier.skipSchemaManagement()
+	}
+
+	if !o.SkipCreateTable {
+		if err := p.CreateSchema(); err != nil {
+			return nil, err
+		}
+	}
+
+	return p, nil
 }
 
 // newTransactionStoreProvider returns a lazy provider for TransactionStore with notifier support.
 func newTransactionStoreProvider(dbProvider fscPostgres.DbProvider, tableNamesConfig common3.TableNamesConfig) lazy.Provider[fscPostgres.Config, *TransactionStore] {
 	return lazy.NewProviderWithKeyMapper(key, func(o fscPostgres.Config) (*TransactionStore, error) {
-		opts := fscPostgres.Opts{
-			DataSource:      o.DataSource,
-			MaxOpenConns:    o.MaxOpenConns,
-			MaxIdleConns:    *o.MaxIdleConns,
-			MaxIdleTime:     *o.MaxIdleTime,
-			TablePrefix:     o.TablePrefix,
-			TableNameParams: o.TableNameParams,
-			Tracing:         o.Tracing,
-		}
-		dbs, err := dbProvider.Get(opts)
-		if err != nil {
-			return nil, err
-		}
-		tableNames, err := common3.GetTableNamesWithOverrides(o.TablePrefix, tableNamesConfig, o.TableNameParams...)
-		if err != nil {
-			return nil, err
-		}
-
-		// notifier
-		notifier, err := NewTransactionNotifier(dbs, tableNames, o.DataSource)
-		if err != nil {
-			return nil, err
-		}
-		if o.SkipCreateTable {
-			notifier.skipSchemaManagement()
-		}
-
-		// db
-		p, err := NewTransactionStoreWithNotifier(dbs, tableNames, notifier)
-		if err != nil {
-			return nil, err
-		}
-		if !o.SkipCreateTable {
-			if err := p.CreateSchema(); err != nil {
-				return nil, err
-			}
-		}
-
-		return p, nil
+		return newTransactionStoreFromConfig(dbProvider, tableNamesConfig, o)
 	})
 }
 
@@ -250,6 +226,51 @@ func newWalletStoreProvider(d *Driver, dbProvider fscPostgres.DbProvider, tableN
 
 		return p, nil
 	})
+}
+
+// newTransactionStoreFromConfig builds a TransactionStore and its change
+// notifier for the given Postgres configuration, creating their schemas
+// unless o.SkipCreateTable is set.
+func newTransactionStoreFromConfig(dbProvider fscPostgres.DbProvider, tableNamesConfig common3.TableNamesConfig, o fscPostgres.Config) (*TransactionStore, error) {
+	opts := fscPostgres.Opts{
+		DataSource:      o.DataSource,
+		MaxOpenConns:    o.MaxOpenConns,
+		MaxIdleConns:    *o.MaxIdleConns,
+		MaxIdleTime:     *o.MaxIdleTime,
+		TablePrefix:     o.TablePrefix,
+		TableNameParams: o.TableNameParams,
+		Tracing:         o.Tracing,
+	}
+	dbs, err := dbProvider.Get(opts)
+	if err != nil {
+		return nil, err
+	}
+	tableNames, err := common3.GetTableNamesWithOverrides(o.TablePrefix, tableNamesConfig, o.TableNameParams...)
+	if err != nil {
+		return nil, err
+	}
+
+	// notifier
+	notifier, err := NewTransactionNotifier(dbs, tableNames, o.DataSource)
+	if err != nil {
+		return nil, err
+	}
+	if o.SkipCreateTable {
+		notifier.skipSchemaManagement()
+	}
+
+	// db
+	p, err := NewTransactionStoreWithNotifier(dbs, tableNames, notifier)
+	if err != nil {
+		return nil, err
+	}
+	if !o.SkipCreateTable {
+		if err := p.CreateSchema(); err != nil {
+			return nil, err
+		}
+	}
+
+	return p, nil
 }
 
 // NewTokenLock returns a new TokenLockStore.

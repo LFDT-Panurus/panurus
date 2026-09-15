@@ -173,7 +173,6 @@ func (u *Update) Where(where string) *Update {
 }
 
 func (u *Update) Compile() (string, error) {
-	counter := 1
 	sb := new(strings.Builder)
 	_, _ = sb.WriteString(u.stmt)
 	_, _ = sb.WriteString(" ")
@@ -182,39 +181,64 @@ func (u *Update) Compile() (string, error) {
 	}
 	_, _ = sb.WriteString(u.table)
 	_, _ = sb.WriteString(" SET ")
-	splitRows := strings.Split(u.rows, ",")
+
+	counter, err := writeUpdateSetClause(sb, u.rows, 1)
+	if err != nil {
+		return "", err
+	}
+
+	if err := writeUpdateWhereClause(sb, u.where, counter); err != nil {
+		return "", err
+	}
+
+	return sb.String(), nil
+}
+
+// writeUpdateSetClause writes "<col> = $N, <col> = $N+1, ..." to sb for each
+// comma-separated column in rows, starting the placeholder numbering at
+// counter, and returns the next available placeholder number.
+func writeUpdateSetClause(sb *strings.Builder, rows string, counter int) (int, error) {
+	splitRows := strings.Split(rows, ",")
 	for i, row := range splitRows {
 		if _, err := fmt.Fprintf(sb, "%s = $%d", strings.TrimSpace(row), counter); err != nil {
-			return "", err
+			return counter, err
 		}
 		if i < len(splitRows)-1 {
 			_, _ = sb.WriteString(", ")
 		}
 		counter++
 	}
-	// sb.WriteString(" ")
 
-	if len(u.where) > 0 {
-		if !strings.HasPrefix(u.where, "WHERE") {
-			_, _ = sb.WriteString(" WHERE ")
-		}
-		if !strings.Contains(u.where, "$") {
-			splitWhere := strings.Split(u.where, ",")
-			for i, row := range splitWhere {
-				if _, err := fmt.Fprintf(sb, "%s = $%d", row, counter); err != nil {
-					return "", err
-				}
-				if i < len(splitWhere)-1 {
-					_, _ = sb.WriteString(" AND ")
-				}
-				counter++
+	return counter, nil
+}
+
+// writeUpdateWhereClause appends the WHERE clause to sb. If where already
+// contains bound placeholders ("$"), it is copied verbatim; otherwise each
+// comma-separated column is turned into "<col> = $N" using its own
+// placeholder, starting at counter.
+func writeUpdateWhereClause(sb *strings.Builder, where string, counter int) error {
+	if len(where) == 0 {
+		return nil
+	}
+	if !strings.HasPrefix(where, "WHERE") {
+		_, _ = sb.WriteString(" WHERE ")
+	}
+	if !strings.Contains(where, "$") {
+		splitWhere := strings.Split(where, ",")
+		for i, row := range splitWhere {
+			if _, err := fmt.Fprintf(sb, "%s = $%d", row, counter); err != nil {
+				return err
 			}
-		} else {
-			_, _ = sb.WriteString(u.where)
+			if i < len(splitWhere)-1 {
+				_, _ = sb.WriteString(" AND ")
+			}
+			counter++
 		}
+	} else {
+		_, _ = sb.WriteString(where)
 	}
 
-	return sb.String(), nil
+	return nil
 }
 
 type Delete struct {

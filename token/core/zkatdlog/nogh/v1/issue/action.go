@@ -198,6 +198,8 @@ func (i *Action) IsGraphHiding() bool {
 }
 
 // Validate ensures the Action is well-formed.
+//
+//nolint:gocognit // ZK issue action validation against the public parameters; extraction risks disturbing which fields are checked against which commitment.
 func (i *Action) Validate() error {
 	if i.Issuer.IsNone() {
 		return ErrIssuerNotSet
@@ -311,6 +313,8 @@ func (i *Action) Serialize() ([]byte, error) {
 }
 
 // Deserialize unmarshals the Action from its protobuf-encoded byte representation.
+//
+//nolint:gocognit // parses raw bytes directly into the crypto structures Validate depends on; a mis-split risks a field landing in the wrong place with no compiler error to catch it.
 func (i *Action) Deserialize(raw []byte) error {
 	issueAction := &actions.IssueAction{}
 	err := proto.Unmarshal(raw, issueAction)

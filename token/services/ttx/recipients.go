@@ -209,44 +209,54 @@ func RequestPolicyIdentity(context view.Context, policy string, ids []view.Ident
 	return pseudonymBoxed.(view.Identity), nil
 }
 
+// resolveRecipientIdentity resolves the identity for a single requested recipient: if there's no
+// local wallet for it, it requests the identity remotely; otherwise it uses the recipient's
+// already-known RecipientData, or fetches a fresh identity from the local wallet. It also
+// reports whether the recipient turned out to be local.
+func (f *RequestRecipientIdentityView) resolveRecipientIdentity(context view.Context, tms *token.ManagementService, recipient Recipient, multiSig bool) (token.Identity, bool, error) {
+	w, err := tms.WalletManager().OwnerWallet(context.Context(), recipient.Identity)
+	if err != nil {
+		w = nil
+	}
+
+	if isSameNode := w != nil; !isSameNode {
+		identity, err := f.callWithRecipientData(context, &recipient, multiSig, f.Policy)
+		if err != nil {
+			return nil, false, errors.Wrapf(err, "failed to get recipient identity")
+		}
+
+		return identity, false, nil
+	}
+
+	if isRemoteRecipient := recipient.RecipientData != nil; isRemoteRecipient {
+		return recipient.RecipientData.Identity, true, nil
+	}
+	if w == nil {
+		return nil, true, errors.Errorf("wallet [%s] not found", string(recipient.Identity))
+	}
+	identity, err := w.GetRecipientIdentity(context.Context())
+	if err != nil {
+		return nil, true, errors.Wrapf(err, "failed to get recipient identity")
+	}
+
+	return identity, true, nil
+}
+
 func (f *RequestRecipientIdentityView) Call(context view.Context) (any, error) {
 	results := make([]token.Identity, len(f.Recipients))
 	local := make([]bool, len(f.Recipients))
-	var err error
 	tms, err := token.GetManagementService(context, token.WithTMSID(f.TMSID))
 	if err != nil {
 		return nil, errors.Wrapf(err, "failed getting token management service [%s]", f.TMSID)
 	}
 	multiSig := len(f.Recipients) > 1
 	for i, recipient := range f.Recipients {
-		local[i] = true
-		w, err := tms.WalletManager().OwnerWallet(context.Context(), recipient.Identity)
+		identity, isLocal, err := f.resolveRecipientIdentity(context, tms, recipient, multiSig)
 		if err != nil {
-			w = nil
+			return nil, err
 		}
-
-		if isSameNode := w != nil; !isSameNode {
-			results[i], err = f.callWithRecipientData(context, &recipient, multiSig, f.Policy)
-			if err != nil {
-				return nil, errors.Wrapf(err, "failed to get recipient identity")
-			}
-			local[i] = false
-
-			continue
-		}
-
-		if isRemoteRecipient := recipient.RecipientData != nil; isRemoteRecipient {
-			results[i] = recipient.RecipientData.Identity
-
-			continue
-		}
-		if w == nil {
-			return nil, errors.Errorf("wallet [%s] not found", string(recipient.Identity))
-		}
-		results[i], err = w.GetRecipientIdentity(context.Context())
-		if err != nil {
-			return nil, errors.Wrapf(err, "failed to get recipient identity")
-		}
+		results[i] = identity
+		local[i] = isLocal
 	}
 	if !multiSig {
 		return results[0], nil
@@ -479,6 +489,31 @@ func RespondRequestRecipientIdentityUsingWallet(context view.Context, wallet str
 	return id.(view.Identity), nil
 }
 
+// resolveRecipientData returns the recipient data and identity to respond with: if the request
+// already carries RecipientData (the echo path), it's validated against the wallet; otherwise a
+// fresh identity is generated from the wallet (the fresh path). isEcho reports which path was
+// taken.
+func resolveRecipientData(context view.Context, w *token.OwnerWallet, wallet string, recipientRequest *RecipientRequest) (recipientData *RecipientData, recipientIdentity view.Identity, isEcho bool, err error) {
+	if recipientRequest.RecipientData != nil {
+		recipientData = recipientRequest.RecipientData
+		recipientIdentity = recipientData.Identity
+		if !w.Contains(context.Context(), recipientIdentity) {
+			return nil, nil, false, errors.Errorf("cannot find identity [%s] in wallet [%s:%s]", recipientIdentity, wallet, recipientRequest.TMSID)
+		}
+
+		return recipientData, recipientIdentity, true, nil
+	}
+
+	logger.DebugfContext(context.Context(), "generate_identity")
+	recipientData, err = w.GetRecipientData(context.Context())
+	if err != nil {
+		return nil, nil, false, errors.Wrapf(err, "failed to get recipient identity")
+	}
+
+	return recipientData, recipientData.Identity, false, nil
+}
+
+//nolint:gocognit // view handshake that both derives a wallet identity and decides which response to sign and send back; splitting the decision from the response risks sending a response that does not match what was decided.
 func (s *RespondRequestRecipientIdentityView) Call(context view.Context) (any, error) {
 	session := session2.NewTypedSessionFromContext(context)
 	recipientRequest := &RecipientRequest{}
@@ -510,23 +545,9 @@ func (s *RespondRequestRecipientIdentityView) Call(context view.Context) (any, e
 		return nil, errors.Wrapf(err, "wallet [%s:%s] not found", wallet, recipientRequest.TMSID)
 	}
 
-	var recipientData *RecipientData
-	var recipientIdentity view.Identity
-	isEcho := false
-	if recipientRequest.RecipientData != nil {
-		recipientData = recipientRequest.RecipientData
-		recipientIdentity = recipientData.Identity
-		if !w.Contains(context.Context(), recipientIdentity) {
-			return nil, errors.Errorf("cannot find identity [%s] in wallet [%s:%s]", recipientIdentity, wallet, recipientRequest.TMSID)
-		}
-		isEcho = true
-	} else {
-		logger.DebugfContext(context.Context(), "generate_identity")
-		recipientData, err = w.GetRecipientData(context.Context())
-		if err != nil {
-			return nil, errors.Wrapf(err, "failed to get recipient identity")
-		}
-		recipientIdentity = recipientData.Identity
+	recipientData, recipientIdentity, isEcho, err := resolveRecipientData(context, w, wallet, recipientRequest)
+	if err != nil {
+		return nil, err
 	}
 
 	// Sign the request-bound attestation to prove key ownership when the key is local.
@@ -628,12 +649,24 @@ func (s *RespondRequestRecipientIdentityView) handleMultisig(
 		return err
 	}
 
+	if err := registerMultisigAuditInfos(context, wm, multisigRecipientData, recipientIdentity, multisigIdentities, auditInfos); err != nil {
+		return err
+	}
+
+	return bindMultisigNodes(context, multisigRecipientData)
+}
+
+// registerMultisigAuditInfos registers the audit info for every component identity of the
+// multisig recipient (other than recipientIdentity itself, already registered by the caller).
+// multisigIdentities and auditInfos are the already-unwrapped and validated component identities
+// and audit infos (see validateMultisigRecipientData).
+func registerMultisigAuditInfos(context view.Context, wm *token.WalletManager, multisigRecipientData *MultisigRecipientData, recipientIdentity token.Identity, multisigIdentities []token.Identity, auditInfos [][]byte) error {
 	// register the audit info for each party too
 	for i, identity := range multisigIdentities {
 		if identity.Equal(recipientIdentity) {
 			continue
 		}
-		err = wm.RegisterRecipientIdentity(context.Context(), &RecipientData{
+		err := wm.RegisterRecipientIdentity(context.Context(), &RecipientData{
 			Identity:               identity,
 			AuditInfo:              auditInfos[i],
 			TokenMetadata:          multisigRecipientData.RecipientData.TokenMetadata,
@@ -644,11 +677,15 @@ func (s *RespondRequestRecipientIdentityView) handleMultisig(
 		}
 	}
 
-	// Update the Endpoint Resolver
+	return nil
+}
+
+// bindMultisigNodes updates the endpoint resolver, binding every multisig node to its
+// corresponding recipient identity.
+func bindMultisigNodes(context view.Context, multisigRecipientData *MultisigRecipientData) error {
 	resolver := endpoint.GetService(context)
 	for i, node := range multisigRecipientData.Nodes {
-		err = resolver.Bind(context.Context(), node, multisigRecipientData.Recipients[i])
-		if err != nil {
+		if err := resolver.Bind(context.Context(), node, multisigRecipientData.Recipients[i]); err != nil {
 			return errors.Wrapf(err, "failed to bind node identity to recipient identity")
 		}
 	}
@@ -840,6 +877,96 @@ func ExchangeRecipientIdentities(context view.Context, walletID string, recipien
 	return ids.([]view.Identity)[0], ids.([]view.Identity)[1], nil
 }
 
+// exchangeLocally handles the case where f.Other has a local wallet on this node: both
+// identities can be fetched directly, with no network exchange needed.
+func (f *ExchangeRecipientIdentitiesView) exchangeLocally(context view.Context, ts *token.ManagementService, otherWallet *token.OwnerWallet) ([]view.Identity, error) {
+	other, err := otherWallet.GetRecipientIdentity(context.Context())
+	if err != nil {
+		return nil, err
+	}
+
+	meWallet, err := ts.WalletManager().OwnerWallet(context.Context(), f.Wallet)
+	if err != nil {
+		return nil, errors.Wrapf(err, "wallet [%s:%s] not found", f.Wallet, f.TMSID)
+	}
+	me, err := meWallet.GetRecipientIdentity(context.Context())
+	if err != nil {
+		return nil, err
+	}
+
+	return []view.Identity{me, other}, nil
+}
+
+// exchangeRemotely handles the case where f.Other has no local wallet: it sends our own
+// recipient data over a session, receives the remote party's, verifies its key-ownership
+// attestation, registers it, and binds the endpoint resolver both ways.
+func (f *ExchangeRecipientIdentitiesView) exchangeRemotely(context view.Context, ts *token.ManagementService) ([]view.Identity, error) {
+	session, err := session2.NewTypedSessionToParty(context, f.Other)
+	if err != nil {
+		return nil, err
+	}
+
+	w, err := ts.WalletManager().OwnerWallet(context.Context(), f.Wallet)
+	if err != nil {
+		return nil, errors.Wrapf(err, "wallet [%s:%s] not found", f.Wallet, f.TMSID)
+	}
+	localRecipientData, err := w.GetRecipientData(context.Context())
+	if err != nil {
+		return nil, errors.WithMessagef(err, "failed getting recipient data, wallet [%s]", w.ID())
+	}
+	nonce, err := GetRandomNonce()
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to generate nonce for exchange request")
+	}
+	request := &ExchangeRecipientRequest{
+		TMSID:         f.TMSID,
+		WalletID:      f.Other,
+		RecipientData: localRecipientData,
+		Nonce:         nonce,
+	}
+	if err = session.SendTyped(context.Context(), request, TypeExchangeRecipientRequest); err != nil {
+		return nil, err
+	}
+
+	resp := &ExchangeRecipientResponse{}
+	if err = session.ReceiveTyped(TypeExchangeRecipientResp, resp); err != nil {
+		return nil, err
+	}
+	if resp.RecipientData == nil {
+		return nil, errors.New("exchange responder returned empty recipient data")
+	}
+
+	// Verify key-ownership attestation
+	verifier, err := ts.SigService().OwnerVerifier(context.Context(), resp.RecipientData.Identity)
+	if err != nil {
+		return nil, errors.Wrapf(err, "failed to get verifier for exchange recipient")
+	}
+	message, err := buildAttestationMessage(request.TMSID, request.WalletID, resp.RecipientData.Identity, false, "", request.Nonce, session.Info().ID, context.ID())
+	if err != nil {
+		return nil, errors.Wrapf(err, "failed to build attestation message")
+	}
+	if err = verifier.Verify(message, resp.Signature); err != nil {
+		return nil, errors.Wrapf(err, "exchange recipient key-ownership attestation failed")
+	}
+
+	if err = ts.WalletManager().RegisterRecipientIdentity(context.Context(), resp.RecipientData); err != nil {
+		return nil, err
+	}
+
+	logger.DebugfContext(context.Context(), "bind [%s] to other [%s]", resp.RecipientData.Identity, f.Other)
+	resolver := endpoint.GetService(context)
+	if err = resolver.Bind(context.Context(), f.Other, resp.RecipientData.Identity); err != nil {
+		return nil, err
+	}
+
+	logger.DebugfContext(context.Context(), "bind me [%s] to [%s]", localRecipientData.Identity, context.Me())
+	if err = resolver.Bind(context.Context(), context.Me(), localRecipientData.Identity); err != nil {
+		return nil, err
+	}
+
+	return []view.Identity{localRecipientData.Identity, resp.RecipientData.Identity}, nil
+}
+
 func (f *ExchangeRecipientIdentitiesView) Call(context view.Context) (any, error) {
 	ts, err := token.GetManagementService(context, token.WithTMSID(f.TMSID))
 	if err != nil {
@@ -847,96 +974,10 @@ func (f *ExchangeRecipientIdentitiesView) Call(context view.Context) (any, error
 	}
 
 	if otherWallet, err := ts.WalletManager().OwnerWallet(context.Context(), f.Other); err == nil {
-		other, err := otherWallet.GetRecipientIdentity(context.Context())
-		if err != nil {
-			return nil, err
-		}
-
-		meWallet, err := ts.WalletManager().OwnerWallet(context.Context(), f.Wallet)
-		if err != nil {
-			return nil, errors.Wrapf(err, "wallet [%s:%s] not found", f.Wallet, f.TMSID)
-		}
-		me, err := meWallet.GetRecipientIdentity(context.Context())
-
-		if err != nil {
-			return nil, err
-		}
-
-		return []view.Identity{me, other}, nil
-	} else {
-		session, err := session2.NewTypedSessionToParty(context, f.Other)
-		if err != nil {
-			return nil, err
-		}
-
-		w, err := ts.WalletManager().OwnerWallet(context.Context(), f.Wallet)
-		if err != nil {
-			return nil, errors.Wrapf(err, "wallet [%s:%s] not found", f.Wallet, f.TMSID)
-		}
-		localRecipientData, err := w.GetRecipientData(context.Context())
-		if err != nil {
-			return nil, errors.WithMessagef(err, "failed getting recipient data, wallet [%s]", w.ID())
-		}
-		nonce, err := GetRandomNonce()
-		if err != nil {
-			return nil, errors.Wrap(err, "failed to generate nonce for exchange request")
-		}
-		request := &ExchangeRecipientRequest{
-			TMSID:         f.TMSID,
-			WalletID:      f.Other,
-			RecipientData: localRecipientData,
-			Nonce:         nonce,
-		}
-		message, err := buildAttestationMessage(request.TMSID, request.WalletID, localRecipientData.Identity, false, "", request.Nonce, session.Info().ID, context.ID())
-		if err != nil {
-			return nil, errors.Wrap(err, "failed to build exchange initiator attestation message")
-		}
-		request.Signature, err = signRecipientAttestation(context.Context(), w, message, localRecipientData.Identity, true)
-		if err != nil {
-			return nil, errors.Wrap(err, "failed to sign exchange initiator attestation")
-		}
-		if err = session.SendTyped(context.Context(), request, TypeExchangeRecipientRequest); err != nil {
-			return nil, err
-		}
-
-		resp := &ExchangeRecipientResponse{}
-		if err = session.ReceiveTyped(TypeExchangeRecipientResp, resp); err != nil {
-			return nil, err
-		}
-		if resp.RecipientData == nil {
-			return nil, errors.New("exchange responder returned empty recipient data")
-		}
-
-		// Verify key-ownership attestation
-		verifier, err := ts.SigService().OwnerVerifier(context.Context(), resp.RecipientData.Identity)
-		if err != nil {
-			return nil, errors.Wrapf(err, "failed to get verifier for exchange recipient")
-		}
-		message, err = buildAttestationMessage(request.TMSID, request.WalletID, resp.RecipientData.Identity, false, "", request.Nonce, session.Info().ID, context.ID())
-		if err != nil {
-			return nil, errors.Wrapf(err, "failed to build attestation message")
-		}
-		if err = verifier.Verify(message, resp.Signature); err != nil {
-			return nil, errors.Wrapf(err, "exchange recipient key-ownership attestation failed")
-		}
-
-		if err = ts.WalletManager().RegisterRecipientIdentity(context.Context(), resp.RecipientData); err != nil {
-			return nil, err
-		}
-
-		logger.DebugfContext(context.Context(), "bind [%s] to other [%s]", resp.RecipientData.Identity, f.Other)
-		resolver := endpoint.GetService(context)
-		if err = resolver.Bind(context.Context(), f.Other, resp.RecipientData.Identity); err != nil {
-			return nil, err
-		}
-
-		logger.DebugfContext(context.Context(), "bind me [%s] to [%s]", localRecipientData.Identity, context.Me())
-		if err = resolver.Bind(context.Context(), context.Me(), localRecipientData.Identity); err != nil {
-			return nil, err
-		}
-
-		return []view.Identity{localRecipientData.Identity, resp.RecipientData.Identity}, nil
+		return f.exchangeLocally(context, ts, otherWallet)
 	}
+
+	return f.exchangeRemotely(context, ts)
 }
 
 type RespondExchangeRecipientIdentitiesView struct {
@@ -963,6 +1004,7 @@ func RespondExchangeRecipientIdentities(context view.Context, opts ...token.Serv
 	return ids.([]view.Identity)[0], ids.([]view.Identity)[1], nil
 }
 
+//nolint:gocognit // same view-handshake shape as RespondRequestRecipientIdentityView.Call above.
 func (s *RespondExchangeRecipientIdentitiesView) Call(context view.Context) (any, error) {
 	session := session2.NewTypedSessionFromContext(context)
 

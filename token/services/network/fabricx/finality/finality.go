@@ -450,6 +450,8 @@ func (n *NSListenerManager) getStatuses(txIDs []string) (map[string]int32, error
 // resolveBatch batch-fetches the token-request hash for the valid terminal txs
 // and hands each off to the worker pool for notification. Non-terminal txs stay
 // pending for the next sweep.
+//
+//nolint:gocognit // finality status resolution for a batch of listeners; the dispatch across status codes is inherently a single decision point and a partial extraction would just move state mutation into helper parameters.
 func (n *NSListenerManager) resolveBatch(ctx context.Context, statuses map[string]int32) {
 	type terminalTx struct {
 		txID    string

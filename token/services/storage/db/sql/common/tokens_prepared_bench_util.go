@@ -26,6 +26,8 @@ import (
 // UnspentTokensIteratorBy is dynamic (its shape depends on whether walletID /
 // tokenType are empty), so this comparison fixes both parameters to non-empty
 // values matching the seeded data, which is the common case in production.
+//
+//nolint:gocognit // benchmark harness comparing iterator strategies; the setup/measure/compare steps share state that a split would only move into parameters.
 func RunUnspentTokensIteratorByPreparedComparison(b *testing.B, store *TokenStore) {
 	b.Helper()
 

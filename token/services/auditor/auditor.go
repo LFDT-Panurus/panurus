@@ -522,6 +522,8 @@ func rejectMultiOwnerActions(record *token.AuditRecord) error {
 // audit (see issuedToEIDAndRH). An owner that maps to no single enrollment ID
 // leaves its input unattributed rather than booked under a guessed enrollment
 // ID, so a record keeping such an input is not fully attributed on return.
+//
+//nolint:gocognit // see the per-input resolution rationale above; the fields it fills in are interdependent in a way that resists a clean split.
 func (r *requestWrapper) completeInputsWithEmptyEID(ctx context.Context, record *token.AuditRecord) error {
 	filter := record.Inputs.ByEnrollmentID("")
 	if filter.Count() == 0 {

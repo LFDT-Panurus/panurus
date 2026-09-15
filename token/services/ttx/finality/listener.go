@@ -110,43 +110,56 @@ func (t *Listener) OnStatus(ctx context.Context, txID string, status int, messag
 	t.metrics.OnStatusDuration.Observe(time.Since(start).Seconds())
 }
 
+// handleValidStatus processes a network.Valid status change for txID: it loads (or reuses the
+// cached) token request, checks its hash against tokenRequestHash, and commits it. It returns
+// the resulting tx status (Confirmed, or Deleted on a hash mismatch) and status message.
+func (t *Listener) handleValidStatus(ctx context.Context, txID, message string, tokenRequestHash []byte) (storage.TxStatus, string, error) {
+	txStatus := storage.Confirmed
+	t.logger.DebugfContext(ctx, "get token request for [%s]", txID)
+
+	tr, msgToSign := t.tokens.GetCachedTokenRequest(txID)
+	if tr == nil {
+		// load it
+		tokenRequestRaw, err := t.ttxDB.GetTokenRequest(ctx, txID)
+		if err != nil {
+			t.logger.ErrorfContext(ctx, "failed retrieving token request [%s]: [%s]", txID, err)
+
+			return txStatus, message, errors.Errorf("failed retrieving token request [%s]: [%w]", txID, err)
+		}
+		t.logger.DebugfContext(ctx, "Read token request")
+
+		// Process token request using the hasher
+		tr, msgToSign, err = t.hasher.ProcessTokenRequest(ctx, tokenRequestRaw)
+		if err != nil {
+			return txStatus, message, errors.Errorf("failed to process token request [%s]: [%w]", txID, err)
+		}
+	}
+	t.logger.DebugfContext(ctx, "Check token request")
+	if err := t.checkTokenRequest(txID, msgToSign, tokenRequestHash); err != nil {
+		t.logger.ErrorfContext(ctx, "tx [%s], %s", txID, err)
+		t.metrics.HashMismatches.Add(1)
+
+		return storage.Deleted, err.Error(), nil
+	}
+
+	if err := Commit(ctx, t.logger, t.tokens, t.ttxDB, txID, tr); err != nil {
+		t.logger.ErrorfContext(ctx, "tx [%s], %s", txID, err)
+
+		return txStatus, message, err
+	}
+
+	return txStatus, message, nil
+}
+
 func (t *Listener) runOnStatus(ctx context.Context, txID string, status int, message string, tokenRequestHash []byte) error {
 	t.logger.DebugfContext(ctx, "tx status changed for tx [%s]: [%s]", txID, status)
 	var txStatus storage.TxStatus
 	switch status {
 	case network.Valid:
-		txStatus = storage.Confirmed
-		t.logger.DebugfContext(ctx, "get token request for [%s]", txID)
-
-		tr, msgToSign := t.tokens.GetCachedTokenRequest(txID)
-		if tr == nil {
-			// load it
-			tokenRequestRaw, err := t.ttxDB.GetTokenRequest(ctx, txID)
-			if err != nil {
-				t.logger.ErrorfContext(ctx, "failed retrieving token request [%s]: [%s]", txID, err)
-
-				return errors.Errorf("failed retrieving token request [%s]: [%w]", txID, err)
-			}
-			t.logger.DebugfContext(ctx, "Read token request")
-
-			// Process token request using the hasher
-			tr, msgToSign, err = t.hasher.ProcessTokenRequest(ctx, tokenRequestRaw)
-			if err != nil {
-				return errors.Errorf("failed to process token request [%s]: [%w]", txID, err)
-			}
-		}
-		t.logger.DebugfContext(ctx, "Check token request")
-		if err := t.checkTokenRequest(txID, msgToSign, tokenRequestHash); err != nil {
-			t.logger.ErrorfContext(ctx, "tx [%s], %s", txID, err)
-			t.metrics.HashMismatches.Add(1)
-			txStatus = storage.Deleted
-			message = err.Error()
-		} else {
-			if err := Commit(ctx, t.logger, t.tokens, t.ttxDB, txID, tr); err != nil {
-				t.logger.ErrorfContext(ctx, "tx [%s], %s", txID, err)
-
-				return err
-			}
+		var err error
+		txStatus, message, err = t.handleValidStatus(ctx, txID, message, tokenRequestHash)
+		if err != nil {
+			return err
 		}
 	case network.Invalid:
 		txStatus = storage.Deleted

@@ -41,6 +41,59 @@ type ClaimView struct {
 	*Claim
 }
 
+// resolvePreImage returns c.PreImage if already set; otherwise it scans for the pre-image via
+// c.Script and double-checks it against the ledger's transfer metadata key (retrying a few times
+// to give the committer time to catch up) before returning it.
+func resolvePreImage(ctx view.Context, c *Claim) []byte {
+	preImage := c.PreImage
+	if len(preImage) != 0 || c.Script == nil {
+		return preImage
+	}
+
+	// Scan for the pre-image
+	var err error
+	preImage, err = htlc.ScanForPreImage(
+		ctx,
+		c.Script.HashInfo.Hash,
+		c.Script.HashInfo.HashFunc,
+		c.Script.HashInfo.HashEncoding,
+		5*time.Minute,
+		token.WithTMSID(c.ScriptTMSID),
+	)
+	assert.NoError(err, "failed to receive the preImage")
+
+	// double-check the value of the key
+	tms, err := token.GetManagementService(ctx, token.WithTMSID(c.ScriptTMSID))
+	assert.NoError(err, "failed getting management service")
+	network := network.GetInstance(ctx, tms.Network(), tms.Channel())
+	assert.NotNil(network, "failed getting network")
+	ledger, err := network.Ledger()
+	assert.NoError(err, "failed getting ledger")
+	transferMetadataKey, err := ledger.TransferMetadataKey(htlc.ClaimKey(c.Script.HashInfo.Hash))
+	assert.NoError(err, "failed getting transfer metadata key")
+
+	// double-check the content of the ledger, retry a few time to give time to the committer
+	runner := utils.NewRetryRunner(logger, 3, 1*time.Second, true)
+	assert.NoError(err, runner.RunWithContext(ctx.Context(), func() error {
+		logger.Debugf("check transfer metadata key [%s]...", transferMetadataKey)
+		stateValues, err := ledger.GetStates(ctx.Context(), tms.Namespace(), transferMetadataKey)
+		if err != nil {
+			return err
+		}
+		logger.Debugf("check transfer metadata key [%s], got [%v]", transferMetadataKey, stateValues)
+		if len(stateValues) != 1 {
+			return errors.Errorf("expected 1 state, found %d", len(stateValues))
+		}
+		if !bytes.Equal(stateValues[0], c.PreImage) {
+			return errors.Errorf("pre-image mismatch [%s] vs [%s]", utils.Hashable(preImage), utils.Hashable(stateValues[0]))
+		}
+
+		return nil
+	}))
+
+	return preImage
+}
+
 func (r *ClaimView) Call(ctx view.Context) (res any, err error) {
 	var tx *htlc.Transaction
 	defer func() {
@@ -57,49 +110,7 @@ func (r *ClaimView) Call(ctx view.Context) (res any, err error) {
 		}
 	}()
 
-	preImage := r.PreImage
-	if len(preImage) == 0 && r.Script != nil {
-		// Scan for the pre-image
-		var err error
-		preImage, err = htlc.ScanForPreImage(
-			ctx,
-			r.Script.HashInfo.Hash,
-			r.Script.HashInfo.HashFunc,
-			r.Script.HashInfo.HashEncoding,
-			5*time.Minute,
-			token.WithTMSID(r.ScriptTMSID),
-		)
-		assert.NoError(err, "failed to receive the preImage")
-
-		// double-check the value of the key
-		tms, err := token.GetManagementService(ctx, token.WithTMSID(r.ScriptTMSID))
-		assert.NoError(err, "failed getting management service")
-		network := network.GetInstance(ctx, tms.Network(), tms.Channel())
-		assert.NotNil(network, "failed getting network")
-		ledger, err := network.Ledger()
-		assert.NoError(err, "failed getting ledger")
-		transferMetadataKey, err := ledger.TransferMetadataKey(htlc.ClaimKey(r.Script.HashInfo.Hash))
-		assert.NoError(err, "failed getting transfer metadata key")
-
-		// double-check the content of the ledger, retry a few time to give time to the committer
-		runner := utils.NewRetryRunner(logger, 3, 1*time.Second, true)
-		assert.NoError(err, runner.RunWithContext(ctx.Context(), func() error {
-			logger.Debugf("check transfer metadata key [%s]...", transferMetadataKey)
-			stateValues, err := ledger.GetStates(ctx.Context(), tms.Namespace(), transferMetadataKey)
-			if err != nil {
-				return err
-			}
-			logger.Debugf("check transfer metadata key [%s], got [%v]", transferMetadataKey, stateValues)
-			if len(stateValues) != 1 {
-				return errors.Errorf("expected 1 state, found %d", len(stateValues))
-			}
-			if !bytes.Equal(stateValues[0], r.PreImage) {
-				return errors.Errorf("pre-image mismatch [%s] vs [%s]", utils.Hashable(preImage), utils.Hashable(stateValues[0]))
-			}
-
-			return nil
-		}))
-	}
+	preImage := resolvePreImage(ctx, r.Claim)
 
 	claimWallet := htlc.GetWallet(ctx, r.Wallet, token.WithTMSID(r.TMSID))
 	assert.NotNil(claimWallet, "wallet [%s] not found", r.Wallet)

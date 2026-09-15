@@ -42,73 +42,96 @@ func SeedBenchTokens(b *testing.B, store *TokenStore, n int) {
 func RunTokenStoreBenchmarks(b *testing.B, store *TokenStore) {
 	b.Helper()
 	b.Run("UnspentTokensIterator", func(b *testing.B) {
-		SeedBenchTokens(b, store, 1000)
-		cfg := benchmark.NewConfig(4, 5*time.Second, 500*time.Millisecond)
-		result := benchmark.RunBenchmark(
-			cfg,
-			func() *TokenStore { return store },
-			func(s *TokenStore) error {
-				it, err := s.UnspentTokensIterator(context.Background())
-				if err != nil {
-					return err
-				}
-				defer it.Close()
-				for {
-					tok, err := it.Next()
-					if err != nil {
-						return err
-					}
-					if tok == nil {
-						break
-					}
-				}
-
-				return nil
-			},
-		)
-		result.Print()
+		benchmarkUnspentTokensIterator(b, store)
 	})
 
 	b.Run("Balance", func(b *testing.B) {
-		SeedBenchTokens(b, store, 1000)
-		cfg := benchmark.NewConfig(4, 5*time.Second, 500*time.Millisecond)
-		result := benchmark.RunBenchmark(
-			cfg,
-			func() *TokenStore { return store },
-			func(s *TokenStore) error {
-				_, err := s.Balance(context.Background(), "wallet0", tokentype.Type("GOLD"))
-
-				return err
-			},
-		)
-		result.Print()
+		benchmarkBalance(b, store)
 	})
 
 	b.Run("UnspentTokensIteratorBy", func(b *testing.B) {
-		SeedBenchTokens(b, store, 1000)
-		cfg := benchmark.NewConfig(4, 5*time.Second, 500*time.Millisecond)
-		result := benchmark.RunBenchmark(
-			cfg,
-			func() *TokenStore { return store },
-			func(s *TokenStore) error {
-				it, err := s.UnspentTokensIteratorBy(context.Background(), "wallet0", tokentype.Type("GOLD"))
+		benchmarkUnspentTokensIteratorBy(b, store)
+	})
+}
+
+// benchmarkUnspentTokensIterator benchmarks draining store's full unspent
+// tokens iterator.
+func benchmarkUnspentTokensIterator(b *testing.B, store *TokenStore) {
+	b.Helper()
+
+	SeedBenchTokens(b, store, 1000)
+	cfg := benchmark.NewConfig(4, 5*time.Second, 500*time.Millisecond)
+	result := benchmark.RunBenchmark(
+		cfg,
+		func() *TokenStore { return store },
+		func(s *TokenStore) error {
+			it, err := s.UnspentTokensIterator(context.Background())
+			if err != nil {
+				return err
+			}
+			defer it.Close()
+			for {
+				tok, err := it.Next()
 				if err != nil {
 					return err
 				}
-				defer it.Close()
-				for {
-					tok, err := it.Next()
-					if err != nil {
-						return err
-					}
-					if tok == nil {
-						break
-					}
+				if tok == nil {
+					break
 				}
+			}
 
-				return nil
-			},
-		)
-		result.Print()
-	})
+			return nil
+		},
+	)
+	result.Print()
+}
+
+// benchmarkBalance benchmarks computing store's wallet0/GOLD balance.
+func benchmarkBalance(b *testing.B, store *TokenStore) {
+	b.Helper()
+
+	SeedBenchTokens(b, store, 1000)
+	cfg := benchmark.NewConfig(4, 5*time.Second, 500*time.Millisecond)
+	result := benchmark.RunBenchmark(
+		cfg,
+		func() *TokenStore { return store },
+		func(s *TokenStore) error {
+			_, err := s.Balance(context.Background(), "wallet0", tokentype.Type("GOLD"))
+
+			return err
+		},
+	)
+	result.Print()
+}
+
+// benchmarkUnspentTokensIteratorBy benchmarks draining store's unspent
+// tokens iterator filtered to wallet0/GOLD.
+func benchmarkUnspentTokensIteratorBy(b *testing.B, store *TokenStore) {
+	b.Helper()
+
+	SeedBenchTokens(b, store, 1000)
+	cfg := benchmark.NewConfig(4, 5*time.Second, 500*time.Millisecond)
+	result := benchmark.RunBenchmark(
+		cfg,
+		func() *TokenStore { return store },
+		func(s *TokenStore) error {
+			it, err := s.UnspentTokensIteratorBy(context.Background(), "wallet0", tokentype.Type("GOLD"))
+			if err != nil {
+				return err
+			}
+			defer it.Close()
+			for {
+				tok, err := it.Next()
+				if err != nil {
+					return err
+				}
+				if tok == nil {
+					break
+				}
+			}
+
+			return nil
+		},
+	)
+	result.Print()
 }
