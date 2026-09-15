@@ -139,6 +139,8 @@ type BulletProofProver struct {
 }
 
 // NewBulletProofProver returns a new BulletProofProver instance.
+//
+//nolint:gocognit // wires witnesses and commitments into a bulletproof prover; extraction risks pairing the wrong witness with the wrong commitment.
 func NewBulletProofProver(inputWitness, outputWitness []*token.Metadata, inputs, outputs []*math.G1, pp *v1.PublicParams) (*BulletProofProver, error) {
 	if len(inputWitness) == 0 {
 		return nil, errors.Wrap(ErrInvalidInputs, "cannot create bulletproof prover: no input witnesses")

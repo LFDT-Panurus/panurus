@@ -73,31 +73,26 @@ func instrumentDirectory(dir string) error {
 	})
 }
 
-// instrumentFile adds tracer hooks to all eligible functions in a Go source file.
-func instrumentFile(filename string) error {
-	fset := token.NewFileSet()
-	node, err := parser.ParseFile(fset, filename, nil, parser.ParseComments)
-	if err != nil {
-		return err
-	}
-
-	modified := false
-	hasTracerImport := false
-	tracerAlias := "tracer"
-
-	// Check if tracer is already imported
+// findTracerImport reports whether the tracer package is already imported by node, and under
+// which alias.
+func findTracerImport(node *ast.File) (hasImport bool, alias string) {
+	alias = "tracer"
 	for _, imp := range node.Imports {
 		if imp.Path.Value == `"github.com/LFDT-Panurus/panurus/tools/profiler/tracer"` {
-			hasTracerImport = true
 			if imp.Name != nil {
-				tracerAlias = imp.Name.Name
+				alias = imp.Name.Name
 			}
 
-			break
+			return true, alias
 		}
 	}
 
-	// Check if any functions need instrumentation
+	return false, alias
+}
+
+// anyFunctionNeedsTracer reports whether node has at least one function eligible for
+// instrumentation.
+func anyFunctionNeedsTracer(node *ast.File) bool {
 	needsTracer := false
 	ast.Inspect(node, func(n ast.Node) bool {
 		fn, ok := n.(*ast.FuncDecl)
@@ -105,27 +100,20 @@ func instrumentFile(filename string) error {
 			return true
 		}
 
-		if shouldSkipFunction(fn) {
-			return true
+		if !shouldSkipFunction(fn) {
+			needsTracer = true
 		}
-
-		needsTracer = true
 
 		return true
 	})
 
-	if !needsTracer {
-		return nil
-	}
+	return needsTracer
+}
 
-	// Add tracer import if needed
-	if !hasTracerImport {
-		tracerAlias = findUniqueAlias(node, "tracer")
-		addTracerImport(node, tracerAlias)
-		modified = true
-	}
-
-	// Add tracer calls to functions
+// addTracerCallsToFunctions adds a tracer call to every eligible function in node that doesn't
+// already have one, and reports whether it modified anything.
+func addTracerCallsToFunctions(node *ast.File, tracerAlias string) bool {
+	modified := false
 	ast.Inspect(node, func(n ast.Node) bool {
 		fn, ok := n.(*ast.FuncDecl)
 		if !ok {
@@ -143,6 +131,33 @@ func instrumentFile(filename string) error {
 
 		return true
 	})
+
+	return modified
+}
+
+// instrumentFile adds tracer hooks to all eligible functions in a Go source file.
+func instrumentFile(filename string) error {
+	fset := token.NewFileSet()
+	node, err := parser.ParseFile(fset, filename, nil, parser.ParseComments)
+	if err != nil {
+		return err
+	}
+
+	if !anyFunctionNeedsTracer(node) {
+		return nil
+	}
+
+	hasTracerImport, tracerAlias := findTracerImport(node)
+	modified := false
+	if !hasTracerImport {
+		tracerAlias = findUniqueAlias(node, "tracer")
+		addTracerImport(node, tracerAlias)
+		modified = true
+	}
+
+	if addTracerCallsToFunctions(node, tracerAlias) {
+		modified = true
+	}
 
 	if !modified {
 		return nil

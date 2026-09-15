@@ -348,6 +348,7 @@ func TestManager_Close(t *testing.T) {
 	})
 }
 
+//nolint:gocognit // subtests share mock/timing setup that a split would either duplicate or thread through parameters, without making any one subtest simpler.
 func TestManager_Cleaner(t *testing.T) {
 	t.Run("cleaner calls Cleanup periodically", func(t *testing.T) {
 		mockFetcher := &mockTokenFetcher{}

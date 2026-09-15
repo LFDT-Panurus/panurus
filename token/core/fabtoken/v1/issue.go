@@ -27,6 +27,42 @@ func NewIssueService(publicParamsManager driver.PublicParamsManager, walletServi
 	return &IssueService{PublicParamsManager: publicParamsManager, WalletService: walletService, Deserializer: deserializer}
 }
 
+// buildIssueOutput builds the i-th issued output (of the given token type/value) and its
+// associated output metadata for issuerIdentity.
+func (s *IssueService) buildIssueOutput(ctx context.Context, issuerIdentity driver.Identity, tokenType token2.Type, precision uint64, owner []byte, value uint64, i int) (*v1.Output, *driver.IssueOutputMetadata, error) {
+	q, err := token2.UInt64ToQuantity(value, precision)
+	if err != nil {
+		return nil, nil, errors.Wrapf(err, "failed to convert [%d] to quantity of precision [%d]", value, precision)
+	}
+	out := &v1.Output{
+		Owner:    owner,
+		Type:     tokenType,
+		Quantity: q.Hex(),
+	}
+
+	outputMetadata := &v1.OutputMetadata{
+		Issuer: issuerIdentity,
+	}
+	outputMetadataRaw, err := outputMetadata.Serialize()
+	if err != nil {
+		return nil, nil, errors.Wrapf(err, "failed serializing token information")
+	}
+	auditInfo, err := s.Deserializer.GetAuditInfo(ctx, owner, s.WalletService)
+	if err != nil {
+		return nil, nil, err
+	}
+	receivers, err := common.AuditableRecipients(ctx, s.Deserializer, s.WalletService, owner)
+	if err != nil {
+		return nil, nil, errors.WithMessagef(err, "failed getting receivers of issue output [%d]", i)
+	}
+
+	return out, &driver.IssueOutputMetadata{
+		OutputMetadata:  outputMetadataRaw,
+		OutputAuditInfo: auditInfo,
+		Receivers:       receivers,
+	}, nil
+}
+
 // Issue returns an IssueAction as a function of the passed arguments
 // Issue also returns a serialization OutputMetadata associated with issued tokens
 // and the identity of the issuer
@@ -51,36 +87,12 @@ func (s *IssueService) Issue(ctx context.Context, issuerIdentity driver.Identity
 	var outs []*v1.Output
 	var outputsMetadata []*driver.IssueOutputMetadata
 	for i, v := range values {
-		q, err := token2.UInt64ToQuantity(v, precision)
-		if err != nil {
-			return nil, nil, errors.Wrapf(err, "failed to convert [%d] to quantity of precision [%d]", v, precision)
-		}
-		outs = append(outs, &v1.Output{
-			Owner:    owners[i],
-			Type:     tokenType,
-			Quantity: q.Hex(),
-		})
-
-		outputMetadata := &v1.OutputMetadata{
-			Issuer: issuerIdentity,
-		}
-		outputMetadataRaw, err := outputMetadata.Serialize()
-		if err != nil {
-			return nil, nil, errors.Wrapf(err, "failed serializing token information")
-		}
-		auditInfo, err := s.Deserializer.GetAuditInfo(ctx, owners[i], s.WalletService)
+		out, outputMetadata, err := s.buildIssueOutput(ctx, issuerIdentity, tokenType, precision, owners[i], v, i)
 		if err != nil {
 			return nil, nil, err
 		}
-		receivers, err := common.AuditableRecipients(ctx, s.Deserializer, s.WalletService, owners[i])
-		if err != nil {
-			return nil, nil, errors.WithMessagef(err, "failed getting receivers of issue output [%d]", i)
-		}
-		outputsMetadata = append(outputsMetadata, &driver.IssueOutputMetadata{
-			OutputMetadata:  outputMetadataRaw,
-			OutputAuditInfo: auditInfo,
-			Receivers:       receivers,
-		})
+		outs = append(outs, out)
+		outputsMetadata = append(outputsMetadata, outputMetadata)
 	}
 	issuerAuditInfo, err := s.Deserializer.GetAuditInfo(ctx, issuerIdentity, s.WalletService)
 	if err != nil {
@@ -110,6 +122,8 @@ func (s *IssueService) Issue(ctx context.Context, issuerIdentity driver.Identity
 }
 
 // VerifyIssue checks if the outputs of an IssueAction match the passed tokenInfos
+//
+//nolint:gocognit // fabtoken issue-action verification; a mis-split here risks silently accepting an invalid issuance.
 func (s *IssueService) VerifyIssue(ctx context.Context, ia driver.IssueAction, metadata []*driver.IssueOutputMetadata) error {
 	if ia == nil {
 		return errors.Errorf("nil issue action")

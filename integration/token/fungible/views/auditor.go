@@ -67,6 +67,34 @@ func (a *AuditView) Call(context view.Context) (any, error) {
 	eIDs := inputs.EnrollmentIDs()
 	tokenTypes := inputs.TokenTypes()
 	fmt.Printf("Limits on inputs [%v][%v]\n", eIDs, tokenTypes)
+	checkPaymentLimit(eIDs, tokenTypes, inputs, outputs)
+
+	// R2: Default cumulative payment limit is set to 2000.
+	checkCumulativePaymentLimit(context, eIDs, tokenTypes, auditor, inputs, outputs)
+
+	// R4: Default holding limit is set to 3000.
+	eIDs = outputs.EnrollmentIDs()
+	tokenTypes = outputs.TokenTypes()
+	checkHoldingLimit(context, eIDs, tokenTypes, auditor, inputs, outputs)
+
+	kvsInstance := GetKVS(context)
+	if err := checkAuthorizedRedeemIssuers(context, kvsInstance, tx, outputs); err != nil {
+		return nil, err
+	}
+	if err := checkNotRevoked(context, kvsInstance, inputs, outputs); err != nil {
+		return nil, err
+	}
+
+	logger.Debugf("AuditView: Approve... [%s]", tx.ID())
+	res, err := context.RunView(ttx.NewAuditApproveView(w, tx))
+	logger.Debugf("AuditView: Approve...done [%s]", tx.ID())
+
+	return res, err
+}
+
+// checkPaymentLimit enforces R1: a single payment between input and output for an enrollment ID
+// and token type may not exceed the default payment limit (200).
+func checkPaymentLimit(eIDs []string, tokenTypes []token2.Type, inputs *token.InputStream, outputs *token.OutputStream) {
 	for _, eID := range eIDs {
 		assert.NotEmpty(eID, "enrollment id should not be empty")
 		for _, tokenType := range tokenTypes {
@@ -88,8 +116,12 @@ func (a *AuditView) Call(context view.Context) (any, error) {
 			// R3: The default configuration is customized by a specific organisation (Guarantor)
 		}
 	}
+}
 
-	// R2: Default cumulative payment limit is set to 2000.
+// checkCumulativePaymentLimit enforces R2/R3: an enrollment ID's last 10 payments plus this
+// transaction's payment, for a token type, may not exceed the default cumulative payment limit
+// (2000).
+func checkCumulativePaymentLimit(context view.Context, eIDs []string, tokenTypes []token2.Type, auditor *ttx.Auditor, inputs *token.InputStream, outputs *token.OutputStream) {
 	for _, eID := range eIDs {
 		assert.NotEmpty(eID, "enrollment id should not be empty")
 		for _, tokenType := range tokenTypes {
@@ -118,10 +150,11 @@ func (a *AuditView) Call(context view.Context) (any, error) {
 			assert.True(total.Cmp(big.NewInt(2000)) < 0, "cumulative payment limit reached [%s][%s][%s]", eID, tokenType, total.Text(10))
 		}
 	}
+}
 
-	// R4: Default holding limit is set to 3000.
-	eIDs = outputs.EnrollmentIDs()
-	tokenTypes = outputs.TokenTypes()
+// checkHoldingLimit enforces R4: an enrollment ID's total holding of a token type, after this
+// transaction, may not exceed the default holding limit (3000).
+func checkHoldingLimit(context view.Context, eIDs []string, tokenTypes []token2.Type, auditor *ttx.Auditor, inputs *token.InputStream, outputs *token.OutputStream) {
 	for _, eID := range eIDs {
 		assert.NotEmpty(eID, "enrollment id should not be empty")
 		for _, tokenType := range tokenTypes {
@@ -151,31 +184,38 @@ func (a *AuditView) Call(context view.Context) (any, error) {
 			assert.True(total.Cmp(big.NewInt(3000)) < 0, "holding limit reached [%s][%s][%s]", eID, tokenType, total.Text(10))
 		}
 	}
+}
 
-	kvsInstance := GetKVS(context)
-
-	// R5: identify redeemed outputs and the issuer that approved each of them, and reject any
-	// redeem whose approving issuer is not on the auditor's allow-list.
+// checkAuthorizedRedeemIssuers enforces R5: identifies redeemed outputs and the issuer that
+// approved each of them, and rejects any redeem whose approving issuer is not on the auditor's
+// allow-list.
+func checkAuthorizedRedeemIssuers(context view.Context, kvsInstance *kvs.KVS, tx *ttx.Transaction, outputs *token.OutputStream) error {
 	for _, redeem := range outputs.ByRedeem().Outputs() {
 		if redeem.Issuer.IsNone() {
-			return nil, errors.Errorf("redeemed output [%s:%d] has no approving issuer", tx.ID(), redeem.Index)
+			return errors.Errorf("redeemed output [%s:%d] has no approving issuer", tx.ID(), redeem.Index)
 		}
 		issuerKey := utils.Hashable(redeem.Issuer).String()
 		fmt.Printf("Redeem: [%s:%d] type [%s] quantity [%s] approved by issuer [%s]\n", tx.ID(), redeem.Index, redeem.Type, redeem.Quantity, issuerKey)
 
 		k := kvs.CreateCompositeKeyOrPanic("authorizedRedeemIssuers", []string{issuerKey})
 		if !kvsInstance.Exists(context.Context(), k) {
-			return nil, errors.Errorf("redeem [%s:%d] approved by issuer [%s] which is not on the authorized issuers list", tx.ID(), redeem.Index, issuerKey)
+			return errors.Errorf("redeem [%s:%d] approved by issuer [%s] which is not on the authorized issuers list", tx.ID(), redeem.Index, issuerKey)
 		}
 	}
 
+	return nil
+}
+
+// checkNotRevoked returns an error if any input or output enrollment identity's revocation
+// handle is present in the revocation list.
+func checkNotRevoked(context view.Context, kvsInstance *kvs.KVS, inputs *token.InputStream, outputs *token.OutputStream) error {
 	for _, rID := range inputs.RevocationHandles() {
 		rh := utils.Hashable(rID).String()
 		// logger.Infof("input RH [%s]", rh)
 		assert.NotNil(rID, "found an input with empty RH")
 		k := kvs.CreateCompositeKeyOrPanic("revocationList", []string{rh})
 		if kvsInstance.Exists(context.Context(), k) {
-			return nil, errors.Errorf("%s Identity is in revoked state", rh)
+			return errors.Errorf("%s Identity is in revoked state", rh)
 		}
 	}
 
@@ -185,15 +225,11 @@ func (a *AuditView) Call(context view.Context) (any, error) {
 		assert.NotNil(rID, "found an output with empty RH")
 		k := kvs.CreateCompositeKeyOrPanic("revocationList", []string{rh})
 		if kvsInstance.Exists(context.Context(), k) {
-			return nil, errors.Errorf("%s Identity is in revoked state", rh)
+			return errors.Errorf("%s Identity is in revoked state", rh)
 		}
 	}
 
-	logger.Debugf("AuditView: Approve... [%s]", tx.ID())
-	res, err := context.RunView(ttx.NewAuditApproveView(w, tx))
-	logger.Debugf("AuditView: Approve...done [%s]", tx.ID())
-
-	return res, err
+	return nil
 }
 
 // AuthorizeRedeemIssuer adds the passed issuer identity to the auditor's allow-list of issuers

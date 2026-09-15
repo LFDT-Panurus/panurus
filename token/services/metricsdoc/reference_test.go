@@ -833,6 +833,8 @@ func isNestedCheckout(dir string) bool {
 
 // grepRepo returns the repository-relative paths of the non-test Go files that
 // match pattern, sorted.
+//
+//nolint:gocognit // test-only repo-wide grep helper; the branching is inherent to walking the tree and filtering matches, not something a split would simplify.
 func grepRepo(t *testing.T, pattern *regexp.Regexp) []string {
 	t.Helper()
 

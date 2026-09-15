@@ -28,6 +28,8 @@ import (
 // walletID / typ are empty), so this comparison fixes both parameters to
 // non-empty values matching the seeded data, which is the common case in
 // production (see token/services/selector/sherdlock/fetcher.go).
+//
+//nolint:gocognit // same benchmark-harness shape as RunUnspentTokensIteratorByPreparedComparison above.
 func RunSpendableTokensIteratorByPreparedComparison(b *testing.B, store *TokenStore) {
 	b.Helper()
 

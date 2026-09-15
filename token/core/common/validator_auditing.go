@@ -37,6 +37,8 @@ var (
 //     single logical auditor entity.
 //
 // This behavior matches the semantics implemented by current token drivers.
+//
+//nolint:gocognit // auditor signature verification; extraction risks disturbing the exact data being signed/verified.
 func AuditingSignaturesValidate[P driver.PublicParameters, T driver.Input, TA driver.TransferAction, IA driver.IssueAction, DS driver.Deserializer](c context.Context, ctx *Context[P, T, TA, IA, DS]) error {
 	auditorSignatures := make([]*driver.AuditorSignature, 0)
 	for _, signature := range ctx.TokenRequest.Signatures {

@@ -283,6 +283,12 @@ func (p *rangeProver) Prove() (*RangeProof, error) {
 }
 
 // preprocess prepares data for the inner product argument
+// preprocess builds the bulletproof range-proof commitments and derives the Fiat-Shamir
+// challenges y, z from them. The commit-then-hash sequence and native-curve dispatch branches
+// must stay in this exact order to match Verify's replay below; extracting pieces risks silently
+// reordering the challenge derivation, which would break proof soundness.
+//
+//nolint:gocognit // see the challenge-derivation rationale above
 func (p *rangeProver) preprocess() ([]*math.Zr, []*math.Zr, *math.Zr, *RangeProof, error) {
 	left := make([]*math.Zr, p.BitLength)
 	right := make([]*math.Zr, p.BitLength)
@@ -501,6 +507,11 @@ func NewRangeVerifier(
 
 // Verify enables a rangeVerifier to check the validity of a RangeProof.
 // It returns nil if the proof is valid, or an error otherwise.
+// Verify checks that rp is a valid bulletproof range proof. It must exactly mirror
+// rangeProver.preprocess's challenge derivation (see that function's waiver comment);
+// extracting pieces risks the two sides silently diverging.
+//
+//nolint:gocognit // see the challenge-derivation rationale above
 func (v *rangeVerifier) Verify(rp *RangeProof) error {
 	// check that the proof is well-formed
 	if rp.Data.InnerProduct == nil || rp.Data.C == nil || rp.Data.D == nil {
