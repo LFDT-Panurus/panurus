@@ -162,8 +162,45 @@ func TestLoadConfigAppliesDefaults(t *testing.T) {
 	assert.Equal(t, DefaultBlockTag, c.Finality.BlockTag)
 	assert.Equal(t, DefaultPollInterval, c.Finality.PollInterval)
 	assert.Equal(t, DefaultFinalityTimeout, c.Finality.Timeout)
+	assert.Equal(t, DefaultConflictGrace, c.Finality.ConflictGrace,
+		"the default timeout is far above the default grace, so nothing should clamp it here")
 	assert.Equal(t, DefaultGasStrategy, c.Gas.Strategy)
 	assert.InEpsilon(t, DefaultGasMultiplier, c.Gas.Multiplier, 1e-9)
+}
+
+// TestConflictGraceDefaultsAndValidation pins FinalityConfig.ConflictGrace's own defaulting rule,
+// separately from the general defaults test above: it is the one field in this struct whose default
+// is not a fixed constant but min(DefaultConflictGrace, Finality.Timeout), specifically so that a
+// deployment or test configuring a short timeout (there are several in this file well under 30s) gets
+// a grace no longer than that timeout instead of a default Validate would then have to reject.
+func TestConflictGraceDefaultsAndValidation(t *testing.T) {
+	t.Run("an explicit value under the default is kept as configured", func(t *testing.T) {
+		c := &Config{Finality: FinalityConfig{Timeout: time.Hour, ConflictGrace: 5 * time.Second}}
+		c.applyDefaults()
+		assert.Equal(t, 5*time.Second, c.Finality.ConflictGrace)
+	})
+
+	t.Run("an unset value defaults to DefaultConflictGrace when the timeout is long enough", func(t *testing.T) {
+		c := &Config{Finality: FinalityConfig{Timeout: time.Hour}}
+		c.applyDefaults()
+		assert.Equal(t, DefaultConflictGrace, c.Finality.ConflictGrace)
+	})
+
+	t.Run("an unset value clamps to a shorter configured timeout", func(t *testing.T) {
+		c := &Config{Finality: FinalityConfig{BlockTag: client.BlockTagLatest, Timeout: 5 * time.Second}}
+		c.applyDefaults()
+		assert.Equal(t, 5*time.Second, c.Finality.ConflictGrace,
+			"the default must never exceed a timeout shorter than it")
+	})
+
+	t.Run("a value above the timeout is not rejected by Validate", func(t *testing.T) {
+		c, err := LoadConfig(newYAMLConfiguration(t, fullConfigYAML))
+		require.NoError(t, err)
+		c.Finality.ConflictGrace = c.Finality.Timeout + time.Hour
+		assert.NoError(t, c.Validate(),
+			"a grace above Timeout is dead code, not a configuration error - Timeout can legitimately "+
+				"be edited after load without ConflictGrace being re-derived from it")
+	})
 }
 
 // TestConfigKeyIsSetOnRealYAML settles the Week-1 review question: whether IsSet on the parent key

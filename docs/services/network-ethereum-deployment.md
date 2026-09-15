@@ -124,6 +124,7 @@ evm:
     blockTag: finalized            # finalized (default) | safe | latest
     timeout: 20m                   # default 20m; must be >= 13m when blockTag is finalized
     pollInterval: 2s               # default 2s
+    conflictGrace: 30s             # default 30s, clamped to timeout; see below
     fromBlock: 0                   # default 0 (search from genesis); set to the deploy block on an older chain
 ```
 
@@ -146,6 +147,11 @@ Four things are easy to get wrong here:
   for a parameters update should use a separate account.
 - **A node without a `submitter` key can still endorse and read**; it simply cannot broadcast. That
   fails on the first `Broadcast`, not at startup, which is intentional - it is actionable there.
+- **`conflictGrace` is not a tuning knob to raise for safety.** It bounds how long the recovery sweep
+  waits, after first observing that a transaction's input is already spent on chain, before recording
+  it as `Invalid` — see "Condemning on evidence, not just on elapsed time" in
+  [network-ethereum.md](./network-ethereum.md). A value above `finality.timeout` is not rejected but is
+  effectively dead: the age gate always condemns first at that point.
 
 ## Step 4 - Verify the deployment
 
