@@ -313,11 +313,38 @@ func (d *StoreService) GetTransactionEndorsementAcks(ctx context.Context, txID s
 	return d.db.GetTransactionEndorsementAcks(ctx, txID)
 }
 
+// UpsertFindings records the drift findings observed by one checks sweep.
+func (d *StoreService) UpsertFindings(ctx context.Context, findings []dbdriver.FindingRecord, seenAt time.Time) error {
+	return d.db.UpsertFindings(ctx, findings, seenAt)
+}
+
+// ResolveFindingsNotSeenSince closes the open findings of the passed checkers that
+// the latest sweep did not observe.
+func (d *StoreService) ResolveFindingsNotSeenSince(ctx context.Context, checkers []string, seenAt time.Time) (int64, error) {
+	return d.db.ResolveFindingsNotSeenSince(ctx, checkers, seenAt)
+}
+
+// QueryFindings returns the stored drift findings matching params, worst first.
+func (d *StoreService) QueryFindings(ctx context.Context, params dbdriver.QueryFindingsParams) ([]*dbdriver.FindingRecord, error) {
+	return d.db.QueryFindings(ctx, params)
+}
+
 // AcquireRecoveryLeadership tries to acquire the DB-backed recovery leadership lease.
 func (d *StoreService) AcquireRecoveryLeadership(ctx context.Context) (dbdriver.RecoveryLeadership, bool, error) {
 	leadership, acquired, err := d.db.AcquireRecoveryLeadership(ctx)
 	if err != nil {
 		return nil, false, errors.Wrapf(err, "failed to acquire recovery leadership")
+	}
+
+	return leadership, acquired, nil
+}
+
+// AcquireLeadership tries to acquire the DB-backed leadership lease identified by
+// lockID, independent of the recovery lease above.
+func (d *StoreService) AcquireLeadership(ctx context.Context, lockID int64) (dbdriver.RecoveryLeadership, bool, error) {
+	leadership, acquired, err := d.db.AcquireLeadership(ctx, lockID)
+	if err != nil {
+		return nil, false, errors.Wrapf(err, "failed to acquire leadership")
 	}
 
 	return leadership, acquired, nil
