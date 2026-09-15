@@ -455,11 +455,15 @@ func (c *CollectEndorsementsView) requestAudit(context view.Context) ([]view.Ide
 
 	if !c.tx.Opts.Auditor.IsNone() {
 		logger.DebugfContext(context.Context(), "ask auditing to [%s]", c.tx.Opts.Auditor)
-		sigService, err := sig.GetService(context)
+		// Resolve auditor locality through the token SigService, whose IsMe propagates
+		// errors, rather than FSC's sig.Service, whose AreMe logs and discards a
+		// FilterExistingSigners failure. A swallowed error would yield local=false and
+		// route a self-audit through startRemote -> GetSession to self, which FSC does
+		// not support (see startLocal in auditor.go), stalling until the receive timeout.
+		local, err := c.tx.TokenService().SigService().IsMe(context.Context(), c.tx.Opts.Auditor)
 		if err != nil {
-			return nil, errors.Wrapf(err, "failed getting sig service for [%s]", c.tx.Opts.Auditor)
+			return nil, errors.Wrapf(err, "failed determining whether auditor [%s] is local", c.tx.Opts.Auditor)
 		}
-		local := sigService.IsMe(context.Context(), c.tx.Opts.Auditor)
 		sessionBoxed, err := context.RunView(newAuditingViewInitiator(c.tx, local, c.Opts.SkipAuditorSignatureVerification))
 		if err != nil {
 			return nil, errors.WithMessagef(err, "failed requesting auditing from [%s]", c.tx.Opts.Auditor.String())
