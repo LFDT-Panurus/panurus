@@ -20,7 +20,7 @@ import (
 
 type endorserStoreConstructor func(*sql.DB) *EndorserStore
 
-func TestQueryValidations(t *testing.T, store endorserStoreConstructor, traits QueryConstructorTraits) {
+func TestQueryValidations(t *testing.T, store endorserStoreConstructor) {
 	gomega.RegisterTestingT(t)
 	db, mockDB, err := sqlmock.New()
 	gomega.Expect(err).ToNot(gomega.HaveOccurred())
@@ -35,16 +35,9 @@ func TestQueryValidations(t *testing.T, store endorserStoreConstructor, traits Q
 	output := []driver2.Value{
 		record.TxID, record.TokenRequest, nil, record.Timestamp,
 	}
-	var query string
-	if traits.MultipleParenthesis {
-		query = "SELECT VALIDATIONS.tx_id, VALIDATIONS.request, VALIDATIONS.metadata, VALIDATIONS.stored_at " +
-			"FROM VALIDATIONS " +
-			"WHERE \\(\\(VALIDATIONS.stored_at >= \\$1\\) AND \\(VALIDATIONS.stored_at <= \\$2\\)\\)"
-	} else {
-		query = "SELECT VALIDATIONS.tx_id, VALIDATIONS.request, VALIDATIONS.metadata, VALIDATIONS.stored_at " +
-			"FROM VALIDATIONS " +
-			"WHERE \\(\\(VALIDATIONS.stored_at >= \\$1\\) AND \\(VALIDATIONS.stored_at <= \\$2\\)\\)"
-	}
+	query := "SELECT VALIDATIONS.tx_id, VALIDATIONS.request, VALIDATIONS.metadata, VALIDATIONS.stored_at " +
+		"FROM VALIDATIONS " +
+		"WHERE \\(\\(VALIDATIONS.stored_at >= \\$1\\) AND \\(VALIDATIONS.stored_at <= \\$2\\)\\)"
 	mockDB.
 		ExpectQuery(query).
 		WithArgs(timeFrom, timeTo).
