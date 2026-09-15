@@ -59,7 +59,7 @@ all: install-tools install-softhsm checks unit-tests #integration-tests
 install-tools:
 # Thanks for great inspiration https://marcofranssen.nl/manage-go-tools-via-go-modules
 	@echo Installing tools from tools/tools.go
-	@cd tools; cat tools.go | grep _ | awk -F'"' '{print $$2}' | xargs -tI % go install %
+	@cd tools; cat tools.go | grep _ | awk -F'"' '{print $$2}' | xargs -tI % bash -c 'go install % || (sleep 2 && go install %)'
 	@$(MAKE) install-linter-tool
 
 .PHONY: download-fabric
