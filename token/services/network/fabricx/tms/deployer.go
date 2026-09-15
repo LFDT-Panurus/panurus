@@ -9,19 +9,25 @@ package tms
 import (
 	"crypto/sha256"
 	"reflect"
+	"strings"
 
 	"github.com/LFDT-Panurus/panurus/token"
 	"github.com/LFDT-Panurus/panurus/token/services/config"
 	"github.com/LFDT-Panurus/panurus/token/services/logging"
 	"github.com/LFDT-Panurus/panurus/token/services/network/common/rws/keys"
 	"github.com/LFDT-Panurus/panurus/token/services/network/common/rws/translator"
-	"github.com/LFDT-Panurus/panurus/token/services/network/fabricx/pp"
 	cdriver "github.com/hyperledger-labs/fabric-smart-client/platform/common/driver"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/services"
 	"github.com/hyperledger/fabric-x-common/api/applicationpb"
 )
 
 var logger = logging.MustGetLogger()
+
+// PPFetcher models an interface for fetching public parameters and namespace version.
+type PPFetcher interface {
+	Fetch(network cdriver.Network, channel cdriver.Channel, namespace cdriver.Namespace) ([]byte, error)
+	FetchNamespaceVersion(network cdriver.Network, channel cdriver.Channel, namespace cdriver.Namespace) (uint64, error)
+}
 
 // DeployerService models a service for deploying TMSs.
 type DeployerService interface {
@@ -36,7 +42,7 @@ type DeployerService interface {
 // NewTMSDeployerService returns a new DeployerService instance for
 // token management systems.
 func NewTMSDeployerService(
-	ppFetcher *pp.PublicParametersService,
+	ppFetcher PPFetcher,
 	configService *config.Service,
 	nsSubmitter Submitter,
 ) *deployerService {
@@ -49,9 +55,7 @@ func NewTMSDeployerService(
 }
 
 type deployerService struct {
-	// ppFetcher is stored as the concrete type so the compiler guarantees
-	// FetchNamespaceVersion is always available — no type assertion needed.
-	ppFetcher     *pp.PublicParametersService
+	ppFetcher     PPFetcher
 	configService *config.Service
 	nsSubmitter   Submitter
 	keyTranslator translator.KeyTranslator
@@ -123,8 +127,9 @@ func (s *deployerService) deployPublicParameters(tmsID token.TMSID) error {
 // deployPublicParametersRaw constructs a public parameters transaction and
 // submits it to the network. It fetches the current namespace policy version
 // so the committer can validate the transaction against the correct policy epoch.
-// A single retry is performed on submit failure to handle the TOCTOU window
-// where a namespace policy update commits between the version fetch and the submit.
+// A retry is performed only on version mismatch errors to handle the TOCTOU window
+// where a namespace policy update commits between the version fetch and the submit,
+// preventing duplicate submissions on transient network errors.
 func (s *deployerService) deployPublicParametersRaw(tmsID token.TMSID, ppRaw []byte) error {
 	const maxAttempts = 2
 
@@ -144,8 +149,8 @@ func (s *deployerService) deployPublicParametersRaw(tmsID token.TMSID, ppRaw []b
 			return nil
 		}
 
-		if attempt < maxAttempts-1 {
-			logger.Warnf("PP deployment submit failed for [%s] (attempt %d/%d), retrying with fresh namespace version: %v",
+		if attempt < maxAttempts-1 && isVersionMismatchError(err) {
+			logger.Warnf("PP deployment submit failed due to version mismatch for [%s] (attempt %d/%d), retrying with fresh namespace version: %v",
 				tmsID, attempt+1, maxAttempts, err)
 
 			continue
@@ -155,6 +160,19 @@ func (s *deployerService) deployPublicParametersRaw(tmsID token.TMSID, ppRaw []b
 	}
 
 	return nil
+}
+
+func isVersionMismatchError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+
+	return strings.Contains(msg, "version mismatch") ||
+		strings.Contains(msg, "invalid version") ||
+		strings.Contains(msg, "validation failed") ||
+		strings.Contains(msg, "invalidated") ||
+		strings.Contains(msg, "MVCC_READ_CONFLICT")
 }
 
 // createPublicParametersTx builds a FabricX transaction that writes the raw

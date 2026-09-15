@@ -70,9 +70,8 @@ func (f *PublicParametersService) Fetch(network driver.Network, channel driver.C
 // used by the fabricx vault marshaller (platform/fabricx/core/vault/marshal.go) to
 // derive NsVersion for ordinary token transactions — a single source of truth.
 //
-// Returns an error when the namespace has no "_meta" entry so a misconfigured or
-// unregistered namespace is surfaced at deploy time rather than silently submitting
-// a NsVersion: 0 transaction that the committer will reject.
+// If the namespace has no "_meta" entry on the ledger (e.g. for an initial deployment),
+// it returns initial version 0.
 func (f *PublicParametersService) FetchNamespaceVersion(network driver.Network, channel driver.Channel, namespace driver.Namespace) (uint64, error) {
 	qs, err := f.qsProvider.Get(network, channel)
 	if err != nil {
@@ -91,7 +90,10 @@ func (f *PublicParametersService) FetchNamespaceVersion(network driver.Network, 
 
 	// Version bytes are encoded as a protobuf varint — same as UnmarshalVersion in
 	// platform/fabricx/core/vault/marshal.go.
-	version, _ := protowire.ConsumeVarint(value.Version)
+	version, n := protowire.ConsumeVarint(value.Version)
+	if n < 0 {
+		return 0, errors.Errorf("failed decoding _meta version for namespace [%s]: invalid varint", namespace)
+	}
 
 	return version, nil
 }

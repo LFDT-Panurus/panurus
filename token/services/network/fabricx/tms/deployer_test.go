@@ -90,16 +90,15 @@ func TestCreatePublicParametersTx_NsVersionCopied(t *testing.T) {
 // causes NsVersion to be 0, which fails this assertion.
 func TestDeployPublicParametersRaw_UsesVersionFromFetcher(t *testing.T) {
 	sub := &captureSubmitter{}
+	mock := &mockPPService{versionToReturn: 5}
 
-	// Build a deployerService with a real pp.PublicParametersService replaced
-	// by a shim via a deployerServiceShim that lets us inject mock behaviour.
-	shim := &deployerServiceShim{
-		mock:          &mockPPService{versionToReturn: 5},
-		sub:           sub,
+	ds := &deployerService{
+		ppFetcher:     mock,
+		nsSubmitter:   sub,
 		keyTranslator: &keys.Translator{},
 	}
 
-	err := shim.deployPublicParametersRaw(token.TMSID{Network: "net", Channel: "ch", Namespace: "ns"}, []byte("pp"))
+	err := ds.deployPublicParametersRaw(token.TMSID{Network: "net", Channel: "ch", Namespace: "ns"}, []byte("pp"))
 	require.NoError(t, err)
 	require.NotNil(t, sub.capturedTx)
 	require.Equal(t, uint64(5), sub.capturedTx.Namespaces[0].NsVersion)
@@ -109,20 +108,22 @@ func TestDeployPublicParametersRaw_UsesVersionFromFetcher(t *testing.T) {
 // FetchNamespaceVersion is propagated and the transaction is never submitted.
 func TestDeployPublicParametersRaw_FetchVersionError(t *testing.T) {
 	sub := &captureSubmitter{}
-	shim := &deployerServiceShim{
-		mock:          &mockPPService{versionErr: errors.New("query service unavailable")},
-		sub:           sub,
+	mock := &mockPPService{versionErr: errors.New("query service unavailable")}
+
+	ds := &deployerService{
+		ppFetcher:     mock,
+		nsSubmitter:   sub,
 		keyTranslator: &keys.Translator{},
 	}
 
-	err := shim.deployPublicParametersRaw(token.TMSID{Network: "net", Channel: "ch", Namespace: "ns"}, []byte("pp"))
+	err := ds.deployPublicParametersRaw(token.TMSID{Network: "net", Channel: "ch", Namespace: "ns"}, []byte("pp"))
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "query service unavailable")
 	require.Nil(t, sub.capturedTx, "transaction must not be submitted when version fetch fails")
 }
 
-// TestDeployPublicParametersRaw_RetryOnSubmitFailure verifies that a single retry
-// is attempted after a submit failure, re-fetching the namespace version each time.
+// TestDeployPublicParametersRaw_RetryOnSubmitFailure verifies that a retry
+// is attempted on version mismatch errors, re-fetching the namespace version.
 // This covers the TOCTOU window where a policy update commits between version fetch
 // and submit.
 func TestDeployPublicParametersRaw_RetryOnSubmitFailure(t *testing.T) {
@@ -131,7 +132,7 @@ func TestDeployPublicParametersRaw_RetryOnSubmitFailure(t *testing.T) {
 		submitFn: func(tx *applicationpb.Tx) error {
 			submitCount++
 			if submitCount == 1 {
-				return errors.New("version mismatch")
+				return errors.New("version mismatch error")
 			}
 
 			return nil
@@ -146,59 +147,50 @@ func TestDeployPublicParametersRaw_RetryOnSubmitFailure(t *testing.T) {
 			return uint64(callCount), nil //nolint:gosec
 		},
 	}
-	shim := &deployerServiceShim{
-		mock:          mock,
-		sub:           sub,
+
+	ds := &deployerService{
+		ppFetcher:     mock,
+		nsSubmitter:   sub,
 		keyTranslator: &keys.Translator{},
 	}
 
-	err := shim.deployPublicParametersRaw(token.TMSID{Network: "net", Channel: "ch", Namespace: "ns"}, []byte("pp"))
+	err := ds.deployPublicParametersRaw(token.TMSID{Network: "net", Channel: "ch", Namespace: "ns"}, []byte("pp"))
 	require.NoError(t, err)
-	require.Equal(t, 2, submitCount, "should have retried once")
+	require.Equal(t, 2, submitCount, "should have retried once on version mismatch error")
 	require.Equal(t, 2, callCount, "should have fetched version twice")
 	require.Equal(t, uint64(2), sub.capturedTx.Namespaces[0].NsVersion, "retry should use the refreshed version")
 }
 
-// ppVersionFetcher is the minimal interface the shim needs from the mock.
-type ppVersionFetcher interface {
-	FetchNamespaceVersion(cdriver.Network, cdriver.Channel, cdriver.Namespace) (uint64, error)
-}
+// TestDeployPublicParametersRaw_NoRetryOnTransientError verifies that transient
+// network or submission errors (non-version errors) do not trigger a retry,
+// preventing duplicate/conflicting submissions against an initialized namespace.
+func TestDeployPublicParametersRaw_NoRetryOnTransientError(t *testing.T) {
+	submitCount := 0
+	sub := &captureSubmitter{
+		submitFn: func(tx *applicationpb.Tx) error {
+			submitCount++
 
-// deployerServiceShim mirrors deployerService but accepts a ppVersionFetcher
-// directly, allowing tests to drive deployPublicParametersRaw without needing
-// a real *pp.PublicParametersService (which requires a live qsProvider).
-type deployerServiceShim struct {
-	mock          ppVersionFetcher
-	sub           Submitter
-	keyTranslator *keys.Translator
-}
+			return errors.New("connection timeout: max retries reached")
+		},
+	}
+	callCount := 0
+	mock := &mockPPServiceFn{
+		versionFn: func() (uint64, error) {
+			callCount++
 
-func (s *deployerServiceShim) deployPublicParametersRaw(tmsID token.TMSID, ppRaw []byte) error {
-	const maxAttempts = 2
-
-	for attempt := range maxAttempts {
-		nsVersion, err := s.mock.FetchNamespaceVersion(tmsID.Network, tmsID.Channel, tmsID.Namespace)
-		if err != nil {
-			return err
-		}
-
-		ds := &deployerService{keyTranslator: s.keyTranslator, nsSubmitter: s.sub}
-		tx, err := ds.createPublicParametersTx(ppRaw, tmsID.Namespace, nsVersion)
-		if err != nil {
-			return err
-		}
-
-		err = s.sub.Submit(tmsID.Network, tmsID.Channel, tx)
-		if err == nil {
-			return nil
-		}
-
-		if attempt < maxAttempts-1 {
-			continue
-		}
-
-		return err
+			return 1, nil
+		},
 	}
 
-	return nil
+	ds := &deployerService{
+		ppFetcher:     mock,
+		nsSubmitter:   sub,
+		keyTranslator: &keys.Translator{},
+	}
+
+	err := ds.deployPublicParametersRaw(token.TMSID{Network: "net", Channel: "ch", Namespace: "ns"}, []byte("pp"))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "connection timeout")
+	require.Equal(t, 1, submitCount, "should NOT retry on transient submit error")
+	require.Equal(t, 1, callCount, "should NOT re-fetch version on transient error")
 }
