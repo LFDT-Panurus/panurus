@@ -31,26 +31,6 @@ type MetaData interface {
 	SpentTokenID() []*token2.ID
 }
 
-// GetTMSProviderFunc is a function type that returns a token management service provider.
-type GetTMSProviderFunc = func() *token.ManagementServiceProvider
-
-// UnspendableTokensIterator is an alias for the driver's UnsupportedTokensIterator.
-type UnspendableTokensIterator = driver.UnsupportedTokensIterator
-
-// Transaction models a token transaction within Panurus, providing access to its identifiers and request content.
-type Transaction interface {
-	// ID returns the transaction identifier.
-	ID() string
-	// Network returns the network name the transaction belongs to.
-	Network() string
-	// Channel returns the channel name.
-	Channel() string
-	// Namespace returns the namespace (chaincode ID) of the transaction.
-	Namespace() string
-	// Request returns the underlying token request.
-	Request() *token.Request
-}
-
 // Cache defines the interface for caching token requests and their extracted actions.
 type Cache interface {
 	// Get retrieves a cache entry by key.
