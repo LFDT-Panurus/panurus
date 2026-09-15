@@ -1,0 +1,152 @@
+/*
+Copyright IBM Corp. All Rights Reserved.
+
+SPDX-License-Identifier: Apache-2.0
+*/
+
+package endorsement
+
+import (
+	"context"
+	"time"
+
+	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
+	"github.com/hyperledger-labs/fabric-smart-client/platform/view/view"
+
+	token2 "github.com/LFDT-Panurus/panurus/token"
+	session2 "github.com/LFDT-Panurus/panurus/token/services/utils/json/session"
+	"github.com/LFDT-Panurus/panurus/x/token/services/network/evm/eip712"
+	"github.com/LFDT-Panurus/panurus/x/token/services/network/evm/statedelta"
+)
+
+// receiveTimeout bounds how long a responder waits for the request on its session before giving up.
+const receiveTimeout = 30 * time.Second
+
+// Responder endorses a token request for one TMS. It is the EVM analog of the Fabric
+// RequestApprovalResponderView, running the flow:
+//
+//	receive → authorize → validate → translate → sign → reply
+//
+// Every collaborator is injected so the flow is unit-testable without an FSC runtime or a live node,
+// and so one Responder serves exactly one TMS (multi-TMS routing is the Service's job, keyed by
+// TMSID). The responder never signs a digest handed to it: it recomputes the StateDelta from the
+// validated actions and signs that, so a malicious initiator cannot get it to endorse a delta that
+// does not match the request it validated.
+type Responder struct {
+	authorizer *Authorizer
+	// factoryFor resolves the delta factory for the TMS a request names. It is resolved per request
+	// rather than fixed at construction because an endorser must be registered before any request
+	// arrives, which is before its TMS has necessarily been built: building a TMS goes through the
+	// network driver, so a responder that demanded one up front could not be registered at all.
+	factoryFor func(tmsID token2.TMSID) (*DeltaFactory, error)
+	signer     EndorserSigner
+	// domainFor resolves the EIP-712 domain to sign against, per TMS. This node registers exactly one
+	// Responder for its whole process lifetime (see registerEndorser's doc comment), but every TMS
+	// this node endorses for can carry its own TokenState clone and therefore its own domain, so the
+	// domain a signature is computed against has to be looked up per request just like the delta
+	// factory is: a fixed domain would sign every request with the first TMS's VerifyingContract, and
+	// the resulting signature would not verify against any other TMS's EndorsementVerifier.
+	domainFor func(tmsID token2.TMSID) (eip712.Domain, error)
+}
+
+// NewResponder assembles a Responder for this node from its collaborators. The DeltaFactory carries
+// the validator, public-parameters provider and the ledger this endorser validates and translates
+// with, per TMS; domainFor resolves the EIP-712 domain that TMS's delta is signed against.
+func NewResponder(
+	authorizer *Authorizer,
+	factoryFor func(tmsID token2.TMSID) (*DeltaFactory, error),
+	signer EndorserSigner,
+	domainFor func(tmsID token2.TMSID) (eip712.Domain, error),
+) *Responder {
+	return &Responder{
+		authorizer: authorizer,
+		factoryFor: factoryFor,
+		signer:     signer,
+		domainFor:  domainFor,
+	}
+}
+
+// Call implements the FSC responder view: receive the request on the context's session, endorse it,
+// and reply. The session authenticates the caller, so authorization uses ts.Info().Caller rather
+// than anything the request declares. A declined endorsement is sent back to the initiator as a
+// response carrying the reason (so the initiator sees why), and also returned as the view's error.
+func (r *Responder) Call(context view.Context) (any, error) {
+	ts := session2.NewTypedSessionFromContext(context)
+
+	var req EndorseRequest
+	if err := ts.ReceiveTypedWithTimeout(TypeEndorseRequest, &req, receiveTimeout); err != nil {
+		return nil, errors.Wrap(err, "failed to receive endorse request")
+	}
+
+	resp := r.Handle(context.Context(), ts.Info().Caller, &req)
+	if err := ts.SendTyped(context.Context(), resp, TypeEndorseResponse); err != nil {
+		return nil, errors.Wrap(err, "failed to send endorse response")
+	}
+	if err := resp.Error(); err != nil {
+		return nil, err
+	}
+
+	return resp, nil
+}
+
+// Handle runs the endorsement decision for one request from the authenticated caller and returns the
+// response to send back: the delta this endorser translated the request into, and its signature over
+// that delta's digest. It never returns an error: a refusal is a well-formed EndorseResponse with Err
+// set, so the initiator always learns the outcome. Splitting it out from Call keeps the decision
+// testable without a session.
+//
+// The delta is part of the reply because the initiator does not build one. It has to encode a delta
+// into the transaction, and producing one means validating the request, which is precisely the work
+// this flow delegates to endorsers, so the endorsers hand back what they signed.
+func (r *Responder) Handle(ctx context.Context, caller view.Identity, req *EndorseRequest) *EndorseResponse {
+	delta, sig, err := r.endorse(ctx, caller, req)
+	if err != nil {
+		return &EndorseResponse{Err: err.Error()}
+	}
+
+	return &EndorseResponse{Delta: delta, Signature: sig, EndorserAddress: r.signer.Address().Hex()}
+}
+
+// endorse is the decision proper: authorize, then validate-and-translate through the shared factory,
+// then sign. It returns the delta and its signature, or the first failure. The digest is derived
+// here, from the delta this endorser built, never taken from the request.
+func (r *Responder) endorse(
+	ctx context.Context,
+	caller view.Identity,
+	req *EndorseRequest,
+) (*statedelta.StateDelta, []byte, error) {
+	if err := req.Validate(); err != nil {
+		return nil, nil, err
+	}
+	if err := r.authorizer.Authorize(caller); err != nil {
+		return nil, nil, err
+	}
+
+	// A TMS this endorser cannot resolve is one it does not serve, so refusing here is the same check
+	// the fixed TMS identity used to make, expressed through what it can actually validate.
+	factory, err := r.factoryFor(req.TMSID)
+	if err != nil {
+		return nil, nil, errors.Wrapf(err, "this endorser does not serve tms [%s]", req.TMSID)
+	}
+
+	delta, err := factory.Build(ctx, req)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	domain, err := r.domainFor(req.TMSID)
+	if err != nil {
+		return nil, nil, errors.Wrapf(err, "this endorser does not serve tms [%s]", req.TMSID)
+	}
+
+	sig, err := r.signer.Sign(eip712.Digest(domain, delta))
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return delta, sig, nil
+}
+
+// compile-time check that *token.Validator satisfies RequestValidator, so the production wiring
+// (tms.Validator()) can be injected directly.
+var _ RequestValidator = (*token2.Validator)(nil)

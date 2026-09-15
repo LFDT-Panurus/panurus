@@ -95,7 +95,10 @@ nav:
       - Config: services/config.md
       - Identity: services/identity.md
       - Interop: services/interop.md
-      - Network Ethereum: services/network-ethereum.md
+      - Network Ethereum:
+          - Overview: services/network-ethereum.md
+          - Driver Internals: services/network-ethereum-internals.md
+          - Deployment Runbook: services/network-ethereum-deployment.md
       - Network Fabric: services/network-fabric.md
       - Network Fabricx: services/network-fabricx.md
       - Network: services/network.md

@@ -1,0 +1,146 @@
+/*
+Copyright IBM Corp. All Rights Reserved.
+
+SPDX-License-Identifier: Apache-2.0
+*/
+
+package statedelta
+
+import (
+	"bytes"
+
+	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
+)
+
+// Size bounds Validate enforces on a StateDelta. They exist so that a delta received from an
+// untrusted party (an endorser's reply, over the wire, before its signature has been checked - see
+// endorsement.Initiator) cannot force unbounded decoding and EIP-712 hashing work on the receiver.
+// They are set generously above anything a real translated token request produces, not as a business
+// rule on transaction shape.
+const (
+	// maxDeltaEntries bounds SpentRefs, Outputs and the metadata key/value pairs, each independently.
+	maxDeltaEntries = 4096
+	// maxFieldBytes bounds each variable-length byte field: one output's TokenData, one metadata
+	// value, or SetupParameters.
+	maxFieldBytes = 1 << 20 // 1 MiB
+)
+
+// OutputToken is a newly created token. It carries two keys (both derived off-chain; the contract
+// treats them as opaque): the addressable id and the content-bound marker.
+type OutputToken struct {
+	// TokenID is keccak256(abi.encode(anchor, index)); the addressable storage key used by queries.
+	TokenID [32]byte
+	// SNMarker is the content-bound serial-number marker,
+	// keccak256(abi.encode(anchor, index, keccak256(TokenData))). Recorded when the output is
+	// created; a graph-revealing spend references it so a spender cannot substitute different bytes
+	// at the same (anchor, index). Zero for graph-hiding drivers, which spend by serial number.
+	SNMarker [32]byte
+	// TokenData is the serialized token as produced by the token driver action.
+	TokenData []byte
+}
+
+// StateDelta is the EVM backend artifact produced by translating a validated token request. It is
+// the input to TokenState.applyStateDelta and the message endorsers sign via EIP-712. This Go field
+// set matches the Solidity struct and the EIP-712 type exactly; see the eip712 package for the
+// encoding.
+//
+// It uses a single SpentRefs list (Angelo's one-list steer): the contract interprets the refs by its
+// graphHiding flag, so exactly one interpretation applies per TokenState (each serves one driver).
+type StateDelta struct {
+	// Anchor is the token-request anchor, SHA-256(nonce||creator). It is NOT the Ethereum tx hash.
+	Anchor [32]byte
+
+	// SpentRefs is the single list of consumed references. Graph-revealing: content-bound output
+	// markers (keys.OutputSNMarker) that must have been recorded at creation and get marked spent;
+	// binding the content prevents spending forged bytes at a real (anchor, index). Graph-hiding:
+	// serial numbers (keys.SpentRefForSerial) that must not already exist and get recorded.
+	SpentRefs [][32]byte
+
+	// Outputs are the newly created (non-redeem) tokens, in deterministic counter order.
+	Outputs []OutputToken
+
+	// MetadataKeys and MetadataVals are aligned (same length). MetadataKeys is sorted ascending so
+	// every endorser produces byte-identical deltas.
+	MetadataKeys [][32]byte
+	MetadataVals [][]byte
+
+	// TokenRequestHash is SHA-256 of the token request; it matches the hash the rest of the SDK
+	// computes, so finality's token-request-hash comparison lines up.
+	TokenRequestHash [32]byte
+
+	// PublicParamsHash is SHA-256 of the public parameters used to validate the request, and
+	// PublicParamsVersion must equal the TokenState's current version at apply time.
+	PublicParamsHash    [32]byte
+	PublicParamsVersion uint64
+
+	// IsSetup marks a public-parameters update delta. When set, SpentRefs and Outputs are empty and
+	// SetupParameters carries the new public parameters.
+	IsSetup         bool
+	SetupParameters []byte
+}
+
+// Validate checks the structural invariants a well-formed StateDelta must satisfy. The translator
+// and endorsers use it to fail fast rather than emit or sign a malformed delta.
+//
+// Beyond shape checks, it enforces two invariants that protect the signing path:
+//   - SetupParameters is present iff IsSetup. The field is covered by the EIP-712 digest, so a
+//     non-setup delta smuggling setup bytes would be signed by endorsers while the contract ignores
+//     it, so refuse it instead.
+//   - MetadataKeys are strictly ascending (see "StateDelta determinism" in
+//     docs/services/network-ethereum-internals.md). Unsorted keys mean the
+//     emitting translator is broken (endorsers would produce different bytes and signatures would
+//     not assemble); duplicate keys would make the on-chain write order ambiguous.
+//
+// It also enforces the size bounds above before doing any per-element work, so a delta built from
+// untrusted bytes is rejected before it can force unbounded comparison or hashing work downstream.
+func (d *StateDelta) Validate() error {
+	if len(d.SpentRefs) > maxDeltaEntries {
+		return errors.Errorf("too many spent refs: %d exceeds the %d limit", len(d.SpentRefs), maxDeltaEntries)
+	}
+	if len(d.Outputs) > maxDeltaEntries {
+		return errors.Errorf("too many outputs: %d exceeds the %d limit", len(d.Outputs), maxDeltaEntries)
+	}
+	for i, out := range d.Outputs {
+		if len(out.TokenData) > maxFieldBytes {
+			return errors.Errorf("output %d token data too large: %d bytes exceeds the %d limit", i, len(out.TokenData), maxFieldBytes)
+		}
+	}
+	if len(d.MetadataKeys) > maxDeltaEntries {
+		return errors.Errorf("too many metadata entries: %d exceeds the %d limit", len(d.MetadataKeys), maxDeltaEntries)
+	}
+	// MetadataVals is bounded on its own, independently of MetadataKeys, so a delta with few or no
+	// keys and an oversized MetadataVals cannot force the per-element loop below to run over more
+	// than maxDeltaEntries entries before the keys/values length mismatch is caught.
+	if len(d.MetadataVals) > maxDeltaEntries {
+		return errors.Errorf("too many metadata entries: %d exceeds the %d limit", len(d.MetadataVals), maxDeltaEntries)
+	}
+	for i, val := range d.MetadataVals {
+		if len(val) > maxFieldBytes {
+			return errors.Errorf("metadata value %d too large: %d bytes exceeds the %d limit", i, len(val), maxFieldBytes)
+		}
+	}
+	if len(d.SetupParameters) > maxFieldBytes {
+		return errors.Errorf("setup parameters too large: %d bytes exceeds the %d limit", len(d.SetupParameters), maxFieldBytes)
+	}
+
+	if len(d.MetadataKeys) != len(d.MetadataVals) {
+		return errors.Errorf("metadata keys/values length mismatch: %d != %d", len(d.MetadataKeys), len(d.MetadataVals))
+	}
+	for i := 1; i < len(d.MetadataKeys); i++ {
+		if bytes.Compare(d.MetadataKeys[i-1][:], d.MetadataKeys[i][:]) >= 0 {
+			return errors.Errorf("metadata keys must be strictly ascending (canonical order), violated at index %d", i)
+		}
+	}
+	if d.IsSetup {
+		if len(d.SpentRefs) != 0 || len(d.Outputs) != 0 || len(d.MetadataKeys) != 0 {
+			return errors.Errorf("setup delta must carry no spent refs, outputs, or metadata")
+		}
+		if len(d.SetupParameters) == 0 {
+			return errors.Errorf("setup delta must carry the new public parameters")
+		}
+	} else if len(d.SetupParameters) != 0 {
+		return errors.Errorf("non-setup delta must not carry setup parameters")
+	}
+
+	return nil
+}
