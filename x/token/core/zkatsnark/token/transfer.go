@@ -32,10 +32,13 @@ type SpendDescription struct {
 // It implements the driver.TransferAction interface so that the common
 // validator infrastructure can be used.
 type TransferAction struct {
-	TypeCommitment   []byte // 32 bytes: MiMC(TokenType, TypeRandomness), shared across all inputs/outputs
+	TypeCommitment   []byte       // 32 bytes: MiMC(TokenType, TypeRandomness), shared across all inputs/outputs
+	InputIDs         []*token2.ID `json:"InputIDs,omitempty"`    // ledger token IDs of spent tokens; populated by TransferService
+	InputTokens      [][]byte     `json:"InputTokens,omitempty"` // serialized OutputDescriptions of spent tokens
 	Inputs           []SpendDescription
 	Outputs          []OutputDescription
 	BindingSignature []byte // 96 bytes: R.X || R.Y || S
+	Issuer           []byte `json:"Issuer,omitempty"` // issuer identity for redeem actions
 }
 
 // ── driver.Action ──────────────────────────────────────────────────────────────
@@ -56,14 +59,16 @@ func (a *TransferAction) NumInputs() int {
 	return len(a.Inputs)
 }
 
-// GetInputs returns nil; zkatsnark inputs are identified by commitment,
-// not by ledger token IDs on the action itself.
+// GetInputs returns the ledger token IDs of the tokens being spent.
 func (a *TransferAction) GetInputs() []*token2.ID {
-	return nil
+	return a.InputIDs
 }
 
 // GetSerializedInputs returns the serialized inputs of the action.
 func (a *TransferAction) GetSerializedInputs() ([][]byte, error) {
+	if len(a.InputTokens) > 0 {
+		return a.InputTokens, nil
+	}
 	res := make([][]byte, len(a.Inputs))
 	for i, in := range a.Inputs {
 		raw, err := json.Marshal(in)
@@ -162,7 +167,12 @@ func (a *TransferAction) SerializeOutputAt(index int) ([]byte, error) {
 	return json.Marshal(a.Outputs[index])
 }
 
-// GetIssuer returns nil, transfers have no issuer.
+// GetIssuer returns the issuer identity for redeem actions, or nil for
+// regular transfers.
 func (a *TransferAction) GetIssuer() driver.Identity {
-	return nil
+	if len(a.Issuer) == 0 {
+		return nil
+	}
+
+	return a.Issuer
 }
