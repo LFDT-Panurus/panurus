@@ -9,10 +9,17 @@ package ttx
 import (
 	"context"
 	"encoding/base64"
+	"sync"
 
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/view"
 )
+
+var closedMsgChan = func() chan *view.Message {
+	ch := make(chan *view.Message)
+	close(ch)
+	return ch
+}()
 
 // LocalBidirectionalChannel is a bidirectional channel that is used to simulate
 // a session between two views (let's call them L and R) running in the same process.
@@ -39,22 +46,29 @@ func NewLocalBidirectionalChannel(ctx context.Context, caller string, contextID 
 		Closed:         false,
 	}
 
+	leftClosed := make(chan struct{})
+	rightClosed := make(chan struct{})
+
 	return &LocalBidirectionalChannel{
 		left: &localSession{
-			name:         "left",
-			contextID:    contextID,
-			caller:       caller,
-			info:         info,
-			readChannel:  rl,
-			writeChannel: lr,
+			name:           "left",
+			contextID:      contextID,
+			caller:         caller,
+			info:           info,
+			readChannel:    rl,
+			writeChannel:   lr,
+			closedChan:     leftClosed,
+			peerClosedChan: rightClosed,
 		},
 		right: &localSession{
-			name:         "right",
-			contextID:    contextID,
-			caller:       caller,
-			info:         info,
-			readChannel:  lr,
-			writeChannel: rl,
+			name:           "right",
+			contextID:      contextID,
+			caller:         caller,
+			info:           info,
+			readChannel:    lr,
+			writeChannel:   rl,
+			closedChan:     rightClosed,
+			peerClosedChan: leftClosed,
 		},
 	}, nil
 }
@@ -78,9 +92,19 @@ type localSession struct {
 	info         view.SessionInfo
 	readChannel  chan *view.Message
 	writeChannel chan *view.Message
+
+	mu             sync.RWMutex
+	closed         bool
+	closedChan     chan struct{}
+	peerClosedChan chan struct{}
+	inFlight       int
+	writeClosed    bool
 }
 
 func (s *localSession) Info() view.SessionInfo {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
 	return s.info
 }
 
@@ -93,32 +117,83 @@ func (s *localSession) SendError(ctx context.Context, payload []byte) error {
 }
 
 func (s *localSession) send(ctx context.Context, payload []byte, status int32) error {
-	if s.info.Closed {
-		return errors.New("session is closed")
+	if ctx == nil {
+		ctx = context.Background()
 	}
 
-	s.writeChannel <- &view.Message{
-		SessionID:    s.info.ID,
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+
+		return errors.New("session is closed")
+	}
+	s.inFlight++
+	info := s.info
+	s.mu.Unlock()
+
+	defer func() {
+		s.mu.Lock()
+		s.inFlight--
+		if s.inFlight == 0 && s.closed && !s.writeClosed {
+			s.writeClosed = true
+			close(s.writeChannel)
+		}
+		s.mu.Unlock()
+	}()
+
+	msg := &view.Message{
+		SessionID:    info.ID,
 		ContextID:    s.contextID,
 		Caller:       s.caller,
-		FromEndpoint: s.info.RemoteEndpoint,
-		FromPKID:     s.info.RemotePKID,
+		FromEndpoint: info.RemoteEndpoint,
+		FromPKID:     info.RemotePKID,
 		Status:       status,
 		Payload:      payload,
 		Ctx:          ctx,
 	}
 
-	return nil
+	select {
+	case s.writeChannel <- msg:
+		return nil
+	default:
+	}
+
+	select {
+	case s.writeChannel <- msg:
+		return nil
+	case <-s.closedChan:
+		return errors.New("session is closed")
+	case <-s.peerClosedChan:
+		return errors.New("session is closed")
+	case <-ctx.Done():
+		return errors.Wrap(ctx.Err(), "context cancelled while sending message")
+	}
 }
 
 func (s *localSession) Receive() <-chan *view.Message {
-	if s.info.Closed {
-		return nil
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if s.closed {
+		return closedMsgChan
 	}
 
 	return s.readChannel
 }
 
 func (s *localSession) Close() {
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+
+		return
+	}
+	s.closed = true
 	s.info.Closed = true
+	close(s.closedChan)
+	if s.inFlight == 0 {
+		s.writeClosed = true
+		close(s.writeChannel)
+	}
+	s.mu.Unlock()
 }
