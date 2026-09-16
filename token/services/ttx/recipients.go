@@ -924,6 +924,14 @@ func (f *ExchangeRecipientIdentitiesView) exchangeRemotely(context view.Context,
 		RecipientData: localRecipientData,
 		Nonce:         nonce,
 	}
+	initMessage, err := buildAttestationMessage(request.TMSID, request.WalletID, localRecipientData.Identity, false, "", request.Nonce, session.Info().ID, context.ID())
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to build exchange initiator attestation message")
+	}
+	request.Signature, err = signRecipientAttestation(context.Context(), w, initMessage, localRecipientData.Identity, true)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to sign exchange initiator attestation")
+	}
 	if err = session.SendTyped(context.Context(), request, TypeExchangeRecipientRequest); err != nil {
 		return nil, err
 	}
