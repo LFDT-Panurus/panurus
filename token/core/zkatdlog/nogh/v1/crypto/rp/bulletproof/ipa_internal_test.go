@@ -68,6 +68,28 @@ func TestIPAValidate(t *testing.T) {
 	err = ipa.Validate(math.BN254)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "nil Right")
+	ipa.Right = curve.NewRandomZr(rand)
+
+	// Regression for the crash-cross-curve-zr fuzz seed: a foreign-curve Left/Right
+	// scalar must be rejected here, otherwise it reaches v.Curve.ModMul in
+	// ipaVerifier.Verify and panics via a cross-curve backend type assertion
+	// (interface conversion: driver.Zr is *bls12381.Zr, not *common.BaseZr).
+	bls := math.Curves[math.BLS12_381]
+	blsRand, err := bls.Rand()
+	require.NoError(t, err)
+
+	// Wrong-curve Left
+	ipa.Left = bls.NewRandomZr(blsRand)
+	err = ipa.Validate(math.BN254)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "invalid IPA proof: invalid Left")
+	ipa.Left = curve.NewRandomZr(rand)
+
+	// Wrong-curve Right
+	ipa.Right = bls.NewRandomZr(blsRand)
+	err = ipa.Validate(math.BN254)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "invalid IPA proof: invalid Right")
 }
 
 func TestIPADeserializeError(t *testing.T) {

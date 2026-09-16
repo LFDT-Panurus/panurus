@@ -77,6 +77,17 @@ func (ipa *IPA) Validate(curve mathlib.CurveID) error {
 	if ipa.Right == nil {
 		return errors.New("invalid IPA proof: nil Right")
 	}
+	// Left and Right are deserialized with an attacker-controlled CurveID; without
+	// these checks a foreign-curve scalar reaches v.Curve.ModMul(s[i], proof.Left, ...)
+	// in ipaVerifier.Verify and panics via a cross-curve backend type assertion
+	// (interface conversion: driver.Zr is *bls12381.Zr, not *common.BaseZr) — an
+	// unauthenticated validator DoS.
+	if err := math.CheckBaseElement(ipa.Left, curve); err != nil {
+		return errors.Wrapf(err, "invalid IPA proof: invalid Left")
+	}
+	if err := math.CheckBaseElement(ipa.Right, curve); err != nil {
+		return errors.Wrapf(err, "invalid IPA proof: invalid Right")
+	}
 	if ipa.L == nil {
 		return errors.New("invalid IPA proof: nil L")
 	}
