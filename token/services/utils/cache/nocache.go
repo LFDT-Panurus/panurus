@@ -9,7 +9,7 @@ SPDX-License-Identifier: Apache-2.0
 package cache
 
 import (
-	"github.com/hyperledger-labs/fabric-smart-client/platform/common/utils"
+	"github.com/LFDT-Panurus/panurus/token/services/utils"
 )
 
 // NoCache implements a dummy cache that does nothing

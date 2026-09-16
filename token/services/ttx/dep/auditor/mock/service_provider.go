@@ -98,8 +98,6 @@ func (fake *AuditServiceProvider) AuditorServiceReturnsOnCall(i int, result1 aud
 func (fake *AuditServiceProvider) Invocations() map[string][][]interface{} {
 	fake.invocationsMutex.RLock()
 	defer fake.invocationsMutex.RUnlock()
-	fake.auditorServiceMutex.RLock()
-	defer fake.auditorServiceMutex.RUnlock()
 	copiedInvocations := map[string][][]interface{}{}
 	for key, value := range fake.invocations {
 		copiedInvocations[key] = value

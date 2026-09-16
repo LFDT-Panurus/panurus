@@ -11,7 +11,7 @@ import (
 	"github.com/LFDT-Panurus/panurus/token/driver"
 	"github.com/LFDT-Panurus/panurus/token/services"
 	"github.com/LFDT-Panurus/panurus/token/services/logging"
-	"github.com/hyperledger-labs/fabric-smart-client/platform/common/utils"
+	"github.com/LFDT-Panurus/panurus/token/services/utils"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/common/utils/lazy"
 	driver2 "github.com/hyperledger-labs/fabric-smart-client/platform/view/services/storage/driver"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/services/storage/driver/common"
@@ -43,8 +43,13 @@ func NewStoreServiceManager[S any, T any](
 				return utils.Zero[T](), err
 			}
 
+			persistenceName, err := common.GetPersistenceName(cfg, prefix)
+			if err != nil {
+				return utils.Zero[T](), err
+			}
+
 			s, err := constructor(
-				common.GetPersistenceName(cfg, prefix),
+				persistenceName,
 				tmsID.Network,
 				tmsID.Channel,
 				tmsID.Namespace,

@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hyperledger-labs/fabric-smart-client/platform/common/utils"
+	"github.com/LFDT-Panurus/panurus/token/services/utils"
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/stretchr/testify/require"
 )
@@ -23,7 +23,7 @@ func TestAdvisoryLock_Acquisition(t *testing.T) {
 
 	db, err := sql.Open("pgx", pgConnStr)
 	require.NoError(t, err)
-	defer utils.IgnoreErrorFunc(db.Close)
+	defer utils.IgnoreError(db.Close)
 
 	ctx := context.Background()
 	lockID := int64(12345)
@@ -60,11 +60,11 @@ func TestAdvisoryLock_MultipleInstances(t *testing.T) {
 
 	db1, err := sql.Open("pgx", pgConnStr)
 	require.NoError(t, err)
-	defer utils.IgnoreErrorFunc(db1.Close)
+	defer utils.IgnoreError(db1.Close)
 
 	db2, err := sql.Open("pgx", pgConnStr)
 	require.NoError(t, err)
-	defer utils.IgnoreErrorFunc(db2.Close)
+	defer utils.IgnoreError(db2.Close)
 
 	ctx := context.Background()
 	lockID := int64(99999)
@@ -101,7 +101,7 @@ func TestAdvisoryLock_DoubleClose(t *testing.T) {
 
 	db, err := sql.Open("pgx", pgConnStr)
 	require.NoError(t, err)
-	defer utils.IgnoreErrorFunc(db.Close)
+	defer utils.IgnoreError(db.Close)
 
 	ctx := context.Background()
 	lockID := int64(54321)
@@ -126,7 +126,7 @@ func TestAdvisoryLock_ContextCancellation(t *testing.T) {
 
 	db, err := sql.Open("pgx", pgConnStr)
 	require.NoError(t, err)
-	defer utils.IgnoreErrorFunc(db.Close)
+	defer utils.IgnoreError(db.Close)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
@@ -161,7 +161,7 @@ func TestAdvisoryLockFactory(t *testing.T) {
 
 	db, err := sql.Open("pgx", pgConnStr)
 	require.NoError(t, err)
-	defer utils.IgnoreErrorFunc(db.Close)
+	defer utils.IgnoreError(db.Close)
 
 	ctx := context.Background()
 
@@ -191,7 +191,7 @@ func TestAdvisoryLock_DifferentLockIDs(t *testing.T) {
 
 	db, err := sql.Open("pgx", pgConnStr)
 	require.NoError(t, err)
-	defer utils.IgnoreErrorFunc(db.Close)
+	defer utils.IgnoreError(db.Close)
 
 	ctx := context.Background()
 	lockID1 := int64(11111)

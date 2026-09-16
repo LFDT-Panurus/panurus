@@ -14,7 +14,7 @@ import (
 
 	driver3 "github.com/LFDT-Panurus/panurus/token/services/storage/db/driver"
 	common3 "github.com/LFDT-Panurus/panurus/token/services/storage/db/sql/common"
-	"github.com/hyperledger-labs/fabric-smart-client/platform/common/utils"
+	"github.com/LFDT-Panurus/panurus/token/services/utils"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/common/utils/lazy"
 	driver2 "github.com/hyperledger-labs/fabric-smart-client/platform/view/services/storage/driver"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/services/storage/driver/common"
