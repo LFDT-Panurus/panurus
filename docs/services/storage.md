@@ -235,6 +235,20 @@ The Storage Service follows a "Finality-Driven" update strategy. While transacti
 The `TokenDB` and `Movements` tables are typically updated only when the **Network Service** confirms that a transaction has reached finality on the ledger. 
 This ensures that the local view of the "Token Landscape" always reflects the ground truth of the distributed ledger.
 
+## Integrity Verification
+
+A store does not persist whatever it is handed. Before a high-value payload is written, and again
+before it is handed back, the store applies a set of structural checks — that a token request is
+anchored to the transaction id it is filed under, that public parameters hash to the hash they are
+addressed by, that a hash-addressed identity row belongs to the identity that was asked for. The
+checks are unconditional and fail-closed, and the ones a store *does not* perform are the caller's
+documented obligation rather than an unstated gap.
+
+Each store method that applies a check names it in a `Verification:` clause in its Godoc, and the
+checks themselves live in `token/services/storage/integrity`. For the full per-asset-class posture —
+including what is deliberately not checked and why — see
+[**Store Integrity Verification**](../security/store_integrity_verification.md).
+
 ## Transaction Recovery Service
 
 The Storage Service includes a **Transaction Recovery Service** that provides the core recovery mechanism for handling pending transactions that may have lost their finality listeners due to node restarts, network interruptions, or other failures.

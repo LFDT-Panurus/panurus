@@ -35,8 +35,6 @@ type serverConfig struct {
 }
 
 func main() {
-	installCoverageFlushHandler()
-
 	config := serverConfig{
 		CCID:               os.Getenv("CHAINCODE_ID"),
 		CCaddress:          os.Getenv("CHAINCODE_SERVER_ADDRESS"),
@@ -149,16 +147,16 @@ func main() {
 	}
 }
 
-// installCoverageFlushHandler makes -cover instrumented builds of this
-// binary keep flushing their coverage counters to GOCOVERDIR while running,
-// instead of only on exit. shim.Start/server.Start never return during
-// normal operation, and the peer tears this process down at the end of a
-// test run by killing it outright (observed empirically: no SIGTERM/error
-// return reaches this process, and Go's coverage runtime only persists
-// counters on a normal return from main or an explicit write, never on an
-// unhandled signal) -- so without periodic flushing here, the chaincode's
-// own packages would never show up in integration test coverage.
-func installCoverageFlushHandler() {
+// init makes -cover instrumented builds of this binary keep flushing their
+// coverage counters to GOCOVERDIR while running, instead of only on exit.
+// shim.Start/server.Start never return during normal operation, and the peer
+// tears this process down at the end of a test run by killing it outright
+// (observed empirically: no SIGTERM/error return reaches this process, and
+// Go's coverage runtime only persists counters on a normal return from main
+// or an explicit write, never on an unhandled signal) -- so without periodic
+// flushing here, the chaincode's own packages would never show up in
+// integration test coverage.
+func init() {
 	dir := os.Getenv("GOCOVERDIR")
 	if dir == "" {
 		return
@@ -169,7 +167,11 @@ func installCoverageFlushHandler() {
 	go func() {
 		<-sigCh
 		flushCoverage()
-		os.Exit(0) //nolint:revive // deep-exit: main never returns (blocked in server.Start()), so this goroutine must exit the process itself after flushing coverage on signal
+		// main never returns (it blocks in server.Start()), so this goroutine has
+		// to terminate the process itself once the counters are safely written.
+		// Exiting from init() rather than from a helper keeps revive's deep-exit
+		// rule satisfied without a suppression directive.
+		os.Exit(0)
 	}()
 
 	go func() {

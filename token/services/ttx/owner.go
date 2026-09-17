@@ -81,6 +81,9 @@ func (a *TxOwner) Check(ctx context.Context) ([]string, error) {
 // appendTransactionEndorseAck records an endorsement acknowledgment signature from a party
 // for the given transaction. This is used internally during transaction distribution to
 // track which parties have acknowledged receipt of the transaction.
+//
+// The caller must have verified sigma against id and the payload actually sent
+// to that party before calling this — see Service.AppendTransactionEndorseAck.
 func (a *TxOwner) appendTransactionEndorseAck(ctx context.Context, tx *Transaction, id view.Identity, sigma []byte) error {
 	return a.owner.AppendTransactionEndorseAck(ctx, tx.ID(), id, sigma)
 }
