@@ -14,7 +14,6 @@ import (
 
 	"github.com/DATA-DOG/go-sqlmock"
 	common3 "github.com/LFDT-Panurus/panurus/token/services/storage/db/sql/query/common"
-	"github.com/LFDT-Panurus/panurus/token/services/storage/db/sql/query/cond"
 	tokentype "github.com/LFDT-Panurus/panurus/token/token"
 	"github.com/stretchr/testify/require"
 )
@@ -44,18 +43,7 @@ func (stubCondInterpreter) TimeOffset(duration time.Duration, sb common3.Builder
 }
 
 func (stubCondInterpreter) InTuple(fields []common3.Serializable, vals []common3.Tuple, sb common3.Builder) {
-	if len(vals) == 0 || len(fields) == 0 {
-		return
-	}
-	ors := make([]cond.Condition, len(vals))
-	for j, tuple := range vals {
-		ands := make([]cond.Condition, len(tuple))
-		for k, val := range tuple {
-			ands[k] = cond.CmpVal(fields[k], "=", val)
-		}
-		ors[j] = cond.And(ands...)
-	}
-	sb.WriteConditionSerializable(cond.Or(ors...), stubCondInterpreter{})
+	common3.WriteInTuple(fields, vals, sb)
 }
 
 // TestUnspentTokensIteratorByPreparedReuse verifies, without a real DB, that

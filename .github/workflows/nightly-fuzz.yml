@@ -159,6 +159,9 @@ jobs:
           - name: storage-integrity-token-request-actions
             pkg: ./token/services/storage/integrity
             func: FuzzCheckTokenRequestActions
+          - name: storage-pagination-keyset-from-raw
+            pkg: ./token/services/storage/db/sql/query/pagination
+            func: FuzzKeysetFromRawNoPanic
 
     steps:
       - name: Checkout code
