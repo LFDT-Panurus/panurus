@@ -100,6 +100,58 @@ type TransactionSer struct {
 	Envelope     []byte
 }
 
+// marshalTransient marshals t's transient metadata, if any.
+func marshalTransient(t *Transaction) ([]byte, error) {
+	if len(t.Transient) == 0 {
+		return nil, nil
+	}
+	transientRaw, err := MarshalMeta(t.Transient)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to marshal transient")
+	}
+
+	return transientRaw, nil
+}
+
+// marshalTokenRequest marshals t's token request, filtering its metadata down to eIDs when
+// eIDs is non-empty.
+func marshalTokenRequest(ctx context.Context, t *Transaction, eIDs ...string) ([]byte, error) {
+	if t.TokenRequest == nil {
+		return nil, nil
+	}
+	req := t.TokenRequest
+	// If eIDs are specified, we only marshal the metadata for the passed eIDs
+	if len(eIDs) != 0 {
+		var err error
+		req, err = t.TokenRequest.FilterMetadataBy(ctx, eIDs...)
+		if err != nil {
+			return nil, errors.Wrap(err, "failed to filter metadata")
+		}
+	}
+	tokenRequestRaw, err := req.Bytes()
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to marshal token request")
+	}
+
+	return tokenRequestRaw, nil
+}
+
+// marshalEnvelope marshals t's envelope, if any.
+func marshalEnvelope(t *Transaction) ([]byte, error) {
+	if t.Envelope == nil {
+		return nil, nil
+	}
+	envRaw, err := t.Envelope.Bytes()
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to marshal envelope")
+	}
+	if logger.IsEnabledFor(zapcore.DebugLevel) {
+		logger.Debugf("transaction envelope [%s]", utils.Hashable(t.Envelope.String()))
+	}
+
+	return envRaw, nil
+}
+
 func marshal(ctx context.Context, t *Transaction, eIDs ...string) ([]byte, error) {
 	// sanity checks
 	if len(t.Network()) == 0 {
@@ -109,41 +161,19 @@ func marshal(ctx context.Context, t *Transaction, eIDs ...string) ([]byte, error
 		return nil, ErrNamespaceNotSet
 	}
 
-	var err error
-
-	var transientRaw []byte
-	if len(t.Transient) != 0 {
-		transientRaw, err = MarshalMeta(t.Transient)
-		if err != nil {
-			return nil, errors.Wrap(err, "failed to marshal transient")
-		}
+	transientRaw, err := marshalTransient(t)
+	if err != nil {
+		return nil, err
 	}
 
-	var tokenRequestRaw []byte
-	if t.TokenRequest != nil {
-		req := t.TokenRequest
-		// If eIDs are specified, we only marshal the metadata for the passed eIDs
-		if len(eIDs) != 0 {
-			req, err = t.TokenRequest.FilterMetadataBy(ctx, eIDs...)
-			if err != nil {
-				return nil, errors.Wrap(err, "failed to filter metadata")
-			}
-		}
-		tokenRequestRaw, err = req.Bytes()
-		if err != nil {
-			return nil, errors.Wrap(err, "failed to marshal token request")
-		}
+	tokenRequestRaw, err := marshalTokenRequest(ctx, t, eIDs...)
+	if err != nil {
+		return nil, err
 	}
 
-	var envRaw []byte
-	if t.Envelope != nil {
-		envRaw, err = t.Envelope.Bytes()
-		if err != nil {
-			return nil, errors.Wrap(err, "failed to marshal envelope")
-		}
-		if logger.IsEnabledFor(zapcore.DebugLevel) {
-			logger.Debugf("transaction envelope [%s]", utils.Hashable(t.Envelope.String()))
-		}
+	envRaw, err := marshalEnvelope(t)
+	if err != nil {
+		return nil, err
 	}
 
 	res, err := asn1.Marshal(TransactionSer{
@@ -165,6 +195,7 @@ func marshal(ctx context.Context, t *Transaction, eIDs ...string) ([]byte, error
 	return res, nil
 }
 
+//nolint:gocognit // reconstructs a Payload's fields from wire bytes in a fixed order that later code depends on; extraction risks a field landing in the wrong place with no compiler error to catch it.
 func unmarshal(getNetwork GetNetworkFunc, p *Payload, raw []byte) error {
 	var ser TransactionSer
 	rest, err := asn1.Unmarshal(raw, &ser)
