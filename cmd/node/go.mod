@@ -9,7 +9,7 @@ replace (
 
 require (
 	github.com/LFDT-Panurus/panurus/integration v0.0.0
-	github.com/hyperledger-labs/fabric-smart-client v0.21.0
+	github.com/hyperledger-labs/fabric-smart-client v0.22.0
 )
 
 require (
@@ -62,7 +62,7 @@ require (
 	github.com/hashicorp/go-uuid v1.0.3 // indirect
 	github.com/hashicorp/golang-lru v1.0.2 // indirect
 	github.com/huin/goupnp v1.3.0 // indirect
-	github.com/hyperledger-labs/fabric-smart-client/integration v0.21.0 // indirect
+	github.com/hyperledger-labs/fabric-smart-client/integration v0.22.0 // indirect
 	github.com/hyperledger-labs/fabric-smart-client/platform/view/services/comm/host/libp2p v0.16.0 // indirect
 	github.com/hyperledger/fabric-amcl v0.0.0-20230602173724-9e02669dceb2 // indirect
 	github.com/hyperledger/fabric-chaincode-go/v2 v2.3.1-0.20260319210430-56968fdc7833 // indirect
@@ -77,7 +77,7 @@ require (
 	github.com/ipld/go-ipld-prime v0.24.0 // indirect
 	github.com/jackc/pgpassfile v1.0.0 // indirect
 	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect
-	github.com/jackc/pgx/v5 v5.10.0 // indirect
+	github.com/jackc/pgx/v5 v5.11.0 // indirect
 	github.com/jackc/pgxlisten v0.0.0-20250802141604-12b92425684c // indirect
 	github.com/jackc/puddle/v2 v2.2.2 // indirect
 	github.com/jackpal/go-nat-pmp v1.0.2 // indirect

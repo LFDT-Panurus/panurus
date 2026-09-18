@@ -883,8 +883,8 @@ github.com/hashicorp/golang-lru/v2 v2.0.7/go.mod h1:QeFd9opnmA6QUJc5vARoKUSoFhyf
 github.com/hpcloud/tail v1.0.0/go.mod h1:ab1qPbhIpdTxEkNHXyeSf5vhxWSCs/tWer42PpOxQnU=
 github.com/hyperledger-labs/SmartBFT v1.0.1 h1:5+otMbvxtiuGwwOg37QvXDcln9almNBRp9fYVW+kgdY=
 github.com/hyperledger-labs/SmartBFT v1.0.1/go.mod h1:BLK++r4BpOjd5M5wncauC9PXBDKBcNCYJkGMgwfJm7M=
-github.com/hyperledger-labs/fabric-smart-client v0.21.0 h1:o2y4SrfYj0JRa5cDtTMts5HbI9fpJP5V4BI9/SHmnDY=
-github.com/hyperledger-labs/fabric-smart-client v0.21.0/go.mod h1:XnvxD/F4rsYLDkmEUvIcYieDrQG5V4QRyr4QRujmACg=
+github.com/hyperledger-labs/fabric-smart-client v0.22.0 h1:FuzaQBSxss0YjFKKmSWO4m8B3zSfDgvPVRAhEaWa5og=
+github.com/hyperledger-labs/fabric-smart-client v0.22.0/go.mod h1:+xLhXkBZh39ZjBvrGOc0HCTZ81/Vn7nuZzUhrZ2NcZw=
 github.com/hyperledger/fabric-amcl v0.0.0-20230602173724-9e02669dceb2 h1:B1Nt8hKb//KvgGRprk0h1t4lCnwhE9/ryb1WqfZbV+M=
 github.com/hyperledger/fabric-amcl v0.0.0-20230602173724-9e02669dceb2/go.mod h1:X+DIyUsaTmalOpmpQfIvFZjKHQedrURQ5t4YqquX7lE=
 github.com/hyperledger/fabric-chaincode-go/v2 v2.3.0 h1:NB/QO2t4R5f6Nz/oREqZeaE4splHI2U9gqndfEQZreo=
@@ -904,8 +904,8 @@ github.com/jackc/pgpassfile v1.0.0 h1:/6Hmqy13Ss2zCq62VdNG8tM1wchn8zjSGOBJ6icpsI
 github.com/jackc/pgpassfile v1.0.0/go.mod h1:CEx0iS5ambNFdcRtxPj5JhEz+xB6uRky5eyVu/W2HEg=
 github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 h1:iCEnooe7UlwOQYpKFhBabPMi4aNAfoODPEFNiAnClxo=
 github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761/go.mod h1:5TJZWKEWniPve33vlWYSoGYefn3gLQRzjfDlhSJ9ZKM=
-github.com/jackc/pgx/v5 v5.10.0 h1:VhSvgU2jSli8o3AqIEOTJr7rZwAEUVo4E4XhR94Zfr0=
-github.com/jackc/pgx/v5 v5.10.0/go.mod h1:mal1tBGAFfLHvZzaYh77YS/eC6IX9OWbRV1QIIM0Jn4=
+github.com/jackc/pgx/v5 v5.11.0 h1:IzBBtyK9AHqf98cctWFifYSci2hgQR/cd56wB4p+ogg=
+github.com/jackc/pgx/v5 v5.11.0/go.mod h1:mal1tBGAFfLHvZzaYh77YS/eC6IX9OWbRV1QIIM0Jn4=
 github.com/jackc/pgxlisten v0.0.0-20250802141604-12b92425684c h1:on93qgQJqBwjHYjUv51BuS6Q8UlALFAHhsvuR5WVaos=
 github.com/jackc/pgxlisten v0.0.0-20250802141604-12b92425684c/go.mod h1:ygR1JwoRvIb4hhLukHQxSB3u/sRQT4Laylx0rDtNEhE=
 github.com/jackc/puddle/v2 v2.2.2 h1:PR8nw+E/1w0GLuRFSmiioY6UooMp6KJv0/61nB7icHo=

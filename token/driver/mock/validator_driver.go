@@ -56,14 +56,12 @@ func (fake *ValidatorDriver) NewValidator(arg1 driver.PublicParameters, arg2 dri
 	if specificReturn {
 		return ret.result1, ret.result2
 	}
-
 	return fakeReturns.result1, fakeReturns.result2
 }
 
 func (fake *ValidatorDriver) NewValidatorCallCount() int {
 	fake.newValidatorMutex.RLock()
 	defer fake.newValidatorMutex.RUnlock()
-
 	return len(fake.newValidatorArgsForCall)
 }
 
@@ -77,7 +75,6 @@ func (fake *ValidatorDriver) NewValidatorArgsForCall(i int) (driver.PublicParame
 	fake.newValidatorMutex.RLock()
 	defer fake.newValidatorMutex.RUnlock()
 	argsForCall := fake.newValidatorArgsForCall[i]
-
 	return argsForCall.arg1, argsForCall.arg2
 }
 
@@ -128,14 +125,12 @@ func (fake *ValidatorDriver) PublicParametersFromBytes(arg1 []byte) (driver.Publ
 	if specificReturn {
 		return ret.result1, ret.result2
 	}
-
 	return fakeReturns.result1, fakeReturns.result2
 }
 
 func (fake *ValidatorDriver) PublicParametersFromBytesCallCount() int {
 	fake.publicParametersFromBytesMutex.RLock()
 	defer fake.publicParametersFromBytesMutex.RUnlock()
-
 	return len(fake.publicParametersFromBytesArgsForCall)
 }
 
@@ -149,7 +144,6 @@ func (fake *ValidatorDriver) PublicParametersFromBytesArgsForCall(i int) []byte 
 	fake.publicParametersFromBytesMutex.RLock()
 	defer fake.publicParametersFromBytesMutex.RUnlock()
 	argsForCall := fake.publicParametersFromBytesArgsForCall[i]
-
 	return argsForCall.arg1
 }
 
@@ -186,7 +180,6 @@ func (fake *ValidatorDriver) Invocations() map[string][][]interface{} {
 	for key, value := range fake.invocations {
 		copiedInvocations[key] = value
 	}
-
 	return copiedInvocations
 }
 

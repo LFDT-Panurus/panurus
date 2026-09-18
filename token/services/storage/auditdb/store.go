@@ -60,7 +60,11 @@ func NewStoreServiceManager(cp db.ConfigService, drivers multiplexed.Driver, rep
 			if err != nil {
 				return nil, err
 			}
-			store, err := drivers.NewAuditTransaction(fsccommon.GetPersistenceName(cfg, "auditdb.persistence"), tmsID.Network, tmsID.Channel, tmsID.Namespace)
+			persistenceName, err := fsccommon.GetPersistenceName(cfg, "auditdb.persistence")
+			if err != nil {
+				return nil, err
+			}
+			store, err := drivers.NewAuditTransaction(persistenceName, tmsID.Network, tmsID.Channel, tmsID.Namespace)
 			if err != nil {
 				return nil, err
 			}

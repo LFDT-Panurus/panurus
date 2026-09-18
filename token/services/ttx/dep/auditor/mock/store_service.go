@@ -304,14 +304,6 @@ func (fake *AuditStoreService) TransactionsReturnsOnCall(i int, result1 *db.Page
 func (fake *AuditStoreService) Invocations() map[string][][]interface{} {
 	fake.invocationsMutex.RLock()
 	defer fake.invocationsMutex.RUnlock()
-	fake.newHoldingsFilterMutex.RLock()
-	defer fake.newHoldingsFilterMutex.RUnlock()
-	fake.newPaymentsFilterMutex.RLock()
-	defer fake.newPaymentsFilterMutex.RUnlock()
-	fake.setStatusMutex.RLock()
-	defer fake.setStatusMutex.RUnlock()
-	fake.transactionsMutex.RLock()
-	defer fake.transactionsMutex.RUnlock()
 	copiedInvocations := map[string][][]interface{}{}
 	for key, value := range fake.invocations {
 		copiedInvocations[key] = value

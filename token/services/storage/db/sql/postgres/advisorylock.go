@@ -13,8 +13,8 @@ import (
 	"github.com/LFDT-Panurus/panurus/token/services/logging"
 	tokensdriver "github.com/LFDT-Panurus/panurus/token/services/storage/db/driver"
 	common5 "github.com/LFDT-Panurus/panurus/token/services/storage/db/sql/common"
+	"github.com/LFDT-Panurus/panurus/token/services/utils"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
-	"github.com/hyperledger-labs/fabric-smart-client/platform/common/utils"
 )
 
 var advisoryLockLogger = logging.MustGetLogger()
@@ -53,14 +53,14 @@ func NewAdvisoryLock(ctx context.Context, db *sql.DB, lockID int64) (*AdvisoryLo
 	query := "SELECT pg_try_advisory_lock($1)"
 	err = conn.QueryRowContext(ctx, query, lockID).Scan(&acquired)
 	if err != nil {
-		utils.IgnoreErrorFunc(conn.Close)
+		utils.IgnoreError(conn.Close)
 
 		return nil, false, errors.Wrapf(err, "failed to execute pg_try_advisory_lock for lock %d", lockID)
 	}
 
 	if !acquired {
 		// Lock is held by another session
-		utils.IgnoreErrorFunc(conn.Close)
+		utils.IgnoreError(conn.Close)
 		logger.Debugf("Advisory lock %d is held by another instance", lockID)
 
 		return nil, false, nil

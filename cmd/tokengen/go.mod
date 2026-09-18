@@ -14,8 +14,8 @@ require (
 	github.com/IBM/mathlib v0.3.2
 	github.com/LFDT-Panurus/panurus v0.10.1
 	github.com/LFDT-Panurus/panurus/integration v0.0.0
-	github.com/hyperledger-labs/fabric-smart-client v0.21.0
-	github.com/hyperledger-labs/fabric-smart-client/integration v0.21.0
+	github.com/hyperledger-labs/fabric-smart-client v0.22.0
+	github.com/hyperledger-labs/fabric-smart-client/integration v0.22.0
 	github.com/onsi/gomega v1.43.0
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/viper v1.21.0
@@ -63,7 +63,7 @@ require (
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/jackc/pgpassfile v1.0.0 // indirect
 	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect
-	github.com/jackc/pgx/v5 v5.10.0 // indirect
+	github.com/jackc/pgx/v5 v5.11.0 // indirect
 	github.com/jackc/pgxlisten v0.0.0-20250802141604-12b92425684c // indirect
 	github.com/jackc/puddle/v2 v2.2.2 // indirect
 	github.com/knadh/koanf/maps v0.1.2 // indirect

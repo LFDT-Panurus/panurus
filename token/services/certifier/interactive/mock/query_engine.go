@@ -5,29 +5,29 @@ import (
 	"context"
 	"sync"
 
-	token2 "github.com/LFDT-Panurus/panurus/token"
+	"github.com/LFDT-Panurus/panurus/token"
 	"github.com/LFDT-Panurus/panurus/token/services/certifier/interactive"
 )
 
 type QueryEngineMock struct {
-	UnspentTokensIteratorStub        func(context.Context) (*token2.UnspentTokensIterator, error)
+	UnspentTokensIteratorStub        func(context.Context) (*token.UnspentTokensIterator, error)
 	unspentTokensIteratorMutex       sync.RWMutex
 	unspentTokensIteratorArgsForCall []struct {
 		arg1 context.Context
 	}
 	unspentTokensIteratorReturns struct {
-		result1 *token2.UnspentTokensIterator
+		result1 *token.UnspentTokensIterator
 		result2 error
 	}
 	unspentTokensIteratorReturnsOnCall map[int]struct {
-		result1 *token2.UnspentTokensIterator
+		result1 *token.UnspentTokensIterator
 		result2 error
 	}
 	invocations      map[string][][]interface{}
 	invocationsMutex sync.RWMutex
 }
 
-func (fake *QueryEngineMock) UnspentTokensIterator(arg1 context.Context) (*token2.UnspentTokensIterator, error) {
+func (fake *QueryEngineMock) UnspentTokensIterator(arg1 context.Context) (*token.UnspentTokensIterator, error) {
 	fake.unspentTokensIteratorMutex.Lock()
 	ret, specificReturn := fake.unspentTokensIteratorReturnsOnCall[len(fake.unspentTokensIteratorArgsForCall)]
 	fake.unspentTokensIteratorArgsForCall = append(fake.unspentTokensIteratorArgsForCall, struct {
@@ -52,7 +52,7 @@ func (fake *QueryEngineMock) UnspentTokensIteratorCallCount() int {
 	return len(fake.unspentTokensIteratorArgsForCall)
 }
 
-func (fake *QueryEngineMock) UnspentTokensIteratorCalls(stub func(context.Context) (*token2.UnspentTokensIterator, error)) {
+func (fake *QueryEngineMock) UnspentTokensIteratorCalls(stub func(context.Context) (*token.UnspentTokensIterator, error)) {
 	fake.unspentTokensIteratorMutex.Lock()
 	defer fake.unspentTokensIteratorMutex.Unlock()
 	fake.UnspentTokensIteratorStub = stub
@@ -65,28 +65,28 @@ func (fake *QueryEngineMock) UnspentTokensIteratorArgsForCall(i int) context.Con
 	return argsForCall.arg1
 }
 
-func (fake *QueryEngineMock) UnspentTokensIteratorReturns(result1 *token2.UnspentTokensIterator, result2 error) {
+func (fake *QueryEngineMock) UnspentTokensIteratorReturns(result1 *token.UnspentTokensIterator, result2 error) {
 	fake.unspentTokensIteratorMutex.Lock()
 	defer fake.unspentTokensIteratorMutex.Unlock()
 	fake.UnspentTokensIteratorStub = nil
 	fake.unspentTokensIteratorReturns = struct {
-		result1 *token2.UnspentTokensIterator
+		result1 *token.UnspentTokensIterator
 		result2 error
 	}{result1, result2}
 }
 
-func (fake *QueryEngineMock) UnspentTokensIteratorReturnsOnCall(i int, result1 *token2.UnspentTokensIterator, result2 error) {
+func (fake *QueryEngineMock) UnspentTokensIteratorReturnsOnCall(i int, result1 *token.UnspentTokensIterator, result2 error) {
 	fake.unspentTokensIteratorMutex.Lock()
 	defer fake.unspentTokensIteratorMutex.Unlock()
 	fake.UnspentTokensIteratorStub = nil
 	if fake.unspentTokensIteratorReturnsOnCall == nil {
 		fake.unspentTokensIteratorReturnsOnCall = make(map[int]struct {
-			result1 *token2.UnspentTokensIterator
+			result1 *token.UnspentTokensIterator
 			result2 error
 		})
 	}
 	fake.unspentTokensIteratorReturnsOnCall[i] = struct {
-		result1 *token2.UnspentTokensIterator
+		result1 *token.UnspentTokensIterator
 		result2 error
 	}{result1, result2}
 }

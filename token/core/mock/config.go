@@ -30,11 +30,11 @@ type Config struct {
 	translatePathReturnsOnCall map[int]struct {
 		result1 string
 	}
-	UnmarshalKeyStub        func(string, interface{}) error
+	UnmarshalKeyStub        func(string, any) error
 	unmarshalKeyMutex       sync.RWMutex
 	unmarshalKeyArgsForCall []struct {
 		arg1 string
-		arg2 interface{}
+		arg2 any
 	}
 	unmarshalKeyReturns struct {
 		result1 error
@@ -160,12 +160,12 @@ func (fake *Config) TranslatePathReturnsOnCall(i int, result1 string) {
 	}{result1}
 }
 
-func (fake *Config) UnmarshalKey(arg1 string, arg2 interface{}) error {
+func (fake *Config) UnmarshalKey(arg1 string, arg2 any) error {
 	fake.unmarshalKeyMutex.Lock()
 	ret, specificReturn := fake.unmarshalKeyReturnsOnCall[len(fake.unmarshalKeyArgsForCall)]
 	fake.unmarshalKeyArgsForCall = append(fake.unmarshalKeyArgsForCall, struct {
 		arg1 string
-		arg2 interface{}
+		arg2 any
 	}{arg1, arg2})
 	stub := fake.UnmarshalKeyStub
 	fakeReturns := fake.unmarshalKeyReturns
@@ -186,13 +186,13 @@ func (fake *Config) UnmarshalKeyCallCount() int {
 	return len(fake.unmarshalKeyArgsForCall)
 }
 
-func (fake *Config) UnmarshalKeyCalls(stub func(string, interface{}) error) {
+func (fake *Config) UnmarshalKeyCalls(stub func(string, any) error) {
 	fake.unmarshalKeyMutex.Lock()
 	defer fake.unmarshalKeyMutex.Unlock()
 	fake.UnmarshalKeyStub = stub
 }
 
-func (fake *Config) UnmarshalKeyArgsForCall(i int) (string, interface{}) {
+func (fake *Config) UnmarshalKeyArgsForCall(i int) (string, any) {
 	fake.unmarshalKeyMutex.RLock()
 	defer fake.unmarshalKeyMutex.RUnlock()
 	argsForCall := fake.unmarshalKeyArgsForCall[i]
