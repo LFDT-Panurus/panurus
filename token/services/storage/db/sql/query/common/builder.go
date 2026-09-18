@@ -28,7 +28,7 @@ func NewBuilderWithOffset(pc *int) *builder {
 }
 
 func (b *builder) WriteParam(v Param) Builder {
-	b.sb.WriteRune('$')
+	_, _ = b.sb.WriteRune('$')
 	_, _ = b.sb.WriteString(strconv.Itoa(*b.pc))
 	*b.pc++
 	b.params = append(b.params, v)
@@ -47,7 +47,7 @@ func (b *builder) BindParams(vs ...Param) Builder {
 }
 
 func (b *builder) WriteParamRef(n int) Builder {
-	b.sb.WriteRune('$')
+	_, _ = b.sb.WriteRune('$')
 	_, _ = b.sb.WriteString(strconv.Itoa(n))
 
 	return b
@@ -57,7 +57,7 @@ func (b *builder) WriteValueTuples(tuples [][]Serializable) Builder {
 	if len(tuples) == 0 {
 		return b
 	}
-	cols := len(tuples[0])
+	assertRectangular(tuples)
 	for i, tuple := range tuples {
 		if i > 0 {
 			b.WriteString(", ")
@@ -70,9 +70,6 @@ func (b *builder) WriteValueTuples(tuples [][]Serializable) Builder {
 			cell.WriteString(b)
 		}
 		b.WriteRune(')')
-		if len(tuple) != cols {
-			panic("wrong length")
-		}
 	}
 
 	return b
@@ -85,7 +82,7 @@ func (b *builder) WriteString(s string) Builder {
 }
 
 func (b *builder) WriteRune(r rune) Builder {
-	b.sb.WriteRune(r)
+	_, _ = b.sb.WriteRune(r)
 
 	return b
 }
@@ -117,6 +114,7 @@ func (b *builder) WriteTuples(tuples []Tuple) Builder {
 	if len(tuples) == 0 {
 		return b
 	}
+	assertRectangular(tuples)
 	rows, cols := len(tuples), len(tuples[0])
 	b.WriteString("($")
 	b.WriteString(strconv.Itoa(*b.pc))
@@ -142,6 +140,64 @@ func (b *builder) WriteTuples(tuples []Tuple) Builder {
 	}
 
 	return b
+}
+
+// assertWidth panics unless every row holds exactly cols cells. cols must be
+// positive: the writers below emit a placeholder for the first cell of every
+// row unconditionally, so a zero-width row would bind no parameter yet still
+// contribute a `$n` reference to the query.
+//
+// Callers invoke it before writing anything, so a malformed input can never
+// leave a half-built fragment behind in the builder.
+func assertWidth[C any](rows [][]C, cols int) {
+	if cols == 0 {
+		panic("wrong length: rows must hold at least one cell")
+	}
+	for i, row := range rows {
+		if len(row) != cols {
+			panic("wrong length: row " + strconv.Itoa(i) + " has " +
+				strconv.Itoa(len(row)) + " cells, expected " + strconv.Itoa(cols))
+		}
+	}
+}
+
+// assertRectangular panics unless every row holds the same, non-zero number of
+// cells as the first one. rows must not be empty.
+func assertRectangular[C any](rows [][]C) {
+	assertWidth(rows, len(rows[0]))
+}
+
+// WriteInTuple renders the tuple membership test `(fields...) IN (vals...)`
+// using the SQL standard row-value form, which both SQLite (>= 3.15) and
+// Postgres support natively. A single field compared against a single value
+// collapses to plain equality.
+//
+// Callers must have already ruled out empty input (see cond.InTuple, which
+// returns a sentinel in that case); the guard here is defensive only.
+//
+// Every tuple must hold exactly one value per field, and a tuple of any other
+// width panics before anything is written. Rendering it instead would produce
+// a query that is wrong rather than merely invalid: a single wide tuple would
+// take the equality shortcut and silently drop every value past the first, and
+// a tuple narrower than the field list would emit a row value whose arity does
+// not match the fields it is compared against.
+func WriteInTuple(fields []Serializable, vals []Tuple, sb Builder) {
+	if len(fields) == 0 || len(vals) == 0 {
+		return
+	}
+	assertWidth(vals, len(fields))
+	if len(fields) == 1 && len(vals) == 1 {
+		sb.WriteSerializables(fields[0]).
+			WriteString(" = ").
+			WriteParam(vals[0][0])
+
+		return
+	}
+	sb.WriteString("(").
+		WriteSerializables(ToSerializables(fields)...).
+		WriteString(") IN (").
+		WriteTuples(vals).
+		WriteString(")")
 }
 
 func ToSerializables[S Serializable](vs []S) []Serializable {

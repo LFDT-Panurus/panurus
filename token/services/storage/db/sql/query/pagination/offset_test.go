@@ -13,7 +13,7 @@ import (
 
 	q "github.com/LFDT-Panurus/panurus/token/services/storage/db/sql/query"
 	"github.com/LFDT-Panurus/panurus/token/services/storage/db/sql/query/pagination"
-	"github.com/hyperledger-labs/fabric-smart-client/platform/common/utils"
+	"github.com/LFDT-Panurus/panurus/token/services/utils"
 )
 
 func TestOffsetSimple(t *testing.T) { //nolint:paralleltest

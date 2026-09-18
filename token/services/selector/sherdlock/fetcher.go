@@ -107,17 +107,58 @@ func (f *mixedFetcher) UnspentTokensIteratorBy(ctx context.Context, walletID str
 	logger.DebugfContext(ctx, "call unspent tokens iterator")
 	it, err := f.eagerFetcher.UnspentTokensIteratorBy(ctx, walletID, currency)
 	logger.DebugfContext(ctx, "fetched eager iterator")
-	if err == nil && it.(interface{ HasNext() bool }).HasNext() {
-		logger.DebugfContext(ctx, "eager iterator had tokens. Returning iterator")
-		f.m.UnspentTokensInvocations.With(fetcherTypeLabel, eager).Add(1)
+	if err == nil {
+		if peeked, hasNext, peekErr := peekIterator(it); peekErr == nil && hasNext {
+			logger.DebugfContext(ctx, "eager iterator had tokens. Returning iterator")
+			f.m.UnspentTokensInvocations.With(fetcherTypeLabel, eager).Add(1)
 
-		return it, nil
+			return peeked, nil
+		}
 	}
 	logger.DebugfContext(ctx, "eager iterator had no tokens. Returning lazy iterator")
 
 	f.m.UnspentTokensInvocations.With(fetcherTypeLabel, lazy).Add(1)
 
 	return f.lazyFetcher.UnspentTokensIteratorBy(ctx, walletID, currency)
+}
+
+// peekedIterator replays an already-consumed first item before delegating
+// subsequent Next calls to the wrapped iterator.
+type peekedIterator[T any] struct {
+	first    *T
+	consumed bool
+	it       Iterator[*T]
+}
+
+func (p *peekedIterator[T]) Next() (*T, error) {
+	if !p.consumed {
+		p.consumed = true
+
+		return p.first, nil
+	}
+
+	return p.it.Next()
+}
+
+func (p *peekedIterator[T]) Close() {
+	p.it.Close()
+}
+
+// peekIterator reads the first element of it to check whether the iterator has
+// any items, returning a replacement iterator that still yields that element
+// first. The Iterator[k] contract only guarantees Next/Close (no HasNext), so
+// emptiness must be checked by peeking rather than by asserting on the
+// underlying concrete type.
+func peekIterator[T any](it Iterator[*T]) (Iterator[*T], bool, error) {
+	first, err := it.Next()
+	if err != nil {
+		return nil, false, err
+	}
+	if first == nil {
+		return nil, false, nil
+	}
+
+	return &peekedIterator[T]{first: first, it: it}, true, nil
 }
 
 // newMixedFetcher is an internal alias for NewMixedFetcher.

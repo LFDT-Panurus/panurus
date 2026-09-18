@@ -23,14 +23,13 @@ import (
 	utils2 "github.com/LFDT-Panurus/panurus/token/services/utils"
 	"github.com/LFDT-Panurus/panurus/token/token"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
-	"github.com/hyperledger-labs/fabric-smart-client/platform/common/utils"
 )
 
 // Precisions maps token formats to their corresponding bit-lengths.
 var Precisions = map[token.Format]uint64{
-	utils.MustGet(v1.SupportedTokenFormat(16)): 16,
-	utils.MustGet(v1.SupportedTokenFormat(32)): 32,
-	utils.MustGet(v1.SupportedTokenFormat(64)): 64,
+	utils2.MustGet(v1.SupportedTokenFormat(16)): 16,
+	utils2.MustGet(v1.SupportedTokenFormat(32)): 32,
+	utils2.MustGet(v1.SupportedTokenFormat(64)): 64,
 }
 
 // TokensService provides functions for managing ZKAT-DLOG tokens,
@@ -203,16 +202,16 @@ func (s *TokensService) DeserializeToken(ctx context.Context, outputFormat token
 	}
 
 	return &Token{
-			Owner: fabToken.Owner,
-			Data:  tokens[0],
-		}, &Metadata{
-			Type:           fabToken.Type,
-			Value:          math.NewCachedZrFromInt(curve, value),
-			BlindingFactor: meta[0].BlindingFactor,
-		}, &UpgradeWitness{
-			FabToken:       fabToken,
-			BlindingFactor: meta[0].BlindingFactor,
-		}, nil
+		Owner: fabToken.Owner,
+		Data:  tokens[0],
+	}, &Metadata{
+		Type:           fabToken.Type,
+		Value:          math.NewCachedZrFromInt(curve, value),
+		BlindingFactor: meta[0].BlindingFactor,
+	}, &UpgradeWitness{
+		FabToken:       fabToken,
+		BlindingFactor: meta[0].BlindingFactor,
+	}, nil
 }
 
 // deserializeTokenWithOutputTokenFormat deserializes the token using the default ZKAT-DLOG format.

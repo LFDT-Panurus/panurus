@@ -10,7 +10,7 @@ import (
 	"embed"
 	"encoding/base64"
 	"encoding/json"
-	"path/filepath"
+	"path"
 	"strings"
 	"testing"
 
@@ -97,14 +97,14 @@ func TestRegression(t *testing.T) {
 	// vectors at testdata/zero, the CSP vectors at testdata/zero/csp, and the
 	// open-issuer-policy (gap 3) vectors at testdata/zero/open-policy.
 	roots := []string{
-		filepath.Join("testdata", "zero"),
-		filepath.Join("testdata", "zero", "csp"),
-		filepath.Join("testdata", "zero", "open-policy"),
+		path.Join("testdata", "zero"),
+		path.Join("testdata", "zero", "csp"),
+		path.Join("testdata", "zero", "open-policy"),
 	}
 
 	for _, root := range roots {
 		for _, config := range configurations {
-			configDir := filepath.Join(root, config)
+			configDir := path.Join(root, config)
 			testRegressionParallel(t, configDir)
 		}
 	}
@@ -123,7 +123,7 @@ func testRegression(t *testing.T, configDir string) {
 	t.Logf("regression test for [%s]", configDir)
 
 	// Read public parameters
-	paramsData, err := testDataFS.ReadFile(filepath.Join(configDir, "params.txt"))
+	paramsData, err := testDataFS.ReadFile(path.Join(configDir, "params.txt"))
 	require.NoError(t, err)
 
 	ppRaw, err := base64.StdEncoding.DecodeString(string(paramsData))
@@ -136,7 +136,7 @@ func testRegression(t *testing.T, configDir string) {
 	auditor := createAuditor(pp)
 
 	// Read aggregated test data file
-	filePath := filepath.Join(configDir, "testdata.json")
+	filePath := path.Join(configDir, "testdata.json")
 	jsonData, err := testDataFS.ReadFile(filePath)
 	require.NoError(t, err, "failed to read aggregated test data from [%s]", filePath)
 

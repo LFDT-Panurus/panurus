@@ -14,8 +14,8 @@ import (
 	"github.com/LFDT-Panurus/panurus/token/services/network/fabric/lookup"
 	"github.com/LFDT-Panurus/panurus/token/services/network/fabricx/pp"
 	"github.com/LFDT-Panurus/panurus/token/services/tokens"
+	"github.com/LFDT-Panurus/panurus/token/services/utils"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/common/driver"
-	"github.com/hyperledger-labs/fabric-smart-client/platform/common/utils"
 )
 
 // NewSetupListenerProvider returns a new setupListenerProvider instance

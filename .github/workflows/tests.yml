@@ -18,6 +18,10 @@ env:
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
 
   checks:
@@ -130,6 +134,21 @@ jobs:
     needs: checks
     if: github.ref == 'refs/heads/main' || github.base_ref == 'main'
     runs-on: ubuntu-latest
+    # FSC's Go-chaincode packager (integration/nwo/fabric/packager/golang) only
+    # detects the chaincode's Go module root when the checkout lives under a
+    # GOPATH-style "github.com/<org>/<repo>" path (it derives the module's
+    # on-disk path by string-slicing `go env GOMOD`'s directory around a
+    # literal "github." substring). A plain actions/checkout at
+    # $GITHUB_WORKSPACE has no such substring, so the packager mis-detects a
+    # go-modules chaincode as legacy GOPATH chaincode: it drops go.mod from
+    # the package and the external "golang" builder then fails with
+    # `cannot find package ... in any of: ... (from $GOPATH)`. Checking out
+    # under go/src/github.com/LFDT-Panurus/panurus (mirroring the layout
+    # every local dev already uses, per AGENTS.md) keeps the real, physical
+    # path intact so the heuristic reconstructs the correct directory.
+    defaults:
+      run:
+        working-directory: go/src/github.com/LFDT-Panurus/panurus
     strategy:
       fail-fast: false
       matrix:
@@ -220,11 +239,13 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: go/src/github.com/LFDT-Panurus/panurus
 
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version-file: "go.mod"
+          go-version-file: "go/src/github.com/LFDT-Panurus/panurus/go.mod"
           cache-dependency-path: "**/*.sum"
 
       - name: Set up tools
@@ -246,8 +267,8 @@ jobs:
         run: |
           mkdir -p covdata
           GOCOVERDIR=$(realpath covdata) make integration-tests-${{ matrix.tests }}
-          go tool covdata textfmt -i=covdata -o coverage.profile
-          ./ci/scripts/filter-coverage.sh coverage.profile coverage.profile
+          go tool covdata textfmt -i=covdata -o "$GITHUB_WORKSPACE/coverage.profile"
+          ./ci/scripts/filter-coverage.sh "$GITHUB_WORKSPACE/coverage.profile" "$GITHUB_WORKSPACE/coverage.profile"
 
       - name: Send coverage to Coveralls
         uses: coverallsapp/github-action@8d6379e14d29928660c4ba802d8e85393440b329 # v2.3.8

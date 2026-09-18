@@ -371,16 +371,6 @@ func (fake *AuditService) ValidateReturnsOnCall(i int, result1 error) {
 func (fake *AuditService) Invocations() map[string][][]interface{} {
 	fake.invocationsMutex.RLock()
 	defer fake.invocationsMutex.RUnlock()
-	fake.auditMutex.RLock()
-	defer fake.auditMutex.RUnlock()
-	fake.checkMutex.RLock()
-	defer fake.checkMutex.RUnlock()
-	fake.getTokenRequestMutex.RLock()
-	defer fake.getTokenRequestMutex.RUnlock()
-	fake.releaseMutex.RLock()
-	defer fake.releaseMutex.RUnlock()
-	fake.validateMutex.RLock()
-	defer fake.validateMutex.RUnlock()
 	copiedInvocations := map[string][][]interface{}{}
 	for key, value := range fake.invocations {
 		copiedInvocations[key] = value

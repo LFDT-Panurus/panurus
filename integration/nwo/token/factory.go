@@ -13,6 +13,7 @@ import (
 	"github.com/hyperledger-labs/fabric-smart-client/integration/nwo/api"
 	"github.com/hyperledger-labs/fabric-smart-client/integration/nwo/fabric"
 	"github.com/hyperledger-labs/fabric-smart-client/integration/nwo/fabricx"
+	"github.com/onsi/gomega"
 )
 
 type platformFactory struct {
@@ -46,6 +47,7 @@ func (p *platformFactory) New(ctx api.Context, t api.Topology, builder api.Build
 // goroutine that started it, and it is a no-op for the backends that recorded nothing.
 func (p *platformFactory) InstallPendingPublicParams() {
 	for _, backend := range p.fabricxBackends {
-		backend.InstallPendingPublicParams()
+		err := backend.InstallPendingPublicParams()
+		gomega.Expect(err).ToNot(gomega.HaveOccurred(), "failed installing the pending public params")
 	}
 }

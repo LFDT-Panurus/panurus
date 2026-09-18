@@ -2,6 +2,10 @@
 
 For an introduction into the concepts of Database, Persistence, Driver, Store, read [this documentation](https://github.com/hyperledger-labs/fabric-smart-client/blob/main/docs/platform/view/db-driver.md).
 
+SQL is not written by hand in these layers: the stores build it with the query-builder
+DSL documented in [SQL Query DSL](./sql-query-dsl.md), which also covers the pagination
+strategies and their trade-offs.
+
 The project utilizes the following layers of abstraction on top of the database layer:
 * `Store`: executes the SQL queries. A `Store` is only used from within the `StoreService` of the same kind.
 * `StoreService`: extends the `Store` (of the same kind) by adding extra functionality (e.g. keeping maps, cache, or combining functionalities of the underlying store). A `StoreService` does not have any other dependency, but the `Store`.

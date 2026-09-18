@@ -21,8 +21,8 @@ import (
 	"github.com/hyperledger-labs/fabric-smart-client/integration/nwo/fsc"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/common/driver"
+	"github.com/hyperledger-labs/fabric-smart-client/platform/common/services/grpc"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/services/config"
-	"github.com/hyperledger-labs/fabric-smart-client/platform/view/services/grpc"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/services/tracing"
 	grpcclient "github.com/hyperledger-labs/fabric-smart-client/platform/view/services/view/grpc/client"
 	webclient "github.com/hyperledger-labs/fabric-smart-client/platform/view/services/web/client"
@@ -121,11 +121,22 @@ func newGrpcClient(configProvider driver.ConfigService, host string) (api2.ViewC
 		return nil, errors.Wrap(err, "failed to parse address")
 	}
 
+	rootCAFiles := configProvider.GetStringSlice("fsc.web.tls.clientRootCAs.files")
+	if len(rootCAFiles) == 0 {
+		return nil, errors.New("no TLS root CA files configured under fsc.web.tls.clientRootCAs.files")
+	}
+	rootCert, err := os.ReadFile(rootCAFiles[0])
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to read TLS root cert")
+	}
+
 	cc := &grpc.ConnectionConfig{
 		Address:           fmt.Sprintf("%s:%s", host, port),
-		TLSEnabled:        true,
-		TLSRootCertFile:   configProvider.GetStringSlice("fsc.web.tls.clientRootCAs.files")[0],
 		ConnectionTimeout: 10 * time.Second,
+		TLS: grpc.SecureOptions{
+			UseTLS:        true,
+			ServerRootCAs: [][]byte{rootCert},
+		},
 	}
 
 	signer, err := grpcclient.NewX509SigningIdentity(
@@ -144,11 +155,25 @@ func newWebClient(configProvider driver.ConfigService, host string) (api2.ViewCl
 		return nil, errors.Wrap(err, "failed to parse address")
 	}
 
+	tlsCert, err := os.ReadFile(configProvider.GetPath("fsc.web.tls.cert.file"))
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to read TLS cert")
+	}
+	tlsKey, err := os.ReadFile(configProvider.GetPath("fsc.web.tls.key.file"))
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to read TLS key")
+	}
+
+	rootCAFiles := configProvider.GetStringSlice("fsc.web.tls.clientRootCAs.files")
+	if len(rootCAFiles) == 0 {
+		return nil, errors.New("no TLS root CA files configured under fsc.web.tls.clientRootCAs.files")
+	}
+
 	return webclient.NewClient(&webclient.Config{
-		Host:        fmt.Sprintf("%s:%s", host, port),
-		CACertPath:  configProvider.GetStringSlice("fsc.web.tls.clientRootCAs.files")[0],
-		TLSCertPath: configProvider.GetPath("fsc.web.tls.cert.file"),
-		TLSKeyPath:  configProvider.GetPath("fsc.web.tls.key.file"),
+		Host:       fmt.Sprintf("%s:%s", host, port),
+		CACertPath: rootCAFiles[0],
+		TLSCertRaw: tlsCert,
+		TLSKeyRaw:  tlsKey,
 	})
 }
 

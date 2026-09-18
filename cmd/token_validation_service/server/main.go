@@ -24,7 +24,7 @@ func main() {
 	// we generate our testdata
 	err := bench.GenerateConfigWS(testdataPath)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to generate config: %v\n", err)
+		_, _ = fmt.Fprintf(os.Stderr, "Failed to generate config: %v\n", err)
 		os.Exit(1)
 	}
 
@@ -34,7 +34,7 @@ func main() {
 		Factory: &bench.TokenValidationServiceViewFactory{},
 	})
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to setup node: %v\n", err)
+		_, _ = fmt.Fprintf(os.Stderr, "Failed to setup node: %v\n", err)
 		os.Exit(1)
 	}
 

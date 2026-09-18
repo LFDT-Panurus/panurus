@@ -9,11 +9,11 @@ import (
 )
 
 type ResponderRegistryMock struct {
-	RegisterResponderStub        func(view.View, interface{}) error
+	RegisterResponderStub        func(view.View, any) error
 	registerResponderMutex       sync.RWMutex
 	registerResponderArgsForCall []struct {
 		arg1 view.View
-		arg2 interface{}
+		arg2 any
 	}
 	registerResponderReturns struct {
 		result1 error
@@ -25,12 +25,12 @@ type ResponderRegistryMock struct {
 	invocationsMutex sync.RWMutex
 }
 
-func (fake *ResponderRegistryMock) RegisterResponder(arg1 view.View, arg2 interface{}) error {
+func (fake *ResponderRegistryMock) RegisterResponder(arg1 view.View, arg2 any) error {
 	fake.registerResponderMutex.Lock()
 	ret, specificReturn := fake.registerResponderReturnsOnCall[len(fake.registerResponderArgsForCall)]
 	fake.registerResponderArgsForCall = append(fake.registerResponderArgsForCall, struct {
 		arg1 view.View
-		arg2 interface{}
+		arg2 any
 	}{arg1, arg2})
 	stub := fake.RegisterResponderStub
 	fakeReturns := fake.registerResponderReturns
@@ -51,13 +51,13 @@ func (fake *ResponderRegistryMock) RegisterResponderCallCount() int {
 	return len(fake.registerResponderArgsForCall)
 }
 
-func (fake *ResponderRegistryMock) RegisterResponderCalls(stub func(view.View, interface{}) error) {
+func (fake *ResponderRegistryMock) RegisterResponderCalls(stub func(view.View, any) error) {
 	fake.registerResponderMutex.Lock()
 	defer fake.registerResponderMutex.Unlock()
 	fake.RegisterResponderStub = stub
 }
 
-func (fake *ResponderRegistryMock) RegisterResponderArgsForCall(i int) (view.View, interface{}) {
+func (fake *ResponderRegistryMock) RegisterResponderArgsForCall(i int) (view.View, any) {
 	fake.registerResponderMutex.RLock()
 	defer fake.registerResponderMutex.RUnlock()
 	argsForCall := fake.registerResponderArgsForCall[i]

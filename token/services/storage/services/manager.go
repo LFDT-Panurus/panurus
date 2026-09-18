@@ -11,7 +11,7 @@ import (
 	"github.com/LFDT-Panurus/panurus/token/driver"
 	"github.com/LFDT-Panurus/panurus/token/services"
 	"github.com/LFDT-Panurus/panurus/token/services/logging"
-	"github.com/hyperledger-labs/fabric-smart-client/platform/common/utils"
+	"github.com/LFDT-Panurus/panurus/token/services/utils"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/common/utils/lazy"
 )
 

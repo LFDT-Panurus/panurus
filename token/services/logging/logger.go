@@ -11,7 +11,6 @@ import (
 	"strings"
 
 	"github.com/hyperledger-labs/fabric-smart-client/platform/common/services/logging"
-	"github.com/hyperledger-labs/fabric-smart-client/platform/common/utils"
 	"go.uber.org/zap/zapcore"
 )
 
@@ -28,7 +27,12 @@ func Init(config logging.Config) {
 }
 
 func MustGetLogger(params ...string) Logger {
-	return utils.MustGet(GetLogger(params...))
+	l, err := GetLogger(params...)
+	if err != nil {
+		panic(err)
+	}
+
+	return l
 }
 
 func GetLogger(params ...string) (Logger, error) {

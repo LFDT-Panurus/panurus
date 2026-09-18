@@ -9,24 +9,24 @@ import (
 )
 
 type ViewManagerMock struct {
-	InitiateViewStub        func(view.View) (interface{}, error)
+	InitiateViewStub        func(view.View) (any, error)
 	initiateViewMutex       sync.RWMutex
 	initiateViewArgsForCall []struct {
 		arg1 view.View
 	}
 	initiateViewReturns struct {
-		result1 interface{}
+		result1 any
 		result2 error
 	}
 	initiateViewReturnsOnCall map[int]struct {
-		result1 interface{}
+		result1 any
 		result2 error
 	}
 	invocations      map[string][][]interface{}
 	invocationsMutex sync.RWMutex
 }
 
-func (fake *ViewManagerMock) InitiateView(arg1 view.View) (interface{}, error) {
+func (fake *ViewManagerMock) InitiateView(arg1 view.View) (any, error) {
 	fake.initiateViewMutex.Lock()
 	ret, specificReturn := fake.initiateViewReturnsOnCall[len(fake.initiateViewArgsForCall)]
 	fake.initiateViewArgsForCall = append(fake.initiateViewArgsForCall, struct {
@@ -51,7 +51,7 @@ func (fake *ViewManagerMock) InitiateViewCallCount() int {
 	return len(fake.initiateViewArgsForCall)
 }
 
-func (fake *ViewManagerMock) InitiateViewCalls(stub func(view.View) (interface{}, error)) {
+func (fake *ViewManagerMock) InitiateViewCalls(stub func(view.View) (any, error)) {
 	fake.initiateViewMutex.Lock()
 	defer fake.initiateViewMutex.Unlock()
 	fake.InitiateViewStub = stub
@@ -64,28 +64,28 @@ func (fake *ViewManagerMock) InitiateViewArgsForCall(i int) view.View {
 	return argsForCall.arg1
 }
 
-func (fake *ViewManagerMock) InitiateViewReturns(result1 interface{}, result2 error) {
+func (fake *ViewManagerMock) InitiateViewReturns(result1 any, result2 error) {
 	fake.initiateViewMutex.Lock()
 	defer fake.initiateViewMutex.Unlock()
 	fake.InitiateViewStub = nil
 	fake.initiateViewReturns = struct {
-		result1 interface{}
+		result1 any
 		result2 error
 	}{result1, result2}
 }
 
-func (fake *ViewManagerMock) InitiateViewReturnsOnCall(i int, result1 interface{}, result2 error) {
+func (fake *ViewManagerMock) InitiateViewReturnsOnCall(i int, result1 any, result2 error) {
 	fake.initiateViewMutex.Lock()
 	defer fake.initiateViewMutex.Unlock()
 	fake.InitiateViewStub = nil
 	if fake.initiateViewReturnsOnCall == nil {
 		fake.initiateViewReturnsOnCall = make(map[int]struct {
-			result1 interface{}
+			result1 any
 			result2 error
 		})
 	}
 	fake.initiateViewReturnsOnCall[i] = struct {
-		result1 interface{}
+		result1 any
 		result2 error
 	}{result1, result2}
 }

@@ -175,7 +175,6 @@ func printFlameGraph(w *tabwriter.Writer, stacks []StackRecord, totalAlloc int64
 		root.Total += rec.Bytes
 
 		for _, fnName := range slices.Backward(rec.Stack) {
-
 			if _, exists := current.Children[fnName]; !exists {
 				current.Children[fnName] = &FlameNode{
 					Name:     fnName,

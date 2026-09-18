@@ -8,7 +8,7 @@ package logging
 
 import (
 	"github.com/LFDT-Panurus/panurus/token/services/logging"
-	"github.com/hyperledger-labs/fabric-smart-client/platform/common/utils"
+	"github.com/LFDT-Panurus/panurus/token/services/utils"
 )
 
 type Logger = logging.Logger

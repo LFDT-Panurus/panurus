@@ -18,6 +18,7 @@ import (
 	_ "github.com/onsi/ginkgo/v2/ginkgo"
 	_ "golang.org/x/perf/cmd/benchstat"
 	_ "golang.org/x/tools/cmd/goimports"
+	_ "golang.org/x/vuln/cmd/govulncheck"
 	_ "google.golang.org/protobuf/cmd/protoc-gen-go"
 	_ "honnef.co/go/tools/cmd/staticcheck"
 )

@@ -122,8 +122,16 @@ make checks
 ```
 
 `make checks` runs: `licensecheck gofmt goimports govet gofix misspell ineffassign
-staticcheck protos-lint buf-format tidy-check` (see `checks.mk`). Fix whatever it
-flags and re-run until it passes cleanly. Do not skip or silence individual checks.
+staticcheck govulncheck protos-lint buf-format tidy-check` (see `checks.mk`). Fix
+whatever it flags and re-run until it passes cleanly. Do not skip or silence
+individual checks.
+
+`govulncheck` findings with no upstream fix are tracked in
+`ci/govulncheck-allowlist.txt`, not silenced ad hoc. If this FSC bump changes
+which vulnerable transitive dependency (e.g. `go-libp2p-kad-dht`, see
+`GO-2024-3218` in that file) is reachable — a fix ships upstream, the call
+path disappears, or a *new* reachable finding appears — update the allowlist
+file accordingly instead of leaving it stale or bypassing the check.
 
 ### 7. Tests
 

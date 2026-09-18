@@ -24,6 +24,7 @@ import (
 	"github.com/LFDT-Panurus/panurus/token/services/network/fabric/tcc/ccpackage"
 	"github.com/hyperledger-labs/fabric-smart-client/integration/nwo/fabric/packager"
 	"github.com/hyperledger-labs/fabric-smart-client/integration/nwo/fabric/topology"
+	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	"github.com/onsi/gomega"
 )
 
@@ -40,7 +41,7 @@ var logger = logging.MustGetLogger()
 
 type fabricPlatform interface {
 	Topology() *topology.Topology
-	UpdateChaincode(name string, version string, path string, file string)
+	UpdateChaincode(name string, version string, opts ...topology.NamespaceOption)
 }
 
 type TCC struct {
@@ -81,9 +82,9 @@ func (p *GenericBackend) PrepareNamespace(tms *topology3.TMS) {
 	var policySb77 strings.Builder
 	for i, org := range orgs {
 		if i > 0 {
-			policySb77.WriteString(",")
+			_, _ = policySb77.WriteString(",")
 		}
-		policySb77.WriteString("'" + org + "MSP.member'")
+		_, _ = policySb77.WriteString("'" + org + "MSP.member'")
 	}
 	policy += policySb77.String()
 	policy += ")"
@@ -106,7 +107,6 @@ func (p *GenericBackend) PrepareNamespace(tms *topology3.TMS) {
 			Path:            p.TokenChaincodePath,
 			Lang:            "golang",
 			Label:           tms.Namespace,
-			Policy:          policy,
 			SignaturePolicy: policy,
 		},
 		Channel: tms.Channel,
@@ -115,11 +115,15 @@ func (p *GenericBackend) PrepareNamespace(tms *topology3.TMS) {
 	p.Fabric(tms).Topology().AddChaincode(cc)
 }
 
-func (p *GenericBackend) InstallPublicParams(tms *topology3.TMS, raw []byte) {
-	// nothing to do here cause the chaincode initialization is done already in the fabric platform
+// InstallPublicParams does nothing, cause the chaincode initialization is done already in
+// the fabric platform.
+func (p *GenericBackend) InstallPublicParams(tms *topology3.TMS, raw []byte) error {
+	return nil
 }
 
-func (p *GenericBackend) UpdatePublicParams(tms *topology3.TMS, ppRaw []byte) {
+// UpdatePublicParams repackages the token chaincode of tms with the given public parameters
+// and upgrades it, returning any failure as an error.
+func (p *GenericBackend) UpdatePublicParams(tms *topology3.TMS, ppRaw []byte) error {
 	var cc *topology.ChannelChaincode
 	for _, chaincode := range p.Fabric(tms).Topology().Chaincodes {
 		if chaincode.Chaincode.Name == tms.Namespace {
@@ -128,7 +132,9 @@ func (p *GenericBackend) UpdatePublicParams(tms *topology3.TMS, ppRaw []byte) {
 			break
 		}
 	}
-	gomega.Expect(cc).NotTo(gomega.BeNil(), "failed to find chaincode [%s]", tms.Namespace)
+	if cc == nil {
+		return errors.Errorf("failed to find chaincode [%s]", tms.Namespace)
+	}
 
 	packageDir := filepath.Join(
 		p.TokenPlatform.GetContext().RootDir(),
@@ -144,7 +150,9 @@ func (p *GenericBackend) UpdatePublicParams(tms *topology3.TMS, ppRaw []byte) {
 		packageDir,
 		cc.Chaincode.Name+newChaincodeVersion+".tar.gz",
 	)
-	gomega.Expect(os.MkdirAll(packageDir, 0750)).ToNot(gomega.HaveOccurred())
+	if err := os.MkdirAll(packageDir, 0750); err != nil {
+		return errors.Wrapf(err, "failed creating package dir [%s]", packageDir)
+	}
 
 	paramsFile := PublicParamsTemplate(ppRaw)
 
@@ -171,11 +179,16 @@ func (p *GenericBackend) UpdatePublicParams(tms *topology3.TMS, ppRaw []byte) {
 			return "", nil
 		},
 	)
-	gomega.Expect(err).ToNot(gomega.HaveOccurred())
+	if err != nil {
+		return errors.Wrapf(err, "failed packaging chaincode [%s]", cc.Chaincode.Name)
+	}
 	cc.Chaincode.PackageFile = packageFile
 	p.Fabric(tms).UpdateChaincode(cc.Chaincode.Name,
 		newChaincodeVersion,
-		cc.Chaincode.Path, cc.Chaincode.PackageFile)
+		topology.WithLegacyChaincode(cc.Chaincode.Path),
+		topology.WithPackageFile(cc.Chaincode.PackageFile))
+
+	return nil
 }
 
 func (p *GenericBackend) tccSetup(tms *topology3.TMS, cc *topology.ChannelChaincode) (*topology.ChannelChaincode, uint16) {

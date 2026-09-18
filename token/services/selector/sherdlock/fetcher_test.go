@@ -180,7 +180,9 @@ func TestCachedFetcher_UnspentTokensIteratorBy_CacheHit(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.NotNil(t, it)
-	assert.True(t, it.(interface{ HasNext() bool }).HasNext())
+	item, err := it.Next()
+	require.NoError(t, err)
+	assert.NotNil(t, item)
 
 	// Verify query counter incremented
 	assert.Equal(t, uint32(1), fetcher.queriesResponded.Load())
@@ -212,7 +214,9 @@ func TestCachedFetcher_UnspentTokensIteratorBy_CacheMiss(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotNil(t, it)
 	// Should return empty iterator
-	assert.False(t, it.(interface{ HasNext() bool }).HasNext())
+	item, err := it.Next()
+	require.NoError(t, err)
+	assert.Nil(t, item)
 
 	mockDB.AssertExpectations(t)
 }

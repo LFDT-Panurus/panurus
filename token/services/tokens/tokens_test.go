@@ -298,6 +298,13 @@ func TestGetCachedTokenRequest(t *testing.T) {
 	assert.Nil(t, req)
 	assert.Nil(t, msg)
 
+	// present-but-nil: a Cache may report a hit while handing back a nil entry;
+	// this must behave like a miss rather than panic on dereference.
+	cache.GetReturns(nil, true)
+	req, msg = ts.GetCachedTokenRequest("nil-entry")
+	assert.Nil(t, req)
+	assert.Nil(t, msg)
+
 	// hit: the stored request and its message-to-sign are returned
 	want := &token.Request{Anchor: "tx1"}
 	cache.GetReturns(&tokens.CacheEntry{Request: want, MsgToSign: []byte("sig")}, true)

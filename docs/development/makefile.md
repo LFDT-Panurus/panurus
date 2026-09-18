@@ -60,6 +60,7 @@ These targets help keep your project clean and tidy.
 | `make clean-fabric-peer-images` | Removes Docker images related to Fabric peers. |
 | `make lint` | Runs `golangci-lint` to check code quality. |
 | `make lint-auto-fix` | Runs `golangci-lint` and automatically fixes issues where possible. |
+| `make govulncheck` | Scans dependencies for known, reachable vulnerabilities with `govulncheck`. Findings listed in `ci/govulncheck-allowlist.txt` don't fail the build. |
 
 ## Tools Generation
 
