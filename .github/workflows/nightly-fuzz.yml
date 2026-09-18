@@ -153,6 +153,12 @@ jobs:
           - name: identity-wallet-register-recipient-guard
             pkg: ./token/services/identity/wallet
             func: FuzzRegisterRecipientIdentityStructuralGuard
+          - name: zkatsnark-action-deserializer
+            pkg: ./x/token/core/zkatsnark/validator
+            func: FuzzActionDeserializerNoPanic
+          - name: zkatsnark-transfer-action-validate
+            pkg: ./x/token/core/zkatsnark/validator
+            func: FuzzTransferActionValidateNoPanic
 
     steps:
       - name: Checkout code
