@@ -20,5 +20,10 @@ lint:
   ignore:
     - token/services/identity/idemix/crypto/protos/idemix_config.proto
 breaking:
+  # WIRE, not the stricter FILE/WIRE_JSON: Panurus exchanges and stores these
+  # messages only as binary protobuf (no protojson anywhere in the tree), so only
+  # binary wire-compatibility matters. This flags the breaks that corrupt node
+  # interop (field type changes, field-number reuse, deletions, cardinality
+  # changes) while allowing wire-neutral refactors like renaming a field.
   use:
-    - FILE
+    - WIRE

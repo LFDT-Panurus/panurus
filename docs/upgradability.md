@@ -567,6 +567,33 @@ For more details on the specific Protobuf messages used by each driver, see:
 *   **Prefer Optional Fields**: Use `proto3` defaults or explicitly check for presence to ensure that missing fields from older clients don't cause crashes.
 *   **Versioned Packages**: For major, breaking changes in a driver's internal logic, create a new protobuf package (e.g., `package zkatdlognogh.v2;`). This allows both the old and new unmarshallers to coexist in the same codebase.
 
+### Automated Enforcement (`buf breaking`)
+
+These recommendations are enforced automatically. `buf.yaml` declares a `breaking:`
+ruleset, and the `proto-breaking` job in
+[`.github/workflows/tests.yml`](../.github/workflows/tests.yml) runs `buf breaking`
+against the pull request's base branch on every PR. Binary-wire-incompatible changes —
+changing a field's type, reusing or renumbering a field, deleting a field without
+reserving its number, changing cardinality, and so on — fail CI before they can merge.
+
+The ruleset is `WIRE` (binary wire compatibility) rather than the stricter `FILE` or
+`WIRE_JSON`. Panurus serializes these messages only as binary protobuf — there is no
+`protojson` use anywhere in the tree — so only binary compatibility affects node interop.
+`WIRE` deliberately permits wire-neutral refactors such as **renaming a field** (the
+binary format keys off field *numbers*, not names), keeping the gate focused on changes
+that actually break cross-version deserialization.
+
+To run the same check locally against your `main` branch (or any other base ref):
+
+```bash
+make protos-breaking                                    # diff against local 'main'
+make protos-breaking BUF_BREAKING_AGAINST=".git#ref=origin/main"
+```
+
+This is intentionally separate from `make checks`: a breaking-change check is comparative
+(it needs a base ref to diff against), so it only runs on pull requests and not on a plain
+push.
+
 ---
 
 ## SDK API Changes (Go)
