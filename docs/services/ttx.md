@@ -571,3 +571,38 @@ The recovery service is part of the **Storage Service** and is instantiated by t
 For detailed information about the recovery mechanism, see:
 - [Storage Service - Transaction Recovery](storage.md#transaction-recovery-service)
 - [Configuration Guide - Recovery Parameters](../configuration.md), Section `Optional: token.tms.<name>.services.network.fabric.recovery`
+
+### Interactive Protocol Timeout Budget
+
+`ReceiveTransactionView` waits up to a fixed timeout for the full endorsement round-trip to
+complete. That budget must exceed the sum of every wait it depends on, or the responder times
+out on a transaction that was still legitimately in progress.
+
+The budget and the invariant below are stated for single-owner FSC-endorsement mode. The
+`boolpolicy`/`multisig` spend responders are not covered: signature collection runs
+`requestSignaturesOnIssues` and `requestSignaturesOnTransfers` as sequential phases
+(`collectendorsements.go:114`). Each phase fans out concurrently, so its cost is one
+signature wait rather than one per identity, but the phases themselves are serial and the
+table below accounts for a single fan-out leg. Multi-owner spends therefore add signature
+waits the invariant does not account for; it is not asserted for those paths.
+
+**Invariant:** `responder receive > sig fan-out + audit + approval`
+
+| Leg | File:Line | Value |
+|---|---|---|
+| Responder receive (the budget) | `token/services/ttx/receivetx.go:35` | 5 min |
+| Signature fan-out (per endorser) | `token/services/ttx/endorse.go:114` | 1 min |
+| Auditor signature | `token/services/ttx/auditor.go:192` | 1 min |
+| FSC-endorsement approval | `token/services/network/fabric/endorsement/fsc/initiator.go:102` | 2 min |
+
+
+The responder budget previously equalled the sum of the legs it must cover in
+FSC-endorsement mode exactly (1 min sig fan-out + 1 min audit + 2 min approval = 4 min
+minimum, with zero slack), so a transaction still legitimately in progress could time out.
+The budget is now 5 min, leaving 1 min of slack. See issue #1266. The unit test in
+`receivetx_timeout_test.go` asserts the invariant directly so any future regression is
+caught by CI rather than by hand.
+
+The budget is intentionally a single named constant rather than an operator-configurable value:
+exposing it independently invites recreating this same inversion. If the budget needs to be
+tunable, it should be one endorsement budget per TMS with the individual waits derived from it.
