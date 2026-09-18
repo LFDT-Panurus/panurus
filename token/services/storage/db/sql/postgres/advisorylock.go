@@ -117,13 +117,21 @@ func recoveryLockID(tables common5.TableNames) int64 {
 // unique and none can accidentally pass one that is shared with another TMS.
 func NewAdvisoryLockFactoryForID(lockID int64) func(context.Context, *sql.DB) (tokensdriver.RecoveryLeadership, bool, error) {
 	return func(ctx context.Context, db *sql.DB) (tokensdriver.RecoveryLeadership, bool, error) {
-		lock, acquired, err := NewAdvisoryLock(ctx, db, lockID)
-		if err != nil || !acquired {
-			return nil, acquired, err
-		}
-
-		return lock, true, nil
+		return acquireLeadership(ctx, db, lockID)
 	}
+}
+
+// acquireLeadership wraps NewAdvisoryLock so that a failed or lost acquisition
+// returns a genuinely nil RecoveryLeadership rather than an interface wrapping
+// a nil *AdvisoryLock, which callers that only check the returned bool would
+// otherwise treat as a non-nil lease.
+func acquireLeadership(ctx context.Context, db *sql.DB, lockID int64) (tokensdriver.RecoveryLeadership, bool, error) {
+	lock, acquired, err := NewAdvisoryLock(ctx, db, lockID)
+	if err != nil || !acquired {
+		return nil, acquired, err
+	}
+
+	return lock, true, nil
 }
 
 // tokenLockCleanupLockID derives the advisory lock id guarding a TMS's token lock cleanup sweep

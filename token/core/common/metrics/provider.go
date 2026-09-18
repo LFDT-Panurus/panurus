@@ -21,8 +21,17 @@ type tmsProvider struct {
 	provider  Provider
 }
 
-// NewTMSProvider returns a new metrics provider for the passed TMS ID and provider.
-func NewTMSProvider(tmsID token.TMSID, provider Provider) *tmsProvider {
+// NewTMSProvider returns a new metrics provider for the passed TMS ID and
+// provider. A nil provider returns a true nil Provider rather than a non-nil
+// wrapper around nothing: since this returns the Provider interface rather
+// than *tmsProvider, callers that check the result for nil - such as
+// checks.NewMetrics's disabled-metrics fallback - see a real nil instead of a
+// non-nil interface value holding a nil *tmsProvider, which panics on first use.
+func NewTMSProvider(tmsID token.TMSID, provider Provider) Provider {
+	if provider == nil {
+		return nil
+	}
+
 	return &tmsProvider{
 		tmsLabels: []string{
 			NetworkLabel, tmsID.Network,
