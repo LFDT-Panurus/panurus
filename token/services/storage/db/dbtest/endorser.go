@@ -38,6 +38,7 @@ var endorserDBCases = []struct {
 	Fn   func(*testing.T, driver3.EndorserStore)
 }{
 	{"ValidationRecordQueries", EValidationRecordQueries},
+	{"DuplicateValidationRecord", EDuplicateValidationRecord},
 }
 
 func EValidationRecordQueries(t *testing.T, db driver3.EndorserStore) {
@@ -109,6 +110,33 @@ func EValidationRecordQueries(t *testing.T, db driver3.EndorserStore) {
 		},
 	})
 	assert.Len(t, filtered, 3)
+}
+
+// EDuplicateValidationRecord verifies that adding a validation record for a tx_id
+// that was already validated does not error out. This mirrors the malicious-transaction
+// test scenario, where two separate approval requests are issued for the same computed
+// tx_id: the first insert must persist, and the second must be a harmless no-op rather
+// than a UNIQUE constraint violation.
+func EDuplicateValidationRecord(t *testing.T, db driver3.EndorserStore) {
+	t.Helper()
+	ctx := t.Context()
+	txID := "dup-tx"
+
+	w, err := db.NewEndorserStoreTransaction()
+	require.NoError(t, err)
+	require.NoError(t, w.AddValidationRecord(ctx, txID, []byte("first"), nil, driver2.PPHash("pp")))
+	require.NoError(t, w.Commit())
+
+	w2, err := db.NewEndorserStoreTransaction()
+	require.NoError(t, err)
+	require.NoError(t, w2.AddValidationRecord(ctx, txID, []byte("second"), nil, driver2.PPHash("pp")), "duplicate insert must not error")
+	require.NoError(t, w2.Commit())
+
+	records := getValidationRecords(t, db, driver3.QueryValidationRecordsParams{
+		Filter: func(r *driver3.ValidationRecord) bool { return r.TxID == txID },
+	})
+	require.Len(t, records, 1)
+	assert.Equal(t, []byte("first"), records[0].TokenRequest, "first validation record must be preserved")
 }
 
 func getValidationRecords(t *testing.T, db driver3.EndorserStore, params driver3.QueryValidationRecordsParams) []*driver3.ValidationRecord {
