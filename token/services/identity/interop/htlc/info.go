@@ -8,8 +8,8 @@ package htlc
 
 import (
 	"context"
-	"encoding/json"
 
+	"github.com/LFDT-Panurus/panurus/token/core/common/encoding/json"
 	"github.com/LFDT-Panurus/panurus/token/driver"
 	"github.com/LFDT-Panurus/panurus/token/services/interop/htlc"
 )
@@ -41,6 +41,9 @@ func (si *ScriptInfo) Marshal() ([]byte, error) {
 }
 
 // Unmarshal populates the ScriptInfo from the provided JSON-encoded bytes.
+//
+// The decode is strict (unknown fields rejected), matching how deserializer.go parses the same
+// wire type.
 func (si *ScriptInfo) Unmarshal(raw []byte) error {
 	return json.Unmarshal(raw, si)
 }
