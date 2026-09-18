@@ -6,6 +6,7 @@ SPDX-License-Identifier: Apache-2.0
 package validator
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"slices"
@@ -24,6 +25,13 @@ var (
 
 	// ErrMissingInputIDs is returned when InputIDs are not populated on the transfer action.
 	ErrMissingInputIDs = errors.New("validator: transfer action InputIDs not populated")
+
+	// ErrNilInputID is returned when an InputID entry is nil.
+	ErrNilInputID = errors.New("validator: nil input ID in transfer action")
+
+	// ErrCommitmentMismatch is returned when the SNARK-proven commitment does not
+	// match the on-ledger output commitment for the referenced input token.
+	ErrCommitmentMismatch = errors.New("validator: input commitment does not match ledger token")
 
 	// ErrMissingIssuer is returned when a redeem action has no issuer identity.
 	ErrMissingIssuer = errors.New("validator: redeem action is missing issuer identity")
@@ -56,6 +64,10 @@ func TransferSignatureValidate(c context.Context, ctx *Context) error {
 	var inputTokens []*snarktoken.Input
 
 	for i, inputID := range inputIDs {
+		if inputID == nil {
+			return errors.Wrapf(ErrNilInputID, "input [%d]", i)
+		}
+
 		// Load the on-chain output (OutputDescription) to get the owner
 		raw, err := ctx.Ledger.GetState(*inputID)
 		if err != nil {
@@ -65,6 +77,14 @@ func TransferSignatureValidate(c context.Context, ctx *Context) error {
 		var outputDesc snarktoken.OutputDescription
 		if err := json.Unmarshal(raw, &outputDesc); err != nil {
 			return errors.Wrapf(err, "failed unmarshalling ledger token for input [%d]", i)
+		}
+
+		// Verify the SNARK-proven CommitmentIn matches the on-ledger CommitmentOut.
+		// Without this check, an attacker could prove ownership of token A but
+		// reference token B's ID, decoupling authorization from what the proof
+		// actually spends.
+		if !bytes.Equal(action.Inputs[i].CommitmentIn, outputDesc.CommitmentOut) {
+			return errors.Wrapf(ErrCommitmentMismatch, "input [%d]: proven commitment does not match ledger token [%s]", i, inputID)
 		}
 
 		owner := outputDesc.Recipient

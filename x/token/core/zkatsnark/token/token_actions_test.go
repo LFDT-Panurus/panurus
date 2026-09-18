@@ -209,16 +209,38 @@ func TestTransferAction_GetInputs_Nil(t *testing.T) {
 	require.Nil(t, a.GetInputs())
 }
 
-func TestTransferAction_GetSerializedInputs_RoundTrip(t *testing.T) {
+func TestTransferAction_GetSerializedInputs_WithInputTokens(t *testing.T) {
+	outputDesc := makeOutputDescription([]byte("bob"))
+	raw, err := json.Marshal(outputDesc)
+	require.NoError(t, err)
+
 	a := &snarktoken.TransferAction{
-		Inputs: []snarktoken.SpendDescription{makeSpendDescription()},
+		Inputs:      []snarktoken.SpendDescription{makeSpendDescription()},
+		InputTokens: [][]byte{raw},
 	}
 	raws, err := a.GetSerializedInputs()
 	require.NoError(t, err)
 	require.Len(t, raws, 1)
 
-	var s snarktoken.SpendDescription
-	require.NoError(t, json.Unmarshal(raws[0], &s))
+	var got snarktoken.OutputDescription
+	require.NoError(t, json.Unmarshal(raws[0], &got))
+	require.Equal(t, []byte("bob"), got.Recipient)
+}
+
+func TestTransferAction_GetSerializedInputs_ErrorWithoutInputTokens(t *testing.T) {
+	a := &snarktoken.TransferAction{
+		Inputs: []snarktoken.SpendDescription{makeSpendDescription()},
+	}
+	_, err := a.GetSerializedInputs()
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "InputTokens not populated")
+}
+
+func TestTransferAction_GetSerializedInputs_NilWhenEmpty(t *testing.T) {
+	a := &snarktoken.TransferAction{}
+	raws, err := a.GetSerializedInputs()
+	require.NoError(t, err)
+	require.Nil(t, raws)
 }
 
 func TestTransferAction_GetSerialNumbers_Nil(t *testing.T) {

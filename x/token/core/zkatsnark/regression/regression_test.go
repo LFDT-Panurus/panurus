@@ -22,7 +22,6 @@ import (
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	"github.com/stretchr/testify/require"
 
-	"github.com/LFDT-Panurus/panurus/token/core/common"
 	"github.com/LFDT-Panurus/panurus/token/driver"
 	"github.com/LFDT-Panurus/panurus/token/driver/protos-go/v1/request"
 	token2 "github.com/LFDT-Panurus/panurus/token/token"
@@ -344,6 +343,11 @@ func TestTransferAction_MultipleInputs_ValidatesSuccessfully(t *testing.T) {
 // transfer action going through the common.Validator pipeline correctly
 // consumes all owner signatures. This is the specific regression test for
 // the "unconsumed signatures" bug.
+//
+// It exercises the full VerifyTokenRequestFromRaw path, which parses
+// TokenRequest.Signatures into per-action Backends, calls VerifyTransfer
+// with the scoped Backend, and invokes EnsureExhausted, the same sequence
+// a Fabric peer runs during endorsement.
 func TestTransferAction_CommonValidator_SignaturesConsumed(t *testing.T) {
 	setupShared(t)
 
@@ -362,23 +366,27 @@ func TestTransferAction_CommonValidator_SignaturesConsumed(t *testing.T) {
 		[][]byte{[]byte("bob"), owner},
 	)
 
-	// Set InputIDs on the transfer action (as TransferService would)
+	// Set InputIDs and InputTokens on the transfer action (as TransferService would)
 	inputTokenID := &token2.ID{TxId: "issue-tx-0", Index: 0}
 	transferAction.InputIDs = []*token2.ID{inputTokenID}
+	outputDescRaw, err := json.Marshal(issueAction.Outputs[0])
+	require.NoError(t, err)
+	transferAction.InputTokens = [][]byte{outputDescRaw}
 
 	// Store the issued token on the test ledger so the validator can look up owner
 	ledger := &testLedger{tokens: make(map[string][]byte)}
 	storeLedgerToken(t, ledger, "issue-tx-0", 0, issueAction.Outputs[0])
 
-	// Build token request with the transfer action
+	// Build token request with proper action-scoped signatures
 	transferRaw, err := transferAction.Serialize()
 	require.NoError(t, err)
 
+	anchor := driver.TokenRequestAnchor("test-tx")
 	tr := &driver.TokenRequest{
+		Version: driver.ProtocolV1,
 		Actions: []*driver.TypedAction{
 			{Type: request.ActionType_ACTION_TYPE_TRANSFER, Raw: transferRaw},
 		},
-		// One owner signature for the input
 		Signatures: []*driver.RequestSignature{
 			{
 				Action: &driver.ActionSignature{
@@ -389,42 +397,27 @@ func TestTransferAction_CommonValidator_SignaturesConsumed(t *testing.T) {
 		},
 	}
 
-	// Create validator via the common framework
-	val, err := validator.NewValidator(sharedPP, &testDeserializer{}, driver.ResourceLimits{})
+	raw, err := tr.Bytes()
 	require.NoError(t, err)
 
-	// Simulate what the common validator does:
-	// 1. Groups signatures by action ID into per-action Backends
-	// 2. Runs TransferSignatureValidate (which calls HasBeenSignedBy)
-	// 3. Calls EnsureExhausted
-	//
-	// We test this by calling VerifyTransfer directly with a mock SignatureProvider
-	// that tracks consumption.
-	msg := []byte("test-transfer-message")
-	sigProvider := &common.Backend{
-		Ledger:  ledger.GetState,
-		Message: msg,
-		Sigs:    [][]byte{[]byte("owner-sig-for-input-0")},
-	}
+	// Create validator via the common framework
+	val, err := validator.NewValidator(sharedPP, &testDeserializer{}, driver.ResourceLimits{}.WithDefaults())
+	require.NoError(t, err)
 
-	err = val.VerifyTransfer(
+	// VerifyTokenRequestFromRaw exercises the full framework path:
+	// parse signatures → scope to per-action Backends → VerifyTransfer → EnsureExhausted
+	_, _, err = val.VerifyTokenRequestFromRaw(
 		context.Background(),
-		driver.TokenRequestAnchor("test-tx"),
-		tr,
-		transferAction,
-		ledger,
-		sigProvider,
-		nil,
+		ledger.GetState,
+		anchor,
+		raw,
 	)
-	require.NoError(t, err, "VerifyTransfer should succeed")
-
-	// The critical check: all signatures must be consumed
-	err = sigProvider.EnsureExhausted()
-	require.NoError(t, err, "all owner signatures must be consumed (regression test for 'unconsumed signatures' bug)")
+	require.NoError(t, err, "VerifyTokenRequestFromRaw should succeed and consume all signatures")
 }
 
 // TestTransferAction_CommonValidator_TwoInputs_SignaturesConsumed verifies
-// that a multi-input transfer correctly consumes all owner signatures.
+// that a multi-input transfer correctly consumes all owner signatures
+// through the full framework pipeline.
 func TestTransferAction_CommonValidator_TwoInputs_SignaturesConsumed(t *testing.T) {
 	setupShared(t)
 
@@ -444,50 +437,60 @@ func TestTransferAction_CommonValidator_TwoInputs_SignaturesConsumed(t *testing.
 		[][]byte{[]byte("bob")},
 	)
 
-	// Set InputIDs
+	// Set InputIDs and InputTokens
 	inputID0 := &token2.ID{TxId: "issue-tx-0", Index: 0}
 	inputID1 := &token2.ID{TxId: "issue-tx-1", Index: 0}
 	transferAction.InputIDs = []*token2.ID{inputID0, inputID1}
+	outputDescRaw0, err := json.Marshal(issueAction1.Outputs[0])
+	require.NoError(t, err)
+	outputDescRaw1, err := json.Marshal(issueAction2.Outputs[0])
+	require.NoError(t, err)
+	transferAction.InputTokens = [][]byte{outputDescRaw0, outputDescRaw1}
 
 	// Store tokens on ledger
 	ledger := &testLedger{tokens: make(map[string][]byte)}
 	storeLedgerToken(t, ledger, "issue-tx-0", 0, issueAction1.Outputs[0])
 	storeLedgerToken(t, ledger, "issue-tx-1", 0, issueAction2.Outputs[0])
 
-	// Build token request
+	// Build token request with two action-scoped signatures
 	transferRaw, err := transferAction.Serialize()
 	require.NoError(t, err)
 
+	anchor := driver.TokenRequestAnchor("test-tx")
 	tr := &driver.TokenRequest{
+		Version: driver.ProtocolV1,
 		Actions: []*driver.TypedAction{
 			{Type: request.ActionType_ACTION_TYPE_TRANSFER, Raw: transferRaw},
 		},
+		Signatures: []*driver.RequestSignature{
+			{
+				Action: &driver.ActionSignature{
+					ActionID:  0,
+					Signature: []byte("sig-for-input-0"),
+				},
+			},
+			{
+				Action: &driver.ActionSignature{
+					ActionID:  0,
+					Signature: []byte("sig-for-input-1"),
+				},
+			},
+		},
 	}
 
-	// Two owner signatures for two inputs
-	msg := []byte("test-transfer-message")
-	sigProvider := &common.Backend{
-		Ledger:  ledger.GetState,
-		Message: msg,
-		Sigs:    [][]byte{[]byte("sig-for-input-0"), []byte("sig-for-input-1")},
-	}
-
-	val, err := validator.NewValidator(sharedPP, &testDeserializer{}, driver.ResourceLimits{})
+	raw, err := tr.Bytes()
 	require.NoError(t, err)
 
-	err = val.VerifyTransfer(
-		context.Background(),
-		driver.TokenRequestAnchor("test-tx"),
-		tr,
-		transferAction,
-		ledger,
-		sigProvider,
-		nil,
-	)
-	require.NoError(t, err, "VerifyTransfer should succeed for multi-input transfer")
+	val, err := validator.NewValidator(sharedPP, &testDeserializer{}, driver.ResourceLimits{}.WithDefaults())
+	require.NoError(t, err)
 
-	err = sigProvider.EnsureExhausted()
-	require.NoError(t, err, "all 2 owner signatures must be consumed")
+	_, _, err = val.VerifyTokenRequestFromRaw(
+		context.Background(),
+		ledger.GetState,
+		anchor,
+		raw,
+	)
+	require.NoError(t, err, "VerifyTokenRequestFromRaw should succeed and consume all 2 owner signatures")
 }
 
 // TestTransferAction_MissingInputIDs_Fails verifies that a transfer action
@@ -516,30 +519,34 @@ func TestTransferAction_MissingInputIDs_Fails(t *testing.T) {
 	transferRaw, err := transferAction.Serialize()
 	require.NoError(t, err)
 
+	anchor := driver.TokenRequestAnchor("test-tx")
 	tr := &driver.TokenRequest{
+		Version: driver.ProtocolV1,
 		Actions: []*driver.TypedAction{
 			{Type: request.ActionType_ACTION_TYPE_TRANSFER, Raw: transferRaw},
 		},
+		Signatures: []*driver.RequestSignature{
+			{
+				Action: &driver.ActionSignature{
+					ActionID:  0,
+					Signature: []byte("sig"),
+				},
+			},
+		},
 	}
 
-	sigProvider := &common.Backend{
-		Ledger:  ledger.GetState,
-		Message: []byte("test"),
-		Sigs:    [][]byte{[]byte("sig")},
-	}
-
-	val, err := validator.NewValidator(sharedPP, &testDeserializer{}, driver.ResourceLimits{})
+	raw, err := tr.Bytes()
 	require.NoError(t, err)
 
-	err = val.VerifyTransfer(
+	val, err := validator.NewValidator(sharedPP, &testDeserializer{}, driver.ResourceLimits{}.WithDefaults())
+	require.NoError(t, err)
+
+	_, _, err = val.VerifyTokenRequestFromRaw(
 		context.Background(),
-		driver.TokenRequestAnchor("test-tx"),
-		tr,
-		transferAction,
-		ledger,
-		sigProvider,
-		nil,
+		ledger.GetState,
+		anchor,
+		raw,
 	)
-	require.Error(t, err, "VerifyTransfer should fail when InputIDs are missing")
+	require.Error(t, err, "VerifyTokenRequestFromRaw should fail when InputIDs are missing")
 	require.ErrorIs(t, err, validator.ErrMissingInputIDs)
 }

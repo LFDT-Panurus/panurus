@@ -65,21 +65,21 @@ func (a *TransferAction) GetInputs() []*token2.ID {
 }
 
 // GetSerializedInputs returns the serialized inputs of the action.
+// It returns the InputTokens (serialized OutputDescriptions) that were
+// populated by TransferService. If InputTokens is empty and no Inputs
+// exist, it returns (nil, nil). If Inputs exist but InputTokens was
+// never populated, it returns an error, falling back to serializing
+// SpendDescriptions would produce OutputSN keys that can never match
+// the on-ledger token keys.
 func (a *TransferAction) GetSerializedInputs() ([][]byte, error) {
 	if len(a.InputTokens) > 0 {
 		return a.InputTokens, nil
 	}
-	res := make([][]byte, len(a.Inputs))
-	for i, in := range a.Inputs {
-		raw, err := json.Marshal(in)
-		if err != nil {
-			return nil, errors.Wrapf(err, "failed to serialize input %d", i)
-		}
-
-		res[i] = raw
+	if len(a.Inputs) == 0 {
+		return nil, nil
 	}
 
-	return res, nil
+	return nil, errors.New("InputTokens not populated: cannot derive serialized inputs from SpendDescriptions alone")
 }
 
 // GetSerialNumbers returns nil, zkatsnark does not use serial numbers.

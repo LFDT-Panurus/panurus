@@ -151,9 +151,9 @@ func (s *TransferService) Transfer(
 	// Populate InputIDs and InputTokens so the validator can look up input token owners
 	// and correctly generate osn keys for ledger validation.
 	action.InputIDs = tokenIDs
-	var inputTokens [][]byte
-	for _, loadedToken := range loadedTokens {
-		inputTokens = append(inputTokens, loadedToken.Token)
+	inputTokens := make([][]byte, len(loadedTokens))
+	for i, loadedToken := range loadedTokens {
+		inputTokens[i] = loadedToken.Token
 	}
 	action.InputTokens = inputTokens
 
