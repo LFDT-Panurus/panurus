@@ -61,30 +61,24 @@ func CompileCollectEndorsementsOpts(opts ...token.ServiceOption) (*EndorsementsO
 
 	// Extract endorsement-specific options from Params
 	if serviceOpts.Params != nil {
-		if v, ok := serviceOpts.Params[ParamSkipAuditing].(bool); ok {
-			endorseOpts.SkipAuditing = v
-		}
-		if v, ok := serviceOpts.Params[ParamSkipAuditorSignatureVerification].(bool); ok {
-			endorseOpts.SkipAuditorSignatureVerification = v
-		}
-		if v, ok := serviceOpts.Params[ParamSkipApproval].(bool); ok {
-			endorseOpts.SkipApproval = v
-		}
-		if v, ok := serviceOpts.Params[ParamSkipDistributeEnv].(bool); ok {
-			endorseOpts.SkipDistributeEnv = v
-		}
-		if v, ok := serviceOpts.Params[ParamExternalWalletSigners].(map[string]ExternalWalletSigner); ok {
-			endorseOpts.ExternalWalletSigners = v
-		}
-		if v, ok := serviceOpts.Params[ParamPolicySigners].([]token.Identity); ok {
-			endorseOpts.PolicySigners = v
-		}
-		if v, ok := serviceOpts.Params[ParamApprovalMetadata].(map[string][]byte); ok {
-			endorseOpts.ApprovalMetadata = v
-		}
+		setParam(serviceOpts.Params, ParamSkipAuditing, &endorseOpts.SkipAuditing)
+		setParam(serviceOpts.Params, ParamSkipAuditorSignatureVerification, &endorseOpts.SkipAuditorSignatureVerification)
+		setParam(serviceOpts.Params, ParamSkipApproval, &endorseOpts.SkipApproval)
+		setParam(serviceOpts.Params, ParamSkipDistributeEnv, &endorseOpts.SkipDistributeEnv)
+		setParam(serviceOpts.Params, ParamExternalWalletSigners, &endorseOpts.ExternalWalletSigners)
+		setParam(serviceOpts.Params, ParamPolicySigners, &endorseOpts.PolicySigners)
+		setParam(serviceOpts.Params, ParamApprovalMetadata, &endorseOpts.ApprovalMetadata)
 	}
 
 	return endorseOpts, nil
+}
+
+// setParam assigns params[key] to *dst when it is present and holds a T, leaving
+// *dst untouched otherwise.
+func setParam[T any](params map[string]any, key string, dst *T) {
+	if v, ok := params[key].(T); ok {
+		*dst = v
+	}
 }
 
 // WithSkipAuditing to skip auditing
