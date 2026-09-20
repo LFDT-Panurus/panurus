@@ -40,24 +40,29 @@ func NewLocalBidirectionalChannel(ctx context.Context, caller string, contextID 
 		Closed:         false,
 	}
 
+	leftClosed := make(chan struct{})
+	rightClosed := make(chan struct{})
+
 	return &LocalBidirectionalChannel{
 		left: &localSession{
-			name:         "left",
-			contextID:    contextID,
-			caller:       caller,
-			info:         info,
-			readChannel:  rl,
-			writeChannel: lr,
-			closedChan:   make(chan struct{}),
+			name:           "left",
+			contextID:      contextID,
+			caller:         caller,
+			info:           info,
+			readChannel:    rl,
+			writeChannel:   lr,
+			closedChan:     leftClosed,
+			peerClosedChan: rightClosed,
 		},
 		right: &localSession{
-			name:         "right",
-			contextID:    contextID,
-			caller:       caller,
-			info:         info,
-			readChannel:  lr,
-			writeChannel: rl,
-			closedChan:   make(chan struct{}),
+			name:           "right",
+			contextID:      contextID,
+			caller:         caller,
+			info:           info,
+			readChannel:    lr,
+			writeChannel:   rl,
+			closedChan:     rightClosed,
+			peerClosedChan: leftClosed,
 		},
 	}, nil
 }
@@ -82,11 +87,12 @@ type localSession struct {
 	readChannel  chan *view.Message
 	writeChannel chan *view.Message
 
-	mu          sync.RWMutex
-	closed      bool
-	closedChan  chan struct{}
-	inFlight    int
-	writeClosed bool
+	mu             sync.RWMutex
+	closed         bool
+	closedChan     chan struct{}
+	peerClosedChan chan struct{}
+	inFlight       int
+	writeClosed    bool
 }
 
 func (s *localSession) Info() view.SessionInfo {
@@ -105,11 +111,22 @@ func (s *localSession) SendError(ctx context.Context, payload []byte) error {
 }
 
 func (s *localSession) send(ctx context.Context, payload []byte, status int32) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
 	s.mu.Lock()
 	if s.closed {
 		s.mu.Unlock()
 
 		return errors.New("session is closed")
+	}
+	select {
+	case <-s.peerClosedChan:
+		s.mu.Unlock()
+
+		return errors.New("session is closed")
+	default:
 	}
 	s.inFlight++
 	info := s.info
@@ -137,12 +154,42 @@ func (s *localSession) send(ctx context.Context, payload []byte, status int32) e
 	}
 
 	select {
-	case s.writeChannel <- msg:
-		return nil
 	case <-s.closedChan:
+		return errors.New("session is closed")
+	case <-s.peerClosedChan:
+		return errors.New("session is closed")
+	default:
+	}
+
+	select {
+	case s.writeChannel <- msg:
+		select {
+		case <-s.closedChan:
+			return errors.New("session is closed")
+		case <-s.peerClosedChan:
+			return errors.New("session is closed")
+		default:
+			return nil
+		}
+	default:
+	}
+
+	select {
+	case <-s.closedChan:
+		return errors.New("session is closed")
+	case <-s.peerClosedChan:
 		return errors.New("session is closed")
 	case <-ctx.Done():
 		return errors.Wrap(ctx.Err(), "context cancelled while sending message")
+	case s.writeChannel <- msg:
+		select {
+		case <-s.closedChan:
+			return errors.New("session is closed")
+		case <-s.peerClosedChan:
+			return errors.New("session is closed")
+		default:
+			return nil
+		}
 	}
 }
 

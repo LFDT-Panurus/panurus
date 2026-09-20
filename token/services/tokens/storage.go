@@ -280,7 +280,7 @@ func (t *DBTransaction) Notify(ctx context.Context, topic string, tmsID token.TM
 // Calling it more than once is safe: the buffer is empty after the first call.
 func (t *DBTransaction) FlushEvents(ctx context.Context) {
 	pending := t.pending
-	t.pending = t.pending[:0]
+	t.pending = nil
 	for _, e := range pending {
 		if logger.IsEnabledFor(zapcore.DebugLevel) {
 			logger.DebugfContext(ctx, "publish new event %v", e)
@@ -293,7 +293,7 @@ func (t *DBTransaction) FlushEvents(ctx context.Context) {
 // recorded for it, so that nothing is published for a transaction that never
 // reached the store.
 func (t *DBTransaction) Rollback() error {
-	t.pending = t.pending[:0]
+	t.pending = nil
 
 	return t.Tx.Rollback()
 }

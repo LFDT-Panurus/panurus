@@ -8,8 +8,10 @@ package tokens
 
 import (
 	"context"
-	"runtime/debug"
+	"path/filepath"
+	"runtime"
 	"slices"
+	"strconv"
 
 	"github.com/LFDT-Panurus/panurus/token"
 	"github.com/LFDT-Panurus/panurus/token/driver"
@@ -221,11 +223,13 @@ func (t *Service) DeleteTokensBy(ctx context.Context, deletedBy string, ids ...*
 	return t.Storage.TokenDB.DeleteTokens(ctx, deletedBy, ids...)
 }
 
-// DeleteTokens marks the tokens as spent in the database, attributed to the caller's stack trace.
+// DeleteTokens marks the tokens as spent in the database, attributed to the caller's location.
 func (t *Service) DeleteTokens(ctx context.Context, ids ...*token2.ID) (err error) {
 	deletedBy := "Service.DeleteTokens"
-	if logger.IsEnabledFor(zapcore.DebugLevel) {
-		deletedBy = string(debug.Stack())
+	if pc, file, line, ok := runtime.Caller(1); ok {
+		if fn := runtime.FuncForPC(pc); fn != nil {
+			deletedBy = fn.Name() + " (" + filepath.Base(file) + ":" + strconv.Itoa(line) + ")"
+		}
 	}
 
 	return t.DeleteTokensBy(ctx, deletedBy, ids...)
