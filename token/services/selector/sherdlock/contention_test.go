@@ -148,7 +148,7 @@ func TestHotTokenContention(t *testing.T) {
 		conflictRate = float64(totalConflicts) / float64(totalAttempts)
 	}
 
-	// conflictRate is the number that mirrors the CERT report's headline
+	// conflictRate is the number that mirrors the stress report's headline
 	// figure (95.2% of lock violations): here it is the share of every lock
 	// attempt, across all replicas, that lost the race. maxShare is diluted
 	// by design: deleteTokensAndStoreChange mints a fresh token ID each time

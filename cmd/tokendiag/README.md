@@ -2,7 +2,7 @@
 
 `tokendiag` is a diagnostic command-line tool for inspecting token-selector state in a
 Panurus token database. It was added for
-[#2395](https://github.com/LFDT-Panurus/panurus/issues/2395), a CERT load test that
+[#2395](https://github.com/LFDT-Panurus/panurus/issues/2395), a stress load test that
 showed severe lock contention on a small number of hot tokens.
 
 ## Build
