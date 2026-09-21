@@ -46,6 +46,7 @@ func newTestListener(t *testing.T, db *mock.TransactionDB) *finality.Listener {
 		finality.NewTokenRequestHasher(&depmock.TokenManagementServiceProvider{}, token.TMSID{Network: "n", Channel: "c", Namespace: "ns"}),
 		db,
 		nil,
+		&mock.SelectorManagerProvider{},
 		noopTracer(),
 		nil,
 	)
@@ -313,6 +314,58 @@ func TestCommit_NoTokenEventsWhenTransactionIsNotCommitted(t *testing.T) {
 			require.Error(t, finality.Commit(t.Context(), logging.MustGetLogger(), tokens, db, "tx1", nil))
 			assert.Equal(t, 0, published, "a transaction that was not committed must publish nothing")
 			assert.Equal(t, 1, storeTx.RollbackCallCount())
+		})
+	}
+}
+
+// TestOnStatus_ReleasesLocksAfterTerminalStatus is the Listener-side regression
+// test for #2395 mechanism 4: once a transaction's status is terminal
+// (Confirmed or Deleted), its selection locks must be released immediately
+// rather than left for the 3-minute lease-expiry sweep.
+func TestOnStatus_ReleasesLocksAfterTerminalStatus(t *testing.T) {
+	tests := []struct {
+		name   string
+		status int
+	}{
+		{name: "confirmed", status: network.Valid},
+		{name: "invalid maps to deleted", status: network.Invalid},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			db := &mock.TransactionDB{}
+			storeTx := &drivermock.TransactionStoreTransaction{}
+			db.NewTransactionReturns(storeTx, nil)
+
+			tokens := &mock.TokensService{}
+			msgToSign := []byte("message")
+			expectedHashString := utils.Hashable(msgToSign).String()
+			tokenRequestHash, err := base64.StdEncoding.DecodeString(expectedHashString)
+			require.NoError(t, err)
+			tokens.GetCachedTokenRequestReturns(&token.Request{}, msgToSign)
+			tokens.AppendValidReturns(nil, nil)
+
+			sm := &fakeSelectorManager{}
+			smProvider := &mock.SelectorManagerProvider{}
+			smProvider.SelectorManagerReturns(sm, nil)
+
+			l := finality.NewListener(
+				logging.MustGetLogger(),
+				&depmock.Network{},
+				"test-namespace",
+				finality.NewTokenRequestHasher(&depmock.TokenManagementServiceProvider{}, token.TMSID{Network: "n", Channel: "c", Namespace: "ns"}),
+				db,
+				tokens,
+				smProvider,
+				noopTracer(),
+				nil,
+			)
+
+			txID := "tx-terminal"
+			l.OnStatus(t.Context(), txID, test.status, "", tokenRequestHash)
+
+			require.Equal(t, []string{txID}, sm.unlockCalls,
+				"a transaction reaching a terminal status must release its selection locks (#2395 mechanism 4)")
 		})
 	}
 }

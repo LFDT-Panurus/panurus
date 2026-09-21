@@ -142,7 +142,24 @@ To prevent double-spending *before* the transaction is committed to the ledger, 
 **Lock lifecycle:**
 1.  **Lock Acquisition**: When the selector takes a candidate token, it attempts to insert a record in the `TokenLocks` table.
 2.  **Concurrency Control**: If another concurrent process has already locked that token, the insertion fails, and the selector moves on to the next candidate.
-3.  **Lock Release**: Locks are released either when the transaction reaches finality (success/failure) or when a timeout occurs, ensuring that tokens do not remain permanently inaccessible due to crashed or abandoned transactions.
+3.  **Lock Release**: Locks are released as soon as the transaction that took them reaches
+    a terminal finality status (`Confirmed` or `Deleted`) — see "Release on settlement"
+    below — with the lease-expiry sweep as a backstop for locks whose consumer never
+    reaches finality (crashed or abandoned transactions, or `Orphan`).
+
+#### Release on settlement
+
+The finality path — `finality.Listener.runOnStatus` for the live subscription, and
+`TTXRecoveryHandler.applyFinalityLogic` for recovery on restart — releases a
+transaction's locks (`token.SelectorManager.Unlock`) the moment its status is known to
+be terminal, for both `Confirmed` and `Deleted` alike: a failed transaction will never
+spend the tokens it selected, so there is no reason to hold them either. This closes
+the window, previously bounded only by `leaseExpiry` (default several minutes), during
+which a settled transaction's already-spent-for tokens stayed locked and therefore
+invisible to other selectors — the dominant source of lock contention on hot tokens
+under concurrent load (issue #2395). Release is best-effort: a failure to unlock is
+logged and does not fail the settlement or recovery path, since the lease-expiry sweep
+below still reclaims the lock eventually.
 
 #### Lease expiry
 
@@ -151,15 +168,20 @@ table that releases a lock when **either** of the following holds.
 
 > **Both `leaseExpiry` and `leaseCleanupTickPeriod` must be non-zero for the cleanup
 > goroutine to start.** If either is zero the pass never runs, so locks held by
-> `Deleted` or `Orphan` consumers are never released and those tokens remain
-> permanently unselectable. Setting `leaseExpiry: 0` to disable time-based expiry
-> while relying on consumer-status release is therefore not supported.
+> `Orphan` consumers, or by a consumer whose release-on-settlement call failed, are
+> never released and those tokens remain permanently unselectable. Setting
+> `leaseExpiry: 0` to disable time-based expiry while relying solely on
+> release-on-settlement is therefore not supported.
 
 *   the **consuming** transaction — the one that took the lock, stored in
     `consumer_tx_id` — has reached `Deleted` or `Orphan`, so it will never spend the
     token; or
 *   the lease is older than `leaseExpiry`, which covers the consumer that crashed or was
     abandoned without ever reaching a terminal status.
+
+In the common case a lock is now released by "Release on settlement" above well before
+its lease would expire; this pass remains the backstop for `Orphan` consumers (which the
+finality path does not observe) and for any release-on-settlement call that failed.
 
 Two properties of the pass are worth spelling out:
 
