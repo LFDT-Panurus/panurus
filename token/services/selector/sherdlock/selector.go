@@ -15,6 +15,7 @@ import (
 
 	"github.com/LFDT-Panurus/panurus/token"
 	"github.com/LFDT-Panurus/panurus/token/services/logging"
+	"github.com/LFDT-Panurus/panurus/token/services/storage/db/driver"
 	"github.com/LFDT-Panurus/panurus/token/services/utils/types/transaction"
 	token2 "github.com/LFDT-Panurus/panurus/token/token"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
@@ -163,6 +164,12 @@ func (s *Selector) selectInternal(ctx context.Context, owner token.OwnerFilter, 
 		return nil, nil, 0, errors.Wrapf(err, "failed to create quantity")
 	}
 	sum, selected, tokensLockedByOthersExist, immediateRetries := token2.NewZeroQuantity(s.precision), collections.NewSet[*token2.ID](), true, 0
+	// attempted tracks every distinct token this call has tried a lock on
+	// (won or lost), so we can report DistinctTokensAttempted at the end.
+	attempted := collections.NewSet[token2.ID]()
+	defer func() {
+		s.metrics.DistinctTokensAttempted.Observe(float64(attempted.Length()))
+	}()
 	for {
 		if t, err := s.next(); err != nil {
 			return nil, nil, immediateRetries, errors.Wrapf(err, "failed to get tokens for [%s:%s]", owner.ID(), tokenType)
@@ -204,9 +211,21 @@ func (s *Selector) selectInternal(ctx context.Context, owner token.OwnerFilter, 
 			if errors.Is(lockErr, token.SelectorRateLimited) {
 				return nil, nil, immediateRetries, lockErr
 			}
-			s.logger.DebugfContext(ctx, "Tried to lock token [%v], but it was already locked by another process", t)
+			attempted.Add(t.Id)
+			if errors.Is(lockErr, driver.ErrTokenAlreadyLocked) {
+				// Lost the race: someone else holds this token. This is the
+				// expected, common case under contention, not a DB error.
+				s.metrics.LockConflicts.Add(1)
+				s.logger.Infof("Lost lock race on token [%s:%d]: already locked by another process", t.Id.TxId, t.Id.Index)
+			} else {
+				// A real store error (not a lock conflict) collapsed into the
+				// same !locked branch by TryLock. Log it distinctly so a DB
+				// outage does not read as ordinary contention.
+				s.logger.Warnf("Failed to lock token [%s:%d]: %v", t.Id.TxId, t.Id.Index, lockErr)
+			}
 			tokensLockedByOthersExist = true
 		} else {
+			attempted.Add(t.Id)
 			s.logger.DebugfContext(ctx, "Got the lock on token [%v]", t)
 			q, err := token2.ToQuantity(t.Quantity, s.precision)
 			if err != nil {

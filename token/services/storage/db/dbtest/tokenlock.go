@@ -15,7 +15,6 @@ import (
 	driver3 "github.com/LFDT-Panurus/panurus/token/services/storage/db/driver"
 	"github.com/LFDT-Panurus/panurus/token/services/utils"
 	"github.com/LFDT-Panurus/panurus/token/token"
-	fscerrors "github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	"github.com/stretchr/testify/require"
 )
 
@@ -66,6 +65,7 @@ var tokenLockDBCases = []struct {
 	{"TestKeepSiblingIndices", TestKeepSiblingIndices},
 	{"TestReleaseOnAgedLease", TestReleaseOnAgedLease},
 	{"TestKeepFreshPendingLock", TestKeepFreshPendingLock},
+	{"TestListLocks", TestListLocks},
 }
 
 func TestFully(t *testing.T, tokenDB driver3.TokenStore, tokenLockDB driver3.TokenLockStore, tokenTransactionDB driver3.TokenTransactionStore) {
@@ -224,6 +224,61 @@ func TestKeepFreshPendingLock(t *testing.T, tokenDB driver3.TokenStore, tokenLoc
 	requireLockHeld(t, tokenLockDB, tokenID)
 }
 
+// TestListLocks verifies that ListLocks reports every held lock together with the
+// current status of its consuming transaction, and that a released lock disappears
+// from the listing. This is the diagnostic reader added for #2395.
+func TestListLocks(t *testing.T, tokenDB driver3.TokenStore, tokenLockDB driver3.TokenLockStore, tokenTransactionDB driver3.TokenTransactionStore) {
+	ctx := t.Context()
+	held := token.ID{TxId: "producer", Index: 0}
+	toRelease := token.ID{TxId: "producer", Index: 1}
+
+	addTokenRequest(t, tokenTransactionDB, "producer")
+	addTokenRequest(t, tokenTransactionDB, "pending-consumer")
+	addTokenRequest(t, tokenTransactionDB, "settled-consumer")
+	storeTokens(t, tokenDB, "producer", 0, 1)
+	require.NoError(t, tokenLockDB.Lock(ctx, &held, "pending-consumer", "owner1"))
+	require.NoError(t, tokenLockDB.Lock(ctx, &toRelease, "settled-consumer", "owner1"))
+
+	locks, err := tokenLockDB.ListLocks(ctx)
+	require.NoError(t, err)
+	require.Len(t, locks, 2)
+
+	byTokenID := map[token.ID]driver3.LockRecord{}
+	for _, l := range locks {
+		byTokenID[l.TokenID] = l
+	}
+
+	pending, ok := byTokenID[held]
+	require.True(t, ok, "lock on %s should be reported", held)
+	require.Equal(t, "pending-consumer", pending.ConsumerTxID)
+	require.NotNil(t, pending.Status)
+	require.Equal(t, driver3.Pending, *pending.Status)
+
+	// Mark the second consumer settled: the lock is still held (this is the leak
+	// TestListLocks is meant to surface - see mechanism 4 in #2395), and ListLocks
+	// must show its consumer's terminal status rather than silently dropping it.
+	require.NoError(t, tokenTransactionDB.SetStatus(ctx, "settled-consumer", driver3.Confirmed, ""))
+
+	locks, err = tokenLockDB.ListLocks(ctx)
+	require.NoError(t, err)
+	require.Len(t, locks, 2)
+	byTokenID = map[token.ID]driver3.LockRecord{}
+	for _, l := range locks {
+		byTokenID[l.TokenID] = l
+	}
+	settled, ok := byTokenID[toRelease]
+	require.True(t, ok, "lock on %s should still be reported after its consumer settles", toRelease)
+	require.NotNil(t, settled.Status)
+	require.Equal(t, driver3.Confirmed, *settled.Status)
+
+	// Releasing the lock removes it from the listing.
+	require.NoError(t, tokenLockDB.UnlockByTxID(ctx, "settled-consumer"))
+	locks, err = tokenLockDB.ListLocks(ctx)
+	require.NoError(t, err)
+	require.Len(t, locks, 1)
+	require.Equal(t, held, locks[0].TokenID)
+}
+
 // addTokenRequest registers a token request for txID, so that its status can later be
 // moved to a terminal one with SetStatus.
 func addTokenRequest(t *testing.T, tokenTransactionDB driver3.TokenTransactionStore, txID string) {
@@ -260,18 +315,13 @@ func storeTokens(t *testing.T, tokenDB driver3.TokenStore, txID string, indices 
 	require.NoError(t, tx.Commit())
 }
 
-// requireLockHeld asserts that the lock on tokenID survived cleanup. The store exposes
-// no read API, so the probe is a second Lock on the same token: the (tx_id, idx)
-// primary key rejects it for as long as the row is there.
-// We assert on driver3.ErrTokenAlreadyLocked specifically so that an unrelated Lock
-// failure (e.g. a future rule that rejects locks on Deleted producers) does not make
-// "Keep" tests pass vacuously.
+// requireLockHeld asserts that the lock on tokenID survived cleanup, via
+// TokenLockStore.ListLocks (see #2395) rather than probing with a second Lock call.
 func requireLockHeld(t *testing.T, tokenLockDB driver3.TokenLockStore, tokenID token.ID) {
 	t.Helper()
 
-	err := tokenLockDB.Lock(t.Context(), &tokenID, "probe-"+tokenID.String(), "owner1")
-	require.True(t, fscerrors.Is(err, driver3.ErrTokenAlreadyLocked),
-		"lock on token %s should still be held (want ErrTokenAlreadyLocked, got %v)", tokenID, err)
+	require.True(t, lockExists(t, tokenLockDB, tokenID),
+		"lock on token %s should still be held", tokenID)
 }
 
 // requireLockReleased asserts that cleanup collected the lock on tokenID: the row is
@@ -279,6 +329,21 @@ func requireLockHeld(t *testing.T, tokenLockDB driver3.TokenLockStore, tokenID t
 func requireLockReleased(t *testing.T, tokenLockDB driver3.TokenLockStore, tokenID token.ID) {
 	t.Helper()
 
-	require.NoError(t, tokenLockDB.Lock(t.Context(), &tokenID, "probe-"+tokenID.String(), "owner1"),
+	require.False(t, lockExists(t, tokenLockDB, tokenID),
 		"lock on token %s should have been released", tokenID)
+}
+
+// lockExists reports whether tokenID appears among the currently held locks.
+func lockExists(t *testing.T, tokenLockDB driver3.TokenLockStore, tokenID token.ID) bool {
+	t.Helper()
+
+	locks, err := tokenLockDB.ListLocks(t.Context())
+	require.NoError(t, err)
+	for _, l := range locks {
+		if l.TokenID == tokenID {
+			return true
+		}
+	}
+
+	return false
 }
