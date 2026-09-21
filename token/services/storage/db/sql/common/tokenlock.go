@@ -20,6 +20,7 @@ import (
 	"github.com/LFDT-Panurus/panurus/token/services/utils/types/transaction"
 	"github.com/LFDT-Panurus/panurus/token/token"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
+	"github.com/hyperledger-labs/fabric-smart-client/platform/common/utils/collections/iterators"
 	fscdriver "github.com/hyperledger-labs/fabric-smart-client/platform/view/services/storage/driver"
 	common2 "github.com/hyperledger-labs/fabric-smart-client/platform/view/services/storage/driver/common"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/services/storage/driver/sql/common"
@@ -102,6 +103,77 @@ func (db *TokenLockStore) UnlockByTxID(ctx context.Context, consumerTxID transac
 	_, err := db.WriteDB.ExecContext(ctx, query, args...)
 
 	return err
+}
+
+// ListLocks returns every currently held lock, joined with the status of its consuming
+// transaction. It reuses the same TokenLocks/Requests join as IsStaleLock/Cleanup, so
+// the notion of "consuming transaction" stays consistent across the diagnostic reader
+// and the actual expiry logic. See driver.TokenLockStore.ListLocks and #2395.
+func (db *TokenLockStore) ListLocks(ctx context.Context) ([]driver.LockRecord, error) {
+	tokenLocks, tokenRequests := q.Table(db.Table.TokenLocks), q.Table(db.Table.Requests)
+
+	query, args := q.Select().
+		Fields(
+			tokenLocks.Field("consumer_tx_id"), tokenLocks.Field("tx_id"), tokenLocks.Field("idx"),
+			tokenRequests.Field("status"), tokenLocks.Field("created_at"),
+		).
+		From(tokenLocks.Join(tokenRequests, cond.Cmp(tokenLocks.Field("consumer_tx_id"), "=", tokenRequests.Field("tx_id")))).
+		Format(db.ci)
+	logging.Debug(logger, query, args)
+
+	rows, err := db.ReadDB.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	it := common.NewIterator(rows, func(entry *driver.LockRecord) error {
+		var createdAt scannableTime
+		if err := rows.Scan(&entry.ConsumerTxID, &entry.TokenID.TxId, &entry.TokenID.Index, &entry.Status, &createdAt); err != nil {
+			return err
+		}
+		entry.CreatedAt = createdAt.Time
+
+		return nil
+	})
+
+	return iterators.ReadAllValues(it)
+}
+
+// scannableTime scans a created_at value regardless of dialect. Postgres hands the
+// database/sql driver a native time.Time; sqlite (modernc.org/sqlite) only performs
+// that conversion for columns declared DATE/DATETIME/TIMESTAMP, and our shared schema
+// declares created_at as TIMESTAMPTZ (deliberately, for timezone-consistent comparison
+// against Postgres's NOW() - see Cleanup), so on sqlite the driver hands back the raw
+// text it wrote the value as instead. Rather than weaken the shared schema, accept
+// either shape here.
+type scannableTime struct {
+	time.Time
+}
+
+// sqliteTimeFormat is the layout modernc.org/sqlite writes a bound time.Time parameter
+// as by default (time.Time.String), absent a _time_format DSN option we don't set.
+const sqliteTimeFormat = "2006-01-02 15:04:05.999999999 -0700 MST"
+
+func (s *scannableTime) Scan(src any) error {
+	switch v := src.(type) {
+	case time.Time:
+		s.Time = v
+
+		return nil
+	case string:
+		t, err := time.Parse(sqliteTimeFormat, v)
+		if err != nil {
+			return errors.Wrapf(err, "cannot parse created_at value [%s]", v)
+		}
+		s.Time = t
+
+		return nil
+	case []byte:
+		return s.Scan(string(v))
+	default:
+		return errors.Errorf("cannot scan value of type [%T] into time.Time", src)
+	}
 }
 
 func (db *TokenLockStore) GetSchema() string {
