@@ -3,7 +3,7 @@
 - [`tokendiag`](../../cmd/tokendiag/README.md) is a read-only diagnostic tool for
   inspecting token-selector state directly against an existing Panurus database
   (SQLite or PostgreSQL). It was added for
-  [#2395](https://github.com/LFDT-Panurus/panurus/issues/2395), a CERT load test that
+  [#2395](https://github.com/LFDT-Panurus/panurus/issues/2395), a stress load test that
   showed a small number of hot tokens absorbing the vast majority of lock-contention
   errors.
 - The `locks` subcommand lists every currently held row in the `token_locks` table,
