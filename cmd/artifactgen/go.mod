@@ -5,6 +5,7 @@ go 1.27.1
 replace (
 	github.com/LFDT-Panurus/panurus => ./../../
 	github.com/LFDT-Panurus/panurus/integration => ./../../integration
+	github.com/LFDT-Panurus/panurus/x/token/services/network/evm => ../../x/token/services/network/evm
 )
 
 require (
@@ -226,5 +227,3 @@ require (
 	modernc.org/memory v1.12.1 // indirect
 	modernc.org/sqlite v1.58.0 // indirect
 )
-
-replace github.com/LFDT-Panurus/panurus/x/token/services/network/evm => ../../x/token/services/network/evm

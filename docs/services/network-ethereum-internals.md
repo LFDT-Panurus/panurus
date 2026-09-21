@@ -51,7 +51,7 @@ in the endorser quorum. Security therefore reduces to endorser honesty and key c
 | Endorsement transport | Fabric endorser protocol | FSC views | FSC views |
 | Spent semantics | delete/SN keys | delete/SN keys + MVCC read-set | spentRefs list + explicit on-chain checks |
 | Re-validation at commit | MVCC | MVCC | the contract does it explicitly — there is no read-set |
-| Finality signal | push committer | notification queue | receipt + `eth_getTransactionByHash` polling, primarily; a fabric-x-evm gateway can add its own `isPending` lifecycle as a faster signal where available |
+| Finality signal | push committer | notification queue | receipt + `eth_getTransactionByHash` polling, primarily; |
 
 The EVM driver follows FabricX structurally — off-chain validation, on-chain endorsement check — but emits a
 `StateDelta` instead of an RWSet and replaces MVCC re-validation with the explicit checks in
