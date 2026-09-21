@@ -78,6 +78,36 @@ func TestSufficientTokensBigDenominationsManyReplicas(t *testing.T, replicas []E
 	assert.Empty(t, errs)
 }
 
+// TestHotTokenContention mirrors the incident reported in #2395: a wallet
+// with a few small tokens and one much larger one, and far more concurrent
+// requests than tokens. Every request asks for CHF1, satisfiable either by a
+// small token directly or by the large one — which recycles most of its
+// value back as a freshly-minted token via deleteTokensAndStoreChange, so at
+// any instant there is exactly one "big" token in the pool. That is the hot
+// token every losing goroutine keeps re-targeting after a lost lock race,
+// absent a per-attempt blacklist (mechanism 1 in #2395) or an anti-join
+// against already-locked tokens (mechanism 3).
+//
+// Unlike the other cases in this file, callers are expected to also inspect
+// lock-conflict counts (see sherdlock's TestHotTokenContention, which wraps
+// the Locker to record them) and assert on their distribution — this
+// function only asserts the functional invariant that must hold regardless
+// of how contention is distributed: total demand exactly matches the wallet
+// balance, so no error here can be a genuine insufficient-funds; any error
+// is spurious, caused by contention.
+func TestHotTokenContention(t *testing.T, replicas []EnhancedManager) {
+	small := newToken(1)
+	big := newToken(296)
+	unspentTokens := createDefaultTokens(append(collections.Repeat(small, 4), big)...)
+	err := storeTokens(replicas[0], unspentTokens)
+	require.NoError(t, err)
+
+	// 3 replicas x 100 requests of CHF1 = CHF300, exactly the total balance.
+	item := newToken(1)
+	errs := parallelSelect(t, replicas, collections.Repeat(item, 100))
+	assert.Empty(t, errs, "spurious insufficient-funds under lock contention (#2395)")
+}
+
 func TestInsufficientTokensOneReplica(t *testing.T, replica EnhancedManager) {
 	// Create 2 tokens of value CHF1 each (total CHF2)
 	item := newToken(1)
