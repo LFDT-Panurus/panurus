@@ -7,7 +7,7 @@ The **Selector Service** (`token/services/selector`) picks the unspent tokens (U
 The Selector Service is responsible for:
 *   **UTXO Selection**: Finding a set of spendable tokens that cover the total quantity required for a transfer operation.
 *   **Double-Spending Mitigation**: Temporarily locking selected tokens during the transaction assembly phase to prevent multiple concurrent transactions from attempting to spend the same tokens.
-*   **Candidate Enumeration**: Walking the wallet's candidate tokens in randomized order, locking each one as it is encountered, and stopping as soon as the accumulated amount covers the request. Token amounts do not order or rank the candidates.
+*   **Candidate Enumeration**: Walking the wallet's candidate tokens, locking each one as it is encountered, and stopping as soon as the accumulated amount covers the request. Under `sherdlock`, candidates already locked by another process are excluded from the query itself, and the remaining candidates are ordered ascending by amount with only same-amount candidates shuffled against each other (see [Token Selection Algorithm](#token-selection-algorithm)). Under `simple`, candidates are walked in database order with no amount ranking.
 
 ## Interaction with TTX and Storage
 
@@ -24,8 +24,8 @@ graph LR
     end
     
     subgraph "Selection Logic"
-        Query[Query Spendable Tokens]
-        Pick[Take Next Candidate - randomized order]
+        Query[Query Spendable Tokens - excludes locked, ordered by amount]
+        Pick[Take Next Candidate - ascending, shuffled within same-amount bucket]
         Lock[Acquire Temporary Lock]
         Done[Return Locked Tokens]
     end
@@ -42,7 +42,7 @@ graph LR
 - **Selector Service**: Creates a selector instance per transaction and orchestrates the Selection Logic steps
 - **Query Spendable Tokens**: Selector calls the Fetcher to retrieve available tokens
 - **Fetcher Logic**: Checks cache first (fast path), queries Token Store - TokenDB on cache miss (slow path)
-- **Take Next Candidate**: Selector takes the next token from the randomized candidate set; the token's amount plays no part in the choice
+- **Take Next Candidate**: Under `sherdlock`, the selector takes the next token from a candidate set ordered ascending by amount, with only same-amount candidates shuffled against each other, and already-locked tokens excluded from the set entirely. Under `simple`, candidates are taken in database order and amount plays no part in the choice.
 - **Acquire Temporary Lock**: Selector locks each candidate as it is encountered, before it knows whether the request can be covered at all; a candidate already locked by another process is skipped and the loop moves on
 
 ## Key Components
@@ -52,38 +52,61 @@ The `SelectorManager` is the entry point for obtaining a `Selector` instance anc
 
 ### Token Selection Algorithm
 
-Selection is a **randomized greedy first-fit**. It is not configurable, and it is not
-amount-aware. `Selector.selectInternal` (`token/services/selector/sherdlock/selector.go`)
-does the following:
+Selection is a **greedy first-fit**, not configurable. It is amount-aware only to the extent
+described below (see [#2395](https://github.com/LFDT-Panurus/panurus/issues/2395) mechanisms
+2–3); it is not a smallest-fit or largest-fit strategy. `Selector.selectInternal`
+(`token/services/selector/sherdlock/selector.go`) does the following:
 
-1. the candidate tokens of the wallet and token type are enumerated in randomized order,
+1. the candidate tokens of the wallet and token type are enumerated — under `sherdlock`,
+   already-locked candidates are excluded from the query (the anti-join, below) and the
+   remainder is ordered ascending by amount with same-amount runs shuffled against each other
+   (the bucketed shuffle, below); under `simple`, candidates are walked in database order,
 2. each candidate is locked as it is encountered — a candidate already locked by another
-   process is skipped; a lock failure wrapping `token.SelectorRateLimited` is a hard abort
-   (not a skip),
+   process is skipped, and (`sherdlock` only) blacklisted for the remainder of this `Select`
+   call so a refetch does not immediately re-attempt and re-lose the same race; a lock failure
+   wrapping `token.SelectorRateLimited` is a hard abort (not a skip),
 3. the amounts of the successfully locked tokens are added up, and
 4. the selector returns as soon as the running sum reaches the requested quantity.
 
-A token's amount therefore only decides *when* the loop stops, never *which* candidate is
-picked. Two consequences worth planning for:
+Two consequences worth planning for still hold:
 
-*   **The number and size of the inputs is not minimized.** A request that a single large
-    token could have covered may well be funded by several small ones.
-*   **The result is not deterministic.** The same request against the same wallet can select
-    a different set of tokens, and a different number of inputs, on each run.
+*   **The number and size of the inputs is not minimized.** Ordering ascending by amount
+    means a request is preferentially funded by several small tokens before a large one is
+    even considered, which can *increase* the number of inputs relative to a single large
+    token that could have covered the request alone.
+*   **The result is not fully deterministic.** Candidates of the same amount are shuffled
+    against each other, so the same request against the same wallet can still select a
+    different set of same-amount tokens on each run; the amount ordering across different
+    amounts, however, is deterministic.
 
-**The randomization is deliberate.** It is what spreads concurrent selectors of the same
-wallet across different candidates: walking a fixed order would make every selector contend
-for the same first tokens, driving up lock failures and, with them, the immediate-retry path
-that gives up with `token.SelectorSufficientButLockedFunds`, and beyond it the backoff path
-that ends in `token.SelectorInsufficientFunds`.
+**`sherdlock`-only: anti-join against locked tokens.** The candidate query excludes any token
+currently held by a lock in the `TokenLocks` table (`NOT EXISTS` against `TokenLocks`, added
+to `buildSpendableTokensIteratorByQuery` in `token/services/storage/db/sql/common/tokens.go`).
+This stops a selector from *starting* a race it is bound to lose; the `INSERT`-based lock
+acquisition (below) remains the race-safe backstop, since the anti-join is read-then-act and
+therefore not itself race-free. Because the anti-join can hide every remaining token from a
+wallet that is not actually out of funds — everything left is simply locked by someone else —
+`Selector.selectInternal` disambiguates an empty scan with
+`TokenFetcher.HasAnySpendableTokens`, a lock-ignoring existence check, before returning
+`token.SelectorInsufficientFunds`.
 
-The shuffle lives in the sherdlock fetcher, not in the selection loop
-(`token/services/selector/sherdlock/fetcher.go`): the lazy fetcher wraps the database
-iterator in `collections.NewPermutatedIterator`, and the cached fetcher hands out a fresh
-permutation of the cached slice on every query. The `simple` driver does **not** shuffle — it
-walks the database iterator in the order the token store returns it
-(`token/services/selector/simple/selector.go`) — so concurrent selectors under `simple` are
-more exposed to colliding on the same leading candidates.
+**`sherdlock`-only: size-ordered, bucket-shuffled candidates.** Candidates are ordered
+ascending by amount (an `ORDER BY` added to the same query), then shuffled only *within* runs
+of equal amount — `bucketedIterator.NewPermutation()` in
+`token/services/selector/sherdlock/fetcher.go`. A strictly deterministic smallest-fit rule was
+deliberately avoided: it would just relocate all contention onto the single smallest token
+instead of spreading it. **The shuffle is still deliberate** for the reason it always was: it
+spreads concurrent selectors of the same wallet across different same-amount candidates —
+walking a fixed order within a bucket would make every selector contend for the same leading
+candidate, driving up lock failures and, with them, the immediate-retry path that gives up
+with `token.SelectorSufficientButLockedFunds`, and beyond it the backoff path that ends in
+`token.SelectorInsufficientFunds`. The bucketing lives in the sherdlock fetcher, not in the
+selection loop: the lazy fetcher and the cached fetcher both hand out a fresh
+`bucketedIterator` permutation on every query. The `simple` driver does **neither** the
+anti-join nor the size ordering — it walks the database iterator in the order the token store
+returns it (`token/services/selector/simple/selector.go`), unordered and un-shuffled — so
+concurrent selectors under `simple` remain fully exposed to colliding on the same leading
+candidates and to starting races against already-locked tokens.
 
 **How it works in the flow (see "Selection Logic" subgraph in diagram):**
 1. **TTX Request**: TTX Service requests token selection for a transfer operation
@@ -105,10 +128,12 @@ more exposed to colliding on the same leading candidates.
 
 #### Strategies that are not implemented
 
-Amount-aware strategies — smallest-first, largest-first, First-In-First-Out, or minimizing
-the number of inputs — are **not** implemented and cannot be configured. There is no
-strategy abstraction in the code and no configuration key that selects one. Making selection
-amount-aware is tracked in
+Deterministic amount-aware strategies — strict smallest-first, largest-first,
+First-In-First-Out, or minimizing the number of inputs — are **not** implemented and cannot
+be configured, even though `sherdlock` now orders candidates ascending by amount (see above):
+that ordering is bucket-shuffled specifically to avoid becoming a deterministic smallest-fit
+rule. There is no strategy abstraction in the code and no configuration key that selects one.
+Making selection fully amount-aware (e.g. minimizing input count) is tracked in
 [issue #2017](https://github.com/LFDT-Panurus/panurus/issues/2017).
 
 ### Locking Mechanism
@@ -239,7 +264,9 @@ token:
 It does **not** select a selection algorithm: both drivers walk candidates greedily and stop
 on first cover, but they diverge in several ways beyond the shuffle:
 
-- `sherdlock` randomizes the candidate order; `simple` walks tokens in database order.
+- `sherdlock` orders candidates ascending by amount (shuffling only within same-amount runs)
+  and excludes already-locked tokens from the query via an anti-join; `simple` walks tokens
+  in unordered database order and does not exclude locked tokens from its query.
 - `sherdlock` holds already-acquired locks across immediate retries; `simple` releases all
   locks between every retry attempt.
 - `simple` runs a `GetTokens` concurrency check after a successful cover and can return a

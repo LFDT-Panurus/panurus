@@ -149,6 +149,13 @@ func (q *MockQueryService) UnspentTokensIteratorBy(_ context.Context, walletID s
 	return &token.UnspentTokensIterator{UnspentTokensIterator: &MockIterator{q, q.cache[walletID], 0}}, nil
 }
 
+// HasAnySpendableTokens reports whether walletID has at least one cached
+// token, mirroring SpendableTokensIteratorBy's ignore-locks semantics (this
+// mock has no lock concept at all).
+func (q *MockQueryService) HasAnySpendableTokens(_ context.Context, walletID string, _ token2.Type) (bool, error) {
+	return len(q.cache[walletID]) > 0, nil
+}
+
 func (q *MockQueryService) GetTokens(ctx context.Context, inputs ...*token2.ID) ([]*token2.Token, error) {
 	ts := make([]*token2.Token, len(inputs))
 	for i, input := range inputs {

@@ -41,6 +41,10 @@ type TokenLocker interface {
 //go:generate counterfeiter -o mocks/token_fetcher.go -fake-name FakeTokenFetcher . TokenFetcher
 type TokenFetcher interface {
 	UnspentTokensIteratorBy(ctx context.Context, walletID string, currency token2.Type) (Iterator[*token2.UnspentTokenInWallet], error)
+	// HasAnySpendableTokens reports whether the wallet has at least one
+	// spendable token of the given type, ignoring locks. See TokenDB's
+	// method of the same name for why the selector needs this.
+	HasAnySpendableTokens(ctx context.Context, walletID string, currency token2.Type) (bool, error)
 }
 
 // FetcherProvider interface for providing fetcher instances.
@@ -55,6 +59,15 @@ type FetcherProvider interface {
 //go:generate counterfeiter -o mocks/tokendb.go -fake-name FakeTokenDB . TokenDB
 type TokenDB interface {
 	SpendableTokensIteratorBy(ctx context.Context, walletID string, typ token2.Type) (driver.SpendableTokensIterator, error)
+	// HasAnySpendableTokens reports whether the wallet has at least one
+	// spendable token of the given type, ignoring locks. SpendableTokensIteratorBy
+	// excludes already-locked tokens (#2395, mechanism 3), so an empty result from
+	// it does not prove the wallet has no funds at all — it may just mean every
+	// token is momentarily locked by another process. This method answers that
+	// question directly, without the lock exclusion, so the selector can tell
+	// "genuinely insufficient funds" apart from "funds exist but are all locked
+	// right now" (see selector.go's use of it).
+	HasAnySpendableTokens(ctx context.Context, walletID string, typ token2.Type) (bool, error)
 }
 
 // ConfigProvider interface for configuration provider.

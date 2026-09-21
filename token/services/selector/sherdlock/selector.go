@@ -192,13 +192,25 @@ func (s *Selector) selectInternal(ctx context.Context, owner token.OwnerFilter, 
 			return nil, nil, immediateRetries, errors.Wrapf(err, "failed to get tokens for [%s:%s]", owner.ID(), tokenType)
 		} else if t == nil {
 			if !tokensLockedByOthersExist {
-				return nil, nil, immediateRetries, errors.Wrapf(
-					token.SelectorInsufficientFunds,
-					"insufficient funds, only [%s] tokens of type [%s] are available, but [%s] were requested and no other process has any tokens locked",
-					sum.Decimal(),
-					tokenType,
-					quantity.Decimal(),
-				)
+				// The candidate query excludes already-locked tokens (#2395,
+				// mechanism 3), so an empty scan that never saw a lock conflict is
+				// ambiguous: it may mean this wallet truly has no more funds, or
+				// that every remaining token is currently locked by someone else
+				// and was hidden from us entirely. Disambiguate with a direct,
+				// lock-ignoring existence check before giving up.
+				hasAny, hasAnyErr := s.fetcher.HasAnySpendableTokens(ctx, owner.ID(), tokenType)
+				if hasAnyErr != nil {
+					return nil, nil, immediateRetries, errors.Wrapf(hasAnyErr, "failed to check for locked tokens for [%s:%s]", owner.ID(), tokenType)
+				}
+				if !hasAny {
+					return nil, nil, immediateRetries, errors.Wrapf(
+						token.SelectorInsufficientFunds,
+						"insufficient funds, only [%s] tokens of type [%s] are available, but [%s] were requested and no other process has any tokens locked",
+						sum.Decimal(),
+						tokenType,
+						quantity.Decimal(),
+					)
+				}
 			}
 
 			if !sawNonBlacklistedCandidate && !blacklisted.Empty() {

@@ -202,6 +202,12 @@ type TokenStore interface {
 	UnspentTokensIteratorBy(ctx context.Context, walletID string, tokenType token.Type) (driver.UnspentTokensIterator, error)
 	// SpendableTokensIteratorBy returns an iterator over all tokens owned solely by the passed wallet identifier and of a given type
 	SpendableTokensIteratorBy(ctx context.Context, walletID string, typ token.Type) (driver.SpendableTokensIterator, error)
+	// HasAnySpendableTokens reports whether the wallet has at least one spendable
+	// token of the given type, ignoring any lock currently held on it. Used to
+	// disambiguate "no funds at all" from "funds exist but are all currently
+	// locked" when SpendableTokensIteratorBy's anti-join against locked tokens
+	// (#2395) hides every candidate from the caller.
+	HasAnySpendableTokens(ctx context.Context, walletID string, typ token.Type) (bool, error)
 	// UnsupportedTokensIteratorBy returns the minimum information for upgrade about the tokens that are not supported
 	UnsupportedTokensIteratorBy(ctx context.Context, walletID string, tokenType token.Type) (driver.UnsupportedTokensIterator, error)
 	// ListUnspentTokensBy returns the list of all tokens owned by the passed identifier of a given type
