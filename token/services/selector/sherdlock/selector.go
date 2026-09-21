@@ -172,6 +172,21 @@ func (s *Selector) selectInternal(ctx context.Context, owner token.OwnerFilter, 
 	defer func() {
 		s.metrics.DistinctTokensAttempted.Observe(float64(attempted.Length()))
 	}()
+	// blacklisted holds tokens this call has already lost a lock race on, so a
+	// refetch does not immediately re-attempt (and re-lose) the same race
+	// against the same hot token: see #2395, where one token was re-proposed
+	// in a loop for over six minutes. It is scoped to this single Select
+	// call, not process-global, so a token that is genuinely freed by
+	// another process is reconsidered on the caller's next Select call.
+	blacklisted := collections.NewSet[token2.ID]()
+	// sawNonBlacklistedCandidate tracks whether the current scan of the
+	// cache (since the last refetch) produced at least one candidate that
+	// was not already blacklisted. If a whole scan sees nothing but
+	// blacklisted tokens, the blacklist is excluding every candidate we
+	// have, so it is cleared below: otherwise a genuinely-contended wallet
+	// with no other tokens would turn a lost race into a permanent false
+	// insufficient-funds instead of ever retrying.
+	sawNonBlacklistedCandidate := false
 	for {
 		if t, err := s.next(); err != nil {
 			return nil, nil, immediateRetries, errors.Wrapf(err, "failed to get tokens for [%s:%s]", owner.ID(), tokenType)
@@ -185,6 +200,12 @@ func (s *Selector) selectInternal(ctx context.Context, owner token.OwnerFilter, 
 					quantity.Decimal(),
 				)
 			}
+
+			if !sawNonBlacklistedCandidate && !blacklisted.Empty() {
+				s.logger.DebugfContext(ctx, "Blacklist excluded every candidate this scan; clearing it so freed tokens can be retried.")
+				blacklisted = collections.NewSet[token2.ID]()
+			}
+			sawNonBlacklistedCandidate = false
 
 			if immediateRetries > maxImmediateRetries {
 				s.logger.Warnf("Exceeded max number of immediate retries. Unlock tokens and abort...")
@@ -208,10 +229,18 @@ func (s *Selector) selectInternal(ctx context.Context, owner token.OwnerFilter, 
 
 			immediateRetries++
 			tokensLockedByOthersExist = false
+		} else if blacklisted.Contains(t.Id) {
+			// Already lost the race on this token earlier in this same
+			// Select call: don't re-attempt it, just note that a locked
+			// token exists so the caller keeps retrying/backing off instead
+			// of reporting insufficient funds.
+			s.logger.DebugfContext(ctx, "Skipping blacklisted token [%v]: already lost a lock race on it this call", t.Id)
+			tokensLockedByOthersExist = true
 		} else {
 			// Counted once here, before the outcome is known, so a later third
 			// outcome branch cannot forget to record the attempt.
 			attempted.Add(t.Id)
+			sawNonBlacklistedCandidate = true
 			if locked, lockErr := s.locker.TryLock(ctx, &t.Id, owner.ID()); !locked {
 				// A rate-limit denial from the locker is a hard stop: abort instead of retrying.
 				if errors.Is(lockErr, token.SelectorRateLimited) {
@@ -222,6 +251,7 @@ func (s *Selector) selectInternal(ctx context.Context, owner token.OwnerFilter, 
 					// expected, common case under contention, not a DB error.
 					s.metrics.LockConflicts.Add(1)
 					s.logger.DebugfContext(ctx, "Lost lock race on token [%s:%d]: already locked by another process", t.Id.TxId, t.Id.Index)
+					blacklisted.Add(t.Id)
 				} else {
 					// A real store error (not a lock conflict) collapsed into the
 					// same !locked branch by TryLock. Only the log line separates
