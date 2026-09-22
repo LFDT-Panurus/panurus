@@ -231,17 +231,25 @@ func TestListLocks(t *testing.T, tokenDB driver3.TokenStore, tokenLockDB driver3
 	ctx := t.Context()
 	held := token.ID{TxId: "producer", Index: 0}
 	toRelease := token.ID{TxId: "producer", Index: 1}
+	orphaned := token.ID{TxId: "producer", Index: 2}
 
 	addTokenRequest(t, tokenTransactionDB, "producer")
 	addTokenRequest(t, tokenTransactionDB, "pending-consumer")
 	addTokenRequest(t, tokenTransactionDB, "settled-consumer")
-	storeTokens(t, tokenDB, "producer", 0, 1)
+	storeTokens(t, tokenDB, "producer", 0, 1, 2)
 	require.NoError(t, tokenLockDB.Lock(ctx, &held, "pending-consumer", "owner1"))
 	require.NoError(t, tokenLockDB.Lock(ctx, &toRelease, "settled-consumer", "owner1"))
+	// No token request is registered for "assembling-consumer": the selector takes
+	// the lock while the transfer is still being assembled, so a lock can legitimately
+	// precede its consumer's requests row. Only consumer_tx_id has no foreign key, so
+	// this shape is representable, and ListLocks LEFT JOINs requests to keep it
+	// visible - dropping it would hide exactly the in-flight and abandoned locks
+	// #2395 is about.
+	require.NoError(t, tokenLockDB.Lock(ctx, &orphaned, "assembling-consumer", "owner1"))
 
 	locks, err := tokenLockDB.ListLocks(ctx)
 	require.NoError(t, err)
-	require.Len(t, locks, 2)
+	require.Len(t, locks, 3)
 
 	byTokenID := map[token.ID]driver3.LockRecord{}
 	for _, l := range locks {
@@ -254,6 +262,13 @@ func TestListLocks(t *testing.T, tokenDB driver3.TokenStore, tokenLockDB driver3
 	require.NotNil(t, pending.Status)
 	require.Equal(t, driver3.Pending, *pending.Status)
 
+	// A lock whose consumer has no requests row is reported with a nil Status,
+	// which is the documented contract of driver.LockRecord.Status.
+	orphan, ok := byTokenID[orphaned]
+	require.True(t, ok, "lock on %s should be reported even with no consumer requests row", orphaned)
+	require.Equal(t, "assembling-consumer", orphan.ConsumerTxID)
+	require.Nil(t, orphan.Status, "consumer has no requests row, so status must be nil")
+
 	// Mark the second consumer settled: the lock is still held (this is the leak
 	// TestListLocks is meant to surface - see mechanism 4 in #2395), and ListLocks
 	// must show its consumer's terminal status rather than silently dropping it.
@@ -261,7 +276,7 @@ func TestListLocks(t *testing.T, tokenDB driver3.TokenStore, tokenLockDB driver3
 
 	locks, err = tokenLockDB.ListLocks(ctx)
 	require.NoError(t, err)
-	require.Len(t, locks, 2)
+	require.Len(t, locks, 3)
 	byTokenID = map[token.ID]driver3.LockRecord{}
 	for _, l := range locks {
 		byTokenID[l.TokenID] = l
@@ -275,8 +290,18 @@ func TestListLocks(t *testing.T, tokenDB driver3.TokenStore, tokenLockDB driver3
 	require.NoError(t, tokenLockDB.UnlockByTxID(ctx, "settled-consumer"))
 	locks, err = tokenLockDB.ListLocks(ctx)
 	require.NoError(t, err)
-	require.Len(t, locks, 1)
-	require.Equal(t, held, locks[0].TokenID)
+	require.Len(t, locks, 2)
+	require.NotContains(t, collectTokenIDs(locks), toRelease)
+}
+
+// collectTokenIDs returns the token IDs of the given lock records.
+func collectTokenIDs(locks []driver3.LockRecord) []token.ID {
+	ids := make([]token.ID, 0, len(locks))
+	for _, l := range locks {
+		ids = append(ids, l.TokenID)
+	}
+
+	return ids
 }
 
 // addTokenRequest registers a token request for txID, so that its status can later be

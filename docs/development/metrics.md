@@ -182,8 +182,9 @@ often a selection had to retry because of concurrent lock contention. `lock_conf
 `distinct_tokens_attempted` were added for [#2395](https://github.com/LFDT-Panurus/panurus/issues/2395)
 to distinguish "one hot token retried many times" from "many tokens each contended once";
 `lock_conflicts_total` is deliberately unlabeled by token id or wallet id to avoid unbounded
-cardinality — per-token attribution belongs in the selector's log line (`Lost lock race on token
-[...]`) and in the [`tokendiag locks`](../../cmd/tokendiag/README.md) command.
+cardinality — per-token attribution belongs in the selector's debug-level log line (`Lost lock
+race on token [...]`, visible once the sherdlock package's logger is at debug level) and in the
+[`tokendiag locks`](../../cmd/tokendiag/README.md) command.
 
 | Metric | Type | Labels | Description |
 |---|---|---|---|
@@ -192,7 +193,7 @@ cardinality — per-token attribution belongs in the selector's log line (`Lost 
 | `panurus_services_selector_sherdlock_selection_outcome_total` | counter | `outcome` | Total number of token selection outcomes by result type |
 | `panurus_services_selector_sherdlock_selection_immediate_retries` | histogram | — | Distribution of immediate retry counts per token selection call |
 | `panurus_services_selector_sherdlock_lock_conflicts_total` | counter | — | Total number of lost lock races (a token was already locked by another process) |
-| `panurus_services_selector_sherdlock_distinct_tokens_attempted` | histogram | — | Distribution of the number of distinct tokens attempted (won or lost a lock race) per token selection call |
+| `panurus_services_selector_sherdlock_distinct_tokens_attempted` | histogram | — | Distribution of the number of distinct tokens a lock was attempted on (won, lost, or rate-limited) per token selection call |
 
 Source: `token/services/selector/sherdlock/metrics.go`.
 

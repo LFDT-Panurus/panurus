@@ -22,10 +22,11 @@ import (
 // Stores groups the store(s) needed by the locks command.
 type Stores struct {
 	TokenLock driver3.TokenLockStore
-	db        *sql.DB
 }
 
-// Close closes the underlying database connection.
+// Close closes the underlying database connection. TokenLock owns the
+// *sql.DB handle it was built from and closes it, so there is nothing else
+// to release here.
 func (s *Stores) Close() error {
 	if err := s.TokenLock.Close(); err != nil {
 		return fmt.Errorf("token lock store close: %w", err)
@@ -71,7 +72,7 @@ func newSQLiteStores(dataSource string, tableNames sqlcommon.TableNames) (*Store
 		return nil, fmt.Errorf("create sqlite token lock store: %w", err)
 	}
 
-	return &Stores{TokenLock: tokenLockStore, db: db}, nil
+	return &Stores{TokenLock: tokenLockStore}, nil
 }
 
 func newPostgresStores(dataSource string, tableNames sqlcommon.TableNames) (*Stores, error) {
@@ -89,5 +90,5 @@ func newPostgresStores(dataSource string, tableNames sqlcommon.TableNames) (*Sto
 		return nil, fmt.Errorf("create postgres token lock store: %w", err)
 	}
 
-	return &Stores{TokenLock: tokenLockStore, db: db}, nil
+	return &Stores{TokenLock: tokenLockStore}, nil
 }
