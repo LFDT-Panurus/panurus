@@ -19,9 +19,28 @@ import (
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/services/storage/kvs"
 )
 
-// walletConfigIDAttributeCount is the number of composite-key attributes written by
-// StoreIdentity for a "configid" entry: [tmsID, roleID, idHash, wID, "configid"].
-const walletConfigIDAttributeCount = 5
+const (
+	// walletStorePrefix is the composite-key object type every entry of this store is written
+	// under.
+	walletStorePrefix = "walletDB"
+	// walletConfigIDAttributeCount is the number of composite-key attributes written by
+	// StoreIdentity for a "configid" entry: [tmsID, roleID, idHash, wID, "configid"].
+	walletConfigIDAttributeCount = 5
+	// metaSuffix and confIDSuffix are the last attribute of, respectively, the metadata and the
+	// identity-configuration-id entry of an identity.
+	metaSuffix   = "meta"
+	confIDSuffix = "configid"
+)
+
+// walletEntry is one of the key-value pairs StoreIdentity writes for an identity.
+type walletEntry struct {
+	// attrs are the composite-key attributes of the entry, under walletStorePrefix.
+	attrs []string
+	// value is the state stored under the key.
+	value any
+	// what names the entry in the error returned when storing it fails.
+	what string
+}
 
 type WalletStore struct {
 	kvs   KVS
@@ -32,39 +51,57 @@ func NewWalletStore(kvs KVS, tmsID token.TMSID) *WalletStore {
 	return &WalletStore{kvs: kvs, tmsID: tmsID}
 }
 
+// StoreIdentity binds the passed identity to the passed wallet, under the passed role, and
+// records the metadata and the identity configuration id it originates from.
+//
+// This backend has no multi-key transaction, so the up-to-four entries below are written one
+// by one. They are ordered so that the entry IdentityExists reads, the wallet reference keyed
+// by [tmsID, roleID, idHash, wID], is written last, and every entry is idempotent: a write
+// that fails part-way therefore leaves the identity reported as *not* stored, and repeating
+// the call rewrites the same values and completes the binding. A partially applied sequence is
+// never reported as a complete one.
 func (s *WalletStore) StoreIdentity(ctx context.Context, identity driver2.Identity, eID string, wID storage.WalletID, roleID int, meta []byte, confID string) error {
 	idHash := identity.UniqueID()
+	tmsID := s.tmsID.String()
+	role := strconv.Itoa(roleID)
+
+	// metadata, configuration id and the two wallet references
+	entries := make([]walletEntry, 0, 4)
 	if meta != nil {
-		k, err := kvs.CreateCompositeKey("walletDB", []string{s.tmsID.String(), strconv.Itoa(roleID), idHash, wID, "meta"})
+		entries = append(entries, walletEntry{
+			attrs: []string{tmsID, role, idHash, wID, metaSuffix},
+			value: meta,
+			what:  "metadata",
+		})
+	}
+	entries = append(entries,
+		walletEntry{
+			attrs: []string{tmsID, role, idHash, wID, confIDSuffix},
+			value: confID,
+			what:  "configuration id",
+		},
+		// the wallet reference GetWalletID and GetWalletIDs read
+		walletEntry{
+			attrs: []string{tmsID, role, idHash},
+			value: wID,
+			what:  "wallet reference",
+		},
+		// last: the wallet reference IdentityExists reads
+		walletEntry{
+			attrs: []string{tmsID, role, idHash, wID},
+			value: wID,
+			what:  "wallet reference",
+		},
+	)
+
+	for _, entry := range entries {
+		k, err := kvs.CreateCompositeKey(walletStorePrefix, entry.attrs)
 		if err != nil {
 			return errors.Wrapf(err, "failed to create key")
 		}
-		if err := s.kvs.Put(ctx, k, meta); err != nil {
-			return errors.WithMessagef(err, "failed to store identity's metadata [%s]", identity)
+		if err := s.kvs.Put(ctx, k, entry.value); err != nil {
+			return errors.WithMessagef(err, "failed to store identity's %s [%s]", entry.what, identity)
 		}
-	}
-	confIDKey, err := kvs.CreateCompositeKey("walletDB", []string{s.tmsID.String(), strconv.Itoa(roleID), idHash, wID, "configid"})
-	if err != nil {
-		return errors.Wrapf(err, "failed to create key")
-	}
-	if err := s.kvs.Put(ctx, confIDKey, confID); err != nil {
-		return errors.WithMessagef(err, "failed to store identity's configuration id [%s]", identity)
-	}
-
-	k, err := kvs.CreateCompositeKey("walletDB", []string{s.tmsID.String(), strconv.Itoa(roleID), idHash, wID})
-	if err != nil {
-		return errors.Wrapf(err, "failed to create key")
-	}
-	if err := s.kvs.Put(ctx, k, wID); err != nil {
-		return errors.WithMessagef(err, "failed to store identity's wallet reference[%s]", identity)
-	}
-
-	k, err = kvs.CreateCompositeKey("walletDB", []string{s.tmsID.String(), strconv.Itoa(roleID), idHash})
-	if err != nil {
-		return errors.Wrapf(err, "failed to create key")
-	}
-	if err := s.kvs.Put(ctx, k, wID); err != nil {
-		return errors.WithMessagef(err, "failed to store identity's wallet reference[%s]", identity)
 	}
 
 	return nil
@@ -72,7 +109,7 @@ func (s *WalletStore) StoreIdentity(ctx context.Context, identity driver2.Identi
 
 func (s *WalletStore) IdentityExists(ctx context.Context, identity driver2.Identity, wID storage.WalletID, roleID int) bool {
 	idHash := identity.UniqueID()
-	k, err := kvs.CreateCompositeKey("walletDB", []string{s.tmsID.String(), strconv.Itoa(roleID), idHash, wID})
+	k, err := kvs.CreateCompositeKey(walletStorePrefix, []string{s.tmsID.String(), strconv.Itoa(roleID), idHash, wID})
 	if err != nil {
 		return false
 	}
@@ -82,7 +119,7 @@ func (s *WalletStore) IdentityExists(ctx context.Context, identity driver2.Ident
 
 func (s *WalletStore) GetWalletID(ctx context.Context, identity driver2.Identity, roleID int) (storage.WalletID, error) {
 	idHash := identity.UniqueID()
-	k, err := kvs.CreateCompositeKey("walletDB", []string{s.tmsID.String(), strconv.Itoa(roleID), idHash})
+	k, err := kvs.CreateCompositeKey(walletStorePrefix, []string{s.tmsID.String(), strconv.Itoa(roleID), idHash})
 	if err != nil {
 		return "", errors.Wrapf(err, "failed to create key")
 	}
@@ -123,10 +160,12 @@ func isNotFoundErr(err error) bool {
 }
 
 func (s *WalletStore) GetWalletIDs(ctx context.Context, roleID int) ([]storage.WalletID, error) {
-	it, err := s.kvs.GetByPartialCompositeID(ctx, "walletDB", []string{s.tmsID.String(), strconv.Itoa(roleID)})
+	it, err := s.kvs.GetByPartialCompositeID(ctx, walletStorePrefix, []string{s.tmsID.String(), strconv.Itoa(roleID)})
 	if err != nil {
 		return nil, errors.Wrapf(err, "failed to get wallets iterator")
 	}
+	defer func() { _ = it.Close() }()
+
 	walletIDs := collections.NewSet[string]()
 	for it.HasNext() {
 		var wID string
@@ -147,7 +186,7 @@ func (s *WalletStore) GetWalletIDs(ctx context.Context, roleID int) ([]storage.W
 // entries under the TMS and filters for one whose idHash attribute matches.
 func (s *WalletStore) GetConfID(ctx context.Context, identity driver2.Identity) (string, error) {
 	idHash := identity.UniqueID()
-	it, err := s.kvs.GetByPartialCompositeID(ctx, "walletDB", []string{s.tmsID.String()})
+	it, err := s.kvs.GetByPartialCompositeID(ctx, walletStorePrefix, []string{s.tmsID.String()})
 	if err != nil {
 		return "", errors.Wrapf(err, "failed to get wallets iterator")
 	}
@@ -166,7 +205,7 @@ func (s *WalletStore) GetConfID(ctx context.Context, identity driver2.Identity) 
 		if len(attributes) != walletConfigIDAttributeCount {
 			continue
 		}
-		if attributes[len(attributes)-1] != "configid" || attributes[2] != idHash {
+		if attributes[len(attributes)-1] != confIDSuffix || attributes[2] != idHash {
 			continue
 		}
 
@@ -178,7 +217,7 @@ func (s *WalletStore) GetConfID(ctx context.Context, identity driver2.Identity) 
 
 func (s *WalletStore) LoadMeta(ctx context.Context, identity driver2.Identity, wID storage.WalletID, roleID int) ([]byte, error) {
 	idHash := identity.UniqueID()
-	k, err := kvs.CreateCompositeKey("walletDB", []string{s.tmsID.String(), strconv.Itoa(roleID), idHash, wID, "meta"})
+	k, err := kvs.CreateCompositeKey(walletStorePrefix, []string{s.tmsID.String(), strconv.Itoa(roleID), idHash, wID, metaSuffix})
 	if err != nil {
 		return nil, errors.Wrapf(err, "failed to create key")
 	}
