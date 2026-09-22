@@ -31,11 +31,12 @@ type Metrics struct {
 	// LockConflicts counts every lost lock race (TryLock finding a token already
 	// locked by another process). Deliberately unlabeled by token id or wallet id:
 	// either would be unbounded cardinality. Per-token attribution belongs in the
-	// structured log line in selector.go and in the `tokendiag locks` command.
+	// debug-level log line in selector.go and in the `tokendiag locks` command.
 	LockConflicts metrics.Counter
 	// DistinctTokensAttempted tracks, per Select() call, how many distinct tokens
-	// were tried (won or lost a race on). This is what distinguishes "one hot
-	// token retried many times" from "many tokens each contended once".
+	// were tried: the lock was won, lost to another process, or denied by the rate
+	// limiter. This is what distinguishes "one hot token retried many times" from
+	// "many tokens each contended once".
 	DistinctTokensAttempted metrics.Histogram
 }
 
@@ -69,7 +70,7 @@ func NewMetrics(p metrics.Provider) *Metrics {
 		}),
 		DistinctTokensAttempted: p.NewHistogram(metrics.HistogramOpts{
 			Name:    "distinct_tokens_attempted",
-			Help:    "Distribution of the number of distinct tokens attempted (won or lost a lock race) per token selection call",
+			Help:    "Distribution of the number of distinct tokens a lock was attempted on (won, lost, or rate-limited) per token selection call",
 			Buckets: []float64{1, 2, 5, 10, 25, 50, 100},
 		}),
 	}

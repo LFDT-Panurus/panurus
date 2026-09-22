@@ -164,8 +164,10 @@ func (s *Selector) selectInternal(ctx context.Context, owner token.OwnerFilter, 
 		return nil, nil, 0, errors.Wrapf(err, "failed to create quantity")
 	}
 	sum, selected, tokensLockedByOthersExist, immediateRetries := token2.NewZeroQuantity(s.precision), collections.NewSet[*token2.ID](), true, 0
-	// attempted tracks every distinct token this call has tried a lock on
-	// (won or lost), so we can report DistinctTokensAttempted at the end.
+	// attempted tracks every distinct token this call has tried a lock on, so we
+	// can report DistinctTokensAttempted at the end. A token counts as attempted
+	// whatever the outcome - lock won, lost to a conflict, or denied by the rate
+	// limiter - because TryLock was called on it in every one of those cases.
 	attempted := collections.NewSet[token2.ID]()
 	defer func() {
 		s.metrics.DistinctTokensAttempted.Observe(float64(attempted.Length()))
@@ -206,26 +208,32 @@ func (s *Selector) selectInternal(ctx context.Context, owner token.OwnerFilter, 
 
 			immediateRetries++
 			tokensLockedByOthersExist = false
-		} else if locked, lockErr := s.locker.TryLock(ctx, &t.Id, owner.ID()); !locked {
-			// A rate-limit denial from the locker is a hard stop: abort instead of retrying.
-			if errors.Is(lockErr, token.SelectorRateLimited) {
-				return nil, nil, immediateRetries, lockErr
-			}
-			attempted.Add(t.Id)
-			if errors.Is(lockErr, driver.ErrTokenAlreadyLocked) {
-				// Lost the race: someone else holds this token. This is the
-				// expected, common case under contention, not a DB error.
-				s.metrics.LockConflicts.Add(1)
-				s.logger.Infof("Lost lock race on token [%s:%d]: already locked by another process", t.Id.TxId, t.Id.Index)
-			} else {
-				// A real store error (not a lock conflict) collapsed into the
-				// same !locked branch by TryLock. Log it distinctly so a DB
-				// outage does not read as ordinary contention.
-				s.logger.Warnf("Failed to lock token [%s:%d]: %v", t.Id.TxId, t.Id.Index, lockErr)
-			}
-			tokensLockedByOthersExist = true
 		} else {
+			// Counted once here, before the outcome is known, so a later third
+			// outcome branch cannot forget to record the attempt.
 			attempted.Add(t.Id)
+			if locked, lockErr := s.locker.TryLock(ctx, &t.Id, owner.ID()); !locked {
+				// A rate-limit denial from the locker is a hard stop: abort instead of retrying.
+				if errors.Is(lockErr, token.SelectorRateLimited) {
+					return nil, nil, immediateRetries, lockErr
+				}
+				if errors.Is(lockErr, driver.ErrTokenAlreadyLocked) {
+					// Lost the race: someone else holds this token. This is the
+					// expected, common case under contention, not a DB error.
+					s.metrics.LockConflicts.Add(1)
+					s.logger.DebugfContext(ctx, "Lost lock race on token [%s:%d]: already locked by another process", t.Id.TxId, t.Id.Index)
+				} else {
+					// A real store error (not a lock conflict) collapsed into the
+					// same !locked branch by TryLock. Only the log line separates
+					// the two: to the caller this still reads as ordinary
+					// contention, so a store outage surfaces as locked funds
+					// rather than as an error. See #2395.
+					s.logger.WarnfContext(ctx, "Failed to lock token [%s:%d]: %v", t.Id.TxId, t.Id.Index, lockErr)
+				}
+				tokensLockedByOthersExist = true
+
+				continue
+			}
 			s.logger.DebugfContext(ctx, "Got the lock on token [%v]", t)
 			q, err := token2.ToQuantity(t.Quantity, s.precision)
 			if err != nil {

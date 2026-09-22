@@ -52,9 +52,10 @@ func statusName(status *driver3.TxStatus) string {
 //   - locks whose consumer has already reached a terminal status (the leak
 //     mechanism-4 in #2395 describes — the lock is not released on settlement,
 //     so it sits until the next lease-age sweep);
-//   - a hot-token ranking, oldest lock first, since a single snapshot cannot
-//     distinguish "repeatedly re-contended" from "held a long time" without
-//     comparing against an earlier run;
+//   - the same list ordered oldest lock first, which is as close to a hot-token
+//     ranking as one snapshot gets: it cannot distinguish "repeatedly
+//     re-contended" from "held a long time" without comparing against an
+//     earlier run;
 //   - a summary line intended for scripting (total, leaked, oldest age).
 func Run(ctx context.Context, w io.Writer, stores *Stores, now time.Time) error {
 	records, err := stores.TokenLock.ListLocks(ctx)
