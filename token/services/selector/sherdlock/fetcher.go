@@ -9,6 +9,7 @@ package sherdlock
 import (
 	"context"
 	"io"
+	"math/big"
 	"math/rand/v2"
 	"sync"
 	"sync/atomic"
@@ -130,6 +131,12 @@ func (f *mixedFetcher) HasAnySpendableTokens(ctx context.Context, walletID strin
 	return f.lazyFetcher.HasAnySpendableTokens(ctx, walletID, currency)
 }
 
+// HasEnoughSpendableTokens delegates to the lazy fetcher's underlying DB, for the same
+// reason as HasAnySpendableTokens: the cache may itself be behind the anti-join.
+func (f *mixedFetcher) HasEnoughSpendableTokens(ctx context.Context, walletID string, currency token2.Type, target *big.Int) (bool, error) {
+	return f.lazyFetcher.HasEnoughSpendableTokens(ctx, walletID, currency, target)
+}
+
 // peekedIterator replays an already-consumed first item before delegating
 // subsequent Next calls to the wrapped iterator.
 type peekedIterator[T any] struct {
@@ -205,6 +212,12 @@ func (f *lazyFetcher) UnspentTokensIteratorBy(ctx context.Context, walletID stri
 // TokenDB.HasAnySpendableTokens): the lazy fetcher has no cache to consult.
 func (f *lazyFetcher) HasAnySpendableTokens(ctx context.Context, walletID string, currency token2.Type) (bool, error) {
 	return f.tokenDB.HasAnySpendableTokens(ctx, walletID, currency)
+}
+
+// HasEnoughSpendableTokens queries the database directly (see TokenDB.HasEnoughSpendableTokens):
+// the lazy fetcher has no cache to consult.
+func (f *lazyFetcher) HasEnoughSpendableTokens(ctx context.Context, walletID string, currency token2.Type, target *big.Int) (bool, error) {
+	return f.tokenDB.HasEnoughSpendableTokens(ctx, walletID, currency, target)
 }
 
 type permutatableIterator[T any] interface {
@@ -485,6 +498,13 @@ func (f *cachedFetcher) UnspentTokensIteratorBy(ctx context.Context, walletID st
 // anti-joined query, so it cannot answer this question.
 func (f *cachedFetcher) HasAnySpendableTokens(ctx context.Context, walletID string, currency token2.Type) (bool, error) {
 	return f.tokenDB.HasAnySpendableTokens(ctx, walletID, currency)
+}
+
+// HasEnoughSpendableTokens bypasses the cache and asks the DB directly (see
+// TokenDB.HasEnoughSpendableTokens): the cache is populated from the anti-joined query, so
+// it cannot answer this question.
+func (f *cachedFetcher) HasEnoughSpendableTokens(ctx context.Context, walletID string, currency token2.Type, target *big.Int) (bool, error) {
+	return f.tokenDB.HasEnoughSpendableTokens(ctx, walletID, currency, target)
 }
 
 // isCacheOverused checks if the cache has been queried too many times since the last refresh.

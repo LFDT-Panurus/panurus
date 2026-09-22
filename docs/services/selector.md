@@ -202,6 +202,65 @@ lock; SQLite is non-distributed and always runs it locally.
 The in-memory locker described below does not use the `TokenLocks` table and never
 expires locks via `Cleanup`; its lifecycle is entirely managed in process.
 
+#### Lock-acquisition strategies (Postgres, `sherdlock` only)
+
+The Postgres `TokenLockStore` supports three lock-acquisition strategies, selected via
+`token.storage.db.lockStrategy` (see [Configuration](#configuration)). SQLite and `simple`
+are unaffected: SQLite's `LoadStorageConfig` call reads and ignores the key, and `simple`
+never reaches this configuration path at all.
+
+*   **`insert` (default).** A plain `INSERT` into `TokenLocks`; a lost race surfaces as a
+    server-side unique-constraint violation on `(tx_id, idx)`, caught and translated to
+    `driver.ErrTokenAlreadyLocked`.
+*   **`onConflict`.** `INSERT ... ON CONFLICT (tx_id, idx) DO NOTHING RETURNING`; a lost
+    race is a clean zero-row result instead of a server-side error.
+*   **`skipLocked`.** Behaves like `onConflict` for a single-token `Lock` call, and
+    additionally implements `BatchLocker.LockBatch`: given a covering window of candidate
+    `(tx_id, idx)` pairs, it claims them in one statement using
+    `FOR UPDATE OF <tokens> SKIP LOCKED` against the `Tokens` rows, joined with the same
+    `INSERT ... ON CONFLICT DO NOTHING` backstop, so a claimant walks past a row a
+    concurrent claimant is already mid-claim on instead of colliding with it.
+
+**What each strategy actually changes, precisely — the mechanism has a narrower effect
+than "reduces lock contention" might suggest:**
+
+*   **Server-side unique-constraint errors are eliminated only for callers that take the
+    single-token `Lock` path directly.** `Selector.selectInternal` type-asserts the
+    configured `Locker` for `BatchLocker` and, when present (i.e. under Postgres
+    regardless of strategy, since `LockBatch` is defined on the strategy-aware store),
+    always claims its covering window through `LockBatch` — which already issues
+    `INSERT ... ON CONFLICT DO NOTHING` under every strategy, `insert` included.
+    `insert`'s error-surfacing single-token `Lock` path is therefore not on `sherdlock`'s
+    hot path at all; it only matters for a `Locker` implementation that does not satisfy
+    `BatchLocker` (a custom or older backend, or a rolling deploy where some replicas have
+    not yet upgraded). This is the case `postgres.TokenLockStore.RoundTrips()` and
+    `.UniqueViolations()` are instrumented to measure directly (exercised by
+    `TestHotTokenContention_SingleTokenLockPath` in `sherdlock/contention_test.go`), rather
+    than being inferred from the conflict-rate benchmark below, which cannot see it.
+*   **`FOR UPDATE SKIP LOCKED` only helps against a genuinely simultaneous holder, not
+    against an already-committed lock — the dominant conflict mode under load.** It lets a
+    claimant skip a row a rival transaction is mid-claim on *at that exact instant*; it does
+    nothing for a row whose lock row was already committed moments earlier, which loses the
+    race the same way under every strategy. Consequently the aggregate conflict rate
+    measured by `TestHotTokenContention`/`TestHotTokenContentionWideWindow` does **not**
+    move across strategies — this was verified empirically, not assumed, and is expected
+    given the mechanism rather than a sign Phase 6 underperforms.
+    `TestTokenLockStore_LockBatch_SkipLocked_SkipsRowLockedByConcurrentTx` in
+    `token/services/storage/db/sql/postgres` isolates the mechanism deterministically
+    instead: it holds a row lock on one candidate via a concurrent transaction, confirms a
+    plain `FOR UPDATE` on that row genuinely blocks (proving the held lock is real), then
+    confirms `LockBatch` under `skipLocked` claims every other candidate without blocking
+    while excluding that one.
+*   **Round-trip reduction comes from batching the claim into one statement per covering
+    window, not from strategy choice.** `LockBatch` issues exactly one round trip per
+    window under every strategy (`onConflict`/`insert` via a multi-row
+    `INSERT ... ON CONFLICT DO NOTHING`, `skipLocked` via the `FOR UPDATE SKIP LOCKED` join
+    above), so `RoundTrips()` comes out equal across strategies for the same workload in
+    `TestHotTokenContention`/`TestHotTokenContentionWideWindow`. The saving Phase 6
+    contributes here is the batch claim itself (`BatchLocker`), which all three strategies
+    share once configured; `lockStrategy` chooses only *how* that one round trip claims the
+    window, not *whether* claiming is batched.
+
 ### In-Memory Locker Internals
 
 The `simple` driver keeps its locks in memory (`token/services/selector/simple/inmemory`)
@@ -273,7 +332,14 @@ token:
     fetcherCacheSize: 1000               # Cache size in entries (default: 0 = use fetcher default)
     fetcherCacheRefresh: 30s             # Cache refresh interval (default: 0 = use fetcher default)
     fetcherCacheMaxQueries: 100          # Max queries before cache refresh (default: 0 = use fetcher default)
+  storage:
+    db:
+      lockStrategy: skipLocked           # Postgres lock-acquisition strategy: insert | onConflict | skipLocked (default: insert)
 ```
+
+`lockStrategy` is read by the Postgres storage driver, independently of `selector.driver`
+above (see [Lock-acquisition strategies](#lock-acquisition-strategies-postgres-sherdlock-only)).
+It has no effect under SQLite or `simple`.
 
 ### Driver
 

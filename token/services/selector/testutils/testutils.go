@@ -9,6 +9,7 @@ package testutils
 import (
 	"bytes"
 	"context"
+	"math/big"
 	"strings"
 	"time"
 
@@ -154,6 +155,25 @@ func (q *MockQueryService) UnspentTokensIteratorBy(_ context.Context, walletID s
 // mock has no lock concept at all).
 func (q *MockQueryService) HasAnySpendableTokens(_ context.Context, walletID string, _ token2.Type) (bool, error) {
 	return len(q.cache[walletID]) > 0, nil
+}
+
+// HasEnoughSpendableTokens reports whether the sum of walletID's cached tokens of typ is
+// at least target, mirroring HasAnySpendableTokens' ignore-locks semantics.
+func (q *MockQueryService) HasEnoughSpendableTokens(_ context.Context, walletID string, typ token2.Type, target *big.Int) (bool, error) {
+	sum := big.NewInt(0)
+	for _, key := range q.cache[walletID] {
+		t, ok := q.kvs[key]
+		if !ok || t.Type != typ {
+			continue
+		}
+		quantity, err := token2.ToQuantity(t.Quantity, TokenQuantityPrecision)
+		if err != nil {
+			return false, err
+		}
+		sum.Add(sum, quantity.ToBigInt())
+	}
+
+	return sum.Cmp(target) >= 0, nil
 }
 
 func (q *MockQueryService) GetTokens(ctx context.Context, inputs ...*token2.ID) ([]*token2.Token, error) {

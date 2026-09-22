@@ -9,7 +9,6 @@ package testutils
 import (
 	"context"
 	"fmt"
-	"math/big"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -108,6 +107,31 @@ func TestHotTokenContention(t *testing.T, replicas []EnhancedManager) {
 	assert.Empty(t, errs, "spurious insufficient-funds under lock contention (#2395)")
 }
 
+// TestHotTokenContentionWideWindow targets the case TestHotTokenContention structurally
+// cannot: a wallet made entirely of CHF1 dust, with every request costing CHF3, so
+// selectInternal's covering-window loop (selector.go) always needs three ascending
+// candidates to satisfy one request, never one. TestHotTokenContention's rotating big
+// token means almost every claim - after the initial handful of small tokens are spent -
+// is a single token that alone covers the request, so its window is size 1 for nearly the
+// entire run: exactly the case where FOR UPDATE SKIP LOCKED, which only skips *other*
+// candidates present in the same statement, cannot show any benefit over a plain INSERT.
+// Here there is no dominant token to fall back to, so every one of the run's many
+// concurrent claims genuinely contends over which three dust tokens, among many
+// similarly-ranked ones, it gets to walk away with - the scenario Phase 6's skipLocked
+// strategy is meant to help.
+func TestHotTokenContentionWideWindow(t *testing.T, replicas []EnhancedManager) {
+	dust := newToken(1)
+	unspentTokens := createDefaultTokens(collections.Repeat(dust, 90)...)
+	err := storeTokens(replicas[0], unspentTokens)
+	require.NoError(t, err)
+
+	// 3 replicas x 10 requests of CHF3 = CHF90, exactly the total balance; every request
+	// needs exactly 3 of the CHF1 tokens, so no change is ever minted.
+	item := newToken(3)
+	errs := parallelSelect(t, replicas, collections.Repeat(item, 10))
+	assert.Empty(t, errs, "spurious insufficient-funds under lock contention (#2395, wide window)")
+}
+
 func TestInsufficientTokensOneReplica(t *testing.T, replica EnhancedManager) {
 	// Create 2 tokens of value CHF1 each (total CHF2)
 	item := newToken(1)
@@ -193,6 +217,12 @@ func (m *enhancedManager) UpdateTokens(deleted []*token.ID, added []token.Unspen
 	}
 	if len(added) > 0 {
 		for _, t := range added {
+			quantity, err := token.ToQuantity(t.Quantity, TokenQuantityPrecision)
+			if err != nil {
+				err2 := tx.Rollback()
+
+				return errors.Wrapf(err, "failed to parse quantity - while rolling back: %v", err2)
+			}
 			if err := tx.StoreToken(m.t.Context(), driver.TokenRecord{
 				TxID:           t.Id.TxId,
 				Index:          t.Id.Index,
@@ -204,7 +234,7 @@ func (m *enhancedManager) UpdateTokens(deleted []*token.ID, added []token.Unspen
 				LedgerMetadata: []byte{},
 				Quantity:       t.Quantity,
 				Type:           t.Type,
-				Amount:         big.NewInt(0),
+				Amount:         quantity.ToBigInt(),
 				Owner:          true,
 				Auditor:        false,
 				Issuer:         false,

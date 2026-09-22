@@ -492,6 +492,54 @@ func (db *TokenStore) HasAnySpendableTokens(ctx context.Context, walletID string
 	return has, nil
 }
 
+// buildHasEnoughSpendableTokensQuery builds the SQL query and args for
+// HasEnoughSpendableTokens without executing it: the same spendable, lock-ignoring
+// predicate as buildHasAnySpendableTokensQuery, but summing amount instead of capping at
+// one row, so the wallet's total is computed in SQL rather than by fetching every token.
+func buildHasEnoughSpendableTokensQuery(db *TokenStore, walletID string, typ token.Type) (string, []any) {
+	return q.Select().FieldsByName("SUM(amount)").
+		From(q.Table(db.table.Tokens)).
+		Where(HasTokenDetails(driver.QueryTokenDetailsParams{
+			WalletID:           walletID,
+			TokenType:          typ,
+			Spendable:          driver.SpendableOnly,
+			LedgerTokenFormats: db.getSupportedTokenFormats(),
+		}, nil)).
+		Format(db.ci)
+}
+
+// HasEnoughSpendableTokens reports whether the wallet's total spendable balance of typ is
+// at least target. Like HasAnySpendableTokens, it deliberately ignores locks: the question
+// is "can this wallet ever pay", not "can it pay right now". The selector uses it as a
+// fast fail, so that a wallet holding dust that could never cover the requested amount
+// fails immediately instead of burning the immediate-retry/backoff budget first.
+func (db *TokenStore) HasEnoughSpendableTokens(ctx context.Context, walletID string, typ token.Type, target *big.Int) (bool, error) {
+	query, args := buildHasEnoughSpendableTokensQuery(db, walletID, typ)
+
+	rows, err := db.readDB.QueryContext(ctx, query, args...)
+	if err != nil {
+		return false, errors.Wrapf(err, "error querying db")
+	}
+	defer Close(rows)
+
+	var sum BigInt
+	if !rows.Next() {
+		if err := rows.Err(); err != nil {
+			return false, err
+		}
+
+		return false, nil
+	}
+	if err := rows.Scan(&sum); err != nil {
+		return false, err
+	}
+	if sum.Int == nil {
+		return false, nil
+	}
+
+	return sum.Cmp(target) >= 0, nil
+}
+
 // UnspentLedgerTokensIteratorBy returns an iterator over all unspent ledger tokens
 func (db *TokenStore) UnspentLedgerTokensIteratorBy(ctx context.Context) (tdriver.LedgerTokensIterator, error) {
 	return db.queryLedgerTokens(ctx, driver.QueryTokenDetailsParams{Spendable: driver.Any})

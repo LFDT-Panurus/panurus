@@ -7,6 +7,7 @@ SPDX-License-Identifier: Apache-2.0
 package common
 
 import (
+	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	driver2 "github.com/hyperledger-labs/fabric-smart-client/platform/view/services/storage/driver"
 )
 
@@ -38,6 +39,32 @@ const (
 	//     storage:
 	//       skipPrefix: true
 	ConfigKeySkipPrefix = "token.storage.skipPrefix"
+
+	// ConfigKeyLockStrategy is the absolute configuration key for the
+	// token-lock acquisition strategy used by SQL backends that support more
+	// than one (currently Postgres only; other backends read and ignore it).
+	//
+	// Example YAML:
+	//
+	//   token:
+	//     storage:
+	//       db:
+	//         lockStrategy: skipLocked
+	ConfigKeyLockStrategy = "token.storage.db.lockStrategy"
+
+	// LockStrategyInsert is the default lock strategy: INSERT and catch the
+	// unique-constraint violation on a lost race. Equivalent to leaving
+	// ConfigKeyLockStrategy unset.
+	LockStrategyInsert = "insert"
+	// LockStrategyOnConflict acquires a lock with
+	// INSERT ... ON CONFLICT DO NOTHING RETURNING, avoiding a server-side
+	// unique-violation error on a lost race.
+	LockStrategyOnConflict = "onConflict"
+	// LockStrategySkipLocked behaves like LockStrategyOnConflict for a single
+	// lock, and additionally allows a covering-window batch claim using
+	// FOR UPDATE SKIP LOCKED to avoid colliding with rows a concurrent
+	// claimant is already processing.
+	LockStrategySkipLocked = "skipLocked"
 )
 
 // TableNamesConfig maps a short code (e.g. "id_signers") to the replacement short code
@@ -55,6 +82,10 @@ type StorageConfig struct {
 	// SkipPrefix disables the FSC-generated prefix on all table names when true.
 	// Default is false.
 	SkipPrefix bool
+	// LockStrategy selects the token-lock acquisition strategy. One of
+	// LockStrategyInsert (default), LockStrategyOnConflict, or
+	// LockStrategySkipLocked. Only acted upon by the Postgres driver.
+	LockStrategy string
 }
 
 // LoadTableNamesConfig reads the table name overrides from cfg.
@@ -87,8 +118,24 @@ func LoadStorageConfig(cfg driver2.Config) (StorageConfig, error) {
 		}
 	}
 
+	lockStrategy := LockStrategyInsert
+	if cfg != nil && cfg.IsSet(ConfigKeyLockStrategy) {
+		if err := cfg.UnmarshalKey(ConfigKeyLockStrategy, &lockStrategy); err != nil {
+			return StorageConfig{}, err
+		}
+		switch lockStrategy {
+		case LockStrategyInsert, LockStrategyOnConflict, LockStrategySkipLocked:
+		default:
+			return StorageConfig{}, errors.Errorf(
+				"invalid value [%s] for [%s]: must be one of [%s, %s, %s]",
+				lockStrategy, ConfigKeyLockStrategy, LockStrategyInsert, LockStrategyOnConflict, LockStrategySkipLocked,
+			)
+		}
+	}
+
 	return StorageConfig{
-		TableNames: tableNames,
-		SkipPrefix: skipPrefix,
+		TableNames:   tableNames,
+		SkipPrefix:   skipPrefix,
+		LockStrategy: lockStrategy,
 	}, nil
 }
