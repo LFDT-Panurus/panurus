@@ -88,6 +88,7 @@ var tokensCases = []struct {
 	{"AmountValidation", TAmountValidation},
 	{"TTokenTypes", TTokenTypes},
 	{"ListUnspentTokensByWallets", TListUnspentTokensByWallets},
+	{"QuerySpendableTokens", TQuerySpendableTokens},
 	{"GetDeletedTokensPendingSKICleanup", TGetDeletedTokensPendingSKICleanup},
 }
 
@@ -1378,6 +1379,223 @@ func TListUnspentTokensByWallets(t *testing.T, db TestTokenDB) {
 	assert.Len(t, res["carol"].Tokens, 1)
 	_, hasStranger := res["stranger"]
 	assert.False(t, hasStranger, "unrequested wallet must not appear as a bucket key")
+}
+
+// TQuerySpendableTokens exercises the bounded spendable-token query: the amount bounds, the
+// ordering and the limit that let a caller ask for a window of a wallet's spendable set
+// instead of all of it (see #2020).
+//
+// Amounts stay inside int64 on purpose. SQLite gives the NUMERIC amount column NUMERIC
+// affinity and converts a wider integer literal to REAL, so comparisons there are exact only
+// up to int64 — the same limit that already applies to the stored values, which is why
+// TBigAmountRoundTrip is Postgres-only.
+func TQuerySpendableTokens(t *testing.T, db TestTokenDB) {
+	t.Helper()
+	ctx := t.Context()
+
+	store := func(txID string, walletID string, typ token.Type, amount int64) {
+		a := big.NewInt(amount)
+		require.NoError(t, db.StoreToken(ctx, driver2.TokenRecord{
+			TxID:           txID,
+			Index:          0,
+			OwnerRaw:       []byte{1, 2, 3},
+			OwnerType:      "idemix",
+			OwnerIdentity:  []byte{},
+			OwnerWalletID:  walletID,
+			Ledger:         []byte("ledger"),
+			LedgerMetadata: []byte{},
+			Quantity:       "0x" + a.Text(16),
+			Type:           typ,
+			Amount:         a,
+			Owner:          true,
+		}, []string{walletID}))
+	}
+
+	// Two tokens share an amount, so that the ordered assertions below cannot accidentally
+	// depend on how ties are broken: either order spells the same list of amounts, which is
+	// all the contract promises.
+	store("alice1", "alice", TST, 1)
+	store("alice5", "alice", TST, 5)
+	store("alice10a", "alice", TST, 10)
+	store("alice10b", "alice", TST, 10)
+	store("alice100", "alice", TST, 100)
+	store("aliceABC", "alice", ABC, 50)
+	store("bob7", "bob", TST, 7)
+
+	aliceTST := driver2.SpendableTokensQuery{WalletID: "alice", TokenType: TST}
+
+	// The zero value is SpendableTokensIteratorBy: every spendable token, unbounded.
+	assert.ElementsMatch(t,
+		[]int64{1, 5, 10, 10, 100, 50, 7},
+		querySpendableAmounts(t, db, driver2.SpendableTokensQuery{}))
+
+	// Wallet and type narrow the set without any amount bound.
+	assert.ElementsMatch(t, []int64{1, 5, 10, 10, 100}, querySpendableAmounts(t, db, aliceTST))
+
+	// Both bounds are inclusive, so a token worth exactly the bound matches.
+	minTen := aliceTST
+	minTen.MinAmount = big.NewInt(10)
+	assert.ElementsMatch(t, []int64{10, 10, 100}, querySpendableAmounts(t, db, minTen))
+
+	maxTen := aliceTST
+	maxTen.MaxAmount = big.NewInt(10)
+	assert.ElementsMatch(t, []int64{1, 5, 10, 10}, querySpendableAmounts(t, db, maxTen))
+
+	window := aliceTST
+	window.MinAmount, window.MaxAmount = big.NewInt(5), big.NewInt(10)
+	assert.ElementsMatch(t, []int64{5, 10, 10}, querySpendableAmounts(t, db, window))
+
+	// An empty range matches nothing rather than erroring.
+	empty := aliceTST
+	empty.MinAmount, empty.MaxAmount = big.NewInt(1000), big.NewInt(2000)
+	assert.Empty(t, querySpendableAmounts(t, db, empty))
+
+	// A bound wider than any stored amount is still a valid comparison.
+	all := aliceTST
+	all.MinAmount = big.NewInt(0)
+	assert.Len(t, querySpendableAmounts(t, db, all), 5)
+
+	// Ordering is honoured in both directions.
+	asc := aliceTST
+	asc.Order = driver2.AmountAscending
+	assert.Equal(t, []int64{1, 5, 10, 10, 100}, querySpendableAmounts(t, db, asc))
+
+	desc := aliceTST
+	desc.Order = driver2.AmountDescending
+	assert.Equal(t, []int64{100, 10, 10, 5, 1}, querySpendableAmounts(t, db, desc))
+
+	// A limit caps the rows read; combined with an order it yields the extremes without
+	// materialising the rest of the wallet.
+	descLimited := desc
+	descLimited.Limit = 2
+	assert.Equal(t, []int64{100, 10}, querySpendableAmounts(t, db, descLimited))
+
+	ascLimited := asc
+	ascLimited.Limit = 3
+	assert.Equal(t, []int64{1, 5, 10}, querySpendableAmounts(t, db, ascLimited))
+
+	// A limit larger than the result set is not an error.
+	descOverLimited := desc
+	descOverLimited.Limit = 100
+	assert.Equal(t, []int64{100, 10, 10, 5, 1}, querySpendableAmounts(t, db, descOverLimited))
+
+	// Zero and negative mean "no cap" — in particular a negative limit must not be passed
+	// through as the builder's explicit-LIMIT-0 sentinel.
+	unlimited := desc
+	unlimited.Limit = -1
+	assert.Equal(t, []int64{100, 10, 10, 5, 1}, querySpendableAmounts(t, db, unlimited))
+
+	// Bounds compose with the spendable filter: a token made non-spendable drops out of a
+	// query whose amount range still covers it.
+	tx, err := db.NewTokenDBTransaction()
+	require.NoError(t, err)
+	require.NoError(t, tx.SetSpendable(ctx, token.ID{TxId: "alice100", Index: 0}, false))
+	require.NoError(t, tx.Commit())
+	assert.Equal(t, []int64{10, 10}, querySpendableAmounts(t, db, minTen))
+
+	// So does deletion.
+	require.NoError(t, db.DeleteTokens(ctx, "delby", &token.ID{TxId: "alice10a", Index: 0}))
+	assert.Equal(t, []int64{10}, querySpendableAmounts(t, db, minTen))
+}
+
+// TWideAmountBounds verifies that an amount bound wider than int64 is compared exactly, so
+// the indexed amount column is usable across its full NUMERIC(78, 0) range. Like
+// TBigAmountRoundTrip it is Postgres-only: SQLite converts an integer literal wider than
+// int64 to REAL, on both sides of the comparison.
+func TWideAmountBounds(t *testing.T, db TestTokenDB) {
+	t.Helper()
+	ctx := t.Context()
+
+	// Three amounts straddling 2^64, one apart at the top so an inexact comparison cannot
+	// tell the largest two apart.
+	small := big.NewInt(1)
+	big1 := new(big.Int).Lsh(big.NewInt(1), 64)
+	big2 := new(big.Int).Add(big1, big.NewInt(1))
+
+	for i, amount := range []*big.Int{small, big1, big2} {
+		require.NoError(t, db.StoreToken(ctx, driver2.TokenRecord{
+			TxID:           fmt.Sprintf("tx%d", i),
+			Index:          0,
+			OwnerRaw:       []byte{1, 2, 3},
+			OwnerType:      "idemix",
+			OwnerIdentity:  []byte{},
+			OwnerWalletID:  "alice",
+			Ledger:         []byte("ledger"),
+			LedgerMetadata: []byte{},
+			Quantity:       "0x" + amount.Text(16),
+			Type:           TST,
+			Amount:         amount,
+			Owner:          true,
+		}, []string{"alice"}))
+	}
+
+	quantities := func(params driver2.SpendableTokensQuery) []string {
+		it, err := db.QuerySpendableTokens(ctx, params)
+		require.NoError(t, err)
+		defer it.Close()
+
+		var out []string
+		for {
+			tok, err := it.Next()
+			require.NoError(t, err)
+			if tok == nil {
+				return out
+			}
+			out = append(out, tok.Quantity)
+		}
+	}
+
+	base := driver2.SpendableTokensQuery{WalletID: "alice", TokenType: TST}
+	hex := func(v *big.Int) string { return "0x" + v.Text(16) }
+
+	// The bound excludes the small token and keeps both wide ones, inclusively.
+	atLeastBig1 := base
+	atLeastBig1.MinAmount = big1
+	atLeastBig1.Order = driver2.AmountAscending
+	assert.Equal(t, []string{hex(big1), hex(big2)}, quantities(atLeastBig1))
+
+	// A bound one unit higher separates two amounts that differ only in their lowest bit,
+	// which a comparison that went through a float could not do.
+	atLeastBig2 := base
+	atLeastBig2.MinAmount = big2
+	assert.Equal(t, []string{hex(big2)}, quantities(atLeastBig2))
+
+	// The same precision applies to the upper bound.
+	atMostBig1 := base
+	atMostBig1.MaxAmount = big1
+	atMostBig1.Order = driver2.AmountDescending
+	assert.Equal(t, []string{hex(big1), hex(small)}, quantities(atMostBig1))
+
+	// And ordering over wide amounts is numeric, not lexicographic: "0x1" must not sort above
+	// a 20-digit value.
+	descending := base
+	descending.Order = driver2.AmountDescending
+	assert.Equal(t, []string{hex(big2), hex(big1), hex(small)}, quantities(descending))
+}
+
+// querySpendableAmounts runs params and returns the amount of each returned token, decoded
+// from the authoritative hex quantity the iterator carries.
+func querySpendableAmounts(t *testing.T, db TestTokenDB, params driver2.SpendableTokensQuery) []int64 {
+	t.Helper()
+	it, err := db.QuerySpendableTokens(t.Context(), params)
+	require.NoError(t, err)
+	defer it.Close()
+
+	var amounts []int64
+	for {
+		tok, err := it.Next()
+		require.NoError(t, err)
+		if tok == nil {
+			break
+		}
+		q, err := token.ToQuantity(tok.Quantity, 64)
+		require.NoError(t, err)
+		v := q.ToBigInt()
+		require.True(t, v.IsInt64(), "amount %s does not fit in an int64; use the hex quantity directly instead", v)
+		amounts = append(amounts, v.Int64())
+	}
+
+	return amounts
 }
 
 func consumeSpendableTokensIterator(t *testing.T, it tdriver.SpendableTokensIterator, tokenType token.Type, count int) {

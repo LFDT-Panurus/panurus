@@ -109,6 +109,58 @@ type QueryTokenDetailsParams struct {
 	Spendable SpendableFilter
 	// LedgerTokenFormats selects tokens whose output on the ledger has a format in the list
 	LedgerTokenFormats []token.Format
+	// MinAmount, when non-nil, keeps only tokens whose amount is greater than or equal to it.
+	// The bound is inclusive: a token worth exactly MinAmount matches.
+	//
+	// The bound is compared against the amount column, which mirrors the authoritative
+	// quantity. On SQLite the comparison is exact only up to int64: that backend gives a
+	// NUMERIC column NUMERIC affinity and converts a wider integer literal to REAL, which is
+	// the same limit that already applies to the stored amounts.
+	MinAmount *big.Int
+	// MaxAmount, when non-nil, keeps only tokens whose amount is less than or equal to it.
+	// The bound is inclusive, with the same precision caveat as MinAmount.
+	MaxAmount *big.Int
+}
+
+// AmountOrder selects the order in which a query returns rows with respect to their amount.
+type AmountOrder int
+
+const (
+	// AmountUnordered adds no ORDER BY clause, leaving the row order to the backend. It is
+	// the zero value, so a query that does not ask for an order keeps the cheapest plan.
+	AmountUnordered AmountOrder = iota
+	// AmountAscending orders rows by amount, smallest first.
+	AmountAscending
+	// AmountDescending orders rows by amount, largest first.
+	AmountDescending
+)
+
+// SpendableTokensQuery bounds a scan over the spendable tokens of a wallet.
+//
+// The zero value selects every spendable token of every wallet and type, unordered and
+// unlimited, which is what SpendableTokensIteratorBy asks for.
+//
+// A store may satisfy WalletID, TokenType, the amount bounds and Order from a single index
+// on (owner_wallet_id, token_type, amount), so a caller that needs only a few tokens can ask
+// for a bounded window instead of the wallet's whole spendable set.
+type SpendableTokensQuery struct {
+	// WalletID restricts the scan to the tokens owned by this wallet. Empty means any wallet.
+	WalletID string
+	// TokenType restricts the scan to this token type. Empty means any type.
+	TokenType token.Type
+	// MinAmount, when non-nil, keeps only tokens worth at least this much (inclusive).
+	MinAmount *big.Int
+	// MaxAmount, when non-nil, keeps only tokens worth at most this much (inclusive).
+	MaxAmount *big.Int
+	// Order sets the order of the returned rows. Rows of equal amount come back in
+	// unspecified order, so Order does not make the result a stable sequence.
+	Order AmountOrder
+	// Limit caps the number of rows returned. Zero or negative means no cap.
+	//
+	// Because tokens of equal amount are returned in unspecified order, Limit describes a
+	// window, not a page: two queries differing only in Limit may disagree about which of
+	// several equal-amount tokens they include.
+	Limit int
 }
 
 type SpendableFilter int
@@ -202,6 +254,11 @@ type TokenStore interface {
 	UnspentTokensIteratorBy(ctx context.Context, walletID string, tokenType token.Type) (driver.UnspentTokensIterator, error)
 	// SpendableTokensIteratorBy returns an iterator over all tokens owned solely by the passed wallet identifier and of a given type
 	SpendableTokensIteratorBy(ctx context.Context, walletID string, typ token.Type) (driver.SpendableTokensIterator, error)
+	// QuerySpendableTokens returns an iterator over the spendable tokens matching params.
+	// It is SpendableTokensIteratorBy with amount bounds, an optional order and an optional
+	// limit, for callers that need only part of a wallet's spendable set: passing the zero
+	// value selects everything, exactly as SpendableTokensIteratorBy does.
+	QuerySpendableTokens(ctx context.Context, params SpendableTokensQuery) (driver.SpendableTokensIterator, error)
 	// UnsupportedTokensIteratorBy returns the minimum information for upgrade about the tokens that are not supported
 	UnsupportedTokensIteratorBy(ctx context.Context, walletID string, tokenType token.Type) (driver.UnsupportedTokensIterator, error)
 	// ListUnspentTokensBy returns the list of all tokens owned by the passed identifier of a given type
