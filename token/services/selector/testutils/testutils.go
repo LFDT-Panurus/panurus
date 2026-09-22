@@ -151,9 +151,21 @@ func (q *MockQueryService) UnspentTokensIterator(context.Context) (*token.Unspen
 }
 
 func (q *MockQueryService) SpendableTokensIteratorBy(ctx context.Context, walletID string, typ token2.Type) (driver.SpendableTokensIterator, error) {
-	it, err := q.UnspentTokensIteratorBy(ctx, walletID, typ)
-	if err != nil {
-		return nil, err
+	var it driver.UnspentTokensIterator
+	if walletID == "" && typ == "" {
+		// Mirrors buildSpendableTokensIteratorByQuery/HasTokenDetails' production semantics: an
+		// empty walletID/typ means "no filter", scanning every token rather than one wallet's
+		// cache entry. sherdlock's cachedFetcher.update relies on exactly this call shape to
+		// build its whole-DB snapshot (token/services/selector/sherdlock/fetcher.go); without
+		// this branch it always finds zero tokens, since q.cache is only ever warmed under a
+		// specific wallet key (see WarmupCache), never under "".
+		it = &token.UnspentTokensIterator{UnspentTokensIterator: &MockIterator{q, q.allKeys, 0}}
+	} else {
+		var err error
+		it, err = q.UnspentTokensIteratorBy(ctx, walletID, typ)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	return collections.Map[*token2.UnspentToken, *token2.UnspentTokenInWallet](it, func(ut *token2.UnspentToken) (*token2.UnspentTokenInWallet, error) {
