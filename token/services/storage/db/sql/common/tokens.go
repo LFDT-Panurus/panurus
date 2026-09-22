@@ -29,7 +29,6 @@ import (
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/common/utils/collections"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/common/utils/collections/iterators"
-	common2 "github.com/hyperledger-labs/fabric-smart-client/platform/view/services/storage/driver/common"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/services/storage/driver/sql/common"
 )
 
@@ -44,11 +43,11 @@ type tokenTables struct {
 
 type TokenStore struct {
 	readDB               *sql.DB
-	writeDB              *sql.DB
+	writeDB              WriteDB
 	table                tokenTables
 	ci                   common3.CondInterpreter
 	notifier             driver.TokenNotifier
-	cleanupLeaderFactory func(context.Context, *sql.DB) (driver.CleanupLeadership, bool, error)
+	cleanupLeaderFactory func(context.Context, WriteDB) (driver.CleanupLeadership, bool, error)
 
 	sttMutex              sync.RWMutex
 	supportedTokenFormats []token.Format
@@ -69,7 +68,7 @@ type TokenStore struct {
 	balanceStmts PreparedStmtHolder[string]
 }
 
-func newTokenStore(readDB, writeDB *sql.DB, tables tokenTables, ci common3.CondInterpreter, notifier driver.TokenNotifier, cleanupLeaderFactory func(context.Context, *sql.DB) (driver.CleanupLeadership, bool, error)) *TokenStore {
+func newTokenStore(readDB *sql.DB, writeDB WriteDB, tables tokenTables, ci common3.CondInterpreter, notifier driver.TokenNotifier, cleanupLeaderFactory func(context.Context, WriteDB) (driver.CleanupLeadership, bool, error)) *TokenStore {
 	ts := &TokenStore{
 		readDB:               readDB,
 		writeDB:              writeDB,
@@ -85,7 +84,7 @@ func newTokenStore(readDB, writeDB *sql.DB, tables tokenTables, ci common3.CondI
 	return ts
 }
 
-func NewTokenStoreWithNotifier(readDB, writeDB *sql.DB, tables TableNames, ci common3.CondInterpreter, notifier driver.TokenNotifier) (*TokenStore, error) {
+func NewTokenStoreWithNotifier(readDB *sql.DB, writeDB WriteDB, tables TableNames, ci common3.CondInterpreter, notifier driver.TokenNotifier) (*TokenStore, error) {
 	return newTokenStore(readDB, writeDB, tokenTables{
 		Tokens:           tables.Tokens,
 		Ownership:        tables.Ownership,
@@ -97,11 +96,12 @@ func NewTokenStoreWithNotifier(readDB, writeDB *sql.DB, tables TableNames, ci co
 }
 
 func NewTokenStoreWithNotifierAndCleanup(
-	readDB, writeDB *sql.DB,
+	readDB *sql.DB,
+	writeDB WriteDB,
 	tables TableNames,
 	ci common3.CondInterpreter,
 	notifier driver.TokenNotifier,
-	cleanupLeaderFactory func(context.Context, *sql.DB) (driver.CleanupLeadership, bool, error),
+	cleanupLeaderFactory func(context.Context, WriteDB) (driver.CleanupLeadership, bool, error),
 ) (*TokenStore, error) {
 	return newTokenStore(readDB, writeDB, tokenTables{
 		Tokens:           tables.Tokens,
@@ -1538,7 +1538,7 @@ func (db *TokenStore) Close() error {
 	_ = db.spendableTokensStmts.Close()
 	_ = db.balanceStmts.Close()
 
-	return common2.Close(db.readDB, db.writeDB)
+	return CloseRWDB(db.readDB, db.writeDB)
 }
 
 func (db *TokenStore) NewTokenDBTransaction() (driver.TokenStoreTransaction, error) {

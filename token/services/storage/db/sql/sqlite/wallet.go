@@ -15,5 +15,5 @@ import (
 type WalletStore = common3.WalletStore
 
 func NewWalletStore(dbs *common2.RWDB, tableNames common3.TableNames) (*WalletStore, error) {
-	return common3.NewWalletStore(dbs.ReadDB, dbs.WriteDB, tableNames, NewConditionInterpreter())
+	return common3.NewWalletStore(dbs.ReadDB, NewBusyRetryWriteDB(dbs.WriteDB), tableNames, NewConditionInterpreter())
 }

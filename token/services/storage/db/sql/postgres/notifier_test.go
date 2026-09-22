@@ -9,7 +9,6 @@ package postgres
 import (
 	"context"
 	"errors"
-	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -306,19 +305,18 @@ func TestNotifierLazyTriggerInstall(t *testing.T) {
 	}))
 	require.Equal(t, 1, triggerCount(), "the first subscription must install the trigger")
 
-	// LISTEN starts asynchronously: keep inserting until a notification lands
-	i := 0
-	require.Eventually(t, func() bool {
-		i++
-		_, err := dbs.WriteDB.Exec("INSERT INTO "+table+" (id) VALUES ($1)", fmt.Sprintf("id%d", i))
-		require.NoError(t, err)
-		select {
-		case <-notified:
-			return true
-		default:
-			return false
-		}
-	}, 15*time.Second, 200*time.Millisecond, "no notification received after installing the trigger")
+	// A single insert suffices: Subscribe returns only once the listener has
+	// registered LISTEN, so this row cannot be emitted into a channel nobody is
+	// listening on. This used to need a retry-insert loop, which is what put the
+	// startup race on the record in #2043.
+	_, err = dbs.WriteDB.Exec("INSERT INTO "+table+" (id) VALUES ($1)", "id1")
+	require.NoError(t, err)
+
+	select {
+	case <-notified:
+	case <-time.After(15 * time.Second):
+		t.Fatal("no notification received for a row written after Subscribe returned")
+	}
 }
 
 // TestNotifierSubscribeClosed tests that Subscribe returns an error when notifier is closed
@@ -652,4 +650,161 @@ func TestRedactDataSource(t *testing.T) {
 			require.Equal(t, tc.expected, redactDataSource(tc.input))
 		})
 	}
+}
+
+// TestHandleBacklogSignalsListening covers the hook the readiness guarantee rests
+// on: pgxlisten calls HandleBacklog once it has issued LISTEN, and that is what
+// tells Subscribe the channel is live. See #2043.
+func TestHandleBacklogSignalsListening(t *testing.T) {
+	var calls int
+	h := &notificationHandler{table: "test_table", onListening: func() { calls++ }}
+
+	require.NoError(t, h.HandleBacklog(t.Context(), "notify_test", nil))
+	require.Equal(t, 1, calls)
+
+	// Called again on every reconnect, and a nil hook must be tolerated.
+	require.NoError(t, h.HandleBacklog(t.Context(), "notify_test", nil))
+	require.Equal(t, 2, calls)
+	require.NoError(t, (&notificationHandler{table: "test_table"}).HandleBacklog(t.Context(), "notify_test", nil))
+}
+
+// TestNotifierSubscribeWaitsForListening verifies that the first Subscribe does
+// not return until the listener has registered LISTEN. Before #2043 it returned
+// after a blind 100ms, so a row written straight afterwards could be emitted
+// before the channel existed and was then dropped by Postgres for good.
+func TestNotifierSubscribeWaitsForListening(t *testing.T) {
+	const listenDelay = 300 * time.Millisecond
+
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	db := &Notifier{
+		table:              "test_table",
+		listenerErr:        make(chan error, 1),
+		ready:              make(chan struct{}),
+		listenReadyTimeout: 5 * time.Second,
+		ctx:                ctx,
+		cancel:             cancel,
+	}
+	db.listener = &mockListener{
+		ListenFN: func(ctx context.Context) error {
+			time.Sleep(listenDelay)
+			db.markListening()
+			<-ctx.Done()
+
+			return ctx.Err()
+		},
+	}
+
+	start := time.Now()
+	require.NoError(t, db.Subscribe(func(driver.Operation, map[driver.ColumnKey]string) {}))
+	require.GreaterOrEqual(t, time.Since(start), listenDelay,
+		"Subscribe must not return before the listener is listening")
+
+	// Later subscriptions do not wait again: the channel is already live.
+	start = time.Now()
+	require.NoError(t, db.Subscribe(func(driver.Operation, map[driver.ColumnKey]string) {}))
+	require.Less(t, time.Since(start), listenDelay)
+}
+
+// TestNotifierSubscribeSucceedsWhenListenIsSlow verifies that a listener which
+// has not registered LISTEN within the timeout does not fail the subscription:
+// it keeps retrying, and refusing to subscribe would be worse than subscribing
+// late.
+func TestNotifierSubscribeSucceedsWhenListenIsSlow(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	db := &Notifier{
+		table: "test_table",
+		listener: &mockListener{
+			ListenFN: func(ctx context.Context) error {
+				<-ctx.Done() // never signals readiness
+
+				return ctx.Err()
+			},
+		},
+		listenerErr:        make(chan error, 1),
+		ready:              make(chan struct{}),
+		listenReadyTimeout: 50 * time.Millisecond,
+		ctx:                ctx,
+		cancel:             cancel,
+	}
+
+	require.NoError(t, db.Subscribe(func(driver.Operation, map[driver.ColumnKey]string) {}))
+}
+
+// TestNotifierSubscribeReturnsListenerErrorWhileWaiting verifies that a listener
+// failing while Subscribe waits for readiness is reported rather than waited out,
+// and that the error stays observable for later subscribers and ListenerError.
+func TestNotifierSubscribeReturnsListenerErrorWhileWaiting(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	db := &Notifier{
+		table: "test_table",
+		listener: &mockListener{
+			ListenFN: func(context.Context) error {
+				return errors.New("listen failed late")
+			},
+		},
+		listenerErr:        make(chan error, 1),
+		ready:              make(chan struct{}),
+		listenReadyTimeout: 5 * time.Second,
+		ctx:                ctx,
+		cancel:             cancel,
+	}
+
+	start := time.Now()
+	err := db.Subscribe(func(driver.Operation, map[driver.ColumnKey]string) {})
+	require.ErrorContains(t, err, "listen failed late")
+	require.Less(t, time.Since(start), db.listenReadyTimeout, "the error must not be waited out")
+
+	select {
+	case reposted := <-db.ListenerError():
+		require.ErrorContains(t, reposted, "listen failed late")
+	default:
+		t.Fatal("the consumed listener error was not put back on the channel")
+	}
+}
+
+// TestNotifierSubscribeDuringCloseDoesNotPanic covers a latent panic in the
+// Subscribe error path: Close closes listenerErr, and Subscribe used to put a
+// consumed error straight back on it, so a Subscribe racing a Close could send on
+// a closed channel. Waiting for LISTEN widened that window from 100ms to seconds,
+// which is how it came up in #2043.
+func TestNotifierSubscribeDuringCloseDoesNotPanic(t *testing.T) {
+	for range 200 {
+		ctx, cancel := context.WithCancel(t.Context())
+		db := &Notifier{
+			table: "test_table",
+			listener: &mockListener{
+				ListenFN: func(ctx context.Context) error {
+					<-ctx.Done()
+
+					return ctx.Err()
+				},
+			},
+			listenerErr:        make(chan error, 1),
+			ready:              make(chan struct{}),
+			listenReadyTimeout: time.Minute, // never reached: Close ends the wait
+			ctx:                ctx,
+			cancel:             cancel,
+		}
+
+		var wg sync.WaitGroup
+		wg.Go(func() { _ = db.Subscribe(func(driver.Operation, map[driver.ColumnKey]string) {}) })
+		wg.Go(func() { require.NoError(t, db.Close()) })
+		wg.Wait()
+		cancel()
+	}
+}
+
+// TestNotifierSubscribeAfterCloseReportsShutdown verifies that a Subscribe which
+// reads from the closed error channel reports the shutdown rather than reporting
+// success: nothing ever sends nil on that channel, so a nil means it was closed.
+func TestNotifierSubscribeAfterCloseReportsShutdown(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	db := &Notifier{table: "test_table", listenerErr: make(chan error, 1), ctx: ctx, cancel: cancel}
+	close(db.listenerErr)
+
+	require.ErrorIs(t, db.takeListenerErr(nil), context.Canceled)
 }
