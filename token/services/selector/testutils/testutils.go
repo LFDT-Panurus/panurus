@@ -10,6 +10,7 @@ import (
 	"bytes"
 	"context"
 	"math/big"
+	"sort"
 	"strings"
 	"time"
 
@@ -101,6 +102,25 @@ func (q *MockQueryService) WarmupCache(walletID, tokenType string) {
 			keys = append(keys, k)
 		}
 	}
+	// Sort ascending by amount, mirroring the real fetcher's SQL ORDER BY amount ASC
+	// (buildSpendableTokensIteratorByQuery, token/services/storage/db/sql/common/tokens.go:415).
+	// q.kvs is a Go map, whose iteration order is unspecified by the language spec, so without
+	// this a caller relying on size-ordered selection (e.g. #2395 phase 4b's smallest-fit fix,
+	// or sherdlock.newBucketedIterator's "items already ordered ascending by amount"
+	// precondition) would see a MockQueryService that cannot reproduce that ordering
+	// deterministically.
+	sort.Slice(keys, func(i, j int) bool {
+		qi, err := token2.ToQuantity(q.kvs[keys[i]].Quantity, TokenQuantityPrecision)
+		if err != nil {
+			return false
+		}
+		qj, err := token2.ToQuantity(q.kvs[keys[j]].Quantity, TokenQuantityPrecision)
+		if err != nil {
+			return false
+		}
+
+		return qi.Cmp(qj) < 0
+	})
 	q.cache[walletID] = keys
 }
 
@@ -137,6 +157,14 @@ func (q *MockQueryService) SpendableTokensIteratorBy(ctx context.Context, wallet
 	}
 
 	return collections.Map[*token2.UnspentToken, *token2.UnspentTokenInWallet](it, func(ut *token2.UnspentToken) (*token2.UnspentTokenInWallet, error) {
+		// iterators.Map's transformer also runs for the zero value that marks exhaustion
+		// (see its doc comment), so it must not dereference ut unchecked: without this guard,
+		// draining this iterator to completion (e.g. via iterators.ReadAllPointers, as
+		// sherdlock's lazyFetcher does) panics on a nil pointer dereference on the final call.
+		if ut == nil {
+			return nil, nil
+		}
+
 		return &token2.UnspentTokenInWallet{
 			Id:       ut.Id,
 			WalletID: string(ut.Owner),

@@ -350,3 +350,27 @@ func TestHotTokenContention_SingleTokenLockPath(t *testing.T) {
 		})
 	}
 }
+
+// TestHotTokenContentionWithSettlement drives testutils.TestHotTokenContentionWithSettlement
+// against a real Postgres-backed selector: unlike TestHotTokenContention, which never calls
+// Unlock and so can only simulate mechanism 4's leak (#2395), this wires each replica's
+// Manager into a real finality.SelectorManagerProvider chain and releases every winning
+// transaction's locks through it, then asserts via lockDB.ListLocks that nothing remains.
+// All replicas share one Postgres container and TablePrefix, so any one of their
+// TokenLockStore instances sees every lock any replica took.
+func TestHotTokenContentionWithSettlement(t *testing.T) {
+	terminate, pgConnStr := startContainer(t)
+	defer terminate()
+
+	const numReplicas = 3
+	replicas := make([]testutils.EnhancedManager, numReplicas)
+	var lockDB driver.TokenLockStore
+	for i := range numReplicas {
+		replica, ldb, err := createManagerAndLockStoreWithStrategy(t, pgConnStr, 2*time.Second, 60, "")
+		require.NoError(t, err)
+		replicas[i] = replica
+		lockDB = ldb
+	}
+
+	testutils.TestHotTokenContentionWithSettlement(t, replicas, lockDB)
+}

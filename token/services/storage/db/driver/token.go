@@ -355,6 +355,25 @@ type TokenNotifier interface {
 	UnsubscribeAll() error
 }
 
+// IsTerminalStatus reports whether status is a terminal status of a consuming
+// transaction — i.e. one after which the lock it holds should already have been
+// released. A LockRecord still present with a terminal-status consumer is the
+// mechanism-4 leak from #2395: nothing on the success path called UnlockByTxID, so
+// the row survived until the next lease-age sweep. A nil status (no matching row in
+// the requests table) is never terminal.
+func IsTerminalStatus(status *TxStatus) bool {
+	if status == nil {
+		return false
+	}
+
+	switch *status {
+	case Confirmed, Deleted, Orphan:
+		return true
+	default:
+		return false
+	}
+}
+
 // LockRecord describes a single held token lock, joined with the terminal-status
 // view of its consuming transaction. Status is nil when the consuming transaction has
 // no matching row in the requests table (should not normally happen, since a lock is

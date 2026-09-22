@@ -16,6 +16,8 @@ import (
 	token2 "github.com/LFDT-Panurus/panurus/token"
 	"github.com/LFDT-Panurus/panurus/token/services/logging"
 	"github.com/LFDT-Panurus/panurus/token/services/storage/db/driver"
+	depmock "github.com/LFDT-Panurus/panurus/token/services/ttx/dep/mock"
+	"github.com/LFDT-Panurus/panurus/token/services/ttx/finality"
 	"github.com/LFDT-Panurus/panurus/token/services/utils"
 	"github.com/LFDT-Panurus/panurus/token/services/utils/types/transaction"
 	"github.com/LFDT-Panurus/panurus/token/token"
@@ -24,6 +26,11 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// maxSpendRetries bounds deleteTokensAndStoreChange's retry loop (see its doc comment): a
+// persistent UpdateTokens failure fails the test with a clear message instead of hanging
+// until the surrounding go test -timeout fires with no indication of where.
+const maxSpendRetries = 100
 
 const defaultCurrency = "CHF"
 
@@ -95,6 +102,8 @@ func TestSufficientTokensBigDenominationsManyReplicas(t *testing.T, replicas []E
 // balance, so no error here can be a genuine insufficient-funds; any error
 // is spurious, caused by contention.
 func TestHotTokenContention(t *testing.T, replicas []EnhancedManager) {
+	require.Len(t, replicas, 3, "token mix below assumes exactly 3 replicas x 100 requests of CHF1 = CHF300 = total balance")
+
 	small := newToken(1)
 	big := newToken(296)
 	unspentTokens := createDefaultTokens(append(collections.Repeat(small, 4), big)...)
@@ -120,6 +129,8 @@ func TestHotTokenContention(t *testing.T, replicas []EnhancedManager) {
 // similarly-ranked ones, it gets to walk away with - the scenario Phase 6's skipLocked
 // strategy is meant to help.
 func TestHotTokenContentionWideWindow(t *testing.T, replicas []EnhancedManager) {
+	require.Len(t, replicas, 3, "token mix below assumes exactly 3 replicas x 10 requests of CHF3 = CHF90 = total balance")
+
 	dust := newToken(1)
 	unspentTokens := createDefaultTokens(collections.Repeat(dust, 90)...)
 	err := storeTokens(replicas[0], unspentTokens)
@@ -130,6 +141,42 @@ func TestHotTokenContentionWideWindow(t *testing.T, replicas []EnhancedManager) 
 	item := newToken(3)
 	errs := parallelSelect(t, replicas, collections.Repeat(item, 10))
 	assert.Empty(t, errs, "spurious insufficient-funds under lock contention (#2395, wide window)")
+}
+
+// TestHotTokenContentionWithSettlement is TestHotTokenContention with a settlement step
+// spliced in after each successful Select+spend: it releases the winning transaction's
+// locks through a *real* finality.SelectorManagerProvider, wired via
+// depmock.TokenManagementServiceProvider/TokenManagementServiceWithExtensions to resolve to
+// replica itself (every EnhancedManager already satisfies token2.SelectorManager) - the same
+// provider chain finality.Listener.releaseLocks uses on tx confirmation
+// (finality/listener.go:186-208). TestHotTokenContention's Close-only harness never touches
+// the lock table (Close just evicts the selector from cache, sherdlock/manager.go:78-84), so
+// it can only simulate mechanism 4's leak, never prove its fix. lockDB is the TokenLockStore
+// backing every replica's Locker - callers construct their replicas over one shared table,
+// so any one of them will do - used only for the final assertion: after every request has
+// settled, ListLocks must report nothing at all, regardless of which replica won or how many
+// lock conflicts it took.
+func TestHotTokenContentionWithSettlement(t *testing.T, replicas []EnhancedManager, lockDB driver.TokenLockStore) {
+	require.Len(t, replicas, 3, "token mix below assumes exactly 3 replicas x 100 requests of CHF1 = CHF300 = total balance")
+
+	small := newToken(1)
+	big := newToken(296)
+	unspentTokens := createDefaultTokens(append(collections.Repeat(small, 4), big)...)
+	err := storeTokens(replicas[0], unspentTokens)
+	require.NoError(t, err)
+
+	item := newToken(1)
+	quantities := collections.Repeat(item, 100)
+	errs := parallelSelectWithSettlement(t, replicas, quantities)
+
+	locks, err := lockDB.ListLocks(t.Context())
+	require.NoError(t, err)
+	t.Logf(
+		"#2395 contention [settlement]: requests=%d, spurious errors=%d, locks remaining after settlement=%d",
+		len(quantities)*len(replicas), len(errs), len(locks),
+	)
+	assert.Empty(t, errs, "spurious insufficient-funds under lock contention (#2395)")
+	assert.Empty(t, locks, "no lock should survive settlement of every request (#2395 mechanism 4)")
 }
 
 func TestInsufficientTokensOneReplica(t *testing.T, replica EnhancedManager) {
@@ -302,6 +349,94 @@ func parallelSelect(t *testing.T, replicas []EnhancedManager, quantities []token
 	return errs
 }
 
+// parallelSelectWithSettlement is parallelSelect with a settlement step added after each
+// successful Select+spend: it releases the winning transaction's locks through a real
+// finality.SelectorManagerProvider chain (see TestHotTokenContentionWithSettlement's doc
+// comment), rather than parallelSelect's Close, which never touches the lock table.
+func parallelSelectWithSettlement(t *testing.T, replicas []EnhancedManager, quantities []token.Quantity) []error {
+	t.Helper()
+	errCh := make(chan error, 100)
+	errs := make([]error, 0)
+	var errMu sync.Mutex
+	go func() {
+		errMu.Lock()
+		defer errMu.Unlock()
+		for err := range errCh {
+			errs = append(errs, err)
+		}
+	}()
+	var wg sync.WaitGroup
+	wg.Add(len(quantities) * len(replicas))
+	for _, replica := range replicas {
+		sp := newRealSelectorManagerProvider(replica)
+		for _, quantity := range quantities {
+			txID := newTxID()
+			sel, err := replica.NewSelector(txID)
+			require.NoError(t, err)
+			go func() {
+				defer utils.IgnoreErrorWithOneArg(replica.Close, txID)
+				tokens, sum, err := sel.Select(t.Context(), defaultTokenFilter, quantity.Hex(), defaultCurrency)
+				if err != nil {
+					errCh <- err
+				} else {
+					assert.NotNil(t, sum)
+					change, subErr := sum.Sub(quantity)
+					assert.NoError(t, subErr)
+					assert.GreaterOrEqual(t, change.ToBigInt().Int64(), int64(0))
+					assert.NotEmpty(t, tokens)
+					assert.NoError(t, deleteTokensAndStoreChange(replica, tokens, change))
+					releaseViaProvider(t, sp, txID)
+				}
+				wg.Done()
+			}()
+		}
+	}
+	wg.Wait()
+	close(errCh)
+	errMu.Lock()
+	defer errMu.Unlock()
+
+	return errs
+}
+
+// newRealSelectorManagerProvider wires a finality.SelectorManagerProvider whose bound TMS
+// resolves to replica itself as the token2.SelectorManager - replica already satisfies that
+// interface, being an EnhancedManager - so SelectorManager() returns the exact manager
+// Select acquired the locks against. This exercises the real provider chain
+// finality.Listener uses (finality/selector_manager.go), not a hand-rolled substitute for it.
+// The bound TMSID is irrelevant: the mocked TokenManagementServiceProvider ignores its
+// arguments and always returns the same tms.
+func newRealSelectorManagerProvider(replica EnhancedManager) *finality.SelectorManagerProvider {
+	tms := &depmock.TokenManagementServiceWithExtensions{}
+	tms.SelectorManagerReturns(replica, nil)
+
+	tmsProvider := &depmock.TokenManagementServiceProvider{}
+	tmsProvider.TokenManagementServiceReturns(tms, nil)
+
+	return finality.NewSelectorManagerProvider(tmsProvider, token2.TMSID{})
+}
+
+// releaseViaProvider resolves sp's SelectorManager and unlocks txID, mirroring
+// finality.Listener's releaseLocks (finality/listener.go:195-208) - except that a failure here
+// fails the test loudly, rather than being logged and swallowed the way the production listener
+// deliberately does, so a regression cannot slip past this harness silently. Called from a
+// goroutine spawned by parallelSelectWithSettlement (not the test's own goroutine), so it uses
+// assert rather than require: require calls runtime.Goexit() on failure, which would only ever
+// exit this spawned goroutine and could hang wg.Wait() instead of actually failing the test.
+func releaseViaProvider(t *testing.T, sp *finality.SelectorManagerProvider, txID transaction.ID) {
+	t.Helper()
+
+	sm, err := sp.SelectorManager()
+	//nolint:testifylint // require-error would conflict with go-require here: this runs on a
+	// goroutine spawned by parallelSelectWithSettlement, not the test's own goroutine, so
+	// require's runtime.Goexit() on failure would only exit this goroutine instead of failing
+	// the test - assert is the correct choice, not an oversight.
+	if !assert.NoError(t, err) || !assert.NotNil(t, sm) {
+		return
+	}
+	assert.NoError(t, sm.Unlock(t.Context(), txID))
+}
+
 func storeTokens(m EnhancedManager, added []token.UnspentToken) error {
 	return m.UpdateTokens(nil, added)
 }
@@ -314,13 +449,17 @@ func deleteTokensAndStoreChange(m EnhancedManager, spentTokens []*token.ID, chan
 			newTxID(): {change},
 		})
 	}
-	for {
+	var lastErr error
+	for range maxSpendRetries {
 		if err := m.UpdateTokens(spentTokens, changeTokens); err == nil {
 			return nil
 		} else {
+			lastErr = err
 			logger.Warnf("Failed to delete tokens: %v. Retrying", err)
 		}
 	}
+
+	return errors.Wrapf(lastErr, "failed to delete tokens [%s] and store change after %d retries", spentTokens, maxSpendRetries)
 }
 
 func createDefaultTokens(quantities ...token.Quantity) []token.UnspentToken {

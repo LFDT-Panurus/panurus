@@ -17,24 +17,6 @@ import (
 	driver3 "github.com/LFDT-Panurus/panurus/token/services/storage/db/driver"
 )
 
-// isTerminal reports whether status is a terminal status of a consuming transaction —
-// i.e. one after which the lock it holds should already have been released. A lock
-// still present with a terminal-status consumer is the mechanism-4 leak from #2395:
-// nothing on the success path calls UnlockByTxID, so the row survives until the
-// next lease-age sweep.
-func isTerminal(status *driver3.TxStatus) bool {
-	if status == nil {
-		return false
-	}
-
-	switch *status {
-	case driver3.Confirmed, driver3.Deleted, driver3.Orphan:
-		return true
-	default:
-		return false
-	}
-}
-
 // statusName renders status for display, or "unknown" if nil.
 func statusName(status *driver3.TxStatus) string {
 	if status == nil {
@@ -78,7 +60,7 @@ func Run(ctx context.Context, w io.Writer, stores *Stores, now time.Time) error 
 			oldest = age
 		}
 		terminalMark := ""
-		if isTerminal(r.Status) {
+		if driver3.IsTerminalStatus(r.Status) {
 			leaked++
 			terminalMark = "  [LEAKED: consumer is terminal, lock should have been released]"
 		}

@@ -66,6 +66,8 @@ var tokenLockDBCases = []struct {
 	{"TestReleaseOnAgedLease", TestReleaseOnAgedLease},
 	{"TestKeepFreshPendingLock", TestKeepFreshPendingLock},
 	{"TestListLocks", TestListLocks},
+	{"TestListLocksReportsLockAge", TestListLocksReportsLockAge},
+	{"TestReleaseAfterConfirm", TestReleaseAfterConfirm},
 }
 
 func TestFully(t *testing.T, tokenDB driver3.TokenStore, tokenLockDB driver3.TokenLockStore, tokenTransactionDB driver3.TokenTransactionStore) {
@@ -304,6 +306,69 @@ func collectTokenIDs(locks []driver3.LockRecord) []token.ID {
 	return ids
 }
 
+// TestListLocksReportsLockAge verifies that ListLocks round-trips the lock's creation
+// timestamp accurately, including across the sqlite/Postgres TIMESTAMPTZ divergence
+// that scannableTime handles (see #2395 Phase 1). LockRecord.CreatedAt is the field
+// the CERT report's "how long has this token been contested" question turns on, so a
+// silent truncation or timezone shift here would make lock-age reporting unreliable
+// without ever failing ListLocks itself.
+func TestListLocksReportsLockAge(t *testing.T, tokenDB driver3.TokenStore, tokenLockDB driver3.TokenLockStore, tokenTransactionDB driver3.TokenTransactionStore) {
+	ctx := t.Context()
+	tokenID := token.ID{TxId: "producer", Index: 0}
+	const backdateBy = 90 * time.Second
+
+	addTokenRequest(t, tokenTransactionDB, "producer")
+	addTokenRequest(t, tokenTransactionDB, "consumer")
+	storeTokens(t, tokenDB, "producer", 0)
+
+	before := time.Now()
+	require.NoError(t, tokenLockDB.LockAt(ctx, &tokenID, "consumer", "owner1", before.Add(-backdateBy)))
+
+	locks, err := tokenLockDB.ListLocks(ctx)
+	require.NoError(t, err)
+	rec := requireLockRecord(t, locks, tokenID)
+
+	age := time.Since(rec.CreatedAt)
+	// Generous tolerance: only guards against a truncation/timezone bug, not clock
+	// skew or test scheduling jitter.
+	require.InDelta(t, backdateBy.Seconds(), age.Seconds(), 30,
+		"reported lock age %s should be close to the %s it was backdated by", age, backdateBy)
+}
+
+// TestReleaseAfterConfirm reproduces, at the store level, the literal
+// invariant the CERT report flagged for token f8a27fc4...: once a lock's consuming
+// transaction reaches a terminal status and the lock has been released (as the
+// settlement path added in Phase 5 now does via UnlockByTxID), ListLocks must not go
+// on reporting it - regardless of how old the lock was when it was released. This
+// pins the release-then-verify round trip that the higher-level contention harness
+// (see testutils.TestHotTokenContentionWithSettlement) exercises under load.
+func TestReleaseAfterConfirm(t *testing.T, tokenDB driver3.TokenStore, tokenLockDB driver3.TokenLockStore, tokenTransactionDB driver3.TokenTransactionStore) {
+	ctx := t.Context()
+	tokenID := token.ID{TxId: "producer", Index: 0}
+
+	addTokenRequest(t, tokenTransactionDB, "producer")
+	addTokenRequest(t, tokenTransactionDB, "consumer")
+	storeTokens(t, tokenDB, "producer", 0)
+
+	// Backdate well past what any sane lease/cleanup tick would use, so this can only
+	// pass because of an explicit release, never because of age-based Cleanup.
+	require.NoError(t, tokenLockDB.LockAt(ctx, &tokenID, "consumer", "owner1", time.Now().Add(-10*time.Minute)))
+	require.NoError(t, tokenTransactionDB.SetStatus(ctx, "consumer", driver3.Confirmed, ""))
+
+	// Before release, the lock is exactly the leak the CERT report flagged: an old
+	// lock whose consumer has already reached a terminal status.
+	locks, err := tokenLockDB.ListLocks(ctx)
+	require.NoError(t, err)
+	rec := requireLockRecord(t, locks, tokenID)
+	require.True(t, driver3.IsTerminalStatus(rec.Status), "consumer status should be terminal")
+
+	// The release path (finality.Listener/TTXRecoveryHandler) calls UnlockByTxID on
+	// settlement; simulate it here, and require the leak to be gone.
+	require.NoError(t, tokenLockDB.UnlockByTxID(ctx, "consumer"))
+	requireNoLeakedLocks(t, tokenLockDB)
+	requireLockReleased(t, tokenLockDB, tokenID)
+}
+
 // addTokenRequest registers a token request for txID, so that its status can later be
 // moved to a terminal one with SetStatus.
 func addTokenRequest(t *testing.T, tokenTransactionDB driver3.TokenTransactionStore, txID string) {
@@ -371,4 +436,34 @@ func lockExists(t *testing.T, tokenLockDB driver3.TokenLockStore, tokenID token.
 	}
 
 	return false
+}
+
+// requireLockRecord finds tokenID among locks or fails the test.
+func requireLockRecord(t *testing.T, locks []driver3.LockRecord, tokenID token.ID) driver3.LockRecord {
+	t.Helper()
+
+	for _, l := range locks {
+		if l.TokenID == tokenID {
+			return l
+		}
+	}
+	t.Fatalf("lock on token %s not found among %d reported locks", tokenID, len(locks))
+
+	return driver3.LockRecord{}
+}
+
+// requireNoLeakedLocks asserts that no currently held lock has a consumer that has
+// already reached a terminal status - i.e. that ListLocks agrees with
+// driver3.IsTerminalStatus that nothing is leaked. This is the literal invariant
+// the CERT report's ">6 minutes after SETTLED" observation flagged for #2395.
+func requireNoLeakedLocks(t *testing.T, tokenLockDB driver3.TokenLockStore) {
+	t.Helper()
+
+	locks, err := tokenLockDB.ListLocks(t.Context())
+	require.NoError(t, err)
+	for _, l := range locks {
+		require.False(t, driver3.IsTerminalStatus(l.Status),
+			"lock on token %s should have been released: consumer %s is already terminal",
+			l.TokenID, l.ConsumerTxID)
+	}
 }

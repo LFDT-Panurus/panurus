@@ -105,6 +105,11 @@ func LoadTableNamesConfig(cfg driver2.Config) (TableNamesConfig, error) {
 
 // LoadStorageConfig reads all SQL storage options from cfg.
 // It returns a zero-value StorageConfig (and nil error) when cfg is nil.
+//
+// On a validation error for one option, it still returns every option parsed successfully so
+// far (with LockStrategy defaulted to LockStrategyInsert), rather than discarding them. Callers
+// that warn-and-continue on error (e.g. postgres/driver.go, sqlite/driver.go) otherwise silently
+// lose TableNames/SkipPrefix to an unrelated typo in lockStrategy - see #2395 Phase 7.
 func LoadStorageConfig(cfg driver2.Config) (StorageConfig, error) {
 	tableNames, err := LoadTableNamesConfig(cfg)
 	if err != nil {
@@ -114,19 +119,19 @@ func LoadStorageConfig(cfg driver2.Config) (StorageConfig, error) {
 	var skipPrefix bool
 	if cfg != nil && cfg.IsSet(ConfigKeySkipPrefix) {
 		if err := cfg.UnmarshalKey(ConfigKeySkipPrefix, &skipPrefix); err != nil {
-			return StorageConfig{}, err
+			return StorageConfig{TableNames: tableNames}, err
 		}
 	}
 
 	lockStrategy := LockStrategyInsert
 	if cfg != nil && cfg.IsSet(ConfigKeyLockStrategy) {
 		if err := cfg.UnmarshalKey(ConfigKeyLockStrategy, &lockStrategy); err != nil {
-			return StorageConfig{}, err
+			return StorageConfig{TableNames: tableNames, SkipPrefix: skipPrefix, LockStrategy: LockStrategyInsert}, err
 		}
 		switch lockStrategy {
 		case LockStrategyInsert, LockStrategyOnConflict, LockStrategySkipLocked:
 		default:
-			return StorageConfig{}, errors.Errorf(
+			return StorageConfig{TableNames: tableNames, SkipPrefix: skipPrefix, LockStrategy: LockStrategyInsert}, errors.Errorf(
 				"invalid value [%s] for [%s]: must be one of [%s, %s, %s]",
 				lockStrategy, ConfigKeyLockStrategy, LockStrategyInsert, LockStrategyOnConflict, LockStrategySkipLocked,
 			)

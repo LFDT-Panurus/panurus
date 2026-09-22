@@ -167,11 +167,17 @@ Every `leaseCleanupTickPeriod`, `sherdlock` runs a cleanup pass over the `TokenL
 table that releases a lock when **either** of the following holds.
 
 > **Both `leaseExpiry` and `leaseCleanupTickPeriod` must be non-zero for the cleanup
-> goroutine to start.** If either is zero the pass never runs, so locks held by
-> `Orphan` consumers, or by a consumer whose release-on-settlement call failed, are
-> never released and those tokens remain permanently unselectable. Setting
-> `leaseExpiry: 0` to disable time-based expiry while relying solely on
-> release-on-settlement is therefore not supported.
+> goroutine to start.** `Config.GetLeaseExpiry()`/`GetLeaseCleanupTickPeriod()` treat an
+> unset *or* explicitly-zero YAML value the same way: 0 is substituted with the default
+> (`leaseExpiry`: several minutes; `leaseCleanupTickPeriod`: about a minute), so writing
+> `leaseExpiry: 0` in configuration does **not** disable the sweep — it silently falls
+> back to the default instead. The sweep can only be disabled by an in-process caller
+> that constructs `sherdlock.NewManager` directly with `leaseExpiry`/
+> `leaseCleanupTickPeriod` of `0`, bypassing the `Config` getters; there is currently no
+> supported way to disable the sweep from YAML configuration, by design — locks held by
+> `Orphan` consumers, or by a consumer whose release-on-settlement call failed, would
+> otherwise never be released and those tokens would remain permanently unselectable.
+> If the sweep is disabled this way, `NewManager` logs a warning naming both values.
 
 *   the **consuming** transaction — the one that took the lock, stored in
     `consumer_tx_id` — has reached `Deleted` or `Orphan`, so it will never spend the
