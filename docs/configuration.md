@@ -28,7 +28,15 @@ token:
     # leaseCleanupTickPeriod defines how often the eviction algorithm must be executed.
     # If leaseCleanupTickPeriod is zero, the eviction algorithm is never executed.
     leaseCleanupTickPeriod: 90s
-    # Token fetcher cache configuration (sherdlock driver only)
+    # Token fetcher configuration (sherdlock driver only)
+    # fetcherStrategy selects how the fetcher obtains the spendable tokens of a wallet:
+    #   mixed (default) serves a request from the token cache and falls back to a database query
+    #     when the cache holds nothing for that wallet;
+    #   eager always serves from the cache;
+    #   lazy always queries the database and keeps no cache, so the three fetcherCache* keys
+    #     below do not apply to it.
+    # If not specified, mixed is used. An unrecognized value makes the node fail to start.
+    fetcherStrategy: mixed
     # The fetcher uses a Ristretto cache to store tokens for efficient retrieval.
     # fetcherCacheSize is the maximum number of tokens to cache. Each token consumes 1 unit of cache cost.
     # If not specified or set to 0, defaults to 100 million (1e8) tokens.
@@ -533,6 +541,7 @@ Default values:
 - numRetries: 3
 - leaseExpiry: 3m
 - leaseCleanupTickPeriod: 90s
+- fetcherStrategy: mixed (sherdlock only; one of mixed, eager, lazy)
 - rateLimitEnabled: false (the built-in per-wallet selection rate limiter is opt-in)
 - rateLimit: 100 requests/s per wallet, when rate limiting is enabled
 - rateLimitBurst: 2 × rateLimit, so 200 requests, when rate limiting is enabled

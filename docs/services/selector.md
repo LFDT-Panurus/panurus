@@ -211,6 +211,31 @@ nor races with the retry.
 - **Time-based**: Refreshes when data is older than `fetcherCacheRefresh`
 - **Query-based**: Refreshes after `fetcherCacheMaxQueries` queries to prevent serving stale data in high-throughput scenarios
 
+### Fetcher strategies
+
+`fetcherStrategy` picks which of the three implemented fetchers the `sherdlock` driver uses
+(`token/services/selector/sherdlock/fetcher.go`). These are the only accepted values, and an
+unrecognized one makes the node fail to start rather than falling back silently:
+
+| `fetcherStrategy` | Behaviour | Cache keys apply |
+|---|---|---|
+| `mixed` (default) | Serves a request from the cache, and falls back to a database query when the cache holds no token for that wallet and currency. | yes |
+| `eager` | Always serves from the cache, refreshed on the two triggers above. Never queries the database on the request path. | yes |
+| `lazy` | Always queries the database and keeps no cache at all. | no |
+
+The trade-off is staleness against query load. `lazy` never offers a token that was already
+spent, at the cost of one query per selection request; `eager` answers from memory but can
+offer tokens spent since the last refresh, which the selector then fails to lock and retries
+over. `mixed` is the default because it takes the cache's fast path only when the cache has
+something to say about the wallet, and pays for a query otherwise. Which path `mixed` takes is
+observable: the `panurus_services_selector_sherdlock_unspent_tokens_invocations` counter is
+incremented with `fetcher_type` set to `eager` or `lazy` on every request. Only `mixed`
+reports it — under `eager` and `lazy` there is no choice to record, and the counter stays at
+zero (see [Metrics](../development/metrics.md)).
+
+The choice is per node, not per TMS: one strategy is resolved at startup and every TMS's
+fetcher is built from it.
+
 ## Configuration
 
 Configure the selector service in your `core.yaml`:
@@ -223,6 +248,7 @@ token:
     retryInterval: 5s                    # Wait time between retries (default: 5s)
     leaseExpiry: 3m                      # Lock expiration time (default: 3m)
     leaseCleanupTickPeriod: 1m           # Lock cleanup interval (default: 1m)
+    fetcherStrategy: mixed               # Token fetcher: mixed | eager | lazy (default: mixed)
     fetcherCacheSize: 1000               # Cache size in entries (default: 0 = use fetcher default)
     fetcherCacheRefresh: 30s             # Cache refresh interval (default: 0 = use fetcher default)
     fetcherCacheMaxQueries: 100          # Max queries before cache refresh (default: 0 = use fetcher default)
@@ -246,9 +272,13 @@ on first cover, but they diverge in several ways beyond the shuffle:
   fourth error sentinel, `token.SelectorSufficientFundsButConcurrencyIssue`, which
   `sherdlock` does not produce.
 
-### Cache Configuration
+### Fetcher Configuration
 
-The fetcher cache improves performance by caching token queries:
+- **fetcherStrategy**: Which fetcher serves selection requests — `mixed` (default), `eager` or
+  `lazy`. See [Fetcher strategies](#fetcher-strategies). Leave it unset to take the default;
+  any other value than the three above aborts startup.
+
+The three keys below tune the cache that `mixed` and `eager` use, and are ignored by `lazy`:
 
 - **fetcherCacheSize**: Maximum number of cached query results. Set to 0 to use the fetcher's default size.
 - **fetcherCacheRefresh**: Time interval after which cached data is considered stale and refreshed. Set to 0 to use the fetcher's default interval.

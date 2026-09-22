@@ -229,6 +229,40 @@ func TestConfig_GetFetcherCacheMaxQueries(t *testing.T) {
 	}
 }
 
+// TestConfig_GetFetcherStrategy verifies the fetcher strategy is reported verbatim, with the
+// empty string standing for "use the fetcher's default". Validating the value is the fetcher's
+// job, so an unrecognized one must reach it unchanged rather than being silently defaulted.
+func TestConfig_GetFetcherStrategy(t *testing.T) {
+	tests := []struct {
+		name     string
+		config   *Config
+		expected string
+	}{
+		{
+			name:     "returns empty when not set",
+			config:   &Config{},
+			expected: "",
+		},
+		{
+			name:     "returns configured strategy",
+			config:   &Config{FetcherStrategy: "lazy"},
+			expected: "lazy",
+		},
+		{
+			name:     "returns unrecognized strategy unchanged",
+			config:   &Config{FetcherStrategy: "listener"},
+			expected: "listener",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := tt.config.GetFetcherStrategy()
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
 // TestConfig_RateLimit verifies the built-in selection rate limiter is off unless it is enabled
 // explicitly or implied by a positive rate, and that the documented defaults apply once it is on.
 func TestConfig_RateLimit(t *testing.T) {

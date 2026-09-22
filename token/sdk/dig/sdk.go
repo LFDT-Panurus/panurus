@@ -166,16 +166,19 @@ func (p *SDK) Install() error {
 		),
 
 		// selector service
-		p.Container().Provide(func(tokenStoreServiceManager tokendb.StoreServiceManager, metricsProvider metrics.Provider, cp sherdlock.ConfigProvider) sherdlock.FetcherProvider {
+		p.Container().Provide(func(tokenStoreServiceManager tokendb.StoreServiceManager, metricsProvider metrics.Provider, cp sherdlock.ConfigProvider) (sherdlock.FetcherProvider, error) {
 			cfg, err := config.New(cp)
 			if err != nil {
 				logger.Errorf("error getting selector config for fetcher, using defaults. %s", err.Error())
+				cfg = &config.Config{}
 			}
 
+			// An unrecognized token.selector.fetcherStrategy fails the container installation
+			// rather than the process, the same way an unknown token.selector.driver does.
 			return sherdlock.NewFetcherProvider(
 				tokenStoreServiceManager,
 				metricsProvider,
-				sherdlock.Mixed,
+				sherdlock.FetcherStrategy(cfg.GetFetcherStrategy()),
 				cfg.GetFetcherCacheSize(),
 				cfg.GetFetcherCacheRefresh(),
 				cfg.GetFetcherCacheMaxQueries(),
