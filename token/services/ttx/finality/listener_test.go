@@ -370,6 +370,47 @@ func TestOnStatus_ReleasesLocksAfterTerminalStatus(t *testing.T) {
 	}
 }
 
+// TestOnStatus_ReleasesLocksOnUnrecognizedStatus is the regression test for the default
+// branch of runOnStatus: a status that is neither network.Valid nor network.Invalid is
+// terminal-but-unrecognized from this listener's point of view (retrying runOnStatus with
+// the same arguments can never turn it into Valid/Invalid), so it must still release txID's
+// selection locks rather than leaving them held until the next lease-expiry sweep (#2395
+// mechanism 4) — mirroring TestOnStatus_ReleasesLocksAfterTerminalStatus and
+// TestOnError_ReleasesLocks for the other two terminal paths.
+func TestOnStatus_ReleasesLocksOnUnrecognizedStatus(t *testing.T) {
+	db := &mock.TransactionDB{}
+
+	sm := &fakeSelectorManager{}
+	smProvider := &mock.SelectorManagerProvider{}
+	smProvider.SelectorManagerReturns(sm, nil)
+
+	l := finality.NewListener(
+		logging.MustGetLogger(),
+		&depmock.Network{},
+		"test-namespace",
+		finality.NewTokenRequestHasher(&depmock.TokenManagementServiceProvider{}, token.TMSID{Network: "n", Channel: "c", Namespace: "ns"}),
+		db,
+		nil,
+		smProvider,
+		noopTracer(),
+		nil,
+	)
+
+	txID := "tx-unrecognized-status"
+	const unrecognizedStatus = 9999
+	l.OnStatus(t.Context(), txID, unrecognizedStatus, "", nil)
+
+	// An unrecognized status can never become network.Valid/network.Invalid by retrying
+	// runOnStatus with the same arguments, so the retryRunner (MaxRetry=3) exhausts all
+	// attempts, releasing locks (idempotently) on every one — hence one unlockCalls entry
+	// per attempt, not just one.
+	require.NotEmpty(t, sm.unlockCalls,
+		"an unrecognized terminal status must still release selection locks (#2395 mechanism 4)")
+	for _, id := range sm.unlockCalls {
+		require.Equal(t, txID, id)
+	}
+}
+
 // TestOnError tests the OnError callback
 func TestOnError(t *testing.T) {
 	ctx := t.Context()

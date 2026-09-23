@@ -186,6 +186,12 @@ func (t *Listener) runOnStatus(ctx context.Context, txID string, status int, mes
 	case network.Invalid:
 		txStatus = storage.Deleted
 	default:
+		// This status is terminal-but-unrecognized from this listener's point of view: it will
+		// never be reclassified as network.Valid/network.Invalid by retrying runOnStatus with
+		// the same arguments, so without releasing here txID's selection locks would sit held
+		// until the next lease-expiry sweep, reproducing #2395 mechanism 4 via this path (see
+		// OnError's doc comment for the same reasoning on that terminal path).
+		releaseLocks(ctx, t.logger, t.selectorManagerProvider, txID)
 
 		return errors.Errorf("listener invoked on [%s] with status [%d], cannot proceed", txID, status)
 	}
