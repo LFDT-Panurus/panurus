@@ -197,6 +197,87 @@ func startManagersWithLockCounters(t *testing.T, number int, backoff time.Durati
 	return replicas, counters, terminate
 }
 
+// startManagersWithLockCountersAndLockStore is startManagersWithLockCounters plus
+// createManagerAndLockStoreWithStrategy's driver.TokenLockStore return: needed by
+// TestStaticHotTokenContentionPareto, which both records per-token attempt/conflict counts via
+// countingLocker and asserts via lockDB.ListLocks that every lock is released by the end of the
+// run (see TestHotTokenContentionWithSettlement, whose lockDB requirement this mirrors). All
+// replicas share one Postgres container and TablePrefix, so any one of their TokenLockStore
+// instances sees every lock any replica took - the returned lockDB is arbitrarily the last one.
+func startManagersWithLockCountersAndLockStore(t *testing.T, number int, backoff time.Duration, maxRetries int, lockStrategy string) ([]testutils.EnhancedManager, []*countingLocker, driver.TokenLockStore, func()) {
+	t.Helper()
+	terminate, pgConnStr := startContainer(t)
+	replicas := make([]testutils.EnhancedManager, number)
+	counters := make([]*countingLocker, number)
+	var lockDB driver.TokenLockStore
+
+	for i := range number {
+		var counter *countingLocker
+		replica, ldb, err := createManagerWithLockerStoreAndStrategy(t, pgConnStr, backoff, maxRetries, func(l Locker) Locker {
+			counter = newCountingLocker(l)
+
+			return counter
+		}, lockStrategy)
+		require.NoError(t, err)
+		replicas[i] = replica
+		counters[i] = counter
+		lockDB = ldb
+	}
+
+	return replicas, counters, lockDB, terminate
+}
+
+// TestStaticHotTokenContentionPareto drives testutils.TestStaticHotTokenContentionPareto
+// against a real Postgres-backed selector, and asserts the CERT-shaped concentration that
+// TestHotTokenContention's rotating hot token cannot reproduce (see that test's doc comment
+// and testutils.TestStaticHotTokenContentionPareto's): a small, static set of token IDs
+// absorbing the large majority of lock conflicts, with at least one of them contested many
+// times over. The concentration assertion is gated behind a floor on the absolute conflict
+// count first: with too few total conflicts, any concentration percentage is either vacuous (a
+// handful of conflicts landing on the hot set by chance) or meaningless to compute at all, so
+// asserting a share before that floor is met would be near-unfalsifiable rather than a genuine
+// check of the incident's shape.
+func TestStaticHotTokenContentionPareto(t *testing.T) {
+	replicas, counters, lockDB, terminate := startManagersWithLockCountersAndLockStore(t, 3, 2*time.Second, 60, "")
+	defer terminate()
+
+	hotIDs := testutils.TestStaticHotTokenContentionPareto(t, replicas, lockDB, 100)
+
+	totalConflicts := 0
+	perTokenConflicts := make(map[token2.ID]int)
+	for _, c := range counters {
+		_, conflicts := c.snapshot()
+		for id, n := range conflicts {
+			totalConflicts += n
+			perTokenConflicts[id] += n
+		}
+	}
+
+	hotConflicts := 0
+	maxHotTokenConflicts := 0
+	for _, id := range hotIDs {
+		n := perTokenConflicts[id]
+		hotConflicts += n
+		if n > maxHotTokenConflicts {
+			maxHotTokenConflicts = n
+		}
+	}
+
+	hotShare := 0.0
+	if totalConflicts > 0 {
+		hotShare = float64(hotConflicts) / float64(totalConflicts)
+	}
+	t.Logf(
+		"#2395 contention [static hot tokens]: total conflicts=%d, hot-set conflicts=%d, hot-set share=%.2f, max single hot-token conflicts=%d",
+		totalConflicts, hotConflicts, hotShare, maxHotTokenConflicts,
+	)
+
+	const minTotalConflicts = 50
+	require.GreaterOrEqual(t, totalConflicts, minTotalConflicts, "workload did not generate enough contention to make a concentration assertion meaningful")
+	require.GreaterOrEqual(t, hotShare, 0.8, "expected the static hot set to absorb the large majority of lock conflicts (#2395)")
+	require.GreaterOrEqual(t, maxHotTokenConflicts, 20, "expected at least one static hot token to be repeatedly contested, mirroring the incident's single-token repeat count")
+}
+
 // TestHotTokenContention reproduces the incident reported in #2395 against a
 // real Postgres-backed selector: a wallet with a few small tokens and one
 // much larger, rotating hot token, and far more concurrent requests than

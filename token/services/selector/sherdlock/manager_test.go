@@ -184,6 +184,41 @@ func createManagerAndLockStoreWithStrategy(t *testing.T, pgConnStr string, backo
 	return testutils.NewEnhancedManager(t, manager, tokenDB.(dbtest.TestTokenDB)), lockDB, nil
 }
 
+// createManagerWithLockerStoreAndStrategy combines createManagerWithLockerAndStrategy's wrap
+// parameter with createManagerAndLockStoreWithStrategy's driver.TokenLockStore return, so a
+// caller can both wrap the Locker (e.g. in a countingLocker, to record per-token attempts and
+// conflicts) and inspect ListLocks directly afterwards. Needed by
+// TestStaticHotTokenContentionPareto (contention_test.go), which requires both at once.
+func createManagerWithLockerStoreAndStrategy(t *testing.T, pgConnStr string, backoff time.Duration, maxRetries int, wrap func(Locker) Locker, lockStrategy string) (testutils.EnhancedManager, driver.TokenLockStore, error) {
+	t.Helper()
+	d := postgres.NewDriverWithDbProvider(mockConfigWithLockStrategy(postgres2.Config{
+		TablePrefix:  "test",
+		DataSource:   pgConnStr,
+		MaxOpenConns: 10,
+	}, lockStrategy), &dbProvider{})
+
+	tokenDB, err := d.NewToken("")
+	if err != nil {
+		return nil, nil, err
+	}
+
+	lockDB, err := d.NewTokenLock("")
+	if err != nil {
+		return nil, nil, errors.Join(err, tokenDB.Close())
+	}
+
+	var locker Locker = lockDB
+	if wrap != nil {
+		locker = wrap(locker)
+	}
+
+	m := NewMetrics(&disabled.Provider{})
+	fetcher := newMixedFetcher(tokenDB.(dbtest.TestTokenDB), m, 0, 0, 0)
+	manager := NewManager(fetcher, locker, testutils.TokenQuantityPrecision, backoff, maxRetries, 0, 0, m)
+
+	return testutils.NewEnhancedManager(t, manager, tokenDB.(dbtest.TestTokenDB)), lockDB, nil
+}
+
 // mockConfigWithLockStrategy builds a mock.ConfigProvider equivalent to
 // multiplexed.MockTypeConfig(postgres2.Persistence, config), additionally answering
 // common5.ConfigKeyLockStrategy with lockStrategy so tests can select the Postgres

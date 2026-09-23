@@ -17,6 +17,9 @@ the six-minute window). The two shapes exercise the same underlying mechanisms (
 observed collision distribution — see the Phase 1–2 section below for detail on why the
 baseline is shaped this way, and "Further testable gaps" #9 for the still-open question of
 whether an operator would be alerted before a real static-hot-token incident recurs.
+"Further testable gaps" #12 closes the fidelity gap itself with a second, static-hot-token
+harness (`TestStaticHotTokenContentionPareto`) that reproduces CERT's actual Pareto shape
+directly.
 
 PR stack (base → tip):
 
@@ -384,3 +387,49 @@ in this pass, and is recorded here as an explicit, documented gap rather than a 
    or Phase 6's `RoundTrips()`/`UniqueViolations()` counters.** They exist for diagnosis but
    there's no test or documented runbook asserting an operator would actually get paged before
    the next CERT-style incident reaches the same 85%-on-5-tokens shape.
+10. **[Closed] A genuine store error (TryLock/TryLockBatch failing for a reason other than
+    contention) was indistinguishable from ordinary lock contention in metrics.** Both
+    `selector.go`'s single-token and batch branches already correctly avoided blacklisting or
+    counting a `LockConflicts` on a real store error (proven by
+    `TestSingleLockGenericStoreError_NotCountedAsConflict_Retried` and
+    `TestBatchLockGenericStoreError_RetriedNotBlacklisted`, which predate this fix) — but nothing
+    distinguished the two cases in metrics, only in a log line. Added `LockStoreErrors`
+    (`lock_store_errors_total`), incremented in both branches, and extended those two existing
+    tests to assert it increments while `LockConflicts` stays at zero. Deliberately did *not*
+    change error propagation/retry semantics: `StubbornSelector.Select`'s only retry trigger is
+    `errors.Is(err, token.SelectorSufficientButLockedFunds)`, so making a persistent store error
+    surface as a different error class would make it give up immediately instead of backing off —
+    a regression under exactly the DB-pressure conditions #2395 describes.
+11. **[Closed] `StubbornSelector.Select` never observed `ImmediateRetries` or
+    `DistinctTokensAttempted` at all.** `selectWithoutMetrics` discarded both values from
+    `selectInternal` (the former via `_`, the latter was never returned in the first place — it
+    was observed by a `defer` inside `selectInternal` itself, i.e. once per *inner* attempt, not
+    once per outer `Select()` call). Fixed by returning both values out of `selectInternal` (with
+    a `-1` sentinel for `DistinctTokensAttempted` on the two early-return paths that occur before
+    it is initialized, preserving `Selector.Select`'s existing "must not observe at all" contract
+    on those paths) and having `StubbornSelector.Select` sum them across every internal backoff
+    attempt, observing once on whichever of its three exit paths (success, `ctx.Done()`, final
+    give-up) is taken. See `TestStubbornSelector_AggregatesRetryMetricsAcrossBackoff`.
+12. **[Closed] Baseline-fidelity gap (called out at the top of this document): no test
+    reproduced CERT's actual static-hot-token Pareto shape.** `TestHotTokenContention`'s hot
+    token is only hot at the *lineage* level — `deleteTokensAndStoreChange` mints a fresh
+    output ID every time it's spent, diluting any single row's conflict share by design, unlike
+    CERT's fixed 5 token *rows* absorbing 85% of collisions with one row (`f8a27fc4...`)
+    contested 1296 times without ever changing identity. New
+    `testutils.TestStaticHotTokenContentionPareto` (driven by `sherdlock`'s
+    `TestStaticHotTokenContentionPareto`) fixes this: a static 5-token hot set plus a "cold"
+    background pool excluded from candidacy by token *type* (not owner — `ContainsToken` is
+    never actually called anywhere in `sherdlock`'s own query path when
+    `defaultTokenFilter.WalletID` is empty, as it deliberately is here; `tokenType` is the only
+    scope parameter this harness can rely on the real Postgres-backed query to enforce), and
+    every request sized well within a single hot token so every hot token is individually
+    sufficient on its own. Requests are released via the real `SelectorManager.Unlock` path
+    (`parallelSelectNoSpend`) rather than spent, so the same static IDs stay contendable across
+    the whole run instead of being consumed. Measured: hot-set share of all conflicts ≈1.00,
+    max single hot-token conflicts in the hundreds — closely matching CERT's reported shape.
+    An earlier attempt excluding the cold pool purely by denomination (relying on
+    `nextCandidate`'s `maxSufficiencyRatio` lookahead-window cap) failed empirically
+    (hot share ≈0.43–0.64): once every hot token is simultaneously locked by other concurrent
+    requests — likely at this concurrency against only 5 hot tokens — the cold pool becomes the
+    next visible individually-sufficient candidate in its own right and gets attempted
+    regardless of its magnitude relative to the hot set.

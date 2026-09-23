@@ -220,6 +220,70 @@ func TestHotTokenContentionWithSettlement(t *testing.T, replicas []EnhancedManag
 	assert.Empty(t, locks, "no lock should survive settlement of every request (#2395 mechanism 4)")
 }
 
+// TestStaticHotTokenContentionPareto targets the shape TestHotTokenContentionWithSettlement's
+// rotating hot token structurally cannot: CERT's actual incident had a small, static set of
+// tokens - never spent, only locked and released - absorbing the overwhelming majority of lock
+// conflicts (one of them contested well over a thousand times in a few minutes). A rotating hot
+// token (see TestHotTokenContention's doc comment) dilutes any single ID's share by
+// construction, since deleteTokensAndStoreChange mints a fresh ID every time it is spent. Here,
+// every winning request releases its lock via the real SelectorManager.Unlock path (like
+// parallelSelectWithSettlement) but never spends the token, so the same handful of token IDs
+// stay in the pool, and stay the top candidates, for the entire run.
+//
+// The wallet mix is the fixed hot set plus a "cold" pool stored under a different token type:
+// Select's query is scoped by (walletID, tokenType), and defaultTokenFilter deliberately leaves
+// WalletID empty (see its doc comment - sherdlock's SQL path treats that as "no owner filter"),
+// so tokenType is the only scope this harness can actually rely on to keep the cold pool out of
+// the candidate set entirely. An earlier version of this scenario instead relied on a much
+// larger cold denomination to fall outside nextCandidate's maxSufficiencyRatio lookahead window
+// (selector.go) - but that only stops cold from being pulled into a window anchored on a hot
+// candidate; once every hot token is momentarily locked by other requests (unsurprising at this
+// concurrency, against only numHotTokens candidates) the cold pool becomes the next visible
+// individually-sufficient candidate in its own right and gets attempted anyway, diluting the hot
+// set's measured share well below any believable concentration floor. Scoping by tokenType
+// instead is enforced by the query itself, so the concentration this test asserts on is
+// deterministic and not a share of one: the wallet genuinely holds other tokens, they are simply
+// outside the scope of the requests under test, exactly as another currency's tokens in the same
+// production DB would be.
+//
+// Callers (see sherdlock's TestStaticHotTokenContentionPareto, which wraps the Locker to record
+// per-token attempt/conflict counts) are expected to assert on the concentration of conflicts
+// among the returned hot token IDs. This function only asserts the invariants that must hold
+// regardless of how contention is distributed: no error here can be a genuine insufficient-
+// funds (every request's amount is well within a single hot token, and nothing is ever spent),
+// and after the run every lock is released. Unlike TestHotTokenContention, it cannot also
+// assert "no spurious insufficient-funds under spend" as a proxy for correctness, since nothing
+// is ever spent here - it is testing contention shape, not the spend path.
+func TestStaticHotTokenContentionPareto(t *testing.T, replicas []EnhancedManager, lockDB driver.TokenLockStore, requestsPerReplica int) []token.ID {
+	require.Len(t, replicas, 3, "token mix below assumes exactly 3 replicas")
+
+	const numHotTokens, numColdTokens = 5, 10
+	const coldCurrency = defaultCurrency + "_COLD"
+	hotValue := newToken(50)
+	coldValue := newToken(10000)
+
+	hotTokens := createDefaultTokens(collections.Repeat(hotValue, numHotTokens)...)
+	coldTokens := createTokensWithType(coldCurrency, collections.Repeat(coldValue, numColdTokens)...)
+	err := storeTokens(replicas[0], append(hotTokens, coldTokens...))
+	require.NoError(t, err)
+
+	hotIDs := make([]token.ID, 0, numHotTokens)
+	for _, tk := range hotTokens {
+		hotIDs = append(hotIDs, tk.Id)
+	}
+
+	// Well below hotValue, so every hot token alone is individually sufficient.
+	item := newToken(1)
+	errs := parallelSelectNoSpend(t, replicas, collections.Repeat(item, requestsPerReplica))
+
+	locks, err := lockDB.ListLocks(t.Context())
+	require.NoError(t, err)
+	assert.Empty(t, errs, "spurious insufficient-funds under lock contention (#2395, static hot tokens)")
+	assert.Empty(t, locks, "no lock should survive settlement of every request (#2395 mechanism 4)")
+
+	return hotIDs
+}
+
 func TestInsufficientTokensOneReplica(t *testing.T, replica EnhancedManager) {
 	// Create 2 tokens of value CHF1 each (total CHF2)
 	item := newToken(1)
@@ -448,6 +512,51 @@ func parallelSelectWithSettlement(t *testing.T, replicas []EnhancedManager, quan
 	return errs
 }
 
+// parallelSelectNoSpend is parallelSelectWithSettlement without the spend step: every winning
+// request releases its lock through the real SelectorManager.Unlock path (releaseViaProvider),
+// exactly as parallelSelectWithSettlement does, but never deletes the selected tokens or mints
+// change - so the same token IDs remain in the pool, available to be re-locked, for the rest of
+// the run. See TestStaticHotTokenContentionPareto, the only caller.
+func parallelSelectNoSpend(t *testing.T, replicas []EnhancedManager, quantities []token.Quantity) []error {
+	t.Helper()
+	errCh := make(chan error, 100)
+	errs := make([]error, 0)
+	var errMu sync.Mutex
+	go func() {
+		errMu.Lock()
+		defer errMu.Unlock()
+		for err := range errCh {
+			errs = append(errs, err)
+		}
+	}()
+	var wg sync.WaitGroup
+	wg.Add(len(quantities) * len(replicas))
+	for _, replica := range replicas {
+		sp := newRealSelectorManagerProvider(replica)
+		for _, quantity := range quantities {
+			txID := newTxID()
+			sel, err := replica.NewSelector(txID)
+			require.NoError(t, err)
+			go func() {
+				defer utils.IgnoreErrorWithOneArg(replica.Close, txID)
+				_, _, selErr := sel.Select(t.Context(), defaultTokenFilter, quantity.Hex(), defaultCurrency)
+				if selErr != nil {
+					errCh <- selErr
+				} else {
+					releaseViaProvider(t, sp, txID)
+				}
+				wg.Done()
+			}()
+		}
+	}
+	wg.Wait()
+	close(errCh)
+	errMu.Lock()
+	defer errMu.Unlock()
+
+	return errs
+}
+
 // newRealSelectorManagerProvider wires a finality.SelectorManagerProvider whose bound TMS
 // resolves to replica itself as the token2.SelectorManager - replica already satisfies that
 // interface, being an EnhancedManager - so SelectorManager() returns the exact manager
@@ -513,6 +622,25 @@ func deleteTokensAndStoreChange(m EnhancedManager, spentTokens []*token.ID, chan
 
 func createDefaultTokens(quantities ...token.Quantity) []token.UnspentToken {
 	return createTokens(map[transaction.ID][]token.Quantity{newTxID(): quantities})
+}
+
+// createTokensWithType is createDefaultTokens, but stored under tokType instead of
+// defaultCurrency - used by TestStaticHotTokenContentionPareto to make its cold pool
+// structurally invisible to a Select scoped to defaultCurrency (see that function's doc
+// comment for why type, not owner, is what this harness's query path actually enforces).
+func createTokensWithType(tokType token.Type, quantities ...token.Quantity) []token.UnspentToken {
+	txID := newTxID()
+	unspentTokens := make([]token.UnspentToken, 0, len(quantities))
+	for i, quantity := range quantities {
+		unspentTokens = append(unspentTokens, token.UnspentToken{
+			Id:       token.ID{TxId: txID, Index: uint64(i)}, // #nosec G115
+			Owner:    defaultWalletOwner,
+			Type:     tokType,
+			Quantity: quantity.Hex(),
+		})
+	}
+
+	return unspentTokens
 }
 
 func createTokens(txs map[transaction.ID][]token.Quantity) []token.UnspentToken {
