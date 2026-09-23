@@ -140,7 +140,11 @@ no lookahead at all: several tokens will have to be combined regardless.
    - **Immediate-retry layer** (`sherdlock` only): the inner loop refetches — refreshing the
      sherdlock token cache via the fetcher — up to a hardcoded `maxImmediateRetries = 5` times
      without releasing its already-acquired locks, then gives up with
-     `token.SelectorSufficientButLockedFunds`. Under `simple`, there is no equivalent cache
+     `token.SelectorSufficientButLockedFunds`. A batch-lock call that fails with a real store
+     error (rather than losing a per-token race) charges one unit of this same budget and
+     refetches immediately: the window it was claiming had already been drained out of the
+     cache, so those candidates would otherwise be gone for the rest of the scan even though
+     nothing established that they were contended. Under `simple`, there is no equivalent cache
      layer; the outer retry loop re-queries the query service directly on every attempt.
    - **Backoff layer**: a configurable `numRetries` / `retryInterval` outer loop (the
      `StubbornSelector` wrapper in `sherdlock`; the `numRetry` / `timeout` loop in `simple`)

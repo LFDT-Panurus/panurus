@@ -8,8 +8,10 @@ package sherdlock_test
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/LFDT-Panurus/panurus/token"
 	commonmetrics "github.com/LFDT-Panurus/panurus/token/core/common/metrics"
@@ -192,6 +194,143 @@ func TestBatchLockGenericStoreError_RetriedNotBlacklisted(t *testing.T) {
 	assert.Equal(t, 2, mockLocker.TryLockBatchCallCount(),
 		"a generic store error must not blacklist the token: it must be re-attempted via TryLockBatch on the next refetch")
 	assert.Zero(t, conflicts.Total(), "a generic store error is not a lock conflict and must not increment LockConflicts")
+}
+
+// recordingBatchLocker is a BatchTokenLocker that records the window it was asked to claim on
+// every call and grants everything except on the first failUntil calls, which fail with a
+// generic store error. failUntil < 0 makes every call fail, modelling a store outage.
+type recordingBatchLocker struct {
+	mu        sync.Mutex
+	calls     [][]token2.ID
+	failUntil int
+}
+
+func (l *recordingBatchLocker) TryLock(context.Context, *token2.ID, string) (bool, error) {
+	return false, errors.New("single-token path not used by recordingBatchLocker")
+}
+
+func (l *recordingBatchLocker) UnlockAll(context.Context) error { return nil }
+
+func (l *recordingBatchLocker) TryLockBatch(_ context.Context, ids []*token2.ID, _ string) ([]*token2.ID, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	window := make([]token2.ID, 0, len(ids))
+	for _, id := range ids {
+		window = append(window, *id)
+	}
+	l.calls = append(l.calls, window)
+
+	if l.failUntil < 0 || len(l.calls) <= l.failUntil {
+		return nil, errors.New("db unavailable")
+	}
+
+	return ids, nil
+}
+
+func (l *recordingBatchLocker) windows() [][]token2.ID {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	return append([][]token2.ID(nil), l.calls...)
+}
+
+// sixSmallTokensFetcher is a fetcher over six 10-unit tokens, handing out a fresh iterator on
+// every call. Sized so that a request of 20 needs a two-token covering window and the cache
+// still holds four further candidates behind it — which is what makes "the failed window was
+// dropped from the rest of this scan" distinguishable from "it was re-offered".
+func sixSmallTokensFetcher() (*mocks.FakeTokenFetcher, []token2.ID) {
+	tokens := make([]*token2.UnspentTokenInWallet, 0, 6)
+	ids := make([]token2.ID, 0, 6)
+	for i := range 6 {
+		tok := &token2.UnspentTokenInWallet{
+			Id:       token2.ID{TxId: fmt.Sprintf("tx-%d", i), Index: 0},
+			Type:     "ABC",
+			Quantity: "10",
+		}
+		tokens = append(tokens, tok)
+		ids = append(ids, tok.Id)
+	}
+
+	f := &mocks.FakeTokenFetcher{}
+	f.UnspentTokensIteratorByStub = func(context.Context, string, token2.Type) (sherdlock.Iterator[*token2.UnspentTokenInWallet], error) {
+		return &sliceIterator{items: tokens}, nil
+	}
+	f.HasEnoughSpendableTokensReturns(true, nil)
+
+	return f, ids
+}
+
+// TestBatchLockStoreError_WindowIsRefetchedNotDropped pins what the batch path's store-error
+// branch actually has to do for its own "Don't blacklist: none of these tokens are known to be
+// lost races" contract to mean anything. The window was assembled by draining candidates out of
+// the cache, so merely continuing would leave them gone for the rest of the scan — functionally
+// indistinguishable from blacklisting them, with the scan quietly locking the *later*,
+// larger candidates behind them instead. The branch must charge one unit of the immediate-retry
+// budget and refetch, so the window's tokens become visible again and can still win a lock once
+// the store recovers.
+func TestBatchLockStoreError_WindowIsRefetchedNotDropped(t *testing.T) {
+	_, metrics := setupMetricsMocks()
+
+	mockFetcher, ids := sixSmallTokensFetcher()
+	mockLocker := &recordingBatchLocker{failUntil: 1}
+
+	s := sherdlock.NewSelector(sherdlock.Logger(), mockFetcher, mockLocker, 64, metrics)
+	tokens, sum, err := s.Select(t.Context(), &unitTestMockOwnerFilter{id: "alice"}, "20", "ABC")
+	require.NoError(t, err, "a single transient store error must not fail the selection")
+	require.Len(t, tokens, 2)
+	assert.Equal(t, "20", sum.Decimal())
+
+	windows := mockLocker.windows()
+	require.Len(t, windows, 2, "one retry after the store error is enough")
+	assert.Equal(t, []token2.ID{ids[0], ids[1]}, windows[0])
+	assert.Equal(t, windows[0], windows[1],
+		"the window that hit the store error must be re-offered once the store recovers, not silently "+
+			"skipped for the rest of the scan in favour of the candidates behind it")
+
+	got := []token2.ID{*tokens[0], *tokens[1]}
+	assert.ElementsMatch(t, []token2.ID{ids[0], ids[1]}, got,
+		"the tokens that hit the store error must be the ones finally locked, proving they were never "+
+			"treated as lost races")
+}
+
+// TestBatchLockStoreError_TerminatesWithinRetryBudget is the other half: a store that never
+// recovers must still terminate, and within the same bound that lock contention is held to
+// (maxImmediateRetries refetches), rather than re-walking the whole cache on every scan — or,
+// worse, busy-looping on the same failing call if the window were simply requeued without
+// charging the budget. The hard deadline is deliberate: a regression that reintroduces an
+// unbounded loop must fail this test rather than hang the suite.
+func TestBatchLockStoreError_TerminatesWithinRetryBudget(t *testing.T) {
+	_, metrics := setupMetricsMocks()
+
+	mockFetcher, _ := sixSmallTokensFetcher()
+	mockLocker := &recordingBatchLocker{failUntil: -1}
+
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
+
+	s := sherdlock.NewSelector(sherdlock.Logger(), mockFetcher, mockLocker, 64, metrics)
+
+	done := make(chan error, 1)
+	go func() {
+		_, _, err := s.Select(ctx, &unitTestMockOwnerFilter{id: "alice"}, "20", "ABC")
+		done <- err
+	}()
+
+	select {
+	case err := <-done:
+		require.Error(t, err)
+		assert.True(t, errors.Is(err, token.SelectorSufficientButLockedFunds),
+			"a persistent store error exhausts the immediate-retry budget, got: %v", err)
+	case <-ctx.Done():
+		t.Fatal("Select did not terminate on a permanently failing store: the batch store-error path is unbounded")
+	}
+
+	// One TryLockBatch attempt per unit of the immediate-retry budget: each failure charges one
+	// and refetches, instead of draining the rest of the cache window by window first.
+	assert.LessOrEqual(t, len(mockLocker.windows()), 6,
+		"a permanently failing store must cost at most one batch attempt per immediate retry, got %d",
+		len(mockLocker.windows()))
 }
 
 // TestBatchLockLostRace_BlacklistsAndCountsConflict is the other half of the asymmetry: when

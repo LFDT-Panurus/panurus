@@ -288,27 +288,10 @@ func (s *Selector) selectInternal(ctx context.Context, owner token.OwnerFilter, 
 			}
 			sawNonBlacklistedCandidate = false
 
-			if immediateRetries > maxImmediateRetries {
-				s.logger.Warnf("Exceeded max number of immediate retries. Unlock tokens and abort...")
-
-				// When we loop over the tokens, we check whether a token is already locked.
-				// Every time our token cache finishes, but we noted that one of the tokens we saw was used by someone,
-				// we retry to fetch, in case the other process did not spend and unlocked the token meanwhile.
-				// We do not unlock our tokens, yet.
-				// After some retries, we unlock the tokens and return a token.SelectorInsufficientFunds error
-				return nil, nil, immediateRetries, token.SelectorSufficientButLockedFunds
+			var refreshErr error
+			if immediateRetries, refreshErr = s.refreshCandidates(ctx, owner.ID(), tokenType, immediateRetries); refreshErr != nil {
+				return nil, nil, immediateRetries, refreshErr
 			}
-
-			s.logger.DebugfContext(ctx, "Fetch all non-deleted tokens from the DB and refresh the token cache.")
-			it, err := s.fetcher.UnspentTokensIteratorBy(ctx, owner.ID(), tokenType)
-			if err != nil {
-				return nil, nil, immediateRetries, errors.Wrapf(err, "failed to reload tokens for retry %d [%s:%s]", immediateRetries, owner.ID(), tokenType)
-			}
-			if err := s.swapCache(it); err != nil {
-				return nil, nil, immediateRetries, err
-			}
-
-			immediateRetries++
 			tokensLockedByOthersExist = false
 		} else if blacklisted.Contains(t.Id) {
 			// Already lost the race on this token earlier in this same
@@ -361,13 +344,26 @@ func (s *Selector) selectInternal(ctx context.Context, owner token.OwnerFilter, 
 					return nil, nil, immediateRetries, lockErr
 				}
 				// A real store error (not per-token contention) failed the whole batch.
-				// Don't blacklist: none of these tokens are known to be lost races.
+				// Don't blacklist: none of these tokens are known to be lost races. But they
+				// were drained out of the cache to build the window, so simply continuing the
+				// scan would leave them gone until the next refetch anyway — functionally
+				// indistinguishable from blacklisting them, with the scan locking the larger
+				// candidates behind them instead. Charge one unit of the immediate-retry budget
+				// and refetch, which makes them visible again while keeping a permanently
+				// failing store bounded by exactly the same budget lock contention is: one
+				// attempt per retry, rather than re-walking the whole cache window by window on
+				// every scan (or busy-looping on the same failing call, which is what requeuing
+				// the window without charging the budget would do).
 				s.logger.Warnf("Failed to batch-lock %d token(s): %v", len(window), lockErr)
 				for _, wt := range window {
 					attempted.Add(wt.Id)
 				}
 				sawNonBlacklistedCandidate = true
 				tokensLockedByOthersExist = true
+				var refreshErr error
+				if immediateRetries, refreshErr = s.refreshCandidates(ctx, owner.ID(), tokenType, immediateRetries); refreshErr != nil {
+					return nil, nil, immediateRetries, refreshErr
+				}
 
 				continue
 			}
@@ -446,6 +442,39 @@ func (s *Selector) selectInternal(ctx context.Context, owner token.OwnerFilter, 
 			}
 		}
 	}
+}
+
+// refreshCandidates charges one unit of the immediate-retry budget and reinstalls a freshly
+// fetched candidate cache, so candidates this scan has already consumed — because they lost a
+// lock race, or because a store error failed the batch they were in — become visible again in
+// case the situation has changed meanwhile. It returns the updated retry count.
+//
+// Once the budget is spent it reports token.SelectorSufficientButLockedFunds instead of
+// refetching: when we loop over the tokens we check whether a token is already locked, and
+// every time our token cache finishes having noted that one of the tokens we saw was used by
+// someone, we retry the fetch in case that other process unlocked it meanwhile, without
+// unlocking our own tokens yet. After some retries we give up, and the caller unlocks.
+//
+// Any candidates buffered by nextCandidate's lookahead are dropped: they were peeked from the
+// cache being replaced, so the fresh, fully ordered candidate set supersedes them.
+func (s *Selector) refreshCandidates(ctx context.Context, walletID string, tokenType token2.Type, immediateRetries int) (int, error) {
+	if immediateRetries > maxImmediateRetries {
+		s.logger.Warnf("Exceeded max number of immediate retries. Unlock tokens and abort...")
+
+		return immediateRetries, token.SelectorSufficientButLockedFunds
+	}
+
+	s.logger.DebugfContext(ctx, "Fetch all non-deleted tokens from the DB and refresh the token cache.")
+	it, err := s.fetcher.UnspentTokensIteratorBy(ctx, walletID, tokenType)
+	if err != nil {
+		return immediateRetries, errors.Wrapf(err, "failed to reload tokens for retry %d [%s:%s]", immediateRetries, walletID, tokenType)
+	}
+	if err := s.swapCache(it); err != nil {
+		return immediateRetries, err
+	}
+	s.pending = nil
+
+	return immediateRetries + 1, nil
 }
 
 // next returns the next token of the current cache. It holds s.mu for the whole
