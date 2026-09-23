@@ -112,6 +112,33 @@ func lockConflictsProvider() (*mocks.FakeProvider, *countingCounter) {
 	return p, conflicts
 }
 
+// lockConflictsAndStoreErrorsProvider hands out a countingCounter for LockConflicts
+// ("lock_conflicts_total") and another for LockStoreErrors ("lock_store_errors_total"), and
+// discards everything else. It is these two counters together that distinguish "the token is
+// genuinely contended" (LockConflicts) from "the store itself is failing" (LockStoreErrors, see
+// metrics.go): a test asserting on the store-error path must check both, since a bug could
+// increment the wrong one instead of just failing to increment the right one.
+func lockConflictsAndStoreErrorsProvider() (*mocks.FakeProvider, *countingCounter, *countingCounter) {
+	conflicts := &countingCounter{}
+	storeErrors := &countingCounter{}
+	p := &mocks.FakeProvider{}
+	p.NewCounterStub = func(opts commonmetrics.CounterOpts) commonmetrics.Counter {
+		switch opts.Name {
+		case "lock_conflicts_total":
+			return conflicts
+		case "lock_store_errors_total":
+			return storeErrors
+		default:
+			return &countingCounter{}
+		}
+	}
+	p.NewHistogramStub = func(commonmetrics.HistogramOpts) commonmetrics.Histogram {
+		return discardHistogram{}
+	}
+
+	return p, conflicts, storeErrors
+}
+
 // singleTokenIteratorStub returns a UnspentTokensIteratorByStub that hands back a fresh
 // one-shot iterator over tok on every call, so a test can drive multiple fetch/refetch
 // cycles (immediate retries) over the same candidate without it ever appearing to be
@@ -165,9 +192,10 @@ func TestBatchLockRateLimit_HardAborts(t *testing.T) {
 // token is missing from won (covered by TestBatchLockLostRace_BlacklistsAndCountsConflict
 // below). This test proves the "retried" half of that asymmetry: the same token, offered
 // again on a refetch, is not skipped as blacklisted and does get a second TryLockBatch call,
-// which this time succeeds.
+// which this time succeeds. It must also count a LockStoreErrors, not a LockConflicts: the two
+// counters exist precisely to distinguish this case from a genuine lost race.
 func TestBatchLockGenericStoreError_RetriedNotBlacklisted(t *testing.T) {
-	metricsProvider, conflicts := lockConflictsProvider()
+	metricsProvider, conflicts, storeErrors := lockConflictsAndStoreErrorsProvider()
 	metrics := sherdlock.NewMetrics(metricsProvider)
 
 	tok := &token2.UnspentTokenInWallet{
@@ -194,6 +222,7 @@ func TestBatchLockGenericStoreError_RetriedNotBlacklisted(t *testing.T) {
 	assert.Equal(t, 2, mockLocker.TryLockBatchCallCount(),
 		"a generic store error must not blacklist the token: it must be re-attempted via TryLockBatch on the next refetch")
 	assert.Zero(t, conflicts.Total(), "a generic store error is not a lock conflict and must not increment LockConflicts")
+	assert.Equal(t, float64(1), storeErrors.Total(), "the one genuine store error must increment LockStoreErrors")
 }
 
 // recordingBatchLocker is a BatchTokenLocker that records the window it was asked to claim on
@@ -460,9 +489,11 @@ func TestSingleLockLostRace_BlacklistsAndCountsConflict(t *testing.T) {
 // TestBatchLockGenericStoreError_RetriedNotBlacklisted's counterpart for the single-token path:
 // a TryLock error that does NOT wrap driver.ErrTokenAlreadyLocked (a real store error, not
 // per-token contention) must not count a LockConflicts and must not blacklist the token, exactly
-// mirroring the batch path's asymmetry documented at selector.go:359-370.
+// mirroring the batch path's asymmetry documented at selector.go:359-370. It must also count a
+// LockStoreErrors, not a LockConflicts: the two counters exist precisely to distinguish this
+// case from a genuine lost race.
 func TestSingleLockGenericStoreError_NotCountedAsConflict_Retried(t *testing.T) {
-	metricsProvider, conflicts := lockConflictsProvider()
+	metricsProvider, conflicts, storeErrors := lockConflictsAndStoreErrorsProvider()
 	metrics := sherdlock.NewMetrics(metricsProvider)
 
 	tok := &token2.UnspentTokenInWallet{
@@ -489,6 +520,7 @@ func TestSingleLockGenericStoreError_NotCountedAsConflict_Retried(t *testing.T) 
 	assert.Equal(t, 2, mockLocker.TryLockCallCount(),
 		"a generic store error must not blacklist the token: it must be re-attempted via TryLock on the next refetch")
 	assert.Zero(t, conflicts.Total(), "a generic store error is not a lock conflict and must not increment LockConflicts")
+	assert.Equal(t, float64(1), storeErrors.Total(), "the one genuine store error must increment LockStoreErrors")
 }
 
 // TestDistinctTokensAttempted_ObservesAttemptedCount pins that Select's deferred report
@@ -571,4 +603,80 @@ func TestDistinctTokensAttempted_NotObservedOnInvalidQuantity(t *testing.T) {
 	require.Error(t, err)
 	assert.Empty(t, distinct.Observations(),
 		"an invalid quantity string returns before attempted is initialized, so DistinctTokensAttempted must not be observed")
+}
+
+// retryMetricsProvider is lockMetricsProvider's counterpart for the two histograms
+// StubbornSelector.Select must aggregate across its internal backoff retries:
+// DistinctTokensAttempted ("distinct_tokens_attempted") and ImmediateRetries
+// ("selection_immediate_retries", see metrics.go). Everything else is discarded.
+func retryMetricsProvider() (*mocks.FakeProvider, *recordingHistogram, *recordingHistogram) {
+	distinct := &recordingHistogram{}
+	immediateRetries := &recordingHistogram{}
+	p := &mocks.FakeProvider{}
+	p.NewCounterStub = func(commonmetrics.CounterOpts) commonmetrics.Counter {
+		return &countingCounter{}
+	}
+	p.NewHistogramStub = func(opts commonmetrics.HistogramOpts) commonmetrics.Histogram {
+		switch opts.Name {
+		case "distinct_tokens_attempted":
+			return distinct
+		case "selection_immediate_retries":
+			return immediateRetries
+		default:
+			return discardHistogram{}
+		}
+	}
+
+	return p, distinct, immediateRetries
+}
+
+// TestStubbornSelector_AggregatesRetryMetricsAcrossBackoff pins that StubbornSelector.Select
+// (selector.go:107-165) observes DistinctTokensAttempted and ImmediateRetries exactly once per
+// outer Select call, summed across every internal selectWithoutMetrics attempt it makes - not
+// once per attempt. Before this was fixed, StubbornSelector never observed either metric at all
+// (selectWithoutMetrics discarded both selectInternal return values), so a caller watching these
+// metrics saw nothing for the exact retry-heavy calls the metrics exist to characterize.
+//
+// The scenario forces the first outer attempt to exhaust selectInternal's own immediate-retry
+// budget against a single always-losing token (4 TryLock losses interleaved with 6 refetches,
+// ending in token.SelectorSufficientButLockedFunds with immediateRetries=6, attemptedCount=1 -
+// see refreshCandidates), triggering StubbornSelector's backoff. The second outer attempt then
+// wins the same token immediately (immediateRetries=0, attemptedCount=1). The aggregated
+// observation must reflect both attempts summed (6 and 2), not just the last one.
+func TestStubbornSelector_AggregatesRetryMetricsAcrossBackoff(t *testing.T) {
+	metricsProvider, distinct, immediateRetriesHist := retryMetricsProvider()
+	metrics := sherdlock.NewMetrics(metricsProvider)
+
+	tok := &token2.UnspentTokenInWallet{
+		Id:       token2.ID{TxId: "tx-hot", Index: 0},
+		Type:     "ABC",
+		Quantity: "100",
+	}
+
+	mockFetcher := &mocks.FakeTokenFetcher{}
+	mockFetcher.UnspentTokensIteratorByStub = singleTokenIteratorStub(tok)
+
+	mockLocker := &mocks.FakeTokenLocker{}
+	lockedErr := errors.Wrapf(driver.ErrTokenAlreadyLocked, "already locked")
+	mockLocker.TryLockReturnsOnCall(0, false, lockedErr)
+	mockLocker.TryLockReturnsOnCall(1, false, lockedErr)
+	mockLocker.TryLockReturnsOnCall(2, false, lockedErr)
+	mockLocker.TryLockReturnsOnCall(3, false, lockedErr)
+	mockLocker.TryLockReturnsOnCall(4, true, nil)
+
+	s := sherdlock.NewStubbornSelector(sherdlock.Logger(), mockFetcher, mockLocker, 64, time.Millisecond, 1, metrics)
+	tokens, sum, err := s.Select(t.Context(), &unitTestMockOwnerFilter{id: "alice"}, "50", "ABC")
+	require.NoError(t, err, "the second outer attempt must win the token and succeed")
+	require.Len(t, tokens, 1)
+	assert.Equal(t, "100", sum.Decimal())
+
+	require.Len(t, immediateRetriesHist.Observations(), 1,
+		"ImmediateRetries must be observed exactly once for the whole outer Select call, not once per internal attempt")
+	assert.InDelta(t, 6, immediateRetriesHist.Observations()[0], 0,
+		"the exhausted first attempt's immediateRetries (6) must carry over into the aggregate even though the winning second attempt resets to 0")
+
+	require.Len(t, distinct.Observations(), 1,
+		"DistinctTokensAttempted must be observed exactly once for the whole outer Select call, not once per internal attempt")
+	assert.InDelta(t, 2, distinct.Observations()[0], 0,
+		"each of the two internal attempts counts the same token as attempted once (1+1), summed across attempts")
 }

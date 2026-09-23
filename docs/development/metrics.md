@@ -184,7 +184,16 @@ to distinguish "one hot token retried many times" from "many tokens each contend
 `lock_conflicts_total` is deliberately unlabeled by token id or wallet id to avoid unbounded
 cardinality — per-token attribution belongs in the selector's debug-level log line (`Lost lock
 race on token [...]`, visible once the sherdlock package's logger is at debug level) and in the
-[`tokendiag locks`](../../cmd/tokendiag/README.md) command.
+[`tokendiag locks`](../../cmd/tokendiag/README.md) command. `lock_store_errors_total` (also
+#2395) counts the sibling case: a TryLock/TryLockBatch failure that is *not* a lock conflict (does
+not wrap `driver.ErrTokenAlreadyLocked`) — a genuine store error such as a connection failure or
+timeout. To the caller both currently surface identically as retried, eventually-locked-funds
+contention, so this counter is what distinguishes "the store is unhealthy" from "tokens are just
+contended" without changing that retry behavior.
+
+For `StubbornSelector`, both `selection_immediate_retries` and `distinct_tokens_attempted` are
+observed once per outer `Select()` call, summed across every internal backoff-retry attempt it
+makes — not once per attempt.
 
 | Metric | Type | Labels | Description |
 |---|---|---|---|
@@ -194,6 +203,7 @@ race on token [...]`, visible once the sherdlock package's logger is at debug le
 | `panurus_services_selector_sherdlock_selection_immediate_retries` | histogram | — | Distribution of immediate retry counts per token selection call |
 | `panurus_services_selector_sherdlock_lock_conflicts_total` | counter | — | Total number of lost lock races (a token was already locked by another process) |
 | `panurus_services_selector_sherdlock_distinct_tokens_attempted` | histogram | — | Distribution of the number of distinct tokens a lock was attempted on (won, lost, or rate-limited) per token selection call |
+| `panurus_services_selector_sherdlock_lock_store_errors_total` | counter | — | Total number of TryLock/TryLockBatch failures that are not lock conflicts (a genuine store error) |
 
 Source: `token/services/selector/sherdlock/metrics.go`.
 

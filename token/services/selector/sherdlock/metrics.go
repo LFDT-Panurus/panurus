@@ -38,6 +38,14 @@ type Metrics struct {
 	// limiter. This is what distinguishes "one hot token retried many times" from
 	// "many tokens each contended once".
 	DistinctTokensAttempted metrics.Histogram
+	// LockStoreErrors counts every TryLock/TryLockBatch failure that is not a lock
+	// conflict (i.e. does not wrap driver.ErrTokenAlreadyLocked): a genuine store
+	// error - connection failure, timeout, etc. Unlike LockConflicts, this signals a
+	// problem with the store itself rather than ordinary contention: to the caller
+	// both currently surface identically (as locked funds, see selector.go), so this
+	// is what distinguishes "the DB is unhealthy" from "tokens are just contended" in
+	// dashboards and alerts. See #2395.
+	LockStoreErrors metrics.Counter
 }
 
 func NewMetrics(p metrics.Provider) *Metrics {
@@ -72,6 +80,10 @@ func NewMetrics(p metrics.Provider) *Metrics {
 			Name:    "distinct_tokens_attempted",
 			Help:    "Distribution of the number of distinct tokens a lock was attempted on (won, lost, or rate-limited) per token selection call",
 			Buckets: []float64{1, 2, 5, 10, 25, 50, 100},
+		}),
+		LockStoreErrors: p.NewCounter(metrics.CounterOpts{
+			Name: "lock_store_errors_total",
+			Help: "Total number of TryLock/TryLockBatch failures that are not lock conflicts (a genuine store error)",
 		}),
 	}
 }

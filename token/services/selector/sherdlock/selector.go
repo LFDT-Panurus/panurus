@@ -104,11 +104,27 @@ type StubbornSelector struct {
 	maxRetriesAfterBackoff int
 }
 
+// Select retries selectWithoutMetrics across backoff cycles until it succeeds, gives up for
+// good, or the context is cancelled. Each inner attempt runs its own, independent
+// selectInternal call (fresh cache, fresh attempted set), so ImmediateRetries and
+// DistinctTokensAttempted are accumulated across every inner attempt here and observed exactly
+// once - on whichever of the three exit paths below is taken - rather than once per inner
+// attempt: a caller watching these metrics wants the cost of the whole outer Select call, not
+// just its last inner leg.
 func (m *StubbornSelector) Select(ctx context.Context, ownerFilter token.OwnerFilter, q string, tokenType token2.Type) ([]*token2.ID, token2.Quantity, error) {
 	start := time.Now()
+	totalImmediateRetries := 0
+	totalAttempted := 0
 	for retriesAfterBackoff := 0; retriesAfterBackoff <= m.maxRetriesAfterBackoff; retriesAfterBackoff++ {
-		if tokens, quantity, err := m.selectWithoutMetrics(ctx, ownerFilter, q, tokenType); err == nil || !errors.Is(err, token.SelectorSufficientButLockedFunds) {
+		tokens, quantity, immediateRetries, attemptedCount, err := m.selectWithoutMetrics(ctx, ownerFilter, q, tokenType)
+		totalImmediateRetries += immediateRetries
+		if attemptedCount >= 0 {
+			totalAttempted += attemptedCount
+		}
+		if err == nil || !errors.Is(err, token.SelectorSufficientButLockedFunds) {
 			m.metrics.SelectionDuration.Observe(time.Since(start).Seconds())
+			m.metrics.ImmediateRetries.Observe(float64(totalImmediateRetries))
+			m.metrics.DistinctTokensAttempted.Observe(float64(totalAttempted))
 			if err == nil {
 				m.metrics.SelectionOutcome.With(outcomeLabel, "success").Add(1)
 			} else if errors.Is(err, token.SelectorInsufficientFunds) {
@@ -134,6 +150,8 @@ func (m *StubbornSelector) Select(ctx context.Context, ownerFilter token.OwnerFi
 				m.logger.Errorf("failed to unlock tokens on context cancellation: %s", err)
 			}
 			m.metrics.SelectionDuration.Observe(time.Since(start).Seconds())
+			m.metrics.ImmediateRetries.Observe(float64(totalImmediateRetries))
+			m.metrics.DistinctTokensAttempted.Observe(float64(totalAttempted))
 			m.metrics.SelectionOutcome.With(outcomeLabel, "error").Add(1)
 
 			return nil, nil, ctx.Err()
@@ -142,6 +160,8 @@ func (m *StubbornSelector) Select(ctx context.Context, ownerFilter token.OwnerFi
 	}
 
 	m.metrics.SelectionDuration.Observe(time.Since(start).Seconds())
+	m.metrics.ImmediateRetries.Observe(float64(totalImmediateRetries))
+	m.metrics.DistinctTokensAttempted.Observe(float64(totalAttempted))
 	m.metrics.SelectionOutcome.With(outcomeLabel, "locked_funds").Add(1)
 
 	return nil, nil, errors.Wrapf(token.SelectorInsufficientFunds, "aborted too many times and no other process unlocked or added tokens")
@@ -168,7 +188,7 @@ func NewSelector(logger logging.Logger, tokenDB TokenFetcher, lockDB TokenLocker
 
 func (s *Selector) Select(ctx context.Context, owner token.OwnerFilter, q string, tokenType token2.Type) ([]*token2.ID, token2.Quantity, error) {
 	start := time.Now()
-	ids, quantity, immediateRetries, err := s.selectInternal(ctx, owner, q, tokenType)
+	ids, quantity, immediateRetries, attemptedCount, err := s.selectInternal(ctx, owner, q, tokenType)
 	if err != nil {
 		if err2 := s.locker.UnlockAll(ctx); err2 != nil {
 			s.logger.Warnf("failed to unlock tokens after selection error: %v", err2)
@@ -176,6 +196,13 @@ func (s *Selector) Select(ctx context.Context, owner token.OwnerFilter, q string
 	}
 	s.metrics.SelectionDuration.Observe(time.Since(start).Seconds())
 	s.metrics.ImmediateRetries.Observe(float64(immediateRetries))
+	// attemptedCount is -1 when selectInternal returned before the attempted set was
+	// initialized (closed selector, invalid quantity): those calls never touched the
+	// fetcher or locker, so DistinctTokensAttempted must not be observed at all for them,
+	// not even as zero.
+	if attemptedCount >= 0 {
+		s.metrics.DistinctTokensAttempted.Observe(float64(attemptedCount))
+	}
 	if err == nil {
 		s.metrics.SelectionOutcome.With(outcomeLabel, "success").Add(1)
 	} else if errors.Is(err, token.SelectorSufficientButLockedFunds) {
@@ -189,25 +216,30 @@ func (s *Selector) Select(ctx context.Context, owner token.OwnerFilter, q string
 	return ids, quantity, err
 }
 
-// selectWithoutMetrics is used by StubbornSelector to avoid double-counting metrics.
-func (s *Selector) selectWithoutMetrics(ctx context.Context, owner token.OwnerFilter, q string, tokenType token2.Type) ([]*token2.ID, token2.Quantity, error) {
-	ids, quantity, _, err := s.selectInternal(ctx, owner, q, tokenType)
+// selectWithoutMetrics is used by StubbornSelector to avoid double-counting metrics: it returns
+// the per-call immediateRetries and attemptedCount so the caller can accumulate them across
+// backoff retries and observe once, instead of observing them here per inner attempt.
+func (s *Selector) selectWithoutMetrics(ctx context.Context, owner token.OwnerFilter, q string, tokenType token2.Type) ([]*token2.ID, token2.Quantity, int, int, error) {
+	ids, quantity, immediateRetries, attemptedCount, err := s.selectInternal(ctx, owner, q, tokenType)
 	if err != nil {
 		if err2 := s.locker.UnlockAll(ctx); err2 != nil {
 			s.logger.Warnf("failed to unlock tokens after selection error: %v", err2)
 		}
 	}
 
-	return ids, quantity, err
+	return ids, quantity, immediateRetries, attemptedCount, err
 }
 
-func (s *Selector) selectInternal(ctx context.Context, owner token.OwnerFilter, q string, tokenType token2.Type) ([]*token2.ID, token2.Quantity, int, error) {
+// selectInternal's fourth return value is the number of distinct tokens attempted this call, for
+// DistinctTokensAttempted - or -1 if the call returned before that tracking was initialized
+// (closed selector, invalid quantity), signaling to callers that it must not be observed at all.
+func (s *Selector) selectInternal(ctx context.Context, owner token.OwnerFilter, q string, tokenType token2.Type) ([]*token2.ID, token2.Quantity, int, int, error) {
 	if s.isClosed() {
-		return nil, nil, 0, errors.Errorf("selector is already closed")
+		return nil, nil, 0, -1, errors.Errorf("selector is already closed")
 	}
 	quantity, err := token2.ToQuantity(q, s.precision)
 	if err != nil {
-		return nil, nil, 0, errors.Wrapf(err, "failed to create quantity")
+		return nil, nil, 0, -1, errors.Wrapf(err, "failed to create quantity")
 	}
 	sum, selected, tokensLockedByOthersExist, immediateRetries := token2.NewZeroQuantity(s.precision), collections.NewSet[*token2.ID](), true, 0
 	// attempted tracks every distinct token this call has tried a lock on, so we
@@ -215,9 +247,6 @@ func (s *Selector) selectInternal(ctx context.Context, owner token.OwnerFilter, 
 	// whatever the outcome - lock won, lost to a conflict, or denied by the rate
 	// limiter - because TryLock was called on it in every one of those cases.
 	attempted := collections.NewSet[token2.ID]()
-	defer func() {
-		s.metrics.DistinctTokensAttempted.Observe(float64(attempted.Length()))
-	}()
 	// blacklisted holds tokens this call has already lost a lock race on, so a
 	// refetch does not immediately re-attempt (and re-lose) the same race
 	// against the same hot token: see #2395, where one token was re-proposed
@@ -242,10 +271,10 @@ func (s *Selector) selectInternal(ctx context.Context, owner token.OwnerFilter, 
 	for {
 		remaining, remainingErr := quantity.Sub(sum)
 		if remainingErr != nil {
-			return nil, nil, immediateRetries, errors.Wrapf(remainingErr, "failed to compute remaining amount for [%s:%s]", owner.ID(), tokenType)
+			return nil, nil, immediateRetries, attempted.Length(), errors.Wrapf(remainingErr, "failed to compute remaining amount for [%s:%s]", owner.ID(), tokenType)
 		}
 		if t, err := s.nextCandidate(remaining); err != nil {
-			return nil, nil, immediateRetries, errors.Wrapf(err, "failed to get tokens for [%s:%s]", owner.ID(), tokenType)
+			return nil, nil, immediateRetries, attempted.Length(), errors.Wrapf(err, "failed to get tokens for [%s:%s]", owner.ID(), tokenType)
 		} else if t == nil {
 			if !tokensLockedByOthersExist {
 				// The candidate query excludes already-locked tokens (#2395,
@@ -269,10 +298,10 @@ func (s *Selector) selectInternal(ctx context.Context, owner token.OwnerFilter, 
 				// non-double-counting form of `total - sum >= remaining`.
 				hasEnough, hasEnoughErr := s.fetcher.HasEnoughSpendableTokens(ctx, owner.ID(), tokenType, quantity.ToBigInt())
 				if hasEnoughErr != nil {
-					return nil, nil, immediateRetries, errors.Wrapf(hasEnoughErr, "failed to check for locked tokens for [%s:%s]", owner.ID(), tokenType)
+					return nil, nil, immediateRetries, attempted.Length(), errors.Wrapf(hasEnoughErr, "failed to check for locked tokens for [%s:%s]", owner.ID(), tokenType)
 				}
 				if !hasEnough {
-					return nil, nil, immediateRetries, errors.Wrapf(
+					return nil, nil, immediateRetries, attempted.Length(), errors.Wrapf(
 						token.SelectorInsufficientFunds,
 						"insufficient funds, only [%s] tokens of type [%s] are available, but [%s] were requested and no other process has any tokens locked",
 						sum.Decimal(),
@@ -290,7 +319,7 @@ func (s *Selector) selectInternal(ctx context.Context, owner token.OwnerFilter, 
 
 			var refreshErr error
 			if immediateRetries, refreshErr = s.refreshCandidates(ctx, owner.ID(), tokenType, immediateRetries); refreshErr != nil {
-				return nil, nil, immediateRetries, refreshErr
+				return nil, nil, immediateRetries, attempted.Length(), refreshErr
 			}
 			tokensLockedByOthersExist = false
 		} else if blacklisted.Contains(t.Id) {
@@ -309,12 +338,12 @@ func (s *Selector) selectInternal(ctx context.Context, owner token.OwnerFilter, 
 			window := []*token2.UnspentTokenInWallet{t}
 			windowSum, err := token2.ToQuantity(t.Quantity, s.precision)
 			if err != nil {
-				return nil, nil, immediateRetries, errors.Wrapf(err, "invalid token [%s] found", t.Id)
+				return nil, nil, immediateRetries, attempted.Length(), errors.Wrapf(err, "invalid token [%s] found", t.Id)
 			}
 			for windowSum.Cmp(remaining) < 0 {
 				next, nextErr := s.dequeue()
 				if nextErr != nil {
-					return nil, nil, immediateRetries, errors.Wrapf(nextErr, "failed to get tokens for [%s:%s]", owner.ID(), tokenType)
+					return nil, nil, immediateRetries, attempted.Length(), errors.Wrapf(nextErr, "failed to get tokens for [%s:%s]", owner.ID(), tokenType)
 				}
 				if next == nil {
 					break
@@ -324,11 +353,11 @@ func (s *Selector) selectInternal(ctx context.Context, owner token.OwnerFilter, 
 				}
 				nq, err := token2.ToQuantity(next.Quantity, s.precision)
 				if err != nil {
-					return nil, nil, immediateRetries, errors.Wrapf(err, "invalid token [%s] found", next.Id)
+					return nil, nil, immediateRetries, attempted.Length(), errors.Wrapf(err, "invalid token [%s] found", next.Id)
 				}
 				windowSum, err = windowSum.Add(nq)
 				if err != nil {
-					return nil, nil, immediateRetries, errors.Wrapf(err, "failed to add quantity")
+					return nil, nil, immediateRetries, attempted.Length(), errors.Wrapf(err, "failed to add quantity")
 				}
 				window = append(window, next)
 			}
@@ -341,7 +370,7 @@ func (s *Selector) selectInternal(ctx context.Context, owner token.OwnerFilter, 
 			if lockErr != nil {
 				// A rate-limit denial from the locker is a hard stop: abort instead of retrying.
 				if errors.Is(lockErr, token.SelectorRateLimited) {
-					return nil, nil, immediateRetries, lockErr
+					return nil, nil, immediateRetries, attempted.Length(), lockErr
 				}
 				// A real store error (not per-token contention) failed the whole batch.
 				// Don't blacklist: none of these tokens are known to be lost races. But they
@@ -355,6 +384,7 @@ func (s *Selector) selectInternal(ctx context.Context, owner token.OwnerFilter, 
 				// every scan (or busy-looping on the same failing call, which is what requeuing
 				// the window without charging the budget would do).
 				s.logger.Warnf("Failed to batch-lock %d token(s): %v", len(window), lockErr)
+				s.metrics.LockStoreErrors.Add(1)
 				for _, wt := range window {
 					attempted.Add(wt.Id)
 				}
@@ -362,7 +392,7 @@ func (s *Selector) selectInternal(ctx context.Context, owner token.OwnerFilter, 
 				tokensLockedByOthersExist = true
 				var refreshErr error
 				if immediateRetries, refreshErr = s.refreshCandidates(ctx, owner.ID(), tokenType, immediateRetries); refreshErr != nil {
-					return nil, nil, immediateRetries, refreshErr
+					return nil, nil, immediateRetries, attempted.Length(), refreshErr
 				}
 
 				continue
@@ -385,17 +415,17 @@ func (s *Selector) selectInternal(ctx context.Context, owner token.OwnerFilter, 
 				s.logger.DebugfContext(ctx, "Got the lock on token [%v]", wt)
 				q, err := token2.ToQuantity(wt.Quantity, s.precision)
 				if err != nil {
-					return nil, nil, immediateRetries, errors.Wrapf(err, "invalid token [%s] found", wt.Id)
+					return nil, nil, immediateRetries, attempted.Length(), errors.Wrapf(err, "invalid token [%s] found", wt.Id)
 				}
 				immediateRetries = 0
 				sum, err = sum.Add(q)
 				if err != nil {
-					return nil, nil, immediateRetries, errors.Wrapf(err, "failed to add quantity")
+					return nil, nil, immediateRetries, attempted.Length(), errors.Wrapf(err, "failed to add quantity")
 				}
 				selected.Add(&wt.Id)
 			}
 			if sum.Cmp(quantity) >= 0 {
-				return selected.ToSlice(), sum, immediateRetries, nil
+				return selected.ToSlice(), sum, immediateRetries, attempted.Length(), nil
 			}
 		} else {
 			// Counted once here, before the outcome is known, so a later third
@@ -405,7 +435,7 @@ func (s *Selector) selectInternal(ctx context.Context, owner token.OwnerFilter, 
 			if locked, lockErr := s.locker.TryLock(ctx, &t.Id, owner.ID()); !locked {
 				// A rate-limit denial from the locker is a hard stop: abort instead of retrying.
 				if errors.Is(lockErr, token.SelectorRateLimited) {
-					return nil, nil, immediateRetries, lockErr
+					return nil, nil, immediateRetries, attempted.Length(), lockErr
 				}
 				if errors.Is(lockErr, driver.ErrTokenAlreadyLocked) {
 					// Lost the race: someone else holds this token. This is the
@@ -419,6 +449,7 @@ func (s *Selector) selectInternal(ctx context.Context, owner token.OwnerFilter, 
 					// the two: to the caller this still reads as ordinary
 					// contention, so a store outage surfaces as locked funds
 					// rather than as an error. See #2395.
+					s.metrics.LockStoreErrors.Add(1)
 					s.logger.WarnfContext(ctx, "Failed to lock token [%s:%d]: %v", t.Id.TxId, t.Id.Index, lockErr)
 				}
 				tokensLockedByOthersExist = true
@@ -428,17 +459,17 @@ func (s *Selector) selectInternal(ctx context.Context, owner token.OwnerFilter, 
 			s.logger.DebugfContext(ctx, "Got the lock on token [%v]", t)
 			q, err := token2.ToQuantity(t.Quantity, s.precision)
 			if err != nil {
-				return nil, nil, immediateRetries, errors.Wrapf(err, "invalid token [%s] found", t.Id)
+				return nil, nil, immediateRetries, attempted.Length(), errors.Wrapf(err, "invalid token [%s] found", t.Id)
 			}
 			s.logger.DebugfContext(ctx, "Found token [%s] to add: [%s:%s].", t.Id, q.Decimal(), t.Type)
 			immediateRetries = 0
 			sum, err = sum.Add(q)
 			if err != nil {
-				return nil, nil, immediateRetries, errors.Wrapf(err, "failed to add quantity")
+				return nil, nil, immediateRetries, attempted.Length(), errors.Wrapf(err, "failed to add quantity")
 			}
 			selected.Add(&t.Id)
 			if sum.Cmp(quantity) >= 0 {
-				return selected.ToSlice(), sum, immediateRetries, nil
+				return selected.ToSlice(), sum, immediateRetries, attempted.Length(), nil
 			}
 		}
 	}
