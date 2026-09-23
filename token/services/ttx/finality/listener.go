@@ -102,9 +102,17 @@ func NewListener(
 }
 
 // OnError is called when a finality event for txID could not be delivered after all retries.
+// This is a terminal give-up for the delivery attempt (the caller notifies at most once via
+// OnStatus or OnError, never both), so txID's selection locks are released here too — otherwise
+// a transaction whose finality notification is permanently undeliverable would keep its locks
+// held until the next lease-expiry sweep, reproducing #2395 mechanism 4 via this path instead
+// of the OnStatus one. Releasing is safe even if txID is later retried by an outer recovery
+// mechanism (e.g. TTXRecoveryHandler.Recover): Unlock is an idempotent no-op on an already
+// unlocked tx, and a subsequent selection attempt simply re-acquires locks as needed.
 func (t *Listener) OnError(ctx context.Context, txID string, err error) {
 	t.metrics.RetryExhausted.Add(1)
 	t.logger.Errorf("finality listener: all retries exhausted for tx [%s]: %v", txID, err)
+	releaseLocks(ctx, t.logger, t.selectorManagerProvider, txID)
 }
 
 func (t *Listener) OnStatus(ctx context.Context, txID string, status int, message string, tokenRequestHash []byte) {

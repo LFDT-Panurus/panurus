@@ -380,6 +380,69 @@ func TestOnError(t *testing.T) {
 	listener.OnError(ctx, "test-tx-id", errors.New("test error"))
 }
 
+// TestOnError_ReleasesLocks is the OnError-side counterpart to
+// TestOnStatus_ReleasesLocksAfterTerminalStatus for #2395 mechanism 4: a
+// transaction whose finality notification could not be delivered after all
+// retries (a terminal give-up, distinct from a Confirmed/Deleted status) must
+// still release its selection locks immediately, rather than leaving them for
+// the lease-expiry sweep.
+func TestOnError_ReleasesLocks(t *testing.T) {
+	db := &mock.TransactionDB{}
+
+	sm := &fakeSelectorManager{}
+	smProvider := &mock.SelectorManagerProvider{}
+	smProvider.SelectorManagerReturns(sm, nil)
+
+	l := finality.NewListener(
+		logging.MustGetLogger(),
+		&depmock.Network{},
+		"test-namespace",
+		finality.NewTokenRequestHasher(&depmock.TokenManagementServiceProvider{}, token.TMSID{Network: "n", Channel: "c", Namespace: "ns"}),
+		db,
+		nil,
+		smProvider,
+		noopTracer(),
+		nil,
+	)
+
+	txID := "tx-error"
+	l.OnError(t.Context(), txID, errors.New("all retries exhausted"))
+
+	require.Equal(t, []string{txID}, sm.unlockCalls,
+		"a transaction whose finality notification is permanently undeliverable must release its selection locks (#2395 mechanism 4)")
+}
+
+// TestOnError_LockReleaseErrorDoesNotPropagate verifies that a failure to
+// release locks inside OnError is logged and swallowed, not propagated as a
+// fatal error from OnError itself: releasing locks is best-effort cleanup and
+// must never interfere with the abandonment path, mirroring releaseLocks'
+// existing error-handling contract used by OnStatus and applyFinalityLogic.
+func TestOnError_LockReleaseErrorDoesNotPropagate(t *testing.T) {
+	db := &mock.TransactionDB{}
+
+	sm := &fakeSelectorManager{unlockErr: errors.New("store unavailable")}
+	smProvider := &mock.SelectorManagerProvider{}
+	smProvider.SelectorManagerReturns(sm, nil)
+
+	l := finality.NewListener(
+		logging.MustGetLogger(),
+		&depmock.Network{},
+		"test-namespace",
+		finality.NewTokenRequestHasher(&depmock.TokenManagementServiceProvider{}, token.TMSID{Network: "n", Channel: "c", Namespace: "ns"}),
+		db,
+		nil,
+		smProvider,
+		noopTracer(),
+		nil,
+	)
+
+	txID := "tx-error-unlock-fails"
+	require.NotPanics(t, func() {
+		l.OnError(t.Context(), txID, errors.New("all retries exhausted"))
+	})
+	require.Equal(t, []string{txID}, sm.unlockCalls)
+}
+
 // TestCheckTokenRequest tests the hash comparison logic used by checkTokenRequest
 func TestCheckTokenRequest(t *testing.T) {
 	t.Run("matching hashes", func(t *testing.T) {

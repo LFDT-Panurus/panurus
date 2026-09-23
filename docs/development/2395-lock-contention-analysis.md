@@ -145,6 +145,19 @@ doesn't fail the settlement/recovery path
 (`TestTTXRecoveryHandler_Recover_LockReleaseErrorDoesNotFailRecovery`). This is a real,
 important limitation of the benchmark harness — see gaps below.
 
+**Follow-up closed (PR #2410): `Listener.OnError`.** Phase 5 only wired `Unlock` into the two
+call sites that observe a terminal *status* (`runOnStatus`/`applyFinalityLogic`). `Listener`
+also has an `OnError` callback, fired when a finality event for a txID could not be delivered
+after all retries (persistent network/delivery failure, distinct from an Invalid/Valid ledger
+status) — before this follow-up it only logged and incremented `RetryExhausted`, leaving that
+transaction's locks held until the lease-expiry sweep, i.e. the exact same gap reopened via a
+different trigger. `OnError` now also calls `releaseLocks`, same best-effort/non-fatal contract
+as the `OnStatus` path. Safe even if the transaction is later retried by an outer recovery
+mechanism: `Unlock`/`UnlockByTxID` is a `DELETE ... WHERE consumer_tx_id = ...`, a no-op if
+already unlocked, and a subsequent selection attempt simply re-acquires locks as needed.
+Verified by `TestOnError_ReleasesLocks` and `TestOnError_LockReleaseErrorDoesNotPropagate` in
+`listener_test.go`.
+
 ## PR #2402 (Phase 6) — configurable Postgres lock-acquisition strategies
 
 **Root cause fixed:** issue mechanism 5 — the collision *symptom itself*: every lost race
