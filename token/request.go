@@ -245,9 +245,11 @@ type Request struct {
 // NewRequest creates a new empty request for the given token service and anchor
 func NewRequest(tokenService *ManagementService, anchor RequestAnchor) *Request {
 	return &Request{
-		Anchor:       anchor,
-		Actions:      &driver.TokenRequest{},
-		Metadata:     &driver.TokenRequestMetadata{},
+		Anchor:  anchor,
+		Actions: &driver.TokenRequest{},
+		Metadata: &driver.TokenRequestMetadata{
+			Anchor: anchor,
+		},
 		TokenService: tokenService,
 	}
 }
@@ -264,6 +266,9 @@ func NewRequestFromBytes(tokenService *ManagementService, anchor RequestAnchor, 
 		if err := trm.FromBytes(trmRaw); err != nil {
 			return nil, errors.Wrapf(err, "failed unmarshalling token request metadata [%d]", len(trmRaw))
 		}
+	}
+	if len(trm.Anchor) == 0 {
+		trm.Anchor = anchor
 	}
 
 	return &Request{
@@ -1115,6 +1120,9 @@ func (r *Request) Bytes() ([]byte, error) {
 	if err != nil {
 		return nil, errors.Wrapf(err, "failed to marshal request in tx [%s]", r.Anchor)
 	}
+	if r.Metadata != nil {
+		r.Metadata.Anchor = r.Anchor
+	}
 	metadataProto, err := r.Metadata.ToProtos()
 	if err != nil {
 		return nil, errors.Wrapf(err, "failed to marshal metadata in tx [%s]", r.Anchor)
@@ -1149,6 +1157,9 @@ func (r *Request) FromBytes(raw []byte) error {
 	if requestWithMetadata.Metadata != nil {
 		if err := r.Metadata.FromProtos(requestWithMetadata.Metadata); err != nil {
 			return errors.Wrapf(err, "failed unmarshalling metadata")
+		}
+		if len(r.Metadata.Anchor) == 0 {
+			r.Metadata.Anchor = r.Anchor
 		}
 	}
 

@@ -28,6 +28,9 @@ const (
 	// MaxAnchorSize defines the maximum allowed size for anchor parameter in bytes.
 	// This limit prevents potential DoS attacks through excessive memory allocation.
 	MaxAnchorSize = 128 // bytes
+
+	// AnchorApplicationMetadataKey is the reserved key in ApplicationMetadata for binding TokenRequestMetadata to an Anchor.
+	AnchorApplicationMetadataKey = "org.lfdt.panurus.anchor"
 )
 
 // Typed errors for protocol validation
@@ -936,6 +939,8 @@ type ActionMetadataEntry struct {
 // TokenRequestMetadata contains the supplementary information needed to process and interpret a TokenRequest.
 // It includes metadata for each issuance and transfer action, enabling de-obfuscation and identity recovery.
 type TokenRequestMetadata struct {
+	// Anchor models the anchor of the token request this metadata is bound to.
+	Anchor TokenRequestAnchor
 	// Actions contains metadata for all actions in the corresponding TokenRequest.
 	Actions []*ActionMetadataEntry
 	// Application allows for attaching arbitrary application-level metadata to the token request.
@@ -1016,10 +1021,19 @@ func (m *TokenRequestMetadata) FromBytes(raw []byte) error {
 }
 
 func (m *TokenRequestMetadata) ToProtos() (*request.TokenRequestMetadata, error) {
+	appMeta := m.Application
+	if len(m.Anchor) > 0 {
+		appMeta = make(map[string][]byte, len(m.Application)+1)
+		for k, v := range m.Application {
+			appMeta[k] = v
+		}
+		appMeta[AnchorApplicationMetadataKey] = []byte(m.Anchor)
+	}
+
 	trm := &request.TokenRequestMetadata{
 		Version:             ProtocolV1,
 		Metadata:            nil,
-		ApplicationMetadata: m.Application,
+		ApplicationMetadata: appMeta,
 	}
 	trm.Metadata = make([]*request.ActionMetadata, 0, len(m.Actions))
 
@@ -1065,6 +1079,10 @@ func (m *TokenRequestMetadata) FromProtos(trm *request.TokenRequestMetadata) err
 	}
 
 	m.Application = trm.ApplicationMetadata
+	if anchorBytes, ok := trm.ApplicationMetadata[AnchorApplicationMetadataKey]; ok {
+		m.Anchor = TokenRequestAnchor(anchorBytes)
+		delete(m.Application, AnchorApplicationMetadataKey)
+	}
 	m.Actions = make([]*ActionMetadataEntry, 0, len(trm.Metadata))
 
 	for _, meta := range trm.Metadata {
