@@ -9,6 +9,7 @@ package simple
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/LFDT-Panurus/panurus/token"
 	"github.com/LFDT-Panurus/panurus/token/services/selector/ratelimit"
@@ -24,7 +25,7 @@ func TestRateLimitedManager(t *testing.T) {
 	qs := &mockQueryService{tokens: makeTokens(2, "USD", -1)}
 	ctx := context.Background()
 
-	mgr := NewManager(locker, func() QueryService { return qs }, 1, 0, false, precision)
+	mgr := NewManager(locker, func() QueryService { return qs }, 1, 0, false, precision, 10000, 50000, 30*time.Second)
 	// A burst of one request, and a rate slow enough that nothing refills during the test.
 	limited := ratelimit.Decorate(mgr, ratelimit.New(ratelimit.Config{Rate: 0.001, Burst: 1}), "n1,c1,ns1")
 
@@ -79,10 +80,13 @@ func TestLoaderRateLimiting(t *testing.T) {
 			locker := &recordingLocker{lockFailAfter: 100}
 			qs := &mockQueryService{tokens: makeTokens(1, "USD", -1)}
 			l := &loader{
-				lockerProvider:       &fixedLockerProvider{locker: locker},
-				numRetries:           1,
-				requestCertification: false,
-				limiter:              ratelimit.CompileOptions(tt.opts...).Limiter(&disabledRateLimitConfig{}),
+				lockerProvider:        &fixedLockerProvider{locker: locker},
+				maxRetries:            1,
+				requestCertification:  false,
+				limiter:               ratelimit.CompileOptions(tt.opts...).Limiter(&disabledRateLimitConfig{}),
+				maxTokensPerSelection: 10000,
+				maxLockAttempts:       50000,
+				selectionTimeout:      30 * time.Second,
 			}
 
 			mgr := l.newManager(locker, qs, precision, "n1,c1,ns1")
