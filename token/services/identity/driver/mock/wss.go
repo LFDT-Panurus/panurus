@@ -63,7 +63,7 @@ type WalletStoreService struct {
 		result1 []driver.WalletID
 		result2 error
 	}
-	IdentityExistsStub        func(context.Context, token.Identity, driver.WalletID, int) bool
+	IdentityExistsStub        func(context.Context, token.Identity, driver.WalletID, int) (bool, error)
 	identityExistsMutex       sync.RWMutex
 	identityExistsArgsForCall []struct {
 		arg1 context.Context
@@ -73,9 +73,11 @@ type WalletStoreService struct {
 	}
 	identityExistsReturns struct {
 		result1 bool
+		result2 error
 	}
 	identityExistsReturnsOnCall map[int]struct {
 		result1 bool
+		result2 error
 	}
 	LoadMetaStub        func(context.Context, token.Identity, driver.WalletID, int) ([]byte, error)
 	loadMetaMutex       sync.RWMutex
@@ -363,7 +365,7 @@ func (fake *WalletStoreService) GetWalletIDsReturnsOnCall(i int, result1 []drive
 	}{result1, result2}
 }
 
-func (fake *WalletStoreService) IdentityExists(arg1 context.Context, arg2 token.Identity, arg3 driver.WalletID, arg4 int) bool {
+func (fake *WalletStoreService) IdentityExists(arg1 context.Context, arg2 token.Identity, arg3 driver.WalletID, arg4 int) (bool, error) {
 	fake.identityExistsMutex.Lock()
 	ret, specificReturn := fake.identityExistsReturnsOnCall[len(fake.identityExistsArgsForCall)]
 	fake.identityExistsArgsForCall = append(fake.identityExistsArgsForCall, struct {
@@ -380,9 +382,9 @@ func (fake *WalletStoreService) IdentityExists(arg1 context.Context, arg2 token.
 		return stub(arg1, arg2, arg3, arg4)
 	}
 	if specificReturn {
-		return ret.result1
+		return ret.result1, ret.result2
 	}
-	return fakeReturns.result1
+	return fakeReturns.result1, fakeReturns.result2
 }
 
 func (fake *WalletStoreService) IdentityExistsCallCount() int {
@@ -391,7 +393,7 @@ func (fake *WalletStoreService) IdentityExistsCallCount() int {
 	return len(fake.identityExistsArgsForCall)
 }
 
-func (fake *WalletStoreService) IdentityExistsCalls(stub func(context.Context, token.Identity, driver.WalletID, int) bool) {
+func (fake *WalletStoreService) IdentityExistsCalls(stub func(context.Context, token.Identity, driver.WalletID, int) (bool, error)) {
 	fake.identityExistsMutex.Lock()
 	defer fake.identityExistsMutex.Unlock()
 	fake.IdentityExistsStub = stub
@@ -404,27 +406,30 @@ func (fake *WalletStoreService) IdentityExistsArgsForCall(i int) (context.Contex
 	return argsForCall.arg1, argsForCall.arg2, argsForCall.arg3, argsForCall.arg4
 }
 
-func (fake *WalletStoreService) IdentityExistsReturns(result1 bool) {
+func (fake *WalletStoreService) IdentityExistsReturns(result1 bool, result2 error) {
 	fake.identityExistsMutex.Lock()
 	defer fake.identityExistsMutex.Unlock()
 	fake.IdentityExistsStub = nil
 	fake.identityExistsReturns = struct {
 		result1 bool
-	}{result1}
+		result2 error
+	}{result1, result2}
 }
 
-func (fake *WalletStoreService) IdentityExistsReturnsOnCall(i int, result1 bool) {
+func (fake *WalletStoreService) IdentityExistsReturnsOnCall(i int, result1 bool, result2 error) {
 	fake.identityExistsMutex.Lock()
 	defer fake.identityExistsMutex.Unlock()
 	fake.IdentityExistsStub = nil
 	if fake.identityExistsReturnsOnCall == nil {
 		fake.identityExistsReturnsOnCall = make(map[int]struct {
 			result1 bool
+			result2 error
 		})
 	}
 	fake.identityExistsReturnsOnCall[i] = struct {
 		result1 bool
-	}{result1}
+		result2 error
+	}{result1, result2}
 }
 
 func (fake *WalletStoreService) LoadMeta(arg1 context.Context, arg2 token.Identity, arg3 driver.WalletID, arg4 int) ([]byte, error) {

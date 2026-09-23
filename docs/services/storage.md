@@ -54,6 +54,8 @@ This store serves as the authoritative registry for all tokens (UTXOs) known to 
 
 ### Wallet & Identity Store (WalletDB / IdentityDB)
 Manages the cryptographic identities and logical wallet groupings used by the node.
+These two stores also have a non-SQL implementation, see [KVS-Backed Identity and Wallet
+Stores](./storage/kvs.md).
 
 *   **Wallets**: Maps user identities to logical wallets and specific roles (e.g., Owner, Auditor).
 *   **IdentityConfigurations**: Persists long-term configuration data for various identity types (e.g., Idemix, X.509).

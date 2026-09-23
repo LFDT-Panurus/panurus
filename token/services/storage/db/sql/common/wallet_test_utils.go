@@ -112,7 +112,7 @@ func TestIdentityExists(t *testing.T, store walletStoreConstructor) {
 		WithArgs(tokenID.UniqueID(), walletID, roleID).
 		WillReturnRows(mockDB.NewRows([]string{"wallet_id"}).AddRow(walletID))
 
-	exists := store(db).IdentityExists(t.Context(), tokenID, walletID, roleID)
+	exists, err := store(db).IdentityExists(t.Context(), tokenID, walletID, roleID)
 
 	gomega.Expect(mockDB.ExpectationsWereMet()).To(gomega.Succeed())
 	gomega.Expect(err).ToNot(gomega.HaveOccurred())

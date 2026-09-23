@@ -10,6 +10,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"net/url"
 	"strings"
 
 	"github.com/LFDT-Panurus/panurus/token/services/logging"
@@ -24,6 +25,18 @@ const (
 	Data         = "data"
 	Value        = "value"
 	CompositeKey = "\x00"
+
+	// pathSeparator separates the components of a composite key once it is mapped onto a
+	// Vault path.
+	pathSeparator = "/"
+	// emptyComponent encodes an empty composite-key component. url.PathEscape never emits a
+	// bare '%' (it only ever writes one as the first byte of a "%XX" triplet), so no escaped
+	// non-empty component can collide with it.
+	emptyComponent = "%"
+	// escapedDot encodes the dots of a "." or ".." component. Those two are left untouched by
+	// url.PathEscape, but the Vault client passes the request path through path.Join, which
+	// would resolve them away and let a component walk out of this KVS' path prefix.
+	escapedDot = "%2E"
 )
 
 var (
@@ -48,24 +61,82 @@ func NewWithClient(client *vault.Client, path string) (*KVS, error) {
 	}, nil
 }
 
+// NormalizeID maps the passed id onto the Vault path this KVS is rooted at.
+//
+// A composite key (see kvs.CreateCompositeKey) becomes one Vault path component per key
+// component, each of them percent-escaped. The escaping is what makes the mapping injective:
+// a raw component that is empty, or that contains pathSeparator - base64-encoded identity
+// hashes routinely do - would otherwise drop or add path components and let two distinct
+// composite keys resolve to the same Vault path, for example CreateCompositeKey("",
+// []string{"1"}) and CreateCompositeKey("1", nil). It also keeps a "." or ".." component from
+// walking out of this KVS' path prefix. Ids that are not composite keys are appended as they
+// are.
 func (v *KVS) NormalizeID(id string) string {
-	if strings.Contains(id, CompositeKey) {
-		replaced := strings.ReplaceAll(id, CompositeKey, "/")
-		replaced = strings.TrimPrefix(replaced, "/")
-		replaced = strings.TrimPrefix(replaced, "/")
-		id = strings.TrimSuffix(replaced, "/")
+	if !strings.Contains(id, CompositeKey) {
+		return v.path + id
 	}
 
-	return v.path + id
+	components := splitCompositeKey(id)
+	escaped := make([]string, len(components))
+	for i, component := range components {
+		escaped[i] = escapeComponent(component)
+	}
+
+	return v.path + strings.Join(escaped, pathSeparator)
 }
 
-func (v *KVS) deNormalizeID(id string) string {
-	trimmedId := strings.TrimPrefix(id, v.path)
-	trimmedId = strings.TrimPrefix(trimmedId, "/")
-	trimmedId = strings.TrimSuffix(trimmedId, "/")
-	normilzedId := "\x00" + strings.ReplaceAll(trimmedId, "/", CompositeKey) + "\x00"
+// deNormalizeID is the inverse of NormalizeID for composite keys: it maps a Vault path back
+// onto the composite key it was built from.
+func (v *KVS) deNormalizeID(id string) (string, error) {
+	trimmed := strings.TrimPrefix(id, v.path)
+	trimmed = strings.TrimPrefix(trimmed, pathSeparator)
+	// Vault reports a path that has children with a trailing separator. An empty component is
+	// encoded as emptyComponent, so trimming it never drops one.
+	trimmed = strings.TrimSuffix(trimmed, pathSeparator)
 
-	return normilzedId
+	var sb strings.Builder
+	sb.WriteString(CompositeKey)
+	for component := range strings.SplitSeq(trimmed, pathSeparator) {
+		unescaped, err := unescapeComponent(component)
+		if err != nil {
+			return "", errors.Wrapf(err, "failed to decode component [%s] of vault path [%s]", component, id)
+		}
+		sb.WriteString(unescaped)
+		sb.WriteString(CompositeKey)
+	}
+
+	return sb.String(), nil
+}
+
+// splitCompositeKey splits a composite key into its components, the object type followed by
+// the attributes. kvs.CreateCompositeKey prefixes the key with one delimiter and terminates
+// every component with one, so exactly one leading and one trailing delimiter are dropped;
+// trimming any more of them would merge an empty component into its neighbour.
+func splitCompositeKey(id string) []string {
+	id = strings.TrimSuffix(strings.TrimPrefix(id, CompositeKey), CompositeKey)
+
+	return strings.Split(id, CompositeKey)
+}
+
+// escapeComponent encodes a single composite-key component as one Vault path component.
+func escapeComponent(component string) string {
+	switch component {
+	case "":
+		return emptyComponent
+	case ".", "..":
+		return strings.ReplaceAll(component, ".", escapedDot)
+	default:
+		return url.PathEscape(component)
+	}
+}
+
+// unescapeComponent is the inverse of escapeComponent.
+func unescapeComponent(component string) (string, error) {
+	if component == emptyComponent {
+		return "", nil
+	}
+
+	return url.PathUnescape(component)
 }
 
 func (v *KVS) GetExisting(ctx context.Context, ids ...string) []string {
@@ -141,38 +212,64 @@ func (v *KVS) Put(_ context.Context, id string, state any) error {
 	return errors.Wrapf(err, "failed to put state with id [%s]", id)
 }
 
-func (v *KVS) Get(_ context.Context, id string, state any) error {
-	id = v.NormalizeID(id)
-	secret, err := v.client.Logical().Read(id)
+func (v *KVS) Get(ctx context.Context, id string, state any) error {
+	raw, found, err := v.read(ctx, id)
 	if err != nil {
-		return errors.Wrapf(err, "failed retrieving state of id [%s]", id)
+		return err
 	}
-
-	if secret == nil {
+	if !found {
 		// In this case no value found for the input id
 		return nil
 	}
 
+	return unmarshalState(id, raw, state)
+}
+
+// read returns the still-marshalled state stored under the passed id, together with whether
+// the id exists at all. Telling a missing id apart from a stored one is what lets the
+// iterator skip keys that are deleted between a list and their read, instead of handing back
+// an untouched, zero-valued state as if it were stored data.
+func (v *KVS) read(_ context.Context, id string) ([]byte, bool, error) {
+	normalized := v.NormalizeID(id)
+	secret, err := v.client.Logical().Read(normalized)
+	if err != nil {
+		return nil, false, errors.Wrapf(err, "failed retrieving state of id [%s]", normalized)
+	}
+
+	if secret == nil {
+		// In this case no value found for the input id
+		return nil, false, nil
+	}
+
 	if secret.Data == nil {
-		return errors.Errorf("data should contain value for id [%s]", id)
+		return nil, false, errors.Errorf("data should contain value for id [%s]", normalized)
 	}
 
 	data, _ := secret.Data[Data].(map[string]any)
 	if len(data) == 0 {
-		return errors.Errorf("state of id [%s] does not exist", id)
+		return nil, false, errors.Errorf("state of id [%s] does not exist", normalized)
 	}
 
 	value, ok := data[Value]
 	if !ok {
-		return errors.Errorf("missing 'value' key in data")
+		return nil, false, errors.Errorf("missing 'value' key in data")
 	}
-	raw, err := base64.StdEncoding.DecodeString(value.(string))
+	encoded, ok := value.(string)
+	if !ok {
+		return nil, false, errors.Errorf("value of id [%s] is not a string but a [%T]", normalized, value)
+	}
+	raw, err := base64.StdEncoding.DecodeString(encoded)
 	if err != nil {
 		logger.Debugf("Failed to decode base64 string: %v, error: %v", value, err)
 
-		return errors.Wrapf(err, "failed to decode base64 string: %v", value)
+		return nil, false, errors.Wrapf(err, "failed to decode base64 string: %v", value)
 	}
 
+	return raw, true, nil
+}
+
+// unmarshalState unmarshals a state read by read into the caller's destination.
+func unmarshalState(id string, raw []byte, state any) error {
 	if err := json.Unmarshal(raw, state); err != nil {
 		logger.Debugf("failed retrieving state of id [%s], cannot unmarshal state, error [%s]", id, err)
 
@@ -183,7 +280,7 @@ func (v *KVS) Get(_ context.Context, id string, state any) error {
 	return nil
 }
 
-func (v *KVS) GetByPartialCompositeID(_ context.Context, prefix string, attrs []string) (kvs.Iterator, error) {
+func (v *KVS) GetByPartialCompositeID(ctx context.Context, prefix string, attrs []string) (kvs.Iterator, error) {
 	compositeKey, err := kvs.CreateCompositeKey(prefix, attrs)
 	if err != nil {
 		return nil, errors.Wrapf(err, "failed building composite key for prefix [%s]", prefix)
@@ -195,9 +292,10 @@ func (v *KVS) GetByPartialCompositeID(_ context.Context, prefix string, attrs []
 		return nil, errors.Wrapf(err, "failed to read list for key [%s]", compositeKey)
 	}
 
-	// No keys found
+	// No keys found: hand back an empty iterator rather than a nil one, so that callers can
+	// iterate without a nil check.
 	if secret == nil {
-		return nil, nil
+		return v.newIterator(ctx, nil), nil
 	}
 
 	// Check if the secret contains any keys
@@ -218,29 +316,65 @@ func (v *KVS) GetByPartialCompositeID(_ context.Context, prefix string, attrs []
 			return nil, errors.Errorf("unable to cast key [%T]: ", key)
 		}
 
-		keyStr := v.deNormalizeID(compositeKey + "/" + castedKey)
+		keyStr, err := v.deNormalizeID(compositeKey + pathSeparator + castedKey)
+		if err != nil {
+			return nil, err
+		}
 		stringKeys[i] = &keyStr
 	}
-	// Create and return a sliceIterator for the keys
-	keys_iterator := collections.NewSliceIterator(stringKeys)
 
-	return &vaultIterator{ri: keys_iterator, client: v}, nil
+	return v.newIterator(ctx, stringKeys), nil
 }
 
+// vaultIterator iterates over the keys a Vault list returned, reading each key's state from
+// Vault as it goes. Vault's KV v1 API has no multi-read endpoint, so there is one round trip
+// per key; the read happens in HasNext rather than in Next so that a key deleted between the
+// list and its read can be skipped instead of being yielded as a zero-valued state.
 type vaultIterator struct {
 	ri     collections.Iterator[*string]
-	next   *string
 	client *KVS
+	//nolint:containedctx // kvs.Iterator has no context parameter, so the caller's context has
+	// to be carried to the reads HasNext performs on its behalf
+	ctx context.Context
+
+	hasNext bool
+	key     string
+	raw     []byte
+	err     error
+}
+
+func (v *KVS) newIterator(ctx context.Context, keys []*string) *vaultIterator {
+	return &vaultIterator{ri: collections.NewSliceIterator(keys), client: v, ctx: ctx}
 }
 
 func (i *vaultIterator) HasNext() bool {
-	var err error
-	i.next, err = i.ri.Next()
-	if err != nil || i.next == nil {
-		return false
-	}
+	for {
+		key, err := i.ri.Next()
+		if err != nil || key == nil {
+			i.hasNext = false
 
-	return true
+			return false
+		}
+
+		raw, found, err := i.client.read(i.ctx, *key)
+		if err != nil {
+			// Keep the key and surface the failure from Next, which can report it.
+			i.key, i.raw, i.err, i.hasNext = *key, nil, err, true
+
+			return true
+		}
+		if !found {
+			// The key was deleted between the list and this read: skip it, rather than
+			// yielding a zero-valued state as if it were stored data.
+			logger.Debugf("skipping id [%s], it is no longer available", *key)
+
+			continue
+		}
+
+		i.key, i.raw, i.err, i.hasNext = *key, raw, nil, true
+
+		return true
+	}
 }
 
 func (i *vaultIterator) Close() error {
@@ -250,10 +384,14 @@ func (i *vaultIterator) Close() error {
 }
 
 func (i *vaultIterator) Next(state any) (string, error) {
-	if i.next == nil {
+	if !i.hasNext {
 		return "", errors.Errorf("no more elements in the iterator")
 	}
-	err := i.client.Get(context.Background(), *i.next, state)
+	i.hasNext = false
 
-	return *i.next, err
+	if i.err != nil {
+		return i.key, i.err
+	}
+
+	return i.key, unmarshalState(i.key, i.raw, state)
 }
