@@ -80,10 +80,12 @@ func (p *benchMetricsProvider) NewCounter(opts fscmetrics.CounterOpts) fscmetric
 	return &benchCounter{cv: cv}
 }
 
+//nolint:ireturn // implements metrics.Provider; the interface fixes the return type
 func (p *benchMetricsProvider) NewGauge(fscmetrics.GaugeOpts) fscmetrics.Gauge {
 	return &benchGauge{}
 }
 
+//nolint:ireturn // implements metrics.Provider; the interface fixes the return type
 func (p *benchMetricsProvider) NewHistogram(opts fscmetrics.HistogramOpts) fscmetrics.Histogram {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -190,6 +192,7 @@ type benchHistogram struct {
 	lvs []string
 }
 
+//nolint:ireturn // implements metrics.Histogram; the interface fixes the return type
 func (h *benchHistogram) With(labelValues ...string) fscmetrics.Histogram {
 	return &benchHistogram{hv: h.hv, lvs: append(append([]string{}, h.lvs...), labelValues...)}
 }
@@ -206,6 +209,7 @@ func (h *benchHistogram) Observe(value float64) {
 // Gauge today, this only exists so benchMetricsProvider implements the Provider interface.
 type benchGauge struct{}
 
+//nolint:ireturn // implements metrics.Gauge; the interface fixes the return type
 func (g *benchGauge) With(...string) fscmetrics.Gauge { return g }
 func (g *benchGauge) Add(float64)                     {}
 func (g *benchGauge) Set(float64)                     {}
@@ -231,6 +235,8 @@ func labelKey(pairs []string) string {
 // visible in `go test -v` output instead of being silently discarded. No-op when mp is nil
 // (settings that don't build a sherdlock selector, e.g. the legacy "selector+*" ones).
 func reportSherdlockMetrics(b *testing.B, mp *benchMetricsProvider) {
+	b.Helper()
+
 	if mp == nil {
 		return
 	}
