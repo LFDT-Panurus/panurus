@@ -124,15 +124,8 @@ func (f *mixedFetcher) UnspentTokensIteratorBy(ctx context.Context, walletID str
 	return f.lazyFetcher.UnspentTokensIteratorBy(ctx, walletID, currency)
 }
 
-// HasAnySpendableTokens delegates to the lazy fetcher's underlying DB, since
-// this check must never be answered from a cache that may itself be behind
-// the anti-join (see TokenDB.HasAnySpendableTokens).
-func (f *mixedFetcher) HasAnySpendableTokens(ctx context.Context, walletID string, currency token2.Type) (bool, error) {
-	return f.lazyFetcher.HasAnySpendableTokens(ctx, walletID, currency)
-}
-
-// HasEnoughSpendableTokens delegates to the lazy fetcher's underlying DB, for the same
-// reason as HasAnySpendableTokens: the cache may itself be behind the anti-join.
+// HasEnoughSpendableTokens delegates to the lazy fetcher's underlying DB: this check must
+// never be answered from a cache that may itself be behind the anti-join.
 func (f *mixedFetcher) HasEnoughSpendableTokens(ctx context.Context, walletID string, currency token2.Type, target *big.Int) (bool, error) {
 	return f.lazyFetcher.HasEnoughSpendableTokens(ctx, walletID, currency, target)
 }
@@ -206,12 +199,6 @@ func (f *lazyFetcher) UnspentTokensIteratorBy(ctx context.Context, walletID stri
 	}
 
 	return newBucketedIterator(items).NewPermutation(), nil
-}
-
-// HasAnySpendableTokens delegates straight to the DB (see
-// TokenDB.HasAnySpendableTokens): the lazy fetcher has no cache to consult.
-func (f *lazyFetcher) HasAnySpendableTokens(ctx context.Context, walletID string, currency token2.Type) (bool, error) {
-	return f.tokenDB.HasAnySpendableTokens(ctx, walletID, currency)
 }
 
 // HasEnoughSpendableTokens queries the database directly (see TokenDB.HasEnoughSpendableTokens):
@@ -491,13 +478,6 @@ func (f *cachedFetcher) UnspentTokensIteratorBy(ctx context.Context, walletID st
 	logger.DebugfContext(ctx, "No tokens found in cache for [%s]. Returning empty iterator.", tokenKey(walletID, currency))
 
 	return collections.NewEmptyIterator[*token2.UnspentTokenInWallet](), nil
-}
-
-// HasAnySpendableTokens bypasses the cache and asks the DB directly (see
-// TokenDB.HasAnySpendableTokens): the cache is itself populated from the
-// anti-joined query, so it cannot answer this question.
-func (f *cachedFetcher) HasAnySpendableTokens(ctx context.Context, walletID string, currency token2.Type) (bool, error) {
-	return f.tokenDB.HasAnySpendableTokens(ctx, walletID, currency)
 }
 
 // HasEnoughSpendableTokens bypasses the cache and asks the DB directly (see

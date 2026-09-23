@@ -190,15 +190,9 @@ func (q *MockQueryService) UnspentTokensIteratorBy(_ context.Context, walletID s
 	return &token.UnspentTokensIterator{UnspentTokensIterator: &MockIterator{q, q.cache[walletID], 0}}, nil
 }
 
-// HasAnySpendableTokens reports whether walletID has at least one cached
-// token, mirroring SpendableTokensIteratorBy's ignore-locks semantics (this
-// mock has no lock concept at all).
-func (q *MockQueryService) HasAnySpendableTokens(_ context.Context, walletID string, _ token2.Type) (bool, error) {
-	return len(q.cache[walletID]) > 0, nil
-}
-
 // HasEnoughSpendableTokens reports whether the sum of walletID's cached tokens of typ is
-// at least target, mirroring HasAnySpendableTokens' ignore-locks semantics.
+// at least target, mirroring SpendableTokensIteratorBy's ignore-locks semantics (this mock
+// has no lock concept at all).
 func (q *MockQueryService) HasEnoughSpendableTokens(_ context.Context, walletID string, typ token2.Type, target *big.Int) (bool, error) {
 	sum := big.NewInt(0)
 	for _, key := range q.cache[walletID] {

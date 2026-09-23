@@ -11,21 +11,6 @@ import (
 )
 
 type FakeTokenFetcher struct {
-	HasAnySpendableTokensStub        func(context.Context, string, token.Type) (bool, error)
-	hasAnySpendableTokensMutex       sync.RWMutex
-	hasAnySpendableTokensArgsForCall []struct {
-		arg1 context.Context
-		arg2 string
-		arg3 token.Type
-	}
-	hasAnySpendableTokensReturns struct {
-		result1 bool
-		result2 error
-	}
-	hasAnySpendableTokensReturnsOnCall map[int]struct {
-		result1 bool
-		result2 error
-	}
 	HasEnoughSpendableTokensStub        func(context.Context, string, token.Type, *big.Int) (bool, error)
 	hasEnoughSpendableTokensMutex       sync.RWMutex
 	hasEnoughSpendableTokensArgsForCall []struct {
@@ -59,72 +44,6 @@ type FakeTokenFetcher struct {
 	}
 	invocations      map[string][][]interface{}
 	invocationsMutex sync.RWMutex
-}
-
-func (fake *FakeTokenFetcher) HasAnySpendableTokens(arg1 context.Context, arg2 string, arg3 token.Type) (bool, error) {
-	fake.hasAnySpendableTokensMutex.Lock()
-	ret, specificReturn := fake.hasAnySpendableTokensReturnsOnCall[len(fake.hasAnySpendableTokensArgsForCall)]
-	fake.hasAnySpendableTokensArgsForCall = append(fake.hasAnySpendableTokensArgsForCall, struct {
-		arg1 context.Context
-		arg2 string
-		arg3 token.Type
-	}{arg1, arg2, arg3})
-	stub := fake.HasAnySpendableTokensStub
-	fakeReturns := fake.hasAnySpendableTokensReturns
-	fake.recordInvocation("HasAnySpendableTokens", []interface{}{arg1, arg2, arg3})
-	fake.hasAnySpendableTokensMutex.Unlock()
-	if stub != nil {
-		return stub(arg1, arg2, arg3)
-	}
-	if specificReturn {
-		return ret.result1, ret.result2
-	}
-	return fakeReturns.result1, fakeReturns.result2
-}
-
-func (fake *FakeTokenFetcher) HasAnySpendableTokensCallCount() int {
-	fake.hasAnySpendableTokensMutex.RLock()
-	defer fake.hasAnySpendableTokensMutex.RUnlock()
-	return len(fake.hasAnySpendableTokensArgsForCall)
-}
-
-func (fake *FakeTokenFetcher) HasAnySpendableTokensCalls(stub func(context.Context, string, token.Type) (bool, error)) {
-	fake.hasAnySpendableTokensMutex.Lock()
-	defer fake.hasAnySpendableTokensMutex.Unlock()
-	fake.HasAnySpendableTokensStub = stub
-}
-
-func (fake *FakeTokenFetcher) HasAnySpendableTokensArgsForCall(i int) (context.Context, string, token.Type) {
-	fake.hasAnySpendableTokensMutex.RLock()
-	defer fake.hasAnySpendableTokensMutex.RUnlock()
-	argsForCall := fake.hasAnySpendableTokensArgsForCall[i]
-	return argsForCall.arg1, argsForCall.arg2, argsForCall.arg3
-}
-
-func (fake *FakeTokenFetcher) HasAnySpendableTokensReturns(result1 bool, result2 error) {
-	fake.hasAnySpendableTokensMutex.Lock()
-	defer fake.hasAnySpendableTokensMutex.Unlock()
-	fake.HasAnySpendableTokensStub = nil
-	fake.hasAnySpendableTokensReturns = struct {
-		result1 bool
-		result2 error
-	}{result1, result2}
-}
-
-func (fake *FakeTokenFetcher) HasAnySpendableTokensReturnsOnCall(i int, result1 bool, result2 error) {
-	fake.hasAnySpendableTokensMutex.Lock()
-	defer fake.hasAnySpendableTokensMutex.Unlock()
-	fake.HasAnySpendableTokensStub = nil
-	if fake.hasAnySpendableTokensReturnsOnCall == nil {
-		fake.hasAnySpendableTokensReturnsOnCall = make(map[int]struct {
-			result1 bool
-			result2 error
-		})
-	}
-	fake.hasAnySpendableTokensReturnsOnCall[i] = struct {
-		result1 bool
-		result2 error
-	}{result1, result2}
 }
 
 func (fake *FakeTokenFetcher) HasEnoughSpendableTokens(arg1 context.Context, arg2 string, arg3 token.Type, arg4 *big.Int) (bool, error) {

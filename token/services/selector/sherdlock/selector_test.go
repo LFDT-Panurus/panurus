@@ -354,11 +354,6 @@ func (f *balanceFetcher) UnspentTokensIteratorBy(context.Context, string, token2
 	return &sliceIterator{items: visible}, nil
 }
 
-// HasAnySpendableTokens reports whether the wallet holds any token at all, locks included.
-func (f *balanceFetcher) HasAnySpendableTokens(context.Context, string, token2.Type) (bool, error) {
-	return len(f.tokens) > 0, nil
-}
-
 // HasEnoughSpendableTokens reports whether the wallet's whole balance, locks included, is at
 // least target.
 func (f *balanceFetcher) HasEnoughSpendableTokens(_ context.Context, _ string, _ token2.Type, target *big.Int) (bool, error) {

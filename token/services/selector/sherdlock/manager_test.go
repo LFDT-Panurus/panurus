@@ -888,7 +888,6 @@ func TestManager_NewSelector_WithDifferentPrecisions(t *testing.T) {
 
 type mockTokenFetcher struct {
 	unspentTokensIteratorByFunc  func(ctx context.Context, walletID string, currency token2.Type) (Iterator[*token2.UnspentTokenInWallet], error)
-	hasAnySpendableTokensFunc    func(ctx context.Context, walletID string, currency token2.Type) (bool, error)
 	hasEnoughSpendableTokensFunc func(ctx context.Context, walletID string, currency token2.Type, target *big.Int) (bool, error)
 }
 
@@ -898,14 +897,6 @@ func (m *mockTokenFetcher) UnspentTokensIteratorBy(ctx context.Context, walletID
 	}
 
 	return &mockIterator{}, nil
-}
-
-func (m *mockTokenFetcher) HasAnySpendableTokens(ctx context.Context, walletID string, currency token2.Type) (bool, error) {
-	if m.hasAnySpendableTokensFunc != nil {
-		return m.hasAnySpendableTokensFunc(ctx, walletID, currency)
-	}
-
-	return false, nil
 }
 
 func (m *mockTokenFetcher) HasEnoughSpendableTokens(ctx context.Context, walletID string, currency token2.Type, target *big.Int) (bool, error) {

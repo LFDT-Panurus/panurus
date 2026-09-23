@@ -454,48 +454,10 @@ func (db *TokenStore) SpendableTokensIteratorBy(ctx context.Context, walletID st
 	}), nil
 }
 
-// buildHasAnySpendableTokensQuery builds the SQL query and args for
-// HasAnySpendableTokens without executing it: the same candidate filter as
-// buildSpendableTokensIteratorByQuery, minus the notLocked anti-join, capped
-// at one row.
-func buildHasAnySpendableTokensQuery(db *TokenStore, walletID string, typ token.Type) (string, []any) {
-	return q.Select().
-		Fields(common3.FieldName("1")).
-		From(q.Table(db.table.Tokens)).
-		Where(HasTokenDetails(driver.QueryTokenDetailsParams{
-			WalletID:           walletID,
-			TokenType:          typ,
-			Spendable:          driver.SpendableOnly,
-			LedgerTokenFormats: db.getSupportedTokenFormats(),
-		}, nil)).
-		Limit(1).
-		Format(db.ci)
-}
-
-// HasAnySpendableTokens reports whether the wallet has at least one
-// spendable token of the given type, ignoring locks (see the Godoc on the
-// driver.TokenStore method for why the selector needs this).
-func (db *TokenStore) HasAnySpendableTokens(ctx context.Context, walletID string, typ token.Type) (bool, error) {
-	query, args := buildHasAnySpendableTokensQuery(db, walletID, typ)
-
-	rows, err := db.readDB.QueryContext(ctx, query, args...)
-	if err != nil {
-		return false, errors.Wrapf(err, "error querying db")
-	}
-	defer Close(rows)
-
-	has := rows.Next()
-	if err := rows.Err(); err != nil {
-		return false, err
-	}
-
-	return has, nil
-}
-
 // buildHasEnoughSpendableTokensQuery builds the SQL query and args for
 // HasEnoughSpendableTokens without executing it: the same spendable, lock-ignoring
-// predicate as buildHasAnySpendableTokensQuery, but summing amount instead of capping at
-// one row, so the wallet's total is computed in SQL rather than by fetching every token.
+// predicate as buildSpendableTokensIteratorByQuery minus its notLocked anti-join, summing
+// amount so the wallet's total is computed in SQL rather than by fetching every token.
 func buildHasEnoughSpendableTokensQuery(db *TokenStore, walletID string, typ token.Type) (string, []any) {
 	return q.Select().FieldsByName("SUM(amount)").
 		From(q.Table(db.table.Tokens)).
@@ -509,8 +471,8 @@ func buildHasEnoughSpendableTokensQuery(db *TokenStore, walletID string, typ tok
 }
 
 // HasEnoughSpendableTokens reports whether the wallet's total spendable balance of typ is
-// at least target. Like HasAnySpendableTokens, it deliberately ignores locks: the question
-// is "can this wallet ever pay", not "can it pay right now". The selector uses it as a
+// at least target. It deliberately ignores locks: the question it answers is "can this
+// wallet ever pay", not "can it pay right now". The selector uses it as a
 // fast fail, so that a wallet holding dust that could never cover the requested amount
 // fails immediately instead of burning the immediate-retry/backoff budget first.
 func (db *TokenStore) HasEnoughSpendableTokens(ctx context.Context, walletID string, typ token.Type, target *big.Int) (bool, error) {

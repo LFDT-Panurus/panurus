@@ -202,18 +202,14 @@ type TokenStore interface {
 	UnspentTokensIteratorBy(ctx context.Context, walletID string, tokenType token.Type) (driver.UnspentTokensIterator, error)
 	// SpendableTokensIteratorBy returns an iterator over all tokens owned solely by the passed wallet identifier and of a given type
 	SpendableTokensIteratorBy(ctx context.Context, walletID string, typ token.Type) (driver.SpendableTokensIterator, error)
-	// HasAnySpendableTokens reports whether the wallet has at least one spendable
-	// token of the given type, ignoring any lock currently held on it. Used to
-	// disambiguate "no funds at all" from "funds exist but are all currently
-	// locked" when SpendableTokensIteratorBy's anti-join against locked tokens
-	// (#2395) hides every candidate from the caller.
-	HasAnySpendableTokens(ctx context.Context, walletID string, typ token.Type) (bool, error)
 	// HasEnoughSpendableTokens reports whether the wallet's total spendable balance of typ
-	// is at least target, ignoring any lock currently held on the underlying tokens (like
-	// HasAnySpendableTokens, this answers "can this wallet ever pay", not "can it pay right
-	// now"). Used as a sum-aware fast fail so a wallet holding dust that could never cover
-	// the requested amount fails immediately instead of burning the selector's
-	// immediate-retry/backoff budget first.
+	// is at least target, ignoring any lock currently held on the underlying tokens: it
+	// answers "can this wallet ever pay", not "can it pay right now". Used as a sum-aware
+	// fast fail so a wallet that could never cover the requested amount fails immediately
+	// instead of burning the selector's immediate-retry/backoff budget first, and to tell
+	// "genuinely insufficient funds" apart from "funds exist but are all locked right now"
+	// when SpendableTokensIteratorBy's anti-join against locked tokens (#2395) hides every
+	// candidate from the caller.
 	HasEnoughSpendableTokens(ctx context.Context, walletID string, typ token.Type, target *big.Int) (bool, error)
 	// UnsupportedTokensIteratorBy returns the minimum information for upgrade about the tokens that are not supported
 	UnsupportedTokensIteratorBy(ctx context.Context, walletID string, tokenType token.Type) (driver.UnsupportedTokensIterator, error)

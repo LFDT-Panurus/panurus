@@ -45,12 +45,6 @@ func (m *mockTokenDB) SpendableTokensIteratorBy(ctx context.Context, walletID st
 	return args.Get(0).(driver.SpendableTokensIterator), args.Error(1)
 }
 
-func (m *mockTokenDB) HasAnySpendableTokens(ctx context.Context, walletID string, typ token2.Type) (bool, error) {
-	args := m.Called(ctx, walletID, typ)
-
-	return args.Bool(0), args.Error(1)
-}
-
 func (m *mockTokenDB) HasEnoughSpendableTokens(ctx context.Context, walletID string, typ token2.Type, target *big.Int) (bool, error) {
 	args := m.Called(ctx, walletID, typ, target)
 
