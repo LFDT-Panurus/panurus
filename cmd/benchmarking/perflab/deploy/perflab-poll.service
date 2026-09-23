@@ -1,0 +1,14 @@
+[Unit]
+Description=PerfLab: fetch main + enumerate open PRs, enqueue Tier-1 jobs
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=perflab
+Environment=PERFLAB_HOME=/opt/perflab
+Environment=PATH=/usr/local/go/bin:/usr/bin:/bin
+# Housekeeping stays off the benchmark cores (see bootstrap.sh for BENCH_CPUSET).
+CPUAffinity=0 1
+ExecStart=/usr/bin/python3 -m perflab.cli poll
+WorkingDirectory=/opt/perflab/src/cmd/benchmarking

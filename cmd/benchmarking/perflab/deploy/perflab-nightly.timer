@@ -1,0 +1,10 @@
+[Unit]
+Description=Run perflab-nightly.service once a day
+
+[Timer]
+OnCalendar=*-*-* 03:19:00
+Persistent=true
+AccuracySec=5min
+
+[Install]
+WantedBy=timers.target
