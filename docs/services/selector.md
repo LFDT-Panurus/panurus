@@ -111,6 +111,24 @@ returns it (`token/services/selector/simple/selector.go`), unordered and un-shuf
 concurrent selectors under `simple` remain fully exposed to colliding on the same leading
 candidates and to starting races against already-locked tokens.
 
+**`sherdlock`-only: the sufficiency window.** Bucket shuffling only randomizes tokens of
+*byte-equal* amount, so on a realistic wallet of mostly-distinct amounts every bucket has size
+1 and the ascending scan is fully deterministic: any request smaller than the smallest token
+always targets that one token. `Selector.nextCandidate`
+(`token/services/selector/sherdlock/selector.go`) widens the randomization for that case. Once
+the scan reaches an *anchor* — the first candidate that on its own covers the amount still
+outstanding — every later candidate is at least as large and therefore equally sufficient, so
+it peeks ahead over up to `sufficiencyWindow = 4` of them and returns one uniformly at random,
+buffering the rest so they are still considered, in order, later on. Two caps keep the choice
+close to a smallest fit: the count cap above, and a magnitude cap — a candidate only joins the
+window if its amount is at most `maxSufficiencyRatio = 5` times **the anchor's** amount. The
+magnitude cap is measured against the anchor rather than the outstanding amount on purpose: on
+a wallet whose smallest token already exceeds 5x the request (a 1 EUR payment out of 20/30/40/50
+EUR denominations), an outstanding-amount basis would reject the very first lookahead candidate,
+collapse the window to the anchor alone, and leave selection deterministic in exactly the regime
+the window exists for. When the anchor does not cover the outstanding amount on its own there is
+no lookahead at all: several tokens will have to be combined regardless.
+
 **How it works in the flow (see "Selection Logic" subgraph in diagram):**
 1. **TTX Request**: TTX Service requests token selection for a transfer operation
 2. **Query Spendable Tokens**: Selector queries via Fetcher (Cache Hit → fast path, Cache Miss → Token Store - TokenDB)

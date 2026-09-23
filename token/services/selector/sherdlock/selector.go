@@ -52,14 +52,23 @@ const (
 
 	// maxSufficiencyRatio additionally bounds the sufficiency window by magnitude, not just
 	// count: a candidate only joins the window if its quantity is at most maxSufficiencyRatio
-	// times the remaining amount being satisfied. Count alone is not enough - a wallet with
-	// very few distinct amounts (e.g. exactly one small token and one huge one, as in
-	// TestSizeOrderedSelection_SmallestFit) would otherwise have sufficiencyWindow trivially
-	// swallow the huge token just because nothing else was in between, defeating the
-	// smallest-fit bias for the smallest wallets, which are also the ones a hot-token incident
-	// hurts the most. 5x keeps the window meaningful (room for several genuinely
-	// similarly-sized candidates around the CERT incident's 1/1.5/2/3 EUR cluster) while still
-	// refusing to lock, say, a 200 EUR token for a 1 EUR payment.
+	// times the *anchor's* quantity - the anchor being the first individually-sufficient
+	// candidate, i.e. the smallest token the ascending scan would have locked anyway. Count
+	// alone is not enough - a wallet with very few distinct amounts (e.g. exactly one small
+	// token and one huge one, as in TestSizeOrderedSelection_SmallestFit) would otherwise have
+	// sufficiencyWindow trivially swallow the huge token just because nothing else was in
+	// between, defeating the smallest-fit bias for the smallest wallets, which are also the
+	// ones a hot-token incident hurts the most. 5x keeps the window meaningful (room for
+	// several genuinely similarly-sized candidates around the CERT incident's 1/1.5/2/3 EUR
+	// cluster) while still refusing to lock, say, a 200 EUR token when a 1 EUR one would do.
+	//
+	// The bound is deliberately anchor-relative and not remaining-relative: with the remaining
+	// amount as the basis, any wallet whose smallest token already exceeds 5x the request (a
+	// 1 EUR payment out of 20/30/40/50 EUR denominations - entirely ordinary, and the #2395
+	// CERT incident's own shape) would see its very first lookahead candidate rejected, leaving
+	// a window of size 1 and fully deterministic selection: the mechanism would be inert in
+	// exactly the regime it exists for. Anchoring on the smallest sufficient token keeps the
+	// selected token within 5x of what would have been locked regardless, in every regime.
 	maxSufficiencyRatio = 5
 )
 
@@ -475,7 +484,8 @@ func (s *Selector) dequeue() (*token2.UnspentTokenInWallet, error) {
 // fetcher.go), every subsequent candidate from here on is >= this one and
 // therefore also individually sufficient, so it peeks up to
 // sufficiencyWindow of them - stopping early at the first one whose
-// quantity exceeds maxSufficiencyRatio times remaining - and returns one
+// quantity exceeds maxSufficiencyRatio times that first candidate's own
+// quantity (see maxSufficiencyRatio) - and returns one
 // chosen uniformly at random, buffering the rest via s.pending so they are
 // still considered, in order, on later calls. This is what spreads "small
 // payment locks the single smallest token" contention across several
@@ -500,7 +510,7 @@ func (s *Selector) nextCandidate(remaining token2.Quantity) (*token2.UnspentToke
 		return t, nil
 	}
 
-	threshold := new(big.Int).Mul(remaining.ToBigInt(), big.NewInt(maxSufficiencyRatio))
+	threshold := new(big.Int).Mul(tq.ToBigInt(), big.NewInt(maxSufficiencyRatio))
 
 	window := []*token2.UnspentTokenInWallet{t}
 	for len(window) < sufficiencyWindow {
@@ -516,9 +526,10 @@ func (s *Selector) nextCandidate(remaining token2.Quantity) (*token2.UnspentToke
 			return nil, errors.Wrapf(nqErr, "invalid token [%s] found", next.Id)
 		}
 		if nq.ToBigInt().Cmp(threshold) > 0 {
-			// Too much bigger than what is actually needed: put it back (ascending
-			// order means every candidate from here on is >= this one, hence also
-			// over threshold, so there is no point looking further).
+			// Too much bigger than the anchor, i.e. than the token this call would
+			// have locked anyway: put it back (ascending order means every candidate
+			// from here on is >= this one, hence also over threshold, so there is no
+			// point looking further).
 			s.pending = append([]*token2.UnspentTokenInWallet{next}, s.pending...)
 
 			break
