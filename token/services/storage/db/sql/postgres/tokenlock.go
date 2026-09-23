@@ -10,8 +10,11 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
+	"sync/atomic"
 	"time"
 
+	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/common/utils/collections/iterators"
 	common2 "github.com/hyperledger-labs/fabric-smart-client/platform/view/services/storage/driver/common"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/services/storage/driver/sql/common"
@@ -22,6 +25,7 @@ import (
 	q "github.com/LFDT-Panurus/panurus/token/services/storage/db/sql/query"
 	common3 "github.com/LFDT-Panurus/panurus/token/services/storage/db/sql/query/common"
 	"github.com/LFDT-Panurus/panurus/token/services/storage/db/sql/query/cond"
+	"github.com/LFDT-Panurus/panurus/token/services/utils/types/transaction"
 	"github.com/LFDT-Panurus/panurus/token/token"
 	"go.uber.org/zap/zapcore"
 )
@@ -30,9 +34,23 @@ import (
 type TokenLockStore struct {
 	*common5.TokenLockStore
 
-	writeDB *sql.DB
-	ci      common3.CondInterpreter
-	lockID  int64
+	writeDB  *sql.DB
+	ci       common3.CondInterpreter
+	lockID   int64
+	strategy string
+
+	// roundTrips counts every Lock and LockBatch call - each now issues exactly one query
+	// under every strategy, so this is also the exact DB round-trip count, and is expected to
+	// come out equal across strategies for a given workload: batching, not strategy choice, is
+	// what saves round trips. uniqueViolations counts only Lock calls whose ErrTokenAlreadyLocked
+	// came from a real server-side unique-constraint violation - possible solely via Lock under
+	// LockStrategyInsert (LockBatch never issues a plain INSERT, and LockStrategyOnConflict/
+	// LockStrategySkipLocked translate a lost race into a clean zero-row result instead), so it
+	// is the real, hard count of the server-side errors that caused the CERT log storm. Exists so
+	// a benchmark can report both with real numbers rather than inferring them from conflict rate,
+	// which does not move across strategies: see RoundTrips and UniqueViolations.
+	roundTrips       atomic.Int64
+	uniqueViolations atomic.Int64
 
 	// cleanupLeaderFactory is bound at construction to an id derived from the fully-qualified
 	// table name (not the prefix alone, which is not unique per TMS - see review discussion on
@@ -56,8 +74,20 @@ func (s *TokenLockStore) CreateSchema() error {
 	return common.InitSchema(s.writeDB, s.GetSchema())
 }
 
-// NewTokenLockStore returns a new TokenLockStore for the given RWDB and table names.
+// NewTokenLockStore returns a new TokenLockStore for the given RWDB and table names,
+// using the default (insert) lock strategy.
 func NewTokenLockStore(dbs *common2.RWDB, tableNames common5.TableNames) (*TokenLockStore, error) {
+	return newTokenLockStoreWithStrategy(dbs, tableNames, common5.LockStrategyInsert)
+}
+
+// newTokenLockStoreWithStrategy is like NewTokenLockStore, but lets the caller select the
+// lock-acquisition strategy (see common5.ConfigKeyLockStrategy). strategy is validated by
+// common5.LoadStorageConfig before it reaches here; an empty string is treated as the
+// default insert strategy.
+func newTokenLockStoreWithStrategy(dbs *common2.RWDB, tableNames common5.TableNames, strategy string) (*TokenLockStore, error) {
+	if strategy == "" {
+		strategy = common5.LockStrategyInsert
+	}
 	ci := NewConditionInterpreter()
 	tldb, err := common5.NewTokenLockStore(dbs.ReadDB, dbs.WriteDB, tableNames, ci, &fscPostgres.ErrorMapper{})
 	if err != nil {
@@ -70,7 +100,157 @@ func NewTokenLockStore(dbs *common2.RWDB, tableNames common5.TableNames) (*Token
 		ci:                   ci,
 		lockID:               createTableLockID(tableNames.TokenLocks),
 		cleanupLeaderFactory: NewCleanupLeaderFactoryForID(tokenLockCleanupLockID(tableNames)),
+		strategy:             strategy,
 	}, nil
+}
+
+// Lock locks the token for consumerTxID, using the configured strategy. The default
+// (LockStrategyInsert) delegates unchanged to the embedded store: an INSERT that surfaces
+// a lost race as a unique-constraint violation. LockStrategyOnConflict and
+// LockStrategySkipLocked both use INSERT ... ON CONFLICT DO NOTHING RETURNING instead: a
+// lost race is a normal zero-row result, not a server-side error. Note this overrides Lock,
+// not LockAt: the embedded TokenLockStore.Lock calls LockAt on itself, not on this type (Go
+// has no virtual dispatch), so overriding LockAt here would never be reached from callers
+// that go through Lock.
+func (db *TokenLockStore) Lock(ctx context.Context, tokenID *token.ID, consumerTxID transaction.ID, walletID string) error {
+	db.roundTrips.Add(1)
+	if db.strategy == common5.LockStrategyInsert {
+		err := db.TokenLockStore.Lock(ctx, tokenID, consumerTxID, walletID)
+		if errors.Is(err, driver.ErrTokenAlreadyLocked) {
+			db.uniqueViolations.Add(1)
+		}
+
+		return err
+	}
+
+	won, err := db.tryInsertOnConflict(ctx, []*token.ID{tokenID}, consumerTxID, time.Now().UTC())
+	if err != nil {
+		return err
+	}
+	if len(won) == 0 {
+		return errors.Wrapf(driver.ErrTokenAlreadyLocked, "token %s is already locked", tokenID)
+	}
+
+	return nil
+}
+
+// RoundTrips returns the number of Lock and LockBatch calls issued against this store
+// instance since construction. Instrumentation only, for benchmarking Phase 6's lock
+// strategies; not part of the driver.TokenLockStore contract.
+func (db *TokenLockStore) RoundTrips() int64 {
+	return db.roundTrips.Load()
+}
+
+// UniqueViolations returns the number of Lock calls that observed a real server-side
+// unique-constraint violation, as opposed to a clean zero-row result - only possible under
+// LockStrategyInsert. Instrumentation only, for benchmarking Phase 6's lock strategies; not
+// part of the driver.TokenLockStore contract.
+func (db *TokenLockStore) UniqueViolations() int64 {
+	return db.uniqueViolations.Load()
+}
+
+// LockBatch attempts to lock, in a single round trip, every token in tokenIDs on behalf of
+// consumerTxID, and returns those it actually won. It never claims a token outside
+// tokenIDs, so callers remain responsible for supplying only candidates that are already
+// known to be spendable: LockBatch itself applies no eligibility predicate beyond "not
+// already locked". Under LockStrategySkipLocked the claim uses FOR UPDATE SKIP LOCKED on
+// the underlying Tokens rows, so a caller walks past rows a concurrent claimant is already
+// processing instead of colliding with them; under LockStrategyOnConflict and
+// LockStrategyInsert it issues the same multi-row INSERT ... ON CONFLICT DO NOTHING as
+// tryInsertOnConflict's single-token callers, for the whole window in one round trip -
+// only the plain LockStrategyInsert single-token Lock path (which must surface a lost race
+// as a unique-constraint violation, not a zero-row result) does not go through this.
+func (db *TokenLockStore) LockBatch(ctx context.Context, tokenIDs []*token.ID, consumerTxID transaction.ID, _ string) ([]*token.ID, error) {
+	if len(tokenIDs) == 0 {
+		return nil, nil
+	}
+	db.roundTrips.Add(1)
+	createdAt := time.Now().UTC()
+	if db.strategy != common5.LockStrategySkipLocked {
+		return db.tryInsertOnConflict(ctx, tokenIDs, consumerTxID, createdAt)
+	}
+
+	return db.tryLockSkipLocked(ctx, tokenIDs, consumerTxID, createdAt)
+}
+
+// tryInsertOnConflict claims a batch of specific (tx_id, idx) candidates using
+// INSERT ... ON CONFLICT DO NOTHING RETURNING, and returns those it actually won.
+func (db *TokenLockStore) tryInsertOnConflict(ctx context.Context, tokenIDs []*token.ID, consumerTxID transaction.ID, createdAt time.Time) ([]*token.ID, error) {
+	iq := q.InsertInto(db.Table.TokenLocks).Fields("consumer_tx_id", "tx_id", "idx", "created_at")
+	for _, id := range tokenIDs {
+		iq = iq.Row(consumerTxID, id.TxId, id.Index, createdAt)
+	}
+	query, args := iq.OnConflictDoNothing().Returning("tx_id", "idx").Format()
+	db.Logger.Debug(query, args)
+
+	rows, err := db.writeDB.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	var won []*token.ID
+	for rows.Next() {
+		var id token.ID
+		if err := rows.Scan(&id.TxId, &id.Index); err != nil {
+			return nil, err
+		}
+		won = append(won, &id)
+	}
+
+	return won, rows.Err()
+}
+
+// tryLockSkipLocked claims a covering window of candidate tokens in one statement: it joins
+// the caller-supplied (tx_id, idx) pairs against the Tokens table under
+// FOR UPDATE SKIP LOCKED, so a claimant skips past rows a concurrent claimant is already
+// working on instead of blocking on or colliding with them, then inserts a lock row per
+// surviving candidate with ON CONFLICT DO NOTHING as a correctness backstop (e.g. a
+// mixed-strategy rolling deploy). It never touches a (tx_id, idx) pair outside tokenIDs.
+func (db *TokenLockStore) tryLockSkipLocked(ctx context.Context, tokenIDs []*token.ID, consumerTxID transaction.ID, createdAt time.Time) ([]*token.ID, error) {
+	args := make([]any, 0, len(tokenIDs)*2+2)
+	values := make([]string, 0, len(tokenIDs))
+	for _, id := range tokenIDs {
+		values = append(values, fmt.Sprintf("($%d, $%d::bigint)", len(args)+1, len(args)+2))
+		args = append(args, id.TxId, id.Index)
+	}
+	consumerTxIDPlaceholder := fmt.Sprintf("$%d", len(args)+1)
+	args = append(args, consumerTxID)
+	createdAtPlaceholder := fmt.Sprintf("$%d", len(args)+1)
+	args = append(args, createdAt)
+
+	// #nosec G202 -- db.Table.Tokens/TokenLocks are trusted table names derived from
+	// this process's own config at construction time, never from request input; the
+	// only per-request values (tokenIDs, consumerTxID, createdAt) are passed as
+	// placeholders in args, never concatenated into the query text.
+	query := "WITH candidates(tx_id, idx) AS (VALUES " + strings.Join(values, ", ") + "), " +
+		"claimed AS (" +
+		"SELECT t.tx_id, t.idx FROM " + db.Table.Tokens + " t " +
+		"JOIN candidates c ON c.tx_id = t.tx_id AND c.idx = t.idx " +
+		"FOR UPDATE OF t SKIP LOCKED" +
+		") " +
+		"INSERT INTO " + db.Table.TokenLocks + " (consumer_tx_id, tx_id, idx, created_at) " +
+		"SELECT " + consumerTxIDPlaceholder + ", tx_id, idx, " + createdAtPlaceholder + " FROM claimed " +
+		"ON CONFLICT (tx_id, idx) DO NOTHING " +
+		"RETURNING tx_id, idx"
+	db.Logger.Debug(query, args)
+
+	rows, err := db.writeDB.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	var won []*token.ID
+	for rows.Next() {
+		var id token.ID
+		if err := rows.Scan(&id.TxId, &id.Index); err != nil {
+			return nil, err
+		}
+		won = append(won, &id)
+	}
+
+	return won, rows.Err()
 }
 
 // AcquireCleanupLeadership attempts to acquire a Postgres advisory lock so

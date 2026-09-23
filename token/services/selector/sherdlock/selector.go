@@ -172,19 +172,67 @@ func (s *Selector) selectInternal(ctx context.Context, owner token.OwnerFilter, 
 	defer func() {
 		s.metrics.DistinctTokensAttempted.Observe(float64(attempted.Length()))
 	}()
+	// blacklisted holds tokens this call has already lost a lock race on, so a
+	// refetch does not immediately re-attempt (and re-lose) the same race
+	// against the same hot token: see #2395, where one token was re-proposed
+	// in a loop for over six minutes. It is scoped to this single Select
+	// call, not process-global, so a token that is genuinely freed by
+	// another process is reconsidered on the caller's next Select call.
+	blacklisted := collections.NewSet[token2.ID]()
+	// sawNonBlacklistedCandidate tracks whether the current scan of the
+	// cache (since the last refetch) produced at least one candidate that
+	// was not already blacklisted. If a whole scan sees nothing but
+	// blacklisted tokens, the blacklist is excluding every candidate we
+	// have, so it is cleared below: otherwise a genuinely-contended wallet
+	// with no other tokens would turn a lost race into a permanent false
+	// insufficient-funds instead of ever retrying.
+	sawNonBlacklistedCandidate := false
+	// batchLocker is non-nil when the underlying store can claim several candidates in one
+	// round trip (see BatchLocker). When present, the loop below claims a covering window
+	// of candidates per attempt instead of one token at a time, which is what actually
+	// dissolves the ordering hot spot from #2395: reading it once up front means the
+	// decision is made per Select call, not per iteration.
+	batchLocker, supportsBatch := s.locker.(BatchTokenLocker)
 	for {
 		if t, err := s.next(); err != nil {
 			return nil, nil, immediateRetries, errors.Wrapf(err, "failed to get tokens for [%s:%s]", owner.ID(), tokenType)
 		} else if t == nil {
 			if !tokensLockedByOthersExist {
-				return nil, nil, immediateRetries, errors.Wrapf(
-					token.SelectorInsufficientFunds,
-					"insufficient funds, only [%s] tokens of type [%s] are available, but [%s] were requested and no other process has any tokens locked",
-					sum.Decimal(),
-					tokenType,
-					quantity.Decimal(),
-				)
+				// The candidate query excludes already-locked tokens (#2395,
+				// mechanism 3), so an empty scan that never saw a lock conflict is
+				// ambiguous: it may mean this wallet truly has no more funds, or
+				// that every remaining token is currently locked by someone else
+				// and was hidden from us entirely. Disambiguate with a direct,
+				// lock-ignoring existence check before giving up.
+				remaining, remainingErr := quantity.Sub(sum)
+				if remainingErr != nil {
+					return nil, nil, immediateRetries, errors.Wrapf(remainingErr, "failed to compute remaining amount for [%s:%s]", owner.ID(), tokenType)
+				}
+				// HasEnoughSpendableTokens is the sum-aware counterpart of HasAnySpendableTokens:
+				// a wallet whose total spendable balance cannot cover the remaining amount can
+				// never satisfy this Select call no matter how the rest gets unlocked, so fail
+				// immediately instead of spending the immediate-retry/backoff budget on a request
+				// that can never succeed.
+				hasEnough, hasEnoughErr := s.fetcher.HasEnoughSpendableTokens(ctx, owner.ID(), tokenType, remaining.ToBigInt())
+				if hasEnoughErr != nil {
+					return nil, nil, immediateRetries, errors.Wrapf(hasEnoughErr, "failed to check for locked tokens for [%s:%s]", owner.ID(), tokenType)
+				}
+				if !hasEnough {
+					return nil, nil, immediateRetries, errors.Wrapf(
+						token.SelectorInsufficientFunds,
+						"insufficient funds, only [%s] tokens of type [%s] are available, but [%s] were requested and no other process has any tokens locked",
+						sum.Decimal(),
+						tokenType,
+						quantity.Decimal(),
+					)
+				}
 			}
+
+			if !sawNonBlacklistedCandidate && !blacklisted.Empty() {
+				s.logger.DebugfContext(ctx, "Blacklist excluded every candidate this scan; clearing it so freed tokens can be retried.")
+				blacklisted = collections.NewSet[token2.ID]()
+			}
+			sawNonBlacklistedCandidate = false
 
 			if immediateRetries > maxImmediateRetries {
 				s.logger.Warnf("Exceeded max number of immediate retries. Unlock tokens and abort...")
@@ -208,10 +256,106 @@ func (s *Selector) selectInternal(ctx context.Context, owner token.OwnerFilter, 
 
 			immediateRetries++
 			tokensLockedByOthersExist = false
+		} else if blacklisted.Contains(t.Id) {
+			// Already lost the race on this token earlier in this same
+			// Select call: don't re-attempt it, just note that a locked
+			// token exists so the caller keeps retrying/backing off instead
+			// of reporting insufficient funds.
+			s.logger.DebugfContext(ctx, "Skipping blacklisted token [%v]: already lost a lock race on it this call", t.Id)
+			tokensLockedByOthersExist = true
+		} else if supportsBatch {
+			// Grow the window from t until it covers the remaining amount (or the cache
+			// runs out), then claim the whole window in one call. This never claims more
+			// than the minimal covering prefix, so no won-but-unselected token is ever
+			// left locked: every token claimed here either ends up in selected below, or
+			// was never actually locked in the first place (a lost race).
+			window := []*token2.UnspentTokenInWallet{t}
+			windowSum, err := token2.ToQuantity(t.Quantity, s.precision)
+			if err != nil {
+				return nil, nil, immediateRetries, errors.Wrapf(err, "invalid token [%s] found", t.Id)
+			}
+			remaining, err := quantity.Sub(sum)
+			if err != nil {
+				return nil, nil, immediateRetries, errors.Wrapf(err, "failed to compute remaining amount")
+			}
+			for windowSum.Cmp(remaining) < 0 {
+				next, nextErr := s.next()
+				if nextErr != nil {
+					return nil, nil, immediateRetries, errors.Wrapf(nextErr, "failed to get tokens for [%s:%s]", owner.ID(), tokenType)
+				}
+				if next == nil {
+					break
+				}
+				if blacklisted.Contains(next.Id) {
+					continue
+				}
+				nq, err := token2.ToQuantity(next.Quantity, s.precision)
+				if err != nil {
+					return nil, nil, immediateRetries, errors.Wrapf(err, "invalid token [%s] found", next.Id)
+				}
+				windowSum, err = windowSum.Add(nq)
+				if err != nil {
+					return nil, nil, immediateRetries, errors.Wrapf(err, "failed to add quantity")
+				}
+				window = append(window, next)
+			}
+
+			ids := make([]*token2.ID, len(window))
+			for i := range window {
+				ids[i] = &window[i].Id
+			}
+			won, lockErr := batchLocker.TryLockBatch(ctx, ids, owner.ID())
+			if lockErr != nil {
+				// A rate-limit denial from the locker is a hard stop: abort instead of retrying.
+				if errors.Is(lockErr, token.SelectorRateLimited) {
+					return nil, nil, immediateRetries, lockErr
+				}
+				// A real store error (not per-token contention) failed the whole batch.
+				// Don't blacklist: none of these tokens are known to be lost races.
+				s.logger.Warnf("Failed to batch-lock %d token(s): %v", len(window), lockErr)
+				for _, wt := range window {
+					attempted.Add(wt.Id)
+				}
+				sawNonBlacklistedCandidate = true
+				tokensLockedByOthersExist = true
+
+				continue
+			}
+			wonSet := collections.NewSet[token2.ID]()
+			for _, id := range won {
+				wonSet.Add(*id)
+			}
+			for _, wt := range window {
+				attempted.Add(wt.Id)
+				sawNonBlacklistedCandidate = true
+				if !wonSet.Contains(wt.Id) {
+					s.metrics.LockConflicts.Add(1)
+					s.logger.Infof("Lost lock race on token [%s:%d]: already locked by another process", wt.Id.TxId, wt.Id.Index)
+					blacklisted.Add(wt.Id)
+					tokensLockedByOthersExist = true
+
+					continue
+				}
+				s.logger.DebugfContext(ctx, "Got the lock on token [%v]", wt)
+				q, err := token2.ToQuantity(wt.Quantity, s.precision)
+				if err != nil {
+					return nil, nil, immediateRetries, errors.Wrapf(err, "invalid token [%s] found", wt.Id)
+				}
+				immediateRetries = 0
+				sum, err = sum.Add(q)
+				if err != nil {
+					return nil, nil, immediateRetries, errors.Wrapf(err, "failed to add quantity")
+				}
+				selected.Add(&wt.Id)
+			}
+			if sum.Cmp(quantity) >= 0 {
+				return selected.ToSlice(), sum, immediateRetries, nil
+			}
 		} else {
 			// Counted once here, before the outcome is known, so a later third
 			// outcome branch cannot forget to record the attempt.
 			attempted.Add(t.Id)
+			sawNonBlacklistedCandidate = true
 			if locked, lockErr := s.locker.TryLock(ctx, &t.Id, owner.ID()); !locked {
 				// A rate-limit denial from the locker is a hard stop: abort instead of retrying.
 				if errors.Is(lockErr, token.SelectorRateLimited) {
@@ -222,6 +366,7 @@ func (s *Selector) selectInternal(ctx context.Context, owner token.OwnerFilter, 
 					// expected, common case under contention, not a DB error.
 					s.metrics.LockConflicts.Add(1)
 					s.logger.DebugfContext(ctx, "Lost lock race on token [%s:%d]: already locked by another process", t.Id.TxId, t.Id.Index)
+					blacklisted.Add(t.Id)
 				} else {
 					// A real store error (not a lock conflict) collapsed into the
 					// same !locked branch by TryLock. Only the log line separates
@@ -332,12 +477,34 @@ func (l *locker) UnlockAll(ctx context.Context) error {
 	return l.UnlockByTxID(ctx, l.txID)
 }
 
+// batchLocker adds TryLockBatch to locker, forwarding to a BatchLocker bound to the same
+// consumer transaction. It is constructed only when the underlying raw Locker actually
+// implements BatchLocker (see NewSherdSelector), so a s.locker.(BatchTokenLocker) assertion
+// in selectInternal reflects genuine backend capability, not just this adapter's shape.
+type batchLocker struct {
+	*locker
+	batch BatchLocker
+}
+
+func (l *batchLocker) TryLockBatch(ctx context.Context, tokenIDs []*token2.ID, walletID string) ([]*token2.ID, error) {
+	won, err := l.batch.LockBatch(ctx, tokenIDs, l.txID, walletID)
+	if err != nil {
+		logger.DebugfContext(ctx, "failed to batch-lock %d token(s) for [%s]: [%s]", len(tokenIDs), l.txID, err)
+	}
+
+	return won, err
+}
+
 func NewSherdSelector(txID transaction.ID, fetcher TokenFetcher, lockDB Locker, precision uint64, backoff time.Duration, maxRetriesAfterBackoff int, m *Metrics) TokenSelectorUnlocker {
 	logger := logger.Named("selector-" + txID)
-	locker := &locker{txID: txID, Locker: lockDB}
+	base := &locker{txID: txID, Locker: lockDB}
+	var tokenLocker TokenLocker = base
+	if bl, ok := lockDB.(BatchLocker); ok {
+		tokenLocker = &batchLocker{locker: base, batch: bl}
+	}
 	if backoff < 0 {
-		return NewSelector(logger, fetcher, locker, precision, m)
+		return NewSelector(logger, fetcher, tokenLocker, precision, m)
 	} else {
-		return NewStubbornSelector(logger, fetcher, locker, precision, backoff, maxRetriesAfterBackoff, m)
+		return NewStubbornSelector(logger, fetcher, tokenLocker, precision, backoff, maxRetriesAfterBackoff, m)
 	}
 }

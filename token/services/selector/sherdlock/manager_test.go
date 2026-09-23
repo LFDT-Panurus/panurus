@@ -9,6 +9,8 @@ package sherdlock
 import (
 	"context"
 	"errors"
+	"math/big"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -17,12 +19,14 @@ import (
 	"github.com/LFDT-Panurus/panurus/token/services/selector/testutils"
 	"github.com/LFDT-Panurus/panurus/token/services/storage/db/dbtest"
 	"github.com/LFDT-Panurus/panurus/token/services/storage/db/driver"
+	common5 "github.com/LFDT-Panurus/panurus/token/services/storage/db/sql/common"
 	"github.com/LFDT-Panurus/panurus/token/services/storage/db/sql/postgres"
 	"github.com/LFDT-Panurus/panurus/token/services/utils/types/transaction"
 	token2 "github.com/LFDT-Panurus/panurus/token/token"
+	fscdriver "github.com/hyperledger-labs/fabric-smart-client/platform/common/driver"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/services/metrics/disabled"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/services/storage/driver/common"
-	"github.com/hyperledger-labs/fabric-smart-client/platform/view/services/storage/driver/multiplexed"
+	"github.com/hyperledger-labs/fabric-smart-client/platform/view/services/storage/driver/common/mock"
 	postgres2 "github.com/hyperledger-labs/fabric-smart-client/platform/view/services/storage/driver/sql/postgres"
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/stretchr/testify/assert"
@@ -109,11 +113,22 @@ func createManager(t *testing.T, pgConnStr string, backoff time.Duration, maxRet
 // of the manager wiring.
 func createManagerWithLocker(t *testing.T, pgConnStr string, backoff time.Duration, maxRetries int, wrap func(Locker) Locker) (testutils.EnhancedManager, error) {
 	t.Helper()
-	d := postgres.NewDriverWithDbProvider(multiplexed.MockTypeConfig(postgres2.Persistence, postgres2.Config{
+
+	return createManagerWithLockerAndStrategy(t, pgConnStr, backoff, maxRetries, wrap, "")
+}
+
+// createManagerWithLockerAndStrategy is like createManagerWithLocker, but also lets the
+// caller select the Postgres lock-acquisition strategy (common5.ConfigKeyLockStrategy). An
+// empty lockStrategy keeps the default (common5.LockStrategyInsert). This exists so
+// TestHotTokenContention can be parametrized across every strategy without duplicating the
+// rest of the manager wiring.
+func createManagerWithLockerAndStrategy(t *testing.T, pgConnStr string, backoff time.Duration, maxRetries int, wrap func(Locker) Locker, lockStrategy string) (testutils.EnhancedManager, error) {
+	t.Helper()
+	d := postgres.NewDriverWithDbProvider(mockConfigWithLockStrategy(postgres2.Config{
 		TablePrefix:  "test",
 		DataSource:   pgConnStr,
 		MaxOpenConns: 10,
-	}), &dbProvider{})
+	}, lockStrategy), &dbProvider{})
 
 	// Create Token DB first
 	tokenDB, err := d.NewToken("")
@@ -137,6 +152,74 @@ func createManagerWithLocker(t *testing.T, pgConnStr string, backoff time.Durati
 	manager := NewManager(fetcher, locker, testutils.TokenQuantityPrecision, backoff, maxRetries, 0, 0, m)
 
 	return testutils.NewEnhancedManager(t, manager, tokenDB.(dbtest.TestTokenDB)), nil
+}
+
+// createManagerAndLockStoreWithStrategy is createManagerWithLockerAndStrategy, but also
+// returns the underlying driver.TokenLockStore, so a caller can inspect ListLocks directly.
+// This is needed by TestHotTokenContentionWithSettlement (contention_test.go) to prove no
+// lock survives settlement via the store's own diagnostic reader, rather than only through
+// the manager's Locker interface, which has no such read path.
+func createManagerAndLockStoreWithStrategy(t *testing.T, pgConnStr string, backoff time.Duration, maxRetries int, lockStrategy string) (testutils.EnhancedManager, driver.TokenLockStore, error) {
+	t.Helper()
+	d := postgres.NewDriverWithDbProvider(mockConfigWithLockStrategy(postgres2.Config{
+		TablePrefix:  "test",
+		DataSource:   pgConnStr,
+		MaxOpenConns: 10,
+	}, lockStrategy), &dbProvider{})
+
+	tokenDB, err := d.NewToken("")
+	if err != nil {
+		return nil, nil, err
+	}
+
+	lockDB, err := d.NewTokenLock("")
+	if err != nil {
+		return nil, nil, errors.Join(err, tokenDB.Close())
+	}
+
+	m := NewMetrics(&disabled.Provider{})
+	fetcher := newMixedFetcher(tokenDB.(dbtest.TestTokenDB), m, 0, 0, 0)
+	manager := NewManager(fetcher, lockDB, testutils.TokenQuantityPrecision, backoff, maxRetries, 0, 0, m)
+
+	return testutils.NewEnhancedManager(t, manager, tokenDB.(dbtest.TestTokenDB)), lockDB, nil
+}
+
+// mockConfigWithLockStrategy builds a mock.ConfigProvider equivalent to
+// multiplexed.MockTypeConfig(postgres2.Persistence, config), additionally answering
+// common5.ConfigKeyLockStrategy with lockStrategy so tests can select the Postgres
+// lock-acquisition strategy without a real config source. An empty lockStrategy leaves the
+// key unset, so common5.LoadStorageConfig falls back to common5.LockStrategyInsert.
+func mockConfigWithLockStrategy(config postgres2.Config, lockStrategy string) *mock.ConfigProvider {
+	cp := &mock.ConfigProvider{}
+	cp.IsSetCalls(func(key string) bool {
+		return key == common5.ConfigKeyLockStrategy && lockStrategy != ""
+	})
+	cp.UnmarshalKeyCalls(func(key string, val any) error {
+		switch {
+		case strings.Contains(key, "type"):
+			typPtr, ok := val.(*fscdriver.PersistenceType)
+			if !ok {
+				return errors.New("unexpected target type for persistence type key")
+			}
+			*typPtr = postgres2.Persistence
+		case strings.Contains(key, "opts"):
+			optsPtr, ok := val.(*postgres2.Config)
+			if !ok {
+				return errors.New("unexpected target type for opts key")
+			}
+			*optsPtr = config
+		case key == common5.ConfigKeyLockStrategy:
+			strPtr, ok := val.(*string)
+			if !ok {
+				return errors.New("unexpected target type for lock strategy key")
+			}
+			*strPtr = lockStrategy
+		}
+
+		return nil
+	})
+
+	return cp
 }
 
 func startContainer(t *testing.T) (func(), string) {
@@ -804,7 +887,9 @@ func TestManager_NewSelector_WithDifferentPrecisions(t *testing.T) {
 // Mock implementations for testing
 
 type mockTokenFetcher struct {
-	unspentTokensIteratorByFunc func(ctx context.Context, walletID string, currency token2.Type) (Iterator[*token2.UnspentTokenInWallet], error)
+	unspentTokensIteratorByFunc  func(ctx context.Context, walletID string, currency token2.Type) (Iterator[*token2.UnspentTokenInWallet], error)
+	hasAnySpendableTokensFunc    func(ctx context.Context, walletID string, currency token2.Type) (bool, error)
+	hasEnoughSpendableTokensFunc func(ctx context.Context, walletID string, currency token2.Type, target *big.Int) (bool, error)
 }
 
 func (m *mockTokenFetcher) UnspentTokensIteratorBy(ctx context.Context, walletID string, currency token2.Type) (Iterator[*token2.UnspentTokenInWallet], error) {
@@ -813,6 +898,22 @@ func (m *mockTokenFetcher) UnspentTokensIteratorBy(ctx context.Context, walletID
 	}
 
 	return &mockIterator{}, nil
+}
+
+func (m *mockTokenFetcher) HasAnySpendableTokens(ctx context.Context, walletID string, currency token2.Type) (bool, error) {
+	if m.hasAnySpendableTokensFunc != nil {
+		return m.hasAnySpendableTokensFunc(ctx, walletID, currency)
+	}
+
+	return false, nil
+}
+
+func (m *mockTokenFetcher) HasEnoughSpendableTokens(ctx context.Context, walletID string, currency token2.Type, target *big.Int) (bool, error) {
+	if m.hasEnoughSpendableTokensFunc != nil {
+		return m.hasEnoughSpendableTokensFunc(ctx, walletID, currency, target)
+	}
+
+	return false, nil
 }
 
 type mockLocker struct {

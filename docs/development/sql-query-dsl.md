@@ -15,7 +15,7 @@ adding a store method or a new condition, not at application authors.
 | :--- | :--- |
 | `query` | Entry points: `Select()`, `Insert()`, `Update()`, `Delete()`, `Table()`. |
 | `query/common` | The `Builder` that accumulates SQL text plus bound parameters, and the `Serializable` / `Condition` / `CondInterpreter` contracts. |
-| `query/cond` | Condition constructors: `Eq`, `Cmp`, `In`, `InTuple`, `And`, `Or`, `Exists`, `BetweenTimestamps`, … |
+| `query/cond` | Condition constructors: `Eq`, `Cmp`, `In`, `InTuple`, `And`, `Or`, `Exists`, `NotExists`, `BetweenTimestamps`, … |
 | `query/select`, `query/insert`, `query/update`, `query/delete` | Per-statement builders. |
 | `query/pagination` | Pagination strategies and the interpreter that turns them into `LIMIT`/`OFFSET`/`WHERE` clauses. |
 

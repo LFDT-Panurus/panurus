@@ -9,6 +9,8 @@ package testutils
 import (
 	"bytes"
 	"context"
+	"math/big"
+	"sort"
 	"strings"
 	"time"
 
@@ -100,6 +102,25 @@ func (q *MockQueryService) WarmupCache(walletID, tokenType string) {
 			keys = append(keys, k)
 		}
 	}
+	// Sort ascending by amount, mirroring the real fetcher's SQL ORDER BY amount ASC
+	// (buildSpendableTokensIteratorByQuery, token/services/storage/db/sql/common/tokens.go:415).
+	// q.kvs is a Go map, whose iteration order is unspecified by the language spec, so without
+	// this a caller relying on size-ordered selection (e.g. #2395 phase 4b's smallest-fit fix,
+	// or sherdlock.newBucketedIterator's "items already ordered ascending by amount"
+	// precondition) would see a MockQueryService that cannot reproduce that ordering
+	// deterministically.
+	sort.Slice(keys, func(i, j int) bool {
+		qi, err := token2.ToQuantity(q.kvs[keys[i]].Quantity, TokenQuantityPrecision)
+		if err != nil {
+			return false
+		}
+		qj, err := token2.ToQuantity(q.kvs[keys[j]].Quantity, TokenQuantityPrecision)
+		if err != nil {
+			return false
+		}
+
+		return qi.Cmp(qj) < 0
+	})
 	q.cache[walletID] = keys
 }
 
@@ -130,12 +151,32 @@ func (q *MockQueryService) UnspentTokensIterator(context.Context) (*token.Unspen
 }
 
 func (q *MockQueryService) SpendableTokensIteratorBy(ctx context.Context, walletID string, typ token2.Type) (driver.SpendableTokensIterator, error) {
-	it, err := q.UnspentTokensIteratorBy(ctx, walletID, typ)
-	if err != nil {
-		return nil, err
+	var it driver.UnspentTokensIterator
+	if walletID == "" && typ == "" {
+		// Mirrors buildSpendableTokensIteratorByQuery/HasTokenDetails' production semantics: an
+		// empty walletID/typ means "no filter", scanning every token rather than one wallet's
+		// cache entry. sherdlock's cachedFetcher.update relies on exactly this call shape to
+		// build its whole-DB snapshot (token/services/selector/sherdlock/fetcher.go); without
+		// this branch it always finds zero tokens, since q.cache is only ever warmed under a
+		// specific wallet key (see WarmupCache), never under "".
+		it = &token.UnspentTokensIterator{UnspentTokensIterator: &MockIterator{q, q.allKeys, 0}}
+	} else {
+		var err error
+		it, err = q.UnspentTokensIteratorBy(ctx, walletID, typ)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	return collections.Map[*token2.UnspentToken, *token2.UnspentTokenInWallet](it, func(ut *token2.UnspentToken) (*token2.UnspentTokenInWallet, error) {
+		// iterators.Map's transformer also runs for the zero value that marks exhaustion
+		// (see its doc comment), so it must not dereference ut unchecked: without this guard,
+		// draining this iterator to completion (e.g. via iterators.ReadAllPointers, as
+		// sherdlock's lazyFetcher does) panics on a nil pointer dereference on the final call.
+		if ut == nil {
+			return nil, nil
+		}
+
 		return &token2.UnspentTokenInWallet{
 			Id:       ut.Id,
 			WalletID: string(ut.Owner),
@@ -147,6 +188,32 @@ func (q *MockQueryService) SpendableTokensIteratorBy(ctx context.Context, wallet
 
 func (q *MockQueryService) UnspentTokensIteratorBy(_ context.Context, walletID string, _ token2.Type) (driver.UnspentTokensIterator, error) {
 	return &token.UnspentTokensIterator{UnspentTokensIterator: &MockIterator{q, q.cache[walletID], 0}}, nil
+}
+
+// HasAnySpendableTokens reports whether walletID has at least one cached
+// token, mirroring SpendableTokensIteratorBy's ignore-locks semantics (this
+// mock has no lock concept at all).
+func (q *MockQueryService) HasAnySpendableTokens(_ context.Context, walletID string, _ token2.Type) (bool, error) {
+	return len(q.cache[walletID]) > 0, nil
+}
+
+// HasEnoughSpendableTokens reports whether the sum of walletID's cached tokens of typ is
+// at least target, mirroring HasAnySpendableTokens' ignore-locks semantics.
+func (q *MockQueryService) HasEnoughSpendableTokens(_ context.Context, walletID string, typ token2.Type, target *big.Int) (bool, error) {
+	sum := big.NewInt(0)
+	for _, key := range q.cache[walletID] {
+		t, ok := q.kvs[key]
+		if !ok || t.Type != typ {
+			continue
+		}
+		quantity, err := token2.ToQuantity(t.Quantity, TokenQuantityPrecision)
+		if err != nil {
+			return false, err
+		}
+		sum.Add(sum, quantity.ToBigInt())
+	}
+
+	return sum.Cmp(target) >= 0, nil
 }
 
 func (q *MockQueryService) GetTokens(ctx context.Context, inputs ...*token2.ID) ([]*token2.Token, error) {

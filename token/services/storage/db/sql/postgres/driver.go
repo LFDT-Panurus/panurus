@@ -69,7 +69,9 @@ func NewDriverWithDbProvider(config driver3.Config, dbProvider fscPostgres.DbPro
 		tableNamesConfig: tableNamesConfig,
 	}
 
-	d.TokenLock = newProviderWithKeyMapper(dbProvider, NewTokenLockStore, "tokenlock", tableNamesConfig)
+	d.TokenLock = newProviderWithKeyMapper(dbProvider, func(dbs *common.RWDB, tableNames common3.TableNames) (*TokenLockStore, error) {
+		return newTokenLockStoreWithStrategy(dbs, tableNames, storageConfig.LockStrategy)
+	}, "tokenlock", tableNamesConfig)
 	d.Identity = newIdentityStoreProvider(dbProvider, tableNamesConfig)
 	d.Wallet = newWalletStoreProvider(d, dbProvider, tableNamesConfig)
 	d.Token = newTokenStoreProvider(dbProvider, tableNamesConfig)
