@@ -140,7 +140,11 @@ func (db *WalletStore) LoadMeta(ctx context.Context, identity token.Identity, wI
 	return result, nil
 }
 
-func (db *WalletStore) IdentityExists(ctx context.Context, identity token.Identity, wID driver.WalletID, roleID int) bool {
+// IdentityExists reports whether the identity-wallet-role binding has been
+// stored. A lookup failure is returned as an error rather than as "not found":
+// the two are not interchangeable, and collapsing them lets a transient
+// connectivity problem read as a definitive negative.
+func (db *WalletStore) IdentityExists(ctx context.Context, identity token.Identity, wID driver.WalletID, roleID int) (bool, error) {
 	idHash := identity.UniqueID()
 	query, args := q.Select().
 		FieldsByName("wallet_id").
@@ -149,11 +153,11 @@ func (db *WalletStore) IdentityExists(ctx context.Context, identity token.Identi
 		Format(db.ci)
 	result, err := common.QueryUniqueContext[driver.WalletID](ctx, db.readDB, query, args...)
 	if err != nil {
-		logger.Errorf("failed looking up wallet-identity [%s-%s]: %w", wID, idHash, err)
+		return false, errors.Wrapf(err, "failed looking up wallet-identity [%s-%s]", wID, idHash)
 	}
 	logger.DebugfContext(ctx, "found identity for wallet-identity [%v-%v]: %v", wID, idHash, result)
 
-	return result != ""
+	return result != "", nil
 }
 
 func (db *WalletStore) GetSchema() string {

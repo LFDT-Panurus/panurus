@@ -109,7 +109,9 @@ func TWalletConfigurationLink(t *testing.T, db driver.WalletStore, identityDB dr
 	confID := conf.UniqueID()
 
 	require.NoError(t, db.StoreIdentity(ctx, []byte("carol"), "eID", "carol_wallet", 0, nil, confID))
-	require.True(t, db.IdentityExists(ctx, []byte("carol"), "carol_wallet", 0))
+	exists, err := db.IdentityExists(ctx, []byte("carol"), "carol_wallet", 0)
+	require.NoError(t, err)
+	require.True(t, exists)
 
 	// The configuration this wallet links to must exist, under the exact
 	// (id, type, url) the wallet's confID was derived from.

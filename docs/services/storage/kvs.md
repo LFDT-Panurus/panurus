@@ -55,6 +55,11 @@ A failure part-way therefore leaves the identity reported as *not* bound, so the
 converges on the complete binding and a partially applied sequence is never mistaken for a
 finished one.
 
+`IdentityExists` returns `(bool, error)`. An error means the lookup itself failed and the answer
+is unknown — it must not be read as "the binding does not exist". Note that this backend can only
+report a malformed key that way: `KVS.Exists` is implemented over FSC's `GetExisting`, which drops
+the underlying store error, so a read failure is indistinguishable from a missing key here.
+
 ## HashiCorp Vault Backend
 
 The Vault backend maps a composite key onto a Vault path under the configured mount point: one

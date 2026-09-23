@@ -107,14 +107,21 @@ func (s *WalletStore) StoreIdentity(ctx context.Context, identity driver2.Identi
 	return nil
 }
 
-func (s *WalletStore) IdentityExists(ctx context.Context, identity driver2.Identity, wID storage.WalletID, roleID int) bool {
+// IdentityExists reports whether the identity-wallet-role binding has been stored.
+// An error means the lookup itself failed and the answer is unknown; it must not be
+// read as "the binding does not exist".
+//
+// Only key construction is reported here: this backend's Exists cannot tell a missing
+// key from a failed read, because FSC implements it over GetExisting, which drops the
+// underlying store error (see GetWalletID).
+func (s *WalletStore) IdentityExists(ctx context.Context, identity driver2.Identity, wID storage.WalletID, roleID int) (bool, error) {
 	idHash := identity.UniqueID()
 	k, err := kvs.CreateCompositeKey(walletStorePrefix, []string{s.tmsID.String(), strconv.Itoa(roleID), idHash, wID})
 	if err != nil {
-		return false
+		return false, errors.Wrapf(err, "failed to create key")
 	}
 
-	return s.kvs.Exists(ctx, k)
+	return s.kvs.Exists(ctx, k), nil
 }
 
 func (s *WalletStore) GetWalletID(ctx context.Context, identity driver2.Identity, roleID int) (storage.WalletID, error) {
