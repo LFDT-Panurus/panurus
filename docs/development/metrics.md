@@ -70,8 +70,9 @@ declared in `token/services/identity/idemix/cache/metrics.go`, yet exported as
 
 The wiring that decides this is the driver setup in
 `token/core/{fabtoken/v1,zkatdlog/nogh/v1}/driver/driver.go`, which builds a TMS-scoped provider and
-passes it to the driver services and the wallet service. Everything reached from the
-dependency-injection container instead keeps its own package prefix.
+passes it to the driver services and the wallet service, and `token/sdk/db/checks.go`, which does the
+same for the ledger drift checks sweep. Everything reached from the dependency-injection container
+instead keeps its own package prefix.
 
 Two rules follow for anyone adding a metric:
 
@@ -230,6 +231,24 @@ path while the identity backend keeps failing; the corresponding log line alone 
 
 Source: `token/services/identity/metrics.go`, `token/services/identity/idemix/cache/metrics.go`,
 `token/services/identity/role/metrics.go`.
+
+## Ledger drift checks
+
+Recorded by the background sweep in `token/services/storage/services/checks`, wired up from
+`token/sdk/db/checks.go` through the TMS-scoped provider — hence the `panurus_core_common_metrics_`
+prefix despite living under `token/services/storage`. `role` is `owner` or `auditor`, naming which
+store a sweep covers; `outcome` is `completed`, `not_leader` or `failed`. See
+[Ledger Drift Checks](../services/storage/checks.md) for what the checks themselves look at.
+
+| Metric | Type | Labels | Description |
+|---|---|---|---|
+| `panurus_core_common_metrics_storage_checks_sweep_duration_seconds` | histogram | `network,channel,namespace,role` | Histogram of the wall-clock time of one ledger drift checks sweep, in seconds |
+| `panurus_core_common_metrics_storage_checks_sweeps_total` | counter | `network,channel,namespace,role,outcome` | Total number of ledger drift checks sweeps by outcome (completed, not_leader, failed) |
+| `panurus_core_common_metrics_storage_checks_findings_observed_total` | counter | `network,channel,namespace,role,checker,code,severity` | Total number of ledger drift findings reported, by check, code and severity |
+| `panurus_core_common_metrics_storage_checks_findings_open` | gauge | `network,channel,namespace,role,severity` | Number of ledger drift findings reported by the latest sweep, by severity |
+| `panurus_core_common_metrics_storage_checks_findings_resolved_total` | counter | `network,channel,namespace,role` | Total number of stored ledger drift findings closed because a sweep stopped reporting them |
+
+Source: `token/services/storage/services/checks/metrics.go`.
 
 ## Fabric-X finality queue
 

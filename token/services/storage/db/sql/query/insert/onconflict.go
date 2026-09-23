@@ -51,3 +51,30 @@ func (e excludedField) WriteString(sb common.Builder) {
 	sb.WriteString("excluded.").
 		WriteSerializables(e.field)
 }
+
+type onConflictIncrement struct {
+	table common.TableName
+	field common.FieldName
+	delta common.Param
+}
+
+// Increment adds delta to the value already stored in field.
+//
+// The right-hand side must be qualified with the table name. An unqualified
+// column reference there is ambiguous to PostgreSQL: it refuses to guess
+// between the row already stored and excluded.<field>, the row proposed for
+// insertion, even though only the former is a legal unqualified reference.
+// SQLite has no such restriction, but accepts the qualified form too.
+func Increment(table common.TableName, field common.FieldName, delta common.Param) OnConflict {
+	return onConflictIncrement{table: table, field: field, delta: delta}
+}
+
+func (o onConflictIncrement) WriteString(sb common.Builder) {
+	sb.WriteSerializables(o.field).
+		WriteString("=").
+		WriteString(string(o.table)).
+		WriteRune('.').
+		WriteSerializables(o.field).
+		WriteString("+").
+		WriteParam(o.delta)
+}

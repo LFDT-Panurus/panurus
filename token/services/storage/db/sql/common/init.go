@@ -46,6 +46,7 @@ var knownShortCodes = map[string]struct{}{
 	"key_store":        {},
 	"eid_leases":       {},
 	"tkn_ski_cleanups": {},
+	"chk_findings":     {},
 }
 
 type TableNames struct {
@@ -68,6 +69,7 @@ type TableNames struct {
 	KeyStore               string
 	EIDLeases              string
 	TokenSKICleanups       string
+	Findings               string
 }
 
 type PersistenceConstructor[V common.DBObject] func(*common.RWDB, TableNames) (V, error)
@@ -178,6 +180,7 @@ func buildTableNames(prefix string, params []string, overrides TableNamesConfig,
 		KeyStore:               name("key_store"),
 		EIDLeases:              name("eid_leases"),
 		TokenSKICleanups:       name("tkn_ski_cleanups"),
+		Findings:               name("chk_findings"),
 	}
 	if err := errors.Join(errs...); err != nil {
 		return TableNames{}, err

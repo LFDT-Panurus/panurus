@@ -14,6 +14,7 @@ package auditdb
 import (
 	"context"
 	"testing"
+	"time"
 
 	dbdriver "github.com/LFDT-Panurus/panurus/token/services/storage/db/driver"
 	driver2 "github.com/hyperledger-labs/fabric-smart-client/platform/common/driver"
@@ -57,6 +58,18 @@ func (s *auditGetTokenRequestsStub) GetTokenRequest(_ context.Context, _ string)
 	panic("unexpected")
 }
 func (s *auditGetTokenRequestsStub) AcquireRecoveryLeadership(_ context.Context) (dbdriver.RecoveryLeadership, bool, error) {
+	panic("unexpected")
+}
+func (s *auditGetTokenRequestsStub) AcquireLeadership(_ context.Context, _ int64) (dbdriver.RecoveryLeadership, bool, error) {
+	panic("unexpected")
+}
+func (s *auditGetTokenRequestsStub) QueryFindings(_ context.Context, _ dbdriver.QueryFindingsParams) ([]*dbdriver.FindingRecord, error) {
+	panic("unexpected")
+}
+func (s *auditGetTokenRequestsStub) UpsertFindings(_ context.Context, _ []dbdriver.FindingRecord, _ time.Time) error {
+	panic("unexpected")
+}
+func (s *auditGetTokenRequestsStub) ResolveFindingsNotSeenSince(_ context.Context, _ []string, _ time.Time) (int64, error) {
 	panic("unexpected")
 }
 func (s *auditGetTokenRequestsStub) ClaimPendingTransactions(_ context.Context, _ dbdriver.RecoveryClaimParams) ([]*dbdriver.RecoveryClaim, error) {
