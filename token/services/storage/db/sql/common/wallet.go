@@ -20,7 +20,6 @@ import (
 	"github.com/LFDT-Panurus/panurus/token/services/storage/db/sql/query/cond"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/common/utils/collections/iterators"
-	common2 "github.com/hyperledger-labs/fabric-smart-client/platform/view/services/storage/driver/common"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/services/storage/driver/sql/common"
 )
 
@@ -31,12 +30,12 @@ type walletTables struct {
 
 type WalletStore struct {
 	readDB  *sql.DB
-	writeDB *sql.DB
+	writeDB WriteDB
 	table   walletTables
 	ci      common3.CondInterpreter
 }
 
-func newWalletStore(readDB, writeDB *sql.DB, tables walletTables, ci common3.CondInterpreter) *WalletStore {
+func newWalletStore(readDB *sql.DB, writeDB WriteDB, tables walletTables, ci common3.CondInterpreter) *WalletStore {
 	return &WalletStore{
 		readDB:  readDB,
 		writeDB: writeDB,
@@ -45,7 +44,7 @@ func newWalletStore(readDB, writeDB *sql.DB, tables walletTables, ci common3.Con
 	}
 }
 
-func NewWalletStore(readDB, writeDB *sql.DB, tables TableNames, ci common3.CondInterpreter) (*WalletStore, error) {
+func NewWalletStore(readDB *sql.DB, writeDB WriteDB, tables TableNames, ci common3.CondInterpreter) (*WalletStore, error) {
 	return newWalletStore(readDB, writeDB, walletTables{
 		Wallets:                tables.Wallets,
 		IdentityConfigurations: tables.IdentityConfigurations,
@@ -182,5 +181,5 @@ func (db *WalletStore) GetSchema() string {
 }
 
 func (db *WalletStore) Close() error {
-	return common2.Close(db.readDB, db.writeDB)
+	return CloseRWDB(db.readDB, db.writeDB)
 }

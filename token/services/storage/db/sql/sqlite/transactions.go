@@ -19,9 +19,9 @@ type (
 )
 
 func NewAuditTransactionStore(dbs *common2.RWDB, tableNames common3.TableNames) (*AuditTransactionStore, error) {
-	return common3.NewAuditTransactionStore(dbs.ReadDB, dbs.WriteDB, tableNames, NewConditionInterpreter(), pagination.NewDefaultInterpreter())
+	return common3.NewAuditTransactionStore(dbs.ReadDB, NewBusyRetryWriteDB(dbs.WriteDB), tableNames, NewConditionInterpreter(), pagination.NewDefaultInterpreter())
 }
 
 func NewTransactionStore(dbs *common2.RWDB, tableNames common3.TableNames) (*OwnerTransactionStore, error) {
-	return common3.NewOwnerTransactionStore(dbs.ReadDB, dbs.WriteDB, tableNames, NewConditionInterpreter(), pagination.NewDefaultInterpreter())
+	return common3.NewOwnerTransactionStore(dbs.ReadDB, NewBusyRetryWriteDB(dbs.WriteDB), tableNames, NewConditionInterpreter(), pagination.NewDefaultInterpreter())
 }

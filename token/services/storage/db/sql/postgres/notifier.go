@@ -31,6 +31,10 @@ import (
 	"github.com/jackc/pgxlisten"
 )
 
+// notificationHandler must stay a BacklogHandler: Subscribe's guarantee that a
+// write landing after it returns is delivered rests on that hook firing.
+var _ pgxlisten.BacklogHandler = (*notificationHandler)(nil)
+
 // databaseListener defines the interface for database event listeners.
 // This abstraction allows for easier testing and mocking.
 type databaseListener interface {
@@ -41,6 +45,21 @@ type databaseListener interface {
 }
 
 // Notifier implements a simple subscription API to listen for updates on a database table.
+//
+// Delivery is serialised per table: one goroutine owns the LISTEN connection,
+// reads notifications one at a time and invokes every subscriber inline (see
+// dispatch). A subscriber that blocks therefore stalls delivery of every later
+// notification on this table's channel, for every subscriber. Callbacks must be
+// fast and non-blocking - hand slow work to a goroutine or a queue. See
+// Subscribe for the full contract.
+//
+// Notifications are also not a durable log. Postgres queues them only for
+// sessions that are already LISTENing and never replays them, so anything
+// emitted before the listener registers, or while a dropped connection is being
+// re-established, is lost. Subscribe closes the first window by waiting for
+// LISTEN; TransportError reports the second. A subscriber that needs to be
+// correct rather than merely prompt must therefore treat a notification as a
+// hint to re-read the table, not as the record of what changed.
 type Notifier struct {
 	// table is the name of the database table to listen for notifications on
 	table string
@@ -79,6 +98,10 @@ type Notifier struct {
 	transportErr chan error
 	// listenerWg waits for the listener goroutine to finish
 	listenerWg sync.WaitGroup
+	// listenerStarted records that the listener goroutine was registered on
+	// listenerWg. Guarded by mu, so Close can tell whether waiting on the group
+	// is safe; see startListener.
+	listenerStarted bool
 	// closed indicates whether the notifier has been closed
 	closed bool
 	// channelName is the name of the channel on which to receive notifications.
@@ -92,6 +115,17 @@ type Notifier struct {
 	// failed or the notifier was closed mid-install. Written once inside
 	// startOnce; the failure is final and every Subscribe returns it.
 	startupErr error
+	// ready is closed once the listener has issued LISTEN on channelName, which
+	// is the point from which Postgres starts queueing notifications for this
+	// session. It is nil for a Notifier assembled outside NewNotifier.
+	ready chan struct{}
+	// readyOnce closes ready exactly once: the signal fires again on every
+	// reconnect, and closing a closed channel panics.
+	readyOnce sync.Once
+	// listenReadyTimeout bounds the first Subscribe's wait for ready. Set by
+	// NewNotifier to defaultListenReadyTimeout; zero falls back to
+	// listenFailureProbe, as does a nil ready.
+	listenReadyTimeout time.Duration
 }
 
 var logger = logging.MustGetLogger()
@@ -116,12 +150,20 @@ func NewSimplePrimaryKey(name driver.ColumnKey) *PrimaryKey {
 	return &PrimaryKey{name: name, valueDecoder: identity}
 }
 
-func NewBytePrimaryKey(name driver.ColumnKey) *PrimaryKey {
-	return &PrimaryKey{name: name, valueDecoder: decodeBYTEA}
-}
-
 const (
 	reconnectInterval = 10 * time.Second
+
+	// defaultListenReadyTimeout bounds how long the first Subscribe waits for the
+	// listener to register LISTEN. Exceeding it is not an error - the listener
+	// keeps trying - but it is logged, because notifications emitted before
+	// LISTEN registers are discarded by Postgres and never replayed.
+	defaultListenReadyTimeout = 5 * time.Second
+
+	// listenFailureProbe is the fallback wait for a Notifier that has no
+	// readiness signal to wait for (assembled outside NewNotifier, with a stub
+	// listener that registers no handler). It is long enough only to catch a
+	// listener that fails immediately.
+	listenFailureProbe = 100 * time.Millisecond
 )
 
 // NewNotifier returns a new Notifier for the given RWDB and table names.
@@ -145,17 +187,19 @@ func NewNotifier(
 	channelName := pgChannelName(table)
 
 	n := &Notifier{
-		writeDB:          writeDB,
-		table:            table,
-		notifyOperations: notifyOperations,
-		primaryKeys:      primaryKeys,
-		listener:         realListener,
-		ctx:              ctx,
-		cancel:           cancel,
-		listenerErr:      make(chan error, 1), // buffered to prevent blocking
-		transportErr:     make(chan error, 1), // buffered, best-effort
-		closed:           false,
-		channelName:      channelName,
+		writeDB:            writeDB,
+		table:              table,
+		notifyOperations:   notifyOperations,
+		primaryKeys:        primaryKeys,
+		listener:           realListener,
+		ctx:                ctx,
+		cancel:             cancel,
+		listenerErr:        make(chan error, 1), // buffered to prevent blocking
+		transportErr:       make(chan error, 1), // buffered, best-effort
+		closed:             false,
+		channelName:        channelName,
+		ready:              make(chan struct{}),
+		listenReadyTimeout: defaultListenReadyTimeout,
 	}
 	n.ensureSchema = n.CreateSchema
 
@@ -171,17 +215,24 @@ func NewNotifier(
 		}
 	}
 
-	// attach handler that calls the subscribers
+	// attach handler that calls the subscribers. onListening is what makes
+	// Subscribe able to wait for LISTEN to be registered; see HandleBacklog.
 	n.listener.Handle(channelName, &notificationHandler{
 		table:       table,
 		primaryKeys: primaryKeys,
 		callback:    n.dispatch,
+		onListening: n.markListening,
 	})
 
 	return n
 }
 
 // dispatch calls all subscribers with the operation and payload.
+//
+// It runs on the listener goroutine, synchronously between two reads of the
+// LISTEN connection, and calls the subscribers in turn. Nothing bounds how long
+// a callback may take, so a slow one delays every subsequent notification on
+// this channel; see the contract on Subscribe.
 func (db *Notifier) dispatch(operation driver.Operation, m map[driver.ColumnKey]string) {
 	db.mu.RLock()
 	// Create a copy of subscribers to avoid issues if a subscriber modifies the list
@@ -202,6 +253,24 @@ func (db *Notifier) dispatch(operation driver.Operation, m map[driver.ColumnKey]
 
 // Subscribe registers a callback function to be called when a matching database event occurs.
 // It returns an error if the notifier is closed or if the listener fails to start.
+//
+// The callback is invoked synchronously on the single listener goroutine that
+// owns this table's LISTEN connection, so it must not block: while it runs, no
+// other notification on the channel is delivered, to this or any other
+// subscriber. It must not call back into the notifier either (Subscribe, Close
+// and UnsubscribeAll all take the same lock the dispatch loop reads under).
+// Anything slow - a query, an RPC, a lock - belongs on a goroutine or a queue
+// the callback only hands work to.
+//
+// The first Subscribe installs the notification trigger and then waits, up to
+// listenReadyTimeout, for the listener to register LISTEN. A row written after
+// it returns nil is therefore guaranteed to reach the callback; previously the
+// call returned after a fixed 100ms that had nothing to do with whether the
+// channel was live, so a write racing startup was silently dropped. If the wait
+// times out the error is logged and Subscribe still returns nil: the listener
+// keeps retrying, and failing the subscription would be worse than a late one.
+// Rows written between the trigger's installation and that point - by another
+// process, or by this one before Subscribe returns - are not replayed.
 func (db *Notifier) Subscribe(callback driver.TriggerCallback) error {
 	if callback == nil {
 		return errors.Errorf("cannot subscribe to a nil callback")
@@ -220,7 +289,6 @@ func (db *Notifier) Subscribe(callback driver.TriggerCallback) error {
 	// Start the listener if this is the first subscription
 	var justStarted bool
 	db.startOnce.Do(func() {
-		justStarted = true
 		logger.Debugf("First subscription for notifier of [%s]. Notifier starts listening...", db.table)
 		// The notification trigger is installed on first subscription rather
 		// than at store creation: tables nobody subscribes to must not pay
@@ -239,17 +307,12 @@ func (db *Notifier) Subscribe(callback driver.TriggerCallback) error {
 
 			return
 		}
-		db.listenerWg.Go(func() {
-			if err := db.listener.Listen(db.ctx); err != nil {
-				// Send error to both the error channel and log it
-				select {
-				case db.listenerErr <- err:
-				default:
-					// If the error channel is full, just log it
-				}
-				logger.Errorf("notifier listen for [%s] failed: %s", db.table, err.Error())
-			}
-		})
+		if !db.startListener() {
+			db.startupErr = errors.Errorf("notifier is closed")
+
+			return
+		}
+		justStarted = true
 	})
 
 	// startOnce.Do guarantees the write inside the closure is visible here.
@@ -259,35 +322,15 @@ func (db *Notifier) Subscribe(callback driver.TriggerCallback) error {
 	}
 
 	if justStarted {
-		// Wait a bit to see if it fails immediately
-		timer := time.NewTimer(100 * time.Millisecond)
-		defer timer.Stop()
-		select {
-		case err := <-db.listenerErr:
-			// Put it back
-			select {
-			case db.listenerErr <- err:
-			default:
-			}
-
+		if err := db.waitForListening(); err != nil {
 			return err
-		case <-timer.C:
-		case <-db.ctx.Done():
-
-			return db.ctx.Err()
 		}
 	}
 
 	// Check if there was an error starting the listener (async errors)
 	select {
 	case err := <-db.listenerErr:
-		// Put it back so other concurrent Subscribe calls can see it
-		select {
-		case db.listenerErr <- err:
-		default:
-		}
-
-		return err
+		return db.takeListenerErr(err)
 	default:
 		// No error, return nil
 
@@ -295,16 +338,138 @@ func (db *Notifier) Subscribe(callback driver.TriggerCallback) error {
 	}
 }
 
+// startListener launches the goroutine that owns the LISTEN connection, unless
+// the notifier was closed first, and reports whether it started one.
+//
+// The launch happens under mu, and Close marks the notifier closed under the same
+// lock before it waits, so the wait group's counter is never raised from zero
+// concurrently with Close's Wait. That ordering is what makes the wait mean
+// something: without it Wait could return before the goroutine had been
+// registered, and Close would then close listenerErr while the listener was
+// still running and might still send on it - a send on a closed channel. See
+// #2043.
+func (db *Notifier) startListener() bool {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+
+	if db.closed {
+		return false
+	}
+	db.listenerStarted = true
+	db.listenerWg.Go(func() {
+		if err := db.listener.Listen(db.ctx); err != nil {
+			db.repostListenerErr(err)
+			logger.Errorf("notifier listen for [%s] failed: %s", db.table, err.Error())
+		}
+	})
+
+	return true
+}
+
+// markListening records that the listener has issued LISTEN on the channel and
+// that notifications are therefore being queued for this session. It is called
+// on the initial connection and again after every reconnect; only the first call
+// has an effect, so a reconnect does not reopen the readiness gate.
+func (db *Notifier) markListening() {
+	db.readyOnce.Do(func() { close(db.ready) })
+}
+
+// waitForListening blocks until the listener has registered LISTEN on the
+// channel, so that a row written once it returns cannot be missed. It gives up
+// early if the listener fails outright or the notifier is closed, and otherwise
+// after listenReadyTimeout - a timeout is logged rather than returned, because
+// the listener keeps retrying and the subscription is still valid.
+//
+// A Notifier assembled outside NewNotifier has no readiness signal to wait for
+// (its listener registers no handler), so it falls back to listenFailureProbe,
+// which only catches a listener that fails immediately.
+func (db *Notifier) waitForListening() error {
+	ready, timeout := db.ready, db.listenReadyTimeout
+	if ready == nil || timeout <= 0 {
+		timeout = listenFailureProbe
+	}
+
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+
+	select {
+	case <-ready: // nil when there is nothing to wait for, and never selected
+		logger.Debugf("notifier for [%s] is listening on [%s]", db.table, db.channelName)
+	case err := <-db.listenerErr:
+		return db.takeListenerErr(err)
+	case <-timer.C:
+		if ready != nil {
+			logger.Warnf(
+				"notifier for [%s] did not start listening within %s; notifications emitted until it does are lost",
+				db.table, timeout)
+		}
+	case <-db.ctx.Done():
+
+		return db.ctx.Err()
+	}
+
+	return nil
+}
+
+// takeListenerErr interprets an error received from listenerErr and keeps it
+// observable for whoever looks next.
+//
+// A nil error means the channel was closed by Close rather than that the
+// listener reported anything: nothing ever sends nil. That is a shutdown, so the
+// context's error is what the caller should see.
+func (db *Notifier) takeListenerErr(err error) error {
+	if err == nil {
+		return db.ctx.Err()
+	}
+	db.repostListenerErr(err)
+
+	return err
+}
+
+// repostListenerErr puts a consumed listener error back on the channel so that
+// concurrent and later Subscribe calls, and ListenerError, still observe it.
+//
+// The send is non-blocking - the channel holds one error and the first one is
+// the interesting one - and is made under the lock that guards closed, because
+// Close closes the channel and sending on a closed channel panics.
+func (db *Notifier) repostListenerErr(err error) {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+
+	if db.closed {
+		return
+	}
+
+	select {
+	case db.listenerErr <- err:
+	default:
+	}
+}
+
 // Close stops the listener and cleans up resources.
 func (db *Notifier) Close() error {
 	db.closeOnce.Do(func() {
-		db.cancel()          // stop listener goroutine
-		db.listenerWg.Wait() // wait for listener to finish
+		db.cancel() // stop listener goroutine
+
 		db.mu.Lock()
 		db.subscribers = nil
-		db.closed = true // mark as closed
+		db.closed = true // no listener can be started from here on
+		started := db.listenerStarted
 		db.mu.Unlock()
-		close(db.listenerErr) // close error channel
+
+		// Wait only for a listener that was actually registered. closed is set
+		// above, so none can start now, and waiting on a group whose counter may
+		// still be raised from zero would race with that raise.
+		if started {
+			db.listenerWg.Wait() // wait for listener to finish
+		}
+
+		// The listener has exited, so nothing sends on listenerErr any more.
+		// Closed under the lock repostListenerErr sends under, so that a
+		// concurrent Subscribe cannot send on it afterwards.
+		db.mu.Lock()
+		close(db.listenerErr)
+		db.mu.Unlock()
 	})
 
 	return nil
@@ -428,7 +593,8 @@ func (a *listenerAdapter) Handle(channelName string, handler pgxlisten.Handler) 
 	a.Listener.Handle(channelName, handler)
 }
 
-// notificationHandler handles database notifications and invokes subscribers
+// notificationHandler handles database notifications and invokes subscribers.
+// It implements both pgxlisten.Handler and pgxlisten.BacklogHandler.
 type notificationHandler struct {
 	// table is the name of the table being listened to
 	table string
@@ -436,6 +602,34 @@ type notificationHandler struct {
 	primaryKeys []PrimaryKey
 	// callback is the function to invoke when a notification is received
 	callback driver.TriggerCallback
+	// onListening is invoked once LISTEN has been issued for the channel, on the
+	// initial connection and on every reconnect. May be nil.
+	onListening func()
+}
+
+// HandleBacklog implements pgxlisten.BacklogHandler. pgxlisten calls it once per
+// channel immediately after issuing LISTEN and before it starts waiting for
+// notifications, which makes it the only hook that reports when the channel
+// actually went live - so that is what it is used for here.
+//
+// There is no backlog to drain. The interface exists for the pattern where work
+// is durably enqueued in a table and a notification merely announces it; such a
+// handler reads the table to pick up what was enqueued while nobody listened.
+// This notifier has no such table: its notifications come from a row trigger, and
+// Postgres discards a NOTIFY that no session is listening for. Anything emitted
+// before this point is gone, which is exactly why Subscribe waits for the signal
+// rather than assuming the channel is live - and why a subscriber that must not
+// miss a change has to re-read the table instead of trusting the payload.
+//
+// It returns nil unconditionally: pgxlisten only logs the error, and there is no
+// failure to report.
+func (h *notificationHandler) HandleBacklog(ctx context.Context, channel string, _ *pgx.Conn) error {
+	logger.DebugfContext(ctx, "listening on channel [%s] for table [%s]", channel, h.table)
+	if h.onListening != nil {
+		h.onListening()
+	}
+
+	return nil
 }
 
 func (h *notificationHandler) parsePayload(s string) (driver.Operation, map[driver.ColumnKey]string, error) {

@@ -30,7 +30,6 @@ import (
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	driver3 "github.com/hyperledger-labs/fabric-smart-client/platform/common/driver"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/common/utils/collections/iterators"
-	common2 "github.com/hyperledger-labs/fabric-smart-client/platform/view/services/storage/driver/common"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/services/storage/driver/sql/common"
 )
 
@@ -81,14 +80,14 @@ type transactionTables struct {
 
 type TransactionStore struct {
 	readDB                *sql.DB
-	writeDB               *sql.DB
+	writeDB               WriteDB
 	table                 transactionTables
 	tablePrefix           string
 	tableParams           []string
 	ci                    common3.CondInterpreter
 	pi                    common3.PagInterpreter
 	notifier              dbdriver.TransactionNotifier
-	recoveryLeaderFactory func(context.Context, *sql.DB) (dbdriver.RecoveryLeadership, bool, error)
+	recoveryLeaderFactory func(context.Context, WriteDB) (dbdriver.RecoveryLeadership, bool, error)
 
 	// getStatusStmt caches the single prepared statement for GetStatus.
 	// Unlike the token-store queries, this query has exactly one shape
@@ -102,14 +101,15 @@ type TransactionStore struct {
 }
 
 func newTransactionStore(
-	readDB, writeDB *sql.DB,
+	readDB *sql.DB,
+	writeDB WriteDB,
 	tablePrefix string,
 	tableParams []string,
 	tables transactionTables,
 	ci common3.CondInterpreter,
 	pi common3.PagInterpreter,
 	notifier dbdriver.TransactionNotifier,
-	recoveryLeaderFactory func(context.Context, *sql.DB) (dbdriver.RecoveryLeadership, bool, error),
+	recoveryLeaderFactory func(context.Context, WriteDB) (dbdriver.RecoveryLeadership, bool, error),
 ) *TransactionStore {
 	ts := &TransactionStore{
 		readDB:                readDB,
@@ -147,11 +147,11 @@ func (s *TransactionStore) PrefixedTableName(name string) string {
 	return formatted
 }
 
-func NewAuditTransactionStore(readDB, writeDB *sql.DB, tables TableNames, ci common3.CondInterpreter, pi common3.PagInterpreter) (*TransactionStore, error) {
+func NewAuditTransactionStore(readDB *sql.DB, writeDB WriteDB, tables TableNames, ci common3.CondInterpreter, pi common3.PagInterpreter) (*TransactionStore, error) {
 	return NewOwnerTransactionStore(readDB, writeDB, tables, ci, pi)
 }
 
-func NewOwnerTransactionStore(readDB, writeDB *sql.DB, tables TableNames, ci common3.CondInterpreter, pi common3.PagInterpreter) (*TransactionStore, error) {
+func NewOwnerTransactionStore(readDB *sql.DB, writeDB WriteDB, tables TableNames, ci common3.CondInterpreter, pi common3.PagInterpreter) (*TransactionStore, error) {
 	return newTransactionStore(readDB, writeDB, tables.Prefix, tables.Params, transactionTables{
 		Movements:             tables.Movements,
 		Transactions:          tables.Transactions,
@@ -161,12 +161,13 @@ func NewOwnerTransactionStore(readDB, writeDB *sql.DB, tables TableNames, ci com
 }
 
 func NewTransactionStoreWithNotifierAndRecovery(
-	readDB, writeDB *sql.DB,
+	readDB *sql.DB,
+	writeDB WriteDB,
 	tables TableNames,
 	ci common3.CondInterpreter,
 	pi common3.PagInterpreter,
 	notifier dbdriver.TransactionNotifier,
-	recoveryLeaderFactory func(context.Context, *sql.DB) (dbdriver.RecoveryLeadership, bool, error),
+	recoveryLeaderFactory func(context.Context, WriteDB) (dbdriver.RecoveryLeadership, bool, error),
 ) (*TransactionStore, error) {
 	return newTransactionStore(readDB, writeDB, tables.Prefix, tables.Params, transactionTables{
 		Movements:             tables.Movements,
@@ -539,7 +540,7 @@ func (db *TransactionStore) Close() error {
 	_ = db.getStatusStmt.Close()
 	_ = db.getTokenRequestStmt.Close()
 
-	return common2.Close(db.readDB, db.writeDB)
+	return CloseRWDB(db.readDB, db.writeDB)
 }
 
 func (db *TransactionStore) SetStatus(ctx context.Context, txID string, status dbdriver.TxStatus, message string) error {

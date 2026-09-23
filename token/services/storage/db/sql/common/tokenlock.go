@@ -21,7 +21,6 @@ import (
 	"github.com/LFDT-Panurus/panurus/token/token"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	fscdriver "github.com/hyperledger-labs/fabric-smart-client/platform/view/services/storage/driver"
-	common2 "github.com/hyperledger-labs/fabric-smart-client/platform/view/services/storage/driver/common"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/services/storage/driver/sql/common"
 )
 
@@ -33,14 +32,14 @@ type tokenLockTables struct {
 
 type TokenLockStore struct {
 	ReadDB       *sql.DB
-	WriteDB      *sql.DB
+	WriteDB      WriteDB
 	Table        tokenLockTables
 	Logger       logging.Logger
 	ci           common3.CondInterpreter
 	errorWrapper fscdriver.SQLErrorWrapper
 }
 
-func newTokenLockStore(readDB, writeDB *sql.DB, tables tokenLockTables, ci common3.CondInterpreter, errorWrapper fscdriver.SQLErrorWrapper) *TokenLockStore {
+func newTokenLockStore(readDB *sql.DB, writeDB WriteDB, tables tokenLockTables, ci common3.CondInterpreter, errorWrapper fscdriver.SQLErrorWrapper) *TokenLockStore {
 	return &TokenLockStore{
 		ReadDB:       readDB,
 		WriteDB:      writeDB,
@@ -51,7 +50,7 @@ func newTokenLockStore(readDB, writeDB *sql.DB, tables tokenLockTables, ci commo
 	}
 }
 
-func NewTokenLockStore(readDB, writeDB *sql.DB, tables TableNames, ci common3.CondInterpreter, errorWrapper fscdriver.SQLErrorWrapper) (*TokenLockStore, error) {
+func NewTokenLockStore(readDB *sql.DB, writeDB WriteDB, tables TableNames, ci common3.CondInterpreter, errorWrapper fscdriver.SQLErrorWrapper) (*TokenLockStore, error) {
 	return newTokenLockStore(
 		readDB,
 		writeDB,
@@ -124,7 +123,7 @@ func (db *TokenLockStore) GetSchema() string {
 }
 
 func (db *TokenLockStore) Close() error {
-	return common2.Close(db.ReadDB, db.WriteDB)
+	return CloseRWDB(db.ReadDB, db.WriteDB)
 }
 
 func IsExpiredToken(tokenRequests, tokenLocks common3.Table, leaseExpiry time.Duration) cond.Condition {

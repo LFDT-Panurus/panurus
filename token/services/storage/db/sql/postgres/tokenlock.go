@@ -41,7 +41,7 @@ type TokenLockStore struct {
 	// was a real bug: it caused every TMS on a node to compete for the
 	// exact same advisory lock, so only one TMS across the whole fleet
 	// ever won cleanup on any tick. See #1798.
-	cleanupLeaderFactory func(context.Context, *sql.DB) (driver.CleanupLeadership, bool, error)
+	cleanupLeaderFactory func(context.Context, common5.WriteDB) (driver.CleanupLeadership, bool, error)
 }
 
 // GetSchema overrides the base GetSchema to prefix with advisory lock

@@ -22,7 +22,6 @@ var advisoryLockLogger = logging.MustGetLogger()
 // AdvisoryLock implements RecoveryLeadership using PostgreSQL advisory locks.
 // Advisory locks are session-scoped and automatically released when the connection closes.
 type AdvisoryLock struct {
-	db     *sql.DB
 	lockID int64
 	conn   *sql.Conn
 	logger logging.Logger
@@ -37,7 +36,11 @@ type AdvisoryLock struct {
 // - Close() is called explicitly
 // - The connection is closed
 // - The process terminates
-func NewAdvisoryLock(ctx context.Context, db *sql.DB, lockID int64) (*AdvisoryLock, bool, error) {
+//
+// db is taken as a common5.WriteDB rather than a *sql.DB so that a backend may
+// decorate its write path; only Conn is used here, and the connection it returns
+// is held for the lock's lifetime.
+func NewAdvisoryLock(ctx context.Context, db common5.WriteDB, lockID int64) (*AdvisoryLock, bool, error) {
 	logger := advisoryLockLogger
 
 	// Get a dedicated connection for this lock
@@ -69,7 +72,6 @@ func NewAdvisoryLock(ctx context.Context, db *sql.DB, lockID int64) (*AdvisoryLo
 	logger.Debugf("Acquired advisory lock %d", lockID)
 
 	return &AdvisoryLock{
-		db:     db,
 		lockID: lockID,
 		conn:   conn,
 		logger: logger,
@@ -115,8 +117,8 @@ func recoveryLockID(tables common5.TableNames) int64 {
 // NewAdvisoryLockFactoryForID returns a recovery leader factory bound to lockID. Binding the id
 // at construction keeps it out of the call path, so no caller has to know how a lock id is made
 // unique and none can accidentally pass one that is shared with another TMS.
-func NewAdvisoryLockFactoryForID(lockID int64) func(context.Context, *sql.DB) (tokensdriver.RecoveryLeadership, bool, error) {
-	return func(ctx context.Context, db *sql.DB) (tokensdriver.RecoveryLeadership, bool, error) {
+func NewAdvisoryLockFactoryForID(lockID int64) func(context.Context, common5.WriteDB) (tokensdriver.RecoveryLeadership, bool, error) {
+	return func(ctx context.Context, db common5.WriteDB) (tokensdriver.RecoveryLeadership, bool, error) {
 		lock, acquired, err := NewAdvisoryLock(ctx, db, lockID)
 		if err != nil || !acquired {
 			return nil, acquired, err
@@ -141,8 +143,8 @@ func keystoreCleanupLockID(tables common5.TableNames) int64 {
 
 // NewCleanupLeaderFactoryForID returns a cleanup leader factory bound to lockID, so the id is
 // fixed when the store is built rather than supplied per call.
-func NewCleanupLeaderFactoryForID(lockID int64) func(context.Context, *sql.DB) (tokensdriver.CleanupLeadership, bool, error) {
-	return func(ctx context.Context, db *sql.DB) (tokensdriver.CleanupLeadership, bool, error) {
+func NewCleanupLeaderFactoryForID(lockID int64) func(context.Context, common5.WriteDB) (tokensdriver.CleanupLeadership, bool, error) {
+	return func(ctx context.Context, db common5.WriteDB) (tokensdriver.CleanupLeadership, bool, error) {
 		lock, acquired, err := NewAdvisoryLock(ctx, db, lockID)
 		if err != nil || !acquired {
 			return nil, acquired, err
