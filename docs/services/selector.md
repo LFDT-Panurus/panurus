@@ -87,8 +87,11 @@ acquisition (below) remains the race-safe backstop, since the anti-join is read-
 therefore not itself race-free. Because the anti-join can hide every remaining token from a
 wallet that is not actually out of funds — everything left is simply locked by someone else —
 `Selector.selectInternal` disambiguates an empty scan with
-`TokenFetcher.HasAnySpendableTokens`, a lock-ignoring existence check, before returning
-`token.SelectorInsufficientFunds`.
+`TokenFetcher.HasEnoughSpendableTokens`, a lock-ignoring `SUM(amount)` check, before returning
+`token.SelectorInsufficientFunds`. That check is made against the **full requested amount**,
+not the amount still outstanding: it ignores locks, so the balance it reports already includes
+the tokens this very call has locked, and comparing against the outstanding amount would count
+them on both sides and make the check vacuously true as soon as anything at all was selected.
 
 **`sherdlock`-only: size-ordered, bucket-shuffled candidates.** Candidates are ordered
 ascending by amount (an `ORDER BY` added to the same query), then shuffled only *within* runs

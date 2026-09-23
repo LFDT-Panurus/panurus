@@ -245,12 +245,20 @@ func (s *Selector) selectInternal(ctx context.Context, owner token.OwnerFilter, 
 				// that every remaining token is currently locked by someone else
 				// and was hidden from us entirely. Disambiguate with a direct,
 				// lock-ignoring existence check before giving up.
-				// HasEnoughSpendableTokens is the sum-aware counterpart of HasAnySpendableTokens:
-				// a wallet whose total spendable balance cannot cover the remaining amount can
-				// never satisfy this Select call no matter how the rest gets unlocked, so fail
-				// immediately instead of spending the immediate-retry/backoff budget on a request
-				// that can never succeed.
-				hasEnough, hasEnoughErr := s.fetcher.HasEnoughSpendableTokens(ctx, owner.ID(), tokenType, remaining.ToBigInt())
+				// HasEnoughSpendableTokens sums the wallet's whole spendable balance: a wallet
+				// that cannot cover the request can never satisfy this Select call no matter how
+				// the rest gets unlocked, so fail immediately instead of spending the
+				// immediate-retry/backoff budget on a request that can never succeed.
+				//
+				// The comparison is against the full requested quantity, not the remaining
+				// amount: the query deliberately ignores locks, so the total it reports still
+				// includes the tokens this very call has already locked and counted into sum.
+				// Comparing against remaining (= quantity - sum) would put those tokens on both
+				// sides, degenerating into `total >= total - sum` — true as soon as anything at
+				// all was selected, which is precisely when the fast fail is needed. Since the
+				// total already includes sum, `total >= quantity` is the equivalent,
+				// non-double-counting form of `total - sum >= remaining`.
+				hasEnough, hasEnoughErr := s.fetcher.HasEnoughSpendableTokens(ctx, owner.ID(), tokenType, quantity.ToBigInt())
 				if hasEnoughErr != nil {
 					return nil, nil, immediateRetries, errors.Wrapf(hasEnoughErr, "failed to check for locked tokens for [%s:%s]", owner.ID(), tokenType)
 				}
