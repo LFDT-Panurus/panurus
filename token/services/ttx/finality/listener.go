@@ -128,6 +128,15 @@ func (t *Listener) OnStatus(ctx context.Context, txID string, status int, messag
 		return err
 	}); err != nil {
 		t.logger.Errorf("finality listener on [%s] failed with error: [%+v], stop.", txID, err)
+		// The retry budget is exhausted, so this notification is given up on for good,
+		// whatever failed inside runOnStatus: an unrecognized status (which retrying can
+		// never reclassify), or a recognized terminal status whose local persistence keeps
+		// failing. Either way txID's selection locks would otherwise sit held until the next
+		// lease-expiry sweep, reproducing #2395 mechanism 4 via this path. Releasing here —
+		// once per notification rather than once per retry attempt — is safe for the same
+		// reason documented on OnError: Unlock is an idempotent no-op on an already unlocked
+		// tx, and a subsequent selection attempt simply re-acquires locks as needed.
+		releaseLocks(newCtx, t.logger, t.selectorManagerProvider, txID)
 	}
 	t.metrics.OnStatusDuration.Observe(time.Since(start).Seconds())
 }
@@ -185,14 +194,20 @@ func (t *Listener) runOnStatus(ctx context.Context, txID string, status int, mes
 		}
 	case network.Invalid:
 		txStatus = storage.Deleted
-	default:
-		// This status is terminal-but-unrecognized from this listener's point of view: it will
-		// never be reclassified as network.Valid/network.Invalid by retrying runOnStatus with
-		// the same arguments, so without releasing here txID's selection locks would sit held
-		// until the next lease-expiry sweep, reproducing #2395 mechanism 4 via this path (see
-		// OnError's doc comment for the same reasoning on that terminal path).
-		releaseLocks(ctx, t.logger, t.selectorManagerProvider, txID)
+	case network.Busy, network.Unknown:
+		// Not a terminal status: the transaction is still being committed and will be
+		// notified again (or picked up by the recovery scan) once it settles. Releasing
+		// its selection locks here would let a concurrent Select hand the very same tokens
+		// to another transaction while this one is still in flight, which is strictly worse
+		// than the #2395 mechanism-4 window the release exists to close. Mirrors
+		// TTXRecoveryHandler.applyFinalityLogic's treatment of the same two statuses.
+		t.logger.DebugfContext(ctx, "tx [%s] has status [%d], not yet finalized - nothing to do", txID, status)
 
+		return nil
+	default:
+		// Genuinely unrecognized: retrying runOnStatus with the same arguments can never
+		// reclassify it, so report the error and let OnStatus release the locks once its
+		// retry budget is exhausted (see OnStatus).
 		return errors.Errorf("listener invoked on [%s] with status [%d], cannot proceed", txID, status)
 	}
 

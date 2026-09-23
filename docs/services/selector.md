@@ -157,7 +157,12 @@ spend the tokens it selected, so there is no reason to hold them either. This cl
 the window, previously bounded only by `leaseExpiry` (default several minutes), during
 which a settled transaction's already-spent-for tokens stayed locked and therefore
 invisible to other selectors — the dominant source of lock contention on hot tokens
-under concurrent load (issue #2395). Release is best-effort: a failure to unlock is
+under concurrent load (issue #2395). A non-terminal status (`Busy`/`Unknown`) never
+releases anything on either path: the transaction is still in flight, so dropping its
+locks would let a concurrent selection re-offer the same tokens. The other two terminal
+give-up paths on the live subscription do release: `Listener.OnError` (the notification
+could not be delivered at all) and `Listener.OnStatus` once its bounded retry budget is
+exhausted (whatever failed inside `runOnStatus`). Release is best-effort: a failure to unlock is
 logged and does not fail the settlement or recovery path, since the lease-expiry sweep
 below still reclaims the lock eventually.
 

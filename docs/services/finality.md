@@ -233,8 +233,13 @@ never causes or implies the other leg's transition.
    (`utils.RetryRunner`, `MaxRetry = 3`, one-second base backoff). Any error from `runOnStatus` —
    including a storage hiccup unrelated to the verdict itself — triggers a retry; only after all 3
    attempts fail does the listener call `OnError`, which bumps the `RetryExhausted` metric and logs,
-   leaving the transaction `Pending` for the recovery sweep (§5) to pick up later. `OnStatus` also
-   records the total wall-clock time (including retries) in the `OnStatusDuration` histogram.
+   leaving the transaction `Pending` for the recovery sweep (§5) to pick up later. When the retries are
+   exhausted, `OnStatus` also releases the transaction's selection locks exactly once — this is a
+   terminal give-up for the notification, whatever failed inside `runOnStatus`, so leaving the locks for
+   the lease-expiry sweep would reopen the contention window of
+   [#2395](https://github.com/LFDT-Panurus/panurus/issues/2395). `Unlock` is idempotent, and a later
+   selection attempt simply re-acquires what it needs. `OnStatus` also records the total wall-clock time
+   (including retries) in the `OnStatusDuration` histogram.
 
    Inside `runOnStatus`:
    - `network.Valid` → the token request to hash-check is fetched from `tokens.Service.GetCachedTokenRequest`
@@ -245,9 +250,14 @@ never causes or implies the other leg's transition.
      proceed to `Commit` (§4). **Mismatch** → `Deleted` + `HashMismatches` metric (§1 — this is folded
      into ordinary `Deleted`, not a distinct status, in the current implementation).
    - `network.Invalid` → `Deleted` directly.
-   - Anything else (`Busy`/`Unknown`) returns an error at this layer and is retried per the paragraph
-     above — the recovery handler (§5), by contrast, treats `Busy`/`Unknown` as an expected transient
-     state and simply releases its claim for the next sweep rather than erroring.
+   - `network.Busy`/`network.Unknown` → the transaction is not yet finalized. This is an expected
+     transient state, so `runOnStatus` logs at Debug and returns `nil` without touching the stores and
+     **without releasing the transaction's selection locks** — the transaction is still in flight, and
+     dropping its locks would let a concurrent `Select` re-offer the same tokens. This matches the
+     recovery handler's treatment of the same two statuses (§5).
+   - Any other, genuinely unrecognized status code returns an error at this layer and is retried per
+     the paragraph above. Retrying can never reclassify it, so the retries are exhausted and
+     `OnStatus`'s give-up branch releases the selection locks once (see below).
    - A verdict that resolves to `Deleted` increments `DeletedTransactions`; one that reaches `Commit`
      increments `ConfirmedTransactions` (both counted once `runOnStatus` returns successfully, not per
      retry attempt).
@@ -330,7 +340,7 @@ with no active listener anywhere. `TTXRecoveryHandler.Recover(ctx, txID)`
 ([`token/services/ttx/finality/recovery.go`](../../token/services/ttx/finality/recovery.go)) covers this
 — instead of waiting for a push event, it calls `Network.GetTransactionStatus(ctx, namespace, txID)`
 directly and runs the same decision logic as `runOnStatus` (`applyFinalityLogic`, sharing
-`checkTokenRequest` and `Commit`). Unlike the live listener path, `Busy`/`Unknown` here is treated as an
+`checkTokenRequest` and `Commit`). As on the live listener path, `Busy`/`Unknown` here is treated as an
 expected transient state, not an error: the handler simply returns `nil` without touching the status,
 releasing its claim so the periodic sweep in
 [Transaction Recovery Service](./storage/recovery.md) picks the transaction up again on its next pass
@@ -419,7 +429,7 @@ observable behavior at the `finalityView.Call` boundary (§3 step 10) is unchang
 | FabricX: pending waiter exceeds `pendingTTL` before a terminal status is polled | still `Pending`; the poller drops its own bookkeeping, no error surfaced there | the caller's own `finalityView` timeout (§6.3) surfaces this to the application; the recovery sweep also covers it |
 | Broadcast never reached the ordering service | permanently `Pending` (ledger never sees it) | recovery sweep marks it `Orphan` after its grace period, see [Transaction Recovery Service](./storage/recovery.md) |
 | Duplicate finality notification for the same tx | idempotent | `TransactionExists`-style guard in `AppendValid` |
-| `runOnStatus` errors 3 times in a row (e.g. a transient storage failure while writing `Confirmed`/`Deleted`) | still `Pending`; `RetryExhausted` metric incremented, `OnError` logs | recovery sweep (§5) re-derives status directly from the ledger on its own schedule — no automatic re-registration of this listener |
+| `runOnStatus` errors 3 times in a row (e.g. a transient storage failure while writing `Confirmed`/`Deleted`) | still `Pending`; `RetryExhausted` metric incremented, `OnError` logs, selection locks released once | recovery sweep (§5) re-derives status directly from the ledger on its own schedule — no automatic re-registration of this listener |
 | Recovery sweep disabled | any of the above `Pending`-stuck cases | none — only the live listener path (and its backend-specific fallback) remains; see [Transaction Recovery Service](./storage/recovery.md) for the enable/disable key |
 
 ## Related documents

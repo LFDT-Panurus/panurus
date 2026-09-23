@@ -52,6 +52,30 @@ func newTestListener(t *testing.T, db *mock.TransactionDB) *finality.Listener {
 	)
 }
 
+// newTestListenerWithSelectorManager builds a Listener wired with the given ttxDB mock,
+// tokens service (may be nil when the test never reaches the token-append path) and
+// selector-manager provider, so lock-release assertions can observe the Unlock calls.
+func newTestListenerWithSelectorManager(
+	t *testing.T,
+	db *mock.TransactionDB,
+	tokens *mock.TokensService,
+	smProvider *mock.SelectorManagerProvider,
+) *finality.Listener {
+	t.Helper()
+
+	return finality.NewListener(
+		logging.MustGetLogger(),
+		&depmock.Network{},
+		"test-namespace",
+		finality.NewTokenRequestHasher(&depmock.TokenManagementServiceProvider{}, token.TMSID{Network: "n", Channel: "c", Namespace: "ns"}),
+		db,
+		tokens,
+		smProvider,
+		noopTracer(),
+		nil,
+	)
+}
+
 // TestOnStatus_ContextCanceledDuringRetry is the primary regression test.
 //
 // Setup: ttxDB.SetStatus always returns a transient error, so the inner retryRunner
@@ -402,13 +426,100 @@ func TestOnStatus_ReleasesLocksOnUnrecognizedStatus(t *testing.T) {
 
 	// An unrecognized status can never become network.Valid/network.Invalid by retrying
 	// runOnStatus with the same arguments, so the retryRunner (MaxRetry=3) exhausts all
-	// attempts, releasing locks (idempotently) on every one — hence one unlockCalls entry
-	// per attempt, not just one.
+	// attempts and OnStatus then releases the locks once for the whole notification (the
+	// exact count is pinned by TestOnStatus_ReleasesLocksExactlyOnceOnUnrecognizedStatus).
 	require.NotEmpty(t, sm.unlockCalls,
 		"an unrecognized terminal status must still release selection locks (#2395 mechanism 4)")
 	for _, id := range sm.unlockCalls {
 		require.Equal(t, txID, id)
 	}
+}
+
+// TestOnStatus_DoesNotReleaseLocksOnNonTerminalStatus pins the counterpart to
+// TestOnStatus_ReleasesLocksOnUnrecognizedStatus: network.Busy and network.Unknown are
+// legitimate transient, *non*-terminal states — fabricx's ListenerEvent.process
+// (token/services/network/fabricx/finality/finality.go) forwards exactly these to
+// OnStatus while a transaction is still pending — so releasing their selection locks
+// would hand the same tokens to a concurrent Select while the first transaction is
+// still mid-commit. TTXRecoveryHandler.applyFinalityLogic (recovery.go) already treats
+// them that way; runOnStatus must match.
+func TestOnStatus_DoesNotReleaseLocksOnNonTerminalStatus(t *testing.T) {
+	tests := []struct {
+		name   string
+		status int
+	}{
+		{name: "busy", status: network.Busy},
+		{name: "unknown", status: network.Unknown},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			db := &mock.TransactionDB{}
+
+			sm := &fakeSelectorManager{}
+			smProvider := &mock.SelectorManagerProvider{}
+			smProvider.SelectorManagerReturns(sm, nil)
+
+			l := newTestListenerWithSelectorManager(t, db, nil, smProvider)
+
+			l.OnStatus(t.Context(), "tx-still-in-flight", test.status, "", nil)
+
+			require.Empty(t, sm.unlockCalls,
+				"status [%d] is a non-terminal, in-flight state: releasing its selection locks lets a "+
+					"concurrent Select re-offer the same tokens to another transaction", test.status)
+			require.Zero(t, db.SetStatusCallCount(),
+				"a non-terminal status must not be persisted as a terminal one")
+		})
+	}
+}
+
+// TestOnStatus_ReleasesLocksOnceOnRetryExhaustion covers the third give-up path of the
+// finality listener: a genuinely terminal ledger status whose local persistence keeps
+// failing. Once the retryRunner's budget is exhausted OnStatus gives up for good, so the
+// transaction's selection locks must be released there too — otherwise they sit until the
+// lease-expiry sweep (#2395 mechanism 4), the very window OnError's doc comment argues
+// must be closed. Exactly once, not once per retry attempt.
+func TestOnStatus_ReleasesLocksOnceOnRetryExhaustion(t *testing.T) {
+	var setCalls atomic.Int32
+	db := &mock.TransactionDB{}
+	db.SetStatusCalls(func(context.Context, string, storage.TxStatus, string) error {
+		setCalls.Add(1)
+
+		return errors.New("ttxdb unavailable")
+	})
+
+	sm := &fakeSelectorManager{}
+	smProvider := &mock.SelectorManagerProvider{}
+	smProvider.SelectorManagerReturns(sm, nil)
+
+	l := newTestListenerWithSelectorManager(t, db, nil, smProvider)
+
+	txID := "tx-terminal-but-unpersistable"
+	l.OnStatus(t.Context(), txID, network.Invalid, "rejected", nil)
+
+	require.GreaterOrEqual(t, int(setCalls.Load()), finality.MaxRetry,
+		"the retry budget should have been exhausted")
+	require.Equal(t, []string{txID}, sm.unlockCalls,
+		"a terminal ledger status whose persistence keeps failing must still release its selection locks, exactly once")
+}
+
+// TestOnStatus_ReleasesLocksExactlyOnceOnUnrecognizedStatus strengthens
+// TestOnStatus_ReleasesLocksOnUnrecognizedStatus with a multiplicity assertion: because
+// runOnStatus returns an error for an unrecognized status, releasing inside it would
+// issue one real Unlock round trip per retry attempt. Release belongs in OnStatus, after
+// the retry runner gave up, so a single notification costs a single Unlock.
+func TestOnStatus_ReleasesLocksExactlyOnceOnUnrecognizedStatus(t *testing.T) {
+	sm := &fakeSelectorManager{}
+	smProvider := &mock.SelectorManagerProvider{}
+	smProvider.SelectorManagerReturns(sm, nil)
+
+	l := newTestListenerWithSelectorManager(t, &mock.TransactionDB{}, nil, smProvider)
+
+	txID := "tx-unrecognized-once"
+	l.OnStatus(t.Context(), txID, 9999, "", nil)
+
+	require.Equal(t, []string{txID}, sm.unlockCalls,
+		"one notification must cost exactly one Unlock round trip, not one per retry attempt")
 }
 
 // TestOnError tests the OnError callback
