@@ -7,6 +7,7 @@ SPDX-License-Identifier: Apache-2.0
 package common
 
 import (
+	"math/big"
 	"testing"
 	"time"
 
@@ -313,6 +314,45 @@ func TestTokenSql(t *testing.T) {
 			},
 			expectedSql:  "(owner = $1) AND (token_type = $2) AND ((tx_id, idx) IN (($3, $4), ($5, $6)))",
 			expectedArgs: []common2.Param{true, "tok", "a", uint64(1), "b", uint64(2)},
+		},
+		{
+			// The bounds are bound as decimal text, the representation StoreToken writes,
+			// and both are inclusive.
+			name:         "min amount",
+			params:       driver2.QueryTokenDetailsParams{MinAmount: big.NewInt(10)},
+			expectedSql:  "(owner = $1) AND (is_deleted = $2) AND (amount >= $3)",
+			expectedArgs: []common2.Param{true, false, "10"},
+		},
+		{
+			name:         "max amount",
+			params:       driver2.QueryTokenDetailsParams{MaxAmount: big.NewInt(10)},
+			expectedSql:  "(owner = $1) AND (is_deleted = $2) AND (amount <= $3)",
+			expectedArgs: []common2.Param{true, false, "10"},
+		},
+		{
+			name: "amount range",
+			params: driver2.QueryTokenDetailsParams{
+				WalletID:  "me",
+				TokenType: token.Type("tok"),
+				MinAmount: big.NewInt(5),
+				MaxAmount: big.NewInt(100),
+			},
+			expectedSql:  "(owner = $1) AND (token_type = $2) AND (owner_wallet_id = $3) AND (is_deleted = $4) AND (amount >= $5) AND (amount <= $6)",
+			expectedArgs: []common2.Param{true, "tok", "me", false, "5", "100"},
+		},
+		{
+			// A bound wider than uint64 is carried through exactly, not truncated.
+			name:         "amount wider than uint64",
+			params:       driver2.QueryTokenDetailsParams{MinAmount: new(big.Int).Lsh(big.NewInt(1), 64)},
+			expectedSql:  "(owner = $1) AND (is_deleted = $2) AND (amount >= $3)",
+			expectedArgs: []common2.Param{true, false, "18446744073709551616"},
+		},
+		{
+			// A zero bound is a bound, not an absent one: only a nil pointer omits the clause.
+			name:         "zero min amount",
+			params:       driver2.QueryTokenDetailsParams{MinAmount: big.NewInt(0)},
+			expectedSql:  "(owner = $1) AND (is_deleted = $2) AND (amount >= $3)",
+			expectedArgs: []common2.Param{true, false, "0"},
 		},
 	}
 	for _, tc := range testCases {

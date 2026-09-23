@@ -58,8 +58,10 @@ type TokenStore struct {
 	// present/absent). See #1183.
 	unspentTokensStmts PreparedStmtHolder[string]
 
-	// spendableTokensStmts caches prepared statements for
-	// SpendableTokensIteratorBy, keyed the same way. See #1919.
+	// spendableTokensStmts caches prepared statements for QuerySpendableTokens (and hence for
+	// SpendableTokensIteratorBy, which delegates to it). Keyed by the wider shape that query
+	// has: wallet and type presence as above, plus the amount bounds, the order and whether a
+	// limit applies. See #1919 and #2020.
 	spendableTokensStmts PreparedStmtHolder[string]
 
 	// balanceStmts caches prepared statements for balance, keyed the same
@@ -385,28 +387,109 @@ func (it *dedupedTokenRowsIterator) Next() (*token.UnspentToken, error) {
 	return nil, nil
 }
 
-// SpendableTokensIteratorBy returns the minimum information about the tokens needed for the selector
 // buildSpendableTokensIteratorByQuery builds the SQL query and args for
 // SpendableTokensIteratorBy without executing it. Extracted so benchmarks
 // can compare the dynamic path against a prepared-once path using identical
 // SQL (see #1919).
 func buildSpendableTokensIteratorByQuery(db *TokenStore, walletID string, typ token.Type) (string, []any) {
-	return q.Select().
+	return buildSpendableTokensQuery(db, driver.SpendableTokensQuery{WalletID: walletID, TokenType: typ})
+}
+
+// buildSpendableTokensQuery builds the SQL query and args behind
+// QuerySpendableTokens.
+//
+// The amount bounds, the order and the limit are all expressed in SQL rather than applied
+// after the fact, so a bounded window costs a bounded scan: with WalletID and TokenType set,
+// idx_spendable_amount covers the equality predicates, the amount range and the sort, and
+// the LIMIT stops the scan early instead of after the whole spendable set has been read and
+// re-parsed in Go (see #2020).
+func buildSpendableTokensQuery(db *TokenStore, params driver.SpendableTokensQuery) (string, []any) {
+	query := q.Select().
 		FieldsByName("tx_id", "idx", "token_type", "quantity", "owner_wallet_id").
 		From(q.Table(db.table.Tokens)).
 		Where(HasTokenDetails(driver.QueryTokenDetailsParams{
-			WalletID:           walletID,
-			TokenType:          typ,
+			WalletID:           params.WalletID,
+			TokenType:          params.TokenType,
 			Spendable:          driver.SpendableOnly,
 			LedgerTokenFormats: db.getSupportedTokenFormats(),
-		}, nil)).
-		Format(db.ci)
+			MinAmount:          params.MinAmount,
+			MaxAmount:          params.MaxAmount,
+		}, nil))
+
+	// Sort on amount alone. Adding tx_id/idx as tie-breakers would make the sequence stable
+	// but would also cost a sort step, since the covering index is ordered by amount only.
+	// An empty slice emits no ORDER BY at all, which is what AmountUnordered asks for.
+	var orderBys []common3.OrderBy
+	switch params.Order {
+	case driver.AmountAscending:
+		orderBys = []common3.OrderBy{q.Asc(common3.FieldName("amount"))}
+	case driver.AmountDescending:
+		orderBys = []common3.OrderBy{q.Desc(common3.FieldName("amount"))}
+	case driver.AmountUnordered:
+	}
+
+	// A non-positive Limit means "no cap", which the builder spells as 0. params.Limit cannot
+	// be forwarded unclamped: the builder reads common3.ZeroLimit (-1) as an explicit LIMIT 0,
+	// so a negative Limit would return nothing instead of everything.
+	limit := max(params.Limit, 0)
+
+	return query.OrderBy(orderBys...).Limit(limit).Format(db.ci)
 }
 
+// spendableTokensStmtKey returns the cache key for the argument shape of a
+// QuerySpendableTokens call. As in unspentTokensStmtKey, the generated SQL depends on which
+// fields are set and not on their values — the bounds and the limit are bound parameters — so
+// calls of the same shape share one prepared statement.
+//
+// The key is fixed-width, one byte per dimension, so that two shapes whose SQL differs cannot
+// spell the same key and be handed each other's cached statement.
+func spendableTokensStmtKey(params driver.SpendableTokensQuery) string {
+	key := []byte(unspentTokensStmtKey(params.WalletID, params.TokenType))
+	key = append(key,
+		setKeyByte(params.MinAmount != nil),
+		setKeyByte(params.MaxAmount != nil),
+		orderKeyByte(params.Order),
+		setKeyByte(params.Limit > 0),
+	)
+
+	return string(key)
+}
+
+// setKeyByte renders "this dimension is present" as a single byte of a shape key.
+func setKeyByte(set bool) byte {
+	if set {
+		return '1'
+	}
+
+	return '0'
+}
+
+// orderKeyByte renders an AmountOrder as a single byte of a shape key. An order the store
+// does not know keys as unordered, matching what buildSpendableTokensQuery emits for it.
+func orderKeyByte(order driver.AmountOrder) byte {
+	switch order {
+	case driver.AmountAscending:
+		return 'a'
+	case driver.AmountDescending:
+		return 'd'
+	case driver.AmountUnordered:
+	}
+
+	return 'u'
+}
+
+// SpendableTokensIteratorBy returns the minimum information about the tokens needed for the
+// selector: every spendable token of the wallet and type, unordered and unlimited. Callers
+// that need only part of that set should use QuerySpendableTokens.
 func (db *TokenStore) SpendableTokensIteratorBy(ctx context.Context, walletID string, typ token.Type) (tdriver.SpendableTokensIterator, error) {
-	key := unspentTokensStmtKey(walletID, typ)
+	return db.QuerySpendableTokens(ctx, driver.SpendableTokensQuery{WalletID: walletID, TokenType: typ})
+}
+
+// QuerySpendableTokens returns an iterator over the spendable tokens matching params.
+func (db *TokenStore) QuerySpendableTokens(ctx context.Context, params driver.SpendableTokensQuery) (tdriver.SpendableTokensIterator, error) {
+	key := spendableTokensStmtKey(params)
 	rows, err := db.spendableTokensStmts.Execute(ctx, db.readDB, key, func() (string, []any, error) {
-		query, args := buildSpendableTokensIteratorByQuery(db, walletID, typ)
+		query, args := buildSpendableTokensQuery(db, params)
 
 		return query, args, nil
 	})
@@ -1480,6 +1563,7 @@ func (db *TokenStore) GetSchema() string {
 		CREATE INDEX IF NOT EXISTS idx_owner_wallet_id_%s ON %s ( owner_wallet_id );
 		CREATE INDEX IF NOT EXISTS idx_owner_wallet_part_%s ON %s ( owner_wallet_id, token_type ) WHERE is_deleted = false AND owner = true;
 		CREATE INDEX IF NOT EXISTS idx_issued_%s ON %s ( redeemed, token_type ) WHERE issuer = true;
+		CREATE INDEX IF NOT EXISTS idx_spendable_amount_%s ON %s ( owner_wallet_id, token_type, amount ) WHERE is_deleted = false AND owner = true AND spendable = true;
 
 		-- Ownership
 		CREATE TABLE IF NOT EXISTS %s (
@@ -1521,6 +1605,7 @@ func (db *TokenStore) GetSchema() string {
 		`,
 		db.table.Requests, db.table.Requests, db.table.Requests, db.table.Requests, db.table.Requests, db.table.Requests, db.table.Requests,
 		db.table.Tokens,
+		db.table.Tokens, db.table.Tokens,
 		db.table.Tokens, db.table.Tokens,
 		db.table.Tokens, db.table.Tokens,
 		db.table.Tokens, db.table.Tokens,

@@ -81,8 +81,32 @@ func HasTokenDetails(params driver2.QueryTokenDetailsParams, tokenTable common.T
 	}
 
 	conds = append(conds, cond.In("ledger_type", params.LedgerTokenFormats...))
+	conds = append(conds, hasAmountBounds(params)...)
 
 	return cond.And(conds...)
+}
+
+// hasAmountBounds renders the amount bounds of params as conditions on the amount column.
+//
+// The bounds are bound as decimal text, the representation StoreToken writes, so the backend
+// compares them against the column as exact numerics instead of going through a float. The
+// column is unqualified because amount exists only on the tokens table: every query that
+// calls HasTokenDetails with a joined table joins tokens with ownership, which carries no
+// amount of its own.
+//
+// Both bounds are inclusive. That departs from cond.fieldBetween's half-open convention
+// deliberately: for a value bound, "at most MaxAmount" reads as including a token worth
+// exactly MaxAmount.
+func hasAmountBounds(params driver2.QueryTokenDetailsParams) []cond.Condition {
+	var conds []cond.Condition
+	if params.MinAmount != nil {
+		conds = append(conds, cond.Gte(common.FieldName("amount"), params.MinAmount.String()))
+	}
+	if params.MaxAmount != nil {
+		conds = append(conds, cond.Lte(common.FieldName("amount"), params.MaxAmount.String()))
+	}
+
+	return conds
 }
 
 func HasMovementsParams(params driver2.QueryMovementsParams) cond.Condition {

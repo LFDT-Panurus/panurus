@@ -27,6 +27,7 @@ func TestTokens(t *testing.T) {
 	// Only NUMERIC(78, 0) on Postgres keeps full precision for amounts wider than int64,
 	// so this case is not part of the shared suite.
 	dbtest2.TokensTestCase(t, cfg, "BigAmountRoundTrip", dbtest2.TBigAmountRoundTrip)
+	dbtest2.TokensTestCase(t, cfg, "WideAmountBounds", dbtest2.TWideAmountBounds)
 }
 
 func TestTransactions(t *testing.T) {

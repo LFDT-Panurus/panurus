@@ -96,6 +96,63 @@ Panurus stores data in several SQL tables. Understanding which tables are "sourc
 | | `tx_ends` | `id` (UUID) | Endorsement acknowledgments. | Recoverable |
 | **Lock** | `tkn_locks` | `tx_id, idx` | Temporary locks for pending transactions. | Transient |
 
+### Token Query Paths and Indexes
+
+The `tokens` table is the one read on the hot path: the token selector queries a wallet's
+spendable tokens on every transfer, and re-queries them on every retry. Its indexes are
+therefore shaped around the predicates those queries use.
+
+| Index | Columns | Partial predicate | Serves |
+| :--- | :--- | :--- | :--- |
+| `idx_spent_<t>` | `is_deleted, owner` | — | Owned/spent sweeps. |
+| `idx_ski_cleanup_<t>` | `is_deleted, spent_at` | — | Keystore cleanup of deleted tokens. |
+| `idx_owner_wallet_id_<t>` | `owner_wallet_id` | — | Lookups by owning wallet. |
+| `idx_owner_wallet_part_<t>` | `owner_wallet_id, token_type` | `is_deleted = false AND owner = true` | Unspent tokens of a wallet and type. |
+| `idx_issued_<t>` | `redeemed, token_type` | `issuer = true` | Issued/redeemed balances. |
+| `idx_spendable_amount_<t>` | `owner_wallet_id, token_type, amount` | `is_deleted = false AND owner = true AND spendable = true` | Spendable tokens of a wallet and type, by amount. |
+
+`amount` is a `NUMERIC(78, 0)` mirror of the authoritative hex `quantity`, maintained on
+write by `StoreToken`. `idx_spendable_amount_<t>` makes it usable as a range: with equality on
+`owner_wallet_id` and `token_type`, an amount range and an ordering by amount are both
+satisfied from the index, without a sort step.
+
+#### Bounded spendable queries
+
+`TokenStore` offers two ways to read a wallet's spendable tokens:
+
+* `SpendableTokensIteratorBy(ctx, walletID, tokenType)` returns **all** of them, unordered and
+  unlimited. This is what the selector uses: it shuffles the rows to spread contention across
+  concurrent selections, so an order imposed by the database would be discarded.
+* `QuerySpendableTokens(ctx, params)` takes a `SpendableTokensQuery` and adds amount bounds, an
+  optional ordering and an optional limit, for a caller that needs only part of the set. The
+  zero value is equivalent to `SpendableTokensIteratorBy` with an empty wallet and type.
+
+```go
+// The three largest spendable TST tokens of alice's wallet worth at least 100.
+it, err := store.QuerySpendableTokens(ctx, driver.SpendableTokensQuery{
+    WalletID:  "alice",
+    TokenType: "TST",
+    MinAmount: big.NewInt(100),
+    Order:     driver.AmountDescending,
+    Limit:     3,
+})
+```
+
+`MinAmount` and `MaxAmount` are inclusive, and are also available on
+`QueryTokenDetailsParams` so that `QueryTokenDetails` and `Balance` can be restricted to an
+amount range.
+
+Two properties are worth keeping in mind:
+
+* **Ties are unordered.** Ordering is by `amount` alone, so that the index satisfies the sort.
+  Tokens of equal amount are returned in unspecified order, which makes `Limit` a window
+  rather than a page — there is deliberately no `Offset`, since offset pagination over
+  unstable ties would skip and repeat rows.
+* **SQLite is exact only up to `int64`.** SQLite gives a `NUMERIC` column NUMERIC affinity and
+  converts an integer literal wider than `int64` to `REAL`. Amount comparisons on SQLite are
+  therefore approximate beyond `int64`, which is the same limit that already applies to the
+  values stored in the column. Postgres keeps full `NUMERIC(78, 0)` precision.
+
 ### Data Criticality Analysis
 
 #### 1. Critical Data (Cannot be lost)
