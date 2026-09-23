@@ -7,10 +7,9 @@ SPDX-License-Identifier: Apache-2.0
 package locks
 
 import (
-	"errors"
-	"fmt"
 	"strings"
 
+	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	"github.com/spf13/viper"
 )
 
@@ -32,6 +31,14 @@ type Config struct {
 	// The FSC-generated prefix and params are still applied around the replacement
 	// (unless SkipPrefix is true). Unknown keys are warned and ignored.
 	TableNames map[string]string `mapstructure:"tableNames"`
+	// TableNameParams holds the TMS identity (network, channel, namespace, in that
+	// order) that the Panurus node passed as the variadic params to
+	// GetTableNamesWithOverrides/GetTableNamesWithConfig when it derived its table
+	// names. These become part of every table name alongside TablePrefix, so they
+	// must match the node's configuration exactly or the tool will resolve the
+	// wrong (or nonexistent) tables. Leave empty if the node was started without
+	// any of these identifiers.
+	TableNameParams []string `mapstructure:"tableNameParams"`
 }
 
 // LoadConfig reads the YAML config file at the given path and returns a Config.
@@ -42,16 +49,16 @@ func LoadConfig(path string) (Config, error) {
 	v.AutomaticEnv()
 
 	if err := v.ReadInConfig(); err != nil {
-		return Config{}, fmt.Errorf("failed to read config file %q: %w", path, err)
+		return Config{}, errors.Wrapf(err, "failed to read config file %q", path)
 	}
 
 	var cfg Config
 	if err := v.Unmarshal(&cfg); err != nil {
-		return Config{}, fmt.Errorf("failed to unmarshal config: %w", err)
+		return Config{}, errors.Wrap(err, "failed to unmarshal config")
 	}
 
 	if cfg.Driver != "sqlite" && cfg.Driver != "postgres" {
-		return Config{}, fmt.Errorf("unsupported driver %q: must be \"sqlite\" or \"postgres\"", cfg.Driver)
+		return Config{}, errors.Errorf("unsupported driver %q: must be \"sqlite\" or \"postgres\"", cfg.Driver)
 	}
 	if cfg.DataSource == "" {
 		return Config{}, errors.New("dataSource must not be empty")

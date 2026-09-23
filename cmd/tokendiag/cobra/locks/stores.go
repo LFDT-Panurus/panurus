@@ -8,12 +8,12 @@ package locks
 
 import (
 	"database/sql"
-	"fmt"
 
 	driver3 "github.com/LFDT-Panurus/panurus/token/services/storage/db/driver"
 	sqlcommon "github.com/LFDT-Panurus/panurus/token/services/storage/db/sql/common"
 	"github.com/LFDT-Panurus/panurus/token/services/storage/db/sql/postgres"
 	"github.com/LFDT-Panurus/panurus/token/services/storage/db/sql/sqlite"
+	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	scommon "github.com/hyperledger-labs/fabric-smart-client/platform/view/services/storage/driver/common"
 	_ "github.com/jackc/pgx/v5/stdlib"
 	_ "modernc.org/sqlite"
@@ -29,7 +29,7 @@ type Stores struct {
 // to release here.
 func (s *Stores) Close() error {
 	if err := s.TokenLock.Close(); err != nil {
-		return fmt.Errorf("token lock store close: %w", err)
+		return errors.Wrap(err, "token lock store close")
 	}
 
 	return nil
@@ -42,9 +42,9 @@ func NewStores(cfg Config) (*Stores, error) {
 		TableNames: cfg.TableNames,
 		SkipPrefix: cfg.SkipPrefix,
 	}
-	tableNames, err := sqlcommon.GetTableNamesWithConfig(cfg.TablePrefix, storeCfg)
+	tableNames, err := sqlcommon.GetTableNamesWithConfig(cfg.TablePrefix, storeCfg, cfg.TableNameParams...)
 	if err != nil {
-		return nil, fmt.Errorf("derive table names: %w", err)
+		return nil, errors.Wrap(err, "derive table names")
 	}
 
 	switch cfg.Driver {
@@ -53,14 +53,14 @@ func NewStores(cfg Config) (*Stores, error) {
 	case "postgres":
 		return newPostgresStores(cfg.DataSource, tableNames)
 	default:
-		return nil, fmt.Errorf("unsupported driver: %s", cfg.Driver)
+		return nil, errors.Errorf("unsupported driver: %s", cfg.Driver)
 	}
 }
 
 func newSQLiteStores(dataSource string, tableNames sqlcommon.TableNames) (*Stores, error) {
 	db, err := sql.Open("sqlite", dataSource)
 	if err != nil {
-		return nil, fmt.Errorf("open sqlite db: %w", err)
+		return nil, errors.Wrap(err, "open sqlite db")
 	}
 
 	dbs := &scommon.RWDB{ReadDB: db, WriteDB: db}
@@ -69,7 +69,7 @@ func newSQLiteStores(dataSource string, tableNames sqlcommon.TableNames) (*Store
 	if err != nil {
 		_ = db.Close()
 
-		return nil, fmt.Errorf("create sqlite token lock store: %w", err)
+		return nil, errors.Wrap(err, "create sqlite token lock store")
 	}
 
 	return &Stores{TokenLock: tokenLockStore}, nil
@@ -78,7 +78,7 @@ func newSQLiteStores(dataSource string, tableNames sqlcommon.TableNames) (*Store
 func newPostgresStores(dataSource string, tableNames sqlcommon.TableNames) (*Stores, error) {
 	db, err := sql.Open("pgx", dataSource)
 	if err != nil {
-		return nil, fmt.Errorf("open postgres db: %w", err)
+		return nil, errors.Wrap(err, "open postgres db")
 	}
 
 	dbs := &scommon.RWDB{ReadDB: db, WriteDB: db}
@@ -87,7 +87,7 @@ func newPostgresStores(dataSource string, tableNames sqlcommon.TableNames) (*Sto
 	if err != nil {
 		_ = db.Close()
 
-		return nil, fmt.Errorf("create postgres token lock store: %w", err)
+		return nil, errors.Wrap(err, "create postgres token lock store")
 	}
 
 	return &Stores{TokenLock: tokenLockStore}, nil

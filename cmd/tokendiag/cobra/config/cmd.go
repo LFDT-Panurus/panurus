@@ -55,6 +55,16 @@ skipPrefix: false
 # tableNames:
 #   tkn_locks: my_token_locks
 tableNames: {}
+
+# tableNameParams carries the TMS identity (network, channel, namespace, in that
+# order) that the Panurus node passed when it derived its own table names. These
+# become part of every table name alongside tablePrefix, so they must match the
+# node's configuration exactly. Leave empty if the node was started without any of
+# these identifiers.
+#
+# Example:
+# tableNameParams: ["mynetwork", "mychannel", "mynamespace"]
+tableNameParams: []
 `
 
 // Cmd returns the Cobra Command for the config subcommand group.

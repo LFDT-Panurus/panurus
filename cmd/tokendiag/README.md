@@ -82,6 +82,7 @@ dataSource: /var/lib/panurus/node/data.db
 tablePrefix: ""
 skipPrefix: false
 tableNames: {}
+tableNameParams: []
 ```
 
 ### PostgreSQL example
@@ -92,7 +93,29 @@ dataSource: "host=db.example.com port=5432 user=panurus password=secret dbname=p
 tablePrefix: "prod_"
 skipPrefix: false
 tableNames: {}
+tableNameParams: []
 ```
+
+### Table name params (network / channel / namespace)
+
+If the Panurus node was started with a non-empty TMS identity — network, channel
+and/or namespace — those values were passed as params when the node derived its own
+table names, and become part of every table name alongside `tablePrefix`. Set the same
+values here, in the same order (network, channel, namespace), so `tokendiag` resolves
+the same tables:
+
+```yaml
+driver: postgres
+dataSource: "postgres://user:pass@localhost:5432/panurus?sslmode=disable"
+tablePrefix: ""
+skipPrefix: false
+tableNames: {}
+tableNameParams: ["mynetwork", "mychannel", "mynamespace"]
+```
+
+Leave `tableNameParams` empty if the node was started without any of these
+identifiers. See [`docs/services/storage.md`](../../docs/services/storage.md#table-name-customisation)
+for the escaping rules that apply to each param.
 
 ### Skipping the prefix
 
@@ -105,6 +128,7 @@ dataSource: "postgres://user:pass@localhost:5432/panurus?sslmode=disable"
 tablePrefix: ""
 skipPrefix: true
 tableNames: {}
+tableNameParams: []
 ```
 
 ### Table name overrides
@@ -120,6 +144,7 @@ tablePrefix: ""
 skipPrefix: false
 tableNames:
   tkn_locks: my_token_locks
+tableNameParams: []
 ```
 
 ## Environment variables

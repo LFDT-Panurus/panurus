@@ -15,6 +15,7 @@ import (
 	"time"
 
 	driver3 "github.com/LFDT-Panurus/panurus/token/services/storage/db/driver"
+	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 )
 
 // isTerminal reports whether status is a terminal status of a consuming transaction —
@@ -60,7 +61,7 @@ func statusName(status *driver3.TxStatus) string {
 func Run(ctx context.Context, w io.Writer, stores *Stores, now time.Time) error {
 	records, err := stores.TokenLock.ListLocks(ctx)
 	if err != nil {
-		return fmt.Errorf("list locks: %w", err)
+		return errors.Wrap(err, "list locks")
 	}
 
 	sort.Slice(records, func(i, j int) bool {

@@ -13,4 +13,8 @@
   lease-age sweep — and prints a summary suitable for scripting.
 - Mirrors `skicleanup`'s configuration format (`driver`, `dataSource`, `tablePrefix`,
   `skipPrefix`, `tableNames`), so an existing `skicleanup` config file can usually be
-  reused as-is; see the tool's own README for details and examples.
+  reused as-is, plus a `tableNameParams` field (network/channel/namespace, in that
+  order) that carries the same params a node passes to `GetTableNamesWithConfig` when
+  it derives its own table names — required whenever the node runs with a non-empty
+  TMS identity, otherwise `tokendiag` resolves the wrong table names; see the tool's
+  own README for details and examples.
