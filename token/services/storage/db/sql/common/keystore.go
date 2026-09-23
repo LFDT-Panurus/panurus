@@ -85,9 +85,26 @@ func (db *KeystoreStore) Put(key string, state any) error {
 	_, err = db.writeDB.Exec(query, args...)
 	if err != nil && errors.HasCause(db.errorWrapper.WrapError(err), driver.UniqueKeyViolation) {
 		// then check that raw is equal to what is stored
-		rawFromDB, err := db.GetRaw(key)
-		if err != nil {
-			return err
+		rawFromDB, getErr := db.GetRaw(key)
+		if getErr != nil {
+			return errors.Wrapf(getErr, "key [%s] exists already but its stored value could not be read back", key)
+		}
+		if rawFromDB == nil {
+			// The insert hit the unique constraint, so the row exists on the
+			// write side, yet the read-back found nothing. GetRaw maps a missing
+			// row to (nil, nil) - the zero value, never scanned - and it reads
+			// from the read DB, which for Postgres may be a replica that has not
+			// caught up yet. That is "could not read it back", not "the value
+			// differs": reporting a mismatch here would fail an idempotent
+			// replay (a restart re-Putting the identical value) with a bogus
+			// integrity error.
+			//
+			// The test is against nil rather than len() == 0 on purpose. A row
+			// that is present but holds an empty value scans into a non-nil
+			// empty slice, and that is a genuine mismatch against any marshalled
+			// state (json.Marshal never yields empty), so it must fall through
+			// to the comparison below instead of being reported as unreadable.
+			return errors.Errorf("key [%s] exists already but its stored value is not visible on the read connection", key)
 		}
 		if bytes.Equal(rawFromDB, raw) {
 			// It might be that this key was already inserted before. The node is restarting, for example.
@@ -95,7 +112,10 @@ func (db *KeystoreStore) Put(key string, state any) error {
 			return nil
 		}
 
-		return errors.Wrapf(err, "key exists already and the value does not match")
+		// A genuine conflict: the key holds a different value. This must be a
+		// fresh error - wrapping the (now nil) read-back error would yield nil
+		// and report success.
+		return errors.Errorf("key [%s] exists already and the value does not match", key)
 	}
 
 	return err

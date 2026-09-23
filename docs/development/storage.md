@@ -108,3 +108,47 @@ Panurus stores data in several SQL tables. Understanding which tables are "sourc
 
 #### 3. Semi-Critical Data
 *   **Requests Metadata**: While the core transaction is on the ledger, the `requests` table may contain `application_metadata` (custom JSON provided by the app) that is not always stored on-chain. If your application relies on this local-only metadata, it must be backed up.
+## Store Contract Notes
+
+These rules are part of the store interfaces, not of any one backend. A custom
+store implementation must honour them; the SQL stores under
+`token/services/storage/db/sql/common` are the reference implementation.
+
+### Existence checks distinguish "absent" from "unknown"
+
+`WalletStoreService.IdentityExists` returns `(bool, error)`. A non-nil error
+means the lookup itself failed and the answer is unknown — it must not be
+reported as `false`, which would make a transient connectivity problem
+indistinguishable from a genuine non-membership.
+
+Callers that cannot carry an error (`Registry.ContainsIdentity`, which backs the
+public `driver.Wallet.Contains`) log the error before collapsing it to `false`.
+
+### Idempotent writes
+
+Several writes are replayed during normal operation — a node restart, a retried
+view, a second replica handling the same request — and must succeed rather than
+report a conflict:
+
+*   `WalletStore.StoreIdentity` and `TokenStore.StorePublicParams` insert with
+    `ON CONFLICT DO NOTHING`. A read followed by a write is not sufficient on its
+    own: two callers can both observe "not present" and then race the insert, so
+    without the conflict clause one of them surfaces a raw constraint violation.
+    `StorePublicParams` does still read first, but for a different reason — the
+    read is what detects a stored row whose `raw` and `raw_hash` disagree, which
+    the insert would otherwise turn into an opaque primary-key error.
+*   `KeystoreStore.Put` is idempotent only for a byte-identical value. Storing a
+    *different* value under an existing key is a genuine data-integrity conflict
+    and must be returned as an error, never silently accepted or ignored.
+
+### Spendable-flag reconciliation
+
+`TokenStoreTransaction.SetSpendableBySupportedTokenFormats` reconciles every
+token's `spendable` flag against the set of ledger formats the node supports:
+tokens with a supported format become spendable, all others become
+non-spendable. An empty format list therefore makes *nothing* spendable.
+
+Implementations should only write rows whose flag actually has to change. The
+call runs on every format reconciliation, so clearing the whole table before
+re-marking the supported rows costs a full-table rewrite — and the attendant
+MVCC bloat on PostgreSQL — however little has changed.

@@ -13,7 +13,6 @@ import (
 	errors2 "errors"
 	"fmt"
 	"math/big"
-	"strings"
 	"time"
 
 	"github.com/LFDT-Panurus/panurus/token"
@@ -658,7 +657,7 @@ func (w *TransactionStoreTransaction) Impl() dbdriver.TransactionImpl {
 
 func (w *TransactionStoreTransaction) Commit() error {
 	if err := w.txn.Commit(); err != nil {
-		return fmt.Errorf("could not commit transaction: %w", err)
+		return errors.Wrap(err, "could not commit transaction")
 	}
 	w.txn = nil
 
@@ -814,8 +813,7 @@ func ttxDBError(err error) error {
 		return nil
 	}
 	logger.Error(err)
-	e := strings.ToLower(err.Error())
-	if strings.Contains(e, "foreign key constraint") {
+	if isForeignKeyViolation(err) {
 		return dbdriver.ErrTokenRequestDoesNotExist
 	}
 

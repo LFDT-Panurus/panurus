@@ -35,6 +35,7 @@ var KeyStoreCases = []struct {
 	Fn   func(*testing.T, driver.KeyStore)
 }{
 	{"TKeyStoreAddGet", TKeyStoreAddGet},
+	{"TKeyStorePutConflict", TKeyStorePutConflict},
 }
 
 func TKeyStoreAddGet(t *testing.T, db driver.KeyStore) {
@@ -50,6 +51,28 @@ func TKeyStoreAddGet(t *testing.T, db driver.KeyStore) {
 		require.NoError(t, db.Get(k, v))
 		assert.Equal(t, k+"_value", v.V)
 	}
+}
+
+// TKeyStorePutConflict asserts how Put treats a key that is already present:
+// re-storing the identical value succeeds (a node restarting must not fail),
+// while storing a different value under the same key is a data-integrity
+// conflict and has to be reported. Exercised against the real driver so that the
+// unique-key violation is actually raised and mapped, not just simulated.
+func TKeyStorePutConflict(t *testing.T, db driver.KeyStore) {
+	t.Helper()
+
+	require.NoError(t, db.Put("k", &Value{V: "original"}))
+
+	// Idempotent: same key, identical value.
+	require.NoError(t, db.Put("k", &Value{V: "original"}))
+
+	// Conflict: same key, different value.
+	require.Error(t, db.Put("k", &Value{V: "different"}))
+
+	// The stored value must be untouched by the rejected write.
+	v := &Value{}
+	require.NoError(t, db.Get("k", v))
+	assert.Equal(t, "original", v.V)
 }
 
 type Value struct {
