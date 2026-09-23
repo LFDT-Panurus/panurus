@@ -208,6 +208,7 @@ For detailed information about the recovery mechanism, see [Storage Service - Tr
 
 ## See Also
 
+- [Token Transaction Finality](./finality.md) - Deep-dive into finality detection and storage effects
 - [Fabric Implementation Details](./network-fabric.md) - Chaincode-based endorsement
 - [FabricX Implementation Details](./network-fabricx.md) - FSC node endorsement
 - [Storage Service - Transaction Recovery](./storage.md#transaction-recovery-service) - Recovery mechanism details

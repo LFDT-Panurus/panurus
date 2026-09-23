@@ -511,6 +511,7 @@ token:
 
 ## See Also
 
+- [Token Transaction Finality](./finality.md) - Deep-dive into finality detection and storage effects, including the query-service polling architecture behind the async finality processing above
 - [Network Service Overview](./network.md) - Generic network service concepts
 - [Fabric Implementation](./network-fabric.md) - Traditional chaincode-based approach
 - [FSC Endorsement Service](../../token/services/network/fabric/endorsement/fsc/) - Implementation details
