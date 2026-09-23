@@ -9,6 +9,7 @@ package sherdlock
 import (
 	"context"
 	"fmt"
+	"math/big"
 	"math/rand/v2"
 	"sync"
 	"time"
@@ -29,6 +30,37 @@ const (
 	// If not, to avoid locking these tokens forever, we roll back and unlock the tokens.
 	maxImmediateRetries = 5
 	NoBackoff           = -1
+
+	// sufficiencyWindow bounds how many ascending-by-amount candidates
+	// nextCandidate considers together once it finds one that, on its own,
+	// already covers the remaining requested amount. bucketedIterator's
+	// shuffle (fetcher.go) only randomizes tokens whose Quantity is
+	// byte-equal, so with realistic wallets (mostly-distinct amounts, as in
+	// the #2395 CERT incident) every such bucket has size 1 and the
+	// ascending scan is fully deterministic: any request smaller than the
+	// smallest token always targets that single token, exactly the hot-spot
+	// #2395 warned against. sufficiencyWindow widens the randomization to
+	// "all individually-sufficient candidates within a bounded lookahead",
+	// not just byte-equal ones. The size is a tradeoff: too small (1) is the
+	// old fully-deterministic behavior; too large risks locking a much
+	// bigger token than needed for a small payment - its own complaint in
+	// #2395 ("a 1 CHF request grabbed a 200 CHF token"). 4 was chosen as a
+	// small constant that still gives real statistical spread across a
+	// handful of similarly-sized candidates while keeping the selected
+	// token close to the smallest sufficient one.
+	sufficiencyWindow = 4
+
+	// maxSufficiencyRatio additionally bounds the sufficiency window by magnitude, not just
+	// count: a candidate only joins the window if its quantity is at most maxSufficiencyRatio
+	// times the remaining amount being satisfied. Count alone is not enough - a wallet with
+	// very few distinct amounts (e.g. exactly one small token and one huge one, as in
+	// TestSizeOrderedSelection_SmallestFit) would otherwise have sufficiencyWindow trivially
+	// swallow the huge token just because nothing else was in between, defeating the
+	// smallest-fit bias for the smallest wallets, which are also the ones a hot-token incident
+	// hurts the most. 5x keeps the window meaningful (room for several genuinely
+	// similarly-sized candidates around the CERT incident's 1/1.5/2/3 EUR cluster) while still
+	// refusing to lock, say, a 200 EUR token for a 1 EUR payment.
+	maxSufficiencyRatio = 5
 )
 
 var logger = logging.MustGetLogger()
@@ -45,6 +77,11 @@ type Selector struct {
 	precision uint64
 	metrics   *Metrics
 	mu        sync.Mutex // protects cache field for concurrent Close() calls
+	// pending holds candidates peeked by nextCandidate's sufficiency-window
+	// lookahead but not chosen, in their original ascending relative order,
+	// so a later call still sees them before any newer cache/refetch result.
+	// Only selectInternal's single goroutine touches it, so it needs no lock.
+	pending []*token2.UnspentTokenInWallet
 }
 
 type StubbornSelector struct {
@@ -194,7 +231,11 @@ func (s *Selector) selectInternal(ctx context.Context, owner token.OwnerFilter, 
 	// decision is made per Select call, not per iteration.
 	batchLocker, supportsBatch := s.locker.(BatchTokenLocker)
 	for {
-		if t, err := s.next(); err != nil {
+		remaining, remainingErr := quantity.Sub(sum)
+		if remainingErr != nil {
+			return nil, nil, immediateRetries, errors.Wrapf(remainingErr, "failed to compute remaining amount for [%s:%s]", owner.ID(), tokenType)
+		}
+		if t, err := s.nextCandidate(remaining); err != nil {
 			return nil, nil, immediateRetries, errors.Wrapf(err, "failed to get tokens for [%s:%s]", owner.ID(), tokenType)
 		} else if t == nil {
 			if !tokensLockedByOthersExist {
@@ -204,10 +245,6 @@ func (s *Selector) selectInternal(ctx context.Context, owner token.OwnerFilter, 
 				// that every remaining token is currently locked by someone else
 				// and was hidden from us entirely. Disambiguate with a direct,
 				// lock-ignoring existence check before giving up.
-				remaining, remainingErr := quantity.Sub(sum)
-				if remainingErr != nil {
-					return nil, nil, immediateRetries, errors.Wrapf(remainingErr, "failed to compute remaining amount for [%s:%s]", owner.ID(), tokenType)
-				}
 				// HasEnoughSpendableTokens is the sum-aware counterpart of HasAnySpendableTokens:
 				// a wallet whose total spendable balance cannot cover the remaining amount can
 				// never satisfy this Select call no matter how the rest gets unlocked, so fail
@@ -274,12 +311,8 @@ func (s *Selector) selectInternal(ctx context.Context, owner token.OwnerFilter, 
 			if err != nil {
 				return nil, nil, immediateRetries, errors.Wrapf(err, "invalid token [%s] found", t.Id)
 			}
-			remaining, err := quantity.Sub(sum)
-			if err != nil {
-				return nil, nil, immediateRetries, errors.Wrapf(err, "failed to compute remaining amount")
-			}
 			for windowSum.Cmp(remaining) < 0 {
-				next, nextErr := s.next()
+				next, nextErr := s.dequeue()
 				if nextErr != nil {
 					return nil, nil, immediateRetries, errors.Wrapf(nextErr, "failed to get tokens for [%s:%s]", owner.ID(), tokenType)
 				}
@@ -410,6 +443,96 @@ func (s *Selector) next() (*token2.UnspentTokenInWallet, error) {
 	}
 
 	return s.cache.Next()
+}
+
+// dequeue returns the next candidate, preferring anything already peeked and
+// buffered by a previous nextCandidate call (in its original relative
+// order) over pulling a fresh one from the cache.
+func (s *Selector) dequeue() (*token2.UnspentTokenInWallet, error) {
+	if len(s.pending) > 0 {
+		t := s.pending[0]
+		s.pending = s.pending[1:]
+
+		return t, nil
+	}
+
+	return s.next()
+}
+
+// nextCandidate is the sufficiency-window-aware replacement for a plain
+// s.next() call: it returns the next candidate to consider for satisfying
+// remaining, but when that candidate already covers remaining on its own,
+// it does not always return the very first such candidate. Because the
+// cache yields tokens in ascending-by-amount order (bucketedIterator,
+// fetcher.go), every subsequent candidate from here on is >= this one and
+// therefore also individually sufficient, so it peeks up to
+// sufficiencyWindow of them - stopping early at the first one whose
+// quantity exceeds maxSufficiencyRatio times remaining - and returns one
+// chosen uniformly at random, buffering the rest via s.pending so they are
+// still considered, in order, on later calls. This is what spreads "small
+// payment locks the single smallest token" contention across several
+// similarly-sized tokens (#2395) for wallets with mostly-distinct amounts,
+// where bucketedIterator's byte-equal-only shuffle has nothing to shuffle.
+// When the candidate alone does not cover remaining, it is returned
+// immediately with no lookahead: satisfying remaining will require
+// combining multiple tokens regardless (handled by selectInternal's own
+// batch-window-growing loop), so widening the window here would only
+// needlessly consume more of the cache.
+func (s *Selector) nextCandidate(remaining token2.Quantity) (*token2.UnspentTokenInWallet, error) {
+	t, err := s.dequeue()
+	if err != nil || t == nil {
+		return t, err
+	}
+
+	tq, err := token2.ToQuantity(t.Quantity, s.precision)
+	if err != nil {
+		return nil, errors.Wrapf(err, "invalid token [%s] found", t.Id)
+	}
+	if tq.Cmp(remaining) < 0 {
+		return t, nil
+	}
+
+	threshold := new(big.Int).Mul(remaining.ToBigInt(), big.NewInt(maxSufficiencyRatio))
+
+	window := []*token2.UnspentTokenInWallet{t}
+	for len(window) < sufficiencyWindow {
+		next, nextErr := s.dequeue()
+		if nextErr != nil {
+			return nil, nextErr
+		}
+		if next == nil {
+			break
+		}
+		nq, nqErr := token2.ToQuantity(next.Quantity, s.precision)
+		if nqErr != nil {
+			return nil, errors.Wrapf(nqErr, "invalid token [%s] found", next.Id)
+		}
+		if nq.ToBigInt().Cmp(threshold) > 0 {
+			// Too much bigger than what is actually needed: put it back (ascending
+			// order means every candidate from here on is >= this one, hence also
+			// over threshold, so there is no point looking further).
+			s.pending = append([]*token2.UnspentTokenInWallet{next}, s.pending...)
+
+			break
+		}
+		window = append(window, next)
+	}
+
+	idx := 0
+	if len(window) > 1 {
+		idx = rand.IntN(len(window))
+	}
+	chosen := window[idx]
+
+	rest := make([]*token2.UnspentTokenInWallet, 0, len(window)-1)
+	for i, w := range window {
+		if i != idx {
+			rest = append(rest, w)
+		}
+	}
+	s.pending = append(rest, s.pending...)
+
+	return chosen, nil
 }
 
 // swapCache installs it as the new token cache and closes the iterator it
