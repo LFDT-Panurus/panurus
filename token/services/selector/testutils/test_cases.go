@@ -35,10 +35,27 @@ const maxSpendRetries = 100
 const defaultCurrency = "CHF"
 
 var (
-	logger                    = logging.MustGetLogger()
-	defaultWalletOwner        = []byte{1, 2, 3}
-	defaultTokenFilter        = &TokenFilter{Wallet: defaultWalletOwner}
-	txId               uint32 = 0
+	logger             = logging.MustGetLogger()
+	defaultWalletOwner = []byte{1, 2, 3}
+	// defaultTokenFilter leaves WalletID empty: sherdlock's SQL path relies on this
+	// (an empty walletID means "no filter" to its underlying store — it applies
+	// ContainsToken over Owner bytes itself instead), so setting it here would make
+	// sherdlock's real-DB query filter on a walletID no stored token actually has,
+	// silently returning zero tokens for every sherdlock test that uses this filter.
+	// The simple driver's selector requires a non-empty ownerFilter.ID() (it uses it
+	// directly as the SQL walletID filter), so it cannot share this filter — see
+	// SimpleDriverTokenFilter and TestHotTokenContentionNWithFilter below.
+	defaultTokenFilter = &TokenFilter{Wallet: defaultWalletOwner}
+	// SimpleDriverTokenFilter is defaultTokenFilter's counterpart for the simple
+	// driver: it must carry a non-empty WalletID matching the identity every token
+	// is stored under (see UpdateTokens' hardcoded []string{"alice"} identity list
+	// below), since simple's selector.Select rejects an empty ownerFilter.ID() and
+	// uses it directly as the SQL walletID filter (unlike sherdlock's ContainsToken
+	// fallback). Used by TestHotTokenContentionSimpleDriver
+	// (token/services/selector/simple/contention_test.go) via
+	// TestHotTokenContentionNWithFilter.
+	SimpleDriverTokenFilter        = &TokenFilter{Wallet: defaultWalletOwner, WalletID: "alice"}
+	txId                    uint32 = 0
 )
 
 type EnhancedManager interface {
@@ -102,17 +119,41 @@ func TestSufficientTokensBigDenominationsManyReplicas(t *testing.T, replicas []E
 // balance, so no error here can be a genuine insufficient-funds; any error
 // is spurious, caused by contention.
 func TestHotTokenContention(t *testing.T, replicas []EnhancedManager) {
-	require.Len(t, replicas, 3, "token mix below assumes exactly 3 replicas x 100 requests of CHF1 = CHF300 = total balance")
+	TestHotTokenContentionN(t, replicas, 100)
+}
+
+// TestHotTokenContentionN is TestHotTokenContention parameterized by requestsPerReplica
+// (TestHotTokenContention itself is just requestsPerReplica=100), so a caller whose driver
+// has different concurrency characteristics can scale the workload down to something that
+// completes in a reasonable time while keeping the same token-mix shape (a handful of small
+// tokens plus one much larger, rotating "hot" one, demand exactly equal to wallet balance).
+// See simple/contention_test.go's TestHotTokenContentionSimpleDriver: the simple driver's
+// selector re-scans its whole candidate set from scratch on every lost lock race (no
+// per-attempt blacklist, unlike sherdlock), so the original 3x100 shape takes far longer to
+// settle against it than against sherdlock/Postgres.
+func TestHotTokenContentionN(t *testing.T, replicas []EnhancedManager, requestsPerReplica int) {
+	TestHotTokenContentionNWithFilter(t, replicas, requestsPerReplica, defaultTokenFilter)
+}
+
+// TestHotTokenContentionNWithFilter is TestHotTokenContentionN parameterized by the
+// OwnerFilter passed to Select, so callers whose driver requires a non-empty
+// ownerFilter.ID() (e.g. the simple driver — see SimpleDriverTokenFilter) can supply one
+// without affecting sherdlock's tests, which rely on defaultTokenFilter's empty WalletID.
+func TestHotTokenContentionNWithFilter(t *testing.T, replicas []EnhancedManager, requestsPerReplica int, filter token2.OwnerFilter) {
+	require.Len(t, replicas, 3, "token mix below assumes exactly 3 replicas x requestsPerReplica requests of CHF1 = total balance")
+
+	totalDemand := 3 * requestsPerReplica
+	require.Greater(t, totalDemand, 4, "token mix below assumes the big token absorbs totalDemand-4 > 0")
 
 	small := newToken(1)
-	big := newToken(296)
+	big := newToken(totalDemand - 4)
 	unspentTokens := createDefaultTokens(append(collections.Repeat(small, 4), big)...)
 	err := storeTokens(replicas[0], unspentTokens)
 	require.NoError(t, err)
 
-	// 3 replicas x 100 requests of CHF1 = CHF300, exactly the total balance.
+	// 3 replicas x requestsPerReplica requests of CHF1 = totalDemand, exactly the total balance.
 	item := newToken(1)
-	errs := parallelSelect(t, replicas, collections.Repeat(item, 100))
+	errs := parallelSelectWithFilter(t, replicas, collections.Repeat(item, requestsPerReplica), filter)
 	assert.Empty(t, errs, "spurious insufficient-funds under lock contention (#2395)")
 }
 
@@ -304,6 +345,14 @@ func newTxID() string {
 
 func parallelSelect(t *testing.T, replicas []EnhancedManager, quantities []token.Quantity) []error {
 	t.Helper()
+
+	return parallelSelectWithFilter(t, replicas, quantities, defaultTokenFilter)
+}
+
+// parallelSelectWithFilter is parallelSelect parameterized by the OwnerFilter passed to
+// Select (see TestHotTokenContentionNWithFilter's doc comment for why this is needed).
+func parallelSelectWithFilter(t *testing.T, replicas []EnhancedManager, quantities []token.Quantity, filter token2.OwnerFilter) []error {
+	t.Helper()
 	errCh := make(chan error, 100)
 	errs := make([]error, 0)
 	var errMu sync.Mutex
@@ -323,7 +372,7 @@ func parallelSelect(t *testing.T, replicas []EnhancedManager, quantities []token
 			require.NoError(t, err)
 			go func() {
 				defer utils.IgnoreErrorWithOneArg(replica.Close, txID)
-				tokens, sum, err := sel.Select(t.Context(), defaultTokenFilter, quantity.Hex(), defaultCurrency)
+				tokens, sum, err := sel.Select(t.Context(), filter, quantity.Hex(), defaultCurrency)
 				if err != nil {
 					errCh <- err
 				} else {
