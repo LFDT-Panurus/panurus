@@ -213,6 +213,7 @@ func testRegression(t *testing.T, configDir string) {
 		requestMetadata := new(driver.TokenRequestMetadata)
 		err = requestMetadata.FromBytes(metadataRaw)
 		require.NoError(t, err, "failed to unmarshal metadata for test case %s", testCaseKey)
+		requestMetadata.Anchor = driver.TokenRequestAnchor(tokenData.TxID)
 
 		// Deserialize token request for auditor check
 		tokenRequest := &driver.TokenRequest{}
