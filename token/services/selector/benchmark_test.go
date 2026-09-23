@@ -9,6 +9,7 @@ package selector
 import (
 	"context"
 	"fmt"
+	"maps"
 	"runtime"
 	"strconv"
 	"strings"
@@ -124,9 +125,7 @@ func (p *benchMetricsProvider) counterByLabel(name string) map[string]float64 {
 	cv.mu.Lock()
 	defer cv.mu.Unlock()
 	out := make(map[string]float64, len(cv.vals))
-	for k, v := range cv.vals {
-		out[k] = v
-	}
+	maps.Copy(out, cv.vals)
 
 	return out
 }
