@@ -197,6 +197,7 @@ type tokenCache interface {
 	Add(key string, value permutatableIterator[*token2.UnspentTokenInWallet])
 	Delete(key string)
 	Clear()
+	Wait()
 }
 
 // cachedFetcher eagerly fetches all the tokens from the DB at regular intervals and returns the cached result
@@ -372,6 +373,7 @@ func (f *cachedFetcher) updateCache(ctx context.Context, tokensByKey map[string]
 
 	// Step 3: Update tracked keys for next cycle
 	f.prevKeys = newKeys
+	f.cache.Wait()
 }
 
 // UnspentTokensIteratorBy returns cached unspent tokens, triggering a refresh if the cache is stale or overused.

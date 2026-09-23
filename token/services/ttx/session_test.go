@@ -10,6 +10,7 @@ package ttx_test
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 
@@ -443,4 +444,200 @@ func TestLocalBidirectionalChannel_UniqueSessionIDs(t *testing.T) {
 	id2 := channel2.LeftSession().Info().ID
 
 	assert.NotEqual(t, id1, id2, "session IDs should be unique")
+}
+
+// TestLocalBidirectionalChannel_CloseReleasesPeerReceive verifies that closing one side of the session
+// TestLocalBidirectionalChannel_CloseReleasesPeerReceive verifies closing peer session unblocks Receive immediately.
+func TestLocalBidirectionalChannel_CloseReleasesPeerReceive(t *testing.T) {
+	ctx := t.Context()
+	channel, err := ttx.NewLocalBidirectionalChannel(ctx, "caller", "ctx-id", "endpoint", []byte("pkid"))
+	require.NoError(t, err)
+
+	leftSession := channel.LeftSession()
+	rightSession := channel.RightSession()
+
+	done := make(chan struct{})
+	go func() {
+		msg := <-rightSession.Receive()
+		assert.Nil(t, msg)
+		close(done)
+	}()
+
+	leftSession.Close()
+
+	select {
+	case <-done:
+		// Success: peer receive unblocked immediately
+	case <-time.After(time.Second):
+		t.Fatal("timeout waiting for peer receive to unblock on close")
+	}
+}
+
+// TestLocalBidirectionalChannel_CloseReleasesPeerSend verifies closing peer session unblocks Send when buffer is full.
+func TestLocalBidirectionalChannel_CloseReleasesPeerSend(t *testing.T) {
+	ctx := t.Context()
+	channel, err := ttx.NewLocalBidirectionalChannel(ctx, "caller", "ctx-id", "endpoint", []byte("pkid"))
+	require.NoError(t, err)
+
+	leftSession := channel.LeftSession()
+	rightSession := channel.RightSession()
+
+	// Fill the 10-slot buffer from left to right
+	for i := range 10 {
+		err := leftSession.Send(ctx, []byte{byte(i)})
+		require.NoError(t, err)
+	}
+
+	// The 11th send will block because buffer is full
+	sendErrChan := make(chan error, 1)
+	go func() {
+		sendErrChan <- leftSession.Send(ctx, []byte{11})
+	}()
+
+	// Closing right session (peer) must unblock the 11th send on left session
+	rightSession.Close()
+
+	select {
+	case err := <-sendErrChan:
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "session is closed")
+	case <-time.After(time.Second):
+		t.Fatal("timeout waiting for peer send to unblock on close")
+	}
+}
+
+// TestLocalBidirectionalChannel_SendAfterPeerClosed verifies send returns error when peer has already closed.
+func TestLocalBidirectionalChannel_SendAfterPeerClosed(t *testing.T) {
+	ctx := t.Context()
+	channel, err := ttx.NewLocalBidirectionalChannel(ctx, "caller", "ctx-id", "endpoint", []byte("pkid"))
+	require.NoError(t, err)
+
+	leftSession := channel.LeftSession()
+	rightSession := channel.RightSession()
+
+	// Peer closes first
+	rightSession.Close()
+
+	// Send from left session should return "session is closed", not nil
+	err = leftSession.Send(ctx, []byte("payload"))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "session is closed")
+
+	// SendError should also return "session is closed"
+	err = leftSession.SendError(ctx, []byte("error-payload"))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "session is closed")
+}
+
+// TestLocalBidirectionalChannel_CancelledContextBufferedSend verifies buffered send with cancelled context succeeds deterministically.
+func TestLocalBidirectionalChannel_CancelledContextBufferedSend(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel() // Pre-cancel context
+
+	channel, err := ttx.NewLocalBidirectionalChannel(ctx, "caller", "ctx-id", "endpoint", []byte("pkid"))
+	require.NoError(t, err)
+
+	leftSession := channel.LeftSession()
+
+	// Sending with cancelled context on non-full buffer should deterministically succeed
+	for i := range 5 {
+		err := leftSession.Send(ctx, []byte{byte(i)})
+		assert.NoError(t, err)
+	}
+}
+
+// TestLocalBidirectionalChannel_NilContext verifies Send handles nil context safely.
+func TestLocalBidirectionalChannel_NilContext(t *testing.T) {
+	channel, err := ttx.NewLocalBidirectionalChannel(context.Background(), "caller", "ctx-id", "endpoint", []byte("pkid"))
+	require.NoError(t, err)
+
+	leftSession := channel.LeftSession()
+	var nilCtx context.Context
+	err = leftSession.Send(nilCtx, []byte("test"))
+	require.NoError(t, err)
+}
+
+// TestLocalBidirectionalChannel_ConcurrentCloseAndOperations tests concurrent usage of session methods.
+func TestLocalBidirectionalChannel_ConcurrentCloseAndOperations(t *testing.T) {
+	ctx := t.Context()
+	channel, err := ttx.NewLocalBidirectionalChannel(ctx, "caller", "ctx-id", "endpoint", []byte("pkid"))
+	require.NoError(t, err)
+
+	leftSession := channel.LeftSession()
+	rightSession := channel.RightSession()
+
+	var wg sync.WaitGroup
+
+	// Goroutine 1: Continually calling Info() on left
+	wg.Go(func() {
+		for range 100 {
+			_ = leftSession.Info()
+		}
+	})
+
+	// Goroutine 2: Continually calling Receive() on left
+	wg.Go(func() {
+		for range 100 {
+			_ = leftSession.Receive()
+		}
+	})
+
+	// Goroutine 3: Sending messages on left
+	wg.Go(func() {
+		for i := range 100 {
+			_ = leftSession.Send(ctx, []byte{byte(i)})
+		}
+	})
+
+	// Goroutine 4: Continually calling Receive() and reading on right
+	wg.Go(func() {
+		for range 100 {
+			ch := rightSession.Receive()
+			if ch != nil {
+				select {
+				case <-ch:
+				default:
+				}
+			}
+		}
+	})
+
+	// Goroutine 5: Close left session concurrently
+	wg.Go(func() {
+		time.Sleep(1 * time.Millisecond)
+		leftSession.Close()
+	})
+
+	// Goroutine 6: Close right session concurrently
+	wg.Go(func() {
+		time.Sleep(2 * time.Millisecond)
+		rightSession.Close()
+	})
+
+	wg.Wait()
+}
+
+// TestLocalBidirectionalChannel_BothSidesClosed verifies closing both left and right sessions
+// does not panic with close of closed channel or cause any errors.
+func TestLocalBidirectionalChannel_BothSidesClosed(t *testing.T) {
+	ctx := t.Context()
+	channel, err := ttx.NewLocalBidirectionalChannel(ctx, "caller", "ctx-id", "endpoint", []byte("pkid"))
+	require.NoError(t, err)
+
+	leftSession := channel.LeftSession()
+	rightSession := channel.RightSession()
+
+	// Close both sessions multiple times
+	leftSession.Close()
+	leftSession.Close()
+	rightSession.Close()
+	rightSession.Close()
+
+	assert.True(t, leftSession.Info().Closed)
+	assert.True(t, rightSession.Info().Closed)
+	assert.Nil(t, leftSession.Receive())
+	assert.Nil(t, rightSession.Receive())
+
+	require.Error(t, leftSession.Send(ctx, []byte("data")))
+	require.Error(t, rightSession.Send(ctx, []byte("data")))
 }
