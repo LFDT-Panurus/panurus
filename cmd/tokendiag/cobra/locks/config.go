@@ -1,0 +1,68 @@
+/*
+Copyright IBM Corp. All Rights Reserved.
+
+SPDX-License-Identifier: Apache-2.0
+*/
+
+package locks
+
+import (
+	"strings"
+
+	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
+	"github.com/spf13/viper"
+)
+
+// Config holds the database connection parameters loaded from the YAML config file.
+type Config struct {
+	// Driver is the database driver to use: "sqlite" or "postgres".
+	Driver string `mapstructure:"driver"`
+	// DataSource is the DSN / file path for the target database.
+	DataSource string `mapstructure:"dataSource"`
+	// TablePrefix is the optional prefix used when deriving table names.
+	TablePrefix string `mapstructure:"tablePrefix"`
+	// SkipPrefix disables the FSC-generated prefix on all table names when true.
+	// Set this to true when the Panurus node was configured with
+	// token.storage.skipPrefix: true. Default is false.
+	SkipPrefix bool `mapstructure:"skipPrefix"`
+	// TableNames holds optional per-table short-code overrides.
+	// Each key is a canonical short code (e.g. "tkn_locks") and the value is
+	// the replacement short code to use when generating the final SQL table name.
+	// The FSC-generated prefix and params are still applied around the replacement
+	// (unless SkipPrefix is true). Unknown keys are warned and ignored.
+	TableNames map[string]string `mapstructure:"tableNames"`
+	// TableNameParams holds the TMS identity (network, channel, namespace, in that
+	// order) that the Panurus node passed as the variadic params to
+	// GetTableNamesWithOverrides/GetTableNamesWithConfig when it derived its table
+	// names. These become part of every table name alongside TablePrefix, so they
+	// must match the node's configuration exactly or the tool will resolve the
+	// wrong (or nonexistent) tables. Leave empty if the node was started without
+	// any of these identifiers.
+	TableNameParams []string `mapstructure:"tableNameParams"`
+}
+
+// LoadConfig reads the YAML config file at the given path and returns a Config.
+func LoadConfig(path string) (Config, error) {
+	v := viper.New()
+	v.SetConfigFile(path)
+	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
+	v.AutomaticEnv()
+
+	if err := v.ReadInConfig(); err != nil {
+		return Config{}, errors.Wrapf(err, "failed to read config file %q", path)
+	}
+
+	var cfg Config
+	if err := v.Unmarshal(&cfg); err != nil {
+		return Config{}, errors.Wrap(err, "failed to unmarshal config")
+	}
+
+	if cfg.Driver != "sqlite" && cfg.Driver != "postgres" {
+		return Config{}, errors.Errorf("unsupported driver %q: must be \"sqlite\" or \"postgres\"", cfg.Driver)
+	}
+	if cfg.DataSource == "" {
+		return Config{}, errors.New("dataSource must not be empty")
+	}
+
+	return cfg, nil
+}

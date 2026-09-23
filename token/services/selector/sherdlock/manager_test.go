@@ -98,6 +98,17 @@ func startManagers(t *testing.T, number int, backoff time.Duration, maxRetries i
 
 func createManager(t *testing.T, pgConnStr string, backoff time.Duration, maxRetries int) (testutils.EnhancedManager, error) {
 	t.Helper()
+
+	return createManagerWithLocker(t, pgConnStr, backoff, maxRetries, nil)
+}
+
+// createManagerWithLocker is like createManager, but lets the caller decorate
+// the raw Locker before it is handed to NewManager. wrap may be nil. This
+// exists so TestHotTokenContention can wrap the Locker in a countingLocker to
+// record per-token lock attempts and conflicts, without duplicating the rest
+// of the manager wiring.
+func createManagerWithLocker(t *testing.T, pgConnStr string, backoff time.Duration, maxRetries int, wrap func(Locker) Locker) (testutils.EnhancedManager, error) {
+	t.Helper()
 	d := postgres.NewDriverWithDbProvider(multiplexed.MockTypeConfig(postgres2.Persistence, postgres2.Config{
 		TablePrefix:  "test",
 		DataSource:   pgConnStr,
@@ -116,9 +127,14 @@ func createManager(t *testing.T, pgConnStr string, backoff time.Duration, maxRet
 		return nil, errors.Join(err, tokenDB.Close())
 	}
 
+	var locker Locker = lockDB
+	if wrap != nil {
+		locker = wrap(locker)
+	}
+
 	m := NewMetrics(&disabled.Provider{})
 	fetcher := newMixedFetcher(tokenDB.(dbtest.TestTokenDB), m, 0, 0, 0)
-	manager := NewManager(fetcher, lockDB, testutils.TokenQuantityPrecision, backoff, maxRetries, 0, 0, m)
+	manager := NewManager(fetcher, locker, testutils.TokenQuantityPrecision, backoff, maxRetries, 0, 0, m)
 
 	return testutils.NewEnhancedManager(t, manager, tokenDB.(dbtest.TestTokenDB)), nil
 }

@@ -10,9 +10,11 @@ import (
 	"context"
 	"time"
 
+	simpleinmemory "github.com/LFDT-Panurus/panurus/token/services/selector/simple/inmemory"
 	"github.com/LFDT-Panurus/panurus/token/services/storage/db/driver"
 	"github.com/LFDT-Panurus/panurus/token/services/utils/types/transaction"
 	"github.com/LFDT-Panurus/panurus/token/token"
+	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 )
 
 type Locker interface {
@@ -32,8 +34,16 @@ func NewLocker(l Locker) *locker {
 	return &locker{Locker: l}
 }
 
+// Lock delegates to the underlying in-memory locker and normalizes a lost
+// lock race to driver.ErrTokenAlreadyLocked, the same sentinel the SQL-backed
+// TokenLockStore returns for the equivalent case (see common/tokenlock.go).
+// Without this, selector.go could not tell "lost the race" from a real error
+// on this backend, since simple/inmemory.AlreadyLockedError is a distinct value.
 func (l *locker) Lock(ctx context.Context, tokenID *token.ID, consumerTxID transaction.ID, walletID string) error {
 	_, err := l.Locker.Lock(ctx, walletID, tokenID, consumerTxID, false)
+	if err != nil && errors.Is(err, simpleinmemory.AlreadyLockedError) {
+		return driver.ErrTokenAlreadyLocked
+	}
 
 	return err
 }
