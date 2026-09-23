@@ -7,8 +7,9 @@ SPDX-License-Identifier: Apache-2.0
 package common
 
 import (
-	"fmt"
 	"math/big"
+
+	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 )
 
 // BigInt is a custom wrapper around math/big.Int that implements
@@ -39,14 +40,14 @@ func (b *BigInt) Scan(value any) error {
 		return nil
 	default:
 
-		return fmt.Errorf("cannot scan type %T into BigInt", value)
+		return errors.Errorf("cannot scan type %T into BigInt", value)
 	}
 
 	if b.Int == nil {
 		b.Int = new(big.Int)
 	}
 	if _, ok := b.SetString(str, 10); !ok {
-		return fmt.Errorf("failed to parse NUMERIC %q into big.Int", str)
+		return errors.Errorf("failed to parse NUMERIC %q into big.Int", str)
 	}
 
 	return nil

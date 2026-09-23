@@ -39,10 +39,11 @@ type PreparedStmtHolder[K comparable] interface {
 }
 
 // preparedStmtHolder is the default PreparedStmtHolder implementation.
-// Statements are written at most once per key (double-checked on prepare)
-// and never overwritten afterward, so reads vastly outnumber writes for any
-// key that has settled — exactly the access pattern sync.Map is optimized
-// for, letting the hot (already-prepared) path stay lock-free.
+// Statements are written once per key on a miss (double-checked under the
+// mutex) and are removed again only when one is found to be unusable, which is
+// rare and never happens for a key that is working. So reads vastly outnumber
+// writes for any key that has settled — exactly the access pattern sync.Map is
+// optimized for, letting the hot (already-prepared) path stay lock-free.
 type preparedStmtHolder[K comparable] struct {
 	stmts sync.Map   // K -> *sql.Stmt
 	mutex sync.Mutex // serializes prepare-on-miss only
@@ -67,6 +68,17 @@ func (h *preparedStmtHolder[K]) Execute(ctx context.Context, db *sql.DB, key K, 
 			// cancellation/deadline error for callers checking its type.
 			return nil, qErr
 		} else {
+			// Drop the statement only when the error says the statement itself
+			// is no longer usable (a server-side deallocation, a schema change),
+			// so the next call re-prepares it instead of taking the unprepared
+			// fallback forever. Evicting on *any* execute error would be worse
+			// than not evicting: an ordinary failure such as a constraint
+			// violation leaves a perfectly valid statement, and a permanent
+			// failure unrelated to validity would add a DEALLOCATE to every
+			// call. See isInvalidPreparedStmt.
+			if isInvalidPreparedStmt(qErr) {
+				h.evict(key, stmt)
+			}
 			logger.Warnf("prepared statement query failed for key [%v], falling back to unprepared query: %s", key, qErr)
 		}
 	} else if ctx.Err() != nil {
@@ -99,6 +111,27 @@ func (h *preparedStmtHolder[K]) getOrPrepare(ctx context.Context, db *sql.DB, ke
 	h.stmts.Store(key, stmt)
 
 	return stmt, nil
+}
+
+// evict removes stmt from the cache, but only if it is still the statement
+// cached under key - a concurrent caller may already have replaced it, and
+// closing that one would break queries that are working fine.
+//
+// Closing does not disturb result sets that are already open: database/sql
+// defers the underlying close until the last dependent Rows is closed. It is
+// not, however, invisible to concurrent callers - a goroutine that loaded this
+// same *sql.Stmt before the eviction and calls QueryContext after it gets
+// "sql: statement is closed" and drops to the unprepared fallback. That is
+// acceptable here (the fallback returns correct results, and eviction only
+// happens for a statement already established as unusable) but it is a
+// degradation, not a no-op, which is another reason to evict narrowly.
+func (h *preparedStmtHolder[K]) evict(key K, stmt *sql.Stmt) {
+	if !h.stmts.CompareAndDelete(key, stmt) {
+		return
+	}
+	if err := stmt.Close(); err != nil {
+		logger.Warnf("failed closing evicted prepared statement for key [%v]: %s", key, err)
+	}
 }
 
 func (h *preparedStmtHolder[K]) Count() int {

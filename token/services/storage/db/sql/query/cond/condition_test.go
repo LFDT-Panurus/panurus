@@ -149,6 +149,55 @@ var testMatrix = []testCase{
 		expectedQuery:  "(1 = 1) OR (status = $0)",
 		expectedParams: []common3.Param{3},
 	},
+	{
+		name:           "not, simple equality",
+		condition:      cond2.Not(cond2.Eq("field", 1)),
+		expectedQuery:  "NOT (field = $0)",
+		expectedParams: []common3.Param{1},
+	},
+	{
+		// The inner condition is parenthesised, so negating a composite negates
+		// the whole of it rather than just its first term.
+		name:           "not, in-list",
+		condition:      cond2.Not(cond2.In(common3.FieldName("field"), 1, 2)),
+		expectedQuery:  "NOT ((field) IN (($0), ($1)))",
+		expectedParams: []common3.Param{1, 2},
+	},
+	{
+		name:           "not, composite and",
+		condition:      cond2.Not(cond2.And(cond2.Eq("a", 1), cond2.Eq("b", 2))),
+		expectedQuery:  "NOT ((a = $0) AND (b = $1))",
+		expectedParams: []common3.Param{1, 2},
+	},
+	{
+		// Negating "always true" must not silently become a tautology.
+		name:           "not, always true",
+		condition:      cond2.Not(cond2.AlwaysTrue),
+		expectedQuery:  "NOT (1 = 1)",
+		expectedParams: []common3.Param{},
+	},
+	{
+		// Not(nil) is the "negate nothing" degenerate case and must match no
+		// row. The sentinel has to render as a falsehood: "1 != 0" would be
+		// true in SQL and turn a negation into a table-wide match.
+		name:           "not, nil condition",
+		condition:      cond2.Not(nil),
+		expectedQuery:  "1 = 0",
+		expectedParams: []common3.Param{},
+	},
+	{
+		// Or() with no operands is false, not a tautology.
+		name:           "or, no operands",
+		condition:      cond2.Or(),
+		expectedQuery:  "1 = 0",
+		expectedParams: []common3.Param{},
+	},
+	{
+		name:           "and, no operands",
+		condition:      cond2.And(),
+		expectedQuery:  "1 = 1",
+		expectedParams: []common3.Param{},
+	},
 }
 
 func TestConditions(t *testing.T) { //nolint:paralleltest

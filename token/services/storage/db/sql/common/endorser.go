@@ -170,9 +170,14 @@ func (w *EndorserStoreTransaction) Commit() error {
 	return w.tx.Commit()
 }
 
-// Rollback rolls back the transaction
+// Rollback rolls back the transaction. A rollback failure cannot be returned
+// (the interface returns nothing) but is logged rather than dropped, so a
+// transaction that outlived its rollback leaves a trace. sql.ErrTxDone is
+// expected when the transaction has already been committed or rolled back.
 func (w *EndorserStoreTransaction) Rollback() {
-	_ = w.tx.Rollback()
+	if err := w.tx.Rollback(); err != nil && !errors.Is(err, sql.ErrTxDone) {
+		logger.Errorf("error rolling back endorser transaction (ignoring...): %s", err)
+	}
 }
 
 // AddValidationRecord adds a validation record to the database.

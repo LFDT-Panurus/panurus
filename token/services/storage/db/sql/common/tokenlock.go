@@ -85,12 +85,17 @@ func (db *TokenLockStore) LockAt(ctx context.Context, tokenID *token.ID, consume
 		Row(consumerTxID, tokenID.TxId, tokenID.Index, createdAt.UTC()).
 		Format()
 	logging.Debug(logger, query, tokenID, consumerTxID)
-	_, err := db.WriteDB.ExecContext(ctx, query, args...)
-	if err != nil && errors.Is(db.errorWrapper.WrapError(err), fscdriver.UniqueKeyViolation) {
-		return errors.Wrapf(driver.ErrTokenAlreadyLocked, "token %s is already locked", tokenID)
+	if _, err := db.WriteDB.ExecContext(ctx, query, args...); err != nil {
+		if errors.Is(db.errorWrapper.WrapError(err), fscdriver.UniqueKeyViolation) {
+			return errors.Wrapf(driver.ErrTokenAlreadyLocked, "token %s is already locked", tokenID)
+		}
+
+		// Any other failure means the lock was NOT taken. It has to be reported:
+		// returning nil here would tell the caller it holds a lock it does not.
+		return errors.Wrapf(err, "failed locking token [%s] for consumer [%s]", tokenID, consumerTxID)
 	}
 
-	return err
+	return nil
 }
 
 func (db *TokenLockStore) UnlockByTxID(ctx context.Context, consumerTxID transaction.ID) error {
@@ -99,9 +104,11 @@ func (db *TokenLockStore) UnlockByTxID(ctx context.Context, consumerTxID transac
 		Format(db.ci)
 	logging.Debug(logger, query, consumerTxID)
 
-	_, err := db.WriteDB.ExecContext(ctx, query, args...)
+	if _, err := db.WriteDB.ExecContext(ctx, query, args...); err != nil {
+		return errors.Wrapf(err, "failed unlocking tokens for consumer [%s]", consumerTxID)
+	}
 
-	return err
+	return nil
 }
 
 func (db *TokenLockStore) GetSchema() string {
