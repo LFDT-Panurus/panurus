@@ -129,7 +129,7 @@ func (d *Driver) NewTokenService(tmsID driver.TMSID, publicParams []byte) (drive
 	networkLocalMembership := n.LocalMembership()
 	qe := vault.QueryEngine()
 	metricsProvider := metrics.NewTMSProvider(tmsConfig.ID(), d.metricsProvider)
-	ws, err := d.newWalletService(
+	ws, sigStack, err := d.newWalletService(
 		tmsConfig,
 		d.endpointService,
 		d.storageProvider,
@@ -144,6 +144,12 @@ func (d *Driver) NewTokenService(tmsID driver.TMSID, publicParams []byte) (drive
 	if err != nil {
 		return nil, errors.Wrapf(err, "failed to initiliaze wallet service for [%s:%s]", tmsID.Network, tmsID.Namespace)
 	}
+	transferred := false
+	defer func() {
+		if !transferred {
+			sigStack.Stop()
+		}
+	}()
 	deserializer := ws.Deserializer
 	ip := ws.IdentityProvider
 
@@ -156,10 +162,18 @@ func (d *Driver) NewTokenService(tmsID driver.TMSID, publicParams []byte) (drive
 	if err != nil {
 		return nil, errors.Wrapf(err, "failed resolving validator resource limits")
 	}
+	// The validator resolves verifiers for ledger-supplied token owners while validating a
+	// transaction, so it must NOT share the observed ws.Deserializer: that one feeds the
+	// signature-throttle escalator, and the principal here is the input token's owner — an
+	// identity the transaction merely names, not the caller. Sharing it would let an attacker
+	// drive an arbitrary third party's throttle level from validation traffic, and would make
+	// validation depend on local per-node call history (see throttle package doc). Give the
+	// validator its own un-observed deserializer; only client-facing paths feed escalation.
+	validatorDeserializer := NewDeserializer()
 	validator := validator.NewValidator(
 		logger,
 		publicParamsManager.PublicParams(),
-		deserializer,
+		validatorDeserializer,
 		limits,
 		nil,
 		nil,
@@ -183,6 +197,10 @@ func (d *Driver) NewTokenService(tmsID driver.TMSID, publicParams []byte) (drive
 	if err != nil {
 		return nil, errors.WithMessagef(err, "failed to create token service")
 	}
+	// The stack gates this service's client-facing signature service and is released when the
+	// service is done with.
+	service.SetSignatureInstrumentation(sigStack)
+	transferred = true
 
 	return service, nil
 }
