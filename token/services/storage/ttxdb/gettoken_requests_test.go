@@ -14,6 +14,7 @@ package ttxdb
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/LFDT-Panurus/panurus/token"
 	dbdriver "github.com/LFDT-Panurus/panurus/token/services/storage/db/driver"
@@ -59,6 +60,18 @@ func (s *getTokenRequestsStub) GetTokenRequest(_ context.Context, _ string) ([]b
 	panic("unexpected")
 }
 func (s *getTokenRequestsStub) AcquireRecoveryLeadership(_ context.Context) (dbdriver.RecoveryLeadership, bool, error) {
+	panic("unexpected")
+}
+func (s *getTokenRequestsStub) AcquireLeadership(_ context.Context, _ int64) (dbdriver.RecoveryLeadership, bool, error) {
+	panic("unexpected")
+}
+func (s *getTokenRequestsStub) QueryFindings(_ context.Context, _ dbdriver.QueryFindingsParams) ([]*dbdriver.FindingRecord, error) {
+	panic("unexpected")
+}
+func (s *getTokenRequestsStub) UpsertFindings(_ context.Context, _ []dbdriver.FindingRecord, _ time.Time) error {
+	panic("unexpected")
+}
+func (s *getTokenRequestsStub) ResolveFindingsNotSeenSince(_ context.Context, _ []string, _ time.Time) (int64, error) {
 	panic("unexpected")
 }
 func (s *getTokenRequestsStub) ClaimPendingTransactions(_ context.Context, _ dbdriver.RecoveryClaimParams) ([]*dbdriver.RecoveryClaim, error) {

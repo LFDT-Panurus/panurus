@@ -77,6 +77,7 @@ type transactionTables struct {
 	Transactions          string
 	Requests              string
 	TransactionEndorseAck string
+	Findings              string
 }
 
 type TransactionStore struct {
@@ -157,6 +158,7 @@ func NewOwnerTransactionStore(readDB, writeDB *sql.DB, tables TableNames, ci com
 		Transactions:          tables.Transactions,
 		Requests:              tables.Requests,
 		TransactionEndorseAck: tables.TransactionEndorseAck,
+		Findings:              tables.Findings,
 	}, ci, pi, nil, nil), nil
 }
 
@@ -173,6 +175,7 @@ func NewTransactionStoreWithNotifierAndRecovery(
 		Transactions:          tables.Transactions,
 		Requests:              tables.Requests,
 		TransactionEndorseAck: tables.TransactionEndorseAck,
+		Findings:              tables.Findings,
 	}, ci, pi, notifier, recoveryLeaderFactory), nil
 }
 
@@ -290,7 +293,15 @@ func (db *TransactionStore) QueryTransactions(ctx context.Context, params dbdriv
 			cond.Cmp(transactionsTable.Field("tx_id"), "=", requestsTable.Field("tx_id"))),
 		).
 		Where(HasTransactionParams(params, transactionsTable)).
-		OrderBy(orderBy(transactionsTable.Field("stored_at"), params.SearchDirection)).
+		// tx_id breaks ties deterministically, so every movement row of a given
+		// transaction is contiguous in the ordering (and thus never split across a
+		// page boundary) even when several share the same stored_at value.
+		// walkTransactions relies on this to dedupe transactions in O(1) memory
+		// instead of tracking every distinct tx_id seen across the whole walk.
+		OrderBy(
+			orderBy(transactionsTable.Field("stored_at"), params.SearchDirection),
+			orderBy(transactionsTable.Field("tx_id"), params.SearchDirection),
+		).
 		Paginated(pagination).
 		FormatPaginated(db.ci, db.pi)
 
@@ -422,6 +433,16 @@ func (db *TransactionStore) AcquireRecoveryLeadership(ctx context.Context) (dbdr
 	}
 
 	return db.recoveryLeaderFactory(ctx, db.writeDB)
+}
+
+// AcquireLeadership returns a leadership handle for an arbitrary caller-chosen
+// lockID, independent of the recovery lock bound at construction. It exists for
+// callers that need their own leader election - such as the ledger drift checks
+// sweep - so they never contend with the recovery sweep for the same lock.
+// The default implementation grants leadership locally: backends that support
+// real distributed locking (e.g. postgres) override it.
+func (db *TransactionStore) AcquireLeadership(context.Context, int64) (dbdriver.RecoveryLeadership, bool, error) {
+	return noopRecoveryLeadership{}, true, nil
 }
 
 // ClaimPendingTransactions returns a claimed batch of Pending transactions.
@@ -630,7 +651,7 @@ func (db *TransactionStore) GetSchema() string {
 		db.table.Transactions, db.table.Requests, db.table.Transactions, db.table.Transactions, db.table.Transactions, db.table.Transactions, db.table.Transactions, db.table.Transactions, db.table.Transactions, db.table.Transactions,
 		db.table.Movements, db.table.Requests, db.table.Movements, db.table.Movements, db.table.Movements, db.table.Movements,
 		db.table.TransactionEndorseAck, db.table.TransactionEndorseAck, db.table.TransactionEndorseAck,
-	)
+	) + db.getFindingsSchema()
 }
 
 func (db *TransactionStore) NewTransactionStoreTransaction() (dbdriver.TransactionStoreTransaction, error) {
