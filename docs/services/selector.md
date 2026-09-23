@@ -7,7 +7,7 @@ The **Selector Service** (`token/services/selector`) picks the unspent tokens (U
 The Selector Service is responsible for:
 *   **UTXO Selection**: Finding a set of spendable tokens that cover the total quantity required for a transfer operation.
 *   **Double-Spending Mitigation**: Temporarily locking selected tokens during the transaction assembly phase to prevent multiple concurrent transactions from attempting to spend the same tokens.
-*   **Candidate Enumeration**: Walking the wallet's candidate tokens in randomized order, locking each one as it is encountered, and stopping as soon as the accumulated amount covers the request. Token amounts do not order or rank the candidates.
+*   **Candidate Enumeration**: Walking the wallet's candidate tokens, locking each one as it is encountered, and stopping as soon as the accumulated amount covers the request. Under `sherdlock`, candidates already locked by another process are excluded from the query itself, and the remaining candidates are ordered ascending by amount with only same-amount candidates shuffled against each other (see [Token Selection Algorithm](#token-selection-algorithm)). Under `simple`, candidates are walked in database order with no amount ranking.
 
 ## Interaction with TTX and Storage
 
@@ -24,8 +24,8 @@ graph LR
     end
     
     subgraph "Selection Logic"
-        Query[Query Spendable Tokens]
-        Pick[Take Next Candidate - randomized order]
+        Query[Query Spendable Tokens - excludes locked, ordered by amount]
+        Pick[Take Next Candidate - ascending, shuffled within same-amount bucket]
         Lock[Acquire Temporary Lock]
         Done[Return Locked Tokens]
     end
@@ -42,7 +42,7 @@ graph LR
 - **Selector Service**: Creates a selector instance per transaction and orchestrates the Selection Logic steps
 - **Query Spendable Tokens**: Selector calls the Fetcher to retrieve available tokens
 - **Fetcher Logic**: Checks cache first (fast path), queries Token Store - TokenDB on cache miss (slow path)
-- **Take Next Candidate**: Selector takes the next token from the randomized candidate set; the token's amount plays no part in the choice
+- **Take Next Candidate**: Under `sherdlock`, the selector takes the next token from a candidate set ordered ascending by amount, with only same-amount candidates shuffled against each other, and already-locked tokens excluded from the set entirely. Under `simple`, candidates are taken in database order and amount plays no part in the choice.
 - **Acquire Temporary Lock**: Selector locks each candidate as it is encountered, before it knows whether the request can be covered at all; a candidate already locked by another process is skipped and the loop moves on
 
 ## Key Components
@@ -52,38 +52,61 @@ The `SelectorManager` is the entry point for obtaining a `Selector` instance anc
 
 ### Token Selection Algorithm
 
-Selection is a **randomized greedy first-fit**. It is not configurable, and it is not
-amount-aware. `Selector.selectInternal` (`token/services/selector/sherdlock/selector.go`)
-does the following:
+Selection is a **greedy first-fit**, not configurable. It is amount-aware only to the extent
+described below (see [#2395](https://github.com/LFDT-Panurus/panurus/issues/2395) mechanisms
+2–3); it is not a smallest-fit or largest-fit strategy. `Selector.selectInternal`
+(`token/services/selector/sherdlock/selector.go`) does the following:
 
-1. the candidate tokens of the wallet and token type are enumerated in randomized order,
+1. the candidate tokens of the wallet and token type are enumerated — under `sherdlock`,
+   already-locked candidates are excluded from the query (the anti-join, below) and the
+   remainder is ordered ascending by amount with same-amount runs shuffled against each other
+   (the bucketed shuffle, below); under `simple`, candidates are walked in database order,
 2. each candidate is locked as it is encountered — a candidate already locked by another
-   process is skipped; a lock failure wrapping `token.SelectorRateLimited` is a hard abort
-   (not a skip),
+   process is skipped, and (`sherdlock` only) blacklisted for the remainder of this `Select`
+   call so a refetch does not immediately re-attempt and re-lose the same race; a lock failure
+   wrapping `token.SelectorRateLimited` is a hard abort (not a skip),
 3. the amounts of the successfully locked tokens are added up, and
 4. the selector returns as soon as the running sum reaches the requested quantity.
 
-A token's amount therefore only decides *when* the loop stops, never *which* candidate is
-picked. Two consequences worth planning for:
+Two consequences worth planning for still hold:
 
-*   **The number and size of the inputs is not minimized.** A request that a single large
-    token could have covered may well be funded by several small ones.
-*   **The result is not deterministic.** The same request against the same wallet can select
-    a different set of tokens, and a different number of inputs, on each run.
+*   **The number and size of the inputs is not minimized.** Ordering ascending by amount
+    means a request is preferentially funded by several small tokens before a large one is
+    even considered, which can *increase* the number of inputs relative to a single large
+    token that could have covered the request alone.
+*   **The result is not fully deterministic.** Candidates of the same amount are shuffled
+    against each other, so the same request against the same wallet can still select a
+    different set of same-amount tokens on each run; the amount ordering across different
+    amounts, however, is deterministic.
 
-**The randomization is deliberate.** It is what spreads concurrent selectors of the same
-wallet across different candidates: walking a fixed order would make every selector contend
-for the same first tokens, driving up lock failures and, with them, the immediate-retry path
-that gives up with `token.SelectorSufficientButLockedFunds`, and beyond it the backoff path
-that ends in `token.SelectorInsufficientFunds`.
+**`sherdlock`-only: anti-join against locked tokens.** The candidate query excludes any token
+currently held by a lock in the `TokenLocks` table (`NOT EXISTS` against `TokenLocks`, added
+to `buildSpendableTokensIteratorByQuery` in `token/services/storage/db/sql/common/tokens.go`).
+This stops a selector from *starting* a race it is bound to lose; the `INSERT`-based lock
+acquisition (below) remains the race-safe backstop, since the anti-join is read-then-act and
+therefore not itself race-free. Because the anti-join can hide every remaining token from a
+wallet that is not actually out of funds — everything left is simply locked by someone else —
+`Selector.selectInternal` disambiguates an empty scan with
+`TokenFetcher.HasAnySpendableTokens`, a lock-ignoring existence check, before returning
+`token.SelectorInsufficientFunds`.
 
-The shuffle lives in the sherdlock fetcher, not in the selection loop
-(`token/services/selector/sherdlock/fetcher.go`): the lazy fetcher wraps the database
-iterator in `collections.NewPermutatedIterator`, and the cached fetcher hands out a fresh
-permutation of the cached slice on every query. The `simple` driver does **not** shuffle — it
-walks the database iterator in the order the token store returns it
-(`token/services/selector/simple/selector.go`) — so concurrent selectors under `simple` are
-more exposed to colliding on the same leading candidates.
+**`sherdlock`-only: size-ordered, bucket-shuffled candidates.** Candidates are ordered
+ascending by amount (an `ORDER BY` added to the same query), then shuffled only *within* runs
+of equal amount — `bucketedIterator.NewPermutation()` in
+`token/services/selector/sherdlock/fetcher.go`. A strictly deterministic smallest-fit rule was
+deliberately avoided: it would just relocate all contention onto the single smallest token
+instead of spreading it. **The shuffle is still deliberate** for the reason it always was: it
+spreads concurrent selectors of the same wallet across different same-amount candidates —
+walking a fixed order within a bucket would make every selector contend for the same leading
+candidate, driving up lock failures and, with them, the immediate-retry path that gives up
+with `token.SelectorSufficientButLockedFunds`, and beyond it the backoff path that ends in
+`token.SelectorInsufficientFunds`. The bucketing lives in the sherdlock fetcher, not in the
+selection loop: the lazy fetcher and the cached fetcher both hand out a fresh
+`bucketedIterator` permutation on every query. The `simple` driver does **neither** the
+anti-join nor the size ordering — it walks the database iterator in the order the token store
+returns it (`token/services/selector/simple/selector.go`), unordered and un-shuffled — so
+concurrent selectors under `simple` remain fully exposed to colliding on the same leading
+candidates and to starting races against already-locked tokens.
 
 **How it works in the flow (see "Selection Logic" subgraph in diagram):**
 1. **TTX Request**: TTX Service requests token selection for a transfer operation
@@ -105,10 +128,12 @@ more exposed to colliding on the same leading candidates.
 
 #### Strategies that are not implemented
 
-Amount-aware strategies — smallest-first, largest-first, First-In-First-Out, or minimizing
-the number of inputs — are **not** implemented and cannot be configured. There is no
-strategy abstraction in the code and no configuration key that selects one. Making selection
-amount-aware is tracked in
+Deterministic amount-aware strategies — strict smallest-first, largest-first,
+First-In-First-Out, or minimizing the number of inputs — are **not** implemented and cannot
+be configured, even though `sherdlock` now orders candidates ascending by amount (see above):
+that ordering is bucket-shuffled specifically to avoid becoming a deterministic smallest-fit
+rule. There is no strategy abstraction in the code and no configuration key that selects one.
+Making selection fully amount-aware (e.g. minimizing input count) is tracked in
 [issue #2017](https://github.com/LFDT-Panurus/panurus/issues/2017).
 
 ### Locking Mechanism
@@ -117,7 +142,24 @@ To prevent double-spending *before* the transaction is committed to the ledger, 
 **Lock lifecycle:**
 1.  **Lock Acquisition**: When the selector takes a candidate token, it attempts to insert a record in the `TokenLocks` table.
 2.  **Concurrency Control**: If another concurrent process has already locked that token, the insertion fails, and the selector moves on to the next candidate.
-3.  **Lock Release**: Locks are released either when the transaction reaches finality (success/failure) or when a timeout occurs, ensuring that tokens do not remain permanently inaccessible due to crashed or abandoned transactions.
+3.  **Lock Release**: Locks are released as soon as the transaction that took them reaches
+    a terminal finality status (`Confirmed` or `Deleted`) — see "Release on settlement"
+    below — with the lease-expiry sweep as a backstop for locks whose consumer never
+    reaches finality (crashed or abandoned transactions, or `Orphan`).
+
+#### Release on settlement
+
+The finality path — `finality.Listener.runOnStatus` for the live subscription, and
+`TTXRecoveryHandler.applyFinalityLogic` for recovery on restart — releases a
+transaction's locks (`token.SelectorManager.Unlock`) the moment its status is known to
+be terminal, for both `Confirmed` and `Deleted` alike: a failed transaction will never
+spend the tokens it selected, so there is no reason to hold them either. This closes
+the window, previously bounded only by `leaseExpiry` (default several minutes), during
+which a settled transaction's already-spent-for tokens stayed locked and therefore
+invisible to other selectors — the dominant source of lock contention on hot tokens
+under concurrent load (issue #2395). Release is best-effort: a failure to unlock is
+logged and does not fail the settlement or recovery path, since the lease-expiry sweep
+below still reclaims the lock eventually.
 
 #### Lease expiry
 
@@ -125,16 +167,27 @@ Every `leaseCleanupTickPeriod`, `sherdlock` runs a cleanup pass over the `TokenL
 table that releases a lock when **either** of the following holds.
 
 > **Both `leaseExpiry` and `leaseCleanupTickPeriod` must be non-zero for the cleanup
-> goroutine to start.** If either is zero the pass never runs, so locks held by
-> `Deleted` or `Orphan` consumers are never released and those tokens remain
-> permanently unselectable. Setting `leaseExpiry: 0` to disable time-based expiry
-> while relying on consumer-status release is therefore not supported.
+> goroutine to start.** `Config.GetLeaseExpiry()`/`GetLeaseCleanupTickPeriod()` treat an
+> unset *or* explicitly-zero YAML value the same way: 0 is substituted with the default
+> (`leaseExpiry`: several minutes; `leaseCleanupTickPeriod`: about a minute), so writing
+> `leaseExpiry: 0` in configuration does **not** disable the sweep — it silently falls
+> back to the default instead. The sweep can only be disabled by an in-process caller
+> that constructs `sherdlock.NewManager` directly with `leaseExpiry`/
+> `leaseCleanupTickPeriod` of `0`, bypassing the `Config` getters; there is currently no
+> supported way to disable the sweep from YAML configuration, by design — locks held by
+> `Orphan` consumers, or by a consumer whose release-on-settlement call failed, would
+> otherwise never be released and those tokens would remain permanently unselectable.
+> If the sweep is disabled this way, `NewManager` logs a warning naming both values.
 
 *   the **consuming** transaction — the one that took the lock, stored in
     `consumer_tx_id` — has reached `Deleted` or `Orphan`, so it will never spend the
     token; or
 *   the lease is older than `leaseExpiry`, which covers the consumer that crashed or was
     abandoned without ever reaching a terminal status.
+
+In the common case a lock is now released by "Release on settlement" above well before
+its lease would expire; this pass remains the backstop for `Orphan` consumers (which the
+finality path does not observe) and for any release-on-settlement call that failed.
 
 Two properties of the pass are worth spelling out:
 
@@ -154,6 +207,65 @@ lock; SQLite is non-distributed and always runs it locally.
 
 The in-memory locker described below does not use the `TokenLocks` table and never
 expires locks via `Cleanup`; its lifecycle is entirely managed in process.
+
+#### Lock-acquisition strategies (Postgres, `sherdlock` only)
+
+The Postgres `TokenLockStore` supports three lock-acquisition strategies, selected via
+`token.storage.db.lockStrategy` (see [Configuration](#configuration)). SQLite and `simple`
+are unaffected: SQLite's `LoadStorageConfig` call reads and ignores the key, and `simple`
+never reaches this configuration path at all.
+
+*   **`insert` (default).** A plain `INSERT` into `TokenLocks`; a lost race surfaces as a
+    server-side unique-constraint violation on `(tx_id, idx)`, caught and translated to
+    `driver.ErrTokenAlreadyLocked`.
+*   **`onConflict`.** `INSERT ... ON CONFLICT (tx_id, idx) DO NOTHING RETURNING`; a lost
+    race is a clean zero-row result instead of a server-side error.
+*   **`skipLocked`.** Behaves like `onConflict` for a single-token `Lock` call, and
+    additionally implements `BatchLocker.LockBatch`: given a covering window of candidate
+    `(tx_id, idx)` pairs, it claims them in one statement using
+    `FOR UPDATE OF <tokens> SKIP LOCKED` against the `Tokens` rows, joined with the same
+    `INSERT ... ON CONFLICT DO NOTHING` backstop, so a claimant walks past a row a
+    concurrent claimant is already mid-claim on instead of colliding with it.
+
+**What each strategy actually changes, precisely — the mechanism has a narrower effect
+than "reduces lock contention" might suggest:**
+
+*   **Server-side unique-constraint errors are eliminated only for callers that take the
+    single-token `Lock` path directly.** `Selector.selectInternal` type-asserts the
+    configured `Locker` for `BatchLocker` and, when present (i.e. under Postgres
+    regardless of strategy, since `LockBatch` is defined on the strategy-aware store),
+    always claims its covering window through `LockBatch` — which already issues
+    `INSERT ... ON CONFLICT DO NOTHING` under every strategy, `insert` included.
+    `insert`'s error-surfacing single-token `Lock` path is therefore not on `sherdlock`'s
+    hot path at all; it only matters for a `Locker` implementation that does not satisfy
+    `BatchLocker` (a custom or older backend, or a rolling deploy where some replicas have
+    not yet upgraded). This is the case `postgres.TokenLockStore.RoundTrips()` and
+    `.UniqueViolations()` are instrumented to measure directly (exercised by
+    `TestHotTokenContention_SingleTokenLockPath` in `sherdlock/contention_test.go`), rather
+    than being inferred from the conflict-rate benchmark below, which cannot see it.
+*   **`FOR UPDATE SKIP LOCKED` only helps against a genuinely simultaneous holder, not
+    against an already-committed lock — the dominant conflict mode under load.** It lets a
+    claimant skip a row a rival transaction is mid-claim on *at that exact instant*; it does
+    nothing for a row whose lock row was already committed moments earlier, which loses the
+    race the same way under every strategy. Consequently the aggregate conflict rate
+    measured by `TestHotTokenContention`/`TestHotTokenContentionWideWindow` does **not**
+    move across strategies — this was verified empirically, not assumed, and is expected
+    given the mechanism rather than a sign Phase 6 underperforms.
+    `TestTokenLockStore_LockBatch_SkipLocked_SkipsRowLockedByConcurrentTx` in
+    `token/services/storage/db/sql/postgres` isolates the mechanism deterministically
+    instead: it holds a row lock on one candidate via a concurrent transaction, confirms a
+    plain `FOR UPDATE` on that row genuinely blocks (proving the held lock is real), then
+    confirms `LockBatch` under `skipLocked` claims every other candidate without blocking
+    while excluding that one.
+*   **Round-trip reduction comes from batching the claim into one statement per covering
+    window, not from strategy choice.** `LockBatch` issues exactly one round trip per
+    window under every strategy (`onConflict`/`insert` via a multi-row
+    `INSERT ... ON CONFLICT DO NOTHING`, `skipLocked` via the `FOR UPDATE SKIP LOCKED` join
+    above), so `RoundTrips()` comes out equal across strategies for the same workload in
+    `TestHotTokenContention`/`TestHotTokenContentionWideWindow`. The saving Phase 6
+    contributes here is the batch claim itself (`BatchLocker`), which all three strategies
+    share once configured; `lockStrategy` chooses only *how* that one round trip claims the
+    window, not *whether* claiming is batched.
 
 ### In-Memory Locker Internals
 
@@ -226,7 +338,14 @@ token:
     fetcherCacheSize: 1000               # Cache size in entries (default: 0 = use fetcher default)
     fetcherCacheRefresh: 30s             # Cache refresh interval (default: 0 = use fetcher default)
     fetcherCacheMaxQueries: 100          # Max queries before cache refresh (default: 0 = use fetcher default)
+  storage:
+    db:
+      lockStrategy: skipLocked           # Postgres lock-acquisition strategy: insert | onConflict | skipLocked (default: insert)
 ```
+
+`lockStrategy` is read by the Postgres storage driver, independently of `selector.driver`
+above (see [Lock-acquisition strategies](#lock-acquisition-strategies-postgres-sherdlock-only)).
+It has no effect under SQLite or `simple`.
 
 ### Driver
 
@@ -239,7 +358,9 @@ token:
 It does **not** select a selection algorithm: both drivers walk candidates greedily and stop
 on first cover, but they diverge in several ways beyond the shuffle:
 
-- `sherdlock` randomizes the candidate order; `simple` walks tokens in database order.
+- `sherdlock` orders candidates ascending by amount (shuffling only within same-amount runs)
+  and excludes already-locked tokens from the query via an anti-join; `simple` walks tokens
+  in unordered database order and does not exclude locked tokens from its query.
 - `sherdlock` holds already-acquired locks across immediate retries; `simple` releases all
   locks between every retry attempt.
 - `simple` runs a `GetTokens` concurrency check after a successful cover and can return a

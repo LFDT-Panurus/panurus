@@ -52,16 +52,28 @@ type tokensService interface {
 	AppendValid(ctx context.Context, tx dbdriver.Transaction, anchor token.RequestAnchor, tr *token.Request) (func(ctx context.Context), error)
 }
 
+// selectorManagerProvider resolves the token.SelectorManager for the TMS a
+// transaction belongs to, so its locks can be released once its status is
+// terminal (#2395 mechanism 4): without this, a settled transaction's locks
+// linger until the lease-expiry sweep, during which its tokens stay invisible
+// to the anti-join and keep colliding. Satisfied by dep.TokenManagementService.
+//
+//go:generate counterfeiter -o mock/selector_manager_provider.go -fake-name SelectorManagerProvider . selectorManagerProvider
+type selectorManagerProvider interface {
+	SelectorManager() (token.SelectorManager, error)
+}
+
 type Listener struct {
-	logger      logging.Logger
-	net         dep.Network
-	namespace   string
-	hasher      tokenRequestHasher
-	ttxDB       transactionDB
-	tokens      tokensService
-	tracer      trace.Tracer
-	metrics     *Metrics
-	retryRunner utils.RetryRunner
+	logger                  logging.Logger
+	net                     dep.Network
+	namespace               string
+	hasher                  tokenRequestHasher
+	ttxDB                   transactionDB
+	tokens                  tokensService
+	selectorManagerProvider selectorManagerProvider
+	tracer                  trace.Tracer
+	metrics                 *Metrics
+	retryRunner             utils.RetryRunner
 }
 
 func NewListener(
@@ -71,26 +83,36 @@ func NewListener(
 	hasher tokenRequestHasher,
 	ttxDB transactionDB,
 	tokens tokensService,
+	selectorManagerProvider selectorManagerProvider,
 	tracer trace.Tracer,
 	metricsProvider metrics.Provider,
 ) *Listener {
 	return &Listener{
-		logger:      logger,
-		net:         net,
-		namespace:   namespace,
-		hasher:      hasher,
-		ttxDB:       ttxDB,
-		tokens:      tokens,
-		tracer:      tracer,
-		metrics:     newMetrics(metricsProvider),
-		retryRunner: utils.NewRetryRunner(logger, MaxRetry, time.Second, true),
+		logger:                  logger,
+		net:                     net,
+		namespace:               namespace,
+		hasher:                  hasher,
+		ttxDB:                   ttxDB,
+		tokens:                  tokens,
+		selectorManagerProvider: selectorManagerProvider,
+		tracer:                  tracer,
+		metrics:                 newMetrics(metricsProvider),
+		retryRunner:             utils.NewRetryRunner(logger, MaxRetry, time.Second, true),
 	}
 }
 
 // OnError is called when a finality event for txID could not be delivered after all retries.
+// This is a terminal give-up for the delivery attempt (the caller notifies at most once via
+// OnStatus or OnError, never both), so txID's selection locks are released here too — otherwise
+// a transaction whose finality notification is permanently undeliverable would keep its locks
+// held until the next lease-expiry sweep, reproducing #2395 mechanism 4 via this path instead
+// of the OnStatus one. Releasing is safe even if txID is later retried by an outer recovery
+// mechanism (e.g. TTXRecoveryHandler.Recover): Unlock is an idempotent no-op on an already
+// unlocked tx, and a subsequent selection attempt simply re-acquires locks as needed.
 func (t *Listener) OnError(ctx context.Context, txID string, err error) {
 	t.metrics.RetryExhausted.Add(1)
 	t.logger.Errorf("finality listener: all retries exhausted for tx [%s]: %v", txID, err)
+	releaseLocks(ctx, t.logger, t.selectorManagerProvider, txID)
 }
 
 func (t *Listener) OnStatus(ctx context.Context, txID string, status int, message string, tokenRequestHash []byte) {
@@ -164,6 +186,12 @@ func (t *Listener) runOnStatus(ctx context.Context, txID string, status int, mes
 	case network.Invalid:
 		txStatus = storage.Deleted
 	default:
+		// This status is terminal-but-unrecognized from this listener's point of view: it will
+		// never be reclassified as network.Valid/network.Invalid by retrying runOnStatus with
+		// the same arguments, so without releasing here txID's selection locks would sit held
+		// until the next lease-expiry sweep, reproducing #2395 mechanism 4 via this path (see
+		// OnError's doc comment for the same reasoning on that terminal path).
+		releaseLocks(ctx, t.logger, t.selectorManagerProvider, txID)
 
 		return errors.Errorf("listener invoked on [%s] with status [%d], cannot proceed", txID, status)
 	}
@@ -182,9 +210,28 @@ func (t *Listener) runOnStatus(ctx context.Context, txID string, status int, mes
 	} else {
 		t.metrics.DeletedTransactions.Add(1)
 	}
+	releaseLocks(ctx, t.logger, t.selectorManagerProvider, txID)
 	t.logger.DebugfContext(ctx, "tx status changed for tx [%s]: [%s] done", txID, status)
 
 	return nil
+}
+
+// releaseLocks unlocks any tokens txID locked during selection, now that its
+// status is terminal (#2395 mechanism 4). It must never fail the settlement
+// path, so it logs and continues on error, mirroring Transaction.Release.
+func releaseLocks(ctx context.Context, logger logging.Logger, sp selectorManagerProvider, txID string) {
+	sm, err := sp.SelectorManager()
+	if err != nil {
+		logger.WarnfContext(ctx, "failed to get selector manager to release locks for tx [%s]: [%s]", txID, err)
+
+		return
+	}
+	if sm == nil {
+		return
+	}
+	if err := sm.Unlock(ctx, txID); err != nil {
+		logger.WarnfContext(ctx, "failed to release locks for tx [%s]: [%s]", txID, err)
+	}
 }
 
 func (t *Listener) checkTokenRequest(txID string, trToSign []byte, reference []byte) error {

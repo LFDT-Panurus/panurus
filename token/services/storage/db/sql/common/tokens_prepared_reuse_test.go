@@ -103,7 +103,8 @@ func TestSpendableTokensIteratorByPreparedReuse(t *testing.T) {
 	store := &TokenStore{
 		readDB: db,
 		table: tokenTables{
-			Tokens: "tokens",
+			Tokens:     "tokens",
+			TokenLocks: "token_locks",
 		},
 		ci:                   stubCondInterpreter{},
 		spendableTokensStmts: newPreparedStmtHolder[string](),

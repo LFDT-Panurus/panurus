@@ -9,7 +9,6 @@ package testutils
 import (
 	"context"
 	"fmt"
-	"math/big"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -17,6 +16,8 @@ import (
 	token2 "github.com/LFDT-Panurus/panurus/token"
 	"github.com/LFDT-Panurus/panurus/token/services/logging"
 	"github.com/LFDT-Panurus/panurus/token/services/storage/db/driver"
+	depmock "github.com/LFDT-Panurus/panurus/token/services/ttx/dep/mock"
+	"github.com/LFDT-Panurus/panurus/token/services/ttx/finality"
 	"github.com/LFDT-Panurus/panurus/token/services/utils"
 	"github.com/LFDT-Panurus/panurus/token/services/utils/types/transaction"
 	"github.com/LFDT-Panurus/panurus/token/token"
@@ -26,13 +27,35 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// maxSpendRetries bounds deleteTokensAndStoreChange's retry loop (see its doc comment): a
+// persistent UpdateTokens failure fails the test with a clear message instead of hanging
+// until the surrounding go test -timeout fires with no indication of where.
+const maxSpendRetries = 100
+
 const defaultCurrency = "CHF"
 
 var (
-	logger                    = logging.MustGetLogger()
-	defaultWalletOwner        = []byte{1, 2, 3}
-	defaultTokenFilter        = &TokenFilter{Wallet: defaultWalletOwner}
-	txId               uint32 = 0
+	logger             = logging.MustGetLogger()
+	defaultWalletOwner = []byte{1, 2, 3}
+	// defaultTokenFilter leaves WalletID empty: sherdlock's SQL path relies on this
+	// (an empty walletID means "no filter" to its underlying store — it applies
+	// ContainsToken over Owner bytes itself instead), so setting it here would make
+	// sherdlock's real-DB query filter on a walletID no stored token actually has,
+	// silently returning zero tokens for every sherdlock test that uses this filter.
+	// The simple driver's selector requires a non-empty ownerFilter.ID() (it uses it
+	// directly as the SQL walletID filter), so it cannot share this filter — see
+	// SimpleDriverTokenFilter and TestHotTokenContentionNWithFilter below.
+	defaultTokenFilter = &TokenFilter{Wallet: defaultWalletOwner}
+	// SimpleDriverTokenFilter is defaultTokenFilter's counterpart for the simple
+	// driver: it must carry a non-empty WalletID matching the identity every token
+	// is stored under (see UpdateTokens' hardcoded []string{"alice"} identity list
+	// below), since simple's selector.Select rejects an empty ownerFilter.ID() and
+	// uses it directly as the SQL walletID filter (unlike sherdlock's ContainsToken
+	// fallback). Used by TestHotTokenContentionSimpleDriver
+	// (token/services/selector/simple/contention_test.go) via
+	// TestHotTokenContentionNWithFilter.
+	SimpleDriverTokenFilter        = &TokenFilter{Wallet: defaultWalletOwner, WalletID: "alice"}
+	txId                    uint32 = 0
 )
 
 type EnhancedManager interface {
@@ -96,16 +119,105 @@ func TestSufficientTokensBigDenominationsManyReplicas(t *testing.T, replicas []E
 // balance, so no error here can be a genuine insufficient-funds; any error
 // is spurious, caused by contention.
 func TestHotTokenContention(t *testing.T, replicas []EnhancedManager) {
+	TestHotTokenContentionN(t, replicas, 100)
+}
+
+// TestHotTokenContentionN is TestHotTokenContention parameterized by requestsPerReplica
+// (TestHotTokenContention itself is just requestsPerReplica=100), so a caller whose driver
+// has different concurrency characteristics can scale the workload down to something that
+// completes in a reasonable time while keeping the same token-mix shape (a handful of small
+// tokens plus one much larger, rotating "hot" one, demand exactly equal to wallet balance).
+// See simple/contention_test.go's TestHotTokenContentionSimpleDriver: the simple driver's
+// selector re-scans its whole candidate set from scratch on every lost lock race (no
+// per-attempt blacklist, unlike sherdlock), so the original 3x100 shape takes far longer to
+// settle against it than against sherdlock/Postgres.
+func TestHotTokenContentionN(t *testing.T, replicas []EnhancedManager, requestsPerReplica int) {
+	TestHotTokenContentionNWithFilter(t, replicas, requestsPerReplica, defaultTokenFilter)
+}
+
+// TestHotTokenContentionNWithFilter is TestHotTokenContentionN parameterized by the
+// OwnerFilter passed to Select, so callers whose driver requires a non-empty
+// ownerFilter.ID() (e.g. the simple driver — see SimpleDriverTokenFilter) can supply one
+// without affecting sherdlock's tests, which rely on defaultTokenFilter's empty WalletID.
+func TestHotTokenContentionNWithFilter(t *testing.T, replicas []EnhancedManager, requestsPerReplica int, filter token2.OwnerFilter) {
+	require.Len(t, replicas, 3, "token mix below assumes exactly 3 replicas x requestsPerReplica requests of CHF1 = total balance")
+
+	totalDemand := 3 * requestsPerReplica
+	require.Greater(t, totalDemand, 4, "token mix below assumes the big token absorbs totalDemand-4 > 0")
+
+	small := newToken(1)
+	big := newToken(totalDemand - 4)
+	unspentTokens := createDefaultTokens(append(collections.Repeat(small, 4), big)...)
+	err := storeTokens(replicas[0], unspentTokens)
+	require.NoError(t, err)
+
+	// 3 replicas x requestsPerReplica requests of CHF1 = totalDemand, exactly the total balance.
+	item := newToken(1)
+	errs := parallelSelectWithFilter(t, replicas, collections.Repeat(item, requestsPerReplica), filter)
+	assert.Empty(t, errs, "spurious insufficient-funds under lock contention (#2395)")
+}
+
+// TestHotTokenContentionWideWindow targets the case TestHotTokenContention structurally
+// cannot: a wallet made entirely of CHF1 dust, with every request costing CHF3, so
+// selectInternal's covering-window loop (selector.go) always needs three ascending
+// candidates to satisfy one request, never one. TestHotTokenContention's rotating big
+// token means almost every claim - after the initial handful of small tokens are spent -
+// is a single token that alone covers the request, so its window is size 1 for nearly the
+// entire run: exactly the case where FOR UPDATE SKIP LOCKED, which only skips *other*
+// candidates present in the same statement, cannot show any benefit over a plain INSERT.
+// Here there is no dominant token to fall back to, so every one of the run's many
+// concurrent claims genuinely contends over which three dust tokens, among many
+// similarly-ranked ones, it gets to walk away with - the scenario Phase 6's skipLocked
+// strategy is meant to help.
+func TestHotTokenContentionWideWindow(t *testing.T, replicas []EnhancedManager) {
+	require.Len(t, replicas, 3, "token mix below assumes exactly 3 replicas x 10 requests of CHF3 = CHF90 = total balance")
+
+	dust := newToken(1)
+	unspentTokens := createDefaultTokens(collections.Repeat(dust, 90)...)
+	err := storeTokens(replicas[0], unspentTokens)
+	require.NoError(t, err)
+
+	// 3 replicas x 10 requests of CHF3 = CHF90, exactly the total balance; every request
+	// needs exactly 3 of the CHF1 tokens, so no change is ever minted.
+	item := newToken(3)
+	errs := parallelSelect(t, replicas, collections.Repeat(item, 10))
+	assert.Empty(t, errs, "spurious insufficient-funds under lock contention (#2395, wide window)")
+}
+
+// TestHotTokenContentionWithSettlement is TestHotTokenContention with a settlement step
+// spliced in after each successful Select+spend: it releases the winning transaction's
+// locks through a *real* finality.SelectorManagerProvider, wired via
+// depmock.TokenManagementServiceProvider/TokenManagementServiceWithExtensions to resolve to
+// replica itself (every EnhancedManager already satisfies token2.SelectorManager) - the same
+// provider chain finality.Listener.releaseLocks uses on tx confirmation
+// (finality/listener.go:186-208). TestHotTokenContention's Close-only harness never touches
+// the lock table (Close just evicts the selector from cache, sherdlock/manager.go:78-84), so
+// it can only simulate mechanism 4's leak, never prove its fix. lockDB is the TokenLockStore
+// backing every replica's Locker - callers construct their replicas over one shared table,
+// so any one of them will do - used only for the final assertion: after every request has
+// settled, ListLocks must report nothing at all, regardless of which replica won or how many
+// lock conflicts it took.
+func TestHotTokenContentionWithSettlement(t *testing.T, replicas []EnhancedManager, lockDB driver.TokenLockStore) {
+	require.Len(t, replicas, 3, "token mix below assumes exactly 3 replicas x 100 requests of CHF1 = CHF300 = total balance")
+
 	small := newToken(1)
 	big := newToken(296)
 	unspentTokens := createDefaultTokens(append(collections.Repeat(small, 4), big)...)
 	err := storeTokens(replicas[0], unspentTokens)
 	require.NoError(t, err)
 
-	// 3 replicas x 100 requests of CHF1 = CHF300, exactly the total balance.
 	item := newToken(1)
-	errs := parallelSelect(t, replicas, collections.Repeat(item, 100))
+	quantities := collections.Repeat(item, 100)
+	errs := parallelSelectWithSettlement(t, replicas, quantities)
+
+	locks, err := lockDB.ListLocks(t.Context())
+	require.NoError(t, err)
+	t.Logf(
+		"#2395 contention [settlement]: requests=%d, spurious errors=%d, locks remaining after settlement=%d",
+		len(quantities)*len(replicas), len(errs), len(locks),
+	)
 	assert.Empty(t, errs, "spurious insufficient-funds under lock contention (#2395)")
+	assert.Empty(t, locks, "no lock should survive settlement of every request (#2395 mechanism 4)")
 }
 
 func TestInsufficientTokensOneReplica(t *testing.T, replica EnhancedManager) {
@@ -193,6 +305,12 @@ func (m *enhancedManager) UpdateTokens(deleted []*token.ID, added []token.Unspen
 	}
 	if len(added) > 0 {
 		for _, t := range added {
+			quantity, err := token.ToQuantity(t.Quantity, TokenQuantityPrecision)
+			if err != nil {
+				err2 := tx.Rollback()
+
+				return errors.Wrapf(err, "failed to parse quantity - while rolling back: %v", err2)
+			}
 			if err := tx.StoreToken(m.t.Context(), driver.TokenRecord{
 				TxID:           t.Id.TxId,
 				Index:          t.Id.Index,
@@ -204,7 +322,7 @@ func (m *enhancedManager) UpdateTokens(deleted []*token.ID, added []token.Unspen
 				LedgerMetadata: []byte{},
 				Quantity:       t.Quantity,
 				Type:           t.Type,
-				Amount:         big.NewInt(0),
+				Amount:         quantity.ToBigInt(),
 				Owner:          true,
 				Auditor:        false,
 				Issuer:         false,
@@ -227,6 +345,14 @@ func newTxID() string {
 
 func parallelSelect(t *testing.T, replicas []EnhancedManager, quantities []token.Quantity) []error {
 	t.Helper()
+
+	return parallelSelectWithFilter(t, replicas, quantities, defaultTokenFilter)
+}
+
+// parallelSelectWithFilter is parallelSelect parameterized by the OwnerFilter passed to
+// Select (see TestHotTokenContentionNWithFilter's doc comment for why this is needed).
+func parallelSelectWithFilter(t *testing.T, replicas []EnhancedManager, quantities []token.Quantity, filter token2.OwnerFilter) []error {
+	t.Helper()
 	errCh := make(chan error, 100)
 	errs := make([]error, 0)
 	var errMu sync.Mutex
@@ -246,7 +372,7 @@ func parallelSelect(t *testing.T, replicas []EnhancedManager, quantities []token
 			require.NoError(t, err)
 			go func() {
 				defer utils.IgnoreErrorWithOneArg(replica.Close, txID)
-				tokens, sum, err := sel.Select(t.Context(), defaultTokenFilter, quantity.Hex(), defaultCurrency)
+				tokens, sum, err := sel.Select(t.Context(), filter, quantity.Hex(), defaultCurrency)
 				if err != nil {
 					errCh <- err
 				} else {
@@ -272,6 +398,94 @@ func parallelSelect(t *testing.T, replicas []EnhancedManager, quantities []token
 	return errs
 }
 
+// parallelSelectWithSettlement is parallelSelect with a settlement step added after each
+// successful Select+spend: it releases the winning transaction's locks through a real
+// finality.SelectorManagerProvider chain (see TestHotTokenContentionWithSettlement's doc
+// comment), rather than parallelSelect's Close, which never touches the lock table.
+func parallelSelectWithSettlement(t *testing.T, replicas []EnhancedManager, quantities []token.Quantity) []error {
+	t.Helper()
+	errCh := make(chan error, 100)
+	errs := make([]error, 0)
+	var errMu sync.Mutex
+	go func() {
+		errMu.Lock()
+		defer errMu.Unlock()
+		for err := range errCh {
+			errs = append(errs, err)
+		}
+	}()
+	var wg sync.WaitGroup
+	wg.Add(len(quantities) * len(replicas))
+	for _, replica := range replicas {
+		sp := newRealSelectorManagerProvider(replica)
+		for _, quantity := range quantities {
+			txID := newTxID()
+			sel, err := replica.NewSelector(txID)
+			require.NoError(t, err)
+			go func() {
+				defer utils.IgnoreErrorWithOneArg(replica.Close, txID)
+				tokens, sum, err := sel.Select(t.Context(), defaultTokenFilter, quantity.Hex(), defaultCurrency)
+				if err != nil {
+					errCh <- err
+				} else {
+					assert.NotNil(t, sum)
+					change, subErr := sum.Sub(quantity)
+					assert.NoError(t, subErr)
+					assert.GreaterOrEqual(t, change.ToBigInt().Int64(), int64(0))
+					assert.NotEmpty(t, tokens)
+					assert.NoError(t, deleteTokensAndStoreChange(replica, tokens, change))
+					releaseViaProvider(t, sp, txID)
+				}
+				wg.Done()
+			}()
+		}
+	}
+	wg.Wait()
+	close(errCh)
+	errMu.Lock()
+	defer errMu.Unlock()
+
+	return errs
+}
+
+// newRealSelectorManagerProvider wires a finality.SelectorManagerProvider whose bound TMS
+// resolves to replica itself as the token2.SelectorManager - replica already satisfies that
+// interface, being an EnhancedManager - so SelectorManager() returns the exact manager
+// Select acquired the locks against. This exercises the real provider chain
+// finality.Listener uses (finality/selector_manager.go), not a hand-rolled substitute for it.
+// The bound TMSID is irrelevant: the mocked TokenManagementServiceProvider ignores its
+// arguments and always returns the same tms.
+func newRealSelectorManagerProvider(replica EnhancedManager) *finality.SelectorManagerProvider {
+	tms := &depmock.TokenManagementServiceWithExtensions{}
+	tms.SelectorManagerReturns(replica, nil)
+
+	tmsProvider := &depmock.TokenManagementServiceProvider{}
+	tmsProvider.TokenManagementServiceReturns(tms, nil)
+
+	return finality.NewSelectorManagerProvider(tmsProvider, token2.TMSID{})
+}
+
+// releaseViaProvider resolves sp's SelectorManager and unlocks txID, mirroring
+// finality.Listener's releaseLocks (finality/listener.go:195-208) - except that a failure here
+// fails the test loudly, rather than being logged and swallowed the way the production listener
+// deliberately does, so a regression cannot slip past this harness silently. Called from a
+// goroutine spawned by parallelSelectWithSettlement (not the test's own goroutine), so it uses
+// assert rather than require: require calls runtime.Goexit() on failure, which would only ever
+// exit this spawned goroutine and could hang wg.Wait() instead of actually failing the test.
+func releaseViaProvider(t *testing.T, sp *finality.SelectorManagerProvider, txID transaction.ID) {
+	t.Helper()
+
+	sm, err := sp.SelectorManager()
+	//nolint:testifylint // require-error would conflict with go-require here: this runs on a
+	// goroutine spawned by parallelSelectWithSettlement, not the test's own goroutine, so
+	// require's runtime.Goexit() on failure would only exit this goroutine instead of failing
+	// the test - assert is the correct choice, not an oversight.
+	if !assert.NoError(t, err) || !assert.NotNil(t, sm) {
+		return
+	}
+	assert.NoError(t, sm.Unlock(t.Context(), txID))
+}
+
 func storeTokens(m EnhancedManager, added []token.UnspentToken) error {
 	return m.UpdateTokens(nil, added)
 }
@@ -284,13 +498,17 @@ func deleteTokensAndStoreChange(m EnhancedManager, spentTokens []*token.ID, chan
 			newTxID(): {change},
 		})
 	}
-	for {
+	var lastErr error
+	for range maxSpendRetries {
 		if err := m.UpdateTokens(spentTokens, changeTokens); err == nil {
 			return nil
 		} else {
+			lastErr = err
 			logger.Warnf("Failed to delete tokens: %v. Retrying", err)
 		}
 	}
+
+	return errors.Wrapf(lastErr, "failed to delete tokens [%s] and store change after %d retries", spentTokens, maxSpendRetries)
 }
 
 func createDefaultTokens(quantities ...token.Quantity) []token.UnspentToken {

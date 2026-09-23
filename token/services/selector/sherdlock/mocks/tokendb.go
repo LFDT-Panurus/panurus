@@ -3,6 +3,7 @@ package mocks
 
 import (
 	"context"
+	"math/big"
 	"sync"
 
 	"github.com/LFDT-Panurus/panurus/token/driver"
@@ -11,6 +12,37 @@ import (
 )
 
 type FakeTokenDB struct {
+	HasAnySpendableTokensStub        func(context.Context, string, token.Type) (bool, error)
+	hasAnySpendableTokensMutex       sync.RWMutex
+	hasAnySpendableTokensArgsForCall []struct {
+		arg1 context.Context
+		arg2 string
+		arg3 token.Type
+	}
+	hasAnySpendableTokensReturns struct {
+		result1 bool
+		result2 error
+	}
+	hasAnySpendableTokensReturnsOnCall map[int]struct {
+		result1 bool
+		result2 error
+	}
+	HasEnoughSpendableTokensStub        func(context.Context, string, token.Type, *big.Int) (bool, error)
+	hasEnoughSpendableTokensMutex       sync.RWMutex
+	hasEnoughSpendableTokensArgsForCall []struct {
+		arg1 context.Context
+		arg2 string
+		arg3 token.Type
+		arg4 *big.Int
+	}
+	hasEnoughSpendableTokensReturns struct {
+		result1 bool
+		result2 error
+	}
+	hasEnoughSpendableTokensReturnsOnCall map[int]struct {
+		result1 bool
+		result2 error
+	}
 	SpendableTokensIteratorByStub        func(context.Context, string, token.Type) (driver.SpendableTokensIterator, error)
 	spendableTokensIteratorByMutex       sync.RWMutex
 	spendableTokensIteratorByArgsForCall []struct {
@@ -28,6 +60,139 @@ type FakeTokenDB struct {
 	}
 	invocations      map[string][][]interface{}
 	invocationsMutex sync.RWMutex
+}
+
+func (fake *FakeTokenDB) HasAnySpendableTokens(arg1 context.Context, arg2 string, arg3 token.Type) (bool, error) {
+	fake.hasAnySpendableTokensMutex.Lock()
+	ret, specificReturn := fake.hasAnySpendableTokensReturnsOnCall[len(fake.hasAnySpendableTokensArgsForCall)]
+	fake.hasAnySpendableTokensArgsForCall = append(fake.hasAnySpendableTokensArgsForCall, struct {
+		arg1 context.Context
+		arg2 string
+		arg3 token.Type
+	}{arg1, arg2, arg3})
+	stub := fake.HasAnySpendableTokensStub
+	fakeReturns := fake.hasAnySpendableTokensReturns
+	fake.recordInvocation("HasAnySpendableTokens", []interface{}{arg1, arg2, arg3})
+	fake.hasAnySpendableTokensMutex.Unlock()
+	if stub != nil {
+		return stub(arg1, arg2, arg3)
+	}
+	if specificReturn {
+		return ret.result1, ret.result2
+	}
+	return fakeReturns.result1, fakeReturns.result2
+}
+
+func (fake *FakeTokenDB) HasAnySpendableTokensCallCount() int {
+	fake.hasAnySpendableTokensMutex.RLock()
+	defer fake.hasAnySpendableTokensMutex.RUnlock()
+	return len(fake.hasAnySpendableTokensArgsForCall)
+}
+
+func (fake *FakeTokenDB) HasAnySpendableTokensCalls(stub func(context.Context, string, token.Type) (bool, error)) {
+	fake.hasAnySpendableTokensMutex.Lock()
+	defer fake.hasAnySpendableTokensMutex.Unlock()
+	fake.HasAnySpendableTokensStub = stub
+}
+
+func (fake *FakeTokenDB) HasAnySpendableTokensArgsForCall(i int) (context.Context, string, token.Type) {
+	fake.hasAnySpendableTokensMutex.RLock()
+	defer fake.hasAnySpendableTokensMutex.RUnlock()
+	argsForCall := fake.hasAnySpendableTokensArgsForCall[i]
+	return argsForCall.arg1, argsForCall.arg2, argsForCall.arg3
+}
+
+func (fake *FakeTokenDB) HasAnySpendableTokensReturns(result1 bool, result2 error) {
+	fake.hasAnySpendableTokensMutex.Lock()
+	defer fake.hasAnySpendableTokensMutex.Unlock()
+	fake.HasAnySpendableTokensStub = nil
+	fake.hasAnySpendableTokensReturns = struct {
+		result1 bool
+		result2 error
+	}{result1, result2}
+}
+
+func (fake *FakeTokenDB) HasAnySpendableTokensReturnsOnCall(i int, result1 bool, result2 error) {
+	fake.hasAnySpendableTokensMutex.Lock()
+	defer fake.hasAnySpendableTokensMutex.Unlock()
+	fake.HasAnySpendableTokensStub = nil
+	if fake.hasAnySpendableTokensReturnsOnCall == nil {
+		fake.hasAnySpendableTokensReturnsOnCall = make(map[int]struct {
+			result1 bool
+			result2 error
+		})
+	}
+	fake.hasAnySpendableTokensReturnsOnCall[i] = struct {
+		result1 bool
+		result2 error
+	}{result1, result2}
+}
+
+func (fake *FakeTokenDB) HasEnoughSpendableTokens(arg1 context.Context, arg2 string, arg3 token.Type, arg4 *big.Int) (bool, error) {
+	fake.hasEnoughSpendableTokensMutex.Lock()
+	ret, specificReturn := fake.hasEnoughSpendableTokensReturnsOnCall[len(fake.hasEnoughSpendableTokensArgsForCall)]
+	fake.hasEnoughSpendableTokensArgsForCall = append(fake.hasEnoughSpendableTokensArgsForCall, struct {
+		arg1 context.Context
+		arg2 string
+		arg3 token.Type
+		arg4 *big.Int
+	}{arg1, arg2, arg3, arg4})
+	stub := fake.HasEnoughSpendableTokensStub
+	fakeReturns := fake.hasEnoughSpendableTokensReturns
+	fake.recordInvocation("HasEnoughSpendableTokens", []interface{}{arg1, arg2, arg3, arg4})
+	fake.hasEnoughSpendableTokensMutex.Unlock()
+	if stub != nil {
+		return stub(arg1, arg2, arg3, arg4)
+	}
+	if specificReturn {
+		return ret.result1, ret.result2
+	}
+	return fakeReturns.result1, fakeReturns.result2
+}
+
+func (fake *FakeTokenDB) HasEnoughSpendableTokensCallCount() int {
+	fake.hasEnoughSpendableTokensMutex.RLock()
+	defer fake.hasEnoughSpendableTokensMutex.RUnlock()
+	return len(fake.hasEnoughSpendableTokensArgsForCall)
+}
+
+func (fake *FakeTokenDB) HasEnoughSpendableTokensCalls(stub func(context.Context, string, token.Type, *big.Int) (bool, error)) {
+	fake.hasEnoughSpendableTokensMutex.Lock()
+	defer fake.hasEnoughSpendableTokensMutex.Unlock()
+	fake.HasEnoughSpendableTokensStub = stub
+}
+
+func (fake *FakeTokenDB) HasEnoughSpendableTokensArgsForCall(i int) (context.Context, string, token.Type, *big.Int) {
+	fake.hasEnoughSpendableTokensMutex.RLock()
+	defer fake.hasEnoughSpendableTokensMutex.RUnlock()
+	argsForCall := fake.hasEnoughSpendableTokensArgsForCall[i]
+	return argsForCall.arg1, argsForCall.arg2, argsForCall.arg3, argsForCall.arg4
+}
+
+func (fake *FakeTokenDB) HasEnoughSpendableTokensReturns(result1 bool, result2 error) {
+	fake.hasEnoughSpendableTokensMutex.Lock()
+	defer fake.hasEnoughSpendableTokensMutex.Unlock()
+	fake.HasEnoughSpendableTokensStub = nil
+	fake.hasEnoughSpendableTokensReturns = struct {
+		result1 bool
+		result2 error
+	}{result1, result2}
+}
+
+func (fake *FakeTokenDB) HasEnoughSpendableTokensReturnsOnCall(i int, result1 bool, result2 error) {
+	fake.hasEnoughSpendableTokensMutex.Lock()
+	defer fake.hasEnoughSpendableTokensMutex.Unlock()
+	fake.HasEnoughSpendableTokensStub = nil
+	if fake.hasEnoughSpendableTokensReturnsOnCall == nil {
+		fake.hasEnoughSpendableTokensReturnsOnCall = make(map[int]struct {
+			result1 bool
+			result2 error
+		})
+	}
+	fake.hasEnoughSpendableTokensReturnsOnCall[i] = struct {
+		result1 bool
+		result2 error
+	}{result1, result2}
 }
 
 func (fake *FakeTokenDB) SpendableTokensIteratorBy(arg1 context.Context, arg2 string, arg3 token.Type) (driver.SpendableTokensIterator, error) {
