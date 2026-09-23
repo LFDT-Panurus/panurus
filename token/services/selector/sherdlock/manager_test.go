@@ -117,7 +117,7 @@ func createManager(t *testing.T, pgConnStr string, backoff time.Duration, maxRet
 	}
 
 	m := NewMetrics(&disabled.Provider{})
-	fetcher := newMixedFetcher(tokenDB.(dbtest.TestTokenDB), m, 0, 0, 0)
+	fetcher := NewMixedFetcher(tokenDB.(dbtest.TestTokenDB), m, 0, 0, 0)
 	manager := NewManager(fetcher, lockDB, testutils.TokenQuantityPrecision, backoff, maxRetries, 0, 0, m)
 
 	return testutils.NewEnhancedManager(t, manager, tokenDB.(dbtest.TestTokenDB)), nil
