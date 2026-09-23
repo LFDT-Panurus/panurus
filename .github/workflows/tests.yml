@@ -2,9 +2,9 @@ name: Tests
 
 on:
   push:
-    branches: [ main, feature/evm-network-driver, feature/zkat-snark-driver ]
+    branches: [ main, feature/zkat-snark-driver ]
   pull_request:
-    branches: [ main, feature/evm-network-driver, feature/zkat-snark-driver ]
+    branches: [ main, feature/zkat-snark-driver ]
   workflow_dispatch:
     inputs:
       fsc-version:
@@ -234,6 +234,34 @@ jobs:
           interop-dlog-t4,
           interop-dlog-t5,
           dlogstress-t1,
+          evm-t1,
+          evm-t2,
+          evm-t2.1,
+          evm-t6,
+          evm-t9,
+          evm-t11,
+          evm-t12,
+          evm-t13,
+          evm-fabtoken-t1,
+          evm-fabtoken-t2,
+          evm-fabtoken-t6,
+          evm-fabtoken-t9,
+          evm-fabtoken-t11,
+          evm-fabtoken-t13,
+          evm-gateway-t1,
+          evm-gateway-t2,
+          evm-gateway-t2.1,
+          evm-gateway-t6,
+          evm-gateway-t9,
+          evm-gateway-t11,
+          evm-gateway-t12,
+          evm-gateway-t13,
+          evm-gateway-fabtoken-t1,
+          evm-gateway-fabtoken-t2,
+          evm-gateway-fabtoken-t6,
+          evm-gateway-fabtoken-t9,
+          evm-gateway-fabtoken-t11,
+          evm-gateway-fabtoken-t13,
         ]
 
     steps:
@@ -241,6 +269,10 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           path: go/src/github.com/LFDT-Panurus/panurus
+          # forge-std is a submodule of the contracts project, and the evm suites' deploy
+          # script imports it. Without this the checkout is missing lib/forge-std and forge
+          # fails to compile.
+          submodules: recursive
 
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
@@ -251,7 +283,21 @@ jobs:
       - name: Set up tools
         run: make install-tools
 
+      - name: Set up foundry
+        if: startsWith(matrix.tests, 'evm')
+        uses: foundry-rs/foundry-toolchain@v1
+        with:
+          # Pinned rather than "stable": forge 1.8.1 fails to deploy the contracts against the
+          # fabric-x-evm gateway backend (evm-gateway/evm-gateway-fabtoken suites) with "Failed to
+          # decode return value: 0x" while simulating the script's env-var cheatcode reads -
+          # reproduced locally, and confirmed absent on 1.7.1 against the same gateway and on 1.8.1
+          # against Besu, so it is a forge/fabric-x-evm incompatibility rather than a bug in the
+          # contracts or the deploy script. Bump this once a newer forge release is confirmed to
+          # deploy cleanly against the gateway again.
+          version: v1.7.1
+
       - name: Download fabric binaries
+        if: ${{ !startsWith(matrix.tests, 'evm') }}
         run: make download-fabric
 
       - name: Docker

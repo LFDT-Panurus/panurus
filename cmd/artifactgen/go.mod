@@ -5,6 +5,7 @@ go 1.27.1
 replace (
 	github.com/LFDT-Panurus/panurus => ./../../
 	github.com/LFDT-Panurus/panurus/integration => ./../../integration
+	github.com/LFDT-Panurus/panurus/x/token/services/network/evm => ../../x/token/services/network/evm
 )
 
 require (
@@ -24,6 +25,7 @@ require (
 	github.com/DATA-DOG/go-sqlmock v1.5.2 // indirect
 	github.com/IBM/idemix v0.3.1 // indirect
 	github.com/IBM/mathlib v0.3.2 // indirect
+	github.com/LFDT-Panurus/panurus/x/token/services/network/evm v0.0.0 // indirect
 	github.com/Masterminds/semver/v3 v3.5.0 // indirect
 	github.com/Microsoft/go-winio v0.6.2 // indirect
 	github.com/XSAM/otelsql v0.44.0 // indirect

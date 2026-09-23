@@ -42,7 +42,7 @@ TOP = .
 include $(TOP)/checks.mk
 
 # Define all Go module directories
-GO_MODULES := . integration token/services/storage/db/kvs/hashicorp cmd/artifactgen cmd/tokengen cmd/token_validation_service cmd/profiler cmd/skicleanup cmd/node
+GO_MODULES := . integration token/services/storage/db/kvs/hashicorp cmd/artifactgen cmd/tokengen cmd/token_validation_service cmd/profiler cmd/skicleanup cmd/node x/token/services/network/evm
 TIDY_GO_MODULES := $(GO_MODULES) tools
 
 # include fabricx target
@@ -51,6 +51,8 @@ include $(TOP)/fabricx.mk
 include $(TOP)/interop.mk
 # include the fungible target
 include $(TOP)/fungible.mk
+# include the evm targets
+include $(TOP)/evm.mk
 
 all: install-tools install-softhsm checks unit-tests #integration-tests
 
@@ -75,6 +77,9 @@ GO_PACKAGES = $(shell go list ./... | grep -v '/integration/' | grep -v 'regress
 unit-tests:
 	@go test $(GO_TEST_PARAMS) $(GO_PACKAGES)
 	cd token/services/storage/db/kvs/hashicorp/; go test -cover ./...
+	cd x/token/services/network/evm; go test -coverpkg=./... -coverprofile=profile.cov ./...
+	@tail -n +2 x/token/services/network/evm/profile.cov >> profile.cov
+	@rm -f x/token/services/network/evm/profile.cov
 
 .PHONY: unit-tests-race
 # run unit tests with race detection
@@ -92,9 +97,15 @@ unit-tests-regression:
 install-softhsm:
 	./ci/scripts/install_softhsm.sh
 
+# The EVM integration suites run against this Besu image.
+BESU_IMAGE ?= hyperledger/besu:24.3.0
+
+# The EVM gateway integration suite runs against this fabric-x-evm image.
+FABRICX_EVM_IMAGE ?= ghcr.io/hyperledger/fabric-x-evm:0.1.3
+
 .PHONY: docker-images
 # build/pull docker images needed for testing
-docker-images: fabric-docker-images monitoring-docker-images testing-docker-images
+docker-images: fabric-docker-images monitoring-docker-images testing-docker-images besu-docker-images fabricx-evm-docker-images
 
 .PHONY: testing-docker-images
 # pull docker images for testing (postgres, vault)
@@ -159,6 +170,14 @@ clean:
 	rm -rf ./integration/token/fungible/dlog/out/
 	rm -rf ./integration/token/fungible/dlog/testdata/
 	rm -rf ./integration/token/fungible/dlogx/out/
+	rm -rf ./integration/token/fungible/evm/out/
+	rm -rf ./integration/token/fungible/evm/testdata/
+	rm -rf ./integration/token/fungible/evmfabtoken/out/
+	rm -rf ./integration/token/fungible/evmfabtoken/testdata/
+	rm -rf ./integration/token/fungible/evmgw/out/
+	rm -rf ./integration/token/fungible/evmgw/testdata/
+	rm -rf ./integration/token/fungible/evmgwfabtoken/out/
+	rm -rf ./integration/token/fungible/evmgwfabtoken/testdata/
 	rm -rf ./integration/token/fungible/dloghsm/out/
 	rm -rf ./integration/token/fungible/dloghsm/testdata/
 	rm -rf ./integration/token/fungible/dlogstress/out/
