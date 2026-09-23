@@ -6,6 +6,18 @@ the wallet's 1276 tokens absorbed 85.0% of all collisions; 8 tokens
 (0.63%) absorbed 95.2%; token `f8a27fc4...` alone accounted for 1296
 collisions (23.0%) spread from 14:06:18.515 to 14:13:00.453 — the "over six
 minutes" in the report). Issue: [#2395](https://github.com/LFDT-Panurus/panurus/issues/2395).
+
+**Baseline-fidelity limitation, up front:** this document's baseline test
+(`testutils.TestHotTokenContention`, Phase 1–2) reproduces contention at the token
+*lineage* level — a rotating hot token whose ID changes every time it's re-minted as
+change — not CERT's actual **static**-hot-token Pareto shape (a fixed 5 token *rows*
+absorbing 85% of collisions, `f8a27fc4...` chief among them, never changing identity across
+the six-minute window). The two shapes exercise the same underlying mechanisms (Phases
+3–6), but the baseline's numbers (below) should not be read as literally reproducing CERT's
+observed collision distribution — see the Phase 1–2 section below for detail on why the
+baseline is shaped this way, and "Further testable gaps" #9 for the still-open question of
+whether an operator would be alerted before a real static-hot-token incident recurs.
+
 PR stack (base → tip):
 
 | PR | Phase | Title | Base |
@@ -50,8 +62,11 @@ to selection or locking logic.
   large "hot" token, far more concurrent requests than tokens, against real Postgres.
   Baseline: **300 distinct tokens attempted, ~7500 lock attempts, ~96% conflict rate**, no
   single token ID dominating — because `deleteTokensAndStoreChange` mints a fresh output ID
-  every time the hot token is spent, so the *lineage* is hot, not a static ID. Hard assertion:
-  total demand == total wallet balance, so any observed selection error is provably spurious.
+  every time the hot token is spent, so the *lineage* is hot, not a static ID (see the
+  baseline-fidelity limitation called out at the top of this document: this is a
+  deliberately different contention shape from CERT's static-hot-token Pareto pattern, not
+  a literal reproduction of it). Hard assertion: total demand == total wallet balance, so
+  any observed selection error is provably spurious.
 
 **Before/after:** none — this PR is instrumentation and a yardstick, not a fix.
 
@@ -282,6 +297,32 @@ contention is expressible as a server error at all.
 
 ---
 
+## Connection-pool / latency telemetry check (unavailable in this pass)
+
+The issue text explicitly asked that the fix be "checked against the load test's own
+latency/connection telemetry, not just the code, when scoping the fix" for the six-minute
+`f8a27fc4...` collision window (14:06:18.515–14:13:00.453). This check was **not performed**
+in this pass, and is recorded here as an explicit, documented gap rather than a silent one:
+
+- What's needed: the CERT load test's own DB connection-pool metrics (open/idle/in-use
+  connections, wait count/time) and per-call latency for the `token_locks`/`tokens` tables
+  during the 14:06–14:13 window, to confirm the code-level diagnosis (repeated re-offering
+  of the same token, Phase 3's fix) matches what the pool/latency data actually showed at
+  the time, rather than relying solely on the collision-count log analysis in
+  `Liste_60_tokens_collisions_CERT_20260903.csv`.
+- Who to ask: the CERT test owner who ran the original load test (Xavier, per the issue
+  discussion) — they would have access to the connection-pool dashboards/latency traces
+  captured during that run, which are not available from this repository or its CI logs.
+- Why the code-level fix is still believed sufficient without it: Phases 3–6 (the blacklist,
+  anti-join, lock release on settlement, and configurable lock-acquisition strategy)
+  address the *mechanism* the collision log demonstrates directly — one token re-colliding
+  1296 times over six minutes is exactly what "no per-call memory of a lost race" (Phase 3)
+  predicts, independent of what the connection pool was doing at the time. Pool exhaustion
+  or elevated latency could have been a contributing or amplifying factor, but nothing in
+  the collision log is inconsistent with the lock-contention mechanism alone fully
+  explaining the symptom. This should still be confirmed against the actual telemetry
+  before considering the incident fully explained, not just the fix adequate.
+
 ## Further testable gaps
 
 1. **[Closed in Phase 7] Phase 5 (lock release on settlement) has no contention-level regression test.**
@@ -305,13 +346,25 @@ contention is expressible as a server error at all.
    `selectInternal` treats a lock failure wrapping this sentinel as a hard abort rather than a
    skip-and-continue; there's no test establishing this differs correctly from
    `ErrTokenAlreadyLocked` under actual contention (only that the sentinel exists).
-5. **[Excluded from Phase 7, user directive] `simple` driver has no equivalent contention baseline.** All of `TestHotTokenContention`,
+5. **[Closed] `simple` driver has no equivalent contention baseline.** All of `TestHotTokenContention`,
    the blacklist, the anti-join, and the lock-strategy tests are `sherdlock`-only by design
    (per the docs, `simple` is unordered, no anti-join, releases all locks between retries).
    There is currently no data on how badly `simple` degrades under the same CERT-shaped
    workload, so operators choosing between drivers have no comparable numbers — worth at
    least running `TestHotTokenContention`-equivalent against `simple` once, even without
    fixing it, purely as a documented baseline (mirrors what #2397 did for `sherdlock`).
+   `token/services/selector/simple/contention_test.go`'s
+   `TestHotTokenContentionSimpleDriver` now provides this baseline (run at a reduced
+   3×10-request scale rather than `TestHotTokenContention`'s 3×100, since the simple
+   driver's whole-candidate-rescan-on-lock-loss makes the original shape far slower to
+   settle). Along the way, this also surfaced a genuine connection-pool self-deadlock in
+   `simple/selector.go`'s `selectByID`: it holds its `unspentTokens` cursor open across the
+   nested `concurrencyCheck` (`GetTokens`) call, so a connection pool smaller than the
+   number of concurrent selectors can deadlock outright (every connection pinned to an open
+   cursor, every caller additionally blocked wanting a second one). This is noted here as a
+   known limitation of the `simple` driver, not fixed — out of scope for a measurement-only
+   baseline, but worth its own follow-up if `simple` is used under real concurrent load with
+   a bounded connection pool.
 6. **[Closed in Phase 7] Rolling-deploy mixed-strategy scenario is untested.** Phase 6's docs explicitly flag that
    plain `insert`'s error-surfacing path only matters "for a rolling deploy where some
    replicas have not yet upgraded" — i.e. some replicas on `insert`, others on `skipLocked`
