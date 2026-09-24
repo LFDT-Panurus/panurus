@@ -306,6 +306,8 @@ func TestSetupPublicParamsResolvesThroughTheIDBasedFactory(t *testing.T) {
 	assert.Equal(t, tmsID, seenID, "the factory must be asked to resolve exactly the TMS being set up")
 	require.NotNil(t, stub.seen)
 	assert.Equal(t, tmsID, stub.seen.TMSID)
+	assert.Equal(t, tmsID.Namespace, env.(*Envelope).Namespace,
+		"Broadcast resolves the submitter and TokenState by this; an envelope without it can never be broadcast")
 }
 
 // TestSetupPublicParamsDoesNotTouchTheChain mirrors TestRequestApprovalDoesNotTouchTheChain: a failed

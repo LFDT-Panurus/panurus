@@ -53,9 +53,16 @@ type ChainProvider struct {
 // (head) storage, so a ChainProvider feeding a delta an endorser is about to sign or a caller
 // re-deriving what the contract will check must read at client.BlockTagLatest - reading at finalized
 // instead reproduces every setup update as a StalePublicParams revert for the whole finalization lag.
-// A ChainProvider used only to notice that an update happened (e.g. driving a local TMS refresh) can
-// still read at the finalized tag; that use is about eventually catching up, not about matching what
-// the contract checks at apply time.
+//
+// That includes a ChainProvider used only to notice that an update happened and drive a local TMS
+// refresh (pp.Watcher's own use - see NewWatcher's callers). It looks like a purely eventual-catch-up
+// concern at first, since the watcher is not itself the thing signing anything, but a responder's
+// DeltaFactory.Build binds every delta to what its OWN local TMS currently holds and refuses to sign
+// when that disagrees with the chain. If the watcher driving that local TMS lags at the finalized tag
+// while the delta's CAS baseline is read at latest (as it must be, above), every ordinary approval this
+// node endorses is refused with ErrStalePublicParams for the whole finalization lag after every setup
+// update, not merely until the watcher "eventually" catches up - the two tags must actually agree, at
+// latest, for the endorsement path to make progress at all.
 func NewChainProvider(evmClient client.EVMClient, tokenState client.Address, blockTag string) *ChainProvider {
 	if blockTag == "" {
 		blockTag = client.BlockTagFinalized

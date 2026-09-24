@@ -10,6 +10,7 @@ import (
 	"context"
 
 	token2 "github.com/LFDT-Panurus/panurus/token"
+	tdriver "github.com/LFDT-Panurus/panurus/token/driver"
 	"github.com/LFDT-Panurus/panurus/x/token/services/network/evm/client"
 )
 
@@ -43,6 +44,17 @@ type PublicParamsProvider interface {
 type LocalPublicParams interface {
 	// PublicParamsHash returns the SHA-256 hash of the public parameters currently in effect locally.
 	PublicParamsHash() token2.PPHash
+}
+
+// PublicParamsValidator deserializes raw public-parameters bytes into a driver.PublicParameters and
+// exposes them for structural validation. It resolves the right token driver from what the bytes
+// themselves declare (their driver name and version), so - unlike RequestValidator - it needs no TMS
+// to already exist. That is what makes SetupDeltaFactory able to endorse a first-time setup: it runs
+// before any TMS exists for the namespace to resolve a validator from. token/core.TokenDriverService
+// satisfies this in production; it already implements token/driver.PPReader with the identical method.
+type PublicParamsValidator interface {
+	// PublicParametersFromBytes unmarshals raw into a driver.PublicParameters instance.
+	PublicParametersFromBytes(raw []byte) (tdriver.PublicParameters, error)
 }
 
 // EndorserSigner signs an EIP-712 digest with the endorser's secp256k1 key and exposes the Ethereum

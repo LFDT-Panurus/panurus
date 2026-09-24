@@ -220,6 +220,7 @@ func TestMultiTMSIsolation_Live(t *testing.T) {
 		resolver:    resolver,
 		identities:  fakeIdentityProvider{},
 		viewManager: fakeViewManager{},
+		ppValidator: fakePPValidator{},
 	}
 
 	// --- Step 1: the real per-(network,channel) entry point --------------------------------------

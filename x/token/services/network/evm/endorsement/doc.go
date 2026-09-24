@@ -22,10 +22,12 @@ SPDX-License-Identifier: Apache-2.0
 //     gather replies, and count a signature only after recovering it to a distinct registered endorser
 //     over the digest of the delta that came back with it, mirroring the contract's threshold and
 //     distinct-signer rules.
-//   - DeltaFactory (delta.go) is the responder's validate-and-translate path, the one every endorser
-//     runs so they all produce byte-identical deltas (see "StateDelta determinism" in
-//     docs/services/network-ethereum-internals.md), and Service (service.go) is the per-TMS entry
-//     point RequestApproval drives.
+//   - DeltaFactory (delta.go) is the responder's validate-and-translate path for a KindApproval
+//     request, the one every endorser runs so they all produce byte-identical deltas (see "StateDelta
+//     determinism" in docs/services/network-ethereum-internals.md); SetupDeltaFactory (also delta.go)
+//     is its KindSetup counterpart, needed because a setup request carries no token.Request for a
+//     RequestValidator to unmarshal and may run before any TMS exists to resolve one from. Service
+//     (service.go) is the per-TMS entry point RequestApproval and SetupPublicParams both drive.
 //
 // Both directions of the wire follow the same principle: the party that does the work is the party
 // that decides what it means. The request carries no precomputed digest, so endorsers recompute

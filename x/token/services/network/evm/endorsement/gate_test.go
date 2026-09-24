@@ -79,6 +79,7 @@ func gateFactory() *DeltaFactory {
 
 func gateRequest() *EndorseRequest {
 	return &EndorseRequest{
+		Kind:         KindApproval,
 		TokenRequest: []byte("week4-gate-request"),
 		TMSID:        token2.TMSID{Network: "evm", Namespace: "token"},
 		Anchor:       gateAnchorHex(),
@@ -102,6 +103,7 @@ func gateEndorsers(t *testing.T, n int) (*Registry, map[string]*Responder) {
 		responders[id.UniqueID()] = NewResponder(
 			auth,
 			func(token2.TMSID) (*DeltaFactory, error) { return factory, nil },
+			nil,
 			signer,
 			func(token2.TMSID) (eip712.Domain, error) { return gateDomain(t), nil },
 		)

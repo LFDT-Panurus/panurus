@@ -23,15 +23,37 @@ const (
 	TypeEndorseResponse = "evm.endorse.response"
 )
 
-// EndorseRequest is what the initiator sends to each endorser: the marshalled token request to
-// validate, the TMS it belongs to, the request anchor, and the optional approval metadata. There is
-// deliberately NO digest field: an endorser must recompute the StateDelta and its EIP-712 digest
-// from the validated actions itself and sign that, never a digest handed to it, or a malicious
-// initiator could get honest endorsers to sign a delta that does not match the request they
-// validated.
+// RequestKind selects which of the two protocols an EndorseRequest carries. Both travel over the same
+// message type and reach the same registered Responder (FSC routes a session to a responder by the
+// initiating view's Go type alone, and RequestApproval and SetupPublicParams share one Initiator type -
+// see registerEndorser's doc comment in driver.go), so the responder tells them apart by this field
+// rather than by which view initiated the session.
+type RequestKind string
+
+const (
+	// KindApproval is an ordinary token-request approval: TokenRequest carries the marshalled request,
+	// validated against on-chain token state and the current public parameters.
+	KindApproval RequestKind = "approval"
+	// KindSetup is a public-parameters setup or update: PublicParamsRaw carries the new parameters,
+	// validated structurally but not against any token state, since none is read for a setup delta.
+	KindSetup RequestKind = "setup"
+)
+
+// EndorseRequest is what the initiator sends to each endorser: the request to validate, the TMS it
+// belongs to, the request anchor, and the optional approval metadata. There is deliberately NO digest
+// field: an endorser must recompute the StateDelta and its EIP-712 digest from the validated actions
+// itself and sign that, never a digest handed to it, or a malicious initiator could get honest
+// endorsers to sign a delta that does not match the request they validated.
 type EndorseRequest struct {
-	// TokenRequest is the marshalled token request the endorser validates and translates.
-	TokenRequest []byte `json:"token_request"`
+	// Kind selects which of TokenRequest or PublicParamsRaw is populated, and which validation and
+	// translation path the responder runs.
+	Kind RequestKind `json:"kind"`
+	// TokenRequest is the marshalled token request the endorser validates and translates. Populated
+	// only when Kind is KindApproval.
+	TokenRequest []byte `json:"token_request,omitempty"`
+	// PublicParamsRaw is the new public parameters' raw serialized bytes. Populated only when Kind is
+	// KindSetup.
+	PublicParamsRaw []byte `json:"public_params_raw,omitempty"`
 	// TMSID identifies the token management system (network, channel, namespace) the request targets.
 	TMSID token2.TMSID `json:"tms_id"`
 	// Anchor is the token-request anchor (the SDK transaction id), the RequestAnchor validation and
@@ -43,14 +65,23 @@ type EndorseRequest struct {
 
 // Validate checks the request carries the fields an endorser needs before it does any work.
 func (r *EndorseRequest) Validate() error {
-	if len(r.TokenRequest) == 0 {
-		return errors.New("endorse request: empty token request")
-	}
 	if len(r.Anchor) == 0 {
 		return errors.New("endorse request: empty anchor")
 	}
 	if len(r.TMSID.Network) == 0 || len(r.TMSID.Namespace) == 0 {
 		return errors.Errorf("endorse request: incomplete tms id [%s]", r.TMSID)
+	}
+	switch r.Kind {
+	case KindApproval:
+		if len(r.TokenRequest) == 0 {
+			return errors.New("endorse request: empty token request")
+		}
+	case KindSetup:
+		if len(r.PublicParamsRaw) == 0 {
+			return errors.New("endorse request: empty public parameters")
+		}
+	default:
+		return errors.Errorf("endorse request: unknown kind [%s]", r.Kind)
 	}
 
 	return nil
