@@ -73,3 +73,41 @@ func TestCleanupStopsASharedNodeOnce(t *testing.T) {
 		assert.Nil(t, entry.Node, "entry [%s] must be cleared", id)
 	}
 }
+
+// TestNodeForNetworkReusesTheSameNetwork checks the ordinary case startNode exists for: a second TMS on
+// the same network settles on the first TMS's already-started chain.
+func TestNodeForNetworkReusesTheSameNetwork(t *testing.T) {
+	shared := &stubNode{}
+	handler := &NetworkHandler{Entries: map[string]*Entry{
+		"tms-a": {Network: "evm-net:", Node: shared},
+	}}
+
+	got := handler.nodeForNetwork("evm-net:", "tms-b")
+	assert.Same(t, shared, got, "a second TMS on the same network must reuse the first TMS's node")
+}
+
+// TestNodeForNetworkIgnoresAnotherNetwork is the regression test for issue #2412 item 7: startNode used
+// to return the first entry with a non-nil Node regardless of which network it belonged to, so a suite
+// standing up two independent EVM networks (NewTopologyWithName) would silently settle the second
+// network's first TMS onto the first network's chain. nodeForNetwork must refuse an entry whose Network
+// does not match, even though it is the only entry with a node at all.
+func TestNodeForNetworkIgnoresAnotherNetwork(t *testing.T) {
+	other := &stubNode{}
+	handler := &NetworkHandler{Entries: map[string]*Entry{
+		"network-a-tms-1": {Network: "network-a:", Node: other},
+	}}
+
+	got := handler.nodeForNetwork("network-b:", "network-b-tms-1")
+	assert.Nil(t, got, "a different network must start its own node, not settle on network-a's chain")
+}
+
+// TestNodeForNetworkIgnoresItsOwnEntry checks the exceptID exclusion: an entry must never be handed its
+// own (not yet set) Node back as if some other TMS had already started one for it.
+func TestNodeForNetworkIgnoresItsOwnEntry(t *testing.T) {
+	handler := &NetworkHandler{Entries: map[string]*Entry{
+		"tms-a": {Network: "evm-net:"},
+	}}
+
+	got := handler.nodeForNetwork("evm-net:", "tms-a")
+	assert.Nil(t, got)
+}
