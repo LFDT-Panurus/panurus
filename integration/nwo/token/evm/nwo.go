@@ -33,6 +33,11 @@ import (
 // Entry is the per-TMS state the handler builds while generating artifacts and then reads back when
 // rendering each node's configuration.
 type Entry struct {
+	// Network is the (network, channel) pair this TMS's chain settles on. startNode reuses another
+	// entry's already-started Node only when this matches: two TMS on the same network share one
+	// chain, but two independently-topologied networks (NewTopologyWithName) must never settle on the
+	// same one just because they both started their first TMS around the same time.
+	Network string
 	// Node is the chain this TMS settles on.
 	Node Node
 	// Deployment holds the contract addresses the TMS was deployed with.
@@ -75,6 +80,15 @@ type NetworkHandler struct {
 	NodeKind string
 	// Threshold is the endorsement threshold; when zero every endorser must sign.
 	Threshold uint
+	// GraphHiding selects the deployed TokenState's spend semantics: content-bound markers (false,
+	// the default) or serial numbers (true). It must agree with the graphHiding the TMS's own token
+	// driver's public parameters declare (driver.PublicParameters.GraphHiding) - a driver-agnostic
+	// harness has no other way to know which mode a suite wants, so a suite composing an EVM network
+	// with a graph-hiding driver has to set this explicitly. Deploying with the wrong mode is not
+	// caught here: it surfaces downstream as every spend reverting with InputMissingOrSpent, because
+	// the contract reads spentRefs by whichever mode it was deployed in regardless of what the driver
+	// actually emitted.
+	GraphHiding bool
 
 	// materials generates the token-level artifacts: wallet crypto material and the public
 	// parameters. That work is the same for every backend, since those identities belong to the token
@@ -115,7 +129,11 @@ func NewNetworkHandler(tokenPlatform common.TokenPlatform, builder api2.Builder)
 func (p *NetworkHandler) GetEntry(tms *topology2.TMS) *Entry {
 	entry, ok := p.Entries[tms.TmsID()]
 	if !ok {
-		entry = &Entry{EndorserOf: map[string]Identity{}, SubmitterOf: map[string]Identity{}}
+		entry = &Entry{
+			Network:     tms.Network + ":" + tms.Channel,
+			EndorserOf:  map[string]Identity{},
+			SubmitterOf: map[string]Identity{},
+		}
 		p.Entries[tms.TmsID()] = entry
 	}
 
@@ -179,6 +197,7 @@ func (p *NetworkHandler) GenerateArtifacts(tms *topology2.TMS) {
 		},
 		Endorsers:    addresses,
 		Threshold:    entry.Threshold,
+		GraphHiding:  p.GraphHiding,
 		PublicParams: p.TokenPlatform.PublicParameters(tms),
 	})
 	gomega.Expect(err).NotTo(gomega.HaveOccurred(), "failed to deploy the contracts for [%s]", tms.TmsID())
@@ -233,12 +252,26 @@ func (p *NetworkHandler) fundSubmitters(tms *topology2.TMS, entry *Entry, keyDir
 	}
 }
 
-// startNode boots the chain this TMS settles on, reusing one already started for the same network.
-func (p *NetworkHandler) startNode(tms *topology2.TMS) Node {
+// nodeForNetwork returns the already-started Node of another entry settled on the same network, or nil
+// if none has one yet. "Same network" is judged by e.Network (tms.Network + tms.Channel), not merely by
+// which entry answers first: a suite that stands up two independent EVM networks via
+// NewTopologyWithName registers one NetworkHandler per topology type (integration/nwo/token/factory.go),
+// so a second network's first TMS must start its own node rather than silently settling on the first
+// network's chain just because some other entry happened to have one already.
+func (p *NetworkHandler) nodeForNetwork(network, exceptID string) Node {
 	for id, e := range p.Entries {
-		if e.Node != nil && id != tms.TmsID() {
+		if e.Node != nil && id != exceptID && e.Network == network {
 			return e.Node
 		}
+	}
+
+	return nil
+}
+
+// startNode boots the chain this TMS settles on, reusing one already started for the same network.
+func (p *NetworkHandler) startNode(tms *topology2.TMS) Node {
+	if node := p.nodeForNetwork(tms.Network+":"+tms.Channel, tms.TmsID()); node != nil {
+		return node
 	}
 
 	ctx := p.TokenPlatform.GetContext()

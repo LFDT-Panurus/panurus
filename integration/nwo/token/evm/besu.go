@@ -12,6 +12,7 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
+	"os"
 	"runtime"
 	"strconv"
 	"strings"
@@ -32,6 +33,27 @@ var logger = logging.MustGetLogger()
 // driver, so the integration suite runs against it rather than against a lighter development chain:
 // the point of the suite is that the driver works on the real thing.
 const DefaultBesuImage = "hyperledger/besu:24.3.0"
+
+// besuImageEnvVar is the environment variable the Makefile's BESU_IMAGE override is passed through as
+// (a command-line `make ... BESU_IMAGE=x` override is exported to the recipe's environment
+// automatically; `evm.mk`'s besu-docker-images target reads the same variable to decide what to pull).
+// Without this, overriding BESU_IMAGE only changed which image got pulled: the suite itself always
+// booted DefaultBesuImage regardless, and CheckImagesExist then failed because that image was never
+// pulled.
+const besuImageEnvVar = "BESU_IMAGE"
+
+// resolveBesuImage returns the configured image, or BESU_IMAGE from the environment, or
+// DefaultBesuImage, in that order of precedence.
+func resolveBesuImage(configured string) string {
+	if configured != "" {
+		return configured
+	}
+	if fromEnv := os.Getenv(besuImageEnvVar); fromEnv != "" {
+		return fromEnv
+	}
+
+	return DefaultBesuImage
+}
 
 // DefaultChainID is the chain id the dev network runs with. It matches the value the deploy scripts
 // and the driver configuration use.
@@ -70,9 +92,7 @@ func (b *Besu) ChainID() int64 { return b.cfg.ChainID }
 // a test network wants. It is a real Besu either way, so the driver exercises the same client
 // behaviour it will see in a deployment; only the consensus and funding are shortcut.
 func StartBesu(ctx context.Context, cfg BesuConfig) (*Besu, error) {
-	if cfg.Image == "" {
-		cfg.Image = DefaultBesuImage
-	}
+	cfg.Image = resolveBesuImage(cfg.Image)
 	if cfg.ChainID == 0 {
 		cfg.ChainID = DefaultChainID
 	}
