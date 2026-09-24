@@ -1,3 +1,22 @@
+.PHONY: test-evm-contracts
+# run the Solidity test suite for the EVM network driver's contracts (forge test) and check their
+# formatting (forge fmt --check). This is the ~950 lines under x/token/services/network/evm/contracts/
+# test/, including the cross-implementation golden-digest gate in EIP712.t.sol - see that directory's
+# README.md.
+#
+# Needs Foundry (forge) on PATH and the forge-std submodule checked out (git submodule update --init
+# --recursive); install-tools does not install Foundry, so a dev who has not followed the README's
+# one-time setup gets a skip and a pointer here rather than a hard failure, matching how the Go e2e
+# suite (x/token/services/network/evm/e2e_anvil_test.go) self-skips without anvil/forge. CI always has
+# both, via the "Set up foundry" step in .github/workflows/tests.yml.
+test-evm-contracts:
+	@if ! command -v forge >/dev/null 2>&1; then \
+		echo "forge not installed; skipping the Solidity contract tests (see x/token/services/network/evm/contracts/README.md)"; \
+		exit 0; \
+	fi
+	cd x/token/services/network/evm/contracts && forge test
+	cd x/token/services/network/evm/contracts && forge fmt --check
+
 .PHONY: besu-docker-images
 # pull the besu docker image the EVM integration suites run against
 besu-docker-images:
