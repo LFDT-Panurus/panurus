@@ -184,7 +184,10 @@ to distinguish "one hot token retried many times" from "many tokens each contend
 `lock_conflicts_total` is deliberately unlabeled by token id or wallet id to avoid unbounded
 cardinality — per-token attribution belongs in the selector's debug-level log line (`Lost lock
 race on token [...]`, visible once the sherdlock package's logger is at debug level) and in the
-[`tokendiag locks`](../../cmd/tokendiag/README.md) command.
+[`tokendiag locks`](../../cmd/tokendiag/README.md) command. The `selection_exact_match_*`
+counters track the exact-amount pre-search that runs before the greedy walk: `attempts` counts the
+pre-searches run, `hits` those that found and locked a change-free selection, and `misses` those that
+fell through to the greedy walk (`attempts` = `hits` + `misses`).
 
 | Metric | Type | Labels | Description |
 |---|---|---|---|
@@ -194,6 +197,9 @@ race on token [...]`, visible once the sherdlock package's logger is at debug le
 | `panurus_services_selector_sherdlock_selection_immediate_retries` | histogram | — | Distribution of immediate retry counts per token selection call |
 | `panurus_services_selector_sherdlock_lock_conflicts_total` | counter | — | Total number of lost lock races (a token was already locked by another process) |
 | `panurus_services_selector_sherdlock_distinct_tokens_attempted` | histogram | — | Distribution of the number of distinct tokens a lock was attempted on (won, lost, or rate-limited) per token selection call |
+| `panurus_services_selector_sherdlock_selection_exact_match_attempts_total` | counter | — | Total number of Select() calls that ran the exact-amount pre-search |
+| `panurus_services_selector_sherdlock_selection_exact_match_hits_total` | counter | — | Total number of exact-amount pre-searches that produced a change-free selection |
+| `panurus_services_selector_sherdlock_selection_exact_match_misses_total` | counter | — | Total number of exact-amount pre-searches that fell through to the greedy walk |
 
 Source: `token/services/selector/sherdlock/metrics.go`.
 
