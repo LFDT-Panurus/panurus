@@ -53,7 +53,7 @@ func TestAuditor(t *testing.T) {
 		err = auditor.Check(
 			t.Context(),
 			&driver.TokenRequest{Actions: []*driver.TypedAction{{Type: request.ActionType_ACTION_TYPE_TRANSFER, Raw: raw}}},
-			&driver.TokenRequestMetadata{Actions: []*driver.ActionMetadataEntry{{ActionID: 0, TransferMetadata: metadata}}},
+			&driver.TokenRequestMetadata{Anchor: "1", Actions: []*driver.ActionMetadataEntry{{ActionID: 0, TransferMetadata: metadata}}},
 			"1",
 			auditTokens,
 		)
@@ -74,7 +74,7 @@ func TestAuditor(t *testing.T) {
 		err = auditor.Check(
 			t.Context(),
 			&driver.TokenRequest{Actions: []*driver.TypedAction{{Type: request.ActionType_ACTION_TYPE_TRANSFER, Raw: raw}}},
-			&driver.TokenRequestMetadata{Actions: []*driver.ActionMetadataEntry{{ActionID: 0, TransferMetadata: metadata}}},
+			&driver.TokenRequestMetadata{Anchor: "1", Actions: []*driver.ActionMetadataEntry{{ActionID: 0, TransferMetadata: metadata}}},
 			"1", auditTokens,
 		)
 		require.Error(t, err)
@@ -98,7 +98,7 @@ func TestAuditor(t *testing.T) {
 		err = auditor.Check(
 			t.Context(),
 			&driver.TokenRequest{Actions: []*driver.TypedAction{{Type: request.ActionType_ACTION_TYPE_TRANSFER, Raw: raw}}},
-			&driver.TokenRequestMetadata{Actions: []*driver.ActionMetadataEntry{{ActionID: 0, TransferMetadata: metadata}}},
+			&driver.TokenRequestMetadata{Anchor: "1", Actions: []*driver.ActionMetadataEntry{{ActionID: 0, TransferMetadata: metadata}}},
 			"1",
 			auditTokens,
 		)
@@ -134,7 +134,7 @@ func TestAuditor(t *testing.T) {
 		err = auditor.Check(
 			t.Context(),
 			&driver.TokenRequest{Actions: []*driver.TypedAction{{Type: request.ActionType_ACTION_TYPE_TRANSFER, Raw: raw}}},
-			&driver.TokenRequestMetadata{Actions: []*driver.ActionMetadataEntry{{ActionID: 0, TransferMetadata: metadata}}},
+			&driver.TokenRequestMetadata{Anchor: "1", Actions: []*driver.ActionMetadataEntry{{ActionID: 0, TransferMetadata: metadata}}},
 			"1",
 			auditTokens,
 		)
@@ -159,7 +159,7 @@ func TestAuditor(t *testing.T) {
 		err = auditor.Check(
 			t.Context(),
 			&driver.TokenRequest{Actions: []*driver.TypedAction{{Type: request.ActionType_ACTION_TYPE_TRANSFER, Raw: raw}}},
-			&driver.TokenRequestMetadata{Actions: []*driver.ActionMetadataEntry{{ActionID: 0, TransferMetadata: metadata}}},
+			&driver.TokenRequestMetadata{Anchor: "1", Actions: []*driver.ActionMetadataEntry{{ActionID: 0, TransferMetadata: metadata}}},
 			"1",
 			auditTokens,
 		)
@@ -179,7 +179,7 @@ func TestAuditor(t *testing.T) {
 		err = auditor.Check(
 			t.Context(),
 			&driver.TokenRequest{Actions: []*driver.TypedAction{{Type: request.ActionType_ACTION_TYPE_ISSUE, Raw: raw}}},
-			&driver.TokenRequestMetadata{Actions: []*driver.ActionMetadataEntry{{ActionID: 0, IssueMetadata: metadata}}},
+			&driver.TokenRequestMetadata{Anchor: "1", Actions: []*driver.ActionMetadataEntry{{ActionID: 0, IssueMetadata: metadata}}},
 			"1",
 			map[string]*token3.Token{},
 		)
@@ -200,7 +200,7 @@ func TestAuditor(t *testing.T) {
 		err = auditor.Check(
 			t.Context(),
 			&driver.TokenRequest{Actions: []*driver.TypedAction{{Type: request.ActionType_ACTION_TYPE_TRANSFER, Raw: raw}}},
-			&driver.TokenRequestMetadata{Actions: []*driver.ActionMetadataEntry{{ActionID: 0, TransferMetadata: metadata}}},
+			&driver.TokenRequestMetadata{Anchor: "1", Actions: []*driver.ActionMetadataEntry{{ActionID: 0, TransferMetadata: metadata}}},
 			"1",
 			auditTokens,
 		)
@@ -222,7 +222,7 @@ func TestAuditor(t *testing.T) {
 		err = auditor.Check(
 			t.Context(),
 			&driver.TokenRequest{Actions: []*driver.TypedAction{{Type: request.ActionType_ACTION_TYPE_TRANSFER, Raw: raw}}},
-			&driver.TokenRequestMetadata{Actions: []*driver.ActionMetadataEntry{{ActionID: 0, TransferMetadata: metadata}}},
+			&driver.TokenRequestMetadata{Anchor: "1", Actions: []*driver.ActionMetadataEntry{{ActionID: 0, TransferMetadata: metadata}}},
 			"1",
 			auditTokens,
 		)
@@ -249,7 +249,7 @@ func TestAuditor(t *testing.T) {
 		err = auditor.Check(
 			t.Context(),
 			&driver.TokenRequest{Actions: []*driver.TypedAction{{Type: request.ActionType_ACTION_TYPE_ISSUE, Raw: raw}}},
-			&driver.TokenRequestMetadata{Actions: []*driver.ActionMetadataEntry{{ActionID: 0, IssueMetadata: metadata}}},
+			&driver.TokenRequestMetadata{Anchor: "1", Actions: []*driver.ActionMetadataEntry{{ActionID: 0, IssueMetadata: metadata}}},
 			"1",
 			map[string]*token3.Token{},
 		)
@@ -320,7 +320,7 @@ func TestAuditor_Check_Errors(t *testing.T) {
 		err := auditor.Check(
 			t.Context(),
 			&driver.TokenRequest{Actions: []*driver.TypedAction{{Type: request.ActionType_ACTION_TYPE_ISSUE, Raw: []byte{1, 2, 3}}}},
-			&driver.TokenRequestMetadata{Actions: []*driver.ActionMetadataEntry{{ActionID: 0, IssueMetadata: &driver.IssueMetadata{}}}},
+			&driver.TokenRequestMetadata{Anchor: "1", Actions: []*driver.ActionMetadataEntry{{ActionID: 0, IssueMetadata: &driver.IssueMetadata{}}}},
 			"1",
 			map[string]*token3.Token{},
 		)
@@ -338,7 +338,7 @@ func TestAuditor_Check_Errors(t *testing.T) {
 		err := auditor.Check(
 			t.Context(),
 			&driver.TokenRequest{Actions: []*driver.TypedAction{{Type: request.ActionType_ACTION_TYPE_ISSUE, Raw: raw}}},
-			&driver.TokenRequestMetadata{Actions: []*driver.ActionMetadataEntry{{ActionID: 0, IssueMetadata: meta}}},
+			&driver.TokenRequestMetadata{Anchor: "1", Actions: []*driver.ActionMetadataEntry{{ActionID: 0, IssueMetadata: meta}}},
 			"1",
 			map[string]*token3.Token{},
 		)
@@ -356,7 +356,7 @@ func TestAuditor_Check_Errors(t *testing.T) {
 		err := auditor.Check(
 			t.Context(),
 			&driver.TokenRequest{Actions: []*driver.TypedAction{{Type: request.ActionType_ACTION_TYPE_ISSUE, Raw: raw}}},
-			&driver.TokenRequestMetadata{Actions: []*driver.ActionMetadataEntry{{ActionID: 0, IssueMetadata: meta}}},
+			&driver.TokenRequestMetadata{Anchor: "1", Actions: []*driver.ActionMetadataEntry{{ActionID: 0, IssueMetadata: meta}}},
 			"1",
 			map[string]*token3.Token{},
 		)
@@ -371,7 +371,7 @@ func TestAuditor_Check_Errors(t *testing.T) {
 		err := auditor.Check(
 			t.Context(),
 			&driver.TokenRequest{Actions: []*driver.TypedAction{{Type: request.ActionType_ACTION_TYPE_TRANSFER, Raw: []byte{1, 2, 3}}}},
-			&driver.TokenRequestMetadata{Actions: []*driver.ActionMetadataEntry{{ActionID: 0, TransferMetadata: &driver.TransferMetadata{}}}},
+			&driver.TokenRequestMetadata{Anchor: "1", Actions: []*driver.ActionMetadataEntry{{ActionID: 0, TransferMetadata: &driver.TransferMetadata{}}}},
 			"1",
 			map[string]*token3.Token{},
 		)
@@ -396,6 +396,7 @@ func TestAuditor_StructuralValidation(t *testing.T) {
 				},
 			},
 			&driver.TokenRequestMetadata{
+				Anchor: "1",
 				Actions: []*driver.ActionMetadataEntry{
 					{ActionID: 0, IssueMetadata: &driver.IssueMetadata{}},
 				},
@@ -419,6 +420,7 @@ func TestAuditor_StructuralValidation(t *testing.T) {
 				},
 			},
 			&driver.TokenRequestMetadata{
+				Anchor: "1",
 				Actions: []*driver.ActionMetadataEntry{
 					{ActionID: 5, IssueMetadata: &driver.IssueMetadata{}},
 				},
@@ -441,6 +443,7 @@ func TestAuditor_StructuralValidation(t *testing.T) {
 				},
 			},
 			&driver.TokenRequestMetadata{
+				Anchor: "1",
 				Actions: []*driver.ActionMetadataEntry{
 					{ActionID: 0, TransferMetadata: &driver.TransferMetadata{}},
 				},
@@ -462,6 +465,7 @@ func TestAuditor_StructuralValidation(t *testing.T) {
 				},
 			},
 			&driver.TokenRequestMetadata{
+				Anchor: "1",
 				Actions: []*driver.ActionMetadataEntry{
 					{ActionID: 0, IssueMetadata: &driver.IssueMetadata{}},
 				},
@@ -483,6 +487,7 @@ func TestAuditor_StructuralValidation(t *testing.T) {
 				},
 			},
 			&driver.TokenRequestMetadata{
+				Anchor: "1",
 				Actions: []*driver.ActionMetadataEntry{
 					{
 						ActionID:         0,
@@ -506,6 +511,7 @@ func TestAuditor_StructuralValidation(t *testing.T) {
 				Actions: []*driver.TypedAction{nil},
 			},
 			&driver.TokenRequestMetadata{
+				Anchor: "1",
 				Actions: []*driver.ActionMetadataEntry{
 					{ActionID: 0, IssueMetadata: &driver.IssueMetadata{}},
 				},
@@ -527,6 +533,7 @@ func TestAuditor_StructuralValidation(t *testing.T) {
 				},
 			},
 			&driver.TokenRequestMetadata{
+				Anchor:  "1",
 				Actions: []*driver.ActionMetadataEntry{nil},
 			},
 			"1", map[string]*token3.Token{},
@@ -560,6 +567,7 @@ func TestAuditor_StructuralValidation(t *testing.T) {
 				},
 			},
 			&driver.TokenRequestMetadata{
+				Anchor: "1",
 				Actions: []*driver.ActionMetadataEntry{
 					{ActionID: 0, IssueMetadata: issueMeta},
 					{ActionID: 1, TransferMetadata: transferMeta},
@@ -586,6 +594,7 @@ func TestAuditor_StructuralValidation(t *testing.T) {
 				},
 			},
 			&driver.TokenRequestMetadata{
+				Anchor: "1",
 				Actions: []*driver.ActionMetadataEntry{
 					{ActionID: 1, IssueMetadata: issueMeta},
 				},
@@ -616,7 +625,7 @@ func TestAuditor_StructuralValidation(t *testing.T) {
 		err = auditor.Check(
 			t.Context(),
 			&driver.TokenRequest{Actions: []*driver.TypedAction{{Type: request.ActionType_ACTION_TYPE_TRANSFER, Raw: raw}}},
-			&driver.TokenRequestMetadata{Actions: []*driver.ActionMetadataEntry{{ActionID: 0, TransferMetadata: metadata}}},
+			&driver.TokenRequestMetadata{Anchor: "1", Actions: []*driver.ActionMetadataEntry{{ActionID: 0, TransferMetadata: metadata}}},
 			"1", auditTokens,
 		)
 		require.Error(t, err)
@@ -641,7 +650,7 @@ func TestAuditor_StructuralValidation(t *testing.T) {
 		err = auditor.Check(
 			t.Context(),
 			&driver.TokenRequest{Actions: []*driver.TypedAction{{Type: request.ActionType_ACTION_TYPE_TRANSFER, Raw: raw}}},
-			&driver.TokenRequestMetadata{Actions: []*driver.ActionMetadataEntry{{ActionID: 0, TransferMetadata: metadata}}},
+			&driver.TokenRequestMetadata{Anchor: "1", Actions: []*driver.ActionMetadataEntry{{ActionID: 0, TransferMetadata: metadata}}},
 			"1", auditTokens,
 		)
 		require.Error(t, err)
@@ -670,7 +679,7 @@ func TestAuditor_StructuralValidation(t *testing.T) {
 		err = auditor.Check(
 			t.Context(),
 			&driver.TokenRequest{Actions: []*driver.TypedAction{{Type: request.ActionType_ACTION_TYPE_TRANSFER, Raw: raw}}},
-			&driver.TokenRequestMetadata{Actions: []*driver.ActionMetadataEntry{{ActionID: 0, TransferMetadata: metadata}}},
+			&driver.TokenRequestMetadata{Anchor: "1", Actions: []*driver.ActionMetadataEntry{{ActionID: 0, TransferMetadata: metadata}}},
 			"1", auditTokens,
 		)
 		require.Error(t, err)
@@ -737,7 +746,7 @@ func TestValidateIssueOutputs_RejectsNilValueMetadata(t *testing.T) {
 		checkErr = auditor.Check(
 			t.Context(),
 			&driver.TokenRequest{Actions: []*driver.TypedAction{{Type: request.ActionType_ACTION_TYPE_ISSUE, Raw: raw}}},
-			&driver.TokenRequestMetadata{Actions: []*driver.ActionMetadataEntry{{ActionID: 0, IssueMetadata: meta}}},
+			&driver.TokenRequestMetadata{Anchor: "1", Actions: []*driver.ActionMetadataEntry{{ActionID: 0, IssueMetadata: meta}}},
 			"1", map[string]*token3.Token{},
 		)
 	}, "T-GAP-C9: Check must not panic on issue output metadata with a nil Value")
@@ -771,7 +780,7 @@ func TestValidateTransferOutputs_RejectsNilValueMetadata(t *testing.T) {
 		checkErr = auditor.Check(
 			t.Context(),
 			&driver.TokenRequest{Actions: []*driver.TypedAction{{Type: request.ActionType_ACTION_TYPE_TRANSFER, Raw: raw}}},
-			&driver.TokenRequestMetadata{Actions: []*driver.ActionMetadataEntry{{ActionID: 0, TransferMetadata: metadata}}},
+			&driver.TokenRequestMetadata{Anchor: "1", Actions: []*driver.ActionMetadataEntry{{ActionID: 0, TransferMetadata: metadata}}},
 			"1", auditTokens,
 		)
 	}, "T-GAP-C9: Check must not panic on transfer output metadata with a nil Value")

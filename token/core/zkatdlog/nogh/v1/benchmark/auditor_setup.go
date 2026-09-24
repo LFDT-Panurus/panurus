@@ -74,6 +74,7 @@ func NewAuditCheckSetup(conf *SetupConfiguration) (*AuditCheckSetup, error) {
 	// Setting IssueMetadata.Issuer.Identity to the same value satisfies the
 	// identity-equality check inside audit.GetAuditInfoForIssues.
 	metadata := &driver.TokenRequestMetadata{
+		Anchor: "benchmark-anchor",
 		Actions: []*driver.ActionMetadataEntry{
 			{
 				ActionID: 0,

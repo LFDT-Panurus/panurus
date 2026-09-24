@@ -408,6 +408,7 @@ func listAuditTokensWithRetry(
 
 // ValidateStructure ensures complete structural correspondence between TokenRequest and TokenRequestMetadata.
 // It validates that:
+// - Anchor is non-empty, within size limits, and matches metadata anchor
 // - Action counts match between request and metadata
 // - Each action has corresponding metadata with correct type
 // - ActionIDs are sequential and match their position
@@ -425,6 +426,22 @@ func ValidateStructure(
 	}
 	if tokenRequestMetadata == nil {
 		return errors.Errorf("tokenRequestMetadata cannot be nil for tx [%s]", txID)
+	}
+
+	if len(txID) == 0 {
+		return driver.ErrAnchorEmpty
+	}
+	if len(txID) > driver.MaxAnchorSize {
+		return driver.ErrAnchorTooLarge
+	}
+	if len(tokenRequestMetadata.Anchor) == 0 {
+		return errors.Errorf("metadata anchor is empty for tx [%s]", txID)
+	}
+	if len(tokenRequestMetadata.Anchor) > driver.MaxAnchorSize {
+		return driver.ErrAnchorTooLarge
+	}
+	if tokenRequestMetadata.Anchor != txID {
+		return errors.Errorf("metadata anchor mismatch: metadata is bound to [%s], but audit requested for [%s]", tokenRequestMetadata.Anchor, txID)
 	}
 
 	// Validate action count matches metadata count
