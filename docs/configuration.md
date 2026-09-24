@@ -47,6 +47,11 @@ token:
     # fetcherCacheMaxQueries is the number of queries after which a soft refresh (non-blocking background update) is triggered.
     # This helps keep the cache fresh without blocking queries. If not specified or set to 0, defaults to 5 queries.
     fetcherCacheMaxQueries: 5
+    # exactMatch enables the change-avoidance pre-search (sherdlock driver only). When on, each
+    # selection first looks for a single unlocked token whose amount equals the request and, if
+    # found, uses it alone so the transaction produces no change; on a miss it falls back to the
+    # normal greedy selection. Off by default. See docs/services/selector.md.
+    exactMatch: false
     # Built-in per-wallet rate limiter for token selection (both drivers).
     # It is disabled by default: without these keys, selection requests are not metered.
     # One selection request (a Selector.Select call) costs one unit, no matter how many tokens it
@@ -542,6 +547,7 @@ Default values:
 - leaseExpiry: 3m
 - leaseCleanupTickPeriod: 90s
 - fetcherStrategy: mixed (sherdlock only; one of mixed, eager, lazy)
+- exactMatch: false (sherdlock only; the change-avoidance pre-search is opt-in)
 - rateLimitEnabled: false (the built-in per-wallet selection rate limiter is opt-in)
 - rateLimit: 100 requests/s per wallet, when rate limiting is enabled
 - rateLimitBurst: 2 × rateLimit, so 200 requests, when rate limiting is enabled

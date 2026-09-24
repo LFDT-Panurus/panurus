@@ -38,6 +38,9 @@ panurus_services_network_fabricx_finality_queue_finality_queue_processing_errors
 panurus_services_selector_sherdlock_distinct_tokens_attempted | histogram | - | token/services/selector/sherdlock/metrics.go | Distribution of the number of distinct tokens a lock was attempted on (won, lost, or rate-limited) per token selection call
 panurus_services_selector_sherdlock_lock_conflicts_total | counter | - | token/services/selector/sherdlock/metrics.go | Total number of lost lock races (a token was already locked by another process)
 panurus_services_selector_sherdlock_selection_duration_seconds | histogram | - | token/services/selector/sherdlock/metrics.go | Duration of a token selection call in seconds
+panurus_services_selector_sherdlock_selection_exact_match_attempts_total | counter | - | token/services/selector/sherdlock/metrics.go | Total number of exact-amount pre-searches run
+panurus_services_selector_sherdlock_selection_exact_match_hits_total | counter | - | token/services/selector/sherdlock/metrics.go | Total number of exact-amount pre-searches that produced a change-free selection
+panurus_services_selector_sherdlock_selection_exact_match_misses_total | counter | - | token/services/selector/sherdlock/metrics.go | Total number of exact-amount pre-searches that fell through to the greedy walk
 panurus_services_selector_sherdlock_selection_immediate_retries | histogram | - | token/services/selector/sherdlock/metrics.go | Distribution of immediate retry counts per token selection call
 panurus_services_selector_sherdlock_selection_outcome_total | counter | outcome | token/services/selector/sherdlock/metrics.go | Total number of token selection outcomes by result type
 panurus_services_selector_sherdlock_unspent_tokens_invocations | counter | fetcher_type | token/services/selector/sherdlock/metrics.go | The number of invocations

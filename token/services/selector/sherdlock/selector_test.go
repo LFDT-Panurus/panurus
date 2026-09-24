@@ -248,6 +248,27 @@ func setupMetricsMocks() (*mocks.FakeProvider, *sherdlock.Metrics) {
 	return metricsProvider, sherdlock.NewMetrics(metricsProvider)
 }
 
+// setupNamedCounterMocks builds a Metrics whose counters are distinct fakes, keyed by
+// metric name, so a test can assert on one counter without the others' increments landing
+// on the same fake. The default setupMetricsMocks wires one shared FakeCounter for every
+// counter, which cannot tell ExactMatchHits from Misses from LockConflicts.
+func setupNamedCounterMocks() (map[string]*mocks.FakeCounter, *sherdlock.Metrics) {
+	mockHistogram := &mocks.FakeHistogram{}
+	mockHistogram.WithReturns(mockHistogram)
+	counters := map[string]*mocks.FakeCounter{}
+	metricsProvider := &mocks.FakeProvider{}
+	metricsProvider.NewHistogramReturns(mockHistogram)
+	metricsProvider.NewCounterCalls(func(opts metricsa.CounterOpts) metricsa.Counter {
+		c := &mocks.FakeCounter{}
+		c.WithReturns(c)
+		counters[opts.Name] = c
+
+		return c
+	})
+
+	return counters, sherdlock.NewMetrics(metricsProvider)
+}
+
 // setupNamedHistogramMocks builds a Metrics whose histograms are distinct fakes, keyed
 // by metric name, so a test can assert on one histogram without the others' observations
 // landing on the same fake.
