@@ -342,6 +342,21 @@ type TokenNotifier interface {
 	UnsubscribeAll() error
 }
 
+// LockRecord describes a single held token lock, joined with the terminal-status
+// view of its consuming transaction. Status is nil when the consuming transaction has
+// no matching row in the requests table (should not normally happen, since a lock is
+// only ever created for a transaction that has one).
+type LockRecord struct {
+	// TokenID is the locked token (the (tx_id, idx) of the transaction that created it).
+	TokenID token.ID
+	// ConsumerTxID is the transaction attempting to spend TokenID.
+	ConsumerTxID transaction.ID
+	// CreatedAt is when the lock was taken (see LockAt).
+	CreatedAt time.Time
+	// Status is the current status of ConsumerTxID, or nil if unknown.
+	Status *TxStatus
+}
+
 // TokenLockStore enforces that a token be used only by one process
 // A housekeeping job can clean up expired locks (e.g. created_at is more than 5 minutes ago) in order to:
 // - avoid that the table grows infinitely
@@ -360,6 +375,11 @@ type TokenLockStore interface {
 	LockAt(ctx context.Context, tokenID *token.ID, consumerTxID transaction.ID, walletID string, createdAt time.Time) error
 	// UnlockByTxID unlocks all tokens locked by the consumer TX
 	UnlockByTxID(ctx context.Context, consumerTxID transaction.ID) error
+	// ListLocks returns every currently held lock, joined with the status of its
+	// consuming transaction. It is a read-only diagnostic: it exists so that operators
+	// and tests can inspect lock state without racing a second Lock call against the
+	// primary key (see #2395). It does no filtering; callers select/rank as needed.
+	ListLocks(ctx context.Context) ([]LockRecord, error)
 	// Cleanup removes stale token locks. A lock is stale when either:
 	// 1. The *consuming* transaction (the one trying to spend the token,
 	//    identified by consumer_tx_id) has reached a terminal failure status

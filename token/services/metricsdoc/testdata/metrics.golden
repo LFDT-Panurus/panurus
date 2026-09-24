@@ -35,6 +35,8 @@ panurus_services_network_fabricx_finality_queue_finality_queue_enqueue_drops_tot
 panurus_services_network_fabricx_finality_queue_finality_queue_pending_events | gauge | - | token/services/network/fabricx/finality/queue/metrics.go | Current number of finality events waiting in the queue buffer
 panurus_services_network_fabricx_finality_queue_finality_queue_processing_duration_seconds | histogram | - | token/services/network/fabricx/finality/queue/metrics.go | Histogram of successful event processing time in worker goroutines (seconds)
 panurus_services_network_fabricx_finality_queue_finality_queue_processing_errors_total | counter | - | token/services/network/fabricx/finality/queue/metrics.go | Total number of errors returned by event.Process in worker goroutines
+panurus_services_selector_sherdlock_distinct_tokens_attempted | histogram | - | token/services/selector/sherdlock/metrics.go | Distribution of the number of distinct tokens a lock was attempted on (won, lost, or rate-limited) per token selection call
+panurus_services_selector_sherdlock_lock_conflicts_total | counter | - | token/services/selector/sherdlock/metrics.go | Total number of lost lock races (a token was already locked by another process)
 panurus_services_selector_sherdlock_selection_duration_seconds | histogram | - | token/services/selector/sherdlock/metrics.go | Duration of a token selection call in seconds
 panurus_services_selector_sherdlock_selection_immediate_retries | histogram | - | token/services/selector/sherdlock/metrics.go | Distribution of immediate retry counts per token selection call
 panurus_services_selector_sherdlock_selection_outcome_total | counter | outcome | token/services/selector/sherdlock/metrics.go | Total number of token selection outcomes by result type

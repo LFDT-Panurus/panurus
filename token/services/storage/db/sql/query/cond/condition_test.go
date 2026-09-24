@@ -108,6 +108,17 @@ var testMatrix = []testCase{
 		expectedParams: []common3.Param{3},
 	},
 	{
+		name: "not exists sub-query",
+		condition: cond2.NotExists(
+			q.Select().
+				Fields(common3.FieldName("1")).
+				From(common3.NewTable("requests")).
+				Where(cond2.Eq("status", 3)),
+		),
+		expectedQuery:  "NOT EXISTS (SELECT 1 FROM requests WHERE status = $0)",
+		expectedParams: []common3.Param{3},
+	},
+	{
 		// A single field and a single value collapses to plain equality.
 		name:           "in-tuple, one field one value",
 		condition:      cond2.InTuple([]common3.Serializable{common3.NewTable("tab").Field("id")}, []cond2.Tuple{{10}}),
