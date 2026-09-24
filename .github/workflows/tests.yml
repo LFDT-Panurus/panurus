@@ -127,6 +127,11 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # forge-std is a submodule of the contracts project (x/token/services/network/evm/contracts),
+          # and both its own forge test suite and the deploy script the Go e2e suite drives import it.
+          # Without this the checkout is missing lib/forge-std and forge fails to compile either.
+          submodules: recursive
 
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
@@ -136,6 +141,15 @@ jobs:
 
       - name: Set up tools
         run: make install-tools
+
+      - name: Set up foundry
+        uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09 # v1.9.1
+        with:
+          # Matches the pin used by the itest job's own "Set up foundry" step below; see its comment
+          # for why 1.7.1 rather than latest. Nothing here talks to the fabric-x-evm gateway that pin
+          # was chosen for, but there is no reason to run two different forge versions across the repo
+          # without one.
+          version: v1.7.1
 
       - name: Install Testing Docker Images
         run: make testing-docker-images
@@ -312,7 +326,7 @@ jobs:
 
       - name: Set up foundry
         if: startsWith(matrix.tests, 'evm')
-        uses: foundry-rs/foundry-toolchain@v1
+        uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09 # v1.9.1
         with:
           # Pinned rather than "stable": forge 1.8.1 fails to deploy the contracts against the
           # fabric-x-evm gateway backend (evm-gateway/evm-gateway-fabtoken suites) with "Failed to
