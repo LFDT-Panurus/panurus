@@ -26,6 +26,11 @@ import (
 // defaultGatewayImage is the published fabric-x-evm image booted when none is configured.
 const defaultGatewayImage = "ghcr.io/hyperledger/fabric-x-evm:0.1.3"
 
+// fabricxEVMImageEnvVar is the environment variable the Makefile's FABRICX_EVM_IMAGE override is
+// passed through as (see besuImageEnvVar's doc comment in besu.go for why this has to be an env var
+// rather than a NetworkHandler field set by the topology).
+const fabricxEVMImageEnvVar = "FABRICX_EVM_IMAGE"
+
 // defaultGatewayChainID is the chain id the gateway runs when none is configured; it mirrors the testnode default.
 const defaultGatewayChainID int64 = 31337
 

@@ -12,6 +12,7 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
+	"os"
 	"runtime"
 	"strconv"
 	"strings"
@@ -32,6 +33,31 @@ var logger = logging.MustGetLogger()
 // driver, so the integration suite runs against it rather than against a lighter development chain:
 // the point of the suite is that the driver works on the real thing.
 const DefaultBesuImage = "hyperledger/besu:24.3.0"
+
+// besuImageEnvVar is the environment variable the Makefile's BESU_IMAGE override is passed through as
+// (a command-line `make ... BESU_IMAGE=x` override is exported to the recipe's environment
+// automatically; `evm.mk`'s besu-docker-images target reads the same variable to decide what to pull).
+// Without this, overriding BESU_IMAGE only changed which image got pulled: the suite itself always
+// booted DefaultBesuImage regardless, and CheckImagesExist then failed because that image was never
+// pulled.
+const besuImageEnvVar = "BESU_IMAGE"
+
+// resolveImage returns envVar from the environment if set, else the configured image, else def. The
+// environment wins because it is what the Makefile's image override passes through, and the same
+// variable decides which image `make` pulls: honouring a configured image over it would boot an image
+// that was never pulled. It is looked up only by the handler (startNode); StartBesu and
+// startGatewayNode take their image as given so a direct caller is not redirected by a stray variable.
+// Besu and the gateway share it so the two overrides cannot drift apart.
+func resolveImage(configured, envVar, def string) string {
+	if fromEnv := os.Getenv(envVar); fromEnv != "" {
+		return fromEnv
+	}
+	if configured != "" {
+		return configured
+	}
+
+	return def
+}
 
 // DefaultChainID is the chain id the dev network runs with. It matches the value the deploy scripts
 // and the driver configuration use.
