@@ -14,8 +14,10 @@ import (
 	"github.com/LFDT-Panurus/panurus/token"
 	"github.com/LFDT-Panurus/panurus/token/services/selector/sherdlock"
 	"github.com/LFDT-Panurus/panurus/token/services/selector/sherdlock/mocks"
+	"github.com/LFDT-Panurus/panurus/token/services/storage/db/driver"
 	token2 "github.com/LFDT-Panurus/panurus/token/token"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
+	metricsa "github.com/hyperledger-labs/fabric-smart-client/platform/view/services/metrics"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -244,4 +246,71 @@ func setupMetricsMocks() (*mocks.FakeProvider, *sherdlock.Metrics) {
 	metricsProvider.NewHistogramReturns(mockHistogram)
 
 	return metricsProvider, sherdlock.NewMetrics(metricsProvider)
+}
+
+// setupNamedHistogramMocks builds a Metrics whose histograms are distinct fakes, keyed
+// by metric name, so a test can assert on one histogram without the others' observations
+// landing on the same fake.
+func setupNamedHistogramMocks() (map[string]*mocks.FakeHistogram, *sherdlock.Metrics) {
+	mockCounter := &mocks.FakeCounter{}
+	mockCounter.WithReturns(mockCounter)
+	histograms := map[string]*mocks.FakeHistogram{}
+	metricsProvider := &mocks.FakeProvider{}
+	metricsProvider.NewCounterReturns(mockCounter)
+	metricsProvider.NewHistogramCalls(func(opts metricsa.HistogramOpts) metricsa.Histogram {
+		h := &mocks.FakeHistogram{}
+		h.WithReturns(h)
+		histograms[opts.Name] = h
+
+		return h
+	})
+
+	return histograms, sherdlock.NewMetrics(metricsProvider)
+}
+
+// TestDistinctTokensAttemptedObservedOncePerSelect pins the contract documented on
+// Metrics.DistinctTokensAttempted and in docs/development/metrics.md: exactly one
+// observation per Select() call, carrying the number of distinct tokens the whole call
+// tried to lock. A StubbornSelector runs its inner selection once per backoff round, so
+// observing inside that inner call would emit one sample per round, each counting only
+// that round's tokens - inflating the sample count and understating per-call fan-out,
+// which is the opposite of what #2395 needs the histogram for.
+func TestDistinctTokensAttemptedObservedOncePerSelect(t *testing.T) {
+	const retriesAfterBackoff = 2
+
+	histograms, metrics := setupNamedHistogramMocks()
+
+	mockFetcher := &mocks.FakeTokenFetcher{}
+	mockLocker := &mocks.FakeTokenLocker{}
+	// Two tokens, both always held by someone else: selection can never complete, so
+	// the stubborn selector exhausts every backoff round and calls its inner selection
+	// retriesAfterBackoff+1 times.
+	mockFetcher.UnspentTokensIteratorByCalls(func(context.Context, string, token2.Type) (sherdlock.Iterator[*token2.UnspentTokenInWallet], error) {
+		it := &mocks.FakeIterator[*token2.UnspentTokenInWallet]{}
+		it.NextReturnsOnCall(0, &token2.UnspentTokenInWallet{
+			Id: token2.ID{TxId: "tx1", Index: 0}, Type: "ABC", Quantity: "100",
+		}, nil)
+		it.NextReturnsOnCall(1, &token2.UnspentTokenInWallet{
+			Id: token2.ID{TxId: "tx2", Index: 0}, Type: "ABC", Quantity: "100",
+		}, nil)
+		it.NextReturns(nil, nil)
+
+		return it, nil
+	})
+	mockLocker.TryLockReturns(false, driver.ErrTokenAlreadyLocked)
+
+	s := sherdlock.NewStubbornSelector(sherdlock.Logger(), mockFetcher, mockLocker, 64, time.Millisecond, retriesAfterBackoff, metrics)
+	_, _, err := s.Select(t.Context(), &unitTestMockOwnerFilter{id: "alice"}, "50", "ABC")
+	require.Error(t, err)
+
+	// Precondition: the inner selection really did run more than once, otherwise this
+	// test would pass even with the observation left in the per-attempt path.
+	require.Greater(t, mockFetcher.UnspentTokensIteratorByCallCount(), retriesAfterBackoff,
+		"expected the stubborn selector to retry, so that per-attempt observation would be visible")
+
+	attempted := histograms["distinct_tokens_attempted"]
+	require.NotNil(t, attempted, "distinct_tokens_attempted histogram was never created")
+	require.Equal(t, 1, attempted.ObserveCallCount(), "DistinctTokensAttempted must be observed once per Select() call")
+	// The count is an exact small integer, so an epsilon comparison would be noise.
+	assert.InDelta(t, 2, attempted.ObserveArgsForCall(0), 0, "both distinct tokens must be counted once each, across all retries")
 }

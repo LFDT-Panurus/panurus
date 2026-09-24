@@ -30,6 +30,7 @@ Panurus ships several standalone CLI tools, each living in its own Go module und
 | [**tokengen**](../cmd/tokengen/README.md) | Generates public parameters, token chaincode packages, and other cryptographic artifacts. Used to pre-configure development and test environments. |
 | [**artifactgen**](../cmd/artifactgen/README.md) | Topology-driven artifact generation (previously part of `tokengen`). Kept separate to avoid pulling in the `integration/nwo` test framework. |
 | [**skicleanup**](../cmd/skicleanup/README.md) | Diagnostic tool that lists orphaned signer entries and their derived SKIs. Connects directly to an existing Panurus database (SQLite or PostgreSQL). |
+| [**tokendiag**](../cmd/tokendiag/README.md) | Diagnostic tool for inspecting token-selector state, starting with currently held token locks and settlement-status leaks. Connects directly to an existing Panurus database (SQLite or PostgreSQL). |
 
 ## Development
 

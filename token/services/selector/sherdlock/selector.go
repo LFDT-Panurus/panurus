@@ -15,6 +15,7 @@ import (
 
 	"github.com/LFDT-Panurus/panurus/token"
 	"github.com/LFDT-Panurus/panurus/token/services/logging"
+	"github.com/LFDT-Panurus/panurus/token/services/storage/db/driver"
 	"github.com/LFDT-Panurus/panurus/token/services/utils/types/transaction"
 	token2 "github.com/LFDT-Panurus/panurus/token/token"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
@@ -59,8 +60,13 @@ type StubbornSelector struct {
 
 func (m *StubbornSelector) Select(ctx context.Context, ownerFilter token.OwnerFilter, q string, tokenType token2.Type) ([]*token2.ID, token2.Quantity, error) {
 	start := time.Now()
+	// One set for the whole call: each backoff round runs a fresh inner selection, but
+	// the histogram reports per-Select() fan-out, so the distinct tokens seen across
+	// every round are unioned here and observed exactly once.
+	attempted := collections.NewSet[token2.ID]()
+	defer observeDistinctTokensAttempted(m.metrics, attempted)
 	for retriesAfterBackoff := 0; retriesAfterBackoff <= m.maxRetriesAfterBackoff; retriesAfterBackoff++ {
-		if tokens, quantity, err := m.selectWithoutMetrics(ctx, ownerFilter, q, tokenType); err == nil || !errors.Is(err, token.SelectorSufficientButLockedFunds) {
+		if tokens, quantity, err := m.selectWithoutMetrics(ctx, ownerFilter, q, tokenType, attempted); err == nil || !errors.Is(err, token.SelectorSufficientButLockedFunds) {
 			m.metrics.SelectionDuration.Observe(time.Since(start).Seconds())
 			if err == nil {
 				m.metrics.SelectionOutcome.With(outcomeLabel, "success").Add(1)
@@ -119,9 +125,23 @@ func NewSelector(logger logging.Logger, tokenDB TokenFetcher, lockDB TokenLocker
 	}
 }
 
+// observeDistinctTokensAttempted records the per-Select() fan-out. It skips the
+// observation when no lock was ever attempted: the early bails in selectInternal and the
+// plain empty-wallet path reach here with an empty set, and observing 0 would land under
+// the histogram's first bucket while still inflating _count - pulling the mean and the
+// quantiles toward zero and blurring the very signal this histogram exists to give. No
+// attempt is absence of data, not a measurement of zero.
+func observeDistinctTokensAttempted(m *Metrics, attempted collections.Set[token2.ID]) {
+	if n := attempted.Length(); n > 0 {
+		m.DistinctTokensAttempted.Observe(float64(n))
+	}
+}
+
 func (s *Selector) Select(ctx context.Context, owner token.OwnerFilter, q string, tokenType token2.Type) ([]*token2.ID, token2.Quantity, error) {
 	start := time.Now()
-	ids, quantity, immediateRetries, err := s.selectInternal(ctx, owner, q, tokenType)
+	attempted := collections.NewSet[token2.ID]()
+	defer observeDistinctTokensAttempted(s.metrics, attempted)
+	ids, quantity, immediateRetries, err := s.selectInternal(ctx, owner, q, tokenType, attempted)
 	if err != nil {
 		if err2 := s.locker.UnlockAll(ctx); err2 != nil {
 			s.logger.Warnf("failed to unlock tokens after selection error: %v", err2)
@@ -143,8 +163,8 @@ func (s *Selector) Select(ctx context.Context, owner token.OwnerFilter, q string
 }
 
 // selectWithoutMetrics is used by StubbornSelector to avoid double-counting metrics.
-func (s *Selector) selectWithoutMetrics(ctx context.Context, owner token.OwnerFilter, q string, tokenType token2.Type) ([]*token2.ID, token2.Quantity, error) {
-	ids, quantity, _, err := s.selectInternal(ctx, owner, q, tokenType)
+func (s *Selector) selectWithoutMetrics(ctx context.Context, owner token.OwnerFilter, q string, tokenType token2.Type, attempted collections.Set[token2.ID]) ([]*token2.ID, token2.Quantity, error) {
+	ids, quantity, _, err := s.selectInternal(ctx, owner, q, tokenType, attempted)
 	if err != nil {
 		if err2 := s.locker.UnlockAll(ctx); err2 != nil {
 			s.logger.Warnf("failed to unlock tokens after selection error: %v", err2)
@@ -154,7 +174,11 @@ func (s *Selector) selectWithoutMetrics(ctx context.Context, owner token.OwnerFi
 	return ids, quantity, err
 }
 
-func (s *Selector) selectInternal(ctx context.Context, owner token.OwnerFilter, q string, tokenType token2.Type) ([]*token2.ID, token2.Quantity, int, error) {
+// selectInternal performs one selection attempt. attempted is owned by the caller and
+// records every distinct token this attempt tried to lock; a StubbornSelector reuses the
+// same set across all of its backoff rounds so that DistinctTokensAttempted is observed
+// once per Select() call, counting each distinct token once.
+func (s *Selector) selectInternal(ctx context.Context, owner token.OwnerFilter, q string, tokenType token2.Type, attempted collections.Set[token2.ID]) ([]*token2.ID, token2.Quantity, int, error) {
 	if s.isClosed() {
 		return nil, nil, 0, errors.Errorf("selector is already closed")
 	}
@@ -199,14 +223,32 @@ func (s *Selector) selectInternal(ctx context.Context, owner token.OwnerFilter, 
 
 			immediateRetries++
 			tokensLockedByOthersExist = false
-		} else if locked, lockErr := s.locker.TryLock(ctx, &t.Id, owner.ID()); !locked {
-			// A rate-limit denial from the locker is a hard stop: abort instead of retrying.
-			if errors.Is(lockErr, token.SelectorRateLimited) {
-				return nil, nil, immediateRetries, lockErr
-			}
-			s.logger.DebugfContext(ctx, "Tried to lock token [%v], but it was already locked by another process", t)
-			tokensLockedByOthersExist = true
 		} else {
+			// Counted once here, before the outcome is known, so a later third
+			// outcome branch cannot forget to record the attempt.
+			attempted.Add(t.Id)
+			if locked, lockErr := s.locker.TryLock(ctx, &t.Id, owner.ID()); !locked {
+				// A rate-limit denial from the locker is a hard stop: abort instead of retrying.
+				if errors.Is(lockErr, token.SelectorRateLimited) {
+					return nil, nil, immediateRetries, lockErr
+				}
+				if errors.Is(lockErr, driver.ErrTokenAlreadyLocked) {
+					// Lost the race: someone else holds this token. This is the
+					// expected, common case under contention, not a DB error.
+					s.metrics.LockConflicts.Add(1)
+					s.logger.DebugfContext(ctx, "Lost lock race on token [%s:%d]: already locked by another process", t.Id.TxId, t.Id.Index)
+				} else {
+					// A real store error (not a lock conflict) collapsed into the
+					// same !locked branch by TryLock. Only the log line separates
+					// the two: to the caller this still reads as ordinary
+					// contention, so a store outage surfaces as locked funds
+					// rather than as an error. See #2395.
+					s.logger.WarnfContext(ctx, "Failed to lock token [%s:%d]: %v", t.Id.TxId, t.Id.Index, lockErr)
+				}
+				tokensLockedByOthersExist = true
+
+				continue
+			}
 			s.logger.DebugfContext(ctx, "Got the lock on token [%v]", t)
 			q, err := token2.ToQuantity(t.Quantity, s.precision)
 			if err != nil {
