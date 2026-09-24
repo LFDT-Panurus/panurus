@@ -33,6 +33,7 @@ import (
 type ServiceFactory struct {
 	client      client.EVMClient
 	viewManager ViewManager
+	ppValidator PublicParamsValidator
 
 	mu       sync.Mutex
 	perTMS   map[string]TMSConfig
@@ -46,6 +47,10 @@ type FactoryConfig struct {
 	Client client.EVMClient
 	// ViewManager runs the initiator.
 	ViewManager ViewManager
+	// PPValidator deserializes and validates a KindSetup request's new public parameters. It is
+	// resolved from what the bytes themselves declare, so it needs no TMS - unlike Client, it is used
+	// only for setup requests, never for reading token state.
+	PPValidator PublicParamsValidator
 }
 
 // TMSConfig is what one TMS contributes to the endorsement factory: its own endorser set, quorum,
@@ -74,10 +79,14 @@ func NewServiceFactory(cfg FactoryConfig) (*ServiceFactory, error) {
 	if cfg.ViewManager == nil {
 		return nil, errors.New("endorsement factory: nil view manager")
 	}
+	if cfg.PPValidator == nil {
+		return nil, errors.New("endorsement factory: nil public parameters validator")
+	}
 
 	return &ServiceFactory{
 		client:      cfg.Client,
 		viewManager: cfg.ViewManager,
+		ppValidator: cfg.PPValidator,
 		perTMS:      map[string]TMSConfig{},
 		services:    map[string]*Service{},
 	}, nil
@@ -193,6 +202,18 @@ func (f *ServiceFactory) NewResponder(
 			}
 
 			return NewDeltaFactory(validator, tms.PublicParametersManager(), cfg.PublicParams, f.client, cfg.TokenState, cfg.BlockTag), nil
+		},
+		func(tmsID token2.TMSID) (*SetupDeltaFactory, error) {
+			// Deliberately does not call resolve: a first-time setup request runs before any TMS exists
+			// for tmsID, and configFor's registration is populated from this network's declared
+			// namespaces (driver.go's installEndorsement), not from a built management service, so it is
+			// available regardless.
+			cfg, err := f.configFor(tmsID)
+			if err != nil {
+				return nil, err
+			}
+
+			return NewSetupDeltaFactory(f.ppValidator, cfg.PublicParams), nil
 		},
 		signer,
 		func(tmsID token2.TMSID) (eip712.Domain, error) {

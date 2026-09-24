@@ -18,12 +18,15 @@ package evmdlog
 import (
 	"errors"
 
+	ftscore "github.com/LFDT-Panurus/panurus/token/core"
 	dlog "github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/driver"
 	"github.com/LFDT-Panurus/panurus/token/sdk"
 	tokensdk "github.com/LFDT-Panurus/panurus/token/sdk/dig"
 	"github.com/LFDT-Panurus/panurus/x/token/services/network/evm"
+	evmendorsement "github.com/LFDT-Panurus/panurus/x/token/services/network/evm/endorsement"
 	"github.com/hyperledger-labs/fabric-smart-client/integration/nwo/fsc/support/libp2p"
 	dig2 "github.com/hyperledger-labs/fabric-smart-client/platform/common/sdk/dig"
+	digutils "github.com/hyperledger-labs/fabric-smart-client/platform/common/utils/dig"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/services"
 	"go.uber.org/dig"
 )
@@ -52,6 +55,15 @@ func (p *SDK) Install() error {
 		p.Container().Provide(evm.NewDriver, dig.Group("network-drivers")),
 		p.Container().Provide(dlog.NewTokenDriver, dig.Group("token-drivers")),
 		p.Container().Provide(dlog.NewValidatorDriver, dig.Group("validator-drivers")),
+		// evm.NewDriver needs a PublicParamsValidator for the setup endorsement path. It resolves
+		// public parameters generically by what their bytes declare (driver name and version), not by
+		// which token driver this SDK composes, so the same *ftscore.TokenDriverService fabric's own
+		// wiring already provides (token/sdk/dig/sdk.go, aliased there to fsc.PublicParamsValidator)
+		// satisfies the EVM module's own, structurally identical interface without change.
+		p.Container().Provide(
+			digutils.Identity[*ftscore.TokenDriverService](),
+			dig.As(new(evmendorsement.PublicParamsValidator)),
+		),
 	)
 	if err != nil {
 		return err

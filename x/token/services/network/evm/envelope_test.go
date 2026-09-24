@@ -33,7 +33,7 @@ func sampleDelta() *statedelta.StateDelta {
 }
 
 func TestEnvelopeRoundTripsEndorsement(t *testing.T) {
-	env := NewApprovedEnvelope("anchorhex", sampleDelta(), [][]byte{{0x01, 0x02}, {0x03, 0x04}})
+	env := NewApprovedEnvelope("anchorhex", "token", sampleDelta(), [][]byte{{0x01, 0x02}, {0x03, 0x04}})
 
 	raw, err := env.Bytes()
 	require.NoError(t, err)
@@ -41,6 +41,7 @@ func TestEnvelopeRoundTripsEndorsement(t *testing.T) {
 	var got Envelope
 	require.NoError(t, got.FromBytes(raw))
 	assert.Equal(t, "anchorhex", got.TxID())
+	assert.Equal(t, "token", got.Namespace, "Broadcast resolves the submitter and TokenState from this")
 	require.NotNil(t, got.Delta)
 	assert.Equal(t, sampleDelta(), got.Delta)
 	assert.Equal(t, [][]byte{{0x01, 0x02}, {0x03, 0x04}}, got.Endorsements)

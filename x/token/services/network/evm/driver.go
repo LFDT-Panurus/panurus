@@ -79,6 +79,9 @@ type Driver struct {
 	// time: resolving during construction would close a cycle, since building a TMS goes through this
 	// driver.
 	tmsProvider *token2.ManagementServiceProvider
+	// ppValidator deserializes and validates a namespace's new public parameters for the setup
+	// endorsement path, independently of any TMS - see PublicParamsValidator's doc comment.
+	ppValidator endorsement.PublicParamsValidator
 	// tokensManager gives the token store for a TMS, so a parameters update is persisted as well as
 	// applied to the running service.
 	tokensManager *tokens.ServiceManager
@@ -123,6 +126,7 @@ func NewDriver(
 	auditStores auditdb.StoreServiceManager,
 	tracerProvider trace.TracerProvider,
 	metricsProvider metrics.Provider,
+	ppValidator endorsement.PublicParamsValidator,
 ) driver.Driver {
 	return &Driver{
 		resolver:      &configNetworkResolver{cs: configService},
@@ -134,6 +138,7 @@ func NewDriver(
 		tokensManager: tokensManager,
 		ttxStores:     ttxStores,
 		auditStores:   auditStores,
+		ppValidator:   ppValidator,
 		recoveryTracer: tracerProvider.Tracer("finality_listener", tracing.WithMetricsOpts(tracing.MetricsOpts{
 			LabelNames: []tracing.LabelName{},
 		})),
@@ -265,8 +270,18 @@ func (d *Driver) watchPublicParams(network, channel string, namespaces []Namespa
 		}
 		cfg := configByContract[tokenState]
 
+		// The watcher deliberately reads at BlockTagLatest, not cfg.Finality.BlockTag, for the same
+		// reason installEndorsement's PublicParams ChainProvider does (see its comment below):
+		// TokenState.applyStateDelta compares an endorsed delta's PublicParamsHash/Version against the
+		// contract's CURRENT (head) storage, not against what is finalized. A watcher polling at
+		// finalized would keep this TMS's local parameters - and therefore DeltaFactory.Build's
+		// localHash - behind that head value for the whole finalization lag after every setup update
+		// (MinFinalizedTagTimeout, tens of minutes on a chain configured for a deep finality depth),
+		// during which every ordinary approval this node endorses is refused with ErrStalePublicParams
+		// even though the update has already landed. Reading at latest keeps the two in step, up to the
+		// watcher's own poll interval.
 		watcher, err := pp.NewWatcher(
-			evmClient, tokenState, cfg.Finality.BlockTag, cfg.Finality.PollInterval,
+			evmClient, tokenState, client.BlockTagLatest, cfg.Finality.PollInterval,
 			func(ctx context.Context, raw []byte, version uint64) error {
 				return d.applyPublicParams(ctx, tmsIDs, raw, version)
 			},
@@ -332,6 +347,7 @@ func (d *Driver) installEndorsement(n *Network, namespaces []NamespaceConfig, ev
 	factory, err := endorsement.NewServiceFactory(endorsement.FactoryConfig{
 		Client:      evmClient,
 		ViewManager: d.viewManager,
+		PPValidator: d.ppValidator,
 	})
 	if err != nil {
 		return err

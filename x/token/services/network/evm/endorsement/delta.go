@@ -126,3 +126,77 @@ func (f *DeltaFactory) Build(ctx context.Context, req *EndorseRequest) (*statede
 
 	return tr.StateDelta()
 }
+
+// setupAction is a minimal translator.SetupAction implementation carrying the raw public parameters to
+// be committed to the delta. The SDK ships no concrete type for it (Fabric's own setupBehaviour defines
+// the same minimal struct locally, in token/services/network/fabric/endorsement/fsc/responder.go).
+type setupAction struct {
+	publicParamsRaw []byte
+}
+
+// GetSetupParameters returns the raw public parameters carried by this action.
+func (a *setupAction) GetSetupParameters() ([]byte, error) {
+	return a.publicParamsRaw, nil
+}
+
+// SetupDeltaFactory turns a setup request's new public parameters into the StateDelta an endorser
+// signs. It belongs to the responder alone, like DeltaFactory, but needs none of its collaborators: a
+// setup delta reads no token state and is validated against no existing token request, so there is
+// nothing for a RequestValidator or a Ledger to do. What it does need is a PublicParamsValidator, to
+// check the new parameters are well-formed before signing anything over them, and the chain's current
+// parameters, which the delta binds to as its optimistic-concurrency baseline exactly as an ordinary
+// delta binds to the parameters it was validated against (TokenState.applyStateDelta compares
+// PublicParamsHash/PublicParamsVersion against its current values for both delta kinds, then applies
+// SetupParameters only for a setup delta - see _applySetup in TokenState.sol). Needing no existing TMS
+// is what makes first-time setup of a namespace possible: the responder is registered before any TMS
+// exists, and SetupPublicParams may run before one exists for this namespace at all.
+type SetupDeltaFactory struct {
+	ppValidator PublicParamsValidator
+	current     PublicParamsProvider
+}
+
+// NewSetupDeltaFactory assembles a SetupDeltaFactory. current supplies the chain's currently active
+// public parameters (whatever a namespace's TokenState was deployed or last updated with), the baseline
+// the new setup delta's optimistic-concurrency check binds to.
+func NewSetupDeltaFactory(ppValidator PublicParamsValidator, current PublicParamsProvider) *SetupDeltaFactory {
+	return &SetupDeltaFactory{ppValidator: ppValidator, current: current}
+}
+
+// Build validates req's new public parameters and returns the StateDelta to sign, binding it to the
+// chain's currently active parameters as the CAS baseline TokenState.applyStateDelta checks before
+// applying the update.
+func (f *SetupDeltaFactory) Build(ctx context.Context, req *EndorseRequest) (*statedelta.StateDelta, error) {
+	newPP, err := f.ppValidator.PublicParametersFromBytes(req.PublicParamsRaw)
+	if err != nil {
+		return nil, errors.Join(ErrValidation, errors.Wrap(err, "failed to unmarshal public parameters"))
+	}
+	if err := newPP.Validate(); err != nil {
+		return nil, errors.Join(ErrValidation, errors.Wrap(err, "failed to validate public parameters"))
+	}
+
+	currentRaw, currentVersion, err := f.current.PublicParams(ctx)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to load the chain's current public parameters")
+	}
+
+	anchor, err := keys.AnchorFromTxID(req.Anchor)
+	if err != nil {
+		return nil, errors.Wrapf(err, "invalid anchor [%s]", req.Anchor)
+	}
+
+	tr := statedelta.NewTranslator(anchor, currentRaw, currentVersion)
+	if err := tr.Write(ctx, &setupAction{publicParamsRaw: req.PublicParamsRaw}); err != nil {
+		return nil, errors.Wrap(err, "failed to translate setup action")
+	}
+	if err := tr.AddPublicParamsDependency(); err != nil {
+		return nil, errors.Wrap(err, "failed to add public parameters dependency")
+	}
+	// A setup delta has no token request to bind a hash to; the new parameters are the content this
+	// endorser is actually being asked to endorse, so they are what gets hashed and stored under the
+	// anchor instead.
+	if _, err := tr.CommitTokenRequest(req.PublicParamsRaw, true); err != nil {
+		return nil, errors.Wrap(err, "failed to commit the setup request")
+	}
+
+	return tr.StateDelta()
+}

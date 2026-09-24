@@ -19,6 +19,7 @@ import (
 	token2 "github.com/LFDT-Panurus/panurus/token"
 	"github.com/LFDT-Panurus/panurus/token/core/common"
 	fabactions "github.com/LFDT-Panurus/panurus/token/core/fabtoken/v1/actions"
+	tdriver "github.com/LFDT-Panurus/panurus/token/driver"
 	"github.com/LFDT-Panurus/panurus/x/token/services/network/evm/client/mock"
 	"github.com/LFDT-Panurus/panurus/x/token/services/network/evm/crypto"
 	"github.com/LFDT-Panurus/panurus/x/token/services/network/evm/eip712"
@@ -93,10 +94,22 @@ func issueAction() *fabactions.IssueAction {
 // validRequest is a well-formed request whose anchor is a valid 32-byte hex (AnchorFromTxID needs it).
 func validRequest() *EndorseRequest {
 	return &EndorseRequest{
+		Kind:         KindApproval,
 		TokenRequest: []byte("marshalled-request"),
 		TMSID:        testTMSID(),
 		Anchor:       anchorHex(0xC1),
 		Metadata:     map[string][]byte{"k": []byte("v")},
+	}
+}
+
+// validSetupRequest is a well-formed KindSetup counterpart to validRequest, sharing the same anchor and
+// TMS so tests can reuse testDomain/testTMSID.
+func validSetupRequest() *EndorseRequest {
+	return &EndorseRequest{
+		Kind:            KindSetup,
+		PublicParamsRaw: []byte("new-public-parameters"),
+		TMSID:           testTMSID(),
+		Anchor:          anchorHex(0xC1),
 	}
 }
 
@@ -109,6 +122,41 @@ func newResponder(t *testing.T, v RequestValidator, pp *fakePP, signer EndorserS
 	return NewResponder(
 		auth,
 		func(token2.TMSID) (*DeltaFactory, error) { return factory, nil },
+		nil,
+		signer,
+		func(token2.TMSID) (eip712.Domain, error) { return testDomain(), nil },
+	)
+}
+
+// fakePPValidator satisfies PublicParamsValidator for setup-path tests without a real token driver.
+type fakePPValidator struct {
+	pp  tdriver.PublicParameters
+	err error
+}
+
+func (f *fakePPValidator) PublicParametersFromBytes([]byte) (tdriver.PublicParameters, error) {
+	return f.pp, f.err
+}
+
+// fakePublicParameters is a minimal PublicParameters double: only Validate is exercised by
+// SetupDeltaFactory, so it is the only method that needs a controllable answer.
+type fakePublicParameters struct {
+	tdriver.PublicParameters
+	err error
+}
+
+func (f *fakePublicParameters) Validate() error { return f.err }
+
+func newResponderWithSetup(t *testing.T, ppValidator PublicParamsValidator, current *fakePP, signer EndorserSigner) *Responder {
+	t.Helper()
+	auth, err := NewAuthorizer([]view.Identity{view.Identity(testCaller)})
+	require.NoError(t, err)
+	factory := NewSetupDeltaFactory(ppValidator, current)
+
+	return NewResponder(
+		auth,
+		func(token2.TMSID) (*DeltaFactory, error) { return nil, errors.New("not a KindApproval test") },
+		func(token2.TMSID) (*SetupDeltaFactory, error) { return factory, nil },
 		signer,
 		func(token2.TMSID) (eip712.Domain, error) { return testDomain(), nil },
 	)
@@ -202,6 +250,7 @@ func TestResponderRejectsUnservedTMS(t *testing.T) {
 		func(tmsID token2.TMSID) (*DeltaFactory, error) {
 			return nil, errors.Errorf("no such tms [%s]", tmsID)
 		},
+		nil,
 		newSigner(t, 1),
 		func(token2.TMSID) (eip712.Domain, error) { return testDomain(), nil },
 	)
@@ -280,6 +329,63 @@ func TestResponderEndorsesASetupAction(t *testing.T) {
 	got, err := eip712.RecoverAddress(digest, resp.Signature)
 	require.NoError(t, err)
 	assert.Equal(t, signer.Address(), got, "endorser must have signed the setup delta it built")
+}
+
+// TestResponderEndorsesASetupRequest is the real production dispatch for issue #2412 item 1: a
+// KindSetup request never reaches factoryFor/DeltaFactory.Build (which requires a validator resolved
+// from an existing TMS, unreachable for first-time setup), it reaches setupFactoryFor/
+// SetupDeltaFactory.Build instead, and the endorser signs the resulting setup delta.
+func TestResponderEndorsesASetupRequest(t *testing.T) {
+	signer := newSigner(t, 1)
+	current := &fakePP{raw: []byte(testPPRaw), version: testPPVer}
+	r := newResponderWithSetup(t, &fakePPValidator{pp: &fakePublicParameters{}}, current, signer)
+
+	req := validSetupRequest()
+	resp := r.Handle(context.Background(), view.Identity(testCaller), req)
+	require.NoError(t, resp.Error())
+	require.NotNil(t, resp.Delta)
+	assert.True(t, resp.Delta.IsSetup)
+	assert.Equal(t, req.PublicParamsRaw, resp.Delta.SetupParameters)
+
+	digest := eip712.Digest(testDomain(), resp.Delta)
+	got, err := eip712.RecoverAddress(digest, resp.Signature)
+	require.NoError(t, err)
+	assert.Equal(t, signer.Address(), got, "endorser must have signed the setup delta it built")
+}
+
+// TestResponderRejectsAnInvalidSetupRequest checks a KindSetup request whose new public parameters
+// fail structural validation is declined rather than signed.
+func TestResponderRejectsAnInvalidSetupRequest(t *testing.T) {
+	current := &fakePP{raw: []byte(testPPRaw), version: testPPVer}
+	r := newResponderWithSetup(t, &fakePPValidator{pp: &fakePublicParameters{err: assert.AnError}}, current, newSigner(t, 1))
+
+	resp := r.Handle(context.Background(), view.Identity(testCaller), validSetupRequest())
+	require.Error(t, resp.Error())
+	assert.Contains(t, resp.Error().Error(), ErrValidation.Error())
+	assert.Empty(t, resp.Signature)
+}
+
+// TestResponderRejectsSetupForAnUnservedTMS mirrors TestResponderRejectsUnservedTMS for the setup path:
+// a TMS this endorser was never registered for (esp.go's configFor) is refused rather than silently
+// resolved through the approval path's factoryFor.
+func TestResponderRejectsSetupForAnUnservedTMS(t *testing.T) {
+	auth, err := NewAuthorizer([]view.Identity{view.Identity(testCaller)})
+	require.NoError(t, err)
+
+	r := NewResponder(
+		auth,
+		func(token2.TMSID) (*DeltaFactory, error) { return nil, errors.New("not a KindApproval test") },
+		func(tmsID token2.TMSID) (*SetupDeltaFactory, error) {
+			return nil, errors.Errorf("no such tms [%s]", tmsID)
+		},
+		newSigner(t, 1),
+		func(token2.TMSID) (eip712.Domain, error) { return testDomain(), nil },
+	)
+
+	resp := r.Handle(context.Background(), view.Identity(testCaller), validSetupRequest())
+	require.Error(t, resp.Error())
+	assert.Contains(t, resp.Error().Error(), "does not serve")
+	assert.Empty(t, resp.Signature)
 }
 
 // compile-time check that the concrete signer satisfies the injected interface.

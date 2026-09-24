@@ -192,6 +192,16 @@ value that would be wrong. Use `isSerialUsed` instead.
 
 ## Public parameters: binding and block tag
 
+This section is about `DeltaFactory`, the `KindApproval` path (`RequestApproval`). Its `KindSetup`
+counterpart, `SetupDeltaFactory` (also `evm/endorsement/delta.go`), is simpler by construction: there is
+no token request to validate against ledger state or existing public parameters, only the new
+parameters' own well-formedness to check, so the "what it validates with" distinction below does not
+apply to it - see "The endorsement flow (driver side)" in
+[network-ethereum.md](./network-ethereum.md#the-endorsement-flow-driver-side) for what it does instead.
+It still binds a `PublicParamsHash`/`PublicParamsVersion` pair (the chain's *current* parameters, as an
+optimistic-concurrency baseline, not the new ones being set), so the block-tag distinction below applies
+to it identically.
+
 An endorser's `DeltaFactory` (`evm/endorsement/delta.go`) touches public parameters from two distinct
 sources, and both distinctions matter enough to have caused real bugs:
 
@@ -212,10 +222,21 @@ sources, and both distinctions matter enough to have caused real bugs:
   `client.BlockTagLatest`, explicitly, regardless of `Finality.BlockTag` — reading it at `finalized`
   instead would mean every endorsement signed in the finalization lag after a setup update reverts
   `StalePublicParams` on chain, since the endorser would keep seeing the pre-update pair the whole time.
-  `TMSConfig.BlockTag` (which feeds `endorsement/ledger.go`'s token-existence reads, and `pp.Watcher`'s
-  own polling) is a separate value and correctly stays at `Finality.BlockTag`: a reorg there risks a
-  double spend, which the pp read does not, so the two uses are allowed to differ and are kept
-  independent by construction (each is a distinct constructor argument, not a shared default).
+  `TMSConfig.BlockTag` (which feeds `endorsement/ledger.go`'s token-existence reads) is a separate value
+  and correctly stays at `Finality.BlockTag`: a reorg there risks a double spend, which the pp read does
+  not.
+  `pp.Watcher`'s own polling (`driver.go`'s `watchPublicParams`) is *not* one of the uses that stays at
+  `Finality.BlockTag`, despite looking like the purely-eventual-catch-up case it would be if nothing else
+  cared what it fed: the watcher is what drives `f.localPP.PublicParamsHash()` above, and that value is
+  compared against a chain read taken at `latest`. A watcher polling at `finalized` would keep this node's
+  half of that comparison behind the chain's head for the whole finalization lag after every setup
+  update, refusing every ordinary approval with `ErrStalePublicParams` for the same window — not the
+  bounded, self-resolving "eventually catches up" cost the phrase suggests, but a real outage on any
+  network whose finality lag is not itself instant. `watchPublicParams` therefore constructs its watcher
+  at `client.BlockTagLatest` too, unconditionally, for the same reason the endorsement `ChainProvider`
+  does. `Finality.BlockTag` and `client.BlockTagLatest` are kept independent by construction (each is a
+  distinct constructor argument, not a shared default); it is the watcher, not the two pp reads, that had
+  to change to make them agree here.
 
 ## Signing: byte formats that bite
 
