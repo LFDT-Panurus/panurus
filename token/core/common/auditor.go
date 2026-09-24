@@ -218,12 +218,6 @@ func (a *Auditor[P, IA, TA, DS]) CheckTransfer(
 	return nil
 }
 
-// ExtractTokenIDsAndCheckDuplicates extracts all token IDs from both transfer and issue actions
-// in the metadata and checks for duplicates. Returns the list of unique token IDs or an error
-// if duplicates are found.
-//
-// This function is used by auditors to ensure that no token is spent multiple times within
-// a single transaction.
 // recordTokenID adds id to tokenIDMap/tokenIDs, or returns an error if id was already recorded
 // (a duplicate token ID within the same token request).
 func recordTokenID(tokenIDMap map[string]*token.ID, tokenIDs *[]*token.ID, id *token.ID, actionIndex int, anchor driver.TokenRequestAnchor) error {
@@ -282,6 +276,12 @@ func extractActionTokenIDs(action *driver.ActionMetadataEntry, tokenIDMap map[st
 	return extractIssueActionTokenIDs(action, tokenIDMap, tokenIDs, i, anchor)
 }
 
+// ExtractTokenIDsAndCheckDuplicates extracts all token IDs from both transfer and issue actions
+// in the metadata and checks for duplicates. Returns the list of unique token IDs or an error
+// if duplicates are found.
+//
+// This function is used by auditors to ensure that no token is spent multiple times within
+// a single transaction.
 func ExtractTokenIDsAndCheckDuplicates(
 	metadata *driver.TokenRequestMetadata,
 	anchor driver.TokenRequestAnchor,
@@ -626,20 +626,6 @@ func checkIssueInputTokenType(inputMetadata *driver.IssueInputMetadata, auditTok
 	return nil
 }
 
-// ValidateTransferActionTokenTypes ensures all inputs and outputs in a transfer action have the same token type.
-// It also validates that input tokens exist in the auditTokens map.
-//
-// When validateValueSum is true (for privacy-preserving tokens like zkatdlog), this also validates
-// that the sum of input values equals the sum of output values using the provided precision.
-//
-// For transfer actions, this validates that:
-// - auditTokens map is non-empty (required for validation)
-// - All input tokens exist in the audit token map
-// - All inputs have the same token type
-// - All outputs have the same token type as the inputs
-// - (Optional) Sum of input values equals sum of output values
-//
-// This ensures token type consistency and value conservation within a transfer action.
 // checkTransferInputTokenType verifies that the i-th transfer input's audit token exists and is
 // non-nil, updates (or checks) *actionTokenType against its type, and, if validateValueSum, adds
 // its quantity to inputSum, returning the (possibly updated) sum.
@@ -698,6 +684,20 @@ func checkTransferInputTokenType(
 	return inputSum, nil
 }
 
+// ValidateTransferActionTokenTypes ensures all inputs and outputs in a transfer action have the same token type.
+// It also validates that input tokens exist in the auditTokens map.
+//
+// When validateValueSum is true (for privacy-preserving tokens like zkatdlog), this also validates
+// that the sum of input values equals the sum of output values using the provided precision.
+//
+// For transfer actions, this validates that:
+// - auditTokens map is non-empty (required for validation)
+// - All input tokens exist in the audit token map
+// - All inputs have the same token type
+// - All outputs have the same token type as the inputs
+// - (Optional) Sum of input values equals sum of output values
+//
+// This ensures token type consistency and value conservation within a transfer action.
 func ValidateTransferActionTokenTypes(
 	metadata *driver.TransferMetadata,
 	auditTokens map[string]*token.Token,
