@@ -28,6 +28,13 @@ type Metrics struct {
 	SelectionOutcome metrics.Counter
 	// ImmediateRetries tracks the distribution of immediate retry counts per Select() call.
 	ImmediateRetries metrics.Histogram
+	// ExactMatchAttempts counts how many Select() calls ran the exact-amount pre-search.
+	ExactMatchAttempts metrics.Counter
+	// ExactMatchHits counts pre-searches that found and locked a change-free selection.
+	ExactMatchHits metrics.Counter
+	// ExactMatchMisses counts pre-searches that found no lockable exact-amount selection
+	// and fell through to the greedy walk.
+	ExactMatchMisses metrics.Counter
 }
 
 func NewMetrics(p metrics.Provider) *Metrics {
@@ -53,6 +60,18 @@ func NewMetrics(p metrics.Provider) *Metrics {
 			Name:    "selection_immediate_retries",
 			Help:    "Distribution of immediate retry counts per token selection call",
 			Buckets: []float64{0, 1, 2, 3, 4, 5},
+		}),
+		ExactMatchAttempts: p.NewCounter(metrics.CounterOpts{
+			Name: "selection_exact_match_attempts_total",
+			Help: "Total number of Select() calls that ran the exact-amount pre-search",
+		}),
+		ExactMatchHits: p.NewCounter(metrics.CounterOpts{
+			Name: "selection_exact_match_hits_total",
+			Help: "Total number of exact-amount pre-searches that produced a change-free selection",
+		}),
+		ExactMatchMisses: p.NewCounter(metrics.CounterOpts{
+			Name: "selection_exact_match_misses_total",
+			Help: "Total number of exact-amount pre-searches that fell through to the greedy walk",
 		}),
 	}
 }

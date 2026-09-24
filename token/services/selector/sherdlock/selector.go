@@ -10,6 +10,7 @@ import (
 	"context"
 	"fmt"
 	"math/rand/v2"
+	"sort"
 	"sync"
 	"time"
 
@@ -44,6 +45,18 @@ type Selector struct {
 	precision uint64
 	metrics   *Metrics
 	mu        sync.Mutex // protects cache field for concurrent Close() calls
+	// exactMatch enables the change-avoidance pre-search (currently k=1): before the
+	// greedy walk, prefer a single unlocked candidate whose amount equals the request.
+	exactMatch bool
+}
+
+// Option customizes a Selector at construction time.
+type Option func(*Selector)
+
+// WithExactMatch enables (or disables) the exact-amount change-avoidance pre-search.
+// It is off by default, preserving the plain greedy first-fit behaviour.
+func WithExactMatch(enabled bool) Option {
+	return func(s *Selector) { s.exactMatch = enabled }
 }
 
 type StubbornSelector struct {
@@ -100,16 +113,16 @@ func (m *StubbornSelector) Select(ctx context.Context, ownerFilter token.OwnerFi
 	return nil, nil, errors.Wrapf(token.SelectorInsufficientFunds, "aborted too many times and no other process unlocked or added tokens")
 }
 
-func NewStubbornSelector(logger logging.Logger, tokenDB TokenFetcher, lockDB TokenLocker, precision uint64, backoff time.Duration, retries int, m *Metrics) *StubbornSelector {
+func NewStubbornSelector(logger logging.Logger, tokenDB TokenFetcher, lockDB TokenLocker, precision uint64, backoff time.Duration, retries int, m *Metrics, opts ...Option) *StubbornSelector {
 	return &StubbornSelector{
-		Selector:               NewSelector(logger, tokenDB, lockDB, precision, m),
+		Selector:               NewSelector(logger, tokenDB, lockDB, precision, m, opts...),
 		backoffInterval:        backoff,
 		maxRetriesAfterBackoff: retries,
 	}
 }
 
-func NewSelector(logger logging.Logger, tokenDB TokenFetcher, lockDB TokenLocker, precision uint64, m *Metrics) *Selector {
-	return &Selector{
+func NewSelector(logger logging.Logger, tokenDB TokenFetcher, lockDB TokenLocker, precision uint64, m *Metrics, opts ...Option) *Selector {
+	s := &Selector{
 		logger:    logger,
 		cache:     collections.NewEmptyIterator[*token2.UnspentTokenInWallet](),
 		fetcher:   tokenDB,
@@ -117,6 +130,11 @@ func NewSelector(logger logging.Logger, tokenDB TokenFetcher, lockDB TokenLocker
 		precision: precision,
 		metrics:   m,
 	}
+	for _, opt := range opts {
+		opt(s)
+	}
+
+	return s
 }
 
 func (s *Selector) Select(ctx context.Context, owner token.OwnerFilter, q string, tokenType token2.Type) ([]*token2.ID, token2.Quantity, error) {
@@ -162,6 +180,22 @@ func (s *Selector) selectInternal(ctx context.Context, owner token.OwnerFilter, 
 	if err != nil {
 		return nil, nil, 0, errors.Wrapf(err, "failed to create quantity")
 	}
+
+	// Change-avoidance pre-search (k=1): before the greedy walk commits any tokens,
+	// prefer a single unlocked candidate whose amount equals the full request, which
+	// completes the selection with zero change. On any miss we fall through to the
+	// greedy walk below, unchanged.
+	if s.exactMatch {
+		s.metrics.ExactMatchAttempts.Add(1)
+		if ids, sum, ok := s.trySingleTokenExactMatch(ctx, owner, quantity, tokenType); ok {
+			s.metrics.ExactMatchHits.Add(1)
+			s.logger.DebugfContext(ctx, "exact-match pre-search selected a single token of [%s:%s]", quantity.Decimal(), tokenType)
+
+			return ids, sum, 0, nil
+		}
+		s.metrics.ExactMatchMisses.Add(1)
+	}
+
 	sum, selected, tokensLockedByOthersExist, immediateRetries := token2.NewZeroQuantity(s.precision), collections.NewSet[*token2.ID](), true, 0
 	for {
 		if t, err := s.next(); err != nil {
@@ -224,6 +258,88 @@ func (s *Selector) selectInternal(ctx context.Context, owner token.OwnerFilter, 
 			}
 		}
 	}
+}
+
+// trySingleTokenExactMatch runs the k=1 change-avoidance pre-search: it looks for a
+// single unlocked candidate whose amount equals quantity and, if one is found and can
+// be locked, returns it as a complete, change-free selection (ok=true). It reports
+// ok=false — leaving the greedy walk to run unchanged — when no exact candidate exists,
+// every exact candidate is currently locked by another process, or any error occurs.
+// It is strictly best-effort: it never fails the selection and never holds a lock unless
+// it returns that lock as the winning result.
+//
+// The candidate slice is read from a fresh iterator so the greedy iterator (s.cache) is
+// never disturbed; it is sorted ascending by amount and then binary-searched for an exact
+// match. When several candidates share the exact amount, the equal-amount run is shuffled
+// before locking to spread contention across them (cf. the bucket shuffle in #2399).
+func (s *Selector) trySingleTokenExactMatch(ctx context.Context, owner token.OwnerFilter, quantity token2.Quantity, tokenType token2.Type) ([]*token2.ID, token2.Quantity, bool) {
+	it, err := s.fetcher.UnspentTokensIteratorBy(ctx, owner.ID(), tokenType)
+	if err != nil {
+		s.logger.DebugfContext(ctx, "exact-match pre-search: failed to fetch candidates: %v", err)
+
+		return nil, nil, false
+	}
+	defer it.Close()
+
+	type candidate struct {
+		id     token2.ID
+		amount token2.Quantity
+	}
+	candidates := make([]candidate, 0)
+	for {
+		t, err := it.Next()
+		if err != nil {
+			s.logger.DebugfContext(ctx, "exact-match pre-search: iterator error: %v", err)
+
+			return nil, nil, false
+		}
+		if t == nil {
+			break
+		}
+		amount, err := token2.ToQuantity(t.Quantity, s.precision)
+		if err != nil {
+			// A malformed amount is left for the greedy path to surface consistently.
+			s.logger.DebugfContext(ctx, "exact-match pre-search: skipping token [%s] with invalid amount: %v", t.Id, err)
+
+			continue
+		}
+		candidates = append(candidates, candidate{id: t.Id, amount: amount})
+	}
+	if len(candidates) == 0 {
+		return nil, nil, false
+	}
+
+	// Sort ascending by amount, then binary-search for the first candidate whose amount
+	// is >= quantity; it is an exact match only if that amount equals quantity.
+	sort.Slice(candidates, func(i, j int) bool { return candidates[i].amount.Cmp(candidates[j].amount) < 0 })
+	lo := sort.Search(len(candidates), func(i int) bool { return candidates[i].amount.Cmp(quantity) >= 0 })
+	if lo >= len(candidates) || candidates[lo].amount.Cmp(quantity) != 0 {
+		return nil, nil, false
+	}
+
+	// Collect the contiguous run of candidates that equal quantity and shuffle it, so
+	// concurrent selectors do not all contend for the same exact-amount token first.
+	hi := lo
+	for hi < len(candidates) && candidates[hi].amount.Cmp(quantity) == 0 {
+		hi++
+	}
+	matches := candidates[lo:hi]
+	rand.Shuffle(len(matches), func(i, j int) { matches[i], matches[j] = matches[j], matches[i] })
+
+	for _, m := range matches {
+		id := m.id
+		locked, lockErr := s.locker.TryLock(ctx, &id, owner.ID())
+		if errors.Is(lockErr, token.SelectorRateLimited) {
+			// The greedy walk will hit the same rate limit and surface it consistently.
+			return nil, nil, false
+		}
+		if locked {
+			return []*token2.ID{&id}, m.amount, true
+		}
+		s.logger.DebugfContext(ctx, "exact-match pre-search: candidate [%s] already locked, trying next", id)
+	}
+
+	return nil, nil, false
 }
 
 // next returns the next token of the current cache. It holds s.mu for the whole
@@ -305,12 +421,12 @@ func (l *locker) UnlockAll(ctx context.Context) error {
 	return l.UnlockByTxID(ctx, l.txID)
 }
 
-func NewSherdSelector(txID transaction.ID, fetcher TokenFetcher, lockDB Locker, precision uint64, backoff time.Duration, maxRetriesAfterBackoff int, m *Metrics) TokenSelectorUnlocker {
+func NewSherdSelector(txID transaction.ID, fetcher TokenFetcher, lockDB Locker, precision uint64, backoff time.Duration, maxRetriesAfterBackoff int, m *Metrics, opts ...Option) TokenSelectorUnlocker {
 	logger := logger.Named("selector-" + txID)
 	locker := &locker{txID: txID, Locker: lockDB}
 	if backoff < 0 {
-		return NewSelector(logger, fetcher, locker, precision, m)
+		return NewSelector(logger, fetcher, locker, precision, m, opts...)
 	} else {
-		return NewStubbornSelector(logger, fetcher, locker, precision, backoff, maxRetriesAfterBackoff, m)
+		return NewStubbornSelector(logger, fetcher, locker, precision, backoff, maxRetriesAfterBackoff, m, opts...)
 	}
 }
