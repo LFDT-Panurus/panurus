@@ -7,6 +7,7 @@ SPDX-License-Identifier: Apache-2.0
 package driver
 
 import (
+	"maps"
 	slices0 "slices"
 
 	"github.com/LFDT-Panurus/panurus/token/driver/protos-go/utils"
@@ -1024,9 +1025,7 @@ func (m *TokenRequestMetadata) ToProtos() (*request.TokenRequestMetadata, error)
 	appMeta := m.Application
 	if len(m.Anchor) > 0 {
 		appMeta = make(map[string][]byte, len(m.Application)+1)
-		for k, v := range m.Application {
-			appMeta[k] = v
-		}
+		maps.Copy(appMeta, m.Application)
 		appMeta[AnchorApplicationMetadataKey] = []byte(m.Anchor)
 	}
 
