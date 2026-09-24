@@ -68,6 +68,11 @@ type Config struct {
 	// RateLimitMaxBuckets caps the number of wallet buckets the limiter keeps in memory. If
 	// <= 0, the limiter's own default is used.
 	RateLimitMaxBuckets int `yaml:"rateLimitMaxBuckets,omitempty"`
+	// ExactMatch enables the sherdlock exact-amount change-avoidance pre-search (currently
+	// k=1): before the greedy walk, prefer a single unlocked token whose amount equals the
+	// request, completing the selection with zero change. It is off by default, preserving the
+	// plain greedy first-fit behaviour.
+	ExactMatch bool `yaml:"exactMatch,omitempty"`
 }
 
 // New returns a SelectorConfig with the values from the token.selector key
@@ -182,4 +187,10 @@ func (c *Config) GetRateLimitBurst() int {
 // memory. It returns 0 when not configured, which selects the limiter's own default.
 func (c *Config) GetRateLimitMaxBuckets() int {
 	return max(c.RateLimitMaxBuckets, 0)
+}
+
+// IsExactMatchEnabled reports whether the sherdlock exact-amount change-avoidance pre-search
+// must be enabled. It is off by default.
+func (c *Config) IsExactMatchEnabled() bool {
+	return c.ExactMatch
 }

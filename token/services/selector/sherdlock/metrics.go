@@ -38,6 +38,14 @@ type Metrics struct {
 	// limiter. This is what distinguishes "one hot token retried many times" from
 	// "many tokens each contended once".
 	DistinctTokensAttempted metrics.Histogram
+	// ExactMatchAttempts counts how many exact-amount pre-searches ran: one per selection
+	// attempt, which under StubbornSelector is one per backoff retry, not one per Select() call.
+	ExactMatchAttempts metrics.Counter
+	// ExactMatchHits counts pre-searches that found and locked a change-free selection.
+	ExactMatchHits metrics.Counter
+	// ExactMatchMisses counts pre-searches that found no lockable exact-amount selection
+	// and fell through to the greedy walk.
+	ExactMatchMisses metrics.Counter
 }
 
 func NewMetrics(p metrics.Provider) *Metrics {
@@ -72,6 +80,18 @@ func NewMetrics(p metrics.Provider) *Metrics {
 			Name:    "distinct_tokens_attempted",
 			Help:    "Distribution of the number of distinct tokens a lock was attempted on (won, lost, or rate-limited) per token selection call",
 			Buckets: []float64{1, 2, 5, 10, 25, 50, 100},
+		}),
+		ExactMatchAttempts: p.NewCounter(metrics.CounterOpts{
+			Name: "selection_exact_match_attempts_total",
+			Help: "Total number of exact-amount pre-searches run",
+		}),
+		ExactMatchHits: p.NewCounter(metrics.CounterOpts{
+			Name: "selection_exact_match_hits_total",
+			Help: "Total number of exact-amount pre-searches that produced a change-free selection",
+		}),
+		ExactMatchMisses: p.NewCounter(metrics.CounterOpts{
+			Name: "selection_exact_match_misses_total",
+			Help: "Total number of exact-amount pre-searches that fell through to the greedy walk",
 		}),
 	}
 }
