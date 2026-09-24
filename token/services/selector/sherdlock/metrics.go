@@ -78,6 +78,14 @@ type Metrics struct {
 	// means the freshness interval is long relative to how fast the wallet turns over, and
 	// the eager strategy is paying for a snapshot it cannot keep.
 	CacheInvalidations metrics.Counter
+	// ExactMatchAttempts counts how many exact-amount pre-searches ran: one per selection
+	// attempt, which under StubbornSelector is one per backoff retry, not one per Select() call.
+	ExactMatchAttempts metrics.Counter
+	// ExactMatchHits counts pre-searches that found and locked a change-free selection.
+	ExactMatchHits metrics.Counter
+	// ExactMatchMisses counts pre-searches that found no lockable exact-amount selection
+	// and fell through to the greedy walk.
+	ExactMatchMisses metrics.Counter
 }
 
 func NewMetrics(p metrics.Provider) *Metrics {
@@ -124,6 +132,18 @@ func NewMetrics(p metrics.Provider) *Metrics {
 		CacheInvalidations: p.NewCounter(metrics.CounterOpts{
 			Name: "cache_invalidations_total",
 			Help: "Total number of times the candidate source was told its snapshot is behind the token store, forcing the next read to refresh it",
+		}),
+		ExactMatchAttempts: p.NewCounter(metrics.CounterOpts{
+			Name: "selection_exact_match_attempts_total",
+			Help: "Total number of exact-amount pre-searches run",
+		}),
+		ExactMatchHits: p.NewCounter(metrics.CounterOpts{
+			Name: "selection_exact_match_hits_total",
+			Help: "Total number of exact-amount pre-searches that produced a change-free selection",
+		}),
+		ExactMatchMisses: p.NewCounter(metrics.CounterOpts{
+			Name: "selection_exact_match_misses_total",
+			Help: "Total number of exact-amount pre-searches that fell through to the greedy walk",
 		}),
 	}
 }
