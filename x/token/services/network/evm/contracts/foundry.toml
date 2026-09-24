@@ -14,6 +14,6 @@ optimizer_runs = 200
 # The EIP-712 cross-impl gate (test/EIP712.t.sol) reads the golden fixture committed by the Go side.
 fs_permissions = [{ access = "read", path = "./test" }]
 
-# forge-std is not vendored; install it before running the suite:
-#   forge install foundry-rs/forge-std --no-commit
-# Then: forge test
+# forge-std is a git submodule (lib/forge-std). On a fresh clone, check it out before running the suite:
+#   git submodule update --init --recursive
+# Then: forge test, or make test-evm-contracts from the repo root.

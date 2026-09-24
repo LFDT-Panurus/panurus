@@ -1,3 +1,33 @@
+.PHONY: test-evm-contracts
+# run the Solidity test suite for the EVM network driver's contracts (forge test) and check their
+# formatting (forge fmt --check). This is the ~950 lines under x/token/services/network/evm/contracts/
+# test/, including the cross-implementation golden-digest gate in EIP712.t.sol - see that directory's
+# README.md.
+#
+# Needs Foundry (forge) on PATH and the forge-std submodule checked out (git submodule update --init
+# --recursive). install-tools does neither, so without them the target prints a pointer and skips,
+# matching how the Go e2e suite (x/token/services/network/evm/e2e_anvil_test.go) self-skips without
+# anvil/forge. Set EVM_CONTRACTS_REQUIRED=1 to fail instead of skipping; CI does, so a broken setup
+# there cannot pass as a skip. It is a separate step in CI, not part of unit-tests, so a contract or
+# formatting failure does not hide the Go results.
+EVM_CONTRACTS_DIR = x/token/services/network/evm/contracts
+test-evm-contracts:
+	@missing=""; \
+	if ! command -v forge >/dev/null 2>&1; then \
+		missing="forge is not installed"; \
+	elif [ ! -f $(EVM_CONTRACTS_DIR)/lib/forge-std/src/Test.sol ]; then \
+		missing="the forge-std submodule is not checked out (git submodule update --init --recursive)"; \
+	fi; \
+	if [ -n "$$missing" ]; then \
+		if [ -n "$(EVM_CONTRACTS_REQUIRED)" ]; then \
+			echo "$$missing; cannot run the Solidity contract tests (see $(EVM_CONTRACTS_DIR)/README.md)"; \
+			exit 1; \
+		fi; \
+		echo "$$missing; skipping the Solidity contract tests (see $(EVM_CONTRACTS_DIR)/README.md)"; \
+	else \
+		cd $(EVM_CONTRACTS_DIR) && forge test && forge fmt --check; \
+	fi
+
 .PHONY: besu-docker-images
 # pull the besu docker image the EVM integration suites run against
 besu-docker-images:

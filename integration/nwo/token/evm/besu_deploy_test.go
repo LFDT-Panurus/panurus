@@ -24,7 +24,7 @@ import (
 // These tests stand up a real Besu and deploy the real contracts into it. They are the Week-6
 // building block: everything the suite does later assumes a node exists with the contracts on it.
 //
-// They are skipped when docker or forge are unavailable so the ordinary unit run stays hermetic, and
+// They are skipped when docker, forge or the Besu image are unavailable so the ordinary unit run stays hermetic, and
 // they carry their own network and container names so a leftover from a previous run cannot make them
 // pass or fail spuriously.
 
@@ -33,8 +33,14 @@ func requireBesuTooling(t *testing.T) {
 	if _, err := exec.LookPath("forge"); err != nil {
 		t.Skip("forge not installed; skipping the Besu deployment test")
 	}
-	if _, err := docker.GetInstance(); err != nil {
+	d, err := docker.GetInstance()
+	if err != nil {
 		t.Skip("docker not available; skipping the Besu deployment test")
+	}
+	// forge and docker alone are not enough: CI installs both for the Solidity suite without pulling the
+	// Besu image, and booting it would then fail the whole unit run rather than skip.
+	if err := d.CheckImagesExist(DefaultBesuImage); err != nil {
+		t.Skipf("besu image %s not pulled; skipping the Besu deployment test", DefaultBesuImage)
 	}
 }
 

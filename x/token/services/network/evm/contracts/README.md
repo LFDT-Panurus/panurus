@@ -47,6 +47,12 @@ forge fmt --check
 npm install ethers@6 && node test/eip712_check.js test/statedelta_digest_fixture.json
 ```
 
+`make test-evm-contracts` (from the repo root) runs `forge test` and `forge fmt --check` for you. CI's
+`utest` job installs Foundry and runs it as its own step on every push and PR, separate from the Go unit
+tests. Locally, if `forge` is not on PATH or `lib/forge-std` is not checked out, the target skips with a
+pointer back to this file rather than failing. Pass `EVM_CONTRACTS_REQUIRED=1` to make it fail instead,
+as CI does.
+
 ## Constraint
 
 Nothing in the Go driver may link go-ethereum (license; enforced by `../depguard_test.go`). Tooling
