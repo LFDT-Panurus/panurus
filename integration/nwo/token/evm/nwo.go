@@ -33,6 +33,11 @@ import (
 // Entry is the per-TMS state the handler builds while generating artifacts and then reads back when
 // rendering each node's configuration.
 type Entry struct {
+	// Network is the (network, channel) pair this TMS's chain settles on. startNode reuses another
+	// entry's already-started Node only when this matches: two TMS on the same network share one
+	// chain, but two independently-topologied networks (NewTopologyWithName) must never settle on the
+	// same one just because they both started their first TMS around the same time.
+	Network string
 	// Node is the chain this TMS settles on.
 	Node Node
 	// Deployment holds the contract addresses the TMS was deployed with.
@@ -115,7 +120,11 @@ func NewNetworkHandler(tokenPlatform common.TokenPlatform, builder api2.Builder)
 func (p *NetworkHandler) GetEntry(tms *topology2.TMS) *Entry {
 	entry, ok := p.Entries[tms.TmsID()]
 	if !ok {
-		entry = &Entry{EndorserOf: map[string]Identity{}, SubmitterOf: map[string]Identity{}}
+		entry = &Entry{
+			Network:     networkKey(tms),
+			EndorserOf:  map[string]Identity{},
+			SubmitterOf: map[string]Identity{},
+		}
 		p.Entries[tms.TmsID()] = entry
 	}
 
@@ -179,6 +188,7 @@ func (p *NetworkHandler) GenerateArtifacts(tms *topology2.TMS) {
 		},
 		Endorsers:    addresses,
 		Threshold:    entry.Threshold,
+		GraphHiding:  graphHidingFor(tms),
 		PublicParams: p.TokenPlatform.PublicParameters(tms),
 	})
 	gomega.Expect(err).NotTo(gomega.HaveOccurred(), "failed to deploy the contracts for [%s]", tms.TmsID())
@@ -233,12 +243,51 @@ func (p *NetworkHandler) fundSubmitters(tms *topology2.TMS, entry *Entry, keyDir
 	}
 }
 
-// startNode boots the chain this TMS settles on, reusing one already started for the same network.
-func (p *NetworkHandler) startNode(tms *topology2.TMS) Node {
+// graphHidingFor returns the spend semantics TokenState must be deployed with for this TMS: they have to
+// agree with the graphHiding its token driver's public parameters declare, and each TMS is judged on its
+// own so networks served by one handler can differ. Every driver this handler registers a crypto
+// material generator for (see NewNetworkHandler) is non graph-hiding; a driver added there that hides
+// the graph must be added here, and an unknown one fails loudly rather than deploying the wrong mode
+// (which would surface only as every spend reverting with InputMissingOrSpent).
+func graphHidingFor(tms *topology2.TMS) bool {
+	switch tms.Driver {
+	case fabtokenv1.DriverIdentifier, zkatdlognoghv1.DriverIdentifier:
+		return false
+	default:
+		gomega.Expect(false).To(gomega.BeTrue(), "unknown token driver [%s] for [%s]: cannot derive graphHiding", tms.Driver, tms.TmsID())
+
+		return false
+	}
+}
+
+// networkKey identifies the chain a TMS settles on. GetEntry records it on the Entry and startNode
+// compares against it, so both must derive it the same way.
+func networkKey(tms *topology2.TMS) string {
+	// The network length prefix keeps the key injective: a colon inside either part cannot make two
+	// distinct (network, channel) pairs produce the same key.
+	return strconv.Itoa(len(tms.Network)) + ":" + tms.Network + ":" + tms.Channel
+}
+
+// nodeForNetwork returns the already-started Node of another entry settled on the same network, or nil
+// if none has one yet. "Same network" is judged by e.Network (tms.Network + tms.Channel), not merely by
+// which entry answers first: a suite that stands up two independent EVM networks via
+// NewTopologyWithName registers one NetworkHandler per topology type (integration/nwo/token/factory.go),
+// so a second network's first TMS must start its own node rather than silently settling on the first
+// network's chain just because some other entry happened to have one already.
+func (p *NetworkHandler) nodeForNetwork(network, exceptID string) Node {
 	for id, e := range p.Entries {
-		if e.Node != nil && id != tms.TmsID() {
+		if e.Node != nil && id != exceptID && e.Network == network {
 			return e.Node
 		}
+	}
+
+	return nil
+}
+
+// startNode boots the chain this TMS settles on, reusing one already started for the same network.
+func (p *NetworkHandler) startNode(tms *topology2.TMS) Node {
+	if node := p.nodeForNetwork(networkKey(tms), tms.TmsID()); node != nil {
+		return node
 	}
 
 	ctx := p.TokenPlatform.GetContext()
@@ -250,14 +299,14 @@ func (p *NetworkHandler) startNode(tms *topology2.TMS) Node {
 	port := int(ctx.ReservePort())
 
 	if p.NodeKind == GatewayTopologyName {
-		node, err := startGatewayNode(context.Background(), p.Image, p.ChainID, port)
+		node, err := startGatewayNode(context.Background(), resolveImage(p.Image, fabricxEVMImageEnvVar, defaultGatewayImage), p.ChainID, port)
 		gomega.Expect(err).NotTo(gomega.HaveOccurred(), "failed to start the EVM node")
 
 		return node
 	}
 
 	node, err := StartBesu(context.Background(), BesuConfig{
-		Image:   p.Image,
+		Image:   resolveImage(p.Image, besuImageEnvVar, DefaultBesuImage),
 		Name:    "besu-" + strconv.Itoa(port),
 		Port:    port,
 		ChainID: p.ChainID,
