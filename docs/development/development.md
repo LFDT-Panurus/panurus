@@ -13,6 +13,7 @@ This page contains link to the development guidelines and more.
 - [Mock Files Generation](./mock.md)
 - [AI Agents Best Practices](./ai_agents.md)
 - [Tools: tokengen](./tokengen.md)
+- [Tools: tokendiag](./tokendiag.md)
 - [Makefile Guide](./makefile.md)
 
 ## Useful resources
