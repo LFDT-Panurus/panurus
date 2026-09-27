@@ -41,6 +41,7 @@ panurus_services_selector_sherdlock_selection_duration_seconds | histogram | - |
 panurus_services_selector_sherdlock_selection_exact_match_attempts_total | counter | - | token/services/selector/sherdlock/metrics.go | Total number of Select() calls that ran the exact-amount pre-search
 panurus_services_selector_sherdlock_selection_exact_match_hits_total | counter | - | token/services/selector/sherdlock/metrics.go | Total number of exact-amount pre-searches that produced a change-free selection
 panurus_services_selector_sherdlock_selection_exact_match_misses_total | counter | - | token/services/selector/sherdlock/metrics.go | Total number of exact-amount pre-searches that fell through to the greedy walk
+panurus_services_selector_sherdlock_selection_exact_match_pair_hits_total | counter | - | token/services/selector/sherdlock/metrics.go | Total number of exact-amount pre-searches completed by a k=2 completing pair
 panurus_services_selector_sherdlock_selection_immediate_retries | histogram | - | token/services/selector/sherdlock/metrics.go | Distribution of immediate retry counts per token selection call
 panurus_services_selector_sherdlock_selection_outcome_total | counter | outcome | token/services/selector/sherdlock/metrics.go | Total number of token selection outcomes by result type
 panurus_services_selector_sherdlock_unspent_tokens_invocations | counter | fetcher_type | token/services/selector/sherdlock/metrics.go | The number of invocations

@@ -111,6 +111,52 @@ strategy abstraction in the code and no configuration key that selects one. Maki
 amount-aware is tracked in
 [issue #2017](https://github.com/LFDT-Panurus/panurus/issues/2017).
 
+### Exact-amount selection (change avoidance)
+
+`sherdlock` supports an **optional, opt-in pre-search** that runs *before* the greedy walk
+and prefers a combination of candidates that sums to the request **exactly**, avoiding the
+change output the greedy first-fit would otherwise mint. It is scoped to `sherdlock`
+(`simple` ignores it), off by default, and tracked under
+[issue #2404](https://github.com/LFDT-Panurus/panurus/issues/2404) as a follow-on to
+[issue #2017](https://github.com/LFDT-Panurus/panurus/issues/2017).
+
+**Why avoid change.** Every unnecessary change output is a new token the wallet must track,
+fund a future lock cycle for, and contend over — so reducing change outputs also shrinks the
+token population exposed to lock contention.
+
+**Motivating example.** Wallet holds `[30, 40, 70, 200]` of one type; the request is `100`.
+The greedy walk picks `{30, 40, 70} = 140` and mints a `40` change output. The pre-search
+instead finds `{30, 70} = 100` — two inputs, no change.
+
+**How it works.** For the request quantity `q`, the pre-search reads the wallet's current
+candidate set from a *fresh* iterator (it never disturbs the greedy iterator), decodes and
+sorts the amounts once, and looks for a change-free completion in increasing input count:
+
+*   **`k = 1`** — a single candidate whose amount equals `q`, found by binary search. This is
+    the ideal (one input, zero change) and is always tried first.
+*   **`k = 2`** — a *pair* of candidates whose amounts sum to `q`, found by a single
+    two-pointer scan over the sorted candidates. Up to a small, fixed number of completing
+    pairs are collected and then shuffled, so concurrent selectors do not all contend for the
+    same pair first (the same anti-hotspot rationale as the greedy shuffle). A pair is locked
+    as a unit; if its second token loses the lock race, the first is released and the next
+    pair (or, finally, the greedy walk) is tried.
+
+`k > 2` is not implemented. On **any** miss — no completion exists, every completion is
+locked by another process, or an error occurs — the pre-search leaves no lock behind and the
+selection falls through to the unchanged greedy walk, so enabling it never changes the set of
+requests that can be funded, only which tokens fund them.
+
+**Enabling it.** The capability is exposed as selector construction options rather than a
+configuration key (default off): `WithExactMatch(true)` enables `k = 1`, and
+`WithExactMatchInputs(k)` sets the maximum inputs to combine (`0` off, `1` = `k = 1`,
+`2` additionally enables the pair search; values are clamped to `[0, 2]`).
+
+**Observability.** The pre-search increments `selection_exact_match_attempts_total`,
+`selection_exact_match_hits_total` (change-free selections found and locked),
+`selection_exact_match_pair_hits_total` (the subset completed by a `k = 2` pair; single-token
+hits are hits minus pair hits), and `selection_exact_match_misses_total` (fell through to the
+greedy walk).
+
 ### Locking Mechanism
 To prevent double-spending *before* the transaction is committed to the ledger, the Selector Service uses a local `TokenLocks` table in the **Storage Service** (see "TokenLocks" box in diagram above).
 

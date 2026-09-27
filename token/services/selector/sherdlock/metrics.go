@@ -40,8 +40,12 @@ type Metrics struct {
 	DistinctTokensAttempted metrics.Histogram
 	// ExactMatchAttempts counts how many Select() calls ran the exact-amount pre-search.
 	ExactMatchAttempts metrics.Counter
-	// ExactMatchHits counts pre-searches that found and locked a change-free selection.
+	// ExactMatchHits counts pre-searches that found and locked a change-free selection
+	// (whether via a single token or a completing pair).
 	ExactMatchHits metrics.Counter
+	// ExactMatchPairHits counts the subset of ExactMatchHits completed by a k=2 pair
+	// rather than a single token; single-token hits are ExactMatchHits - ExactMatchPairHits.
+	ExactMatchPairHits metrics.Counter
 	// ExactMatchMisses counts pre-searches that found no lockable exact-amount selection
 	// and fell through to the greedy walk.
 	ExactMatchMisses metrics.Counter
@@ -87,6 +91,10 @@ func NewMetrics(p metrics.Provider) *Metrics {
 		ExactMatchHits: p.NewCounter(metrics.CounterOpts{
 			Name: "selection_exact_match_hits_total",
 			Help: "Total number of exact-amount pre-searches that produced a change-free selection",
+		}),
+		ExactMatchPairHits: p.NewCounter(metrics.CounterOpts{
+			Name: "selection_exact_match_pair_hits_total",
+			Help: "Total number of exact-amount pre-searches completed by a k=2 completing pair",
 		}),
 		ExactMatchMisses: p.NewCounter(metrics.CounterOpts{
 			Name: "selection_exact_match_misses_total",
