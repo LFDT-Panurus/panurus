@@ -312,7 +312,7 @@ jobs:
 
       - name: Set up foundry
         if: startsWith(matrix.tests, 'evm')
-        uses: foundry-rs/foundry-toolchain@v1
+        uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09 # v1.9.1
         with:
           # Pinned rather than "stable": forge 1.8.1 fails to deploy the contracts against the
           # fabric-x-evm gateway backend (evm-gateway/evm-gateway-fabtoken suites) with "Failed to
