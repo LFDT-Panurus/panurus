@@ -66,6 +66,20 @@ type FakeLocker struct {
 	unlockByTxIDReturnsOnCall map[int]struct {
 		result1 error
 	}
+	UnlockTokenStub        func(context.Context, *token.ID, transaction.ID, string) error
+	unlockTokenMutex       sync.RWMutex
+	unlockTokenArgsForCall []struct {
+		arg1 context.Context
+		arg2 *token.ID
+		arg3 transaction.ID
+		arg4 string
+	}
+	unlockTokenReturns struct {
+		result1 error
+	}
+	unlockTokenReturnsOnCall map[int]struct {
+		result1 error
+	}
 	invocations      map[string][][]interface{}
 	invocationsMutex sync.RWMutex
 }
@@ -321,6 +335,70 @@ func (fake *FakeLocker) UnlockByTxIDReturnsOnCall(i int, result1 error) {
 		})
 	}
 	fake.unlockByTxIDReturnsOnCall[i] = struct {
+		result1 error
+	}{result1}
+}
+
+func (fake *FakeLocker) UnlockToken(arg1 context.Context, arg2 *token.ID, arg3 transaction.ID, arg4 string) error {
+	fake.unlockTokenMutex.Lock()
+	ret, specificReturn := fake.unlockTokenReturnsOnCall[len(fake.unlockTokenArgsForCall)]
+	fake.unlockTokenArgsForCall = append(fake.unlockTokenArgsForCall, struct {
+		arg1 context.Context
+		arg2 *token.ID
+		arg3 transaction.ID
+		arg4 string
+	}{arg1, arg2, arg3, arg4})
+	stub := fake.UnlockTokenStub
+	fakeReturns := fake.unlockTokenReturns
+	fake.recordInvocation("UnlockToken", []interface{}{arg1, arg2, arg3, arg4})
+	fake.unlockTokenMutex.Unlock()
+	if stub != nil {
+		return stub(arg1, arg2, arg3, arg4)
+	}
+	if specificReturn {
+		return ret.result1
+	}
+	return fakeReturns.result1
+}
+
+func (fake *FakeLocker) UnlockTokenCallCount() int {
+	fake.unlockTokenMutex.RLock()
+	defer fake.unlockTokenMutex.RUnlock()
+	return len(fake.unlockTokenArgsForCall)
+}
+
+func (fake *FakeLocker) UnlockTokenCalls(stub func(context.Context, *token.ID, transaction.ID, string) error) {
+	fake.unlockTokenMutex.Lock()
+	defer fake.unlockTokenMutex.Unlock()
+	fake.UnlockTokenStub = stub
+}
+
+func (fake *FakeLocker) UnlockTokenArgsForCall(i int) (context.Context, *token.ID, transaction.ID, string) {
+	fake.unlockTokenMutex.RLock()
+	defer fake.unlockTokenMutex.RUnlock()
+	argsForCall := fake.unlockTokenArgsForCall[i]
+	return argsForCall.arg1, argsForCall.arg2, argsForCall.arg3, argsForCall.arg4
+}
+
+func (fake *FakeLocker) UnlockTokenReturns(result1 error) {
+	fake.unlockTokenMutex.Lock()
+	defer fake.unlockTokenMutex.Unlock()
+	fake.UnlockTokenStub = nil
+	fake.unlockTokenReturns = struct {
+		result1 error
+	}{result1}
+}
+
+func (fake *FakeLocker) UnlockTokenReturnsOnCall(i int, result1 error) {
+	fake.unlockTokenMutex.Lock()
+	defer fake.unlockTokenMutex.Unlock()
+	fake.UnlockTokenStub = nil
+	if fake.unlockTokenReturnsOnCall == nil {
+		fake.unlockTokenReturnsOnCall = make(map[int]struct {
+			result1 error
+		})
+	}
+	fake.unlockTokenReturnsOnCall[i] = struct {
 		result1 error
 	}{result1}
 }

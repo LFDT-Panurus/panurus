@@ -33,6 +33,11 @@ type TokenLocker interface {
 	// It returns whether the lock was acquired and, when it was not, the underlying
 	// error. When that error wraps token.SelectorRateLimited the selector aborts.
 	TryLock(ctx context.Context, tokenID *token2.ID, walletID string) (bool, error)
+	// Unlock releases this selection's lock on a single token. It is the inverse of
+	// TryLock and, unlike UnlockAll, leaves every other lock this transaction holds in
+	// place — so a speculative lock taken by the pre-search can be released without
+	// dropping inputs locked by earlier actions of the same transaction.
+	Unlock(ctx context.Context, tokenID *token2.ID, walletID string) error
 	UnlockAll(ctx context.Context) error
 }
 
@@ -80,6 +85,9 @@ type Locker interface {
 	Lock(ctx context.Context, tokenID *token2.ID, consumerTxID transaction.ID, walletID string) error
 	// UnlockByTxID unlocks all tokens locked by the consumer TX
 	UnlockByTxID(ctx context.Context, consumerTxID transaction.ID) error
+	// UnlockToken releases the consumer TX's lock on a single token, leaving its other
+	// locks intact. walletID mirrors Lock for backends that key locks per wallet.
+	UnlockToken(ctx context.Context, tokenID *token2.ID, consumerTxID transaction.ID, walletID string) error
 	// Cleanup removes the locks such that either:
 	// 1. The transaction that locked that token is valid or invalid;
 	// 2. The lock is too old.
