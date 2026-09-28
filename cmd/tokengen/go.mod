@@ -13,10 +13,10 @@ require (
 	github.com/IBM/idemix v0.3.1
 	github.com/IBM/mathlib v0.3.2
 	github.com/LFDT-Panurus/panurus v0.10.1
-	github.com/LFDT-Panurus/panurus/integration v0.0.0
-	github.com/hyperledger-labs/fabric-smart-client v0.22.0
-	github.com/hyperledger-labs/fabric-smart-client/integration v0.22.0
-	github.com/onsi/gomega v1.43.0
+	github.com/LFDT-Panurus/panurus/integration v0.0.0-00010101000000-000000000000
+	github.com/hyperledger-labs/fabric-smart-client v0.23.0
+	github.com/hyperledger-labs/fabric-smart-client/integration v0.23.0
+	github.com/onsi/gomega v1.44.0
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/viper v1.21.0
 	github.com/stretchr/testify v1.12.1
@@ -71,7 +71,7 @@ require (
 	github.com/knadh/koanf/providers/env/v2 v2.0.1 // indirect
 	github.com/knadh/koanf/providers/file v1.2.1 // indirect
 	github.com/knadh/koanf/providers/rawbytes v1.0.1 // indirect
-	github.com/knadh/koanf/v2 v2.3.6 // indirect
+	github.com/knadh/koanf/v2 v2.3.7 // indirect
 	github.com/kr/pretty v0.3.1 // indirect
 	github.com/kr/text v0.2.0 // indirect
 	github.com/mattn/go-isatty v0.0.24 // indirect
@@ -83,7 +83,7 @@ require (
 	github.com/moby/moby/client v0.6.0 // indirect
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
 	github.com/ncruces/go-strftime v1.0.0 // indirect
-	github.com/onsi/ginkgo/v2 v2.32.2 // indirect
+	github.com/onsi/ginkgo/v2 v2.33.0 // indirect
 	github.com/opencontainers/go-digest v1.0.0 // indirect
 	github.com/opencontainers/image-spec v1.1.1 // indirect
 	github.com/pelletier/go-toml/v2 v2.3.1 // indirect
@@ -124,10 +124,10 @@ require (
 	golang.org/x/tools v0.49.0 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20260819154853-08b0e4226688 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260825221802-da73d73af1c5 // indirect
-	google.golang.org/grpc v1.83.2 // indirect
+	google.golang.org/grpc v1.84.0 // indirect
 	google.golang.org/protobuf v1.36.12 // indirect
-	modernc.org/libc v1.75.6 // indirect
+	modernc.org/libc v1.75.7 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.12.1 // indirect
-	modernc.org/sqlite v1.58.0 // indirect
+	modernc.org/sqlite v1.59.0 // indirect
 )

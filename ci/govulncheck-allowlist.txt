@@ -14,3 +14,19 @@
 # exposed to the public IPFS DHT this advisory concerns. Re-review when FSC's
 # go-libp2p-kad-dht dependency is upgraded past this advisory.
 GO-2024-3218
+
+# GO-2026-6443: DoS via server panic on requests lacking both :authority and
+# Host headers, in google.golang.org/grpc. The panic is raised only inside
+# grpc's xDS routing interceptor (internal/xds/server.RouteAndProcess) and is
+# triggerable only when the server is configured with xDS routing. Panurus's
+# only reachable grpc server on this path is the token chaincode-as-a-service
+# server (shim.ChaincodeServer in token/services/network/fabric/tcc/main/main.go),
+# a plain chaincode gRPC server with no xDS routing that accepts connections
+# only from the Fabric peer over mTLS inside a permissioned network -- so the
+# vulnerable xDS code path is never configured or exposed. govulncheck reports
+# it via http2Server.HandleStreams (called by every grpc server), not the xDS
+# sink. The only fix at/above the grpc v1.84.0 that fabric-smart-client requires
+# is an unreleased v1.85.0-dev pseudo-version; the stable v1.83.2 fix predates
+# that pin and cannot be adopted. Re-review when FSC's grpc dependency moves to
+# v1.85.0+.
+GO-2026-6443
