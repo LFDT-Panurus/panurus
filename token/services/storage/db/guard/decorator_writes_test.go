@@ -216,6 +216,7 @@ func TestGuardRejectsOversizeDescriptorAliasWithoutDescriptor(t *testing.T) {
 type fakeEndorserStore struct {
 	driver.EndorserStore
 	tx      *fakeEndorserStoreTx
+	calls   int
 	openErr error
 }
 
@@ -225,6 +226,12 @@ func (f *fakeEndorserStore) NewEndorserStoreTransaction() (driver.EndorserStoreT
 	}
 
 	return f.tx, nil
+}
+
+func (f *fakeEndorserStore) RecordValidationFailure(context.Context, string, []byte, tokendriver.PPHash, string) error {
+	f.calls++
+
+	return nil
 }
 
 type fakeEndorserStoreTx struct {
@@ -256,6 +263,24 @@ func TestGuardBoundsAddValidationRecord(t *testing.T) {
 		)
 
 		return fake.tx.calls, err
+	})
+}
+
+// TestGuardBoundsRecordValidationFailure verifies the endorser-store guard sums the tx id,
+// token request, public parameters hash and reason of a recorded validation failure.
+func TestGuardBoundsRecordValidationFailure(t *testing.T) {
+	assertSizeBoundary(t, "RecordValidationFailure", 4+5+6+7, func(t *testing.T, p guard.Policy) (int, error) {
+		t.Helper()
+		fake := &fakeEndorserStore{}
+		err := guard.WrapEndorser(fake, p).RecordValidationFailure(
+			t.Context(),
+			strings.Repeat("t", 4),
+			make([]byte, 5),
+			tokendriver.PPHash(make([]byte, 6)),
+			strings.Repeat("r", 7),
+		)
+
+		return fake.calls, err
 	})
 }
 

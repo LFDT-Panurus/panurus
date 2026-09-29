@@ -24,4 +24,7 @@ var (
 	// ErrValidatePublicParams signals that the submitted public parameters failed
 	// authorization or consistency checks
 	ErrValidatePublicParams = errors.New("invalid public parameters")
+	// ErrAlreadyProcessed signals that the request was already approved by this
+	// endorser and must not be evaluated again
+	ErrAlreadyProcessed = errors.New("request already processed")
 )

@@ -10,6 +10,7 @@ import (
 	"context"
 	"testing"
 
+	tdriver "github.com/LFDT-Panurus/panurus/token/driver"
 	"github.com/LFDT-Panurus/panurus/token/services/storage/db/common"
 	dbdriver "github.com/LFDT-Panurus/panurus/token/services/storage/db/driver"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
@@ -37,6 +38,14 @@ func (failingEndorserStore) QueryValidations(context.Context, dbdriver.QueryVali
 
 func (failingEndorserStore) GetStatus(context.Context, string) (dbdriver.TxStatus, string, error) {
 	return dbdriver.Unknown, "", errQueryFailed
+}
+
+func (failingEndorserStore) RecordValidationFailure(context.Context, string, []byte, tdriver.PPHash, string) error {
+	return errQueryFailed
+}
+
+func (failingEndorserStore) QueryValidationFailures(context.Context, dbdriver.QueryValidationFailureRecordsParams) (dbdriver.ValidationFailureRecordsIterator, error) {
+	return nil, errQueryFailed
 }
 
 // TestValidationRecordsPreservesErrorChain checks that a driver failure surfaced by

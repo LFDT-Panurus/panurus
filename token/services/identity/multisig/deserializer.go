@@ -21,11 +21,11 @@ import (
 //go:generate counterfeiter -o mock/matcher.go -fake-name Matcher github.com/LFDT-Panurus/panurus/token/driver.Matcher
 //go:generate counterfeiter -o mock/audit_info_matcher.go -fake-name AuditInfoMatcher . AuditInfoMatcher
 //go:generate sed -i "/var _ multisig\\.AuditInfoMatcher = new(AuditInfoMatcher)/d" mock/audit_info_matcher.go
-//go:generate sed -i "/\"github.com\\/hyperledger-labs\\/panurus\\/token\\/services\\/identity\\/multisig\"/d" mock/audit_info_matcher.go
+//go:generate sed -i "/\"github.com\\/LFDT-Panurus\\/panurus\\/token\\/services\\/identity\\/multisig\"/d" mock/audit_info_matcher.go
 
 //go:generate counterfeiter -o mock/verifier_des.go -fake-name VerifierDES . VerifierDES
 //go:generate sed -i "/var _ multisig\\.VerifierDES = new(VerifierDES)/d" mock/verifier_des.go
-//go:generate sed -i "/\"github.com\\/hyperledger-labs\\/panurus\\/token\\/services\\/identity\\/multisig\"/d" mock/verifier_des.go
+//go:generate sed -i "/\"github.com\\/LFDT-Panurus\\/panurus\\/token\\/services\\/identity\\/multisig\"/d" mock/verifier_des.go
 
 type VerifierDES interface {
 	DeserializeVerifier(ctx context.Context, id driver.Identity) (driver.Verifier, error)
