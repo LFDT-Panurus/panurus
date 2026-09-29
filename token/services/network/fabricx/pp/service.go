@@ -13,9 +13,20 @@ import (
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/common/driver"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/fabricx/core/committer/queryservice"
+	"github.com/hyperledger-labs/fabric-smart-client/platform/fabricx/core/vault"
 )
 
 var logger = logging.MustGetLogger()
+
+// QueryService models the FabricX query service needed to read public parameters.
+//
+//go:generate counterfeiter -o mock/qs.go -fake-name QueryService . QueryService
+type QueryService = queryservice.QueryService
+
+// QueryServiceProvider is an alias for queryservice.Provider.
+//
+//go:generate counterfeiter -o mock/qps.go -fake-name QueryServiceProvider . QueryServiceProvider
+type QueryServiceProvider = queryservice.Provider
 
 // PublicParametersService models a service for fetching and loading public parameters.
 type PublicParametersService struct {
@@ -62,6 +73,33 @@ func (f *PublicParametersService) Fetch(network driver.Network, channel driver.C
 	}
 
 	return value.Raw, nil
+}
+
+// FetchSetupHashVersion retrieves the ledger version of the public parameters
+// setup hash key for the specified network, channel, and namespace. This is the
+// key for which every token transaction carries a versioned read dependency, so
+// its row version is the version an endorser must attach to the transactions it
+// translates.
+// The returned boolean reports whether the key exists on the ledger at all; when
+// it does not, the returned version is zero.
+func (f *PublicParametersService) FetchSetupHashVersion(network driver.Network, channel driver.Channel, namespace driver.Namespace) (uint64, bool, error) {
+	qs, err := f.qsProvider.Get(network, channel)
+	if err != nil {
+		return 0, false, errors.Wrapf(err, "failed getting query service")
+	}
+	k, err := f.translator.CreateSetupHashKey()
+	if err != nil {
+		return 0, false, errors.Wrapf(err, "failed creating setup hash key")
+	}
+	value, err := qs.GetState(namespace, k)
+	if err != nil {
+		return 0, false, errors.Wrapf(err, "failed getting state")
+	}
+	if value == nil {
+		return 0, false, nil
+	}
+
+	return vault.UnmarshalVersion(value.Version), true, nil
 }
 
 // Loader models a loader for public parameters.

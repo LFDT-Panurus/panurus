@@ -882,7 +882,17 @@ func TestSelector(network *integration.Infrastructure, auditorId string, sel *to
 	TransferCash(network, alice, "", "USD", 160, bob, auditor, "insufficient funds, only [150] tokens of type [USD] are available")
 }
 
-func TestPublicParamsUpdate(network *integration.Infrastructure, newAuditorID string, ppBytes []byte, networkName string, issuerAsAuditor bool, sel *token3.ReplicaSelector, updateWithAppend bool) {
+// TestPublicParamsUpdate updates the public parameters of the given TMS and checks that
+// the network keeps working with the new parameters.
+//
+// The optional restartAfterUpdate node names are restarted once the update has been
+// picked up by every node, before any transaction is issued against the new parameters.
+// Pass the endorser nodes of a network whose endorsers track the on-chain version of the
+// public parameters (FabricX) to cover
+// https://github.com/LFDT-Panurus/panurus/issues/2255: an endorser that rebuilds its
+// public parameters version from scratch on startup attaches a stale version to every
+// transaction it endorses, and the committer rejects them all with an MVCC conflict.
+func TestPublicParamsUpdate(network *integration.Infrastructure, newAuditorID string, ppBytes []byte, networkName string, issuerAsAuditor bool, sel *token3.ReplicaSelector, updateWithAppend bool, restartAfterUpdate ...string) {
 	newAuditor := sel.Get(newAuditorID)
 	tms := GetTMSByNetworkName(network, networkName)
 	newIssuer := sel.Get("newIssuer")
@@ -915,6 +925,17 @@ func TestPublicParamsUpdate(network *integration.Infrastructure, newAuditorID st
 	}
 	gomega.Eventually(DoesWalletExist).WithArguments(network, alice, "", views.OwnerWallet).WithTimeout(1 * time.Minute).WithPolling(15 * time.Second).Should(gomega.BeTrue())
 	gomega.Eventually(DoesWalletExist).WithArguments(network, manager, "manager.id1", views.OwnerWallet).WithTimeout(1 * time.Minute).WithPolling(15 * time.Second).Should(gomega.BeTrue())
+
+	// restart the requested nodes now that the update is in place, so that what follows
+	// exercises nodes that learnt the new public parameters at startup rather than from
+	// the update notification
+	if len(restartAfterUpdate) > 0 {
+		refs := make([]*token3.NodeReference, 0, len(restartAfterUpdate))
+		for _, name := range restartAfterUpdate {
+			refs = append(refs, sel.Get(name))
+		}
+		Restart(network, false, nil, refs...)
+	}
 
 	txId = IssueCash(network, "", "USD", 110, alice, newAuditor, true, newIssuer)
 	gomega.Expect(txId).NotTo(gomega.BeEmpty())
