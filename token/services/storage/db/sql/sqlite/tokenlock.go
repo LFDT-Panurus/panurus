@@ -31,7 +31,7 @@ func (db *TokenLockStore) AcquireCleanupLeadership(_ context.Context) (driver.Cl
 
 // NewTokenLockStore returns a new TokenLockStore for the given RWDB and table names.
 func NewTokenLockStore(dbs *common3.RWDB, tableNames common4.TableNames) (*TokenLockStore, error) {
-	tldb, err := common4.NewTokenLockStore(dbs.ReadDB, dbs.WriteDB, tableNames, NewConditionInterpreter(), &fscSqlite.ErrorMapper{})
+	tldb, err := common4.NewTokenLockStore(dbs.ReadDB, NewBusyRetryWriteDB(dbs.WriteDB), tableNames, NewConditionInterpreter(), &fscSqlite.ErrorMapper{})
 	if err != nil {
 		return nil, err
 	}

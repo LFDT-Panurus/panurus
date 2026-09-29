@@ -20,7 +20,7 @@ func NewTokenStore(
 ) (*TokenStore, error) {
 	return sqlcommon.NewTokenStoreWithNotifier(
 		dbs.ReadDB,
-		dbs.WriteDB,
+		NewBusyRetryWriteDB(dbs.WriteDB),
 		tableNames,
 		NewConditionInterpreter(),
 		nil,
