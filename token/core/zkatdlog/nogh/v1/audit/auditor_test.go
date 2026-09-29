@@ -8,6 +8,7 @@ package audit_test
 
 import (
 	"os"
+	"strconv"
 	"testing"
 
 	"github.com/IBM/idemix/bccsp/types"
@@ -1027,12 +1028,19 @@ func getIdemixInfo(t *testing.T, dir string) (driver.Identity, []byte) {
 	return id, audit
 }
 
+// auditTestInputValues are the cleartext values of the two input tokens that createInputs always
+// produces. They are the single source of truth shared with buildAuditTokensFromInputs, which must
+// record the same quantities in the audit-token store so the auditor's value-conservation check
+// (validateTransferValueConservation) sees inputs that balance the transfers' outputs (25+35 == 60,
+// i.e. 40+20 or a single 60 redeem).
+var auditTestInputValues = []int64{25, 35}
+
 func createInputs(t *testing.T, pp *v1.PublicParams, id driver.Identity) ([]*token.Token, []*token.Metadata) {
 	t.Helper()
 	c := math.Curves[pp.Curve]
 	inputs := make([]*token.Token, 2)
 	infos := make([]*token.Metadata, 2)
-	values := []*math.Zr{c.NewZrFromInt(25), c.NewZrFromInt(35)}
+	values := []*math.Zr{c.NewZrFromInt(auditTestInputValues[0]), c.NewZrFromInt(auditTestInputValues[1])}
 	rand, err := c.Rand()
 	require.NoError(t, err)
 	ttype := c.HashToZr([]byte("ABC"))
@@ -1116,9 +1124,15 @@ func buildAuditTokensFromInputs(t *testing.T, metadata *driver.TransferMetadata,
 			}
 			tokenID := metadata.Inputs[i].TokenID
 			if tokenID != nil {
+				// Record the real input value (see auditTestInputValues) so the auditor's
+				// value-conservation check sees inputs that balance the transfer's outputs.
+				quantity := "0"
+				if i < len(auditTestInputValues) {
+					quantity = strconv.FormatInt(auditTestInputValues[i], 10)
+				}
 				auditTokens[tokenID.String()] = &token3.Token{
 					Type:     "ABC",
-					Quantity: "0", // Placeholder - actual value not needed for these tests
+					Quantity: quantity,
 					Owner:    tok.Owner,
 				}
 			}
