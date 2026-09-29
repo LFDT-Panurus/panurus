@@ -7,6 +7,7 @@ SPDX-License-Identifier: Apache-2.0
 package endorsement
 
 import (
+	"bytes"
 	"context"
 	"strconv"
 	"strings"
@@ -220,6 +221,16 @@ func (i *Initiator) bind(anchor [keys.AnchorLength]byte, delta *statedelta.State
 	}
 	if err := delta.Validate(); err != nil {
 		return errors.Wrapf(ErrDeltaMismatch, "malformed delta: %v", err)
+	}
+	// A setup request carries the exact parameters to commit, so unlike a token request the delta can be
+	// checked against it without a validator.
+	if i.request != nil && i.request.Kind == KindSetup {
+		if !delta.IsSetup {
+			return errors.Wrapf(ErrDeltaMismatch, "setup request answered with a non-setup delta")
+		}
+		if !bytes.Equal(delta.SetupParameters, i.request.PublicParamsRaw) {
+			return errors.Wrapf(ErrDeltaMismatch, "delta setup parameters differ from the requested ones")
+		}
 	}
 
 	return nil

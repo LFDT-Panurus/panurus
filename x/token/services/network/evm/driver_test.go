@@ -8,7 +8,9 @@ package evm
 
 import (
 	"context"
+	"sync"
 	"testing"
+	"time"
 
 	token2 "github.com/LFDT-Panurus/panurus/token"
 	tokendriver "github.com/LFDT-Panurus/panurus/token/driver"
@@ -17,6 +19,7 @@ import (
 	"github.com/LFDT-Panurus/panurus/token/services/network/driver"
 	tokendbmock "github.com/LFDT-Panurus/panurus/token/services/storage/tokendb/mock"
 	"github.com/LFDT-Panurus/panurus/token/services/tokens"
+	"github.com/LFDT-Panurus/panurus/x/token/services/network/evm/client"
 	"github.com/LFDT-Panurus/panurus/x/token/services/network/evm/client/mock"
 	"github.com/LFDT-Panurus/panurus/x/token/services/network/evm/eip712"
 	"github.com/LFDT-Panurus/panurus/x/token/services/network/evm/endorsement"
@@ -151,6 +154,14 @@ type fakeViewManager struct{}
 
 func (fakeViewManager) InitiateView(context.Context, view.View) (any, error) { return nil, nil }
 
+// fakePPValidator satisfies endorsement.PublicParamsValidator without a real token driver; these tests
+// never actually endorse a setup request, only build the factory that would serve one.
+type fakePPValidator struct{}
+
+func (fakePPValidator) PublicParametersFromBytes([]byte) (tokendriver.PublicParameters, error) {
+	return nil, errors.New("fakePPValidator: not implemented")
+}
+
 // fakeIdentityProvider resolves every name to an identity carrying the same bytes, so
 // config.AllowedRequesters can turn the allowlist's names into identities the way d.resolveIdentity
 // does in production.
@@ -194,6 +205,7 @@ func testServiceFactory(t *testing.T, config *Config) *endorsement.ServiceFactor
 	factory, err := endorsement.NewServiceFactory(endorsement.FactoryConfig{
 		Client:      evmClient,
 		ViewManager: fakeViewManager{},
+		PPValidator: fakePPValidator{},
 	})
 	require.NoError(t, err)
 	require.NoError(t, factory.Register(token2.TMSID{Network: "evm", Namespace: "token"}, endorsement.TMSConfig{
@@ -288,7 +300,7 @@ func TestNewDriver(t *testing.T) {
 	cs := config.NewService(fakeConfigProvider{})
 	d := NewDriver(
 		cs, fakeIdentityProvider{}, nil, nil, nil, nil, nil, nil,
-		tracenoop.NewTracerProvider(), nil,
+		tracenoop.NewTracerProvider(), nil, nil,
 	)
 
 	impl, ok := d.(*Driver)
@@ -490,6 +502,214 @@ func TestWatchPublicParamsWithoutTMSProvider(t *testing.T) {
 	d.watchPublicParams("evm-net", "", []NamespaceConfig{{Namespace: "token", Config: c}}, &mock.EVMClient{})
 
 	assert.Empty(t, d.watchers, "no watcher may be started without a tms provider")
+}
+
+// TestWatchPublicParamsReadsAtLatestNotFinality is the regression test for issue #2412 item 2: the
+// watcher used to poll at cfg.Finality.BlockTag (finalized by default), while the endorsement path's
+// own ChainProvider deliberately reads the same contract at latest to match what
+// TokenState.applyStateDelta checks at apply time. That mismatch meant an endorsing node's local view
+// of public parameters lagged an already-mined setup update by the whole finalization window, during
+// which every ordinary approval that node endorses was refused with ErrStalePublicParams. A node
+// endorsing against this contract must read at latest regardless of what Finality.BlockTag is
+// configured to.
+func TestWatchPublicParamsReadsAtLatestNotFinality(t *testing.T) {
+	c := validConfig()
+	c.applyDefaults()
+	c.Finality.BlockTag = client.BlockTagFinalized
+	c.Finality.PollInterval = 5 * time.Millisecond
+	c.Endorser.Enabled = true
+	c.Endorser.Address = c.Endorsement.Endorsers[0].Address
+	c.Endorsement.Allowlist = []string{c.Endorsement.Endorsers[0].FSCIdentity}
+	require.NoError(t, c.Validate())
+
+	d := &Driver{
+		watchers:    map[string]*pp.Watcher{},
+		tmsProvider: token2.NewManagementServiceProvider(&fakeTokenManagerServiceProvider{updateErr: map[string]error{}}, nil, nil, nil, nil),
+	}
+
+	var mu sync.Mutex
+	var tags []string
+	evmClient := &mock.EVMClient{}
+	evmClient.CallStub = func(_ context.Context, _ client.Address, _ []byte, blockTag string) ([]byte, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		tags = append(tags, blockTag)
+
+		return nil, nil
+	}
+
+	d.watchPublicParams("evm-net", "", []NamespaceConfig{{Namespace: "token", Config: c}}, evmClient)
+	t.Cleanup(func() {
+		for _, w := range d.watchers {
+			w.Stop()
+		}
+	})
+
+	require.Eventually(t, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+
+		return len(tags) > 0
+	}, time.Second, 5*time.Millisecond, "the watcher must poll the chain at least once")
+
+	mu.Lock()
+	defer mu.Unlock()
+	for _, tag := range tags {
+		assert.Equal(t, client.BlockTagLatest, tag,
+			"the watcher must read at latest even though Finality.BlockTag is configured to finalized")
+	}
+}
+
+// TestWatchPublicParamsEndorsingConfigWinsOnSharedContract checks that when an endorsing and a slower
+// non-endorsing namespace share one TokenState, declared in either order, the watcher polls at the
+// endorsing namespace's interval rather than whichever was declared last.
+func TestWatchPublicParamsEndorsingConfigWinsOnSharedContract(t *testing.T) {
+	endorsing := validConfig()
+	endorsing.applyDefaults()
+	endorsing.Finality.PollInterval = 5 * time.Millisecond
+	endorsing.Endorser.Enabled = true
+	endorsing.Endorser.Address = endorsing.Endorsement.Endorsers[0].Address
+	endorsing.Endorsement.Allowlist = []string{endorsing.Endorsement.Endorsers[0].FSCIdentity}
+	require.NoError(t, endorsing.Validate())
+
+	slow := validConfig()
+	slow.applyDefaults()
+	slow.Finality.PollInterval = time.Hour
+	slow.Finality.Timeout = 2 * time.Hour
+	require.NoError(t, slow.Validate())
+
+	d := &Driver{
+		watchers:    map[string]*pp.Watcher{},
+		tmsProvider: token2.NewManagementServiceProvider(&fakeTokenManagerServiceProvider{updateErr: map[string]error{}}, nil, nil, nil, nil),
+	}
+
+	var mu sync.Mutex
+	polls := 0
+	evmClient := &mock.EVMClient{}
+	evmClient.CallStub = func(_ context.Context, _ client.Address, _ []byte, _ string) ([]byte, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		polls++
+
+		return nil, nil
+	}
+
+	d.watchPublicParams("evm-net", "", []NamespaceConfig{
+		{Namespace: "endorsing", Config: endorsing},
+		{Namespace: "slow", Config: slow},
+	}, evmClient)
+	t.Cleanup(func() {
+		for _, w := range d.watchers {
+			w.Stop()
+		}
+	})
+
+	require.Eventually(t, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+
+		return polls >= 3
+	}, time.Second, 5*time.Millisecond, "the watcher must poll at the endorsing namespace's short interval")
+}
+
+// TestWatchPublicParamsShortestEndorsingIntervalWins checks that between two endorsing namespaces
+// sharing one TokenState, a slower one declared last does not stretch the fast one's poll interval.
+func TestWatchPublicParamsShortestEndorsingIntervalWins(t *testing.T) {
+	newEndorsing := func(poll time.Duration) *Config {
+		c := validConfig()
+		c.applyDefaults()
+		c.Finality.PollInterval = poll
+		c.Finality.Timeout = 2 * time.Hour
+		c.Endorser.Enabled = true
+		c.Endorser.Address = c.Endorsement.Endorsers[0].Address
+		c.Endorsement.Allowlist = []string{c.Endorsement.Endorsers[0].FSCIdentity}
+		require.NoError(t, c.Validate())
+
+		return c
+	}
+
+	d := &Driver{
+		watchers:    map[string]*pp.Watcher{},
+		tmsProvider: token2.NewManagementServiceProvider(&fakeTokenManagerServiceProvider{updateErr: map[string]error{}}, nil, nil, nil, nil),
+	}
+
+	var mu sync.Mutex
+	polls := 0
+	evmClient := &mock.EVMClient{}
+	evmClient.CallStub = func(_ context.Context, _ client.Address, _ []byte, _ string) ([]byte, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		polls++
+
+		return nil, nil
+	}
+
+	d.watchPublicParams("evm-net", "", []NamespaceConfig{
+		{Namespace: "fast", Config: newEndorsing(5 * time.Millisecond)},
+		{Namespace: "slow", Config: newEndorsing(time.Hour)},
+	}, evmClient)
+	t.Cleanup(func() {
+		for _, w := range d.watchers {
+			w.Stop()
+		}
+	})
+
+	require.Eventually(t, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+
+		return polls >= 3
+	}, time.Second, 5*time.Millisecond, "the watcher must poll at the shortest endorsing interval")
+}
+
+// TestWatchPublicParamsReadsAtConfiguredTagWhenNotEndorsing checks the other half of the gating: a
+// node that does not endorse against this contract has no lockstep requirement with
+// TokenState.applyStateDelta's head-storage check, so its watcher must poll at the configured
+// Finality.BlockTag rather than latest, avoiding the reorg exposure a non-finalized read carries.
+func TestWatchPublicParamsReadsAtConfiguredTagWhenNotEndorsing(t *testing.T) {
+	c := validConfig()
+	c.applyDefaults()
+	c.Finality.BlockTag = client.BlockTagFinalized
+	c.Finality.PollInterval = 5 * time.Millisecond
+	require.NoError(t, c.Validate())
+	require.False(t, c.Endorser.Enabled, "this test is about a node that is not configured as an endorser")
+
+	d := &Driver{
+		watchers:    map[string]*pp.Watcher{},
+		tmsProvider: token2.NewManagementServiceProvider(&fakeTokenManagerServiceProvider{updateErr: map[string]error{}}, nil, nil, nil, nil),
+	}
+
+	var mu sync.Mutex
+	var tags []string
+	evmClient := &mock.EVMClient{}
+	evmClient.CallStub = func(_ context.Context, _ client.Address, _ []byte, blockTag string) ([]byte, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		tags = append(tags, blockTag)
+
+		return nil, nil
+	}
+
+	d.watchPublicParams("evm-net", "", []NamespaceConfig{{Namespace: "token", Config: c}}, evmClient)
+	t.Cleanup(func() {
+		for _, w := range d.watchers {
+			w.Stop()
+		}
+	})
+
+	require.Eventually(t, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+
+		return len(tags) > 0
+	}, time.Second, 5*time.Millisecond, "the watcher must poll the chain at least once")
+
+	mu.Lock()
+	defer mu.Unlock()
+	for _, tag := range tags {
+		assert.Equal(t, client.BlockTagFinalized, tag,
+			"a non-endorsing node's watcher must read at the configured Finality.BlockTag, not latest")
+	}
 }
 
 // TestWatchPublicParamsSkipsABadTokenState checks a namespace whose TokenStateAddress cannot be
