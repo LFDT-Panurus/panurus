@@ -17,6 +17,9 @@ import (
 //
 //go:generate counterfeiter -o mock/storage.go -fake-name Storage . Storage
 type Storage interface {
+	// AlreadyProcessed reports whether the request identified by txID has already
+	// been approved by this endorser (i.e. a validation record already exists for it).
+	AlreadyProcessed(ctx context.Context, txID string) (bool, error)
 	AppendValidationRecord(ctx context.Context, txID string, tokenRequest []byte, meta map[string][]byte, ppHash tdriver.PPHash) error
 }
 

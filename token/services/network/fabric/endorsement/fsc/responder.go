@@ -386,6 +386,22 @@ func (b *approvalBehaviour) validate(context view.Context, request *Request) err
 	request.Tms = tms
 	request.PublicParamsHash = tms.PublicParametersManager().PublicParamsHash()
 
+	db, err := b.storageProvider.GetStorage(request.TMSID)
+	if err != nil {
+		return errors.WithMessagef(err, "failed to retrieve db [%s]", request.TMSID)
+	}
+
+	// Reject a request this endorser has already approved before doing any (expensive)
+	// verification: a validation record is written for every approved request keyed by
+	// its anchor, so its presence means the request was already processed. This makes
+	// re-approval a fast, explicit rejection rather than wasted work that only fails
+	// later at the validation-record insert.
+	if processed, err := db.AlreadyProcessed(context.Context(), request.Anchor); err != nil {
+		return errors.WithMessagef(err, "failed to check whether [%s] was already processed", request.Anchor)
+	} else if processed {
+		return errors.Wrapf(ErrAlreadyProcessed, "request [%s] was already processed", request.Anchor)
+	}
+
 	getState := func(id token.ID) ([]byte, error) {
 		key, err := b.keyTranslator.CreateOutputKey(id.TxId, id.Index)
 		if err != nil {
@@ -409,10 +425,6 @@ func (b *approvalBehaviour) validate(context view.Context, request *Request) err
 	)
 	if err != nil {
 		return errors.WithMessagef(err, "failed to verify token request for [%s]", request.Anchor)
-	}
-	db, err := b.storageProvider.GetStorage(request.TMSID)
-	if err != nil {
-		return errors.WithMessagef(err, "failed to retrieve db [%s]", request.TMSID)
 	}
 	logger.DebugfContext(context.Context(), "Append validation record for TX [%s]", request.Anchor)
 	if err := db.AppendValidationRecord(

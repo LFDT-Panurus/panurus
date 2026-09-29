@@ -76,6 +76,7 @@ type MockNewRequestApprovalResponderView struct {
 	tmsp            *mock.TokenManagementSystemProvider
 	channelProvider *mock.ChannelProvider
 	mspManager      *mock.MSPManager
+	storage         *mock.Storage
 }
 
 func mockNewRequestApprovalResponderView(t *testing.T, overrideTMSID *token.TMSID) *MockNewRequestApprovalResponderView {
@@ -164,6 +165,7 @@ func mockNewRequestApprovalResponderView(t *testing.T, overrideTMSID *token.TMSI
 		tmsp:            tmsp,
 		channelProvider: channelProvider,
 		mspManager:      mspManager,
+		storage:         storage,
 	}
 }
 
@@ -677,6 +679,41 @@ func TestRequestApprovalResponderView(t *testing.T) {
 			expectError: false,
 			verify: func(m *MockNewRequestApprovalResponderView, res any) {
 				assert.Equal(t, 1, m.rws.DoneCallCount())
+			},
+		},
+		{
+			name: "request already processed",
+			setup: func() *MockNewRequestApprovalResponderView {
+				m := mockNewRequestApprovalResponderView(t, nil)
+				m.storage.AlreadyProcessedReturns(true, nil)
+
+				return m
+			},
+			expectError:      true,
+			expectErrorType:  fsc.ErrAlreadyProcessed,
+			expectErrContain: "was already processed",
+			verify: func(m *MockNewRequestApprovalResponderView, res any) {
+				assert.Equal(t, 1, m.rws.DoneCallCount())
+				// the request must be rejected before any verification or record append
+				assert.Equal(t, 0, m.validator.VerifyTokenRequestFromRawCallCount())
+				assert.Equal(t, 0, m.storage.AppendValidationRecordCallCount())
+			},
+		},
+		{
+			name: "failed to check whether request was already processed",
+			setup: func() *MockNewRequestApprovalResponderView {
+				m := mockNewRequestApprovalResponderView(t, nil)
+				m.storage.AlreadyProcessedReturns(false, errors.New("pineapple"))
+
+				return m
+			},
+			expectError:      true,
+			expectErrorType:  fsc.ErrValidateProposal,
+			expectErrContain: "pineapple",
+			verify: func(m *MockNewRequestApprovalResponderView, res any) {
+				assert.Equal(t, 1, m.rws.DoneCallCount())
+				assert.Equal(t, 0, m.validator.VerifyTokenRequestFromRawCallCount())
+				assert.Equal(t, 0, m.storage.AppendValidationRecordCallCount())
 			},
 		},
 		{
