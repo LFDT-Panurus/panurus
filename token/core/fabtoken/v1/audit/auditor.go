@@ -75,7 +75,7 @@ func NewAuditor(logger logging.Logger, tracer trace.Tracer, deserializer driver.
 	}
 
 	transferValidators := []ValidateTransferAuditFunc{
-		TransferAuditValidate(precision),
+		TransferAuditValidate(),
 	}
 
 	return common.NewAuditor[*setup.PublicParams, *actions.IssueAction, *actions.TransferAction, driver.Deserializer](
@@ -125,7 +125,7 @@ func IssueAuditValidate(precision uint64) ValidateIssueAuditFunc {
 }
 
 // TransferAuditValidate returns a validation function for transfer actions.
-func TransferAuditValidate(precision uint64) ValidateTransferAuditFunc {
+func TransferAuditValidate() ValidateTransferAuditFunc {
 	return func(ctx context.Context, auditCtx *AuditContext) error {
 		// Get the transfer action and metadata
 		action := auditCtx.TransferAction
@@ -150,10 +150,10 @@ func TransferAuditValidate(precision uint64) ValidateTransferAuditFunc {
 			return errors.Wrapf(err, "transfer action does not match metadata")
 		}
 
-		// Validate that all inputs and outputs have the same token type
-		// For fabtoken, we don't validate value sums because outputs are in cleartext
-		// and validated by the action's Match() method
-		if err := common.ValidateTransferActionTokenTypes(metadata, auditCtx.AuditTokens, false, precision); err != nil {
+		// Validate that all inputs have the same token type.
+		// For fabtoken, output types and value sums are in cleartext and validated by the
+		// action's Match() method above.
+		if err := common.ValidateTransferActionTokenTypes(metadata, auditCtx.AuditTokens); err != nil {
 			return errors.Wrapf(err, "token type validation failed for transfer action")
 		}
 
