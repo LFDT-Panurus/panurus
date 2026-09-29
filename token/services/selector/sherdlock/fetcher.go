@@ -9,6 +9,7 @@ package sherdlock
 import (
 	"context"
 	"io"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -29,15 +30,27 @@ const (
 	defaultCacheMaxQueries        = maxImmediateRetries
 )
 
+// FetcherStrategy names the strategy a fetcher provider uses to obtain the spendable tokens
+// of a wallet. The accepted values are the ones listed below, which are exactly the ones
+// SupportedFetcherStrategies reports; anything else is rejected by NewFetcherProvider.
 type FetcherStrategy string
 
 const (
-	Lazy     FetcherStrategy = "lazy"
-	Eager    FetcherStrategy = "eager"
-	Mixed    FetcherStrategy = "mixed"
-	Listener FetcherStrategy = "listener"
-	Cached   FetcherStrategy = "cached"
+	// Lazy queries the token store on every selection request and hands out a permutation of
+	// the result. It keeps no state, so it never serves a token that has been spent since,
+	// at the cost of one query per request.
+	Lazy FetcherStrategy = "lazy"
+	// Eager keeps a cache of the spendable tokens of every wallet, refreshed when it grows
+	// stale or has answered too many requests, and serves every request from it. It trades
+	// query load for the risk of offering tokens that were spent since the last refresh.
+	Eager FetcherStrategy = "eager"
+	// Mixed serves a request from the Eager cache when that cache holds tokens for the
+	// wallet and falls back to Lazy when it does not. It is the default.
+	Mixed FetcherStrategy = "mixed"
 )
+
+// DefaultFetcherStrategy is the strategy NewFetcherProvider uses when it is not given one.
+const DefaultFetcherStrategy = Mixed
 
 type fetchFunc func(db *tokendb.StoreService, m *Metrics, cacheSize int64, freshnessInterval time.Duration, maxQueries int) TokenFetcher
 
@@ -50,17 +63,43 @@ type fetcherProvider struct {
 	maxQueries               int
 }
 
+// fetchers holds the constructor of every selectable strategy. Its keys are the single
+// source of truth for which FetcherStrategy values are accepted.
 var fetchers = map[FetcherStrategy]fetchFunc{
+	Lazy: func(db *tokendb.StoreService, _ *Metrics, _ int64, _ time.Duration, _ int) TokenFetcher {
+		return NewLazyFetcher(db)
+	},
+	Eager: func(db *tokendb.StoreService, _ *Metrics, cacheSize int64, freshnessInterval time.Duration, maxQueries int) TokenFetcher {
+		return NewCachedFetcher(db, cacheSize, freshnessInterval, maxQueries)
+	},
 	Mixed: func(db *tokendb.StoreService, m *Metrics, cacheSize int64, freshnessInterval time.Duration, maxQueries int) TokenFetcher {
-		return newMixedFetcher(db, m, cacheSize, freshnessInterval, maxQueries)
+		return NewMixedFetcher(db, m, cacheSize, freshnessInterval, maxQueries)
 	},
 }
 
-// NewFetcherProvider creates a new fetcher provider with the specified strategy and configuration.
-func NewFetcherProvider(storeServiceManager tokendb.StoreServiceManager, metricsProvider metrics.Provider, strategy FetcherStrategy, cacheSize int64, freshnessInterval time.Duration, maxQueries int) *fetcherProvider {
+// SupportedFetcherStrategies returns the strategies NewFetcherProvider accepts, in
+// alphabetical order.
+func SupportedFetcherStrategies() []FetcherStrategy {
+	strategies := make([]FetcherStrategy, 0, len(fetchers))
+	for strategy := range fetchers {
+		strategies = append(strategies, strategy)
+	}
+	slices.Sort(strategies)
+
+	return strategies
+}
+
+// NewFetcherProvider creates a new fetcher provider with the specified strategy and
+// configuration. An empty strategy selects DefaultFetcherStrategy; any other unsupported
+// value returns an error, so that a bad configuration value fails cleanly at startup rather
+// than taking the process down.
+func NewFetcherProvider(storeServiceManager tokendb.StoreServiceManager, metricsProvider metrics.Provider, strategy FetcherStrategy, cacheSize int64, freshnessInterval time.Duration, maxQueries int) (*fetcherProvider, error) {
+	if strategy == "" {
+		strategy = DefaultFetcherStrategy
+	}
 	fetcher, ok := fetchers[strategy]
 	if !ok {
-		panic("undefined fetcher strategy: " + strategy)
+		return nil, errors.Errorf("undefined fetcher strategy [%s], supported strategies are %v", strategy, SupportedFetcherStrategies())
 	}
 
 	return &fetcherProvider{
@@ -70,7 +109,7 @@ func NewFetcherProvider(storeServiceManager tokendb.StoreServiceManager, metrics
 		cacheSize:                cacheSize,
 		freshnessInterval:        freshnessInterval,
 		maxQueries:               maxQueries,
-	}
+	}, nil
 }
 
 // GetFetcher returns a token fetcher instance for the specified TMS ID.
@@ -159,11 +198,6 @@ func peekIterator[T any](it Iterator[*T]) (Iterator[*T], bool, error) {
 	}
 
 	return &peekedIterator[T]{first: first, it: it}, true, nil
-}
-
-// newMixedFetcher is an internal alias for NewMixedFetcher.
-func newMixedFetcher(tokenDB TokenDB, m *Metrics, cacheSize int64, freshnessInterval time.Duration, maxQueries int) *mixedFetcher {
-	return NewMixedFetcher(tokenDB, m, cacheSize, freshnessInterval, maxQueries)
 }
 
 // lazyFetcher only looks up the results when requested

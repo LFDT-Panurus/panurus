@@ -46,6 +46,13 @@ type Config struct {
 	FetcherCacheSize       int64         `yaml:"fetcherCacheSize,omitempty"`
 	FetcherCacheRefresh    time.Duration `yaml:"fetcherCacheRefresh,omitempty"`
 	FetcherCacheMaxQueries int           `yaml:"fetcherCacheMaxQueries,omitempty"`
+	// FetcherStrategy selects how the sherdlock token fetcher obtains the spendable tokens of
+	// a wallet: "mixed" (the default) serves a request from the token cache and falls back to
+	// a database query when the cache holds nothing for the wallet, "eager" always serves from
+	// the cache, and "lazy" always queries the database. An unset value selects the fetcher's
+	// default; an unrecognized one makes the node fail to start. The three FetcherCache* knobs
+	// above tune the cache that "mixed" and "eager" use and are ignored by "lazy".
+	FetcherStrategy string `yaml:"fetcherStrategy,omitempty"`
 	// RateLimitEnabled turns on the built-in per-wallet selection rate limiter with the
 	// default rate and burst. Rate limiting is off unless this is set or RateLimit is
 	// positive.
@@ -127,6 +134,13 @@ func (c *Config) GetFetcherCacheRefresh() time.Duration {
 func (c *Config) GetFetcherCacheMaxQueries() int {
 	// Return 0 if not set, which will trigger use of fetcher default
 	return c.FetcherCacheMaxQueries
+}
+
+// GetFetcherStrategy returns the configured token fetcher strategy. It returns the empty
+// string when none is configured, which selects the fetcher's default strategy; validation of
+// a non-empty value belongs to the fetcher, which owns the set of strategies it implements.
+func (c *Config) GetFetcherStrategy() string {
+	return c.FetcherStrategy
 }
 
 // IsRateLimitEnabled tells whether the built-in per-wallet selection rate limiter must be
