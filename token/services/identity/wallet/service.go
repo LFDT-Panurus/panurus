@@ -69,14 +69,67 @@ func NewService(
 	}
 }
 
+// registry returns the RoleRegistry configured for the given role, or a descriptive
+// error when none is configured. It replaces a bare map index whose nil result would
+// otherwise turn a missing-role misconfiguration into a nil-interface method-call panic
+// at first use.
+//
+//nolint:ireturn // RoleRegistry is the map's value type; callers legitimately need the interface
+func (s *Service) registry(role idriver.IdentityRoleType) (RoleRegistry, error) {
+	reg, ok := s.RoleRegistries[role]
+	if !ok || reg == nil {
+		return nil, errors.Errorf("no registry configured for %s role", idriver.RoleToString(role))
+	}
+
+	return reg, nil
+}
+
+// roleWallet looks up the registry for the given role, fetches the wallet bound to id, and
+// returns it as the concrete role-wallet interface W. Unlike a bare type assertion, a wallet
+// that does not implement W yields a descriptive error instead of panicking the calling
+// goroutine — the defect that #2068 addresses for a custom or partially-implemented
+// WalletFactory/RoleRegistry.
+func roleWallet[W tdriver.Wallet](ctx context.Context, s *Service, role idriver.IdentityRoleType, id tdriver.WalletLookupID) (W, error) {
+	var zero W
+	reg, err := s.registry(role)
+	if err != nil {
+		return zero, err
+	}
+	w, err := reg.WalletByID(ctx, role, id)
+	if err != nil {
+		return zero, err
+	}
+	rw, ok := w.(W)
+	if !ok {
+		walletID := "<nil>"
+		if w != nil {
+			walletID = w.ID()
+		}
+
+		return zero, errors.Errorf("wallet [%s] does not implement the expected %s wallet interface", walletID, idriver.RoleToString(role))
+	}
+
+	return rw, nil
+}
+
 // RegisterOwnerIdentity registers a long-term owner identity using the owner registry.
 func (s *Service) RegisterOwnerIdentity(ctx context.Context, config tdriver.IdentityConfiguration) error {
-	return s.RoleRegistries[idriver.OwnerRole].RegisterIdentity(ctx, config)
+	reg, err := s.registry(idriver.OwnerRole)
+	if err != nil {
+		return err
+	}
+
+	return reg.RegisterIdentity(ctx, config)
 }
 
 // RegisterIssuerIdentity registers a long-term issuer identity using the issuer registry.
 func (s *Service) RegisterIssuerIdentity(ctx context.Context, config tdriver.IdentityConfiguration) error {
-	return s.RoleRegistries[idriver.IssuerRole].RegisterIdentity(ctx, config)
+	reg, err := s.registry(idriver.IssuerRole)
+	if err != nil {
+		return err
+	}
+
+	return reg.RegisterIdentity(ctx, config)
 }
 
 // GetAuditInfo retrieves audit information for the given identity using the configured IdentityProvider.
@@ -182,47 +235,40 @@ func (s *Service) Wallet(ctx context.Context, identity tdriver.Identity) tdriver
 
 // OwnerWalletIDs returns the list of owner wallet identifiers from the owner registry.
 func (s *Service) OwnerWalletIDs(ctx context.Context) ([]string, error) {
-	return s.RoleRegistries[idriver.OwnerRole].WalletIDs(ctx)
+	reg, err := s.registry(idriver.OwnerRole)
+	if err != nil {
+		return nil, err
+	}
+
+	return reg.WalletIDs(ctx)
 }
 
 // OwnerWallet returns the OwnerWallet instance bound to the passed lookup id.
+// It returns an error (rather than panicking) if no owner registry is configured or the
+// resolved wallet does not implement tdriver.OwnerWallet.
 func (s *Service) OwnerWallet(ctx context.Context, id tdriver.WalletLookupID) (tdriver.OwnerWallet, error) {
-	w, err := s.RoleRegistries[idriver.OwnerRole].WalletByID(ctx, idriver.OwnerRole, id)
-	if err != nil {
-		return nil, err
-	}
-
-	return w.(tdriver.OwnerWallet), nil
+	return roleWallet[tdriver.OwnerWallet](ctx, s, idriver.OwnerRole, id)
 }
 
 // IssuerWallet returns the IssuerWallet instance bound to the passed lookup id.
+// It returns an error (rather than panicking) if no issuer registry is configured or the
+// resolved wallet does not implement tdriver.IssuerWallet.
 func (s *Service) IssuerWallet(ctx context.Context, id tdriver.WalletLookupID) (tdriver.IssuerWallet, error) {
-	w, err := s.RoleRegistries[idriver.IssuerRole].WalletByID(ctx, idriver.IssuerRole, id)
-	if err != nil {
-		return nil, err
-	}
-
-	return w.(tdriver.IssuerWallet), nil
+	return roleWallet[tdriver.IssuerWallet](ctx, s, idriver.IssuerRole, id)
 }
 
 // AuditorWallet returns the AuditorWallet instance bound to the passed lookup id.
+// It returns an error (rather than panicking) if no auditor registry is configured or the
+// resolved wallet does not implement tdriver.AuditorWallet.
 func (s *Service) AuditorWallet(ctx context.Context, id tdriver.WalletLookupID) (tdriver.AuditorWallet, error) {
-	w, err := s.RoleRegistries[idriver.AuditorRole].WalletByID(ctx, idriver.AuditorRole, id)
-	if err != nil {
-		return nil, err
-	}
-
-	return w.(tdriver.AuditorWallet), nil
+	return roleWallet[tdriver.AuditorWallet](ctx, s, idriver.AuditorRole, id)
 }
 
 // CertifierWallet returns the CertifierWallet instance bound to the passed lookup id.
+// It returns an error (rather than panicking) if no certifier registry is configured or the
+// resolved wallet does not implement tdriver.CertifierWallet.
 func (s *Service) CertifierWallet(ctx context.Context, id tdriver.WalletLookupID) (tdriver.CertifierWallet, error) {
-	w, err := s.RoleRegistries[idriver.CertifierRole].WalletByID(ctx, idriver.CertifierRole, id)
-	if err != nil {
-		return nil, err
-	}
-
-	return w.(tdriver.CertifierWallet), nil
+	return roleWallet[tdriver.CertifierWallet](ctx, s, idriver.CertifierRole, id)
 }
 
 // SpendIDs returns the spend ids for the passed token ids.
