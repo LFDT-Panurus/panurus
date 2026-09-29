@@ -12,6 +12,14 @@ The endorser database stores validation records that track token requests valida
 - Status and status message
 - Timestamp
 
+The same table also records **validation failures** — token requests the endorser attempted but
+failed to validate. A failed request is stored as a *rejected* row in the one `VALIDATIONS`
+table, discriminated from approved requests by a `rejected` column. A rejected row is purely
+forensic: it never gates whether the same request may be evaluated again. It additionally
+carries the public parameters hash the request was evaluated against, so a rejection can be
+replayed exactly as it happened. See
+[Recording a Validation Failure](#recording-a-validation-failure-auditing).
+
 ## Architecture
 
 The endorserdb follows the same architectural pattern as other storage services in Panurus:
@@ -131,21 +139,119 @@ err := store.SetStatus(ctx, txID, driver.Confirmed, "Transaction confirmed")
 status, message, err := store.GetStatus(ctx, txID)
 ```
 
+### Checking Whether a Request Was Already Processed
+
+`AlreadyProcessed` reports whether a validation record already exists for a given `txID`. A record is
+written once an endorser has approved a request and just before it endorses it, keyed by the request
+anchor (transaction id), so its presence means the request has already been processed:
+
+```go
+processed, err := store.AlreadyProcessed(ctx, txID)
+```
+
+It is built on `GetStatus`, which reads **approved rows only** (`rejected = false`) and reports `Unknown`
+without error for a `txID` that has no approved record, so a rejected (failed) row never makes a request
+look processed. Any existing approved record — including one whose status is later set to a terminal value
+such as `Deleted` or `Orphan` — counts as processed. The FSC token-request approval responder calls this
+before running the (expensive) token-request verification and rejects an already-processed anchor early
+with `ErrAlreadyProcessed`. This early check is an optimisation: the responder writes the record *before*
+releasing the endorsement signature, and `AppendValidationRecord` remains the atomic single-approval
+backstop for a concurrent duplicate that races past the check. The approval is a conditional upsert on the
+`tx_id` primary key that overwrites only a prior rejected row (`ON CONFLICT (tx_id) DO UPDATE ... WHERE
+rejected = true`); a second approval of an already-approved anchor therefore affects no rows, which the
+store reports as an error (`integrity.ErrAlreadyApproved`) before a second endorsement is produced.
+
+### Undoing a Record for a Failed Endorsement
+
+`DeleteValidationRecord` removes the validation record for a `txID` (deleting a `txID` that has no
+record is not an error):
+
+```go
+err := store.DeleteValidationRecord(ctx, txID)
+```
+
+The responder writes the record before endorsing so the already-processed marker is durable before the
+signature is released. If endorsement then fails, it calls `DeleteValidationRecord` to roll the record
+back, leaving the request retryable instead of permanently rejected by `AlreadyProcessed`. Unlike a
+status transition (which keeps the record and so keeps it counting as processed), this removes the row
+entirely, so a subsequent `AlreadyProcessed` reports `false` again.
+
+### Recording a Validation Failure (auditing)
+
+When an endorser *fails* to validate a token request, it still records the attempt for auditing
+purposes via `RecordValidationFailure`:
+
+```go
+err := store.RecordValidationFailure(ctx, txID, tokenRequest, ppHash, reason)
+```
+
+This writes an **audit-only** *rejected* row into the shared `VALIDATIONS` table. It is deliberately
+**not** an approved validation record, and the distinction is the whole point:
+
+- **It records which public parameters were used.** `ppHash` is the hash this endorser resolved from
+  its own TMS when it evaluated the request, stored so the rejection can be replayed exactly as it
+  happened. It may be empty when validation failed before that point (e.g. the TMS could not be
+  resolved).
+- **It never gates re-evaluation.** `AlreadyProcessed` (via `GetStatus`) reads approved rows only, so
+  a recorded failure does not make a request look processed. Whether the same request may be evaluated
+  again is governed entirely by the success path (an approved row), never by the presence of a failure
+  record. A request that failed for a transient reason can simply be re-submitted and re-evaluated;
+  the latest attempt is audited.
+- **It applies no token-request well-formedness check.** A request often fails precisely because it
+  was malformed, carried zero actions, or declared an unsupported version — exactly the inputs
+  `AppendValidationRecord` refuses. The failure log must be able to capture them, so only `txID` and
+  `tokenRequest` are required to be non-empty; `ppHash` may be empty.
+- **It keeps only the latest attempt per anchor.** The row is keyed by `tx_id`, so re-recording a
+  failure for the same anchor overwrites the previous rejected row (latest-wins). The conditional
+  upsert (`ON CONFLICT (tx_id) DO UPDATE ... WHERE rejected = true`) overwrites a prior rejection but
+  can never clobber an existing approved row.
+- **It is bounded.** Anchors are client-supplied, so each write prunes rejected rows beyond the
+  most recent `DefaultMaxValidationFailureRecords` (10000; tunable via
+  `EndorserStore.SetMaxValidationFailureRecords`). Approved rows are never pruned.
+
+The FSC approval responder (`token/services/network/fabric/endorsement/fsc/responder.go`) calls this
+when `behaviour.validate` returns an error, **except** for `ErrAlreadyProcessed` (a replay of a
+request that was already evaluated and recorded — there is nothing new to audit). It passes the hash
+of the public parameters this endorser resolved for the request (`request.PublicParamsHash`). The
+write is best-effort: it runs on a context detached from the request's (so a failure caused by the
+request's context being cancelled is still audited) and a failure to record is logged rather than
+returned, so it neither masks the original validation error nor affects retryability.
+
+Recorded failures can be queried with `ValidationFailures`:
+
+```go
+it, err := store.ValidationFailures(ctx, endorserdb.QueryValidationFailureRecordsParams{
+    From: &from,
+    To:   &to,
+})
+```
+
 ## Database Schema
 
-The endorserdb uses a single, self-contained table:
+The endorserdb owns a single self-contained table that holds both approved and rejected requests:
 
 ### VALIDATIONS Table
-Stores validation records created during endorsement:
+One row per transaction, keyed by `tx_id`:
 - `tx_id`: Transaction identifier (primary key)
 - `request`: Token request data (NOT NULL)
-- `metadata`: Validation metadata (NOT NULL)
-- `pp_hash`: Public parameters hash (NOT NULL)
-- `status`: Validation status (NOT NULL)
+- `metadata`: Validation metadata (NOT NULL; a rejected row stores JSON `null`)
+- `pp_hash`: Public parameters hash the request was evaluated against (NOT NULL; may be an empty blob
+  for a rejected row whose validation failed before the hash was resolved)
+- `rejected`: Discriminator (NOT NULL, default `false`) — `false` for an approved request, `true` for a
+  request whose validation failed
+- `reason`: Free-text description of the failure (NOT NULL, default `''`; empty for an approved row)
+- `status`: Validation status (NOT NULL; meaningful only for approved rows)
 - `status_message`: Status message (NOT NULL)
 - `stored_at`: Timestamp (NOT NULL)
 
-There is no foreign key to the Requests table — a validation record can be created and have its status tracked entirely independently of any TTXDB/AuditDB Requests row for the same `tx_id`.
+It is indexed on `(status, stored_at)` and `(rejected, stored_at)`.
+
+There is no foreign key to the Requests table — a validation record can be created and have its status
+tracked entirely independently of any TTXDB/AuditDB Requests row for the same `tx_id`.
+
+`GetStatus` (and therefore `AlreadyProcessed`) reads approved rows only, so a rejected row never affects
+the single-approval guard or re-evaluation of a request. `QueryValidations` returns approved rows;
+`QueryValidationFailures` returns rejected rows.
 
 ## Relationship with TTXDB
 
