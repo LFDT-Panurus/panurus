@@ -29,6 +29,9 @@ const namespacePolicy2of3 = "OutOf(2, 'Org1MSP.member', 'Org2MSP.member', 'Org3M
 
 var namespacePolicyOrgs = []string{"Org1", "Org2", "Org3"}
 
+// endorserNode is the single FSC endorser the FabricX topology deploys.
+const endorserNode = "endorser-1"
+
 const None = 0
 const (
 	Aries = 1 << iota
@@ -65,6 +68,9 @@ var _ = Describe("EndToEnd", func() {
 					false,
 					selector,
 					false,
+					// #2255: the endorser must keep endorsing commit-able transactions
+					// after a restart that follows a public parameters update
+					endorserNode,
 				)
 			})
 			It("Update public params (append new auditor and issuer)", Label("T2.1"), func() {
@@ -76,6 +82,7 @@ var _ = Describe("EndToEnd", func() {
 					false,
 					selector,
 					true,
+					endorserNode,
 				)
 			})
 			It("Test Identity Revocation", Label("T3"), func() { fungible.TestRevokeIdentity(ts.II, "auditor", selector) })
@@ -97,6 +104,7 @@ var _ = Describe("EndToEnd", func() {
 					true,
 					selector,
 					false,
+					endorserNode,
 				)
 			})
 		})

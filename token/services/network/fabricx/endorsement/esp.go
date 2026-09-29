@@ -117,9 +117,14 @@ func (l *loader) load(tmsID token2.TMSID) (endorsement.Service, error) {
 		fns.IdentityProvider(),
 		l.keyTranslator,
 		func(txID string, namespace string, rws *fabric.RWSet) (fsc.Translator, error) {
+			ppVersion, err := vk.GetVersion()
+			if err != nil {
+				return nil, errors.Wrapf(err, "failed to get public parameters version for [%s]", tmsID)
+			}
+
 			return translator.New(
 				txID,
-				NewRWSetWrapper(rws, namespace, txID, vk.GetVersion()),
+				NewRWSetWrapper(rws, namespace, txID, ppVersion),
 				l.keyTranslator,
 			), nil
 		},

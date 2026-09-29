@@ -65,7 +65,7 @@ func NewDriver(
 	grpcClientProvider queryservice.GRPCClientProvider,
 	ppValidator fsc.PublicParamsValidator,
 ) (driver.Driver, error) {
-	vkp := pp2.NewVersionKeeperProvider()
+	vkp := pp2.NewVersionKeeperProvider(ppFetcher)
 	kt := &keys.Translator{}
 
 	queryExecutorProvider := qe.NewExecutorProvider(qsProvider)
