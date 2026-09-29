@@ -36,6 +36,19 @@ type sweeper struct {
 	metricsProvider metrics.Provider
 	mu              sync.Mutex
 	managers        []*checks.Manager
+	// started keys the (tmsID, role) pairs this sweeper has already started a
+	// manager for. CheckService is invoked once per TMS in the common case, but a
+	// TMS construction that fails after CheckService has run - the ttx service
+	// manager calls it mid-build, before a GetNetwork step that can still fail, and
+	// the lazy provider does not cache a failed build - is retried, which would
+	// otherwise start a second manager for the same store on every retry: a leaked
+	// goroutine and ticker, and on a backend whose leadership is a local no-op
+	// (sqlite) a genuinely duplicated, concurrent sweep. (The auditor manager calls
+	// GetNetwork before CheckService, so its build cannot fail after the sweep
+	// starts; the dedup still guards it harmlessly.) Keyed by tmsID/role so each
+	// store is swept by at most one manager per sweeper regardless of how many times
+	// its service is rebuilt.
+	started map[string]struct{}
 }
 
 // start builds a drift checks manager for one store and starts it.
@@ -54,6 +67,23 @@ func (s *sweeper) start(
 		// nothing to configure the sweep from, which is the case in setups that wire
 		// the check service by hand. The on-demand checks still work.
 		logger.Debugf("no configuration available, not starting drift checks for [%s][%s]", tmsID, role)
+
+		return nil
+	}
+
+	// Take the lock before building anything: the dedup check must gate the whole
+	// build, not just Start. A repeated CheckService call (a retried TMS build) that
+	// got past this point would otherwise reconstruct the manager - including
+	// re-registering its metrics - on every retry only to discard it, and on a
+	// provider that rejects duplicate metric registration that reconstruction, which
+	// used to happen before the started check, could itself fail.
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	key := tmsID.String() + "/" + role
+	if _, ok := s.started[key]; ok {
+		// a manager for this store is already running; a repeated CheckService call
+		// (a retried TMS build) must not start a second one.
+		logger.Debugf("drift checks already running for [%s][%s], not starting another", tmsID, role)
 
 		return nil
 	}
@@ -89,14 +119,25 @@ func (s *sweeper) start(
 	// connection it holds past shutdown. Appending after Start while holding the lock across
 	// both (rather than releasing it between them) closes that window: Stop() now either runs
 	// entirely before this manager exists to sweeper.Stop's eyes, or entirely after it is both
-	// started and tracked, never in between. Start itself only validates config and spawns a
-	// goroutine, so holding the lock across it is not a meaningful bottleneck even when several
-	// TMSes start concurrently through one sweeper.
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	// started and tracked, never in between. The lock is already held (taken above, before the
+	// manager was built), so the started check, Start and the append cannot race with each other
+	// or with Stop. Building and starting a manager only validates config and spawns a goroutine,
+	// so holding the lock across it is not a meaningful bottleneck even when several TMSes start
+	// concurrently through one sweeper.
 	if err := manager.Start(); err != nil {
 		return errors.Wrapf(err, "failed to start drift checks for [%s][%s]", tmsID, role)
 	}
+	if s.started == nil {
+		s.started = make(map[string]struct{})
+	}
+	// We record "started" (and track the manager) even when Start() was a no-op because the config
+	// disabled checks: Start() returns nil without starting anything when config.Enabled is false
+	// (manager.go). The dedup is therefore keyed on "a manager was built for this store", not on "a
+	// sweep goroutine is actually running". The one edge this leaves: if the config source were to
+	// flip from disabled to enabled across a retried build for the same key, the dedup would suppress
+	// the retry and no sweep would ever start. That needs the config to change mid-process and is
+	// consistent with the pre-existing s.managers append, so it is left as-is.
+	s.started[key] = struct{}{}
 	s.managers = append(s.managers, manager)
 
 	return nil
@@ -114,6 +155,7 @@ func (s *sweeper) Stop() error {
 		}
 	}
 	s.managers = nil
+	s.started = nil
 
 	return errors.Join(errs...)
 }

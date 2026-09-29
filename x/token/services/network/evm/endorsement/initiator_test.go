@@ -430,3 +430,18 @@ func TestInitiatorBindChecksSetupParameters(t *testing.T) {
 		})
 	}
 }
+
+// TestInitiatorBindRejectsSetupDeltaForApproval is the symmetric guard: an approval request answered
+// with a setup delta must be rejected without a validator, so an endorser cannot relay a
+// public-parameters rewrite in place of the token approval that was asked for.
+func TestInitiatorBindRejectsSetupDeltaForApproval(t *testing.T) {
+	req := &EndorseRequest{Kind: KindApproval, TMSID: testTMSID(), Anchor: anchorHex(0xC1)}
+	init := NewInitiator(nil, 1, testDomain(), req)
+
+	setupDelta := endorsedDelta(t)
+	setupDelta.IsSetup = true
+	setupDelta.SetupParameters = []byte("new-public-parameters")
+
+	require.ErrorIs(t, init.bind(requestAnchor(t), setupDelta), ErrDeltaMismatch)
+	require.NoError(t, init.bind(requestAnchor(t), endorsedDelta(t)))
+}
