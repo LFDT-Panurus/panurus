@@ -19,7 +19,7 @@ type EndorserStore = common.EndorserStore
 func NewEndorserStore(dbs *common2.RWDB, tables common.TableNames) (*EndorserStore, error) {
 	return common.NewEndorserStore(
 		dbs.ReadDB,
-		dbs.WriteDB,
+		NewBusyRetryWriteDB(dbs.WriteDB),
 		tables,
 		NewConditionInterpreter(),
 		pagination.NewDefaultInterpreter(),

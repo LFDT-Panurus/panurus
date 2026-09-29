@@ -27,7 +27,7 @@ import (
 // EndorserStore manages validation records for token transaction endorsements
 type EndorserStore struct {
 	readDB      *sql.DB
-	writeDB     *sql.DB
+	writeDB     WriteDB
 	table       string
 	tablePrefix string
 	tableParams []string
@@ -37,7 +37,8 @@ type EndorserStore struct {
 
 // NewEndorserStore creates a new EndorserStore
 func NewEndorserStore(
-	readDB, writeDB *sql.DB,
+	readDB *sql.DB,
+	writeDB WriteDB,
 	tables TableNames,
 	ci common3.CondInterpreter,
 	pi common3.PagInterpreter,

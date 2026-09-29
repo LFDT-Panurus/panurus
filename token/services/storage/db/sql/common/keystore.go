@@ -19,7 +19,6 @@ import (
 	"github.com/LFDT-Panurus/panurus/token/services/storage/db/sql/query/cond"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/services/storage/driver"
-	dcommon "github.com/hyperledger-labs/fabric-smart-client/platform/view/services/storage/driver/common"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/services/storage/driver/sql/common"
 )
 
@@ -29,13 +28,13 @@ type keystoreTables struct {
 
 type KeystoreStore struct {
 	readDB       *sql.DB
-	writeDB      *sql.DB
+	writeDB      WriteDB
 	errorWrapper driver.SQLErrorWrapper
 	table        keystoreTables
 	ci           qcommon.CondInterpreter
 }
 
-func newKeystoreStore(readDB, writeDB *sql.DB, tables keystoreTables, ci qcommon.CondInterpreter, errorWrapper driver.SQLErrorWrapper) *KeystoreStore {
+func newKeystoreStore(readDB *sql.DB, writeDB WriteDB, tables keystoreTables, ci qcommon.CondInterpreter, errorWrapper driver.SQLErrorWrapper) *KeystoreStore {
 	return &KeystoreStore{
 		readDB:       readDB,
 		writeDB:      writeDB,
@@ -45,7 +44,7 @@ func newKeystoreStore(readDB, writeDB *sql.DB, tables keystoreTables, ci qcommon
 	}
 }
 
-func NewKeystoreStore(readDB, writeDB *sql.DB, tables TableNames, ci qcommon.CondInterpreter, errorWrapper driver.SQLErrorWrapper) (*KeystoreStore, error) {
+func NewKeystoreStore(readDB *sql.DB, writeDB WriteDB, tables TableNames, ci qcommon.CondInterpreter, errorWrapper driver.SQLErrorWrapper) (*KeystoreStore, error) {
 	return newKeystoreStore(
 		readDB,
 		writeDB,
@@ -62,7 +61,7 @@ func (db *KeystoreStore) CreateSchema() error {
 }
 
 func (db *KeystoreStore) Close() error {
-	return dcommon.Close(db.readDB, db.writeDB)
+	return CloseRWDB(db.readDB, db.writeDB)
 }
 
 func (db *KeystoreStore) Put(key string, state any) error {

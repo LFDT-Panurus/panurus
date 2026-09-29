@@ -5,8 +5,6 @@ SPDX-License-Identifier: Apache-2.0
 package postgres
 
 import (
-	"math"
-	"strconv"
 	"time"
 
 	"github.com/LFDT-Panurus/panurus/token/services/storage/db/sql/query/common"
@@ -20,15 +18,20 @@ func NewConditionInterpreter() *interpreter {
 
 type interpreter struct{}
 
+// TimeOffset renders NOW() shifted by duration. The seconds literal keeps any
+// sub-second part - Postgres intervals accept fractional seconds and
+// timestamptz stores microseconds, so nothing is lost. See FormatOffsetSeconds
+// for the truncation this replaced.
 func (i *interpreter) TimeOffset(duration time.Duration, sb common.Builder) {
 	sb.WriteString("NOW()")
 	if duration == 0 {
 		return
 	}
+	seconds, _ := common.FormatOffsetSeconds(duration)
 	sb.WriteRune(' ').
 		WriteRune(signs[duration > 0]).
 		WriteString(" INTERVAL '").
-		WriteString(strconv.Itoa(int(math.Abs(duration.Seconds())))).
+		WriteString(seconds).
 		WriteString(" seconds'")
 }
 

@@ -99,7 +99,7 @@ func newIdentityStoreProvider(dbProvider fscSqlite.DbProvider, tableNamesConfig 
 
 		p, err := common2.NewIdentityStoreWithNotifier(
 			dbs.ReadDB,
-			dbs.WriteDB,
+			NewBusyRetryWriteDB(dbs.WriteDB),
 			tableNames,
 			secondcache.NewTyped[bool](5000),
 			secondcache.NewTyped[[]byte](5000),

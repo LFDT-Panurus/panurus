@@ -27,7 +27,6 @@ import (
 	"github.com/hyperledger-labs/fabric-smart-client/platform/common/utils/cache/secondcache"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/common/utils/collections/iterators"
 	driver2 "github.com/hyperledger-labs/fabric-smart-client/platform/view/services/storage/driver"
-	common2 "github.com/hyperledger-labs/fabric-smart-client/platform/view/services/storage/driver/common"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/services/storage/driver/sql/common"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/view"
 )
@@ -61,7 +60,7 @@ type identityTables struct {
 // IdentityStore is a SQL-backed implementation of the IdentityStore interface.
 type IdentityStore struct {
 	readDB   *sql.DB
-	writeDB  *sql.DB
+	writeDB  WriteDB
 	table    identityTables
 	ci       common3.CondInterpreter
 	notifier idriver.IdentityConfigurationNotifier
@@ -72,7 +71,8 @@ type IdentityStore struct {
 }
 
 func newIdentityStore(
-	readDB, writeDB *sql.DB,
+	readDB *sql.DB,
+	writeDB WriteDB,
 	tables identityTables,
 	singerInfoCache cache[bool],
 	auditInfoCache cache[[]byte],
@@ -93,7 +93,8 @@ func newIdentityStore(
 }
 
 func NewCachedIdentityStore(
-	readDB, writeDB *sql.DB,
+	readDB *sql.DB,
+	writeDB WriteDB,
 	tables TableNames,
 	ci common3.CondInterpreter,
 	errorWrapper driver2.SQLErrorWrapper,
@@ -110,7 +111,8 @@ func NewCachedIdentityStore(
 }
 
 func NewNoCacheIdentityStore(
-	readDB, writeDB *sql.DB,
+	readDB *sql.DB,
+	writeDB WriteDB,
 	tables TableNames,
 	ci common3.CondInterpreter,
 	errorWrapper driver2.SQLErrorWrapper,
@@ -127,7 +129,8 @@ func NewNoCacheIdentityStore(
 }
 
 func NewIdentityStore(
-	readDB, writeDB *sql.DB,
+	readDB *sql.DB,
+	writeDB WriteDB,
 	tables TableNames,
 	signerInfoCache cache[bool],
 	auditInfoCache cache[[]byte],
@@ -152,7 +155,8 @@ func NewIdentityStore(
 
 // NewIdentityStoreWithNotifier creates a new IdentityStore with a notifier.
 func NewIdentityStoreWithNotifier(
-	readDB, writeDB *sql.DB,
+	readDB *sql.DB,
+	writeDB WriteDB,
 	tables TableNames,
 	signerInfoCache cache[bool],
 	auditInfoCache cache[[]byte],
@@ -721,7 +725,7 @@ func (db *IdentityStore) insertIdempotently(ctx context.Context, tx dbTransactio
 }
 
 func (db *IdentityStore) Close() error {
-	return common2.Close(db.readDB, db.writeDB)
+	return CloseRWDB(db.readDB, db.writeDB)
 }
 
 func (db *IdentityStore) GetSchema() string {
