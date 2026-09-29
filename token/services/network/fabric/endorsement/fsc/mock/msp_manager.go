@@ -121,14 +121,19 @@ func (fake *MSPManager) GetMSPIdentifierReturnsOnCall(i int, result1 string, res
 }
 
 func (fake *MSPManager) GetVerifier(arg1 view.Identity) (driver.Verifier, error) {
+	var arg1Copy view.Identity
+	if arg1 != nil {
+		arg1Copy = make(view.Identity, len(arg1))
+		copy(arg1Copy, arg1)
+	}
 	fake.getVerifierMutex.Lock()
 	ret, specificReturn := fake.getVerifierReturnsOnCall[len(fake.getVerifierArgsForCall)]
 	fake.getVerifierArgsForCall = append(fake.getVerifierArgsForCall, struct {
 		arg1 view.Identity
-	}{arg1})
+	}{arg1Copy})
 	stub := fake.GetVerifierStub
 	fakeReturns := fake.getVerifierReturns
-	fake.recordInvocation("GetVerifier", []interface{}{arg1})
+	fake.recordInvocation("GetVerifier", []interface{}{arg1Copy})
 	fake.getVerifierMutex.Unlock()
 	if stub != nil {
 		return stub(arg1)
@@ -185,14 +190,19 @@ func (fake *MSPManager) GetVerifierReturnsOnCall(i int, result1 driver.Verifier,
 }
 
 func (fake *MSPManager) IsValid(arg1 view.Identity) error {
+	var arg1Copy view.Identity
+	if arg1 != nil {
+		arg1Copy = make(view.Identity, len(arg1))
+		copy(arg1Copy, arg1)
+	}
 	fake.isValidMutex.Lock()
 	ret, specificReturn := fake.isValidReturnsOnCall[len(fake.isValidArgsForCall)]
 	fake.isValidArgsForCall = append(fake.isValidArgsForCall, struct {
 		arg1 view.Identity
-	}{arg1})
+	}{arg1Copy})
 	stub := fake.IsValidStub
 	fakeReturns := fake.isValidReturns
-	fake.recordInvocation("IsValid", []interface{}{arg1})
+	fake.recordInvocation("IsValid", []interface{}{arg1Copy})
 	fake.isValidMutex.Unlock()
 	if stub != nil {
 		return stub(arg1)

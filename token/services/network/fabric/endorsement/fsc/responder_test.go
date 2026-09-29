@@ -7,6 +7,7 @@ SPDX-License-Identifier: Apache-2.0
 package fsc_test
 
 import (
+	"context"
 	"encoding/json"
 	"testing"
 
@@ -76,6 +77,7 @@ type MockNewRequestApprovalResponderView struct {
 	tmsp            *mock.TokenManagementSystemProvider
 	channelProvider *mock.ChannelProvider
 	mspManager      *mock.MSPManager
+	storage         *mock.Storage
 }
 
 func mockNewRequestApprovalResponderView(t *testing.T, overrideTMSID *token.TMSID) *MockNewRequestApprovalResponderView {
@@ -164,6 +166,7 @@ func mockNewRequestApprovalResponderView(t *testing.T, overrideTMSID *token.TMSI
 		tmsp:            tmsp,
 		channelProvider: channelProvider,
 		mspManager:      mspManager,
+		storage:         storage,
 	}
 }
 
@@ -631,6 +634,10 @@ func TestRequestApprovalResponderView(t *testing.T) {
 			expectErrContain: "no endorser ID",
 			verify: func(m *MockNewRequestApprovalResponderView, res any) {
 				assert.Equal(t, 1, m.rws.DoneCallCount())
+				// the record is written before endorsing; endorsement then failed, so it is
+				// rolled back, leaving the anchor retryable instead of permanently rejected.
+				assert.Equal(t, 1, m.storage.AppendValidationRecordCallCount())
+				assert.Equal(t, 1, m.storage.DeleteValidationRecordCallCount())
 			},
 		},
 		{
@@ -646,6 +653,50 @@ func TestRequestApprovalResponderView(t *testing.T) {
 			expectErrContain: "endorse failed",
 			verify: func(m *MockNewRequestApprovalResponderView, res any) {
 				assert.Equal(t, 1, m.rws.DoneCallCount())
+				// the record is written before endorsing; endorsement then failed, so it is
+				// rolled back, leaving the anchor retryable instead of permanently rejected.
+				assert.Equal(t, 1, m.storage.AppendValidationRecordCallCount())
+				assert.Equal(t, 1, m.storage.DeleteValidationRecordCallCount())
+			},
+		},
+		{
+			name: "failed to endorse and rollback fails",
+			setup: func() *MockNewRequestApprovalResponderView {
+				m := mockNewRequestApprovalResponderView(t, nil)
+				m.es.EndorseReturns(nil, errors.New("endorse failed"))
+				m.storage.DeleteValidationRecordReturns(errors.New("delete failed"))
+
+				return m
+			},
+			expectError:      true,
+			expectErrorType:  fsc.ErrEndorseProposal,
+			expectErrContain: "endorse failed",
+			verify: func(m *MockNewRequestApprovalResponderView, res any) {
+				assert.Equal(t, 1, m.rws.DoneCallCount())
+				// a rollback failure is logged, not returned: the endorsement error is still
+				// surfaced and must not be masked by the failed cleanup.
+				assert.Equal(t, 1, m.storage.AppendValidationRecordCallCount())
+				assert.Equal(t, 1, m.storage.DeleteValidationRecordCallCount())
+			},
+		},
+		{
+			name: "failed to append validation record",
+			setup: func() *MockNewRequestApprovalResponderView {
+				m := mockNewRequestApprovalResponderView(t, nil)
+				m.storage.AppendValidationRecordReturns(errors.New("append failed"))
+
+				return m
+			},
+			expectError:      true,
+			expectErrorType:  fsc.ErrValidateProposal,
+			expectErrContain: "failed to append metadata",
+			verify: func(m *MockNewRequestApprovalResponderView, res any) {
+				assert.Equal(t, 1, m.rws.DoneCallCount())
+				// the record is written before endorsing, so a failure here aborts before the
+				// endorsement signature is ever released, and nothing needs rolling back.
+				assert.Equal(t, 0, m.es.EndorseCallCount())
+				assert.Equal(t, 1, m.storage.AppendValidationRecordCallCount())
+				assert.Equal(t, 0, m.storage.DeleteValidationRecordCallCount())
 			},
 		},
 		{
@@ -658,6 +709,10 @@ func TestRequestApprovalResponderView(t *testing.T) {
 			expectError: false,
 			verify: func(m *MockNewRequestApprovalResponderView, res any) {
 				assert.Equal(t, 1, m.rws.DoneCallCount())
+				// the validation record is written exactly once, before endorsement, and is
+				// not rolled back on success.
+				assert.Equal(t, 1, m.storage.AppendValidationRecordCallCount())
+				assert.Equal(t, 0, m.storage.DeleteValidationRecordCallCount())
 			},
 		},
 		{
@@ -677,6 +732,41 @@ func TestRequestApprovalResponderView(t *testing.T) {
 			expectError: false,
 			verify: func(m *MockNewRequestApprovalResponderView, res any) {
 				assert.Equal(t, 1, m.rws.DoneCallCount())
+			},
+		},
+		{
+			name: "request already processed",
+			setup: func() *MockNewRequestApprovalResponderView {
+				m := mockNewRequestApprovalResponderView(t, nil)
+				m.storage.AlreadyProcessedReturns(true, nil)
+
+				return m
+			},
+			expectError:      true,
+			expectErrorType:  fsc.ErrAlreadyProcessed,
+			expectErrContain: "was already processed",
+			verify: func(m *MockNewRequestApprovalResponderView, res any) {
+				assert.Equal(t, 1, m.rws.DoneCallCount())
+				// the request must be rejected before any verification or record append
+				assert.Equal(t, 0, m.validator.VerifyTokenRequestFromRawCallCount())
+				assert.Equal(t, 0, m.storage.AppendValidationRecordCallCount())
+			},
+		},
+		{
+			name: "failed to check whether request was already processed",
+			setup: func() *MockNewRequestApprovalResponderView {
+				m := mockNewRequestApprovalResponderView(t, nil)
+				m.storage.AlreadyProcessedReturns(false, errors.New("pineapple"))
+
+				return m
+			},
+			expectError:      true,
+			expectErrorType:  fsc.ErrValidateProposal,
+			expectErrContain: "pineapple",
+			verify: func(m *MockNewRequestApprovalResponderView, res any) {
+				assert.Equal(t, 1, m.rws.DoneCallCount())
+				assert.Equal(t, 0, m.validator.VerifyTokenRequestFromRawCallCount())
+				assert.Equal(t, 0, m.storage.AppendValidationRecordCallCount())
 			},
 		},
 		{
@@ -716,4 +806,40 @@ func TestRequestApprovalResponderView(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestRequestApprovalResponderView_RollbackDetachedFromRequestContext is a regression test:
+// an endorsement most often fails because the request's context was cancelled (client
+// disconnected or deadline fired). The compensating rollback that deletes the validation
+// record must NOT run on that same cancelled context, or DeleteValidationRecord would fail
+// immediately and leave the anchor permanently marked as processed — defeating the
+// retryability the rollback exists to provide. See rollbackValidationRecord in responder.go.
+func TestRequestApprovalResponderView_RollbackDetachedFromRequestContext(t *testing.T) {
+	m := mockNewRequestApprovalResponderView(t, nil)
+
+	// the request runs under an already-cancelled context, and endorsement fails as a result
+	canceledCtx, cancel := context.WithCancel(context.Background())
+	cancel()
+	m.ctx.ContextReturns(canceledCtx)
+	m.es.EndorseReturns(nil, errors.New("context canceled"))
+
+	// capture whether the context handed to the rollback was live *at the moment the delete
+	// ran* — inspecting it afterwards is useless, as rollbackValidationRecord cancels its own
+	// bounded context on return.
+	var rollbackCtxErr error
+	m.storage.DeleteValidationRecordCalls(func(ctx context.Context, _ string) error {
+		rollbackCtxErr = ctx.Err()
+
+		return nil
+	})
+
+	_, err := m.view.Call(m.ctx)
+	require.Error(t, err)
+	require.ErrorIs(t, err, fsc.ErrEndorseProposal)
+
+	// the record was written before endorsing, then rolled back despite the dead request
+	// context: the rollback must have received a live (non-cancelled) context.
+	require.Equal(t, 1, m.storage.AppendValidationRecordCallCount())
+	require.Equal(t, 1, m.storage.DeleteValidationRecordCallCount())
+	assert.NoError(t, rollbackCtxErr, "rollback must not run on the cancelled request context")
 }

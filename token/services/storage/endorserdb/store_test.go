@@ -128,6 +128,68 @@ func TestValidationRecordsLifecycle(t *testing.T) {
 	assert.Equal(t, endorserdb.Pending, status)
 }
 
+// TestAlreadyProcessed checks that AlreadyProcessed reports false for a txID with no
+// validation record and true once a record exists, regardless of its later status.
+func TestAlreadyProcessed(t *testing.T) {
+	ctx := t.Context()
+	manager := newStoreServiceManager(t)
+	store, err := manager.StoreServiceByTMSId(token.TMSID{Network: "pineapple", Namespace: "ns"})
+	require.NoError(t, err)
+
+	// an unknown txID has not been processed
+	processed, err := store.AlreadyProcessed(ctx, "processed-1")
+	require.NoError(t, err)
+	assert.False(t, processed)
+
+	// once a validation record exists, the request counts as processed
+	require.NoError(t, store.AppendValidationRecord(ctx, "processed-1", actionsTokenRequest(t, "tr"), nil, driver2.PPHash("pp")))
+	processed, err = store.AlreadyProcessed(ctx, "processed-1")
+	require.NoError(t, err)
+	assert.True(t, processed)
+
+	// a terminal status (e.g. a tx that never committed) does not clear the record:
+	// it still counts as processed, matching the tx_id primary-key behaviour of the insert
+	require.NoError(t, store.SetStatus(ctx, "processed-1", endorserdb.Deleted, "gone"))
+	processed, err = store.AlreadyProcessed(ctx, "processed-1")
+	require.NoError(t, err)
+	assert.True(t, processed)
+
+	// an unrelated txID is still unprocessed
+	processed, err = store.AlreadyProcessed(ctx, "processed-2")
+	require.NoError(t, err)
+	assert.False(t, processed)
+}
+
+// TestDeleteValidationRecord checks that DeleteValidationRecord removes the record so the
+// request no longer counts as processed (used to undo a record whose endorsement failed), and
+// that deleting a txID with no record is not an error.
+func TestDeleteValidationRecord(t *testing.T) {
+	ctx := t.Context()
+	manager := newStoreServiceManager(t)
+	store, err := manager.StoreServiceByTMSId(token.TMSID{Network: "pineapple", Namespace: "ns"})
+	require.NoError(t, err)
+
+	// deleting a txID that has no record is a no-op, not an error
+	require.NoError(t, store.DeleteValidationRecord(ctx, "delete-1"))
+
+	// write a record, then delete it: the request must go back to unprocessed
+	require.NoError(t, store.AppendValidationRecord(ctx, "delete-1", actionsTokenRequest(t, "tr"), nil, driver2.PPHash("pp")))
+	processed, err := store.AlreadyProcessed(ctx, "delete-1")
+	require.NoError(t, err)
+	assert.True(t, processed)
+
+	require.NoError(t, store.DeleteValidationRecord(ctx, "delete-1"))
+	processed, err = store.AlreadyProcessed(ctx, "delete-1")
+	require.NoError(t, err)
+	assert.False(t, processed)
+
+	// the anchor can therefore be appended again, as a retry of a failed endorsement would
+	require.NoError(t, store.AppendValidationRecord(ctx, "delete-1", actionsTokenRequest(t, "tr"), nil, driver2.PPHash("pp")))
+	processed, err = store.AlreadyProcessed(ctx, "delete-1")
+	require.NoError(t, err)
+	assert.True(t, processed)
+}
+
 // TestSetStatus_NotifyNotDroppedByCallerCanceledContext is a regression test for
 // #2316 on the endorserdb path: SetStatus's notification must not be lost just
 // because the caller's own context has already expired by the time the status

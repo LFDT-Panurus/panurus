@@ -258,16 +258,21 @@ type FabricRWSet struct {
 }
 
 func (fake *FabricRWSet) AddReadAt(arg1 driver.Namespace, arg2 string, arg3 driver.RawVersion) error {
+	var arg3Copy driver.RawVersion
+	if arg3 != nil {
+		arg3Copy = make(driver.RawVersion, len(arg3))
+		copy(arg3Copy, arg3)
+	}
 	fake.addReadAtMutex.Lock()
 	ret, specificReturn := fake.addReadAtReturnsOnCall[len(fake.addReadAtArgsForCall)]
 	fake.addReadAtArgsForCall = append(fake.addReadAtArgsForCall, struct {
 		arg1 driver.Namespace
 		arg2 string
 		arg3 driver.RawVersion
-	}{arg1, arg2, arg3})
+	}{arg1, arg2, arg3Copy})
 	stub := fake.AddReadAtStub
 	fakeReturns := fake.addReadAtReturns
-	fake.recordInvocation("AddReadAt", []interface{}{arg1, arg2, arg3})
+	fake.recordInvocation("AddReadAt", []interface{}{arg1, arg2, arg3Copy})
 	fake.addReadAtMutex.Unlock()
 	if stub != nil {
 		return stub(arg1, arg2, arg3)
@@ -326,15 +331,20 @@ func (fake *FabricRWSet) AppendRWSet(arg1 []byte, arg2 ...driver.Namespace) erro
 		arg1Copy = make([]byte, len(arg1))
 		copy(arg1Copy, arg1)
 	}
+	var arg2Copy []driver.Namespace
+	if arg2 != nil {
+		arg2Copy = make([]driver.Namespace, len(arg2))
+		copy(arg2Copy, arg2)
+	}
 	fake.appendRWSetMutex.Lock()
 	ret, specificReturn := fake.appendRWSetReturnsOnCall[len(fake.appendRWSetArgsForCall)]
 	fake.appendRWSetArgsForCall = append(fake.appendRWSetArgsForCall, struct {
 		arg1 []byte
 		arg2 []driver.Namespace
-	}{arg1Copy, arg2})
+	}{arg1Copy, arg2Copy})
 	stub := fake.AppendRWSetStub
 	fakeReturns := fake.appendRWSetReturns
-	fake.recordInvocation("AppendRWSet", []interface{}{arg1Copy, arg2})
+	fake.recordInvocation("AppendRWSet", []interface{}{arg1Copy, arg2Copy})
 	fake.appendRWSetMutex.Unlock()
 	if stub != nil {
 		return stub(arg1, arg2...)
@@ -591,15 +601,20 @@ func (fake *FabricRWSet) DoneCalls(stub func()) {
 }
 
 func (fake *FabricRWSet) Equals(arg1 any, arg2 ...driver.Namespace) error {
+	var arg2Copy []driver.Namespace
+	if arg2 != nil {
+		arg2Copy = make([]driver.Namespace, len(arg2))
+		copy(arg2Copy, arg2)
+	}
 	fake.equalsMutex.Lock()
 	ret, specificReturn := fake.equalsReturnsOnCall[len(fake.equalsArgsForCall)]
 	fake.equalsArgsForCall = append(fake.equalsArgsForCall, struct {
 		arg1 any
 		arg2 []driver.Namespace
-	}{arg1, arg2})
+	}{arg1, arg2Copy})
 	stub := fake.EqualsStub
 	fakeReturns := fake.equalsReturns
-	fake.recordInvocation("Equals", []interface{}{arg1, arg2})
+	fake.recordInvocation("Equals", []interface{}{arg1, arg2Copy})
 	fake.equalsMutex.Unlock()
 	if stub != nil {
 		return stub(arg1, arg2...)
@@ -851,16 +866,21 @@ func (fake *FabricRWSet) GetReadKeyAtReturnsOnCall(i int, result1 driver.PKey, r
 }
 
 func (fake *FabricRWSet) GetState(arg1 driver.Namespace, arg2 driver.PKey, arg3 ...driver.GetStateOpt) (driver.RawValue, error) {
+	var arg3Copy []driver.GetStateOpt
+	if arg3 != nil {
+		arg3Copy = make([]driver.GetStateOpt, len(arg3))
+		copy(arg3Copy, arg3)
+	}
 	fake.getStateMutex.Lock()
 	ret, specificReturn := fake.getStateReturnsOnCall[len(fake.getStateArgsForCall)]
 	fake.getStateArgsForCall = append(fake.getStateArgsForCall, struct {
 		arg1 driver.Namespace
 		arg2 driver.PKey
 		arg3 []driver.GetStateOpt
-	}{arg1, arg2, arg3})
+	}{arg1, arg2, arg3Copy})
 	stub := fake.GetStateStub
 	fakeReturns := fake.getStateReturns
-	fake.recordInvocation("GetState", []interface{}{arg1, arg2, arg3})
+	fake.recordInvocation("GetState", []interface{}{arg1, arg2, arg3Copy})
 	fake.getStateMutex.Unlock()
 	if stub != nil {
 		return stub(arg1, arg2, arg3...)
@@ -917,16 +937,21 @@ func (fake *FabricRWSet) GetStateReturnsOnCall(i int, result1 driver.RawValue, r
 }
 
 func (fake *FabricRWSet) GetStateMetadata(arg1 driver.Namespace, arg2 driver.PKey, arg3 ...driver.GetStateOpt) (driver.Metadata, error) {
+	var arg3Copy []driver.GetStateOpt
+	if arg3 != nil {
+		arg3Copy = make([]driver.GetStateOpt, len(arg3))
+		copy(arg3Copy, arg3)
+	}
 	fake.getStateMetadataMutex.Lock()
 	ret, specificReturn := fake.getStateMetadataReturnsOnCall[len(fake.getStateMetadataArgsForCall)]
 	fake.getStateMetadataArgsForCall = append(fake.getStateMetadataArgsForCall, struct {
 		arg1 driver.Namespace
 		arg2 driver.PKey
 		arg3 []driver.GetStateOpt
-	}{arg1, arg2, arg3})
+	}{arg1, arg2, arg3Copy})
 	stub := fake.GetStateMetadataStub
 	fakeReturns := fake.getStateMetadataReturns
-	fake.recordInvocation("GetStateMetadata", []interface{}{arg1, arg2, arg3})
+	fake.recordInvocation("GetStateMetadata", []interface{}{arg1, arg2, arg3Copy})
 	fake.getStateMetadataMutex.Unlock()
 	if stub != nil {
 		return stub(arg1, arg2, arg3...)
@@ -1332,16 +1357,21 @@ func (fake *FabricRWSet) NumWritesReturnsOnCall(i int, result1 int) {
 }
 
 func (fake *FabricRWSet) SetState(arg1 driver.Namespace, arg2 driver.PKey, arg3 driver.RawValue) error {
+	var arg3Copy driver.RawValue
+	if arg3 != nil {
+		arg3Copy = make(driver.RawValue, len(arg3))
+		copy(arg3Copy, arg3)
+	}
 	fake.setStateMutex.Lock()
 	ret, specificReturn := fake.setStateReturnsOnCall[len(fake.setStateArgsForCall)]
 	fake.setStateArgsForCall = append(fake.setStateArgsForCall, struct {
 		arg1 driver.Namespace
 		arg2 driver.PKey
 		arg3 driver.RawValue
-	}{arg1, arg2, arg3})
+	}{arg1, arg2, arg3Copy})
 	stub := fake.SetStateStub
 	fakeReturns := fake.setStateReturns
-	fake.recordInvocation("SetState", []interface{}{arg1, arg2, arg3})
+	fake.recordInvocation("SetState", []interface{}{arg1, arg2, arg3Copy})
 	fake.setStateMutex.Unlock()
 	if stub != nil {
 		return stub(arg1, arg2, arg3)

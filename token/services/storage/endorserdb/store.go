@@ -163,6 +163,45 @@ func (d *StoreService) AppendValidationRecord(ctx context.Context, txID string, 
 	return nil
 }
 
+// DeleteValidationRecord removes the validation record for txID, if any. It undoes a record
+// written by AppendValidationRecord whose endorsement subsequently failed, so that the
+// request is left retryable instead of permanently rejected by AlreadyProcessed. Deleting a
+// txID that has no record is not an error.
+func (d *StoreService) DeleteValidationRecord(ctx context.Context, txID string) error {
+	logger.DebugfContext(ctx, "deleting validation record... [%s]", txID)
+
+	w, err := d.db.NewEndorserStoreTransaction()
+	if err != nil {
+		return errors.WithMessagef(err, "begin update for txid [%s] failed", txID)
+	}
+	if err := w.DeleteValidationRecord(ctx, txID); err != nil {
+		w.Rollback()
+
+		return errors.WithMessagef(err, "delete validation record for txid [%s] failed", txID)
+	}
+	if err := w.Commit(); err != nil {
+		return errors.WithMessagef(err, "delete validation record commit for txid [%s] failed", txID)
+	}
+	logger.DebugfContext(ctx, "deleting validation record completed without errors")
+
+	return nil
+}
+
+// AlreadyProcessed reports whether a validation record already exists for txID.
+//
+// A validation record is written for every request this endorser approves, keyed
+// by the request anchor (tx id), so its presence means the request has already
+// been processed and must not be evaluated again. It builds on GetStatus, which
+// reports Unknown (without error) for a txID that has no record.
+func (d *StoreService) AlreadyProcessed(ctx context.Context, txID string) (bool, error) {
+	status, _, err := d.GetStatus(ctx, txID)
+	if err != nil {
+		return false, errors.WithMessagef(err, "failed to check whether [%s] was already processed", txID)
+	}
+
+	return status != Unknown, nil
+}
+
 // SetStatus sets the status of the validation record with the passed transaction id to the passed status
 func (d *StoreService) SetStatus(ctx context.Context, txID string, status dbdriver.TxStatus, message string) error {
 	logger.DebugfContext(ctx, "set status [%s][%s]...", txID, status)

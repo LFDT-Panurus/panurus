@@ -131,6 +131,40 @@ err := store.SetStatus(ctx, txID, driver.Confirmed, "Transaction confirmed")
 status, message, err := store.GetStatus(ctx, txID)
 ```
 
+### Checking Whether a Request Was Already Processed
+
+`AlreadyProcessed` reports whether a validation record already exists for a given `txID`. A record is
+written once an endorser has approved a request and just before it endorses it, keyed by the request
+anchor (transaction id), so its presence means the request has already been processed:
+
+```go
+processed, err := store.AlreadyProcessed(ctx, txID)
+```
+
+It is built on `GetStatus` (which reports `Unknown` without error for a `txID` that has no record), so
+any existing record — including one whose status is later set to a terminal value such as `Deleted` or
+`Orphan` — counts as processed. The FSC token-request approval responder calls this before running the
+(expensive) token-request verification and rejects an already-processed anchor early with
+`ErrAlreadyProcessed`. This early check is an optimisation: the responder writes the record *before*
+releasing the endorsement signature, so the `tx_id` primary key remains the atomic single-approval
+backstop for a concurrent duplicate that races past the check — it fails at the insert, before a
+second endorsement is produced.
+
+### Undoing a Record for a Failed Endorsement
+
+`DeleteValidationRecord` removes the validation record for a `txID` (deleting a `txID` that has no
+record is not an error):
+
+```go
+err := store.DeleteValidationRecord(ctx, txID)
+```
+
+The responder writes the record before endorsing so the already-processed marker is durable before the
+signature is released. If endorsement then fails, it calls `DeleteValidationRecord` to roll the record
+back, leaving the request retryable instead of permanently rejected by `AlreadyProcessed`. Unlike a
+status transition (which keeps the record and so keeps it counting as processed), this removes the row
+entirely, so a subsequent `AlreadyProcessed` reports `false` again.
+
 ## Database Schema
 
 The endorserdb uses a single, self-contained table:

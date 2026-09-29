@@ -105,6 +105,27 @@ func TestAWAddValidationRecord(t *testing.T, store endorserStoreConstructor) {
 	gomega.Expect(mockDB.ExpectationsWereMet()).To(gomega.Succeed())
 }
 
+func TestDeleteValidationRecordEndorser(t *testing.T, store endorserStoreConstructor) {
+	gomega.RegisterTestingT(t)
+	db, mockDB, err := sqlmock.New()
+	gomega.Expect(err).ToNot(gomega.HaveOccurred())
+
+	txID := "txid"
+
+	mockDB.ExpectBegin()
+	mockDB.ExpectExec("DELETE FROM VALIDATIONS WHERE tx_id = \\$1").
+		WithArgs(txID).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mockDB.ExpectCommit()
+
+	aw, err := store(db).NewEndorserStoreTransaction()
+	gomega.Expect(err).ToNot(gomega.HaveOccurred())
+	gomega.Expect(aw.DeleteValidationRecord(t.Context(), txID)).To(gomega.Succeed())
+	gomega.Expect(aw.Commit()).To(gomega.Succeed())
+
+	gomega.Expect(mockDB.ExpectationsWereMet()).To(gomega.Succeed())
+}
+
 func TestSetStatusEndorser(t *testing.T, store endorserStoreConstructor) {
 	gomega.RegisterTestingT(t)
 	db, mockDB, err := sqlmock.New()

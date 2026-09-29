@@ -10,6 +10,7 @@ import (
 	"context"
 	"encoding/json"
 	"slices"
+	"time"
 
 	token2 "github.com/LFDT-Panurus/panurus/token"
 	"github.com/LFDT-Panurus/panurus/token/core/common"
@@ -31,6 +32,12 @@ const (
 	SetupFunction    = "setup"
 )
 
+// rollbackTimeout bounds the compensating rollback that undoes a validation
+// record after a failed endorsement. The rollback runs on a context detached
+// from the request's (see rollbackValidationRecord), so it needs its own
+// deadline rather than inheriting the request's.
+const rollbackTimeout = 30 * time.Second
+
 // Request models an in-flight request being processed by ResponderView. It carries the
 // fields common to every protocol handled by ResponderView plus the fields that are
 // specific to a given responderBehaviour; only the fields relevant to the selected
@@ -48,6 +55,10 @@ type Request struct {
 	Meta             map[string][]byte
 	ApprovalMetadata map[string][]byte
 	PublicParamsHash tdriver.PPHash
+	// Storage is resolved once by approvalBehaviour.validate and reused by persist and
+	// rollback, so the store is looked up a single time per request rather than re-resolved
+	// after the endorsement signature has been released.
+	Storage Storage
 
 	// setup-specific fields, populated by setupBehaviour
 	PublicParamsRaw []byte
@@ -74,6 +85,16 @@ type responderBehaviour interface {
 	validate(ctx view.Context, request *Request) error
 	// translate writes the behaviour-specific actions into the request's RWSet.
 	translate(ctx context.Context, request *Request) error
+	// persist records any behaviour-specific state that must survive the request. It runs
+	// *before* the proposal is endorsed, so the record is durable before the endorsement
+	// signature is released to the client: "endorsement released => record durable" holds,
+	// and the record's primary key makes single-approval atomic. Behaviours with nothing to
+	// persist return nil.
+	persist(ctx context.Context, request *Request) error
+	// rollback undoes whatever persist wrote. It runs when endorsement fails, so that a
+	// request whose endorsement did not complete is left retryable instead of permanently
+	// marked as processed. Behaviours with nothing to roll back return nil.
+	rollback(ctx context.Context, request *Request) error
 }
 
 // ResponderView is the responder of the FSC endorsement protocols. It receives a
@@ -151,13 +172,53 @@ func (r *ResponderView) Call(context view.Context) (any, error) {
 		return nil, errors.Join(ErrValidateProposal, err)
 	}
 
+	// persist behaviour-specific state *before* endorsing: endorsing releases the signed
+	// proposal response to the client (session.Send inside the FSC endorsement responder), so
+	// the already-processed marker must be durable first. Otherwise a client could hold a
+	// valid endorsement for an anchor this endorser kept no record of, and replay it. A
+	// failure here means nothing was endorsed, so the request stays retryable.
+	if err := behaviour.persist(context.Context(), request); err != nil {
+		return nil, errors.Join(ErrValidateProposal, err)
+	}
+
 	// endorse
 	res, err := r.endorse(context, request, behaviour)
 	if err != nil {
+		// Rolling back here is only safe because an endorsement error means the signed proposal
+		// response was NOT released to the client: EndorserService.Endorse runs FSC's
+		// endorsement responder (endorser.NewEndorsementOnProposalResponderView), whose last
+		// fallible step is session.Send — it returns nil on a successful send and only errors
+		// when it failed to produce or send the response, with no post-send step that could
+		// error after the signature went out. So on error nothing was released, and deleting the
+		// record cannot strand an endorsement the client already holds; it just leaves the
+		// request retryable. (If a future fabric-smart-client bump lets Endorse error after
+		// sending, this rollback would reopen the replay window and must be reconsidered.)
+		//
+		// A rollback failure is logged, not returned: it must not mask the endorsement error,
+		// and the worst case is a request that stays marked as processed (fail-closed).
+		if rbErr := rollbackValidationRecord(context.Context(), behaviour, request); rbErr != nil {
+			logger.Errorf("failed to roll back validation record for [%s] after endorsement failure: %s", request.Anchor, rbErr)
+		}
+
 		return nil, errors.Join(ErrEndorseProposal, err)
 	}
 
 	return res, nil
+}
+
+// rollbackValidationRecord runs behaviour.rollback on a context detached from the request's.
+//
+// The endorsement most often fails precisely because the request's context was cancelled (the
+// client disconnected or the deadline fired). Rolling back on that same, now-cancelled context
+// would make DeleteValidationRecord fail immediately, leaving the anchor permanently marked as
+// processed — the opposite of the retryability this rollback exists to provide. context.WithoutCancel
+// keeps the request's values (tracing, logging) while dropping its cancellation, and the rollback
+// still gets its own bounded deadline so it cannot hang.
+func rollbackValidationRecord(ctx context.Context, behaviour responderBehaviour, request *Request) error {
+	rbCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), rollbackTimeout)
+	defer cancel()
+
+	return behaviour.rollback(rbCtx, request)
 }
 
 func (r *ResponderView) receive(ctx view.Context) (*Request, responderBehaviour, error) {
@@ -386,6 +447,28 @@ func (b *approvalBehaviour) validate(context view.Context, request *Request) err
 	request.Tms = tms
 	request.PublicParamsHash = tms.PublicParametersManager().PublicParamsHash()
 
+	// Resolve the store once here and reuse it in persist/rollback, so it is looked up a
+	// single time per request rather than re-resolved after the endorsement signature has
+	// been released.
+	db, err := b.storageProvider.GetStorage(request.TMSID)
+	if err != nil {
+		return errors.WithMessagef(err, "failed to retrieve db [%s]", request.TMSID)
+	}
+	request.Storage = db
+
+	// Reject a request this endorser has already approved before doing any (expensive)
+	// verification: a validation record is written once a request has been approved and just
+	// before it is endorsed (see persist), keyed by its anchor, so its presence means the
+	// request was already processed. This makes re-approval a fast, explicit rejection rather
+	// than wasted work that only fails later at the validation-record insert.
+	if processed, err := db.AlreadyProcessed(context.Context(), request.Anchor); err != nil {
+		// AlreadyProcessed already wraps the underlying failure with the
+		// "failed to check whether [X] was already processed" context.
+		return err
+	} else if processed {
+		return errors.Wrapf(ErrAlreadyProcessed, "request [%s] was already processed", request.Anchor)
+	}
+
 	getState := func(id token.ID) ([]byte, error) {
 		key, err := b.keyTranslator.CreateOutputKey(id.TxId, id.Index)
 		if err != nil {
@@ -410,22 +493,40 @@ func (b *approvalBehaviour) validate(context view.Context, request *Request) err
 	if err != nil {
 		return errors.WithMessagef(err, "failed to verify token request for [%s]", request.Anchor)
 	}
-	db, err := b.storageProvider.GetStorage(request.TMSID)
-	if err != nil {
-		return errors.WithMessagef(err, "failed to retrieve db [%s]", request.TMSID)
-	}
-	logger.DebugfContext(context.Context(), "Append validation record for TX [%s]", request.Anchor)
-	if err := db.AppendValidationRecord(
-		context.Context(),
+	request.Actions = actions
+	request.Meta = meta
+
+	return nil
+}
+
+// persist writes the validation record for an approved request. It runs *before* the request
+// is endorsed (see ResponderView.Call), so the record — and therefore the already-processed
+// marker checked by validate — is durable before the endorsement signature is released to
+// the client, and the record's primary key makes single-approval atomic. If endorsement then
+// fails, rollback removes the record.
+func (b *approvalBehaviour) persist(ctx context.Context, request *Request) error {
+	logger.DebugfContext(ctx, "Append validation record for TX [%s]", request.Anchor)
+	if err := request.Storage.AppendValidationRecord(
+		ctx,
 		request.Anchor,
 		request.RequestRaw,
-		meta,
+		request.Meta,
 		request.PublicParamsHash,
 	); err != nil {
 		return errors.WithMessagef(err, "failed to append metadata for [%s]", request.Anchor)
 	}
-	request.Actions = actions
-	request.Meta = meta
+
+	return nil
+}
+
+// rollback removes the validation record written by persist. It runs when endorsement fails,
+// so an anchor whose endorsement did not complete is left retryable instead of permanently
+// rejected by the already-processed check.
+func (b *approvalBehaviour) rollback(ctx context.Context, request *Request) error {
+	logger.DebugfContext(ctx, "Delete validation record for TX [%s]", request.Anchor)
+	if err := request.Storage.DeleteValidationRecord(ctx, request.Anchor); err != nil {
+		return errors.WithMessagef(err, "failed to delete validation record for [%s]", request.Anchor)
+	}
 
 	return nil
 }
@@ -574,5 +675,15 @@ func (b *setupBehaviour) translate(ctx context.Context, request *Request) error 
 		return errors.Wrapf(err, "failed to write setup action for tx [%s]", request.Anchor)
 	}
 
+	return nil
+}
+
+// persist is a no-op: the setup protocol keeps no per-request validation record.
+func (b *setupBehaviour) persist(ctx context.Context, request *Request) error {
+	return nil
+}
+
+// rollback is a no-op: the setup protocol persists nothing, so there is nothing to undo.
+func (b *setupBehaviour) rollback(ctx context.Context, request *Request) error {
 	return nil
 }

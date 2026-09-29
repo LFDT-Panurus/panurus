@@ -87,6 +87,11 @@ type EndorserService struct {
 }
 
 func (fake *EndorserService) CollectEndorsements(arg1 view.Context, arg2 *endorser.Transaction, arg3 time.Duration, arg4 ...view.Identity) error {
+	var arg4Copy []view.Identity
+	if arg4 != nil {
+		arg4Copy = make([]view.Identity, len(arg4))
+		copy(arg4Copy, arg4)
+	}
 	fake.collectEndorsementsMutex.Lock()
 	ret, specificReturn := fake.collectEndorsementsReturnsOnCall[len(fake.collectEndorsementsArgsForCall)]
 	fake.collectEndorsementsArgsForCall = append(fake.collectEndorsementsArgsForCall, struct {
@@ -94,10 +99,10 @@ func (fake *EndorserService) CollectEndorsements(arg1 view.Context, arg2 *endors
 		arg2 *endorser.Transaction
 		arg3 time.Duration
 		arg4 []view.Identity
-	}{arg1, arg2, arg3, arg4})
+	}{arg1, arg2, arg3, arg4Copy})
 	stub := fake.CollectEndorsementsStub
 	fakeReturns := fake.collectEndorsementsReturns
-	fake.recordInvocation("CollectEndorsements", []interface{}{arg1, arg2, arg3, arg4})
+	fake.recordInvocation("CollectEndorsements", []interface{}{arg1, arg2, arg3, arg4Copy})
 	fake.collectEndorsementsMutex.Unlock()
 	if stub != nil {
 		return stub(arg1, arg2, arg3, arg4...)
@@ -151,16 +156,21 @@ func (fake *EndorserService) CollectEndorsementsReturnsOnCall(i int, result1 err
 }
 
 func (fake *EndorserService) Endorse(arg1 view.Context, arg2 *endorser.Transaction, arg3 ...view.Identity) (any, error) {
+	var arg3Copy []view.Identity
+	if arg3 != nil {
+		arg3Copy = make([]view.Identity, len(arg3))
+		copy(arg3Copy, arg3)
+	}
 	fake.endorseMutex.Lock()
 	ret, specificReturn := fake.endorseReturnsOnCall[len(fake.endorseArgsForCall)]
 	fake.endorseArgsForCall = append(fake.endorseArgsForCall, struct {
 		arg1 view.Context
 		arg2 *endorser.Transaction
 		arg3 []view.Identity
-	}{arg1, arg2, arg3})
+	}{arg1, arg2, arg3Copy})
 	stub := fake.EndorseStub
 	fakeReturns := fake.endorseReturns
-	fake.recordInvocation("Endorse", []interface{}{arg1, arg2, arg3})
+	fake.recordInvocation("Endorse", []interface{}{arg1, arg2, arg3Copy})
 	fake.endorseMutex.Unlock()
 	if stub != nil {
 		return stub(arg1, arg2, arg3...)
@@ -281,15 +291,20 @@ func (fake *EndorserService) EndorserIDReturnsOnCall(i int, result1 view.Identit
 }
 
 func (fake *EndorserService) NewTransaction(arg1 view.Context, arg2 ...fabric.TransactionOption) (*endorser.Transaction, error) {
+	var arg2Copy []fabric.TransactionOption
+	if arg2 != nil {
+		arg2Copy = make([]fabric.TransactionOption, len(arg2))
+		copy(arg2Copy, arg2)
+	}
 	fake.newTransactionMutex.Lock()
 	ret, specificReturn := fake.newTransactionReturnsOnCall[len(fake.newTransactionArgsForCall)]
 	fake.newTransactionArgsForCall = append(fake.newTransactionArgsForCall, struct {
 		arg1 view.Context
 		arg2 []fabric.TransactionOption
-	}{arg1, arg2})
+	}{arg1, arg2Copy})
 	stub := fake.NewTransactionStub
 	fakeReturns := fake.newTransactionReturns
-	fake.recordInvocation("NewTransaction", []interface{}{arg1, arg2})
+	fake.recordInvocation("NewTransaction", []interface{}{arg1, arg2Copy})
 	fake.newTransactionMutex.Unlock()
 	if stub != nil {
 		return stub(arg1, arg2...)
