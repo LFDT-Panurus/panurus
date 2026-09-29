@@ -294,6 +294,7 @@ func (n *Network) RequestApproval(
 
 	anchor := n.ComputeTxID(&txID)
 	result, err := endorser.Endorse(context, &endorsement.EndorseRequest{
+		Kind:         endorsement.KindApproval,
 		TokenRequest: requestRaw,
 		TMSID:        tms.ID(),
 		Anchor:       anchor,
@@ -303,12 +304,7 @@ func (n *Network) RequestApproval(
 		return nil, errors.Wrapf(err, "failed to collect endorsements for [%s]", anchor)
 	}
 
-	return &Envelope{
-		Anchor:       anchor,
-		Namespace:    tms.ID().Namespace,
-		Delta:        result.Delta,
-		Endorsements: result.Endorsements,
-	}, nil
+	return NewApprovedEnvelope(anchor, tms.ID().Namespace, result.Delta, result.Endorsements), nil
 }
 
 // endorserFor returns the endorsement service for a TMS: the one injected directly if there is one,
@@ -491,20 +487,16 @@ func (n *Network) SetupPublicParams(
 
 	anchor := n.ComputeTxID(&txID)
 	result, err := endorser.Endorse(context, &endorsement.EndorseRequest{
-		TokenRequest: publicParamsRaw,
-		TMSID:        tmsID,
-		Anchor:       anchor,
+		Kind:            endorsement.KindSetup,
+		PublicParamsRaw: publicParamsRaw,
+		TMSID:           tmsID,
+		Anchor:          anchor,
 	})
 	if err != nil {
 		return nil, errors.Wrapf(err, "failed to collect endorsements for public parameters [%s]", anchor)
 	}
 
-	return &Envelope{
-		Anchor:       anchor,
-		Namespace:    tmsID.Namespace,
-		Delta:        result.Delta,
-		Endorsements: result.Endorsements,
-	}, nil
+	return NewApprovedEnvelope(anchor, tmsID.Namespace, result.Delta, result.Endorsements), nil
 }
 
 // FetchPublicParameters retrieves the public parameters currently stored in namespace's own

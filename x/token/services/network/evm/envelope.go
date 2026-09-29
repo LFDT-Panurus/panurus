@@ -39,12 +39,16 @@ type Envelope struct {
 // Compile-time assertion that Envelope satisfies the driver contract.
 var _ driver.Envelope = (*Envelope)(nil)
 
-// NewApprovedEnvelope builds the envelope RequestApproval returns once endorsement has assembled a
-// quorum: the anchor, the endorsed delta, and the signatures over its digest. RawTx and EthTxHash
-// stay empty until Broadcast submits it. Kept in primitive terms so the root package does not depend
-// on the endorsement package; the driver maps an endorsement result onto these arguments.
-func NewApprovedEnvelope(anchor string, delta *statedelta.StateDelta, endorsements [][]byte) *Envelope {
-	return &Envelope{Anchor: anchor, Delta: delta, Endorsements: endorsements}
+// NewApprovedEnvelope builds the envelope RequestApproval and SetupPublicParams return once
+// endorsement has assembled a quorum: the anchor, the TMS namespace, the endorsed delta, and the
+// signatures over its digest. RawTx and EthTxHash stay empty until Broadcast submits it. Kept in
+// primitive terms so the root package does not depend on the endorsement package; the driver maps an
+// endorsement result onto these arguments.
+//
+// namespace must be set: Broadcast has no namespace argument of its own, so an envelope built without
+// one cannot be broadcast (see Envelope.Namespace's doc comment).
+func NewApprovedEnvelope(anchor, namespace string, delta *statedelta.StateDelta, endorsements [][]byte) *Envelope {
+	return &Envelope{Anchor: anchor, Namespace: namespace, Delta: delta, Endorsements: endorsements}
 }
 
 // Bytes marshals the envelope to bytes.

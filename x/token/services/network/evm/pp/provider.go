@@ -53,9 +53,15 @@ type ChainProvider struct {
 // (head) storage, so a ChainProvider feeding a delta an endorser is about to sign or a caller
 // re-deriving what the contract will check must read at client.BlockTagLatest - reading at finalized
 // instead reproduces every setup update as a StalePublicParams revert for the whole finalization lag.
-// A ChainProvider used only to notice that an update happened (e.g. driving a local TMS refresh) can
-// still read at the finalized tag; that use is about eventually catching up, not about matching what
-// the contract checks at apply time.
+//
+// That includes a ChainProvider used by pp.Watcher on a node that endorses (see NewWatcher's callers):
+// a responder's DeltaFactory.Build binds every delta to what its OWN local TMS currently holds and
+// refuses to sign when that disagrees with the chain, so if the watcher driving that local TMS lags at
+// the finalized tag while the delta's CAS baseline is read at latest, every approval this node endorses
+// is refused with ErrStalePublicParams for the whole finalization lag after every setup update. A
+// watcher on a node that endorses nothing has no such comparison to keep in lockstep and reads at the
+// configured finality tag instead, which keeps its reorg safety; driver.go's watchPublicParams makes
+// that choice per contract, so do not drop it in favor of a blanket latest.
 func NewChainProvider(evmClient client.EVMClient, tokenState client.Address, blockTag string) *ChainProvider {
 	if blockTag == "" {
 		blockTag = client.BlockTagFinalized

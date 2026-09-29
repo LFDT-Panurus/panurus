@@ -394,3 +394,39 @@ func TestInitiatorBoundsTheReportedDeclines(t *testing.T) {
 	assert.Contains(t, err.Error(), "and 3 more", "the surplus reasons should be summarised, not spelled out")
 	assert.Equal(t, maxReportedDeclines, strings.Count(err.Error(), "connection refused"))
 }
+
+// TestInitiatorBindChecksSetupParameters checks that, for a setup request, a delta that is not a setup
+// delta or that carries parameters other than the requested ones is rejected without any validator.
+func TestInitiatorBindChecksSetupParameters(t *testing.T) {
+	req := validSetupRequest()
+	init := NewInitiator(nil, 1, testDomain(), req)
+
+	matching := endorsedDelta(t)
+	matching.IsSetup = true
+	matching.SetupParameters = req.PublicParamsRaw
+
+	wrongParams := endorsedDelta(t)
+	wrongParams.IsSetup = true
+	wrongParams.SetupParameters = []byte("other-public-parameters")
+
+	tests := []struct {
+		name    string
+		delta   *statedelta.StateDelta
+		wantErr bool
+	}{
+		{"matching setup delta", matching, false},
+		{"non-setup delta", endorsedDelta(t), true},
+		{"different parameters", wrongParams, true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			err := init.bind(requestAnchor(t), tc.delta)
+			if tc.wantErr {
+				require.ErrorIs(t, err, ErrDeltaMismatch)
+
+				return
+			}
+			require.NoError(t, err)
+		})
+	}
+}

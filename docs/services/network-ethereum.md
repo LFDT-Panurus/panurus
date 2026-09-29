@@ -686,10 +686,12 @@ views.
 
 ```go
 type EndorseRequest struct {
-    TokenRequest []byte
-    TMSID        token.TMSID
-    Anchor       string
-    Metadata     map[string][]byte
+    Kind            RequestKind // KindApproval or KindSetup
+    TokenRequest    []byte      // populated for KindApproval
+    PublicParamsRaw []byte      // populated for KindSetup
+    TMSID           token.TMSID
+    Anchor          string
+    Metadata        map[string][]byte
 }
 
 type EndorseResponse struct {
@@ -700,6 +702,11 @@ type EndorseResponse struct {
 }
 ```
 
+Both `RequestApproval` and `SetupPublicParams` collect a quorum through the same `Initiator`/`Responder`
+pair - FSC routes a session to a responder by the initiating view's Go type alone, so only one
+`Responder` can ever be registered per node, and it tells the two protocols apart by `Kind` rather than by
+which view opened the session. For `KindApproval`:
+
 1. Authorize the caller by FSC identity, against the TMS's configured allowlist (the EVM analog of
    Fabric's MSP/ACL creator check).
 2. Validate the token request against the ledger (`eth_call` at `finalized`), using the same Token SDK
@@ -707,8 +714,21 @@ type EndorseResponse struct {
 3. Persist a validation record, for audit.
 4. Translate the validated actions into a `StateDelta`.
 5. Check the delta's public-parameters version against this node's synced version; refuse to sign a
-   stale one.
+   stale one. The node's own view of "synced" is a `pp.Watcher` polling the contract at `latest`, not at
+   the configured finality tag: this check itself also reads the chain's current parameters at `latest`
+   (`TokenState.applyStateDelta` compares against its own head storage, not against what is finalized), so
+   a watcher lagging at `finalized` would keep refusing every ordinary approval for the whole finalization
+   window after any setup update, not merely until it "eventually" catches up.
 6. Sign the EIP-712 digest, and reply with the delta, the signature, and the endorser's address.
+
+`KindSetup` (`SetupPublicParams`, first-time setup or a later rotation) skips steps 2-3 entirely: there is
+no token request to validate against ledger state, only new public parameters to check are well-formed
+(`PublicParamsValidator.PublicParametersFromBytes` + `Validate()`, resolved from what the parameters
+themselves declare, not from a TMS - the request may be the very thing that brings the TMS into existence).
+The `StateDelta` it signs binds the chain's *current* parameters as its optimistic-concurrency baseline
+(`PublicParamsHash`/`PublicParamsVersion`, read at `latest`) and carries the *new* ones in
+`SetupParameters`; `TokenState.applyStateDelta` checks the former against its own current storage before
+applying the latter (see `_applySetup` above).
 
 **The initiator does not build a `StateDelta`.** Producing one means validating the request against
 on-chain state, which is exactly the work already delegated to endorsers, so the initiator relays what

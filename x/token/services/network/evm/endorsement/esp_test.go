@@ -25,6 +25,7 @@ func testFactoryConfig(t *testing.T) FactoryConfig {
 	return FactoryConfig{
 		Client:      &mock.EVMClient{},
 		ViewManager: &stubViewManager{},
+		PPValidator: &fakePPValidator{},
 	}
 }
 
@@ -54,6 +55,7 @@ func TestNewServiceFactoryValidates(t *testing.T) {
 	bad := map[string]func(*FactoryConfig){
 		"no client":       func(c *FactoryConfig) { c.Client = nil },
 		"no view manager": func(c *FactoryConfig) { c.ViewManager = nil },
+		"no pp validator": func(c *FactoryConfig) { c.PPValidator = nil },
 	}
 	for name, mutate := range bad {
 		t.Run(name, func(t *testing.T) {

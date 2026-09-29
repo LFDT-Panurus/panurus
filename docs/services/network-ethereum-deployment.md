@@ -147,6 +147,11 @@ Four things are easy to get wrong here:
   for a parameters update should use a separate account.
 - **A node without a `submitter` key can still endorse and read**; it simply cannot broadcast. That
   fails on the first `Broadcast`, not at startup, which is intentional - it is actionable there.
+- **An endorsing node's `endorser.address` must also appear in `endorsement.endorsers`.** `Validate`
+  checks this at startup: a mismatch (a typo, or an address updated in one block but not the other) used
+  to start cleanly and sign endorsements no registry recognised - discarded, silently, as an unrecognised
+  signer, with no error beyond a debug log and no visible symptom short of that node's signatures never
+  counting toward a quorum.
 - **`conflictGrace` is not a tuning knob to raise for safety.** It bounds how long the recovery sweep
   waits, after first observing that a transaction's input is already spent on chain, before recording
   it as `Invalid` — see "Condemning on evidence, not just on elapsed time" in
