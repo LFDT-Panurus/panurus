@@ -844,7 +844,7 @@ func TestCachedFetcher_Update_ThunderingHerd(t *testing.T) {
 // TestNewFetcherProvider verifies provider creation with valid/invalid strategies and zero values.
 func TestNewFetcherProvider(t *testing.T) {
 	t.Run("creates provider with valid strategy", func(t *testing.T) {
-		provider := NewFetcherProvider(
+		provider, err := NewFetcherProvider(
 			nil,
 			&disabled.Provider{},
 			Mixed,
@@ -853,27 +853,35 @@ func TestNewFetcherProvider(t *testing.T) {
 			10,
 		)
 
+		require.NoError(t, err)
 		assert.NotNil(t, provider)
 		assert.Equal(t, int64(100), provider.cacheSize)
 		assert.Equal(t, time.Second, provider.freshnessInterval)
 		assert.Equal(t, 10, provider.maxQueries)
 	})
 
-	t.Run("panics with invalid strategy", func(t *testing.T) {
-		assert.Panics(t, func() {
-			NewFetcherProvider(
-				nil,
-				&disabled.Provider{},
-				"invalid",
-				100,
-				time.Second,
-				10,
-			)
-		})
+	t.Run("returns an error with invalid strategy", func(t *testing.T) {
+		provider, err := NewFetcherProvider(
+			nil,
+			&disabled.Provider{},
+			"invalid",
+			100,
+			time.Second,
+			10,
+		)
+
+		require.Error(t, err)
+		assert.Nil(t, provider)
+		assert.Contains(t, err.Error(), "undefined fetcher strategy [invalid]")
+		// The message must name the accepted values, since it is what an operator sees when
+		// token.selector.fetcherStrategy is misspelled.
+		for _, strategy := range SupportedFetcherStrategies() {
+			assert.Contains(t, err.Error(), string(strategy))
+		}
 	})
 
 	t.Run("creates provider with zero values", func(t *testing.T) {
-		provider := NewFetcherProvider(
+		provider, err := NewFetcherProvider(
 			nil,
 			&disabled.Provider{},
 			Mixed,
@@ -882,11 +890,78 @@ func TestNewFetcherProvider(t *testing.T) {
 			0,
 		)
 
+		require.NoError(t, err)
 		assert.NotNil(t, provider)
 		assert.Equal(t, int64(0), provider.cacheSize)
 		assert.Equal(t, time.Duration(0), provider.freshnessInterval)
 		assert.Equal(t, 0, provider.maxQueries)
 	})
+
+	t.Run("empty strategy selects the default", func(t *testing.T) {
+		defaulted, err := NewFetcherProvider(nil, &disabled.Provider{}, "", 0, 0, 0)
+		require.NoError(t, err)
+		require.NotNil(t, defaulted)
+
+		explicit, err := NewFetcherProvider(nil, &disabled.Provider{}, DefaultFetcherStrategy, 0, 0, 0)
+		require.NoError(t, err)
+
+		// fetchFunc values are not comparable, so compare the fetcher each one builds.
+		assert.IsType(t,
+			explicit.fetch(&tokendb.StoreService{}, nil, 0, 0, 0),
+			defaulted.fetch(&tokendb.StoreService{}, nil, 0, 0, 0),
+		)
+	})
+}
+
+// TestSupportedFetcherStrategies pins the set of selectable strategies: every declared
+// FetcherStrategy constant must be registered, and every registered one must be usable.
+// Issue #2022 was that four of five declared constants had no registry entry.
+func TestSupportedFetcherStrategies(t *testing.T) {
+	assert.Equal(t, []FetcherStrategy{Eager, Lazy, Mixed}, SupportedFetcherStrategies())
+
+	for _, strategy := range SupportedFetcherStrategies() {
+		t.Run(string(strategy), func(t *testing.T) {
+			provider, err := NewFetcherProvider(nil, &disabled.Provider{}, strategy, 0, 0, 0)
+			require.NoError(t, err)
+			require.NotNil(t, provider)
+			assert.NotNil(t, provider.fetch(&tokendb.StoreService{}, NewMetrics(&disabled.Provider{}), 0, 0, 0))
+		})
+	}
+}
+
+// TestFetcherStrategyBuildsExpectedFetcher verifies that each strategy selects the fetcher
+// implementation it names, rather than all of them resolving to the same one.
+func TestFetcherStrategyBuildsExpectedFetcher(t *testing.T) {
+	tests := []struct {
+		strategy FetcherStrategy
+		expected TokenFetcher
+	}{
+		{strategy: Lazy, expected: &lazyFetcher{}},
+		{strategy: Eager, expected: &cachedFetcher{}},
+		{strategy: Mixed, expected: &mixedFetcher{}},
+	}
+
+	for _, tt := range tests {
+		t.Run(string(tt.strategy), func(t *testing.T) {
+			provider, err := NewFetcherProvider(
+				&mockStoreServiceManager{
+					storeServiceByTMSIdFunc: func(tmsID token.TMSID) (*tokendb.StoreService, error) {
+						return &tokendb.StoreService{}, nil
+					},
+				},
+				&disabled.Provider{},
+				tt.strategy,
+				0,
+				0,
+				0,
+			)
+			require.NoError(t, err)
+
+			fetcher, err := provider.GetFetcher(token.TMSID{})
+			require.NoError(t, err)
+			assert.IsType(t, tt.expected, fetcher)
+		})
+	}
 }
 
 // TestFetcherProvider_GetFetcher verifies errors when token store unavailable.
@@ -898,7 +973,7 @@ func TestFetcherProvider_GetFetcher(t *testing.T) {
 			},
 		}
 
-		provider := NewFetcherProvider(
+		provider, err := NewFetcherProvider(
 			mockStoreManager,
 			&disabled.Provider{},
 			Mixed,
@@ -906,6 +981,7 @@ func TestFetcherProvider_GetFetcher(t *testing.T) {
 			time.Second,
 			10,
 		)
+		require.NoError(t, err)
 
 		fetcher, err := provider.GetFetcher(token.TMSID{})
 
@@ -921,7 +997,7 @@ func TestFetcherProvider_GetFetcher(t *testing.T) {
 			},
 		}
 
-		provider := NewFetcherProvider(
+		provider, err := NewFetcherProvider(
 			mockStoreManager,
 			&disabled.Provider{},
 			Mixed,
@@ -929,6 +1005,7 @@ func TestFetcherProvider_GetFetcher(t *testing.T) {
 			time.Second,
 			10,
 		)
+		require.NoError(t, err)
 
 		fetcher, err := provider.GetFetcher(token.TMSID{})
 
