@@ -131,9 +131,20 @@ func HasMovementsParams(params driver2.QueryMovementsParams) cond.Condition {
 }
 
 func HasValidationParams(params driver2.QueryValidationRecordsParams, tableName string) cond.Condition {
+	// Validation records are the approved rows only: the rejected rows in the same table are
+	// audit records of failed requests, returned by QueryValidationFailures instead.
 	return cond.And(
 		cond.BetweenTimestamps(common.FieldName(tableName+".stored_at"), utc(params.From), utc(params.To)),
+		cond.Eq(common.FieldName(tableName+".rejected"), false),
 		cond.In("status", params.Statuses...),
+	)
+}
+
+func HasValidationFailureParams(params driver2.QueryValidationFailureRecordsParams, tableName string) cond.Condition {
+	// Validation failure records are the rejected rows only.
+	return cond.And(
+		cond.BetweenTimestamps(common.FieldName(tableName+".stored_at"), utc(params.From), utc(params.To)),
+		cond.Eq(common.FieldName(tableName+".rejected"), true),
 	)
 }
 
