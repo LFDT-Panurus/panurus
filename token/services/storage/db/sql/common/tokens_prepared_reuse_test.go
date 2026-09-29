@@ -74,7 +74,7 @@ func TestUnspentTokensIteratorByPreparedReuse(t *testing.T) {
 	mockDB.ExpectQuery(queryPattern).WillReturnRows(sqlmock.NewRows(cols))
 
 	for range 3 {
-		it, err := store.UnspentTokensIteratorBy(t.Context(), "wallet0", tokentype.Type("GOLD"))
+		it, err := store.UnspentTokensIteratorBy(t.Context(), "wallet0", tokentype.Type("GOLD"), 0)
 		require.NoError(t, err)
 		it.Close()
 	}
@@ -84,7 +84,7 @@ func TestUnspentTokensIteratorByPreparedReuse(t *testing.T) {
 	mockDB.ExpectPrepare(queryPattern).
 		ExpectQuery().WillReturnRows(sqlmock.NewRows(cols))
 
-	it, err := store.UnspentTokensIteratorBy(t.Context(), "wallet0", "")
+	it, err := store.UnspentTokensIteratorBy(t.Context(), "wallet0", "", 0)
 	require.NoError(t, err)
 	it.Close()
 	require.Equal(t, 2, store.PreparedStmtCount())

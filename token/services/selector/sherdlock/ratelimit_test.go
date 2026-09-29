@@ -10,6 +10,7 @@ import (
 	"context"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/LFDT-Panurus/panurus/token"
 	"github.com/LFDT-Panurus/panurus/token/driver"
@@ -50,7 +51,16 @@ func TestRateLimitedManager(t *testing.T) {
 	locker := &mocks.FakeLocker{}
 	ctx := t.Context()
 
-	mgr := sherdlock.NewManager(fetcher, locker, 64, 0, 0, 0, 0, metrics)
+	mgr := sherdlock.NewManager(&sherdlock.Config{
+		Fetcher:                fetcher,
+		Locker:                 locker,
+		Precision:              64,
+		MaxTokensPerSelection:  10000,
+		MaxLockAttempts:        50000,
+		MaxRetriesAfterBackOff: 3,
+		SelectionTimeout:       30 * time.Second,
+		Metrics:                metrics,
+	})
 	t.Cleanup(func() { require.NoError(t, mgr.Stop()) })
 
 	// A burst of one request, and a rate slow enough that nothing refills during the test.
@@ -149,7 +159,8 @@ func newServiceUnderTest(t *testing.T, opts ...ratelimit.Option) (*sherdlock.Sel
 	lockStoreManager.StoreServiceByTMSIdReturns(nil, nil)
 	metricsProvider, _ := setupMetricsMocks()
 
-	svc := sherdlock.NewService(fetcherProvider, lockStoreManager, &mocks.FakeConfigProvider{}, metricsProvider, opts...)
+	svc, err := sherdlock.NewService(fetcherProvider, lockStoreManager, &mocks.FakeConfigProvider{}, metricsProvider, opts...)
+	require.NoError(t, err)
 	t.Cleanup(svc.Shutdown)
 
 	driverTMS := &drivermock.TokenManagerService{}

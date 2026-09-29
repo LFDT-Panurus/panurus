@@ -33,7 +33,7 @@ func newTestSuite(commType fsc.P2PCommunicationType, factor int, names ...string
 	opts, selector := token2.NewReplicationOptions(factor, names...)
 	ts := token2.NewTestSuite(StartPort, dvp2.Topology(dvp2.Opts{
 		CommType:       commType,
-		DefaultTMSOpts: common.TMSOpts{TokenSDKDriver: zkatdlognoghv1.DriverIdentifier},
+		DefaultTMSOpts: common.TMSOpts{TokenSDKDriver: zkatdlognoghv1.DriverIdentifier, Aries: true},
 		FSCLogSpec:     "",
 		SDKs:           []nodepkg.SDK{&fdlog.SDK{}},
 		Replication:    opts,

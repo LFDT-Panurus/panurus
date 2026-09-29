@@ -9,6 +9,7 @@ package dbtest
 import (
 	"fmt"
 	"math/big"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -88,6 +89,7 @@ var tokensCases = []struct {
 	{"AmountValidation", TAmountValidation},
 	{"TTokenTypes", TTokenTypes},
 	{"ListUnspentTokensByWallets", TListUnspentTokensByWallets},
+	{"UnspentTokensIteratorByLimit", TUnspentTokensIteratorByLimit},
 	{"GetDeletedTokensPendingSKICleanup", TGetDeletedTokensPendingSKICleanup},
 }
 
@@ -291,13 +293,126 @@ func TSaveAndGetToken(t *testing.T, db TestTokenDB) {
 
 func getTokensBy(t *testing.T, db TestTokenDB, ownerEID string, typ token.Type) []*token.UnspentToken {
 	t.Helper()
-	it, err := db.UnspentTokensIteratorBy(t.Context(), ownerEID, typ)
+
+	return getTokensByWithLimit(t, db, ownerEID, typ, 0)
+}
+
+func getTokensByWithLimit(t *testing.T, db TestTokenDB, ownerEID string, typ token.Type, limit int) []*token.UnspentToken {
+	t.Helper()
+	it, err := db.UnspentTokensIteratorBy(t.Context(), ownerEID, typ, limit)
 	require.NoError(t, err)
 
 	tokens, err := iterators.ReadAllPointers(it)
 	require.NoError(t, err, "error iterating over tokens")
 
 	return tokens
+}
+
+// TUnspentTokensIteratorByLimit exercises UnspentTokensIteratorBy with a
+// non-zero limit against a real database. Without this case the limited query
+// is never executed by any test, which hid two bugs: a literal "?" placeholder
+// that is a syntax error on PostgreSQL, and a LIMIT applied before dedup.
+//
+// The fixture deliberately stores tokens that match *both* branches of the
+// UNION (owner_wallet_id = alice on the tokens row, plus an ownership row for
+// alice), because that is the case where a pre-dedup LIMIT silently halves the
+// number of tokens the selector gets to see. It then adds a token co-owned by
+// two wallets (see the ABC block below), which is the exact shape that made a
+// single physical token contribute two rows to the UNION and consume two LIMIT
+// slots before the projection was fixed.
+func TUnspentTokensIteratorByLimit(t *testing.T, db TestTokenDB) {
+	t.Helper()
+
+	const wallet = "alice"
+	const total = 6
+	for i := range total {
+		require.NoError(t, db.StoreToken(t.Context(), driver2.TokenRecord{
+			TxID:           fmt.Sprintf("tx%d", i),
+			Index:          0,
+			IssuerRaw:      []byte{},
+			OwnerRaw:       []byte{1, 2, 3},
+			OwnerType:      "idemix",
+			OwnerIdentity:  []byte{},
+			OwnerWalletID:  wallet,
+			Ledger:         []byte("ledger"),
+			LedgerMetadata: []byte{},
+			Quantity:       "0x0" + strconv.Itoa(i+1),
+			Type:           TST,
+			Amount:         new(big.Int).SetUint64(uint64(i + 1)),
+			Owner:          true,
+		}, []string{wallet}))
+	}
+
+	// Baseline: the unlimited path already dedups in the iterator.
+	unlimited := getTokensByWithLimit(t, db, wallet, TST, 0)
+	require.Len(t, unlimited, total, "unlimited query must return every distinct token")
+
+	// A limit below the number of available tokens must yield exactly that
+	// many distinct tokens, not half of them.
+	for _, limit := range []int{1, 2, 3, 5} {
+		limited := getTokensByWithLimit(t, db, wallet, TST, limit)
+		assert.Len(t, limited, limit, "limit %d must return %d distinct tokens", limit, limit)
+		assertDistinctTokens(t, limited)
+	}
+
+	// A limit at or above the number of available tokens returns all of them.
+	for _, limit := range []int{total, total + 1, 100} {
+		limited := getTokensByWithLimit(t, db, wallet, TST, limit)
+		assert.Len(t, limited, total, "limit %d must return all %d tokens", limit, total)
+		assertDistinctTokens(t, limited)
+	}
+
+	// Largest tokens first, so the selector reaches its target with the
+	// fewest rows: with amounts 1..6, a limit of 2 must return 6 and 5.
+	top := getTokensByWithLimit(t, db, wallet, TST, 2)
+	require.Len(t, top, 2)
+	quantities := []string{top[0].Quantity, top[1].Quantity}
+	assert.ElementsMatch(t, []string{"0x06", "0x05"}, quantities,
+		"limited query must order by amount descending")
+
+	// Multi-owner regression: a token whose tokens.owner_wallet_id is alice AND
+	// whose ownership table lists both alice and bob matches branch 1 (by
+	// owner_wallet_id) once per ownership row. Before the fix branch 1 projected
+	// ownership.wallet_id, so this single physical token produced two rows with
+	// the same amount; sorted adjacently by ORDER BY amount DESC, a pre-dedup
+	// LIMIT counted both and the selector saw one fewer distinct token than the
+	// wallet actually holds. We isolate this on token type ABC so it does not
+	// disturb the TST counts asserted above.
+	require.NoError(t, db.StoreToken(t.Context(), driver2.TokenRecord{
+		TxID: "co", Index: 0, IssuerRaw: []byte{}, OwnerRaw: []byte{1, 2, 3},
+		OwnerType: "idemix", OwnerIdentity: []byte{}, OwnerWalletID: wallet,
+		Ledger: []byte("ledger"), LedgerMetadata: []byte{},
+		Quantity: "0x09", Type: ABC, Amount: big.NewInt(9), Owner: true,
+	}, []string{wallet, "bob"}))
+	require.NoError(t, db.StoreToken(t.Context(), driver2.TokenRecord{
+		TxID: "solo", Index: 0, IssuerRaw: []byte{}, OwnerRaw: []byte{1, 2, 3},
+		OwnerType: "idemix", OwnerIdentity: []byte{}, OwnerWalletID: wallet,
+		Ledger: []byte("ledger"), LedgerMetadata: []byte{},
+		Quantity: "0x08", Type: ABC, Amount: big.NewInt(8), Owner: true,
+	}, []string{wallet}))
+
+	// alice holds two distinct ABC tokens. A limit of 2 must surface both, once
+	// each — before the fix the co-owned token ate both LIMIT slots and the solo
+	// token disappeared, so a funded wallet looked short.
+	coLimited := getTokensByWithLimit(t, db, wallet, ABC, 2)
+	assert.Len(t, coLimited, 2, "co-owned token must consume one LIMIT slot, not two")
+	assertDistinctTokens(t, coLimited)
+
+	// The larger (co-owned) token comes first and appears exactly once.
+	coTop := getTokensByWithLimit(t, db, wallet, ABC, 1)
+	require.Len(t, coTop, 1)
+	assert.Equal(t, "0x09", coTop[0].Quantity, "largest token first, listed once")
+	assertDistinctTokens(t, coTop)
+}
+
+func assertDistinctTokens(t *testing.T, tokens []*token.UnspentToken) {
+	t.Helper()
+	seen := make(map[token.ID]struct{}, len(tokens))
+	for _, tok := range tokens {
+		_, dup := seen[tok.Id]
+		assert.False(t, dup, "token %v returned more than once", tok.Id)
+		seen[tok.Id] = struct{}{}
+	}
 }
 
 func TDeleteAndMine(t *testing.T, db TestTokenDB) {

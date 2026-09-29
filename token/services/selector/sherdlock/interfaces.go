@@ -38,6 +38,14 @@ type TokenLocker interface {
 
 // TokenFetcher interface for fetching tokens.
 //
+// It intentionally takes no row limit. sherdlock enforces its resource bound in
+// the selector loop (maxTokensPerSelection / maxLockAttempts), not at the query:
+// the cached fetcher eagerly loads every wallet's tokens into a shared cache, so
+// a per-selection LIMIT cannot be pushed into that query without corrupting the
+// cache for other wallets. A limit parameter here was inert and misleading, so it
+// was removed; the DB-level bound applies only to the simple driver, which pushes
+// its own limit through driver.QueryEngine.UnspentTokensIteratorBy.
+//
 //go:generate counterfeiter -o mocks/token_fetcher.go -fake-name FakeTokenFetcher . TokenFetcher
 type TokenFetcher interface {
 	UnspentTokensIteratorBy(ctx context.Context, walletID string, currency token2.Type) (Iterator[*token2.UnspentTokenInWallet], error)

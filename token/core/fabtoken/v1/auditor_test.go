@@ -232,7 +232,7 @@ func (m *mockQueryEngine) UnspentTokensIterator(ctx context.Context) (driver.Uns
 	return nil, nil
 }
 
-func (m *mockQueryEngine) UnspentTokensIteratorBy(ctx context.Context, id string, tokenType token.Type) (driver.UnspentTokensIterator, error) {
+func (m *mockQueryEngine) UnspentTokensIteratorBy(ctx context.Context, id string, tokenType token.Type, limit int) (driver.UnspentTokensIterator, error) {
 	return nil, nil
 }
 

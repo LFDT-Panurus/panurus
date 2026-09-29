@@ -35,11 +35,22 @@ func NewService(
 	c ConfigProvider,
 	metricsProvider metrics.Provider,
 	opts ...ratelimit.Option,
-) *SelectorService {
+) (*SelectorService, error) {
 	cfg, err := config.New(c)
 	if err != nil {
 		logger.Errorf("error getting selector config, using defaults. %s", err.Error())
 		cfg = &config.Config{}
+	}
+
+	// Validate configuration and refuse to start on a bad one. Silently
+	// resetting the limits here would be worse than useless: because Validate
+	// checks the defaults-applied limits, a config that tightens a single knob
+	// (e.g. maxTokensPerSelection) below an untouched default (maxLocksPerTransaction)
+	// fails validation, and wiping cfg.Limits then resolves every knob back to
+	// its default — laxer than the operator asked for. A rejected configuration
+	// must fail startup instead.
+	if err := cfg.Validate(); err != nil {
+		return nil, errors.Wrap(err, "invalid selector configuration")
 	}
 
 	svc := &SelectorService{}
@@ -50,6 +61,10 @@ func NewService(
 		numRetries:                   cfg.GetNumRetries(),
 		leaseExpiry:                  cfg.GetLeaseExpiry(),
 		leaseCleanupTickPeriod:       cfg.GetLeaseCleanupTickPeriod(),
+		maxTokensPerSelection:        cfg.GetMaxTokensPerSelection(),
+		maxLockAttempts:              cfg.GetMaxLockAttempts(),
+		maxLocksPerTx:                cfg.GetMaxLocksPerTransaction(),
+		selectionTimeout:             cfg.GetSelectionTimeout(),
 		metrics:                      NewMetrics(metricsProvider),
 		limiter:                      ratelimit.CompileOptions(opts...).Limiter(cfg),
 		onCreate:                     svc.trackManager,
@@ -59,7 +74,7 @@ func NewService(
 	}
 	svc.managerLazyCache = lazy2.NewProviderWithKeyMapper(key, loader.load)
 
-	return svc
+	return svc, nil
 }
 
 func (s *SelectorService) SelectorManager(tms *token.ManagementService) (token.SelectorManager, error) {
@@ -111,6 +126,10 @@ type loader struct {
 	retryInterval                time.Duration
 	leaseExpiry                  time.Duration
 	leaseCleanupTickPeriod       time.Duration
+	maxTokensPerSelection        int
+	maxLockAttempts              int
+	maxLocksPerTx                int
+	selectionTimeout             time.Duration
 	metrics                      *Metrics
 	// limiter meters selection requests per wallet. It is nil when rate limiting is
 	// disabled, which is the default, and is shared by every manager the loader builds.
@@ -136,16 +155,19 @@ func (s *loader) loadTMS(tms TMS) (token.SelectorManager, error) {
 		return nil, errors.Errorf("failed to create token fetcher: %v", err)
 	}
 
-	mgr := NewManager(
-		fetcher,
-		tokenLockStoreService,
-		pp.Precision(),
-		s.retryInterval,
-		s.numRetries,
-		s.leaseExpiry,
-		s.leaseCleanupTickPeriod,
-		s.metrics,
-	)
+	mgr := NewManager(&Config{
+		Fetcher:                fetcher,
+		Locker:                 NewBoundedLocker(tokenLockStoreService, s.maxLocksPerTx),
+		Precision:              pp.Precision(),
+		Backoff:                s.retryInterval,
+		MaxRetriesAfterBackOff: s.numRetries,
+		LeaseExpiry:            s.leaseExpiry,
+		LeaseCleanupTickPeriod: s.leaseCleanupTickPeriod,
+		MaxTokensPerSelection:  s.maxTokensPerSelection,
+		MaxLockAttempts:        s.maxLockAttempts,
+		SelectionTimeout:       s.selectionTimeout,
+		Metrics:                s.metrics,
+	})
 	if s.onCreate != nil {
 		s.onCreate(mgr)
 	}

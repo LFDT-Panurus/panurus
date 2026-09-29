@@ -12,6 +12,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/LFDT-Panurus/panurus/token/services/selector/sherdlock"
 	"github.com/LFDT-Panurus/panurus/token/services/selector/sherdlock/mocks"
@@ -53,7 +54,7 @@ func TestSelectorClosesDisplacedIterators(t *testing.T) {
 	// immediate retries and gives up with SufficientButLockedFunds.
 	mockLocker.TryLockReturns(false, nil)
 
-	s := sherdlock.NewSelector(sherdlock.Logger(), mockFetcher, mockLocker, 64, metrics)
+	s := sherdlock.NewSelector(sherdlock.Logger(), mockFetcher, mockLocker, 64, 10000, 50000, 30*time.Second, metrics)
 	_, _, err := s.Select(t.Context(), &unitTestMockOwnerFilter{id: "alice"}, "50", "ABC")
 	require.Error(t, err)
 
@@ -94,7 +95,7 @@ func TestSelectorCloseDuringRetryIsRaceFree(t *testing.T) {
 	}
 	mockLocker.TryLockReturns(false, nil)
 
-	s := sherdlock.NewSelector(sherdlock.Logger(), mockFetcher, mockLocker, 64, metrics)
+	s := sherdlock.NewSelector(sherdlock.Logger(), mockFetcher, mockLocker, 64, 10000, 50000, 30*time.Second, metrics)
 
 	var wg sync.WaitGroup
 	wg.Add(2)

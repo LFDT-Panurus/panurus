@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/LFDT-Panurus/panurus/token"
 	"github.com/LFDT-Panurus/panurus/token/services/selector/sherdlock"
@@ -167,7 +168,17 @@ func NewSelector(qs *testutils.MockQueryService, walletIDByRawIdentity WalletIDB
 		return qs
 	}
 
-	s, _ := selector.NewManager(lock, qf, testutils.SelectorNumRetries, testutils.SelectorTimeout, false, testutils.TokenQuantityPrecision).NewSelector(testutils.TxID)
+	s, _ := selector.NewManager(
+		lock,
+		qf,
+		testutils.SelectorNumRetries,
+		testutils.SelectorTimeout,
+		false,
+		testutils.TokenQuantityPrecision,
+		10000,          // maxTokensPerSelection
+		50000,          // maxLockAttempts
+		30*time.Second, // selectionTimeout
+	).NewSelector(testutils.TxID)
 
 	return &extendedSelector{
 		Selector: s,
@@ -184,6 +195,9 @@ func NewSherdSelector(qs *testutils.MockQueryService, _ WalletIDByRawIdentityFun
 			testutils.TokenQuantityPrecision,
 			sherdlock.NoBackoff,
 			testutils.SelectorNumRetries,
+			10000,          // maxTokensPerSelection
+			50000,          // maxLockAttempts
+			30*time.Second, // selectionTimeout
 			sherdlock.NewMetrics(&disabled.Provider{}),
 		),
 		Lock: nil,
