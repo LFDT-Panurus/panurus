@@ -54,8 +54,12 @@ type setupListener struct {
 }
 
 // OnStatus notifies the wrapped listener of a status change and
-// triggers an update in the associated VersionKeeper.
+// re-reads the public parameters version into the associated VersionKeeper.
+// A failed read is only logged: the keeper retries on the next read, so a
+// transient ledger error does not leave it stuck on a stale version.
 func (l *setupListener) OnStatus(ctx context.Context, key driver.PKey, value []byte) {
 	l.Listener.OnStatus(ctx, key, value)
-	l.vk.UpdateVersion()
+	if err := l.vk.UpdateVersion(); err != nil {
+		logger.ErrorfContext(ctx, "failed updating public parameters version for key [%s]: %s", key, err)
+	}
 }
