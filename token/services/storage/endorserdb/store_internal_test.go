@@ -39,6 +39,14 @@ func (failingEndorserStore) GetStatus(context.Context, string) (dbdriver.TxStatu
 	return dbdriver.Unknown, "", errQueryFailed
 }
 
+func (failingEndorserStore) RecordValidationFailure(context.Context, string, []byte, string) error {
+	return errQueryFailed
+}
+
+func (failingEndorserStore) QueryValidationFailures(context.Context, dbdriver.QueryValidationFailureRecordsParams) (dbdriver.ValidationFailureRecordsIterator, error) {
+	return nil, errQueryFailed
+}
+
 // TestValidationRecordsPreservesErrorChain checks that a driver failure surfaced by
 // ValidationRecords stays matchable with errors.Is. Building the error by interpolating the cause
 // into a new message (errors.Errorf with %s) would break every caller that switches on the

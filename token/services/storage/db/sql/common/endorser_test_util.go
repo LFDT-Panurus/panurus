@@ -105,6 +105,99 @@ func TestAWAddValidationRecord(t *testing.T, store endorserStoreConstructor) {
 	gomega.Expect(mockDB.ExpectationsWereMet()).To(gomega.Succeed())
 }
 
+func TestDeleteValidationRecordEndorser(t *testing.T, store endorserStoreConstructor) {
+	gomega.RegisterTestingT(t)
+	db, mockDB, err := sqlmock.New()
+	gomega.Expect(err).ToNot(gomega.HaveOccurred())
+
+	txID := "txid"
+
+	mockDB.ExpectBegin()
+	mockDB.ExpectExec("DELETE FROM VALIDATIONS WHERE tx_id = \\$1").
+		WithArgs(txID).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mockDB.ExpectCommit()
+
+	aw, err := store(db).NewEndorserStoreTransaction()
+	gomega.Expect(err).ToNot(gomega.HaveOccurred())
+	gomega.Expect(aw.DeleteValidationRecord(t.Context(), txID)).To(gomega.Succeed())
+	gomega.Expect(aw.Commit()).To(gomega.Succeed())
+
+	gomega.Expect(mockDB.ExpectationsWereMet()).To(gomega.Succeed())
+}
+
+func TestRecordValidationFailure(t *testing.T, store endorserStoreConstructor) {
+	gomega.RegisterTestingT(t)
+	db, mockDB, err := sqlmock.New()
+	gomega.Expect(err).ToNot(gomega.HaveOccurred())
+
+	txID := "txid"
+	tokenRequest := []byte("malformed_request")
+	reason := "failed to verify token request: boom"
+	anyID := sqlmock.AnyArg()
+	now := sqlmock.AnyArg()
+
+	// Append-only direct insert: no surrounding BEGIN/COMMIT, generated id and timestamp.
+	mockDB.
+		ExpectExec("INSERT INTO VALIDATION_FAILURES \\(id, tx_id, request, reason, stored_at\\) "+
+			"VALUES \\(\\$1, \\$2, \\$3, \\$4, \\$5\\)").
+		WithArgs(anyID, txID, tokenRequest, reason, now).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	gomega.Expect(store(db).RecordValidationFailure(t.Context(), txID, tokenRequest, reason)).To(gomega.Succeed())
+
+	gomega.Expect(mockDB.ExpectationsWereMet()).To(gomega.Succeed())
+}
+
+func TestRecordValidationFailureRejectsEmpty(t *testing.T, store endorserStoreConstructor) {
+	gomega.RegisterTestingT(t)
+	db, _, err := sqlmock.New()
+	gomega.Expect(err).ToNot(gomega.HaveOccurred())
+
+	// An empty tx id or empty request is refused before any query is issued, so no
+	// expectations are registered on the mock.
+	gomega.Expect(store(db).RecordValidationFailure(t.Context(), "", []byte("req"), "reason")).ToNot(gomega.Succeed())
+	gomega.Expect(store(db).RecordValidationFailure(t.Context(), "txid", nil, "reason")).ToNot(gomega.Succeed())
+}
+
+func TestQueryValidationFailures(t *testing.T, store endorserStoreConstructor) {
+	gomega.RegisterTestingT(t)
+	db, mockDB, err := sqlmock.New()
+	gomega.Expect(err).ToNot(gomega.HaveOccurred())
+
+	timeFrom := time.Date(2025, time.June, 8, 10, 0, 0, 0, time.UTC)
+	timeTo := time.Date(2025, time.June, 9, 10, 0, 0, 0, time.UTC)
+	record := driver.ValidationFailureRecord{
+		TxID:         "1234",
+		TokenRequest: []byte("bad request"),
+		Reason:       "boom",
+		Timestamp:    timeFrom,
+	}
+	output := []driver2.Value{
+		record.TxID, record.TokenRequest, record.Reason, record.Timestamp,
+	}
+	query := "SELECT VALIDATION_FAILURES.tx_id, VALIDATION_FAILURES.request, VALIDATION_FAILURES.reason, VALIDATION_FAILURES.stored_at " +
+		"FROM VALIDATION_FAILURES " +
+		"WHERE \\(\\(VALIDATION_FAILURES.stored_at >= \\$1\\) AND \\(VALIDATION_FAILURES.stored_at <= \\$2\\)\\)"
+	mockDB.
+		ExpectQuery(query).
+		WithArgs(timeFrom, timeTo).
+		WillReturnRows(mockDB.NewRows([]string{"tx_id", "request", "reason", "stored_at"}).AddRow(output...))
+
+	it, err := store(db).QueryValidationFailures(t.Context(),
+		driver.QueryValidationFailureRecordsParams{
+			From: &timeFrom,
+			To:   &timeTo,
+		},
+	)
+
+	gomega.Expect(mockDB.ExpectationsWereMet()).To(gomega.Succeed())
+	gomega.Expect(err).ToNot(gomega.HaveOccurred())
+	records, err := iterators.ReadAllValues(it)
+	gomega.Expect(err).ToNot(gomega.HaveOccurred())
+	gomega.Expect(records).To(gomega.ConsistOf(record))
+}
+
 func TestSetStatusEndorser(t *testing.T, store endorserStoreConstructor) {
 	gomega.RegisterTestingT(t)
 	db, mockDB, err := sqlmock.New()

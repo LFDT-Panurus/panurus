@@ -35,6 +35,18 @@ type EndorserStoreTransaction struct {
 	commitReturnsOnCall map[int]struct {
 		result1 error
 	}
+	DeleteValidationRecordStub        func(context.Context, string) error
+	deleteValidationRecordMutex       sync.RWMutex
+	deleteValidationRecordArgsForCall []struct {
+		arg1 context.Context
+		arg2 string
+	}
+	deleteValidationRecordReturns struct {
+		result1 error
+	}
+	deleteValidationRecordReturnsOnCall map[int]struct {
+		result1 error
+	}
 	ImplStub        func() driver.TransactionImpl
 	implMutex       sync.RWMutex
 	implArgsForCall []struct {
@@ -186,6 +198,68 @@ func (fake *EndorserStoreTransaction) CommitReturnsOnCall(i int, result1 error) 
 		})
 	}
 	fake.commitReturnsOnCall[i] = struct {
+		result1 error
+	}{result1}
+}
+
+func (fake *EndorserStoreTransaction) DeleteValidationRecord(arg1 context.Context, arg2 string) error {
+	fake.deleteValidationRecordMutex.Lock()
+	ret, specificReturn := fake.deleteValidationRecordReturnsOnCall[len(fake.deleteValidationRecordArgsForCall)]
+	fake.deleteValidationRecordArgsForCall = append(fake.deleteValidationRecordArgsForCall, struct {
+		arg1 context.Context
+		arg2 string
+	}{arg1, arg2})
+	stub := fake.DeleteValidationRecordStub
+	fakeReturns := fake.deleteValidationRecordReturns
+	fake.recordInvocation("DeleteValidationRecord", []interface{}{arg1, arg2})
+	fake.deleteValidationRecordMutex.Unlock()
+	if stub != nil {
+		return stub(arg1, arg2)
+	}
+	if specificReturn {
+		return ret.result1
+	}
+	return fakeReturns.result1
+}
+
+func (fake *EndorserStoreTransaction) DeleteValidationRecordCallCount() int {
+	fake.deleteValidationRecordMutex.RLock()
+	defer fake.deleteValidationRecordMutex.RUnlock()
+	return len(fake.deleteValidationRecordArgsForCall)
+}
+
+func (fake *EndorserStoreTransaction) DeleteValidationRecordCalls(stub func(context.Context, string) error) {
+	fake.deleteValidationRecordMutex.Lock()
+	defer fake.deleteValidationRecordMutex.Unlock()
+	fake.DeleteValidationRecordStub = stub
+}
+
+func (fake *EndorserStoreTransaction) DeleteValidationRecordArgsForCall(i int) (context.Context, string) {
+	fake.deleteValidationRecordMutex.RLock()
+	defer fake.deleteValidationRecordMutex.RUnlock()
+	argsForCall := fake.deleteValidationRecordArgsForCall[i]
+	return argsForCall.arg1, argsForCall.arg2
+}
+
+func (fake *EndorserStoreTransaction) DeleteValidationRecordReturns(result1 error) {
+	fake.deleteValidationRecordMutex.Lock()
+	defer fake.deleteValidationRecordMutex.Unlock()
+	fake.DeleteValidationRecordStub = nil
+	fake.deleteValidationRecordReturns = struct {
+		result1 error
+	}{result1}
+}
+
+func (fake *EndorserStoreTransaction) DeleteValidationRecordReturnsOnCall(i int, result1 error) {
+	fake.deleteValidationRecordMutex.Lock()
+	defer fake.deleteValidationRecordMutex.Unlock()
+	fake.DeleteValidationRecordStub = nil
+	if fake.deleteValidationRecordReturnsOnCall == nil {
+		fake.deleteValidationRecordReturnsOnCall = make(map[int]struct {
+			result1 error
+		})
+	}
+	fake.deleteValidationRecordReturnsOnCall[i] = struct {
 		result1 error
 	}{result1}
 }

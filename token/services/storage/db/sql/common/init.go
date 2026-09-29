@@ -34,6 +34,7 @@ var knownShortCodes = map[string]struct{}{
 	"tx_ends":          {},
 	"requests":         {},
 	"req_vals":         {},
+	"req_fails":        {},
 	"tokens":           {},
 	"tkn_own":          {},
 	"tkn_crts":         {},
@@ -56,6 +57,7 @@ type TableNames struct {
 	Transactions           string
 	Requests               string
 	Validations            string
+	ValidationFailures     string
 	TransactionEndorseAck  string
 	Certifications         string
 	Tokens                 string
@@ -168,6 +170,7 @@ func buildTableNames(prefix string, params []string, overrides TableNamesConfig,
 		TransactionEndorseAck:  name("tx_ends"),
 		Requests:               name("requests"),
 		Validations:            name("req_vals"),
+		ValidationFailures:     name("req_fails"),
 		Tokens:                 name("tokens"),
 		Ownership:              name("tkn_own"),
 		Certifications:         name("tkn_crts"),

@@ -12,6 +12,8 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/hashicorp/go-uuid"
+
 	driver2 "github.com/LFDT-Panurus/panurus/token/driver"
 	"github.com/LFDT-Panurus/panurus/token/services/logging"
 	dbdriver "github.com/LFDT-Panurus/panurus/token/services/storage/db/driver"
@@ -26,13 +28,14 @@ import (
 
 // EndorserStore manages validation records for token transaction endorsements
 type EndorserStore struct {
-	readDB      *sql.DB
-	writeDB     WriteDB
-	table       string
-	tablePrefix string
-	tableParams []string
-	ci          common3.CondInterpreter
-	pi          common3.PagInterpreter
+	readDB       *sql.DB
+	writeDB      WriteDB
+	table        string
+	failureTable string
+	tablePrefix  string
+	tableParams  []string
+	ci           common3.CondInterpreter
+	pi           common3.PagInterpreter
 }
 
 // NewEndorserStore creates a new EndorserStore
@@ -44,13 +47,14 @@ func NewEndorserStore(
 	pi common3.PagInterpreter,
 ) (*EndorserStore, error) {
 	return &EndorserStore{
-		readDB:      readDB,
-		writeDB:     writeDB,
-		table:       tables.Validations,
-		tablePrefix: tables.Prefix,
-		tableParams: tables.Params,
-		ci:          ci,
-		pi:          pi,
+		readDB:       readDB,
+		writeDB:      writeDB,
+		table:        tables.Validations,
+		failureTable: tables.ValidationFailures,
+		tablePrefix:  tables.Prefix,
+		tableParams:  tables.Params,
+		ci:           ci,
+		pi:           pi,
 	}, nil
 }
 
@@ -59,7 +63,13 @@ func (db *EndorserStore) Close() error {
 	return nil // Connections are managed externally
 }
 
-// GetSchema returns the SQL schema for creating the endorser store tables
+// GetSchema returns the SQL schema for creating the endorser store tables.
+//
+// The validations table holds one row per approved request, keyed by tx_id, and is the
+// single-approval / already-processed guard. The validation-failures table is a separate,
+// append-only audit log of requests whose validation failed: it is keyed by a generated id
+// (several failures may share a tx_id), carries no pp_hash or status, and is never consulted
+// by the already-processed check.
 func (db *EndorserStore) GetSchema() string {
 	return fmt.Sprintf(`
 		CREATE TABLE IF NOT EXISTS %s (
@@ -72,7 +82,18 @@ func (db *EndorserStore) GetSchema() string {
 			stored_at TIMESTAMP NOT NULL
 		);
 		CREATE INDEX IF NOT EXISTS idx_status_storedat_%s ON %s ( status, stored_at );
-	`, db.table, db.table, db.table)
+
+		CREATE TABLE IF NOT EXISTS %s (
+			id CHAR(36) NOT NULL PRIMARY KEY,
+			tx_id TEXT NOT NULL,
+			request BYTEA NOT NULL,
+			reason TEXT NOT NULL,
+			stored_at TIMESTAMP NOT NULL
+		);
+		CREATE INDEX IF NOT EXISTS idx_txid_%s ON %s ( tx_id );
+		CREATE INDEX IF NOT EXISTS idx_storedat_%s ON %s ( stored_at );
+	`, db.table, db.table, db.table,
+		db.failureTable, db.failureTable, db.failureTable, db.failureTable, db.failureTable)
 }
 
 // CreateSchema creates the database schema for the endorser store
@@ -154,6 +175,66 @@ func (db *EndorserStore) GetStatus(ctx context.Context, txID string) (dbdriver.T
 	return status, statusMessage, nil
 }
 
+// RecordValidationFailure appends an audit-only record that validation of the request filed
+// under txID failed. It is a direct, append-only insert: unlike AddValidationRecord it does
+// not open an EndorserStoreTransaction (there is no multi-step atomicity to protect), applies
+// no token-request well-formedness checks (the request may have failed because it was
+// malformed), and never affects the already-processed guard.
+func (db *EndorserStore) RecordValidationFailure(ctx context.Context, txID string, tokenRequest []byte, reason string) error {
+	logger.DebugfContext(ctx, "recording validation failure [%s]", txID)
+
+	if txID == "" {
+		return errors.WithMessage(integrity.ErrEmptyTxID, "refusing to record validation failure")
+	}
+	if len(tokenRequest) == 0 {
+		return errors.Wrapf(integrity.ErrEmptyTokenRequest, "refusing to record validation failure for [%s]", txID)
+	}
+
+	id, err := uuid.GenerateUUID()
+	if err != nil {
+		return errors.Wrapf(err, "error generating uuid")
+	}
+	query, args := q.InsertInto(db.failureTable).
+		Fields("id", "tx_id", "request", "reason", "stored_at").
+		Row(id, txID, tokenRequest, reason, time.Now().UTC()).
+		Format()
+
+	logging.Debug(logger, query, args)
+	if _, err := db.writeDB.ExecContext(ctx, query, args...); err != nil {
+		return errors.Wrapf(err, "failed to insert validation failure record for tx [%s]", txID)
+	}
+
+	return nil
+}
+
+// QueryValidationFailures returns an iterator over validation failure records matching params.
+func (db *EndorserStore) QueryValidationFailures(ctx context.Context, params dbdriver.QueryValidationFailureRecordsParams) (dbdriver.ValidationFailureRecordsIterator, error) {
+	failuresTable := q.Table(db.failureTable)
+	query, args := q.Select().
+		Fields(
+			failuresTable.Field("tx_id"), failuresTable.Field("request"),
+			failuresTable.Field("reason"), failuresTable.Field("stored_at"),
+		).
+		From(failuresTable).
+		Where(HasValidationFailureParams(params, db.failureTable)).
+		Format(db.ci)
+
+	logging.Debug(logger, query, args)
+	rows, err := db.readDB.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+
+	it := common.NewIterator(rows, func(r *dbdriver.ValidationFailureRecord) error {
+		return rows.Scan(&r.TxID, &r.TokenRequest, &r.Reason, &r.Timestamp)
+	})
+	if params.Filter == nil {
+		return it, nil
+	}
+
+	return iterators.Filter(it, params.Filter), nil
+}
+
 // EndorserStoreTransaction represents a database transaction for endorser operations
 type EndorserStoreTransaction struct {
 	tx    *sql.Tx
@@ -208,6 +289,23 @@ func (w *EndorserStoreTransaction) AddValidationRecord(ctx context.Context, txID
 	logging.Debug(logger, query, args)
 	if _, err := w.tx.ExecContext(ctx, query, args...); err != nil {
 		return errors.Wrapf(err, "failed to insert validation record for tx [%s]", txID)
+	}
+
+	return nil
+}
+
+// DeleteValidationRecord removes the validation record for txID. Deleting a txID that has
+// no record is not an error: the DELETE simply affects no rows.
+func (w *EndorserStoreTransaction) DeleteValidationRecord(ctx context.Context, txID string) error {
+	logger.DebugfContext(ctx, "deleting validation record [%s]", txID)
+
+	query, args := q.DeleteFrom(w.table).
+		Where(cond.Eq("tx_id", txID)).
+		Format(w.ci)
+
+	logging.Debug(logger, query, args)
+	if _, err := w.tx.ExecContext(ctx, query, args...); err != nil {
+		return errors.Wrapf(err, "failed to delete validation record for tx [%s]", txID)
 	}
 
 	return nil

@@ -116,7 +116,7 @@ func TestGetTableNamesPartialOverride(t *testing.T) {
 }
 
 // TestGetTableNamesAllShortCodes exercises every known short code to ensure
-// the override path is wired for all 17 fields.
+// the override path is wired for all 18 fields.
 func TestGetTableNamesAllShortCodes(t *testing.T) {
 	shortCodes := map[string]func(common.TableNames) string{
 		"movements":        func(t common.TableNames) string { return t.Movements },
@@ -124,6 +124,7 @@ func TestGetTableNamesAllShortCodes(t *testing.T) {
 		"tx_ends":          func(t common.TableNames) string { return t.TransactionEndorseAck },
 		"requests":         func(t common.TableNames) string { return t.Requests },
 		"req_vals":         func(t common.TableNames) string { return t.Validations },
+		"req_fails":        func(t common.TableNames) string { return t.ValidationFailures },
 		"tokens":           func(t common.TableNames) string { return t.Tokens },
 		"tkn_own":          func(t common.TableNames) string { return t.Ownership },
 		"tkn_crts":         func(t common.TableNames) string { return t.Certifications },
@@ -170,6 +171,7 @@ func TestGetTableNamesLegacy(t *testing.T) {
 		Transactions:           "fsc_txs",
 		Requests:               "fsc_requests",
 		Validations:            "fsc_req_vals",
+		ValidationFailures:     "fsc_req_fails",
 		TransactionEndorseAck:  "fsc_tx_ends",
 		Certifications:         "fsc_tkn_crts",
 		Tokens:                 "fsc_tokens",
@@ -232,7 +234,7 @@ func TestGetTableNamesWithOverridesSkipPrefix(t *testing.T) {
 	// None of the generated names should start with the prefix.
 	for _, name := range []string{
 		got.Movements, got.Transactions, got.TransactionEndorseAck,
-		got.Requests, got.Validations, got.Tokens, got.Ownership,
+		got.Requests, got.Validations, got.ValidationFailures, got.Tokens, got.Ownership,
 		got.Certifications, got.TokenLocks, got.PublicParams,
 		got.Wallets, got.IdentityConfigurations, got.IdentityInfo,
 		got.Signers, got.KeyStore, got.EIDLeases, got.TokenSKICleanups,
@@ -351,7 +353,7 @@ func TestGetTableNamesInvalidParamsReportedOnce(t *testing.T) {
 func allTableNames(tn common.TableNames) []string {
 	return []string{
 		tn.Movements, tn.Transactions, tn.TransactionEndorseAck,
-		tn.Requests, tn.Validations, tn.Tokens, tn.Ownership,
+		tn.Requests, tn.Validations, tn.ValidationFailures, tn.Tokens, tn.Ownership,
 		tn.Certifications, tn.TokenLocks, tn.PublicParams,
 		tn.Wallets, tn.IdentityConfigurations, tn.IdentityInfo,
 		tn.Signers, tn.KeyStore, tn.EIDLeases, tn.TokenSKICleanups,
