@@ -314,3 +314,18 @@ func TestTransferReadsNumOutputsOnce(t *testing.T) {
 	assert.Equal(t, keys.ComputeTokenID(anchor, 2), d.Outputs[2].TokenID,
 		"the counter must advance by the output count the loop actually enumerated")
 }
+
+// TestAddSetupBaselineAcceptsEmptyPublicParams checks that a setup delta can bind to an empty on-chain
+// baseline (a TokenState deployed with empty EVM_PP0), which AddPublicParamsDependency refuses for an
+// ordinary delta.
+func TestAddSetupBaselineAcceptsEmptyPublicParams(t *testing.T) {
+	tr := NewTranslator([32]byte{1}, nil, 0)
+	require.Error(t, tr.AddPublicParamsDependency())
+
+	tr.AddSetupBaseline()
+	_, err := tr.CommitTokenRequest([]byte("new-pp"), true)
+	require.NoError(t, err)
+	delta, err := tr.StateDelta()
+	require.NoError(t, err)
+	assert.Equal(t, crypto.SHA256(nil), delta.PublicParamsHash[:])
+}

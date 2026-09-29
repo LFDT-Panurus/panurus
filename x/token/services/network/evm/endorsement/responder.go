@@ -22,6 +22,14 @@ import (
 // receiveTimeout bounds how long a responder waits for the request on its session before giving up.
 const receiveTimeout = 30 * time.Second
 
+// deltaBuilder is what endorse needs of either factory kind: DeltaFactory and SetupDeltaFactory
+// differ in how they resolve and validate, not in how their result gets turned into a signed
+// delta, so endorse resolves one of these and shares a single Build+error path for both instead
+// of duplicating it per request kind.
+type deltaBuilder interface {
+	Build(ctx context.Context, req *EndorseRequest) (*statedelta.StateDelta, error)
+}
+
 // Responder endorses a token request for one TMS. It is the EVM analog of the Fabric
 // RequestApprovalResponderView, running the flow:
 //
@@ -39,7 +47,11 @@ type Responder struct {
 	// arrives, which is before its TMS has necessarily been built: building a TMS goes through the
 	// network driver, so a responder that demanded one up front could not be registered at all.
 	factoryFor func(tmsID token2.TMSID) (*DeltaFactory, error)
-	signer     EndorserSigner
+	// setupFactoryFor is factoryFor's counterpart for a KindSetup request. It is resolved separately,
+	// and independently of any TMS, because a setup request may be the very request that brings a TMS
+	// into existence: factoryFor's TMS resolution would refuse a namespace that has none yet.
+	setupFactoryFor func(tmsID token2.TMSID) (*SetupDeltaFactory, error)
+	signer          EndorserSigner
 	// domainFor resolves the EIP-712 domain to sign against, per TMS. This node registers exactly one
 	// Responder for its whole process lifetime (see registerEndorser's doc comment), but every TMS
 	// this node endorses for can carry its own TokenState clone and therefore its own domain, so the
@@ -55,14 +67,16 @@ type Responder struct {
 func NewResponder(
 	authorizer *Authorizer,
 	factoryFor func(tmsID token2.TMSID) (*DeltaFactory, error),
+	setupFactoryFor func(tmsID token2.TMSID) (*SetupDeltaFactory, error),
 	signer EndorserSigner,
 	domainFor func(tmsID token2.TMSID) (eip712.Domain, error),
 ) *Responder {
 	return &Responder{
-		authorizer: authorizer,
-		factoryFor: factoryFor,
-		signer:     signer,
-		domainFor:  domainFor,
+		authorizer:      authorizer,
+		factoryFor:      factoryFor,
+		setupFactoryFor: setupFactoryFor,
+		signer:          signer,
+		domainFor:       domainFor,
 	}
 }
 
@@ -122,11 +136,25 @@ func (r *Responder) endorse(
 		return nil, nil, err
 	}
 
-	// A TMS this endorser cannot resolve is one it does not serve, so refusing here is the same check
-	// the fixed TMS identity used to make, expressed through what it can actually validate.
-	factory, err := r.factoryFor(req.TMSID)
-	if err != nil {
-		return nil, nil, errors.Wrapf(err, "this endorser does not serve tms [%s]", req.TMSID)
+	var factory deltaBuilder
+	switch req.Kind {
+	case KindSetup:
+		if r.setupFactoryFor == nil {
+			return nil, nil, errors.Errorf("this endorser does not serve setup requests")
+		}
+		f, err := r.setupFactoryFor(req.TMSID)
+		if err != nil {
+			return nil, nil, errors.Wrapf(err, "this endorser does not serve tms [%s]", req.TMSID)
+		}
+		factory = f
+	default:
+		// A TMS this endorser cannot resolve is one it does not serve, so refusing here is the same
+		// check the fixed TMS identity used to make, expressed through what it can actually validate.
+		f, err := r.factoryFor(req.TMSID)
+		if err != nil {
+			return nil, nil, errors.Wrapf(err, "this endorser does not serve tms [%s]", req.TMSID)
+		}
+		factory = f
 	}
 
 	delta, err := factory.Build(ctx, req)

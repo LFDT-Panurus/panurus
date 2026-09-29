@@ -332,8 +332,19 @@ func (c *Config) validateEndorsement() error {
 		if c.Endorser.Address == "" {
 			return errors.New("evm config: endorser.address is required when endorser.enabled is set")
 		}
-		if _, err := client.HexToAddress(c.Endorser.Address); err != nil {
+		selfAddr, err := client.HexToAddress(c.Endorser.Address)
+		if err != nil {
 			return errors.Wrap(err, "evm config: invalid endorser address")
+		}
+		// Without this, a node whose own address is missing from endorsement.endorsers, or typo'd
+		// against the entry that was meant to name it, starts cleanly and signs endorsements the
+		// initiator's registry does not recognise: Initiator.verify discards them as ErrUnknownSigner,
+		// silently, with no startup error and only a debug log - the node looks like a healthy endorser
+		// that simply never contributes to a quorum.
+		if _, ok := seen[selfAddr]; !ok {
+			return errors.Errorf(
+				"evm config: endorser.address [%s] does not appear in endorsement.endorsers; "+
+					"this node would sign endorsements no registry recognises", c.Endorser.Address)
 		}
 		// The authorizer is deliberately fail-closed: it refuses to build from an empty allowlist
 		// rather than default to trusting everyone. Catching that here means a node left this way
