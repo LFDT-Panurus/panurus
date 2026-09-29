@@ -1104,14 +1104,19 @@ func (fake *FabricTransaction) EndorseProposalResponseReturnsOnCall(i int, resul
 }
 
 func (fake *FabricTransaction) EndorseProposalResponseWithIdentity(arg1 view.Identity) error {
+	var arg1Copy view.Identity
+	if arg1 != nil {
+		arg1Copy = make(view.Identity, len(arg1))
+		copy(arg1Copy, arg1)
+	}
 	fake.endorseProposalResponseWithIdentityMutex.Lock()
 	ret, specificReturn := fake.endorseProposalResponseWithIdentityReturnsOnCall[len(fake.endorseProposalResponseWithIdentityArgsForCall)]
 	fake.endorseProposalResponseWithIdentityArgsForCall = append(fake.endorseProposalResponseWithIdentityArgsForCall, struct {
 		arg1 view.Identity
-	}{arg1})
+	}{arg1Copy})
 	stub := fake.EndorseProposalResponseWithIdentityStub
 	fakeReturns := fake.endorseProposalResponseWithIdentityReturns
-	fake.recordInvocation("EndorseProposalResponseWithIdentity", []interface{}{arg1})
+	fake.recordInvocation("EndorseProposalResponseWithIdentity", []interface{}{arg1Copy})
 	fake.endorseProposalResponseWithIdentityMutex.Unlock()
 	if stub != nil {
 		return stub(arg1)
@@ -1165,14 +1170,19 @@ func (fake *FabricTransaction) EndorseProposalResponseWithIdentityReturnsOnCall(
 }
 
 func (fake *FabricTransaction) EndorseProposalWithIdentity(arg1 view.Identity) error {
+	var arg1Copy view.Identity
+	if arg1 != nil {
+		arg1Copy = make(view.Identity, len(arg1))
+		copy(arg1Copy, arg1)
+	}
 	fake.endorseProposalWithIdentityMutex.Lock()
 	ret, specificReturn := fake.endorseProposalWithIdentityReturnsOnCall[len(fake.endorseProposalWithIdentityArgsForCall)]
 	fake.endorseProposalWithIdentityArgsForCall = append(fake.endorseProposalWithIdentityArgsForCall, struct {
 		arg1 view.Identity
-	}{arg1})
+	}{arg1Copy})
 	stub := fake.EndorseProposalWithIdentityStub
 	fakeReturns := fake.endorseProposalWithIdentityReturns
-	fake.recordInvocation("EndorseProposalWithIdentity", []interface{}{arg1})
+	fake.recordInvocation("EndorseProposalWithIdentity", []interface{}{arg1Copy})
 	fake.endorseProposalWithIdentityMutex.Unlock()
 	if stub != nil {
 		return stub(arg1)
@@ -1226,14 +1236,19 @@ func (fake *FabricTransaction) EndorseProposalWithIdentityReturnsOnCall(i int, r
 }
 
 func (fake *FabricTransaction) EndorseWithIdentity(arg1 view.Identity) error {
+	var arg1Copy view.Identity
+	if arg1 != nil {
+		arg1Copy = make(view.Identity, len(arg1))
+		copy(arg1Copy, arg1)
+	}
 	fake.endorseWithIdentityMutex.Lock()
 	ret, specificReturn := fake.endorseWithIdentityReturnsOnCall[len(fake.endorseWithIdentityArgsForCall)]
 	fake.endorseWithIdentityArgsForCall = append(fake.endorseWithIdentityArgsForCall, struct {
 		arg1 view.Identity
-	}{arg1})
+	}{arg1Copy})
 	stub := fake.EndorseWithIdentityStub
 	fakeReturns := fake.endorseWithIdentityReturns
-	fake.recordInvocation("EndorseWithIdentity", []interface{}{arg1})
+	fake.recordInvocation("EndorseWithIdentity", []interface{}{arg1Copy})
 	fake.endorseWithIdentityMutex.Unlock()
 	if stub != nil {
 		return stub(arg1)
@@ -1287,15 +1302,20 @@ func (fake *FabricTransaction) EndorseWithIdentityReturnsOnCall(i int, result1 e
 }
 
 func (fake *FabricTransaction) EndorseWithSigner(arg1 view.Identity, arg2 driver.Signer) error {
+	var arg1Copy view.Identity
+	if arg1 != nil {
+		arg1Copy = make(view.Identity, len(arg1))
+		copy(arg1Copy, arg1)
+	}
 	fake.endorseWithSignerMutex.Lock()
 	ret, specificReturn := fake.endorseWithSignerReturnsOnCall[len(fake.endorseWithSignerArgsForCall)]
 	fake.endorseWithSignerArgsForCall = append(fake.endorseWithSignerArgsForCall, struct {
 		arg1 view.Identity
 		arg2 driver.Signer
-	}{arg1, arg2})
+	}{arg1Copy, arg2})
 	stub := fake.EndorseWithSignerStub
 	fakeReturns := fake.endorseWithSignerReturns
-	fake.recordInvocation("EndorseWithSigner", []interface{}{arg1, arg2})
+	fake.recordInvocation("EndorseWithSigner", []interface{}{arg1Copy, arg2})
 	fake.endorseWithSignerMutex.Unlock()
 	if stub != nil {
 		return stub(arg1, arg2)
@@ -1896,14 +1916,19 @@ func (fake *FabricTransaction) ProposalReturnsOnCall(i int, result1 driver.Propo
 }
 
 func (fake *FabricTransaction) ProposalHasBeenEndorsedBy(arg1 view.Identity) error {
+	var arg1Copy view.Identity
+	if arg1 != nil {
+		arg1Copy = make(view.Identity, len(arg1))
+		copy(arg1Copy, arg1)
+	}
 	fake.proposalHasBeenEndorsedByMutex.Lock()
 	ret, specificReturn := fake.proposalHasBeenEndorsedByReturnsOnCall[len(fake.proposalHasBeenEndorsedByArgsForCall)]
 	fake.proposalHasBeenEndorsedByArgsForCall = append(fake.proposalHasBeenEndorsedByArgsForCall, struct {
 		arg1 view.Identity
-	}{arg1})
+	}{arg1Copy})
 	stub := fake.ProposalHasBeenEndorsedByStub
 	fakeReturns := fake.proposalHasBeenEndorsedByReturns
-	fake.recordInvocation("ProposalHasBeenEndorsedBy", []interface{}{arg1})
+	fake.recordInvocation("ProposalHasBeenEndorsedBy", []interface{}{arg1Copy})
 	fake.proposalHasBeenEndorsedByMutex.Unlock()
 	if stub != nil {
 		return stub(arg1)
@@ -2457,15 +2482,20 @@ func (fake *FabricTransaction) SetParameterAtReturnsOnCall(i int, result1 error)
 }
 
 func (fake *FabricTransaction) SetProposal(arg1 string, arg2 string, arg3 string, arg4 ...string) {
+	var arg4Copy []string
+	if arg4 != nil {
+		arg4Copy = make([]string, len(arg4))
+		copy(arg4Copy, arg4)
+	}
 	fake.setProposalMutex.Lock()
 	fake.setProposalArgsForCall = append(fake.setProposalArgsForCall, struct {
 		arg1 string
 		arg2 string
 		arg3 string
 		arg4 []string
-	}{arg1, arg2, arg3, arg4})
+	}{arg1, arg2, arg3, arg4Copy})
 	stub := fake.SetProposalStub
-	fake.recordInvocation("SetProposal", []interface{}{arg1, arg2, arg3, arg4})
+	fake.recordInvocation("SetProposal", []interface{}{arg1, arg2, arg3, arg4Copy})
 	fake.setProposalMutex.Unlock()
 	if stub != nil {
 		fake.SetProposalStub(arg1, arg2, arg3, arg4...)

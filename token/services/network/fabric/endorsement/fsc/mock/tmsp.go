@@ -27,14 +27,19 @@ type TokenManagementSystemProvider struct {
 }
 
 func (fake *TokenManagementSystemProvider) GetManagementService(arg1 ...token.ServiceOption) (*token.ManagementService, error) {
+	var arg1Copy []token.ServiceOption
+	if arg1 != nil {
+		arg1Copy = make([]token.ServiceOption, len(arg1))
+		copy(arg1Copy, arg1)
+	}
 	fake.getManagementServiceMutex.Lock()
 	ret, specificReturn := fake.getManagementServiceReturnsOnCall[len(fake.getManagementServiceArgsForCall)]
 	fake.getManagementServiceArgsForCall = append(fake.getManagementServiceArgsForCall, struct {
 		arg1 []token.ServiceOption
-	}{arg1})
+	}{arg1Copy})
 	stub := fake.GetManagementServiceStub
 	fakeReturns := fake.getManagementServiceReturns
-	fake.recordInvocation("GetManagementService", []interface{}{arg1})
+	fake.recordInvocation("GetManagementService", []interface{}{arg1Copy})
 	fake.getManagementServiceMutex.Unlock()
 	if stub != nil {
 		return stub(arg1...)

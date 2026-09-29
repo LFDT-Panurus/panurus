@@ -40,3 +40,7 @@ func TestAWAddValidationRecordEndorser(t *testing.T) {
 func TestSetStatusEndorser(t *testing.T) {
 	common2.TestSetStatusEndorser(t, mockEndorserStore)
 }
+
+func TestDeleteValidationRecordEndorser(t *testing.T) {
+	common2.TestDeleteValidationRecordEndorser(t, mockEndorserStore)
+}
