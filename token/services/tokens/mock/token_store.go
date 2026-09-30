@@ -356,6 +356,20 @@ type FakeTokenStore struct {
 		result1 []drivera.PPHash
 		result2 error
 	}
+	QuerySpendableTokensStub        func(context.Context, driver.SpendableTokensQuery) (drivera.SpendableTokensIterator, error)
+	querySpendableTokensMutex       sync.RWMutex
+	querySpendableTokensArgsForCall []struct {
+		arg1 context.Context
+		arg2 driver.SpendableTokensQuery
+	}
+	querySpendableTokensReturns struct {
+		result1 drivera.SpendableTokensIterator
+		result2 error
+	}
+	querySpendableTokensReturnsOnCall map[int]struct {
+		result1 drivera.SpendableTokensIterator
+		result2 error
+	}
 	QueryTokenDetailsStub        func(context.Context, driver.QueryTokenDetailsParams) ([]driver.TokenDetails, error)
 	queryTokenDetailsMutex       sync.RWMutex
 	queryTokenDetailsArgsForCall []struct {
@@ -2140,6 +2154,71 @@ func (fake *FakeTokenStore) PublicParamsHashesReturnsOnCall(i int, result1 []dri
 	}
 	fake.publicParamsHashesReturnsOnCall[i] = struct {
 		result1 []drivera.PPHash
+		result2 error
+	}{result1, result2}
+}
+
+func (fake *FakeTokenStore) QuerySpendableTokens(arg1 context.Context, arg2 driver.SpendableTokensQuery) (drivera.SpendableTokensIterator, error) {
+	fake.querySpendableTokensMutex.Lock()
+	ret, specificReturn := fake.querySpendableTokensReturnsOnCall[len(fake.querySpendableTokensArgsForCall)]
+	fake.querySpendableTokensArgsForCall = append(fake.querySpendableTokensArgsForCall, struct {
+		arg1 context.Context
+		arg2 driver.SpendableTokensQuery
+	}{arg1, arg2})
+	stub := fake.QuerySpendableTokensStub
+	fakeReturns := fake.querySpendableTokensReturns
+	fake.recordInvocation("QuerySpendableTokens", []interface{}{arg1, arg2})
+	fake.querySpendableTokensMutex.Unlock()
+	if stub != nil {
+		return stub(arg1, arg2)
+	}
+	if specificReturn {
+		return ret.result1, ret.result2
+	}
+	return fakeReturns.result1, fakeReturns.result2
+}
+
+func (fake *FakeTokenStore) QuerySpendableTokensCallCount() int {
+	fake.querySpendableTokensMutex.RLock()
+	defer fake.querySpendableTokensMutex.RUnlock()
+	return len(fake.querySpendableTokensArgsForCall)
+}
+
+func (fake *FakeTokenStore) QuerySpendableTokensCalls(stub func(context.Context, driver.SpendableTokensQuery) (drivera.SpendableTokensIterator, error)) {
+	fake.querySpendableTokensMutex.Lock()
+	defer fake.querySpendableTokensMutex.Unlock()
+	fake.QuerySpendableTokensStub = stub
+}
+
+func (fake *FakeTokenStore) QuerySpendableTokensArgsForCall(i int) (context.Context, driver.SpendableTokensQuery) {
+	fake.querySpendableTokensMutex.RLock()
+	defer fake.querySpendableTokensMutex.RUnlock()
+	argsForCall := fake.querySpendableTokensArgsForCall[i]
+	return argsForCall.arg1, argsForCall.arg2
+}
+
+func (fake *FakeTokenStore) QuerySpendableTokensReturns(result1 drivera.SpendableTokensIterator, result2 error) {
+	fake.querySpendableTokensMutex.Lock()
+	defer fake.querySpendableTokensMutex.Unlock()
+	fake.QuerySpendableTokensStub = nil
+	fake.querySpendableTokensReturns = struct {
+		result1 drivera.SpendableTokensIterator
+		result2 error
+	}{result1, result2}
+}
+
+func (fake *FakeTokenStore) QuerySpendableTokensReturnsOnCall(i int, result1 drivera.SpendableTokensIterator, result2 error) {
+	fake.querySpendableTokensMutex.Lock()
+	defer fake.querySpendableTokensMutex.Unlock()
+	fake.QuerySpendableTokensStub = nil
+	if fake.querySpendableTokensReturnsOnCall == nil {
+		fake.querySpendableTokensReturnsOnCall = make(map[int]struct {
+			result1 drivera.SpendableTokensIterator
+			result2 error
+		})
+	}
+	fake.querySpendableTokensReturnsOnCall[i] = struct {
+		result1 drivera.SpendableTokensIterator
 		result2 error
 	}{result1, result2}
 }
