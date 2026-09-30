@@ -131,10 +131,13 @@ func (t *Translator) AddPublicParamsDependency() error {
 	return nil
 }
 
-// QueryTokens returns the raw state of each of the passed token ids. It fails if any id is
-// nil, cannot be turned into an output key, or refers to a state that does not exist.
+// QueryTokens returns the raw state of each of the passed token ids, one result per id at
+// the same position. An id whose state does not exist gets a nil entry, matching the fabricx
+// backend's convention for reporting an absent token, so callers can tell "missing" apart from
+// a genuine read failure. QueryTokens still fails as a whole if any id is nil or cannot be
+// turned into an output key: those are malformed requests, not observations about the ledger.
 func (t *Translator) QueryTokens(ctx context.Context, ids []*token.ID) ([][]byte, error) {
-	var res [][]byte
+	res := make([][]byte, len(ids))
 	var errs []error
 	for i, id := range ids {
 		if id == nil {
@@ -150,7 +153,6 @@ func (t *Translator) QueryTokens(ctx context.Context, ids []*token.ID) ([][]byte
 			errs = append(errs, errors.Errorf("error creating output ID: %s", err))
 
 			continue
-			// return nil, errors.Errorf("error creating output ID: %s", err)
 		}
 		logger.DebugfContext(ctx, "query state [%s:%s]", id, outputID)
 		bytes, err := t.RWSet.GetState(outputID)
@@ -160,11 +162,11 @@ func (t *Translator) QueryTokens(ctx context.Context, ids []*token.ID) ([][]byte
 			continue
 		}
 		if len(bytes) == 0 {
-			errs = append(errs, errors.Errorf("output for key [%s] does not exist", outputID))
-
+			// state does not exist: leave res[i] nil rather than erroring, so the caller can
+			// distinguish an absent token from a read it could not complete at all.
 			continue
 		}
-		res = append(res, bytes)
+		res[i] = bytes
 	}
 	if len(errs) != 0 {
 		return nil, errors.Errorf("failed quering tokens [%v] with errs [%d][%v]", ids, len(errs), errs)

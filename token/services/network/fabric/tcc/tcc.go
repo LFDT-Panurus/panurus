@@ -297,6 +297,12 @@ func (cc *TokenChaincode) QueryPublicParams(stub shim.ChaincodeStubInterface) *p
 // QueryTokens returns the raw state of the tokens whose ids are JSON-encoded in idsRaw.
 // idsRaw is caller-controlled: it must be a JSON array of token ids, each of them non-null
 // and carrying a non-empty tx id, otherwise a validation error is returned.
+//
+// The response is a JSON array with one entry per id, in the same order: an id whose state
+// does not exist on the ledger serializes to a null entry rather than making the whole call
+// fail, matching translator.Translator.QueryTokens's contract. A caller that requires every
+// requested token to actually exist (certification, for one) must check for nulls itself;
+// GetTokenView does this.
 func (cc *TokenChaincode) QueryTokens(idsRaw []byte, stub shim.ChaincodeStubInterface) *pb.Response {
 	limits := cc.effectiveQueryLimits()
 	if err := limits.CheckRequestSize(idsRaw); err != nil {
