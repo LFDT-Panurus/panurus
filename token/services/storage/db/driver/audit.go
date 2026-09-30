@@ -35,7 +35,11 @@ type AuditTransactionStore interface {
 	// slice returns an empty map without touching the database.
 	GetStatuses(ctx context.Context, txIDs []string) (map[string]TxStatus, error)
 
-	// QueryTransactions returns a list of transactions that match the passed params
+	// QueryTransactions returns a list of transactions that match the passed
+	// params, ordered by stored_at (direction set by params.SearchDirection) and
+	// then by tx_id as a deterministic tie-breaker for rows sharing a stored_at
+	// value, which offset-based pagination needs for a stable row order across
+	// separate queries.
 	QueryTransactions(ctx context.Context, params QueryTransactionsParams, pagination driver.Pagination) (*driver.PageIterator[*TransactionRecord], error)
 
 	// QueryMovements returns a list of movement records
@@ -72,6 +76,11 @@ type AuditTransactionStore interface {
 	// If acquired is false, leadership was not obtained and the returned lease must be nil.
 	AcquireRecoveryLeadership(ctx context.Context) (RecoveryLeadership, bool, error)
 
+	// AcquireLeadership tries to acquire the PostgreSQL advisory lock identified by lockID,
+	// for a leader election independent of the recovery sweep's own lock.
+	// If acquired is false, leadership was not obtained and the returned lease must be nil.
+	AcquireLeadership(ctx context.Context, lockID int64) (RecoveryLeadership, bool, error)
+
 	// ClaimPendingTransactions atomically claims a batch of Pending transactions for recovery processing.
 	// Transactions whose recovery lease expired are eligible again.
 	// Returns the minimal projection (TxID + StoredAt) needed by the recovery loop;
@@ -89,4 +98,6 @@ type AuditTransactionStore interface {
 	// PrefixedTableName returns the formatted table name for the given logical table name,
 	// following the persistence naming rules of this store.
 	PrefixedTableName(name string) string
+
+	FindingsStore
 }

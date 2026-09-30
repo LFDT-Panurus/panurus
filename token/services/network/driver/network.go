@@ -78,6 +78,12 @@ type Network interface {
 	FetchPublicParameters(namespace string) ([]byte, error)
 
 	// QueryTokens retrieves raw token data for the specified IDs from the ledger state.
+	//
+	// On success, the returned slice is positional: it has exactly len(IDs) entries,
+	// entry i is the content of IDs[i], and an ID absent from the ledger is a nil
+	// entry at its position rather than a shorter slice or a reordering. A caller
+	// that cannot honor this (e.g. a backend that would otherwise compact or
+	// reorder the result) must report the query as failed instead.
 	QueryTokens(ctx context.Context, namespace string, IDs []*token.ID) ([][]byte, error)
 
 	// AreTokensSpent checks the spent status of multiple tokens on the distributed ledger.

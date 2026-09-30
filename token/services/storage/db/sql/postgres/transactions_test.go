@@ -20,6 +20,7 @@ func mockTransactionsStore(db *sql.DB) *common2.TransactionStore {
 		Requests:              "REQUESTS",
 		Validations:           "VALIDATIONS",
 		TransactionEndorseAck: "TRANSACTION_ENDORSE_ACK",
+		Findings:              "FINDINGS",
 	}, NewConditionInterpreter(), NewPaginationInterpreter())
 
 	return store
@@ -43,6 +44,14 @@ func TestGetStatus(t *testing.T) {
 
 func TestQueryTokenRequests(t *testing.T) {
 	common2.TestQueryTokenRequests(t, mockTransactionsStore)
+}
+
+func TestCountOpenFindings(t *testing.T) {
+	common2.TestCountOpenFindings(t, mockTransactionsStore)
+}
+
+func TestCountOpenFindings_NoOpenFindings(t *testing.T) {
+	common2.TestCountOpenFindings_NoOpenFindings(t, mockTransactionsStore)
 }
 
 func TestGetTransactionEndorsementAcks(t *testing.T) {

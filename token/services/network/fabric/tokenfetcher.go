@@ -35,6 +35,10 @@ type tokenFetcher struct {
 	channel     string
 }
 
+// QueryTokens invokes the chaincode's queryTokens function and unboxes its response. It
+// carries the chaincode's own contract through unchanged: an absent token is a nil entry
+// at its position in the result, not an error, so an error here means the request itself
+// could not be completed (network, malformed ids, and the like).
 func (f *tokenFetcher) QueryTokens(ctx context.Context, namespace string, IDs []*token.ID) ([][]byte, error) {
 	idsRaw, err := json.Marshal(IDs)
 	if err != nil {

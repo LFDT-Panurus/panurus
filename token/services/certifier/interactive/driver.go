@@ -214,6 +214,13 @@ func (c *ChaincodeBackend) Load(context view.Context, cr *CertificationRequest) 
 	if !ok {
 		return nil, errors.Errorf("expected [][]byte, got [%T]", tokensBoxed)
 	}
+	for i, out := range tokenOutputs {
+		if len(out) == 0 {
+			// QueryTokens reports an absent token as a nil entry rather than an error, but
+			// certification requires the token to genuinely exist on the ledger.
+			return nil, errors.Errorf("token [%v] does not exist on the ledger", cr.IDs[i])
+		}
+	}
 
 	return tokenOutputs, nil
 }

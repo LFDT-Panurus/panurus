@@ -263,3 +263,51 @@ func TestRecoveryIntegration(t *testing.T) {
 	err = leadership3.Close()
 	require.NoError(t, err)
 }
+
+// TestAuditRecoveryIntegration mirrors TestRecoveryIntegration for the audit
+// store. NewAuditTransactionStore used to leave recoveryLeaderFactory nil, so
+// AcquireRecoveryLeadership fell back to a no-op that always "wins" - every
+// replica sharing the database would believe itself the leader of the audit
+// store's recovery and checks sweeps at once. This asserts the audit store
+// takes a real, mutually exclusive advisory lock, the same as the owner store.
+func TestAuditRecoveryIntegration(t *testing.T) {
+	terminate, pgConnStr := startContainer(t)
+	defer terminate()
+
+	driver := NewDriver(postgresCfg(pgConnStr, "audit_recovery_test"))
+
+	ctx := context.Background()
+
+	storeInterface, err := driver.NewAuditTransaction("test", "audit_recovery_test")
+	require.NoError(t, err)
+	require.NotNil(t, storeInterface)
+
+	store, ok := storeInterface.(*AuditTransactionStore)
+	require.True(t, ok, "Store should be *AuditTransactionStore")
+
+	err = store.CreateSchema()
+	require.NoError(t, err)
+
+	leadership, acquired, err := store.AcquireRecoveryLeadership(ctx)
+	require.NoError(t, err)
+	require.True(t, acquired, "Should acquire leadership")
+	require.NotNil(t, leadership)
+
+	// A second replica must not also acquire it: this is the exact bug the noop
+	// fallback caused, since it lets every caller "win" unconditionally.
+	leadership2, acquired, err := store.AcquireRecoveryLeadership(ctx)
+	require.NoError(t, err)
+	require.False(t, acquired, "Should not acquire leadership when already held")
+	require.Nil(t, leadership2)
+
+	err = leadership.Close()
+	require.NoError(t, err)
+
+	leadership3, acquired, err := store.AcquireRecoveryLeadership(ctx)
+	require.NoError(t, err)
+	require.True(t, acquired, "Should acquire leadership after release")
+	require.NotNil(t, leadership3)
+
+	err = leadership3.Close()
+	require.NoError(t, err)
+}

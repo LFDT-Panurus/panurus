@@ -59,3 +59,23 @@ func TestQueryTokens_ValidIDsAreRead(t *testing.T) {
 	assert.Len(t, res, 2)
 	assert.Equal(t, 2, rws.GetStateCallCount())
 }
+
+// A token whose state does not exist must be reported as a nil entry at its position, not as an
+// error: callers (the ledger drift checks) rely on this to tell "the ledger does not have this
+// token" apart from "the read itself failed", which GetState erroring for a real reason still is.
+func TestQueryTokens_MissingStateIsNilEntryNotError(t *testing.T) {
+	rws := &mock.RWSet{}
+	rws.GetStateReturnsOnCall(0, []byte("value"), nil)
+	rws.GetStateReturnsOnCall(1, nil, nil) // absent state: no error, empty bytes
+	rws.GetStateReturnsOnCall(2, []byte("value2"), nil)
+	w := translator.New("0", translator.NewRWSetWrapper(rws, tokenNameSpace, "0"), &keys.Translator{})
+
+	res, err := w.QueryTokens(context.Background(), []*token.ID{
+		{TxId: "tx", Index: 0}, {TxId: "tx", Index: 1}, {TxId: "tx", Index: 2},
+	})
+	require.NoError(t, err)
+	require.Len(t, res, 3)
+	assert.Equal(t, []byte("value"), res[0])
+	assert.Nil(t, res[1])
+	assert.Equal(t, []byte("value2"), res[2])
+}

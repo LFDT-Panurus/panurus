@@ -11,8 +11,12 @@ import (
 	"testing"
 
 	"github.com/LFDT-Panurus/panurus/token"
+	"github.com/LFDT-Panurus/panurus/token/services/config"
 	"github.com/LFDT-Panurus/panurus/token/services/storage/db/common"
 	"github.com/LFDT-Panurus/panurus/token/services/storage/db/common/mock"
+	"github.com/LFDT-Panurus/panurus/token/services/storage/services/checks"
+	checksmock "github.com/LFDT-Panurus/panurus/token/services/storage/services/checks/mock"
+	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -27,7 +31,7 @@ func TestNewAuditorCheckServiceProvider(t *testing.T) {
 		{Name: "checker2", Checker: func(ctx context.Context) ([]string, error) { return nil, nil }},
 	}
 
-	provider := NewAuditorCheckServiceProvider(tmsProvider, networkProvider, checkers)
+	provider := NewAuditorCheckServiceProvider(tmsProvider, networkProvider, checkers, nil, nil)
 
 	assert.NotNil(t, provider)
 	assert.Equal(t, tmsProvider, provider.tmsProvider)
@@ -44,7 +48,7 @@ func TestAuditorCheckServiceProvider_CheckService(t *testing.T) {
 		{Name: "checker1", Checker: func(ctx context.Context) ([]string, error) { return nil, nil }},
 	}
 
-	provider := NewAuditorCheckServiceProvider(tmsProvider, networkProvider, checkers)
+	provider := NewAuditorCheckServiceProvider(tmsProvider, networkProvider, checkers, nil, nil)
 
 	tmsID := token.TMSID{
 		Network:   "test-network",
@@ -72,7 +76,7 @@ func TestNewOwnerCheckServiceProvider(t *testing.T) {
 		{Name: "checker2", Checker: func(ctx context.Context) ([]string, error) { return nil, nil }},
 	}
 
-	provider := NewOwnerCheckServiceProvider(tmsProvider, networkProvider, checkers)
+	provider := NewOwnerCheckServiceProvider(tmsProvider, networkProvider, checkers, nil, nil)
 
 	assert.NotNil(t, provider)
 	assert.Equal(t, tmsProvider, provider.tmsProvider)
@@ -89,7 +93,7 @@ func TestOwnerCheckServiceProvider_CheckService(t *testing.T) {
 		{Name: "checker1", Checker: func(ctx context.Context) ([]string, error) { return nil, nil }},
 	}
 
-	provider := NewOwnerCheckServiceProvider(tmsProvider, networkProvider, checkers)
+	provider := NewOwnerCheckServiceProvider(tmsProvider, networkProvider, checkers, nil, nil)
 
 	tmsID := token.TMSID{
 		Network:   "test-network",
@@ -118,7 +122,7 @@ func TestAuditorCheckServiceProvider_WithMultipleCheckers(t *testing.T) {
 		{Name: "checker3", Checker: func(ctx context.Context) ([]string, error) { return nil, nil }},
 	}
 
-	provider := NewAuditorCheckServiceProvider(tmsProvider, networkProvider, checkers)
+	provider := NewAuditorCheckServiceProvider(tmsProvider, networkProvider, checkers, nil, nil)
 	require.NotNil(t, provider)
 	assert.Len(t, provider.checkers, 3)
 }
@@ -136,7 +140,7 @@ func TestOwnerCheckServiceProvider_WithMultipleCheckers(t *testing.T) {
 		{Name: "checker3", Checker: func(ctx context.Context) ([]string, error) { return nil, nil }},
 	}
 
-	provider := NewOwnerCheckServiceProvider(tmsProvider, networkProvider, checkers)
+	provider := NewOwnerCheckServiceProvider(tmsProvider, networkProvider, checkers, nil, nil)
 	require.NotNil(t, provider)
 	assert.Len(t, provider.checkers, 3)
 }
@@ -148,7 +152,7 @@ func TestAuditorCheckServiceProvider_WithEmptyCheckers(t *testing.T) {
 	networkProvider := &mock.NetworkProvider{}
 	checkers := []common.NamedChecker{}
 
-	provider := NewAuditorCheckServiceProvider(tmsProvider, networkProvider, checkers)
+	provider := NewAuditorCheckServiceProvider(tmsProvider, networkProvider, checkers, nil, nil)
 	require.NotNil(t, provider)
 	assert.Empty(t, provider.checkers)
 }
@@ -160,7 +164,7 @@ func TestOwnerCheckServiceProvider_WithEmptyCheckers(t *testing.T) {
 	networkProvider := &mock.NetworkProvider{}
 	checkers := []common.NamedChecker{}
 
-	provider := NewOwnerCheckServiceProvider(tmsProvider, networkProvider, checkers)
+	provider := NewOwnerCheckServiceProvider(tmsProvider, networkProvider, checkers, nil, nil)
 	require.NotNil(t, provider)
 	assert.Empty(t, provider.checkers)
 }
@@ -173,7 +177,7 @@ func TestAuditorCheckServiceProvider_WithNilProviders(t *testing.T) {
 	}
 
 	// Test with nil providers - should still create the provider
-	provider := NewAuditorCheckServiceProvider(nil, nil, checkers)
+	provider := NewAuditorCheckServiceProvider(nil, nil, checkers, nil, nil)
 	require.NotNil(t, provider)
 	assert.Nil(t, provider.tmsProvider)
 	assert.Nil(t, provider.networkProvider)
@@ -188,9 +192,52 @@ func TestOwnerCheckServiceProvider_WithNilProviders(t *testing.T) {
 	}
 
 	// Test with nil providers - should still create the provider
-	provider := NewOwnerCheckServiceProvider(nil, nil, checkers)
+	provider := NewOwnerCheckServiceProvider(nil, nil, checkers, nil, nil)
 	require.NotNil(t, provider)
 	assert.Nil(t, provider.tmsProvider)
 	assert.Nil(t, provider.networkProvider)
 	assert.Len(t, provider.checkers, 1)
+}
+
+// failingConfiguration always errors, which ConfigFor (called by sweeper.start) falls back to
+// checks.DefaultConfig() for - enough to exercise sweeper.start's real Start()-then-track path
+// without needing a working *config.Configuration.
+type failingConfiguration struct{}
+
+func (failingConfiguration) ConfigurationFor(_, _, _ string) (*config.Configuration, error) {
+	return nil, errors.New("no configuration in this test")
+}
+
+// TestSweeper_StartTracksTheManagerBeforeReturning is the regression test for a leak on
+// shutdown racing init: sweeper.start used to append the manager to s.managers only after
+// Start() returned, so a Stop() landing in that window would never see it and never stop it,
+// leaking its goroutine (and, on postgres, the advisory-lock connection it holds). start() now
+// holds s.mu across Start() and the append together, so a successfully started manager is
+// always immediately visible to, and stoppable by, Stop().
+func TestSweeper_StartTracksTheManagerBeforeReturning(t *testing.T) {
+	s := &sweeper{configuration: failingConfiguration{}}
+	tmsID := token.TMSID{Network: "n1", Channel: "c1", Namespace: "ns1"}
+
+	err := s.start(
+		&mock.TokenManagementServiceProvider{},
+		&mock.NetworkProvider{},
+		nil,
+		&checksmock.Storage{},
+		nil,
+		tmsID,
+		nil,
+		checks.RoleOwner,
+		0,
+	)
+	require.NoError(t, err)
+
+	s.mu.Lock()
+	require.Len(t, s.managers, 1, "a successfully started manager must be tracked immediately")
+	s.mu.Unlock()
+
+	require.NoError(t, s.Stop())
+
+	s.mu.Lock()
+	assert.Empty(t, s.managers, "Stop must clear the tracked managers")
+	s.mu.Unlock()
 }

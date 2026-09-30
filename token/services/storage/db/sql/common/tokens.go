@@ -862,7 +862,7 @@ func (db *TokenStore) getLedgerToken(ctx context.Context, ids []*token.ID) ([][]
 	tokens := make([][]byte, len(ids))
 	for i, id := range ids {
 		if tok, ok := tokenMap[id.String()]; !ok || tok == nil {
-			return nil, errors.Errorf("token not found for key [%s]", id)
+			return nil, errors.Wrapf(tdriver.ErrTokenNotFound, "token not found for key [%s]", id)
 		} else if len(tok) == 0 {
 			return nil, errors.Errorf("empty token found for key [%s]", id)
 		} else {
@@ -1104,12 +1104,12 @@ func (db *TokenStore) WhoDeletedTokens(ctx context.Context, inputs ...*token.ID)
 		return nil, isSpent, err
 	}
 	if counter == 0 {
-		return nil, nil, errors.Errorf("token not found for key [%s:%d]", inputs[0].TxId, inputs[0].Index)
+		return nil, nil, errors.Wrapf(tdriver.ErrTokenNotFound, "token not found for key [%s:%d]", inputs[0].TxId, inputs[0].Index)
 	}
 	if counter != len(inputs) {
 		for j, f := range found {
 			if !f {
-				return nil, nil, errors.Errorf("token not found for key [%s:%d]", inputs[j].TxId, inputs[j].Index)
+				return nil, nil, errors.Wrapf(tdriver.ErrTokenNotFound, "token not found for key [%s:%d]", inputs[j].TxId, inputs[j].Index)
 			}
 		}
 		panic("programming error: should not reach this point")
