@@ -94,8 +94,10 @@ type WalletStoreService interface {
 	// identity configuration (by its unique id, see driver.IdentityConfiguration.UniqueID)
 	// that originated it.
 	StoreIdentity(ctx context.Context, identity token.Identity, eID string, wID WalletID, roleID int, meta []byte, confID string) error
-	// IdentityExists checks whether an identity-wallet binding has already been stored
-	IdentityExists(ctx context.Context, identity token.Identity, wID WalletID, roleID int) bool
+	// IdentityExists checks whether an identity-wallet binding has already been
+	// stored. An error means the lookup itself failed and the answer is unknown;
+	// it must not be read as "the binding does not exist".
+	IdentityExists(ctx context.Context, identity token.Identity, wID WalletID, roleID int) (bool, error)
 	// LoadMeta returns the metadata stored for a specific identity
 	LoadMeta(ctx context.Context, identity token.Identity, wID WalletID, roleID int) ([]byte, error)
 	// GetConfID returns the identity configuration id (see driver.IdentityConfiguration.UniqueID)

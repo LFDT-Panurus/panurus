@@ -390,9 +390,21 @@ func (r *Registry) BindIdentity(ctx context.Context, identity driver.Identity, e
 }
 
 // ContainsIdentity returns true if the passed identity belongs to the passed wallet,
-// false otherwise
+// false otherwise.
+//
+// The signature cannot carry an error: it backs driver.Wallet.Contains, which
+// returns a plain bool. A failed lookup is therefore reported as false, but it
+// is logged first so that a storage problem is not indistinguishable from a
+// genuine non-membership.
 func (r *Registry) ContainsIdentity(ctx context.Context, identity driver.Identity, wID string) bool {
-	return r.Storage.IdentityExists(ctx, identity, wID, int(r.Role.ID()))
+	exists, err := r.Storage.IdentityExists(ctx, identity, wID, int(r.Role.ID()))
+	if err != nil {
+		r.Logger.Errorf("failed checking whether identity [%s] belongs to wallet [%s]: %v", identity, wID, err)
+
+		return false
+	}
+
+	return exists
 }
 
 // WalletIDs returns the list of wallet identifiers

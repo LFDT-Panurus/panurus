@@ -40,6 +40,10 @@ func TestIdentityExists(t *testing.T) {
 	common2.TestIdentityExists(t, mockWalletStore)
 }
 
+func TestIdentityExistsPropagatesQueryError(t *testing.T) {
+	common2.TestIdentityExistsPropagatesQueryError(t, mockWalletStore)
+}
+
 func TestStoreIdentity(t *testing.T) {
 	common2.TestStoreIdentity(t, mockWalletStore)
 }

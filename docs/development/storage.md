@@ -192,3 +192,84 @@ must be written accordingly:
   re-established; `TransportError` reports those. Treat a notification as "this
   table changed, go look", which is what `identity/membership`'s subscriber
   already does.
+
+## Store Contract Notes
+
+These rules are part of the store interfaces, not of any one backend. A custom
+store implementation must honour them; the SQL stores under
+`token/services/storage/db/sql/common` are the reference implementation.
+
+### Existence checks distinguish "absent" from "unknown"
+
+`WalletStoreService.IdentityExists` returns `(bool, error)`. A non-nil error
+means the lookup itself failed and the answer is unknown — it must not be
+reported as `false`, which would make a transient connectivity problem
+indistinguishable from a genuine non-membership.
+
+Callers that cannot carry an error (`Registry.ContainsIdentity`, which backs the
+public `driver.Wallet.Contains`) log the error before collapsing it to `false`.
+
+### Idempotent writes
+
+Several writes are replayed during normal operation — a node restart, a retried
+view, a second replica handling the same request — and must succeed rather than
+report a conflict:
+
+*   `WalletStore.StoreIdentity` and `TokenStore.StorePublicParams` insert with
+    `ON CONFLICT DO NOTHING`. A read followed by a write is not sufficient on its
+    own: two callers can both observe "not present" and then race the insert, so
+    without the conflict clause one of them surfaces a raw constraint violation.
+    `StorePublicParams` does still read first, but for a different reason — the
+    read is what detects a stored row whose `raw` and `raw_hash` disagree, which
+    the insert would otherwise turn into an opaque primary-key error.
+*   `KeystoreStore.Put` is idempotent only for a byte-identical value. Storing a
+    *different* value under an existing key is a genuine data-integrity conflict
+    and must be returned as an error, never silently accepted or ignored.
+
+### Spendable-flag reconciliation
+
+`TokenStoreTransaction.SetSpendableBySupportedTokenFormats` reconciles every
+token's `spendable` flag against the set of ledger formats the node supports:
+tokens with a supported format become spendable, all others become
+non-spendable. An empty format list therefore makes *nothing* spendable.
+
+Implementations should only write rows whose flag actually has to change. The
+call runs on every format reconciliation, so clearing the whole table before
+re-marking the supported rows costs a full-table rewrite — and the attendant
+MVCC bloat on PostgreSQL — however little has changed.
+
+### Driver errors are classified by code, never by message text
+
+A store that maps a backend failure onto a meaningful sentinel error — say
+`ttxDBError` turning a foreign-key violation into
+`driver.ErrTokenRequestDoesNotExist` — must decide from the code the driver
+reports through its own typed error, never from the text of the message.
+Message wording is not part of any driver's contract and has changed across both
+PostgreSQL and SQLite releases, so a match on it breaks silently at the next
+dependency bump.
+
+`token/services/storage/db/sql/common/sqlerrors.go` is the single place that does
+this classification. It matches drivers through the narrow interfaces they
+already satisfy — `SQLState() string` for `*pgconn.PgError`, `Code() int` for
+modernc.org/sqlite's `*sqlite.Error` — so this technology-agnostic layer takes no
+driver dependency, and it unwraps, so wrapping an error on the way up preserves
+the classification.
+
+A driver that exposes neither accessor is deliberately left unclassified: every
+predicate reports `false` rather than falling back to a message match. Each
+caller's `false` branch is the conservative one — the original error is returned
+unmapped, and a cached prepared statement is left in place — whereas guessing
+from message text risks mapping an unrelated failure onto a specific error that
+callers act on.
+
+Only codes a real backend can actually return belong in the table. A code the
+driver resolves for itself is not a defensive extra branch, it is a branch no
+deployment can reach: `SQLITE_SCHEMA` is left out for exactly this reason, since
+`modernc.org/sqlite` prepares through `sqlite3_prepare_v2` and SQLite
+re-prepares the statement transparently instead of returning the code.
+
+FSC's per-driver `ErrorMapper` (`driver.SQLErrorWrapper`) classifies by code the
+same way, and stores already inject it to recognise
+`driver.UniqueKeyViolation`. The foreign-key table in `sqlerrors.go` is local only
+because FSC has no `ForeignKeyViolation` sentinel to map onto yet; when it gains
+one, prefer the injected wrapper over a second table here.

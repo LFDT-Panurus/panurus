@@ -12,7 +12,6 @@ import (
 	"fmt"
 	"math/big"
 	"runtime/debug"
-	"strings"
 	"sync"
 	"time"
 
@@ -1156,10 +1155,11 @@ func (db *TokenStore) StorePublicParams(ctx context.Context, raw []byte) error {
 	query, args := q.InsertInto(db.table.PublicParams).
 		Fields("raw", "raw_hash", "stored_at").
 		Row(raw, rawHash, time.Now().UTC()).
+		OnConflictDoNothing().
 		Format()
 	logger.DebugfContext(ctx, query, fmt.Sprintf("store public parameters (%d bytes), hash [%s]", len(raw), logging.Base64(rawHash)))
 	if _, err := db.writeDB.ExecContext(ctx, query, args...); err != nil {
-		return err
+		return errors.Wrapf(err, "failed storing public parameters with hash [%s]", logging.Base64(rawHash))
 	}
 
 	return nil
@@ -1774,30 +1774,67 @@ func (t *TokenTransaction) SetSpendable(ctx context.Context, tokenID token.ID, s
 	return nil
 }
 
+// SetSpendableBySupportedTokenFormats reconciles the spendable flag of every
+// token against formats: tokens whose ledger type is supported become
+// spendable, all others become non-spendable.
+//
+// Both updates are conditional on the flag actually having to change, so a
+// reconciliation that agrees with the stored state writes no rows. Rewriting
+// the whole table unconditionally - as this used to do, by clearing every flag
+// before setting the supported ones - costs a full-table rewrite and the
+// attendant MVCC bloat on every call, however little has changed.
 func (t *TokenTransaction) SetSpendableBySupportedTokenFormats(ctx context.Context, formats []token.Format) error {
-	// first set all spendable flags to false
+	// Clear the flag on tokens whose format is no longer supported. With no
+	// supported format at all, that is every token still marked spendable: note
+	// that cond.In degrades to AlwaysTrue on an empty value list, so the
+	// unsupported set has to be spelled out rather than derived by negating it.
+	var unsupported cond.Condition = cond.Eq("spendable", true)
+	if len(formats) > 0 {
+		unsupported = cond.And(
+			cond.Eq("spendable", true),
+			// A NULL ledger type matches no supported format either, but SQL's
+			// NOT (NULL IN (...)) is NULL rather than true, so it needs its own
+			// branch to still be cleared.
+			cond.Or(
+				cond.Not(cond.In("ledger_type", formats...)),
+				cond.IsNil(common3.FieldName("ledger_type")),
+			),
+		)
+	}
 	query, args := q.Update(t.table.Tokens).
 		Set("spendable", false).
-		Format(t.ci)
-
-	logging.Debug(logger, query, args)
-	if _, err := t.tx.ExecContext(ctx, query, args...); err != nil {
-		return errors.Wrapf(err, "error setting spendable flag to false for all tokens")
-	}
-
-	// then set the spendable flags to true only for the supported token types
-	query, args = q.Update(t.table.Tokens).
-		Set("spendable", true).
-		Where(cond.In("ledger_type", formats...)).
+		Where(unsupported).
 		Format(t.ci)
 
 	logging.Debug(logger, query, args)
 	res, err := t.tx.ExecContext(ctx, query, args...)
 	if err != nil {
+		return errors.Wrapf(err, "error setting spendable flag to false for token types other than [%v]", formats)
+	}
+	if rows, err := res.RowsAffected(); err == nil {
+		logger.DebugfContext(ctx, "cleared spendable flag on [%d] rows", rows)
+	}
+
+	if len(formats) == 0 {
+		return nil
+	}
+
+	// Then set the flag on the supported formats that do not already have it.
+	query, args = q.Update(t.table.Tokens).
+		Set("spendable", true).
+		Where(cond.And(
+			cond.Eq("spendable", false),
+			cond.In("ledger_type", formats...),
+		)).
+		Format(t.ci)
+
+	logging.Debug(logger, query, args)
+	res, err = t.tx.ExecContext(ctx, query, args...)
+	if err != nil {
 		return errors.Wrapf(err, "error setting spendable flag to true for token types [%v]", formats)
-	} else {
-		rows, _ := res.RowsAffected()
-		logger.DebugfContext(ctx, "rows affected [%d]", rows)
+	}
+	if rows, err := res.RowsAffected(); err == nil {
+		logger.DebugfContext(ctx, "set spendable flag on [%d] rows", rows)
 	}
 
 	return nil
@@ -1816,8 +1853,7 @@ func tokenDBError(err error) error {
 		return nil
 	}
 	logger.Error(err)
-	e := strings.ToLower(err.Error())
-	if strings.Contains(e, "foreign key constraint") {
+	if isForeignKeyViolation(err) {
 		return driver.ErrTokenDoesNotExist
 	}
 
