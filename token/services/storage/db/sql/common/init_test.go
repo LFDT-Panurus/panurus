@@ -136,6 +136,7 @@ func TestGetTableNamesAllShortCodes(t *testing.T) {
 		"key_store":        func(t common.TableNames) string { return t.KeyStore },
 		"eid_leases":       func(t common.TableNames) string { return t.EIDLeases },
 		"tkn_ski_cleanups": func(t common.TableNames) string { return t.TokenSKICleanups },
+		"chk_findings":     func(t common.TableNames) string { return t.Findings },
 	}
 
 	prefix := "pfx"
@@ -182,6 +183,7 @@ func TestGetTableNamesLegacy(t *testing.T) {
 		KeyStore:               "fsc_key_store",
 		EIDLeases:              "fsc_eid_leases",
 		TokenSKICleanups:       "fsc_tkn_ski_cleanups",
+		Findings:               "fsc_chk_findings",
 	}, names)
 
 	names, err = common.GetTableNames("valid_prefix")
