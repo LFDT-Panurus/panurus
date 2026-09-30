@@ -342,36 +342,73 @@ token:
 
 ## Public Parameters Management
 
-FabricX employs a `VersionKeeper` for managing public parameters lifecycle:
+On FabricX the public parameters live on the ledger under two keys written together
+by every setup transaction: the setup key (the raw parameters) and the setup *hash*
+key (their SHA256 digest). Every token transaction an endorser translates carries a
+**versioned read dependency** on the setup hash key
+([`RWSetWrapper.StateMustExist`](../../token/services/network/fabricx/endorsement/rwset.go)),
+so the committer rejects the transaction with `ABORTED_MVCC_CONFLICT` unless the
+version the endorser attached is the version that key currently has on the ledger.
+This is what binds a transaction to the parameters it was validated against.
+
+[`pp.VersionKeeper`](../../token/services/network/fabricx/pp/versionkeeper.go) is the
+component that knows that version. It holds an **absolute read of the on-chain row
+version of the setup hash key**, obtained through the query service
+(`PublicParametersService.FetchSetupHashVersion`), and never a count of the updates
+the local process happened to witness. That distinction matters: a node that starts
+after the parameters have already been updated must attach exactly the same version
+as a node that has been running since genesis.
 
 ```mermaid
 sequenceDiagram
-    participant Net as FabricX Network
+    participant End as Endorser
     participant VK as Version Keeper
-    participant Ledger as Blockchain
+    participant QS as Query Service
+    participant SL as Setup Listener
     participant TMS as TMS Provider
 
-    Note over Net,TMS: Initialization
-    Net->>VK: Initialize
-    VK->>Ledger: Query latest version
-    Ledger-->>VK: Version N
-    VK->>Ledger: Fetch parameters (version N)
-    Ledger-->>VK: Parameters
-    VK->>TMS: Update parameters
-    
-    Note over Net,TMS: Periodic Lookup
-    loop Every interval
-        VK->>Ledger: Check for new version
-        Ledger-->>VK: Version N+1 available
-        VK->>Ledger: Fetch parameters (version N+1)
-        Ledger-->>VK: New parameters
-        VK->>VK: Validate parameters
-        VK->>TMS: Update parameters
-        VK->>VK: Increment local version
+    Note over End,TMS: First use (including after a restart)
+    End->>VK: GetVersion()
+    VK->>QS: Row version of the setup hash key
+    QS-->>VK: Version N
+    VK-->>End: N
+    Note right of VK: cached; later reads need no round-trip
+
+    Note over End,TMS: Public parameters updated on-chain
+    loop Every lookup interval
+        SL->>QS: Read the setup key
+        QS-->>SL: Parameters (changed)
+        SL->>TMS: Update parameters
+        SL->>VK: UpdateVersion()
+        VK->>QS: Row version of the setup hash key
+        QS-->>VK: Version N+1
+        Note right of VK: absolute re-read, not an increment
     end
 ```
 
+Two consequences of reading the version rather than counting notifications:
+
+- **Restart safety**: a restarted endorser reads the current version straight from
+  the ledger, so it keeps endorsing transactions that commit. Before
+  [#2255](https://github.com/LFDT-Panurus/panurus/issues/2255) the keeper treated
+  its first observation as "initialization" and stayed behind by exactly the number
+  of updates it had not witnessed, which permanently broke any endorser restarted
+  after a parameters update. The FabricX fungible suite covers this end to end: its
+  public-parameters-update specs restart the endorser after the update and then
+  transact against the new parameters.
+- **No drift**: a missed or coalesced notification, or a version that jumps by more
+  than one, cannot desynchronize the keeper, because each update re-reads the real
+  version.
+
+If the read fails, or the parameters are not on the ledger yet, the keeper stays
+unsynchronized: `GetVersion` returns the error to the caller (so the endorsement
+fails loudly instead of producing a transaction that is silently rejected later)
+and retries on the next call.
+
 ### Version Keeper Configuration
+
+The keeper itself has no configuration; it follows the lookup listener that watches
+the setup key:
 
 ```yaml
 token:
