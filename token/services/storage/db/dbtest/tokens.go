@@ -927,11 +927,14 @@ func TCertification(t *testing.T, db TestTokenDB) {
 	require.Error(t, err)
 	assert.Empty(t, certifications)
 
-	// store an empty certification and check that an error is returned
+	// Certifying a token that was never stored violates the Certifications ->
+	// Tokens foreign key. It must be reported as a missing token rather than as
+	// an opaque failure: this is what pins the driver-error classification
+	// against the real PostgreSQL and SQLite drivers.
 	err = db.StoreCertifications(ctx, map[*token.ID][]byte{
 		tokenID: {},
 	})
-	require.Error(t, err)
+	require.ErrorIs(t, err, driver2.ErrTokenDoesNotExist)
 	certifications, err = db.GetCertifications(ctx, []*token.ID{tokenID})
 	require.Error(t, err)
 	assert.Empty(t, certifications)

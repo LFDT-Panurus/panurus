@@ -26,7 +26,7 @@ func (c *constant) WriteString(_ common.CondInterpreter, sb common.Builder) {
 
 var (
 	AlwaysTrue  = Constant("1 = 1")
-	AlwaysFalse = Constant("1 != 0")
+	AlwaysFalse = Constant("1 = 0")
 )
 
 type andOr struct {

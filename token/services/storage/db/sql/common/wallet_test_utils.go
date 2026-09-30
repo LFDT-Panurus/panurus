@@ -12,6 +12,7 @@ import (
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/LFDT-Panurus/panurus/token"
 	"github.com/LFDT-Panurus/panurus/token/services/storage/db/driver"
+	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	"github.com/onsi/gomega"
 )
 
@@ -112,11 +113,33 @@ func TestIdentityExists(t *testing.T, store walletStoreConstructor) {
 		WithArgs(tokenID.UniqueID(), walletID, roleID).
 		WillReturnRows(mockDB.NewRows([]string{"wallet_id"}).AddRow(walletID))
 
-	exists := store(db).IdentityExists(t.Context(), tokenID, walletID, roleID)
+	exists, err := store(db).IdentityExists(t.Context(), tokenID, walletID, roleID)
 
 	gomega.Expect(mockDB.ExpectationsWereMet()).To(gomega.Succeed())
 	gomega.Expect(err).ToNot(gomega.HaveOccurred())
 	gomega.Expect(exists).To(gomega.BeTrue())
+}
+
+// TestIdentityExistsPropagatesQueryError asserts that a failed lookup surfaces as
+// an error rather than as a negative answer.
+func TestIdentityExistsPropagatesQueryError(t *testing.T, store walletStoreConstructor) {
+	gomega.RegisterTestingT(t)
+	db, mockDB, err := sqlmock.New()
+	gomega.Expect(err).ToNot(gomega.HaveOccurred())
+
+	tokenID := token.Identity([]byte("1234"))
+	roleID := 5
+	walletID := driver.WalletID("my wallet")
+	mockDB.
+		ExpectQuery("SELECT wallet_id FROM WALLETS WHERE \\(identity_hash = \\$1\\) AND \\(wallet_id = \\$2\\) AND \\(role_id = \\$3\\)").
+		WithArgs(tokenID.UniqueID(), walletID, roleID).
+		WillReturnError(errors.New("connection reset"))
+
+	exists, err := store(db).IdentityExists(t.Context(), tokenID, walletID, roleID)
+
+	gomega.Expect(mockDB.ExpectationsWereMet()).To(gomega.Succeed())
+	gomega.Expect(err).To(gomega.HaveOccurred())
+	gomega.Expect(exists).To(gomega.BeFalse())
 }
 
 func TestStoreIdentity(t *testing.T, store walletStoreConstructor) {
