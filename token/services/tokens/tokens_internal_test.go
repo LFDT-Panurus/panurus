@@ -57,7 +57,7 @@ func TestGetActions_CacheHit(t *testing.T) {
 	ctx := context.Background()
 
 	spend := []*token2.ID{{TxId: "in", Index: 0}}
-	appendTokens := []TokenToAppend{{TxID: "tx1", Index: 0}}
+	appendTokens := []*TokenToAppend{{TxID: "tx1", Index: 0}}
 	cache := &stubCache{entry: &CacheEntry{ToSpend: spend, ToAppend: appendTokens}, ok: true}
 
 	// TMSProvider intentionally nil: a cache hit must not reach it.

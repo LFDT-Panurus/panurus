@@ -357,6 +357,7 @@ func TestRistrettoCache_Integration(t *testing.T) {
 
 	// Clear cache
 	c.Clear()
+	c.Wait()
 
 	// Verify cleared
 	_, ok = c.Get("key1")

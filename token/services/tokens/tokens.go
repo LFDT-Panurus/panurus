@@ -8,8 +8,10 @@ package tokens
 
 import (
 	"context"
-	"runtime/debug"
+	"path/filepath"
+	"runtime"
 	"slices"
+	"strconv"
 
 	"github.com/LFDT-Panurus/panurus/token"
 	"github.com/LFDT-Panurus/panurus/token/driver"
@@ -48,7 +50,7 @@ type CacheEntry struct {
 	// ToSpend is the list of token IDs to be marked as spent.
 	ToSpend []*token2.ID
 	// ToAppend is the list of tokens to be added to the local store.
-	ToAppend []TokenToAppend
+	ToAppend []*TokenToAppend
 	// MsgToSign is the serialized message that was signed.
 	MsgToSign []byte
 }
@@ -94,17 +96,23 @@ func noPostCommit(context.Context) {}
 // must invoke it after committing tx, see PostCommit.
 func (t *Service) AppendValid(ctx context.Context, tx dbdriver.Transaction, txID token.RequestAnchor, request *token.Request) (postCommit PostCommit, err error) {
 	if request == nil {
-		logger.DebugfContext(ctx, "transaction [%s], no request found, skip it", txID)
+		if logger.IsEnabledFor(zapcore.DebugLevel) {
+			logger.DebugfContext(ctx, "transaction [%s], no request found, skip it", txID)
+		}
 
 		return noPostCommit, nil
 	}
 	if request.Metadata == nil {
-		logger.DebugfContext(ctx, "transaction [%s], no metadata found, skip it", txID)
+		if logger.IsEnabledFor(zapcore.DebugLevel) {
+			logger.DebugfContext(ctx, "transaction [%s], no metadata found, skip it", txID)
+		}
 
 		return noPostCommit, nil
 	}
 
-	logger.DebugfContext(ctx, "check transaction exists")
+	if logger.IsEnabledFor(zapcore.DebugLevel) {
+		logger.DebugfContext(ctx, "check transaction exists")
+	}
 	exists, err := t.Storage.TransactionExists(ctx, string(txID))
 	if err != nil {
 		logger.ErrorfContext(ctx, "transaction [%s], failed to check existence in db [%s]", txID, err)
@@ -112,7 +120,9 @@ func (t *Service) AppendValid(ctx context.Context, tx dbdriver.Transaction, txID
 		return noPostCommit, errors.WithMessagef(err, "transaction [%s], failed to check existence in db", txID)
 	}
 	if exists {
-		logger.DebugfContext(ctx, "transaction [%s], exists in db, skipping", txID)
+		if logger.IsEnabledFor(zapcore.DebugLevel) {
+			logger.DebugfContext(ctx, "transaction [%s], exists in db, skipping", txID)
+		}
 
 		return noPostCommit, nil
 	}
@@ -123,7 +133,9 @@ func (t *Service) AppendValid(ctx context.Context, tx dbdriver.Transaction, txID
 	}
 	defer t.removeCachedTokenRequest(string(txID))
 
-	logger.DebugfContext(ctx, "transaction [%s] continue db transaction", txID)
+	if logger.IsEnabledFor(zapcore.DebugLevel) {
+		logger.DebugfContext(ctx, "transaction [%s] continue db transaction", txID)
+	}
 	// ContinueTransaction wraps the caller's own transaction (the same underlying
 	// *sql.Tx the caller started); it does NOT open a new one. Ownership therefore
 	// stays with the caller: on failure we only stop and propagate the error, and
@@ -136,7 +148,9 @@ func (t *Service) AppendValid(ctx context.Context, tx dbdriver.Transaction, txID
 		return noPostCommit, errors.WithMessagef(err, "transaction [%s], failed to continue db transaction", txID)
 	}
 
-	logger.DebugfContext(ctx, "append tokens")
+	if logger.IsEnabledFor(zapcore.DebugLevel) {
+		logger.DebugfContext(ctx, "append tokens")
+	}
 	for _, tta := range toAppend {
 		err = ts.AppendToken(ctx, tta)
 		if err != nil {
@@ -144,13 +158,17 @@ func (t *Service) AppendValid(ctx context.Context, tx dbdriver.Transaction, txID
 		}
 	}
 
-	logger.DebugfContext(ctx, "delete spend tokens")
+	if logger.IsEnabledFor(zapcore.DebugLevel) {
+		logger.DebugfContext(ctx, "delete spend tokens")
+	}
 	err = ts.DeleteTokens(ctx, string(txID), toSpend)
 	if err != nil {
 		return noPostCommit, errors.WithMessagef(err, "transaction [%s], failed to delete tokens", txID)
 	}
 
-	logger.DebugfContext(ctx, "ready to commit")
+	if logger.IsEnabledFor(zapcore.DebugLevel) {
+		logger.DebugfContext(ctx, "ready to commit")
+	}
 
 	return ts.FlushEvents, nil
 }
@@ -161,7 +179,9 @@ func (t *Service) CacheRequest(ctx context.Context, request *token.Request) erro
 	if err != nil {
 		return errors.WithMessagef(err, "failed to extract actions for request [%s]", request.ID())
 	}
-	logger.DebugfContext(ctx, "cache request [%s]", request.ID())
+	if logger.IsEnabledFor(zapcore.DebugLevel) {
+		logger.DebugfContext(ctx, "cache request [%s]", request.ID())
+	}
 	// append to cache
 	msgToSign, err := request.MarshalToSign()
 	if err != nil {
@@ -201,9 +221,16 @@ func (t *Service) DeleteTokensBy(ctx context.Context, deletedBy string, ids ...*
 	return t.Storage.TokenDB.DeleteTokens(ctx, deletedBy, ids...)
 }
 
-// DeleteTokens marks the tokens as spent in the database, attributed to the caller's stack trace.
+// DeleteTokens marks the tokens as spent in the database, attributed to the caller's location.
 func (t *Service) DeleteTokens(ctx context.Context, ids ...*token2.ID) (err error) {
-	return t.DeleteTokensBy(ctx, string(debug.Stack()), ids...)
+	deletedBy := "Service.DeleteTokens"
+	if pc, file, line, ok := runtime.Caller(1); ok {
+		if fn := runtime.FuncForPC(pc); fn != nil {
+			deletedBy = fn.Name() + " (" + filepath.Base(file) + ":" + strconv.Itoa(line) + ")"
+		}
+	}
+
+	return t.DeleteTokensBy(ctx, deletedBy, ids...)
 }
 
 // SetSpendableFlag sets the spendable status for the specified tokens.
@@ -307,7 +334,9 @@ func (t *Service) PruneInvalidUnspentTokens(ctx context.Context) ([]*token2.ID, 
 }
 
 func (t *Service) deleteTokens(ctx context.Context, network *network.Network, tms *token.ManagementService, tokens []*token2.UnspentToken) ([]*token2.ID, error) {
-	logger.DebugfContext(ctx, "delete tokens from vault [%d][%v]", len(tokens), tokens)
+	if logger.IsEnabledFor(zapcore.DebugLevel) {
+		logger.DebugfContext(ctx, "delete tokens from vault [%d][%v]", len(tokens), tokens)
+	}
 	if len(tokens) == 0 {
 		return nil, nil
 	}
@@ -327,13 +356,17 @@ func (t *Service) deleteTokens(ctx context.Context, network *network.Network, tm
 	}
 
 	// remove the tokens flagged as spent
-	var toDelete []*token2.ID
+	toDelete := make([]*token2.ID, 0, len(tokens))
 	for i, tok := range tokens {
 		if spent[i] {
-			logger.DebugfContext(ctx, "token [%s] is spent", tok.Id)
+			if logger.IsEnabledFor(zapcore.DebugLevel) {
+				logger.DebugfContext(ctx, "token [%s] is spent", tok.Id)
+			}
 			toDelete = append(toDelete, &tok.Id)
 		} else {
-			logger.DebugfContext(ctx, "token [%s] is not spent", tok.Id)
+			if logger.IsEnabledFor(zapcore.DebugLevel) {
+				logger.DebugfContext(ctx, "token [%s] is not spent", tok.Id)
+			}
 		}
 	}
 	if err := t.DeleteTokens(ctx, toDelete...); err != nil {
@@ -343,12 +376,16 @@ func (t *Service) deleteTokens(ctx context.Context, network *network.Network, tm
 	return toDelete, nil
 }
 
-func (t *Service) getActions(ctx context.Context, anchor token.RequestAnchor, request *token.Request) ([]*token2.ID, []TokenToAppend, error) {
+func (t *Service) getActions(ctx context.Context, anchor token.RequestAnchor, request *token.Request) ([]*token2.ID, []*TokenToAppend, error) {
 	// check the cache first
-	logger.DebugfContext(ctx, "check request cache for [%s]", anchor)
+	if logger.IsEnabledFor(zapcore.DebugLevel) {
+		logger.DebugfContext(ctx, "check request cache for [%s]", anchor)
+	}
 	entry, ok := t.RequestsCache.Get(string(anchor))
 	if ok && entry != nil {
-		logger.DebugfContext(ctx, "cache hit, return it")
+		if logger.IsEnabledFor(zapcore.DebugLevel) {
+			logger.DebugfContext(ctx, "cache hit, return it")
+		}
 
 		return entry.ToSpend, entry.ToAppend, nil
 	}
@@ -356,24 +393,30 @@ func (t *Service) getActions(ctx context.Context, anchor token.RequestAnchor, re
 	return t.extractActions(ctx, anchor, request)
 }
 
-func (t *Service) extractActions(ctx context.Context, anchor token.RequestAnchor, request *token.Request) ([]*token2.ID, []TokenToAppend, error) {
+func (t *Service) extractActions(ctx context.Context, anchor token.RequestAnchor, request *token.Request) ([]*token2.ID, []*TokenToAppend, error) {
 	tms, err := t.TMSProvider.GetManagementService(token.WithTMSID(t.tmsID))
 	if err != nil {
 		return nil, nil, errors.WithMessagef(err, "failed getting token management service [%s]", t.tmsID)
 	}
 
-	logger.DebugfContext(ctx, "transaction [%s on (%s)] is known, extract tokens", anchor, tms.ID())
+	if logger.IsEnabledFor(zapcore.DebugLevel) {
+		logger.DebugfContext(ctx, "transaction [%s on (%s)] is known, extract tokens", anchor, tms.ID())
+	}
 	pp := tms.PublicParametersManager().PublicParameters()
 	graphHiding := pp.GraphHiding()
 	precision := pp.Precision()
 	auth := tms.Authorization()
 	auditorFlag := auth.AmIAnAuditor()
 	if auditorFlag {
-		logger.DebugfContext(ctx, "transaction [%s], I must be the auditor", anchor)
+		if logger.IsEnabledFor(zapcore.DebugLevel) {
+			logger.DebugfContext(ctx, "transaction [%s], I must be the auditor", anchor)
+		}
 	}
 	md, err := request.GetMetadata()
 	if err != nil {
-		logger.DebugfContext(ctx, "transaction [%s], failed to get metadata [%s]", anchor, err)
+		if logger.IsEnabledFor(zapcore.DebugLevel) {
+			logger.DebugfContext(ctx, "transaction [%s], failed to get metadata [%s]", anchor, err)
+		}
 
 		return nil, nil, errors.WithMessagef(err, "transaction [%s], failed to get request metadata", anchor)
 	}
@@ -383,7 +426,9 @@ func (t *Service) extractActions(ctx context.Context, anchor token.RequestAnchor
 		return nil, nil, errors.WithMessagef(err, "failed to get request's outputs")
 	}
 	toSpend, toAppend, err := t.Parse(ctx, auth, anchor, md, is, os, auditorFlag, precision, graphHiding)
-	logger.DebugfContext(ctx, "transaction [%s] parsed [%d] inputs and [%d] outputs", anchor, len(toSpend), len(toAppend))
+	if logger.IsEnabledFor(zapcore.DebugLevel) {
+		logger.DebugfContext(ctx, "transaction [%s] parsed [%d] inputs and [%d] outputs", anchor, len(toSpend), len(toAppend))
+	}
 
 	return toSpend, toAppend, err
 }
@@ -399,23 +444,35 @@ func (t *Service) Parse(
 	auditorFlag bool,
 	precision uint64,
 	graphHiding bool,
-) (toSpend []*token2.ID, toAppend []TokenToAppend, err error) {
+) (toSpend []*token2.ID, toAppend []*TokenToAppend, err error) {
 	if graphHiding {
 		ids := md.SpentTokenID()
-		logger.DebugfContext(ctx, "transaction [%s] with graph hiding, delete inputs [%v]", requestAnchor, ids)
+		if logger.IsEnabledFor(zapcore.DebugLevel) {
+			logger.DebugfContext(ctx, "transaction [%s] with graph hiding, delete inputs [%v]", requestAnchor, ids)
+		}
+		toSpend = make([]*token2.ID, 0, len(ids)+is.Count())
 		toSpend = append(toSpend, ids...)
+	} else {
+		toSpend = make([]*token2.ID, 0, is.Count())
 	}
+	toAppend = make([]*TokenToAppend, 0, os.Count())
 
-	logger.DebugfContext(ctx, "parse [%d] inputs and [%d] outputs from [%s]", is.Count(), os.Count(), requestAnchor)
+	if logger.IsEnabledFor(zapcore.DebugLevel) {
+		logger.DebugfContext(ctx, "parse [%d] inputs and [%d] outputs from [%s]", is.Count(), os.Count(), requestAnchor)
+	}
 
 	// parse the inputs
 	for _, input := range is.Inputs() {
 		if input.Id == nil {
-			logger.DebugfContext(ctx, "transaction [%s] found an input that is not mine, skip it", requestAnchor)
+			if logger.IsEnabledFor(zapcore.DebugLevel) {
+				logger.DebugfContext(ctx, "transaction [%s] found an input that is not mine, skip it", requestAnchor)
+			}
 
 			continue
 		}
-		logger.DebugfContext(ctx, "transaction [%s] delete input [%s]", requestAnchor, input.Id)
+		if logger.IsEnabledFor(zapcore.DebugLevel) {
+			logger.DebugfContext(ctx, "transaction [%s] delete input [%s]", requestAnchor, input.Id)
+		}
 		toSpend = append(toSpend, input.Id)
 	}
 
@@ -424,19 +481,23 @@ func (t *Service) Parse(
 		// if this is a redeem (empty owner), store it only if it was redeemed against
 		// an issuer known to this node; otherwise skip it.
 		if len(output.Token.Owner) == 0 {
-			logger.DebugfContext(ctx, "output [%s:%d] is a redeem", requestAnchor, output.Index)
+			if logger.IsEnabledFor(zapcore.DebugLevel) {
+				logger.DebugfContext(ctx, "output [%s:%d] is a redeem", requestAnchor, output.Index)
+			}
 
 			issuer := output.Issuer
 			redeemedMine := !issuer.IsNone() && auth.Issued(ctx, issuer, &output.Token)
 			if !redeemedMine {
-				logger.DebugfContext(ctx, "transaction [%s], discarding redeem, issuer is not mine", requestAnchor)
+				if logger.IsEnabledFor(zapcore.DebugLevel) {
+					logger.DebugfContext(ctx, "transaction [%s], discarding redeem, issuer is not mine", requestAnchor)
+				}
 
 				continue
 			}
 
 			// clone the token and the caller-owned byte slices so the cached entry does not
 			// alias the output stream, which may be reused or mutated after Parse returns
-			tta := TokenToAppend{
+			tta := &TokenToAppend{
 				TxID:                  string(requestAnchor),
 				Index:                 output.Index,
 				Tok:                   output.Clone(),
@@ -476,7 +537,9 @@ func (t *Service) Parse(
 			logger.DebugfContext(ctx, "store token [%s:%d][%s]", requestAnchor, output.Index, utils.Hashable(output.LedgerOutput))
 		}
 		if !mine && !auditorFlag && !issuerFlag {
-			logger.DebugfContext(ctx, "transaction [%s], discarding token, not mine, not an auditor, not an issuer", requestAnchor)
+			if logger.IsEnabledFor(zapcore.DebugLevel) {
+				logger.DebugfContext(ctx, "transaction [%s], discarding token, not mine, not an auditor, not an issuer", requestAnchor)
+			}
 
 			continue
 		}
@@ -488,7 +551,7 @@ func (t *Service) Parse(
 
 		// clone the token and the caller-owned byte slices so the cached entry does not
 		// alias the output stream, which may be reused or mutated after Parse returns
-		tta := TokenToAppend{
+		tta := &TokenToAppend{
 			TxID:                  string(requestAnchor),
 			Index:                 output.Index,
 			Tok:                   output.Clone(),
