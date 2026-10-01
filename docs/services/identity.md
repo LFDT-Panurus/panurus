@@ -123,6 +123,28 @@ A wallet identifier registered with a `nil` wallet counts as absent, both on the
 creation double-checks the cache; a factory that returns no wallet and no error is reported as an
 error.
 
+### Wallet accessor error contract
+
+`wallet.Service`'s role accessors — `OwnerWallet`, `IssuerWallet`, `AuditorWallet`,
+`CertifierWallet`, and the `RegisterOwnerIdentity` / `RegisterIssuerIdentity` /
+`OwnerWalletIDs` delegators — return a typed error rather than panicking on a
+misconfiguration or a non-conforming implementation:
+
+*   **Missing role registry.** If `RoleRegistries` has no (or a `nil`) entry for the role
+    the accessor indexes into, the accessor returns `no registry configured for <role> role`
+    instead of a nil-interface method-call panic. `NewService` does not reject an incomplete
+    `RoleRegistries` up front; the guard is applied lazily, at first use of the affected role.
+*   **Wrong wallet type.** A `RoleRegistry.WalletByID` implementation that returns a
+    `driver.Wallet` not satisfying the concrete role interface the accessor expects (e.g. a
+    wallet that does not implement `driver.OwnerWallet`) yields
+    `wallet [<id>] does not implement the expected <role> wallet interface`, rather than a
+    failed type assertion panicking the calling goroutine. This is the failure mode a custom
+    or partially-implemented `WalletFactory` can produce.
+
+`Service.Wallet` (the best-effort owner-then-issuer resolver) still treats these as
+"no wallet found": it discards the error and returns `nil`, so callers of `Wallet` see the
+unchanged nil-on-miss behaviour while the explicit accessors surface the error.
+
 ### LocalMembership
 
 The `LocalMembership` component (`token/services/identity/membership`) plays a pivotal role in managing local identities for a specific role (e.g., Owner, Issuer).

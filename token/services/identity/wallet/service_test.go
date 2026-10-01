@@ -228,6 +228,53 @@ func TestWalletAndLookupFunctions(t *testing.T) {
 	require.Equal(t, driver.Wallet(ow), w)
 }
 
+func TestWalletAccessorsMissingRegistry(t *testing.T) {
+	ctx := t.Context()
+	// Empty RoleRegistries: every accessor and delegator must return an error rather than
+	// panicking on a nil-interface method call.
+	s := wallet.NewService(&logging.MockLogger{}, &dmock.IdentityProvider{}, &dmock.Deserializer{}, wallet.RoleRegistries{})
+
+	_, err := s.OwnerWallet(ctx, driver.WalletLookupID("id"))
+	require.ErrorContains(t, err, "no registry configured for owner role")
+
+	_, err = s.IssuerWallet(ctx, driver.WalletLookupID("id"))
+	require.ErrorContains(t, err, "no registry configured for issuer role")
+
+	_, err = s.AuditorWallet(ctx, driver.WalletLookupID("id"))
+	require.ErrorContains(t, err, "no registry configured for auditor role")
+
+	_, err = s.CertifierWallet(ctx, driver.WalletLookupID("id"))
+	require.ErrorContains(t, err, "no registry configured for certifier role")
+
+	_, err = s.OwnerWalletIDs(ctx)
+	require.ErrorContains(t, err, "no registry configured for owner role")
+
+	err = s.RegisterOwnerIdentity(ctx, driver.IdentityConfiguration{})
+	require.ErrorContains(t, err, "no registry configured for owner role")
+
+	err = s.RegisterIssuerIdentity(ctx, driver.IdentityConfiguration{})
+	require.ErrorContains(t, err, "no registry configured for issuer role")
+}
+
+func TestWalletAccessorsWrongWalletType(t *testing.T) {
+	ctx := t.Context()
+	ownerReg := &wmock.RoleRegistry{}
+	// Return a wallet that implements driver.Wallet but not the expected role interface.
+	// A dmock.IssuerWallet does not satisfy driver.OwnerWallet.
+	notAnOwner := &dmock.IssuerWallet{}
+	notAnOwner.IDReturns("w-mismatch")
+	ownerReg.WalletByIDReturns(notAnOwner, nil)
+	s := wallet.NewService(
+		&logging.MockLogger{},
+		&dmock.IdentityProvider{},
+		&dmock.Deserializer{},
+		map[idriver.IdentityRoleType]wallet.RoleRegistry{idriver.OwnerRole: ownerReg},
+	)
+
+	_, err := s.OwnerWallet(ctx, driver.WalletLookupID("id"))
+	require.ErrorContains(t, err, "wallet [w-mismatch] does not implement the expected owner wallet interface")
+}
+
 func TestSpendIDsAndConvert(t *testing.T) {
 	s := wallet.NewService(&logging.MockLogger{}, &dmock.IdentityProvider{}, &dmock.Deserializer{}, nil)
 	// SpendIDs empty

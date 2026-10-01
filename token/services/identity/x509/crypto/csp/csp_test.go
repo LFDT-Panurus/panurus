@@ -464,6 +464,39 @@ func TestKeyMarshalling(t *testing.T) {
 	})
 }
 
+// Test that the ecdsa signer/verifiers return an error (rather than panicking) when
+// handed a bccsp.Key whose concrete type is not the one they expect.
+func TestECDSASignerVerifierWrongKeyType(t *testing.T) {
+	privKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+	pub := &ecdsaPublicKey{&privKey.PublicKey}
+	priv := &ecdsaPrivateKey{privKey}
+	digest := sha256.Sum256([]byte("test"))
+
+	// ecdsaSigner expects *ecdsaPrivateKey; hand it a public key.
+	t.Run("Sign Wrong Key Type", func(t *testing.T) {
+		_, err := (&ecdsaSigner{}).Sign(pub, digest[:], nil)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "expected *ecdsaPrivateKey")
+	})
+
+	// ecdsaPrivateKeyVerifier expects *ecdsaPrivateKey; hand it a public key.
+	t.Run("Private Key Verifier Wrong Key Type", func(t *testing.T) {
+		valid, err := (&ecdsaPrivateKeyVerifier{}).Verify(pub, []byte("sig"), digest[:], nil)
+		require.Error(t, err)
+		assert.False(t, valid)
+		assert.Contains(t, err.Error(), "expected *ecdsaPrivateKey")
+	})
+
+	// ecdsaPublicKeyKeyVerifier expects *ecdsaPublicKey; hand it a private key.
+	t.Run("Public Key Verifier Wrong Key Type", func(t *testing.T) {
+		valid, err := (&ecdsaPublicKeyKeyVerifier{}).Verify(priv, []byte("sig"), digest[:], nil)
+		require.Error(t, err)
+		assert.False(t, valid)
+		assert.Contains(t, err.Error(), "expected *ecdsaPublicKey")
+	})
+}
+
 // Test that a KVS store is created as not read-only
 func TestKVSStore_ReadOnly(t *testing.T) {
 	keyStore := NewKVSStore(kvs.NewTrackedMemory())
