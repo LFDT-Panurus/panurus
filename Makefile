@@ -74,7 +74,7 @@ GO_PACKAGES = $(shell go list ./... | grep -v '/integration/' | grep -v 'regress
 
 .PHONY: unit-tests
 # run standard unit tests
-unit-tests:
+unit-tests: test-evm-contracts
 	@go test $(GO_TEST_PARAMS) $(GO_PACKAGES)
 	cd token/services/storage/db/kvs/hashicorp/; go test -cover ./...
 	cd x/token/services/network/evm; go test -coverpkg=./... -coverprofile=profile.cov ./...
@@ -86,6 +86,7 @@ unit-tests:
 unit-tests-race:
 	@export GORACE=history_size=7; go test -race -cover $(shell go list ./... | grep -v '/integration/'  | grep -v 'regression')
 	cd integration/nwo/; go test -cover ./...
+	@export GORACE=history_size=7; cd x/token/services/network/evm; go test -race -cover ./...
 
 .PHONY: unit-tests-regression
 # run regression unit tests
