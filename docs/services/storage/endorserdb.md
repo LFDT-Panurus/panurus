@@ -131,6 +131,23 @@ err := store.SetStatus(ctx, txID, driver.Confirmed, "Transaction confirmed")
 status, message, err := store.GetStatus(ctx, txID)
 ```
 
+### Checking Whether a Request Was Already Processed
+
+`AlreadyProcessed` reports whether a validation record already exists for a given `txID`. A record is
+written for every request an endorser approves, keyed by the request anchor (transaction id), so its
+presence means the request has already been processed:
+
+```go
+processed, err := store.AlreadyProcessed(ctx, txID)
+```
+
+It is built on `GetStatus` (which reports `Unknown` without error for a `txID` that has no record), so
+any existing record — including one whose status is later set to a terminal value such as `Deleted` or
+`Orphan` — counts as processed. The FSC token-request approval responder calls this before running the
+(expensive) token-request verification and rejects an already-processed anchor early with
+`ErrAlreadyProcessed`, rather than re-verifying only to fail later on the `tx_id` primary-key conflict
+at insert time.
+
 ## Database Schema
 
 The endorserdb uses a single, self-contained table:

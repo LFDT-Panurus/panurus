@@ -52,7 +52,11 @@ evaluate would cost write throughput and catch nothing.
 1. **Callers of `endorserdb.AppendValidationRecord` MUST validate the token request first**, and
    MUST take `pp_hash` from their own TMS rather than from the peer that sent the request. The store
    checks that the payload is a deserializable request with at least one action; it cannot check
-   that the actions are legal.
+   that the actions are legal. As a hardening measure the FSC approval responder also calls
+   `endorserdb.AlreadyProcessed(anchor)` *before* validating, and rejects a request whose anchor
+   already has a validation record with `ErrAlreadyProcessed` — so a replayed anchor is refused
+   cheaply and explicitly rather than after a full re-validation that would only fail on the `tx_id`
+   primary-key conflict at insert time.
 2. **Callers of `AddTransactionEndorsementAck` MUST verify the signature** against the payload they
    sent to that endorser, before storing. The store checks only that an endorser and a signature are
    present.

@@ -163,6 +163,21 @@ func (d *StoreService) AppendValidationRecord(ctx context.Context, txID string, 
 	return nil
 }
 
+// AlreadyProcessed reports whether a validation record already exists for txID.
+//
+// A validation record is written for every request this endorser approves, keyed
+// by the request anchor (tx id), so its presence means the request has already
+// been processed and must not be evaluated again. It builds on GetStatus, which
+// reports Unknown (without error) for a txID that has no record.
+func (d *StoreService) AlreadyProcessed(ctx context.Context, txID string) (bool, error) {
+	status, _, err := d.GetStatus(ctx, txID)
+	if err != nil {
+		return false, errors.WithMessagef(err, "failed to check whether [%s] was already processed", txID)
+	}
+
+	return status != Unknown, nil
+}
+
 // SetStatus sets the status of the validation record with the passed transaction id to the passed status
 func (d *StoreService) SetStatus(ctx context.Context, txID string, status dbdriver.TxStatus, message string) error {
 	logger.DebugfContext(ctx, "set status [%s][%s]...", txID, status)
