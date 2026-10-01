@@ -58,6 +58,11 @@ func TestBatchingStatusDB_CoalescesConcurrentGetStatus(t *testing.T) {
 		"tx2": dbdriver.Pending,
 	}}
 	d := newBatchingStatusDB(store)
+	// Drive the flush explicitly rather than racing the wall-clock batch
+	// window: coalescing is then proven because both callers joined the batch,
+	// not because a timer happened to fire after both goroutines were
+	// scheduled. See flushWhenJoined / neverFlushWindow.
+	d.batcher.window = neverFlushWindow
 
 	ids := []string{"tx1", "tx2"}
 	results := make([]dbdriver.TxStatus, len(ids))
@@ -71,6 +76,7 @@ func TestBatchingStatusDB_CoalescesConcurrentGetStatus(t *testing.T) {
 			results[i] = s
 		}(i, id)
 	}
+	flushWhenJoined(t, d.batcher, len(ids))
 	wg.Wait()
 
 	assert.Equal(t, []dbdriver.TxStatus{dbdriver.Confirmed, dbdriver.Pending}, results)
