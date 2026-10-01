@@ -107,6 +107,7 @@ nav:
       - Storage:
           - Overview: services/storage.md
           - Cleanup Service: services/storage/keystore_cleanup.md
+          - KVS Backend: services/storage/kvs.md
           - Recovery Service: services/storage/recovery.md
       - Tokens: services/tokens.md
       - TTX: services/ttx.md

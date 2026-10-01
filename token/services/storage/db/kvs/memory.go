@@ -10,17 +10,20 @@ import (
 	"context"
 
 	"github.com/LFDT-Panurus/panurus/token/services/utils"
+	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
+	"github.com/hyperledger-labs/fabric-smart-client/platform/view/services/storage/driver"
 	mem "github.com/hyperledger-labs/fabric-smart-client/platform/view/services/storage/driver/memory"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/services/storage/kvs"
 )
 
 func NewInMemory() (KVS, error) {
-	k, err := kvs.New(utils.MustGet(mem.NewDriver().NewKVS("")), "", kvs.DefaultCacheSize)
+	store := utils.MustGet(mem.NewDriver().NewKVS(""))
+	k, err := kvs.New(store, "", kvs.DefaultCacheSize)
 	if err != nil {
 		return nil, err
 	}
 
-	return &fscKVS{KVS: k}, nil
+	return &fscKVS{KVS: k, store: store}, nil
 }
 
 func Keystore(kvs KVS) *kvsAdapter {
@@ -49,10 +52,18 @@ func (k *kvsAdapter) Delete(id string) error {
 
 type fscKVS struct {
 	*kvs.KVS
+	// store is the key-value store backing KVS. It is kept here because kvs.KVS.Stop() only
+	// logs a failure to close it, and Close has to report one.
+	store driver.KeyValueStore
 }
 
+// Close closes the underlying key-value store. It does so directly rather than through
+// kvs.KVS.Stop(), which closes the same store but only logs a failure, leaving the caller no way
+// to observe it.
 func (k *fscKVS) Close() error {
-	k.Stop()
+	if err := k.store.Close(); err != nil {
+		return errors.Wrap(err, "failed to close the kvs store")
+	}
 
 	return nil
 }

@@ -11,6 +11,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 
@@ -33,6 +34,7 @@ func TestVaultKVS(t *testing.T) {
 	require.NoError(t, err)
 
 	testRound(t, client)
+	testCompositeKeyComponents(t, client)
 	testParallelWrites(t, client)
 	testParallelWritesReadDelete(t, client)
 	testParallelConnections(t, client)
@@ -157,7 +159,9 @@ func testRound(t *testing.T, client *vault.Client) {
 
 	it, err = kvstore.GetByPartialCompositeID(ctx, k, []string{})
 	require.NoError(t, err)
-	assert.Nil(t, it)
+	// nothing stored under the prefix: an empty iterator, not a nil one
+	require.NotNil(t, it)
+	assert.False(t, it.HasNext())
 	require.NoError(t, kvstore.Delete(t.Context(), k))
 	assert.False(t, kvstore.Exists(ctx, k))
 
@@ -184,7 +188,8 @@ func testRound(t *testing.T, client *vault.Client) {
 
 	it, err = kvstore.GetByPartialCompositeID(ctx, k, []string{})
 	require.NoError(t, err)
-	assert.Nil(t, it)
+	require.NotNil(t, it)
+	assert.False(t, it.HasNext())
 
 	_, err = kvstore.GetByPartialCompositeID(ctx, "k", []string{})
 	require.NoError(t, err)
@@ -203,13 +208,90 @@ func testRound(t *testing.T, client *vault.Client) {
 
 	err = kvstore.Get(ctx, k3, nil)
 	require.NoError(t, err)
-	assert.Nil(t, it)
+	assert.False(t, it.HasNext())
 
 	k4, _ := kvs.CreateCompositeKey("k", []string{"4"})
 	require.NoError(t, kvstore.Delete(t.Context(), k4))
 
 	results = kvstore.GetExisting(ctx)
 	assert.Empty(t, results)
+}
+
+// testCompositeKeyComponents asserts that composite keys whose components are empty, or carry
+// the Vault path separator, a percent sign or a relative path element, address distinct
+// secrets and come back out of the iterator unchanged. Before the components were escaped,
+// CreateCompositeKey("", []string{"1"}) and CreateCompositeKey("1", nil) resolved to the same
+// Vault path. It also covers a key that disappears between the list and its read: the
+// iterator must skip it instead of yielding a zero-valued state.
+func testCompositeKeyComponents(t *testing.T, client *vault.Client) {
+	t.Helper()
+	ctx := t.Context()
+	kvstore, err := hashicorp.NewWithClient(client, "kv1/data/panurus/components/")
+	require.NoError(t, err)
+
+	emptyObjectType, err := kvs.CreateCompositeKey("", []string{"1"})
+	require.NoError(t, err)
+	noAttributes, err := kvs.CreateCompositeKey("1", nil)
+	require.NoError(t, err)
+	require.NoError(t, kvstore.Put(ctx, emptyObjectType, &stuff{"empty-object-type", 1}))
+	require.NoError(t, kvstore.Put(ctx, noAttributes, &stuff{"no-attributes", 2}))
+
+	val := &stuff{}
+	require.NoError(t, kvstore.Get(ctx, emptyObjectType, val))
+	assert.Equal(t, &stuff{"empty-object-type", 1}, val)
+	val = &stuff{}
+	require.NoError(t, kvstore.Get(ctx, noAttributes, val))
+	assert.Equal(t, &stuff{"no-attributes", 2}, val)
+
+	const prefix = "ck"
+	keys := make([]string, 0, 4)
+	expected := make(map[string]*stuff, 4)
+	for i, attrs := range [][]string{
+		{"tms", "MHg=+/abc"}, // base64, as Identity.UniqueID() produces
+		{"tms", ""},
+		{"tms", ".."},
+		{"tms", "100%"},
+	} {
+		k, err := kvs.CreateCompositeKey(prefix, attrs)
+		require.NoError(t, err)
+		value := &stuff{strings.Join(attrs, "|"), i}
+		require.NoError(t, kvstore.Put(ctx, k, value))
+		keys = append(keys, k)
+		expected[k] = value
+	}
+
+	it, err := kvstore.GetByPartialCompositeID(ctx, prefix, []string{"tms"})
+	require.NoError(t, err)
+	defer hashicorp.SilentClose(it)
+	found := make(map[string]*stuff, len(expected))
+	for it.HasNext() {
+		value := &stuff{}
+		key, err := it.Next(value)
+		require.NoError(t, err)
+		found[key] = value
+	}
+	assert.Equal(t, expected, found)
+
+	// the list is taken when the iterator is created, the values are read as it advances
+	itDeleted, err := kvstore.GetByPartialCompositeID(ctx, prefix, []string{"tms"})
+	require.NoError(t, err)
+	defer hashicorp.SilentClose(itDeleted)
+	require.NoError(t, kvstore.Delete(ctx, keys[0]))
+	remaining := make(map[string]*stuff, len(expected)-1)
+	for itDeleted.HasNext() {
+		value := &stuff{}
+		key, err := itDeleted.Next(value)
+		require.NoError(t, err)
+		remaining[key] = value
+	}
+	assert.NotContains(t, remaining, keys[0])
+	assert.Len(t, remaining, len(expected)-1)
+
+	for _, k := range keys[1:] {
+		require.NoError(t, kvstore.Delete(ctx, k))
+	}
+	require.NoError(t, kvstore.Delete(ctx, emptyObjectType))
+	require.NoError(t, kvstore.Delete(ctx, noAttributes))
 }
 
 func testParallelWrites(t *testing.T, client *vault.Client) {
