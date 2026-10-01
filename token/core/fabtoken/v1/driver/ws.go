@@ -19,6 +19,7 @@ import (
 	"github.com/LFDT-Panurus/panurus/token/services/identity/wallet"
 	"github.com/LFDT-Panurus/panurus/token/services/identity/x509"
 	"github.com/LFDT-Panurus/panurus/token/services/logging"
+	"github.com/LFDT-Panurus/panurus/token/services/observability"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/services/metrics/disabled"
 )
@@ -133,7 +134,7 @@ func (d *WalletServiceFactory) NewWalletService(tmsConfig driver.Configuration, 
 	tmsID := tmsConfig.ID()
 	logger := logging.DriverLogger("panurus.driver.fabtoken", tmsID.Network, tmsID.Channel, tmsID.Namespace)
 
-	return d.newWalletService(
+	ws, err := d.newWalletService(
 		tmsConfig,
 		&membership.NoBinder{},
 		d.storageProvider,
@@ -145,4 +146,9 @@ func (d *WalletServiceFactory) NewWalletService(tmsConfig driver.Configuration, 
 		true,
 		&disabled.Provider{},
 	)
+	if err != nil {
+		return nil, err
+	}
+
+	return observability.NewWalletServiceDecorator(ws, &disabled.Provider{}, nil), nil
 }
