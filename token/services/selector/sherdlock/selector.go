@@ -51,18 +51,52 @@ type Selector struct {
 	precision uint64
 	metrics   *Metrics
 	mu        sync.Mutex // protects cache field for concurrent Close() calls
-	// exactMatch enables the change-avoidance pre-search (currently k=1): before the
-	// greedy walk, prefer a single unlocked candidate whose amount equals the request.
-	exactMatch bool
+	// maxExactMatchInputs bounds the change-avoidance pre-search that runs before the
+	// greedy walk: 0 disables it, 1 enables the k=1 single-completing-token search, and
+	// 2 additionally enables the k=2 completing-pair search. Higher input counts are not
+	// implemented and are treated as 2.
+	maxExactMatchInputs int
 }
+
+// maxExactMatchPairs bounds how many distinct completing pairs the k=2 pre-search
+// collects before shuffling and trying them, so a wallet holding many equal-value
+// tokens cannot make the pair scan record an unbounded number of ties. It mirrors the
+// bucket-shuffle anti-hotspot rationale of #2399: collect a handful, then pick one at
+// random rather than always contending for the same pair first.
+const maxExactMatchPairs = 4
 
 // Option customizes a Selector at construction time.
 type Option func(*Selector)
 
-// WithExactMatch enables (or disables) the exact-amount change-avoidance pre-search.
-// It is off by default, preserving the plain greedy first-fit behaviour.
+// WithExactMatch enables (or disables) the exact-amount change-avoidance pre-search at
+// k=1 (a single completing token). It is off by default, preserving the plain greedy
+// first-fit behaviour. To also enable the k=2 completing-pair search, use
+// WithExactMatchInputs(2).
 func WithExactMatch(enabled bool) Option {
-	return func(s *Selector) { s.exactMatch = enabled }
+	return func(s *Selector) {
+		if enabled {
+			s.maxExactMatchInputs = 1
+		} else {
+			s.maxExactMatchInputs = 0
+		}
+	}
+}
+
+// WithExactMatchInputs sets the maximum number of inputs the change-avoidance pre-search
+// may combine to hit the request exactly: 0 disables it, 1 is the k=1 single-token search,
+// and 2 additionally enables the k=2 completing-pair search. Values are clamped to [0, 2];
+// k>2 is not implemented.
+func WithExactMatchInputs(k int) Option {
+	return func(s *Selector) {
+		switch {
+		case k < 0:
+			s.maxExactMatchInputs = 0
+		case k > 2:
+			s.maxExactMatchInputs = 2
+		default:
+			s.maxExactMatchInputs = k
+		}
+	}
 }
 
 type StubbornSelector struct {
@@ -210,15 +244,16 @@ func (s *Selector) selectInternal(ctx context.Context, owner token.OwnerFilter, 
 		return nil, nil, 0, errors.Wrapf(err, "failed to create quantity")
 	}
 
-	// Change-avoidance pre-search (k=1): before the greedy walk commits any tokens,
-	// prefer a single unlocked candidate whose amount equals the full request, which
-	// completes the selection with zero change. On any miss we fall through to the
-	// greedy walk below, unchanged.
-	if s.exactMatch {
+	// Change-avoidance pre-search: before the greedy walk commits any tokens, prefer an
+	// unlocked combination of candidates whose amounts sum to the full request exactly,
+	// which completes the selection with zero change. k=1 looks for a single completing
+	// token; k=2 additionally looks for a completing pair. On any miss we fall through to
+	// the greedy walk below, unchanged.
+	if s.maxExactMatchInputs >= 1 {
 		s.metrics.ExactMatchAttempts.Add(1)
-		if ids, sum, ok := s.trySingleTokenExactMatch(ctx, owner, quantity, tokenType); ok {
+		if ids, sum, ok := s.tryExactMatch(ctx, owner, quantity, tokenType); ok {
 			s.metrics.ExactMatchHits.Add(1)
-			s.logger.DebugfContext(ctx, "exact-match pre-search selected a single token of [%s:%s]", quantity.Decimal(), tokenType)
+			s.logger.DebugfContext(ctx, "exact-match pre-search selected %d token(s) summing to [%s:%s] with no change", len(ids), quantity.Decimal(), tokenType)
 
 			return ids, sum, 0, nil
 		}
@@ -307,44 +342,73 @@ func (s *Selector) selectInternal(ctx context.Context, owner token.OwnerFilter, 
 	}
 }
 
-// trySingleTokenExactMatch runs the k=1 change-avoidance pre-search: it looks for a
-// single unlocked candidate whose amount equals quantity and, if one is found and can
-// be locked, returns it as a complete, change-free selection (ok=true). It reports
-// ok=false — leaving the greedy walk to run unchanged — when no exact candidate exists,
-// every exact candidate is currently locked by another process, or any error occurs.
-// It is strictly best-effort: it never fails the selection and never holds a lock unless
-// it returns that lock as the winning result.
+// exactMatchCandidate is one unlocked spendable token considered by the pre-search,
+// paired with its parsed amount so amounts are decoded once, not per comparison.
+type exactMatchCandidate struct {
+	id     token2.ID
+	amount token2.Quantity
+}
+
+// tryExactMatch runs the change-avoidance pre-search over the wallet's current
+// candidate set and returns a complete, change-free selection (ok=true) when one can be
+// found and locked. It tries the cheapest completion first — a single token equal to the
+// request (k=1) — and, only when maxExactMatchInputs >= 2 and no single token completes
+// the request, a completing pair (k=2). It reports ok=false — leaving the greedy walk to
+// run unchanged — on any miss, contention, or error.
 //
-// The candidate slice is read from a fresh iterator so the greedy iterator (s.cache) is
-// never disturbed; it is sorted ascending by amount and then binary-searched for an exact
-// match. When several candidates share the exact amount, the equal-amount run is shuffled
-// before locking to spread contention across them (cf. the bucket shuffle in #2399).
+// It is strictly best-effort: it never fails the selection, and it never leaves a lock
+// held unless it returns that lock as part of the winning result (a partially locked pair
+// is unwound, see lockExactMatchPair).
+func (s *Selector) tryExactMatch(ctx context.Context, owner token.OwnerFilter, quantity token2.Quantity, tokenType token2.Type) ([]*token2.ID, token2.Quantity, bool) {
+	candidates, ok := s.loadSortedCandidates(ctx, owner, tokenType)
+	if !ok || len(candidates) == 0 {
+		return nil, nil, false
+	}
+
+	// k=1: a single completing token is the ideal — one input, zero change — so it is
+	// always tried first, even when k=2 is enabled.
+	if ids, sum, ok := s.trySingleExactMatch(ctx, owner, quantity, candidates); ok {
+		return ids, sum, true
+	}
+
+	// k=2: a completing pair. Only attempted when no single token completed the request.
+	if s.maxExactMatchInputs >= 2 {
+		if ids, sum, ok := s.tryPairExactMatch(ctx, owner, quantity, candidates); ok {
+			s.metrics.ExactMatchPairHits.Add(1)
+
+			return ids, sum, true
+		}
+	}
+
+	return nil, nil, false
+}
+
+// loadSortedCandidates reads the wallet's current unlocked candidates for tokenType from a
+// fresh iterator — so the greedy iterator (s.cache) is never disturbed — decodes their
+// amounts, and returns them sorted ascending by amount. It returns ok=false on any fetch
+// or iterator error, leaving the greedy walk to surface the failure consistently. Tokens
+// with a malformed amount are skipped and left for the greedy path.
 //
-// It is called once per selectInternal invocation; under StubbornSelector selectInternal
-// is re-entered on every backoff retry, so this pre-search (and its fresh fetch) runs once
-// per backoff retry too. To keep that cost bounded, the scan gives up and falls through to
-// the greedy walk once a wallet+type exposes more than maxScanCandidates unlocked
-// candidates.
-func (s *Selector) trySingleTokenExactMatch(ctx context.Context, owner token.OwnerFilter, quantity token2.Quantity, tokenType token2.Type) ([]*token2.ID, token2.Quantity, bool) {
+// loadSortedCandidates runs once per tryExactMatch call, and under StubbornSelector
+// tryExactMatch is re-entered (with a fresh fetch) on every backoff retry. To keep that
+// cost bounded, it gives up and returns ok=false — falling through to the greedy walk —
+// once a wallet+type exposes more than maxScanCandidates unlocked candidates.
+func (s *Selector) loadSortedCandidates(ctx context.Context, owner token.OwnerFilter, tokenType token2.Type) ([]exactMatchCandidate, bool) {
 	it, err := s.fetcher.UnspentTokensIteratorBy(ctx, owner.ID(), tokenType)
 	if err != nil {
 		s.logger.DebugfContext(ctx, "exact-match pre-search: failed to fetch candidates: %v", err)
 
-		return nil, nil, false
+		return nil, false
 	}
 	defer it.Close()
 
-	type candidate struct {
-		id     token2.ID
-		amount token2.Quantity
-	}
-	candidates := make([]candidate, 0)
+	candidates := make([]exactMatchCandidate, 0)
 	for {
 		t, err := it.Next()
 		if err != nil {
 			s.logger.DebugfContext(ctx, "exact-match pre-search: iterator error: %v", err)
 
-			return nil, nil, false
+			return nil, false
 		}
 		if t == nil {
 			break
@@ -356,51 +420,164 @@ func (s *Selector) trySingleTokenExactMatch(ctx context.Context, owner token.Own
 
 			continue
 		}
-		candidates = append(candidates, candidate{id: t.Id, amount: amount})
+		candidates = append(candidates, exactMatchCandidate{id: t.Id, amount: amount})
 		if len(candidates) > maxScanCandidates {
 			// Too many candidates to scan cheaply: give up and let the greedy walk
 			// run unchanged. Bailing here (rather than after the loop) keeps the
 			// materialised slice bounded and skips the sort entirely.
 			s.logger.DebugfContext(ctx, "exact-match pre-search: candidate set exceeds cap of %d, falling back to greedy", maxScanCandidates)
 
-			return nil, nil, false
+			return nil, false
 		}
 	}
-	if len(candidates) == 0 {
-		return nil, nil, false
-	}
 
-	// Sort ascending by amount, then binary-search for the first candidate whose amount
-	// is >= quantity; it is an exact match only if that amount equals quantity.
+	// Sort ascending by amount so k=1 can binary-search and k=2 can two-pointer scan.
 	sort.Slice(candidates, func(i, j int) bool { return candidates[i].amount.Cmp(candidates[j].amount) < 0 })
+
+	return candidates, true
+}
+
+// trySingleExactMatch is the k=1 pre-search over the pre-sorted candidates: it
+// binary-searches for a candidate whose amount equals quantity and, if one is found and
+// lockable, returns it as a single-token, change-free selection. When several candidates
+// share the exact amount, the tie is broken by shuffling those candidates' ids before
+// locking, so concurrent selectors do not all contend for the same token first (cf. the
+// bucket shuffle in #2399). It never mutates candidates, so the k=2 scan can still rely
+// on the ascending order.
+func (s *Selector) trySingleExactMatch(ctx context.Context, owner token.OwnerFilter, quantity token2.Quantity, candidates []exactMatchCandidate) ([]*token2.ID, token2.Quantity, bool) {
 	lo := sort.Search(len(candidates), func(i int) bool { return candidates[i].amount.Cmp(quantity) >= 0 })
 	if lo >= len(candidates) || candidates[lo].amount.Cmp(quantity) != 0 {
 		return nil, nil, false
 	}
 
-	// Collect the contiguous run of candidates that equal quantity and shuffle it, so
-	// concurrent selectors do not all contend for the same exact-amount token first.
-	hi := lo
-	for hi < len(candidates) && candidates[hi].amount.Cmp(quantity) == 0 {
-		hi++
+	// Collect the ids of the contiguous run of candidates that equal quantity into a
+	// local slice (leaving candidates sorted for the k=2 scan) and shuffle it.
+	matches := make([]token2.ID, 0)
+	for hi := lo; hi < len(candidates) && candidates[hi].amount.Cmp(quantity) == 0; hi++ {
+		matches = append(matches, candidates[hi].id)
 	}
-	matches := candidates[lo:hi]
 	rand.Shuffle(len(matches), func(i, j int) { matches[i], matches[j] = matches[j], matches[i] })
 
-	for _, m := range matches {
-		id := m.id
+	for _, id := range matches {
 		locked, lockErr := s.locker.TryLock(ctx, &id, owner.ID())
 		if errors.Is(lockErr, token.SelectorRateLimited) {
 			// The greedy walk will hit the same rate limit and surface it consistently.
 			return nil, nil, false
 		}
 		if locked {
-			return []*token2.ID{&id}, m.amount, true
+			return []*token2.ID{&id}, quantity, true
 		}
-		s.logger.DebugfContext(ctx, "exact-match pre-search: candidate [%s] already locked, trying next", id)
+		s.logger.DebugfContext(ctx, "exact-match pre-search: single candidate [%s] already locked, trying next", id)
 	}
 
 	return nil, nil, false
+}
+
+// tryPairExactMatch is the k=2 pre-search over the pre-sorted candidates: a single
+// two-pointer scan collects up to maxExactMatchPairs distinct pairs whose amounts sum to
+// quantity exactly, the collected pairs are shuffled to spread contention, and each pair
+// is then locked as a unit. The first fully lockable pair is returned as a two-input,
+// change-free selection. A pair whose second token loses its lock race is unwound (see
+// lockExactMatchPair), so on a miss no lock is left behind and the greedy walk starts
+// clean.
+func (s *Selector) tryPairExactMatch(ctx context.Context, owner token.OwnerFilter, quantity token2.Quantity, candidates []exactMatchCandidate) ([]*token2.ID, token2.Quantity, bool) {
+	type pair struct{ a, b exactMatchCandidate }
+	pairs := make([]pair, 0, maxExactMatchPairs)
+	for lo, hi := 0, len(candidates)-1; lo < hi && len(pairs) < maxExactMatchPairs; {
+		sum, err := candidates[lo].amount.Add(candidates[hi].amount)
+		if err != nil {
+			// Amounts are store-validated; a sum error is unexpected. Bail out of the
+			// pair search and let the greedy walk proceed.
+			s.logger.DebugfContext(ctx, "exact-match pre-search: pair sum error: %v", err)
+
+			return nil, nil, false
+		}
+		switch sum.Cmp(quantity) {
+		case 0:
+			pairs = append(pairs, pair{a: candidates[lo], b: candidates[hi]})
+			lo++
+			hi--
+		case -1:
+			lo++
+		default:
+			hi--
+		}
+	}
+	if len(pairs) == 0 {
+		return nil, nil, false
+	}
+	rand.Shuffle(len(pairs), func(i, j int) { pairs[i], pairs[j] = pairs[j], pairs[i] })
+
+	for _, p := range pairs {
+		if ids, sum, ok := s.lockExactMatchPair(ctx, owner, p.a, p.b); ok {
+			return ids, sum, true
+		}
+	}
+
+	return nil, nil, false
+}
+
+// lockExactMatchPair locks both tokens of a completing pair. It locks the first, then the
+// second; if the second cannot be acquired (contended or rate-limited) it releases the
+// first before reporting failure, so the pre-search never leaves a half-locked pair
+// behind. Because the pre-search runs before the greedy walk and before any other lock is
+// taken for this selection, releasing via the locker's UnlockAll unwinds only this
+// pre-search's own acquisition. On success it returns both ids and their sum.
+func (s *Selector) lockExactMatchPair(ctx context.Context, owner token.OwnerFilter, a, b exactMatchCandidate) ([]*token2.ID, token2.Quantity, bool) {
+	first := a.id
+	locked, lockErr := s.locker.TryLock(ctx, &first, owner.ID())
+	if errors.Is(lockErr, token.SelectorRateLimited) {
+		return nil, nil, false
+	}
+	if !locked {
+		// Nothing locked yet, so nothing to unwind; try the next pair.
+		s.logger.DebugfContext(ctx, "exact-match pre-search: pair token [%s] already locked, skipping pair", first)
+
+		return nil, nil, false
+	}
+
+	second := b.id
+	// Whether the second lock is lost to plain contention or a rate-limit denial, the
+	// response is the same: release the first token and let the greedy walk take over
+	// (it re-surfaces any rate limit consistently), so the specific error is not needed.
+	locked, _ = s.locker.TryLock(ctx, &second, owner.ID())
+	if !locked {
+		s.logger.DebugfContext(ctx, "exact-match pre-search: pair token [%s] already locked, releasing [%s] and skipping pair", second, first)
+		s.releasePreSearchLocks(ctx)
+
+		return nil, nil, false
+	}
+
+	sum, err := a.amount.Add(b.amount)
+	if err != nil {
+		s.logger.DebugfContext(ctx, "exact-match pre-search: pair sum error after locking: %v", err)
+		s.releasePreSearchLocks(ctx)
+
+		return nil, nil, false
+	}
+
+	return []*token2.ID{&first, &second}, sum, true
+}
+
+// releasePreSearchLocks unwinds any locks the exact-match pre-search has acquired so far
+// (in practice, the first token of a pair whose second token was contended).
+//
+// It unlocks by consumer-tx id (UnlockAll -> UnlockByTxID), not by token id, so it releases
+// every token this selection currently holds. That is correct only under an invariant that
+// must be kept in mind before changing this code: each lockExactMatchPair attempt enters
+// with a clean lock set, so the only lock held when this runs is the single first token of
+// the current pair. That invariant holds because the pre-search runs before the greedy
+// walk, k=1 leaves nothing locked on a miss, and the pairs are tried strictly sequentially
+// with every failed attempt fully unwound (here) before the next begins — so N failed pairs
+// produce N independent unwinds, never a cross-pair over-release. If the pair loop is ever
+// parallelised, or any other lock is taken for this selection before the pre-search, this
+// must switch to unlocking the specific token id instead. The
+// "MultiplePartialPairLocksUnwindOncePerFailure" case in TestExactMatchPairSelectionUnit
+// pins the invariant by asserting UnlockAll is called exactly once per failed second lock.
+func (s *Selector) releasePreSearchLocks(ctx context.Context) {
+	if err := s.locker.UnlockAll(ctx); err != nil {
+		s.logger.DebugfContext(ctx, "exact-match pre-search: failed to release partial pair lock: %v", err)
+	}
 }
 
 // next returns the next token of the current cache. It holds s.mu for the whole
