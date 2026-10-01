@@ -14,7 +14,7 @@ require (
 	github.com/google/pprof v0.0.0-20260802141513-ef3492d7dac3
 	github.com/hashicorp/go-uuid v1.0.3
 	github.com/hyperledger-labs/fabric-smart-client v0.23.0
-	github.com/hyperledger/fabric-chaincode-go/v2 v2.3.0
+	github.com/hyperledger/fabric-chaincode-go/v2 v2.3.1-0.20260319210430-56968fdc7833
 	github.com/hyperledger/fabric-lib-go v1.1.5-0.20260708100132-163bcc919208
 	github.com/hyperledger/fabric-protos-go-apiv2 v0.3.7
 	github.com/hyperledger/fabric-x-common v0.2.8
