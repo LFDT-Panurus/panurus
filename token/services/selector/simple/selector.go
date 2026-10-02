@@ -65,6 +65,17 @@ func (s *selector) concurrencyCheck(ctx context.Context, ids []*token2.ID) error
 	return err
 }
 
+// selectByID walks the wallet's unspent tokens, locking as it goes, and retries the whole scan
+// from scratch whenever a lock race or a concurrency check fails.
+//
+// Known limitation, observed while measuring this driver against #2395's hot-token workload
+// (TestHotTokenContentionSimpleDriver): the unspentTokens cursor stays open across the nested
+// concurrencyCheck call below, which issues its own query. A connection pool smaller than the
+// number of concurrent selectors can therefore deadlock outright - every connection pinned to
+// an open cursor, and every holder additionally blocked waiting for a second one. This is not
+// fixed here: the measurement that found it was deliberately scoped to recording how the simple
+// driver degrades, not to changing it, and sherdlock is the default. Anyone running this driver
+// under real concurrent load with a bounded pool should treat it as a prerequisite to fix.
 func (s *selector) selectByID(ctx context.Context, ownerFilter token.OwnerFilter, q string, tokenType token2.Type) ([]*token2.ID, token2.Quantity, error) {
 	var toBeSpent []*token2.ID
 	var sum token2.Quantity

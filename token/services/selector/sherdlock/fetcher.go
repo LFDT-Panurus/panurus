@@ -9,6 +9,8 @@ package sherdlock
 import (
 	"context"
 	"io"
+	"math/big"
+	"math/rand/v2"
 	"slices"
 	"sync"
 	"sync/atomic"
@@ -161,6 +163,12 @@ func (f *mixedFetcher) UnspentTokensIteratorBy(ctx context.Context, walletID str
 	return f.lazyFetcher.UnspentTokensIteratorBy(ctx, walletID, currency)
 }
 
+// HasEnoughSpendableTokens delegates to the lazy fetcher's underlying DB: this check must
+// never be answered from a cache that may itself be behind the anti-join.
+func (f *mixedFetcher) HasEnoughSpendableTokens(ctx context.Context, walletID string, currency token2.Type, target *big.Int) (bool, error) {
+	return f.lazyFetcher.HasEnoughSpendableTokens(ctx, walletID, currency, target)
+}
+
 // peekedIterator replays an already-consumed first item before delegating
 // subsequent Next calls to the wrapped iterator.
 type peekedIterator[T any] struct {
@@ -217,13 +225,82 @@ func (f *lazyFetcher) UnspentTokensIteratorBy(ctx context.Context, walletID stri
 	if err != nil {
 		return nil, err
 	}
+	defer it.Close()
 
-	return collections.NewPermutatedIterator[token2.UnspentTokenInWallet](it)
+	items, err := iterators.ReadAllPointers[token2.UnspentTokenInWallet](it)
+	if err != nil {
+		return nil, err
+	}
+
+	return newBucketedIterator(items).NewPermutation(), nil
+}
+
+// HasEnoughSpendableTokens queries the database directly (see TokenDB.HasEnoughSpendableTokens):
+// the lazy fetcher has no cache to consult.
+func (f *lazyFetcher) HasEnoughSpendableTokens(ctx context.Context, walletID string, currency token2.Type, target *big.Int) (bool, error) {
+	return f.tokenDB.HasEnoughSpendableTokens(ctx, walletID, currency, target)
 }
 
 type permutatableIterator[T any] interface {
 	iterators.Iterator[T]
 	NewPermutation() iterators.Iterator[T]
+}
+
+// bucketedIterator wraps a slice of tokens already ordered ascending by
+// amount (see buildSpendableTokensIteratorByQuery's ORDER BY, #2395 phase
+// 4b) and permutes it by shuffling only within contiguous runs of tokens
+// with equal Quantity, preserving the size ordering across runs. This
+// answers the incident's "why did a 1 CHF request grab a 200 CHF token
+// instead of a same-size one" question without introducing a new hot spot:
+// a strictly deterministic smallest-fit rule would just relocate all
+// contention onto the single smallest token.
+type bucketedIterator struct {
+	items []*token2.UnspentTokenInWallet
+	pos   int
+}
+
+// newBucketedIterator wraps items, which must already be ordered ascending
+// by amount, for later shuffling via NewPermutation.
+func newBucketedIterator(items []*token2.UnspentTokenInWallet) *bucketedIterator {
+	return &bucketedIterator{items: items}
+}
+
+// Next returns items in the order they were stored, and (nil, nil) once
+// exhausted: sherdlock.Iterator's contract (see selectInternal's t == nil
+// refetch branch) signals exhaustion with a nil element and nil error, not
+// io.EOF — returning io.EOF here made every lazy-fetch refetch cycle look
+// like a hard failure instead of "cache exhausted, fetch more" (#2395).
+func (b *bucketedIterator) Next() (*token2.UnspentTokenInWallet, error) {
+	if b.pos >= len(b.items) {
+		return nil, nil
+	}
+	item := b.items[b.pos]
+	b.pos++
+
+	return item, nil
+}
+
+func (b *bucketedIterator) Close() {}
+
+// NewPermutation returns a fresh iterator over the same items: still
+// ascending by amount overall, but with each run of equal-Quantity tokens
+// independently shuffled, so equally-good candidates are still randomized
+// against each other while the size ordering across runs survives.
+func (b *bucketedIterator) NewPermutation() iterators.Iterator[*token2.UnspentTokenInWallet] {
+	shuffled := make([]*token2.UnspentTokenInWallet, len(b.items))
+	copy(shuffled, b.items)
+
+	for start := 0; start < len(shuffled); {
+		end := start + 1
+		for end < len(shuffled) && shuffled[end].Quantity == shuffled[start].Quantity {
+			end++
+		}
+		bucket := shuffled[start:end]
+		rand.Shuffle(len(bucket), func(i, j int) { bucket[i], bucket[j] = bucket[j], bucket[i] })
+		start = end
+	}
+
+	return newBucketedIterator(shuffled)
 }
 
 type tokenCache interface {
@@ -391,7 +468,11 @@ func (f *cachedFetcher) updateCache(ctx context.Context, tokensByKey map[string]
 	// Step 1: Add/update new entries first
 	newKeys := make(map[string]struct{}, len(tokensByKey))
 	for key, toks := range tokensByKey {
-		f.cache.Add(key, iterators.Slice(toks))
+		// toks arrived from SpendableTokensIteratorBy already ascending by
+		// amount (#2395 phase 4b) and groupTokensByKey preserves that order
+		// per key, so bucketedIterator's within-bucket shuffle on
+		// NewPermutation still shuffles only among equally-good candidates.
+		f.cache.Add(key, newBucketedIterator(toks))
 		newKeys[key] = struct{}{}
 	}
 
@@ -433,6 +514,13 @@ func (f *cachedFetcher) UnspentTokensIteratorBy(ctx context.Context, walletID st
 	return collections.NewEmptyIterator[*token2.UnspentTokenInWallet](), nil
 }
 
+// HasEnoughSpendableTokens bypasses the cache and asks the DB directly (see
+// TokenDB.HasEnoughSpendableTokens): the cache is populated from the anti-joined query, so
+// it cannot answer this question.
+func (f *cachedFetcher) HasEnoughSpendableTokens(ctx context.Context, walletID string, currency token2.Type, target *big.Int) (bool, error) {
+	return f.tokenDB.HasEnoughSpendableTokens(ctx, walletID, currency, target)
+}
+
 // isCacheOverused checks if the cache has been queried too many times since the last refresh.
 func (f *cachedFetcher) isCacheOverused() bool {
 	return f.queriesResponded.Load() >= f.maxQueriesBeforeRefresh
@@ -446,4 +534,30 @@ func (f *cachedFetcher) isCacheStale() bool {
 	}
 
 	return time.Since(time.Unix(0, lastFetched)) > f.freshnessInterval
+}
+
+// CacheInvalidator is optionally implemented by a TokenFetcher that answers from a cached
+// snapshot of the token store. It is deliberately not part of TokenFetcher: a fetcher that
+// always reads through (lazyFetcher) has nothing to invalidate, and an out-of-tree fetcher
+// should not have to grow a no-op method. The selector type-asserts for it, so a fetcher
+// that does not implement it simply keeps its current behaviour.
+type CacheInvalidator interface {
+	// InvalidateCache marks the cached snapshot as stale, so the next read refreshes it
+	// from the store. It does not evict the entries: a reader arriving before the refresh
+	// completes should still see the old snapshot rather than an empty one, which is what
+	// updateCache's add-before-remove ordering already protects against.
+	InvalidateCache()
+}
+
+// InvalidateCache implements CacheInvalidator by clearing the last-fetched timestamp, which
+// makes isCacheStale report true and so turns the next UnspentTokensIteratorBy call into a
+// hard refresh.
+func (f *cachedFetcher) InvalidateCache() {
+	f.lastFetched.Store(0)
+}
+
+// InvalidateCache implements CacheInvalidator by invalidating the eager cache: it is the only
+// part of a mixedFetcher that can go behind the store, since the lazy half reads through.
+func (f *mixedFetcher) InvalidateCache() {
+	f.eagerFetcher.InvalidateCache()
 }
