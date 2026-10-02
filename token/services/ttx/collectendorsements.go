@@ -436,6 +436,10 @@ func (c *CollectEndorsementsView) signExternal(ctx context.Context, party view.I
 	return sigma, nil
 }
 
+// SigResponseTimeout bounds how long the initiator waits for one remote
+// signer's reply within a signature fan-out phase.
+const SigResponseTimeout = 1 * time.Minute
+
 // signRemote requests a signature from a remote party by opening a network session,
 // sending the signature request, receiving the signature, and verifying it.
 // This is used when the signing party is on a different node.
@@ -456,7 +460,7 @@ func (c *CollectEndorsementsView) signRemote(
 	}
 
 	var signaturePayload SignaturePayload
-	if err := ts.ReceiveTypedWithTimeout(TypeSignature, &signaturePayload, time.Minute); err != nil {
+	if err := ts.ReceiveTypedWithTimeout(TypeSignature, &signaturePayload, SigResponseTimeout); err != nil {
 		return nil, errors.Wrap(err, "failed reading message")
 	}
 	sigma := signaturePayload.Signature
@@ -900,15 +904,16 @@ func (c *CollectEndorsementsView) getSession(context view.Context, p view.Identi
 	return context.GetSession(context.Initiator(), p)
 }
 
-// answerCollectionTimeout bounds the wait for each fan-out answer. It is a
-// backstop only: workers are already bounded by their own per-receive timeouts.
-const answerCollectionTimeout = 2 * time.Minute
+// AnswerCollectionTimeout bounds each signature fan-out phase. It is the phase's
+// true upper bound, not a backstop: a worker's own SigResponseTimeout covers only
+// the receive, not the session dial or signature verification around it.
+const AnswerCollectionTimeout = 2 * time.Minute
 
 // fanOut runs work(i) for each i in [0, n) on its own goroutine and returns the
 // results in index order. It returns on the first error without waiting for the
 // remaining workers; those drain into the collector's buffered channel and exit.
 func fanOut[T any](ctx context.Context, n int, work func(i int) (T, error)) ([]T, error) {
-	collector := utils.NewAnswersCollector[int, T](n, answerCollectionTimeout)
+	collector := utils.NewAnswersCollector[int, T](n, AnswerCollectionTimeout)
 	for i := range n {
 		go func() {
 			value, err := work(i)

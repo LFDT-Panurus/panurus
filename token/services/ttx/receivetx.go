@@ -30,16 +30,20 @@ func NewReceiveTransactionView(opts ...TxOption) *ReceiveTransactionView {
 	}
 }
 
+// DefaultReceiveTransactionTimeout bounds the full endorsement round-trip a
+// responder waits for when no timeout is given via opts.
+const DefaultReceiveTransactionTimeout = 8 * time.Minute
+
 // Call listens to a versioned envelope from the context's session and returns a transaction.
 // Supported message types are TypeTransaction, TypeTransactionResponse, and TypeSignatureRequest.
-// If no timeout is specified via the opts, 4 minutes is used as default.
+// If no timeout is specified via the opts, DefaultReceiveTransactionTimeout is used.
 func (f *ReceiveTransactionView) Call(context view.Context) (any, error) {
 	options, err := CompileOpts(f.opts...)
 	if err != nil {
 		return nil, errors.Join(err, ErrFailedCompilingOptions)
 	}
 	if options.Timeout == 0 {
-		options.Timeout = time.Minute * 4
+		options.Timeout = DefaultReceiveTransactionTimeout
 	}
 
 	jsonSession := jsession.JSON(context)
