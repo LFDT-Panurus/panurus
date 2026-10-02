@@ -94,6 +94,10 @@ func (d *Driver) startRecovery(tmsID token2.TMSID, network *Network) error {
 
 	config := d.recoveryConfig(tmsID)
 	parser := ttxfinality.NewTokenRequestHasher(wrapper.NewTokenManagementServiceProvider(d.tmsProvider), tmsID)
+	// Recovering a transaction to a terminal status must also release the selection locks it still
+	// holds, exactly as the in-memory listener does on the live path: a recovered transaction is
+	// precisely the case where nobody is left to release them. See #2395.
+	selectorManagers := ttxfinality.NewSelectorManagerProvider(wrapper.NewTokenManagementServiceProvider(d.tmsProvider), tmsID)
 	started := make([]*recovery.Manager, 0, 2)
 	for _, store := range []recoveryStore{ttxStore, auditStore} {
 		handler := ttxfinality.NewTTXRecoveryHandler(
@@ -114,6 +118,7 @@ func (d *Driver) startRecovery(tmsID token2.TMSID, network *Network) error {
 			tmsID,
 			store,
 			tokensService,
+			selectorManagers,
 			d.recoveryTracer,
 			d.metricsProvider,
 		)

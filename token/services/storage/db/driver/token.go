@@ -202,6 +202,15 @@ type TokenStore interface {
 	UnspentTokensIteratorBy(ctx context.Context, walletID string, tokenType token.Type) (driver.UnspentTokensIterator, error)
 	// SpendableTokensIteratorBy returns an iterator over all tokens owned solely by the passed wallet identifier and of a given type
 	SpendableTokensIteratorBy(ctx context.Context, walletID string, typ token.Type) (driver.SpendableTokensIterator, error)
+	// HasEnoughSpendableTokens reports whether the wallet's total spendable balance of typ
+	// is at least target, ignoring any lock currently held on the underlying tokens: it
+	// answers "can this wallet ever pay", not "can it pay right now". Used as a sum-aware
+	// fast fail so a wallet that could never cover the requested amount fails immediately
+	// instead of burning the selector's immediate-retry/backoff budget first, and to tell
+	// "genuinely insufficient funds" apart from "funds exist but are all locked right now"
+	// when SpendableTokensIteratorBy's anti-join against locked tokens (#2395) hides every
+	// candidate from the caller.
+	HasEnoughSpendableTokens(ctx context.Context, walletID string, typ token.Type, target *big.Int) (bool, error)
 	// UnsupportedTokensIteratorBy returns the minimum information for upgrade about the tokens that are not supported
 	UnsupportedTokensIteratorBy(ctx context.Context, walletID string, tokenType token.Type) (driver.UnsupportedTokensIterator, error)
 	// ListUnspentTokensBy returns the list of all tokens owned by the passed identifier of a given type
@@ -342,6 +351,25 @@ type TokenNotifier interface {
 	UnsubscribeAll() error
 }
 
+// IsTerminalStatus reports whether status is a terminal status of a consuming
+// transaction — i.e. one after which the lock it holds should already have been
+// released. A LockRecord still present with a terminal-status consumer is the
+// mechanism-4 leak from #2395: nothing on the success path called UnlockByTxID, so
+// the row survived until the next lease-age sweep. A nil status (no matching row in
+// the requests table) is never terminal.
+func IsTerminalStatus(status *TxStatus) bool {
+	if status == nil {
+		return false
+	}
+
+	switch *status {
+	case Confirmed, Deleted, Orphan:
+		return true
+	default:
+		return false
+	}
+}
+
 // LockRecord describes a single held token lock, joined with the terminal-status
 // view of its consuming transaction. Status is nil when the consuming transaction has
 // no matching row in the requests table (should not normally happen, since a lock is
@@ -404,6 +432,16 @@ var (
 	// ErrTokenAlreadyLocked is returned by TokenLockStore.Lock when the token is
 	// already locked by another transaction (primary-key conflict on the lock row).
 	ErrTokenAlreadyLocked = errors.New("token already locked")
+	// ErrTokenNotSpendable is returned by TokenLockStore.Lock when the token still
+	// exists but is no longer spendable - it has been spent (is_deleted), marked
+	// non-spendable, or is not owned by this node. Unlike ErrTokenAlreadyLocked it is
+	// not contention: no amount of waiting makes the token available again, because the
+	// candidate itself is stale. A selector serving candidates from a cache can observe
+	// this for a token that was spendable when the snapshot was taken and spent since,
+	// and must drop the candidate and refresh rather than retry it. Keeping the two
+	// apart is what stops such a stale candidate from being returned to the caller, who
+	// would then fail to load it. See #2395.
+	ErrTokenNotSpendable = errors.New("token is not spendable")
 	// ErrAmountMissing is returned when a record carries no amount. The amount column is NOT NULL.
 	ErrAmountMissing = errors.New("no amount specified")
 	// ErrAmountOutOfRange is returned when an amount is too wide for the amount column to hold.

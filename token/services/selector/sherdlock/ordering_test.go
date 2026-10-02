@@ -1,0 +1,258 @@
+/*
+Copyright IBM Corp. All Rights Reserved.
+
+SPDX-License-Identifier: Apache-2.0
+*/
+
+package sherdlock_test
+
+import (
+	"fmt"
+	"testing"
+
+	"github.com/LFDT-Panurus/panurus/token/services/selector/sherdlock"
+	"github.com/LFDT-Panurus/panurus/token/services/selector/sherdlock/mocks"
+	"github.com/LFDT-Panurus/panurus/token/services/selector/testutils"
+	token2 "github.com/LFDT-Panurus/panurus/token/token"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+// TestSizeOrderedSelection_SmallestFit reproduces the exact scenario from #2395's phase 4b
+// fix (see sherdlock.bucketedIterator's doc comment, fetcher.go: "why did a 1 CHF request grab
+// a 200 CHF token instead of a same-size one"): a wallet holding one small token and one much
+// larger one, asked for exactly the small amount. Before phase 4b, the fetcher had no ordering
+// guarantee at all, so the large token could be selected just as easily as the small one,
+// needlessly fragmenting it into a same-size token via a follow-up mint. This test wires a real
+// lazyFetcher over testutils.MockQueryService (no container needed) rather than
+// mocks.FakeTokenFetcher, specifically because it is bucketedIterator's ORDER-BY-preserving
+// behavior under test here, not just the selector's own loop - a fake fetcher's canned
+// iterator order would prove nothing about the real fetcher/DB contract this test exists to
+// pin (buildSpendableTokensIteratorByQuery's ORDER BY, tokens.go:415).
+func TestSizeOrderedSelection_SmallestFit(t *testing.T) {
+	const walletID = "wallet-xavier"
+	const tokenType = "EUR"
+
+	qs := testutils.NewMockQueryService()
+	addMockToken(qs, walletID, tokenType, "tx-small", "1")
+	addMockToken(qs, walletID, tokenType, "tx-big", "200")
+	qs.WarmupCache(walletID, tokenType)
+
+	_, metrics := setupMetricsMocks()
+	mockLocker := &mocks.FakeTokenLocker{}
+	mockLocker.TryLockReturns(true, nil)
+
+	s := sherdlock.NewSelector(sherdlock.Logger(), sherdlock.NewLazyFetcher(qs), mockLocker, testutils.TokenQuantityPrecision, metrics)
+
+	tokens, sum, err := s.Select(t.Context(), &unitTestMockOwnerFilter{id: walletID}, "1", tokenType)
+	require.NoError(t, err)
+	require.Len(t, tokens, 1, "a 1 EUR request satisfiable by the 1 EUR token alone must never need the 200 EUR one too")
+	assert.Equal(t, "tx-small", tokens[0].TxId, "expected the smallest-fitting token to be selected, not the hot 200 EUR one (#2395)")
+	assert.Equal(t, "1", sum.Decimal())
+}
+
+// TestSizeOrderedSelection_SameAmountBucketShuffle pins the other half of bucketedIterator's
+// contract: candidates of equal amount must still be shuffled against each other (so
+// smallest-fit does not simply relocate all contention onto whichever equal-amount token
+// happens to sort first), while the ascending ordering across distinct amounts is preserved.
+// It repeatedly selects a single token satisfying a request smaller than any one of several
+// equal-amount candidates, across independent Selector instances (each gets its own fresh
+// permutation via lazyFetcher/bucketedIterator.NewPermutation), and asserts more than one of
+// the candidates was picked across the run. With 5 equally likely candidates, the odds every
+// one of 40 independent trials lands on the same candidate are astronomically small, so this
+// is not a flaky assertion in practice.
+func TestSizeOrderedSelection_SameAmountBucketShuffle(t *testing.T) {
+	const walletID = "wallet-bucket"
+	const tokenType = "EUR"
+	const numCandidates = 5
+	const numTrials = 40
+
+	qs := testutils.NewMockQueryService()
+	for i := range numCandidates {
+		addMockToken(qs, walletID, tokenType, fmt.Sprintf("tx-%d", i), "10")
+	}
+	qs.WarmupCache(walletID, tokenType)
+
+	_, metrics := setupMetricsMocks()
+
+	picked := make(map[string]int)
+	for range numTrials {
+		mockLocker := &mocks.FakeTokenLocker{}
+		mockLocker.TryLockReturns(true, nil)
+		s := sherdlock.NewSelector(sherdlock.Logger(), sherdlock.NewLazyFetcher(qs), mockLocker, testutils.TokenQuantityPrecision, metrics)
+
+		tokens, _, err := s.Select(t.Context(), &unitTestMockOwnerFilter{id: walletID}, "10", tokenType)
+		require.NoError(t, err)
+		require.Len(t, tokens, 1)
+		picked[tokens[0].TxId]++
+	}
+
+	assert.Greater(t, len(picked), 1, "expected the shuffle to spread selection across equal-amount candidates instead of always picking the same one, got: %v", picked)
+}
+
+// TestSizeOrderedSelection_SufficiencyWindowShuffle closes the gap left by
+// TestSizeOrderedSelection_SmallestFit and TestSizeOrderedSelection_SameAmountBucketShuffle:
+// neither covers several *distinct* amounts that each individually satisfy the request, which
+// is exactly the #2395 CERT-incident shape ("a 1 EUR request grabbed the 200 EUR token")
+// bucketedIterator's byte-equal-only shuffle (fetcher.go) cannot help with, since every bucket
+// there has size 1 for distinct amounts. This test wires a wallet with amounts 2, 3, 4, 5, 6
+// and 200 EUR - all individually sufficient for a 1 EUR request - and repeats the selection
+// many times with a fresh Selector/locker each time (so there is no real lock contention, only
+// nextCandidate's sufficiency-window randomization, selector.go) to assert:
+//  1. the winning token is not always the same one (real statistical spread among the
+//     individually-sufficient small candidates 2, 3, 4 and 5 EUR, the ones that fall within
+//     the sufficiencyWindow=4 lookahead starting at the smallest sufficient candidate), and
+//  2. the 6 and far-oversized 200 EUR tokens, both outside that lookahead window, are
+//     essentially never chosen, preserving the smallest-fit bias the #2395 fix guidance also
+//     required.
+func TestSizeOrderedSelection_SufficiencyWindowShuffle(t *testing.T) {
+	const walletID = "wallet-cert-incident"
+	const tokenType = "EUR"
+	const numTrials = 200
+
+	qs := testutils.NewMockQueryService()
+	addMockToken(qs, walletID, tokenType, "tx-2", "2")
+	addMockToken(qs, walletID, tokenType, "tx-3", "3")
+	addMockToken(qs, walletID, tokenType, "tx-4", "4")
+	addMockToken(qs, walletID, tokenType, "tx-5", "5")
+	addMockToken(qs, walletID, tokenType, "tx-6", "6")
+	addMockToken(qs, walletID, tokenType, "tx-200", "200")
+	qs.WarmupCache(walletID, tokenType)
+
+	_, metrics := setupMetricsMocks()
+
+	picked := make(map[string]int)
+	for range numTrials {
+		mockLocker := &mocks.FakeTokenLocker{}
+		mockLocker.TryLockReturns(true, nil)
+		s := sherdlock.NewSelector(sherdlock.Logger(), sherdlock.NewLazyFetcher(qs), mockLocker, testutils.TokenQuantityPrecision, metrics)
+
+		tokens, sum, err := s.Select(t.Context(), &unitTestMockOwnerFilter{id: walletID}, "1", tokenType)
+		require.NoError(t, err)
+		require.Len(t, tokens, 1, "a 1 EUR request satisfiable by any single token must never need more than one")
+		picked[tokens[0].TxId]++
+		assert.NotEqual(t, "0", sum.Decimal())
+	}
+
+	assert.GreaterOrEqual(t, len(picked), 2,
+		"expected real statistical spread among the distinct-amount sufficient candidates within the window (2/3/4/5 EUR), got: %v", picked)
+	assert.Zero(t, picked["tx-200"],
+		"expected the far-oversized 200 EUR token, outside the sufficiency window, to never be selected, got: %v", picked)
+	assert.Zero(t, picked["tx-6"],
+		"expected the 6 EUR token, outside the sufficiency window, to never be selected, got: %v", picked)
+}
+
+// TestSizeOrderedSelection_SufficiencyWindowWhenEveryTokenDwarfsTheRequest covers the regime
+// TestSizeOrderedSelection_SufficiencyWindowShuffle cannot: a wallet whose *smallest* token is
+// already far larger than the requested amount. That is the ordinary shape of a change-making
+// wallet (a 1 EUR payment out of 20/30/40/50 EUR denominations) and it is exactly where a hot
+// token hurts, since every candidate is an equally good choice.
+//
+// The window's magnitude cap must therefore be measured against the anchor (the smallest
+// individually-sufficient token, i.e. what is actually about to be locked), not against the
+// remaining amount: with a remaining-relative cap, `20 > 5 * 1` makes the second candidate
+// over-threshold on the very first lookahead step, the window collapses to the anchor alone,
+// and selection is fully deterministic on the single smallest token — the mechanism is inert
+// in precisely the regime it exists for.
+//
+// The count cap (sufficiencyWindow = 4) still keeps the selected token close to the smallest
+// fit, so the 60 and 2000 EUR tokens beyond the window are never reached.
+func TestSizeOrderedSelection_SufficiencyWindowWhenEveryTokenDwarfsTheRequest(t *testing.T) {
+	const walletID = "wallet-change-denominations"
+	const tokenType = "EUR"
+	const numTrials = 200
+
+	qs := testutils.NewMockQueryService()
+	for _, q := range []string{"20", "30", "40", "50", "60", "2000"} {
+		addMockToken(qs, walletID, tokenType, "tx-"+q, q)
+	}
+	qs.WarmupCache(walletID, tokenType)
+
+	_, metrics := setupMetricsMocks()
+
+	picked := make(map[string]int)
+	for range numTrials {
+		mockLocker := &mocks.FakeTokenLocker{}
+		mockLocker.TryLockReturns(true, nil)
+		s := sherdlock.NewSelector(sherdlock.Logger(), sherdlock.NewLazyFetcher(qs), mockLocker, testutils.TokenQuantityPrecision, metrics)
+
+		tokens, _, err := s.Select(t.Context(), &unitTestMockOwnerFilter{id: walletID}, "1", tokenType)
+		require.NoError(t, err)
+		require.Len(t, tokens, 1, "every token here individually covers a request of 1")
+		picked[tokens[0].TxId]++
+	}
+
+	assert.Greater(t, len(picked), 1,
+		"expected the sufficiency window to spread selection across the equally-good candidates even though "+
+			"the smallest of them is 20x the request, got: %v", picked)
+	assert.Zero(t, picked["tx-2000"],
+		"expected the far-oversized 2000 EUR token, beyond the lookahead window, to never be selected, got: %v", picked)
+	assert.Zero(t, picked["tx-60"],
+		"expected the 60 EUR token, beyond the sufficiencyWindow=4 lookahead, to never be selected, got: %v", picked)
+}
+
+// TestSizeOrderedSelection_SufficiencyRatioBoundary pins maxSufficiencyRatio itself, which
+// neither window test above does: in both of them the *count* cap (sufficiencyWindow = 4) is
+// the binding constraint. Their anchors are 2 and 20, so their thresholds are 10 and 100, and
+// the first candidate each one expects to be excluded (6 EUR, 60 EUR) is comfortably under its
+// threshold and excluded by the count alone. Raising maxSufficiencyRatio to a value that
+// disables it leaves both of them green; the only test that notices is
+// TestSizeOrderedSelection_SmallestFit, and only about half the time, since its window is two
+// tokens wide and the shuffle between them is a coin flip.
+//
+// This wallet holds three tokens, so the count cap cannot bind, and the amounts sit on the
+// boundary itself: with anchor 2 the threshold is 2 * maxSufficiencyRatio = 10, so the 10 EUR
+// token must still be eligible - nextCandidate drops a candidate only when it is *strictly*
+// greater than the threshold - while the 11 EUR one must not be. Both halves matter: a ">="
+// comparison would silently shave the boundary candidate off every window, and no ratio bound
+// at all would let the 11 EUR token in, which is the hot-token complaint from #2395 in
+// miniature.
+func TestSizeOrderedSelection_SufficiencyRatioBoundary(t *testing.T) {
+	const walletID = "wallet-ratio-boundary"
+	const tokenType = "EUR"
+	const numTrials = 200
+
+	qs := testutils.NewMockQueryService()
+	addMockToken(qs, walletID, tokenType, "tx-2", "2")
+	addMockToken(qs, walletID, tokenType, "tx-10", "10")
+	addMockToken(qs, walletID, tokenType, "tx-11", "11")
+	qs.WarmupCache(walletID, tokenType)
+
+	_, metrics := setupMetricsMocks()
+
+	picked := make(map[string]int)
+	for range numTrials {
+		mockLocker := &mocks.FakeTokenLocker{}
+		mockLocker.TryLockReturns(true, nil)
+		s := sherdlock.NewSelector(sherdlock.Logger(), sherdlock.NewLazyFetcher(qs), mockLocker, testutils.TokenQuantityPrecision, metrics)
+
+		tokens, _, err := s.Select(t.Context(), &unitTestMockOwnerFilter{id: walletID}, "1", tokenType)
+		require.NoError(t, err)
+		require.Len(t, tokens, 1, "every token here individually covers a request of 1")
+		picked[tokens[0].TxId]++
+	}
+
+	assert.Positive(t, picked["tx-2"],
+		"the anchor itself must stay in the window, got: %v", picked)
+	assert.Positive(t, picked["tx-10"],
+		"a candidate at exactly maxSufficiencyRatio x the anchor must remain eligible - the bound excludes "+
+			"only what is strictly above it, and the count cap cannot bind with three tokens, got: %v", picked)
+	assert.Zero(t, picked["tx-11"],
+		"a candidate above maxSufficiencyRatio x the anchor must be excluded by the ratio bound, not merely "+
+			"by the lookahead count, got: %v", picked)
+}
+
+// addMockToken registers a token in qs under a key WarmupCache's substring filter can find:
+// it must contain both walletID and tokenType (see MockQueryService.WarmupCache), mirroring
+// the key shape used by benchmark_test.go's setup.
+func addMockToken(qs *testutils.MockQueryService, walletID, tokenType, txID, quantity string) {
+	owner := []byte(walletID)
+	tok := &token2.UnspentToken{
+		Id:       token2.ID{TxId: txID, Index: 0},
+		Owner:    owner,
+		Type:     token2.Type(tokenType),
+		Quantity: quantity,
+	}
+	key := fmt.Sprintf("etoken.%s.%s.%s.%d", walletID, tokenType, txID, 0)
+	qs.Add(key, tok)
+}

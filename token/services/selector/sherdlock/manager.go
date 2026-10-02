@@ -61,6 +61,7 @@ func NewManager(
 	if leaseCleanupTickPeriod > 0 && leaseExpiry > 0 {
 		go mgr.cleaner(ctx)
 	} else {
+		logger.Warnf("lease cleanup disabled (leaseCleanupTickPeriod=%s, leaseExpiry=%s): stale token locks will not be swept", leaseCleanupTickPeriod, leaseExpiry)
 		close(mgr.cleanerDone)
 	}
 

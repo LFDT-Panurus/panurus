@@ -514,6 +514,7 @@ func (n *Network) createRecoveryManager(tmsID token2.TMSID, storage transactionD
 		tmsID,
 		storage,
 		tokensService,
+		ttxfinality.NewSelectorManagerProvider(wrapper.NewTokenManagementServiceProvider(n.tmsProvider), tmsID),
 		n.finalityTracer,
 		n.metricsProvider,
 	)

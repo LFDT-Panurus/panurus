@@ -38,6 +38,28 @@ type Metrics struct {
 	// limiter. This is what distinguishes "one hot token retried many times" from
 	// "many tokens each contended once".
 	DistinctTokensAttempted metrics.Histogram
+	// LockStoreErrors counts every TryLock/TryLockBatch failure that is not a lock
+	// conflict (i.e. does not wrap driver.ErrTokenAlreadyLocked): a genuine store
+	// error - connection failure, timeout, etc. Unlike LockConflicts, this signals a
+	// problem with the store itself rather than ordinary contention: to the caller
+	// both currently surface identically (as locked funds, see selector.go), so this
+	// is what distinguishes "the DB is unhealthy" from "tokens are just contended" in
+	// dashboards and alerts. See #2395.
+	LockStoreErrors metrics.Counter
+	// StaleCandidates counts candidates dropped because the token was no longer
+	// spendable by the time the lock was attempted (driver.ErrTokenNotSpendable) - a
+	// candidate served from a snapshot the store had already moved past. It measures
+	// how far behind the eager fetcher's cache runs under load: unlike LockConflicts
+	// it is not contention, and unlike LockStoreErrors it is not ill health.
+	//
+	// It is incremented on the single-token lock path only. A batch-capable backend
+	// (postgres.TokenLockStore.LockBatch, currently the only implementation) answers
+	// with just the tokens it won, so a stale candidate is indistinguishable from a
+	// lost race there and is counted under LockConflicts instead: on such a deployment
+	// this counter stays at zero even during a stale-candidate episode, and a rising
+	// LockConflicts with no actual contention is the symptom to read instead. See the
+	// batch loser branch of Selector.selectInternal (selector.go) and #2395.
+	StaleCandidates metrics.Counter
 }
 
 func NewMetrics(p metrics.Provider) *Metrics {
@@ -72,6 +94,14 @@ func NewMetrics(p metrics.Provider) *Metrics {
 			Name:    "distinct_tokens_attempted",
 			Help:    "Distribution of the number of distinct tokens a lock was attempted on (won, lost, or rate-limited) per token selection call",
 			Buckets: []float64{1, 2, 5, 10, 25, 50, 100},
+		}),
+		LockStoreErrors: p.NewCounter(metrics.CounterOpts{
+			Name: "lock_store_errors_total",
+			Help: "Total number of TryLock/TryLockBatch failures that are not lock conflicts (a genuine store error)",
+		}),
+		StaleCandidates: p.NewCounter(metrics.CounterOpts{
+			Name: "stale_candidates_total",
+			Help: "Total number of candidate tokens dropped because they were no longer spendable when the lock was attempted",
 		}),
 	}
 }
