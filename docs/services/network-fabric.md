@@ -69,6 +69,13 @@ Malformed arguments always produce an ordinary error response (status 500). `Inv
 top-level `recover()` remains as a last resort, but no supported input is expected to reach
 it.
 
+A well-formed id for a token that does not exist on the ledger is not an error: `queryTokens`
+returns a successful response whose array carries a `null` entry at that id's position, the
+same convention `translator.QueryTokens` and the fabricx executor already use internally.
+This lets a caller distinguish "missing" from "the query itself failed" (the ledger drift
+checks' background sweep depends on this). A caller that requires every requested token to
+actually exist — certification, for one — must check for nulls itself; `GetTokenView` does.
+
 ### Query Limits
 
 `queryTokens`, `areTokensSpent` and `queryStates` each turn every element of the caller-supplied

@@ -74,7 +74,13 @@ type TransactionStore interface {
 	// slice returns an empty map without touching the database.
 	GetStatuses(ctx context.Context, txIDs []string) (map[string]TxStatus, error)
 
-	// QueryTransactions returns a list of transactions that match the given criteria
+	// QueryTransactions returns a list of transactions that match the given
+	// criteria, ordered by stored_at (direction set by params.SearchDirection)
+	// and then by tx_id as a deterministic tie-breaker for rows that share a
+	// stored_at value. The tie-breaker matters beyond readability: without one,
+	// offset-based pagination over rows with equal stored_at values has no
+	// guaranteed stable order across separate queries, which can skip or repeat
+	// rows across a page boundary.
 	QueryTransactions(ctx context.Context, params QueryTransactionsParams, pagination driver2.Pagination) (*driver2.PageIterator[*TransactionRecord], error)
 
 	// QueryMovements returns a list of movement records
@@ -116,6 +122,11 @@ type TransactionStore interface {
 	// If acquired is false, leadership was not obtained and the returned lease must be nil.
 	AcquireRecoveryLeadership(ctx context.Context) (RecoveryLeadership, bool, error)
 
+	// AcquireLeadership tries to acquire the PostgreSQL advisory lock identified by lockID,
+	// for a leader election independent of the recovery sweep's own lock.
+	// If acquired is false, leadership was not obtained and the returned lease must be nil.
+	AcquireLeadership(ctx context.Context, lockID int64) (RecoveryLeadership, bool, error)
+
 	// ClaimPendingTransactions atomically claims a batch of Pending transactions for recovery processing.
 	// Transactions whose recovery lease expired are eligible again.
 	// Returns the minimal projection (TxID + StoredAt) needed by the recovery loop;
@@ -128,6 +139,8 @@ type TransactionStore interface {
 
 	// Notifier returns a TransactionNotifier for this store to subscribe to transaction status changes.
 	Notifier() (TransactionNotifier, error)
+
+	FindingsStore
 }
 
 type TransactionEndorsementAckStore interface {

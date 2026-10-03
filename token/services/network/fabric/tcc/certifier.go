@@ -44,6 +44,25 @@ func (r *GetTokenView) Call(context view.Context) (any, error) {
 	if err != nil {
 		return nil, errors.Wrapf(err, "failed querying tokens")
 	}
+	if err := requireAllPresent(r.IDs, tokens); err != nil {
+		return nil, err
+	}
 
 	return tokens, nil
+}
+
+// requireAllPresent rejects a QueryTokens result that has a nil entry for any id. QueryTokens
+// reports an absent token as a nil entry at its position rather than an error, so a caller
+// that only checks the error would treat "does not exist on the ledger" as a successful
+// result of nil bytes. GetTokenView's contract is that the caller gets back exactly the
+// content it asked for, so this refuses here rather than let every current and future
+// caller of the view need to know to check for nils itself.
+func requireAllPresent(ids []*token2.ID, tokens [][]byte) error {
+	for i, out := range tokens {
+		if len(out) == 0 {
+			return errors.Errorf("token [%v] does not exist on the ledger", ids[i])
+		}
+	}
+
+	return nil
 }
