@@ -7,6 +7,7 @@ SPDX-License-Identifier: Apache-2.0
 package endorsement
 
 import (
+	"context"
 	"encoding/json"
 	"math/big"
 	"testing"
@@ -63,5 +64,31 @@ func FuzzEndorseResponseDecode(f *testing.F) {
 			return
 		}
 		_ = eip712.Digest(domain, resp.Delta)
+	})
+}
+
+// FuzzSetupDeltaBuild fuzzes SetupDeltaFactory.Build, which takes the new public parameters and the
+// anchor straight from an EndorseRequest sent by a remote peer. Whatever those bytes are, Build must
+// return an error or a well-formed setup delta carrying exactly the parameters it was given.
+func FuzzSetupDeltaBuild(f *testing.F) {
+	f.Add([]byte("new-pp"), anchorHex(0xC1), []byte("current-pp"))
+	f.Add([]byte("new-pp"), anchorHex(0xC1), []byte(nil)) // empty on-chain baseline
+	f.Add([]byte(nil), anchorHex(0xC1), []byte("current-pp"))
+	f.Add([]byte("new-pp"), "", []byte("current-pp"))
+	f.Add([]byte("new-pp"), "not-hex", []byte("current-pp"))
+	f.Add([]byte("new-pp"), anchorHex(0xC1)[:10], []byte("current-pp"))
+
+	f.Fuzz(func(t *testing.T, newPP []byte, anchor string, currentPP []byte) {
+		factory := NewSetupDeltaFactory(&fakePPValidator{pp: &fakePublicParameters{}}, &fakePP{raw: currentPP})
+
+		delta, err := factory.Build(context.Background(), &EndorseRequest{
+			Kind: KindSetup, PublicParamsRaw: newPP, TMSID: testTMSID(), Anchor: anchor,
+		})
+		if err != nil {
+			return
+		}
+		if !delta.IsSetup || string(delta.SetupParameters) != string(newPP) {
+			t.Fatalf("Build returned a delta that is not a setup of the requested parameters")
+		}
 	})
 }

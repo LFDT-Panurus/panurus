@@ -275,6 +275,11 @@ func TestConfigValidationRejectsBadDocuments(t *testing.T) {
 		},
 		"enabled endorser without address": func(c *Config) { c.Endorser.Address = "" },
 		"enabled endorser bad address":     func(c *Config) { c.Endorser.Address = "nope" },
+		// A well-formed address that simply is not one of the configured endorsers: this node would
+		// start cleanly and sign endorsements the registry silently discards as ErrUnknownSigner.
+		"enabled endorser address not in the endorsers set": func(c *Config) {
+			c.Endorser.Address = "0x0000000000000000000000000000000000000001"
+		},
 		"enabled endorser without allowlist": func(c *Config) {
 			c.Endorsement.Allowlist = nil
 		},

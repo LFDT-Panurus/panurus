@@ -97,6 +97,16 @@ func (t *Translator) AddPublicParamsDependency() error {
 	return nil
 }
 
+// AddSetupBaseline is AddPublicParamsDependency for a setup delta. It differs only in accepting empty
+// current parameters: a TokenState deployed with an empty EVM_PP0 is valid (the contract hashes
+// whatever it was given, and an endorsed setup delta is what later fills it in), and its baseline is
+// sha256 of the empty string. An ordinary delta is validated against real parameters, so it keeps
+// rejecting empty ones through AddPublicParamsDependency.
+func (t *Translator) AddSetupBaseline() {
+	copy(t.publicParamsHash[:], crypto.SHA256(t.pp))
+	t.hasPublicParams = true
+}
+
 // CommitTokenRequest hashes the marshalled token request (SHA-256, matching the hash the rest of the
 // SDK stores and compares) and, when storeHash is set, records it in the delta for the contract to
 // store under the anchor. It returns the hash either way.

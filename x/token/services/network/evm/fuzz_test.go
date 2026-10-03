@@ -21,6 +21,7 @@ import (
 func FuzzEnvelopeFromBytes(f *testing.F) {
 	full, err := NewApprovedEnvelope(
 		"c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1",
+		"token",
 		&statedelta.StateDelta{IsSetup: true, SetupParameters: []byte("pp")},
 		[][]byte{make([]byte, 65)},
 	).Bytes()

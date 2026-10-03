@@ -190,6 +190,10 @@ jobs:
             dir: ./x/token/services/network/evm
             pkg: ./keys
             func: FuzzAnchorFromTxID
+          - name: evm-setup-delta-build
+            dir: ./x/token/services/network/evm
+            pkg: ./endorsement
+            func: FuzzSetupDeltaBuild
           - name: evm-abi-decode-bytes
             dir: ./x/token/services/network/evm
             pkg: ./abi

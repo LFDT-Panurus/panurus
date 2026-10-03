@@ -20,10 +20,20 @@ import (
 
 func sampleRequest() *EndorseRequest {
 	return &EndorseRequest{
+		Kind:         KindApproval,
 		TokenRequest: []byte("marshalled-token-request"),
 		TMSID:        token2.TMSID{Network: "evm", Namespace: "token"},
 		Anchor:       "anchor-abc",
 		Metadata:     map[string][]byte{"k": []byte("v")},
+	}
+}
+
+func sampleSetupRequest() *EndorseRequest {
+	return &EndorseRequest{
+		Kind:            KindSetup,
+		PublicParamsRaw: []byte("new-public-parameters"),
+		TMSID:           token2.TMSID{Network: "evm", Namespace: "token"},
+		Anchor:          "anchor-abc",
 	}
 }
 
@@ -56,10 +66,29 @@ func TestEndorseRequestValidate(t *testing.T) {
 		"empty anchor":        func(r *EndorseRequest) { r.Anchor = "" },
 		"no network":          func(r *EndorseRequest) { r.TMSID.Network = "" },
 		"no namespace":        func(r *EndorseRequest) { r.TMSID.Namespace = "" },
+		"unknown kind":        func(r *EndorseRequest) { r.Kind = "bogus" },
 	}
 	for name, mutate := range bad {
 		t.Run(name, func(t *testing.T) {
 			r := sampleRequest()
+			mutate(r)
+			require.Error(t, r.Validate())
+		})
+	}
+}
+
+func TestEndorseRequestValidateSetup(t *testing.T) {
+	require.NoError(t, sampleSetupRequest().Validate())
+
+	bad := map[string]func(*EndorseRequest){
+		"empty public params": func(r *EndorseRequest) { r.PublicParamsRaw = nil },
+		"empty anchor":        func(r *EndorseRequest) { r.Anchor = "" },
+		"no network":          func(r *EndorseRequest) { r.TMSID.Network = "" },
+		"no namespace":        func(r *EndorseRequest) { r.TMSID.Namespace = "" },
+	}
+	for name, mutate := range bad {
+		t.Run(name, func(t *testing.T) {
+			r := sampleSetupRequest()
 			mutate(r)
 			require.Error(t, r.Validate())
 		})
