@@ -85,3 +85,32 @@ func TestFanOutEmpty(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, results)
 }
+
+// TestFanOutTimeoutBoundsWholePhase verifies that answerCollectionTimeout bounds
+// the fan-out as a whole rather than each answer. The collector arms a fresh
+// timer on every Collect call, so collecting one answer at a time gives n
+// workers n independent windows: three workers completing 240ms apart would run
+// for 720ms against a 300ms bound and report no error at all.
+func TestFanOutTimeoutBoundsWholePhase(t *testing.T) {
+	const (
+		workers = 3
+		stagger = 240 * time.Millisecond
+	)
+
+	original := answerCollectionTimeout
+	answerCollectionTimeout = 300 * time.Millisecond
+	t.Cleanup(func() { answerCollectionTimeout = original })
+
+	start := time.Now()
+	_, err := fanOut(t.Context(), workers, func(i int) (int, error) {
+		// Each worker finishes inside the bound on its own; together they do not.
+		time.Sleep(time.Duration(i+1) * stagger)
+
+		return i, nil
+	})
+	elapsed := time.Since(start)
+
+	require.Error(t, err, "the phase must not outlive answerCollectionTimeout")
+	assert.Less(t, elapsed, workers*stagger,
+		"the timeout must bound the whole fan-out, not each answer")
+}
