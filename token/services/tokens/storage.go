@@ -16,6 +16,7 @@ import (
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/services/events"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/services/storage/driver"
+	"go.uber.org/zap/zapcore"
 )
 
 const (
@@ -163,13 +164,19 @@ func (t *DBTransaction) DeleteToken(ctx context.Context, tokenID token2.ID, dele
 
 	// The token is not in the local store, so there are no owners to notify.
 	if tok == nil {
-		logger.DebugfContext(ctx, "nothing further to delete for [%s]", tokenID)
+		if logger.IsEnabledFor(zapcore.DebugLevel) {
+			logger.DebugfContext(ctx, "nothing further to delete for [%s]", tokenID)
+		}
 
 		return nil
 	}
-	logger.DebugfContext(ctx, "Notify owners")
+	if logger.IsEnabledFor(zapcore.DebugLevel) {
+		logger.DebugfContext(ctx, "Notify owners")
+	}
 	for _, owner := range owners {
-		logger.DebugfContext(ctx, "post new delete-token event [%s:%s]", tokenID, owner)
+		if logger.IsEnabledFor(zapcore.DebugLevel) {
+			logger.DebugfContext(ctx, "post new delete-token event [%s:%s]", tokenID, owner)
+		}
 		t.Notify(ctx, DeleteToken, t.TMSID, owner, tok.Type, tokenID.TxId, tokenID.Index)
 	}
 
@@ -190,7 +197,7 @@ func (t *DBTransaction) DeleteTokens(ctx context.Context, deletedBy string, ids 
 // AppendToken records a new token in the database and records an add-token event for
 // each of its owners. The events are published only after the transaction commits,
 // see Notify and FlushEvents.
-func (t *DBTransaction) AppendToken(ctx context.Context, tta TokenToAppend) error {
+func (t *DBTransaction) AppendToken(ctx context.Context, tta *TokenToAppend) error {
 	q, err := token2.ToQuantity(tta.Tok.Quantity, tta.Precision)
 	if err != nil {
 		return errors.Wrapf(err, "cannot covert [%s] with precision [%d]", tta.Tok.Quantity, tta.Precision)
@@ -230,7 +237,9 @@ func (t *DBTransaction) AppendToken(ctx context.Context, tta TokenToAppend) erro
 		return errors.Wrapf(err, "cannot store token in db")
 	}
 
-	logger.DebugfContext(ctx, "Notify owners")
+	if logger.IsEnabledFor(zapcore.DebugLevel) {
+		logger.DebugfContext(ctx, "Notify owners")
+	}
 	for _, id := range tta.Owners {
 		if len(id) == 0 {
 			continue
@@ -261,7 +270,9 @@ func (t *DBTransaction) Notify(ctx context.Context, topic string, tmsID token.TM
 		Index:     index,
 	})
 
-	logger.DebugfContext(ctx, "record new event %v", e)
+	if logger.IsEnabledFor(zapcore.DebugLevel) {
+		logger.DebugfContext(ctx, "record new event %v", e)
+	}
 	t.pending = append(t.pending, e)
 }
 
@@ -277,7 +288,9 @@ func (t *DBTransaction) FlushEvents(ctx context.Context) {
 	pending := t.pending
 	t.pending = nil
 	for _, e := range pending {
-		logger.DebugfContext(ctx, "publish new event %v", e)
+		if logger.IsEnabledFor(zapcore.DebugLevel) {
+			logger.DebugfContext(ctx, "publish new event %v", e)
+		}
 		t.Notifier.Publish(e)
 	}
 }

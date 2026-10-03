@@ -78,6 +78,12 @@ func (c *ristrettoCache[T]) Clear() {
 	c.cache.Wait()
 }
 
+// Wait blocks until all buffered writes and deletes are applied to the cache.
+// Useful for testing and deterministic cache state assertions.
+func (c *ristrettoCache[T]) Wait() {
+	c.cache.Wait()
+}
+
 func (c *ristrettoCache[T]) GetOrLoad(key string, loader func() (T, error)) (T, bool, error) {
 	var zero T
 
