@@ -297,6 +297,35 @@ func TestBucketSetClearRateKeepsTheBalance(t *testing.T) {
 	assert.Equal(t, 10, taken, "the key should be back on the default rate")
 }
 
+// TestBucketSetClearRateSettlesIdleGapAtTheOldRate pins that ClearRate credits the time a key
+// spent idle under a reduced override at the old reduced rate, not the new default rate. Without
+// settling the accrual (and advancing b.last) first, the idle gap is credited on the next Take at
+// the full default rate, handing back a full default bucket — exactly the jump ClearRate's
+// contract says it avoids.
+func TestBucketSetClearRateSettlesIdleGapAtTheOldRate(t *testing.T) {
+	clock := newTestClock()
+	s := newTestBucketSet(t, 100, 100, time.Hour, clock)
+
+	// Reduce alice to a tenth and drain the reduced bucket.
+	s.SetRate("alice", 10, 10)
+	for s.Take("alice") {
+	}
+	require.False(t, s.Take("alice"), "pre-condition: the reduced bucket is empty")
+
+	// Idle for one second under the override, then clear it.
+	clock.advance(time.Second)
+	s.ClearRate("alice")
+
+	// The one idle second must be worth one second at the old reduced rate (10 tokens), not a
+	// full default bucket (100). Count what is immediately available.
+	taken := 0
+	for s.Take("alice") {
+		taken++
+		require.Less(t, taken, 100, "the idle gap must not be credited at the full default rate")
+	}
+	assert.Equal(t, 10, taken, "the idle second should be credited at the old reduced rate")
+}
+
 func TestBucketSetClearRateOnUnknownKey(t *testing.T) {
 	clock := newTestClock()
 	s := newTestBucketSet(t, 1, 1, time.Hour, clock)
