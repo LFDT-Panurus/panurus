@@ -25,24 +25,36 @@ type labelRecord struct {
 type fakeMetricsProvider struct {
 	counterRecords   map[string][]labelRecord
 	histogramRecords map[string][]labelRecord
+	gaugeRecords     map[string][]labelRecord
+	// declaredLabels is the LabelNames each metric was declared with, so that a test can assert
+	// the label set a Prometheus registry would be handed.
+	declaredLabels map[string][]string
 }
 
 func newFakeMetricsProvider() *fakeMetricsProvider {
 	return &fakeMetricsProvider{
 		counterRecords:   map[string][]labelRecord{},
 		histogramRecords: map[string][]labelRecord{},
+		gaugeRecords:     map[string][]labelRecord{},
+		declaredLabels:   map[string][]string{},
 	}
 }
 
 func (p *fakeMetricsProvider) NewCounter(opts metrics.CounterOpts) metrics.Counter {
+	p.declaredLabels[opts.Name] = opts.LabelNames
+
 	return &fakeCounter{provider: p, name: opts.Name}
 }
 
-func (p *fakeMetricsProvider) NewGauge(_ metrics.GaugeOpts) metrics.Gauge {
-	return &fakeGauge{}
+func (p *fakeMetricsProvider) NewGauge(opts metrics.GaugeOpts) metrics.Gauge {
+	p.declaredLabels[opts.Name] = opts.LabelNames
+
+	return &fakeGauge{provider: p, name: opts.Name}
 }
 
 func (p *fakeMetricsProvider) NewHistogram(opts metrics.HistogramOpts) metrics.Histogram {
+	p.declaredLabels[opts.Name] = opts.LabelNames
+
 	return &fakeHistogram{provider: p, name: opts.Name}
 }
 
@@ -100,8 +112,33 @@ func (h *fakeHistogram) Observe(value float64) {
 	h.provider.histogramRecords[h.name] = append(h.provider.histogramRecords[h.name], labelRecord{labels: h.labels, value: value})
 }
 
-type fakeGauge struct{}
+// gaugeSetValue returns the last value the named gauge was Set to under exactly the given label
+// values (in order), and whether it was set at all.
+func (p *fakeMetricsProvider) gaugeSetValue(name string, labelValues ...string) (float64, bool) {
+	value, found := 0.0, false
+	for _, r := range p.gaugeRecords[name] {
+		if slices.Equal(r.labels, labelValues) {
+			value, found = r.value, true
+		}
+	}
 
-func (g *fakeGauge) With(_ ...string) metrics.Gauge { return g }
-func (g *fakeGauge) Add(_ float64)                  {}
-func (g *fakeGauge) Set(_ float64)                  {}
+	return value, found
+}
+
+type fakeGauge struct {
+	provider *fakeMetricsProvider
+	name     string
+	labels   []string
+}
+
+func (g *fakeGauge) With(labelValues ...string) metrics.Gauge {
+	return &fakeGauge{provider: g.provider, name: g.name, labels: append(slices.Clone(g.labels), labelValues...)}
+}
+
+func (g *fakeGauge) Add(delta float64) {
+	g.provider.gaugeRecords[g.name] = append(g.provider.gaugeRecords[g.name], labelRecord{labels: g.labels, value: delta})
+}
+
+func (g *fakeGauge) Set(value float64) {
+	g.provider.gaugeRecords[g.name] = append(g.provider.gaugeRecords[g.name], labelRecord{labels: g.labels, value: value})
+}
