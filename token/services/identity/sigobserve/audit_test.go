@@ -155,6 +155,44 @@ func TestAuditLoggerOptionalFields(t *testing.T) {
 	assert.Contains(t, text, `err="storage down"`)
 }
 
+// TestAuditLoggerRendersEmptySentinelAsNone pins that an empty/nil identity, which reaches the
+// logger as the "<empty>" sentinel its hash collides on (not ""), is rendered as principal=none
+// rather than principal=<empty>, so a missing attribution reads the same however it arrived.
+func TestAuditLoggerRendersEmptySentinelAsNone(t *testing.T) {
+	log := &captureLog{}
+	sigobserve.NewAuditLogger(log).Observe(t.Context(), sigobserve.Event{
+		Op:        sigobserve.OpGetSigner,
+		Principal: "<empty>",
+		Outcome:   sigobserve.OutcomeError,
+		Err:       errors.New("no signer"),
+	})
+
+	text := log.one(t).text
+	assert.Contains(t, text, "principal=none", "the empty sentinel must render as a missing attribution")
+	assert.NotContains(t, text, "principal=<empty>")
+}
+
+// TestAuditLoggerDoesNotSampleUnattributedSentinel pins that warn records for the "<empty>"
+// sentinel are never sampled: an unattributed record carries no identity to rate-limit against,
+// and lumping every empty/nil identity onto one shared bucket would let unrelated anomalies
+// suppress each other. All records must be written, well past the per-principal warn burst.
+func TestAuditLoggerDoesNotSampleUnattributedSentinel(t *testing.T) {
+	log := &captureLog{}
+	a := sigobserve.NewAuditLogger(log)
+
+	const n = 100 // far above warnSampleBurst (20)
+	for range n {
+		a.Observe(t.Context(), sigobserve.Event{
+			Op:        sigobserve.OpVerify,
+			Principal: "<empty>",
+			Outcome:   sigobserve.OutcomeInvalid,
+			Err:       errors.New("rejected"),
+		})
+	}
+
+	assert.Len(t, log.lines, n, "every unattributed warn record must be written, none sampled away")
+}
+
 // TestAuditLoggerQuotesErrorToPreventLogInjection is the integrity guard on the audit trail: the
 // error message is the one field carrying arbitrary, possibly attacker-supplied text, so a newline
 // in it must never split the record and forge a second sig-audit line in the forensic trail this
