@@ -10,7 +10,6 @@ import (
 	"context"
 	"database/sql"
 	"testing"
-	"time"
 
 	"github.com/LFDT-Panurus/panurus/token/services/utils"
 	_ "github.com/jackc/pgx/v5/stdlib"
@@ -128,24 +127,27 @@ func TestAdvisoryLock_ContextCancellation(t *testing.T) {
 	require.NoError(t, err)
 	defer utils.IgnoreError(db.Close)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	lockID := int64(11111)
 
-	// Acquire lock with short-lived context
+	// Acquire the lock with a cancellable context. The context carries no deadline on
+	// purpose: sql.Open is lazy, so this first acquisition also dials and authenticates
+	// against the container, which on a loaded runner takes far longer than acquiring the
+	// lock does. A short deadline here covered that setup too and failed the test
+	// spuriously with "failed SASL auth: context deadline exceeded".
 	lock, acquired, err := NewAdvisoryLock(ctx, db, lockID)
 	require.NoError(t, err)
 	require.True(t, acquired)
 	require.NotNil(t, lock)
 
-	// Lock should still be valid even after context cancellation
-	// (advisory locks are session-scoped, not context-scoped)
-	time.Sleep(150 * time.Millisecond)
+	// Cancel the context that acquired the lock: advisory locks are session-scoped, not
+	// context-scoped, so the lock must remain held.
+	cancel()
 
 	// Verify lock is still held by trying to acquire it again
-	ctx2 := context.Background()
-	lock2, acquired, err := NewAdvisoryLock(ctx2, db, lockID)
+	lock2, acquired, err := NewAdvisoryLock(context.Background(), db, lockID)
 	require.NoError(t, err)
 	require.False(t, acquired, "Lock should still be held after context cancellation")
 	require.Nil(t, lock2)
