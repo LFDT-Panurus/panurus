@@ -900,14 +900,23 @@ func (c *CollectEndorsementsView) getSession(context view.Context, p view.Identi
 	return context.GetSession(context.Initiator(), p)
 }
 
-// answerCollectionTimeout bounds the wait for each fan-out answer. It is a
-// backstop only: workers are already bounded by their own per-receive timeouts.
-const answerCollectionTimeout = 2 * time.Minute
+// answerCollectionTimeout bounds a whole fan-out, not a single answer. It is a
+// var rather than a const only so tests can shorten it; nothing reassigns it in
+// production code.
+var answerCollectionTimeout = 2 * time.Minute
 
 // fanOut runs work(i) for each i in [0, n) on its own goroutine and returns the
 // results in index order. It returns on the first error without waiting for the
 // remaining workers; those drain into the collector's buffered channel and exit.
+//
+// The deadline is applied to the context rather than left to the collector, so
+// it bounds the fan-out as a whole. The collector arms a fresh timer on each
+// Collect call, which on its own would let a phase with n workers run for n
+// times the timeout.
 func fanOut[T any](ctx context.Context, n int, work func(i int) (T, error)) ([]T, error) {
+	ctx, cancel := context.WithTimeout(ctx, answerCollectionTimeout)
+	defer cancel()
+
 	collector := utils.NewAnswersCollector[int, T](n, answerCollectionTimeout)
 	for i := range n {
 		go func() {
