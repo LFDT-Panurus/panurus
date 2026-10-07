@@ -16,7 +16,7 @@ import (
 
 func WalletTest(t *testing.T, cfgProvider cfgProvider) {
 	t.Helper()
-	for _, c := range walletCases {
+	for _, c := range WalletCases {
 		drv := cfgProvider(c.Name)
 		db, err := drv.NewWallet("", c.Name)
 		if err != nil {
@@ -50,7 +50,10 @@ func WalletTest(t *testing.T, cfgProvider cfgProvider) {
 	}
 }
 
-var walletCases = []struct {
+// WalletCases is the shared WalletStore suite. It is exported so that the backends that have
+// no cfgProvider - the KVS ones, which are not SQL drivers - can run it too; see
+// WalletTest for the SQL entry point.
+var WalletCases = []struct {
 	Name string
 	Fn   func(*testing.T, driver.WalletStore, driver.IdentityStore, driver.IdentityConfiguration)
 }{
