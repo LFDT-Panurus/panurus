@@ -261,6 +261,7 @@ token:
     fetcherCacheSize: 1000               # Cache size in entries (default: 0 = use fetcher default)
     fetcherCacheRefresh: 30s             # Cache refresh interval (default: 0 = use fetcher default)
     fetcherCacheMaxQueries: 100          # Max queries before cache refresh (default: 0 = use fetcher default)
+    exactMatch: false                    # Change-avoidance pre-search, sherdlock only (default: false)
 ```
 
 ### Driver
@@ -292,5 +293,16 @@ The three keys below tune the cache that `mixed` and `eager` use, and are ignore
 - **fetcherCacheSize**: Maximum number of cached query results. Set to 0 to use the fetcher's default size.
 - **fetcherCacheRefresh**: Time interval after which cached data is considered stale and refreshed. Set to 0 to use the fetcher's default interval.
 - **fetcherCacheMaxQueries**: Maximum number of queries before forcing a cache refresh. Set to 0 to use the fetcher's default limit.
+
+### Change-avoidance pre-search (sherdlock)
+
+- **exactMatch** (`sherdlock` only, default `false`): when enabled, each selection first runs a
+  k=1 pre-search that looks for a single unlocked token whose amount equals the full request. If
+  one is found and can be locked, it is returned on its own, so the transaction produces no change
+  (no change token is minted). On any miss — no exact token, or every exact token is currently
+  locked by another process — the selection falls through to the normal greedy walk, unchanged.
+  It is strictly best-effort and never fails a selection on its own. The pre-search exposes the
+  `selection_exact_match_{attempts,hits,misses}_total` metrics (see
+  [metrics](../development/metrics.md)). Leave it off to keep the plain greedy first-fit behaviour.
 
 **Example**: With `fetcherCacheSize: 1000`, `fetcherCacheRefresh: 30s`, and `fetcherCacheMaxQueries: 100`, the cache stores up to 1000 query results, refreshes data every 30 seconds, and forces a refresh after 100 queries.
