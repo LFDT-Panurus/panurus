@@ -20,6 +20,7 @@ import (
 type Locker interface {
 	Lock(ctx context.Context, owner string, id *token.ID, txID string, reclaim bool) (string, error)
 	UnlockByTxID(ctx context.Context, txID string)
+	UnlockIDs(ctx context.Context, owner string, ids ...*token.ID) []*token.ID
 }
 
 type Vault interface {
@@ -50,6 +51,15 @@ func (l *locker) Lock(ctx context.Context, tokenID *token.ID, consumerTxID trans
 
 func (l *locker) UnlockByTxID(ctx context.Context, txID transaction.ID) error {
 	l.Locker.UnlockByTxID(ctx, txID)
+
+	return nil
+}
+
+// UnlockToken releases the lock on a single token. This backend shards locks by owner
+// (walletID), so it unlocks via UnlockIDs for that wallet; the token is only ever asked
+// to be released by the transaction that locked it, so this removes just that lock.
+func (l *locker) UnlockToken(ctx context.Context, tokenID *token.ID, _ transaction.ID, walletID string) error {
+	l.UnlockIDs(ctx, walletID, tokenID)
 
 	return nil
 }

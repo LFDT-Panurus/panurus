@@ -200,6 +200,7 @@ fell through to the greedy walk (`attempts` = `hits` + `misses`).
 | `panurus_services_selector_sherdlock_distinct_tokens_attempted` | histogram | — | Distribution of the number of distinct tokens a lock was attempted on (won, lost, or rate-limited) per token selection call |
 | `panurus_services_selector_sherdlock_selection_exact_match_attempts_total` | counter | — | Total number of exact-amount pre-searches run |
 | `panurus_services_selector_sherdlock_selection_exact_match_hits_total` | counter | — | Total number of exact-amount pre-searches that produced a change-free selection |
+| `panurus_services_selector_sherdlock_selection_exact_match_pair_hits_total` | counter | — | Subset of hits completed by a k=2 completing pair (single-token hits = hits − pair hits) |
 | `panurus_services_selector_sherdlock_selection_exact_match_misses_total` | counter | — | Total number of exact-amount pre-searches that fell through to the greedy walk |
 
 Source: `token/services/selector/sherdlock/metrics.go`.

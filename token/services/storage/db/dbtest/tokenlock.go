@@ -63,6 +63,7 @@ var tokenLockDBCases = []struct {
 	{"TestReleaseOnOrphanConsumer", TestReleaseOnOrphanConsumer},
 	{"TestKeepOnDeletedProducer", TestKeepOnDeletedProducer},
 	{"TestKeepSiblingIndices", TestKeepSiblingIndices},
+	{"TestUnlockToken", TestUnlockToken},
 	{"TestReleaseOnAgedLease", TestReleaseOnAgedLease},
 	{"TestKeepFreshPendingLock", TestKeepFreshPendingLock},
 	{"TestListLocks", TestListLocks},
@@ -186,6 +187,34 @@ func TestKeepSiblingIndices(t *testing.T, tokenDB driver3.TokenStore, tokenLockD
 
 	requireLockHeld(t, tokenLockDB, live)
 	requireLockReleased(t, tokenLockDB, expired)
+}
+
+// TestUnlockToken verifies that releasing a single token lock leaves the consuming
+// transaction's other locks intact. The exact-match pre-search speculatively locks a
+// token and, on a lost race for its pair partner, must release just that token — not
+// every lock the consumer holds. Because the selector is reused across a transaction's
+// actions, a tx-wide release here would drop inputs an earlier action already locked.
+func TestUnlockToken(t *testing.T, tokenDB driver3.TokenStore, tokenLockDB driver3.TokenLockStore, tokenTransactionDB driver3.TokenTransactionStore) {
+	ctx := t.Context()
+	released := token.ID{TxId: "producer", Index: 0}
+	kept := token.ID{TxId: "producer", Index: 1}
+
+	addTokenRequest(t, tokenTransactionDB, "producer")
+	addTokenRequest(t, tokenTransactionDB, "consumer")
+	storeTokens(t, tokenDB, "producer", 0, 1)
+	// Both tokens are locked by the same consumer, as two actions of one transaction would.
+	require.NoError(t, tokenLockDB.Lock(ctx, &released, "consumer", "owner1"))
+	require.NoError(t, tokenLockDB.Lock(ctx, &kept, "consumer", "owner1"))
+
+	// Releasing one lock must leave the consumer's other lock untouched.
+	require.NoError(t, tokenLockDB.UnlockToken(ctx, &released, "consumer", "owner1"))
+	requireLockReleased(t, tokenLockDB, released)
+	requireLockHeld(t, tokenLockDB, kept)
+
+	// Releasing a lock the consumer no longer holds is a no-op, not an error, and still
+	// leaves the sibling lock in place.
+	require.NoError(t, tokenLockDB.UnlockToken(ctx, &released, "consumer", "owner1"))
+	requireLockHeld(t, tokenLockDB, kept)
 }
 
 // TestReleaseOnAgedLease verifies the second expiry branch: a lock whose consuming

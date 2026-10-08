@@ -840,6 +840,10 @@ func (m *mockLocker) UnlockByTxID(ctx context.Context, consumerTxID transaction.
 	return nil
 }
 
+func (m *mockLocker) UnlockToken(_ context.Context, _ *token2.ID, _ transaction.ID, _ string) error {
+	return nil
+}
+
 func (m *mockLocker) Cleanup(ctx context.Context, leaseExpiry time.Duration) error {
 	if m.cleanupFunc != nil {
 		return m.cleanupFunc(ctx, leaseExpiry)

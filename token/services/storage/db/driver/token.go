@@ -432,6 +432,12 @@ type TokenLockStore interface {
 	LockAt(ctx context.Context, tokenID *token.ID, consumerTxID transaction.ID, walletID string, createdAt time.Time) error
 	// UnlockByTxID unlocks all tokens locked by the consumer TX
 	UnlockByTxID(ctx context.Context, consumerTxID transaction.ID) error
+	// UnlockToken releases this consumer's lock on a single token, identified by
+	// (consumerTxID, tokenID). Unlike UnlockByTxID it leaves the consumer's other
+	// locks untouched, so a caller that must release one speculatively-locked token
+	// does not drop the rest of the transaction's inputs. walletID mirrors Lock and
+	// is for backends that key locks per wallet; the SQL store ignores it.
+	UnlockToken(ctx context.Context, tokenID *token.ID, consumerTxID transaction.ID, walletID string) error
 	// ListLocks returns every currently held lock, joined with the status of its
 	// consuming transaction. It is a read-only diagnostic: it exists so that operators
 	// and tests can inspect lock state without racing a second Lock call against the

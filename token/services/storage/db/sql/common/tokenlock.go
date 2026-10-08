@@ -111,6 +111,27 @@ func (db *TokenLockStore) UnlockByTxID(ctx context.Context, consumerTxID transac
 	return nil
 }
 
+// UnlockToken releases this consumer's lock on a single token. The delete is scoped to
+// (consumer_tx_id, tx_id, idx) so it only ever removes the row this consumer owns for
+// that token and leaves the rest of the transaction's locks in place. walletID is unused
+// by this SQL store (locks are keyed by consumer, not wallet), mirroring Lock.
+func (db *TokenLockStore) UnlockToken(ctx context.Context, tokenID *token.ID, consumerTxID transaction.ID, _ string) error {
+	query, args := q.DeleteFrom(db.Table.TokenLocks).
+		Where(cond.And(
+			cond.Eq("consumer_tx_id", consumerTxID),
+			cond.Eq("tx_id", tokenID.TxId),
+			cond.Eq("idx", tokenID.Index),
+		)).
+		Format(db.ci)
+	logging.Debug(logger, query, consumerTxID, tokenID)
+
+	if _, err := db.WriteDB.ExecContext(ctx, query, args...); err != nil {
+		return errors.Wrapf(err, "failed unlocking token [%s] for consumer [%s]", tokenID, consumerTxID)
+	}
+
+	return nil
+}
+
 // ListLocks returns every currently held lock, joined with the status of its consuming
 // transaction. It reuses the same TokenLocks/Requests join as IsStaleLock/Cleanup, so
 // the notion of "consuming transaction" stays consistent across the diagnostic reader

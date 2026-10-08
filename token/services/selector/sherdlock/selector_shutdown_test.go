@@ -114,6 +114,10 @@ func (l *cancelTestLocker) TryLock(_ context.Context, _ *token2.ID, _ string) (b
 	return l.tryLockResult, nil
 }
 
+func (l *cancelTestLocker) Unlock(_ context.Context, _ *token2.ID, _ string) error {
+	return nil
+}
+
 func (l *cancelTestLocker) UnlockAll(_ context.Context) error {
 	*l.unlockAllCalled = true
 
