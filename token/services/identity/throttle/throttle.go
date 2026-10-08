@@ -107,10 +107,18 @@ type Escalator struct {
 	// now is the clock, indirected for tests.
 	now func() time.Time
 
-	// mu guards principals and the per-level counts.
+	// mu guards principals, the per-level counts, and the two LRU lists.
 	mu         sync.Mutex
 	principals map[string]*principal
 	counts     map[Level]int
+	// lruNormal and lruSoft hold the tracked principals at LevelNormal and LevelSoft respectively,
+	// most-recently-seen first. They let evictToMakeRoom pick a victim in O(1) rather than scanning
+	// the whole principals map on the signature hot path. A LevelBlocked principal is in neither
+	// list: a block must never be evicted (that would restore its full quota), exactly as the
+	// previous scan skipped blocked entries. Membership is kept in step with p.level and p.lastSeen
+	// (see listFor, touch, transition, principalFor and evictPrincipal).
+	lruNormal *lruList
+	lruSoft   *lruList
 
 	stopOnce sync.Once
 	stopped  chan struct{}
@@ -137,6 +145,68 @@ type principal struct {
 	slot int
 	// slotStart is when the current ring entry started.
 	slotStart time.Time
+
+	// id is the principals-map key for this entry, carried on the principal so the LRU list can
+	// delete it from the map in O(1) when it evicts the entry.
+	id string
+	// prev and next link this principal into its level's LRU list (lruNormal or lruSoft). They are
+	// nil exactly when the principal is unlinked: a detached (untracked) principal, or one held at
+	// LevelBlocked. A principal is in a list iff it is tracked in the map and not blocked.
+	prev, next *principal
+}
+
+// lruList is an intrusive doubly-linked list of principals, most-recently-seen first, bracketed by
+// sentinel head and tail nodes. It gives evictToMakeRoom an O(1) victim (the tail) instead of a
+// full-map scan on the signature hot path.
+type lruList struct {
+	head *principal
+	tail *principal
+}
+
+// newLRUList returns an empty list with its sentinels wired.
+func newLRUList() *lruList {
+	l := &lruList{head: &principal{}, tail: &principal{}}
+	l.head.next = l.tail
+	l.tail.prev = l.head
+
+	return l
+}
+
+// remove unlinks p if it is linked, and is a no-op otherwise.
+func (l *lruList) remove(p *principal) {
+	if p.prev == nil {
+		return
+	}
+	p.prev.next = p.next
+	p.next.prev = p.prev
+	p.prev = nil
+	p.next = nil
+}
+
+// pushFront links p at the most-recently-seen end. p must be unlinked.
+func (l *lruList) pushFront(p *principal) {
+	p.prev = l.head
+	p.next = l.head.next
+	l.head.next.prev = p
+	l.head.next = p
+}
+
+// moveFront makes p the most-recently-seen entry, linking it if it was unlinked.
+func (l *lruList) moveFront(p *principal) {
+	if l.head.next == p {
+		return
+	}
+	l.remove(p)
+	l.pushFront(p)
+}
+
+// back returns the least-recently-seen principal, or nil when the list is empty.
+func (l *lruList) back() *principal {
+	if l.tail.prev == l.head {
+		return nil
+	}
+
+	return l.tail.prev
 }
 
 // slot counts the operations observed during one sub-interval of a window.
@@ -144,6 +214,29 @@ type slot struct {
 	total   int
 	errors  int
 	invalid int
+}
+
+// listFor returns the LRU list a principal at level belongs to, or nil for LevelBlocked (a blocked
+// principal is never evicted and so is tracked in no list).
+func (e *Escalator) listFor(level Level) *lruList {
+	switch level {
+	case LevelNormal:
+		return e.lruNormal
+	case LevelSoft:
+		return e.lruSoft
+	default:
+		return nil
+	}
+}
+
+// touch records that p was just seen, moving it to the most-recently-seen end of its level's LRU
+// list so eviction prefers genuinely idle principals. It must only be called for a tracked
+// (attached) principal; a detached one is in no list and must never be linked. Callers must hold
+// e.mu.
+func (e *Escalator) touch(p *principal) {
+	if l := e.listFor(p.level); l != nil {
+		l.moveFront(p)
+	}
 }
 
 // Option customizes an Escalator.
@@ -177,6 +270,8 @@ func New(cfg *Config, opts ...Option) *Escalator {
 		now:        time.Now,
 		principals: make(map[string]*principal),
 		counts:     make(map[Level]int),
+		lruNormal:  newLRUList(),
+		lruSoft:    newLRUList(),
 		stopped:    make(chan struct{}),
 	}
 	for _, opt := range opts {
@@ -232,8 +327,13 @@ func (e *Escalator) decide(ctx context.Context, principalID string) (denied bool
 
 	// A detached principal (map saturated) is returned at LevelNormal, so the block check and
 	// de-escalation below are no-ops for it; it is not escalated after a failed Take either.
-	p, _ := e.principalFor(principalID)
+	p, attached := e.principalFor(principalID)
 	p.lastSeen = e.now()
+	if attached {
+		// Mark it most-recently-seen so eviction prefers genuinely idle principals. A detached
+		// principal is in no list and must not be linked.
+		e.touch(p)
+	}
 	e.advanceWindow(p)
 
 	// A block is checked before the bucket so that a blocked principal is not also charged
@@ -260,7 +360,7 @@ func (e *Escalator) decide(ctx context.Context, principalID string) (denied bool
 	// and the LevelSoft guard inside escalate then correctly absorbs concurrent over-quota
 	// calls that arrive before SoftDuration has elapsed.
 	e.mu.Lock()
-	p, attached := e.principalFor(principalID)
+	p, attached = e.principalFor(principalID)
 	if !attached {
 		// The map is saturated with throttled principals, so this one is not tracked. It is
 		// still denied — its persistent bucket is empty — but it must not be escalated:
@@ -314,6 +414,9 @@ func (e *Escalator) Observe(ctx context.Context, ev sigobserve.Event) {
 		return
 	}
 	p.lastSeen = e.now()
+	// Observe only reaches here for an attached principal (it returns above when detached), so it
+	// is always safe to mark it most-recently-seen.
+	e.touch(p)
 	e.advanceWindow(p)
 	// Recover the principal's level for the elapsed time before recording this sample. Without
 	// this, de-escalation and block release run only in decide (the gated path), so a principal
@@ -426,7 +529,7 @@ func (e *Escalator) principalFor(principalID string) (p *principal, attached boo
 	}
 
 	now := e.now()
-	p = &principal{level: LevelNormal, lastSeen: now, slotStart: now}
+	p = &principal{level: LevelNormal, lastSeen: now, slotStart: now, id: principalID}
 
 	cap := e.cfg.MaxPrincipals
 	if cap > 0 && len(e.principals) >= cap {
@@ -443,6 +546,9 @@ func (e *Escalator) principalFor(principalID string) (p *principal, attached boo
 	}
 
 	e.principals[principalID] = p
+	// A new principal starts at LevelNormal and most-recently-seen. Linking it here, on the
+	// attached path only, keeps the invariant that a detached principal is never in a list.
+	e.lruNormal.pushFront(p)
 
 	return p, true
 }
@@ -459,27 +565,18 @@ func (e *Escalator) principalFor(principalID string) (p *principal, attached boo
 // the map with cheap soft entries — burst+1 requests each — and thereby detach, and so stop
 // escalating (in particular stop running invalid-signature detection on), every newly seen
 // principal. Callers must hold e.mu.
+//
+// The preference order falls straight out of the two LRU lists: the oldest LevelNormal entry is
+// lruNormal's tail, the oldest LevelSoft entry is lruSoft's tail, and LevelBlocked entries are in
+// neither list, so they are never chosen. Taking the normal tail first, then the soft tail, picks
+// the same victim the previous full-map scan did, in O(1).
 func (e *Escalator) evictToMakeRoom() {
-	var oldestID string
-	var oldestLevel Level
-	var oldest time.Time
-
-	for id, p := range e.principals {
-		if p.level == LevelBlocked {
-			continue
-		}
-		better := oldestID == "" ||
-			// A normal candidate always displaces a soft one, however recently the soft one was seen.
-			(oldestLevel == LevelSoft && p.level == LevelNormal) ||
-			// Within the same level, the least recently seen entry is evicted.
-			(oldestLevel == p.level && p.lastSeen.Before(oldest))
-		if better {
-			oldestID, oldestLevel, oldest = id, p.level, p.lastSeen
-		}
+	victim := e.lruNormal.back()
+	if victim == nil {
+		victim = e.lruSoft.back()
 	}
-
-	if oldestID != "" {
-		e.evictPrincipal(oldestID, e.principals[oldestID])
+	if victim != nil {
+		e.evictPrincipal(victim.id, victim)
 	}
 }
 
@@ -612,6 +709,22 @@ func (e *Escalator) transition(ctx context.Context, principalID string, p *princ
 	if level != LevelNormal {
 		e.counts[level]++
 	}
+
+	// Move the principal between LRU lists to match its new level: out of its old level's list and
+	// into the new one. A LevelBlocked principal belongs to no list (listFor returns nil), so a
+	// transition to or from blocked links or unlinks accordingly. A blocked→blocked re-arm leaves
+	// it unlinked. transition is never reached for a detached principal (it is always LevelNormal
+	// and nothing escalates or de-escalates it), so this never links one that must stay out.
+	oldList := e.listFor(p.level)
+	newList := e.listFor(level)
+	if oldList != newList {
+		if oldList != nil {
+			oldList.remove(p)
+		}
+		if newList != nil {
+			newList.pushFront(p)
+		}
+	}
 	p.level = level
 
 	now := e.now()
@@ -728,6 +841,11 @@ func (e *Escalator) evictPrincipal(id string, p *principal) {
 			e.gauge.SetThrottledPrincipals(string(LevelSoft), e.counts[LevelSoft])
 			e.gauge.SetThrottledPrincipals(string(LevelBlocked), e.counts[LevelBlocked])
 		}
+	}
+	// Keep the LRU list in step with the map. A LevelBlocked principal is in no list (remove is a
+	// no-op); a normal or soft one is unlinked here so the list never points at a dropped entry.
+	if l := e.listFor(p.level); l != nil {
+		l.remove(p)
 	}
 	e.buckets.ClearRate(id)
 	delete(e.principals, id)
