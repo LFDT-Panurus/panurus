@@ -193,6 +193,74 @@ The chaincode endorsement follows Fabric's standard endorsement policies:
 
 Example policy: `"OR('Org1MSP.peer', 'Org2MSP.peer')"` - requires endorsement from either Org1 or Org2.
 
+### Endorser Selection
+
+By default the endorsing peers are chosen by Fabric's service discovery, which may return
+peers of any organization that satisfies the chaincode's endorsement policy. A node can
+narrow that choice to peers it wants to talk to, which matters in multi-cloud or
+multi-region deployments where crossing an organization boundary also means crossing a
+network boundary:
+
+```yaml
+services:
+  network:
+    fabric:
+      endorsement:
+        # Restrict endorsement to peers of these organizations. To keep endorsement
+        # inside this node's own organization, list its own MSP ID.
+        mspIDs: [Org1MSP, Org3MSP]
+```
+
+The selection is read with
+[`ResolveEndorserSelection`](../../token/services/network/fabric/config/endorsers.go) and
+applied to the FSC invocation as `WithEndorsersByMSPIDs(...)`. On the endorse path it is read once per TMS, when the
+endorsement service is created; the public-parameters fetcher re-reads it on each fetch,
+which is not cached because those fetches are rare and the fetcher holds no other
+per-TMS state. Notes:
+
+- There is deliberately **no `fromMyOrg` shorthand**. It would have to be resolved from
+  the node's identity at runtime, whereas an MSP ID is static, already known to the
+  operator, and present in the channel configuration — so a node that wants to keep
+  endorsement inside its own organization simply lists its own MSP ID.
+- Setting no key keeps Fabric's default discovery, which is the behaviour of every
+  existing deployment.
+- An `mspIDs` entry that is empty or blank, or an organization listed twice, makes the
+  node fail to start. Whether an MSP ID *exists*, or hosts a peer, cannot be checked when
+  the configuration is loaded — the configuration layer has no channel — so a selection
+  that no peer satisfies is only detected when an invocation is attempted. Such a failure
+  quotes the key and the value in force, for example `[services.network.fabric.endorsement.mspIDs]
+  restricts endorsement to peers in [Org9MSP]`. Without that, an organization that hosts no
+  endorsing peer surfaces only as a discovery error naming neither an endorser nor a
+  configuration key.
+- Entries in `mspIDs` are trimmed, so a stray space in the YAML list is not sent to
+  discovery as part of an MSP ID, and two entries differing only by whitespace are
+  rejected as duplicates.
+- The selection **narrows** discovery; it does not replace the chaincode's endorsement
+  policy. A selection that cannot satisfy that policy makes endorsement fail, so a
+  single-organization selection is only usable where one organization's peers suffice —
+  for example `OR('Org1MSP.peer','Org2MSP.peer')`, not `AND(...)`.
+- The same selection is applied to the public-parameters query
+  ([`ppfetcher.go`](../../token/services/network/fabric/ppfetcher.go)), so a node that
+  restricts endorsement does not read public parameters from another organization's peer.
+  When
+  the TMS configuration is not yet resolvable, that query falls back to default
+  discovery, because public parameters may have to be fetched before a namespace has a
+  usable configuration. Any *other* failure to resolve the selection fails the query,
+  matching endorsement: falling back there would read the public parameters from the very
+  peers the selection exists to avoid.
+- This applies to **chaincode endorsement mode only**, for both the approval invocation
+  and the public-parameters query. In FSC endorsement mode the endorsers are FSC nodes
+  selected by `fsc_endorsement.policy.type` (below) and the selection is not applied at
+  all — the local organization there frequently hosts no peer, so applying it would
+  strand the query with no endorser. Contradictory configuration is still rejected in
+  both modes, and a selection set in FSC mode is logged as a warning.
+- **Not yet covered:** the read-only token and state queries
+  ([`tokenfetcher.go`](../../token/services/network/fabric/tokenfetcher.go),
+  `ledger.QueryStates` in [`network.go`](../../token/services/network/fabric/network.go))
+  still use unconstrained discovery. A node with a selection configured therefore keeps
+  endorsement and public-parameters traffic inside its organization, but may still send
+  those queries to another organization's peers.
+
 ### FSC Endorsement
 
 As an alternative to chaincode-based endorsement, FSC nodes equipped with a proper
@@ -550,7 +618,13 @@ scan, and a non-positive delay would busy loop.
 
 ```yaml
 # Chaincode-based endorsement (default)
-# No additional configuration needed - uses Fabric's endorsement policies
+# No additional configuration needed - uses Fabric's endorsement policies.
+# Optionally, restrict which peers may endorse - see Endorser Selection above.
+services:
+  network:
+    fabric:
+      endorsement:
+        # mspIDs: [Org1MSP, Org3MSP]
 ```
 
 ## Implementation Details

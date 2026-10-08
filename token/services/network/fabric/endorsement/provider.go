@@ -14,6 +14,7 @@ import (
 	"github.com/LFDT-Panurus/panurus/token/services/network/common"
 	"github.com/LFDT-Panurus/panurus/token/services/network/common/rws/translator"
 	"github.com/LFDT-Panurus/panurus/token/services/network/driver"
+	config2 "github.com/LFDT-Panurus/panurus/token/services/network/fabric/config"
 	"github.com/LFDT-Panurus/panurus/token/services/network/fabric/endorsement/fsc"
 	"github.com/LFDT-Panurus/panurus/token/services/storage/endorserdb"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
@@ -26,7 +27,9 @@ import (
 )
 
 const (
-	FSCEndorsementKey = "services.network.fabric.fsc_endorsement"
+	// FSCEndorsementKey selects FSC endorsement for a TMS. It is an alias of the
+	// configuration package's key, which the endorser-selection policy also reads.
+	FSCEndorsementKey = config2.FSCEndorsementKey
 )
 
 var logger = logging.MustGetLogger()
@@ -88,10 +91,27 @@ func (l *loader) load(tmsID token2.TMSID) (Service, error) {
 		return nil, errors.WithMessagef(err, "failed to get configuration for [%s]", tmsID)
 	}
 
-	if !configuration.IsSet(FSCEndorsementKey) {
+	// The selection is validated in both modes, and whether it applies is decided in one
+	// place for both this loader and the public-parameters fetcher: contradictory
+	// configuration is an operator mistake whichever mode the TMS runs in, and failing
+	// here names it instead of leaving it to be discovered later.
+	selection, chaincodeEndorsement, err := config2.ResolveEndorserSelection(configuration)
+	if err != nil {
+		return nil, errors.WithMessagef(err, "invalid endorser selection for [%s]", tmsID)
+	}
+
+	if chaincodeEndorsement {
 		logger.Debugf("chaincode endorsement enabled...")
 
-		return NewChaincodeEndorsementService(tmsID), nil
+		if selection.IsSet() {
+			logger.Debugf("endorser selection for [%s]: %s", tmsID, selection.Explain())
+		}
+
+		return NewChaincodeEndorsementService(tmsID, selection), nil
+	}
+
+	if selection.IsSet() {
+		logger.Warnf("endorser selection configured for [%s] but FSC endorsement is enabled; the selection does not apply to FSC endorsers", tmsID)
 	}
 
 	logger.Debugf("FSC endorsement enabled...")

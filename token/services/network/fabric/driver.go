@@ -89,7 +89,7 @@ func NewGenericDriver(
 		tmsProvider,
 		tracerProvider,
 		identityProvider,
-		NewChaincodePublicParamsFetcher(viewManager),
+		NewChaincodePublicParamsFetcher(viewManager, NewConfigEndorserSelectionProvider(configProvider)),
 		NewTokenExecutorProvider(fnsProvider),
 		NewSpentTokenExecutorProvider(fnsProvider, keyTranslator),
 		keyTranslator,
