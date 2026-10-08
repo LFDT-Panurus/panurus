@@ -123,6 +123,45 @@ A wallet identifier registered with a `nil` wallet counts as absent, both on the
 creation double-checks the cache; a factory that returns no wallet and no error is reported as an
 error.
 
+### Wallet accessor error contract
+
+`wallet.Service`'s role accessors — `OwnerWallet`, `IssuerWallet`, `AuditorWallet`,
+`CertifierWallet`, and the `RegisterOwnerIdentity` / `RegisterIssuerIdentity` /
+`OwnerWalletIDs` delegators — return a typed error rather than panicking on a
+misconfiguration or a non-conforming implementation:
+
+*   **Missing role registry.** If `RoleRegistries` has no (or a `nil`) entry for the role
+    the accessor indexes into, the accessor returns `no registry configured for <role> role`
+    instead of a nil-interface method-call panic. `NewService` does not reject an incomplete
+    `RoleRegistries` up front; the guard is applied lazily, at first use of the affected role.
+*   **Wrong wallet type.** A `RoleRegistry.WalletByID` implementation that returns a
+    `driver.Wallet` not satisfying the concrete role interface the accessor expects (e.g. a
+    wallet that does not implement `driver.OwnerWallet`) yields
+    `wallet [<concrete-type>] for <role> role lookup [<id>] does not implement the expected wallet interface`,
+    rather than a failed type assertion panicking the calling goroutine. The message reports the
+    wallet's concrete Go type (via `%T`) and the lookup id, never the wallet's own id, so the
+    error path stays panic-free even when the registry hands back a typed-nil wallet whose type
+    *fails* the assertion. This is the failure mode a custom or partially-implemented
+    `WalletFactory` can produce.
+*   **Nil wallet.** A registry that returns a wallet which is nil — either a nil
+    `driver.Wallet` interface, or a non-nil interface wrapping a nil pointer whose concrete type
+    *does* satisfy the expected role interface (so the type assertion succeeds) — yields
+    `registry for <role> role returned a nil wallet for lookup [<id>]`. Without this guard the
+    accessor would hand the typed-nil back to the caller, whose first method call (e.g.
+    `wallet.ID()` in `authorization.IsMine`) would then panic.
+
+Each guard above also emits a `Warn`-level log when it trips, because the main consumers in
+`token/core/common/authorization.go` treat any accessor error as "not my wallet" and degrade
+silently — so a mis-wired role would otherwise leave no trace. The guards never trip for the
+shipped drivers, which always wire all four roles with the correct wallet types, so this adds
+no log noise on a correctly configured node.
+
+`Service.Wallet` (the best-effort owner-then-issuer resolver) still treats these as
+"no wallet found" and returns `nil` to its caller, but it now logs the dropped owner/issuer
+accessor error at debug level rather than discarding it silently — so a misconfiguration
+(e.g. no owner *and* no issuer registry) that makes `Wallet` return `nil` leaves a trace,
+while the explicit accessors still surface the error to their callers.
+
 ### LocalMembership
 
 The `LocalMembership` component (`token/services/identity/membership`) plays a pivotal role in managing local identities for a specific role (e.g., Owner, Issuer).

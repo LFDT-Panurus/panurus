@@ -228,6 +228,178 @@ func TestWalletAndLookupFunctions(t *testing.T) {
 	require.Equal(t, driver.Wallet(ow), w)
 }
 
+func TestWalletAccessorsMissingRegistry(t *testing.T) {
+	ctx := t.Context()
+	// Empty RoleRegistries: every accessor and delegator must return an error rather than
+	// panicking on a nil-interface method call.
+	s := wallet.NewService(&logging.MockLogger{}, &dmock.IdentityProvider{}, &dmock.Deserializer{}, wallet.RoleRegistries{})
+
+	_, err := s.OwnerWallet(ctx, driver.WalletLookupID("id"))
+	require.ErrorContains(t, err, "no registry configured for owner role")
+
+	_, err = s.IssuerWallet(ctx, driver.WalletLookupID("id"))
+	require.ErrorContains(t, err, "no registry configured for issuer role")
+
+	_, err = s.AuditorWallet(ctx, driver.WalletLookupID("id"))
+	require.ErrorContains(t, err, "no registry configured for auditor role")
+
+	_, err = s.CertifierWallet(ctx, driver.WalletLookupID("id"))
+	require.ErrorContains(t, err, "no registry configured for certifier role")
+
+	_, err = s.OwnerWalletIDs(ctx)
+	require.ErrorContains(t, err, "no registry configured for owner role")
+
+	err = s.RegisterOwnerIdentity(ctx, driver.IdentityConfiguration{})
+	require.ErrorContains(t, err, "no registry configured for owner role")
+
+	err = s.RegisterIssuerIdentity(ctx, driver.IdentityConfiguration{})
+	require.ErrorContains(t, err, "no registry configured for issuer role")
+}
+
+func TestWalletAccessorsWrongWalletType(t *testing.T) {
+	ctx := t.Context()
+	ownerReg := &wmock.RoleRegistry{}
+	// Return a wallet that implements driver.Wallet but not the expected role interface.
+	// A dmock.IssuerWallet does not satisfy driver.OwnerWallet.
+	notAnOwner := &dmock.IssuerWallet{}
+	notAnOwner.IDReturns("w-mismatch")
+	ownerReg.WalletByIDReturns(notAnOwner, nil)
+	s := wallet.NewService(
+		&logging.MockLogger{},
+		&dmock.IdentityProvider{},
+		&dmock.Deserializer{},
+		map[idriver.IdentityRoleType]wallet.RoleRegistry{idriver.OwnerRole: ownerReg},
+	)
+
+	_, err := s.OwnerWallet(ctx, driver.WalletLookupID("id"))
+	require.ErrorContains(t, err, "does not implement the expected wallet interface")
+	require.ErrorContains(t, err, "owner role")
+	// The message reports the concrete type (%T), not the wallet id — so it must not consult ID().
+	require.ErrorContains(t, err, "IssuerWallet")
+	require.NotContains(t, err.Error(), "w-mismatch")
+}
+
+// TestWalletAccessorsTypedNilWalletCorrectTypeNoPanic covers the harder typed-nil shape:
+// a RoleRegistry returns a non-nil driver.Wallet interface wrapping a nil pointer whose
+// concrete type *does* satisfy the expected role interface (e.g. a nil *dmock.OwnerWallet
+// for OwnerRole). The type assertion then succeeds, so a bare `rw, ok := w.(W)` guard lets
+// the typed-nil through and the caller's first method call (wallet.ID()) panics. The
+// accessor must instead detect the nil wallet and return a typed error. See #2068.
+func TestWalletAccessorsTypedNilWalletCorrectTypeNoPanic(t *testing.T) {
+	ctx := t.Context()
+	ownerReg := &wmock.RoleRegistry{}
+	var nilOwner *dmock.OwnerWallet // typed-nil that *does* satisfy driver.OwnerWallet
+	ownerReg.WalletByIDReturns(nilOwner, nil)
+	s := wallet.NewService(
+		&logging.MockLogger{},
+		&dmock.IdentityProvider{},
+		&dmock.Deserializer{},
+		map[idriver.IdentityRoleType]wallet.RoleRegistry{idriver.OwnerRole: ownerReg},
+	)
+
+	require.NotPanics(t, func() {
+		w, err := s.OwnerWallet(ctx, driver.WalletLookupID("id"))
+		require.ErrorContains(t, err, "returned a nil wallet")
+		require.Nil(t, w)
+	})
+
+	// Service.Wallet probes OwnerWallet first; a typed-nil owner wallet must not be
+	// propagated out as a non-nil driver.Wallet (which would panic the eventual caller).
+	require.NotPanics(t, func() {
+		require.Nil(t, s.Wallet(ctx, driver.Identity("id")))
+	})
+}
+
+// TestWalletAccessorsTypedNilWalletNoPanic covers the typed-nil wallet case: a RoleRegistry
+// that returns a non-nil driver.Wallet interface wrapping a nil pointer which does not satisfy
+// the expected role interface. The accessor must return the typed error without dereferencing
+// the wallet (previously it called w.ID() and panicked on the nil receiver).
+func TestWalletAccessorsTypedNilWalletNoPanic(t *testing.T) {
+	ctx := t.Context()
+	ownerReg := &wmock.RoleRegistry{}
+	var nilWallet *dmock.IssuerWallet // typed-nil driver.Wallet, not an OwnerWallet
+	ownerReg.WalletByIDReturns(nilWallet, nil)
+	s := wallet.NewService(
+		&logging.MockLogger{},
+		&dmock.IdentityProvider{},
+		&dmock.Deserializer{},
+		map[idriver.IdentityRoleType]wallet.RoleRegistry{idriver.OwnerRole: ownerReg},
+	)
+
+	require.NotPanics(t, func() {
+		_, err := s.OwnerWallet(ctx, driver.WalletLookupID("id"))
+		require.ErrorContains(t, err, "does not implement the expected wallet interface")
+		require.ErrorContains(t, err, "owner role")
+	})
+}
+
+// TestWalletAccessorsRegistryGuard table-drives all four role accessors against both
+// a missing registry entry and a present-but-typed-nil entry (a non-nil RoleRegistry
+// interface wrapping a nil *wmock.RoleRegistry, as Convert would produce from a nil
+// concrete value). Both must yield the typed error rather than panicking.
+func TestWalletAccessorsRegistryGuard(t *testing.T) {
+	ctx := t.Context()
+
+	cases := []struct {
+		role string
+		key  idriver.IdentityRoleType
+		call func(context.Context, *wallet.Service) error
+	}{
+		{"owner", idriver.OwnerRole, func(ctx context.Context, s *wallet.Service) error {
+			_, err := s.OwnerWallet(ctx, driver.WalletLookupID("id"))
+
+			return err
+		}},
+		{"issuer", idriver.IssuerRole, func(ctx context.Context, s *wallet.Service) error {
+			_, err := s.IssuerWallet(ctx, driver.WalletLookupID("id"))
+
+			return err
+		}},
+		{"auditor", idriver.AuditorRole, func(ctx context.Context, s *wallet.Service) error {
+			_, err := s.AuditorWallet(ctx, driver.WalletLookupID("id"))
+
+			return err
+		}},
+		{"certifier", idriver.CertifierRole, func(ctx context.Context, s *wallet.Service) error {
+			_, err := s.CertifierWallet(ctx, driver.WalletLookupID("id"))
+
+			return err
+		}},
+	}
+
+	for _, tc := range cases {
+		t.Run("missing/"+tc.role, func(t *testing.T) {
+			s := wallet.NewService(&logging.MockLogger{}, &dmock.IdentityProvider{}, &dmock.Deserializer{}, wallet.RoleRegistries{})
+			require.NotPanics(t, func() {
+				require.ErrorContains(t, tc.call(ctx, s), "no registry configured for "+tc.role+" role")
+			})
+		})
+		t.Run("typed-nil/"+tc.role, func(t *testing.T) {
+			var nilReg *wmock.RoleRegistry // non-nil interface wrapping a nil pointer
+			s := wallet.NewService(&logging.MockLogger{}, &dmock.IdentityProvider{}, &dmock.Deserializer{},
+				map[idriver.IdentityRoleType]wallet.RoleRegistry{tc.key: nilReg})
+			require.NotPanics(t, func() {
+				require.ErrorContains(t, tc.call(ctx, s), "no registry configured for "+tc.role+" role")
+			})
+		})
+	}
+}
+
+// TestDoneSkipsNilRegistry ensures Done tolerates a typed-nil registry entry rather than
+// panicking at shutdown when invoking Done() on it.
+func TestDoneSkipsNilRegistry(t *testing.T) {
+	liveReg := &wmock.RoleRegistry{}
+	liveReg.DoneReturns(nil)
+	var nilReg *wmock.RoleRegistry // non-nil interface wrapping a nil pointer
+	s := wallet.NewService(&logging.MockLogger{}, &dmock.IdentityProvider{}, &dmock.Deserializer{},
+		map[idriver.IdentityRoleType]wallet.RoleRegistry{idriver.OwnerRole: liveReg, idriver.IssuerRole: nilReg})
+
+	require.NotPanics(t, func() {
+		require.NoError(t, s.Done())
+	})
+	require.Equal(t, 1, liveReg.DoneCallCount())
+}
+
 func TestSpendIDsAndConvert(t *testing.T) {
 	s := wallet.NewService(&logging.MockLogger{}, &dmock.IdentityProvider{}, &dmock.Deserializer{}, nil)
 	// SpendIDs empty
