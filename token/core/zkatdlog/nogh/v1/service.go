@@ -10,7 +10,6 @@ import (
 	"github.com/LFDT-Panurus/panurus/token/core/common"
 	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/setup"
 	"github.com/LFDT-Panurus/panurus/token/driver"
-	"github.com/LFDT-Panurus/panurus/token/services/identity/wallet"
 	"github.com/LFDT-Panurus/panurus/token/services/logging"
 )
 
@@ -20,7 +19,7 @@ type Service struct {
 
 func NewTokenService(
 	logger logging.Logger,
-	ws *wallet.Service,
+	ws driver.WalletService,
 	ppm common.PublicParametersManager[*setup.PublicParams],
 	identityProvider driver.IdentityProvider,
 	deserializer driver.Deserializer,

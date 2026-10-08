@@ -110,6 +110,7 @@ nav:
           - Recovery Service: services/storage/recovery.md
       - Tokens: services/tokens.md
       - TTX: services/ttx.md
+      - Observability: services/observability.md
   - Security:
       - HTLC Deadlines and Clock Synchronisation: security/htlc_deadline_clock_assumptions.md
       - OpenSSF Baseline: openssf/README.md

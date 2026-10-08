@@ -98,3 +98,6 @@ The [Certifier Service](./services/certifier.md) handles the lifecycle of token 
 
 ### Benchmark Service
 The [Benchmark Service](./services/benchmark.md) provides performance benchmarking capabilities for the Panurus. It allows developers and operators to measure the performance of various token operations under different configurations and workloads.
+
+### Observability Service
+The [Observability Service](./services/observability.md) provides injectable decorators, Prometheus metrics collection, and circuit breaker back-pressure protection for Token-API entry points and wallets.

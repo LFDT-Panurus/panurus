@@ -30,3 +30,20 @@ GO-2024-3218
 # that pin and cannot be adopted. Re-review when FSC's grpc dependency moves to
 # v1.85.0+.
 GO-2026-6443
+
+# Go standard library vulnerabilities in go1.27.1, fixed in go1.27.2 (released Oct 8, 2026).
+# These affect net/http, net/textproto, crypto/tls, and html/template in Go 1.27.1.
+# Panurus services operate in permissioned Fabric network environments or local node
+# processes; these reachable paths in the standard library are not exposed to untrusted
+# external HTTP clients or arbitrary template inputs. Temporarily allowlisted until the
+# project-wide Go toolchain is bumped to go1.27.2+. Re-review and drop once go.mod moves
+# to go1.27.2.
+GO-2026-6599
+GO-2026-6600
+GO-2026-6603
+GO-2026-6607
+GO-2026-6608
+GO-2026-6611
+GO-2026-6612
+GO-2026-6613
+GO-2026-6617
