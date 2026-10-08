@@ -10,6 +10,20 @@ import (
 )
 
 type Storage struct {
+	AlreadyProcessedStub        func(context.Context, string) (bool, error)
+	alreadyProcessedMutex       sync.RWMutex
+	alreadyProcessedArgsForCall []struct {
+		arg1 context.Context
+		arg2 string
+	}
+	alreadyProcessedReturns struct {
+		result1 bool
+		result2 error
+	}
+	alreadyProcessedReturnsOnCall map[int]struct {
+		result1 bool
+		result2 error
+	}
 	AppendValidationRecordStub        func(context.Context, string, []byte, map[string][]byte, driver.PPHash) error
 	appendValidationRecordMutex       sync.RWMutex
 	appendValidationRecordArgsForCall []struct {
@@ -25,8 +39,85 @@ type Storage struct {
 	appendValidationRecordReturnsOnCall map[int]struct {
 		result1 error
 	}
+	DeleteValidationRecordStub        func(context.Context, string) error
+	deleteValidationRecordMutex       sync.RWMutex
+	deleteValidationRecordArgsForCall []struct {
+		arg1 context.Context
+		arg2 string
+	}
+	deleteValidationRecordReturns struct {
+		result1 error
+	}
+	deleteValidationRecordReturnsOnCall map[int]struct {
+		result1 error
+	}
 	invocations      map[string][][]interface{}
 	invocationsMutex sync.RWMutex
+}
+
+func (fake *Storage) AlreadyProcessed(arg1 context.Context, arg2 string) (bool, error) {
+	fake.alreadyProcessedMutex.Lock()
+	ret, specificReturn := fake.alreadyProcessedReturnsOnCall[len(fake.alreadyProcessedArgsForCall)]
+	fake.alreadyProcessedArgsForCall = append(fake.alreadyProcessedArgsForCall, struct {
+		arg1 context.Context
+		arg2 string
+	}{arg1, arg2})
+	stub := fake.AlreadyProcessedStub
+	fakeReturns := fake.alreadyProcessedReturns
+	fake.recordInvocation("AlreadyProcessed", []interface{}{arg1, arg2})
+	fake.alreadyProcessedMutex.Unlock()
+	if stub != nil {
+		return stub(arg1, arg2)
+	}
+	if specificReturn {
+		return ret.result1, ret.result2
+	}
+	return fakeReturns.result1, fakeReturns.result2
+}
+
+func (fake *Storage) AlreadyProcessedCallCount() int {
+	fake.alreadyProcessedMutex.RLock()
+	defer fake.alreadyProcessedMutex.RUnlock()
+	return len(fake.alreadyProcessedArgsForCall)
+}
+
+func (fake *Storage) AlreadyProcessedCalls(stub func(context.Context, string) (bool, error)) {
+	fake.alreadyProcessedMutex.Lock()
+	defer fake.alreadyProcessedMutex.Unlock()
+	fake.AlreadyProcessedStub = stub
+}
+
+func (fake *Storage) AlreadyProcessedArgsForCall(i int) (context.Context, string) {
+	fake.alreadyProcessedMutex.RLock()
+	defer fake.alreadyProcessedMutex.RUnlock()
+	argsForCall := fake.alreadyProcessedArgsForCall[i]
+	return argsForCall.arg1, argsForCall.arg2
+}
+
+func (fake *Storage) AlreadyProcessedReturns(result1 bool, result2 error) {
+	fake.alreadyProcessedMutex.Lock()
+	defer fake.alreadyProcessedMutex.Unlock()
+	fake.AlreadyProcessedStub = nil
+	fake.alreadyProcessedReturns = struct {
+		result1 bool
+		result2 error
+	}{result1, result2}
+}
+
+func (fake *Storage) AlreadyProcessedReturnsOnCall(i int, result1 bool, result2 error) {
+	fake.alreadyProcessedMutex.Lock()
+	defer fake.alreadyProcessedMutex.Unlock()
+	fake.AlreadyProcessedStub = nil
+	if fake.alreadyProcessedReturnsOnCall == nil {
+		fake.alreadyProcessedReturnsOnCall = make(map[int]struct {
+			result1 bool
+			result2 error
+		})
+	}
+	fake.alreadyProcessedReturnsOnCall[i] = struct {
+		result1 bool
+		result2 error
+	}{result1, result2}
 }
 
 func (fake *Storage) AppendValidationRecord(arg1 context.Context, arg2 string, arg3 []byte, arg4 map[string][]byte, arg5 driver.PPHash) error {
@@ -34,6 +125,11 @@ func (fake *Storage) AppendValidationRecord(arg1 context.Context, arg2 string, a
 	if arg3 != nil {
 		arg3Copy = make([]byte, len(arg3))
 		copy(arg3Copy, arg3)
+	}
+	var arg5Copy driver.PPHash
+	if arg5 != nil {
+		arg5Copy = make(driver.PPHash, len(arg5))
+		copy(arg5Copy, arg5)
 	}
 	fake.appendValidationRecordMutex.Lock()
 	ret, specificReturn := fake.appendValidationRecordReturnsOnCall[len(fake.appendValidationRecordArgsForCall)]
@@ -43,10 +139,10 @@ func (fake *Storage) AppendValidationRecord(arg1 context.Context, arg2 string, a
 		arg3 []byte
 		arg4 map[string][]byte
 		arg5 driver.PPHash
-	}{arg1, arg2, arg3Copy, arg4, arg5})
+	}{arg1, arg2, arg3Copy, arg4, arg5Copy})
 	stub := fake.AppendValidationRecordStub
 	fakeReturns := fake.appendValidationRecordReturns
-	fake.recordInvocation("AppendValidationRecord", []interface{}{arg1, arg2, arg3Copy, arg4, arg5})
+	fake.recordInvocation("AppendValidationRecord", []interface{}{arg1, arg2, arg3Copy, arg4, arg5Copy})
 	fake.appendValidationRecordMutex.Unlock()
 	if stub != nil {
 		return stub(arg1, arg2, arg3, arg4, arg5)
@@ -95,6 +191,68 @@ func (fake *Storage) AppendValidationRecordReturnsOnCall(i int, result1 error) {
 		})
 	}
 	fake.appendValidationRecordReturnsOnCall[i] = struct {
+		result1 error
+	}{result1}
+}
+
+func (fake *Storage) DeleteValidationRecord(arg1 context.Context, arg2 string) error {
+	fake.deleteValidationRecordMutex.Lock()
+	ret, specificReturn := fake.deleteValidationRecordReturnsOnCall[len(fake.deleteValidationRecordArgsForCall)]
+	fake.deleteValidationRecordArgsForCall = append(fake.deleteValidationRecordArgsForCall, struct {
+		arg1 context.Context
+		arg2 string
+	}{arg1, arg2})
+	stub := fake.DeleteValidationRecordStub
+	fakeReturns := fake.deleteValidationRecordReturns
+	fake.recordInvocation("DeleteValidationRecord", []interface{}{arg1, arg2})
+	fake.deleteValidationRecordMutex.Unlock()
+	if stub != nil {
+		return stub(arg1, arg2)
+	}
+	if specificReturn {
+		return ret.result1
+	}
+	return fakeReturns.result1
+}
+
+func (fake *Storage) DeleteValidationRecordCallCount() int {
+	fake.deleteValidationRecordMutex.RLock()
+	defer fake.deleteValidationRecordMutex.RUnlock()
+	return len(fake.deleteValidationRecordArgsForCall)
+}
+
+func (fake *Storage) DeleteValidationRecordCalls(stub func(context.Context, string) error) {
+	fake.deleteValidationRecordMutex.Lock()
+	defer fake.deleteValidationRecordMutex.Unlock()
+	fake.DeleteValidationRecordStub = stub
+}
+
+func (fake *Storage) DeleteValidationRecordArgsForCall(i int) (context.Context, string) {
+	fake.deleteValidationRecordMutex.RLock()
+	defer fake.deleteValidationRecordMutex.RUnlock()
+	argsForCall := fake.deleteValidationRecordArgsForCall[i]
+	return argsForCall.arg1, argsForCall.arg2
+}
+
+func (fake *Storage) DeleteValidationRecordReturns(result1 error) {
+	fake.deleteValidationRecordMutex.Lock()
+	defer fake.deleteValidationRecordMutex.Unlock()
+	fake.DeleteValidationRecordStub = nil
+	fake.deleteValidationRecordReturns = struct {
+		result1 error
+	}{result1}
+}
+
+func (fake *Storage) DeleteValidationRecordReturnsOnCall(i int, result1 error) {
+	fake.deleteValidationRecordMutex.Lock()
+	defer fake.deleteValidationRecordMutex.Unlock()
+	fake.DeleteValidationRecordStub = nil
+	if fake.deleteValidationRecordReturnsOnCall == nil {
+		fake.deleteValidationRecordReturnsOnCall = make(map[int]struct {
+			result1 error
+		})
+	}
+	fake.deleteValidationRecordReturnsOnCall[i] = struct {
 		result1 error
 	}{result1}
 }
