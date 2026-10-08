@@ -804,6 +804,10 @@ to another TMS's public parameters. Two TMS that are deliberately configured to 
 `contracts.tokenState` do share one watcher and see the same updates, which is the intended behaviour for
 that setup.
 
+`Ledger().Status(txID)` has no namespace argument, so on a network with several TMS it asks every TMS's
+TokenState at the same time and takes the first one that knows the anchor. Anchors are derived from a fresh
+random nonce, so at most one of them can have applied a given transaction.
+
 This node's own role as an endorser (`endorser.enabled`, `endorser.keystore`, `endorser.address`) is the
 one thing that stays node-wide rather than per TMS, because FSC can register only one endorsement
 responder per process (see `registerEndorser`'s doc comment in `driver.go`). If more than one TMS on the

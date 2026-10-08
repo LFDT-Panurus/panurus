@@ -37,13 +37,26 @@ type Submitter struct {
 	nonces     *NonceManager
 }
 
-// NewSubmitter assembles a Submitter for one TMS.
+// NewSubmitter assembles a Submitter for one TMS, with a nonce sequence of its own.
 func NewSubmitter(
 	evmClient client.EVMClient,
 	key *secp256k1.PrivateKey,
 	tokenState client.Address,
 	chainID *big.Int,
 	gas GasConfig,
+) (*Submitter, error) {
+	return buildSubmitter(evmClient, key, tokenState, chainID, gas, nil)
+}
+
+// buildSubmitter is NewSubmitter with the nonce sequence supplied by the caller, so several
+// Submitters paying from one account can share one. A nil nonces gets the Submitter its own.
+func buildSubmitter(
+	evmClient client.EVMClient,
+	key *secp256k1.PrivateKey,
+	tokenState client.Address,
+	chainID *big.Int,
+	gas GasConfig,
+	nonces *NonceManager,
 ) (*Submitter, error) {
 	if evmClient == nil {
 		return nil, errors.New("submitter: nil evm client")
@@ -55,6 +68,9 @@ func NewSubmitter(
 		return nil, errors.New("submitter: chain id must be set and positive")
 	}
 	address := eip712.PubKeyToAddress(key.PubKey())
+	if nonces == nil {
+		nonces = NewNonceManager(evmClient, address)
+	}
 
 	return &Submitter{
 		client:     evmClient,
@@ -63,7 +79,7 @@ func NewSubmitter(
 		tokenState: tokenState,
 		chainID:    chainID,
 		gas:        gas,
-		nonces:     NewNonceManager(evmClient, address),
+		nonces:     nonces,
 	}, nil
 }
 

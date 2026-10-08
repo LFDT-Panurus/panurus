@@ -113,6 +113,15 @@ spend must reference that exact marker, so forged content simply never matches a
 `ComputeTokenID` stays the addressable storage key, independent of content, so `QueryTokens` can still
 resolve a `token.ID` to its bytes.
 
+**A spent token keeps its bytes on chain.** `TokenState` only marks the spend (`snSpent`) and never clears
+`tokens[tokenID]`, unlike the Fabric translator, which deletes the output key. `QueryTokens` and
+`Ledger.GetStates` therefore read the spent flags of every token they find, in one `areTokensSpent` call,
+and treat a spent one as missing, which is what their callers (the vault's unspent-token check among them)
+expect. If that call fails, the read fails too, rather than hand back bytes for a token that may be gone.
+Under graph hiding `areTokensSpent` is unsupported, so the reader checks the clone's `graphHiding` flag
+(read once, it is fixed at `initialize`) and skips the call: the bytes are returned as read, with no extra
+round trip. Fabric does not delete spent outputs in that mode either.
+
 ## Hashing: keccak256 vs SHA-256
 
 | Value | Algorithm | Why |
@@ -236,6 +245,13 @@ sources, and both distinctions matter enough to have caused real bugs:
   comparison to keep in lockstep, so its watchers keep `Finality.BlockTag` and its reorg safety.
   `Finality.BlockTag` and `client.BlockTagLatest` are kept independent by construction (each is a
   distinct constructor argument, not a shared default).
+- **Two other reads use `latest` for the same reason.** `Network.FetchPublicParameters`, the fetcher
+  a TMS is built from, reads at `latest` like `Connect`'s deployment and policy checks: at `finalized`
+  a contract deployed within the finalization window does not exist yet, so the node would connect and
+  then fail to build its TMS. `Network.anchorApplied`, which turns a resubmit refused as already
+  applied back into a success, reads at `latest` because the refusal comes from gas estimation at the
+  head of the chain. Both go through the binding's `latest` reader; finality itself is still decided at
+  `Finality.BlockTag`.
 
 ## Signing: byte formats that bite
 

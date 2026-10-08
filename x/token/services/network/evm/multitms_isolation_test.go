@@ -257,21 +257,25 @@ func TestMultiTMSIsolation_Live(t *testing.T) {
 	// counted from where that left off rather than from zero.
 	beforeQuery := evmClient.CallCallCount()
 
-	evmClient.CallReturns(abiBytes([]byte("owned-by-b")), nil)
+	stubTokenReads(evmClient, []byte("owned-by-b"), false)
 	out, err := n.QueryTokens(t.Context(), tmsB.Namespace, []*token.ID{{TxId: anchorHex(0x01), Index: 0}})
 	require.NoError(t, err)
 	require.Len(t, out, 1)
 	assert.Equal(t, []byte("owned-by-b"), out[0])
 
-	require.Equal(t, beforeQuery+1, evmClient.CallCallCount())
-	_, calledTo, _, _ := evmClient.CallArgsForCall(beforeQuery)
-	assert.Equal(t, addrB, calledTo, "QueryTokens for the tms-b namespace must read through tms-b's own TokenState clone")
-	assert.NotEqual(t, addrA, calledTo, "it must not silently fall back to tms-a's TokenState")
+	// One read for the token, one for the clone's graphHiding mode and one for whether the token is
+	// spent, all against tms-b's contract.
+	require.Equal(t, beforeQuery+3, evmClient.CallCallCount())
+	for i := beforeQuery; i < beforeQuery+3; i++ {
+		_, calledTo, _, _ := evmClient.CallArgsForCall(i)
+		assert.Equal(t, addrB, calledTo, "QueryTokens for the tms-b namespace must read through tms-b's own TokenState clone")
+		assert.NotEqual(t, addrA, calledTo, "it must not silently fall back to tms-a's TokenState")
+	}
 
 	// The same holds in the other direction: tms-a's own reads must still go through tms-a's contract,
 	// unaffected by tms-b sharing the same *Network object.
 	beforeQueryA := evmClient.CallCallCount()
-	evmClient.CallReturns(abiBytes([]byte("owned-by-a")), nil)
+	stubTokenReads(evmClient, []byte("owned-by-a"), false)
 	outA, err := n.QueryTokens(t.Context(), tmsA.Namespace, []*token.ID{{TxId: anchorHex(0x02), Index: 0}})
 	require.NoError(t, err)
 	require.Len(t, outA, 1)

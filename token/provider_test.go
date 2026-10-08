@@ -106,6 +106,9 @@ type mockTokenManagerServiceProvider struct {
 	updateErr       error
 	getTMSErr       error
 	tms             driver.TokenManagerService
+	// reloadTo, when set, is the service Update swaps in, as the core provider does when the
+	// parameters changed.
+	reloadTo driver.TokenManagerService
 }
 
 func (m *mockTokenManagerServiceProvider) GetTokenManagerService(opts driver.ServiceOptions) (driver.TokenManagerService, error) {
@@ -118,6 +121,9 @@ func (m *mockTokenManagerServiceProvider) GetTokenManagerService(opts driver.Ser
 
 func (m *mockTokenManagerServiceProvider) Update(opts driver.ServiceOptions) error {
 	m.updateCallCount++
+	if m.updateErr == nil && m.reloadTo != nil {
+		m.tms = m.reloadTo
+	}
 
 	return m.updateErr
 }
@@ -215,6 +221,48 @@ func TestManagementServiceProvider_Update(t *testing.T) {
 	assert.Equal(t, 1, tmsProvider.updateCallCount)
 
 	// Verify cache was cleared
+	_, exists := provider.services["net1ch1ns1"]
+	assert.False(t, exists)
+}
+
+// shutdownCountingSelectorProvider is a selector provider that counts Shutdown calls.
+type shutdownCountingSelectorProvider struct {
+	mockSelectorManagerProvider
+	shutdowns int
+}
+
+func (m *shutdownCountingSelectorProvider) Shutdown() { m.shutdowns++ }
+
+// TestManagementServiceProvider_Update_SameParams verifies that re-applying the public parameters a
+// TMS already runs changes nothing: in particular it must not shut down the selector managers, which
+// stops their background cleanup for every TMS on the node. The core provider is still asked, since
+// it is the one that knows whether the parameters changed.
+func TestManagementServiceProvider_Update_SameParams(t *testing.T) {
+	live := &mock.TokenManagerService{}
+	tmsProvider := &mockTokenManagerServiceProvider{tms: live}
+	selectorProvider := &shutdownCountingSelectorProvider{}
+	provider := NewManagementServiceProvider(
+		tmsProvider,
+		&mockNormalizer{},
+		&mockVaultProvider{},
+		&mockCertificationClientProvider{},
+		selectorProvider,
+	)
+
+	cached := &ManagementService{tms: live}
+	provider.services["net1ch1ns1"] = cached
+
+	tmsID := TMSID{Network: "net1", Channel: "ch1", Namespace: "ns1"}
+	require.NoError(t, provider.Update(tmsID, []byte("current params")))
+	assert.Equal(t, 1, tmsProvider.updateCallCount, "the core provider decides")
+	assert.Equal(t, 0, selectorProvider.shutdowns, "selector managers must keep running")
+	assert.Same(t, cached, provider.services["net1ch1ns1"], "the cached service stays")
+
+	// When the core provider swaps in a new service, the full reload still happens.
+	tmsProvider.reloadTo = &mock.TokenManagerService{}
+	require.NoError(t, provider.Update(tmsID, []byte("new params")))
+	assert.Equal(t, 2, tmsProvider.updateCallCount)
+	assert.Equal(t, 1, selectorProvider.shutdowns)
 	_, exists := provider.services["net1ch1ns1"]
 	assert.False(t, exists)
 }
