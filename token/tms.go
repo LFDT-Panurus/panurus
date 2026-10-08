@@ -114,6 +114,13 @@ func signatureServiceOptions(tms driver.TokenManagerService) []SignatureServiceO
 	return []SignatureServiceOption{
 		WithSignatureObserver(instrumented.SignatureObserver()),
 		WithSignatureGate(gate),
+		// Key the gate on the party's enrollment ID rather than the raw identity hash. Without this
+		// a party presenting a fresh pseudonym per request (an Idemix nym on the recipient path is
+		// the canonical case) is a new key with a full quota every time, so pseudonym rotation
+		// walks straight around the per-principal limit. The resolver falls back to the identity
+		// hash for any identity it cannot resolve from local audit info, so non-rotating identities
+		// are unaffected. It is installed only alongside a gate, so an ungated service pays nothing.
+		WithPrincipalKeyResolver(newEnrollmentKeyResolver(tms.IdentityProvider())),
 	}
 }
 
