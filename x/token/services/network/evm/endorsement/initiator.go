@@ -223,7 +223,9 @@ func (i *Initiator) bind(anchor [keys.AnchorLength]byte, delta *statedelta.State
 		return errors.Wrapf(ErrDeltaMismatch, "malformed delta: %v", err)
 	}
 	// A setup request carries the exact parameters to commit, so unlike a token request the delta can be
-	// checked against it without a validator.
+	// checked against it without a validator. A non-setup request must never be answered with a setup
+	// delta, or an approval could relay a public-parameters rewrite in place of the token approval asked
+	// for; that guard is symmetric to the one below and also needs no validator.
 	if i.request != nil && i.request.Kind == KindSetup {
 		if !delta.IsSetup {
 			return errors.Wrapf(ErrDeltaMismatch, "setup request answered with a non-setup delta")
@@ -231,6 +233,8 @@ func (i *Initiator) bind(anchor [keys.AnchorLength]byte, delta *statedelta.State
 		if !bytes.Equal(delta.SetupParameters, i.request.PublicParamsRaw) {
 			return errors.Wrapf(ErrDeltaMismatch, "delta setup parameters differ from the requested ones")
 		}
+	} else if delta.IsSetup {
+		return errors.Wrapf(ErrDeltaMismatch, "non-setup request answered with a setup delta")
 	}
 
 	return nil

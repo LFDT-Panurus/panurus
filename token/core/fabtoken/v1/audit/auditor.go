@@ -69,13 +69,13 @@ type Auditor = common.Auditor[*setup.PublicParams, *actions.IssueAction, *action
 // limits are the configured resource limits; they are threaded into the
 // ActionDeserializer and applied to each action before deserialization so the
 // audit path enforces the same policy as the validator (see validator.go).
-func NewAuditor(logger logging.Logger, tracer trace.Tracer, deserializer driver.Deserializer, pp *setup.PublicParams, precision uint64, limits driver.ResourceLimits) *Auditor {
+func NewAuditor(logger logging.Logger, tracer trace.Tracer, deserializer driver.Deserializer, pp *setup.PublicParams, limits driver.ResourceLimits) *Auditor {
 	issueValidators := []ValidateIssueAuditFunc{
-		IssueAuditValidate(precision),
+		IssueAuditValidate(),
 	}
 
 	transferValidators := []ValidateTransferAuditFunc{
-		TransferAuditValidate(precision),
+		TransferAuditValidate(),
 	}
 
 	return common.NewAuditor[*setup.PublicParams, *actions.IssueAction, *actions.TransferAction, driver.Deserializer](
@@ -90,7 +90,7 @@ func NewAuditor(logger logging.Logger, tracer trace.Tracer, deserializer driver.
 }
 
 // IssueAuditValidate returns a validation function for issue actions.
-func IssueAuditValidate(precision uint64) ValidateIssueAuditFunc {
+func IssueAuditValidate() ValidateIssueAuditFunc {
 	return func(ctx context.Context, auditCtx *AuditContext) error {
 		// Get the issue action and metadata
 		action := auditCtx.IssueAction
@@ -125,7 +125,7 @@ func IssueAuditValidate(precision uint64) ValidateIssueAuditFunc {
 }
 
 // TransferAuditValidate returns a validation function for transfer actions.
-func TransferAuditValidate(precision uint64) ValidateTransferAuditFunc {
+func TransferAuditValidate() ValidateTransferAuditFunc {
 	return func(ctx context.Context, auditCtx *AuditContext) error {
 		// Get the transfer action and metadata
 		action := auditCtx.TransferAction
@@ -150,10 +150,14 @@ func TransferAuditValidate(precision uint64) ValidateTransferAuditFunc {
 			return errors.Wrapf(err, "transfer action does not match metadata")
 		}
 
-		// Validate that all inputs and outputs have the same token type
-		// For fabtoken, we don't validate value sums because outputs are in cleartext
-		// and validated by the action's Match() method
-		if err := common.ValidateTransferActionTokenTypes(metadata, auditCtx.AuditTokens, false, precision); err != nil {
+		// Validate that all inputs have the same token type.
+		// For fabtoken, output types and input/output value conservation are enforced committer-side
+		// against ledger state by TransferBalanceValidate in
+		// token/core/fabtoken/v1/validator/validator_transfer.go (it sums ctx.InputTokens), not here and
+		// not by Match(), which only checks structural correspondence. Note this is distinct from the
+		// sender-side TransferService.VerifyTransfer, which sums values the action's own author wrote and
+		// so is a self-check, not an independent guarantee.
+		if err := common.ValidateTransferActionTokenTypes(metadata, auditCtx.AuditTokens); err != nil {
 			return errors.Wrapf(err, "token type validation failed for transfer action")
 		}
 
