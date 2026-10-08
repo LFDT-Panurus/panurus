@@ -281,9 +281,49 @@ func TestSignatureServiceGetAuditInfoStopsAtTheFirstDenial(t *testing.T) {
 // observability stack to install.
 func TestSignatureServiceOptionsTolerateNil(t *testing.T) {
 	s := NewSignatureService(&mock.Deserializer{}, &mock.IdentityProvider{},
-		WithSignatureObserver(nil), WithSignatureGate(nil))
+		WithSignatureObserver(nil), WithSignatureGate(nil), WithPrincipalKeyResolver(nil))
 
 	assert.NotNil(t, s.observer, "a nil observer must not replace the no-op one")
 	assert.Nil(t, s.gate)
+	assert.Nil(t, s.principalKey, "a nil resolver must not be installed")
 	require.NoError(t, s.allow(t.Context(), sigobserve.OpSign, sigobserve.RoleUnknown, Identity("an_identity")))
+}
+
+// fixedKeyResolver is a PrincipalKeyResolver that returns the same key for every identity, so the
+// gate-keying contract can be tested independently of how a real resolver derives that key.
+type fixedKeyResolver struct{ key string }
+
+func (r fixedKeyResolver) ThrottleKey(context.Context, Identity) string { return r.key }
+
+// TestSignatureServiceGateKeysOnResolvedPrincipal pins finding 2: when a resolver is installed, the
+// gate must meter the resolved stable key, not the raw (rotating) identity hash. Otherwise a party
+// presenting a fresh pseudonym per request gets a full quota every time and walks around the limit.
+func TestSignatureServiceGateKeysOnResolvedPrincipal(t *testing.T) {
+	gate := &denyingGate{}
+	events := &gateRecorder{}
+	s := NewSignatureService(&mock.Deserializer{}, &mock.IdentityProvider{},
+		WithSignatureObserver(events), WithSignatureGate(gate),
+		WithPrincipalKeyResolver(fixedKeyResolver{key: "eid:alice"}))
+
+	_, err := s.OwnerVerifier(t.Context(), Identity("a_rotating_pseudonym"))
+	require.ErrorIs(t, err, SignatureThrottled)
+
+	assert.Equal(t, "eid:alice", gate.last, "the gate must meter the resolved stable key, not the pseudonym hash")
+	events2 := events.all()
+	require.Len(t, events2, 1)
+	assert.Equal(t, "eid:alice", events2[0].Principal, "the denial must be reported under the resolved key")
+}
+
+// TestSignatureServiceFallsBackToIdentityHashWhenResolverIsEmpty pins the safe default: a resolver
+// returning "" (no stable key available) leaves the gate keyed on the identity hash, exactly as if
+// no resolver were installed. An over-broad key would let unrelated identities throttle each other.
+func TestSignatureServiceFallsBackToIdentityHashWhenResolverIsEmpty(t *testing.T) {
+	gate := &denyingGate{}
+	id := Identity("an_identity")
+	s := NewSignatureService(&mock.Deserializer{}, &mock.IdentityProvider{},
+		WithSignatureGate(gate), WithPrincipalKeyResolver(fixedKeyResolver{key: ""}))
+
+	_, err := s.OwnerVerifier(t.Context(), id)
+	require.ErrorIs(t, err, SignatureThrottled)
+	assert.Equal(t, id.UniqueID(), gate.last, "an empty resolver result must fall back to the identity hash")
 }
