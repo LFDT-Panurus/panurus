@@ -32,6 +32,7 @@ import (
 	"github.com/LFDT-Panurus/panurus/token/services/identity/role"
 	_ "github.com/LFDT-Panurus/panurus/token/services/logging" // registers the "panurus" metric namespace replacer
 	fabricxqueue "github.com/LFDT-Panurus/panurus/token/services/network/fabricx/finality/queue"
+	"github.com/LFDT-Panurus/panurus/token/services/observability"
 	"github.com/LFDT-Panurus/panurus/token/services/selector/sherdlock"
 	"github.com/LFDT-Panurus/panurus/token/services/storage/services/checks"
 	"github.com/LFDT-Panurus/panurus/token/services/ttx"
@@ -238,6 +239,16 @@ var groups = []group{
 			{file: "token/sdk/db/checks.go", call: "checks.NewMetrics(metrics.NewTMSProvider(tmsID, s.metricsProvider))"},
 		},
 		build: func(p metrics.Provider) { checks.NewMetrics(p) },
+	},
+	{
+		subsystem: "Wallet service",
+		source:    "token/services/observability/metrics.go",
+		scope:     tmsScoped,
+		wiring: []wiringSite{
+			{file: "token/core/fabtoken/v1/driver/driver.go", call: "observability.NewWalletServiceDecoratorWithConfig("},
+			{file: "token/core/zkatdlog/nogh/v1/driver/driver.go", call: "observability.NewWalletServiceDecoratorWithConfig("},
+		},
+		build: func(p metrics.Provider) { observability.NewWalletMetrics(p) },
 	},
 	{
 		subsystem: "TTX: transaction lifecycle",

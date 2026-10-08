@@ -240,6 +240,25 @@ path while the identity backend keeps failing; the corresponding log line alone 
 Source: `token/services/identity/metrics.go`, `token/services/identity/idemix/cache/metrics.go`,
 `token/services/identity/role/metrics.go`.
 
+## Wallet service
+
+Recorded by the observability decorator in `token/services/observability/`, which wraps the wallet
+service and per-wallet instances (`OwnerWallet`, `IssuerWallet`, `AuditorWallet`, `CertifierWallet`)
+with metrics and circuit breaking. Both driver paths (FabToken and ZKAT-DLog) receive a TMS-scoped
+provider, hence the `panurus_core_common_metrics_` prefix. All metrics carry `wallet_id` to prevent
+metric collisions across wallets.
+
+| Metric | Type | Labels | Description |
+|---|---|---|---|
+| `panurus_core_common_metrics_wallet_requests_total` | counter | `network,channel,namespace,method,wallet_id` | Total number of wallet service requests |
+| `panurus_core_common_metrics_wallet_errors_total` | counter | `network,channel,namespace,method,wallet_id` | Total number of wallet service errors |
+| `panurus_core_common_metrics_wallet_request_duration_seconds` | histogram | `network,channel,namespace,method,wallet_id` | Execution duration of wallet service operations in seconds |
+| `panurus_core_common_metrics_wallet_inflight_requests` | gauge | `network,channel,namespace,method,wallet_id` | Current number of in-flight wallet service requests |
+| `panurus_core_common_metrics_wallet_circuit_breaker_rejections_total` | counter | `network,channel,namespace,method,wallet_id` | Total number of requests rejected by the circuit breaker |
+| `panurus_core_common_metrics_wallet_circuit_breaker_state` | gauge | `network,channel,namespace,method,wallet_id` | Current circuit breaker state (0=Closed, 1=Open, 2=HalfOpen) |
+
+Source: `token/services/observability/metrics.go`. Wired in `token/core/{fabtoken/v1,zkatdlog/nogh/v1}/driver/driver.go`.
+
 ## Ledger drift checks
 
 Recorded by the background sweep in `token/services/storage/services/checks`, wired up from
