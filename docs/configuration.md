@@ -197,6 +197,30 @@ token:
         network:
           # Configuration related to the Fabric network
           fabric:
+            # endorsement restricts which peers may endorse the token chaincode invocations
+            # issued by this node. Without it, Fabric's service discovery may select peers of
+            # any organization that satisfies the chaincode's endorsement policy, which in
+            # multi-cloud deployments can send endorsement traffic across a network boundary.
+            # The selection narrows discovery, it does not replace the chaincode's endorsement
+            # policy; a selection that cannot satisfy that policy makes endorsement fail.
+            # This applies to chaincode endorsement only; with fsc_endorsement below, the
+            # endorsers are FSC nodes selected by its policy type and the selection is not
+            # applied (contradictory values are still rejected, and a selection set in that
+            # mode is logged as a warning).
+            # It does not constrain the read-only token and state queries, only
+            # endorsement and the public-parameters query.
+            endorsement:
+              # Restrict endorsement to peers belonging to these MSP IDs. To keep
+              # endorsement inside this node's own organization, list its own MSP ID.
+              # Entries are
+              # trimmed; an empty or blank entry, or an organization listed twice once
+              # trimmed, is a configuration error. Whether an MSP ID exists, or hosts a
+              # peer, cannot be checked here; a selection no peer satisfies fails the
+              # invocation, quoting the key and the value in force.
+              # mspIDs:
+              # - Org1MSP
+              # - Org3MSP
+
             # In Fabric, the execution of the token chaincode can be endorsed by any node equipped with
             # a proper endorsement key.
             # Therefore, also FSC nodes equipped with proper endorsement keys can perform the same function.
