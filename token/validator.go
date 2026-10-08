@@ -81,7 +81,7 @@ type stateGetter struct {
 	f driver.GetStateFnc
 }
 
-func NewLedgerFromGetter(f driver.GetStateFnc) *stateGetter {
+func NewLedgerFromGetter(f driver.GetStateFnc) Ledger {
 	return &stateGetter{f: f}
 }
 
