@@ -120,15 +120,30 @@ func (p *ManagementServiceProvider) Update(tmsID TMSID, val []byte) error {
 	p.lock.Lock()
 	defer p.lock.Unlock()
 
-	p.logger.Infof("update tms [%s] with public params [%s]", tmsID, Hashable(val))
-	err := p.tmsProvider.Update(driver.ServiceOptions{
+	key := tmsID.Network + tmsID.Channel + tmsID.Namespace
+	opts := driver.ServiceOptions{
 		Network:      tmsID.Network,
 		Channel:      tmsID.Channel,
 		Namespace:    tmsID.Namespace,
 		PublicParams: val,
-	})
-	if err != nil {
+	}
+	p.logger.Infof("update tms [%s] with public params [%s]", tmsID, Hashable(val))
+	if err := p.tmsProvider.Update(opts); err != nil {
 		return errors.Wrapf(err, "failed updating tms [%s]", tmsID)
+	}
+
+	// The core provider keeps its service when the parameters did not change. In that case the
+	// cached service still wraps the live one and there is nothing to reload. Going on would
+	// still shut down every selector manager below, for every TMS on this node, on a call that
+	// changed nothing; callers that re-apply what they observe (the EVM driver's watcher does on
+	// startup and on every retry) would then churn the selectors for no reason.
+	if s, ok := p.services[key]; ok && s.tms != nil {
+		current, err := p.tmsProvider.GetTokenManagerService(opts)
+		if err == nil && current == s.tms {
+			p.logger.Debugf("tms [%s] already runs public params [%s], nothing to reload", tmsID, Hashable(val))
+
+			return nil
+		}
 	}
 
 	// Shut down background goroutines for the evicted TMS before clearing the cache.
@@ -137,7 +152,6 @@ func (p *ManagementServiceProvider) Update(tmsID TMSID, val []byte) error {
 	}
 
 	// clear cache
-	key := tmsID.Network + tmsID.Channel + tmsID.Namespace
 	delete(p.services, key)
 
 	p.logger.Infof("update tms [%s] with public params [%s]...done", tmsID, Hashable(val))

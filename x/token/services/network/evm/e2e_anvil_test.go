@@ -1251,3 +1251,217 @@ func TestTransferMetadataRoundTripAgainstAnvil(t *testing.T) {
 	require.Error(t, err, "an empty metadata value is indistinguishable from an absent key on the read path")
 	t.Logf("reading back the empty-valued key gave: %v", err)
 }
+
+// anvilFixture is one TMS deployed on a fresh anvil node and wired through NewNetwork, with every
+// configuration default left as production has it unless the caller changes it.
+type anvilFixture struct {
+	client     client.EVMClient
+	network    *Network
+	signer     *eip712.Signer
+	tokenState client.Address
+	pp         []byte
+}
+
+func newAnvilFixture(t *testing.T, configure func(*Config)) *anvilFixture {
+	t.Helper()
+	endpoint := startAnvil(t)
+
+	keyBytes, err := hex.DecodeString(anvilKey1)
+	require.NoError(t, err)
+	signer, err := eip712.NewSignerFromBytes(keyBytes)
+	require.NoError(t, err)
+
+	pp := []byte("fixture-public-params")
+	tokenState := deployContracts(t, endpoint, signer.Address(), pp)
+	evmClient, err := client.NewJSONRPCClient(endpoint, nil)
+	require.NoError(t, err)
+
+	cfg := validConfig()
+	cfg.Endpoint = endpoint
+	cfg.Contracts.TokenState = tokenState.Hex()
+	cfg.Endorsement.Endorsers[0].Address = signer.Address().Hex()
+	if configure != nil {
+		configure(cfg)
+	}
+	cfg.applyDefaults()
+	require.NoError(t, cfg.Validate())
+
+	submitter, err := NewSubmitter(evmClient, secp256k1.PrivKeyFromBytes(keyBytes), tokenState,
+		big.NewInt(testChainID), cfg.Gas)
+	require.NoError(t, err)
+	n, err := NewNetwork("evm-net", evmClient,
+		[]NamespaceConfig{{Namespace: "token", Config: cfg, Submitter: submitter}}, nil, nil)
+	require.NoError(t, err)
+
+	return &anvilFixture{client: evmClient, network: n, signer: signer, tokenState: tokenState, pp: pp}
+}
+
+// issue builds an endorsed envelope creating one token, under a fresh anchor derived from creator.
+func (f *anvilFixture) issue(t *testing.T, creator string, tokenData []byte) *Envelope {
+	t.Helper()
+	anchorID := f.network.ComputeTxID(&driver.TxID{Creator: []byte(creator)})
+	anchor, err := keys.AnchorFromTxID(anchorID)
+	require.NoError(t, err)
+
+	return f.envelope(t, anchorID, &statedelta.StateDelta{
+		Anchor: anchor,
+		Outputs: []statedelta.OutputToken{{
+			TokenID:   keys.ComputeTokenID(anchor, 0),
+			SNMarker:  keys.OutputSNMarker(anchor, 0, tokenData),
+			TokenData: tokenData,
+		}},
+		TokenRequestHash: sha256Of("request-" + creator),
+		PublicParamsHash: sha256Of(string(f.pp)),
+	})
+}
+
+func (f *anvilFixture) envelope(t *testing.T, anchorID string, delta *statedelta.StateDelta) *Envelope {
+	t.Helper()
+	domain := eip712.Domain{ChainID: big.NewInt(testChainID), VerifyingContract: f.tokenState}
+
+	return &Envelope{
+		Anchor: anchorID, Namespace: "token", Delta: delta, Endorsements: endorse(t, f.signer, domain, delta),
+	}
+}
+
+// TestResubmittingAnAppliedAnchorAtTheDefaultTagAgainstAnvil is the resubmit case with the block tag
+// a production configuration defaults to. The first attempt is at the head of the chain but not
+// finalized yet, which is exactly when a caller that lost the reply retries.
+func TestResubmittingAnAppliedAnchorAtTheDefaultTagAgainstAnvil(t *testing.T) {
+	f := newAnvilFixture(t, nil)
+	binding, err := f.network.binding("token")
+	require.NoError(t, err)
+	require.Equal(t, client.BlockTagFinalized, binding.config.Finality.BlockTag)
+
+	first := f.issue(t, "issuer-default-tag", []byte("alice-owns-100"))
+	require.NoError(t, f.network.Broadcast(t.Context(), first))
+	require.Equal(t, uint64(1), waitMined(t, f.client, first.EthTxHash))
+
+	retry := &Envelope{Anchor: first.Anchor, Namespace: "token", Delta: first.Delta, Endorsements: first.Endorsements}
+	require.NoError(t, f.network.Broadcast(t.Context(), retry),
+		"the anchor is applied at the head of the chain, so the retry is a success, finalized or not")
+}
+
+// TestFetchPublicParametersRightAfterDeployAgainstAnvil covers a node started right after the
+// contracts were deployed, with the default finalized tag: Connect accepts the contract, so the TMS
+// built next must be able to read its public parameters too.
+func TestFetchPublicParametersRightAfterDeployAgainstAnvil(t *testing.T) {
+	f := newAnvilFixture(t, nil)
+
+	_, err := f.network.Connect("token")
+	require.NoError(t, err)
+	raw, err := f.network.FetchPublicParameters("token")
+	require.NoError(t, err)
+	assert.Equal(t, f.pp, raw)
+}
+
+// TestTwoTMSSharingASubmitterAgainstAnvil drives two TMS, each with its own TokenState but the same
+// submitter key, through the driver's own submitter construction. Alternating between them is the
+// case that used to fail: each TMS kept its own nonce counter for the shared account, so the first
+// one to send again after the other reused a nonce the chain had already taken.
+func TestTwoTMSSharingASubmitterAgainstAnvil(t *testing.T) {
+	endpoint := startAnvil(t)
+	keyBytes, err := hex.DecodeString(anvilKey1)
+	require.NoError(t, err)
+	signer, err := eip712.NewSignerFromBytes(keyBytes)
+	require.NoError(t, err)
+
+	pp := []byte("shared-submitter-pp")
+	evmClient, err := client.NewJSONRPCClient(endpoint, nil)
+	require.NoError(t, err)
+	keystore := writeKey(t, anvilKey1)
+
+	d := &Driver{}
+	tokenStates := map[string]client.Address{}
+	namespaces := make([]NamespaceConfig, 0, 2)
+	for _, ns := range []string{"a", "b"} {
+		tokenState := deployContracts(t, endpoint, signer.Address(), pp)
+		tokenStates[ns] = tokenState
+
+		cfg := validConfig()
+		cfg.Endpoint = endpoint
+		cfg.Contracts.TokenState = tokenState.Hex()
+		cfg.Endorsement.Endorsers[0].Address = signer.Address().Hex()
+		cfg.Submitter.Keystore = keystore
+		cfg.applyDefaults()
+		require.NoError(t, cfg.Validate())
+
+		submitter, err := d.newSubmitter(cfg, evmClient)
+		require.NoError(t, err)
+		namespaces = append(namespaces, NamespaceConfig{Namespace: ns, Config: cfg, Submitter: submitter})
+	}
+	n, err := NewNetwork("evm-net", evmClient, namespaces, nil, nil)
+	require.NoError(t, err)
+
+	send := func(ns, creator string) error {
+		anchorID := n.ComputeTxID(&driver.TxID{Creator: []byte(creator)})
+		anchor, err := keys.AnchorFromTxID(anchorID)
+		require.NoError(t, err)
+		data := []byte("token-" + creator)
+		delta := &statedelta.StateDelta{
+			Anchor: anchor,
+			Outputs: []statedelta.OutputToken{{
+				TokenID: keys.ComputeTokenID(anchor, 0), SNMarker: keys.OutputSNMarker(anchor, 0, data), TokenData: data,
+			}},
+			TokenRequestHash: sha256Of("request-" + creator),
+			PublicParamsHash: sha256Of(string(pp)),
+		}
+		domain := eip712.Domain{ChainID: big.NewInt(testChainID), VerifyingContract: tokenStates[ns]}
+
+		return n.Broadcast(t.Context(), &Envelope{
+			Anchor: anchorID, Namespace: ns, Delta: delta, Endorsements: endorse(t, signer, domain, delta),
+		})
+	}
+
+	for i, ns := range []string{"a", "b", "a", "b"} {
+		require.NoError(t, send(ns, "tx-"+strconv.Itoa(i)),
+			"transaction %d on TMS %s must not collide with the other TMS's use of the account", i, ns)
+	}
+}
+
+// TestSpentTokensReadAsGoneAgainstAnvil spends a token on a real node and reads it back. The contract
+// keeps a spent token's bytes, so without the spent check QueryTokens and GetStates would still return
+// them, and the vault's unspent-token check could never notice a token the chain already spent.
+func TestSpentTokensReadAsGoneAgainstAnvil(t *testing.T) {
+	f := newAnvilFixture(t, func(c *Config) { c.Finality.BlockTag = client.BlockTagLatest })
+
+	issued := f.issue(t, "issuer-spent", []byte("alice-100"))
+	require.NoError(t, f.network.Broadcast(t.Context(), issued))
+	require.Equal(t, uint64(1), waitMined(t, f.client, issued.EthTxHash))
+
+	spentID := &token.ID{TxId: issued.Anchor, Index: 0}
+	out, err := f.network.QueryTokens(t.Context(), "token", []*token.ID{spentID})
+	require.NoError(t, err)
+	require.Equal(t, [][]byte{[]byte("alice-100")}, out, "unspent, so readable")
+
+	spendID := f.network.ComputeTxID(&driver.TxID{Creator: []byte("alice")})
+	spendAnchor, err := keys.AnchorFromTxID(spendID)
+	require.NoError(t, err)
+	bob := []byte("bob-100")
+	spend := f.envelope(t, spendID, &statedelta.StateDelta{
+		Anchor:    spendAnchor,
+		SpentRefs: [][32]byte{keys.OutputSNMarker(issued.Delta.Anchor, 0, []byte("alice-100"))},
+		Outputs: []statedelta.OutputToken{{
+			TokenID: keys.ComputeTokenID(spendAnchor, 0), SNMarker: keys.OutputSNMarker(spendAnchor, 0, bob), TokenData: bob,
+		}},
+		TokenRequestHash: sha256Of("request-alice"),
+		PublicParamsHash: sha256Of(string(f.pp)),
+	})
+	require.NoError(t, f.network.Broadcast(t.Context(), spend))
+	require.Equal(t, uint64(1), waitMined(t, f.client, spend.EthTxHash))
+
+	flags, err := f.network.AreTokensSpent(t.Context(), "token", []*token.ID{spentID}, nil)
+	require.NoError(t, err)
+	require.Equal(t, []bool{true}, flags)
+
+	_, err = f.network.QueryTokens(t.Context(), "token", []*token.ID{spentID})
+	require.Error(t, err, "a spent token must not read as an unspent one")
+	assert.Contains(t, err.Error(), "does not exist")
+
+	ledger, err := f.network.Ledger()
+	require.NoError(t, err)
+	states, err := ledger.GetStates(t.Context(), "token", issued.Anchor+":0", spendID+":0")
+	require.NoError(t, err)
+	assert.Nil(t, states[0], "the spent token has no state")
+	assert.Equal(t, bob, states[1], "the new one does")
+}

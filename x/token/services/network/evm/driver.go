@@ -8,6 +8,7 @@ package evm
 
 import (
 	"context"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -104,6 +105,12 @@ type Driver struct {
 	// recoveries keeps the sweeps started per TMS, for the same reason.
 	recoveryMu sync.Mutex
 	recoveries map[string][]*recovery.Manager
+	// nonces keeps one nonce manager per submitting account on a chain. Every TMS gets its own
+	// Submitter, but two TMS configured with the same submitter key spend from one account, and
+	// Ethereum nonces are per account: two independent counters for it hand out the same nonce and
+	// whichever transaction is sent second fails "nonce too low".
+	noncesMu sync.Mutex
+	nonces   map[string]*NonceManager
 }
 
 // Compile-time assertion that Driver satisfies the factory contract.
@@ -145,6 +152,7 @@ func NewDriver(
 		metricsProvider: metricsProvider,
 		watchers:        map[string]*pp.Watcher{},
 		recoveries:      map[string][]*recovery.Manager{},
+		nonces:          map[string]*NonceManager{},
 	}
 }
 
@@ -468,7 +476,33 @@ func (d *Driver) newSubmitter(config *Config, evmClient client.EVMClient) (*Subm
 		return nil, err
 	}
 
-	return NewSubmitter(evmClient, key, tokenState, config.ChainIDBig(), config.Gas)
+	nonces := d.nonceManager(config.ChainID, eip712.PubKeyToAddress(key.PubKey()), evmClient)
+
+	return buildSubmitter(evmClient, key, tokenState, config.ChainIDBig(), config.Gas, nonces)
+}
+
+// nonceManager returns the nonce manager of a submitting account on a chain, creating it on first
+// use, so every Submitter this driver builds for that account shares one sequence.
+//
+// The key is the chain and the account only, never the client. A nonce sequence is chain state, so
+// two Submitters for one account on one chain must share it whichever endpoint each was built with:
+// keying on the client too would bring back two counters for one account, which is the collision this
+// exists to prevent. The client given on first use is the one the manager recovers the pending nonce
+// through, and any endpoint serving that chain answers the same.
+func (d *Driver) nonceManager(chainID int64, account client.Address, evmClient client.EVMClient) *NonceManager {
+	d.noncesMu.Lock()
+	defer d.noncesMu.Unlock()
+	if d.nonces == nil {
+		d.nonces = map[string]*NonceManager{}
+	}
+	key := strconv.FormatInt(chainID, 10) + ":" + account.Hex()
+	manager, ok := d.nonces[key]
+	if !ok {
+		manager = NewNonceManager(evmClient, account)
+		d.nonces[key] = manager
+	}
+
+	return manager
 }
 
 // registerEndorser registers this node's responder so it can answer requests. A node that does not
