@@ -587,6 +587,108 @@ func TestBucketSetCapNonPositiveIsUnbounded(t *testing.T) {
 	assert.Equal(t, 1000, s.Len(), "a non-positive cap leaves the set unbounded")
 }
 
+// lruKeys returns the keys in the LRU list from most- to least-recently-used, for asserting the
+// intrusive list stays in step with the map.
+func (s *BucketSet) lruKeys() []string {
+	var keys []string
+	for b := s.lruHead.next; b != s.lruTail; b = b.next {
+		keys = append(keys, b.key)
+	}
+
+	return keys
+}
+
+// assertLRUConsistent pins the list/map invariant: the LRU list holds exactly the non-overridden
+// buckets, each linked once, ordered most-recently-used first.
+func assertLRUConsistent(t *testing.T, s *BucketSet) {
+	t.Helper()
+
+	inList := map[string]bool{}
+	var prevLast time.Time
+	first := true
+	for b := s.lruHead.next; b != s.lruTail; b = b.next {
+		require.Contains(t, s.buckets, b.key, "a listed bucket must be in the map")
+		require.False(t, s.buckets[b.key].overridden, "an overridden bucket must not be in the list")
+		require.False(t, inList[b.key], "a bucket must appear in the list at most once")
+		inList[b.key] = true
+		if !first {
+			require.False(t, prevLast.Before(b.last), "the list must be ordered most-recently-used first")
+		}
+		prevLast, first = b.last, false
+	}
+	for key, b := range s.buckets {
+		if !b.overridden {
+			require.True(t, inList[key], "every non-overridden bucket must be in the list")
+		}
+	}
+}
+
+// TestBucketSetLRUTracksAccessOrder pins that the eviction victim follows access recency, not
+// creation order: re-taking an old key must spare it and sink a key that has gone untouched.
+func TestBucketSetLRUTracksAccessOrder(t *testing.T) {
+	clock := newTestClock()
+	s := newTestBucketSetCapped(t, 100, 100, time.Hour, 2, clock)
+
+	s.Take("a") // t0
+	clock.advance(time.Second)
+	s.Take("b") // t1
+	clock.advance(time.Second)
+	s.Take("a") // t2: "a" is now most-recently-used, "b" the LRU
+	clock.advance(time.Second)
+	assert.Equal(t, []string{"a", "b"}, s.lruKeys())
+
+	s.Take("c") // at cap: "b" (now LRU) must be evicted, "a" kept despite being created first
+
+	_, hasA := s.buckets["a"]
+	_, hasB := s.buckets["b"]
+	assert.True(t, hasA, "a recently re-taken key must not be evicted")
+	assert.False(t, hasB, "the least-recently-accessed key must be evicted")
+	assertLRUConsistent(t, s)
+}
+
+// TestBucketSetLRUMembershipFollowsOverride pins that SetRate removes a bucket from the list (an
+// override is never evicted) and ClearRate links it back, keeping the list and map consistent.
+func TestBucketSetLRUMembershipFollowsOverride(t *testing.T) {
+	clock := newTestClock()
+	s := newTestBucketSetCapped(t, 100, 100, time.Hour, 4, clock)
+
+	s.Take("a")
+	s.Take("b")
+	assert.ElementsMatch(t, []string{"a", "b"}, s.lruKeys())
+
+	s.SetRate("a", 1, 1) // override: "a" leaves the list but stays in the map
+	assert.Equal(t, []string{"b"}, s.lruKeys())
+	assert.Contains(t, s.buckets, "a")
+	assertLRUConsistent(t, s)
+
+	s.ClearRate("a") // back to the default quota: "a" rejoins the list at the front
+	assert.Equal(t, []string{"a", "b"}, s.lruKeys())
+	assertLRUConsistent(t, s)
+
+	s.Reset("b") // dropped entirely: gone from both list and map
+	assert.Equal(t, []string{"a"}, s.lruKeys())
+	assert.NotContains(t, s.buckets, "b")
+	assertLRUConsistent(t, s)
+}
+
+// BenchmarkSaturatedEviction documents the point of the intrusive list: at the cap, every fresh key
+// pays only an O(1) tail eviction rather than a full-map scan. It is a benchmark, not an assertion
+// (constant-time is not safely assertable in a unit test); run with -benchmem to compare caps.
+func BenchmarkSaturatedEviction(b *testing.B) {
+	clock := newTestClock()
+	s := NewBucketSet(1e9, 1e9, time.Hour, time.Hour, 10_000, clock.Now)
+	b.Cleanup(s.Stop)
+	for i := range 10_000 { // fill to the cap
+		s.Take(strconv.Itoa(i))
+	}
+
+	b.ResetTimer()
+	for i := range b.N {
+		// Each key is unseen, so every Take evicts the LRU tail to make room.
+		s.Take("fresh-" + strconv.Itoa(i))
+	}
+}
+
 func TestBucketSetConcurrentUse(t *testing.T) {
 	s := NewBucketSet(1000, 1000, time.Minute, time.Millisecond, 0, nil)
 	t.Cleanup(s.Stop)
