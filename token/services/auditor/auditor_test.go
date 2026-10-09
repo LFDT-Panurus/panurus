@@ -502,6 +502,44 @@ func TestService_Append_Success(t *testing.T) {
 	require.NoError(t, err)
 }
 
+// TestService_Append_FinalityListenerDoesNotReleaseSelectionLocks pins the auditor's wiring of
+// the finality listener: an auditor inspects and records transactions assembled and spent
+// elsewhere, so it never holds token-selection locks for them. Its listener is therefore wired
+// with finality.NewNoSelectorManagerProvider, and a finalized transaction costs no selector
+// manager lookup, no Unlock that could only ever match zero rows, and - on a TMS with no usable
+// selector manager - no warning logged per finalized transaction. See #2395 mechanism 4, whose
+// release belongs to the spending node alone.
+func TestService_Append_FinalityListenerDoesNotReleaseSelectionLocks(t *testing.T) {
+	fakeNet := &auditmock.Network{}
+	netProvider := &auditmock.NetworkProvider{}
+	netProvider.GetNetworkReturns(network.NewNetwork(fakeNet, nil), nil)
+
+	tmsProv := newTestTMSProvider(t)
+	svc := auditor.NewService(
+		token.TMSID{}, netProvider,
+		newTestStoreService(t, newFakeStore()),
+		nil, tmsProv, noop.NewTracerProvider().Tracer(""), nil, nil, nil,
+	)
+	tx := &auditmock.Transaction{}
+	tx.IDReturns("tx-auditor-no-release")
+	tx.NetworkReturns("testnet")
+	tx.ChannelReturns("testch")
+	tx.NamespaceReturns("testns")
+	tx.RequestReturns(token.NewRequest(newTestManagementService(t), token.RequestAnchor("tx-auditor-no-release")))
+
+	require.NoError(t, svc.Append(context.Background(), tx))
+	require.Equal(t, 1, fakeNet.AddFinalityListenerCallCount())
+	_, _, listener := fakeNet.AddFinalityListenerArgsForCall(0)
+
+	// network.Invalid is terminal and does not go through the token-request hasher, so the TMS
+	// would be resolved only to reach a selector manager. It must not be.
+	before := tmsProv.TokenManagementServiceCallCount()
+	listener.OnStatus(context.Background(), tx.ID(), network.Invalid, "rejected", nil)
+
+	require.Equal(t, before, tmsProv.TokenManagementServiceCallCount(),
+		"an auditor's finality listener must not resolve a selector manager: it holds no selection locks to release")
+}
+
 func TestService_Append_AddFinalityListenerError(t *testing.T) {
 	fakeNet := &auditmock.Network{}
 	fakeNet.AddFinalityListenerReturns(errors.New("listener fail"))

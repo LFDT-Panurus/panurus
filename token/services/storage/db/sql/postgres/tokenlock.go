@@ -10,8 +10,11 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
+	"sync/atomic"
 	"time"
 
+	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/common/utils/collections/iterators"
 	common2 "github.com/hyperledger-labs/fabric-smart-client/platform/view/services/storage/driver/common"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/services/storage/driver/sql/common"
@@ -22,6 +25,7 @@ import (
 	q "github.com/LFDT-Panurus/panurus/token/services/storage/db/sql/query"
 	common3 "github.com/LFDT-Panurus/panurus/token/services/storage/db/sql/query/common"
 	"github.com/LFDT-Panurus/panurus/token/services/storage/db/sql/query/cond"
+	"github.com/LFDT-Panurus/panurus/token/services/utils/types/transaction"
 	"github.com/LFDT-Panurus/panurus/token/token"
 	"go.uber.org/zap/zapcore"
 )
@@ -30,9 +34,23 @@ import (
 type TokenLockStore struct {
 	*common5.TokenLockStore
 
-	writeDB *sql.DB
-	ci      common3.CondInterpreter
-	lockID  int64
+	writeDB  *sql.DB
+	ci       common3.CondInterpreter
+	lockID   int64
+	strategy string
+
+	// roundTrips counts every Lock and LockBatch call - each now issues exactly one query
+	// under every strategy, so this is also the exact DB round-trip count, and is expected to
+	// come out equal across strategies for a given workload: batching, not strategy choice, is
+	// what saves round trips. uniqueViolations counts only Lock calls whose ErrTokenAlreadyLocked
+	// came from a real server-side unique-constraint violation - possible solely via Lock under
+	// LockStrategyInsert (LockBatch never issues a plain INSERT, and LockStrategyOnConflict/
+	// LockStrategySkipLocked translate a lost race into a clean zero-row result instead), so it
+	// is the real, hard count of the server-side errors that caused the CERT log storm. Exists so
+	// a benchmark can report both with real numbers rather than inferring them from conflict rate,
+	// which does not move across strategies: see RoundTrips and UniqueViolations.
+	roundTrips       atomic.Int64
+	uniqueViolations atomic.Int64
 
 	// cleanupLeaderFactory is bound at construction to an id derived from the fully-qualified
 	// table name (not the prefix alone, which is not unique per TMS - see review discussion on
@@ -56,8 +74,20 @@ func (s *TokenLockStore) CreateSchema() error {
 	return common.InitSchema(s.writeDB, s.GetSchema())
 }
 
-// NewTokenLockStore returns a new TokenLockStore for the given RWDB and table names.
+// NewTokenLockStore returns a new TokenLockStore for the given RWDB and table names,
+// using the default (insert) lock strategy.
 func NewTokenLockStore(dbs *common2.RWDB, tableNames common5.TableNames) (*TokenLockStore, error) {
+	return newTokenLockStoreWithStrategy(dbs, tableNames, common5.LockStrategyInsert)
+}
+
+// newTokenLockStoreWithStrategy is like NewTokenLockStore, but lets the caller select the
+// lock-acquisition strategy (see common5.ConfigKeyLockStrategy). strategy is validated by
+// common5.LoadStorageConfig before it reaches here; an empty string is treated as the
+// default insert strategy.
+func newTokenLockStoreWithStrategy(dbs *common2.RWDB, tableNames common5.TableNames, strategy string) (*TokenLockStore, error) {
+	if strategy == "" {
+		strategy = common5.LockStrategyInsert
+	}
 	ci := NewConditionInterpreter()
 	tldb, err := common5.NewTokenLockStore(dbs.ReadDB, dbs.WriteDB, tableNames, ci, &fscPostgres.ErrorMapper{})
 	if err != nil {
@@ -70,7 +100,229 @@ func NewTokenLockStore(dbs *common2.RWDB, tableNames common5.TableNames) (*Token
 		ci:                   ci,
 		lockID:               createTableLockID(tableNames.TokenLocks),
 		cleanupLeaderFactory: NewCleanupLeaderFactoryForID(tokenLockCleanupLockID(tableNames)),
+		strategy:             strategy,
 	}, nil
+}
+
+// Lock locks the token for consumerTxID, using the configured strategy. The default
+// (LockStrategyInsert) delegates unchanged to the embedded store: an INSERT that surfaces
+// a lost race as a unique-constraint violation. LockStrategyOnConflict and
+// LockStrategySkipLocked both use INSERT ... ON CONFLICT DO NOTHING RETURNING instead: a
+// lost race is a normal zero-row result, not a server-side error. Note this overrides Lock,
+// not LockAt: the embedded TokenLockStore.Lock calls LockAt on itself, not on this type (Go
+// has no virtual dispatch), so overriding LockAt here would never be reached from callers
+// that go through Lock.
+func (db *TokenLockStore) Lock(ctx context.Context, tokenID *token.ID, consumerTxID transaction.ID, walletID string) error {
+	db.roundTrips.Add(1)
+	if db.strategy == common5.LockStrategyInsert {
+		err := db.TokenLockStore.Lock(ctx, tokenID, consumerTxID, walletID)
+		if errors.Is(err, driver.ErrTokenAlreadyLocked) {
+			db.uniqueViolations.Add(1)
+		}
+
+		return err
+	}
+
+	outcome, err := db.tryInsertOnConflict(ctx, []*token.ID{tokenID}, consumerTxID, time.Now().UTC())
+	if err != nil {
+		return err
+	}
+	if len(outcome.Won) == 0 {
+		// A claim this token is not in the winners of is either a lost race or a candidate
+		// that is no longer spendable, and for a single token the two are worth telling
+		// apart: a caller must retry the first and drop the second. claimCandidates
+		// classifies them in the claim statement itself, so this costs no extra read and -
+		// unlike a follow-up probe - reports the state the claim actually saw rather than a
+		// later one.
+		if len(outcome.Stale) > 0 {
+			return errors.Wrapf(driver.ErrTokenNotSpendable, "token %s is no longer spendable", tokenID)
+		}
+
+		return errors.Wrapf(driver.ErrTokenAlreadyLocked, "token %s is already locked", tokenID)
+	}
+
+	return nil
+}
+
+// RoundTrips returns the number of Lock and LockBatch calls issued against this store
+// instance since construction. Instrumentation only, for benchmarking Phase 6's lock
+// strategies; not part of the driver.TokenLockStore contract.
+func (db *TokenLockStore) RoundTrips() int64 {
+	return db.roundTrips.Load()
+}
+
+// UniqueViolations returns the number of Lock calls that observed a real server-side
+// unique-constraint violation, as opposed to a clean zero-row result - only possible under
+// LockStrategyInsert. Instrumentation only, for benchmarking Phase 6's lock strategies; not
+// part of the driver.TokenLockStore contract.
+func (db *TokenLockStore) UniqueViolations() int64 {
+	return db.uniqueViolations.Load()
+}
+
+// LockBatch attempts to lock, in a single round trip, every token in tokenIDs on behalf of
+// consumerTxID, and reports per candidate how the claim resolved: the tokens it won, and
+// those it refused because they are no longer spendable (driver.BatchLockOutcome). It never
+// claims a token outside tokenIDs, so callers remain responsible for supplying only
+// candidates that are already known to be spendable: LockBatch itself applies no
+// eligibility predicate beyond "not already locked". Under LockStrategySkipLocked the claim uses FOR UPDATE SKIP LOCKED on
+// the underlying Tokens rows, so a caller walks past rows a concurrent claimant is already
+// processing instead of colliding with them; under LockStrategyOnConflict and
+// LockStrategyInsert it issues the same multi-row INSERT ... ON CONFLICT DO NOTHING as
+// tryInsertOnConflict's single-token callers, for the whole window in one round trip -
+// only the plain LockStrategyInsert single-token Lock path (which must surface a lost race
+// as a unique-constraint violation, not a zero-row result) does not go through this.
+func (db *TokenLockStore) LockBatch(ctx context.Context, tokenIDs []*token.ID, consumerTxID transaction.ID, _ string) (driver.BatchLockOutcome, error) {
+	if len(tokenIDs) == 0 {
+		return driver.BatchLockOutcome{}, nil
+	}
+	db.roundTrips.Add(1)
+	createdAt := time.Now().UTC()
+	if db.strategy != common5.LockStrategySkipLocked {
+		return db.tryInsertOnConflict(ctx, tokenIDs, consumerTxID, createdAt)
+	}
+
+	return db.tryLockSkipLocked(ctx, tokenIDs, consumerTxID, createdAt)
+}
+
+// tryInsertOnConflict claims a batch of specific (tx_id, idx) candidates using
+// INSERT ... ON CONFLICT DO NOTHING RETURNING, and returns those it actually won. Like
+// tryLockSkipLocked it joins the candidates against the Tokens table and claims only the
+// rows that are still spendable, so a candidate that was spent since the caller read it is
+// never locked and so never returned to a consumer that could not load it (see
+// common5.TokenLockStore.LockAt and #2395).
+func (db *TokenLockStore) tryInsertOnConflict(ctx context.Context, tokenIDs []*token.ID, consumerTxID transaction.ID, createdAt time.Time) (driver.BatchLockOutcome, error) {
+	return db.claimCandidates(ctx, tokenIDs, consumerTxID, createdAt, false)
+}
+
+// tryLockSkipLocked claims a covering window of candidate tokens in one statement: it joins
+// the caller-supplied (tx_id, idx) pairs against the Tokens table under
+// FOR UPDATE SKIP LOCKED, so a claimant skips past rows a concurrent claimant is already
+// working on instead of blocking on or colliding with them, then inserts a lock row per
+// surviving candidate with ON CONFLICT DO NOTHING as a correctness backstop (e.g. a
+// mixed-strategy rolling deploy). It never touches a (tx_id, idx) pair outside tokenIDs.
+func (db *TokenLockStore) tryLockSkipLocked(ctx context.Context, tokenIDs []*token.ID, consumerTxID transaction.ID, createdAt time.Time) (driver.BatchLockOutcome, error) {
+	return db.claimCandidates(ctx, tokenIDs, consumerTxID, createdAt, true)
+}
+
+// claimCandidates is the shared body of tryInsertOnConflict and tryLockSkipLocked: it joins
+// the caller-supplied (tx_id, idx) pairs against the Tokens table, keeps only the rows that
+// are still spendable, inserts a lock row per survivor with ON CONFLICT DO NOTHING, and
+// reports back how each candidate resolved - won, or refused as no longer spendable, with
+// "lost a race to another claimant" the remainder (driver.BatchLockOutcome). skipLocked
+// additionally takes FOR UPDATE SKIP LOCKED on the joined Tokens rows, so a claimant walks
+// past rows a concurrent claimant is already processing instead of blocking on or colliding
+// with them. It never touches a (tx_id, idx) pair outside tokenIDs.
+//
+// Classifying costs no extra round trip: all three verdicts are read off one statement. The
+// spendability verdict comes from its own CTE rather than from the claim's source, because
+// under skipLocked those are not the same question - a row SKIP LOCKED walks past is a row
+// another claimant holds, which is a lost race and not a stale candidate, and taking "absent
+// from the claim source" to mean "not spendable" would report it as the latter. Both CTEs
+// read the one statement snapshot, so the unlocked scan answers spendability for exactly the
+// rows the locked one considered. See #2395.
+func (db *TokenLockStore) claimCandidates(ctx context.Context, tokenIDs []*token.ID, consumerTxID transaction.ID, createdAt time.Time, skipLocked bool) (driver.BatchLockOutcome, error) {
+	args := make([]any, 0, len(tokenIDs)*2+5)
+	values := make([]string, 0, len(tokenIDs))
+	for _, id := range tokenIDs {
+		values = append(values, fmt.Sprintf("($%d, $%d::bigint)", len(args)+1, len(args)+2))
+		args = append(args, id.TxId, id.Index)
+	}
+	consumerTxIDPlaceholder := fmt.Sprintf("$%d", len(args)+1)
+	args = append(args, consumerTxID)
+	createdAtPlaceholder := fmt.Sprintf("$%d", len(args)+1)
+	args = append(args, createdAt)
+	// The spendability flags are bound, not formatted in, like everywhere else. Each one
+	// is appended to args exactly once even though, under skipLocked, the predicate text
+	// that references it ends up in the query twice (see spendableCTE below): a Postgres
+	// $N placeholder may be referenced any number of times in a statement and still
+	// consumes a single positional argument, so the reuse must not be mirrored by a
+	// second append - that would shift every later placeholder's number.
+	notDeletedPlaceholder := fmt.Sprintf("$%d", len(args)+1)
+	args = append(args, false)
+	spendablePlaceholder := fmt.Sprintf("$%d", len(args)+1)
+	args = append(args, true)
+	ownedPlaceholder := fmt.Sprintf("$%d", len(args)+1)
+	args = append(args, true)
+
+	// spendable is the eligibility predicate on its own, with no row lock, and is what the
+	// returned classification reads. Without skipLocked it is also the claim's source, since
+	// there is then nothing else for eligibility to depend on.
+	spendableCTE := "SELECT t.tx_id, t.idx FROM " + db.Table.Tokens + " t " +
+		"JOIN candidates c ON c.tx_id = t.tx_id AND c.idx = t.idx " +
+		"WHERE t.is_deleted = " + notDeletedPlaceholder +
+		" AND t.spendable = " + spendablePlaceholder +
+		" AND t.owner = " + ownedPlaceholder
+	claimSource := "spendable"
+	eligibleCTE := ""
+	if skipLocked {
+		// Same predicate, plus the row lock: this, not spendable, is what may actually be
+		// claimed, so it is the insert's source while spendable stays the classifier.
+		// Reusing the spendableCTE text puts its three flag placeholders in the query a
+		// second time on purpose, and keeping them literally the same placeholders - rather
+		// than binding a second copy of the flags - is what makes the two CTEs provably the
+		// same predicate.
+		eligibleCTE = "eligible AS (" + spendableCTE + " FOR UPDATE OF t SKIP LOCKED), "
+		claimSource = "eligible"
+	}
+
+	// #nosec G202 -- db.Table.Tokens/TokenLocks are trusted table names derived from
+	// this process's own config at construction time, never from request input; the
+	// only per-request values (tokenIDs, consumerTxID, createdAt, the spendability
+	// flags) are passed as placeholders in args, never concatenated into the query text.
+	query := "WITH candidates(tx_id, idx) AS (VALUES " + strings.Join(values, ", ") + "), " +
+		"spendable AS (" + spendableCTE + "), " +
+		eligibleCTE +
+		"claimed AS (" +
+		"INSERT INTO " + db.Table.TokenLocks + " (consumer_tx_id, tx_id, idx, created_at) " +
+		"SELECT " + consumerTxIDPlaceholder + ", tx_id, idx, " + createdAtPlaceholder + " FROM " + claimSource + " " +
+		"ON CONFLICT (tx_id, idx) DO NOTHING " +
+		"RETURNING tx_id, idx" +
+		") " +
+		"SELECT c.tx_id, c.idx, (cl.tx_id IS NOT NULL) AS won, (s.tx_id IS NOT NULL) AS still_spendable " +
+		"FROM candidates c " +
+		"LEFT JOIN claimed cl ON cl.tx_id = c.tx_id AND cl.idx = c.idx " +
+		"LEFT JOIN spendable s ON s.tx_id = c.tx_id AND s.idx = c.idx"
+	db.Logger.Debug(query, args)
+
+	rows, err := db.writeDB.QueryContext(ctx, query, args...)
+	if err != nil {
+		return driver.BatchLockOutcome{}, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	// outcome is returned even when the read below fails part-way. The claim is a single
+	// statement that has already committed by the time the first row is read, so every row
+	// read before the failure is an authoritative verdict on a lock this consumer tx now
+	// holds, and the only way the caller can put those locks to use (or know to account for
+	// them) is to be handed them. Dropping them instead would leave them held, unusable and
+	// unreported, until the lease-expiry sweep. See #2395.
+	var outcome driver.BatchLockOutcome
+	for rows.Next() {
+		var (
+			id             token.ID
+			won            bool
+			stillSpendable bool
+		)
+		if err := rows.Scan(&id.TxId, &id.Index, &won, &stillSpendable); err != nil {
+			return outcome, err
+		}
+		switch {
+		case won:
+			outcome.Won = append(outcome.Won, &id)
+		case !stillSpendable:
+			// Spent, marked non-spendable, not owned here, or gone from the Tokens table
+			// altogether: in every case the candidate itself is stale, and no amount of
+			// waiting brings it back.
+			outcome.Stale = append(outcome.Stale, &id)
+		}
+		// Spendable but unwon: another claimant holds the lock row, or holds the row lock
+		// under skipLocked. Left out of both sets, which is how the caller reads a lost race.
+	}
+	if err := rows.Err(); err != nil {
+		return outcome, err
+	}
+
+	return outcome, nil
 }
 
 // AcquireCleanupLeadership attempts to acquire a Postgres advisory lock so

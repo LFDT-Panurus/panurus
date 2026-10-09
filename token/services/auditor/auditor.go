@@ -292,6 +292,11 @@ func (a *Service) Append(ctx context.Context, tx Transaction) error {
 		finality.NewTokenRequestHasher(a.tmsProvider, a.tmsID),
 		a.auditDB,
 		a.tokenDB,
+		// An auditor never acquires token-selection locks for the transactions it audits -
+		// those belong to the node that assembled and spent them - so this listener has
+		// nothing to release when one settles. See NoSelectorManagerProvider (#2395
+		// mechanism 4).
+		finality.NewNoSelectorManagerProvider(),
 		a.finalityTracer,
 		a.metricsProvider,
 	)

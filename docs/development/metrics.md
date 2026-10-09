@@ -185,7 +185,43 @@ to distinguish "one hot token retried many times" from "many tokens each contend
 `lock_conflicts_total` is deliberately unlabeled by token id or wallet id to avoid unbounded
 cardinality — per-token attribution belongs in the selector's debug-level log line (`Lost lock
 race on token [...]`, visible once the sherdlock package's logger is at debug level) and in the
-[`tokendiag locks`](../../cmd/tokendiag/README.md) command.
+[`tokendiag locks`](../../cmd/tokendiag/README.md) command. `lock_store_errors_total` (also
+#2395) counts the sibling case: a TryLock/TryLockBatch failure that is *not* a lock conflict (does
+not wrap `driver.ErrTokenAlreadyLocked`) — a genuine store error such as a connection failure or
+timeout. To the caller both currently surface identically as retried, eventually-locked-funds
+contention, so this counter is what distinguishes "the store is unhealthy" from "tokens are just
+contended" without changing that retry behavior.
+
+`stale_candidates_total` (also #2395) counts the third case, which is neither: a candidate
+dropped because the token was no longer spendable by the time the lock was attempted
+(`driver.ErrTokenNotSpendable`). The eager fetcher serves candidates from a snapshot of the
+token store, so a token spent after that snapshot was taken is still offered until the cache
+refreshes; the lock is conditional on the token still being spendable, so such a candidate is
+rejected rather than handed to a caller that could not load it. A non-zero rate here therefore
+means the cache's freshness interval is long relative to how fast the wallet is spending, not
+that tokens are contended or that the store is unhealthy.
+
+**Both lock paths report it.** A batch-capable backend — Postgres, via `LockBatch`, currently
+the only implementation — claims a whole window of candidates in one statement, and that
+statement classifies each candidate it did not win: the ones it refused as no longer spendable
+come back as such, and "another claimant holds it" is the remainder. So a stale candidate on the
+batch path is counted here, dropped for good, and used to refresh the candidate cache, exactly
+as on the single-token path — which also means a selection no longer has to wait for the eager
+cache's own `freshnessInterval` to recover from one.
+
+A backend is still allowed to win or not win a candidate without saying why; a selector treats
+every unwon candidate from one of those as a lost race. On such a deployment
+`stale_candidates_total` stays at zero *even during a stale-candidate episode*, and the symptom
+to read is `lock_conflicts_total` rising without a corresponding rise in real contention (e.g.
+with `distinct_tokens_attempted` flat and no competing senders). Correctness is unaffected
+either way — a token the store refuses is never handed to a caller — the difference is in what
+is reported and in how quickly the candidate cache learns it is behind the store.
+
+For `StubbornSelector`, both `selection_immediate_retries` and `distinct_tokens_attempted` are
+observed once per outer `Select()` call, aggregated over every internal backoff-retry attempt it
+makes — not once per attempt. They aggregate differently: `selection_immediate_retries` counts
+events and so sums the per-attempt counts, while `distinct_tokens_attempted` counts distinct
+tokens and so unions them, meaning a token contended across several attempts is counted once.
 
 | Metric | Type | Labels | Description |
 |---|---|---|---|
@@ -195,6 +231,8 @@ race on token [...]`, visible once the sherdlock package's logger is at debug le
 | `panurus_services_selector_sherdlock_selection_immediate_retries` | histogram | — | Distribution of immediate retry counts per token selection call |
 | `panurus_services_selector_sherdlock_lock_conflicts_total` | counter | — | Total number of lost lock races (a token was already locked by another process) |
 | `panurus_services_selector_sherdlock_distinct_tokens_attempted` | histogram | — | Distribution of the number of distinct tokens a lock was attempted on (won, lost, or rate-limited) per token selection call |
+| `panurus_services_selector_sherdlock_lock_store_errors_total` | counter | — | Total number of TryLock/TryLockBatch failures that are not lock conflicts (a genuine store error) |
+| `panurus_services_selector_sherdlock_stale_candidates_total` | counter | — | Total number of candidate tokens dropped because they were no longer spendable when the lock was attempted |
 
 Source: `token/services/selector/sherdlock/metrics.go`.
 

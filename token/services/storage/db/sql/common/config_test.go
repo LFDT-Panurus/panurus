@@ -117,3 +117,33 @@ func TestLoadStorageConfigTableNamesAndSkipPrefix(t *testing.T) {
 	assert.True(t, result.SkipPrefix)
 	assert.Equal(t, "my_tokens", result.TableNames["tokens"])
 }
+
+// TestLoadStorageConfigInvalidLockStrategyPreservesOtherFields pins the #2395 Phase 7 fix: a
+// typo'd lockStrategy (e.g. "skiplocked" instead of "skipLocked") must still return the
+// TableNames and SkipPrefix already parsed successfully, alongside the validation error -
+// not discard them by falling back to a zero-value StorageConfig. Before the fix, a caller that
+// warns and continues on error (postgres/driver.go, sqlite/driver.go) would silently lose an
+// operator's configured table name overrides to an unrelated typo in a different key.
+func TestLoadStorageConfigInvalidLockStrategyPreservesOtherFields(t *testing.T) {
+	cfg := &mockConfig{
+		isSet: true,
+		unmarshal: func(key string, rawVal any) error {
+			switch key {
+			case common.ConfigKeySkipPrefix:
+				*rawVal.(*bool) = true
+			case common.ConfigKeyTableNames:
+				*rawVal.(*common.TableNamesConfig) = common.TableNamesConfig{"tokens": "my_tokens"}
+			case common.ConfigKeyLockStrategy:
+				*rawVal.(*string) = "skiplocked"
+			}
+
+			return nil
+		},
+	}
+
+	result, err := common.LoadStorageConfig(cfg)
+	require.Error(t, err, "expected an invalid lockStrategy value to be rejected")
+	assert.Equal(t, "my_tokens", result.TableNames["tokens"], "TableNames must survive an unrelated lockStrategy typo")
+	assert.True(t, result.SkipPrefix, "SkipPrefix must survive an unrelated lockStrategy typo")
+	assert.Equal(t, common.LockStrategyInsert, result.LockStrategy, "LockStrategy must fall back to the default, not the invalid raw value")
+}

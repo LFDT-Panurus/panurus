@@ -28,11 +28,7 @@ import (
 // (from the table prefix), not injected by the test. See #1798.
 func TestTokenLockStore_AcquireCleanupLeadership_ConcurrentReplicas(t *testing.T) {
 	cfg := fscpostgres.DefaultConfig(fscpostgres.WithDBName("test-cleanup-leadership"))
-	terminate, _, err := fscpostgres.StartPostgres(t.Context(), cfg, nil)
-	if err != nil {
-		t.Skipf("postgres not available: %v", err)
-	}
-	t.Cleanup(terminate)
+	startPostgres(t, cfg)
 
 	db, err := sql.Open("pgx", cfg.DataSource())
 	require.NoError(t, err)
@@ -107,11 +103,7 @@ func TestTokenLockStore_AcquireCleanupLeadership_ConcurrentReplicas(t *testing.T
 // TMS across the whole fleet would ever win cleanup on any tick. See #1798.
 func TestTokenLockStore_AcquireCleanupLeadership_DistinctTMS(t *testing.T) {
 	cfg := fscpostgres.DefaultConfig(fscpostgres.WithDBName("test-cleanup-leadership-distinct-tms"))
-	terminate, _, err := fscpostgres.StartPostgres(t.Context(), cfg, nil)
-	if err != nil {
-		t.Skipf("postgres not available: %v", err)
-	}
-	t.Cleanup(terminate)
+	startPostgres(t, cfg)
 
 	db, err := sql.Open("pgx", cfg.DataSource())
 	require.NoError(t, err)

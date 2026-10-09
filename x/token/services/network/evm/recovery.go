@@ -43,6 +43,13 @@ type recoveryStore interface {
 	) (*cdriver.PageIterator[*dbdriver.TransactionRecord], error)
 }
 
+// selectorManagerProvider is what releasing a recovered transaction's selection locks needs: a way
+// to reach the TMS's selector manager. It is declared here because the recovery handler's own view
+// of it is unexported, and because the two handlers this file wires are given different ones.
+type selectorManagerProvider interface {
+	SelectorManager() (token2.SelectorManager, error)
+}
+
 // startRecovery starts the transaction-recovery sweep for a TMS, over both the transaction store and
 // the audit store.
 //
@@ -94,13 +101,30 @@ func (d *Driver) startRecovery(tmsID token2.TMSID, network *Network) error {
 
 	config := d.recoveryConfig(tmsID)
 	parser := ttxfinality.NewTokenRequestHasher(wrapper.NewTokenManagementServiceProvider(d.tmsProvider), tmsID)
-	started := make([]*recovery.Manager, 0, 2)
-	for _, store := range []recoveryStore{ttxStore, auditStore} {
+	// Recovering a transaction to a terminal status must also release the selection locks it still
+	// holds, exactly as the in-memory listener does on the live path: a recovered transaction is
+	// precisely the case where nobody is left to release them. See #2395.
+	//
+	// Only the transactions this node spent its own tokens for ever hold such locks, i.e. the ones
+	// in the transaction store. The audit store holds transactions assembled and spent elsewhere,
+	// which this node only audited, so its handler gets no selector manager: releasing there could
+	// at best delete zero rows, and would log a warning per recovered transaction on a TMS with no
+	// usable selector manager.
+	selectorManagers := ttxfinality.NewSelectorManagerProvider(wrapper.NewTokenManagementServiceProvider(d.tmsProvider), tmsID)
+	stores := []struct {
+		store            recoveryStore
+		selectorManagers selectorManagerProvider
+	}{
+		{store: ttxStore, selectorManagers: selectorManagers},
+		{store: auditStore, selectorManagers: ttxfinality.NewNoSelectorManagerProvider()},
+	}
+	started := make([]*recovery.Manager, 0, len(stores))
+	for _, s := range stores {
 		handler := ttxfinality.NewTTXRecoveryHandler(
 			logger,
 			settledNetwork{
 				Network: network,
-				store:   store,
+				store:   s.store,
 				timeout: binding.config.Finality.Timeout,
 				grace:   binding.config.Finality.ConflictGrace,
 				parser:  parser,
@@ -112,13 +136,14 @@ func (d *Driver) startRecovery(tmsID token2.TMSID, network *Network) error {
 			tmsID.Namespace,
 			parser,
 			tmsID,
-			store,
+			s.store,
 			tokensService,
+			s.selectorManagers,
 			d.recoveryTracer,
 			d.metricsProvider,
 		)
 
-		manager := recovery.NewManager(logger, store, handler, config)
+		manager := recovery.NewManager(logger, s.store, handler, config)
 		if err := manager.Start(); err != nil {
 			// Stop what already started, so a half-wired TMS does not leave a sweeper polling on
 			// behalf of a network the caller is about to discard.
