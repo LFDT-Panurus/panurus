@@ -20,9 +20,24 @@ import (
 // database behind it, so only the query builders may be exercised against it.
 func newSQLOnlyTokenStore() *TokenStore {
 	return &TokenStore{
-		table: tokenTables{Tokens: "tokens"},
+		table: tokenTables{Tokens: "tokens", TokenLocks: "token_locks"},
 		ci:    newTestInterpreter(),
 	}
+}
+
+// baseInner is the predicate HasTokenDetails renders for a wallet-and-type query, before
+// the anti-join is combined with it.
+const baseInner = "(owner = $1) AND (token_type = $2) AND (owner_wallet_id = $3) AND (is_deleted = $4) AND (spendable = $5)"
+
+// antiJoinSQL is notLocked's rendering against newSQLOnlyTokenStore's table names. Every
+// spendable-token query carries it: the selector must not be handed candidates another
+// consumer already holds a lock on (#2395, mechanism 1).
+const antiJoinSQL = "NOT EXISTS (SELECT 1 FROM token_locks WHERE (token_locks.tx_id = tokens.tx_id) AND (token_locks.idx = tokens.idx))"
+
+// antiJoined combines an inner predicate with the anti-join the way cond.And renders it, so
+// each expectation below states only the part that varies by shape.
+func antiJoined(inner string) string {
+	return "(" + inner + ") AND (" + antiJoinSQL + ")"
 }
 
 // TestBuildSpendableTokensQuery pins the SQL each SpendableTokensQuery shape renders. The
@@ -32,8 +47,8 @@ func newSQLOnlyTokenStore() *TokenStore {
 func TestBuildSpendableTokensQuery(t *testing.T) {
 	db := newSQLOnlyTokenStore()
 
-	const baseWhere = "WHERE (owner = $1) AND (token_type = $2) AND (owner_wallet_id = $3) AND (is_deleted = $4) AND (spendable = $5)"
 	const selectFrom = "SELECT tx_id, idx, token_type, quantity, owner_wallet_id FROM tokens "
+	baseWhere := "WHERE " + antiJoined(baseInner)
 
 	for _, tc := range []struct {
 		name         string
@@ -46,7 +61,7 @@ func TestBuildSpendableTokensQuery(t *testing.T) {
 			// before: no amount predicate, no ORDER BY, no LIMIT.
 			name:         "zero value",
 			params:       driver2.SpendableTokensQuery{},
-			expectedSQL:  selectFrom + "WHERE (owner = $1) AND (is_deleted = $2) AND (spendable = $3)",
+			expectedSQL:  selectFrom + "WHERE " + antiJoined("(owner = $1) AND (is_deleted = $2) AND (spendable = $3)"),
 			expectedArgs: []any{true, false, true},
 		},
 		{
@@ -63,7 +78,7 @@ func TestBuildSpendableTokensQuery(t *testing.T) {
 				MinAmount: big.NewInt(5),
 				MaxAmount: big.NewInt(100),
 			},
-			expectedSQL:  selectFrom + baseWhere + " AND (amount >= $6) AND (amount <= $7)",
+			expectedSQL:  selectFrom + "WHERE " + antiJoined(baseInner+" AND (amount >= $6) AND (amount <= $7)"),
 			expectedArgs: []any{true, token.Type("TST"), "alice", false, true, "5", "100"},
 		},
 		{
@@ -111,7 +126,7 @@ func TestBuildSpendableTokensQuery(t *testing.T) {
 				Order:     driver2.AmountDescending,
 				Limit:     7,
 			},
-			expectedSQL:  selectFrom + baseWhere + " AND (amount >= $6) AND (amount <= $7) ORDER BY amount DESC LIMIT $8",
+			expectedSQL:  selectFrom + "WHERE " + antiJoined(baseInner+" AND (amount >= $6) AND (amount <= $7)") + " ORDER BY amount DESC LIMIT $8",
 			expectedArgs: []any{true, token.Type("TST"), "alice", false, true, "1", "2", 7},
 		},
 	} {
@@ -123,23 +138,28 @@ func TestBuildSpendableTokensQuery(t *testing.T) {
 	}
 }
 
-// TestBuildSpendableTokensIteratorByQueryUnchanged checks that routing
-// SpendableTokensIteratorBy through the new builder left its SQL byte-identical, so the
-// selector's hot path is untouched by #2020.
-func TestBuildSpendableTokensIteratorByQueryUnchanged(t *testing.T) {
+// TestBuildSpendableTokensIteratorByQueryShape checks that SpendableTokensIteratorBy and its
+// extracted query builder render the same SQL, and that the shape the selector depends on is
+// the one they render: ascending by amount, anti-joined against TokenLocks, and unlimited.
+//
+// #2020 routed this path through buildSpendableTokensQuery and left it unordered, which was
+// byte-identical to the SQL of the time. #2395 needs both clauses here - sherdlock's
+// bucketedIterator and sufficiency window assume ascending candidates, and the anti-join is
+// what stops selectors racing for a token someone already holds - so the assertion is now
+// that they are present rather than that the SQL is unchanged. The LIMIT stays absent: the
+// selector reads the whole remaining candidate set.
+func TestBuildSpendableTokensIteratorByQueryShape(t *testing.T) {
 	db := newSQLOnlyTokenStore()
 
 	for _, walletID := range []string{"", "alice"} {
 		for _, typ := range []token.Type{"", "TST"} {
-			legacyQuery, legacyArgs := buildSpendableTokensIteratorByQuery(db, walletID, typ)
-			query, args := buildSpendableTokensQuery(db, driver2.SpendableTokensQuery{
-				WalletID: walletID, TokenType: typ,
-			})
-			assert.Equal(t, query, legacyQuery)
-			assert.Equal(t, args, legacyArgs)
-			assert.NotContains(t, legacyQuery, "ORDER BY")
-			assert.NotContains(t, legacyQuery, "LIMIT")
-			assert.NotContains(t, legacyQuery, "amount")
+			iteratorQuery, iteratorArgs := buildSpendableTokensIteratorByQuery(db, walletID, typ)
+			query, args := buildSpendableTokensQuery(db, spendableTokensIteratorByParams(walletID, typ))
+			assert.Equal(t, query, iteratorQuery)
+			assert.Equal(t, args, iteratorArgs)
+			assert.Contains(t, iteratorQuery, "ORDER BY amount ASC")
+			assert.Contains(t, iteratorQuery, antiJoinSQL)
+			assert.NotContains(t, iteratorQuery, "LIMIT")
 		}
 	}
 }

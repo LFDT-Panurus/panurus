@@ -22,13 +22,19 @@ type TokenStore struct {
 	*sqlcommon.TokenStore
 	writeDB *sql.DB
 	lockID  int64
+	// tokenLocksLockID is the lock the TokenLockStore creates the TokenLocks table under.
+	// This store's schema emits that table's DDL too, because its notLocked anti-join depends
+	// on it, so it must hold that lock as well or the two CREATE TABLE IF NOT EXISTS can run
+	// concurrently and fail. See prefixSchemaWithLocks.
+	tokenLocksLockID int64
 }
 
-// GetSchema overrides the base GetSchema to prefix with advisory lock
+// GetSchema overrides the base GetSchema to prefix with the advisory locks covering every
+// table the schema creates: this store's own, and the TokenLocks table it also emits.
 func (s *TokenStore) GetSchema() string {
 	baseSchema := s.TokenStore.GetSchema()
 
-	return prefixSchemaWithLock(baseSchema, s.lockID)
+	return prefixSchemaWithLocks(baseSchema, s.lockID, s.tokenLocksLockID)
 }
 
 // CreateSchema overrides the base CreateSchema to ensure GetSchema is called on the correct receiver
@@ -90,8 +96,9 @@ func NewTokenStoreWithNotifier(dbs *scommon.RWDB, tableNames sqlcommon.TableName
 	// Wrap with postgres-specific store that adds advisory lock to schema
 
 	return &TokenStore{
-		TokenStore: baseStore,
-		writeDB:    dbs.WriteDB,
-		lockID:     createTableLockID("tokens"),
+		TokenStore:       baseStore,
+		writeDB:          dbs.WriteDB,
+		lockID:           createTableLockID("tokens"),
+		tokenLocksLockID: createTableLockID(tableNames.TokenLocks),
 	}, nil
 }

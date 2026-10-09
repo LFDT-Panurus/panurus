@@ -8,6 +8,7 @@ package sherdlock
 
 import (
 	"context"
+	"math/big"
 	"time"
 
 	"github.com/LFDT-Panurus/panurus/token"
@@ -41,6 +42,10 @@ type TokenLocker interface {
 //go:generate counterfeiter -o mocks/token_fetcher.go -fake-name FakeTokenFetcher . TokenFetcher
 type TokenFetcher interface {
 	UnspentTokensIteratorBy(ctx context.Context, walletID string, currency token2.Type) (Iterator[*token2.UnspentTokenInWallet], error)
+	// HasEnoughSpendableTokens reports whether the wallet's total spendable balance of
+	// currency is at least target, ignoring locks. See TokenDB's method of the same name
+	// for why the selector needs this.
+	HasEnoughSpendableTokens(ctx context.Context, walletID string, currency token2.Type, target *big.Int) (bool, error)
 }
 
 // FetcherProvider interface for providing fetcher instances.
@@ -55,6 +60,14 @@ type FetcherProvider interface {
 //go:generate counterfeiter -o mocks/tokendb.go -fake-name FakeTokenDB . TokenDB
 type TokenDB interface {
 	SpendableTokensIteratorBy(ctx context.Context, walletID string, typ token2.Type) (driver.SpendableTokensIterator, error)
+	// HasEnoughSpendableTokens reports whether the wallet's total spendable balance of typ
+	// is at least target, ignoring locks. SpendableTokensIteratorBy excludes already-locked
+	// tokens (#2395, mechanism 3), so an empty result from it does not prove the wallet has no
+	// funds — it may just mean every token is momentarily locked by another process. This
+	// method answers the balance question directly, without the lock exclusion, so the
+	// selector can fail fast on a wallet that could never cover the request instead of
+	// consuming its immediate-retry/backoff budget (see selector.go's use of it).
+	HasEnoughSpendableTokens(ctx context.Context, walletID string, typ token2.Type, target *big.Int) (bool, error)
 }
 
 // ConfigProvider interface for configuration provider.
@@ -89,6 +102,65 @@ type Locker interface {
 	// backends (sqlite, in-memory) always grant leadership locally. The lock
 	// id (if any) is owned internally by the implementation. See #1798.
 	AcquireCleanupLeadership(ctx context.Context) (dbdriver.CleanupLeadership, bool, error)
+}
+
+// BatchLocker is optionally implemented by a Locker that can claim several candidate
+// tokens in a single call. The selector type-asserts for it and, when present, claims a
+// covering window of candidates per round trip instead of one token at a time; when
+// absent, it falls back to Locker.Lock unchanged. Every backend that satisfies BatchLocker
+// must also satisfy Locker's ordinary single-token behaviour, since callers may mix both.
+//
+//go:generate counterfeiter -o mocks/batch_locker.go -fake-name FakeBatchLocker . BatchLocker
+type BatchLocker interface {
+	// LockBatch attempts to lock every token in tokenIDs on behalf of consumerTxID and
+	// reports, per candidate, how the claim resolved: the tokens it won, and those it
+	// refused as no longer spendable. It never claims a token outside tokenIDs. A backend
+	// that cannot separate a stale candidate from a lost race leaves
+	// BatchLockOutcome.Stale empty; see dbdriver.BatchLockOutcome. An error may come with a
+	// partially populated outcome - the claim can commit before the call fails - and the
+	// verdicts in it are authoritative for the locks they name.
+	LockBatch(ctx context.Context, tokenIDs []*token2.ID, consumerTxID transaction.ID, walletID string) (dbdriver.BatchLockOutcome, error)
+}
+
+// lockerUnwrapper is implemented by a Locker that wraps another store rather than being one
+// (tokenlockdb.StoreService embeds the driver.TokenLockStore interface). Such a wrapper
+// promotes only that interface's method set, so an optional capability the concrete driver
+// offers beyond it is invisible on the wrapper itself and must be looked for underneath.
+type lockerUnwrapper interface {
+	Unwrap() dbdriver.TokenLockStore
+}
+
+// asBatchLocker reports whether l can claim candidates in batches, looking both at l itself
+// and at the store it wraps. The two-step lookup is the whole point: the Locker the manager is
+// built with is a *tokenlockdb.StoreService, which satisfies BatchLocker only through the
+// driver store it embeds, so asserting on the wrapper alone takes the batch path out of every
+// deployment without failing a build or a test. See BatchLocker and lockerUnwrapper.
+func asBatchLocker(l Locker) (BatchLocker, bool) {
+	if bl, ok := l.(BatchLocker); ok {
+		return bl, true
+	}
+	if u, ok := l.(lockerUnwrapper); ok {
+		if inner := u.Unwrap(); inner != nil {
+			if bl, ok := inner.(BatchLocker); ok {
+				return bl, true
+			}
+		}
+	}
+
+	return nil, false
+}
+
+// BatchTokenLocker is optionally implemented by a TokenLocker that can claim several
+// candidate tokens for its consumer transaction in a single call. See BatchLocker: this is
+// the txID-bound counterpart the selector actually type-asserts s.locker against.
+//
+//go:generate counterfeiter -o mocks/batch_token_locker.go -fake-name FakeBatchTokenLocker . BatchTokenLocker
+type BatchTokenLocker interface {
+	TokenLocker
+	// TryLockBatch attempts to lock every token in tokenIDs for the selecting wallet
+	// (walletID) and reports, per candidate, how the claim resolved. It never claims a
+	// token outside tokenIDs. See BatchLocker.LockBatch.
+	TryLockBatch(ctx context.Context, tokenIDs []*token2.ID, walletID string) (dbdriver.BatchLockOutcome, error)
 }
 
 // TokenSelectorUnlocker interface combines Selector and UnlockAll.
