@@ -29,7 +29,19 @@ const (
 	// wholesale (see warnSampler.allow) rather than scanned for an LRU victim, keeping the
 	// sampler O(1) per call and free of any background goroutine.
 	warnSamplerMaxPrincipals = 4096
+	// emptyPrincipal is the identity hash fabric-smart-client's Identity.UniqueID() returns for a
+	// zero-length identity: a fixed sentinel string, not a content hash, that every empty or nil
+	// identity collides on. An event for such an identity arrives here with this value, not "".
+	emptyPrincipal = "<empty>"
 )
+
+// unattributed reports whether principal carries no usable attribution: either it is absent ("")
+// or it is the shared sentinel every empty/nil identity hashes to (emptyPrincipal). Such a record
+// cannot be rate-limited or attributed per principal, since one bucket shared across unrelated
+// callers would let their anomalies suppress each other.
+func unattributed(principal string) bool {
+	return principal == "" || principal == emptyPrincipal
+}
 
 // auditLog is the subset of logging.Logger the audit trail needs. Keeping it narrow lets the
 // audit record be asserted in tests without a logging backend.
@@ -191,10 +203,11 @@ func (a *AuditLogger) record(e Event) string {
 	return b.String()
 }
 
-// principalOrNone renders an empty principal explicitly, so a record is never ambiguous
-// about whether attribution was missing or the field was dropped.
+// principalOrNone renders an unattributed principal explicitly as "none", so a record is never
+// ambiguous about whether attribution was missing or the field was dropped. An empty/nil identity
+// reaches here as the "<empty>" sentinel, not "", so both are mapped (see unattributed).
 func principalOrNone(principal string) string {
-	if principal == "" {
+	if unattributed(principal) {
 		return "none"
 	}
 
@@ -244,11 +257,12 @@ func newWarnSampler() *warnSampler {
 }
 
 // allow reports whether a warn record for principal should be written now, consuming one token
-// when it returns true. An unattributed record (empty principal) is always allowed: it carries no
-// identity to rate-limit against, and lumping every such record onto one bucket would let
-// unrelated anomalies suppress each other.
+// when it returns true. An unattributed record is always allowed: it carries no identity to
+// rate-limit against, and lumping every such record onto one bucket would let unrelated anomalies
+// suppress each other. This covers both the empty string and the "<empty>" sentinel that every
+// empty/nil identity hashes to (see unattributed).
 func (w *warnSampler) allow(principal string) bool {
-	if principal == "" {
+	if unattributed(principal) {
 		return true
 	}
 

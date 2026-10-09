@@ -280,6 +280,12 @@ func (s *BucketSet) ClearRate(key string) {
 	if !ok {
 		return
 	}
+	// Settle the balance at the current (reduced) rate and advance b.last to now before swapping
+	// in the defaults, exactly as bucketForOverride and the in-place SetRate branch do. Otherwise
+	// the time the key sat idle under the override is left uncredited with b.last stale, and the
+	// next Take refills that whole gap at the new, higher default rate — handing back a full
+	// default bucket, the jump this method's contract says it avoids.
+	s.refill(b, s.now())
 	if b.overridden {
 		s.overrides--
 	}
