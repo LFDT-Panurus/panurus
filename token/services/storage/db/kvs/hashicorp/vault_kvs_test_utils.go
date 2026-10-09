@@ -143,6 +143,8 @@ func waitForVault(vaultURL, token string) error {
 	for i := range 90 { // Try for a bit
 		resp, err := client.Do(req)
 		if err == nil && resp.StatusCode == http.StatusOK {
+			SilentClose(resp.Body)
+
 			return nil
 		}
 		if err != nil {
