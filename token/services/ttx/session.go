@@ -15,13 +15,6 @@ import (
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/view"
 )
 
-var closedMsgChan = func() chan *view.Message {
-	ch := make(chan *view.Message)
-	close(ch)
-
-	return ch
-}()
-
 // LocalBidirectionalChannel is a bidirectional channel that is used to simulate
 // a session between two views (let's call them L and R) running in the same process.
 type LocalBidirectionalChannel struct {
@@ -153,22 +146,23 @@ func (s *localSession) send(ctx context.Context, payload []byte, status int32) e
 		Ctx:          ctx,
 	}
 
-	// If the peer has already closed its side, fail fast rather than dropping the
-	// message into a buffer nobody will drain. Without this check the non-blocking
-	// send below would report success or failure purely on buffer occupancy, so a
-	// caller could believe a message was delivered to a closed peer.
+	// Fail fast if either this session or the peer session is closed before writing to writeChannel
 	select {
+	case <-s.closedChan:
+		return errors.New("session is closed")
 	case <-s.peerClosedChan:
 		return errors.New("session is closed")
 	default:
 	}
 
+	// Try non-blocking write if buffer has room
 	select {
 	case s.writeChannel <- msg:
 		return nil
 	default:
 	}
 
+	// Blocking select: wait for buffer room, session close, or context cancellation
 	select {
 	case s.writeChannel <- msg:
 		return nil
@@ -186,7 +180,7 @@ func (s *localSession) Receive() <-chan *view.Message {
 	defer s.mu.RUnlock()
 
 	if s.closed {
-		return closedMsgChan
+		return nil
 	}
 
 	return s.readChannel
