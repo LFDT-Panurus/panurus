@@ -301,6 +301,9 @@ func (a *AuditingViewInitiator) verifyAuditorSignature(context view.Context, sig
 	for _, auditorID := range a.tx.TokenService().PublicParametersManager().PublicParameters().Auditors() {
 		v, err := a.tx.TokenService().SigService().AuditorVerifier(context.Context(), auditorID)
 		if err != nil {
+			// AuditorVerifier is deliberately not throttle-gated (see token.SignatureService),
+			// so this can never be a token.SignatureThrottled denial; any error is a genuine
+			// resolution failure. Skip this auditor and try the next.
 			logger.DebugfContext(context.Context(), "failed to get auditor verifier for [%s]", auditorID)
 
 			continue
