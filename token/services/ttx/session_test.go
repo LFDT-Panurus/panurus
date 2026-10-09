@@ -272,7 +272,7 @@ func TestLocalBidirectionalChannel_SendAfterClose(t *testing.T) {
 	assert.Contains(t, err.Error(), "session is closed")
 }
 
-// TestLocalBidirectionalChannel_ReceiveAfterClose verifies receive returns closed channel after close.
+// TestLocalBidirectionalChannel_ReceiveAfterClose verifies receive returns nil channel after close.
 func TestLocalBidirectionalChannel_ReceiveAfterClose(t *testing.T) {
 	ctx := t.Context()
 	channel, err := ttx.NewLocalBidirectionalChannel(ctx, "caller", "ctx-id", "endpoint", []byte("pkid"))
@@ -285,10 +285,7 @@ func TestLocalBidirectionalChannel_ReceiveAfterClose(t *testing.T) {
 
 	// Try to receive after close
 	receiveChan := leftSession.Receive()
-	require.NotNil(t, receiveChan)
-	msg, ok := <-receiveChan
-	assert.False(t, ok)
-	assert.Nil(t, msg)
+	assert.Nil(t, receiveChan)
 }
 
 // TestLocalBidirectionalChannel_MessageFields verifies all message fields are set correctly.
@@ -635,13 +632,8 @@ func TestLocalBidirectionalChannel_BothSidesClosed(t *testing.T) {
 
 	assert.True(t, leftSession.Info().Closed)
 	assert.True(t, rightSession.Info().Closed)
-	msgLeft, okLeft := <-leftSession.Receive()
-	assert.False(t, okLeft)
-	assert.Nil(t, msgLeft)
-
-	msgRight, okRight := <-rightSession.Receive()
-	assert.False(t, okRight)
-	assert.Nil(t, msgRight)
+	assert.Nil(t, leftSession.Receive())
+	assert.Nil(t, rightSession.Receive())
 
 	require.Error(t, leftSession.Send(ctx, []byte("data")))
 	require.Error(t, rightSession.Send(ctx, []byte("data")))
