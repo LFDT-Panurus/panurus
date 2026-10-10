@@ -16,6 +16,7 @@ import (
 	"github.com/LFDT-Panurus/panurus/token/core/fabtoken/v1/validator"
 	"github.com/LFDT-Panurus/panurus/token/driver"
 	"github.com/LFDT-Panurus/panurus/token/services/logging"
+	"github.com/LFDT-Panurus/panurus/token/services/observability"
 	"github.com/LFDT-Panurus/panurus/token/services/utils"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 )
@@ -146,8 +147,13 @@ func (d *Driver) NewTokenService(tmsID driver.TMSID, publicParams []byte) (drive
 	}
 	deserializer := ws.Deserializer
 	ip := ws.IdentityProvider
+	// Decorate WalletService with circuit breaker protection loaded from TMS configuration and TMS-scoped Prometheus metrics.
+	// Note: metricsProvider is scoped via metrics.NewTMSProvider with the TMS ID, which injects
+	// the required network, channel, and namespace labels.
+	cbConfig := observability.LoadCircuitBreakerConfig(tmsConfig)
+	decoratedWS := observability.NewWalletServiceDecoratorWithConfig(ws, metricsProvider, cbConfig)
 
-	authorization := common.NewStandardAuthorization(logger, publicParamsManager.PublicParams(), ws)
+	authorization := common.NewStandardAuthorization(logger, publicParamsManager.PublicParams(), decoratedWS)
 	tokensService, err := v1.NewTokensService(publicParamsManager.PublicParams(), deserializer)
 	if err != nil {
 		return nil, errors.Wrapf(err, "failed to initialize token service for [%s:%s]", tmsID.Network, tmsID.Namespace)
@@ -167,13 +173,13 @@ func (d *Driver) NewTokenService(tmsID driver.TMSID, publicParams []byte) (drive
 	)
 	service, err := v1.NewService(
 		logger,
-		ws,
+		decoratedWS,
 		publicParamsManager,
 		ip,
 		deserializer,
 		tmsConfig,
-		metrics.NewIssueService(v1.NewIssueService(publicParamsManager, ws, deserializer), metricsProvider),
-		metrics.NewTransferService(v1.NewTransferService(logger, publicParamsManager, ws, common.NewVaultTokenLoader(qe), deserializer), metricsProvider),
+		metrics.NewIssueService(v1.NewIssueService(publicParamsManager, decoratedWS, deserializer), metricsProvider),
+		metrics.NewTransferService(v1.NewTransferService(logger, publicParamsManager, decoratedWS, common.NewVaultTokenLoader(qe), deserializer), metricsProvider),
 		metrics.NewAuditorService(v1.NewAuditorService(logger, publicParamsManager, deserializer, qe, d.tracerProvider, common.LoadAuditRetryConfig(tmsConfig), limits), metricsProvider),
 		metrics.NewTokensService(tokensService, metricsProvider),
 		metrics.NewTokensUpgradeService(&v1.TokensUpgradeService{}, metricsProvider),
