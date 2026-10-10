@@ -74,6 +74,7 @@ func (a *Service) Append(ctx context.Context, tx *Transaction) error {
 			finality.NewTokenRequestHasher(a.tmsProvider, a.tmsID),
 			a.ttxStoreService,
 			a.tokensService,
+			finality.NewSelectorManagerProvider(a.tmsProvider, a.tmsID),
 			a.finalityTracer,
 			a.metricsProvider,
 		),

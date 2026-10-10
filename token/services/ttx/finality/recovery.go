@@ -30,15 +30,16 @@ type networkService interface {
 // TTXRecoveryHandler implements transaction recovery by directly querying transaction status
 // and applying finality logic synchronously
 type TTXRecoveryHandler struct {
-	logger        logging.Logger
-	network       networkService
-	namespace     string
-	hasher        tokenRequestHasher
-	tmsID         token.TMSID
-	transactionDB transactionDB
-	tokens        tokensService
-	tracer        trace.Tracer
-	metrics       *Metrics
+	logger                  logging.Logger
+	network                 networkService
+	namespace               string
+	hasher                  tokenRequestHasher
+	tmsID                   token.TMSID
+	transactionDB           transactionDB
+	tokens                  tokensService
+	selectorManagerProvider selectorManagerProvider
+	tracer                  trace.Tracer
+	metrics                 *Metrics
 }
 
 // NewTTXRecoveryHandler creates a new recovery handler with all dependencies needed
@@ -51,19 +52,21 @@ func NewTTXRecoveryHandler(
 	tmsID token.TMSID,
 	transactionDB transactionDB,
 	tokens tokensService,
+	selectorManagerProvider selectorManagerProvider,
 	tracer trace.Tracer,
 	metricsProvider metrics.Provider,
 ) *TTXRecoveryHandler {
 	return &TTXRecoveryHandler{
-		logger:        logger,
-		network:       network,
-		namespace:     namespace,
-		hasher:        hasher,
-		tmsID:         tmsID,
-		transactionDB: transactionDB,
-		tokens:        tokens,
-		tracer:        tracer,
-		metrics:       NewMetrics(metricsProvider),
+		logger:                  logger,
+		network:                 network,
+		namespace:               namespace,
+		hasher:                  hasher,
+		tmsID:                   tmsID,
+		transactionDB:           transactionDB,
+		tokens:                  tokens,
+		selectorManagerProvider: selectorManagerProvider,
+		tracer:                  tracer,
+		metrics:                 NewMetrics(metricsProvider),
 	}
 }
 
@@ -171,6 +174,7 @@ func (h *TTXRecoveryHandler) applyFinalityLogic(ctx context.Context, txID string
 	} else {
 		h.metrics.DeletedTransactions.Add(1)
 	}
+	releaseLocks(ctx, h.logger, h.selectorManagerProvider, txID)
 
 	h.logger.DebugfContext(ctx, "successfully recovered transaction [%s] with status [%s]", txID, txStatus)
 

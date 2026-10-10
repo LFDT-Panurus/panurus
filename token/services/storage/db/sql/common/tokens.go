@@ -38,6 +38,10 @@ type tokenTables struct {
 	Certifications   string
 	Requests         string
 	TokenSKICleanups string
+	// TokenLocks is only used by buildSpendableTokensIteratorByQuery's
+	// anti-join against already-locked tokens (#2395); no other TokenStore
+	// query touches it.
+	TokenLocks string
 }
 
 type TokenStore struct {
@@ -92,6 +96,7 @@ func NewTokenStoreWithNotifier(readDB *sql.DB, writeDB WriteDB, tables TableName
 		Certifications:   tables.Certifications,
 		Requests:         tables.Requests,
 		TokenSKICleanups: tables.TokenSKICleanups,
+		TokenLocks:       tables.TokenLocks,
 	}, ci, notifier, nil), nil
 }
 
@@ -110,6 +115,7 @@ func NewTokenStoreWithNotifierAndCleanup(
 		Certifications:   tables.Certifications,
 		Requests:         tables.Requests,
 		TokenSKICleanups: tables.TokenSKICleanups,
+		TokenLocks:       tables.TokenLocks,
 	}, ci, notifier, cleanupLeaderFactory), nil
 }
 
@@ -390,11 +396,33 @@ func (it *dedupedTokenRowsIterator) Next() (*token.UnspentToken, error) {
 // can compare the dynamic path against a prepared-once path using identical
 // SQL (see #1919).
 func buildSpendableTokensIteratorByQuery(db *TokenStore, walletID string, typ token.Type) (string, []any) {
-	return buildSpendableTokensQuery(db, driver.SpendableTokensQuery{WalletID: walletID, TokenType: typ})
+	return buildSpendableTokensQuery(db, spendableTokensIteratorByParams(walletID, typ))
+}
+
+// spendableTokensIteratorByParams is the SpendableTokensQuery that SpendableTokensIteratorBy
+// stands for, in one place so the iterator and buildSpendableTokensIteratorByQuery (and the
+// benchmark that compares them) cannot drift apart.
+//
+// Order is explicit rather than left at the zero value: AmountUnordered is the cheapest plan
+// in general, but sherdlock's candidate scan requires ascending-by-amount rows - its
+// bucketedIterator shuffle and its sufficiency window both assume every later candidate is
+// >= the current one (#2395, mechanism 2) - and the covering index supplies that order with
+// no sort step.
+func spendableTokensIteratorByParams(walletID string, typ token.Type) driver.SpendableTokensQuery {
+	return driver.SpendableTokensQuery{
+		WalletID:  walletID,
+		TokenType: typ,
+		Order:     driver.AmountAscending,
+	}
 }
 
 // buildSpendableTokensQuery builds the SQL query and args behind
 // QuerySpendableTokens.
+//
+// Tokens another consumer already holds a lock on are excluded here, in the shared builder,
+// and not only on the SpendableTokensIteratorBy path: QuerySpendableTokens is documented as
+// that iterator plus bounds, so a bounded caller must not start seeing candidates the
+// unbounded one hides (#2395, mechanism 1). See notLocked.
 //
 // The amount bounds, the order and the limit are all expressed in SQL rather than applied
 // after the fact, so a bounded window costs a bounded scan: with WalletID and TokenType set,
@@ -402,17 +430,23 @@ func buildSpendableTokensIteratorByQuery(db *TokenStore, walletID string, typ to
 // the LIMIT stops the scan early instead of after the whole spendable set has been read and
 // re-parsed in Go (see #2020).
 func buildSpendableTokensQuery(db *TokenStore, params driver.SpendableTokensQuery) (string, []any) {
+	tokenTable := q.Table(db.table.Tokens)
+	tokenLocksTable := q.Table(db.table.TokenLocks)
+
 	query := q.Select().
 		FieldsByName("tx_id", "idx", "token_type", "quantity", "owner_wallet_id").
-		From(q.Table(db.table.Tokens)).
-		Where(HasTokenDetails(driver.QueryTokenDetailsParams{
-			WalletID:           params.WalletID,
-			TokenType:          params.TokenType,
-			Spendable:          driver.SpendableOnly,
-			LedgerTokenFormats: db.getSupportedTokenFormats(),
-			MinAmount:          params.MinAmount,
-			MaxAmount:          params.MaxAmount,
-		}, nil))
+		From(tokenTable).
+		Where(cond.And(
+			HasTokenDetails(driver.QueryTokenDetailsParams{
+				WalletID:           params.WalletID,
+				TokenType:          params.TokenType,
+				Spendable:          driver.SpendableOnly,
+				LedgerTokenFormats: db.getSupportedTokenFormats(),
+				MinAmount:          params.MinAmount,
+				MaxAmount:          params.MaxAmount,
+			}, nil),
+			notLocked(tokenTable, tokenLocksTable),
+		))
 
 	// Sort on amount alone. Adding tx_id/idx as tie-breakers would make the sequence stable
 	// but would also cost a sort step, since the covering index is ordered by amount only.
@@ -476,11 +510,34 @@ func orderKeyByte(order driver.AmountOrder) byte {
 	return 'u'
 }
 
+// notLocked excludes tokens that currently have a row in TokenLocks, so
+// concurrent selectors stop racing to lock a token they can already see is
+// held by someone else (#2395, mechanism 3). The row-level INSERT into
+// TokenLocks remains the race-safe backstop for the window between this read
+// and that INSERT; this anti-join only stops selectors from starting a race
+// they are very likely to lose.
+//
+// This is deliberately not folded into HasTokenDetails: balance and audit
+// queries need to see locked tokens too, only the spendable-tokens query
+// used by the selector should exclude them.
+func notLocked(tokenTable, tokenLocksTable common3.Table) cond.Condition {
+	return cond.NotExists(
+		q.Select().
+			Fields(common3.FieldName("1")).
+			From(tokenLocksTable).
+			Where(cond.And(
+				cond.Cmp(tokenLocksTable.Field("tx_id"), "=", tokenTable.Field("tx_id")),
+				cond.Cmp(tokenLocksTable.Field("idx"), "=", tokenTable.Field("idx")),
+			)),
+	)
+}
+
 // SpendableTokensIteratorBy returns the minimum information about the tokens needed for the
-// selector: every spendable token of the wallet and type, unordered and unlimited. Callers
-// that need only part of that set should use QuerySpendableTokens.
+// selector: every spendable token of the wallet and type that no other consumer currently
+// holds a lock on, ascending by amount and unlimited. Callers that need only part of that
+// set should use QuerySpendableTokens.
 func (db *TokenStore) SpendableTokensIteratorBy(ctx context.Context, walletID string, typ token.Type) (tdriver.SpendableTokensIterator, error) {
-	return db.QuerySpendableTokens(ctx, driver.SpendableTokensQuery{WalletID: walletID, TokenType: typ})
+	return db.QuerySpendableTokens(ctx, spendableTokensIteratorByParams(walletID, typ))
 }
 
 // QuerySpendableTokens returns an iterator over the spendable tokens matching params.
@@ -498,6 +555,54 @@ func (db *TokenStore) QuerySpendableTokens(ctx context.Context, params driver.Sp
 	return common.NewIterator(rows, func(r *token.UnspentTokenInWallet) error {
 		return rows.Scan(&r.Id.TxId, &r.Id.Index, &r.Type, &r.Quantity, &r.WalletID)
 	}), nil
+}
+
+// buildHasEnoughSpendableTokensQuery builds the SQL query and args for
+// HasEnoughSpendableTokens without executing it: the same spendable, lock-ignoring
+// predicate as buildSpendableTokensIteratorByQuery minus its notLocked anti-join, summing
+// amount so the wallet's total is computed in SQL rather than by fetching every token.
+func buildHasEnoughSpendableTokensQuery(db *TokenStore, walletID string, typ token.Type) (string, []any) {
+	return q.Select().FieldsByName("SUM(amount)").
+		From(q.Table(db.table.Tokens)).
+		Where(HasTokenDetails(driver.QueryTokenDetailsParams{
+			WalletID:           walletID,
+			TokenType:          typ,
+			Spendable:          driver.SpendableOnly,
+			LedgerTokenFormats: db.getSupportedTokenFormats(),
+		}, nil)).
+		Format(db.ci)
+}
+
+// HasEnoughSpendableTokens reports whether the wallet's total spendable balance of typ is
+// at least target. It deliberately ignores locks: the question it answers is "can this
+// wallet ever pay", not "can it pay right now". The selector uses it as a
+// fast fail, so that a wallet holding dust that could never cover the requested amount
+// fails immediately instead of burning the immediate-retry/backoff budget first.
+func (db *TokenStore) HasEnoughSpendableTokens(ctx context.Context, walletID string, typ token.Type, target *big.Int) (bool, error) {
+	query, args := buildHasEnoughSpendableTokensQuery(db, walletID, typ)
+
+	rows, err := db.readDB.QueryContext(ctx, query, args...)
+	if err != nil {
+		return false, errors.Wrapf(err, "error querying db")
+	}
+	defer Close(rows)
+
+	var sum BigInt
+	if !rows.Next() {
+		if err := rows.Err(); err != nil {
+			return false, err
+		}
+
+		return false, nil
+	}
+	if err := rows.Scan(&sum); err != nil {
+		return false, err
+	}
+	if sum.Int == nil {
+		return false, nil
+	}
+
+	return sum.Cmp(target) >= 0, nil
 }
 
 // UnspentLedgerTokensIteratorBy returns an iterator over all unspent ledger tokens
@@ -1582,8 +1687,15 @@ func (db *TokenStore) GetSchema() string {
 		CREATE INDEX IF NOT EXISTS idx_ski_cleanup_%s ON %s ( is_deleted, spent_at );
 		CREATE INDEX IF NOT EXISTS idx_owner_wallet_id_%s ON %s ( owner_wallet_id );
 		CREATE INDEX IF NOT EXISTS idx_owner_wallet_part_%s ON %s ( owner_wallet_id, token_type ) WHERE is_deleted = false AND owner = true;
-		CREATE INDEX IF NOT EXISTS idx_issued_%s ON %s ( redeemed, token_type ) WHERE issuer = true;
+		-- Covers buildSpendableTokensIteratorByQuery (#2395 phase 4b) end to end: its
+		-- equality predicates form the leading columns and its ORDER BY amount is the
+		-- trailing one, so the selector's spendable-tokens scan reads rows already in
+		-- amount order instead of sorting the whole wallet. Separate from
+		-- idx_owner_wallet_part rather than an extra column on it, because that index
+		-- already exists in deployed schemas and CREATE INDEX IF NOT EXISTS would not
+		-- replace it under the same name.
 		CREATE INDEX IF NOT EXISTS idx_spendable_amount_%s ON %s ( owner_wallet_id, token_type, amount ) WHERE is_deleted = false AND owner = true AND spendable = true;
+		CREATE INDEX IF NOT EXISTS idx_issued_%s ON %s ( redeemed, token_type ) WHERE issuer = true;
 
 		-- Ownership
 		CREATE TABLE IF NOT EXISTS %s (
@@ -1635,7 +1747,13 @@ func (db *TokenStore) GetSchema() string {
 		db.table.PublicParams, db.table.PublicParams, db.table.PublicParams,
 		db.table.Certifications, db.table.Tokens,
 		db.table.TokenSKICleanups, db.table.Tokens, db.table.TokenSKICleanups, db.table.TokenSKICleanups,
-	)
+	) +
+		// TokenLocks is created here too, idempotently and alongside
+		// TokenLockStore.GetSchema, because buildSpendableTokensIteratorByQuery's notLocked
+		// anti-join (#2395, mechanism 3) makes this table a hard dependency of the token
+		// store itself, not just of the locker. The definition is shared rather than
+		// repeated so the two emitters cannot drift apart - see tokenLocksSchema.
+		tokenLocksSchema(db.table.TokenLocks, db.table.Tokens)
 }
 
 func (db *TokenStore) Close() error {

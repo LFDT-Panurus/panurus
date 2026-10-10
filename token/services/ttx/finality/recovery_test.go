@@ -49,6 +49,7 @@ func TestTTXRecoveryHandler_Recover_ValidTransaction_CachedRequest(t *testing.T)
 		tmsID,
 		mockTTXDB,
 		mockTokens,
+		&mock2.SelectorManagerProvider{},
 		tracer,
 		nil, // metrics provider is nil-safe
 	)
@@ -112,6 +113,7 @@ func TestTTXRecoveryHandler_Recover_ValidTransaction_LoadFromDB(t *testing.T) {
 		tmsID,
 		mockTTXDB,
 		mockTokens,
+		&mock2.SelectorManagerProvider{},
 		tracer,
 		nil,
 	)
@@ -154,6 +156,159 @@ func TestTTXRecoveryHandler_Recover_ValidTransaction_LoadFromDB(t *testing.T) {
 	require.Equal(t, 1, publishedAfterCommits)
 }
 
+// fakeSelectorManager is a minimal token.SelectorManager that records every
+// txID it was asked to Unlock, for asserting the #2395 mechanism-4 fix: locks
+// must be released once a transaction's status is terminal, not just left to
+// the lease-expiry sweep.
+type fakeSelectorManager struct {
+	unlockCalls []string
+	unlockErr   error
+}
+
+func (f *fakeSelectorManager) NewSelector(_ string) (token.Selector, error) { return nil, nil }
+
+func (f *fakeSelectorManager) Unlock(_ context.Context, id string) error {
+	f.unlockCalls = append(f.unlockCalls, id)
+
+	return f.unlockErr
+}
+
+func (f *fakeSelectorManager) Close(_ string) error { return nil }
+
+// TestTTXRecoveryHandler_Recover_ReleasesLocksOnConfirmed is the regression
+// test for #2395 mechanism 4: a transaction recovered as Confirmed must
+// release the locks it took during selection immediately, rather than
+// leaving them for the 3-minute lease-expiry sweep.
+func TestTTXRecoveryHandler_Recover_ReleasesLocksOnConfirmed(t *testing.T) {
+	ctx := context.Background()
+	txID := "tx-confirmed"
+	namespace := "testns"
+	tmsID := token.TMSID{Network: "testnet", Channel: "testchannel", Namespace: "testns"}
+
+	mockNetwork := &mock2.Network{}
+	mockHasher := &mock2.TokenRequestHasher{}
+	mockTTXDB := &mock2.TransactionDB{}
+	mockTokens := &mock2.TokensService{}
+	mockTx := &drivermock.TransactionStoreTransaction{}
+	logger := logging.MustGetLogger()
+	tracer := noop.NewTracerProvider().Tracer("test")
+
+	sm := &fakeSelectorManager{}
+	smProvider := &mock2.SelectorManagerProvider{}
+	smProvider.SelectorManagerReturns(sm, nil)
+
+	handler := finality.NewTTXRecoveryHandler(
+		logger,
+		mockNetwork,
+		namespace,
+		mockHasher,
+		tmsID,
+		mockTTXDB,
+		mockTokens,
+		smProvider,
+		tracer,
+		nil,
+	)
+
+	msgToSign := []byte("message")
+	expectedHashString := utils.Hashable(msgToSign).String()
+	tokenRequestHash, err := base64.StdEncoding.DecodeString(expectedHashString)
+	require.NoError(t, err)
+
+	mockNetwork.GetTransactionStatusReturns(network.Valid, tokenRequestHash, "", nil)
+	mockTokens.GetCachedTokenRequestReturns(&token.Request{}, msgToSign)
+	mockTTXDB.NewTransactionReturns(mockTx, nil)
+	mockTokens.AppendValidReturns(nil, nil)
+	mockTx.SetStatusReturns(nil)
+	mockTx.CommitReturns(nil)
+
+	require.NoError(t, handler.Recover(ctx, txID))
+	require.Equal(t, []string{txID}, sm.unlockCalls,
+		"a confirmed transaction must release its selection locks (#2395 mechanism 4)")
+}
+
+// TestTTXRecoveryHandler_Recover_ReleasesLocksOnDeleted is the Deleted-status
+// counterpart: a failed transaction must also release its locks, since it
+// will never spend the tokens it selected.
+func TestTTXRecoveryHandler_Recover_ReleasesLocksOnDeleted(t *testing.T) {
+	ctx := context.Background()
+	txID := "tx-deleted"
+	namespace := "testns"
+	tmsID := token.TMSID{Network: "testnet", Channel: "testchannel", Namespace: "testns"}
+
+	mockNetwork := &mock2.Network{}
+	mockHasher := &mock2.TokenRequestHasher{}
+	mockTTXDB := &mock2.TransactionDB{}
+	mockTokens := &mock2.TokensService{}
+	logger := logging.MustGetLogger()
+	tracer := noop.NewTracerProvider().Tracer("test")
+
+	sm := &fakeSelectorManager{}
+	smProvider := &mock2.SelectorManagerProvider{}
+	smProvider.SelectorManagerReturns(sm, nil)
+
+	handler := finality.NewTTXRecoveryHandler(
+		logger,
+		mockNetwork,
+		namespace,
+		mockHasher,
+		tmsID,
+		mockTTXDB,
+		mockTokens,
+		smProvider,
+		tracer,
+		nil,
+	)
+
+	mockNetwork.GetTransactionStatusReturns(network.Invalid, nil, "rejected", nil)
+	mockTTXDB.SetStatusReturns(nil)
+
+	require.NoError(t, handler.Recover(ctx, txID))
+	require.Equal(t, []string{txID}, sm.unlockCalls,
+		"a deleted transaction must also release its selection locks (#2395 mechanism 4)")
+}
+
+// TestTTXRecoveryHandler_Recover_LockReleaseErrorDoesNotFailRecovery verifies
+// that a failure to release locks is logged and swallowed, not propagated:
+// releasing locks is a best-effort cleanup and must never fail the
+// settlement path, mirroring Transaction.Release's existing error handling.
+func TestTTXRecoveryHandler_Recover_LockReleaseErrorDoesNotFailRecovery(t *testing.T) {
+	ctx := context.Background()
+	txID := "tx-unlock-fails"
+	namespace := "testns"
+	tmsID := token.TMSID{Network: "testnet", Channel: "testchannel", Namespace: "testns"}
+
+	mockNetwork := &mock2.Network{}
+	mockHasher := &mock2.TokenRequestHasher{}
+	mockTTXDB := &mock2.TransactionDB{}
+	mockTokens := &mock2.TokensService{}
+	logger := logging.MustGetLogger()
+	tracer := noop.NewTracerProvider().Tracer("test")
+
+	sm := &fakeSelectorManager{unlockErr: errors.New("store unavailable")}
+	smProvider := &mock2.SelectorManagerProvider{}
+	smProvider.SelectorManagerReturns(sm, nil)
+
+	handler := finality.NewTTXRecoveryHandler(
+		logger,
+		mockNetwork,
+		namespace,
+		mockHasher,
+		tmsID,
+		mockTTXDB,
+		mockTokens,
+		smProvider,
+		tracer,
+		nil,
+	)
+
+	mockNetwork.GetTransactionStatusReturns(network.Invalid, nil, "rejected", nil)
+	mockTTXDB.SetStatusReturns(nil)
+
+	require.NoError(t, handler.Recover(ctx, txID))
+	require.Equal(t, []string{txID}, sm.unlockCalls)
+}
+
 func TestTTXRecoveryHandler_Recover_InvalidTransaction(t *testing.T) {
 	// Setup
 	ctx := context.Background()
@@ -178,6 +333,7 @@ func TestTTXRecoveryHandler_Recover_InvalidTransaction(t *testing.T) {
 		tmsID,
 		mockTTXDB,
 		mockTokens,
+		&mock2.SelectorManagerProvider{},
 		tracer,
 		nil,
 	)
@@ -225,6 +381,7 @@ func TestTTXRecoveryHandler_Recover_BusyTransaction(t *testing.T) {
 		tmsID,
 		mockTTXDB,
 		mockTokens,
+		&mock2.SelectorManagerProvider{},
 		tracer,
 		nil,
 	)
@@ -266,6 +423,7 @@ func TestTTXRecoveryHandler_Recover_NetworkError(t *testing.T) {
 		tmsID,
 		mockTTXDB,
 		mockTokens,
+		&mock2.SelectorManagerProvider{},
 		tracer,
 		nil,
 	)
@@ -308,6 +466,7 @@ func TestTTXRecoveryHandler_Recover_HashMismatch(t *testing.T) {
 		tmsID,
 		mockTTXDB,
 		mockTokens,
+		&mock2.SelectorManagerProvider{},
 		tracer,
 		nil,
 	)
@@ -363,6 +522,7 @@ func TestTTXRecoveryHandler_Recover_GetTokenRequestError(t *testing.T) {
 		tmsID,
 		mockTTXDB,
 		mockTokens,
+		&mock2.SelectorManagerProvider{},
 		tracer,
 		nil,
 	)
@@ -409,6 +569,7 @@ func TestTTXRecoveryHandler_Recover_AppendError(t *testing.T) {
 		tmsID,
 		mockTTXDB,
 		mockTokens,
+		&mock2.SelectorManagerProvider{},
 		tracer,
 		nil,
 	)
@@ -465,6 +626,7 @@ func TestTTXRecoveryHandler_Recover_SetStatusError(t *testing.T) {
 		tmsID,
 		mockTTXDB,
 		mockTokens,
+		&mock2.SelectorManagerProvider{},
 		tracer,
 		nil,
 	)
