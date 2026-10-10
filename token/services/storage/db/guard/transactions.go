@@ -8,6 +8,7 @@ package guard
 
 import (
 	"context"
+	"database/sql"
 	"math/big"
 
 	"github.com/LFDT-Panurus/panurus/token"
@@ -32,7 +33,28 @@ func WrapAuditTransaction(s driver.AuditTransactionStore, p Policy) driver.Audit
 		return s
 	}
 
-	return &guardedAuditTx{AuditTransactionStore: s, policy: p}
+	g := &guardedAuditTx{AuditTransactionStore: s, policy: p}
+	if w, ok := s.(writeDBProvider); ok {
+		return &guardedSQLAuditTx{guardedAuditTx: g, db: w}
+	}
+
+	return g
+}
+
+// writeDBProvider mirrors locker.WriteDBProvider.
+type writeDBProvider interface {
+	WriteDB() *sql.DB
+}
+
+// guardedSQLAuditTx keeps WriteDB visible through the guard so the postgres
+// auditor locker can still reach the underlying *sql.DB.
+type guardedSQLAuditTx struct {
+	*guardedAuditTx
+	db writeDBProvider
+}
+
+func (g *guardedSQLAuditTx) WriteDB() *sql.DB {
+	return g.db.WriteDB()
 }
 
 type guardedOwnerTx struct {
