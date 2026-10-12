@@ -190,7 +190,7 @@ func (t *DBTransaction) DeleteTokens(ctx context.Context, deletedBy string, ids 
 // AppendToken records a new token in the database and records an add-token event for
 // each of its owners. The events are published only after the transaction commits,
 // see Notify and FlushEvents.
-func (t *DBTransaction) AppendToken(ctx context.Context, tta TokenToAppend) error {
+func (t *DBTransaction) AppendToken(ctx context.Context, tta *TokenToAppend) error {
 	q, err := token2.ToQuantity(tta.Tok.Quantity, tta.Precision)
 	if err != nil {
 		return errors.Wrapf(err, "cannot covert [%s] with precision [%d]", tta.Tok.Quantity, tta.Precision)

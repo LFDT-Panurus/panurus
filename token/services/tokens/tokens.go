@@ -137,8 +137,8 @@ func (t *Service) AppendValid(ctx context.Context, tx dbdriver.Transaction, txID
 	}
 
 	logger.DebugfContext(ctx, "append tokens")
-	for _, tta := range toAppend {
-		err = ts.AppendToken(ctx, tta)
+	for i := range toAppend {
+		err = ts.AppendToken(ctx, &toAppend[i])
 		if err != nil {
 			return noPostCommit, errors.WithMessagef(err, "transaction [%s], failed to append token", txID)
 		}
@@ -327,7 +327,7 @@ func (t *Service) deleteTokens(ctx context.Context, network *network.Network, tm
 	}
 
 	// remove the tokens flagged as spent
-	var toDelete []*token2.ID
+	toDelete := make([]*token2.ID, 0, len(tokens))
 	for i, tok := range tokens {
 		if spent[i] {
 			logger.DebugfContext(ctx, "token [%s] is spent", tok.Id)
@@ -403,8 +403,12 @@ func (t *Service) Parse(
 	if graphHiding {
 		ids := md.SpentTokenID()
 		logger.DebugfContext(ctx, "transaction [%s] with graph hiding, delete inputs [%v]", requestAnchor, ids)
+		toSpend = make([]*token2.ID, 0, len(ids)+is.Count())
 		toSpend = append(toSpend, ids...)
+	} else {
+		toSpend = make([]*token2.ID, 0, is.Count())
 	}
+	toAppend = make([]TokenToAppend, 0, os.Count())
 
 	logger.DebugfContext(ctx, "parse [%d] inputs and [%d] outputs from [%s]", is.Count(), os.Count(), requestAnchor)
 
