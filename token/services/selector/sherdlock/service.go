@@ -19,8 +19,17 @@ import (
 	lazy2 "github.com/hyperledger-labs/fabric-smart-client/platform/common/utils/lazy"
 )
 
+// lazyCache is the per-TMS manager cache a SelectorService looks managers up in.
+type lazyCache = lazy2.Provider[*token.ManagementService, token.SelectorManager]
+
 type SelectorService struct {
-	managerLazyCache lazy2.Provider[*token.ManagementService, token.SelectorManager]
+	// cacheMu guards managerLazyCache. SelectorManager holds it for reading across the whole lookup
+	// and Shutdown holds it for writing to replace the cache, so a lookup can never finish on a cache
+	// Shutdown has already discarded and hand out a manager it has stopped. It is a separate lock
+	// from mu because building a manager inside the lookup calls trackManager, which takes mu.
+	cacheMu          sync.RWMutex
+	managerLazyCache lazyCache
+	newCache         func() lazyCache
 	mu               sync.Mutex
 	managers         []*Manager
 }
@@ -57,7 +66,10 @@ func NewService(
 	if loader.limiter != nil {
 		logger.Infof("per-wallet token selection rate limiting is enabled")
 	}
-	svc.managerLazyCache = lazy2.NewProviderWithKeyMapper(key, loader.load)
+	svc.newCache = func() lazyCache {
+		return lazy2.NewProviderWithKeyMapper(key, loader.load)
+	}
+	svc.managerLazyCache = svc.newCache()
 
 	return svc
 }
@@ -66,6 +78,9 @@ func (s *SelectorService) SelectorManager(tms *token.ManagementService) (token.S
 	if tms == nil {
 		return nil, errors.Errorf("invalid tms, nil reference")
 	}
+
+	s.cacheMu.RLock()
+	defer s.cacheMu.RUnlock()
 
 	return s.managerLazyCache.Get(tms)
 }
@@ -79,10 +94,21 @@ func (s *SelectorService) SelectorManager(tms *token.ManagementService) (token.S
 // caller in the first place. The built-in limiter runs no goroutines and prunes its own buckets,
 // so there is nothing to leak.
 func (s *SelectorService) Shutdown() {
+	// Start from an empty cache. The cached managers are the ones being stopped here, and the
+	// cache is keyed by TMS id, so keeping it would hand every later caller the same stopped
+	// manager for as long as the process lives: its background cleanup would never run again.
+	//
+	// Taking cacheMu first waits out any lookup in flight, so every manager the old cache built is
+	// already tracked, and is stopped below, before the old cache is dropped.
+	s.cacheMu.Lock()
+	if s.newCache != nil {
+		s.managerLazyCache = s.newCache()
+	}
 	s.mu.Lock()
 	managers := s.managers
 	s.managers = nil
 	s.mu.Unlock()
+	s.cacheMu.Unlock()
 
 	for _, m := range managers {
 		if err := m.Stop(); err != nil {

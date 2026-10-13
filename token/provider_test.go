@@ -8,6 +8,7 @@ package token
 
 import (
 	"context"
+	"crypto/sha256"
 	"testing"
 
 	"github.com/LFDT-Panurus/panurus/token/driver"
@@ -215,6 +216,53 @@ func TestManagementServiceProvider_Update(t *testing.T) {
 	assert.Equal(t, 1, tmsProvider.updateCallCount)
 
 	// Verify cache was cleared
+	_, exists := provider.services["net1ch1ns1"]
+	assert.False(t, exists)
+}
+
+// shutdownCountingSelectorProvider is a selector provider that counts Shutdown calls.
+type shutdownCountingSelectorProvider struct {
+	mockSelectorManagerProvider
+	shutdowns int
+}
+
+func (m *shutdownCountingSelectorProvider) Shutdown() { m.shutdowns++ }
+
+// TestManagementServiceProvider_Update_SameParams verifies that re-applying the public parameters a
+// TMS already runs changes nothing: in particular it must not shut down the selector managers, which
+// stops their background cleanup for every TMS on the node. The core provider is still asked, since
+// a TMS it does not have yet has to be built either way.
+func TestManagementServiceProvider_Update_SameParams(t *testing.T) {
+	current := []byte("current params")
+	digest := sha256.Sum256(current)
+	ppm := &mock.PublicParamsManager{}
+	ppm.PublicParamsHashReturns(digest[:])
+	live := &mock.TokenManagerService{}
+	live.PublicParamsManagerReturns(ppm)
+
+	tmsProvider := &mockTokenManagerServiceProvider{tms: live}
+	selectorProvider := &shutdownCountingSelectorProvider{}
+	provider := NewManagementServiceProvider(
+		tmsProvider,
+		&mockNormalizer{},
+		&mockVaultProvider{},
+		&mockCertificationClientProvider{},
+		selectorProvider,
+	)
+
+	cached := &ManagementService{tms: live}
+	provider.services["net1ch1ns1"] = cached
+
+	tmsID := TMSID{Network: "net1", Channel: "ch1", Namespace: "ns1"}
+	require.NoError(t, provider.Update(tmsID, current))
+	assert.Equal(t, 1, tmsProvider.updateCallCount, "the core provider is still asked")
+	assert.Equal(t, 0, selectorProvider.shutdowns, "selector managers must keep running")
+	assert.Same(t, cached, provider.services["net1ch1ns1"], "the cached service stays")
+
+	// Different parameters still get the full reload.
+	require.NoError(t, provider.Update(tmsID, []byte("new params")))
+	assert.Equal(t, 2, tmsProvider.updateCallCount)
+	assert.Equal(t, 1, selectorProvider.shutdowns)
 	_, exists := provider.services["net1ch1ns1"]
 	assert.False(t, exists)
 }
