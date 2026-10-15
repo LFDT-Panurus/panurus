@@ -16,6 +16,7 @@ import (
 	"github.com/LFDT-Panurus/panurus/token/services/logging"
 	"github.com/LFDT-Panurus/panurus/token/token"
 	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/pp"
+	"github.com/consensys/gnark-crypto/ecc"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 )
 
@@ -49,13 +50,16 @@ func (s *TokensService) Deobfuscate(ctx context.Context, output driver.TokenOutp
 		return nil, nil, nil, "", errors.Wrap(err, "failed to unmarshal output")
 	}
 
-	cm, err := note.Commitment()
+	curve := ecc.BLS12_381
+	if s.PublicParametersManager != nil && s.PublicParametersManager.PublicParams() != nil {
+		curve = s.PublicParametersManager.PublicParams().Curve
+	}
+	cm, err := note.Commitment(curve)
 	if err != nil {
 		return nil, nil, nil, "", errors.Wrap(err, "failed to compute commitment")
 	}
 
-	cmBytes := cm.Bytes()
-	if !bytes.Equal(cmBytes[:], outputDesc.CommitmentOut) {
+	if !bytes.Equal(cm, outputDesc.CommitmentOut) {
 		return nil, nil, nil, "", errors.New("metadata commitment does not match output commitment")
 	}
 

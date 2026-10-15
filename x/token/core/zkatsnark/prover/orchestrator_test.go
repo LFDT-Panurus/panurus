@@ -11,17 +11,15 @@ import (
 
 	"github.com/consensys/gnark-crypto/ecc"
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
-	"github.com/consensys/gnark-crypto/ecc/bls12-381/twistededwards"
-	"github.com/consensys/gnark/backend/groth16"
 	"github.com/consensys/gnark/backend/witness"
 	"github.com/consensys/gnark/frontend"
 
 	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/circuit"
 	"github.com/stretchr/testify/require"
 
+	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/crypto/backend"
 	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/crypto/jubjub"
 	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/prover"
-	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/setup"
 	snarktoken "github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/token"
 )
 
@@ -82,7 +80,7 @@ func publicWitnessFromOutputDescription(t *testing.T, desc snarktoken.OutputDesc
 func TestBuildTransferAction_Valid(t *testing.T) {
 	setupProvers(t)
 
-	o := prover.NewOrchestrator(spendProver, outputProver)
+	o := prover.NewOrchestrator(spendProver, outputProver, testPP)
 
 	note1, err := snarktoken.NewRandomNote(100, "USD")
 	require.NoError(t, err)
@@ -104,24 +102,21 @@ func TestBuildTransferAction_Valid(t *testing.T) {
 	require.Len(t, action.Outputs, 2)
 	require.Len(t, outputs, 2)
 
+	b, err := backend.NewProofSystemBackend(testPP.ProofSystem, testPP.Curve)
+	require.NoError(t, err)
+
 	// Every proof must independently verify.
 	for i, input := range action.Inputs {
-		proof, err := setup.DeserializeProof(input.SpendProof, testPP.Curve)
-		require.NoError(t, err, "input %d", i)
-
 		pw := publicWitnessFromSpendDescription(t, input)
 
-		err = groth16.Verify(proof, spendVK, pw)
+		err = b.Verify(testPP.VKSpend, input.SpendProof, pw)
 		require.NoError(t, err, "input %d: proof does not verify", i)
 	}
 
 	for j, output := range action.Outputs {
-		proof, err := setup.DeserializeProof(output.OutputProof, testPP.Curve)
-		require.NoError(t, err, "output %d: proof deserialize", j)
-
 		pw := publicWitnessFromOutputDescription(t, output)
 
-		err = groth16.Verify(proof, outputVK, pw)
+		err = b.Verify(testPP.VKOutput, output.OutputProof, pw)
 		require.NoError(t, err, "output %d: proof does not verify", j)
 	}
 
@@ -131,34 +126,25 @@ func TestBuildTransferAction_Valid(t *testing.T) {
 	var inResults, outResults []prover.ProofResult
 
 	for _, input := range action.Inputs {
-		var cm, cx, cy fr.Element
-		require.NoError(t, cm.SetBytesCanonical(input.CommitmentIn))
-		require.NoError(t, cx.SetBytesCanonical(input.ValueCommitInX))
-		require.NoError(t, cy.SetBytesCanonical(input.ValueCommitInY))
-
 		inResults = append(inResults, prover.ProofResult{
-			Commitment:  cm,
-			ValueCommit: twistededwards.PointAffine{X: cx, Y: cy},
+			Commitment:       input.CommitmentIn,
+			ValueCommitmentX: input.ValueCommitInX,
+			ValueCommitmentY: input.ValueCommitInY,
 		})
 	}
 
 	for _, output := range action.Outputs {
-		var cm, cx, cy fr.Element
-		require.NoError(t, cm.SetBytesCanonical(output.CommitmentOut))
-		require.NoError(t, cx.SetBytesCanonical(output.ValueCommitOutX))
-		require.NoError(t, cy.SetBytesCanonical(output.ValueCommitOutY))
-
 		outResults = append(outResults, prover.ProofResult{
-			Commitment:  cm,
-			ValueCommit: twistededwards.PointAffine{X: cx, Y: cy},
+			Commitment:       output.CommitmentOut,
+			ValueCommitmentX: output.ValueCommitOutX,
+			ValueCommitmentY: output.ValueCommitOutY,
 		})
 	}
 
-	bvk := prover.ComputeBVK(inResults, outResults, 0)
+	bvk, err := prover.ComputeBVK(inResults, outResults, 0)
+	require.NoError(t, err)
 
-	var actionTC fr.Element
-	require.NoError(t, actionTC.SetBytesCanonical(action.TypeCommitment))
-	actionHash := prover.ComputeActionHash(snarktoken.ActionTypeTransfer, actionTC, inResults, outResults)
+	actionHash := prover.ComputeActionHash(snarktoken.ActionTypeTransfer, action.TypeCommitment, inResults, outResults)
 
 	sig, err := jubjub.DeserializeSignature(action.BindingSignature)
 	require.NoError(t, err)
@@ -170,7 +156,7 @@ func TestBuildTransferAction_Valid(t *testing.T) {
 func TestBuildIssueAction_Valid(t *testing.T) {
 	setupProvers(t)
 
-	o := prover.NewOrchestrator(spendProver, outputProver)
+	o := prover.NewOrchestrator(spendProver, outputProver, testPP)
 
 	action, outputs, err := o.BuildIssueAction(
 		context.Background(),
@@ -185,14 +171,14 @@ func TestBuildIssueAction_Valid(t *testing.T) {
 	require.Len(t, action.Outputs, 1)
 	require.Len(t, outputs, 1)
 
+	b, err := backend.NewProofSystemBackend(testPP.ProofSystem, testPP.Curve)
+	require.NoError(t, err)
+
 	// Outputs must verify
 	for j, output := range action.Outputs {
-		proof, err := setup.DeserializeProof(output.OutputProof, testPP.Curve)
-		require.NoError(t, err, "output %d: proof deserialize", j)
-
 		pw := publicWitnessFromOutputDescription(t, output)
 
-		err = groth16.Verify(proof, outputVK, pw)
+		err = b.Verify(testPP.VKOutput, output.OutputProof, pw)
 		require.NoError(t, err, "output %d: proof does not verify", j)
 	}
 }

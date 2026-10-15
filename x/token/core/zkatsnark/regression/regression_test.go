@@ -25,6 +25,7 @@ import (
 	"github.com/LFDT-Panurus/panurus/token/driver"
 	"github.com/LFDT-Panurus/panurus/token/driver/protos-go/v1/request"
 	token2 "github.com/LFDT-Panurus/panurus/token/token"
+	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/crypto/backend"
 	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/pp"
 	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/prover"
 	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/setup"
@@ -61,9 +62,9 @@ func setupShared(t *testing.T) {
 
 			return
 		}
-		spendPK, err := setup.LoadProvingKey(p, setup.CircuitSpend)
+		spendPKBytes, err := setup.LoadProvingKeyBytes(p, setup.CircuitSpend)
 		if err != nil {
-			sharedSetErr = errors.Wrap(err, "LoadProvingKey spend")
+			sharedSetErr = errors.Wrap(err, "LoadProvingKeyBytes spend")
 
 			return
 		}
@@ -73,16 +74,24 @@ func setupShared(t *testing.T) {
 
 			return
 		}
-		outputPK, err := setup.LoadProvingKey(p, setup.CircuitOutput)
+		outputPKBytes, err := setup.LoadProvingKeyBytes(p, setup.CircuitOutput)
 		if err != nil {
-			sharedSetErr = errors.Wrap(err, "LoadProvingKey output")
+			sharedSetErr = errors.Wrap(err, "LoadProvingKeyBytes output")
+
+			return
+		}
+
+		b, err := backend.NewProofSystemBackend(p.ProofSystem, p.Curve)
+		if err != nil {
+			sharedSetErr = errors.Wrap(err, "NewProofSystemBackend")
 
 			return
 		}
 
 		orch = prover.NewOrchestrator(
-			prover.NewSpendProver(spendCS, spendPK),
-			prover.NewOutputProver(outputCS, outputPK),
+			prover.NewSpendProver(spendCS, spendPKBytes, b, p),
+			prover.NewOutputProver(outputCS, outputPKBytes, b, p),
+			p,
 		)
 	})
 

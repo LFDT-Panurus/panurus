@@ -96,8 +96,13 @@ func TransferSignatureValidate(c context.Context, ctx *Context) error {
 
 		// Verify the owner's signature
 		uniqueID := driver.Identity(owner).UniqueID()
-		ctx.Logger.Debugf("check sender [%d][%s]", i, uniqueID)
+		if ctx.Logger != nil {
+			ctx.Logger.Debugf("check sender [%d][%s]", i, uniqueID)
+		}
 
+		if utils.IsNil(ctx.Deserializer) {
+			return errors.New("validator: nil deserializer")
+		}
 		verifier, err := ctx.Deserializer.GetOwnerVerifier(c, owner)
 		if err != nil {
 			return errors.Wrapf(err, "failed deserializing owner [%d][%s]", i, uniqueID)
@@ -105,7 +110,9 @@ func TransferSignatureValidate(c context.Context, ctx *Context) error {
 		if utils.IsNil(ctx.SignatureProvider) {
 			return common.ErrNilSignatureProvider
 		}
-		ctx.Logger.Debugf("signature verification [%d][%s]", i, uniqueID)
+		if ctx.Logger != nil {
+			ctx.Logger.Debugf("signature verification [%d][%s]", i, uniqueID)
+		}
 		sigma, err := ctx.SignatureProvider.HasBeenSignedBy(c, owner, verifier)
 		if err != nil {
 			return errors.Wrapf(err, "failed signature verification [%d][%s]", i, uniqueID)
@@ -128,7 +135,9 @@ func TransferSignatureValidate(c context.Context, ctx *Context) error {
 		}
 
 		if isRedeem {
-			ctx.Logger.Debugf("action is a redeem, verify the signature of the issuer")
+			if ctx.Logger != nil {
+				ctx.Logger.Debugf("action is a redeem, verify the signature of the issuer")
+			}
 			issuer := action.GetIssuer()
 			if issuer == nil {
 				return ErrMissingIssuer

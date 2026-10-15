@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/consensys/gnark-crypto/ecc"
 	"github.com/stretchr/testify/require"
 
 	"github.com/LFDT-Panurus/panurus/token/driver"
@@ -77,13 +78,12 @@ func TestTokensService_Deobfuscate_Success(t *testing.T) {
 	require.NoError(t, err)
 	note.Issuer = []byte("issuer-1")
 
-	cm, err := note.Commitment()
+	cm, err := note.Commitment(ecc.BLS12_381)
 	require.NoError(t, err)
-	cmBytes := cm.Bytes()
 
 	// Build a matching OutputDescription.
 	outputDesc := snarktoken.OutputDescription{
-		CommitmentOut: cmBytes[:],
+		CommitmentOut: cm,
 		Recipient:     []byte("alice"),
 	}
 	outputRaw, err := json.Marshal(outputDesc)

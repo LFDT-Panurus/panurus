@@ -37,8 +37,7 @@ func validSpendBytes(t *testing.T) snarktoken.SpendDescription {
 	cmBytes := cm.Bytes()
 	cxBytes := cv.X.Bytes()
 	cyBytes := cv.Y.Bytes()
-	tt := snarktoken.EncodeTokenType("USD")
-	ttBytes := tt.Bytes()
+	ttBytes := snarktoken.EncodeTokenType("USD")
 
 	return snarktoken.SpendDescription{
 		CommitmentIn:   cmBytes[:],
@@ -134,8 +133,7 @@ func validMigrationBytes(t *testing.T) *snarktoken.MigrationAction {
 	require.NoError(t, err)
 	cmBytes := cm.Bytes()
 
-	tt := snarktoken.EncodeTokenType("USD")
-	ttBytes := tt.Bytes()
+	ttBytes := snarktoken.EncodeTokenType("USD")
 
 	return &snarktoken.MigrationAction{
 		CommitmentPedersenX: pxBytes[:],
@@ -190,4 +188,214 @@ func TestDecodeMigrationAction_ValueCommitNotOnJubjub(t *testing.T) {
 
 	_, err := decodeMigrationAction(a)
 	require.Error(t, err, "an off-Jubjub-curve value commitment must be rejected")
+}
+
+// ── Additional decode tests ─────────────────────────────────────────────────
+
+func validOutputBytes(t *testing.T) snarktoken.OutputDescription {
+	t.Helper()
+	rcv, err := jubjub.RandomJubjubScalar()
+	require.NoError(t, err)
+	cv, err := jubjub.ValueCommit(100, rcv)
+	require.NoError(t, err)
+
+	var cm fr.Element
+	_, err = cm.SetRandom()
+	require.NoError(t, err)
+
+	cmBytes := cm.Bytes()
+	cxBytes := cv.X.Bytes()
+	cyBytes := cv.Y.Bytes()
+	ttBytes := snarktoken.EncodeTokenType("USD")
+
+	return snarktoken.OutputDescription{
+		CommitmentOut:   cmBytes[:],
+		ValueCommitOutX: cxBytes[:],
+		ValueCommitOutY: cyBytes[:],
+		TypeCommitment:  ttBytes[:],
+		OutputProof:     make([]byte, 192),
+	}
+}
+
+func TestDecodeOutputDescription_Valid(t *testing.T) {
+	d := validOutputBytes(t)
+	decoded, err := decodeOutputDescription(0, d)
+	require.NoError(t, err)
+
+	var expectedCommitment fr.Element
+	require.NoError(t, expectedCommitment.SetBytesCanonical(d.CommitmentOut))
+	require.True(t, decoded.Commitment.Equal(&expectedCommitment))
+}
+
+func TestDecodeOutputDescription_NonCanonicalFieldElement(t *testing.T) {
+	d := validOutputBytes(t)
+	nonCanonical := make([]byte, 32)
+	for i := range nonCanonical {
+		nonCanonical[i] = 0xFF
+	}
+	d.CommitmentOut = nonCanonical
+
+	_, err := decodeOutputDescription(0, d)
+	require.Error(t, err, "a non-canonical commitment must be rejected")
+}
+
+func TestDecodeOutputDescription_NonCanonicalValueCommitOutX(t *testing.T) {
+	d := validOutputBytes(t)
+	nonCanonical := make([]byte, 32)
+	for i := range nonCanonical {
+		nonCanonical[i] = 0xFF
+	}
+	d.ValueCommitOutX = nonCanonical
+
+	_, err := decodeOutputDescription(0, d)
+	require.Error(t, err, "a non-canonical ValueCommitOutX must be rejected")
+}
+
+func TestDecodeOutputDescription_NonCanonicalValueCommitOutY(t *testing.T) {
+	d := validOutputBytes(t)
+	nonCanonical := make([]byte, 32)
+	for i := range nonCanonical {
+		nonCanonical[i] = 0xFF
+	}
+	d.ValueCommitOutY = nonCanonical
+
+	_, err := decodeOutputDescription(0, d)
+	require.Error(t, err, "a non-canonical ValueCommitOutY must be rejected")
+}
+
+func TestDecodeOutputDescription_NonCanonicalTypeCommitment(t *testing.T) {
+	d := validOutputBytes(t)
+	nonCanonical := make([]byte, 32)
+	for i := range nonCanonical {
+		nonCanonical[i] = 0xFF
+	}
+	d.TypeCommitment = nonCanonical
+
+	_, err := decodeOutputDescription(0, d)
+	require.Error(t, err, "a non-canonical TypeCommitment must be rejected")
+}
+
+func TestDecodeOutputDescription_PointNotOnCurve(t *testing.T) {
+	d := validOutputBytes(t)
+	var badY fr.Element
+	badY.SetUint64(999999)
+	badYBytes := badY.Bytes()
+	d.ValueCommitOutY = badYBytes[:]
+
+	_, err := decodeOutputDescription(0, d)
+	require.Error(t, err, "a value commitment point off the Jubjub curve must be rejected")
+}
+
+func TestDecodeAllOutputs_Valid(t *testing.T) {
+	out1 := validOutputBytes(t)
+	out2 := validOutputBytes(t)
+
+	decoded, err := decodeAllOutputs([]snarktoken.OutputDescription{out1, out2})
+	require.NoError(t, err)
+	require.Len(t, decoded, 2)
+}
+
+func TestDecodeAllOutputs_StopsAtFirstFailure(t *testing.T) {
+	good := validOutputBytes(t)
+	bad := validOutputBytes(t)
+	bad.CommitmentOut = make([]byte, 31) // wrong length → SetBytesCanonical error
+
+	_, err := decodeAllOutputs([]snarktoken.OutputDescription{good, bad})
+	require.Error(t, err)
+}
+
+func TestDecodeSpendDescription_NonCanonicalValueCommitInX(t *testing.T) {
+	d := validSpendBytes(t)
+	nonCanonical := make([]byte, 32)
+	for i := range nonCanonical {
+		nonCanonical[i] = 0xFF
+	}
+	d.ValueCommitInX = nonCanonical
+
+	_, err := decodeSpendDescription(0, d)
+	require.Error(t, err, "a non-canonical ValueCommitInX must be rejected")
+}
+
+func TestDecodeSpendDescription_NonCanonicalValueCommitInY(t *testing.T) {
+	d := validSpendBytes(t)
+	nonCanonical := make([]byte, 32)
+	for i := range nonCanonical {
+		nonCanonical[i] = 0xFF
+	}
+	d.ValueCommitInY = nonCanonical
+
+	_, err := decodeSpendDescription(0, d)
+	require.Error(t, err, "a non-canonical ValueCommitInY must be rejected")
+}
+
+func TestDecodeSpendDescription_NonCanonicalTypeCommitment(t *testing.T) {
+	d := validSpendBytes(t)
+	nonCanonical := make([]byte, 32)
+	for i := range nonCanonical {
+		nonCanonical[i] = 0xFF
+	}
+	d.TypeCommitment = nonCanonical
+
+	_, err := decodeSpendDescription(0, d)
+	require.Error(t, err, "a non-canonical TypeCommitment must be rejected")
+}
+
+func TestDecodeMigrationAction_NonCanonicalPedersenY(t *testing.T) {
+	a := validMigrationBytes(t)
+	nonCanonical := make([]byte, 48)
+	for i := range nonCanonical {
+		nonCanonical[i] = 0xFF
+	}
+	a.CommitmentPedersenY = nonCanonical
+
+	_, err := decodeMigrationAction(a)
+	require.Error(t, err, "a non-canonical PedersenY must be rejected")
+}
+
+func TestDecodeMigrationAction_NonCanonicalCommitmentMiMC(t *testing.T) {
+	a := validMigrationBytes(t)
+	nonCanonical := make([]byte, 32)
+	for i := range nonCanonical {
+		nonCanonical[i] = 0xFF
+	}
+	a.CommitmentMiMC = nonCanonical
+
+	_, err := decodeMigrationAction(a)
+	require.Error(t, err, "a non-canonical CommitmentMiMC must be rejected")
+}
+
+func TestDecodeMigrationAction_NonCanonicalValueCommitOutX(t *testing.T) {
+	a := validMigrationBytes(t)
+	nonCanonical := make([]byte, 32)
+	for i := range nonCanonical {
+		nonCanonical[i] = 0xFF
+	}
+	a.ValueCommitOutX = nonCanonical
+
+	_, err := decodeMigrationAction(a)
+	require.Error(t, err, "a non-canonical ValueCommitOutX must be rejected")
+}
+
+func TestDecodeMigrationAction_NonCanonicalValueCommitOutY(t *testing.T) {
+	a := validMigrationBytes(t)
+	nonCanonical := make([]byte, 32)
+	for i := range nonCanonical {
+		nonCanonical[i] = 0xFF
+	}
+	a.ValueCommitOutY = nonCanonical
+
+	_, err := decodeMigrationAction(a)
+	require.Error(t, err, "a non-canonical ValueCommitOutY must be rejected")
+}
+
+func TestDecodeMigrationAction_NonCanonicalTypeCommitment(t *testing.T) {
+	a := validMigrationBytes(t)
+	nonCanonical := make([]byte, 32)
+	for i := range nonCanonical {
+		nonCanonical[i] = 0xFF
+	}
+	a.TypeCommitment = nonCanonical
+
+	_, err := decodeMigrationAction(a)
+	require.Error(t, err, "a non-canonical TypeCommitment must be rejected")
 }

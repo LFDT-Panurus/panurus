@@ -57,7 +57,7 @@ func (v *Validator) IssueZKValidate(_ context.Context, ctx *Context) error {
 		return err
 	}
 
-	if err := verifyAllProofs(v.keys.vkSpend, v.keys.vkOutput, v.pp.Curve, nil, nil, action.Outputs, decodedOutputs); err != nil {
+	if err := verifyAllProofs(v.backend, v.keys.vkSpendBytes, v.keys.vkOutputBytes, v.pp.Curve, nil, nil, action.Outputs, decodedOutputs); err != nil {
 		return err
 	}
 
@@ -87,6 +87,10 @@ func IssueSignatureValidate(c context.Context, ctx *Context) error {
 	// Check the issuer is among those known (open-policy if list is empty)
 	if issuers := ctx.PP.Issuers(); len(issuers) != 0 && !slices.ContainsFunc(issuers, issuer.Equal) {
 		return errors.New("issuer not authorized")
+	}
+
+	if utils.IsNil(ctx.Deserializer) {
+		return errors.New("validator: nil deserializer")
 	}
 
 	verifier, err := ctx.Deserializer.GetIssuerVerifier(c, issuer)

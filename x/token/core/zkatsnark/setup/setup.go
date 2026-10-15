@@ -8,27 +8,29 @@ SPDX-License-Identifier: Apache-2.0
 //
 // This package is used in two distinct contexts:
 //   - Offline, once: SetupAll compiles all circuits and runs the trusted
-//     setup ceremony (currently Groth16-only), populating a PublicParams
-//     with proving and verification keys for distribution.
+//     setup ceremony, populating a PublicParams with proving and
+//     verification keys for distribution.
 //   - Online, per-process startup: the prover and validator layers call
 //     Compile*Circuit to reconstruct the constraint system (deterministic
 //     and cheap, ~100ms) and LoadProvingKey/LoadVerifyingKey to deserialize
 //     the keys already present in a distributed PublicParams. Neither of
-//     these paths calls groth16.Setup, that only ever runs inside SetupAll.
+//     these paths calls Setup, that only ever runs inside SetupAll.
 package setup
 
 import (
-	"bytes"
 	"math/big"
 
 	"github.com/consensys/gnark-crypto/ecc"
-	"github.com/consensys/gnark/backend/groth16"
 	"github.com/consensys/gnark/constraint"
 	"github.com/consensys/gnark/frontend"
 	"github.com/consensys/gnark/frontend/cs/r1cs"
+	"github.com/consensys/gnark/frontend/cs/scs"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 
 	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/circuit"
+	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/crypto/babyjubjub"
+	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/crypto/backend"
+	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/crypto/jubjub"
 	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/pp"
 )
 
@@ -53,22 +55,82 @@ var ErrMissingKey = errors.New("setup: key missing from public parameters")
 // PublicParams.ProofSystem but not yet implemented in this package.
 var ErrNotImplemented = errors.New("setup: not yet implemented")
 
+// ── Curve-dependent generator selection ─────────────────────────────────────────
+
+// generatorCoords holds the affine coordinates of V and R generators
+// as *big.Int, suitable for injection into circuit struct fields.
+type generatorCoords struct {
+	VX, VY *big.Int
+	RX, RY *big.Int
+}
+
+// curveGenerators returns the value-commitment generators (V, R) for the
+// given outer curve, as *big.Int coordinates suitable for circuit struct
+// field injection. This is the single resolution point shared by all three
+// Compile*Circuit functions.
+func curveGenerators(curve ecc.ID) (generatorCoords, error) {
+	switch curve {
+	case ecc.BLS12_381:
+		return generatorCoords{
+			VX: jubjub.V.X.BigInt(new(big.Int)),
+			VY: jubjub.V.Y.BigInt(new(big.Int)),
+			RX: jubjub.R.X.BigInt(new(big.Int)),
+			RY: jubjub.R.Y.BigInt(new(big.Int)),
+		}, nil
+	case ecc.BN254:
+		return generatorCoords{
+			VX: babyjubjub.V.X.BigInt(new(big.Int)),
+			VY: babyjubjub.V.Y.BigInt(new(big.Int)),
+			RX: babyjubjub.R.X.BigInt(new(big.Int)),
+			RY: babyjubjub.R.Y.BigInt(new(big.Int)),
+		}, nil
+	default:
+		return generatorCoords{}, errors.Errorf("setup: no value-commitment generators for curve %s", curve)
+	}
+}
+
+// csBuilder returns the appropriate constraint system builder for the
+// given proof system: r1cs.NewBuilder for groth16, scs.NewBuilder for plonk.
+func csBuilder(proofSystem string) (frontend.NewBuilder, error) {
+	switch proofSystem {
+	case "groth16":
+		return r1cs.NewBuilder, nil
+	case "plonk":
+		return scs.NewBuilder, nil
+	default:
+		return nil, errors.Errorf("setup: unsupported proof system %q", proofSystem)
+	}
+}
+
 // ── Circuit compilation ────────────────────────────────────────────────────────
 //
 // These functions are deterministic given the same PublicParams field
-// values that affect circuit shape (currently just Curve and, for
+// values that affect circuit shape (currently Curve, ProofSystem, and for
 // OutputCircuit, MaxBits). Two calls with equivalent PublicParams always
 // produce an equivalent constraint system. They are cheap (well under a
 // second) and safe to call once per process at startup — there is no need
 // to cache or serialize the constraint system itself.
 
-// CompileSpendCircuit compiles circuit.SpendCircuit for the curve specified
-// in p.Curve.
+// CompileSpendCircuit compiles circuit.SpendCircuit for the curve and proof
+// system specified in p.
 func CompileSpendCircuit(p *pp.PublicParams) (constraint.ConstraintSystem, error) {
+	gens, err := curveGenerators(p.Curve)
+	if err != nil {
+		return nil, err
+	}
+
+	builder, err := csBuilder(p.ProofSystem)
+	if err != nil {
+		return nil, err
+	}
+
 	cs, err := frontend.Compile(
 		p.Curve.ScalarField(),
-		r1cs.NewBuilder,
-		&circuit.SpendCircuit{},
+		builder,
+		&circuit.SpendCircuit{
+			GenVX: gens.VX, GenVY: gens.VY,
+			GenRX: gens.RX, GenRY: gens.RY,
+		},
 	)
 	if err != nil {
 		return nil, errors.Wrapf(err, "setup: SpendCircuit compilation failed")
@@ -77,8 +139,8 @@ func CompileSpendCircuit(p *pp.PublicParams) (constraint.ConstraintSystem, error
 	return cs, nil
 }
 
-// CompileOutputCircuit compiles circuit.OutputCircuit for the curve
-// specified in p.Curve, with the range-check bit-width taken from p.MaxBits.
+// CompileOutputCircuit compiles circuit.OutputCircuit for the curve and
+// proof system specified in p, with the range-check bit-width from p.MaxBits.
 //
 // MaxBits is a compile-time circuit parameter, not a witness value: two
 // PublicParams differing only in MaxBits compile to two DIFFERENT circuits
@@ -90,10 +152,25 @@ func CompileOutputCircuit(p *pp.PublicParams) (constraint.ConstraintSystem, erro
 	if p.MaxBits <= 0 {
 		return nil, errors.Errorf("setup: cannot compile OutputCircuit: MaxBits must be positive, got %d", p.MaxBits)
 	}
+
+	gens, err := curveGenerators(p.Curve)
+	if err != nil {
+		return nil, err
+	}
+
+	builder, err := csBuilder(p.ProofSystem)
+	if err != nil {
+		return nil, err
+	}
+
 	cs, err := frontend.Compile(
 		p.Curve.ScalarField(),
-		r1cs.NewBuilder,
-		&circuit.OutputCircuit{MaxBits: p.MaxBits},
+		builder,
+		&circuit.OutputCircuit{
+			MaxBits: p.MaxBits,
+			GenVX:   gens.VX, GenVY: gens.VY,
+			GenRX: gens.RX, GenRY: gens.RY,
+		},
 	)
 	if err != nil {
 		return nil, errors.Wrapf(err, "setup: OutputCircuit compilation failed")
@@ -113,8 +190,8 @@ type PedersenGeneratorCoords struct {
 }
 
 // CompileMigrationCircuit compiles circuit.MigrationCircuit for the curve
-// specified in p.Curve, with the range-check bit-width from p.MaxBits and
-// the Pedersen generator coordinates from gens.
+// and proof system specified in p, with the range-check bit-width from
+// p.MaxBits and the Pedersen generator coordinates from gens.
 //
 // The Pedersen generators are compile-time constants baked into the
 // constraint system. Two calls with different generators produce different
@@ -124,14 +201,26 @@ func CompileMigrationCircuit(p *pp.PublicParams, gens PedersenGeneratorCoords) (
 		return nil, errors.Errorf("setup: cannot compile MigrationCircuit: MaxBits must be positive, got %d", p.MaxBits)
 	}
 
+	vcGens, err := curveGenerators(p.Curve)
+	if err != nil {
+		return nil, err
+	}
+
+	builder, err := csBuilder(p.ProofSystem)
+	if err != nil {
+		return nil, err
+	}
+
 	cs, err := frontend.Compile(
 		p.Curve.ScalarField(),
-		r1cs.NewBuilder,
+		builder,
 		&circuit.MigrationCircuit{
 			MaxBits: p.MaxBits,
 			PedG0X:  gens.G0X, PedG0Y: gens.G0Y,
 			PedG1X: gens.G1X, PedG1Y: gens.G1Y,
 			PedG2X: gens.G2X, PedG2Y: gens.G2Y,
+			GenVX: vcGens.VX, GenVY: vcGens.VY,
+			GenRX: vcGens.RX, GenRY: vcGens.RY,
 		},
 	)
 	if err != nil {
@@ -141,8 +230,8 @@ func CompileMigrationCircuit(p *pp.PublicParams, gens PedersenGeneratorCoords) (
 	return cs, nil
 }
 
-// SetupMigration compiles MigrationCircuit and runs groth16.Setup,
-// populating p.PKMigration/VKMigration in place.
+// SetupMigration compiles MigrationCircuit and runs setup via the proof
+// system backend, populating p.PKMigration/VKMigration in place.
 //
 // This is deliberately NOT called from SetupAll. It is a separate,
 // explicitly-invoked function until the Pedersen opening group (Group 1)
@@ -150,8 +239,9 @@ func CompileMigrationCircuit(p *pp.PublicParams, gens PedersenGeneratorCoords) (
 // Spend/Output setup path can never be broken by in-progress migration
 // circuit changes.
 func SetupMigration(p *pp.PublicParams, gens PedersenGeneratorCoords) (*pp.PublicParams, error) {
-	if p.ProofSystem != "groth16" {
-		return nil, errors.Wrapf(ErrNotImplemented, "setup: SetupMigration only supports groth16, got %q", p.ProofSystem)
+	b, err := backend.NewProofSystemBackend(p.ProofSystem, p.Curve)
+	if err != nil {
+		return nil, errors.Wrapf(err, "setup: SetupMigration backend creation")
 	}
 
 	migCS, err := CompileMigrationCircuit(p, gens)
@@ -159,35 +249,31 @@ func SetupMigration(p *pp.PublicParams, gens PedersenGeneratorCoords) (*pp.Publi
 		return nil, err
 	}
 
-	migPK, migVK, err := groth16.Setup(migCS)
+	pkBytes, vkBytes, err := b.Setup(migCS)
 	if err != nil {
-		return nil, errors.Wrapf(err, "setup: MigrationCircuit groth16.Setup failed")
+		return nil, errors.Wrapf(err, "setup: MigrationCircuit setup failed")
 	}
 
-	if p.PKMigration, err = SerializeProvingKey(migPK); err != nil {
-		return nil, errors.Wrapf(err, "setup: MigrationCircuit proving key serialization")
-	}
-
-	if p.VKMigration, err = SerializeVerifyingKey(migVK); err != nil {
-		return nil, errors.Wrapf(err, "setup: MigrationCircuit verifying key serialization")
-	}
+	p.PKMigration = pkBytes
+	p.VKMigration = vkBytes
 
 	return p, nil
 }
 
 // ── Trusted setup ───────────────────────────────────────────────────────────────
 
-// SetupAll compiles SpendCircuit and OutputCircuit and runs groth16.Setup
-// for each, populating p.PKSpend/VKSpend and p.PKOutput/VKOutput in place.
-// Call this once, offline. It is slow (the Groth16 setup ceremony itself
-// takes seconds to tens of seconds per circuit depending on constraint
-// count), do not call it on any request-serving path.
+// SetupAll compiles SpendCircuit and OutputCircuit and runs setup for
+// each, populating p.PKSpend/VKSpend and p.PKOutput/VKOutput in place.
+// Call this once, offline. It is slow (the setup ceremony itself takes
+// seconds to tens of seconds per circuit depending on constraint count),
+// do not call it on any request-serving path.
 //
 // The returned *pp.PublicParams is the same pointer passed in, mutated in
 // place, returned for convenient chaining.
 func SetupAll(p *pp.PublicParams) (*pp.PublicParams, error) {
-	if p.ProofSystem != "groth16" {
-		return nil, errors.Wrapf(ErrNotImplemented, "setup: SetupAll only supports groth16, got %q", p.ProofSystem)
+	b, err := backend.NewProofSystemBackend(p.ProofSystem, p.Curve)
+	if err != nil {
+		return nil, errors.Wrapf(err, "setup: SetupAll backend creation")
 	}
 
 	// ── SpendCircuit ──────────────────────────────────────────────────────
@@ -195,32 +281,24 @@ func SetupAll(p *pp.PublicParams) (*pp.PublicParams, error) {
 	if err != nil {
 		return nil, err
 	}
-	spendPK, spendVK, err := groth16.Setup(spendCS)
+	pkBytes, vkBytes, err := b.Setup(spendCS)
 	if err != nil {
-		return nil, errors.Wrapf(err, "setup: SpendCircuit groth16.Setup failed")
+		return nil, errors.Wrapf(err, "setup: SpendCircuit setup failed")
 	}
-	if p.PKSpend, err = SerializeProvingKey(spendPK); err != nil {
-		return nil, errors.Wrapf(err, "setup: SpendCircuit proving key serialization")
-	}
-	if p.VKSpend, err = SerializeVerifyingKey(spendVK); err != nil {
-		return nil, errors.Wrapf(err, "setup: SpendCircuit verifying key serialization")
-	}
+	p.PKSpend = pkBytes
+	p.VKSpend = vkBytes
 
 	// ── OutputCircuit ─────────────────────────────────────────────────────
 	outputCS, err := CompileOutputCircuit(p)
 	if err != nil {
 		return nil, err
 	}
-	outputPK, outputVK, err := groth16.Setup(outputCS)
+	pkBytes, vkBytes, err = b.Setup(outputCS)
 	if err != nil {
-		return nil, errors.Wrapf(err, "setup: OutputCircuit groth16.Setup failed")
+		return nil, errors.Wrapf(err, "setup: OutputCircuit setup failed")
 	}
-	if p.PKOutput, err = SerializeProvingKey(outputPK); err != nil {
-		return nil, errors.Wrapf(err, "setup: OutputCircuit proving key serialization")
-	}
-	if p.VKOutput, err = SerializeVerifyingKey(outputVK); err != nil {
-		return nil, errors.Wrapf(err, "setup: OutputCircuit verifying key serialization")
-	}
+	p.PKOutput = pkBytes
+	p.VKOutput = vkBytes
 
 	if err := p.Validate(); err != nil {
 		return nil, errors.Wrapf(err, "setup: resulting public params failed validation")
@@ -229,67 +307,16 @@ func SetupAll(p *pp.PublicParams) (*pp.PublicParams, error) {
 	return p, nil
 }
 
-// ── Key serialization ─────────────────────────────────────────────────────────
-//
-// gnark's ProvingKey/VerifyingKey/Proof types all implement io.WriterTo /
-// io.ReaderFrom, which these functions wrap directly. No custom encoding —
-// this is exactly the format gnark itself reads and writes.
-
-// SerializeProvingKey encodes a groth16.ProvingKey to bytes.
-func SerializeProvingKey(pk groth16.ProvingKey) ([]byte, error) {
-	var buf bytes.Buffer
-	if _, err := pk.WriteTo(&buf); err != nil {
-		return nil, errors.Wrapf(err, "setup: proving key serialize")
-	}
-
-	return buf.Bytes(), nil
-}
-
-// DeserializeProvingKey reconstructs a groth16.ProvingKey from bytes.
-// curve must match the curve the key was generated for — passing the wrong
-// curve produces either a decode error or, worse, a key that decodes
-// without error but is silently wrong for that curve. Always source curve
-// from the same PublicParams the key came from (p.Curve), never hardcode it.
-func DeserializeProvingKey(raw []byte, curve ecc.ID) (groth16.ProvingKey, error) {
-	pk := groth16.NewProvingKey(curve)
-	if _, err := pk.ReadFrom(bytes.NewReader(raw)); err != nil {
-		return nil, errors.Wrapf(err, "setup: proving key deserialize")
-	}
-
-	return pk, nil
-}
-
-// SerializeVerifyingKey encodes a groth16.VerifyingKey to bytes.
-func SerializeVerifyingKey(vk groth16.VerifyingKey) ([]byte, error) {
-	var buf bytes.Buffer
-	if _, err := vk.WriteTo(&buf); err != nil {
-		return nil, errors.Wrapf(err, "setup: verifying key serialize")
-	}
-
-	return buf.Bytes(), nil
-}
-
-// DeserializeVerifyingKey reconstructs a groth16.VerifyingKey from bytes.
-// Same curve-matching caveat as DeserializeProvingKey applies.
-func DeserializeVerifyingKey(raw []byte, curve ecc.ID) (groth16.VerifyingKey, error) {
-	vk := groth16.NewVerifyingKey(curve)
-	if _, err := vk.ReadFrom(bytes.NewReader(raw)); err != nil {
-		return nil, errors.Wrapf(err, "setup: verifying key deserialize")
-	}
-
-	return vk, nil
-}
-
 // ── Key loading by circuit type ───────────────────────────────────────────────
 //
 // These are the functions the prover and validator layers actually call at
 // startup: given a fully-populated PublicParams (post-SetupAll, or received
-// over the network already populated), load the concrete key for a named
+// over the network already populated), load the raw key bytes for a named
 // circuit.
 
-// LoadProvingKey retrieves and deserializes the proving key for the named
-// circuit (CircuitSpend, CircuitOutput, or CircuitMigration) from p.
-func LoadProvingKey(p *pp.PublicParams, circuitName CircuitName) (groth16.ProvingKey, error) {
+// LoadProvingKeyBytes retrieves the serialized proving key bytes for the
+// named circuit from p.
+func LoadProvingKeyBytes(p *pp.PublicParams, circuitName CircuitName) ([]byte, error) {
 	var raw []byte
 	switch circuitName {
 	case CircuitSpend:
@@ -305,12 +332,12 @@ func LoadProvingKey(p *pp.PublicParams, circuitName CircuitName) (groth16.Provin
 		return nil, errors.Wrapf(ErrMissingKey, "no proving key for circuit %q", circuitName)
 	}
 
-	return DeserializeProvingKey(raw, p.Curve)
+	return raw, nil
 }
 
-// LoadVerifyingKey retrieves and deserializes the verification key for the
-// named circuit (CircuitSpend, CircuitOutput, or CircuitMigration) from p.
-func LoadVerifyingKey(p *pp.PublicParams, circuitName CircuitName) (groth16.VerifyingKey, error) {
+// LoadVerifyingKeyBytes retrieves the serialized verification key bytes for
+// the named circuit from p.
+func LoadVerifyingKeyBytes(p *pp.PublicParams, circuitName CircuitName) ([]byte, error) {
 	var raw []byte
 	switch circuitName {
 	case CircuitSpend:
@@ -326,34 +353,5 @@ func LoadVerifyingKey(p *pp.PublicParams, circuitName CircuitName) (groth16.Veri
 		return nil, errors.Wrapf(ErrMissingKey, "no verifying key for circuit %q", circuitName)
 	}
 
-	return DeserializeVerifyingKey(raw, p.Curve)
-}
-
-// ── Proof serialization ────────────────────────────────────────────────────────
-//
-// Groth16 proofs are a fixed 192 bytes for BLS12-381 regardless of circuit
-// complexity, used by the Orchestrator (prover layer) to produce the wire
-// format's SpendProof/OutputProof byte slices, and will be used by the
-// validator layer to reconstruct a groth16.Proof before calling
-// groth16.Verify.
-
-// SerializeProof encodes a groth16.Proof to bytes.
-func SerializeProof(proof groth16.Proof) ([]byte, error) {
-	var buf bytes.Buffer
-	if _, err := proof.WriteTo(&buf); err != nil {
-		return nil, errors.Wrapf(err, "setup: proof serialize")
-	}
-
-	return buf.Bytes(), nil
-}
-
-// DeserializeProof reconstructs a groth16.Proof from bytes. curve must
-// match the curve the proof was generated for.
-func DeserializeProof(raw []byte, curve ecc.ID) (groth16.Proof, error) {
-	proof := groth16.NewProof(curve)
-	if _, err := proof.ReadFrom(bytes.NewReader(raw)); err != nil {
-		return nil, errors.Wrapf(err, "setup: proof deserialize")
-	}
-
-	return proof, nil
+	return raw, nil
 }
