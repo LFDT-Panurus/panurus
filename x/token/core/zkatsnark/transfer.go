@@ -148,6 +148,15 @@ func (s *TransferService) Transfer(
 		return nil, nil, errors.Wrapf(err, "failed to generate zk transfer")
 	}
 
+	// Populate InputIDs and InputTokens so the validator can look up input token owners
+	// and correctly generate osn keys for ledger validation.
+	action.InputIDs = tokenIDs
+	inputTokens := make([][]byte, len(loadedTokens))
+	for i, loadedToken := range loadedTokens {
+		inputTokens[i] = loadedToken.Token
+	}
+	action.InputTokens = inputTokens
+
 	var transferOutputsMetadata []*driver.TransferOutputMetadata
 	for i, output := range outputTokens {
 		var outputAuditInfo []byte
@@ -209,6 +218,7 @@ func (s *TransferService) Transfer(
 		if err != nil {
 			return nil, nil, errors.Wrap(err, "failed to select issuer for redeem")
 		}
+		action.Issuer = issuer
 		transferMetadata.Issuer = driver.AuditableIdentity{
 			Identity: issuer,
 		}
@@ -240,12 +250,11 @@ func (s *TransferService) VerifyTransfer(ctx context.Context, transferAction dri
 		if err != nil {
 			return errors.Wrap(err, "failed unmarshalling metadata")
 		}
-		cm, err := note.Commitment()
+		cm, err := note.Commitment(s.PublicParametersManager.PublicParams().Curve)
 		if err != nil {
 			return errors.Wrap(err, "failed computing commitment from metadata")
 		}
-		cmBytes := cm.Bytes()
-		if !bytes.Equal(cmBytes[:], action.Outputs[i].CommitmentOut) {
+		if !bytes.Equal(cm, action.Outputs[i].CommitmentOut) {
 			return errors.Errorf("output commitment does not match metadata")
 		}
 		s.Logger.DebugfContext(ctx, "transfer output [%s,%d,%s]", note.TokenType, note.Value, driver.Identity(action.Outputs[i].Recipient))

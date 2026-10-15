@@ -8,6 +8,7 @@ package validator
 import (
 	"testing"
 
+	"github.com/consensys/gnark-crypto/ecc"
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
 	"github.com/stretchr/testify/require"
 
@@ -22,8 +23,12 @@ func mustTypeCommitmentV(t *testing.T, tokenType string) fr.Element {
 	_, err := typeRandomness.SetRandom()
 	require.NoError(t, err)
 
-	tc, err := snarktoken.ComputeTypeCommitment(tokenType, typeRandomness)
+	tr := typeRandomness.Bytes()
+	tcBytes, err := snarktoken.ComputeTypeCommitment(tokenType, tr[:], ecc.BLS12_381)
 	require.NoError(t, err)
+
+	var tc fr.Element
+	require.NoError(t, tc.SetBytesCanonical(tcBytes))
 
 	return tc
 }
@@ -50,11 +55,32 @@ func TestVerifyBindingSignature_AgreesWithProverSideConstruction(t *testing.T) {
 	_, _ = cm2.SetRandom()
 
 	tc := mustTypeCommitmentV(t, "USD")
+	tcBytes := tc.Bytes()
 
-	inputs := []prover.ProofResult{{Commitment: cm1, ValueCommit: cv1, RCV: rcv1}}
-	outputs := []prover.ProofResult{{Commitment: cm2, ValueCommit: cv2, RCV: rcv2}}
+	cm1Bytes := cm1.Bytes()
+	cv1XBytes := cv1.X.Bytes()
+	cv1YBytes := cv1.Y.Bytes()
+	rcv1Bytes := rcv1.Bytes()
 
-	sig, err := prover.ComputeBindingSignature("transfer", tc, inputs, outputs)
+	cm2Bytes := cm2.Bytes()
+	cv2XBytes := cv2.X.Bytes()
+	cv2YBytes := cv2.Y.Bytes()
+	rcv2Bytes := rcv2.Bytes()
+
+	inputs := []prover.ProofResult{{
+		Commitment:       cm1Bytes[:],
+		ValueCommitmentX: cv1XBytes[:],
+		ValueCommitmentY: cv1YBytes[:],
+		RCV:              rcv1Bytes[:],
+	}}
+	outputs := []prover.ProofResult{{
+		Commitment:       cm2Bytes[:],
+		ValueCommitmentX: cv2XBytes[:],
+		ValueCommitmentY: cv2YBytes[:],
+		RCV:              rcv2Bytes[:],
+	}}
+
+	sig, err := prover.ComputeBindingSignature("transfer", tcBytes[:], inputs, outputs)
 	require.NoError(t, err)
 	sigBytes, err := jubjub.SerializeSignature(sig)
 	require.NoError(t, err)
@@ -86,12 +112,21 @@ func TestVerifyBindingSignature_WrongPublicValueDeltaFailsIssuance(t *testing.T)
 	_, _ = cm.SetRandom()
 
 	tc := mustTypeCommitmentV(t, "USD")
+	tcBytes := tc.Bytes()
 
-	outputs := []prover.ProofResult{{Commitment: cm, ValueCommit: cv, RCV: rcv}}
-	var totalIssued fr.Element
-	totalIssued.SetUint64(500)
+	cmBytes := cm.Bytes()
+	cvXBytes := cv.X.Bytes()
+	cvYBytes := cv.Y.Bytes()
+	rcvBytes := rcv.Bytes()
 
-	sig, err := prover.ComputeBindingSignature("issue", tc, nil, outputs)
+	outputs := []prover.ProofResult{{
+		Commitment:       cmBytes[:],
+		ValueCommitmentX: cvXBytes[:],
+		ValueCommitmentY: cvYBytes[:],
+		RCV:              rcvBytes[:],
+	}}
+
+	sig, err := prover.ComputeBindingSignature("issue", tcBytes[:], nil, outputs)
 	require.NoError(t, err)
 	sigBytes, err := jubjub.SerializeSignature(sig)
 	require.NoError(t, err)

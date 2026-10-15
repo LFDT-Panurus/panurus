@@ -95,7 +95,6 @@ require (
 	github.com/hyperledger-labs/fabric-smart-client/platform/fabric/services/state/cc/query v0.16.0 // indirect
 	github.com/hyperledger-labs/fabric-smart-client/platform/view/services/comm/host/libp2p v0.16.0 // indirect
 	github.com/hyperledger/fabric-amcl v0.0.0-20230602173724-9e02669dceb2 // indirect
-	github.com/hyperledger/fabric-chaincode-go/v2 v2.3.1-0.20260319210430-56968fdc7833 // indirect
 	github.com/hyperledger/fabric-protos-go-apiv2 v0.3.7 // indirect
 	github.com/hyperledger/fabric-x-common v0.2.8 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect

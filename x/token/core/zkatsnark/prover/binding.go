@@ -6,6 +6,7 @@ SPDX-License-Identifier: Apache-2.0
 package prover
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/binary"
 	"fmt"
@@ -14,9 +15,9 @@ import (
 	"sort"
 
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
+	"github.com/consensys/gnark-crypto/ecc/bls12-381/twistededwards"
 
 	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/crypto/jubjub"
-	"github.com/consensys/gnark-crypto/ecc/bls12-381/twistededwards"
 )
 
 // domainSeparator prevents a binding signature produced by this scheme from
@@ -24,11 +25,13 @@ import (
 const domainSeparator = "zkatsnark-action-binding-v1"
 
 // ProofResult holds everything one input or output token contributes to an
-// action's binding signature.
+// action's binding signature. All fields are raw bytes to avoid locking
+// the type to a single curve.
 type ProofResult struct {
-	Commitment  fr.Element
-	ValueCommit twistededwards.PointAffine
-	RCV         fr.Element
+	Commitment       []byte // 32 bytes
+	ValueCommitmentX []byte // 32 bytes
+	ValueCommitmentY []byte // 32 bytes
+	RCV              []byte // 32 bytes
 }
 
 // sortedByCommitment returns results sorted lexicographically by
@@ -40,15 +43,7 @@ func sortedByCommitment(results []ProofResult) []ProofResult {
 	sorted := make([]ProofResult, len(results))
 	copy(sorted, results)
 	sort.Slice(sorted, func(i, j int) bool {
-		a := sorted[i].Commitment.Bytes()
-		b := sorted[j].Commitment.Bytes()
-		for k := range a {
-			if a[k] != b[k] {
-				return a[k] < b[k]
-			}
-		}
-
-		return false
+		return bytes.Compare(sorted[i].Commitment, sorted[j].Commitment) < 0
 	})
 
 	return sorted
@@ -73,34 +68,25 @@ func writeLengthPrefixed(h hash.Hash, b []byte) {
 // any divergence in sorting, encoding, or field ordering causes every
 // legitimate binding signature to fail verification with no useful
 // diagnostic.
-func ComputeActionHash(actionType string, typeCommitment fr.Element, inputs, outputs []ProofResult) []byte {
+func ComputeActionHash(actionType string, typeCommitment []byte, inputs, outputs []ProofResult) []byte {
 	h := sha256.New()
 	_, _ = h.Write([]byte(domainSeparator))
 	writeLengthPrefixed(h, []byte(actionType))
 
 	// TypeCommitment is a fixed-length field element (32 bytes), so no
 	// length prefix is needed — there is no concatenation ambiguity.
-	tcBytes := typeCommitment.Bytes()
-	_, _ = h.Write(tcBytes[:])
+	_, _ = h.Write(typeCommitment)
 
 	for _, r := range sortedByCommitment(inputs) {
-		cm := r.Commitment.Bytes()
-		cmx := r.ValueCommit.X.Bytes()
-		cmy := r.ValueCommit.Y.Bytes()
-
-		_, _ = h.Write(cm[:])
-		_, _ = h.Write(cmx[:])
-		_, _ = h.Write(cmy[:])
+		_, _ = h.Write(r.Commitment)
+		_, _ = h.Write(r.ValueCommitmentX)
+		_, _ = h.Write(r.ValueCommitmentY)
 	}
 
 	for _, r := range sortedByCommitment(outputs) {
-		cm := r.Commitment.Bytes()
-		cmx := r.ValueCommit.X.Bytes()
-		cmy := r.ValueCommit.Y.Bytes()
-
-		_, _ = h.Write(cm[:])
-		_, _ = h.Write(cmx[:])
-		_, _ = h.Write(cmy[:])
+		_, _ = h.Write(r.Commitment)
+		_, _ = h.Write(r.ValueCommitmentX)
+		_, _ = h.Write(r.ValueCommitmentY)
 	}
 
 	return h.Sum(nil)
@@ -121,17 +107,25 @@ func ComputeActionHash(actionType string, typeCommitment fr.Element, inputs, out
 // adding valueBalance·V restores the equality bvk = bsk·R so the
 // Schnorr verification succeeds.
 //
-// Exposed here because it is a pure function of public data that the
-// eventual validator will need to compute independently.
-func ComputeBVK(inputs, outputs []ProofResult, valueBalance uint64) twistededwards.PointAffine {
+// NOTE: Currently BLS12-381/Jubjub only. BN254 support for binding
+// signatures requires a parallel implementation using babyjubjub.
+func ComputeBVK(inputs, outputs []ProofResult, valueBalance uint64) (twistededwards.PointAffine, error) {
 	points := make([]twistededwards.PointAffine, 0, len(inputs)+len(outputs)+1)
 
 	for _, r := range inputs {
-		points = append(points, r.ValueCommit)
+		pt, err := ValueCommitPointBLS12381(r.ValueCommitmentX, r.ValueCommitmentY)
+		if err != nil {
+			return twistededwards.PointAffine{}, err
+		}
+		points = append(points, pt)
 	}
 
 	for _, r := range outputs {
-		points = append(points, jubjub.NegatePoint(r.ValueCommit))
+		pt, err := ValueCommitPointBLS12381(r.ValueCommitmentX, r.ValueCommitmentY)
+		if err != nil {
+			return twistededwards.PointAffine{}, err
+		}
+		points = append(points, jubjub.NegatePoint(pt))
 	}
 
 	if valueBalance != 0 {
@@ -144,7 +138,7 @@ func ComputeBVK(inputs, outputs []ProofResult, valueBalance uint64) twistededwar
 		points = append(points, vbPoint)
 	}
 
-	return jubjub.ValueCommitSum(points)
+	return jubjub.ValueCommitSum(points), nil
 }
 
 // ComputeBindingSignature computes the per-action binding signature proving
@@ -160,7 +154,7 @@ func ComputeBVK(inputs, outputs []ProofResult, valueBalance uint64) twistededwar
 // For issuance (empty inputs), bsk becomes −Σrcv_out. There is no
 // conservation requirement for issuance, the signature instead attests
 // that the published output value commitments are correctly formed.
-func ComputeBindingSignature(actionType string, typeCommitment fr.Element, inputs, outputs []ProofResult) (jubjub.Signature, error) {
+func ComputeBindingSignature(actionType string, typeCommitment []byte, inputs, outputs []ProofResult) (jubjub.Signature, error) {
 	// bsk must be computed modulo the Jubjub subgroup order, NOT the
 	// BLS12-381 scalar field modulus. fr.Element.Add/Sub reduce mod r
 	// (the BLS12-381 scalar field), but the Schnorr signature scheme
@@ -171,11 +165,19 @@ func ComputeBindingSignature(actionType string, typeCommitment fr.Element, input
 	bskBig := new(big.Int)
 
 	for _, r := range inputs {
-		bskBig.Add(bskBig, r.RCV.BigInt(new(big.Int)))
+		var rcv fr.Element
+		if err := rcv.SetBytesCanonical(r.RCV); err != nil {
+			return jubjub.Signature{}, fmt.Errorf("prover: invalid input RCV bytes: %w", err)
+		}
+		bskBig.Add(bskBig, rcv.BigInt(new(big.Int)))
 	}
 
 	for _, r := range outputs {
-		bskBig.Sub(bskBig, r.RCV.BigInt(new(big.Int)))
+		var rcv fr.Element
+		if err := rcv.SetBytesCanonical(r.RCV); err != nil {
+			return jubjub.Signature{}, fmt.Errorf("prover: invalid output RCV bytes: %w", err)
+		}
+		bskBig.Sub(bskBig, rcv.BigInt(new(big.Int)))
 	}
 
 	bskBig.Mod(bskBig, order)

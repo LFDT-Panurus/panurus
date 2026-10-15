@@ -8,6 +8,7 @@ package validator
 import (
 	"testing"
 
+	"github.com/consensys/gnark-crypto/ecc"
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
 	"github.com/stretchr/testify/require"
 
@@ -20,8 +21,12 @@ func TestCheckTypeCommitmentHomogeneity_Consistent(t *testing.T) {
 	_, err := typeRandomness.SetRandom()
 	require.NoError(t, err)
 
-	tc, err := snarktoken.ComputeTypeCommitment("USD", typeRandomness)
+	tr := typeRandomness.Bytes()
+	tcBytes, err := snarktoken.ComputeTypeCommitment("USD", tr[:], ecc.BLS12_381)
 	require.NoError(t, err)
+
+	var tc fr.Element
+	require.NoError(t, tc.SetBytesCanonical(tcBytes))
 
 	spend := decodedSpend{TypeCommitment: tc}
 	output := decodedOutput{TypeCommitment: tc}
@@ -37,10 +42,16 @@ func TestCheckTypeCommitmentHomogeneity_Mismatch(t *testing.T) {
 	_, err = typeRandomness2.SetRandom()
 	require.NoError(t, err)
 
-	tcUSD, err := snarktoken.ComputeTypeCommitment("USD", typeRandomness1)
+	tr1 := typeRandomness1.Bytes()
+	tr2 := typeRandomness2.Bytes()
+	tcUSDBytes, err := snarktoken.ComputeTypeCommitment("USD", tr1[:], ecc.BLS12_381)
 	require.NoError(t, err)
-	tcEUR, err := snarktoken.ComputeTypeCommitment("EUR", typeRandomness2)
+	tcEURBytes, err := snarktoken.ComputeTypeCommitment("EUR", tr2[:], ecc.BLS12_381)
 	require.NoError(t, err)
+
+	var tcUSD, tcEUR fr.Element
+	require.NoError(t, tcUSD.SetBytesCanonical(tcUSDBytes))
+	require.NoError(t, tcEUR.SetBytesCanonical(tcEURBytes))
 
 	spend := decodedSpend{TypeCommitment: tcEUR}
 

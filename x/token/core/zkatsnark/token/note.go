@@ -7,11 +7,14 @@ package token
 
 import (
 	"encoding/binary"
-	"fmt"
 
-	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
+	"github.com/consensys/gnark-crypto/ecc"
+	bls12381fr "github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
+	bn254fr "github.com/consensys/gnark-crypto/ecc/bn254/fr"
+	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 
 	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/crypto/mimc"
+	mimcbn254 "github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/crypto/mimc/bn254"
 )
 
 // Note is the complete private description of a token, everything needed
@@ -24,17 +27,39 @@ import (
 // It deliberately does not store any value-commitment randomness (RCV),
 // that is generated fresh every time the token is used in a proof, by the
 // WitnessBuilder, and has no relationship to anything stored here.
+//
+// Randomness is stored as raw bytes (32) to avoid locking Note to a single
+// curve's fr.Element type. It is decoded into the appropriate curve's field
+// element at usage sites.
 type Note struct {
 	Value      uint64
 	TokenType  string
-	Randomness fr.Element
+	Randomness [32]byte
 	Issuer     []byte
 }
 
-// EncodeTokenType maps a token type string to a canonical BLS12-381 field
-// element.
-func EncodeTokenType(tokenType string) fr.Element {
-	var t fr.Element
+// EncodeTokenType maps a token type string to a canonical field element
+// encoding as raw bytes. The bytes can be loaded into either curve's
+// fr.Element via SetBytes.
+func EncodeTokenType(tokenType string) []byte {
+	var t bls12381fr.Element
+	t.SetBytes([]byte(tokenType))
+	b := t.Bytes()
+
+	return b[:]
+}
+
+// EncodeTokenTypeBLS12381 maps a token type to a BLS12-381 fr.Element.
+func EncodeTokenTypeBLS12381(tokenType string) bls12381fr.Element {
+	var t bls12381fr.Element
+	t.SetBytes([]byte(tokenType))
+
+	return t
+}
+
+// EncodeTokenTypeBN254 maps a token type to a BN254 fr.Element.
+func EncodeTokenTypeBN254(tokenType string) bn254fr.Element {
+	var t bn254fr.Element
 	t.SetBytes([]byte(tokenType))
 
 	return t
@@ -45,42 +70,108 @@ func EncodeTokenType(tokenType string) fr.Element {
 // in a single action share the same typeRandomness, so they produce the
 // same TypeCommitment, letting the validator confirm type homogeneity
 // without learning the plaintext type.
-func ComputeTypeCommitment(tokenType string, typeRandomness fr.Element) (fr.Element, error) {
-	t := EncodeTokenType(tokenType)
+//
+// Returns the commitment as raw bytes (32). The curve parameter determines
+// which MiMC implementation is used.
+func ComputeTypeCommitment(tokenType string, typeRandomness []byte, curve ecc.ID) ([]byte, error) {
+	switch curve {
+	case ecc.BLS12_381:
+		var t, tr bls12381fr.Element
+		t.SetBytes([]byte(tokenType))
+		if err := tr.SetBytesCanonical(typeRandomness); err != nil {
+			return nil, errors.Wrapf(err, "note: invalid type randomness bytes")
+		}
+		tc, err := mimc.Hash(t, tr)
+		if err != nil {
+			return nil, errors.Wrapf(err, "note: type commitment computation failed")
+		}
+		b := tc.Bytes()
 
-	tc, err := mimc.Hash(t, typeRandomness)
-	if err != nil {
-		return fr.Element{}, fmt.Errorf("note: type commitment computation failed: %w", err)
+		return b[:], nil
+
+	case ecc.BN254:
+		var t, tr bn254fr.Element
+		t.SetBytes([]byte(tokenType))
+		if err := tr.SetBytesCanonical(typeRandomness); err != nil {
+			return nil, errors.Wrapf(err, "note: invalid type randomness bytes")
+		}
+		tc, err := mimcbn254.Hash(t, tr)
+		if err != nil {
+			return nil, errors.Wrapf(err, "note: type commitment computation failed")
+		}
+		b := tc.Bytes()
+
+		return b[:], nil
+
+	default:
+		return nil, errors.Errorf("note: unsupported curve %s for type commitment", curve)
 	}
-
-	return tc, nil
 }
 
-// Commitment computes cm = MiMC(Value, TokenType, Randomness).
+// Commitment computes cm = MiMC(Value, TokenType, Randomness) and returns
+// the result as raw bytes.
+//
 // This must match Constraint Group 1 in circuit.SpendCircuit.Define and
 // circuit.OutputCircuit.Define exactly, same three inputs, same order.
-func (n *Note) Commitment() (fr.Element, error) {
-	var v fr.Element
-	v.SetUint64(n.Value)
-	t := EncodeTokenType(n.TokenType)
+//
+// The curve parameter selects the MiMC variant (BLS12-381 or BN254).
+// Returning []byte instead of a typed fr.Element is consistent with how
+// the wire format already treats every commitment as opaque bytes at the
+// SpendDescription/OutputDescription level (Decision G, Option 2).
+func (n *Note) Commitment(curve ecc.ID) ([]byte, error) {
+	switch curve {
+	case ecc.BLS12_381:
+		var v bls12381fr.Element
+		v.SetUint64(n.Value)
+		var t bls12381fr.Element
+		t.SetBytes([]byte(n.TokenType))
+		var r bls12381fr.Element
+		if err := r.SetBytesCanonical(n.Randomness[:]); err != nil {
+			return nil, errors.Wrapf(err, "note: invalid randomness bytes")
+		}
+		cm, err := mimc.Hash(v, t, r)
+		if err != nil {
+			return nil, errors.Wrapf(err, "note: commitment computation failed")
+		}
+		b := cm.Bytes()
 
-	cm, err := mimc.Hash(v, t, n.Randomness)
-	if err != nil {
-		return fr.Element{}, fmt.Errorf("note: commitment computation failed: %w", err)
+		return b[:], nil
+
+	case ecc.BN254:
+		var v bn254fr.Element
+		v.SetUint64(n.Value)
+		var t bn254fr.Element
+		t.SetBytes([]byte(n.TokenType))
+		var r bn254fr.Element
+		if err := r.SetBytesCanonical(n.Randomness[:]); err != nil {
+			return nil, errors.Wrapf(err, "note: invalid randomness bytes")
+		}
+		cm, err := mimcbn254.Hash(v, t, r)
+		if err != nil {
+			return nil, errors.Wrapf(err, "note: commitment computation failed")
+		}
+		b := cm.Bytes()
+
+		return b[:], nil
+
+	default:
+		return nil, errors.Errorf("note: unsupported curve %s", curve)
 	}
-
-	return cm, nil
 }
 
 // NewRandomNote constructs a Note for a newly created token, with fresh
-// cryptographically random commitment randomness.
+// cryptographically random commitment randomness. The randomness is stored
+// as raw bytes, curve-agnostic.
 func NewRandomNote(value uint64, tokenType string) (*Note, error) {
-	var r fr.Element
+	// Generate randomness in the smaller of the two supported scalar fields (BN254 < BLS12-381)
+	// so the byte representation is strictly canonical in both curves.
+	var r bn254fr.Element
 	if _, err := r.SetRandom(); err != nil {
-		return nil, fmt.Errorf("note: randomness generation failed: %w", err)
+		return nil, errors.Wrapf(err, "note: randomness generation failed")
 	}
+	rBytes := r.Bytes()
 
-	return &Note{Value: value, TokenType: tokenType, Randomness: r, Issuer: nil}, nil
+	return &Note{Value: value, TokenType: tokenType, Randomness: rBytes, Issuer: nil}, nil
 }
 
 // Serialize encodes the Note as CLEARTEXT bytes: 8-byte big-endian Value,
@@ -97,8 +188,7 @@ func (n *Note) Serialize() ([]byte, error) {
 
 	out = append(out, []byte(n.TokenType)...)
 
-	rBytes := n.Randomness.Bytes()
-	out = append(out, rBytes[:]...)
+	out = append(out, n.Randomness[:]...)
 
 	var issuerLenBuf [8]byte
 	binary.BigEndian.PutUint64(issuerLenBuf[:], uint64(len(n.Issuer)))
@@ -111,7 +201,7 @@ func (n *Note) Serialize() ([]byte, error) {
 // DeserializeNote reconstructs a Note from bytes produced by Serialize.
 func Deserialize(raw []byte) (*Note, error) {
 	if len(raw) < 16 {
-		return nil, fmt.Errorf("note: serialized note too short: %d bytes", len(raw))
+		return nil, errors.Errorf("note: serialized note too short: %d bytes", len(raw))
 	}
 
 	value := binary.BigEndian.Uint64(raw[0:8])
@@ -119,26 +209,24 @@ func Deserialize(raw []byte) (*Note, error) {
 
 	expectedLen := 16 + typeLen + 32
 	if uint64(len(raw)) < expectedLen {
-		return nil, fmt.Errorf("note: length mismatch, expected at least %d got %d", expectedLen, len(raw))
+		return nil, errors.Errorf("note: length mismatch, expected at least %d got %d", expectedLen, len(raw))
 	}
 
 	tokenType := string(raw[16 : 16+typeLen])
 
-	var r fr.Element
-	if err := r.SetBytesCanonical(raw[16+typeLen : 16+typeLen+32]); err != nil {
-		return nil, fmt.Errorf("note: invalid randomness bytes: %w", err)
-	}
+	var r [32]byte
+	copy(r[:], raw[16+typeLen:16+typeLen+32])
 
 	offset := 16 + typeLen + 32
 	var issuer []byte
 	if uint64(len(raw)) >= offset+8 {
 		issuerLen := binary.BigEndian.Uint64(raw[offset : offset+8])
 		if uint64(len(raw)) != offset+8+issuerLen {
-			return nil, fmt.Errorf("note: length mismatch, expected %d got %d", offset+8+issuerLen, len(raw))
+			return nil, errors.Errorf("note: length mismatch, expected %d got %d", offset+8+issuerLen, len(raw))
 		}
 		issuer = raw[offset+8:]
 	} else if uint64(len(raw)) != offset {
-		return nil, fmt.Errorf("note: length mismatch, expected %d got %d", offset, len(raw))
+		return nil, errors.Errorf("note: length mismatch, expected %d got %d", offset, len(raw))
 	}
 
 	return &Note{Value: value, TokenType: tokenType, Randomness: r, Issuer: issuer}, nil

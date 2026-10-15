@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/consensys/gnark-crypto/ecc"
 	"github.com/stretchr/testify/require"
 
 	snarktoken "github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/token"
@@ -209,16 +210,38 @@ func TestTransferAction_GetInputs_Nil(t *testing.T) {
 	require.Nil(t, a.GetInputs())
 }
 
-func TestTransferAction_GetSerializedInputs_RoundTrip(t *testing.T) {
+func TestTransferAction_GetSerializedInputs_WithInputTokens(t *testing.T) {
+	outputDesc := makeOutputDescription([]byte("bob"))
+	raw, err := json.Marshal(outputDesc)
+	require.NoError(t, err)
+
 	a := &snarktoken.TransferAction{
-		Inputs: []snarktoken.SpendDescription{makeSpendDescription()},
+		Inputs:      []snarktoken.SpendDescription{makeSpendDescription()},
+		InputTokens: [][]byte{raw},
 	}
 	raws, err := a.GetSerializedInputs()
 	require.NoError(t, err)
 	require.Len(t, raws, 1)
 
-	var s snarktoken.SpendDescription
-	require.NoError(t, json.Unmarshal(raws[0], &s))
+	var got snarktoken.OutputDescription
+	require.NoError(t, json.Unmarshal(raws[0], &got))
+	require.Equal(t, []byte("bob"), got.Recipient)
+}
+
+func TestTransferAction_GetSerializedInputs_ErrorWithoutInputTokens(t *testing.T) {
+	a := &snarktoken.TransferAction{
+		Inputs: []snarktoken.SpendDescription{makeSpendDescription()},
+	}
+	_, err := a.GetSerializedInputs()
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "InputTokens not populated")
+}
+
+func TestTransferAction_GetSerializedInputs_NilWhenEmpty(t *testing.T) {
+	a := &snarktoken.TransferAction{}
+	raws, err := a.GetSerializedInputs()
+	require.NoError(t, err)
+	require.Nil(t, raws)
 }
 
 func TestTransferAction_GetSerialNumbers_Nil(t *testing.T) {
@@ -421,13 +444,13 @@ func TestEncodeTokenType_Empty(t *testing.T) {
 func TestEncodeTokenType_Deterministic(t *testing.T) {
 	e1 := snarktoken.EncodeTokenType("EUR")
 	e2 := snarktoken.EncodeTokenType("EUR")
-	require.Equal(t, e1.Bytes(), e2.Bytes())
+	require.Equal(t, e1, e2)
 }
 
 func TestEncodeTokenType_DifferentTypes(t *testing.T) {
 	eUSD := snarktoken.EncodeTokenType("USD")
 	eEUR := snarktoken.EncodeTokenType("EUR")
-	require.NotEqual(t, eUSD.Bytes(), eEUR.Bytes())
+	require.NotEqual(t, eUSD, eEUR)
 }
 
 // ── ComputeTypeCommitment ─────────────────────────────────────────────────────
@@ -436,26 +459,26 @@ func TestComputeTypeCommitment_Deterministic(t *testing.T) {
 	note, err := snarktoken.NewRandomNote(100, "USD")
 	require.NoError(t, err)
 
-	tc1, err := snarktoken.ComputeTypeCommitment("USD", note.Randomness)
+	tc1, err := snarktoken.ComputeTypeCommitment("USD", note.Randomness[:], ecc.BLS12_381)
 	require.NoError(t, err)
 
-	tc2, err := snarktoken.ComputeTypeCommitment("USD", note.Randomness)
+	tc2, err := snarktoken.ComputeTypeCommitment("USD", note.Randomness[:], ecc.BLS12_381)
 	require.NoError(t, err)
 
-	require.Equal(t, tc1.Bytes(), tc2.Bytes())
+	require.Equal(t, tc1, tc2)
 }
 
 func TestComputeTypeCommitment_DifferentTypesGiveDifferentCommitments(t *testing.T) {
 	note, err := snarktoken.NewRandomNote(100, "USD")
 	require.NoError(t, err)
 
-	tcUSD, err := snarktoken.ComputeTypeCommitment("USD", note.Randomness)
+	tcUSD, err := snarktoken.ComputeTypeCommitment("USD", note.Randomness[:], ecc.BLS12_381)
 	require.NoError(t, err)
 
-	tcEUR, err := snarktoken.ComputeTypeCommitment("EUR", note.Randomness)
+	tcEUR, err := snarktoken.ComputeTypeCommitment("EUR", note.Randomness[:], ecc.BLS12_381)
 	require.NoError(t, err)
 
-	require.NotEqual(t, tcUSD.Bytes(), tcEUR.Bytes())
+	require.NotEqual(t, tcUSD, tcEUR)
 }
 
 // ── Note with issuer ──────────────────────────────────────────────────────────
