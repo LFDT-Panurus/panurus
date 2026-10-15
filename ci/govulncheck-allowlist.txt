@@ -6,6 +6,22 @@
 # reviewed and judged not exploitable in Panurus's usage. Include the OSV ID,
 # the module it comes from, and why it's safe to ignore here. Re-review (and
 # ideally drop) each entry whenever the pulling-in dependency is upgraded.
+#
+# UNREACHABLE findings need no entry here, and must not be given one: this
+# file is consulted only after govulncheck exits non-zero, which a
+# module-level-only finding never does, so an entry buys nothing today and
+# suppresses the failure CI should raise if the finding ever does become
+# reachable.
+#
+# GO-2026-5932 (golang.org/x/crypto/openpgp) is the standing example, and is
+# deliberately absent. The package is unmaintained with no fixed version
+# (introduced: 0), so no x/crypto bump clears it — but it is in the import
+# graph of no module, test binaries included, so it is never linked into a
+# Panurus binary, and govulncheck reports it only under "Module Results",
+# 0 called. Re-check in any module with:
+#     go list -deps -test ./... | grep golang.org/x/crypto/openpgp
+# If that ever prints a package, port the call site to a maintained fork
+# rather than adding an entry here. Full evidence: PR #2464.
 
 # GO-2024-3218: Content Censorship in IPFS via Kademlia DHT abuse, in
 # github.com/libp2p/go-libp2p-kad-dht. No fix is published upstream. Reached
