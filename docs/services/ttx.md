@@ -573,3 +573,35 @@ The recovery service is part of the **Storage Service** and is instantiated by t
 For detailed information about the recovery mechanism, see:
 - [Storage Service - Transaction Recovery](storage.md#transaction-recovery-service)
 - [Configuration Guide - Recovery Parameters](../configuration.md), Section `Optional: token.tms.<name>.services.network.fabric.recovery`
+
+### Interactive Protocol Timeout Budget
+
+`ReceiveTransactionView` waits up to a fixed timeout for the full endorsement round-trip to
+complete. That budget must exceed the sum of every wait it depends on, or the responder times
+out on a transaction that was still legitimately in progress.
+
+Signature collection runs `requestSignaturesOnIssues` and `requestSignaturesOnTransfers` as
+serial phases, unconditionally, for any transaction carrying both. Each phase fans out
+concurrently, so its cost is one phase bound rather than one per identity — but the two
+phases are additive. The phase bound is `AnswerCollectionTimeout`, not the per-signer
+`SigResponseTimeout`: the latter covers only the receive, while the session dial and
+signature verification around it fall outside that window.
+
+**Invariant:** `responder receive > 2 x signature phase + audit + approval`
+
+| Leg | Constant | Value |
+|---|---|---|
+| Responder receive (the budget) | `ttx.DefaultReceiveTransactionTimeout` | 8 min |
+| Signature phase (x2, serial) | `ttx.AnswerCollectionTimeout` | 2 min each |
+| Auditor signature | `ttx.AuditTimeout` | 1 min |
+| FSC-endorsement approval | `fsc.ApprovalTimeout` | 2 min |
+
+The budget previously sat below the sum of the legs it must cover (2 + 2 + 1 + 2 = 7 min
+minimum), so a transaction still legitimately in progress could time out. The budget is now
+8 min, leaving 1 min of slack. See issue #1266. The unit test in
+`receivetx_timeout_test.go` asserts the invariant directly so any future regression is
+caught by CI rather than by hand.
+
+The budget is intentionally a single named constant rather than an operator-configurable value:
+exposing it independently invites recreating this same inversion. If the budget needs to be
+tunable, it should be one endorsement budget per TMS with the individual waits derived from it.
