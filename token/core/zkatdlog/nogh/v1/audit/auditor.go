@@ -141,7 +141,7 @@ func NewAuditor(logger logging.Logger, tracer trace.Tracer, infoMatcher InfoMatc
 	}
 
 	transferValidators := []ValidateTransferAuditFunc{
-		TransferAuditValidate(infoMatcher, pp, c, precision),
+		TransferAuditValidate(infoMatcher, pp, c),
 	}
 
 	auditor := common.NewAuditor[*v1.PublicParams, *issue.Action, *transfer.Action, driver.Deserializer](
@@ -236,7 +236,7 @@ func IssueAuditValidate(infoMatcher InfoMatcher, pedersenParams []*math.G1, curv
 }
 
 // TransferAuditValidate returns a validation function for transfer actions.
-func TransferAuditValidate(infoMatcher InfoMatcher, pedersenParams []*math.G1, curve *math.Curve, precision uint64) ValidateTransferAuditFunc {
+func TransferAuditValidate(infoMatcher InfoMatcher, pedersenParams []*math.G1, curve *math.Curve) ValidateTransferAuditFunc {
 	return func(ctx context.Context, auditCtx *AuditContext) error {
 		// Get the transfer action
 		action := auditCtx.TransferAction
@@ -271,8 +271,10 @@ func TransferAuditValidate(infoMatcher InfoMatcher, pedersenParams []*math.G1, c
 			return err
 		}
 
-		// Validate that all inputs and outputs have the same token type and sum of values
-		if err := common.ValidateTransferActionTokenTypes(metadata, auditCtx.AuditTokens, true, precision); err != nil {
+		// Validate that all inputs have the same token type. Output types and input/output value
+		// conservation are enforced cryptographically by the transfer proof (TypeAndSumVerifier,
+		// token/core/zkatdlog/nogh/v1/transfer/typeandsum.go) during validation, not here.
+		if err := common.ValidateTransferActionTokenTypes(metadata, auditCtx.AuditTokens); err != nil {
 			return errors.Wrapf(err, "token type validation failed for transfer action")
 		}
 

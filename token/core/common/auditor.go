@@ -627,82 +627,63 @@ func checkIssueInputTokenType(inputMetadata *driver.IssueInputMetadata, auditTok
 }
 
 // checkTransferInputTokenType verifies that the i-th transfer input's audit token exists and is
-// non-nil, updates (or checks) *actionTokenType against its type, and, if validateValueSum, adds
-// its quantity to inputSum, returning the (possibly updated) sum.
+// non-nil, and updates (or checks) *actionTokenType against that token's type.
 func checkTransferInputTokenType(
 	inputMetadata *driver.TransferInputMetadata,
 	auditTokens map[string]*token.Token,
 	i int,
 	actionTokenType *token.Type,
-	inputSum token.Quantity,
-	validateValueSum bool,
-	precision uint64,
-) (token.Quantity, error) {
+) error {
 	if inputMetadata == nil {
-		return inputSum, errors.Errorf("input metadata at index [%d] is nil", i)
+		return errors.Errorf("input metadata at index [%d] is nil", i)
 	}
 
 	// TokenID is required
 	if inputMetadata.TokenID == nil {
-		return inputSum, errors.Errorf("input at index [%d] has nil TokenID", i)
+		return errors.Errorf("input at index [%d] has nil TokenID", i)
 	}
 
 	// Verify input token exists and validate type
 	inputToken, exists := auditTokens[inputMetadata.TokenID.String()]
 	if !exists {
-		return inputSum, errors.Errorf("input token [%s:%d] at index [%d] not found in audit tokens",
+		return errors.Errorf("input token [%s:%d] at index [%d] not found in audit tokens",
 			inputMetadata.TokenID.TxId, inputMetadata.TokenID.Index, i)
 	}
 
 	if inputToken == nil {
-		return inputSum, errors.Errorf("input token [%s:%d] at index [%d] is nil in audit tokens",
+		return errors.Errorf("input token [%s:%d] at index [%d] is nil in audit tokens",
 			inputMetadata.TokenID.TxId, inputMetadata.TokenID.Index, i)
 	}
 
-	// Validate and accumulate token type
+	// Validate token type
 	if *actionTokenType == "" {
 		*actionTokenType = inputToken.Type
 	} else if *actionTokenType != inputToken.Type {
-		return inputSum, errors.Errorf(
+		return errors.Errorf(
 			"token type mismatch in transfer action: input [%d] has type [%s] but expected [%s]",
 			i, inputToken.Type, *actionTokenType,
 		)
 	}
 
-	// Accumulate input value if validation is requested
-	if validateValueSum {
-		inputQty, err := token.ToQuantity(inputToken.Quantity, precision)
-		if err != nil {
-			return inputSum, errors.Wrapf(err, "failed to convert input quantity at index [%d]", i)
-		}
-		inputSum, err = inputSum.Add(inputQty)
-		if err != nil {
-			return inputSum, errors.Wrapf(err, "failed to add input quantity at index [%d]", i)
-		}
-	}
-
-	return inputSum, nil
+	return nil
 }
 
-// ValidateTransferActionTokenTypes ensures all inputs and outputs in a transfer action have the same token type.
-// It also validates that input tokens exist in the auditTokens map.
-//
-// When validateValueSum is true (for privacy-preserving tokens like zkatdlog), this also validates
-// that the sum of input values equals the sum of output values using the provided precision.
+// ValidateTransferActionTokenTypes ensures all inputs in a transfer action have the same token type
+// and that every input token exists in the auditTokens map.
 //
 // For transfer actions, this validates that:
 // - auditTokens map is non-empty (required for validation)
 // - All input tokens exist in the audit token map
 // - All inputs have the same token type
-// - All outputs have the same token type as the inputs
-// - (Optional) Sum of input values equals sum of output values
 //
-// This ensures token type consistency and value conservation within a transfer action.
+// Output token type validation and input/output value conservation are handled committer-side in each
+// driver's validation path (fabtoken: TransferBalanceValidate in
+// token/core/fabtoken/v1/validator/validator_transfer.go, which sums ledger-state input tokens;
+// zkatdlog: the transfer proof's TypeAndSumVerifier), not by this function and not by
+// TransferMetadata.Match.
 func ValidateTransferActionTokenTypes(
 	metadata *driver.TransferMetadata,
 	auditTokens map[string]*token.Token,
-	validateValueSum bool,
-	precision uint64,
 ) error {
 	if metadata == nil {
 		return errors.Errorf("metadata cannot be nil for transfer action validation")
@@ -716,25 +697,16 @@ func ValidateTransferActionTokenTypes(
 	}
 
 	var actionTokenType token.Type
-	var inputSum token.Quantity
-
-	if validateValueSum {
-		inputSum = token.NewZeroQuantity(precision)
-	}
 
 	// Validate and extract token type from inputs
 	for i, inputMetadata := range metadata.Inputs {
-		newSum, err := checkTransferInputTokenType(inputMetadata, auditTokens, i, &actionTokenType, inputSum, validateValueSum, precision)
-		if err != nil {
+		if err := checkTransferInputTokenType(inputMetadata, auditTokens, i, &actionTokenType); err != nil {
 			return err
 		}
-		inputSum = newSum
 	}
 
-	// Note: Output token type and value validation is driver-specific.
-	// For cleartext tokens (fabtoken), outputs are validated by the action's Match() method.
-	// For privacy-preserving tokens (zkatdlog), outputs require additional cryptographic validation
-	// which is handled by the driver-specific auditor.
+	// Output token type validation and input/output value conservation are intentionally not done
+	// here; they live in each driver's validation path (see the godoc above for the exact locations).
 
 	return nil
 }

@@ -715,7 +715,7 @@ func TestValidateIssueActionTokenTypes(t *testing.T) {
 }
 
 func TestValidateTransferActionTokenTypes(t *testing.T) {
-	t.Run("Success_WithoutValueValidation", func(t *testing.T) {
+	t.Run("Success", func(t *testing.T) {
 		id1 := &token.ID{TxId: "tx1", Index: 0}
 		tok1 := &token.Token{Type: "USD", Quantity: "100"}
 
@@ -729,25 +729,7 @@ func TestValidateTransferActionTokenTypes(t *testing.T) {
 			id1.String(): tok1,
 		}
 
-		err := ValidateTransferActionTokenTypes(metadata, auditTokens, false, 64)
-		require.NoError(t, err)
-	})
-
-	t.Run("Success_WithValueValidation", func(t *testing.T) {
-		id1 := &token.ID{TxId: "tx1", Index: 0}
-		tok1 := &token.Token{Type: "USD", Quantity: "100"}
-
-		metadata := &driver.TransferMetadata{
-			Inputs: []*driver.TransferInputMetadata{
-				{TokenID: id1},
-			},
-		}
-
-		auditTokens := map[string]*token.Token{
-			id1.String(): tok1,
-		}
-
-		err := ValidateTransferActionTokenTypes(metadata, auditTokens, true, 64)
+		err := ValidateTransferActionTokenTypes(metadata, auditTokens)
 		require.NoError(t, err)
 	})
 
@@ -763,7 +745,7 @@ func TestValidateTransferActionTokenTypes(t *testing.T) {
 			id1.String(): tok1,
 		}
 
-		err := ValidateTransferActionTokenTypes(metadata, auditTokens, false, 64)
+		err := ValidateTransferActionTokenTypes(metadata, auditTokens)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "input metadata at index [0] is nil")
 	})
@@ -782,7 +764,7 @@ func TestValidateTransferActionTokenTypes(t *testing.T) {
 			id1.String(): tok1,
 		}
 
-		err := ValidateTransferActionTokenTypes(metadata, auditTokens, false, 64)
+		err := ValidateTransferActionTokenTypes(metadata, auditTokens)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "has nil TokenID")
 	})
@@ -803,7 +785,7 @@ func TestValidateTransferActionTokenTypes(t *testing.T) {
 			id2.String(): tok2, // Only id2 is present
 		}
 
-		err := ValidateTransferActionTokenTypes(metadata, auditTokens, false, 64)
+		err := ValidateTransferActionTokenTypes(metadata, auditTokens)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "not found in audit tokens")
 	})
@@ -821,7 +803,7 @@ func TestValidateTransferActionTokenTypes(t *testing.T) {
 			id1.String(): nil, // Nil token
 		}
 
-		err := ValidateTransferActionTokenTypes(metadata, auditTokens, false, 64)
+		err := ValidateTransferActionTokenTypes(metadata, auditTokens)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "is nil in audit tokens")
 	})
@@ -844,7 +826,7 @@ func TestValidateTransferActionTokenTypes(t *testing.T) {
 			id2.String(): tok2,
 		}
 
-		err := ValidateTransferActionTokenTypes(metadata, auditTokens, false, 64)
+		err := ValidateTransferActionTokenTypes(metadata, auditTokens)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "token type mismatch")
 	})
@@ -859,7 +841,7 @@ func TestValidateTransferActionTokenTypes(t *testing.T) {
 		}
 
 		// Nil audit tokens should return error
-		err := ValidateTransferActionTokenTypes(metadata, nil, false, 64)
+		err := ValidateTransferActionTokenTypes(metadata, nil)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "auditTokens cannot be nil")
 	})
@@ -874,7 +856,7 @@ func TestValidateTransferActionTokenTypes(t *testing.T) {
 		}
 
 		// Empty audit tokens should return error
-		err := ValidateTransferActionTokenTypes(metadata, make(map[string]*token.Token), false, 64)
+		err := ValidateTransferActionTokenTypes(metadata, make(map[string]*token.Token))
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "auditTokens cannot be empty")
 	})
