@@ -12,7 +12,7 @@ replace (
 require (
 	github.com/IBM/idemix v0.3.1
 	github.com/IBM/mathlib v0.3.2
-	github.com/LFDT-Panurus/panurus v0.10.1
+	github.com/LFDT-Panurus/panurus v0.14.2
 	github.com/LFDT-Panurus/panurus/integration v0.0.0-00010101000000-000000000000
 	github.com/hyperledger-labs/fabric-smart-client v0.26.0
 	github.com/hyperledger-labs/fabric-smart-client/integration v0.26.0
