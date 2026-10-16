@@ -20,6 +20,16 @@ import (
 
 type tokenLockStoreConstructor func(*sql.DB) *TokenLockStore
 
+// lockQueryRegexp matches the conditional lock insert LockAt issues: the lock row is
+// written only if the token is still spendable, so the statement is an INSERT ... SELECT
+// guarded by an EXISTS over the Tokens table rather than a plain VALUES insert. The
+// spendability flags are bound, which is why the argument list carries nine parameters.
+// See TokenLockStore.lockQuery and #2395.
+const lockQueryRegexp = "INSERT INTO TOKEN_LOCKS \\(consumer_tx_id, tx_id, idx, created_at\\) " +
+	"SELECT \\$1, \\$2, \\$3, \\$4 WHERE EXISTS \\(" +
+	"SELECT 1 FROM TOKENS WHERE tx_id = \\$5 AND idx = \\$6 " +
+	"AND is_deleted = \\$7 AND spendable = \\$8 AND owner = \\$9\\)"
+
 func TestLock(t *testing.T, store tokenLockStoreConstructor) {
 	gomega.RegisterTestingT(t)
 	db, mockDB, err := sqlmock.New()
@@ -30,8 +40,8 @@ func TestLock(t *testing.T, store tokenLockStoreConstructor) {
 	now := sqlmock.AnyArg()
 
 	mockDB.
-		ExpectExec("INSERT INTO TOKEN_LOCKS \\(consumer_tx_id, tx_id, idx, created_at\\) VALUES \\(\\$1, \\$2, \\$3, \\$4\\)").
-		WithArgs(trID, tokenID.TxId, tokenID.Index, now).
+		ExpectExec(lockQueryRegexp).
+		WithArgs(trID, tokenID.TxId, tokenID.Index, now, tokenID.TxId, tokenID.Index, false, true, true).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 
 	err = store(db).Lock(t.Context(), &tokenID, trID, "owner1")
@@ -71,8 +81,8 @@ func TestLockContextCancelled(t *testing.T, store tokenLockStoreConstructor) {
 
 	// The mock will block for 1 s; the context expires after 10 ms.
 	mockDB.
-		ExpectExec("INSERT INTO TOKEN_LOCKS \\(consumer_tx_id, tx_id, idx, created_at\\) VALUES \\(\\$1, \\$2, \\$3, \\$4\\)").
-		WithArgs(trID, tokenID.TxId, tokenID.Index, now).
+		ExpectExec(lockQueryRegexp).
+		WithArgs(trID, tokenID.TxId, tokenID.Index, now, tokenID.TxId, tokenID.Index, false, true, true).
 		WillDelayFor(time.Second).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 

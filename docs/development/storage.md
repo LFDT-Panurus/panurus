@@ -123,12 +123,22 @@ satisfied from the index, without a sort step.
 
 `TokenStore` offers two ways to read a wallet's spendable tokens:
 
-* `SpendableTokensIteratorBy(ctx, walletID, tokenType)` returns **all** of them, unordered and
-  unlimited. This is what the selector uses: it shuffles the rows to spread contention across
-  concurrent selections, so an order imposed by the database would be discarded.
+* `SpendableTokensIteratorBy(ctx, walletID, tokenType)` returns **all** of them, **ascending by
+  amount** and unlimited. This is what the selector uses, and the order is load-bearing:
+  sherdlock scans candidates smallest-first so a small payment does not lock a large token,
+  and it shuffles only within runs of equal amount, so discarding the database's order would
+  break both (see [selector](../services/selector.md), #2395). `idx_spendable_amount_<t>`
+  supplies the order with no sort step.
 * `QuerySpendableTokens(ctx, params)` takes a `SpendableTokensQuery` and adds amount bounds, an
   optional ordering and an optional limit, for a caller that needs only part of the set. The
-  zero value is equivalent to `SpendableTokensIteratorBy` with an empty wallet and type.
+  zero value is equivalent to `SpendableTokensIteratorBy` with an empty wallet and type, except
+  that the iterator asks for `AmountAscending`.
+
+Both exclude tokens that currently have a row in `TokenLocks`. The anti-join lives in the
+query the two share, so a bounded caller never sees a candidate the unbounded one hides: a
+selector that can already tell a token is held by another consumer does not start a race for
+it (#2395). The row-level insert into `TokenLocks` remains the race-safe backstop for the
+window between this read and that insert.
 
 ```go
 // The three largest spendable TST tokens of alice's wallet worth at least 100.

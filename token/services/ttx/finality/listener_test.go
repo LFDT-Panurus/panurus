@@ -46,6 +46,31 @@ func newTestListener(t *testing.T, db *mock.TransactionDB) *finality.Listener {
 		finality.NewTokenRequestHasher(&depmock.TokenManagementServiceProvider{}, token.TMSID{Network: "n", Channel: "c", Namespace: "ns"}),
 		db,
 		nil,
+		&mock.SelectorManagerProvider{},
+		noopTracer(),
+		nil,
+	)
+}
+
+// newTestListenerWithSelectorManager builds a Listener wired with the given ttxDB mock,
+// tokens service (may be nil when the test never reaches the token-append path) and
+// selector-manager provider, so lock-release assertions can observe the Unlock calls.
+func newTestListenerWithSelectorManager(
+	t *testing.T,
+	db *mock.TransactionDB,
+	tokens *mock.TokensService,
+	smProvider *mock.SelectorManagerProvider,
+) *finality.Listener {
+	t.Helper()
+
+	return finality.NewListener(
+		logging.MustGetLogger(),
+		&depmock.Network{},
+		"test-namespace",
+		finality.NewTokenRequestHasher(&depmock.TokenManagementServiceProvider{}, token.TMSID{Network: "n", Channel: "c", Namespace: "ns"}),
+		db,
+		tokens,
+		smProvider,
 		noopTracer(),
 		nil,
 	)
@@ -317,40 +342,406 @@ func TestCommit_NoTokenEventsWhenTransactionIsNotCommitted(t *testing.T) {
 	}
 }
 
-// TestOnError tests the OnError callback
-func TestOnError(t *testing.T) {
-	ctx := t.Context()
+// TestOnStatus_ReleasesLocksAfterTerminalStatus is the Listener-side regression
+// test for #2395 mechanism 4: once a transaction's status is terminal
+// (Confirmed or Deleted), its selection locks must be released immediately
+// rather than left for the 3-minute lease-expiry sweep.
+func TestOnStatus_ReleasesLocksAfterTerminalStatus(t *testing.T) {
+	tests := []struct {
+		name   string
+		status int
+	}{
+		{name: "confirmed", status: network.Valid},
+		{name: "invalid maps to deleted", status: network.Invalid},
+	}
 
-	listener := newTestListener(t, &mock.TransactionDB{})
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			db := &mock.TransactionDB{}
+			storeTx := &drivermock.TransactionStoreTransaction{}
+			db.NewTransactionReturns(storeTx, nil)
 
-	// OnError should just log and not panic
-	listener.OnError(ctx, "test-tx-id", errors.New("test error"))
+			tokens := &mock.TokensService{}
+			msgToSign := []byte("message")
+			expectedHashString := utils.Hashable(msgToSign).String()
+			tokenRequestHash, err := base64.StdEncoding.DecodeString(expectedHashString)
+			require.NoError(t, err)
+			tokens.GetCachedTokenRequestReturns(&token.Request{}, msgToSign)
+			tokens.AppendValidReturns(nil, nil)
+
+			sm := &fakeSelectorManager{}
+			smProvider := &mock.SelectorManagerProvider{}
+			smProvider.SelectorManagerReturns(sm, nil)
+
+			l := finality.NewListener(
+				logging.MustGetLogger(),
+				&depmock.Network{},
+				"test-namespace",
+				finality.NewTokenRequestHasher(&depmock.TokenManagementServiceProvider{}, token.TMSID{Network: "n", Channel: "c", Namespace: "ns"}),
+				db,
+				tokens,
+				smProvider,
+				noopTracer(),
+				nil,
+			)
+
+			txID := "tx-terminal"
+			l.OnStatus(t.Context(), txID, test.status, "", tokenRequestHash)
+
+			require.Equal(t, []string{txID}, sm.unlockCalls,
+				"a transaction reaching a terminal status must release its selection locks (#2395 mechanism 4)")
+		})
+	}
 }
 
-// TestCheckTokenRequest tests the hash comparison logic used by checkTokenRequest
-func TestCheckTokenRequest(t *testing.T) {
-	t.Run("matching hashes", func(t *testing.T) {
-		data := []byte("test data")
-		hash := utils.Hashable(data).String()
-		reference, err := base64.StdEncoding.DecodeString(hash)
+// TestOnStatus_DoesNotReleaseLocksOnUnrecognizedStatus pins the default branch of
+// runOnStatus: a status that is neither network.Valid/network.Invalid nor one of the
+// in-flight network.Busy/network.Unknown states says nothing about where the transaction
+// actually stands. Releasing its selection locks would let a concurrent Select hand the
+// very same tokens to another transaction while this one may still be in flight, so the
+// locks stay held and are left to the lease-expiry sweep — unlike a recognized terminal
+// status whose persistence keeps failing, which does release
+// (TestOnStatus_ReleasesLocksOnceOnRetryExhaustion).
+func TestOnStatus_DoesNotReleaseLocksOnUnrecognizedStatus(t *testing.T) {
+	db := &mock.TransactionDB{}
+
+	sm := &fakeSelectorManager{}
+	smProvider := &mock.SelectorManagerProvider{}
+	smProvider.SelectorManagerReturns(sm, nil)
+
+	l := finality.NewListener(
+		logging.MustGetLogger(),
+		&depmock.Network{},
+		"test-namespace",
+		finality.NewTokenRequestHasher(&depmock.TokenManagementServiceProvider{}, token.TMSID{Network: "n", Channel: "c", Namespace: "ns"}),
+		db,
+		nil,
+		smProvider,
+		noopTracer(),
+		nil,
+	)
+
+	const unrecognizedStatus = 9999
+	l.OnStatus(t.Context(), "tx-unrecognized-status", unrecognizedStatus, "", nil)
+
+	require.Empty(t, sm.unlockCalls,
+		"a status this listener cannot classify leaves the transaction's true state unknown: "+
+			"releasing its selection locks could re-offer in-flight tokens to a concurrent Select")
+	require.Zero(t, db.SetStatusCallCount(),
+		"an unrecognized status must not be persisted as a terminal one")
+}
+
+// TestOnStatus_DoesNotRetryUnrecognizedStatus pins the second half of the same decision:
+// runOnStatus cannot reclassify an unrecognized status by being called again with the same
+// arguments, so ErrUnrecognizedStatus terminates the retry loop on the first attempt rather
+// than burning MaxRetry attempts and their backoff sleeps. The retry runner's first delay is
+// one second, so a retrying OnStatus could not return this quickly.
+func TestOnStatus_DoesNotRetryUnrecognizedStatus(t *testing.T) {
+	var smCalls atomic.Int32
+	smProvider := &mock.SelectorManagerProvider{}
+	smProvider.SelectorManagerCalls(func() (token.SelectorManager, error) {
+		smCalls.Add(1)
+
+		return &fakeSelectorManager{}, nil
+	})
+
+	l := newTestListenerWithSelectorManager(t, &mock.TransactionDB{}, nil, smProvider)
+
+	start := time.Now()
+	l.OnStatus(t.Context(), "tx-unrecognized-once", 9999, "", nil)
+
+	require.Less(t, time.Since(start), time.Second,
+		"an unrecognized status must terminate the retry loop immediately, not sleep through its budget")
+	require.Zero(t, int(smCalls.Load()),
+		"no selector manager should even be resolved for a transaction whose locks are not released")
+}
+
+// TestOnStatus_DoesNotReleaseLocksOnNonTerminalStatus pins the counterpart to
+// TestOnStatus_ReleasesLocksOnUnrecognizedStatus: network.Busy and network.Unknown are
+// legitimate transient, *non*-terminal states — fabricx's ListenerEvent.process
+// (token/services/network/fabricx/finality/finality.go) forwards exactly these to
+// OnStatus while a transaction is still pending — so releasing their selection locks
+// would hand the same tokens to a concurrent Select while the first transaction is
+// still mid-commit. TTXRecoveryHandler.applyFinalityLogic (recovery.go) already treats
+// them that way; runOnStatus must match.
+func TestOnStatus_DoesNotReleaseLocksOnNonTerminalStatus(t *testing.T) {
+	tests := []struct {
+		name   string
+		status int
+	}{
+		{name: "busy", status: network.Busy},
+		{name: "unknown", status: network.Unknown},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			db := &mock.TransactionDB{}
+
+			sm := &fakeSelectorManager{}
+			smProvider := &mock.SelectorManagerProvider{}
+			smProvider.SelectorManagerReturns(sm, nil)
+
+			l := newTestListenerWithSelectorManager(t, db, nil, smProvider)
+
+			l.OnStatus(t.Context(), "tx-still-in-flight", test.status, "", nil)
+
+			require.Empty(t, sm.unlockCalls,
+				"status [%d] is a non-terminal, in-flight state: releasing its selection locks lets a "+
+					"concurrent Select re-offer the same tokens to another transaction", test.status)
+			require.Zero(t, db.SetStatusCallCount(),
+				"a non-terminal status must not be persisted as a terminal one")
+		})
+	}
+}
+
+// TestOnStatus_ReleasesLocksOnceOnRetryExhaustion covers the one give-up path of the finality
+// listener that does release: a transaction the ledger *rejected*, whose rejection could not
+// be persisted locally. Once the retryRunner's budget is exhausted OnStatus gives up for good,
+// and a rejected transaction never spent its inputs, so its selection locks must be released
+// there too — otherwise they sit until the lease-expiry sweep (#2395 mechanism 4), the very
+// window OnError's doc comment argues must be closed. Exactly once, not once per retry
+// attempt.
+//
+// The Valid counterpart must do the opposite, and is
+// TestOnStatus_DoesNotReleaseLocksWhenValidTxCannotBePersisted.
+func TestOnStatus_ReleasesLocksOnceOnRetryExhaustion(t *testing.T) {
+	var setCalls atomic.Int32
+	db := &mock.TransactionDB{}
+	db.SetStatusCalls(func(context.Context, string, storage.TxStatus, string) error {
+		setCalls.Add(1)
+
+		return errors.New("ttxdb unavailable")
+	})
+
+	sm := &fakeSelectorManager{}
+	smProvider := &mock.SelectorManagerProvider{}
+	smProvider.SelectorManagerReturns(sm, nil)
+
+	l := newTestListenerWithSelectorManager(t, db, nil, smProvider)
+
+	txID := "tx-terminal-but-unpersistable"
+	l.OnStatus(t.Context(), txID, network.Invalid, "rejected", nil)
+
+	require.GreaterOrEqual(t, int(setCalls.Load()), finality.MaxRetry,
+		"the retry budget should have been exhausted")
+	require.Equal(t, []string{txID}, sm.unlockCalls,
+		"a terminal ledger status whose persistence keeps failing must still release its selection locks, exactly once")
+}
+
+// TestOnStatus_DoesNotReleaseLocksWhenValidTxCannotBePersisted pins the give-up path that
+// looks exactly like TestOnStatus_ReleasesLocksOnceOnRetryExhaustion and must behave the
+// opposite way: the ledger said network.Valid, so the transaction committed and its inputs
+// are spent, but applying it locally kept failing until the retry budget ran out. The token
+// store therefore still shows those inputs as unspent. Releasing their selection locks there
+// hands them straight back to a concurrent Select, which would build a transfer out of tokens
+// that are already gone — a transaction that cannot validate, and an "insufficient funds"
+// for the wallet that really does own them.
+//
+// Only a rejection makes local state agree with the ledger for free (nothing to apply), so
+// only a rejection may release here. A Valid transaction's locks are left to the recovery
+// sweep, which re-derives the status from the ledger, applies the request and releases them
+// through TTXRecoveryHandler, and to the lease-expiry sweep behind it.
+func TestOnStatus_DoesNotReleaseLocksWhenValidTxCannotBePersisted(t *testing.T) {
+	t.Run("the token request cannot be read back", func(t *testing.T) {
+		var reads atomic.Int32
+		db := &mock.TransactionDB{}
+		db.GetTokenRequestCalls(func(context.Context, string) ([]byte, error) {
+			reads.Add(1)
+
+			return nil, errors.New("ttxdb unavailable")
+		})
+
+		sm := &fakeSelectorManager{}
+		smProvider := &mock.SelectorManagerProvider{}
+		smProvider.SelectorManagerReturns(sm, nil)
+
+		// GetCachedTokenRequest misses, so the listener falls back to the store and fails there.
+		tokens := &mock.TokensService{}
+		tokens.GetCachedTokenRequestReturns(nil, nil)
+
+		l := newTestListenerWithSelectorManager(t, db, tokens, smProvider)
+
+		l.OnStatus(t.Context(), "tx-valid-unreadable", network.Valid, "", nil)
+
+		require.GreaterOrEqual(t, int(reads.Load()), finality.MaxRetry,
+			"the retry budget should have been exhausted, otherwise this is not the give-up path")
+		require.Empty(t, sm.unlockCalls,
+			"the ledger accepted this transaction, so its inputs are spent on-chain while the local "+
+				"store still shows them unspent: releasing their locks lets a concurrent Select "+
+				"re-pick tokens that are already gone")
+	})
+
+	t.Run("the commit keeps failing", func(t *testing.T) {
+		db := &mock.TransactionDB{}
+		storeTx := &drivermock.TransactionStoreTransaction{}
+		storeTx.CommitReturns(errors.New("ttxdb unavailable"))
+		db.NewTransactionReturns(storeTx, nil)
+
+		msgToSign := []byte("message")
+		tokenRequestHash, err := base64.StdEncoding.DecodeString(utils.Hashable(msgToSign).String())
 		require.NoError(t, err)
 
-		// Verify hash calculation works correctly
-		assert.NotEmpty(t, hash)
-		assert.NotEmpty(t, reference)
+		tokens := &mock.TokensService{}
+		tokens.GetCachedTokenRequestReturns(&token.Request{}, msgToSign)
+		tokens.AppendValidReturns(nil, nil)
 
-		// Verify the hash can be decoded and re-encoded
-		reencoded := base64.StdEncoding.EncodeToString(reference)
-		assert.Equal(t, hash, reencoded)
+		sm := &fakeSelectorManager{}
+		smProvider := &mock.SelectorManagerProvider{}
+		smProvider.SelectorManagerReturns(sm, nil)
+
+		l := newTestListenerWithSelectorManager(t, db, tokens, smProvider)
+
+		l.OnStatus(t.Context(), "tx-valid-uncommittable", network.Valid, "", tokenRequestHash)
+
+		require.GreaterOrEqual(t, storeTx.CommitCallCount(), finality.MaxRetry,
+			"the retry budget should have been exhausted, otherwise this is not the give-up path")
+		require.Equal(t, storeTx.CommitCallCount(), storeTx.RollbackCallCount(),
+			"every failed attempt must roll its store transaction back")
+		require.Zero(t, db.NotifyStatusCallCount(),
+			"nothing was persisted, so no waiter may be told the transaction is confirmed")
+		require.Empty(t, sm.unlockCalls,
+			"the spent inputs of a transaction the ledger accepted must stay locked until the "+
+				"recovery sweep applies it: this is the #2395 mechanism-4 release's one exception")
+	})
+}
+
+// TestOnStatus_DoesNotReleaseLocksOnCanceledContext pins the fourth give-up path, the one
+// that looks like retry exhaustion but is not: utils.RetryRunner.RunWithErrorsContext returns
+// ctx.Err() as soon as its context is done, both before the first attempt and from the
+// backoff sleep between attempts. That error is neither nil nor ErrUnrecognizedStatus, so it
+// used to fall through to the release — classifying a shutdown or an interrupted notification
+// as "recognized terminal status whose persistence kept failing", and releasing the selection
+// locks of a transaction whose state was never established. An interruption is evidence of
+// nothing, exactly like Busy/Unknown, an unrecognized status and OnError, so the locks stay
+// held and the recovery and lease-expiry sweeps reclaim them.
+func TestOnStatus_DoesNotReleaseLocksOnCanceledContext(t *testing.T) {
+	t.Run("canceled before the first attempt", func(t *testing.T) {
+		db := &mock.TransactionDB{}
+		db.SetStatusReturns(errors.New("ttxdb unavailable"))
+
+		sm := &fakeSelectorManager{}
+		smProvider := &mock.SelectorManagerProvider{}
+		smProvider.SelectorManagerReturns(sm, nil)
+
+		l := newTestListenerWithSelectorManager(t, db, nil, smProvider)
+
+		ctx, cancel := context.WithCancel(t.Context())
+		cancel()
+
+		l.OnStatus(ctx, "tx-canceled-before-start", network.Invalid, "rejected", nil)
+
+		require.Empty(t, sm.unlockCalls,
+			"a context canceled before the retry loop ran establishes nothing about the transaction: "+
+				"releasing its selection locks could re-offer in-flight tokens to a concurrent Select")
 	})
 
-	t.Run("non-matching hashes", func(t *testing.T) {
-		data1 := []byte("test data 1")
-		data2 := []byte("test data 2")
-		hash1 := utils.Hashable(data1).String()
-		hash2 := utils.Hashable(data2).String()
+	t.Run("canceled during the retry backoff", func(t *testing.T) {
+		var setCalls atomic.Int32
+		db := &mock.TransactionDB{}
+		db.SetStatusCalls(func(context.Context, string, storage.TxStatus, string) error {
+			setCalls.Add(1)
 
-		// Verify hashes are different
-		assert.NotEqual(t, hash1, hash2)
+			return errors.New("ttxdb unavailable")
+		})
+
+		sm := &fakeSelectorManager{}
+		smProvider := &mock.SelectorManagerProvider{}
+		smProvider.SelectorManagerReturns(sm, nil)
+
+		l := newTestListenerWithSelectorManager(t, db, nil, smProvider)
+
+		ctx, cancel := context.WithCancel(t.Context())
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			l.OnStatus(ctx, "tx-canceled-mid-retry", network.Invalid, "rejected", nil)
+		}()
+
+		// Cancel once the loop is demonstrably inside its first backoff sleep, so the
+		// give-up error is ctx.Err() rather than the exhausted retry budget.
+		require.Eventually(t, func() bool { return setCalls.Load() >= 1 }, time.Second, 10*time.Millisecond)
+		cancel()
+
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			t.Fatal("OnStatus did not return after context cancellation")
+		}
+
+		require.Less(t, int(setCalls.Load()), finality.MaxRetry,
+			"the retry budget must have been abandoned rather than exhausted, otherwise this case "+
+				"is indistinguishable from TestOnStatus_ReleasesLocksOnceOnRetryExhaustion")
+		require.Empty(t, sm.unlockCalls,
+			"an interrupted notification is not a verdict: its selection locks stay held for the "+
+				"recovery and lease-expiry sweeps")
 	})
+}
+
+// TestOnStatus_ReleasesLocksWhenStoreErrorWrapsContextCanceled pins the other side of that
+// decision: the give-up path inspects the listener's own context, not the error it was handed.
+// A store can return an error that wraps context.Canceled or context.DeadlineExceeded from its
+// own internal deadline while this listener's context is still live; that is an ordinary
+// persistence failure on a recognized terminal status, so the retry budget really is exhausted
+// and the locks must be released. Sniffing the error for context sentinels instead would
+// silently reclassify it and reopen the #2395 mechanism-4 window on this path.
+func TestOnStatus_ReleasesLocksWhenStoreErrorWrapsContextCanceled(t *testing.T) {
+	db := &mock.TransactionDB{}
+	db.SetStatusReturns(errors.Join(errors.New("query timed out"), context.Canceled))
+
+	sm := &fakeSelectorManager{}
+	smProvider := &mock.SelectorManagerProvider{}
+	smProvider.SelectorManagerReturns(sm, nil)
+
+	l := newTestListenerWithSelectorManager(t, db, nil, smProvider)
+
+	txID := "tx-store-deadline"
+	l.OnStatus(t.Context(), txID, network.Invalid, "rejected", nil)
+
+	require.Equal(t, []string{txID}, sm.unlockCalls,
+		"the listener's context was never canceled, so this is a recognized terminal status whose "+
+			"persistence kept failing: its locks must still be released exactly once")
+}
+
+// TestOnError tests the OnError callback
+// TestOnError pins what OnError must *not* do. An undeliverable finality event carries no
+// verdict, so the handler records it and stops: it must not write a status, open a
+// transaction or notify anybody, because any of those would commit the node to a verdict it
+// does not have. (That it also does not release the transaction's selection locks is
+// TestOnError_DoesNotReleaseLocks below.)
+func TestOnError(t *testing.T) {
+	db := &mock.TransactionDB{}
+	listener := newTestListener(t, db)
+
+	require.NotPanics(t, func() {
+		listener.OnError(t.Context(), "test-tx-id", errors.New("test error"))
+	})
+
+	assert.Zero(t, db.SetStatusCallCount(), "an undeliverable event is not evidence of any status")
+	assert.Zero(t, db.NewTransactionCallCount(), "nothing is persisted for a transaction with no verdict")
+	assert.Zero(t, db.NotifyStatusCallCount(), "no listener may be told a status that was never established")
+}
+
+// TestOnError_DoesNotReleaseLocks pins OnError's side of the "only release on a status known
+// to be terminal" rule. OnError means the finality notification could not be delivered, which
+// says nothing about where the transaction stands — and on the EVM driver says outright that
+// it could not be observed: manager.go calls OnError when every poll in the window failed to
+// reach the chain, and when the watch ends with no verdict. Releasing there would hand the
+// tokens of a possibly in-flight (or already mined) transaction to a concurrent Select, the
+// same hazard that keeps Busy/Unknown and ErrUnrecognizedStatus from releasing. The recovery
+// sweep, which re-derives the status from the ledger, and the lease-expiry sweep behind it are
+// the backstops that do not need to know the verdict.
+func TestOnError_DoesNotReleaseLocks(t *testing.T) {
+	sm := &fakeSelectorManager{}
+	smProvider := &mock.SelectorManagerProvider{}
+	smProvider.SelectorManagerReturns(sm, nil)
+
+	l := newTestListenerWithSelectorManager(t, &mock.TransactionDB{}, nil, smProvider)
+
+	require.NotPanics(t, func() {
+		l.OnError(t.Context(), "tx-undeliverable", errors.New("finality: could not reach the chain before the timeout"))
+	})
+
+	require.Empty(t, sm.unlockCalls,
+		"an undeliverable notification leaves the transaction's status unknown: releasing its "+
+			"selection locks could re-offer in-flight tokens to a concurrent Select")
 }

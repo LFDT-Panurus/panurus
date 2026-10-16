@@ -65,6 +65,14 @@ func (s *selector) concurrencyCheck(ctx context.Context, ids []*token2.ID) error
 	return err
 }
 
+// selectByID walks the wallet's unspent tokens, locking as it goes, and retries the whole scan
+// from scratch whenever a lock race or a concurrency check fails.
+//
+// Each iteration holds at most one database connection at a time: the unspentTokens cursor is
+// closed before the nested concurrencyCheck query runs (see below). Overlapping the two used to
+// make every in-flight Select pin two connections, which self-deadlocks any pool smaller than
+// the number of concurrent selectors - observed against #2395's hot-token workload
+// (TestHotTokenContentionSimpleDriver) with MaxOpenConns=10 and 30 concurrent selects.
 func (s *selector) selectByID(ctx context.Context, ownerFilter token.OwnerFilter, q string, tokenType token2.Type) ([]*token2.ID, token2.Quantity, error) {
 	var toBeSpent []*token2.ID
 	var sum token2.Quantity
@@ -165,6 +173,14 @@ func (s *selector) selectByID(ctx context.Context, ownerFilter token.OwnerFilter
 				break
 			}
 		}
+
+		// Release the cursor before concurrencyCheck issues its own query. The scan loop
+		// above is done with the iterator - the retry path at the top of the outer loop
+		// opens a fresh one - so closing it here costs nothing and keeps this selector down
+		// to a single connection checkout at any instant, which is what stops a bounded
+		// pool from deadlocking under concurrent selects (#2395).
+		unspentTokens.Close()
+		unspentTokens = nil
 
 		concurrencyIssue := false
 		if target.Cmp(sum) <= 0 {

@@ -138,7 +138,10 @@ const (
 // SpendableTokensQuery bounds a scan over the spendable tokens of a wallet.
 //
 // The zero value selects every spendable token of every wallet and type, unordered and
-// unlimited, which is what SpendableTokensIteratorBy asks for.
+// unlimited. SpendableTokensIteratorBy is that query with Order set to AmountAscending,
+// which sherdlock's candidate scan requires (#2395); the two otherwise agree, and in
+// particular every spendable-token query hides the tokens another consumer currently holds
+// a lock on.
 //
 // A store may satisfy WalletID, TokenType, the amount bounds and Order from a single index
 // on (owner_wallet_id, token_type, amount), so a caller that needs only a few tokens can ask
@@ -259,6 +262,15 @@ type TokenStore interface {
 	// limit, for callers that need only part of a wallet's spendable set: passing the zero
 	// value selects everything, exactly as SpendableTokensIteratorBy does.
 	QuerySpendableTokens(ctx context.Context, params SpendableTokensQuery) (driver.SpendableTokensIterator, error)
+	// HasEnoughSpendableTokens reports whether the wallet's total spendable balance of typ
+	// is at least target, ignoring any lock currently held on the underlying tokens: it
+	// answers "can this wallet ever pay", not "can it pay right now". Used as a sum-aware
+	// fast fail so a wallet that could never cover the requested amount fails immediately
+	// instead of burning the selector's immediate-retry/backoff budget first, and to tell
+	// "genuinely insufficient funds" apart from "funds exist but are all locked right now"
+	// when SpendableTokensIteratorBy's anti-join against locked tokens (#2395) hides every
+	// candidate from the caller.
+	HasEnoughSpendableTokens(ctx context.Context, walletID string, typ token.Type, target *big.Int) (bool, error)
 	// UnsupportedTokensIteratorBy returns the minimum information for upgrade about the tokens that are not supported
 	UnsupportedTokensIteratorBy(ctx context.Context, walletID string, tokenType token.Type) (driver.UnsupportedTokensIterator, error)
 	// ListUnspentTokensBy returns the list of all tokens owned by the passed identifier of a given type
@@ -399,6 +411,25 @@ type TokenNotifier interface {
 	UnsubscribeAll() error
 }
 
+// IsTerminalStatus reports whether status is a terminal status of a consuming
+// transaction — i.e. one after which the lock it holds should already have been
+// released. A LockRecord still present with a terminal-status consumer is the
+// mechanism-4 leak from #2395: nothing on the success path called UnlockByTxID, so
+// the row survived until the next lease-age sweep. A nil status (no matching row in
+// the requests table) is never terminal.
+func IsTerminalStatus(status *TxStatus) bool {
+	if status == nil {
+		return false
+	}
+
+	switch *status {
+	case Confirmed, Deleted, Orphan:
+		return true
+	default:
+		return false
+	}
+}
+
 // LockRecord describes a single held token lock, joined with the terminal-status
 // view of its consuming transaction. Status is nil when the consuming transaction has
 // no matching row in the requests table (should not normally happen, since a lock is
@@ -456,11 +487,46 @@ type TokenLockStore interface {
 	Close() error
 }
 
+// BatchLockOutcome reports, per candidate, how a batched lock claim resolved. Won lists
+// the tokens actually claimed. Stale lists the candidates the store refused because they
+// are no longer spendable - the batch counterpart of ErrTokenNotSpendable on the
+// single-token Lock path. Every candidate in neither set lost a race: another claimant
+// already holds its lock, the counterpart of ErrTokenAlreadyLocked. The two sets are
+// disjoint subsets of the candidates the caller passed in, so "lost a race" is the
+// complement and needs no third slice.
+//
+// A backend that cannot tell the two reasons apart may leave Stale empty, in which case
+// every unwon candidate reads as a lost race. That is sound - a selector drops an unwon
+// candidate whichever reason it was unwon for - but it is only sound, not informative:
+// the distinction is what lets a selector drop a stale candidate for good and refresh its
+// candidate cache, rather than wait for contention that no one is causing.
+//
+// An outcome returned alongside a non-nil error is partial, not empty: a store whose claim
+// commits before it reports (an INSERT ... RETURNING, say) can fail while reading its own
+// result, and the verdicts it read before failing are still authoritative - the locks are
+// held. Such a store must return them, and a caller must use them, since locks that are
+// held but never reported are unusable by anyone until the lease expires. Candidates with
+// no verdict at all are simply unclassified: neither won nor known stale. See #2395.
+type BatchLockOutcome struct {
+	Won   []*token.ID
+	Stale []*token.ID
+}
+
 var (
 	ErrTokenDoesNotExist = errors.New("token does not exist")
 	// ErrTokenAlreadyLocked is returned by TokenLockStore.Lock when the token is
 	// already locked by another transaction (primary-key conflict on the lock row).
 	ErrTokenAlreadyLocked = errors.New("token already locked")
+	// ErrTokenNotSpendable is returned by TokenLockStore.Lock when the token still
+	// exists but is no longer spendable - it has been spent (is_deleted), marked
+	// non-spendable, or is not owned by this node. Unlike ErrTokenAlreadyLocked it is
+	// not contention: no amount of waiting makes the token available again, because the
+	// candidate itself is stale. A selector serving candidates from a cache can observe
+	// this for a token that was spendable when the snapshot was taken and spent since,
+	// and must drop the candidate and refresh rather than retry it. Keeping the two
+	// apart is what stops such a stale candidate from being returned to the caller, who
+	// would then fail to load it. See #2395.
+	ErrTokenNotSpendable = errors.New("token is not spendable")
 	// ErrAmountMissing is returned when a record carries no amount. The amount column is NOT NULL.
 	ErrAmountMissing = errors.New("no amount specified")
 	// ErrAmountOutOfRange is returned when an amount is too wide for the amount column to hold.
