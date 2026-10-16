@@ -361,6 +361,12 @@ func TestConfig_ImplementsRateLimitConfiguration(t *testing.T) {
 	var _ ratelimit.Configuration = &Config{}
 }
 
+func TestConfig_IsExactMatchEnabled(t *testing.T) {
+	assert.False(t, (&Config{}).IsExactMatchEnabled())
+	assert.False(t, (&Config{ExactMatch: false}).IsExactMatchEnabled())
+	assert.True(t, (&Config{ExactMatch: true}).IsExactMatchEnabled())
+}
+
 // TestNew verifies config parsing handles valid configs, empty configs, and unmarshal errors.
 func TestNew(t *testing.T) {
 	tests := []struct {

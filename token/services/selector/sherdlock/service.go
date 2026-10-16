@@ -50,9 +50,13 @@ func NewService(
 		numRetries:                   cfg.GetNumRetries(),
 		leaseExpiry:                  cfg.GetLeaseExpiry(),
 		leaseCleanupTickPeriod:       cfg.GetLeaseCleanupTickPeriod(),
+		exactMatch:                   cfg.IsExactMatchEnabled(),
 		metrics:                      NewMetrics(metricsProvider),
 		limiter:                      ratelimit.CompileOptions(opts...).Limiter(cfg),
 		onCreate:                     svc.trackManager,
+	}
+	if loader.exactMatch {
+		logger.Infof("sherdlock exact-amount change-avoidance pre-search is enabled")
 	}
 	if loader.limiter != nil {
 		logger.Infof("per-wallet token selection rate limiting is enabled")
@@ -111,7 +115,10 @@ type loader struct {
 	retryInterval                time.Duration
 	leaseExpiry                  time.Duration
 	leaseCleanupTickPeriod       time.Duration
-	metrics                      *Metrics
+	// exactMatch enables the exact-amount change-avoidance pre-search on every selector the
+	// loader builds. Off by default.
+	exactMatch bool
+	metrics    *Metrics
 	// limiter meters selection requests per wallet. It is nil when rate limiting is
 	// disabled, which is the default, and is shared by every manager the loader builds.
 	limiter  ratelimit.Limiter
@@ -136,6 +143,10 @@ func (s *loader) loadTMS(tms TMS) (token.SelectorManager, error) {
 		return nil, errors.Errorf("failed to create token fetcher: %v", err)
 	}
 
+	var opts []Option
+	if s.exactMatch {
+		opts = append(opts, WithExactMatch(true))
+	}
 	mgr := NewManager(
 		fetcher,
 		tokenLockStoreService,
@@ -145,6 +156,7 @@ func (s *loader) loadTMS(tms TMS) (token.SelectorManager, error) {
 		s.leaseExpiry,
 		s.leaseCleanupTickPeriod,
 		s.metrics,
+		opts...,
 	)
 	if s.onCreate != nil {
 		s.onCreate(mgr)
