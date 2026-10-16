@@ -26,6 +26,12 @@ panurus_core_common_metrics_tokens_upgrade_service_operations_total | counter | 
 panurus_core_common_metrics_transfer_service_duration_seconds | histogram | network,channel,namespace,method | token/core/common/metrics/transfer.go | Duration of TransferService method calls in seconds
 panurus_core_common_metrics_transfer_service_errors_total | counter | network,channel,namespace,method | token/core/common/metrics/transfer.go | Total number of TransferService method errors
 panurus_core_common_metrics_transfer_service_operations_total | counter | network,channel,namespace,method | token/core/common/metrics/transfer.go | Total number of TransferService method invocations
+panurus_core_common_metrics_wallet_circuit_breaker_rejections_total | counter | network,channel,namespace,method,wallet_id | token/services/observability/metrics.go | Total number of requests rejected by the circuit breaker
+panurus_core_common_metrics_wallet_circuit_breaker_state | gauge | network,channel,namespace,method,wallet_id | token/services/observability/metrics.go | Current circuit breaker state (0=Closed, 1=Open, 2=HalfOpen)
+panurus_core_common_metrics_wallet_errors_total | counter | network,channel,namespace,method,wallet_id | token/services/observability/metrics.go | Total number of wallet service errors
+panurus_core_common_metrics_wallet_inflight_requests | gauge | network,channel,namespace,method,wallet_id | token/services/observability/metrics.go | Current number of in-flight wallet service requests
+panurus_core_common_metrics_wallet_request_duration_seconds | histogram | network,channel,namespace,method,wallet_id | token/services/observability/metrics.go | Execution duration of wallet service operations in seconds
+panurus_core_common_metrics_wallet_requests_total | counter | network,channel,namespace,method,wallet_id | token/services/observability/metrics.go | Total number of wallet service requests
 panurus_services_auditor_auditor_append_duration_seconds | histogram | - | token/services/auditor/metrics.go | Histogram of Append() processing time per transaction, in seconds
 panurus_services_auditor_auditor_append_errors_total | counter | - | token/services/auditor/metrics.go | Total number of Append() calls that failed to store the audit record
 panurus_services_auditor_auditor_audit_duration_seconds | histogram | - | token/services/auditor/metrics.go | Histogram of Audit() processing time per transaction (including lock acquisition), in seconds
