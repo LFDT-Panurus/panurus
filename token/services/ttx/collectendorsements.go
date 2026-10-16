@@ -10,6 +10,7 @@ import (
 	"context"
 	"encoding/json"
 	maps0 "maps"
+	"math"
 	"sync"
 	"time"
 
@@ -387,7 +388,7 @@ func (c *CollectEndorsementsView) requestSignatures(signers []view.Identity, ver
 	// sigmas map is populated here from the collected answers.
 	if len(remoteSigners) > 0 {
 		logger.DebugfContext(context.Context(), "request [%d] remote signatures concurrently", len(remoteSigners))
-		remoteSigmas, err := fanOut(context.Context(), len(remoteSigners), func(i int) ([]byte, error) {
+		remoteSigmas, err := fanOut(context.Context(), len(remoteSigners), AnswerCollectionTimeout, func(i int) ([]byte, error) {
 			party := remoteSigners[i]
 			sigma, err := c.signRemote(context, party, &SignatureRequest{TX: txRaw, Signer: party}, requestRaw, verifierGetter)
 			if err != nil {
@@ -625,7 +626,7 @@ func (c *CollectEndorsementsView) distributeTxToParties(context view.Context, di
 	// Remote parties are independent, fan out the round-trips so total latency
 	// tracks the slowest party. Workers only do network I/O and verification;
 	// the acks are recorded on this goroutine from the collected answers.
-	sigmas, err := fanOut(context.Context(), len(remote), func(i int) ([]byte, error) {
+	sigmas, err := fanOut(context.Context(), len(remote), AnswerCollectionTimeout, func(i int) ([]byte, error) {
 		entry := &remote[i]
 		logger.DebugfContext(context.Context(), "Distribute to %s", entry.EID)
 		sigma, err := c.distributeTxToParty(context, entry, payloads[i])
@@ -900,15 +901,28 @@ func (c *CollectEndorsementsView) getSession(context view.Context, p view.Identi
 	return context.GetSession(context.Initiator(), p)
 }
 
-// answerCollectionTimeout bounds the wait for each fan-out answer. It is a
-// backstop only: workers are already bounded by their own per-receive timeouts.
-const answerCollectionTimeout = 2 * time.Minute
+// AnswerCollectionTimeout bounds a whole signature fan-out phase, not a single
+// answer.
+const AnswerCollectionTimeout = 2 * time.Minute
+
+// noPerAnswerTimeout disables the collector's own per-Collect timer, so a fan-out
+// is bounded only by the context deadline fanOut derives. A collector timeout of
+// zero would select DefaultAnswersCollectorTimeout instead of disabling the timer.
+const noPerAnswerTimeout = time.Duration(math.MaxInt64)
 
 // fanOut runs work(i) for each i in [0, n) on its own goroutine and returns the
 // results in index order. It returns on the first error without waiting for the
 // remaining workers; those drain into the collector's buffered channel and exit.
-func fanOut[T any](ctx context.Context, n int, work func(i int) (T, error)) ([]T, error) {
-	collector := utils.NewAnswersCollector[int, T](n, answerCollectionTimeout)
+//
+// timeout bounds the fan-out as a whole: it is applied to the context, and the
+// collector is given no timer of its own, so the context deadline is the single
+// source of truth. The collector arms a fresh timer on each Collect call, which
+// on its own would let a phase with n workers run for n times the timeout.
+func fanOut[T any](ctx context.Context, n int, timeout time.Duration, work func(i int) (T, error)) ([]T, error) {
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	collector := utils.NewAnswersCollector[int, T](n, noPerAnswerTimeout)
 	for i := range n {
 		go func() {
 			value, err := work(i)

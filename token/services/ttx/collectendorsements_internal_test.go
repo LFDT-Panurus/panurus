@@ -24,7 +24,7 @@ func TestFanOutLatencyTracksSlowestParty(t *testing.T) {
 	const delay = 200 * time.Millisecond
 
 	start := time.Now()
-	results, err := fanOut(t.Context(), n, func(i int) (int, error) {
+	results, err := fanOut(t.Context(), n, AnswerCollectionTimeout, func(i int) (int, error) {
 		time.Sleep(delay)
 
 		return i * 2, nil
@@ -46,7 +46,7 @@ func TestFanOutFailsFastOnFirstError(t *testing.T) {
 	slow := 3 * time.Second
 
 	start := time.Now()
-	_, err := fanOut(t.Context(), 3, func(i int) ([]byte, error) {
+	_, err := fanOut(t.Context(), 3, AnswerCollectionTimeout, func(i int) ([]byte, error) {
 		if i == 0 {
 			return nil, errors.New("party unreachable")
 		}
@@ -67,7 +67,7 @@ func TestFanOutContextCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 
-	_, err := fanOut(ctx, 2, func(int) (int, error) {
+	_, err := fanOut(ctx, 2, AnswerCollectionTimeout, func(int) (int, error) {
 		time.Sleep(3 * time.Second)
 
 		return 0, nil
@@ -77,11 +77,35 @@ func TestFanOutContextCancellation(t *testing.T) {
 
 // TestFanOutEmpty verifies the no-remote-parties case is a no-op.
 func TestFanOutEmpty(t *testing.T) {
-	results, err := fanOut(t.Context(), 0, func(int) (int, error) {
+	results, err := fanOut(t.Context(), 0, AnswerCollectionTimeout, func(int) (int, error) {
 		t.Fatal("work must not be invoked for n = 0")
 
 		return 0, nil
 	})
 	require.NoError(t, err)
 	assert.Empty(t, results)
+}
+
+// TestFanOutTimeoutBoundsWholePhase verifies that fanOut's timeout argument bounds
+// the fan-out as a whole rather than each answer. The collector arms a fresh
+// timer on every Collect call, so collecting one answer at a time gives n
+// workers n independent windows: three workers completing 240ms apart would run
+// for 720ms against a 300ms bound and report no error at all.
+func TestFanOutTimeoutBoundsWholePhase(t *testing.T) {
+	const (
+		workers = 3
+		stagger = 240 * time.Millisecond
+	)
+	start := time.Now()
+	_, err := fanOut(t.Context(), workers, 300*time.Millisecond, func(i int) (int, error) {
+		// Each worker finishes inside the bound on its own; together they do not.
+		time.Sleep(time.Duration(i+1) * stagger)
+
+		return i, nil
+	})
+	elapsed := time.Since(start)
+
+	require.Error(t, err, "the phase must not outlive the fan-out timeout")
+	assert.Less(t, elapsed, workers*stagger,
+		"the timeout must bound the whole fan-out, not each answer")
 }
