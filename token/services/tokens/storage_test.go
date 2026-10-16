@@ -59,7 +59,7 @@ func TestTransaction_AppendToken(t *testing.T) {
 		Owners:    []string{}, // no owners
 		Flags:     tokens.Flags{Mine: false},
 	}
-	err = tx.AppendToken(ctx, tta)
+	err = tx.AppendToken(ctx, &tta)
 	require.NoError(t, err)
 	// commit to flush the (empty) event buffer — without this the assertion is vacuous
 	require.NoError(t, tx.Commit(ctx))
@@ -106,7 +106,7 @@ func TestTransaction_AppendToken_Notify(t *testing.T) {
 		Owners:    []string{"wallet1"},
 		Flags:     tokens.Flags{Mine: true},
 	}
-	err = tx.AppendToken(ctx, tta)
+	err = tx.AppendToken(ctx, &tta)
 	require.NoError(t, err)
 	// the transaction is still open, nothing may be published yet
 	assert.Equal(t, 0, pub.PublishCallCount())
@@ -145,7 +145,7 @@ func TestTransaction_AppendToken_NoEventBeforeCommit(t *testing.T) {
 		Owners:    []string{"wallet1"},
 		Flags:     tokens.Flags{Mine: true},
 	}
-	require.NoError(t, tx.AppendToken(ctx, tta))
+	require.NoError(t, tx.AppendToken(ctx, &tta))
 	require.Equal(t, 0, pub.PublishCallCount())
 
 	// the owner of the transaction decides to roll back
@@ -166,7 +166,7 @@ func TestTransaction_Commit_PublishesRecordedEventsInOrder(t *testing.T) {
 	tx, err := tokens.NewTransaction(pub, &tokendb.Transaction{TokenStoreTransaction: mockTx}, tmsID)
 	require.NoError(t, err)
 
-	require.NoError(t, tx.AppendToken(ctx, tokens.TokenToAppend{
+	require.NoError(t, tx.AppendToken(ctx, &tokens.TokenToAppend{
 		TxID:      "tx1",
 		Index:     0,
 		Tok:       &token2.Token{Type: "TOK", Owner: []byte("alice"), Quantity: "0x64"},
@@ -205,7 +205,7 @@ func TestTransaction_Commit_Error_PublishesNothing(t *testing.T) {
 	tx, err := tokens.NewTransaction(pub, &tokendb.Transaction{TokenStoreTransaction: mockTx}, tmsID)
 	require.NoError(t, err)
 
-	require.NoError(t, tx.AppendToken(ctx, tokens.TokenToAppend{
+	require.NoError(t, tx.AppendToken(ctx, &tokens.TokenToAppend{
 		TxID:      "tx1",
 		Index:     0,
 		Tok:       &token2.Token{Type: "TOK", Owner: []byte("alice"), Quantity: "0x64"},
@@ -231,7 +231,7 @@ func TestTransaction_FlushEvents_Idempotent(t *testing.T) {
 	tx, err := tokens.NewTransaction(pub, &tokendb.Transaction{TokenStoreTransaction: mockTx}, tmsID)
 	require.NoError(t, err)
 
-	require.NoError(t, tx.AppendToken(ctx, tokens.TokenToAppend{
+	require.NoError(t, tx.AppendToken(ctx, &tokens.TokenToAppend{
 		TxID:      "tx1",
 		Index:     0,
 		Tok:       &token2.Token{Type: "TOK", Owner: []byte("alice"), Quantity: "0x64"},
@@ -273,7 +273,7 @@ func TestTransaction_AppendToken_NoNotify(t *testing.T) {
 			Issuer:  false,
 		},
 	}
-	err = tx.AppendToken(ctx, tta)
+	err = tx.AppendToken(ctx, &tta)
 	require.NoError(t, err)
 	// commit to flush the (empty) event buffer — without this the assertion is vacuous
 	require.NoError(t, tx.Commit(ctx))
