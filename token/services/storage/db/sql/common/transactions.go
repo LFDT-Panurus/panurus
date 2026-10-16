@@ -25,7 +25,7 @@ import (
 	"github.com/LFDT-Panurus/panurus/token/services/storage/db/sql/query/cond"
 	_select "github.com/LFDT-Panurus/panurus/token/services/storage/db/sql/query/select"
 	"github.com/LFDT-Panurus/panurus/token/services/storage/integrity"
-	"github.com/hashicorp/go-uuid"
+	"github.com/google/uuid"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	driver3 "github.com/hyperledger-labs/fabric-smart-client/platform/common/driver"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/common/utils/collections/iterators"
@@ -502,13 +502,13 @@ func (db *TransactionStore) AddTransactionEndorsementAck(ctx context.Context, tx
 	}
 
 	now := time.Now().UTC()
-	id, err := uuid.GenerateUUID()
+	id, err := uuid.NewRandom()
 	if err != nil {
 		return errors.Wrapf(err, "error generating uuid")
 	}
 	query, args := q.InsertInto(db.table.TransactionEndorseAck).
 		Fields("id", "tx_id", "endorser", "sigma", "stored_at").
-		Row(id, txID, endorser, sigma, now).
+		Row(id.String(), txID, endorser, sigma, now).
 		Format()
 
 	logging.Debug(logger, query, txID, fmt.Sprintf("(%d bytes)", len(endorser)), fmt.Sprintf("(%d bytes)", len(sigma)), now)
@@ -705,14 +705,14 @@ func (w *TransactionStoreTransaction) AddTransaction(ctx context.Context, rs ...
 	rows := make([]common3.Tuple, len(rs))
 	for i, r := range rs {
 		logger.DebugfContext(ctx, "adding transaction record [%s:%d,%s:%s:%s:%s]", r.TxID, r.ActionType, r.TokenType, r.SenderEID, r.RecipientEID, r.Amount)
-		id, err := uuid.GenerateUUID()
+		id, err := uuid.NewRandom()
 		if err != nil {
 			return errors.Wrapf(err, "error generating uuid")
 		}
 		if err := validateAmount(r.Amount); err != nil {
 			return errors.WithMessagef(err, "invalid amount for record [%s]", r.TxID)
 		}
-		rows[i] = common3.Tuple{id, r.TxID, int(r.ActionType), r.SenderEID, r.RecipientEID, r.TokenType, r.Amount.String(), r.Timestamp.UTC()}
+		rows[i] = common3.Tuple{id.String(), r.TxID, int(r.ActionType), r.SenderEID, r.RecipientEID, r.TokenType, r.Amount.String(), r.Timestamp.UTC()}
 	}
 
 	query, args := q.InsertInto(w.table.Transactions).
@@ -782,14 +782,14 @@ func (w *TransactionStoreTransaction) AddMovement(ctx context.Context, rs ...dbd
 	rows := make([]common3.Tuple, len(rs))
 	for i, r := range rs {
 		logger.DebugfContext(ctx, "adding movement record [%s]", r)
-		id, err := uuid.GenerateUUID()
+		id, err := uuid.NewRandom()
 		if err != nil {
 			return errors.Wrapf(err, "error generating uuid")
 		}
 		if err := validateAmount(r.Amount); err != nil {
 			return errors.WithMessagef(err, "invalid amount for record [%s]", r.TxID)
 		}
-		rows[i] = common3.Tuple{id, r.TxID, r.EnrollmentID, r.TokenType, r.Amount.String(), now}
+		rows[i] = common3.Tuple{id.String(), r.TxID, r.EnrollmentID, r.TokenType, r.Amount.String(), now}
 	}
 
 	query, args := q.InsertInto(w.table.Movements).

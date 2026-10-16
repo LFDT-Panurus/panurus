@@ -18,7 +18,7 @@ import (
 	"github.com/LFDT-Panurus/panurus/token/services/storage"
 	dbdriver "github.com/LFDT-Panurus/panurus/token/services/storage/db/driver"
 	"github.com/LFDT-Panurus/panurus/token/services/storage/ttxdb"
-	"github.com/hashicorp/go-uuid"
+	"github.com/google/uuid"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 )
 
@@ -229,14 +229,14 @@ func (m *Manager) Start() error {
 	// guaranteeing every process's owner string is unique, so a shared config value (e.g. one
 	// InstanceID baked into a Deployment's ConfigMap and applied to every replica pod) can
 	// never collide.
-	suffix, err := uuid.GenerateUUID()
+	suffix, err := uuid.NewRandom()
 	if err != nil {
 		return errors.Wrapf(err, "failed to generate instance id suffix")
 	}
 	if m.configuredInstanceID == "" {
-		m.config.InstanceID = "recovery-" + suffix
+		m.config.InstanceID = "recovery-" + suffix.String()
 	} else {
-		m.config.InstanceID = m.configuredInstanceID + "-" + suffix
+		m.config.InstanceID = m.configuredInstanceID + "-" + suffix.String()
 	}
 
 	// The context is deliberately held on the manager: it scopes the background recovery loop

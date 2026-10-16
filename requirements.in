@@ -5,4 +5,8 @@ pymdown-extensions>=11.0.1
 # Transitive dependency (mkdocs-material -> requests -> idna)
 # idna < 3.15 has a denial-of-service issue (PYSEC-2026-215 / CVE-2024-3651)
 idna>=3.15
+
+# Benchmark tooling only (cmd/benchmarking), not shipped. BSD-3-Clause; scanners read its
+# bundled LICENSES/ directory as one blob and mislabel it — see
+# docs/security/dependency_licenses.md
 pandas>=3.0.5

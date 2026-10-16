@@ -118,6 +118,7 @@ nav:
       - Baseline Level 2: openssf/baseline_level_2.md
       - Baseline Level 3: openssf/baseline_level_3.md
       - Selector Resource Limits: security/selector_resource_limits.md
+      - Third-Party License Dispositions: security/dependency_licenses.md
   - Development:
       - Overview: development/development.md
       - General Guidelines: development/general.md
