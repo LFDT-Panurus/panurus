@@ -7,6 +7,8 @@ SPDX-License-Identifier: Apache-2.0
 package evm
 
 import (
+	"bytes"
+	"context"
 	"encoding/binary"
 	"encoding/hex"
 	"math/big"
@@ -22,6 +24,7 @@ import (
 	ncommon "github.com/LFDT-Panurus/panurus/token/services/network/common"
 	"github.com/LFDT-Panurus/panurus/token/services/network/driver"
 	"github.com/LFDT-Panurus/panurus/token/token"
+	"github.com/LFDT-Panurus/panurus/x/token/services/network/evm/abi"
 	"github.com/LFDT-Panurus/panurus/x/token/services/network/evm/client"
 	"github.com/LFDT-Panurus/panurus/x/token/services/network/evm/client/mock"
 	"github.com/LFDT-Panurus/panurus/x/token/services/network/evm/endorsement"
@@ -106,6 +109,77 @@ func abiBoolArray(flags []bool) []byte {
 	}
 
 	return out
+}
+
+// stubTokenReads answers every getToken call with data and every areTokensSpent call with spent for
+// each id it is asked about, so token reads can be tested without counting calls.
+func stubTokenReads(evm *mock.EVMClient, data []byte, spent bool) {
+	selector := abi.MethodID(areTokensSpentMethod)
+	evm.CallStub = func(_ context.Context, _ client.Address, call []byte, _ string) ([]byte, error) {
+		if bytes.Equal(call, abi.MethodID(graphHidingMethod)) {
+			return abiBool(false), nil
+		}
+		if !bytes.HasPrefix(call, selector) {
+			return abiBytes(data), nil
+		}
+		// selector, then the array's offset word, then its length word.
+		flags := make([]bool, binary.BigEndian.Uint64(call[60:68]))
+		for i := range flags {
+			flags[i] = spent
+		}
+
+		return abiBoolArray(flags), nil
+	}
+}
+
+// callsBySelector answers each call with the function registered for its method, so a test does not
+// depend on the order of reads that run concurrently, such as the spent batch beside the token reads.
+func callsBySelector(evm *mock.EVMClient, answers map[string]func() ([]byte, error)) {
+	evm.CallStub = func(_ context.Context, _ client.Address, call []byte, _ string) ([]byte, error) {
+		for method, answer := range answers {
+			if bytes.HasPrefix(call, abi.MethodID(method)) {
+				return answer()
+			}
+		}
+
+		return nil, errors.Errorf("unexpected call [%x]", call[:4])
+	}
+}
+
+// tokenSequence answers successive getToken calls with the given values in turn. The token reads
+// are issued one after another, so their order is fixed even when other reads run beside them.
+func tokenSequence(values ...[]byte) func() ([]byte, error) {
+	next := 0
+
+	return func() ([]byte, error) {
+		v := values[next]
+		next++
+
+		return abiBytes(v), nil
+	}
+}
+
+// countCalls returns how many of evm's calls were to method.
+func countCalls(evm *mock.EVMClient, method string) int {
+	n := 0
+	for i := range evm.CallCallCount() {
+		_, _, call, _ := evm.CallArgsForCall(i)
+		if bytes.HasPrefix(call, abi.MethodID(method)) {
+			n++
+		}
+	}
+
+	return n
+}
+
+// abiBool encodes a bool return value as one ABI word.
+func abiBool(v bool) []byte {
+	word := make([]byte, 32)
+	if v {
+		word[31] = 1
+	}
+
+	return word
 }
 
 // stubEndorser returns a fixed endorsement result, or an error.
@@ -435,7 +509,7 @@ func TestBroadcastAcceptsAConsistentEnvelope(t *testing.T) {
 func TestQueryTokens(t *testing.T) {
 	t.Run("returns the stored bytes", func(t *testing.T) {
 		evm := &mock.EVMClient{}
-		evm.CallReturns(abiBytes([]byte("token-bytes")), nil)
+		stubTokenReads(evm, []byte("token-bytes"), false)
 		n := testNetwork(t, evm, nil)
 
 		out, err := n.QueryTokens(t.Context(), "token", []*token.ID{{TxId: anchorHex(0x01), Index: 0}})
@@ -444,9 +518,107 @@ func TestQueryTokens(t *testing.T) {
 		assert.Equal(t, []byte("token-bytes"), out[0])
 	})
 
+	t.Run("a spent token is an error, as a deleted one is on Fabric", func(t *testing.T) {
+		evm := &mock.EVMClient{}
+		stubTokenReads(evm, []byte("token-bytes"), true)
+		n := testNetwork(t, evm, nil)
+
+		_, err := n.QueryTokens(t.Context(), "token", []*token.ID{{TxId: anchorHex(0x01), Index: 0}})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "does not exist")
+	})
+
+	t.Run("under graph hiding the spent check is skipped and the bytes are kept", func(t *testing.T) {
+		evm := &mock.EVMClient{}
+		callsBySelector(evm, map[string]func() ([]byte, error){
+			getTokenMethod:    func() ([]byte, error) { return abiBytes([]byte("token-bytes")), nil },
+			graphHidingMethod: func() ([]byte, error) { return abiBool(true), nil },
+		})
+		n := testNetwork(t, evm, nil)
+
+		id := []*token.ID{{TxId: anchorHex(0x01), Index: 0}}
+		out, err := n.QueryTokens(t.Context(), "token", id)
+		require.NoError(t, err)
+		assert.Equal(t, [][]byte{[]byte("token-bytes")}, out)
+
+		// The mode is fixed per clone, so the second query costs only its token read.
+		_, err = n.QueryTokens(t.Context(), "token", id)
+		require.NoError(t, err)
+		assert.Equal(t, 3, evm.CallCallCount(), "no areTokensSpent call, and the mode is read once")
+		assert.Equal(t, 1, countCalls(evm, graphHidingMethod))
+	})
+
+	t.Run("the spent check runs beside the token reads, not after them", func(t *testing.T) {
+		evm := &mock.EVMClient{}
+		spentAsked := make(chan struct{})
+		callsBySelector(evm, map[string]func() ([]byte, error){
+			graphHidingMethod: func() ([]byte, error) { return abiBool(false), nil },
+			areTokensSpentMethod: func() ([]byte, error) {
+				close(spentAsked)
+
+				return abiBoolArray([]bool{false}), nil
+			},
+			getTokenMethod: func() ([]byte, error) {
+				select {
+				case <-spentAsked:
+					return abiBytes([]byte("token-bytes")), nil
+				case <-time.After(5 * time.Second):
+					return nil, errors.New("areTokensSpent was not issued while the token was being read")
+				}
+			},
+		})
+		n := testNetwork(t, evm, nil)
+
+		out, err := n.QueryTokens(t.Context(), "token", []*token.ID{{TxId: anchorHex(0x01), Index: 0}})
+		require.NoError(t, err)
+		assert.Equal(t, [][]byte{[]byte("token-bytes")}, out)
+	})
+
+	t.Run("a revert from the spent check on a graph-revealing clone is an error", func(t *testing.T) {
+		evm := &mock.EVMClient{}
+		callsBySelector(evm, map[string]func() ([]byte, error){
+			getTokenMethod:    func() ([]byte, error) { return abiBytes([]byte("token-bytes")), nil },
+			graphHidingMethod: func() ([]byte, error) { return abiBool(false), nil },
+			areTokensSpentMethod: func() ([]byte, error) {
+				return nil, errors.Wrap(client.ErrExecutionReverted, "eth_call failed")
+			},
+		})
+		n := testNetwork(t, evm, nil)
+
+		_, err := n.QueryTokens(t.Context(), "token", []*token.ID{{TxId: anchorHex(0x01), Index: 0}})
+		require.Error(t, err, "the bytes may belong to a spent token, so they must not be returned")
+	})
+
+	t.Run("a missing token fails before the rest are read", func(t *testing.T) {
+		evm := &mock.EVMClient{}
+		stubTokenReads(evm, nil, false)
+		n := testNetwork(t, evm, nil)
+
+		_, err := n.QueryTokens(t.Context(), "token", []*token.ID{
+			{TxId: anchorHex(0x01), Index: 0},
+			{TxId: anchorHex(0x02), Index: 0},
+			{TxId: anchorHex(0x03), Index: 0},
+		})
+		require.Error(t, err)
+		assert.Equal(t, 1, countCalls(evm, getTokenMethod), "one read for the missing token, nothing after it")
+	})
+
+	t.Run("a failed spent check is an error", func(t *testing.T) {
+		evm := &mock.EVMClient{}
+		callsBySelector(evm, map[string]func() ([]byte, error){
+			getTokenMethod:       func() ([]byte, error) { return abiBytes([]byte("token-bytes")), nil },
+			graphHidingMethod:    func() ([]byte, error) { return abiBool(false), nil },
+			areTokensSpentMethod: func() ([]byte, error) { return nil, errors.New("connection refused") },
+		})
+		n := testNetwork(t, evm, nil)
+
+		_, err := n.QueryTokens(t.Context(), "token", []*token.ID{{TxId: anchorHex(0x01), Index: 0}})
+		require.Error(t, err)
+	})
+
 	t.Run("a missing token is an error, not an empty entry", func(t *testing.T) {
 		evm := &mock.EVMClient{}
-		evm.CallReturns(abiBytes(nil), nil)
+		stubTokenReads(evm, nil, false)
 		n := testNetwork(t, evm, nil)
 
 		_, err := n.QueryTokens(t.Context(), "token", []*token.ID{{TxId: anchorHex(0x01), Index: 0}})
@@ -456,7 +628,7 @@ func TestQueryTokens(t *testing.T) {
 
 	t.Run("the call targets the token's addressable id", func(t *testing.T) {
 		evm := &mock.EVMClient{}
-		evm.CallReturns(abiBytes([]byte("x")), nil)
+		stubTokenReads(evm, []byte("x"), false)
 		n := testNetwork(t, evm, nil)
 
 		txID := anchorHex(0xB1)
@@ -465,7 +637,16 @@ func TestQueryTokens(t *testing.T) {
 
 		binding, err := n.binding(testNamespace)
 		require.NoError(t, err)
-		_, to, data, tag := evm.CallArgsForCall(0)
+		var to client.Address
+		var data []byte
+		var tag string
+		for i := range evm.CallCallCount() {
+			_, to, data, tag = evm.CallArgsForCall(i)
+			if bytes.HasPrefix(data, abi.MethodID(getTokenMethod)) {
+				break
+			}
+		}
+		require.True(t, bytes.HasPrefix(data, abi.MethodID(getTokenMethod)), "no getToken call")
 		assert.Equal(t, binding.tokenState, to)
 		assert.Equal(t, client.BlockTagFinalized, tag)
 
@@ -521,6 +702,11 @@ func TestFetchPublicParameters(t *testing.T) {
 	out, err := n.FetchPublicParameters("token")
 	require.NoError(t, err)
 	assert.Equal(t, []byte("public-params"), out)
+
+	// The TMS is built from this, so it has to see a contract deployed within the finalization
+	// window, the same way Connect's deployment check does.
+	_, _, _, tag := evm.CallArgsForCall(0)
+	assert.Equal(t, client.BlockTagLatest, tag)
 }
 
 // TestLookupTransferMetadataKeyTimesOut checks the polling contract: the value is written when the
@@ -570,8 +756,11 @@ func TestLedgerViewGetTransactionStatus(t *testing.T) {
 func TestLedgerViewGetStates(t *testing.T) {
 	t.Run("returns bytes for a found key and nil for a missing one", func(t *testing.T) {
 		evm := &mock.EVMClient{}
-		evm.CallReturnsOnCall(0, abiBytes([]byte("token-bytes")), nil)
-		evm.CallReturnsOnCall(1, abiBytes(nil), nil)
+		callsBySelector(evm, map[string]func() ([]byte, error){
+			getTokenMethod:       tokenSequence([]byte("token-bytes"), nil),
+			graphHidingMethod:    func() ([]byte, error) { return abiBool(false), nil },
+			areTokensSpentMethod: func() ([]byte, error) { return abiBoolArray([]bool{false, false}), nil },
+		})
 		n := testNetwork(t, evm, nil)
 		l := &ledgerView{network: n}
 
@@ -582,6 +771,17 @@ func TestLedgerViewGetStates(t *testing.T) {
 		require.Len(t, out, 2)
 		assert.Equal(t, []byte("token-bytes"), out[0])
 		assert.Nil(t, out[1])
+	})
+
+	t.Run("a spent token yields nil, as a deleted key does on Fabric", func(t *testing.T) {
+		evm := &mock.EVMClient{}
+		stubTokenReads(evm, []byte("token-bytes"), true)
+		n := testNetwork(t, evm, nil)
+		l := &ledgerView{network: n}
+
+		out, err := l.GetStates(t.Context(), "token", anchorHex(0x01)+":0")
+		require.NoError(t, err)
+		assert.Equal(t, [][]byte{nil}, out)
 	})
 
 	t.Run("a malformed key is rejected", func(t *testing.T) {

@@ -8,6 +8,7 @@ package evm
 
 import (
 	"context"
+	"sync/atomic"
 
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 
@@ -25,6 +26,7 @@ const (
 	getPublicParametersMethod = "getPublicParameters()"     // #nosec G101 -- ABI method signature
 	getTransferMetadataMethod = "getTransferMetadata(bytes32)"
 	getTokenRequestHashMethod = "getTokenRequestHash(bytes32)"
+	graphHidingMethod         = "graphHiding()"
 )
 
 // contractReader performs the driver's read-only calls against a TMS's TokenState clone. It is the
@@ -33,7 +35,18 @@ type contractReader struct {
 	client     client.EVMClient
 	tokenState client.Address
 	blockTag   string
+
+	// mode caches the clone's graphHiding flag once read: modeUnknown, modeRevealing or modeHiding.
+	// The flag is fixed at initialize, so one successful read holds for the reader's lifetime; a
+	// failed read is not cached.
+	mode atomic.Uint32
 }
+
+const (
+	modeUnknown uint32 = iota
+	modeRevealing
+	modeHiding
+)
 
 func newContractReader(evmClient client.EVMClient, tokenState client.Address, blockTag string) *contractReader {
 	if blockTag == "" {
@@ -58,6 +71,117 @@ func (r *contractReader) tokenData(ctx context.Context, id *token.ID) ([]byte, e
 	}
 
 	return abi.DecodeBytes(raw)
+}
+
+// liveTokenData returns the stored bytes of each token, nil for one that does not exist or has
+// already been spent.
+//
+// The contract keeps a token's bytes after it is spent and only marks the spend, unlike the Fabric
+// translator, which deletes the output key. Callers of QueryTokens and GetStates rely on the Fabric
+// behaviour: the vault's unspent-token check, for one, can only notice a token spent on chain if the
+// read for it comes back empty. So on a graph-revealing clone the spent flags are read for every
+// id, in one batch, and spent ones are dropped. That batch is part of the answer: if it fails, the
+// read fails, rather than return bytes for a token that may be gone. It needs only the ids, so it
+// runs while the token reads do and adds no latency of its own; for an id with no token the contract
+// answers not spent, and the answer is not used anyway.
+//
+// A graph-hiding clone cannot say which ids are spent (areTokensSpent reverts there), and the Fabric
+// translator does not delete spent outputs in that mode either, so the batch is skipped and the
+// bytes are returned as stored, with no call beyond the token reads.
+//
+// With requireAll set, a token that is missing or spent is an error instead of a nil entry, and a
+// missing one fails the call at once rather than after every other id has been read.
+func (r *contractReader) liveTokenData(ctx context.Context, ids []*token.ID, requireAll bool) ([][]byte, error) {
+	if len(ids) == 0 {
+		return [][]byte{}, nil
+	}
+	hiding, err := r.isGraphHiding(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	type spentAnswer struct {
+		flags []bool
+		err   error
+	}
+	var spentCh chan spentAnswer
+	if !hiding {
+		spentCh = make(chan spentAnswer, 1)
+		go func() {
+			flags, err := r.spent(ctx, ids)
+			spentCh <- spentAnswer{flags: flags, err: err}
+		}()
+	}
+
+	out := make([][]byte, len(ids))
+	for i, id := range ids {
+		data, err := r.tokenData(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		if len(data) == 0 {
+			if requireAll {
+				return nil, errTokenDoesNotExist(id)
+			}
+
+			continue
+		}
+		out[i] = data
+	}
+	if hiding {
+		return out, nil
+	}
+
+	answer := <-spentCh
+	if answer.err != nil {
+		return nil, answer.err
+	}
+	for i, isSpent := range answer.flags {
+		if !isSpent || out[i] == nil {
+			continue
+		}
+		if requireAll {
+			return nil, errTokenDoesNotExist(ids[i])
+		}
+		out[i] = nil
+	}
+
+	return out, nil
+}
+
+// isGraphHiding reports the clone's graphHiding mode, reading it from the contract until one read
+// succeeds. No lock is held across the read: callers racing on the first one each read the same
+// immutable flag and store the same answer.
+func (r *contractReader) isGraphHiding(ctx context.Context) (bool, error) {
+	switch r.mode.Load() {
+	case modeHiding:
+		return true, nil
+	case modeRevealing:
+		return false, nil
+	}
+	raw, err := r.client.Call(ctx, r.tokenState, abi.MethodID(graphHidingMethod), r.blockTag)
+	if err != nil {
+		return false, errors.Wrap(err, "graphHiding failed")
+	}
+	v, err := abi.DecodeUint64(raw)
+	if err != nil {
+		return false, errors.Wrap(err, "graphHiding: decode")
+	}
+	if v != 0 {
+		r.mode.Store(modeHiding)
+
+		return true, nil
+	}
+	r.mode.Store(modeRevealing)
+
+	return false, nil
+}
+
+// errTokenDoesNotExist reports a token that is not on chain, or no longer is because it was spent.
+func errTokenDoesNotExist(id *token.ID) error {
+	return errors.Errorf("token [%s:%d] does not exist", id.TxId, id.Index)
 }
 
 // spent reports, for each token id, whether it has been spent. It calls the contract's batch method

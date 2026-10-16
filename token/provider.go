@@ -7,7 +7,9 @@ SPDX-License-Identifier: Apache-2.0
 package token
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
 	"sync"
 
 	"github.com/LFDT-Panurus/panurus/token/driver"
@@ -120,15 +122,28 @@ func (p *ManagementServiceProvider) Update(tmsID TMSID, val []byte) error {
 	p.lock.Lock()
 	defer p.lock.Unlock()
 
-	p.logger.Infof("update tms [%s] with public params [%s]", tmsID, Hashable(val))
-	err := p.tmsProvider.Update(driver.ServiceOptions{
+	key := tmsID.Network + tmsID.Channel + tmsID.Namespace
+	opts := driver.ServiceOptions{
 		Network:      tmsID.Network,
 		Channel:      tmsID.Channel,
 		Namespace:    tmsID.Namespace,
 		PublicParams: val,
-	})
-	if err != nil {
+	}
+	p.logger.Infof("update tms [%s] with public params [%s]", tmsID, Hashable(val))
+	if err := p.tmsProvider.Update(opts); err != nil {
 		return errors.Wrapf(err, "failed updating tms [%s]", tmsID)
+	}
+
+	// The core provider keeps its service when the parameters did not change, which it decides by
+	// comparing their SHA-256 with the hash the service reports. The same test on the cached service
+	// tells whether there is anything to reload. Going on would still shut down every selector
+	// manager below, for every TMS on this node, on a call that changed nothing; callers that
+	// re-apply what they observe (the EVM driver's watcher does on startup and on every retry) would
+	// then churn the selectors for no reason.
+	if s, ok := p.services[key]; ok && runsPublicParams(s, val) {
+		p.logger.Debugf("tms [%s] already runs public params [%s], nothing to reload", tmsID, Hashable(val))
+
+		return nil
 	}
 
 	// Shut down background goroutines for the evicted TMS before clearing the cache.
@@ -137,12 +152,26 @@ func (p *ManagementServiceProvider) Update(tmsID TMSID, val []byte) error {
 	}
 
 	// clear cache
-	key := tmsID.Network + tmsID.Channel + tmsID.Namespace
 	delete(p.services, key)
 
 	p.logger.Infof("update tms [%s] with public params [%s]...done", tmsID, Hashable(val))
 
 	return nil
+}
+
+// runsPublicParams reports whether s is built from the public parameters val, by the same SHA-256
+// test the core provider uses to decide whether an update changes anything.
+func runsPublicParams(s *ManagementService, val []byte) bool {
+	if s == nil || s.tms == nil {
+		return false
+	}
+	ppm := s.tms.PublicParamsManager()
+	if ppm == nil {
+		return false
+	}
+	digest := sha256.Sum256(val)
+
+	return bytes.Equal(ppm.PublicParamsHash(), digest[:])
 }
 
 // ConfigurationFor returns the configuration for the given TMS id without building a

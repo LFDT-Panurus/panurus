@@ -145,6 +145,10 @@ Four things are easy to get wrong here:
   as only one of them happens to be broadcasting, so it will not show up in a smoke test. The same
   applies to any out-of-band spending from a node's account: whoever submits the endorsed setup delta
   for a parameters update should use a separate account.
+- **Several TMS on one node may share a submitter key.** The driver keeps one nonce sequence per
+  account and chain for the whole node, so TMS that broadcast from the same account take their nonces
+  from it in turn. The limit above is about separate processes, which cannot see each other's
+  sequence.
 - **A node without a `submitter` key can still endorse and read**; it simply cannot broadcast. That
   fails on the first `Broadcast`, not at startup, which is intentional - it is actionable there.
 - **An endorsing node's `endorser.address` must also appear in `endorsement.endorsers`.** `Validate`
