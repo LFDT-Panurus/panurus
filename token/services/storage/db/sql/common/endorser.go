@@ -213,6 +213,23 @@ func (w *EndorserStoreTransaction) AddValidationRecord(ctx context.Context, txID
 	return nil
 }
 
+// DeleteValidationRecord removes the validation record for txID. Deleting a txID that has
+// no record is not an error: the DELETE simply affects no rows.
+func (w *EndorserStoreTransaction) DeleteValidationRecord(ctx context.Context, txID string) error {
+	logger.DebugfContext(ctx, "deleting validation record [%s]", txID)
+
+	query, args := q.DeleteFrom(w.table).
+		Where(cond.Eq("tx_id", txID)).
+		Format(w.ci)
+
+	logging.Debug(logger, query, args)
+	if _, err := w.tx.ExecContext(ctx, query, args...); err != nil {
+		return errors.Wrapf(err, "failed to delete validation record for tx [%s]", txID)
+	}
+
+	return nil
+}
+
 // SetStatus sets the status of a validation record
 func (w *EndorserStoreTransaction) SetStatus(ctx context.Context, txID string, status dbdriver.TxStatus, message string) error {
 	logger.DebugfContext(ctx, "setting validation record status [%s][%s]", txID, status)

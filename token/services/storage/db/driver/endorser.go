@@ -50,6 +50,12 @@ type EndorserStoreTransaction interface {
 	// the request it names carries nothing to validate.
 	AddValidationRecord(ctx context.Context, txID string, tokenRequest []byte, meta map[string][]byte, ppHash driver.PPHash) error
 
+	// DeleteValidationRecord removes the validation record for txID, if any. It is used to
+	// undo a record whose endorsement subsequently failed, so the request is left retryable
+	// rather than permanently marked as processed. Deleting a txID that has no record is not
+	// an error.
+	DeleteValidationRecord(ctx context.Context, txID string) error
+
 	// SetStatus sets the status of a validation record
 	SetStatus(ctx context.Context, txID string, status TxStatus, message string) error
 }

@@ -274,3 +274,7 @@ func TestSetStatusEndorser(t *testing.T) {
 
 	gomega.Expect(mockDB.ExpectationsWereMet()).To(gomega.Succeed())
 }
+
+func TestDeleteValidationRecordEndorser(t *testing.T) {
+	common2.TestDeleteValidationRecordEndorser(t, mockEndorserStore)
+}

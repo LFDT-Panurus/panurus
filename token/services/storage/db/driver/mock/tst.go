@@ -93,15 +93,20 @@ type TransactionStoreTransaction struct {
 }
 
 func (fake *TransactionStoreTransaction) AddMovement(arg1 context.Context, arg2 ...driver.MovementRecord) error {
+	var arg2Copy []driver.MovementRecord
+	if arg2 != nil {
+		arg2Copy = make([]driver.MovementRecord, len(arg2))
+		copy(arg2Copy, arg2)
+	}
 	fake.addMovementMutex.Lock()
 	ret, specificReturn := fake.addMovementReturnsOnCall[len(fake.addMovementArgsForCall)]
 	fake.addMovementArgsForCall = append(fake.addMovementArgsForCall, struct {
 		arg1 context.Context
 		arg2 []driver.MovementRecord
-	}{arg1, arg2})
+	}{arg1, arg2Copy})
 	stub := fake.AddMovementStub
 	fakeReturns := fake.addMovementReturns
-	fake.recordInvocation("AddMovement", []interface{}{arg1, arg2})
+	fake.recordInvocation("AddMovement", []interface{}{arg1, arg2Copy})
 	fake.addMovementMutex.Unlock()
 	if stub != nil {
 		return stub(arg1, arg2...)
@@ -160,6 +165,11 @@ func (fake *TransactionStoreTransaction) AddTokenRequest(arg1 context.Context, a
 		arg3Copy = make([]byte, len(arg3))
 		copy(arg3Copy, arg3)
 	}
+	var arg6Copy drivera.PPHash
+	if arg6 != nil {
+		arg6Copy = make(drivera.PPHash, len(arg6))
+		copy(arg6Copy, arg6)
+	}
 	fake.addTokenRequestMutex.Lock()
 	ret, specificReturn := fake.addTokenRequestReturnsOnCall[len(fake.addTokenRequestArgsForCall)]
 	fake.addTokenRequestArgsForCall = append(fake.addTokenRequestArgsForCall, struct {
@@ -169,10 +179,10 @@ func (fake *TransactionStoreTransaction) AddTokenRequest(arg1 context.Context, a
 		arg4 map[string][]byte
 		arg5 map[string][]byte
 		arg6 drivera.PPHash
-	}{arg1, arg2, arg3Copy, arg4, arg5, arg6})
+	}{arg1, arg2, arg3Copy, arg4, arg5, arg6Copy})
 	stub := fake.AddTokenRequestStub
 	fakeReturns := fake.addTokenRequestReturns
-	fake.recordInvocation("AddTokenRequest", []interface{}{arg1, arg2, arg3Copy, arg4, arg5, arg6})
+	fake.recordInvocation("AddTokenRequest", []interface{}{arg1, arg2, arg3Copy, arg4, arg5, arg6Copy})
 	fake.addTokenRequestMutex.Unlock()
 	if stub != nil {
 		return stub(arg1, arg2, arg3, arg4, arg5, arg6)
@@ -226,15 +236,20 @@ func (fake *TransactionStoreTransaction) AddTokenRequestReturnsOnCall(i int, res
 }
 
 func (fake *TransactionStoreTransaction) AddTransaction(arg1 context.Context, arg2 ...driver.TransactionRecord) error {
+	var arg2Copy []driver.TransactionRecord
+	if arg2 != nil {
+		arg2Copy = make([]driver.TransactionRecord, len(arg2))
+		copy(arg2Copy, arg2)
+	}
 	fake.addTransactionMutex.Lock()
 	ret, specificReturn := fake.addTransactionReturnsOnCall[len(fake.addTransactionArgsForCall)]
 	fake.addTransactionArgsForCall = append(fake.addTransactionArgsForCall, struct {
 		arg1 context.Context
 		arg2 []driver.TransactionRecord
-	}{arg1, arg2})
+	}{arg1, arg2Copy})
 	stub := fake.AddTransactionStub
 	fakeReturns := fake.addTransactionReturns
-	fake.recordInvocation("AddTransaction", []interface{}{arg1, arg2})
+	fake.recordInvocation("AddTransaction", []interface{}{arg1, arg2Copy})
 	fake.addTransactionMutex.Unlock()
 	if stub != nil {
 		return stub(arg1, arg2...)

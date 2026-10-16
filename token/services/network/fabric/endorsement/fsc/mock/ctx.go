@@ -270,16 +270,26 @@ func (fake *Context) GetServiceReturnsOnCall(i int, result1 any, result2 error) 
 }
 
 func (fake *Context) GetSession(arg1 view.View, arg2 view.Identity, arg3 ...view.View) (view.Session, error) {
+	var arg2Copy view.Identity
+	if arg2 != nil {
+		arg2Copy = make(view.Identity, len(arg2))
+		copy(arg2Copy, arg2)
+	}
+	var arg3Copy []view.View
+	if arg3 != nil {
+		arg3Copy = make([]view.View, len(arg3))
+		copy(arg3Copy, arg3)
+	}
 	fake.getSessionMutex.Lock()
 	ret, specificReturn := fake.getSessionReturnsOnCall[len(fake.getSessionArgsForCall)]
 	fake.getSessionArgsForCall = append(fake.getSessionArgsForCall, struct {
 		arg1 view.View
 		arg2 view.Identity
 		arg3 []view.View
-	}{arg1, arg2, arg3})
+	}{arg1, arg2Copy, arg3Copy})
 	stub := fake.GetSessionStub
 	fakeReturns := fake.getSessionReturns
-	fake.recordInvocation("GetSession", []interface{}{arg1, arg2, arg3})
+	fake.recordInvocation("GetSession", []interface{}{arg1, arg2Copy, arg3Copy})
 	fake.getSessionMutex.Unlock()
 	if stub != nil {
 		return stub(arg1, arg2, arg3...)
@@ -336,15 +346,20 @@ func (fake *Context) GetSessionReturnsOnCall(i int, result1 view.Session, result
 }
 
 func (fake *Context) GetSessionByID(arg1 string, arg2 view.Identity) (view.Session, error) {
+	var arg2Copy view.Identity
+	if arg2 != nil {
+		arg2Copy = make(view.Identity, len(arg2))
+		copy(arg2Copy, arg2)
+	}
 	fake.getSessionByIDMutex.Lock()
 	ret, specificReturn := fake.getSessionByIDReturnsOnCall[len(fake.getSessionByIDArgsForCall)]
 	fake.getSessionByIDArgsForCall = append(fake.getSessionByIDArgsForCall, struct {
 		arg1 string
 		arg2 view.Identity
-	}{arg1, arg2})
+	}{arg1, arg2Copy})
 	stub := fake.GetSessionByIDStub
 	fakeReturns := fake.getSessionByIDReturns
-	fake.recordInvocation("GetSessionByID", []interface{}{arg1, arg2})
+	fake.recordInvocation("GetSessionByID", []interface{}{arg1, arg2Copy})
 	fake.getSessionByIDMutex.Unlock()
 	if stub != nil {
 		return stub(arg1, arg2)
@@ -507,14 +522,19 @@ func (fake *Context) InitiatorReturnsOnCall(i int, result1 view.View) {
 }
 
 func (fake *Context) IsMe(arg1 view.Identity) bool {
+	var arg1Copy view.Identity
+	if arg1 != nil {
+		arg1Copy = make(view.Identity, len(arg1))
+		copy(arg1Copy, arg1)
+	}
 	fake.isMeMutex.Lock()
 	ret, specificReturn := fake.isMeReturnsOnCall[len(fake.isMeArgsForCall)]
 	fake.isMeArgsForCall = append(fake.isMeArgsForCall, struct {
 		arg1 view.Identity
-	}{arg1})
+	}{arg1Copy})
 	stub := fake.IsMeStub
 	fakeReturns := fake.isMeReturns
-	fake.recordInvocation("IsMe", []interface{}{arg1})
+	fake.recordInvocation("IsMe", []interface{}{arg1Copy})
 	fake.isMeMutex.Unlock()
 	if stub != nil {
 		return stub(arg1)
@@ -653,15 +673,20 @@ func (fake *Context) OnErrorArgsForCall(i int) func() {
 }
 
 func (fake *Context) RunView(arg1 view.View, arg2 ...view.RunViewOption) (any, error) {
+	var arg2Copy []view.RunViewOption
+	if arg2 != nil {
+		arg2Copy = make([]view.RunViewOption, len(arg2))
+		copy(arg2Copy, arg2)
+	}
 	fake.runViewMutex.Lock()
 	ret, specificReturn := fake.runViewReturnsOnCall[len(fake.runViewArgsForCall)]
 	fake.runViewArgsForCall = append(fake.runViewArgsForCall, struct {
 		arg1 view.View
 		arg2 []view.RunViewOption
-	}{arg1, arg2})
+	}{arg1, arg2Copy})
 	stub := fake.RunViewStub
 	fakeReturns := fake.runViewReturns
-	fake.recordInvocation("RunView", []interface{}{arg1, arg2})
+	fake.recordInvocation("RunView", []interface{}{arg1, arg2Copy})
 	fake.runViewMutex.Unlock()
 	if stub != nil {
 		return stub(arg1, arg2...)
@@ -771,16 +796,21 @@ func (fake *Context) SessionReturnsOnCall(i int, result1 view.Session) {
 }
 
 func (fake *Context) StartSpanFrom(arg1 context.Context, arg2 string, arg3 ...trace.SpanStartOption) (context.Context, trace.Span) {
+	var arg3Copy []trace.SpanStartOption
+	if arg3 != nil {
+		arg3Copy = make([]trace.SpanStartOption, len(arg3))
+		copy(arg3Copy, arg3)
+	}
 	fake.startSpanFromMutex.Lock()
 	ret, specificReturn := fake.startSpanFromReturnsOnCall[len(fake.startSpanFromArgsForCall)]
 	fake.startSpanFromArgsForCall = append(fake.startSpanFromArgsForCall, struct {
 		arg1 context.Context
 		arg2 string
 		arg3 []trace.SpanStartOption
-	}{arg1, arg2, arg3})
+	}{arg1, arg2, arg3Copy})
 	stub := fake.StartSpanFromStub
 	fakeReturns := fake.startSpanFromReturns
-	fake.recordInvocation("StartSpanFrom", []interface{}{arg1, arg2, arg3})
+	fake.recordInvocation("StartSpanFrom", []interface{}{arg1, arg2, arg3Copy})
 	fake.startSpanFromMutex.Unlock()
 	if stub != nil {
 		return stub(arg1, arg2, arg3...)
