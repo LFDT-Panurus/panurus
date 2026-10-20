@@ -219,6 +219,7 @@ func TestOrchestrator_BuildTransferAction_NoInputsNoOutputs(t *testing.T) {
 		nil,
 		"USD",
 		testPP,
+		nil,
 	)
 	require.Error(t, err, "empty inputs and outputs must be rejected")
 }
@@ -233,6 +234,7 @@ func TestOrchestrator_BuildIssueAction_NoOutputs(t *testing.T) {
 		nil,
 		"USD",
 		testPP,
+		nil,
 	)
 	require.Error(t, err, "zero outputs must be rejected")
 }

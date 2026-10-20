@@ -49,3 +49,11 @@ var (
 	// deployment's PublicParams has no migration verification key loaded.
 	ErrMigrationNotConfigured = errors.New("validator: migration circuit not configured for this deployment")
 )
+
+var (
+	// ErrInvalidHTLCAction is returned when an HTLC action is invalid.
+	ErrInvalidHTLCAction = errors.New("invalid transfer action: an htlc script only transfers the ownership of a token")
+
+	// ErrHTLCOutputNotFound is returned when the HTLC output is not found.
+	ErrHTLCOutputNotFound = errors.New("invalid transfer action: an htlc script only transfers the ownership of a token, output not found")
+)

@@ -262,6 +262,14 @@ jobs:
             dir: ./token/services/storage/db/kvs/hashicorp
             pkg: .
             func: FuzzNormalizeIDRoundTrip
+          - name: zkatsnark-action-deserializer
+            dir: ./x/token/core/zkatsnark
+            pkg: ./validator
+            func: FuzzActionDeserializerNoPanic
+          - name: zkatsnark-transfer-action-validate
+            dir: ./x/token/core/zkatsnark
+            pkg: ./validator
+            func: FuzzTransferActionValidateNoPanic
 
     steps:
       - name: Checkout code

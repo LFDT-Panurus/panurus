@@ -182,7 +182,6 @@ jobs:
 
   itest:
     needs: checks
-    if: github.ref == 'refs/heads/main' || github.base_ref == 'main'
     runs-on: ubuntu-latest
     # FSC's Go-chaincode packager (integration/nwo/fabric/packager/golang) only
     # detects the chaincode's Go module root when the checkout lives under a
@@ -254,6 +253,7 @@ jobs:
           fabricx-dlog-t16-websocket,
           fabricx-dlog-t16-libp2p,
           fabricx-dlog-t16-replicas,
+          fabricx-zkatsnark-t1,
           fabtoken-dlog-fabric,
           dloghsm-fabric-t1-websocket,
           dloghsm-fabric-t1-libp2p,
