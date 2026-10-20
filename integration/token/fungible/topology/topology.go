@@ -78,6 +78,7 @@ func Topology(opts common.Opts) []api.Topology {
 		fscTopology.EnableTracing(tracing.File)
 	}
 	fscTopology.SetLogging(token2.RunnerDebug(opts.FSCLogSpec), "")
+	fscTopology.Templates.Core = CoreTemplate
 
 	issuer := fscTopology.AddNodeByName("issuer").AddOptions(
 		fabric.WithOrganization("Org1"),

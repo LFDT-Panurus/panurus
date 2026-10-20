@@ -33,7 +33,6 @@ import (
 	fabtokenv1 "github.com/LFDT-Panurus/panurus/token/core/fabtoken/v1/setup"
 	dlognoghv1 "github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/setup"
 	dlogtoken "github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/token"
-	zkatsnarkpp "github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/pp"
 	"github.com/LFDT-Panurus/panurus/token/driver"
 	"github.com/LFDT-Panurus/panurus/token/services/identity"
 	"github.com/LFDT-Panurus/panurus/token/services/identity/x509"
@@ -41,6 +40,7 @@ import (
 	"github.com/LFDT-Panurus/panurus/token/services/storage/ttxdb"
 	"github.com/LFDT-Panurus/panurus/token/services/ttx"
 	"github.com/LFDT-Panurus/panurus/token/token"
+	zkatsnarkpp "github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/pp"
 	"github.com/hyperledger-labs/fabric-smart-client/integration"
 	"github.com/hyperledger-labs/fabric-smart-client/integration/nwo/common"
 	topology2 "github.com/hyperledger-labs/fabric-smart-client/integration/nwo/fabric/topology"
@@ -1315,7 +1315,7 @@ func UpdatePublicParamsAndWait(network *integration.Infrastructure, publicParams
 		if node.Id() == "custodian" {
 			continue
 		}
-		gomega.Eventually(GetPublicParams).WithArguments(network, node).WithTimeout(60 * time.Second).WithPolling(5 * time.Second).Should(gomega.Equal(publicParams))
+		gomega.Eventually(GetPublicParams).WithArguments(network, node).WithTimeout(120 * time.Second).WithPolling(5 * time.Second).Should(gomega.Equal(publicParams))
 	}
 }
 

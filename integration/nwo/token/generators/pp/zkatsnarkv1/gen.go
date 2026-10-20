@@ -10,11 +10,12 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strconv"
 
 	"github.com/IBM/idemix/msp"
 	math3 "github.com/IBM/mathlib"
-	"github.com/LFDT-Panurus/panurus/integration/nwo/token/topology"
 	zkatsnarkcrypto "github.com/LFDT-Panurus/panurus/integration/nwo/token/generators/crypto/zkatsnarkv1"
+	"github.com/LFDT-Panurus/panurus/integration/nwo/token/topology"
 	"github.com/LFDT-Panurus/panurus/token/driver"
 	"github.com/LFDT-Panurus/panurus/token/services/identity"
 	"github.com/LFDT-Panurus/panurus/token/services/identity/x509"
@@ -65,6 +66,19 @@ func (d *ZkatsnarkPublicParamsGenerator) Generate(tms *topology.TMS, wallets *to
 			Curve:     curveID,
 		},
 	}
+	bits := uint64(64)
+	if len(args) > 1 {
+		baseArg, ok := args[1].(string)
+		if !ok {
+			return nil, errors.Errorf("invalid argument type, expected string, got %T", args[1])
+		}
+		bits, err = strconv.ParseUint(baseArg, 10, 32)
+		if err != nil {
+			return nil, err
+		}
+	}
+	params.MaxBits = int(bits)
+	params.PrecisionValue = bits
 
 	keyStore := x509.NewKeyStore(kvs.NewTrackedMemory())
 	if len(tms.Auditors) != 0 {

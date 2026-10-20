@@ -184,6 +184,7 @@ func TestValidateTransfer_EndToEnd(t *testing.T) {
 		},
 		"USD",
 		testPP,
+		nil,
 	)
 	require.NoError(t, err)
 
@@ -202,6 +203,7 @@ func TestValidateIssue_EndToEnd(t *testing.T) {
 		[]prover.OutputRequest{{Value: 500, TokenType: "USD", Recipient: []byte("alice")}},
 		"USD",
 		testPP,
+		nil,
 	)
 	require.NoError(t, err)
 
@@ -225,6 +227,7 @@ func TestValidateTransfer_RejectsTamperedCommitment(t *testing.T) {
 		[]prover.OutputRequest{{Value: 100, TokenType: "USD", Recipient: []byte("bob")}},
 		"USD",
 		testPP,
+		nil,
 	)
 	require.NoError(t, err)
 
@@ -248,6 +251,7 @@ func TestValidateTransfer_RejectsWrongTypeCommitment(t *testing.T) {
 		[]prover.OutputRequest{{Value: 100, TokenType: "USD", Recipient: []byte("bob")}},
 		"USD",
 		testPP,
+		nil,
 	)
 	require.NoError(t, err)
 
@@ -277,6 +281,7 @@ func TestValidateTransfer_RejectsCorruptedBindingSignature(t *testing.T) {
 		[]prover.OutputRequest{{Value: 100, TokenType: "USD", Recipient: []byte("bob")}},
 		"USD",
 		testPP,
+		nil,
 	)
 	require.NoError(t, err)
 

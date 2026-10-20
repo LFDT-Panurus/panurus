@@ -98,8 +98,10 @@ func TestBuildTransferAction_Valid(t *testing.T) {
 		},
 		"USD",
 		testPP,
+		map[string][]byte{"k": []byte("v")},
 	)
 	require.NoError(t, err)
+	require.Equal(t, map[string][]byte{"k": []byte("v")}, action.GetMetadata())
 	require.Len(t, action.Inputs, 2)
 	require.Len(t, action.Outputs, 2)
 	require.Len(t, outputs, 2)
@@ -180,8 +182,10 @@ func TestBuildIssueAction_Valid(t *testing.T) {
 		},
 		"USD",
 		testPP,
+		map[string][]byte{"k": []byte("v")},
 	)
 	require.NoError(t, err)
+	require.Equal(t, map[string][]byte{"k": []byte("v")}, action.GetMetadata())
 	require.Len(t, action.Outputs, 1)
 	require.Len(t, outputs, 1)
 

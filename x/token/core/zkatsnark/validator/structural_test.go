@@ -19,7 +19,7 @@ func validSpendDescription() snarktoken.SpendDescription {
 		ValueCommitInX: make([]byte, 32),
 		ValueCommitInY: make([]byte, 32),
 		TypeCommitment: make([]byte, 32),
-		SpendProof:     make([]byte, 244),
+		SpendProof:     make([]byte, 292),
 	}
 }
 
@@ -45,7 +45,7 @@ func validOutputDescription() snarktoken.OutputDescription {
 		ValueCommitOutX: make([]byte, 32),
 		ValueCommitOutY: make([]byte, 32),
 		TypeCommitment:  make([]byte, 32),
-		OutputProof:     make([]byte, 244),
+		OutputProof:     make([]byte, 292),
 	}
 }
 
