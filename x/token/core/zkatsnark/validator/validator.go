@@ -72,12 +72,16 @@ func NewValidator(p *pp.PublicParams, deserializer driver.Deserializer, limits d
 	v := &Validator{pp: p, keys: keys}
 
 	transferValidators := []ValidateTransferFunc{
+		TransferSignatureValidate,
 		v.TransferZKValidate,
+		TransferHTLCValidate,
+		common.TransferApplicationDataValidate[*pp.PublicParams, *snarktoken.Input, *snarktoken.TransferAction, *snarktoken.IssueAction, driver.Deserializer],
 	}
 
 	issueValidators := []ValidateIssueFunc{
 		v.IssueZKValidate,
 		IssueSignatureValidate,
+		common.IssueApplicationDataValidate[*pp.PublicParams, *snarktoken.Input, *snarktoken.TransferAction, *snarktoken.IssueAction, driver.Deserializer],
 	}
 
 	auditingValidators := []ValidateAuditingFunc{
@@ -89,7 +93,7 @@ func NewValidator(p *pp.PublicParams, deserializer driver.Deserializer, limits d
 		p,
 		deserializer,
 		limits,
-		&ActionDeserializer{},
+		&ActionDeserializer{Limits: limits},
 		transferValidators,
 		issueValidators,
 		auditingValidators,

@@ -15,8 +15,8 @@ import (
 // compared against, not a bare magic number.
 const (
 	fieldElementLen   = 32  // one BLS12-381 Fr element, canonical encoding
-	groth16ProofLen   = 244 // gnark's WriteTo size for a standard BLS12-381 Groth16 proof (spend/output circuits)
-	migrationProofLen = 292 // migration circuit proof; gnark adds one G1 commitment (48 bytes) for emulated-field limb range checks
+	groth16ProofLen   = 292 // gnark WriteTo size for a BLS12-381 Groth16 proof with one G1 commitment (spend/output circuits)
+	migrationProofLen = 292 // migration circuit proof; same size as the spend/output proofs under gnark v0.16
 	signatureLen      = 96  // R.X (32) || R.Y (32) || S (32)
 	fpElementLen      = 48  // the canonical encoding length of one BLS12-381 base-field (Fp) element, 48 bytes
 )

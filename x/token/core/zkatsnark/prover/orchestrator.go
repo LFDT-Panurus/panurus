@@ -91,6 +91,7 @@ func (o *Orchestrator) BuildTransferAction(
 	outputs []OutputRequest,
 	tokenType string,
 	publicParams *pp.PublicParams,
+	metadata map[string][]byte,
 ) (*snarktoken.TransferAction, []*snarktoken.Note, error) {
 	if len(inputs) == 0 && len(outputs) == 0 {
 		return nil, nil, errors.New("orchestrator: transfer action requires at least one input or output")
@@ -169,6 +170,7 @@ func (o *Orchestrator) BuildTransferAction(
 		Inputs:           inputDescs,
 		Outputs:          outputDescs,
 		BindingSignature: sigBytes,
+		Metadata:         metadata,
 	}
 
 	return action, newNotes, nil
@@ -183,6 +185,7 @@ func (o *Orchestrator) BuildIssueAction(
 	outputs []OutputRequest,
 	tokenType string,
 	publicParams *pp.PublicParams,
+	metadata map[string][]byte,
 ) (*snarktoken.IssueAction, []*snarktoken.Note, error) {
 	if len(outputs) == 0 {
 		return nil, nil, errors.New("orchestrator: issue action requires at least one output")
@@ -246,6 +249,7 @@ func (o *Orchestrator) BuildIssueAction(
 		Outputs:          outputDescs,
 		BindingSignature: sigBytes,
 		TotalValue:       totalValueBytes[:],
+		Metadata:         metadata,
 	}
 
 	return action, newNotes, nil
