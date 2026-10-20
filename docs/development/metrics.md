@@ -74,7 +74,8 @@ declared in `token/services/identity/idemix/cache/metrics.go`, yet exported as
 `panurus_core_common_metrics_cache_level`.
 
 The wiring that decides this is the driver setup in
-`token/core/{fabtoken/v1,zkatdlog/nogh/v1}/driver/driver.go`, which builds a TMS-scoped provider and
+`token/core/{fabtoken/v1,zkatdlog/nogh/v1}/driver/driver.go` and
+`x/token/core/zkatsnark/driver/driver.go`, which build a TMS-scoped provider and
 passes it to the driver services and the wallet service, and `token/sdk/db/checks.go`, which does the
 same for the ledger drift checks sweep. Everything reached from the dependency-injection container
 instead keeps its own package prefix.
@@ -300,7 +301,8 @@ Source: `token/services/certifier/interactive/metrics.go`.
 ## Identity and caches
 
 All identity instrumentation is created through the TMS-scoped provider from the wallet service
-(`token/core/{fabtoken/v1,zkatdlog/nogh/v1}/driver/ws.go`), hence the
+(`token/core/{fabtoken/v1,zkatdlog/nogh/v1}/driver/ws.go` and
+`x/token/core/zkatsnark/driver/ws.go`), hence the
 `panurus_core_common_metrics_` prefix despite living under `token/services/identity`.
 
 `outcome` and `path` are `cache`, `routed` or `fallback`. A near-zero

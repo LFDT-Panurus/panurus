@@ -11,6 +11,7 @@ import (
 	"context"
 
 	"github.com/LFDT-Panurus/panurus/token/core/common"
+	"github.com/LFDT-Panurus/panurus/token/core/common/meta"
 	"github.com/LFDT-Panurus/panurus/token/driver"
 	"github.com/LFDT-Panurus/panurus/token/services/logging"
 	"github.com/LFDT-Panurus/panurus/token/token"
@@ -68,7 +69,12 @@ func (s *IssueService) Issue(ctx context.Context, issuerIdentity driver.Identity
 		}
 	}
 
-	action, notes, err := s.Orchestrator.BuildIssueAction(ctx, issuerIdentity, outputs, string(tokenType), p)
+	var actionMetadata map[string][]byte
+	if opts != nil {
+		actionMetadata = meta.IssueActionMetadata(opts.Attributes)
+	}
+
+	action, notes, err := s.Orchestrator.BuildIssueAction(ctx, issuerIdentity, outputs, string(tokenType), p, actionMetadata)
 	if err != nil {
 		return nil, nil, errors.WithMessagef(err, "failed to build issue action")
 	}

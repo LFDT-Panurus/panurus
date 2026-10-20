@@ -142,6 +142,11 @@ var tokenDrivers = []tmsProviderSite{
 		providerRef: "d.metricsProvider",
 	},
 	{
+		file:        "x/token/core/zkatsnark/driver/driver.go",
+		call:        "metrics.NewTMSProvider(tmsConfig.ID(), d.metricsProvider)",
+		providerRef: "d.metricsProvider",
+	},
+	{
 		file:        "token/sdk/db/checks.go",
 		call:        "metrics.NewTMSProvider(tmsID, s.metricsProvider)",
 		providerRef: "s.metricsProvider",

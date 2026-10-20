@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 
 	"github.com/LFDT-Panurus/panurus/token/core/common"
+	"github.com/LFDT-Panurus/panurus/token/core/common/meta"
 	"github.com/LFDT-Panurus/panurus/token/driver"
 	"github.com/LFDT-Panurus/panurus/token/services/logging"
 	token2 "github.com/LFDT-Panurus/panurus/token/token"
@@ -143,10 +144,24 @@ func (s *TransferService) Transfer(
 		}
 	}
 
-	action, notes, err := s.Orchestrator.BuildTransferAction(ctx, inputs, outputs, tokenType, s.PublicParametersManager.PublicParams())
+	var actionMetadata map[string][]byte
+	if opts != nil {
+		actionMetadata = meta.TransferActionMetadata(opts.Attributes)
+	}
+
+	action, notes, err := s.Orchestrator.BuildTransferAction(ctx, inputs, outputs, tokenType, s.PublicParametersManager.PublicParams(), actionMetadata)
 	if err != nil {
 		return nil, nil, errors.Wrapf(err, "failed to generate zk transfer")
 	}
+
+	// Populate InputIDs and InputTokens so the validator can look up input token owners
+	// and correctly generate osn keys for ledger validation.
+	action.InputIDs = tokenIDs
+	inputTokens := make([][]byte, len(loadedTokens))
+	for i, loadedToken := range loadedTokens {
+		inputTokens[i] = loadedToken.Token
+	}
+	action.InputTokens = inputTokens
 
 	var transferOutputsMetadata []*driver.TransferOutputMetadata
 	for i, output := range outputTokens {
@@ -209,6 +224,7 @@ func (s *TransferService) Transfer(
 		if err != nil {
 			return nil, nil, errors.Wrap(err, "failed to select issuer for redeem")
 		}
+		action.Issuer = issuer
 		transferMetadata.Issuer = driver.AuditableIdentity{
 			Identity: issuer,
 		}

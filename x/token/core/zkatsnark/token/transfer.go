@@ -22,7 +22,7 @@ type SpendDescription struct {
 	ValueCommitInX []byte // 32 bytes
 	ValueCommitInY []byte // 32 bytes
 	TypeCommitment []byte // 32 bytes: MiMC(TokenType, TypeRandomness)
-	SpendProof     []byte // 244 bytes: Groth16 proof for SpendCircuit
+	SpendProof     []byte // 292 bytes: Groth16 proof for SpendCircuit
 }
 
 // TransferAction represents consuming one or more existing tokens and
@@ -32,13 +32,23 @@ type SpendDescription struct {
 // It implements the driver.TransferAction interface so that the common
 // validator infrastructure can be used.
 type TransferAction struct {
-	TypeCommitment   []byte // 32 bytes: MiMC(TokenType, TypeRandomness), shared across all inputs/outputs
+	TypeCommitment   []byte       // 32 bytes: MiMC(TokenType, TypeRandomness), shared across all inputs/outputs
+	InputIDs         []*token2.ID `json:"InputIDs,omitempty"`    // ledger token IDs of spent tokens; populated by TransferService
+	InputTokens      [][]byte     `json:"InputTokens,omitempty"` // serialized OutputDescriptions of spent tokens
 	Inputs           []SpendDescription
 	Outputs          []OutputDescription
 	BindingSignature []byte // 96 bytes: R.X || R.Y || S
+	Issuer           []byte `json:"Issuer,omitempty"` // issuer identity for redeem actions
+	limits           *driver.ResourceLimits
+	Metadata         map[string][]byte `json:"Metadata,omitempty"` // action metadata, set from the transfer options
 }
 
 // ── driver.Action ──────────────────────────────────────────────────────────────
+
+// SetLimits configures the resource limits enforced by Validate and Deserialize.
+func (a *TransferAction) SetLimits(limits driver.ResourceLimits) {
+	a.limits = &limits
+}
 
 // Validate performs a basic structural self-check on the action.
 func (a *TransferAction) Validate() error {
@@ -46,7 +56,7 @@ func (a *TransferAction) Validate() error {
 		return errors.New("transfer action has no inputs and no outputs")
 	}
 
-	return nil
+	return a.checkLimits()
 }
 
 // ── driver.ActionWithInputs ────────────────────────────────────────────────────
@@ -56,25 +66,27 @@ func (a *TransferAction) NumInputs() int {
 	return len(a.Inputs)
 }
 
-// GetInputs returns nil; zkatsnark inputs are identified by commitment,
-// not by ledger token IDs on the action itself.
+// GetInputs returns the ledger token IDs of the tokens being spent.
 func (a *TransferAction) GetInputs() []*token2.ID {
-	return nil
+	return a.InputIDs
 }
 
 // GetSerializedInputs returns the serialized inputs of the action.
+// It returns the InputTokens (serialized OutputDescriptions) that were
+// populated by TransferService. If InputTokens is empty and no Inputs
+// exist, it returns (nil, nil). If Inputs exist but InputTokens was
+// never populated, it returns an error, falling back to serializing
+// SpendDescriptions would produce OutputSN keys that can never match
+// the on-ledger token keys.
 func (a *TransferAction) GetSerializedInputs() ([][]byte, error) {
-	res := make([][]byte, len(a.Inputs))
-	for i, in := range a.Inputs {
-		raw, err := json.Marshal(in)
-		if err != nil {
-			return nil, errors.Wrapf(err, "failed to serialize input %d", i)
-		}
-
-		res[i] = raw
+	if len(a.InputTokens) > 0 {
+		return a.InputTokens, nil
+	}
+	if len(a.Inputs) == 0 {
+		return nil, nil
 	}
 
-	return res, nil
+	return nil, errors.New("InputTokens not populated: cannot derive serialized inputs from SpendDescriptions alone")
 }
 
 // GetSerialNumbers returns nil, zkatsnark does not use serial numbers.
@@ -87,9 +99,9 @@ func (a *TransferAction) IsGraphHiding() bool {
 	return false
 }
 
-// GetMetadata returns nil, zkatsnark has no per-action metadata.
+// GetMetadata returns the metadata of the action.
 func (a *TransferAction) GetMetadata() map[string][]byte {
-	return nil
+	return a.Metadata
 }
 
 // ExtraSigners returns nil, zkatsnark does not require extra signers.
@@ -111,7 +123,21 @@ func (a *TransferAction) Serialize() ([]byte, error) {
 
 // Deserialize populates the action from bytes produced by Serialize.
 func (a *TransferAction) Deserialize(raw []byte) error {
-	return json.Unmarshal(raw, a)
+	if err := json.Unmarshal(raw, a); err != nil {
+		return errors.Wrap(err, "failed to deserialize transfer action")
+	}
+
+	return a.checkLimits()
+}
+
+// checkLimits enforces the configured resource limits on the action.
+func (a *TransferAction) checkLimits() error {
+	limits := effectiveLimits(a.limits)
+	if err := checkCountLimits(len(a.Inputs), len(a.Outputs), limits); err != nil {
+		return err
+	}
+
+	return checkMetadataLimits(a.Metadata, limits)
 }
 
 // NumOutputs returns the number of outputs.
@@ -162,7 +188,12 @@ func (a *TransferAction) SerializeOutputAt(index int) ([]byte, error) {
 	return json.Marshal(a.Outputs[index])
 }
 
-// GetIssuer returns nil, transfers have no issuer.
+// GetIssuer returns the issuer identity for redeem actions, or nil for
+// regular transfers.
 func (a *TransferAction) GetIssuer() driver.Identity {
-	return nil
+	if len(a.Issuer) == 0 {
+		return nil
+	}
+
+	return a.Issuer
 }
