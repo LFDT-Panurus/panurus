@@ -20,7 +20,7 @@ import (
 	config2 "github.com/LFDT-Panurus/panurus/token/services/config"
 	"github.com/LFDT-Panurus/panurus/token/services/logging"
 	kvs2 "github.com/LFDT-Panurus/panurus/token/services/storage/db/kvs"
-	snark "github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/driver"
+	snark "github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/driver"
 	"github.com/hyperledger-labs/fabric-smart-client/integration"
 	"github.com/hyperledger-labs/fabric-smart-client/integration/nwo/fsc/node"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/services/config"

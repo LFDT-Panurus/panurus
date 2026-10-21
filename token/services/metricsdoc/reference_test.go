@@ -140,7 +140,7 @@ var tokenDrivers = []tmsProviderSite{
 		providerRef: "d.metricsProvider",
 	},
 	{
-		file:        "x/token/core/zkatsnark/driver/driver.go",
+		file:        "x/token/core/zkatsnark/nogh/v1/driver/driver.go",
 		call:        "metrics.NewTMSProvider(tmsConfig.ID(), d.metricsProvider)",
 		providerRef: "d.metricsProvider",
 	},

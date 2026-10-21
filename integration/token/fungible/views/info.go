@@ -18,7 +18,7 @@ import (
 	"github.com/LFDT-Panurus/panurus/token/services/ttx"
 	"github.com/LFDT-Panurus/panurus/token/services/utils"
 	token2 "github.com/LFDT-Panurus/panurus/token/token"
-	zkatsnark "github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/driver"
+	zkatsnark "github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/driver"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/common/utils/assert"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/view"
 )
