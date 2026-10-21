@@ -261,15 +261,15 @@ jobs:
             func: FuzzNormalizeIDRoundTrip
           - name: zkatsnark-action-deserializer
             dir: ./x/token/core/zkatsnark
-            pkg: ./validator
+            pkg: ./nogh/v1/validator
             func: FuzzActionDeserializerNoPanic
           - name: zkatsnark-transfer-action-validate
             dir: ./x/token/core/zkatsnark
-            pkg: ./validator
+            pkg: ./nogh/v1/validator
             func: FuzzTransferActionValidateNoPanic
           - name: zkatsnark-edwards-signature
             dir: ./x/token/core/zkatsnark
-            pkg: ./crypto/edwards
+            pkg: ./nogh/v1/crypto/edwards
             func: FuzzDeserializeSignature
 
     steps:
