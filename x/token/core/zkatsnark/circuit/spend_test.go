@@ -19,7 +19,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/circuit"
-	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/crypto/jubjub"
+	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/crypto/edwards"
 	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/crypto/mimc"
 )
 
@@ -95,7 +95,7 @@ func buildSpendAssignment(t *testing.T, inp spendInputs) *circuit.SpendCircuit {
 	require.NoError(t, err, "mimc.Hash failed in buildSpendAssignment")
 
 	// Compute the value commitment using native Jubjub.
-	cv, err := jubjub.ValueCommit(inp.value, inp.rcv)
+	cv, err := edwards.Jubjub().ValueCommit(inp.value, inp.rcv)
 	require.NoError(t, err, "jubjub.ValueCommit failed in buildSpendAssignment")
 
 	// Compute the type commitment: MiMC(TokenType, TypeRandomness)
@@ -202,7 +202,7 @@ func TestSpendCircuitInvalid_WrongValueCommit(t *testing.T) {
 	_, err := fakeRcv.SetRandom()
 	require.NoError(t, err)
 
-	fakeCv, err := jubjub.ValueCommit(inp.value+1, fakeRcv)
+	fakeCv, err := edwards.Jubjub().ValueCommit(inp.value+1, fakeRcv)
 	require.NoError(t, err)
 	assignment.ValueCommitInX = fakeCv.X
 	assignment.ValueCommitInY = fakeCv.Y

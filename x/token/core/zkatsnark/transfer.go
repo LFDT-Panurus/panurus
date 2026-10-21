@@ -149,7 +149,14 @@ func (s *TransferService) Transfer(
 		actionMetadata = meta.TransferActionMetadata(opts.Attributes)
 	}
 
-	action, notes, err := s.Orchestrator.BuildTransferAction(ctx, inputs, outputs, tokenType, s.PublicParametersManager.PublicParams(), actionMetadata)
+	action, notes, err := s.Orchestrator.BuildTransferAction(
+		ctx,
+		inputs,
+		outputs,
+		tokenType,
+		s.PublicParametersManager.PublicParams(),
+		actionMetadata,
+	)
 	if err != nil {
 		return nil, nil, errors.Wrapf(err, "failed to generate zk transfer")
 	}
@@ -256,12 +263,11 @@ func (s *TransferService) VerifyTransfer(ctx context.Context, transferAction dri
 		if err != nil {
 			return errors.Wrap(err, "failed unmarshalling metadata")
 		}
-		cm, err := note.Commitment()
+		cm, err := note.Commitment(s.PublicParametersManager.PublicParams().Curve)
 		if err != nil {
 			return errors.Wrap(err, "failed computing commitment from metadata")
 		}
-		cmBytes := cm.Bytes()
-		if !bytes.Equal(cmBytes[:], action.Outputs[i].CommitmentOut) {
+		if !bytes.Equal(cm, action.Outputs[i].CommitmentOut) {
 			return errors.Errorf("output commitment does not match metadata")
 		}
 		s.Logger.DebugfContext(ctx, "transfer output [%s,%d,%s]", note.TokenType, note.Value, driver.Identity(action.Outputs[i].Recipient))

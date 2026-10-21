@@ -26,7 +26,7 @@ import (
 	"github.com/consensys/gnark-crypto/ecc"
 
 	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/circuit"
-	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/crypto/jubjub"
+	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/crypto/edwards"
 	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/crypto/mimc"
 	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/crypto/params"
 )
@@ -211,7 +211,7 @@ func buildMigrationAssignment(t *testing.T, inp migrationInputs) *circuit.Migrat
 	require.NoError(t, err, "mimc.Hash failed")
 
 	// Compute Jubjub value commitment
-	cv, err := jubjub.ValueCommit(inp.value, inp.rcv)
+	cv, err := edwards.Jubjub().ValueCommit(inp.value, inp.rcv)
 	require.NoError(t, err, "jubjub.ValueCommit failed")
 
 	// Compute type commitment: MiMC(TokenType, TypeRandomness)
@@ -368,7 +368,7 @@ func TestMigrationCircuitInvalid_WrongValueCommit(t *testing.T) {
 	var fakeRCV fr.Element
 	_, err := fakeRCV.SetRandom()
 	require.NoError(t, err)
-	fakeCV, err := jubjub.ValueCommit(inp.value+50, fakeRCV)
+	fakeCV, err := edwards.Jubjub().ValueCommit(inp.value+50, fakeRCV)
 	require.NoError(t, err)
 	assignment.ValueCommitOutX = fakeCV.X
 	assignment.ValueCommitOutY = fakeCV.Y

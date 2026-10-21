@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/consensys/gnark-crypto/ecc"
 	"github.com/stretchr/testify/require"
 
 	snarktoken "github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/token"
@@ -436,54 +437,73 @@ func TestTokensUpgradeService_CheckUpgradeProof_Error(t *testing.T) {
 
 func TestEncodeTokenType_Empty(t *testing.T) {
 	// Empty string must not panic and must produce a zero element.
-	elem := snarktoken.EncodeTokenType("")
-	require.NotNil(t, elem)
+	for _, curve := range supportedCurves {
+		elem, err := snarktoken.EncodeTokenTypeBytes("", curve)
+		require.NoError(t, err)
+		require.Equal(t, make([]byte, 32), elem)
+	}
 }
 
 func TestEncodeTokenType_Deterministic(t *testing.T) {
-	e1 := snarktoken.EncodeTokenType("EUR")
-	e2 := snarktoken.EncodeTokenType("EUR")
-	require.Equal(t, e1.Bytes(), e2.Bytes())
+	for _, curve := range supportedCurves {
+		e1, err := snarktoken.EncodeTokenTypeBytes("EUR", curve)
+		require.NoError(t, err)
+		e2, err := snarktoken.EncodeTokenTypeBytes("EUR", curve)
+		require.NoError(t, err)
+		require.Equal(t, e1, e2)
+	}
 }
 
 func TestEncodeTokenType_DifferentTypes(t *testing.T) {
-	eUSD := snarktoken.EncodeTokenType("USD")
-	eEUR := snarktoken.EncodeTokenType("EUR")
-	require.NotEqual(t, eUSD.Bytes(), eEUR.Bytes())
+	for _, curve := range supportedCurves {
+		eUSD, err := snarktoken.EncodeTokenTypeBytes("USD", curve)
+		require.NoError(t, err)
+		eEUR, err := snarktoken.EncodeTokenTypeBytes("EUR", curve)
+		require.NoError(t, err)
+		require.NotEqual(t, eUSD, eEUR)
+	}
 }
 
 // ── ComputeTypeCommitment ─────────────────────────────────────────────────────
 
 func TestComputeTypeCommitment_Deterministic(t *testing.T) {
-	note, err := snarktoken.NewRandomNote(100, "USD")
-	require.NoError(t, err)
+	for _, curve := range []ecc.ID{ecc.BLS12_381, ecc.BN254} {
+		t.Run(curve.String(), func(t *testing.T) {
+			note, err := snarktoken.NewRandomNote(100, "USD", curve)
+			require.NoError(t, err)
 
-	tc1, err := snarktoken.ComputeTypeCommitment("USD", note.Randomness)
-	require.NoError(t, err)
+			tc1, err := snarktoken.ComputeTypeCommitment("USD", note.Randomness, curve)
+			require.NoError(t, err)
 
-	tc2, err := snarktoken.ComputeTypeCommitment("USD", note.Randomness)
-	require.NoError(t, err)
+			tc2, err := snarktoken.ComputeTypeCommitment("USD", note.Randomness, curve)
+			require.NoError(t, err)
 
-	require.Equal(t, tc1.Bytes(), tc2.Bytes())
+			require.Equal(t, tc1, tc2)
+		})
+	}
 }
 
 func TestComputeTypeCommitment_DifferentTypesGiveDifferentCommitments(t *testing.T) {
-	note, err := snarktoken.NewRandomNote(100, "USD")
-	require.NoError(t, err)
+	for _, curve := range []ecc.ID{ecc.BLS12_381, ecc.BN254} {
+		t.Run(curve.String(), func(t *testing.T) {
+			note, err := snarktoken.NewRandomNote(100, "USD", curve)
+			require.NoError(t, err)
 
-	tcUSD, err := snarktoken.ComputeTypeCommitment("USD", note.Randomness)
-	require.NoError(t, err)
+			tcUSD, err := snarktoken.ComputeTypeCommitment("USD", note.Randomness, curve)
+			require.NoError(t, err)
 
-	tcEUR, err := snarktoken.ComputeTypeCommitment("EUR", note.Randomness)
-	require.NoError(t, err)
+			tcEUR, err := snarktoken.ComputeTypeCommitment("EUR", note.Randomness, curve)
+			require.NoError(t, err)
 
-	require.NotEqual(t, tcUSD.Bytes(), tcEUR.Bytes())
+			require.NotEqual(t, tcUSD, tcEUR)
+		})
+	}
 }
 
 // ── Note with issuer ──────────────────────────────────────────────────────────
 
 func TestNote_Serialize_WithIssuer_RoundTrip(t *testing.T) {
-	note, err := snarktoken.NewRandomNote(500, "USD")
+	note, err := snarktoken.NewRandomNote(500, "USD", ecc.BLS12_381)
 	require.NoError(t, err)
 	note.Issuer = []byte("issuer-abc")
 

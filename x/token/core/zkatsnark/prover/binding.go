@@ -6,17 +6,16 @@ SPDX-License-Identifier: Apache-2.0
 package prover
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/binary"
-	"fmt"
 	"hash"
-	"math/big"
 	"sort"
 
-	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
+	"github.com/consensys/gnark-crypto/ecc"
+	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 
-	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/crypto/jubjub"
-	"github.com/consensys/gnark-crypto/ecc/bls12-381/twistededwards"
+	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/crypto/edwards"
 )
 
 // domainSeparator prevents a binding signature produced by this scheme from
@@ -24,11 +23,13 @@ import (
 const domainSeparator = "zkatsnark-action-binding-v1"
 
 // ProofResult holds everything one input or output token contributes to an
-// action's binding signature.
+// action's binding signature. All fields are raw bytes to avoid locking
+// the type to a single curve.
 type ProofResult struct {
-	Commitment  fr.Element
-	ValueCommit twistededwards.PointAffine
-	RCV         fr.Element
+	Commitment       []byte // 32 bytes
+	ValueCommitmentX []byte // 32 bytes
+	ValueCommitmentY []byte // 32 bytes
+	RCV              []byte // 32 bytes
 }
 
 // sortedByCommitment returns results sorted lexicographically by
@@ -40,15 +41,7 @@ func sortedByCommitment(results []ProofResult) []ProofResult {
 	sorted := make([]ProofResult, len(results))
 	copy(sorted, results)
 	sort.Slice(sorted, func(i, j int) bool {
-		a := sorted[i].Commitment.Bytes()
-		b := sorted[j].Commitment.Bytes()
-		for k := range a {
-			if a[k] != b[k] {
-				return a[k] < b[k]
-			}
-		}
-
-		return false
+		return bytes.Compare(sorted[i].Commitment, sorted[j].Commitment) < 0
 	})
 
 	return sorted
@@ -73,34 +66,25 @@ func writeLengthPrefixed(h hash.Hash, b []byte) {
 // any divergence in sorting, encoding, or field ordering causes every
 // legitimate binding signature to fail verification with no useful
 // diagnostic.
-func ComputeActionHash(actionType string, typeCommitment fr.Element, inputs, outputs []ProofResult) []byte {
+func ComputeActionHash(actionType string, typeCommitment []byte, inputs, outputs []ProofResult) []byte {
 	h := sha256.New()
 	_, _ = h.Write([]byte(domainSeparator))
 	writeLengthPrefixed(h, []byte(actionType))
 
 	// TypeCommitment is a fixed-length field element (32 bytes), so no
 	// length prefix is needed — there is no concatenation ambiguity.
-	tcBytes := typeCommitment.Bytes()
-	_, _ = h.Write(tcBytes[:])
+	_, _ = h.Write(typeCommitment)
 
 	for _, r := range sortedByCommitment(inputs) {
-		cm := r.Commitment.Bytes()
-		cmx := r.ValueCommit.X.Bytes()
-		cmy := r.ValueCommit.Y.Bytes()
-
-		_, _ = h.Write(cm[:])
-		_, _ = h.Write(cmx[:])
-		_, _ = h.Write(cmy[:])
+		_, _ = h.Write(r.Commitment)
+		_, _ = h.Write(r.ValueCommitmentX)
+		_, _ = h.Write(r.ValueCommitmentY)
 	}
 
 	for _, r := range sortedByCommitment(outputs) {
-		cm := r.Commitment.Bytes()
-		cmx := r.ValueCommit.X.Bytes()
-		cmy := r.ValueCommit.Y.Bytes()
-
-		_, _ = h.Write(cm[:])
-		_, _ = h.Write(cmx[:])
-		_, _ = h.Write(cmy[:])
+		_, _ = h.Write(r.Commitment)
+		_, _ = h.Write(r.ValueCommitmentX)
+		_, _ = h.Write(r.ValueCommitmentY)
 	}
 
 	return h.Sum(nil)
@@ -121,73 +105,64 @@ func ComputeActionHash(actionType string, typeCommitment fr.Element, inputs, out
 // adding valueBalance·V restores the equality bvk = bsk·R so the
 // Schnorr verification succeeds.
 //
-// Exposed here because it is a pure function of public data that the
-// eventual validator will need to compute independently.
-func ComputeBVK(inputs, outputs []ProofResult, valueBalance uint64) twistededwards.PointAffine {
-	points := make([]twistededwards.PointAffine, 0, len(inputs)+len(outputs)+1)
-
-	for _, r := range inputs {
-		points = append(points, r.ValueCommit)
+// The embedded twisted Edwards curve is selected by the pairing curve curve.
+func ComputeBVK(curve ecc.ID, inputs, outputs []ProofResult, valueBalance uint64) (edwards.Coords, error) {
+	suite, err := edwards.ForCurve(curve)
+	if err != nil {
+		return edwards.Coords{}, errors.Wrapf(err, "prover: bvk")
 	}
 
-	for _, r := range outputs {
-		points = append(points, jubjub.NegatePoint(r.ValueCommit))
+	bvk, err := suite.BindingKey(toCoords(inputs), toCoords(outputs), valueBalance)
+	if err != nil {
+		return edwards.Coords{}, errors.Wrapf(err, "prover: bvk computation")
 	}
 
-	if valueBalance != 0 {
-		var vbScalar fr.Element
-		vbScalar.SetUint64(valueBalance)
-		vbBig := vbScalar.BigInt(new(big.Int))
+	return bvk, nil
+}
 
-		var vbPoint twistededwards.PointAffine
-		vbPoint.ScalarMultiplication(&jubjub.V, vbBig)
-		points = append(points, vbPoint)
+func toCoords(rs []ProofResult) []edwards.Coords {
+	cs := make([]edwards.Coords, len(rs))
+	for i, r := range rs {
+		cs[i] = edwards.Coords{X: r.ValueCommitmentX, Y: r.ValueCommitmentY}
 	}
 
-	return jubjub.ValueCommitSum(points)
+	return cs
 }
 
 // ComputeBindingSignature computes the per-action binding signature proving
-// value conservation: Σvalue_in == Σvalue_out.
+// value conservation (Σvalue_in == Σvalue_out) over the twisted Edwards curve
+// embedded in the given pairing curve, and returns it serialized.
 //
 // bsk = Σrcv_in − Σrcv_out is the private signing key, computable only
 // because the caller collected every RCV used across this action's proofs.
-// Signing uses jubjub.R as the group base point, matching the ZCash
+// Signing uses the curve's R generator as the base point, matching the ZCash
 // Sapling convention: bvk = Σcv_in − Σcv_out reduces to exactly bsk·R when
 // values are conserved, and to something else entirely (unreachable by the
-// prover, since nobody knows log_R(V)) when they are not
+// prover, since nobody knows log_R(V)) when they are not.
 //
 // For issuance (empty inputs), bsk becomes −Σrcv_out. There is no
 // conservation requirement for issuance, the signature instead attests
 // that the published output value commitments are correctly formed.
-func ComputeBindingSignature(actionType string, typeCommitment fr.Element, inputs, outputs []ProofResult) (jubjub.Signature, error) {
-	// bsk must be computed modulo the Jubjub subgroup order, NOT the
-	// BLS12-381 scalar field modulus. fr.Element.Add/Sub reduce mod r
-	// (the BLS12-381 scalar field), but the Schnorr signature scheme
-	// operates over the Jubjub curve whose subgroup order is different.
-	params := twistededwards.GetEdwardsCurve()
-	order := &params.Order
-
-	bskBig := new(big.Int)
-
-	for _, r := range inputs {
-		bskBig.Add(bskBig, r.RCV.BigInt(new(big.Int)))
+func ComputeBindingSignature(curve ecc.ID, actionType string, typeCommitment []byte, inputs, outputs []ProofResult) ([]byte, error) {
+	suite, err := edwards.ForCurve(curve)
+	if err != nil {
+		return nil, errors.Wrapf(err, "prover: binding signature")
 	}
 
-	for _, r := range outputs {
-		bskBig.Sub(bskBig, r.RCV.BigInt(new(big.Int)))
+	rcvs := func(rs []ProofResult) [][]byte {
+		out := make([][]byte, len(rs))
+		for i, r := range rs {
+			out[i] = r.RCV
+		}
+
+		return out
 	}
-
-	bskBig.Mod(bskBig, order)
-
-	var bsk fr.Element
-	bsk.SetBigInt(bskBig)
 
 	actionHash := ComputeActionHash(actionType, typeCommitment, inputs, outputs)
 
-	sig, err := jubjub.Sign(bsk, actionHash, jubjub.R)
+	sig, err := suite.SignBinding(actionHash, rcvs(inputs), rcvs(outputs))
 	if err != nil {
-		return jubjub.Signature{}, fmt.Errorf("prover: binding signature generation failed: %w", err)
+		return nil, errors.Wrapf(err, "prover: binding signature generation failed")
 	}
 
 	return sig, nil

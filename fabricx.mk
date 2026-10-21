@@ -121,6 +121,26 @@ integration-tests-fabricx-dlog:
 integration-tests-fabricx-zkatsnark-t1:
 	make integration-tests-fabricx-zkatsnark TEST_FILTER="T1"
 
+.PHONY: integration-tests-fabricx-zkatsnark-t2
+integration-tests-fabricx-zkatsnark-t2:
+	make integration-tests-fabricx-zkatsnark TEST_FILTER="T2"
+
+.PHONY: integration-tests-fabricx-zkatsnark-t2.1
+integration-tests-fabricx-zkatsnark-t2.1:
+	make integration-tests-fabricx-zkatsnark TEST_FILTER="T2.1"
+
+.PHONY: integration-tests-fabricx-zkatsnark-t3
+integration-tests-fabricx-zkatsnark-t3:
+	make integration-tests-fabricx-zkatsnark TEST_FILTER="T3"
+
+.PHONY: integration-tests-fabricx-zkatsnark-t4
+integration-tests-fabricx-zkatsnark-t4:
+	make integration-tests-fabricx-zkatsnark TEST_FILTER="T4"
+
+.PHONY: integration-tests-fabricx-zkatsnark-t5
+integration-tests-fabricx-zkatsnark-t5:
+	make integration-tests-fabricx-zkatsnark TEST_FILTER="T5"
+
 .PHONY: integration-tests-fabricx-zkatsnark
 integration-tests-fabricx-zkatsnark:
 	cd ./integration/token/fungible/zkatsnark; export FAB_BINS=$(FAB_BINS); ginkgo $(GINKGO_TEST_OPTS) --label-filter="$(TEST_FILTER)" .

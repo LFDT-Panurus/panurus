@@ -6,7 +6,8 @@ SPDX-License-Identifier: Apache-2.0
 package validator
 
 import (
-	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
+	"math/big"
+
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 )
 
@@ -17,15 +18,15 @@ import (
 //
 // actionTC is the TypeCommitment from the action envelope (TransferAction or
 // IssueAction). Each individual input/output TypeCommitment must match it.
-func checkTypeCommitmentHomogeneity(actionTC fr.Element, decodedInputs []decodedSpend, decodedOutputs []decodedOutput) error {
+func checkTypeCommitmentHomogeneity(actionTC *big.Int, decodedInputs []decodedSpend, decodedOutputs []decodedOutput) error {
 	for i, d := range decodedInputs {
-		if !d.TypeCommitment.Equal(&actionTC) {
+		if d.TypeCommitment.Cmp(actionTC) != 0 {
 			return errors.Wrapf(ErrTypeMismatch, "input %d: TypeCommitment does not match action's TypeCommitment", i)
 		}
 	}
 
 	for j, d := range decodedOutputs {
-		if !d.TypeCommitment.Equal(&actionTC) {
+		if d.TypeCommitment.Cmp(actionTC) != 0 {
 			return errors.Wrapf(ErrTypeMismatch, "output %d: TypeCommitment does not match action's TypeCommitment", j)
 		}
 	}

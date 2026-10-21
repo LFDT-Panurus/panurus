@@ -88,9 +88,11 @@ token/core/zkatsnark/
 ├── crypto/
 │   ├── poseidon/
 │   │   └── hash.go            # Native Go Poseidon (the curve specified in public parameters, BLS12-381 by default)
-│   ├── jubjub/
+│   ├── edwards/               # Generic over any gnark-crypto twisted Edwards curve
+│   │   ├── curve.go           # Curve[F, PF, P], Group adapter, V/R generator derivation
 │   │   ├── commitment.go      # ValueCommit: cv = v·V + rcv·R
-│   │   └── schnorr.go         # Jubjub Schnorr sign/verify
+│   │   ├── schnorr.go         # Schnorr sign/verify, signature (de)serialization
+│   │   └── curves.go          # Jubjub() (BLS12-381) and BabyJubjub() (BN254) instances
 │   └── params/
 │       └── params.go          # PublicParams: V, R generator points + vk/pk management
 ├── circuit/
@@ -195,7 +197,12 @@ Since `V` generates a prime-order Jubjub subgroup, this holds iff `Σv_in = Σv_
 
 **Implementation**:
 ```go
-// token/core/zkatsnark/crypto/jubjub/commitment.go
+// token/core/zkatsnark/crypto/edwards/commitment.go
+//
+// The package is generic over the curve: edwards.Jubjub() and edwards.BabyJubjub()
+// return ready-made instances; another gnark-crypto twisted Edwards curve is added
+// by writing a Group adapter (see curves.go) and calling edwards.New with its seeds.
+// The snippet below is a simplified illustration of the construction.
 
 type PublicParams struct {
     V twistededwards.PointAffine  // Value generator

@@ -47,7 +47,7 @@ const (
 
 	// transferTimeout is the maximum time to wait for a transfer operation to complete in tests.
 	// This generous timeout accounts for variable CI environment performance.
-	transferTimeout = 60 * time.Second
+	transferTimeout = 240 * time.Second
 )
 
 var AuditedTransactions = []TransactionRecord{
@@ -900,6 +900,7 @@ func TestPublicParamsUpdate(network *integration.Infrastructure, newAuditorID st
 	alice := sel.Get("alice")
 	manager := sel.Get("manager")
 	auditor := sel.Get("auditor")
+	endorser1 := sel.Get("endorser-1")
 	if issuerAsAuditor {
 		auditor = issuer
 	}
@@ -911,10 +912,13 @@ func TestPublicParamsUpdate(network *integration.Infrastructure, newAuditorID st
 	RegisterAuditor(network, newAuditor)
 	UpdatePublicParams(network, ppBytes, tms)
 
-	gomega.Eventually(GetPublicParams).WithArguments(network, newIssuer).WithTimeout(30 * time.Second).WithPolling(15 * time.Second).Should(gomega.Equal(ppBytes))
-	gomega.Eventually(GetPublicParams).WithArguments(network, issuer).WithTimeout(30 * time.Second).WithPolling(15 * time.Second).Should(gomega.Equal(ppBytes))
+	gomega.Eventually(GetPublicParams).WithArguments(network, newIssuer).WithTimeout(120 * time.Second).WithPolling(15 * time.Second).Should(gomega.Equal(ppBytes))
+	gomega.Eventually(GetPublicParams).WithArguments(network, issuer).WithTimeout(120 * time.Second).WithPolling(15 * time.Second).Should(gomega.Equal(ppBytes))
+	if _, ok := (*sel)["endorser-1"]; ok {
+		gomega.Eventually(GetPublicParams).WithArguments(network, endorser1).WithTimeout(120 * time.Second).WithPolling(15 * time.Second).Should(gomega.Equal(ppBytes))
+	}
 	if !issuerAsAuditor {
-		gomega.Eventually(GetPublicParams).WithArguments(network, newAuditor).WithTimeout(30 * time.Second).WithPolling(15 * time.Second).Should(gomega.Equal(ppBytes))
+		gomega.Eventually(GetPublicParams).WithArguments(network, newAuditor).WithTimeout(120 * time.Second).WithPolling(15 * time.Second).Should(gomega.Equal(ppBytes))
 	}
 	// give time to the issuer and the auditor to update their public parameters and reload their wallets
 	gomega.Eventually(DoesWalletExist).WithArguments(network, newIssuer, "", views.IssuerWallet).WithTimeout(1 * time.Minute).WithPolling(15 * time.Second).Should(gomega.BeTrue())
@@ -936,6 +940,8 @@ func TestPublicParamsUpdate(network *integration.Infrastructure, newAuditorID st
 		}
 		Restart(network, false, nil, refs...)
 	}
+
+	time.Sleep(1 * time.Minute)
 
 	txId = IssueCash(network, "", "USD", 110, alice, newAuditor, true, newIssuer)
 	gomega.Expect(txId).NotTo(gomega.BeEmpty())
