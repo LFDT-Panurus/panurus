@@ -14,7 +14,7 @@ import (
 	"github.com/LFDT-Panurus/panurus/token/services/network/fabricx"
 	"github.com/LFDT-Panurus/panurus/token/services/network/fabricx/pp"
 	"github.com/LFDT-Panurus/panurus/token/services/network/fabricx/tms"
-	zkatsnark "github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/driver"
+	zkatsnark "github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/driver"
 	"github.com/hyperledger-labs/fabric-smart-client/integration/nwo/fsc/support/libp2p"
 	common "github.com/hyperledger-labs/fabric-smart-client/platform/common/sdk/dig"
 	digutils "github.com/hyperledger-labs/fabric-smart-client/platform/common/utils/dig"
