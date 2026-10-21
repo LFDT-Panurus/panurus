@@ -7,45 +7,34 @@ package validator_test
 
 import (
 	"context"
-	"crypto/ecdsa"
-	"crypto/elliptic"
 	cryptorand "crypto/rand"
 	"crypto/sha256"
-	x509std "crypto/x509"
-	"crypto/x509/pkix"
 	"encoding/json"
-	"encoding/pem"
 	"math/big"
 	"strconv"
 	"sync"
 	"testing"
-	"time"
 
 	mathlib "github.com/IBM/mathlib"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	"github.com/stretchr/testify/require"
-	"go.opentelemetry.io/otel/trace/noop"
 
 	"github.com/LFDT-Panurus/panurus/token/core/common"
 	"github.com/LFDT-Panurus/panurus/token/driver"
 	drivermock "github.com/LFDT-Panurus/panurus/token/driver/mock"
 	"github.com/LFDT-Panurus/panurus/token/driver/protos-go/v1/request"
 	benchmark2 "github.com/LFDT-Panurus/panurus/token/services/benchmark"
-	"github.com/LFDT-Panurus/panurus/token/services/identity"
-	"github.com/LFDT-Panurus/panurus/token/services/identity/x509"
-	x509crypto "github.com/LFDT-Panurus/panurus/token/services/identity/x509/crypto"
-	"github.com/LFDT-Panurus/panurus/token/services/logging"
+	"github.com/LFDT-Panurus/panurus/token/services/identity/idemixnym"
 	token2 "github.com/LFDT-Panurus/panurus/token/token"
 
 	"github.com/consensys/gnark-crypto/ecc"
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
 
-	zkatsnark "github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1"
 	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/crypto/backend"
-	snarkdriver "github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/driver"
 	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/pp"
 	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/prover"
 	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/setup"
+	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/testutils"
 	snarktoken "github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/token"
 	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/validator"
 )
@@ -1346,7 +1335,7 @@ func TestIssueSignatureValidate_IssuerNotAuthorized(t *testing.T) {
 
 		err = validator.IssueSignatureValidate(t.Context(), ctx)
 		require.Error(t, err)
-		require.Contains(t, err.Error(), "issuer not authorized")
+		require.Contains(t, err.Error(), "issuer is not authorized")
 	})
 }
 
@@ -1370,318 +1359,139 @@ func TestValidateMigration_NotConfiguredWithoutSetup(t *testing.T) {
 
 // ── Benchmarks ───────────────────────────────────────────────────────────────
 //
-// These mirror the pattern in token/core/fabtoken/v1/validator/validator_test.go:
-// BenchmarkValidatorTransfer / TestParallelBenchmarkValidatorTransfer build a
-// Validator once per benchmark case and repeatedly call
-// VerifyTokenRequestFromRaw against raw wire-format bytes, rather than going
-// through the TransferService / Orchestrator on every iteration.
+// These mirror token/core/zkatdlog/nogh/v1/validator/validator_test.go: the
+// fixtures (real issue/transfer/redeem/swap token requests, signed and
+// endorsed through the production services) come from the shared testutils
+// package, and the benchmarks repeatedly call VerifyTokenRequestFromRaw on
+// them.
+
+// idemixTestdataPath points at the idemix MSP material shared with
+// zkatdlog/nogh/v1 (generic idemix fixtures, nothing zkatdlog-specific).
+const idemixTestdataPath = "../../../../../../../token/core/zkatdlog/nogh/v1/testdata"
+
+// testutilsConfigurations builds the testutils setup configurations for the
+// curves selected by the benchmark cases (shared -curves flag) and the proof
+// system selected via -proof_system (default groth16).
+func testutilsConfigurations(cases []benchmark2.TestCase) (*testutils.SetupConfigurations, error) {
+	proofSystem, err := benchmarkProofSystem()
+	if err != nil {
+		return nil, err
+	}
+
+	var curves []ecc.ID
+	seen := map[ecc.ID]struct{}{}
+	for _, tc := range cases {
+		curve, err := curveFromCaseID(tc.BenchmarkCase.CurveID)
+		if err != nil {
+			return nil, err
+		}
+		if _, ok := seen[curve]; ok {
+			continue
+		}
+		seen[curve] = struct{}{}
+		curves = append(curves, curve)
+	}
+
+	return testutils.NewSetupConfigurationsWithParams(testutils.SetupParams{
+		IdemixTestdataPath: idemixTestdataPath,
+		CurveIDs:           curves,
+		OwnerIdentityType:  idemixnym.IdentityType,
+		ProofSystem:        proofSystem,
+	})
+}
+
+// newTestutilsEnv builds the testutils.Env matching the given benchmark case.
+func newTestutilsEnv(configurations *testutils.SetupConfigurations, c *benchmark2.Case) (*testutils.Env, error) {
+	proofSystem, err := benchmarkProofSystem()
+	if err != nil {
+		return nil, err
+	}
+	curve, err := curveFromCaseID(c.CurveID)
+	if err != nil {
+		return nil, err
+	}
+	configuration, err := configurations.GetSetupConfigurationFor(curve, proofSystem)
+	if err != nil {
+		return nil, err
+	}
+
+	return testutils.NewEnv(configuration)
+}
 
 // BenchmarkValidatorTransfer benchmarks VerifyTokenRequestFromRaw on a
 // zkatsnark transfer token request, for every configured benchmark case.
-// Each case's curve comes from benchmarkCase.CurveID (driven by the shared
-// -curves flag); the proof system comes from the -proof_system flag
-// (default groth16).
 func BenchmarkValidatorTransfer(b *testing.B) {
 	_, _, cases, err := benchmark2.GenerateCasesWithDefaults()
 	require.NoError(b, err)
+	configurations, err := testutilsConfigurations(cases)
+	require.NoError(b, err)
 
-	for _, tc := range cases {
-		b.Run(tc.Name, func(b *testing.B) {
-			cfg, err := benchmarkConfigFor(tc.BenchmarkCase)
-			require.NoError(b, err)
-			f := fixtureFor(b, cfg)
-
-			n := int(benchmark2.SetupSamples()) // #nosec G115
-			if n == 0 {
-				n = min(b.N, 1000)
-			}
-			env, err := newBenchmarkValidatorEnv(b, n, tc.BenchmarkCase, f)
-			require.NoError(b, err)
-
-			b.ResetTimer()
-			i := 0
-			for b.Loop() {
-				e := env.Envs[i%len(env.Envs)]
-				_, _, err := e.v.VerifyTokenRequestFromRaw(
-					b.Context(),
-					e.getState,
-					"an_anchor",
-					e.raw,
-				)
-				require.NoError(b, err)
-				i++
-			}
-		})
-	}
-}
-
-// TestParallelBenchmarkValidatorTransfer runs the validator transfer
-// benchmark in parallel. Each case's curve comes from
-// benchmarkCase.CurveID (driven by the shared -curves flag); the proof
-// system comes from the -proof_system flag (default groth16).
-func TestParallelBenchmarkValidatorTransfer(t *testing.T) {
-	_, _, cases, err := benchmark2.GenerateCasesWithDefaults()
-	require.NoError(t, err)
-
-	test := benchmark2.NewTest[*benchmarkValidatorEnv](cases)
-	test.RunBenchmark(t,
-		func(c *benchmark2.Case) (*benchmarkValidatorEnv, error) {
-			cfg, err := benchmarkConfigFor(c)
-			if err != nil {
-				return nil, err
-			}
-			f := fixtureFor(t, cfg)
-
-			return newBenchmarkValidatorEnv(t, 1, c, f)
+	test := benchmark2.NewTest[*testutils.Env](cases)
+	test.GoBenchmark(b,
+		func(c *benchmark2.Case) (*testutils.Env, error) {
+			return newTestutilsEnv(configurations, c)
 		},
-		func(ctx context.Context, env *benchmarkValidatorEnv) error {
-			_, _, err := env.Envs[0].v.VerifyTokenRequestFromRaw(
-				ctx,
-				env.Envs[0].getState,
-				"an_anchor",
-				env.Envs[0].raw,
-			)
+		func(ctx context.Context, env *testutils.Env) error {
+			_, _, err := env.Engine.VerifyTokenRequestFromRaw(ctx, env.Ledger.GetState, driver.TokenRequestAnchor(env.TRWithTransferTxID), env.TRWithTransferRaw)
 
 			return err
 		},
 	)
 }
 
-type benchmarkValidatorSingleEnv struct {
-	v        *validator.Validator
-	raw      []byte
-	getState driver.GetStateFnc
-}
+// TestParallelBenchmarkValidatorTransfer runs the validator transfer
+// benchmark in parallel.
+func TestParallelBenchmarkValidatorTransfer(t *testing.T) {
+	_, _, cases, err := benchmark2.GenerateCasesWithDefaults()
+	require.NoError(t, err)
+	configurations, err := testutilsConfigurations(cases)
+	require.NoError(t, err)
 
-type benchmarkValidatorEnv struct {
-	Envs []*benchmarkValidatorSingleEnv
-}
-
-// newBenchmarkValidatorEnv builds n independent transfer token requests
-// (each with its own freshly proven TransferAction) against the shared
-// fixture's Validator.
-func newBenchmarkValidatorEnv(tb testing.TB, n int, benchmarkCase *benchmark2.Case, f *e2eFixture) (*benchmarkValidatorEnv, error) {
-	tb.Helper()
-	envs := make([]*benchmarkValidatorSingleEnv, n)
-	for i := range n {
-		env, err := newValidatorBenchmarkSingleEnv(tb, benchmarkCase, f)
-		if err != nil {
-			return nil, err
-		}
-		envs[i] = env
-	}
-
-	return &benchmarkValidatorEnv{Envs: envs}, nil
-}
-
-// newValidatorBenchmarkSingleEnv builds one transfer token request using the
-// REAL production stack: snarkdriver.NewDeserializer for identity
-// verification, a real x509 owner identity/signer producing a genuine ECDSA
-// signature, and zkatsnark.TransferService.Transfer (rather than calling
-// f.orch.BuildTransferAction directly) to generate the TransferAction. This
-// exercises the same code path a live node runs, including real signature
-// verification inside TransferSignatureValidate.
-func newValidatorBenchmarkSingleEnv(tb testing.TB, benchmarkCase *benchmark2.Case, f *e2eFixture) (*benchmarkValidatorSingleEnv, error) {
-	tb.Helper()
-
-	certPEM, sk, err := generateBenchmarkCert()
-	if err != nil {
-		return nil, err
-	}
-	owner, err := identity.WrapWithType(x509.IdentityType, certPEM)
-	if err != nil {
-		return nil, err
-	}
-	signer := x509crypto.NewEcdsaSigner(sk)
-
-	numInputs := benchmarkCase.NumInputs
-	if numInputs == 0 {
-		numInputs = 1
-	}
-	numOutputs := benchmarkCase.NumOutputs
-	if numOutputs == 0 {
-		numOutputs = 1
-	}
-
-	ids := make([]*token2.ID, numInputs)
-	loadedTokens := make([]common.LoadedToken[[]byte, []byte], numInputs)
-	ledger := make(map[token2.ID][]byte, numInputs)
-	for i := range numInputs {
-		ids[i] = &token2.ID{TxId: strconv.Itoa(i), Index: 0}
-
-		note, err := snarktoken.NewRandomNote(100, "ABC", f.cfg.curve)
-		if err != nil {
-			return nil, err
-		}
-		noteBytes, err := note.Serialize()
-		if err != nil {
-			return nil, err
-		}
-
-		cm, err := note.Commitment(f.cfg.curve)
-		if err != nil {
-			return nil, err
-		}
-		outputDesc := &snarktoken.OutputDescription{
-			CommitmentOut: cm,
-			Recipient:     owner,
-		}
-		rawOutputDesc, err := outputDesc.Serialize()
-		if err != nil {
-			return nil, err
-		}
-		ledger[*ids[i]] = rawOutputDesc
-
-		loadedTokens[i] = common.LoadedToken[[]byte, []byte]{
-			Token:    rawOutputDesc,
-			Metadata: noteBytes,
-		}
-	}
-
-	outputTokens := make([]*token2.Token, numOutputs)
-	for i := range numOutputs {
-		outputTokens[i] = &token2.Token{
-			Owner:    owner,
-			Type:     "ABC",
-			Quantity: token2.NewQuantityFromUInt64(100).Hex(),
-		}
-	}
-
-	// DefaultPublicParams seeds a placeholder, non-parseable idemix issuer
-	// public key ("dummy-idemix-pk"): fine for Groth16/Plonk proof
-	// verification, which never touches it, but snarkdriver.NewDeserializer
-	// eagerly builds an idemix deserializer for every configured key and
-	// fails on it. This benchmark only exercises x509 owner identities, so
-	// strip it before constructing the real Deserializer.
-	ppForDeserializer := *f.pp
-	ppForDeserializer.IdemixIssuerPublicKeys = nil
-	des, err := snarkdriver.NewDeserializer(&ppForDeserializer)
-	if err != nil {
-		return nil, err
-	}
-
-	ws := &drivermock.WalletService{}
-	ws.GetAuditInfoReturns([]byte("audit"), nil)
-
-	tl := &validatorBenchTokenLoader{tokens: loadedTokens}
-
-	ppm, err := common.NewPublicParamsManagerFromParams(f.pp)
-	if err != nil {
-		return nil, err
-	}
-
-	ts := zkatsnark.NewTransferService(
-		logging.MustGetLogger(),
-		ppm,
-		ws,
-		tl,
-		des,
-		noop.NewTracerProvider(),
-		nil,
-		nil,
-		f.orch,
-	)
-
-	const anchor = driver.TokenRequestAnchor("an_anchor")
-	transferAction, _, err := ts.Transfer(tb.Context(), anchor, nil, ids, outputTokens, nil)
-	if err != nil {
-		return nil, err
-	}
-
-	action, ok := transferAction.(*snarktoken.TransferAction)
-	if !ok {
-		return nil, errors.New("expected *snarktoken.TransferAction")
-	}
-
-	rawTA, err := action.Serialize()
-	if err != nil {
-		return nil, err
-	}
-
-	tr := &driver.TokenRequest{
-		Version: driver.ProtocolV1,
-		Actions: []*driver.TypedAction{
-			{Type: request.ActionType_ACTION_TYPE_TRANSFER, Raw: rawTA},
+	test := benchmark2.NewTest[*testutils.Env](cases)
+	test.RunBenchmark(t,
+		func(c *benchmark2.Case) (*testutils.Env, error) {
+			return newTestutilsEnv(configurations, c)
 		},
-	}
+		func(ctx context.Context, env *testutils.Env) error {
+			_, _, err := env.Engine.VerifyTokenRequestFromRaw(ctx, env.Ledger.GetState, driver.TokenRequestAnchor(env.TRWithTransferTxID), env.TRWithTransferRaw)
 
-	toSign, err := tr.MarshalToMessageToSign([]byte(anchor))
-	if err != nil {
-		return nil, err
-	}
-	sigma, err := signer.Sign(toSign)
-	if err != nil {
-		return nil, err
-	}
-	for range numInputs {
-		tr.Signatures = append(tr.Signatures, &driver.RequestSignature{
-			Action: &driver.ActionSignature{Signature: sigma},
+			return err
+		},
+	)
+}
+
+// TestValidator re-validates every positive testutils fixture through the
+// real validator stack, for each supported curve.
+func TestValidator(t *testing.T) {
+	for _, curve := range []ecc.ID{ecc.BN254, ecc.BLS12_381} {
+		t.Run(curve.String(), func(t *testing.T) {
+			configurations, err := testutils.NewSetupConfigurationsWithParams(testutils.SetupParams{
+				IdemixTestdataPath: idemixTestdataPath,
+				CurveIDs:           []ecc.ID{curve},
+				OwnerIdentityType:  idemixnym.IdentityType,
+			})
+			require.NoError(t, err)
+			configuration, err := configurations.GetSetupConfiguration(curve)
+			require.NoError(t, err)
+			env, err := testutils.NewEnv(configuration)
+			require.NoError(t, err)
+
+			for name, fixture := range map[string]struct {
+				txID string
+				raw  []byte
+				n    int
+			}{
+				"issue":    {env.TRWithIssueTxID, env.TRWithIssueRaw, 1},
+				"transfer": {env.TRWithTransferTxID, env.TRWithTransferRaw, 1},
+				"redeem":   {env.TRWithRedeemTxID, env.TRWithRedeemRaw, 1},
+				"swap":     {env.TRWithSwapTxID, env.TRWithSwapRaw, 2},
+			} {
+				t.Run(name, func(t *testing.T) {
+					actions, _, err := env.Engine.VerifyTokenRequestFromRaw(t.Context(), env.Ledger.GetState, driver.TokenRequestAnchor(fixture.txID), fixture.raw)
+					require.NoError(t, err)
+					require.Len(t, actions, fixture.n)
+				})
+			}
 		})
 	}
-
-	raw, err := tr.Bytes()
-	if err != nil {
-		return nil, err
-	}
-
-	v, err := validator.NewValidator(f.pp, des, driver.DefaultResourceLimits())
-	if err != nil {
-		return nil, err
-	}
-
-	getState := func(id token2.ID) ([]byte, error) {
-		raw, ok := ledger[id]
-		if !ok {
-			return nil, errors.Errorf("no such token [%s]", id)
-		}
-
-		return raw, nil
-	}
-
-	return &benchmarkValidatorSingleEnv{v: v, raw: raw, getState: getState}, nil
-}
-
-// validatorBenchTokenLoader is a trivial in-memory TokenLoader backing
-// newValidatorBenchmarkSingleEnv's call into zkatsnark.TransferService.Transfer.
-type validatorBenchTokenLoader struct {
-	tokens []common.LoadedToken[[]byte, []byte]
-}
-
-func (t *validatorBenchTokenLoader) LoadTokens(_ context.Context, ids []*token2.ID) ([]common.LoadedToken[[]byte, []byte], error) {
-	if len(ids) != len(t.tokens) {
-		return nil, errors.Errorf("expected [%d] token ids, got [%d]", len(t.tokens), len(ids))
-	}
-
-	return t.tokens, nil
-}
-
-// generateBenchmarkCert generates an ephemeral self-signed ECDSA certificate
-// usable as a real x509 owner identity, mirroring
-// x509/crypto.GenerateTestCert without requiring a *testing.T (needed here
-// since this helper is shared by both *testing.T and *testing.B callers).
-func generateBenchmarkCert() ([]byte, *ecdsa.PrivateKey, error) {
-	sk, err := ecdsa.GenerateKey(elliptic.P256(), cryptorand.Reader)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	template := x509std.Certificate{
-		SerialNumber: big.NewInt(1),
-		Subject:      pkix.Name{CommonName: "validator-benchmark"},
-		NotBefore:    time.Now().Add(-time.Hour),
-		NotAfter:     time.Now().Add(time.Hour),
-		KeyUsage:     x509std.KeyUsageKeyEncipherment | x509std.KeyUsageDigitalSignature,
-	}
-
-	derBytes, err := x509std.CreateCertificate(cryptorand.Reader, &template, &template, &sk.PublicKey, sk)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: derBytes})
-	if certPEM == nil {
-		return nil, nil, errors.New("failed to encode certificate to PEM")
-	}
-
-	return certPEM, sk, nil
 }

@@ -355,6 +355,14 @@ type OwnerIdentity struct {
 	Signer    driver.SigningIdentity
 }
 
+// LoadOwnerIdentityByType is the exported form of loadOwnerIdentityByType, for
+// callers outside this package (e.g. other drivers' testutils) that need to
+// load an idemix(nym) owner identity from the same testdata without
+// duplicating the idemix key-manager plumbing below.
+func LoadOwnerIdentityByType(ctx context.Context, dir string, curveID math.CurveID, idType identity.Type) (*OwnerIdentity, error) {
+	return loadOwnerIdentityByType(ctx, dir, curveID, idType)
+}
+
 // loadOwnerIdentityByType loads an owner identity based on the specified identity type.
 // It delegates to either loadIdemixOwnerIdentity or loadIdemixNymOwnerIdentity.
 func loadOwnerIdentityByType(ctx context.Context, dir string, curveID math.CurveID, idType identity.Type) (*OwnerIdentity, error) {
