@@ -40,7 +40,7 @@ import (
 	"github.com/LFDT-Panurus/panurus/token/services/storage/ttxdb"
 	"github.com/LFDT-Panurus/panurus/token/services/ttx"
 	"github.com/LFDT-Panurus/panurus/token/token"
-	zkatsnarkpp "github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/pp"
+	zkatsnarkpp "github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/pp"
 	"github.com/hyperledger-labs/fabric-smart-client/integration"
 	"github.com/hyperledger-labs/fabric-smart-client/integration/nwo/common"
 	topology2 "github.com/hyperledger-labs/fabric-smart-client/integration/nwo/fabric/topology"
