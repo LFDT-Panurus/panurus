@@ -7,11 +7,10 @@ token:
       namespace: ns1
       services:
         network:
-          fabric:
-            recovery:
-              enabled: true
-              ttl: 45s
-              # advisoryLockID was removed when the lock id became per-TMS. An operator
-              # upgrading from an older release still has it in their config, so loading
-              # must ignore it rather than fail.
-              advisoryLockID: 8389190333894887286
+          recovery:
+            enabled: true
+            ttl: 45s
+            # advisoryLockID was removed when the lock id became per-TMS. An operator
+            # upgrading from an older release still has it in their config, so loading
+            # must ignore it rather than fail.
+            advisoryLockID: 8389190333894887286

@@ -213,8 +213,10 @@ Two consequences worth knowing before you debug one of them:
   others.
 
 Recovery for transactions left `Pending` across a restart is not configured under `evm` at all: settings
-load from `services.network.fabric.recovery`, the same key the Fabric and FabricX drivers read, with the
-SDK's defaults (enabled, 30s TTL, 5s scan interval) applying when a TMS sets none. See "Transaction recovery
+load from `services.network.recovery`, the shared, network-agnostic key every driver reads (the Fabric and
+FabricX drivers read the same key), with the SDK's defaults (enabled, 30s TTL, 5s scan interval) applying
+when a TMS sets none. This key was formerly `services.network.fabric.recovery`, which is no longer read.
+See "Transaction recovery
 across restarts" in the [implementation guide](./network-ethereum.md#transaction-recovery-across-restarts)
 for what it does.
 

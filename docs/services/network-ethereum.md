@@ -891,8 +891,10 @@ The driver therefore starts the SDK's recovery manager over both the transaction
 when a namespace connects. It periodically re-asks the chain about transactions that have been `Pending`
 longer than the configured TTL, using the same anchor lookup a fresh listener would have performed.
 
-- Settings load from `services.network.fabric.recovery` — the same key the Fabric and FabricX drivers use,
-  not an EVM-specific one; a TMS with none uses the SDK defaults (enabled, 30s TTL, 5s scan interval).
+- Settings load from `services.network.recovery` — the shared, network-agnostic key every driver reads
+  (Fabric and FabricX read the same one), not an EVM-specific one; a TMS with none uses the SDK defaults
+  (enabled, 30s TTL, 5s scan interval). This key was formerly `services.network.fabric.recovery`, which
+  is no longer read.
 - A failure to start recovery is logged, not fatal — the node still works, it just cannot rescue
   transactions left over from a previous run.
 

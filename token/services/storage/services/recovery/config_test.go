@@ -22,7 +22,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// An operator upgrading from a release that still had services.network.fabric.recovery.advisoryLockID
+// An operator upgrading from a release that still had services.network.recovery.advisoryLockID
 // keeps that key in their config. The lock id is now derived per TMS and the field is gone, so the
 // key must simply be ignored rather than failing the load.
 func TestLoadConfig_IgnoresStaleAdvisoryLockID(t *testing.T) {

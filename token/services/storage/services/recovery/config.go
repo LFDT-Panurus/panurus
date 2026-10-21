@@ -15,8 +15,11 @@ import (
 )
 
 const (
-	// ConfigKeyRecovery is the configuration key for recovery settings
-	ConfigKeyRecovery = "services.network.fabric.recovery"
+	// ConfigKeyRecovery is the configuration key for recovery settings. The
+	// recovery manager is generic storage-service infrastructure shared by
+	// every network driver, so the key is network-agnostic rather than
+	// namespaced under any one driver.
+	ConfigKeyRecovery = "services.network.recovery"
 
 	defaultStuckTransactionAlertThreshold = 5
 )
