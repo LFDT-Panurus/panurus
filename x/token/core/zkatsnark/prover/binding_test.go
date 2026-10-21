@@ -8,20 +8,30 @@ package prover_test
 import (
 	"testing"
 
+	"github.com/consensys/gnark-crypto/ecc"
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
 	"github.com/stretchr/testify/require"
 
-	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/crypto/jubjub"
+	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/crypto/edwards"
 	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/prover"
 	snarktoken "github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/token"
 )
 
+func verifyJubjub(bvk edwards.Coords, msg, sig []byte) error {
+	suite, err := edwards.ForCurve(ecc.BLS12_381)
+	if err != nil {
+		return err
+	}
+
+	return suite.VerifyBinding(bvk, msg, sig)
+}
+
 func mustProofResult(t *testing.T, value uint64) prover.ProofResult {
 	t.Helper()
-	rcv, err := jubjub.RandomJubjubScalar()
+	rcv, err := edwards.Jubjub().RandomScalar()
 	require.NoError(t, err)
 
-	cv, err := jubjub.ValueCommit(value, rcv)
+	cv, err := edwards.Jubjub().ValueCommit(value, rcv)
 	require.NoError(t, err)
 
 	// Commitment field is irrelevant to binding-signature math directly,
@@ -30,16 +40,27 @@ func mustProofResult(t *testing.T, value uint64) prover.ProofResult {
 	_, err = cm.SetRandom()
 	require.NoError(t, err)
 
-	return prover.ProofResult{Commitment: cm, ValueCommit: cv, RCV: rcv}
+	cmBytes := cm.Bytes()
+	cvx := cv.X.Bytes()
+	cvy := cv.Y.Bytes()
+	rcvBytes := rcv.Bytes()
+
+	return prover.ProofResult{
+		Commitment:       cmBytes[:],
+		ValueCommitmentX: cvx[:],
+		ValueCommitmentY: cvy[:],
+		RCV:              rcvBytes[:],
+	}
 }
 
-func mustTypeCommitment(t *testing.T, tokenType string) fr.Element {
+func mustTypeCommitment(t *testing.T, tokenType string) []byte {
 	t.Helper()
 	var typeRandomness fr.Element
 	_, err := typeRandomness.SetRandom()
 	require.NoError(t, err)
 
-	tc, err := snarktoken.ComputeTypeCommitment(tokenType, typeRandomness)
+	typeRandomnessBytes := typeRandomness.Bytes()
+	tc, err := snarktoken.ComputeTypeCommitment(tokenType, typeRandomnessBytes[:], ecc.BLS12_381)
 	require.NoError(t, err)
 
 	return tc
@@ -96,21 +117,18 @@ func TestComputeBindingSignatureValid(t *testing.T) {
 
 	h := prover.ComputeActionHash("transfer", tc, in, out)
 
-	sig, err := prover.ComputeBindingSignature("transfer", tc, in, out)
+	sig, err := prover.ComputeBindingSignature(ecc.BLS12_381, "transfer", tc, in, out)
 	require.NoError(t, err)
 
-	bvk := prover.ComputeBVK(in, out, 0)
-	err = jubjub.Verify(bvk, h, sig, jubjub.R)
+	bvk, err := prover.ComputeBVK(ecc.BLS12_381, in, out, 0)
+	require.NoError(t, err)
+	err = verifyJubjub(bvk, h, sig)
 
 	require.NoError(t, err, "binding signature must verify against independently computed bvk")
 }
 
 // TestComputeBindingSignatureRejectsNonConservation is the core security
-// property test. It does NOT special-case the mismatch, it demonstrates
-// that the same verification code path used for the honest case correctly
-// rejects a bundle where values do not balance, purely as a mathematical
-// consequence of V and R being independent generators (nobody knows
-// log_R(V)).
+// property test.
 func TestComputeBindingSignatureRejectsNonConservation(t *testing.T) {
 	in := []prover.ProofResult{mustProofResult(t, 100), mustProofResult(t, 50)}
 	out := []prover.ProofResult{mustProofResult(t, 120), mustProofResult(t, 40)}
@@ -118,11 +136,12 @@ func TestComputeBindingSignatureRejectsNonConservation(t *testing.T) {
 
 	h := prover.ComputeActionHash("transfer", tc, in, out)
 
-	sig, err := prover.ComputeBindingSignature("transfer", tc, in, out)
+	sig, err := prover.ComputeBindingSignature(ecc.BLS12_381, "transfer", tc, in, out)
 	require.NoError(t, err)
 
-	bvk := prover.ComputeBVK(in, out, 0)
-	err = jubjub.Verify(bvk, h, sig, jubjub.R)
+	bvk, err := prover.ComputeBVK(ecc.BLS12_381, in, out, 0)
+	require.NoError(t, err)
+	err = verifyJubjub(bvk, h, sig)
 
 	require.Error(t, err,
 		"CRITICAL: a binding signature for non-conserved values must fail verification — "+
@@ -133,13 +152,14 @@ func TestComputeBindingSignatureIssuance(t *testing.T) {
 	out := []prover.ProofResult{mustProofResult(t, 500)}
 	tc := mustTypeCommitment(t, "USD")
 
-	sig, err := prover.ComputeBindingSignature("issue", tc, nil, out)
+	sig, err := prover.ComputeBindingSignature(ecc.BLS12_381, "issue", tc, nil, out)
 	require.NoError(t, err)
 
-	bvk := prover.ComputeBVK(nil, out, 500)
+	bvk, err := prover.ComputeBVK(ecc.BLS12_381, nil, out, 500)
+	require.NoError(t, err)
 	actionHash := prover.ComputeActionHash("issue", tc, nil, out)
 
-	err = jubjub.Verify(bvk, actionHash, sig, jubjub.R)
+	err = verifyJubjub(bvk, actionHash, sig)
 	require.NoError(t, err, "issuance binding signature (zero inputs) must verify")
 }
 
@@ -148,14 +168,15 @@ func TestComputeBindingSignatureRejectsWrongTypeCommitmentAtVerification(t *test
 	out := []prover.ProofResult{mustProofResult(t, 100)}
 	tcUSD := mustTypeCommitment(t, "USD")
 
-	sig, err := prover.ComputeBindingSignature("transfer", tcUSD, in, out)
+	sig, err := prover.ComputeBindingSignature(ecc.BLS12_381, "transfer", tcUSD, in, out)
 	require.NoError(t, err)
 
-	bvk := prover.ComputeBVK(in, out, 0)
+	bvk, err := prover.ComputeBVK(ecc.BLS12_381, in, out, 0)
+	require.NoError(t, err)
 	tcEUR := mustTypeCommitment(t, "EUR")
 	h := prover.ComputeActionHash("transfer", tcEUR, in, out)
 
-	err = jubjub.Verify(bvk, h, sig, jubjub.R)
+	err = verifyJubjub(bvk, h, sig)
 	require.Error(t, err,
 		"verifying against a hash computed with a different type commitment must fail, "+
 			"this confirms type commitment really is bound into the signed message")

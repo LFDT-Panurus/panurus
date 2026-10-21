@@ -6,11 +6,11 @@ SPDX-License-Identifier: Apache-2.0
 package circuit
 
 import (
+	"math/big"
+
 	"github.com/consensys/gnark/frontend"
-	"github.com/consensys/gnark/std/algebra/native/twistededwards"
 
 	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/circuit/gadgets"
-	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/crypto/jubjub"
 	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/crypto/params"
 )
 
@@ -35,9 +35,14 @@ type OutputCircuit struct {
 	RCV            frontend.Variable
 	TypeRandomness frontend.Variable
 
-	// Compile-time parameter
+	// Compile-time parameters
 	// MaxBits is the bit-width of the value range constraint.
 	MaxBits int
+
+	// GenVX/GenVY/GenRX/GenRY are the value-commitment generators,
+	// injected at compile time based on pp.Curve.
+	GenVX, GenVY *big.Int
+	GenRX, GenRY *big.Int
 }
 
 func (c *OutputCircuit) Define(api frontend.API) error {
@@ -54,8 +59,7 @@ func (c *OutputCircuit) Define(api frontend.API) error {
 	api.AssertIsEqual(commitment, c.CommitmentOut)
 
 	// ── Constraint Group 2: Value Commitment Integrity ──────────────────────
-	genV := twistededwards.Point{X: jubjub.V.X, Y: jubjub.V.Y}
-	genR := twistededwards.Point{X: jubjub.R.X, Y: jubjub.R.Y}
+	genV, genR := resolveGenerators(api, c.GenVX, c.GenVY, c.GenRX, c.GenRY)
 
 	cv, err := gadgets.ValueCommitCircuit(api, c.Value, c.RCV, genV, genR)
 	if err != nil {

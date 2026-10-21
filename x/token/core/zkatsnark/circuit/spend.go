@@ -6,11 +6,11 @@ SPDX-License-Identifier: Apache-2.0
 package circuit
 
 import (
+	"math/big"
+
 	"github.com/consensys/gnark/frontend"
-	"github.com/consensys/gnark/std/algebra/native/twistededwards"
 
 	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/circuit/gadgets"
-	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/crypto/jubjub"
 )
 
 // SpendCircuit proves that the prover knows a valid opening of a commitment
@@ -30,6 +30,14 @@ type SpendCircuit struct {
 	Randomness     frontend.Variable
 	RCV            frontend.Variable
 	TypeRandomness frontend.Variable
+
+	// Compile-time parameters — value-commitment generators.
+	// These are injected by setup.CompileSpendCircuit based on pp.Curve
+	// (jubjub.V/R for BLS12-381, babyjubjub.V/R for BN254).
+	// They replace the previous hardcoded jubjub.V/R references that
+	// would silently miscompile if the circuit were compiled for BN254.
+	GenVX, GenVY *big.Int
+	GenRX, GenRY *big.Int
 }
 
 // Define encodes the SpendCircuit constraints into the R1CS.
@@ -52,8 +60,7 @@ func (c *SpendCircuit) Define(api frontend.API) error {
 
 	// gadgets.ValueCommitCircuit is the in-circuit counterpart of jubjub.ValueCommit.
 	// Consistency between native and circuit is enforced by TestValueCommitCrossConsistency.
-	genV := twistededwards.Point{X: jubjub.V.X, Y: jubjub.V.Y}
-	genR := twistededwards.Point{X: jubjub.R.X, Y: jubjub.R.Y}
+	genV, genR := resolveGenerators(api, c.GenVX, c.GenVY, c.GenRX, c.GenRY)
 
 	cv, err := gadgets.ValueCommitCircuit(api, c.Value, c.RCV, genV, genR)
 	if err != nil {

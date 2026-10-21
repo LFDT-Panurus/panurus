@@ -20,7 +20,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/circuit"
-	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/crypto/jubjub"
+	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/crypto/edwards"
 	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/crypto/mimc"
 	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/crypto/params"
 )
@@ -84,7 +84,7 @@ func buildOutputAssignment(t *testing.T, inp outputInputs) *circuit.OutputCircui
 	cm, err := mimc.Hash(vField, inp.tokenType, inp.randomness)
 	require.NoError(t, err)
 
-	cv, err := jubjub.ValueCommit(inp.value, inp.rcv)
+	cv, err := edwards.Jubjub().ValueCommit(inp.value, inp.rcv)
 	require.NoError(t, err)
 
 	// Compute the type commitment: MiMC(TokenType, TypeRandomness)
@@ -165,7 +165,7 @@ func TestOutputCircuitInvalid_WrongValueCommit(t *testing.T) {
 	var fakeRCV fr.Element
 	_, err := fakeRCV.SetRandom()
 	require.NoError(t, err)
-	fakeCV, _ := jubjub.ValueCommit(inp.value+100, fakeRCV)
+	fakeCV, _ := edwards.Jubjub().ValueCommit(inp.value+100, fakeRCV)
 	assignment.ValueCommitOutX = fakeCV.X
 	assignment.ValueCommitOutY = fakeCV.Y
 
@@ -200,7 +200,7 @@ func TestOutputCircuitInvalid_ZeroValue(t *testing.T) {
 	cm, err := mimc.Hash(zeroField, tokenType, randomness)
 	require.NoError(t, err)
 
-	cv, err := jubjub.ValueCommit(0, rcv)
+	cv, err := edwards.Jubjub().ValueCommit(0, rcv)
 	require.NoError(t, err)
 
 	tc, err := mimc.Hash(tokenType, typeRandomness)

@@ -6,8 +6,10 @@ SPDX-License-Identifier: Apache-2.0
 package validator
 
 import (
+	"math/big"
 	"testing"
 
+	"github.com/consensys/gnark-crypto/ecc"
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
 	"github.com/stretchr/testify/require"
 
@@ -20,8 +22,11 @@ func TestCheckTypeCommitmentHomogeneity_Consistent(t *testing.T) {
 	_, err := typeRandomness.SetRandom()
 	require.NoError(t, err)
 
-	tc, err := snarktoken.ComputeTypeCommitment("USD", typeRandomness)
+	tr := typeRandomness.Bytes()
+	tcBytes, err := snarktoken.ComputeTypeCommitment("USD", tr[:], ecc.BLS12_381)
 	require.NoError(t, err)
+
+	tc := new(big.Int).SetBytes(tcBytes)
 
 	spend := decodedSpend{TypeCommitment: tc}
 	output := decodedOutput{TypeCommitment: tc}
@@ -37,10 +42,14 @@ func TestCheckTypeCommitmentHomogeneity_Mismatch(t *testing.T) {
 	_, err = typeRandomness2.SetRandom()
 	require.NoError(t, err)
 
-	tcUSD, err := snarktoken.ComputeTypeCommitment("USD", typeRandomness1)
+	tr1 := typeRandomness1.Bytes()
+	tr2 := typeRandomness2.Bytes()
+	tcUSDBytes, err := snarktoken.ComputeTypeCommitment("USD", tr1[:], ecc.BLS12_381)
 	require.NoError(t, err)
-	tcEUR, err := snarktoken.ComputeTypeCommitment("EUR", typeRandomness2)
+	tcEURBytes, err := snarktoken.ComputeTypeCommitment("EUR", tr2[:], ecc.BLS12_381)
 	require.NoError(t, err)
+
+	tcUSD, tcEUR := new(big.Int).SetBytes(tcUSDBytes), new(big.Int).SetBytes(tcEURBytes)
 
 	spend := decodedSpend{TypeCommitment: tcEUR}
 
@@ -49,9 +58,5 @@ func TestCheckTypeCommitmentHomogeneity_Mismatch(t *testing.T) {
 }
 
 func TestCheckTypeCommitmentHomogeneity_EmptySliceIsVacuouslyValid(t *testing.T) {
-	var tc fr.Element
-	_, err := tc.SetRandom()
-	require.NoError(t, err)
-
-	require.NoError(t, checkTypeCommitmentHomogeneity(tc, nil, nil))
+	require.NoError(t, checkTypeCommitmentHomogeneity(big.NewInt(42), nil, nil))
 }

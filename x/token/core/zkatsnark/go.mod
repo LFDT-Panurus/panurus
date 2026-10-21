@@ -1,6 +1,6 @@
 module github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark
 
-go 1.27.2
+go 1.27.3
 
 require (
 	github.com/IBM/mathlib v0.3.2

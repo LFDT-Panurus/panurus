@@ -10,21 +10,19 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/consensys/gnark-crypto/ecc"
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
-	"github.com/consensys/gnark/backend/groth16"
 	"github.com/consensys/gnark/frontend"
 	"github.com/stretchr/testify/require"
 
+	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/crypto/backend"
 	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/prover"
+	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/setup"
 	snarktoken "github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/token"
 )
 
 var (
 	spendProver     *prover.SpendProver
-	spendVK         groth16.VerifyingKey
 	outputProver    *prover.OutputProver
-	outputVK        groth16.VerifyingKey
 	proverSetupOnce sync.Once
 )
 
@@ -33,44 +31,48 @@ func setupProvers(t *testing.T) {
 	proverSetupOnce.Do(func() {
 		compileTestCircuits(t)
 
-		spendPK, vk1, err := groth16.Setup(testSpendCS)
+		var err error
+		testPP, err = setup.SetupAll(testPP)
 		if err != nil {
-			panic(fmt.Sprintf("spend groth16.Setup failed: %v", err))
+			panic(fmt.Sprintf("setup.SetupAll failed: %v", err))
 		}
-		spendVK = vk1
-		spendProver = prover.NewSpendProver(testSpendCS, spendPK)
 
-		outputPK, vk2, err := groth16.Setup(testOutputCS)
+		b, err := backend.NewProofSystemBackend(testPP.ProofSystem, testPP.Curve)
 		if err != nil {
-			panic(fmt.Sprintf("output groth16.Setup failed: %v", err))
+			panic(fmt.Sprintf("backend creation failed: %v", err))
 		}
-		outputVK = vk2
-		outputProver = prover.NewOutputProver(testOutputCS, outputPK)
+
+		spendProver = prover.NewSpendProver(testSpendCS, testPP.PKSpend, b, testPP)
+		outputProver = prover.NewOutputProver(testOutputCS, testPP.PKOutput, b, testPP)
 	})
 }
 
 func TestSpendProver(t *testing.T) {
 	setupProvers(t)
 
-	note, err := snarktoken.NewRandomNote(500, "USD")
+	note, err := snarktoken.NewRandomNote(500, "USD", testPP.Curve)
 	require.NoError(t, err)
 
 	var typeRandomness fr.Element
 	_, _ = typeRandomness.SetRandom()
+	tr := typeRandomness.Bytes()
 
-	witnessRes, err := prover.BuildSpendWitness(note, typeRandomness)
+	witnessRes, err := prover.BuildSpendWitness(note, tr[:], testPP)
 	require.NoError(t, err)
 
 	proof, err := spendProver.Prove(witnessRes.Assignment)
 	require.NoError(t, err)
 
-	witness, err := frontend.NewWitness(witnessRes.Assignment, ecc.BLS12_381.ScalarField())
+	witness, err := frontend.NewWitness(witnessRes.Assignment, testPP.Curve.ScalarField())
 	require.NoError(t, err)
 
 	publicWitness, err := witness.Public()
 	require.NoError(t, err)
 
-	err = groth16.Verify(proof, spendVK, publicWitness)
+	b, err := backend.NewProofSystemBackend(testPP.ProofSystem, testPP.Curve)
+	require.NoError(t, err)
+
+	err = b.Verify(testPP.VKSpend, proof, publicWitness)
 	require.NoError(t, err, "a proof from the production SpendProver must verify")
 }
 
@@ -79,19 +81,23 @@ func TestOutputProver(t *testing.T) {
 
 	var typeRandomness fr.Element
 	_, _ = typeRandomness.SetRandom()
+	tr := typeRandomness.Bytes()
 
-	witnessRes, err := prover.BuildOutputWitness(750, "EUR", testPP, typeRandomness)
+	witnessRes, err := prover.BuildOutputWitness(750, "EUR", testPP, tr[:])
 	require.NoError(t, err)
 
 	proof, err := outputProver.Prove(witnessRes.Assignment)
 	require.NoError(t, err)
 
-	witness, err := frontend.NewWitness(witnessRes.Assignment, ecc.BLS12_381.ScalarField())
+	witness, err := frontend.NewWitness(witnessRes.Assignment, testPP.Curve.ScalarField())
 	require.NoError(t, err)
 
 	publicWitness, err := witness.Public()
 	require.NoError(t, err)
 
-	err = groth16.Verify(proof, outputVK, publicWitness)
+	b, err := backend.NewProofSystemBackend(testPP.ProofSystem, testPP.Curve)
+	require.NoError(t, err)
+
+	err = b.Verify(testPP.VKOutput, proof, publicWitness)
 	require.NoError(t, err, "a proof from the production OutputProver must verify")
 }

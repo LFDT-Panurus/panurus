@@ -6,42 +6,42 @@ SPDX-License-Identifier: Apache-2.0
 package validator
 
 import (
-	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
-	"github.com/consensys/gnark-crypto/ecc/bls12-381/twistededwards"
+	"github.com/consensys/gnark-crypto/ecc"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 
-	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/crypto/jubjub"
+	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/crypto/edwards"
 	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/prover"
 )
 
 // toSpendProofResult converts an already-decoded description into the
-// prover.ProofResult shape ComputeBVK/ComputeActionHash expect. RCV is
-// deliberately left as the zero value: ComputeBVK never reads
-// ProofResult.RCV — only the prover's bsk computation
-// (ComputeBindingSignature) does, and the validator never computes bsk
-// (it has no access to the private RCV values that would require).
+// prover.ProofResult shape ComputeActionHash expects. RCV is deliberately left
+// nil: only the prover's bsk computation reads it, and the validator never has
+// the private RCV values.
 func toSpendProofResult(d decodedSpend) prover.ProofResult {
 	return prover.ProofResult{
-		Commitment:  d.Commitment,
-		ValueCommit: twistededwards.PointAffine{X: d.ValueCommitX, Y: d.ValueCommitY},
+		Commitment:       d.CommitmentBytes,
+		ValueCommitmentX: d.ValueCommitXBytes,
+		ValueCommitmentY: d.ValueCommitYBytes,
 	}
 }
 
 func toOutputProofResult(d decodedOutput) prover.ProofResult {
 	return prover.ProofResult{
-		Commitment:  d.Commitment,
-		ValueCommit: twistededwards.PointAffine{X: d.ValueCommitX, Y: d.ValueCommitY},
+		Commitment:       d.CommitmentBytes,
+		ValueCommitmentX: d.ValueCommitXBytes,
+		ValueCommitmentY: d.ValueCommitYBytes,
 	}
 }
 
 // verifyBindingSignature reconstructs bvk and the action hash from
 // already-decoded public data, and checks the signature against them.
 //
-// publicValueDelta convention must match the prover exactly: prover.NoPublicValue
+// publicValueDelta convention must match the prover exactly: 0
 // for TransferAction, the decoded TotalValue for IssueAction.
 func verifyBindingSignature(
+	curve ecc.ID,
 	actionType string,
-	typeCommitment fr.Element,
+	typeCommitment []byte,
 	decodedInputs []decodedSpend,
 	decodedOutputs []decodedOutput,
 	sigBytes []byte,
@@ -57,16 +57,28 @@ func verifyBindingSignature(
 		outputResults[i] = toOutputProofResult(decodedOutputs[i])
 	}
 
-	bvk := prover.ComputeBVK(spendResults, outputResults, publicValueDelta)
 	actionHash := prover.ComputeActionHash(actionType, typeCommitment, spendResults, outputResults)
 
-	sig, err := jubjub.DeserializeSignature(sigBytes)
+	suite, err := edwards.ForCurve(curve)
 	if err != nil {
-		return errors.Wrapf(err, "validator: binding signature decode")
+		return errors.Wrapf(err, "validator: binding signature")
 	}
 
-	err = jubjub.Verify(bvk, actionHash, sig, jubjub.R)
+	toCoords := func(rs []prover.ProofResult) []edwards.Coords {
+		cs := make([]edwards.Coords, len(rs))
+		for i, r := range rs {
+			cs[i] = edwards.Coords{X: r.ValueCommitmentX, Y: r.ValueCommitmentY}
+		}
+
+		return cs
+	}
+
+	bvk, err := suite.BindingKey(toCoords(spendResults), toCoords(outputResults), publicValueDelta)
 	if err != nil {
+		return errors.Wrapf(err, "validator: bvk computation")
+	}
+
+	if err := suite.VerifyBinding(bvk, actionHash, sigBytes); err != nil {
 		return errors.Wrapf(ErrInvalidBindingSignature, "%s", err)
 	}
 

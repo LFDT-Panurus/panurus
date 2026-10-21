@@ -270,6 +270,10 @@ jobs:
             dir: ./x/token/core/zkatsnark
             pkg: ./validator
             func: FuzzTransferActionValidateNoPanic
+          - name: zkatsnark-edwards-signature
+            dir: ./x/token/core/zkatsnark
+            pkg: ./crypto/edwards
+            func: FuzzDeserializeSignature
 
     steps:
       - name: Checkout code
