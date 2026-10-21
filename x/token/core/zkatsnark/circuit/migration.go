@@ -10,11 +10,9 @@ import (
 
 	"github.com/consensys/gnark/frontend"
 	"github.com/consensys/gnark/std/algebra/emulated/sw_emulated"
-	"github.com/consensys/gnark/std/algebra/native/twistededwards"
 	"github.com/consensys/gnark/std/math/emulated"
 
 	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/circuit/gadgets"
-	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/crypto/jubjub"
 	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/crypto/params"
 )
 
@@ -113,6 +111,13 @@ type MigrationCircuit struct {
 	// PedG2X, PedG2Y are the coordinates of the third Pedersen
 	// generator (blinding factor scalar).
 	PedG2X, PedG2Y *big.Int
+
+	// GenVX/GenVY/GenRX/GenRY are the value-commitment generators,
+	// injected at compile time based on pp.Curve (jubjub.V/R for
+	// BLS12-381, babyjubjub.V/R for BN254). Fixes the same
+	// hardcoded-generator bug as SpendCircuit/OutputCircuit.
+	GenVX, GenVY *big.Int
+	GenRX, GenRY *big.Int
 }
 
 // Define encodes the MigrationCircuit constraints into the R1CS.
@@ -210,8 +215,7 @@ func (c *MigrationCircuit) Define(api frontend.API) error {
 	// Identical to OutputCircuit's value commitment group. Uses the same
 	// Jubjub generators V and R, ensuring the migrated token's value
 	// commitment is compatible with SpendCircuit.
-	genV := twistededwards.Point{X: jubjub.V.X, Y: jubjub.V.Y}
-	genR := twistededwards.Point{X: jubjub.R.X, Y: jubjub.R.Y}
+	genV, genR := resolveGenerators(api, c.GenVX, c.GenVY, c.GenRX, c.GenRY)
 
 	cv, err := gadgets.ValueCommitCircuit(api, c.Value, c.RCV, genV, genR)
 	if err != nil {

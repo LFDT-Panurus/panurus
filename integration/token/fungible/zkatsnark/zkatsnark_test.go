@@ -42,6 +42,36 @@ var _ = Describe("EndToEnd", func() {
 				fungible.TestAll(ts.II, "auditor", nil, true, selector)
 			})
 		})
+		Describe("Extras with websockets", t.Label, func() {
+			ts, selector := newTestSuite(t.CommType, Aries|WithEndorsers|WebEnabled, t.ReplicationFactor, "", "alice", "bob", "charlie")
+			BeforeEach(ts.Setup)
+			AfterEach(ts.TearDown)
+			It("Update public params (new auditor and issuer)", Label("T2"), func() {
+				fungible.TestPublicParamsUpdate(
+					ts.II,
+					"newAuditor",
+					fungible.PrepareUpdatedPublicParams(ts.II, "newAuditor", "newIssuer", "default", false),
+					"default",
+					false,
+					selector,
+					false,
+				)
+			})
+			It("Update public params (append new auditor and issuer)", Label("T2.1"), func() {
+				fungible.TestPublicParamsUpdate(
+					ts.II,
+					"newAuditor",
+					fungible.PrepareUpdatedPublicParams(ts.II, "newAuditor", "newIssuer", "default", true),
+					"default",
+					false,
+					selector,
+					true,
+				)
+			})
+			It("Test Identity Revocation", Label("T3"), func() { fungible.TestRevokeIdentity(ts.II, "auditor", selector) })
+			It("Test Remote Wallet (GRPC)", Label("T4"), func() { fungible.TestRemoteOwnerWallet(ts.II, "auditor", selector, false) })
+			It("Test Remote Wallet (WebSocket)", Label("T5"), func() { fungible.TestRemoteOwnerWallet(ts.II, "auditor", selector, true) })
+		})
 	}
 })
 

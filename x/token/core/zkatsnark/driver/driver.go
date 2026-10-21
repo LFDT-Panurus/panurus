@@ -18,6 +18,7 @@ import (
 	"github.com/LFDT-Panurus/panurus/token/services/ttx/multisig"
 	"github.com/LFDT-Panurus/panurus/token/services/utils"
 	zkatsnark "github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark"
+	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/crypto/backend"
 	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/pp"
 	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/prover"
 	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/setup"
@@ -160,27 +161,32 @@ func (d *Driver) NewTokenService(tmsID driver.TMSID, publicParams []byte) (drive
 		return nil, errors.Wrap(err, "failed to instantiate validator")
 	}
 
+	b, err := backend.NewProofSystemBackend(ppp.ProofSystem, ppp.Curve)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to create proof system backend")
+	}
+
 	spendCS, err := setup.CompileSpendCircuit(ppp)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to compile spend circuit")
 	}
-	spendPK, err := setup.LoadProvingKey(ppp, setup.CircuitSpend)
+	spendPKBytes, err := setup.LoadProvingKeyBytes(ppp, setup.CircuitSpend)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to load spend proving key")
 	}
-	spendProver := prover.NewSpendProver(spendCS, spendPK)
+	spendProver := prover.NewSpendProver(spendCS, spendPKBytes, b, ppp)
 
 	outputCS, err := setup.CompileOutputCircuit(ppp)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to compile output circuit")
 	}
-	outputPK, err := setup.LoadProvingKey(ppp, setup.CircuitOutput)
+	outputPKBytes, err := setup.LoadProvingKeyBytes(ppp, setup.CircuitOutput)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to load output proving key")
 	}
-	outputProver := prover.NewOutputProver(outputCS, outputPK)
+	outputProver := prover.NewOutputProver(outputCS, outputPKBytes, b, ppp)
 
-	orchestrator := prover.NewOrchestrator(spendProver, outputProver)
+	orchestrator := prover.NewOrchestrator(spendProver, outputProver, ppp)
 
 	tokensService, err := token.NewTokensService(logger, ppm, deserializer)
 	if err != nil {

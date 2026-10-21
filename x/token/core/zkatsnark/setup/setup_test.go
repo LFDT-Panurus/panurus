@@ -12,14 +12,13 @@ import (
 	"testing"
 
 	"github.com/consensys/gnark-crypto/ecc"
-	"github.com/consensys/gnark/backend/groth16"
 	"github.com/stretchr/testify/require"
 
 	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/pp"
 	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/setup"
 )
 
-// ── Shared setup (groth16.Setup is expensive; run once for all key tests) ────
+// ── Shared setup (Setup is expensive; run once for all key tests) ────
 
 var (
 	setupOnce sync.Once
@@ -48,10 +47,7 @@ func setupSharedPP(t *testing.T) *pp.PublicParams {
 }
 
 // dummyGens returns trivial non-nil big.Int coordinates suitable for
-// compilation-only tests. The values are not valid Pedersen generators (they
-// don't correspond to any real curve point), but gnark only reads them at
-// compile time to wire constants into the R1CS, so any non-nil value works
-// for compilation tests. Do not use these for proof generation.
+// compilation-only tests.
 func dummyGens() setup.PedersenGeneratorCoords {
 	one := new(big.Int).SetInt64(1)
 
@@ -114,132 +110,81 @@ func TestSetupAll_PopulatesKeys(t *testing.T) {
 	require.NotEmpty(t, p.VKOutput, "VKOutput must be populated after SetupAll")
 }
 
-func TestSetupAll_NonGroth16_Error(t *testing.T) {
+func TestSetupAll_UnsupportedProofSystem_Error(t *testing.T) {
 	p := pp.DefaultPublicParams()
-	p.ProofSystem = "plonk"
+	p.ProofSystem = "invalid-proof-system"
 	_, err := setup.SetupAll(p)
-	require.ErrorIs(t, err, setup.ErrNotImplemented)
+	require.Error(t, err)
 }
 
-// ── LoadProvingKey / LoadVerifyingKey ─────────────────────────────────────────
+// ── LoadProvingKeyBytes / LoadVerifyingKeyBytes ──────────────────────────────
 
-func TestLoadProvingKey_SpendCircuit_Success(t *testing.T) {
+func TestLoadProvingKeyBytes_SpendCircuit_Success(t *testing.T) {
 	p := setupSharedPP(t)
-	pk, err := setup.LoadProvingKey(p, setup.CircuitSpend)
+	pk, err := setup.LoadProvingKeyBytes(p, setup.CircuitSpend)
 	require.NoError(t, err)
-	require.NotNil(t, pk)
+	require.NotEmpty(t, pk)
 }
 
-func TestLoadVerifyingKey_SpendCircuit_Success(t *testing.T) {
+func TestLoadVerifyingKeyBytes_SpendCircuit_Success(t *testing.T) {
 	p := setupSharedPP(t)
-	vk, err := setup.LoadVerifyingKey(p, setup.CircuitSpend)
+	vk, err := setup.LoadVerifyingKeyBytes(p, setup.CircuitSpend)
 	require.NoError(t, err)
-	require.NotNil(t, vk)
+	require.NotEmpty(t, vk)
 }
 
-func TestLoadProvingKey_OutputCircuit_Success(t *testing.T) {
+func TestLoadProvingKeyBytes_OutputCircuit_Success(t *testing.T) {
 	p := setupSharedPP(t)
-	pk, err := setup.LoadProvingKey(p, setup.CircuitOutput)
+	pk, err := setup.LoadProvingKeyBytes(p, setup.CircuitOutput)
 	require.NoError(t, err)
-	require.NotNil(t, pk)
+	require.NotEmpty(t, pk)
 }
 
-func TestLoadVerifyingKey_OutputCircuit_Success(t *testing.T) {
+func TestLoadVerifyingKeyBytes_OutputCircuit_Success(t *testing.T) {
 	p := setupSharedPP(t)
-	vk, err := setup.LoadVerifyingKey(p, setup.CircuitOutput)
+	vk, err := setup.LoadVerifyingKeyBytes(p, setup.CircuitOutput)
 	require.NoError(t, err)
-	require.NotNil(t, vk)
+	require.NotEmpty(t, vk)
 }
 
-func TestLoadProvingKey_MissingKey_Error(t *testing.T) {
+func TestLoadProvingKeyBytes_MissingKey_Error(t *testing.T) {
 	p := pp.DefaultPublicParams() // no keys set
-	_, err := setup.LoadProvingKey(p, setup.CircuitSpend)
+	_, err := setup.LoadProvingKeyBytes(p, setup.CircuitSpend)
 	require.ErrorIs(t, err, setup.ErrMissingKey)
 }
 
-func TestLoadVerifyingKey_MissingKey_Error(t *testing.T) {
+func TestLoadVerifyingKeyBytes_MissingKey_Error(t *testing.T) {
 	p := pp.DefaultPublicParams()
-	_, err := setup.LoadVerifyingKey(p, setup.CircuitOutput)
+	_, err := setup.LoadVerifyingKeyBytes(p, setup.CircuitOutput)
 	require.ErrorIs(t, err, setup.ErrMissingKey)
 }
 
-func TestLoadProvingKey_UnknownCircuit_Error(t *testing.T) {
+func TestLoadProvingKeyBytes_UnknownCircuit_Error(t *testing.T) {
 	p := setupSharedPP(t)
-	_, err := setup.LoadProvingKey(p, "nonexistent-circuit")
+	_, err := setup.LoadProvingKeyBytes(p, "nonexistent-circuit")
 	require.Error(t, err)
 }
 
-func TestLoadVerifyingKey_UnknownCircuit_Error(t *testing.T) {
+func TestLoadVerifyingKeyBytes_UnknownCircuit_Error(t *testing.T) {
 	p := setupSharedPP(t)
-	_, err := setup.LoadVerifyingKey(p, "nonexistent-circuit")
+	_, err := setup.LoadVerifyingKeyBytes(p, "nonexistent-circuit")
 	require.Error(t, err)
 }
 
-func TestLoadProvingKey_MigrationMissing_Error(t *testing.T) {
+func TestLoadProvingKeyBytes_MigrationMissing_Error(t *testing.T) {
 	// SetupAll does NOT populate migration keys.
 	p := setupSharedPP(t)
-	_, err := setup.LoadProvingKey(p, setup.CircuitMigration)
+	_, err := setup.LoadProvingKeyBytes(p, setup.CircuitMigration)
 	require.ErrorIs(t, err, setup.ErrMissingKey)
 }
 
-func TestLoadVerifyingKey_MigrationMissing_Error(t *testing.T) {
+func TestLoadVerifyingKeyBytes_MigrationMissing_Error(t *testing.T) {
 	p := setupSharedPP(t)
-	_, err := setup.LoadVerifyingKey(p, setup.CircuitMigration)
+	_, err := setup.LoadVerifyingKeyBytes(p, setup.CircuitMigration)
 	require.ErrorIs(t, err, setup.ErrMissingKey)
-}
-
-// ── Key serialization round-trips ─────────────────────────────────────────────
-
-func TestSerializeDeserializeVerifyingKey_RoundTrip(t *testing.T) {
-	p := setupSharedPP(t)
-
-	vk, err := setup.LoadVerifyingKey(p, setup.CircuitSpend)
-	require.NoError(t, err)
-
-	raw, err := setup.SerializeVerifyingKey(vk)
-	require.NoError(t, err)
-	require.NotEmpty(t, raw)
-
-	vk2, err := setup.DeserializeVerifyingKey(raw, ecc.BLS12_381)
-	require.NoError(t, err)
-	require.NotNil(t, vk2)
-}
-
-func TestSerializeDeserializeProvingKey_RoundTrip(t *testing.T) {
-	p := setupSharedPP(t)
-
-	pk, err := setup.LoadProvingKey(p, setup.CircuitSpend)
-	require.NoError(t, err)
-
-	raw, err := setup.SerializeProvingKey(pk)
-	require.NoError(t, err)
-	require.NotEmpty(t, raw)
-
-	pk2, err := setup.DeserializeProvingKey(raw, ecc.BLS12_381)
-	require.NoError(t, err)
-	require.NotNil(t, pk2)
-}
-
-// ── Proof serialization ────────────────────────────────────────────────────────
-
-func TestDeserializeProof_BadBytes_Error(t *testing.T) {
-	_, err := setup.DeserializeProof([]byte("garbage proof bytes"), ecc.BLS12_381)
-	require.Error(t, err)
-}
-
-func TestDeserializeProof_EmptyBytes_Error(t *testing.T) {
-	_, err := setup.DeserializeProof([]byte{}, ecc.BLS12_381)
-	require.Error(t, err)
 }
 
 // ── SetupMigration ────────────────────────────────────────────────────────────
-
-func TestSetupMigration_NonGroth16_Error(t *testing.T) {
-	p := pp.DefaultPublicParams()
-	p.ProofSystem = "plonk"
-	_, err := setup.SetupMigration(p, dummyGens())
-	require.ErrorIs(t, err, setup.ErrNotImplemented)
-}
 
 func TestSetupMigration_Success(t *testing.T) {
 	p := pp.DefaultPublicParams()
@@ -249,26 +194,126 @@ func TestSetupMigration_Success(t *testing.T) {
 	require.NotEmpty(t, p.VKMigration)
 }
 
-func TestSerializeProof_Success(t *testing.T) {
-	proof := groth16.NewProof(ecc.BLS12_381)
-	raw, err := setup.SerializeProof(proof)
-	require.NoError(t, err)
-	require.NotEmpty(t, raw)
-}
-
-func TestDeserializeProvingKey_BadBytes_Error(t *testing.T) {
-	_, err := setup.DeserializeProvingKey([]byte("garbage"), ecc.BLS12_381)
-	require.Error(t, err)
-}
-
-func TestDeserializeVerifyingKey_BadBytes_Error(t *testing.T) {
-	_, err := setup.DeserializeVerifyingKey([]byte("garbage"), ecc.BLS12_381)
-	require.Error(t, err)
-}
-
 func TestSetupAll_OutputCircuitError(t *testing.T) {
 	p := pp.DefaultPublicParams()
 	p.MaxBits = 0
 	_, err := setup.SetupAll(p)
 	require.Error(t, err)
+}
+
+// ── BN254 compile/setup tests ───────────────────────────────────────────────
+
+func TestCompileSpendCircuit_BN254_Success(t *testing.T) {
+	p := pp.DefaultPublicParams()
+	p.Curve = ecc.BN254
+	cs, err := setup.CompileSpendCircuit(p)
+	require.NoError(t, err)
+	require.Positive(t, cs.GetNbConstraints(), "BN254 SpendCircuit must have constraints")
+}
+
+func TestCompileOutputCircuit_BN254_Success(t *testing.T) {
+	p := pp.DefaultPublicParams()
+	p.Curve = ecc.BN254
+	cs, err := setup.CompileOutputCircuit(p)
+	require.NoError(t, err)
+	require.Positive(t, cs.GetNbConstraints(), "BN254 OutputCircuit must have constraints")
+}
+
+func TestSetupAll_BN254_PopulatesKeys(t *testing.T) {
+	p := pp.DefaultPublicParams()
+	p.Curve = ecc.BN254
+	p, err := setup.SetupAll(p)
+	require.NoError(t, err)
+	require.NotEmpty(t, p.PKSpend, "BN254 PKSpend must be populated")
+	require.NotEmpty(t, p.VKSpend, "BN254 VKSpend must be populated")
+	require.NotEmpty(t, p.PKOutput, "BN254 PKOutput must be populated")
+	require.NotEmpty(t, p.VKOutput, "BN254 VKOutput must be populated")
+}
+
+// ── Plonk compile/setup tests ───────────────────────────────────────────────
+
+func TestCompileSpendCircuit_Plonk_Success(t *testing.T) {
+	p := pp.DefaultPublicParams()
+	p.ProofSystem = "plonk"
+	cs, err := setup.CompileSpendCircuit(p)
+	require.NoError(t, err)
+	require.Positive(t, cs.GetNbConstraints(), "Plonk SpendCircuit must have constraints")
+}
+
+func TestCompileOutputCircuit_Plonk_Success(t *testing.T) {
+	p := pp.DefaultPublicParams()
+	p.ProofSystem = "plonk"
+	cs, err := setup.CompileOutputCircuit(p)
+	require.NoError(t, err)
+	require.Positive(t, cs.GetNbConstraints(), "Plonk OutputCircuit must have constraints")
+}
+
+func TestSetupAll_Plonk_PopulatesKeys(t *testing.T) {
+	p := pp.DefaultPublicParams()
+	p.ProofSystem = "plonk"
+	p, err := setup.SetupAll(p)
+	require.NoError(t, err)
+	require.NotEmpty(t, p.PKSpend, "Plonk PKSpend must be populated")
+	require.NotEmpty(t, p.VKSpend, "Plonk VKSpend must be populated")
+	require.NotEmpty(t, p.PKOutput, "Plonk PKOutput must be populated")
+	require.NotEmpty(t, p.VKOutput, "Plonk VKOutput must be populated")
+}
+
+// ── Unsupported curve error path ────────────────────────────────────────────
+
+func TestCompileSpendCircuit_UnsupportedCurve_Error(t *testing.T) {
+	p := pp.DefaultPublicParams()
+	p.Curve = ecc.BW6_761
+	_, err := setup.CompileSpendCircuit(p)
+	require.Error(t, err)
+}
+
+func TestCompileOutputCircuit_UnsupportedCurve_Error(t *testing.T) {
+	p := pp.DefaultPublicParams()
+	p.Curve = ecc.BW6_761
+	_, err := setup.CompileOutputCircuit(p)
+	require.Error(t, err)
+}
+
+func TestCompileMigrationCircuit_UnsupportedCurve_Error(t *testing.T) {
+	p := pp.DefaultPublicParams()
+	p.Curve = ecc.BW6_761
+	_, err := setup.CompileMigrationCircuit(p, dummyGens())
+	require.Error(t, err)
+}
+
+func TestCompileSpendCircuit_UnsupportedProofSystem_Error(t *testing.T) {
+	p := pp.DefaultPublicParams()
+	p.ProofSystem = "invalid"
+	_, err := setup.CompileSpendCircuit(p)
+	require.Error(t, err)
+}
+
+func TestCompileOutputCircuit_UnsupportedProofSystem_Error(t *testing.T) {
+	p := pp.DefaultPublicParams()
+	p.ProofSystem = "invalid"
+	_, err := setup.CompileOutputCircuit(p)
+	require.Error(t, err)
+}
+
+func TestCompileMigrationCircuit_UnsupportedProofSystem_Error(t *testing.T) {
+	p := pp.DefaultPublicParams()
+	p.ProofSystem = "invalid"
+	_, err := setup.CompileMigrationCircuit(p, dummyGens())
+	require.Error(t, err)
+}
+
+func TestSetupMigration_UnsupportedProofSystem_Error(t *testing.T) {
+	p := pp.DefaultPublicParams()
+	p.ProofSystem = "invalid"
+	_, err := setup.SetupMigration(p, dummyGens())
+	require.Error(t, err)
+}
+
+func TestCompileMigrationCircuit_Plonk_Success(t *testing.T) {
+	p := pp.DefaultPublicParams()
+	p.ProofSystem = "plonk"
+	cs, err := setup.CompileMigrationCircuit(p, dummyGens())
+	require.NoError(t, err)
+	require.Positive(t, cs.GetNbConstraints(), "Plonk MigrationCircuit must have constraints")
 }

@@ -143,12 +143,11 @@ func (s *IssueService) VerifyIssue(ctx context.Context, ia driver.IssueAction, o
 			return errors.Wrap(err, "failed unmarshalling metadata")
 		}
 
-		cm, err := note.Commitment()
+		cm, err := note.Commitment(s.PublicParametersManager.PublicParams().Curve)
 		if err != nil {
 			return errors.Wrap(err, "failed computing commitment from metadata")
 		}
-		cmBytes := cm.Bytes()
-		if !bytes.Equal(cmBytes[:], action.Outputs[i].CommitmentOut) {
+		if !bytes.Equal(cm, action.Outputs[i].CommitmentOut) {
 			return errors.Errorf("output commitment does not match metadata")
 		}
 

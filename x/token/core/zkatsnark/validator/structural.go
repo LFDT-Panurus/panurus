@@ -14,11 +14,9 @@ import (
 // Byte lengths, named so a failing check identifies which constant it
 // compared against, not a bare magic number.
 const (
-	fieldElementLen   = 32  // one BLS12-381 Fr element, canonical encoding
-	groth16ProofLen   = 292 // gnark WriteTo size for a BLS12-381 Groth16 proof with one G1 commitment (spend/output circuits)
-	migrationProofLen = 292 // migration circuit proof; same size as the spend/output proofs under gnark v0.16
-	signatureLen      = 96  // R.X (32) || R.Y (32) || S (32)
-	fpElementLen      = 48  // the canonical encoding length of one BLS12-381 base-field (Fp) element, 48 bytes
+	fieldElementLen = 32 // one Fr element, canonical encoding (both BLS12-381 and BN254 have 32-byte scalars)
+	signatureLen    = 96 // R.X (32) || R.Y (32) || S (32)
+	fpElementLen    = 48 // one BLS12-381 base-field (Fp) element
 )
 
 // validateSpendDescriptionShape checks byte lengths only — no field-element
@@ -39,8 +37,8 @@ func validateSpendDescriptionShape(i int, d snarktoken.SpendDescription) error {
 	if len(d.TypeCommitment) != fieldElementLen {
 		return errors.Wrapf(ErrMalformedAction, "input %d: TypeCommitment must be %d bytes, got %d", i, fieldElementLen, len(d.TypeCommitment))
 	}
-	if len(d.SpendProof) != groth16ProofLen {
-		return errors.Wrapf(ErrMalformedAction, "input %d: SpendProof must be %d bytes, got %d", i, groth16ProofLen, len(d.SpendProof))
+	if len(d.SpendProof) == 0 {
+		return errors.Wrapf(ErrMalformedAction, "input %d: SpendProof must not be empty", i)
 	}
 
 	return nil
@@ -60,8 +58,8 @@ func validateOutputDescriptionShape(j int, d snarktoken.OutputDescription) error
 	if len(d.TypeCommitment) != fieldElementLen {
 		return errors.Wrapf(ErrMalformedAction, "output %d: TypeCommitment must be %d bytes, got %d", j, fieldElementLen, len(d.TypeCommitment))
 	}
-	if len(d.OutputProof) != groth16ProofLen {
-		return errors.Wrapf(ErrMalformedAction, "output %d: OutputProof must be %d bytes, got %d", j, groth16ProofLen, len(d.OutputProof))
+	if len(d.OutputProof) == 0 {
+		return errors.Wrapf(ErrMalformedAction, "output %d: OutputProof must not be empty", j)
 	}
 
 	return nil
@@ -139,8 +137,8 @@ func validateMigrationActionShape(a *snarktoken.MigrationAction) error {
 	if len(a.TypeCommitment) != fieldElementLen {
 		return errors.Wrapf(ErrMalformedAction, "TypeCommitment must be %d bytes, got %d", fieldElementLen, len(a.TypeCommitment))
 	}
-	if len(a.MigrationProof) != migrationProofLen {
-		return errors.Wrapf(ErrMalformedAction, "MigrationProof must be %d bytes, got %d", migrationProofLen, len(a.MigrationProof))
+	if len(a.MigrationProof) == 0 {
+		return errors.Wrapf(ErrMalformedAction, "MigrationProof must not be empty")
 	}
 
 	return nil

@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/consensys/gnark-crypto/ecc"
 	"github.com/stretchr/testify/require"
 
 	"github.com/LFDT-Panurus/panurus/token/driver"
@@ -73,17 +74,16 @@ func TestTokensService_SupportedTokenFormats(t *testing.T) {
 
 func TestTokensService_Deobfuscate_Success(t *testing.T) {
 	// Create a note and compute its commitment so we can build a matching output.
-	note, err := snarktoken.NewRandomNote(100, "USD")
+	note, err := snarktoken.NewRandomNote(100, "USD", ecc.BLS12_381)
 	require.NoError(t, err)
 	note.Issuer = []byte("issuer-1")
 
-	cm, err := note.Commitment()
+	cm, err := note.Commitment(ecc.BLS12_381)
 	require.NoError(t, err)
-	cmBytes := cm.Bytes()
 
 	// Build a matching OutputDescription.
 	outputDesc := snarktoken.OutputDescription{
-		CommitmentOut: cmBytes[:],
+		CommitmentOut: cm,
 		Recipient:     []byte("alice"),
 	}
 	outputRaw, err := json.Marshal(outputDesc)
@@ -121,7 +121,7 @@ func TestTokensService_Deobfuscate_BadMetadata(t *testing.T) {
 }
 
 func TestTokensService_Deobfuscate_BadOutput(t *testing.T) {
-	note, err := snarktoken.NewRandomNote(100, "USD")
+	note, err := snarktoken.NewRandomNote(100, "USD", ecc.BLS12_381)
 	require.NoError(t, err)
 
 	metadata, err := note.Serialize()
@@ -138,7 +138,7 @@ func TestTokensService_Deobfuscate_BadOutput(t *testing.T) {
 }
 
 func TestTokensService_Deobfuscate_CommitmentMismatch(t *testing.T) {
-	note, err := snarktoken.NewRandomNote(100, "USD")
+	note, err := snarktoken.NewRandomNote(100, "USD", ecc.BLS12_381)
 	require.NoError(t, err)
 
 	metadata, err := note.Serialize()

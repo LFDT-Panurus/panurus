@@ -11,7 +11,6 @@ import (
 
 	mathlib "github.com/IBM/mathlib"
 	"github.com/consensys/gnark-crypto/ecc"
-	bls12381tw "github.com/consensys/gnark-crypto/ecc/bls12-381/twistededwards"
 	"github.com/stretchr/testify/require"
 
 	"github.com/LFDT-Panurus/panurus/token/driver"
@@ -194,19 +193,6 @@ func TestPublicParams_Validate_ZeroMaxBits(t *testing.T) {
 func TestPublicParams_Validate_NegativeMaxBits(t *testing.T) {
 	p := defaultValidPP()
 	p.MaxBits = -5
-	require.Error(t, p.Validate())
-}
-
-func TestPublicParams_Validate_VNotOnCurve(t *testing.T) {
-	p := defaultValidPP()
-	// Set V to origin (0,0) which is not a valid Jubjub point
-	p.V = bls12381tw.PointAffine{}
-	require.Error(t, p.Validate())
-}
-
-func TestPublicParams_Validate_RNotOnCurve(t *testing.T) {
-	p := defaultValidPP()
-	p.R = bls12381tw.PointAffine{}
 	require.Error(t, p.Validate())
 }
 

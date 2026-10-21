@@ -8,7 +8,7 @@ package validator
 import (
 	"context"
 
-	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
+	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 
 	snarktoken "github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/token"
 )
@@ -27,32 +27,33 @@ func (v *Validator) TransferZKValidate(_ context.Context, ctx *Context) error {
 		return err
 	}
 
-	decodedInputs, err := decodeAllSpends(action.Inputs)
+	decodedInputs, err := decodeAllSpends(action.Inputs, v.pp.Curve)
 	if err != nil {
 		return err
 	}
 
-	decodedOutputs, err := decodeAllOutputs(action.Outputs)
+	decodedOutputs, err := decodeAllOutputs(action.Outputs, v.pp.Curve)
 	if err != nil {
 		return err
 	}
 
 	// Decode the action-level TypeCommitment.
-	var actionTC fr.Element
-	if err := actionTC.SetBytesCanonical(action.TypeCommitment); err != nil {
-		return err
+	actionTC, err := decodeScalar(v.pp.Curve, action.TypeCommitment)
+	if err != nil {
+		return errors.Wrapf(err, "validator: TypeCommitment")
 	}
 
 	if err := checkTypeCommitmentHomogeneity(actionTC, decodedInputs, decodedOutputs); err != nil {
 		return err
 	}
 
-	if err := verifyAllProofs(v.keys.vkSpend, v.keys.vkOutput, v.pp.Curve, action.Inputs, decodedInputs, action.Outputs, decodedOutputs); err != nil {
+	if err := verifyAllProofs(v.backend, v.keys.vkSpendBytes, v.keys.vkOutputBytes, v.pp.Curve, action.Inputs, decodedInputs, action.Outputs, decodedOutputs); err != nil {
 		return err
 	}
 
 	return verifyBindingSignature(
-		snarktoken.ActionTypeTransfer, actionTC,
+		v.pp.Curve,
+		snarktoken.ActionTypeTransfer, action.TypeCommitment,
 		decodedInputs, decodedOutputs,
 		action.BindingSignature, 0,
 	)

@@ -33,9 +33,9 @@ func TestValidateSpendDescriptionShape_WrongCommitmentLength(t *testing.T) {
 	require.ErrorIs(t, validateSpendDescriptionShape(0, d), ErrMalformedAction)
 }
 
-func TestValidateSpendDescriptionShape_WrongProofLength(t *testing.T) {
+func TestValidateSpendDescriptionShape_EmptyProof(t *testing.T) {
 	d := validSpendDescription()
-	d.SpendProof = make([]byte, 191)
+	d.SpendProof = nil
 	require.ErrorIs(t, validateSpendDescriptionShape(0, d), ErrMalformedAction)
 }
 
@@ -56,6 +56,12 @@ func TestValidateOutputDescriptionShape_Valid(t *testing.T) {
 func TestValidateOutputDescriptionShape_WrongTypeCommitmentLength(t *testing.T) {
 	d := validOutputDescription()
 	d.TypeCommitment = make([]byte, 16)
+	require.ErrorIs(t, validateOutputDescriptionShape(0, d), ErrMalformedAction)
+}
+
+func TestValidateOutputDescriptionShape_EmptyProof(t *testing.T) {
+	d := validOutputDescription()
+	d.OutputProof = nil
 	require.ErrorIs(t, validateOutputDescriptionShape(0, d), ErrMalformedAction)
 }
 
@@ -105,8 +111,183 @@ func TestValidateMigrationActionShape_WrongPedersenXLength(t *testing.T) {
 	require.ErrorIs(t, validateMigrationActionShape(a), ErrMalformedAction)
 }
 
-func TestValidateMigrationActionShape_WrongProofLength(t *testing.T) {
+func TestValidateMigrationActionShape_EmptyProof(t *testing.T) {
 	a := validMigrationAction()
-	a.MigrationProof = make([]byte, 100)
+	a.MigrationProof = nil
 	require.ErrorIs(t, validateMigrationActionShape(a), ErrMalformedAction)
+}
+
+// ── Additional spend description shape tests ────────────────────────────────
+
+func TestValidateSpendDescriptionShape_WrongValueCommitInXLength(t *testing.T) {
+	d := validSpendDescription()
+	d.ValueCommitInX = make([]byte, 16)
+	require.ErrorIs(t, validateSpendDescriptionShape(0, d), ErrMalformedAction)
+}
+
+func TestValidateSpendDescriptionShape_WrongValueCommitInYLength(t *testing.T) {
+	d := validSpendDescription()
+	d.ValueCommitInY = make([]byte, 64)
+	require.ErrorIs(t, validateSpendDescriptionShape(0, d), ErrMalformedAction)
+}
+
+func TestValidateSpendDescriptionShape_WrongTypeCommitmentLength(t *testing.T) {
+	d := validSpendDescription()
+	d.TypeCommitment = make([]byte, 48)
+	require.ErrorIs(t, validateSpendDescriptionShape(0, d), ErrMalformedAction)
+}
+
+// ── Additional output description shape tests ───────────────────────────────
+
+func TestValidateOutputDescriptionShape_WrongCommitmentOutLength(t *testing.T) {
+	d := validOutputDescription()
+	d.CommitmentOut = make([]byte, 31)
+	require.ErrorIs(t, validateOutputDescriptionShape(0, d), ErrMalformedAction)
+}
+
+func TestValidateOutputDescriptionShape_WrongValueCommitOutXLength(t *testing.T) {
+	d := validOutputDescription()
+	d.ValueCommitOutX = make([]byte, 33)
+	require.ErrorIs(t, validateOutputDescriptionShape(0, d), ErrMalformedAction)
+}
+
+func TestValidateOutputDescriptionShape_WrongValueCommitOutYLength(t *testing.T) {
+	d := validOutputDescription()
+	d.ValueCommitOutY = make([]byte, 0)
+	require.ErrorIs(t, validateOutputDescriptionShape(0, d), ErrMalformedAction)
+}
+
+// ── Additional issue action shape tests ─────────────────────────────────────
+
+func TestValidateIssueActionShape_NoOutputs(t *testing.T) {
+	a := &snarktoken.IssueAction{
+		TokenType:      "USD",
+		TypeCommitment: make([]byte, 32),
+		TotalValue:     make([]byte, 32),
+	}
+	require.ErrorIs(t, validateIssueActionShape(a), ErrMalformedAction)
+}
+
+func TestValidateIssueActionShape_WrongTypeCommitmentLength(t *testing.T) {
+	a := &snarktoken.IssueAction{
+		TokenType:        "USD",
+		TypeCommitment:   make([]byte, 16),
+		TotalValue:       make([]byte, 32),
+		Outputs:          []snarktoken.OutputDescription{validOutputDescription()},
+		BindingSignature: make([]byte, 96),
+	}
+	require.ErrorIs(t, validateIssueActionShape(a), ErrMalformedAction)
+}
+
+func TestValidateIssueActionShape_Valid(t *testing.T) {
+	a := &snarktoken.IssueAction{
+		TokenType:        "USD",
+		TypeCommitment:   make([]byte, 32),
+		TotalValue:       make([]byte, 32),
+		Outputs:          []snarktoken.OutputDescription{validOutputDescription()},
+		BindingSignature: make([]byte, 96),
+	}
+	require.NoError(t, validateIssueActionShape(a))
+}
+
+func TestValidateIssueActionShape_BadOutputDescriptionPropagates(t *testing.T) {
+	badOut := validOutputDescription()
+	badOut.CommitmentOut = make([]byte, 1)
+
+	a := &snarktoken.IssueAction{
+		TokenType:        "USD",
+		TypeCommitment:   make([]byte, 32),
+		TotalValue:       make([]byte, 32),
+		Outputs:          []snarktoken.OutputDescription{badOut},
+		BindingSignature: make([]byte, 96),
+	}
+	require.ErrorIs(t, validateIssueActionShape(a), ErrMalformedAction)
+}
+
+func TestValidateIssueActionShape_BadBindingSignature(t *testing.T) {
+	a := &snarktoken.IssueAction{
+		TokenType:        "USD",
+		TypeCommitment:   make([]byte, 32),
+		TotalValue:       make([]byte, 32),
+		Outputs:          []snarktoken.OutputDescription{validOutputDescription()},
+		BindingSignature: make([]byte, 64),
+	}
+	require.ErrorIs(t, validateIssueActionShape(a), ErrMalformedAction)
+}
+
+// ── Additional migration action shape tests ─────────────────────────────────
+
+func TestValidateMigrationActionShape_WrongPedersenYLength(t *testing.T) {
+	a := validMigrationAction()
+	a.CommitmentPedersenY = make([]byte, 32)
+	require.ErrorIs(t, validateMigrationActionShape(a), ErrMalformedAction)
+}
+
+func TestValidateMigrationActionShape_WrongCommitmentMiMCLength(t *testing.T) {
+	a := validMigrationAction()
+	a.CommitmentMiMC = make([]byte, 48)
+	require.ErrorIs(t, validateMigrationActionShape(a), ErrMalformedAction)
+}
+
+func TestValidateMigrationActionShape_WrongValueCommitOutXLength(t *testing.T) {
+	a := validMigrationAction()
+	a.ValueCommitOutX = make([]byte, 64)
+	require.ErrorIs(t, validateMigrationActionShape(a), ErrMalformedAction)
+}
+
+func TestValidateMigrationActionShape_WrongValueCommitOutYLength(t *testing.T) {
+	a := validMigrationAction()
+	a.ValueCommitOutY = make([]byte, 0)
+	require.ErrorIs(t, validateMigrationActionShape(a), ErrMalformedAction)
+}
+
+func TestValidateMigrationActionShape_WrongTypeCommitmentLength(t *testing.T) {
+	a := validMigrationAction()
+	a.TypeCommitment = make([]byte, 48)
+	require.ErrorIs(t, validateMigrationActionShape(a), ErrMalformedAction)
+}
+
+// ── Additional transfer action shape tests ──────────────────────────────────
+
+func TestValidateTransferActionShape_WrongTypeCommitmentLength(t *testing.T) {
+	a := &snarktoken.TransferAction{
+		TypeCommitment: make([]byte, 16),
+		Inputs:         []snarktoken.SpendDescription{validSpendDescription()},
+	}
+	require.ErrorIs(t, validateTransferActionShape(a), ErrMalformedAction)
+}
+
+func TestValidateTransferActionShape_BadInputPropagates(t *testing.T) {
+	badIn := validSpendDescription()
+	badIn.CommitmentIn = make([]byte, 1)
+
+	a := &snarktoken.TransferAction{
+		TypeCommitment:   make([]byte, 32),
+		Inputs:           []snarktoken.SpendDescription{badIn},
+		BindingSignature: make([]byte, 96),
+	}
+	require.ErrorIs(t, validateTransferActionShape(a), ErrMalformedAction)
+}
+
+func TestValidateTransferActionShape_BadOutputPropagates(t *testing.T) {
+	badOut := validOutputDescription()
+	badOut.OutputProof = nil
+
+	a := &snarktoken.TransferAction{
+		TypeCommitment:   make([]byte, 32),
+		Inputs:           []snarktoken.SpendDescription{validSpendDescription()},
+		Outputs:          []snarktoken.OutputDescription{badOut},
+		BindingSignature: make([]byte, 96),
+	}
+	require.ErrorIs(t, validateTransferActionShape(a), ErrMalformedAction)
+}
+
+func TestValidateTransferActionShape_Valid(t *testing.T) {
+	a := &snarktoken.TransferAction{
+		TypeCommitment:   make([]byte, 32),
+		Inputs:           []snarktoken.SpendDescription{validSpendDescription()},
+		Outputs:          []snarktoken.OutputDescription{validOutputDescription()},
+		BindingSignature: make([]byte, 96),
+	}
+	require.NoError(t, validateTransferActionShape(a))
 }

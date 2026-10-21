@@ -13,9 +13,9 @@ import (
 
 	bls12381 "github.com/consensys/gnark-crypto/ecc/bls12-381"
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
-	"github.com/consensys/gnark/backend/groth16"
 	"github.com/stretchr/testify/require"
 
+	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/crypto/backend"
 	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/pp"
 	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/prover"
 	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/setup"
@@ -93,12 +93,10 @@ func TestBuildMigrationWitness_Basic(t *testing.T) {
 		CommitmentBytes: onCurveG1Bytes(t),
 	}
 
-	var typeRandomness fr.Element
-	_, err := typeRandomness.SetRandom()
-	require.NoError(t, err)
+	tr := randomCanonicalFr(t)
 
 	p := pp.DefaultPublicParams()
-	res, err := prover.BuildMigrationWitness(opening, p, typeRandomness)
+	res, err := prover.BuildMigrationWitness(opening, p, tr)
 	require.NoError(t, err)
 	require.NotNil(t, res)
 	require.NotNil(t, res.Note)
@@ -114,11 +112,10 @@ func TestBuildMigrationWitness_EmptyTokenType_Error(t *testing.T) {
 		CommitmentBytes: onCurveG1Bytes(t),
 	}
 
-	var typeRandomness fr.Element
-	_, _ = typeRandomness.SetRandom()
+	tr := randomCanonicalFr(t)
 
 	p := pp.DefaultPublicParams()
-	_, err := prover.BuildMigrationWitness(opening, p, typeRandomness)
+	_, err := prover.BuildMigrationWitness(opening, p, tr)
 	require.Error(t, err, "empty TokenType must be rejected by PedersenOpening.Validate()")
 }
 
@@ -130,11 +127,10 @@ func TestBuildMigrationWitness_EmptyBlindingFactor_Error(t *testing.T) {
 		CommitmentBytes: onCurveG1Bytes(t),
 	}
 
-	var typeRandomness fr.Element
-	_, _ = typeRandomness.SetRandom()
+	tr := randomCanonicalFr(t)
 
 	p := pp.DefaultPublicParams()
-	_, err := prover.BuildMigrationWitness(opening, p, typeRandomness)
+	_, err := prover.BuildMigrationWitness(opening, p, tr)
 	require.Error(t, err, "nil BlindingFactor must be rejected by PedersenOpening.Validate()")
 }
 
@@ -152,11 +148,10 @@ func TestBuildMigrationWitness_NonCanonicalBlindingFactor_Error(t *testing.T) {
 		CommitmentBytes: onCurveG1Bytes(t),
 	}
 
-	var typeRandomness fr.Element
-	_, _ = typeRandomness.SetRandom()
+	tr := randomCanonicalFr(t)
 
 	p := pp.DefaultPublicParams()
-	_, err := prover.BuildMigrationWitness(opening, p, typeRandomness)
+	_, err := prover.BuildMigrationWitness(opening, p, tr)
 	require.Error(t, err, "a non-canonical blinding factor must be rejected")
 }
 
@@ -168,11 +163,10 @@ func TestBuildMigrationWitness_GarbageCommitmentBytes_Error(t *testing.T) {
 		CommitmentBytes: []byte("not a valid G1 point at all"),
 	}
 
-	var typeRandomness fr.Element
-	_, _ = typeRandomness.SetRandom()
+	tr := randomCanonicalFr(t)
 
 	p := pp.DefaultPublicParams()
-	_, err := prover.BuildMigrationWitness(opening, p, typeRandomness)
+	_, err := prover.BuildMigrationWitness(opening, p, tr)
 	require.Error(t, err, "garbage commitment bytes must be rejected")
 }
 
@@ -211,7 +205,7 @@ func TestPedersenGeneratorCoordsFrom_DifferentVersions_DifferentCoords(t *testin
 
 func TestOrchestrator_BuildTransferAction_NoInputsNoOutputs(t *testing.T) {
 	setupProvers(t)
-	o := prover.NewOrchestrator(spendProver, outputProver)
+	o := prover.NewOrchestrator(spendProver, outputProver, testPP)
 
 	_, _, err := o.BuildTransferAction(
 		context.Background(),
@@ -226,7 +220,7 @@ func TestOrchestrator_BuildTransferAction_NoInputsNoOutputs(t *testing.T) {
 
 func TestOrchestrator_BuildIssueAction_NoOutputs(t *testing.T) {
 	setupProvers(t)
-	o := prover.NewOrchestrator(spendProver, outputProver)
+	o := prover.NewOrchestrator(spendProver, outputProver, testPP)
 
 	_, _, err := o.BuildIssueAction(
 		context.Background(),
@@ -242,7 +236,7 @@ func TestOrchestrator_BuildIssueAction_NoOutputs(t *testing.T) {
 func TestOrchestrator_BuildMigrationAction_NoProver(t *testing.T) {
 	setupProvers(t)
 	// Create an orchestrator WITHOUT a migration prover.
-	o := prover.NewOrchestrator(spendProver, outputProver)
+	o := prover.NewOrchestrator(spendProver, outputProver, testPP)
 
 	_, _, err := o.BuildMigrationAction(
 		context.Background(),
@@ -262,7 +256,7 @@ func TestOrchestrator_BuildMigrationAction_NoProver(t *testing.T) {
 
 func TestOrchestrator_BuildMigrationAction_NoRequests(t *testing.T) {
 	setupProvers(t)
-	o := prover.NewOrchestrator(spendProver, outputProver)
+	o := prover.NewOrchestrator(spendProver, outputProver, testPP)
 
 	_, _, err := o.BuildMigrationAction(context.Background(), nil, testPP)
 	require.Error(t, err, "empty migration request list must be rejected")
@@ -274,12 +268,15 @@ func TestOrchestrator_BuildMigrationAction_Valid(t *testing.T) {
 	cs, err := setup.CompileMigrationCircuit(p, gens)
 	require.NoError(t, err)
 
-	pk, _, err := groth16.Setup(cs)
+	p, err = setup.SetupMigration(p, gens)
 	require.NoError(t, err)
 
-	migProver := prover.NewMigrationProver(cs, pk)
+	b, err := backend.NewProofSystemBackend(p.ProofSystem, p.Curve)
+	require.NoError(t, err)
 
-	o := prover.NewOrchestrator(nil, nil)
+	migProver := prover.NewMigrationProver(cs, p.PKMigration, b, p)
+
+	o := prover.NewOrchestrator(nil, nil, p)
 	o.SetMigrationProver(migProver)
 
 	bf := randomCanonicalFr(t)

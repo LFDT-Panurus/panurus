@@ -12,18 +12,14 @@ import (
 
 	mathlib "github.com/IBM/mathlib"
 	bls12381 "github.com/consensys/gnark-crypto/ecc/bls12-381"
-	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
-	"github.com/consensys/gnark-crypto/ecc/bls12-381/twistededwards"
-	"github.com/consensys/gnark/backend/groth16"
+	bls12381fr "github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
 	"github.com/consensys/gnark/constraint"
 	"github.com/consensys/gnark/frontend"
 	"github.com/consensys/gnark/std/math/emulated"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 
-	"github.com/consensys/gnark-crypto/ecc"
-
 	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/circuit"
-	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/crypto/jubjub"
+	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/crypto/backend"
 	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/pp"
 	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/setup"
 	snarktoken "github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/token"
@@ -41,12 +37,13 @@ const (
 // format. The caller must persist the Note, if it is dropped, the migrated
 // token becomes permanently unspendable.
 type MigrationWitnessResult struct {
-	Assignment      *circuit.MigrationCircuit
-	Note            *snarktoken.Note
-	RCV             fr.Element
-	Commitment      fr.Element
-	ValueCommitment twistededwards.PointAffine
-	TypeCommitment  fr.Element
+	Assignment       *circuit.MigrationCircuit
+	Note             *snarktoken.Note
+	RCV              []byte // 32 bytes
+	Commitment       []byte // 32 bytes
+	ValueCommitmentX []byte // 32 bytes
+	ValueCommitmentY []byte // 32 bytes
+	TypeCommitment   []byte // 32 bytes
 	// PedersenCommitX/Y are the extracted affine coordinates of the
 	// original Pedersen commitment, for inclusion in the wire format.
 	PedersenCommitX [48]byte
@@ -65,47 +62,47 @@ type MigrationWitnessResult struct {
 func BuildMigrationWitness(
 	opening snarktoken.PedersenOpening,
 	publicParams *pp.PublicParams,
-	typeRandomness fr.Element,
+	typeRandomness []byte,
 ) (*MigrationWitnessResult, error) {
 	if err := opening.Validate(); err != nil {
 		return nil, errors.Wrapf(err, "prover: invalid PedersenOpening")
 	}
 
-	note, err := snarktoken.NewRandomNote(opening.Value, opening.TokenType)
+	cc, err := newCurveCtx(publicParams.Curve)
+	if err != nil {
+		return nil, err
+	}
+
+	note, err := snarktoken.NewRandomNote(opening.Value, opening.TokenType, cc.id)
 	if err != nil {
 		return nil, errors.Wrapf(err, "prover: migration note creation failed")
 	}
 
-	cm, err := note.Commitment()
+	cm, err := note.Commitment(cc.id)
 	if err != nil {
 		return nil, errors.Wrapf(err, "prover: migration commitment derivation failed")
 	}
 
-	rcv, err := jubjub.RandomJubjubScalar()
+	rcvBytes, err := cc.suite.RandomScalar()
 	if err != nil {
 		return nil, errors.Wrapf(err, "prover: migration RCV generation failed")
 	}
 
-	cv, err := jubjub.ValueCommit(note.Value, rcv)
+	cv, err := cc.suite.ValueCommit(note.Value, rcvBytes)
 	if err != nil {
 		return nil, errors.Wrapf(err, "prover: migration value commitment failed")
 	}
 
-	// Compute TokenTypePed = HashToZr(tokenType)
-	// Must match the exact algorithm used by IBM mathlib's HashToZr for
-	// BLS12-381: SHA-256(data) → big.Int → mod r.
+	// The Pedersen side is the source zkatdlog commitment, which lives in
+	// BLS12-381 G1 regardless of the curve the new zkatsnark token uses.
+	// TokenTypePed = HashToZr(tokenType)
 	tokenTypePed := hashToZrBLS12381([]byte(opening.TokenType))
 
-	// Parse the Pedersen blinding factor
-	var blindingFactor fr.Element
+	var blindingFactor bls12381fr.Element
 	if err := blindingFactor.SetBytesCanonical(opening.BlindingFactor); err != nil {
 		return nil, errors.Wrapf(err, "prover: invalid Pedersen blinding factor bytes")
 	}
 
-	// Extract Pedersen commitment X/Y coordinates
-	// The commitment is stored as uncompressed G1 (RawBytes: X || Y,
-	// 96 bytes) or compressed (48 bytes). We parse it via gnark-crypto's
-	// G1Affine.SetBytes which handles both formats.
 	var pedPoint bls12381.G1Affine
 	if _, err := pedPoint.SetBytes(opening.CommitmentBytes); err != nil {
 		return nil, errors.Wrapf(err, "prover: invalid Pedersen commitment bytes")
@@ -114,77 +111,91 @@ func BuildMigrationWitness(
 	pedXBig := pedPoint.X.BigInt(new(big.Int))
 	pedYBig := pedPoint.Y.BigInt(new(big.Int))
 
-	// Also extract raw bytes for the wire format.
 	pedXBytes := pedPoint.X.Bytes()
 	pedYBytes := pedPoint.Y.Bytes()
 
 	gens := DefaultPedersenGeneratorCoords()
-	var vField fr.Element
-	vField.SetUint64(opening.Value)
-
-	tField := snarktoken.EncodeTokenType(opening.TokenType)
-
-	tc, err := snarktoken.ComputeTypeCommitment(opening.TokenType, typeRandomness)
+	tc, err := snarktoken.ComputeTypeCommitment(opening.TokenType, typeRandomness, cc.id)
 	if err != nil {
 		return nil, errors.Wrapf(err, "prover: migration type commitment failed")
 	}
 
+	cmField, err := cc.canonical(cm)
+	if err != nil {
+		return nil, errors.Wrapf(err, "prover: invalid commitment bytes")
+	}
+	tcField, err := cc.canonical(tc)
+	if err != nil {
+		return nil, errors.Wrapf(err, "prover: invalid type commitment bytes")
+	}
+	trField, err := cc.canonical(typeRandomness)
+	if err != nil {
+		return nil, errors.Wrapf(err, "prover: invalid type randomness bytes")
+	}
+	rField, err := cc.fromBytes(note.Randomness)
+	if err != nil {
+		return nil, errors.Wrapf(err, "prover: invalid note randomness bytes")
+	}
+
+	g := cc.generators()
+
 	assignment := &circuit.MigrationCircuit{
-		// Public inputs — emulated field elements must use ValueOf.
 		CommitmentPedersenX: emulated.ValueOf[emulated.BLS12381Fp](pedXBig),
 		CommitmentPedersenY: emulated.ValueOf[emulated.BLS12381Fp](pedYBig),
-		CommitmentMiMC:      cm,
-		ValueCommitOutX:     cv.X,
-		ValueCommitOutY:     cv.Y,
-		TypeCommitment:      tc,
-		// Private inputs
-		Value:          vField,
-		TokenType:      tField,
-		TokenTypePed:   tokenTypePed,
-		RandomnessPed:  blindingFactor,
-		RandomnessNew:  note.Randomness,
-		RCV:            rcv,
-		TypeRandomness: typeRandomness,
-		// Compile-time parameters
-		MaxBits: publicParams.MaxBits,
-		PedG0X:  gens.G0X, PedG0Y: gens.G0Y,
+		CommitmentMiMC:      cmField,
+		ValueCommitOutX:     new(big.Int).SetBytes(cv.X),
+		ValueCommitOutY:     new(big.Int).SetBytes(cv.Y),
+		TypeCommitment:      tcField,
+		Value:               new(big.Int).SetUint64(opening.Value),
+		TokenType:           cc.tokenType(opening.TokenType),
+		TokenTypePed:        tokenTypePed,
+		RandomnessPed:       blindingFactor,
+		RandomnessNew:       rField,
+		RCV:                 new(big.Int).SetBytes(rcvBytes),
+		TypeRandomness:      trField,
+		MaxBits:             publicParams.MaxBits,
+		PedG0X:              gens.G0X, PedG0Y: gens.G0Y,
 		PedG1X: gens.G1X, PedG1Y: gens.G1Y,
 		PedG2X: gens.G2X, PedG2Y: gens.G2Y,
+		GenVX: g.VX, GenVY: g.VY,
+		GenRX: g.RX, GenRY: g.RY,
 	}
 
 	return &MigrationWitnessResult{
-		Assignment:      assignment,
-		Note:            note,
-		RCV:             rcv,
-		Commitment:      cm,
-		ValueCommitment: cv,
-		TypeCommitment:  tc,
-		PedersenCommitX: pedXBytes,
-		PedersenCommitY: pedYBytes,
+		Assignment:       assignment,
+		Note:             note,
+		RCV:              rcvBytes,
+		Commitment:       cm,
+		ValueCommitmentX: cv.X,
+		ValueCommitmentY: cv.Y,
+		TypeCommitment:   tc,
+		PedersenCommitX:  pedXBytes,
+		PedersenCommitY:  pedYBytes,
 	}, nil
 }
 
-// MigrationProver generates Groth16 proofs for MigrationCircuit. Same
-// lifecycle and concurrency guarantees as SpendProver/OutputProver.
+// MigrationProver generates proofs for MigrationCircuit via ProofSystemBackend.
+// Same lifecycle and concurrency guarantees as SpendProver/OutputProver.
 type MigrationProver struct {
-	cs constraint.ConstraintSystem
-	pk groth16.ProvingKey
+	cs      constraint.ConstraintSystem
+	pkBytes []byte
+	backend backend.ProofSystemBackend
+	pp      *pp.PublicParams
 }
 
-// NewMigrationProver creates a new MigrationProver with the given
-// constraint system and proving key.
-func NewMigrationProver(cs constraint.ConstraintSystem, pk groth16.ProvingKey) *MigrationProver {
-	return &MigrationProver{cs: cs, pk: pk}
+// NewMigrationProver creates a new MigrationProver.
+func NewMigrationProver(cs constraint.ConstraintSystem, pkBytes []byte, b backend.ProofSystemBackend, p *pp.PublicParams) *MigrationProver {
+	return &MigrationProver{cs: cs, pkBytes: pkBytes, backend: b, pp: p}
 }
 
-// Prove generates a Groth16 proof for the given MigrationCircuit assignment.
-func (p *MigrationProver) Prove(assignment *circuit.MigrationCircuit) (groth16.Proof, error) {
-	witness, err := frontend.NewWitness(assignment, ecc.BLS12_381.ScalarField())
+// Prove generates a proof for the given MigrationCircuit assignment.
+func (p *MigrationProver) Prove(assignment *circuit.MigrationCircuit) ([]byte, error) {
+	witness, err := frontend.NewWitness(assignment, p.pp.Curve.ScalarField())
 	if err != nil {
 		return nil, errors.Wrapf(err, "migration prover: witness construction failed")
 	}
 
-	proof, err := groth16.Prove(p.cs, p.pk, witness)
+	proof, err := p.backend.Prove(p.cs, p.pkBytes, witness)
 	if err != nil {
 		return nil, errors.Wrapf(err, "migration prover: proof generation failed")
 	}
@@ -196,12 +207,12 @@ func (p *MigrationProver) Prove(assignment *circuit.MigrationCircuit) (groth16.P
 
 // hashToZrBLS12381 replicates IBM mathlib's HashToZr for BLS12-381:
 // SHA-256(data) → big.Int → mod r (scalar field order).
-func hashToZrBLS12381(data []byte) fr.Element {
+func hashToZrBLS12381(data []byte) bls12381fr.Element {
 	digest := sha256.Sum256(data)
 	digestBig := new(big.Int).SetBytes(digest[:])
-	digestBig.Mod(digestBig, fr.Modulus())
+	digestBig.Mod(digestBig, bls12381fr.Modulus())
 
-	var result fr.Element
+	var result bls12381fr.Element
 	result.SetBigInt(digestBig)
 
 	return result

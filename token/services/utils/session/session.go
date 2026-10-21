@@ -18,7 +18,7 @@ import (
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/view"
 )
 
-const DefaultReceiveTimeout = 10 * time.Second
+const DefaultReceiveTimeout = 30 * time.Second
 
 // ErrTimeout is returned when a session receive operation times out.
 var ErrTimeout = errors.New("session timeout")

@@ -7,12 +7,12 @@ SPDX-License-Identifier: Apache-2.0
 //
 // PublicParams is the single shared artifact between the prover (client)
 // and the validator (eventually, the network layer). Every field that
-// affects cryptographic validity, the curve, the proof system, the
-// value-commitment generators, circuit keys, and the value range lives
-// here. None of it is configurable via per-node config files: doing so
-// would let different participants silently disagree about what a valid
-// proof looks like, which breaks consensus. Distribution of this struct
-// (serialized) is a network-layer concern outside this package's scope.
+// affects cryptographic validity, the curve, the proof system, circuit
+// keys, and the value range lives here. None of it is configurable via
+// per-node config files: doing so would let different participants silently
+// disagree about what a valid proof looks like, which breaks consensus.
+// Distribution of this struct (serialized) is a network-layer concern
+// outside this package's scope.
 package pp
 
 import (
@@ -23,13 +23,11 @@ import (
 
 	mathlib "github.com/IBM/mathlib"
 	"github.com/consensys/gnark-crypto/ecc"
-	"github.com/consensys/gnark-crypto/ecc/bls12-381/twistededwards"
 
 	"github.com/LFDT-Panurus/panurus/token/core"
 	pp3 "github.com/LFDT-Panurus/panurus/token/core/common/encoding/pp"
 	"github.com/LFDT-Panurus/panurus/token/driver"
 	pp2 "github.com/LFDT-Panurus/panurus/token/driver/protos-go/v1/pp"
-	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/crypto/jubjub"
 	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/crypto/params"
 )
 
@@ -49,6 +47,12 @@ type IdemixIssuerPublicKey struct {
 
 // PublicParams holds every parameter shared between the prover and the
 // validator for the zkatsnark driver.
+//
+// V and R value-commitment generators are NOT stored here (Decision H).
+// They are nothing-up-my-sleeve values, deterministically re-derivable
+// by anyone running the same code from a fixed public seed. Callers look
+// them up directly from crypto/jubjub.V/R or crypto/babyjubjub.V/R based
+// on pp.Curve.
 type PublicParams struct {
 	// ── driver.PublicParameters interface-backing fields ──────────────────
 
@@ -82,23 +86,11 @@ type PublicParams struct {
 
 	// ── Proof system and curve ─────────────────────────────────────────────
 
-	// ProofSystem selects the ZK proof system. Currently only "groth16" is
-	// implemented; "plonk" is reserved for a future migration and is
-	// rejected by Validate() and by setup.SetupAll until implemented.
+	// ProofSystem selects the ZK proof system: "groth16" or "plonk".
 	ProofSystem string
 
-	// Curve is the outer pairing curve. BLS12-381 by default, per Angelo's
-	// direction (BN254 is no longer recommended).
+	// Curve is the outer pairing curve. BLS12-381 or BN254.
 	Curve ecc.ID
-
-	// ── Value commitment generators (Jubjub, embedded in BLS12-381 Fr) ────
-
-	// V is the value generator: cv = Value·V + RCV·R.
-	V twistededwards.PointAffine
-
-	// R is the randomness generator, and also the group base point used
-	// for the per-action binding signature (see prover.ComputeBindingSignature).
-	R twistededwards.PointAffine
 
 	// ── Circuit keys ────────────────────────────────────────────────────────
 	// Populated once, offline, by setup.SetupAll. Proving keys are
@@ -262,7 +254,11 @@ func DeserializePublicParams(raw []byte) (*PublicParams, error) {
 // It does NOT require circuit keys to be populated — a freshly constructed
 // PublicParams destined for setup.SetupAll is expected to have empty
 // PK*/VK* fields at the point Validate is called. Key presence is checked
-// separately, at load time, by setup.LoadProvingKey / LoadVerifyingKey.
+// separately, at load time, by setup.LoadProvingKeyBytes / LoadVerifyingKeyBytes.
+//
+// V/R generators are NOT validated here — they are deterministically
+// derived from code (crypto/jubjub, crypto/babyjubjub) and always valid
+// by construction (Decision H).
 func (pp *PublicParams) Validate() error {
 	if pp.Label == "" {
 		return errors.New("pp: Label must not be empty")
@@ -278,12 +274,6 @@ func (pp *PublicParams) Validate() error {
 	}
 	if pp.MaxBits <= 0 {
 		return fmt.Errorf("pp: MaxBits must be positive, got %d", pp.MaxBits)
-	}
-	if !pp.V.IsOnCurve() {
-		return errors.New("pp: V is not a valid point on the Jubjub curve")
-	}
-	if !pp.R.IsOnCurve() {
-		return errors.New("pp: R is not a valid point on the Jubjub curve")
 	}
 	if len(pp.IdemixIssuerPublicKeys) == 0 {
 		return errors.New("pp: expected at least one idemix issuer public key")
@@ -321,14 +311,15 @@ func (pp *PublicParams) Hash() ([32]byte, error) {
 // setup.SetupAll. Circuit keys (PK*/VK*) are empty until SetupAll populates
 // them, DefaultPublicParams alone is NOT sufficient for proving or
 // verifying; it must go through setup first.
+//
+// V/R generators are NOT stored in PublicParams (Decision H). They are
+// looked up from crypto/jubjub or crypto/babyjubjub based on Curve.
 func DefaultPublicParams() *PublicParams {
 	return &PublicParams{
 		Label:              "zkatsnark",
 		SchemeVersion:      1,
 		ProofSystem:        params.DefaultProofSystem,
 		Curve:              params.DefaultCurve,
-		V:                  jubjub.V,
-		R:                  jubjub.R,
 		MaxBits:            params.DefaultMaxBits,
 		GraphHidingEnabled: false,
 		CertifierID:        "",
