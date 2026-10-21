@@ -20,6 +20,7 @@ import (
 	config2 "github.com/LFDT-Panurus/panurus/token/services/config"
 	"github.com/LFDT-Panurus/panurus/token/services/logging"
 	kvs2 "github.com/LFDT-Panurus/panurus/token/services/storage/db/kvs"
+	snark "github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/driver"
 	"github.com/hyperledger-labs/fabric-smart-client/integration"
 	"github.com/hyperledger-labs/fabric-smart-client/integration/nwo/fsc/node"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/services/config"
@@ -119,7 +120,9 @@ func (l *walletManagerLoader) Load(user string) *token.WalletManager {
 	storageProvider := identity.NewKVSStorageProvider(kvss)
 	s := core.NewWalletServiceFactoryService(
 		fabtoken.NewWalletServiceFactory(storageProvider),
-		dlog.NewWalletServiceFactory(storageProvider))
+		dlog.NewWalletServiceFactory(storageProvider),
+		snark.NewWalletServiceFactory(storageProvider),
+	)
 	tmsConfig, err := configService.ConfigurationFor(tms.Network, tms.Channel, tms.Namespace)
 	gomega.Expect(err).ToNot(gomega.HaveOccurred())
 	walletService, err := s.NewWalletService(tmsConfig, ppRaw)

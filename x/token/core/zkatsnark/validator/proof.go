@@ -6,17 +6,14 @@ SPDX-License-Identifier: Apache-2.0
 package validator
 
 import (
-	"math/big"
-
 	"github.com/consensys/gnark-crypto/ecc"
-	"github.com/consensys/gnark/backend/groth16"
 	"github.com/consensys/gnark/backend/witness"
 	"github.com/consensys/gnark/frontend"
 	"github.com/consensys/gnark/std/math/emulated"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 
 	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/circuit"
-	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/setup"
+	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/crypto/backend"
 	snarktoken "github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/token"
 )
 
@@ -26,7 +23,7 @@ import (
 // wire, so frontend.PublicOnly() is the only viable construction path
 // here, unlike the prover side which builds a full witness and could
 // derive the public portion from it.
-func publicWitnessForSpend(d decodedSpend) (witness.Witness, error) {
+func publicWitnessForSpend(d decodedSpend, curve ecc.ID) (witness.Witness, error) {
 	assignment := &circuit.SpendCircuit{
 		CommitmentIn:   d.Commitment,
 		ValueCommitInX: d.ValueCommitX,
@@ -34,7 +31,7 @@ func publicWitnessForSpend(d decodedSpend) (witness.Witness, error) {
 		TypeCommitment: d.TypeCommitment,
 	}
 
-	w, err := frontend.NewWitness(assignment, ecc.BLS12_381.ScalarField(), frontend.PublicOnly())
+	w, err := frontend.NewWitness(assignment, curve.ScalarField(), frontend.PublicOnly())
 	if err != nil {
 		return nil, errors.Wrapf(err, "validator: building spend public witness")
 	}
@@ -47,14 +44,14 @@ func publicWitnessForSpend(d decodedSpend) (witness.Witness, error) {
 // (frontend.NewWitness never reads non-frontend.Variable struct fields);
 // the range constraint's actual bit-width is already fixed inside vkOutput,
 // which is what enforces it for this specific proof.
-func publicWitnessForOutput(d decodedOutput) (witness.Witness, error) {
+func publicWitnessForOutput(d decodedOutput, curve ecc.ID) (witness.Witness, error) {
 	assignment := &circuit.OutputCircuit{
 		CommitmentOut:   d.Commitment,
 		ValueCommitOutX: d.ValueCommitX,
 		ValueCommitOutY: d.ValueCommitY,
 		TypeCommitment:  d.TypeCommitment,
 	}
-	w, err := frontend.NewWitness(assignment, ecc.BLS12_381.ScalarField(), frontend.PublicOnly())
+	w, err := frontend.NewWitness(assignment, curve.ScalarField(), frontend.PublicOnly())
 	if err != nil {
 		return nil, errors.Wrapf(err, "validator: building output public witness")
 	}
@@ -66,26 +63,23 @@ func publicWitnessForOutput(d decodedOutput) (witness.Witness, error) {
 // MigrationCircuit from decoded field elements.
 //
 // Only the six gnark:",public" fields are populated (CommitmentPedersenX/Y,
-// CommitmentMiMC, ValueCommitOutX/Y, TokenType). Every private field
+// CommitmentMiMC, ValueCommitOutX/Y, TypeCommitment). Every private field
 // (Value, TokenTypePed, RandomnessPed, RandomnessNew, RCV) and every
-// compile-time-only field (MaxBits, PedG0X/Y, PedG1X/Y, PedG2X/Y) is left
-// at its zero value. frontend.PublicOnly() only reads gnark:",public"
-// -tagged frontend.Variable (and emulated.Element) fields via reflection —
-// it never dereferences the *big.Int compile-time fields, so leaving them
-// nil is safe here, exactly as OutputCircuit's MaxBits is safely left
-// unset in publicWitnessForOutput above. Worth double-checking this
-// specific circuit given it has more compile-time-only fields (seven) than
-// any circuit validated so far.
-func publicWitnessForMigration(d decodedMigration) (witness.Witness, error) {
+// compile-time-only field (MaxBits, PedG0X/Y, PedG1X/Y, PedG2X/Y,
+// GenVX/Y, GenRX/Y) is left at its zero value. frontend.PublicOnly() only
+// reads gnark:",public"-tagged frontend.Variable (and emulated.Element)
+// fields via reflection — it never dereferences the *big.Int compile-time
+// fields, so leaving them nil is safe here.
+func publicWitnessForMigration(d decodedMigration, curve ecc.ID) (witness.Witness, error) {
 	assignment := &circuit.MigrationCircuit{
-		CommitmentPedersenX: emulated.ValueOf[emulated.BLS12381Fp](d.PedersenX.BigInt(new(big.Int))),
-		CommitmentPedersenY: emulated.ValueOf[emulated.BLS12381Fp](d.PedersenY.BigInt(new(big.Int))),
+		CommitmentPedersenX: emulated.ValueOf[emulated.BLS12381Fp](d.PedersenX),
+		CommitmentPedersenY: emulated.ValueOf[emulated.BLS12381Fp](d.PedersenY),
 		CommitmentMiMC:      d.CommitmentMiMC,
 		ValueCommitOutX:     d.ValueCommitX,
 		ValueCommitOutY:     d.ValueCommitY,
 		TypeCommitment:      d.TypeCommitment,
 	}
-	w, err := frontend.NewWitness(assignment, ecc.BLS12_381.ScalarField(), frontend.PublicOnly())
+	w, err := frontend.NewWitness(assignment, curve.ScalarField(), frontend.PublicOnly())
 	if err != nil {
 		return nil, errors.Wrapf(err, "validator: building migration public witness")
 	}
@@ -97,9 +91,13 @@ type proofOutcome struct {
 	err error
 }
 
+// verifyAllProofs verifies all spend and output proofs in parallel using
+// the ProofSystemBackend. The backend handles both Groth16 and Plonk
+// transparently — the validator never touches proof-system-specific types.
 func verifyAllProofs(
-	vkSpend groth16.VerifyingKey,
-	vkOutput groth16.VerifyingKey,
+	b backend.ProofSystemBackend,
+	vkSpendBytes []byte,
+	vkOutputBytes []byte,
 	curve ecc.ID,
 	inputs []snarktoken.SpendDescription,
 	decodedInputs []decodedSpend,
@@ -114,21 +112,14 @@ func verifyAllProofs(
 
 	for i := range inputs {
 		go func() {
-			proof, err := setup.DeserializeProof(inputs[i].SpendProof, curve)
-			if err != nil {
-				ch <- proofOutcome{errors.Wrapf(err, "input %d: proof decode", i)}
-
-				return
-			}
-
-			pw, err := publicWitnessForSpend(decodedInputs[i])
+			pw, err := publicWitnessForSpend(decodedInputs[i], curve)
 			if err != nil {
 				ch <- proofOutcome{err}
 
 				return
 			}
 
-			if err := groth16.Verify(proof, vkSpend, pw); err != nil {
+			if err := b.Verify(vkSpendBytes, inputs[i].SpendProof, pw); err != nil {
 				ch <- proofOutcome{errors.Wrapf(ErrInvalidProof, "input %d: %s", i, err)}
 
 				return
@@ -140,19 +131,13 @@ func verifyAllProofs(
 
 	for j := range outputs {
 		go func() {
-			proof, err := setup.DeserializeProof(outputs[j].OutputProof, curve)
-			if err != nil {
-				ch <- proofOutcome{errors.Wrapf(err, "output %d: proof decode", j)}
-
-				return
-			}
-			pw, err := publicWitnessForOutput(decodedOutputs[j])
+			pw, err := publicWitnessForOutput(decodedOutputs[j], curve)
 			if err != nil {
 				ch <- proofOutcome{err}
 
 				return
 			}
-			if err := groth16.Verify(proof, vkOutput, pw); err != nil {
+			if err := b.Verify(vkOutputBytes, outputs[j].OutputProof, pw); err != nil {
 				ch <- proofOutcome{errors.Wrapf(ErrInvalidProof, "output %d: %s", j, err)}
 
 				return
@@ -171,27 +156,19 @@ func verifyAllProofs(
 }
 
 // verifyMigrationProof verifies a single MigrationAction's proof against
-// vkMigration. A MigrationAction always carries exactly one proof — never
-// a batch the way TransferAction carries many SpendProofs/OutputProofs —
-// so no internal parallelism is needed here, unlike verifyAllProofs. A
-// caller validating many MigrationActions together is responsible for
-// parallelizing ACROSS calls to ValidateMigration, at a layer above this
-// package.
+// vkMigration via the ProofSystemBackend.
 func verifyMigrationProof(
-	vkMigration groth16.VerifyingKey,
+	b backend.ProofSystemBackend,
+	vkMigrationBytes []byte,
 	curve ecc.ID,
 	proofBytes []byte,
 	decoded decodedMigration,
 ) error {
-	proof, err := setup.DeserializeProof(proofBytes, curve)
-	if err != nil {
-		return errors.Wrapf(err, "validator: migration proof decode")
-	}
-	pw, err := publicWitnessForMigration(decoded)
+	pw, err := publicWitnessForMigration(decoded, curve)
 	if err != nil {
 		return err
 	}
-	if err := groth16.Verify(proof, vkMigration, pw); err != nil {
+	if err := b.Verify(vkMigrationBytes, proofBytes, pw); err != nil {
 		return errors.Wrapf(ErrInvalidProof, "%s", err)
 	}
 

@@ -7,26 +7,25 @@ package validator
 
 import (
 	"context"
-	"math/big"
 	"slices"
 
-	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
-	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
-
 	"github.com/LFDT-Panurus/panurus/token/core/common"
+	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/validator"
 	"github.com/LFDT-Panurus/panurus/token/driver"
 	"github.com/LFDT-Panurus/panurus/token/services/utils"
 	snarktoken "github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/token"
+	"github.com/consensys/gnark-crypto/ecc"
+	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 )
 
 // parseTotalValue decodes the wire-format TotalValue bytes into a uint64.
-func parseTotalValue(raw []byte) (uint64, error) {
-	var totalValueField fr.Element
-	if err := totalValueField.SetBytesCanonical(raw); err != nil {
-		return 0, errors.Wrapf(err, "validator: TotalValue not canonical")
+func parseTotalValue(curve ecc.ID, raw []byte) (uint64, error) {
+	v, err := decodeScalar(curve, raw)
+	if err != nil {
+		return 0, errors.Wrapf(err, "validator: TotalValue")
 	}
 
-	return totalValueField.BigInt(new(big.Int)).Uint64(), nil
+	return v.Uint64(), nil
 }
 
 // IssueZKValidate is a ValidateIssueFunc callback that performs the full
@@ -42,32 +41,33 @@ func (v *Validator) IssueZKValidate(_ context.Context, ctx *Context) error {
 		return err
 	}
 
-	decodedOutputs, err := decodeAllOutputs(action.Outputs)
+	decodedOutputs, err := decodeAllOutputs(action.Outputs, v.pp.Curve)
 	if err != nil {
 		return err
 	}
 
 	// Decode the action-level TypeCommitment.
-	var actionTC fr.Element
-	if err := actionTC.SetBytesCanonical(action.TypeCommitment); err != nil {
-		return err
+	actionTC, err := decodeScalar(v.pp.Curve, action.TypeCommitment)
+	if err != nil {
+		return errors.Wrapf(err, "validator: TypeCommitment")
 	}
 
 	if err := checkTypeCommitmentHomogeneity(actionTC, nil, decodedOutputs); err != nil {
 		return err
 	}
 
-	if err := verifyAllProofs(v.keys.vkSpend, v.keys.vkOutput, v.pp.Curve, nil, nil, action.Outputs, decodedOutputs); err != nil {
+	if err := verifyAllProofs(v.backend, v.keys.vkSpendBytes, v.keys.vkOutputBytes, v.pp.Curve, nil, nil, action.Outputs, decodedOutputs); err != nil {
 		return err
 	}
 
-	totalValue, err := parseTotalValue(action.TotalValue)
+	totalValue, err := parseTotalValue(v.pp.Curve, action.TotalValue)
 	if err != nil {
 		return err
 	}
 
 	return verifyBindingSignature(
-		snarktoken.ActionTypeIssue, actionTC,
+		v.pp.Curve,
+		snarktoken.ActionTypeIssue, action.TypeCommitment,
 		nil, decodedOutputs,
 		action.BindingSignature, totalValue,
 	)
@@ -86,7 +86,11 @@ func IssueSignatureValidate(c context.Context, ctx *Context) error {
 
 	// Check the issuer is among those known (open-policy if list is empty)
 	if issuers := ctx.PP.Issuers(); len(issuers) != 0 && !slices.ContainsFunc(issuers, issuer.Equal) {
-		return errors.New("issuer not authorized")
+		return validator.ErrIssuerNotAuthorized
+	}
+
+	if utils.IsNil(ctx.Deserializer) {
+		return errors.New("validator: nil deserializer")
 	}
 
 	verifier, err := ctx.Deserializer.GetIssuerVerifier(c, issuer)

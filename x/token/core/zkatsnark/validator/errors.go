@@ -25,8 +25,8 @@ var (
 	ErrMalformedAction = errors.New("validator: action is malformed")
 
 	// ErrInvalidEncoding is returned when a byte field does not decode to
-	// a canonical field element, or a decoded point is not on the Jubjub
-	// curve.
+	// a canonical field element, or a decoded point is not on the twisted Edwards
+	// curve embedded in the configured pairing curve.
 	ErrInvalidEncoding = errors.New("validator: field encoding invalid")
 
 	// ErrTypeMismatch is returned when an input or output's TokenType does

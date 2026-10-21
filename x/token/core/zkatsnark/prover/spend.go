@@ -6,40 +6,43 @@ SPDX-License-Identifier: Apache-2.0
 package prover
 
 import (
-	"fmt"
-
-	"github.com/consensys/gnark-crypto/ecc"
-	"github.com/consensys/gnark/backend/groth16"
 	"github.com/consensys/gnark/constraint"
 	"github.com/consensys/gnark/frontend"
+	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 
 	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/circuit"
+	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/crypto/backend"
+	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/pp"
 )
 
-// SpendProver generates Groth16 proofs for SpendCircuit. Construct once at
-// driver startup and reuse for every transaction. Safe for concurrent use
-// from multiple goroutines.
+// SpendProver generates proofs for SpendCircuit via the ProofSystemBackend.
+// Construct once at driver startup and reuse for every transaction.
+// Safe for concurrent use from multiple goroutines.
 type SpendProver struct {
-	cs constraint.ConstraintSystem
-	pk groth16.ProvingKey
+	cs      constraint.ConstraintSystem
+	pkBytes []byte
+	backend backend.ProofSystemBackend
+	pp      *pp.PublicParams
 }
 
-func NewSpendProver(cs constraint.ConstraintSystem, pk groth16.ProvingKey) *SpendProver {
-	return &SpendProver{cs: cs, pk: pk}
+// NewSpendProver creates a new SpendProver with the given constraint system,
+// serialized proving key bytes, and proof system backend.
+func NewSpendProver(cs constraint.ConstraintSystem, pkBytes []byte, b backend.ProofSystemBackend, p *pp.PublicParams) *SpendProver {
+	return &SpendProver{cs: cs, pkBytes: pkBytes, backend: b, pp: p}
 }
 
-// Prove generates a Groth16 proof for the given SpendCircuit assignment.
-// Returns an error if the assignment does not satisfy the constraint
-// system.
-func (p *SpendProver) Prove(assignment *circuit.SpendCircuit) (groth16.Proof, error) {
-	witness, err := frontend.NewWitness(assignment, ecc.BLS12_381.ScalarField())
+// Prove generates a proof for the given SpendCircuit assignment.
+// Returns the serialized proof bytes, or an error if the assignment does
+// not satisfy the constraint system.
+func (p *SpendProver) Prove(assignment *circuit.SpendCircuit) ([]byte, error) {
+	witness, err := frontend.NewWitness(assignment, p.pp.Curve.ScalarField())
 	if err != nil {
-		return nil, fmt.Errorf("spend prover: witness construction failed: %w", err)
+		return nil, errors.Wrapf(err, "spend prover: witness construction failed")
 	}
 
-	proof, err := groth16.Prove(p.cs, p.pk, witness)
+	proof, err := p.backend.Prove(p.cs, p.pkBytes, witness)
 	if err != nil {
-		return nil, fmt.Errorf("spend prover: proof generation failed: %w", err)
+		return nil, errors.Wrapf(err, "spend prover: proof generation failed")
 	}
 
 	return proof, nil
