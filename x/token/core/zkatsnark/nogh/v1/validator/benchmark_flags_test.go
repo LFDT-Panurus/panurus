@@ -12,8 +12,6 @@ import (
 	mathlib "github.com/IBM/mathlib"
 	"github.com/consensys/gnark-crypto/ecc"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
-
-	benchmark2 "github.com/LFDT-Panurus/panurus/token/services/benchmark"
 )
 
 // defaultBenchmarkProofSystem is used when -proof_system is not set.
@@ -51,22 +49,4 @@ func curveFromCaseID(id mathlib.CurveID) (ecc.ID, error) {
 	default:
 		return 0, errors.Errorf("unsupported curve ID [%d] for zkatsnark benchmarks: want BN254 or a BLS12_381 variant", id)
 	}
-}
-
-// benchmarkConfigFor returns the (proof system, curve) combination to
-// benchmark for the given benchmark.Case: the proof system comes from the
-// -proof_system flag (default groth16), the curve comes from the case
-// itself (benchmarkCase.CurveID), driven by the shared -curves flag.
-func benchmarkConfigFor(benchmarkCase *benchmark2.Case) (e2eConfig, error) {
-	proofSystem, err := benchmarkProofSystem()
-	if err != nil {
-		return e2eConfig{}, err
-	}
-
-	curve, err := curveFromCaseID(benchmarkCase.CurveID)
-	if err != nil {
-		return e2eConfig{}, err
-	}
-
-	return e2eConfig{proofSystem: proofSystem, curve: curve}, nil
 }
