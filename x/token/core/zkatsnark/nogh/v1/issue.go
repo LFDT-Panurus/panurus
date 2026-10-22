@@ -30,6 +30,7 @@ type IssueService struct {
 	TokensService           driver.TokensService
 	TokensUpgradeService    driver.TokensUpgradeService
 	Orchestrator            *prover.Orchestrator
+	Validator               *validator.Validator
 }
 
 func NewIssueService(
@@ -40,6 +41,7 @@ func NewIssueService(
 	tokensService driver.TokensService,
 	tokensUpgradeService driver.TokensUpgradeService,
 	orchestrator *prover.Orchestrator,
+	v *validator.Validator,
 ) *IssueService {
 	return &IssueService{
 		Logger:                  logger,
@@ -49,6 +51,7 @@ func NewIssueService(
 		TokensService:           tokensService,
 		TokensUpgradeService:    tokensUpgradeService,
 		Orchestrator:            orchestrator,
+		Validator:               v,
 	}
 }
 
@@ -154,13 +157,7 @@ func (s *IssueService) VerifyIssue(ctx context.Context, ia driver.IssueAction, o
 		s.Logger.DebugfContext(ctx, "issue output [%s,%d,%s]", note.TokenType, note.Value, driver.Identity(action.Outputs[i].Recipient))
 	}
 
-	p := s.PublicParametersManager.PublicParams()
-	v, err := validator.NewValidator(p, s.Deserializer, driver.ResourceLimits{}.WithDefaults())
-	if err != nil {
-		return errors.Wrap(err, "failed to instantiate validator")
-	}
-
-	if err := v.ValidateIssue(action); err != nil {
+	if err := s.Validator.ValidateIssue(action); err != nil {
 		return errors.Wrap(err, "failed to verify issue proof")
 	}
 

@@ -14,16 +14,17 @@ import (
 	"github.com/consensys/gnark/frontend"
 	"github.com/stretchr/testify/require"
 
-	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/crypto/backend"
+	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/prepared"
 	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/prover"
 	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/setup"
 	snarktoken "github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/token"
 )
 
 var (
-	spendProver     *prover.SpendProver
-	outputProver    *prover.OutputProver
-	proverSetupOnce sync.Once
+	spendProver      *prover.SpendProver
+	outputProver     *prover.OutputProver
+	testProverParams *prepared.Prover
+	proverSetupOnce  sync.Once
 )
 
 func setupProvers(t *testing.T) {
@@ -37,13 +38,13 @@ func setupProvers(t *testing.T) {
 			panic(fmt.Sprintf("setup.SetupAll failed: %v", err))
 		}
 
-		b, err := backend.NewProofSystemBackend(testPP.ProofSystem, testPP.Curve)
+		testProverParams, err = prepared.NewProver(testPP)
 		if err != nil {
-			panic(fmt.Sprintf("backend creation failed: %v", err))
+			panic(fmt.Sprintf("prepared.NewProver failed: %v", err))
 		}
 
-		spendProver = prover.NewSpendProver(testSpendCS, testPP.PKSpend, b, testPP)
-		outputProver = prover.NewOutputProver(testOutputCS, testPP.PKOutput, b, testPP)
+		spendProver = prover.NewSpendProver(testProverParams)
+		outputProver = prover.NewOutputProver(testProverParams)
 	})
 }
 
@@ -69,10 +70,10 @@ func TestSpendProver(t *testing.T) {
 	publicWitness, err := witness.Public()
 	require.NoError(t, err)
 
-	b, err := backend.NewProofSystemBackend(testPP.ProofSystem, testPP.Curve)
+	vk, err := testProverParams.Backend().NewVerifyingKey(testPP.VKSpend)
 	require.NoError(t, err)
 
-	err = b.Verify(testPP.VKSpend, proof, publicWitness)
+	err = testProverParams.Backend().Verify(vk, proof, publicWitness)
 	require.NoError(t, err, "a proof from the production SpendProver must verify")
 }
 
@@ -95,9 +96,9 @@ func TestOutputProver(t *testing.T) {
 	publicWitness, err := witness.Public()
 	require.NoError(t, err)
 
-	b, err := backend.NewProofSystemBackend(testPP.ProofSystem, testPP.Curve)
+	vk, err := testProverParams.Backend().NewVerifyingKey(testPP.VKOutput)
 	require.NoError(t, err)
 
-	err = b.Verify(testPP.VKOutput, proof, publicWitness)
+	err = testProverParams.Backend().Verify(vk, proof, publicWitness)
 	require.NoError(t, err, "a proof from the production OutputProver must verify")
 }

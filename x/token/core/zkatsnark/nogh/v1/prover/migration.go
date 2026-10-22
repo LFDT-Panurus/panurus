@@ -13,14 +13,13 @@ import (
 	mathlib "github.com/IBM/mathlib"
 	bls12381 "github.com/consensys/gnark-crypto/ecc/bls12-381"
 	bls12381fr "github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
-	"github.com/consensys/gnark/constraint"
 	"github.com/consensys/gnark/frontend"
 	"github.com/consensys/gnark/std/math/emulated"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 
 	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/circuit"
-	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/crypto/backend"
 	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/pp"
+	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/prepared"
 	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/setup"
 	snarktoken "github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/token"
 )
@@ -177,25 +176,29 @@ func BuildMigrationWitness(
 // MigrationProver generates proofs for MigrationCircuit via ProofSystemBackend.
 // Same lifecycle and concurrency guarantees as SpendProver/OutputProver.
 type MigrationProver struct {
-	cs      constraint.ConstraintSystem
-	pkBytes []byte
-	backend backend.ProofSystemBackend
-	pp      *pp.PublicParams
+	prepared *prepared.Prover
 }
 
-// NewMigrationProver creates a new MigrationProver.
-func NewMigrationProver(cs constraint.ConstraintSystem, pkBytes []byte, b backend.ProofSystemBackend, p *pp.PublicParams) *MigrationProver {
-	return &MigrationProver{cs: cs, pkBytes: pkBytes, backend: b, pp: p}
+// NewMigrationProver creates a new MigrationProver over already-prepared
+// public parameters for a proving role. p must have been built via
+// (*prepared.Prover).WithMigration — i.e. p.PKMigration() must be non-nil —
+// otherwise an error is returned.
+func NewMigrationProver(p *prepared.Prover) (*MigrationProver, error) {
+	if p.PKMigration() == nil {
+		return nil, errors.New("migration prover: no migration proving key configured; call Prover.WithMigration first")
+	}
+
+	return &MigrationProver{prepared: p}, nil
 }
 
 // Prove generates a proof for the given MigrationCircuit assignment.
 func (p *MigrationProver) Prove(assignment *circuit.MigrationCircuit) ([]byte, error) {
-	witness, err := frontend.NewWitness(assignment, p.pp.Curve.ScalarField())
+	witness, err := frontend.NewWitness(assignment, p.prepared.PP().Curve.ScalarField())
 	if err != nil {
 		return nil, errors.Wrapf(err, "migration prover: witness construction failed")
 	}
 
-	proof, err := p.backend.Prove(p.cs, p.pkBytes, witness)
+	proof, err := p.prepared.Backend().Prove(p.prepared.MigrationCS(), p.prepared.PKMigration(), witness)
 	if err != nil {
 		return nil, errors.Wrapf(err, "migration prover: proof generation failed")
 	}

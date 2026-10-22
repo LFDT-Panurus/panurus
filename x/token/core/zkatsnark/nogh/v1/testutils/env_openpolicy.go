@@ -52,7 +52,7 @@ func NewOpenPolicyEnv(configuration *SetupConfiguration) (*OpenPolicyEnv, error)
 		return nil, err
 	}
 
-	engine, err := validator.NewValidator(pp, deserializer, driver.ResourceLimits{}.WithDefaults())
+	engine, err := validator.NewValidator(configuration.Verifier, deserializer, driver.ResourceLimits{}.WithDefaults())
 	if err != nil {
 		return nil, err
 	}

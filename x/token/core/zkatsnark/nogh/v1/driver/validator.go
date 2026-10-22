@@ -10,6 +10,7 @@ import (
 	"github.com/LFDT-Panurus/panurus/token/core"
 	"github.com/LFDT-Panurus/panurus/token/driver"
 	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/pp"
+	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/prepared"
 	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/validator"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 )
@@ -27,7 +28,10 @@ func NewValidatorDriver() core.NamedFactory[driver.ValidatorDriver] {
 	}
 }
 
-// NewValidator returns a new zkatsnark validator for the passed public parameters.
+// NewValidator returns a new zkatsnark validator for the passed public
+// parameters. Prepares a verifier-only prepared.Verifier internally — no
+// proving keys are deserialized on this path, since a validator never
+// proves.
 func (d ValidatorDriver) NewValidator(params driver.PublicParameters, limits driver.ResourceLimits) (driver.Validator, error) {
 	ppp, ok := params.(*pp.PublicParams)
 	if !ok {
@@ -36,10 +40,14 @@ func (d ValidatorDriver) NewValidator(params driver.PublicParameters, limits dri
 	if err := ppp.Validate(); err != nil {
 		return nil, errors.Wrapf(err, "failed validating public parameters")
 	}
+	verifierParams, err := prepared.NewVerifier(ppp)
+	if err != nil {
+		return nil, errors.Wrapf(err, "failed preparing public parameters")
+	}
 	deserializer, err := NewDeserializer(ppp)
 	if err != nil {
 		return nil, errors.Errorf("failed to create token service deserializer: %v", err)
 	}
 	// Returns the validator for zkatsnark
-	return validator.NewValidator(ppp, deserializer, limits)
+	return validator.NewValidator(verifierParams, deserializer, limits)
 }
