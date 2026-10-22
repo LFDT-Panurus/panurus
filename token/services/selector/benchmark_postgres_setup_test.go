@@ -57,7 +57,7 @@ func TestMain(m *testing.M) {
 		spec = "error"
 	}
 	logging.Init(logging.Config{LogSpec: spec})
-	os.Exit(m.Run())
+	m.Run()
 }
 
 // requirePostgresEnv mirrors the variable of the postgres storage package: when set, a missing
