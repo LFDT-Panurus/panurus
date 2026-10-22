@@ -38,6 +38,7 @@ type TransferService struct {
 	TokensService           driver.TokensService
 	TokenDeserializer       any // placeholder if needed later, but not strictly used here
 	Orchestrator            *prover.Orchestrator
+	Validator               *validator.Validator
 }
 
 func NewTransferService(
@@ -50,6 +51,7 @@ func NewTransferService(
 	tokensService driver.TokensService,
 	tokenDeserializer any, // matches signature in driver.go
 	orchestrator *prover.Orchestrator,
+	v *validator.Validator,
 ) *TransferService {
 	return &TransferService{
 		Logger:                  logger,
@@ -61,6 +63,7 @@ func NewTransferService(
 		TokensService:           tokensService,
 		TokenDeserializer:       tokenDeserializer,
 		Orchestrator:            orchestrator,
+		Validator:               v,
 	}
 }
 
@@ -273,13 +276,7 @@ func (s *TransferService) VerifyTransfer(ctx context.Context, transferAction dri
 		s.Logger.DebugfContext(ctx, "transfer output [%s,%d,%s]", note.TokenType, note.Value, driver.Identity(action.Outputs[i].Recipient))
 	}
 
-	p := s.PublicParametersManager.PublicParams()
-	v, err := validator.NewValidator(p, s.Deserializer, driver.ResourceLimits{}.WithDefaults())
-	if err != nil {
-		return errors.Wrap(err, "failed to instantiate validator")
-	}
-
-	if err := v.ValidateTransfer(action); err != nil {
+	if err := s.Validator.ValidateTransfer(action); err != nil {
 		return errors.Wrap(err, "failed to verify transfer proof")
 	}
 

@@ -56,7 +56,7 @@ func (v *Validator) IssueZKValidate(_ context.Context, ctx *Context) error {
 		return err
 	}
 
-	if err := verifyAllProofs(v.backend, v.keys.vkSpendBytes, v.keys.vkOutputBytes, v.pp.Curve, nil, nil, action.Outputs, decodedOutputs); err != nil {
+	if err := verifyAllProofs(v.prepared, nil, nil, action.Outputs, decodedOutputs); err != nil {
 		return err
 	}
 

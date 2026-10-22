@@ -11,9 +11,8 @@ import (
 	"github.com/LFDT-Panurus/panurus/token/core/common"
 	"github.com/LFDT-Panurus/panurus/token/driver"
 	"github.com/LFDT-Panurus/panurus/token/services/logging"
-	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/crypto/backend"
 	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/pp"
-	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/setup"
+	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/prepared"
 	snarktoken "github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/token"
 )
 
@@ -34,49 +33,19 @@ type Context = common.Context[*pp.PublicParams, *snarktoken.Input, *snarktoken.T
 // CommonValidator is the common.Validator type parameterized for zkatsnark.
 type CommonValidator = common.Validator[*pp.PublicParams, *snarktoken.Input, *snarktoken.TransferAction, *snarktoken.IssueAction, driver.Deserializer]
 
-// zkKeys captures the loaded verification key bytes. They are stored
-// inside the Validator and referenced by the validation callback closures.
-// Keys are kept as raw bytes — deserialization happens inside the
-// ProofSystemBackend on each Verify call.
-type zkKeys struct {
-	vkSpendBytes     []byte
-	vkOutputBytes    []byte
-	vkMigrationBytes []byte
-}
-
 // Validator wraps the common.Validator infrastructure with zkatsnark-specific
 // cryptographic checks and a standalone ValidateMigration method.
 type Validator struct {
 	*CommonValidator
 
-	pp      *pp.PublicParams
-	keys    *zkKeys
-	backend backend.ProofSystemBackend
+	pp       *pp.PublicParams
+	prepared *prepared.Verifier
 }
 
-// NewValidator creates a new Validator using the provided public parameters and verifier deserializer.
-func NewValidator(p *pp.PublicParams, deserializer driver.Deserializer, limits driver.ResourceLimits) (*Validator, error) {
-	b, err := backend.NewProofSystemBackend(p.ProofSystem, p.Curve)
-	if err != nil {
-		return nil, errors.Wrapf(err, "validator: creating proof system backend")
-	}
-
-	vkSpendBytes, err := setup.LoadVerifyingKeyBytes(p, setup.CircuitSpend)
-	if err != nil {
-		return nil, errors.Wrapf(err, "validator: loading spend verifying key")
-	}
-
-	vkOutputBytes, err := setup.LoadVerifyingKeyBytes(p, setup.CircuitOutput)
-	if err != nil {
-		return nil, errors.Wrapf(err, "validator: loading output verifying key")
-	}
-
-	keys := &zkKeys{vkSpendBytes: vkSpendBytes, vkOutputBytes: vkOutputBytes}
-	if vkmBytes, err := setup.LoadVerifyingKeyBytes(p, setup.CircuitMigration); err == nil {
-		keys.vkMigrationBytes = vkmBytes
-	}
-
-	v := &Validator{pp: p, keys: keys, backend: b}
+// NewValidator creates a new Validator over already-prepared public
+// parameters for a verifying role.
+func NewValidator(p *prepared.Verifier, deserializer driver.Deserializer, limits driver.ResourceLimits) (*Validator, error) {
+	v := &Validator{pp: p.PP(), prepared: p}
 
 	transferValidators := []ValidateTransferFunc{
 		TransferSignatureValidate,
@@ -97,7 +66,7 @@ func NewValidator(p *pp.PublicParams, deserializer driver.Deserializer, limits d
 
 	v.CommonValidator = common.NewValidator(
 		logger,
-		p,
+		v.pp,
 		deserializer,
 		limits,
 		&ActionDeserializer{Limits: limits},
@@ -136,7 +105,7 @@ func (v *Validator) ValidateTransfer(a *snarktoken.TransferAction) error {
 		return err
 	}
 
-	if err := verifyAllProofs(v.backend, v.keys.vkSpendBytes, v.keys.vkOutputBytes, v.pp.Curve, a.Inputs, decodedInputs, a.Outputs, decodedOutputs); err != nil {
+	if err := verifyAllProofs(v.prepared, a.Inputs, decodedInputs, a.Outputs, decodedOutputs); err != nil {
 		return err
 	}
 
@@ -168,7 +137,7 @@ func (v *Validator) ValidateIssue(a *snarktoken.IssueAction) error {
 		return err
 	}
 
-	if err := verifyAllProofs(v.backend, v.keys.vkSpendBytes, v.keys.vkOutputBytes, v.pp.Curve, nil, nil, a.Outputs, decodedOutputs); err != nil {
+	if err := verifyAllProofs(v.prepared, nil, nil, a.Outputs, decodedOutputs); err != nil {
 		return err
 	}
 
@@ -189,7 +158,7 @@ func (v *Validator) ValidateIssue(a *snarktoken.IssueAction) error {
 // Migration is zkatsnark-specific and has no slot in the common.Validator
 // framework, so it is a standalone method on the wrapper struct.
 func (v *Validator) ValidateMigration(a *snarktoken.MigrationAction) error {
-	if len(v.keys.vkMigrationBytes) == 0 {
+	if v.prepared.VKMigration() == nil {
 		return ErrMigrationNotConfigured
 	}
 
@@ -202,5 +171,5 @@ func (v *Validator) ValidateMigration(a *snarktoken.MigrationAction) error {
 		return err
 	}
 
-	return verifyMigrationProof(v.backend, v.keys.vkMigrationBytes, v.pp.Curve, a.MigrationProof, decoded)
+	return verifyMigrationProof(v.prepared, a.MigrationProof, decoded)
 }
