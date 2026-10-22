@@ -7,7 +7,7 @@ The **Selector Service** (`token/services/selector`) picks the unspent tokens (U
 The Selector Service is responsible for:
 *   **UTXO Selection**: Finding a set of spendable tokens that cover the total quantity required for a transfer operation.
 *   **Double-Spending Mitigation**: Temporarily locking selected tokens during the transaction assembly phase to prevent multiple concurrent transactions from attempting to spend the same tokens.
-*   **Candidate Enumeration**: Walking the wallet's candidate tokens, locking each one as it is encountered, and stopping as soon as the accumulated amount covers the request. Under `sherdlock`, candidates already locked by another process are excluded from the query itself, and the remaining candidates are ordered ascending by amount with only same-amount candidates shuffled against each other (see [Token Selection Algorithm](#token-selection-algorithm)). Under `simple`, candidates are walked in database order with no amount ranking.
+*   **Candidate Enumeration**: Walking the wallet's candidate tokens, locking each one as it is encountered, and stopping as soon as the accumulated amount covers the request. Under `sherdlock`, candidates already locked by another process are excluded from the query itself, and the remaining candidates are ordered ascending by amount with only same-amount candidates shuffled against each other (see [How Selection Works](#how-selection-works)). Under `simple`, candidates are walked in database order with no amount ranking.
 
 ## Interaction with TTX and Storage
 
@@ -16,192 +16,219 @@ The Selector Service bridges the gap between the high-level **TTX Service** and 
 ```mermaid
 graph LR
     TTX[TTX Service] --> Selector[Selector Service]
-    
+
     subgraph "Token Fetcher"
         Fetcher[Fetcher Logic]
         Fetcher -->|Cache Hit| Cache[Cache]
         Fetcher -->|Cache Miss| TokenDB[Token Store - TokenDB]
     end
-    
+
     subgraph "Selection Logic"
         Query[Query Spendable Tokens - excludes locked, ordered by amount]
         Pick[Take Next Candidate - ascending, shuffled within same-amount bucket]
-        Lock[Acquire Temporary Lock]
+        LockOne[Lock One Candidate]
+        LockBatch[Claim a Covering Window in One Round Trip]
         Done[Return Locked Tokens]
     end
-    
+
     Selector --> Fetcher
     Selector --> Query
     Query --> Pick
-    Pick --> Lock
-    Lock -->|locked by another process, or sum still below target| Pick
-    Lock -->|requested amount covered| Done
+    Pick -->|store cannot batch| LockOne
+    Pick -->|store supports LockBatch - the Postgres default| LockBatch
+    LockOne -->|locked by another process, or sum still below target| Pick
+    LockBatch -->|window still short of target| Pick
+    LockOne -->|requested amount covered| Done
+    LockBatch -->|requested amount covered| Done
 ```
 
 **How the components interact:**
-- **Selector Service**: Creates a selector instance per transaction and orchestrates the Selection Logic steps
-- **Query Spendable Tokens**: Selector calls the Fetcher to retrieve available tokens
-- **Fetcher Logic**: Checks cache first (fast path), queries Token Store - TokenDB on cache miss (slow path)
+- **Selector Service**: Creates a selector instance per transaction and orchestrates the Selection Logic steps.
+- **Query Spendable Tokens**: Selector calls the Fetcher to retrieve available tokens.
+- **Fetcher Logic**: Checks cache first (fast path), queries Token Store - TokenDB on cache miss (slow path).
 - **Take Next Candidate**: Under `sherdlock`, the selector takes the next token from a candidate set ordered ascending by amount, with only same-amount candidates shuffled against each other, and already-locked tokens excluded from the set entirely. Under `simple`, candidates are taken in database order and amount plays no part in the choice.
-- **Acquire Temporary Lock**: Selector locks each candidate as it is encountered, before it knows whether the request can be covered at all; a candidate already locked by another process is skipped and the loop moves on
+- **Lock a candidate**: Whenever the lock store can claim several candidates in one round trip (the Postgres backend, under every `lockStrategy`), the selector grows a window of candidates up to the outstanding amount and claims the whole window at once instead of locking one token at a time. This is the actual hot path under Postgres, not a fallback; see step 3 ("Locking a candidate") of [the step-by-step walkthrough](#a-single-select-call-step-by-step-sherdlock).
 
 ## Key Components
 
 ### Selector Manager
 The `SelectorManager` is the entry point for obtaining a `Selector` instance anchored to a specific transaction. It ensures that the selection process is consistent and tied to the lifecycle of a single token request.
 
-### Token Selection Algorithm
+## How Selection Works
 
-Selection is a **greedy first-fit**, not configurable. It is amount-aware only to the extent
-described below (see [#2395](https://github.com/LFDT-Panurus/panurus/issues/2395) mechanisms
-2–3); it is not a smallest-fit or largest-fit strategy. `Selector.selectInternal`
-(`token/services/selector/sherdlock/selector.go`) does the following:
+Selection is a **greedy first-fit**: both drivers walk candidate tokens, locking each as it
+is encountered, and stop as soon as the running sum covers the request. It is amount-aware
+only in how it orders and groups candidates (see below); it is not a smallest-fit or
+largest-fit strategy, and the number of inputs is not minimized. `Selector.selectInternal`
+(`token/services/selector/sherdlock/selector.go`) is the sherdlock implementation; `simple`'s
+equivalent is `selector.selectByID` (`token/services/selector/simple/selector.go`).
 
-1. the candidate tokens of the wallet and token type are enumerated — under `sherdlock`,
-   already-locked candidates are excluded from the query (the anti-join, below) and the
-   remainder is ordered ascending by amount with same-amount runs shuffled against each other
-   (the bucketed shuffle, below); under `simple`, candidates are walked in database order,
-2. each candidate is locked as it is encountered — a candidate already locked by another
-   process is skipped, and (`sherdlock` only) blacklisted for the remainder of this `Select`
-   call so a refetch does not immediately re-attempt and re-lose the same race; a lock failure
-   wrapping `token.SelectorRateLimited` is a hard abort (not a skip),
-3. the amounts of the successfully locked tokens are added up, and
-4. the selector returns as soon as the running sum reaches the requested quantity.
+### A single `Select` call, step by step (sherdlock)
 
-Two consequences worth planning for still hold:
+1. **Entry.** `StubbornSelector.Select` (for a manager-issued selector) or `Selector.Select`
+   parses the requested quantity and calls `selectInternal`, which runs the loop below once.
+   `StubbornSelector` wraps that single attempt in the backoff loop described in step 5.
 
-*   **The number and size of the inputs is not minimized.** Ordering ascending by amount
-    means a request is preferentially funded by several small tokens before a large one is
-    even considered, which can *increase* the number of inputs relative to a single large
-    token that could have covered the request alone.
-*   **The result is not fully deterministic.** Candidates of the same amount are shuffled
-    against each other, so the same request against the same wallet can still select a
-    different set of same-amount tokens on each run; the amount ordering across different
-    amounts, however, is deterministic.
+2. **Next candidate.** `nextCandidate` asks the candidate cache for the next token, skipping
+   anything this call has already lost a lock race on (the *blacklist*, scoped to one
+   `Select` call — see [Ordering and the sufficiency window](#ordering-and-the-sufficiency-window)
+   for how it picks among several candidates that would each cover the request alone). Three
+   outcomes:
+   - **Blacklisted token** → skipped, and the call remembers that a locked token exists
+     (so an empty scan later isn't mistaken for "no funds anywhere").
+   - **Scan exhausted (nil)** → go to step 5.
+   - **Usable candidate** → go to step 3.
 
-**`sherdlock`-only: anti-join against locked tokens.** The candidate query excludes any token
-currently held by a lock in the `TokenLocks` table (`NOT EXISTS` against `TokenLocks`, added
-to `buildSpendableTokensIteratorByQuery` in `token/services/storage/db/sql/common/tokens.go`).
-This stops a selector from *starting* a race it is bound to lose; the `INSERT`-based lock
-acquisition (below) remains the race-safe backstop, since the anti-join is read-then-act and
-therefore not itself race-free. Because the anti-join can hide every remaining token from a
-wallet that is not actually out of funds — everything left is simply locked by someone else —
-`Selector.selectInternal` disambiguates an empty scan with
-`TokenFetcher.HasEnoughSpendableTokens`, a lock-ignoring `SUM(amount)` check, before returning
-`token.SelectorInsufficientFunds`. That check is made against the **full requested amount**,
-not the amount still outstanding: it ignores locks, so the balance it reports already includes
-the tokens this very call has locked, and comparing against the outstanding amount would count
-them on both sides and make the check vacuously true as soon as anything at all was selected.
+3. **Locking a candidate.** The selector type-asserts its locker for batch support once, up
+   front (`asBatchLocker`/`BatchTokenLocker`). Whichever path is taken, the loop grows a
+   *window* of candidates whose amounts sum to at least the amount still outstanding (or until
+   the cache runs out, or until `maxBatchWindow = 256` candidates are collected — a cap needed
+   because the Postgres claim statement binds `2n+5` parameters and the wire protocol refuses
+   more than 65535), then claims it:
+   - **Batch path (Postgres, every `lockStrategy`)**: one round trip claims the whole window via
+     `BatchLocker.LockBatch`, which reports, per candidate, whether it was **won**, found
+     **stale** (no longer spendable — spent, or no longer owned here), or neither (lost the
+     race to another claimant). Won tokens are added to the running sum; stale candidates are
+     blacklisted for good and the cache is told it's behind the store (one invalidation covers
+     every stale candidate in the window); contended candidates are blacklisted for this call
+     only, and the loop remembers that locked tokens exist.
+   - **Single-token fallback** (no batch-capable locker): the same three outcomes, one
+     `TryLock` call per candidate, distinguished by error sentinel
+     (`driver.ErrTokenNotSpendable` = stale, `driver.ErrTokenAlreadyLocked` = contended, any
+     other error = a genuine store error — counted separately, but handled identically to a
+     lost race from the caller's point of view).
+   - **Either path**: a lock denial wrapping `token.SelectorRateLimited` aborts the whole
+     `Select` call immediately — it is not retried.
 
-The check only ever turns a give-up into a retry, never the other way round. An empty scan with
-no observed lock conflict used to return `token.SelectorInsufficientFunds` from here
-unconditionally, and that error exits `StubbornSelector`'s backoff loop outright rather than
-being retried — so a balance read that is behind the store, from a lagging read replica for
-instance, fails such a call exactly as it did before. What the check adds is that a wallet whose
-balance *does* cover the request no longer gives up here at all. Making the answer proof against
-replica lag is a read-routing question rather than a selector one: the candidate scan reads the
-same replica and so can never be more current than this check is.
+4. **Progress check.** If the running sum now covers the request, the call returns the
+   selected token IDs. Otherwise it loops back to step 2.
 
-**`sherdlock`-only: size-ordered, bucket-shuffled candidates.** Candidates are ordered
-ascending by amount (an `ORDER BY` added to the same query), then shuffled only *within* runs
-of equal amount — `bucketedIterator.NewPermutation()` in
-`token/services/selector/sherdlock/fetcher.go`. A strictly deterministic smallest-fit rule was
-deliberately avoided: it would just relocate all contention onto the single smallest token
-instead of spreading it. **The shuffle is still deliberate** for the reason it always was: it
-spreads concurrent selectors of the same wallet across different same-amount candidates —
-walking a fixed order within a bucket would make every selector contend for the same leading
-candidate, driving up lock failures and, with them, the immediate-retry path that gives up
-with `token.SelectorSufficientButLockedFunds`, and beyond it the backoff path that ends in
-`token.SelectorInsufficientFunds`. The bucketing lives in the sherdlock fetcher, not in the
-selection loop: the lazy fetcher and the cached fetcher both hand out a fresh
-`bucketedIterator` permutation on every query. The `simple` driver does **neither** the
-anti-join nor the size ordering — it walks the database iterator in the order the token store
-returns it (`token/services/selector/simple/selector.go`), unordered and un-shuffled — so
-concurrent selectors under `simple` remain fully exposed to colliding on the same leading
-candidates and to starting races against already-locked tokens.
+5. **Exhaustion.** When the candidate scan comes up empty with no locked token observed, an
+   empty result is ambiguous: it may mean the wallet is genuinely out of funds, or that every
+   remaining token is momentarily locked by someone else and hidden from the scan by the
+   anti-join (step 2 of [Ordering and the sufficiency window](#ordering-and-the-sufficiency-window)).
+   `HasEnoughSpendableTokens` disambiguates with a lock-ignoring balance check against the
+   **full requested amount** (not the amount still outstanding — the balance already includes
+   tokens this call itself has locked, so comparing against the outstanding amount would count
+   them twice and be vacuously true as soon as anything was selected):
+   - **Balance insufficient** → `token.SelectorInsufficientFunds`, immediately.
+   - **Balance sufficient** → the cache is refetched (charging one unit of a hardcoded
+     `maxImmediateRetries = 5` budget; refetching is skipped for the very first fetch of a
+     `Select` call, which starts with nothing to refresh) and the loop resumes from step 2.
+     Once the budget is spent, the call gives up with
+     `token.SelectorSufficientButLockedFunds` instead of refetching again.
 
-The `ORDER BY` is served from an index rather than sorted per query: the tokens table carries
-`idx_spendable_amount_<prefix>` on `(owner_wallet_id, token_type, amount)`, partial on
-`is_deleted = false AND owner = true AND spendable = true`
-(`TokenStore.GetSchema`, `token/services/storage/db/sql/common/tokens.go`). The spendable-tokens
-query's equality predicates are exactly that index's leading columns and its `ORDER BY amount`
-is the trailing one, so the scan reads rows already in amount order. This matters most under
-the `lazy` fetcher strategy, which issues the query on every selection; the cached and mixed
-strategies amortize it over many requests and would mask a missing index on all but the first
-query of each refresh cycle.
+6. **Backing off.** `StubbornSelector.Select` wraps the whole sequence above in an outer loop:
+   on `SelectorSufficientButLockedFunds` it releases every lock this attempt took, sleeps a
+   random interval uniform in `[0, retryInterval)`, and retries the entire selection from a
+   fresh candidate cache. It sleeps after *every* failed attempt, including the last — so the
+   worst case is `(numRetries + 1) * retryInterval` on average half that, not
+   `numRetries * retryInterval`. Any other error, including `SelectorInsufficientFunds` and
+   `SelectorRateLimited`, exits immediately without backing off.
 
-Bucket boundaries are found by string equality on the stored quantity, which identifies equal
-amounts only because that encoding is canonical — one representation per value — while the
-`ORDER BY` itself is numeric on the `amount` column. A non-canonical encoding would split a run
-of equal amounts across buckets: the ordering stays correct, but the shuffle quietly degrades
-towards a no-op for those runs, losing the anti-hot-spot property it exists for.
+### What `simple` does differently
 
-**`sherdlock`-only: the sufficiency window.** Bucket shuffling only randomizes tokens of
-*byte-equal* amount, so on a realistic wallet of mostly-distinct amounts every bucket has size
-1 and the ascending scan is fully deterministic: any request smaller than the smallest token
-always targets that one token. `Selector.nextCandidate`
-(`token/services/selector/sherdlock/selector.go`) widens the randomization for that case. Once
-the scan reaches an *anchor* — the first candidate that on its own covers the amount still
-outstanding — every later candidate is at least as large and therefore equally sufficient, so
-it peeks ahead over up to `sufficiencyWindow = 4` of them and returns one uniformly at random,
-buffering the rest so they are still considered, in order, later on. Two caps keep the choice
-close to a smallest fit: the count cap above, and a magnitude cap — a candidate only joins the
-window if its amount is at most `maxSufficiencyRatio = 5` times **the anchor's** amount. The
-magnitude cap is measured against the anchor rather than the outstanding amount on purpose: on
-a wallet whose smallest token already exceeds 5x the request (a 1 EUR payment out of 20/30/40/50
-EUR denominations), an outstanding-amount basis would reject the very first lookahead candidate,
-collapse the window to the anchor alone, and leave selection deterministic in exactly the regime
-the window exists for. When the anchor does not cover the outstanding amount on its own there is
-no lookahead at all: several tokens will have to be combined regardless.
+`simple`'s `selectByID` is structurally similar — scan, lock, stop on cover, retry on
+shortfall — but several things work differently, not just "the same minus sherdlock's
+mechanisms":
 
-Two rules keep the window honest about what it can actually lock. Candidates blacklisted earlier
-in this same `Select` call are excluded from it: this call cannot lock them at all, so letting
-them into the draw would spend part of the random pick on a guaranteed no-op and dilute the very
-spreading the window provides. And the buffer of peeked-but-unreturned candidates is dropped at
-the start of every `Select` call, so a `StubbornSelector` leg resuming after a backoff re-examines
-the wallet from a fresh fetch — which is the entire point of having backed off — rather than
-replaying candidates peeked before other processes had a chance to release their locks. It is also
-dropped whenever a fresh candidate cache is installed, since the new, fully-ordered set supersedes
-anything peeked from the old one. Like the candidate cache itself, the buffer is guarded by the
-selector's mutex: a selection is driven by a single goroutine, but the manager hands out one cached
-`Selector` per transaction id and `Close` may be called from another goroutine at any time.
+- **No batching, no anti-join, no amount ordering.** Candidates come from the database in
+  whatever order the query returns them, already-locked tokens are not excluded from the
+  query, and each is locked with one call.
+- **Locks are released between every retry attempt**, not held across them: a `simple` retry
+  starts over with nothing locked, where sherdlock's immediate-retry layer keeps its
+  already-won locks and only refetches the candidate source.
+- **`reclaim`**: a lock attempt passes `reclaim = (numRetry == 1) || (this is not the first
+  scan of this `Select` call)` — i.e. true on the very first attempt too when `numRetry == 1`,
+  and from the second attempt onward otherwise. A reclaiming lock checks whether the current
+  holder's consuming transaction has reached `Deleted` and, if so, takes the lock over.
+- **A concurrency re-check after covering the request.** Once a scan's locked tokens cover the
+  target, `simple` makes one more `GetTokens` call to confirm they still exist before
+  returning them (see [`simple`: connection usage per selection](#simple-connection-usage-per-selection)
+  for why this runs after the candidate cursor is closed, not while it's open).
+- **Three possible outcomes on final failure, not one.** When the retry budget
+  (`numRetry`) is exhausted, `simple` checks, in order: did the concurrency re-check fail on an
+  earlier attempt → `token.SelectorSufficientFundsButConcurrencyIssue`; else are funds
+  sufficient but some locked → `token.SelectorSufficientButLockedFunds`; else →
+  `token.SelectorInsufficientFunds`. Sherdlock's backoff loop only ever ends in the latter two.
+- **The retry sleep is skipped on the attempt that gives up for good** — `simple` sleeps
+  between attempts but not after the final one, so its worst case is `numRetry - 1` sleeps
+  uniform in `[0, retryInterval)`. The sleep is also a plain `time.Sleep`, not cancellable by
+  the caller's context (sherdlock's backoff wait is).
 
-**How it works in the flow (see "Selection Logic" subgraph in diagram):**
-1. **TTX Request**: TTX Service requests token selection for a transfer operation
-2. **Query Spendable Tokens**: Selector queries via Fetcher (Cache Hit → fast path, Cache Miss → Token Store - TokenDB)
-3. **Take Next Candidate**: Selector takes the next token from the randomized candidate set
-4. **Acquire Temporary Lock**: The candidate is locked to prevent double-spending (in the `TokenLocks` table under the `sherdlock` driver, in memory under `simple`); on success its amount is added to the running sum, on failure the loop moves to the next candidate
-5. **Return or Retry**: The selector returns as soon as the sum covers the request; if the
-   candidate set is exhausted while other processes hold locks, it retries in two distinct
-   layers:
-   - **Immediate-retry layer** (`sherdlock` only): the inner loop refetches — refreshing the
-     sherdlock token cache via the fetcher — up to a hardcoded `maxImmediateRetries = 5` times
-     without releasing its already-acquired locks, then gives up with
-     `token.SelectorSufficientButLockedFunds`. A batch-lock call that fails with a real store
-     error (rather than losing a per-token race) charges one unit of this same budget and
-     refetches immediately: the window it was claiming had already been drained out of the
-     cache, so those candidates would otherwise be gone for the rest of the scan even though
-     nothing established that they were contended. A store that fails *after* its claim
-     committed — a result set that breaks mid-read — reports the verdicts it did read
-     alongside the error, and those tokens are kept: the lock rows exist, so abandoning them
-     would hold them until the lease expires while the selection goes looking elsewhere. Under `simple`, there is no equivalent cache
-     layer; the outer retry loop re-queries the query service directly on every attempt.
-   - **Backoff layer**: a configurable `numRetries` / `retryInterval` outer loop (the
-     `StubbornSelector` wrapper in `sherdlock`; the `numRetry` / `timeout` loop in `simple`)
-     releases locks, sleeps, and re-runs the whole selection from scratch. Exhausting this
-     layer returns `token.SelectorInsufficientFunds`.
+### Error sentinels
 
-#### Strategies that are not implemented
+`token/selector.go` declares five:
+
+| Sentinel | Returned by `sherdlock` | Returned by `simple` |
+|---|---|---|
+| `SelectorInsufficientFunds` | yes | yes |
+| `SelectorSufficientButLockedFunds` | yes | yes |
+| `SelectorSufficientFundsButConcurrencyIssue` | no | yes |
+| `SelectorSufficientButNotCertifiedFunds` | no | no — declared but currently returned by neither driver |
+| `SelectorRateLimited` | detected (from the `Locker`/`BatchLocker`) and propagated, never produced by the selector itself | same |
+
+### Ordering and the sufficiency window
+
+Two `sherdlock`-only mechanisms shape which candidate the scan reaches first, both aimed at
+the same problem: concurrent selectors of one wallet converging on the same token and
+colliding (issue [#2395](https://github.com/LFDT-Panurus/panurus/issues/2395)).
+
+1. **Anti-join against locked tokens.** The candidate query excludes any token currently held
+   by a lock in the `TokenLocks` table (a `NOT EXISTS` against `TokenLocks`, in the shared
+   query builder `buildSpendableTokensQuery`, `token/services/storage/db/sql/common/tokens.go`
+   — used by both the unbounded iterator the selector reads and the bounded
+   `QuerySpendableTokens`). This stops a selector from *starting* a race it is bound to lose;
+   the lock acquisition itself remains the race-safe backstop, since this read-then-act check
+   is not itself race-free. It's why an empty scan is ambiguous and needs the
+   `HasEnoughSpendableTokens` check in step 5 above.
+
+2. **Size-ordered, bucket-shuffled candidates.** Candidates are ordered ascending by amount
+   (served straight from the `idx_spendable_amount_<prefix>` index on
+   `(owner_wallet_id, token_type, amount)`, so no separate sort step is needed), then shuffled
+   only *within* runs of byte-equal amount (`bucketedIterator.NewPermutation()`,
+   `token/services/selector/sherdlock/fetcher.go`). A strict smallest-fit rule was deliberately
+   avoided — it would just relocate all contention onto the single smallest token instead of
+   spreading it. This shuffle only has something to randomize when several tokens share the
+   same amount; on a wallet of mostly-distinct amounts every bucket has size 1, which is why
+   mechanism 3 below exists. `NewPermutation`'s cost scales with the size of the cached
+   candidate list and is paid on every cache hit under the `eager`/`mixed` fetcher strategies
+   — see the [benchmark report](selector-postgres-benchmark-report.md#findings) for measured
+   numbers; no optimization of it has been made as of this writing.
+
+3. **The sufficiency window.** Because mechanism 2's shuffle only randomizes byte-equal
+   amounts, a wallet of mostly-distinct amounts would otherwise deterministically send every
+   small request to the single smallest token. `nextCandidate` widens the randomization for
+   that case: once the ascending scan reaches an *anchor* candidate that alone covers the
+   amount outstanding, every later candidate is also sufficient, so it peeks ahead over up to
+   `sufficiencyWindow = 4` of them — stopping early at one whose amount exceeds
+   `maxSufficiencyRatio = 5` times the *anchor's* amount, to keep the choice close to a
+   smallest fit — and returns one chosen uniformly at random, buffering the rest (`pending`)
+   so later calls still see them, in order, before anything newer. The magnitude cap is
+   anchor-relative rather than outstanding-amount-relative on purpose: anchoring on the
+   outstanding amount would reject the very first lookahead candidate on a wallet whose
+   smallest token already exceeds 5x a small request, collapsing the window to size 1 in
+   exactly the regime it exists for. Blacklisted candidates never enter the window (letting
+   them in would spend part of the random pick on a guaranteed no-op) and the buffer is
+   dropped at the start of every `Select` call and whenever a fresh candidate cache is
+   installed, so a backoff retry re-examines the wallet fresh rather than replaying candidates
+   peeked before other processes had a chance to release their locks.
+
+The `driver` key does **not** select a selection algorithm — both drivers walk candidates
+greedily and stop on first cover — only which of the mechanisms above apply; see
+[What `simple` does differently](#what-simple-does-differently).
+
+### Strategies that are not implemented
 
 Deterministic amount-aware strategies — strict smallest-first, largest-first,
 First-In-First-Out, or minimizing the number of inputs — are **not** implemented and cannot
-be configured, even though `sherdlock` now orders candidates ascending by amount (see above):
-that ordering is bucket-shuffled specifically to avoid becoming a deterministic smallest-fit
-rule. There is no strategy abstraction in the code and no configuration key that selects one.
-Making selection fully amount-aware (e.g. minimizing input count) is tracked in
+be configured, even though `sherdlock` orders candidates ascending by amount (mechanism 2
+above): that ordering is bucket-shuffled specifically to avoid becoming a deterministic
+smallest-fit rule. There is no strategy abstraction in the code and no configuration key that
+selects one. Making selection fully amount-aware (e.g. minimizing input count) is tracked in
 [issue #2017](https://github.com/LFDT-Panurus/panurus/issues/2017).
 
-### Locking Mechanism
+## Locking Mechanism
 To prevent double-spending *before* the transaction is committed to the ledger, the Selector Service uses a local `TokenLocks` table in the **Storage Service** (see "TokenLocks" box in diagram above).
 
 **Lock lifecycle:**
@@ -340,15 +367,15 @@ never reaches this configuration path at all.
     concurrent claimant is already mid-claim on instead of colliding with it.
 
 Under every strategy `LockBatch` inserts the lock rows in `(tx_id, idx)` order, whatever order
-the caller listed its candidates in. The candidates are shuffled within equal-amount runs, so
-concurrent claimants list overlapping windows in different orders; inserting the same keys in
-different orders makes the claims wait for each other and deadlock, which Postgres reports only
-after `deadlock_timeout` (1 s by default), so each deadlock costs a second and a retry. Which
-order an unsorted `INSERT ... SELECT` uses is the planner's choice and changes with table size
-and window length, so the order is fixed in the statement rather than relied on. Measured on
-the `multi-replica` workload with `insert`: 26–56 selects/s and a p95 of 1.2–2.3 s before,
-about 280–360 selects/s and a p95 of about 110–145 ms after. `skipLocked` did not deadlock in
-the overlapping-claims test with or without the ordering.
+the caller listed its candidates in, rather than leaving the order to the query planner. The
+candidates are shuffled within equal-amount runs (see
+[Ordering and the sufficiency window](#ordering-and-the-sufficiency-window)), so concurrent
+claimants list overlapping windows in different orders; inserting the same keys in different
+orders makes the claims wait for each other and deadlock, which Postgres reports only
+after `deadlock_timeout` (1 s by default). Fixing the insertion order removed a deadlock that
+previously cost a second plus a retry on every occurrence — see the
+[benchmark report](selector-postgres-benchmark-report.md#findings) for the measured
+before/after throughput.
 
 **What each strategy actually changes, precisely — the mechanism has a narrower effect
 than "reduces lock contention" might suggest:**
@@ -363,23 +390,38 @@ than "reduces lock contention" might suggest:**
     hot path at all; it only matters for a `Locker` implementation that does not satisfy
     `BatchLocker` (a custom or older backend, or a rolling deploy where some replicas have
     not yet upgraded). This is the case `postgres.TokenLockStore.RoundTrips()` and
-    `.UniqueViolations()` are instrumented to measure directly (exercised by
-    `TestHotTokenContention_SingleTokenLockPath` in `sherdlock/contention_test.go`), rather
-    than being inferred from the conflict-rate benchmark below, which cannot see it.
+    `.UniqueViolations()` are instrumented to measure directly, rather than being inferred
+    from a conflict-rate benchmark, which cannot see it.
 *   **`FOR UPDATE SKIP LOCKED` only helps against a genuinely simultaneous holder, not
     against an already-committed lock — the dominant conflict mode under load.** It lets a
     claimant skip a row a rival transaction is mid-claim on *at that exact instant*; it does
     nothing for a row whose lock row was already committed moments earlier, which loses the
-    race the same way under every strategy. Consequently the aggregate conflict rate
-    measured by `TestHotTokenContention`/`TestHotTokenContentionWideWindow` does **not**
-    move across strategies — this was verified empirically, not assumed, and is expected
-    given the mechanism rather than a sign Phase 6 underperforms.
-    `TestTokenLockStore_LockBatch_SkipLocked_SkipsRowLockedByConcurrentTx` in
-    `token/services/storage/db/sql/postgres` isolates the mechanism deterministically
-    instead: it holds a row lock on one candidate via a concurrent transaction, confirms a
-    plain `FOR UPDATE` on that row genuinely blocks (proving the held lock is real), then
-    confirms `LockBatch` under `skipLocked` claims every other candidate without blocking
-    while excluding that one.
+    race the same way under every strategy. This is why `skipLocked` does not come out ahead
+    on the measured workloads — see the
+    [benchmark report's recommendation table](selector-postgres-benchmark-report.md#recommendation-by-workload):
+    for multiple nodes on one database, use the `insert` default or `onConflict`; avoid
+    `skipLocked`.
+*   **Round-trip reduction comes from batching the claim into one statement per covering
+    window, not from strategy choice.** `LockBatch` issues exactly one round trip per
+    window under every strategy (`onConflict`/`insert` via a multi-row
+    `INSERT ... ON CONFLICT DO NOTHING`, `skipLocked` via the `FOR UPDATE SKIP LOCKED` join
+    above). The saving comes from the batch claim itself (`BatchLocker`), which all three
+    strategies share once configured; `lockStrategy` chooses only *how* that one round trip
+    claims the window, not *whether* claiming is batched.
+
+**A batched claim reports *why* a candidate was not won, not just that it was not.** The claim
+statement answers with the tokens it won and, separately, the candidates it refused because they
+are no longer spendable — spent, marked unspendable, or no longer owned here — leaving "another
+claimant holds it" as the remainder (`driver.BatchLockOutcome`). The selector needs the
+distinction because the two call for opposite handling: a contended candidate is worth retrying
+and keeps the caller backing off, while a stale one can never come back and is instead dropped
+for good, counted under `stale_candidates_total`, and taken as proof that the candidate snapshot
+is behind the store, so the cache is refreshed within the same `Select` call. Classifying costs
+no extra round trip — all three verdicts are read off the one statement — but under `skipLocked`
+it does require the spendability predicate to be evaluated a second time without the row lock,
+since a row `FOR UPDATE SKIP LOCKED` walks past is a contended row and must not be reported as
+unspendable. A backend that cannot distinguish the two may report winners only, in which case
+every unwon candidate reads as contended; that is sound but blind.
 
 **Discovering the capability.** `BatchLocker` is optional and resolved at runtime, which makes
 *how* it is looked up part of the mechanism rather than a detail. The `Locker` the manager is
@@ -398,31 +440,6 @@ Since the Postgres claim binds `2n+5` parameters and the wire protocol refuses m
 scan simply claims another window when one is not enough, exactly as it already does when the
 candidate cache runs out mid-window — but it keeps a large selection on the batch path instead
 of turning it into a store error that the retry budget then burns through.
-*   **Round-trip reduction comes from batching the claim into one statement per covering
-    window, not from strategy choice.** `LockBatch` issues exactly one round trip per
-    window under every strategy (`onConflict`/`insert` via a multi-row
-    `INSERT ... ON CONFLICT DO NOTHING`, `skipLocked` via the `FOR UPDATE SKIP LOCKED` join
-    above), so `RoundTrips()` comes out equal across strategies for the same workload in
-    `TestHotTokenContention`/`TestHotTokenContentionWideWindow`. The saving Phase 6
-    contributes here is the batch claim itself (`BatchLocker`), which all three strategies
-    share once configured; `lockStrategy` chooses only *how* that one round trip claims the
-    window, not *whether* claiming is batched.
-
-**A batched claim reports *why* a candidate was not won, not just that it was not.** The claim
-statement answers with the tokens it won and, separately, the candidates it refused because they
-are no longer spendable — spent, marked unspendable, or no longer owned here — leaving "another
-claimant holds it" as the remainder (`driver.BatchLockOutcome`). The selector needs the
-distinction because the two call for opposite handling: a contended candidate is worth retrying
-and keeps the caller backing off, while a stale one can never come back and is instead dropped
-for good, counted under `stale_candidates_total`, and taken as proof that the candidate snapshot
-is behind the store, so the cache is refreshed within the same `Select` call. Classifying costs
-no extra round trip — all three verdicts are read off the one statement — but under `skipLocked`
-it does require the spendability predicate to be evaluated a second time without the row lock,
-since a row `FOR UPDATE SKIP LOCKED` walks past is a contended row and must not be reported as
-unspendable. A backend that cannot distinguish the two may report winners only, in which case
-every unwon candidate reads as contended; that is the behaviour every batch-capable backend had
-before, and it is sound but blind — see
-`TestBatchLockStaleCandidate_UnclassifiedFallsBackToConflict`.
 
 ### In-Memory Locker Internals
 
@@ -475,9 +492,20 @@ The `sherdlock` driver was never exposed to this: its fetcher reads the candidat
 into memory (and, under the cached and mixed strategies, usually answers from the cache
 without a query at all) rather than iterating a live cursor across other queries.
 
+> **A second, still-open overlap exists on the in-loop reclaim path.** The fix above covers the
+> *post-loop* concurrency re-check only. While the candidate cursor is open, each `Lock` call
+> made with `reclaim=true` (true from the second scan attempt onward, or from the first when
+> `numRetry == 1`) resolves the current holder's status via a nested query
+> (`inmemory.locker.lockInShard` → `ttxdb.GetStatus`), which needs a second connection while
+> the cursor still holds the first. Under sustained contention with enough concurrent
+> selectors relative to pool size, this can still deadlock the whole pool — reproduced by the
+> `production-shape` benchmark workload at a 250ms hold time with 16 clients against a pool of
+> 10. Tracked as [issue #2474](https://github.com/LFDT-Panurus/panurus/issues/2474); not fixed
+> as of this writing.
+
 ## Token Fetcher and Cache
 
-The selector uses a **Token Fetcher** to retrieve available tokens from the database. The fetcher uses a **Ristretto LRU cache** to improve performance by caching token queries (keyed by wallet+currency).
+The selector uses a **Token Fetcher** to retrieve available tokens from the database. The fetcher uses a **Ristretto cache** (admission/eviction via TinyLFU, not LRU) to improve performance by caching token queries (keyed by wallet+currency).
 
 **Flow**: `Selector.Select()` → `Fetcher.UnspentTokensIteratorBy(wallet, currency)` → `Token Iterator`
 
@@ -515,21 +543,18 @@ counted under `cache_invalidations_total`.
     spendable (a stale candidate, see above).
 *   **A scan ran out of candidates before covering the request**, and the selector is about
     to refetch. Re-reading the same snapshot would not be a retry at all: the candidate query
-    hides tokens locked by anyone (mechanism 3 above), so a lock another process released
-    since the snapshot was taken is *not in it* and cannot appear by reading it again — and
-    neither can a token this call locked itself disappear from it. Without the invalidation
-    the eager and mixed strategies hand back the identical set until `fetcherCacheRefresh`
-    expires, spending the whole immediate-retry budget to re-read it and failing with
+    hides tokens locked by anyone, so a lock another process released since the snapshot was
+    taken is *not in it* and cannot appear by reading it again — and neither can a token this
+    call locked itself disappear from it. Without the invalidation the eager and mixed
+    strategies hand back the identical set until `fetcherCacheRefresh` expires, spending the
+    whole immediate-retry budget to re-read it and failing with
     `SelectorSufficientButLockedFunds` on a wallet that can pay. The lazy strategy reads
     through and implements no `CacheInvalidator`, so nothing is forced or counted for it.
 
     The **first** fetch of a selection is exempt. A `Select` starts with an empty candidate
     cache, so it always refetches once before anything is known to be stale; forcing a
     refresh there would re-read the whole token store on every call and leave the caching
-    strategies doing strictly more work than the lazy one they exist to avoid. The cost of
-    the rule is therefore bounded by the retries a selection actually needs: zero for one
-    served by its first scan, at most `maxImmediateRetries` for one that keeps coming up
-    short, and several invalidations before one read collapse into that single refresh.
+    strategies doing strictly more work than the lazy one they exist to avoid.
 
 An invalidation is not the same as "mark it old" — it must also beat a refresh that is already in flight. A refresh releases the lock
 for the duration of its query, so one that started earlier is holding a snapshot that cannot
@@ -538,16 +563,10 @@ for a whole `fetcherCacheRefresh` interval. The fetcher therefore counts invalid
 compares the count before and after its query. A snapshot that has been overtaken is
 **installed but not stamped fresh**: readers get the newer data, the cache stays stale, and
 the next request pays for a refresh that reads *after* the invalidation. Invalidation never
-empties the cache.
-
-Installing the overtaken snapshot, rather than discarding it, matters under sustained
-invalidation. A wallet that settles continuously invalidates on nearly every `Select`, so with
-a discard rule every refresh is overtaken before it finishes and none is ever installed: the
-cache serves its first snapshot for as long as the load lasts, full of tokens spent long ago,
-and most selections exhaust their retries on them and fail with `SufficientButLockedFunds` on a
-wallet that can pay (measured: 16 clients settling one wallet, 3 snapshots installed and 1,691
-discarded in 100 selections, 74–78% of selections failing; with the install rule none failed
-and throughput was five to ten times higher). `lazy` reads through and is not affected.
+empties the cache. Installing the overtaken snapshot, rather than discarding it, matters under
+sustained invalidation: see the [benchmark report](selector-postgres-benchmark-report.md#findings)
+for the measured effect of each rule on a continuously-settling wallet. `lazy` reads through
+and is not affected.
 
 ### Fetcher strategies
 
@@ -557,7 +576,7 @@ unrecognized one makes the node fail to start rather than falling back silently:
 
 | `fetcherStrategy` | Behaviour | Cache keys apply |
 |---|---|---|
-| `mixed` (default) | Serves a request from the cache, and falls back to a database query when the cache holds no token for that wallet and currency. | yes |
+| `mixed` (default) | On every request, peeks the eager cache's iterator for that wallet and currency; serves from it when non-empty, falls back to a database query otherwise. | yes |
 | `eager` | Always answers from the cache, never from a query scoped to the requested wallet. The cache itself is refreshed on the two triggers above, so a request that finds it stale does pay for the refreshing query inline. | yes |
 | `lazy` | Always queries the database and keeps no cache at all. | no |
 
@@ -589,9 +608,13 @@ token:
     leaseExpiry: 3m                      # Lock expiration time (default: 3m)
     leaseCleanupTickPeriod: 1m           # Lock cleanup interval (default: 1m)
     fetcherStrategy: mixed               # Token fetcher: mixed | eager | lazy (default: mixed)
-    fetcherCacheSize: 1000               # Cache size in entries (default: 0 = use fetcher default)
+    fetcherCacheSize: 1000               # Cache size in Ristretto cost units (default: 0 = use fetcher default)
     fetcherCacheRefresh: 30s             # Cache refresh interval (default: 0 = use fetcher default)
     fetcherCacheMaxQueries: 100          # Max queries before cache refresh (default: 0 = use fetcher default)
+    rateLimitEnabled: false              # Opt-in per-wallet selection rate limiter (default: false)
+    rateLimit: 100                       # Requests per second per wallet, once enabled (default: 100)
+    rateLimitBurst: 200                  # Burst capacity per wallet, once enabled (default: 2x rate)
+    rateLimitMaxBuckets: 4096            # Live wallet buckets the limiter keeps in memory (default: 4096)
   storage:
     db:
       lockStrategy: skipLocked           # Postgres lock-acquisition strategy: insert | onConflict | skipLocked (default: insert)
@@ -601,6 +624,75 @@ token:
 above (see [Lock-acquisition strategies](#lock-acquisition-strategies-postgres-sherdlock-only)).
 It has no effect under SQLite or `simple`.
 
+### Defaults reference
+
+| Key | Default | Source | YAML-configurable |
+|---|---|---|---|
+| `driver` | `sherdlock` | `token/sdk/dig/sdk.go`'s `selectorProviders` map resolves `token.selector.driver` directly (`Simple`, `Sherdlock`, and `""` all map to a constructor, `""` landing on sherdlock); `config.Config.GetDriver()`/`defaultDriver` (`config/driver.go`) exist but have no production caller | yes |
+| `numRetries` | `3` | `config/driver.go` `defaultNumRetries` | yes |
+| `retryInterval` | `5s` | `config/driver.go` `defaultRetryInterval` | yes |
+| `leaseExpiry` | `3m` | `config/driver.go` `defaultLeaseExpiry` | yes |
+| `leaseCleanupTickPeriod` | `1m` | `config/driver.go` `defaultLeaseCleanupTickPeriod` | yes |
+| `fetcherStrategy` | `mixed` | `sherdlock/fetcher.go` `DefaultFetcherStrategy` | yes (sherdlock only) |
+| `fetcherCacheSize` | `0` → Ristretto `MaxCost = 1e8` cost units (cost-per-entry is 1, so effectively up to 100M cached wallet+currency entries) | `token/services/utils/cache/ristretto.go` `DefaultMaxCost`, via `cache.NewDefaultRistrettoCache` | yes |
+| `fetcherCacheRefresh` | `0` → `1s` | `sherdlock/fetcher.go` `defaultCacheFreshnessInterval` | yes |
+| `fetcherCacheMaxQueries` | `0` → `5` (same constant as `maxImmediateRetries`, see below — not an independent number) | `sherdlock/fetcher.go` `defaultCacheMaxQueries` | yes |
+| `storage.db.lockStrategy` | `insert` | Postgres `TokenLockStore` | yes, Postgres only |
+| `rateLimitEnabled` / `rateLimit` | rate limiting off | `ratelimit/limiter.go` | yes |
+| `rateLimit` (once enabled, unset) | `100` req/s per wallet | `ratelimit.DefaultRate` | yes |
+| `rateLimitBurst` (once enabled, unset) | `rate * 2`, i.e. `200` by default | `ratelimit.DefaultBurstFactor` | yes |
+| `rateLimitMaxBuckets` | `0` → `4096` live wallet buckets | `ratelimit.DefaultMaxBuckets` | yes |
+| — rate limiter idle timeout | `5m` | `ratelimit.DefaultIdleTimeout` | **no** — not exposed via `Config` |
+| — `sufficiencyWindow` | `4` | `sherdlock/selector.go` | **no** — hardcoded constant |
+| — `maxSufficiencyRatio` | `5` | `sherdlock/selector.go` | **no** — hardcoded constant |
+| — `maxImmediateRetries` | `5` | `sherdlock/selector.go` | **no** — hardcoded constant |
+| — `maxBatchWindow` | `256` | `sherdlock/selector.go` | **no** — hardcoded constant |
+
+The last five rows are not reachable from `core.yaml` at all. They materially shape contention
+behavior — the sufficiency window spreads selection across same-sized tokens, the batch window
+caps how many candidates one claim covers — but changing them requires a code change, not a
+configuration change. If a deployment's token-amount distribution or contention pattern doesn't
+fit these shipped values, that is tracked as a selection-algorithm question under
+[issue #2017](https://github.com/LFDT-Panurus/panurus/issues/2017), not something to look for a
+YAML key for.
+
+### Guidelines: choosing non-default values
+
+- **`storage.db.lockStrategy`: the default `insert` is the right choice for most deployments —
+  do not switch to `skipLocked` on the strength of its name alone.** `FOR UPDATE SKIP LOCKED`
+  only helps against a holder that is *simultaneously* mid-claim; it does nothing for a lock
+  already committed moments earlier, which is the dominant conflict mode under load (see
+  [Lock-acquisition strategies](#lock-acquisition-strategies-postgres-sherdlock-only)). The
+  [benchmark report's recommendation table](selector-postgres-benchmark-report.md#recommendation-by-workload)
+  concurs: for multiple nodes on one database, use the `insert` default or `onConflict`; avoid
+  `skipLocked`.
+- **`retryInterval` / `numRetries`: lower `retryInterval` for latency-sensitive callers that
+  would rather fail fast and let the caller retry; raise `numRetries` only knowing it is not a
+  free extra attempt.** Both drivers jitter their backoff sleep uniformly in
+  `[0, retryInterval)` — `sherdlock/selector.go`'s `rand.Int64N(backoffInterval)` and
+  `simple/selector.go`'s `retryBackoff()` use the identical pattern — so quoting the configured
+  value as a fixed per-retry delay overstates the typical case by roughly 2x. Sherdlock's
+  `StubbornSelector` loop sleeps after every attempt including the one that has already failed
+  for good, so its worst case is `(numRetries + 1) * retryInterval`, not
+  `numRetries * retryInterval`; raising `numRetries` by one therefore always costs one more full
+  backoff sleep on a selection that was going to fail anyway, not just one more chance to
+  succeed. `simple` does **not** sleep after its final failed attempt, so raising its
+  `numRetries` costs one less sleep than the equivalent sherdlock change.
+- **`fetcherStrategy`: default `mixed` is right for most deployments.** Use `lazy` only for
+  low-throughput or correctness-critical wallets that cannot tolerate being offered a
+  since-spent token (at the cost of one query per selection). Reach for `eager` only after
+  `mixed`'s fallback-to-query path is itself shown to be the bottleneck — `eager` amortizes
+  queries over more requests but is exposed to staleness on every one of them, not just the
+  ones `mixed` would have queried anyway.
+- **Rate limiting defaults are a safety net, not a general throughput control.** `100` req/s
+  per wallet with a burst of `200` is generous; lower it deliberately to protect a specific hot
+  wallet from a runaway retry storm once you've observed one, rather than as a first lever when
+  tuning for throughput. No workload in `BenchmarkSelectorPostgres` currently exercises rate
+  limiting — it is an orthogonal contention knob the existing workloads are blind to.
+- **The hardcoded sufficiency-window and batch-window constants are not tuning knobs.** If a
+  deployment's amount distribution or contention pattern genuinely doesn't fit them, that is a
+  code change against issue #2017, not a configuration adjustment.
+
 ### Driver
 
 `driver` selects the selector implementation and, with it, the locking backend:
@@ -609,17 +701,9 @@ It has no effect under SQLite or `simple`.
   leases governed by `leaseExpiry` and `leaseCleanupTickPeriod`.
 - **simple**: keeps its locks in memory (see [In-Memory Locker Internals](#in-memory-locker-internals)).
 
-It does **not** select a selection algorithm: both drivers walk candidates greedily and stop
-on first cover, but they diverge in several ways beyond the shuffle:
-
-- `sherdlock` orders candidates ascending by amount (shuffling only within same-amount runs)
-  and excludes already-locked tokens from the query via an anti-join; `simple` walks tokens
-  in unordered database order and does not exclude locked tokens from its query.
-- `sherdlock` holds already-acquired locks across immediate retries; `simple` releases all
-  locks between every retry attempt.
-- `simple` runs a `GetTokens` concurrency check after a successful cover and can return a
-  fourth error sentinel, `token.SelectorSufficientFundsButConcurrencyIssue`, which
-  `sherdlock` does not produce.
+See [What `simple` does differently](#what-simple-does-differently) for the full behavioral
+comparison beyond locking backend and amount ordering — retry semantics, which locks survive
+a retry, and the extra `simple`-only error sentinel all differ too.
 
 ### Fetcher Configuration
 
@@ -629,7 +713,7 @@ on first cover, but they diverge in several ways beyond the shuffle:
 
 The three keys below tune the cache that `mixed` and `eager` use, and are ignored by `lazy`:
 
-- **fetcherCacheSize**: Maximum number of cached query results. Set to 0 to use the fetcher's default size.
+- **fetcherCacheSize**: Maximum number of cached query results, in Ristretto cost units (cost-per-entry is 1, so effectively a cap on entries). Set to 0 to use the fetcher's default size.
 - **fetcherCacheRefresh**: Time interval after which cached data is considered stale and refreshed. Set to 0 to use the fetcher's default interval.
 - **fetcherCacheMaxQueries**: Maximum number of queries before forcing a cache refresh. Set to 0 to use the fetcher's default limit.
 
@@ -658,7 +742,7 @@ By default the baseline (all production defaults) is swept one axis at a time:
 | replicas | 1, 3 (`multi-replica`) | 1 |
 
 `PANURUS_SELECTOR_BENCH_MATRIX=full` replaces the sweep with the cross product of fetcher, lock
-strategy and batch locking.
+strategy and batch locking, plus a `simple` configuration appended.
 
 ### Workloads
 
@@ -668,12 +752,13 @@ strategy and batch locking.
 | `wallet-size` | 1k / 100k (optionally 1M) tokens: how the spendable query, fetcher and lock anti-join scale |
 | `selection-size` | 1 / 10 / 100 / 500 tokens per `Select`: the sufficiency window and the `LockBatch` window limit |
 | `fragmented` | Power-law denominations; one case per request size (50 / 500 / 5000) plus a mix, so a tail can be attributed to a size |
-| `hot-wallet` | 16 clients on one wallet holding 1.5x their demand: lock conflicts and retries |
+| `hot-wallet` | 16 clients on one wallet holding 1.5x their demand: lock conflicts and retries. Also carries a `retry=20ms`/`retry=5s` pair over sherdlock default + `simple`, corroborating `near-exhaustion`'s retry-interval axis on a second workload |
 | `hot-wallet-distinct-amounts` | The hot wallet with every token of a different amount, so concurrent batches list candidates in the same order; separates ordering effects (deadlocks) from contention |
 | `disjoint-wallets` | 16 clients, one wallet each: database and pool cost without logical contention |
 | `multi-replica` | The hot wallet served by 3 nodes on one database (the #2395 shape) |
 | `settle` | Select, spend the inputs and re-create outputs in one store transaction, release: the full lifecycle with churning token IDs. Run at 5 inputs per transaction (a typical transfer) and 100 (a stress case: settlement holds a pooled connection for ~250 ms, and with more clients than connections every `Select` queues behind it) |
-| `near-exhaustion` | Wallet holds what 10 of 16 clients need and each selection stays locked for 3 ms, so demand can exceed supply; retries absorb most shortages, so this mostly measures retry cost |
+| `near-exhaustion` | Wallet holds what 10 of 16 clients need and each selection stays locked for 3 ms, so demand can exceed supply; retries absorb most shortages, so this mostly measures retry cost. Runs `retry=20ms` (benchmark default) over the 4 `coreConfigs()` rows and `retry=5s` (production default) over sherdlock default + `simple`, to test whether retry interval changes the sherdlock-vs-simple ordering — see the benchmark report for the resolved finding |
+| `production-shape` | Like `near-exhaustion`, but with a hold time of 50ms/250ms — closer to a real transaction's endorsement-collection window — on sherdlock default and `simple`. Throughput is hold-bound (capped near `clients/hold`, ≈64/s at best for the 250ms case), not selector-bound; `p50/p95/p99-ms` and `contended/op` are the metrics that actually say something about the selector. `simple`'s case runs with a larger pool than its production default to avoid a connection-pool deadlock under sustained hold (see [issue #2474](https://github.com/LFDT-Panurus/panurus/issues/2474)) |
 | `stale-locks` | 30% of the wallet locked by a crashed replica, lease cleaner on and off |
 
 Run it with `make benchmark-selector-postgres` (see `token/services/selector/README.md` for the

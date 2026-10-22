@@ -237,6 +237,28 @@ func lockConfigs() []pgConfig {
 	return []pgConfig{base, onConflict, skipLocked, single}
 }
 
+// retryConfigs is the two configs the sherdlock-vs-simple retry-interval hypothesis is about:
+// baseline sherdlock (mixed/insert/batch) and simple. Used wherever retryInterval is swept as
+// its own axis - see nearExhaustionCases and hotWalletCases.
+func retryConfigs() []pgConfig {
+	base := baselinePgConfig()
+	simpleCfg := base
+	simpleCfg.driver = "simple"
+
+	return []pgConfig{base, simpleCfg}
+}
+
+// withRetryInterval clones each config with retryInterval set to d, for building a retry=
+// axis explicitly rather than relying on whatever baselinePgConfig() happened to default to.
+func withRetryInterval(cfgs []pgConfig, d time.Duration) []pgConfig {
+	out := slices.Clone(cfgs)
+	for i := range out {
+		out[i].retryInterval = d
+	}
+
+	return out
+}
+
 func withReplicas(cfgs []pgConfig, n int) []pgConfig {
 	out := slices.Clone(cfgs)
 	for i := range out {
@@ -261,6 +283,7 @@ func BenchmarkSelectorPostgres(b *testing.B) {
 	b.Run("multi-replica", func(b *testing.B) { runPgCases(b, env, multiReplicaCases()) })
 	b.Run("settle", func(b *testing.B) { runPgCases(b, env, settleCases()) })
 	b.Run("near-exhaustion", func(b *testing.B) { runPgCases(b, env, nearExhaustionCases()) })
+	b.Run("production-shape", func(b *testing.B) { runPgCases(b, env, productionShapeCases()) })
 	b.Run("stale-locks", func(b *testing.B) { runPgCases(b, env, staleLockCases()) })
 }
 
@@ -371,6 +394,11 @@ const hotClients = 16
 
 // hotWalletCases: many clients on one wallet holding 1.5x what they need at once, so most
 // Selects find free tokens but keep colliding on the same ascending-by-amount prefix.
+//
+// Also carries a retry=20ms/retry=5s pair over retryConfigs(), as a second, corroborating
+// workload for the near-exhaustion retry-interval hypothesis (see nearExhaustionCases) rather
+// than resting it on one workload alone. These two named cases are in addition to the pgConfigs()
+// sweep above, which stays unnamed exactly as before.
 func hotWalletCases() []pgCase {
 	var cases []pgCase
 	for _, cfg := range pgConfigs() {
@@ -381,6 +409,17 @@ func hotWalletCases() []pgCase {
 				return selectOp(fx, oneWallet(""), fixedQty(100), false, 0)
 			},
 		})
+	}
+	for _, retry := range []time.Duration{benchDefaultRetryInterval(), 5 * time.Second} {
+		for _, cfg := range withRetryInterval(retryConfigs(), retry) {
+			cases = append(cases, pgCase{
+				name: "retry=" + retry.String(), cfg: cfg, clients: hotClients,
+				setup: seedUniform(benchWalletID, hotClients*100*3/2),
+				op: func(fx *pgFixture) pgOp {
+					return selectOp(fx, oneWallet(""), fixedQty(100), false, 0)
+				},
+			})
+		}
 	}
 
 	return cases
@@ -503,16 +542,84 @@ const nearExhaustionHold = 3 * time.Millisecond
 // short (balance check, retries, backoff). Retries absorb most shortages, so few requests end as
 // contended/op (measured 0.03-0.11 for sherdlock, 0 for simple): this mostly measures retry cost
 // rather than failure. Contended requests are reported, not treated as errors.
+//
+// retryInterval is swept as its own axis here: retry=20ms over coreConfigs() (the benchmark
+// default, preserving the 4 existing rows - mixed, lazy, eager, simple) and retry=5s over
+// retryConfigs() (just mixed + simple, the two rows the sherdlock-vs-simple backoff-mechanism
+// hypothesis is about - see docs/services/selector.md and the benchmark report). Every row
+// carries an explicit retry= segment; none stay unnamed, so a retry=5s case can never be
+// mistaken for - or silently share a fixture with - the benchmark-default 20ms case of the
+// same cfg.name().
 func nearExhaustionCases() []pgCase {
 	var cases []pgCase
-	for _, cfg := range coreConfigs() {
+	for _, cfg := range withRetryInterval(coreConfigs(), benchDefaultRetryInterval()) {
 		cases = append(cases, pgCase{
-			cfg: cfg, clients: hotClients,
+			name: "retry=20ms", cfg: cfg, clients: hotClients,
 			setup: seedUniform(benchWalletID, 10*100),
 			op: func(fx *pgFixture) pgOp {
 				return selectOp(fx, oneWallet(""), fixedQty(100), false, nearExhaustionHold)
 			},
 		})
+	}
+	for _, cfg := range withRetryInterval(retryConfigs(), 5*time.Second) {
+		cases = append(cases, pgCase{
+			name: "retry=5s", cfg: cfg, clients: hotClients,
+			setup: seedUniform(benchWalletID, 10*100),
+			op: func(fx *pgFixture) pgOp {
+				return selectOp(fx, oneWallet(""), fixedQty(100), false, nearExhaustionHold)
+			},
+		})
+	}
+
+	return cases
+}
+
+// productionShapeConfigs is the two configs production-shape sweeps: baseline sherdlock and
+// simple. Unlike nearExhaustionCases (which sweeps every coreConfigs() row), this workload is
+// about the hold-time axis specifically, so it is kept to the two configs the driver choice
+// itself is about.
+//
+// simple's pool is sized at 4x hotClients rather than the production-default 10. At a 250ms
+// hold with hotClients concurrent selectors, enough cursors from UnspentTokensIteratorBy stay
+// open simultaneously that every selector past the first retry also needs a second connection
+// for Lock's reclaim-path GetStatus query (simple/inmemory/locker.go) - at pool size 10 this
+// deadlocks the whole pool permanently rather than contending or retrying (see issue #2474,
+// found via this workload; tracked there, not fixed here per this benchmark's test-only scope).
+// A pool sized to cover two connections per client sidesteps the deadlock so this workload can
+// still measure simple's latency and contention under a hold time existing workloads are too
+// short to expose it with.
+func productionShapeConfigs() []pgConfig {
+	base := baselinePgConfig()
+	simpleCfg := base
+	simpleCfg.driver, simpleCfg.maxConns = "simple", 4*hotClients
+
+	return []pgConfig{base, simpleCfg}
+}
+
+// production-shape: like near-exhaustion, but with hold times an order of magnitude closer to a
+// real transaction's endorsement-collection time (near-exhaustion uses nearExhaustionHold = 3ms
+// to keep its runtime short; this workload spends the time to use 50ms and 250ms instead). The
+// wallet holds 0.625x of what the 16 clients need at once (the same ratio nearExhaustionCases
+// already validates), so demand can exceed supply and a selection's hold time determines how
+// long a token stays unavailable to everyone else.
+//
+// Throughput here is hold-bound, not selector-bound: with hold inside the timed region but
+// outside Select's own latency, selects/sec is capped near clients/hold by arithmetic regardless
+// of how fast the selector itself is (16 clients / 250ms hold ≈ 64/s at best). The metrics that
+// actually say something about the selector are p50/p95/p99-ms (Select's own latency, which
+// excludes hold) and contended/op.
+func productionShapeCases() []pgCase {
+	var cases []pgCase
+	for _, hold := range []time.Duration{50 * time.Millisecond, 250 * time.Millisecond} {
+		for _, cfg := range productionShapeConfigs() {
+			cases = append(cases, pgCase{
+				name: "hold=" + hold.String(), cfg: cfg, clients: hotClients,
+				setup: seedUniform(benchWalletID, 10*100),
+				op: func(fx *pgFixture) pgOp {
+					return selectOp(fx, oneWallet(""), fixedQty(100), false, hold)
+				},
+			})
+		}
 	}
 
 	return cases

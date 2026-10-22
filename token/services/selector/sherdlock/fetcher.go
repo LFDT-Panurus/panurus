@@ -124,10 +124,14 @@ func (p *fetcherProvider) GetFetcher(tmsID token.TMSID) (TokenFetcher, error) {
 	return p.fetch(tokenDB, p.metrics, p.cacheSize, p.freshnessInterval, p.maxQueries), nil
 }
 
-// mixedFetcher combines both eager and lazy strategies
-// In this example we return the eager result only the first time and all subsequent request are served by the lazy fetcher
-// Other implementations can make different combinations, e.g. fresh results under a threshold (e.g. 10ms) can be served by the eager fetcher
-// or listen for insert events in the database
+// mixedFetcher combines the eager and lazy strategies: every call peeks the eager
+// (cached) fetcher's iterator for the requested wallet and currency, serves from it when
+// non-empty, and falls back to a database query through the lazy fetcher only when the
+// cache has nothing to say about that wallet. This is a per-call decision, not a
+// first-call-then-lazy rule - a wallet the cache knows about keeps being served from it on
+// every request. Other implementations can make different combinations, e.g. fresh results
+// under a threshold (e.g. 10ms) can be served by the eager fetcher, or listen for insert
+// events in the database.
 type mixedFetcher struct {
 	lazyFetcher  *lazyFetcher
 	eagerFetcher *cachedFetcher

@@ -7,9 +7,12 @@ SPDX-License-Identifier: Apache-2.0
 package selector
 
 import (
+	"strconv"
 	"testing"
+	"time"
 
 	"github.com/LFDT-Panurus/panurus/token/services/selector/testutils"
+	token2 "github.com/LFDT-Panurus/panurus/token/token"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -142,6 +145,52 @@ func TestBenchPostgresSimpleDriverSelectsAndUnlocks(t *testing.T) {
 	require.NoError(t, err)
 	_, _, err = again.Select(t.Context(), filter, testutils.SelectQuantity, testutils.TokenType)
 	require.NoError(t, err)
+}
+
+// TestBenchPostgresRetryIntervalReachesTheSelector checks that pgConfig.retryInterval is not
+// just rendered into core.yaml but actually changes the backoff an exhausting Select sleeps
+// through. Without this test, a future refactor of renderCoreYAML or pgConfig could silently
+// stop plumbing retryInterval through and every retry=5s benchmark case would quietly measure
+// the production default (5s) regardless of what it claims, or vice versa.
+func TestBenchPostgresRetryIntervalReachesTheSelector(t *testing.T) {
+	const (
+		shortInterval = 20 * time.Millisecond
+		longInterval  = 2 * time.Second
+	)
+
+	durationOf := func(t *testing.T, retryInterval time.Duration) time.Duration {
+		t.Helper()
+		cfg := baselinePgConfig()
+		cfg.retryInterval = retryInterval
+		cfg.cleaner = false // see the comment below on cleaner:false and time.Now() planting.
+		fx := pgHarnessFixture(t, cfg)
+
+		// Lock every token in the wallet on behalf of a different consumer, planted at
+		// time.Now() rather than an hour ago: with the default 1s-tick cleaner the lease
+		// (leaseExpiry default 3m) would not have expired yet either way, but planting at
+		// time.Now() with cleaner:false removes any dependency on tick timing at all, so the
+		// test cannot flake on a slow CI scheduler letting a tick slip in.
+		for i := range pgHarnessTokens {
+			require.NoError(t, fx.replicas[0].lockMgr.pg.Load().LockAt(
+				t.Context(), &token2.ID{TxId: "seed-" + strconv.Itoa(i)}, "crasher-tx", pgHarnessWallet, time.Now()))
+		}
+
+		txID := fx.nextTxID()
+		sel, err := fx.replicas[0].mgr.NewSelector(txID)
+		require.NoError(t, err)
+		start := time.Now()
+		_, _, err = sel.Select(t.Context(), &testutils.TokenFilter{WalletID: pgHarnessWallet}, testutils.SelectQuantity, testutils.TokenType)
+		elapsed := time.Since(start)
+		require.Error(t, err, "every token is locked by another consumer, so Select must exhaust its retries")
+
+		return elapsed
+	}
+
+	short := durationOf(t, shortInterval)
+	long := durationOf(t, longInterval)
+	assert.Greater(t, float64(long), float64(short)*1.5,
+		"a %v retryInterval (%v) should take measurably longer than a %v one (%v)",
+		longInterval, long, shortInterval, short)
 }
 
 // TestBenchPostgresSettleKeepsBalance checks the settle step conserves the wallet's balance and

@@ -55,17 +55,23 @@ func TestSizeOrderedSelection_SmallestFit(t *testing.T) {
 // contract: candidates of equal amount must still be shuffled against each other (so
 // smallest-fit does not simply relocate all contention onto whichever equal-amount token
 // happens to sort first), while the ascending ordering across distinct amounts is preserved.
-// It repeatedly selects a single token satisfying a request smaller than any one of several
-// equal-amount candidates, across independent Selector instances (each gets its own fresh
-// permutation via lazyFetcher/bucketedIterator.NewPermutation), and asserts more than one of
-// the candidates was picked across the run. With 5 equally likely candidates, the odds every
-// one of 40 independent trials lands on the same candidate are astronomically small, so this
-// is not a flaky assertion in practice.
+//
+// numCandidates is deliberately larger than sufficiencyWindow (selector.go, = 4): with only 5
+// equal-amount candidates, as an earlier version of this test used, nextCandidate's
+// sufficiency-window lookahead alone would uniformly pick among all 5 regardless of whether
+// bucketedIterator.NewPermutation actually shuffles anything - a no-op permutation would still
+// pass "picked more than one candidate" because the window mechanism, not the bucket shuffle,
+// would be doing the spreading. With 32 candidates, a no-op NewPermutation always returns the
+// same deterministic first sufficiencyWindow=4 of them, so this test's "more than 4 distinct
+// winners" assertion is specifically about the shuffle, not about the window. It repeatedly
+// selects a single token across independent Selector instances (each gets its own fresh
+// permutation via lazyFetcher/bucketedIterator.NewPermutation), and asserts more than
+// sufficiencyWindow candidates were picked across the run.
 func TestSizeOrderedSelection_SameAmountBucketShuffle(t *testing.T) {
 	const walletID = "wallet-bucket"
 	const tokenType = "EUR"
-	const numCandidates = 5
-	const numTrials = 40
+	const numCandidates = 32
+	const numTrials = 200
 
 	qs := testutils.NewMockQueryService()
 	for i := range numCandidates {
@@ -87,7 +93,10 @@ func TestSizeOrderedSelection_SameAmountBucketShuffle(t *testing.T) {
 		picked[tokens[0].TxId]++
 	}
 
-	assert.Greater(t, len(picked), 1, "expected the shuffle to spread selection across equal-amount candidates instead of always picking the same one, got: %v", picked)
+	assert.Greater(t, len(picked), 4,
+		"expected the bucket shuffle to spread selection across more than sufficiencyWindow=4 of the "+
+			"32 equal-amount candidates; a no-op NewPermutation would deterministically pin the window "+
+			"to the same first 4, got: %v", picked)
 }
 
 // TestSizeOrderedSelection_SufficiencyWindowShuffle closes the gap left by

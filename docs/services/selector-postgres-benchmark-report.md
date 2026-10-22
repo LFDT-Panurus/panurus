@@ -116,6 +116,40 @@ spent meanwhile); sherdlock reports none.
 | sherdlock eager | 24 (13-34) | 559 | 3035 | 0.06 |
 | simple | 150 | 51 | 1631 | 0 |
 
+**Retry interval: sherdlock closes most of its gap to `simple` at the production 5s interval,
+but not enough to flip the ordering.** `-benchtime=300x -count=5` on `retry=20ms` vs `retry=5s`
+(`benchstat -col /retry`, p=0.008 throughout, statistically significant):
+
+| Config | retry=20ms selects/s | retry=5s selects/s | Δ |
+|---|---|---|---|
+| sherdlock mixed | 37.91 | 62.37 | +64.5% |
+| simple | 438.80 | 65.92 | -85.0% |
+
+At 20ms simple leads by ~11.6x; at the production 5s default the two land at 62.37/s vs
+65.92/s — a ~1.06x gap, essentially a tie, simple still (barely) ahead. The mechanism: sherdlock
+pays for *more* backoff dead time per failed `Select` than simple at a long interval (its
+`StubbornSelector` loop runs 4 attempts and sleeps after all 4, including a wasted sleep after
+the attempt that already failed for good, worst case `(numRetries+1) * retryInterval`; simple's
+loop runs 3 attempts, sleeps after only 2, worst case `numRetries * retryInterval`) — so
+sherdlock's *relative* slowdown from a longer interval is smaller than simple's, not because
+sherdlock's backoff is cheaper in absolute terms, but because simple is giving up more of its
+20ms lead to the same fixed retry-interval math. The gap stays under the 2x bar this report
+uses to generalize a finding, so it is reported here as an observation specific to this
+workload's balance-check/retry-cost shape, not promoted into the cross-workload recommendation
+table below — see the `hot-wallet` cross-check immediately following, which does not reproduce
+the effect at all.
+
+**Cross-check on `hot-wallet` (16 clients, 1.5x supply, no retry needed in the common case):**
+the same `retry=20ms`/`retry=5s` comparison (`-benchtime=100x -count=5`) shows **no significant
+effect** on either driver (sherdlock 223.9→205.2/s, p=1.000; simple 461.6→483.8/s, p=0.421 —
+neither passes the p<0.05 bar), and the ~2x sherdlock-vs-simple gap is unchanged at either
+interval. This is expected: `hot-wallet`'s supply covers 1.5x demand, so most requests succeed
+without exhausting retries and spending backoff time at all, unlike `near-exhaustion`'s 0.625x
+ratio where coming up short is common. The two workloads disagree, which is exactly the signal
+this report's reporting rule is designed to catch: a retry-interval effect real enough to move
+near-exhaustion's numbers by double digits is not a property of the selectors in general, it is
+a property of *how often a workload actually pays for backoff*.
+
 ### Stale locks (30% of wallet locked by a crashed replica)
 
 | | selects/s | stale locks left |
@@ -143,11 +177,33 @@ spent meanwhile); sherdlock reports none.
    (it uses `ON CONFLICT DO NOTHING` under every strategy), and the counter only moves on the
    single-token `Lock` path. Lost races under batch locking show up as `lockRT/op` and
    lock conflicts instead.
-4. **Pool size: bigger was not better where measured (suggestive).** 50 connections were 40%
+4. **Fixing `LockBatch`'s insertion order removed a deadlock, not just reduced contention.**
+   Before the fix, a multi-row claim inserted lock rows in whatever order the query planner
+   chose, which varies with table size and window length; since candidates are shuffled within
+   equal-amount runs (the bucketed shuffle), concurrent claimants listed overlapping windows in
+   different orders, and inserting the same keys in different orders deadlocks — detected only
+   after Postgres's `deadlock_timeout` (1s default), costing that second plus a retry per
+   occurrence. Measured on the `multi-replica` workload with `insert`: 26-56 selects/s and a p95
+   of 1.2-2.3s before fixing the order, about 280-360 selects/s and a p95 of about 110-145ms
+   after. `skipLocked` did not deadlock in the overlapping-claims test with or without the
+   ordering, so the fix (inserting in a fixed `(tx_id, idx)` order under every strategy) costs a
+   sort of at most `maxBatchWindow` (256) rows to keep the three strategies' behaviour the same.
+5. **Pool size: bigger was not better where measured (suggestive).** 50 connections were 40%
    slower than 10 on the hot wallet (more concurrent backends fighting over the same rows). Pool
    size was only varied in that one workload, so nothing is known about the settle case, where
    the pool of 10 is the bottleneck.
-5. **Sherdlock vs simple.**
+6. **Installing an overtaken cache snapshot rather than discarding it matters under sustained
+   invalidation.** The `cachedFetcher` compares its invalidation count before and after each
+   refresh query; a snapshot whose refresh was overtaken by an invalidation is installed but
+   left marked stale, so the next reader pays for a refresh that reads *after* the invalidation
+   instead of looping on the same discarded attempt. On a wallet settling continuously under 16
+   clients, a discard-on-overtake rule left every refresh perpetually overtaken before it
+   finished — 3 snapshots installed against 1,691 discarded in 100 selections — serving a
+   snapshot full of long-spent tokens and failing 74-78% of selections with
+   `SelectorSufficientButLockedFunds` on a wallet that could pay; with the install rule in place,
+   none failed and throughput was five to ten times higher. `lazy` reads through and is
+   unaffected either way.
+7. **Sherdlock vs simple.**
    - Sherdlock wins when the wallet is large (30x at 100k tokens: simple reads the whole wallet per
      Select), when many wallets are served in parallel (3x on disjoint wallets), for small and
      medium selections, and always for multi-node deployments (simple cannot coordinate).
@@ -156,9 +212,19 @@ spent meanwhile); sherdlock reports none.
      contention on one node (1.3x on a hot wallet, which is within noise; 3.7x with distinct
      amounts) and when demand exceeds supply (4x), because in-process locking costs no round
      trips. These wins disappear when the node is not alone.
-6. **The lease cleaner is a correctness feature, not a performance one.** With it off, crashed
+8. **The lease cleaner is a correctness feature, not a performance one.** With it off, crashed
    replicas' locks stay forever (3000 of 10000 tokens hidden). It shows no cost in the hot-wallet,
    uncontended or settle runs.
+9. **Retry interval narrows the sherdlock-vs-simple gap on near-exhaustion, but the effect does
+   not generalize (workload-specific, not a cross-workload recommendation).** At the production
+   5s `retryInterval` default, near-exhaustion's sherdlock-vs-simple gap collapses from ~11.6x
+   (at the benchmark's 20ms default) to a ~1.06x near-tie (p=0.008, n=5, statistically
+   significant) — see the near-exhaustion section above for the full numbers and mechanism.
+   The same comparison on `hot-wallet` shows **no significant effect** (p=1.000 and p=0.421) and
+   no change to its ~2x gap. Per this report's own rule for generalizing a finding beyond a
+   single workload, this stays an observation about near-exhaustion's balance-check/retry-cost
+   shape specifically, not a recommendation to change `retryInterval` for sherdlock-vs-simple
+   choice in general.
 
 ### Recommendation by workload
 
@@ -404,3 +470,39 @@ go test ./token/services/selector/ -run '^$' -benchtime=1000x -count=3 \
 For stronger conclusions: run on a dedicated machine with Postgres on its own host, use
 `PANURUS_SELECTOR_BENCH_RETRY=5s` for production-like retry behaviour, and `-count=5` with
 `benchstat`.
+
+**The retry-interval finding above** (near-exhaustion's sherdlock-vs-simple gap closing from
+~11.6x to ~1.06x at the production 5s interval) was produced this way — one interleaved file,
+`benchstat -col /retry` to project the axis into comparison columns:
+
+```bash
+PANURUS_REQUIRE_POSTGRES=1 go test ./token/services/selector/ -run '^$' -benchtime=300x -count=5 \
+  -bench 'BenchmarkSelectorPostgres/near-exhaustion/retry=(20ms|5s)/(sherdlock\+mixed.*|simple)' \
+  -timeout 90m > near-exhaustion.txt
+benchstat -col /retry near-exhaustion.txt
+```
+
+See [token/services/selector/README.md](../../token/services/selector/README.md#statistics-with-benchstat)
+for why this must be one interleaved file rather than two separate ones, and for the
+`PANURUS_SELECTOR_BENCH_LOGSPEC` knob this relies on to keep the output `benchstat`-clean.
+
+**`BenchmarkNewPermutation`** (`token/services/selector/sherdlock/fetcher_bench_test.go`)
+measures the cost of `bucketedIterator.NewPermutation` — the shuffle
+[the ordering and sufficiency window mechanism](selector.md#ordering-and-the-sufficiency-window)
+runs on every cache hit under the `eager`/`mixed` fetcher strategies, regardless of how few
+tokens the request actually needs:
+
+```bash
+go test ./token/services/selector/sherdlock/ -run '^$' -bench BenchmarkNewPermutation -benchmem -count=5
+```
+
+At 1M cached tokens: ~14-18ms per call when every token shares one amount (the worst case —
+the shuffle sees the whole list as a single bucket), ~6ms when every token has a distinct
+amount (the common case for a realistic wallet — every bucket has size 1, so the cost is
+almost entirely the slice copy, not the shuffle itself); both cases make exactly 2 allocations
+regardless of size. At 1k tokens the same two cases cost ~11μs and ~7μs respectively — the
+cost is linear in cache size across the whole range measured (1k/10k/100k/1M). This is a real,
+measurable cost every deployment running the default `mixed` strategy pays, not a hypothetical
+one; see [issue #2017](https://github.com/LFDT-Panurus/panurus/issues/2017) for the broader
+amount-aware-selection angle this falls under. No optimization of `NewPermutation` has been
+made as of this writing.

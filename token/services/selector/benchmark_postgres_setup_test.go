@@ -24,6 +24,7 @@ import (
 	netsdk "github.com/LFDT-Panurus/panurus/token/sdk/network"
 	"github.com/LFDT-Panurus/panurus/token/sdk/tms"
 	ftsconfig "github.com/LFDT-Panurus/panurus/token/services/config"
+	"github.com/LFDT-Panurus/panurus/token/services/logging"
 	selconfig "github.com/LFDT-Panurus/panurus/token/services/selector/config"
 	"github.com/LFDT-Panurus/panurus/token/services/selector/sherdlock"
 	"github.com/LFDT-Panurus/panurus/token/services/selector/simple"
@@ -40,6 +41,24 @@ import (
 	fscpostgres "github.com/hyperledger-labs/fabric-smart-client/platform/view/services/storage/driver/sql/postgres"
 	"github.com/stretchr/testify/require"
 )
+
+// TestMain quiets the package's default INFO-level logging before any test or benchmark in
+// this package runs. go test always multiplexes a test binary's stderr into its own stdout
+// (confirmed: there is no way to separate them at the shell level), so the per-request INFO
+// and WARN logs a contended Select emits under sherdlock (e.g. "Lost lock race on token ...",
+// "Exceeded max number of immediate retries") interleave mid-line with benchmark result lines
+// under concurrent load, corrupting them for benchstat parsing - "error" is the lowest level
+// that stays clean under every workload in this package. PANURUS_SELECTOR_BENCH_LOGSPEC
+// overrides it for debugging a failure that needs the detail back; see
+// token/services/selector/README.md.
+func TestMain(m *testing.M) {
+	spec := os.Getenv("PANURUS_SELECTOR_BENCH_LOGSPEC")
+	if spec == "" {
+		spec = "error"
+	}
+	logging.Init(logging.Config{LogSpec: spec})
+	os.Exit(m.Run())
+}
 
 // requirePostgresEnv mirrors the variable of the postgres storage package: when set, a missing
 // Postgres fails the run instead of skipping it.
@@ -114,17 +133,23 @@ type pgConfig struct {
 	cleaner bool
 	// leaseExpiry overrides token.selector.leaseExpiry when set.
 	leaseExpiry time.Duration
+	// retryInterval is token.selector.retryInterval. Always set explicitly to a positive
+	// value by baselinePgConfig - renderCoreYAML guards against a zero value with a require,
+	// since Config.GetRetryInterval() falls back to the 5s production default on zero, and a
+	// forgotten field would silently contaminate a case named for a different interval.
+	retryInterval time.Duration
 }
 
 // baselinePgConfig is what a node runs with when nothing is configured.
 func baselinePgConfig() pgConfig {
 	return pgConfig{
-		driver:       string(selconfigDriverSherdlock),
-		fetcher:      string(sherdlock.DefaultFetcherStrategy),
-		lockStrategy: "insert",
-		replicas:     1,
-		maxConns:     10,
-		cleaner:      true,
+		driver:        string(selconfigDriverSherdlock),
+		fetcher:       string(sherdlock.DefaultFetcherStrategy),
+		lockStrategy:  "insert",
+		replicas:      1,
+		maxConns:      10,
+		cleaner:       true,
+		retryInterval: benchDefaultRetryInterval(),
 	}
 }
 
@@ -191,19 +216,31 @@ func pgConfigs() []pgConfig {
 	}
 }
 
-// benchRetryInterval is token.selector.retryInterval. The benchmarks default to 20ms so a contended
-// case does not spend its run asleep; production defaults to 5s, which PANURUS_SELECTOR_BENCH_RETRY
-// sets (e.g. "5s") to measure what a node with default configuration sees.
-func benchRetryInterval() string {
-	if v := os.Getenv("PANURUS_SELECTOR_BENCH_RETRY"); v != "" {
-		return v
+// benchDefaultRetryInterval is the retryInterval baselinePgConfig uses. The benchmarks default
+// to 20ms so a contended case does not spend its run asleep; production defaults to 5s, which
+// PANURUS_SELECTOR_BENCH_RETRY sets (e.g. "5s") to measure what a node with default
+// configuration sees. Read once via sync.OnceValue: every pgConfig this process builds shares
+// the same environment, and os.Getenv on every baselinePgConfig call would be needless repeated
+// work for a value that cannot change mid-run.
+var benchDefaultRetryInterval = sync.OnceValue(func() time.Duration {
+	v := os.Getenv("PANURUS_SELECTOR_BENCH_RETRY")
+	if v == "" {
+		v = "20ms"
+	}
+	d, err := time.ParseDuration(v)
+	if err != nil {
+		panic("invalid PANURUS_SELECTOR_BENCH_RETRY: " + err.Error())
 	}
 
-	return "20ms"
-}
+	return d
+})
 
 // renderCoreYAML renders the part of core.yaml the selector stack reads.
-func (c pgConfig) renderCoreYAML(dsn string) string {
+func (c pgConfig) renderCoreYAML(tb testing.TB, dsn string) string {
+	tb.Helper()
+	require.NotZero(tb, c.retryInterval, "pgConfig.retryInterval must always be explicitly set: "+
+		"a zero value falls back to the production 5s default (Config.GetRetryInterval) and "+
+		"would silently contaminate a case named for a different interval")
 	tick := "1s"
 	if !c.cleaner {
 		// A non-zero negative value: zero would mean "use the default", and the manager only
@@ -247,7 +284,7 @@ fsc:
         dataSource: "%s"
         tablePrefix: bench
         maxOpenConns: %d
-`, c.driver, benchRetryInterval(), expiry, tick, c.fetcher, c.lockStrategy,
+`, c.driver, c.retryInterval.String(), expiry, tick, c.fetcher, c.lockStrategy,
 		benchTMSID.Network, benchTMSID.Channel, benchTMSID.Namespace, dsn, c.maxConns)
 }
 
@@ -321,7 +358,7 @@ func newPgReplica(tb testing.TB, dsn string, cfg pgConfig) *pgReplica {
 
 	// Real FSC config provider over a generated core.yaml: this is the object production
 	// hands to every one of the constructors below.
-	fp, err := (&fscconfig.Provider{}).ProvideFromRaw([]byte(cfg.renderCoreYAML(dsn)))
+	fp, err := (&fscconfig.Provider{}).ProvideFromRaw([]byte(cfg.renderCoreYAML(tb, dsn)))
 	require.NoError(tb, err)
 	cws := tms.NewConfigServiceWrapper(ftsconfig.NewService(fp))
 
