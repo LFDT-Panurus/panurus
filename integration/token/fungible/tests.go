@@ -905,6 +905,12 @@ func TestPublicParamsUpdate(network *integration.Infrastructure, newAuditorID st
 		auditor = issuer
 	}
 	RegisterAuditor(network, auditor)
+	CheckPublicParams(network, issuer, auditor, alice)
+	if _, ok := (*sel)["endorser-1"]; ok {
+		CheckPublicParams(network, endorser1)
+	}
+	time.Sleep(10 * time.Second)
+
 	txId := IssueCash(network, "", "USD", 110, alice, auditor, true, issuer)
 	gomega.Expect(txId).NotTo(gomega.BeEmpty())
 	CheckBalanceAndHolding(network, alice, "", "USD", 110, auditor)
@@ -997,6 +1003,15 @@ func TestRevokeIdentity(network *integration.Infrastructure, auditorId string, s
 	bob := sel.Get("bob")
 
 	RegisterAuditor(network, auditor)
+
+	// give some time to the nodes to get the public parameters
+	time.Sleep(10 * time.Second)
+	CheckPublicParams(network, issuer, auditor, alice, bob)
+	// give time to the issuer, auditor, alice, and bob to update their public parameters and reload their wallets
+	gomega.Eventually(DoesWalletExist).WithArguments(network, issuer, "", views.IssuerWallet).WithTimeout(1 * time.Minute).WithPolling(15 * time.Second).Should(gomega.BeTrue())
+	gomega.Eventually(DoesWalletExist).WithArguments(network, auditor, "", views.AuditorWallet).WithTimeout(1 * time.Minute).WithPolling(15 * time.Second).Should(gomega.BeTrue())
+	gomega.Eventually(DoesWalletExist).WithArguments(network, alice, "", views.OwnerWallet).WithTimeout(1 * time.Minute).WithPolling(15 * time.Second).Should(gomega.BeTrue())
+	gomega.Eventually(DoesWalletExist).WithArguments(network, bob, "", views.OwnerWallet).WithTimeout(1 * time.Minute).WithPolling(15 * time.Second).Should(gomega.BeTrue())
 
 	IssueCash(network, "", "USD", 110, alice, auditor, true, issuer)
 	CheckBalanceAndHolding(network, alice, "", "USD", 110, auditor)
@@ -1098,9 +1113,14 @@ func TestRemoteOwnerWalletWithWMP(network *integration.Infrastructure, wmp *Wall
 
 	// give some time to the nodes to get the public parameters
 	time.Sleep(10 * time.Second)
-
 	SetKVSEntry(network, issuer, "auditor", auditor.Id())
 	CheckPublicParams(network, issuer, auditor, alice, bob, charlie, manager)
+	// give time to the issuer, auditor, alice, and bob to update their public parameters and reload their wallets
+	gomega.Eventually(DoesWalletExist).WithArguments(network, issuer, "", views.IssuerWallet).WithTimeout(1 * time.Minute).WithPolling(15 * time.Second).Should(gomega.BeTrue())
+	gomega.Eventually(DoesWalletExist).WithArguments(network, auditor, "", views.AuditorWallet).WithTimeout(1 * time.Minute).WithPolling(15 * time.Second).Should(gomega.BeTrue())
+	gomega.Eventually(DoesWalletExist).WithArguments(network, alice, "", views.OwnerWallet).WithTimeout(1 * time.Minute).WithPolling(15 * time.Second).Should(gomega.BeTrue())
+	gomega.Eventually(DoesWalletExist).WithArguments(network, bob, "", views.OwnerWallet).WithTimeout(1 * time.Minute).WithPolling(15 * time.Second).Should(gomega.BeTrue())
+	gomega.Eventually(DoesWalletExist).WithArguments(network, charlie, "", views.OwnerWallet).WithTimeout(1 * time.Minute).WithPolling(15 * time.Second).Should(gomega.BeTrue())
 
 	Withdraw(network, wmp, websSocket, alice, "alice_remote", "USD", 10, auditor, issuer)
 	CheckBalanceAndHolding(network, alice, "alice_remote", "USD", 10, auditor)

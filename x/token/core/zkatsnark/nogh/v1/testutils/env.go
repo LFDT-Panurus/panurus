@@ -141,7 +141,7 @@ func NewEnv(configuration *SetupConfiguration) (*Env, error) {
 		return nil, err
 	}
 
-	engine, err := validator.NewValidator(pp, deserializer, driver.ResourceLimits{}.WithDefaults())
+	engine, err := validator.NewValidator(configuration.Verifier, deserializer, driver.ResourceLimits{}.WithDefaults())
 	if err != nil {
 		return nil, err
 	}
@@ -501,6 +501,11 @@ func newIssueService(configuration *SetupConfiguration) (*zkatsnark.IssueService
 		},
 	}
 
+	v, err := validator.NewValidator(configuration.Verifier, deserializer, driver.ResourceLimits{}.WithDefaults())
+	if err != nil {
+		return nil, nil, errors.Wrap(err, "failed to instantiate validator")
+	}
+
 	return zkatsnark.NewIssueService(
 		logging.MustGetLogger(),
 		ppm,
@@ -509,6 +514,7 @@ func newIssueService(configuration *SetupConfiguration) (*zkatsnark.IssueService
 		nil, // TokensService is not required by IssueService.Issue/VerifyIssue
 		nil, // TokensUpgradeService: out of scope, see plan notes
 		configuration.Orchestrator,
+		v,
 	), deserializer, nil
 }
 
@@ -699,9 +705,14 @@ func newAuditorService(configuration *SetupConfiguration, deserializer driver.De
 
 // newTransferService builds a zkatsnark.TransferService wired against the
 // given configuration and token loader.
-func newTransferService(configuration *SetupConfiguration, deserializer driver.Deserializer, loader *testTokenLoader, auditInfoMap map[string][]byte) *zkatsnark.TransferService {
+func newTransferService(configuration *SetupConfiguration, deserializer driver.Deserializer, loader *testTokenLoader, auditInfoMap map[string][]byte) (*zkatsnark.TransferService, error) {
 	ppm := &testPublicParamsManager{pp: configuration.PP}
 	ws := &testWalletService{auditInfoMap: auditInfoMap}
+
+	v, err := validator.NewValidator(configuration.Verifier, deserializer, driver.ResourceLimits{}.WithDefaults())
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to instantiate validator")
+	}
 
 	return zkatsnark.NewTransferService(
 		logging.MustGetLogger(),
@@ -713,7 +724,8 @@ func newTransferService(configuration *SetupConfiguration, deserializer driver.D
 		nil, // TokensService is not required by TransferService.Transfer/VerifyTransfer
 		nil, // tokenDeserializer: placeholder, unused by TransferService
 		configuration.Orchestrator,
-	)
+		v,
+	), nil
 }
 
 // transferTokenType is the token type used by every fixture in this package.
@@ -811,7 +823,10 @@ func prepareTransferWithOpts(
 		return nil, nil, nil, errors.Wrap(err, "failed to create deserializer")
 	}
 	loader := &testTokenLoader{tokens: tokenLoaderMap}
-	transferService := newTransferService(configuration, deserializer, loader, auditInfoMap)
+	transferService, err := newTransferService(configuration, deserializer, loader, auditInfoMap)
+	if err != nil {
+		return nil, nil, nil, errors.Wrap(err, "failed to create transfer service")
+	}
 
 	outputTokens := make([]*token2.Token, numOutputs)
 	for i := range numOutputs {

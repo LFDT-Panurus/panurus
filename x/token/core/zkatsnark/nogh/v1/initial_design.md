@@ -629,6 +629,23 @@ The proving key is read-only after loading. Multiple goroutines can call `Prove`
 concurrently without synchronization, each call constructs its own witness object
 and intermediate state.
 
+**As implemented**: `crypto/backend.ProofSystemBackend.Prove`/`Verify` take an
+already-deserialized `*backend.ProvingKey`/`*backend.VerifyingKey` handle rather than raw
+bytes — deserializing a key is not cheap, and these calls happen once per proof, so paying
+that cost again on every `Prove`/`Verify` call would defeat the "loaded once, reused"
+design above. `NewProvingKey`/`NewVerifyingKey` deserialize once; the resulting handle
+tags its proof system and curve so a mismatched handle (e.g. a Plonk key handed to the
+Groth16 backend) is rejected with an error instead of reaching gnark's internal type
+assertion, which panics on mismatch.
+
+Package `prepared` builds these handles, plus the compiled spend/output/migration
+constraint systems, once when public parameters are installed (`prepared.NewParams` +
+`NewProverFrom`/`NewVerifierFrom`). Preparation is split by role: `prepared.Prover` holds
+proving keys, `prepared.Verifier` holds only verifying keys. A validator never reads a
+proving key, so a validator-only process (e.g. `cmd/token_validation_service`) never pays
+to deserialize the proving keys — which are an order of magnitude larger than verifying
+keys — at all.
+
 ### 6.3 Parallel Orchestrator
 
 The Orchestrator drives parallel proof generation, collects outputs, and assembles the

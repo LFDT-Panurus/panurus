@@ -19,11 +19,12 @@ import (
 	"github.com/LFDT-Panurus/panurus/token/services/logging"
 	"github.com/LFDT-Panurus/panurus/token/token"
 	zkatsnark "github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1"
-	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/crypto/backend"
 	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/pp"
+	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/prepared"
 	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/prover"
 	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/setup"
 	snarktoken "github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/token"
+	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/validator"
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/otel/trace/noop"
 )
@@ -43,56 +44,66 @@ func (m *MockTokenLoader) LoadTokens(ctx context.Context, ids []*token.ID) ([]co
 var (
 	testPP           *pp.PublicParams
 	testOrchestrator *prover.Orchestrator
+	testValidator    *validator.Validator
 	orchestratorOnce sync.Once
 	orchestratorErr  error
 )
 
-func setupOrchestrator(tb testing.TB) (*pp.PublicParams, *prover.Orchestrator) {
+func setupOrchestrator(tb testing.TB) (*pp.PublicParams, *prover.Orchestrator, *validator.Validator) {
 	tb.Helper()
 	orchestratorOnce.Do(func() {
 		p := pp.DefaultPublicParams()
 
-		spendCS, err := setup.CompileSpendCircuit(p)
-		if err != nil {
-			orchestratorErr = err
-
-			return
-		}
-		outputCS, err := setup.CompileOutputCircuit(p)
+		p, err := setup.SetupAll(p)
 		if err != nil {
 			orchestratorErr = err
 
 			return
 		}
 
-		p, err = setup.SetupAll(p)
+		base, err := prepared.NewParams(p)
 		if err != nil {
 			orchestratorErr = err
 
 			return
 		}
 
-		b, err := backend.NewProofSystemBackend(p.ProofSystem, p.Curve)
+		proverParams, err := prepared.NewProverFrom(base)
 		if err != nil {
 			orchestratorErr = err
 
 			return
 		}
 
-		spendProver := prover.NewSpendProver(spendCS, p.PKSpend, b, p)
-		outputProver := prover.NewOutputProver(outputCS, p.PKOutput, b, p)
+		verifierParams, err := prepared.NewVerifierFrom(base)
+		if err != nil {
+			orchestratorErr = err
+
+			return
+		}
+
+		val, err := validator.NewValidator(verifierParams, nil, driver.ResourceLimits{}.WithDefaults())
+		if err != nil {
+			orchestratorErr = err
+
+			return
+		}
+
+		spendProver := prover.NewSpendProver(proverParams)
+		outputProver := prover.NewOutputProver(proverParams)
 
 		testPP = p
-		testOrchestrator = prover.NewOrchestrator(spendProver, outputProver, p)
+		testOrchestrator = prover.NewOrchestrator(spendProver, outputProver)
+		testValidator = val
 	})
 	require.NoError(tb, orchestratorErr)
 
-	return testPP, testOrchestrator
+	return testPP, testOrchestrator, testValidator
 }
 
 // BenchmarkTransferServiceTransfer benchmarks the Transfer method of the zkatsnark TransferService.
 func BenchmarkTransferServiceTransfer(b *testing.B) {
-	publicParams, orchestrator := setupOrchestrator(b)
+	publicParams, orchestrator, val := setupOrchestrator(b)
 
 	_, _, cases, err := benchmark2.GenerateCasesWithDefaults()
 	require.NoError(b, err)
@@ -103,7 +114,7 @@ func BenchmarkTransferServiceTransfer(b *testing.B) {
 			if n == 0 {
 				n = min(b.N, 1000)
 			}
-			env, err := newBenchmarkTransferEnv(n, tc.BenchmarkCase, publicParams, orchestrator)
+			env, err := newBenchmarkTransferEnv(n, tc.BenchmarkCase, publicParams, orchestrator, val)
 			require.NoError(b, err)
 
 			b.ResetTimer()
@@ -128,7 +139,7 @@ func BenchmarkTransferServiceTransfer(b *testing.B) {
 
 // TestParallelBenchmarkTransferServiceTransfer runs the transfer benchmark in parallel.
 func TestParallelBenchmarkTransferServiceTransfer(t *testing.T) {
-	publicParams, orchestrator := setupOrchestrator(t)
+	publicParams, orchestrator, val := setupOrchestrator(t)
 
 	_, _, cases, err := benchmark2.GenerateCasesWithDefaults()
 	require.NoError(t, err)
@@ -136,7 +147,7 @@ func TestParallelBenchmarkTransferServiceTransfer(t *testing.T) {
 	test := benchmark2.NewTest[*benchmarkTransferEnv](cases)
 	test.RunBenchmark(t,
 		func(c *benchmark2.Case) (*benchmarkTransferEnv, error) {
-			return newBenchmarkTransferEnv(1, c, publicParams, orchestrator)
+			return newBenchmarkTransferEnv(1, c, publicParams, orchestrator, val)
 		},
 		func(ctx context.Context, env *benchmarkTransferEnv) error {
 			action, _, err := env.Envs[0].ts.Transfer(
@@ -165,7 +176,7 @@ type transferEnv struct {
 }
 
 // newTransferEnv creates a new transfer environment for a given benchmark case.
-func newTransferEnv(benchmarkCase *benchmark2.Case, publicParams *pp.PublicParams, orchestrator *prover.Orchestrator) (*transferEnv, error) {
+func newTransferEnv(benchmarkCase *benchmark2.Case, publicParams *pp.PublicParams, orchestrator *prover.Orchestrator, val *validator.Validator) (*transferEnv, error) {
 	logger := logging.MustGetLogger("test")
 
 	ppm, err := common.NewPublicParamsManagerFromParams(publicParams)
@@ -229,6 +240,7 @@ func newTransferEnv(benchmarkCase *benchmark2.Case, publicParams *pp.PublicParam
 		tokensService,
 		nil,
 		orchestrator,
+		val,
 	)
 
 	return &transferEnv{
@@ -244,10 +256,10 @@ type benchmarkTransferEnv struct {
 }
 
 // newBenchmarkTransferEnv creates a new benchmark transfer environment with 'n' transfer environments.
-func newBenchmarkTransferEnv(n int, benchmarkCase *benchmark2.Case, publicParams *pp.PublicParams, orchestrator *prover.Orchestrator) (*benchmarkTransferEnv, error) {
+func newBenchmarkTransferEnv(n int, benchmarkCase *benchmark2.Case, publicParams *pp.PublicParams, orchestrator *prover.Orchestrator, val *validator.Validator) (*benchmarkTransferEnv, error) {
 	envs := make([]*transferEnv, n)
 	for i := range n {
-		env, err := newTransferEnv(benchmarkCase, publicParams, orchestrator)
+		env, err := newTransferEnv(benchmarkCase, publicParams, orchestrator, val)
 		if err != nil {
 			return nil, err
 		}

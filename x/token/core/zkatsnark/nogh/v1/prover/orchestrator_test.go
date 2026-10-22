@@ -16,7 +16,6 @@ import (
 	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/circuit"
 	"github.com/stretchr/testify/require"
 
-	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/crypto/backend"
 	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/crypto/edwards"
 	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/prover"
 	snarktoken "github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/token"
@@ -79,7 +78,7 @@ func publicWitnessFromOutputDescription(t *testing.T, desc snarktoken.OutputDesc
 func TestBuildTransferAction_Valid(t *testing.T) {
 	setupProvers(t)
 
-	o := prover.NewOrchestrator(spendProver, outputProver, testPP)
+	o := prover.NewOrchestrator(spendProver, outputProver)
 
 	note1, err := snarktoken.NewRandomNote(100, "USD", testPP.Curve)
 	require.NoError(t, err)
@@ -103,21 +102,23 @@ func TestBuildTransferAction_Valid(t *testing.T) {
 	require.Len(t, action.Outputs, 2)
 	require.Len(t, outputs, 2)
 
-	b, err := backend.NewProofSystemBackend(testPP.ProofSystem, testPP.Curve)
+	vkSpend, err := testProverParams.Backend().NewVerifyingKey(testPP.VKSpend)
+	require.NoError(t, err)
+	vkOutput, err := testProverParams.Backend().NewVerifyingKey(testPP.VKOutput)
 	require.NoError(t, err)
 
 	// Every proof must independently verify.
 	for i, input := range action.Inputs {
 		pw := publicWitnessFromSpendDescription(t, input)
 
-		err = b.Verify(testPP.VKSpend, input.SpendProof, pw)
+		err = testProverParams.Backend().Verify(vkSpend, input.SpendProof, pw)
 		require.NoError(t, err, "input %d: proof does not verify", i)
 	}
 
 	for j, output := range action.Outputs {
 		pw := publicWitnessFromOutputDescription(t, output)
 
-		err = b.Verify(testPP.VKOutput, output.OutputProof, pw)
+		err = testProverParams.Backend().Verify(vkOutput, output.OutputProof, pw)
 		require.NoError(t, err, "output %d: proof does not verify", j)
 	}
 
@@ -157,7 +158,7 @@ func TestBuildTransferAction_Valid(t *testing.T) {
 func TestBuildIssueAction_Valid(t *testing.T) {
 	setupProvers(t)
 
-	o := prover.NewOrchestrator(spendProver, outputProver, testPP)
+	o := prover.NewOrchestrator(spendProver, outputProver)
 
 	action, outputs, err := o.BuildIssueAction(
 		context.Background(),
@@ -174,14 +175,14 @@ func TestBuildIssueAction_Valid(t *testing.T) {
 	require.Len(t, action.Outputs, 1)
 	require.Len(t, outputs, 1)
 
-	b, err := backend.NewProofSystemBackend(testPP.ProofSystem, testPP.Curve)
+	vkOutput, err := testProverParams.Backend().NewVerifyingKey(testPP.VKOutput)
 	require.NoError(t, err)
 
 	// Outputs must verify
 	for j, output := range action.Outputs {
 		pw := publicWitnessFromOutputDescription(t, output)
 
-		err = b.Verify(testPP.VKOutput, output.OutputProof, pw)
+		err = testProverParams.Backend().Verify(vkOutput, output.OutputProof, pw)
 		require.NoError(t, err, "output %d: proof does not verify", j)
 	}
 }

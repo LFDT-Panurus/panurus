@@ -23,12 +23,13 @@ type Orchestrator struct {
 	spendProver     *SpendProver
 	outputProver    *OutputProver
 	migrationProver *MigrationProver // nil when migration is not configured
-	pp              *pp.PublicParams
 }
 
-// NewOrchestrator creates a new Orchestrator.
-func NewOrchestrator(spendProver *SpendProver, outputProver *OutputProver, publicParams *pp.PublicParams) *Orchestrator {
-	return &Orchestrator{spendProver: spendProver, outputProver: outputProver, pp: publicParams}
+// NewOrchestrator creates a new Orchestrator over already-prepared public
+// parameters for a proving role. The spendProver and outputProver must have
+// been built from the same prepared.Prover.
+func NewOrchestrator(spendProver *SpendProver, outputProver *OutputProver) *Orchestrator {
+	return &Orchestrator{spendProver: spendProver, outputProver: outputProver}
 }
 
 // SetMigrationProver configures migration support. Call this after

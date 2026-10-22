@@ -15,8 +15,8 @@ import (
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
 	"github.com/stretchr/testify/require"
 
-	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/crypto/backend"
 	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/pp"
+	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/prepared"
 	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/prover"
 	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/setup"
 	snarktoken "github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/token"
@@ -205,7 +205,7 @@ func TestPedersenGeneratorCoordsFrom_DifferentVersions_DifferentCoords(t *testin
 
 func TestOrchestrator_BuildTransferAction_NoInputsNoOutputs(t *testing.T) {
 	setupProvers(t)
-	o := prover.NewOrchestrator(spendProver, outputProver, testPP)
+	o := prover.NewOrchestrator(spendProver, outputProver)
 
 	_, _, err := o.BuildTransferAction(
 		context.Background(),
@@ -220,7 +220,7 @@ func TestOrchestrator_BuildTransferAction_NoInputsNoOutputs(t *testing.T) {
 
 func TestOrchestrator_BuildIssueAction_NoOutputs(t *testing.T) {
 	setupProvers(t)
-	o := prover.NewOrchestrator(spendProver, outputProver, testPP)
+	o := prover.NewOrchestrator(spendProver, outputProver)
 
 	_, _, err := o.BuildIssueAction(
 		context.Background(),
@@ -236,7 +236,7 @@ func TestOrchestrator_BuildIssueAction_NoOutputs(t *testing.T) {
 func TestOrchestrator_BuildMigrationAction_NoProver(t *testing.T) {
 	setupProvers(t)
 	// Create an orchestrator WITHOUT a migration prover.
-	o := prover.NewOrchestrator(spendProver, outputProver, testPP)
+	o := prover.NewOrchestrator(spendProver, outputProver)
 
 	_, _, err := o.BuildMigrationAction(
 		context.Background(),
@@ -256,7 +256,7 @@ func TestOrchestrator_BuildMigrationAction_NoProver(t *testing.T) {
 
 func TestOrchestrator_BuildMigrationAction_NoRequests(t *testing.T) {
 	setupProvers(t)
-	o := prover.NewOrchestrator(spendProver, outputProver, testPP)
+	o := prover.NewOrchestrator(spendProver, outputProver)
 
 	_, _, err := o.BuildMigrationAction(context.Background(), nil, testPP)
 	require.Error(t, err, "empty migration request list must be rejected")
@@ -265,18 +265,21 @@ func TestOrchestrator_BuildMigrationAction_NoRequests(t *testing.T) {
 func TestOrchestrator_BuildMigrationAction_Valid(t *testing.T) {
 	p := pp.DefaultPublicParams()
 	gens := prover.DefaultPedersenGeneratorCoords()
-	cs, err := setup.CompileMigrationCircuit(p, gens)
-	require.NoError(t, err)
 
+	p, err := setup.SetupAll(p)
+	require.NoError(t, err)
 	p, err = setup.SetupMigration(p, gens)
 	require.NoError(t, err)
 
-	b, err := backend.NewProofSystemBackend(p.ProofSystem, p.Curve)
+	proverParams, err := prepared.NewProver(p)
+	require.NoError(t, err)
+	proverParams, err = proverParams.WithMigration(gens)
 	require.NoError(t, err)
 
-	migProver := prover.NewMigrationProver(cs, p.PKMigration, b, p)
+	migProver, err := prover.NewMigrationProver(proverParams)
+	require.NoError(t, err)
 
-	o := prover.NewOrchestrator(nil, nil, p)
+	o := prover.NewOrchestrator(nil, nil)
 	o.SetMigrationProver(migProver)
 
 	bf := randomCanonicalFr(t)

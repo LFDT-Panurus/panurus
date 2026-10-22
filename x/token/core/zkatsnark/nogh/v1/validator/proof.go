@@ -13,7 +13,7 @@ import (
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 
 	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/circuit"
-	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/crypto/backend"
+	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/prepared"
 	snarktoken "github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/token"
 )
 
@@ -92,13 +92,13 @@ type proofOutcome struct {
 }
 
 // verifyAllProofs verifies all spend and output proofs in parallel using
-// the ProofSystemBackend. The backend handles both Groth16 and Plonk
-// transparently — the validator never touches proof-system-specific types.
+// the already-prepared backend and verifying keys. The backend handles
+// both Groth16 and Plonk transparently — the validator never touches
+// proof-system-specific types. Every goroutine shares the same
+// already-deserialized verifying keys: gnark's Verify does not mutate a
+// verifying key, so this is safe without synchronization.
 func verifyAllProofs(
-	b backend.ProofSystemBackend,
-	vkSpendBytes []byte,
-	vkOutputBytes []byte,
-	curve ecc.ID,
+	v *prepared.Verifier,
 	inputs []snarktoken.SpendDescription,
 	decodedInputs []decodedSpend,
 	outputs []snarktoken.OutputDescription,
@@ -108,6 +108,7 @@ func verifyAllProofs(
 	if total == 0 {
 		return nil
 	}
+	curve := v.PP().Curve
 	ch := make(chan proofOutcome, total)
 
 	for i := range inputs {
@@ -119,7 +120,7 @@ func verifyAllProofs(
 				return
 			}
 
-			if err := b.Verify(vkSpendBytes, inputs[i].SpendProof, pw); err != nil {
+			if err := v.Backend().Verify(v.VKSpend(), inputs[i].SpendProof, pw); err != nil {
 				ch <- proofOutcome{errors.Wrapf(ErrInvalidProof, "input %d: %s", i, err)}
 
 				return
@@ -137,7 +138,7 @@ func verifyAllProofs(
 
 				return
 			}
-			if err := b.Verify(vkOutputBytes, outputs[j].OutputProof, pw); err != nil {
+			if err := v.Backend().Verify(v.VKOutput(), outputs[j].OutputProof, pw); err != nil {
 				ch <- proofOutcome{errors.Wrapf(ErrInvalidProof, "output %d: %s", j, err)}
 
 				return
@@ -156,19 +157,19 @@ func verifyAllProofs(
 }
 
 // verifyMigrationProof verifies a single MigrationAction's proof against
-// vkMigration via the ProofSystemBackend.
+// the already-prepared migration verifying key. Callers must check
+// v.VKMigration() != nil first (ValidateMigration does, returning
+// ErrMigrationNotConfigured otherwise).
 func verifyMigrationProof(
-	b backend.ProofSystemBackend,
-	vkMigrationBytes []byte,
-	curve ecc.ID,
+	v *prepared.Verifier,
 	proofBytes []byte,
 	decoded decodedMigration,
 ) error {
-	pw, err := publicWitnessForMigration(decoded, curve)
+	pw, err := publicWitnessForMigration(decoded, v.PP().Curve)
 	if err != nil {
 		return err
 	}
-	if err := b.Verify(vkMigrationBytes, proofBytes, pw); err != nil {
+	if err := v.Backend().Verify(v.VKMigration(), proofBytes, pw); err != nil {
 		return errors.Wrapf(ErrInvalidProof, "%s", err)
 	}
 

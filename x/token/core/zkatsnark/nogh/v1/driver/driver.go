@@ -18,11 +18,11 @@ import (
 	"github.com/LFDT-Panurus/panurus/token/services/ttx/multisig"
 	"github.com/LFDT-Panurus/panurus/token/services/utils"
 	zkatsnark "github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1"
-	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/crypto/backend"
 	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/pp"
+	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/prepared"
 	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/prover"
-	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/setup"
 	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/token"
+	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/validator"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 )
 
@@ -155,45 +155,36 @@ func (d *Driver) NewTokenService(tmsID driver.TMSID, publicParams []byte) (drive
 		boolpolicy.NewEscrowAuth(ws),
 	)
 
-	valDriver := NewValidatorDriver().Driver
-	validator, err := valDriver.NewValidator(ppp, driver.ResourceLimits{}.WithDefaults())
+	baseParams, err := prepared.NewParams(ppp)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to prepare public parameters")
+	}
+
+	proverParams, err := prepared.NewProverFrom(baseParams)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to prepare public parameters for proving")
+	}
+
+	verifierParams, err := prepared.NewVerifierFrom(baseParams)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to prepare public parameters for verification")
+	}
+
+	val, err := validator.NewValidator(verifierParams, deserializer, driver.ResourceLimits{}.WithDefaults())
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to instantiate validator")
 	}
 
-	b, err := backend.NewProofSystemBackend(ppp.ProofSystem, ppp.Curve)
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to create proof system backend")
-	}
-
-	spendCS, err := setup.CompileSpendCircuit(ppp)
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to compile spend circuit")
-	}
-	spendPKBytes, err := setup.LoadProvingKeyBytes(ppp, setup.CircuitSpend)
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to load spend proving key")
-	}
-	spendProver := prover.NewSpendProver(spendCS, spendPKBytes, b, ppp)
-
-	outputCS, err := setup.CompileOutputCircuit(ppp)
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to compile output circuit")
-	}
-	outputPKBytes, err := setup.LoadProvingKeyBytes(ppp, setup.CircuitOutput)
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to load output proving key")
-	}
-	outputProver := prover.NewOutputProver(outputCS, outputPKBytes, b, ppp)
-
-	orchestrator := prover.NewOrchestrator(spendProver, outputProver, ppp)
+	spendProver := prover.NewSpendProver(proverParams)
+	outputProver := prover.NewOutputProver(proverParams)
+	orchestrator := prover.NewOrchestrator(spendProver, outputProver)
 
 	tokensService, err := token.NewTokensService(logger, ppm, deserializer)
 	if err != nil {
 		return nil, errors.Wrapf(err, "failed to initialize token service for [%s:%s]", tmsID.Network, tmsID.Namespace)
 	}
 
-	issueService := zkatsnark.NewIssueService(logger, ppm, ws, deserializer, tokensService, nil, orchestrator)
+	issueService := zkatsnark.NewIssueService(logger, ppm, ws, deserializer, tokensService, nil, orchestrator, val)
 	transferService := zkatsnark.NewTransferService(
 		logger,
 		ppm,
@@ -204,6 +195,7 @@ func (d *Driver) NewTokenService(tmsID driver.TMSID, publicParams []byte) (drive
 		tokensService,
 		tokensService,
 		orchestrator,
+		val,
 	)
 	auditorService := zkatsnark.NewAuditorService(logger, ppm, deserializer, qe, d.tracerProvider)
 
@@ -225,7 +217,7 @@ func (d *Driver) NewTokenService(tmsID driver.TMSID, publicParams []byte) (drive
 		metrics.NewTokensService(tokensService, metricsProvider),
 		metrics.NewTokensUpgradeService(tokensUpgradeService, metricsProvider),
 		authorization,
-		validator,
+		val,
 	)
 	if err != nil {
 		return nil, errors.WithMessagef(err, "failed to create token service")

@@ -16,8 +16,8 @@ import (
 
 	nbenchmark "github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/benchmark"
 	"github.com/LFDT-Panurus/panurus/token/services/identity"
-	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/crypto/backend"
 	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/pp"
+	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/prepared"
 	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/prover"
 	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/setup"
 )
@@ -69,6 +69,9 @@ func idemixCurveAndPath(curve ecc.ID) (mathlib.CurveID, string, error) {
 //     fixtures that want to exercise the "signed by a non-first auditor key" path
 //     should sign with this signer instead.
 //   - Orchestrator: the gnark prover orchestrator built from PP's proving keys.
+//   - Verifier: the prepared verifier-role params built from PP's verifying
+//     keys, shared by every test/env that needs a validator.NewValidator over
+//     this configuration instead of re-preparing per call.
 type SetupConfiguration struct {
 	PP                  *pp.PublicParams
 	OwnerIdentity       *OwnerIdentity
@@ -76,6 +79,7 @@ type SetupConfiguration struct {
 	SecondAuditorSigner *Signer
 	IssuerSigner        *Signer
 	Orchestrator        *prover.Orchestrator
+	Verifier            *prepared.Verifier
 	CurveID             ecc.ID
 	ProofSystem         string
 }
@@ -198,9 +202,19 @@ func newSetupConfigurationsWithParams(params SetupParams, registerIssuer bool) (
 		}
 		p.AddAuditor(secondAuditorID)
 
-		orchestrator, err := newOrchestrator(p)
+		baseParams, err := prepared.NewParams(p)
+		if err != nil {
+			return nil, errors.Wrapf(err, "failed preparing public parameters for curve [%s], proof system [%s]", curveID, proofSystem)
+		}
+
+		orchestrator, err := newOrchestrator(baseParams)
 		if err != nil {
 			return nil, errors.Wrapf(err, "failed building orchestrator for curve [%s], proof system [%s]", curveID, proofSystem)
+		}
+
+		verifierParams, err := prepared.NewVerifierFrom(baseParams)
+		if err != nil {
+			return nil, errors.Wrapf(err, "failed preparing verifier for curve [%s], proof system [%s]", curveID, proofSystem)
 		}
 
 		configurations[key(curveID, proofSystem)] = &SetupConfiguration{
@@ -210,6 +224,7 @@ func newSetupConfigurationsWithParams(params SetupParams, registerIssuer bool) (
 			SecondAuditorSigner: secondAuditorSigner,
 			IssuerSigner:        issuerSigner,
 			Orchestrator:        orchestrator,
+			Verifier:            verifierParams,
 			CurveID:             curveID,
 			ProofSystem:         proofSystem,
 		}
@@ -219,35 +234,18 @@ func newSetupConfigurationsWithParams(params SetupParams, registerIssuer bool) (
 }
 
 // newOrchestrator builds the gnark prover.Orchestrator for the given, already
-// set-up public parameters (PKSpend/PKOutput populated by setup.SetupAll).
-func newOrchestrator(p *pp.PublicParams) (*prover.Orchestrator, error) {
-	spendCS, err := setup.CompileSpendCircuit(p)
+// prepared base params (PKSpend/PKOutput deserialized from a PublicParams
+// populated by setup.SetupAll).
+func newOrchestrator(base *prepared.Params) (*prover.Orchestrator, error) {
+	proverParams, err := prepared.NewProverFrom(base)
 	if err != nil {
-		return nil, errors.Wrap(err, "failed compiling spend circuit")
-	}
-	spendPKBytes, err := setup.LoadProvingKeyBytes(p, setup.CircuitSpend)
-	if err != nil {
-		return nil, errors.Wrap(err, "failed loading spend proving key")
+		return nil, errors.Wrap(err, "failed preparing public parameters for proving")
 	}
 
-	outputCS, err := setup.CompileOutputCircuit(p)
-	if err != nil {
-		return nil, errors.Wrap(err, "failed compiling output circuit")
-	}
-	outputPKBytes, err := setup.LoadProvingKeyBytes(p, setup.CircuitOutput)
-	if err != nil {
-		return nil, errors.Wrap(err, "failed loading output proving key")
-	}
+	spendProver := prover.NewSpendProver(proverParams)
+	outputProver := prover.NewOutputProver(proverParams)
 
-	b, err := backend.NewProofSystemBackend(p.ProofSystem, p.Curve)
-	if err != nil {
-		return nil, errors.Wrap(err, "failed creating proof system backend")
-	}
-
-	spendProver := prover.NewSpendProver(spendCS, spendPKBytes, b, p)
-	outputProver := prover.NewOutputProver(outputCS, outputPKBytes, b, p)
-
-	return prover.NewOrchestrator(spendProver, outputProver, p), nil
+	return prover.NewOrchestrator(spendProver, outputProver), nil
 }
 
 // GetSetupConfiguration returns the full SetupConfiguration for the provided

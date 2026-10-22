@@ -30,8 +30,8 @@ import (
 	"github.com/consensys/gnark-crypto/ecc"
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
 
-	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/crypto/backend"
 	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/pp"
+	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/prepared"
 	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/prover"
 	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/setup"
 	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/testutils"
@@ -61,6 +61,7 @@ var e2eConfigs = []e2eConfig{
 type e2eFixture struct {
 	cfg  e2eConfig
 	pp   *pp.PublicParams
+	base *prepared.Params
 	orch *prover.Orchestrator
 	val  *validator.Validator
 
@@ -107,39 +108,32 @@ func buildFixture(cfg e2eConfig) (*e2eFixture, error) {
 	if err != nil {
 		return nil, err
 	}
-	b, err := backend.NewProofSystemBackend(p.ProofSystem, p.Curve)
+
+	base, err := prepared.NewParams(p)
 	if err != nil {
 		return nil, err
 	}
 
-	spendCS, err := setup.CompileSpendCircuit(p)
+	proverParams, err := prepared.NewProverFrom(base)
 	if err != nil {
 		return nil, err
 	}
-	spendPK, err := setup.LoadProvingKeyBytes(p, setup.CircuitSpend)
-	if err != nil {
-		return nil, err
-	}
-	outputCS, err := setup.CompileOutputCircuit(p)
-	if err != nil {
-		return nil, err
-	}
-	outputPK, err := setup.LoadProvingKeyBytes(p, setup.CircuitOutput)
+
+	verifierParams, err := prepared.NewVerifierFrom(base)
 	if err != nil {
 		return nil, err
 	}
 
 	orch := prover.NewOrchestrator(
-		prover.NewSpendProver(spendCS, spendPK, b, p),
-		prover.NewOutputProver(outputCS, outputPK, b, p),
-		p,
+		prover.NewSpendProver(proverParams),
+		prover.NewOutputProver(proverParams),
 	)
-	val, err := validator.NewValidator(p, nil, driver.ResourceLimits{}.WithDefaults())
+	val, err := validator.NewValidator(verifierParams, nil, driver.ResourceLimits{}.WithDefaults())
 	if err != nil {
 		return nil, err
 	}
 
-	return &e2eFixture{cfg: cfg, pp: p, orch: orch, val: val}, nil
+	return &e2eFixture{cfg: cfg, pp: p, base: base, orch: orch, val: val}, nil
 }
 
 // forEachConfig runs fn as a subtest for every supported proof system x curve.
@@ -234,22 +228,38 @@ func (f *e2eFixture) setupMigration() error {
 	if err != nil {
 		return err
 	}
-	migCS, err := setup.CompileMigrationCircuit(p, gens)
+
+	base, err := prepared.NewParams(p)
 	if err != nil {
 		return err
 	}
-	migPK, err := setup.LoadProvingKeyBytes(p, setup.CircuitMigration)
+
+	proverParams, err := prepared.NewProverFrom(base)
 	if err != nil {
 		return err
 	}
-	b, err := backend.NewProofSystemBackend(p.ProofSystem, p.Curve)
+	proverParams, err = proverParams.WithMigration(gens)
 	if err != nil {
 		return err
 	}
-	f.orch.SetMigrationProver(prover.NewMigrationProver(migCS, migPK, b, p))
+
+	migProver, err := prover.NewMigrationProver(proverParams)
+	if err != nil {
+		return err
+	}
+	f.orch.SetMigrationProver(migProver)
+
+	verifierParams, err := prepared.NewVerifierFrom(base)
+	if err != nil {
+		return err
+	}
+	verifierParams, err = verifierParams.WithMigration(gens)
+	if err != nil {
+		return err
+	}
 
 	// Rebuild the Validator so it picks up the now-populated vkMigration.
-	f.val, err = validator.NewValidator(p, nil, driver.ResourceLimits{}.WithDefaults())
+	f.val, err = validator.NewValidator(verifierParams, nil, driver.ResourceLimits{}.WithDefaults())
 
 	return err
 }
@@ -1349,7 +1359,11 @@ func TestValidateMigration_NotConfiguredWithoutSetup(t *testing.T) {
 		freshPP := *f.pp
 		freshPP.PKMigration, freshPP.VKMigration = nil, nil
 
-		freshVal, err := validator.NewValidator(&freshPP, nil, driver.ResourceLimits{}.WithDefaults())
+		freshVerifierParams, err := prepared.NewVerifier(&freshPP)
+		require.NoError(t, err)
+		require.Nil(t, freshVerifierParams.VKMigration())
+
+		freshVal, err := validator.NewValidator(freshVerifierParams, nil, driver.ResourceLimits{}.WithDefaults())
 		require.NoError(t, err)
 
 		err = freshVal.ValidateMigration(&snarktoken.MigrationAction{})

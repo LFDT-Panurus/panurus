@@ -47,7 +47,7 @@ func (v *Validator) TransferZKValidate(_ context.Context, ctx *Context) error {
 		return err
 	}
 
-	if err := verifyAllProofs(v.backend, v.keys.vkSpendBytes, v.keys.vkOutputBytes, v.pp.Curve, action.Inputs, decodedInputs, action.Outputs, decodedOutputs); err != nil {
+	if err := verifyAllProofs(v.prepared, action.Inputs, decodedInputs, action.Outputs, decodedOutputs); err != nil {
 		return err
 	}
 

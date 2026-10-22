@@ -26,8 +26,8 @@ import (
 	"github.com/LFDT-Panurus/panurus/token/driver/protos-go/v1/request"
 	"github.com/LFDT-Panurus/panurus/token/services/identity"
 	token2 "github.com/LFDT-Panurus/panurus/token/token"
-	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/crypto/backend"
 	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/pp"
+	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/prepared"
 	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/prover"
 	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/setup"
 	snarktoken "github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/token"
@@ -37,10 +37,11 @@ import (
 // ── Shared expensive setup ────────────────────────────────────────────────
 
 var (
-	setupOnce    sync.Once
-	sharedPP     *pp.PublicParams
-	orch         *prover.Orchestrator
-	sharedSetErr error
+	setupOnce            sync.Once
+	sharedPP             *pp.PublicParams
+	sharedVerifierParams *prepared.Verifier
+	orch                 *prover.Orchestrator
+	sharedSetErr         error
 )
 
 func setupShared(t *testing.T) {
@@ -56,43 +57,30 @@ func setupShared(t *testing.T) {
 		}
 		sharedPP = p
 
-		// Build provers
-		spendCS, err := setup.CompileSpendCircuit(p)
+		base, err := prepared.NewParams(p)
 		if err != nil {
-			sharedSetErr = errors.Wrap(err, "CompileSpendCircuit")
-
-			return
-		}
-		spendPKBytes, err := setup.LoadProvingKeyBytes(p, setup.CircuitSpend)
-		if err != nil {
-			sharedSetErr = errors.Wrap(err, "LoadProvingKeyBytes spend")
-
-			return
-		}
-		outputCS, err := setup.CompileOutputCircuit(p)
-		if err != nil {
-			sharedSetErr = errors.Wrap(err, "CompileOutputCircuit")
-
-			return
-		}
-		outputPKBytes, err := setup.LoadProvingKeyBytes(p, setup.CircuitOutput)
-		if err != nil {
-			sharedSetErr = errors.Wrap(err, "LoadProvingKeyBytes output")
+			sharedSetErr = errors.Wrap(err, "prepared.NewParams")
 
 			return
 		}
 
-		b, err := backend.NewProofSystemBackend(p.ProofSystem, p.Curve)
+		proverParams, err := prepared.NewProverFrom(base)
 		if err != nil {
-			sharedSetErr = errors.Wrap(err, "NewProofSystemBackend")
+			sharedSetErr = errors.Wrap(err, "prepared.NewProverFrom")
+
+			return
+		}
+
+		sharedVerifierParams, err = prepared.NewVerifierFrom(base)
+		if err != nil {
+			sharedSetErr = errors.Wrap(err, "prepared.NewVerifierFrom")
 
 			return
 		}
 
 		orch = prover.NewOrchestrator(
-			prover.NewSpendProver(spendCS, spendPKBytes, b, p),
-			prover.NewOutputProver(outputCS, outputPKBytes, b, p),
-			p,
+			prover.NewSpendProver(proverParams),
+			prover.NewOutputProver(proverParams),
 		)
 	})
 
@@ -270,7 +258,7 @@ func TestIssueAction_ValidatesSuccessfully(t *testing.T) {
 
 	action, _ := buildIssueAction(t, issuer, "USD", []uint64{100}, [][]byte{owner})
 
-	val, err := validator.NewValidator(sharedPP, &testDeserializer{}, driver.ResourceLimits{})
+	val, err := validator.NewValidator(sharedVerifierParams, &testDeserializer{}, driver.ResourceLimits{})
 	require.NoError(t, err)
 
 	err = val.ValidateIssue(action)
@@ -289,7 +277,7 @@ func TestIssueAction_TwoOutputs_ValidatesSuccessfully(t *testing.T) {
 		[][]byte{typedID(t, "alice"), typedID(t, "bob")},
 	)
 
-	val, err := validator.NewValidator(sharedPP, &testDeserializer{}, driver.ResourceLimits{})
+	val, err := validator.NewValidator(sharedVerifierParams, &testDeserializer{}, driver.ResourceLimits{})
 	require.NoError(t, err)
 
 	err = val.ValidateIssue(action)
@@ -316,7 +304,7 @@ func TestTransferAction_ValidatesSuccessfully(t *testing.T) {
 		[][]byte{typedID(t, "bob"), owner},
 	)
 
-	val, err := validator.NewValidator(sharedPP, &testDeserializer{}, driver.ResourceLimits{})
+	val, err := validator.NewValidator(sharedVerifierParams, &testDeserializer{}, driver.ResourceLimits{})
 	require.NoError(t, err)
 
 	err = val.ValidateTransfer(action)
@@ -344,7 +332,7 @@ func TestTransferAction_MultipleInputs_ValidatesSuccessfully(t *testing.T) {
 		[][]byte{typedID(t, "bob")},
 	)
 
-	val, err := validator.NewValidator(sharedPP, &testDeserializer{}, driver.ResourceLimits{})
+	val, err := validator.NewValidator(sharedVerifierParams, &testDeserializer{}, driver.ResourceLimits{})
 	require.NoError(t, err)
 
 	err = val.ValidateTransfer(action)
@@ -413,7 +401,7 @@ func TestTransferAction_CommonValidator_SignaturesConsumed(t *testing.T) {
 	require.NoError(t, err)
 
 	// Create validator via the common framework
-	val, err := validator.NewValidator(sharedPP, &testDeserializer{}, driver.ResourceLimits{}.WithDefaults())
+	val, err := validator.NewValidator(sharedVerifierParams, &testDeserializer{}, driver.ResourceLimits{}.WithDefaults())
 	require.NoError(t, err)
 
 	// VerifyTokenRequestFromRaw exercises the full framework path:
@@ -493,7 +481,7 @@ func TestTransferAction_CommonValidator_TwoInputs_SignaturesConsumed(t *testing.
 	raw, err := tr.Bytes()
 	require.NoError(t, err)
 
-	val, err := validator.NewValidator(sharedPP, &testDeserializer{}, driver.ResourceLimits{}.WithDefaults())
+	val, err := validator.NewValidator(sharedVerifierParams, &testDeserializer{}, driver.ResourceLimits{}.WithDefaults())
 	require.NoError(t, err)
 
 	_, _, err = val.VerifyTokenRequestFromRaw(
@@ -550,7 +538,7 @@ func TestTransferAction_MissingInputIDs_Fails(t *testing.T) {
 	raw, err := tr.Bytes()
 	require.NoError(t, err)
 
-	val, err := validator.NewValidator(sharedPP, &testDeserializer{}, driver.ResourceLimits{}.WithDefaults())
+	val, err := validator.NewValidator(sharedVerifierParams, &testDeserializer{}, driver.ResourceLimits{}.WithDefaults())
 	require.NoError(t, err)
 
 	_, _, err = val.VerifyTokenRequestFromRaw(
