@@ -75,8 +75,8 @@ GO_PACKAGES = $(shell go list ./... | grep -v '/integration/' | grep -v 'regress
 .PHONY: benchmark-selector-postgres
 # benchmark the token selectors against a real Postgres (needs `make testing-docker-images`).
 # BENCH_FILTER narrows the run, e.g. BENCH_FILTER='hot-wallet/.*skipLocked'.
-# BENCH_COUNT repeats every case that many times (go test -count), interleaved within one run
-# rather than across separate invocations, so the output stays one benchstat-pairable file - see
+# BENCH_COUNT repeats every case that many times (go test -count) in one go test invocation, so
+# the N repeats of every case land in a single output file benchstat can read with -col - see
 # "Statistics with benchstat" in token/services/selector/README.md.
 BENCH_FILTER ?= .
 BENCH_TIME ?= 100x

@@ -36,8 +36,13 @@ fail instead. They also skip under `-short`.
 Environment: `PANURUS_SELECTOR_BENCH_MATRIX=full` runs the full sherdlock cross product
 (fetcher x lock strategy x batch locking) in place of the one-axis sweep;
 `PANURUS_SELECTOR_BENCH_LARGE=1` adds a 1M-token wallet to `wallet-size`;
-`PANURUS_SELECTOR_BENCH_RETRY=5s` sets `token.selector.retryInterval` (the benchmarks default to 20ms
-so contended cases do not spend their run asleep; 5s is the production default);
+`PANURUS_SELECTOR_BENCH_RETRY=5s` sets `token.selector.retryInterval` for every case that does not
+name its own `retry=` segment (the benchmarks default to 20ms so contended cases do not spend
+their run asleep; 5s is the production default). Cases with an explicit `retry=` segment in their
+name (`near-exhaustion`, `hot-wallet`) ignore this variable: they sweep the retry-interval axis
+themselves with literals, so their label can never drift from what they actually ran at - set
+`BENCH_FILTER='near-exhaustion/retry=5s'` (or `hot-wallet/retry=5s`) to select the 5s arm directly
+instead;
 `PANURUS_SELECTOR_BENCH_LOGSPEC` overrides the package's default `error`-level logging (quieted so
 the per-request INFO/WARN logs a contended Select emits cannot interleave mid-line with benchmark
 result lines and corrupt them for `benchstat` - see `TestMain` in `benchmark_postgres_setup_test.go`),
@@ -63,24 +68,13 @@ make benchmark-selector-postgres BENCH_FILTER='near-exhaustion/retry=(20ms|5s)/(
 benchstat -col /retry near-exhaustion.txt
 ```
 
-**Use one interleaved file and `-col`, not two separate files.** `benchstat` pairs rows by the
-full benchmark name after stripping the trailing `-N` GOMAXPROCS suffix. Two cases whose names
-differ by a `key=value` segment (e.g. `retry=20ms` vs `retry=5s`) are, by that rule, two
-*different* rows, not two variants of the same row — running them into separate files and
-handing `benchstat` both produces two unpaired rows with no comparison at all (confirmed by
-running it, not assumed). `-col /retry` on a single file tells `benchstat` to project the
-`retry=` segment into columns of one comparison table instead, which only works when every
-variant's samples are interleaved within that one file, because `go test -count=N` orders a
-case's own `N` repeats as a contiguous block — `-col` needs each variant to appear once per
-`go test` invocation's interleaving pass for the comparison to align run-for-run rather than
-stacking one case's five repeats against another's five with no correspondence between them.
-Reuse the base/variant interleaving loop pattern from
-`.github/workflows/token-validation-benchmark.yml`'s `run_one` if you need that explicitly.
-
-**`-col` only reaches axes that live in `pgCase.name`'s `key=value` segments** (`retry=`,
-`hold=`). `lockStrategy` and `maxConns` live inside the `+`-joined blob `pgConfig.name()`
-produces (e.g. `sherdlock+mixed+skipLocked+batch+clean+conns10`) and are not separately
-addressable by `-col` — renaming them into `key=value` segments would invalidate the existing
-case names across every workload, which this benchmark declines to do. Compare those two by
-filtering `BENCH_FILTER` to each value and reading the per-metric numbers by hand instead of
-reaching for `-col` on them.
+**`-col` splits on whole `/`-separated name segments, not arbitrary substrings.** A benchmark
+name's `key=value` segments (e.g. `retry=20ms`, `hold=50ms`) are each their own segment, so
+`-col /retry` can project them into columns of one comparison table. `lockStrategy` and
+`maxConns`, by contrast, live inside the `+`-joined blob `pgConfig.name()` produces (e.g.
+`sherdlock+mixed+skipLocked+batch+clean+conns10`) — they are not their own segment, so `-col`
+cannot reach them regardless of what key you pass it (including a positional key like `-col /1`:
+benchstat accepts those too, they just can't split a blob that isn't its own segment either).
+Renaming them into `key=value` segments would invalidate the existing case names across every
+workload, which this benchmark declines to do. Compare those two by filtering `BENCH_FILTER` to
+each value and reading the per-metric numbers by hand instead of reaching for `-col` on them.

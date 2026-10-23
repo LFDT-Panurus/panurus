@@ -468,12 +468,13 @@ go test ./token/services/selector/ -run '^$' -benchtime=1000x -count=3 \
 ```
 
 For stronger conclusions: run on a dedicated machine with Postgres on its own host, use
-`PANURUS_SELECTOR_BENCH_RETRY=5s` for production-like retry behaviour, and `-count=5` with
-`benchstat`.
+`PANURUS_SELECTOR_BENCH_RETRY=5s` for production-like retry behaviour on every case that does
+not already name its own `retry=` segment, and `-count=5` with `benchstat`.
 
 **The retry-interval finding above** (near-exhaustion's sherdlock-vs-simple gap closing from
-~11.6x to ~1.06x at the production 5s interval) was produced this way — one interleaved file,
-`benchstat -col /retry` to project the axis into comparison columns:
+~11.6x to ~1.06x at the production 5s interval) was produced this way — one `go test` run with
+`-count=5` so each case's repeats land in one file, `benchstat -col /retry` to project the
+`retry=` axis into comparison columns:
 
 ```bash
 PANURUS_REQUIRE_POSTGRES=1 go test ./token/services/selector/ -run '^$' -benchtime=300x -count=5 \
@@ -483,8 +484,8 @@ benchstat -col /retry near-exhaustion.txt
 ```
 
 See [token/services/selector/README.md](../../token/services/selector/README.md#statistics-with-benchstat)
-for why this must be one interleaved file rather than two separate ones, and for the
-`PANURUS_SELECTOR_BENCH_LOGSPEC` knob this relies on to keep the output `benchstat`-clean.
+for the `BENCH_COUNT`/`-col` recipe this follows, and for the `PANURUS_SELECTOR_BENCH_LOGSPEC`
+knob that keeps the output `benchstat`-clean.
 
 **`BenchmarkNewPermutation`** (`token/services/selector/sherdlock/fetcher_bench_test.go`)
 measures the cost of `bucketedIterator.NewPermutation` — the shuffle
@@ -496,13 +497,38 @@ tokens the request actually needs:
 go test ./token/services/selector/sherdlock/ -run '^$' -bench BenchmarkNewPermutation -benchmem -count=5
 ```
 
-At 1M cached tokens: ~14-18ms per call when every token shares one amount (the worst case —
+At 1M cached tokens: ~12-14ms per call when every token shares one amount (the worst case —
 the shuffle sees the whole list as a single bucket), ~6ms when every token has a distinct
-amount (the common case for a realistic wallet — every bucket has size 1, so the cost is
-almost entirely the slice copy, not the shuffle itself); both cases make exactly 2 allocations
-regardless of size. At 1k tokens the same two cases cost ~11μs and ~7μs respectively — the
-cost is linear in cache size across the whole range measured (1k/10k/100k/1M). This is a real,
-measurable cost every deployment running the default `mixed` strategy pays, not a hypothetical
-one; see [issue #2017](https://github.com/LFDT-Panurus/panurus/issues/2017) for the broader
-amount-aware-selection angle this falls under. No optimization of `NewPermutation` has been
-made as of this writing.
+amount (the common case for a realistic wallet — every bucket has size 1, so `rand.Shuffle`
+does no reordering work); both cases make exactly 2 allocations regardless of size. At 1k
+tokens the same two cases cost ~11μs and ~7μs respectively — the cost is linear in cache size
+across the whole range measured (1k/10k/100k/1M).
+
+**`BenchmarkNewPermutationStages`** (same file) decomposes the distinct-amount case into
+`NewPermutation`'s three sequential stages — the slice copy alone, the copy plus the
+bucket-boundary scan (the `Quantity` string comparisons that find each equal-amount run), and
+the full function — to see where that cost actually goes, rather than assuming it is the copy:
+
+```bash
+go test ./token/services/selector/sherdlock/ -run '^$' -bench BenchmarkNewPermutationStages -benchmem -count=5
+```
+
+| Stage | 1k tokens | 1M tokens | Share of full (1M) |
+|---|---|---|---|
+| copy | ~2.0μs | ~1.4ms | ~23% |
+| bucket scan (copy→copyscan delta) | ~3.4μs | ~3.7ms | ~62% |
+| shuffle (copyscan→full delta) | ~1.6μs | ~0.9ms | ~15% |
+| full | ~7.0μs | ~6.0ms | 100% |
+
+The bucket-boundary scan, not the copy, dominates: at 1M distinct-amount tokens it costs about
+2.7x the copy alone, and is itself more than four times the cost the `rand.Shuffle` call adds
+on top (a no-op reorder on every size-1 bucket here). So the dominant cost in the realistic,
+every-amount-distinct case is comparing each token's `Quantity` string against its neighbor's
+to find bucket boundaries — not the slice copy. This is a real, measurable cost every
+deployment running the default `mixed` strategy pays, not a hypothetical one; see
+[issue #2017](https://github.com/LFDT-Panurus/panurus/issues/2017) for the broader
+amount-aware-selection angle this falls under. Replacing the string comparison with a numeric
+or interned bucket key would reduce the scan's cost (a shorter comparison), not eliminate it —
+the scan still has to dereference each `*UnspentTokenInWallet` across 1M heap-scattered
+elements regardless of key representation. No optimization of `NewPermutation` has been made
+as of this writing.

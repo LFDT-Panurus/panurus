@@ -505,7 +505,7 @@ without a query at all) rather than iterating a live cursor across other queries
 
 ## Token Fetcher and Cache
 
-The selector uses a **Token Fetcher** to retrieve available tokens from the database. The fetcher uses a **Ristretto cache** (admission/eviction via TinyLFU, not LRU) to improve performance by caching token queries (keyed by wallet+currency).
+The selector uses a **Token Fetcher** to retrieve available tokens from the database. The fetcher uses a **Ristretto cache** (admission/eviction via TinyLFU, not LRU) to improve performance by caching, per wallet+currency key, the tokens that key's entry holds.
 
 **Flow**: `Selector.Select()` → `Fetcher.UnspentTokensIteratorBy(wallet, currency)` → `Token Iterator`
 
@@ -608,7 +608,7 @@ token:
     leaseExpiry: 3m                      # Lock expiration time (default: 3m)
     leaseCleanupTickPeriod: 1m           # Lock cleanup interval (default: 1m)
     fetcherStrategy: mixed               # Token fetcher: mixed | eager | lazy (default: mixed)
-    fetcherCacheSize: 1000               # Cache size in Ristretto cost units (default: 0 = use fetcher default)
+    fetcherCacheSize: 1000               # Maximum number of cached tokens (default: 0 = use fetcher default)
     fetcherCacheRefresh: 30s             # Cache refresh interval (default: 0 = use fetcher default)
     fetcherCacheMaxQueries: 100          # Max queries before cache refresh (default: 0 = use fetcher default)
     rateLimitEnabled: false              # Opt-in per-wallet selection rate limiter (default: false)
@@ -634,7 +634,7 @@ It has no effect under SQLite or `simple`.
 | `leaseExpiry` | `3m` | `config/driver.go` `defaultLeaseExpiry` | yes |
 | `leaseCleanupTickPeriod` | `1m` | `config/driver.go` `defaultLeaseCleanupTickPeriod` | yes |
 | `fetcherStrategy` | `mixed` | `sherdlock/fetcher.go` `DefaultFetcherStrategy` | yes (sherdlock only) |
-| `fetcherCacheSize` | `0` → Ristretto `MaxCost = 1e8` cost units (cost-per-entry is 1, so effectively up to 100M cached wallet+currency entries) | `token/services/utils/cache/ristretto.go` `DefaultMaxCost`, via `cache.NewDefaultRistrettoCache` | yes |
+| `fetcherCacheSize` | `0` → Ristretto `MaxCost = 1e8` tokens (an entry's cost is the number of tokens it holds, at least 1 — so the limit counts tokens, not entries, and any value below the number of tokens a single wallet+currency entry holds caches nothing for it) | `sherdlock/fetcher.go` `NewCachedFetcher`'s own Ristretto config (`IgnoreInternalCost: true`, `Cost: tokenCacheEntryCost`), `cache.DefaultMaxCost` | yes |
 | `fetcherCacheRefresh` | `0` → `1s` | `sherdlock/fetcher.go` `defaultCacheFreshnessInterval` | yes |
 | `fetcherCacheMaxQueries` | `0` → `5` (same constant as `maxImmediateRetries`, see below — not an independent number) | `sherdlock/fetcher.go` `defaultCacheMaxQueries` | yes |
 | `storage.db.lockStrategy` | `insert` | Postgres `TokenLockStore` | yes, Postgres only |
@@ -713,11 +713,11 @@ a retry, and the extra `simple`-only error sentinel all differ too.
 
 The three keys below tune the cache that `mixed` and `eager` use, and are ignored by `lazy`:
 
-- **fetcherCacheSize**: Maximum number of cached query results, in Ristretto cost units (cost-per-entry is 1, so effectively a cap on entries). Set to 0 to use the fetcher's default size.
+- **fetcherCacheSize**: Maximum number of cached tokens across all cached wallet+currency entries (an entry's cost is the number of tokens it holds). Set to 0 to use the fetcher's default size.
 - **fetcherCacheRefresh**: Time interval after which cached data is considered stale and refreshed. Set to 0 to use the fetcher's default interval.
 - **fetcherCacheMaxQueries**: Maximum number of queries before forcing a cache refresh. Set to 0 to use the fetcher's default limit.
 
-**Example**: With `fetcherCacheSize: 1000`, `fetcherCacheRefresh: 30s`, and `fetcherCacheMaxQueries: 100`, the cache stores up to 1000 query results, refreshes data every 30 seconds, and forces a refresh after 100 queries.
+**Example**: With `fetcherCacheSize: 1000`, `fetcherCacheRefresh: 30s`, and `fetcherCacheMaxQueries: 100`, the cache stores up to 1000 tokens across all cached wallet+currency entries, refreshes data every 30 seconds, and forces a refresh after 100 queries.
 
 ## Benchmarking against Postgres
 
@@ -757,7 +757,7 @@ strategy and batch locking, plus a `simple` configuration appended.
 | `disjoint-wallets` | 16 clients, one wallet each: database and pool cost without logical contention |
 | `multi-replica` | The hot wallet served by 3 nodes on one database (the #2395 shape) |
 | `settle` | Select, spend the inputs and re-create outputs in one store transaction, release: the full lifecycle with churning token IDs. Run at 5 inputs per transaction (a typical transfer) and 100 (a stress case: settlement holds a pooled connection for ~250 ms, and with more clients than connections every `Select` queues behind it) |
-| `near-exhaustion` | Wallet holds what 10 of 16 clients need and each selection stays locked for 3 ms, so demand can exceed supply; retries absorb most shortages, so this mostly measures retry cost. Runs `retry=20ms` (benchmark default) over the 4 `coreConfigs()` rows and `retry=5s` (production default) over sherdlock default + `simple`, to test whether retry interval changes the sherdlock-vs-simple ordering — see the benchmark report for the resolved finding |
+| `near-exhaustion` | Wallet holds what 10 of 16 clients need and each selection stays locked for 3 ms, so demand can exceed supply; retries absorb most shortages, so this mostly measures retry cost. Runs `retry=20ms` (pinned, matching the benchmark default) over the 4 `coreConfigs()` rows and `retry=5s` (pinned, matching the production default) over sherdlock default + `simple`, to test whether retry interval changes the sherdlock-vs-simple ordering — see the benchmark report for the resolved finding |
 | `production-shape` | Like `near-exhaustion`, but with a hold time of 50ms/250ms — closer to a real transaction's endorsement-collection window — on sherdlock default and `simple`. Throughput is hold-bound (capped near `clients/hold`, ≈64/s at best for the 250ms case), not selector-bound; `p50/p95/p99-ms` and `contended/op` are the metrics that actually say something about the selector. `simple`'s case runs with a larger pool than its production default to avoid a connection-pool deadlock under sustained hold (see [issue #2474](https://github.com/LFDT-Panurus/panurus/issues/2474)) |
 | `stale-locks` | 30% of the wallet locked by a crashed replica, lease cleaner on and off |
 

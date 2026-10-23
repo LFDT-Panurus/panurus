@@ -193,6 +193,61 @@ func TestBenchPostgresRetryIntervalReachesTheSelector(t *testing.T) {
 		longInterval, long, shortInterval, short)
 }
 
+// TestBenchPostgresCaseNamesAreUnique checks every workload's pgCase slice produces distinct
+// b.Run names (c.name + "/" + c.cfg.name(), or just c.cfg.name() when c.name is ""). None of
+// these *Cases() functions touch Postgres - they are plain Go - so this runs without Docker and
+// without PANURUS_REQUIRE_POSTGRES, unlike almost everything else in this file.
+//
+// A collision is not cosmetic: Go's testing package disambiguates two sub-benchmarks sharing a
+// name by appending "#01", "#02", etc., so the run still "succeeds" and produces output - but
+// benchstat then sees two differently-named rows that happen to both claim the same semantic
+// case (e.g. two "retry=5s" rows), and reports them as separate, uncomparable rows under one
+// column instead of pairing them into the comparison the case names were meant to describe. See
+// AkramBitar's review of PR #2499: hotWalletCases building its retry= axis from
+// benchDefaultRetryInterval() meant that at PANURUS_SELECTOR_BENCH_RETRY=5s the "20ms" and "5s"
+// arms both ran (and were named) at 5s.
+//
+// This test runs with the environment as given, which in CI leaves PANURUS_SELECTOR_BENCH_RETRY
+// unset. To specifically re-check the condition that exposed the original bug, run it with
+// PANURUS_SELECTOR_BENCH_RETRY=5s set explicitly:
+//
+//	PANURUS_SELECTOR_BENCH_RETRY=5s go test ./token/services/selector/ -run TestBenchPostgresCaseNamesAreUnique -v
+func TestBenchPostgresCaseNamesAreUnique(t *testing.T) {
+	workloads := map[string]func() []pgCase{
+		"uncontended":                 uncontendedCases,
+		"wallet-size":                 walletSizeCases,
+		"selection-size":              selectionSizeCases,
+		"fragmented":                  fragmentedCases,
+		"hot-wallet":                  hotWalletCases,
+		"hot-wallet-distinct-amounts": hotWalletDistinctCases,
+		"disjoint-wallets":            disjointWalletCases,
+		"multi-replica":               multiReplicaCases,
+		"settle":                      settleCases,
+		"near-exhaustion":             nearExhaustionCases,
+		"production-shape":            productionShapeCases,
+		"stale-locks":                 staleLockCases,
+	}
+
+	for workload, build := range workloads {
+		t.Run(workload, func(t *testing.T) {
+			seen := make(map[string][]pgCase)
+			for _, c := range build() {
+				name := c.cfg.name()
+				if c.name != "" {
+					name = c.name + "/" + name
+				}
+				seen[name] = append(seen[name], c)
+			}
+			for name, cases := range seen {
+				assert.Len(t, cases, 1,
+					"%s: %d cases share the sub-benchmark name %q; go test would disambiguate "+
+						"them with a #01 suffix and benchstat would then see them as separate, "+
+						"unpaired rows instead of one comparable case", workload, len(cases), name)
+			}
+		})
+	}
+}
+
 // TestBenchPostgresSettleKeepsBalance checks the settle step conserves the wallet's balance and
 // leaves nothing locked once the selection is released.
 func TestBenchPostgresSettleKeepsBalance(t *testing.T) {

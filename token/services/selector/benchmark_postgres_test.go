@@ -392,13 +392,25 @@ func fragmentedCases() []pgCase {
 
 const hotClients = 16
 
+// benchShortRetryInterval is the literal interval every retry=-labelled case runs the "short"
+// arm at. It is deliberately a literal, not benchDefaultRetryInterval(): a named retry= case's
+// label must always match the interval it actually ran at, and benchDefaultRetryInterval()
+// follows PANURUS_SELECTOR_BENCH_RETRY, which at BENCH_RETRY=5s would make the "short" arm run
+// at 5s too, under a label that still says 20ms - and collide in name with the "long" 5s arm
+// (see TestBenchPostgresCaseNamesAreUnique). PANURUS_SELECTOR_BENCH_RETRY still controls every
+// *unnamed* case via baselinePgConfig/benchDefaultRetryInterval - only the explicit retry= axes
+// below are pinned.
+const benchShortRetryInterval = 20 * time.Millisecond
+
 // hotWalletCases: many clients on one wallet holding 1.5x what they need at once, so most
 // Selects find free tokens but keep colliding on the same ascending-by-amount prefix.
 //
 // Also carries a retry=20ms/retry=5s pair over retryConfigs(), as a second, corroborating
 // workload for the near-exhaustion retry-interval hypothesis (see nearExhaustionCases) rather
 // than resting it on one workload alone. These two named cases are in addition to the pgConfigs()
-// sweep above, which stays unnamed exactly as before.
+// sweep above, which stays unnamed exactly as before. Both durations are literals (see
+// benchShortRetryInterval), so the two arms can never collapse onto the same name no matter what
+// PANURUS_SELECTOR_BENCH_RETRY is set to.
 func hotWalletCases() []pgCase {
 	var cases []pgCase
 	for _, cfg := range pgConfigs() {
@@ -410,7 +422,7 @@ func hotWalletCases() []pgCase {
 			},
 		})
 	}
-	for _, retry := range []time.Duration{benchDefaultRetryInterval(), 5 * time.Second} {
+	for _, retry := range []time.Duration{benchShortRetryInterval, 5 * time.Second} {
 		for _, cfg := range withRetryInterval(retryConfigs(), retry) {
 			cases = append(cases, pgCase{
 				name: "retry=" + retry.String(), cfg: cfg, clients: hotClients,
@@ -549,12 +561,16 @@ const nearExhaustionHold = 3 * time.Millisecond
 // hypothesis is about - see docs/services/selector.md and the benchmark report). Every row
 // carries an explicit retry= segment; none stay unnamed, so a retry=5s case can never be
 // mistaken for - or silently share a fixture with - the benchmark-default 20ms case of the
-// same cfg.name().
+// same cfg.name(). The 20ms arm is the literal benchShortRetryInterval, not
+// benchDefaultRetryInterval(): the label must match what the case actually ran at regardless of
+// PANURUS_SELECTOR_BENCH_RETRY (see benchShortRetryInterval's comment) - at BENCH_RETRY=5s a
+// label derived from the env-driven default would read "retry=20ms" while running at 5s, and
+// would also collide in name with this function's own retry=5s arm below.
 func nearExhaustionCases() []pgCase {
 	var cases []pgCase
-	for _, cfg := range withRetryInterval(coreConfigs(), benchDefaultRetryInterval()) {
+	for _, cfg := range withRetryInterval(coreConfigs(), benchShortRetryInterval) {
 		cases = append(cases, pgCase{
-			name: "retry=20ms", cfg: cfg, clients: hotClients,
+			name: "retry=" + benchShortRetryInterval.String(), cfg: cfg, clients: hotClients,
 			setup: seedUniform(benchWalletID, 10*100),
 			op: func(fx *pgFixture) pgOp {
 				return selectOp(fx, oneWallet(""), fixedQty(100), false, nearExhaustionHold)

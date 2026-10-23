@@ -13,13 +13,15 @@ import (
 	"testing"
 
 	token2 "github.com/LFDT-Panurus/panurus/token/token"
+	"github.com/hyperledger-labs/fabric-smart-client/platform/common/utils/collections/iterators"
 )
 
 // permutationItems builds n tokens for BenchmarkNewPermutation and the direct NewPermutation
 // unit tests below: "uniform" puts every item in one bucket (the worst case for the shuffle,
 // since rand.Shuffle sees the whole slice as a single run), "distinct" gives every item a
-// different Quantity (the common case for a realistic wallet, where the shuffle is a no-op
-// because every bucket has size 1 and NewPermutation's cost is dominated by the slice copy).
+// different Quantity (the common case for a realistic wallet, where the shuffle itself does no
+// work because every bucket has size 1 — see BenchmarkNewPermutationStages for where the cost
+// actually goes in that case: the bucket-boundary scan over Quantity, not the slice copy).
 func permutationItems(n int, shape string) []*token2.UnspentTokenInWallet {
 	items := make([]*token2.UnspentTokenInWallet, n)
 	for i := range items {
@@ -46,6 +48,81 @@ func BenchmarkNewPermutation(b *testing.B) {
 			b.Run(fmt.Sprintf("tokens=%d/%s", n, shape), func(b *testing.B) {
 				items := permutationItems(n, shape)
 				it := newBucketedIterator(items)
+				b.ReportAllocs()
+				b.ResetTimer()
+				for range b.N {
+					_ = it.NewPermutation()
+				}
+			})
+		}
+	}
+}
+
+// copyOnlyPermutation and copyScanPermutation below are NewPermutation with one of its trailing
+// stages removed, each still ending in "return newBucketedIterator(shuffled)" exactly as
+// NewPermutation does. That is deliberate, not incidental: a copy-only sub-benchmark built the
+// obvious way (copy, then either discard the result or sink it to a package variable) does not
+// measure the copy cost NewPermutation actually pays, because the two choices land on opposite
+// sides of escape analysis - a discarded slice can stay on the stack and reads artificially
+// cheap, while sinking it to a global forces a heap allocation NewPermutation doesn't otherwise
+// need and adds GC noise on top, reading artificially expensive and noisy. Wrapping every stage
+// in the same returned iterator gives all three variants NewPermutation's own escape behavior
+// (the slice always escapes via the returned iterator, and all three allocate the same backing
+// array plus the iterator struct - 2 allocs/op, like full NewPermutation), so the three numbers
+// differ only in the work each one does, not in what the compiler does with the result.
+
+// copyOnlyPermutation is NewPermutation with the bucket scan and shuffle removed: the copy
+// alone.
+func copyOnlyPermutation(items []*token2.UnspentTokenInWallet) iterators.Iterator[*token2.UnspentTokenInWallet] {
+	shuffled := make([]*token2.UnspentTokenInWallet, len(items))
+	copy(shuffled, items)
+
+	return newBucketedIterator(shuffled)
+}
+
+// copyScanPermutation is NewPermutation with the rand.Shuffle call removed: the copy plus the
+// bucket-boundary scan (the Quantity string comparisons that find each equal-amount run), but
+// none of the per-bucket shuffling.
+func copyScanPermutation(items []*token2.UnspentTokenInWallet) iterators.Iterator[*token2.UnspentTokenInWallet] {
+	shuffled := make([]*token2.UnspentTokenInWallet, len(items))
+	copy(shuffled, items)
+
+	for start := 0; start < len(shuffled); {
+		end := start + 1
+		for end < len(shuffled) && shuffled[end].Quantity == shuffled[start].Quantity {
+			end++
+		}
+		start = end
+	}
+
+	return newBucketedIterator(shuffled)
+}
+
+// BenchmarkNewPermutationStages decomposes NewPermutation into its three sequential stages -
+// copy, copy+bucket-scan, and the full function (copy+scan+shuffle) - to see where its cost
+// actually goes, rather than assuming. See docs/services/selector-postgres-benchmark-report.md
+// for the measured split at realistic wallet sizes; it does not simply confirm "it's the copy".
+func BenchmarkNewPermutationStages(b *testing.B) {
+	for _, n := range []int{1_000, 10_000, 100_000, 1_000_000} {
+		for _, shape := range []string{"uniform", "distinct"} {
+			items := permutationItems(n, shape)
+			it := newBucketedIterator(items)
+
+			b.Run(fmt.Sprintf("tokens=%d/%s/stage=copy", n, shape), func(b *testing.B) {
+				b.ReportAllocs()
+				b.ResetTimer()
+				for range b.N {
+					_ = copyOnlyPermutation(items)
+				}
+			})
+			b.Run(fmt.Sprintf("tokens=%d/%s/stage=copyscan", n, shape), func(b *testing.B) {
+				b.ReportAllocs()
+				b.ResetTimer()
+				for range b.N {
+					_ = copyScanPermutation(items)
+				}
+			})
+			b.Run(fmt.Sprintf("tokens=%d/%s/stage=full", n, shape), func(b *testing.B) {
 				b.ReportAllocs()
 				b.ResetTimer()
 				for range b.N {

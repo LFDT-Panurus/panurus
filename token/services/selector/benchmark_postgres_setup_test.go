@@ -216,12 +216,15 @@ func pgConfigs() []pgConfig {
 	}
 }
 
-// benchDefaultRetryInterval is the retryInterval baselinePgConfig uses. The benchmarks default
-// to 20ms so a contended case does not spend its run asleep; production defaults to 5s, which
+// benchDefaultRetryInterval is the retryInterval baselinePgConfig uses, and therefore the
+// interval every case not naming its own retry= segment runs at (see benchShortRetryInterval
+// for the cases that do - nearExhaustionCases, hotWalletCases - which pin a literal instead so
+// their label can never drift from what they actually ran at). The benchmarks default to 20ms
+// so a contended case does not spend its run asleep; production defaults to 5s, which
 // PANURUS_SELECTOR_BENCH_RETRY sets (e.g. "5s") to measure what a node with default
-// configuration sees. Read once via sync.OnceValue: every pgConfig this process builds shares
-// the same environment, and os.Getenv on every baselinePgConfig call would be needless repeated
-// work for a value that cannot change mid-run.
+// configuration sees for every unnamed case. Read once via sync.OnceValue: every pgConfig this
+// process builds shares the same environment, and os.Getenv on every baselinePgConfig call
+// would be needless repeated work for a value that cannot change mid-run.
 var benchDefaultRetryInterval = sync.OnceValue(func() time.Duration {
 	v := os.Getenv("PANURUS_SELECTOR_BENCH_RETRY")
 	if v == "" {
