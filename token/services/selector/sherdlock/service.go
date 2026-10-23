@@ -33,6 +33,13 @@ type managerEntry struct {
 //
 // By default, selection is not rate limited. Passing ratelimit options, or enabling the
 // token.selector.rateLimit* configuration keys, meters every selection request per wallet.
+//
+// The sherdlock selection-tuning keys (token.selector.sufficiencyWindow,
+// maxSufficiencyRatio, maxImmediateRetries, maxBatchWindow) are read from configuration only;
+// unlike rate limiting, there is no sherdlock.Option parameter here to override them
+// programmatically, because this constructor already uses its one variadic parameter for
+// ratelimit.Option. Build a Manager directly (NewManager) with sherdlock.Option values if you
+// need to set them in code instead of YAML.
 func NewService(
 	fetcherProvider FetcherProvider,
 	tokenLockStoreServiceManager tokenlockdb.StoreServiceManager,
@@ -56,6 +63,12 @@ func NewService(
 		leaseCleanupTickPeriod:       cfg.GetLeaseCleanupTickPeriod(),
 		metrics:                      NewMetrics(metricsProvider),
 		limiter:                      ratelimit.CompileOptions(opts...).Limiter(cfg),
+		tuning: CompileOptions(
+			WithSufficiencyWindow(cfg.GetSufficiencyWindow()),
+			WithMaxSufficiencyRatio(cfg.GetMaxSufficiencyRatio()),
+			WithMaxImmediateRetries(cfg.GetMaxImmediateRetries()),
+			WithMaxBatchWindow(cfg.GetMaxBatchWindow()),
+		),
 	}
 	if loader.limiter != nil {
 		logger.Infof("per-wallet token selection rate limiting is enabled")
@@ -94,6 +107,9 @@ type loader struct {
 	// limiter meters selection requests per wallet. It is nil when rate limiting is
 	// disabled, which is the default, and is shared by every manager the loader builds.
 	limiter ratelimit.Limiter
+	// tuning is the normalized selection tuning (see Tuning) every manager the loader
+	// builds is constructed with.
+	tuning Tuning
 }
 
 func (s *loader) load(tms *token.ManagementService) (*managerEntry, error) {
@@ -123,6 +139,7 @@ func (s *loader) loadTMS(tms TMS) (*managerEntry, error) {
 		s.leaseExpiry,
 		s.leaseCleanupTickPeriod,
 		s.metrics,
+		WithTuning(s.tuning),
 	)
 	// Decorate returns mgr unchanged when no limiter is configured.
 	return &managerEntry{manager: mgr, selector: ratelimit.Decorate(mgr, s.limiter, tms.ID().String())}, nil

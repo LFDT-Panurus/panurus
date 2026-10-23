@@ -242,6 +242,42 @@ func TestSizeOrderedSelection_SufficiencyRatioBoundary(t *testing.T) {
 			"by the lookahead count, got: %v", picked)
 }
 
+// TestSizeOrderedSelection_ConfiguredSufficiencyWindowOfOneIsDeterministic verifies
+// sherdlock.WithSufficiencyWindow(1) actually governs nextCandidate's behaviour, not just that
+// the value is stored: on the exact wallet shape TestSizeOrderedSelection_SufficiencyWindowShuffle
+// uses to prove real statistical spread at the default window of 4, a configured window of 1
+// must restore the old fully-deterministic behaviour - every trial picks the same, smallest
+// sufficient token.
+func TestSizeOrderedSelection_ConfiguredSufficiencyWindowOfOneIsDeterministic(t *testing.T) {
+	const walletID = "wallet-cert-incident-deterministic"
+	const tokenType = "EUR"
+	const numTrials = 50
+
+	qs := testutils.NewMockQueryService()
+	addMockToken(qs, walletID, tokenType, "tx-2", "2")
+	addMockToken(qs, walletID, tokenType, "tx-3", "3")
+	addMockToken(qs, walletID, tokenType, "tx-4", "4")
+	addMockToken(qs, walletID, tokenType, "tx-5", "5")
+	qs.WarmupCache(walletID, tokenType)
+
+	_, metrics := setupMetricsMocks()
+
+	picked := make(map[string]int)
+	for range numTrials {
+		mockLocker := &mocks.FakeTokenLocker{}
+		mockLocker.TryLockReturns(true, nil)
+		s := sherdlock.NewSelector(sherdlock.Logger(), sherdlock.NewLazyFetcher(qs), mockLocker, testutils.TokenQuantityPrecision, metrics, sherdlock.WithSufficiencyWindow(1))
+
+		tokens, _, err := s.Select(t.Context(), &unitTestMockOwnerFilter{id: walletID}, "1", tokenType)
+		require.NoError(t, err)
+		require.Len(t, tokens, 1)
+		picked[tokens[0].TxId]++
+	}
+
+	assert.Len(t, picked, 1, "a configured sufficiency window of 1 must always pick the single smallest-fitting token, got: %v", picked)
+	assert.Equal(t, numTrials, picked["tx-2"], "the smallest token must be the one picked every time, got: %v", picked)
+}
+
 // addMockToken registers a token in qs under a key WarmupCache's substring filter can find:
 // it must contain both walletID and tokenType (see MockQueryService.WarmupCache), mirroring
 // the key shape used by benchmark_test.go's setup.

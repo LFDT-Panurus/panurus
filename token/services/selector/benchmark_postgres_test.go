@@ -309,7 +309,7 @@ func walletSizeCases() []pgCase {
 }
 
 // selection-size: tokens needed per Select, crossing the sufficiency window and the
-// maxBatchWindow (256) boundary of LockBatch.
+// maxBatchWindow (sherdlock's default: 256) boundary of LockBatch.
 func selectionSizeCases() []pgCase {
 	base := baselinePgConfig()
 	skip, single, simpleCfg := base, base, base

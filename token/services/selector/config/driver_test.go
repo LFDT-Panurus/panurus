@@ -16,6 +16,7 @@ import (
 	"github.com/LFDT-Panurus/panurus/token/services/selector/ratelimit"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.yaml.in/yaml/v3"
 )
 
 // Package config_test validates selector configuration parsing and default value handling.
@@ -361,6 +362,48 @@ func TestConfig_ImplementsRateLimitConfiguration(t *testing.T) {
 	var _ ratelimit.Configuration = &Config{}
 }
 
+// TestConfig_GetRateLimitIdleTimeout verifies the idle timeout defaults to zero, which lets the
+// limiter pick its own, and that a negative value is treated the same way.
+func TestConfig_GetRateLimitIdleTimeout(t *testing.T) {
+	assert.Equal(t, time.Duration(0), (&Config{}).GetRateLimitIdleTimeout())
+	assert.Equal(t, time.Duration(0), (&Config{RateLimitIdleTimeout: -time.Minute}).GetRateLimitIdleTimeout())
+	assert.Equal(t, 10*time.Minute, (&Config{RateLimitIdleTimeout: 10 * time.Minute}).GetRateLimitIdleTimeout())
+}
+
+// TestConfig_GetSherdlockTuning verifies the four sherdlock tuning knobs default to zero, which
+// lets the sherdlock driver pick its own defaults, and that a negative value is treated the same
+// way.
+func TestConfig_GetSherdlockTuning(t *testing.T) {
+	tests := []struct {
+		name     string
+		config   *Config
+		getter   func(*Config) int
+		expected int
+	}{
+		{name: "sufficiencyWindow unset", config: &Config{}, getter: (*Config).GetSufficiencyWindow, expected: 0},
+		{name: "sufficiencyWindow negative", config: &Config{SufficiencyWindow: -1}, getter: (*Config).GetSufficiencyWindow, expected: 0},
+		{name: "sufficiencyWindow positive", config: &Config{SufficiencyWindow: 8}, getter: (*Config).GetSufficiencyWindow, expected: 8},
+
+		{name: "maxSufficiencyRatio unset", config: &Config{}, getter: (*Config).GetMaxSufficiencyRatio, expected: 0},
+		{name: "maxSufficiencyRatio negative", config: &Config{MaxSufficiencyRatio: -1}, getter: (*Config).GetMaxSufficiencyRatio, expected: 0},
+		{name: "maxSufficiencyRatio positive", config: &Config{MaxSufficiencyRatio: 10}, getter: (*Config).GetMaxSufficiencyRatio, expected: 10},
+
+		{name: "maxImmediateRetries unset", config: &Config{}, getter: (*Config).GetMaxImmediateRetries, expected: 0},
+		{name: "maxImmediateRetries negative", config: &Config{MaxImmediateRetries: -1}, getter: (*Config).GetMaxImmediateRetries, expected: 0},
+		{name: "maxImmediateRetries positive", config: &Config{MaxImmediateRetries: 20}, getter: (*Config).GetMaxImmediateRetries, expected: 20},
+
+		{name: "maxBatchWindow unset", config: &Config{}, getter: (*Config).GetMaxBatchWindow, expected: 0},
+		{name: "maxBatchWindow negative", config: &Config{MaxBatchWindow: -1}, getter: (*Config).GetMaxBatchWindow, expected: 0},
+		{name: "maxBatchWindow positive", config: &Config{MaxBatchWindow: 512}, getter: (*Config).GetMaxBatchWindow, expected: 512},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.expected, tt.getter(tt.config))
+		})
+	}
+}
+
 // TestNew verifies config parsing handles valid configs, empty configs, and unmarshal errors.
 func TestNew(t *testing.T) {
 	tests := []struct {
@@ -425,4 +468,35 @@ func TestNew(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestConfig_YAMLRoundTripsTheFiveNewKeys verifies the five keys added for #2500
+// (sufficiencyWindow, maxSufficiencyRatio, maxImmediateRetries, maxBatchWindow,
+// rateLimitIdleTimeout) actually unmarshal from the same core.yaml shape an operator would
+// write, and that every accessor's consumer-side default is reproduced when the whole
+// token.selector block is absent.
+func TestConfig_YAMLRoundTripsTheFiveNewKeys(t *testing.T) {
+	const doc = `
+sufficiencyWindow: 8
+maxSufficiencyRatio: 10
+maxImmediateRetries: 20
+maxBatchWindow: 512
+rateLimitIdleTimeout: 10m
+`
+	var c Config
+	require.NoError(t, yaml.Unmarshal([]byte(doc), &c))
+
+	assert.Equal(t, 8, c.GetSufficiencyWindow())
+	assert.Equal(t, 10, c.GetMaxSufficiencyRatio())
+	assert.Equal(t, 20, c.GetMaxImmediateRetries())
+	assert.Equal(t, 512, c.GetMaxBatchWindow())
+	assert.Equal(t, 10*time.Minute, c.GetRateLimitIdleTimeout())
+
+	var empty Config
+	require.NoError(t, yaml.Unmarshal([]byte(""), &empty))
+	assert.Zero(t, empty.GetSufficiencyWindow())
+	assert.Zero(t, empty.GetMaxSufficiencyRatio())
+	assert.Zero(t, empty.GetMaxImmediateRetries())
+	assert.Zero(t, empty.GetMaxBatchWindow())
+	assert.Zero(t, empty.GetRateLimitIdleTimeout())
 }
