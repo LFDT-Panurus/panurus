@@ -401,8 +401,9 @@ identifies transactions by the anchor it derived off chain. This is why finality
 for an event keyed on the anchor rather than by looking up a transaction.
 
 **`spentRefs` means one of two things, fixed per contract.** With `graphHiding` off, each ref is a
-content-bound marker that must already exist and be unspent; because the marker commits to the token's
-bytes, a spender cannot substitute different content at the same position. With `graphHiding` on, each
+content-bound marker that must already exist; the token it was recorded for is deleted, as on Fabric.
+Because the marker commits to the token's bytes, a spender cannot substitute different content at the
+same position. With `graphHiding` on, each
 ref is a serial number that simply must not have been seen before, which reveals nothing about which
 output is being consumed. One TMS runs one token driver, so the mode is chosen at deployment and never
 changes.
@@ -612,7 +613,7 @@ the table to reach for when a transaction reverts.
 | `DuplicateSigner` | The same endorser signed twice | A broken initiator; N signatures from one endorser are not N endorsements |
 | `InvalidSignatureLength` | A signature was not 65 bytes | A malformed or truncated signature |
 | `StalePublicParams` | The delta names parameters that are no longer current | Someone updated the parameters between endorsement and submission; re-endorse |
-| `InputMissingOrSpent` | A consumed marker does not exist, or is already spent | A double spend, or a token whose content does not match what was recorded |
+| `InputMissingOrSpent` | A consumed marker does not exist, or its token was already spent and deleted | A double spend, or a token whose content does not match what was recorded |
 | `DoubleSpend` | A serial number was already used (graph-hiding mode) | A double spend |
 | `MetadataKeyOccupied` | A metadata key was already written | A reused key, for example an HTLC claim seen twice |
 | `MalformedSetupDelta` | A setup delta carried spends, outputs or metadata, or no parameters | A driver bug; setup deltas carry only new parameters |
@@ -644,8 +645,10 @@ interface ITokenState {
     function applyStateDelta(StateDelta calldata delta, bytes[] calldata signatures) external returns (bool);
 
     function getToken(bytes32 tokenID) external view returns (bytes memory);
-    // isSpent/areTokensSpent revert with UnsupportedForGraphHiding on a graph-hiding clone: spend
-    // state there is keyed by serial number, not token ID. Use isSerialUsed instead.
+    // getToken returns empty for a token that is not stored. On a graph-revealing clone a spend
+    // deletes the token, so isSpent/areTokensSpent report "not stored" as spent, as Fabric does.
+    // They revert with UnsupportedForGraphHiding on a graph-hiding clone, which never deletes:
+    // spend state there is keyed by serial number, not token ID. Use isSerialUsed instead.
     function isSpent(bytes32 tokenID) external view returns (bool);
     function areTokensSpent(bytes32[] calldata tokenIDs) external view returns (bool[] memory);
     function isSerialUsed(bytes32 serial) external view returns (bool);
@@ -917,10 +920,11 @@ the restart recovery exists to clean up after, which an in-memory timer would no
 resolve a permanently-rejected transfer, because a reverted `applyStateDelta` emits no event and, when it
 reverts at gas-estimation time, no transaction is ever sent — so there is no receipt either, and `Unknown`
 is the only answer the chain gives until the timeout elapses. Waiting that long is wasteful when the chain
-already has proof the transaction can never apply: `snSpent` (`contracts/src/TokenState.sol`) only ever
-moves from unspent to spent, never back, so if the anchor is absent **and** any of the transaction's input
-tokens is already spent by some other transaction, that other transaction is the one that consumed the
-input and this one can never succeed. The verdict is permanent, not a confidence interval.
+already has proof the transaction can never apply: a spent token is deleted (`contracts/src/TokenState.sol`)
+and never written back, so if the anchor is absent **and** any of the transaction's input tokens is already
+spent by some other transaction, that other transaction is the one that consumed the input and this one can
+never succeed. The verdict is permanent, not a confidence interval. Because a token that was never stored
+also reads as spent, an input only counts once the transaction that created it reads as applied.
 
 The recovery sweep checks this before falling back to the age gate: it parses the transaction's stored
 request into its input token ids and asks the chain, via `AreTokensSpent`, whether any of them are already
@@ -986,6 +990,11 @@ are worth checking against a new backend:
 - **Revert wording differs between clients** ("execution reverted" on geth, "Execution reverted" on Besu), and
   the JSON-RPC error code for it (`-32000`) is implementation-defined and shared with other server-side
   failures. The driver pairs the code with the message rather than trusting either alone.
+- **Some nodes estimate gas after the refund.** A graph-revealing spend deletes the token, which earns a
+  storage refund of up to a fifth of the gas used, but the refund is only paid at the end, so execution
+  still needs the full amount. Besu estimates the full amount; the fabric-x-evm gateway (0.1.3) returns
+  the amount net of the refund, so with the default `gas.multiplier` of 1.2 a large spend runs out of gas
+  and reverts. Against such a node set the multiplier to at least 1.25; the integration tests use 1.5.
 
 Contracts must be compiled for the EVM version the target node supports. Besu's dev network has no PUSH0, so
 contracts build for `paris`; a `shanghai` build reverts every contract creation.

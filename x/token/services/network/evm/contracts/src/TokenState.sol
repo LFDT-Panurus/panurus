@@ -13,8 +13,9 @@ interface IEndorsementVerifier {
 /// @notice Stores token state for one TMS and applies endorsed StateDeltas. Under the Approach-2 trust
 ///         model the chain does no token validation: `applyStateDelta` checks only (a) a quorum of
 ///         endorser signatures, (b) the public-parameters version is current, and (c) declared inputs
-///         exist and are unspent / declared serials are unused, then applies the transition. Correctness
-///         is established off-chain by the endorser quorum.
+///         exist / declared serials are unused, then applies the transition. Correctness is established
+///         off-chain by the endorser quorum. Like Fabric, a graph-revealing spend deletes the token, so
+///         an absent token is a spent one; a graph-hiding clone never deletes tokens.
 ///
 /// @dev    Deployed per TMS as an EIP-1167 clone of a shared implementation and set up via `initialize`
 ///. The implementation is meant to be cloned; the clone's `initialize` seeds the
@@ -23,17 +24,15 @@ interface IEndorsementVerifier {
 contract TokenState {
     // --- token state -------------------------------------------------------------------------------
 
-    /// @dev tokenID => serialized token bytes (addressable by anchor,index for queries).
+    /// @dev tokenID => serialized token bytes (addressable by anchor,index for queries). Graph-revealing
+    ///      spends delete the entry.
     mapping(bytes32 => bytes) private tokens;
-    /// @dev graph-revealing: content-bound output markers recorded at output creation.
-    mapping(bytes32 => bool) private snExists;
-    /// @dev graph-revealing: markers consumed by a spend.
-    mapping(bytes32 => bool) private snSpent;
+    /// @dev graph-revealing: content-bound output marker => the tokenID it was recorded for. A spend
+    ///      references the marker, so it names both the token and its exact bytes; both entries are
+    ///      deleted on spend.
+    mapping(bytes32 => bytes32) private markerToken;
     /// @dev graph-hiding: serial numbers seen.
     mapping(bytes32 => bool) private serialUsed;
-    /// @dev option (a) query surface: tokenID => its content-bound marker, recorded at creation, so
-    ///      isSpent(tokenID) resolves in a single call without the caller holding the token content.
-    mapping(bytes32 => bytes32) private tokenMarker;
     /// @dev anchor => SHA-256(tokenRequest).
     mapping(bytes32 => bytes32) private tokenRequestHashes;
     /// @dev idempotency / replay guard.
@@ -145,18 +144,19 @@ contract TokenState {
             }
         } else {
             for (uint256 i = 0; i < refs.length; i++) {
-                // Existence of the content-bound marker proves the spent token has exactly the bytes
-                // recorded at creation, so forged content is rejected.
-                if (!snExists[refs[i]] || snSpent[refs[i]]) revert InputMissingOrSpent(refs[i]);
-                snSpent[refs[i]] = true;
+                // The marker is only recorded for the exact bytes stored at creation, so finding it
+                // rejects forged content as well as a missing or already spent token.
+                bytes32 tokenID = markerToken[refs[i]];
+                if (tokenID == bytes32(0)) revert InputMissingOrSpent(refs[i]);
+                delete markerToken[refs[i]];
+                delete tokens[tokenID];
             }
         }
 
         OutputToken[] calldata outs = delta.outputs;
         for (uint256 i = 0; i < outs.length; i++) {
             tokens[outs[i].tokenID] = outs[i].tokenData;
-            snExists[outs[i].snMarker] = true;
-            tokenMarker[outs[i].tokenID] = outs[i].snMarker;
+            if (!graphHiding) markerToken[outs[i].snMarker] = outs[i].tokenID;
         }
 
         for (uint256 i = 0; i < delta.metadataKeys.length; i++) {
@@ -187,19 +187,19 @@ contract TokenState {
 
     // --- queries -----------------------------------------------------------------------------------
 
-    /// @notice The serialized token bytes stored at tokenID, or empty if none.
+    /// @notice The serialized token bytes stored at tokenID, or empty if none (never created, or spent
+    ///         on a graph-revealing clone).
     function getToken(bytes32 tokenID) external view returns (bytes memory) {
         return tokens[tokenID];
     }
 
-    /// @notice Graph-revealing spent status by token id, resolved through the content-bound marker.
-    /// @dev    Reverts on a graph-hiding clone: that mode never records a marker (translator.go leaves
-    ///         SNMarker zero for it), so tokenMarker[tokenID] would always resolve to snSpent[0x0],
-    ///         which is never set here - a caller would silently get "not spent" for a token that was
-    ///         in fact spent via serialUsed. Use isSerialUsed for a graph-hiding clone instead.
+    /// @notice Graph-revealing spent status by token id: a token is spent when it is not stored, as on
+    ///         Fabric. That includes an id that was never created.
+    /// @dev    Reverts on a graph-hiding clone: that mode spends by serial number and never deletes, so
+    ///         every created token would read as unspent. Use isSerialUsed there instead.
     function isSpent(bytes32 tokenID) external view returns (bool) {
         if (graphHiding) revert UnsupportedForGraphHiding();
-        return snSpent[tokenMarker[tokenID]];
+        return tokens[tokenID].length == 0;
     }
 
     /// @notice Graph-revealing spent status for a batch of token ids, aligned with the input.
@@ -208,7 +208,7 @@ contract TokenState {
         if (graphHiding) revert UnsupportedForGraphHiding();
         out = new bool[](tokenIDs.length);
         for (uint256 i = 0; i < tokenIDs.length; i++) {
-            out[i] = snSpent[tokenMarker[tokenIDs[i]]];
+            out[i] = tokens[tokenIDs[i]].length == 0;
         }
     }
 

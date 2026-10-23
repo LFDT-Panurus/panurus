@@ -191,11 +191,12 @@ type tokenRequestParser interface {
 	ProcessTokenRequest(ctx context.Context, tokenRequestRaw []byte) (*token2.Request, []byte, error)
 }
 
-// spentReader answers whether tokens have already been spent on chain. *Network satisfies it; it is
-// declared here, on the consumer side, so settledNetwork depends on the one method it calls rather
-// than the whole network surface.
+// spentReader answers whether tokens have already been spent on chain, and whether the transaction
+// that created them was applied. *Network satisfies it; it is declared here, on the consumer side, so
+// settledNetwork depends on the methods it calls rather than the whole network surface.
 type spentReader interface {
 	AreTokensSpent(ctx context.Context, namespace string, tokenIDs []*token.ID, meta []string) ([]bool, error)
+	GetTransactionStatus(ctx context.Context, namespace, txID string) (int, []byte, string, error)
 }
 
 // settledNetwork answers "still unknown" as "invalid" for the recovery path only, along two
@@ -215,9 +216,10 @@ type spentReader interface {
 //
 // Evidence is the other, faster signal, and the reason this type exists rather than a bare timeout.
 // An anchor absent from the chain plus an input already spent by some other, already-applied
-// transaction proves this transaction can never apply: snSpent only ever moves from false to true
-// (contracts/src/TokenState.sol), so the input cannot become unspent, and _applyTransfer reverts on
-// any spent input every time it is tried. The verdict does not need to wait for the timeout because
+// transaction proves this transaction can never apply: a spent token is deleted and never written
+// back (contracts/src/TokenState.sol), so the input cannot become unspent, and _applyTransfer reverts
+// on any spent input every time it is tried. Since a token that was never stored reads as spent too,
+// an input only counts once the transaction that created it is applied. The verdict does not need to wait for the timeout because
 // nothing about waiting longer could change it. This is also what makes the auditor recover on its
 // own: startRecovery sweeps the audit store through the same settledNetwork, so an auditor that never
 // saw the broadcaster's rejection reaches Invalid by reading the chain, not by being told.
@@ -414,8 +416,8 @@ func (n settledNetwork) condemnedByConflict(ctx context.Context, namespace, txID
 	}
 
 	anySpent := false
-	for _, s := range spent {
-		if s {
+	for i, s := range spent {
+		if s && n.created(ctx, namespace, inputs[i]) {
 			anySpent = true
 
 			break
@@ -454,6 +456,16 @@ func (n settledNetwork) condemnedByConflict(ctx context.Context, namespace, txID
 	}
 
 	return true, false, "transaction inputs were already spent by another transaction; it can never be applied"
+}
+
+// created reports whether the transaction that created id has been applied. AreTokensSpent reads a
+// token that is not stored as spent, which is also what a token whose creating transaction has not
+// landed yet looks like, so only an applied creator turns "not stored" into evidence. A failed read
+// answers false, leaving the verdict to the next sweep.
+func (n settledNetwork) created(ctx context.Context, namespace string, id *token.ID) bool {
+	status, _, _, err := n.spent.GetTransactionStatus(ctx, namespace, id.TxId)
+
+	return err == nil && status == driver.Valid
 }
 
 // candidateInputs returns the input token ids of txID worth checking for a conflict, and whether there

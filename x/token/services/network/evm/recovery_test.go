@@ -331,6 +331,18 @@ func TestSettledNetworkCondemnsASpentInput(t *testing.T) {
 		assert.Equal(t, driver.Unknown, status)
 	})
 
+	t.Run("a missing input whose creator has not applied is no evidence", func(t *testing.T) {
+		n, txID := build(t, timeout/2, transferRequest(inputID), []bool{true}, nil)
+		n.spent = &fakeSpentReader{spent: []bool{true}, creatorPending: true}
+
+		status, _, _, err := n.GetTransactionStatus(t.Context(), "token", txID)
+		require.NoError(t, err)
+		assert.Equal(t, driver.Unknown, status)
+		n.conflicts.mu.Lock()
+		assert.True(t, n.conflicts.entries[txID].firstSeen.IsZero(), "a token that was never stored must not start the clock")
+		n.conflicts.mu.Unlock()
+	})
+
 	t.Run("a conflict that goes away resets the grace window", func(t *testing.T) {
 		n, txID := build(t, 2*timeout, transferRequest(inputID), []bool{true}, nil)
 
@@ -625,6 +637,10 @@ func (r *concurrentSpentReader) AreTokensSpent(
 	return r.spent, nil
 }
 
+func (r *concurrentSpentReader) GetTransactionStatus(_ context.Context, _, _ string) (int, []byte, string, error) {
+	return driver.Valid, nil, "", nil
+}
+
 // fakeParser is a tokenRequestParser returning a fixed request, or an error, and counting calls.
 type fakeParser struct {
 	request *token2.Request
@@ -639,10 +655,20 @@ func (f *fakeParser) ProcessTokenRequest(_ context.Context, _ []byte) (*token2.R
 }
 
 // fakeSpentReader is a spentReader returning a fixed spent slice, or an error, and counting calls.
+// Every input's creating transaction reads as applied unless creatorPending is set.
 type fakeSpentReader struct {
-	spent []bool
-	err   error
-	calls int
+	spent          []bool
+	err            error
+	calls          int
+	creatorPending bool
+}
+
+func (f *fakeSpentReader) GetTransactionStatus(_ context.Context, _, _ string) (int, []byte, string, error) {
+	if f.creatorPending {
+		return driver.Unknown, nil, "", nil
+	}
+
+	return driver.Valid, nil, "", nil
 }
 
 func (f *fakeSpentReader) AreTokensSpent(

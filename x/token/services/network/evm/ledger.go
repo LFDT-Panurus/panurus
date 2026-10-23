@@ -63,8 +63,7 @@ func (r *contractReader) tokenData(ctx context.Context, id *token.ID) ([]byte, e
 // spent reports, for each token id, whether it has been spent. It calls the contract's batch method
 // so a wallet checking many tokens costs one round trip.
 //
-// The contract resolves spent status through the content-bound marker recorded when the output was
-// created, so the caller does not need the token's bytes, only its id.
+// The contract deletes a token when it is spent, so it answers by whether the token is still stored.
 func (r *contractReader) spent(ctx context.Context, ids []*token.ID) ([]bool, error) {
 	tokenIDs := make([][32]byte, len(ids))
 	for i, id := range ids {

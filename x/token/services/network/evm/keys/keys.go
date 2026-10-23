@@ -50,7 +50,7 @@ func ComputeTokenID(anchor [AnchorLength]byte, index uint64) [32]byte {
 // the exact token content; otherwise a spender could present different bytes at a real (anchor,
 // index). The marker is recorded when the output is created and referenced by a graph-revealing
 // spend, so a forged token yields a marker that was never recorded and the spend is rejected. The
-// contract treats it as an opaque bytes32 (existence check only, no derivation).
+// contract treats it as an opaque bytes32 (a lookup key for the token to delete, no derivation).
 func OutputSNMarker(anchor [AnchorLength]byte, index uint64, tokenData []byte) [32]byte {
 	contentHash := crypto.Keccak256(tokenData)
 	var buf [96]byte

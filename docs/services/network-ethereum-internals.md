@@ -172,13 +172,15 @@ actions, not the raw token request — the same action objects the Fabric RWSet 
 Fabric's own translator uses opposite polarities for the two modes it supports, and the EVM contract
 inherits both:
 
-- **Graph-revealing** (`fabtoken`, `zkatdlog/nogh`): an output is recorded at creation under both its token
-  ID and its content-bound marker (`OutputSNMarker`). A spend must reference a marker that **exists** and is
-  **unspent** (`snExists[ref] && !snSpent[ref]`); spending sets `snSpent[ref] = true`. Spent is presence-then-flag.
+- **Graph-revealing** (`fabtoken`, `zkatdlog/nogh`): an output is stored under its token ID, and its
+  content-bound marker (`OutputSNMarker`) is recorded as pointing at that ID. A spend must reference a
+  marker that **exists** (`markerToken[ref] != 0`); spending deletes both the marker and the token, as
+  Fabric deletes a spent output. Spent is absence: `isSpent`/`areTokensSpent` report a token that is not
+  stored as spent, including one that was never created, and `getToken` returns empty for it.
 - **Graph-hiding**: a spend reference is a serial number that must **not** already exist
   (`!serialUsed[ref]`); spending writes it (`serialUsed[ref] = true`). Spent is presence, full stop — there is
   no separate existence check because a graph-hiding driver never records an output's serial number at
-  creation.
+  creation. Tokens are never deleted, since a serial number does not say which token it spends.
 
 Because each `TokenState` clone serves exactly one token driver, the mode is fixed for the life of the
 contract (the `graphHiding` flag, set at `initialize` from the public parameters) and `StateDelta` carries a

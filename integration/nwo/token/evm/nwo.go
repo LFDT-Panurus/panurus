@@ -25,6 +25,9 @@ import (
 	zkatdlognoghv1 "github.com/LFDT-Panurus/panurus/integration/nwo/token/generators/crypto/zkatdlognoghv1"
 	topology2 "github.com/LFDT-Panurus/panurus/integration/nwo/token/topology"
 	token2 "github.com/LFDT-Panurus/panurus/token"
+	fabtokendriver "github.com/LFDT-Panurus/panurus/token/core/fabtoken/v1/driver"
+	dlogdriver "github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/driver"
+	"github.com/LFDT-Panurus/panurus/token/driver"
 	evmdriver "github.com/LFDT-Panurus/panurus/x/token/services/network/evm"
 	evmclient "github.com/LFDT-Panurus/panurus/x/token/services/network/evm/client"
 	evmnwo "github.com/LFDT-Panurus/panurus/x/token/services/network/evm/nwo"
@@ -188,7 +191,7 @@ func (p *NetworkHandler) GenerateArtifacts(tms *topology2.TMS) {
 		},
 		Endorsers:    addresses,
 		Threshold:    entry.Threshold,
-		GraphHiding:  graphHidingFor(tms),
+		GraphHiding:  graphHidingFor(tms, p.TokenPlatform.PublicParameters(tms)),
 		PublicParams: p.TokenPlatform.PublicParameters(tms),
 	})
 	gomega.Expect(err).NotTo(gomega.HaveOccurred(), "failed to deploy the contracts for [%s]", tms.TmsID())
@@ -243,21 +246,27 @@ func (p *NetworkHandler) fundSubmitters(tms *topology2.TMS, entry *Entry, keyDir
 	}
 }
 
-// graphHidingFor returns the spend semantics TokenState must be deployed with for this TMS: they have to
-// agree with the graphHiding its token driver's public parameters declare, and each TMS is judged on its
-// own so networks served by one handler can differ. Every driver this handler registers a crypto
-// material generator for (see NewNetworkHandler) is non graph-hiding; a driver added there that hides
-// the graph must be added here, and an unknown one fails loudly rather than deploying the wrong mode
-// (which would surface only as every spend reverting with InputMissingOrSpent).
-func graphHidingFor(tms *topology2.TMS) bool {
+// graphHidingFor returns the spend semantics TokenState must be deployed with for this TMS, read from
+// the public parameters it is deployed with, so the two cannot disagree. Each TMS is judged on its own
+// so networks served by one handler can differ. A driver this handler cannot parse parameters for
+// fails loudly rather than deploying the wrong mode (which would surface only as every spend reverting
+// with InputMissingOrSpent).
+func graphHidingFor(tms *topology2.TMS, ppRaw []byte) bool {
+	var reader driver.PPReader
 	switch tms.Driver {
-	case fabtokenv1.DriverIdentifier, zkatdlognoghv1.DriverIdentifier:
-		return false
+	case fabtokenv1.DriverIdentifier:
+		reader = fabtokendriver.PublicParametersDeserializer{}
+	case zkatdlognoghv1.DriverIdentifier:
+		reader = dlogdriver.PublicParametersDeserializer{}
 	default:
 		gomega.Expect(false).To(gomega.BeTrue(), "unknown token driver [%s] for [%s]: cannot derive graphHiding", tms.Driver, tms.TmsID())
 
 		return false
 	}
+	pp, err := reader.PublicParametersFromBytes(ppRaw)
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), "failed to parse the public parameters of [%s]", tms.TmsID())
+
+	return pp.GraphHiding()
 }
 
 // networkKey identifies the chain a TMS settles on. GetEntry records it on the Entry and startNode

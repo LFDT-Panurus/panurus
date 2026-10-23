@@ -42,7 +42,7 @@ token:
               fromBlock: {{ FromBlock }}
             gas:
               strategy: estimate
-              multiplier: 1.2
+              multiplier: 1.5
             {{ if IsEndorser }}
             endorser:
               enabled: true

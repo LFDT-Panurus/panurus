@@ -86,9 +86,11 @@ extra contract deployment, so there is no reason to run without it.
 
 Record the `TokenState clone` address from the output. That is the TMS's contract.
 
-`graphHiding` is fixed for the life of the clone and must match the token driver: graph-revealing
-drivers (fabtoken, zkatdlog) spend content-bound markers, graph-hiding drivers spend serial numbers.
-A mismatch is not detected at deploy time - it surfaces as every spend failing.
+`graphHiding` is fixed for the life of the clone and must match `GraphHiding()` of the public
+parameters you deploy with: graph-revealing drivers (fabtoken, zkatdlog) spend content-bound markers
+and delete the spent token, graph-hiding drivers spend serial numbers and never delete. A mismatch is
+not detected at deploy time - it surfaces as every spend failing. The integration NWO reads the flag
+from the public parameters for you.
 
 ## Step 3 - Configure the nodes
 

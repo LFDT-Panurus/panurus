@@ -122,7 +122,7 @@ contract TokenStateTest is Test {
         assertEq(ts.getTokenRequestHash(anchor), d.tokenRequestHash);
     }
 
-    function test_Spend_MarksInputSpent() public {
+    function test_Spend_DeletesInput() public {
         bytes32 a1 = keccak256("issue-1");
         StateDelta memory issue = _issue(a1, "tok-A");
         ts.applyStateDelta(issue, _sign(issue));
@@ -131,9 +131,15 @@ contract TokenStateTest is Test {
         StateDelta memory spend = _spend(a2, _marker(a1, 0, "tok-A"), "tok-B");
         assertTrue(ts.applyStateDelta(spend, _sign(spend)));
 
-        // the originally-issued token is now spent (resolved via its content-bound marker)
+        // the originally-issued token is deleted, as on Fabric, and so reads as spent
+        assertEq(ts.getToken(_tokenID(a1, 0)), bytes(""));
         assertTrue(ts.isSpent(_tokenID(a1, 0)));
         assertEq(ts.getToken(_tokenID(a2, 0)), bytes("tok-B"));
+    }
+
+    function test_IsSpent_UnknownTokenIsSpent() public view {
+        // absent means spent, the same answer Fabric gives for a key that does not exist
+        assertTrue(ts.isSpent(keccak256("never-created")));
     }
 
     // --- security: double spend / forged content / tamper ------------------------------------------
@@ -342,6 +348,27 @@ contract TokenStateTest is Test {
         d2.publicParamsVersion = 0;
         vm.expectPartialRevert(TokenState.DoubleSpend.selector);
         gh.applyStateDelta(d2, _signFor(gh, d2));
+    }
+
+    function test_GraphHiding_NeverDeletesTokens() public {
+        TokenState gh = TokenState(Clones.clone(address(impl)));
+        gh.initialize(address(verifier), address(this), pp0, true);
+
+        bytes32 a1 = keccak256("gh-issue");
+        StateDelta memory issue = _issue(a1, "tok-A");
+        gh.applyStateDelta(issue, _signFor(gh, issue));
+
+        // a serial cannot be linked to the token it spends, so the token stays stored
+        StateDelta memory d;
+        d.anchor = keccak256("gh-spend");
+        d.spentRefs = new bytes32[](1);
+        d.spentRefs[0] = keccak256("serial-1");
+        d.tokenRequestHash = keccak256("req");
+        d.publicParamsHash = sha256(pp0);
+        d.publicParamsVersion = 0;
+        gh.applyStateDelta(d, _signFor(gh, d));
+
+        assertEq(gh.getToken(_tokenID(a1, 0)), bytes("tok-A"));
     }
 
     function test_GraphHiding_IsSpentQueriesRevert() public {

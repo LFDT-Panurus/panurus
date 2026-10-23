@@ -527,9 +527,9 @@ func (n *Network) FetchPublicParameters(namespace string) ([]byte, error) {
 	return binding.latest.publicParameters(context.Background())
 }
 
-// QueryTokens reads the stored bytes of the given tokens through namespace's own TokenState contract.
-// A token that does not exist on chain is an error rather than an empty entry, because the caller
-// asked for tokens it believes exist and a silent gap would read as a valid empty token.
+// QueryTokens reads the stored bytes of the given tokens through namespace's own TokenState contract,
+// aligned with the input. A token that is not stored, because it was never created or has been spent,
+// gets a nil entry, the same convention as the Fabric backend.
 func (n *Network) QueryTokens(ctx context.Context, namespace string, ids []*token.ID) ([][]byte, error) {
 	binding, err := n.binding(namespace)
 	if err != nil {
@@ -542,18 +542,18 @@ func (n *Network) QueryTokens(ctx context.Context, namespace string, ids []*toke
 		if err != nil {
 			return nil, err
 		}
-		if len(data) == 0 {
-			return nil, errors.Errorf("token [%s:%d] does not exist", id.TxId, id.Index)
+		if len(data) != 0 {
+			out[i] = data
 		}
-		out[i] = data
 	}
 
 	return out, nil
 }
 
 // AreTokensSpent checks the spent status of the given tokens against namespace's own TokenState
-// contract, aligned with the input. It resolves through the content-bound marker recorded at
-// creation, so only the ids are needed.
+// contract, aligned with the input. As on Fabric, a token that is not stored counts as spent, which
+// includes one that was never created. It fails under graph hiding, where spent tokens are not
+// deleted and the contract cannot answer.
 func (n *Network) AreTokensSpent(
 	ctx context.Context,
 	namespace string,

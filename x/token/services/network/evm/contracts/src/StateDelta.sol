@@ -13,8 +13,9 @@ struct OutputToken {
     /// @dev keccak256(abi.encode(anchor, index)); addressable storage key used by queries.
     bytes32 tokenID;
     /// @dev keccak256(abi.encode(anchor, index, keccak256(tokenData))); recorded at creation and
-    ///      referenced by a graph-revealing spend, so a spender cannot substitute different bytes at the
-    ///      same (anchor, index). Zero for graph-hiding drivers (which spend by serial number).
+    ///      referenced by a graph-revealing spend, which deletes the token, so a spender cannot
+    ///      substitute different bytes at the same (anchor, index). Zero for graph-hiding drivers (which
+    ///      spend by serial number).
     bytes32 snMarker;
     /// @dev the serialized token as produced by the token driver action.
     bytes tokenData;
@@ -28,8 +29,8 @@ struct StateDelta {
     /// @dev token-request anchor, SHA-256(nonce||creator); NOT the Ethereum tx hash.
     bytes32 anchor;
     /// @dev consumed references. Graph-revealing: content-bound output markers (`OutputToken.snMarker`)
-    ///      that must exist and get marked spent. Graph-hiding: serial numbers that must not exist and
-    ///      get recorded.
+    ///      that must exist; the token they were recorded for is deleted. Graph-hiding: serial numbers
+    ///      that must not exist and get recorded.
     bytes32[] spentRefs;
     /// @dev newly created (non-redeem) tokens, in deterministic counter order.
     OutputToken[] outputs;

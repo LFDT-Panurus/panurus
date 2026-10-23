@@ -284,6 +284,9 @@ func TestEndToEndAgainstAnvil(t *testing.T) {
 	spent, err = n.AreTokensSpent(t.Context(), "token", []*token.ID{issuedID}, nil)
 	require.NoError(t, err)
 	assert.Equal(t, []bool{true}, spent, "the transferred input must be marked spent")
+	spentData, err := n.QueryTokens(t.Context(), "token", []*token.ID{issuedID})
+	require.NoError(t, err)
+	assert.Nil(t, spentData[0], "a spent token is deleted, as on Fabric")
 
 	bobsToken, err := n.QueryTokens(t.Context(), "token", []*token.ID{{TxId: spendAnchorID, Index: 0}})
 	require.NoError(t, err)
@@ -1032,8 +1035,9 @@ func TestMinedButRevertedAgainstAnvil(t *testing.T) {
 	assert.NotEqual(t, driver.Valid, code,
 		"a reverted apply wrote nothing: reporting it as valid would credit tokens the chain does not have")
 
-	_, err = n.QueryTokens(t.Context(), "token", []*token.ID{{TxId: anchorID, Index: 0}})
-	assert.Error(t, err, "the output of a reverted apply must not be readable")
+	stored, err := n.QueryTokens(t.Context(), "token", []*token.ID{{TxId: anchorID, Index: 0}})
+	require.NoError(t, err)
+	assert.Nil(t, stored[0], "the output of a reverted apply must not be readable")
 }
 
 // TestDigestAgreesWithTheContractAgainstAnvil is a differential test of the two EIP-712

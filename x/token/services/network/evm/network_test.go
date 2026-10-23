@@ -444,14 +444,18 @@ func TestQueryTokens(t *testing.T) {
 		assert.Equal(t, []byte("token-bytes"), out[0])
 	})
 
-	t.Run("a missing token is an error, not an empty entry", func(t *testing.T) {
+	t.Run("a missing token is a nil entry", func(t *testing.T) {
 		evm := &mock.EVMClient{}
-		evm.CallReturns(abiBytes(nil), nil)
+		evm.CallReturnsOnCall(0, abiBytes(nil), nil)
+		evm.CallReturnsOnCall(1, abiBytes([]byte("x")), nil)
 		n := testNetwork(t, evm, nil)
 
-		_, err := n.QueryTokens(t.Context(), "token", []*token.ID{{TxId: anchorHex(0x01), Index: 0}})
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "does not exist")
+		out, err := n.QueryTokens(t.Context(), "token", []*token.ID{
+			{TxId: anchorHex(0x01), Index: 0},
+			{TxId: anchorHex(0x02), Index: 0},
+		})
+		require.NoError(t, err)
+		assert.Equal(t, [][]byte{nil, []byte("x")}, out)
 	})
 
 	t.Run("the call targets the token's addressable id", func(t *testing.T) {

@@ -51,7 +51,8 @@ type StateDelta struct {
 	Anchor [32]byte
 
 	// SpentRefs is the single list of consumed references. Graph-revealing: content-bound output
-	// markers (keys.OutputSNMarker) that must have been recorded at creation and get marked spent;
+	// markers (keys.OutputSNMarker) that must have been recorded at creation; the contract deletes
+	// the token each one was recorded for;
 	// binding the content prevents spending forged bytes at a real (anchor, index). Graph-hiding:
 	// serial numbers (keys.SpentRefForSerial) that must not already exist and get recorded.
 	SpentRefs [][32]byte
