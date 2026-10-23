@@ -31,7 +31,14 @@ type LockerProvider interface {
 }
 
 type SelectorService struct {
-	managerLazyCache lazy.Provider[*token.ManagementService, token.SelectorManager]
+	managerLazyCache lazy.Provider[*token.ManagementService, *managerEntry]
+}
+
+// managerEntry is the cached manager of one TMS: the manager itself, and what the service hands
+// out for it, which is the manager decorated by the rate limiter when one is configured.
+type managerEntry struct {
+	manager  *Manager
+	selector token.SelectorManager
 }
 
 // NewService returns a SelectorService for the simple driver.
@@ -66,7 +73,17 @@ func (s *SelectorService) SelectorManager(tms *token.ManagementService) (token.S
 		return nil, errors.Errorf("invalid tms, nil reference")
 	}
 
-	return s.managerLazyCache.Get(tms)
+	entry, err := s.managerLazyCache.Get(tms)
+	if err != nil {
+		return nil, err
+	}
+	// The cache is keyed by TMS, so after a public parameters update the TMS gets back the
+	// manager built for the previous parameters. Keep its precision in line with the current ones.
+	if pp := tms.PublicParameters(); pp != nil {
+		entry.manager.SetPrecision(pp.Precision())
+	}
+
+	return entry.selector, nil
 }
 
 type Cache interface {
@@ -101,7 +118,7 @@ type loader struct {
 	limiter ratelimit.Limiter
 }
 
-func (s *loader) load(tms *token.ManagementService) (token.SelectorManager, error) {
+func (s *loader) load(tms *token.ManagementService) (*managerEntry, error) {
 	logger.Debugf("new in-memory locker for [%s:%s:%s]", tms.Network(), tms.Channel(), tms.Namespace())
 
 	locker, err := s.lockerProvider.New(tms.Network(), tms.Channel(), tms.Namespace())
@@ -119,7 +136,7 @@ func (s *loader) load(tms *token.ManagementService) (token.SelectorManager, erro
 // newManager builds the manager for one TMS and, when rate limiting is enabled, wraps it so that
 // every selection request is metered against the allowance of the wallet it selects for. scope is
 // the TMS id, which keeps the allowances of one network or namespace separate from the others.
-func (s *loader) newManager(locker Locker, qs QueryService, precision uint64, scope string) token.SelectorManager {
+func (s *loader) newManager(locker Locker, qs QueryService, precision uint64, scope string) *managerEntry {
 	mgr := NewManager(
 		locker,
 		func() QueryService { return qs },
@@ -130,7 +147,7 @@ func (s *loader) newManager(locker Locker, qs QueryService, precision uint64, sc
 	)
 
 	// Decorate returns mgr unchanged when no limiter is configured, which is the default.
-	return ratelimit.Decorate(mgr, s.limiter, scope)
+	return &managerEntry{manager: mgr, selector: ratelimit.Decorate(mgr, s.limiter, scope)}
 }
 
 func key(tms *token.ManagementService) string {

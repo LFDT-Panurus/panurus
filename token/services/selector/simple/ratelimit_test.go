@@ -85,7 +85,7 @@ func TestLoaderRateLimiting(t *testing.T) {
 				limiter:              ratelimit.CompileOptions(tt.opts...).Limiter(&disabledRateLimitConfig{}),
 			}
 
-			mgr := l.newManager(locker, qs, precision, "n1,c1,ns1")
+			mgr := l.newManager(locker, qs, precision, "n1,c1,ns1").selector
 			_, plain := mgr.(*Manager)
 			assert.Equal(t, tt.decorated, !plain, "manager decorated: %t", !plain)
 		})

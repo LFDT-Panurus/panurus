@@ -9,6 +9,7 @@ package sherdlock
 import (
 	"context"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/LFDT-Panurus/panurus/token"
@@ -27,6 +28,7 @@ var ErrTimeout = errors.New("timeout occurred")
 
 type Manager struct {
 	selectorCache          lazy2.Provider[transaction.ID, TokenSelectorUnlocker]
+	precision              atomic.Uint64
 	locker                 Locker
 	leaseExpiry            time.Duration
 	leaseCleanupTickPeriod time.Duration
@@ -54,10 +56,11 @@ func NewManager(
 		metrics:                m,
 		cancel:                 cancel,
 		cleanerDone:            make(chan struct{}),
-		selectorCache: lazy2.NewProvider(func(txID transaction.ID) (TokenSelectorUnlocker, error) {
-			return NewSherdSelector(txID, fetcher, locker, precision, backoff, maxRetriesAfterBackOff, m), nil
-		}),
 	}
+	mgr.precision.Store(precision)
+	mgr.selectorCache = lazy2.NewProvider(func(txID transaction.ID) (TokenSelectorUnlocker, error) {
+		return NewSherdSelector(txID, fetcher, locker, mgr.precision.Load(), backoff, maxRetriesAfterBackOff, m), nil
+	})
 	if leaseCleanupTickPeriod > 0 && leaseExpiry > 0 {
 		go mgr.cleaner(ctx)
 	} else {
@@ -66,6 +69,13 @@ func NewManager(
 	}
 
 	return mgr
+}
+
+// SetPrecision sets the precision of the selectors this manager creates from now on.
+// The selector service calls it when the public parameters of the TMS change.
+// Selectors that already exist keep the precision they were created with.
+func (m *Manager) SetPrecision(precision uint64) {
+	m.precision.Store(precision)
 }
 
 func (m *Manager) NewSelector(id transaction.ID) (token.Selector, error) {

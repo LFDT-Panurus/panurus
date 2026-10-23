@@ -19,7 +19,14 @@ import (
 )
 
 type SelectorService struct {
-	managerLazyCache lazy2.Provider[*token.ManagementService, token.SelectorManager]
+	managerLazyCache lazy2.Provider[*token.ManagementService, *managerEntry]
+}
+
+// managerEntry is the cached manager of one TMS: the manager itself, and what the service hands
+// out for it, which is the manager decorated by the rate limiter when one is configured.
+type managerEntry struct {
+	manager  *Manager
+	selector token.SelectorManager
 }
 
 // NewService returns a SelectorService for the sherdlock driver.
@@ -63,7 +70,17 @@ func (s *SelectorService) SelectorManager(tms *token.ManagementService) (token.S
 		return nil, errors.Errorf("invalid tms, nil reference")
 	}
 
-	return s.managerLazyCache.Get(tms)
+	entry, err := s.managerLazyCache.Get(tms)
+	if err != nil {
+		return nil, err
+	}
+	// The cache is keyed by TMS id, so after a public parameters update the TMS gets back the
+	// manager built for the previous parameters. Keep its precision in line with the current ones.
+	if pp := tms.PublicParameters(); pp != nil {
+		entry.manager.SetPrecision(pp.Precision())
+	}
+
+	return entry.selector, nil
 }
 
 type loader struct {
@@ -79,11 +96,11 @@ type loader struct {
 	limiter ratelimit.Limiter
 }
 
-func (s *loader) load(tms *token.ManagementService) (token.SelectorManager, error) {
+func (s *loader) load(tms *token.ManagementService) (*managerEntry, error) {
 	return s.loadTMS(tms)
 }
 
-func (s *loader) loadTMS(tms TMS) (token.SelectorManager, error) {
+func (s *loader) loadTMS(tms TMS) (*managerEntry, error) {
 	pp := tms.PublicParameters()
 	if pp == nil {
 		return nil, errors.Errorf("public parameters not set yet for TMS [%s]", tms.ID())
@@ -108,7 +125,7 @@ func (s *loader) loadTMS(tms TMS) (token.SelectorManager, error) {
 		s.metrics,
 	)
 	// Decorate returns mgr unchanged when no limiter is configured.
-	return ratelimit.Decorate(mgr, s.limiter, tms.ID().String()), nil
+	return &managerEntry{manager: mgr, selector: ratelimit.Decorate(mgr, s.limiter, tms.ID().String())}, nil
 }
 
 func key(tms *token.ManagementService) string {
