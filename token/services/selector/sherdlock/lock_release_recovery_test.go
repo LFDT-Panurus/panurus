@@ -275,7 +275,9 @@ func TestMixedFetcher_RecoversWhenItsStaleSnapshotIsNotEmpty(t *testing.T) {
 	require.NoError(t, err,
 		"the dust alone cannot cover the request, but the released token can, and a non-empty stale "+
 			"snapshot must not hide it")
-	assert.Equal(t, []token2.ID{dust.Id, contended.Id}, idSet(ids),
+	// Select returns its selection from a set, in no particular order, so compare the
+	// elements rather than the order they were locked in.
+	assert.ElementsMatch(t, []token2.ID{dust.Id, contended.Id}, idSet(ids),
 		"the dust was locked first and stays selected; the released token is what completes the request")
 	assert.Equal(t, "110", sum.Decimal())
 	assert.Positive(t, invalidations.Total(),
