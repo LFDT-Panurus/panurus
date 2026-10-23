@@ -2,10 +2,10 @@
 
 ## `panurus.json` — Panurus Overview
 
-A single overview dashboard covering every metric Panurus exports: 20 panels across 9 rows, one row per
+A single overview dashboard covering every metric Panurus exports: 23 panels across 10 rows, one row per
 subsystem (driver services, transaction lifecycle, finality listener, envelope sessions, auditor, token
 selection, certification and identity caches, signer resolution and cache provisioning, Fabric-X finality
-queue).
+queue, storage connection pool).
 
 ### Import
 

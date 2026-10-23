@@ -72,3 +72,7 @@ panurus_services_utils_json_session_ttx_envelope_body_bytes | histogram | type |
 panurus_services_utils_json_session_ttx_envelope_errors_total | counter | error | token/services/utils/json/session/metrics.go | Total number of envelope validation errors
 panurus_services_utils_json_session_ttx_envelope_received_total | counter | version,type | token/services/utils/json/session/metrics.go | Total number of versioned envelopes received
 panurus_services_utils_json_session_ttx_envelope_sent_total | counter | version,type | token/services/utils/json/session/metrics.go | Total number of versioned envelopes sent
+panurus_storage_db_pool_in_use | gauge | pool | token/services/storage/db/sql/dbpool/metrics.go | Number of connections currently checked out of the pool
+panurus_storage_db_pool_max_open | gauge | pool | token/services/storage/db/sql/dbpool/metrics.go | Configured maximum number of open connections for the pool
+panurus_storage_db_pool_wait_count_total | counter | pool | token/services/storage/db/sql/dbpool/metrics.go | Total number of connection checkouts that had to wait because the pool was at its connection limit
+panurus_storage_db_pool_wait_seconds_total | counter | pool | token/services/storage/db/sql/dbpool/metrics.go | Total time, in seconds, callers spent waiting for a connection to become available

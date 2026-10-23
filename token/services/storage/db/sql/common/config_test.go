@@ -8,6 +8,7 @@ package common_test
 
 import (
 	"testing"
+	"time"
 
 	common "github.com/LFDT-Panurus/panurus/token/services/storage/db/sql/common"
 	"github.com/stretchr/testify/assert"
@@ -146,4 +147,90 @@ func TestLoadStorageConfigInvalidLockStrategyPreservesOtherFields(t *testing.T) 
 	assert.Equal(t, "my_tokens", result.TableNames["tokens"], "TableNames must survive an unrelated lockStrategy typo")
 	assert.True(t, result.SkipPrefix, "SkipPrefix must survive an unrelated lockStrategy typo")
 	assert.Equal(t, common.LockStrategyInsert, result.LockStrategy, "LockStrategy must fall back to the default, not the invalid raw value")
+}
+
+// TestLoadStorageConfigPoolMetricsIntervalDefault checks that PoolMetricsInterval defaults to
+// common.DefaultPoolMetricsInterval when the key is absent from the config.
+func TestLoadStorageConfigPoolMetricsIntervalDefault(t *testing.T) {
+	cfg := &mockConfig{isSet: false}
+	result, err := common.LoadStorageConfig(cfg)
+	require.NoError(t, err)
+	assert.Equal(t, common.DefaultPoolMetricsInterval, result.PoolMetricsInterval)
+}
+
+// TestLoadStorageConfigPoolMetricsIntervalExplicit checks that an explicit value is parsed.
+func TestLoadStorageConfigPoolMetricsIntervalExplicit(t *testing.T) {
+	cfg := &mockConfig{
+		isSet: true,
+		unmarshal: func(key string, rawVal any) error {
+			if key == common.ConfigKeyPoolMetricsInterval {
+				*rawVal.(*string) = "5s"
+			}
+
+			return nil
+		},
+	}
+	result, err := common.LoadStorageConfig(cfg)
+	require.NoError(t, err)
+	assert.Equal(t, 5*time.Second, result.PoolMetricsInterval)
+}
+
+// TestLoadStorageConfigPoolMetricsIntervalZeroDisables checks that 0 is accepted and preserved
+// (the sampler treats it as "disabled", not as "unset").
+func TestLoadStorageConfigPoolMetricsIntervalZeroDisables(t *testing.T) {
+	cfg := &mockConfig{
+		isSet: true,
+		unmarshal: func(key string, rawVal any) error {
+			if key == common.ConfigKeyPoolMetricsInterval {
+				*rawVal.(*string) = "0"
+			}
+
+			return nil
+		},
+	}
+	result, err := common.LoadStorageConfig(cfg)
+	require.NoError(t, err)
+	assert.Zero(t, result.PoolMetricsInterval)
+}
+
+// TestLoadStorageConfigPoolMetricsIntervalMalformedPreservesOtherFields checks that a malformed
+// duration is rejected but, per LoadStorageConfig's documented contract, does not discard the
+// other options already parsed successfully.
+func TestLoadStorageConfigPoolMetricsIntervalMalformedPreservesOtherFields(t *testing.T) {
+	cfg := &mockConfig{
+		isSet: true,
+		unmarshal: func(key string, rawVal any) error {
+			switch key {
+			case common.ConfigKeySkipPrefix:
+				*rawVal.(*bool) = true
+			case common.ConfigKeyPoolMetricsInterval:
+				*rawVal.(*string) = "not-a-duration"
+			}
+
+			return nil
+		},
+	}
+
+	result, err := common.LoadStorageConfig(cfg)
+	require.Error(t, err, "expected a malformed poolMetricsInterval to be rejected")
+	assert.True(t, result.SkipPrefix, "SkipPrefix must survive an unrelated poolMetricsInterval typo")
+	assert.Equal(t, common.DefaultPoolMetricsInterval, result.PoolMetricsInterval, "PoolMetricsInterval must fall back to the default, not the invalid raw value")
+}
+
+// TestLoadStorageConfigPoolMetricsIntervalNegativeRejected checks that a negative duration is
+// rejected rather than silently disabling the sampler the way 0 does.
+func TestLoadStorageConfigPoolMetricsIntervalNegativeRejected(t *testing.T) {
+	cfg := &mockConfig{
+		isSet: true,
+		unmarshal: func(key string, rawVal any) error {
+			if key == common.ConfigKeyPoolMetricsInterval {
+				*rawVal.(*string) = "-1s"
+			}
+
+			return nil
+		},
+	}
+	result, err := common.LoadStorageConfig(cfg)
+	require.Error(t, err)
+	assert.Equal(t, common.DefaultPoolMetricsInterval, result.PoolMetricsInterval)
 }

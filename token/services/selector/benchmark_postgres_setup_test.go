@@ -365,7 +365,8 @@ func newPgReplica(tb testing.TB, dsn string, cfg pgConfig) *pgReplica {
 	require.NoError(tb, err)
 	cws := tms.NewConfigServiceWrapper(ftsconfig.NewService(fp))
 
-	named := pgstore.NewNamedDriver(fp, fscpostgres.NewDbProvider())
+	// Pool-metrics sampler wiring is left to a follow-up (#2508 PR B); pass nil for now.
+	named := pgstore.NewNamedDriver(fp, fscpostgres.NewDbProvider(), nil)
 	mux := multiplexed.NewDriver(fp, named)
 	tokenSSM := tokendb.NewStoreServiceManager(cws, mux)
 	ttxSSM := ttxdb.NewStoreServiceManager(cws, mux)

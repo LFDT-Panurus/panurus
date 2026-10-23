@@ -35,6 +35,7 @@ import (
 	"github.com/LFDT-Panurus/panurus/token/services/observability"
 	"github.com/LFDT-Panurus/panurus/token/services/selector/ratelimit"
 	"github.com/LFDT-Panurus/panurus/token/services/selector/sherdlock"
+	"github.com/LFDT-Panurus/panurus/token/services/storage/db/sql/dbpool"
 	"github.com/LFDT-Panurus/panurus/token/services/storage/services/checks"
 	"github.com/LFDT-Panurus/panurus/token/services/ttx"
 	ttxfinality "github.com/LFDT-Panurus/panurus/token/services/ttx/finality"
@@ -334,6 +335,15 @@ var groups = []group{
 			{file: "token/services/network/fabricx/finality/queue/queue.go", call: "newMetrics(cfg.MetricsProvider)"},
 		},
 		build: func(p metrics.Provider) { fabricxqueue.NewMetrics(p) },
+	},
+	{
+		subsystem: "Storage connection pool",
+		source:    "token/services/storage/db/sql/dbpool/metrics.go",
+		scope:     direct,
+		wiring: []wiringSite{
+			{file: "token/sdk/dig/sdk.go", call: "p.Container().Provide(dbpool.NewSampler)"},
+		},
+		build: func(p metrics.Provider) { dbpool.NewMetrics(p) },
 	},
 }
 

@@ -37,6 +37,7 @@ import (
 	auditdblocker "github.com/LFDT-Panurus/panurus/token/services/storage/auditdb/locker"
 	db2 "github.com/LFDT-Panurus/panurus/token/services/storage/db"
 	common2 "github.com/LFDT-Panurus/panurus/token/services/storage/db/common"
+	"github.com/LFDT-Panurus/panurus/token/services/storage/db/sql/dbpool"
 	"github.com/LFDT-Panurus/panurus/token/services/storage/db/sql/memory"
 	"github.com/LFDT-Panurus/panurus/token/services/storage/db/sql/postgres"
 	"github.com/LFDT-Panurus/panurus/token/services/storage/db/sql/sqlite"
@@ -202,6 +203,7 @@ func (p *SDK) Install() error {
 		p.Container().Provide(digutils.Identity[*tokens.ServiceManager](), dig.As(new(auditor.TokensServiceManager))),
 		p.Container().Provide(vault.NewVaultProvider),
 		p.Container().Provide(digutils.Identity[*vault.Provider](), dig.As(new(token.VaultProvider))),
+		p.Container().Provide(dbpool.NewSampler),
 		p.Container().Provide(sqlite.NewNamedDriver, dig.Group("token-db-drivers")),
 		p.Container().Provide(postgres.NewNamedDriver, dig.Group("token-db-drivers")),
 		p.Container().Provide(memory.NewNamedDriver, dig.Group("token-db-drivers")),
@@ -311,6 +313,7 @@ func (p *SDK) Start(ctx context.Context) error {
 	if err := errors2.Join(
 		p.Container().Invoke(registerNetworkDrivers),
 		p.Container().Invoke(connectNetworks),
+		p.Container().Invoke(func(s *dbpool.Sampler) error { return s.Start() }),
 	); err != nil {
 		logger.Errorf("Token platform enabled, starting...failed with error [%s]", err)
 
@@ -323,11 +326,13 @@ func (p *SDK) Start(ctx context.Context) error {
 
 // Stop stops the token platform services, including the background ledger
 // drift checks sweeps started as a side effect of building each TMS's check
-// service in Start, before stopping the underlying SDK.
+// service in Start, and the connection-pool metrics sampler, before stopping
+// the underlying SDK.
 //
 // Without this, a running sweep - and on Postgres its dedicated advisory-lock
 // connection - outlives an in-process SDK restart: the old sweep keeps
-// holding the lock and the new one never acquires leadership.
+// holding the lock and the new one never acquires leadership. The sampler's
+// goroutine would leak the same way.
 func (p *SDK) Stop() error {
 	if !p.TokenEnabled() {
 		return p.SDK.Stop()
@@ -338,6 +343,9 @@ func (p *SDK) Stop() error {
 		return errors.Join(a.Stop(), o.Stop())
 	}); err != nil {
 		stopErrs = append(stopErrs, errors.WithMessagef(err, "failed stopping the drift checks sweeps"))
+	}
+	if err := p.Container().Invoke(func(s *dbpool.Sampler) error { return s.Stop() }); err != nil {
+		stopErrs = append(stopErrs, errors.WithMessagef(err, "failed stopping the connection-pool metrics sampler"))
 	}
 
 	stopErrs = append(stopErrs, p.SDK.Stop())

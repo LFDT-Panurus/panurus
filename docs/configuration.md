@@ -881,6 +881,28 @@ to `<params>_<short_code>` (params still apply when provided; short-code overrid
 
 ---
 
+### Optional: token.storage.db.poolMetricsInterval
+
+How often the connection-pool metrics sampler reads `(*sql.DB).Stats()` for each Postgres token
+store's pool, as a Go duration string. Unlike its neighbour `token.storage.db.lockStrategy`, this
+key is purely observability — it changes how often pool occupancy is reported, never how storage
+itself behaves.
+
+Default: `1s`. Set to `0` to disable the sampler (and its background goroutine) entirely, for a
+node that does not scrape Prometheus.
+
+```yaml
+token:
+  storage:
+    db:
+      poolMetricsInterval: 1s
+```
+
+See [Connection-Pool Metrics](services/storage.md#connection-pool-metrics) for what the sampler
+reports and why the default is deliberately short.
+
+---
+
 ### Optional: token.storage.maxPayloadSize
 
 Maximum serialised size, in bytes, accepted by a single storage-service write

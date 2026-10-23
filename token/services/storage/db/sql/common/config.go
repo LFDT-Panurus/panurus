@@ -7,6 +7,8 @@ SPDX-License-Identifier: Apache-2.0
 package common
 
 import (
+	"time"
+
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	driver2 "github.com/hyperledger-labs/fabric-smart-client/platform/view/services/storage/driver"
 )
@@ -65,6 +67,34 @@ const (
 	// FOR UPDATE SKIP LOCKED to avoid colliding with rows a concurrent
 	// claimant is already processing.
 	LockStrategySkipLocked = "skipLocked"
+
+	// ConfigKeyPoolMetricsInterval is the absolute configuration key for how
+	// often the Postgres connection-pool sampler reads (*sql.DB).Stats() and
+	// updates db_pool_in_use/db_pool_max_open/db_pool_wait_*. Unlike its
+	// siblings above, this key is observability only: it changes nothing about
+	// how storage operates, only how often it is reported on. Default is 1s;
+	// 0 disables the sampler (and its goroutine) entirely, for an operator who
+	// does not scrape Prometheus.
+	//
+	// Example YAML:
+	//
+	//   token:
+	//     storage:
+	//       db:
+	//         poolMetricsInterval: 1s
+	ConfigKeyPoolMetricsInterval = "token.storage.db.poolMetricsInterval"
+
+	// DefaultPoolMetricsInterval is used when ConfigKeyPoolMetricsInterval is
+	// unset. 1s rather than a coarser interval because the signal it exists to
+	// catch - a pool held near-saturated by connections with a short average
+	// hold time, such as the ~250ms settlement hold in #2474 - would be missed
+	// most of the time by a slower poll: at 10s the duty cycle is roughly
+	// 1-in-40, at 1s roughly 1-in-4, and a *sustained* exhaustion episode (the
+	// kind that actually hangs Select calls) is sampled reliably either way.
+	// Burst detection does not depend on this interval: db_pool_wait_count_total
+	// increments once per blocked checkout regardless of how often it is
+	// scraped, so the gauge's job is occupancy context, not detection.
+	DefaultPoolMetricsInterval = time.Second
 )
 
 // TableNamesConfig maps a short code (e.g. "id_signers") to the replacement short code
@@ -86,6 +116,10 @@ type StorageConfig struct {
 	// LockStrategyInsert (default), LockStrategyOnConflict, or
 	// LockStrategySkipLocked. Only acted upon by the Postgres driver.
 	LockStrategy string
+	// PoolMetricsInterval is how often the connection-pool sampler reads
+	// (*sql.DB).Stats(). Defaults to DefaultPoolMetricsInterval; 0 disables
+	// the sampler. Only acted upon by the Postgres driver.
+	PoolMetricsInterval time.Duration
 }
 
 // LoadTableNamesConfig reads the table name overrides from cfg.
@@ -126,21 +160,42 @@ func LoadStorageConfig(cfg driver2.Config) (StorageConfig, error) {
 	lockStrategy := LockStrategyInsert
 	if cfg != nil && cfg.IsSet(ConfigKeyLockStrategy) {
 		if err := cfg.UnmarshalKey(ConfigKeyLockStrategy, &lockStrategy); err != nil {
-			return StorageConfig{TableNames: tableNames, SkipPrefix: skipPrefix, LockStrategy: LockStrategyInsert}, err
+			return StorageConfig{TableNames: tableNames, SkipPrefix: skipPrefix, LockStrategy: LockStrategyInsert, PoolMetricsInterval: DefaultPoolMetricsInterval}, err
 		}
 		switch lockStrategy {
 		case LockStrategyInsert, LockStrategyOnConflict, LockStrategySkipLocked:
 		default:
-			return StorageConfig{TableNames: tableNames, SkipPrefix: skipPrefix, LockStrategy: LockStrategyInsert}, errors.Errorf(
+			return StorageConfig{TableNames: tableNames, SkipPrefix: skipPrefix, LockStrategy: LockStrategyInsert, PoolMetricsInterval: DefaultPoolMetricsInterval}, errors.Errorf(
 				"invalid value [%s] for [%s]: must be one of [%s, %s, %s]",
 				lockStrategy, ConfigKeyLockStrategy, LockStrategyInsert, LockStrategyOnConflict, LockStrategySkipLocked,
 			)
 		}
 	}
 
+	poolMetricsInterval := DefaultPoolMetricsInterval
+	if cfg != nil && cfg.IsSet(ConfigKeyPoolMetricsInterval) {
+		raw := DefaultPoolMetricsInterval.String()
+		if err := cfg.UnmarshalKey(ConfigKeyPoolMetricsInterval, &raw); err != nil {
+			return StorageConfig{TableNames: tableNames, SkipPrefix: skipPrefix, LockStrategy: lockStrategy, PoolMetricsInterval: DefaultPoolMetricsInterval}, err
+		}
+		parsed, err := time.ParseDuration(raw)
+		if err != nil {
+			return StorageConfig{TableNames: tableNames, SkipPrefix: skipPrefix, LockStrategy: lockStrategy, PoolMetricsInterval: DefaultPoolMetricsInterval}, errors.Wrapf(
+				err, "invalid value [%s] for [%s]: must be a Go duration", raw, ConfigKeyPoolMetricsInterval,
+			)
+		}
+		if parsed < 0 {
+			return StorageConfig{TableNames: tableNames, SkipPrefix: skipPrefix, LockStrategy: lockStrategy, PoolMetricsInterval: DefaultPoolMetricsInterval}, errors.Errorf(
+				"invalid value [%s] for [%s]: must not be negative", raw, ConfigKeyPoolMetricsInterval,
+			)
+		}
+		poolMetricsInterval = parsed
+	}
+
 	return StorageConfig{
-		TableNames:   tableNames,
-		SkipPrefix:   skipPrefix,
-		LockStrategy: lockStrategy,
+		TableNames:          tableNames,
+		SkipPrefix:          skipPrefix,
+		LockStrategy:        lockStrategy,
+		PoolMetricsInterval: poolMetricsInterval,
 	}, nil
 }

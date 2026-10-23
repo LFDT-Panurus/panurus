@@ -20,7 +20,12 @@ same list.
 
 ## How a metric name is built
 
-Panurus code never writes the exported name. It supplies only the bare `Name` field:
+Panurus code never writes the exported name. It supplies only the bare `Name` field — with one
+stated exception, [Storage connection pool](#storage-connection-pool), which sets `Namespace` and
+`Subsystem` explicitly so its name does not depend on which package happens to call the
+constructor; see that section for why.
+
+For every other metric:
 
 ```go
 p.NewCounter(metrics.CounterOpts{
@@ -370,6 +375,68 @@ event was discarded, which means a lost finality notification.
 
 Source: `token/services/network/fabricx/finality/queue/metrics.go`.
 
+## Storage connection pool
+
+Recorded by a `dbpool.Sampler` that polls `(*sql.DB).Stats()` for every Postgres connection pool a
+token store opens, once per second. It exists because Panurus never checks out a connection
+itself — the pool lives inside fabric-smart-client's `postgres.Open` and reaches Panurus only as a
+`*sql.DB` — so `Stats()` is the only available signal, and it exposes cumulative totals
+(`WaitCount`/`WaitDuration`), not per-wait observations. That rules out the histogram the parent
+epic ([#2492](https://github.com/LFDT-Panurus/panurus/issues/2492)) originally proposed; a gauge
+plus a counter pair is the closest honest signal instead — see
+[#2508](https://github.com/LFDT-Panurus/panurus/issues/2508).
+
+`pool` identifies the underlying data source as `host:port/database`, not the store: every store
+sharing a data source — including fabric-smart-client's own `kvs`/`binding`/`signerinfo`/`auditinfo`
+stores, which take the same `DbProvider` singleton — shares one `*sql.DB`, so a per-store label
+would register several identical series for one pool, and `in_use`/`wait_*` are therefore node-wide
+occupancy, not occupancy attributable to Panurus alone. The label is parsed out of the data source
+rather than redacted from it, so a credential in a field redaction would miss (query parameters,
+for instance) is never read, only `host`, `port` and the database name. Postgres advisory-lock
+connections (opened outside the pool, e.g. by the recovery and keystore-cleanup leaders) are not
+reflected in these metrics, since they never reach `(*sql.DB).Stats()`.
+
+`in_use` and `max_open` are deliberately **instantaneous** samples, not a max held since the
+previous one. Sampling at 1s rather than something coarser is what makes a *sustained* exhaustion
+episode — such as [#2474](https://github.com/LFDT-Panurus/panurus/issues/2474), where a pool of 10
+was permanently exhausted by connections with a ~250ms hold time — land on most samples instead of
+being missed between them; detecting a short-lived burst does not depend on the sampling rate at
+all, because `wait_count_total` increments once per blocked checkout regardless of how often
+anything scrapes it. Peak occupancy is a query, not a stored value:
+`max_over_time(panurus_storage_db_pool_in_use[$__rate_interval])`. Do not raise the sampling
+interval (`token.storage.db.poolMetricsInterval`, default `1s`) back toward something like 10s
+without re-reading this — at a slower poll the gauge can sit well below `max_open` throughout an
+episode that was, in fact, permanently exhausted between samples. `0` disables the sampler (and its
+goroutine) entirely, for a node that does not scrape Prometheus.
+
+| Metric | Type | Labels | Description |
+|---|---|---|---|
+| `panurus_storage_db_pool_in_use` | gauge | `pool` | Number of connections currently checked out of the pool |
+| `panurus_storage_db_pool_max_open` | gauge | `pool` | Configured maximum number of open connections for the pool |
+| `panurus_storage_db_pool_wait_count_total` | counter | `pool` | Total number of connection checkouts that had to wait because the pool was at its connection limit |
+| `panurus_storage_db_pool_wait_seconds_total` | counter | `pool` | Total time, in seconds, callers spent waiting for a connection to become available |
+
+Current saturation:
+
+```promql
+panurus_storage_db_pool_in_use / panurus_storage_db_pool_max_open
+```
+
+Peak saturation over the query window:
+
+```promql
+max_over_time(panurus_storage_db_pool_in_use[$__rate_interval]) / panurus_storage_db_pool_max_open
+```
+
+Mean connection wait:
+
+```promql
+rate(panurus_storage_db_pool_wait_seconds_total[$__rate_interval])
+  / rate(panurus_storage_db_pool_wait_count_total[$__rate_interval])
+```
+
+Source: `token/services/storage/db/sql/dbpool/metrics.go`.
+
 ## Example queries
 
 Transaction throughput per TMS:
@@ -439,9 +506,12 @@ not already cover it.
 
 ### 1. Storage layer
 
-`tokendb`, `ttxdb`, `auditdb`, `identitydb` and the keystore have **no instrumentation at all**. A slow
-node cannot be attributed to storage from SDK metrics alone; the driver and ttx histograms include
-storage time without isolating it.
+Connection-pool occupancy is now covered — see [Storage connection pool](#storage-connection-pool).
+What remains blind: `tokendb`, `ttxdb`, `auditdb`, `identitydb` and the keystore have **no
+per-operation instrumentation**. A slow node cannot be attributed to a specific store or operation
+from SDK metrics alone; the driver and ttx histograms include storage time without isolating it,
+and the connection-pool metrics show whether the pool itself is the bottleneck but not which store
+or query is holding it.
 
 Proposal: `store_operations_total{store,operation,outcome}` (counter) and
 `store_operation_duration_seconds{store,operation}` (histogram), recorded in the store service layer.
@@ -518,7 +588,10 @@ Smaller consistency issues, worth fixing together since each one changes exporte
 - **Package attribution.** Metrics created through the TMS-scoped provider are exported under
   `panurus_core_common_metrics_` instead of their own package, which puts identity and cache metrics in
   a namespace that has nothing to do with them. Setting `Namespace`/`Subsystem` explicitly in the opts,
-  or making the wrapper preserve the caller's package, would fix it.
+  or making the wrapper preserve the caller's package, would fix it. [Storage connection
+  pool](#storage-connection-pool) already does this for its own metrics — the first family in the repo
+  to do so — precisely because it is a new metric with no existing dashboard or alert to break by
+  choosing a stable, explicit name up front.
 - **Stuttering names.** `panurus_services_auditor_auditor_*`,
   `panurus_services_ttx_finality_finality_listener_*` and
   `panurus_services_network_fabricx_finality_queue_finality_queue_*` repeat their package in the metric

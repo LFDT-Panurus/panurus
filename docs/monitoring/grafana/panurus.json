@@ -1153,6 +1153,125 @@
           "legendFormat": "p95"
         }
       ]
+    },
+    {
+      "type": "row",
+      "id": 900,
+      "title": "Storage connection pool",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 88
+      },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "id": 901,
+      "title": "Current saturation (in_use / max_open)",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 8,
+        "x": 0,
+        "y": 89
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "max": 1,
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "showLegend": true,
+          "placement": "bottom"
+        }
+      },
+      "targets": [
+        {
+          "refId": "s",
+          "expr": "panurus_storage_db_pool_in_use / panurus_storage_db_pool_max_open",
+          "legendFormat": "{{pool}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "id": 902,
+      "title": "Peak saturation over the query window",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 8,
+        "x": 8,
+        "y": 89
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "max": 1,
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "showLegend": true,
+          "placement": "bottom"
+        }
+      },
+      "targets": [
+        {
+          "refId": "p",
+          "expr": "max_over_time(panurus_storage_db_pool_in_use[$__rate_interval]) / panurus_storage_db_pool_max_open",
+          "legendFormat": "{{pool}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "id": 903,
+      "title": "Mean connection wait",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 8,
+        "x": 16,
+        "y": 89
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "showLegend": true,
+          "placement": "bottom"
+        }
+      },
+      "targets": [
+        {
+          "refId": "w",
+          "expr": "rate(panurus_storage_db_pool_wait_seconds_total[$__rate_interval]) / rate(panurus_storage_db_pool_wait_count_total[$__rate_interval])",
+          "legendFormat": "{{pool}}"
+        }
+      ]
     }
   ],
   "refresh": "30s",

@@ -460,3 +460,50 @@ Each divergence is recorded as a finding with a stable key, a code and a severit
 ### Configuration
 
 Drift check behavior is controlled by the `token.tms.<name>.services.storage.checks` configuration section. See [**Ledger Drift Checks**](storage/checks.md) for the parameters.
+
+## Connection-Pool Metrics
+
+Every Postgres token store (`TokenDB`, `TTXDB`, `AuditDB`, `IdentityDB`, `WalletDB`, the keystore
+and the token lock store) opens its `*sql.DB` through fabric-smart-client's `postgres.Open`, which
+keys its connection pools by data source: every store sharing a data source shares one pool. A
+background sampler polls `(*sql.DB).Stats()` for each registered pool once per second and reports
+it as `panurus_storage_db_pool_in_use`, `panurus_storage_db_pool_max_open`,
+`panurus_storage_db_pool_wait_count_total` and `panurus_storage_db_pool_wait_seconds_total` — see
+[Storage connection pool](../development/metrics.md#storage-connection-pool) for the full metric
+reference and the PromQL to derive saturation and mean wait from them.
+
+`in_use` tracking `max_open`, together with a rising `wait_count_total`, is the pool-exhaustion
+signature behind [#2474](https://github.com/LFDT-Panurus/panurus/issues/2474) — a pool held
+saturated by connections with a nonzero hold time surfaces in production only as hung `Select`
+calls, with nothing else pointing at the pool as the cause.
+
+Two things these metrics do **not** cover:
+
+- They are **node-wide pool occupancy, not Panurus-attributable occupancy**. fabric-smart-client's
+  own `kvs`, `binding`, `signerinfo` and `auditinfo` stores take the same connection-pool provider,
+  so a pool shared with one of those shows traffic from both.
+- They do **not** include connections opened outside the pool, such as the dedicated
+  `pg_advisory_lock` connections held by the recovery, keystore-cleanup and drift-check leaders
+  (see [Transaction Recovery Service](#transaction-recovery-service), [Keystore Cleanup
+  Service](#keystore-cleanup-service) and [Ledger Drift Checks](#ledger-drift-checks) above) — those
+  never reach `(*sql.DB).Stats()`.
+
+### Configuration
+
+`token.storage.db.poolMetricsInterval` sets how often the sampler polls, as a Go duration string.
+Unlike its neighbour `token.storage.db.lockStrategy`, this key is purely observability — it changes
+how often pool occupancy is reported, never how storage itself behaves.
+
+Default: `1s`. Set to `0` to disable the sampler (and its background goroutine) entirely, for a
+node that does not scrape Prometheus.
+
+```yaml
+token:
+  storage:
+    db:
+      poolMetricsInterval: 1s
+```
+
+The default is deliberately short: sampling less often risks missing a sustained exhaustion episode
+between polls, which is exactly the failure mode these metrics exist to surface. See [Storage
+connection pool](../development/metrics.md#storage-connection-pool) for the reasoning in full.
