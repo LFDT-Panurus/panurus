@@ -422,7 +422,7 @@ func (a *DefaultCheckers) CheckTransactions(ctx context.Context) ([]Finding, err
 			return nil
 		}
 
-		findings = append(findings, a.compareTransactionStatus(l, transactionRecord)...)
+		findings = append(findings, a.compareTransactionStatus(ctx, l, transactionRecord)...)
 
 		return nil
 	})
@@ -505,9 +505,10 @@ func (a *DefaultCheckers) walkTransactions(ctx context.Context, tmsID token.TMSI
 	}
 }
 
-// compareTransactionStatus resolves one local transaction record against the ledger.
-func (a *DefaultCheckers) compareTransactionStatus(l *network.Ledger, transactionRecord *driver.TransactionRecord) []Finding {
-	lVC, _, err := l.Status(transactionRecord.TxID)
+// compareTransactionStatus resolves one local transaction record against the ledger. ctx
+// bounds the ledger query where the driver implementation supports cancellation or deadlines.
+func (a *DefaultCheckers) compareTransactionStatus(ctx context.Context, l *network.Ledger, transactionRecord *driver.TransactionRecord) []Finding {
+	lVC, _, err := l.Status(ctx, transactionRecord.TxID)
 	if err != nil {
 		// nothing is known about this transaction's real ledger status. Falling back
 		// to network.Unknown and comparing it as if it were a real answer would turn

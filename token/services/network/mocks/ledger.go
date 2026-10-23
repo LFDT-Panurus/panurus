@@ -43,10 +43,11 @@ type Ledger struct {
 		result3 string
 		result4 error
 	}
-	StatusStub        func(string) (driver.ValidationCode, error)
+	StatusStub        func(context.Context, string) (driver.ValidationCode, error)
 	statusMutex       sync.RWMutex
 	statusArgsForCall []struct {
-		arg1 string
+		arg1 context.Context
+		arg2 string
 	}
 	statusReturns struct {
 		result1 driver.ValidationCode
@@ -211,18 +212,19 @@ func (fake *Ledger) GetTransactionStatusReturnsOnCall(i int, result1 int, result
 	}{result1, result2, result3, result4}
 }
 
-func (fake *Ledger) Status(arg1 string) (driver.ValidationCode, error) {
+func (fake *Ledger) Status(arg1 context.Context, arg2 string) (driver.ValidationCode, error) {
 	fake.statusMutex.Lock()
 	ret, specificReturn := fake.statusReturnsOnCall[len(fake.statusArgsForCall)]
 	fake.statusArgsForCall = append(fake.statusArgsForCall, struct {
-		arg1 string
-	}{arg1})
+		arg1 context.Context
+		arg2 string
+	}{arg1, arg2})
 	stub := fake.StatusStub
 	fakeReturns := fake.statusReturns
-	fake.recordInvocation("Status", []interface{}{arg1})
+	fake.recordInvocation("Status", []interface{}{arg1, arg2})
 	fake.statusMutex.Unlock()
 	if stub != nil {
-		return stub(arg1)
+		return stub(arg1, arg2)
 	}
 	if specificReturn {
 		return ret.result1, ret.result2
@@ -236,17 +238,17 @@ func (fake *Ledger) StatusCallCount() int {
 	return len(fake.statusArgsForCall)
 }
 
-func (fake *Ledger) StatusCalls(stub func(string) (driver.ValidationCode, error)) {
+func (fake *Ledger) StatusCalls(stub func(context.Context, string) (driver.ValidationCode, error)) {
 	fake.statusMutex.Lock()
 	defer fake.statusMutex.Unlock()
 	fake.StatusStub = stub
 }
 
-func (fake *Ledger) StatusArgsForCall(i int) string {
+func (fake *Ledger) StatusArgsForCall(i int) (context.Context, string) {
 	fake.statusMutex.RLock()
 	defer fake.statusMutex.RUnlock()
 	argsForCall := fake.statusArgsForCall[i]
-	return argsForCall.arg1
+	return argsForCall.arg1, argsForCall.arg2
 }
 
 func (fake *Ledger) StatusReturns(result1 driver.ValidationCode, result2 error) {

@@ -83,12 +83,14 @@ func NewLedger(ch *fabric.Channel, network string, keyTranslator translator.KeyT
 }
 
 // Status retrieves the validation status of a transaction from the Fabric ledger.
-func (l *ledger) Status(id string) (driver.ValidationCode, error) {
+// FSC's underlying Ledger.GetTransactionByID takes no context, so ctx cannot bound the
+// query itself; it is used only for context-aware logging.
+func (l *ledger) Status(ctx context.Context, id string) (driver.ValidationCode, error) {
 	tx, err := l.l.GetTransactionByID(id)
 	if err != nil {
 		return driver.Unknown, errors.Wrapf(err, "failed to get transaction [%s]", id)
 	}
-	logger.Debugf("ledger status of [%s] is [%d]", id, tx.ValidationCode())
+	logger.DebugfContext(ctx, "ledger status of [%s] is [%d]", id, tx.ValidationCode())
 	switch peer.TxValidationCode(tx.ValidationCode()) {
 	case peer.TxValidationCode_VALID:
 		return driver.Valid, nil

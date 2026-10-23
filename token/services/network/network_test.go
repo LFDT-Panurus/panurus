@@ -162,13 +162,13 @@ func TestLedger(t *testing.T) {
 	l, err := n.Ledger()
 	require.NoError(t, err)
 
-	vc, msg, err := l.Status("tx1")
+	vc, msg, err := l.Status(context.Background(), "tx1")
 	require.NoError(t, err)
 	require.Equal(t, network.Valid, vc)
 	require.Empty(t, msg)
 
 	dl.StatusReturns(network.Unknown, errors.New("status err"))
-	_, _, err = l.Status("tx1")
+	_, _, err = l.Status(context.Background(), "tx1")
 	require.Error(t, err)
 
 	states, err := l.GetStates(context.Background(), "ns", "k1")

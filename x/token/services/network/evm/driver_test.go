@@ -117,7 +117,7 @@ func TestNetworkSurfaceIsWired(t *testing.T) {
 	assert.Equal(t, driver.Unknown, status)
 	assert.Nil(t, hash)
 
-	code, err := ledger.Status(anchorHex(0x01))
+	code, err := ledger.Status(t.Context(), anchorHex(0x01))
 	require.NoError(t, err)
 	assert.Equal(t, driver.Unknown, code)
 }

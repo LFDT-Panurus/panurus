@@ -78,7 +78,7 @@ func TestLedgerStatusWithSeveralTMS(t *testing.T) {
 		ledger, err := n.Ledger()
 		require.NoError(t, err)
 
-		return ledger.Status(anchorHex(0x01))
+		return ledger.Status(t.Context(), anchorHex(0x01))
 	}
 
 	t.Run("found in whichever TokenState applied it", func(t *testing.T) {
@@ -130,7 +130,7 @@ func TestLedgerStatusWithSeveralTMS(t *testing.T) {
 
 		done := make(chan driver.ValidationCode, 1)
 		go func() {
-			code, err := ledger.Status(anchorHex(0x01))
+			code, err := ledger.Status(t.Context(), anchorHex(0x01))
 			assert.NoError(t, err)
 			done <- code
 		}()
@@ -146,7 +146,42 @@ func TestLedgerStatusWithSeveralTMS(t *testing.T) {
 		n := twoTMSNetwork(t, nil)
 		ledger, err := n.Ledger()
 		require.NoError(t, err)
-		_, err = ledger.Status("not-an-anchor")
+		_, err = ledger.Status(t.Context(), "not-an-anchor")
 		require.Error(t, err)
+	})
+
+	t.Run("a cancelled context aborts the fan-out", func(t *testing.T) {
+		release := make(chan struct{})
+		defer close(release)
+
+		evm := &mock.EVMClient{}
+		evm.CallStub = func(ctx context.Context, to client.Address, _ []byte, _ string) ([]byte, error) {
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-release:
+				return applied()
+			}
+		}
+
+		namespaces := make([]NamespaceConfig, 0, 2)
+		for ns, tokenState := range map[string]string{"a": statusTokenStateA, "b": statusTokenStateB} {
+			cfg := validConfig()
+			cfg.Contracts.TokenState = tokenState
+			cfg.applyDefaults()
+			require.NoError(t, cfg.Validate())
+			namespaces = append(namespaces, NamespaceConfig{Namespace: ns, Config: cfg})
+		}
+		n, err := NewNetwork("evm-net", evm, namespaces, nil, nil)
+		require.NoError(t, err)
+		ledger, err := n.Ledger()
+		require.NoError(t, err)
+
+		ctx, cancel := context.WithCancel(t.Context())
+		cancel()
+
+		_, err = ledger.Status(ctx, anchorHex(0x01))
+		require.Error(t, err)
+		assert.ErrorIs(t, err, context.Canceled)
 	})
 }

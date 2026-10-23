@@ -17,7 +17,10 @@ type Ledger interface {
 	// together with a non-nil error. Implementations are not required to agree on
 	// whether a pending (not-yet-committed) transaction is reported as Unknown or
 	// Invalid; callers should not rely on Unknown being returned without an error.
-	Status(id string) (ValidationCode, error)
+	// ctx bounds the ledger query where the underlying backend supports cancellation
+	// or deadlines; implementations that call into a backend without context support
+	// accept ctx but cannot honor it beyond context-aware logging.
+	Status(ctx context.Context, id string) (ValidationCode, error)
 	// GetTransactionStatus retrieves the current status and token request hash for a transaction.
 	// It returns the validation status, the token request hash stored for namespace (if any),
 	// a human-readable status message, and any error encountered while contacting the ledger.

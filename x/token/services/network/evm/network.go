@@ -661,11 +661,13 @@ type ledgerView struct {
 // transaction as unknown to the ledger.
 //
 // The TokenStates are asked at the same time, so a call costs one round trip of latency however many
-// TMS share the network, and the first one to report the anchor ends the rest.
+// TMS share the network, and the first one to report the anchor ends the rest. ctx bounds all of
+// them: cancelling it (or letting its deadline pass) aborts every in-flight read.
 //
 // A read that fails for any TMS makes an otherwise Unknown answer an error, because the anchor may be
-// in the contract that could not be read.
-func (l *ledgerView) Status(id string) (driver.ValidationCode, error) {
+// in the contract that could not be read. A cancelled ctx surfaces the same way, as a failed read for
+// each binding still in flight when cancellation happens.
+func (l *ledgerView) Status(ctx context.Context, id string) (driver.ValidationCode, error) {
 	anchor, err := keys.AnchorFromTxID(id)
 	if err != nil {
 		return driver.Unknown, errors.Wrapf(err, "evm network: invalid transaction id [%s]", id)
@@ -673,13 +675,13 @@ func (l *ledgerView) Status(id string) (driver.ValidationCode, error) {
 
 	if len(l.network.bindings) == 1 {
 		for _, binding := range l.network.bindings {
-			code, _, _, err := binding.finality.StatusByAnchor(context.Background(), anchor)
+			code, _, _, err := binding.finality.StatusByAnchor(ctx, anchor)
 
 			return code, err
 		}
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
 	type answer struct {

@@ -181,9 +181,11 @@ type Ledger struct {
 	l driver.Ledger
 }
 
-// Status returns the validation code for a specific transaction ID.
-func (l *Ledger) Status(id string) (ValidationCode, string, error) {
-	vc, err := l.l.Status(id)
+// Status returns the validation code for a specific transaction ID. ctx bounds the
+// underlying ledger query where the driver implementation supports cancellation or
+// deadlines.
+func (l *Ledger) Status(ctx context.Context, id string) (ValidationCode, string, error) {
+	vc, err := l.l.Status(ctx, id)
 	if err != nil {
 		return 0, "", err
 	}
