@@ -32,8 +32,9 @@ Properties worth knowing:
 - **Per wallet, per TMS.** Buckets are keyed by the wallet id *and* the TMS id, so the
   same wallet id in two networks or namespaces gets two independent allowances.
 - **Bounded memory.** Buckets are created on first use and pruned without any background
-  goroutine: idle ones are swept during ordinary access, and a hard cap
-  (`rateLimitMaxBuckets`) evicts the least recently used ones if the sweep is not enough.
+  goroutine: idle ones (idle for at least `rateLimitIdleTimeout`, default 5m) are swept
+  during ordinary access, and a hard cap (`rateLimitMaxBuckets`) evicts the least recently
+  used ones if the sweep is not enough.
 - **Unlocking is never throttled.** Only `Select` is metered; `Unlock` and `Close` pass
   through, so a throttled wallet can always clean up after itself.
 - **Empty wallet ids are never throttled.**
@@ -57,9 +58,13 @@ token:
     rateLimitBurst: 200
     # Maximum number of per-wallet buckets held in memory. Defaults to 4096.
     rateLimitMaxBuckets: 4096
+    # How long an idle bucket is kept before it becomes eligible for eviction. Has no effect
+    # unless rate limiting is enabled, and may be raised further to the bucket refill
+    # duration. Defaults to 5m.
+    rateLimitIdleTimeout: 5m
 ```
 
-Omitting all four keys, which is the default, leaves selection unmetered.
+Omitting all five keys, which is the default, leaves selection unmetered.
 
 ### Enabling it from code
 

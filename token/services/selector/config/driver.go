@@ -68,6 +68,36 @@ type Config struct {
 	// RateLimitMaxBuckets caps the number of wallet buckets the limiter keeps in memory. If
 	// <= 0, the limiter's own default is used.
 	RateLimitMaxBuckets int `yaml:"rateLimitMaxBuckets,omitempty"`
+	// RateLimitIdleTimeout is how long an idle per-wallet rate-limiter bucket is kept before
+	// it becomes eligible for eviction. If <= 0, the limiter's own default
+	// (ratelimit.DefaultIdleTimeout) is used. It has no effect unless rate limiting is
+	// enabled, and the limiter may raise it further to the time a bucket needs to refill
+	// from empty to full (see ratelimit.Config.normalize).
+	RateLimitIdleTimeout time.Duration `yaml:"rateLimitIdleTimeout,omitempty"`
+	// SufficiencyWindow bounds how many ascending-by-amount candidates the sherdlock
+	// selector considers together once it finds one that, on its own, already covers the
+	// remaining requested amount (see sherdlock.Tuning). If <= 0, the sherdlock driver's own
+	// default is used. Ignored by the simple driver.
+	SufficiencyWindow int `yaml:"sufficiencyWindow,omitempty"`
+	// MaxSufficiencyRatio additionally bounds the sherdlock sufficiency window by magnitude:
+	// a candidate only joins the window if its quantity is at most this many times the
+	// anchor's quantity (see sherdlock.Tuning). If <= 0, the sherdlock driver's own default
+	// is used. Ignored by the simple driver.
+	MaxSufficiencyRatio int `yaml:"maxSufficiencyRatio,omitempty"`
+	// MaxImmediateRetries bounds how many times the sherdlock selector refetches its
+	// candidate cache within one Select call before giving up with
+	// token.SelectorSufficientButLockedFunds (see sherdlock.Tuning). If <= 0, the sherdlock
+	// driver's own default is used. Ignored by the simple driver.
+	//
+	// It does not change the token fetcher's own cache-refresh budget
+	// (fetcherCacheMaxQueries above), which defaults independently and is not derived from
+	// this value: raise both if you raise this one.
+	MaxImmediateRetries int `yaml:"maxImmediateRetries,omitempty"`
+	// MaxBatchWindow caps how many candidates a single sherdlock batch lock claim may cover
+	// (see sherdlock.Tuning). If <= 0, the sherdlock driver's own default is used. Ignored
+	// by the simple driver. A value above the driver's own limit is clamped to it with a
+	// warning, rather than failing startup.
+	MaxBatchWindow int `yaml:"maxBatchWindow,omitempty"`
 }
 
 // New returns a SelectorConfig with the values from the token.selector key
@@ -182,4 +212,34 @@ func (c *Config) GetRateLimitBurst() int {
 // memory. It returns 0 when not configured, which selects the limiter's own default.
 func (c *Config) GetRateLimitMaxBuckets() int {
 	return max(c.RateLimitMaxBuckets, 0)
+}
+
+// GetRateLimitIdleTimeout returns the configured rate-limiter idle timeout. It returns 0 when
+// not configured, which selects the limiter's own default (ratelimit.DefaultIdleTimeout).
+func (c *Config) GetRateLimitIdleTimeout() time.Duration {
+	return max(c.RateLimitIdleTimeout, 0)
+}
+
+// GetSufficiencyWindow returns the configured sherdlock sufficiency window. It returns 0 when
+// not configured, which selects the sherdlock driver's own default.
+func (c *Config) GetSufficiencyWindow() int {
+	return max(c.SufficiencyWindow, 0)
+}
+
+// GetMaxSufficiencyRatio returns the configured sherdlock sufficiency ratio bound. It returns 0
+// when not configured, which selects the sherdlock driver's own default.
+func (c *Config) GetMaxSufficiencyRatio() int {
+	return max(c.MaxSufficiencyRatio, 0)
+}
+
+// GetMaxImmediateRetries returns the configured sherdlock immediate-retry budget. It returns 0
+// when not configured, which selects the sherdlock driver's own default.
+func (c *Config) GetMaxImmediateRetries() int {
+	return max(c.MaxImmediateRetries, 0)
+}
+
+// GetMaxBatchWindow returns the configured sherdlock batch-window cap. It returns 0 when not
+// configured, which selects the sherdlock driver's own default.
+func (c *Config) GetMaxBatchWindow() int {
+	return max(c.MaxBatchWindow, 0)
 }

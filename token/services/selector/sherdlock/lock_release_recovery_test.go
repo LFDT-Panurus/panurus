@@ -342,6 +342,29 @@ func TestSelectorRecovery_BudgetIsNotSpentOnAnUnchangedStore(t *testing.T) {
 			"fetch), not by how often the cache is invalidated")
 }
 
+// TestSelectorRecovery_ConfiguredMaxImmediateRetriesCutsTheBudget proves
+// sherdlock.WithMaxImmediateRetries actually governs the retry budget, not just that the value
+// is stored: the same permanently-contended wallet as
+// TestSelectorRecovery_BudgetIsNotSpentOnAnUnchangedStore, but with the budget configured down
+// to 1, must exhaust it - and therefore stop scanning - far sooner than the default's bound of 8.
+func TestSelectorRecovery_ConfiguredMaxImmediateRetriesCutsTheBudget(t *testing.T) {
+	contended := aliceToken("contended", "100")
+	store := newContendedStore(contended)
+	store.lock(contended.Id, "another-process")
+
+	metrics, _ := invalidationMetrics()
+	fetcher := sherdlock.NewCachedFetcher(store, 0, time.Hour, 1_000_000)
+	s := sherdlock.NewSelector(sherdlock.Logger(), fetcher, &storeLocker{store: store, txID: "mine"}, 64, metrics, sherdlock.WithMaxImmediateRetries(1))
+
+	_, _, err := s.Select(t.Context(), &unitTestMockOwnerFilter{id: "alice"}, "50", "USD")
+
+	require.True(t, errors.Is(err, token.SelectorSufficientButLockedFunds),
+		"the wallet can pay but its only token stays locked, so this must report locked funds, got: %v", err)
+	assert.LessOrEqual(t, store.scanCount(), 3,
+		"a configured budget of 1 immediate retry (plus the first fetch, plus slack for the "+
+			"refresh-then-read pairing) must give up far sooner than the default budget of 5 would")
+}
+
 // TestEagerFetcher_FirstFetchForcesNoRefresh is the guard on the exemption that keeps the
 // eager strategy a cache at all. A selection starts with an empty candidate cache, so it
 // always reaches refreshCandidates once, before anything is known to be stale. Forcing the

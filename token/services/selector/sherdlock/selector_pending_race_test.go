@@ -114,15 +114,15 @@ func (l *recordingWindowLocker) sizes() []int {
 	return append([]int(nil), l.windows...)
 }
 
-// TestSelector_BatchWindowIsCapped pins maxBatchWindow. The window grows until it covers the
-// outstanding amount, which is unbounded in the number of tokens: a wallet of unit-value dust
+// TestSelector_BatchWindowIsCapped pins defaultMaxBatchWindow. The window grows until it covers
+// the outstanding amount, which is unbounded in the number of tokens: a wallet of unit-value dust
 // paying a large amount needs one input per unit. The Postgres claim binds 2n+5 parameters and
 // the protocol refuses more than 65535, so an uncapped window becomes a store error that the
 // retry budget then burns through, failing a selection the single-token path would have
 // completed. The cap must not change the outcome - the outer loop claims another window - so
 // this asserts both: no claim exceeds the cap, and the full amount is still selected.
 func TestSelector_BatchWindowIsCapped(t *testing.T) {
-	const dust = maxBatchWindow * 3
+	const dust = defaultMaxBatchWindow * 3
 
 	fetcher := &mockTokenFetcher{
 		unspentTokensIteratorByFunc: func(context.Context, string, token2.Type) (Iterator[*token2.UnspentTokenInWallet], error) {
@@ -154,10 +154,93 @@ func TestSelector_BatchWindowIsCapped(t *testing.T) {
 	sizes := locker.sizes()
 	require.NotEmpty(t, sizes, "the batch path must have been taken")
 	for i, size := range sizes {
-		require.LessOrEqual(t, size, maxBatchWindow,
+		require.LessOrEqual(t, size, defaultMaxBatchWindow,
 			"claim %d covered %d candidates, over the %d cap: a large enough window exceeds Postgres's bind-parameter limit",
-			i, size, maxBatchWindow)
+			i, size, defaultMaxBatchWindow)
 	}
 	require.Greater(t, len(sizes), 1,
 		"a request needing more than one window must be served by several claims, not one oversized one")
+}
+
+// TestSelector_ConfiguredBatchWindowIsCapped is TestSelector_BatchWindowIsCapped's configured
+// counterpart: it proves WithMaxBatchWindow actually governs the claimed window size, not just
+// that the value is stored, by configuring a window far below the default and asserting every
+// claim respects it instead of the default.
+func TestSelector_ConfiguredBatchWindowIsCapped(t *testing.T) {
+	const configuredWindow = 8
+	const dust = configuredWindow * 3
+
+	fetcher := &mockTokenFetcher{
+		unspentTokensIteratorByFunc: func(context.Context, string, token2.Type) (Iterator[*token2.UnspentTokenInWallet], error) {
+			tokens := make([]*token2.UnspentTokenInWallet, 0, dust)
+			for i := range dust {
+				tokens = append(tokens, &token2.UnspentTokenInWallet{
+					Id:       token2.ID{TxId: "dust", Index: uint64(i)},
+					Type:     "USD",
+					Quantity: "1",
+				})
+			}
+
+			return iterators.Slice(tokens), nil
+		},
+		hasEnoughSpendableTokensFunc: func(context.Context, string, token2.Type, *big.Int) (bool, error) {
+			return true, nil
+		},
+	}
+
+	locker := &recordingWindowLocker{}
+	sel := NewSelector(logger, fetcher, locker, 64, NewMetrics(&disabled.Provider{}), WithMaxBatchWindow(configuredWindow))
+
+	selected, sum, err := sel.Select(t.Context(), &ownerFilter{id: "wallet1"}, strconv.Itoa(dust), "USD")
+	require.NoError(t, err)
+	require.Len(t, selected, dust, "the cap must not reduce what gets selected")
+	require.Equal(t, strconv.Itoa(dust), sum.Decimal())
+
+	sizes := locker.sizes()
+	require.NotEmpty(t, sizes, "the batch path must have been taken")
+	for i, size := range sizes {
+		require.LessOrEqual(t, size, configuredWindow,
+			"claim %d covered %d candidates, over the configured cap of %d", i, size, configuredWindow)
+	}
+	require.Greater(t, len(sizes), 1,
+		"a request needing more than one configured window must be served by several claims")
+}
+
+// TestSelector_PendingBufferStaysBoundedByConfiguredWindow verifies the invariant documented on
+// Selector.pending - its length stays below the sufficiency window at all times - continues to
+// hold for a non-default configured window, not just the package default of 4.
+func TestSelector_PendingBufferStaysBoundedByConfiguredWindow(t *testing.T) {
+	const configuredWindow = 3
+
+	fetcher := &mockTokenFetcher{
+		unspentTokensIteratorByFunc: func(context.Context, string, token2.Type) (Iterator[*token2.UnspentTokenInWallet], error) {
+			tokens := make([]*token2.UnspentTokenInWallet, 0, 10)
+			for i := range 10 {
+				tokens = append(tokens, &token2.UnspentTokenInWallet{
+					Id:       token2.ID{TxId: "tx", Index: uint64(i)},
+					Type:     "USD",
+					Quantity: "100",
+				})
+			}
+
+			return iterators.Slice(tokens), nil
+		},
+		hasEnoughSpendableTokensFunc: func(context.Context, string, token2.Type, *big.Int) (bool, error) {
+			return true, nil
+		},
+	}
+
+	locker := &recordingWindowLocker{}
+	sel := NewSelector(logger, fetcher, locker, 64, NewMetrics(&disabled.Provider{}), WithSufficiencyWindow(configuredWindow))
+	require.Equal(t, configuredWindow, sel.tuning.SufficiencyWindow)
+
+	_, _, err := sel.Select(t.Context(), &ownerFilter{id: "wallet1"}, "50", "USD")
+	require.NoError(t, err)
+
+	sel.mu.Lock()
+	pendingLen := len(sel.pending)
+	sel.mu.Unlock()
+	require.Less(t, pendingLen, configuredWindow,
+		"the pending buffer must stay bounded by the configured window, got %d buffered entries against a window of %d",
+		pendingLen, configuredWindow)
 }

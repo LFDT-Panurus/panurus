@@ -9,6 +9,7 @@ package simple
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/LFDT-Panurus/panurus/token"
 	"github.com/LFDT-Panurus/panurus/token/services/selector/ratelimit"
@@ -105,7 +106,8 @@ func (p *fixedLockerProvider) New(_, _, _ string) (Locker, error) {
 // default token.selector configuration.
 type disabledRateLimitConfig struct{}
 
-func (c *disabledRateLimitConfig) IsRateLimitEnabled() bool    { return false }
-func (c *disabledRateLimitConfig) GetRateLimit() float64       { return 0 }
-func (c *disabledRateLimitConfig) GetRateLimitBurst() int      { return 0 }
-func (c *disabledRateLimitConfig) GetRateLimitMaxBuckets() int { return 0 }
+func (c *disabledRateLimitConfig) IsRateLimitEnabled() bool               { return false }
+func (c *disabledRateLimitConfig) GetRateLimit() float64                  { return 0 }
+func (c *disabledRateLimitConfig) GetRateLimitBurst() int                 { return 0 }
+func (c *disabledRateLimitConfig) GetRateLimitMaxBuckets() int            { return 0 }
+func (c *disabledRateLimitConfig) GetRateLimitIdleTimeout() time.Duration { return 0 }

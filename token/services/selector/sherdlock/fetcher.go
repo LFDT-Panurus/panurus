@@ -29,7 +29,11 @@ import (
 
 const (
 	defaultCacheFreshnessInterval = 1 * time.Second
-	defaultCacheMaxQueries        = maxImmediateRetries
+	// defaultCacheMaxQueries shares its value with defaultMaxImmediateRetries, but the two
+	// budgets are independent once configured: this one defaults the fetcher's own
+	// fetcherCacheMaxQueries key (token/services/selector/config), and a configured
+	// maxImmediateRetries does not move it. Raise both together if you raise one.
+	defaultCacheMaxQueries = defaultMaxImmediateRetries
 )
 
 // FetcherStrategy names the strategy a fetcher provider uses to obtain the spendable tokens
