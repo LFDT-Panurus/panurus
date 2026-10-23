@@ -11,6 +11,7 @@ import (
 
 	mathlib "github.com/IBM/mathlib"
 	"github.com/LFDT-Panurus/panurus/token/core/common/encoding/asn1"
+	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/crypto/common"
 	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/crypto/math"
 	bls12381fr "github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
 	bn254fr "github.com/consensys/gnark-crypto/ecc/bn254/fr"
@@ -183,23 +184,15 @@ func (rp *rangeProver) Prove() (*RangeProof, error) {
 	}
 
 	n := rp.NumberOfBits
-	tr := Transcript{Curve: rp.Curve}
-	if len(rp.TranscriptHeader) != 0 {
-		tr.SetState(rp.TranscriptHeader)
-	} else {
-		tr.InitHasher()
-		// Absorb the public statement: VGenerators || AGenerators || BGenerators || NumberOfBits.
-		for _, g := range rp.VGenerators {
-			tr.Absorb(g.Bytes())
-		}
-		for _, g := range rp.AGenerators {
-			tr.Absorb(g.Bytes())
-		}
-		for _, g := range rp.BGenerators {
-			tr.Absorb(g.Bytes())
-		}
-		tr.Absorb(new(big.Int).SetUint64(n).Bytes())
+	// TranscriptHeader must be set: it seeds the Fiat-Shamir transcript with the public
+	// statement (VGenerators || AGenerators || BGenerators || NumberOfBits), and the inner
+	// CSP prover (cspP.Prove below) hard-fails on an empty header regardless, so there is no
+	// supported self-seeding fallback here.
+	if len(rp.TranscriptHeader) == 0 {
+		return nil, errors.New("invalid transcript header")
 	}
+	tr := common.Transcript{Curve: rp.Curve}
+	tr.SetState(rp.TranscriptHeader)
 	// Absorb VCommitment
 	tr.Absorb(rp.VCommitment.Bytes())
 
@@ -492,24 +485,14 @@ func (rv *rangeVerifier) Verify(proof *RangeProof) error {
 	}
 
 	n := rv.NumberOfBits
-	tr := Transcript{Curve: rv.Curve}
-	if len(rv.TranscriptHeader) != 0 {
-		tr.SetState(rv.TranscriptHeader)
-	} else {
-		tr.InitHasher()
-
-		// Replay transcript: absorb the same public statement as the prover.
-		for _, g := range rv.VGenerators {
-			tr.Absorb(g.Bytes())
-		}
-		for _, g := range rv.AGenerators {
-			tr.Absorb(g.Bytes())
-		}
-		for _, g := range rv.BGenerators {
-			tr.Absorb(g.Bytes())
-		}
-		tr.Absorb(new(big.Int).SetUint64(n).Bytes())
+	// TranscriptHeader must be set: see the matching comment in rangeProver.Prove. The inner
+	// CSP verifier (cspV.Verify below) hard-fails on an empty header regardless, so there is
+	// no supported self-seeding fallback here.
+	if len(rv.TranscriptHeader) == 0 {
+		return errors.New("invalid transcript header")
 	}
+	tr := common.Transcript{Curve: rv.Curve}
+	tr.SetState(rv.TranscriptHeader)
 	tr.Absorb(rv.VCommitment.Bytes())
 
 	// Verify Schnorr PoK for VCommitment = v·G_v + r·G_r.

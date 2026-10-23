@@ -21,6 +21,7 @@ Welcome to Panurus documentation.
 *   [**Selector Resource Limits**](security/selector_resource_limits.md): How to throttle token selection, either with the opt-in built-in per-wallet rate limiter or by supplying your own limiter or `Locker`.
 *   [**Security Policy**](../SECURITY.md): How to report a vulnerability.
 *   [**Store Integrity Verification**](security/store_integrity_verification.md): What each store verifies about the payloads it persists, what it requires of its caller, and what it deliberately does not check.
+*   [**ZK-ATDLOG Range-Proof Fiat-Shamir Transcripts**](security/dlognogh_range_proof_transcripts.md): The Bulletproof and CSP range-proof transcript constructions, and why every challenge must depend on the full transcript absorbed so far.
 
 ## Command-Line Tools
 

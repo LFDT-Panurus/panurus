@@ -20,9 +20,9 @@ import (
 	utils2 "github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/protos-go/utils"
 	math2 "github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/protos-go/v1/math"
 	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/protos-go/v1/pp"
+	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/crypto/common"
 	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/crypto/math"
 	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/crypto/rp"
-	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/crypto/rp/csp"
 	executor "github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/crypto/rp/executor"
 	"github.com/LFDT-Panurus/panurus/token/driver"
 	protosv1 "github.com/LFDT-Panurus/panurus/token/driver/protos-go/v1"
@@ -355,6 +355,7 @@ func NewWith(params SetupParams) (*PublicParams, error) {
 		return nil, errors.Errorf("unrecognized range proof type: %d", params.ProofType)
 	}
 
+	pp.initCSPTranscriptHeader()
 	pp.MaxToken = pp.ComputeMaxTokenValue()
 
 	return pp, nil
@@ -604,6 +605,12 @@ func (p *PublicParams) GenerateCSPRangeProofParameters(bitLength uint64) error {
 		p.CSPRangeProofParams.RightGenerators[i] = curve.HashToG1([]byte(domainPrefix + "CSPRangeProof.R." + strconv.FormatUint(i, 10)))
 	}
 
+	// Populate RPTranscriptHeader immediately rather than leaving it for the next
+	// Validate() call: a caller that generates CSP params and then proves/verifies
+	// without an intervening Validate() would otherwise see a nil header. initCSPTranscriptHeader
+	// is idempotent and cheap, so calling it here as well as from NewWith/Validate is safe.
+	p.initCSPTranscriptHeader()
+
 	return nil
 }
 
@@ -646,32 +653,45 @@ func (p *PublicParams) ComputeHash() ([]byte, error) {
 	return hash.Sum(nil), nil
 }
 
+// ComputeMaxTokenValue returns the largest value that can be committed to under the
+// configured range-proof parameters. It is a pure computation: it does not mutate p.
+// The CSP transcript header is computed by initCSPTranscriptHeader instead, which callers
+// are responsible for invoking before relying on p.CSPRangeProofParams.RPTranscriptHeader.
 func (p *PublicParams) ComputeMaxTokenValue() uint64 {
 	if p.RangeProofParams != nil {
 		return 1<<p.RangeProofParams.BitLength - 1
 	}
 	if p.CSPRangeProofParams != nil {
-		tr := csp.Transcript{Curve: mathlib.Curves[p.Curve]}
-		tr.InitHasher()
-		// Absorb the public statement: PedersenGenerators || LeftGenerators || RightGenerators || NumberOfBits.
-		for _, g := range p.PedersenGenerators {
-			tr.Absorb(g.Bytes())
-		}
-		// p.CSPRangeProofParams.RPTranscriptHeader = tr.State()
-		for _, g := range p.CSPRangeProofParams.LeftGenerators {
-			tr.Absorb(g.Bytes())
-		}
-		for _, g := range p.CSPRangeProofParams.RightGenerators {
-			tr.Absorb(g.Bytes())
-		}
-		n := p.CSPRangeProofParams.BitLength
-		tr.Absorb(new(big.Int).SetUint64(n).Bytes())
-		p.CSPRangeProofParams.RPTranscriptHeader = tr.State()
-
 		return 1<<p.CSPRangeProofParams.BitLength - 1
 	}
 
 	return 0
+}
+
+// initCSPTranscriptHeader (re)computes p.CSPRangeProofParams.RPTranscriptHeader from the
+// public statement: PedersenGenerators || LeftGenerators || RightGenerators || NumberOfBits.
+// RPTranscriptHeader is never part of the wire encoding (CSPRangeProofParams.ToProtos omits
+// it), so every loader of a *PublicParams must call this explicitly before any CSP range
+// proof is produced or verified; NewWith and Validate below are the only two paths that do so.
+// It is idempotent and a no-op when p.CSPRangeProofParams is nil.
+func (p *PublicParams) initCSPTranscriptHeader() {
+	if p.CSPRangeProofParams == nil {
+		return
+	}
+	tr := common.Transcript{Curve: mathlib.Curves[p.Curve]}
+	tr.InitHasher()
+	for _, g := range p.PedersenGenerators {
+		tr.Absorb(g.Bytes())
+	}
+	for _, g := range p.CSPRangeProofParams.LeftGenerators {
+		tr.Absorb(g.Bytes())
+	}
+	for _, g := range p.CSPRangeProofParams.RightGenerators {
+		tr.Absorb(g.Bytes())
+	}
+	n := p.CSPRangeProofParams.BitLength
+	tr.Absorb(new(big.Int).SetUint64(n).Bytes())
+	p.CSPRangeProofParams.RPTranscriptHeader = tr.State()
 }
 
 func (p *PublicParams) String() string {
@@ -742,6 +762,7 @@ func (p *PublicParams) Validate() error {
 		}
 	}
 
+	p.initCSPTranscriptHeader()
 	maxToken := p.ComputeMaxTokenValue()
 	if maxToken != p.MaxToken {
 		return errors.Errorf("invalid max token, [%d]!=[%d]", maxToken, p.MaxToken)

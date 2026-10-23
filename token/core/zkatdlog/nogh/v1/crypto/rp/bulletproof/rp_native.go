@@ -25,7 +25,8 @@ func nativeRPPreprocess[T any, E math2.GnarkFr[T]](
 	C, D *math.G1,
 	rho, eta *math.Zr,
 	randReader io.Reader,
-) ([]*math.Zr, []*math.Zr, *math.Zr, *RangeProof, error) {
+	tr *common.Transcript,
+) ([]*math.Zr, []*math.Zr, *math.Zr, *RangeProof, *common.Transcript, error) {
 	n := len(left)
 	var yE_ T
 	math2.SetNativeFromZr[T, E](y, E(&yE_))
@@ -117,12 +118,12 @@ func nativeRPPreprocess[T any, E math2.GnarkFr[T]](
 	tau2 := p.Curve.NewRandomZr(randReader)
 	T2 := p.CommitmentGenerators[0].Mul2(t2, p.CommitmentGenerators[1], tau2)
 
-	array := common.GetG1Array([]*math.G1{T1, T2})
-	bytesToHash, err := array.Bytes()
+	tr.Absorb(T1.Bytes())
+	tr.Absorb(T2.Bytes())
+	x, err := tr.Squeeze()
 	if err != nil {
-		return nil, nil, nil, nil, err
+		return nil, nil, nil, nil, nil, err
 	}
-	x := p.Curve.HashToZr(bytesToHash)
 	var xE_ T
 	math2.SetNativeFromZr[T, E](x, E(&xE_))
 	xE := E(&xE_)
@@ -190,13 +191,13 @@ func nativeRPPreprocess[T any, E math2.GnarkFr[T]](
 		},
 	}
 
-	return left, right, y, rp, nil
+	return left, right, y, rp, tr, nil
 }
 
 // nativeRPVerify performs the outer verification for the range proof using native gnark arithmetic.
 // It computes the polynomial evaluation of the range constraint and ensures that the
 // resulting commitment equations hold before delegating the inner product to nativeRPVerifyIPA.
-func nativeRPVerify[T any, E math2.GnarkFr[T]](v *rangeVerifier, rp *RangeProof, x, y, z *math.Zr) error {
+func nativeRPVerify[T any, E math2.GnarkFr[T]](v *rangeVerifier, rp *RangeProof, x, y, z *math.Zr, tr *common.Transcript) error {
 	n := len(v.RightGenerators)
 	var yE_ T
 	math2.SetNativeFromZr[T, E](y, E(&yE_))
@@ -263,13 +264,13 @@ func nativeRPVerify[T any, E math2.GnarkFr[T]](v *rangeVerifier, rp *RangeProof,
 		return errors.New("invalid range proof")
 	}
 
-	return nativeRPVerifyIPA[T, E](v, rp, xE, yPowE, zE, E(&zSquareE))
+	return nativeRPVerifyIPA[T, E](v, rp, xE, yPowE, zE, E(&zSquareE), tr)
 }
 
 // nativeRPVerifyIPA performs the inner product argument (IPA) verification step for the range proof.
 // It constructs the updated right generators and scalar vectors using native gnark arithmetic,
 // computes the final commitment, and delegates the remaining steps to the standard IPAVerifier.
-func nativeRPVerifyIPA[T any, E math2.GnarkFr[T]](v *rangeVerifier, rp *RangeProof, xE E, yPowE []T, zE, zSquareE E) error {
+func nativeRPVerifyIPA[T any, E math2.GnarkFr[T]](v *rangeVerifier, rp *RangeProof, xE E, yPowE []T, zE, zSquareE E, tr *common.Transcript) error {
 	n := len(v.LeftGenerators)
 
 	yPowPtrs := make([]E, n)
@@ -349,6 +350,7 @@ func nativeRPVerifyIPA[T any, E math2.GnarkFr[T]](v *rangeVerifier, rp *RangePro
 		com,
 		v.NumberOfRounds,
 		v.Curve,
+		tr,
 		v.Provider,
 	)
 

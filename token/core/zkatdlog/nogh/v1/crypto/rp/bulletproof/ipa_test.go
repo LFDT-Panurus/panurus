@@ -14,6 +14,7 @@ import (
 	"testing"
 
 	math "github.com/IBM/mathlib"
+	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/crypto/common"
 	math2 "github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/crypto/math"
 	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/crypto/rp/bulletproof"
 	benchmark2 "github.com/LFDT-Panurus/panurus/token/services/benchmark"
@@ -21,6 +22,18 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// newStandaloneIPATranscript returns a freshly seeded transcript for a standalone IPA
+// proof/verification run (i.e. one not nested inside an enclosing range proof, which would
+// instead continue its own transcript into the IPA). Prover and verifier each call this to
+// get their own transcript instance; both are seeded identically, so they replay the same
+// challenge sequence as long as the absorbed statement matches.
+func newStandaloneIPATranscript(curve *math.Curve) *common.Transcript {
+	tr := &common.Transcript{Curve: curve}
+	tr.InitHasherWithDomain(bulletproof.StandaloneIPATranscriptDomain)
+
+	return tr
+}
 
 type ipaSetup struct {
 	left      []*math.Zr
@@ -83,6 +96,7 @@ func TestIPAProofVerify(t *testing.T) {
 		setup.com,
 		setup.nr,
 		setup.curve,
+		newStandaloneIPATranscript(setup.curve),
 		nil,
 	)
 	proof, err := prover.Prove()
@@ -97,6 +111,7 @@ func TestIPAProofVerify(t *testing.T) {
 		setup.com,
 		setup.nr,
 		setup.curve,
+		newStandaloneIPATranscript(setup.curve),
 		nil,
 	)
 	err = verifier.Verify(proof)
@@ -128,6 +143,7 @@ func BenchmarkIPAProver(b *testing.B) {
 				setup.com,
 				setup.nr,
 				setup.curve,
+				newStandaloneIPATranscript(setup.curve),
 				nil,
 			)
 			proof, err := prover.Prove()
@@ -157,6 +173,7 @@ func TestParallelIPAProver(t *testing.T) {
 				setup.com,
 				setup.nr,
 				setup.curve,
+				newStandaloneIPATranscript(setup.curve),
 				nil,
 			)
 			_, err := prover.Prove()

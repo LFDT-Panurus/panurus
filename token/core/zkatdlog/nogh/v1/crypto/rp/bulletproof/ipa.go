@@ -17,6 +17,12 @@ import (
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 )
 
+// StandaloneIPATranscriptDomain is the Fiat-Shamir domain separator a caller should use to
+// seed a fresh common.Transcript for an IPA proof run on its own, outside of an enclosing
+// range proof (which instead continues its own transcript, started under
+// bulletproof.TranscriptDomain, into the IPA — see rangeProver.Prove/rangeVerifier.Verify).
+const StandaloneIPATranscriptDomain = "Bulletproof-IPA-v1"
+
 // IPA contains the proof for the inner product argument.
 type IPA struct {
 	// Left is the final reduced scalar from the left vector.
@@ -94,6 +100,19 @@ func (ipa *IPA) Validate(curve mathlib.CurveID) error {
 	if ipa.R == nil {
 		return errors.New("invalid IPA proof: nil R")
 	}
+	// L and R must have equal length (one pair per folding round) and that length must be
+	// bounded: the authoritative check is ipaVerifier.Verify's uint64(len(proof.L)) ==
+	// v.NumberOfRounds, derived from the public parameters, but that only runs after
+	// Validate. maxIPARounds bounds len(L)/len(R) here too, independent of any
+	// PP-derived round count this call site may not have (see the analogous
+	// maxCSPRounds in csp/validation.go). The real bound is BitLength<=64 => at most 6
+	// rounds (log2(64)); 16 leaves headroom.
+	if len(ipa.L) != len(ipa.R) {
+		return errors.New("invalid IPA proof: L and R must have the same length")
+	}
+	if len(ipa.L) > maxIPARounds {
+		return errors.Errorf("invalid IPA proof: L exceeds maximum of %d rounds, got %d", maxIPARounds, len(ipa.L))
+	}
 	if err := math.CheckElements(ipa.L, curve, uint64(len(ipa.L))); err != nil {
 		return errors.Wrapf(err, "invalid IPA proof: invalid L elements")
 	}
@@ -103,6 +122,10 @@ func (ipa *IPA) Validate(curve mathlib.CurveID) error {
 
 	return nil
 }
+
+// maxIPARounds bounds the number of folding rounds an IPA proof's L/R slices may contain.
+// See the doc comment on IPA.Validate's use of it.
+const maxIPARounds = 16
 
 // ipaProver manages the creation of an inner product argument proof.
 type ipaProver struct {
@@ -124,12 +147,24 @@ type ipaProver struct {
 	NumberOfRounds uint64
 	// Curve is the mathematical curve.
 	Curve *mathlib.Curve
+	// Transcript is the running Fiat-Shamir transcript the first challenge and every
+	// round challenge are squeezed from. It must be non-nil and already seeded (via
+	// InitHasher/InitHasherWithDomain or SetState) by the caller: an IPA invoked as a
+	// range-proof sub-proof must receive the enclosing proof's own transcript so the
+	// IPA's challenges are bound to everything absorbed before it; a standalone IPA must
+	// seed its own fresh transcript explicitly. There is deliberately no nil-means-
+	// self-seed fallback (see the CSP Transcript self-seed branches removed in rp.go for
+	// why that convention is a trap: the caller forgets and the proof silently loses the
+	// binding it exists to provide).
+	Transcript *common.Transcript
 	// Provider creates a fresh Executor for each Prove call.
 	// If nil, DefaultProvider (SerialProvider) is used.
 	Provider executor.ExecutorProvider
 }
 
 // NewIPAProver returns a new ipaProver instance.
+// tr is the running Fiat-Shamir transcript to derive challenges from; it must be non-nil
+// and already seeded by the caller (see the Transcript field doc on ipaProver).
 // exec controls how generator reduction is parallelised; pass nil
 // to use SerialExecutor (equivalent to the previous behaviour).
 func NewIPAProver(
@@ -140,6 +175,7 @@ func NewIPAProver(
 	Commitment *mathlib.G1,
 	rounds uint64,
 	c *mathlib.Curve,
+	tr *common.Transcript,
 	provider executor.ExecutorProvider,
 ) *ipaProver {
 	if provider == nil {
@@ -156,27 +192,29 @@ func NewIPAProver(
 		NumberOfRounds:  rounds,
 		Commitment:      Commitment,
 		Q:               Q,
+		Transcript:      tr,
 		Provider:        provider,
 	}
 }
 
 // Prove generates an inner product argument proof.
 func (p *ipaProver) Prove() (*IPA, error) {
-	array := common.GetG1Array(p.RightGenerators, p.LeftGenerators, []*mathlib.G1{p.Q, p.Commitment})
-	bytesToHash := make([][]byte, 3)
-	var err error
-	bytesToHash[0], err = array.Bytes()
+	if p.Transcript == nil {
+		return nil, errors.New("invalid IPA prover: nil transcript")
+	}
+	// Bind the first challenge to the generator basis, Q, the folded commitment and the
+	// claimed inner product, via the running transcript so it also carries forward
+	// anything absorbed by an enclosing proof (e.g. the range proof's y, z, x, T1, T2).
+	genBytes, err := common.GetG1Array(p.RightGenerators, p.LeftGenerators, []*mathlib.G1{p.Q, p.Commitment}).Bytes()
 	if err != nil {
 		return nil, err
 	}
-	bytesToHash[1] = []byte(common.Separator)
-	bytesToHash[2] = p.InnerProduct.Bytes()
-	raw, err := asn1.MarshalStd(bytesToHash)
+	p.Transcript.Absorb(genBytes)
+	p.Transcript.Absorb(p.InnerProduct.Bytes())
+	x, err := p.Transcript.Squeeze()
 	if err != nil {
 		return nil, err
 	}
-	// compute first challenge
-	x := p.Curve.HashToZr(raw)
 
 	// compute a commitment to inner product value and the vectors
 	C := p.Q.Mul(p.Curve.ModMul(x, p.InnerProduct, p.Curve.GroupOrder))
@@ -255,13 +293,16 @@ func (p *ipaProver) reduce(X, com *mathlib.G1) (*mathlib.Zr, *mathlib.Zr, []*mat
 		LArray[i] = p.Curve.MultiScalarMul(pointsL, scalarsL)
 		RArray[i] = p.Curve.MultiScalarMul(pointsR, scalarsR)
 
-		// compute this round's challenge x
-		array := common.GetG1Array([]*mathlib.G1{LArray[i], RArray[i]})
-		bytesToHash, err := array.Bytes()
+		// compute this round's challenge x, chained through the same running transcript
+		// as the first challenge, so it is bound to every earlier round's (L, R) pair too
+		// (and, transitively, to whatever an enclosing proof absorbed before the IPA
+		// started) rather than being a pure function of this round's (L_i, R_i) alone.
+		p.Transcript.Absorb(LArray[i].Bytes())
+		p.Transcript.Absorb(RArray[i].Bytes())
+		x, err := p.Transcript.Squeeze()
 		if err != nil {
 			return nil, nil, nil, nil, err
 		}
-		x := p.Curve.HashToZr(bytesToHash)
 		xList = append(xList, x)
 
 		// compute 1/x
@@ -301,12 +342,19 @@ type ipaVerifier struct {
 	NumberOfRounds uint64
 	// Curve is the mathematical curve.
 	Curve *mathlib.Curve
+	// Transcript is the running Fiat-Shamir transcript to replay challenges from. See the
+	// doc on ipaProver.Transcript: it must be non-nil, seeded identically to the prover's,
+	// and there is no nil-means-self-seed fallback.
+	Transcript *common.Transcript
 	// Provider creates a fresh Executor for each Prove call.
 	// If nil, DefaultProvider (SerialProvider) is used.
 	Provider executor.ExecutorProvider
 }
 
 // NewIPAVerifier returns an ipaVerifier instance.
+// tr is the running Fiat-Shamir transcript to replay challenges from; it must be non-nil
+// and seeded identically to the prover's transcript (see the Transcript field doc on
+// ipaProver).
 // exec controls how generator reduction is parallelised; pass nil
 // to use SerialExecutor (equivalent to the previous behaviour).
 func NewIPAVerifier(
@@ -316,6 +364,7 @@ func NewIPAVerifier(
 	Commitment *mathlib.G1,
 	rounds uint64,
 	c *mathlib.Curve,
+	tr *common.Transcript,
 	provider executor.ExecutorProvider,
 ) *ipaVerifier {
 	if provider == nil {
@@ -330,6 +379,7 @@ func NewIPAVerifier(
 		NumberOfRounds:  rounds,
 		Commitment:      Commitment,
 		Q:               Q,
+		Transcript:      tr,
 		Provider:        provider,
 	}
 }
@@ -343,21 +393,29 @@ func (v *ipaVerifier) Verify(proof *IPA) error {
 	if len(proof.L) != len(proof.R) || uint64(len(proof.L)) != v.NumberOfRounds {
 		return errors.New("invalid IPA proof")
 	}
-	// compute the first challenge x
-	array := common.GetG1Array(v.RightGenerators, v.LeftGenerators, []*mathlib.G1{v.Q, v.Commitment})
-	bytesToHash := make([][]byte, 3)
-	var err error
-	bytesToHash[0], err = array.Bytes()
+	// LeftGenerators must have exactly 2^NumberOfRounds entries: ComputeSVector(1<<rounds,
+	// ...) below produces an s of that length, which is then copy'd into the final MSM's
+	// scalar slice alongside leftGen/rightGen (ipa.go generators/scalars construction). copy
+	// silently truncates on a length mismatch rather than failing, so a caller-introduced
+	// mismatch (NewIPAVerifier is exported and does not itself enforce this) would
+	// otherwise produce a wrong-but-quiet verification instead of an error here.
+	if uint64(len(v.LeftGenerators)) != 1<<v.NumberOfRounds || len(v.LeftGenerators) != len(v.RightGenerators) {
+		return errors.New("invalid IPA verifier: generator count does not match 2^NumberOfRounds")
+	}
+	if v.Transcript == nil {
+		return errors.New("invalid IPA verifier: nil transcript")
+	}
+	// compute the first challenge x — mirrors ipaProver.Prove exactly
+	genBytes, err := common.GetG1Array(v.RightGenerators, v.LeftGenerators, []*mathlib.G1{v.Q, v.Commitment}).Bytes()
 	if err != nil {
 		return err
 	}
-	bytesToHash[1] = []byte(common.Separator)
-	bytesToHash[2] = v.InnerProduct.Bytes()
-	raw, err := asn1.MarshalStd(bytesToHash)
+	v.Transcript.Absorb(genBytes)
+	v.Transcript.Absorb(v.InnerProduct.Bytes())
+	x, err := v.Transcript.Squeeze()
 	if err != nil {
 		return err
 	}
-	x := v.Curve.HashToZr(raw)
 	// C is commitment to leftVector, rightVector and their inner product
 	C := v.Q.Mul(v.Curve.ModMul(x, v.InnerProduct, v.Curve.GroupOrder))
 	C.Add(v.Commitment)
@@ -377,13 +435,14 @@ func (v *ipaVerifier) Verify(proof *IPA) error {
 		if proof.L[i] == nil || proof.R[i] == nil {
 			return errors.New("invalid IPA proof: nil elements")
 		}
-		// compute the challenge x for each round of reduction
-		array = common.GetG1Array([]*mathlib.G1{proof.L[i], proof.R[i]})
-		raw, err = array.Bytes()
+		// compute the challenge x for each round of reduction, chained through the same
+		// running transcript as the first challenge — mirrors ipaProver.reduce exactly
+		v.Transcript.Absorb(proof.L[i].Bytes())
+		v.Transcript.Absorb(proof.R[i].Bytes())
+		x, err = v.Transcript.Squeeze()
 		if err != nil {
 			return err
 		}
-		x = v.Curve.HashToZr(raw)
 		xList[i] = x.Copy()
 		// 1/x
 		xInv := x.Copy()

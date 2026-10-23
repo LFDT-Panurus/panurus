@@ -4,7 +4,7 @@ Copyright IBM Corp. All Rights Reserved.
 SPDX-License-Identifier: Apache-2.0
 */
 
-package csp
+package common
 
 import (
 	"crypto/sha256"
@@ -57,6 +57,10 @@ func (tr *Transcript) State() []byte {
 	return tr.fsState
 }
 
+// SetState restores a previously saved transcript state (see State), or seeds the
+// transcript with a caller-chosen header of any length (e.g. the CSP range proof's
+// WithTranscriptHeader). Both uses are safe: fsState is only ever fed into Absorb's
+// sha256(fsState||msg), which accepts any-length input.
 func (tr *Transcript) SetState(state []byte) {
 	tr.fsState = state
 }

@@ -8,6 +8,7 @@ package csp
 
 import (
 	mathlib "github.com/IBM/mathlib"
+	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/crypto/common"
 	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/crypto/math"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 )
@@ -119,7 +120,7 @@ func (p *prover) Prove() (*Proof, error) {
 		return nil, errors.New("invalid transcript header")
 	}
 
-	tr := Transcript{Curve: p.Curve}
+	tr := common.Transcript{Curve: p.Curve}
 	tr.SetState(p.TranscriptHeader)
 
 	tr.Absorb(p.Commitment.Bytes())
@@ -311,7 +312,7 @@ func (v *verifier) Verify(proof *Proof) error {
 		return errors.New("invalid transcript header")
 	}
 
-	tr := Transcript{Curve: v.Curve}
+	tr := common.Transcript{Curve: v.Curve}
 	tr.SetState(v.TranscriptHeader)
 
 	tr.Absorb(v.Commitment.Bytes())

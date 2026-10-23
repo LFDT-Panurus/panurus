@@ -111,6 +111,7 @@ func TestNativeIPAProofVerify(t *testing.T) {
 				setup.com,
 				setup.nr,
 				setup.curve,
+				newStandaloneIPATranscript(setup.curve),
 				nil,
 			)
 			proof, err := prover.Prove()
@@ -124,6 +125,7 @@ func TestNativeIPAProofVerify(t *testing.T) {
 				setup.com,
 				setup.nr,
 				setup.curve,
+				newStandaloneIPATranscript(setup.curve),
 				nil,
 			)
 			require.NoError(t, verifier.Verify(proof))
@@ -164,12 +166,12 @@ func TestNativeReduceVectors_Consistency(t *testing.T) {
 
 			proof, err := bulletproof.NewIPAProver(
 				ip, left, right, Q,
-				leftGens, rightGens, com, nr, curve, nil,
+				leftGens, rightGens, com, nr, curve, newStandaloneIPATranscript(curve), nil,
 			).Prove()
 			require.NoError(t, err)
 
 			err = bulletproof.NewIPAVerifier(
-				ip, Q, leftGens, rightGens, com, nr, curve, nil,
+				ip, Q, leftGens, rightGens, com, nr, curve, newStandaloneIPATranscript(curve), nil,
 			).Verify(proof)
 			require.NoError(t, err)
 		})
@@ -228,7 +230,7 @@ func BenchmarkNativeIPAProver(b *testing.B) {
 				prover := bulletproof.NewIPAProver(
 					ip, setup.left, setup.right, setup.Q,
 					setup.leftGens, setup.rightGens, setup.com,
-					setup.nr, setup.curve, nil,
+					setup.nr, setup.curve, newStandaloneIPATranscript(setup.curve), nil,
 				)
 				_, err := prover.Prove()
 				require.NoError(b, err)

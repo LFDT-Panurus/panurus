@@ -110,12 +110,29 @@ func validateCSPVerifierInputs(curve *mathlib.Curve, v *verifier) error {
 	return nil
 }
 
+// maxCSPRounds bounds the number of folding rounds a CSP proof's Left/Right/VLeft/VRight
+// slices may contain when expectedRounds is not independently known (see validateRangeProof,
+// which calls validateCSPProof with expectedRounds derived from the proof itself). The real
+// bound is NumberOfBits<=64 (validateRange{Prover,Verifier}Inputs) => witSize=2*64+4=132 =>
+// next-power-of-two paddedSize=256 => 8 rounds; 16 leaves headroom without letting an
+// attacker-chosen round count grow unbounded before the PP-derived check in verifier.Verify.
+const maxCSPRounds = 16
+
 // validateCSPProof validates the structure of a CSP proof.
 // proof.Left and proof.Right are prover-supplied folding commitments that are used
 // directly in the verifier equation; admitting the identity element (infinity) would
 // neutralise the corresponding round constraint and weaken range-proof soundness.
 // All G1 proof elements are therefore rejected if they are nil, on the wrong curve,
 // or the point at infinity — mirroring the check in the IPA verifier.
+//
+// expectedRounds is authoritative when the caller has it (verifier.Verify passes the
+// PP-derived NumberOfRounds). validateRangeProof, however, calls this with
+// len(proof.cspProof.Left) — i.e. expectedRounds is read off the very proof being
+// validated, making the length check against it vacuous by construction. To still catch a
+// malformed/truncated proof at that earlier point, this also checks the four slices are
+// mutually consistent in length and within maxCSPRounds, independent of what expectedRounds
+// says; verifier.Verify's own call (with a real expectedRounds) keeps relying on the
+// authoritative check above it.
 func validateCSPProof(curve *mathlib.Curve, proof *Proof, expectedRounds uint64) error {
 	if proof == nil {
 		return ErrNilProof
@@ -153,6 +170,14 @@ func validateCSPProof(curve *mathlib.Curve, proof *Proof, expectedRounds uint64)
 	}
 	if err := math.CheckZrElements(proof.VRight, curve.ID(), expectedRounds); err != nil {
 		return errors.Wrapf(err, "proof.VRight validation failed")
+	}
+	// Belt-and-braces beyond the individual expectedRounds checks above: when
+	// expectedRounds itself was read off this proof (validateRangeProof's call), those
+	// checks alone are vacuous, so also bound the round count by a small constant
+	// independent of expectedRounds. The slices' mutual equality is already implied by
+	// each matching expectedRounds above; this only adds the constant bound.
+	if uint64(len(proof.Left)) > maxCSPRounds {
+		return errors.Wrapf(ErrInvalidLength, "proof.Left exceeds maximum of %d rounds, got %d", maxCSPRounds, len(proof.Left))
 	}
 
 	return nil

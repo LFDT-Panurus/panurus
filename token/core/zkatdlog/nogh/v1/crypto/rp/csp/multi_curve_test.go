@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	mathlib "github.com/IBM/mathlib"
+	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/crypto/common"
 )
 
 // TestAllCurvesSupported verifies that all critical tests run successfully
@@ -50,7 +51,7 @@ func TestAllCurvesSupported(t *testing.T) {
 
 func testTranscriptBasicOperations(t *testing.T, curve *mathlib.Curve) {
 	t.Helper()
-	tr := Transcript{Curve: curve}
+	tr := common.Transcript{Curve: curve}
 	tr.InitHasher()
 
 	// Test absorb and squeeze

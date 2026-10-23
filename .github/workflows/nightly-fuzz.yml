@@ -99,6 +99,15 @@ jobs:
           - name: zkatdlog-transfer-csp-verifier
             pkg: ./token/core/zkatdlog/nogh/v1/transfer
             func: FuzzCSPVerifierNoPanic
+          - name: zkatdlog-bulletproof-range-proof-deserialize
+            pkg: ./token/core/zkatdlog/nogh/v1/crypto/rp/bulletproof
+            func: FuzzRangeProofDeserializeNoPanic
+          - name: zkatdlog-bulletproof-ipa-deserialize
+            pkg: ./token/core/zkatdlog/nogh/v1/crypto/rp/bulletproof
+            func: FuzzIPADeserializeNoPanic
+          - name: zkatdlog-csp-range-proof-deserialize
+            pkg: ./token/core/zkatdlog/nogh/v1/crypto/rp/csp
+            func: FuzzCSPRangeProofDeserializeNoPanic
           - name: zkatdlog-token-deserialize
             pkg: ./token/core/zkatdlog/nogh/v1/token
             func: FuzzTokenDeserializeNoPanic

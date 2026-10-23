@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	math "github.com/IBM/mathlib"
+	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/crypto/common"
 	"github.com/stretchr/testify/require"
 )
 
@@ -219,4 +220,55 @@ func TestRangeVerifier_VerifyError(t *testing.T) {
 	err = verifier.Verify(proof)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "invalid range proof: nil elements")
+}
+
+// TestChallengeXBoundToFullTranscript is a regression test for the Fiat-Shamir
+// transcript binding fixed by TestOutofRange in rp_test.go: the challenge x
+// must depend on everything absorbed before T1, T2 (the commitment, C and D,
+// and the derived challenges y, z), not on T1, T2 alone. If x could be
+// computed independent of C, D, V, a prover could fix T1, T2 (and so x)
+// before committing to the bit-decomposition vectors.
+func TestChallengeXBoundToFullTranscript(t *testing.T) {
+	curve := math.Curves[math.BN254]
+	rand, err := curve.Rand()
+	require.NoError(t, err)
+
+	T1 := curve.GenG1.Mul(curve.NewRandomZr(rand))
+	T2 := curve.GenG1.Mul(curve.NewRandomZr(rand))
+
+	deriveX := func(commitment, c, d *math.G1) *math.Zr {
+		tr := &common.Transcript{Curve: curve}
+		tr.InitHasherWithDomain(TranscriptDomain)
+		tr.Absorb(commitment.Bytes())
+		tr.Absorb(c.Bytes())
+		tr.Absorb(d.Bytes())
+		_, err := tr.Squeeze() // y
+		require.NoError(t, err)
+		_, err = tr.Squeeze() // z
+		require.NoError(t, err)
+		tr.Absorb(T1.Bytes())
+		tr.Absorb(T2.Bytes())
+		x, err := tr.Squeeze()
+		require.NoError(t, err)
+
+		return x
+	}
+
+	commitment := curve.GenG1.Mul(curve.NewRandomZr(rand))
+	C := curve.GenG1.Mul(curve.NewRandomZr(rand))
+	D := curve.GenG1.Mul(curve.NewRandomZr(rand))
+
+	xBase := deriveX(commitment, C, D)
+
+	// Changing any of commitment, C, D (with T1, T2 fixed) must change x:
+	// a prover cannot pick T1, T2 first and learn x before committing to the
+	// bit-decomposition vectors.
+	otherCommitment := curve.GenG1.Mul(curve.NewRandomZr(rand))
+	require.False(t, xBase.Equals(deriveX(otherCommitment, C, D)))
+
+	otherC := curve.GenG1.Mul(curve.NewRandomZr(rand))
+	require.False(t, xBase.Equals(deriveX(commitment, otherC, D)))
+
+	otherD := curve.GenG1.Mul(curve.NewRandomZr(rand))
+	require.False(t, xBase.Equals(deriveX(commitment, C, otherD)))
 }

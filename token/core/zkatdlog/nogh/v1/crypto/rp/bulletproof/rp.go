@@ -7,6 +7,8 @@ SPDX-License-Identifier: Apache-2.0
 package bulletproof
 
 import (
+	"math/big"
+
 	math "github.com/IBM/mathlib"
 	"github.com/LFDT-Panurus/panurus/token/core/common/encoding/asn1"
 	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/crypto/common"
@@ -16,6 +18,34 @@ import (
 	bn254fr "github.com/consensys/gnark-crypto/ecc/bn254/fr"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 )
+
+// TranscriptDomain is the Fiat-Shamir domain separator for the Bulletproof
+// range proof transcript.
+const TranscriptDomain = "Bulletproof-RangeProof-v1"
+
+// absorbPublicStatement absorbs the public parameters of a Bulletproof range proof —
+// everything that is fixed before any proof-specific commitment exists — into tr,
+// immediately after it is seeded with InitHasherWithDomain(TranscriptDomain) and before the
+// value commitment. Binding these into the transcript means a proof produced under one set
+// of generators/bit-length cannot be replayed as if produced under another, even though the
+// verifier's own arithmetic already uses its own generators (so this is defense-in-depth,
+// not a demonstrated attack — see the CSP range proof's analogous
+// VGenerators||AGenerators||BGenerators||NumberOfBits absorption in csp/rp.go).
+// Prover and verifier must call this with the same arguments in the same order; it is a
+// plain function (not cached on PublicParams) deliberately: see the discussion on why a
+// stored/serialized transcript header is the wrong tradeoff here.
+func absorbPublicStatement(tr *common.Transcript, commitmentGenerators, leftGenerators, rightGenerators []*math.G1, bitLength uint64) {
+	for _, g := range commitmentGenerators {
+		tr.Absorb(g.Bytes())
+	}
+	for _, g := range leftGenerators {
+		tr.Absorb(g.Bytes())
+	}
+	for _, g := range rightGenerators {
+		tr.Absorb(g.Bytes())
+	}
+	tr.Absorb(new(big.Int).SetUint64(bitLength).Bytes())
+}
 
 // RangeProofData contains the elements of a Bulletproof-style range proof.
 type RangeProofData struct {
@@ -242,7 +272,7 @@ func (p *rangeProver) Prove() (*RangeProof, error) {
 	// left = (b_i-z) + xU_i
 	// right = y^i((b_i-1+z)+xV_i)+2^iz^2
 
-	left, right, y, rp, err := p.preprocess()
+	left, right, y, rp, tr, err := p.preprocess()
 	if err != nil {
 		return nil, err
 	}
@@ -261,7 +291,8 @@ func (p *rangeProver) Prove() (*RangeProof, error) {
 	// compute the commitment to left and right
 	com := CommitVector(left, right, p.LeftGenerators, rightGeneratorsPrime, p.Curve)
 	rp.Data.InnerProduct = math2.InnerProduct(left, right, p.Curve)
-	// produce the IPA
+	// produce the IPA, continuing the same transcript used for y, z, x, T1, T2 above so
+	// the IPA's own challenges are bound to the enclosing range proof's statement too.
 	ipp := NewIPAProver(
 		rp.Data.InnerProduct,
 		left,
@@ -272,6 +303,7 @@ func (p *rangeProver) Prove() (*RangeProof, error) {
 		com,
 		p.NumberOfRounds,
 		p.Curve,
+		tr,
 		p.Provider,
 	)
 	rp.IPA, err = ipp.Prove()
@@ -282,8 +314,10 @@ func (p *rangeProver) Prove() (*RangeProof, error) {
 	return rp, nil
 }
 
-// preprocess prepares data for the inner product argument
-func (p *rangeProver) preprocess() ([]*math.Zr, []*math.Zr, *math.Zr, *RangeProof, error) {
+// preprocess prepares data for the inner product argument. The returned *common.Transcript
+// is the same one used to derive y, z and x; callers must pass it on to the IPA sub-proof
+// so its challenges continue the same running transcript instead of starting a new one.
+func (p *rangeProver) preprocess() ([]*math.Zr, []*math.Zr, *math.Zr, *RangeProof, *common.Transcript, error) {
 	left := make([]*math.Zr, p.BitLength)
 	right := make([]*math.Zr, p.BitLength)
 	randomLeft := make([]*math.Zr, p.BitLength)
@@ -291,7 +325,7 @@ func (p *rangeProver) preprocess() ([]*math.Zr, []*math.Zr, *math.Zr, *RangeProo
 
 	rand, err := p.Curve.Rand()
 	if err != nil {
-		return nil, nil, nil, nil, err
+		return nil, nil, nil, nil, nil, err
 	}
 	rho := p.Curve.NewRandomZr(rand)
 	eta := p.Curve.NewRandomZr(rand)
@@ -321,30 +355,40 @@ func (p *rangeProver) preprocess() ([]*math.Zr, []*math.Zr, *math.Zr, *RangeProo
 	// D is a hiding commitment thanks to eta
 	// D.Add(p.P.Mul(eta))
 
-	array := common.GetG1Array([]*math.G1{C, D, p.Commitment})
-	// compute challenges y and z
-	bytesToHash, err := array.Bytes()
+	// Bind y, z, and (later) x to a single running transcript that absorbs
+	// the public statement, the commitment, C, D and then T1, T2, so x cannot be chosen
+	// before C and D are fixed (see common.Transcript for the Absorb/Squeeze pattern
+	// already used by the CSP range proof).
+	tr := &common.Transcript{Curve: p.Curve}
+	tr.InitHasherWithDomain(TranscriptDomain)
+	absorbPublicStatement(tr, p.CommitmentGenerators, p.LeftGenerators, p.RightGenerators, p.BitLength)
+	tr.Absorb(p.Commitment.Bytes())
+	tr.Absorb(C.Bytes())
+	tr.Absorb(D.Bytes())
+	y, err := tr.Squeeze()
 	if err != nil {
-		return nil, nil, nil, nil, err
+		return nil, nil, nil, nil, nil, err
 	}
-	y := p.Curve.HashToZr(bytesToHash)
-	z := p.Curve.HashToZr(y.Bytes())
+	z, err := tr.Squeeze()
+	if err != nil {
+		return nil, nil, nil, nil, nil, err
+	}
 
 	isBLS, isBN254 := math2.DispatchCurve(p.Curve)
 	if isBLS {
 		rand, err := p.Curve.Rand()
 		if err != nil {
-			return nil, nil, nil, nil, err
+			return nil, nil, nil, nil, nil, err
 		}
 
-		return nativeRPPreprocess[bls12381fr.Element, *bls12381fr.Element](p, left, right, randomLeft, randomRight, y, z, C, D, rho, eta, rand)
+		return nativeRPPreprocess[bls12381fr.Element, *bls12381fr.Element](p, left, right, randomLeft, randomRight, y, z, C, D, rho, eta, rand, tr)
 	} else if isBN254 {
 		rand, err := p.Curve.Rand()
 		if err != nil {
-			return nil, nil, nil, nil, err
+			return nil, nil, nil, nil, nil, err
 		}
 
-		return nativeRPPreprocess[bn254fr.Element, *bn254fr.Element](p, left, right, randomLeft, randomRight, y, z, C, D, rho, eta, rand)
+		return nativeRPPreprocess[bn254fr.Element, *bn254fr.Element](p, left, right, randomLeft, randomRight, y, z, C, D, rho, eta, rand, tr)
 	}
 
 	leftPrime := make([]*math.Zr, len(left))
@@ -403,13 +447,13 @@ func (p *rangeProver) preprocess() ([]*math.Zr, []*math.Zr, *math.Zr, *RangeProo
 	tau2 := p.Curve.NewRandomZr(rand)
 	T2 := p.CommitmentGenerators[0].Mul2(t2, p.CommitmentGenerators[1], tau2)
 
-	// compute challenge x
-	array = common.GetG1Array([]*math.G1{T1, T2})
-	bytesToHash, err = array.Bytes()
+	// compute challenge x, bound to the same transcript as y and z
+	tr.Absorb(T1.Bytes())
+	tr.Absorb(T2.Bytes())
+	x, err := tr.Squeeze()
 	if err != nil {
-		return nil, nil, nil, nil, err
+		return nil, nil, nil, nil, nil, err
 	}
-	x := p.Curve.HashToZr(bytesToHash)
 
 	// compute vectors left and right against which an IPA will be produced
 	// if p.Value is within the authorized range, then L_iR_i =0 and L_i-R_i-1 = 0
@@ -446,7 +490,7 @@ func (p *rangeProver) preprocess() ([]*math.Zr, []*math.Zr, *math.Zr, *RangeProo
 		},
 	}
 
-	return left, right, y, rp, nil
+	return left, right, y, rp, tr, nil
 }
 
 // rangeVerifier is an internal struct that manages the verification of a range proof.
@@ -503,6 +547,9 @@ func NewRangeVerifier(
 // It returns nil if the proof is valid, or an error otherwise.
 func (v *rangeVerifier) Verify(rp *RangeProof) error {
 	// check that the proof is well-formed
+	if rp == nil || rp.Data == nil {
+		return errors.New("invalid range proof: nil elements")
+	}
 	if rp.Data.InnerProduct == nil || rp.Data.C == nil || rp.Data.D == nil {
 		return errors.New("invalid range proof: nil elements")
 	}
@@ -515,29 +562,45 @@ func (v *rangeVerifier) Verify(rp *RangeProof) error {
 	if rp.IPA == nil {
 		return errors.New("invalid range proof: nil elements")
 	}
-	array := common.GetG1Array([]*math.G1{rp.Data.T1, rp.Data.T2})
-	bytesToHash, err := array.Bytes()
+	// LeftGenerators/RightGenerators/BitLength are expected to be consistent (enforced by
+	// RangeProofParams.Validate on the public-parameters path), but NewRangeVerifier is
+	// exported and bypasses that check, and yPow below is sized from RightGenerators while
+	// verifyIPA's n is sized from LeftGenerators — a caller-introduced mismatch would
+	// otherwise reach an index-out-of-range deep inside verifyIPA instead of failing here.
+	if len(v.LeftGenerators) != len(v.RightGenerators) || uint64(len(v.LeftGenerators)) != v.BitLength {
+		return errors.New("invalid range proof: generator/bit-length mismatch")
+	}
+	// Replay the same transcript sequence as the prover: absorb the public statement, the
+	// commitment, C, D to derive y and z, then absorb T1, T2 to derive x. This binds x to
+	// the earlier commitments so it cannot be chosen independently of them (see preprocess
+	// in rp.go).
+	tr := &common.Transcript{Curve: v.Curve}
+	tr.InitHasherWithDomain(TranscriptDomain)
+	absorbPublicStatement(tr, v.CommitmentGenerators, v.LeftGenerators, v.RightGenerators, v.BitLength)
+	tr.Absorb(v.Commitment.Bytes())
+	tr.Absorb(rp.Data.C.Bytes())
+	tr.Absorb(rp.Data.D.Bytes())
+	y, err := tr.Squeeze()
 	if err != nil {
 		return err
 	}
-	// compute x and x^2
-	x := v.Curve.HashToZr(bytesToHash)
+	z, err := tr.Squeeze()
+	if err != nil {
+		return err
+	}
+	tr.Absorb(rp.Data.T1.Bytes())
+	tr.Absorb(rp.Data.T2.Bytes())
+	x, err := tr.Squeeze()
+	if err != nil {
+		return err
+	}
 	xSquare := x.PowMod(math2.Two(v.Curve))
-
-	// compute y and z
-	array = common.GetG1Array([]*math.G1{rp.Data.C, rp.Data.D, v.Commitment})
-	bytesToHash, err = array.Bytes()
-	if err != nil {
-		return err
-	}
-	y := v.Curve.HashToZr(bytesToHash)
-	z := v.Curve.HashToZr(y.Bytes())
 
 	isBLS, isBN254 := math2.DispatchCurve(v.Curve)
 	if isBLS {
-		return nativeRPVerify[bls12381fr.Element, *bls12381fr.Element](v, rp, x, y, z)
+		return nativeRPVerify[bls12381fr.Element, *bls12381fr.Element](v, rp, x, y, z, tr)
 	} else if isBN254 {
-		return nativeRPVerify[bn254fr.Element, *bn254fr.Element](v, rp, x, y, z)
+		return nativeRPVerify[bn254fr.Element, *bn254fr.Element](v, rp, x, y, z, tr)
 	}
 	// z^2 and z^3
 	zSquare := z.PowMod(math2.Two(v.Curve))
@@ -577,8 +640,9 @@ func (v *rangeVerifier) Verify(rp *RangeProof) error {
 		return errors.New("invalid range proof")
 	}
 
-	// verify the IPA
-	err = v.verifyIPA(rp, x, yPow, z, zSquare)
+	// verify the IPA, continuing the same transcript used to derive y, z, x above so the
+	// IPA's own challenges are bound to the range proof's statement too.
+	err = v.verifyIPA(rp, x, yPow, z, zSquare, tr)
 	if err != nil {
 		return err
 	}
@@ -587,7 +651,7 @@ func (v *rangeVerifier) Verify(rp *RangeProof) error {
 }
 
 // verifyIPA checks if the IPA within the range proof is valid
-func (v *rangeVerifier) verifyIPA(rp *RangeProof, x *math.Zr, yPow []*math.Zr, z, zSquare *math.Zr) error {
+func (v *rangeVerifier) verifyIPA(rp *RangeProof, x *math.Zr, yPow []*math.Zr, z, zSquare *math.Zr, tr *common.Transcript) error {
 	n := len(v.LeftGenerators)
 
 	// Replace 64 individual InvModOrder() calls with one BatchInverse call
@@ -658,6 +722,7 @@ func (v *rangeVerifier) verifyIPA(rp *RangeProof, x *math.Zr, yPow []*math.Zr, z
 		com,
 		v.NumberOfRounds,
 		v.Curve,
+		tr,
 		v.Provider,
 	)
 
