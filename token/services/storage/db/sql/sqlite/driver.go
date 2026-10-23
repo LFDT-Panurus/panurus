@@ -11,7 +11,7 @@ import (
 
 	"github.com/LFDT-Panurus/panurus/token/services/logging"
 	"github.com/LFDT-Panurus/panurus/token/services/utils"
-	"github.com/hyperledger-labs/fabric-smart-client/platform/common/utils/cache/secondcache"
+	cache2 "github.com/LFDT-Panurus/panurus/token/services/utils/cache"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/common/utils/lazy"
 	driver2 "github.com/hyperledger-labs/fabric-smart-client/platform/view/services/storage/driver"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/services/storage/driver/common"
@@ -101,8 +101,8 @@ func newIdentityStoreProvider(dbProvider fscSqlite.DbProvider, tableNamesConfig 
 			dbs.ReadDB,
 			NewBusyRetryWriteDB(dbs.WriteDB),
 			tableNames,
-			secondcache.NewTyped[bool](5000),
-			secondcache.NewTyped[[]byte](5000),
+			cache2.NewSecondChanceCache[bool](5000, 1),
+			cache2.NewSecondChanceCache[[]byte](5000, 1),
 			NewConditionInterpreter(),
 			&fscSqlite.ErrorMapper{},
 			nil,

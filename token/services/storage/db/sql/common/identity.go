@@ -24,7 +24,6 @@ import (
 	"github.com/LFDT-Panurus/panurus/token/services/utils"
 	cache2 "github.com/LFDT-Panurus/panurus/token/services/utils/cache"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
-	"github.com/hyperledger-labs/fabric-smart-client/platform/common/utils/cache/secondcache"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/common/utils/collections/iterators"
 	driver2 "github.com/hyperledger-labs/fabric-smart-client/platform/view/services/storage/driver"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/services/storage/driver/sql/common"
@@ -103,8 +102,8 @@ func NewCachedIdentityStore(
 		readDB,
 		writeDB,
 		tables,
-		secondcache.NewTyped[bool](5000),
-		secondcache.NewTyped[[]byte](5000),
+		cache2.NewSecondChanceCache[bool](5000, 1),
+		cache2.NewSecondChanceCache[[]byte](5000, 1),
 		ci,
 		errorWrapper,
 	)

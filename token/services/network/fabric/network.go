@@ -639,9 +639,9 @@ type setupListenerProvider struct {
 func (p *setupListenerProvider) GetListener(tmsID token2.TMSID) lookup.Listener {
 	return &setupListener{
 		GetTMSProvider: func() *token2.ManagementServiceProvider { return p.tmsProvider },
-		GetTokens: lazy.NewGetter[*tokens.Service](func() (*tokens.Service, error) {
+		GetTokens: lazy.NewHolder[*tokens.Service](func() (*tokens.Service, error) {
 			return p.tokensProvider.ServiceByTMSId(tmsID)
-		}).Get,
+		}, nil).Get,
 		TMSID: tmsID,
 	}
 }

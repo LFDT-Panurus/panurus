@@ -17,12 +17,12 @@ import (
 	"github.com/LFDT-Panurus/panurus/integration/token/fungible/views/ppsetup"
 	"github.com/hyperledger-labs/fabric-smart-client/integration/nwo/api"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
-	viewclient "github.com/hyperledger-labs/fabric-smart-client/platform/view/services/view/grpc/client"
+	viewclient "github.com/hyperledger-labs/fabric-smart-client/platform/view/services/view/client"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-// fakeClient is an api.GRPCClient whose CallView behaviour is driven by the test.
+// fakeClient is an api.RemoteViewClient whose CallView behaviour is driven by the test.
 type fakeClient struct {
 	callView func(fid string, in []byte) (any, error)
 	calls    atomic.Int32
@@ -48,13 +48,13 @@ func (c *fakeClient) StreamCallView(string, []byte) (*viewclient.Stream, error) 
 
 // fakeClientProvider returns nil for the first nilTimes lookups, and client afterwards.
 type fakeClientProvider struct {
-	client   api.GRPCClient
+	client   api.RemoteViewClient
 	nilTimes int
 	lookups  atomic.Int32
 }
 
 //nolint:ireturn // the return type is fixed by the ClientProvider interface under test
-func (p *fakeClientProvider) Client(string) api.GRPCClient {
+func (p *fakeClientProvider) Client(string) api.RemoteViewClient {
 	if int(p.lookups.Add(1)) <= p.nilTimes {
 		return nil
 	}

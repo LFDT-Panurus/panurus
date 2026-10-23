@@ -15,8 +15,8 @@ import (
 	idriver "github.com/LFDT-Panurus/panurus/token/services/identity/driver"
 	"github.com/LFDT-Panurus/panurus/token/services/logging"
 	"github.com/LFDT-Panurus/panurus/token/services/storage/integrity"
+	cache2 "github.com/LFDT-Panurus/panurus/token/services/utils/cache"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
-	"github.com/hyperledger-labs/fabric-smart-client/platform/common/utils/cache/secondcache"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/common/utils/collections"
 	"go.uber.org/zap/zapcore"
 )
@@ -112,7 +112,7 @@ func NewProvider(
 		enrollmentIDUnmarshaler: enrollmentIDUnmarshaler,
 		deserializer:            deserializer,
 		storage:                 storage,
-		signers:                 secondcache.NewTyped[*SignerEntry](50),
+		signers:                 cache2.NewSecondChanceCache[*SignerEntry](50, 1),
 		metrics:                 m,
 	}
 }

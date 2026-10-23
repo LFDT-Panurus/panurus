@@ -43,7 +43,7 @@ var logger = logging.MustGetLogger()
 // ClientProvider hands out a gRPC client for a named FSC node. Backend uses it to reach the
 // issuer node whose view sets up the public parameters.
 type ClientProvider interface {
-	Client(string) api.GRPCClient
+	Client(string) api.RemoteViewClient
 }
 
 // Backend installs and updates the token public parameters of a fabricx network by
@@ -398,7 +398,7 @@ func (b *Backend) PublicParamsInstallTimeout() time.Duration {
 }
 
 // callSetupPublicParamsView invokes the SetupPublicParams view on the given client.
-func callSetupPublicParamsView(issuer api.GRPCClient, tms *tokentopology.TMS, ppRaw []byte) error {
+func callSetupPublicParamsView(issuer api.RemoteViewClient, tms *tokentopology.TMS, ppRaw []byte) error {
 	// marshalling here rather than via common.JSONMarshall, whose failure mode is an
 	// assertion that needs a registered gomega fail handler
 	input, err := json.Marshal(&ppsetup.SetupPublicParams{
