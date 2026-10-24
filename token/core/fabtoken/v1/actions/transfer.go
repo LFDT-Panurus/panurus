@@ -215,34 +215,16 @@ func (t *TransferAction) Validate() error {
 		return errors.Wrapf(ErrTooManyInputs, "limit [%d]", limits.MaxInputs)
 	}
 	for i, in := range t.Inputs {
-		if in == nil {
-			return errors.Errorf("invalid input at index [%d], empty input", i)
-		}
-		if in.ID == nil {
-			return errors.Errorf("invalid input's ID at index [%d], it is empty", i)
-		}
-		if len(in.ID.TxId) == 0 {
-			return errors.Errorf("invalid input's ID at index [%d], tx id is empty", i)
-		}
-		if in.Input == nil {
-			return errors.Errorf("invalid input's token at index [%d], empty token", i)
-		}
-		if err := in.Input.Validate(true); err != nil {
-			return errors.Wrapf(err, "invalid input token at index [%d]", i)
+		if err := validateTransferInput(i, in); err != nil {
+			return err
 		}
 	}
 	if len(t.Outputs) > limits.MaxOutputs {
 		return errors.Wrapf(ErrTooManyOutputs, "limit [%d]", limits.MaxOutputs)
 	}
 	for i, out := range t.Outputs {
-		if out == nil {
-			return errors.Errorf("invalid output at index [%d], empty output", i)
-		}
-		if len(out.Type) == 0 {
-			return errors.Errorf("invalid output's type at index [%d], output type is empty", i)
-		}
-		if len(out.Quantity) == 0 {
-			return errors.Errorf("invalid output's quantity at index [%d], output quantity is empty", i)
+		if err := validateTransferOutput(i, out); err != nil {
+			return err
 		}
 	}
 	if err := checkMetadataLimits(t.Metadata, limits.MaxMetadataEntries, limits.MaxMetadataKeyBytes, limits.MaxMetadataValueBytes); err != nil {
@@ -253,6 +235,44 @@ func (t *TransferAction) Validate() error {
 	// if t.IsRedeem() && (t.Issuer == nil) {
 	// 	return ErrMissingIssuer
 	// }
+
+	return nil
+}
+
+// validateTransferInput checks that the i-th input of a transfer action is well-formed: it must
+// carry a non-empty ID and a valid token.
+func validateTransferInput(i int, in *TransferActionInput) error {
+	if in == nil {
+		return errors.Errorf("invalid input at index [%d], empty input", i)
+	}
+	if in.ID == nil {
+		return errors.Errorf("invalid input's ID at index [%d], it is empty", i)
+	}
+	if len(in.ID.TxId) == 0 {
+		return errors.Errorf("invalid input's ID at index [%d], tx id is empty", i)
+	}
+	if in.Input == nil {
+		return errors.Errorf("invalid input's token at index [%d], empty token", i)
+	}
+	if err := in.Input.Validate(true); err != nil {
+		return errors.Wrapf(err, "invalid input token at index [%d]", i)
+	}
+
+	return nil
+}
+
+// validateTransferOutput checks that the i-th output of a transfer action is non-nil and has a
+// non-empty type and quantity.
+func validateTransferOutput(i int, out *Output) error {
+	if out == nil {
+		return errors.Errorf("invalid output at index [%d], empty output", i)
+	}
+	if len(out.Type) == 0 {
+		return errors.Errorf("invalid output's type at index [%d], output type is empty", i)
+	}
+	if len(out.Quantity) == 0 {
+		return errors.Errorf("invalid output's quantity at index [%d], output quantity is empty", i)
+	}
 
 	return nil
 }
