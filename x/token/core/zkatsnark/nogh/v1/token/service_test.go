@@ -7,7 +7,6 @@ package token_test
 
 import (
 	"context"
-	"encoding/json"
 	"testing"
 
 	"github.com/consensys/gnark-crypto/ecc"
@@ -86,7 +85,7 @@ func TestTokensService_Deobfuscate_Success(t *testing.T) {
 		CommitmentOut: cm,
 		Recipient:     []byte("alice"),
 	}
-	outputRaw, err := json.Marshal(outputDesc)
+	outputRaw, err := outputDesc.Serialize()
 	require.NoError(t, err)
 
 	// Serialize the note as metadata.
@@ -132,7 +131,7 @@ func TestTokensService_Deobfuscate_BadOutput(t *testing.T) {
 	svc, err := snarktoken.NewTokensService(logging.MustGetLogger("test"), nil, deser)
 	require.NoError(t, err)
 
-	_, _, _, _, err = svc.Deobfuscate(context.Background(), []byte("not json"), metadata)
+	_, _, _, _, err = svc.Deobfuscate(context.Background(), []byte("bad data"), metadata)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "failed to unmarshal output")
 }
@@ -149,7 +148,7 @@ func TestTokensService_Deobfuscate_CommitmentMismatch(t *testing.T) {
 		CommitmentOut: make([]byte, 32), // zeroes won't match
 		Recipient:     []byte("alice"),
 	}
-	outputRaw, err := json.Marshal(outputDesc)
+	outputRaw, err := outputDesc.Serialize()
 	require.NoError(t, err)
 
 	deser := &stubDeserializer{}
@@ -166,7 +165,7 @@ func TestTokensService_Recipients_Success(t *testing.T) {
 	outputDesc := snarktoken.OutputDescription{
 		Recipient: []byte("bob"),
 	}
-	outputRaw, err := json.Marshal(outputDesc)
+	outputRaw, err := outputDesc.Serialize()
 	require.NoError(t, err)
 
 	deser := &stubDeserializer{
@@ -188,7 +187,7 @@ func TestTokensService_Recipients_BadJSON(t *testing.T) {
 	svc, err := snarktoken.NewTokensService(logging.MustGetLogger("test"), nil, deser)
 	require.NoError(t, err)
 
-	_, err = svc.Recipients([]byte("not json"))
+	_, err = svc.Recipients([]byte("bad data"))
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "failed to unmarshal output")
 }

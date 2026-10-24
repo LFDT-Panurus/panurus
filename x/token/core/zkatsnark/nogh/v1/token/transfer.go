@@ -6,11 +6,12 @@ SPDX-License-Identifier: Apache-2.0
 package token
 
 import (
-	"encoding/json"
-
 	"github.com/LFDT-Panurus/panurus/token/driver"
+	protosv1 "github.com/LFDT-Panurus/panurus/token/driver/protos-go/v1"
 	token2 "github.com/LFDT-Panurus/panurus/token/token"
+	snarkactions "github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/protos-go/v1/actions"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
+	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/proto"
 )
 
 // SpendDescription is the public wire-format record for one token being
@@ -23,6 +24,32 @@ type SpendDescription struct {
 	ValueCommitInY []byte // 32 bytes
 	TypeCommitment []byte // 32 bytes: MiMC(TokenType, TypeRandomness)
 	SpendProof     []byte // 292 bytes: Groth16 proof for SpendCircuit
+}
+
+// toProto converts the SpendDescription to its protobuf representation.
+func (s *SpendDescription) toProto() *snarkactions.SpendDescription {
+	return &snarkactions.SpendDescription{
+		CommitmentIn:   s.CommitmentIn,
+		ValueCommitInX: s.ValueCommitInX,
+		ValueCommitInY: s.ValueCommitInY,
+		TypeCommitment: s.TypeCommitment,
+		SpendProof:     s.SpendProof,
+	}
+}
+
+// spendDescriptionFromProto creates a SpendDescription from its protobuf representation.
+func spendDescriptionFromProto(pb *snarkactions.SpendDescription) SpendDescription {
+	if pb == nil {
+		return SpendDescription{}
+	}
+
+	return SpendDescription{
+		CommitmentIn:   pb.CommitmentIn,
+		ValueCommitInX: pb.ValueCommitInX,
+		ValueCommitInY: pb.ValueCommitInY,
+		TypeCommitment: pb.TypeCommitment,
+		SpendProof:     pb.SpendProof,
+	}
 }
 
 // TransferAction represents consuming one or more existing tokens and
@@ -111,20 +138,71 @@ func (a *TransferAction) ExtraSigners() []driver.Identity {
 
 // ── driver.TransferAction ──────────────────────────────────────────────────────
 
-// Serialize converts the action to bytes using JSON encoding.
+// Serialize converts the action to bytes using protobuf encoding.
 func (a *TransferAction) Serialize() ([]byte, error) {
-	raw, err := json.Marshal(a)
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to serialize transfer action")
+	inputs := make([]*snarkactions.SpendDescription, len(a.Inputs))
+	for i := range a.Inputs {
+		inputs[i] = a.Inputs[i].toProto()
 	}
 
-	return raw, nil
+	outputs := make([]*snarkactions.OutputDescription, len(a.Outputs))
+	for i := range a.Outputs {
+		outputs[i] = a.Outputs[i].toProto()
+	}
+
+	inputIDs := make([]*protosv1.TokenID, len(a.InputIDs))
+	for i, id := range a.InputIDs {
+		if id != nil {
+			inputIDs[i] = &protosv1.TokenID{
+				TxId:  id.TxId,
+				Index: id.Index,
+			}
+		}
+	}
+
+	return proto.Marshal(&snarkactions.TransferAction{
+		TypeCommitment:   a.TypeCommitment,
+		InputIds:         inputIDs,
+		InputTokens:      a.InputTokens,
+		Inputs:           inputs,
+		Outputs:          outputs,
+		BindingSignature: a.BindingSignature,
+		Issuer:           a.Issuer,
+		Metadata:         a.Metadata,
+	})
 }
 
 // Deserialize populates the action from bytes produced by Serialize.
 func (a *TransferAction) Deserialize(raw []byte) error {
-	if err := json.Unmarshal(raw, a); err != nil {
+	pb := &snarkactions.TransferAction{}
+	if err := proto.Unmarshal(raw, pb); err != nil {
 		return errors.Wrap(err, "failed to deserialize transfer action")
+	}
+
+	a.TypeCommitment = pb.TypeCommitment
+	a.BindingSignature = pb.BindingSignature
+	a.Issuer = pb.Issuer
+	a.Metadata = pb.Metadata
+	a.InputTokens = pb.InputTokens
+
+	a.InputIDs = make([]*token2.ID, len(pb.InputIds))
+	for i, id := range pb.InputIds {
+		if id != nil {
+			a.InputIDs[i] = &token2.ID{
+				TxId:  id.TxId,
+				Index: id.Index,
+			}
+		}
+	}
+
+	a.Inputs = make([]SpendDescription, len(pb.Inputs))
+	for i, in := range pb.Inputs {
+		a.Inputs[i] = spendDescriptionFromProto(in)
+	}
+
+	a.Outputs = make([]OutputDescription, len(pb.Outputs))
+	for i, out := range pb.Outputs {
+		a.Outputs[i] = outputDescriptionFromProto(out)
 	}
 
 	return a.checkLimits()
@@ -145,11 +223,11 @@ func (a *TransferAction) NumOutputs() int {
 	return len(a.Outputs)
 }
 
-// GetSerializedOutputs returns each output serialized as JSON.
+// GetSerializedOutputs returns each output serialized as protobuf.
 func (a *TransferAction) GetSerializedOutputs() ([][]byte, error) {
 	res := make([][]byte, len(a.Outputs))
-	for i, out := range a.Outputs {
-		raw, err := json.Marshal(out)
+	for i := range a.Outputs {
+		raw, err := a.Outputs[i].Serialize()
 		if err != nil {
 			return nil, errors.Wrapf(err, "failed to serialize output %d", i)
 		}
@@ -185,7 +263,7 @@ func (a *TransferAction) SerializeOutputAt(index int) ([]byte, error) {
 		return nil, errors.Errorf("SerializeOutputAt: index [%d] out of bounds (len=%d)", index, len(a.Outputs))
 	}
 
-	return json.Marshal(a.Outputs[index])
+	return a.Outputs[index].Serialize()
 }
 
 // GetIssuer returns the issuer identity for redeem actions, or nil for

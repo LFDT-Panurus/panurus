@@ -12,8 +12,10 @@ import (
 
 	"github.com/consensys/gnark-crypto/ecc"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
+	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/proto"
 
 	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/crypto/mimc"
+	snarknote "github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/protos-go/v1/note"
 )
 
 // DefaultRandomnessLength is 64 bytes (512 bits), providing at least 256 bits
@@ -153,38 +155,37 @@ func (n *Note) Commitment(curve ecc.ID) ([]byte, error) {
 	return cm, nil
 }
 
-// Serialize encodes the Note as CLEARTEXT bytes:
-// 8-byte big-endian Value,
-// 8-byte big-endian TokenType length, then TokenType bytes,
-// 8-byte big-endian Randomness length, then Randomness bytes,
-// 8-byte big-endian Issuer length, then Issuer bytes.
+// Serialize encodes the Note as protobuf bytes.
 func (n *Note) Serialize() ([]byte, error) {
-	out := make([]byte, 0, 8+8+len(n.TokenType)+8+len(n.Randomness)+8+len(n.Issuer))
-	var valueBuf [8]byte
-	binary.BigEndian.PutUint64(valueBuf[:], n.Value)
-	out = append(out, valueBuf[:]...)
-
-	var typeLenBuf [8]byte
-	binary.BigEndian.PutUint64(typeLenBuf[:], uint64(len(n.TokenType)))
-	out = append(out, typeLenBuf[:]...)
-	out = append(out, []byte(n.TokenType)...)
-
-	var randLenBuf [8]byte
-	binary.BigEndian.PutUint64(randLenBuf[:], uint64(len(n.Randomness)))
-	out = append(out, randLenBuf[:]...)
-	out = append(out, n.Randomness...)
-
-	var issuerLenBuf [8]byte
-	binary.BigEndian.PutUint64(issuerLenBuf[:], uint64(len(n.Issuer)))
-	out = append(out, issuerLenBuf[:]...)
-	out = append(out, n.Issuer...)
-
-	return out, nil
+	return proto.Marshal(&snarknote.Note{
+		Value:      n.Value,
+		TokenType:  n.TokenType,
+		Randomness: n.Randomness,
+		Issuer:     n.Issuer,
+	})
 }
 
 // Deserialize reconstructs a Note from bytes produced by Serialize.
-// It supports both new length-prefixed randomness notes and legacy 32-byte fixed randomness notes.
+// It first attempts protobuf decoding; if that fails, it falls back to the
+// legacy binary format for backward compatibility.
 func Deserialize(raw []byte) (*Note, error) {
+	// Try protobuf first.
+	pb := &snarknote.Note{}
+	if err := proto.Unmarshal(raw, pb); err == nil {
+		return &Note{
+			Value:      pb.Value,
+			TokenType:  pb.TokenType,
+			Randomness: pb.Randomness,
+			Issuer:     pb.Issuer,
+		}, nil
+	}
+
+	// Fall back to legacy binary format.
+	return deserializeLegacy(raw)
+}
+
+// deserializeLegacy reconstructs a Note from the legacy binary format.
+func deserializeLegacy(raw []byte) (*Note, error) {
 	if len(raw) < 16 {
 		return nil, errors.Errorf("note: serialized note too short: %d bytes", len(raw))
 	}
@@ -192,7 +193,7 @@ func Deserialize(raw []byte) (*Note, error) {
 	value := binary.BigEndian.Uint64(raw[0:8])
 	typeLen := binary.BigEndian.Uint64(raw[8:16])
 
-	if uint64(len(raw)) < 16+typeLen {
+	if typeLen > uint64(len(raw))-16 {
 		return nil, errors.Errorf("note: length mismatch, expected at least %d got %d", 16+typeLen, len(raw))
 	}
 
@@ -211,7 +212,7 @@ func Deserialize(raw []byte) (*Note, error) {
 				isLengthPrefixed = true
 			} else if len(remAfterRand) >= 8 {
 				issLen := binary.BigEndian.Uint64(remAfterRand[0:8])
-				if uint64(len(remAfterRand)) == 8+issLen {
+				if uint64(len(remAfterRand))-8 == issLen {
 					isLengthPrefixed = true
 				}
 			}
@@ -237,7 +238,7 @@ func Deserialize(raw []byte) (*Note, error) {
 		remAfterRand := rem[32:]
 		if len(remAfterRand) >= 8 {
 			issLen := binary.BigEndian.Uint64(remAfterRand[0:8])
-			if uint64(len(remAfterRand)) != 8+issLen {
+			if uint64(len(remAfterRand))-8 != issLen {
 				return nil, errors.Errorf("note: length mismatch, expected %d issuer bytes got %d", 8+issLen, len(remAfterRand))
 			}
 			issuer = make([]byte, issLen)

@@ -17,18 +17,20 @@ package pp
 
 import (
 	"crypto/sha256"
-	"encoding/json"
 	"errors"
 	"fmt"
 
 	mathlib "github.com/IBM/mathlib"
 	"github.com/consensys/gnark-crypto/ecc"
+	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/proto"
 
 	"github.com/LFDT-Panurus/panurus/token/core"
 	pp3 "github.com/LFDT-Panurus/panurus/token/core/common/encoding/pp"
 	"github.com/LFDT-Panurus/panurus/token/driver"
+	protosv1 "github.com/LFDT-Panurus/panurus/token/driver/protos-go/v1"
 	pp2 "github.com/LFDT-Panurus/panurus/token/driver/protos-go/v1/pp"
 	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/crypto/params"
+	snarkpp "github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/protos-go/v1/pp"
 )
 
 // Compile-time assertion: PublicParams must implement driver.PublicParameters.
@@ -213,12 +215,48 @@ func (pp *PublicParams) String() string {
 	)
 }
 
-// ── Serialization ─────────────────────────────────────────────────────────────
-
-// Serialize converts PublicParams into its byte representation. Uses JSON
-// for now, readable and simple to debug during development.
+// Serialize converts PublicParams into its byte representation using protobuf.
 func (pp *PublicParams) Serialize() ([]byte, error) {
-	raw, err := json.Marshal(pp)
+	auditors := make([]*protosv1.Identity, len(pp.AuditorIdentities))
+	for i, id := range pp.AuditorIdentities {
+		auditors[i] = &protosv1.Identity{Raw: id}
+	}
+
+	issuers := make([]*protosv1.Identity, len(pp.IssuerIdentities))
+	for i, id := range pp.IssuerIdentities {
+		issuers[i] = &protosv1.Identity{Raw: id}
+	}
+
+	idemixKeys := make([]*snarkpp.IdemixIssuerPublicKey, len(pp.IdemixIssuerPublicKeys))
+	for i, key := range pp.IdemixIssuerPublicKeys {
+		if key != nil {
+			idemixKeys[i] = &snarkpp.IdemixIssuerPublicKey{
+				PublicKey: key.PublicKey,
+				CurveId:   uint64(key.Curve), // #nosec G115
+			}
+		}
+	}
+
+	raw, err := proto.Marshal(&snarkpp.PublicParameters{
+		Label:                  pp.Label,
+		SchemeVersion:          uint32(pp.SchemeVersion), // #nosec G115
+		GraphHidingEnabled:     pp.GraphHidingEnabled,
+		CertifierId:            pp.CertifierID,
+		AuditorIdentities:      auditors,
+		IssuerIdentities:       issuers,
+		PrecisionValue:         pp.PrecisionValue,
+		ProofSystem:            pp.ProofSystem,
+		Curve:                  uint64(pp.Curve), // #nosec G115
+		PkSpend:                pp.PKSpend,
+		PkOutput:               pp.PKOutput,
+		PkMigration:            pp.PKMigration,
+		VkSpend:                pp.VKSpend,
+		VkOutput:               pp.VKOutput,
+		VkMigration:            pp.VKMigration,
+		MaxBits:                uint32(pp.MaxBits), // #nosec G115
+		IdemixIssuerPublicKeys: idemixKeys,
+		ExtraParams:            pp.ExtraParams,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("pp: serialize failed: %w", err)
 	}
@@ -237,15 +275,66 @@ func DeserializePublicParams(raw []byte) (*PublicParams, error) {
 	if err != nil {
 		return nil, fmt.Errorf("pp: deserialize failed: %w", err)
 	}
-	var p PublicParams
-	if err := json.Unmarshal(container.Raw, &p); err != nil {
+
+	pb := &snarkpp.PublicParameters{}
+	if err := proto.Unmarshal(container.Raw, pb); err != nil {
 		return nil, fmt.Errorf("pp: deserialize failed: %w", err)
 	}
+
+	auditors := make([]driver.Identity, len(pb.AuditorIdentities))
+	for i, id := range pb.AuditorIdentities {
+		if id != nil {
+			auditors[i] = id.Raw
+		}
+	}
+
+	issuers := make([]driver.Identity, len(pb.IssuerIdentities))
+	for i, id := range pb.IssuerIdentities {
+		if id != nil {
+			issuers[i] = id.Raw
+		}
+	}
+
+	idemixKeys := make([]*IdemixIssuerPublicKey, len(pb.IdemixIssuerPublicKeys))
+	for i, key := range pb.IdemixIssuerPublicKeys {
+		if key != nil {
+			idemixKeys[i] = &IdemixIssuerPublicKey{
+				PublicKey: key.PublicKey,
+				Curve:     mathlib.CurveID(key.CurveId), // #nosec G115
+			}
+		}
+	}
+
+	p := &PublicParams{
+		Label:                  pb.Label,
+		SchemeVersion:          driver.TokenDriverVersion(pb.SchemeVersion),
+		GraphHidingEnabled:     pb.GraphHidingEnabled,
+		CertifierID:            pb.CertifierId,
+		AuditorIdentities:      auditors,
+		IssuerIdentities:       issuers,
+		PrecisionValue:         pb.PrecisionValue,
+		ProofSystem:            pb.ProofSystem,
+		Curve:                  ecc.ID(pb.Curve), // #nosec G115
+		PKSpend:                pb.PkSpend,
+		PKOutput:               pb.PkOutput,
+		PKMigration:            pb.PkMigration,
+		VKSpend:                pb.VkSpend,
+		VKOutput:               pb.VkOutput,
+		VKMigration:            pb.VkMigration,
+		MaxBits:                int(pb.MaxBits), // #nosec G115
+		IdemixIssuerPublicKeys: idemixKeys,
+		ExtraParams:            pb.ExtraParams,
+	}
+
+	if p.ExtraParams == nil {
+		p.ExtraParams = driver.Extras{}
+	}
+
 	if err := p.Validate(); err != nil {
 		return nil, fmt.Errorf("pp: deserialized params failed validation: %w", err)
 	}
 
-	return &p, nil
+	return p, nil
 }
 
 // ── Validation ────────────────────────────────────────────────────────────────

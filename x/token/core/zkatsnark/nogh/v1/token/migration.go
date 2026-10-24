@@ -7,6 +7,9 @@ package token
 
 import (
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
+	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/proto"
+
+	snarkactions "github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/protos-go/v1/actions"
 )
 
 // PedersenOpening holds everything the migration prover needs to know about
@@ -81,4 +84,37 @@ type MigrationAction struct {
 	TypeCommitment []byte // 32 bytes: MiMC(TokenType, TypeRandomness)
 	MigrationProof []byte
 	Recipient      []byte
+}
+
+// Serialize converts the MigrationAction to protobuf bytes.
+func (a *MigrationAction) Serialize() ([]byte, error) {
+	return proto.Marshal(&snarkactions.MigrationAction{
+		CommitmentPedersenX: a.CommitmentPedersenX,
+		CommitmentPedersenY: a.CommitmentPedersenY,
+		CommitmentMimc:      a.CommitmentMiMC,
+		ValueCommitOutX:     a.ValueCommitOutX,
+		ValueCommitOutY:     a.ValueCommitOutY,
+		TypeCommitment:      a.TypeCommitment,
+		MigrationProof:      a.MigrationProof,
+		Recipient:           a.Recipient,
+	})
+}
+
+// Deserialize populates the MigrationAction from protobuf bytes.
+func (a *MigrationAction) Deserialize(raw []byte) error {
+	pb := &snarkactions.MigrationAction{}
+	if err := proto.Unmarshal(raw, pb); err != nil {
+		return errors.Wrap(err, "failed to deserialize migration action")
+	}
+
+	a.CommitmentPedersenX = pb.CommitmentPedersenX
+	a.CommitmentPedersenY = pb.CommitmentPedersenY
+	a.CommitmentMiMC = pb.CommitmentMimc
+	a.ValueCommitOutX = pb.ValueCommitOutX
+	a.ValueCommitOutY = pb.ValueCommitOutY
+	a.TypeCommitment = pb.TypeCommitment
+	a.MigrationProof = pb.MigrationProof
+	a.Recipient = pb.Recipient
+
+	return nil
 }

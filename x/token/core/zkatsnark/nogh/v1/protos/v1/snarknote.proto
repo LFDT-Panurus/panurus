@@ -1,0 +1,25 @@
+/*
+   Copyright IBM Corp. All Rights Reserved.
+
+   SPDX-License-Identifier: Apache-2.0
+*/
+
+syntax = "proto3";
+
+package fabric_token_sdk.token.zkatsnark.v1;
+
+option go_package = "github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/protos-go/v1/note";
+
+// Note is the complete private description of a token, everything needed
+// to spend it. It is never published on-chain in cleartext.
+message Note {
+  // value is the token denomination
+  uint64 value = 1;
+  // token_type is the logical token type string (e.g., "USD", "EUR")
+  string token_type = 2;
+  // randomness is the commitment randomness stored as raw bytes,
+  // reduced into the appropriate curve's scalar field at usage sites
+  bytes randomness = 3;
+  // issuer is the identity of the token issuer, if applicable
+  bytes issuer = 4;
+}

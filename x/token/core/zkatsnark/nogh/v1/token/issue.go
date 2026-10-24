@@ -6,11 +6,11 @@ SPDX-License-Identifier: Apache-2.0
 package token
 
 import (
-	"encoding/json"
-
 	"github.com/LFDT-Panurus/panurus/token/driver"
 	token2 "github.com/LFDT-Panurus/panurus/token/token"
+	snarkactions "github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/protos-go/v1/actions"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
+	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/proto"
 )
 
 // OutputDescription is the public wire-format record for one newly created
@@ -27,14 +27,54 @@ type OutputDescription struct {
 
 // ── driver.Output interface ────────────────────────────────────────────────────
 
-// Serialize converts the output description to bytes.
+// Serialize converts the output description to bytes using protobuf encoding.
 func (o *OutputDescription) Serialize() ([]byte, error) {
-	raw, err := json.Marshal(o)
+	raw, err := proto.Marshal(o.toProto())
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to serialize output description")
 	}
 
 	return raw, nil
+}
+
+// toProto converts the OutputDescription to its protobuf representation.
+func (o *OutputDescription) toProto() *snarkactions.OutputDescription {
+	return &snarkactions.OutputDescription{
+		CommitmentOut:   o.CommitmentOut,
+		ValueCommitOutX: o.ValueCommitOutX,
+		ValueCommitOutY: o.ValueCommitOutY,
+		TypeCommitment:  o.TypeCommitment,
+		OutputProof:     o.OutputProof,
+		Recipient:       o.Recipient,
+	}
+}
+
+// outputDescriptionFromProto creates an OutputDescription from its protobuf representation.
+func outputDescriptionFromProto(pb *snarkactions.OutputDescription) OutputDescription {
+	if pb == nil {
+		return OutputDescription{}
+	}
+
+	return OutputDescription{
+		CommitmentOut:   pb.CommitmentOut,
+		ValueCommitOutX: pb.ValueCommitOutX,
+		ValueCommitOutY: pb.ValueCommitOutY,
+		TypeCommitment:  pb.TypeCommitment,
+		OutputProof:     pb.OutputProof,
+		Recipient:       pb.Recipient,
+	}
+}
+
+// DeserializeOutputDescription reconstructs an OutputDescription from bytes
+// produced by Serialize.
+func DeserializeOutputDescription(raw []byte) (*OutputDescription, error) {
+	pb := &snarkactions.OutputDescription{}
+	if err := proto.Unmarshal(raw, pb); err != nil {
+		return nil, errors.Wrap(err, "failed to deserialize output description")
+	}
+	od := outputDescriptionFromProto(pb)
+
+	return &od, nil
 }
 
 // IsRedeem returns true if this output is a redeem (burn) output.
@@ -124,20 +164,41 @@ func (a *IssueAction) ExtraSigners() []driver.Identity {
 
 // ── driver.IssueAction ─────────────────────────────────────────────────────────
 
-// Serialize converts the action to bytes using JSON encoding.
+// Serialize converts the action to bytes using protobuf encoding.
 func (a *IssueAction) Serialize() ([]byte, error) {
-	raw, err := json.Marshal(a)
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to serialize issue action")
+	outputs := make([]*snarkactions.OutputDescription, len(a.Outputs))
+	for i := range a.Outputs {
+		outputs[i] = a.Outputs[i].toProto()
 	}
 
-	return raw, nil
+	return proto.Marshal(&snarkactions.IssueAction{
+		Issuer:           a.Issuer,
+		TokenType:        a.TokenType,
+		TypeCommitment:   a.TypeCommitment,
+		Outputs:          outputs,
+		BindingSignature: a.BindingSignature,
+		TotalValue:       a.TotalValue,
+		Metadata:         a.Metadata,
+	})
 }
 
 // Deserialize populates the action from bytes produced by Serialize.
 func (a *IssueAction) Deserialize(raw []byte) error {
-	if err := json.Unmarshal(raw, a); err != nil {
+	pb := &snarkactions.IssueAction{}
+	if err := proto.Unmarshal(raw, pb); err != nil {
 		return errors.Wrap(err, "failed to deserialize issue action")
+	}
+
+	a.Issuer = pb.Issuer
+	a.TokenType = pb.TokenType
+	a.TypeCommitment = pb.TypeCommitment
+	a.BindingSignature = pb.BindingSignature
+	a.TotalValue = pb.TotalValue
+	a.Metadata = pb.Metadata
+
+	a.Outputs = make([]OutputDescription, len(pb.Outputs))
+	for i, out := range pb.Outputs {
+		a.Outputs[i] = outputDescriptionFromProto(out)
 	}
 
 	return a.checkLimits()
@@ -158,11 +219,11 @@ func (a *IssueAction) NumOutputs() int {
 	return len(a.Outputs)
 }
 
-// GetSerializedOutputs returns each output serialized as JSON.
+// GetSerializedOutputs returns each output serialized as protobuf.
 func (a *IssueAction) GetSerializedOutputs() ([][]byte, error) {
 	res := make([][]byte, len(a.Outputs))
-	for i, out := range a.Outputs {
-		raw, err := json.Marshal(out)
+	for i := range a.Outputs {
+		raw, err := a.Outputs[i].Serialize()
 		if err != nil {
 			return nil, errors.Wrapf(err, "failed to serialize output %d", i)
 		}

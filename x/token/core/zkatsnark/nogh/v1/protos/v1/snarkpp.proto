@@ -1,0 +1,68 @@
+/*
+   Copyright IBM Corp. All Rights Reserved.
+
+   SPDX-License-Identifier: Apache-2.0
+*/
+
+syntax = "proto3";
+
+package fabric_token_sdk.token.zkatsnark.v1;
+
+import "common.proto";
+
+option go_package = "github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/protos-go/v1/pp";
+
+// IdemixIssuerPublicKey contains the public key and curve of an Idemix issuer.
+// This is used for pseudonymous owner identities in the wallet service.
+message IdemixIssuerPublicKey {
+  // public_key is the serialized Idemix issuer public key
+  bytes public_key = 1;
+  // curve_id is the mathlib curve identifier (e.g., BN254)
+  uint64 curve_id = 2;
+}
+
+// PublicParameters holds every parameter shared between the prover and the
+// validator for the zkatsnark driver.
+//
+// V and R value-commitment generators are NOT stored here; they are
+// nothing-up-my-sleeve values, deterministically re-derivable from code.
+message PublicParameters {
+  // label identifies this driver, e.g. "zkatsnark"
+  string label = 1;
+  // scheme_version versions this specific parameter set
+  uint32 scheme_version = 2;
+  // graph_hiding_enabled indicates whether graph hiding is active
+  bool graph_hiding_enabled = 3;
+  // certifier_id identifies the certification driver used in Phase 2;
+  // empty string means no certification is active (Phase 1)
+  string certifier_id = 4;
+  // auditor_identities lists identities authorized to audit transactions
+  repeated fabric_token_sdk.token.driver.v1.Identity auditor_identities = 5;
+  // issuer_identities lists identities authorized to issue tokens
+  repeated fabric_token_sdk.token.driver.v1.Identity issuer_identities = 6;
+  // precision_value is the decimal precision used for token values
+  uint64 precision_value = 7;
+  // proof_system selects the ZK proof system: "groth16" or "plonk"
+  string proof_system = 8;
+  // curve is the outer pairing curve identifier (e.g., BLS12-381 = 4, BN254 = 0)
+  uint64 curve = 9;
+  // pk_spend is the proving key for the spend circuit
+  bytes pk_spend = 10;
+  // pk_output is the proving key for the output circuit
+  bytes pk_output = 11;
+  // pk_migration is the proving key for the migration circuit
+  bytes pk_migration = 12;
+  // vk_spend is the verification key for the spend circuit
+  bytes vk_spend = 13;
+  // vk_output is the verification key for the output circuit
+  bytes vk_output = 14;
+  // vk_migration is the verification key for the migration circuit
+  bytes vk_migration = 15;
+  // max_bits bounds the token value field inside OutputCircuit's range check
+  uint32 max_bits = 16;
+  // idemix_issuer_public_keys lists Idemix issuer public keys for anonymous credentials.
+  // Wallets should prefer keys with lower array indices.
+  repeated IdemixIssuerPublicKey idemix_issuer_public_keys = 17;
+  // extra_params carries any additional parameters not covered by the named accessors
+  map<string, bytes> extra_params = 18;
+}

@@ -1,0 +1,115 @@
+/*
+   Copyright IBM Corp. All Rights Reserved.
+
+   SPDX-License-Identifier: Apache-2.0
+*/
+
+syntax = "proto3";
+
+package fabric_token_sdk.token.zkatsnark.v1;
+
+import "common.proto";
+
+option go_package = "github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/protos-go/v1/actions";
+
+// OutputDescription is the public wire-format record for one newly created
+// token. Everything here is safe to publish; the note secrets (value,
+// type, randomness) that this commitment opens to are never included.
+message OutputDescription {
+  // commitment_out is the MiMC commitment: MiMC(value, type, randomness), 32 bytes
+  bytes commitment_out = 1;
+  // value_commit_out_x is the Jubjub X coordinate of the output value commitment, 32 bytes
+  bytes value_commit_out_x = 2;
+  // value_commit_out_y is the Jubjub Y coordinate of the output value commitment, 32 bytes
+  bytes value_commit_out_y = 3;
+  // type_commitment is the type commitment: MiMC(TokenType, TypeRandomness), 32 bytes
+  bytes type_commitment = 4;
+  // output_proof is the Groth16 proof for OutputCircuit, 292 bytes
+  bytes output_proof = 5;
+  // recipient is the intended recipient identity
+  bytes recipient = 6;
+}
+
+// SpendDescription is the public wire-format record for one token being
+// consumed as an input. The commitment being spent, its value commitment,
+// and its type commitment are all public; the value, token type, randomness,
+// type randomness, and value-commitment randomness that open them are not.
+message SpendDescription {
+  // commitment_in is the MiMC commitment of the token being spent, 32 bytes
+  bytes commitment_in = 1;
+  // value_commit_in_x is the Jubjub X coordinate of the input value commitment, 32 bytes
+  bytes value_commit_in_x = 2;
+  // value_commit_in_y is the Jubjub Y coordinate of the input value commitment, 32 bytes
+  bytes value_commit_in_y = 3;
+  // type_commitment is the type commitment: MiMC(TokenType, TypeRandomness), 32 bytes
+  bytes type_commitment = 4;
+  // spend_proof is the Groth16 proof for SpendCircuit, 292 bytes
+  bytes spend_proof = 5;
+}
+
+// IssueAction represents the creation of one or more new tokens.
+// There are no SpendDescriptions — issuance consumes nothing.
+message IssueAction {
+  // issuer is the identity of the authorized issuer creating these tokens
+  bytes issuer = 1;
+  // token_type is kept in cleartext for issuer authorization policy checks
+  string token_type = 2;
+  // type_commitment is MiMC(TokenType, TypeRandomness), shared across all outputs, 32 bytes
+  bytes type_commitment = 3;
+  // outputs are the newly issued tokens
+  repeated OutputDescription outputs = 4;
+  // binding_signature is the binding signature: R.X || R.Y || S, 96 bytes
+  bytes binding_signature = 5;
+  // total_value is the total value of all outputs, 32 bytes
+  bytes total_value = 6;
+  // metadata contains application-specific data for this issuance
+  map<string, bytes> metadata = 7;
+}
+
+// TransferAction represents consuming one or more existing tokens and
+// creating one or more new tokens, with value conserved across the two sets.
+message TransferAction {
+  // type_commitment is MiMC(TokenType, TypeRandomness), shared across all inputs/outputs, 32 bytes
+  bytes type_commitment = 1;
+  // input_ids are the ledger token IDs of spent tokens
+  repeated fabric_token_sdk.token.driver.v1.TokenID input_ids = 2;
+  // input_tokens are the serialized OutputDescriptions of spent tokens
+  repeated bytes input_tokens = 3;
+  // inputs are the spend descriptions for each input token
+  repeated SpendDescription inputs = 4;
+  // outputs are the output descriptions for each new token
+  repeated OutputDescription outputs = 5;
+  // binding_signature is the binding signature: R.X || R.Y || S, 96 bytes
+  bytes binding_signature = 6;
+  // issuer is the issuer identity for redeem actions
+  bytes issuer = 7;
+  // metadata contains application-specific data for this transfer
+  map<string, bytes> metadata = 8;
+}
+
+// MigrationAction is the public wire-format record for a single token
+// migration from zkatdlog (Pedersen-committed, BLS12-381 G1) to zkatsnark
+// (MiMC-committed, Jubjub value commitment).
+message MigrationAction {
+  // commitment_pedersen_x is the X coordinate of the existing Pedersen
+  // commitment (BLS12-381 G1 base field Fp, 48 bytes)
+  bytes commitment_pedersen_x = 1;
+  // commitment_pedersen_y is the Y coordinate of the existing Pedersen
+  // commitment (BLS12-381 G1 base field Fp, 48 bytes)
+  bytes commitment_pedersen_y = 2;
+  // commitment_mimc is the new MiMC commitment for the migrated token
+  // (BLS12-381 scalar field Fr, 32 bytes)
+  bytes commitment_mimc = 3;
+  // value_commit_out_x is the X coordinate of the new Jubjub value
+  // commitment (BLS12-381 Fr embedded Edwards coordinate, 32 bytes)
+  bytes value_commit_out_x = 4;
+  // value_commit_out_y is the Y coordinate of the new Jubjub value
+  // commitment (BLS12-381 Fr embedded Edwards coordinate, 32 bytes)
+  bytes value_commit_out_y = 5;
+  // type_commitment is MiMC(TokenType, TypeRandomness), 32 bytes
+  bytes type_commitment = 6;
+  // migration_proof is the zero-knowledge proof for the migration circuit
+  bytes migration_proof = 7;
+  // recipient is the intended recipient identity
+  bytes recipient = 8;
+}

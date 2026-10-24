@@ -266,6 +266,22 @@ jobs:
             dir: ./x/token/core/zkatsnark
             pkg: ./nogh/v1/crypto/backend
             func: FuzzNewKeysNoPanic
+          - name: zkatsnark-public-params-deserialize
+            dir: ./x/token/core/zkatsnark
+            pkg: ./nogh/v1/pp
+            func: FuzzPublicParamsDeserializeNoPanic
+          - name: zkatsnark-note-deserialize
+            dir: ./x/token/core/zkatsnark
+            pkg: ./nogh/v1/token
+            func: FuzzNoteDeserializeNoPanic
+          - name: zkatsnark-output-description-deserialize
+            dir: ./x/token/core/zkatsnark
+            pkg: ./nogh/v1/token
+            func: FuzzOutputDescriptionDeserializeNoPanic
+          - name: zkatsnark-migration-action-deserialize
+            dir: ./x/token/core/zkatsnark
+            pkg: ./nogh/v1/token
+            func: FuzzMigrationActionDeserializeNoPanic
 
     steps:
       - name: Checkout code

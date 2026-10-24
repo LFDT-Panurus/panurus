@@ -5,6 +5,7 @@ modules:
   - path: token/driver/protos/v1
   - path: token/services/identity/x509/crypto/protos/v1
   - path: token/services/identity/idemix/crypto/protos
+  - path: x/token/core/zkatsnark/nogh/v1/protos/v1
 lint:
   use:
     - STANDARD
