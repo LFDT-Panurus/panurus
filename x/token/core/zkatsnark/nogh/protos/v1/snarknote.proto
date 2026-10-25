@@ -8,7 +8,7 @@ syntax = "proto3";
 
 package fabric_token_sdk.token.zkatsnark.v1;
 
-option go_package = "github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/protos-go/v1/note";
+option go_package = "github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/protos-go/v1/note";
 
 // Note is the complete private description of a token, everything needed
 // to spend it. It is never published on-chain in cleartext.

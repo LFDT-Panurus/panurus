@@ -10,7 +10,7 @@ package fabric_token_sdk.token.zkatsnark.v1;
 
 import "common.proto";
 
-option go_package = "github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/protos-go/v1/pp";
+option go_package = "github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/protos-go/v1/pp";
 
 // IdemixIssuerPublicKey contains the public key and curve of an Idemix issuer.
 // This is used for pseudonymous owner identities in the wallet service.

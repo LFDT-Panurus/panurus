@@ -8,7 +8,7 @@ package token
 import (
 	"github.com/LFDT-Panurus/panurus/token/driver"
 	token2 "github.com/LFDT-Panurus/panurus/token/token"
-	snarkactions "github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/protos-go/v1/actions"
+	snarkactions "github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/protos-go/v1/actions"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/proto"
 )

@@ -113,7 +113,7 @@ const file_snarknote_proto_rawDesc = "" +
 	"\n" +
 	"randomness\x18\x03 \x01(\fR\n" +
 	"randomness\x12\x16\n" +
-	"\x06issuer\x18\x04 \x01(\fR\x06issuerBRZPgithub.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/protos-go/v1/noteb\x06proto3"
+	"\x06issuer\x18\x04 \x01(\fR\x06issuerBOZMgithub.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/protos-go/v1/noteb\x06proto3"
 
 var (
 	file_snarknote_proto_rawDescOnce sync.Once

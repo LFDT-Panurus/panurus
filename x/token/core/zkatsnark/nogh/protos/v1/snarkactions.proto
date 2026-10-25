@@ -10,7 +10,7 @@ package fabric_token_sdk.token.zkatsnark.v1;
 
 import "common.proto";
 
-option go_package = "github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/protos-go/v1/actions";
+option go_package = "github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/protos-go/v1/actions";
 
 // OutputDescription is the public wire-format record for one newly created
 // token. Everything here is safe to publish; the note secrets (value,

@@ -319,7 +319,7 @@ const file_snarkpp_proto_rawDesc = "" +
 	"\fextra_params\x18\x12 \x03(\v2F.fabric_token_sdk.token.zkatsnark.v1.PublicParameters.ExtraParamsEntryR\vextraParams\x1a>\n" +
 	"\x10ExtraParamsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\fR\x05value:\x028\x01BPZNgithub.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/protos-go/v1/ppb\x06proto3"
+	"\x05value\x18\x02 \x01(\fR\x05value:\x028\x01BMZKgithub.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/protos-go/v1/ppb\x06proto3"
 
 var (
 	file_snarkpp_proto_rawDescOnce sync.Once

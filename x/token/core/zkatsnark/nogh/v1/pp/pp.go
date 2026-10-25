@@ -30,7 +30,7 @@ import (
 	protosv1 "github.com/LFDT-Panurus/panurus/token/driver/protos-go/v1"
 	pp2 "github.com/LFDT-Panurus/panurus/token/driver/protos-go/v1/pp"
 	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/crypto/params"
-	snarkpp "github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/protos-go/v1/pp"
+	snarkpp "github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/protos-go/v1/pp"
 )
 
 // Compile-time assertion: PublicParams must implement driver.PublicParameters.

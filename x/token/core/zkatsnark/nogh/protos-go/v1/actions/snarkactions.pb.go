@@ -584,7 +584,7 @@ const file_snarkactions_proto_rawDesc = "" +
 	"\x12value_commit_out_y\x18\x05 \x01(\fR\x0fvalueCommitOutY\x12'\n" +
 	"\x0ftype_commitment\x18\x06 \x01(\fR\x0etypeCommitment\x12'\n" +
 	"\x0fmigration_proof\x18\a \x01(\fR\x0emigrationProof\x12\x1c\n" +
-	"\trecipient\x18\b \x01(\fR\trecipientBUZSgithub.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/protos-go/v1/actionsb\x06proto3"
+	"\trecipient\x18\b \x01(\fR\trecipientBRZPgithub.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/protos-go/v1/actionsb\x06proto3"
 
 var (
 	file_snarkactions_proto_rawDescOnce sync.Once
