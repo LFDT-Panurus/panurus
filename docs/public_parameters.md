@@ -37,7 +37,9 @@ In a standard Hyperledger Fabric network, public parameters are managed by the *
 
 ### FabricX
 In FabricX, public parameters are managed through a dedicated **Public Parameters Service** and the **Vault**.
-1.  **Publication**: Parameters are written to the ledger under a well-known setup key within the token namespace.
+1.  **Publication**: Parameters are written to the ledger under a well-known setup key within the token namespace. When deploying public parameters via `DeployTMSWithPP`:
+    - The deployer dynamically queries the current namespace policy version (`NsVersion`) from the ledger via `qs.GetState(committerpb.MetaNamespaceID, namespace)` (the `_meta` system namespace) using protobuf varint decoding, ensuring the deployment transaction is validated against the active policy epoch.
+    - If the namespace has no `_meta` entry on the ledger (e.g., initial deployment of a new namespace before any endorsement policy updates), it defaults cleanly to initial version 0.
 2.  **Query Service**: FSC nodes use the `FabricX` Query Service to fetch these parameters directly from the vault's world state.
 
 ---

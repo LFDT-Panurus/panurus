@@ -14,6 +14,7 @@ import (
 	"github.com/hyperledger-labs/fabric-smart-client/platform/common/driver"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/fabricx/core/committer/queryservice"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/fabricx/core/vault"
+	"github.com/hyperledger/fabric-x-common/api/committerpb"
 )
 
 var logger = logging.MustGetLogger()
@@ -100,6 +101,33 @@ func (f *PublicParametersService) FetchSetupHashVersion(network driver.Network, 
 	}
 
 	return vault.UnmarshalVersion(value.Version), true, nil
+}
+
+// FetchNamespaceVersion retrieves the current namespace policy version from the
+// ledger using qs.GetState(committerpb.MetaNamespaceID, namespace). This queries the same
+// committerpb.MetaNamespaceID key and vault.UnmarshalVersion protobuf varint decoding
+// used by the fabricx vault marshaller (platform/fabricx/core/vault/marshal.go) to derive
+// NsVersion for ordinary token transactions.
+//
+// If the namespace has no entry in committerpb.MetaNamespaceID on the ledger or has an empty
+// version (e.g. for an initial deployment), it logs at Debug level and returns initial version 0.
+func (f *PublicParametersService) FetchNamespaceVersion(network driver.Network, channel driver.Channel, namespace driver.Namespace) (uint64, error) {
+	qs, err := f.qsProvider.Get(network, channel)
+	if err != nil {
+		return 0, errors.Wrapf(err, "failed getting query service for [%s/%s]", network, channel)
+	}
+
+	value, err := qs.GetState(committerpb.MetaNamespaceID, namespace)
+	if err != nil {
+		return 0, errors.Wrapf(err, "failed reading _meta version for namespace [%s]", namespace)
+	}
+	if value == nil || len(value.Version) == 0 {
+		logger.Debugf("namespace [%s] has no _meta entry or empty version on [%s/%s] — returning initial version 0", namespace, network, channel)
+
+		return 0, nil
+	}
+
+	return vault.UnmarshalVersion(value.Version), nil
 }
 
 // Loader models a loader for public parameters.
