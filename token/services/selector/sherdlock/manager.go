@@ -36,6 +36,9 @@ type Manager struct {
 	stopOnce               sync.Once
 }
 
+// NewManager creates a sherdlock selector Manager. Any Option passed is forwarded to every
+// selector the manager builds, so WithExactMatch here enables the exact-amount pre-search for
+// all selections served by this manager.
 func NewManager(
 	fetcher TokenFetcher,
 	locker Locker,
@@ -45,6 +48,7 @@ func NewManager(
 	leaseExpiry time.Duration,
 	leaseCleanupTickPeriod time.Duration,
 	m *Metrics,
+	opts ...Option,
 ) *Manager {
 	ctx, cancel := context.WithCancel(context.Background())
 	mgr := &Manager{
@@ -55,7 +59,7 @@ func NewManager(
 		cancel:                 cancel,
 		cleanerDone:            make(chan struct{}),
 		selectorCache: lazy2.NewProvider(func(txID transaction.ID) (TokenSelectorUnlocker, error) {
-			return NewSherdSelector(txID, fetcher, locker, precision, backoff, maxRetriesAfterBackOff, m), nil
+			return NewSherdSelector(txID, fetcher, locker, precision, backoff, maxRetriesAfterBackOff, m, opts...), nil
 		}),
 	}
 	if leaseCleanupTickPeriod > 0 && leaseExpiry > 0 {

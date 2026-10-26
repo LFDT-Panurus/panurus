@@ -237,6 +237,11 @@ makes — not once per attempt. They aggregate differently: `selection_immediate
 events and so sums the per-attempt counts, while `distinct_tokens_attempted` counts distinct
 tokens and so unions them, meaning a token contended across several attempts is counted once.
 
+The `selection_exact_match_*` counters track the exact-amount pre-search that runs before the
+greedy walk: `attempts` counts the pre-searches run, `hits` those that found and locked a
+change-free selection, and `misses` those that fell through to the greedy walk (`attempts` =
+`hits` + `misses`).
+
 | Metric | Type | Labels | Description |
 |---|---|---|---|
 | `panurus_services_selector_sherdlock_unspent_tokens_invocations` | counter | `fetcher_type` | The number of invocations |
@@ -248,6 +253,9 @@ tokens and so unions them, meaning a token contended across several attempts is 
 | `panurus_services_selector_sherdlock_lock_store_errors_total` | counter | — | Total number of TryLock/TryLockBatch failures that are not lock conflicts (a genuine store error) |
 | `panurus_services_selector_sherdlock_stale_candidates_total` | counter | — | Total number of candidate tokens dropped because they were no longer spendable when the lock was attempted |
 | `panurus_services_selector_sherdlock_cache_invalidations_total` | counter | — | Total number of times the candidate source was told its snapshot is behind the token store, forcing the next read to refresh it |
+| `panurus_services_selector_sherdlock_selection_exact_match_attempts_total` | counter | — | Total number of exact-amount pre-searches run |
+| `panurus_services_selector_sherdlock_selection_exact_match_hits_total` | counter | — | Total number of exact-amount pre-searches that produced a change-free selection |
+| `panurus_services_selector_sherdlock_selection_exact_match_misses_total` | counter | — | Total number of exact-amount pre-searches that fell through to the greedy walk |
 
 Source: `token/services/selector/sherdlock/metrics.go`.
 
