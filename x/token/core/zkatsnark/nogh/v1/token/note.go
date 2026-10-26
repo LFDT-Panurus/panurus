@@ -14,8 +14,8 @@ import (
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/proto"
 
-	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/crypto/mimc"
 	snarknote "github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/protos-go/v1/note"
+	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/crypto/mimc"
 )
 
 // DefaultRandomnessLength is 64 bytes (512 bits), providing at least 256 bits
