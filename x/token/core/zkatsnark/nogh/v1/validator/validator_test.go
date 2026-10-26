@@ -9,7 +9,6 @@ import (
 	"context"
 	cryptorand "crypto/rand"
 	"crypto/sha256"
-	"encoding/json"
 	"math/big"
 	"strconv"
 	"sync"
@@ -992,7 +991,7 @@ func TestTransferSignatureValidate_CommitmentMismatch(t *testing.T) {
 			Recipient:     []byte("bob"),
 			CommitmentOut: make([]byte, 32),
 		}
-		raw, err := json.Marshal(badDesc)
+		raw, err := badDesc.Serialize()
 		require.NoError(t, err)
 
 		mockLedger := &drivermock.Ledger{}
@@ -1032,7 +1031,7 @@ func TestTransferSignatureValidate_NilSignatureProvider(t *testing.T) {
 			Recipient:     []byte("bob"),
 			CommitmentOut: action.Inputs[0].CommitmentIn,
 		}
-		raw, err := json.Marshal(desc)
+		raw, err := desc.Serialize()
 		require.NoError(t, err)
 
 		mockLedger := &drivermock.Ledger{}
@@ -1076,7 +1075,7 @@ func TestTransferSignatureValidate_Success(t *testing.T) {
 			Recipient:     []byte("bob"),
 			CommitmentOut: action.Inputs[0].CommitmentIn,
 		}
-		raw, err := json.Marshal(desc)
+		raw, err := desc.Serialize()
 		require.NoError(t, err)
 
 		mockLedger := &drivermock.Ledger{}
@@ -1126,7 +1125,7 @@ func TestTransferSignatureValidate_Redeem_MissingIssuer(t *testing.T) {
 			Recipient:     []byte("bob"),
 			CommitmentOut: action.Inputs[0].CommitmentIn,
 		}
-		raw, err := json.Marshal(desc)
+		raw, err := desc.Serialize()
 		require.NoError(t, err)
 
 		mockLedger := &drivermock.Ledger{}
@@ -1175,7 +1174,7 @@ func TestTransferSignatureValidate_Redeem_Success(t *testing.T) {
 			Recipient:     []byte("bob"),
 			CommitmentOut: action.Inputs[0].CommitmentIn,
 		}
-		raw, err := json.Marshal(desc)
+		raw, err := desc.Serialize()
 		require.NoError(t, err)
 
 		mockLedger := &drivermock.Ledger{}

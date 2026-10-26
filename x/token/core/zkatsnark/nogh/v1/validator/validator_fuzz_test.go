@@ -6,7 +6,6 @@ SPDX-License-Identifier: Apache-2.0
 package validator_test
 
 import (
-	"encoding/json"
 	"testing"
 
 	token2 "github.com/LFDT-Panurus/panurus/token/token"
@@ -54,7 +53,7 @@ func validTransferActionRaw(tb testing.TB, withInputIDs bool) []byte {
 			OutputProof:     make([]byte, 292),
 			Recipient:       []byte("bob"),
 		}
-		raw, err := json.Marshal(outputDesc)
+		raw, err := outputDesc.Serialize()
 		require.NoError(tb, err)
 		action.InputTokens = [][]byte{raw}
 	}

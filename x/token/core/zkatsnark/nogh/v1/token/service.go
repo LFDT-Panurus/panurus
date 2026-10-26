@@ -8,7 +8,6 @@ package token
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"strconv"
 
 	"github.com/LFDT-Panurus/panurus/token/core/common"
@@ -44,8 +43,7 @@ func (s *TokensService) Deobfuscate(ctx context.Context, output driver.TokenOutp
 		return nil, nil, nil, "", errors.Wrap(err, "failed to deserialize token metadata")
 	}
 
-	var outputDesc OutputDescription
-	err = json.Unmarshal(output, &outputDesc)
+	outputDesc, err := DeserializeOutputDescription(output)
 	if err != nil {
 		return nil, nil, nil, "", errors.Wrap(err, "failed to unmarshal output")
 	}
@@ -78,8 +76,7 @@ func (s *TokensService) Deobfuscate(ctx context.Context, output driver.TokenOutp
 }
 
 func (s *TokensService) Recipients(output driver.TokenOutput) ([]driver.Identity, error) {
-	var outputDesc OutputDescription
-	err := json.Unmarshal(output, &outputDesc)
+	outputDesc, err := DeserializeOutputDescription(output)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to unmarshal output")
 	}
