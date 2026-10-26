@@ -38,7 +38,19 @@ const (
 	// emits in aggregate once the global burst is spent, regardless of how many distinct principals
 	// are presented.
 	warnSamplerGlobalRefillPerSec = 64
+	// emptyPrincipal is the identity hash fabric-smart-client's Identity.UniqueID() returns for a
+	// zero-length identity: a fixed sentinel string, not a content hash, that every empty or nil
+	// identity collides on. An event for such an identity arrives here with this value, not "".
+	emptyPrincipal = "<empty>"
 )
+
+// unattributed reports whether principal carries no usable attribution: either it is absent ("")
+// or it is the shared sentinel every empty/nil identity hashes to (emptyPrincipal). Such a record
+// cannot be rate-limited or attributed per principal, since one bucket shared across unrelated
+// callers would let their anomalies suppress each other.
+func unattributed(principal string) bool {
+	return principal == "" || principal == emptyPrincipal
+}
 
 // auditLog is the subset of logging.Logger the audit trail needs. Keeping it narrow lets the
 // audit record be asserted in tests without a logging backend.
@@ -213,11 +225,12 @@ func (a *AuditLogger) record(e Event) string {
 }
 
 // principalField renders the principal field, quoting it the same way the other free-form fields
-// are quoted so a newline in it cannot forge a record. An empty principal is rendered as the
+// are quoted so a newline in it cannot forge a record. An unattributed principal is rendered as the
 // unquoted sentinel none, so a record is never ambiguous about whether attribution was missing or
-// the field was dropped - and none, a fixed literal, needs no quoting.
+// the field was dropped - and none, a fixed literal, needs no quoting. An empty/nil identity reaches
+// here as the "<empty>" sentinel, not "", so both are mapped (see unattributed).
 func principalField(principal string) string {
-	if principal == "" {
+	if unattributed(principal) {
 		return "none"
 	}
 
@@ -292,9 +305,10 @@ func newWarnSampler() *warnSampler {
 //
 // The global bucket is checked first but charged last, so a principal already being thinned by its
 // own bucket does not spend the shared budget on a line that is dropped anyway. An unattributed
-// record (empty principal) carries no identity to rate-limit against and so skips the per-principal
-// layer, but it is still charged against the global bucket: that closes the key-free amplification
-// path where a failure occurring before attribution logs one line per attempt without bound.
+// record carries no identity to rate-limit against and so skips the per-principal layer, but it is
+// still charged against the global bucket: that closes the key-free amplification path where a
+// failure occurring before attribution logs one line per attempt without bound. This covers both
+// the empty string and the "<empty>" sentinel every empty/nil identity hashes to (see unattributed).
 func (w *warnSampler) allow(principal string) bool {
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -303,7 +317,7 @@ func (w *warnSampler) allow(principal string) bool {
 	if !w.globalHasToken(now) {
 		return false
 	}
-	if principal != "" && !w.principalAllows(principal, now) {
+	if !unattributed(principal) && !w.principalAllows(principal, now) {
 		return false
 	}
 	// Both gates passed: charge the global bucket for the line being admitted. The per-principal
