@@ -418,6 +418,9 @@ func setupMetricsMocks() (*mocks.FakeProvider, *sherdlock.Metrics) {
 	metricsProvider := &mocks.FakeProvider{}
 	metricsProvider.NewCounterReturns(mockCounter)
 	metricsProvider.NewHistogramReturns(mockHistogram)
+	mockGauge := &mocks.FakeGauge{}
+	mockGauge.WithReturns(mockGauge)
+	metricsProvider.NewGaugeReturns(mockGauge)
 
 	return metricsProvider, sherdlock.NewMetrics(metricsProvider)
 }

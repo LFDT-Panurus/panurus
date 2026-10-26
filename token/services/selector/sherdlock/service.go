@@ -55,7 +55,7 @@ func NewService(
 		leaseExpiry:                  cfg.GetLeaseExpiry(),
 		leaseCleanupTickPeriod:       cfg.GetLeaseCleanupTickPeriod(),
 		metrics:                      NewMetrics(metricsProvider),
-		limiter:                      ratelimit.CompileOptions(opts...).Limiter(cfg),
+		limiter:                      ratelimit.CompileOptions(opts...).Limiter(cfg, metricsProvider),
 	}
 	if loader.limiter != nil {
 		logger.Infof("per-wallet token selection rate limiting is enabled")

@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"github.com/LFDT-Panurus/panurus/token"
+	"github.com/LFDT-Panurus/panurus/token/core/common/metrics"
 	"github.com/LFDT-Panurus/panurus/token/services/logging"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 )
@@ -90,6 +91,9 @@ type Config struct {
 	// MaxBuckets is the maximum number of live buckets. Once the idle sweep cannot bring the
 	// limiter back under this number, the least recently used buckets are dropped.
 	MaxBuckets int
+	// Metrics is the provider the limiter reports to. Nil discards the metrics. It must be the
+	// process-wide provider, see Metrics.
+	Metrics metrics.Provider
 }
 
 // DefaultConfig returns the configuration used when rate limiting is enabled without any
@@ -168,6 +172,7 @@ type BucketLimiter struct {
 	burst       float64
 	idleTimeout time.Duration
 	maxBuckets  int
+	metrics     *Metrics
 	// now returns the current time. It is a field so tests can drive the bucket with a
 	// deterministic clock instead of sleeping.
 	now func() time.Time
@@ -176,6 +181,9 @@ type BucketLimiter struct {
 	buckets          map[string]*bucket
 	callsSinceSweep  int
 	lastEvictionWarn time.Time
+	// published is the bucket count last reported to Metrics.BucketsActive, so steady-state calls
+	// that leave the count unchanged do not touch the gauge under the lock.
+	published int
 }
 
 // New returns a BucketLimiter with the given configuration. Non-positive configuration values
@@ -188,23 +196,39 @@ func New(c Config) *BucketLimiter {
 		burst:       float64(c.Burst),
 		idleTimeout: c.IdleTimeout,
 		maxBuckets:  c.MaxBuckets,
+		metrics:     NewMetrics(c.Metrics),
 		now:         time.Now,
 		buckets:     make(map[string]*bucket),
+		published:   -1,
 	}
 }
 
 // Allow consumes one request from the bucket of walletID within scope. It returns an error
 // wrapping token.SelectorRateLimited when the wallet has no request left, and nil otherwise.
-// An empty walletID is never throttled.
+// An empty walletID is never throttled. Every denial is counted in Metrics.Denied under scope.
 func (l *BucketLimiter) Allow(_ context.Context, scope string, walletID string) error {
 	if len(walletID) == 0 {
 		return nil
 	}
 
+	err := l.allow(scope, walletID)
+	if err != nil {
+		// Outside the lock, so metric bookkeeping never lengthens the critical section.
+		l.metrics.Denied.With(tmsLabel, scope).Add(1)
+	}
+
+	return err
+}
+
+// allow is the bucket arithmetic of Allow.
+func (l *BucketLimiter) allow(scope string, walletID string) error {
 	now := l.now()
 
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	// Deferred after the unlock, so it runs before it, while the count is stable. It covers every
+	// way Allow changes the bucket count: insert, idle sweep and eviction, denied or not.
+	defer l.publishBucketsLocked()
 
 	l.maybeSweep(now)
 
@@ -234,6 +258,16 @@ func (l *BucketLimiter) Allow(_ context.Context, scope string, walletID string) 
 	return nil
 }
 
+// publishBucketsLocked reports the current bucket count. It must be called with l.mu held.
+func (l *BucketLimiter) publishBucketsLocked() {
+	n := len(l.buckets)
+	if n == l.published {
+		return
+	}
+	l.published = n
+	l.metrics.BucketsActive.Set(float64(n))
+}
+
 // Stop releases the memory held by the limiter. The limiter stays usable afterwards, with every
 // wallet starting from a full bucket again.
 //
@@ -245,6 +279,7 @@ func (l *BucketLimiter) Stop() {
 
 	l.buckets = make(map[string]*bucket)
 	l.callsSinceSweep = 0
+	l.publishBucketsLocked()
 }
 
 // BucketCount returns the number of live buckets. It is exported for tests and diagnostics.

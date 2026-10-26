@@ -6,6 +6,8 @@ SPDX-License-Identifier: Apache-2.0
 
 package ratelimit
 
+import "github.com/LFDT-Panurus/panurus/token/core/common/metrics"
+
 // Configuration is the subset of the selector configuration that describes the built-in rate
 // limiter. It is implemented by token/services/selector/config.Config.
 type Configuration interface {
@@ -30,6 +32,9 @@ type Options struct {
 	// have none (WithLimiter(nil)). Without it, an explicit "off" would be
 	// indistinguishable from "not specified" and configuration would win.
 	set bool
+	// defaultConfig records that WithDefaultLimiter was the last decision, so the limiter is built
+	// when the service knows its metrics provider.
+	defaultConfig bool
 }
 
 // WithLimiter makes the selector service use the passed limiter, ignoring the
@@ -38,18 +43,24 @@ type Options struct {
 //
 // The service does not take ownership of the limiter: it never stops it.
 // A limiter passed here may therefore be shared between services, and its lifecycle stays with
-// the caller.
+// the caller. A BucketLimiter reports metrics only if it was built with Config.Metrics.
 func WithLimiter(limiter Limiter) Option {
 	return func(o *Options) {
 		o.limiter = limiter
 		o.set = true
+		o.defaultConfig = false
 	}
 }
 
 // WithDefaultLimiter enables the built-in per-wallet limiter with DefaultConfig, whatever the
-// token.selector.rateLimit* configuration says.
+// token.selector.rateLimit* configuration says. The limiter reports to the service's metrics
+// provider.
 func WithDefaultLimiter() Option {
-	return WithLimiter(New(DefaultConfig()))
+	return func(o *Options) {
+		o.limiter = nil
+		o.set = true
+		o.defaultConfig = true
+	}
 }
 
 // CompileOptions applies the passed options.
@@ -68,9 +79,17 @@ func CompileOptions(opts ...Option) *Options {
 // or nil when selection must not be rate limited. Options win over configuration; without any
 // option, the limiter comes from the configuration, which has rate limiting off by default.
 //
+// p is the metrics provider limiters built here report to; nil discards the metrics.
+//
 // A nil Configuration is treated as "not configured", so that a service whose configuration
 // failed to parse still starts, with rate limiting off.
-func (o *Options) Limiter(c Configuration) Limiter {
+func (o *Options) Limiter(c Configuration, p metrics.Provider) Limiter {
+	if o.defaultConfig {
+		cfg := DefaultConfig()
+		cfg.Metrics = p
+
+		return New(cfg)
+	}
 	if o.set {
 		return o.limiter
 	}
@@ -82,5 +101,6 @@ func (o *Options) Limiter(c Configuration) Limiter {
 		Rate:       c.GetRateLimit(),
 		Burst:      c.GetRateLimitBurst(),
 		MaxBuckets: c.GetRateLimitMaxBuckets(),
+		Metrics:    p,
 	})
 }

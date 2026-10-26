@@ -82,7 +82,7 @@ func TestLoaderRateLimiting(t *testing.T) {
 				lockerProvider:       &fixedLockerProvider{locker: locker},
 				numRetries:           1,
 				requestCertification: false,
-				limiter:              ratelimit.CompileOptions(tt.opts...).Limiter(&disabledRateLimitConfig{}),
+				limiter:              ratelimit.CompileOptions(tt.opts...).Limiter(&disabledRateLimitConfig{}, nil),
 			}
 
 			mgr := l.newManager(locker, qs, precision, "n1,c1,ns1").selector

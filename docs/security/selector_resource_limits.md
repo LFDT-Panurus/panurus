@@ -85,8 +85,8 @@ svc = sherdlock.NewService(fetcherProvider, lockStoreManager, configProvider, me
     ratelimit.WithLimiter(nil))
 ```
 
-`simple.NewService(lockerProvider, configProvider, opts ...ratelimit.Option)` takes the
-same options.
+`simple.NewService(lockerProvider, configProvider, metricsProvider, opts ...ratelimit.Option)`
+takes the same options.
 
 A limiter passed with `WithLimiter` belongs to the caller: the service never stops it.
 `BucketLimiter.Stop()` exists for callers that own a limiter and want its memory back.

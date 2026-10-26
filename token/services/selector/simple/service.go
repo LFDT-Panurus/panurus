@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/LFDT-Panurus/panurus/token"
+	"github.com/LFDT-Panurus/panurus/token/core/common/metrics"
 	"github.com/LFDT-Panurus/panurus/token/driver"
 	"github.com/LFDT-Panurus/panurus/token/services/logging"
 	"github.com/LFDT-Panurus/panurus/token/services/selector/config"
@@ -45,7 +46,7 @@ type managerEntry struct {
 //
 // By default, selection is not rate limited. Passing ratelimit options, or enabling the
 // token.selector.rateLimit* configuration keys, meters every selection request per wallet.
-func NewService(lockerProvider LockerProvider, c ConfigProvider, opts ...ratelimit.Option) *SelectorService {
+func NewService(lockerProvider LockerProvider, c ConfigProvider, metricsProvider metrics.Provider, opts ...ratelimit.Option) *SelectorService {
 	cfg, err := config.New(c)
 	if err != nil {
 		logger.Errorf("error getting selector config, using defaults. %s", err.Error())
@@ -58,7 +59,7 @@ func NewService(lockerProvider LockerProvider, c ConfigProvider, opts ...ratelim
 		numRetries:           cfg.GetNumRetries(),
 		retryInterval:        cfg.GetRetryInterval(),
 		requestCertification: true,
-		limiter:              ratelimit.CompileOptions(opts...).Limiter(cfg),
+		limiter:              ratelimit.CompileOptions(opts...).Limiter(cfg, metricsProvider),
 	}
 	if loader.limiter != nil {
 		logger.Infof("per-wallet token selection rate limiting is enabled")

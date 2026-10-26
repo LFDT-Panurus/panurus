@@ -182,6 +182,13 @@ type Counter interface {
 	With(labelValues ...string) Counter
 }
 
+//go:generate counterfeiter -o mocks/metrics_gauge.go -fake-name FakeGauge github.com/hyperledger-labs/fabric-smart-client/platform/view/services/metrics.Gauge
+type Gauge interface {
+	Add(float64)
+	Set(float64)
+	With(labelValues ...string) Gauge
+}
+
 //go:generate counterfeiter -o mocks/metrics_histogram.go -fake-name FakeHistogram github.com/hyperledger-labs/fabric-smart-client/platform/view/services/metrics.Histogram
 type Histogram interface {
 	Observe(float64)

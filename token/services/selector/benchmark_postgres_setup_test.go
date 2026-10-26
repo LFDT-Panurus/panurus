@@ -391,7 +391,7 @@ func newPgReplica(tb testing.TB, dsn string, cfg pgConfig) *pgReplica {
 	r := &pgReplica{tokens: tokens, lockMgr: lockMgr, metrics: newBenchMetricsProvider()}
 	switch cfg.driver {
 	case "simple":
-		svc := simple.NewService(netsdk.NewLockerProvider(ttxSSM, 2*time.Second, 5*time.Minute), fp)
+		svc := simple.NewService(netsdk.NewLockerProvider(ttxSSM, 2*time.Second, 5*time.Minute), fp, r.metrics)
 		r.mgr, err = svc.SelectorManager(mgmt)
 	default:
 		sc, cfgErr := selconfig.New(fp)

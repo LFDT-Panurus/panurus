@@ -115,6 +115,48 @@ func TestServiceRateLimiting(t *testing.T) {
 		require.ErrorIs(t, err, token.SelectorRateLimited)
 	})
 
+	t.Run("DenialsReachTheMetricsProvider", func(t *testing.T) {
+		// The service must hand its own metrics provider to the limiter it builds.
+		counter := &mocks.FakeCounter{}
+		counter.WithReturns(counter)
+		gauge := &mocks.FakeGauge{}
+		gauge.WithReturns(gauge)
+		histogram := &mocks.FakeHistogram{}
+		histogram.WithReturns(histogram)
+		provider := &mocks.FakeProvider{}
+		provider.NewCounterReturns(counter)
+		provider.NewGaugeReturns(gauge)
+		provider.NewHistogramReturns(histogram)
+
+		svc, tms := newServiceUnderTestWithMetrics(t, provider, ratelimit.WithDefaultLimiter())
+		mgr, err := svc.SelectorManager(tms)
+		require.NoError(t, err)
+		selector, err := mgr.NewSelector("tx1")
+		require.NoError(t, err)
+
+		// Drain the default burst of 200. Allowed selections reach the absent lock store of this
+		// harness and panic there, which says nothing about the limiter: swallow it.
+		for range 200 {
+			func() {
+				defer func() { _ = recover() }()
+				_, _, _ = selector.Select(t.Context(), &unitTestMockOwnerFilter{id: "alice"}, "50", "ABC")
+			}()
+		}
+		assert.Zero(t, counter.AddCallCount(), "allowed requests must not be counted as denials")
+
+		_, _, err = selector.Select(t.Context(), &unitTestMockOwnerFilter{id: "alice"}, "50", "ABC")
+		require.ErrorIs(t, err, token.SelectorRateLimited)
+
+		assert.Equal(t, 1, counter.AddCallCount())
+		assert.Equal(t, 1, gauge.SetCallCount())
+		assert.InDelta(t, 1, gauge.SetArgsForCall(0), 0)
+		var labelled bool
+		for i := range counter.WithCallCount() {
+			labelled = labelled || fmt.Sprint(counter.WithArgsForCall(i)) == fmt.Sprint([]string{"tms", tms.ID().String()})
+		}
+		assert.True(t, labelled, "denial must be labeled with the tms id")
+	})
+
 	t.Run("WithNilLimiter", func(t *testing.T) {
 		svc, tms := newServiceUnderTest(t, ratelimit.WithLimiter(nil))
 
@@ -129,12 +171,19 @@ func TestServiceRateLimiting(t *testing.T) {
 func newServiceUnderTest(t *testing.T, opts ...ratelimit.Option) (*sherdlock.SelectorService, *token.ManagementService) {
 	t.Helper()
 
+	metricsProvider, _ := setupMetricsMocks()
+
+	return newServiceUnderTestWithMetrics(t, metricsProvider, opts...)
+}
+
+// newServiceUnderTestWithMetrics is newServiceUnderTest with a caller-supplied metrics provider.
+func newServiceUnderTestWithMetrics(t *testing.T, metricsProvider *mocks.FakeProvider, opts ...ratelimit.Option) (*sherdlock.SelectorService, *token.ManagementService) {
+	t.Helper()
+
 	fetcherProvider := &mocks.FakeFetcherProvider{}
 	fetcherProvider.GetFetcherReturns(newFetcherOf("100"), nil)
 	lockStoreManager := &mocks.FakeTokenLockStoreServiceManager{}
 	lockStoreManager.StoreServiceByTMSIdReturns(nil, nil)
-	metricsProvider, _ := setupMetricsMocks()
-
 	svc := sherdlock.NewService(fetcherProvider, lockStoreManager, &mocks.FakeConfigProvider{}, metricsProvider, opts...)
 
 	driverTMS := &drivermock.TokenManagerService{}

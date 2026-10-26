@@ -251,6 +251,31 @@ tokens and so unions them, meaning a token contended across several attempts is 
 
 Source: `token/services/selector/sherdlock/metrics.go`.
 
+## Token selection rate limiting
+
+Recorded by the opt-in per-wallet rate limiter (`token.selector.rateLimit*`, or the `ratelimit`
+options), for both the `sherdlock` and `simple` selector drivers. Nothing is registered while rate
+limiting is off. `denied_total` counts selection requests rejected with `token.SelectorRateLimited`,
+which is what tells a policy-driven rejection apart from real lock contention
+(`lock_conflicts_total`, `selection_outcome_total{outcome="locked_funds"}`).
+
+`denied_total` is labeled by `tms` (the TMS id the limiter was asked about) and deliberately not by
+wallet id, which would be unbounded cardinality; the denial error names the wallet. `buckets_active`
+is a single process-wide gauge, since one limiter serves every TMS of a selector service; it assumes one metered limiter per process (two limiters sharing a provider overwrite each other). When it sits
+at `rateLimitMaxBuckets` the limiter is evicting live wallets, which resets their allowance.
+
+The names omit the `ratelimit_` prefix the issue proposed, because the package name is already part
+of the Prometheus name. The `tms` label is an intentional exception to the `network`/`channel`/`namespace`
+convention: the limiter only knows the TMS id string. A pre-built limiter passed with
+`ratelimit.WithLimiter` is metered only if it was built with `ratelimit.Config.Metrics`.
+
+| Metric | Type | Labels | Description |
+|---|---|---|---|
+| `panurus_services_selector_ratelimit_denied_total` | counter | `tms` | Total number of token selection requests denied by the per-wallet rate limiter |
+| `panurus_services_selector_ratelimit_buckets_active` | gauge | — | Number of live per-wallet buckets held by the token selection rate limiter |
+
+Source: `token/services/selector/ratelimit/metrics.go`.
+
 ## Certification (interactive)
 
 `certified_tokens` is recorded by the certification service (server side); the remaining four are
