@@ -9,6 +9,7 @@ package ratelimit
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/LFDT-Panurus/panurus/token"
 	"github.com/stretchr/testify/assert"
@@ -18,16 +19,18 @@ import (
 // fakeConfiguration is a Configuration built from explicit values, standing in for the parsed
 // token.selector configuration.
 type fakeConfiguration struct {
-	enabled    bool
-	rate       float64
-	burst      int
-	maxBuckets int
+	enabled     bool
+	rate        float64
+	burst       int
+	maxBuckets  int
+	idleTimeout time.Duration
 }
 
-func (c *fakeConfiguration) IsRateLimitEnabled() bool    { return c.enabled }
-func (c *fakeConfiguration) GetRateLimit() float64       { return c.rate }
-func (c *fakeConfiguration) GetRateLimitBurst() int      { return c.burst }
-func (c *fakeConfiguration) GetRateLimitMaxBuckets() int { return c.maxBuckets }
+func (c *fakeConfiguration) IsRateLimitEnabled() bool               { return c.enabled }
+func (c *fakeConfiguration) GetRateLimit() float64                  { return c.rate }
+func (c *fakeConfiguration) GetRateLimitBurst() int                 { return c.burst }
+func (c *fakeConfiguration) GetRateLimitMaxBuckets() int            { return c.maxBuckets }
+func (c *fakeConfiguration) GetRateLimitIdleTimeout() time.Duration { return c.idleTimeout }
 
 // TestOptions_DisabledByDefault verifies that without options and without configuration there is no
 // limiter at all.
@@ -45,6 +48,23 @@ func TestOptions_FromConfiguration(t *testing.T) {
 	ctx := context.Background()
 	require.NoError(t, limiter.Allow(ctx, testScope, "alice"))
 	require.ErrorIs(t, limiter.Allow(ctx, testScope, "alice"), token.SelectorRateLimited)
+}
+
+// TestOptions_FromConfiguration_IdleTimeout verifies the configured idle timeout reaches the
+// built limiter, and that leaving it unset yields DefaultIdleTimeout - both via normalize(),
+// which Options.Limiter must not bypass.
+func TestOptions_FromConfiguration_IdleTimeout(t *testing.T) {
+	limiter := CompileOptions().Limiter(&fakeConfiguration{enabled: true, rate: 2, burst: 1, idleTimeout: 10 * time.Minute})
+	require.NotNil(t, limiter)
+	bl, ok := limiter.(*BucketLimiter)
+	require.True(t, ok)
+	assert.Equal(t, 10*time.Minute, bl.idleTimeout)
+
+	limiter = CompileOptions().Limiter(&fakeConfiguration{enabled: true, rate: 2, burst: 1})
+	require.NotNil(t, limiter)
+	bl, ok = limiter.(*BucketLimiter)
+	require.True(t, ok)
+	assert.Equal(t, DefaultIdleTimeout, bl.idleTimeout)
 }
 
 // TestOptions_WithLimiterOverridesConfiguration verifies an explicitly supplied limiter wins over

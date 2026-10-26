@@ -143,10 +143,12 @@ always targets that one token. `Selector.nextCandidate`
 (`token/services/selector/sherdlock/selector.go`) widens the randomization for that case. Once
 the scan reaches an *anchor* — the first candidate that on its own covers the amount still
 outstanding — every later candidate is at least as large and therefore equally sufficient, so
-it peeks ahead over up to `sufficiencyWindow = 4` of them and returns one uniformly at random,
+it peeks ahead over up to `sufficiencyWindow` (default `4`, configurable — see
+[Configuration](#configuration)) of them and returns one uniformly at random,
 buffering the rest so they are still considered, in order, later on. Two caps keep the choice
 close to a smallest fit: the count cap above, and a magnitude cap — a candidate only joins the
-window if its amount is at most `maxSufficiencyRatio = 5` times **the anchor's** amount. The
+window if its amount is at most `maxSufficiencyRatio` (default `5`, also configurable) times
+**the anchor's** amount. The
 magnitude cap is measured against the anchor rather than the outstanding amount on purpose: on
 a wallet whose smallest token already exceeds 5x the request (a 1 EUR payment out of 20/30/40/50
 EUR denominations), an outstanding-amount basis would reject the very first lookahead candidate,
@@ -175,7 +177,8 @@ selector's mutex: a selection is driven by a single goroutine, but the manager h
    candidate set is exhausted while other processes hold locks, it retries in two distinct
    layers:
    - **Immediate-retry layer** (`sherdlock` only): the inner loop refetches — refreshing the
-     sherdlock token cache via the fetcher — up to a hardcoded `maxImmediateRetries = 5` times
+     sherdlock token cache via the fetcher — up to `maxImmediateRetries` (default `5`,
+     configurable — see [Configuration](#configuration)) times
      without releasing its already-acquired locks, then gives up with
      `token.SelectorSufficientButLockedFunds`. A batch-lock call that fails with a real store
      error (rather than losing a per-token race) charges one unit of this same budget and
@@ -394,7 +397,8 @@ absence truthfully for a backend that genuinely cannot batch, so the fallback ke
 **The window is capped.** A covering window grows until it covers the outstanding amount, which
 is unbounded in the *number* of tokens: a wallet of unit-value dust needs one input per unit.
 Since the Postgres claim binds `2n+5` parameters and the wire protocol refuses more than 65535,
-`maxBatchWindow` (256) bounds a single claim. This does not change what gets selected — the
+`maxBatchWindow` (default `256`, configurable — see [Configuration](#configuration)) bounds a
+single claim. This does not change what gets selected — the
 scan simply claims another window when one is not enough, exactly as it already does when the
 candidate cache runs out mid-window — but it keeps a large selection on the batch path instead
 of turning it into a store error that the retry budget then burns through.
@@ -592,6 +596,11 @@ token:
     fetcherCacheSize: 1000               # Cache size in entries (default: 0 = use fetcher default)
     fetcherCacheRefresh: 30s             # Cache refresh interval (default: 0 = use fetcher default)
     fetcherCacheMaxQueries: 100          # Max queries before cache refresh (default: 0 = use fetcher default)
+    sufficiencyWindow: 4                 # sherdlock only: sufficiency-window lookahead size (default: 0 = sherdlock's own default of 4)
+    maxSufficiencyRatio: 5               # sherdlock only: sufficiency-window magnitude cap (default: 0 = sherdlock's own default of 5)
+    maxImmediateRetries: 5               # sherdlock only: immediate-retry budget per Select call (default: 0 = sherdlock's own default of 5)
+    maxBatchWindow: 256                  # sherdlock only: candidates per batch-lock claim (default: 0 = sherdlock's own default of 256)
+    rateLimitIdleTimeout: 5m             # Rate limiter idle-bucket eviction timeout (default: 0 = limiter's own default of 5m)
   storage:
     db:
       lockStrategy: skipLocked           # Postgres lock-acquisition strategy: insert | onConflict | skipLocked (default: insert)
@@ -634,6 +643,28 @@ The three keys below tune the cache that `mixed` and `eager` use, and are ignore
 - **fetcherCacheMaxQueries**: Maximum number of queries before forcing a cache refresh. Set to 0 to use the fetcher's default limit.
 
 **Example**: With `fetcherCacheSize: 1000`, `fetcherCacheRefresh: 30s`, and `fetcherCacheMaxQueries: 100`, the cache stores up to 1000 query results, refreshes data every 30 seconds, and forces a refresh after 100 queries.
+
+### Selection Tuning (sherdlock only)
+
+These four keys tune the contention-spreading mechanism described in [Token Selection
+Algorithm](#token-selection-algorithm) above. They have no effect under `simple`. Unset
+(or `0`, or negative) selects sherdlock's own default, listed below — these are
+configurability knobs, not a change to the selection algorithm itself.
+
+- **sufficiencyWindow** (default `4`): how many ascending-by-amount, individually-sufficient
+  candidates `nextCandidate` considers together before picking one uniformly at random. `1`
+  restores the old, fully deterministic smallest-fit behaviour.
+- **maxSufficiencyRatio** (default `5`): additionally bounds the window by magnitude — a
+  candidate only joins it if its amount is at most this many times the anchor's amount.
+- **maxImmediateRetries** (default `5`): how many times one `Select` call refetches its
+  candidate cache before giving up with `token.SelectorSufficientButLockedFunds`. Raising
+  this does **not** raise the token fetcher's own cache-refresh budget — raise
+  `fetcherCacheMaxQueries` too if you raise this.
+- **maxBatchWindow** (default `256`): caps how many candidates a single batch-lock claim may
+  cover (see [Lock-acquisition strategies](#lock-acquisition-strategies-postgres-sherdlock-only)).
+  A configured value above an internal limit (comfortably inside the Postgres bind-parameter
+  bound) is clamped down to it with a warning, rather than left to reach the store as an
+  oversized claim.
 
 ## Benchmarking against Postgres
 

@@ -6,6 +6,8 @@ SPDX-License-Identifier: Apache-2.0
 
 package ratelimit
 
+import "time"
+
 // Configuration is the subset of the selector configuration that describes the built-in rate
 // limiter. It is implemented by token/services/selector/config.Config.
 type Configuration interface {
@@ -17,6 +19,9 @@ type Configuration interface {
 	GetRateLimitBurst() int
 	// GetRateLimitMaxBuckets returns the maximum number of live wallet buckets.
 	GetRateLimitMaxBuckets() int
+	// GetRateLimitIdleTimeout returns how long an idle wallet bucket is kept before it
+	// becomes eligible for eviction.
+	GetRateLimitIdleTimeout() time.Duration
 }
 
 // Option customizes how a selector service obtains its rate limiter. Options take precedence
@@ -79,8 +84,9 @@ func (o *Options) Limiter(c Configuration) Limiter {
 	}
 
 	return New(Config{
-		Rate:       c.GetRateLimit(),
-		Burst:      c.GetRateLimitBurst(),
-		MaxBuckets: c.GetRateLimitMaxBuckets(),
+		Rate:        c.GetRateLimit(),
+		Burst:       c.GetRateLimitBurst(),
+		MaxBuckets:  c.GetRateLimitMaxBuckets(),
+		IdleTimeout: c.GetRateLimitIdleTimeout(),
 	})
 }

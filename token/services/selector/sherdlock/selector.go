@@ -23,68 +23,9 @@ import (
 	"github.com/hyperledger-labs/fabric-smart-client/platform/common/utils/collections"
 )
 
-const (
-	// This way we avoid deadlocks, e.g. We have 2 tokens of value 10CHF each (20 CHF in total).
-	// We also have two processes that both ask for 15CHF. If both of them concurrently lock one token each,
-	// they will retry maxRetry times to see if the other process in the meantime unlocked the token.
-	// If not, to avoid locking these tokens forever, we roll back and unlock the tokens.
-	maxImmediateRetries = 5
-	NoBackoff           = -1
-
-	// sufficiencyWindow bounds how many ascending-by-amount candidates
-	// nextCandidate considers together once it finds one that, on its own,
-	// already covers the remaining requested amount. bucketedIterator's
-	// shuffle (fetcher.go) only randomizes tokens whose Quantity is
-	// byte-equal, so with realistic wallets every such bucket has size 1 and the
-	// ascending scan is fully deterministic: any request smaller than the
-	// smallest token always targets that single token, exactly the hot-spot
-	// #2395 warned against. sufficiencyWindow widens the randomization to
-	// "all individually-sufficient candidates within a bounded lookahead",
-	// not just byte-equal ones. The size is a tradeoff: too small (1) is the
-	// old fully-deterministic behavior; too large risks locking a much
-	// bigger token than needed for a small payment - its own complaint in
-	// #2395 ("a 1 CHF request grabbed a 200 CHF token"). 4 was chosen as a
-	// small constant that still gives real statistical spread across a
-	// handful of similarly-sized candidates while keeping the selected
-	// token close to the smallest sufficient one.
-	sufficiencyWindow = 4
-
-	// maxSufficiencyRatio additionally bounds the sufficiency window by magnitude, not just
-	// count: a candidate only joins the window if its quantity is at most maxSufficiencyRatio
-	// times the *anchor's* quantity - the anchor being the first individually-sufficient
-	// candidate, i.e. the smallest token the ascending scan would have locked anyway. Count
-	// alone is not enough - a wallet with very few distinct amounts (e.g. exactly one small
-	// token and one huge one, as in TestSizeOrderedSelection_SmallestFit) would otherwise have
-	// sufficiencyWindow trivially swallow the huge token just because nothing else was in
-	// between, defeating the smallest-fit bias for the smallest wallets, which are also the
-	// ones a hot-token incident hurts the most. 5x keeps the window meaningful while still
-	// refusing to lock, say, a 200 EUR token when a 1 EUR one would do.
-	//
-	// The bound is deliberately anchor-relative and not remaining-relative: with the remaining
-	// amount as the basis, any wallet whose smallest token already exceeds 5x the request would
-	// see its very first lookahead candidate rejected, leaving
-	// a window of size 1 and fully deterministic selection: the mechanism would be inert in
-	// exactly the regime it exists for. Anchoring on the smallest sufficient token keeps the
-	// selected token within 5x of what would have been locked regardless, in every regime.
-	maxSufficiencyRatio = 5
-
-	// maxBatchWindow caps how many candidates a single batch claim may cover. The window
-	// otherwise grows until it covers the remaining amount, which is unbounded in the number
-	// of tokens: a dust-heavy wallet paying a large amount can need tens of thousands of
-	// inputs. The Postgres claim binds 2n+5 parameters (claimCandidates) and the wire protocol
-	// refuses a statement with more than 65535, so an uncapped window would surface as a store
-	// error - and the store-error branch refetches and rebuilds the same oversized window on
-	// every attempt, so the selection burns its whole retry budget and fails where the
-	// single-token path would have succeeded. The store refuses such a batch itself
-	// (postgres.MaxLockBatchCandidates), but only this cap keeps a selection from ever
-	// building one: 256 is two orders of magnitude inside that bound, and is chosen for the
-	// statement size a claim should have rather than for the largest one it could have.
-	//
-	// The cap costs nothing in the common case and does not change what gets selected: the
-	// outer loop simply claims another window when one is not enough, exactly as it already
-	// does when the cache runs out mid-window.
-	maxBatchWindow = 256
-)
+// NoBackoff tells NewSherdSelector to build a plain Selector rather than a StubbornSelector:
+// no backoff-and-retry cycle wraps selection, so a single losing attempt is final.
+const NoBackoff = -1
 
 var logger = logging.MustGetLogger()
 
@@ -99,7 +40,11 @@ type Selector struct {
 	locker    TokenLocker
 	precision uint64
 	metrics   *Metrics
-	mu        sync.Mutex // protects the cache and pending fields
+	// tuning is normalized once, at construction (see NewSelector), and never mutated
+	// afterwards: every invariant below assumes a Tuning that cannot change over the life of
+	// this Selector.
+	tuning Tuning
+	mu     sync.Mutex // protects the cache and pending fields
 	// pending holds candidates peeked by nextCandidate's sufficiency-window
 	// lookahead but not chosen, in their original ascending relative order,
 	// so a later call still sees them before any newer cache/refetch result.
@@ -110,11 +55,11 @@ type Selector struct {
 	// at any time, so the buffer is read and written only through dequeue and
 	// requeue, and cleared by swapCache and Close, all of which hold mu.
 	//
-	// Its length stays below sufficiencyWindow at all times, including in a wallet
+	// Its length stays below tuning.SufficiencyWindow at all times, including in a wallet
 	// where every token is individually sufficient and therefore every call grows a
 	// full window: nextCandidate dequeues from pending before it touches the cache,
 	// so a window is assembled out of pending first and only at most
-	// sufficiencyWindow-1 of those entries are ever buffered back. The buffer is
+	// tuning.SufficiencyWindow-1 of those entries are ever buffered back. The buffer is
 	// bounded by the window size, not by the wallet or the cache size, and
 	// refreshCandidates drops it outright whenever it installs a fresh cache.
 	pending []*token2.UnspentTokenInWallet
@@ -122,7 +67,7 @@ type Selector struct {
 
 type StubbornSelector struct {
 	*Selector
-	// After maxImmediateRetries attempts, the procs will roll back and unlock the tokens.
+	// After Tuning.MaxImmediateRetries attempts, the procs will roll back and unlock the tokens.
 	// If two procs unlock at the same time, we have a livelock.
 	// To avoid it, we back off (wait) for a random interval within some limits and retry
 	backoffInterval time.Duration
@@ -197,15 +142,17 @@ func (m *StubbornSelector) Select(ctx context.Context, ownerFilter token.OwnerFi
 	return nil, nil, errors.Wrapf(token.SelectorInsufficientFunds, "aborted too many times and no other process unlocked or added tokens")
 }
 
-func NewStubbornSelector(logger logging.Logger, tokenDB TokenFetcher, lockDB TokenLocker, precision uint64, backoff time.Duration, retries int, m *Metrics) *StubbornSelector {
+func NewStubbornSelector(logger logging.Logger, tokenDB TokenFetcher, lockDB TokenLocker, precision uint64, backoff time.Duration, retries int, m *Metrics, opts ...Option) *StubbornSelector {
 	return &StubbornSelector{
-		Selector:               NewSelector(logger, tokenDB, lockDB, precision, m),
+		Selector:               NewSelector(logger, tokenDB, lockDB, precision, m, opts...),
 		backoffInterval:        backoff,
 		maxRetriesAfterBackoff: retries,
 	}
 }
 
-func NewSelector(logger logging.Logger, tokenDB TokenFetcher, lockDB TokenLocker, precision uint64, m *Metrics) *Selector {
+// NewSelector returns a Selector tuned by opts, falling back to the package defaults for
+// anything opts leaves unset (see Tuning and CompileOptions).
+func NewSelector(logger logging.Logger, tokenDB TokenFetcher, lockDB TokenLocker, precision uint64, m *Metrics, opts ...Option) *Selector {
 	return &Selector{
 		logger:    logger,
 		cache:     collections.NewEmptyIterator[*token2.UnspentTokenInWallet](),
@@ -213,6 +160,7 @@ func NewSelector(logger logging.Logger, tokenDB TokenFetcher, lockDB TokenLocker
 		locker:    lockDB,
 		precision: precision,
 		metrics:   m,
+		tuning:    CompileOptions(opts...),
 	}
 }
 
@@ -392,7 +340,7 @@ func (s *Selector) selectInternal(ctx context.Context, owner token.OwnerFilter, 
 			tokensLockedByOthersExist = true
 		} else if supportsBatch {
 			// Grow the window from t until it covers the remaining amount (or the cache
-			// runs out, or maxBatchWindow is reached), then claim the whole window in one
+			// runs out, or Tuning.MaxBatchWindow is reached), then claim the whole window in one
 			// call. This never claims more than the minimal covering prefix, so no
 			// won-but-unselected token is ever left locked: every token claimed here either
 			// ends up in selected below, or was never actually locked in the first place (a
@@ -405,7 +353,7 @@ func (s *Selector) selectInternal(ctx context.Context, owner token.OwnerFilter, 
 			if err != nil {
 				return nil, nil, immediateRetries, errors.Wrapf(err, "invalid token [%s] found", t.Id)
 			}
-			for windowSum.Cmp(remaining) < 0 && len(window) < maxBatchWindow {
+			for windowSum.Cmp(remaining) < 0 && len(window) < s.tuning.MaxBatchWindow {
 				next, nextErr := s.dequeue()
 				if nextErr != nil {
 					return nil, nil, immediateRetries, errors.Wrapf(nextErr, "failed to get tokens for [%s:%s]", owner.ID(), tokenType)
@@ -672,7 +620,7 @@ func (s *Selector) selectInternal(ctx context.Context, owner token.OwnerFilter, 
 // lazy one with a full-table scan. The lazy strategy implements no CacheInvalidator and reads
 // through regardless, so all of this costs it nothing either way.
 func (s *Selector) refreshCandidates(ctx context.Context, walletID string, tokenType token2.Type, immediateRetries int, alreadyFetched bool) (int, error) {
-	if immediateRetries > maxImmediateRetries {
+	if immediateRetries > s.tuning.MaxImmediateRetries {
 		s.logger.Warnf("Exceeded max number of immediate retries. Unlock tokens and abort...")
 
 		return immediateRetries, token.SelectorSufficientButLockedFunds
@@ -749,9 +697,9 @@ func (s *Selector) dropPending() {
 // cache yields tokens in ascending-by-amount order (bucketedIterator,
 // fetcher.go), every subsequent candidate from here on is >= this one and
 // therefore also individually sufficient, so it peeks up to
-// sufficiencyWindow of them - stopping early at the first one whose
-// quantity exceeds maxSufficiencyRatio times that first candidate's own
-// quantity (see maxSufficiencyRatio) - and returns one
+// s.tuning.SufficiencyWindow of them - stopping early at the first one whose
+// quantity exceeds s.tuning.MaxSufficiencyRatio times that first candidate's
+// own quantity - and returns one
 // chosen uniformly at random, buffering the rest via s.pending so they are
 // still considered, in order, on later calls. This is what spreads "small
 // payment locks the single smallest token" contention across several
@@ -792,10 +740,10 @@ func (s *Selector) nextCandidate(remaining token2.Quantity, isBlacklisted func(t
 		return t, nil
 	}
 
-	threshold := new(big.Int).Mul(tq.ToBigInt(), big.NewInt(maxSufficiencyRatio))
+	threshold := new(big.Int).Mul(tq.ToBigInt(), big.NewInt(int64(s.tuning.MaxSufficiencyRatio)))
 
 	window := []*token2.UnspentTokenInWallet{t}
-	for len(window) < sufficiencyWindow {
+	for len(window) < s.tuning.SufficiencyWindow {
 		next, nextErr := s.dequeue()
 		if nextErr != nil {
 			return nil, nextErr
@@ -944,7 +892,7 @@ func (l *batchLocker) TryLockBatch(ctx context.Context, tokenIDs []*token2.ID, w
 	return outcome, err
 }
 
-func NewSherdSelector(txID transaction.ID, fetcher TokenFetcher, lockDB Locker, precision uint64, backoff time.Duration, maxRetriesAfterBackoff int, m *Metrics) TokenSelectorUnlocker {
+func NewSherdSelector(txID transaction.ID, fetcher TokenFetcher, lockDB Locker, precision uint64, backoff time.Duration, maxRetriesAfterBackoff int, m *Metrics, opts ...Option) TokenSelectorUnlocker {
 	logger := logger.Named("selector-" + txID)
 	base := &locker{txID: txID, Locker: lockDB}
 	var tokenLocker TokenLocker = base
@@ -952,8 +900,8 @@ func NewSherdSelector(txID transaction.ID, fetcher TokenFetcher, lockDB Locker, 
 		tokenLocker = &batchLocker{locker: base, batch: bl}
 	}
 	if backoff < 0 {
-		return NewSelector(logger, fetcher, tokenLocker, precision, m)
+		return NewSelector(logger, fetcher, tokenLocker, precision, m, opts...)
 	} else {
-		return NewStubbornSelector(logger, fetcher, tokenLocker, precision, backoff, maxRetriesAfterBackoff, m)
+		return NewStubbornSelector(logger, fetcher, tokenLocker, precision, backoff, maxRetriesAfterBackoff, m, opts...)
 	}
 }
