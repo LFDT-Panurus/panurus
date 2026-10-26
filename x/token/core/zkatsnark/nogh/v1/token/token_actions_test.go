@@ -7,7 +7,6 @@ package token_test
 
 import (
 	"context"
-	"encoding/json"
 	"testing"
 
 	"github.com/consensys/gnark-crypto/ecc"
@@ -59,8 +58,8 @@ func TestOutputDescription_Serialize(t *testing.T) {
 	raw, err := o.Serialize()
 	require.NoError(t, err)
 
-	var got snarktoken.OutputDescription
-	require.NoError(t, json.Unmarshal(raw, &got))
+	got, err := snarktoken.DeserializeOutputDescription(raw)
+	require.NoError(t, err)
 	require.Equal(t, o.Recipient, got.Recipient)
 }
 
@@ -151,9 +150,9 @@ func TestIssueAction_GetSerializedOutputs_RoundTrip(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, raws, 2)
 
-	var o snarktoken.OutputDescription
-	require.NoError(t, json.Unmarshal(raws[0], &o))
-	require.Equal(t, []byte("alice"), o.Recipient)
+	got, err := snarktoken.DeserializeOutputDescription(raws[0])
+	require.NoError(t, err)
+	require.Equal(t, []byte("alice"), got.Recipient)
 }
 
 func TestIssueAction_Serialize_Deserialize_RoundTrip(t *testing.T) {
@@ -212,7 +211,7 @@ func TestTransferAction_GetInputs_Nil(t *testing.T) {
 
 func TestTransferAction_GetSerializedInputs_WithInputTokens(t *testing.T) {
 	outputDesc := makeOutputDescription([]byte("bob"))
-	raw, err := json.Marshal(outputDesc)
+	raw, err := outputDesc.Serialize()
 	require.NoError(t, err)
 
 	a := &snarktoken.TransferAction{
@@ -223,8 +222,8 @@ func TestTransferAction_GetSerializedInputs_WithInputTokens(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, raws, 1)
 
-	var got snarktoken.OutputDescription
-	require.NoError(t, json.Unmarshal(raws[0], &got))
+	got, err := snarktoken.DeserializeOutputDescription(raws[0])
+	require.NoError(t, err)
 	require.Equal(t, []byte("bob"), got.Recipient)
 }
 
@@ -292,9 +291,9 @@ func TestTransferAction_GetSerializedOutputs_RoundTrip(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, raws, 1)
 
-	var o snarktoken.OutputDescription
-	require.NoError(t, json.Unmarshal(raws[0], &o))
-	require.Equal(t, []byte("y"), o.Recipient)
+	got, err := snarktoken.DeserializeOutputDescription(raws[0])
+	require.NoError(t, err)
+	require.Equal(t, []byte("y"), got.Recipient)
 }
 
 func TestTransferAction_IsRedeemAt_RedeemOutput(t *testing.T) {
@@ -326,9 +325,9 @@ func TestTransferAction_SerializeOutputAt_InBounds(t *testing.T) {
 	raw, err := a.SerializeOutputAt(0)
 	require.NoError(t, err)
 
-	var o snarktoken.OutputDescription
-	require.NoError(t, json.Unmarshal(raw, &o))
-	require.Equal(t, []byte("z"), o.Recipient)
+	got, err := snarktoken.DeserializeOutputDescription(raw)
+	require.NoError(t, err)
+	require.Equal(t, []byte("z"), got.Recipient)
 }
 
 func TestTransferAction_SerializeOutputAt_OutOfBounds(t *testing.T) {
@@ -530,4 +529,30 @@ func TestNote_Deserialize_LengthMismatch(t *testing.T) {
 	buf[15] = 0xE8 // 1000 in big-endian LSB
 	_, err := snarktoken.Deserialize(buf)
 	require.Error(t, err)
+}
+
+func TestMigrationAction_Serialize_Deserialize_RoundTrip(t *testing.T) {
+	orig := &snarktoken.MigrationAction{
+		CommitmentPedersenX: []byte("pedersen-x"),
+		CommitmentPedersenY: []byte("pedersen-y"),
+		CommitmentMiMC:      []byte("mimc-cm"),
+		ValueCommitOutX:     []byte("jubjub-x"),
+		ValueCommitOutY:     []byte("jubjub-y"),
+		TypeCommitment:      []byte("type-cm"),
+		MigrationProof:      []byte("proof-bytes"),
+		Recipient:           []byte("carol"),
+	}
+	raw, err := orig.Serialize()
+	require.NoError(t, err)
+
+	got := &snarktoken.MigrationAction{}
+	require.NoError(t, got.Deserialize(raw))
+	require.Equal(t, orig.CommitmentPedersenX, got.CommitmentPedersenX)
+	require.Equal(t, orig.CommitmentPedersenY, got.CommitmentPedersenY)
+	require.Equal(t, orig.CommitmentMiMC, got.CommitmentMiMC)
+	require.Equal(t, orig.ValueCommitOutX, got.ValueCommitOutX)
+	require.Equal(t, orig.ValueCommitOutY, got.ValueCommitOutY)
+	require.Equal(t, orig.TypeCommitment, got.TypeCommitment)
+	require.Equal(t, orig.MigrationProof, got.MigrationProof)
+	require.Equal(t, orig.Recipient, got.Recipient)
 }

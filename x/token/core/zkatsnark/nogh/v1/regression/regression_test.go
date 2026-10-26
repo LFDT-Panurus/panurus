@@ -15,7 +15,6 @@ package regression
 
 import (
 	"context"
-	"encoding/json"
 	"sync"
 	"testing"
 
@@ -182,7 +181,7 @@ func (l *testLedger) GetState(id token2.ID) ([]byte, error) {
 // storeLedgerToken stores a serialized OutputDescription in the test ledger.
 func storeLedgerToken(t *testing.T, ledger *testLedger, txID string, index uint64, desc snarktoken.OutputDescription) *token2.ID {
 	t.Helper()
-	raw, err := json.Marshal(desc)
+	raw, err := desc.Serialize()
 	require.NoError(t, err)
 
 	id := &token2.ID{TxId: txID, Index: index}
@@ -369,7 +368,7 @@ func TestTransferAction_CommonValidator_SignaturesConsumed(t *testing.T) {
 	// Set InputIDs and InputTokens on the transfer action (as TransferService would)
 	inputTokenID := &token2.ID{TxId: "issue-tx-0", Index: 0}
 	transferAction.InputIDs = []*token2.ID{inputTokenID}
-	outputDescRaw, err := json.Marshal(issueAction.Outputs[0])
+	outputDescRaw, err := issueAction.Outputs[0].Serialize()
 	require.NoError(t, err)
 	transferAction.InputTokens = [][]byte{outputDescRaw}
 
@@ -441,9 +440,9 @@ func TestTransferAction_CommonValidator_TwoInputs_SignaturesConsumed(t *testing.
 	inputID0 := &token2.ID{TxId: "issue-tx-0", Index: 0}
 	inputID1 := &token2.ID{TxId: "issue-tx-1", Index: 0}
 	transferAction.InputIDs = []*token2.ID{inputID0, inputID1}
-	outputDescRaw0, err := json.Marshal(issueAction1.Outputs[0])
+	outputDescRaw0, err := issueAction1.Outputs[0].Serialize()
 	require.NoError(t, err)
-	outputDescRaw1, err := json.Marshal(issueAction2.Outputs[0])
+	outputDescRaw1, err := issueAction2.Outputs[0].Serialize()
 	require.NoError(t, err)
 	transferAction.InputTokens = [][]byte{outputDescRaw0, outputDescRaw1}
 

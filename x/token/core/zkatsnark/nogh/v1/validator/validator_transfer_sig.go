@@ -8,7 +8,6 @@ package validator
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"slices"
 
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
@@ -74,8 +73,8 @@ func TransferSignatureValidate(c context.Context, ctx *Context) error {
 			return errors.Wrapf(err, "failed loading token [%s] from ledger for input [%d]", inputID, i)
 		}
 
-		var outputDesc snarktoken.OutputDescription
-		if err := json.Unmarshal(raw, &outputDesc); err != nil {
+		outputDesc, err := snarktoken.DeserializeOutputDescription(raw)
+		if err != nil {
 			return errors.Wrapf(err, "failed unmarshalling ledger token for input [%d]", i)
 		}
 
