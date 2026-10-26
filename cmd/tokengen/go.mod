@@ -131,3 +131,5 @@ require (
 	modernc.org/memory v1.12.1 // indirect
 	modernc.org/sqlite v1.61.0 // indirect
 )
+
+replace github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark => ./../../x/token/core/zkatsnark
