@@ -9,7 +9,6 @@ package zkatsnark
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 
 	"github.com/LFDT-Panurus/panurus/token/core/common"
 	"github.com/LFDT-Panurus/panurus/token/core/common/meta"
@@ -102,8 +101,8 @@ func (s *TransferService) Transfer(
 			return nil, nil, errors.New("all input tokens must have the same type")
 		}
 
-		var outputDesc snarktoken.OutputDescription
-		if err := json.Unmarshal(loadedToken.Token, &outputDesc); err != nil {
+		outputDesc, err := snarktoken.DeserializeOutputDescription(loadedToken.Token)
+		if err != nil {
 			return nil, nil, errors.Wrapf(err, "failed to unmarshal output token for %s", tokenIDs[i])
 		}
 
