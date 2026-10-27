@@ -33,6 +33,7 @@ import (
 	_ "github.com/LFDT-Panurus/panurus/token/services/logging" // registers the "panurus" metric namespace replacer
 	fabricxqueue "github.com/LFDT-Panurus/panurus/token/services/network/fabricx/finality/queue"
 	"github.com/LFDT-Panurus/panurus/token/services/observability"
+	"github.com/LFDT-Panurus/panurus/token/services/selector/ratelimit"
 	"github.com/LFDT-Panurus/panurus/token/services/selector/sherdlock"
 	"github.com/LFDT-Panurus/panurus/token/services/storage/services/checks"
 	"github.com/LFDT-Panurus/panurus/token/services/ttx"
@@ -297,6 +298,15 @@ var groups = []group{
 			{file: "token/services/selector/sherdlock/fetcher.go", call: "NewMetrics(metricsProvider)"},
 		},
 		build: func(p metrics.Provider) { sherdlock.NewMetrics(p) },
+	},
+	{
+		subsystem: "Token selection (rate limiter)",
+		source:    "token/services/selector/ratelimit/metrics.go",
+		scope:     direct,
+		wiring: []wiringSite{
+			{file: "token/services/selector/ratelimit/limiter.go", call: "NewMetrics(c.Metrics)"},
+		},
+		build: func(p metrics.Provider) { ratelimit.NewMetrics(p) },
 	},
 	{
 		subsystem: "Certification service (server)",

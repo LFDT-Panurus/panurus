@@ -12,6 +12,7 @@ import (
 	"github.com/LFDT-Panurus/panurus/token"
 	"github.com/LFDT-Panurus/panurus/token/driver"
 	drivermock "github.com/LFDT-Panurus/panurus/token/driver/mock"
+	"github.com/hyperledger-labs/fabric-smart-client/platform/view/services/metrics/disabled"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -20,7 +21,7 @@ import (
 // the current public parameters. After an update the TMS is rebuilt, but the service hands back
 // the manager it cached for the TMS when the parameters had a lower precision.
 func TestServicePrecisionFollowsPublicParamsUpdate(t *testing.T) {
-	svc := NewService(&fixedLockerProvider{locker: &recordingLocker{lockFailAfter: 100}}, &emptyConfigProvider{})
+	svc := NewService(&fixedLockerProvider{locker: &recordingLocker{lockFailAfter: 100}}, &emptyConfigProvider{}, &disabled.Provider{})
 
 	before, err := svc.SelectorManager(newTMSWithPrecision(t, 32))
 	require.NoError(t, err)
