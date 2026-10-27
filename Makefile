@@ -43,7 +43,8 @@ include $(TOP)/checks.mk
 
 # Define all Go module directories
 GO_MODULES := . integration token/services/storage/db/kvs/hashicorp cmd/artifactgen cmd/tokengen cmd/token_validation_service cmd/profiler cmd/skicleanup cmd/tokendiag cmd/node x/token/services/network/evm
-TIDY_GO_MODULES := $(GO_MODULES) tools
+# the lazer module (x/) needs `make lazer-install` to build, so it is not in GO_MODULES
+TIDY_GO_MODULES := $(GO_MODULES) x/token/services/identity/lazer tools
 
 # include fabricx target
 include $(TOP)/fabricx.mk
@@ -53,6 +54,8 @@ include $(TOP)/interop.mk
 include $(TOP)/fungible.mk
 # include the evm targets
 include $(TOP)/evm.mk
+# include the lazer (post-quantum identity) targets
+include $(TOP)/lazer.mk
 
 all: install-tools install-softhsm checks unit-tests #integration-tests
 

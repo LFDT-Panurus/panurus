@@ -4,6 +4,7 @@
 /.bob/
 
 go.work
+/.lazer/
 go.work.sum
 fabric-samples/
 fabric-smart-client/
