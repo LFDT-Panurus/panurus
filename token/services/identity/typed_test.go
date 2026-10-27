@@ -60,3 +60,23 @@ func TestWrapWithType(t *testing.T) {
 	assert.Equal(t, idType, unmarshaledTI.Type)
 	assert.Equal(t, id, unmarshaledTI.Identity)
 }
+
+func TestTypeToString(t *testing.T) {
+	// The numeric values are persisted in the owner field of tokens, they must never change.
+	for _, tc := range []struct {
+		idType   driver.IdentityType
+		expected int32
+		str      string
+	}{
+		{driver.IdemixIdentityType, 1, "idemix"},
+		{driver.X509IdentityType, 2, "x509"},
+		{driver.IdemixNymIdentityType, 3, "idemixnym"},
+		{driver.HTLCScriptIdentityType, 4, "htlc"},
+		{driver.MultiSigIdentityType, 5, "multisig"},
+		{driver.LazerIdentityType, 7, "lazer"},
+	} {
+		assert.Equal(t, tc.expected, tc.idType, tc.str)
+		assert.Equal(t, tc.str, identity.TypeToString(tc.idType))
+	}
+	assert.Equal(t, "Type (42)", identity.TypeToString(42))
+}
