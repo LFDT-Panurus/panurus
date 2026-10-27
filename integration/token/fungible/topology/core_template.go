@@ -25,12 +25,17 @@ fsc:
     # Private key matching the X.509 certificate
     key:
       file: {{ .NodeLocalPrivateKeyPath Peer }}
-  # Client X.509 certificates
-  client:
-    certs:
-    {{- range Peer.Admins }}
-    - {{ . }} 
-    {{- end }}
+  # The remote view API: the view service on the gRPC listener and, when the web server is
+  # enabled, on its HTTP binding. clients are the identities, besides the node's own,
+  # allowed to call views.
+  view:
+    remote:
+      enabled: true
+      backends: [grpc{{ if WebEnabled }}, web{{ end }}]
+      clients:
+      {{- range Peer.Admins }}
+      - {{ . }}
+      {{- end }}
   # Server-side TLS defaults, inherited field by field by every listener this node owns
   # (fsc.grpc and fsc.web). A service's own tls: block overrides only the fields it
   # actually sets; everything else falls through to here.
