@@ -17,7 +17,7 @@ import (
 // defaultBenchmarkProofSystem is used when -proof_system is not set.
 const defaultBenchmarkProofSystem = "groth16"
 
-var benchProofSystem = flag.String("proof_system", "", "ZK proof system to benchmark: groth16 or plonk (default groth16)")
+var benchProofSystem = flag.String("proof_system", "", "ZK proof system to benchmark: groth16, plonk or plonkfri (default groth16)")
 
 // benchmarkProofSystem returns the proof system selected via the
 // -proof_system flag, falling back to defaultBenchmarkProofSystem when the
@@ -29,10 +29,10 @@ func benchmarkProofSystem() (string, error) {
 	}
 
 	switch strings.ToLower(str) {
-	case "groth16", "plonk":
+	case "groth16", "plonk", "plonkfri":
 		return strings.ToLower(str), nil
 	default:
-		return "", errors.Errorf("invalid proof_system [%s]: want groth16 or plonk", str)
+		return "", errors.Errorf("invalid proof_system [%s]: want groth16, plonk or plonkfri", str)
 	}
 }
 

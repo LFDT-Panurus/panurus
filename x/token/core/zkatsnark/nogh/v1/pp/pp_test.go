@@ -175,6 +175,32 @@ func TestPublicParams_Validate_GrothAndPlonkBothAccepted(t *testing.T) {
 	require.NoError(t, p.Validate())
 }
 
+func TestPublicParams_Validate_MaxBitsBounds(t *testing.T) {
+	for _, bits := range []int{1, 32, 64} {
+		p := defaultValidPP()
+		p.MaxBits = bits
+		require.NoError(t, p.Validate(), "MaxBits %d", bits)
+	}
+	// 65 and above would break the uint64 value domain; ~243 would let value
+	// sums wrap the Edwards subgroup order and inflate the supply.
+	for _, bits := range []int{65, 128, 243, 254} {
+		p := defaultValidPP()
+		p.MaxBits = bits
+		require.Error(t, p.Validate(), "MaxBits %d", bits)
+	}
+}
+
+func TestPublicParams_Validate_PlonkFRI(t *testing.T) {
+	p := defaultValidPP()
+	p.ProofSystem = "plonkfri"
+	p.Curve = ecc.BN254
+	require.NoError(t, p.Validate())
+
+	// plonkfri exists only for bn254 in the underlying gnark fork
+	p.Curve = ecc.BLS12_381
+	require.Error(t, p.Validate())
+}
+
 func TestPublicParams_Validate_UnsupportedCurve(t *testing.T) {
 	p := defaultValidPP()
 	p.Curve = ecc.BN254              // BN254 is actually accepted, so use something else

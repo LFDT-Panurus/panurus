@@ -25,6 +25,13 @@ func parseTotalValue(curve ecc.ID, raw []byte) (uint64, error) {
 		return 0, errors.Wrapf(err, "validator: TotalValue")
 	}
 
+	// decodeScalar returns a canonical field element, which can exceed 64
+	// bits; Uint64() would silently keep only the low 64, so T and T+2^64
+	// would decode to the same value. Reject instead.
+	if !v.IsUint64() {
+		return 0, errors.Wrapf(ErrInvalidEncoding, "validator: TotalValue does not fit in 64 bits")
+	}
+
 	return v.Uint64(), nil
 }
 
