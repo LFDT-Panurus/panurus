@@ -150,13 +150,11 @@ func TestMetrics_ConcurrentAllow(t *testing.T) {
 
 	var wg sync.WaitGroup
 	for range 20 {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			for range 10 {
 				_ = l.Allow(context.Background(), "s", "w")
 			}
-		}()
+		})
 	}
 	wg.Wait()
 
