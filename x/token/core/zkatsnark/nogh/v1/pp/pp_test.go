@@ -196,7 +196,7 @@ func TestPublicParams_Validate_PlonkFRI(t *testing.T) {
 	p.Curve = ecc.BN254
 	require.NoError(t, p.Validate())
 
-	// plonkfri exists only for bn254 in the underlying gnark fork
+	// plonkfri exists only for bn254 (crypto/internal/plonkfri/bn254)
 	p.Curve = ecc.BLS12_381
 	require.Error(t, p.Validate())
 }

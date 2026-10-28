@@ -7,23 +7,22 @@ package backend
 
 import (
 	"github.com/consensys/gnark-crypto/ecc"
-	"github.com/consensys/gnark/backend/plonkfri"
+	fr_bn254 "github.com/consensys/gnark-crypto/ecc/bn254/fr"
 	"github.com/consensys/gnark/backend/witness"
 	"github.com/consensys/gnark/constraint"
 	cs_bn254 "github.com/consensys/gnark/constraint/bn254"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
+
+	plonkfri "github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/crypto/internal/plonkfri/bn254"
 )
 
 const systemPlonkFRI = "plonkfri"
 
 // plonkFRIBackend implements ProofSystemBackend for PLONK with FRI as the
 // polynomial commitment scheme. Unlike plonk it needs no SRS: the setup is
-// transparent and deterministic. Only bn254 is supported by the underlying
-// gnark fork, and the constraint system must be a SparseR1CS (scs builder).
-//
-// The fork's plonkfri.Setup/Prove/Verify panic on unexpected constraint-system
-// or proof types, so this backend checks those types itself and returns
-// errors instead.
+// transparent and deterministic. Only bn254 is supported by the vendored
+// implementation (package crypto/internal/plonkfri/bn254), and the
+// constraint system must be a SparseR1CS (scs builder).
 type plonkFRIBackend struct {
 	curve ecc.ID
 }
@@ -80,7 +79,7 @@ func (b *plonkFRIBackend) Setup(cs constraint.ConstraintSystem) ([]byte, []byte,
 // embedded verifying key, so it is considerably more expensive than for the
 // other systems: call it once per key.
 func (b *plonkFRIBackend) NewProvingKey(raw []byte) (*ProvingKey, error) {
-	pk := plonkfri.NewProvingKey(b.curve)
+	pk := &plonkfri.ProvingKey{}
 	if err := readFromExact(pk, raw); err != nil {
 		return nil, errors.Wrapf(err, "plonkfri backend: proving key deserialization")
 	}
@@ -90,7 +89,7 @@ func (b *plonkFRIBackend) NewProvingKey(raw []byte) (*ProvingKey, error) {
 
 // NewVerifyingKey implements ProofSystemBackend.NewVerifyingKey for PLONK-FRI.
 func (b *plonkFRIBackend) NewVerifyingKey(raw []byte) (*VerifyingKey, error) {
-	vk := plonkfri.NewVerifyingKey(b.curve)
+	vk := &plonkfri.VerifyingKey{}
 	if err := readFromExact(vk, raw); err != nil {
 		return nil, errors.Wrapf(err, "plonkfri backend: verifying key deserialization")
 	}
@@ -124,19 +123,25 @@ func (b *plonkFRIBackend) Verify(vk *VerifyingKey, proofBytes []byte, publicWitn
 		return err
 	}
 
-	proof := plonkfri.NewProof(b.curve)
+	if publicWitness == nil {
+		return errors.New("plonkfri backend: public witness is nil")
+	}
+	public, ok := publicWitness.Vector().(fr_bn254.Vector)
+	if !ok {
+		return errors.Wrapf(witness.ErrInvalidWitness, "plonkfri backend: public witness is not a bn254 vector, got %T", publicWitness.Vector())
+	}
+
+	proof := &plonkfri.Proof{}
 	if err := readFromExact(proof, proofBytes); err != nil {
 		return errors.Wrapf(err, "plonkfri backend: proof deserialization")
 	}
 
-	return plonkfri.Verify(proof, key, publicWitness)
+	return plonkfri.Verify(proof, key, public)
 }
 
 // provingKey validates that pk was produced for PLONK-FRI and this backend's
-// curve, and returns the underlying gnark key.
-//
-//nolint:ireturn // returns the gnark plonkfri.ProvingKey interface, the only type the fork exposes
-func (b *plonkFRIBackend) provingKey(pk *ProvingKey) (plonkfri.ProvingKey, error) {
+// curve, and returns the underlying key.
+func (b *plonkFRIBackend) provingKey(pk *ProvingKey) (*plonkfri.ProvingKey, error) {
 	if pk == nil {
 		return nil, errors.New("plonkfri backend: proving key is nil")
 	}
@@ -146,7 +151,7 @@ func (b *plonkFRIBackend) provingKey(pk *ProvingKey) (plonkfri.ProvingKey, error
 	if pk.curve != b.curve {
 		return nil, errors.Errorf("plonkfri backend: proving key is for curve %s, backend is for curve %s", pk.curve, b.curve)
 	}
-	key, ok := pk.key.(plonkfri.ProvingKey)
+	key, ok := pk.key.(*plonkfri.ProvingKey)
 	if !ok {
 		return nil, errors.Errorf("plonkfri backend: proving key holds unexpected type %T", pk.key)
 	}
@@ -155,9 +160,7 @@ func (b *plonkFRIBackend) provingKey(pk *ProvingKey) (plonkfri.ProvingKey, error
 }
 
 // verifyingKey is the VerifyingKey counterpart of provingKey.
-//
-//nolint:ireturn // returns the gnark plonkfri.VerifyingKey interface, the only type the fork exposes
-func (b *plonkFRIBackend) verifyingKey(vk *VerifyingKey) (plonkfri.VerifyingKey, error) {
+func (b *plonkFRIBackend) verifyingKey(vk *VerifyingKey) (*plonkfri.VerifyingKey, error) {
 	if vk == nil {
 		return nil, errors.New("plonkfri backend: verifying key is nil")
 	}
@@ -167,7 +170,7 @@ func (b *plonkFRIBackend) verifyingKey(vk *VerifyingKey) (plonkfri.VerifyingKey,
 	if vk.curve != b.curve {
 		return nil, errors.Errorf("plonkfri backend: verifying key is for curve %s, backend is for curve %s", vk.curve, b.curve)
 	}
-	key, ok := vk.key.(plonkfri.VerifyingKey)
+	key, ok := vk.key.(*plonkfri.VerifyingKey)
 	if !ok {
 		return nil, errors.Errorf("plonkfri backend: verifying key holds unexpected type %T", vk.key)
 	}

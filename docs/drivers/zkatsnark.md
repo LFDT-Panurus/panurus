@@ -17,9 +17,19 @@ a single abstraction, `crypto/backend.ProofSystemBackend`
 PLONK with FRI as the polynomial commitment scheme instead of KZG. It needs no structured reference
 string: `Setup` is deterministic, so the same circuit always yields byte-identical keys.
 
-`plonkfri` is provided by the gnark fork `github.com/dewindtk/gnark-fork` (`backend/plonkfri`), wired
-in with a `replace` directive in `x/token/core/zkatsnark/go.mod`. Its security status is described in the
-fork's `PROJECT.md`; it has **not been externally reviewed**, so treat it as experimental.
+`plonkfri` is not part of upstream gnark. Its implementation lives in the zkatsnark module itself, in
+`nogh/v1/crypto/internal/plonkfri` (`bn254` for the prover and verifier, `nativefri` for the FRI
+commitment scheme), on top of plain upstream `github.com/consensys/gnark`; no `replace` directive is
+needed. It is a copy of the PLONK-FRI backend of the gnark fork `github.com/dewindtk/gnark-fork`, taken
+from `github.com/adecaro/gnark` at commit `ccc2c555fda533f9b09cf05cbeddb732552002d0`. The package
+documentation (`bn254/doc.go`) lists the differences from that source. The security arguments are
+described in the fork's `PROJECT.md` and backed by the attack and zero-knowledge tests that came with the
+code. It has **not been externally reviewed**, so treat it as experimental.
+
+The fork was based on gnark v0.16.3; the module now builds on upstream gnark v0.16.4. The spend,
+output and migration constraint systems compiled with either are identical (apart from the gnark
+version recorded in the serialized constraint system), and `plonkfri` keys are byte-identical, so public
+parameters generated with the fork remain valid.
 
 ### Constraints and trade-offs
 
@@ -61,10 +71,11 @@ fork's `PROJECT.md`; it has **not been externally reviewed**, so treat it as exp
 
 ### Serialization
 
-Keys and proofs are encoded by the fork (`WriteTo` / `ReadFrom`). Decoders are bounded, reject
+Keys and proofs are encoded by `crypto/internal/plonkfri/bn254` (`WriteTo` / `ReadFrom`). Decoders are bounded, reject
 non-canonical field elements and inconsistent sizes, and `ProvingKey.ReadFrom` rejects a key whose
 recomputed FRI commitment differs from the embedded verifying key. The format is new and unversioned.
-`FuzzPlonkFRIVerifyNoPanic` (see `.github/workflows/nightly-fuzz.yml`) covers the decoders.
+`FuzzPlonkFRIVerifyNoPanic` and `FuzzNewKeysNoPanic` (through the backend) and `FuzzReadFrom`
+(directly on the decoders) cover them; see `.github/workflows/nightly-fuzz.yml`.
 
 ### Selecting it
 

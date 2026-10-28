@@ -133,5 +133,3 @@ require (
 )
 
 replace github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark => ./../../x/token/core/zkatsnark
-
-replace github.com/consensys/gnark => github.com/adecaro/gnark v0.5.2-0.20261027065111-ccc2c555fda5

@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/consensys/gnark-crypto/ecc"
+	"github.com/consensys/gnark/backend/witness"
 	"github.com/consensys/gnark/constraint"
 	"github.com/consensys/gnark/frontend"
 	"github.com/consensys/gnark/frontend/cs/r1cs"
@@ -116,6 +117,37 @@ func TestPlonkFRI_Verify_TamperedAndTruncatedProof(t *testing.T) {
 	require.Error(t, f.b.Verify(f.vk, proof[:len(proof)/2], pubW))
 	require.Error(t, f.b.Verify(f.vk, nil, pubW))
 	require.Error(t, f.b.Verify(f.vk, []byte("garbage"), pubW))
+}
+
+// TestPlonkFRI_Verify_RejectsForeignPublicWitness checks that a public witness
+// over a field other than bn254's is rejected with an error, not a panic, and
+// before the proof is even decoded.
+func TestPlonkFRI_Verify_RejectsForeignPublicWitness(t *testing.T) {
+	fx := newPlonkFRIFixture(t)
+	w, err := frontend.NewWitness(&trivialCircuit{X: 3, Y: 3}, ecc.BN254.ScalarField())
+	require.NoError(t, err)
+	proof, err := fx.b.Prove(fx.cs, fx.pk, w)
+	require.NoError(t, err)
+
+	foreign, err := frontend.NewWitness(&trivialCircuit{X: 3, Y: 3}, ecc.BLS12_381.ScalarField(), frontend.PublicOnly())
+	require.NoError(t, err)
+	err = fx.b.Verify(fx.vk, proof, foreign)
+	require.ErrorIs(t, err, witness.ErrInvalidWitness)
+
+	require.Error(t, fx.b.Verify(fx.vk, proof, nil))
+}
+
+// TestPlonkFRI_Verify_RejectsFullWitness checks that a full witness (public
+// and secret values) passed as the public witness is rejected.
+func TestPlonkFRI_Verify_RejectsFullWitness(t *testing.T) {
+	fx := newPlonkFRIFixture(t)
+	w, err := frontend.NewWitness(&trivialCircuit{X: 3, Y: 3}, ecc.BN254.ScalarField())
+	require.NoError(t, err)
+	proof, err := fx.b.Prove(fx.cs, fx.pk, w)
+	require.NoError(t, err)
+
+	err = fx.b.Verify(fx.vk, proof, w)
+	require.ErrorContains(t, err, "witness length is invalid")
 }
 
 func TestPlonkFRI_Keys_CorruptBytes(t *testing.T) {

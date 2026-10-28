@@ -70,6 +70,10 @@ download-fabric:
 	./ci/scripts/download_fabric.sh $(FABRIC_BINARY_BASE) $(FABRIC_VERSION) $(FABRIC_CA_VERSION)
 
 GO_TEST_PARAMS ?= -coverpkg=./... -coverprofile=profile.cov
+# The zkatsnark driver is its own Go module, so the root `go list ./...` does not see it; the unit-test
+# targets run its packages explicitly (regression is left to unit-tests-regression, as for the root module).
+# Evaluated inside x/token/core/zkatsnark.
+ZKATSNARK_UNIT_PACKAGES = $$(go list ./... | grep -v 'regression' | grep -v 'protos-go')
 GO_PACKAGES = $(shell go list ./... | grep -v '/integration/' | grep -v 'regression' | grep -v 'mock' |  grep -v 'protos-go' |  grep -v 'testutils'; go list ./integration/nwo/...)
 
 .PHONY: benchmark-selector-postgres
@@ -92,6 +96,9 @@ unit-tests:
 	cd x/token/services/network/evm; go test -coverpkg=./... -coverprofile=profile.cov ./...
 	@tail -n +2 x/token/services/network/evm/profile.cov >> profile.cov
 	@rm -f x/token/services/network/evm/profile.cov
+	cd x/token/core/zkatsnark; go test -timeout 30m -coverpkg=./... -coverprofile=profile.cov $(ZKATSNARK_UNIT_PACKAGES)
+	@tail -n +2 x/token/core/zkatsnark/profile.cov >> profile.cov
+	@rm -f x/token/core/zkatsnark/profile.cov
 
 .PHONY: unit-tests-race
 # run unit tests with race detection
@@ -99,11 +106,13 @@ unit-tests-race:
 	@export GORACE=history_size=7; go test -race -cover $(shell go list ./... | grep -v '/integration/'  | grep -v 'regression')
 	cd integration/nwo/; go test -cover ./...
 	@export GORACE=history_size=7; cd x/token/services/network/evm; go test -race -cover ./...
+	@export GORACE=history_size=7; cd x/token/core/zkatsnark; go test -race -timeout 60m -cover $(ZKATSNARK_UNIT_PACKAGES)
 
 .PHONY: unit-tests-regression
 # run regression unit tests
 unit-tests-regression:
 	@go test -race -timeout 0 -cover $(shell go list ./... | grep -v '/integration/' | grep 'regression')
+	@cd x/token/core/zkatsnark; go test -race -timeout 0 -cover $$(go list ./... | grep 'regression')
 
 .PHONY: install-softhsm
 # install softhsm for testing
