@@ -39,6 +39,7 @@
 typedef struct
 {
   polymat_t B2; /* Falcon public key as 8x8 matrix over the 64-deg ring */
+  polyvec_t c0; /* public non-zero target derived from the public key, 8 elems */
   lin_prover_state_t p1;
   lin_prover_state_t p2;
   polyvec_t r; /* masking randomness, 16 elems */
@@ -51,6 +52,7 @@ typedef cbdc_user_state_struct *cbdc_user_state_ptr;
 typedef struct
 {
   uint8_t sk[1281];
+  polyvec_t c0; /* see cbdc_user_state_struct */
   lin_verifier_state_t p1;
 } cbdc_issuer_state_struct;
 typedef cbdc_issuer_state_struct cbdc_issuer_state_t[1];
@@ -59,6 +61,7 @@ typedef cbdc_issuer_state_struct *cbdc_issuer_state_ptr;
 typedef struct
 {
   polymat_t B2;
+  polyvec_t c0; /* see cbdc_user_state_struct */
   lin_verifier_state_t p2;
 } cbdc_verifier_state_struct;
 typedef cbdc_verifier_state_struct cbdc_verifier_state_t[1];
