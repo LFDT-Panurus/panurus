@@ -93,6 +93,9 @@ jobs:
           - name: zkatdlog-issue-csp-verifier
             pkg: ./token/core/zkatdlog/nogh/v1/issue
             func: FuzzCSPVerifierNoPanic
+          - name: zkatdlog-issue-csp-verifier-token-commitment
+            pkg: ./token/core/zkatdlog/nogh/v1/issue
+            func: FuzzCSPVerifierTokenCommitmentNoPanic
           - name: zkatdlog-transfer-bulletproof-verifier
             pkg: ./token/core/zkatdlog/nogh/v1/transfer
             func: FuzzBulletProofVerifierNoPanic
@@ -114,6 +117,9 @@ jobs:
           - name: zkatdlog-metadata-deserialize
             pkg: ./token/core/zkatdlog/nogh/v1/token
             func: FuzzMetadataDeserializeNoPanic
+          - name: zkatdlog-token-to-clear
+            pkg: ./token/core/zkatdlog/nogh/v1/token
+            func: FuzzToClearNoPanic
           - name: zkatdlog-public-params-deserialize
             pkg: ./token/core/zkatdlog/nogh/v1/setup
             func: FuzzPublicParamsDeserializeNoPanic

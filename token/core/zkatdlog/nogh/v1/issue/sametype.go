@@ -185,6 +185,29 @@ func NewSameTypeVerifier(tokens []*math.G1, pp []*math.G1, c *math.Curve) *SameT
 	}
 }
 
+// ValidateTokens checks the token commitments the verifier was constructed with,
+// rejecting any that is nil, on a curve other than curveID, or the point at infinity.
+//
+// The commitments come straight off the wire: utils.FromG1Proto accepts a G1 encoded
+// on any valid curve and Token.Validate only nil-checks it, so without this check a
+// foreign-curve commitment reaches the Sub against the proof's curve-checked
+// CommitmentToType and panics in the mathlib backend's type assertion (an
+// unauthenticated validator DoS). An empty token set is rejected too: the range
+// correctness verifier accepts a zero-length proof set against zero commitments, so a
+// commitment-free action would get a vacuously valid range proof.
+func (v *SameTypeVerifier) ValidateTokens(curveID math.CurveID) error {
+	if len(v.Tokens) == 0 {
+		return errors.Join(ErrInvalidTokenCommitments, errors.New("no token commitments"))
+	}
+	for i, tok := range v.Tokens {
+		if err := math2.CheckElement(tok, curveID); err != nil {
+			return errors.Join(ErrInvalidTokenCommitments, errors.Wrapf(err, "invalid token commitment at index [%d]", i))
+		}
+	}
+
+	return nil
+}
+
 // Verify checks the validity of the SameType proof.
 func (v *SameTypeVerifier) Verify(proof *SameType) error {
 	// Recompute the commitment to randomness from the proof responses.

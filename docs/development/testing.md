@@ -95,10 +95,12 @@ valid encodings are still correctly accepted.
 | `FuzzActionDeserializerMultiActionNoPanic` | `token/core/zkatdlog/nogh/v1/validator` | Two independently typed, independently fuzzed actions in the same `TokenRequest`. |
 | `FuzzBulletProofVerifierNoPanic` | `token/core/zkatdlog/nogh/v1/issue` | Raw BulletProof issue-proof bytes through `BulletProofVerifier.Verify` — the call `IssueValidate` makes on unauthenticated wire bytes. |
 | `FuzzCSPVerifierNoPanic` | `token/core/zkatdlog/nogh/v1/issue` | Raw CSP issue-proof bytes through `CSPVerifier.Verify`. |
+| `FuzzCSPVerifierTokenCommitmentNoPanic` | `token/core/zkatdlog/nogh/v1/issue` | An issue output's commitment wire bytes *and* the CSP proof bytes together, covering the attacker-controlled token commitments that `FuzzCSPVerifierNoPanic` holds fixed. |
 | `FuzzBulletProofVerifierNoPanic` | `token/core/zkatdlog/nogh/v1/transfer` | Raw BulletProof transfer-proof bytes through `BulletProofVerifier.Verify` — the call `TransferValidate` makes on unauthenticated wire bytes. |
 | `FuzzCSPVerifierNoPanic` | `token/core/zkatdlog/nogh/v1/transfer` | Raw CSP transfer-proof bytes through `CSPVerifier.Verify`. |
 | `FuzzTokenDeserializeNoPanic` | `token/core/zkatdlog/nogh/v1/token` | Raw ledger-stored output bytes through `Token.Deserialize`. |
 | `FuzzMetadataDeserializeNoPanic` | `token/core/zkatdlog/nogh/v1/token` | Raw ledger-stored metadata bytes through `Metadata.Deserialize`. |
+| `FuzzToClearNoPanic` | `token/core/zkatdlog/nogh/v1/token` | An output's and its metadata's wire bytes together through `Token.ToClear`, where the two meet in curve arithmetic — the pair `VerifyIssue`/`VerifyTransfer` check before any proof is verified. |
 | `FuzzPublicParamsDeserializeNoPanic` | `token/core/zkatdlog/nogh/v1/setup` | Raw ledger-stored public parameters through `NewPublicParamsFromBytes`, exercised by every validator/prover/verifier on startup and params update. |
 | `FuzzProofDeserializeNoPanic` | `token/core/zkatdlog/nogh/v1/crypto/upgrade` | Raw untrusted token-upgrade request bytes through `Proof.Deserialize`. |
 | `FuzzRegisterRecipientIdentityStructuralGuard` | `token/services/identity/wallet` | A counterparty's identity and audit-info bytes through `Service.RegisterRecipientIdentity`, asserting the structural guard rejects exactly the out-of-bounds lengths and never panics. |

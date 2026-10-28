@@ -64,6 +64,14 @@ func (v *BulletProofVerifier) Verify(proof []byte) error {
 	if err := tp.RangeCorrectness.Validate(v.curveID); err != nil {
 		return errors.Join(ErrInvalidIssueProof, err)
 	}
+	// Validate the token commitments before they are used in curve arithmetic below:
+	// they are attacker-supplied wire data (utils.FromG1Proto accepts any valid curve
+	// and Token.Validate only nil-checks them), so a commitment on a curve other than
+	// v.curveID would make coms[i].Sub(commitmentToType) panic in the mathlib
+	// backend's type assertion rather than fail verification.
+	if err := v.SameType.ValidateTokens(v.curveID); err != nil {
+		return errors.Join(ErrInvalidIssueProof, err)
+	}
 	// Verify the same-type proof.
 	err = v.SameType.Verify(tp.SameType)
 	if err != nil {

@@ -49,6 +49,10 @@ var (
 	ErrInvalidSameTypeProof = errors.New("invalid same type proof")
 	// ErrInvalidIssueProof is returned when the issue proof is invalid
 	ErrInvalidIssueProof = errors.New("invalid issue proof")
+	// ErrInvalidTokenCommitments is returned when the token commitments an issue
+	// verifier was constructed with are missing or not valid elements of the curve
+	// named by the public parameters
+	ErrInvalidTokenCommitments = errors.New("invalid token commitments")
 	// ErrProveTypeFailed is returned when the type proof fails
 	ErrProveTypeFailed = errors.New("couldn't prove type during the issue")
 	// ErrVerifySameTypeProofFailed is returned when the same type proof verification fails

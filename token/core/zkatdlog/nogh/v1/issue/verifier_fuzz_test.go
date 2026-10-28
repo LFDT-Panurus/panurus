@@ -10,6 +10,8 @@ import (
 	"testing"
 
 	math "github.com/IBM/mathlib"
+	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/protos-go/utils"
+	mathproto "github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/protos-go/v1/math"
 	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/crypto/rp"
 	v1 "github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/setup"
 	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/token"
@@ -101,6 +103,68 @@ func FuzzCSPVerifierNoPanic(f *testing.F) {
 		}
 		require.NotPanics(t, func() {
 			_ = verifier.Verify(raw)
+		})
+	})
+}
+
+// g1Raw returns the wire encoding of a G1 point as it travels inside an issue
+// action's output (actions.Token.Data.Raw, produced by utils.ToProtoG1).
+func g1Raw(tb testing.TB, g1 *math.G1) []byte {
+	tb.Helper()
+	p, err := utils.ToProtoG1(g1)
+	require.NoError(tb, err)
+
+	return p.Raw
+}
+
+// FuzzCSPVerifierTokenCommitmentNoPanic fuzzes the *token commitment* half of the CSP
+// issue verifier's input, which FuzzCSPVerifierNoPanic cannot reach: that target holds
+// the commitments fixed and only fuzzes the proof bytes, but the commitments are
+// attacker-controlled too. They arrive as actions.Token.Data.Raw, are decoded by
+// utils.FromG1Proto — which accepts a G1 encoded on any valid curve — and are only
+// nil-checked by Action.Validate before IssueValidate hands them to issue.NewVerifier.
+//
+// Both halves are fuzzed together because the panic this guards (#2555) needs a
+// structurally valid proof to get as far as the commitment arithmetic. The seed corpus
+// pins the original crash: a BLS12-381 commitment against BN254 public parameters,
+// which used to panic in coms[i].Sub(commitmentToType).
+func FuzzCSPVerifierTokenCommitmentNoPanic(f *testing.F) {
+	curve := math.Curves[math.BN254]
+	pp, err := v1.NewWith(v1.SetupParams{
+		DriverName:    v1.DLogNoGHDriverName,
+		DriverVersion: v1.ProtocolV1,
+		BitLength:     32,
+		CurveID:       math.BN254,
+		ProofType:     rp.CSPRangeProofType,
+	})
+	require.NoError(f, err)
+
+	tokens, tw := fuzzTokens(f, curve, pp.PedersenGenerators)
+	prover, err := NewCSPBasedProver(tw, tokens, pp)
+	require.NoError(f, err)
+	proofBytes, err := prover.Prove()
+	require.NoError(f, err)
+
+	f.Add(g1Raw(f, tokens[0]), proofBytes)
+	// The #2555 crash: a commitment on a different valid curve than pp.Curve.
+	f.Add(g1Raw(f, math.Curves[math.BLS12_381].GenG1), proofBytes)
+	f.Add(g1Raw(f, curve.NewG1()), proofBytes)
+	f.Add([]byte{}, proofBytes)
+	f.Add([]byte("malformed"), proofBytes)
+	f.Add(g1Raw(f, tokens[0]), []byte{})
+	f.Add(g1Raw(f, tokens[0]), []byte("malformed"))
+
+	f.Fuzz(func(t *testing.T, commitmentRaw, proof []byte) {
+		if len(commitmentRaw) > maxFuzzIssueProofBytes || len(proof) > maxFuzzIssueProofBytes {
+			t.Skip()
+		}
+
+		require.NotPanics(t, func() {
+			commitment, err := utils.FromG1Proto(&mathproto.G1{Raw: commitmentRaw})
+			if err != nil {
+				return
+			}
+			_ = NewCSPVerifier([]*math.G1{commitment}, pp).Verify(proof)
 		})
 	})
 }

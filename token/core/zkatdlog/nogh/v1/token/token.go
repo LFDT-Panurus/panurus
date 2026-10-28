@@ -73,6 +73,15 @@ func (t *Token) Deserialize(bytes []byte) error {
 // ToClear verifies the token commitment against the provided metadata and public parameters.
 // If valid, it returns the token in cleartext (type, quantity, and owner).
 func (t *Token) ToClear(meta *Metadata, pp *noghv1.PublicParams) (*token.Token, error) {
+	// Pin every element to pp.Curve before it reaches curve arithmetic. t.Data and
+	// meta's scalars are both wire data decoded with the sender's own curve id
+	// (utils.FromG1Proto / FromZrProto), and Token.Validate / Metadata.Validate only
+	// nil-check them. Mixing curves is not a soundness failure but a panic: the
+	// mathlib backend type-asserts its argument to its own representation, so a
+	// foreign-curve element would crash commit's Mul or the Equals below.
+	if err := t.validateAgainstCurve(meta, pp.Curve); err != nil {
+		return nil, err
+	}
 	com, err := commit([]*math.Zr{
 		math.Curves[pp.Curve].HashToZr([]byte(meta.Type)),
 		meta.Value,
@@ -91,6 +100,23 @@ func (t *Token) ToClear(meta *Metadata, pp *noghv1.PublicParams) (*token.Token, 
 		Quantity: "0x" + meta.Value.String(),
 		Owner:    t.Owner,
 	}, nil
+}
+
+// validateAgainstCurve checks that the token's commitment and the metadata's scalars
+// all belong to curveID, so that ToClear's commitment arithmetic cannot panic on
+// cross-curve operands.
+func (t *Token) validateAgainstCurve(meta *Metadata, curveID math.CurveID) error {
+	if err := math2.CheckElement(t.Data, curveID); err != nil {
+		return errors.Join(ErrInvalidCurveElement, errors.Wrap(err, "invalid token commitment"))
+	}
+	if err := math2.CheckBaseElement(meta.Value, curveID); err != nil {
+		return errors.Join(ErrInvalidCurveElement, errors.Wrap(err, "invalid metadata value"))
+	}
+	if err := math2.CheckBaseElement(meta.BlindingFactor, curveID); err != nil {
+		return errors.Join(ErrInvalidCurveElement, errors.Wrap(err, "invalid metadata blinding factor"))
+	}
+
+	return nil
 }
 
 // Validate checks if the token structure is well-formed.

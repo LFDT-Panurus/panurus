@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	math "github.com/IBM/mathlib"
+	noghv1 "github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/setup"
 	"github.com/stretchr/testify/require"
 )
 
@@ -74,6 +75,86 @@ func FuzzMetadataDeserializeNoPanic(f *testing.F) {
 		}
 		require.NotPanics(t, func() {
 			_ = (&Metadata{}).Deserialize(raw)
+		})
+	})
+}
+
+// FuzzToClearNoPanic fuzzes the wire bytes of both ToClear operands together: the
+// token's serialized output and its serialized metadata. Deserializing each one
+// separately is already covered by the two targets above, but neither reaches
+// ToClear, which is where the two are combined in curve arithmetic
+// (commit's Mul and com.Equals) and where cross-curve operands panic.
+//
+// This is the exact pair IssueService.VerifyIssue and TransferService.VerifyTransfer
+// feed to ToClear for every output, before any ZK proof is verified, and it is
+// reachable from Request.IsValid on a payload just unmarshalled from a remote peer.
+// The seed corpus pins the two crashes: a foreign-curve commitment and a
+// foreign-curve metadata scalar against BN254 public parameters.
+func FuzzToClearNoPanic(f *testing.F) {
+	curve := math.BN254
+	c := math.Curves[curve]
+	foreign := math.Curves[math.BLS12_381]
+	rand, err := c.Rand()
+	require.NoError(f, err)
+	pp := &noghv1.PublicParams{
+		Curve: curve,
+		PedersenGenerators: []*math.G1{
+			c.GenG1.Mul(c.NewRandomZr(rand)),
+			c.GenG1.Mul(c.NewRandomZr(rand)),
+			c.GenG1.Mul(c.NewRandomZr(rand)),
+		},
+	}
+
+	meta := &Metadata{
+		Type:           "COIN",
+		Value:          c.NewZrFromUint64(100),
+		BlindingFactor: c.NewZrFromUint64(7),
+	}
+	data, err := commit([]*math.Zr{
+		c.HashToZr([]byte(meta.Type)),
+		meta.Value,
+		meta.BlindingFactor,
+	}, pp.PedersenGenerators, c)
+	require.NoError(f, err)
+
+	tokRaw, err := (&Token{Owner: []byte("owner"), Data: data}).Serialize()
+	require.NoError(f, err)
+	metaRaw, err := meta.Serialize()
+	require.NoError(f, err)
+
+	foreignTokRaw, err := (&Token{Owner: []byte("owner"), Data: foreign.GenG1.Copy()}).Serialize()
+	require.NoError(f, err)
+	foreignMetaRaw, err := (&Metadata{
+		Type:           "COIN",
+		Value:          foreign.NewZrFromUint64(100),
+		BlindingFactor: foreign.NewZrFromUint64(7),
+	}).Serialize()
+	require.NoError(f, err)
+
+	f.Add(tokRaw, metaRaw)
+	// The two cross-curve crashes: foreign G1 commitment, foreign Zr scalars.
+	f.Add(foreignTokRaw, metaRaw)
+	f.Add(tokRaw, foreignMetaRaw)
+	f.Add([]byte{}, metaRaw)
+	f.Add(tokRaw, []byte{})
+	f.Add([]byte("malformed"), []byte("malformed"))
+	f.Add(tokRaw[:len(tokRaw)/2], metaRaw[:len(metaRaw)/2])
+
+	f.Fuzz(func(t *testing.T, tokenRaw, metadataRaw []byte) {
+		if len(tokenRaw) > maxFuzzTokenBytes || len(metadataRaw) > maxFuzzTokenBytes {
+			t.Skip()
+		}
+
+		require.NotPanics(t, func() {
+			tok := &Token{}
+			if err := tok.Deserialize(tokenRaw); err != nil {
+				return
+			}
+			md := &Metadata{}
+			if err := md.Deserialize(metadataRaw); err != nil {
+				return
+			}
+			_, _ = tok.ToClear(md, pp)
 		})
 	})
 }

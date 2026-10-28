@@ -688,7 +688,9 @@ func TestToken_ToClear_Extra(t *testing.T) {
 		Data:  c.GenG1,
 	}
 
-	// Nil Value
+	// Nil Value. ToClear's curve guard catches this before commit does, so the
+	// error is ErrInvalidCurveElement rather than commit's ErrNilCommitElement
+	// (which commit still returns to its other callers, e.g. computeTokens).
 	meta := &Metadata{
 		Type:           "COIN",
 		Value:          nil,
@@ -696,8 +698,8 @@ func TestToken_ToClear_Extra(t *testing.T) {
 	}
 	_, err = tok.ToClear(meta, pp)
 	require.Error(t, err)
-	assert.True(t, errors.HasCause(err, ErrNilCommitElement))
-	assert.Contains(t, err.Error(), "cannot retrieve token in the clear: failed to check token data")
+	require.ErrorIs(t, err, ErrInvalidCurveElement)
+	assert.Contains(t, err.Error(), "invalid metadata value")
 
 	// Nil BlindingFactor
 	meta = &Metadata{
@@ -707,7 +709,8 @@ func TestToken_ToClear_Extra(t *testing.T) {
 	}
 	_, err = tok.ToClear(meta, pp)
 	require.Error(t, err)
-	assert.True(t, errors.HasCause(err, ErrNilCommitElement))
+	require.ErrorIs(t, err, ErrInvalidCurveElement)
+	assert.Contains(t, err.Error(), "invalid metadata blinding factor")
 }
 
 func TestTokensService_New_Extra(t *testing.T) {
@@ -945,4 +948,102 @@ func TestTokensService_Recipients_DeserializeError(t *testing.T) {
 	_, err := s.Recipients([]byte("invalid"))
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to deserialize token")
+}
+
+// TestToken_ToClear_CrossCurveOperands covers the second reachable instance of the
+// #2555 crash class, on a path the issue did not name.
+//
+// ToClear recomputes the Pedersen commitment from the metadata and compares it to the
+// token's own commitment. Three of its operands are attacker-supplied wire data
+// decoded with the sender's own curve id — t.Data via utils.FromG1Proto, and the
+// metadata's Value and BlindingFactor via utils.FromZrProto — and neither
+// Token.Validate nor Metadata.Validate looks at the curve. Mixing curves panics in
+// the mathlib backend's type assertion rather than returning an error:
+//
+//   - a foreign-curve t.Data crashes com.Equals(t.Data)
+//     ("driver.G1 is *bls12381.G1, not *gurvy.bn254G1")
+//   - a foreign-curve Value or BlindingFactor crashes commit's generators[i].Mul
+//     ("driver.Zr is *bls12381.Zr, not *common.BaseZr")
+//
+// This is remotely reachable without any authorization: IssueService.VerifyIssue
+// calls ToClear for every output *before* the ZK verifier runs, and it is reached from
+// Request.IsValid, which ttx's collectactions view runs on a reply just unmarshalled
+// from a remote peer. No recover sits between the two.
+func TestToken_ToClear_CrossCurveOperands(t *testing.T) {
+	curve := math.BN254
+	c := math.Curves[curve]
+	foreign := math.Curves[math.BLS12_381]
+	rand, err := c.Rand()
+	require.NoError(t, err)
+	pp := &noghv1.PublicParams{
+		Curve: curve,
+		PedersenGenerators: []*math.G1{
+			c.GenG1.Mul(c.NewRandomZr(rand)),
+			c.GenG1.Mul(c.NewRandomZr(rand)),
+			c.GenG1.Mul(c.NewRandomZr(rand)),
+		},
+	}
+
+	goodMeta := func() *Metadata {
+		return &Metadata{
+			Type:           "COIN",
+			Value:          c.NewZrFromUint64(100),
+			BlindingFactor: c.NewRandomZr(rand),
+			Issuer:         []byte("issuer"),
+		}
+	}
+	goodData := func(meta *Metadata) *math.G1 {
+		data, err := commit([]*math.Zr{
+			c.HashToZr([]byte(meta.Type)),
+			meta.Value,
+			meta.BlindingFactor,
+		}, pp.PedersenGenerators, c)
+		require.NoError(t, err)
+
+		return data
+	}
+
+	for _, tc := range []struct {
+		name    string
+		corrupt func(*Token, *Metadata)
+		wants   string
+	}{
+		{
+			name:    "foreign curve token commitment",
+			corrupt: func(tok *Token, _ *Metadata) { tok.Data = foreign.GenG1.Copy() },
+			wants:   "invalid token commitment",
+		},
+		{
+			name:    "foreign curve metadata value",
+			corrupt: func(_ *Token, m *Metadata) { m.Value = foreign.NewZrFromUint64(100) },
+			wants:   "invalid metadata value",
+		},
+		{
+			name:    "foreign curve metadata blinding factor",
+			corrupt: func(_ *Token, m *Metadata) { m.BlindingFactor = foreign.NewZrFromUint64(7) },
+			wants:   "invalid metadata blinding factor",
+		},
+		{
+			name:    "infinity token commitment",
+			corrupt: func(tok *Token, _ *Metadata) { tok.Data = c.NewG1() },
+			wants:   "invalid token commitment",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			meta := goodMeta()
+			tok := &Token{Owner: []byte("owner"), Data: goodData(meta)}
+			tc.corrupt(tok, meta)
+
+			// Both structural checks still pass: neither inspects the curve.
+			require.NoError(t, tok.Validate(true))
+			require.NoError(t, meta.Validate(true))
+
+			var err error
+			require.NotPanics(t, func() {
+				_, err = tok.ToClear(meta, pp)
+			}, "#2555: cross-curve operands must not panic ToClear")
+			require.ErrorIs(t, err, ErrInvalidCurveElement)
+			assert.Contains(t, err.Error(), tc.wants)
+		})
+	}
 }

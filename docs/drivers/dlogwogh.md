@@ -1599,6 +1599,33 @@ The security of ZKAT-DLOG (NOGH) relies on:
 - Cache attacks (memory access patterns)
 - Power analysis (where applicable)
 
+**Curve Confusion Resistance**: Every group element that arrives from the wire carries its
+own curve identifier — `mathlib`'s JSON encoding of a `G1`/`Zr` includes a `curve` field,
+and `utils.FromG1Proto` decodes whichever curve the sender named. Mixing elements from two
+curves in one operation is not a soundness failure but a crash: the backend `Add`/`Sub`/`Mul`
+type-asserts its argument to its own representation and panics. Since validation runs on
+unauthenticated input, every verifier therefore pins each deserialized element to
+`PublicParams.Curve` before using it in arithmetic:
+
+| Boundary | Check |
+| --- | --- |
+| Proof sub-structures | `SameType.Validate`, `TypeAndSumProof.Validate`, `RangeCorrectness.Validate` (`crypto/math.CheckElement` / `CheckBaseElement`) |
+| Token commitments (issue) | `SameTypeVerifier.ValidateTokens`, called by both the BulletProof and CSP issue verifiers before the commitment arithmetic |
+| Commitment openings | `Token.ToClear` pins the output commitment and the metadata's value and blinding factor before recomputing the Pedersen commitment |
+| Range-proof internals | `csp`'s `validateRangeProof`, `bulletproof`'s `IPA.Validate` |
+
+`CheckElement` also rejects the point at infinity, which no honest commitment or proof
+element is except with negligible probability. A rejected element produces an ordinary
+validation error, never a panic.
+
+Note that this applies to scalars (`Zr`) as well as group elements: a metadata value or
+blinding factor decoded on a foreign curve crashes the `generators[i].Mul(vector[i])`
+inside `commit` just as a foreign commitment crashes `Sub` or `Equals`. Any new code path
+that combines a wire-sourced element with a public-parameter generator needs the same
+check, and the fuzz targets listed in
+[Fuzz Testing](../development/testing.md#fuzz-testing) exist to catch the ones that miss
+it.
+
 ## 13. Implementation Details
 
 ### 13.1 Error Handling

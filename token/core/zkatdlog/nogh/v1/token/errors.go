@@ -27,6 +27,9 @@ var (
 	ErrNilCommitElement = errors.New("cannot commit a nil element")
 	// ErrTokenMismatch is returned when a token commitment does not match its metadata.
 	ErrTokenMismatch = errors.New("cannot retrieve token in the clear: output does not match provided opening")
+	// ErrInvalidCurveElement is returned when a token commitment or a metadata scalar
+	// is missing, or does not belong to the curve named by the public parameters.
+	ErrInvalidCurveElement = errors.New("element is missing or does not belong to the public parameters' curve")
 	// ErrMissingFabToken is returned when the Fabtoken output is missing in an upgrade witness.
 	ErrMissingFabToken = errors.New("missing FabToken")
 	// ErrMissingFabTokenOwner is returned when the Fabtoken owner is empty.
