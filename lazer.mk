@@ -111,6 +111,12 @@ lazer-check:
 	done
 	@if test -f $(LAZER_PREFIX)/REVISION; then sed 's/^/lazer /' $(LAZER_PREFIX)/REVISION; \
 	else echo "lazer revision unknown (installed before REVISION was recorded)"; fi
+	@# the installed lazer must have been built with the current patches: an older
+	@# build still links, without the fixes
+	@want="$$(for p in $$(ls $(LAZER_PATCHES)/*.patch 2>/dev/null | LC_ALL=C sort); do \
+		printf '  %s  %s\n' "$$($(LAZER_SHA256) < $$p | cut -d' ' -f1)" "$$(basename $$p)"; done)"; \
+	got="$$(test -f $(LAZER_PREFIX)/REVISION && sed -n '/^patches:/,$$p' $(LAZER_PREFIX)/REVISION | sed 1d)"; \
+	test "$$want" = "$$got" || { echo "the installed lazer was not built with the patches in $(LAZER_PATCHES), run 'make lazer-install'"; exit 1; }
 
 .PHONY: lazer-test
 # run the unit tests of the lazer identity module (needs lazer-install)

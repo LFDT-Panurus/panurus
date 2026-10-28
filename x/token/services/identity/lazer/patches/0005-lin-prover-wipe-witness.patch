@@ -1,0 +1,52 @@
+From: Panurus maintainers
+Subject: [PATCH 5/5] lin_prover_wipe_witness
+
+A prover state kept across many proofs (lin_prover_set_witness, prove,
+lin_prover_set_witness, prove, ...) holds the last witness until
+lin_prover_clear. lin_prover_wipe_witness wipes the witness (s1, which also
+holds the appended upsilon, and m) and the prover randomness s2, and marks
+the witness as unset, keeping the public part of the state so it can prove
+again after a new lin_prover_set_witness.
+
+Panurus-local patch, applied by `make lazer-install` (lazer.mk).
+
+diff --git a/src/lazer-in2.h b/src/lazer-in2.h
+index 949aeef..74115fa 100644
+--- a/src/lazer-in2.h
++++ b/src/lazer-in2.h
+@@ -1620,6 +1620,7 @@ int lin_prover_prove_ctx_bnd (lin_prover_state_t state, uint8_t *proof,
+                               const uint8_t coins[32], const uint8_t *ctx,
+                               size_t ctxlen);
+ void lin_prover_clear (lin_prover_state_t state);
++void lin_prover_wipe_witness (lin_prover_state_t state);
+ void lin_verifier_init (lin_verifier_state_t state, const uint8_t ppseed[32],
+                         const lin_params_t params);
+ void lin_verifier_set_statement_A (lin_verifier_state_t state, polymat_t A);
+diff --git a/src/lin-proofs.c b/src/lin-proofs.c
+index 0e7ef4c..479c7b3 100644
+--- a/src/lin-proofs.c
++++ b/src/lin-proofs.c
+@@ -4892,6 +4892,23 @@ lin_prover_prove_ctx_bnd (lin_prover_state_t state, uint8_t *proof,
+   return rc;
+ }
+ 
++/*
++ * Wipe the witness (and the prover randomness s2) held by state, keeping the
++ * public part. The state can prove again after a new lin_prover_set_witness:
++ * a prover kept for many proofs does not keep the last witness around
++ * (panurus patch).
++ */
++void
++lin_prover_wipe_witness (lin_prover_state_t state)
++{
++  _lnp_prover_state_ptr __lnp_state = state->lnp_state;
++
++  polyvec_wipe (__lnp_state->s1);
++  polyvec_wipe (__lnp_state->s2);
++  polyvec_wipe (__lnp_state->m);
++  __lnp_state->witness_set = 0;
++}
++
+ void
+ lin_prover_clear (lin_prover_state_t state)
+ {
