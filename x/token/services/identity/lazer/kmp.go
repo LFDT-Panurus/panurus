@@ -29,9 +29,19 @@ type KeyManagerProvider struct {
 
 	// ignoreVerifyOnlyWallet when set to true, for each wallet the service will force the load of the secrets
 	ignoreVerifyOnlyWallet bool
+
+	// keyManagerOptions are passed to every key manager, the first one shares
+	// a prover limiter among all of them
+	keyManagerOptions []KeyManagerOption
 }
 
 // NewKeyManagerProvider returns a provider for the given issuer public key.
+// The key managers it creates share one ProverLimiter of DefaultProverLimit,
+// so the number of presentations generated at the same time, and the memory
+// of those in progress, does not grow with the number of wallets; each key
+// manager still keeps its idle prover states (see WithIdleProvers). opts are
+// applied to every key manager after that, e.g. WithProverLimiter to set
+// another limit or WithIdleProvers(0) to keep no prover state at rest.
 func NewKeyManagerProvider(
 	issuerPublicKey []byte,
 	keystore idriver.Keystore,
@@ -40,8 +50,10 @@ func NewKeyManagerProvider(
 	cacheSize int,
 	ignoreVerifyOnlyWallet bool,
 	metricsProvider metrics.Provider,
+	opts ...KeyManagerOption,
 ) *KeyManagerProvider {
 	return &KeyManagerProvider{
+		keyManagerOptions:      append([]KeyManagerOption{WithProverLimiter(NewProverLimiter(0))}, opts...),
 		issuerPublicKey:        issuerPublicKey,
 		keystore:               keystore,
 		identityStore:          identityStore,
@@ -68,7 +80,7 @@ func (l *KeyManagerProvider) Get(ctx context.Context, identityConfig *driver.Ide
 		return nil, err
 	}
 
-	keyManager, err := NewKeyManager(conf, l.keystore, l.identityStore)
+	keyManager, err := NewKeyManager(conf, l.keystore, l.identityStore, l.keyManagerOptions...)
 	if err != nil {
 		return nil, errors.Wrapf(err, "failed instantiating lazer key manager from [%s]", identityConfig.URL)
 	}
@@ -123,8 +135,9 @@ type WrappedKeyManager struct {
 // The identity cache has no way to wait for its provisioning goroutine, so
 // Close only cancels it: an identity generation in progress completes or fails
 // with "key manager closed", after which the goroutine sees the cancellation
-// and exits. This is safe because KeyManager.Close and KeyManager.Identity are
-// synchronized, and Identity refuses to serve once closed.
+// and exits. This is safe because Identity refuses to serve once closed, a
+// generation waiting for a prover fails on Close, and one in progress holds
+// its own prover state, which Close does not release.
 func (k *WrappedKeyManager) Close() {
 	if k.identityCache != nil {
 		k.identityCache.Close()
@@ -136,7 +149,7 @@ func (k *WrappedKeyManager) Close() {
 // Close, even if the cache still holds pseudonyms generated before.
 func (k *WrappedKeyManager) Identity(ctx context.Context, auditInfo []byte) (*idriver.IdentityDescriptor, error) {
 	if k.isClosed() {
-		return nil, errors.New("key manager closed")
+		return nil, errClosed
 	}
 
 	return k.getIdentityFunc(ctx, auditInfo)

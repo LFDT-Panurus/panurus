@@ -160,8 +160,44 @@ encodings of the OU, role, EID and RH alone exceed the bound, and one of them mu
 `KeyManager.Close` (and `WrappedKeyManager.Close`) is idempotent and safe to call concurrently with
 the other methods. Afterwards `Identity` and the signer deserializers fail, as do verifications
 with the key manager's verifier. `IsRemote` does not change. The identity cache cannot wait for its
-provisioning goroutine, so `WrappedKeyManager.Close` cancels it: a generation in progress fails
-with "key manager closed" and the goroutine exits. Identities still in the cache are not served.
+provisioning goroutine, so `WrappedKeyManager.Close` cancels it: a generation waiting for a prover
+fails with "key manager closed", one in progress completes, and the goroutine exits. Identities
+still in the cache are not served.
+
+### Concurrent identity generation
+
+Generating an identity is mostly generating its presentation (about 120 ms). The C prover state of a
+user is mutated by every presentation (it holds the statement and the witness, and lazer converts
+operands to the CRT domain in place, even those it only reads), so it can serve one presentation at
+a time. The key manager therefore keeps a pool of prover states (`prover.go`):
+
+- At construction the wallet state is imported into a *template* (`anoncreds.UserTemplate`), which
+  holds the public key, the masking randomness and the attributes but no prover, and never proves:
+  `cbdc_user_credverify`, `presgen`, `export` and `maskattrs` reject it. Prover states are cloned from
+  it (`cbdc_user_clone`): the clone copies the template, which is only read, so clones can be made
+  concurrently, and sets up its own presentation prover (about 16 ms). Clones have no issuance prover.
+  The credential is checked once, on the first clone, which becomes the first idle state.
+- A `ProverLimiter` bounds the presentations generated at the same time, hence the prover states in use
+  (about 10 MB each, mostly public matrices expanded from the parameter seed). `KeyManagerProvider`
+  shares one limiter of `DefaultProverLimit()` (`min(GOMAXPROCS, 4)`) among all the key managers it
+  creates, so the memory of the presentations *in progress* does not grow with the number of wallets; a
+  key manager built directly with `NewKeyManager` has its own unless `WithProverLimiter` is passed.
+  GOMAXPROCS alone would not bound the work: a goroutine in a cgo call does not count against it.
+- Each key manager keeps up to `WithIdleProvers(n)` states between calls, 1 by default, plus its template
+  (small, no prover). At rest a node therefore holds about n x 10 MB per local wallet (before the pool a
+  wallet held a full user state with both provers, about 14 MB). With 0 a wallet holds no prover state at
+  rest, and every identity pays for setting up a prover (about 16 ms). States beyond n are set up for a
+  call and released after it: with the defaults, concurrent calls on one wallet beyond the first pay that
+  setup too. Pass `WithIdleProvers` to `NewKeyManagerProvider` to change it for every wallet.
+- `Identity` waits for a free slot; it fails if its context is done or the key manager is closed
+  first. Close clears the idle states and, once the clones in progress are done, the template; a state
+  in use is cleared when it is given back.
+- After each presentation the prover wipes its witness (lazer patch 0005), so pooled provers do not
+  keep copies of the credential and masking randomness. The issuance prover (P1) of a `User` keeps its
+  witness until `Clear`; it only exists in the short-lived user states of issuance (`issuer.go`).
+
+Concurrent proofs, and hence this pool, rely on lazer patch 0004: before it the discrete gaussian
+sampler of lazer kept its sign bits in process-global variables.
 
 ## Benchmarks
 
@@ -172,7 +208,13 @@ in `km_bench_test.go` measure throughput with concurrent workers:
 ```bash
 cd x/token/services/identity/lazer
 go test -run 'TestParallelBenchmarkLazer' -v .
+go test -run '^$' -bench 'BenchmarkKmIdentity' -cpu 1,2,4,8 .
 ```
+
+`BenchmarkKmIdentityParallel` generates identities with one key manager from parallel goroutines. As
+an indication, on an Apple M1 Max it takes about 138, 69, 42 and 36 ms per identity with 1, 2, 4 and 8
+CPUs (the limiter allows 4 concurrent presentations), against about 115 ms whatever the number of CPUs
+before the prover pool.
 
 Verifiers do not cache presentation checks, so every verification and every audit match pays for the
 full presentation check. As an indication, on an Apple M-series laptop: generating an identity takes about
@@ -237,6 +279,12 @@ cannot be silently skipped or misapplied.
 | `0001-coder-bounds-checks.patch` | Bounds for `src/coder.c`: `coder_dec_begin_bnd`/`coder_enc_begin_bnd` start a coder that never reads or writes past the buffer; an access that would sets a sticky error (`coder_get_err`) and decoding fails. Every read and write path is covered (bytes, fixed-width, hints and gaussian unary codes, end marker, sparse vectors). `lin_verifier_verify_ctx_bnd` and `lin_prover_prove_ctx_bnd` (`src/lin-proofs.c`) use them for proofs. Without it, a crafted proof, presentation, credential or masked attributes made the decoders read past the end of the input. |
 | `0002-blindsig-no-exit.patch` | `falcon_decode_pubkey_chk`, `falcon_preimage_sample_chk` and `falcon_check_keypair` (`src/blindsig.c`) validate Falcon keys and return an error instead of calling `exit()`; secret temporaries are wiped. |
 | `0003-zeroize-secrets.patch` | `bytes_clear` cannot be optimized away, `poly_wipe`/`polyvec_wipe`/`polymat_wipe` zero secrets before they are freed, and the LNP prover wipes its witness, its copies and its expanded coins. |
+| `0004-grandom-sampler-state.patch` | Two defects of the discrete gaussian sampler (`src/grandom.c`, `src/intvec.c`) the provers draw their masking vectors from. `gaussian155` kept its sign bits in function-level `static` variables: shared by all threads (a data race between concurrent proofs), carried from one rng stream to the next and never wiped. For `log2o >= 24`, `_intvec_grandom` reseeded the rng with the same seed and domain for every element, so the elements of a vector shared their uniform part and coins: 64 elements with `log2o = 30` took about 2 distinct values. The presentation mask `y4` (`log2stdev4 = 30`) was affected, which undermines the zero-knowledge of presentations generated before the fix. The sign-bit buffer now belongs to the caller and a vector is sampled from one stream; the distribution of a sample is unchanged and verifiers are not affected. |
+| `0005-lin-prover-wipe-witness.patch` | `lin_prover_wipe_witness` wipes the witness and the prover randomness of a prover state and keeps its public part, so that a prover reused for many proofs does not keep the last witness. |
+
+`make lazer-check` (run by `lazer-test` and `lazer-bench`) fails if the installed lazer was not built with
+exactly the patches in the directory (it compares their sha256 with `./.lazer/REVISION`), so a build made before
+a patch was added cannot be used by mistake.
 
 To change a patch, apply the series to a pristine checkout of `LAZER_COMMIT`, edit, and regenerate the patch
 with `git diff` (paths `a/src/...`, `b/src/...`). Patches must not touch the Falcon sources under
@@ -302,6 +350,7 @@ files and is the reference for the scheme, not part of this module.
 | `config.go` | configuration and on-disk layout |
 | `identity.go` | identity and signature encodings, verifier pool |
 | `km.go`, `kmp.go` | `KeyManager`, `KeyManagerProvider`, identity cache wrapper |
+| `prover.go` | prover state pool and `ProverLimiter`, see [Concurrent identity generation](#concurrent-identity-generation) |
 | `deserializer.go`, `audit.go` | verifier/matcher deserializers, `AuditInfo` |
 | `strictjson.go` | strict and canonical JSON decoding of audit infos, signer infos and configurations |
 | `issuer.go`, `cmd/lazergen` | issuer key generation and wallet issuance for tools and tests |
@@ -310,6 +359,15 @@ files and is the reference for the scheme, not part of this module.
 | `anoncreds/anoncreds_params.h`, `anoncreds/params/` | proof system parameters: the generated header and the `.py` files it is generated from |
 
 ## Open issues
+
+**Advisory: presentations generated before lazer patch 0004.** Before the patch, lazer's discrete Gaussian
+sampler gave the 64 coefficients of each polynomial of the presentation mask `y4` (`log2stdev4 = 30`) about
+two distinct values (see `0004-grandom-sampler-state.patch` in [Local patches](#local-patches)). That mask
+hides the projections of the P2 witness, so a published presentation made with an unpatched build may leak
+information about it: the credential, the masking randomness, the hidden attributes (including `usk`) and the
+commitment openings. Treat identities, signatures and audit infos generated with such a build as possibly
+exposing their wallet: re-issue the credentials of those wallets with a new `usk` and stop using their
+pseudonyms. The defect is in upstream lazer as well and must be reported to its maintainers.
 
 0. **Unforgeability argument.** A credential-less forgery present in an earlier version (and in lazer's
    `cbdc.py`) is fixed by a public non-zero target in the credential equation, see
@@ -323,7 +381,9 @@ files and is the reference for the scheme, not part of this module.
    `CBDC_COM_ROWS` in `anoncreds/anoncreds.h` and regenerate the `popen` and `p2` parameters.
 2. **Size.** A signature is about 52 KB.
 3. **Patched lazer.** The build carries local fixes to lazer (bounds-checked decoders, non-exiting key
-   decoding, zeroization, see [Local patches](#local-patches)). They should be upstreamed, and lazer's
+   decoding, zeroization, the discrete gaussian sampler, see [Local patches](#local-patches)). The
+   sampler defects fixed by 0004 are in upstream lazer too, and affect presentations generated before the
+   fix (see the patch). They should be upstreamed, and lazer's
    remaining unchecked entry points (e.g. `signer_sign`, `verifier_vrfy`, `user_sign` of its own blind
    signature, which this module does not use) still use the unbounded coder.
 4. **Secrets in memory.** Secrets are wiped on `Clear` and after use, in C and in the Go wrapper, but copies

@@ -30,6 +30,15 @@ A pseudonym (the identity published in a token owner field) is
   from the wallet secret, with the identity as additional data.
 - Wallet secret `usk || user state` is moved to the `idriver.Keystore` by the
   KMP and removed from the stored configuration (only the SKI stays).
+- Concurrency: a presentation mutates its C prover state, so each key manager
+  clones prover states from a never-proving template and keeps them in a pool
+  (`prover.go`). A `ProverLimiter`, shared by all key managers of a
+  `KeyManagerProvider` (default `min(GOMAXPROCS, 4)`), bounds the presentations
+  running at once, hence the prover states in use (about 10 MB each); each key
+  manager also keeps `WithIdleProvers` (default 1) of them between calls.
+- Presentations generated before lazer patch 0004 may leak their witness: see
+  the advisory in `docs/services/identity-lazer.md`, "Open issues". See
+  `docs/services/identity-lazer.md`, "Concurrent identity generation".
 
 ## Benchmarks
 
@@ -40,7 +49,7 @@ tests in `km_bench_test.go` measure throughput with concurrent workers. See
 ## Layout
 
 `config.go` JSON config and on-disk layout (`msp/IssuerPublicKey`,
-`user/SignerConfig[Full]`), `km.go`, `kmp.go`, `deserializer.go`, `audit.go`, `strictjson.go`,
+`user/SignerConfig[Full]`), `km.go`, `kmp.go`, `prover.go` (prover pool and limiter), `deserializer.go`, `audit.go`, `strictjson.go`,
 `identity.go` (encodings, verifier pool), `issuer.go`
 (helpers used by `cmd/lazergen`).
 
