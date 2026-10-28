@@ -144,6 +144,9 @@ jobs:
           - name: driver-config-key-field-round-trip
             pkg: ./token/driver
             func: FuzzConfigKeyFieldRoundTrip
+          - name: driver-token-request-metadata-from-bytes
+            pkg: ./token/driver
+            func: FuzzTokenRequestMetadataFromBytesNoPanic
           - name: tcc-query-tokens
             pkg: ./token/services/network/fabric/tcc
             func: FuzzQueryTokensNoPanic
