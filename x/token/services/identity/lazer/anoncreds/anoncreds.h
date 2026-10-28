@@ -56,7 +56,10 @@ typedef struct
   polyvec_t r; /* masking randomness, 16 elems */
   polyvec_t m; /* encoded attributes, 5 elems */
   int masked;  /* set once cbdc_user_maskattrs or cbdc_user_import has run */
-  int ready;   /* set by a successful cbdc_user_init */
+  int ready;   /* set by a successful cbdc_user_init or cbdc_user_template_init */
+  int p1_ready; /* p1 is initialized (cbdc_user_init) */
+  int p2_ready; /* p2 is initialized (cbdc_user_init, cbdc_user_clone) */
+  int template; /* set by cbdc_user_template_init: never proves, see there */
 } cbdc_user_state_struct;
 typedef cbdc_user_state_struct cbdc_user_state_t[1];
 typedef cbdc_user_state_struct *cbdc_user_state_ptr;
@@ -140,6 +143,9 @@ int cbdc_user_credverify (cbdc_user_state_t state, const uint8_t *cred,
 int cbdc_user_export (cbdc_user_state_t state, uint8_t *out, size_t *outlen);
 int cbdc_user_import (cbdc_user_state_t state, const uint8_t *in, size_t inlen,
                       const uint8_t *attrs);
+int cbdc_user_template_init (cbdc_user_state_t state,
+                             const uint8_t pubkey[897]);
+int cbdc_user_clone (cbdc_user_state_t dst, const cbdc_user_state_struct *src);
 int cbdc_attrs_ok (const uint8_t *attrs);
 
 int cbdc_issuer_init (cbdc_issuer_state_t state, const uint8_t pubkey[897],
@@ -166,5 +172,8 @@ int cbdc_verifier_sokverify (const uint8_t *nym, size_t nymlen,
 
 /* for tests only, see anoncreds.c */
 size_t cbdc_proof_hint_offset (int which);
+int cbdc_test_grandom (int64_t *out, unsigned int n, unsigned int log2o,
+                       const uint8_t seed[32], uint32_t dom);
+int cbdc_test_p2_witness_wiped (cbdc_user_state_t state);
 
 #endif

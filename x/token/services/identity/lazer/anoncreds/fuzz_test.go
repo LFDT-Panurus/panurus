@@ -186,6 +186,7 @@ func FuzzCredVerify(f *testing.F) {
 	})
 }
 
+// FuzzImport also drives NewUserTemplate, which imports the same encoding.
 func FuzzImport(f *testing.F) {
 	ff := newFuzzFixture(f)
 	flat := bytes.Join(ff.attrs, nil)
@@ -211,9 +212,16 @@ func FuzzImport(f *testing.F) {
 				copy(as[i], attrs[i*AttrLen:])
 			}
 		}
-		if err := u.Import(g.put(state), as); err != nil {
+		importErr := u.Import(g.put(state), as)
+		// the template imports the same encoding, it accepts exactly what Import accepts
+		tmpl, tmplErr := NewUserTemplate(ff.ipk, g.put(state), as)
+		if (importErr == nil) != (tmplErr == nil) {
+			t.Fatalf("Import: %v, NewUserTemplate: %v", importErr, tmplErr)
+		}
+		if tmplErr != nil {
 			return
 		}
+		defer tmpl.Clear()
 		out, err := u.Export()
 		if err != nil {
 			t.Fatalf("Export after Import: %v", err)
@@ -222,6 +230,13 @@ func FuzzImport(f *testing.F) {
 			t.Fatal("Export does not return the imported state")
 		}
 		_ = u.CredVerify(ff.cred)
+
+		c, err := tmpl.Clone()
+		if err != nil {
+			t.Fatalf("Clone: %v", err)
+		}
+		defer c.Clear()
+		_ = c.CredVerify(ff.cred)
 	})
 }
 

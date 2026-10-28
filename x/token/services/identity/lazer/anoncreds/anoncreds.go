@@ -135,6 +135,39 @@ const (
 // malformed proofs.
 func proofHintOffset(system int) int { return int(C.cbdc_proof_hint_offset(C.int(system))) }
 
+// p2WitnessWiped reports whether the presentation prover of u holds no
+// witness. Tests use it to check that the witness is wiped after use.
+func p2WitnessWiped(u *User) (bool, error) {
+	if u == nil || u.c == nil {
+		return false, errCleared
+	}
+	switch C.cbdc_test_p2_witness_wiped(u.c) {
+	case 1:
+		return true, nil
+	case 0:
+		return false, nil
+	default:
+		return false, errors.Wrapf(ErrInvalid, "no presentation prover")
+	}
+}
+
+// gaussianSamples returns n samples of lazer's discrete gaussian with sigma
+// 1.55*2^log2o from the stream (seed, dom), the sampler the provers use for
+// their masking vectors. Tests use it to check the sampler.
+func gaussianSamples(n int, log2o uint, seed [32]byte, dom uint32) ([]int64, error) {
+	if n <= 0 {
+		return nil, errors.Wrapf(ErrInvalid, "n <= 0")
+	}
+	out := make([]int64, n)
+	rc := C.cbdc_test_grandom((*C.int64_t)(unsafe.Pointer(&out[0])), C.uint(n), C.uint(log2o),
+		(*C.uint8_t)(unsafe.Pointer(&seed[0])), C.uint32_t(dom))
+	if rc != 1 {
+		return nil, errors.Wrapf(ErrInvalid, "gaussian samples")
+	}
+
+	return out, nil
+}
+
 // PubKeyOK reports whether pubkey is a well-formed Falcon-512 public key.
 func PubKeyOK(pubkey []byte) bool {
 	return len(pubkey) == PubKeyLen && C.cbdc_pubkey_ok(ptr(pubkey)) == 1
@@ -270,6 +303,73 @@ func (u *User) Import(state []byte, attrs [][]byte) error {
 	}
 
 	return nil
+}
+
+// UserTemplate is the imported state of a credential holder from which
+// presentation-only Users are cloned. It never proves, so concurrent Clone
+// calls on the same template are safe; Clear must not run concurrently with
+// them. It owns C memory, release it with Clear.
+type UserTemplate struct{ c *C.cbdc_user_state_struct }
+
+// NewUserTemplate returns a template for the issuer public key pubkey holding
+// the state exported by User.Export; attrs are the attributes that were
+// masked. It returns ErrInvalid if pubkey or the state are malformed.
+func NewUserTemplate(pubkey []byte, state []byte, attrs [][]byte) (*UserTemplate, error) {
+	if len(pubkey) != PubKeyLen {
+		return nil, errors.Wrapf(ErrInvalid, "len(pubkey) != %d", PubKeyLen)
+	}
+	flat, err := checkAttrs(attrs)
+	if err != nil {
+		return nil, err
+	}
+	defer wipe(flat)
+	c := (*C.cbdc_user_state_struct)(C.calloc(1, C.sizeof_cbdc_user_state_struct))
+	if c == nil {
+		return nil, errors.New("anoncreds: out of memory")
+	}
+	if C.cbdc_user_template_init(c, ptr(pubkey)) != 1 {
+		C.free(unsafe.Pointer(c))
+
+		return nil, errors.Wrapf(ErrInvalid, "malformed issuer public key")
+	}
+	t := &UserTemplate{c: c}
+	if C.cbdc_user_import(c, ptr(state), C.size_t(len(state)), ptr(flat)) != 1 {
+		t.Clear()
+
+		return nil, errors.Wrapf(ErrInvalid, "user state")
+	}
+
+	return t, nil
+}
+
+// Clone returns a new User with the state of the template and its own
+// presentation prover. The User can CredVerify and PresGen, but not
+// MaskAttrs. It must be released with Clear.
+func (t *UserTemplate) Clone() (*User, error) {
+	if t == nil || t.c == nil {
+		return nil, errCleared
+	}
+	c := (*C.cbdc_user_state_struct)(C.calloc(1, C.sizeof_cbdc_user_state_struct))
+	if c == nil {
+		return nil, errors.New("anoncreds: out of memory")
+	}
+	if C.cbdc_user_clone(c, t.c) != 1 {
+		C.free(unsafe.Pointer(c))
+
+		return nil, errors.Wrapf(ErrInvalid, "template")
+	}
+
+	return &User{c: c}, nil
+}
+
+// Clear releases the C state. The template must not be used afterwards.
+func (t *UserTemplate) Clear() {
+	if t == nil || t.c == nil {
+		return
+	}
+	C.cbdc_user_clear(t.c)
+	C.free(unsafe.Pointer(t.c))
+	t.c = nil
 }
 
 // CredVerify checks the credential against the state of the user (after
