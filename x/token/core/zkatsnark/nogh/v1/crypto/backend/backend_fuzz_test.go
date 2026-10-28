@@ -42,18 +42,29 @@ func FuzzNewKeysNoPanic(f *testing.F) {
 	plonkPK, plonkVK, err := plonkB.Setup(plonkCS)
 	require.NoError(f, err)
 
+	plonkFRIB, err := backend.NewProofSystemBackend("plonkfri", ecc.BN254)
+	require.NoError(f, err)
+	plonkFRICS, err := frontend.Compile(ecc.BN254.ScalarField(), scs.NewBuilder, &trivialCircuit{})
+	require.NoError(f, err)
+	plonkFRIPK, plonkFRIVK, err := plonkFRIB.Setup(plonkFRICS)
+	require.NoError(f, err)
+
 	seeds := [][]byte{
 		groth16PK, groth16VK,
 		plonkPK, plonkVK,
+		plonkFRIPK, plonkFRIVK,
 		{},
 		groth16PK[:len(groth16PK)/2],
 		plonkVK[:len(plonkVK)/2],
+		plonkFRIVK[:len(plonkFRIVK)/2],
+		plonkFRIPK[:len(plonkFRIPK)/2],
 		[]byte("garbage"),
 		make([]byte, 64),
 	}
 	for _, s := range seeds {
 		f.Add(s, "groth16")
 		f.Add(s, "plonk")
+		f.Add(s, "plonkfri")
 	}
 
 	f.Fuzz(func(t *testing.T, raw []byte, system string) {
@@ -63,6 +74,8 @@ func FuzzNewKeysNoPanic(f *testing.F) {
 			b = groth16B
 		case "plonk":
 			b = plonkB
+		case "plonkfri":
+			b = plonkFRIB
 		default:
 			t.Skip("unsupported system")
 		}

@@ -23,6 +23,7 @@ These targets run various test suites.
 | `make unit-tests` | Runs standard unit tests for Panurus, excluding integration and regression tests. |
 | `make unit-tests-race` | Runs unit tests with the Go race detector enabled. |
 | `make unit-tests-regression` | Runs regression tests. |
+| `make unit-tests-zkatsnark` | Runs the unit tests of the `x/token/core/zkatsnark` module (a separate Go module that `unit-tests` and `unit-tests-race` do not cover) under the race detector, with coverage. `ZKATSNARK_SHARD=validator\|setup\|crypto\|prover\|rest` selects one shard (what CI runs in parallel); the default `all` runs every shard sequentially and takes a long time. Shards are defined in `ci/scripts/zkatsnark-packages.sh`. |
 | `make test-evm-contracts` | Runs the EVM driver's Solidity tests (`forge test`) and `forge fmt --check`. Skips without `forge` or the `forge-std` submodule; set `EVM_CONTRACTS_REQUIRED=1` to fail instead. |
 
 ### Integration Tests
