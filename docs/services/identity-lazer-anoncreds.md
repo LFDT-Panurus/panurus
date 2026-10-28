@@ -562,9 +562,13 @@ lattice reduction. Check concrete claims with the lattice estimator [APS15]. Not
 rows over $\mathcal{R}_p$, $p=12289$) is a separate assumption, and it is much weaker.
 
 Two consistency constants of `anoncreds.h` must match the parameters: `CBDC_COM_ROWS = 2` (rows of
-$\mathbf{A}_{\mathrm{com}}$) and `CBDC_MAXCOM = 3`. `cbdc_params_ok` checks that the number of rows of $P_1$,
-$P_2$ and SoK statements is $8$, $8+3\cdot2$ and $2$. Initialization aborts otherwise, because a mismatch would
-produce unsound statements.
+$\mathbf{A}_{\mathrm{com}}$) and `CBDC_MAXCOM = 3`. `cbdc_params_ok` (`cbdc_params_check` reports which check
+failed) checks that the number of rows of $P_1$, $P_2$ and SoK statements is $8$, $8+3\cdot2$ and $2$, and it
+also cross-checks everything else that `anoncreds.c` hard-codes against the generated tables: the ring degree
+and modulus, the witness length (21, 75, 11), the binary part ($\boldsymbol\tau$, elements 16–23 of $P_2$),
+and, for each $\ell_2$ group, the witness elements it covers and its squared bound (`CBDC_L2SQR_BND_*` in
+`anoncreds.h`: $109^2$, $91^2$, $34034726$, $64^2$, $39^2$, the table above). Initialization aborts otherwise,
+because a mismatch would produce unsound statements, or statements the prover cannot satisfy.
 
 ---
 
@@ -582,20 +586,42 @@ produce unsound statements.
   (`coder_enc_grandom3`, parameter $\lceil\log_2(165/1.55)\rceil=7$, matching Falcon's $\sigma$). This needs
   about 9.4 bits per coefficient on average, so a credential is about 1.3 KB (the buffer bound is 3000 bytes).
 - **Proofs** use lazer's own encoding. Buffers are sized at $1.2\times$ the nominal proof length
-  (`CBDC_PROOFLEN`).
+  (`CBDC_PROOFLEN`). The prover writes at most that many bytes (`lin_prover_prove_ctx_bnd`, from a local lazer
+  patch); a proof that would not fit is discarded and proven again with fresh coins (`cbdc_prove`), and the
+  operation fails if it never fits. Every encoder of `anoncreds.c` is bounded in the same way.
 
 ### 9.2 Defensive decoding
 
 Every input that can come from another party is treated as hostile:
 
 - fixed-length inputs (nyms, openings, user state) must have the exact length;
-- variable-length inputs are bounded by their maximum and copied into a zero-padded buffer before decoding
-  (`cbdc_padded`, `cbdc_dec_vec`), because the bit decoder may read past the end;
+- variable-length inputs are bounded by their maximum (`cbdc_maxlen_*`) and decoded in place by a bounded
+  coder (`coder_dec_begin_bnd`, `lin_verifier_verify_ctx_bnd`). lazer's decoder used to scan the unary codes
+  of the hints and of the Gaussian elements without a bound, so that a crafted proof made it read past the end
+  of any buffer (an earlier version copied inputs into a buffer with 64 bytes of zero padding, which a long
+  unary run crossed); the bounded coder stops at the end of the input and decoding fails, see the local
+  patches in [the module documentation](identity-lazer.md#local-patches). No copy or padding is needed;
 - decoders (`cbdc_dec_vec`, `cbdc_dec_cred`) and proof verifiers must consume their input exactly (canonical
   encodings, no trailing bytes);
 - decoded openings and user states are checked against their norm bounds;
-- the Go layer checks lengths again and never panics on malformed input. `FuzzSokVerify` fuzzes the
-  standalone verifiers.
+- issuer keys are validated without exiting: a malformed public key (header byte, a coefficient $\ge q$) makes
+  `cbdc_user_init`, `cbdc_verifier_init` and `cbdc_issuer_init` fail, and `cbdc_issuer_init` also checks that the
+  private key decodes and matches the public key;
+- the prover is never run on a false statement: the credential (`cbdc_cred_ok`) and every commitment
+  (`cbdc_com_ok`) are checked before `cbdc_user_presgen`, the commitment before `cbdc_user_sokprove`, and the norm
+  bound of the attributes (`cbdc_attrs_ok`) before `cbdc_user_maskattrs`;
+- states track whether they are initialized and masked: export before masking, and every function on a state
+  whose initialization failed or that was cleared, fail instead of dereferencing freed memory;
+- the Go layer checks lengths again, returns `ErrInvalid` on a cleared object and never panics on malformed
+  input. Fuzz targets cover every decoder of untrusted input (`FuzzSokVerify`, `FuzzPresVer`, `FuzzIssue`,
+  `FuzzCredVerify`, `FuzzImport`, `FuzzCommitWithOpening`, `FuzzNewVerifier`), with their inputs placed right
+  before an inaccessible page so that an out-of-bounds read crashes.
+
+Secrets are wiped before their memory is released: the issuer key on `cbdc_issuer_clear`, the masking
+randomness $\mathbf{r}$ and the encoded attributes on `cbdc_user_clear` (and when a new masking or import
+replaces them), the opening $\boldsymbol\rho$ on `cbdc_commit_clear`, seeds, witnesses and decoded credentials
+after use, and the prover's copy of the witness in lazer (local patch). The Go wrapper wipes its copies of the
+attributes.
 
 ### 9.3 Concurrency
 
@@ -734,6 +760,8 @@ under a different `ctx`, a different nym and a different issuer.
    on attributes (ranges, inequalities), and no verifiable encryption of attributes for an auditor. The
    scheme supports exactly 5 attributes of 32 bytes and at most 3 nyms per presentation.
 5. **Side channels.** The code makes no constant-time claims beyond those of lazer and Falcon.
+6. **Patched lazer.** Bounds checking, non-exiting key decoding and zeroization rely on local patches to lazer
+   ([module documentation](identity-lazer.md#local-patches)) that are not upstream yet.
 
 ---
 
@@ -753,11 +781,13 @@ under a different `ctx`, a different nym and a different issuer.
 | opening check | — | `cbdc_opening_verify` | `OpeningVerify` |
 | SoK | proof on `ctx` | `cbdc_user_sokprove`, `cbdc_verifier_sokverify` | `Commitment.SokProve`, `SokVerify` |
 | presentation | $P_2$ | `cbdc_user_presgen`, `cbdc_p2_statement`, `cbdc_verifier_presver` | `User.PresGen`, `Verifier.PresVer` |
-| parameters | — | `anoncreds_params.h`, `cbdc_params_ok` | `ParamsOK` |
+| parameters | — | `anoncreds_params.h`, `cbdc_params_ok`, `cbdc_params_check` | `ParamsOK` |
+| issuer key check | — | `cbdc_pubkey_ok`, `falcon_check_keypair` (patched lazer) | `PubKeyOK`, `NewIssuer` |
 
 A complete runnable example of every step is `anoncreds/cmd/anoncreds_demo/main.go`. The test file
 `anoncreds_test.go` shows the negative cases (wrong context, swapped nyms, foreign nyms, overlapping indices,
-corrupted or truncated proofs, other issuer).
+corrupted or truncated proofs, other issuer); `regression_test.go` the crafted inputs and misuse cases of §9.2,
+and `fuzz_test.go` the fuzz targets.
 
 ---
 

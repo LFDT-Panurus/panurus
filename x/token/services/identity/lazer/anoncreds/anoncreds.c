@@ -25,8 +25,29 @@
 /* proof system parameters p1_param, p2_param, popen_param, generated from params/ */
 #include "anoncreds_params.h"
 
-#define CBDC_L2SQR_BND_R (109 * 109) /* l2(r)^2, wl2[0] in anoncreds_p1_params.py */
-#define CBDC_LOG2O_BLINDSIG 7        /* ceil(log(165/1.55,2)) */
+#define CBDC_LOG2O_BLINDSIG 7 /* ceil(log(165/1.55,2)) */
+
+/*
+ * Overwrite n bytes at p with zeros in a way the compiler cannot elide
+ * (explicit_bzero is not available everywhere and lazer #defines it to bzero
+ * on macOS).
+ */
+static void
+cbdc_wipe (void *p, size_t n)
+{
+  volatile uint8_t *q = (volatile uint8_t *)p;
+
+  while (n--)
+    *q++ = 0;
+}
+
+/* wipe and free a polyvec holding secret data */
+static void
+cbdc_vec_free_secret (polyvec_t v)
+{
+  polyvec_wipe (v);
+  polyvec_free (v);
+}
 
 /* ring Rp. The proof systems require polys over this ring. */
 static const limb_t cbdc_q_limbs[] = { CBDC_MOD };
@@ -86,17 +107,103 @@ static pthread_once_t cbdc_pp_once = PTHREAD_ONCE_INIT;
  * must work on a private copy, see cbdc_mat_copy.
  */
 /*
- * The generated parameters (anoncreds_params.h) and the constants of anoncreds.h must
- * agree: p2 has one block of CBDC_COM_ROWS rows for each of CBDC_MAXCOM
- * commitments on top of the 8 rows of the credential, popen has CBDC_COM_ROWS
- * rows. Returns 1 if they do.
+ * Euclidean norm group i of params covers the n witness elements
+ * start..start+n-1 and has the squared bound bnd.
  */
+static int
+cbdc_l2group_ok (const lin_params_struct *params, unsigned int i,
+                 unsigned int start, unsigned int n, int64_t bnd)
+{
+  lnp_tbox_params_srcptr tbox = params->tbox_params;
+  unsigned int j;
+
+  if (i >= tbox->Z || tbox->n[i] != n || params->Es_nrows[i] != n)
+    return 0;
+  for (j = 0; j < n; j++)
+    if (params->Es[i][j] != start + j)
+      return 0;
+  return int_get_i64 (tbox->l2Bsqr[i]) == bnd;
+}
+
+/* the common structure of the three proof systems */
+static int
+cbdc_lin_ok (const lin_params_struct *params, unsigned int nprime,
+             unsigned int nwitness, unsigned int ngroups, unsigned int nbin)
+{
+  lnp_tbox_params_srcptr tbox = params->tbox_params;
+
+  return params->dprime == CBDC_DEG && int_get_i64 (params->p) == CBDC_MOD
+         && params->k == 1 && tbox->nprime == nprime
+         && params->ns1_indices == nwitness && params->nm_indices == 0
+         && tbox->Z == ngroups && tbox->nbin == nbin
+         && params->Ps_nrows == nbin;
+}
+
+/*
+ * Check the generated parameters (anoncreds_params.h) against the constants
+ * of anoncreds.h and the witness layout used in this file, which must agree
+ * or the statements would be unsound (or the prover would not terminate):
+ * - P1 proves (r, mpriv) with [Ar, AMpriv] (8 rows): l2(r)^2 <= 109^2 and
+ *   l2(m)^2 <= 91^2;
+ * - P2 proves (r, tau, s1, s2, mpriv, rcom) (75 elements, 8 rows plus one
+ *   block of CBDC_COM_ROWS rows for each of CBDC_MAXCOM commitments): r as
+ *   in P1, tau binary, l2(s1,s2)^2 <= 34034726, each attribute <= 64^2 and
+ *   each commitment randomness <= 39^2;
+ * - the SoK proves (attr, r) with Acom (CBDC_COM_ROWS rows): 64^2 and 39^2.
+ * Returns 0 if they agree, else the number of the first failed check.
+ */
+int
+cbdc_params_check (void)
+{
+  unsigned int i;
+
+  /* P1 */
+  if (!cbdc_lin_ok (p1_param, 8, 16 + CBDC_NATTRS, 2, 0))
+    return 1;
+  if (!cbdc_l2group_ok (p1_param, 0, 0, 16, CBDC_L2SQR_BND_R))
+    return 2;
+  if (!cbdc_l2group_ok (p1_param, 1, 16, CBDC_NATTRS, CBDC_L2SQR_BND_ATTRS))
+    return 3;
+
+  /* P2 */
+  if (!cbdc_lin_ok (p2_param, 8 + CBDC_MAXCOM * CBDC_COM_ROWS,
+                    40 + CBDC_NATTRS + CBDC_MAXCOM * 10,
+                    2 + CBDC_NATTRS + CBDC_MAXCOM, 8))
+    return 4;
+  for (i = 0; i < 8; i++)
+    if (p2_param->Ps[i] != 16 + i) /* tau is binary */
+      return 5;
+  if (!cbdc_l2group_ok (p2_param, 0, 0, 16, CBDC_L2SQR_BND_R))
+    return 6;
+  if (!cbdc_l2group_ok (p2_param, 1, 24, 16, CBDC_L2SQR_BND_CRED))
+    return 7;
+  for (i = 0; i < CBDC_NATTRS; i++)
+    if (!cbdc_l2group_ok (p2_param, 2 + i, 40 + i, 1, CBDC_L2SQR_BND_ATTR))
+      return 8;
+  for (i = 0; i < CBDC_MAXCOM; i++)
+    if (!cbdc_l2group_ok (p2_param, 2 + CBDC_NATTRS + i,
+                          40 + CBDC_NATTRS + 10 * i, 10, CBDC_L2SQR_BND_COM))
+      return 9;
+
+  /* SoK */
+  if (!cbdc_lin_ok (popen_param, CBDC_COM_ROWS, 1 + 10, 2, 0))
+    return 10;
+  if (!cbdc_l2group_ok (popen_param, 0, 0, 1, CBDC_L2SQR_BND_ATTR))
+    return 11;
+  if (!cbdc_l2group_ok (popen_param, 1, 1, 10, CBDC_L2SQR_BND_COM))
+    return 12;
+
+  /* an attribute encodes into 64 coefficients in [-7,8] */
+  if (CBDC_DEG * 8 * 8 > CBDC_L2SQR_BND_ATTR)
+    return 13;
+  return 0;
+}
+
+/* Returns 1 if the generated parameters agree with anoncreds.h, see above. */
 int
 cbdc_params_ok (void)
 {
-  return p1_param->tbox_params->nprime == 8
-         && p2_param->tbox_params->nprime == 8 + CBDC_MAXCOM * CBDC_COM_ROWS
-         && popen_param->tbox_params->nprime == CBDC_COM_ROWS;
+  return cbdc_params_check () == 0;
 }
 
 static void
@@ -107,7 +214,8 @@ cbdc_pp_do_init (void)
   if (!cbdc_params_ok ())
     {
       /* a build with inconsistent parameters would produce unsound statements */
-      fprintf (stderr, "cbdc: parameters do not match CBDC_COM_ROWS/CBDC_MAXCOM\n");
+      fprintf (stderr, "cbdc: parameters do not match anoncreds.h (check %d)\n",
+               cbdc_params_check ());
       abort ();
     }
 
@@ -141,7 +249,29 @@ cbdc_mat_copy (polymat_t out, polymat_t src)
 
 /* buffer sizes */
 
+/*
+ * Proof buffers hold 1.2 times the nominal proof length. The prover never
+ * writes past them (lin_prover_prove_ctx_bnd); a proof that would not fit,
+ * which the rejection sampling makes very unlikely, is discarded and proven
+ * again with fresh coins, up to CBDC_PROVE_TRIES times.
+ */
 #define CBDC_PROOFLEN(params) ((size_t)lin_params_get_prooflen (params) * 6 / 5 + 1)
+#define CBDC_PROVE_TRIES 4
+
+/* prove into at most cap bytes, retrying with fresh coins. Returns 1 on success. */
+static int
+cbdc_prove (lin_prover_state_t prover, uint8_t *out, size_t cap, size_t *len,
+            const uint8_t *ctx, size_t ctxlen)
+{
+  int i;
+
+  for (i = 0; i < CBDC_PROVE_TRIES; i++)
+    if (lin_prover_prove_ctx_bnd (prover, out, cap, len, NULL, ctx, ctxlen)
+        == 1)
+      return 1;
+  *len = 0;
+  return 0;
+}
 
 size_t
 cbdc_maxlen_masked_attrs (void)
@@ -218,6 +348,7 @@ cbdc_encattrs (polyvec_t v, const uint8_t *attrs, unsigned int n)
         coeffs[i * CBDC_DEG + j * 2 + 1] = cbdc_redc16 (b % 16);
       }
   polyvec_set_coeffvec_i64 (v, coeffs);
+  cbdc_wipe (coeffs, sizeof (coeffs));
 }
 
 /* expand 64 bytes to 8 binary polys, msb first */
@@ -230,6 +361,7 @@ cbdc_expand_tau (polyvec_t tau, const uint8_t bytes[64])
   for (k = 0; k < 8 * CBDC_DEG; k++)
     coeffs[k] = (bytes[k >> 3] >> (7 - (k & 7))) & 1;
   polyvec_set_coeffvec_i64 (tau, coeffs);
+  cbdc_wipe (coeffs, sizeof (coeffs));
 }
 
 static int
@@ -345,8 +477,8 @@ cbdc_p1_statement (polymat_t A, polyvec_t u, polyvec_t t,
   polyvec_redc (u, u);
 
   polyvec_free (amm);
-  polyvec_free (mpub);
-  polyvec_free (mpriv);
+  cbdc_vec_free_secret (mpub);
+  cbdc_vec_free_secret (mpriv);
   polymat_free (AMpriv);
   polymat_free (AM);
 }
@@ -422,8 +554,8 @@ cbdc_p2_statement (polymat_t A, polyvec_t u, polymat_t B2, polyvec_t c0,
   polyvec_redc (u, u);
 
   polyvec_free (amm);
-  polyvec_free (mpub);
-  polyvec_free (mpriv);
+  cbdc_vec_free_secret (mpub);
+  cbdc_vec_free_secret (mpriv);
   polymat_free (AMpriv);
   polymat_free (AM);
   polymat_free (AR);
@@ -431,15 +563,33 @@ cbdc_p2_statement (polymat_t A, polyvec_t u, polymat_t B2, polyvec_t c0,
   polymat_free (Acom);
 }
 
-/* Falcon pubkey -> 8x8 matrix B2 over Rp s.t. B2*aut(s) = aut(pk*s) */
-static void
+/*
+ * Returns 1 if pubkey is a well-formed Falcon-512 public key (header byte and
+ * all 512 coefficients < q), without exiting on malformed input.
+ */
+int
+cbdc_pubkey_ok (const uint8_t pubkey[897])
+{
+  int16_t h[512];
+
+  if (pubkey == NULL)
+    return 0;
+  return falcon_decode_pubkey_chk (h, pubkey) == 0;
+}
+
+/*
+ * Falcon pubkey -> 8x8 matrix B2 over Rp s.t. B2*aut(s) = aut(pk*s). Returns
+ * 1 on success, 0 (and allocates nothing) if pubkey is malformed.
+ */
+static int
 cbdc_decode_pk (polymat_t B2, const uint8_t pubkey[897])
 {
   int16_t h[512];
   polymat_t pk;
   poly_t p;
 
-  falcon_decode_pubkey (h, pubkey);
+  if (pubkey == NULL || falcon_decode_pubkey_chk (h, pubkey) != 0)
+    return 0;
 
   poly_alloc (p, cbdc_falcon_ring);
   poly_set_coeffvec_i16 (p, h);
@@ -452,6 +602,7 @@ cbdc_decode_pk (polymat_t B2, const uint8_t pubkey[897])
 
   polymat_free (pk);
   poly_free (p);
+  return 1;
 }
 
 /*
@@ -482,30 +633,36 @@ cbdc_derive_c0 (polyvec_t c0, const uint8_t pubkey[897])
 }
 
 /*
- * Decode a credential tau,s1,s2 from a zero padded buffer (see cbdc_padded)
- * holding credlen bytes. Returns 1 if it decodes and consumes exactly credlen
+ * Decode a credential tau,s1,s2 from the credlen bytes at cred. The decoder
+ * never reads past them. Returns 1 if it decodes and consumes exactly credlen
  * bytes.
  */
 static int
-cbdc_dec_cred (polyvec_t tau, polyvec_t s1, polyvec_t s2,
-               const uint8_t *credbuf, size_t credlen)
+cbdc_dec_cred (polyvec_t tau, polyvec_t s1, polyvec_t s2, const uint8_t *cred,
+               size_t credlen)
 {
   coder_state_t cstate;
   uint8_t tau_[64];
   unsigned int off;
+  int rv = 0;
 
-  coder_dec_begin (cstate, credbuf);
-  if (coder_dec_bytes (cstate, tau_, sizeof (tau_)) != 0)
+  if (cred == NULL || credlen == 0 || credlen > cbdc_maxlen_cred ())
     return 0;
+  coder_dec_begin_bnd (cstate, cred, credlen);
+  if (coder_dec_bytes (cstate, tau_, sizeof (tau_)) != 0)
+    goto out;
   coder_dec_grandom3 (cstate, s1, CBDC_LOG2O_BLINDSIG);
   coder_dec_grandom3 (cstate, s2, CBDC_LOG2O_BLINDSIG);
-  if (coder_dec_end (cstate) != 1)
-    return 0;
+  if (coder_get_err (cstate) || coder_dec_end (cstate) != 1)
+    goto out;
   off = coder_get_offset (cstate);
   if (off % 8 != 0 || (size_t)(off >> 3) != credlen)
-    return 0;
+    goto out;
   cbdc_expand_tau (tau, tau_);
-  return 1;
+  rv = 1;
+out:
+  cbdc_wipe (tau_, sizeof (tau_));
+  return rv;
 }
 
 void
@@ -516,76 +673,98 @@ cbdc_issuer_keygen (uint8_t sk[1281], uint8_t pk[897])
 
 /* user */
 
-void
+/*
+ * Returns 1 on success, 0 if pubkey is not a valid Falcon-512 public key, in
+ * which case state is zeroed and need not be cleared.
+ */
+int
 cbdc_user_init (cbdc_user_state_t state, const uint8_t pubkey[897])
 {
   cbdc_pp_init ();
 
   memset (state, 0, sizeof (cbdc_user_state_t));
-  cbdc_decode_pk (state->B2, pubkey);
+  if (!cbdc_decode_pk (state->B2, pubkey))
+    return 0;
   cbdc_derive_c0 (state->c0, pubkey);
   lin_prover_init (state->p1, cbdc_p1pp, p1_param);
   lin_prover_init (state->p2, cbdc_p2pp, p2_param);
+  state->ready = 1;
+  return 1;
 }
 
-void
-cbdc_user_clear (cbdc_user_state_t state)
+/* forget the masking randomness and the attributes */
+static void
+cbdc_user_forget (cbdc_user_state_t state)
 {
-  lin_prover_clear (state->p1);
-  lin_prover_clear (state->p2);
-  polymat_free (state->B2);
-  polyvec_free (state->c0);
   if (state->masked)
     {
-      polyvec_free (state->r);
-      polyvec_free (state->m);
+      cbdc_vec_free_secret (state->r);
+      cbdc_vec_free_secret (state->m);
       state->masked = 0;
     }
 }
 
-/* encode a polyvec with coefficients in Z_12289 */
+/* Release the state; it may be called more than once. */
+void
+cbdc_user_clear (cbdc_user_state_t state)
+{
+  if (!state->ready)
+    return;
+  lin_prover_clear (state->p1);
+  lin_prover_clear (state->p2);
+  polymat_free (state->B2);
+  polyvec_free (state->c0);
+  cbdc_user_forget (state);
+  cbdc_wipe (state, sizeof (cbdc_user_state_t));
+}
+
+/*
+ * Encode a polyvec with coefficients in Z_12289 into at most cap bytes at
+ * out. Returns the length, 0 if it does not fit.
+ */
 static size_t
-cbdc_enc_vec (uint8_t *out, polyvec_t v)
+cbdc_enc_vec (uint8_t *out, size_t cap, polyvec_t v)
 {
   coder_state_t cstate;
   unsigned int len;
   INT_T (mod, 1);
 
+  if (out == NULL)
+    return 0;
   int_set_i64 (mod, CBDC_MOD);
   polyvec_redp (v, v);
 
-  coder_enc_begin (cstate, out);
+  coder_enc_begin_bnd (cstate, out, cap);
   coder_enc_urandom3 (cstate, v, mod, CBDC_LOGMOD);
   coder_enc_end (cstate);
+  if (coder_get_err (cstate))
+    return 0;
   len = coder_get_offset (cstate);
-  ASSERT_ERR (len % 8 == 0);
+  if (len % 8 != 0 || (size_t)(len >> 3) > cap)
+    return 0;
   return len >> 3;
 }
 
 /*
  * Decode a polyvec from the first inlen bytes of in, returns the number of
- * bytes read or -1. The decoder may read past inlen, so the input is copied
- * into a zero padded buffer first.
+ * bytes read or -1. The decoder never reads past in + inlen.
  */
 static long
 cbdc_dec_vec (polyvec_t v, const uint8_t *in, size_t inlen)
 {
   coder_state_t cstate;
   unsigned int off;
-  uint8_t buf[CBDC_USERSTATELEN + 64];
   INT_T (mod, 1);
 
-  if (in == NULL || inlen > CBDC_USERSTATELEN)
+  if (in == NULL || inlen == 0)
     return -1;
-  memset (buf, 0, sizeof (buf));
-  memcpy (buf, in, inlen);
 
   int_set_i64 (mod, CBDC_MOD);
 
-  coder_dec_begin (cstate, buf);
+  coder_dec_begin_bnd (cstate, in, inlen);
   if (coder_dec_urandom3 (cstate, v, mod, CBDC_LOGMOD) != 0)
     return -1;
-  if (coder_dec_end (cstate) != 1)
+  if (coder_get_err (cstate) || coder_dec_end (cstate) != 1)
     return -1;
   off = coder_get_offset (cstate);
   if (off % 8 != 0 || (size_t)(off >> 3) > inlen)
@@ -593,25 +772,6 @@ cbdc_dec_vec (polyvec_t v, const uint8_t *in, size_t inlen)
   polyvec_redc (v, v);
   return off >> 3;
 }
-
-/* zero padded copy of an untrusted input, NULL if len > maxlen. Free it. */
-static uint8_t *
-cbdc_padded (const uint8_t *in, size_t len, size_t maxlen)
-{
-  uint8_t *buf;
-
-  if (len > maxlen || (len > 0 && in == NULL))
-    return NULL;
-  buf = calloc (1, maxlen + 64);
-  if (buf == NULL)
-    return NULL;
-  if (len > 0)
-    memcpy (buf, in, len);
-  return buf;
-}
-
-/* l2(r)^2 bound of the commitment randomness, wl2 in anoncreds_p2_params.py */
-#define CBDC_L2SQR_BND_COM (39 * 39)
 
 /* nym = Acom*(attr,r), a is the encoding of attr */
 static void
@@ -629,12 +789,12 @@ cbdc_commit_compute (cbdc_commit_t com, polyvec_t a)
   polyvec_mul (com->nym, Acom, s);
   polyvec_redc (com->nym, com->nym);
 
-  polyvec_free (s);
+  cbdc_vec_free_secret (s);
   polymat_free (Acom);
 }
 
-/* encode nym to exactly CBDC_NYMLEN bytes */
-static void
+/* encode nym to exactly CBDC_NYMLEN bytes. Returns 1 on success. */
+static int
 cbdc_nym_encode (uint8_t *nym, size_t *nymlen, polyvec_t nymv)
 {
   /* encoding reduces to [0,q) in place, so encode a copy */
@@ -643,14 +803,17 @@ cbdc_nym_encode (uint8_t *nym, size_t *nymlen, polyvec_t nymv)
 
   polyvec_alloc (tmp, cbdc_ring, CBDC_COM_ROWS);
   polyvec_set (tmp, nymv);
-  len = cbdc_enc_vec (nym, tmp);
-  ASSERT_ERR (len == CBDC_NYMLEN);
-  *nymlen = len;
+  len = cbdc_enc_vec (nym, CBDC_NYMLEN, tmp);
   polyvec_free (tmp);
+  *nymlen = len;
+  return len == CBDC_NYMLEN;
 }
 
-/* nym = Acom*(attr,r) with internal coins for r */
-void
+/*
+ * nym = Acom*(attr,r) with internal coins for r. Returns 1 on success, in
+ * which case com must be cleared by the caller.
+ */
+int
 cbdc_user_commit (cbdc_commit_t com, uint8_t *nym, size_t *nymlen,
                   const uint8_t attr[32])
 {
@@ -662,6 +825,10 @@ cbdc_user_commit (cbdc_commit_t com, uint8_t *nym, size_t *nymlen,
   INT_T (bnd, 2);
 
   cbdc_pp_init ();
+
+  memset (com, 0, sizeof (cbdc_commit_t));
+  if (attr == NULL || nym == NULL || nymlen == NULL)
+    return 0;
 
   int_set_i64 (lo, -2);
   int_set_i64 (hi, 2);
@@ -680,31 +847,45 @@ cbdc_user_commit (cbdc_commit_t com, uint8_t *nym, size_t *nymlen,
       polyvec_l2sqr (l2sqr, com->r);
     }
   while (int_gt (l2sqr, bnd));
+  cbdc_wipe (seed, sizeof (seed));
 
   cbdc_commit_compute (com, a);
-  cbdc_nym_encode (nym, nymlen, com->nym);
-
-  polyvec_free (a);
+  cbdc_vec_free_secret (a);
+  if (!cbdc_nym_encode (nym, nymlen, com->nym))
+    {
+      cbdc_commit_clear (com);
+      return 0;
+    }
+  return 1;
 }
 
+/* Release a commitment, wiping its opening. */
 void
 cbdc_commit_clear (cbdc_commit_t com)
 {
   polyvec_free (com->nym);
-  polyvec_free (com->r);
+  cbdc_vec_free_secret (com->r);
+  cbdc_wipe (com, sizeof (cbdc_commit_t));
 }
 
-/* encode the opening (the randomness r) of a commitment */
-void
+/*
+ * Encode the opening (the randomness r) of a commitment into
+ * cbdc_maxlen_opening() bytes. Returns 1 on success.
+ */
+int
 cbdc_commit_export (cbdc_commit_t com, uint8_t *opening, size_t *openinglen)
 {
   polyvec_t tmp;
+  size_t len;
 
+  if (opening == NULL || openinglen == NULL)
+    return 0;
   polyvec_alloc (tmp, cbdc_ring, 10);
   polyvec_set (tmp, com->r);
-  *openinglen = cbdc_enc_vec (opening, tmp);
-  ASSERT_ERR (*openinglen == CBDC_OPENINGLEN);
-  polyvec_free (tmp);
+  len = cbdc_enc_vec (opening, CBDC_OPENINGLEN, tmp);
+  cbdc_vec_free_secret (tmp);
+  *openinglen = len;
+  return len == CBDC_OPENINGLEN;
 }
 
 /* l2(r)^2 <= bound and r decodes. Returns 1 if the opening is valid. */
@@ -736,17 +917,25 @@ cbdc_commit_import (cbdc_commit_t com, uint8_t *nym, size_t *nymlen,
 
   cbdc_pp_init ();
 
+  memset (com, 0, sizeof (cbdc_commit_t));
+  if (attr == NULL || nym == NULL || nymlen == NULL)
+    return 0;
   polyvec_alloc (com->r, cbdc_ring, 10);
   if (!cbdc_opening_decode (com->r, opening, openinglen))
     {
-      polyvec_free (com->r);
+      cbdc_vec_free_secret (com->r);
+      memset (com, 0, sizeof (cbdc_commit_t));
       return 0;
     }
   polyvec_alloc (a, cbdc_ring, 1);
   cbdc_encattrs (a, attr, 1);
   cbdc_commit_compute (com, a);
-  cbdc_nym_encode (nym, nymlen, com->nym);
-  polyvec_free (a);
+  cbdc_vec_free_secret (a);
+  if (!cbdc_nym_encode (nym, nymlen, com->nym))
+    {
+      cbdc_commit_clear (com);
+      return 0;
+    }
   return 1;
 }
 
@@ -761,7 +950,7 @@ cbdc_opening_verify (const uint8_t *nym, size_t nymlen, const uint8_t attr[32],
 
   cbdc_pp_init ();
 
-  if (nymlen != CBDC_NYMLEN)
+  if (nymlen != CBDC_NYMLEN || attr == NULL)
     return 0;
   polyvec_alloc (nymv, cbdc_ring, CBDC_COM_ROWS);
   if (cbdc_dec_vec (nymv, nym, nymlen) != (long)CBDC_NYMLEN)
@@ -778,9 +967,9 @@ cbdc_opening_verify (const uint8_t *nym, size_t nymlen, const uint8_t attr[32],
       polyvec_redc (nymv, nymv);
       b = polyvec_eq (com->nym, nymv);
       polyvec_free (com->nym);
-      polyvec_free (a);
+      cbdc_vec_free_secret (a);
     }
-  polyvec_free (com->r);
+  cbdc_vec_free_secret (com->r);
   polyvec_free (nymv);
   return b == 1;
 }
@@ -795,23 +984,64 @@ cbdc_sok_statement (polyvec_t t, polyvec_t nym)
   polyvec_redc (t, t);
 }
 
+/* com holds a commitment (cbdc_user_commit or cbdc_commit_import) */
+static int
+cbdc_commit_ready (cbdc_commit_srcptr com)
+{
+  return com != NULL && com->r->nelems == 10 && com->r->elems != NULL
+         && com->nym->nelems == CBDC_COM_ROWS && com->nym->elems != NULL;
+}
+
+/* Returns 1 if com->nym = Acom*(m_k,com->r) for the encoded attribute m_k. */
+static int
+cbdc_com_ok (cbdc_commit_ptr com, poly_ptr mk)
+{
+  cbdc_commit_t chk;
+  polyvec_t a;
+  int b;
+
+  polyvec_alloc (a, cbdc_ring, 1);
+  poly_set (polyvec_get_elem (a, 0), mk);
+  chk->r[0] = com->r[0];
+  cbdc_commit_compute (chk, a);
+  b = polyvec_eq (chk->nym, com->nym) == 1;
+  polyvec_free (chk->nym);
+  cbdc_vec_free_secret (a);
+  return b;
+}
+
 /*
  * Signature of knowledge of the opening of com (attr,r), bound to the
- * context ctx (e.g. a domain separator and the message).
+ * context ctx (e.g. a domain separator and the message). proof must hold
+ * cbdc_maxlen_sok() bytes. Returns 1 on success, 0 if com is not a
+ * commitment to attr (the prover is never run on a false statement) or the
+ * proof does not fit.
  */
-void
+int
 cbdc_user_sokprove (uint8_t *proof, size_t *proofl, cbdc_commit_t com,
                     const uint8_t *ctx, size_t ctxlen, const uint8_t attr[32])
 {
   lin_prover_state_t prover;
   polyvec_t a, s, t;
   polymat_t Acom;
+  int rv;
 
   cbdc_pp_init ();
 
-  cbdc_mat_copy (Acom, cbdc_Acom);
+  if (proof == NULL || proofl == NULL || attr == NULL
+      || !cbdc_commit_ready (com))
+    return 0;
+  *proofl = 0;
+
   polyvec_alloc (a, cbdc_ring, 1);
   cbdc_encattrs (a, attr, 1);
+  if (!cbdc_com_ok (com, polyvec_get_elem (a, 0)))
+    {
+      cbdc_vec_free_secret (a);
+      return 0;
+    }
+
+  cbdc_mat_copy (Acom, cbdc_Acom);
   polyvec_alloc (s, cbdc_ring, 1 + 10);
   cbdc_put (s, 0, a);
   cbdc_put (s, 1, com->r);
@@ -820,17 +1050,23 @@ cbdc_user_sokprove (uint8_t *proof, size_t *proofl, cbdc_commit_t com,
   lin_prover_init (prover, cbdc_popenpp, popen_param);
   lin_prover_set_statement (prover, Acom, t);
   lin_prover_set_witness (prover, s);
-  lin_prover_prove_ctx (prover, proof, proofl, NULL, ctx, ctxlen);
+  rv = cbdc_prove (prover, proof, cbdc_maxlen_sok (), proofl, ctx, ctxlen);
   lin_prover_clear (prover);
 
-  polyvec_free (a);
-  polyvec_free (s);
+  cbdc_vec_free_secret (a);
+  cbdc_vec_free_secret (s);
   polyvec_free (t);
   polymat_free (Acom);
+  return rv == 1;
 }
 
-/* attrs: 5*32 bytes */
-void
+/*
+ * attrs: 5*32 bytes, masked_attrs: cbdc_maxlen_masked_attrs() bytes. Returns
+ * 1 on success, 0 if the state is not initialized, idx_rev is invalid, the
+ * attributes do not satisfy the norm bound of P1 (cbdc_attrs_ok) or the
+ * output does not fit. On failure a previous masking is kept.
+ */
+int
 cbdc_user_maskattrs (cbdc_user_state_t state, uint8_t *masked_attrs,
                      size_t *masked_attrslen, const uint8_t *attrs,
                      const unsigned int *idx_rev, unsigned int nrev)
@@ -839,18 +1075,19 @@ cbdc_user_maskattrs (cbdc_user_state_t state, uint8_t *masked_attrs,
   polymat_t A;
   uint8_t seed[32];
   uint8_t dom = 0;
-  size_t tlen, plen;
+  size_t tlen, plen = 0;
+  const size_t cap = cbdc_maxlen_masked_attrs ();
+  int rc;
   INT_T (l2sqr, 2);
   INT_T (bnd, 2);
 
   cbdc_pp_init ();
 
-  if (state->masked)
-    {
-      polyvec_free (state->r);
-      polyvec_free (state->m);
-      state->masked = 0;
-    }
+  if (!state->ready || masked_attrs == NULL || masked_attrslen == NULL
+      || attrs == NULL || (nrev > 0 && idx_rev == NULL)
+      || !cbdc_idx_valid (idx_rev, nrev) || !cbdc_attrs_ok (attrs))
+    return 0;
+  *masked_attrslen = 0;
 
   polyvec_alloc (m, cbdc_ring, CBDC_NATTRS);
   cbdc_encattrs (m, attrs, CBDC_NATTRS);
@@ -867,6 +1104,7 @@ cbdc_user_maskattrs (cbdc_user_state_t state, uint8_t *masked_attrs,
       polyvec_l2sqr (l2sqr, r);
     }
   while (int_gt (l2sqr, bnd));
+  cbdc_wipe (seed, sizeof (seed));
 
   /* t = Ar*r + Am*m */
   polyvec_alloc (t, cbdc_ring, 8);
@@ -895,22 +1133,34 @@ cbdc_user_maskattrs (cbdc_user_state_t state, uint8_t *masked_attrs,
   lin_prover_set_witness (state->p1, w);
 
   /* masked attrs = enc(t) || P1 */
-  tlen = cbdc_enc_vec (masked_attrs, t);
-  lin_prover_prove (state->p1, masked_attrs + tlen, &plen, NULL);
-  *masked_attrslen = tlen + plen;
+  tlen = cbdc_enc_vec (masked_attrs, cap, t);
+  rc = tlen > 0
+       && cbdc_prove (state->p1, masked_attrs + tlen, cap - tlen, &plen, NULL,
+                      0);
 
-  /* save randomness and message */
-  state->r[0] = r[0];
-  state->m[0] = m[0];
-  state->masked = 1;
+  if (rc)
+    {
+      /* save randomness and message */
+      cbdc_user_forget (state);
+      state->r[0] = r[0];
+      state->m[0] = m[0];
+      state->masked = 1;
+      *masked_attrslen = tlen + plen;
+    }
+  else
+    {
+      cbdc_vec_free_secret (r);
+      cbdc_vec_free_secret (m);
+    }
 
   polyvec_free (t);
-  polyvec_free (tmp);
+  cbdc_vec_free_secret (tmp);
   polyvec_free (u);
-  polyvec_free (w);
-  polyvec_free (mpub);
-  polyvec_free (mpriv);
+  cbdc_vec_free_secret (w);
+  cbdc_vec_free_secret (mpub);
+  cbdc_vec_free_secret (mpriv);
   polymat_free (A);
+  return rc;
 }
 
 /*
@@ -958,32 +1208,14 @@ cbdc_cred_ok (cbdc_user_state_t state, polyvec_t tau, polyvec_t s1,
   polyvec_redc (acc, acc);
   rv = polyvec_eq (acc, zero) == 1;
 
-  polyvec_free (acc);
-  polyvec_free (tmp);
+  cbdc_vec_free_secret (acc);
+  cbdc_vec_free_secret (tmp);
   polyvec_free (zero);
   polymat_free (AR);
   polymat_free (ATAU);
   polymat_free (AM);
   polymat_free (B2);
   return rv;
-}
-
-/* Returns 1 if com->nym = Acom*(m_k,com->r) for the encoded attribute m_k. */
-static int
-cbdc_com_ok (cbdc_commit_ptr com, poly_ptr mk)
-{
-  cbdc_commit_t chk;
-  polyvec_t a;
-  int b;
-
-  polyvec_alloc (a, cbdc_ring, 1);
-  poly_set (polyvec_get_elem (a, 0), mk);
-  chk->r[0] = com->r[0];
-  cbdc_commit_compute (chk, a);
-  b = polyvec_eq (chk->nym, com->nym) == 1;
-  polyvec_free (chk->nym);
-  polyvec_free (a);
-  return b;
 }
 
 /* committed indices must be distinct, valid, disjoint from the revealed ones */
@@ -1021,17 +1253,16 @@ cbdc_user_presgen (cbdc_user_state_t state, uint8_t *pres, size_t *preslen,
   polyvec_t tau, s1, s2, w, u;
   polyvec_t nyms[CBDC_MAXCOM];
   polymat_t A;
-  uint8_t *credbuf;
   unsigned int i;
   int rv = 0;
 
   cbdc_pp_init ();
 
-  if (!state->masked || !cbdc_com_valid (idx_rev, nrev, idx_com, ncom))
+  if (!state->ready || !state->masked || pres == NULL || preslen == NULL
+      || (nrev > 0 && idx_rev == NULL) || (ncom > 0 && (idx_com == NULL || coms == NULL))
+      || !cbdc_com_valid (idx_rev, nrev, idx_com, ncom))
     return 0;
-  credbuf = cbdc_padded (cred, credlen, cbdc_maxlen_cred ());
-  if (credbuf == NULL)
-    return 0;
+  *preslen = 0;
 
   polyvec_alloc (tau, cbdc_ring, 8);
   polyvec_alloc (s1, cbdc_ring, 8);
@@ -1041,11 +1272,11 @@ cbdc_user_presgen (cbdc_user_state_t state, uint8_t *pres, size_t *preslen,
    * decode blindsig tau,s1,s2 and check the whole witness: the prover must
    * not be run on a false statement (it does not terminate cleanly then).
    */
-  if (!cbdc_dec_cred (tau, s1, s2, credbuf, credlen)
+  if (!cbdc_dec_cred (tau, s1, s2, cred, credlen)
       || !cbdc_cred_ok (state, tau, s1, s2))
     goto err_dec;
   for (i = 0; i < ncom; i++)
-    if (coms[i] == NULL
+    if (!cbdc_commit_ready (coms[i])
         || !cbdc_com_ok (coms[i], polyvec_get_elem (state->m, idx_com[i])))
       goto err_dec;
 
@@ -1070,23 +1301,21 @@ cbdc_user_presgen (cbdc_user_state_t state, uint8_t *pres, size_t *preslen,
       {
         cbdc_put (w, 45 + i * 10, coms[i]->r);
       }
-    polyvec_free (mpub);
-    polyvec_free (mpriv);
+    cbdc_vec_free_secret (mpub);
+    cbdc_vec_free_secret (mpriv);
   }
 
   lin_prover_set_statement (state->p2, A, u);
   lin_prover_set_witness (state->p2, w);
-  lin_prover_prove_ctx (state->p2, pres, preslen, NULL, ctx, ctxlen);
-  rv = 1;
+  rv = cbdc_prove (state->p2, pres, cbdc_maxlen_pres (), preslen, ctx, ctxlen);
 
-  polyvec_free (w);
+  cbdc_vec_free_secret (w);
   polyvec_free (u);
   polymat_free (A);
 err_dec:
-  polyvec_free (tau);
-  polyvec_free (s1);
-  polyvec_free (s2);
-  free (credbuf);
+  cbdc_vec_free_secret (tau);
+  cbdc_vec_free_secret (s1);
+  cbdc_vec_free_secret (s2);
   return rv;
 }
 
@@ -1100,46 +1329,49 @@ cbdc_user_credverify (cbdc_user_state_t state, const uint8_t *cred,
                       size_t credlen)
 {
   polyvec_t tau, s1, s2;
-  uint8_t *credbuf;
   int rv = 0;
 
   cbdc_pp_init ();
 
-  if (!state->masked)
-    return 0;
-  credbuf = cbdc_padded (cred, credlen, cbdc_maxlen_cred ());
-  if (credbuf == NULL)
+  if (!state->ready || !state->masked)
     return 0;
 
   polyvec_alloc (tau, cbdc_ring, 8);
   polyvec_alloc (s1, cbdc_ring, 8);
   polyvec_alloc (s2, cbdc_ring, 8);
 
-  if (!cbdc_dec_cred (tau, s1, s2, credbuf, credlen))
+  if (!cbdc_dec_cred (tau, s1, s2, cred, credlen))
     goto err_dec;
 
   rv = cbdc_cred_ok (state, tau, s1, s2);
 
 err_dec:
-  polyvec_free (tau);
-  polyvec_free (s1);
-  polyvec_free (s2);
-  free (credbuf);
+  cbdc_vec_free_secret (tau);
+  cbdc_vec_free_secret (s1);
+  cbdc_vec_free_secret (s2);
   return rv;
 }
 
-/* user state import/export: only the masking randomness r is secret */
-void
+/*
+ * User state import/export: only the masking randomness r is secret. out
+ * must hold cbdc_maxlen_userstate() bytes. Returns 1 on success, 0 if the
+ * state is not initialized or holds no masking (neither cbdc_user_maskattrs
+ * nor cbdc_user_import has succeeded).
+ */
+int
 cbdc_user_export (cbdc_user_state_t state, uint8_t *out, size_t *outlen)
 {
   polyvec_t tmp;
+  size_t len;
 
-  ASSERT_ERR (state->masked);
+  if (!state->ready || !state->masked || out == NULL || outlen == NULL)
+    return 0;
   polyvec_alloc (tmp, cbdc_ring, 16);
   polyvec_set (tmp, state->r);
-  *outlen = cbdc_enc_vec (out, tmp);
-  ASSERT_ERR (*outlen == CBDC_USERSTATELEN);
-  polyvec_free (tmp);
+  len = cbdc_enc_vec (out, CBDC_USERSTATELEN, tmp);
+  cbdc_vec_free_secret (tmp);
+  *outlen = len;
+  return len == CBDC_USERSTATELEN;
 }
 
 /* attrs: 5*32 bytes. Returns 1 on success. */
@@ -1153,26 +1385,22 @@ cbdc_user_import (cbdc_user_state_t state, const uint8_t *in, size_t inlen,
 
   cbdc_pp_init ();
 
-  if (inlen != CBDC_USERSTATELEN)
+  if (!state->ready || inlen != CBDC_USERSTATELEN || attrs == NULL)
     return 0;
   polyvec_alloc (r, cbdc_ring, 16);
-  if (cbdc_dec_vec (r, in, inlen) < 0)
+  if (cbdc_dec_vec (r, in, inlen) != (long)CBDC_USERSTATELEN)
     {
-      polyvec_free (r);
+      cbdc_vec_free_secret (r);
       return 0;
     }
   int_set_i64 (bnd, CBDC_L2SQR_BND_R);
   polyvec_l2sqr (l2sqr, r);
   if (int_gt (l2sqr, bnd))
     {
-      polyvec_free (r);
+      cbdc_vec_free_secret (r);
       return 0;
     }
-  if (state->masked)
-    {
-      polyvec_free (state->r);
-      polyvec_free (state->m);
-    }
+  cbdc_user_forget (state);
   polyvec_alloc (m, cbdc_ring, CBDC_NATTRS);
   cbdc_encattrs (m, attrs, CBDC_NATTRS);
   state->r[0] = r[0];
@@ -1192,34 +1420,53 @@ cbdc_attrs_ok (const uint8_t *attrs)
 
   cbdc_pp_init ();
 
+  if (attrs == NULL)
+    return 0;
   polyvec_alloc (m, cbdc_ring, CBDC_NATTRS);
   cbdc_encattrs (m, attrs, CBDC_NATTRS);
-  int_set_i64 (bnd, 91 * 91);
+  int_set_i64 (bnd, CBDC_L2SQR_BND_ATTRS);
   polyvec_l2sqr (l2sqr, m);
   b = !int_gt (l2sqr, bnd);
-  polyvec_free (m);
+  cbdc_vec_free_secret (m);
   return b;
 }
 
 /* issuer */
 
-void
+/*
+ * Returns 1 on success, 0 if privkey is not a well-formed Falcon-512 private
+ * key whose public key is pubkey, in which case state is zeroed and need not
+ * be cleared.
+ */
+int
 cbdc_issuer_init (cbdc_issuer_state_t state, const uint8_t pubkey[897],
                   const uint8_t privkey[1281])
 {
   cbdc_pp_init ();
 
   memset (state, 0, sizeof (cbdc_issuer_state_t));
+  if (pubkey == NULL || privkey == NULL
+      || falcon_check_keypair (privkey, pubkey) != 0)
+    return 0;
   memcpy (state->sk, privkey, sizeof (state->sk));
   cbdc_derive_c0 (state->c0, pubkey);
   lin_verifier_init (state->p1, cbdc_p1pp, p1_param);
+  state->ready = 1;
+  return 1;
 }
 
+/* Release the state and wipe the private key; it may be called more than once. */
 void
 cbdc_issuer_clear (cbdc_issuer_state_t state)
 {
+  if (!state->ready)
+    {
+      cbdc_wipe (state->sk, sizeof (state->sk));
+      return;
+    }
   lin_verifier_clear (state->p1);
   polyvec_free (state->c0);
+  cbdc_wipe (state, sizeof (cbdc_issuer_state_t));
 }
 
 /*
@@ -1234,7 +1481,6 @@ cbdc_issuer_issue (cbdc_issuer_state_t state, uint8_t *cred, size_t *credlen,
 {
   polyvec_t m, t, u, tau, tmp, tp, s1v, s2v;
   polymat_t A, ATAU;
-  uint8_t *masked = NULL;
   poly_t fp;
   int16_t tf[512], s1[512], s2[512];
   int64_t c[512];
@@ -1247,19 +1493,20 @@ cbdc_issuer_issue (cbdc_issuer_state_t state, uint8_t *cred, size_t *credlen,
 
   cbdc_pp_init ();
 
-  if (!cbdc_idx_valid (idx_rev, nrev))
+  if (!state->ready || cred == NULL || credlen == NULL || attrs_rev == NULL
+      || (nrev > 0 && idx_rev == NULL) || !cbdc_idx_valid (idx_rev, nrev)
+      || masked_attrs == NULL || masked_attrslen == 0
+      || masked_attrslen > cbdc_maxlen_masked_attrs ())
     return 0;
+  *credlen = 0;
 
   polyvec_alloc (m, cbdc_ring, CBDC_NATTRS);
   cbdc_encattrs (m, attrs_rev, CBDC_NATTRS);
 
-  /* decode masked attributes */
-  masked = cbdc_padded (masked_attrs, masked_attrslen,
-                        cbdc_maxlen_masked_attrs ());
+  /* decode masked attributes, never reading past masked_attrslen bytes */
   polyvec_alloc (t, cbdc_ring, 8);
-  if (masked == NULL)
-    goto err_t;
-  tlen = cbdc_dec_vec (t, masked, masked_attrslen < 1024 ? masked_attrslen : 1024);
+  tlen = cbdc_dec_vec (t, masked_attrs,
+                       masked_attrslen < 1024 ? masked_attrslen : 1024);
   if (tlen < 0)
     goto err_t;
   off = (size_t)tlen;
@@ -1267,7 +1514,8 @@ cbdc_issuer_issue (cbdc_issuer_state_t state, uint8_t *cred, size_t *credlen,
   /* verify proof for PoK(w): Aw + u = 0 */
   cbdc_p1_statement (A, u, t, idx_rev, nrev, m);
   lin_verifier_set_statement (state->p1, A, u);
-  b = lin_verifier_verify (state->p1, masked + off, &len);
+  b = lin_verifier_verify_ctx_bnd (state->p1, masked_attrs + off,
+                                   masked_attrslen - off, &len, NULL, 0);
   polyvec_free (u);
   polymat_free (A);
   if (b != 1 || off + len != masked_attrslen)
@@ -1296,7 +1544,15 @@ cbdc_issuer_issue (cbdc_issuer_state_t state, uint8_t *cred, size_t *credlen,
   poly_get_coeffvec_i64 (c, fp);
   for (i = 0; i < 512; i++)
     tf[i] = (int16_t)c[i];
-  falcon_preimage_sample (s1, s2, tf, state->sk);
+  if (falcon_preimage_sample_chk (s1, s2, tf, state->sk) != 0)
+    {
+      b = 0;
+      poly_free (fp);
+      polyvec_free (tau);
+      polyvec_free (tmp);
+      polyvec_free (tp);
+      goto err_t;
+    }
 
   polyvec_alloc (s1v, cbdc_ring, 8);
   polyvec_alloc (s2v, cbdc_ring, 8);
@@ -1305,25 +1561,28 @@ cbdc_issuer_issue (cbdc_issuer_state_t state, uint8_t *cred, size_t *credlen,
   poly_set_coeffvec_i16 (fp, s2);
   poly_toisoring (s2v, fp);
 
-  /* encode blindsig tau,s1,s2 */
-  coder_enc_begin (cstate, cred);
+  /* encode blindsig tau,s1,s2 into at most cbdc_maxlen_cred() bytes */
+  coder_enc_begin_bnd (cstate, cred, cbdc_maxlen_cred ());
   coder_enc_bytes (cstate, tau_, sizeof (tau_));
   coder_enc_grandom3 (cstate, s1v, CBDC_LOG2O_BLINDSIG);
   coder_enc_grandom3 (cstate, s2v, CBDC_LOG2O_BLINDSIG);
   coder_enc_end (cstate);
   len = coder_get_offset (cstate);
-  ASSERT_ERR (len % 8 == 0);
-  *credlen = len >> 3;
-  b = 1;
+  b = !coder_get_err (cstate) && len % 8 == 0
+      && (len >> 3) <= cbdc_maxlen_cred ();
+  *credlen = b ? len >> 3 : 0;
 
+  cbdc_wipe (s1, sizeof (s1));
+  cbdc_wipe (s2, sizeof (s2));
+  cbdc_wipe (tau_, sizeof (tau_));
+  poly_wipe (fp);
   poly_free (fp);
-  polyvec_free (tau);
+  cbdc_vec_free_secret (tau);
   polyvec_free (tmp);
   polyvec_free (tp);
-  polyvec_free (s1v);
-  polyvec_free (s2v);
+  cbdc_vec_free_secret (s1v);
+  cbdc_vec_free_secret (s2v);
 err_t:
-  free (masked);
   polyvec_free (t);
   polyvec_free (m);
   return b;
@@ -1331,23 +1590,34 @@ err_t:
 
 /* verifier */
 
-void
+/*
+ * Returns 1 on success, 0 if pubkey is not a valid Falcon-512 public key, in
+ * which case state is zeroed and need not be cleared.
+ */
+int
 cbdc_verifier_init (cbdc_verifier_state_t state, const uint8_t pubkey[897])
 {
   cbdc_pp_init ();
 
   memset (state, 0, sizeof (cbdc_verifier_state_t));
-  cbdc_decode_pk (state->B2, pubkey);
+  if (!cbdc_decode_pk (state->B2, pubkey))
+    return 0;
   cbdc_derive_c0 (state->c0, pubkey);
   lin_verifier_init (state->p2, cbdc_p2pp, p2_param);
+  state->ready = 1;
+  return 1;
 }
 
+/* Release the state; it may be called more than once. */
 void
 cbdc_verifier_clear (cbdc_verifier_state_t state)
 {
+  if (!state->ready)
+    return;
   lin_verifier_clear (state->p2);
   polymat_free (state->B2);
   polyvec_free (state->c0);
+  memset (state, 0, sizeof (cbdc_verifier_state_t));
 }
 
 /*
@@ -1366,17 +1636,16 @@ cbdc_verifier_presver (cbdc_verifier_state_t state, const uint8_t *attrs_rev,
   polyvec_t m, u;
   polyvec_t nymv[CBDC_MAXCOM];
   polymat_t A;
-  uint8_t *presbuf;
   size_t len = 0;
   unsigned int i, nok = 0;
   int b = 0;
 
   cbdc_pp_init ();
 
-  if (!cbdc_com_valid (idx_rev, nrev, idx_com, ncom))
-    return 0;
-  presbuf = cbdc_padded (pres, preslen, cbdc_maxlen_pres ());
-  if (presbuf == NULL)
+  if (!state->ready || attrs_rev == NULL || (nrev > 0 && idx_rev == NULL)
+      || (ncom > 0 && (idx_com == NULL || nyms == NULL || nymlens == NULL))
+      || !cbdc_com_valid (idx_rev, nrev, idx_com, ncom) || pres == NULL
+      || preslen == 0 || preslen > cbdc_maxlen_pres ())
     return 0;
   for (i = 0; i < ncom; i++)
     {
@@ -1393,7 +1662,8 @@ cbdc_verifier_presver (cbdc_verifier_state_t state, const uint8_t *attrs_rev,
   cbdc_p2_statement (A, u, state->B2, state->c0, m, idx_rev, nrev, nymv,
                      idx_com, ncom);
   lin_verifier_set_statement (state->p2, A, u);
-  b = lin_verifier_verify_ctx (state->p2, presbuf, &len, ctx, ctxlen);
+  b = lin_verifier_verify_ctx_bnd (state->p2, pres, preslen, &len, ctx,
+                                   ctxlen);
   if (b == 1 && len != preslen)
     b = 0;
 
@@ -1403,7 +1673,6 @@ cbdc_verifier_presver (cbdc_verifier_state_t state, const uint8_t *attrs_rev,
 out:
   for (i = 0; i < nok; i++)
     polyvec_free (nymv[i]);
-  free (presbuf);
   return b == 1;
 }
 
@@ -1415,23 +1684,19 @@ cbdc_verifier_sokverify (const uint8_t *nym, size_t nymlen,
   lin_verifier_state_t verifier;
   polyvec_t nymv, t;
   polymat_t Acom;
-  uint8_t *proofbuf;
   size_t len = 0;
   int b = 0;
 
   cbdc_pp_init ();
 
-  if (nymlen != CBDC_NYMLEN)
-    return 0;
-  proofbuf = cbdc_padded (proof, proofl, cbdc_maxlen_sok ());
-  if (proofbuf == NULL)
+  if (nymlen != CBDC_NYMLEN || proof == NULL || proofl == 0
+      || proofl > cbdc_maxlen_sok ())
     return 0;
 
   polyvec_alloc (nymv, cbdc_ring, CBDC_COM_ROWS);
   if (cbdc_dec_vec (nymv, nym, nymlen) != (long)CBDC_NYMLEN)
     {
       polyvec_free (nymv);
-      free (proofbuf);
       return 0;
     }
   cbdc_sok_statement (t, nymv);
@@ -1439,7 +1704,7 @@ cbdc_verifier_sokverify (const uint8_t *nym, size_t nymlen,
 
   lin_verifier_init (verifier, cbdc_popenpp, popen_param);
   lin_verifier_set_statement (verifier, Acom, t);
-  b = lin_verifier_verify_ctx (verifier, proofbuf, &len, ctx, ctxlen);
+  b = lin_verifier_verify_ctx_bnd (verifier, proof, proofl, &len, ctx, ctxlen);
   if (b == 1 && len != proofl)
     b = 0;
   lin_verifier_clear (verifier);
@@ -1447,6 +1712,43 @@ cbdc_verifier_sokverify (const uint8_t *nym, size_t nymlen,
   polymat_free (Acom);
   polyvec_free (t);
   polyvec_free (nymv);
-  free (proofbuf);
   return b == 1;
+}
+
+/*
+ * Bit offset of the hints in an encoded proof of the proof system which (1:
+ * P1, 2: P2, 3: SoK), 0 for another value. The hints follow the fixed-width
+ * part of the proof (tB, h, tA1, c) and start the variable-length part. Only
+ * used to craft malformed proofs in tests.
+ */
+size_t
+cbdc_proof_hint_offset (int which)
+{
+  const lin_params_struct *params;
+  lnp_tbox_params_srcptr P;
+  abdlop_params_srcptr T;
+  size_t log2q, D;
+
+  switch (which)
+    {
+    case 1:
+      params = p1_param;
+      break;
+    case 2:
+      params = p2_param;
+      break;
+    case 3:
+      params = popen_param;
+      break;
+    default:
+      return 0;
+    }
+  P = params->tbox_params;
+  T = P->tbox;
+  log2q = T->ring->log2q;
+  D = P->quad_eval->quad_many->dcompress->D;
+  return (size_t)(T->l + T->lext) * T->ring->d * log2q
+         + (size_t)(P->quad_eval->lambda / 2) * T->ring->d * log2q
+         + (size_t)T->kmsis * T->ring->d * (log2q - D)
+         + (size_t)T->ring->d * T->log2omega;
 }

@@ -229,12 +229,24 @@ func (k *KeyManager) Identity(ctx context.Context, auditInfo []byte) (*idriver.I
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to serialize the identity")
 	}
-	ai := &AuditInfo{EID: eid, RH: rh, OpeningEID: comEID.Opening(), OpeningRH: comRH.Opening()}
+	openingEID, err := comEID.Opening()
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to export the opening of nymEID")
+	}
+	openingRH, err := comRH.Opening()
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to export the opening of nymRH")
+	}
+	ai := &AuditInfo{EID: eid, RH: rh, OpeningEID: openingEID, OpeningRH: openingRH}
 	aiRaw, err := ai.Bytes()
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to serialize the audit info")
 	}
-	signerInfo := &SignerInfo{OpeningSK: comSK.Opening(), Pres: pres}
+	openingSK, err := comSK.Opening()
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to export the opening of nymSK")
+	}
+	signerInfo := &SignerInfo{OpeningSK: openingSK, Pres: pres}
 	signerInfoRaw, err := json.Marshal(signerInfo)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to serialize the signer info")

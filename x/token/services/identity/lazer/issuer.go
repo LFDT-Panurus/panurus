@@ -63,7 +63,11 @@ func IssueSignerConfig(isk, ipk []byte, ou, role, eid, rh string) (*SignerConfig
 		return nil, errors.Wrap(err, "issued credential is invalid")
 	}
 
-	secret := append(append([]byte(nil), attrs[IdxUSK]...), user.Export()...)
+	state, err := user.Export()
+	if err != nil {
+		return nil, err
+	}
+	secret := append(append([]byte(nil), attrs[IdxUSK]...), state...)
 
 	return &SignerConfig{
 		Cred:             cred,
