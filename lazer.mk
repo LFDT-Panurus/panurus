@@ -14,7 +14,13 @@
 #   (unset)                    LAZER_REPO at the pinned LAZER_COMMIT (the default)
 #   LAZER_REF=<branch or tag>  LAZER_REPO at that ref instead of the pinned commit
 #   LAZER_SRC=/path/to/lazer   copy of a local checkout (it is never built in place)
-# The revision that was built is recorded in $(LAZER_PREFIX)/REVISION.
+# Either way, the Panurus-local patches in $(LAZER_PATCHES) (described in
+# docs/services/identity-lazer.md, "lazer revision")
+# are then applied, in lexical order, to the copy in $(LAZER_BUILD); the
+# LAZER_SRC checkout itself is never modified. A patch that does not apply
+# exactly (no fuzz, not already applied) fails the build. The revision that
+# was built and the applied patches with their sha256 are recorded in
+# $(LAZER_PREFIX)/REVISION.
 #
 # Examples:
 #   make lazer-install LAZER_SRC=$$HOME/go/src/github.com/lazer-crypto/lazer
@@ -40,6 +46,10 @@ LAZER_SRC    ?=
 # lazer's tests/abdlop-test fails its randomized check at line 146 in about 90%
 # of the runs when built with -O2, against a few percent with the default -O3.
 LAZER_CFLAGS ?=
+# Panurus-local fixes to lazer, applied by lazer-fetch. They are part of the
+# input of the build, so the CI cache key of .lazer includes them.
+LAZER_PATCHES := $(CURDIR)/$(LAZER_MODULE)/patches
+LAZER_SHA256  := $(shell command -v sha256sum >/dev/null 2>&1 && echo sha256sum || echo 'shasum -a 256')
 LAZER_LIBS    = $(LAZER_PREFIX)/lib/liblazer.a $(LAZER_PREFIX)/lib/libhexl.a $(LAZER_PREFIX)/include/lazer.h $(LAZER_PREFIX)/include/src/moduli.h
 
 .PHONY: lazer-install
@@ -82,6 +92,16 @@ else
 	       "$$(test -z "$$(git -C $(LAZER_SRC) status --porcelain --untracked-files=no)" || echo ' (with uncommitted changes)')"; \
 	   else echo 'commit: unknown (not a git checkout)'; fi; } > $(LAZER_BUILD)/.lazer-revision
 endif
+	@# apply the Panurus-local patches strictly: no fuzz, no reversed or
+	@# already applied patch, no partial application
+	@printf 'patches:\n' >> $(LAZER_BUILD)/.lazer-revision
+	@set -e; for p in $$(ls $(LAZER_PATCHES)/*.patch 2>/dev/null | LC_ALL=C sort); do \
+		echo "Applying $$(basename $$p)"; \
+		patch --forward --strip=1 --fuzz=0 --batch --quiet -d $(LAZER_BUILD) -i $$p \
+			|| { echo "lazer patch $$(basename $$p) does not apply to $(LAZER_BUILD)"; exit 1; }; \
+		printf '  %s  %s\n' "$$($(LAZER_SHA256) < $$p | cut -d' ' -f1)" "$$(basename $$p)" \
+			>> $(LAZER_BUILD)/.lazer-revision; \
+	done
 
 .PHONY: lazer-check
 # check that lazer is installed
