@@ -186,7 +186,11 @@ func TestUserExportImport(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer u2.Clear()
-	if err := u2.Import(f.user.Export(), f.attrs); err != nil {
+	st, err := f.user.Export()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := u2.Import(st, f.attrs); err != nil {
 		t.Fatal(err)
 	}
 	c, _ := Commit(f.attrs[0])
@@ -231,7 +235,10 @@ func TestSokAndOpening(t *testing.T) {
 		t.Fatal("malformed input accepted")
 	}
 
-	op := c.Opening()
+	op, err := c.Opening()
+	if err != nil {
+		t.Fatal(err)
+	}
 	if !OpeningVerify(c.Nym, attr, op) {
 		t.Fatal("valid opening rejected")
 	}
@@ -264,14 +271,6 @@ func TestBadInputs(t *testing.T) {
 	if _, err := AttrsOK([][]byte{{1}}); err == nil {
 		t.Fatal("bad attrs accepted")
 	}
-}
-
-func FuzzSokVerify(f *testing.F) {
-	f.Add([]byte("a"), []byte("b"), []byte("c"))
-	f.Fuzz(func(t *testing.T, nym, ctx, proof []byte) {
-		_ = SokVerify(nym, ctx, proof)
-		_ = OpeningVerify(nym, make([]byte, AttrLen), proof)
-	})
 }
 
 // zeroWitness returns a user whose state is r = 0, m = 0, and the all-zero

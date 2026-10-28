@@ -143,7 +143,7 @@ func run() {
 		if err := anoncreds.SokVerify(com.Nym, ctx, proof); err != nil {
 			fail("nym proof invalid.")
 		}
-		if !anoncreds.OpeningVerify(com.Nym, attrs[i], com.Opening()) {
+		if !anoncreds.OpeningVerify(com.Nym, attrs[i], must(com.Opening())) {
 			fail("nym opening invalid.")
 		}
 	}

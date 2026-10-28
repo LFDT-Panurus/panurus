@@ -13,7 +13,9 @@ SPDX-License-Identifier: Apache-2.0
 // liblazer.a, which `make lazer-install` installs into <repo>/.lazer.
 //
 // All inputs that can come from an untrusted party are length checked here and
-// again in C; no function panics on malformed input.
+// again in C, and the C decoders never read past the input they are given; no
+// function panics or exits on malformed input. Methods called on a cleared
+// (or zero) User, Issuer, Verifier or Commitment return ErrInvalid.
 //
 //nolint:nlreturn // cgo rewrites calls into C into code with a return statement on the same line
 package anoncreds
@@ -29,6 +31,7 @@ package anoncreds
 */
 import "C"
 import (
+	"runtime"
 	"unsafe"
 
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
@@ -45,6 +48,9 @@ const (
 
 // ErrInvalid is returned when an input is malformed or a proof does not verify.
 var ErrInvalid = errors.New("anoncreds: invalid input")
+
+// errCleared is returned by the methods of an object that was cleared.
+var errCleared = errors.Wrap(ErrInvalid, "object was cleared")
 
 // User holds the state of a credential holder. It owns C memory, release it with Clear.
 type User struct{ c *C.cbdc_user_state_struct }
@@ -83,6 +89,8 @@ func idxptr(idx []uint32) (*C.uint, C.uint) {
 	return (*C.uint)(unsafe.Pointer(&idx[0])), C.uint(len(idx))
 }
 
+// checkAttrs returns the NAttrs attributes concatenated. The copy may hold
+// secret attributes: the caller must wipe it.
 func checkAttrs(attrs [][]byte) ([]byte, error) {
 	if len(attrs) != NAttrs {
 		return nil, errors.Wrapf(ErrInvalid, "expected %d attributes", NAttrs)
@@ -90,6 +98,8 @@ func checkAttrs(attrs [][]byte) ([]byte, error) {
 	flat := make([]byte, 0, NAttrs*AttrLen)
 	for _, a := range attrs {
 		if len(a) != AttrLen {
+			wipe(flat[:cap(flat)])
+
 			return nil, errors.Wrapf(ErrInvalid, "attribute length != %d", AttrLen)
 		}
 		flat = append(flat, a...)
@@ -98,9 +108,37 @@ func checkAttrs(attrs [][]byte) ([]byte, error) {
 	return flat, nil
 }
 
+// wipe overwrites b with zeros.
+func wipe(b []byte) {
+	clear(b)
+	// keep the stores from being optimized away
+	runtime.KeepAlive(b)
+}
+
 // ParamsOK reports whether the proof system parameters match the constants of
-// the scheme (number of rows of the commitment key, maximal number of nyms).
+// the scheme: dimensions, witness layout and every norm bound that anoncreds.c
+// hard-codes.
 func ParamsOK() bool { return C.cbdc_params_ok() == 1 }
+
+// paramsCheck returns 0 if ParamsOK, else the number of the first failed check.
+func paramsCheck() int { return int(C.cbdc_params_check()) }
+
+// Proof systems, for proofHintOffset.
+const (
+	proofP1  = 1
+	proofP2  = 2
+	proofSok = 3
+)
+
+// proofHintOffset returns the bit offset of the hints in an encoded proof of
+// the given system (see cbdc_proof_hint_offset). Tests use it to craft
+// malformed proofs.
+func proofHintOffset(system int) int { return int(C.cbdc_proof_hint_offset(C.int(system))) }
+
+// PubKeyOK reports whether pubkey is a well-formed Falcon-512 public key.
+func PubKeyOK(pubkey []byte) bool {
+	return len(pubkey) == PubKeyLen && C.cbdc_pubkey_ok(ptr(pubkey)) == 1
+}
 
 // MaxLen* are the maximal lengths of the respective encodings.
 func MaxLenMaskedAttrs() int { return int(C.cbdc_maxlen_masked_attrs()) }
@@ -144,20 +182,28 @@ func AttrsOK(attrs [][]byte) (bool, error) {
 	return C.cbdc_attrs_ok(ptr(flat)) == 1, nil
 }
 
-// NewUser returns a user for the issuer public key pubkey.
+// NewUser returns a user for the issuer public key pubkey. It returns
+// ErrInvalid if pubkey is not a well-formed Falcon-512 public key.
 func NewUser(pubkey []byte) (*User, error) {
 	if len(pubkey) != PubKeyLen {
 		return nil, errors.Wrapf(ErrInvalid, "len(pubkey) != %d", PubKeyLen)
 	}
-	u := &User{c: (*C.cbdc_user_state_struct)(C.calloc(1, C.sizeof_cbdc_user_state_struct))}
-	C.cbdc_user_init(u.c, ptr(pubkey))
+	c := (*C.cbdc_user_state_struct)(C.calloc(1, C.sizeof_cbdc_user_state_struct))
+	if c == nil {
+		return nil, errors.New("anoncreds: out of memory")
+	}
+	if C.cbdc_user_init(c, ptr(pubkey)) != 1 {
+		C.free(unsafe.Pointer(c))
 
-	return u, nil
+		return nil, errors.Wrapf(ErrInvalid, "malformed issuer public key")
+	}
+
+	return &User{c: c}, nil
 }
 
 // Clear releases the C state. The User must not be used afterwards.
 func (u *User) Clear() {
-	if u.c == nil {
+	if u == nil || u.c == nil {
 		return
 	}
 	C.cbdc_user_clear(u.c)
@@ -166,38 +212,58 @@ func (u *User) Clear() {
 }
 
 // MaskAttrs outputs the masked attributes (t,P1); idxRev are the indices of
-// the attributes revealed to the issuer.
+// the attributes revealed to the issuer. It returns ErrInvalid if the
+// attributes do not satisfy AttrsOK or an index is out of range; a previous
+// masking of the user is kept then.
 func (u *User) MaskAttrs(attrs [][]byte, idxRev []uint32) ([]byte, error) {
+	if u == nil || u.c == nil {
+		return nil, errCleared
+	}
 	flat, err := checkAttrs(attrs)
 	if err != nil {
 		return nil, err
 	}
+	defer wipe(flat)
+	if C.cbdc_attrs_ok(ptr(flat)) != 1 {
+		return nil, errors.Wrapf(ErrInvalid, "attributes exceed the norm bound, see AttrsOK")
+	}
 	out := make([]byte, C.cbdc_maxlen_masked_attrs())
 	var outl C.size_t
 	ir, nrev := idxptr(idxRev)
-	C.cbdc_user_maskattrs(u.c, ptr(out), &outl, ptr(flat), ir, nrev)
+	if C.cbdc_user_maskattrs(u.c, ptr(out), &outl, ptr(flat), ir, nrev) != 1 {
+		return nil, errors.Wrapf(ErrInvalid, "masking failed")
+	}
 
 	return out[:outl], nil
 }
 
 // Export returns the secret masking randomness of the user, to be combined
-// with the attributes in Import. It requires a previous call to MaskAttrs or
-// Import.
-func (u *User) Export() []byte {
+// with the attributes in Import. It returns ErrInvalid unless MaskAttrs or
+// Import succeeded before.
+func (u *User) Export() ([]byte, error) {
+	if u == nil || u.c == nil {
+		return nil, errCleared
+	}
 	out := make([]byte, C.cbdc_maxlen_userstate())
 	var outl C.size_t
-	C.cbdc_user_export(u.c, ptr(out), &outl)
+	if C.cbdc_user_export(u.c, ptr(out), &outl) != 1 {
+		return nil, errors.Wrapf(ErrInvalid, "no masking to export, call MaskAttrs or Import first")
+	}
 
-	return out[:outl]
+	return out[:outl], nil
 }
 
 // Import restores the state exported by Export; attrs are the attributes that
 // were masked.
 func (u *User) Import(state []byte, attrs [][]byte) error {
+	if u == nil || u.c == nil {
+		return errCleared
+	}
 	flat, err := checkAttrs(attrs)
 	if err != nil {
 		return err
 	}
+	defer wipe(flat)
 	rc := C.cbdc_user_import(u.c, ptr(state), C.size_t(len(state)), ptr(flat))
 	if rc != 1 {
 		return errors.Wrapf(ErrInvalid, "user state")
@@ -209,6 +275,9 @@ func (u *User) Import(state []byte, attrs [][]byte) error {
 // CredVerify checks the credential against the state of the user (after
 // MaskAttrs or Import) without running a proof.
 func (u *User) CredVerify(cred []byte) error {
+	if u == nil || u.c == nil {
+		return errCleared
+	}
 	rc := C.cbdc_user_credverify(u.c, ptr(cred), C.size_t(len(cred)))
 	if rc != 1 {
 		return errors.Wrapf(ErrInvalid, "credential")
@@ -220,7 +289,10 @@ func (u *User) CredVerify(cred []byte) error {
 // PresGen outputs a presentation bound to ctx. coms[i] is the commitment to
 // the attribute with index idxCom[i].
 func (u *User) PresGen(cred []byte, idxRev []uint32, coms []*Commitment, idxCom []uint32, ctx []byte) ([]byte, error) {
-	if len(coms) != len(idxCom) {
+	if u == nil || u.c == nil {
+		return nil, errCleared
+	}
+	if len(coms) != len(idxCom) || len(coms) > MaxCom {
 		return nil, errors.Wrapf(ErrInvalid, "len(coms) != len(idxCom)")
 	}
 	if len(cred) > MaxLenCred() {
@@ -238,6 +310,9 @@ func (u *User) PresGen(cred []byte, idxRev []uint32, coms []*Commitment, idxCom 
 		defer C.free(mem)
 		s := unsafe.Slice(carr, len(coms))
 		for i, c := range coms {
+			if c == nil || c.c == nil {
+				return nil, errCleared
+			}
 			s[i] = c.c
 		}
 	}
@@ -257,11 +332,17 @@ func Commit(attr []byte) (*Commitment, error) {
 	}
 	nym := make([]byte, C.cbdc_maxlen_nym())
 	var nymlen C.size_t
-	com := &Commitment{c: (*C.cbdc_commit_struct)(C.calloc(1, C.sizeof_cbdc_commit_struct))}
-	C.cbdc_user_commit(com.c, ptr(nym), &nymlen, ptr(attr))
-	com.Nym = nym[:nymlen]
+	c := (*C.cbdc_commit_struct)(C.calloc(1, C.sizeof_cbdc_commit_struct))
+	if c == nil {
+		return nil, errors.New("anoncreds: out of memory")
+	}
+	if C.cbdc_user_commit(c, ptr(nym), &nymlen, ptr(attr)) != 1 {
+		C.free(unsafe.Pointer(c))
 
-	return com, nil
+		return nil, errors.Wrapf(ErrInvalid, "commitment failed")
+	}
+
+	return &Commitment{c: c, Nym: nym[:nymlen]}, nil
 }
 
 // CommitWithOpening rebuilds the commitment to attr from an opening returned by
@@ -272,41 +353,55 @@ func CommitWithOpening(attr []byte, opening []byte) (*Commitment, error) {
 	}
 	nym := make([]byte, C.cbdc_maxlen_nym())
 	var nymlen C.size_t
-	com := &Commitment{c: (*C.cbdc_commit_struct)(C.calloc(1, C.sizeof_cbdc_commit_struct))}
-	if C.cbdc_commit_import(com.c, ptr(nym), &nymlen, ptr(attr), ptr(opening), C.size_t(len(opening))) != 1 {
-		C.free(unsafe.Pointer(com.c))
+	c := (*C.cbdc_commit_struct)(C.calloc(1, C.sizeof_cbdc_commit_struct))
+	if c == nil {
+		return nil, errors.New("anoncreds: out of memory")
+	}
+	if C.cbdc_commit_import(c, ptr(nym), &nymlen, ptr(attr), ptr(opening), C.size_t(len(opening))) != 1 {
+		C.free(unsafe.Pointer(c))
 
 		return nil, errors.Wrapf(ErrInvalid, "opening")
 	}
-	com.Nym = nym[:nymlen]
 
-	return com, nil
+	return &Commitment{c: c, Nym: nym[:nymlen]}, nil
 }
 
 // Opening returns the serialized randomness of the commitment.
-func (c *Commitment) Opening() []byte {
+func (c *Commitment) Opening() ([]byte, error) {
+	if c == nil || c.c == nil {
+		return nil, errCleared
+	}
 	out := make([]byte, C.cbdc_maxlen_opening())
 	var outl C.size_t
-	C.cbdc_commit_export(c.c, ptr(out), &outl)
+	if C.cbdc_commit_export(c.c, ptr(out), &outl) != 1 {
+		return nil, errors.Wrapf(ErrInvalid, "opening")
+	}
 
-	return out[:outl]
+	return out[:outl], nil
 }
 
 // SokProve proves knowledge of the opening of the commitment, bound to ctx.
+// attr must be the attribute the commitment was made to, else ErrInvalid is
+// returned.
 func (c *Commitment) SokProve(ctx []byte, attr []byte) ([]byte, error) {
+	if c == nil || c.c == nil {
+		return nil, errCleared
+	}
 	if len(attr) != AttrLen {
 		return nil, errors.Wrapf(ErrInvalid, "attribute length != %d", AttrLen)
 	}
 	proof := make([]byte, C.cbdc_maxlen_sok())
 	var proofl C.size_t
-	C.cbdc_user_sokprove(ptr(proof), &proofl, c.c, ptr(ctx), C.size_t(len(ctx)), ptr(attr))
+	if C.cbdc_user_sokprove(ptr(proof), &proofl, c.c, ptr(ctx), C.size_t(len(ctx)), ptr(attr)) != 1 {
+		return nil, errors.Wrapf(ErrInvalid, "the commitment does not commit to attr")
+	}
 
 	return proof[:proofl], nil
 }
 
 // Clear releases the C memory of the commitment.
 func (c *Commitment) Clear() {
-	if c.c == nil {
+	if c == nil || c.c == nil {
 		return
 	}
 	C.cbdc_commit_clear(c.c)
@@ -323,7 +418,9 @@ func OpeningVerify(nym, attr, opening []byte) bool {
 	return C.cbdc_opening_verify(ptr(nym), C.size_t(len(nym)), ptr(attr), ptr(opening), C.size_t(len(opening))) == 1
 }
 
-// NewIssuer returns an issuer for the key pair (pubkey, privkey).
+// NewIssuer returns an issuer for the key pair (pubkey, privkey). It returns
+// ErrInvalid if privkey is not a well-formed Falcon-512 private key whose
+// public key is pubkey.
 func NewIssuer(pubkey []byte, privkey []byte) (*Issuer, error) {
 	if len(pubkey) != PubKeyLen {
 		return nil, errors.Wrapf(ErrInvalid, "len(pubkey) != %d", PubKeyLen)
@@ -331,15 +428,22 @@ func NewIssuer(pubkey []byte, privkey []byte) (*Issuer, error) {
 	if len(privkey) != PrivKeyLen {
 		return nil, errors.Wrapf(ErrInvalid, "len(privkey) != %d", PrivKeyLen)
 	}
-	s := &Issuer{c: (*C.cbdc_issuer_state_struct)(C.calloc(1, C.sizeof_cbdc_issuer_state_struct))}
-	C.cbdc_issuer_init(s.c, ptr(pubkey), ptr(privkey))
+	c := (*C.cbdc_issuer_state_struct)(C.calloc(1, C.sizeof_cbdc_issuer_state_struct))
+	if c == nil {
+		return nil, errors.New("anoncreds: out of memory")
+	}
+	if C.cbdc_issuer_init(c, ptr(pubkey), ptr(privkey)) != 1 {
+		C.free(unsafe.Pointer(c))
 
-	return s, nil
+		return nil, errors.Wrapf(ErrInvalid, "malformed or mismatched issuer key pair")
+	}
+
+	return &Issuer{c: c}, nil
 }
 
 // Clear releases the C state. The Issuer must not be used afterwards.
 func (s *Issuer) Clear() {
-	if s.c == nil {
+	if s == nil || s.c == nil {
 		return
 	}
 	C.cbdc_issuer_clear(s.c)
@@ -351,10 +455,14 @@ func (s *Issuer) Clear() {
 // issuer (attrsRev, with unrevealed attributes zeroed) and outputs a
 // credential.
 func (s *Issuer) Issue(attrsRev [][]byte, idxRev []uint32, maskedAttrs []byte) ([]byte, error) {
+	if s == nil || s.c == nil {
+		return nil, errCleared
+	}
 	flat, err := checkAttrs(attrsRev)
 	if err != nil {
 		return nil, err
 	}
+	defer wipe(flat)
 	out := make([]byte, C.cbdc_maxlen_cred())
 	var outl C.size_t
 	ir, nrev := idxptr(idxRev)
@@ -367,20 +475,28 @@ func (s *Issuer) Issue(attrsRev [][]byte, idxRev []uint32, maskedAttrs []byte) (
 	return out[:outl], nil
 }
 
-// NewVerifier returns a verifier for the issuer public key pubkey.
+// NewVerifier returns a verifier for the issuer public key pubkey. It returns
+// ErrInvalid if pubkey is not a well-formed Falcon-512 public key.
 func NewVerifier(pubkey []byte) (*Verifier, error) {
 	if len(pubkey) != PubKeyLen {
 		return nil, errors.Wrapf(ErrInvalid, "len(pubkey) != %d", PubKeyLen)
 	}
-	v := &Verifier{c: (*C.cbdc_verifier_state_struct)(C.calloc(1, C.sizeof_cbdc_verifier_state_struct))}
-	C.cbdc_verifier_init(v.c, ptr(pubkey))
+	c := (*C.cbdc_verifier_state_struct)(C.calloc(1, C.sizeof_cbdc_verifier_state_struct))
+	if c == nil {
+		return nil, errors.New("anoncreds: out of memory")
+	}
+	if C.cbdc_verifier_init(c, ptr(pubkey)) != 1 {
+		C.free(unsafe.Pointer(c))
 
-	return v, nil
+		return nil, errors.Wrapf(ErrInvalid, "malformed issuer public key")
+	}
+
+	return &Verifier{c: c}, nil
 }
 
 // Clear releases the C state. The Verifier must not be used afterwards.
 func (v *Verifier) Clear() {
-	if v.c == nil {
+	if v == nil || v.c == nil {
 		return
 	}
 	C.cbdc_verifier_clear(v.c)
@@ -393,6 +509,9 @@ func (v *Verifier) Clear() {
 // (nyms[i] commits to the attribute idxCom[i]). A Verifier must not be used
 // concurrently.
 func (v *Verifier) PresVer(attrsRev [][]byte, idxRev []uint32, nyms [][]byte, idxCom []uint32, pres []byte, ctx []byte) error {
+	if v == nil || v.c == nil {
+		return errCleared
+	}
 	flat, err := checkAttrs(attrsRev)
 	if err != nil {
 		return err
