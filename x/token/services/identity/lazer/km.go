@@ -149,19 +149,48 @@ type KeyManager struct {
 	// siKey is the key that encrypts the signer infos at rest
 	siKey []byte
 
-	// mu protects user (presentation generation mutates it) and closed
+	// provers generate the presentations, nil for a remote key manager
+	provers *proverPool
+
+	// mu protects closed
 	mu     sync.Mutex
-	user   *anoncreds.User
 	closed bool
 
 	identityStore IdentityStoreService
+}
+
+// KeyManagerOption configures a key manager.
+type KeyManagerOption func(*keyManagerOptions)
+
+type keyManagerOptions struct {
+	limiter     *ProverLimiter
+	idleProvers int
+}
+
+// WithProverLimiter makes the key manager share limiter with other key
+// managers, bounding the presentations generated at the same time by all of
+// them. By default each key manager has its own limiter of DefaultProverLimit.
+func WithProverLimiter(limiter *ProverLimiter) KeyManagerOption {
+	return func(o *keyManagerOptions) { o.limiter = limiter }
+}
+
+// WithIdleProvers sets the number of prover states (about 10 MB each) the key
+// manager keeps between identity generations, 1 by default. With 0 no memory
+// is kept, but every identity generation pays the setup of a prover (about
+// 16 ms on top of about 120 ms).
+func WithIdleProvers(n int) KeyManagerOption {
+	return func(o *keyManagerOptions) { o.idleProvers = max(n, 0) }
 }
 
 // NewKeyManager creates a key manager from the configuration. The wallet secret
 // is taken from the configuration (and then stored in the keystore), or loaded
 // from the keystore through the SKI of the configuration. A configuration
 // without signer yields a remote key manager that can only verify.
-func NewKeyManager(conf *Config, keystore idriver.Keystore, identityStore IdentityStoreService) (*KeyManager, error) {
+func NewKeyManager(conf *Config, keystore idriver.Keystore, identityStore IdentityStoreService, opts ...KeyManagerOption) (*KeyManager, error) {
+	options := keyManagerOptions{idleProvers: defaultIdleProvers}
+	for _, opt := range opts {
+		opt(&options)
+	}
 	if conf == nil {
 		return nil, errors.New("no lazer config provided")
 	}
@@ -218,19 +247,23 @@ func NewKeyManager(conf *Config, keystore idriver.Keystore, identityStore Identi
 	if km.siKey, err = signerInfoKey(conf.IPK, secret); err != nil {
 		return nil, errors.Wrap(err, "failed to derive the signer info key")
 	}
-	if km.user, err = anoncreds.NewUser(conf.IPK); err != nil {
-		return nil, err
-	}
-	if err := km.user.Import(secret[anoncreds.AttrLen:], km.attrs); err != nil {
-		km.user.Clear()
-
+	tmpl, err := anoncreds.NewUserTemplate(conf.IPK, secret[anoncreds.AttrLen:], km.attrs)
+	if err != nil {
 		return nil, errors.Wrap(err, "failed to import the user state")
 	}
-	if err := km.user.CredVerify(conf.Signer.Cred); err != nil {
-		km.user.Clear()
+	first, err := tmpl.Clone()
+	if err != nil {
+		tmpl.Clear()
+
+		return nil, errors.Wrap(err, "failed to create a prover state")
+	}
+	if err := first.CredVerify(conf.Signer.Cred); err != nil {
+		first.Clear()
+		tmpl.Clear()
 
 		return nil, errors.Wrap(err, "credential is not cryptographically valid")
 	}
+	km.provers = newProverPool(tmpl, first, options.limiter, options.idleProvers)
 	km.remote = false
 	ok = true
 
@@ -239,15 +272,15 @@ func NewKeyManager(conf *Config, keystore idriver.Keystore, identityStore Identi
 
 // Close releases the C state held by the key manager. It is idempotent and
 // safe to call concurrently with the other methods; afterwards Identity and
-// the signer deserializers fail, and so do verifications. Signers already
+// the signer deserializers fail, and so do verifications. Identity calls
+// waiting for a prover fail, those in progress complete. Signers already
 // returned keep working: they own no C state.
 func (k *KeyManager) Close() {
 	k.mu.Lock()
-	defer k.mu.Unlock()
 	k.closed = true
-	if k.user != nil {
-		k.user.Clear()
-		k.user = nil
+	k.mu.Unlock()
+	if k.provers != nil {
+		k.provers.close()
 	}
 	k.pv.Close()
 }
@@ -295,7 +328,7 @@ func (k *KeyManager) Identity(ctx context.Context, auditInfo []byte) (*idriver.I
 		return nil, errors.New("remote key manager cannot generate identities")
 	}
 	if k.isClosed() {
-		return nil, errors.New("key manager closed")
+		return nil, errClosed
 	}
 	eid, rh := k.conf.Signer.EnrollmentID, k.conf.Signer.RevocationHandle
 	attrEID, attrRH := k.attrs[IdxEID], k.attrs[IdxRH]
@@ -336,14 +369,8 @@ func (k *KeyManager) Identity(ctx context.Context, auditInfo []byte) (*idriver.I
 	}
 	defer comSK.Clear()
 
-	k.mu.Lock()
-	var pres []byte
-	if !k.closed && k.user != nil {
-		pres, err = k.user.PresGen(k.conf.Signer.Cred, nil, []*anoncreds.Commitment{comSK, comEID, comRH}, idxCom, k.pv.ctx)
-	} else {
-		err = errors.New("key manager closed")
-	}
-	k.mu.Unlock()
+	// the user states are mutated by every presentation: one per call, from the pool
+	pres, err := k.present(ctx, []*anoncreds.Commitment{comSK, comEID, comRH})
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to generate the presentation")
 	}
@@ -391,6 +418,19 @@ func (k *KeyManager) Identity(ctx context.Context, auditInfo []byte) (*idriver.I
 	}, nil
 }
 
+// present generates the presentation of the commitments coms with a prover
+// state of the pool, given back even if PresGen panics: the limiter may be
+// shared with other key managers.
+func (k *KeyManager) present(ctx context.Context, coms []*anoncreds.Commitment) ([]byte, error) {
+	user, err := k.provers.get(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer k.provers.put(user)
+
+	return user.PresGen(k.conf.Signer.Cred, nil, coms, idxCom, k.pv.ctx)
+}
+
 // DeserializeVerifier returns the verifier of the given pseudonym.
 func (k *KeyManager) DeserializeVerifier(ctx context.Context, raw []byte) (tdriver.Verifier, error) {
 	return k.Deserializer.DeserializeVerifier(ctx, raw)
@@ -422,7 +462,7 @@ func (k *KeyManager) deserializeSigner(ctx context.Context, raw []byte) (*Signer
 		return nil, errors.New("no local wallet secret for this key manager")
 	}
 	if k.isClosed() {
-		return nil, errors.New("key manager closed")
+		return nil, errClosed
 	}
 	if k.identityStore == nil {
 		return nil, errors.New("no identity store available")
