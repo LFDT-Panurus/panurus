@@ -21,6 +21,9 @@ Code: `x/token/services/identity/lazer` (a separate Go module, because it uses c
 
 ## Scheme
 
+For a full technical description of the underlying cryptography (lattices, issuance, proofs, security) see
+[The Lazer Anonymous Credential Scheme](identity-lazer-anoncreds.md).
+
 A credential is issued by the issuer (a Falcon-512 key pair, `lazergen ca-keygen`) on five
 32-byte attributes:
 
@@ -190,6 +193,10 @@ files and is the reference for the scheme, not part of this module.
 
 ## Open issues
 
+0. **Unforgeability argument.** A credential-less forgery present in an earlier version (and in lazer's
+   `cbdc.py`) is fixed by a public non-zero target in the credential equation, see
+   [the scheme description, §10.1](identity-lazer-anoncreds.md#101-unforgeability-of-credentials). Credentials
+   issued before that fix must be reissued. A formal reduction is still missing.
 1. **Commitment binding.** The commitment key is 2x11 over Z_12289[X]/(X^64+1). A rough estimate
    gives about 80-bit core-SVP for finding two openings (collision norm up to 150) and about
    120 bit for extracting an opening. A break lets a user open `nymEID`/`nymRH` to a false

@@ -100,6 +100,7 @@ nav:
       - Finality: services/finality.md
       - Identity: services/identity.md
       - Identity (Lazer, post-quantum): services/identity-lazer.md
+      - Lazer Anonymous Credentials: services/identity-lazer-anoncreds.md
       - Interop: services/interop.md
       - Network Ethereum:
           - Overview: services/network-ethereum.md
