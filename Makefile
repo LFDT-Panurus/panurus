@@ -70,6 +70,10 @@ download-fabric:
 	./ci/scripts/download_fabric.sh $(FABRIC_BINARY_BASE) $(FABRIC_VERSION) $(FABRIC_CA_VERSION)
 
 GO_TEST_PARAMS ?= -coverpkg=./... -coverprofile=profile.cov
+# The zkatsnark driver is its own Go module, so the root `go list ./...` does not see it. Its unit tests
+# are slow under -race (the proving tests dominate), so CI runs them as parallel shards, one job each:
+# see unit-tests-zkatsnark and ci/scripts/zkatsnark-packages.sh for the shard definitions.
+ZKATSNARK_SHARD ?= all
 GO_PACKAGES = $(shell go list ./... | grep -v '/integration/' | grep -v 'regression' | grep -v 'mock' |  grep -v 'protos-go' |  grep -v 'testutils'; go list ./integration/nwo/...)
 
 .PHONY: benchmark-selector-postgres
@@ -85,7 +89,8 @@ benchmark-selector-postgres:
 	@go test ./token/services/selector/ -run '^$$' -bench 'BenchmarkSelectorPostgres/$(BENCH_FILTER)' -benchtime=$(BENCH_TIME) -count=$(BENCH_COUNT) -benchmem -timeout 90m
 
 .PHONY: unit-tests
-# run standard unit tests
+# run standard unit tests. The zkatsnark module (x/token/core/zkatsnark) is NOT covered here: use
+# unit-tests-zkatsnark, which CI runs as parallel race-enabled shards.
 unit-tests:
 	@go test $(GO_TEST_PARAMS) $(GO_PACKAGES)
 	cd token/services/storage/db/kvs/hashicorp/; go test -cover ./...
@@ -100,10 +105,18 @@ unit-tests-race:
 	cd integration/nwo/; go test -cover ./...
 	@export GORACE=history_size=7; cd x/token/services/network/evm; go test -race -cover ./...
 
+.PHONY: unit-tests-zkatsnark
+# run the unit tests of one shard of the zkatsnark module under the race detector, with coverage written to
+# x/token/core/zkatsnark/profile.cov. ZKATSNARK_SHARD is one of validator, setup, crypto, prover, rest, or all
+# (the default, i.e. every shard sequentially).
+unit-tests-zkatsnark:
+	@export GORACE=history_size=7; cd x/token/core/zkatsnark; go test -race -timeout 60m -coverpkg=./... -coverprofile=profile.cov $$(../../../../ci/scripts/zkatsnark-packages.sh $(ZKATSNARK_SHARD))
+
 .PHONY: unit-tests-regression
 # run regression unit tests
 unit-tests-regression:
 	@go test -race -timeout 0 -cover $(shell go list ./... | grep -v '/integration/' | grep 'regression')
+	@cd x/token/core/zkatsnark; go test -race -timeout 0 -cover $$(go list ./... | grep 'regression')
 
 .PHONY: install-softhsm
 # install softhsm for testing

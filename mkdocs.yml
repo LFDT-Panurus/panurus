@@ -75,6 +75,7 @@ nav:
   - Drivers:
       - Fabtoken: drivers/fabtoken.md
       - DLog (Zero-Knowledge): drivers/dlogwogh.md
+      - ZKAT-SNARK (Proof Systems): drivers/zkatsnark.md
       - Extending Validator: drivers/extending_validator.md
       - Metrics: drivers/metrics.md
       - Validator Resource Limits: drivers/validation-resource-limits.md

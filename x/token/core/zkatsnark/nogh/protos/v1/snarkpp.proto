@@ -42,7 +42,7 @@ message PublicParameters {
   repeated fabric_token_sdk.token.driver.v1.Identity issuer_identities = 6;
   // precision_value is the decimal precision used for token values
   uint64 precision_value = 7;
-  // proof_system selects the ZK proof system: "groth16" or "plonk"
+  // proof_system selects the ZK proof system: "groth16", "plonk" or "plonkfri"
   string proof_system = 8;
   // curve is the outer pairing curve identifier (e.g., BLS12-381 = 4, BN254 = 0)
   uint64 curve = 9;

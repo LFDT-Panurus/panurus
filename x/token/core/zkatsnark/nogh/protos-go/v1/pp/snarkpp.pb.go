@@ -105,7 +105,7 @@ type PublicParameters struct {
 	IssuerIdentities []*v1.Identity `protobuf:"bytes,6,rep,name=issuer_identities,json=issuerIdentities,proto3" json:"issuer_identities,omitempty"`
 	// precision_value is the decimal precision used for token values
 	PrecisionValue uint64 `protobuf:"varint,7,opt,name=precision_value,json=precisionValue,proto3" json:"precision_value,omitempty"`
-	// proof_system selects the ZK proof system: "groth16" or "plonk"
+	// proof_system selects the ZK proof system: "groth16", "plonk" or "plonkfri"
 	ProofSystem string `protobuf:"bytes,8,opt,name=proof_system,json=proofSystem,proto3" json:"proof_system,omitempty"`
 	// curve is the outer pairing curve identifier (e.g., BLS12-381 = 4, BN254 = 0)
 	Curve uint64 `protobuf:"varint,9,opt,name=curve,proto3" json:"curve,omitempty"`

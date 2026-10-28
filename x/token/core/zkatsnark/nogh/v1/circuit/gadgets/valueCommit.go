@@ -67,9 +67,18 @@ func ValueCommitCircuit(
 		return twistededwards.Point{}, err
 	}
 
-	vV := curve.ScalarMul(genV, value)
-	rcvR := curve.ScalarMul(genR, rcv)
-	commitment := curve.Add(vV, rcvR)
-
-	return commitment, nil
+	// A single double-base scalar multiplication instead of two ScalarMul calls
+	// plus an Add. This is deliberate: ScalarMul uses the FakeGLV method, whose
+	// scalar-decomposition check is an emulated-field multiplication, and that
+	// calls api.Commit (a BSB22 commitment). Circuits with commitments cannot be
+	// proven by plonkfri, and the single call is also cheaper (~9.7k constraints
+	// against ~14k for two ScalarMul calls on BN254).
+	//
+	// The default (complete) path is used, not WithIncompleteArithmetic, so zero
+	// scalars and identity points are handled correctly. The scalars are
+	// decomposed canonically by ToBinary, as ScalarMul reduces them mod the
+	// subgroup order, so s and s+order still give the same point exactly as
+	// before; callers that need value to be bound beyond that must range-check it
+	// (OutputCircuit does).
+	return curve.DoubleBaseScalarMul(genV, genR, value, rcv), nil
 }

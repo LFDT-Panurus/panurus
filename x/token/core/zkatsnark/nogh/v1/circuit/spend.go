@@ -11,6 +11,7 @@ import (
 	"github.com/consensys/gnark/frontend"
 
 	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/circuit/gadgets"
+	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/crypto/params"
 )
 
 // SpendCircuit proves that the prover knows a valid opening of a commitment
@@ -31,6 +32,12 @@ type SpendCircuit struct {
 	RCV            frontend.Variable
 	TypeRandomness frontend.Variable
 
+	// Compile-time parameters
+	// MaxBits is the bit-width of the value range constraint. It is baked
+	// into the circuit, so provers and verifiers must use the same value
+	// (see setup.CompileSpendCircuit). Zero selects params.DefaultMaxBits.
+	MaxBits int
+
 	// Compile-time parameters — value-commitment generators.
 	// These are injected by setup.CompileSpendCircuit based on pp.Curve
 	// (jubjub.V/R for BLS12-381, babyjubjub.V/R for BN254).
@@ -43,6 +50,11 @@ type SpendCircuit struct {
 // Define encodes the SpendCircuit constraints into the R1CS.
 // Called exactly once during frontend.Compile; not called at prove time.
 func (c *SpendCircuit) Define(api frontend.API) error {
+	maxBits := c.MaxBits
+	if maxBits <= 0 {
+		maxBits = params.DefaultMaxBits
+	}
+
 	// ── Constraint Group 1: Commitment Integrity ────────────────────────────
 	// Enforce: CommitmentIn == MiMC(Value, TokenType, Randomness)
 
@@ -68,6 +80,14 @@ func (c *SpendCircuit) Define(api frontend.API) error {
 	}
 	api.AssertIsEqual(cv.X, c.ValueCommitInX)
 	api.AssertIsEqual(cv.Y, c.ValueCommitInY)
+
+	// Range check: Value ∈ [0, 2^maxBits). The value commitment above is
+	// computed with DoubleBaseScalarMul, which reduces the scalar modulo the
+	// (≈2^251) subgroup order, so without this check a Value that differs from
+	// the committed one by a multiple of that order would open the same
+	// commitment. Bounding Value well below the order makes it unique, exactly
+	// as OutputCircuit does for newly created notes.
+	_ = api.ToBinary(c.Value, maxBits)
 
 	// ── Constraint Group 3: Type Commitment Integrity ───────────────────────
 	// Enforce: TypeCommitment == MiMC(TokenType, TypeRandomness)

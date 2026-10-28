@@ -52,6 +52,7 @@ var e2eConfigs = []e2eConfig{
 	{"groth16", ecc.BN254},
 	{"plonk", ecc.BLS12_381},
 	{"plonk", ecc.BN254},
+	{"plonkfri", ecc.BN254}, // plonkfri exists only for bn254
 }
 
 // e2eFixture holds a real Orchestrator (prover side) and Validator for one

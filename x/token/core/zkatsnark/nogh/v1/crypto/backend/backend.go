@@ -4,7 +4,7 @@ SPDX-License-Identifier: Apache-2.0
 */
 
 // Package backend provides the ProofSystemBackend interface and concrete
-// implementations for Groth16 and Plonk. This is the single abstraction
+// implementations for Groth16, Plonk and PlonkFRI. This is the single abstraction
 // layer that setup, prover, and validator all route through instead of
 // calling groth16.* or plonk.* directly (Decision A).
 //
@@ -58,7 +58,7 @@ type VerifyingKey struct {
 }
 
 // ProofSystemBackend abstracts over different ZK proof systems (Groth16,
-// Plonk). groth16.Proof and plonk.Proof are different concrete types with no
+// Plonk, PlonkFRI). groth16.Proof and plonk.Proof are different concrete types with no
 // shared gnark-exported interface, so this wraps Setup/Prove/Verify behind a
 // single interface selectable at runtime by proof system name.
 type ProofSystemBackend interface {
@@ -157,7 +157,7 @@ func (b *groth16Backend) Verify(vk *VerifyingKey, proofBytes []byte, publicWitne
 	}
 
 	proof := groth16.NewProof(b.curve)
-	if _, err := proof.ReadFrom(bytes.NewReader(proofBytes)); err != nil {
+	if err := readFromExact(proof, proofBytes); err != nil {
 		return errors.Wrapf(err, "groth16 backend: proof deserialization")
 	}
 
@@ -184,7 +184,7 @@ func (b *groth16Backend) DeserializeVerifyingKey(raw []byte) (any, error) {
 
 func (b *groth16Backend) deserializeProvingKey(raw []byte) (groth16.ProvingKey, error) {
 	pk := groth16.NewProvingKey(b.curve)
-	if _, err := pk.ReadFrom(bytes.NewReader(raw)); err != nil {
+	if err := readFromExact(pk, raw); err != nil {
 		return nil, errors.Wrapf(err, "groth16 backend: proving key deserialization")
 	}
 
@@ -193,7 +193,7 @@ func (b *groth16Backend) deserializeProvingKey(raw []byte) (groth16.ProvingKey, 
 
 func (b *groth16Backend) deserializeVerifyingKey(raw []byte) (groth16.VerifyingKey, error) {
 	vk := groth16.NewVerifyingKey(b.curve)
-	if _, err := vk.ReadFrom(bytes.NewReader(raw)); err != nil {
+	if err := readFromExact(vk, raw); err != nil {
 		return nil, errors.Wrapf(err, "groth16 backend: verifying key deserialization")
 	}
 
@@ -331,7 +331,7 @@ func (b *plonkBackend) Verify(vk *VerifyingKey, proofBytes []byte, publicWitness
 	}
 
 	proof := plonk.NewProof(b.curve)
-	if _, err := proof.ReadFrom(bytes.NewReader(proofBytes)); err != nil {
+	if err := readFromExact(proof, proofBytes); err != nil {
 		return errors.Wrapf(err, "plonk backend: proof deserialization")
 	}
 
@@ -358,7 +358,7 @@ func (b *plonkBackend) DeserializeVerifyingKey(raw []byte) (any, error) {
 
 func (b *plonkBackend) deserializeProvingKey(raw []byte) (plonk.ProvingKey, error) {
 	pk := plonk.NewProvingKey(b.curve)
-	if _, err := pk.ReadFrom(bytes.NewReader(raw)); err != nil {
+	if err := readFromExact(pk, raw); err != nil {
 		return nil, errors.Wrapf(err, "plonk backend: proving key deserialization")
 	}
 
@@ -367,7 +367,7 @@ func (b *plonkBackend) deserializeProvingKey(raw []byte) (plonk.ProvingKey, erro
 
 func (b *plonkBackend) deserializeVerifyingKey(raw []byte) (plonk.VerifyingKey, error) {
 	vk := plonk.NewVerifyingKey(b.curve)
-	if _, err := vk.ReadFrom(bytes.NewReader(raw)); err != nil {
+	if err := readFromExact(vk, raw); err != nil {
 		return nil, errors.Wrapf(err, "plonk backend: verifying key deserialization")
 	}
 
@@ -419,7 +419,7 @@ func (b *plonkBackend) verifyingKey(vk *VerifyingKey) (plonk.VerifyingKey, error
 
 // NewProofSystemBackend creates the appropriate backend for the given proof
 // system name and curve. Dispatches on proofSystem: "groth16" → groth16Backend,
-// "plonk" → plonkBackend.
+// "plonk" → plonkBackend, "plonkfri" → plonkFRIBackend (bn254 only).
 //
 //nolint:ireturn // returns ProofSystemBackend interface to select between groth16 and plonk implementations
 func NewProofSystemBackend(proofSystem string, curve ecc.ID) (ProofSystemBackend, error) {
@@ -428,6 +428,8 @@ func NewProofSystemBackend(proofSystem string, curve ecc.ID) (ProofSystemBackend
 		return &groth16Backend{curve: curve}, nil
 	case systemPlonk:
 		return &plonkBackend{curve: curve}, nil
+	case systemPlonkFRI:
+		return newPlonkFRIBackend(curve)
 	default:
 		return nil, errors.Errorf("backend: unsupported proof system %q", proofSystem)
 	}
@@ -437,6 +439,26 @@ func NewProofSystemBackend(proofSystem string, curve ecc.ID) (ProofSystemBackend
 
 type writerTo interface {
 	WriteTo(w io.Writer) (int64, error)
+}
+
+// ErrTrailingBytes is returned when a serialized key or proof carries bytes
+// after the encoded object. gnark's ReadFrom implementations stop at the end of
+// the object and ignore the rest, which would make the encoding malleable.
+var ErrTrailingBytes = errors.New("backend: trailing bytes after serialized object")
+
+// readFromExact decodes raw into obj and rejects any unconsumed trailing bytes.
+// It checks the reader's remaining length rather than the byte count returned
+// by ReadFrom, which is not exact for every gnark implementation.
+func readFromExact(obj io.ReaderFrom, raw []byte) error {
+	r := bytes.NewReader(raw)
+	if _, err := obj.ReadFrom(r); err != nil {
+		return err
+	}
+	if r.Len() != 0 {
+		return errors.Wrapf(ErrTrailingBytes, "%d unread bytes", r.Len())
+	}
+
+	return nil
 }
 
 func serializeWriterTo(obj writerTo) ([]byte, error) {

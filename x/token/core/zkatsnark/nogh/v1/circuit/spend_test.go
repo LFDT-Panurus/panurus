@@ -253,3 +253,30 @@ func TestSpendCircuitInvalid_WrongTypeRandomness(t *testing.T) {
 	require.Error(t, err,
 		"SpendCircuit must reject a witness where TypeRandomness doesn't produce the public TypeCommitment")
 }
+
+// TestSpendCircuitInvalid_ValueExceedsMaxBits isolates the range check: the
+// circuit is compiled with a small MaxBits and given a value above it whose
+// note commitment and value commitment are both consistent, so nothing but
+// the range constraint can reject it.
+func TestSpendCircuitInvalid_ValueExceedsMaxBits(t *testing.T) {
+	const maxBits = 8
+
+	cs, err := frontend.Compile(
+		ecc.BLS12_381.ScalarField(),
+		r1cs.NewBuilder,
+		&circuit.SpendCircuit{MaxBits: maxBits},
+	)
+	require.NoError(t, err)
+
+	inRange := newRandomSpendInputs(t)
+	inRange.value = 1<<maxBits - 1
+	witness, err := frontend.NewWitness(buildSpendAssignment(t, inRange), ecc.BLS12_381.ScalarField())
+	require.NoError(t, err)
+	require.NoError(t, cs.IsSolved(witness), "a value below 2^MaxBits must be accepted")
+
+	tooBig := newRandomSpendInputs(t)
+	tooBig.value = 1 << maxBits
+	witness, err = frontend.NewWitness(buildSpendAssignment(t, tooBig), ecc.BLS12_381.ScalarField())
+	require.NoError(t, err)
+	require.Error(t, cs.IsSolved(witness), "SpendCircuit must reject values >= 2^MaxBits")
+}

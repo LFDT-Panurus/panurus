@@ -32,7 +32,7 @@ The agent must adhere to the project's Go coding standards.
 Validation is the only path to finality.
 - **Goal:** Ensure correctness and prevent regressions.
 - **Action:** Every change must include a testing strategy. For new features, this means adding unit tests or integration tests. For bug fixes, it means verifying the fix with the reproduction case.
-- **Mandate:** Always run `make unit-tests` and relevant integration tests (e.g., `make integration-tests-fabtoken-fabric-t1`).
+- **Mandate:** Always run `make unit-tests` and relevant integration tests (e.g., `make integration-tests-fabtoken-fabric-t1`). If you changed `x/token/core/zkatsnark`, which is a separate Go module that `make unit-tests` does not cover, also run the affected shard with `make unit-tests-zkatsnark ZKATSNARK_SHARD=<shard>`.
 
 ### 5. Surgical and Atomic Changes
 Keep changes focused and minimal.

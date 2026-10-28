@@ -404,3 +404,28 @@ func TestDecodeMigrationAction_NonCanonicalTypeCommitment(t *testing.T) {
 	_, err := decodeMigrationAction(a, ecc.BLS12_381)
 	require.Error(t, err, "a non-canonical TypeCommitment must be rejected")
 }
+
+// TestParseTotalValue_RejectsValuesAbove64Bits: a canonical field element can
+// exceed 64 bits, and big.Int.Uint64 would silently keep only the low 64, so
+// TotalValue and TotalValue+2^64 would decode to the same amount.
+func TestParseTotalValue_RejectsValuesAbove64Bits(t *testing.T) {
+	for _, curve := range []ecc.ID{ecc.BLS12_381, ecc.BN254} {
+		t.Run(curve.String(), func(t *testing.T) {
+			encode := func(v *big.Int) []byte { return v.FillBytes(make([]byte, 32)) }
+
+			got, err := parseTotalValue(curve, encode(big.NewInt(500)))
+			require.NoError(t, err)
+			require.Equal(t, uint64(500), got)
+
+			maxU64 := new(big.Int).SetUint64(^uint64(0))
+			got, err = parseTotalValue(curve, encode(maxU64))
+			require.NoError(t, err)
+			require.Equal(t, ^uint64(0), got)
+
+			// 500 + 2^64 is a canonical field element that used to alias 500.
+			aliased := new(big.Int).Add(big.NewInt(500), new(big.Int).Lsh(big.NewInt(1), 64))
+			_, err = parseTotalValue(curve, encode(aliased))
+			require.ErrorIs(t, err, ErrInvalidEncoding)
+		})
+	}
+}
