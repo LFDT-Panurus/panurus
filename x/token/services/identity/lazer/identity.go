@@ -7,7 +7,6 @@ SPDX-License-Identifier: Apache-2.0
 package lazer
 
 import (
-	"crypto/sha256"
 	"encoding/asn1"
 	"sync"
 
@@ -19,8 +18,6 @@ import (
 const (
 	// verifierPoolSize is the number of idle verifier states kept around.
 	verifierPoolSize = 4
-	// defaultPresCacheSize is the number of verified presentations remembered.
-	defaultPresCacheSize = 4096
 )
 
 var (
@@ -91,8 +88,8 @@ func unmarshalSignature(raw []byte) (*Signature, error) {
 
 // presVerifier verifies presentations and signatures under an issuer public
 // key. It is safe for concurrent use: the C verifier states are not, hence a
-// small pool of them is kept and results of presentation checks are cached,
-// because a pseudonym signs many messages with the same presentation.
+// small pool of them is kept. Nothing is cached: every signature carries a
+// presentation, and every verification checks it.
 //
 // After Close the pool is empty and stays empty: verifications fail, and
 // verifier states still in use are released when they are given back.
@@ -104,10 +101,6 @@ type presVerifier struct {
 	poolMu sync.Mutex
 	idle   []*anoncreds.Verifier
 	closed bool
-
-	mu       sync.Mutex
-	verified map[[sha256.Size]byte]struct{}
-	maxCache int
 }
 
 func newPresVerifier(ipk []byte) (*presVerifier, error) {
@@ -118,11 +111,9 @@ func newPresVerifier(ipk []byte) (*presVerifier, error) {
 	}
 
 	return &presVerifier{
-		ipk:      append([]byte(nil), ipk...),
-		ctx:      identityContext(ipk),
-		idle:     []*anoncreds.Verifier{v},
-		verified: map[[sha256.Size]byte]struct{}{},
-		maxCache: defaultPresCacheSize,
+		ipk:  append([]byte(nil), ipk...),
+		ctx:  identityContext(ipk),
+		idle: []*anoncreds.Verifier{v},
 	}, nil
 }
 
@@ -169,28 +160,9 @@ func (p *presVerifier) release(v *anoncreds.Verifier) {
 	v.Clear()
 }
 
-func presKey(id *SerializedIdentity, pres []byte) [sha256.Size]byte {
-	h := sha256.New()
-	for _, n := range [][]byte{id.NymSK, id.NymEID, id.NymRH, pres} {
-		h.Write(n)
-	}
-	var k [sha256.Size]byte
-	copy(k[:], h.Sum(nil))
-
-	return k
-}
-
 // verifyPres checks that pres proves that the nyms of id commit to the
 // attributes (usk, eid, rh) of a credential issued by the issuer.
 func (p *presVerifier) verifyPres(id *SerializedIdentity, pres []byte) error {
-	k := presKey(id, pres)
-	p.mu.Lock()
-	_, ok := p.verified[k]
-	p.mu.Unlock()
-	if ok {
-		return nil
-	}
-
 	v, err := p.acquire()
 	if err != nil {
 		return err
@@ -200,13 +172,6 @@ func (p *presVerifier) verifyPres(id *SerializedIdentity, pres []byte) error {
 	if err := v.PresVer(zeroAttributes(), nil, nyms, idxCom, pres, p.ctx); err != nil {
 		return errors.Wrap(err, "invalid presentation")
 	}
-
-	p.mu.Lock()
-	if len(p.verified) >= p.maxCache {
-		p.verified = map[[sha256.Size]byte]struct{}{}
-	}
-	p.verified[k] = struct{}{}
-	p.mu.Unlock()
 
 	return nil
 }

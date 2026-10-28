@@ -37,7 +37,7 @@ func TestIdentityRoundTrip(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, v.Verify(msg, sigma))
 	require.NoError(t, desc.Verifier.Verify(msg, sigma))
-	// a second verification uses the cached presentation check
+	// every verification checks the presentation again
 	require.NoError(t, v.Verify(msg, sigma))
 
 	// wrong message

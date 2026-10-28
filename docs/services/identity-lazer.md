@@ -56,8 +56,14 @@ A signature is the ASN.1 sequence `{pres, sok}`:
   (with a domain separator).
 
 Signing uses `nymSK`, not `nymEID`: the auditor knows the openings of the EID and RH nyms
-(see below), so it must not be able to sign. Verifiers cache the result of the (expensive)
-presentation check per identity, so repeated signatures of one pseudonym cost one SoK check.
+(see below), so it must not be able to sign.
+
+Verification checks both the presentation and the SoK on every call. Nothing is cached, because
+the design is **one signature per pseudonym**: a wallet takes a fresh pseudonym (`Identity`) for each
+signature. This is also what keeps signatures unlinkable, since two signatures under the same pseudonym
+share its nyms. A pseudonym that signs again still verifies, but each verification pays the full
+presentation check again (the dominant cost, see [Benchmarks](#benchmarks)), and the signatures
+are linkable.
 
 ### Audit info
 
@@ -69,8 +75,8 @@ An identity is only checked syntactically when it is deserialized, so matching i
 info must also prove that it has a credential: otherwise anyone could commit to a victim's EID and
 RH, without any credential, and have the auditor accept the pseudonym as the victim's. Matching
 therefore recomputes `nymEID` and `nymRH` from the values and openings, and verifies `pres` against
-the three nyms under the issuer public key (`presVerifier.verifyPres`, cached like signature
-presentations). This is done by the paths bound to a `Deserializer`, which has the issuer public key:
+the three nyms under the issuer public key (`presVerifier.verifyPres`, the same check as for
+signature presentations). This is done by the paths bound to a `Deserializer`, which has the issuer public key:
 
 - `Deserializer.MatchIdentity` (used by the token services on issue and transfer, by the auditor and
   by `RegisterRecipient`);
@@ -168,8 +174,11 @@ cd x/token/services/identity/lazer
 go test -run 'TestParallelBenchmarkLazer' -v .
 ```
 
-Verifiers cache presentation checks, so benchmarks that reuse identities measure the cached
-cost; `BenchmarkMatchIdentityCold` measures the uncached one.
+Verifiers do not cache presentation checks, so every verification and every audit match pays for the
+full presentation check. As an indication, on an Apple M-series laptop: generating an identity takes about
+100 ms, signing about 27 ms and verifying about 67 ms (`go test -bench BenchmarkLazer -benchtime=5x .`).
+`BenchmarkMatchIdentity` measures the audit matching, which verifies the presentation of the audit info
+in the same way. Numbers depend heavily on the machine and the build.
 
 ## Building and testing
 
@@ -291,7 +300,7 @@ files and is the reference for the scheme, not part of this module.
 |---|---|
 | `schema.go` | attribute layout, domain separators |
 | `config.go` | configuration and on-disk layout |
-| `identity.go` | identity and signature encodings, verifier pool, presentation cache |
+| `identity.go` | identity and signature encodings, verifier pool |
 | `km.go`, `kmp.go` | `KeyManager`, `KeyManagerProvider`, identity cache wrapper |
 | `deserializer.go`, `audit.go` | verifier/matcher deserializers, `AuditInfo` |
 | `strictjson.go` | strict and canonical JSON decoding of audit infos, signer infos and configurations |
@@ -326,4 +335,5 @@ files and is the reference for the scheme, not part of this module.
 
 Driver, public-parameter (`IdemixIssuerPublicKeys` equivalent) and integration (`nwo`) wiring,
 a SKI cleanup provider, revocation (the RH is committed but not checked against a list), a
-per-message presentation signature mode, and sending the presentation once per transaction.
+per-message presentation signature mode, and sending the presentation once per transaction (with
+one signature per pseudonym each signature carries its own presentation, about 37 KB).
