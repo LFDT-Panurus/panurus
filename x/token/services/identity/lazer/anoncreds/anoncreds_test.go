@@ -273,3 +273,95 @@ func FuzzSokVerify(f *testing.F) {
 		_ = OpeningVerify(nym, make([]byte, AttrLen), proof)
 	})
 }
+
+// zeroWitness returns a user whose state is r = 0, m = 0, and the all-zero
+// credential tau = s1 = s2 = 0, i.e. the trivial witness of the credential
+// relation. It needs no issuer secret.
+func zeroWitness(tb testing.TB, ipk []byte) (*User, []byte) {
+	tb.Helper()
+	u, err := NewUser(ipk)
+	if err != nil {
+		tb.Fatal(err)
+	}
+	tb.Cleanup(u.Clear)
+	zero := make([][]byte, NAttrs)
+	for i := range zero {
+		zero[i] = make([]byte, AttrLen)
+	}
+	// encodings of zero vectors: zero bits followed by the terminator bit
+	st := make([]byte, MaxLenUserState())
+	st[len(st)-1] = 0x01
+	if err := u.Import(st, zero); err != nil {
+		st[len(st)-1] = 0x80
+		if err := u.Import(st, zero); err != nil {
+			tb.Fatal("zero user state does not import")
+		}
+	}
+	// 64 bytes tau, 2*8*64 gaussian coefficients of 1+7+1 bits, terminator
+	cred := make([]byte, (64*8+2*8*64*9)/8+1)
+	cred[len(cred)-1] = 0x01
+
+	return u, cred
+}
+
+// TestZeroWitnessForgery checks that nobody can present without an issued
+// credential by using the trivial witness, with nothing revealed (as in
+// Panurus) and with an all-zero revealed attribute.
+func TestZeroWitnessForgery(t *testing.T) {
+	_, ipk := IssuerKeygen()
+	u, cred := zeroWitness(t, ipk)
+	if u.CredVerify(cred) == nil {
+		t.Fatal("all-zero credential accepted")
+	}
+	zero := revealed(make([][]byte, NAttrs), nil)
+	idxCom := []uint32{0, 2, 3}
+	var coms []*Commitment
+	var nyms [][]byte
+	for range idxCom {
+		c, err := Commit(make([]byte, AttrLen))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer c.Clear()
+		coms = append(coms, c)
+		nyms = append(nyms, c.Nym)
+	}
+	v, err := NewVerifier(ipk)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer v.Clear()
+	ctx := []byte("ctx")
+	for _, idxRev := range [][]uint32{nil, {1}} {
+		// the prover refuses a witness that does not satisfy the statement
+		if _, err := u.PresGen(cred, idxRev, coms, idxCom, ctx); err == nil {
+			t.Fatalf("presentation from the zero witness generated (idxRev=%v)", idxRev)
+		}
+	}
+	// a proof for the zero witness under the old, homogeneous statement does
+	// not exist for the new one; a verifier must reject arbitrary bytes too
+	if v.PresVer(zero, nil, nyms, idxCom, make([]byte, 1024), ctx) == nil {
+		t.Fatal("garbage presentation accepted")
+	}
+}
+
+// TestPresGenChecksNyms checks that a presentation is not generated for a
+// nym that does not commit to the attribute at its index.
+func TestPresGenChecksNyms(t *testing.T) {
+	f := setup(t)
+	c, err := Commit(f.attrs[1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Clear()
+	if _, err := f.user.PresGen(f.cred, nil, []*Commitment{c}, []uint32{0}, []byte("ctx")); err == nil {
+		t.Fatal("presentation generated for a nym to another attribute")
+	}
+}
+
+func TestCredTrailingBytes(t *testing.T) {
+	f := setup(t)
+	if f.user.CredVerify(append(append([]byte{}, f.cred...), 0)) == nil {
+		t.Fatal("credential with trailing byte accepted")
+	}
+}

@@ -9,7 +9,8 @@
  *
  * Attributes (5 x 32 bytes) are encoded as 5 polynomials over
  * Rp = Z_12289[X]/(X^64+1). The issuer blindly signs (Falcon-512 preimage
- * sampling) a commitment t = Ar*r + Am*m to the attributes, after checking a
+ * sampling) t + Atau*tau + c0, with the commitment t = Ar*r + Am*m to the
+ * attributes, a binary tau chosen by the issuer and a public non-zero c0, after checking a
  * proof P1 that t is well-formed and consistent with the attributes revealed
  * to it. A presentation P2 proves knowledge of a credential and selectively
  * discloses attributes to the verifier. Attributes can additionally be
@@ -351,7 +352,7 @@ cbdc_p1_statement (polymat_t A, polyvec_t u, polyvec_t t,
 }
 
 /*
- * P2: [Ar,Atau,-B1,-B2,AMpriv,0]*(r,tau,s1,s2,mpriv,rcom)+(AMpub*mpub,0)=0,
+ * P2: [Ar,Atau,-B1,-B2,AMpriv,0]*(r,tau,s1,s2,mpriv,rcom)+(AMpub*mpub+c0,0)=0,
  * with, for each committed attribute idx_com[i] with commitment nyms[i], an
  * additional block of CBDC_COM_ROWS rows
  *   Acom[:,0]*attr[idx_com[i]] + Acom[:,1..10]*rcom_i - nym_i = 0,
@@ -360,7 +361,8 @@ cbdc_p1_statement (polymat_t A, polyvec_t u, polyvec_t t,
  * columns in AMpriv are not zeroed and they stay part of mpriv.
  */
 static void
-cbdc_p2_statement (polymat_t A, polyvec_t u, polymat_t B2, polyvec_t m,
+cbdc_p2_statement (polymat_t A, polyvec_t u, polymat_t B2, polyvec_t c0,
+                   polyvec_t m,
                    const unsigned int *idx_rev, unsigned int nrev,
                    polyvec_t *nyms, const unsigned int *idx_com,
                    unsigned int ncom)
@@ -393,6 +395,7 @@ cbdc_p2_statement (polymat_t A, polyvec_t u, polymat_t B2, polyvec_t m,
 
   polyvec_alloc (amm, cbdc_ring, 8);
   polyvec_mul (amm, AM, mpub);
+  polyvec_add (amm, amm, c0, 0);
   polyvec_redc (amm, amm);
   polyvec_alloc (u, cbdc_ring, 8 + 3 * CBDC_COM_ROWS);
   polyvec_set_zero (u);
@@ -451,6 +454,60 @@ cbdc_decode_pk (polymat_t B2, const uint8_t pubkey[897])
   poly_free (p);
 }
 
+/*
+ * Public non-zero target c0 in Rp^8, derived from the issuer public key. The
+ * credential equation is Ar*r + Atau*tau + Am*m + c0 = s1 + B2*s2. Without c0
+ * the P2 statement is homogeneous when no (or only zero) attributes are
+ * revealed, and the zero witness satisfies it: anybody could present without
+ * a credential.
+ */
+static void
+cbdc_derive_c0 (polyvec_t c0, const uint8_t pubkey[897])
+{
+  static const char dom[] = "panurus/lazer/anoncreds/c0/v1";
+  shake128_state_t hstate;
+  uint8_t seed[32];
+  INT_T (mod, 1);
+
+  shake128_init (hstate);
+  shake128_absorb (hstate, (const uint8_t *)dom, sizeof (dom) - 1);
+  shake128_absorb (hstate, pubkey, 897);
+  shake128_squeeze (hstate, seed, sizeof (seed));
+  shake128_clear (hstate);
+
+  int_set_i64 (mod, CBDC_MOD);
+  polyvec_alloc (c0, cbdc_ring, 8);
+  polyvec_urandom (c0, mod, CBDC_LOGMOD, seed, 0);
+  polyvec_redc (c0, c0);
+}
+
+/*
+ * Decode a credential tau,s1,s2 from a zero padded buffer (see cbdc_padded)
+ * holding credlen bytes. Returns 1 if it decodes and consumes exactly credlen
+ * bytes.
+ */
+static int
+cbdc_dec_cred (polyvec_t tau, polyvec_t s1, polyvec_t s2,
+               const uint8_t *credbuf, size_t credlen)
+{
+  coder_state_t cstate;
+  uint8_t tau_[64];
+  unsigned int off;
+
+  coder_dec_begin (cstate, credbuf);
+  if (coder_dec_bytes (cstate, tau_, sizeof (tau_)) != 0)
+    return 0;
+  coder_dec_grandom3 (cstate, s1, CBDC_LOG2O_BLINDSIG);
+  coder_dec_grandom3 (cstate, s2, CBDC_LOG2O_BLINDSIG);
+  if (coder_dec_end (cstate) != 1)
+    return 0;
+  off = coder_get_offset (cstate);
+  if (off % 8 != 0 || (size_t)(off >> 3) != credlen)
+    return 0;
+  cbdc_expand_tau (tau, tau_);
+  return 1;
+}
+
 void
 cbdc_issuer_keygen (uint8_t sk[1281], uint8_t pk[897])
 {
@@ -466,6 +523,7 @@ cbdc_user_init (cbdc_user_state_t state, const uint8_t pubkey[897])
 
   memset (state, 0, sizeof (cbdc_user_state_t));
   cbdc_decode_pk (state->B2, pubkey);
+  cbdc_derive_c0 (state->c0, pubkey);
   lin_prover_init (state->p1, cbdc_p1pp, p1_param);
   lin_prover_init (state->p2, cbdc_p2pp, p2_param);
 }
@@ -476,6 +534,7 @@ cbdc_user_clear (cbdc_user_state_t state)
   lin_prover_clear (state->p1);
   lin_prover_clear (state->p2);
   polymat_free (state->B2);
+  polyvec_free (state->c0);
   if (state->masked)
     {
       polyvec_free (state->r);
@@ -854,6 +913,79 @@ cbdc_user_maskattrs (cbdc_user_state_t state, uint8_t *masked_attrs,
   polymat_free (A);
 }
 
+/*
+ * Ar*r + Atau*tau + Am*m + c0 = s1 + B2*s2 and l2(s1,s2) is bounded, for the
+ * r and m in state. Returns 1 if the credential is valid.
+ */
+static int
+cbdc_cred_ok (cbdc_user_state_t state, polyvec_t tau, polyvec_t s1,
+              polyvec_t s2)
+{
+  polyvec_t acc, tmp, zero;
+  polymat_t AR, ATAU, AM, B2;
+  int rv;
+  INT_T (l2sqr, 2);
+  INT_T (l2sqr2, 2);
+  INT_T (bnd, 2);
+
+  /* norm bound of the preimage, sqrt(34034726) in anoncreds_p2_params.py */
+  polyvec_l2sqr (l2sqr, s1);
+  polyvec_l2sqr (l2sqr2, s2);
+  int_add (l2sqr, l2sqr, l2sqr2);
+  int_set_i64 (bnd, 34034726);
+  if (int_gt (l2sqr, bnd))
+    return 0;
+
+  cbdc_mat_copy (AR, cbdc_AR);
+  cbdc_mat_copy (ATAU, cbdc_ATAU);
+  cbdc_mat_copy (AM, cbdc_AM);
+  cbdc_mat_copy (B2, state->B2);
+
+  polyvec_alloc (acc, cbdc_ring, 8);
+  polyvec_alloc (tmp, cbdc_ring, 8);
+  polyvec_alloc (zero, cbdc_ring, 8);
+  polyvec_set_zero (zero);
+
+  polyvec_mul (acc, AR, state->r);
+  polyvec_mul (tmp, ATAU, tau);
+  polyvec_add (acc, acc, tmp, 0);
+  polyvec_mul (tmp, AM, state->m);
+  polyvec_add (acc, acc, tmp, 0);
+  polyvec_add (acc, acc, state->c0, 0);
+  polyvec_sub (acc, acc, s1, 0);
+  polyvec_mul (tmp, B2, s2);
+  polyvec_sub (acc, acc, tmp, 0);
+  polyvec_redc (acc, acc);
+  rv = polyvec_eq (acc, zero) == 1;
+
+  polyvec_free (acc);
+  polyvec_free (tmp);
+  polyvec_free (zero);
+  polymat_free (AR);
+  polymat_free (ATAU);
+  polymat_free (AM);
+  polymat_free (B2);
+  return rv;
+}
+
+/* Returns 1 if com->nym = Acom*(m_k,com->r) for the encoded attribute m_k. */
+static int
+cbdc_com_ok (cbdc_commit_ptr com, poly_ptr mk)
+{
+  cbdc_commit_t chk;
+  polyvec_t a;
+  int b;
+
+  polyvec_alloc (a, cbdc_ring, 1);
+  poly_set (polyvec_get_elem (a, 0), mk);
+  chk->r[0] = com->r[0];
+  cbdc_commit_compute (chk, a);
+  b = polyvec_eq (chk->nym, com->nym) == 1;
+  polyvec_free (chk->nym);
+  polyvec_free (a);
+  return b;
+}
+
 /* committed indices must be distinct, valid, disjoint from the revealed ones */
 static int
 cbdc_com_valid (const unsigned int *idx_rev, unsigned int nrev,
@@ -889,9 +1021,7 @@ cbdc_user_presgen (cbdc_user_state_t state, uint8_t *pres, size_t *preslen,
   polyvec_t tau, s1, s2, w, u;
   polyvec_t nyms[CBDC_MAXCOM];
   polymat_t A;
-  uint8_t tau_[64];
   uint8_t *credbuf;
-  coder_state_t cstate;
   unsigned int i;
   int rv = 0;
 
@@ -907,20 +1037,22 @@ cbdc_user_presgen (cbdc_user_state_t state, uint8_t *pres, size_t *preslen,
   polyvec_alloc (s1, cbdc_ring, 8);
   polyvec_alloc (s2, cbdc_ring, 8);
 
-  /* decode blindsig tau,s1,s2 */
-  coder_dec_begin (cstate, credbuf);
-  if (coder_dec_bytes (cstate, tau_, sizeof (tau_)) != 0)
+  /*
+   * decode blindsig tau,s1,s2 and check the whole witness: the prover must
+   * not be run on a false statement (it does not terminate cleanly then).
+   */
+  if (!cbdc_dec_cred (tau, s1, s2, credbuf, credlen)
+      || !cbdc_cred_ok (state, tau, s1, s2))
     goto err_dec;
-  coder_dec_grandom3 (cstate, s1, CBDC_LOG2O_BLINDSIG);
-  coder_dec_grandom3 (cstate, s2, CBDC_LOG2O_BLINDSIG);
-  if (coder_dec_end (cstate) != 1)
-    goto err_dec;
-  cbdc_expand_tau (tau, tau_);
+  for (i = 0; i < ncom; i++)
+    if (coms[i] == NULL
+        || !cbdc_com_ok (coms[i], polyvec_get_elem (state->m, idx_com[i])))
+      goto err_dec;
 
   for (i = 0; i < ncom; i++)
     nyms[i][0] = coms[i]->nym[0];
-  cbdc_p2_statement (A, u, state->B2, state->m, idx_rev, nrev, nyms, idx_com,
-                     ncom);
+  cbdc_p2_statement (A, u, state->B2, state->c0, state->m, idx_rev, nrev, nyms,
+                     idx_com, ncom);
 
   /* w = (r,tau,s1,s2,mpriv,rcom) */
   {
@@ -960,22 +1092,16 @@ err_dec:
 
 /*
  * Cheap check of a credential against the state of the user (after maskattrs
- * or import): Ar*r + Atau*tau + Am*m = s1 + B2*s2 and l2(s1,s2) is bounded.
+ * or import): Ar*r + Atau*tau + Am*m + c0 = s1 + B2*s2 and l2(s1,s2) is bounded.
  * Returns 1 if the credential is valid.
  */
 int
 cbdc_user_credverify (cbdc_user_state_t state, const uint8_t *cred,
                       size_t credlen)
 {
-  polyvec_t tau, s1, s2, acc, tmp, zero;
-  polymat_t AR, ATAU, AM, B2;
-  uint8_t tau_[64];
+  polyvec_t tau, s1, s2;
   uint8_t *credbuf;
-  coder_state_t cstate;
   int rv = 0;
-  INT_T (l2sqr, 2);
-  INT_T (l2sqr2, 2);
-  INT_T (bnd, 2);
 
   cbdc_pp_init ();
 
@@ -989,51 +1115,11 @@ cbdc_user_credverify (cbdc_user_state_t state, const uint8_t *cred,
   polyvec_alloc (s1, cbdc_ring, 8);
   polyvec_alloc (s2, cbdc_ring, 8);
 
-  coder_dec_begin (cstate, credbuf);
-  if (coder_dec_bytes (cstate, tau_, sizeof (tau_)) != 0)
-    goto err_dec;
-  coder_dec_grandom3 (cstate, s1, CBDC_LOG2O_BLINDSIG);
-  coder_dec_grandom3 (cstate, s2, CBDC_LOG2O_BLINDSIG);
-  if (coder_dec_end (cstate) != 1)
-    goto err_dec;
-  cbdc_expand_tau (tau, tau_);
-
-  /* norm bound of the preimage, sqrt(34034726) in anoncreds_p2_params.py */
-  polyvec_l2sqr (l2sqr, s1);
-  polyvec_l2sqr (l2sqr2, s2);
-  int_add (l2sqr, l2sqr, l2sqr2);
-  int_set_i64 (bnd, 34034726);
-  if (int_gt (l2sqr, bnd))
+  if (!cbdc_dec_cred (tau, s1, s2, credbuf, credlen))
     goto err_dec;
 
-  cbdc_mat_copy (AR, cbdc_AR);
-  cbdc_mat_copy (ATAU, cbdc_ATAU);
-  cbdc_mat_copy (AM, cbdc_AM);
-  cbdc_mat_copy (B2, state->B2);
+  rv = cbdc_cred_ok (state, tau, s1, s2);
 
-  polyvec_alloc (acc, cbdc_ring, 8);
-  polyvec_alloc (tmp, cbdc_ring, 8);
-  polyvec_alloc (zero, cbdc_ring, 8);
-  polyvec_set_zero (zero);
-
-  polyvec_mul (acc, AR, state->r);
-  polyvec_mul (tmp, ATAU, tau);
-  polyvec_add (acc, acc, tmp, 0);
-  polyvec_mul (tmp, AM, state->m);
-  polyvec_add (acc, acc, tmp, 0);
-  polyvec_sub (acc, acc, s1, 0);
-  polyvec_mul (tmp, B2, s2);
-  polyvec_sub (acc, acc, tmp, 0);
-  polyvec_redc (acc, acc);
-  rv = polyvec_eq (acc, zero) == 1;
-
-  polyvec_free (acc);
-  polyvec_free (tmp);
-  polyvec_free (zero);
-  polymat_free (AR);
-  polymat_free (ATAU);
-  polymat_free (AM);
-  polymat_free (B2);
 err_dec:
   polyvec_free (tau);
   polyvec_free (s1);
@@ -1118,13 +1204,14 @@ cbdc_attrs_ok (const uint8_t *attrs)
 /* issuer */
 
 void
-cbdc_issuer_init (cbdc_issuer_state_t state, UNUSED const uint8_t pubkey[897],
+cbdc_issuer_init (cbdc_issuer_state_t state, const uint8_t pubkey[897],
                   const uint8_t privkey[1281])
 {
   cbdc_pp_init ();
 
   memset (state, 0, sizeof (cbdc_issuer_state_t));
   memcpy (state->sk, privkey, sizeof (state->sk));
+  cbdc_derive_c0 (state->c0, pubkey);
   lin_verifier_init (state->p1, cbdc_p1pp, p1_param);
 }
 
@@ -1132,6 +1219,7 @@ void
 cbdc_issuer_clear (cbdc_issuer_state_t state)
 {
   lin_verifier_clear (state->p1);
+  polyvec_free (state->c0);
 }
 
 /*
@@ -1193,13 +1281,14 @@ cbdc_issuer_issue (cbdc_issuer_state_t state, uint8_t *cred, size_t *credlen,
   polyvec_alloc (tau, cbdc_ring, 8);
   cbdc_expand_tau (tau, tau_);
 
-  /* preimage sampling for Atau*tau + t */
+  /* preimage sampling for Atau*tau + t + c0 */
   polyvec_alloc (tmp, cbdc_ring, 8);
   polyvec_alloc (tp, cbdc_ring, 8);
   cbdc_mat_copy (ATAU, cbdc_ATAU);
   polyvec_mul (tmp, ATAU, tau);
   polymat_free (ATAU);
   polyvec_add (tp, tmp, t, 0);
+  polyvec_add (tp, tp, state->c0, 0);
   polyvec_redc (tp, tp);
 
   poly_alloc (fp, cbdc_falcon_ring);
@@ -1249,6 +1338,7 @@ cbdc_verifier_init (cbdc_verifier_state_t state, const uint8_t pubkey[897])
 
   memset (state, 0, sizeof (cbdc_verifier_state_t));
   cbdc_decode_pk (state->B2, pubkey);
+  cbdc_derive_c0 (state->c0, pubkey);
   lin_verifier_init (state->p2, cbdc_p2pp, p2_param);
 }
 
@@ -1257,6 +1347,7 @@ cbdc_verifier_clear (cbdc_verifier_state_t state)
 {
   lin_verifier_clear (state->p2);
   polymat_free (state->B2);
+  polyvec_free (state->c0);
 }
 
 /*
@@ -1299,7 +1390,8 @@ cbdc_verifier_presver (cbdc_verifier_state_t state, const uint8_t *attrs_rev,
   polyvec_alloc (m, cbdc_ring, CBDC_NATTRS);
   cbdc_encattrs (m, attrs_rev, CBDC_NATTRS);
 
-  cbdc_p2_statement (A, u, state->B2, m, idx_rev, nrev, nymv, idx_com, ncom);
+  cbdc_p2_statement (A, u, state->B2, state->c0, m, idx_rev, nrev, nymv,
+                     idx_com, ncom);
   lin_verifier_set_statement (state->p2, A, u);
   b = lin_verifier_verify_ctx (state->p2, presbuf, &len, ctx, ctxlen);
   if (b == 1 && len != preslen)
