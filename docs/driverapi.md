@@ -99,6 +99,10 @@ A `TokenRequest` is the primary structure submitted to the ledger. It consists o
 - **Auditing**: A dedicated section for auditor signatures and their identities.
 - **Metadata**: (Sent via transient data) Contains cleartext information required by participants and auditors to process the transaction.
 
+Metadata arrives from a remote peer, so an optional field the sender omitted decodes to a zero
+value rather than panicking the decoder. Enforcing that a field is present is the job of
+`Match`, not of decoding.
+
 ### Message Hierarchy
 
 The following diagram illustrates the relationship between the core Protobuf messages defined in `token/driver/protos/v1`:

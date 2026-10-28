@@ -326,6 +326,63 @@ func TestAuditableIdentity_FromProtos(t *testing.T) {
 	assert.Equal(t, []byte("auditinfo1"), ai.AuditInfo)
 }
 
+// TestAuditableIdentity_FromProtos_Nil tests that a nil protobuf decodes to the zero
+// value instead of panicking. An absent optional issuer field unmarshals to nil, so a
+// remote peer could otherwise crash the node (see issue #2553).
+func TestAuditableIdentity_FromProtos_Nil(t *testing.T) {
+	ai := &AuditableIdentity{
+		Identity:  Identity("identity1"),
+		AuditInfo: []byte("auditinfo1"),
+	}
+
+	err := ai.FromProtos(nil)
+	require.NoError(t, err)
+	assert.Nil(t, ai.Identity)
+	assert.Nil(t, ai.AuditInfo)
+}
+
+// TestAuditableIdentity_FromProtos_OverwritesDestination pins the guarantee that
+// IssueMetadata.FromProtos and TransferMetadata.FromProtos rely on: every field is
+// written on every path, so decoding into a reused destination cannot leave a previous
+// identity attached to new metadata. Without this, an early "return nil" on the nil
+// path would be a silent identity mix-up rather than an obvious crash.
+func TestAuditableIdentity_FromProtos_OverwritesDestination(t *testing.T) {
+	stale := func() *AuditableIdentity {
+		return &AuditableIdentity{
+			Identity:  Identity("previous-issuer"),
+			AuditInfo: []byte("previous-audit-info"),
+		}
+	}
+
+	t.Run("nil proto clears both fields", func(t *testing.T) {
+		ai := stale()
+		require.NoError(t, ai.FromProtos(nil))
+		assert.Nil(t, ai.Identity)
+		assert.Nil(t, ai.AuditInfo)
+	})
+
+	t.Run("empty proto clears both fields", func(t *testing.T) {
+		ai := stale()
+		require.NoError(t, ai.FromProtos(&request.AuditableIdentity{}))
+		assert.Nil(t, ai.Identity)
+		assert.Nil(t, ai.AuditInfo)
+	})
+
+	t.Run("nil issuer clears a reused issue metadata", func(t *testing.T) {
+		im := &IssueMetadata{Issuer: *stale()}
+		require.NoError(t, im.FromProtos(&request.IssueMetadata{Issuer: nil}))
+		assert.Nil(t, im.Issuer.Identity)
+		assert.Nil(t, im.Issuer.AuditInfo)
+	})
+
+	t.Run("nil issuer clears a reused transfer metadata", func(t *testing.T) {
+		tm := &TransferMetadata{Issuer: *stale()}
+		require.NoError(t, tm.FromProtos(&request.TransferMetadata{Issuer: nil}))
+		assert.Nil(t, tm.Issuer.Identity)
+		assert.Nil(t, tm.Issuer.AuditInfo)
+	})
+}
+
 // TestIssueInputMetadata_ToProtos tests conversion to protobuf
 func TestIssueInputMetadata_ToProtos(t *testing.T) {
 	iim := &IssueInputMetadata{
@@ -518,6 +575,37 @@ func TestIssueMetadata_FromProtos(t *testing.T) {
 	assert.Len(t, im.ExtraSigners, 1)
 	assert.Equal(t, Identity("signer1"), im.ExtraSigners[0].Identity)
 	assert.Nil(t, im.ExtraSigners[0].AuditInfo)
+}
+
+// TestIssueMetadata_FromProtos_NilIssuer tests that issue metadata carrying no issuer
+// decodes to the zero issuer instead of panicking (issue #2553).
+func TestIssueMetadata_FromProtos_NilIssuer(t *testing.T) {
+	proto := &request.IssueMetadata{
+		Issuer:  nil,
+		Inputs:  []*request.IssueInputMetadata{},
+		Outputs: []*request.OutputMetadata{},
+	}
+
+	im := &IssueMetadata{}
+	err := im.FromProtos(proto)
+	require.NoError(t, err)
+	assert.Nil(t, im.Issuer.Identity)
+	assert.Nil(t, im.Issuer.AuditInfo)
+}
+
+// TestIssueMetadata_FromProtos_NilExtraSigner tests that a nil extra signer entry
+// decodes to the zero identity instead of panicking.
+func TestIssueMetadata_FromProtos_NilExtraSigner(t *testing.T) {
+	proto := &request.IssueMetadata{
+		Issuer:       &request.AuditableIdentity{},
+		ExtraSigners: []*request.AuditableIdentity{nil},
+	}
+
+	im := &IssueMetadata{}
+	err := im.FromProtos(proto)
+	require.NoError(t, err)
+	require.Len(t, im.ExtraSigners, 1)
+	assert.Nil(t, im.ExtraSigners[0].Identity)
 }
 
 // TestTransferInputMetadata_ToProtos tests conversion to protobuf
@@ -815,6 +903,129 @@ func TestTransferMetadata_FromProtos_NilIssuer(t *testing.T) {
 	require.NoError(t, err)
 	assert.Nil(t, tm.Issuer.Identity)
 	assert.Nil(t, tm.Issuer.AuditInfo)
+}
+
+// TestTransferMetadata_FromProtos_NilExtraSigner tests that a nil extra signer entry
+// decodes to the zero identity instead of panicking.
+func TestTransferMetadata_FromProtos_NilExtraSigner(t *testing.T) {
+	proto := &request.TransferMetadata{
+		ExtraSigners: []*request.AuditableIdentity{nil},
+	}
+
+	tm := &TransferMetadata{}
+	err := tm.FromProtos(proto)
+	require.NoError(t, err)
+	require.Len(t, tm.ExtraSigners, 1)
+	assert.Nil(t, tm.ExtraSigners[0].Identity)
+}
+
+// TestTokenRequestMetadata_FromBytes_NilIssuer tests the full wire entry point: a
+// serialized TokenRequestMetadata whose issue metadata omits the issuer must not panic
+// the decoder (issue #2553).
+func TestTokenRequestMetadata_FromBytes_NilIssuer(t *testing.T) {
+	protoMeta := &request.TokenRequestMetadata{
+		Version: ProtocolV1,
+		Metadata: []*request.ActionMetadata{
+			{
+				ActionId: 0,
+				Metadata: &request.ActionMetadata_IssueMetadata{
+					IssueMetadata: &request.IssueMetadata{Issuer: nil},
+				},
+			},
+		},
+	}
+
+	raw, err := proto.Marshal(protoMeta)
+	require.NoError(t, err)
+
+	reqMeta := &TokenRequestMetadata{}
+	err = reqMeta.FromBytes(raw)
+	require.NoError(t, err)
+	require.Len(t, reqMeta.Actions, 1)
+	require.NotNil(t, reqMeta.Actions[0].IssueMetadata)
+	assert.Nil(t, reqMeta.Actions[0].IssueMetadata.Issuer.Identity)
+}
+
+// FuzzTokenRequestMetadataFromBytesNoPanic drives the wire entry point for token request
+// metadata with attacker-controlled bytes. TokenRequestMetadata.FromBytes decodes payloads
+// received from remote peers, so a panic anywhere beneath it is a remote DoS — issue #2553 was
+// exactly that, an absent optional issuer field unmarshalling to nil and being dereferenced.
+// An error return is a fine outcome for any input; a panic never is.
+func FuzzTokenRequestMetadataFromBytesNoPanic(f *testing.F) {
+	// a well-formed payload
+	valid, err := (&TokenRequestMetadata{
+		Actions: []*ActionMetadataEntry{
+			{
+				ActionID: 0,
+				IssueMetadata: &IssueMetadata{
+					Issuer:  AuditableIdentity{Identity: Identity("issuer"), AuditInfo: []byte("audit")},
+					Inputs:  []*IssueInputMetadata{{TokenID: &token.ID{TxId: "tx", Index: 0}}},
+					Outputs: []*IssueOutputMetadata{{OutputMetadata: []byte("meta")}},
+				},
+			},
+		},
+		Application: map[string][]byte{"k": []byte("v")},
+	}).Bytes()
+	if err != nil {
+		f.Fatalf("failed building the valid seed: %v", err)
+	}
+	f.Add(valid)
+	f.Add(valid[:len(valid)/2]) // truncated
+	f.Add([]byte{})             // empty
+	f.Add([]byte("not a proto"))
+
+	// the #2553 payload: issue metadata with the optional issuer field absent
+	for _, seed := range []*request.TokenRequestMetadata{
+		{
+			Version: ProtocolV1,
+			Metadata: []*request.ActionMetadata{
+				{Metadata: &request.ActionMetadata_IssueMetadata{IssueMetadata: &request.IssueMetadata{}}},
+			},
+		},
+		{
+			Version: ProtocolV1,
+			Metadata: []*request.ActionMetadata{
+				{Metadata: &request.ActionMetadata_TransferMetadata{TransferMetadata: &request.TransferMetadata{}}},
+			},
+		},
+		{Version: ProtocolV1, Metadata: []*request.ActionMetadata{{}}},
+		{Version: ProtocolV1},
+		{},
+	} {
+		raw, err := proto.Marshal(seed)
+		if err != nil {
+			f.Fatalf("failed building a seed: %v", err)
+		}
+		f.Add(raw)
+	}
+
+	f.Fuzz(func(t *testing.T, raw []byte) {
+		meta := &TokenRequestMetadata{}
+		if err := meta.FromBytes(raw); err != nil {
+			return // rejecting malformed input is the expected outcome
+		}
+		// A payload that decodes must also be safe to walk: these accessors run on
+		// decoded metadata before any validation of its contents.
+		for _, action := range meta.Actions {
+			if action == nil {
+				continue
+			}
+			if im := action.IssueMetadata; im != nil {
+				im.Receivers()
+				for j := range im.Outputs {
+					im.IsOutputAbsent(j)
+				}
+			}
+			if tm := action.TransferMetadata; tm != nil {
+				tm.Receivers()
+				tm.Senders()
+				tm.TokenIDs()
+				for j := range tm.Outputs {
+					tm.IsOutputAbsent(j)
+				}
+			}
+		}
+	})
 }
 
 func TestTokenRequestMetadataSerialization(t *testing.T) {
