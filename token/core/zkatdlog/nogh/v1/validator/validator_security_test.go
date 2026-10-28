@@ -461,6 +461,90 @@ func TestSecurityP2_TransferSignatureValidate_NilOutputInRedeem(t *testing.T) {
 	require.NoError(t, err)
 }
 
+// TestTransferSignatureValidate_ZeroLengthOwnerIsRedeem verifies that the
+// redeem-detection loop classifies an output with a non-nil but zero-length
+// owner as a redeem, consistently with Token.IsRedeem() (len(Owner) == 0),
+// which is the predicate used by the rest of the validation pipeline.
+//
+// Regression for issue #2556: the loop previously tested `output.Owner == nil`,
+// so an output carrying `[]byte{}` as owner was treated as a regular transfer
+// here while being treated as a redeem elsewhere, skipping the
+// issuer-signature requirement.
+func TestTransferSignatureValidate_ZeroLengthOwnerIsRedeem(t *testing.T) {
+	pp, err := v1.Setup(32, []byte("idemix"), math.BLS12_381_BBS_GURVY)
+	require.NoError(t, err)
+
+	// At least one issuer, so the redeem-detection branch is entered.
+	pp.IssuerIDs = []driver.Identity{[]byte("issuer1")}
+
+	validTok := &token.Token{Owner: []byte("owner1"), Data: pp.PedersenGenerators[0]}
+	issuer := driver.Identity("issuer1")
+
+	mockDesInst := &mock3.Deserializer{}
+	mockDesInst.GetOwnerVerifierReturns(&mock3.Verifier{}, nil)
+	mockDesInst.GetIssuerVerifierReturns(&mock3.Verifier{}, nil)
+
+	// newContext builds a transfer with a single output owned by owner. When
+	// withIssuer is false the action carries no issuer, so a detected redeem
+	// must fail with ErrMissingIssuer.
+	newContext := func(owner []byte, withIssuer bool, signedBy *[]driver.Identity) *validator.Context {
+		action := &transfer.Action{
+			Inputs:  []*transfer.ActionInput{{Token: validTok}},
+			Outputs: []*token.Token{{Owner: owner, Data: pp.PedersenGenerators[0]}},
+		}
+		if withIssuer {
+			action.Issuer = issuer
+		}
+
+		return &validator.Context{
+			Logger:         logging.MustGetLogger(),
+			PP:             pp,
+			TransferAction: action,
+			Deserializer:   mockDesInst,
+			SignatureProvider: &mockSignatureProvider{
+				HasBeenSignedByFunc: func(_ context.Context, id driver.Identity, _ driver.Verifier) ([]byte, error) {
+					*signedBy = append(*signedBy, id)
+
+					return []byte("sig"), nil
+				},
+			},
+			MetadataCounter: make(map[string]int),
+		}
+	}
+
+	t.Run("nil owner is a redeem", func(t *testing.T) {
+		var signedBy []driver.Identity
+		err := validator.TransferSignatureValidate(context.Background(), newContext(nil, false, &signedBy))
+		require.ErrorIs(t, err, validator.ErrMissingIssuer)
+	})
+
+	t.Run("zero-length owner is a redeem", func(t *testing.T) {
+		var signedBy []driver.Identity
+		err := validator.TransferSignatureValidate(context.Background(), newContext([]byte{}, false, &signedBy))
+		require.ErrorIs(t, err, validator.ErrMissingIssuer, "#2556: an empty owner must be detected as a redeem")
+	})
+
+	t.Run("zero-length owner requires the issuer signature", func(t *testing.T) {
+		var signedBy []driver.Identity
+		ctx := newContext([]byte{}, true, &signedBy)
+		err := validator.TransferSignatureValidate(context.Background(), ctx)
+		require.NoError(t, err)
+		// The issuer signature is collected on top of the input-owner signature.
+		require.Equal(t, []driver.Identity{driver.Identity(validTok.Owner), issuer}, signedBy)
+		require.Len(t, ctx.Signatures, 2)
+	})
+
+	t.Run("non-empty owner is a plain transfer", func(t *testing.T) {
+		var signedBy []driver.Identity
+		ctx := newContext([]byte("recipient"), true, &signedBy)
+		err := validator.TransferSignatureValidate(context.Background(), ctx)
+		require.NoError(t, err)
+		// Only the input owner signs: no issuer signature is requested.
+		require.Equal(t, []driver.Identity{driver.Identity(validTok.Owner)}, signedBy)
+		require.Len(t, ctx.Signatures, 1)
+	})
+}
+
 // TestSecurityP3_TransferZKProofValidate_NilInputToken verifies that
 // TransferZKProofValidate returns an error instead of a nil-pointer panic when
 // ctx.InputTokens contains a nil entry.
