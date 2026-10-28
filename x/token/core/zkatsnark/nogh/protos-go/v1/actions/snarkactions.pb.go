@@ -532,6 +532,111 @@ func (x *MigrationAction) GetRecipient() []byte {
 	return nil
 }
 
+// FabtokenMigrationAction is the public wire-format record for a single token
+// migration from cleartext fabtoken to zkatsnark (MiMC-committed, Jubjub value commitment).
+type FabtokenMigrationAction struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// fabtoken_digest is the public MiMC digest of the original cleartext fabtoken:
+	// MiMC(Value, TokenType), 32 bytes
+	FabtokenDigest []byte `protobuf:"bytes,1,opt,name=fabtoken_digest,json=fabtokenDigest,proto3" json:"fabtoken_digest,omitempty"`
+	// commitment_mimc is the new MiMC commitment for the migrated token
+	// (BLS12-381 scalar field Fr, 32 bytes)
+	CommitmentMimc []byte `protobuf:"bytes,2,opt,name=commitment_mimc,json=commitmentMimc,proto3" json:"commitment_mimc,omitempty"`
+	// value_commit_out_x is the X coordinate of the new Jubjub value
+	// commitment (BLS12-381 Fr embedded Edwards coordinate, 32 bytes)
+	ValueCommitOutX []byte `protobuf:"bytes,3,opt,name=value_commit_out_x,json=valueCommitOutX,proto3" json:"value_commit_out_x,omitempty"`
+	// value_commit_out_y is the Y coordinate of the new Jubjub value
+	// commitment (BLS12-381 Fr embedded Edwards coordinate, 32 bytes)
+	ValueCommitOutY []byte `protobuf:"bytes,4,opt,name=value_commit_out_y,json=valueCommitOutY,proto3" json:"value_commit_out_y,omitempty"`
+	// type_commitment is MiMC(TokenType, TypeRandomness), 32 bytes
+	TypeCommitment []byte `protobuf:"bytes,5,opt,name=type_commitment,json=typeCommitment,proto3" json:"type_commitment,omitempty"`
+	// migration_proof is the zero-knowledge proof for the FabtokenMigrationCircuit
+	MigrationProof []byte `protobuf:"bytes,6,opt,name=migration_proof,json=migrationProof,proto3" json:"migration_proof,omitempty"`
+	// recipient is the intended recipient identity
+	Recipient     []byte `protobuf:"bytes,7,opt,name=recipient,proto3" json:"recipient,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *FabtokenMigrationAction) Reset() {
+	*x = FabtokenMigrationAction{}
+	mi := &file_snarkactions_proto_msgTypes[5]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FabtokenMigrationAction) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FabtokenMigrationAction) ProtoMessage() {}
+
+func (x *FabtokenMigrationAction) ProtoReflect() protoreflect.Message {
+	mi := &file_snarkactions_proto_msgTypes[5]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FabtokenMigrationAction.ProtoReflect.Descriptor instead.
+func (*FabtokenMigrationAction) Descriptor() ([]byte, []int) {
+	return file_snarkactions_proto_rawDescGZIP(), []int{5}
+}
+
+func (x *FabtokenMigrationAction) GetFabtokenDigest() []byte {
+	if x != nil {
+		return x.FabtokenDigest
+	}
+	return nil
+}
+
+func (x *FabtokenMigrationAction) GetCommitmentMimc() []byte {
+	if x != nil {
+		return x.CommitmentMimc
+	}
+	return nil
+}
+
+func (x *FabtokenMigrationAction) GetValueCommitOutX() []byte {
+	if x != nil {
+		return x.ValueCommitOutX
+	}
+	return nil
+}
+
+func (x *FabtokenMigrationAction) GetValueCommitOutY() []byte {
+	if x != nil {
+		return x.ValueCommitOutY
+	}
+	return nil
+}
+
+func (x *FabtokenMigrationAction) GetTypeCommitment() []byte {
+	if x != nil {
+		return x.TypeCommitment
+	}
+	return nil
+}
+
+func (x *FabtokenMigrationAction) GetMigrationProof() []byte {
+	if x != nil {
+		return x.MigrationProof
+	}
+	return nil
+}
+
+func (x *FabtokenMigrationAction) GetRecipient() []byte {
+	if x != nil {
+		return x.Recipient
+	}
+	return nil
+}
+
 var File_snarkactions_proto protoreflect.FileDescriptor
 
 const file_snarkactions_proto_rawDesc = "" +
@@ -584,7 +689,15 @@ const file_snarkactions_proto_rawDesc = "" +
 	"\x12value_commit_out_y\x18\x05 \x01(\fR\x0fvalueCommitOutY\x12'\n" +
 	"\x0ftype_commitment\x18\x06 \x01(\fR\x0etypeCommitment\x12'\n" +
 	"\x0fmigration_proof\x18\a \x01(\fR\x0emigrationProof\x12\x1c\n" +
-	"\trecipient\x18\b \x01(\fR\trecipientBRZPgithub.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/protos-go/v1/actionsb\x06proto3"
+	"\trecipient\x18\b \x01(\fR\trecipient\"\xb5\x02\n" +
+	"\x17FabtokenMigrationAction\x12'\n" +
+	"\x0ffabtoken_digest\x18\x01 \x01(\fR\x0efabtokenDigest\x12'\n" +
+	"\x0fcommitment_mimc\x18\x02 \x01(\fR\x0ecommitmentMimc\x12+\n" +
+	"\x12value_commit_out_x\x18\x03 \x01(\fR\x0fvalueCommitOutX\x12+\n" +
+	"\x12value_commit_out_y\x18\x04 \x01(\fR\x0fvalueCommitOutY\x12'\n" +
+	"\x0ftype_commitment\x18\x05 \x01(\fR\x0etypeCommitment\x12'\n" +
+	"\x0fmigration_proof\x18\x06 \x01(\fR\x0emigrationProof\x12\x1c\n" +
+	"\trecipient\x18\a \x01(\fR\trecipientBRZPgithub.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/protos-go/v1/actionsb\x06proto3"
 
 var (
 	file_snarkactions_proto_rawDescOnce sync.Once
@@ -598,24 +711,25 @@ func file_snarkactions_proto_rawDescGZIP() []byte {
 	return file_snarkactions_proto_rawDescData
 }
 
-var file_snarkactions_proto_msgTypes = make([]protoimpl.MessageInfo, 7)
+var file_snarkactions_proto_msgTypes = make([]protoimpl.MessageInfo, 8)
 var file_snarkactions_proto_goTypes = []any{
-	(*OutputDescription)(nil), // 0: fabric_token_sdk.token.zkatsnark.v1.OutputDescription
-	(*SpendDescription)(nil),  // 1: fabric_token_sdk.token.zkatsnark.v1.SpendDescription
-	(*IssueAction)(nil),       // 2: fabric_token_sdk.token.zkatsnark.v1.IssueAction
-	(*TransferAction)(nil),    // 3: fabric_token_sdk.token.zkatsnark.v1.TransferAction
-	(*MigrationAction)(nil),   // 4: fabric_token_sdk.token.zkatsnark.v1.MigrationAction
-	nil,                       // 5: fabric_token_sdk.token.zkatsnark.v1.IssueAction.MetadataEntry
-	nil,                       // 6: fabric_token_sdk.token.zkatsnark.v1.TransferAction.MetadataEntry
-	(*v1.TokenID)(nil),        // 7: fabric_token_sdk.token.driver.v1.TokenID
+	(*OutputDescription)(nil),       // 0: fabric_token_sdk.token.zkatsnark.v1.OutputDescription
+	(*SpendDescription)(nil),        // 1: fabric_token_sdk.token.zkatsnark.v1.SpendDescription
+	(*IssueAction)(nil),             // 2: fabric_token_sdk.token.zkatsnark.v1.IssueAction
+	(*TransferAction)(nil),          // 3: fabric_token_sdk.token.zkatsnark.v1.TransferAction
+	(*MigrationAction)(nil),         // 4: fabric_token_sdk.token.zkatsnark.v1.MigrationAction
+	(*FabtokenMigrationAction)(nil), // 5: fabric_token_sdk.token.zkatsnark.v1.FabtokenMigrationAction
+	nil,                             // 6: fabric_token_sdk.token.zkatsnark.v1.IssueAction.MetadataEntry
+	nil,                             // 7: fabric_token_sdk.token.zkatsnark.v1.TransferAction.MetadataEntry
+	(*v1.TokenID)(nil),              // 8: fabric_token_sdk.token.driver.v1.TokenID
 }
 var file_snarkactions_proto_depIdxs = []int32{
 	0, // 0: fabric_token_sdk.token.zkatsnark.v1.IssueAction.outputs:type_name -> fabric_token_sdk.token.zkatsnark.v1.OutputDescription
-	5, // 1: fabric_token_sdk.token.zkatsnark.v1.IssueAction.metadata:type_name -> fabric_token_sdk.token.zkatsnark.v1.IssueAction.MetadataEntry
-	7, // 2: fabric_token_sdk.token.zkatsnark.v1.TransferAction.input_ids:type_name -> fabric_token_sdk.token.driver.v1.TokenID
+	6, // 1: fabric_token_sdk.token.zkatsnark.v1.IssueAction.metadata:type_name -> fabric_token_sdk.token.zkatsnark.v1.IssueAction.MetadataEntry
+	8, // 2: fabric_token_sdk.token.zkatsnark.v1.TransferAction.input_ids:type_name -> fabric_token_sdk.token.driver.v1.TokenID
 	1, // 3: fabric_token_sdk.token.zkatsnark.v1.TransferAction.inputs:type_name -> fabric_token_sdk.token.zkatsnark.v1.SpendDescription
 	0, // 4: fabric_token_sdk.token.zkatsnark.v1.TransferAction.outputs:type_name -> fabric_token_sdk.token.zkatsnark.v1.OutputDescription
-	6, // 5: fabric_token_sdk.token.zkatsnark.v1.TransferAction.metadata:type_name -> fabric_token_sdk.token.zkatsnark.v1.TransferAction.MetadataEntry
+	7, // 5: fabric_token_sdk.token.zkatsnark.v1.TransferAction.metadata:type_name -> fabric_token_sdk.token.zkatsnark.v1.TransferAction.MetadataEntry
 	6, // [6:6] is the sub-list for method output_type
 	6, // [6:6] is the sub-list for method input_type
 	6, // [6:6] is the sub-list for extension type_name
@@ -634,7 +748,7 @@ func file_snarkactions_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_snarkactions_proto_rawDesc), len(file_snarkactions_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   7,
+			NumMessages:   8,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

@@ -291,3 +291,56 @@ func TestValidateTransferActionShape_Valid(t *testing.T) {
 	}
 	require.NoError(t, validateTransferActionShape(a))
 }
+
+// ── Fabtoken migration action shape tests ───────────────────────────────────
+
+func validFabtokenMigrationAction() *snarktoken.FabtokenMigrationAction {
+	return &snarktoken.FabtokenMigrationAction{
+		FabtokenDigest:  make([]byte, 32),
+		CommitmentMiMC:  make([]byte, 32),
+		ValueCommitOutX: make([]byte, 32),
+		ValueCommitOutY: make([]byte, 32),
+		TypeCommitment:  make([]byte, 32),
+		MigrationProof:  make([]byte, 292),
+	}
+}
+
+func TestValidateFabtokenMigrationActionShape_Valid(t *testing.T) {
+	require.NoError(t, validateFabtokenMigrationActionShape(validFabtokenMigrationAction()))
+}
+
+func TestValidateFabtokenMigrationActionShape_WrongDigestLength(t *testing.T) {
+	a := validFabtokenMigrationAction()
+	a.FabtokenDigest = make([]byte, 16)
+	require.ErrorIs(t, validateFabtokenMigrationActionShape(a), ErrMalformedAction)
+}
+
+func TestValidateFabtokenMigrationActionShape_WrongCommitmentMiMCLength(t *testing.T) {
+	a := validFabtokenMigrationAction()
+	a.CommitmentMiMC = make([]byte, 48)
+	require.ErrorIs(t, validateFabtokenMigrationActionShape(a), ErrMalformedAction)
+}
+
+func TestValidateFabtokenMigrationActionShape_WrongValueCommitOutXLength(t *testing.T) {
+	a := validFabtokenMigrationAction()
+	a.ValueCommitOutX = make([]byte, 64)
+	require.ErrorIs(t, validateFabtokenMigrationActionShape(a), ErrMalformedAction)
+}
+
+func TestValidateFabtokenMigrationActionShape_WrongValueCommitOutYLength(t *testing.T) {
+	a := validFabtokenMigrationAction()
+	a.ValueCommitOutY = make([]byte, 0)
+	require.ErrorIs(t, validateFabtokenMigrationActionShape(a), ErrMalformedAction)
+}
+
+func TestValidateFabtokenMigrationActionShape_WrongTypeCommitmentLength(t *testing.T) {
+	a := validFabtokenMigrationAction()
+	a.TypeCommitment = make([]byte, 48)
+	require.ErrorIs(t, validateFabtokenMigrationActionShape(a), ErrMalformedAction)
+}
+
+func TestValidateFabtokenMigrationActionShape_EmptyProof(t *testing.T) {
+	a := validFabtokenMigrationAction()
+	a.MigrationProof = nil
+	require.ErrorIs(t, validateFabtokenMigrationActionShape(a), ErrMalformedAction)
+}

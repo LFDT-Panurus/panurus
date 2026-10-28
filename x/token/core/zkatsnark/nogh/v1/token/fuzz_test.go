@@ -100,3 +100,33 @@ func FuzzMigrationActionDeserializeNoPanic(f *testing.F) {
 		})
 	})
 }
+
+// FuzzFabtokenMigrationActionDeserializeNoPanic fuzzes FabtokenMigrationAction.Deserialize with arbitrary bytes.
+func FuzzFabtokenMigrationActionDeserializeNoPanic(f *testing.F) {
+	action := &snarktoken.FabtokenMigrationAction{
+		FabtokenDigest:  make([]byte, 32),
+		CommitmentMiMC:  make([]byte, 32),
+		ValueCommitOutX: make([]byte, 32),
+		ValueCommitOutY: make([]byte, 32),
+		TypeCommitment:  make([]byte, 32),
+		MigrationProof:  make([]byte, 100),
+		Recipient:       []byte("alice"),
+	}
+	raw, err := action.Serialize()
+	require.NoError(f, err)
+
+	f.Add(raw)
+	f.Add([]byte{})
+	f.Add([]byte("malformed-bytes"))
+	f.Add(raw[:len(raw)/2])
+
+	f.Fuzz(func(t *testing.T, raw []byte) {
+		if len(raw) > maxFuzzBytes {
+			t.Skip()
+		}
+		require.NotPanics(t, func() {
+			fma := &snarktoken.FabtokenMigrationAction{}
+			_ = fma.Deserialize(raw)
+		})
+	})
+}

@@ -41,9 +41,10 @@ import (
 type CircuitName string
 
 const (
-	CircuitSpend     CircuitName = "spend"
-	CircuitOutput    CircuitName = "output"
-	CircuitMigration CircuitName = "migration"
+	CircuitSpend             CircuitName = "spend"
+	CircuitOutput            CircuitName = "output"
+	CircuitMigration         CircuitName = "migration"
+	CircuitFabtokenMigration CircuitName = "fabtoken_migration" //nolint:gosec // G101: circuit name, not credentials
 )
 
 // ErrMissingKey is returned when a requested proving or verification key is
@@ -274,6 +275,63 @@ func SetupMigration(p *pp.PublicParams, gens PedersenGeneratorCoords) (*pp.Publi
 	return p, nil
 }
 
+// CompileFabtokenMigrationCircuit compiles circuit.FabtokenMigrationCircuit for the curve
+// and proof system specified in p, with the range-check bit-width from p.MaxBits.
+func CompileFabtokenMigrationCircuit(p *pp.PublicParams) (constraint.ConstraintSystem, error) {
+	if p.MaxBits <= 0 {
+		return nil, errors.Errorf("setup: cannot compile FabtokenMigrationCircuit: MaxBits must be positive, got %d", p.MaxBits)
+	}
+
+	gens, err := curveGenerators(p.Curve)
+	if err != nil {
+		return nil, err
+	}
+
+	builder, err := csBuilder(p.ProofSystem)
+	if err != nil {
+		return nil, err
+	}
+
+	cs, err := frontend.Compile(
+		p.Curve.ScalarField(),
+		builder,
+		&circuit.FabtokenMigrationCircuit{
+			MaxBits: p.MaxBits,
+			GenVX:   gens.VX, GenVY: gens.VY,
+			GenRX: gens.RX, GenRY: gens.RY,
+		},
+	)
+	if err != nil {
+		return nil, errors.Wrapf(err, "setup: FabtokenMigrationCircuit compilation failed")
+	}
+
+	return cs, nil
+}
+
+// SetupFabtokenMigration compiles FabtokenMigrationCircuit and runs setup via the proof
+// system backend, populating p.PKFabtokenMigration/VKFabtokenMigration in place.
+func SetupFabtokenMigration(p *pp.PublicParams) (*pp.PublicParams, error) {
+	b, err := backend.NewProofSystemBackend(p.ProofSystem, p.Curve)
+	if err != nil {
+		return nil, errors.Wrapf(err, "setup: SetupFabtokenMigration backend creation")
+	}
+
+	fabCS, err := CompileFabtokenMigrationCircuit(p)
+	if err != nil {
+		return nil, err
+	}
+
+	pkBytes, vkBytes, err := b.Setup(fabCS)
+	if err != nil {
+		return nil, errors.Wrapf(err, "setup: FabtokenMigrationCircuit setup failed")
+	}
+
+	p.PKFabtokenMigration = pkBytes
+	p.VKFabtokenMigration = vkBytes
+
+	return p, nil
+}
+
 // ── Trusted setup ───────────────────────────────────────────────────────────────
 
 // SetupAll compiles SpendCircuit and OutputCircuit and runs setup for
@@ -339,6 +397,8 @@ func LoadProvingKeyBytes(p *pp.PublicParams, circuitName CircuitName) ([]byte, e
 		raw = p.PKOutput
 	case CircuitMigration:
 		raw = p.PKMigration
+	case CircuitFabtokenMigration:
+		raw = p.PKFabtokenMigration
 	default:
 		return nil, errors.Errorf("setup: unknown circuit name %q", circuitName)
 	}
@@ -360,6 +420,8 @@ func LoadVerifyingKeyBytes(p *pp.PublicParams, circuitName CircuitName) ([]byte,
 		raw = p.VKOutput
 	case CircuitMigration:
 		raw = p.VKMigration
+	case CircuitFabtokenMigration:
+		raw = p.VKFabtokenMigration
 	default:
 		return nil, errors.Errorf("setup: unknown circuit name %q", circuitName)
 	}

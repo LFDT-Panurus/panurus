@@ -87,6 +87,24 @@ func publicWitnessForMigration(d decodedMigration, curve ecc.ID) (witness.Witnes
 	return w, nil
 }
 
+// publicWitnessForFabtokenMigration builds a public-only witness for
+// FabtokenMigrationCircuit from decoded field elements.
+func publicWitnessForFabtokenMigration(d decodedFabtokenMigration, curve ecc.ID) (witness.Witness, error) {
+	assignment := &circuit.FabtokenMigrationCircuit{
+		FabtokenDigest:  d.FabtokenDigest,
+		CommitmentMiMC:  d.CommitmentMiMC,
+		ValueCommitOutX: d.ValueCommitX,
+		ValueCommitOutY: d.ValueCommitY,
+		TypeCommitment:  d.TypeCommitment,
+	}
+	w, err := frontend.NewWitness(assignment, curve.ScalarField(), frontend.PublicOnly())
+	if err != nil {
+		return nil, errors.Wrapf(err, "validator: building fabtoken migration public witness")
+	}
+
+	return w, nil
+}
+
 type proofOutcome struct {
 	err error
 }
@@ -170,6 +188,24 @@ func verifyMigrationProof(
 		return err
 	}
 	if err := v.Backend().Verify(v.VKMigration(), proofBytes, pw); err != nil {
+		return errors.Wrapf(ErrInvalidProof, "%s", err)
+	}
+
+	return nil
+}
+
+// verifyFabtokenMigrationProof verifies a single FabtokenMigrationAction's proof against
+// the already-prepared fabtoken migration verifying key.
+func verifyFabtokenMigrationProof(
+	v *prepared.Verifier,
+	proofBytes []byte,
+	decoded decodedFabtokenMigration,
+) error {
+	pw, err := publicWitnessForFabtokenMigration(decoded, v.PP().Curve)
+	if err != nil {
+		return err
+	}
+	if err := v.Backend().Verify(v.VKFabtokenMigration(), proofBytes, pw); err != nil {
 		return errors.Wrapf(ErrInvalidProof, "%s", err)
 	}
 

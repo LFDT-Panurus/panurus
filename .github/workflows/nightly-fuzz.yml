@@ -299,6 +299,10 @@ jobs:
             dir: ./x/token/core/zkatsnark
             pkg: ./nogh/v1/token
             func: FuzzMigrationActionDeserializeNoPanic
+          - name: zkatsnark-fabtoken-migration-action-deserialize
+            dir: ./x/token/core/zkatsnark
+            pkg: ./nogh/v1/token
+            func: FuzzFabtokenMigrationActionDeserializeNoPanic
 
     steps:
       - name: Checkout code

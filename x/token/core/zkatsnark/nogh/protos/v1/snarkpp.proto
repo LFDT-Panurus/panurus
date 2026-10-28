@@ -65,4 +65,8 @@ message PublicParameters {
   repeated IdemixIssuerPublicKey idemix_issuer_public_keys = 17;
   // extra_params carries any additional parameters not covered by the named accessors
   map<string, bytes> extra_params = 18;
+  // pk_fabtoken_migration is the proving key for the fabtoken migration circuit
+  bytes pk_fabtoken_migration = 19;
+  // vk_fabtoken_migration is the verification key for the fabtoken migration circuit
+  bytes vk_fabtoken_migration = 20;
 }

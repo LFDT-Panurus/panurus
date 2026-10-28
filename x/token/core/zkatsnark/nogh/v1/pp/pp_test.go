@@ -246,6 +246,14 @@ func TestPublicParams_Validate_EmptyIdemixPublicKey(t *testing.T) {
 
 func TestPublicParams_SerializeDeserialize_RoundTrip(t *testing.T) {
 	orig := defaultValidPP()
+	orig.PKSpend = []byte("pk-spend")
+	orig.PKOutput = []byte("pk-output")
+	orig.PKMigration = []byte("pk-migration")
+	orig.PKFabtokenMigration = []byte("pk-fabtoken-migration")
+	orig.VKSpend = []byte("vk-spend")
+	orig.VKOutput = []byte("vk-output")
+	orig.VKMigration = []byte("vk-migration")
+	orig.VKFabtokenMigration = []byte("vk-fabtoken-migration")
 
 	raw, err := orig.Serialize()
 	require.NoError(t, err)
@@ -254,13 +262,19 @@ func TestPublicParams_SerializeDeserialize_RoundTrip(t *testing.T) {
 	got, err := pp.DeserializePublicParams(raw)
 	require.NoError(t, err)
 
-	// Spot-check key fields rather than require.Equal on the whole struct
-	// (circuit keys are empty in DefaultPublicParams, so the comparison is safe).
 	require.Equal(t, orig.Label, got.Label)
 	require.Equal(t, orig.SchemeVersion, got.SchemeVersion)
 	require.Equal(t, orig.ProofSystem, got.ProofSystem)
 	require.Equal(t, orig.MaxBits, got.MaxBits)
 	require.Equal(t, orig.PrecisionValue, got.PrecisionValue)
+	require.Equal(t, orig.PKSpend, got.PKSpend)
+	require.Equal(t, orig.PKOutput, got.PKOutput)
+	require.Equal(t, orig.PKMigration, got.PKMigration)
+	require.Equal(t, orig.PKFabtokenMigration, got.PKFabtokenMigration)
+	require.Equal(t, orig.VKSpend, got.VKSpend)
+	require.Equal(t, orig.VKOutput, got.VKOutput)
+	require.Equal(t, orig.VKMigration, got.VKMigration)
+	require.Equal(t, orig.VKFabtokenMigration, got.VKFabtokenMigration)
 }
 
 func TestPublicParams_DeserializePublicParams_GarbageBytes_Error(t *testing.T) {

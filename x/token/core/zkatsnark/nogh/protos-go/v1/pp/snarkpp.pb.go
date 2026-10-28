@@ -127,9 +127,13 @@ type PublicParameters struct {
 	// Wallets should prefer keys with lower array indices.
 	IdemixIssuerPublicKeys []*IdemixIssuerPublicKey `protobuf:"bytes,17,rep,name=idemix_issuer_public_keys,json=idemixIssuerPublicKeys,proto3" json:"idemix_issuer_public_keys,omitempty"`
 	// extra_params carries any additional parameters not covered by the named accessors
-	ExtraParams   map[string][]byte `protobuf:"bytes,18,rep,name=extra_params,json=extraParams,proto3" json:"extra_params,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	ExtraParams map[string][]byte `protobuf:"bytes,18,rep,name=extra_params,json=extraParams,proto3" json:"extra_params,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	// pk_fabtoken_migration is the proving key for the fabtoken migration circuit
+	PkFabtokenMigration []byte `protobuf:"bytes,19,opt,name=pk_fabtoken_migration,json=pkFabtokenMigration,proto3" json:"pk_fabtoken_migration,omitempty"`
+	// vk_fabtoken_migration is the verification key for the fabtoken migration circuit
+	VkFabtokenMigration []byte `protobuf:"bytes,20,opt,name=vk_fabtoken_migration,json=vkFabtokenMigration,proto3" json:"vk_fabtoken_migration,omitempty"`
+	unknownFields       protoimpl.UnknownFields
+	sizeCache           protoimpl.SizeCache
 }
 
 func (x *PublicParameters) Reset() {
@@ -288,6 +292,20 @@ func (x *PublicParameters) GetExtraParams() map[string][]byte {
 	return nil
 }
 
+func (x *PublicParameters) GetPkFabtokenMigration() []byte {
+	if x != nil {
+		return x.PkFabtokenMigration
+	}
+	return nil
+}
+
+func (x *PublicParameters) GetVkFabtokenMigration() []byte {
+	if x != nil {
+		return x.VkFabtokenMigration
+	}
+	return nil
+}
+
 var File_snarkpp_proto protoreflect.FileDescriptor
 
 const file_snarkpp_proto_rawDesc = "" +
@@ -296,7 +314,7 @@ const file_snarkpp_proto_rawDesc = "" +
 	"\x15IdemixIssuerPublicKey\x12\x1d\n" +
 	"\n" +
 	"public_key\x18\x01 \x01(\fR\tpublicKey\x12\x19\n" +
-	"\bcurve_id\x18\x02 \x01(\x04R\acurveId\"\xad\a\n" +
+	"\bcurve_id\x18\x02 \x01(\x04R\acurveId\"\x95\b\n" +
 	"\x10PublicParameters\x12\x14\n" +
 	"\x05label\x18\x01 \x01(\tR\x05label\x12%\n" +
 	"\x0escheme_version\x18\x02 \x01(\rR\rschemeVersion\x120\n" +
@@ -316,7 +334,9 @@ const file_snarkpp_proto_rawDesc = "" +
 	"\fvk_migration\x18\x0f \x01(\fR\vvkMigration\x12\x19\n" +
 	"\bmax_bits\x18\x10 \x01(\rR\amaxBits\x12u\n" +
 	"\x19idemix_issuer_public_keys\x18\x11 \x03(\v2:.fabric_token_sdk.token.zkatsnark.v1.IdemixIssuerPublicKeyR\x16idemixIssuerPublicKeys\x12i\n" +
-	"\fextra_params\x18\x12 \x03(\v2F.fabric_token_sdk.token.zkatsnark.v1.PublicParameters.ExtraParamsEntryR\vextraParams\x1a>\n" +
+	"\fextra_params\x18\x12 \x03(\v2F.fabric_token_sdk.token.zkatsnark.v1.PublicParameters.ExtraParamsEntryR\vextraParams\x122\n" +
+	"\x15pk_fabtoken_migration\x18\x13 \x01(\fR\x13pkFabtokenMigration\x122\n" +
+	"\x15vk_fabtoken_migration\x18\x14 \x01(\fR\x13vkFabtokenMigration\x1a>\n" +
 	"\x10ExtraParamsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\fR\x05value:\x028\x01BMZKgithub.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/protos-go/v1/ppb\x06proto3"

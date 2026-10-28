@@ -184,6 +184,18 @@ func TestLoadVerifyingKeyBytes_MigrationMissing_Error(t *testing.T) {
 	require.ErrorIs(t, err, setup.ErrMissingKey)
 }
 
+func TestLoadProvingKeyBytes_FabtokenMigrationMissing_Error(t *testing.T) {
+	p := setupSharedPP(t)
+	_, err := setup.LoadProvingKeyBytes(p, setup.CircuitFabtokenMigration)
+	require.ErrorIs(t, err, setup.ErrMissingKey)
+}
+
+func TestLoadVerifyingKeyBytes_FabtokenMigrationMissing_Error(t *testing.T) {
+	p := setupSharedPP(t)
+	_, err := setup.LoadVerifyingKeyBytes(p, setup.CircuitFabtokenMigration)
+	require.ErrorIs(t, err, setup.ErrMissingKey)
+}
+
 // ── SetupMigration ────────────────────────────────────────────────────────────
 
 func TestSetupMigration_Success(t *testing.T) {
@@ -353,4 +365,55 @@ func TestCompileMigrationCircuit_Plonk_Success(t *testing.T) {
 	cs, err := setup.CompileMigrationCircuit(p, dummyGens())
 	require.NoError(t, err)
 	require.Positive(t, cs.GetNbConstraints(), "Plonk MigrationCircuit must have constraints")
+}
+
+func TestCompileFabtokenMigrationCircuit_Success(t *testing.T) {
+	p := pp.DefaultPublicParams()
+	cs, err := setup.CompileFabtokenMigrationCircuit(p)
+	require.NoError(t, err)
+	require.Positive(t, cs.GetNbConstraints(), "FabtokenMigrationCircuit must have constraints")
+}
+
+func TestCompileFabtokenMigrationCircuit_ZeroMaxBits_Error(t *testing.T) {
+	p := pp.DefaultPublicParams()
+	p.MaxBits = 0
+	_, err := setup.CompileFabtokenMigrationCircuit(p)
+	require.Error(t, err)
+}
+
+func TestCompileFabtokenMigrationCircuit_UnsupportedCurve_Error(t *testing.T) {
+	p := pp.DefaultPublicParams()
+	p.Curve = ecc.BW6_761
+	_, err := setup.CompileFabtokenMigrationCircuit(p)
+	require.Error(t, err)
+}
+
+func TestCompileFabtokenMigrationCircuit_UnsupportedProofSystem_Error(t *testing.T) {
+	p := pp.DefaultPublicParams()
+	p.ProofSystem = "invalid"
+	_, err := setup.CompileFabtokenMigrationCircuit(p)
+	require.Error(t, err)
+}
+
+func TestCompileFabtokenMigrationCircuit_Plonk_Success(t *testing.T) {
+	p := pp.DefaultPublicParams()
+	p.ProofSystem = "plonk"
+	cs, err := setup.CompileFabtokenMigrationCircuit(p)
+	require.NoError(t, err)
+	require.Positive(t, cs.GetNbConstraints(), "Plonk FabtokenMigrationCircuit must have constraints")
+}
+
+func TestSetupFabtokenMigration_Success(t *testing.T) {
+	p := pp.DefaultPublicParams()
+	p, err := setup.SetupFabtokenMigration(p)
+	require.NoError(t, err)
+	require.NotEmpty(t, p.PKFabtokenMigration)
+	require.NotEmpty(t, p.VKFabtokenMigration)
+}
+
+func TestSetupFabtokenMigration_UnsupportedProofSystem_Error(t *testing.T) {
+	p := pp.DefaultPublicParams()
+	p.ProofSystem = "invalid"
+	_, err := setup.SetupFabtokenMigration(p)
+	require.Error(t, err)
 }

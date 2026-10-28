@@ -558,3 +558,99 @@ func typedID(t *testing.T, name string) []byte {
 
 	return id
 }
+
+// TestFabtokenMigration_EndToEndLifecycle tests the full lifecycle of upgrading
+// a cleartext Fabtoken into a confidential Zkatsnark token, and subsequently
+// spending that migrated note in a normal Zkatsnark transfer action.
+func TestFabtokenMigration_EndToEndLifecycle(t *testing.T) {
+	setupShared(t)
+
+	// 1. Setup Fabtoken migration keys
+	p, err := setup.SetupFabtokenMigration(sharedPP)
+	require.NoError(t, err)
+
+	base, err := prepared.NewParams(p)
+	require.NoError(t, err)
+
+	proverParams, err := prepared.NewProverFrom(base)
+	require.NoError(t, err)
+	proverParams, err = proverParams.WithFabtokenMigration()
+	require.NoError(t, err)
+
+	fProver, err := prover.NewFabtokenMigrationProver(proverParams)
+	require.NoError(t, err)
+	orch.SetFabtokenMigrationProver(fProver)
+
+	verifierParams, err := prepared.NewVerifierFrom(base)
+	require.NoError(t, err)
+	verifierParams, err = verifierParams.WithFabtokenMigration()
+	require.NoError(t, err)
+
+	val, err := validator.NewValidator(verifierParams, &testDeserializer{}, driver.ResourceLimits{}.WithDefaults())
+	require.NoError(t, err)
+
+	// 2. Cleartext Fabtoken on ledger
+	sourceValue := uint64(500)
+	sourceTokenType := "EUR"
+	owner := typedID(t, "alice")
+
+	// Verify the expected public digest matches what the ledger derives
+	expectedDigest, err := snarktoken.ComputeFabtokenDigest(sourceValue, sourceTokenType, sharedPP.Curve)
+	require.NoError(t, err)
+
+	// 3. Prove migration from fabtoken to zkatsnark
+	opening := snarktoken.FabtokenOpening{
+		Value:     sourceValue,
+		TokenType: sourceTokenType,
+	}
+
+	actions, notes, err := orch.BuildFabtokenMigrationAction(
+		context.Background(),
+		[]prover.FabtokenMigrationRequest{{
+			Opening:   opening,
+			Recipient: owner,
+		}},
+		sharedPP,
+	)
+	require.NoError(t, err)
+	require.Len(t, actions, 1)
+	require.Len(t, notes, 1)
+
+	// Verify digest matches
+	require.Equal(t, expectedDigest, actions[0].FabtokenDigest)
+
+	// Verify note properties
+	require.Equal(t, sourceValue, notes[0].Value)
+	require.Equal(t, sourceTokenType, notes[0].TokenType)
+	noteCommitment, err := notes[0].Commitment(sharedPP.Curve)
+	require.NoError(t, err)
+	require.Equal(t, noteCommitment, actions[0].CommitmentMiMC)
+
+	// 4. Serialize and deserialize action (network wire roundtrip)
+	actionRaw, err := actions[0].Serialize()
+	require.NoError(t, err)
+
+	var deserialized snarktoken.FabtokenMigrationAction
+	err = deserialized.Deserialize(actionRaw)
+	require.NoError(t, err)
+
+	// 5. Validate the migration action via the real validator
+	err = val.ValidateFabtokenMigration(&deserialized)
+	require.NoError(t, err, "FabtokenMigrationAction must validate successfully")
+
+	// 6. Spend the newly migrated confidential note in a normal TransferAction!
+	bob := typedID(t, "bob")
+	transferAction, transferNotes := buildTransferAction(
+		t,
+		notes,
+		sourceTokenType,
+		[]uint64{300, 200},
+		[][]byte{bob, owner},
+	)
+	require.Len(t, transferNotes, 2)
+	require.Equal(t, uint64(300), transferNotes[0].Value)
+	require.Equal(t, uint64(200), transferNotes[1].Value)
+
+	err = val.ValidateTransfer(transferAction)
+	require.NoError(t, err, "TransferAction spending migrated note must validate successfully")
+}

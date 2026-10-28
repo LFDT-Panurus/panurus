@@ -100,13 +100,15 @@ type PublicParams struct {
 	// distributed to clients (out-of-band or via the TMS); verification
 	// keys are small and distributed via the network channel configuration.
 
-	PKSpend     []byte
-	PKOutput    []byte
-	PKMigration []byte
+	PKSpend             []byte
+	PKOutput            []byte
+	PKMigration         []byte
+	PKFabtokenMigration []byte
 
-	VKSpend     []byte
-	VKOutput    []byte
-	VKMigration []byte
+	VKSpend             []byte
+	VKOutput            []byte
+	VKMigration         []byte
+	VKFabtokenMigration []byte
 
 	// ── Value range ─────────────────────────────────────────────────────────
 
@@ -252,9 +254,11 @@ func (pp *PublicParams) Serialize() ([]byte, error) {
 		PkSpend:                pp.PKSpend,
 		PkOutput:               pp.PKOutput,
 		PkMigration:            pp.PKMigration,
+		PkFabtokenMigration:    pp.PKFabtokenMigration,
 		VkSpend:                pp.VKSpend,
 		VkOutput:               pp.VKOutput,
 		VkMigration:            pp.VKMigration,
+		VkFabtokenMigration:    pp.VKFabtokenMigration,
 		MaxBits:                uint32(pp.MaxBits), // #nosec G115
 		IdemixIssuerPublicKeys: idemixKeys,
 		ExtraParams:            pp.ExtraParams,
@@ -320,9 +324,11 @@ func DeserializePublicParams(raw []byte) (*PublicParams, error) {
 		PKSpend:                pb.PkSpend,
 		PKOutput:               pb.PkOutput,
 		PKMigration:            pb.PkMigration,
+		PKFabtokenMigration:    pb.PkFabtokenMigration,
 		VKSpend:                pb.VkSpend,
 		VKOutput:               pb.VkOutput,
 		VKMigration:            pb.VkMigration,
+		VKFabtokenMigration:    pb.VkFabtokenMigration,
 		MaxBits:                int(pb.MaxBits), // #nosec G115
 		IdemixIssuerPublicKeys: idemixKeys,
 		ExtraParams:            pb.ExtraParams,

@@ -21,7 +21,7 @@ import (
 func TestForCurve_MatchesNativeHash(t *testing.T) {
 	r := []byte("some-randomness-longer-than-thirty-two-bytes-for-reduction")
 
-	s, err := mimc.ForCurve(ecc.BLS12_381)
+	sBLS, err := mimc.ForCurve(ecc.BLS12_381)
 	require.NoError(t, err)
 	var v, tt, rr bls12381fr.Element
 	v.SetUint64(7)
@@ -29,11 +29,11 @@ func TestForCurve_MatchesNativeHash(t *testing.T) {
 	rr.SetBytes(r)
 	want, err := mimc.Hash(v, tt, rr)
 	require.NoError(t, err)
-	got, err := s.NoteCommitment(7, "USD", r)
+	got, err := sBLS.NoteCommitment(7, "USD", r)
 	require.NoError(t, err)
 	require.Equal(t, want.Marshal(), got)
 
-	s, err = mimc.ForCurve(ecc.BN254)
+	sBN, err := mimc.ForCurve(ecc.BN254)
 	require.NoError(t, err)
 	var v2, t2, r2 bn254fr.Element
 	v2.SetUint64(7)
@@ -41,10 +41,23 @@ func TestForCurve_MatchesNativeHash(t *testing.T) {
 	r2.SetBytes(r)
 	want2, err := mimcbn254.Hash(t2, r2)
 	require.NoError(t, err)
-	got, err = s.TypeCommitment("USD", r)
+	got, err = sBN.TypeCommitment("USD", r)
 	require.NoError(t, err)
 	require.Equal(t, want2.Marshal(), got)
 	_ = v2
+
+	// FabtokenDigest test
+	wantBLSDigest, err := mimc.Hash(v, tt)
+	require.NoError(t, err)
+	gotBLSDigest, err := sBLS.FabtokenDigest(7, "USD")
+	require.NoError(t, err)
+	require.Equal(t, wantBLSDigest.Marshal(), gotBLSDigest)
+
+	wantBNDigest, err := mimcbn254.Hash(v2, t2)
+	require.NoError(t, err)
+	gotBNDigest, err := sBN.FabtokenDigest(7, "USD")
+	require.NoError(t, err)
+	require.Equal(t, wantBNDigest.Marshal(), gotBNDigest)
 }
 
 func TestForCurve_Unsupported(t *testing.T) {

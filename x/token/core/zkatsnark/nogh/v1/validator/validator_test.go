@@ -67,6 +67,9 @@ type e2eFixture struct {
 
 	migOnce sync.Once
 	migErr  error
+
+	fabmigOnce sync.Once
+	fabmigErr  error
 }
 
 var (
@@ -259,6 +262,53 @@ func (f *e2eFixture) setupMigration() error {
 	}
 
 	// Rebuild the Validator so it picks up the now-populated vkMigration.
+	f.val, err = validator.NewValidator(verifierParams, nil, driver.ResourceLimits{}.WithDefaults())
+
+	return err
+}
+
+func (f *e2eFixture) requireFabtokenMigration(t *testing.T) {
+	t.Helper()
+	f.fabmigOnce.Do(func() { f.fabmigErr = f.setupFabtokenMigration() })
+	require.NoError(t, f.fabmigErr, "fabtoken migration setup must succeed on %s", f.cfg.name())
+}
+
+func (f *e2eFixture) setupFabtokenMigration() error {
+	p, err := setup.SetupFabtokenMigration(f.pp)
+	if err != nil {
+		return err
+	}
+
+	base, err := prepared.NewParams(p)
+	if err != nil {
+		return err
+	}
+
+	proverParams, err := prepared.NewProverFrom(base)
+	if err != nil {
+		return err
+	}
+	proverParams, err = proverParams.WithFabtokenMigration()
+	if err != nil {
+		return err
+	}
+
+	fProver, err := prover.NewFabtokenMigrationProver(proverParams)
+	if err != nil {
+		return err
+	}
+	f.orch.SetFabtokenMigrationProver(fProver)
+
+	verifierParams, err := prepared.NewVerifierFrom(base)
+	if err != nil {
+		return err
+	}
+	verifierParams, err = verifierParams.WithFabtokenMigration()
+	if err != nil {
+		return err
+	}
+
+	// Rebuild the Validator so it picks up the now-populated vkFabtokenMigration.
 	f.val, err = validator.NewValidator(verifierParams, nil, driver.ResourceLimits{}.WithDefaults())
 
 	return err
@@ -478,6 +528,75 @@ func TestValidateMigration_RejectsTamperedCommitment(t *testing.T) {
 	})
 }
 
+func TestValidateFabtokenMigration_EndToEnd(t *testing.T) {
+	forEachConfig(t, func(t *testing.T, f *e2eFixture) {
+		t.Helper()
+		f.requireFabtokenMigration(t)
+
+		opening := snarktoken.FabtokenOpening{
+			Value:     350,
+			TokenType: "USD",
+		}
+
+		actions, _, err := f.orch.BuildFabtokenMigrationAction(
+			t.Context(),
+			[]prover.FabtokenMigrationRequest{{Opening: opening, Recipient: []byte("alice")}},
+			f.pp,
+		)
+		require.NoError(t, err)
+		require.Len(t, actions, 1)
+
+		err = f.val.ValidateFabtokenMigration(&actions[0])
+		require.NoError(t, err, "a genuine fabtoken migration, proven by the Orchestrator, must validate")
+	})
+}
+
+func TestValidateFabtokenMigration_RejectsTamperedDigest(t *testing.T) {
+	forEachConfig(t, func(t *testing.T, f *e2eFixture) {
+		t.Helper()
+		f.requireFabtokenMigration(t)
+
+		opening := snarktoken.FabtokenOpening{
+			Value:     100,
+			TokenType: "USD",
+		}
+		actions, _, err := f.orch.BuildFabtokenMigrationAction(
+			t.Context(),
+			[]prover.FabtokenMigrationRequest{{Opening: opening, Recipient: []byte("bob")}},
+			f.pp,
+		)
+		require.NoError(t, err)
+
+		actions[0].FabtokenDigest[0] ^= 0xFF
+
+		err = f.val.ValidateFabtokenMigration(&actions[0])
+		require.Error(t, err, "a tampered fabtoken digest must be rejected")
+	})
+}
+
+func TestValidateFabtokenMigration_RejectsTamperedCommitment(t *testing.T) {
+	forEachConfig(t, func(t *testing.T, f *e2eFixture) {
+		t.Helper()
+		f.requireFabtokenMigration(t)
+
+		opening := snarktoken.FabtokenOpening{
+			Value:     100,
+			TokenType: "USD",
+		}
+		actions, _, err := f.orch.BuildFabtokenMigrationAction(
+			t.Context(),
+			[]prover.FabtokenMigrationRequest{{Opening: opening, Recipient: []byte("bob")}},
+			f.pp,
+		)
+		require.NoError(t, err)
+
+		actions[0].CommitmentMiMC[0] ^= 0xFF
+
+		err = f.val.ValidateFabtokenMigration(&actions[0])
+		require.Error(t, err, "a tampered MiMC commitment must be rejected")
+	})
+}
+
 // TestValidateIssue_RejectsTamperedOutput demonstrates that corrupting an
 // output commitment byte causes the proof to fail verification.
 func TestValidateIssue_RejectsTamperedOutput(t *testing.T) {
@@ -613,6 +732,20 @@ func TestValidateMigration_MalformedShape(t *testing.T) {
 
 		err := f.val.ValidateMigration(action)
 		require.Error(t, err, "malformed migration action must be rejected")
+	})
+}
+
+func TestValidateFabtokenMigration_MalformedShape(t *testing.T) {
+	forEachConfig(t, func(t *testing.T, f *e2eFixture) {
+		t.Helper()
+		f.requireFabtokenMigration(t)
+
+		action := &snarktoken.FabtokenMigrationAction{
+			FabtokenDigest: make([]byte, 16), // wrong length (should be 32)
+		}
+
+		err := f.val.ValidateFabtokenMigration(action)
+		require.Error(t, err, "malformed fabtoken migration action must be rejected")
 	})
 }
 
@@ -1368,6 +1501,24 @@ func TestValidateMigration_NotConfiguredWithoutSetup(t *testing.T) {
 
 		err = freshVal.ValidateMigration(&snarktoken.MigrationAction{})
 		require.ErrorIs(t, err, validator.ErrMigrationNotConfigured)
+	})
+}
+
+func TestValidateFabtokenMigration_NotConfiguredWithoutSetup(t *testing.T) {
+	forEachConfig(t, func(t *testing.T, f *e2eFixture) {
+		t.Helper()
+		freshPP := *f.pp
+		freshPP.PKFabtokenMigration, freshPP.VKFabtokenMigration = nil, nil
+
+		freshVerifierParams, err := prepared.NewVerifier(&freshPP)
+		require.NoError(t, err)
+		require.Nil(t, freshVerifierParams.VKFabtokenMigration())
+
+		freshVal, err := validator.NewValidator(freshVerifierParams, nil, driver.ResourceLimits{}.WithDefaults())
+		require.NoError(t, err)
+
+		err = freshVal.ValidateFabtokenMigration(&snarktoken.FabtokenMigrationAction{})
+		require.ErrorIs(t, err, validator.ErrFabtokenMigrationNotConfigured)
 	})
 }
 

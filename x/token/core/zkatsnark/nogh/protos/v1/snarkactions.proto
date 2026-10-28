@@ -113,3 +113,26 @@ message MigrationAction {
   // recipient is the intended recipient identity
   bytes recipient = 8;
 }
+
+// FabtokenMigrationAction is the public wire-format record for a single token
+// migration from cleartext fabtoken to zkatsnark (MiMC-committed, Jubjub value commitment).
+message FabtokenMigrationAction {
+  // fabtoken_digest is the public MiMC digest of the original cleartext fabtoken:
+  // MiMC(Value, TokenType), 32 bytes
+  bytes fabtoken_digest = 1;
+  // commitment_mimc is the new MiMC commitment for the migrated token
+  // (BLS12-381 scalar field Fr, 32 bytes)
+  bytes commitment_mimc = 2;
+  // value_commit_out_x is the X coordinate of the new Jubjub value
+  // commitment (BLS12-381 Fr embedded Edwards coordinate, 32 bytes)
+  bytes value_commit_out_x = 3;
+  // value_commit_out_y is the Y coordinate of the new Jubjub value
+  // commitment (BLS12-381 Fr embedded Edwards coordinate, 32 bytes)
+  bytes value_commit_out_y = 4;
+  // type_commitment is MiMC(TokenType, TypeRandomness), 32 bytes
+  bytes type_commitment = 5;
+  // migration_proof is the zero-knowledge proof for the FabtokenMigrationCircuit
+  bytes migration_proof = 6;
+  // recipient is the intended recipient identity
+  bytes recipient = 7;
+}

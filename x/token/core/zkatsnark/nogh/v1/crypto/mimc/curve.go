@@ -33,6 +33,8 @@ type Suite interface {
 	TypeCommitment(tokenType string, randomness []byte) ([]byte, error)
 	// NoteCommitment returns MiMC(value, EncodeTokenType(tokenType), randomness).
 	NoteCommitment(value uint64, tokenType string, randomness []byte) ([]byte, error)
+	// FabtokenDigest returns MiMC(value, EncodeTokenType(tokenType)).
+	FabtokenDigest(value uint64, tokenType string) ([]byte, error)
 }
 
 // field is the constraint satisfied by *E for gnark-crypto's fr.Element.
@@ -101,6 +103,17 @@ func (s suite[E, PE]) NoteCommitment(value uint64, tokenType string, randomness 
 	var v E
 	PE(&v).SetUint64(value)
 	h, err := s.hash(v, s.element([]byte(tokenType)), s.element(randomness))
+	if err != nil {
+		return nil, err
+	}
+
+	return PE(&h).Marshal(), nil
+}
+
+func (s suite[E, PE]) FabtokenDigest(value uint64, tokenType string) ([]byte, error) {
+	var v E
+	PE(&v).SetUint64(value)
+	h, err := s.hash(v, s.element([]byte(tokenType)))
 	if err != nil {
 		return nil, err
 	}

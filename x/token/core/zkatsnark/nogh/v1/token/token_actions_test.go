@@ -556,3 +556,50 @@ func TestMigrationAction_Serialize_Deserialize_RoundTrip(t *testing.T) {
 	require.Equal(t, orig.MigrationProof, got.MigrationProof)
 	require.Equal(t, orig.Recipient, got.Recipient)
 }
+
+func TestFabtokenOpening_Validate(t *testing.T) {
+	valid := &snarktoken.FabtokenOpening{
+		Value:     100,
+		TokenType: "USD",
+	}
+	require.NoError(t, valid.Validate())
+
+	zeroVal := &snarktoken.FabtokenOpening{
+		Value:     0,
+		TokenType: "USD",
+	}
+	require.Error(t, zeroVal.Validate())
+
+	emptyType := &snarktoken.FabtokenOpening{
+		Value:     100,
+		TokenType: "",
+	}
+	require.Error(t, emptyType.Validate())
+}
+
+func TestFabtokenMigrationAction_Serialize_Deserialize_RoundTrip(t *testing.T) {
+	orig := &snarktoken.FabtokenMigrationAction{
+		FabtokenDigest:  []byte("fabtoken-digest-32-bytes-long!"),
+		CommitmentMiMC:  []byte("mimc-cm"),
+		ValueCommitOutX: []byte("jubjub-x"),
+		ValueCommitOutY: []byte("jubjub-y"),
+		TypeCommitment:  []byte("type-cm"),
+		MigrationProof:  []byte("proof-bytes"),
+		Recipient:       []byte("carol"),
+	}
+	raw, err := orig.Serialize()
+	require.NoError(t, err)
+
+	got := &snarktoken.FabtokenMigrationAction{}
+	require.NoError(t, got.Deserialize(raw))
+	require.Equal(t, orig.FabtokenDigest, got.FabtokenDigest)
+	require.Equal(t, orig.CommitmentMiMC, got.CommitmentMiMC)
+	require.Equal(t, orig.ValueCommitOutX, got.ValueCommitOutX)
+	require.Equal(t, orig.ValueCommitOutY, got.ValueCommitOutY)
+	require.Equal(t, orig.TypeCommitment, got.TypeCommitment)
+	require.Equal(t, orig.MigrationProof, got.MigrationProof)
+	require.Equal(t, orig.Recipient, got.Recipient)
+
+	// Deserialize garbage bytes error
+	require.Error(t, got.Deserialize([]byte("not-a-proto")))
+}

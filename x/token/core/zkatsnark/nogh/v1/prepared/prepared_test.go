@@ -122,6 +122,33 @@ func TestVerifier_WithMigration_MissingKeyIsError(t *testing.T) {
 	require.ErrorIs(t, err, setup.ErrMissingKey)
 }
 
+func TestVerifier_WithFabtokenMigration_MissingKeyIsError(t *testing.T) {
+	p := setupSharedPP(t)
+
+	v, err := prepared.NewVerifier(p)
+	require.NoError(t, err)
+	require.Nil(t, v.VKFabtokenMigration())
+
+	_, err = v.WithFabtokenMigration()
+	require.Error(t, err, "WithFabtokenMigration must fail when no fabtoken migration verifying key is configured")
+	require.ErrorIs(t, err, setup.ErrMissingKey)
+}
+
+func TestVerifier_WithFabtokenMigration_Success(t *testing.T) {
+	p := setupSharedPP(t)
+	withKeys := *p
+	pWithKeys, err := setup.SetupFabtokenMigration(&withKeys)
+	require.NoError(t, err)
+
+	v, err := prepared.NewVerifier(pWithKeys)
+	require.NoError(t, err)
+	require.NotNil(t, v.VKFabtokenMigration())
+
+	vWithFab, err := v.WithFabtokenMigration()
+	require.NoError(t, err)
+	require.NotNil(t, vWithFab.FabtokenMigrationCS())
+}
+
 // ── Prover ───────────────────────────────────────────────────────────────────
 
 func TestNewProver(t *testing.T) {
@@ -132,6 +159,7 @@ func TestNewProver(t *testing.T) {
 	require.NotNil(t, pr.PKSpend())
 	require.NotNil(t, pr.PKOutput())
 	require.Nil(t, pr.PKMigration(), "default public params carry no migration key")
+	require.Nil(t, pr.PKFabtokenMigration(), "default public params carry no fabtoken migration key")
 }
 
 func TestNewProverFrom_SharesParams(t *testing.T) {
@@ -174,4 +202,31 @@ func TestProver_WithMigration_MissingKeyIsError(t *testing.T) {
 	_, err = pr.WithMigration(setup.PedersenGeneratorCoords{})
 	require.Error(t, err, "WithMigration must fail when no migration proving key is configured")
 	require.ErrorIs(t, err, setup.ErrMissingKey)
+}
+
+func TestProver_WithFabtokenMigration_MissingKeyIsError(t *testing.T) {
+	p := setupSharedPP(t)
+
+	pr, err := prepared.NewProver(p)
+	require.NoError(t, err)
+	require.Nil(t, pr.PKFabtokenMigration())
+
+	_, err = pr.WithFabtokenMigration()
+	require.Error(t, err, "WithFabtokenMigration must fail when no fabtoken migration proving key is configured")
+	require.ErrorIs(t, err, setup.ErrMissingKey)
+}
+
+func TestProver_WithFabtokenMigration_Success(t *testing.T) {
+	p := setupSharedPP(t)
+	withKeys := *p
+	pWithKeys, err := setup.SetupFabtokenMigration(&withKeys)
+	require.NoError(t, err)
+
+	pr, err := prepared.NewProver(pWithKeys)
+	require.NoError(t, err)
+	require.NotNil(t, pr.PKFabtokenMigration())
+
+	prWithFab, err := pr.WithFabtokenMigration()
+	require.NoError(t, err)
+	require.NotNil(t, prWithFab.FabtokenMigrationCS())
 }

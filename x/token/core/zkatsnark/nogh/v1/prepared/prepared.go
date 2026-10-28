@@ -48,11 +48,12 @@ import (
 // system's concrete type before asserting the key), so this invariant must
 // be preserved by any code that constructs a Params directly.
 type Params struct {
-	pp          *pp.PublicParams
-	backend     backend.ProofSystemBackend
-	spendCS     constraint.ConstraintSystem
-	outputCS    constraint.ConstraintSystem
-	migrationCS constraint.ConstraintSystem
+	pp                  *pp.PublicParams
+	backend             backend.ProofSystemBackend
+	spendCS             constraint.ConstraintSystem
+	outputCS            constraint.ConstraintSystem
+	migrationCS         constraint.ConstraintSystem
+	fabtokenMigrationCS constraint.ConstraintSystem
 }
 
 // PP returns the underlying public parameters.
@@ -75,6 +76,11 @@ func (b *Params) OutputCS() constraint.ConstraintSystem { return b.outputCS }
 // nil if WithMigration has not been called. Callers must treat the result
 // as read-only.
 func (b *Params) MigrationCS() constraint.ConstraintSystem { return b.migrationCS }
+
+// FabtokenMigrationCS returns the compiled fabtoken migration circuit constraint system, or
+// nil if WithFabtokenMigration has not been called. Callers must treat the result
+// as read-only.
+func (b *Params) FabtokenMigrationCS() constraint.ConstraintSystem { return b.fabtokenMigrationCS }
 
 // NewParams compiles the spend and output circuits for p and creates the
 // proof-system backend selected by p.ProofSystem and p.Curve. It performs
@@ -103,9 +109,10 @@ func NewParams(p *pp.PublicParams) (*Params, error) {
 // holds no proving keys.
 type Verifier struct {
 	*Params
-	vkSpend     *backend.VerifyingKey
-	vkOutput    *backend.VerifyingKey
-	vkMigration *backend.VerifyingKey
+	vkSpend             *backend.VerifyingKey
+	vkOutput            *backend.VerifyingKey
+	vkMigration         *backend.VerifyingKey
+	vkFabtokenMigration *backend.VerifyingKey
 }
 
 // VKSpend returns the deserialized spend verifying key.
@@ -117,6 +124,10 @@ func (v *Verifier) VKOutput() *backend.VerifyingKey { return v.vkOutput }
 // VKMigration returns the deserialized migration verifying key, or nil if
 // this deployment has no migration verifying key configured.
 func (v *Verifier) VKMigration() *backend.VerifyingKey { return v.vkMigration }
+
+// VKFabtokenMigration returns the deserialized fabtoken migration verifying key, or nil if
+// this deployment has no fabtoken migration verifying key configured.
+func (v *Verifier) VKFabtokenMigration() *backend.VerifyingKey { return v.vkFabtokenMigration }
 
 // NewVerifier prepares p for a verifying role: compiles the spend and
 // output circuits and deserializes the spend and output verifying keys.
@@ -161,6 +172,16 @@ func NewVerifierFrom(base *Params) (*Verifier, error) {
 		v.vkMigration = vkMigration
 	}
 
+	vkFabtokenMigration, err := loadVerifyingKey(base, setup.CircuitFabtokenMigration)
+	switch {
+	case errors.Is(err, setup.ErrMissingKey):
+		// No fabtoken migration verifying key configured for this deployment.
+	case err != nil:
+		return nil, errors.Wrapf(err, "prepared: loading fabtoken migration verifying key")
+	default:
+		v.vkFabtokenMigration = vkFabtokenMigration
+	}
+
 	return v, nil
 }
 
@@ -188,13 +209,35 @@ func (v *Verifier) WithMigration(gens setup.PedersenGeneratorCoords) (*Verifier,
 	return &next, nil
 }
 
+// WithFabtokenMigration returns a copy of v additionally holding the compiled
+// fabtoken migration circuit and the fabtoken migration verifying key. Returns an error if
+// p's public parameters carry no fabtoken migration verifying key at all.
+func (v *Verifier) WithFabtokenMigration() (*Verifier, error) {
+	if v.vkFabtokenMigration == nil {
+		return nil, errors.Wrapf(setup.ErrMissingKey, "prepared: no fabtoken migration verifying key configured")
+	}
+
+	fabCS, err := setup.CompileFabtokenMigrationCircuit(v.pp)
+	if err != nil {
+		return nil, errors.Wrapf(err, "prepared: compiling fabtoken migration circuit")
+	}
+
+	base := *v.Params
+	base.fabtokenMigrationCS = fabCS
+	next := *v
+	next.Params = &base
+
+	return &next, nil
+}
+
 // Prover is the prepared public parameters for a proving role: Params plus
 // the deserialized spend and output proving keys.
 type Prover struct {
 	*Params
-	pkSpend     *backend.ProvingKey
-	pkOutput    *backend.ProvingKey
-	pkMigration *backend.ProvingKey
+	pkSpend             *backend.ProvingKey
+	pkOutput            *backend.ProvingKey
+	pkMigration         *backend.ProvingKey
+	pkFabtokenMigration *backend.ProvingKey
 }
 
 // PKSpend returns the deserialized spend proving key.
@@ -206,6 +249,10 @@ func (p *Prover) PKOutput() *backend.ProvingKey { return p.pkOutput }
 // PKMigration returns the deserialized migration proving key, or nil if
 // this deployment has no migration proving key configured.
 func (p *Prover) PKMigration() *backend.ProvingKey { return p.pkMigration }
+
+// PKFabtokenMigration returns the deserialized fabtoken migration proving key, or nil if
+// this deployment has no fabtoken migration proving key configured.
+func (p *Prover) PKFabtokenMigration() *backend.ProvingKey { return p.pkFabtokenMigration }
 
 // NewProver prepares p for a proving role: compiles the spend and output
 // circuits and deserializes the spend and output proving keys. Missing or
@@ -246,6 +293,16 @@ func NewProverFrom(base *Params) (*Prover, error) {
 		p.pkMigration = pkMigration
 	}
 
+	pkFabtokenMigration, err := loadProvingKey(base, setup.CircuitFabtokenMigration)
+	switch {
+	case errors.Is(err, setup.ErrMissingKey):
+		// No fabtoken migration proving key configured for this deployment.
+	case err != nil:
+		return nil, errors.Wrapf(err, "prepared: loading fabtoken migration proving key")
+	default:
+		p.pkFabtokenMigration = pkFabtokenMigration
+	}
+
 	return p, nil
 }
 
@@ -264,6 +321,27 @@ func (p *Prover) WithMigration(gens setup.PedersenGeneratorCoords) (*Prover, err
 
 	base := *p.Params
 	base.migrationCS = migrationCS
+	next := *p
+	next.Params = &base
+
+	return &next, nil
+}
+
+// WithFabtokenMigration returns a copy of p additionally holding the compiled
+// fabtoken migration circuit and the fabtoken migration proving key. Returns an error if p's
+// public parameters carry no fabtoken migration proving key at all.
+func (p *Prover) WithFabtokenMigration() (*Prover, error) {
+	if p.pkFabtokenMigration == nil {
+		return nil, errors.Wrapf(setup.ErrMissingKey, "prepared: no fabtoken migration proving key configured")
+	}
+
+	fabCS, err := setup.CompileFabtokenMigrationCircuit(p.pp)
+	if err != nil {
+		return nil, errors.Wrapf(err, "prepared: compiling fabtoken migration circuit")
+	}
+
+	base := *p.Params
+	base.fabtokenMigrationCS = fabCS
 	next := *p
 	next.Params = &base
 

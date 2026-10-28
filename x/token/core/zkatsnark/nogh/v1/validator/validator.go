@@ -173,3 +173,21 @@ func (v *Validator) ValidateMigration(a *snarktoken.MigrationAction) error {
 
 	return verifyMigrationProof(v.prepared, a.MigrationProof, decoded)
 }
+
+// ValidateFabtokenMigration checks the cryptographic validity of a FabtokenMigrationAction.
+func (v *Validator) ValidateFabtokenMigration(a *snarktoken.FabtokenMigrationAction) error {
+	if v.prepared.VKFabtokenMigration() == nil {
+		return ErrFabtokenMigrationNotConfigured
+	}
+
+	if err := validateFabtokenMigrationActionShape(a); err != nil {
+		return err
+	}
+
+	decoded, err := decodeFabtokenMigrationAction(a, v.pp.Curve)
+	if err != nil {
+		return err
+	}
+
+	return verifyFabtokenMigrationProof(v.prepared, a.MigrationProof, decoded)
+}

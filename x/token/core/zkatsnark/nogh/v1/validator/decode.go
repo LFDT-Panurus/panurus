@@ -60,6 +60,16 @@ type decodedMigration struct {
 	TypeCommitment *big.Int
 }
 
+// decodedFabtokenMigration is the canonical decoding of a FabtokenMigrationAction's public
+// bytes.
+type decodedFabtokenMigration struct {
+	FabtokenDigest *big.Int
+	CommitmentMiMC *big.Int
+	ValueCommitX   *big.Int
+	ValueCommitY   *big.Int
+	TypeCommitment *big.Int
+}
+
 // decodeScalar decodes b as a canonical element of the scalar field of curve:
 // exactly the field's byte width, big-endian, strictly below the modulus.
 func decodeScalar(curve ecc.ID, b []byte) (*big.Int, error) {
@@ -210,6 +220,29 @@ func decodeMigrationAction(a *snarktoken.MigrationAction, curve ecc.ID) (decoded
 
 	if err := checkValueCommitPoint(curve, a.ValueCommitOutX, a.ValueCommitOutY); err != nil {
 		return decodedMigration{}, err
+	}
+
+	return out, nil
+}
+
+// decodeFabtokenMigrationAction decodes a FabtokenMigrationAction's public bytes against curve,
+// confirming that all field elements are canonical and that the value commitment point lies on
+// the embedded twisted Edwards curve.
+func decodeFabtokenMigrationAction(a *snarktoken.FabtokenMigrationAction, curve ecc.ID) (decodedFabtokenMigration, error) {
+	var out decodedFabtokenMigration
+
+	if err := decodeFields(curve,
+		namedField{"FabtokenDigest", a.FabtokenDigest, &out.FabtokenDigest},
+		namedField{"CommitmentMiMC", a.CommitmentMiMC, &out.CommitmentMiMC},
+		namedField{"ValueCommitOutX", a.ValueCommitOutX, &out.ValueCommitX},
+		namedField{"ValueCommitOutY", a.ValueCommitOutY, &out.ValueCommitY},
+		namedField{"TypeCommitment", a.TypeCommitment, &out.TypeCommitment},
+	); err != nil {
+		return decodedFabtokenMigration{}, err
+	}
+
+	if err := checkValueCommitPoint(curve, a.ValueCommitOutX, a.ValueCommitOutY); err != nil {
+		return decodedFabtokenMigration{}, err
 	}
 
 	return out, nil
