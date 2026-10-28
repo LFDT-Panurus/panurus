@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/LFDT-Panurus/panurus/token"
+	"github.com/LFDT-Panurus/panurus/token/services/network"
 	"github.com/LFDT-Panurus/panurus/token/services/storage/ttxdb"
 	"github.com/LFDT-Panurus/panurus/token/services/ttx/dep"
 	"github.com/LFDT-Panurus/panurus/token/services/ttx/dep/db"
@@ -67,13 +68,47 @@ func (f *finalityView) Call(ctx view.Context) (any, error) {
 		tmsID = options.Transaction.TMSID()
 	}
 	if timeout == 0 {
-		timeout = 5 * time.Minute
+		timeout = defaultFinalityTimeout(ctx, tmsID, 5*time.Minute)
 	}
 	// Zero out any non-needed references to allow the garbage collector to reclaim them
 	f.opts = nil
 	options.Transaction = nil
 
 	return f.call(ctx, txID, tmsID, timeout)
+}
+
+// finalityTimeoutMargin is how much longer than the network's own finality timeout a default wait
+// lasts, so the network's verdict (Invalid, at its timeout) arrives before the wait gives up.
+const finalityTimeoutMargin = time.Minute
+
+// defaultFinalityTimeout is the timeout used when the caller did not set one: fallback, raised to the
+// network's own finality timeout plus a margin when the network reports a longer one. A network that
+// waits for a finalized block (EVM) can take longer to decide than the fixed default.
+func defaultFinalityTimeout(sp token.ServiceProvider, tmsID token.TMSID, fallback time.Duration) time.Duration {
+	s, err := sp.GetService(&network.Provider{})
+	if err != nil {
+		return fallback
+	}
+	provider, ok := s.(*network.Provider)
+	if !ok {
+		return fallback
+	}
+	nw, err := provider.GetNetwork(tmsID.Network, tmsID.Channel)
+	if err != nil || nw == nil {
+		return fallback
+	}
+
+	return coverNetworkFinality(fallback, nw.FinalityTimeout(tmsID.Namespace))
+}
+
+// coverNetworkFinality returns fallback, or the network's finality timeout plus the margin when that
+// is longer. A zero network timeout means the network does not say.
+func coverNetworkFinality(fallback, networkTimeout time.Duration) time.Duration {
+	if networkTimeout > 0 && networkTimeout+finalityTimeoutMargin > fallback {
+		return networkTimeout + finalityTimeoutMargin
+	}
+
+	return fallback
 }
 
 // validateFinalityCallInputs checks that txID and timeout are within accepted bounds.

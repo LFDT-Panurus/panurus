@@ -81,7 +81,10 @@ type Network struct {
 }
 
 // Compile-time assertion that Network satisfies the driver contract.
-var _ driver.Network = (*Network)(nil)
+var (
+	_ driver.Network                 = (*Network)(nil)
+	_ driver.FinalityTimeoutProvider = (*Network)(nil)
+)
 
 // NamespaceConfig pairs one TMS's namespace with its own resolved configuration and submitter, so
 // NewNetwork can build that TMS's own namespaceBinding instead of one shared instance reused by every
@@ -601,6 +604,18 @@ func (n *Network) LookupTransferMetadataKey(namespace string, key string, timeou
 		case <-ticker.C:
 		}
 	}
+}
+
+// FinalityTimeout returns namespace's finality timeout, how long a finality listener may wait for a
+// verdict. With the default finalized block tag it is long (see MinFinalizedTagTimeout), and ttx uses
+// it to keep its own default wait from ending first.
+func (n *Network) FinalityTimeout(namespace string) time.Duration {
+	binding, err := n.binding(namespace)
+	if err != nil {
+		return 0
+	}
+
+	return binding.config.Finality.Timeout
 }
 
 // LocalMembership returns this node's identities. The driver does not mint identities of its own, so

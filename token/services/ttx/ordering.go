@@ -95,9 +95,10 @@ type orderingAndFinalityView struct {
 // The view does the following:
 // 1. It broadcasts the token transaction to the proper backend.
 // 2. It waits for finality of the token transaction.
-// The default timeout is used and it is set to 10mins.
+// The default timeout is 10 minutes, or the network's own finality timeout plus a margin when that is
+// longer.
 func NewOrderingAndFinalityView(tx *Transaction) *orderingAndFinalityView {
-	return NewOrderingAndFinalityWithTimeoutView(tx, finalityTimeout)
+	return &orderingAndFinalityView{tx: tx}
 }
 
 // NewOrderingAndFinalityWithTimeoutView returns a new instance of the orderingAndFinalityView struct.
@@ -118,5 +119,10 @@ func (o *orderingAndFinalityView) Call(ctx view.Context) (any, error) {
 		return nil, err
 	}
 
-	return ctx.RunView(NewFinalityView(o.tx, WithTimeout(o.timeout)))
+	timeout := o.timeout
+	if timeout == 0 {
+		timeout = defaultFinalityTimeout(ctx, o.tx.TMSID(), finalityTimeout)
+	}
+
+	return ctx.RunView(NewFinalityView(o.tx, WithTimeout(timeout)))
 }

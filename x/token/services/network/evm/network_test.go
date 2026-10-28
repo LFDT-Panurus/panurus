@@ -548,6 +548,15 @@ func TestLookupTransferMetadataKeyTimesOut(t *testing.T) {
 	assert.Contains(t, err.Error(), "not found")
 }
 
+func TestFinalityTimeout(t *testing.T) {
+	n := testNetwork(t, &mock.EVMClient{}, nil)
+	binding, err := n.binding(testNamespace)
+	require.NoError(t, err)
+
+	assert.Equal(t, binding.config.Finality.Timeout, n.FinalityTimeout(testNamespace))
+	assert.Zero(t, n.FinalityTimeout("unknown"))
+}
+
 func TestLookupTransferMetadataKeyFound(t *testing.T) {
 	evm := &mock.EVMClient{}
 	evm.CallReturns(abiBytes([]byte("value")), nil)

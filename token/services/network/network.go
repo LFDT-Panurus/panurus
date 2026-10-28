@@ -298,6 +298,16 @@ func (n *Network) QueryTokens(ctx context.Context, namespace string, IDs []*toke
 	return n.n.QueryTokens(ctx, namespace, IDs)
 }
 
+// FinalityTimeout returns how long the network may take to notify a finality listener registered for
+// namespace, or zero if the network does not say (see driver.FinalityTimeoutProvider).
+func (n *Network) FinalityTimeout(namespace string) time.Duration {
+	if p, ok := n.n.(driver.FinalityTimeoutProvider); ok {
+		return p.FinalityTimeout(namespace)
+	}
+
+	return 0
+}
+
 // AreTokensSpent checks the spent status of multiple tokens on the ledger.
 func (n *Network) AreTokensSpent(ctx context.Context, namespace string, tokenIDs []*token2.ID, meta []string) ([]bool, error) {
 	return n.n.AreTokensSpent(ctx, namespace, tokenIDs, meta)

@@ -342,3 +342,19 @@ func TestGetInstance(t *testing.T) {
 		network.GetProvider(sp)
 	})
 }
+
+// timedNetwork is a driver network that reports its finality timeout.
+type timedNetwork struct {
+	*mocks.Network
+	timeout time.Duration
+}
+
+func (n timedNetwork) FinalityTimeout(string) time.Duration { return n.timeout }
+
+func TestFinalityTimeout(t *testing.T) {
+	require.Zero(t, network.NewNetwork(&mocks.Network{}, nil).FinalityTimeout("ns"),
+		"a driver that does not say reports zero")
+
+	n := network.NewNetwork(timedNetwork{Network: &mocks.Network{}, timeout: 13 * time.Minute}, nil)
+	require.Equal(t, 13*time.Minute, n.FinalityTimeout("ns"))
+}

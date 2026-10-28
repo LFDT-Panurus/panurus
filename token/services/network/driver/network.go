@@ -41,6 +41,16 @@ func (t *TxID) String() string {
 	return fmt.Sprintf("[%s:%s]", base64.StdEncoding.EncodeToString(t.Nonce), base64.StdEncoding.EncodeToString(t.Creator))
 }
 
+// FinalityTimeoutProvider is optionally implemented by a Network whose finality listeners take a
+// known, possibly long, time to reach a verdict, for example because they wait for a finalized
+// block. Callers that wait for finality with a default timeout use it so they do not give up before
+// the network itself has decided.
+type FinalityTimeoutProvider interface {
+	// FinalityTimeout returns how long the network may take to notify a finality listener registered
+	// for namespace, or zero if it does not know.
+	FinalityTimeout(namespace string) time.Duration
+}
+
 // Network models a DLT backend that stores and validates token transactions.
 type Network interface {
 	// Name returns the identifier of the network.

@@ -853,6 +853,11 @@ not a tuning knob. It has to exceed both the chain's real time-to-finality at th
 and the longest gap an application leaves between preparing a transaction and broadcasting it — otherwise
 recovery condemns transactions that were merely slow to submit, not ones that were rejected.
 
+The ttx finality views (`NewFinalityView`, `NewOrderingAndFinalityView`) wait 5 and 10 minutes by default,
+less than the 13-minute minimum for `finalized`. When the caller sets no timeout, they ask the network for
+its finality timeout (`driver.FinalityTimeoutProvider`) and wait that long plus a minute instead, so they
+see the driver's verdict rather than give up first. An explicit timeout is used as given.
+
 ### Error classification
 
 A caller decides what to do with a failure by class, not by reading a message. The driver exposes the
