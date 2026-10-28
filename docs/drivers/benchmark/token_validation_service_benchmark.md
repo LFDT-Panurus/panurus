@@ -219,6 +219,18 @@ Now I can run the visualisation:
 streamlit run cmd/benchmarking/plotly_plot_node.py 
 ```
 
+## Validator lifecycle
+
+Building a validator (~7ms) costs more than validating a request (~5ms), so
+`TokenValidationServiceViewFactory` builds one lazily on the first `NewView`
+call carrying token data and shares it with every later view.
+
+If initialization fails, *every* `NewView` call returns `failed to create token
+validator` — no view is handed a `nil` validator, so a bad `-testRoot` surfaces
+as that error rather than as misleading `validator backend is nil` failures from
+`Call`. The failure is not memoized, so a transient error does not poison the
+factory.
+
 ## Understanding Results
 
 ### Metrics Reported
