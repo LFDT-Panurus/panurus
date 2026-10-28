@@ -7,6 +7,7 @@ SPDX-License-Identifier: Apache-2.0
 package lazer
 
 import (
+	"crypto/hkdf"
 	"crypto/sha256"
 
 	"github.com/LFDT-Panurus/panurus/x/token/services/identity/lazer/anoncreds"
@@ -40,7 +41,12 @@ const (
 	idCtxDomain = "panurus/lazer/id/v1"
 	sigDomain   = "panurus/lazer/sig/v1"
 	skiDomain   = "panurus/lazer/ski/v1"
+	// signerInfoKeyDomain separates the key that encrypts the signer infos at rest.
+	signerInfoKeyDomain = "panurus/lazer/signerinfo/v1"
 )
+
+// signerInfoKeyLen is the length of the AES-256-GCM key of the signer infos.
+const signerInfoKeyLen = 32
 
 // hashAttr maps a string value of the attribute idx to its 32 byte encoding.
 func hashAttr(idx uint32, v string) []byte {
@@ -107,4 +113,12 @@ func secretKeyIdentifier(ipk, usk []byte) []byte {
 	h.Write(usk)
 
 	return h.Sum(nil)
+}
+
+// signerInfoKey derives the key that encrypts the signer infos of a wallet at
+// rest from the wallet secret (usk and the user state), bound to the issuer.
+func signerInfoKey(ipk, secret []byte) ([]byte, error) {
+	salt := sha256.Sum256(ipk)
+
+	return hkdf.Key(sha256.New, secret, salt[:], signerInfoKeyDomain, signerInfoKeyLen)
 }

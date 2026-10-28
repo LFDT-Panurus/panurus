@@ -64,28 +64,45 @@ func NewConfigFromRaw(ipk []byte, raw []byte) (*Config, error) {
 		return nil, errors.New("invalid configuration size")
 	}
 	conf := &Config{}
-	dec := json.NewDecoder(bytes.NewReader(raw))
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(conf); err != nil {
+	// the raw configuration is machine-written (Marshal), but may come from
+	// configuration files: strict, not canonical
+	if err := strictUnmarshal(raw, conf); err != nil {
 		return nil, errors.Wrap(err, "failed to unmarshal configuration")
 	}
 
 	return conf, conf.validate(ipk)
 }
 
-// NewConfigWithIPK loads the signer configuration from dir (or dir/msp) and
+// NewConfigWithIPK loads the signer configuration of the wallet in dir and
 // combines it with the passed issuer public key. If ignoreVerifyOnlyWallet is
-// set, SignerConfigFull is preferred.
+// set, SignerConfigFull is preferred to SignerConfig.
+//
+// The wallet is in dir/user, or in dir/msp/user if dir has no user directory.
+// It is an error if neither exists, and if a signer configuration exists but
+// cannot be read or decoded. A user directory without signer configuration is
+// a verify-only (remote) wallet.
 func NewConfigWithIPK(ipk []byte, dir string, ignoreVerifyOnlyWallet bool) (*Config, error) {
-	conf, err := newConfigWithIPK(ipk, dir, ignoreVerifyOnlyWallet)
-	if err != nil {
-		conf, err = newConfigWithIPK(ipk, filepath.Join(dir, ExtraPathElement), ignoreVerifyOnlyWallet)
+	for _, d := range []string{dir, filepath.Join(dir, ExtraPathElement)} {
+		info, err := os.Stat(filepath.Join(d, ConfigDirUser))
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+
+			return nil, errors.Wrapf(err, "failed reading lazer configuration from [%s]", dir)
+		}
+		if !info.IsDir() {
+			return nil, errors.Errorf("failed reading lazer configuration from [%s]: [%s] is not a directory", dir, filepath.Join(d, ConfigDirUser))
+		}
+		conf, err := newConfigWithIPK(ipk, d, ignoreVerifyOnlyWallet)
 		if err != nil {
 			return nil, errors.Wrapf(err, "failed reading lazer configuration from [%s]", dir)
 		}
+
+		return conf, nil
 	}
 
-	return conf, nil
+	return nil, errors.Errorf("failed reading lazer configuration from [%s]: no [%s] directory in it or in [%s]", dir, ConfigDirUser, ExtraPathElement)
 }
 
 // NewConfig loads the configuration (issuer public key included) from dir.
@@ -98,12 +115,17 @@ func NewConfig(dir string) (*Config, error) {
 	return NewConfigWithIPK(ipk, dir, true)
 }
 
+// newConfigWithIPK loads the signer configuration from dir/user. A missing
+// signer configuration is a remote wallet, any other failure is an error.
 func newConfigWithIPK(ipk []byte, dir string, ignoreVerifyOnlyWallet bool) (*Config, error) {
 	path := filepath.Join(dir, ConfigDirUser, ConfigFileSigner)
 	if ignoreVerifyOnlyWallet {
 		full := filepath.Join(dir, ConfigDirUser, ConfigFileSignerFull)
-		if _, err := os.Stat(full); err == nil {
+		switch _, err := os.Stat(full); {
+		case err == nil:
 			path = full
+		case !os.IsNotExist(err):
+			return nil, errors.Wrapf(err, "failed to stat [%s]", full)
 		}
 	}
 	conf := &Config{Version: ProtocolVersionV1, IPK: ipk}
@@ -116,10 +138,11 @@ func newConfigWithIPK(ipk []byte, dir string, ignoreVerifyOnlyWallet bool) (*Con
 
 		return conf, conf.validate(ipk)
 	}
+	if len(raw) > maxConfigSize {
+		return nil, errors.Errorf("signer config at [%s] is too large", path)
+	}
 	signer := &SignerConfig{}
-	dec := json.NewDecoder(bytes.NewReader(raw))
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(signer); err != nil {
+	if err := strictUnmarshal(raw, signer); err != nil {
 		return nil, errors.Wrapf(err, "failed to unmarshal signer config at [%s]", path)
 	}
 	conf.Signer = signer
