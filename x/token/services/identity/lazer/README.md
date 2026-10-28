@@ -41,7 +41,7 @@ tests in `km_bench_test.go` measure throughput with concurrent workers. See
 
 `config.go` JSON config and on-disk layout (`msp/IssuerPublicKey`,
 `user/SignerConfig[Full]`), `km.go`, `kmp.go`, `deserializer.go`, `audit.go`, `strictjson.go`,
-`identity.go` (encodings, verifier pool, presentation cache), `issuer.go`
+`identity.go` (encodings, verifier pool), `issuer.go`
 (helpers used by `cmd/lazergen`).
 
 ```
@@ -81,4 +81,5 @@ root Panurus build is unaffected.
 
 Driver, public-parameter and nwo wiring (`nogh/v1/driver`, `IdemixIssuerPublicKeys`),
 SKI cleanup provider, revocation (RH is committed but never checked), a
-per-message P2 signature mode, and sending `pres` once per transaction.
+per-message P2 signature mode, and sending `pres` once per transaction. Verification does not
+cache presentation checks (one signature per pseudonym), so every `Verify` pays for the full check.
