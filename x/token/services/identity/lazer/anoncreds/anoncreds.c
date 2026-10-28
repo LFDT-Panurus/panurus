@@ -688,7 +688,66 @@ cbdc_user_init (cbdc_user_state_t state, const uint8_t pubkey[897])
   cbdc_derive_c0 (state->c0, pubkey);
   lin_prover_init (state->p1, cbdc_p1pp, p1_param);
   lin_prover_init (state->p2, cbdc_p2pp, p2_param);
+  state->p1_ready = 1;
+  state->p2_ready = 1;
   state->ready = 1;
+  return 1;
+}
+
+/*
+ * A template holds the public key and, after cbdc_user_import, the masking
+ * randomness and the attributes, but no prover: it is only the source of
+ * cbdc_user_clone. Operations that run arithmetic on r, m or c0 (credverify,
+ * presgen, export, maskattrs) reject it: lazer converts the operands of a
+ * multiplication to the CRT domain in place, so they would write the
+ * template, and cloning concurrently from a template is safe only because
+ * nothing writes it. Returns 1 on success, 0 if pubkey is not a valid
+ * Falcon-512 public key, in which case state is zeroed and need not be
+ * cleared.
+ */
+int
+cbdc_user_template_init (cbdc_user_state_t state, const uint8_t pubkey[897])
+{
+  cbdc_pp_init ();
+
+  memset (state, 0, sizeof (cbdc_user_state_t));
+  if (!cbdc_decode_pk (state->B2, pubkey))
+    return 0;
+  cbdc_derive_c0 (state->c0, pubkey);
+  state->template = 1;
+  state->ready = 1;
+  return 1;
+}
+
+/*
+ * Initialize dst as a copy of the imported template src with its own P2
+ * prover, so that dst can present (but not mask attributes, it has no P1
+ * prover). src is only read, hence concurrent clones of the same template
+ * are safe as long as nothing else uses it. dst must be cleared. Returns 1
+ * on success, 0 if src is not an imported template, in which case dst is
+ * zeroed and need not be cleared.
+ */
+int
+cbdc_user_clone (cbdc_user_state_t dst, const cbdc_user_state_struct *src)
+{
+  cbdc_pp_init ();
+
+  memset (dst, 0, sizeof (cbdc_user_state_t));
+  if (src == NULL || !src->ready || !src->template || !src->masked)
+    return 0;
+  /* *_set copy the representation of the source without converting it */
+  polymat_alloc (dst->B2, cbdc_ring, 8, 8);
+  polymat_set (dst->B2, (polymat_ptr)src->B2);
+  polyvec_alloc (dst->c0, cbdc_ring, 8);
+  polyvec_set (dst->c0, (polyvec_ptr)src->c0);
+  polyvec_alloc (dst->r, cbdc_ring, 16);
+  polyvec_set (dst->r, (polyvec_ptr)src->r);
+  polyvec_alloc (dst->m, cbdc_ring, CBDC_NATTRS);
+  polyvec_set (dst->m, (polyvec_ptr)src->m);
+  dst->masked = 1;
+  lin_prover_init (dst->p2, cbdc_p2pp, p2_param);
+  dst->p2_ready = 1;
+  dst->ready = 1;
   return 1;
 }
 
@@ -710,8 +769,10 @@ cbdc_user_clear (cbdc_user_state_t state)
 {
   if (!state->ready)
     return;
-  lin_prover_clear (state->p1);
-  lin_prover_clear (state->p2);
+  if (state->p1_ready)
+    lin_prover_clear (state->p1);
+  if (state->p2_ready)
+    lin_prover_clear (state->p2);
   polymat_free (state->B2);
   polyvec_free (state->c0);
   cbdc_user_forget (state);
@@ -1083,8 +1144,8 @@ cbdc_user_maskattrs (cbdc_user_state_t state, uint8_t *masked_attrs,
 
   cbdc_pp_init ();
 
-  if (!state->ready || masked_attrs == NULL || masked_attrslen == NULL
-      || attrs == NULL || (nrev > 0 && idx_rev == NULL)
+  if (!state->ready || !state->p1_ready || masked_attrs == NULL
+      || masked_attrslen == NULL || attrs == NULL || (nrev > 0 && idx_rev == NULL)
       || !cbdc_idx_valid (idx_rev, nrev) || !cbdc_attrs_ok (attrs))
     return 0;
   *masked_attrslen = 0;
@@ -1258,7 +1319,8 @@ cbdc_user_presgen (cbdc_user_state_t state, uint8_t *pres, size_t *preslen,
 
   cbdc_pp_init ();
 
-  if (!state->ready || !state->masked || pres == NULL || preslen == NULL
+  if (!state->ready || !state->p2_ready || !state->masked || pres == NULL
+      || preslen == NULL
       || (nrev > 0 && idx_rev == NULL) || (ncom > 0 && (idx_com == NULL || coms == NULL))
       || !cbdc_com_valid (idx_rev, nrev, idx_com, ncom))
     return 0;
@@ -1308,6 +1370,8 @@ cbdc_user_presgen (cbdc_user_state_t state, uint8_t *pres, size_t *preslen,
   lin_prover_set_statement (state->p2, A, u);
   lin_prover_set_witness (state->p2, w);
   rv = cbdc_prove (state->p2, pres, cbdc_maxlen_pres (), preslen, ctx, ctxlen);
+  /* the prover is kept for the next presentation, not its witness */
+  lin_prover_wipe_witness (state->p2);
 
   cbdc_vec_free_secret (w);
   polyvec_free (u);
@@ -1333,7 +1397,7 @@ cbdc_user_credverify (cbdc_user_state_t state, const uint8_t *cred,
 
   cbdc_pp_init ();
 
-  if (!state->ready || !state->masked)
+  if (!state->ready || state->template || !state->masked)
     return 0;
 
   polyvec_alloc (tau, cbdc_ring, 8);
@@ -1364,7 +1428,8 @@ cbdc_user_export (cbdc_user_state_t state, uint8_t *out, size_t *outlen)
   polyvec_t tmp;
   size_t len;
 
-  if (!state->ready || !state->masked || out == NULL || outlen == NULL)
+  if (!state->ready || state->template || !state->masked || out == NULL
+      || outlen == NULL)
     return 0;
   polyvec_alloc (tmp, cbdc_ring, 16);
   polyvec_set (tmp, state->r);
@@ -1751,4 +1816,75 @@ cbdc_proof_hint_offset (int which)
          + (size_t)(P->quad_eval->lambda / 2) * T->ring->d * log2q
          + (size_t)T->kmsis * T->ring->d * (log2q - D)
          + (size_t)T->ring->d * T->log2omega;
+}
+
+/*
+ * For tests only: n samples of the discrete gaussian of lazer with sigma
+ * 1.55*2^log2o, as the provers draw their masking vectors. Returns 1 on
+ * success.
+ */
+int
+cbdc_test_grandom (int64_t *out, unsigned int n, unsigned int log2o,
+                   const uint8_t seed[32], uint32_t dom)
+{
+  intvec_t v;
+  unsigned int i;
+
+  /* intvec_grandom samples into a variable length array on the stack */
+  if (out == NULL || seed == NULL || n == 0 || n > 65536 || log2o == 0
+      || log2o > 40)
+    return 0;
+  intvec_alloc (v, n, 1);
+  intvec_grandom (v, log2o, seed, dom);
+  for (i = 0; i < n; i++)
+    out[i] = int_get_i64 (intvec_get_elem (v, i));
+  intvec_free (v);
+  return 1;
+}
+
+/*
+ * For tests only: 1 if the presentation prover of state holds no witness
+ * (it is wiped after every presentation), 0 if it does, -1 if state has no
+ * presentation prover.
+ */
+int
+cbdc_test_p2_witness_wiped (cbdc_user_state_t state)
+{
+  _lnp_prover_state_ptr p;
+  polyvec_ptr vs[3];
+  unsigned int i, j, k;
+
+  if (!state->ready || !state->p2_ready)
+    return -1;
+  p = state->p2->lnp_state;
+  if (p->witness_set)
+    return 0;
+  vs[0] = p->s1;
+  vs[1] = p->s2;
+  vs[2] = p->m;
+  for (i = 0; i < 3; i++)
+    {
+      if (vs[i]->elems == NULL)
+        continue;
+      for (j = 0; j < polyvec_get_nelems (vs[i]); j++)
+        {
+          poly_ptr e = polyvec_get_elem (vs[i], j);
+
+          /* poly_wipe zeroes both representations, it keeps the crt flag */
+          if (e->crtrep != NULL)
+            {
+              const uint8_t *b = (const uint8_t *)e->crtrep;
+              size_t n = sizeof (crtcoeff_t) * e->ring->d * e->ring->nmoduli;
+
+              while (n-- > 0)
+                if (b[n] != 0)
+                  return 0;
+            }
+          /* the limbs, not poly_get_coeff, which converts from crt */
+          for (k = 0; k < polyvec_get_ring (vs[i])->d; k++)
+            if (!int_eqzero (intvec_get_elem (e->coeffs, k)))
+              return 0;
+        }
+    }
+  return 1;
 }
