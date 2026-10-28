@@ -361,3 +361,178 @@ jobs:
                 labels: ['testing', 'bug'],
               })
             }
+
+  # Fuzz targets of the post-quantum lazer identity module. It is a separate Go
+  # module that links liblazer.a through cgo, so every entry needs lazer built
+  # first (`make lazer-install`, cached as in lazer-tests.yml); the targets run
+  # from the module root (`dir`).
+  fuzz-lazer:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    permissions:
+      contents: read
+      issues: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: lazer-anoncreds-sok-verify
+            dir: ./x/token/services/identity/lazer
+            pkg: ./anoncreds
+            func: FuzzSokVerify
+          - name: lazer-anoncreds-pres-ver
+            dir: ./x/token/services/identity/lazer
+            pkg: ./anoncreds
+            func: FuzzPresVer
+          - name: lazer-anoncreds-issue
+            dir: ./x/token/services/identity/lazer
+            pkg: ./anoncreds
+            func: FuzzIssue
+          - name: lazer-anoncreds-cred-verify
+            dir: ./x/token/services/identity/lazer
+            pkg: ./anoncreds
+            func: FuzzCredVerify
+          - name: lazer-anoncreds-import
+            dir: ./x/token/services/identity/lazer
+            pkg: ./anoncreds
+            func: FuzzImport
+          - name: lazer-anoncreds-commit-with-opening
+            dir: ./x/token/services/identity/lazer
+            pkg: ./anoncreds
+            func: FuzzCommitWithOpening
+          - name: lazer-anoncreds-new-verifier
+            dir: ./x/token/services/identity/lazer
+            pkg: ./anoncreds
+            func: FuzzNewVerifier
+          - name: lazer-deserializers
+            dir: ./x/token/services/identity/lazer
+            pkg: .
+            func: FuzzDeserializers
+          - name: lazer-deserialize-audit-info
+            dir: ./x/token/services/identity/lazer
+            pkg: .
+            func: FuzzDeserializeAuditInfo
+          - name: lazer-signer-info-decode
+            dir: ./x/token/services/identity/lazer
+            pkg: .
+            func: FuzzSignerInfoDecode
+          - name: lazer-new-config-from-raw
+            dir: ./x/token/services/identity/lazer
+            pkg: .
+            func: FuzzNewConfigFromRaw
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: "x/token/services/identity/lazer/go.mod"
+          cache-dependency-path: "x/token/services/identity/lazer/go.sum"
+
+      - name: Install lazer build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake unzip patch git libgmp-dev libmpfr-dev
+
+      # Same cache (and key) as lazer-tests.yml: the installed lazer depends
+      # only on lazer.mk and the Panurus-local patches.
+      - name: Cache installed lazer
+        id: lazer-cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .lazer
+          key: lazer-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('lazer.mk', 'x/token/services/identity/lazer/patches/**') }}
+
+      - name: Build and install lazer
+        if: steps.lazer-cache.outputs.cache-hit != 'true'
+        run: make lazer-install
+
+      - name: Restore fuzz corpus cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/go-build/fuzz
+          key: fuzz-${{ matrix.name }}-${{ github.run_id }}
+          restore-keys: |
+            fuzz-${{ matrix.name }}-
+
+      - name: Run fuzz campaign
+        working-directory: ${{ matrix.dir }}
+        run: |
+          set -o pipefail
+          go test ${{ matrix.pkg }} \
+            -run='^$' \
+            -fuzz='^${{ matrix.func }}$' \
+            -fuzztime="${{ github.event.inputs.fuzztime || '4h' }}" \
+            2>&1 | tee fuzz-output.log
+
+      - name: Collect crash artifacts
+        if: failure()
+        # Same directory the campaign ran in: both the log and the corpus that reproduces the crash are
+        # written relative to it, and losing them would leave only the fact that something failed.
+        working-directory: ${{ matrix.dir }}
+        run: |
+          mkdir -p fuzz-failure
+          cp fuzz-output.log fuzz-failure/ || true
+          find "${{ matrix.pkg }}" -type d -path "*/testdata/fuzz/${{ matrix.func }}*" \
+            -exec cp -r {} fuzz-failure/ \; || true
+
+      - name: Upload crash artifacts
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: fuzz-failure-${{ matrix.name }}
+          path: ${{ matrix.dir }}/fuzz-failure/
+          retention-days: 30
+
+      - name: File or update GitHub issue
+        if: failure()
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            const name = '${{ matrix.name }}'
+            const pkg = '${{ matrix.pkg }}'
+            const func = '${{ matrix.func }}'
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`
+            const title = `Nightly fuzz failure: ${name}`
+
+            const body = [
+              `The nightly fuzz workflow found a failing input for \`${func}\` in \`${pkg}\`.`,
+              '',
+              `**Latest failing run:** ${runUrl}`,
+              '',
+              'Download the `fuzz-failure-' + name + '` artifact from that run for the',
+              'failing seed and full log, then reproduce locally with:',
+              '',
+              '```bash',
+              'make lazer-install',
+              `cd ${{ matrix.dir }} && go test ${pkg} -run='${func}/<hash>'`,
+              '```',
+              '',
+              'If confirmed, commit the failing seed file into the target\'s',
+              '`testdata/fuzz/' + func + '/` directory to add it to the permanent regression corpus.',
+            ].join('\n')
+
+            const existing = await github.rest.search.issuesAndPullRequests({
+              q: `repo:${context.repo.owner}/${context.repo.repo} is:issue is:open in:title "${title}"`,
+            })
+
+            if (existing.data.items.length > 0) {
+              const issue = existing.data.items[0]
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                body: `New failing run: ${runUrl}`,
+              })
+            } else {
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title,
+                body,
+                labels: ['testing', 'bug'],
+              })
+            }

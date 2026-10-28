@@ -50,14 +50,16 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             build-essential cmake unzip patch git libgmp-dev libmpfr-dev
 
-      # The installed lazer only depends on the pinned revision and on how
-      # lazer.mk builds it, so key the cache on lazer.mk.
+      # The installed lazer only depends on the pinned revision, on how
+      # lazer.mk builds it and on the Panurus-local patches applied to it, so
+      # key the cache on lazer.mk and the patches. Keep this key in sync with
+      # the fuzz-lazer job of nightly-fuzz.yml.
       - name: Cache installed lazer
         id: lazer-cache
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .lazer
-          key: lazer-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('lazer.mk') }}
+          key: lazer-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('lazer.mk', 'x/token/services/identity/lazer/patches/**') }}
 
       - name: Build and install lazer
         if: steps.lazer-cache.outputs.cache-hit != 'true'
