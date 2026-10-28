@@ -56,6 +56,13 @@ which makes clock synchronisation a deployment requirement and sets a lower boun
 deadlines. See
 [HTLC Deadlines and Clock Synchronisation](../security/htlc_deadline_clock_assumptions.md).
 
+A script names its hash and encoding functions by numeric identifier, and an identifier is only
+usable if that implementation is linked into the binary. `Transaction.Lock` rejects a
+`WithHashFunc` / `WithHashEncoding` value that is not, rather than building a script no verifier
+could ever claim; `ClaimVerifier` likewise rejects such a script instead of failing on it. Callers
+passing a non-default hash function should expect an error from `Lock` when the network cannot
+compute it.
+
 ### HTLC Validation Rules
 Spending an HTLC-locked token is validated by each token driver's transfer validator
 (`TransferHTLCValidate` in `token/core/fabtoken/v1/validator` and

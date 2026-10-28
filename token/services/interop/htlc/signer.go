@@ -70,15 +70,13 @@ func (cv *ClaimVerifier) Verify(tokenRequestAndTxID, claimSignature []byte) erro
 		return errors.WithMessagef(err, "failed to verify recipient signature")
 	}
 
-	if !cv.HashInfo.HashFunc.Available() {
-		return errors.Errorf("script hash function not available [%d]", cv.HashInfo.HashFunc)
+	// Image validates both the hash and the encoding function before using them: the script is
+	// attacker-controlled, and an out-of-range value for either makes New() return nil, which
+	// would panic the verifier rather than reject the claim.
+	image, err := cv.HashInfo.Image(sig.Preimage)
+	if err != nil {
+		return errors.WithMessagef(err, "failed to compute hash image of the claim preimage")
 	}
-	hash := cv.HashInfo.HashFunc.New()
-	if _, err = hash.Write(sig.Preimage); err != nil {
-		return errors.Wrapf(err, "failed to compute hash image")
-	}
-	image := hash.Sum(nil)
-	image = []byte(cv.HashInfo.HashEncoding.New().EncodeToString(image))
 
 	if !bytes.Equal(cv.HashInfo.Hash, image) {
 		return errors.Errorf("hash mismatch: SHA(%x) = %x != %x", sig.Preimage, image, cv.HashInfo.Hash)

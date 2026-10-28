@@ -128,7 +128,27 @@ func TestClaimVerifierVerifyUnavailableHashFunc(t *testing.T) {
 	}
 	err := cv.Verify([]byte("req"), validClaimSigBytes(t, preImage, []byte("sig")))
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "script hash function not available")
+	require.Contains(t, err.Error(), "hash function not available")
+}
+
+// An out-of-range HashEncoding makes Encoding.New() return nil; the verifier must reject the
+// claim rather than dereference it. The script is attacker-supplied, so a panic here is a DoS.
+func TestClaimVerifierVerifyUnavailableHashEncoding(t *testing.T) {
+	preImage := []byte("secret")
+	verifier := &mock.Verifier{}
+	verifier.VerifyReturns(nil)
+
+	cv := &htlc.ClaimVerifier{
+		Recipient: verifier,
+		HashInfo:  htlc.HashInfo{Hash: []byte("h"), HashFunc: crypto.SHA256, HashEncoding: encoding.Encoding(99)},
+	}
+
+	var err error
+	require.NotPanics(t, func() {
+		err = cv.Verify([]byte("req"), validClaimSigBytes(t, preImage, []byte("sig")))
+	})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "encoding function not available")
 }
 
 // ---- Verifier ----

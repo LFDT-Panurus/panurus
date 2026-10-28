@@ -335,6 +335,14 @@ func (t *Transaction) Claim(ctx context.Context, wallet *token.OwnerWallet, tok 
 }
 
 func (t *Transaction) recipientAsScript(sender, recipient view.Identity, deadline time.Duration, h []byte, hashFunc crypto.Hash, hashEncoding encoding.Encoding) (view.Identity, []byte, *Script, error) {
+	hashInfo := HashInfo{HashFunc: hashFunc, HashEncoding: hashEncoding}
+	// Reject an unavailable hash or encoding function up front, for both branches below: the
+	// identifiers come from the caller's transfer options, crypto.Hash.New() panics on one that is
+	// not linked into the binary, and a script that names one can never be claimed by any verifier.
+	if err := hashInfo.Validate(); err != nil {
+		return nil, nil, nil, errors.WithMessagef(err, "cannot lock with the requested hash info")
+	}
+
 	// sample pre-image and its hash
 	var preImage []byte
 	var err error
@@ -343,29 +351,17 @@ func (t *Transaction) recipientAsScript(sender, recipient view.Identity, deadlin
 		if err != nil {
 			return nil, nil, nil, err
 		}
-		hash := hashFunc.New()
-		if _, err := hash.Write(preImage); err != nil {
-			return nil, nil, nil, err
-		}
-		h = hash.Sum(nil)
-		// no need to encode if encoding is none (=0)
-		if hashEncoding != 0 {
-			he := hashEncoding.New()
-			if he == nil {
-				return nil, nil, nil, errors.New("hashEncoding.New() returned nil")
-			}
-			h = []byte(he.EncodeToString(h))
+		h, err = hashInfo.Image(preImage)
+		if err != nil {
+			return nil, nil, nil, errors.WithMessagef(err, "failed to compute the image of the sampled pre-image")
 		}
 	}
 
 	logger.Debugf("pair (pre-image, hash) = (%s,%s)", base64.StdEncoding.EncodeToString(preImage), base64.StdEncoding.EncodeToString(h))
 
+	hashInfo.Hash = h
 	script := &Script{
-		HashInfo: HashInfo{
-			Hash:         h,
-			HashFunc:     hashFunc,
-			HashEncoding: hashEncoding,
-		},
+		HashInfo:  hashInfo,
 		Deadline:  time.Now().Add(deadline),
 		Recipient: recipient,
 		Sender:    sender,

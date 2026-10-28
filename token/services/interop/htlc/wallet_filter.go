@@ -29,17 +29,15 @@ type PreImageSelector struct {
 func (f *PreImageSelector) Filter(tok *token.UnspentToken, script *Script) (bool, error) {
 	logger.Debugf("token [%s,%s,%s,%s] contains a script? Yes", tok.Id, view.Identity(tok.Owner).UniqueID(), tok.Type, tok.Quantity)
 
-	if !script.HashInfo.HashFunc.Available() {
-		logger.Errorf("script hash function not available [%d]", script.HashInfo.HashFunc)
+	// Image validates both the hash and the encoding function before using them: the script comes
+	// from a token owner field, and an out-of-range value for either makes New() return nil, which
+	// would panic the selector rather than skip the token.
+	h, err := script.HashInfo.Image(f.preImage)
+	if err != nil {
+		logger.Errorf("cannot compute the image of the pre-image for token [%s]: %v", tok.Id, err)
 
 		return false, nil
 	}
-	hash := script.HashInfo.HashFunc.New()
-	if _, err := hash.Write(f.preImage); err != nil {
-		return false, err
-	}
-	h := hash.Sum(nil)
-	h = []byte(script.HashInfo.HashEncoding.New().EncodeToString(h))
 
 	logger.Debugf("searching for script matching (pre-image, image) = (%s,%s)", logging.Base64(f.preImage), logging.Base64(h))
 

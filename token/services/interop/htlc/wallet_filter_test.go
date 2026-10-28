@@ -155,6 +155,28 @@ func TestPreImageSelectorUnavailableHashFunc(t *testing.T) {
 	require.False(t, ok)
 }
 
+// An out-of-range HashEncoding makes Encoding.New() return nil; the selector must skip the token
+// rather than dereference it. The script comes from an attacker-controlled token owner field.
+func TestPreImageSelectorUnavailableHashEncoding(t *testing.T) {
+	script := &Script{
+		HashInfo: HashInfo{
+			HashFunc:     crypto.SHA256,
+			HashEncoding: encoding.Encoding(99),
+		},
+	}
+	tok := makeFilterToken(t, script)
+
+	var (
+		ok  bool
+		err error
+	)
+	require.NotPanics(t, func() {
+		ok, err = (&PreImageSelector{preImage: []byte("any")}).Filter(tok, script)
+	})
+	require.NoError(t, err)
+	require.False(t, ok)
+}
+
 // ---- IsScript ----
 
 func TestIsScriptValidHTLC(t *testing.T) {
