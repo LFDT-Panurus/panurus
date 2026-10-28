@@ -47,7 +47,7 @@ LAZER_SRC    ?=
 # of the runs when built with -O2, against a few percent with the default -O3.
 LAZER_CFLAGS ?=
 # Panurus-local fixes to lazer, applied by lazer-fetch. They are part of the
-# input of the build, so the CI cache key of .lazer includes them.
+# input of the build.
 LAZER_PATCHES := $(CURDIR)/$(LAZER_MODULE)/patches
 LAZER_SHA256  := $(shell command -v sha256sum >/dev/null 2>&1 && echo sha256sum || echo 'shasum -a 256')
 LAZER_LIBS    = $(LAZER_PREFIX)/lib/liblazer.a $(LAZER_PREFIX)/lib/libhexl.a $(LAZER_PREFIX)/include/lazer.h $(LAZER_PREFIX)/include/src/moduli.h
