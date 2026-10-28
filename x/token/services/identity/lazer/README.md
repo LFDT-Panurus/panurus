@@ -20,29 +20,27 @@ A pseudonym (the identity published in a token owner field) is
 - Signature: `ASN.1{pres, sok}` where `sok` is a signature of knowledge of the
   opening of `nymSK`, bound to the message. Signing uses `nymSK`, so an auditor
   who holds the EID/RH openings cannot forge signatures.
-- Audit info: `{EID, RH, openingEID, openingRH}`. `Match` recomputes the nyms.
-  `Identity(ctx, auditInfo)` reuses the openings, so `nymEID` and `nymRH` stay
-  fixed across pseudonyms (as in idemix).
-- Signer info (identity store): `{openingSK, pres}`, enough to rebuild a signer.
+- Audit info: `{eid, rh, opening_eid, opening_rh, pres}`, canonical JSON. Matching
+  (`Deserializer.MatchIdentity`/`GetAuditInfoMatcher`) recomputes the nyms and checks
+  `pres` under the issuer key, so an identity made up from someone's EID/RH without a
+  credential does not match. `Identity(ctx, auditInfo)` reuses the openings, so `nymEID`
+  and `nymRH` stay fixed across pseudonyms (as in idemix).
+- Signer info (identity store): `{version, enc_opening_sk, pres}`. The opening of `nymSK`
+  reveals `usk` together with `nymSK`, so it is AES-256-GCM encrypted under a key derived
+  from the wallet secret, with the identity as additional data.
 - Wallet secret `usk || user state` is moved to the `idriver.Keystore` by the
   KMP and removed from the stored configuration (only the SKI stays).
 
-## Sizes and timings (amd64 under emulation, indicative only)
+## Benchmarks
 
-| item | size |
-|---|---|
-| identity | 688 B |
-| signature | about 52 KB (pres 37 KB + SoK 16 KB) |
-| audit info | about 3 KB |
-| signer info | about 50 KB |
-
-Identity generation about 0.4 s, sign about 70 ms, verify about 270 ms uncached
-and about 30 ms with the presentation check cached.
+`make lazer-bench` prints sizes and timings; the `TestParallelBenchmarkLazer*`
+tests in `km_bench_test.go` measure throughput with concurrent workers. See
+`docs/services/identity-lazer.md`.
 
 ## Layout
 
 `config.go` JSON config and on-disk layout (`msp/IssuerPublicKey`,
-`user/SignerConfig[Full]`), `km.go`, `kmp.go`, `deserializer.go`, `audit.go`,
+`user/SignerConfig[Full]`), `km.go`, `kmp.go`, `deserializer.go`, `audit.go`, `strictjson.go`,
 `identity.go` (encodings, verifier pool, presentation cache), `issuer.go`
 (helpers used by `cmd/lazergen`).
 

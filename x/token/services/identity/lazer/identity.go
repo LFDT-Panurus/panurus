@@ -93,11 +93,17 @@ func unmarshalSignature(raw []byte) (*Signature, error) {
 // key. It is safe for concurrent use: the C verifier states are not, hence a
 // small pool of them is kept and results of presentation checks are cached,
 // because a pseudonym signs many messages with the same presentation.
+//
+// After Close the pool is empty and stays empty: verifications fail, and
+// verifier states still in use are released when they are given back.
 type presVerifier struct {
 	ipk []byte
 	ctx []byte
 
-	pool chan *anoncreds.Verifier
+	// poolMu protects idle and closed
+	poolMu sync.Mutex
+	idle   []*anoncreds.Verifier
+	closed bool
 
 	mu       sync.Mutex
 	verified map[[sha256.Size]byte]struct{}
@@ -110,45 +116,57 @@ func newPresVerifier(ipk []byte) (*presVerifier, error) {
 	if err != nil {
 		return nil, errors.Wrap(err, "invalid issuer public key")
 	}
-	pool := make(chan *anoncreds.Verifier, verifierPoolSize)
-	pool <- v
 
 	return &presVerifier{
 		ipk:      append([]byte(nil), ipk...),
 		ctx:      identityContext(ipk),
-		pool:     pool,
+		idle:     []*anoncreds.Verifier{v},
 		verified: map[[sha256.Size]byte]struct{}{},
 		maxCache: defaultPresCacheSize,
 	}, nil
 }
 
-// Close releases the C state of the pooled verifiers.
+// Close releases the C state of the pooled verifiers. It is idempotent.
 func (p *presVerifier) Close() {
-	for {
-		select {
-		case v := <-p.pool:
-			v.Clear()
-		default:
-			return
-		}
+	p.poolMu.Lock()
+	defer p.poolMu.Unlock()
+	p.closed = true
+	for _, v := range p.idle {
+		v.Clear()
 	}
+	p.idle = nil
 }
 
 func (p *presVerifier) acquire() (*anoncreds.Verifier, error) {
-	select {
-	case v := <-p.pool:
-		return v, nil
-	default:
-		return anoncreds.NewVerifier(p.ipk)
+	p.poolMu.Lock()
+	if p.closed {
+		p.poolMu.Unlock()
+
+		return nil, errors.New("verifier closed")
 	}
+	if n := len(p.idle); n > 0 {
+		v := p.idle[n-1]
+		p.idle[n-1] = nil
+		p.idle = p.idle[:n-1]
+		p.poolMu.Unlock()
+
+		return v, nil
+	}
+	p.poolMu.Unlock()
+
+	return anoncreds.NewVerifier(p.ipk)
 }
 
 func (p *presVerifier) release(v *anoncreds.Verifier) {
-	select {
-	case p.pool <- v:
-	default:
-		v.Clear()
+	p.poolMu.Lock()
+	if !p.closed && len(p.idle) < verifierPoolSize {
+		p.idle = append(p.idle, v)
+		p.poolMu.Unlock()
+
+		return
 	}
+	p.poolMu.Unlock()
+	v.Clear()
 }
 
 func presKey(id *SerializedIdentity, pres []byte) [sha256.Size]byte {

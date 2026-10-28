@@ -119,6 +119,12 @@ type WrappedKeyManager struct {
 }
 
 // Close stops the background provisioning and releases the key manager.
+//
+// The identity cache has no way to wait for its provisioning goroutine, so
+// Close only cancels it: an identity generation in progress completes or fails
+// with "key manager closed", after which the goroutine sees the cancellation
+// and exits. This is safe because KeyManager.Close and KeyManager.Identity are
+// synchronized, and Identity refuses to serve once closed.
 func (k *WrappedKeyManager) Close() {
 	if k.identityCache != nil {
 		k.identityCache.Close()
@@ -126,8 +132,13 @@ func (k *WrappedKeyManager) Close() {
 	k.KeyManager.Close()
 }
 
-// Identity returns a pseudonym, from the cache if possible.
+// Identity returns a pseudonym, from the cache if possible. It fails after
+// Close, even if the cache still holds pseudonyms generated before.
 func (k *WrappedKeyManager) Identity(ctx context.Context, auditInfo []byte) (*idriver.IdentityDescriptor, error) {
+	if k.isClosed() {
+		return nil, errors.New("key manager closed")
+	}
+
 	return k.getIdentityFunc(ctx, auditInfo)
 }
 

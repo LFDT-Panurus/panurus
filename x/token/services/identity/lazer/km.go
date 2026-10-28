@@ -7,8 +7,10 @@ SPDX-License-Identifier: Apache-2.0
 package lazer
 
 import (
-	"bytes"
 	"context"
+	"crypto/aes"
+	"crypto/cipher"
+	"crypto/rand"
 	"encoding/asn1"
 	"encoding/hex"
 	"encoding/json"
@@ -39,12 +41,98 @@ type IdentityStoreService interface {
 	GetSignerInfo(ctx context.Context, id []byte) ([]byte, error)
 }
 
-// SignerInfo is what is needed to sign under a pseudonym, besides the wallet secret.
+// SignerInfoVersionV1 is the only supported version of SignerInfo.
+const SignerInfoVersionV1 = 1
+
+// SignerInfo is what is needed to sign under a pseudonym, besides the wallet
+// secret. It is kept by the identity store, which is not a secret store.
+//
+// The opening of nymSK is encrypted: together with nymSK it reveals usk (nymSK
+// is linear in usk and its opening), that is, it lets its holder sign under
+// every pseudonym of the wallet. EncOpeningSK is nonce || AES-256-GCM(opening),
+// with a key derived from the wallet secret (see signerInfoKey) and the
+// serialized identity as additional data.
 type SignerInfo struct {
-	// OpeningSK is the opening of nymSK
-	OpeningSK []byte `json:"opening_sk"`
+	// Version is SignerInfoVersionV1
+	Version int `json:"version"`
+	// EncOpeningSK is the encrypted opening of nymSK
+	EncOpeningSK []byte `json:"enc_opening_sk"`
 	// Pres is the presentation of the pseudonym, it is part of each signature
 	Pres []byte `json:"pres"`
+}
+
+// gcmNonceLen is the length of the AES-GCM nonce prefixed to EncOpeningSK.
+const gcmNonceLen = 12
+
+// maxSignerInfoLen bounds the size of a signer info before parsing it.
+const maxSignerInfoLen = 1 << 17
+
+// decodeSignerInfo parses a signer info strictly: the input must be the
+// encoding json.Marshal produces, and the version and lengths must be valid.
+func decodeSignerInfo(raw []byte) (*SignerInfo, error) {
+	if len(raw) == 0 || len(raw) > maxSignerInfoLen {
+		return nil, errors.Errorf("invalid signer info length [%d]", len(raw))
+	}
+	info := &SignerInfo{}
+	if err := canonicalUnmarshal(raw, info); err != nil {
+		return nil, errors.Wrap(err, "failed to unmarshal the signer info")
+	}
+	if info.Version != SignerInfoVersionV1 {
+		return nil, errors.Errorf("unsupported signer info version [%d]", info.Version)
+	}
+	if len(info.EncOpeningSK) != gcmNonceLen+anoncreds.MaxLenOpening()+16 {
+		return nil, errors.New("invalid encrypted opening in the signer info")
+	}
+	if len(info.Pres) == 0 || len(info.Pres) > anoncreds.MaxLenPres() {
+		return nil, errors.New("invalid presentation in the signer info")
+	}
+
+	return info, nil
+}
+
+// signerInfoAEAD returns the AEAD that protects the signer infos.
+func signerInfoAEAD(key []byte) (cipher.AEAD, error) {
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to create the signer info cipher")
+	}
+	aead, err := cipher.NewGCM(block)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to create the signer info cipher")
+	}
+
+	return aead, nil
+}
+
+// sealOpening encrypts the opening of nymSK of the identity id.
+func sealOpening(key, id, opening []byte) ([]byte, error) {
+	aead, err := signerInfoAEAD(key)
+	if err != nil {
+		return nil, err
+	}
+	nonce := make([]byte, gcmNonceLen, gcmNonceLen+len(opening)+aead.Overhead())
+	if _, err := rand.Read(nonce); err != nil {
+		return nil, errors.Wrap(err, "failed to sample the nonce")
+	}
+
+	return aead.Seal(nonce, nonce, opening, id), nil
+}
+
+// openOpening decrypts the opening of nymSK of the identity id.
+func openOpening(key, id, enc []byte) ([]byte, error) {
+	aead, err := signerInfoAEAD(key)
+	if err != nil {
+		return nil, err
+	}
+	if len(enc) < gcmNonceLen {
+		return nil, errors.New("invalid encrypted opening")
+	}
+	opening, err := aead.Open(nil, enc[:gcmNonceLen], enc[gcmNonceLen:], id)
+	if err != nil {
+		return nil, errors.New("failed to decrypt the opening: the signer info is not of this wallet or of this identity")
+	}
+
+	return opening, nil
 }
 
 // KeyManager generates and recognizes post-quantum anonymous identities.
@@ -53,11 +141,18 @@ type KeyManager struct {
 
 	conf *Config
 
-	// user state, protected by mu: presentation generation mutates it
-	mu    sync.Mutex
-	user  *anoncreds.User
+	// remote is set at construction and never changes: the wallet secret is not available
+	remote bool
+	// usk, attrs and siKey are set at construction and never change
 	usk   []byte
 	attrs [][]byte
+	// siKey is the key that encrypts the signer infos at rest
+	siKey []byte
+
+	// mu protects user (presentation generation mutates it) and closed
+	mu     sync.Mutex
+	user   *anoncreds.User
+	closed bool
 
 	identityStore IdentityStoreService
 }
@@ -77,9 +172,16 @@ func NewKeyManager(conf *Config, keystore idriver.Keystore, identityStore Identi
 	if err != nil {
 		return nil, err
 	}
-	km := &KeyManager{Deserializer: des, conf: conf, identityStore: identityStore}
+	km := &KeyManager{Deserializer: des, conf: conf, identityStore: identityStore, remote: true}
+	ok := false
+	defer func() {
+		if !ok {
+			des.Close()
+		}
+	}()
 	if conf.Signer == nil {
 		logger.Debugf("lazer config [%s] has no signer, it will be considered remote", conf.Name)
+		ok = true
 
 		return km, nil
 	}
@@ -100,6 +202,7 @@ func NewKeyManager(conf *Config, keystore idriver.Keystore, identityStore Identi
 		}
 	default:
 		logger.Debugf("lazer config [%s] has no secret, it will be considered remote", conf.Name)
+		ok = true
 
 		return km, nil
 	}
@@ -112,6 +215,9 @@ func NewKeyManager(conf *Config, keystore idriver.Keystore, identityStore Identi
 
 	km.usk = append([]byte(nil), secret[:anoncreds.AttrLen]...)
 	km.attrs = attributes(km.usk, conf.Signer.OU, conf.Signer.EnrollmentID, conf.Signer.RevocationHandle, conf.Signer.Role)
+	if km.siKey, err = signerInfoKey(conf.IPK, secret); err != nil {
+		return nil, errors.Wrap(err, "failed to derive the signer info key")
+	}
 	if km.user, err = anoncreds.NewUser(conf.IPK); err != nil {
 		return nil, err
 	}
@@ -125,14 +231,20 @@ func NewKeyManager(conf *Config, keystore idriver.Keystore, identityStore Identi
 
 		return nil, errors.Wrap(err, "credential is not cryptographically valid")
 	}
+	km.remote = false
+	ok = true
 
 	return km, nil
 }
 
-// Close releases the C state held by the key manager.
+// Close releases the C state held by the key manager. It is idempotent and
+// safe to call concurrently with the other methods; afterwards Identity and
+// the signer deserializers fail, and so do verifications. Signers already
+// returned keep working: they own no C state.
 func (k *KeyManager) Close() {
 	k.mu.Lock()
 	defer k.mu.Unlock()
+	k.closed = true
 	if k.user != nil {
 		k.user.Clear()
 		k.user = nil
@@ -140,11 +252,20 @@ func (k *KeyManager) Close() {
 	k.pv.Close()
 }
 
+// isClosed reports whether Close was called.
+func (k *KeyManager) isClosed() bool {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+
+	return k.closed
+}
+
 // Config returns the configuration, without secret material.
 func (k *KeyManager) Config() *Config { return k.conf }
 
-// IsRemote returns true if the wallet secret is not available locally.
-func (k *KeyManager) IsRemote() bool { return k.user == nil }
+// IsRemote returns true if the wallet secret is not available locally. It does
+// not change over the lifetime of the key manager, Close included.
+func (k *KeyManager) IsRemote() bool { return k.remote }
 
 // Anonymous returns true: identities are pseudonymous.
 func (k *KeyManager) Anonymous() bool { return true }
@@ -172,6 +293,9 @@ func (k *KeyManager) String() string {
 func (k *KeyManager) Identity(ctx context.Context, auditInfo []byte) (*idriver.IdentityDescriptor, error) {
 	if k.IsRemote() {
 		return nil, errors.New("remote key manager cannot generate identities")
+	}
+	if k.isClosed() {
+		return nil, errors.New("key manager closed")
 	}
 	eid, rh := k.conf.Signer.EnrollmentID, k.conf.Signer.RevocationHandle
 	attrEID, attrRH := k.attrs[IdxEID], k.attrs[IdxRH]
@@ -214,7 +338,7 @@ func (k *KeyManager) Identity(ctx context.Context, auditInfo []byte) (*idriver.I
 
 	k.mu.Lock()
 	var pres []byte
-	if k.user != nil {
+	if !k.closed && k.user != nil {
 		pres, err = k.user.PresGen(k.conf.Signer.Cred, nil, []*anoncreds.Commitment{comSK, comEID, comRH}, idxCom, k.pv.ctx)
 	} else {
 		err = errors.New("key manager closed")
@@ -237,7 +361,7 @@ func (k *KeyManager) Identity(ctx context.Context, auditInfo []byte) (*idriver.I
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to export the opening of nymRH")
 	}
-	ai := &AuditInfo{EID: eid, RH: rh, OpeningEID: openingEID, OpeningRH: openingRH}
+	ai := &AuditInfo{EID: eid, RH: rh, OpeningEID: openingEID, OpeningRH: openingRH, Pres: pres}
 	aiRaw, err := ai.Bytes()
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to serialize the audit info")
@@ -246,14 +370,17 @@ func (k *KeyManager) Identity(ctx context.Context, auditInfo []byte) (*idriver.I
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to export the opening of nymSK")
 	}
-	signerInfo := &SignerInfo{OpeningSK: openingSK, Pres: pres}
-	signerInfoRaw, err := json.Marshal(signerInfo)
+	encOpening, err := sealOpening(k.siKey, id, openingSK)
+	if err != nil {
+		return nil, err
+	}
+	signerInfoRaw, err := json.Marshal(&SignerInfo{Version: SignerInfoVersionV1, EncOpeningSK: encOpening, Pres: pres})
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to serialize the signer info")
 	}
 	logger.DebugfContext(ctx, "new lazer identity generated with [%s:%s]", eid, utils.Hashable(rh))
 
-	signer := &Signer{usk: k.usk, opening: signerInfo.OpeningSK, pres: pres}
+	signer := &Signer{usk: k.usk, opening: openingSK, pres: pres}
 
 	return &idriver.IdentityDescriptor{
 		Identity:   id,
@@ -294,6 +421,9 @@ func (k *KeyManager) deserializeSigner(ctx context.Context, raw []byte) (*Signer
 	if k.IsRemote() {
 		return nil, errors.New("no local wallet secret for this key manager")
 	}
+	if k.isClosed() {
+		return nil, errors.New("key manager closed")
+	}
 	if k.identityStore == nil {
 		return nil, errors.New("no identity store available")
 	}
@@ -308,17 +438,17 @@ func (k *KeyManager) deserializeSigner(ctx context.Context, raw []byte) (*Signer
 	if len(infoRaw) == 0 {
 		return nil, errors.Errorf("no signer info found for identity [%s]", tdriver.Identity(raw).UniqueID())
 	}
-	info := &SignerInfo{}
-	dec := json.NewDecoder(bytes.NewReader(infoRaw))
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(info); err != nil {
-		return nil, errors.Wrap(err, "failed to unmarshal the signer info")
+	info, err := decodeSignerInfo(infoRaw)
+	if err != nil {
+		return nil, err
 	}
-	if len(info.Pres) == 0 || len(info.Pres) > anoncreds.MaxLenPres() {
-		return nil, errors.New("invalid presentation in the signer info")
+	// only the wallet secret decrypts the opening, and only for this identity
+	opening, err := openOpening(k.siKey, raw, info.EncOpeningSK)
+	if err != nil {
+		return nil, err
 	}
-	// the secrets must open nymSK: this is what ties the identity to this wallet
-	com, err := anoncreds.CommitWithOpening(k.usk, info.OpeningSK)
+	// usk and the opening must open nymSK, otherwise the signatures would not verify
+	com, err := anoncreds.CommitWithOpening(k.usk, opening)
 	if err != nil {
 		return nil, errors.Wrap(err, "invalid signer info")
 	}
@@ -327,7 +457,7 @@ func (k *KeyManager) deserializeSigner(ctx context.Context, raw []byte) (*Signer
 		return nil, errors.New("the identity does not belong to this key manager")
 	}
 
-	return &Signer{usk: k.usk, opening: info.OpeningSK, pres: info.Pres}, nil
+	return &Signer{usk: k.usk, opening: opening, pres: info.Pres}, nil
 }
 
 // Info returns a string that includes the given identity. If auditInfo is
@@ -336,7 +466,8 @@ func (k *KeyManager) Info(ctx context.Context, raw []byte, auditInfo []byte) (st
 	return k.Deserializer.Info(ctx, raw, auditInfo)
 }
 
-// Signer signs under a pseudonym.
+// Signer signs under a pseudonym. It holds the opening of nymSK in memory
+// only, in plaintext.
 type Signer struct {
 	usk     []byte
 	opening []byte

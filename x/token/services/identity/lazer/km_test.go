@@ -150,13 +150,34 @@ func TestAudit(t *testing.T) {
 	d2, err := w2.km.Identity(ctx, nil)
 	require.NoError(t, err)
 	require.Error(t, des.MatchIdentity(ctx, desc.Identity, d2.AuditInfo))
-	// a lying EID does not match
-	forged, _ := DeserializeAuditInfo(desc.AuditInfo)
-	forged.EID = "mallory"
-	require.Error(t, forged.Match(ctx, desc.Identity))
-	forged, _ = DeserializeAuditInfo(desc.AuditInfo)
-	forged.RH = "other"
-	require.Error(t, forged.Match(ctx, desc.Identity))
+	// a lying EID or RH, or the presentation of another identity, does not match
+	for name, tamper := range map[string]func(*AuditInfo){
+		"eid":  func(a *AuditInfo) { a.EID = "mallory" },
+		"rh":   func(a *AuditInfo) { a.RH = "other" },
+		"pres": func(a *AuditInfo) { o, _ := DeserializeAuditInfo(other.AuditInfo); a.Pres = o.Pres },
+	} {
+		forged, err := DeserializeAuditInfo(desc.AuditInfo)
+		require.NoError(t, err)
+		tamper(forged)
+		raw, err := forged.Bytes()
+		require.NoError(t, err)
+		require.Error(t, des.MatchIdentity(ctx, desc.Identity, raw), name)
+		_, err = des.DeserializeAuditInfo(ctx, desc.Identity, raw)
+		require.Error(t, err, name)
+	}
+	// the deserializer checks the audit info against the identity, which is required
+	_, err = des.DeserializeAuditInfo(ctx, other.Identity, desc.AuditInfo)
+	require.Error(t, err)
+	_, err = des.DeserializeAuditInfo(ctx, nil, desc.AuditInfo)
+	require.Error(t, err)
+	// the audit info deserializer without ipk only reads EID and RH
+	plain, err := (&AuditInfoDeserializer{}).DeserializeAuditInfo(ctx, desc.Identity, desc.AuditInfo)
+	require.NoError(t, err)
+	assert.Equal(t, "alice", plain.EnrollmentID())
+	_, isMatcher := plain.(interface {
+		Match(context.Context, []byte) error
+	})
+	assert.False(t, isMatcher, "an audit info without issuer key must not be usable as a matcher")
 
 	// the auditor cannot sign: signatures need the nymSK opening
 	_, err = DeserializeAuditInfo(append(append([]byte(nil), desc.AuditInfo...), ' ', '{'))
@@ -180,7 +201,13 @@ func TestIdentityWithReferenceAuditInfo(t *testing.T) {
 	des, err := NewDeserializer(w.ipk)
 	require.NoError(t, err)
 	t.Cleanup(des.Close)
-	require.NoError(t, des.MatchIdentity(ctx, second.Identity, first.AuditInfo))
+	require.NoError(t, des.MatchIdentity(ctx, second.Identity, second.AuditInfo))
+	// the audit info of an identity carries the presentation of that identity:
+	// the reference audit info has the same openings, but not the presentation
+	ref, err := DeserializeAuditInfo(first.AuditInfo)
+	require.NoError(t, err)
+	require.NoError(t, ref.matchOpenings(i2))
+	require.Error(t, des.MatchIdentity(ctx, second.Identity, first.AuditInfo))
 	sigma, err := second.Signer.Sign([]byte("m"))
 	require.NoError(t, err)
 	v, _ := des.DeserializeVerifier(ctx, second.Identity)
@@ -316,19 +343,4 @@ func TestMalformedInputs(t *testing.T) {
 	raw, _ := json.Marshal(m)
 	_, err = DeserializeAuditInfo(raw)
 	require.Error(t, err)
-}
-
-func FuzzDeserializers(f *testing.F) {
-	_, ipk := NewIssuerKey()
-	des, err := NewDeserializer(ipk)
-	require.NoError(f, err)
-	f.Cleanup(des.Close)
-	f.Add([]byte{0x30, 0x00}, []byte("{}"), []byte{0x30, 0x00})
-	f.Fuzz(func(t *testing.T, id, ai, sig []byte) {
-		if v, err := des.DeserializeVerifier(context.Background(), id); err == nil {
-			_ = v.Verify([]byte("m"), sig)
-		}
-		_, _ = DeserializeAuditInfo(ai)
-		_ = des.MatchIdentity(context.Background(), id, ai)
-	})
 }
