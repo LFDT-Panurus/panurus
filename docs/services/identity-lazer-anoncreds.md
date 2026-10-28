@@ -420,11 +420,11 @@ $$\mathsf{nym}=\mathbf{A}_{\mathrm{com}}\begin{pmatrix}m\\ \boldsymbol\rho\end{p
 with $\boldsymbol\rho\in\mathcal{R}_p^{10}$ uniform in $[-2,2]$ per coefficient, resampled until
 $\lVert\boldsymbol\rho\rVert_2\le39$ (the expected norm is $\sqrt{640\cdot2}\approx35.8$). The **opening** is
 $\boldsymbol\rho$ (`cbdc_commit_export`). `cbdc_opening_verify` decodes it, checks the norm bound and recomputes
-the nym. Nyms are what Panurus publishes as pseudonymous identities. Fresh $\boldsymbol\rho$ makes two nyms of
-the same attribute unlinkable. Reusing an opening (`CommitWithOpening`) reproduces the same nym on purpose.
-Note the consequence: Panurus reuses the openings of `nymEID` and `nymRH` when it creates a new pseudonym from
-reference audit info (`KeyManager.Identity(ctx, auditInfo)`). Those nyms are then byte-identical, so **anyone**,
-not only the auditor, can link such pseudonyms.
+the nym. Panurus publishes the nym of the enrollment id, `nymEID`, as the pseudonymous identity. Fresh
+$\boldsymbol\rho$ makes two nyms of the same attribute unlinkable. Reusing an opening (`CommitWithOpening`)
+reproduces the same nym on purpose. Note the consequence: Panurus reuses the openings of `nymEID` and `nymRH`
+when it creates a new pseudonym from reference audit info (`KeyManager.Identity(ctx, auditInfo)`). The two
+pseudonyms are then the **same identity**, as with `idemixnym`, so anyone can link them.
 
 - *Hiding* is computational, under M-LWE for the $2\times10$ block $\mathbf{A}'_{\mathrm{com}}$.
 - *Binding* reduces to M-SIS on $\mathbf{A}_{\mathrm{com}}$: two valid openings $(m,\boldsymbol\rho)\neq(m',\boldsymbol\rho')$
@@ -440,8 +440,11 @@ $$\mathbf{A}_{\mathrm{com}}\mathbf{w}-\mathsf{nym}=\mathbf{0},\qquad\lVert m\rVe
 
 (parameters `params/anoncreds_popen_params.py`). With `ctx` = domain separator ‖ message, this is a
 **signature on the message under the public key `nym`** [CL06]. Panurus signs transactions this way with the
-nym of `usk`. The auditor knows the openings of the *other* nyms, which use independent $\boldsymbol\rho$, so it
-can recompute them but cannot produce such a signature for `nymSK`.
+nym of `usk`, `nymSK`, which travels with the signature; the presentation binds it to the identity `nymEID`
+([§7](#7-presentation)). The auditor knows the opening of `nymRH` only, which uses an independent
+$\boldsymbol\rho$; it cannot produce such a signature for `nymSK`. It does not know the opening of `nymEID`
+either ([§6.3](#63-proof-that-a-nym-commits-to-a-public-attribute)): a presentation for the identity needs
+it, together with a credential with that enrollment id.
 
 Unforgeability against an honest nym does not follow from knowledge soundness alone. The reduction:
 
@@ -453,6 +456,28 @@ So signature unforgeability rests on **inhomogeneous M-SIS (ISIS) for the 2-row 
 with bound $\sqrt{64^2+39^2}\approx75$**. A rough estimate (root Hermite factor $\approx1.0039$) gives about
 120 bits core-SVP, slightly below the usual 128-bit target. This is a different and stronger assumption than the
 norm-150 collision problem behind binding ([§6.1](#61-nyms)).
+
+### 6.3 Proof that a nym commits to a public attribute
+
+The auditor must learn that the identity `nymEID` commits to a given enrollment id, but must not learn the
+opening: with it, anyone holding a credential with the same enrollment id (the issuer can always make one)
+could produce presentations, hence signatures, for the identity. `cbdc_user_eqopenprove` therefore proves,
+bound to `ctx`, that $\mathsf{nym}$ commits to the **public** encoded attribute $a$: knowledge of
+$\mathbf{w}=(x,\boldsymbol\rho)$ with
+
+$$\begin{pmatrix}\mathbf{0} & \mathbf{A}'_{\mathrm{com}}\end{pmatrix}\mathbf{w}+(\mathbf{a}_0\,a-\mathsf{nym})=\mathbf{0},\qquad\lVert x\rVert_2\le64,\quad\lVert\boldsymbol\rho\rVert_2\le39,$$
+
+that is, $\mathsf{nym}-\mathbf{a}_0a=\mathbf{A}'_{\mathrm{com}}\boldsymbol\rho$ for a short $\boldsymbol\rho$. The honest
+witness is $(0,\boldsymbol\rho)$. It reuses the parameters of the SoK unchanged (same $2\times11$ shape; the
+statement is set at run time and hashed into the challenge). The zeroed column is essential: a plain SoK
+on $\mathsf{nym}-\mathbf{a}_0a$ would extract an opening to $a+x'$ for some short $x'$, which says nothing about
+$a$. The prover first checks that the commitment opens to $a$, so it never runs on a false statement.
+
+Soundness is commitment binding: an extracted $\boldsymbol\rho'$ and an honest opening $(a',\boldsymbol\rho'')$ of the
+same nym with $a'\neq a$ give $\mathbf{A}_{\mathrm{com}}(a-a',\boldsymbol\rho'-\boldsymbol\rho'')=\mathbf{0}$, the norm-150
+collision of [§6.1](#61-nyms). It is zero-knowledge for $\boldsymbol\rho$. Panurus binds `ctx` to a domain
+separator, the issuer key, the nym and the attribute (`eidProofContext`), so a proof is neither a SoK nor valid
+for another nym or attribute. `cbdc_verifier_eqopenverify` accepts exactly one proof (`len == proofl`).
 
 ---
 
@@ -534,7 +559,9 @@ attributes, rebuilds $(\mathbf{A},\mathbf{u})$ from *its own* copy of $\mathbf{B
 nyms and the index list, and runs `lin_verifier_verify_ctx`. The proof must also consume exactly `preslen`
 bytes. Since the verifier builds the statement, every public input (key, revealed values, nyms, indices,
 `ctx`) is authenticated by the proof. Panurus goes further and *hardcodes* $\mathsf{Com}=(0,2,3)$ in the
-verifier instead of reading it from the identity.
+verifier instead of reading it from the signature. It takes $\mathsf{nym}_2$ (`nymEID`) from the identity and
+$\mathsf{nym}_0,\mathsf{nym}_3$ (`nymSK`, `nymRH`) from the signature: since all three enter the statement, a
+presentation made for one identity fails for any other.
 
 ---
 
@@ -738,8 +765,13 @@ $\mathbf{A}_r\mathbf{r}+\mathbf{A}_m\mathbf{m}$ (M-SIS), or a new preimage (forg
 A nym commits to one specific attribute only as long as $\mathbf{A}_{\mathrm{com}}$ is binding (M-SIS with 2
 rows, collisions of norm about 150). A user who breaks it could prove a presentation for a nym and later open
 it to another value. In Panurus, that means fooling the auditor about the enrollment id or the revocation
-handle. Breaking binding would still not let anyone forge credentials (an NTRU/M-SIS problem) or signatures against an honest nym (ISIS with bound 75,
-[§6.2](#62-signature-of-knowledge-of-an-opening)).
+handle, or proving a false enrollment id for it with the proof of [§6.3](#63-proof-that-a-nym-commits-to-a-public-attribute).
+Breaking binding would still not let anyone forge credentials (an NTRU/M-SIS problem) or signatures against an honest nym (ISIS with bound 75,
+[§6.2](#62-signature-of-knowledge-of-an-opening)). Since the identity is `nymEID` alone, extracting an opening
+of a victim's `nymEID` (ISIS, as in §6.2) would let a holder of a credential with the same enrollment id sign
+for it. Conversely, `nymRH` and `nymSK` travel with each signature, so the revocation handle is bound per
+signature, not per identity: a user with the opening of `nymEID` and two credentials for the same enrollment
+id can sign under it with either revocation handle.
 
 ### 10.5 Signatures of knowledge
 
@@ -794,6 +826,7 @@ under a different `ctx`, a different nym and a different issuer.
 | nym | $\mathbf{A}_{\mathrm{com}}(m,\boldsymbol\rho)$ | `cbdc_user_commit`, `cbdc_commit_compute`, `cbdc_commit_import` | `Commit`, `CommitWithOpening`, `Commitment.Opening` |
 | opening check | — | `cbdc_opening_verify` | `OpeningVerify` |
 | SoK | proof on `ctx` | `cbdc_user_sokprove`, `cbdc_verifier_sokverify` | `Commitment.SokProve`, `SokVerify` |
+| nym commits to $a$ | proof on `ctx` | `cbdc_user_eqopenprove`, `cbdc_eqopen_statement`, `cbdc_verifier_eqopenverify` | `Commitment.EqOpeningProve`, `EqOpeningVerify` |
 | presentation | $P_2$ | `cbdc_user_presgen`, `cbdc_p2_statement`, `cbdc_verifier_presver` | `User.PresGen`, `Verifier.PresVer` |
 | parameters | — | `anoncreds_params.h`, `cbdc_params_ok`, `cbdc_params_check` | `ParamsOK` |
 | issuer key check | — | `cbdc_pubkey_ok`, `falcon_check_keypair` (patched lazer) | `PubKeyOK`, `NewIssuer` |

@@ -39,44 +39,76 @@ Attributes are always hashed with a domain separator, see `schema.go`.
 
 ### Identity (pseudonym)
 
-The identity is what is stored in the token's owner field: an ASN.1 sequence of three
-commitments, `{nymSK, nymEID, nymRH}`. Each is `Acom * (attribute, r)` with fresh
-randomness `r`, so two pseudonyms of the same wallet share nothing. The identity is small
-(about 0.7 KB) because no proof is part of it. It is wrapped in a `TypedIdentity` of type 7.
+The identity is what is stored in the token's owner field: the commitment to the enrollment id,
+`nymEID = Acom * (H(EID), r)`, and nothing else, as with `idemixnym`. It is 225 bytes (two
+polynomials of 64 coefficients, 14 bits each, plus the end marker) and is wrapped in a
+`TypedIdentity` of type 7. A fresh `r` makes two pseudonyms of the same wallet unrelated.
+Deserializing an identity only checks its length; every proof that uses it decodes it
+canonically (coefficients below 12289, exact end marker), so two byte strings never denote the
+same nym.
 
 ### Signatures
 
-A signature is the ASN.1 sequence `{pres, sok}`:
+A signature is the DER-encoded ASN.1 sequence `{nymSK, nymRH, pres, sok}`:
 
+- `nymSK = Acom * (usk, r1)` and `nymRH = Acom * (H(RH), r3)` are the other two commitments of the
+  pseudonym. They travel with every signature, as the `Creator` of an `idemixnym` signature does.
 - `pres` is a zero-knowledge presentation of the credential, with all attributes hidden. It proves
-  that a credential of the issuer exists and that the three nyms commit to attributes 0, 2 and 3.
-  It is bound to the issuer public key. The verifier fixes the committed indices itself and never
-  reads them from the identity.
+  that a credential of the issuer exists and that `nymSK`, the identity `nymEID` and `nymRH` commit
+  to its attributes 0, 2 and 3. It is bound to the issuer public key. The verifier fixes the
+  committed indices itself, and takes `nymEID` from the identity, never from the signature.
 - `sok` is a signature of knowledge of the opening of `nymSK`, bound to the signed message
   (with a domain separator).
 
-Signing uses `nymSK`, not `nymEID`: the auditor knows the openings of the EID and RH nyms
-(see below), so it must not be able to sign.
+Verification checks the SoK and then the presentation, on every call. The signature must
+re-encode to the same bytes (`encoding/asn1` alone accepts extra elements in a sequence), the nyms
+must have the length of a nym, and the proofs must be non-empty and bounded.
 
-Verification checks both the presentation and the SoK on every call. Nothing is cached, because
-the design is **one signature per pseudonym**: a wallet takes a fresh pseudonym (`Identity`) for each
-signature. This is also what keeps signatures unlinkable, since two signatures under the same pseudonym
-share its nyms. A pseudonym that signs again still verifies, but each verification pays the full
-presentation check again (the dominant cost, see [Benchmarks](#benchmarks)), and the signatures
-are linkable.
+Who can sign under a `nymEID`: whoever has a credential of the issuer with that enrollment id
+**and** the opening of `nymEID` (the presentation proves knowledge of both), plus `usk` and the opening
+of a `nymSK` bound to them. That is the wallet that made the pseudonym. The opening of `nymEID` is
+therefore never revealed, not even to the auditor (see [Audit info](#audit-info)): otherwise the issuer,
+which can make itself a credential for any enrollment id, or another wallet with the same enrollment
+id, would only need an audit info to sign for the victim. `TestAuditorCannotSign` checks this.
+
+The revocation handle is bound per signature: `nymRH` is part of the signature, so a future
+revocation check must look at `nymRH` of every signature. In particular the audit info does **not**
+attest the RH of later signatures: it proves the RH of the presentation it carries. A user who holds
+the opening of a `nymEID` and a second credential with the same enrollment id but another RH (for
+example a revoked one, or one moved over from another wallet) can sign under the same `nymEID` with
+that RH. An auditor that cares compares `nymRH` of an audited signature with `nym_rh` of the audit info.
+
+Nothing is cached, because the design is **one signature per pseudonym**: a wallet takes a fresh
+pseudonym (`Identity`) for each signature. This is also what keeps signatures unlinkable, since two
+signatures under the same pseudonym share their nyms. A pseudonym that signs again still verifies,
+but each verification pays the full presentation check again (the dominant cost, see
+[Benchmarks](#benchmarks)), and the signatures are linkable.
 
 ### Audit info
 
-`AuditInfo` is JSON: `{eid, rh, opening_eid, opening_rh, pres}`, where `pres` is the presentation
-generated with the pseudonym (the one its signatures carry). `EnrollmentID()` and `RevocationHandle()`
-return the plaintext.
+`AuditInfo` is JSON:
+`{eid, rh, nym_eid, nym_sk, nym_rh, opening_rh, eid_proof, enc_opening_eid, pres}`, where `pres` is
+the presentation generated with the pseudonym (the one its signatures carry) and `nym_sk`/`nym_rh`
+its other nyms. `EnrollmentID()` and `RevocationHandle()` return the plaintext.
+
+- `eid_proof` proves that `nym_eid` commits to `H(eid)` without revealing the opening: a proof of
+  knowledge of a short `r` with `nymEID - Acom_0 * H(eid) = Acom_r * r` (`anoncreds.EqOpeningVerify`,
+  see [the scheme description](identity-lazer-anoncreds.md#63-proof-that-a-nym-commits-to-a-public-attribute)).
+  It is bound to the issuer public key, the nym and the attribute.
+- `opening_rh` opens `nym_rh` in the clear: `nymRH` is not a signing key.
+- `enc_opening_eid` is the opening of `nymEID`, `nonce || AES-256-GCM(opening)` under a key derived
+  from the wallet secret (`HKDF-SHA256(usk || user state, SHA-256(ipk), "panurus/lazer/auditopening/v1")`,
+  `auditKey` in `schema.go`), with `domain || nymEID || H(eid) || H(rh)` as additional data. Only the
+  wallet that made the pseudonym decrypts it, to derive pseudonyms with the same `nymEID` (see below).
+  Matching ignores it.
 
 An identity is only checked syntactically when it is deserialized, so matching it against an audit
-info must also prove that it has a credential: otherwise anyone could commit to a victim's EID and
-RH, without any credential, and have the auditor accept the pseudonym as the victim's. Matching
-therefore recomputes `nymEID` and `nymRH` from the values and openings, and verifies `pres` against
-the three nyms under the issuer public key (`presVerifier.verifyPres`, the same check as for
-signature presentations). This is done by the paths bound to a `Deserializer`, which has the issuer public key:
+info must also prove that it has a credential: otherwise anyone could commit to a victim's EID, without
+any credential, and have the auditor accept the pseudonym as the victim's. Matching therefore checks
+that the identity is `nym_eid`, verifies `eid_proof`, checks that `opening_rh` opens `nym_rh` to the
+RH, and verifies `pres` against `(nym_sk, identity, nym_rh)` under the issuer public key
+(`presVerifier.verifyPres`, the same check as for signature presentations). This is done by the paths
+bound to a `Deserializer`, which has the issuer public key:
 
 - `Deserializer.MatchIdentity` (used by the token services on issue and transfer, by the auditor and
   by `RegisterRecipient`);
@@ -84,30 +116,34 @@ signature presentations). This is done by the paths bound to a `Deserializer`, w
 - `Deserializer.DeserializeAuditInfo`, which requires the identity and matches it;
 - `Deserializer.Info`.
 
-`AuditInfo` itself has no `Match` method: without the issuer public key a match could only check
-the openings, which a credential-less pseudonym passes. `AuditInfoDeserializer` (no issuer public
+`AuditInfo` itself has no `Match` method: without the issuer public key the presentation cannot be
+checked, and a credential-less pseudonym would match. `AuditInfoDeserializer` (no issuer public
 key, meant for the EID/RH deserializer) only reads the enrollment id and revocation handle out of an
 audit info. It does not match anything and returns a value that is not a `driver.Matcher`.
 Callers must have matched the identity through a `Deserializer` first, as the wallet and auditor
 flows of Panurus do.
 
 The decoder is canonical: the input must be exactly what `Bytes()` (`json.Marshal`) produces, so
-unknown, duplicate or case-variant members and trailing data are rejected. The openings must have
-the length of an opening and `pres` at most `anoncreds.MaxLenPres()` bytes.
+unknown, duplicate or case-variant members and trailing data are rejected. Nyms, the opening and the
+ciphertext must have their fixed lengths, `eid_proof` at most `anoncreds.MaxLenSok()` and `pres` at
+most `anoncreds.MaxLenPres()` bytes.
 
-`KeyManager.Identity(ctx, auditInfo)` with a reference audit info reuses its openings, so the new
-pseudonym has the same `nymEID` and `nymRH`, as in Idemix. Its presentation is fresh, so a new
-pseudonym is matched with its own audit info, not with the reference one.
+`KeyManager.Identity(ctx, auditInfo)` with a reference audit info of the same wallet decrypts its
+opening of `nymEID` and reuses it and the opening of `nymRH`, so the new pseudonym **is the same
+identity** (the same `nymEID`, as with `idemixnym`), with a fresh `nymSK` and presentation. The audit
+info of another wallet, even one with the same enrollment id and revocation handle, is refused. Since the
+identity bytes are the same, the identity store may keep the signer info and audit info of any of these
+descriptors (depending on the backend, the first or the last written); every combination is valid: each
+audit info matches the identity and each signer info signs for it.
 
 An opening reveals the committed value: a nym is `Acom * (enc(attribute), r)`, linear in the
 attribute, and `Acom` is public, so given a nym and its opening anyone solves for the attribute
-(`TestRegressionOpeningRevealsAttribute` does it). For the audit info this is by design: whoever
-holds it learns the EID and RH hash, which is what the auditor needs. The opening of `nymSK` is
-never part of the audit info, see below.
+(`TestRegressionOpeningRevealsAttribute` does it). For `nymRH` in the audit info this is by design: whoever
+holds it learns the RH hash. The opening of `nymSK` is never part of the audit info, see below.
 
 ### Signer info
 
-`IdentityDescriptor.SignerInfo` is JSON `{version, enc_opening_sk, pres}`. It is kept by the
+`IdentityDescriptor.SignerInfo` is JSON `{version, enc_opening_sk, nym_rh, pres}`. It is kept by the
 identity store, and `DeserializeSigner` uses it, together with the wallet secret, to rebuild a
 signer.
 
@@ -118,16 +154,17 @@ of the wallet. The opening is therefore encrypted at rest:
 - `enc_opening_sk` is `nonce || AES-256-GCM(opening)`, with a random 12-byte nonce;
 - the key is `HKDF-SHA256(secret = usk || user state, salt = SHA-256(ipk), info = "panurus/lazer/signerinfo/v1")`,
   that is, it is derived from the wallet secret held by the key manager (see `signerInfoKey` in `schema.go`);
-- the additional data is the serialized identity, so a signer info only decrypts for its identity.
+- the additional data is `SHA-256("panurus/lazer/signerinfo/ad/v2" || identity || nym_rh || pres)`, so a
+  signer info only decrypts for its identity, and a signer info whose `nym_rh` or `pres` was altered in the
+  store is refused instead of producing signatures that do not verify.
 
-`DeserializeSigner` decodes the signer info strictly (canonical JSON, `version` 1, fixed ciphertext
-length, presentation length), decrypts the opening and checks that `usk` and the opening open `nymSK`
-of the identity. A signer info that does not decrypt (another wallet, another identity, tampering)
-or an older plaintext signer info is refused. The plaintext opening only lives in memory, in the
-returned `Signer`.
+`DeserializeSigner` decodes the signer info strictly (canonical JSON, `version` 2, fixed lengths,
+presentation length), decrypts the opening and recomputes `nymSK` from `usk` and the opening. A signer
+info that does not decrypt (another wallet, another identity, tampering) or of an older version is
+refused. The plaintext opening only lives in memory, in the returned `Signer`.
 
 What ties a pseudonym to the wallet is the presentation, bound to the credential of the wallet.
-The decryption and the opening check only establish that this key manager can sign for it.
+The decryption only establishes that this key manager can sign for it.
 
 ### Wallet secret and configuration
 
@@ -218,7 +255,9 @@ before the prover pool.
 
 Verifiers do not cache presentation checks, so every verification and every audit match pays for the
 full presentation check. As an indication, on an Apple M-series laptop: generating an identity takes about
-100 ms, signing about 27 ms and verifying about 67 ms (`go test -bench BenchmarkLazer -benchtime=5x .`).
+160 ms (presentation and enrollment id proof), signing about 40 ms and verifying about 70 ms
+(`go test -bench BenchmarkLazer -benchtime=5x .`). Sizes: identity 225 B, signature about 53.4 KB, audit info
+about 75 KB, signer info about 51 KB (the last three base64 in JSON or DER, dominated by the presentation).
 `BenchmarkMatchIdentity` measures the audit matching, which verifies the presentation of the audit info
 in the same way. Numbers depend heavily on the machine and the build.
 
@@ -376,10 +415,11 @@ pseudonyms. The defect is in upstream lazer as well and must be reported to its 
 1. **Commitment binding.** The commitment key is 2x11 over Z_12289[X]/(X^64+1). A rough estimate
    gives about 80-bit core-SVP for finding two openings (collision norm up to 150) and about
    120 bit for extracting an opening. A break lets a user open `nymEID`/`nymRH` to a false
-   enrollment id or revocation handle (audit evasion); it does not allow signature forgery or
-   linking. Before any production use, run the lattice estimator and, if needed, increase
+   enrollment id or revocation handle, or prove a false enrollment id with `eid_proof` (audit evasion);
+   it does not allow linking. Since the identity is `nymEID` alone, extracting an opening of a victim's
+   `nymEID` would also let a holder of a credential with the same enrollment id sign for it. Before any production use, run the lattice estimator and, if needed, increase
    `CBDC_COM_ROWS` in `anoncreds/anoncreds.h` and regenerate the `popen` and `p2` parameters.
-2. **Size.** A signature is about 52 KB.
+2. **Size.** A signature is about 53.4 KB (the identity is 225 B).
 3. **Patched lazer.** The build carries local fixes to lazer (bounds-checked decoders, non-exiting key
    decoding, zeroization, the discrete gaussian sampler, see [Local patches](#local-patches)). The
    sampler defects fixed by 0004 are in upstream lazer too, and affect presentations generated before the

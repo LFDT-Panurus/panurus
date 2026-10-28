@@ -151,6 +151,17 @@ func p2WitnessWiped(u *User) (bool, error) {
 	}
 }
 
+// eqOpeningStatementOK reports whether the statement of the equality-of-opening
+// proof for c and attr zeroes the attribute column of the commitment key: without
+// it the proof would accept a commitment to attr + x for any short x.
+func eqOpeningStatementOK(c *Commitment, attr []byte) bool {
+	if c == nil || c.c == nil || len(attr) != AttrLen {
+		return false
+	}
+
+	return C.cbdc_test_eqopen_statement_ok(c.c, ptr(attr)) == 1
+}
+
 // gaussianSamples returns n samples of lazer's discrete gaussian with sigma
 // 1.55*2^log2o from the stream (seed, dom), the sampler the provers use for
 // their masking vectors. Tests use it to check the sampler.
@@ -499,6 +510,25 @@ func (c *Commitment) SokProve(ctx []byte, attr []byte) ([]byte, error) {
 	return proof[:proofl], nil
 }
 
+// EqOpeningProve proves that the commitment commits to the public attribute
+// attr, bound to ctx, without revealing its opening. attr must be the
+// attribute the commitment was made to, else ErrInvalid is returned.
+func (c *Commitment) EqOpeningProve(ctx []byte, attr []byte) ([]byte, error) {
+	if c == nil || c.c == nil {
+		return nil, errCleared
+	}
+	if len(attr) != AttrLen {
+		return nil, errors.Wrapf(ErrInvalid, "attribute length != %d", AttrLen)
+	}
+	proof := make([]byte, C.cbdc_maxlen_sok())
+	var proofl C.size_t
+	if C.cbdc_user_eqopenprove(ptr(proof), &proofl, c.c, ptr(ctx), C.size_t(len(ctx)), ptr(attr)) != 1 {
+		return nil, errors.Wrap(ErrInvalid, "the commitment does not commit to attr")
+	}
+
+	return proof[:proofl], nil
+}
+
 // Clear releases the C memory of the commitment.
 func (c *Commitment) Clear() {
 	if c == nil || c.c == nil {
@@ -643,6 +673,20 @@ func (v *Verifier) PresVer(attrsRev [][]byte, idxRev []uint32, nyms [][]byte, id
 		ptr(pres), C.size_t(len(pres)), ptr(ctx), C.size_t(len(ctx)))
 	if rc != 1 {
 		return errors.Wrapf(ErrInvalid, "presentation does not verify")
+	}
+
+	return nil
+}
+
+// EqOpeningVerify verifies a proof, made by EqOpeningProve, that nym is a
+// commitment to the public attribute attr, bound to ctx.
+func EqOpeningVerify(nym []byte, attr []byte, ctx []byte, proof []byte) error {
+	if len(attr) != AttrLen {
+		return errors.Wrapf(ErrInvalid, "attribute length != %d", AttrLen)
+	}
+	rc := C.cbdc_verifier_eqopenverify(ptr(nym), C.size_t(len(nym)), ptr(attr), ptr(ctx), C.size_t(len(ctx)), ptr(proof), C.size_t(len(proof)))
+	if rc != 1 {
+		return errors.Wrap(ErrInvalid, "proof does not verify")
 	}
 
 	return nil

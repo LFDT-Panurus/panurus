@@ -8,6 +8,7 @@ package lazer
 
 import (
 	"context"
+	"encoding/asn1"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -68,6 +69,27 @@ func FuzzDeserializers(f *testing.F) {
 	require.NoError(f, err)
 	f.Cleanup(des.Close)
 	f.Add([]byte{0x30, 0x00}, []byte("{}"), []byte{0x30, 0x00})
+	// identities of the right length: zero, a coefficient out of range, a bad end marker
+	zero := make([]byte, len(s.id))
+	high := append([]byte(nil), s.id...)
+	high[0], high[1] = 0xff, 0xff
+	marker := append([]byte(nil), s.id...)
+	marker[len(marker)-1] = 0x03
+	for _, id := range [][]byte{zero, high, marker} {
+		f.Add(id, s.ai, s.sig)
+	}
+	// signatures with swapped, short or extra elements
+	sig, err := unmarshalSignature(s.sig)
+	require.NoError(f, err)
+	swapped, err := asn1.Marshal(Signature{NymSK: sig.NymRH, NymRH: sig.NymSK, Pres: sig.Pres, Sok: sig.Sok})
+	require.NoError(f, err)
+	short, err := asn1.Marshal(Signature{NymSK: sig.NymSK[1:], NymRH: sig.NymRH, Pres: sig.Pres, Sok: sig.Sok})
+	require.NoError(f, err)
+	extra, err := asn1.Marshal(struct{ A, B, C, D, E []byte }{sig.NymSK, sig.NymRH, sig.Pres, sig.Sok, []byte{0}})
+	require.NoError(f, err)
+	for _, sigma := range [][]byte{swapped, short, extra} {
+		f.Add(s.id, s.ai, sigma)
+	}
 	for _, id := range variants(s.id) {
 		f.Add(id, s.ai, s.sig)
 	}
@@ -122,11 +144,12 @@ func FuzzSignerInfoDecode(f *testing.F) {
 		if err != nil {
 			return
 		}
-		if _, err := openOpening(s.w.km.siKey, id, info.EncOpeningSK); err != nil {
+		if _, err := openOpening(s.w.km.siKey, signerInfoAD(id, info.NymRH, info.Pres), info.EncOpeningSK); err != nil {
 			return
 		}
 		// only the stored signer info of the stored identity decrypts
 		require.Equal(t, s.id, id)
+		require.Equal(t, s.info, raw)
 	})
 }
 

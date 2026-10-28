@@ -130,6 +130,9 @@ int cbdc_opening_verify (const uint8_t *nym, size_t nymlen,
 int cbdc_user_sokprove (uint8_t *proof, size_t *proofl, cbdc_commit_t com,
                         const uint8_t *ctx, size_t ctxlen,
                         const uint8_t attr[32]);
+int cbdc_user_eqopenprove (uint8_t *proof, size_t *proofl, cbdc_commit_t com,
+                           const uint8_t *ctx, size_t ctxlen,
+                           const uint8_t attr[32]);
 int cbdc_user_maskattrs (cbdc_user_state_t state, uint8_t *masked_attrs,
                          size_t *masked_attrslen, const uint8_t *attrs,
                          const unsigned int *idx_rev, unsigned int nrev);
@@ -170,10 +173,16 @@ int cbdc_verifier_sokverify (const uint8_t *nym, size_t nymlen,
                              const uint8_t *ctx, size_t ctxlen,
                              const uint8_t *proof, size_t proofl);
 
+int cbdc_verifier_eqopenverify (const uint8_t *nym, size_t nymlen,
+                                const uint8_t attr[32], const uint8_t *ctx,
+                                size_t ctxlen, const uint8_t *proof,
+                                size_t proofl);
+
 /* for tests only, see anoncreds.c */
 size_t cbdc_proof_hint_offset (int which);
 int cbdc_test_grandom (int64_t *out, unsigned int n, unsigned int log2o,
                        const uint8_t seed[32], uint32_t dom);
 int cbdc_test_p2_witness_wiped (cbdc_user_state_t state);
+int cbdc_test_eqopen_statement_ok (cbdc_commit_t com, const uint8_t attr[32]);
 
 #endif
