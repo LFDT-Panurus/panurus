@@ -812,10 +812,15 @@ TMS's TokenState at the same time and takes the first one that knows the anchor.
 a fresh random nonce, so at most one of them can have applied a given transaction. `ctx` bounds all of
 those reads: cancelling it aborts whichever are still in flight.
 
-This node's own role as an endorser (`endorser.enabled`, `endorser.keystore`, `endorser.address`) is the
-one thing that stays node-wide rather than per TMS, because FSC can register only one endorsement
-responder per process (see `registerEndorser`'s doc comment in `driver.go`). If more than one TMS on the
-network enables endorsing, they must all name the same key; the driver refuses to start otherwise.
+This node's endorser key (`endorser.keystore`, `endorser.address`) is the one thing that stays node-wide
+rather than per TMS, because FSC can register only one endorsement responder per process (see
+`registerEndorser`'s doc comment in `driver.go`). If more than one TMS on the network enables endorsing,
+they must all use the same key; the driver refuses to start otherwise. Keys are compared by address, so
+the same key reached through two different keystore paths is fine.
+
+Which requesters are admitted is per TMS. The one responder checks each request against the
+`endorsement.allowlist` of the TMS the request names, and refuses a request for a TMS that does not set
+`endorser.enabled`, even when another TMS on the network made this node an endorser.
 
 ### How finality resolves
 

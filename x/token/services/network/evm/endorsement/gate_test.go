@@ -101,7 +101,7 @@ func gateEndorsers(t *testing.T, n int) (*Registry, map[string]*Responder) {
 		entries = append(entries, Endorser{Identity: id, Address: signer.Address()})
 		factory := gateFactory()
 		responders[id.UniqueID()] = NewResponder(
-			auth,
+			fixedAuthorizer(auth),
 			func(token2.TMSID) (*DeltaFactory, error) { return factory, nil },
 			nil,
 			signer,
