@@ -68,6 +68,9 @@ type TMSConfig struct {
 	BlockTag string
 	// PublicParams supplies the parameters a delta is bound to.
 	PublicParams PublicParamsProvider
+	// Authorizer is this TMS's allowlist of requesters, the identities this node endorses for on its
+	// behalf. Nil means this node is not an endorser for the TMS, and every request for it is refused.
+	Authorizer *Authorizer
 }
 
 // NewServiceFactory returns a factory for the given network. Register must be called once per TMS
@@ -173,8 +176,10 @@ type TMSResolver func(tmsID token2.TMSID) (*token2.ManagementService, error)
 // It is deliberately not tied to a TMS. An endorser has to be registered before any request reaches
 // it, and that is before its TMS has necessarily been built, since building one goes through the
 // network driver. The TMS is therefore resolved per request, from the id the request carries.
+//
+// Requests are authorized against the allowlist of the TMS they name (TMSConfig.Authorizer), since
+// this one responder answers for every TMS on the node.
 func (f *ServiceFactory) NewResponder(
-	authorizer *Authorizer,
 	signer EndorserSigner,
 	resolve TMSResolver,
 ) (*Responder, error) {
@@ -186,7 +191,17 @@ func (f *ServiceFactory) NewResponder(
 	}
 
 	return NewResponder(
-		authorizer,
+		func(tmsID token2.TMSID) (*Authorizer, error) {
+			cfg, err := f.configFor(tmsID)
+			if err != nil {
+				return nil, err
+			}
+			if cfg.Authorizer == nil {
+				return nil, errors.Errorf("this node is not an endorser for tms [%s]", tmsID)
+			}
+
+			return cfg.Authorizer, nil
+		},
 		func(tmsID token2.TMSID) (*DeltaFactory, error) {
 			tms, err := resolve(tmsID)
 			if err != nil {

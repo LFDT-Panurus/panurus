@@ -386,13 +386,13 @@ func (d *Driver) installEndorsement(n *Network, namespaces []NamespaceConfig, ev
 		return err
 	}
 
-	// endorserConfig is the configuration that governs this node's own role as an endorser, which is
-	// registered once for the whole node process (see registerEndorser's doc comment). It defaults to
-	// the first TMS's configuration, matching this driver's pre-existing choice of "the first TMS
-	// declaring the network" as the network-wide representative; if any TMS actually enables
-	// endorsing, that TMS's configuration takes over instead, and every other TMS that also enables it
-	// must name the same key, since one node signs endorsements with one key for the whole network.
-	endorserConfig := namespaces[0].Config
+	// endorserSigner is the key this node signs endorsements with. The responder is registered once
+	// for the whole node process (see registerEndorser's doc comment), so every TMS that enables
+	// endorsing must use the same key; which requesters each TMS admits is its own allowlist,
+	// registered with it below. Each distinct keystore is decrypted once, here, and the signer is
+	// handed to registerEndorser rather than loaded again.
+	var endorserSigner *eip712.Signer
+	loaded := map[EndorserConfig]*eip712.Signer{}
 	for _, nc := range namespaces {
 		registry, err := nc.Config.EndorserRegistry(d.resolveIdentity)
 		if err != nil {
@@ -403,6 +403,27 @@ func (d *Driver) installEndorsement(n *Network, namespaces []NamespaceConfig, ev
 			return errors.Wrapf(err, "evm: tms [%s]", nc.Namespace)
 		}
 		tmsID := token2.TMSID{Network: network, Channel: channel, Namespace: nc.Namespace}
+		var authorizer *endorsement.Authorizer
+		if nc.Config.Endorser.Enabled {
+			signer, ok := loaded[nc.Config.Endorser]
+			if !ok {
+				if signer, err = loadEndorserSigner(nc.Config); err != nil {
+					return errors.Wrapf(err, "evm: tms [%s]", nc.Namespace)
+				}
+				loaded[nc.Config.Endorser] = signer
+			}
+			if endorserSigner == nil {
+				endorserSigner = signer
+			} else if signer.Address() != endorserSigner.Address() {
+				return errors.Errorf(
+					"evm: tms [%s] configures this node as an endorser with a different key than "+
+						"another tms on [%s:%s]; one node endorses with one key for the whole network",
+					nc.Namespace, network, channel)
+			}
+			if authorizer, err = d.endorsementAuthorizer(nc.Config); err != nil {
+				return errors.Wrapf(err, "evm: tms [%s]", nc.Namespace)
+			}
+		}
 		// PublicParams deliberately reads at BlockTagLatest, not nc.Config.Finality.BlockTag:
 		// TokenState.applyStateDelta enforces publicParamsVersion/publicParamsHash against its current
 		// (head) storage, not against what is finalized. Binding a delta to the finalized value would
@@ -416,20 +437,9 @@ func (d *Driver) installEndorsement(n *Network, namespaces []NamespaceConfig, ev
 			TokenState:   tokenState,
 			BlockTag:     nc.Config.Finality.BlockTag,
 			PublicParams: pp.NewChainProvider(evmClient, tokenState, client.BlockTagLatest),
+			Authorizer:   authorizer,
 		}); err != nil {
 			return errors.Wrapf(err, "evm: tms [%s]", nc.Namespace)
-		}
-
-		if nc.Config.Endorser.Enabled {
-			if !endorserConfig.Endorser.Enabled {
-				endorserConfig = nc.Config
-			} else if endorserConfig.Endorser.Keystore != nc.Config.Endorser.Keystore ||
-				endorserConfig.Endorser.Address != nc.Config.Endorser.Address {
-				return errors.Errorf(
-					"evm: tms [%s] configures this node as an endorser with a different key than "+
-						"another tms on [%s:%s]; one node endorses with one key for the whole network",
-					nc.Namespace, network, channel)
-			}
 		}
 	}
 
@@ -451,7 +461,10 @@ func (d *Driver) installEndorsement(n *Network, namespaces []NamespaceConfig, ev
 	// Registration happens now, not on the first approval. An endorser node answers requests without
 	// ever making one, so registering lazily on the approval path would mean it never registers at
 	// all and every request to it times out.
-	if err := d.registerEndorser(network+":"+channel, factory, endorserConfig); err != nil {
+	if endorserSigner == nil {
+		return nil
+	}
+	if err := d.registerEndorser(network+":"+channel, factory, endorserSigner); err != nil {
 		return errors.Wrap(err, "evm: failed to register this node as an endorser")
 	}
 
@@ -505,8 +518,8 @@ func (d *Driver) nonceManager(chainID int64, account client.Address, evmClient c
 	return manager
 }
 
-// registerEndorser registers this node's responder so it can answer requests. A node that does not
-// endorse has no key and registers nothing.
+// registerEndorser registers this node's responder so it can answer requests, signing with signer. A
+// node that does not endorse has no signer and registers nothing.
 //
 // The registration is per node, not per network, because FSC routes an incoming session to a
 // responder by the initiating view's Go type alone: it has no notion of "this responder, but only for
@@ -527,8 +540,8 @@ func (d *Driver) nonceManager(chainID int64, account client.Address, evmClient c
 //
 // The TMS is resolved when a request arrives rather than now: resolving one here would ask the token
 // layer for a service that is still being built through this very driver.
-func (d *Driver) registerEndorser(networkKey string, factory *endorsement.ServiceFactory, config *Config) error {
-	if d.viewRegistry == nil || !config.Endorser.Enabled {
+func (d *Driver) registerEndorser(networkKey string, factory *endorsement.ServiceFactory, signer *eip712.Signer) error {
+	if d.viewRegistry == nil || signer == nil {
 		return nil
 	}
 
@@ -545,25 +558,7 @@ func (d *Driver) registerEndorser(networkKey string, factory *endorsement.Servic
 		return nil
 	}
 
-	signer, err := config.EndorserSigner()
-	if err != nil {
-		return errors.Wrap(err, "this node is configured as an endorser but its key is unusable")
-	}
-	// Separately from the error: errors.Wrap(nil, ...) is nil, so folding this into the branch above
-	// would report success and leave the node unregistered, which is the exact silent-endorser failure
-	// the comment above says must not happen.
-	if signer == nil {
-		return errors.New("this node is configured as an endorser but no signing key was loaded")
-	}
-	allowed, err := config.AllowedRequesters(d.resolveIdentity)
-	if err != nil {
-		return errors.Wrap(err, "failed to resolve the endorsement allowlist")
-	}
-	authorizer, err := endorsement.NewAuthorizer(allowed)
-	if err != nil {
-		return errors.Wrap(err, "failed to build the endorsement allowlist")
-	}
-	responder, err := factory.NewResponder(authorizer, signer, d.resolveTMS)
+	responder, err := factory.NewResponder(signer, d.resolveTMS)
 	if err != nil {
 		return errors.Wrap(err, "failed to build the endorsement responder")
 	}
@@ -574,6 +569,39 @@ func (d *Driver) registerEndorser(networkKey string, factory *endorsement.Servic
 	logger.Infof("registered as the endorser for [%s] with address %s", networkKey, signer.Address())
 
 	return nil
+}
+
+// endorsementAuthorizer builds the allowlist of requesters a TMS admits for endorsement.
+func (d *Driver) endorsementAuthorizer(config *Config) (*endorsement.Authorizer, error) {
+	allowed, err := config.AllowedRequesters(d.resolveIdentity)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to resolve the endorsement allowlist")
+	}
+	authorizer, err := endorsement.NewAuthorizer(allowed)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to build the endorsement allowlist")
+	}
+
+	return authorizer, nil
+}
+
+// loadEndorserSigner loads the key a TMS endorses with. TMSs are compared by the signer's address, not
+// by keystore path: the same key can be named by two different paths.
+//
+// A broken key is an error, not a skip: a node explicitly configured with endorser.enabled must not
+// start up looking healthy while unable to answer requests (see registerEndorser's doc comment).
+func loadEndorserSigner(config *Config) (*eip712.Signer, error) {
+	signer, err := config.EndorserSigner()
+	if err != nil {
+		return nil, errors.Wrap(err, "this node is configured as an endorser but its key is unusable")
+	}
+	// Separately from the error: errors.Wrap(nil, ...) is nil, so folding this into the branch above
+	// would report success with no key and leave the node silently unregistered.
+	if signer == nil {
+		return nil, errors.New("this node is configured as an endorser but no signing key was loaded")
+	}
+
+	return signer, nil
 }
 
 // resolveIdentity turns a configured node name into the identity that node speaks with.
