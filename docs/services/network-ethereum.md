@@ -858,6 +858,10 @@ less than the 13-minute minimum for `finalized`. When the caller sets no timeout
 its finality timeout (`driver.FinalityTimeoutProvider`) and wait that long plus a minute instead, so they
 see the driver's verdict rather than give up first. An explicit timeout is used as given.
 
+A finality listener notified `Valid` gets a fresh context rather than the watch's own, which expires at
+`finality.timeout`: the ttx listener commits the transaction under it, and an anchor found late in the
+window would otherwise leave that commit almost no time.
+
 ### Error classification
 
 A caller decides what to do with a failure by class, not by reading a message. The driver exposes the
