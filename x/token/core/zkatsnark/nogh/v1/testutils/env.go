@@ -141,7 +141,7 @@ func NewEnv(configuration *SetupConfiguration) (*Env, error) {
 		return nil, err
 	}
 
-	engine, err := validator.NewValidator(configuration.Verifier, deserializer, driver.ResourceLimits{}.WithDefaults())
+	engine, err := validator.NewValidator(configuration.Verifier, deserializer, resourceLimitsFor(configuration))
 	if err != nil {
 		return nil, err
 	}
@@ -501,7 +501,7 @@ func newIssueService(configuration *SetupConfiguration) (*zkatsnark.IssueService
 		},
 	}
 
-	v, err := validator.NewValidator(configuration.Verifier, deserializer, driver.ResourceLimits{}.WithDefaults())
+	v, err := validator.NewValidator(configuration.Verifier, deserializer, resourceLimitsFor(configuration))
 	if err != nil {
 		return nil, nil, errors.Wrap(err, "failed to instantiate validator")
 	}
@@ -709,7 +709,7 @@ func newTransferService(configuration *SetupConfiguration, deserializer driver.D
 	ppm := &testPublicParamsManager{pp: configuration.PP}
 	ws := &testWalletService{auditInfoMap: auditInfoMap}
 
-	v, err := validator.NewValidator(configuration.Verifier, deserializer, driver.ResourceLimits{}.WithDefaults())
+	v, err := validator.NewValidator(configuration.Verifier, deserializer, resourceLimitsFor(configuration))
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to instantiate validator")
 	}
@@ -1094,4 +1094,20 @@ func auditorEndorse(signer *Signer, tokenRequest *driver.TokenRequest, txID stri
 	}
 
 	return signer.Sign(bytes)
+}
+
+// resourceLimitsFor returns the validator resource limits for the fixtures of
+// configuration. The defaults are sized for compact proofs (groth16/plonk are
+// well under 1 KiB); a plonkfri proof is roughly 840 KiB and a transfer carries
+// one per input and output, so its fixtures need larger request, action and
+// proof limits.
+func resourceLimitsFor(configuration *SetupConfiguration) driver.ResourceLimits {
+	var l driver.ResourceLimits
+	if configuration.ProofSystem == "plonkfri" {
+		l.MaxRequestBytes = 16 << 20
+		l.MaxActionBytes = 16 << 20
+		l.MaxProofBytes = 4 << 20
+	}
+
+	return l.WithDefaults()
 }

@@ -76,6 +76,15 @@ You can run unit tests using the following make targets:
     ```bash
     make unit-tests-regression
     ```
+-   **zkatsnark driver unit tests**:
+    `x/token/core/zkatsnark` is a separate Go module, so `make unit-tests` and `make unit-tests-race` do not run
+    its tests. They are slow under the race detector (proving dominates), so CI runs them as parallel shards.
+    Run one shard, or all of them sequentially (long):
+    ```bash
+    make unit-tests-zkatsnark ZKATSNARK_SHARD=crypto   # validator | setup | crypto | prover | rest
+    make unit-tests-zkatsnark                          # every shard
+    ```
+    The shards are defined in `ci/scripts/zkatsnark-packages.sh`; a package that no named shard claims runs in `rest`.
 
 ## Fuzz Testing
 

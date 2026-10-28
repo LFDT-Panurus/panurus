@@ -259,6 +259,43 @@ func TestSetupAll_Plonk_PopulatesKeys(t *testing.T) {
 	require.NotEmpty(t, p.VKOutput, "Plonk VKOutput must be populated")
 }
 
+// ── PlonkFRI compile/setup tests ────────────────────────────────────────────
+
+func plonkFRIPP() *pp.PublicParams {
+	p := pp.DefaultPublicParams()
+	p.ProofSystem = "plonkfri"
+	p.Curve = ecc.BN254
+
+	return p
+}
+
+func TestCompileCircuits_PlonkFRI_Success(t *testing.T) {
+	spend, err := setup.CompileSpendCircuit(plonkFRIPP())
+	require.NoError(t, err)
+	require.Positive(t, spend.GetNbConstraints(), "PlonkFRI SpendCircuit must have constraints")
+
+	output, err := setup.CompileOutputCircuit(plonkFRIPP())
+	require.NoError(t, err)
+	require.Positive(t, output.GetNbConstraints(), "PlonkFRI OutputCircuit must have constraints")
+}
+
+func TestSetupAll_PlonkFRI_PopulatesKeys(t *testing.T) {
+	p, err := setup.SetupAll(plonkFRIPP())
+	require.NoError(t, err)
+	require.NotEmpty(t, p.PKSpend, "PlonkFRI PKSpend must be populated")
+	require.NotEmpty(t, p.VKSpend, "PlonkFRI VKSpend must be populated")
+	require.NotEmpty(t, p.PKOutput, "PlonkFRI PKOutput must be populated")
+	require.NotEmpty(t, p.VKOutput, "PlonkFRI VKOutput must be populated")
+}
+
+func TestSetupAll_PlonkFRI_UnsupportedCurve_Error(t *testing.T) {
+	p := pp.DefaultPublicParams()
+	p.ProofSystem = "plonkfri"
+	p.Curve = ecc.BLS12_381
+	_, err := setup.SetupAll(p)
+	require.Error(t, err)
+}
+
 // ── Unsupported curve error path ────────────────────────────────────────────
 
 func TestCompileSpendCircuit_UnsupportedCurve_Error(t *testing.T) {

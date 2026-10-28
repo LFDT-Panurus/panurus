@@ -88,7 +88,8 @@ type PublicParams struct {
 
 	// ── Proof system and curve ─────────────────────────────────────────────
 
-	// ProofSystem selects the ZK proof system: "groth16" or "plonk".
+	// ProofSystem selects the ZK proof system: "groth16", "plonk" or "plonkfri"
+	// (plonkfri is transparent, needs no SRS, and supports only BN254).
 	ProofSystem string
 
 	// Curve is the outer pairing curve. BLS12-381 or BN254.
@@ -151,9 +152,10 @@ func (pp *PublicParams) GraphHiding() bool {
 }
 
 // MaxTokenValue returns 2^MaxBits - 1, the largest value the OutputCircuit
-// range check permits. Falls back to the full uint64 range if MaxBits is
-// unset or degenerate, rather than panicking, callers should still treat
-// an unset MaxBits as invalid via Validate().
+// range check permits. Validate caps MaxBits at params.MaxAllowedBits (64), so
+// for valid parameters MaxBits >= 64 means the full uint64 range. Falls back to
+// that range if MaxBits is unset or degenerate, rather than panicking, callers
+// should still treat an unset MaxBits as invalid via Validate().
 func (pp *PublicParams) MaxTokenValue() uint64 {
 	if pp.MaxBits <= 0 || pp.MaxBits >= 64 {
 		return ^uint64(0)
@@ -355,14 +357,20 @@ func (pp *PublicParams) Validate() error {
 	if pp.SchemeVersion <= 0 {
 		return fmt.Errorf("pp: SchemeVersion must be positive, got %d", pp.SchemeVersion)
 	}
-	if pp.ProofSystem != "groth16" && pp.ProofSystem != "plonk" {
+	if pp.ProofSystem != "groth16" && pp.ProofSystem != "plonk" && pp.ProofSystem != "plonkfri" {
 		return fmt.Errorf("pp: unsupported ProofSystem %q", pp.ProofSystem)
 	}
 	if pp.Curve != ecc.BLS12_381 && pp.Curve != ecc.BN254 {
 		return fmt.Errorf("pp: unsupported Curve %s", pp.Curve)
 	}
+	if pp.ProofSystem == "plonkfri" && pp.Curve != ecc.BN254 {
+		return fmt.Errorf("pp: ProofSystem %q supports only Curve %s, got %s", pp.ProofSystem, ecc.BN254, pp.Curve)
+	}
 	if pp.MaxBits <= 0 {
 		return fmt.Errorf("pp: MaxBits must be positive, got %d", pp.MaxBits)
+	}
+	if pp.MaxBits > params.MaxAllowedBits {
+		return fmt.Errorf("pp: MaxBits must be at most %d, got %d", params.MaxAllowedBits, pp.MaxBits)
 	}
 	if len(pp.IdemixIssuerPublicKeys) == 0 {
 		return errors.New("pp: expected at least one idemix issuer public key")

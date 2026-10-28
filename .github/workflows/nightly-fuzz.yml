@@ -278,6 +278,14 @@ jobs:
             dir: ./x/token/core/zkatsnark
             pkg: ./nogh/v1/crypto/backend
             func: FuzzNewKeysNoPanic
+          - name: zkatsnark-backend-plonkfri-verify
+            dir: ./x/token/core/zkatsnark
+            pkg: ./nogh/v1/crypto/backend
+            func: FuzzPlonkFRIVerifyNoPanic
+          - name: zkatsnark-plonkfri-bn254-read-from
+            dir: ./x/token/core/zkatsnark
+            pkg: ./nogh/v1/crypto/internal/plonkfri/bn254
+            func: FuzzReadFrom
           - name: zkatsnark-public-params-deserialize
             dir: ./x/token/core/zkatsnark
             pkg: ./nogh/v1/pp

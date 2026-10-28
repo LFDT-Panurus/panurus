@@ -30,6 +30,7 @@ import (
 	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/circuit"
 	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/crypto/backend"
 	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/crypto/edwards"
+	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/crypto/params"
 	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/pp"
 )
 
@@ -89,12 +90,12 @@ func curveGenerators(curve ecc.ID) (generatorCoords, error) {
 }
 
 // csBuilder returns the appropriate constraint system builder for the
-// given proof system: r1cs.NewBuilder for groth16, scs.NewBuilder for plonk.
+// given proof system: r1cs.NewBuilder for groth16, scs.NewBuilder for plonk and plonkfri.
 func csBuilder(proofSystem string) (frontend.NewBuilder, error) {
 	switch proofSystem {
 	case "groth16":
 		return r1cs.NewBuilder, nil
-	case "plonk":
+	case "plonk", "plonkfri":
 		return scs.NewBuilder, nil
 	default:
 		return nil, errors.Errorf("setup: unsupported proof system %q", proofSystem)
@@ -113,6 +114,13 @@ func csBuilder(proofSystem string) (frontend.NewBuilder, error) {
 // CompileSpendCircuit compiles circuit.SpendCircuit for the curve and proof
 // system specified in p.
 func CompileSpendCircuit(p *pp.PublicParams) (constraint.ConstraintSystem, error) {
+	if p.MaxBits <= 0 {
+		return nil, errors.Errorf("setup: cannot compile SpendCircuit: MaxBits must be positive, got %d", p.MaxBits)
+	}
+	if p.MaxBits > params.MaxAllowedBits {
+		return nil, errors.Errorf("setup: cannot compile SpendCircuit: MaxBits must be at most %d, got %d", params.MaxAllowedBits, p.MaxBits)
+	}
+
 	gens, err := curveGenerators(p.Curve)
 	if err != nil {
 		return nil, err
@@ -127,7 +135,8 @@ func CompileSpendCircuit(p *pp.PublicParams) (constraint.ConstraintSystem, error
 		p.Curve.ScalarField(),
 		builder,
 		&circuit.SpendCircuit{
-			GenVX: gens.VX, GenVY: gens.VY,
+			MaxBits: p.MaxBits,
+			GenVX:   gens.VX, GenVY: gens.VY,
 			GenRX: gens.RX, GenRY: gens.RY,
 		},
 	)
@@ -150,6 +159,9 @@ func CompileSpendCircuit(p *pp.PublicParams) (constraint.ConstraintSystem, error
 func CompileOutputCircuit(p *pp.PublicParams) (constraint.ConstraintSystem, error) {
 	if p.MaxBits <= 0 {
 		return nil, errors.Errorf("setup: cannot compile OutputCircuit: MaxBits must be positive, got %d", p.MaxBits)
+	}
+	if p.MaxBits > params.MaxAllowedBits {
+		return nil, errors.Errorf("setup: cannot compile OutputCircuit: MaxBits must be at most %d, got %d", params.MaxAllowedBits, p.MaxBits)
 	}
 
 	gens, err := curveGenerators(p.Curve)
@@ -198,6 +210,9 @@ type PedersenGeneratorCoords struct {
 func CompileMigrationCircuit(p *pp.PublicParams, gens PedersenGeneratorCoords) (constraint.ConstraintSystem, error) {
 	if p.MaxBits <= 0 {
 		return nil, errors.Errorf("setup: cannot compile MigrationCircuit: MaxBits must be positive, got %d", p.MaxBits)
+	}
+	if p.MaxBits > params.MaxAllowedBits {
+		return nil, errors.Errorf("setup: cannot compile MigrationCircuit: MaxBits must be at most %d, got %d", params.MaxAllowedBits, p.MaxBits)
 	}
 
 	vcGens, err := curveGenerators(p.Curve)
