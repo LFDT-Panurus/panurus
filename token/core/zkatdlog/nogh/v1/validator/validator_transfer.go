@@ -35,9 +35,16 @@ func TransferActionValidate(c context.Context, ctx *Context) error {
 // performs its own nil guards so that it cannot panic even when called in
 // isolation (e.g., in a custom validation pipeline).
 //
+// Redeem detection uses Token.IsRedeem() (len(Owner) == 0), the same predicate used by
+// the rest of the pipeline: TransferHTLCValidate below, Action.IsRedeem/IsRedeemAt, the
+// auditor and the transfer service. An empty-but-non-nil owner is therefore classified
+// as a redeem here too, and cannot skip the issuer-signature requirement.
+// Action.IsRedeem() is not called here on purpose: it dereferences nil output entries,
+// whereas the loop below guards against them.
+//
 // Open-policy redeem behaviour: when PP.IssuerIDs is empty (len(ctx.PP.Issuers()) == 0),
 // the issuer-signature requirement for redeem actions is skipped entirely and any
-// transfer (including those with nil-owner outputs) is accepted without an issuer signature.
+// transfer (including those with ownerless outputs) is accepted without an issuer signature.
 // This mirrors the open-policy issuer behaviour in IssueValidate and is intentional for
 // deployments that do not restrict which identities may authorize redemptions.
 //
