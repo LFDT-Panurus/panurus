@@ -37,7 +37,7 @@ func randomAttr(t *testing.T) []byte {
 }
 
 // TestRegressionCommitmentSizesAreFixed checks that nyms and openings have a
-// constant length: UnmarshalIdentity and DeserializeAuditInfo rely on it.
+// constant length: checkIdentity and DeserializeAuditInfo rely on it.
 func TestRegressionCommitmentSizesAreFixed(t *testing.T) {
 	for range 200 {
 		c, err := anoncreds.Commit(randomAttr(t))
@@ -106,8 +106,12 @@ func TestRegressionSignatureNotMalleable(t *testing.T) {
 
 	reject := func(name string, pres, sok []byte) {
 		t.Helper()
-		raw, err := asn1.Marshal(Signature{Pres: pres, Sok: sok})
+		raw, err := asn1.Marshal(Signature{NymSK: sig.NymSK, NymRH: sig.NymRH, Pres: pres, Sok: sok})
 		require.NoError(t, err)
+		require.Error(t, d.Verifier.Verify(msg, raw), name)
+	}
+	rejectRaw := func(name string, raw []byte) {
+		t.Helper()
 		require.Error(t, d.Verifier.Verify(msg, raw), name)
 	}
 	flip := func(b []byte, pos int, bit uint) []byte {
@@ -134,6 +138,37 @@ func TestRegressionSignatureNotMalleable(t *testing.T) {
 	_, err = rand.Read(random)
 	require.NoError(t, err)
 	reject("random pres", random, sig.Sok)
+
+	// the nyms of the signature
+	for _, pos := range []int{0, len(sig.NymSK) / 2, len(sig.NymSK) - 1} {
+		for _, nymRH := range []bool{false, true} {
+			s := *sig
+			if nymRH {
+				s.NymRH = flip(s.NymRH, pos, 0)
+			} else {
+				s.NymSK = flip(s.NymSK, pos, 0)
+			}
+			raw, err := asn1.Marshal(s)
+			require.NoError(t, err)
+			rejectRaw("nym byte flipped", raw)
+		}
+	}
+	// encoding/asn1 alone accepts extra elements in a sequence and the nyms in any length
+	type extra struct {
+		NymSK, NymRH, Pres, Sok, Extra []byte
+	}
+	raw2, err := asn1.Marshal(extra{sig.NymSK, sig.NymRH, sig.Pres, sig.Sok, []byte{1}})
+	require.NoError(t, err)
+	rejectRaw("extra element", raw2)
+	raw2, err = asn1.Marshal(Signature{NymSK: append(append([]byte(nil), sig.NymSK...), 0), NymRH: sig.NymRH, Pres: sig.Pres, Sok: sig.Sok})
+	require.NoError(t, err)
+	rejectRaw("long nym", raw2)
+	rejectRaw("trailing data", append(append([]byte(nil), raw...), 0))
+	// a signature of the former layout {pres, sok}
+	type old struct{ Pres, Sok []byte }
+	raw2, err = asn1.Marshal(old{sig.Pres, sig.Sok})
+	require.NoError(t, err)
+	rejectRaw("signature of the former layout", raw2)
 }
 
 // TestRegressionCloseConcurrentWithIdentity checks that Close may run while
@@ -226,12 +261,18 @@ func TestRegressionIdentityWithoutCredentialIsRejected(t *testing.T) {
 	rh, err := anoncreds.Commit(hashAttr(IdxRH, "alice-rh"))
 	require.NoError(t, err)
 	defer rh.Clear()
-	id, err := (&SerializedIdentity{NymSK: sk.Nym, NymEID: eid.Nym, NymRH: rh.Nym}).Bytes()
+	id := eid.Nym
+	eidProof, err := eid.EqOpeningProve(eidProofContext(ipk, id, hashAttr(IdxEID, "alice")), hashAttr(IdxEID, "alice"))
 	require.NoError(t, err)
+	encOpening := make([]byte, gcmNonceLen+anoncreds.MaxLenOpening()+gcmTagLen)
 	// the presentation of a real identity of alice does not help
 	for _, pres := range [][]byte{make([]byte, 1024), alicePres(t)} {
-		ai, err := (&AuditInfo{EID: "alice", RH: "alice-rh", OpeningEID: mustOpening(t, eid), OpeningRH: mustOpening(t, rh), Pres: pres}).Bytes()
+		ai, err := (&AuditInfo{
+			EID: "alice", RH: "alice-rh", NymEID: id, NymSK: sk.Nym, NymRH: rh.Nym, OpeningRH: mustOpening(t, rh),
+			EIDProof: eidProof, EncOpeningEID: encOpening, Pres: pres,
+		}).Bytes()
 		require.NoError(t, err)
+		require.NoError(t, d.pv.verifyEID(id, "alice", eidProof), "the enrollment id proof alone is valid")
 
 		_, errVerifier := d.DeserializeVerifier(t.Context(), id)
 		errMatch := d.MatchIdentity(t.Context(), id, ai)
@@ -298,6 +339,44 @@ func TestRegressionAuditInfoIsCanonical(t *testing.T) {
 	require.Error(t, err, "duplicate key accepted")
 	_, err = DeserializeAuditInfo(append([]byte(" "), d.AuditInfo...))
 	require.Error(t, err, "non-canonical whitespace accepted")
+}
+
+// TestRegressionAuditInfoLengths checks the fixed and bounded lengths of the
+// fields of an audit info.
+func TestRegressionAuditInfoLengths(t *testing.T) {
+	w := newTestWallet(t, "alice")
+	d, err := w.km.Identity(t.Context(), nil)
+	require.NoError(t, err)
+	resize := func(b []byte, n int) []byte {
+		out := make([]byte, n)
+		copy(out, b)
+
+		return out
+	}
+	for name, tamper := range map[string]func(*AuditInfo){
+		"nym_eid short":         func(a *AuditInfo) { a.NymEID = a.NymEID[1:] },
+		"nym_eid long":          func(a *AuditInfo) { a.NymEID = resize(a.NymEID, len(a.NymEID)+1) },
+		"nym_sk short":          func(a *AuditInfo) { a.NymSK = a.NymSK[1:] },
+		"nym_sk long":           func(a *AuditInfo) { a.NymSK = resize(a.NymSK, len(a.NymSK)+1) },
+		"nym_rh short":          func(a *AuditInfo) { a.NymRH = a.NymRH[1:] },
+		"nym_rh long":           func(a *AuditInfo) { a.NymRH = resize(a.NymRH, len(a.NymRH)+1) },
+		"opening_rh short":      func(a *AuditInfo) { a.OpeningRH = a.OpeningRH[1:] },
+		"opening_rh long":       func(a *AuditInfo) { a.OpeningRH = resize(a.OpeningRH, len(a.OpeningRH)+1) },
+		"enc_opening_eid short": func(a *AuditInfo) { a.EncOpeningEID = a.EncOpeningEID[1:] },
+		"enc_opening_eid long":  func(a *AuditInfo) { a.EncOpeningEID = resize(a.EncOpeningEID, len(a.EncOpeningEID)+1) },
+		"eid_proof empty":       func(a *AuditInfo) { a.EIDProof = nil },
+		"eid_proof too long":    func(a *AuditInfo) { a.EIDProof = resize(a.EIDProof, anoncreds.MaxLenSok()+1) },
+		"pres empty":            func(a *AuditInfo) { a.Pres = nil },
+		"pres too long":         func(a *AuditInfo) { a.Pres = resize(a.Pres, anoncreds.MaxLenPres()+1) },
+	} {
+		ai, err := DeserializeAuditInfo(d.AuditInfo)
+		require.NoError(t, err)
+		tamper(ai)
+		raw, err := ai.Bytes()
+		require.NoError(t, err)
+		_, err = DeserializeAuditInfo(raw)
+		require.Error(t, err, name)
+	}
 }
 
 // TestRegressionStrictDecoders checks the signer info and configuration
@@ -430,7 +509,8 @@ func TestRegressionSignerInfoIsEncrypted(t *testing.T) {
 	require.Error(t, err)
 	// another wallet secret does not decrypt
 	other := newTestWallet(t, "alice")
-	_, err = openOpening(other.km.siKey, d.Identity, info.EncOpeningSK)
+	ad := signerInfoAD(d.Identity, info.NymRH, info.Pres)
+	_, err = openOpening(other.km.siKey, ad, info.EncOpeningSK)
 	require.Error(t, err)
 	// the key binds to the identity: the signer info of another identity is refused
 	d2, err := w.km.Identity(ctx, nil)
@@ -467,6 +547,28 @@ func TestRegressionSignerInfoIsEncrypted(t *testing.T) {
 	w.store.put(d.Identity, legacy)
 	_, err = w.km.DeserializeSigner(ctx, d.Identity)
 	require.Error(t, err)
+	v1, err := json.Marshal(map[string]any{"version": 1, "enc_opening_sk": info.EncOpeningSK, "pres": info.Pres})
+	require.NoError(t, err)
+	w.store.put(d.Identity, v1)
+	_, err = w.km.DeserializeSigner(ctx, d.Identity)
+	require.Error(t, err)
+	// the encrypted opening is bound to the nymRH and the presentation of the signer info
+	d3, err := w.km.Identity(ctx, nil)
+	require.NoError(t, err)
+	info3, err := decodeSignerInfo(d3.SignerInfo)
+	require.NoError(t, err)
+	for name, tamper := range map[string]func(*SignerInfo){
+		"nym_rh": func(i *SignerInfo) { i.NymRH = info3.NymRH },
+		"pres":   func(i *SignerInfo) { i.Pres = info3.Pres },
+	} {
+		forged := *info
+		tamper(&forged)
+		raw, err := json.Marshal(&forged)
+		require.NoError(t, err)
+		w.store.put(d.Identity, raw)
+		_, err = w.km.DeserializeSigner(ctx, d.Identity)
+		require.Error(t, err, name)
+	}
 }
 
 // TestRegressionOpeningRevealsAttribute documents why openings must not
@@ -474,14 +576,15 @@ func TestRegressionSignerInfoIsEncrypted(t *testing.T) {
 // opening solves for attr. The column of Acom that multiplies the attribute is
 // public and obtained here with CommitWithOpening. Applied to nymSK this
 // yields usk (whence the encryption of the signer info), applied to the audit
-// info it yields the EID and RH hashes (by design, for the auditor).
+// info it yields the RH hash (by design, for the auditor). The opening of
+// nymEID, the identity, is never in the clear (see TestAuditorCannotSign).
 func TestRegressionOpeningRevealsAttribute(t *testing.T) {
 	w := newTestWallet(t, "alice")
 	d, err := w.km.Identity(t.Context(), nil)
 	require.NoError(t, err)
-	id, err := UnmarshalIdentity(d.Identity)
-	require.NoError(t, err)
 	ai, err := DeserializeAuditInfo(d.AuditInfo)
+	require.NoError(t, err)
+	openingEID, err := openOpening(w.km.aiKey, ai.auditOpeningAD(), ai.EncOpeningEID)
 	require.NoError(t, err)
 
 	for _, tc := range []struct {
@@ -489,9 +592,9 @@ func TestRegressionOpeningRevealsAttribute(t *testing.T) {
 		nym, opening []byte
 		want         []byte
 	}{
-		{"usk from nymSK", id.NymSK, d.Signer.(*Signer).opening, w.km.usk},
-		{"EID from nymEID", id.NymEID, ai.OpeningEID, hashAttr(IdxEID, "alice")},
-		{"RH from nymRH", id.NymRH, ai.OpeningRH, hashAttr(IdxRH, "rh-alice")},
+		{"usk from nymSK", ai.NymSK, d.Signer.(*Signer).opening, w.km.usk},
+		{"EID from nymEID (wallet only)", d.Identity, openingEID, hashAttr(IdxEID, "alice")},
+		{"RH from nymRH", ai.NymRH, ai.OpeningRH, hashAttr(IdxRH, "rh-alice")},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			require.Equal(t, tc.want, solveAttribute(t, tc.nym, tc.opening))

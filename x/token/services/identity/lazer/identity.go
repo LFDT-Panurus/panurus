@@ -7,6 +7,7 @@ SPDX-License-Identifier: Apache-2.0
 package lazer
 
 import (
+	"bytes"
 	"encoding/asn1"
 	"sync"
 
@@ -20,58 +21,43 @@ const (
 	verifierPoolSize = 4
 )
 
-var (
-	// maxNymLen is the length of an encoded nym.
-	maxNymLen = anoncreds.MaxLenNym()
-	// maxIdentityLen bounds the size of a serialized identity before parsing it.
-	maxIdentityLen = 3*maxNymLen + 64
-)
+// maxNymLen is the length of an encoded nym, and of an identity.
+var maxNymLen = anoncreds.MaxLenNym()
 
-// SerializedIdentity is the pseudonym published on the ledger: commitments to
-// the user secret, the enrollment id and the revocation handle.
-type SerializedIdentity struct {
-	NymSK  []byte
-	NymEID []byte
-	NymRH  []byte
+// An identity (the pseudonym published on the ledger) is the commitment nymEID
+// to the enrollment id, nothing else, as in idemixnym. The signatures carry the
+// commitments to the user secret (nymSK) and to the revocation handle (nymRH)
+// and the presentation that binds the three to a credential.
+
+// checkIdentity checks that raw has the length of a nym. The nym itself is
+// decoded, canonically, by every proof verification that uses it.
+func checkIdentity(raw []byte) error {
+	if len(raw) != maxNymLen {
+		return errors.Errorf("invalid identity length [%d]", len(raw))
+	}
+
+	return nil
 }
 
-// Signature is a signature under a pseudonym: a presentation proving that the
-// nyms of the pseudonym are bound to a valid credential, and a signature of
+// Signature is a signature under a pseudonym nymEID: the commitments nymSK and
+// nymRH, a presentation proving that (nymSK, nymEID, nymRH) commit to the
+// (usk, eid, rh) attributes of a credential of the issuer, and a signature of
 // knowledge of the opening of nymSK bound to the message.
 type Signature struct {
-	Pres []byte
-	Sok  []byte
+	NymSK []byte
+	NymRH []byte
+	Pres  []byte
+	Sok   []byte
 }
 
-// Bytes serializes the identity.
-func (i *SerializedIdentity) Bytes() ([]byte, error) {
-	return asn1.Marshal(*i)
-}
+// maxSignatureLen bounds the size of a signature before parsing it.
+var maxSignatureLen = anoncreds.MaxLenPres() + anoncreds.MaxLenSok() + 2*maxNymLen + 64
 
-// UnmarshalIdentity parses and validates a serialized identity.
-func UnmarshalIdentity(raw []byte) (*SerializedIdentity, error) {
-	if len(raw) == 0 || len(raw) > maxIdentityLen {
-		return nil, errors.Errorf("invalid identity length [%d]", len(raw))
-	}
-	id := &SerializedIdentity{}
-	rest, err := asn1.Unmarshal(raw, id)
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to unmarshal identity")
-	}
-	if len(rest) != 0 {
-		return nil, errors.New("trailing data after identity")
-	}
-	for _, n := range [][]byte{id.NymSK, id.NymEID, id.NymRH} {
-		if len(n) != maxNymLen {
-			return nil, errors.Errorf("invalid nym length [%d]", len(n))
-		}
-	}
-
-	return id, nil
-}
-
+// unmarshalSignature parses a signature strictly: it must be the DER encoding
+// of a Signature (encoding/asn1 alone accepts extra elements in the sequence)
+// with nyms of the right length and non-empty bounded proofs.
 func unmarshalSignature(raw []byte) (*Signature, error) {
-	if len(raw) == 0 || len(raw) > anoncreds.MaxLenPres()+anoncreds.MaxLenSok()+64 {
+	if len(raw) == 0 || len(raw) > maxSignatureLen {
 		return nil, errors.Errorf("invalid signature length [%d]", len(raw))
 	}
 	sig := &Signature{}
@@ -81,6 +67,16 @@ func unmarshalSignature(raw []byte) (*Signature, error) {
 	}
 	if len(rest) != 0 {
 		return nil, errors.New("trailing data after signature")
+	}
+	again, err := asn1.Marshal(*sig)
+	if err != nil || !bytes.Equal(again, raw) {
+		return nil, errors.New("non-canonical signature encoding")
+	}
+	if len(sig.NymSK) != maxNymLen || len(sig.NymRH) != maxNymLen {
+		return nil, errors.New("invalid nym length in signature")
+	}
+	if len(sig.Pres) == 0 || len(sig.Pres) > anoncreds.MaxLenPres() || len(sig.Sok) == 0 || len(sig.Sok) > anoncreds.MaxLenSok() {
+		return nil, errors.New("invalid proof length in signature")
 	}
 
 	return sig, nil
@@ -160,15 +156,15 @@ func (p *presVerifier) release(v *anoncreds.Verifier) {
 	v.Clear()
 }
 
-// verifyPres checks that pres proves that the nyms of id commit to the
-// attributes (usk, eid, rh) of a credential issued by the issuer.
-func (p *presVerifier) verifyPres(id *SerializedIdentity, pres []byte) error {
+// verifyPres checks that pres proves that nymSK, nymEID and nymRH commit to
+// the attributes (usk, eid, rh) of a credential issued by the issuer.
+func (p *presVerifier) verifyPres(nymSK, nymEID, nymRH, pres []byte) error {
 	v, err := p.acquire()
 	if err != nil {
 		return err
 	}
 	defer p.release(v)
-	nyms := [][]byte{id.NymSK, id.NymEID, id.NymRH}
+	nyms := [][]byte{nymSK, nymEID, nymRH}
 	if err := v.PresVer(zeroAttributes(), nil, nyms, idxCom, pres, p.ctx); err != nil {
 		return errors.Wrap(err, "invalid presentation")
 	}
@@ -176,31 +172,36 @@ func (p *presVerifier) verifyPres(id *SerializedIdentity, pres []byte) error {
 	return nil
 }
 
-// verify checks sigma as a signature of msg under the identity id.
-func (p *presVerifier) verify(id *SerializedIdentity, msg, sigma []byte) error {
+// verifyEID checks that proof proves that nymEID commits to the enrollment id eid.
+func (p *presVerifier) verifyEID(nymEID []byte, eid string, proof []byte) error {
+	attr := hashAttr(IdxEID, eid)
+
+	return anoncreds.EqOpeningVerify(nymEID, attr, eidProofContext(p.ipk, nymEID, attr), proof)
+}
+
+// verify checks sigma as a signature of msg under the identity nymEID. The
+// signature of knowledge, the cheaper check, comes first.
+func (p *presVerifier) verify(nymEID, msg, sigma []byte) error {
 	sig, err := unmarshalSignature(sigma)
 	if err != nil {
 		return err
 	}
-	if err := p.verifyPres(id, sig.Pres); err != nil {
-		return err
-	}
-	if err := anoncreds.SokVerify(id.NymSK, signatureContext(msg), sig.Sok); err != nil {
+	if err := anoncreds.SokVerify(sig.NymSK, signatureContext(msg), sig.Sok); err != nil {
 		return errors.Wrap(err, "invalid signature")
 	}
 
-	return nil
+	return p.verifyPres(sig.NymSK, nymEID, sig.NymRH, sig.Pres)
 }
 
 // Verifier verifies signatures under a pseudonym.
 type Verifier struct {
-	id *SerializedIdentity
-	pv *presVerifier
+	nymEID []byte
+	pv     *presVerifier
 }
 
 var _ driver.Verifier = (*Verifier)(nil)
 
 // Verify checks that sigma is a valid signature of message.
 func (v *Verifier) Verify(message, sigma []byte) error {
-	return v.pv.verify(v.id, message, sigma)
+	return v.pv.verify(v.nymEID, message, sigma)
 }

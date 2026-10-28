@@ -255,6 +255,67 @@ func TestSokAndOpening(t *testing.T) {
 	}
 }
 
+func TestEqOpening(t *testing.T) {
+	attr := randBytes(t, AttrLen)
+	c, err := Commit(attr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Clear()
+	ctx := []byte("eqopen|ctx")
+	proof, err := c.EqOpeningProve(ctx, attr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := EqOpeningVerify(c.Nym, attr, ctx, proof); err != nil {
+		t.Fatal(err)
+	}
+	// the prover is never run on a false statement
+	if _, err := c.EqOpeningProve(ctx, randBytes(t, AttrLen)); err == nil {
+		t.Fatal("proof made for another attribute")
+	}
+	// bound to the attribute, the context and the nym
+	near := append([]byte(nil), attr...)
+	near[0] ^= 1
+	if EqOpeningVerify(c.Nym, near, ctx, proof) == nil || EqOpeningVerify(c.Nym, randBytes(t, AttrLen), ctx, proof) == nil {
+		t.Fatal("proof accepted for another attribute")
+	}
+	if EqOpeningVerify(c.Nym, attr, []byte("other"), proof) == nil {
+		t.Fatal("wrong ctx accepted")
+	}
+	other, err := Commit(attr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer other.Clear()
+	if EqOpeningVerify(other.Nym, attr, ctx, proof) == nil {
+		t.Fatal("proof accepted for another nym")
+	}
+	// a proof of knowledge of an opening is not a proof of the attribute, and vice versa
+	sok, err := c.SokProve(ctx, attr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if EqOpeningVerify(c.Nym, attr, ctx, sok) == nil {
+		t.Fatal("SoK accepted as an equality-of-opening proof")
+	}
+	if SokVerify(c.Nym, ctx, proof) == nil {
+		t.Fatal("equality-of-opening proof accepted as a SoK")
+	}
+	if EqOpeningVerify(c.Nym, attr, ctx, append(proof, 0)) == nil || EqOpeningVerify(c.Nym, attr, ctx, proof[:10]) == nil ||
+		EqOpeningVerify(c.Nym[:3], attr, ctx, proof) == nil || EqOpeningVerify(c.Nym, attr[:3], ctx, proof) == nil {
+		t.Fatal("malformed input accepted")
+	}
+	// the attribute column of the statement is zero: the proof is about attr itself
+	if !eqOpeningStatementOK(c, attr) || !eqOpeningStatementOK(c, randBytes(t, AttrLen)) {
+		t.Fatal("the statement does not zero the attribute column")
+	}
+	var cleared Commitment
+	if _, err := cleared.EqOpeningProve(ctx, attr); err == nil {
+		t.Fatal("cleared commitment proved")
+	}
+}
+
 func TestParamsMatchConstants(t *testing.T) {
 	if !ParamsOK() {
 		t.Fatal("anoncreds_params.h does not match CBDC_COM_ROWS/CBDC_MAXCOM in anoncreds.h")

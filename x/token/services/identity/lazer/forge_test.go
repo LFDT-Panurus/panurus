@@ -50,9 +50,8 @@ func TestForgeryWithoutCredential(t *testing.T) {
 	sok, err := coms[0].SokProve(signatureContext(msg), usk)
 	require.NoError(t, err)
 
-	id, err := (&SerializedIdentity{NymSK: coms[0].Nym, NymEID: coms[1].Nym, NymRH: coms[2].Nym}).Bytes()
-	require.NoError(t, err)
-	sig, err := asn1.Marshal(Signature{Pres: pres, Sok: sok})
+	id := coms[1].Nym
+	sig, err := asn1.Marshal(Signature{NymSK: coms[0].Nym, NymRH: coms[2].Nym, Pres: pres, Sok: sok})
 	require.NoError(t, err)
 
 	d, err := NewDeserializer(ipk)

@@ -7,11 +7,16 @@ SPDX-License-Identifier: Apache-2.0
 package lazer
 
 import (
+	"bytes"
 	"context"
+	"encoding/asn1"
+	"encoding/base64"
 	"encoding/json"
 	"sync"
 	"testing"
 
+	idriver "github.com/LFDT-Panurus/panurus/token/services/identity/driver"
+	"github.com/LFDT-Panurus/panurus/x/token/services/identity/lazer/anoncreds"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -23,7 +28,7 @@ func TestIdentityRoundTrip(t *testing.T) {
 	desc, err := w.km.Identity(ctx, nil)
 	require.NoError(t, err)
 	w.store.put(desc.Identity, desc.SignerInfo)
-	assert.Less(t, len(desc.Identity), 1024, "the identity must stay small, proofs travel with the signature")
+	assert.Len(t, desc.Identity, anoncreds.MaxLenNym(), "the identity is nymEID only, proofs travel with the signature")
 
 	msg := []byte("hello world")
 	sigma, err := desc.Signer.Sign(msg)
@@ -72,13 +77,23 @@ func TestIdentitiesAreUnlinkable(t *testing.T) {
 	require.NoError(t, err)
 	b, err := w.km.Identity(context.Background(), nil)
 	require.NoError(t, err)
-	ia, err := UnmarshalIdentity(a.Identity)
+	assert.NotEqual(t, a.Identity, b.Identity)
+	sa := mustSignature(t, a.Signer, []byte("m"))
+	sb := mustSignature(t, b.Signer, []byte("m"))
+	assert.NotEqual(t, sa.NymSK, sb.NymSK)
+	assert.NotEqual(t, sa.NymRH, sb.NymRH)
+	assert.NotEqual(t, sa.Pres, sb.Pres)
+}
+
+// mustSignature signs msg with s and parses the signature.
+func mustSignature(t *testing.T, s interface{ Sign([]byte) ([]byte, error) }, msg []byte) *Signature {
+	t.Helper()
+	raw, err := s.Sign(msg)
 	require.NoError(t, err)
-	ib, err := UnmarshalIdentity(b.Identity)
+	sig, err := unmarshalSignature(raw)
 	require.NoError(t, err)
-	assert.NotEqual(t, ia.NymSK, ib.NymSK)
-	assert.NotEqual(t, ia.NymEID, ib.NymEID)
-	assert.NotEqual(t, ia.NymRH, ib.NymRH)
+
+	return sig
 }
 
 func TestSignatureUnderOtherIdentity(t *testing.T) {
@@ -100,14 +115,21 @@ func TestSignatureUnderOtherIdentity(t *testing.T) {
 	require.NoError(t, err)
 	require.Error(t, vB.Verify(msg, sigmaA))
 
-	// swapping the nyms of an identity breaks the presentation binding
-	ia, _ := UnmarshalIdentity(a.Identity)
-	ib, _ := UnmarshalIdentity(b.Identity)
-	mixed, err := (&SerializedIdentity{NymSK: ia.NymSK, NymEID: ib.NymEID, NymRH: ia.NymRH}).Bytes()
+	// swapping the nyms or the presentation of two signatures breaks the presentation binding
+	vA, err := des.DeserializeVerifier(ctx, a.Identity)
 	require.NoError(t, err)
-	vM, err := des.DeserializeVerifier(ctx, mixed)
-	require.NoError(t, err)
-	require.Error(t, vM.Verify(msg, sigmaA))
+	sa := mustSignature(t, a.Signer, msg)
+	sb := mustSignature(t, b.Signer, msg)
+	for name, mixed := range map[string]Signature{
+		"nymRH": {NymSK: sa.NymSK, NymRH: sb.NymRH, Pres: sa.Pres, Sok: sa.Sok},
+		"nymSK": {NymSK: sb.NymSK, NymRH: sa.NymRH, Pres: sa.Pres, Sok: sb.Sok},
+		"pres":  {NymSK: sa.NymSK, NymRH: sa.NymRH, Pres: sb.Pres, Sok: sa.Sok},
+		"all":   {NymSK: sb.NymSK, NymRH: sb.NymRH, Pres: sb.Pres, Sok: sb.Sok},
+	} {
+		raw, err := asn1.Marshal(mixed)
+		require.NoError(t, err)
+		require.Error(t, vA.Verify(msg, raw), name)
+	}
 
 	// another issuer
 	other := newTestWallet(t, "alice")
@@ -151,10 +173,18 @@ func TestAudit(t *testing.T) {
 	require.NoError(t, err)
 	require.Error(t, des.MatchIdentity(ctx, desc.Identity, d2.AuditInfo))
 	// a lying EID or RH, or the presentation of another identity, does not match
+	o, err := DeserializeAuditInfo(other.AuditInfo)
+	require.NoError(t, err)
 	for name, tamper := range map[string]func(*AuditInfo){
-		"eid":  func(a *AuditInfo) { a.EID = "mallory" },
-		"rh":   func(a *AuditInfo) { a.RH = "other" },
-		"pres": func(a *AuditInfo) { o, _ := DeserializeAuditInfo(other.AuditInfo); a.Pres = o.Pres },
+		"eid":        func(a *AuditInfo) { a.EID = "mallory" },
+		"rh":         func(a *AuditInfo) { a.RH = "other" },
+		"pres":       func(a *AuditInfo) { a.Pres = o.Pres },
+		"nym_sk":     func(a *AuditInfo) { a.NymSK = o.NymSK },
+		"nym_rh":     func(a *AuditInfo) { a.NymRH = o.NymRH },
+		"opening_rh": func(a *AuditInfo) { a.OpeningRH = o.OpeningRH },
+		"eid_proof":  func(a *AuditInfo) { a.EIDProof = o.EIDProof },
+		"nym_eid":    func(a *AuditInfo) { a.NymEID = o.NymEID },
+		"rh_set":     func(a *AuditInfo) { a.NymRH, a.OpeningRH = o.NymRH, o.OpeningRH },
 	} {
 		forged, err := DeserializeAuditInfo(desc.AuditInfo)
 		require.NoError(t, err)
@@ -179,9 +209,61 @@ func TestAudit(t *testing.T) {
 	})
 	assert.False(t, isMatcher, "an audit info without issuer key must not be usable as a matcher")
 
-	// the auditor cannot sign: signatures need the nymSK opening
+	// the audit info does not reveal the opening of nymEID
+	pai, err := DeserializeAuditInfo(desc.AuditInfo)
+	require.NoError(t, err)
+	op, err := openOpening(w.km.aiKey, pai.auditOpeningAD(), pai.EncOpeningEID)
+	require.NoError(t, err)
+	assert.False(t, bytes.Contains(desc.AuditInfo, op))
+	assert.NotContains(t, string(desc.AuditInfo), base64.StdEncoding.EncodeToString(op))
+	assert.False(t, bytes.Contains(pai.EncOpeningEID, op))
+	assert.True(t, anoncreds.OpeningVerify(desc.Identity, hashAttr(IdxEID, "alice"), op))
+
 	_, err = DeserializeAuditInfo(append(append([]byte(nil), desc.AuditInfo...), ' ', '{'))
 	require.Error(t, err)
+}
+
+// TestAuditorCannotSign checks that the holder of an audit info cannot sign
+// under its identity, even with a credential for the same enrollment id (which
+// the issuer can always make): the opening of nymEID is never revealed.
+func TestAuditorCannotSign(t *testing.T) {
+	w := newTestWallet(t, "alice")
+	ctx := context.Background()
+	victim, err := w.km.Identity(ctx, nil)
+	require.NoError(t, err)
+	des, err := NewDeserializer(w.ipk)
+	require.NoError(t, err)
+	t.Cleanup(des.Close)
+	v, err := des.DeserializeVerifier(ctx, victim.Identity)
+	require.NoError(t, err)
+
+	// a second wallet, same issuer, same enrollment id and revocation handle
+	w.addWallet(t, "alice")
+	attacker, err := w.km.Identity(ctx, nil)
+	require.NoError(t, err)
+	msg := []byte("transfer everything")
+	sig := mustSignature(t, attacker.Signer, msg)
+	ai, err := DeserializeAuditInfo(victim.AuditInfo)
+	require.NoError(t, err)
+	for name, forged := range map[string]Signature{
+		"attacker signature":         *sig,
+		"victim nyms, attacker pres": {NymSK: ai.NymSK, NymRH: ai.NymRH, Pres: sig.Pres, Sok: sig.Sok},
+		"victim pres, attacker sok":  {NymSK: ai.NymSK, NymRH: ai.NymRH, Pres: ai.Pres, Sok: sig.Sok},
+	} {
+		raw, err := asn1.Marshal(forged)
+		require.NoError(t, err)
+		require.Error(t, v.Verify(msg, raw), name)
+	}
+
+	// nor can it make an audit info of its own match the victim's identity,
+	// although the victim's enrollment id proof is valid for its enrollment id
+	aai, err := DeserializeAuditInfo(attacker.AuditInfo)
+	require.NoError(t, err)
+	aai.NymEID, aai.EIDProof = ai.NymEID, ai.EIDProof
+	raw, err := aai.Bytes()
+	require.NoError(t, err)
+	require.Error(t, des.MatchIdentity(ctx, victim.Identity, raw))
+	require.Error(t, des.MatchIdentity(ctx, victim.Identity, attacker.AuditInfo))
 }
 
 func TestIdentityWithReferenceAuditInfo(t *testing.T) {
@@ -192,32 +274,69 @@ func TestIdentityWithReferenceAuditInfo(t *testing.T) {
 	second, err := w.km.Identity(ctx, first.AuditInfo)
 	require.NoError(t, err)
 
-	i1, _ := UnmarshalIdentity(first.Identity)
-	i2, _ := UnmarshalIdentity(second.Identity)
-	assert.Equal(t, i1.NymEID, i2.NymEID, "nymEID is reused")
-	assert.Equal(t, i1.NymRH, i2.NymRH, "nymRH is reused")
-	assert.NotEqual(t, i1.NymSK, i2.NymSK, "nymSK is fresh")
+	assert.Equal(t, first.Identity, second.Identity, "nymEID, the identity, is reused")
+	s1 := mustSignature(t, first.Signer, []byte("m"))
+	s2 := mustSignature(t, second.Signer, []byte("m"))
+	assert.Equal(t, s1.NymRH, s2.NymRH, "nymRH is reused")
+	assert.NotEqual(t, s1.NymSK, s2.NymSK, "nymSK is fresh")
+	assert.NotEqual(t, s1.Pres, s2.Pres, "the presentation is fresh")
 
 	des, err := NewDeserializer(w.ipk)
 	require.NoError(t, err)
 	t.Cleanup(des.Close)
+	// the identity is the same: both audit infos match it, whichever the stores keep,
+	// and the signatures of both descriptors verify under it
 	require.NoError(t, des.MatchIdentity(ctx, second.Identity, second.AuditInfo))
-	// the audit info of an identity carries the presentation of that identity:
-	// the reference audit info has the same openings, but not the presentation
-	ref, err := DeserializeAuditInfo(first.AuditInfo)
+	require.NoError(t, des.MatchIdentity(ctx, second.Identity, first.AuditInfo))
+	v, err := des.DeserializeVerifier(ctx, second.Identity)
 	require.NoError(t, err)
-	require.NoError(t, ref.matchOpenings(i2))
-	require.Error(t, des.MatchIdentity(ctx, second.Identity, first.AuditInfo))
-	sigma, err := second.Signer.Sign([]byte("m"))
+	for _, d := range []*idriver.IdentityDescriptor{first, second} {
+		sigma, err := d.Signer.Sign([]byte("m"))
+		require.NoError(t, err)
+		require.NoError(t, v.Verify([]byte("m"), sigma))
+	}
+	// the signer info of either descriptor rebuilds a signer
+	for _, d := range []*idriver.IdentityDescriptor{first, second} {
+		w.store.put(d.Identity, d.SignerInfo)
+		s, err := w.km.DeserializeSigner(ctx, d.Identity)
+		require.NoError(t, err)
+		sigma, err := s.Sign([]byte("m"))
+		require.NoError(t, err)
+		require.NoError(t, v.Verify([]byte("m"), sigma))
+	}
+	// a third generation from the second audit info is the same identity again
+	third, err := w.km.Identity(ctx, second.AuditInfo)
 	require.NoError(t, err)
-	v, _ := des.DeserializeVerifier(ctx, second.Identity)
-	require.NoError(t, v.Verify([]byte("m"), sigma))
+	assert.Equal(t, first.Identity, third.Identity)
 
 	// audit info of another wallet is refused
 	w2 := newTestWallet(t, "bob")
 	d2, err := w2.km.Identity(ctx, nil)
 	require.NoError(t, err)
 	_, err = w.km.Identity(ctx, d2.AuditInfo)
+	require.Error(t, err)
+	// an audit info of this wallet whose encrypted opening, or RH opening, comes from another identity
+	fresh, err := w.km.Identity(ctx, nil)
+	require.NoError(t, err)
+	fai, err := DeserializeAuditInfo(fresh.AuditInfo)
+	require.NoError(t, err)
+	for name, tamper := range map[string]func(*AuditInfo){
+		"enc_opening_eid": func(a *AuditInfo) { a.EncOpeningEID = fai.EncOpeningEID },
+		"nym_rh":          func(a *AuditInfo) { a.NymRH = fai.NymRH },
+		"opening_rh":      func(a *AuditInfo) { a.OpeningRH = fai.OpeningRH },
+	} {
+		ai, err := DeserializeAuditInfo(first.AuditInfo)
+		require.NoError(t, err)
+		tamper(ai)
+		raw, err := ai.Bytes()
+		require.NoError(t, err)
+		_, err = w.km.Identity(ctx, raw)
+		require.Error(t, err, name)
+	}
+	// also of another wallet with the same enrollment id and revocation handle:
+	// the opening of nymEID is encrypted for the wallet that made it
+	w.addWallet(t, "alice")
+	_, err = w.km.Identity(ctx, first.AuditInfo)
 	require.Error(t, err)
 }
 

@@ -380,6 +380,10 @@ jobs:
             dir: ./x/token/services/identity/lazer
             pkg: ./anoncreds
             func: FuzzSokVerify
+          - name: lazer-anoncreds-eq-opening-verify
+            dir: ./x/token/services/identity/lazer
+            pkg: ./anoncreds
+            func: FuzzEqOpeningVerify
           - name: lazer-anoncreds-pres-ver
             dir: ./x/token/services/identity/lazer
             pkg: ./anoncreds

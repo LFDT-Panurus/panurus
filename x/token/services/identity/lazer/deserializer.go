@@ -39,16 +39,15 @@ func NewDeserializer(ipk []byte) (*Deserializer, error) {
 // Close releases the C state of the deserializer.
 func (d *Deserializer) Close() { d.pv.Close() }
 
-// DeserializeVerifier returns the verifier of a pseudonym. The identity is
-// only checked syntactically here; signatures carry the proof that the
-// pseudonym is bound to a credential of the issuer.
+// DeserializeVerifier returns the verifier of a pseudonym, the commitment
+// nymEID. The identity is only checked syntactically here; signatures carry
+// the proof that it is bound to a credential of the issuer.
 func (d *Deserializer) DeserializeVerifier(_ context.Context, raw driver.Identity) (driver.Verifier, error) {
-	id, err := UnmarshalIdentity(raw)
-	if err != nil {
+	if err := checkIdentity(raw); err != nil {
 		return nil, errors.WithMessagef(err, "failed to deserialize identity")
 	}
 
-	return &Verifier{id: id, pv: d.pv}, nil
+	return &Verifier{nymEID: append([]byte(nil), raw...), pv: d.pv}, nil
 }
 
 // matcher deserializes a raw audit info into a matcher bound to the issuer.
@@ -85,9 +84,9 @@ func (d *Deserializer) GetAuditInfoMatcher(_ context.Context, _ driver.Identity,
 	return d.matcher(auditInfo)
 }
 
-// MatchIdentity verifies that the audit info matches the identity: the nyms
-// commit to its enrollment id and revocation handle, and its presentation
-// binds them to a credential of the issuer.
+// MatchIdentity verifies that the audit info matches the identity: the
+// identity commits to its enrollment id, its nymRH to its revocation handle,
+// and its presentation binds them to a credential of the issuer.
 func (d *Deserializer) MatchIdentity(ctx context.Context, id driver.Identity, ai []byte) error {
 	m, err := d.matcher(ai)
 	if err != nil {

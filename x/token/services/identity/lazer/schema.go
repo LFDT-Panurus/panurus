@@ -43,6 +43,14 @@ const (
 	skiDomain   = "panurus/lazer/ski/v1"
 	// signerInfoKeyDomain separates the key that encrypts the signer infos at rest.
 	signerInfoKeyDomain = "panurus/lazer/signerinfo/v1"
+	// signerInfoADDomain separates the additional data of the encrypted opening of a signer info.
+	signerInfoADDomain = "panurus/lazer/signerinfo/ad/v2"
+	// auditKeyDomain separates the key that encrypts the opening of nymEID in the audit infos.
+	auditKeyDomain = "panurus/lazer/auditopening/v1"
+	// auditOpeningDomain separates the additional data of that encrypted opening.
+	auditOpeningDomain = "panurus/lazer/auditopening/ad/v1"
+	// eidProofDomain separates the proofs that nymEID commits to the enrollment id.
+	eidProofDomain = "panurus/lazer/eidproof/v1"
 )
 
 // signerInfoKeyLen is the length of the AES-256-GCM key of the signer infos.
@@ -105,6 +113,16 @@ func signatureContext(msg []byte) []byte {
 	return append([]byte(sigDomain), msg...)
 }
 
+// eidProofContext binds a proof that nym commits to the enrollment id attribute
+// attr to the issuer, the nym and the attribute.
+func eidProofContext(ipk, nym, attr []byte) []byte {
+	h := sha256.Sum256(ipk)
+	ctx := append([]byte(eidProofDomain), h[:]...)
+	ctx = append(ctx, nym...)
+
+	return append(ctx, attr...)
+}
+
 // secretKeyIdentifier is the identifier of the wallet secret in the keystore.
 func secretKeyIdentifier(ipk, usk []byte) []byte {
 	h := sha256.New()
@@ -121,4 +139,12 @@ func signerInfoKey(ipk, secret []byte) ([]byte, error) {
 	salt := sha256.Sum256(ipk)
 
 	return hkdf.Key(sha256.New, secret, salt[:], signerInfoKeyDomain, signerInfoKeyLen)
+}
+
+// auditKey derives the key that encrypts the opening of nymEID in the audit
+// infos of a wallet from the wallet secret, bound to the issuer.
+func auditKey(ipk, secret []byte) ([]byte, error) {
+	salt := sha256.Sum256(ipk)
+
+	return hkdf.Key(sha256.New, secret, salt[:], auditKeyDomain, signerInfoKeyLen)
 }

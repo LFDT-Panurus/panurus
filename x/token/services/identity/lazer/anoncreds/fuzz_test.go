@@ -31,6 +31,7 @@ type fuzzFixture struct {
 	state  []byte
 	com    *Commitment
 	sok    []byte
+	eqop   []byte
 }
 
 func newFuzzFixture(tb testing.TB) *fuzzFixture {
@@ -46,6 +47,9 @@ func newFuzzFixture(tb testing.TB) *fuzzFixture {
 		tb.Fatal(err)
 	}
 	if ff.sok, err = ff.com.SokProve(ff.ctx, ff.attrs[0]); err != nil {
+		tb.Fatal(err)
+	}
+	if ff.eqop, err = ff.com.EqOpeningProve(ff.ctx, ff.attrs[0]); err != nil {
 		tb.Fatal(err)
 	}
 	if ff.state, err = ff.user.Export(); err != nil {
@@ -106,6 +110,34 @@ func FuzzSokVerify(f *testing.F) {
 			t.Fatal("proof accepted for another context")
 		}
 		_ = OpeningVerify(nym, make([]byte, AttrLen), proof)
+	})
+}
+
+func FuzzEqOpeningVerify(f *testing.F) {
+	ff := newFuzzFixture(f)
+	for _, p := range variants(ff.eqop) {
+		f.Add(ff.com.Nym, ff.attrs[0], ff.ctx, p)
+	}
+	f.Add(ff.com.Nym, ff.attrs[1], ff.ctx, ff.eqop)
+	f.Add(ff.com.Nym, ff.attrs[0], ff.ctx, ff.sok)
+	f.Add(ff.com.Nym, ff.attrs[0], ff.ctx, craftSok(false))
+	f.Add(ff.com.Nym, ff.attrs[0], ff.ctx, craftSok(true))
+	f.Add(ff.com.Nym[:len(ff.com.Nym)-1], ff.attrs[0], ff.ctx, ff.eqop)
+	f.Add([]byte{}, []byte{}, []byte{}, []byte{})
+	g := newGuard(f, MaxLenSok())
+	gn := newGuard(f, MaxLenNym())
+	f.Fuzz(func(t *testing.T, nym, attr, ctx, proof []byte) {
+		nym, proof = gn.put(nym), g.put(proof)
+		if EqOpeningVerify(nym, attr, ctx, proof) != nil {
+			return
+		}
+		// a proof that verifies is bound to its context and to its attribute
+		if EqOpeningVerify(nym, attr, flip(ctx), proof) == nil {
+			t.Fatal("proof accepted for another context")
+		}
+		if EqOpeningVerify(nym, flip(attr), ctx, proof) == nil {
+			t.Fatal("proof accepted for another attribute")
+		}
 	})
 }
 

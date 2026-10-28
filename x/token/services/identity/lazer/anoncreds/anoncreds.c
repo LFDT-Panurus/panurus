@@ -1122,6 +1122,81 @@ cbdc_user_sokprove (uint8_t *proof, size_t *proofl, cbdc_commit_t com,
 }
 
 /*
+ * Statement of the equality-of-opening proof: [0 | Acom_r]*(x,r) + t = 0 with
+ * t = Acom_0*a - nym, that is, nym - Acom_0*a = Acom_r*r for a short r. The
+ * column of the attribute is zeroed, so the proof shows that nym commits to
+ * the public attribute a itself (a proof of knowledge of an opening of nym
+ * would also accept a + x for any short x).
+ */
+static void
+cbdc_eqopen_statement (polymat_t A, polyvec_t t, polyvec_t nym, polyvec_t a)
+{
+  unsigned int i;
+  polyvec_t a0;
+
+  cbdc_mat_copy (A, cbdc_Acom);
+  polyvec_alloc (t, cbdc_ring, CBDC_COM_ROWS);
+  polyvec_alloc (a0, cbdc_ring, 11);
+  polyvec_set_zero (a0);
+  cbdc_put (a0, 0, a);
+  polyvec_mul (t, A, a0);
+  polyvec_sub (t, t, nym, 0);
+  polyvec_redc (t, t);
+  polyvec_free (a0);
+  for (i = 0; i < CBDC_COM_ROWS; i++)
+    poly_set_zero (polymat_get_elem (A, i, 0));
+}
+
+/*
+ * Proof that com is a commitment to the public attribute attr, bound to ctx,
+ * revealing nothing about the opening. proof must hold cbdc_maxlen_sok()
+ * bytes. Returns 1 on success, 0 if com is not a commitment to attr (the
+ * prover is never run on a false statement) or the proof does not fit.
+ */
+int
+cbdc_user_eqopenprove (uint8_t *proof, size_t *proofl, cbdc_commit_t com,
+                       const uint8_t *ctx, size_t ctxlen,
+                       const uint8_t attr[32])
+{
+  lin_prover_state_t prover;
+  polyvec_t a, s, t;
+  polymat_t A;
+  int rv;
+
+  cbdc_pp_init ();
+
+  if (proof == NULL || proofl == NULL || attr == NULL
+      || !cbdc_commit_ready (com))
+    return 0;
+  *proofl = 0;
+
+  polyvec_alloc (a, cbdc_ring, 1);
+  cbdc_encattrs (a, attr, 1);
+  if (!cbdc_com_ok (com, polyvec_get_elem (a, 0)))
+    {
+      cbdc_vec_free_secret (a);
+      return 0;
+    }
+
+  cbdc_eqopen_statement (A, t, com->nym, a);
+  polyvec_alloc (s, cbdc_ring, 1 + 10);
+  polyvec_set_zero (s);
+  cbdc_put (s, 1, com->r);
+
+  lin_prover_init (prover, cbdc_popenpp, popen_param);
+  lin_prover_set_statement (prover, A, t);
+  lin_prover_set_witness (prover, s);
+  rv = cbdc_prove (prover, proof, cbdc_maxlen_sok (), proofl, ctx, ctxlen);
+  lin_prover_clear (prover);
+
+  cbdc_vec_free_secret (a);
+  cbdc_vec_free_secret (s);
+  polyvec_free (t);
+  polymat_free (A);
+  return rv == 1;
+}
+
+/*
  * attrs: 5*32 bytes, masked_attrs: cbdc_maxlen_masked_attrs() bytes. Returns
  * 1 on success, 0 if the state is not initialized, idx_rev is invalid, the
  * attributes do not satisfy the norm bound of P1 (cbdc_attrs_ok) or the
@@ -1781,6 +1856,52 @@ cbdc_verifier_sokverify (const uint8_t *nym, size_t nymlen,
 }
 
 /*
+ * Returns 1 if proof (cbdc_user_eqopenprove) proves, bound to ctx, that nym
+ * commits to the public attribute attr. The proof must be consumed exactly.
+ */
+int
+cbdc_verifier_eqopenverify (const uint8_t *nym, size_t nymlen,
+                            const uint8_t attr[32], const uint8_t *ctx,
+                            size_t ctxlen, const uint8_t *proof,
+                            size_t proofl)
+{
+  lin_verifier_state_t verifier;
+  polyvec_t nymv, a, t;
+  polymat_t A;
+  size_t len = 0;
+  int b = 0;
+
+  cbdc_pp_init ();
+
+  if (nymlen != CBDC_NYMLEN || attr == NULL || proof == NULL || proofl == 0
+      || proofl > cbdc_maxlen_sok ())
+    return 0;
+
+  polyvec_alloc (nymv, cbdc_ring, CBDC_COM_ROWS);
+  if (cbdc_dec_vec (nymv, nym, nymlen) != (long)CBDC_NYMLEN)
+    {
+      polyvec_free (nymv);
+      return 0;
+    }
+  polyvec_alloc (a, cbdc_ring, 1);
+  cbdc_encattrs (a, attr, 1);
+  cbdc_eqopen_statement (A, t, nymv, a);
+
+  lin_verifier_init (verifier, cbdc_popenpp, popen_param);
+  lin_verifier_set_statement (verifier, A, t);
+  b = lin_verifier_verify_ctx_bnd (verifier, proof, proofl, &len, ctx, ctxlen);
+  if (b == 1 && len != proofl)
+    b = 0;
+  lin_verifier_clear (verifier);
+
+  polymat_free (A);
+  polyvec_free (t);
+  polyvec_free (a);
+  polyvec_free (nymv);
+  return b == 1;
+}
+
+/*
  * Bit offset of the hints in an encoded proof of the proof system which (1:
  * P1, 2: P2, 3: SoK), 0 for another value. The hints follow the fixed-width
  * part of the proof (tB, h, tA1, c) and start the variable-length part. Only
@@ -1887,4 +2008,60 @@ cbdc_test_p2_witness_wiped (cbdc_user_state_t state)
         }
     }
   return 1;
+}
+
+/*
+ * For tests only: 1 if the statement of the equality-of-opening proof for
+ * the nym of com and the attribute attr has a zero attribute column, the
+ * other columns of Acom, and t = Acom_0*enc(attr) - nym; 0 otherwise.
+ */
+int
+cbdc_test_eqopen_statement_ok (cbdc_commit_t com, const uint8_t attr[32])
+{
+  polymat_t A;
+  polyvec_t a, a0, t, want;
+  unsigned int i, j;
+  int ok = 1;
+
+  cbdc_pp_init ();
+
+  if (attr == NULL || !cbdc_commit_ready (com))
+    return 0;
+  polyvec_alloc (a, cbdc_ring, 1);
+  cbdc_encattrs (a, attr, 1);
+  cbdc_eqopen_statement (A, t, com->nym, a);
+
+  for (i = 0; i < CBDC_COM_ROWS; i++)
+    for (j = 0; j < 11; j++)
+      {
+        poly_ptr e = polymat_get_elem (A, i, j);
+        poly_ptr f = polymat_get_elem (cbdc_Acom, i, j);
+        poly_t zero;
+
+        poly_alloc (zero, cbdc_ring);
+        poly_set_zero (zero);
+        poly_redc (e, e);
+        poly_redc (f, f);
+        if (poly_eq (e, j == 0 ? zero : f) != 1)
+          ok = 0;
+        poly_free (zero);
+      }
+
+  polyvec_alloc (a0, cbdc_ring, 11);
+  polyvec_set_zero (a0);
+  cbdc_put (a0, 0, a);
+  polyvec_alloc (want, cbdc_ring, CBDC_COM_ROWS);
+  polyvec_mul (want, cbdc_Acom, a0);
+  polyvec_sub (want, want, com->nym, 0);
+  polyvec_redc (want, want);
+  polyvec_redc (t, t);
+  if (polyvec_eq (want, t) != 1)
+    ok = 0;
+
+  polyvec_free (want);
+  polyvec_free (a0);
+  polyvec_free (t);
+  polymat_free (A);
+  cbdc_vec_free_secret (a);
+  return ok;
 }

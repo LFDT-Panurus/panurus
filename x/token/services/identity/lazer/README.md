@@ -11,23 +11,26 @@ Status: **experimental**, not wired into any driver (see "Not done").
 Credential attributes (32 bytes each): `usk` (hidden at issuance), `SHA-256(OU)`,
 `SHA-256(EID)`, `SHA-256(RH)`, `SHA-256(role)`. See `schema.go`.
 
-A pseudonym (the identity published in a token owner field) is
-`ASN.1{nymSK, nymEID, nymRH}`, three commitments `Acom*(attr,r)`, about 0.7 KB.
+A pseudonym (the identity published in a token owner field) is `nymEID`, the
+commitment `Acom*(H(EID),r)` to the enrollment id, 225 B, as in idemixnym.
 
-- `pres`: a P2 presentation (hides every attribute) proving a valid credential
-  exists and that the three nyms commit to attributes 0, 2 and 3. The verifier
-  hardcodes those indices. It is bound to the issuer by a context string.
-- Signature: `ASN.1{pres, sok}` where `sok` is a signature of knowledge of the
-  opening of `nymSK`, bound to the message. Signing uses `nymSK`, so an auditor
-  who holds the EID/RH openings cannot forge signatures.
-- Audit info: `{eid, rh, opening_eid, opening_rh, pres}`, canonical JSON. Matching
-  (`Deserializer.MatchIdentity`/`GetAuditInfoMatcher`) recomputes the nyms and checks
-  `pres` under the issuer key, so an identity made up from someone's EID/RH without a
-  credential does not match. `Identity(ctx, auditInfo)` reuses the openings, so `nymEID`
-  and `nymRH` stay fixed across pseudonyms (as in idemix).
-- Signer info (identity store): `{version, enc_opening_sk, pres}`. The opening of `nymSK`
-  reveals `usk` together with `nymSK`, so it is AES-256-GCM encrypted under a key derived
-  from the wallet secret, with the identity as additional data.
+- Signature: DER `{nymSK, nymRH, pres, sok}`. `pres` is a P2 presentation (hides every
+  attribute) proving a valid credential exists and that `nymSK`, the identity and
+  `nymRH` commit to attributes 0, 2 and 3; the verifier hardcodes those indices and
+  takes `nymEID` from the identity. `sok` is a signature of knowledge of the opening
+  of `nymSK`, bound to the message.
+- The opening of `nymEID` is never revealed: with it, anyone holding a credential with
+  the same EID (the issuer can make one) could sign under the identity.
+- Audit info: `{eid, rh, nym_eid, nym_sk, nym_rh, opening_rh, eid_proof, enc_opening_eid, pres}`,
+  canonical JSON. `eid_proof` proves that `nym_eid` commits to the EID without revealing
+  the opening (`anoncreds.EqOpeningVerify`). Matching checks it, the RH opening and `pres`
+  under the issuer key, so an identity made up from someone's EID/RH without a credential
+  does not match. `enc_opening_eid` is the opening encrypted for the wallet:
+  `Identity(ctx, auditInfo)` reuses it, so the new pseudonym is the same `nymEID` (as in
+  idemixnym), with a fresh `nymSK` and presentation.
+- Signer info (identity store): `{version: 2, enc_opening_sk, nym_rh, pres}`. The opening of
+  `nymSK` reveals `usk` together with `nymSK`, so it is AES-256-GCM encrypted under a key
+  derived from the wallet secret, bound to the identity, `nym_rh` and `pres`.
 - Wallet secret `usk || user state` is moved to the `idriver.Keystore` by the
   KMP and removed from the stored configuration (only the SKI stays).
 - Concurrency: a presentation mutates its C prover state, so each key manager
@@ -84,7 +87,7 @@ root Panurus build is unaffected.
    signatures or linking pseudonyms. Run the lattice estimator and, if needed,
    raise `CBDC_COM_ROWS` and regenerate the `popen`/`p2` parameters. Do not claim
    audit soundness at production strength before that.
-2. Proof sizes: about 52 KB per signature is far larger than idemix.
+2. Proof sizes: about 53 KB per signature is far larger than idemix.
 
 ## Not done
 
