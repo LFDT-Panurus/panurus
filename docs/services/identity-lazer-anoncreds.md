@@ -653,7 +653,7 @@ homogeneous:
 
 $$\mathbf{A}_r\mathbf{r}+\mathbf{A}_\tau\boldsymbol\tau-\mathbf{s}_1-\mathbf{B}\mathbf{s}_2+\mathbf{A}_m^{\mathrm{priv}}\mathbf{m}_{\mathrm{priv}}=\mathbf{0}.$$
 
-All constraints are upper bounds ([§2.5](#25-zero-knowledge-proofs-from-lattices-lnp-lazer)), so
+All constraints are upper bounds ([§2.5](#25-zero-knowledge-proofs-from-lattices-lnp--lazer)), so
 $(\mathbf{r},\boldsymbol\tau,\mathbf{s}_1,\mathbf{s}_2,\mathbf{m})=\mathbf{0}$ is a valid witness. The commitment
 rows then say only $\mathbf{A}'_{\mathrm{com}}\boldsymbol\rho_j=\mathsf{nym}_j$, which holds for any
 $\mathsf{nym}_j=\mathsf{Com}(0;\boldsymbol\rho_j)$. Anyone who knows only the issuer **public** key can therefore:
