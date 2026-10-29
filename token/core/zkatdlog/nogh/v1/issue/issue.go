@@ -51,8 +51,8 @@ func NewVerifier(tokens []*math.G1, pp *v1.PublicParams, proofType rp.ProofType)
 	}
 
 	if proofType == rp.RangeProofType {
-		return NewBulletProofVerifier(tokens, pp), nil
+		return NewBulletProofVerifier(tokens, pp)
 	}
 
-	return NewCSPVerifier(tokens, pp), nil
+	return NewCSPVerifier(tokens, pp)
 }

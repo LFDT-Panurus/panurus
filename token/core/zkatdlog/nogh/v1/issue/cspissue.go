@@ -140,9 +140,13 @@ type CSPVerifier struct {
 }
 
 // NewCSPVerifier instantiates a CSPVerifier for the given token commitments and public parameters.
-func NewCSPVerifier(tokens []*math.G1, pp *v1.PublicParams) *CSPVerifier {
-	v := &CSPVerifier{curveID: pp.Curve}
-	v.SameType = NewSameTypeVerifier(tokens, pp.PedersenGenerators, math.Curves[pp.Curve])
+// It returns an error if a commitment does not belong to the curve in pp.
+func NewCSPVerifier(tokens []*math.G1, pp *v1.PublicParams) (*CSPVerifier, error) {
+	sameType, err := NewSameTypeVerifier(tokens, pp.PedersenGenerators, math.Curves[pp.Curve])
+	if err != nil {
+		return nil, err
+	}
+	v := &CSPVerifier{curveID: pp.Curve, SameType: sameType}
 	v.RangeCorrectness = csp.NewRangeCorrectnessVerifier(
 		pp.PedersenGenerators[1:],
 		pp.CSPRangeProofParams.LeftGenerators,
@@ -152,7 +156,7 @@ func NewCSPVerifier(tokens []*math.G1, pp *v1.PublicParams) *CSPVerifier {
 		pp.ExecutorProvider,
 	).WithTranscriptHeader(pp.CSPRangeProofParams.RPTranscriptHeader)
 
-	return v
+	return v, nil
 }
 
 // Verify checks the validity of the zero-knowledge proof for an issue action.

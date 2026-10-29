@@ -328,8 +328,18 @@ type TypeAndSumVerifier struct {
 }
 
 // NewTypeAndSumVerifier returns a new TypeAndSumVerifier instance.
-func NewTypeAndSumVerifier(pp []*math.G1, inputs []*math.G1, outputs []*math.G1, c *math.Curve) *TypeAndSumVerifier {
-	return &TypeAndSumVerifier{Inputs: inputs, Outputs: outputs, PedParams: pp, Curve: c}
+//
+// The input and output commitments are curve-checked here rather than in Verify, so the
+// verifier cannot exist holding one that would panic the G1 arithmetic (issue #2554).
+func NewTypeAndSumVerifier(pp []*math.G1, inputs []*math.G1, outputs []*math.G1, c *math.Curve) (*TypeAndSumVerifier, error) {
+	if err := math2.CheckEachElement(inputs, c.ID()); err != nil {
+		return nil, errors.Join(err, ErrInvalidInputCommitment, ErrInvalidTransferProof)
+	}
+	if err := math2.CheckEachElement(outputs, c.ID()); err != nil {
+		return nil, errors.Join(err, ErrInvalidOutputCommitment, ErrInvalidTransferProof)
+	}
+
+	return &TypeAndSumVerifier{Inputs: inputs, Outputs: outputs, PedParams: pp, Curve: c}, nil
 }
 
 // Verify checks the validity of a TypeAndSumProof.

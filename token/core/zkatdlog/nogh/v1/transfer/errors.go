@@ -59,6 +59,10 @@ var (
 	ErrSumAndTypeChallengeMismatch = errors.New("invalid sum and type proof: challenge mismatch")
 	// ErrInvalidCommitmentToType is returned when a commitment to type is invalid
 	ErrInvalidCommitmentToType = errors.New("CommitmentToType is invalid")
+	// ErrInvalidInputCommitment is returned when an input commitment is nil, at infinity, or on the wrong curve
+	ErrInvalidInputCommitment = errors.New("invalid input token commitment in transfer action")
+	// ErrInvalidOutputCommitment is ErrInvalidInputCommitment's counterpart for outputs
+	ErrInvalidOutputCommitment = errors.New("invalid output token commitment in transfer action")
 	// ErrInvalidInputBlindingFactors is returned when input blinding factors are invalid
 	ErrInvalidInputBlindingFactors = errors.New("InputBlindingFactors are invalid")
 	// ErrInvalidInputValues is returned when input values are invalid

@@ -44,7 +44,8 @@ func NewTypeAndSumEnv(t *testing.T) *TypeAndSumEnv {
 	pp = preparePedersenParameters(t, c)
 	iow, in, out, inBF, outBF, com = prepareIOCProver(t, pp, c)
 	prover = transfer.NewTypeAndSumProver(iow, pp, in, out, com, c)
-	verifier = transfer.NewTypeAndSumVerifier(pp, in, out, c)
+	verifier, err := transfer.NewTypeAndSumVerifier(pp, in, out, c)
+	require.NoError(t, err)
 
 	return &TypeAndSumEnv{
 		c:        c,
@@ -344,7 +345,8 @@ func TestTypeAndSumVerify_ShortInputBlindingFactors(t *testing.T) {
 	}
 	out[0] = c.GenG1.Copy()
 
-	verifier := transfer.NewTypeAndSumVerifier(pp, in, out, c)
+	verifier, err := transfer.NewTypeAndSumVerifier(pp, in, out, c)
+	require.NoError(t, err)
 
 	// Proof has only 1 InputBlindingFactor; verifier expects 2.
 	require.NotPanics(t, func() {
@@ -376,7 +378,8 @@ func TestTypeAndSumVerify_ShortInputValues(t *testing.T) {
 	}
 	out[0] = c.GenG1.Copy()
 
-	verifier := transfer.NewTypeAndSumVerifier(pp, in, out, c)
+	verifier, err := transfer.NewTypeAndSumVerifier(pp, in, out, c)
+	require.NoError(t, err)
 
 	rand, err := c.Rand()
 	require.NoError(t, err)
