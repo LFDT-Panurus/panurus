@@ -496,6 +496,12 @@ func (db *IdentityStore) GetExistingSignerInfo(ctx context.Context, ids ...tdriv
 	if err != nil {
 		return nil, err
 	}
+	// Must precede the cache loop: the iterator ends a truncated scan with a nil
+	// error, which would cache a real signer as absent (#2562).
+	if err := rows.Err(); err != nil {
+		return nil, errors.Wrap(err, "error reading existing signer info")
+	}
+
 	for _, idHash := range idHashes {
 		db.signerInfoCache.Add(idHash, found.Contains(idHash))
 	}
