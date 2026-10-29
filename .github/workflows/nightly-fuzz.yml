@@ -270,6 +270,10 @@ jobs:
             dir: ./x/token/core/zkatsnark
             pkg: ./nogh/v1/validator
             func: FuzzTransferActionValidateNoPanic
+          - name: zkatsnark-action-limits
+            dir: ./x/token/core/zkatsnark
+            pkg: ./nogh/v1/validator
+            func: FuzzActionResourceLimits
           - name: zkatsnark-edwards-signature
             dir: ./x/token/core/zkatsnark
             pkg: ./nogh/v1/crypto/edwards
