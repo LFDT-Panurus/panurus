@@ -19,12 +19,15 @@ import (
 	"github.com/LFDT-Panurus/panurus/token/driver"
 	"github.com/LFDT-Panurus/panurus/token/services/identity"
 	"github.com/LFDT-Panurus/panurus/token/services/identity/x509"
+	"github.com/LFDT-Panurus/panurus/token/services/logging"
 	"github.com/LFDT-Panurus/panurus/token/services/storage/db/kvs"
 	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/pp"
 	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/setup"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/common/utils/collections"
 )
+
+var logger = logging.MustGetLogger()
 
 type ZkatsnarkPublicParamsGenerator struct {
 	DriverVersion driver.TokenDriverVersion
@@ -57,29 +60,17 @@ func (d *ZkatsnarkPublicParamsGenerator) Generate(tms *topology.TMS, wallets *to
 		curveID = math3.BLS12_381_BBS_GURVY
 	}
 
-	// For zkatsnark, we get the default public parameters and then add issuers and auditors.
-	params := pp.DefaultPublicParams()
-	params.SchemeVersion = d.DriverVersion
-	params.IdemixIssuerPublicKeys = []*pp.IdemixIssuerPublicKey{
-		{
-			PublicKey: ipkBytes,
-			Curve:     curveID,
-		},
+	// second argument is the max bit length of token values
+	baseArg, ok := args[1].(string)
+	if !ok {
+		return nil, errors.Errorf("invalid argument type, expected string, got %T", args[1])
 	}
-	bits := uint64(64)
-	if len(args) > 1 {
-		baseArg, ok := args[1].(string)
-		if !ok {
-			return nil, errors.Errorf("invalid argument type, expected string, got %T", args[1])
-		}
-		bits, err = strconv.ParseUint(baseArg, 10, 32)
-		if err != nil {
-			return nil, err
-		}
+	bits, err := strconv.ParseUint(baseArg, 10, 32)
+	if err != nil {
+		return nil, err
 	}
-	params.MaxBits = int(bits)
-	params.PrecisionValue = bits
 
+	var auditors, issuers []driver.Identity
 	keyStore := x509.NewKeyStore(kvs.NewTrackedMemory())
 	if len(tms.Auditors) != 0 {
 		if len(wallets.Auditors) == 0 {
@@ -100,7 +91,7 @@ func (d *ZkatsnarkPublicParamsGenerator) Generate(tms *topology.TMS, wallets *to
 				if err != nil {
 					return nil, errors.WithMessagef(err, "failed to create x509 identity for auditor [%v]", auditor)
 				}
-				params.AuditorIdentities = append(params.AuditorIdentities, wrap)
+				auditors = append(auditors, wrap)
 			}
 		}
 	}
@@ -125,19 +116,29 @@ func (d *ZkatsnarkPublicParamsGenerator) Generate(tms *topology.TMS, wallets *to
 				if err != nil {
 					return nil, errors.WithMessagef(err, "failed to create x509 identity for issuer [%v]", issuer)
 				}
-				params.IssuerIdentities = append(params.IssuerIdentities, wrap)
+				issuers = append(issuers, wrap)
 			}
 		}
 	}
 
-	// validate before serialization
-	if err := params.Validate(); err != nil {
-		return nil, errors.Wrapf(err, "failed to validate public parameters")
+	// Build, validate and set up the public parameters (circuit keys included).
+	params, err := setup.GeneratePublicParams(setup.GenerateOptions{
+		Version: d.DriverVersion,
+		MaxBits: int(bits),
+		IdemixIssuerPublicKeys: []*pp.IdemixIssuerPublicKey{
+			{
+				PublicKey: ipkBytes,
+				Curve:     curveID,
+			},
+		},
+		Issuers:  issuers,
+		Auditors: auditors,
+	})
+	if err != nil {
+		return nil, errors.Wrapf(err, "failed to generate public parameters")
 	}
-
-	// Setup groth16 circuits and generate proving and verifying keys
-	if _, err := setup.SetupAll(params); err != nil {
-		return nil, errors.Wrapf(err, "failed to setup groth16 circuits")
+	if err := params.ValidateForDeployment(); err != nil {
+		logger.Warnf("zkatsnark public parameters: %s", err)
 	}
 
 	// finalization
