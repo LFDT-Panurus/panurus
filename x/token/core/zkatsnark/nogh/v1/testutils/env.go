@@ -727,7 +727,6 @@ func newTransferService(configuration *SetupConfiguration, deserializer driver.D
 		deserializer,
 		noop.NewTracerProvider(),
 		nil, // TokensService is not required by TransferService.Transfer/VerifyTransfer
-		nil, // tokenDeserializer: placeholder, unused by TransferService
 		configuration.Orchestrator,
 		v,
 	), nil
