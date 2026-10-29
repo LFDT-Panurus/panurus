@@ -54,6 +54,10 @@ same atomic claim: at any instant, a pending row is claimed by at most one repli
 `recovery_claimed_by` and `recovery_claim_expires_at` columns of each store's own requests
 table, so an audit claim never hides a row from the owner sweep or the other way round.
 
+Every claim statement is a write and runs on the write pool, including
+`ClaimPendingTransactions`. Postgres gives both pools the same handle today, so this only
+bites once the read pool points at a replica, which rejects the claim and stalls the sweep.
+
 The claim does not by itself reduce how many times a still-pending row gets processed: a row
 that is not yet finalized is released unchanged at the end of the sweep that claimed it, so the
 next tick claims and processes it again, on this replica or another. What the atomic claim
