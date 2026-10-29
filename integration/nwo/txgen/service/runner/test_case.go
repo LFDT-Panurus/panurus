@@ -13,6 +13,7 @@ import (
 	"github.com/LFDT-Panurus/panurus/integration/nwo/txgen/model/api"
 	"github.com/LFDT-Panurus/panurus/integration/nwo/txgen/service/logging"
 	"github.com/LFDT-Panurus/panurus/integration/nwo/txgen/service/user"
+	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 
 	"github.com/sourcegraph/conc/pool"
 )
@@ -45,9 +46,15 @@ type TestCaseRunner struct {
 	intermediary *user.IntermediaryClient
 }
 
+// Run executes a single test case. A payer or payee missing from customers fails the
+// test case instead of panicking.
 func (r *TestCaseRunner) Run(scenario *model.TestCase, customers map[string]*customerState, settings *TestCaseSettings) *TestCaseResult {
 	r.logger.Infof("Starting case %s", scenario.Name)
-	payer := customers[scenario.Payer]
+
+	payer, ok := customers[scenario.Payer]
+	if !ok {
+		return r.failed(scenario, settings, errors.Errorf("no state for payer [%s]", scenario.Payer))
+	}
 	funds := scenario.Issue.Total
 
 	if settings.UseExistingFunds {
@@ -114,10 +121,9 @@ func (r *TestCaseRunner) Run(scenario *model.TestCase, customers map[string]*cus
 	r.logger.Infof("%d transfer amounts: %v", len(transferAmnts), transferAmnts)
 
 	if scenario.Transfer.Execute {
-		payees := make([]*customerState, 0, len(scenario.Payees))
-		for _, p := range scenario.Payees {
-			// TODO introduce verification check
-			payees = append(payees, customers[p])
+		payees, err := resolveCustomers(customers, scenario.Payees)
+		if err != nil {
+			return r.failed(scenario, settings, err)
 		}
 
 		execErr := r.doPayments(payer, payees, transferAmnts, settings)
@@ -142,6 +148,41 @@ func (r *TestCaseRunner) Run(scenario *model.TestCase, customers map[string]*cus
 		Success:   true,
 		Duration:  duration,
 		Iteration: settings.Iteration,
+	}
+}
+
+// resolveCustomers maps aliases to their states, failing on an unknown or empty set.
+func resolveCustomers(customers map[string]*customerState, aliases []model.UserAlias) ([]*customerState, error) {
+	if len(aliases) == 0 {
+		return nil, errors.New("no payee defined")
+	}
+
+	states := make([]*customerState, 0, len(aliases))
+	var missing []model.UserAlias
+	for _, alias := range aliases {
+		state, ok := customers[alias]
+		if !ok {
+			missing = append(missing, alias)
+
+			continue
+		}
+		states = append(states, state)
+	}
+	if len(missing) > 0 {
+		return nil, errors.Errorf("no state for payees %v", missing)
+	}
+
+	return states, nil
+}
+
+func (r *TestCaseRunner) failed(scenario *model.TestCase, settings *TestCaseSettings, err error) *TestCaseResult {
+	r.logger.Errorf("Test case %s, iter %d cannot run: %v", scenario.Name, settings.Iteration, err)
+
+	return &TestCaseResult{
+		Name:      scenario.Name,
+		Success:   false,
+		Iteration: settings.Iteration,
+		Error:     err,
 	}
 }
 

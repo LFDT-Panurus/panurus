@@ -19,6 +19,7 @@ This page contains link to the development guidelines and more.
 - [Update fabric-smart-client](./update-fsc.md): Runbook for bumping the `fabric-smart-client` dependency to the latest `main`.
 - [Tools: tokengen](./tokengen.md)
 - [Tools: tokendiag](./tokendiag.md)
+- [Tools: txgen (load generator)](./txgen.md)
 - [Makefile Guide](./makefile.md)
 - [Documentation Guide](./documentation.md): How to preview and build this documentation site with MkDocs (`make docs-serve`, `make docs-build`).
 
