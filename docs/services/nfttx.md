@@ -41,5 +41,29 @@ Unlike fungible tokens, each NFT must be unique. The NFTTX Service often utilize
 ### Rich Metadata
 NFTs often carry extensive metadata (e.g., links to digital artwork, serial numbers, or physical asset descriptions). The NFTTX Service provides standardized ways to include this metadata in the token request's metadata fields, ensuring it is properly signed and (if required by the driver) obfuscated on the ledger.
 
+### Reading an NFT's State
+
+An NFT keeps its state in the token's type field, as base64. `OwnerWallet.QueryByKey` finds
+an NFT in the wallet by a field of its state and decodes it into a value you pass in:
+
+```go
+house := &House{}
+if err := wallet.QueryByKey(ctx, house, "LinearID", houseID); err != nil {
+    return errors.Wrapf(err, "failed loading house with id %s", houseID)
+}
+```
+
+**Always check the error.** `QueryByKey` returns one when:
+
+- nothing in the wallet matches the key and value — `ErrNoResults`, which callers can test
+  for with `errors.Is`;
+- the type of the matching NFT is not valid base64;
+- the type holds no state;
+- the state does not fit the passed value.
+
+Only the first of these means "not found". The others report a corrupt or unexpected state and
+are never reduced to `ErrNoResults`. On any error the passed value is useless: it is left empty
+or half-filled. On success it has really been written to.
+
 ### NFT Wallets
 The service integrates with the **Identity Service** to manage specialized NFT wallets. These wallets are optimized for tracking ownership of distinct assets rather than aggregate balances, making it easy for applications to display a user's collection of NFTs.
