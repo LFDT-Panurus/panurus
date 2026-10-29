@@ -9,15 +9,18 @@ package ttx
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"time"
 
 	"github.com/LFDT-Panurus/panurus/token"
+	"github.com/LFDT-Panurus/panurus/token/driver"
 	"github.com/LFDT-Panurus/panurus/token/services/identity/boolpolicy"
 	"github.com/LFDT-Panurus/panurus/token/services/identity/multisig"
 	"github.com/LFDT-Panurus/panurus/token/services/ttx/dep"
 	"github.com/LFDT-Panurus/panurus/token/services/utils"
 	jsession "github.com/LFDT-Panurus/panurus/token/services/utils/json/session"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
+	"github.com/hyperledger-labs/fabric-smart-client/platform/common/utils/collections"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/view"
 )
 
@@ -27,6 +30,9 @@ import (
 // Usually, EndorseView is preceded by an invocation of `tx.ReceiveTransaction(context)` or alike.
 type EndorseView struct {
 	tx *Transaction
+	// set when signature collection consumed the distribution message; receiveTransaction
+	// takes it from here rather than reading the session again
+	pendingMessage *jsession.Envelope
 }
 
 // NewEndorseView returns an instance of the EndorseView embedding the passed transaction.
@@ -92,7 +98,7 @@ func (s *EndorseView) handleSignatureRequests(context view.Context) error {
 		return errors.Wrapf(err, "failed collecting requests of signature")
 	}
 
-	logger.DebugfContext(context.Context(), "expect [%d] requests to sign for tx id [%s]", len(requiredSigners), s.tx.ID())
+	logger.DebugfContext(context.Context(), "expect up to [%d] requests to sign for tx id [%s]", len(requiredSigners), s.tx.ID())
 
 	typedSession := jsession.NewTypedSessionFromContext(context)
 
@@ -101,57 +107,76 @@ func (s *EndorseView) handleSignatureRequests(context view.Context) error {
 		return errors.Wrap(err, "failed to marshal token request to sign")
 	}
 
-	for i, signerIdentity := range requiredSigners {
-		if err := s.handleSignatureRequestFor(context, typedSession, i, signerIdentity, len(requiredSigners), tokenRequestToSign); err != nil {
+	// an upper bound, not a count: the initiator may send fewer (WithPolicySigners). Counted
+	// per signer, since a cross-phase signer is asked twice.
+	pending := make(map[string]int, len(requiredSigners))
+	for _, signerIdentity := range requiredSigners {
+		pending[signerIdentity.UniqueID()]++
+	}
+	for i := range requiredSigners {
+		more, err := s.handleSignatureRequestFor(context, typedSession, i, pending, tokenRequestToSign)
+		if err != nil {
 			return err
+		}
+		if !more {
+			break
 		}
 	}
 
 	return nil
 }
 
-// handleSignatureRequestFor handles the i-th expected signer's request: it receives (or reuses,
-// for the first request already carried by s.tx.FromSignatureRequest) the signature request,
-// checks it names the expected signer, signs tokenRequestToSign, and sends the signature back.
-func (s *EndorseView) handleSignatureRequestFor(context view.Context, typedSession *jsession.TypedSession, i int, signerIdentity view.Identity, numRequiredSigners int, tokenRequestToSign []byte) error {
+// handleSignatureRequestFor answers one signature request, reporting whether more may follow.
+func (s *EndorseView) handleSignatureRequestFor(context view.Context, typedSession *jsession.TypedSession, i int, pending map[string]int, tokenRequestToSign []byte) (bool, error) {
 	signatureRequest := &SignatureRequest{}
 
 	if i == 0 && s.tx.FromSignatureRequest != nil {
 		signatureRequest = s.tx.FromSignatureRequest
 	} else {
 		logger.DebugfContext(context.Context(), "receiving signature request...")
-		if err := typedSession.ReceiveTypedWithTimeout(TypeSignatureRequest, signatureRequest, time.Minute); err != nil {
-			return errors.Wrap(err, "failed reading signature request")
+		env, err := typedSession.ReceiveAnyTyped(time.Minute)
+		if err != nil {
+			return false, errors.Wrap(err, "failed reading signature request")
+		}
+		// the initiator moved on to distribution: fewer requests than expected, not a timeout
+		if env.Type != TypeSignatureRequest {
+			logger.DebugfContext(context.Context(), "signature collection ended early with a [%s] message, no further requests expected", env.Type)
+			s.pendingMessage = env
+
+			return false, nil
+		}
+		if err := json.Unmarshal(env.Body, signatureRequest); err != nil {
+			return false, errors.Wrap(err, "failed unmarshalling signature request")
 		}
 	}
 
-	// check for the expected identity
-	if !signatureRequest.Signer.Equal(signerIdentity) {
-		return errors.Wrapf(
+	signerIdentity := signatureRequest.Signer
+	if pending[signerIdentity.UniqueID()] <= 0 {
+		return false, errors.Wrapf(
 			ErrSignerIdentityMismatch,
-			"signature request's signer does not match the expected signer, [%s] != [%s], required signatures [%d]",
-			signatureRequest.Signer,
+			"signature request's signer [%s] is not an outstanding required signer, [%d] still pending",
 			signerIdentity,
-			numRequiredSigners,
+			len(pending),
 		)
 	}
+	pending[signerIdentity.UniqueID()]--
 
 	// sign the token request with the expected identity
 	sigService := s.tx.TokenService().SigService()
 	signer, err := sigService.GetSigner(context.Context(), signerIdentity)
 	if err != nil {
-		return errors.Wrapf(err, "cannot find signer for [%s]", signerIdentity)
+		return false, errors.Wrapf(err, "cannot find signer for [%s]", signerIdentity)
 	}
 	sigma, err := signer.Sign(tokenRequestToSign)
 	if err != nil {
-		return errors.Wrapf(err, "failed signing request")
+		return false, errors.Wrapf(err, "failed signing request")
 	}
 	logger.DebugfContext(context.Context(), "Send back signature [%s][%s]", signerIdentity, utils.Hashable(sigma))
 	if err := typedSession.SendTyped(context.Context(), &SignaturePayload{Signature: sigma}, TypeSignature); err != nil {
-		return errors.Wrapf(err, "failed sending signature back")
+		return false, errors.Wrapf(err, "failed sending signature back")
 	}
 
-	return nil
+	return true, nil
 }
 
 // receiveTransaction is used to intercept the last round of transaction distribution from CollectEndorsementsView.
@@ -159,7 +184,7 @@ func (s *EndorseView) handleSignatureRequestFor(context view.Context, typedSessi
 // CollectEndorsementsView distributes the token request with the additional signatures.
 func (s *EndorseView) receiveTransaction(context view.Context) ([]byte, error) {
 	logger.DebugfContext(context.Context(), "receive transaction...")
-	tx, err := ReceiveTransaction(context)
+	tx, err := s.nextTransaction(context)
 	if err != nil {
 		return nil, errors.Wrapf(err, "failed receiving transaction")
 	}
@@ -169,6 +194,32 @@ func (s *EndorseView) receiveTransaction(context view.Context) ([]byte, error) {
 	}
 
 	return tx.FromRaw, nil
+}
+
+// nextTransaction returns the distributed transaction, reusing a pendingMessage if set.
+func (s *EndorseView) nextTransaction(context view.Context) (*Transaction, error) {
+	env := s.pendingMessage
+	if env == nil {
+		return ReceiveTransaction(context)
+	}
+	s.pendingMessage = nil
+
+	if env.Type != TypeTransaction && env.Type != TypeTransactionResponse {
+		return nil, errors.Join(errors.Errorf("unexpected message type [%s]", env.Type), jsession.ErrTypeMismatch)
+	}
+	var payload TransactionPayload
+	if err := json.Unmarshal(env.Body, &payload); err != nil {
+		return nil, errors.Wrap(err, "failed unmarshalling transaction payload")
+	}
+	tx, err := NewTransactionFromBytes(context, payload.Raw)
+	if err != nil {
+		return nil, err
+	}
+	if err := tx.IsValid(context.Context()); err != nil {
+		return nil, errors.WithMessagef(err, "invalid transaction %s", tx.ID())
+	}
+
+	return tx, nil
 }
 
 func validateEndorsedTransaction(expected, received *Transaction) error {
@@ -250,17 +301,11 @@ func extractRequiredSigners(ctx context.Context, sigService dep.SignatureService
 	issuerSigners := request.IssueSigners()
 	transferSigners := request.TransferSigners()
 	res := make([]token.Identity, 0, len(issuerSigners)+len(transferSigners))
-	for _, signer := range issuerSigners {
-		if appendUnwrapped(&res, signer) {
-			continue
-		}
-		res = append(res, signer)
+	if err := appendSignerGroup(ctx, &res, issuerSigners); err != nil {
+		return nil, errors.Wrapf(err, "failed collecting issue signers")
 	}
-	for _, signer := range transferSigners {
-		if appendUnwrapped(&res, signer) {
-			continue
-		}
-		res = append(res, signer)
+	if err := appendSignerGroup(ctx, &res, transferSigners); err != nil {
+		return nil, errors.Wrapf(err, "failed collecting transfer signers")
 	}
 	subset := make([]token.Identity, 0, len(res))
 	for _, res := range res {
@@ -276,21 +321,45 @@ func extractRequiredSigners(ctx context.Context, sigService dep.SignatureService
 	return subset, nil
 }
 
-// appendUnwrapped appends the component identities of a composite identity (multisig or policy)
-// to res and returns true; returns false when the identity is not a composite type.
-func appendUnwrapped(res *[]token.Identity, signer token.Identity) bool {
-	if multiSigners, _, _ := multisig.Unwrap(signer); len(multiSigners) != 0 {
-		*res = append(*res, multiSigners...)
+// appendSignerGroup appends one group's signers, deduplicated within the group to match
+// requestSignatures' remoteSeen. Each composite occurrence is its own group; ctx bounds depth.
+func appendSignerGroup(ctx context.Context, res *[]token.Identity, signers []token.Identity) error {
+	seen := collections.NewSet[string]()
+	for _, signer := range signers {
+		components, ok := unwrapComposite(signer)
+		if !ok {
+			if seen.Contains(signer.UniqueID()) {
+				continue
+			}
+			seen.Add(signer.UniqueID())
+			*res = append(*res, signer)
 
-		return true
+			continue
+		}
+		inner, err := driver.EnterCompositeIdentity(ctx)
+		if err != nil {
+			return errors.Wrapf(err, "cannot expand composite signer [%s]", signer)
+		}
+		if err := appendSignerGroup(inner, res, components); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func unwrapComposite(signer token.Identity) ([]token.Identity, bool) {
+	if multiSigners, _, _ := multisig.Unwrap(signer); len(multiSigners) != 0 {
+		return multiSigners, true
 	}
 	if pi, ok, _ := boolpolicy.Unwrap(signer); ok && pi != nil {
-		for _, b := range pi.Identities {
-			*res = append(*res, token.Identity(b))
+		components := make([]token.Identity, len(pi.Identities))
+		for i, b := range pi.Identities {
+			components[i] = b
 		}
 
-		return true
+		return components, true
 	}
 
-	return false
+	return nil, false
 }

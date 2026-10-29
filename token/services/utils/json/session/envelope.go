@@ -183,6 +183,25 @@ func ReceiveTypedWithTimeoutAndMetrics(s *session.S, expectedType string, dst an
 	return json.Unmarshal(env.Body, dst)
 }
 
+// ReceiveAnyTypedWithMetrics receives an envelope of any type, validating the version but not
+// the type, and records metrics. The caller dispatches on the returned envelope's Type.
+func ReceiveAnyTypedWithMetrics(s *session.S, d time.Duration, m *EnvelopeMetrics) (*Envelope, error) {
+	raw, err := s.ReceiveRawWithTimeout(d)
+	if err != nil {
+		return nil, err
+	}
+
+	env, err := UnwrapEnvelope(raw, "")
+	if err != nil {
+		m.observeError(classifyError(err))
+
+		return nil, err
+	}
+	m.observeReceive(env)
+
+	return env, nil
+}
+
 // TypedSession wraps a JSON session together with the envelope metrics resolved
 // from the view context, so callers send and receive versioned messages through
 // methods (and get metrics recorded) instead of static helpers.
@@ -246,6 +265,12 @@ func (t *TypedSession) ReceiveTyped(expectedType string, dst any) error {
 // ReceiveTypedWithTimeout receives a versioned envelope into dst with an explicit timeout, recording metrics.
 func (t *TypedSession) ReceiveTypedWithTimeout(expectedType string, dst any, d time.Duration) error {
 	return ReceiveTypedWithTimeoutAndMetrics(t.S, expectedType, dst, d, t.metrics)
+}
+
+// ReceiveAnyTyped receives an envelope of any type, recording metrics. The caller dispatches
+// on the returned envelope's Type.
+func (t *TypedSession) ReceiveAnyTyped(d time.Duration) (*Envelope, error) {
+	return ReceiveAnyTypedWithMetrics(t.S, d, t.metrics)
 }
 
 func classifyError(err error) string {

@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/LFDT-Panurus/panurus/token"
 	"github.com/LFDT-Panurus/panurus/token/driver"
@@ -37,7 +38,10 @@ type TestEndorseViewContextInput struct {
 	SigRequestOnly bool
 	// IsMeErr makes the token IdentityProvider's IsMe return this error, simulating a
 	// storage failure while resolving ownership of a required signer (issue #2066).
-	IsMeErr error
+	IsMeErr             error
+	ExtraTransferSender token.Identity
+	// SignatureRequests, when set, queues one request per listed signer instead of one.
+	SignatureRequests []token.Identity
 }
 
 type TestEndorseViewContext struct {
@@ -59,7 +63,7 @@ func newTestEndorseViewContext(t *testing.T, input *TestEndorseViewContextInput)
 	}
 
 	session := &mock2.Session{}
-	ch := make(chan *view.Message, 2)
+	ch := make(chan *view.Message, 4)
 	session.ReceiveReturns(ch)
 
 	tms := &mock2.TokenManagementServiceWithExtensions{}
@@ -107,6 +111,16 @@ func newTestEndorseViewContext(t *testing.T, input *TestEndorseViewContextInput)
 				},
 			},
 		},
+	}
+	if len(input.ExtraTransferSender) != 0 {
+		req.Metadata.Actions = append(req.Metadata.Actions, &driver.ActionMetadataEntry{
+			ActionID: 1,
+			TransferMetadata: &driver.TransferMetadata{
+				Inputs: []*driver.TransferInputMetadata{
+					{Senders: []*driver.AuditableIdentity{{Identity: input.ExtraTransferSender}}},
+				},
+			},
+		})
 	}
 	tms.NewRequestReturns(req, nil)
 
@@ -184,7 +198,13 @@ func newTestEndorseViewContext(t *testing.T, input *TestEndorseViewContextInput)
 	//  CancelledContext=false, SigRequestOnly=true:
 	//    → only sig-request queued; phase-2 blocks until timer fires (not useful in
 	//      unit tests, reserved for live testing).
-	if !input.CancelledContext || input.SigRequestOnly {
+	if len(input.SignatureRequests) != 0 {
+		for _, signer := range input.SignatureRequests {
+			ch <- &view.Message{
+				Payload: mustEnvelopeBytes(t, ttx.TypeSignatureRequest, &ttx.SignatureRequest{Signer: signer}),
+			}
+		}
+	} else if !input.CancelledContext || input.SigRequestOnly {
 		signatureRequest := &ttx.SignatureRequest{
 			Signer: input.IssuerIdentity,
 		}
@@ -301,7 +321,7 @@ func TestEndorseView(t *testing.T) {
 				return c
 			},
 			expectError:   true,
-			errorContains: "signature request's signer does not match the expected signer",
+			errorContains: "is not an outstanding required signer",
 			expectErr:     ttx.ErrSignerIdentityMismatch,
 			verify: func(ctx *TestEndorseViewContext, _ any) {
 				assert.Equal(t, 0, ctx.session.SendCallCount())
@@ -317,7 +337,7 @@ func TestEndorseView(t *testing.T) {
 				return c
 			},
 			expectError:   true,
-			errorContains: "signature request's signer does not match the expected signer",
+			errorContains: "is not an outstanding required signer",
 			expectErr:     ttx.ErrSignerIdentityMismatch,
 			verify: func(ctx *TestEndorseViewContext, _ any) {
 				assert.Equal(t, 0, ctx.session.SendCallCount())
@@ -428,4 +448,55 @@ func TestEndorseView_EndorsedTxContextCancellation(t *testing.T) {
 	// Phase 1 signature was sent before the context was cancelled.
 	assert.GreaterOrEqual(t, testCtx.session.SendCallCount(), 1,
 		"token signature must have been sent before context cancellation")
+}
+
+// Two required signers are derived but only one request is sent, as WithPolicySigners does.
+func TestEndorseView_InitiatorSendsFewerSignatureRequests(t *testing.T) {
+	testCtx := newTestEndorseViewContext(t, &TestEndorseViewContextInput{
+		ExtraTransferSender: token.Identity("a_sender"),
+	})
+
+	v := ttx.NewEndorseView(testCtx.tx)
+	done := make(chan error, 1)
+	go func() { _, err := v.Call(testCtx.ctx); done <- err }()
+
+	select {
+	case err := <-done:
+		require.NoError(t, err, "endorsement must complete when the initiator sends fewer requests")
+	case <-time.After(20 * time.Second):
+		t.Fatal("endorsement blocked waiting for a signature request the initiator never sends")
+	}
+
+	// one token signature, then the ack
+	assert.Equal(t, 2, testCtx.session.SendCallCount())
+	_, msg := testCtx.session.SendArgsForCall(0)
+	var signaturePayload ttx.SignaturePayload
+	require.NoError(t, json.Unmarshal(mustUnwrapBody(t, msg, ttx.TypeSignature), &signaturePayload))
+	assert.Equal(t, []byte("a_token_sigma"), signaturePayload.Signature)
+	_, msg = testCtx.session.SendArgsForCall(1)
+	require.NoError(t, json.Unmarshal(mustUnwrapBody(t, msg, ttx.TypeSignature), &signaturePayload))
+	assert.Equal(t, []byte("an_ack_signature"), signaturePayload.Signature)
+}
+
+// A cross-phase signer is asked twice, so occurrences must be counted, not deduplicated.
+func TestEndorseView_SameSignerAcrossIssueAndTransfer(t *testing.T) {
+	issuer := token.Identity("an_issuer")
+	testCtx := newTestEndorseViewContext(t, &TestEndorseViewContextInput{
+		IssuerIdentity:      issuer,
+		ExtraTransferSender: issuer,
+		SignatureRequests:   []token.Identity{issuer, issuer},
+	})
+
+	v := ttx.NewEndorseView(testCtx.tx)
+	_, err := v.Call(testCtx.ctx)
+	require.NoError(t, err)
+
+	// two token signatures, then the ack
+	assert.Equal(t, 3, testCtx.session.SendCallCount())
+	for i := range 2 {
+		_, msg := testCtx.session.SendArgsForCall(i)
+		var payload ttx.SignaturePayload
+		require.NoError(t, json.Unmarshal(mustUnwrapBody(t, msg, ttx.TypeSignature), &payload))
+		assert.Equal(t, []byte("a_token_sigma"), payload.Signature, "signature %d", i)
+	}
 }
