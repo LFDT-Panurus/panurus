@@ -64,6 +64,18 @@ func (l *ledger) store(id *token2.ID, raw []byte) {
 	l.tokens[id.String()] = raw
 }
 
+// Entries returns a copy of the ledger content, keyed by token2.ID.String().
+// The regression vector generator uses it to freeze the ledger state each
+// fixture's transfer inputs are looked up in.
+func (l *ledger) Entries() map[string][]byte {
+	out := make(map[string][]byte, len(l.tokens))
+	for k, v := range l.tokens {
+		out[k] = append([]byte(nil), v...)
+	}
+
+	return out
+}
+
 // Env holds every fixture built against the real zkatsnark production
 // services, mirroring token/core/zkatdlog/nogh/v1/testutils.Env field for
 // field (minus the upgrade-witness fixture, which has no zkatsnark
@@ -360,6 +372,12 @@ type TestCase struct {
 	ReqRaw   string  `json:"req_raw"`
 	Metadata string  `json:"metadata,omitempty"`
 	Inputs   *Inputs `json:"inputs,omitempty"`
+	// Ledger maps token2.ID.String() to the base64-encoded serialized
+	// OutputDescription the validator looks up for each transfer input.
+	Ledger map[string]string `json:"ledger,omitempty"`
+	// ExpectedError, when set, is a substring of the error validation must
+	// fail with. Empty means the request must validate.
+	ExpectedError string `json:"expected_error,omitempty"`
 }
 
 // SaveAggregatedToFile writes multiple test cases to a single JSON file.
@@ -1106,8 +1124,15 @@ func auditorEndorse(signer *Signer, tokenRequest *driver.TokenRequest, txID stri
 // one per input and output, so its fixtures need larger request, action and
 // proof limits.
 func resourceLimitsFor(configuration *SetupConfiguration) driver.ResourceLimits {
+	return ResourceLimitsFor(configuration.ProofSystem)
+}
+
+// ResourceLimitsFor returns the validator resource limits used by the fixtures
+// of the given proof system (see resourceLimitsFor), so that tests replaying
+// frozen fixtures validate them under the same limits they were built with.
+func ResourceLimitsFor(proofSystem string) driver.ResourceLimits {
 	var l driver.ResourceLimits
-	if configuration.ProofSystem == "plonkfri" {
+	if proofSystem == "plonkfri" {
 		l.MaxRequestBytes = 16 << 20
 		l.MaxActionBytes = 16 << 20
 		l.MaxProofBytes = 4 << 20
