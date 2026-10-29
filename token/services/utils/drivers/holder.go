@@ -4,8 +4,6 @@ Copyright IBM Corp. All Rights Reserved.
 SPDX-License-Identifier: Apache-2.0
 */
 
-// This file implements a generic, thread-safe registry for storing and retrieving drivers by key.
-// Holder provides concurrent access to a map of drivers with panic on duplicate registration.
 package drivers
 
 import (
@@ -16,21 +14,25 @@ import (
 	"github.com/LFDT-Panurus/panurus/token/services/logging"
 )
 
+// Holder is a driver registry safe for concurrent use: Get and Register both hold driversMu.
 type Holder[K comparable, D any] struct {
 	Logger    logging.Logger
 	driversMu sync.RWMutex
-	Drivers   map[K]D
+	drivers   map[K]D
 }
 
 func NewHolder[K comparable, D any]() *Holder[K, D] {
 	return &Holder[K, D]{
 		Logger:  logging.MustGetLogger(),
-		Drivers: make(map[K]D),
+		drivers: make(map[K]D),
 	}
 }
 
 func (h *Holder[K, D]) Get(name K) (D, bool) {
-	d, ok := h.Drivers[name]
+	h.driversMu.RLock()
+	defer h.driversMu.RUnlock()
+
+	d, ok := h.drivers[name]
 
 	return d, ok
 }
@@ -45,8 +47,8 @@ func (h *Holder[K, D]) Register(name K, driver D) {
 	if v := reflect.ValueOf(driver); v.IsNil() {
 		panic("Register driver is nil")
 	}
-	if _, dup := h.Drivers[name]; dup {
+	if _, dup := h.drivers[name]; dup {
 		panic(fmt.Sprintf("Register called twice for driver %v", name))
 	}
-	h.Drivers[name] = driver
+	h.drivers[name] = driver
 }

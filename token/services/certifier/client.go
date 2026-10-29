@@ -21,7 +21,7 @@ type CertificationClient struct {
 
 func NewCertificationClient(ctx context.Context, tms *token.ManagementService) (*CertificationClient, error) {
 	driver := tms.PublicParametersManager().PublicParameters().CertificationDriver()
-	d, ok := holder.Drivers[driver]
+	d, ok := holder.Get(driver)
 	if !ok {
 		return nil, errors.Errorf("certifier driver [%s] not found", driver)
 	}
