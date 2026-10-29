@@ -291,18 +291,22 @@ is why it is not part of `GO_MODULES` and not covered by `make unit-tests`.
 
 ### lazer revision
 
-By default `make lazer-install` builds a pinned lazer commit, `LAZER_COMMIT` in `lazer.mk`. It is currently
-`cc536f79c73a1cce6c8de5120564b15c809d1caa`, the head of
-[lazer-crypto/lazer#33](https://github.com/lazer-crypto/lazer/pull/33). That PR adds arm64/macOS support and fixes
-`int_mod` for zero-padded multi-limb moduli. Until it is merged, `LAZER_REPO` points at the fork the PR comes from
-(`https://github.com/adecaro/lazer.git`). A commit that only exists on a fork can become unfetchable if that branch is
-force-pushed or deleted. Once the PR is merged, set `LAZER_REPO` back to `https://github.com/lazer-crypto/lazer.git`
-and `LAZER_COMMIT` to the merge commit.
+By default `make lazer-install` builds a pinned lazer commit, `LAZER_COMMIT` in `lazer.mk`, of `LAZER_REPO`
+(`https://github.com/lazer-crypto/lazer.git`). It is currently `b958e247a2fdb9593b3c25c9603c6c5305c19420`, the head
+of upstream `main`. [lazer-crypto/lazer#33](https://github.com/lazer-crypto/lazer/pull/33) adds arm64/macOS support
+and fixes `int_mod` for zero-padded multi-limb moduli. Until it is merged, it is carried as the local patch
+`0000-lazer-pr33-arm64-int-mod.patch` (see [Local patches](#local-patches)) instead of building the PR head from the
+fork it comes from: a commit that only exists on a fork can become unfetchable if that branch is force-pushed or
+deleted. Once the PR is merged, delete patch 0000 and set `LAZER_COMMIT` to the merge commit.
 
 There are two ways to build something else:
 
 - `LAZER_REF=<branch or tag>` builds that ref of `LAZER_REPO` instead of the pinned commit.
 - `LAZER_SRC=<dir>` builds a copy of a local checkout.
+
+Either way the local patches are applied, starting with 0000. A source that already contains lazer-crypto/lazer#33
+(the `adecaro/lazer` fork, the PR branch, or upstream `main` once the PR is merged) therefore fails to patch; build
+it without patch 0000.
 
 #### Local patches
 
@@ -315,6 +319,7 @@ cannot be silently skipped or misapplied.
 
 | Patch | What it does |
 |---|---|
+| `0000-lazer-pr33-arm64-int-mod.patch` | The two commits of [lazer-crypto/lazer#33](https://github.com/lazer-crypto/lazer/pull/33), as `git format-patch` mails: `int_mod` (`src/int.c`) strips the zero top limbs of the modulus before `mpn_sec_div_r`, which requires a non-zero top limb (the result was undefined, and wrong on arm64); and lazer builds and runs on arm64 and macOS (portable `config.h` target and `lazer-in2.h` carry helpers, ARMv8 AES in `src/aes256ctr.c`, `src/hexl.patch` for Intel HEXL, arch-dependent Makefile flags, Homebrew GMP/MPFR). On x86-64 the compiler flags and code paths are unchanged. |
 | `0001-coder-bounds-checks.patch` | Bounds for `src/coder.c`: `coder_dec_begin_bnd`/`coder_enc_begin_bnd` start a coder that never reads or writes past the buffer; an access that would sets a sticky error (`coder_get_err`) and decoding fails. Every read and write path is covered (bytes, fixed-width, hints and gaussian unary codes, end marker, sparse vectors). `lin_verifier_verify_ctx_bnd` and `lin_prover_prove_ctx_bnd` (`src/lin-proofs.c`) use them for proofs. Without it, a crafted proof, presentation, credential or masked attributes made the decoders read past the end of the input. |
 | `0002-blindsig-no-exit.patch` | `falcon_decode_pubkey_chk`, `falcon_preimage_sample_chk` and `falcon_check_keypair` (`src/blindsig.c`) validate Falcon keys and return an error instead of calling `exit()`; secret temporaries are wiped. |
 | `0003-zeroize-secrets.patch` | `bytes_clear` cannot be optimized away, `poly_wipe`/`polyvec_wipe`/`polymat_wipe` zero secrets before they are freed, and the LNP prover wipes its witness, its copies and its expanded coins. |
@@ -326,17 +331,19 @@ exactly the patches in the directory (it compares their sha256 with `./.lazer/RE
 a patch was added cannot be used by mistake.
 
 To change a patch, apply the series to a pristine checkout of `LAZER_COMMIT`, edit, and regenerate the patch
-with `git diff` (paths `a/src/...`, `b/src/...`). Patches must not touch the Falcon sources under
-`third_party/`: lazer's own Makefile extracts them and applies `src/falcon.patch` at build time, after
-`lazer-fetch`. When moving to a new lazer revision, drop the patches that are merged upstream and refresh the
+with `git diff` or `git format-patch --no-signature` (paths `a/...`, `b/...`, relative to the lazer root; no
+signature, so that the sha256 of a patch does not depend on the git version that produced it). Patches must not
+touch the Falcon or Intel HEXL sources under `third_party/`: lazer's own Makefile extracts them and applies
+`src/falcon.patch` and `src/hexl.patch` (added by patch 0000) at build time, after `lazer-fetch`. A change to them
+goes into those files. When moving to a new lazer revision, drop the patches that are merged upstream and refresh the
 others.
 
 `make lazer-install` records what it built in `./.lazer/REVISION`, and `make lazer-check` (run by the test
 targets) prints it. For a fetched build, this is the repository, ref and commit. For `LAZER_SRC`, it is the
 source directory and the checkout's `HEAD`, marked `(with uncommitted changes)` if the working tree is dirty.
-Both are followed by the applied patches with their sha256. The CI cache of `./.lazer` (`lazer-tests.yml`, and
-the `fuzz-lazer` job of `nightly-fuzz.yml`) is keyed on `lazer.mk` and the patches, so changing either rebuilds
-lazer.
+Both are followed by the applied patches with their sha256. CI (`lazer-tests.yml`, and the `fuzz-lazer` job of
+`nightly-fuzz.yml`) does not cache `./.lazer`: lazer is built with `-march=native`, so every run builds it from
+scratch.
 
 The tests cover, among others: identity and signature round trips, unlinkability, signatures under
 the wrong identity or issuer, swapped nyms, audit matching and reuse, signers of another wallet,
