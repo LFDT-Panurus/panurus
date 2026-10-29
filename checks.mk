@@ -100,7 +100,7 @@ misspell:
 	@for dir in $(GO_MODULES); do \
 		echo "  Checking spelling in module: $$dir"; \
 		(cd $$dir && { \
-			OUTPUT="$$(find . -path './.git' -prune -o -type f -print | grep -v '.golangci.yml' | grep -v 'testdata' | xargs misspell || true)"; \
+			OUTPUT="$$(find . -path './.git' -prune -o -type f -print | grep -v '.golangci.yml' | grep -v 'testdata' | grep -v '^./.lazer/' | grep -v '\.patch$$' | xargs misspell || true)"; \
 			if [ -n "$$OUTPUT" ]; then \
 				echo "The following files in $$dir have spelling errors:"; \
 				echo "$$OUTPUT"; \
