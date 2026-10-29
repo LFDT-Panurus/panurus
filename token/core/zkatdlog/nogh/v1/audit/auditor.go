@@ -13,6 +13,7 @@ import (
 
 	math "github.com/IBM/mathlib"
 	"github.com/LFDT-Panurus/panurus/token/core/common"
+	math2 "github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/crypto/math"
 	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/issue"
 	v1 "github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/setup"
 	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/token"
@@ -596,6 +597,17 @@ func validateOutputReceivers(
 func InspectOutput(ctx context.Context, infoMatcher InfoMatcher, pedersenParams []*math.G1, curve *math.Curve, output *InspectableToken, index int) error {
 	if output == nil || output.Data.Data == nil {
 		return errors.Errorf("invalid output at index [%d]", index)
+	}
+	// Counterparty-supplied commitment: a wrong-curve one panics Equals (issue #2554).
+	if err := math2.CheckElement(output.Data.Data, curve.ID()); err != nil {
+		return errors.Wrapf(err, "invalid commitment in output at index [%d]", index)
+	}
+	// The opening is as untrusted as the commitment (issue #2554).
+	if err := math2.CheckBaseElement(output.Data.Value, curve.ID()); err != nil {
+		return errors.Wrapf(err, "invalid value in output at index [%d]", index)
+	}
+	if err := math2.CheckBaseElement(output.Data.BF, curve.ID()); err != nil {
+		return errors.Wrapf(err, "invalid blinding factor in output at index [%d]", index)
 	}
 	// Recompute commitment from provided cleartext data
 	tokenComm := commit([]*math.Zr{
