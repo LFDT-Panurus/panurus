@@ -983,6 +983,15 @@ Anything else spending from that account — an administrative parameters update
 nodes' nonces behind their backs in the same way. Keep a separate operator account for deployment and
 administrative submissions.
 
+The local count can also run ahead of the chain with no error: a transaction the node accepted can leave
+its pool unmined (evicted, or lost in a node restart, since the pool is not persisted), and every later
+nonce then queues behind the hole. The nonce manager reads the node's pending nonce again at most every
+10 seconds, and if it stays below the local count for 30 seconds it reuses that nonce to fill the hole,
+then re-reads the chain so the transactions that were queued are not issued again. The 30 seconds keep a
+replica behind a load balancer that has not seen the latest broadcast yet from causing a live transaction
+to be replaced. Each read of the pending nonce gives up after 5 seconds, since it runs while every other
+submission on the account waits.
+
 ### Node compatibility
 
 The driver speaks plain JSON-RPC and does not link go-ethereum, so it works against any EVM node. Two things
