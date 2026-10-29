@@ -1422,3 +1422,74 @@ func TestTwoTMSSharingASubmitterAgainstAnvil(t *testing.T) {
 			"transaction %d on TMS %s must not collide with the other TMS's use of the account", i, ns)
 	}
 }
+
+// anvilRPC calls a JSON-RPC method on the node directly, for the anvil-only controls (automine,
+// dropping a pool transaction) the driver's client has no reason to expose.
+func anvilRPC(t *testing.T, endpoint, method string, params ...any) {
+	t.Helper()
+	if params == nil {
+		params = []any{}
+	}
+	body, err := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": 1, "method": method, "params": params})
+	require.NoError(t, err)
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, endpoint, bytes.NewReader(body))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer func() { _ = resp.Body.Close() }()
+	var out struct {
+		Error json.RawMessage `json:"error"`
+	}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&out))
+	require.Empty(t, out.Error, "%s failed", method)
+}
+
+// TestNonceGapIsFilledAgainstAnvil is a broadcast the node accepted and then lost from its pool. The
+// send succeeded, so nothing re-read the nonce, and every later transaction from the account queued
+// behind the hole and never mined.
+func TestNonceGapIsFilledAgainstAnvil(t *testing.T) {
+	node := startAnvil(t)
+	evmClient, err := client.NewJSONRPCClient(node, nil)
+	require.NoError(t, err)
+	keyBytes, err := hex.DecodeString(anvilKey1)
+	require.NoError(t, err)
+	target, err := client.HexToAddress("0x000000000000000000000000000000000000dEaD")
+	require.NoError(t, err)
+	submitter, err := NewSubmitter(evmClient, secp256k1.PrivKeyFromBytes(keyBytes), target,
+		big.NewInt(testChainID), GasConfig{Strategy: GasStrategyFixed, Limit: 200_000})
+	require.NoError(t, err)
+	submitter.nonces.gapGrace = 200 * time.Millisecond
+	submitter.nonces.gapCheckEvery = 0
+
+	submit := func(marker byte) client.Hash {
+		var anchor [32]byte
+		anchor[31] = marker
+		_, hash, err := submitter.Submit(t.Context(), &statedelta.StateDelta{
+			Anchor:           anchor,
+			Outputs:          []statedelta.OutputToken{{TokenID: keys.ComputeTokenID(anchor, 0), TokenData: []byte{marker}}},
+			TokenRequestHash: sha256Of("gap-request"),
+			PublicParamsHash: sha256Of("pp"),
+		}, [][]byte{make([]byte, 65)})
+		require.NoError(t, err)
+
+		return hash
+	}
+
+	anvilRPC(t, node, "evm_setAutomine", false)
+	lost := submit(1)
+	anvilRPC(t, node, "anvil_dropTransaction", lost.Hex())
+	anvilRPC(t, node, "evm_setAutomine", true)
+
+	queued := submit(2) // nonce 1, behind the hole at 0
+	time.Sleep(300 * time.Millisecond)
+	filler := submit(3) // the gap has lasted the grace period: takes nonce 0
+	after := submit(4)  // the chain is re-read: nonce 2, not a second nonce 1
+
+	for name, h := range map[string]client.Hash{"queued": queued, "filler": filler, "after": after} {
+		assert.Equal(t, uint64(1), waitMined(t, evmClient, h.Hex()), "the %s transaction must be mined", name)
+	}
+	next, err := evmClient.PendingNonceAt(t.Context(), submitter.Address())
+	require.NoError(t, err)
+	assert.Equal(t, uint64(3), next)
+}
