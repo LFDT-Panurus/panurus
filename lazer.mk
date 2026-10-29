@@ -15,12 +15,15 @@
 #   LAZER_REF=<branch or tag>  LAZER_REPO at that ref instead of the pinned commit
 #   LAZER_SRC=/path/to/lazer   copy of a local checkout (it is never built in place)
 # Either way, the Panurus-local patches in $(LAZER_PATCHES) (described in
-# docs/services/identity-lazer.md, "lazer revision")
+# docs/services/identity-lazer.md, "Local patches")
 # are then applied, in lexical order, to the copy in $(LAZER_BUILD); the
 # LAZER_SRC checkout itself is never modified. A patch that does not apply
 # exactly (no fuzz, not already applied) fails the build. The revision that
 # was built and the applied patches with their sha256 are recorded in
-# $(LAZER_PREFIX)/REVISION.
+# $(LAZER_PREFIX)/REVISION. Patch 0000 carries lazer-crypto/lazer#33, so a source
+# that already contains it (the adecaro/lazer fork, the PR branch, or upstream
+# main once the PR is merged) fails to patch: drop 0000 when moving to such a
+# revision.
 #
 # Examples:
 #   make lazer-install LAZER_SRC=$$HOME/go/src/github.com/lazer-crypto/lazer
@@ -31,14 +34,14 @@ LAZER_MODULE ?= x/token/services/identity/lazer
 # package), so it is not configurable.
 LAZER_PREFIX := $(CURDIR)/.lazer
 LAZER_BUILD  := $(LAZER_PREFIX)/build
-# Pinned lazer revision. It carries the arm64/macOS support and the int_mod
-# fix of lazer-crypto/lazer#33, so until that PR is merged it is fetched from
-# the fork it was opened from. A commit that only exists on a fork can become
-# unfetchable if that branch is force-pushed or deleted, so once the PR is
-# merged point LAZER_REPO back to https://github.com/lazer-crypto/lazer.git and
-# LAZER_COMMIT to the merge commit.
-LAZER_REPO   ?= https://github.com/adecaro/lazer.git
-LAZER_COMMIT ?= cc536f79c73a1cce6c8de5120564b15c809d1caa
+# Pinned lazer revision: upstream main. The arm64/macOS support and the int_mod
+# fix of lazer-crypto/lazer#33 (not merged yet) are applied on top of it by
+# patches/0000-lazer-pr33-arm64-int-mod.patch, rather than fetching the PR head
+# from the fork it was opened from: a commit that only exists on a fork can
+# become unfetchable if that branch is force-pushed or deleted. Once the PR is
+# merged, drop patch 0000 and point LAZER_COMMIT to the merge commit.
+LAZER_REPO   ?= https://github.com/lazer-crypto/lazer.git
+LAZER_COMMIT ?= b958e247a2fdb9593b3c25c9603c6c5305c19420
 LAZER_REF    ?=
 LAZER_SRC    ?=
 # C flags for lazer. Empty means: use lazer's own Makefile defaults (-O3, the

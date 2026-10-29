@@ -1,0 +1,627 @@
+From 336830d660928dd62aac8befed8d0e0c3eed0501 Mon Sep 17 00:00:00 2001
+From: Angelo De Caro <adc@zurich.ibm.com>
+Date: Tue, 27 Oct 2026 16:47:24 +0100
+Subject: [PATCH 1/2] Fix int_mod for zero-padded multi-limb moduli
+
+int_mod passed m->nlimbs to mpn_sec_div_r even when the most significant
+limbs of m are zero (e.g. the dcompress modulus m ~ 2^58 stored with the
+nlimbs of a 76-bit q). GMP requires the divisor's top limb to be
+non-zero, so the result was undefined: on x86-64 it happened to be
+correct, on arm64 it returned values far outside (-m,m), which made
+abdlop_verify reject honest proofs (abdlop, lnp-quad tests).
+
+Strip the zero top limbs first, as int_div already does, and zero the
+upper limbs of the result.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ src/int.c | 15 ++++++++++++---
+ 1 file changed, 12 insertions(+), 3 deletions(-)
+
+diff --git a/src/int.c b/src/int.c
+index 5b45105..000101b 100644
+--- a/src/int.c
++++ b/src/int.c
+@@ -156,12 +156,21 @@ int_mod (int_t r, const int_t a, const int_t m)
+     }
+   else
+     {
+-      limb_t scratch[mpn_sec_div_r_itch (a->nlimbs, m->nlimbs)];
++      unsigned int mnlimbs;
++
++      /* mpn_sec_div_r requires the divisor's top limb to be non-zero */
++      for (mnlimbs = m->nlimbs; m->limbs[mnlimbs - 1] == 0; mnlimbs--)
++        ;
++      ASSERT_ERR (mnlimbs >= 1);
++      ASSERT_ERR (a->nlimbs >= mnlimbs);
++
++      limb_t scratch[mpn_sec_div_r_itch (a->nlimbs, mnlimbs)];
+       limb_t tmp[a->nlimbs];
+ 
+       limbs_cpy (tmp, a->limbs, a->nlimbs);
+-      mpn_sec_div_r (tmp, a->nlimbs, m->limbs, m->nlimbs, scratch);
+-      limbs_cpy (r->limbs, tmp, r->nlimbs);
++      mpn_sec_div_r (tmp, a->nlimbs, m->limbs, mnlimbs, scratch);
++      limbs_cpy (r->limbs, tmp, mnlimbs);
++      limbs_set (r->limbs + mnlimbs, 0, r->nlimbs - mnlimbs);
+       r->neg = a->neg;
+     }
+ }
+
+From cc536f79c73a1cce6c8de5120564b15c809d1caa Mon Sep 17 00:00:00 2001
+From: Angelo De Caro <adc@zurich.ibm.com>
+Date: Tue, 27 Oct 2026 16:47:24 +0100
+Subject: [PATCH 2/2] Support building and running on arm64 (and macOS)
+
+The core library and its tests now build natively on non-x86 targets
+such as macOS on Apple silicon, using the existing portable code paths:
+
+- config.h: default TARGET to TARGET_AMD64 on x86-64 and to
+  TARGET_GENERIC elsewhere.
+- lazer-in2.h: include x86 intrinsics headers only on x86; implement the
+  add-with-carry / sub-with-borrow helpers with __int128 elsewhere.
+- aes256ctr.c: in the generic AES-256-CTR, use the ARMv8 crypto
+  extensions (vaeseq/vaesmcq) when available. The bit-serial software
+  AES dominated runtime (~50s vs 0.6s for a CBDC issuance and
+  presentation round).
+- src/hexl.patch (applied when unpacking Intel HEXL): skip cpu_features
+  and guard <immintrin.h> on non-x86 so that HEXL builds with its scalar
+  fallbacks; compute MSB() with clz instead of log2l, which is not exact
+  where long double is 64-bit (e.g. arm64).
+- Makefile: arch-dependent flags (no FALCON_AVX2/FMA and -mcpu=native,
+  which keeps the AES extension enabled with clang, on non-x86); apply
+  hexl.patch and pass -DCMAKE_POLICY_VERSION_MINIMUM=3.5 for recent
+  cmake; find libhexl in lib or lib64; use Homebrew's gmp/mpfr on macOS
+  and link liblazer.so against its dependencies there; build libhash
+  (AVX-512 only) on x86-64 only.
+- README, docs: document arm64/macOS support and what remains
+  x86-64 only (make all: Labrador, lattice-hash).
+
+On x86-64 the compiler flags and lazer's code paths are unchanged; the
+only differences there are the MSB() change in HEXL (same results) and
+the cmake policy flag.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ Makefile                        |  36 ++++-
+ README.md                       |  12 +-
+ config.h                        |   9 +-
+ docs/source/getting_started.rst |   2 +
+ src/aes256ctr.c                 |  28 ++++
+ src/hexl.patch                  | 257 ++++++++++++++++++++++++++++++++
+ src/lazer-in2.h                 |  27 ++--
+ 7 files changed, 351 insertions(+), 20 deletions(-)
+ create mode 100644 src/hexl.patch
+
+diff --git a/Makefile b/Makefile
+index 0b73b91..d8a72ea 100644
+--- a/Makefile
++++ b/Makefile
+@@ -1,12 +1,36 @@
++UNAME_M := $(shell uname -m)
++UNAME_S := $(shell uname -s)
++ifneq ($(filter x86_64 amd64,$(UNAME_M)),)
++ARCH_X86 = 1
+ CFLAGS_FALCON_AMD64 = -DFALCON_FPNATIVE -DFALCON_AVX2 -DFALCON_FMA
++CFLAGS_ARCH = -march=native -mtune=native
++else
++# non-x86 (e.g. arm64): portable code paths, no AVX2/AVX512.
++# -mcpu (not -march) so that clang keeps the AES extension enabled.
++CFLAGS_FALCON_AMD64 = -DFALCON_FPNATIVE
++CFLAGS_ARCH = -mcpu=native
++endif
+ CFLAGS_WARN = -Wall -Wextra
+-CFLAGS_DEFAULT = $(CFLAGS_WARN) -O3 -g -march=native -mtune=native\
++CFLAGS_DEFAULT = $(CFLAGS_WARN) -O3 -g $(CFLAGS_ARCH)\
+  -fomit-frame-pointer
+ CFLAGS_DEBUG = $(CFLAGS_WARN) -Og -ggdb3
+ ADD_CPPFLAGS = -DNDEBUG
+ 
+ CPPFLAGS += $(ADD_CPPFLAGS)
+-LIBS = -lm $(HEXL_DIR)/build/hexl/lib64/libhexl.a -lstdc++
++# hexl installs to lib64 on linux/x86-64 and to lib elsewhere
++HEXL_LIBDIR = $(if $(wildcard $(HEXL_DIR)/build/hexl/lib64),lib64,lib)
++LIBS = -lm $(HEXL_DIR)/build/hexl/$(HEXL_LIBDIR)/libhexl.a -lstdc++
++
++# gmp and mpfr from homebrew on macOS
++ifeq ($(UNAME_S),Darwin)
++BREW_PREFIX := $(shell brew --prefix 2>/dev/null)
++ifneq ($(BREW_PREFIX),)
++CPPFLAGS += -I$(BREW_PREFIX)/include
++LIBS += -L$(BREW_PREFIX)/lib
++endif
++# macOS does not allow undefined symbols in shared libraries
++SHARED_LIBS = $(LIBS)
++endif
+ 
+ # honor user CFLAGS
+ ifdef CFLAGS
+@@ -176,7 +200,8 @@ HEXL_ZIP = $(HEXL_DIR).zip
+ 
+ $(HEXL_DIR): $(HEXL_ZIP)
+ 	cd $(THIRD_PARTY_DIR) && unzip $(HEXL_SUBDIR).zip
+-	cd $(HEXL_DIR) && cmake -S . -B build -DHEXL_BENCHMARK=OFF -DHEXL_TESTING=OFF
++	patch -d $(HEXL_DIR) -p1 < src/hexl.patch
++	cd $(HEXL_DIR) && cmake -S . -B build -DHEXL_BENCHMARK=OFF -DHEXL_TESTING=OFF -DCMAKE_POLICY_VERSION_MINIMUM=3.5
+ 	cd $(HEXL_DIR) && cmake --build build
+ #	cd $(HEXL_DIR) && cmake -S . -B build -DHEXL_SHARED_LIB=ON
+ #	cd $(HEXL_DIR) && cmake --build build
+@@ -368,7 +393,8 @@ lib-all: lazer.h lib-static-all lib-shared-all
+ lib: lazer.h lib-static lib-shared
+ 
+ lib-shared-all: lazer.h liblazer.so liblabrador32.so liblabrador36.so liblabrador38.so libhash.so
+-lib-shared: lazer.h liblazer.so libhash.so
++# libhash (lattice-hash) uses AVX512 intrinsics: x86-64 only
++lib-shared: lazer.h liblazer.so $(if $(ARCH_X86),libhash.so)
+ lib-static-all: lazer.h liblazer.a
+ lib-static: lazer.h liblazer.a
+ 
+@@ -376,7 +402,7 @@ liblazer.a: src/lazer_static.o src/hexl_static.o $(FALCON_OBJ_STATIC)
+ 	ar rcs liblazer.a src/lazer_static.o src/hexl_static.o $(FALCON_OBJ_STATIC)
+ 
+ liblazer.so: src/lazer_shared.o  src/hexl_shared.o $(FALCON_OBJ_SHARED)
+-	$(CC) $(CPPFLAGS) $(CFLAGS) -I. -shared -o liblazer.so src/lazer_shared.o src/hexl_shared.o $(FALCON_OBJ_SHARED)
++	$(CC) $(CPPFLAGS) $(CFLAGS) -I. -shared -o liblazer.so src/lazer_shared.o src/hexl_shared.o $(FALCON_OBJ_SHARED) $(SHARED_LIBS)
+ 
+ src/lazer_static.o: $(LIBSOURCES) lazer.h $(FALCON_DIR)
+ 	$(CC) $(CPPFLAGS) $(CFLAGS) -I$(FALCON_DIR) -I. -c -o src/lazer_static.o src/lazer.c
+diff --git a/README.md b/README.md
+index 36aa376..bbcd0b4 100644
+--- a/README.md
++++ b/README.md
+@@ -16,6 +16,16 @@ and run lazer:
+ - sagemath >= 10.2
+ - python3 >= 3.10, its development package and the cffi package 
+ 
++The core C library (`make`, `make lib`) and its tests (`make check`)
++also build and run on arm64 / aarch64, e.g. macOS on Apple silicon
++with Apple clang and `brew install cmake gmp mpfr` (the Makefile picks
++up the Homebrew prefix automatically). On non-x86 targets the
++portable code paths are used: Intel HEXL runs its scalar
++implementation, Falcon is built without AVX2 and AES-256-CTR uses the
++ARMv8 crypto extensions if available. This is slower than the AVX-512
++build. `make all` additionally builds the Labrador and lattice-hash
++libraries, which require AVX-512 and are therefore x86-64 only.
++
+ The following software is required to build the documentation:
+ 
+  - sphinx >= 5.3 and the sphinxcontrib-bibtex package
+@@ -26,7 +36,7 @@ with the dependencies' versions equal to the listed above.
+ We assume that it works with greater versions as well,
+ as long as they are backward compatible. It *may*
+ work with lesser versions as well.
+-Note that during compilation, the cpu_features package
++Note that during compilation on x86-64, the cpu_features package
+ will be cloned from GitHub, so also git and an internet
+ connection are required.
+ 
+diff --git a/config.h b/config.h
+index 3759aab..aa366a5 100644
+--- a/config.h
++++ b/config.h
+@@ -1,8 +1,15 @@
+ /*
+  * TARGET: GENERIC, AMD64
+- * Architecture target.
++ * Architecture target. Defaults to AMD64 on x86-64 and to the portable
++ * GENERIC code paths elsewhere (e.g. arm64).
+  */
++#ifndef TARGET
++#if defined(__x86_64__) || defined(_M_X64)
+ #define TARGET TARGET_AMD64
++#else
++#define TARGET TARGET_GENERIC
++#endif
++#endif
+ 
+ /*
+  * RNG: SHAKE128, AES256CTR
+diff --git a/docs/source/getting_started.rst b/docs/source/getting_started.rst
+index 906b194..f0814c5 100644
+--- a/docs/source/getting_started.rst
++++ b/docs/source/getting_started.rst
+@@ -23,6 +23,8 @@ Performance is currently only optimized for CPUs with the AVX-512 instruction se
+ 
+ The functions for creating succinct proofs require AVX-512. Those functions will not be available on systems lacking AVX-512.
+ 
++The library also builds and runs on arm64 / aarch64 (e.g. macOS on Apple silicon, with gmp, mpfr and cmake installed via Homebrew). On non-x86 targets, portable code paths are used (scalar Intel HEXL, Falcon without AVX2, AES-256-CTR via the ARMv8 crypto extensions if available), so performance is lower than on AVX-512 systems.
++
+ 
+ Building
+ --------
+diff --git a/src/aes256ctr.c b/src/aes256ctr.c
+index 56b58bc..47d19b5 100644
+--- a/src/aes256ctr.c
++++ b/src/aes256ctr.c
+@@ -7,6 +7,10 @@
+ #if RNG == RNG_AES256CTR
+ #if TARGET == TARGET_GENERIC
+ 
++#if defined(__ARM_FEATURE_AES)
++#include <arm_neon.h>
++#endif
++
+ static inline void
+ incbe (uint8_t n[16])
+ {
+@@ -71,6 +75,11 @@ xtime (unsigned char c)
+ static unsigned char
+ bytesub (unsigned char c)
+ {
++#if defined(__ARM_FEATURE_AES)
++  /* vaeseq with a zero key on a splatted byte is SubBytes (ShiftRows
++     is a no-op on equal bytes). */
++  return vgetq_lane_u8 (vaeseq_u8 (vdupq_n_u8 (c), vdupq_n_u8 (0)), 0);
++#else
+   unsigned char c3 = multiply (square (c), c);
+   unsigned char c7 = multiply (square (c3), c);
+   unsigned char c63 = multiply (square (square (square (c7))), c7);
+@@ -95,11 +104,24 @@ bytesub (unsigned char c)
+   for (i = 0; i < 8; ++i)
+     result |= h[i] << i;
+   return result;
++#endif
+ }
+ 
+ static void
+ aes256 (aes256ctr_state_t state, unsigned char *out, const unsigned char *in)
+ {
++#if defined(__ARM_FEATURE_AES)
++  /* ARMv8 crypto extensions: vaeseq is AddRoundKey+SubBytes+ShiftRows,
++     vaesmcq is MixColumns. */
++  uint8x16_t b = vld1q_u8 (in);
++  int r;
++
++  for (r = 0; r < 13; ++r)
++    b = vaesmcq_u8 (vaeseq_u8 (b, vld1q_u8 (state->rkeys[r])));
++  b = vaeseq_u8 (b, vld1q_u8 (state->rkeys[13]));
++  b = veorq_u8 (b, vld1q_u8 (state->rkeys[14]));
++  vst1q_u8 (out, b);
++#else
+   unsigned char _state[4][4];
+   unsigned char new_state[4][4];
+   int i, j, r;
+@@ -136,6 +158,7 @@ aes256 (aes256ctr_state_t state, unsigned char *out, const unsigned char *in)
+   for (j = 0; j < 4; ++j)
+     for (i = 0; i < 4; ++i)
+       out[j * 4 + i] = _state[i][j];
++#endif
+ }
+ 
+ static void
+@@ -173,6 +196,11 @@ _aes256ctr_init (aes256ctr_state_t state, const uint8_t key[32],
+       for (i = 0; i < 4; ++i)
+         state->expanded[i][j] = temp[i] ^ state->expanded[i][j - 8];
+     }
++
++  /* round keys in AES byte order */
++  for (j = 0; j < 60; ++j)
++    for (i = 0; i < 4; ++i)
++      state->rkeys[j / 4][(j % 4) * 4 + i] = state->expanded[i][j];
+ }
+ 
+ static void
+diff --git a/src/hexl.patch b/src/hexl.patch
+new file mode 100644
+index 0000000..638e5b5
+--- /dev/null
++++ b/src/hexl.patch
+@@ -0,0 +1,257 @@
++diff --git a/CMakeLists.txt b/CMakeLists.txt
++index b0da96f..546d9d3 100644
++--- a/CMakeLists.txt
+++++ b/CMakeLists.txt
++@@ -139,8 +139,14 @@ message(STATUS "CMAKE_INSTALL_PREFIX:     ${CMAKE_INSTALL_PREFIX}")
++ #------------------------------------------------------------------------------
++ # Third-party code...
++ #------------------------------------------------------------------------------
+++if (NOT CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64|amd64")
+++  message(STATUS "CpuFeatures: not needed on ${CMAKE_SYSTEM_PROCESSOR}")
+++  set(HEXL_NO_CPU_FEATURES ON)
+++else()
++ find_package(CpuFeatures CONFIG)
++-if (NOT CpuFeatures_FOUND)
+++endif()
+++if (HEXL_NO_CPU_FEATURES)
+++elseif (NOT CpuFeatures_FOUND)
++   message(STATUS "CpuFeatures: pre-installed CpuFeatures not found")
++   add_subdirectory(cmake/third-party/cpu-features)
++ else()
++diff --git a/hexl/CMakeLists.txt b/hexl/CMakeLists.txt
++index 7c660a0..30532a1 100644
++--- a/hexl/CMakeLists.txt
+++++ b/hexl/CMakeLists.txt
++@@ -120,7 +120,9 @@ install(DIRECTORY ${HEXL_INC_ROOT_DIR}/
++         PATTERN "*.h")
++ 
++ if (HEXL_SHARED_LIB)
+++  if (NOT HEXL_NO_CPU_FEATURES)
++     target_link_libraries(hexl PRIVATE cpu_features)
+++  endif()
++     if (HEXL_DEBUG)
++         target_link_libraries(hexl PUBLIC easyloggingpp)
++         # Manually add logging include directory
++@@ -145,15 +147,18 @@ else ()
++         endif()
++     endif()
++ 
++-    if (CpuFeatures_FOUND)
+++    if (HEXL_NO_CPU_FEATURES)
+++    elseif (CpuFeatures_FOUND)
++       target_link_libraries(hexl PRIVATE cpu_features)
++     else()
++       hexl_create_archive(hexl cpu_features)
++     endif()
++ 
+++    if (NOT HEXL_NO_CPU_FEATURES)
++     # Manually add cpu_features include directory
++     target_include_directories(hexl
++       PRIVATE $<TARGET_PROPERTY:cpu_features,INTERFACE_INCLUDE_DIRECTORIES>)
+++    endif()
++ endif()
++ 
++ install(TARGETS hexl DESTINATION ${CMAKE_INSTALL_LIBDIR})
++diff --git a/hexl/util/cpu-features.hpp b/hexl/util/cpu-features.hpp
++index ba40839..88ab512 100644
++--- a/hexl/util/cpu-features.hpp
+++++ b/hexl/util/cpu-features.hpp
++@@ -7,7 +7,9 @@
++ 
++ #include <cstdlib>
++ 
+++#if defined(__x86_64__) || defined(_M_X64)
++ #include "cpuinfo_x86.h"  // NOLINT(build/include_subdir)
+++#endif
++ 
++ namespace intel {
++ namespace hexl {
++@@ -20,6 +22,7 @@ static const bool disable_avx512ifma =
++ static const bool disable_avx512vbmi2 =
++     disable_avx512dq || (std::getenv("HEXL_DISABLE_AVX512VBMI2") != nullptr);
++ 
+++#if defined(__x86_64__) || defined(_M_X64)
++ static const cpu_features::X86Features features =
++     cpu_features::GetX86Info().features;
++ 
++@@ -30,6 +33,12 @@ static const bool has_avx512ifma = features.avx512ifma && !disable_avx512ifma;
++ 
++ static const bool has_avx512vbmi2 =
++     features.avx512vbmi2 && !disable_avx512vbmi2;
+++#else
+++// Non-x86 targets (e.g. arm64): no AVX512, use the portable code paths.
+++static const bool has_avx512dq = false;
+++static const bool has_avx512ifma = false;
+++static const bool has_avx512vbmi2 = false;
+++#endif
++ 
++ }  // namespace hexl
++ }  // namespace intel
++diff --git a/hexl/include/hexl/util/gcc.hpp b/hexl/include/hexl/util/gcc.hpp
++index 828e383..ba067a4 100644
++--- a/hexl/include/hexl/util/gcc.hpp
+++++ b/hexl/include/hexl/util/gcc.hpp
++@@ -55,7 +55,8 @@ inline uint64_t MultiplyUInt64Hi(uint64_t x, uint64_t y) {
++ 
++ // Returns most-significant bit of the input
++ inline uint64_t MSB(uint64_t input) {
++-  return static_cast<uint64_t>(std::log2l(input));
+++  // not log2l: long double is only 64-bit on some targets (e.g. arm64)
+++  return static_cast<uint64_t>(63 - __builtin_clzll(input));
++ }
++ 
++ #define HEXL_LOOP_UNROLL_4 _Pragma("GCC unroll 4")
++diff --git a/hexl/include/hexl/util/clang.hpp b/hexl/include/hexl/util/clang.hpp
++index 958bea7..ae4d55f 100644
++--- a/hexl/include/hexl/util/clang.hpp
+++++ b/hexl/include/hexl/util/clang.hpp
++@@ -55,7 +55,8 @@ inline uint64_t MultiplyUInt64Hi(uint64_t x, uint64_t y) {
++ 
++ // Returns most-significant bit of the input
++ inline uint64_t MSB(uint64_t input) {
++-  return static_cast<uint64_t>(std::log2l(input));
+++  // not log2l: long double is only 64-bit on some targets (e.g. arm64)
+++  return static_cast<uint64_t>(63 - __builtin_clzll(input));
++ }
++ 
++ #define HEXL_LOOP_UNROLL_4 _Pragma("clang loop unroll_count(4)")
++diff --git a/hexl/eltwise/eltwise-cmp-add-avx512.cpp b/hexl/eltwise/eltwise-cmp-add-avx512.cpp
++index 7ead8ca..012b992 100644
++--- a/hexl/eltwise/eltwise-cmp-add-avx512.cpp
+++++ b/hexl/eltwise/eltwise-cmp-add-avx512.cpp
++@@ -3,7 +3,9 @@
++ 
++ #include "eltwise/eltwise-cmp-add-avx512.hpp"
++ 
+++#if defined(__x86_64__) || defined(_M_X64)
++ #include <immintrin.h>
+++#endif
++ #include <stdint.h>
++ 
++ #include "eltwise/eltwise-cmp-add-internal.hpp"
++diff --git a/hexl/eltwise/eltwise-mult-mod-avx512ifma.cpp b/hexl/eltwise/eltwise-mult-mod-avx512ifma.cpp
++index 54374cf..61601a8 100644
++--- a/hexl/eltwise/eltwise-mult-mod-avx512ifma.cpp
+++++ b/hexl/eltwise/eltwise-mult-mod-avx512ifma.cpp
++@@ -1,7 +1,9 @@
++ // Copyright (C) 2020 Intel Corporation
++ // SPDX-License-Identifier: Apache-2.0
++ 
+++#if defined(__x86_64__) || defined(_M_X64)
++ #include <immintrin.h>
+++#endif
++ #include <stdint.h>
++ 
++ #include <limits>
++diff --git a/hexl/eltwise/eltwise-fma-mod-avx512.cpp b/hexl/eltwise/eltwise-fma-mod-avx512.cpp
++index fa6a545..03f8c7a 100644
++--- a/hexl/eltwise/eltwise-fma-mod-avx512.cpp
+++++ b/hexl/eltwise/eltwise-fma-mod-avx512.cpp
++@@ -3,7 +3,9 @@
++ 
++ #include "eltwise/eltwise-fma-mod-avx512.hpp"
++ 
+++#if defined(__x86_64__) || defined(_M_X64)
++ #include <immintrin.h>
+++#endif
++ 
++ #include "hexl/eltwise/eltwise-fma-mod.hpp"
++ #include "hexl/number-theory/number-theory.hpp"
++diff --git a/hexl/eltwise/eltwise-sub-mod-avx512.cpp b/hexl/eltwise/eltwise-sub-mod-avx512.cpp
++index 2039c91..a6408bf 100644
++--- a/hexl/eltwise/eltwise-sub-mod-avx512.cpp
+++++ b/hexl/eltwise/eltwise-sub-mod-avx512.cpp
++@@ -3,7 +3,9 @@
++ 
++ #include "eltwise/eltwise-sub-mod-avx512.hpp"
++ 
+++#if defined(__x86_64__) || defined(_M_X64)
++ #include <immintrin.h>
+++#endif
++ #include <stdint.h>
++ 
++ #include "eltwise/eltwise-sub-mod-internal.hpp"
++diff --git a/hexl/eltwise/eltwise-add-mod-avx512.cpp b/hexl/eltwise/eltwise-add-mod-avx512.cpp
++index 7c103ca..a84b35b 100644
++--- a/hexl/eltwise/eltwise-add-mod-avx512.cpp
+++++ b/hexl/eltwise/eltwise-add-mod-avx512.cpp
++@@ -3,7 +3,9 @@
++ 
++ #include "eltwise/eltwise-add-mod-avx512.hpp"
++ 
+++#if defined(__x86_64__) || defined(_M_X64)
++ #include <immintrin.h>
+++#endif
++ #include <stdint.h>
++ 
++ #include "eltwise/eltwise-add-mod-internal.hpp"
++diff --git a/hexl/eltwise/eltwise-cmp-sub-mod-avx512.hpp b/hexl/eltwise/eltwise-cmp-sub-mod-avx512.hpp
++index ff5a942..3a9cc98 100644
++--- a/hexl/eltwise/eltwise-cmp-sub-mod-avx512.hpp
+++++ b/hexl/eltwise/eltwise-cmp-sub-mod-avx512.hpp
++@@ -3,7 +3,9 @@
++ 
++ #pragma once
++ 
+++#if defined(__x86_64__) || defined(_M_X64)
++ #include <immintrin.h>
+++#endif
++ #include <stdint.h>
++ 
++ #include "eltwise/eltwise-cmp-sub-mod-internal.hpp"
++diff --git a/hexl/eltwise/eltwise-mult-mod-avx512dq.cpp b/hexl/eltwise/eltwise-mult-mod-avx512dq.cpp
++index cbf0ec0..eed7f81 100644
++--- a/hexl/eltwise/eltwise-mult-mod-avx512dq.cpp
+++++ b/hexl/eltwise/eltwise-mult-mod-avx512dq.cpp
++@@ -1,7 +1,9 @@
++ // Copyright (C) 2020 Intel Corporation
++ // SPDX-License-Identifier: Apache-2.0
++ 
+++#if defined(__x86_64__) || defined(_M_X64)
++ #include <immintrin.h>
+++#endif
++ #include <stdint.h>
++ 
++ #include <limits>
++diff --git a/hexl/ntt/inv-ntt-avx512.cpp b/hexl/ntt/inv-ntt-avx512.cpp
++index 8d340fe..51da9c3 100644
++--- a/hexl/ntt/inv-ntt-avx512.cpp
+++++ b/hexl/ntt/inv-ntt-avx512.cpp
++@@ -3,7 +3,9 @@
++ 
++ #include "ntt/inv-ntt-avx512.hpp"
++ 
+++#if defined(__x86_64__) || defined(_M_X64)
++ #include <immintrin.h>
+++#endif
++ 
++ #include <cstring>
++ #include <functional>
++diff --git a/hexl/ntt/ntt-avx512-util.hpp b/hexl/ntt/ntt-avx512-util.hpp
++index c2342c0..2e3a591 100644
++--- a/hexl/ntt/ntt-avx512-util.hpp
+++++ b/hexl/ntt/ntt-avx512-util.hpp
++@@ -3,7 +3,9 @@
++ 
++ #pragma once
++ 
+++#if defined(__x86_64__) || defined(_M_X64)
++ #include <immintrin.h>
+++#endif
++ 
++ #include <functional>
++ #include <vector>
++diff --git a/hexl/util/avx512-util.hpp b/hexl/util/avx512-util.hpp
++index c5e206a..672d2db 100644
++--- a/hexl/util/avx512-util.hpp
+++++ b/hexl/util/avx512-util.hpp
++@@ -3,7 +3,9 @@
++ 
++ #pragma once
++ 
+++#if defined(__x86_64__) || defined(_M_X64)
++ #include <immintrin.h>
+++#endif
++ 
++ #include <vector>
++ 
+diff --git a/src/lazer-in2.h b/src/lazer-in2.h
+index 0666c50..1649fac 100644
+--- a/src/lazer-in2.h
++++ b/src/lazer-in2.h
+@@ -187,6 +187,7 @@ typedef struct
+ {
+ #if TARGET == TARGET_GENERIC
+   uint8_t expanded[4][60];
++  _ALIGN16 uint8_t rkeys[15][16]; /* round keys, used with ARMv8 AES */
+   uint8_t nonce[16];
+   uint8_t cache[16];
+   uint8_t *cache_ptr;
+@@ -2018,7 +2019,7 @@ _get_coeffvec (poly_t poly)
+   return poly->coeffs;
+ }
+ 
+-#ifndef _OS_IOS
++#if defined(__x86_64__) || defined(_M_X64)
+ #include <immintrin.h>
+ #include <x86intrin.h>
+ #endif
+@@ -2059,13 +2060,13 @@ static inline unsigned char
+ _addcarry_u64_ (unsigned char c, unsigned long long x, unsigned long long y,
+                 unsigned long long *p)
+ {
+-#ifdef _OS_IOS
+-  unsigned long long cout;
+-
+-  *p = __builtin_addcll (x, y, c, &cout);
+-  return cout;
+-#else
++#if defined(__x86_64__) || defined(_M_X64)
+   return _addcarry_u64 (c, x, y, p);
++#else
++  unsigned __int128 s = (unsigned __int128)x + y + c;
++
++  *p = (unsigned long long)s;
++  return (unsigned char)(s >> 64);
+ #endif
+ }
+ 
+@@ -2073,13 +2074,13 @@ static inline unsigned char
+ _subborrow_u64_ (unsigned char c, unsigned long long x, unsigned long long y,
+                  unsigned long long *p)
+ {
+-#ifdef _OS_IOS
+-  unsigned long long cout;
+-
+-  *p = __builtin_subcll (x, y, c, &cout);
+-  return cout;
+-#else
++#if defined(__x86_64__) || defined(_M_X64)
+   return _subborrow_u64 (c, x, y, p);
++#else
++  unsigned __int128 s = (unsigned __int128)x - y - c;
++
++  *p = (unsigned long long)s;
++  return (unsigned char)((s >> 64) & 1);
+ #endif
+ }
+ 

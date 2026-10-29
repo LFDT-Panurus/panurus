@@ -364,7 +364,7 @@ jobs:
 
   # Fuzz targets of the post-quantum lazer identity module. It is a separate Go
   # module that links liblazer.a through cgo, so every entry needs lazer built
-  # first (`make lazer-install`, cached as in lazer-tests.yml); the targets run
+  # first (`make lazer-install`, not cached, as in lazer-tests.yml); the targets run
   # from the module root (`dir`).
   fuzz-lazer:
     runs-on: ubuntu-latest
