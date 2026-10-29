@@ -11,7 +11,6 @@ import (
 	"encoding/base64"
 
 	"github.com/LFDT-Panurus/panurus/token"
-	"github.com/LFDT-Panurus/panurus/token/services/nfttx/marshaller"
 	token2 "github.com/LFDT-Panurus/panurus/token/token"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	"github.com/tidwall/gjson"
@@ -77,13 +76,7 @@ func (s *QueryExecutor) QueryByKey(ctx context.Context, state any, key string, v
 		}
 		if q.Cmp(token2.NewOneQuantity(s.precision)) == 0 {
 			// this is the token
-			decoded, err := base64.StdEncoding.DecodeString(string(t.Type))
-			if err != nil {
-				return errors.Wrap(err, "failed to decode type")
-			}
-			if err := marshaller.Unmarshal(decoded, state); err == nil {
-				return errors.Wrap(err, "failed to unmarshal state")
-			}
+			return decodeState(t.Type, state)
 		}
 	}
 
