@@ -325,6 +325,18 @@ cannot be silently skipped or misapplied.
 | `0003-zeroize-secrets.patch` | `bytes_clear` cannot be optimized away, `poly_wipe`/`polyvec_wipe`/`polymat_wipe` zero secrets before they are freed, and the LNP prover wipes its witness, its copies and its expanded coins. |
 | `0004-grandom-sampler-state.patch` | Two defects of the discrete gaussian sampler (`src/grandom.c`, `src/intvec.c`) the provers draw their masking vectors from. `gaussian155` kept its sign bits in function-level `static` variables: shared by all threads (a data race between concurrent proofs), carried from one rng stream to the next and never wiped. For `log2o >= 24`, `_intvec_grandom` reseeded the rng with the same seed and domain for every element, so the elements of a vector shared their uniform part and coins: 64 elements with `log2o = 30` took about 2 distinct values. The presentation mask `y4` (`log2stdev4 = 30`) was affected, which undermines the zero-knowledge of presentations generated before the fix. The sign-bit buffer now belongs to the caller and a vector is sampled from one stream; the distribution of a sample is unchanged and verifiers are not affected. |
 | `0005-lin-prover-wipe-witness.patch` | `lin_prover_wipe_witness` wipes the witness and the prover randomness of a prover state and keeps its public part, so that a prover reused for many proofs does not keep the last witness. |
+| `0006-tbox-fiat-shamir-h-z3-z4.patch` | [lazer-crypto/lazer#28](https://github.com/lazer-crypto/lazer/issues/28): three prover messages of the toolbox protocol were not bound by the challenges meant to bind them. `h` was never hashed, so `mu` and the final challenge did not depend on it; `z3` and `z4` were never hashed, and the challenges compressing their equations came from the hash before them; and those challenges also came from the hash before `tg`. `h`, `z3` and `z4` are now absorbed (their own proof encodings; `coder_grandom3_nbits` in `src/coder.c` sizes the `z3`/`z4` buffer), and the `z3`/`z4` challenges come from the hash after `tg`. The JL matrices `R`, `R'` stay derived from the hash before `z3`/`z4`. Ported from the fix in the issue thread. |
+| `0007-tbox-l2-equation-domains.patch` | [lazer-crypto/lazer#25](https://github.com/lazer-crypto/lazer/issues/25): the exact-ℓ2 equations shared one challenge domain, so only their sum was checked and norm could move from one block to another. Equation `i` now uses domain `dom + i`, which stays below the next domain in use. |
+| `0008-tbox-accumulator-challenge-pairs.patch` | [lazer-crypto/lazer#24](https://github.com/lazer-crypto/lazer/issues/24): `___schwartz_zippel_accumulate2` gave all `lambda / 2` accumulator pairs the same challenges. It now draws a `lambda × M` matrix and pair `i` uses rows `2i` and `2i + 1`. |
+| `0009-quad-verify-bound-z21.patch` | [lazer-crypto/lazer#26](https://github.com/lazer-crypto/lazer/issues/26): `lnp_quad_verify` and `abdlop_verify` bounded only `z22`, not `z21`, while the parameters assume a bound on all of `z2`. They now check `‖z21‖² + ‖w − γ·w1‖² ≤ Bsqr`. Honest proofs and the transcript are unchanged. |
+| `0010-prover-zk-z2-rejection-beta-signs.patch` | [lazer-crypto/lazer#31](https://github.com/lazer-crypto/lazer/issues/31), prover-only: the `z2` rejection (`rej2 == 2`) used the bimodal test with `σ1²` and no sign; it now uses the one-time rejection Rej1 of Lyubashevsky–Nguyen–Seiler, "Shorter lattice-based zero-knowledge proofs via one-time commitments" (`rej_onetime`, `src/rejection.c`) with `σ2²`, which roughly doubles the expected `z2` attempts. The toolbox prover's β4 sign read an always-zero bit on every fourth attempt; it now reads the next unused bit, and the sign bits are wiped. |
+
+Patches 0006-0008 change `src/lin-proofs.c`, not `src/lnp-tbox.c`: `lin_prover_prove` and
+`lin_verifier_verify` run a private copy of the toolbox protocol in `lin-proofs.c`, so a fix to `lnp-tbox.c`
+alone, as proposed upstream, does not reach the proofs this module makes. 0009 and 0010 change the shared
+`src/lnp-quad.c`, `src/abdlop.c` and `src/rejection.c`. 0006-0008 change the transcript: presentations, SoKs
+and equality-of-opening proofs made before and after them do not verify against each other. Credentials, nyms,
+parameters and proof sizes are unchanged.
 
 `make lazer-check` (run by `lazer-test` and `lazer-bench`) fails if the installed lazer was not built with
 exactly the patches in the directory (it compares their sha256 with `./.lazer/REVISION`), so a build made before
@@ -428,9 +440,19 @@ pseudonyms. The defect is in upstream lazer as well and must be reported to its 
    `CBDC_COM_ROWS` in `anoncreds/anoncreds.h` and regenerate the `popen` and `p2` parameters.
 2. **Size.** A signature is about 53.4 KB (the identity is 225 B).
 3. **Patched lazer.** The build carries local fixes to lazer (bounds-checked decoders, non-exiting key
-   decoding, zeroization, the discrete gaussian sampler, see [Local patches](#local-patches)). The
-   sampler defects fixed by 0004 are in upstream lazer too, and affect presentations generated before the
-   fix (see the patch). They should be upstreamed, and lazer's
+   decoding, zeroization, the discrete gaussian sampler, the toolbox soundness and zero-knowledge issues, see
+   [Local patches](#local-patches)). The sampler defects fixed by 0004 are in upstream lazer too, and affect
+   presentations generated before the fix (see the patch).
+   The open upstream issues lazer-crypto/lazer#24, #25, #26, #28 and #31 are fixed locally by 0006-0010, in
+   the toolbox copy of `src/lin-proofs.c` that the proofs run; fixes to upstream `src/lnp-tbox.c` alone would
+   not cover this build. Proofs made before and after the patches are incompatible. The fixes for #28, #25
+   and #26 were checked by code review against the issue threads and the reporters' fix commits; they are not
+   covered by negative regression tests (tests that a cheating proof is rejected), and #24 has no dedicated
+   test either: the honest-proof tests show that the patched prover and verifier agree. Entry points of
+   `liblazer.a` that this module does not use stay unpatched: lazer's own toolbox in `src/lnp-tbox.c`
+   (`lnp_prover_prove` / `lnp_verifier_verify`) still has #24, #25, #28 and the β4 sign defect, and
+   `src/lnp-quad-eval.c` does not hash `h` before `lnp_quad_many_*` either. These fixes should
+   be upstreamed, and lazer's
    remaining unchecked entry points (e.g. `signer_sign`, `verifier_vrfy`, `user_sign` of its own blind
    signature, which this module does not use) still use the unbounded coder.
 4. **Secrets in memory.** Secrets are wiped on `Clear` and after use, in C and in the Go wrapper, but copies

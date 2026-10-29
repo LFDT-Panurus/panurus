@@ -1,0 +1,385 @@
+From: Panurus maintainers
+Subject: [PATCH 6/10] toolbox: absorb h, z3 and z4 into the Fiat-Shamir transcript
+
+Three prover messages of the toolbox protocol in src/lin-proofs.c were not
+bound by the challenges that are meant to bind them
+(lazer-crypto/lazer#28):
+
+- h was never hashed: mu, which combines the quadratic equations
+  (lnp_quad_many_*), and the final challenge were derived from the hash
+  after tg, so a prover could solve for h after seeing mu and make every
+  evaluation and quadratic equation hold in combination;
+- z3 and z4 were never hashed: the challenges V3/V4 that compress their
+  256 linear equations each were derived from hash0, before z3/z4 exist;
+- V3/V4 were derived before tg, while the other accumulators feeding h use
+  the hash after it, so g could be chosen to cancel an error in the z3/z4
+  equations.
+
+h is now absorbed before lnp_quad_many_prove/_verify, z3 and z4 right after
+they are computed (prover) or norm-checked (verifier), and V3/V4 are drawn
+from the hash after tg. The JL matrices R, R' stay derived from cseed, the
+hash before z3/z4, from which the prover computes them. Each round absorbs
+the proof's own encoding of the message; coder_grandom3_nbits sizes the
+buffer for z3/z4 exactly.
+
+Ported from the fix proposed in the issue thread (and the reporters' fork),
+which targets src/lnp-tbox.c: lin_prover_prove and lin_verifier_verify run
+the toolbox copy in src/lin-proofs.c, so the fix is applied there, in the
+prover and in the verifier. It changes the transcript: proofs made before
+and after do not verify against each other. Proof sizes do not change.
+
+Panurus-local patch, applied by `make lazer-install` (lazer.mk).
+
+diff --git a/src/coder.c b/src/coder.c
+index 353825b..304df14 100644
+--- a/src/coder.c
++++ b/src/coder.c
+@@ -1186,6 +1186,40 @@ coder_dec_urandom4diag (coder_state_t state, polymat_t v, const int_t m,
+   return 0;
+ }
+ 
++/*
++ * Number of bits coder_enc_grandom3 (v, log2o) writes: per coefficient a
++ * unary part (nones ones and a zero) and log2o + 1 bits (panurus patch, for
++ * hashing the encoding of z3, z4, lazer-crypto/lazer#28).
++ */
++size_t
++coder_grandom3_nbits (polyvec_t v, unsigned int log2o)
++{
++  const unsigned int la = log2o + 1;
++  const int64_t ao = (int64_t)1 << la;
++  size_t n = 0;
++  unsigned int i, k;
++  intvec_ptr c;
++
++  _VEC_FOREACH_ELEM (v, i)
++  {
++    c = poly_get_coeffvec (polyvec_get_elem (v, i));
++    for (k = 0; k < c->nelems; k++)
++      {
++        const int64_t z = int_get_i64 (intvec_get_elem_src (c, k));
++        int64_t z0 = z - (z & ~(ao - 1));
++        int64_t z1;
++
++        if (z0 >= ao / 2)
++          z0 -= ao;
++        else if (z0 < -ao / 2)
++          z0 += ao;
++        z1 = (z - z0) >> la;
++        n += (size_t)(z1 <= 0 ? -2 * z1 : 2 * z1 - 1) + 1 + la;
++      }
++  }
++  return n;
++}
++
+ void
+ coder_enc_grandom3 (coder_state_t state, polyvec_t v, unsigned int log2o)
+ {
+diff --git a/src/lazer-in2.h b/src/lazer-in2.h
+index 74115fa..077bf99 100644
+--- a/src/lazer-in2.h
++++ b/src/lazer-in2.h
+@@ -1413,6 +1413,7 @@ void coder_enc_urandom3 (coder_state_t state, polyvec_t v, const int_t m,
+ int coder_dec_urandom3 (coder_state_t state, polyvec_t v, const int_t m,
+                         unsigned int mbits);
+ void coder_enc_grandom3 (coder_state_t state, polyvec_t v, unsigned int log2o);
++size_t coder_grandom3_nbits (polyvec_t v, unsigned int log2o);
+ void coder_enc_ghint3 (coder_state_t state, polyvec_t ghint);
+ void coder_dec_grandom3 (coder_state_t state, polyvec_t v, unsigned int log2o);
+ void coder_dec_ghint3 (coder_state_t state, polyvec_t ghint);
+diff --git a/src/lin-proofs.c b/src/lin-proofs.c
+index 479c7b3..4bdddbf 100644
+--- a/src/lin-proofs.c
++++ b/src/lin-proofs.c
+@@ -106,8 +106,9 @@ static void ___schwartz_zippel_accumulate_z4 (
+     spolymat_ptr R2i2[], spolyvec_ptr r1i2[], poly_ptr r0i2[],
+     spolymat_ptr R2t, spolyvec_ptr r1t, poly_ptr r0t, polymat_t Ds,
+     polymat_t Dm, polyvec_t u, polymat_t oDs, polymat_t oDm, polyvec_t z4,
+-    const uint8_t seed[32], uint32_t dom, const lnp_tbox_params_t params,
+-    spolyvec_t u0, spolyvec_t u1, spolymat_t t0, spolymat_t t1);
++    const uint8_t seed[32], const uint8_t rseed[32], uint32_t dom,
++    const lnp_tbox_params_t params, spolyvec_t u0, spolyvec_t u1,
++    spolymat_t t0, spolymat_t t1);
+ static void ___schwartz_zippel_accumulate_z3 (
+     spolymat_ptr R2i[], spolyvec_ptr r1i[], poly_ptr r0i[],
+     spolymat_ptr R2i2[], spolyvec_ptr r1i2[], poly_ptr r0i2[],
+@@ -115,8 +116,13 @@ static void ___schwartz_zippel_accumulate_z3 (
+     const unsigned int *const *const Es, const unsigned int *Es_nrows,
+     const unsigned int *const *const Em, const unsigned int *Em_nrows,
+     const unsigned int *const Ps, const unsigned int Ps_nrows, polyvec_t z3,
+-    const uint8_t seed[32], uint32_t dom, const lnp_tbox_params_t params,
+-    spolyvec_t u0, spolyvec_t u1, spolymat_t t0, spolymat_t t1);
++    const uint8_t seed[32], const uint8_t rseed[32], uint32_t dom,
++    const lnp_tbox_params_t params, spolyvec_t u0, spolyvec_t u1,
++    spolymat_t t0, spolymat_t t1);
++static void __lnp_tbox_hash_z34 (uint8_t hash[32], polyvec_t z3,
++                                 polyvec_t z4, const lnp_tbox_params_t params);
++static void __lnp_tbox_hash_h (uint8_t hash[32], polyvec_t h,
++                               const lnp_tbox_params_t params);
+ 
+ static inline void
+ ___evaleq (poly_ptr res, spolymat_ptr Rprime2, spolyvec_ptr rprime1,
+@@ -243,7 +249,7 @@ _lnp_tbox_prove (uint8_t hash[32], polyvec_t tB, polyvec_t h, poly_t c,
+   poly_ptr r0prime_sz2[lambda / 2];
+   shake128_state_t hstate;
+   coder_state_t cstate;
+-  uint8_t hash0[32];
++  uint8_t hashr[32]; /* cseed: seed of R, R' (panurus patch) */
+   uint8_t expseed[3 * 32];
+   const uint8_t *seed_rej34 = expseed;
+   const uint8_t *seed_cont = expseed + 32;
+@@ -349,7 +355,14 @@ _lnp_tbox_prove (uint8_t hash[32], polyvec_t tB, polyvec_t h, poly_t c,
+                           Em, Em_nrows, Ps, Ps_nrows, Ds, Dm, u, seed_rej34,
+                           params);
+   STOPWATCH_STOP (stopwatch_lnp_tbox_prove_z34);
+-  memcpy (hash0, hash, 32); // save this level of FS hash for later
++  /*
++   * z3, z4 are absorbed before the challenges that combine their 256
++   * equations each; the JL matrices R, R' stay derived from cseed, the hash
++   * before z3, z4, from which the prover computed them (panurus patch,
++   * lazer-crypto/lazer#28).
++   */
++  memcpy (hashr, hash, 32);
++  __lnp_tbox_hash_z34 (hash, z3, z4, params);
+ 
+   /* tB = (tB_,tg,t) */
+ 
+@@ -615,8 +628,7 @@ _lnp_tbox_prove (uint8_t hash[32], polyvec_t tB, polyvec_t h, poly_t c,
+       DEBUG_PRINTF (DEBUG_LEVEL >= 2, "%s", "schwarz-zippel z4 evalqs");
+       ___schwartz_zippel_accumulate_z4 (
+           R2prime_sz, r1prime_sz, r0prime_sz, R2prime_sz2, r1prime_sz2,
+-          r0prime_sz2, R2t, r1t, r0t, Ds, Dm, u, oDs, oDm, z4,
+-          hash0, // XXX why hash0 needed ??
++          r0prime_sz2, R2t, r1t, r0t, Ds, Dm, u, oDs, oDm, z4, hash, hashr,
+           lambda * (2 * (d - 1) + 2 + Z), params, u0, u1, t0, t1);
+     }
+   STOPWATCH_STOP (stopwatch_lnp_tbox_prove_sz_z4);
+@@ -627,8 +639,8 @@ _lnp_tbox_prove (uint8_t hash[32], polyvec_t tB, polyvec_t h, poly_t c,
+       ___schwartz_zippel_accumulate_z3 (
+           R2prime_sz, r1prime_sz, r0prime_sz, R2prime_sz2, r1prime_sz2,
+           r0prime_sz2, R2t, r1t, r0t, Es, Es_nrows, Em, Em_nrows, Ps, Ps_nrows,
+-          z3, hash0, lambda * (2 * (d - 1) + 2 + Z + 256), params, u0, u1, t0,
+-          t1);
++          z3, hash, hashr, lambda * (2 * (d - 1) + 2 + Z + 256), params, u0,
++          u1, t0, t1);
+     }
+   STOPWATCH_STOP (stopwatch_lnp_tbox_prove_sz_z3);
+ 
+@@ -703,6 +715,9 @@ _lnp_tbox_prove (uint8_t hash[32], polyvec_t tB, polyvec_t h, poly_t c,
+ #endif
+ 
+   DEBUG_PRINTF (DEBUG_LEVEL >= 2, "%s", "call many_prove");
++  /* h is absorbed before mu and the final challenge (panurus patch,
++     lazer-crypto/lazer#28) */
++  __lnp_tbox_hash_h (hash, h, params);
+   lnp_quad_many_prove (hash, tB, c, z1, z21, hint, s1, m, s2, tA2, A1, A2prime,
+                        Bprime, R2prime_sz, r1prime_sz, lambda / 2 + 2,
+                        seed_cont2, quad);
+@@ -821,7 +836,7 @@ _lnp_tbox_verify (uint8_t hash[32], polyvec_t h, poly_t c, polyvec_t z1,
+   spolymat_t R2t;
+   spolyvec_t r1t;
+   poly_t r0t;
+-  uint8_t hash0[32];
++  uint8_t hashr[32]; /* cseed: seed of R, R' (panurus patch) */
+   polymat_t oDs;
+   polymat_t oDm;
+   polyvec_t ou;
+@@ -1006,7 +1021,9 @@ _lnp_tbox_verify (uint8_t hash[32], polyvec_t h, poly_t c, polyvec_t z1,
+       //printf ("XXX z3, z4 norm bound check failed.\n");
+       goto ret;
+     }
+-  memcpy (hash0, hash, 32); // save this level of FS hash for later
++  /* as in the prover (panurus patch, lazer-crypto/lazer#28) */
++  memcpy (hashr, hash, 32);
++  __lnp_tbox_hash_z34 (hash, z3, z4, params);
+ 
+   /* check if h's coeffs 0 and d/2 are zero. */
+   b = 0;
+@@ -1105,7 +1122,7 @@ _lnp_tbox_verify (uint8_t hash[32], polyvec_t h, poly_t c, polyvec_t z1,
+     {
+       ___schwartz_zippel_accumulate_z4 (
+           R2prime_sz, r1prime_sz, r0prime_sz, R2prime_sz2, r1prime_sz2,
+-          r0prime_sz2, R2t, r1t, r0t, Ds, Dm, u, oDs, oDm, z4, hash0,
++          r0prime_sz2, R2t, r1t, r0t, Ds, Dm, u, oDs, oDm, z4, hash, hashr,
+           lambda * (2 * (d - 1) + 2 + Z), params, u0, u1, t0, t1);
+     }
+   STOPWATCH_STOP (stopwatch_lnp_tbox_verify_sz_z4);
+@@ -1115,8 +1132,8 @@ _lnp_tbox_verify (uint8_t hash[32], polyvec_t h, poly_t c, polyvec_t z1,
+       ___schwartz_zippel_accumulate_z3 (
+           R2prime_sz, r1prime_sz, r0prime_sz, R2prime_sz2, r1prime_sz2,
+           r0prime_sz2, R2t, r1t, r0t, Es, Es_nrows, Em, Em_nrows, Ps, Ps_nrows,
+-          z3, hash0, lambda * (2 * (d - 1) + 2 + Z + 256), params, u0, u1, t0,
+-          t1);
++          z3, hash, hashr, lambda * (2 * (d - 1) + 2 + Z + 256), params, u0,
++          u1, t0, t1);
+     }
+   STOPWATCH_STOP (stopwatch_lnp_tbox_verify_sz_z3);
+ 
+@@ -1148,6 +1165,8 @@ _lnp_tbox_verify (uint8_t hash[32], polyvec_t h, poly_t c, polyvec_t z1,
+       R2prime_sz[i]->nelems_max = NELEMS_DIAG (np);
+     }
+ 
++  /* as in the prover (panurus patch, lazer-crypto/lazer#28) */
++  __lnp_tbox_hash_h (hash, h, params);
+   b = lnp_quad_many_verify (hash, c, z1, z21, hint, tA1, tB, A1, A2prime,
+                             Bprime, R2prime_sz, r1prime_sz, r0prime_sz,
+                             lambda / 2 + 2, quad);
+@@ -1863,6 +1882,98 @@ ret:
+   return b;
+ }
+ 
++/*
++ * hash <- SHAKE128(hash || enc), enc the proof's own encoding of z3, z4 (one
++ * coder session, grandom3 with log2stdev3 then log2stdev4) on centred copies;
++ * the callers keep using z3, z4. Both are absorbed, as the proof encodes
++ * both, also when nex or nprime is 0. The coder is bounded by the exact
++ * length (coder_grandom3_nbits). Panurus patch, lazer-crypto/lazer#28.
++ */
++static void
++__lnp_tbox_hash_z34 (uint8_t hash[32], polyvec_t z3, polyvec_t z4,
++                     const lnp_tbox_params_t params)
++{
++  polyring_srcptr Rq = params->tbox->ring;
++  shake128_state_t hstate;
++  coder_state_t cstate;
++  polyvec_t a3, a4;
++  uint8_t *buf;
++  size_t len;
++
++  polyvec_alloc (a3, Rq, polyvec_get_nelems (z3));
++  polyvec_alloc (a4, Rq, polyvec_get_nelems (z4));
++  polyvec_set (a3, z3);
++  polyvec_set (a4, z4);
++  polyvec_fromcrt (a3);
++  polyvec_fromcrt (a4);
++  polyvec_mod (a3, a3);
++  polyvec_mod (a4, a4);
++  polyvec_redc (a3, a3);
++  polyvec_redc (a4, a4);
++  len = (coder_grandom3_nbits (a3, params->log2stdev3)
++         + coder_grandom3_nbits (a4, params->log2stdev4))
++            / 8
++        + 2;
++  buf = _alloc (len);
++
++  coder_enc_begin_bnd (cstate, buf, len);
++  coder_enc_grandom3 (cstate, a3, params->log2stdev3);
++  coder_enc_grandom3 (cstate, a4, params->log2stdev4);
++  coder_enc_end (cstate);
++  ASSERT_ERR (coder_get_err (cstate) == 0);
++  ASSERT_ERR (coder_get_offset (cstate) % 8 == 0);
++
++  shake128_init (hstate);
++  shake128_absorb (hstate, hash, 32);
++  shake128_absorb (hstate, buf, coder_get_offset (cstate) >> 3);
++  shake128_squeeze (hstate, hash, 32);
++  shake128_clear (hstate);
++
++  _free (buf, len);
++  polyvec_free (a4);
++  polyvec_free (a3);
++}
++
++/*
++ * hash <- SHAKE128(hash || enc), enc the proof's own encoding of h
++ * (urandom3 mod q) on a copy reduced to [0, q). Panurus patch,
++ * lazer-crypto/lazer#28.
++ */
++static void
++__lnp_tbox_hash_h (uint8_t hash[32], polyvec_t h,
++                   const lnp_tbox_params_t params)
++{
++  polyring_srcptr Rq = params->tbox->ring;
++  int_srcptr q = polyring_get_mod (Rq);
++  const unsigned int log2q = polyring_get_log2q (Rq);
++  const unsigned int d = polyring_get_deg (Rq);
++  const unsigned int n = polyvec_get_nelems (h);
++  shake128_state_t hstate;
++  coder_state_t cstate;
++  uint8_t out[CEIL (log2q * d * n, 8) + 2];
++  polyvec_t a;
++
++  polyvec_alloc (a, Rq, n);
++  polyvec_set (a, h);
++  polyvec_fromcrt (a);
++  polyvec_mod (a, a);
++  polyvec_redp (a, a);
++
++  coder_enc_begin_bnd (cstate, out, sizeof (out));
++  coder_enc_urandom3 (cstate, a, q, log2q);
++  coder_enc_end (cstate);
++  ASSERT_ERR (coder_get_err (cstate) == 0);
++  ASSERT_ERR (coder_get_offset (cstate) % 8 == 0);
++
++  shake128_init (hstate);
++  shake128_absorb (hstate, hash, 32);
++  shake128_absorb (hstate, out, coder_get_offset (cstate) >> 3);
++  shake128_squeeze (hstate, hash, 32);
++  shake128_clear (hstate);
++
++  polyvec_free (a);
++}
++
+ /* expand i-th row of R from cseed and i */
+ static inline void
+ __expand_R_i (int8_t *Ri, unsigned int ncols, unsigned int i,
+@@ -2798,8 +2909,9 @@ ___schwartz_zippel_accumulate_z4 (
+     spolymat_ptr R2i2[], spolyvec_ptr r1i2[], poly_ptr r0i2[],
+     spolymat_ptr R2t, spolyvec_ptr r1t, poly_ptr r0t, polymat_t Ds,
+     polymat_t Dm, polyvec_t u, polymat_t oDs, polymat_t oDm, polyvec_t z4,
+-    const uint8_t seed[32], uint32_t dom, const lnp_tbox_params_t params,
+-    spolyvec_t u0, spolyvec_t u1, spolymat_t t0, spolymat_t t1)
++    const uint8_t seed[32], const uint8_t rseed[32], uint32_t dom,
++    const lnp_tbox_params_t params, spolyvec_t u0, spolyvec_t u1,
++    spolymat_t t0, spolymat_t t1)
+ {
+   abdlop_params_srcptr tbox = params->tbox;
+   polyring_srcptr Rq = tbox->ring;
+@@ -2886,7 +2998,7 @@ ___schwartz_zippel_accumulate_z4 (
+ 
+       for (i = 0; i < 256; i++)
+         {
+-          __expand_Rprime_i (Rprimei, nprime * d, i, seed);
++          __expand_Rprime_i (Rprimei, nprime * d, i, rseed);
+ 
+           for (k = 0; k < lambda; k++)
+             {
+@@ -2925,7 +3037,7 @@ ___schwartz_zippel_accumulate_z4 (
+ 
+       for (i = 0; i < 256; i++)
+         {
+-          __expand_Rprime_i (Rprimei, nprime * d, i, seed);
++          __expand_Rprime_i (Rprimei, nprime * d, i, rseed);
+ 
+           for (k = 0; k < lambda; k++)
+             {
+@@ -3174,8 +3286,9 @@ ___schwartz_zippel_accumulate_z3 (
+     const unsigned int *const *const Es, const unsigned int *Es_nrows,
+     const unsigned int *const *const Em, const unsigned int *Em_nrows,
+     const unsigned int *const Ps, const unsigned int Ps_nrows, polyvec_t z3,
+-    const uint8_t seed[32], uint32_t dom, const lnp_tbox_params_t params,
+-    spolyvec_t u0, spolyvec_t u1, spolymat_t t0, spolymat_t t1)
++    const uint8_t seed[32], const uint8_t rseed[32], uint32_t dom,
++    const lnp_tbox_params_t params, spolyvec_t u0, spolyvec_t u1,
++    spolymat_t t0, spolymat_t t1)
+ {
+   abdlop_params_srcptr tbox = params->tbox;
+   polyring_srcptr Rq = tbox->ring;
+@@ -3289,7 +3402,7 @@ ___schwartz_zippel_accumulate_z3 (
+ 
+       for (i = 0; i < 256; i++)
+         {
+-          __expand_R_i (Ri, nex * d, i, seed);
++          __expand_R_i (Ri, nex * d, i, rseed);
+ 
+           for (k = 0; k < lambda; k++)
+             {
+@@ -3328,7 +3441,7 @@ ___schwartz_zippel_accumulate_z3 (
+ 
+       for (i = 0; i < 256; i++)
+         {
+-          __expand_R_i (Ri, nex * d, i, seed);
++          __expand_R_i (Ri, nex * d, i, rseed);
+ 
+           for (k = 0; k < lambda; k++)
+             {
