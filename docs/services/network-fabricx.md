@@ -329,6 +329,17 @@ graph LR
     Notify3 --> App
 ```
 
+### Submit-Path Finality Wait
+
+Besides the async queue above, the submitter
+(`token/services/network/fabricx/tms`) also waits for finality inline on
+broadcast. Polling starts before the ordering call, so a transaction committing
+early is not missed, and is cancelled if the broadcast fails.
+
+Only `io.EOF` is retried (block 0 not yet committed, typical at startup):
+`finalityEOFRetries` (5) attempts, `finalityRetryDuration` (2s) apart. Any other
+error returns immediately.
+
 ### Finality Configuration
 
 ```yaml

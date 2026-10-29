@@ -87,6 +87,12 @@ type fnsBroadcaster struct {
 	fnsProvider *fabric.NetworkServiceProvider
 }
 
+// ordering models the subset of the ordering service used to broadcast an envelope.
+type ordering interface {
+	// Broadcast sends the passed blob to the ordering service to be ordered.
+	Broadcast(ctx context.Context, blob any) error
+}
+
 // Broadcast sends the transaction envelope to the ordering service and blocks
 // until finality is confirmed. It starts a background goroutine to poll
 // for finality while performing the broadcast operation.
@@ -101,11 +107,25 @@ func (p *fnsBroadcaster) Broadcast(network, channel string, txID driver.TxID, en
 		return errors.Wrapf(err, "failed to get channel [%s]", channel)
 	}
 
-	final := make(chan error)
-	go func() { final <- getFinality(ch.Finality(), txID) }()
+	return broadcastAndWaitForFinality(context.Background(), fns.Ordering(), ch.Finality(), network, channel, txID, env)
+}
+
+// broadcastAndWaitForFinality broadcasts env and waits for txID to become final.
+// Polling starts before the broadcast so a transaction that commits before the
+// broadcast returns is not missed.
+func broadcastAndWaitForFinality(ctx context.Context, orderer ordering, finality driver.Finality, network, channel string, txID driver.TxID, env *cb.Envelope) error {
+	finalityCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	// Buffered, and the context is cancelled on return, so the poller always
+	// exits even when the broadcast error path never reads the result.
+	final := make(chan error, 1)
+	go func() {
+		final <- getFinality(finalityCtx, finality, txID, finalityEOFRetries, finalityRetryDuration)
+	}()
 
 	logger.Infof("Send transaction [txID=%v] for ordering", txID)
-	if err := fns.Ordering().Broadcast(context.Background(), env); err != nil {
+	if err := orderer.Broadcast(ctx, env); err != nil {
 		return errors.Wrapf(err, "failed broadcasting on [%s,%s]", network, channel)
 	}
 
@@ -114,22 +134,32 @@ func (p *fnsBroadcaster) Broadcast(network, channel string, txID driver.TxID, en
 	return <-final
 }
 
-// getFinality polls the finality service to determine if a transaction has
-// been committed to the ledger. It includes retry logic with a delay to
-// handle EOF errors, which can occur during network startup or when
-// block 0 is not yet available.
-func getFinality(finality driver.Finality, txID string) error {
+// getFinality polls the finality service until txID is committed, retrying at
+// most retries times with delay in between. Only io.EOF is retried: it means
+// block 0 is not yet available, typically during network startup.
+func getFinality(ctx context.Context, finality driver.Finality, txID string, retries int, delay time.Duration) error {
 	logger.Debugf("wait for finality [txID=%v]", txID)
-	for range finalityEOFRetries {
-		err := finality.IsFinal(context.Background(), txID)
+	for attempt := range retries {
+		err := finality.IsFinal(ctx, txID)
 		if err == nil {
 			return nil
 		}
 		if !errors.Is(err, io.EOF) {
 			return errors.Wrapf(err, "finality failed")
 		}
+		if attempt == retries-1 {
+			break
+		}
 		logger.Warnf("EOF returned. Maybe block 0 is not yet committed. Sleep and retry...")
-		time.Sleep(finalityRetryDuration)
+
+		timer := time.NewTimer(delay)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+
+			return errors.Wrapf(ctx.Err(), "finality wait interrupted")
+		case <-timer.C:
+		}
 	}
 
 	return errors.New("max retries reached")
