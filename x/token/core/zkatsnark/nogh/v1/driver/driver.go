@@ -13,10 +13,7 @@ import (
 	"github.com/LFDT-Panurus/panurus/token/core/common/metrics"
 	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/crypto/upgrade"
 	"github.com/LFDT-Panurus/panurus/token/driver"
-	"github.com/LFDT-Panurus/panurus/token/services/interop/htlc"
 	"github.com/LFDT-Panurus/panurus/token/services/logging"
-	"github.com/LFDT-Panurus/panurus/token/services/ttx/boolpolicy"
-	"github.com/LFDT-Panurus/panurus/token/services/ttx/multisig"
 	"github.com/LFDT-Panurus/panurus/token/services/utils"
 	zkatsnark "github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1"
 	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/pp"
@@ -149,12 +146,7 @@ func (d *Driver) NewTokenService(tmsID driver.TMSID, publicParams []byte) (drive
 	deserializer := ws.Deserializer
 	ip := ws.IdentityProvider
 
-	authorization := common.NewAuthorizationMultiplexer(
-		common.NewTMSAuthorization(logger, ppm.PublicParams(), ws),
-		htlc.NewScriptAuth(ws),
-		multisig.NewEscrowAuth(ws),
-		boolpolicy.NewEscrowAuth(ws),
-	)
+	authorization := newAuthorization(logger, ppm.PublicParams(), ws)
 
 	baseParams, err := prepared.NewParams(ppp)
 	if err != nil {
@@ -220,6 +212,15 @@ func (d *Driver) NewTokenService(tmsID driver.TMSID, publicParams []byte) (drive
 	}
 
 	return service, err
+}
+
+// newAuthorization returns the ownership, issuance and auditor authorization
+// chain of the driver. It is the chain shared by every token driver: the
+// type-gated htlc, multisig and boolpolicy authorizations go before the
+// wallet-based one, which would otherwise claim escrow-typed tokens whose
+// composite identity is bound to a wallet under the wrong wallet id.
+func newAuthorization(logger logging.Logger, pp driver.PublicParameters, ws driver.WalletService) *common.AuthorizationMultiplexer {
+	return common.NewStandardAuthorization(logger, pp, ws)
 }
 
 // NewTokensServices builds the TokensService and the TokensUpgradeService of a

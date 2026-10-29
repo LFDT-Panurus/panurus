@@ -91,6 +91,10 @@ p.Curve = ecc.BN254
 p, err := setup.SetupAll(p)
 ```
 
+## Ownership Authorization
+
+The driver decides whether a token is owned by a local wallet (`IsMine`), was issued by a local issuer (`Issued`), and whether this node is an auditor (`AmIAnAuditor`) through `common.NewStandardAuthorization` (`token/core/common/authorization.go`), the same chain fabtoken and zkatdlog use. The chain is first-match-wins. The type-gated htlc, multisig and boolpolicy authorizations run first and record escrow-typed tokens under prefixed ownership ids (`htlc.sender<wallet>`, `htlc.recipient<wallet>`, `escrow<wallet>`, `policy<wallet>`). The wallet-based authorization runs last as the catch-all for plain owners. If it ran first, it would claim an escrow token whose composite identity is bound to a wallet under that wallet id and drop its ownership entries. See [Identity Service](../services/identity.md) for how to add a new escrow type. The regression test is `x/token/core/zkatsnark/nogh/v1/driver/authorization_test.go`.
+
 ## Token Upgrades
 
 A network that moves to ZKAT-SNARK still holds tokens created by the driver it used before. This
