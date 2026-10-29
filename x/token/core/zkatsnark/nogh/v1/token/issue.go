@@ -7,6 +7,7 @@ package token
 
 import (
 	"github.com/LFDT-Panurus/panurus/token/driver"
+	protosv1 "github.com/LFDT-Panurus/panurus/token/driver/protos-go/v1"
 	token2 "github.com/LFDT-Panurus/panurus/token/token"
 	snarkactions "github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/protos-go/v1/actions"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
@@ -90,7 +91,10 @@ func (o *OutputDescription) GetOwner() []byte {
 
 // IssueAction represents the creation of one or more new tokens.
 //
-// There are no SpendDescriptions — issuance consumes nothing. The binding
+// There are no SpendDescriptions: a plain issuance consumes nothing. An
+// upgrade issuance (burn-and-re-issue of legacy fabtoken outputs) lists the
+// redeemed fabtokens in Inputs and reveals TypeRandomness, so that the
+// validator can bind the minted type and value to the redeemed ones. The binding
 // signature's signing key is bsk = −Σrcv_out (no input RCVs to add), and it
 // attests that every output's value commitment is correctly formed, not
 // that any conservation equation holds — there is nothing to conserve
@@ -107,6 +111,11 @@ type IssueAction struct {
 	TotalValue       []byte
 	limits           *driver.ResourceLimits
 	Metadata         map[string][]byte `json:"Metadata,omitempty"` // action metadata, set from the issue options
+	// Inputs are the legacy fabtoken outputs redeemed by an upgrade issuance; empty otherwise.
+	Inputs []*IssueActionInput `json:"Inputs,omitempty"`
+	// TypeRandomness opens TypeCommitment. It is set if and only if Inputs is
+	// non-empty: the token type is then already public through the inputs.
+	TypeRandomness []byte `json:"TypeRandomness,omitempty"`
 }
 
 // ── driver.Action ──────────────────────────────────────────────────────────────
@@ -121,25 +130,77 @@ func (a *IssueAction) Validate() error {
 	if len(a.Outputs) == 0 {
 		return errors.New("issue action has no outputs")
 	}
+	if err := a.validateInputs(); err != nil {
+		return err
+	}
 
 	return a.checkLimits()
 }
 
-// ── driver.ActionWithInputs ────────────────────────────────────────────────────
+// validateInputs checks the upgrade inputs are complete and pairwise distinct,
+// and that TypeRandomness is present exactly when there are inputs.
+func (a *IssueAction) validateInputs() error {
+	if len(a.Inputs) == 0 {
+		if len(a.TypeRandomness) != 0 {
+			return errors.New("issue action reveals type randomness but has no inputs")
+		}
 
-// NumInputs returns 0, issuance has no inputs.
-func (a *IssueAction) NumInputs() int {
-	return 0
-}
+		return nil
+	}
+	if len(a.TypeRandomness) == 0 {
+		return errors.New("upgrade issue action must reveal its type randomness")
+	}
+	seen := make(map[token2.ID]struct{}, len(a.Inputs))
+	for i, in := range a.Inputs {
+		if in == nil || len(in.Token) == 0 || len(in.ID.TxId) == 0 {
+			return errors.Wrapf(ErrInvalidUpgradeInput, "input [%d] is nil or incomplete", i)
+		}
+		if _, ok := seen[in.ID]; ok {
+			return errors.Wrapf(ErrDuplicateUpgradeInput, "input [%d] [%s]", i, in.ID)
+		}
+		seen[in.ID] = struct{}{}
+	}
 
-// GetInputs returns nil, issuance has no inputs.
-func (a *IssueAction) GetInputs() []*token2.ID {
 	return nil
 }
 
-// GetSerializedInputs returns nil, issuance has no inputs.
+// ── driver.ActionWithInputs ────────────────────────────────────────────────────
+
+// NumInputs returns the number of redeemed fabtoken outputs.
+func (a *IssueAction) NumInputs() int {
+	return len(a.Inputs)
+}
+
+// GetInputs returns the ledger IDs of the redeemed fabtoken outputs.
+func (a *IssueAction) GetInputs() []*token2.ID {
+	if len(a.Inputs) == 0 {
+		return nil
+	}
+	res := make([]*token2.ID, len(a.Inputs))
+	for i, in := range a.Inputs {
+		if in != nil {
+			res[i] = &in.ID
+		}
+	}
+
+	return res
+}
+
+// GetSerializedInputs returns the redeemed fabtoken outputs exactly as stored
+// on the ledger.
 func (a *IssueAction) GetSerializedInputs() ([][]byte, error) {
-	return nil, nil
+	if len(a.Inputs) == 0 {
+		return nil, nil
+	}
+	res := make([][]byte, len(a.Inputs))
+	for i, in := range a.Inputs {
+		if in == nil {
+			return nil, errors.Errorf("nil input at index [%d]", i)
+		}
+		res[i] = in.Token
+	}
+
+	return res, nil
 }
 
 // GetSerialNumbers returns nil, zkatsnark does not use serial numbers.
@@ -157,7 +218,9 @@ func (a *IssueAction) GetMetadata() map[string][]byte {
 	return a.Metadata
 }
 
-// ExtraSigners returns nil, zkatsnark does not require extra signers.
+// ExtraSigners returns nil: as in zkatdlog, an upgrade issuance is authorized
+// by the issuer signature alone. The owners consent off-chain, through the
+// upgrade proof the issuer verifies before assembling the issuance.
 func (a *IssueAction) ExtraSigners() []driver.Identity {
 	return nil
 }
@@ -170,6 +233,16 @@ func (a *IssueAction) Serialize() ([]byte, error) {
 	for i := range a.Outputs {
 		outputs[i] = a.Outputs[i].toProto()
 	}
+	var inputs []*snarkactions.IssueActionInput
+	for i, in := range a.Inputs {
+		if in == nil {
+			return nil, errors.Errorf("nil input at index [%d]", i)
+		}
+		inputs = append(inputs, &snarkactions.IssueActionInput{
+			Id:    &protosv1.TokenID{TxId: in.ID.TxId, Index: in.ID.Index},
+			Token: in.Token,
+		})
+	}
 
 	return proto.Marshal(&snarkactions.IssueAction{
 		Issuer:           a.Issuer,
@@ -179,6 +252,8 @@ func (a *IssueAction) Serialize() ([]byte, error) {
 		BindingSignature: a.BindingSignature,
 		TotalValue:       a.TotalValue,
 		Metadata:         a.Metadata,
+		Inputs:           inputs,
+		TypeRandomness:   a.TypeRandomness,
 	})
 }
 
@@ -196,9 +271,25 @@ func (a *IssueAction) Deserialize(raw []byte) error {
 	a.TotalValue = pb.TotalValue
 	a.Metadata = pb.Metadata
 
+	a.TypeRandomness = pb.TypeRandomness
+
 	a.Outputs = make([]OutputDescription, len(pb.Outputs))
 	for i, out := range pb.Outputs {
 		a.Outputs[i] = outputDescriptionFromProto(out)
+	}
+
+	a.Inputs = nil
+	if len(pb.Inputs) > 0 {
+		a.Inputs = make([]*IssueActionInput, len(pb.Inputs))
+		for i, in := range pb.Inputs {
+			if in == nil || in.Id == nil {
+				return errors.Wrapf(ErrInvalidUpgradeInput, "input [%d] has no id", i)
+			}
+			a.Inputs[i] = &IssueActionInput{
+				ID:    token2.ID{TxId: in.Id.TxId, Index: in.Id.Index},
+				Token: in.Token,
+			}
+		}
 	}
 
 	return a.checkLimits()
@@ -207,7 +298,7 @@ func (a *IssueAction) Deserialize(raw []byte) error {
 // checkLimits enforces the configured resource limits on the action.
 func (a *IssueAction) checkLimits() error {
 	limits := effectiveLimits(a.limits)
-	if err := checkCountLimits(0, len(a.Outputs), limits); err != nil {
+	if err := checkCountLimits(len(a.Inputs), len(a.Outputs), limits); err != nil {
 		return err
 	}
 

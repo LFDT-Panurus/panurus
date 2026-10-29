@@ -135,9 +135,14 @@ type SpendDescription struct {
 	// type_commitment is the type commitment: MiMC(TokenType, TypeRandomness), 32 bytes
 	TypeCommitment []byte `protobuf:"bytes,4,opt,name=type_commitment,json=typeCommitment,proto3" json:"type_commitment,omitempty"`
 	// spend_proof is the Groth16 proof for SpendCircuit, 292 bytes
-	SpendProof    []byte `protobuf:"bytes,5,opt,name=spend_proof,json=spendProof,proto3" json:"spend_proof,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	SpendProof []byte `protobuf:"bytes,5,opt,name=spend_proof,json=spendProof,proto3" json:"spend_proof,omitempty"`
+	// upgrade_randomness is set only when the spent token is a legacy fabtoken
+	// output upgraded in place: it is the randomness of the note the fabtoken is
+	// reinterpreted as, so that the validator can recompute commitment_in from
+	// the cleartext ledger token, 32 bytes
+	UpgradeRandomness []byte `protobuf:"bytes,6,opt,name=upgrade_randomness,json=upgradeRandomness,proto3" json:"upgrade_randomness,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
 }
 
 func (x *SpendDescription) Reset() {
@@ -205,8 +210,73 @@ func (x *SpendDescription) GetSpendProof() []byte {
 	return nil
 }
 
+func (x *SpendDescription) GetUpgradeRandomness() []byte {
+	if x != nil {
+		return x.UpgradeRandomness
+	}
+	return nil
+}
+
+// IssueActionInput is a ledger token consumed by an issue action. It is used
+// by the burn-and-re-issue upgrade, where the inputs are legacy fabtoken
+// outputs that the issue action redeems.
+type IssueActionInput struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// id is the ledger identifier of the consumed token
+	Id *v1.TokenID `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	// token is the consumed token exactly as stored on the ledger
+	Token         []byte `protobuf:"bytes,2,opt,name=token,proto3" json:"token,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *IssueActionInput) Reset() {
+	*x = IssueActionInput{}
+	mi := &file_snarkactions_proto_msgTypes[2]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *IssueActionInput) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*IssueActionInput) ProtoMessage() {}
+
+func (x *IssueActionInput) ProtoReflect() protoreflect.Message {
+	mi := &file_snarkactions_proto_msgTypes[2]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use IssueActionInput.ProtoReflect.Descriptor instead.
+func (*IssueActionInput) Descriptor() ([]byte, []int) {
+	return file_snarkactions_proto_rawDescGZIP(), []int{2}
+}
+
+func (x *IssueActionInput) GetId() *v1.TokenID {
+	if x != nil {
+		return x.Id
+	}
+	return nil
+}
+
+func (x *IssueActionInput) GetToken() []byte {
+	if x != nil {
+		return x.Token
+	}
+	return nil
+}
+
 // IssueAction represents the creation of one or more new tokens.
-// There are no SpendDescriptions — issuance consumes nothing.
+// There are no SpendDescriptions; a plain issuance consumes nothing, an
+// upgrade issuance consumes the legacy tokens listed in inputs.
 type IssueAction struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// issuer is the identity of the authorized issuer creating these tokens
@@ -222,14 +292,19 @@ type IssueAction struct {
 	// total_value is the total value of all outputs, 32 bytes
 	TotalValue []byte `protobuf:"bytes,6,opt,name=total_value,json=totalValue,proto3" json:"total_value,omitempty"`
 	// metadata contains application-specific data for this issuance
-	Metadata      map[string][]byte `protobuf:"bytes,7,rep,name=metadata,proto3" json:"metadata,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	Metadata map[string][]byte `protobuf:"bytes,7,rep,name=metadata,proto3" json:"metadata,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	// inputs are the legacy tokens redeemed by an upgrade issuance; empty otherwise
+	Inputs []*IssueActionInput `protobuf:"bytes,8,rep,name=inputs,proto3" json:"inputs,omitempty"`
+	// type_randomness opens type_commitment; set only when inputs is non-empty,
+	// where the token type is already public through the inputs, 32 bytes
+	TypeRandomness []byte `protobuf:"bytes,9,opt,name=type_randomness,json=typeRandomness,proto3" json:"type_randomness,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *IssueAction) Reset() {
 	*x = IssueAction{}
-	mi := &file_snarkactions_proto_msgTypes[2]
+	mi := &file_snarkactions_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -241,7 +316,7 @@ func (x *IssueAction) String() string {
 func (*IssueAction) ProtoMessage() {}
 
 func (x *IssueAction) ProtoReflect() protoreflect.Message {
-	mi := &file_snarkactions_proto_msgTypes[2]
+	mi := &file_snarkactions_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -254,7 +329,7 @@ func (x *IssueAction) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use IssueAction.ProtoReflect.Descriptor instead.
 func (*IssueAction) Descriptor() ([]byte, []int) {
-	return file_snarkactions_proto_rawDescGZIP(), []int{2}
+	return file_snarkactions_proto_rawDescGZIP(), []int{3}
 }
 
 func (x *IssueAction) GetIssuer() []byte {
@@ -306,6 +381,20 @@ func (x *IssueAction) GetMetadata() map[string][]byte {
 	return nil
 }
 
+func (x *IssueAction) GetInputs() []*IssueActionInput {
+	if x != nil {
+		return x.Inputs
+	}
+	return nil
+}
+
+func (x *IssueAction) GetTypeRandomness() []byte {
+	if x != nil {
+		return x.TypeRandomness
+	}
+	return nil
+}
+
 // TransferAction represents consuming one or more existing tokens and
 // creating one or more new tokens, with value conserved across the two sets.
 type TransferAction struct {
@@ -332,7 +421,7 @@ type TransferAction struct {
 
 func (x *TransferAction) Reset() {
 	*x = TransferAction{}
-	mi := &file_snarkactions_proto_msgTypes[3]
+	mi := &file_snarkactions_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -344,7 +433,7 @@ func (x *TransferAction) String() string {
 func (*TransferAction) ProtoMessage() {}
 
 func (x *TransferAction) ProtoReflect() protoreflect.Message {
-	mi := &file_snarkactions_proto_msgTypes[3]
+	mi := &file_snarkactions_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -357,7 +446,7 @@ func (x *TransferAction) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TransferAction.ProtoReflect.Descriptor instead.
 func (*TransferAction) Descriptor() ([]byte, []int) {
-	return file_snarkactions_proto_rawDescGZIP(), []int{3}
+	return file_snarkactions_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *TransferAction) GetTypeCommitment() []byte {
@@ -448,7 +537,7 @@ type MigrationAction struct {
 
 func (x *MigrationAction) Reset() {
 	*x = MigrationAction{}
-	mi := &file_snarkactions_proto_msgTypes[4]
+	mi := &file_snarkactions_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -460,7 +549,7 @@ func (x *MigrationAction) String() string {
 func (*MigrationAction) ProtoMessage() {}
 
 func (x *MigrationAction) ProtoReflect() protoreflect.Message {
-	mi := &file_snarkactions_proto_msgTypes[4]
+	mi := &file_snarkactions_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -473,7 +562,7 @@ func (x *MigrationAction) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MigrationAction.ProtoReflect.Descriptor instead.
 func (*MigrationAction) Descriptor() ([]byte, []int) {
-	return file_snarkactions_proto_rawDescGZIP(), []int{4}
+	return file_snarkactions_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *MigrationAction) GetCommitmentPedersenX() []byte {
@@ -543,14 +632,18 @@ const file_snarkactions_proto_rawDesc = "" +
 	"\x12value_commit_out_y\x18\x03 \x01(\fR\x0fvalueCommitOutY\x12'\n" +
 	"\x0ftype_commitment\x18\x04 \x01(\fR\x0etypeCommitment\x12!\n" +
 	"\foutput_proof\x18\x05 \x01(\fR\voutputProof\x12\x1c\n" +
-	"\trecipient\x18\x06 \x01(\fR\trecipient\"\xd7\x01\n" +
+	"\trecipient\x18\x06 \x01(\fR\trecipient\"\x86\x02\n" +
 	"\x10SpendDescription\x12#\n" +
 	"\rcommitment_in\x18\x01 \x01(\fR\fcommitmentIn\x12)\n" +
 	"\x11value_commit_in_x\x18\x02 \x01(\fR\x0evalueCommitInX\x12)\n" +
 	"\x11value_commit_in_y\x18\x03 \x01(\fR\x0evalueCommitInY\x12'\n" +
 	"\x0ftype_commitment\x18\x04 \x01(\fR\x0etypeCommitment\x12\x1f\n" +
 	"\vspend_proof\x18\x05 \x01(\fR\n" +
-	"spendProof\"\xa6\x03\n" +
+	"spendProof\x12-\n" +
+	"\x12upgrade_randomness\x18\x06 \x01(\fR\x11upgradeRandomness\"c\n" +
+	"\x10IssueActionInput\x129\n" +
+	"\x02id\x18\x01 \x01(\v2).fabric_token_sdk.token.driver.v1.TokenIDR\x02id\x12\x14\n" +
+	"\x05token\x18\x02 \x01(\fR\x05token\"\x9e\x04\n" +
 	"\vIssueAction\x12\x16\n" +
 	"\x06issuer\x18\x01 \x01(\fR\x06issuer\x12\x1d\n" +
 	"\n" +
@@ -560,7 +653,9 @@ const file_snarkactions_proto_rawDesc = "" +
 	"\x11binding_signature\x18\x05 \x01(\fR\x10bindingSignature\x12\x1f\n" +
 	"\vtotal_value\x18\x06 \x01(\fR\n" +
 	"totalValue\x12Z\n" +
-	"\bmetadata\x18\a \x03(\v2>.fabric_token_sdk.token.zkatsnark.v1.IssueAction.MetadataEntryR\bmetadata\x1a;\n" +
+	"\bmetadata\x18\a \x03(\v2>.fabric_token_sdk.token.zkatsnark.v1.IssueAction.MetadataEntryR\bmetadata\x12M\n" +
+	"\x06inputs\x18\b \x03(\v25.fabric_token_sdk.token.zkatsnark.v1.IssueActionInputR\x06inputs\x12'\n" +
+	"\x0ftype_randomness\x18\t \x01(\fR\x0etypeRandomness\x1a;\n" +
 	"\rMetadataEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\fR\x05value:\x028\x01\"\xa6\x04\n" +
@@ -598,29 +693,32 @@ func file_snarkactions_proto_rawDescGZIP() []byte {
 	return file_snarkactions_proto_rawDescData
 }
 
-var file_snarkactions_proto_msgTypes = make([]protoimpl.MessageInfo, 7)
+var file_snarkactions_proto_msgTypes = make([]protoimpl.MessageInfo, 8)
 var file_snarkactions_proto_goTypes = []any{
 	(*OutputDescription)(nil), // 0: fabric_token_sdk.token.zkatsnark.v1.OutputDescription
 	(*SpendDescription)(nil),  // 1: fabric_token_sdk.token.zkatsnark.v1.SpendDescription
-	(*IssueAction)(nil),       // 2: fabric_token_sdk.token.zkatsnark.v1.IssueAction
-	(*TransferAction)(nil),    // 3: fabric_token_sdk.token.zkatsnark.v1.TransferAction
-	(*MigrationAction)(nil),   // 4: fabric_token_sdk.token.zkatsnark.v1.MigrationAction
-	nil,                       // 5: fabric_token_sdk.token.zkatsnark.v1.IssueAction.MetadataEntry
-	nil,                       // 6: fabric_token_sdk.token.zkatsnark.v1.TransferAction.MetadataEntry
-	(*v1.TokenID)(nil),        // 7: fabric_token_sdk.token.driver.v1.TokenID
+	(*IssueActionInput)(nil),  // 2: fabric_token_sdk.token.zkatsnark.v1.IssueActionInput
+	(*IssueAction)(nil),       // 3: fabric_token_sdk.token.zkatsnark.v1.IssueAction
+	(*TransferAction)(nil),    // 4: fabric_token_sdk.token.zkatsnark.v1.TransferAction
+	(*MigrationAction)(nil),   // 5: fabric_token_sdk.token.zkatsnark.v1.MigrationAction
+	nil,                       // 6: fabric_token_sdk.token.zkatsnark.v1.IssueAction.MetadataEntry
+	nil,                       // 7: fabric_token_sdk.token.zkatsnark.v1.TransferAction.MetadataEntry
+	(*v1.TokenID)(nil),        // 8: fabric_token_sdk.token.driver.v1.TokenID
 }
 var file_snarkactions_proto_depIdxs = []int32{
-	0, // 0: fabric_token_sdk.token.zkatsnark.v1.IssueAction.outputs:type_name -> fabric_token_sdk.token.zkatsnark.v1.OutputDescription
-	5, // 1: fabric_token_sdk.token.zkatsnark.v1.IssueAction.metadata:type_name -> fabric_token_sdk.token.zkatsnark.v1.IssueAction.MetadataEntry
-	7, // 2: fabric_token_sdk.token.zkatsnark.v1.TransferAction.input_ids:type_name -> fabric_token_sdk.token.driver.v1.TokenID
-	1, // 3: fabric_token_sdk.token.zkatsnark.v1.TransferAction.inputs:type_name -> fabric_token_sdk.token.zkatsnark.v1.SpendDescription
-	0, // 4: fabric_token_sdk.token.zkatsnark.v1.TransferAction.outputs:type_name -> fabric_token_sdk.token.zkatsnark.v1.OutputDescription
-	6, // 5: fabric_token_sdk.token.zkatsnark.v1.TransferAction.metadata:type_name -> fabric_token_sdk.token.zkatsnark.v1.TransferAction.MetadataEntry
-	6, // [6:6] is the sub-list for method output_type
-	6, // [6:6] is the sub-list for method input_type
-	6, // [6:6] is the sub-list for extension type_name
-	6, // [6:6] is the sub-list for extension extendee
-	0, // [0:6] is the sub-list for field type_name
+	8, // 0: fabric_token_sdk.token.zkatsnark.v1.IssueActionInput.id:type_name -> fabric_token_sdk.token.driver.v1.TokenID
+	0, // 1: fabric_token_sdk.token.zkatsnark.v1.IssueAction.outputs:type_name -> fabric_token_sdk.token.zkatsnark.v1.OutputDescription
+	6, // 2: fabric_token_sdk.token.zkatsnark.v1.IssueAction.metadata:type_name -> fabric_token_sdk.token.zkatsnark.v1.IssueAction.MetadataEntry
+	2, // 3: fabric_token_sdk.token.zkatsnark.v1.IssueAction.inputs:type_name -> fabric_token_sdk.token.zkatsnark.v1.IssueActionInput
+	8, // 4: fabric_token_sdk.token.zkatsnark.v1.TransferAction.input_ids:type_name -> fabric_token_sdk.token.driver.v1.TokenID
+	1, // 5: fabric_token_sdk.token.zkatsnark.v1.TransferAction.inputs:type_name -> fabric_token_sdk.token.zkatsnark.v1.SpendDescription
+	0, // 6: fabric_token_sdk.token.zkatsnark.v1.TransferAction.outputs:type_name -> fabric_token_sdk.token.zkatsnark.v1.OutputDescription
+	7, // 7: fabric_token_sdk.token.zkatsnark.v1.TransferAction.metadata:type_name -> fabric_token_sdk.token.zkatsnark.v1.TransferAction.MetadataEntry
+	8, // [8:8] is the sub-list for method output_type
+	8, // [8:8] is the sub-list for method input_type
+	8, // [8:8] is the sub-list for extension type_name
+	8, // [8:8] is the sub-list for extension extendee
+	0, // [0:8] is the sub-list for field type_name
 }
 
 func init() { file_snarkactions_proto_init() }
@@ -634,7 +732,7 @@ func file_snarkactions_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_snarkactions_proto_rawDesc), len(file_snarkactions_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   7,
+			NumMessages:   8,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

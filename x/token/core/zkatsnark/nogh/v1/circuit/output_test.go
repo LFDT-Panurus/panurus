@@ -65,7 +65,7 @@ type outputInputs struct {
 func newRandomOutputInputs(t *testing.T) outputInputs {
 	t.Helper()
 	var tokenType, randomness, rcv, typeRandomness fr.Element
-	tokenType.SetBytes([]byte("USD"))
+	tokenType.SetBytes(mimc.TokenTypeBytes("USD"))
 	_, err := randomness.SetRandom()
 	require.NoError(t, err)
 	_, err = rcv.SetRandom()
@@ -183,7 +183,7 @@ func TestOutputCircuitInvalid_ZeroValue(t *testing.T) {
 	setupOutput(t)
 
 	var tokenType, randomness, rcv, typeRandomness fr.Element
-	tokenType.SetBytes([]byte("USD"))
+	tokenType.SetBytes(mimc.TokenTypeBytes("USD"))
 	_, err := randomness.SetRandom()
 	require.NoError(t, err)
 	_, err = rcv.SetRandom()
@@ -242,7 +242,7 @@ func TestOutputCircuitInvalid_OverflowValue(t *testing.T) {
 	overflowValue.SetBigInt(&b)
 
 	var tokenType, randomness, rcv, typeRandomness fr.Element
-	tokenType.SetBytes([]byte("USD"))
+	tokenType.SetBytes(mimc.TokenTypeBytes("USD"))
 	_, err := randomness.SetRandom()
 	require.NoError(t, err)
 	_, err = rcv.SetRandom()

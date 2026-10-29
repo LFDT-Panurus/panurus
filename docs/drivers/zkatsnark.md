@@ -1,4 +1,9 @@
-# ZKAT-SNARK Driver: Proof Systems
+# ZKAT-SNARK Driver
+
+This page covers the [proof systems](#proof-systems) the driver supports and how it
+[upgrades tokens](#token-upgrades) created by other drivers.
+
+## Proof Systems
 
 The `zkatsnark` driver (`x/token/core/zkatsnark/nogh/v1`) proves its spend, output and migration
 circuits with [gnark](https://github.com/consensys/gnark). The proof system is selected by the
@@ -12,7 +17,7 @@ a single abstraction, `crypto/backend.ProofSystemBackend`
 | `plonk`       | BLS12-381, BN254 | SparseR1CS | universal KZG SRS | ~520 B |
 | `plonkfri`    | BN254 only       | SparseR1CS | none (transparent) | ~841 KiB |
 
-## `plonkfri`
+### `plonkfri`
 
 PLONK with FRI as the polynomial commitment scheme instead of KZG. It needs no structured reference
 string: `Setup` is deterministic, so the same circuit always yields byte-identical keys.
@@ -31,7 +36,7 @@ output and migration constraint systems compiled with either are identical (apar
 version recorded in the serialized constraint system), and `plonkfri` keys are byte-identical, so public
 parameters generated with the fork remain valid.
 
-### Constraints and trade-offs
+#### Constraints and trade-offs
 
 - **BN254 only.** `pp.Validate` rejects any other curve for `plonkfri`. The migration circuit is
   BLS12-381-only, so migration is unavailable with `plonkfri`.
@@ -49,7 +54,7 @@ parameters generated with the fork remain valid.
   zkatdlog driver, not by zkatsnark. If you add such a check to zkatsnark, it must be per proof
   system, otherwise it rejects every `plonkfri` proof.
 
-### Parameter bounds and decoding hardening
+#### Parameter bounds and decoding hardening
 
 - **`MaxBits` is limited to 1..64.** Token values are `uint64` throughout, and value balance is checked by a
   Schnorr binding signature over the sum of value commitments, i.e. modulo the Edwards subgroup order
@@ -69,7 +74,7 @@ parameters generated with the fork remain valid.
 - **`TotalValue`** of an issue action must fit in 64 bits; a field element above that is rejected rather than
   truncated.
 
-### Serialization
+#### Serialization
 
 Keys and proofs are encoded by `crypto/internal/plonkfri/bn254` (`WriteTo` / `ReadFrom`). Decoders are bounded, reject
 non-canonical field elements and inconsistent sizes, and `ProvingKey.ReadFrom` rejects a key whose
@@ -77,7 +82,7 @@ recomputed FRI commitment differs from the embedded verifying key. The format is
 `FuzzPlonkFRIVerifyNoPanic` and `FuzzNewKeysNoPanic` (through the backend) and `FuzzReadFrom`
 (directly on the decoders) cover them; see `.github/workflows/nightly-fuzz.yml`.
 
-### Selecting it
+#### Selecting it
 
 ```go
 p := pp.DefaultPublicParams()
@@ -85,3 +90,340 @@ p.ProofSystem = "plonkfri"
 p.Curve = ecc.BN254
 p, err := setup.SetupAll(p)
 ```
+
+## Token Upgrades
+
+A network that moves to ZKAT-SNARK still holds tokens created by the driver it used before. This
+section describes how those tokens become ZKAT-SNARK notes. It follows the two mechanisms described
+in [Upgradability](../upgradability.md#token-upgradability-ledger):
+
+- **In place**, inside an ordinary transfer. The owner spends the legacy token as if it were a
+  ZKAT-SNARK note. No issuer is involved and no separate transaction is needed.
+- **Through the issuer** (burn-and-re-issue). The owner asks an issuer to redeem the legacy tokens
+  and issue new notes worth the same.
+
+| Source | In place, during a transfer | Through the issuer |
+|---|---|---|
+| Fabtoken, precision `<= min(PrecisionValue, MaxBits)` | Yes | No (already spendable) |
+| Fabtoken, precision `> min(PrecisionValue, MaxBits)` | No | Yes |
+| ZKAT-DLOG | Not yet supported | Not yet supported (proof only, see below) |
+
+Every legacy token takes exactly one path, as in ZKAT-DLOG. A token that can be spent in place
+never needs the issuer, and the issuer refuses to burn a spendable token.
+
+This split is enforced **off-chain, by the issuer**: `upgrade.Service.checkUpgradable` checks the
+format each token is declared with in the upgrade request. The ledger does not check it. A
+malicious issuer can therefore burn and re-issue a token that was eligible for the in-place path.
+This does not affect soundness: the ledger still requires the token to exist and be spent once,
+and the minted notes to carry its type and value.
+
+On both paths, a fabtoken whose quantity cannot be represented at the ZKAT-SNARK `PrecisionValue`
+is refused, as in ZKAT-DLOG. It can be neither spent in place nor re-issued.
+
+The code is in `x/token/core/zkatsnark/nogh/v1`. Paths below are relative to it.
+
+### Notation
+
+A ZKAT-SNARK note is `{v, t, r}`: value, token type and randomness. Its ledger output carries:
+
+- `cm = MiMC(v, enc(t), r)`, the note commitment;
+- `cv = v·V + rcv·R`, a value commitment on the embedded Edwards curve;
+- `tc = MiMC(enc(t), tr)`, a type commitment, with `tr` shared by every input and output of an
+  action.
+
+`enc(t)` is `mimc.TokenTypeBytes(t)`, the first 31 bytes of `SHA-256("zkatsnark/token-type/v1" ‖ t)`.
+It is always a canonical field element on BN254 and BLS12-381, and it is injective up to SHA-256
+collisions. An earlier encoding, the type bytes reduced mod r, mapped `"\x00USD"` and `"USD"` (or
+any two types congruent mod r) to the same commitment.
+
+**Breaking change.** ZKAT-SNARK notes and type commitments created with the earlier encoding
+cannot be spent after this change. Their commitments no longer open with `enc(t)`, so their spend
+proofs fail. A network that already holds such notes must re-issue them.
+
+A transfer conserves value through the binding signature over `Σcv_in − Σcv_out`. It keeps one
+type through the shared `tc`, which every spend and output proof opens.
+
+### Which fabtoken formats take which path
+
+The spend and output circuits range-check every value to `[1, 2^MaxBits)`, and fabtoken quantities
+are parsed with the ZKAT-SNARK quantity precision `PrecisionValue`. A fabtoken format of precision
+`p` is therefore spendable in place iff `p <= min(PrecisionValue, MaxBits)`
+(`token.InPlaceFabtokenPrecisions`).
+
+- **In place.** `TokensService.SupportedTokenFormats()` returns `"zkatsnark"` plus the in-place
+  fabtoken formats. The token store marks such tokens spendable when the driver is installed, and
+  the wallet selects them for transfers like any other token.
+- **Through the issuer.** `token.NewTokensUpgradeService` accepts exactly the fabtoken formats
+  missing from that list.
+- **Pinned.** `TestTokensService_InPlaceFabtokenFormats` checks that no format is on both lists or
+  on neither.
+
+With the default public parameters (`PrecisionValue = 64`, `MaxBits = 64`) every fabtoken format is
+spent in place, and the issuer path is only reachable with a smaller precision or `MaxBits`. This is
+the same as ZKAT-DLOG with a 64-bit precision.
+
+`TokensService.Deobfuscate` and `Recipients` open a fabtoken output from its cleartext content, so
+wallets, auditors and the token store handle the tokens before they are upgraded. As in ZKAT-DLOG,
+`Deobfuscate` requires the fabtoken output metadata (`actions.OutputMetadata`) that the fabtoken
+driver stores with every output, and refuses metadata it cannot parse.
+
+### In-place upgrade of fabtoken during a transfer
+
+The design mirrors the ZKAT-DLOG upgrade witness (`TransferUpgradeWitnessValidate`). There, a
+fabtoken input is reinterpreted as a Pedersen commitment with a disclosed blinding factor. Here, it
+is reinterpreted as a note with a disclosed randomness.
+
+#### Assembling the transfer (owner)
+
+`TransferService.Transfer` loads the inputs from the vault. For each input that is a fabtoken
+output (`token.IsFabtokenOutput`, a typed token with the fabtoken tag), `inputNote` does the
+following:
+
+1. **Parse.** It parses the output with `token.ParseFabtokenOutput`. The owner and type must be
+   non-empty, and the quantity must be a positive integer at `PrecisionValue`. The value must not
+   exceed `pp.MaxTokenValue()`, otherwise the transfer fails with a request to upgrade the token
+   through the issuer.
+2. **Fresh note.** It builds a fresh note `{v, t, r}` from the cleartext value and type, with
+   uniformly random `r`.
+3. **Spend request.** It marks the spend request `Upgraded`.
+
+The orchestrator then proves the input with the ordinary `SpendCircuit` over that note. Because the
+request is marked `Upgraded`, it also discloses `r` in the spend description as
+`UpgradeRandomness`. The transfer's `InputTokens` carries the fabtoken bytes **exactly as loaded**.
+The ledger derives the key it checks and deletes from these bytes, so they must not be re-encoded.
+
+Inputs can mix fabtoken outputs and ZKAT-SNARK notes of the same type. The outputs are ordinary
+ZKAT-SNARK notes. The owner signs the token request as for any transfer; the signer is the
+fabtoken's owner.
+
+```
+SpendDescription {
+  CommitmentIn       = MiMC(v, enc(t), r)   // as for any input
+  ValueCommitInX/Y   = v·V + rcv·R
+  TypeCommitment     = MiMC(enc(t), tr)
+  SpendProof         = SpendCircuit proof
+  UpgradeRandomness  = r                    // only for an upgraded fabtoken
+}
+```
+
+`UpgradeRandomness` is field 6 of `SpendDescription` in `snarkactions.proto`.
+
+#### Validation (ledger)
+
+`TransferSignatureValidate` loads each input from the ledger by its ID. `ledgerInputOwner` then
+decides how to bind the spend to the ledger token, from the ledger bytes, which no transaction can
+choose:
+
+- **ZKAT-SNARK output.**
+  - `CommitmentIn` must equal its `CommitmentOut`.
+  - `UpgradeRandomness` must be empty; otherwise the action is `ErrMalformedAction`.
+  - The owner is its `Recipient`.
+- **Fabtoken output.**
+  1. It is parsed with `ParseFabtokenOutput`, and its value must not exceed `pp.MaxTokenValue()`.
+  2. `UpgradeRandomness` must be a canonical field element.
+  3. `MiMC(v, enc(t), UpgradeRandomness)` is recomputed from the **cleartext ledger token** and must
+     equal `CommitmentIn` (`ErrCommitmentMismatch` otherwise).
+  4. The owner is the fabtoken's owner.
+
+The owner's signature is then verified as for any input. The remaining checks need no change.
+
+**Value and type.** The spend proof shows that `cv` and `tc` open to the same `v` and `enc(t)`
+as `CommitmentIn`. Since `CommitmentIn` is now pinned to the ledger token's value and type, the type
+homogeneity check and the binding signature conserve them.
+
+**Existence and single use.** The translator checks and deletes
+`CreateOutputSNKey(txID, index, InputTokens[i])`. Changing a single byte of the fabtoken gives a
+key that does not exist.
+
+**What the upgrade reveals.** It reveals the spent token's value and type, which were public on the
+ledger anyway. The outputs are as private as in any transfer.
+
+#### Requirements
+
+- The auditor must hold the spent fabtoken outputs in its token store, as for every transfer input.
+  If auditing moved to another node when the network switched drivers, that node needs the
+  fabtoken-era tokens first.
+- Owners of script (HTLC), multisig or policy identities follow the same rules as for ZKAT-SNARK
+  inputs. A transfer whose required signatures are missing is rejected.
+
+### Upgrading fabtoken through the issuer (burn-and-re-issue)
+
+This path reuses the ZKAT-DLOG protocol and trust model:
+
+- a 32-byte challenge;
+- owner signatures over `SHA256(challenge ‖ tokens)`;
+- `ttx.RequestTokensUpgrade` and `ttx.Transaction.Upgrade`.
+
+**Trust model.** The owners' consent is the upgrade proof, which the issuer verifies off-chain.
+On the ledger the issuance is authorized by the **issuer signature alone**; no owner signature is
+required at validation time.
+
+**What the ledger adds over ZKAT-DLOG.** ZKAT-SNARK also checks on the ledger that the redeemed
+tokens are real, spent once, and match the value and type of what is minted. An issuer can burn a
+token it was not asked to upgrade, exactly as in ZKAT-DLOG, but it cannot mint more than it burns
+or change the type.
+
+#### Protocol
+
+1. **Request (owner).** `ttx.RequestTokensUpgrade` sends the issuer the tokens to upgrade and the
+   recipient data. The issuer replies with a challenge.
+2. **Proof (owner).** `TokensService.GenUpgradeProof` signs `SHA256(challenge ‖ tokens)` with every
+   token owner's key.
+3. **Issue (issuer).** `ttx.Transaction.Upgrade` calls `IssueService.Issue` with the upgrade
+   request. Its `upgrade` branch does the following:
+   - `ProcessTokensUpgradeRequest` checks three things off-chain:
+     - every token is upgrade-eligible, with at most `MaxUpgradeRequestTokens` (256) tokens;
+     - the challenge;
+     - the owner signatures. This is the owners' consent.
+   - `token.SummarizeUpgradeInputs` parses every token as a fabtoken output and checks the inputs.
+     The owner must be a plain x509 or idemix identity, the IDs pairwise distinct and the types all
+     equal. The values are summed, with an overflow check.
+   - It splits the total into `k = ⌈total / pp.MaxTokenValue()⌉` values (`splitUpgradeTotal`):
+     `k − 1` values of `MaxTokenValue` and the remainder. Each value is in `[1, MaxTokenValue]`,
+     and they sum to the total. If `k` exceeds the validator's `ResourceLimits.MaxOutputs`
+     (256 by default), the upgrade is refused before any proving, with an error stating `k` and
+     the limit.
+   - It gets the issuer identity for the type from the issuer wallet.
+   - `Orchestrator.BuildUpgradeIssueAction` builds an ordinary ZKAT-SNARK issue of the `k`
+     outputs, all to the single recipient. It adds the redeemed tokens as `Inputs` and reveals the
+     type randomness.
+   - It fills the issue metadata with one output entry per output note. `Inputs` holds the
+     redeemed token IDs, and there are no extra signers.
+4. **Endorsement.** The issuer collects the auditor endorsement and its own signature. The recipient
+   accepts the transaction with `ttx.NewAcceptView`, as for any issue.
+
+#### The upgrade issue action
+
+`snarkactions.proto` adds two fields to `IssueAction`. A plain issue leaves both empty.
+
+```
+IssueAction {
+  Issuer, TokenType, TypeCommitment, Outputs, BindingSignature, TotalValue, Metadata  // as before
+  Inputs          []IssueActionInput{ID, Token}   // field 8: redeemed fabtoken outputs, ledger bytes verbatim
+  TypeRandomness  []byte                          // field 9: opens TypeCommitment; set iff Inputs is non-empty
+}
+```
+
+- `NumInputs`, `GetInputs` and `GetSerializedInputs` expose the inputs, so the translator spends them
+  like transfer inputs (must exist, then delete).
+- `ExtraSigners()` returns nil, as in ZKAT-DLOG.
+- `Validate` rejects nil or incomplete inputs, duplicate input IDs (`ErrDuplicateUpgradeInput`), and
+  `TypeRandomness` without inputs or the other way round. The input count is bounded by
+  `ResourceLimits.MaxInputs`.
+
+#### Validation (ledger)
+
+The issue pipeline runs four checks, in order:
+
+1. `IssueZKValidate`: the output proofs and the binding signature over `TotalValue`, unchanged.
+2. `IssueSignatureValidate`: the issuer is authorized and signed. This is the only signature an
+   upgrade issue needs.
+3. `IssueUpgradeInputsValidate`, for an issue with inputs:
+   - every input is a well-formed fabtoken output with a plain owner, the inputs are distinct, and
+     they all have `TokenType`. Otherwise the action fails with `ErrMalformedAction` or
+     `ErrTypeMismatch`;
+   - `TypeCommitment == MiMC(enc(TokenType), TypeRandomness)`, with `TypeRandomness` canonical.
+     This binds the type the outputs' proofs commit to; the cleartext `TokenType` alone is just a
+     label (`ErrTypeMismatch`);
+   - `TotalValue` equals the redeemed total. The binding signature already ties `TotalValue` to the
+     outputs (`ErrUpgradeValueMismatch`).
+
+   It consumes no signature. An issue that reveals `TypeRandomness` without inputs is malformed.
+4. `common.IssueApplicationDataValidate`: the action metadata, as for any issue.
+
+The checks of step 3 are in `Validator.validateUpgradeInputs`. `Validator.ValidateIssue`, the
+local path behind `IssueService.VerifyIssue`, also runs them.
+
+Any signature beyond the issuer's is rejected as unconsumed. The translator then checks and deletes
+the key of every input, so each fabtoken is redeemed at most once, whichever path redeems it.
+
+**Open issuer policy.** If `PP.Issuers()` is empty, `IssueSignatureValidate` accepts any issuer.
+Since the owners' consent is checked off-chain, anyone can then burn other parties' fabtokens and
+re-mint their value to a recipient of their choice. This matches ZKAT-DLOG. Deployments that hold
+fabtokens should register their issuers.
+
+#### Auditing
+
+`AuditorService.checkUpgradeIssue` refuses an upgrade issue whose metadata does not describe it
+exactly:
+
+- the input token IDs, in order;
+- each parsed input matches the auditor's own copy of that token from its token store, as
+  returned by `QueryEngine.ListAuditTokens`. The owner, type and quantity must all match, and the
+  quantities are compared as numbers at `PrecisionValue`, so `"0x10"` and `"16"` match. A missing
+  copy is refused;
+- every output note opens its output commitment and has the redeemed type;
+- the note values sum to the redeemed total.
+
+#### Requirements
+
+- The issuer must hold the owners' verifiers, to check the upgrade proof. x509 always works; idemix
+  needs the issuer key in the ZKAT-SNARK public parameters.
+- Script, multisig and policy owners cannot sign the upgrade proof and are refused.
+- The issuer must be authorized for the token type, as for any issue.
+- The auditor must hold the redeemed fabtoken outputs in its token store, as for the in-place
+  path, since it compares every input with its own copy.
+
+### Upgrading ZKAT-DLOG tokens
+
+ZKAT-DLOG outputs are not yet upgradable on either path. The building blocks exist, but nothing
+ties them to the ledger.
+
+- **Circuit.** `circuit.MigrationCircuit` proves that a ZKAT-DLOG Pedersen commitment
+  `C = t_ped·G0 + v·G1 + bf·G2` on BLS12-381 G1 (emulated in the circuit) opens to the same value as
+  a new note commitment, value commitment and type commitment.
+- **Prover.** `prover.BuildMigrationWitness` and `Orchestrator.BuildMigrationAction` produce a
+  `MigrationAction`.
+- **Validator.** `validator.ValidateMigration` checks its proof against `VKMigration`.
+- **Proof systems.** The circuit uses emulated arithmetic and BSB22 commitments, so it needs a
+  BLS12-381 deployment and is unavailable with `plonkfri`.
+
+`ValidateMigration` is **not** in the validator pipeline, and the action is not bound to anything on
+the ledger:
+
+- it has no input ID, so the ledger does not spend the ZKAT-DLOG token;
+- nothing authorizes it: no owner or issuer signature covers it, including its `Recipient`;
+- the circuit does not constrain the Pedersen type encoding `t_ped = HashToZr(t)` to the note's type
+  `enc(t)`, so the type can be swapped.
+
+A successful `ValidateMigration` is therefore not an authorization to mint. To support ZKAT-DLOG
+upgrades, the action must follow the fabtoken design:
+
+- **In place.** A ZKAT-DLOG input would be a transfer input whose spend description carries a
+  migration proof instead of a spend proof. Its `CommitmentPedersen` would have to equal the ledger
+  token's commitment, and the owner would sign.
+- **Through the issuer.** The ZKAT-DLOG tokens would be the issue's `Inputs`, each with its migration
+  proof, authorized by the issuer as for fabtoken.
+
+Both also need the type link above to be constrained in the circuit.
+
+### Test coverage
+
+- **Fabtoken parsing and summaries.** `token/upgrade_test.go` covers parsing, the input summary, the
+  issue action's inputs and extra signers, the ledger key derived from the inputs, and the upgrade
+  service.
+- **Path split and opening.** `token/service_test.go` covers the split between the two paths and
+  opening fabtoken outputs.
+- **On-chain checks.** `validator/validator_issue_upgrade_test.go` exercises the full validator
+  pipeline:
+  - burn-and-re-issue end to end on both curves;
+  - issuer-only signing, a missing issuer signature, an unconsumed owner signature;
+  - value and type mismatches, a relabelled type, wrong or stripped type randomness;
+  - duplicate inputs, and script, empty or non-fabtoken inputs;
+  - the local `ValidateIssue` path rejecting a wrong `TotalValue` or `TypeRandomness`;
+  - splitting a large total over several outputs with `MaxBits = 8`, and refusing a total that
+    needs more than `MaxOutputs` outputs;
+  - the auditor checks, including a note of the wrong type and inputs that differ from the
+    auditor's copies;
+  - in-place transfers end to end on both curves, including an HTLC script claim;
+  - in-place tampering: wrong randomness, ledger value, type or owner changed, script owner,
+    value above `MaxTokenValue`, upgrade randomness on a ZKAT-SNARK input.
+- **Issuer branch.** `issue_upgrade_test.go` and `issue_split_internal_test.go` cover the argument
+  checks of the upgrade branch and the split.
+- **Driver wiring.** `driver/upgrade_wiring_test.go` checks that the services wired by the driver
+  give every fabtoken format exactly one path, with the default parameters and with `MaxBits = 32`,
+  and runs a burn-and-re-issue of a 64-bit fabtoken through that wiring.
+- **Lifecycle.** `regression.TestFabtokenInPlaceUpgrade_Lifecycle` upgrades a fabtoken in place,
+  spends the resulting note, and checks that a forged value is rejected.
+- **Fuzzing.** `FuzzIssueActionWithInputsDeserializeNoPanic` and `FuzzParseFabtokenOutputNoPanic`
+  run nightly (`.github/workflows/nightly-fuzz.yml`).

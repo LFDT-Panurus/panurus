@@ -14,6 +14,7 @@ import (
 
 	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/circuit"
 	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/crypto/edwards"
+	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/crypto/mimc"
 	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/pp"
 	snarktoken "github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/token"
 )
@@ -59,9 +60,9 @@ func (c *curveCtx) canonical(b []byte) (*big.Int, error) {
 }
 
 // tokenType maps a token type string to a field element, as the note
-// commitment does.
+// commitment does (mimc.TokenTypeBytes, always below the modulus).
 func (c *curveCtx) tokenType(t string) *big.Int {
-	return new(big.Int).Mod(new(big.Int).SetBytes([]byte(t)), c.modulus)
+	return new(big.Int).SetBytes(mimc.TokenTypeBytes(t))
 }
 
 // randomFieldElement returns a uniform field element and its canonical bytes.

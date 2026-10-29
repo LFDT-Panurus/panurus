@@ -87,13 +87,15 @@ func (s *TransferService) Transfer(
 	inputs := make([]prover.SpendRequest, len(loadedTokens))
 	var transferInputsMetadata []*driver.TransferInputMetadata
 
+	pp := s.PublicParametersManager.PublicParams()
 	for i, loadedToken := range loadedTokens {
-		note, err := snarktoken.Deserialize(loadedToken.Metadata)
+		note, owner, upgraded, err := s.inputNote(loadedToken, pp)
 		if err != nil {
-			return nil, nil, errors.Wrapf(err, "failed deserializing token metadata for %s", tokenIDs[i])
+			return nil, nil, errors.Wrapf(err, "failed loading input %s", tokenIDs[i])
 		}
 		inputs[i] = prover.SpendRequest{
-			Note: note,
+			Note:     note,
+			Upgraded: upgraded,
 		}
 		if i == 0 {
 			tokenType = note.TokenType
@@ -101,12 +103,7 @@ func (s *TransferService) Transfer(
 			return nil, nil, errors.New("all input tokens must have the same type")
 		}
 
-		outputDesc, err := snarktoken.DeserializeOutputDescription(loadedToken.Token)
-		if err != nil {
-			return nil, nil, errors.Wrapf(err, "failed to unmarshal output token for %s", tokenIDs[i])
-		}
-
-		auditInfo, err := s.Deserializer.GetAuditInfo(ctx, outputDesc.Recipient, s.WalletService)
+		auditInfo, err := s.Deserializer.GetAuditInfo(ctx, owner, s.WalletService)
 		if err != nil {
 			return nil, nil, errors.Wrapf(err, "failed getting audit info for sender identity")
 		}
@@ -114,7 +111,7 @@ func (s *TransferService) Transfer(
 			TokenID: tokenIDs[i],
 			Senders: []*driver.AuditableIdentity{
 				{
-					Identity:  outputDesc.Recipient,
+					Identity:  owner,
 					AuditInfo: auditInfo,
 				},
 			},
@@ -130,7 +127,7 @@ func (s *TransferService) Transfer(
 			return nil, nil, errors.New("all output tokens must have the same type as inputs")
 		}
 
-		q, err := token2.ToQuantity(output.Quantity, s.PublicParametersManager.PublicParams().PrecisionValue)
+		q, err := token2.ToQuantity(output.Quantity, pp.PrecisionValue)
 		if err != nil {
 			return nil, nil, errors.Wrapf(err, "failed to get value for %dth output", i)
 		}
@@ -240,6 +237,41 @@ func (s *TransferService) Transfer(
 	}
 
 	return action, transferMetadata, nil
+}
+
+// inputNote returns the note a loaded input is spent as, and its owner. A
+// zkatsnark output is spent as the note stored in its metadata. A legacy
+// fabtoken output in a format zkatsnark supports directly is upgraded in place:
+// it is spent as a fresh note carrying its cleartext value and type, and the
+// note's randomness is disclosed in the spend description so that the
+// validator can bind the spent commitment to the ledger token.
+func (s *TransferService) inputNote(loaded common.LoadedToken[[]byte, []byte], pp *pp.PublicParams) (*snarktoken.Note, driver.Identity, bool, error) {
+	if snarktoken.IsFabtokenOutput(loaded.Token) {
+		fab, err := snarktoken.ParseFabtokenOutput(loaded.Token, pp.PrecisionValue)
+		if err != nil {
+			return nil, nil, false, err
+		}
+		if fab.Value > pp.MaxTokenValue() {
+			return nil, nil, false, errors.Errorf("fabtoken value [%d] exceeds the maximum token value [%d], upgrade it first", fab.Value, pp.MaxTokenValue())
+		}
+		note, err := snarktoken.NewRandomNote(fab.Value, string(fab.Type), pp.Curve)
+		if err != nil {
+			return nil, nil, false, err
+		}
+
+		return note, fab.Owner, true, nil
+	}
+
+	note, err := snarktoken.Deserialize(loaded.Metadata)
+	if err != nil {
+		return nil, nil, false, errors.Wrap(err, "failed deserializing token metadata")
+	}
+	outputDesc, err := snarktoken.DeserializeOutputDescription(loaded.Token)
+	if err != nil {
+		return nil, nil, false, errors.Wrap(err, "failed to unmarshal output token")
+	}
+
+	return note, outputDesc.Recipient, false, nil
 }
 
 func (s *TransferService) VerifyTransfer(ctx context.Context, transferAction driver.TransferAction, outputMetadata []*driver.TransferOutputMetadata) error {

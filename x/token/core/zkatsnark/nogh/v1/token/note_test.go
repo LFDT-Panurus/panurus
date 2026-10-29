@@ -12,6 +12,7 @@ import (
 	"github.com/consensys/gnark-crypto/ecc"
 	"github.com/stretchr/testify/require"
 
+	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/crypto/mimc"
 	snarktoken "github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/token"
 )
 
@@ -59,7 +60,7 @@ func TestNoteCommitmentDeterminism_WideRandomness(t *testing.T) {
 func TestEncodeTokenType_Generic(t *testing.T) {
 	for _, curve := range supportedCurves {
 		t.Run(curve.String(), func(t *testing.T) {
-			want := new(big.Int).Mod(new(big.Int).SetBytes([]byte("USD")), curve.ScalarField())
+			want := new(big.Int).SetBytes(mimc.TokenTypeBytes("USD"))
 
 			got, err := snarktoken.EncodeTokenTypeBytes("USD", curve)
 			require.NoError(t, err)

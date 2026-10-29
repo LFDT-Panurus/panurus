@@ -55,6 +55,11 @@ func (l *ledger) GetState(id token2.ID) ([]byte, error) {
 	return raw, nil
 }
 
+// Store records raw as the ledger token id, replacing any previous value.
+func (l *ledger) Store(id *token2.ID, raw []byte) {
+	l.store(id, raw)
+}
+
 func (l *ledger) store(id *token2.ID, raw []byte) {
 	l.tokens[id.String()] = raw
 }

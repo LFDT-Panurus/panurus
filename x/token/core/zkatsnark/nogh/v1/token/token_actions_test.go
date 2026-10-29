@@ -6,7 +6,6 @@ SPDX-License-Identifier: Apache-2.0
 package token_test
 
 import (
-	"context"
 	"testing"
 
 	"github.com/consensys/gnark-crypto/ecc"
@@ -405,41 +404,19 @@ func TestPedersenOpening_Validate_EmptyCommitmentBytes(t *testing.T) {
 	require.Error(t, o.Validate())
 }
 
-// ── TokensUpgradeService ──────────────────────────────────────────────────────
-
-func TestTokensUpgradeService_NewUpgradeChallenge_Error(t *testing.T) {
-	svc, err := snarktoken.NewTokensUpgradeService()
-	require.NoError(t, err)
-
-	_, err = svc.NewUpgradeChallenge()
-	require.Error(t, err, "TokensUpgradeService.NewUpgradeChallenge is not implemented")
-}
-
-func TestTokensUpgradeService_GenUpgradeProof_Error(t *testing.T) {
-	svc, err := snarktoken.NewTokensUpgradeService()
-	require.NoError(t, err)
-
-	_, err = svc.GenUpgradeProof(context.Background(), nil, nil, nil)
-	require.Error(t, err)
-}
-
-func TestTokensUpgradeService_CheckUpgradeProof_Error(t *testing.T) {
-	svc, err := snarktoken.NewTokensUpgradeService()
-	require.NoError(t, err)
-
-	ok, err := svc.CheckUpgradeProof(context.Background(), nil, nil, nil)
-	require.Error(t, err)
-	require.False(t, ok)
-}
-
 // ── EncodeTokenType ───────────────────────────────────────────────────────────
 
 func TestEncodeTokenType_Empty(t *testing.T) {
-	// Empty string must not panic and must produce a zero element.
+	// Empty string must not panic, and must not collide with the zero
+	// element or with "\x00" (the former SetBytes encoding mapped both to 0).
 	for _, curve := range supportedCurves {
 		elem, err := snarktoken.EncodeTokenTypeBytes("", curve)
 		require.NoError(t, err)
-		require.Equal(t, make([]byte, 32), elem)
+		require.Len(t, elem, 32)
+		require.NotEqual(t, make([]byte, 32), elem)
+		nul, err := snarktoken.EncodeTokenTypeBytes("\x00", curve)
+		require.NoError(t, err)
+		require.NotEqual(t, nul, elem)
 	}
 }
 
