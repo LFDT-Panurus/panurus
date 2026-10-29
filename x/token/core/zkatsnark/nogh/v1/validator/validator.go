@@ -57,6 +57,7 @@ func NewValidator(p *prepared.Verifier, deserializer driver.Deserializer, limits
 	issueValidators := []ValidateIssueFunc{
 		v.IssueZKValidate,
 		IssueSignatureValidate,
+		v.IssueUpgradeInputsValidate,
 		common.IssueApplicationDataValidate[*pp.PublicParams, *snarktoken.Input, *snarktoken.TransferAction, *snarktoken.IssueAction, driver.Deserializer],
 	}
 
@@ -117,7 +118,10 @@ func (v *Validator) ValidateTransfer(a *snarktoken.TransferAction) error {
 	)
 }
 
-// ValidateIssue checks the cryptographic validity of an IssueAction.
+// ValidateIssue checks the cryptographic validity of an IssueAction and, for
+// an upgrade issuance, its binding to the redeemed inputs (type, type
+// commitment opening and total value; see IssueUpgradeInputsValidate). It
+// checks no signature.
 func (v *Validator) ValidateIssue(a *snarktoken.IssueAction) error {
 	if err := validateIssueActionShape(a); err != nil {
 		return err
@@ -146,17 +150,27 @@ func (v *Validator) ValidateIssue(a *snarktoken.IssueAction) error {
 		return err
 	}
 
-	return verifyBindingSignature(
+	if err := verifyBindingSignature(
 		v.pp.Curve,
 		snarktoken.ActionTypeIssue, a.TypeCommitment,
 		nil, decodedOutputs,
 		a.BindingSignature, totalValue,
-	)
+	); err != nil {
+		return err
+	}
+
+	// an upgrade issuance must also be bound to the tokens it redeems, as in
+	// the ledger pipeline (IssueUpgradeInputsValidate)
+	return v.validateUpgradeInputs(a)
 }
 
 // ValidateMigration checks the cryptographic validity of a MigrationAction.
 // Migration is zkatsnark-specific and has no slot in the common.Validator
 // framework, so it is a standalone method on the wrapper struct.
+//
+// It only verifies the migration proof: the action is not bound to a ledger
+// token, to its owner's consent or to its recipient, so a successful check is
+// not an authorization to mint.
 func (v *Validator) ValidateMigration(a *snarktoken.MigrationAction) error {
 	if v.prepared.VKMigration() == nil {
 		return ErrMigrationNotConfigured

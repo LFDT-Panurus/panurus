@@ -7,12 +7,11 @@ package prover
 
 import (
 	"context"
-	"errors"
-	"fmt"
 	"math/big"
 
 	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/pp"
 	snarktoken "github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/token"
+	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 )
 
 // Orchestrator drives parallel proof generation for a single action and
@@ -41,6 +40,9 @@ func (o *Orchestrator) SetMigrationProver(mp *MigrationProver) {
 
 type SpendRequest struct {
 	Note *snarktoken.Note
+	// Upgraded marks a legacy fabtoken output upgraded in place: the spend
+	// description then discloses the note randomness (UpgradeRandomness).
+	Upgraded bool
 }
 
 type OutputRequest struct {
@@ -100,17 +102,17 @@ func (o *Orchestrator) BuildTransferAction(
 	// Generate a single typeRandomness for the entire action.
 	cc, err := newCurveCtx(publicParams.Curve)
 	if err != nil {
-		return nil, nil, fmt.Errorf("orchestrator: %w", err)
+		return nil, nil, errors.Wrap(err, "orchestrator: curve context failed")
 	}
 	typeRandomnessBytes, err := cc.randomFieldElement()
 	if err != nil {
-		return nil, nil, fmt.Errorf("orchestrator: type randomness generation failed: %w", err)
+		return nil, nil, errors.Wrap(err, "orchestrator: type randomness generation failed")
 	}
 
 	// Compute the shared TypeCommitment once for the action envelope.
 	typeCommitment, err := snarktoken.ComputeTypeCommitment(tokenType, typeRandomnessBytes, publicParams.Curve)
 	if err != nil {
-		return nil, nil, fmt.Errorf("orchestrator: type commitment computation failed: %w", err)
+		return nil, nil, errors.Wrap(err, "orchestrator: type commitment computation failed")
 	}
 
 	spendCh := make(chan spendOutcome, len(inputs))
@@ -128,7 +130,7 @@ func (o *Orchestrator) BuildTransferAction(
 	for range inputs {
 		r := <-spendCh
 		if r.err != nil {
-			return nil, nil, fmt.Errorf("orchestrator: spend proof %d failed: %w", r.index, r.err)
+			return nil, nil, errors.Wrapf(r.err, "orchestrator: spend proof %d failed", r.index)
 		}
 		spendOutcomes[r.index] = r
 	}
@@ -137,7 +139,7 @@ func (o *Orchestrator) BuildTransferAction(
 	for range outputs {
 		r := <-outputCh
 		if r.err != nil {
-			return nil, nil, fmt.Errorf("orchestrator: output proof %d failed: %w", r.index, r.err)
+			return nil, nil, errors.Wrapf(r.err, "orchestrator: output proof %d failed", r.index)
 		}
 		outputOutcomes[r.index] = r
 	}
@@ -160,7 +162,7 @@ func (o *Orchestrator) BuildTransferAction(
 
 	sigBytes, err := ComputeBindingSignature(publicParams.Curve, snarktoken.ActionTypeTransfer, typeCommitment, inputResults, outputResults)
 	if err != nil {
-		return nil, nil, fmt.Errorf("orchestrator: binding signature failed: %w", err)
+		return nil, nil, errors.Wrap(err, "orchestrator: binding signature failed")
 	}
 
 	action := &snarktoken.TransferAction{
@@ -185,24 +187,65 @@ func (o *Orchestrator) BuildIssueAction(
 	publicParams *pp.PublicParams,
 	metadata map[string][]byte,
 ) (*snarktoken.IssueAction, []*snarktoken.Note, error) {
+	action, notes, _, err := o.buildIssueAction(issuer, outputs, tokenType, publicParams, metadata)
+
+	return action, notes, err
+}
+
+// BuildUpgradeIssueAction builds an upgrade issuance: an IssueAction that
+// redeems the passed legacy fabtoken outputs and mints outputs of the same
+// type and total value. The inputs are attached verbatim and the type
+// randomness is revealed, so that the validator can bind the minted type and
+// value to the redeemed ones (see validator.IssueUpgradeInputsValidate).
+// Checking that the inputs are upgradable and that the outputs match them is
+// the caller's responsibility; the validator enforces it on the ledger.
+func (o *Orchestrator) BuildUpgradeIssueAction(
+	ctx context.Context,
+	issuer []byte,
+	inputs []*snarktoken.IssueActionInput,
+	outputs []OutputRequest,
+	tokenType string,
+	publicParams *pp.PublicParams,
+	metadata map[string][]byte,
+) (*snarktoken.IssueAction, []*snarktoken.Note, error) {
+	if len(inputs) == 0 {
+		return nil, nil, errors.New("orchestrator: upgrade issue action requires at least one input")
+	}
+	action, notes, typeRandomness, err := o.buildIssueAction(issuer, outputs, tokenType, publicParams, metadata)
+	if err != nil {
+		return nil, nil, err
+	}
+	action.Inputs = inputs
+	action.TypeRandomness = typeRandomness
+
+	return action, notes, nil
+}
+
+func (o *Orchestrator) buildIssueAction(
+	issuer []byte,
+	outputs []OutputRequest,
+	tokenType string,
+	publicParams *pp.PublicParams,
+	metadata map[string][]byte,
+) (*snarktoken.IssueAction, []*snarktoken.Note, []byte, error) {
 	if len(outputs) == 0 {
-		return nil, nil, errors.New("orchestrator: issue action requires at least one output")
+		return nil, nil, nil, errors.New("orchestrator: issue action requires at least one output")
 	}
 
 	// Generate a single typeRandomness for the entire action.
 	cc, err := newCurveCtx(publicParams.Curve)
 	if err != nil {
-		return nil, nil, fmt.Errorf("orchestrator: %w", err)
+		return nil, nil, nil, errors.Wrap(err, "orchestrator: curve context failed")
 	}
 	typeRandomnessBytes, err := cc.randomFieldElement()
 	if err != nil {
-		return nil, nil, fmt.Errorf("orchestrator: type randomness generation failed: %w", err)
+		return nil, nil, nil, errors.Wrap(err, "orchestrator: type randomness generation failed")
 	}
 
 	// Compute the shared TypeCommitment once for the action envelope.
 	typeCommitment, err := snarktoken.ComputeTypeCommitment(tokenType, typeRandomnessBytes, publicParams.Curve)
 	if err != nil {
-		return nil, nil, fmt.Errorf("orchestrator: type commitment computation failed: %w", err)
+		return nil, nil, nil, errors.Wrap(err, "orchestrator: type commitment computation failed")
 	}
 
 	var totalValue uint64
@@ -216,7 +259,7 @@ func (o *Orchestrator) BuildIssueAction(
 	for range outputs {
 		r := <-outputCh
 		if r.err != nil {
-			return nil, nil, fmt.Errorf("orchestrator: output proof %d failed: %w", r.index, r.err)
+			return nil, nil, nil, errors.Wrapf(r.err, "orchestrator: output proof %d failed", r.index)
 		}
 		outputOutcomes[r.index] = r
 	}
@@ -232,7 +275,7 @@ func (o *Orchestrator) BuildIssueAction(
 
 	sigBytes, err := ComputeBindingSignature(publicParams.Curve, snarktoken.ActionTypeIssue, typeCommitment, nil, outputResults)
 	if err != nil {
-		return nil, nil, fmt.Errorf("orchestrator: binding signature failed: %w", err)
+		return nil, nil, nil, errors.Wrap(err, "orchestrator: binding signature failed")
 	}
 
 	totalValueBytes := new(big.Int).SetUint64(totalValue).FillBytes(make([]byte, (cc.modulus.BitLen()+7)/8))
@@ -247,7 +290,7 @@ func (o *Orchestrator) BuildIssueAction(
 		Metadata:         metadata,
 	}
 
-	return action, newNotes, nil
+	return action, newNotes, typeRandomnessBytes, nil
 }
 
 // BuildMigrationAction generates proofs for a batch of zkatdlog token
@@ -279,7 +322,7 @@ func (o *Orchestrator) BuildMigrationAction(
 	for range requests {
 		r := <-migCh
 		if r.err != nil {
-			return nil, nil, fmt.Errorf("orchestrator: migration proof %d failed: %w", r.index, r.err)
+			return nil, nil, errors.Wrapf(r.err, "orchestrator: migration proof %d failed", r.index)
 		}
 
 		outcomes[r.index] = r
@@ -310,7 +353,7 @@ func (o *Orchestrator) proveSpend(index int, req SpendRequest, typeRandomness []
 		return
 	}
 
-	out <- spendOutcome{
+	outcome := spendOutcome{
 		index: index,
 		result: ProofResult{
 			Commitment:       witnessRes.Commitment,
@@ -326,6 +369,16 @@ func (o *Orchestrator) proveSpend(index int, req SpendRequest, typeRandomness []
 			SpendProof:     proofBytes,
 		},
 	}
+	if req.Upgraded {
+		r, err := snarktoken.FieldElementFromBytes(req.Note.Randomness, publicParams.Curve)
+		if err != nil {
+			out <- spendOutcome{index: index, err: err}
+
+			return
+		}
+		outcome.desc.UpgradeRandomness = r
+	}
+	out <- outcome
 }
 
 func (o *Orchestrator) proveOutput(index int, req OutputRequest, publicParams *pp.PublicParams, typeRandomness []byte, out chan<- outputOutcome) {
@@ -374,7 +427,7 @@ func (o *Orchestrator) proveMigration(index int, req MigrationRequest, publicPar
 	}
 	typeRandomnessBytes, err := cc.randomFieldElement()
 	if err != nil {
-		out <- migrationOutcome{index: index, err: fmt.Errorf("type randomness generation failed: %w", err)}
+		out <- migrationOutcome{index: index, err: errors.Wrap(err, "type randomness generation failed")}
 
 		return
 	}

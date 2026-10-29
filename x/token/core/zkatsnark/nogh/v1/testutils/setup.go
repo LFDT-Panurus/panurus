@@ -104,6 +104,9 @@ type SetupParams struct {
 	// defaults to pp.DefaultPublicParams's "groth16", preserving existing
 	// callers' behavior.
 	ProofSystem string
+	// MaxBits overrides the range-check bit width the circuits are compiled
+	// with (pp.PublicParams.MaxBits). Zero keeps the default.
+	MaxBits int
 }
 
 // NewSetupConfigurations loads test data from the given idemixTestdataPath and
@@ -176,6 +179,9 @@ func newSetupConfigurationsWithParams(params SetupParams, registerIssuer bool) (
 		p := pp.DefaultPublicParams()
 		p.Curve = curveID
 		p.ProofSystem = proofSystem
+		if params.MaxBits != 0 {
+			p.MaxBits = params.MaxBits
+		}
 		p.IdemixIssuerPublicKeys = []*pp.IdemixIssuerPublicKey{
 			{PublicKey: idemixIssuerPK, Curve: mathCurveID},
 		}

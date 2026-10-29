@@ -15,6 +15,7 @@ import (
 	"github.com/LFDT-Panurus/panurus/token/core/common"
 	"github.com/LFDT-Panurus/panurus/token/driver"
 	"github.com/LFDT-Panurus/panurus/token/services/utils"
+	token2 "github.com/LFDT-Panurus/panurus/token/token"
 	snarktoken "github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/token"
 )
 
@@ -73,20 +74,14 @@ func TransferSignatureValidate(c context.Context, ctx *Context) error {
 			return errors.Wrapf(err, "failed loading token [%s] from ledger for input [%d]", inputID, i)
 		}
 
-		outputDesc, err := snarktoken.DeserializeOutputDescription(raw)
+		// Verify the SNARK-proven CommitmentIn matches the ledger token. Without
+		// this check, an attacker could prove ownership of token A but reference
+		// token B's ID, decoupling authorization from what the proof actually
+		// spends.
+		owner, err := ledgerInputOwner(ctx, i, *inputID, raw, action.Inputs[i])
 		if err != nil {
-			return errors.Wrapf(err, "failed unmarshalling ledger token for input [%d]", i)
+			return err
 		}
-
-		// Verify the SNARK-proven CommitmentIn matches the on-ledger CommitmentOut.
-		// Without this check, an attacker could prove ownership of token A but
-		// reference token B's ID, decoupling authorization from what the proof
-		// actually spends.
-		if !bytes.Equal(action.Inputs[i].CommitmentIn, outputDesc.CommitmentOut) {
-			return errors.Wrapf(ErrCommitmentMismatch, "input [%d]: proven commitment does not match ledger token [%s]", i, inputID)
-		}
-
-		owner := outputDesc.Recipient
 		if len(owner) == 0 {
 			return errors.Errorf("input [%d] has empty owner", i)
 		}
@@ -94,7 +89,7 @@ func TransferSignatureValidate(c context.Context, ctx *Context) error {
 		inputTokens = append(inputTokens, &snarktoken.Input{Owner: owner})
 
 		// Verify the owner's signature
-		uniqueID := driver.Identity(owner).UniqueID()
+		uniqueID := owner.UniqueID()
 		if ctx.Logger != nil {
 			ctx.Logger.Debugf("check sender [%d][%s]", i, uniqueID)
 		}
@@ -159,4 +154,56 @@ func TransferSignatureValidate(c context.Context, ctx *Context) error {
 	}
 
 	return nil
+}
+
+// ledgerInputOwner binds the i-th spend description to the ledger token raw it
+// references and returns the token's owner.
+//
+// A zkatsnark output binds through its commitment: CommitmentIn must equal its
+// CommitmentOut, and no upgrade randomness may be disclosed.
+//
+// A legacy fabtoken output is upgraded in place, as zkatdlog does with its
+// upgrade witness: the validator rebuilds the note commitment
+// MiMC(value, type, UpgradeRandomness) from the cleartext ledger token and
+// requires CommitmentIn to equal it. The spend proof then guarantees that the
+// value and type commitments carry the fabtoken's value and type, so the
+// binding signature and type homogeneity checks conserve them unchanged. Only
+// fabtoken outputs whose quantity fits the zkatsnark precision are accepted;
+// larger ones must go through burn-and-re-issue.
+func ledgerInputOwner(ctx *Context, i int, id token2.ID, raw []byte, spend snarktoken.SpendDescription) (driver.Identity, error) {
+	if !snarktoken.IsFabtokenOutput(raw) {
+		if len(spend.UpgradeRandomness) != 0 {
+			return nil, errors.Wrapf(ErrMalformedAction, "input [%d]: upgrade randomness on a non-fabtoken input", i)
+		}
+		outputDesc, err := snarktoken.DeserializeOutputDescription(raw)
+		if err != nil {
+			return nil, errors.Wrapf(err, "failed unmarshalling ledger token for input [%d]", i)
+		}
+		if !bytes.Equal(spend.CommitmentIn, outputDesc.CommitmentOut) {
+			return nil, errors.Wrapf(ErrCommitmentMismatch, "input [%d]: proven commitment does not match ledger token [%s]", i, id)
+		}
+
+		return outputDesc.Recipient, nil
+	}
+
+	fab, err := snarktoken.ParseFabtokenOutput(raw, ctx.PP.PrecisionValue)
+	if err != nil {
+		return nil, errors.Join(ErrMalformedAction, errors.Wrapf(err, "input [%d]: ledger token [%s]", i, id))
+	}
+	if fab.Value > ctx.PP.MaxTokenValue() {
+		return nil, errors.Wrapf(ErrMalformedAction, "input [%d]: fabtoken value exceeds the maximum token value", i)
+	}
+	if _, err := decodeScalar(ctx.PP.Curve, spend.UpgradeRandomness); err != nil {
+		return nil, errors.Wrapf(err, "input [%d]: UpgradeRandomness", i)
+	}
+	note := &snarktoken.Note{Value: fab.Value, TokenType: string(fab.Type), Randomness: spend.UpgradeRandomness}
+	cm, err := note.Commitment(ctx.PP.Curve)
+	if err != nil {
+		return nil, errors.Wrapf(err, "input [%d]: recomputing upgraded commitment", i)
+	}
+	if !bytes.Equal(spend.CommitmentIn, cm) {
+		return nil, errors.Wrapf(ErrCommitmentMismatch, "input [%d]: proven commitment does not open to fabtoken [%s]", i, id)
+	}
+
+	return fab.Owner, nil
 }

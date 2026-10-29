@@ -124,7 +124,7 @@ func newRandomMigrationInputs(t *testing.T) migrationInputs {
 
 	// EncodeTokenType, same as snarktoken.EncodeTokenType
 	var tokenTypeFr fr.Element
-	tokenTypeFr.SetBytes([]byte(tokenType))
+	tokenTypeFr.SetBytes(mimc.TokenTypeBytes(tokenType))
 
 	digest := sha256.Sum256([]byte(tokenType))
 	digestBig := new(big.Int).SetBytes(digest[:])

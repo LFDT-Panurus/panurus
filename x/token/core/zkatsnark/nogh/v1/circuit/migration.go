@@ -67,7 +67,7 @@ type MigrationCircuit struct {
 	Value frontend.Variable
 
 	// TokenType is the canonical field-element encoding of the token type,
-	// produced by EncodeTokenType (SetBytes). Private — the validator
+	// produced by EncodeTokenType (mimc.TokenTypeBytes). Private — the validator
 	// only sees the TypeCommitment, not the plaintext type.
 	TokenType frontend.Variable
 

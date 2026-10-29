@@ -21,6 +21,7 @@ import (
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	"github.com/stretchr/testify/require"
 
+	"github.com/LFDT-Panurus/panurus/token/core/fabtoken/v1/actions"
 	"github.com/LFDT-Panurus/panurus/token/driver"
 	"github.com/LFDT-Panurus/panurus/token/driver/protos-go/v1/request"
 	"github.com/LFDT-Panurus/panurus/token/services/identity"
@@ -557,4 +558,89 @@ func typedID(t *testing.T, name string) []byte {
 	require.NoError(t, err)
 
 	return id
+}
+
+// TestFabtokenInPlaceUpgrade_Lifecycle covers the in-place upgrade of a legacy
+// fabtoken output inside a transfer, end to end through the wire format and
+// VerifyTokenRequestFromRaw, and then spends the resulting zkatsnark note in an
+// ordinary transfer.
+func TestFabtokenInPlaceUpgrade_Lifecycle(t *testing.T) {
+	setupShared(t)
+	ledger := &testLedger{tokens: map[string][]byte{}}
+	val, err := validator.NewValidator(sharedVerifierParams, &testDeserializer{}, driver.ResourceLimits{}.WithDefaults())
+	require.NoError(t, err)
+	alice, bob := typedID(t, "alice"), typedID(t, "bob")
+
+	// 1. A cleartext fabtoken output is on the ledger.
+	fabRaw, err := (&actions.Output{Owner: alice, Type: "USD", Quantity: "0x2a"}).Serialize()
+	require.NoError(t, err)
+	fabID := &token2.ID{TxId: "fabtoken-tx", Index: 0}
+	ledger.tokens[fabID.String()] = fabRaw
+
+	// 2. Alice spends it as the note {42, USD, r} and pays bob.
+	inNote, err := snarktoken.NewRandomNote(42, "USD", sharedPP.Curve)
+	require.NoError(t, err)
+	upgrade, outNotes, err := orch.BuildTransferAction(
+		context.Background(),
+		[]prover.SpendRequest{{Note: inNote, Upgraded: true}},
+		[]prover.OutputRequest{{Value: 42, TokenType: "USD", Recipient: bob}},
+		"USD",
+		sharedPP,
+		nil,
+	)
+	require.NoError(t, err)
+	upgrade.InputIDs = []*token2.ID{fabID}
+	upgrade.InputTokens = [][]byte{fabRaw}
+	require.NoError(t, verifyTransfer(t, val, ledger, "upgrade-tx", upgrade))
+
+	// 3. Bob spends the upgraded note like any other zkatsnark note.
+	bobID := storeLedgerToken(t, ledger, "upgrade-tx", 0, upgrade.Outputs[0])
+	spend, _, err := orch.BuildTransferAction(
+		context.Background(),
+		[]prover.SpendRequest{{Note: outNotes[0]}},
+		[]prover.OutputRequest{{Value: 40, TokenType: "USD", Recipient: alice}, {Value: 2, TokenType: "USD", Recipient: bob}},
+		"USD",
+		sharedPP,
+		nil,
+	)
+	require.NoError(t, err)
+	spend.InputIDs = []*token2.ID{bobID}
+	ser, err := upgrade.Outputs[0].Serialize()
+	require.NoError(t, err)
+	spend.InputTokens = [][]byte{ser}
+	require.NoError(t, verifyTransfer(t, val, ledger, "spend-tx", spend))
+
+	// 4. The fabtoken cannot be spent as a different value.
+	forged, _, err := orch.BuildTransferAction(
+		context.Background(),
+		[]prover.SpendRequest{{Note: &snarktoken.Note{Value: 1000, TokenType: "USD", Randomness: inNote.Randomness}, Upgraded: true}},
+		[]prover.OutputRequest{{Value: 1000, TokenType: "USD", Recipient: bob}},
+		"USD",
+		sharedPP,
+		nil,
+	)
+	require.NoError(t, err)
+	forged.InputIDs = []*token2.ID{fabID}
+	forged.InputTokens = [][]byte{fabRaw}
+	require.ErrorIs(t, verifyTransfer(t, val, ledger, "forged-tx", forged), validator.ErrCommitmentMismatch)
+}
+
+// verifyTransfer wraps a transfer in a token request signed by a stub owner
+// signature and runs the full validator pipeline on it.
+func verifyTransfer(t *testing.T, val *validator.Validator, ledger *testLedger, txID string, action *snarktoken.TransferAction) error {
+	t.Helper()
+	raw, err := action.Serialize()
+	require.NoError(t, err)
+	tr := &driver.TokenRequest{
+		Version: driver.ProtocolV1,
+		Actions: []*driver.TypedAction{{Type: request.ActionType_ACTION_TYPE_TRANSFER, Raw: raw}},
+	}
+	for range action.Inputs {
+		tr.Signatures = append(tr.Signatures, &driver.RequestSignature{Action: &driver.ActionSignature{ActionID: 0, Signature: []byte("sig")}})
+	}
+	trRaw, err := tr.Bytes()
+	require.NoError(t, err)
+	_, _, err = val.VerifyTokenRequestFromRaw(context.Background(), ledger.GetState, driver.TokenRequestAnchor(txID), trRaw)
+
+	return err
 }
