@@ -65,7 +65,7 @@ type spendInputs struct {
 func newRandomSpendInputs(t *testing.T) spendInputs {
 	t.Helper()
 	var tokenType, randomness, rcv, typeRandomness fr.Element
-	tokenType.SetBytes([]byte("USD"))
+	tokenType.SetBytes(mimc.TokenTypeBytes("USD"))
 	_, err := randomness.SetRandom()
 	require.NoError(t, err)
 	_, err = rcv.SetRandom()
@@ -181,7 +181,7 @@ func TestSpendCircuitInvalid_WrongTokenType(t *testing.T) {
 	assignment := buildSpendAssignment(t, inp)
 
 	var wrongTokenType fr.Element
-	wrongTokenType.SetBytes([]byte("EUR"))
+	wrongTokenType.SetBytes(mimc.TokenTypeBytes("EUR"))
 	assignment.TokenType = wrongTokenType
 
 	witness, err := frontend.NewWitness(assignment, ecc.BLS12_381.ScalarField())

@@ -19,10 +19,9 @@ import (
 // startup, holding already-loaded provers, and reuse across every
 // transaction.
 type Orchestrator struct {
-	spendProver             *SpendProver
-	outputProver            *OutputProver
-	migrationProver         *MigrationProver         // nil when migration is not configured
-	fabtokenMigrationProver *FabtokenMigrationProver // nil when fabtoken migration is not configured
+	spendProver     *SpendProver
+	outputProver    *OutputProver
+	migrationProver *MigrationProver // nil when migration is not configured
 }
 
 // NewOrchestrator creates a new Orchestrator over already-prepared public
@@ -39,13 +38,11 @@ func (o *Orchestrator) SetMigrationProver(mp *MigrationProver) {
 	o.migrationProver = mp
 }
 
-// SetFabtokenMigrationProver configures fabtoken migration support.
-func (o *Orchestrator) SetFabtokenMigrationProver(fp *FabtokenMigrationProver) {
-	o.fabtokenMigrationProver = fp
-}
-
 type SpendRequest struct {
 	Note *snarktoken.Note
+	// Upgraded marks a legacy fabtoken output upgraded in place: the spend
+	// description then discloses the note randomness (UpgradeRandomness).
+	Upgraded bool
 }
 
 type OutputRequest struct {
@@ -78,19 +75,6 @@ type MigrationRequest struct {
 type migrationOutcome struct {
 	index  int
 	action snarktoken.MigrationAction
-	note   *snarktoken.Note
-	err    error
-}
-
-// FabtokenMigrationRequest describes a single fabtoken to migrate.
-type FabtokenMigrationRequest struct {
-	Opening   snarktoken.FabtokenOpening
-	Recipient []byte
-}
-
-type fabtokenMigrationOutcome struct {
-	index  int
-	action snarktoken.FabtokenMigrationAction
 	note   *snarktoken.Note
 	err    error
 }
@@ -203,24 +187,65 @@ func (o *Orchestrator) BuildIssueAction(
 	publicParams *pp.PublicParams,
 	metadata map[string][]byte,
 ) (*snarktoken.IssueAction, []*snarktoken.Note, error) {
+	action, notes, _, err := o.buildIssueAction(issuer, outputs, tokenType, publicParams, metadata)
+
+	return action, notes, err
+}
+
+// BuildUpgradeIssueAction builds an upgrade issuance: an IssueAction that
+// redeems the passed legacy fabtoken outputs and mints outputs of the same
+// type and total value. The inputs are attached verbatim and the type
+// randomness is revealed, so that the validator can bind the minted type and
+// value to the redeemed ones (see validator.IssueUpgradeInputsValidate).
+// Checking that the inputs are upgradable and that the outputs match them is
+// the caller's responsibility; the validator enforces it on the ledger.
+func (o *Orchestrator) BuildUpgradeIssueAction(
+	ctx context.Context,
+	issuer []byte,
+	inputs []*snarktoken.IssueActionInput,
+	outputs []OutputRequest,
+	tokenType string,
+	publicParams *pp.PublicParams,
+	metadata map[string][]byte,
+) (*snarktoken.IssueAction, []*snarktoken.Note, error) {
+	if len(inputs) == 0 {
+		return nil, nil, errors.New("orchestrator: upgrade issue action requires at least one input")
+	}
+	action, notes, typeRandomness, err := o.buildIssueAction(issuer, outputs, tokenType, publicParams, metadata)
+	if err != nil {
+		return nil, nil, err
+	}
+	action.Inputs = inputs
+	action.TypeRandomness = typeRandomness
+
+	return action, notes, nil
+}
+
+func (o *Orchestrator) buildIssueAction(
+	issuer []byte,
+	outputs []OutputRequest,
+	tokenType string,
+	publicParams *pp.PublicParams,
+	metadata map[string][]byte,
+) (*snarktoken.IssueAction, []*snarktoken.Note, []byte, error) {
 	if len(outputs) == 0 {
-		return nil, nil, errors.New("orchestrator: issue action requires at least one output")
+		return nil, nil, nil, errors.New("orchestrator: issue action requires at least one output")
 	}
 
 	// Generate a single typeRandomness for the entire action.
 	cc, err := newCurveCtx(publicParams.Curve)
 	if err != nil {
-		return nil, nil, errors.Wrap(err, "orchestrator: curve context failed")
+		return nil, nil, nil, errors.Wrap(err, "orchestrator: curve context failed")
 	}
 	typeRandomnessBytes, err := cc.randomFieldElement()
 	if err != nil {
-		return nil, nil, errors.Wrap(err, "orchestrator: type randomness generation failed")
+		return nil, nil, nil, errors.Wrap(err, "orchestrator: type randomness generation failed")
 	}
 
 	// Compute the shared TypeCommitment once for the action envelope.
 	typeCommitment, err := snarktoken.ComputeTypeCommitment(tokenType, typeRandomnessBytes, publicParams.Curve)
 	if err != nil {
-		return nil, nil, errors.Wrap(err, "orchestrator: type commitment computation failed")
+		return nil, nil, nil, errors.Wrap(err, "orchestrator: type commitment computation failed")
 	}
 
 	var totalValue uint64
@@ -234,7 +259,7 @@ func (o *Orchestrator) BuildIssueAction(
 	for range outputs {
 		r := <-outputCh
 		if r.err != nil {
-			return nil, nil, errors.Wrapf(r.err, "orchestrator: output proof %d failed", r.index)
+			return nil, nil, nil, errors.Wrapf(r.err, "orchestrator: output proof %d failed", r.index)
 		}
 		outputOutcomes[r.index] = r
 	}
@@ -250,7 +275,7 @@ func (o *Orchestrator) BuildIssueAction(
 
 	sigBytes, err := ComputeBindingSignature(publicParams.Curve, snarktoken.ActionTypeIssue, typeCommitment, nil, outputResults)
 	if err != nil {
-		return nil, nil, errors.Wrap(err, "orchestrator: binding signature failed")
+		return nil, nil, nil, errors.Wrap(err, "orchestrator: binding signature failed")
 	}
 
 	totalValueBytes := new(big.Int).SetUint64(totalValue).FillBytes(make([]byte, (cc.modulus.BitLen()+7)/8))
@@ -265,7 +290,7 @@ func (o *Orchestrator) BuildIssueAction(
 		Metadata:         metadata,
 	}
 
-	return action, newNotes, nil
+	return action, newNotes, typeRandomnessBytes, nil
 }
 
 // BuildMigrationAction generates proofs for a batch of zkatdlog token
@@ -313,46 +338,6 @@ func (o *Orchestrator) BuildMigrationAction(
 	return actions, notes, nil
 }
 
-// BuildFabtokenMigrationAction generates proofs for a batch of fabtoken
-// migrations concurrently, producing one FabtokenMigrationAction per token.
-func (o *Orchestrator) BuildFabtokenMigrationAction(
-	ctx context.Context,
-	requests []FabtokenMigrationRequest,
-	publicParams *pp.PublicParams,
-) ([]snarktoken.FabtokenMigrationAction, []*snarktoken.Note, error) {
-	if len(requests) == 0 {
-		return nil, nil, errors.New("orchestrator: fabtoken migration action requires at least one request")
-	}
-
-	if o.fabtokenMigrationProver == nil {
-		return nil, nil, errors.New("orchestrator: fabtoken migration prover not configured — call SetFabtokenMigrationProver")
-	}
-
-	migCh := make(chan fabtokenMigrationOutcome, len(requests))
-	for i, req := range requests {
-		go o.proveFabtokenMigration(i, req, publicParams, migCh)
-	}
-
-	outcomes := make([]fabtokenMigrationOutcome, len(requests))
-	for range requests {
-		r := <-migCh
-		if r.err != nil {
-			return nil, nil, errors.Wrapf(r.err, "orchestrator: fabtoken migration proof %d failed", r.index)
-		}
-
-		outcomes[r.index] = r
-	}
-
-	actions := make([]snarktoken.FabtokenMigrationAction, len(outcomes))
-	notes := make([]*snarktoken.Note, len(outcomes))
-	for i, oc := range outcomes {
-		actions[i] = oc.action
-		notes[i] = oc.note
-	}
-
-	return actions, notes, nil
-}
-
 func (o *Orchestrator) proveSpend(index int, req SpendRequest, typeRandomness []byte, publicParams *pp.PublicParams, out chan<- spendOutcome) {
 	witnessRes, err := BuildSpendWitness(req.Note, typeRandomness, publicParams)
 	if err != nil {
@@ -368,7 +353,7 @@ func (o *Orchestrator) proveSpend(index int, req SpendRequest, typeRandomness []
 		return
 	}
 
-	out <- spendOutcome{
+	outcome := spendOutcome{
 		index: index,
 		result: ProofResult{
 			Commitment:       witnessRes.Commitment,
@@ -384,6 +369,16 @@ func (o *Orchestrator) proveSpend(index int, req SpendRequest, typeRandomness []
 			SpendProof:     proofBytes,
 		},
 	}
+	if req.Upgraded {
+		r, err := snarktoken.FieldElementFromBytes(req.Note.Randomness, publicParams.Curve)
+		if err != nil {
+			out <- spendOutcome{index: index, err: err}
+
+			return
+		}
+		outcome.desc.UpgradeRandomness = r
+	}
+	out <- outcome
 }
 
 func (o *Orchestrator) proveOutput(index int, req OutputRequest, publicParams *pp.PublicParams, typeRandomness []byte, out chan<- outputOutcome) {
@@ -462,49 +457,6 @@ func (o *Orchestrator) proveMigration(index int, req MigrationRequest, publicPar
 			TypeCommitment:      witnessRes.TypeCommitment,
 			MigrationProof:      proofBytes,
 			Recipient:           req.Recipient,
-		},
-		note: witnessRes.Note,
-	}
-}
-
-func (o *Orchestrator) proveFabtokenMigration(index int, req FabtokenMigrationRequest, publicParams *pp.PublicParams, out chan<- fabtokenMigrationOutcome) {
-	cc, err := newCurveCtx(publicParams.Curve)
-	if err != nil {
-		out <- fabtokenMigrationOutcome{index: index, err: err}
-
-		return
-	}
-	typeRandomnessBytes, err := cc.randomFieldElement()
-	if err != nil {
-		out <- fabtokenMigrationOutcome{index: index, err: errors.Wrap(err, "type randomness generation failed")}
-
-		return
-	}
-
-	witnessRes, err := BuildFabtokenMigrationWitness(req.Opening, publicParams, typeRandomnessBytes)
-	if err != nil {
-		out <- fabtokenMigrationOutcome{index: index, err: err}
-
-		return
-	}
-
-	proofBytes, err := o.fabtokenMigrationProver.Prove(witnessRes.Assignment)
-	if err != nil {
-		out <- fabtokenMigrationOutcome{index: index, err: err}
-
-		return
-	}
-
-	out <- fabtokenMigrationOutcome{
-		index: index,
-		action: snarktoken.FabtokenMigrationAction{
-			FabtokenDigest:  witnessRes.FabtokenDigest,
-			CommitmentMiMC:  witnessRes.Commitment,
-			ValueCommitOutX: witnessRes.ValueCommitmentX,
-			ValueCommitOutY: witnessRes.ValueCommitmentY,
-			TypeCommitment:  witnessRes.TypeCommitment,
-			MigrationProof:  proofBytes,
-			Recipient:       req.Recipient,
 		},
 		note: witnessRes.Note,
 	}

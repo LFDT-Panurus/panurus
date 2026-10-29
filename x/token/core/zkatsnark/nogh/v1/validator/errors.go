@@ -48,10 +48,6 @@ var (
 	// ErrMigrationNotConfigured is returned by ValidateMigration when this
 	// deployment's PublicParams has no migration verification key loaded.
 	ErrMigrationNotConfigured = errors.New("validator: migration circuit not configured for this deployment")
-
-	// ErrFabtokenMigrationNotConfigured is returned by ValidateFabtokenMigration when this
-	// deployment's PublicParams has no fabtoken migration verification key loaded.
-	ErrFabtokenMigrationNotConfigured = errors.New("validator: fabtoken migration circuit not configured for this deployment")
 )
 
 var (

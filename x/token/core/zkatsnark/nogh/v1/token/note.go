@@ -132,24 +132,6 @@ func ComputeTypeCommitment(tokenType string, typeRandomness []byte, curve ecc.ID
 	return tc, nil
 }
 
-// ComputeFabtokenDigest computes the binding digest for a cleartext fabtoken:
-// MiMC(value, EncodeTokenType(tokenType)). The validator computes this directly
-// from the cleartext fabtoken being spent/upgraded on the ledger and supplies it
-// as a public input to the FabtokenMigrationCircuit.
-func ComputeFabtokenDigest(value uint64, tokenType string, curve ecc.ID) ([]byte, error) {
-	s, err := mimc.ForCurve(curve)
-	if err != nil {
-		return nil, errors.Wrapf(err, "note: fabtoken digest computation failed")
-	}
-
-	digest, err := s.FabtokenDigest(value, tokenType)
-	if err != nil {
-		return nil, errors.Wrapf(err, "note: fabtoken digest computation failed")
-	}
-
-	return digest, nil
-}
-
 // Commitment computes cm = MiMC(Value, TokenType, Randomness) and returns
 // the result as raw bytes.
 //

@@ -24,16 +24,22 @@ type SpendDescription struct {
 	ValueCommitInY []byte // 32 bytes
 	TypeCommitment []byte // 32 bytes: MiMC(TokenType, TypeRandomness)
 	SpendProof     []byte // 292 bytes: Groth16 proof for SpendCircuit
+	// UpgradeRandomness is set only when the spent ledger token is a legacy
+	// fabtoken output upgraded in place: the token is spent as the note
+	// {value, type, UpgradeRandomness} built from its cleartext content, and the
+	// validator recomputes CommitmentIn from the ledger token with it.
+	UpgradeRandomness []byte `json:"UpgradeRandomness,omitempty"`
 }
 
 // toProto converts the SpendDescription to its protobuf representation.
 func (s *SpendDescription) toProto() *snarkactions.SpendDescription {
 	return &snarkactions.SpendDescription{
-		CommitmentIn:   s.CommitmentIn,
-		ValueCommitInX: s.ValueCommitInX,
-		ValueCommitInY: s.ValueCommitInY,
-		TypeCommitment: s.TypeCommitment,
-		SpendProof:     s.SpendProof,
+		CommitmentIn:      s.CommitmentIn,
+		ValueCommitInX:    s.ValueCommitInX,
+		ValueCommitInY:    s.ValueCommitInY,
+		TypeCommitment:    s.TypeCommitment,
+		SpendProof:        s.SpendProof,
+		UpgradeRandomness: s.UpgradeRandomness,
 	}
 }
 
@@ -44,11 +50,12 @@ func spendDescriptionFromProto(pb *snarkactions.SpendDescription) SpendDescripti
 	}
 
 	return SpendDescription{
-		CommitmentIn:   pb.CommitmentIn,
-		ValueCommitInX: pb.ValueCommitInX,
-		ValueCommitInY: pb.ValueCommitInY,
-		TypeCommitment: pb.TypeCommitment,
-		SpendProof:     pb.SpendProof,
+		CommitmentIn:      pb.CommitmentIn,
+		ValueCommitInX:    pb.ValueCommitInX,
+		ValueCommitInY:    pb.ValueCommitInY,
+		TypeCommitment:    pb.TypeCommitment,
+		SpendProof:        pb.SpendProof,
+		UpgradeRandomness: pb.UpgradeRandomness,
 	}
 }
 

@@ -6,7 +6,6 @@ SPDX-License-Identifier: Apache-2.0
 package token_test
 
 import (
-	"context"
 	"testing"
 
 	"github.com/consensys/gnark-crypto/ecc"
@@ -405,41 +404,19 @@ func TestPedersenOpening_Validate_EmptyCommitmentBytes(t *testing.T) {
 	require.Error(t, o.Validate())
 }
 
-// ── TokensUpgradeService ──────────────────────────────────────────────────────
-
-func TestTokensUpgradeService_NewUpgradeChallenge_Error(t *testing.T) {
-	svc, err := snarktoken.NewTokensUpgradeService()
-	require.NoError(t, err)
-
-	_, err = svc.NewUpgradeChallenge()
-	require.Error(t, err, "TokensUpgradeService.NewUpgradeChallenge is not implemented")
-}
-
-func TestTokensUpgradeService_GenUpgradeProof_Error(t *testing.T) {
-	svc, err := snarktoken.NewTokensUpgradeService()
-	require.NoError(t, err)
-
-	_, err = svc.GenUpgradeProof(context.Background(), nil, nil, nil)
-	require.Error(t, err)
-}
-
-func TestTokensUpgradeService_CheckUpgradeProof_Error(t *testing.T) {
-	svc, err := snarktoken.NewTokensUpgradeService()
-	require.NoError(t, err)
-
-	ok, err := svc.CheckUpgradeProof(context.Background(), nil, nil, nil)
-	require.Error(t, err)
-	require.False(t, ok)
-}
-
 // ── EncodeTokenType ───────────────────────────────────────────────────────────
 
 func TestEncodeTokenType_Empty(t *testing.T) {
-	// Empty string must not panic and must produce a zero element.
+	// Empty string must not panic, and must not collide with the zero
+	// element or with "\x00" (the former SetBytes encoding mapped both to 0).
 	for _, curve := range supportedCurves {
 		elem, err := snarktoken.EncodeTokenTypeBytes("", curve)
 		require.NoError(t, err)
-		require.Equal(t, make([]byte, 32), elem)
+		require.Len(t, elem, 32)
+		require.NotEqual(t, make([]byte, 32), elem)
+		nul, err := snarktoken.EncodeTokenTypeBytes("\x00", curve)
+		require.NoError(t, err)
+		require.NotEqual(t, nul, elem)
 	}
 }
 
@@ -555,51 +532,4 @@ func TestMigrationAction_Serialize_Deserialize_RoundTrip(t *testing.T) {
 	require.Equal(t, orig.TypeCommitment, got.TypeCommitment)
 	require.Equal(t, orig.MigrationProof, got.MigrationProof)
 	require.Equal(t, orig.Recipient, got.Recipient)
-}
-
-func TestFabtokenOpening_Validate(t *testing.T) {
-	valid := &snarktoken.FabtokenOpening{
-		Value:     100,
-		TokenType: "USD",
-	}
-	require.NoError(t, valid.Validate())
-
-	zeroVal := &snarktoken.FabtokenOpening{
-		Value:     0,
-		TokenType: "USD",
-	}
-	require.Error(t, zeroVal.Validate())
-
-	emptyType := &snarktoken.FabtokenOpening{
-		Value:     100,
-		TokenType: "",
-	}
-	require.Error(t, emptyType.Validate())
-}
-
-func TestFabtokenMigrationAction_Serialize_Deserialize_RoundTrip(t *testing.T) {
-	orig := &snarktoken.FabtokenMigrationAction{
-		FabtokenDigest:  []byte("fabtoken-digest-32-bytes-long!"),
-		CommitmentMiMC:  []byte("mimc-cm"),
-		ValueCommitOutX: []byte("jubjub-x"),
-		ValueCommitOutY: []byte("jubjub-y"),
-		TypeCommitment:  []byte("type-cm"),
-		MigrationProof:  []byte("proof-bytes"),
-		Recipient:       []byte("carol"),
-	}
-	raw, err := orig.Serialize()
-	require.NoError(t, err)
-
-	got := &snarktoken.FabtokenMigrationAction{}
-	require.NoError(t, got.Deserialize(raw))
-	require.Equal(t, orig.FabtokenDigest, got.FabtokenDigest)
-	require.Equal(t, orig.CommitmentMiMC, got.CommitmentMiMC)
-	require.Equal(t, orig.ValueCommitOutX, got.ValueCommitOutX)
-	require.Equal(t, orig.ValueCommitOutY, got.ValueCommitOutY)
-	require.Equal(t, orig.TypeCommitment, got.TypeCommitment)
-	require.Equal(t, orig.MigrationProof, got.MigrationProof)
-	require.Equal(t, orig.Recipient, got.Recipient)
-
-	// Deserialize garbage bytes error
-	require.Error(t, got.Deserialize([]byte("not-a-proto")))
 }

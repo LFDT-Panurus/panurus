@@ -12,6 +12,8 @@ import (
 	"github.com/consensys/gnark-crypto/ecc"
 	"github.com/stretchr/testify/require"
 
+	"github.com/LFDT-Panurus/panurus/token/core/fabtoken/v1/actions"
+	token2 "github.com/LFDT-Panurus/panurus/token/token"
 	snarktoken "github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/token"
 )
 
@@ -101,32 +103,66 @@ func FuzzMigrationActionDeserializeNoPanic(f *testing.F) {
 	})
 }
 
-// FuzzFabtokenMigrationActionDeserializeNoPanic fuzzes FabtokenMigrationAction.Deserialize with arbitrary bytes.
-func FuzzFabtokenMigrationActionDeserializeNoPanic(f *testing.F) {
-	action := &snarktoken.FabtokenMigrationAction{
-		FabtokenDigest:  make([]byte, 32),
-		CommitmentMiMC:  make([]byte, 32),
-		ValueCommitOutX: make([]byte, 32),
-		ValueCommitOutY: make([]byte, 32),
-		TypeCommitment:  make([]byte, 32),
-		MigrationProof:  make([]byte, 100),
-		Recipient:       []byte("alice"),
+// FuzzIssueActionWithInputsDeserializeNoPanic fuzzes IssueAction.Deserialize
+// followed by Validate, ExtraSigners and SummarizeUpgradeInputs: an upgrade
+// issuance carries legacy ledger tokens chosen by the issuer, which the
+// validator, the auditor and every endorser parse.
+func FuzzIssueActionWithInputsDeserializeNoPanic(f *testing.F) {
+	owner := []byte("owner")
+	fab, err := (&actions.Output{Owner: owner, Type: "USD", Quantity: "0x10"}).Serialize()
+	if err != nil {
+		f.Fatal(err)
 	}
-	raw, err := action.Serialize()
-	require.NoError(f, err)
-
+	valid := &snarktoken.IssueAction{
+		Issuer:         []byte("issuer"),
+		TokenType:      "USD",
+		Outputs:        []snarktoken.OutputDescription{{Recipient: owner}},
+		Inputs:         []*snarktoken.IssueActionInput{{ID: token2.ID{TxId: "tx", Index: 1}, Token: fab}},
+		TypeRandomness: make([]byte, 32),
+	}
+	raw, err := valid.Serialize()
+	if err != nil {
+		f.Fatal(err)
+	}
 	f.Add(raw)
 	f.Add([]byte{})
-	f.Add([]byte("malformed-bytes"))
 	f.Add(raw[:len(raw)/2])
+	f.Add([]byte{0x42, 0x02, 0x0a, 0x00}) // input with an empty id message
 
 	f.Fuzz(func(t *testing.T, raw []byte) {
 		if len(raw) > maxFuzzBytes {
 			t.Skip()
 		}
-		require.NotPanics(t, func() {
-			fma := &snarktoken.FabtokenMigrationAction{}
-			_ = fma.Deserialize(raw)
-		})
+		a := &snarktoken.IssueAction{}
+		if err := a.Deserialize(raw); err != nil {
+			return
+		}
+		_ = a.Validate()
+		_ = a.ExtraSigners()
+		_ = a.GetInputs()
+		_, _ = a.GetSerializedInputs()
+		_, _ = snarktoken.SummarizeUpgradeInputs(a.Inputs, 64)
+	})
+}
+
+// FuzzParseFabtokenOutputNoPanic fuzzes the fabtoken parser shared by both
+// upgrade paths with arbitrary ledger token bytes.
+func FuzzParseFabtokenOutputNoPanic(f *testing.F) {
+	fab, err := (&actions.Output{Owner: []byte("owner"), Type: "USD", Quantity: "0x10"}).Serialize()
+	if err != nil {
+		f.Fatal(err)
+	}
+	f.Add(fab)
+	f.Add([]byte{})
+	f.Add(fab[:len(fab)/2])
+	f.Add([]byte("not asn1"))
+
+	f.Fuzz(func(t *testing.T, raw []byte) {
+		if len(raw) > maxFuzzBytes {
+			t.Skip()
+		}
+		_ = snarktoken.IsFabtokenOutput(raw)
+		_, _ = snarktoken.ParseFabtokenOutput(raw, 64)
+		_, _ = snarktoken.ParseUpgradeInput(raw, 16)
 	})
 }

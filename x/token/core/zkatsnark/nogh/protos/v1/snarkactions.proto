@@ -45,10 +45,26 @@ message SpendDescription {
   bytes type_commitment = 4;
   // spend_proof is the Groth16 proof for SpendCircuit, 292 bytes
   bytes spend_proof = 5;
+  // upgrade_randomness is set only when the spent token is a legacy fabtoken
+  // output upgraded in place: it is the randomness of the note the fabtoken is
+  // reinterpreted as, so that the validator can recompute commitment_in from
+  // the cleartext ledger token, 32 bytes
+  bytes upgrade_randomness = 6;
+}
+
+// IssueActionInput is a ledger token consumed by an issue action. It is used
+// by the burn-and-re-issue upgrade, where the inputs are legacy fabtoken
+// outputs that the issue action redeems.
+message IssueActionInput {
+  // id is the ledger identifier of the consumed token
+  fabric_token_sdk.token.driver.v1.TokenID id = 1;
+  // token is the consumed token exactly as stored on the ledger
+  bytes token = 2;
 }
 
 // IssueAction represents the creation of one or more new tokens.
-// There are no SpendDescriptions — issuance consumes nothing.
+// There are no SpendDescriptions; a plain issuance consumes nothing, an
+// upgrade issuance consumes the legacy tokens listed in inputs.
 message IssueAction {
   // issuer is the identity of the authorized issuer creating these tokens
   bytes issuer = 1;
@@ -64,6 +80,11 @@ message IssueAction {
   bytes total_value = 6;
   // metadata contains application-specific data for this issuance
   map<string, bytes> metadata = 7;
+  // inputs are the legacy tokens redeemed by an upgrade issuance; empty otherwise
+  repeated IssueActionInput inputs = 8;
+  // type_randomness opens type_commitment; set only when inputs is non-empty,
+  // where the token type is already public through the inputs, 32 bytes
+  bytes type_randomness = 9;
 }
 
 // TransferAction represents consuming one or more existing tokens and
@@ -112,27 +133,4 @@ message MigrationAction {
   bytes migration_proof = 7;
   // recipient is the intended recipient identity
   bytes recipient = 8;
-}
-
-// FabtokenMigrationAction is the public wire-format record for a single token
-// migration from cleartext fabtoken to zkatsnark (MiMC-committed, Jubjub value commitment).
-message FabtokenMigrationAction {
-  // fabtoken_digest is the public MiMC digest of the original cleartext fabtoken:
-  // MiMC(Value, TokenType), 32 bytes
-  bytes fabtoken_digest = 1;
-  // commitment_mimc is the new MiMC commitment for the migrated token
-  // (BLS12-381 scalar field Fr, 32 bytes)
-  bytes commitment_mimc = 2;
-  // value_commit_out_x is the X coordinate of the new Jubjub value
-  // commitment (BLS12-381 Fr embedded Edwards coordinate, 32 bytes)
-  bytes value_commit_out_x = 3;
-  // value_commit_out_y is the Y coordinate of the new Jubjub value
-  // commitment (BLS12-381 Fr embedded Edwards coordinate, 32 bytes)
-  bytes value_commit_out_y = 4;
-  // type_commitment is MiMC(TokenType, TypeRandomness), 32 bytes
-  bytes type_commitment = 5;
-  // migration_proof is the zero-knowledge proof for the FabtokenMigrationCircuit
-  bytes migration_proof = 6;
-  // recipient is the intended recipient identity
-  bytes recipient = 7;
 }

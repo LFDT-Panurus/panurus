@@ -143,27 +143,3 @@ func validateMigrationActionShape(a *snarktoken.MigrationAction) error {
 
 	return nil
 }
-
-// validateFabtokenMigrationActionShape checks byte lengths for a FabtokenMigrationAction.
-func validateFabtokenMigrationActionShape(a *snarktoken.FabtokenMigrationAction) error {
-	if len(a.FabtokenDigest) != fieldElementLen {
-		return errors.Wrapf(ErrMalformedAction, "FabtokenDigest must be %d bytes, got %d", fieldElementLen, len(a.FabtokenDigest))
-	}
-	if len(a.CommitmentMiMC) != fieldElementLen {
-		return errors.Wrapf(ErrMalformedAction, "CommitmentMiMC must be %d bytes, got %d", fieldElementLen, len(a.CommitmentMiMC))
-	}
-	if len(a.ValueCommitOutX) != fieldElementLen {
-		return errors.Wrapf(ErrMalformedAction, "ValueCommitOutX must be %d bytes, got %d", fieldElementLen, len(a.ValueCommitOutX))
-	}
-	if len(a.ValueCommitOutY) != fieldElementLen {
-		return errors.Wrapf(ErrMalformedAction, "ValueCommitOutY must be %d bytes, got %d", fieldElementLen, len(a.ValueCommitOutY))
-	}
-	if len(a.TypeCommitment) != fieldElementLen {
-		return errors.Wrapf(ErrMalformedAction, "TypeCommitment must be %d bytes, got %d", fieldElementLen, len(a.TypeCommitment))
-	}
-	if len(a.MigrationProof) == 0 {
-		return errors.Wrapf(ErrMalformedAction, "MigrationProof must not be empty")
-	}
-
-	return nil
-}

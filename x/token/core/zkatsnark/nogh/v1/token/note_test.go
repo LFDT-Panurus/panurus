@@ -12,6 +12,7 @@ import (
 	"github.com/consensys/gnark-crypto/ecc"
 	"github.com/stretchr/testify/require"
 
+	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/crypto/mimc"
 	snarktoken "github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/token"
 )
 
@@ -59,7 +60,7 @@ func TestNoteCommitmentDeterminism_WideRandomness(t *testing.T) {
 func TestEncodeTokenType_Generic(t *testing.T) {
 	for _, curve := range supportedCurves {
 		t.Run(curve.String(), func(t *testing.T) {
-			want := new(big.Int).Mod(new(big.Int).SetBytes([]byte("USD")), curve.ScalarField())
+			want := new(big.Int).SetBytes(mimc.TokenTypeBytes("USD"))
 
 			got, err := snarktoken.EncodeTokenTypeBytes("USD", curve)
 			require.NoError(t, err)
@@ -189,33 +190,5 @@ func TestFieldElementFromBytes_WideAndCanonical(t *testing.T) {
 	}
 
 	_, err = snarktoken.FieldElementFromBytes(wide, ecc.BW6_761)
-	require.Error(t, err)
-}
-
-func TestComputeFabtokenDigest(t *testing.T) {
-	for _, curve := range supportedCurves {
-		t.Run(curve.String(), func(t *testing.T) {
-			d1, err := snarktoken.ComputeFabtokenDigest(100, "USD", curve)
-			require.NoError(t, err)
-			require.Len(t, d1, 32)
-
-			// Determinism
-			d2, err := snarktoken.ComputeFabtokenDigest(100, "USD", curve)
-			require.NoError(t, err)
-			require.Equal(t, d1, d2)
-
-			// Distinct value produces distinct digest
-			dDiffVal, err := snarktoken.ComputeFabtokenDigest(101, "USD", curve)
-			require.NoError(t, err)
-			require.NotEqual(t, d1, dDiffVal)
-
-			// Distinct token type produces distinct digest
-			dDiffType, err := snarktoken.ComputeFabtokenDigest(100, "EUR", curve)
-			require.NoError(t, err)
-			require.NotEqual(t, d1, dDiffType)
-		})
-	}
-
-	_, err := snarktoken.ComputeFabtokenDigest(100, "USD", ecc.BW6_761)
 	require.Error(t, err)
 }

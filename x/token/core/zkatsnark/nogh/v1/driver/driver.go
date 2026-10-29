@@ -11,6 +11,7 @@ import (
 	"github.com/LFDT-Panurus/panurus/token/core/common"
 	cdriver "github.com/LFDT-Panurus/panurus/token/core/common/driver"
 	"github.com/LFDT-Panurus/panurus/token/core/common/metrics"
+	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/crypto/upgrade"
 	"github.com/LFDT-Panurus/panurus/token/driver"
 	"github.com/LFDT-Panurus/panurus/token/services/interop/htlc"
 	"github.com/LFDT-Panurus/panurus/token/services/logging"
@@ -179,12 +180,12 @@ func (d *Driver) NewTokenService(tmsID driver.TMSID, publicParams []byte) (drive
 	outputProver := prover.NewOutputProver(proverParams)
 	orchestrator := prover.NewOrchestrator(spendProver, outputProver)
 
-	tokensService, err := token.NewTokensService(logger, ppm, deserializer)
+	tokensService, tokensUpgradeService, err := NewTokensServices(logger, ppm, deserializer, ip)
 	if err != nil {
-		return nil, errors.Wrapf(err, "failed to initialize token service for [%s:%s]", tmsID.Network, tmsID.Namespace)
+		return nil, errors.WithMessagef(err, "failed to initialize token services for [%s:%s]", tmsID.Network, tmsID.Namespace)
 	}
 
-	issueService := zkatsnark.NewIssueService(logger, ppm, ws, deserializer, tokensService, nil, orchestrator, val)
+	issueService := zkatsnark.NewIssueService(logger, ppm, ws, deserializer, tokensService, tokensUpgradeService, orchestrator, val)
 	transferService := zkatsnark.NewTransferService(
 		logger,
 		ppm,
@@ -198,11 +199,6 @@ func (d *Driver) NewTokenService(tmsID driver.TMSID, publicParams []byte) (drive
 		val,
 	)
 	auditorService := zkatsnark.NewAuditorService(logger, ppm, deserializer, qe, d.tracerProvider)
-
-	tokensUpgradeService, err := token.NewTokensUpgradeService()
-	if err != nil {
-		return nil, errors.Wrapf(err, "failed to initialize token upgrade service for [%s:%s]", tmsID.Network, tmsID.Namespace)
-	}
 
 	service, err := zkatsnark.NewTokenService(
 		logger,
@@ -224,4 +220,26 @@ func (d *Driver) NewTokenService(tmsID driver.TMSID, publicParams []byte) (drive
 	}
 
 	return service, err
+}
+
+// NewTokensServices builds the TokensService and the TokensUpgradeService of a
+// zkatsnark TMS, exactly as NewTokenService wires them: the upgrade service is
+// eligible for exactly the fabtoken formats the tokens service does not spend
+// in place, so each fabtoken format takes exactly one upgrade path.
+func NewTokensServices(
+	logger logging.Logger,
+	ppm common.PublicParametersManager[*pp.PublicParams],
+	deserializer driver.Deserializer,
+	identityProvider upgrade.IdentityProvider,
+) (*token.TokensService, *token.TokensUpgradeService, error) {
+	tokensService, err := token.NewTokensService(logger, ppm, deserializer)
+	if err != nil {
+		return nil, nil, errors.Wrap(err, "failed to initialize token service")
+	}
+	tokensUpgradeService, err := token.NewTokensUpgradeService(logger, ppm.PublicParams().PrecisionValue, deserializer, identityProvider, tokensService.SupportedTokenFormats())
+	if err != nil {
+		return nil, nil, errors.Wrap(err, "failed to initialize token upgrade service")
+	}
+
+	return tokensService, tokensUpgradeService, nil
 }

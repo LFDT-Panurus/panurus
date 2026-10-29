@@ -43,33 +43,6 @@ Two disjoint families of formats reach this path:
 
 ### Upgrading DLog tokens whose format changed
 
-### Cleartext Fabtoken to Zkatsnark Migration (Zero-Knowledge Upgrade)
-
-For nodes transitioning from transparent tokens (Fabtoken) to confidential zero-knowledge tokens (zkatsnark), Panurus provides a dedicated zero-knowledge migration circuit: `FabtokenMigrationCircuit`.
-
-Unlike the `MigrationCircuit` (which converts legacy ZKAT-DLOG Pedersen commitments on BLS12-381 G1 via emulated non-native field arithmetic), source Fabtokens store their `Value` and `TokenType` as cleartext strings/integers on the ledger.
-
-#### Circuit Constraints
-
-The `FabtokenMigrationCircuit` proves in zero knowledge that a new confidential zkatsnark note correctly encodes the exact value and token type from the source cleartext token, without exposing the value in the proof statement:
-
-1. **Fabtoken Digest Integrity**: Asserts `FabtokenDigest == MiMC(Value, TokenType)`. The ledger validator independently computes this digest from the cleartext token being consumed and supplies it as a public input.
-2. **MiMC Note Commitment Integrity**: Asserts `CommitmentMiMC == MiMC(Value, TokenType, RandomnessNew)` for the newly minted confidential note.
-3. **Value Commitment Integrity**: Asserts `(ValueCommitOutX, ValueCommitOutY) == Value·V + RCV·R` over the embedded twisted Edwards curve (Jubjub for BLS12-381, Baby Jubjub for BN254).
-4. **Range Check**: Asserts `1 <= Value < 2^MaxBits` to guarantee non-zero, non-negative, and non-overflowing token denomination.
-5. **Type Commitment Integrity**: Asserts `TypeCommitment == MiMC(TokenType, TypeRandomness)`.
-
-#### Performance Advantages
-
-Because Fabtoken inputs are field elements directly in the SNARK curve's scalar field, no emulated curve arithmetic or non-native field gadgets are needed. The circuit compiles to approximately 8,900 R1CS constraints, enabling fast proof generation and verification across both BLS12-381 and BN254.
-
-#### Lifecycle Flow
-
-1. **Witness Generation**: The client provides `FabtokenOpening{Value, TokenType}`. `prover.BuildFabtokenMigrationWitness` derives the MiMC note commitment, Jubjub value commitment, type commitment, and `FabtokenDigest`.
-2. **Proof Generation**: `FabtokenMigrationProver.Prove` generates a Groth16 (or Plonk) proof, packaged into `FabtokenMigrationAction`.
-3. **Validator Verification**: The validator decodes the public field elements, verifies point-on-curve membership for the value commitment, and executes `verifyFabtokenMigrationProof` against `VKFabtokenMigration`.
-4. **Subsequent Transfers**: The resulting `Note` is retained in the recipient's wallet and can be spent directly in standard confidential `TransferAction` transactions.
-
 A ZKAT-DLOG output is a Pedersen commitment, and its `token.Format` is a digest that covers the
 Pedersen generators of the public parameters that produced it (`SupportedTokenFormat` in
 `token/core/zkatdlog/nogh/v1/token/service.go`). Regenerating the public parameters with different
@@ -139,6 +112,15 @@ Panurus records the public parameters in two places, and both matter for this fl
 > change when the curve, the driver version, or the generation procedure itself changes. Before
 > publishing new public parameters, compare `SupportedTokenFormats()` before and after: if the set
 > changes, every existing token needs this upgrade path, and owners must be online to run it.
+
+### Upgrading tokens to ZKAT-SNARK
+
+The ZKAT-SNARK driver upgrades cleartext fabtoken outputs with both mechanisms above: in place,
+inside an ordinary transfer, or by burn-and-re-issue through an issuer. Fabtoken formats are split
+between the two exactly as for ZKAT-DLOG, and the issuer path keeps the ZKAT-DLOG trust model: the
+issuer signature alone authorizes the burn on the ledger. The ZKAT-SNARK driver cannot yet upgrade ZKAT-DLOG
+outputs on either path. See [ZKAT-SNARK: Token Upgrades](drivers/zkatsnark.md#token-upgrades) for
+the protocols, the on-chain checks, and the status of the ZKAT-DLOG migration.
 
 ### Code Example: Identifying Unsupported Tokens
 
