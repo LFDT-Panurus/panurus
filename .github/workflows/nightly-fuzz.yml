@@ -314,6 +314,10 @@ jobs:
             dir: ./x/token/core/zkatsnark
             pkg: ./nogh/v1/token
             func: FuzzParseFabtokenOutputNoPanic
+          - name: zkatsnark-auditor-check
+            dir: ./x/token/core/zkatsnark
+            pkg: ./nogh/v1/audit
+            func: FuzzAuditorCheckNoPanic
 
     steps:
       - name: Checkout code

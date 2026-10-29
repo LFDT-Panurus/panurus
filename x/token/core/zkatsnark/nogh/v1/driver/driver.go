@@ -208,7 +208,7 @@ func (d *Driver) NewTokenService(tmsID driver.TMSID, publicParams []byte) (drive
 		orchestrator,
 		val,
 	)
-	auditorService := zkatsnark.NewAuditorService(logger, ppm, deserializer, qe, d.tracerProvider)
+	auditorService := zkatsnark.NewAuditorService(logger, ppm, deserializer, qe, d.tracerProvider, common.LoadAuditRetryConfig(tmsConfig))
 
 	service, err := zkatsnark.NewTokenService(
 		logger,
