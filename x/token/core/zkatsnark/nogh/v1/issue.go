@@ -30,6 +30,7 @@ type TokensUpgradeRequestProcessor interface {
 	ProcessTokensUpgradeRequest(ctx context.Context, utp *driver.TokenUpgradeRequest) ([]token.Token, error)
 }
 
+// IssueService assembles and verifies zkatsnark issue actions.
 type IssueService struct {
 	Logger                  logging.Logger
 	PublicParametersManager common.PublicParametersManager[*pp.PublicParams]
@@ -41,6 +42,7 @@ type IssueService struct {
 	Validator               *validator.Validator
 }
 
+// NewIssueService returns a new IssueService.
 func NewIssueService(
 	logger logging.Logger,
 	publicParametersManager common.PublicParametersManager[*pp.PublicParams],
@@ -63,6 +65,8 @@ func NewIssueService(
 	}
 }
 
+// Issue builds an issue action creating one output per (value, owner) pair, together with its metadata.
+// When the issuer, the token type and the values are all empty, it performs a token upgrade instead.
 func (s *IssueService) Issue(ctx context.Context, issuerIdentity driver.Identity, tokenType token.Type, values []uint64, owners [][]byte, opts *driver.IssueOptions) (driver.IssueAction, *driver.IssueMetadata, error) {
 	for _, owner := range owners {
 		if len(owner) == 0 {
@@ -75,6 +79,9 @@ func (s *IssueService) Issue(ctx context.Context, issuerIdentity driver.Identity
 		// burn-and-re-issue of legacy fabtoken outputs: type, value and issuer are
 		// derived from the upgrade request rather than passed by the caller
 		return s.upgrade(ctx, owners, opts)
+	}
+	if len(values) != len(owners) {
+		return nil, nil, errors.Errorf("number of values [%d] does not match number of recipients [%d]", len(values), len(owners))
 	}
 
 	outputs := make([]prover.OutputRequest, len(values))
