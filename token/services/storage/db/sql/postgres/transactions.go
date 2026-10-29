@@ -70,15 +70,15 @@ type TransactionStore struct {
 // the same depth would make those selectors ambiguous. Go then drops them from the method
 // set and the store silently stops satisfying driver.TransactionStore. Explicit forwarding
 // keeps the override visible at the call site.
+//
+// Every statement here is a write, so the store only keeps the write pool.
 type recoveryClaimStore struct {
-	readDB  *sql.DB
 	writeDB *sql.DB
 	tables  sqlcommon.TableNames
 }
 
 func newRecoveryClaimStore(dbs *scommon.RWDB, tableNames sqlcommon.TableNames) *recoveryClaimStore {
 	return &recoveryClaimStore{
-		readDB:  dbs.ReadDB,
 		writeDB: dbs.WriteDB,
 		tables:  tableNames,
 	}
@@ -266,8 +266,8 @@ func (db *recoveryClaimStore) claimPending(ctx context.Context, params tokensdri
 
 	logger.Debug(query, args)
 
-	// Execute the query
-	rows, err := db.readDB.QueryContext(ctx, query, args...)
+	// Write pool: a read-only replica rejects both the UPDATE and its FOR UPDATE (#2563).
+	rows, err := db.writeDB.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, errors.Wrapf(err, "failed to claim pending transactions")
 	}
