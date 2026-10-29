@@ -17,11 +17,15 @@ tokengen gen fabtoken.v1 --auditors ./msp/auditor --issuers ./msp/issuer --outpu
 
 # Generate ZKAT-DLOG public parameters
 tokengen gen zkatdlognogh.v1 --curve bls12_381_bbs --idemix-issuer-pk ./msp/idemix --output ./params
+
+# Generate ZKAT-SNARK public parameters (includes the circuit setup)
+tokengen gen zkatsnark.v1 --proof-system groth16 --curve bn254 --idemix ./msp/idemix --issuers ./msp/issuer --output ./params
 ```
 
 ### Driver-Specific Details:
 - **[FabToken](drivers/fabtoken.md#public-parameters)**: Focuses on auditor and issuer identities (X.509).
 - **[DLOG w/o Graph Hiding](drivers/dlogwogh.md#4-public-parameters)**: Includes Pedersen generators, range proof parameters, and Idemix issuer keys for privacy.
+- **[ZKAT-SNARK](drivers/zkatsnark.md#public-parameters)**: Includes the proof system, SNARK curve, circuit proving and verification keys, and Idemix issuer keys.
 
 ---
 
