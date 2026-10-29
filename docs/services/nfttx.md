@@ -64,8 +64,18 @@ On an error the passed value is useless: it is left empty or half-filled. On suc
 has really been written to.
 
 To read an NFT already in a wallet, use `OwnerWallet.QueryByKey`. It finds the NFT by a
-field of its state and decodes it the same way. It returns `ErrNoResults` if nothing
-matches.
+field of its state and decodes it the same way:
+
+```go
+house := &House{}
+if err := wallet.QueryByKey(ctx, house, "LinearID", houseID); err != nil {
+    return errors.Wrapf(err, "failed loading house with id %s", houseID)
+}
+```
+
+It returns `ErrNoResults`, which callers can test for with `errors.Is`, when nothing in the
+wallet matches the key and value. A matching NFT whose state fails to decode is reported with
+the decoding error instead, never reduced to `ErrNoResults`.
 
 ### NFT Wallets
 The service integrates with the **Identity Service** to manage specialized NFT wallets. These wallets are optimized for tracking ownership of distinct assets rather than aggregate balances, making it easy for applications to display a user's collection of NFTs.
