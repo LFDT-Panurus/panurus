@@ -47,6 +47,10 @@ var (
 	ErrGetIssueProverFailed = errors.New("cannot get issue prover")
 	// ErrInvalidSameTypeProof is returned when the same type proof is invalid
 	ErrInvalidSameTypeProof = errors.New("invalid same type proof")
+	// ErrInvalidTokenCommitment is returned when a token commitment is nil, at infinity, or on the wrong curve
+	ErrInvalidTokenCommitment = errors.New("invalid token commitment in issue action")
+	// ErrNoTokenCommitments is returned when an issue action carries no token commitments
+	ErrNoTokenCommitments = errors.New("no token commitments in issue action")
 	// ErrInvalidIssueProof is returned when the issue proof is invalid
 	ErrInvalidIssueProof = errors.New("invalid issue proof")
 	// ErrProveTypeFailed is returned when the type proof fails

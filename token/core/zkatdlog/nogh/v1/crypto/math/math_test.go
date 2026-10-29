@@ -73,6 +73,28 @@ func TestCheckElements(t *testing.T) {
 	require.Contains(t, err.Error(), "element is nil")
 }
 
+func TestCheckEachElement(t *testing.T) {
+	curve := math.Curves[math.BN254]
+	g1 := curve.GenG1
+
+	// Unlike CheckElements, no length is prescribed: any length passes, including zero.
+	require.NoError(t, CheckEachElement([]*math.G1{}, math.BN254))
+	require.NoError(t, CheckEachElement([]*math.G1{g1}, math.BN254))
+	require.NoError(t, CheckEachElement([]*math.G1{g1, g1}, math.BN254))
+
+	err := CheckEachElement([]*math.G1{g1, nil}, math.BN254)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "element is nil")
+
+	err = CheckEachElement([]*math.G1{g1, curve.NewG1()}, math.BN254)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "element is infinity")
+
+	err = CheckEachElement([]*math.G1{g1, math.Curves[math.BLS12_377_GURVY].GenG1}, math.BN254)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "element curve must equal curve ID")
+}
+
 func TestCheckZrElements(t *testing.T) {
 	curve := math.Curves[math.BN254]
 	zr1 := curve.NewZrFromUint64(1)
