@@ -7,14 +7,13 @@ SPDX-License-Identifier: Apache-2.0
 package mimc
 
 import (
-	"fmt"
-
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
 	gmimc "github.com/consensys/gnark-crypto/ecc/bls12-381/fr/mimc"
+	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 )
 
 // ErrInvalidInputCount is returned when the number of inputs is outside [1, MaxInputs].
-var ErrInvalidInputCount = fmt.Errorf("mimc: input count must be between 1 and %d", MaxInputs)
+var ErrInvalidInputCount = errors.Errorf("mimc: input count must be between 1 and %d", MaxInputs)
 
 // MaxInputs is the maximum number of field elements Hash accepts.
 // This covers all Phase 1 commitment variants: mimc(v, type, r).
@@ -30,7 +29,7 @@ const MaxInputs = 3
 func Hash(inputs ...fr.Element) (fr.Element, error) {
 	n := len(inputs)
 	if n == 0 || n > MaxInputs {
-		return fr.Element{}, fmt.Errorf("%w: got %d", ErrInvalidInputCount, n)
+		return fr.Element{}, errors.Wrapf(ErrInvalidInputCount, "got %d", n)
 	}
 
 	// hasher is the default mimc hash implementation for BLS12-381 provided by gnark-crypto
