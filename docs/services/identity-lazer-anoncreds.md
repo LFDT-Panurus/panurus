@@ -210,7 +210,9 @@ Points worth knowing:
   interaction made non-interactive with Fiat–Shamir [FS86].
 - **Fiat–Shamir with aborts** [Lyu09, Lyu12]. To be zero-knowledge, the responses go through *rejection
   sampling*, so the prover sometimes restarts. The header comments give the expected number of runs
-  ("repetition rate": about 9.5 for $P_1$, 6.6 for $P_2$, 9.8 for the SoK).
+  ("repetition rate": about 9.5 for $P_1$, 6.6 for $P_2$, 9.8 for the SoK). These assume the bimodal $\mathbf{z}_2$
+  rejection; with the one-time rejection of local patch 0010 the $\mathbf{z}_2$ step accepts about half as often,
+  so expect roughly twice as many runs.
 - **Context binding (signatures of knowledge).** `lin_prover_prove_ctx` hashes an extra context string
   `ctx` into the Fiat–Shamir challenge. The proof is then a *signature of knowledge* [CL06] on `ctx`: it can
   only be produced by someone who knows a witness, and it does not verify for any other `ctx`.
@@ -577,12 +579,22 @@ the figures reported in the generated header:
 | statement $\mathbf{A}$ over $\mathcal{R}_p$ | $8\times21$ | $14\times75$ | $2\times11$ |
 | norm constraints | $\ell_2$: $[109, 91]$ | binary $\tau$; $\ell_2$: $109$, $5833.9$, $5\times64$, $3\times39$ | $\ell_2$: $[64, 39]$ |
 | proof modulus $q$ | $\approx2^{43}$ | $\approx2^{51}$ | $\approx2^{38}$ |
-| knowledge error | $\le2^{-127}$ | $\le2^{-127}$ | $\le2^{-127}$ |
+| knowledge error | $\le2^{-127}$ ¹ | $\le2^{-127}$ ¹ | $\le2^{-127}$ ¹ |
 | soundness assumption | MSIS(17, 78, $2^{33.95}$) | MSIS(20, 139, $2^{40.62}$) | MSIS(17, 64, $2^{32.25}$) |
 | zero-knowledge assumption | MLWE(28, 29, $[-1,1]$) | MLWE(32, 32, $[-1,1]$) | MLWE(24, 29, $[-1,1]$) |
 | root Hermite factor (MSIS / MLWE) | 1.00428 / 1.00426 | 1.00439 / 1.00440 | 1.00437 / 1.00439 |
-| expected repetitions | 9.46 | 6.59 | 9.82 |
+| expected repetitions ² | 9.46 | 6.59 | 9.82 |
 | proof size | ≈ 19.8 KiB | ≈ 36.9 KiB | ≈ 16.5 KiB |
+
+¹ As computed by the code generator for the protocol. It holds for this build only with the local patches
+0006-0009 ([module documentation](identity-lazer.md#local-patches)): without them, upstream lazer's toolbox
+did not bind `h`, `z3` and `z4` in the Fiat–Shamir transcript (lazer-crypto/lazer#28), checked only the sum of
+the exact-$\ell_2$ equations (#25), reused one challenge pair for every accumulator (#24, a soundness error of
+about $q^{-2}$ for that step instead of $q^{-\lambda}$) and did not bound $\mathbf{z}_{21}$ (#26).
+
+² As reported by the code generator, which assumes the bimodal $\mathbf{z}_2$ rejection. With local patch 0010
+the $\mathbf{z}_2$ step uses the one-time rejection Rej1, which accepts with probability about $1/(2M_2)$ instead of
+$1/M_2$: expect roughly twice as many repetitions.
 
 A root Hermite factor around $1.0043$–$1.0044$ is the usual target for roughly 128-bit security against
 lattice reduction. Check concrete claims with the lattice estimator [APS15]. Note that these figures cover the
@@ -808,6 +820,13 @@ under a different `ctx`, a different nym and a different issuer.
 5. **Side channels.** The code makes no constant-time claims beyond those of lazer and Falcon.
 6. **Patched lazer.** Bounds checking, non-exiting key decoding and zeroization rely on local patches to lazer
    ([module documentation](identity-lazer.md#local-patches)) that are not upstream yet.
+7. **Proof-system soundness and zero-knowledge depend on local patches.** The open upstream issues
+   lazer-crypto/lazer#24, #25, #26 and #28 break or weaken the soundness of the toolbox protocol that $P_1$,
+   $P_2$ and the SoK run, and #31 the zero-knowledge of their prover; for $P_2$, #25 let a credential holder
+   exceed the per-block norm bounds, which [§10.1](#101-unforgeability-of-credentials) relies on. They are
+   fixed locally by patches 0006-0010, in the toolbox copy of lazer's `src/lin-proofs.c`. The fixes for #28,
+   #25 and #26 were checked by code review against the issue threads, not by negative regression tests.
+   Proofs made before and after these patches are incompatible.
 
 ---
 

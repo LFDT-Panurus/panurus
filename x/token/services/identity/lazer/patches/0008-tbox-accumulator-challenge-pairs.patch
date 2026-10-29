@@ -1,0 +1,47 @@
+From: Panurus maintainers
+Subject: [PATCH 8/10] toolbox: distinct challenges for every accumulator pair
+
+___schwartz_zippel_accumulate2 drew 2 * M challenges from (seed, dom) inside
+its loop over the lambda / 2 accumulator pairs, so every pair got the same
+challenges and the step gave 2 independent Schwartz-Zippel tests whatever
+lambda (lazer-crypto/lazer#24). It now draws a lambda x M matrix once and
+pair i uses rows 2i and 2i + 1, as _schwartz_zippel_int in lnp-quad-eval.c
+and the z3/z4 accumulators do.
+
+Applied to the toolbox copy in src/lin-proofs.c, which the lin_* proofs
+run. It changes the transcript; proof sizes do not change.
+
+Panurus-local patch, applied by `make lazer-install` (lazer.mk).
+
+diff --git a/src/lin-proofs.c b/src/lin-proofs.c
+index 636b1e8..f6421de 100644
+--- a/src/lin-proofs.c
++++ b/src/lin-proofs.c
+@@ -2325,18 +2325,23 @@ ___schwartz_zippel_accumulate2 (
+   polyring_srcptr Rq = quad_eval->ring;
+   int_srcptr q = polyring_get_mod (Rq);
+   const unsigned int log2q = polyring_get_log2q (Rq);
+-  INTVEC_T (V, 2 * M, Rq->q->nlimbs);
++  INTVEC_T (V, lambda * M, Rq->q->nlimbs);
+   intvec_t subv1, subv2;
+   unsigned int i;
+ 
+   DEBUG_PRINTF (DEBUG_PRINT_FUNCTION_ENTRY, "%s begin", __func__);
+ 
+-  intvec_get_subvec (subv1, V, 0, M, 1);
+-  intvec_get_subvec (subv2, V, M, M, 1);
++  /*
++   * a lambda x M challenge matrix, rows 2i and 2i+1 for the i-th pair of
++   * accumulators: drawing 2M values from (seed, dom) for every pair gave all
++   * lambda/2 pairs the same challenges (panurus patch, lazer-crypto/lazer#24)
++   */
++  intvec_urandom (V, q, log2q, seed, dom);
+ 
+   for (i = 0; i < lambda / 2; i++)
+     {
+-      intvec_urandom (V, q, log2q, seed, dom);
++      intvec_get_subvec (subv1, V, (2 * i) * M, M, 1);
++      intvec_get_subvec (subv2, V, (2 * i + 1) * M, M, 1);
+ 
+       ___schwartz_zippel_accumulate (R2i[i], r1i[i], r0i[i], R2primei,
+                                      r1primei, r0primei, M, subv1, u0, u1, u2,
