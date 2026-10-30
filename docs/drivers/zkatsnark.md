@@ -1,8 +1,8 @@
 # ZKAT-SNARK Driver
 
 This page covers the [proof systems](#proof-systems) the driver supports, how the driver is
-[wired](#driver-wiring) into a token management service, how it
-[upgrades tokens](#token-upgrades) created by other drivers, and the
+[wired](#driver-wiring) into a token management service, what the [auditor](#auditing) checks before
+it endorses a request, how it [upgrades tokens](#token-upgrades) created by other drivers, and the
 [regression vectors](#regression-vectors) that freeze its wire formats.
 
 ## Proof Systems
@@ -128,6 +128,92 @@ the ZKAT-DLOG driver does:
 - **Policy identities.** `NewEIDRHDeserializer` registers `boolpolicy.NewAuditInfoDeserializer(d)`
   with the parent multiplex, so a `boolpolicy` identity whose components share an enrollment ID
   resolves to it, and malformed component audit info is reported as an error.
+
+## Auditing
+
+Before the auditor endorses a token request, `AuditorService.AuditorCheck`
+(`x/token/core/zkatsnark/nogh/v1/auditor.go`) checks that the request metadata really describes the
+request's actions. The metadata carries the cleartext of every output note, owner, receiver and
+issuer, and that cleartext is what the auditor records. The auditor does not verify the
+zero-knowledge proofs: the validator does that on chain. It checks what only a party holding the
+cleartext can check.
+
+As in ZKAT-DLOG, the checks run through the generic `common.Auditor` (`token/core/common/auditor.go`).
+The ZKAT-SNARK validator functions live in the `audit` package (`x/token/core/zkatsnark/nogh/v1/audit`).
+`AuditorCheck` first loads the auditor's own copy of every spent token from its token store
+(`QueryEngine.ListAuditTokens`, through `common.RetrieveAuditTokens`). It then runs
+`common.ValidateStructure`, which requires exactly one metadata entry of the right type for each
+action, and finally the checks below. Identities are checked through `InspectIdentity`: the
+identity and its audit info must both be non-empty, the identity must equal the one reported by the
+metadata, if any, and `Deserializer.MatchIdentity` must accept the audit info for it. Script,
+multisig and policy owners are delegated to their typed deserializers, as in ZKAT-DLOG.
+
+### Issue
+
+`audit.IssueAuditValidate` checks that:
+
+- `IssueMetadata.Match` holds: the action is well formed, and the input count, output count, extra
+  signers and issuer all match;
+- every output has metadata and an owner (an issue cannot redeem);
+- every output note opens the output's `CommitmentOut`, i.e. `MiMC(value, type, randomness)`;
+- every note has the action's cleartext `TokenType`. The validator authorizes the issuer for this
+  type, but on chain it only checks that the type commitments are homogeneous;
+- every note's `Issuer` is the action's issuer. The commitment does not bind it, but the token
+  service reports it as the token's issuer;
+- every owner matches its `OutputAuditInfo`. The receivers are exactly the recipients behind the
+  owner, in order, and each matches its audit info;
+- the issuer matches the metadata issuer and its audit info, and is listed in `PP.Issuers()`. When
+  that list is empty, issuance is open-policy and any issuer is accepted, as in the validator.
+
+For an upgrade issuance, the [upgrade checks](#auditing-1) run first.
+
+### Transfer and redeem
+
+`audit.TransferAuditValidate` checks that:
+
+- `TransferMetadata.Match` holds;
+- `InputIDs` and `InputTokens` have one entry per spend description;
+- each input's metadata `TokenID` equals `InputIDs[i]`, the ledger token the action spends, and has
+  exactly one sender. The sender is the owner of the auditor's copy of that token. It is also the
+  owner of `InputTokens[i]`, a ZKAT-SNARK output or a fabtoken spent in place. The sender matches
+  its audit info. The validator reads the input owners from the ledger through `InputIDs`, and the
+  auditor's copies come from its own token store, so the comparison with the audited owner is the
+  one that matters. `InputTokens` is not checked on chain, so the comparison with it is defense in
+  depth only;
+- every non-redeem output's owner matches its `OutputAuditInfo`, and its receivers are the owner's
+  recipients, each matching its audit info. As in ZKAT-DLOG, the recipient comparison is skipped
+  for an empty receiver identity, but every receiver is inspected, so an empty one is still
+  refused. A redeem output (empty `Recipient`) must carry no owner audit info and no non-empty
+  receiver;
+- every output note opens its `CommitmentOut`, including redeem outputs, and carries no `Issuer`;
+- `common.ValidateTransferActionTokenTypes(..., true, PP.Precision())` holds: every spent token is
+  among the audit tokens, all of one type, with a quantity that parses at `PrecisionValue`;
+- value is conserved. Every output note, redeem outputs included, has the inputs' type, and the
+  note values sum exactly to the audited input quantities. `ValidateTransferActionTokenTypes` does
+  not compare sums, so this check is specific to ZKAT-SNARK. Without it, the metadata could report
+  different values than the ones moved;
+- a transfer carries an issuer only if it redeems. A redeem with an issuer must name one listed in
+  `PP.Issuers()`. A redeem without an issuer is left to the validator, which refuses it when
+  `PP.Issuers()` is not empty (`ErrMissingIssuer`) and accepts it under the open policy.
+
+### Configuration
+
+The audit-token lookup retries while the transaction that produced a spent token is still pending.
+The retry budget is read per TMS from `token.tms.<id>.auditor.auditTokensRetry`
+(`common.LoadAuditRetryConfig`), as for the other drivers; see
+[Configuration](../configuration.md). The tracer comes from the driver's tracer provider and is
+handed to `common.Auditor`, as in ZKAT-DLOG.
+
+### Test coverage
+
+- `audit/auditor_test.go` builds synthetic actions on both curves and checks every rule above,
+  positive and negative. The negative cases include a wrong note, swapped notes, an inflated
+  value, a swapped owner, misreported owner, sender, receiver and issuer audit info, a spent token
+  ID that differs from the metadata, an extra output, a lowered audited input, a mixed type,
+  unauthorized issuers and redeem issuers, and redeem outputs that report an owner.
+- `auditor_test.go` tampers with real, proven requests from `testutils.Env` (issue, transfer,
+  redeem and swap), using real idemix and x509 identities, and checks the retry configuration.
+- `FuzzAuditorCheckNoPanic` (`audit/fuzz_test.go`) runs nightly.
 
 ## Token Upgrades
 
@@ -383,7 +469,7 @@ fabtokens should register their issuers.
 #### Auditing
 
 `AuditorService.checkUpgradeIssue` refuses an upgrade issue whose metadata does not describe it
-exactly:
+exactly. It runs before the [generic issue checks](#issue), which also apply:
 
 - the input token IDs, in order;
 - each parsed input matches the auditor's own copy of that token from its token store, as

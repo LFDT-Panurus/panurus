@@ -723,6 +723,7 @@ func newAuditorService(configuration *SetupConfiguration, deserializer driver.De
 		deserializer,
 		qe,
 		noop.NewTracerProvider(),
+		common.DefaultAuditRetryConfig(),
 	)
 }
 
