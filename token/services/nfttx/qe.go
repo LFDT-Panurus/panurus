@@ -7,6 +7,7 @@ SPDX-License-Identifier: Apache-2.0
 package nfttx
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 
@@ -77,17 +78,29 @@ func (s *QueryExecutor) QueryByKey(ctx context.Context, state any, key string, v
 		}
 		if q.Cmp(token2.NewOneQuantity(s.precision)) == 0 {
 			// this is the token
-			decoded, err := base64.StdEncoding.DecodeString(string(t.Type))
-			if err != nil {
-				return errors.Wrap(err, "failed to decode type")
-			}
-			if err := marshaller.Unmarshal(decoded, state); err == nil {
-				return errors.Wrap(err, "failed to unmarshal state")
-			}
+			return decodeState(t.Type, state)
 		}
 	}
 
 	return ErrNoResults
+}
+
+// decodeState decodes the base64 state held in an NFT's type into state. On error
+// state is left unusable: empty or half-written.
+func decodeState(typ token2.Type, state any) error {
+	decoded, err := base64.StdEncoding.DecodeString(string(typ))
+	if err != nil {
+		return errors.Wrap(err, "failed to decode type")
+	}
+	// null unmarshals into anything without writing to it, which would be a false success
+	if bytes.Equal(bytes.TrimSpace(decoded), []byte("null")) {
+		return errors.New("type carries no state")
+	}
+	if err := marshaller.Unmarshal(decoded, state); err != nil {
+		return errors.Wrap(err, "failed to unmarshal state")
+	}
+
+	return nil
 }
 
 type jsonFilter struct {
