@@ -9,6 +9,7 @@ package pp
 import (
 	"github.com/LFDT-Panurus/panurus/cmd/tokengen/cobra/pp/fabtokenv1"
 	"github.com/LFDT-Panurus/panurus/cmd/tokengen/cobra/pp/zkatdlognoghv1"
+	"github.com/LFDT-Panurus/panurus/cmd/tokengen/cobra/pp/zkatsnarkv1"
 	"github.com/spf13/cobra"
 )
 
@@ -16,6 +17,7 @@ import (
 func GenCmd() *cobra.Command {
 	genCobraCommand.AddCommand(fabtokenv1.Cmd())
 	genCobraCommand.AddCommand(zkatdlognoghv1.Cmd())
+	genCobraCommand.AddCommand(zkatsnarkv1.Cmd())
 
 	return genCobraCommand
 }

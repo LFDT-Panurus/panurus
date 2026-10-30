@@ -13,6 +13,7 @@ import (
 	"github.com/LFDT-Panurus/panurus/token/core"
 	fabtoken "github.com/LFDT-Panurus/panurus/token/core/fabtoken/v1/driver"
 	dlog "github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/driver"
+	zkatsnark "github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/driver"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	"github.com/spf13/cobra"
 )
@@ -64,7 +65,7 @@ func Print(args *Args) error {
 	if err != nil {
 		return errors.Wrapf(err, "failed to read file at [%s]", args.InputFile)
 	}
-	s := core.NewPPManagerFactoryService(fabtoken.NewPPMFactory(), dlog.NewPPMFactory())
+	s := core.NewPPManagerFactoryService(fabtoken.NewPPMFactory(), dlog.NewPPMFactory(), zkatsnark.NewPPMFactory())
 	pp, err := s.PublicParametersFromBytes(raw)
 	if err != nil {
 		return errors.Wrapf(err, "failed to unmarshal pp from [%s]", args.InputFile)

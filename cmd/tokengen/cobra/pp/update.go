@@ -8,6 +8,7 @@ package pp
 
 import (
 	"github.com/LFDT-Panurus/panurus/cmd/tokengen/cobra/pp/zkatdlognoghv1"
+	"github.com/LFDT-Panurus/panurus/cmd/tokengen/cobra/pp/zkatsnarkv1"
 	"github.com/spf13/cobra"
 )
 
@@ -15,6 +16,7 @@ import (
 func UpdateCmd() *cobra.Command {
 	// not implemented for fabtoken
 	updateCobraCommand.AddCommand(zkatdlognoghv1.UpdateCmd())
+	updateCobraCommand.AddCommand(zkatsnarkv1.UpdateCmd())
 
 	return updateCobraCommand
 }
