@@ -65,6 +65,14 @@ parameters generated with the fork remain valid.
   value plus the order open the same commitment; the range check removes the ambiguity. The note commitment
   already pins the value, so this is defence in depth. It changes the spend constraint system, so spend keys of
   existing public parameters must be regenerated.
+- **Output public inputs.** `OutputCircuit`'s four public inputs (`CommitmentOut`, `ValueCommitOutX/Y`,
+  `TypeCommitment`) must be tagged `gnark:",public"`, with the leading comma. gnark reads the text before the
+  first comma as the field name, so `gnark:"public"` left them secret. The output verifying key then bound no
+  public input, and the validator's public-only witness (`publicWitnessForOutput`) was empty, so an output proof
+  verified against any commitment. The tag is fixed, which changes the output constraint system, so output keys
+  of existing public parameters must be regenerated (`setup.SetupAll`). `TestOutputCircuitPublicInputs`,
+  `TestOutputCircuitRejectsTamperedPublicWitness` (`nogh/v1/circuit`) and
+  `TestPublicWitnessForOutput_BindsAllPublicInputs` (`nogh/v1/validator`) pin the layout.
 - **Trailing bytes are rejected** for proving keys, verifying keys and proofs of every proof system
   (`backend.ErrTrailingBytes`); gnark's decoders alone stop at the end of the object and ignore the rest, which
   makes the encoding malleable.
@@ -90,6 +98,10 @@ p.ProofSystem = "plonkfri"
 p.Curve = ecc.BN254
 p, err := setup.SetupAll(p)
 ```
+
+## Ownership Authorization
+
+The driver decides whether a token is owned by a local wallet (`IsMine`), was issued by a local issuer (`Issued`), and whether this node is an auditor (`AmIAnAuditor`) through `common.NewStandardAuthorization` (`token/core/common/authorization.go`), the same chain fabtoken and zkatdlog use. The chain is first-match-wins. The type-gated htlc, multisig and boolpolicy authorizations run first and record escrow-typed tokens under prefixed ownership ids (`htlc.sender<wallet>`, `htlc.recipient<wallet>`, `escrow<wallet>`, `policy<wallet>`). The wallet-based authorization runs last as the catch-all for plain owners. If it ran first, it would claim an escrow token whose composite identity is bound to a wallet under that wallet id and drop its ownership entries. See [Identity Service](../services/identity.md) for how to add a new escrow type. The ordering is covered by `TestAuthorizationOrder_BoundPolicyIdentity` in `token/services/ttx/boolpolicy/auth_test.go`.
 
 ## Token Upgrades
 
