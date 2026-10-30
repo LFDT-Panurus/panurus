@@ -10,6 +10,8 @@ import (
 	"math"
 	"testing"
 
+	"github.com/LFDT-Panurus/panurus/token/driver"
+	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/validator"
 	"github.com/stretchr/testify/require"
 )
 
@@ -48,4 +50,21 @@ func TestSplitUpgradeTotal(t *testing.T) {
 	require.NoError(t, err)
 	_, err = splitUpgradeTotal(256*255+1, 255, 256)
 	require.EqualError(t, err, "total value [65281] needs [257] outputs of at most [255], exceeding the limit of [256] outputs")
+}
+
+// TestIssueServiceMaxOutputs checks that maxOutputs, which bounds the upgrade
+// split, reflects the validator's configured resource limits rather than the
+// defaults, and falls back to the defaults only when no validator is set.
+func TestIssueServiceMaxOutputs(t *testing.T) {
+	s := &IssueService{Validator: &validator.Validator{
+		CommonValidator: &validator.CommonValidator{Limits: driver.ResourceLimits{MaxOutputs: 3}.WithDefaults()},
+	}}
+	require.Equal(t, 3, s.maxOutputs())
+
+	_, err := splitUpgradeTotal(3*255, 255, s.maxOutputs())
+	require.NoError(t, err)
+	_, err = splitUpgradeTotal(3*255+1, 255, s.maxOutputs())
+	require.EqualError(t, err, "total value [766] needs [4] outputs of at most [255], exceeding the limit of [3] outputs")
+
+	require.Equal(t, driver.DefaultResourceLimits().MaxOutputs, (&IssueService{}).maxOutputs())
 }

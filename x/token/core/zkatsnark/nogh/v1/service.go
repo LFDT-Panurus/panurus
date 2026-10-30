@@ -9,18 +9,19 @@ package zkatsnark
 import (
 	"github.com/LFDT-Panurus/panurus/token/core/common"
 	"github.com/LFDT-Panurus/panurus/token/driver"
-	"github.com/LFDT-Panurus/panurus/token/services/identity/wallet"
 	"github.com/LFDT-Panurus/panurus/token/services/logging"
 	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/pp"
 )
 
+// Service is the zkatsnark token manager service.
 type Service struct {
 	*common.Service[*pp.PublicParams]
 }
 
+// NewTokenService returns a new zkatsnark token manager service backed by the passed wallet service.
 func NewTokenService(
 	logger logging.Logger,
-	ws *wallet.Service,
+	ws driver.WalletService,
 	ppm common.PublicParametersManager[*pp.PublicParams],
 	identityProvider driver.IdentityProvider,
 	deserializer driver.Deserializer,

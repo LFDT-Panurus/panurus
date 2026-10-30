@@ -58,7 +58,8 @@ the dig container — the config-backed implementation above — and injects it 
 construction paths, so they always enforce the same configured limits:
 
 - The per-TMS token manager service: each driver's `NewTokenDriver` constructor
-  (`token/core/fabtoken/v1/driver/driver.go`, `token/core/zkatdlog/nogh/v1/driver/driver.go`) takes a
+  (`token/core/fabtoken/v1/driver/driver.go`, `token/core/zkatdlog/nogh/v1/driver/driver.go`,
+  `x/token/core/zkatsnark/nogh/v1/driver/driver.go`) takes a
   `driver.ResourceLimitsProvider` and resolves it inside `NewTokenService`, immediately before
   constructing that TMS's validator.
 - The standalone validator-driver service: `newValidatorDriverService`
@@ -142,6 +143,18 @@ cryptographic code.
 
 **FabToken v1** (`token/core/fabtoken/v1/actions/limits.go` — fabtoken has no ZK proof, so there is
 no `MaxProofBytes`):
+
+| Field | Default |
+| --- | --- |
+| `MaxInputs` | 256 |
+| `MaxOutputs` | 256 |
+| `MaxMetadataEntries` | 64 |
+| `MaxMetadataKeyBytes` | 256 |
+| `MaxMetadataValueBytes` | 4 KiB |
+
+**ZKAT-SNARK NOGH v1** (`x/token/core/zkatsnark/nogh/v1/token/limits.go` — identical field defaults
+for issue and transfer actions; there is intentionally no `MaxProofBytes` check, because a single
+bound would reject every `plonkfri` proof, see [ZKAT-SNARK Driver](zkatsnark.md#constraints-and-trade-offs)):
 
 | Field | Default |
 | --- | --- |
