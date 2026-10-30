@@ -303,3 +303,78 @@ func TestOutputCircuitInvalid_WrongTypeRandomness(t *testing.T) {
 	require.Error(t, err,
 		"OutputCircuit must reject a witness where TypeRandomness doesn't produce the public TypeCommitment")
 }
+
+// TestOutputCircuitPublicInputs pins the public-input layout of
+// OutputCircuit: the four commitment fields must be tagged gnark:",public".
+// A tag without the leading comma (gnark:"public") names the field "public"
+// and leaves it secret, so the verifier would bind nothing.
+func TestOutputCircuitPublicInputs(t *testing.T) {
+	setupOutput(t)
+
+	// One extra public wire is the constant 1.
+	require.Equal(t, 5, outputCS.GetNbPublicVariables(), "OutputCircuit must expose exactly four public inputs")
+	require.Equal(t, 4, outputVK.NbPublicWitness(), "the output verifying key must bind four public inputs")
+}
+
+// TestOutputCircuitRejectsTamperedPublicWitness proves a valid output and
+// then verifies it against a public witness built, as the validator does,
+// from public fields only (frontend.PublicOnly), with one field replaced by
+// a different value. Every substitution must be rejected.
+func TestOutputCircuitRejectsTamperedPublicWitness(t *testing.T) {
+	setupOutput(t)
+
+	inp := newRandomOutputInputs(t)
+	assignment := buildOutputAssignment(t, inp)
+
+	fullWitness, err := frontend.NewWitness(assignment, ecc.BLS12_381.ScalarField())
+	require.NoError(t, err)
+	proof, err := groth16.Prove(outputCS, outputPK, fullWitness)
+	require.NoError(t, err)
+
+	requireRejected := func(t *testing.T, c *circuit.OutputCircuit) {
+		t.Helper()
+		w, err := frontend.NewWitness(&circuit.OutputCircuit{
+			CommitmentOut:   c.CommitmentOut,
+			ValueCommitOutX: c.ValueCommitOutX,
+			ValueCommitOutY: c.ValueCommitOutY,
+			TypeCommitment:  c.TypeCommitment,
+		}, ecc.BLS12_381.ScalarField(), frontend.PublicOnly())
+		require.NoError(t, err)
+		require.Error(t, groth16.Verify(proof, outputVK, w), "a proof must not verify against a tampered public witness")
+	}
+
+	var other fr.Element
+	_, err = other.SetRandom()
+	require.NoError(t, err)
+
+	// Sanity check: the untampered public-only witness verifies.
+	honest, err := frontend.NewWitness(&circuit.OutputCircuit{
+		CommitmentOut:   assignment.CommitmentOut,
+		ValueCommitOutX: assignment.ValueCommitOutX,
+		ValueCommitOutY: assignment.ValueCommitOutY,
+		TypeCommitment:  assignment.TypeCommitment,
+	}, ecc.BLS12_381.ScalarField(), frontend.PublicOnly())
+	require.NoError(t, err)
+	require.NoError(t, groth16.Verify(proof, outputVK, honest))
+
+	t.Run("CommitmentOut", func(t *testing.T) {
+		c := *assignment
+		c.CommitmentOut = other
+		requireRejected(t, &c)
+	})
+	t.Run("ValueCommitOutX", func(t *testing.T) {
+		c := *assignment
+		c.ValueCommitOutX = other
+		requireRejected(t, &c)
+	})
+	t.Run("ValueCommitOutY", func(t *testing.T) {
+		c := *assignment
+		c.ValueCommitOutY = other
+		requireRejected(t, &c)
+	})
+	t.Run("TypeCommitment", func(t *testing.T) {
+		c := *assignment
+		c.TypeCommitment = other
+		requireRejected(t, &c)
+	})
+}

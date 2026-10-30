@@ -744,7 +744,7 @@ func (a *EscrowAuth) Issued(_ context.Context, _ driver.Identity, _ *token.Token
 func (a *EscrowAuth) OwnerType(raw []byte) (driver.IdentityType, []byte, error)        { ... }
 ```
 
-Register it in `common.NewStandardAuthorization` (`token/core/common/authorization.go`), the chain both drivers use. Order matters: the multiplexer is first-match-wins and `NewTMSAuthorization` resolves *any* identity bound to a wallet — including composite identities — so it would claim the token under the wrong wallet id and drop its ownership entries. Every type-gated authorization must therefore be registered **before** the trailing `NewTMSAuthorization` catch-all (regression: `TestAuthorizationOrder_BoundPolicyIdentity` in `token/services/ttx/boolpolicy/auth_test.go`).
+Register it in `common.NewStandardAuthorization` (`token/core/common/authorization.go`), the chain every token driver (fabtoken, zkatdlog, zkatsnark) uses. Order matters: the multiplexer is first-match-wins and `NewTMSAuthorization` resolves *any* identity bound to a wallet — including composite identities — so it would claim the token under the wrong wallet id and drop its ownership entries. Every type-gated authorization must therefore be registered **before** the trailing `NewTMSAuthorization` catch-all (regression: `TestAuthorizationOrder_BoundPolicyIdentity` in `token/services/ttx/boolpolicy/auth_test.go`).
 
 ```go
 // token/core/common/authorization.go
