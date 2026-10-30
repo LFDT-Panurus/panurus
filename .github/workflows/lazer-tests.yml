@@ -31,7 +31,17 @@ concurrency:
 
 jobs:
   lazer-unit-tests:
-    runs-on: ubuntu-latest
+    name: lazer-unit-tests (${{ matrix.arch }})
+    # arm64 exercises the arm64 support carried by patch 0000 (lazer-crypto/lazer#33).
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
 
     steps:

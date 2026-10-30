@@ -346,7 +346,8 @@ others.
 `make lazer-install` records what it built in `./.lazer/REVISION`, and `make lazer-check` (run by the test
 targets) prints it. For a fetched build, this is the repository, ref and commit. For `LAZER_SRC`, it is the
 source directory and the checkout's `HEAD`, marked `(with uncommitted changes)` if the working tree is dirty.
-Both are followed by the applied patches with their sha256. CI (`lazer-tests.yml`, and the `fuzz-lazer` job of
+Both are followed by the applied patches with their sha256. `lazer-tests.yml` runs the unit tests on Linux
+amd64 and arm64 (`ubuntu-24.04-arm`), so the arm64 support of patch 0000 is built and tested in CI. CI (`lazer-tests.yml`, and the `fuzz-lazer` job of
 `nightly-fuzz.yml`) does not cache `./.lazer`: lazer is built with `-march=native`, so every run builds it from
 scratch.
 
