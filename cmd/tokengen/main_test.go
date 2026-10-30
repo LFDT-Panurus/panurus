@@ -14,12 +14,14 @@ import (
 	"testing"
 
 	"github.com/LFDT-Panurus/panurus/cmd/tokengen/cobra/pp/common"
+	"github.com/LFDT-Panurus/panurus/cmd/tokengen/cobra/pp/zkatsnarkv1"
 	"github.com/LFDT-Panurus/panurus/integration/nwo/token/generators/crypto/fabtokenv1"
 	"github.com/LFDT-Panurus/panurus/integration/nwo/token/generators/crypto/zkatdlognoghv1"
 	v1 "github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/setup"
 	"github.com/LFDT-Panurus/panurus/token/driver"
 	"github.com/LFDT-Panurus/panurus/token/services/utils"
 	"github.com/LFDT-Panurus/panurus/token/services/utils/slices"
+	zkatsnarkpp "github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/pp"
 	. "github.com/onsi/gomega"
 	"github.com/onsi/gomega/gexec"
 )
@@ -373,4 +375,63 @@ func testGenRunWithError(gt *WithT, tokengen string, args []string, errMsg strin
 func testGenRun(gt *WithT, tokengen string, args []string) {
 	output, err := exec.Command(tokengen, args...).CombinedOutput()
 	gt.Expect(err).ToNot(HaveOccurred(), "failed running tokengen [%s:%v] with output \n[%s]", tokengen, args, string(output))
+}
+
+// TestZKATSNARKGenUpdatePrint tests gen, update and print for the zkatsnark.v1 driver end-to-end.
+func TestZKATSNARKGenUpdatePrint(t *testing.T) {
+	gt := NewGomegaWithT(t)
+	tokengen, err := gexec.Build("github.com/LFDT-Panurus/panurus/cmd/tokengen")
+	gt.Expect(err).NotTo(HaveOccurred())
+	defer gexec.CleanupBuildArtifacts()
+
+	genOutput := t.TempDir()
+	testGenRun(gt, tokengen, []string{
+		"gen", zkatsnarkv1.DriverIdentifier,
+		"--idemix", "./testdata/idemix",
+		"--issuers", "./testdata/issuers/msp",
+		"--auditors", "./testdata/auditors/msp",
+		"--proof-system", "groth16",
+		"--curve", "bn254",
+		"--bits", "8",
+		"--output", genOutput,
+	})
+	input := filepath.Join(genOutput, "zkatsnarkv1_pp.json")
+	before := readZKATSNARKPP(gt, input)
+
+	// swap issuers and auditors
+	updateOutput := t.TempDir()
+	testGenRun(gt, tokengen, []string{
+		"update", zkatsnarkv1.DriverIdentifier,
+		"--input", input,
+		"--issuers", "./testdata/auditors/msp",
+		"--auditors", "./testdata/issuers/msp",
+		"--output", updateOutput,
+	})
+	updated := filepath.Join(updateOutput, "zkatsnarkv1_pp.json")
+	after := readZKATSNARKPP(gt, updated)
+	gt.Expect(after.Issuers()).To(Equal(before.Auditors()))
+	gt.Expect(after.Auditors()).To(Equal(before.Issuers()))
+	gt.Expect(after.PKSpend).To(Equal(before.PKSpend))
+	gt.Expect(after.VKOutput).To(Equal(before.VKOutput))
+
+	out, err := exec.Command(tokengen, "pp", "print", "--input", updated).CombinedOutput()
+	gt.Expect(err).NotTo(HaveOccurred(), string(out))
+	gt.Expect(string(out)).To(ContainSubstring("zkatsnark public params"))
+
+	testGenRunWithError(gt, tokengen, []string{
+		"gen", zkatsnarkv1.DriverIdentifier,
+		"--idemix", "./testdata/idemix",
+		"--proof-system", "foo",
+		"--output", t.TempDir(),
+	}, "unsupported proof system [foo]")
+}
+
+// readZKATSNARKPP reads and deserializes the zkatsnark public parameters at path.
+func readZKATSNARKPP(gt *WithT, path string) *zkatsnarkpp.PublicParams {
+	raw, err := os.ReadFile(path)
+	gt.Expect(err).NotTo(HaveOccurred())
+	p, err := zkatsnarkpp.DeserializePublicParams(raw)
+	gt.Expect(err).NotTo(HaveOccurred())
+
+	return p
 }

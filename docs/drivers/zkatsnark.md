@@ -2,8 +2,9 @@
 
 This page covers the [proof systems](#proof-systems) the driver supports, how the driver is
 [wired](#driver-wiring) into a token management service, what the [auditor](#auditing) checks before
-it endorses a request, how it [upgrades tokens](#token-upgrades) created by other drivers, and the
-[regression vectors](#regression-vectors) that freeze its wire formats.
+it endorses a request, how it [upgrades tokens](#token-upgrades) created by other drivers, the
+[regression vectors](#regression-vectors) that freeze its wire formats, and how its
+[public parameters](#public-parameters) are generated.
 
 ## Proof Systems
 
@@ -620,3 +621,82 @@ break in the pull request. Changes that need new vectors include:
 
 The generator's ECDSA test certificates expire after 24 hours. Validation does not check their
 expiry, so the vectors stay valid.
+
+## Public Parameters
+
+ZKAT-SNARK public parameters (`x/token/core/zkatsnark/nogh/v1/pp.PublicParams`, driver identifier
+`zkatsnark.v1`) carry the proof system, the SNARK curve, `MaxBits`, the precision, the idemix issuer
+public keys, the issuer and auditor identities, extras, and the proving and verification keys of the
+spend and output circuits. The circuit keys make a file a few MB in size (about 2.4 MB for
+groth16/BN254 with `MaxBits = 8`, more for plonk and plonkfri).
+
+### Generation
+
+`setup.GeneratePublicParams(setup.GenerateOptions{...})` builds the parameters from
+`pp.DefaultPublicParams()` and the passed options, validates them, and runs `setup.SetupAll` to
+produce the circuit keys. Both [`tokengen`](../../cmd/tokengen/README.md) and the NWO generator
+(`integration/nwo/token/generators/pp/zkatsnarkv1`) use it. `GeneratePublicParams` requires at
+least one idemix issuer public key, and rejects a `MaxBits` outside `1..64` and a precision greater
+than `MaxBits` (a zero precision means `MaxBits`). `setup.ParseProofSystem` and `setup.ParseCurve`
+parse proof system and curve names.
+
+```bash
+tokengen gen zkatsnark.v1 \
+  --idemix ./msp/idemix \
+  --issuers ./msp/issuer --auditors ./msp/auditor \
+  --proof-system groth16 --curve bn254 --bits 64 \
+  --output ./params
+```
+
+| Flag | Default | Meaning |
+|------|---------|---------|
+| `-i`, `--idemix` | (required) | Idemix MSP directories, one or more; wallets prefer earlier keys |
+| `-s`, `--issuers` | none | Issuer MSP directories (X.509) |
+| `-a`, `--auditors` | none | Auditor MSP directories (X.509) |
+| `-p`, `--proof-system` | `groth16` | `groth16`, `plonk` or `plonkfri` |
+| `-c`, `--curve` | `bls12_381` | `bn254` or `bls12_381` (`plonkfri` needs `bn254`) |
+| `-b`, `--bits` | `64` | `MaxBits`, the bit length of a token value (`1..64`); it shapes the circuits |
+| `--precision` | `0` (= `--bits`) | Token quantity precision, at most `--bits` |
+| `-r`, `--aries` | `false` | Use the aries idemix backend (`BLS12_381_BBS_GURVY` idemix keys) |
+| `-v`, `--version` | `0` (= 1) | Scheme version written in the parameters |
+| `-x`, `--extra` | none | Extra data, `key=path`, repeatable |
+| `-o`, `--output` | `.` | Output directory |
+
+The output file is `zkatsnarkv<version>_pp.json`. There is no `--cc` flag: the Fabric token
+chaincode does not register the zkatsnark driver.
+
+`tokengen` runs a single-party setup, so its output is meant for development and testing:
+
+- `groth16` runs a per-circuit setup in the `tokengen` process, which therefore knows the toxic waste;
+- `plonk` generates its KZG SRS locally with gnark's `unsafekzg`;
+- `plonkfri` is transparent and needs no trusted setup.
+
+### Update
+
+`tokengen update zkatsnark.v1` changes the issuers, auditors, extras and version of existing
+parameters without running the setup again. The circuit keys, the proof system, the curve,
+`MaxBits`, the precision and the idemix keys stay the same.
+
+```bash
+tokengen update zkatsnark.v1 --input ./params/zkatsnarkv1_pp.json \
+  --issuers ./msp/new-issuer --auditors ./msp/new-auditor --output ./updated
+```
+
+- `--issuers` and `--auditors` replace the current list when given; a list that is not given stays
+  the same.
+- With `--append`, the new identities are added to the current ones, and identities already present
+  are skipped.
+- `--version 0` (the default) keeps the input version. `--extra` entries are merged into the current
+  extras.
+- The input must be `zkatsnark.v*` parameters that contain the circuit keys, and the output file
+  must not exist yet.
+
+`tokengen pp print --input ./params/zkatsnarkv1_pp.json` prints a summary of the parameters.
+
+### Deployment checks
+
+`PublicParams.ValidateForDeployment()` returns an error when `IssuerIdentities` is empty. In that
+open-policy mode, which `Validate()` still accepts, the issue and transfer validators skip the
+issuer check, so any identity can issue and redeem tokens. It mirrors the ZKAT-DLOG check of the
+same name. `tokengen gen` and `tokengen update` print the error as a `WARNING:`, and the NWO
+generator logs it as a warning; neither fails.
