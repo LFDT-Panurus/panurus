@@ -41,7 +41,9 @@ type deltaBuilder interface {
 // validated actions and signs that, so a malicious initiator cannot get it to endorse a delta that
 // does not match the request it validated.
 type Responder struct {
-	authorizer *Authorizer
+	// authorizerFor resolves the allowlist of the TMS a request names. One Responder answers for every
+	// TMS on the node, and each TMS has its own set of requesters.
+	authorizerFor func(tmsID token2.TMSID) (*Authorizer, error)
 	// factoryFor resolves the delta factory for the TMS a request names. It is resolved per request
 	// rather than fixed at construction because an endorser must be registered before any request
 	// arrives, which is before its TMS has necessarily been built: building a TMS goes through the
@@ -61,18 +63,19 @@ type Responder struct {
 	domainFor func(tmsID token2.TMSID) (eip712.Domain, error)
 }
 
-// NewResponder assembles a Responder for this node from its collaborators. The DeltaFactory carries
-// the validator, public-parameters provider and the ledger this endorser validates and translates
-// with, per TMS; domainFor resolves the EIP-712 domain that TMS's delta is signed against.
+// NewResponder assembles a Responder for this node from its collaborators. authorizerFor resolves the
+// allowlist a request is checked against, per TMS. The DeltaFactory carries the validator,
+// public-parameters provider and the ledger this endorser validates and translates with, per TMS;
+// domainFor resolves the EIP-712 domain that TMS's delta is signed against.
 func NewResponder(
-	authorizer *Authorizer,
+	authorizerFor func(tmsID token2.TMSID) (*Authorizer, error),
 	factoryFor func(tmsID token2.TMSID) (*DeltaFactory, error),
 	setupFactoryFor func(tmsID token2.TMSID) (*SetupDeltaFactory, error),
 	signer EndorserSigner,
 	domainFor func(tmsID token2.TMSID) (eip712.Domain, error),
 ) *Responder {
 	return &Responder{
-		authorizer:      authorizer,
+		authorizerFor:   authorizerFor,
 		factoryFor:      factoryFor,
 		setupFactoryFor: setupFactoryFor,
 		signer:          signer,
@@ -132,7 +135,15 @@ func (r *Responder) endorse(
 	if err := req.Validate(); err != nil {
 		return nil, nil, err
 	}
-	if err := r.authorizer.Authorize(caller); err != nil {
+	// A TMS with no allowlist here gets the same answer as a caller missing from one, so a caller on no
+	// allowlist cannot probe which TMSs this node endorses for. The detail stays in the log.
+	authorizer, err := r.authorizerFor(req.TMSID)
+	if err != nil {
+		logger.Warnf("refusing endorsement request from [%s]: no allowlist for tms [%s]: %v", caller, req.TMSID, err)
+
+		return nil, nil, errors.Wrapf(ErrUnauthorized, "identity [%s]", caller)
+	}
+	if err := authorizer.Authorize(caller); err != nil {
 		return nil, nil, err
 	}
 

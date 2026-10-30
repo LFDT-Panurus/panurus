@@ -8,6 +8,7 @@ package evm
 
 import (
 	"context"
+	"encoding/hex"
 	"sync"
 	"testing"
 	"time"
@@ -187,6 +188,16 @@ func endorserConfig(t *testing.T) *Config {
 	return c
 }
 
+// testEndorserSigner loads config's endorser key the way installEndorsement does before handing it to
+// registerEndorser.
+func testEndorserSigner(t *testing.T, config *Config) *eip712.Signer {
+	t.Helper()
+	signer, err := loadEndorserSigner(config)
+	require.NoError(t, err)
+
+	return signer
+}
+
 // testServiceFactory builds a real *endorsement.ServiceFactory over config, the same shape
 // installEndorsement assembles, so registerEndorser is exercised with the collaborator it actually
 // gets in production. It registers config under a single fixed TMS id, which is all these tests need:
@@ -231,12 +242,13 @@ func TestRegisterEndorserRefusesASecondNetwork(t *testing.T) {
 	d := &Driver{viewRegistry: registry, identities: fakeIdentityProvider{}}
 	config := endorserConfig(t)
 	factory := testServiceFactory(t, config)
+	signer := testEndorserSigner(t, config)
 
-	require.NoError(t, d.registerEndorser("network-a:", factory, config))
+	require.NoError(t, d.registerEndorser("network-a:", factory, signer))
 	assert.Equal(t, 1, registry.calls, "the first network must register")
 	assert.Equal(t, "network-a:", d.registeredFor)
 
-	require.NoError(t, d.registerEndorser("network-b:", factory, config),
+	require.NoError(t, d.registerEndorser("network-b:", factory, signer),
 		"a second network is refused loudly via a log line, not an error - see registerEndorser's doc comment")
 	assert.Equal(t, 1, registry.calls, "a second, different network must not overwrite the registration")
 	assert.Equal(t, "network-a:", d.registeredFor, "the first network's registration must stand")
@@ -249,9 +261,10 @@ func TestRegisterEndorserIsIdempotentForTheSameNetwork(t *testing.T) {
 	d := &Driver{viewRegistry: registry, identities: fakeIdentityProvider{}}
 	config := endorserConfig(t)
 	factory := testServiceFactory(t, config)
+	signer := testEndorserSigner(t, config)
 
-	require.NoError(t, d.registerEndorser("network-a:", factory, config))
-	require.NoError(t, d.registerEndorser("network-a:", factory, config))
+	require.NoError(t, d.registerEndorser("network-a:", factory, signer))
+	require.NoError(t, d.registerEndorser("network-a:", factory, signer))
 
 	assert.Equal(t, 1, registry.calls, "registering the same network twice must not re-register")
 }
@@ -264,32 +277,31 @@ func TestRegisterEndorserSkipsANonEndorsingNetwork(t *testing.T) {
 	d := &Driver{viewRegistry: registry, identities: fakeIdentityProvider{}}
 	endorsing := endorserConfig(t)
 	factory := testServiceFactory(t, endorsing)
-	require.NoError(t, d.registerEndorser("network-a:", factory, endorsing))
+	require.NoError(t, d.registerEndorser("network-a:", factory, testEndorserSigner(t, endorsing)))
 
-	notEndorsing := validConfig() // Endorser.Enabled defaults to false
-	require.NoError(t, d.registerEndorser("network-b:", factory, notEndorsing))
+	// a network with no endorsing TMS has no signer
+	require.NoError(t, d.registerEndorser("network-b:", factory, nil))
 
 	assert.Equal(t, 1, registry.calls)
 	assert.Equal(t, "network-a:", d.registeredFor)
 }
 
-// TestRegisterEndorserReturnsAnErrorForABrokenKey is the regression test for the finding that a node
+// TestLoadEndorserSignerReturnsAnErrorForABrokenKey is the regression test for the finding that a node
 // explicitly configured as an endorser, but whose signing key cannot be loaded, used to register
 // nothing and only log the failure: nothing told the caller registration never happened, so
 // installEndorsement and Driver.New both reported success regardless. A broken endorser answers no
 // requests, which looks identical to ordinary network trouble from the outside and was otherwise
 // discoverable only once a quorum it was needed for timed out.
-func TestRegisterEndorserReturnsAnErrorForABrokenKey(t *testing.T) {
-	registry := &fakeViewRegistry{}
-	d := &Driver{viewRegistry: registry, identities: fakeIdentityProvider{}}
+//
+// The key is now loaded once by installEndorsement and handed to registerEndorser, so the error has to
+// come from loadEndorserSigner, before anything is registered.
+func TestLoadEndorserSignerReturnsAnErrorForABrokenKey(t *testing.T) {
 	config := endorserConfig(t)
 	config.Endorser.Keystore = "" // unusable: LoadKey rejects an empty path
-	factory := testServiceFactory(t, config)
 
-	err := d.registerEndorser("network-a:", factory, config)
+	signer, err := loadEndorserSigner(config)
 	require.Error(t, err)
-	assert.Zero(t, registry.calls, "a broken key must not reach the view registry")
-	assert.Empty(t, d.registeredFor, "a failed attempt must not mark the network as registered")
+	assert.Nil(t, signer)
 }
 
 // --- NewDriver ---------------------------------------------------------------------------------
@@ -726,4 +738,131 @@ func TestWatchPublicParamsSkipsABadTokenState(t *testing.T) {
 	d.watchPublicParams("evm-net", "", []NamespaceConfig{{Namespace: "token", Config: bad}}, &mock.EVMClient{})
 
 	assert.Empty(t, d.watchers, "a namespace with an unparsable token state must not start a watcher")
+}
+
+// capturingRegistry keeps the responder Driver.New registers, so a test can send it requests.
+type capturingRegistry struct{ responder view.View }
+
+func (c *capturingRegistry) RegisterResponder(r view.View, _ any) error {
+	c.responder = r
+
+	return nil
+}
+
+// twoTMSEndorser builds, through installEndorsement, the one responder a node registers for two TMS
+// on the same network, each with its own configuration.
+func twoTMSEndorser(t *testing.T, cfgA, cfgB *Config) (*endorsement.Responder, error) {
+	t.Helper()
+	tmsA := token2.TMSID{Network: "evm-net", Namespace: "tms-a"}
+	tmsB := token2.TMSID{Network: "evm-net", Namespace: "tms-b"}
+	cfgA.Contracts.TokenState = "0x" + repeat("aa", 20)
+	cfgB.Contracts.TokenState = "0x" + repeat("bb", 20)
+	for _, c := range []*Config{cfgA, cfgB} {
+		c.applyDefaults()
+		require.NoError(t, c.Validate())
+	}
+	reg := &capturingRegistry{}
+	d := &Driver{
+		resolver: &crossTMSResolver{
+			network: "evm-net",
+			order:   []token2.TMSID{tmsA, tmsB},
+			configs: map[token2.TMSID]*Config{tmsA: cfgA, tmsB: cfgB},
+		},
+		identities:   fakeIdentityProvider{},
+		viewManager:  fakeViewManager{},
+		ppValidator:  fakePPValidator{},
+		viewRegistry: reg,
+	}
+	if _, err := driverNewWithClient(d, "evm-net", "", &mock.EVMClient{}); err != nil {
+		return nil, err
+	}
+	responder, ok := reg.responder.(*endorsement.Responder)
+	require.True(t, ok, "an endorsing node registers a responder")
+
+	return responder, nil
+}
+
+func approvalFor(namespace string) *endorsement.EndorseRequest {
+	return &endorsement.EndorseRequest{
+		Kind:         endorsement.KindApproval,
+		Anchor:       repeat("11", 32),
+		TMSID:        token2.TMSID{Network: "evm-net", Namespace: namespace},
+		TokenRequest: []byte("request"),
+	}
+}
+
+// TestEndorserAuthorizesAgainstTheRequestedTMS checks each TMS's allowlist applies to its own
+// requests. One responder answers for every TMS on the node, and it used to check every request
+// against the allowlist of whichever TMS configured the endorser first.
+func TestEndorserAuthorizesAgainstTheRequestedTMS(t *testing.T) {
+	keystore := writeKey(t, testKeyHex)
+	cfgA, cfgB := endorserConfig(t), endorserConfig(t)
+	cfgA.Endorser.Keystore, cfgB.Endorser.Keystore = keystore, keystore
+	cfgA.Endorsement.Allowlist = []string{"alice"}
+	cfgB.Endorsement.Allowlist = []string{"bob"}
+	responder, err := twoTMSEndorser(t, cfgA, cfgB)
+	require.NoError(t, err)
+
+	unauthorized := endorsement.ErrUnauthorized.Error()
+	cases := []struct {
+		caller, namespace string
+		allowed           bool
+	}{
+		{"alice", "tms-a", true},
+		{"bob", "tms-a", false},
+		{"bob", "tms-b", true},
+		{"alice", "tms-b", false},
+	}
+	for _, c := range cases {
+		resp := responder.Handle(t.Context(), view.Identity(c.caller), approvalFor(c.namespace))
+		require.NotEmpty(t, resp.Err, "the request fails later anyway, there is no tms to resolve")
+		if c.allowed {
+			assert.NotContains(t, resp.Err, unauthorized, "%s on %s", c.caller, c.namespace)
+		} else {
+			assert.Contains(t, resp.Err, unauthorized, "%s on %s", c.caller, c.namespace)
+		}
+	}
+}
+
+// TestEndorserRefusesATMSItDoesNotEndorse checks a TMS that does not enable endorser on this node is
+// refused, even though another TMS on the same network made the node an endorser. The refusal reads
+// as an unauthorized caller, so it does not tell the caller which TMSs this node does endorse for.
+func TestEndorserRefusesATMSItDoesNotEndorse(t *testing.T) {
+	cfgA := endorserConfig(t)
+	cfgA.Endorsement.Allowlist = []string{"alice"}
+	cfgB := validConfig()
+	cfgB.Endorsement.Allowlist = []string{"alice"}
+	responder, err := twoTMSEndorser(t, cfgA, cfgB)
+	require.NoError(t, err)
+
+	resp := responder.Handle(t.Context(), view.Identity("alice"), approvalFor("tms-b"))
+	assert.Contains(t, resp.Err, endorsement.ErrUnauthorized.Error())
+	assert.NotContains(t, resp.Err, "tms-b")
+}
+
+// TestEndorserKeyIsComparedByAddress checks two TMS naming the same endorser key through different
+// keystore paths are accepted, and two different keys are still refused.
+func TestEndorserKeyIsComparedByAddress(t *testing.T) {
+	t.Run("same key, two paths", func(t *testing.T) {
+		cfgA, cfgB := endorserConfig(t), endorserConfig(t)
+		require.NotEqual(t, cfgA.Endorser.Keystore, cfgB.Endorser.Keystore)
+		_, err := twoTMSEndorser(t, cfgA, cfgB)
+		require.NoError(t, err)
+	})
+
+	t.Run("different keys", func(t *testing.T) {
+		cfgA, cfgB := endorserConfig(t), endorserConfig(t)
+		otherKey := "0000000000000000000000000000000000000000000000000000000000000002"
+		keyBytes, err := hex.DecodeString(otherKey)
+		require.NoError(t, err)
+		other, err := eip712.NewSignerFromBytes(keyBytes)
+		require.NoError(t, err)
+		cfgB.Endorser.Keystore = writeKey(t, otherKey)
+		cfgB.Endorser.Address = other.Address().Hex()
+		cfgB.Endorsement.Endorsers = append(cfgB.Endorsement.Endorsers,
+			EndorserBinding{Address: other.Address().Hex(), FSCIdentity: "endorser-2"})
+		_, err = twoTMSEndorser(t, cfgA, cfgB)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "different key")
+	})
 }

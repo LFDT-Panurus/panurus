@@ -17,14 +17,8 @@ import (
 // always supplied explicitly, and Config.Validate refuses to let an endorsing node start without one,
 // rather than resolving an empty one to "the TMS network's nodes" here.
 //
-// The design describes this allowlist as configured per TMS, but in the current wiring it is really
-// per node: configNetworkResolver.ConfigFor loads the EVM configuration of whichever TMS declares it
-// first for a network/channel, on the reasoning that connection fields (endpoint, chain id) are
-// genuinely shared - and Endorsement.Allowlist rides along as part of that same Config, so every TMS a
-// Responder resolves a factory for (Responder.factoryFor) is checked against the first TMS's list, not
-// its own. Two TMS on one network cannot be given different requester sets today; giving Authorizer
-// its own per-TMS lookup would need Config's connection fields and its endorsement policy fields
-// (allowlist, threshold, endorser settings) to stop being loaded as one struct.
+// The allowlist is per TMS: one Responder answers for every TMS on the node, and it checks a request
+// against the Authorizer registered for the TMS the request names (TMSConfig.Authorizer).
 //
 // It is fail-closed: an empty allowlist is rejected at construction, and an unknown or empty caller
 // is denied, so a misconfiguration cannot silently authorize everyone.

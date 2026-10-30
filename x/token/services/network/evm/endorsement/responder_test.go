@@ -102,6 +102,11 @@ func validRequest() *EndorseRequest {
 	}
 }
 
+// fixedAuthorizer resolves the same allowlist for every TMS.
+func fixedAuthorizer(auth *Authorizer) func(token2.TMSID) (*Authorizer, error) {
+	return func(token2.TMSID) (*Authorizer, error) { return auth, nil }
+}
+
 // validSetupRequest is a well-formed KindSetup counterpart to validRequest, sharing the same anchor and
 // TMS so tests can reuse testDomain/testTMSID.
 func validSetupRequest() *EndorseRequest {
@@ -120,7 +125,7 @@ func newResponder(t *testing.T, v RequestValidator, pp *fakePP, signer EndorserS
 	factory := NewDeltaFactory(v, pp, pp, &mock.EVMClient{}, addr(0xAA), "")
 
 	return NewResponder(
-		auth,
+		fixedAuthorizer(auth),
 		func(token2.TMSID) (*DeltaFactory, error) { return factory, nil },
 		nil,
 		signer,
@@ -154,7 +159,7 @@ func newResponderWithSetup(t *testing.T, ppValidator PublicParamsValidator, curr
 	factory := NewSetupDeltaFactory(ppValidator, current)
 
 	return NewResponder(
-		auth,
+		fixedAuthorizer(auth),
 		func(token2.TMSID) (*DeltaFactory, error) { return nil, errors.New("not a KindApproval test") },
 		func(token2.TMSID) (*SetupDeltaFactory, error) { return factory, nil },
 		signer,
@@ -238,6 +243,37 @@ func TestResponderRejectsUnauthorizedCaller(t *testing.T) {
 	assert.Contains(t, resp.Error().Error(), ErrUnauthorized.Error())
 }
 
+// TestResponderHidesWhichTMSsItServes checks a request for a TMS with no allowlist here gets the same
+// reply as a caller missing from one, so a caller cannot probe which TMSs this node endorses for.
+func TestResponderHidesWhichTMSsItServes(t *testing.T) {
+	auth, err := NewAuthorizer([]view.Identity{view.Identity(testCaller)})
+	require.NoError(t, err)
+	factory := NewDeltaFactory(&fakeValidator{}, &fakePP{}, &fakePP{}, &mock.EVMClient{}, addr(0xAA), "")
+	r := NewResponder(
+		func(tmsID token2.TMSID) (*Authorizer, error) {
+			if tmsID == testTMSID() {
+				return auth, nil
+			}
+
+			return nil, errors.Errorf("no allowlist for tms [%s]", tmsID)
+		},
+		func(token2.TMSID) (*DeltaFactory, error) { return factory, nil },
+		nil,
+		newSigner(t, 1),
+		func(token2.TMSID) (eip712.Domain, error) { return testDomain(), nil },
+	)
+
+	unauthorized := r.Handle(context.Background(), view.Identity("mallory"), validRequest())
+	unknownTMS := validRequest()
+	unknownTMS.TMSID.Namespace = "other"
+	unserved := r.Handle(context.Background(), view.Identity("mallory"), unknownTMS)
+
+	require.Error(t, unserved.Error())
+	assert.Equal(t, unauthorized.Err, unserved.Err, "an unknown tms must look like an unauthorized caller")
+	assert.NotContains(t, unserved.Err, "other")
+	assert.Empty(t, unserved.Signature)
+}
+
 // TestResponderRejectsUnservedTMS checks an endorser refuses a request for a TMS it cannot resolve.
 // The responder is registered before any TMS exists, so "which TMS do I serve" is answered by what it
 // can actually resolve and validate, rather than by an identity fixed at construction.
@@ -246,7 +282,7 @@ func TestResponderRejectsUnservedTMS(t *testing.T) {
 	require.NoError(t, err)
 
 	r := NewResponder(
-		auth,
+		fixedAuthorizer(auth),
 		func(tmsID token2.TMSID) (*DeltaFactory, error) {
 			return nil, errors.Errorf("no such tms [%s]", tmsID)
 		},
@@ -373,7 +409,7 @@ func TestResponderRejectsSetupForAnUnservedTMS(t *testing.T) {
 	require.NoError(t, err)
 
 	r := NewResponder(
-		auth,
+		fixedAuthorizer(auth),
 		func(token2.TMSID) (*DeltaFactory, error) { return nil, errors.New("not a KindApproval test") },
 		func(tmsID token2.TMSID) (*SetupDeltaFactory, error) {
 			return nil, errors.Errorf("no such tms [%s]", tmsID)
@@ -395,7 +431,7 @@ func TestResponderRejectsSetupWithNilSetupFactory(t *testing.T) {
 	require.NoError(t, err)
 
 	r := NewResponder(
-		auth,
+		fixedAuthorizer(auth),
 		func(token2.TMSID) (*DeltaFactory, error) { return nil, errors.New("not a KindApproval test") },
 		nil,
 		newSigner(t, 1),
