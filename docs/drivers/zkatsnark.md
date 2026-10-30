@@ -39,7 +39,8 @@ parameters generated with the fork remain valid.
 #### Constraints and trade-offs
 
 - **BN254 only.** `pp.Validate` rejects any other curve for `plonkfri`. The migration circuit is
-  BLS12-381-only, so migration is unavailable with `plonkfri`.
+  BLS12-381-only, so ZKAT-DLOG upgrades are unavailable with `plonkfri`: `pp.Validate` and
+  `setup.CompileMigrationCircuit` refuse the combination.
 - **Plain PLONK gates only.** `plonkfri` does not support BSB22 commitments (`api.Commit`). Circuits
   must not use gadgets built on it, such as emulated-field multiplication, the range checker's
   commitment variant, or `twistededwards.ScalarMul` (whose FakeGLV decomposition check is an emulated
@@ -106,7 +107,8 @@ in [Upgradability](../upgradability.md#token-upgradability-ledger):
 |---|---|---|
 | Fabtoken, precision `<= min(PrecisionValue, MaxBits)` | Yes | No (already spendable) |
 | Fabtoken, precision `> min(PrecisionValue, MaxBits)` | No | Yes |
-| ZKAT-DLOG | Not yet supported | Not yet supported (proof only, see below) |
+| ZKAT-DLOG on BLS12-381 | No (follow-up) | Yes |
+| ZKAT-DLOG on BN254 | No | No |
 
 Every legacy token takes exactly one path, as in ZKAT-DLOG. A token that can be spent in place
 never needs the issuer, and the issuer refuses to burn a spendable token.
@@ -366,36 +368,138 @@ exactly:
 
 ### Upgrading ZKAT-DLOG tokens
 
-ZKAT-DLOG outputs are not yet upgradable on either path. The building blocks exist, but nothing
-ties them to the ledger.
+ZKAT-DLOG outputs are upgraded **through the issuer** (burn-and-re-issue). The design mirrors the
+fabtoken path and reuses the owner-consent protocol ZKAT-DLOG itself uses for commitment tokens of
+an older generation of public parameters. The in-place path is a follow-up (see below).
 
-- **Circuit.** `circuit.MigrationCircuit` proves that a ZKAT-DLOG Pedersen commitment
-  `C = t_ped·G0 + v·G1 + bf·G2` on BLS12-381 G1 (emulated in the circuit) opens to the same value as
-  a new note commitment, value commitment and type commitment.
-- **Prover.** `prover.BuildMigrationWitness` and `Orchestrator.BuildMigrationAction` produce a
-  `MigrationAction`.
-- **Validator.** `validator.ValidateMigration` checks its proof against `VKMigration`.
-- **Proof systems.** The circuit uses emulated arithmetic and BSB22 commitments, so it needs a
-  BLS12-381 deployment and is unavailable with `plonkfri`.
+#### Trust model and requirements
 
-`ValidateMigration` is **not** in the validator pipeline, and the action is not bound to anything on
-the ledger:
+- **Trusted ZKAT-DLOG parameters.** The ZKAT-SNARK public parameters embed, verbatim, the serialized
+  ZKAT-DLOG (`zkatdlognogh` v1) public parameters being migrated from, in
+  `PublicParams.LegacyDLogPublicParams` (`snarkpp.proto` field 19, `legacy_dlog_public_params`). They
+  are governed and hash-pinned with the rest of the ZKAT-SNARK public parameters. From them come:
+  - the Pedersen generators, which `setup.PedersenGeneratorCoordsFromDLog` reads from the public
+    parameters (never re-derived) and bakes into the migration circuit;
+  - the ZKAT-DLOG token formats, computed by ZKAT-DLOG's own `token.CommTokenFormats`;
+  - the public parameters hash carried by the owners' upgrade proofs.
 
-- it has no input ID, so the ledger does not spend the ZKAT-DLOG token;
-- nothing authorizes it: no owner or issuer signature covers it, including its `Recipient`;
-- the circuit does not constrain the Pedersen type encoding `t_ped = HashToZr(t)` to the note's type
-  `enc(t)`, so the type can be swapped.
+  `pp.(*PublicParams).LegacyDLog()` parses and validates them. Only one ZKAT-DLOG generation is
+  supported: its generators are compile-time constants of the migration circuit.
+- **Migration keys.** `setup.SetupMigration(p)` compiles `circuit.MigrationCircuit` with those
+  generators and fills `PKMigration`/`VKMigration`. It is not part of `SetupAll`.
+- **Curves and proof systems.** Both deployments must be on BLS12-381: the ZKAT-SNARK `Curve` must be
+  `BLS12_381`, and the ZKAT-DLOG curve one of `BLS12_381`, `BLS12_381_GURVY`, `BLS12_381_BBS` and
+  `BLS12_381_BBS_GURVY`. The proof system must be `groth16` or `plonk`, not `plonkfri`. ZKAT-DLOG
+  deployments on BN254 (the tokengen and NWO default) cannot be upgraded.
+- **Fail closed.** `pp.Validate` refuses migration keys without ZKAT-DLOG parameters, and ZKAT-DLOG
+  parameters that are malformed, on another curve, combined with a non-BLS12-381 ZKAT-SNARK curve or
+  `plonkfri`, or without `VKMigration`. The validator refuses any ZKAT-DLOG upgrade with
+  `ErrMigrationNotConfigured` when `VKMigration` or the ZKAT-DLOG parameters are absent, and the
+  issuer refuses it without a migration prover.
 
-A successful `ValidateMigration` is therefore not an authorization to mint. To support ZKAT-DLOG
-upgrades, the action must follow the fabtoken design:
+#### The migration circuit
 
-- **In place.** A ZKAT-DLOG input would be a transfer input whose spend description carries a
-  migration proof instead of a spend proof. Its `CommitmentPedersen` would have to equal the ledger
-  token's commitment, and the owner would sign.
-- **Through the issuer.** The ZKAT-DLOG tokens would be the issue's `Inputs`, each with its migration
-  proof, authorized by the issuer as for fabtoken.
+`circuit.MigrationCircuit` is a *legacy spend* proof for one redeemed ZKAT-DLOG output:
 
-Both also need the type link above to be constrained in the circuit.
+- public inputs: the Pedersen commitment `C` (BLS12-381 G1, emulated), the type scalar `TokenTypePed`,
+  and the value commitment `cv`;
+- private inputs: the value `v`, the Pedersen blinding factor `bf` and the value-commitment
+  randomness `rcv`;
+- constraints: `C = TokenTypePed·G0 + v·G1 + bf·G2`, `cv = v·V + rcv·R`, and `1 <= v < 2^MaxBits`.
+
+Every public input is set by the validator. `C` is read from the ledger bytes of the redeemed token,
+never from the prover, and `TokenTypePed = SHA256(TokenType) mod r` (`token.TokenTypePed`, ZKAT-DLOG's
+`HashToZr`) is computed from the issue's cleartext `TokenType`. By the binding property of the
+Pedersen commitment, a proof only exists if the redeemed token carries exactly that type. The
+minted notes are ordinary `OutputCircuit` outputs.
+
+#### Wire format
+
+Each redeemed ZKAT-DLOG output is an `IssueActionInput` whose `migration` field (3) is set:
+
+```
+IssueActionInput {
+  id, token                                       // as for fabtoken: ID and ledger bytes verbatim
+  migration  MigrationDescription {               // field 3: set iff token is a ZKAT-DLOG output
+    value_commit_in_x, value_commit_in_y          // cv of the redeemed value, 32 bytes each
+    migration_proof                               // proof for MigrationCircuit
+  }
+}
+```
+
+The upgrade issue reveals `TokenType` and `TypeRandomness`, as for fabtoken, but `TotalValue` is the
+zero encoding. Value is conserved by the binding signature over `Σcv_in − Σcv_out` with
+`valueBalance = 0`, under the action type `issue-migration` (`token.ActionTypeIssueMigration`),
+where each input's commitment in the action hash is its 96-byte Pedersen point `X‖Y`. One action
+never mixes fabtoken and ZKAT-DLOG inputs. The former `MigrationAction` message is deprecated and
+unused; it remains only for protobuf compatibility.
+
+#### Protocol
+
+1. **Request and proof (owner).** As for fabtoken: `ttx.RequestTokensUpgrade`, and
+   `GenUpgradeProof` signs `SHA256(challenge ‖ tokens)` with every owner's key. ZKAT-DLOG formats are
+   never in `SupportedTokenFormats`. The upgrade service resolves them, and their public parameters
+   hash, through `token.LegacyDLogResolver`, which the driver builds from the embedded ZKAT-DLOG
+   parameters.
+2. **Issue (issuer).** After `ProcessTokensUpgradeRequest`, `IssueService.upgrade` routes an
+   all-ZKAT-DLOG request to `upgradeDLog` and refuses a mixed one. `upgradeDLog` refuses, before any
+   proving: no migration prover or ZKAT-DLOG parameters, an opening that does not match
+   (`token.OpenDLogOutput`), a non-plain owner, mixed types, duplicate IDs, a value of 0 or above
+   `MaxTokenValue`, an overflowing total, or more than `MaxOutputs` outputs. It then splits the total
+   as for fabtoken and calls `Orchestrator.BuildDLogUpgradeIssueAction`, which proves the migrations
+   and outputs concurrently with one shared type randomness.
+
+#### Validation (ledger)
+
+The same four issue validators run (`validator.go` is unchanged). For a ZKAT-DLOG upgrade:
+
+1. `IssueZKValidate` checks the outputs as usual, then, for every input:
+   - parses the ledger bytes as a `comm` typed ZKAT-DLOG output with a plain owner and a
+     non-identity commitment on the configured ZKAT-DLOG curve (`token.SummarizeDLogInputs`);
+   - checks that `cv` is canonical and on the embedded twisted Edwards curve;
+   - verifies the migration proof against `VKMigration`, with `C` from the ledger bytes and
+     `TokenTypePed` from `TokenType`.
+
+   It also requires `TotalValue == 0` and verifies the binding signature with the migration value
+   commitments, `issue-migration` and a value balance of 0.
+2. `IssueSignatureValidate`: the issuer signature alone authorizes the upgrade.
+3. `IssueUpgradeInputsValidate`: a single kind of input, a migration proof exactly on ZKAT-DLOG inputs,
+   the input checks above, and `TypeCommitment == MiMC(enc(TokenType), TypeRandomness)`.
+4. `common.IssueApplicationDataValidate`.
+
+`Validator.ValidateIssue` runs the same checks. The translator checks and deletes the key derived
+from each input's ID and ledger bytes, so each ZKAT-DLOG output is redeemed at most once, and only if
+it exists on the ledger.
+
+#### Auditing
+
+`AuditorService.checkDLogUpgradeIssue` requires the input IDs in order, each input's owner to equal
+the auditor's own copy of the token, the audited type to be `TokenType`, every output note to open
+its commitment with that type, and the note values to sum to the audited input quantities.
+
+#### What the upgrade reveals
+
+The token type and the number of redeemed tokens are public, as on the fabtoken path. The values are
+not: `TotalValue` is 0 and only value commitments are published. The issuer learns the openings,
+the same trust model as ZKAT-DLOG's own commitment-token upgrade.
+
+#### Wallets and the token store
+
+`TokensService.Deobfuscate` and `Recipients` open or parse a not-yet-upgraded ZKAT-DLOG output with
+the embedded parameters, so wallets, the token store and auditors keep handling it until it is
+upgraded. Without ZKAT-DLOG parameters they return an error.
+
+#### Follow-ups
+
+- **In-place upgrade.** Spending a ZKAT-DLOG output inside a transfer keeps the type hidden, so the
+  circuit would have to prove `SHA256(t) mod r` and `enc(t)` in-circuit (about 276k R1CS constraints
+  for two SHA-256 hashes of a 64-byte type, against about 72k for the whole migration circuit), or
+  reveal the type in such transfers.
+- **ZKAT-DLOG on BN254.** It needs a circuit that emulates BN254 G1.
+- **Key generation and integration tests.** tokengen and NWO do not yet emit `VKMigration` and the
+  embedded ZKAT-DLOG parameters, and no integration test switches a network from ZKAT-DLOG to
+  ZKAT-SNARK.
+- **Several ZKAT-DLOG generations.** Each needs its own migration keys.
 
 ### Test coverage
 
@@ -423,7 +527,26 @@ Both also need the type link above to be constrained in the circuit.
 - **Driver wiring.** `driver/upgrade_wiring_test.go` checks that the services wired by the driver
   give every fabtoken format exactly one path, with the default parameters and with `MaxBits = 32`,
   and runs a burn-and-re-issue of a 64-bit fabtoken through that wiring.
+- **ZKAT-DLOG upgrades.**
+  - `circuit/migration_test.go`: valid openings, a wrong value, randomness or value commitment,
+    another token's point, zero and overflowing values, and the type swap (an honest `"USD"`
+    opening against the public type scalar of `"EUR"`).
+  - `setup/setup_test.go`, `pp/migration_test.go`: generators read from a BBS ZKAT-DLOG deployment,
+    refusal of BN254, `plonkfri` and missing ZKAT-DLOG parameters, every `pp.Validate` rule, and the
+    field-19 round trip.
+  - `token/dlog_test.go`: parsing and opening ZKAT-DLOG outputs, the resolver, the services, the
+    input structure and the ledger key.
+  - `validator/validator_issue_migration_test.go`: upgrades end to end with 1 and 3 inputs and a
+    split, and the rejections: type swap, relabelled type, replaced or altered commitments, swapped
+    proofs, value inflation, nonzero `TotalValue`, type randomness, missing proofs, mixed kinds,
+    duplicates, script owners, a BN254 token, signatures, missing configuration, double spend and
+    wrong ledger ID through the translator, and the auditor checks.
+  - `issue_dlog_internal_test.go` and `driver/migration_test.go`: the issuer's refusals and the
+    driver's routing of ZKAT-DLOG formats.
 - **Lifecycle.** `regression.TestFabtokenInPlaceUpgrade_Lifecycle` upgrades a fabtoken in place,
   spends the resulting note, and checks that a forged value is rejected.
-- **Fuzzing.** `FuzzIssueActionWithInputsDeserializeNoPanic` and `FuzzParseFabtokenOutputNoPanic`
+  `regression.TestDLogUpgrade_Lifecycle` upgrades a ZKAT-DLOG output through the issuer, commits it
+  through the translator, spends the resulting note, and refuses a second upgrade.
+- **Fuzzing.** `FuzzIssueActionWithInputsDeserializeNoPanic` (including migration descriptions),
+  `FuzzParseFabtokenOutputNoPanic`, `FuzzParseDLogOutputNoPanic` and `FuzzOpenDLogOutputNoPanic`
   run nightly (`.github/workflows/nightly-fuzz.yml`).
