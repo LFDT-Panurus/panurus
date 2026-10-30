@@ -18,7 +18,7 @@ type CertificationService struct {
 
 func NewCertificationService(tms *token.ManagementService, wallet string) (*CertificationService, error) {
 	driver := tms.PublicParametersManager().PublicParameters().CertificationDriver()
-	d, ok := holder.Drivers[driver]
+	d, ok := holder.Get(driver)
 	if !ok {
 		return nil, errors.Errorf("certifier driver [%s] not found", driver)
 	}

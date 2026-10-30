@@ -9,6 +9,7 @@ SPDX-License-Identifier: Apache-2.0
 package drivers
 
 import (
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -22,15 +23,16 @@ func TestNewHolder(t *testing.T) {
 
 		assert.NotNil(t, holder)
 		assert.NotNil(t, holder.Logger)
-		assert.NotNil(t, holder.Drivers)
-		assert.Empty(t, holder.Drivers)
+		_, ok := holder.Get("anything")
+		assert.False(t, ok)
 	})
 
 	t.Run("int key, string value", func(t *testing.T) {
 		holder := NewHolder[int, string]()
 
 		assert.NotNil(t, holder)
-		assert.NotNil(t, holder.Drivers)
+		_, ok := holder.Get(0)
+		assert.False(t, ok)
 	})
 }
 
@@ -42,7 +44,6 @@ func TestHolder_Register(t *testing.T) {
 
 		holder.Register("driver1", driver)
 
-		assert.Len(t, holder.Drivers, 1)
 		retrieved, ok := holder.Get("driver1")
 		require.True(t, ok)
 		assert.Equal(t, driver, retrieved)
@@ -56,7 +57,12 @@ func TestHolder_Register(t *testing.T) {
 		holder.Register("d1", driver1)
 		holder.Register("d2", driver2)
 
-		assert.Len(t, holder.Drivers, 2)
+		got1, ok := holder.Get("d1")
+		require.True(t, ok)
+		assert.Equal(t, driver1, got1)
+		got2, ok := holder.Get("d2")
+		require.True(t, ok)
+		assert.Equal(t, driver2, got2)
 	})
 }
 
@@ -129,29 +135,45 @@ func TestHolder_Get(t *testing.T) {
 	})
 }
 
-// TestHolder_ConcurrentAccess verifies thread-safe access
-func TestHolder_ConcurrentAccess(t *testing.T) {
+// Fails on an unguarded Get: fatal "concurrent map read and map write", or a -race report.
+func TestHolder_ConcurrentRegisterAndGet(t *testing.T) {
+	const writers, readers, keys = 8, 8, 256
+
 	holder := NewHolder[int, *testDriver]()
 
-	// Register some initial drivers
-	for i := range 10 {
-		holder.Register(i, &testDriver{name: string(rune('A' + i))})
-	}
+	start := make(chan struct{})
+	var wg sync.WaitGroup
 
-	// Concurrent reads should not panic
-	done := make(chan bool)
-	for i := range 10 {
-		go func(id int) {
-			defer func() { done <- true }()
-			for range 100 {
-				_, _ = holder.Get(id % 10)
+	for w := range writers {
+		wg.Add(1)
+		go func(w int) {
+			defer wg.Done()
+			<-start
+			for k := range keys {
+				holder.Register(w*keys+k, &testDriver{name: "driver"})
 			}
-		}(i)
+		}(w)
 	}
 
-	// Wait for all goroutines
-	for range 10 {
-		<-done
+	for r := range readers {
+		wg.Add(1)
+		go func(r int) {
+			defer wg.Done()
+			<-start
+			for i := range writers * keys {
+				_, _ = holder.Get((r + i) % (writers * keys))
+			}
+		}(r)
+	}
+
+	close(start)
+	wg.Wait()
+
+	for w := range writers {
+		for k := range keys {
+			_, ok := holder.Get(w*keys + k)
+			require.True(t, ok, "driver %d missing after concurrent registration", w*keys+k)
+		}
 	}
 }
 

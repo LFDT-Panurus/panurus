@@ -40,3 +40,24 @@ In some system configurations, specific nodes are designated as **Certifiers**. 
 
 ### Integration with Drivers
 The service leverages the **Driver API** to generate the actual cryptographic proof. Different drivers may implement certifications in different ways (e.g., a simple signature over the token ID for cleartext tokens, or a complex ZKP for privacy-preserving ones).
+
+## Driver Resolution
+
+`NewCertificationClient` and `NewCertificationService` resolve a certification driver by the name the
+TMS public parameters report through `CertificationDriver()`, looking it up in a package-private
+registry (`token/services/utils/drivers.Holder`).
+
+**No driver registers itself today, so certification is inactive.** The `dummy` and `interactive`
+drivers implement the interface but nothing adds them to the registry: the `init()`-based
+self-registration was removed in `df071e82f` when the SDK moved to explicit `dig` dependency
+injection, and the exported `Register` hook it used went with it in `3f367bb20`. Both constructors
+therefore return `certifier driver [...] not found`. Nothing reaches that error in practice, because
+`RegisterView` skips certification unless the public parameters report `GraphHiding()`, and both
+shipped drivers report `false`. Re-enabling certification means wiring the driver through the
+container in `token/sdk/dig`, not reinstating a global registry.
+
+The registry itself is safe for concurrent use, and the map it holds is unreachable from outside its
+package: `Get` and `Register` both take its lock, so a lookup overlapping a registration cannot
+observe the map mid-write. This matters because in Go an unsynchronised map read racing a write is
+not a recoverable error — the runtime throws `concurrent map read and map write` and the process
+dies. Code resolving a driver must go through `Get` rather than reading the map.
