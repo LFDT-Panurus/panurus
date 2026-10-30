@@ -7,6 +7,7 @@ SPDX-License-Identifier: Apache-2.0
 package nfttx
 
 import (
+	"bytes"
 	"encoding/base64"
 
 	"github.com/LFDT-Panurus/panurus/token"
@@ -37,13 +38,22 @@ func (o *OutputStream) ByEnrollmentID(id string) *OutputStream {
 	return &OutputStream{OutputStream: o.OutputStream.ByEnrollmentID(id)}
 }
 
+// StateAt decodes the base64 state in the output's type into state, which on error
+// is left unusable.
 func (o *OutputStream) StateAt(index int, state any) error {
+	if index < 0 || index >= o.Count() {
+		return errors.Errorf("index [%d] out of range [0, %d)", index, o.Count())
+	}
 	output := o.At(index)
 	decoded, err := base64.StdEncoding.DecodeString(string(output.Type))
 	if err != nil {
 		return errors.Wrap(err, "failed to decode type")
 	}
-	if err := marshaller.Unmarshal(decoded, state); err == nil {
+	// null unmarshals into anything without writing to it
+	if bytes.Equal(bytes.TrimSpace(decoded), []byte("null")) {
+		return errors.New("type carries no state")
+	}
+	if err := marshaller.Unmarshal(decoded, state); err != nil {
 		return errors.Wrap(err, "failed to unmarshal state")
 	}
 
