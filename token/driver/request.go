@@ -281,6 +281,7 @@ func (r *TokenRequest) ToProtos() (*request.TokenRequest, error) {
 	}, nil
 }
 
+// FromProtos requires a non-nil tr; FromBytes only ever passes a freshly unmarshalled message.
 func (r *TokenRequest) FromProtos(tr *request.TokenRequest) error {
 	// Validate version - only ProtocolV1 (structured format) is supported
 	if tr.Version != uint32(ProtocolV1) {
@@ -466,7 +467,17 @@ func (a *AuditableIdentity) ToProtos() (*request.AuditableIdentity, error) {
 	}, nil
 }
 
+// FromProtos populates this AuditableIdentity from its protobuf representation.
+// A nil protobuf, which is what an absent optional field unmarshals to, decodes to the
+// zero value: requiring an identity is Match's job, not the decoder's. Every field is
+// written on every path, so decoding into a reused destination leaves nothing behind.
 func (a *AuditableIdentity) FromProtos(auditableIdentity *request.AuditableIdentity) error {
+	if auditableIdentity == nil {
+		a.Identity = nil
+		a.AuditInfo = nil
+
+		return nil
+	}
 	a.Identity = ToIdentity(auditableIdentity.Identity)
 	a.AuditInfo = auditableIdentity.AuditInfo
 
@@ -488,6 +499,7 @@ func (i *IssueInputMetadata) ToProtos() (*request.IssueInputMetadata, error) {
 	}, nil
 }
 
+// FromProtos requires a non-nil issueInputMetadata; protos.FromProtosSlice skips nil elements.
 func (i *IssueInputMetadata) FromProtos(issueInputMetadata *request.IssueInputMetadata) error {
 	i.TokenID = ToTokenID(issueInputMetadata.TokenId)
 
@@ -577,12 +589,11 @@ func (i *IssueMetadata) ToProtos() (*request.IssueMetadata, error) {
 	}, nil
 }
 
+// FromProtos requires a non-nil issueMetadata; callers reach it via GetIssueMetadata().
 func (i *IssueMetadata) FromProtos(issueMetadata *request.IssueMetadata) error {
-	issuer := &AuditableIdentity{}
-	if err := issuer.FromProtos(issueMetadata.Issuer); err != nil {
+	if err := i.Issuer.FromProtos(issueMetadata.Issuer); err != nil {
 		return errors.Wrapf(err, "failed unmarshalling issuer [%v]", issueMetadata.Issuer)
 	}
-	i.Issuer = *issuer
 	i.Inputs = slices.GenericSliceOfPointers[IssueInputMetadata](len(issueMetadata.Inputs))
 	err := protos.FromProtosSlice[request.IssueInputMetadata, *IssueInputMetadata](issueMetadata.Inputs, i.Inputs)
 	if err != nil {
@@ -802,6 +813,7 @@ func (t *TransferMetadata) ToProtos() (*request.TransferMetadata, error) {
 	}, nil
 }
 
+// FromProtos requires a non-nil transferMetadata; callers reach it via GetTransferMetadata().
 func (t *TransferMetadata) FromProtos(transferMetadata *request.TransferMetadata) error {
 	t.Inputs = slices.GenericSliceOfPointers[TransferInputMetadata](len(transferMetadata.Inputs))
 	if err := protos.FromProtosSlice(transferMetadata.Inputs, t.Inputs); err != nil {
@@ -817,11 +829,8 @@ func (t *TransferMetadata) FromProtos(transferMetadata *request.TransferMetadata
 		return errors.Wrap(err, "failed unmarshalling extra signers")
 	}
 
-	t.Issuer = AuditableIdentity{}
-	if transferMetadata.Issuer != nil {
-		if err := t.Issuer.FromProtos(transferMetadata.Issuer); err != nil {
-			return errors.Wrap(err, "failed unmarshalling issuer")
-		}
+	if err := t.Issuer.FromProtos(transferMetadata.Issuer); err != nil {
+		return errors.Wrap(err, "failed unmarshalling issuer")
 	}
 
 	return nil
@@ -1058,6 +1067,7 @@ func (m *TokenRequestMetadata) ToProtos() (*request.TokenRequestMetadata, error)
 	return trm, nil
 }
 
+// FromProtos requires a non-nil trm; FromBytes only ever passes a freshly unmarshalled message.
 func (m *TokenRequestMetadata) FromProtos(trm *request.TokenRequestMetadata) error {
 	// assert version
 	if trm.Version != ProtocolV1 {
