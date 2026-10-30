@@ -1,8 +1,9 @@
 # ZKAT-SNARK Driver
 
 This page covers the [proof systems](#proof-systems) the driver supports, how the driver is
-[wired](#driver-wiring) into a token management service, and how it
-[upgrades tokens](#token-upgrades) created by other drivers.
+[wired](#driver-wiring) into a token management service, how it
+[upgrades tokens](#token-upgrades) created by other drivers, and the
+[regression vectors](#regression-vectors) that freeze its wire formats.
 
 ## Proof Systems
 
@@ -464,3 +465,72 @@ Both also need the type link above to be constrained in the circuit.
   spends the resulting note, and checks that a forged value is rejected.
 - **Fuzzing.** `FuzzIssueActionWithInputsDeserializeNoPanic` and `FuzzParseFabtokenOutputNoPanic`
   run nightly (`.github/workflows/nightly-fuzz.yml`).
+- **Frozen vectors.** `regression.TestGoldenVectors` replays frozen issue, transfer, redeem and swap
+  requests against frozen public parameters (see [Regression Vectors](#regression-vectors)).
+
+## Regression Vectors
+
+The tests in `x/token/core/zkatsnark/nogh/v1/regression` prove and verify in the same run, so a change
+that alters the prover and the validator together goes unnoticed by them. `regression/golden_test.go`
+(`TestGoldenVectors`) closes that gap: it replays requests generated earlier and committed under
+`regression/testdata`, like the zkatdlog vectors in `token/core/zkatdlog/nogh/v1/regression/testdata`.
+
+### Layout
+
+Each configuration has its own directory, `<proof system>-<curve>-<MaxBits>`:
+
+| Directory | Why it is in the matrix | Cases |
+|-----------|-------------------------|-------|
+| `groth16-bn254-16`     | groth16 on BN254 with a small range check | all |
+| `groth16-bls12_381-64` | the production default (`pp.DefaultPublicParams`) | all |
+| `plonk-bls12_381-16`   | plonk with a universal KZG SRS | all |
+| `plonkfri-bn254-16`    | the transparent proof system | `issues_0`, `transfers_0` |
+
+Each directory contains two files:
+
+- `params.txt`: the base64-encoded serialized public parameters. The proving keys are stripped,
+  because validation needs only the verifying keys. This keeps the vectors small (about 5 MiB in total,
+  most of it the plonkfri proofs, which are about 841 KiB each).
+- `testdata.json`: one `testutils.TestCase` per fixture, keyed by name. Each case holds:
+  - the serialized token request (`req_raw`) and its anchor (`txid`);
+  - the request metadata and the audit inputs;
+  - the ledger entries its transfer inputs are looked up in (`ledger`). For plonkfri this field is
+    omitted, because it equals the request's `InputTokens`, and the test rebuilds the ledger from
+    them.
+  - the expected outcome (`expected_error`). It is empty for a request that must validate.
+    Otherwise it is a substring of the expected error, as for `unclaimed_metadata_0`
+    (`more metadata than those validated`) and `extra_signature_0` (`unconsumed signatures`).
+
+### What the test checks
+
+For each configuration, the test:
+
+1. decodes the public parameters, checks the proof system, curve and `MaxBits`, checks that they
+   re-serialize to the frozen bytes, and builds the validator through the production entry point
+   (`core.NewValidatorDriverService` with `driver.NewValidatorDriver`);
+2. validates every request with `token.Validator.UnmarshallAndVerifyWithMetadata` and checks the
+   expected outcome, and the number and kind of actions;
+3. checks that every action re-serializes to its frozen bytes. Actions with a metadata map are
+   compared as decoded protobuf messages, because protobuf map order is not deterministic;
+4. tampers with the frozen proofs and commitments of one issue and one transfer, and checks that
+   validation then fails. This shows that the frozen verifying keys are actually used.
+
+### Regenerating
+
+```bash
+cd x/token/core/zkatsnark/nogh/v1/regression/testdata/generator
+go run .                              # every configuration
+go run . -configs=groth16-bn254-16    # a single configuration
+```
+
+The setup is randomized, so regenerating replaces every byte of the chosen configurations. The vectors
+are meant to fail when the wire format changes. Regenerate them only on purpose, and explain the
+break in the pull request. Changes that need new vectors include:
+
+- the spend or output circuits, which change the verifying keys;
+- the gnark version, if it changes the key or proof encoding;
+- the public parameters or action protobufs, or the type and commitment encodings;
+- a protobuf library bump that changes the `proto.Marshal` output.
+
+The generator's ECDSA test certificates expire after 24 hours. Validation does not check their
+expiry, so the vectors stay valid.

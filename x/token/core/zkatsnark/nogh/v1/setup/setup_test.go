@@ -6,12 +6,12 @@ SPDX-License-Identifier: Apache-2.0
 package setup_test
 
 import (
-	"fmt"
 	"math/big"
 	"sync"
 	"testing"
 
 	"github.com/consensys/gnark-crypto/ecc"
+	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	"github.com/stretchr/testify/require"
 
 	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/pp"
@@ -33,7 +33,7 @@ func setupSharedPP(t *testing.T) *pp.PublicParams {
 		var err error
 		p, err = setup.SetupAll(p)
 		if err != nil {
-			setupErr = fmt.Errorf("shared setup.SetupAll: %w", err)
+			setupErr = errors.Wrap(err, "shared setup.SetupAll")
 
 			return
 		}

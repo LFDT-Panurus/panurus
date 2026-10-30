@@ -238,7 +238,6 @@ func newTransferEnv(benchmarkCase *benchmark2.Case, publicParams *pp.PublicParam
 		des,
 		noop.NewTracerProvider(),
 		tokensService,
-		nil,
 		orchestrator,
 		val,
 	)

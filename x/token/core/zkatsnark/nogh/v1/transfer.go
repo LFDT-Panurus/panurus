@@ -23,10 +23,12 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
+// TokenLoader loads the serialized tokens and their metadata for the given IDs.
 type TokenLoader interface {
 	LoadTokens(ctx context.Context, ids []*token2.ID) ([]common.LoadedToken[[]byte, []byte], error)
 }
 
+// TransferService assembles and verifies zkatsnark transfer actions.
 type TransferService struct {
 	Logger                  logging.Logger
 	PublicParametersManager common.PublicParametersManager[*pp.PublicParams]
@@ -35,11 +37,11 @@ type TransferService struct {
 	Deserializer            driver.Deserializer
 	TracerProvider          trace.TracerProvider
 	TokensService           driver.TokensService
-	TokenDeserializer       any // placeholder if needed later, but not strictly used here
 	Orchestrator            *prover.Orchestrator
 	Validator               *validator.Validator
 }
 
+// NewTransferService returns a new TransferService.
 func NewTransferService(
 	logger logging.Logger,
 	publicParametersManager common.PublicParametersManager[*pp.PublicParams],
@@ -48,7 +50,6 @@ func NewTransferService(
 	deserializer driver.Deserializer,
 	tracerProvider trace.TracerProvider,
 	tokensService driver.TokensService,
-	tokenDeserializer any, // matches signature in driver.go
 	orchestrator *prover.Orchestrator,
 	v *validator.Validator,
 ) *TransferService {
@@ -60,12 +61,12 @@ func NewTransferService(
 		Deserializer:            deserializer,
 		TracerProvider:          tracerProvider,
 		TokensService:           tokensService,
-		TokenDeserializer:       tokenDeserializer,
 		Orchestrator:            orchestrator,
 		Validator:               v,
 	}
 }
 
+// Transfer builds a transfer action spending tokenIDs into outputTokens, together with its metadata.
 func (s *TransferService) Transfer(
 	ctx context.Context,
 	anchor driver.TokenRequestAnchor,
@@ -76,6 +77,12 @@ func (s *TransferService) Transfer(
 ) (driver.TransferAction, *driver.TransferMetadata, error) {
 	if len(tokenIDs) == 0 && len(outputTokens) == 0 {
 		return nil, nil, errors.New("failed to prepare transfer action: nil token id and output")
+	}
+	if common.IsAnyNil(tokenIDs...) {
+		return nil, nil, errors.New("failed to prepare transfer action: nil token id")
+	}
+	if common.IsAnyNil(outputTokens...) {
+		return nil, nil, errors.New("failed to prepare transfer action: nil output token")
 	}
 
 	loadedTokens, err := s.VaultTokenLoader.LoadTokens(ctx, tokenIDs)

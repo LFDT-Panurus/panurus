@@ -7,10 +7,9 @@ SPDX-License-Identifier: Apache-2.0
 package gadgets
 
 import (
-	"fmt"
-
 	"github.com/consensys/gnark/frontend"
 	stdmimc "github.com/consensys/gnark/std/hash/mimc"
+	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 )
 
 // HashCircuit computes the MiMC hash of 1 to 3 circuit variables.
@@ -26,7 +25,7 @@ import (
 func HashCircuit(api frontend.API, inputs ...frontend.Variable) (frontend.Variable, error) {
 	n := len(inputs)
 	if n == 0 || n > 3 {
-		return nil, fmt.Errorf("mimc gadget: input count must be between 1 and 3, got %d", n)
+		return nil, errors.Errorf("mimc gadget: input count must be between 1 and 3, got %d", n)
 	}
 
 	// NewMiMC constructs a MiMC hasher for the circuit's scalar field.
@@ -34,7 +33,7 @@ func HashCircuit(api frontend.API, inputs ...frontend.Variable) (frontend.Variab
 	// the same constants used by gnark-crypto's native implementation.
 	h, err := stdmimc.NewMiMC(api)
 	if err != nil {
-		return nil, fmt.Errorf("mimc gadget: failed to create MiMC instance: %w", err)
+		return nil, errors.Wrap(err, "mimc gadget: failed to create MiMC instance")
 	}
 
 	// Write all inputs to the hasher sequentially.

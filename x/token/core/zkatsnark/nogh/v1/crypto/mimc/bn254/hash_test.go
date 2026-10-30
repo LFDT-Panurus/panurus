@@ -7,13 +7,13 @@ SPDX-License-Identifier: Apache-2.0
 package bn254_test
 
 import (
-	"fmt"
 	"testing"
 
 	"github.com/consensys/gnark-crypto/ecc"
 	"github.com/consensys/gnark-crypto/ecc/bn254/fr"
 	"github.com/consensys/gnark/frontend"
 	"github.com/consensys/gnark/frontend/cs/r1cs"
+	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	"github.com/stretchr/testify/require"
 
 	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/circuit/gadgets"
@@ -121,7 +121,7 @@ type mimcCrossConsistencyCircuit struct {
 func (c *mimcCrossConsistencyCircuit) Define(api frontend.API) error {
 	h, err := gadgets.HashCircuit(api, c.A, c.B, c.C)
 	if err != nil {
-		return fmt.Errorf("cross-consistency circuit: %w", err)
+		return errors.Wrap(err, "cross-consistency circuit")
 	}
 	api.AssertIsEqual(h, c.Expected)
 

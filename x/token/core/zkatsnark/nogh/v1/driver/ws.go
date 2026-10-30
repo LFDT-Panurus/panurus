@@ -27,6 +27,7 @@ import (
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/view"
 )
 
+// BaseWalletServiceFactory builds zkatsnark wallet services from public parameters.
 type BaseWalletServiceFactory struct {
 	PublicParametersDeserializer
 }
@@ -44,7 +45,10 @@ func (d *BaseWalletServiceFactory) NewWalletService(
 	ignoreRemote bool,
 	metricsProvider metrics.Provider,
 ) (*wallet.Service, error) {
-	ppp := publicParams.(*pp.PublicParams)
+	ppp, ok := publicParams.(*pp.PublicParams)
+	if !ok || ppp == nil {
+		return nil, errors.Errorf("invalid public parameters type [%T]", publicParams)
+	}
 	roles := role.NewRoles()
 	deserializerManager := deserializer.NewTypedSignerDeserializerMultiplex()
 	tmsID := tmsConfig.ID()
