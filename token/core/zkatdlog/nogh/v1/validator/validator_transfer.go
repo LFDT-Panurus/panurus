@@ -14,6 +14,7 @@ import (
 
 	math "github.com/IBM/mathlib"
 	"github.com/LFDT-Panurus/panurus/token/core/common"
+	math2 "github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/crypto/math"
 	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/token"
 	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/transfer"
 	"github.com/LFDT-Panurus/panurus/token/driver"
@@ -139,7 +140,10 @@ func TransferSignatureValidate(c context.Context, ctx *Context) error {
 func TransferUpgradeWitnessValidate(c context.Context, ctx *Context) error {
 	// recall that TransferActionValidate has been called before this function
 
-	for _, input := range ctx.TransferAction.Inputs {
+	for i, input := range ctx.TransferAction.Inputs {
+		if input == nil {
+			return errors.Errorf("invalid input at index [%d]: nil input", i)
+		}
 		witness := input.UpgradeWitness
 		if witness != nil {
 			// check that the corresponding input is compatible with the witness
@@ -151,6 +155,16 @@ func TransferUpgradeWitnessValidate(c context.Context, ctx *Context) error {
 			q, err := token2.ToQuantity(witness.FabToken.Quantity, ctx.PP.QuantityPrecision)
 			if err != nil {
 				return errors.Wrapf(err, "failed to unmarshal quantity")
+			}
+			if input.Token == nil {
+				return errors.Errorf("invalid input at index [%d]: nil token", i)
+			}
+			// Both feed the arithmetic below (issue #2554).
+			if err := math2.CheckElement(input.Token.Data, ctx.PP.Curve); err != nil {
+				return errors.Wrapf(err, "invalid commitment in input token")
+			}
+			if err := math2.CheckBaseElement(witness.BlindingFactor, ctx.PP.Curve); err != nil {
+				return errors.Wrapf(err, "invalid blinding factor in upgrade witness")
 			}
 			tokens, _, err := token.GetTokensWithWitnessAndBF([]uint64{q.ToBigInt().Uint64()}, []*math.Zr{witness.BlindingFactor}, witness.FabToken.Type, ctx.PP.PedersenGenerators, math.Curves[ctx.PP.Curve])
 			if err != nil {

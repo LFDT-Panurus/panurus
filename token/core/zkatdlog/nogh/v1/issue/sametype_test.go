@@ -63,7 +63,10 @@ func GetSameTypeProverAndVerifier(t *testing.T) (*issue.SameTypeProver, *issue.S
 
 	tokens := prepareTokens(t, pp)
 
-	return issue.NewSameTypeProver("ABC", blindingFactor, com, pp, math.Curves[1]), issue.NewSameTypeVerifier(tokens, pp, math.Curves[1])
+	verifier, err := issue.NewSameTypeVerifier(tokens, pp, math.Curves[1])
+	require.NoError(t, err)
+
+	return issue.NewSameTypeProver("ABC", blindingFactor, com, pp, math.Curves[1]), verifier
 }
 
 func TestSameTypeDeserializeError(t *testing.T) {

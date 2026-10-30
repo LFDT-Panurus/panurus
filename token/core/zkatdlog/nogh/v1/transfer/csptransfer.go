@@ -172,7 +172,13 @@ type CSPVerifier struct {
 }
 
 // NewCSPVerifier returns a new CSPVerifier instance.
-func NewCSPVerifier(inputs, outputs []*math.G1, pp *v1.PublicParams) *CSPVerifier {
+// It returns an error if an input or output commitment does not belong to the curve in pp.
+func NewCSPVerifier(inputs, outputs []*math.G1, pp *v1.PublicParams) (*CSPVerifier, error) {
+	typeAndSum, err := NewTypeAndSumVerifier(pp.PedersenGenerators, inputs, outputs, math.Curves[pp.Curve])
+	if err != nil {
+		return nil, err
+	}
+
 	// check if this is an ownership transfer (1 input, 1 output)
 	// if so, skip range proof as well-formedness proof is sufficient.
 	var rangeCorrectness *csp.RangeCorrectnessVerifier
@@ -189,9 +195,9 @@ func NewCSPVerifier(inputs, outputs []*math.G1, pp *v1.PublicParams) *CSPVerifie
 
 	return &CSPVerifier{
 		PP:               pp,
-		TypeAndSum:       NewTypeAndSumVerifier(pp.PedersenGenerators, inputs, outputs, math.Curves[pp.Curve]),
+		TypeAndSum:       typeAndSum,
 		RangeCorrectness: rangeCorrectness,
-	}
+	}, nil
 }
 
 // Verify checks the validity of a serialized Proof.

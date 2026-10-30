@@ -71,7 +71,8 @@ func TestCSPVerifierRejectsTruncatedSameTypeProof(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	verifier := issue.NewCSPVerifier(tokens, pp)
+	verifier, err := issue.NewCSPVerifier(tokens, pp)
+	require.NoError(t, err)
 
 	var verifyErr error
 	require.NotPanics(t, func() {
@@ -144,7 +145,8 @@ func TestCSPVerifierRejectsTruncatedRangeCorrectnessProof(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	verifier := issue.NewCSPVerifier(tokens, pp)
+	verifier, err := issue.NewCSPVerifier(tokens, pp)
+	require.NoError(t, err)
 
 	var verifyErr error
 	require.NotPanics(t, func() {

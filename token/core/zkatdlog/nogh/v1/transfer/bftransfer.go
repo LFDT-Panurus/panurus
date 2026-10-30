@@ -70,7 +70,13 @@ type BulletProofVerifier struct {
 }
 
 // NewBulletProofVerifier returns a new BulletProofVerifier instance.
-func NewBulletProofVerifier(inputs, outputs []*math.G1, pp *v1.PublicParams) *BulletProofVerifier {
+// It returns an error if an input or output commitment does not belong to the curve in pp.
+func NewBulletProofVerifier(inputs, outputs []*math.G1, pp *v1.PublicParams) (*BulletProofVerifier, error) {
+	typeAndSum, err := NewTypeAndSumVerifier(pp.PedersenGenerators, inputs, outputs, math.Curves[pp.Curve])
+	if err != nil {
+		return nil, err
+	}
+
 	// check if this is an ownership transfer (1 input, 1 output)
 	// if so, skip range proof as well-formedness proof is sufficient.
 	var rangeCorrectness *bulletproof.RangeCorrectnessVerifier
@@ -90,9 +96,9 @@ func NewBulletProofVerifier(inputs, outputs []*math.G1, pp *v1.PublicParams) *Bu
 
 	return &BulletProofVerifier{
 		PP:               pp,
-		TypeAndSum:       NewTypeAndSumVerifier(pp.PedersenGenerators, inputs, outputs, math.Curves[pp.Curve]),
+		TypeAndSum:       typeAndSum,
 		RangeCorrectness: rangeCorrectness,
-	}
+	}, nil
 }
 
 // Verify checks the validity of a serialized Proof.
