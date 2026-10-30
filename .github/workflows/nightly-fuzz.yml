@@ -298,10 +298,14 @@ jobs:
             dir: ./x/token/core/zkatsnark
             pkg: ./nogh/v1/token
             func: FuzzOutputDescriptionDeserializeNoPanic
-          - name: zkatsnark-migration-action-deserialize
+          - name: zkatsnark-parse-dlog-output
             dir: ./x/token/core/zkatsnark
             pkg: ./nogh/v1/token
-            func: FuzzMigrationActionDeserializeNoPanic
+            func: FuzzParseDLogOutputNoPanic
+          - name: zkatsnark-open-dlog-output
+            dir: ./x/token/core/zkatsnark
+            pkg: ./nogh/v1/token
+            func: FuzzOpenDLogOutputNoPanic
           - name: zkatsnark-issue-action-with-inputs-deserialize
             dir: ./x/token/core/zkatsnark
             pkg: ./nogh/v1/token

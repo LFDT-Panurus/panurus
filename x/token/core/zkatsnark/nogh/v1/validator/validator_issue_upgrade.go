@@ -6,7 +6,6 @@ SPDX-License-Identifier: Apache-2.0
 package validator
 
 import (
-	"bytes"
 	"context"
 
 	snarktoken "github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/token"
@@ -21,7 +20,11 @@ var (
 
 // IssueUpgradeInputsValidate is a ValidateIssueFunc callback that binds an
 // upgrade issuance (burn-and-re-issue of legacy fabtoken outputs) to the tokens
-// it redeems. It is a no-op for a plain issuance.
+// it redeems. It is a no-op for a plain issuance. An upgrade issuance of
+// ZKAT-DLOG outputs is checked by validateDLogUpgradeInputs instead: inputs
+// well-formed and of the configured ZKAT-DLOG generation, and TypeCommitment
+// opening to TokenType; its values are bound by the migration proofs and the
+// binding signature verified in IssueZKValidate.
 //
 // It must run after IssueZKValidate (outputs are well-formed and TotalValue is
 // the value they commit to, by the binding signature). It checks that:
@@ -57,6 +60,15 @@ func (v *Validator) validateUpgradeInputs(a *snarktoken.IssueAction) error {
 		return nil
 	}
 
+	// a single kind of input, and a migration proof exactly for ZKAT-DLOG
+	// inputs; completeness and duplicates are checked by the summaries below
+	if err := a.CheckUpgradeInputKinds(); err != nil {
+		return errors.WithMessagef(errors.Join(ErrMalformedAction, err), "%s", err.Error())
+	}
+	if a.IsDLogUpgrade() {
+		return v.validateDLogUpgradeInputs(a)
+	}
+
 	summary, err := snarktoken.SummarizeUpgradeInputs(a.Inputs, v.pp.PrecisionValue)
 	if err != nil {
 		// Join keeps both sentinels reachable with errors.Is, but prints only
@@ -67,15 +79,8 @@ func (v *Validator) validateUpgradeInputs(a *snarktoken.IssueAction) error {
 	if string(summary.Type) != a.TokenType {
 		return errors.Wrapf(ErrTypeMismatch, "redeemed type [%s] differs from issued type [%s]", summary.Type, a.TokenType)
 	}
-	if _, err := decodeScalar(v.pp.Curve, a.TypeRandomness); err != nil {
-		return errors.Wrapf(err, "validator: TypeRandomness")
-	}
-	tc, err := snarktoken.ComputeTypeCommitment(a.TokenType, a.TypeRandomness, v.pp.Curve)
-	if err != nil {
-		return errors.Wrap(err, "validator: recomputing type commitment")
-	}
-	if !bytes.Equal(tc, a.TypeCommitment) {
-		return errors.Wrap(ErrTypeMismatch, "type commitment does not open to the redeemed type")
+	if err := v.checkTypeOpening(a); err != nil {
+		return err
 	}
 
 	total, err := parseTotalValue(v.pp.Curve, a.TotalValue)

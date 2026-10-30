@@ -143,7 +143,7 @@ func TestTokensUpgradeService(t *testing.T) {
 		{ID: token2.ID{TxId: "tx2"}, Format: format16, Token: fabtokenOutput(t, bob.ID, "USD", "5")},
 	}
 	ip := staticIdentityProvider{string(alice.ID): alice.Signer, string(bob.ID): bob.Signer}
-	svc, err := snarktoken.NewTokensUpgradeService(nil, 64, x509Deserializer{}, ip, []token2.Format{"zkatsnark"})
+	svc, err := snarktoken.NewTokensUpgradeService(nil, 64, x509Deserializer{}, ip, []token2.Format{"zkatsnark"}, nil)
 	require.NoError(t, err)
 
 	ch, err := svc.NewUpgradeChallenge()

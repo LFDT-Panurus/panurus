@@ -8,13 +8,9 @@ package validator_test
 import (
 	"context"
 	cryptorand "crypto/rand"
-	"crypto/sha256"
-	"math/big"
-	"strconv"
 	"sync"
 	"testing"
 
-	mathlib "github.com/IBM/mathlib"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	"github.com/stretchr/testify/require"
 
@@ -27,7 +23,6 @@ import (
 	token2 "github.com/LFDT-Panurus/panurus/token/token"
 
 	"github.com/consensys/gnark-crypto/ecc"
-	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
 
 	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/pp"
 	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/prepared"
@@ -64,9 +59,6 @@ type e2eFixture struct {
 	base *prepared.Params
 	orch *prover.Orchestrator
 	val  *validator.Validator
-
-	migOnce sync.Once
-	migErr  error
 }
 
 var (
@@ -154,114 +146,6 @@ func (f *e2eFixture) randomFieldBytes(t *testing.T) []byte {
 	require.NoError(t, err)
 
 	return n.FillBytes(make([]byte, 32))
-}
-
-// computeTestPedersenCommitment computes a genuine zkatdlog-style Pedersen
-// commitment matching what prover.DefaultPedersenGeneratorCoords derives
-// internally (seeded on "zkatdlognogh", version 1) — so a PedersenOpening
-// built from this function's output is exactly what BuildMigrationWitness
-// expects to be able to open.
-//
-// This duplicates logic already present in circuit/migration_test.go's
-// computePedersenCommitment. Worth extracting both (and any future copy in
-// prover tests) into a small shared internal test-helper package rather
-// than tripling this derivation across the codebase.
-//
-// SCOPE: proves Layer 3 and Layer 4 agree with EACH OTHER using whatever
-// generator/hash derivation is currently wired in. Does NOT prove
-// compatibility with real, already-deployed zkatdlog commitments — see the
-// still-open generator-authenticity concern from the migration circuit
-// review.
-func computeTestPedersenCommitment(t *testing.T, value uint64, tokenType string, blindingFactor fr.Element) []byte {
-	t.Helper()
-
-	curve := mathlib.Curves[mathlib.BLS12_381]
-	const driverName, driverVersion = "zkatdlognogh", 1
-
-	gens := make([]*mathlib.G1, 3)
-	for i := range 3 {
-		seed := "lfdt-panurus." + driverName + "." + strconv.Itoa(driverVersion) + ".PedersenGenerators." + strconv.Itoa(i)
-		gens[i] = curve.HashToG1([]byte(seed))
-	}
-
-	digest := sha256.Sum256([]byte(tokenType))
-	digestBig := new(big.Int).SetBytes(digest[:])
-	digestBig.Mod(digestBig, fr.Modulus())
-	var tokenTypePed fr.Element
-	tokenTypePed.SetBigInt(digestBig)
-	typeScalar := curve.NewZrFromBytes(tokenTypePed.Marshal())
-
-	var vField fr.Element
-	vField.SetUint64(value)
-	valueScalar := curve.NewZrFromBytes(vField.Marshal())
-
-	bfScalar := curve.NewZrFromBytes(blindingFactor.Marshal())
-
-	com := curve.NewG1()
-	com.Add(gens[0].Mul(typeScalar))
-	com.Add(gens[1].Mul(valueScalar))
-	com.Add(gens[2].Mul(bfScalar))
-
-	return com.Bytes()
-}
-
-// requireMigration extends the fixture with a real MigrationCircuit trusted
-// setup and wires a MigrationProver into the Orchestrator.
-//
-// BN254 is skipped: although the circuit compiles and sets up there,
-// prover.BuildMigrationWitness and DefaultPedersenGeneratorCoords are
-// hardcoded to BLS12-381 field/G1 types (the legacy zkatdlog commitments
-// being migrated are BLS12-381 points), so no witness can be built.
-func (f *e2eFixture) requireMigration(t *testing.T) {
-	t.Helper()
-	if f.cfg.curve != ecc.BLS12_381 {
-		t.Skipf("migration prover is BLS12-381-only; not supported on %s", f.cfg.name())
-	}
-	f.migOnce.Do(func() { f.migErr = f.setupMigration() })
-	require.NoError(t, f.migErr, "migration setup must succeed on %s", f.cfg.name())
-}
-
-func (f *e2eFixture) setupMigration() error {
-	gens := prover.DefaultPedersenGeneratorCoords()
-
-	p, err := setup.SetupMigration(f.pp, gens)
-	if err != nil {
-		return err
-	}
-
-	base, err := prepared.NewParams(p)
-	if err != nil {
-		return err
-	}
-
-	proverParams, err := prepared.NewProverFrom(base)
-	if err != nil {
-		return err
-	}
-	proverParams, err = proverParams.WithMigration(gens)
-	if err != nil {
-		return err
-	}
-
-	migProver, err := prover.NewMigrationProver(proverParams)
-	if err != nil {
-		return err
-	}
-	f.orch.SetMigrationProver(migProver)
-
-	verifierParams, err := prepared.NewVerifierFrom(base)
-	if err != nil {
-		return err
-	}
-	verifierParams, err = verifierParams.WithMigration(gens)
-	if err != nil {
-		return err
-	}
-
-	// Rebuild the Validator so it picks up the now-populated vkMigration.
-	f.val, err = validator.NewValidator(verifierParams, nil, driver.ResourceLimits{}.WithDefaults())
-
-	return err
 }
 
 // TestValidateTransfer_EndToEnd is the single most important test in this
@@ -417,67 +301,6 @@ func TestValidateTransfer_MalformedShape(t *testing.T) {
 	})
 }
 
-func TestValidateMigration_EndToEnd(t *testing.T) {
-	forEachConfig(t, func(t *testing.T, f *e2eFixture) {
-		t.Helper()
-		f.requireMigration(t)
-
-		var blindingFactor fr.Element
-		_, err := blindingFactor.SetRandom()
-		require.NoError(t, err)
-		bfBytes := blindingFactor.Bytes()
-
-		commitmentBytes := computeTestPedersenCommitment(t, 250, "USD", blindingFactor)
-
-		opening := snarktoken.PedersenOpening{
-			Value:           250,
-			TokenType:       "USD",
-			BlindingFactor:  bfBytes[:],
-			CommitmentBytes: commitmentBytes,
-		}
-
-		actions, _, err := f.orch.BuildMigrationAction(
-			t.Context(),
-			[]prover.MigrationRequest{{Opening: opening, Recipient: []byte("alice")}},
-			f.pp,
-		)
-		require.NoError(t, err)
-		require.Len(t, actions, 1)
-
-		err = f.val.ValidateMigration(&actions[0])
-		require.NoError(t, err, "a genuine migration, proven by the Orchestrator, must validate")
-	})
-}
-
-func TestValidateMigration_RejectsTamperedCommitment(t *testing.T) {
-	forEachConfig(t, func(t *testing.T, f *e2eFixture) {
-		t.Helper()
-		f.requireMigration(t)
-
-		var blindingFactor fr.Element
-		_, err := blindingFactor.SetRandom()
-		require.NoError(t, err)
-		bfBytes := blindingFactor.Bytes()
-		commitmentBytes := computeTestPedersenCommitment(t, 100, "USD", blindingFactor)
-
-		opening := snarktoken.PedersenOpening{
-			Value: 100, TokenType: "USD",
-			BlindingFactor: bfBytes[:], CommitmentBytes: commitmentBytes,
-		}
-		actions, _, err := f.orch.BuildMigrationAction(
-			t.Context(),
-			[]prover.MigrationRequest{{Opening: opening, Recipient: []byte("bob")}},
-			f.pp,
-		)
-		require.NoError(t, err)
-
-		actions[0].CommitmentMiMC[0] ^= 0xFF
-
-		err = f.val.ValidateMigration(&actions[0])
-		require.Error(t, err, "a tampered MiMC commitment must be rejected")
-	})
-}
-
 // TestValidateIssue_RejectsTamperedOutput demonstrates that corrupting an
 // output commitment byte causes the proof to fail verification.
 func TestValidateIssue_RejectsTamperedOutput(t *testing.T) {
@@ -597,22 +420,6 @@ func TestValidateTransfer_RejectsNonCanonicalTypeCommitment(t *testing.T) {
 
 		err = f.val.ValidateTransfer(action)
 		require.Error(t, err, "non-canonical TypeCommitment bytes must be rejected")
-	})
-}
-
-// TestValidateMigration_MalformedShape confirms structural rejection
-// before cryptographic work.
-func TestValidateMigration_MalformedShape(t *testing.T) {
-	forEachConfig(t, func(t *testing.T, f *e2eFixture) {
-		t.Helper()
-		f.requireMigration(t)
-
-		action := &snarktoken.MigrationAction{
-			CommitmentPedersenX: make([]byte, 32), // wrong length (should be 48)
-		}
-
-		err := f.val.ValidateMigration(action)
-		require.Error(t, err, "malformed migration action must be rejected")
 	})
 }
 
@@ -1346,28 +1153,6 @@ func TestIssueSignatureValidate_IssuerNotAuthorized(t *testing.T) {
 		err = validator.IssueSignatureValidate(t.Context(), ctx)
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "issuer is not authorized")
-	})
-}
-
-// TestValidateMigration_NotConfiguredWithoutSetup confirms the "migration
-// never set up" path fails closed with a specific, distinguishable error,
-// rather than silently skipping the check or panicking.
-func TestValidateMigration_NotConfiguredWithoutSetup(t *testing.T) {
-	forEachConfig(t, func(t *testing.T, f *e2eFixture) {
-		t.Helper()
-		// A fresh Validator over Spend/Output-only params — no migration key.
-		freshPP := *f.pp
-		freshPP.PKMigration, freshPP.VKMigration = nil, nil
-
-		freshVerifierParams, err := prepared.NewVerifier(&freshPP)
-		require.NoError(t, err)
-		require.Nil(t, freshVerifierParams.VKMigration())
-
-		freshVal, err := validator.NewValidator(freshVerifierParams, nil, driver.ResourceLimits{}.WithDefaults())
-		require.NoError(t, err)
-
-		err = freshVal.ValidateMigration(&snarktoken.MigrationAction{})
-		require.ErrorIs(t, err, validator.ErrMigrationNotConfigured)
 	})
 }
 

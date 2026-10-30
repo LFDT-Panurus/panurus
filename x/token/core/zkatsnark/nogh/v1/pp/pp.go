@@ -128,6 +128,17 @@ type PublicParams struct {
 	// ExtraParams carries any additional parameters not covered by the
 	// interface's named accessors. Backs Extras().
 	ExtraParams driver.Extras
+
+	// ── ZKAT-DLOG upgrade ──────────────────────────────────────────────────
+
+	// LegacyDLogPublicParams holds, verbatim, the serialized ZKAT-DLOG
+	// (zkatdlognogh v1) public parameters whose outputs can be upgraded to
+	// zkatsnark by burn-and-re-issue. Empty when ZKAT-DLOG upgrades are not
+	// supported. It is governed and hash-pinned together with the rest of
+	// these parameters: the Pedersen generators baked into VKMigration, the
+	// ZKAT-DLOG token formats, and the hash bound into upgrade proofs are
+	// all derived from it (see LegacyDLog).
+	LegacyDLogPublicParams []byte
 }
 
 // ── driver.PublicParameters interface implementation ────────────────────────
@@ -258,6 +269,7 @@ func (pp *PublicParams) Serialize() ([]byte, error) {
 		MaxBits:                uint32(pp.MaxBits), // #nosec G115
 		IdemixIssuerPublicKeys: idemixKeys,
 		ExtraParams:            pp.ExtraParams,
+		LegacyDlogPublicParams: pp.LegacyDLogPublicParams,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("pp: serialize failed: %w", err)
@@ -326,6 +338,7 @@ func DeserializePublicParams(raw []byte) (*PublicParams, error) {
 		MaxBits:                int(pb.MaxBits), // #nosec G115
 		IdemixIssuerPublicKeys: idemixKeys,
 		ExtraParams:            pb.ExtraParams,
+		LegacyDLogPublicParams: pb.LegacyDlogPublicParams,
 	}
 
 	if p.ExtraParams == nil {
@@ -384,7 +397,7 @@ func (pp *PublicParams) Validate() error {
 		}
 	}
 
-	return nil
+	return pp.validateMigration()
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────

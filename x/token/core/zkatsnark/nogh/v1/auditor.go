@@ -102,6 +102,9 @@ func (s *AuditorService) checkUpgradeIssue(raw []byte, md *driver.IssueMetadata,
 	if err := action.Validate(); err != nil {
 		return err
 	}
+	if action.IsDLogUpgrade() {
+		return s.checkDLogUpgradeIssue(action, md, auditTokens)
+	}
 	p := s.PublicParametersManager.PublicParams()
 	summary, err := snarktoken.SummarizeUpgradeInputs(action.Inputs, p.PrecisionValue)
 	if err != nil {

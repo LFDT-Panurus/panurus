@@ -13,9 +13,6 @@ import (
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
 	"github.com/stretchr/testify/require"
 
-	bls12381 "github.com/consensys/gnark-crypto/ecc/bls12-381"
-	"github.com/consensys/gnark-crypto/ecc/bls12-381/fp"
-
 	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/crypto/edwards"
 	snarktoken "github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/token"
 )
@@ -99,99 +96,6 @@ func TestDecodeAllSpends_StopsAtFirstFailure(t *testing.T) {
 
 	_, err := decodeAllSpends([]snarktoken.SpendDescription{good, bad}, ecc.BLS12_381)
 	require.Error(t, err)
-}
-
-// onCurveG1Point returns a genuine BLS12-381 G1 generator point. The exact
-// Generators() signature/name is a common gnark-crypto convention across
-// its curve packages but hasn't been directly confirmed for bls12-381
-// specifically — verify with `go doc github.com/consensys/gnark-crypto/
-// ecc/bls12-381` if this doesn't compile.
-func onCurveG1Point(t *testing.T) bls12381.G1Affine {
-	t.Helper()
-	_, _, g1Gen, _ := bls12381.Generators()
-
-	return g1Gen
-}
-
-func validMigrationBytes(t *testing.T) *snarktoken.MigrationAction {
-	t.Helper()
-
-	g1 := onCurveG1Point(t)
-	var pxFp, pyFp fp.Element
-	pxFp.Set(&g1.X)
-	pyFp.Set(&g1.Y)
-	pxBytes := pxFp.Bytes()
-	pyBytes := pyFp.Bytes()
-
-	var rcv fr.Element
-	_, err := rcv.SetRandom()
-	require.NoError(t, err)
-	cv, err := edwards.Jubjub().ValueCommit(100, rcv)
-	require.NoError(t, err)
-	cxBytes := cv.X.Bytes()
-	cyBytes := cv.Y.Bytes()
-
-	var cm fr.Element
-	_, err = cm.SetRandom()
-	require.NoError(t, err)
-	cmBytes := cm.Bytes()
-
-	ttBytes, err := snarktoken.EncodeTokenTypeBytes("USD", ecc.BLS12_381)
-	require.NoError(t, err)
-
-	return &snarktoken.MigrationAction{
-		CommitmentPedersenX: pxBytes[:],
-		CommitmentPedersenY: pyBytes[:],
-		CommitmentMiMC:      cmBytes[:],
-		ValueCommitOutX:     cxBytes[:],
-		ValueCommitOutY:     cyBytes[:],
-		TypeCommitment:      ttBytes[:],
-		MigrationProof:      make([]byte, 192),
-	}
-}
-
-func TestDecodeMigrationAction_Valid(t *testing.T) {
-	a := validMigrationBytes(t)
-	decoded, err := decodeMigrationAction(a, ecc.BLS12_381)
-	require.NoError(t, err)
-
-	var expectedX fp.Element
-	require.NoError(t, expectedX.SetBytesCanonical(a.CommitmentPedersenX))
-	require.Zero(t, decoded.PedersenX.Cmp(expectedX.BigInt(new(big.Int))))
-}
-
-func TestDecodeMigrationAction_PedersenPointNotOnCurve(t *testing.T) {
-	a := validMigrationBytes(t)
-	var badY fp.Element
-	badY.SetUint64(999999999)
-	badYBytes := badY.Bytes()
-	a.CommitmentPedersenY = badYBytes[:]
-
-	_, err := decodeMigrationAction(a, ecc.BLS12_381)
-	require.Error(t, err, "an off-curve Pedersen commitment point must be rejected")
-}
-
-func TestDecodeMigrationAction_NonCanonicalPedersenX(t *testing.T) {
-	a := validMigrationBytes(t)
-	nonCanonical := make([]byte, 48)
-	for i := range nonCanonical {
-		nonCanonical[i] = 0xFF
-	}
-	a.CommitmentPedersenX = nonCanonical
-
-	_, err := decodeMigrationAction(a, ecc.BLS12_381)
-	require.Error(t, err, "a non-canonical Fp element must be rejected, not silently reduced")
-}
-
-func TestDecodeMigrationAction_ValueCommitNotOnJubjub(t *testing.T) {
-	a := validMigrationBytes(t)
-	var badY fr.Element
-	badY.SetUint64(123456789)
-	badYBytes := badY.Bytes()
-	a.ValueCommitOutY = badYBytes[:]
-
-	_, err := decodeMigrationAction(a, ecc.BLS12_381)
-	require.Error(t, err, "an off-Jubjub-curve value commitment must be rejected")
 }
 
 // ── Additional decode tests ─────────────────────────────────────────────────
@@ -342,66 +246,6 @@ func TestDecodeSpendDescription_NonCanonicalTypeCommitment(t *testing.T) {
 	d.TypeCommitment = nonCanonical
 
 	_, err := decodeSpendDescription(0, d, ecc.BLS12_381)
-	require.Error(t, err, "a non-canonical TypeCommitment must be rejected")
-}
-
-func TestDecodeMigrationAction_NonCanonicalPedersenY(t *testing.T) {
-	a := validMigrationBytes(t)
-	nonCanonical := make([]byte, 48)
-	for i := range nonCanonical {
-		nonCanonical[i] = 0xFF
-	}
-	a.CommitmentPedersenY = nonCanonical
-
-	_, err := decodeMigrationAction(a, ecc.BLS12_381)
-	require.Error(t, err, "a non-canonical PedersenY must be rejected")
-}
-
-func TestDecodeMigrationAction_NonCanonicalCommitmentMiMC(t *testing.T) {
-	a := validMigrationBytes(t)
-	nonCanonical := make([]byte, 32)
-	for i := range nonCanonical {
-		nonCanonical[i] = 0xFF
-	}
-	a.CommitmentMiMC = nonCanonical
-
-	_, err := decodeMigrationAction(a, ecc.BLS12_381)
-	require.Error(t, err, "a non-canonical CommitmentMiMC must be rejected")
-}
-
-func TestDecodeMigrationAction_NonCanonicalValueCommitOutX(t *testing.T) {
-	a := validMigrationBytes(t)
-	nonCanonical := make([]byte, 32)
-	for i := range nonCanonical {
-		nonCanonical[i] = 0xFF
-	}
-	a.ValueCommitOutX = nonCanonical
-
-	_, err := decodeMigrationAction(a, ecc.BLS12_381)
-	require.Error(t, err, "a non-canonical ValueCommitOutX must be rejected")
-}
-
-func TestDecodeMigrationAction_NonCanonicalValueCommitOutY(t *testing.T) {
-	a := validMigrationBytes(t)
-	nonCanonical := make([]byte, 32)
-	for i := range nonCanonical {
-		nonCanonical[i] = 0xFF
-	}
-	a.ValueCommitOutY = nonCanonical
-
-	_, err := decodeMigrationAction(a, ecc.BLS12_381)
-	require.Error(t, err, "a non-canonical ValueCommitOutY must be rejected")
-}
-
-func TestDecodeMigrationAction_NonCanonicalTypeCommitment(t *testing.T) {
-	a := validMigrationBytes(t)
-	nonCanonical := make([]byte, 32)
-	for i := range nonCanonical {
-		nonCanonical[i] = 0xFF
-	}
-	a.TypeCommitment = nonCanonical
-
-	_, err := decodeMigrationAction(a, ecc.BLS12_381)
 	require.Error(t, err, "a non-canonical TypeCommitment must be rejected")
 }
 

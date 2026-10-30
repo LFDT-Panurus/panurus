@@ -94,7 +94,7 @@ func TestTokensService_InPlaceFabtokenFormats(t *testing.T) {
 
 		svc, err := snarktoken.NewTokensService(logging.MustGetLogger("test"), &staticPPM{pp: p}, &stubDeserializer{})
 		require.NoError(t, err)
-		up, err := snarktoken.NewTokensUpgradeService(nil, tc.precision, nil, nil, svc.SupportedTokenFormats())
+		up, err := snarktoken.NewTokensUpgradeService(nil, tc.precision, nil, nil, svc.SupportedTokenFormats(), nil)
 		require.NoError(t, err)
 		for _, precision := range []uint64{16, 32, 64} {
 			format, err := fabtoken.SupportedTokenFormat(precision)

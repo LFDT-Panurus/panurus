@@ -38,6 +38,12 @@ func (o *Orchestrator) SetMigrationProver(mp *MigrationProver) {
 	o.migrationProver = mp
 }
 
+// HasMigrationProver reports whether a migration prover is configured, that
+// is, whether the orchestrator can build ZKAT-DLOG upgrade issuances.
+func (o *Orchestrator) HasMigrationProver() bool {
+	return o.migrationProver != nil
+}
+
 type SpendRequest struct {
 	Note *snarktoken.Note
 	// Upgraded marks a legacy fabtoken output upgraded in place: the spend
@@ -62,19 +68,6 @@ type outputOutcome struct {
 	index  int
 	result ProofResult
 	desc   snarktoken.OutputDescription
-	note   *snarktoken.Note
-	err    error
-}
-
-// MigrationRequest describes a single zkatdlog token to migrate.
-type MigrationRequest struct {
-	Opening   snarktoken.PedersenOpening
-	Recipient []byte
-}
-
-type migrationOutcome struct {
-	index  int
-	action snarktoken.MigrationAction
 	note   *snarktoken.Note
 	err    error
 }
@@ -293,51 +286,6 @@ func (o *Orchestrator) buildIssueAction(
 	return action, newNotes, typeRandomnessBytes, nil
 }
 
-// BuildMigrationAction generates proofs for a batch of zkatdlog token
-// migrations concurrently, producing one MigrationAction per token.
-// No binding signature is computed (Decision C: the shared Value variable
-// in each circuit is the conservation proof).
-//
-// Returns the newly created Notes alongside the actions; persisting or
-// transmitting them is the caller's responsibility.
-func (o *Orchestrator) BuildMigrationAction(
-	ctx context.Context,
-	requests []MigrationRequest,
-	publicParams *pp.PublicParams,
-) ([]snarktoken.MigrationAction, []*snarktoken.Note, error) {
-	if len(requests) == 0 {
-		return nil, nil, errors.New("orchestrator: migration action requires at least one request")
-	}
-
-	if o.migrationProver == nil {
-		return nil, nil, errors.New("orchestrator: migration prover not configured — call SetMigrationProver")
-	}
-
-	migCh := make(chan migrationOutcome, len(requests))
-	for i, req := range requests {
-		go o.proveMigration(i, req, publicParams, migCh)
-	}
-
-	outcomes := make([]migrationOutcome, len(requests))
-	for range requests {
-		r := <-migCh
-		if r.err != nil {
-			return nil, nil, errors.Wrapf(r.err, "orchestrator: migration proof %d failed", r.index)
-		}
-
-		outcomes[r.index] = r
-	}
-
-	actions := make([]snarktoken.MigrationAction, len(outcomes))
-	notes := make([]*snarktoken.Note, len(outcomes))
-	for i, oc := range outcomes {
-		actions[i] = oc.action
-		notes[i] = oc.note
-	}
-
-	return actions, notes, nil
-}
-
 func (o *Orchestrator) proveSpend(index int, req SpendRequest, typeRandomness []byte, publicParams *pp.PublicParams, out chan<- spendOutcome) {
 	witnessRes, err := BuildSpendWitness(req.Note, typeRandomness, publicParams)
 	if err != nil {
@@ -411,52 +359,6 @@ func (o *Orchestrator) proveOutput(index int, req OutputRequest, publicParams *p
 			TypeCommitment:  witnessRes.TypeCommitment,
 			OutputProof:     proofBytes,
 			Recipient:       req.Recipient,
-		},
-		note: witnessRes.Note,
-	}
-}
-
-func (o *Orchestrator) proveMigration(index int, req MigrationRequest, publicParams *pp.PublicParams, out chan<- migrationOutcome) {
-	// Each migration request gets its own typeRandomness since
-	// each produces an independent MigrationAction.
-	cc, err := newCurveCtx(publicParams.Curve)
-	if err != nil {
-		out <- migrationOutcome{index: index, err: err}
-
-		return
-	}
-	typeRandomnessBytes, err := cc.randomFieldElement()
-	if err != nil {
-		out <- migrationOutcome{index: index, err: errors.Wrap(err, "type randomness generation failed")}
-
-		return
-	}
-
-	witnessRes, err := BuildMigrationWitness(req.Opening, publicParams, typeRandomnessBytes)
-	if err != nil {
-		out <- migrationOutcome{index: index, err: err}
-
-		return
-	}
-
-	proofBytes, err := o.migrationProver.Prove(witnessRes.Assignment)
-	if err != nil {
-		out <- migrationOutcome{index: index, err: err}
-
-		return
-	}
-
-	out <- migrationOutcome{
-		index: index,
-		action: snarktoken.MigrationAction{
-			CommitmentPedersenX: witnessRes.PedersenCommitX[:],
-			CommitmentPedersenY: witnessRes.PedersenCommitY[:],
-			CommitmentMiMC:      witnessRes.Commitment,
-			ValueCommitOutX:     witnessRes.ValueCommitmentX,
-			ValueCommitOutY:     witnessRes.ValueCommitmentY,
-			TypeCommitment:      witnessRes.TypeCommitment,
-			MigrationProof:      proofBytes,
-			Recipient:           req.Recipient,
 		},
 		note: witnessRes.Note,
 	}

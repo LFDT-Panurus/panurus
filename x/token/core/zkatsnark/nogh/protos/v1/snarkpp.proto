@@ -65,4 +65,8 @@ message PublicParameters {
   repeated IdemixIssuerPublicKey idemix_issuer_public_keys = 17;
   // extra_params carries any additional parameters not covered by the named accessors
   map<string, bytes> extra_params = 18;
+  // legacy_dlog_public_params are the serialized ZKAT-DLOG (zkatdlognogh v1)
+  // public parameters whose outputs can be upgraded to zkatsnark; empty when
+  // ZKAT-DLOG upgrades are not supported
+  bytes legacy_dlog_public_params = 19;
 }

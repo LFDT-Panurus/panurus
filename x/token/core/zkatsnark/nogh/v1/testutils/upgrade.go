@@ -194,6 +194,7 @@ func NewUpgradeFixtureWithOptions(configuration *SetupConfiguration, opts Upgrad
 			deserializer,
 			signers,
 			[]token2.Format{snarktoken.OutputTokenFormat},
+			nil,
 		)
 	}
 	if err != nil {

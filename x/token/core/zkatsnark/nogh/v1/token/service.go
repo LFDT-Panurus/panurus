@@ -14,7 +14,9 @@ import (
 	"github.com/LFDT-Panurus/panurus/token/core/common"
 	fabtoken "github.com/LFDT-Panurus/panurus/token/core/fabtoken/v1"
 	"github.com/LFDT-Panurus/panurus/token/core/fabtoken/v1/actions"
+	dlogmath "github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/crypto/math"
 	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/crypto/upgrade"
+	dlogtoken "github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/token"
 	"github.com/LFDT-Panurus/panurus/token/driver"
 	"github.com/LFDT-Panurus/panurus/token/services/logging"
 	"github.com/LFDT-Panurus/panurus/token/token"
@@ -32,7 +34,13 @@ type TokensService struct {
 	Deserializer            driver.Deserializer
 	// SupportedTokenFormatList lists the formats spendable directly: zkatsnark
 	// outputs and, upgraded in place, the fabtoken formats of InPlaceFabtokenPrecisions.
+	// ZKAT-DLOG formats are never listed: those outputs are only upgraded
+	// through the issuer (TokensUpgradeService).
 	SupportedTokenFormatList []token.Format
+	// Legacy are the ZKAT-DLOG public parameters whose outputs can be
+	// upgraded, used to open them (Deobfuscate). Nil when ZKAT-DLOG upgrades
+	// are not supported.
+	Legacy *pp.LegacyDLog
 }
 
 func NewTokensService(logger logging.Logger, publicParametersManager common.PublicParametersManager[*pp.PublicParams], deserializer driver.Deserializer) (*TokensService, error) {
@@ -49,11 +57,24 @@ func NewTokensService(logger logging.Logger, publicParametersManager common.Publ
 		formats = append(formats, format)
 	}
 
+	var legacyDLog *pp.LegacyDLog
+	if p != nil {
+		var err error
+		legacyDLog, err = p.LegacyDLog()
+		if err != nil {
+			if !errors.Is(err, pp.ErrNoLegacyDLog) {
+				return nil, errors.WithMessagef(err, "invalid ZKAT-DLOG public parameters")
+			}
+			legacyDLog = nil
+		}
+	}
+
 	return &TokensService{
 		Logger:                   logger,
 		PublicParametersManager:  publicParametersManager,
 		Deserializer:             deserializer,
 		SupportedTokenFormatList: formats,
+		Legacy:                   legacyDLog,
 	}, nil
 }
 
@@ -88,6 +109,9 @@ func (s *TokensService) SupportedTokenFormats() []token.Format {
 func (s *TokensService) Deobfuscate(ctx context.Context, output driver.TokenOutput, outputMetadata driver.TokenOutputMetadata) (*token.Token, driver.Identity, []driver.Identity, token.Format, error) {
 	if IsFabtokenOutput(output) {
 		return s.deobfuscateFabtoken(output, outputMetadata)
+	}
+	if IsDLogOutput(output) {
+		return s.deobfuscateDLog(output, outputMetadata)
 	}
 	note, err := Deserialize(outputMetadata)
 	if err != nil {
@@ -151,7 +175,59 @@ func (s *TokensService) deobfuscateFabtoken(output driver.TokenOutput, outputMet
 	return &token.Token{Owner: out.Owner, Type: out.Type, Quantity: out.Quantity}, md.Issuer, recipients, OutputTokenFormat, nil
 }
 
+// deobfuscateDLog opens a not-yet-upgraded ZKAT-DLOG output with the embedded
+// ZKAT-DLOG public parameters, as ZKAT-DLOG itself does, so that wallets, the
+// token store and auditors keep handling it until it is upgraded. It returns
+// the ZKAT-DLOG output format, which zkatsnark never spends directly.
+func (s *TokensService) deobfuscateDLog(output driver.TokenOutput, outputMetadata driver.TokenOutputMetadata) (*token.Token, driver.Identity, []driver.Identity, token.Format, error) {
+	if s.Legacy == nil {
+		return nil, nil, nil, "", errors.New("ZKAT-DLOG output, but no ZKAT-DLOG public parameters are configured")
+	}
+	out := &dlogtoken.Token{}
+	if err := out.Deserialize(output); err != nil {
+		return nil, nil, nil, "", errors.Wrap(err, "failed to unmarshal ZKAT-DLOG output")
+	}
+	if err := dlogmath.CheckElement(out.Data, s.Legacy.PP.Curve); err != nil {
+		return nil, nil, nil, "", errors.Wrap(err, "invalid ZKAT-DLOG commitment")
+	}
+	md := &dlogtoken.Metadata{}
+	if err := md.Deserialize(outputMetadata); err != nil {
+		return nil, nil, nil, "", errors.Wrap(err, "failed to unmarshal ZKAT-DLOG output metadata")
+	}
+	if err := dlogmath.CheckBaseElement(md.Value, s.Legacy.PP.Curve); err != nil {
+		return nil, nil, nil, "", errors.Wrap(err, "invalid value in ZKAT-DLOG output metadata")
+	}
+	if err := dlogmath.CheckBaseElement(md.BlindingFactor, s.Legacy.PP.Curve); err != nil {
+		return nil, nil, nil, "", errors.Wrap(err, "invalid blinding factor in ZKAT-DLOG output metadata")
+	}
+	clear, err := out.ToClear(md, s.Legacy.PP)
+	if err != nil {
+		return nil, nil, nil, "", errors.Wrap(err, "failed to open ZKAT-DLOG output")
+	}
+	recipients, err := s.Deserializer.Recipients(out.Owner)
+	if err != nil {
+		return nil, nil, nil, "", errors.Wrap(err, "failed to get recipients")
+	}
+	format, err := dlogtoken.SupportedTokenFormat(s.Legacy.PP, s.Legacy.PP.BitLength())
+	if err != nil {
+		return nil, nil, nil, "", errors.Wrap(err, "failed computing ZKAT-DLOG token format")
+	}
+
+	return clear, md.Issuer, recipients, format, nil
+}
+
 func (s *TokensService) Recipients(output driver.TokenOutput) ([]driver.Identity, error) {
+	if IsDLogOutput(output) {
+		if s.Legacy == nil {
+			return nil, errors.New("ZKAT-DLOG output, but no ZKAT-DLOG public parameters are configured")
+		}
+		out := &dlogtoken.Token{}
+		if err := out.Deserialize(output); err != nil {
+			return nil, errors.Wrap(err, "failed to unmarshal ZKAT-DLOG output")
+		}
+
+		return s.Deserializer.Recipients(out.Owner)
+	}
 	if IsFabtokenOutput(output) {
 		out := &actions.Output{}
 		if err := out.Deserialize(output); err != nil {
@@ -179,20 +255,23 @@ func (s *TokensService) Recipients(output driver.TokenOutput) ([]driver.Identity
 // eligible formats are exactly the fabtoken formats absent from
 // supportedTokenFormats (see InPlaceFabtokenPrecisions), so a token is either
 // upgraded in place inside a transfer or by burn-and-re-issue, never both.
-// Commitment tokens of other drivers are not supported (no public parameters
-// history).
+// It also accepts the ZKAT-DLOG outputs of the single ZKAT-DLOG generation
+// embedded in the public parameters, resolved through a LegacyDLogResolver;
+// commitment tokens of any other generation are refused.
 type TokensUpgradeService = upgrade.Service
 
 // NewTokensUpgradeService returns the zkatsnark TokensUpgradeService. precision
 // is the zkatsnark quantity precision, used to parse fabtoken quantities;
 // supportedTokenFormats are the formats zkatsnark spends directly, which are
-// never upgrade-eligible.
+// never upgrade-eligible. legacy resolves the ZKAT-DLOG formats that can be
+// upgraded; nil restricts the service to fabtoken outputs.
 func NewTokensUpgradeService(
 	logger logging.Logger,
 	precision uint64,
 	deserializer upgrade.Deserializer,
 	identityProvider upgrade.IdentityProvider,
 	supportedTokenFormats []token.Format,
+	legacy upgrade.PublicParamsResolver,
 ) (*TokensUpgradeService, error) {
 	// the complement of the fabtoken formats TokensService spends directly
 	var fabtokenFormats []token.Format
@@ -213,6 +292,7 @@ func NewTokensUpgradeService(
 		SupportedTokenFormatList:        supportedTokenFormats,
 		Deserializer:                    deserializer,
 		IdentityProvider:                identityProvider,
+		PublicParamsHistory:             legacy,
 	}, nil
 }
 
