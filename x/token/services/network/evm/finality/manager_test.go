@@ -213,6 +213,41 @@ func TestAddListenerNotifiesOnceApplied(t *testing.T) {
 	assert.Equal(t, []byte("tr-hash"), listener.trHash)
 }
 
+// ctxRecordingListener records how long the context it is notified with has left.
+type ctxRecordingListener struct {
+	left chan time.Duration
+}
+
+func (l *ctxRecordingListener) OnStatus(ctx context.Context, _ string, _ int, _ string, _ []byte) {
+	left := time.Duration(-1) // no deadline
+	if d, ok := ctx.Deadline(); ok {
+		left = time.Until(d)
+	}
+	l.left <- left
+}
+
+func (l *ctxRecordingListener) OnError(context.Context, string, error) {}
+
+// TestValidFoundLateGetsAFreshContext checks a listener notified Valid near the end of the watch is
+// not handed the watch's own context: the ttx listener commits the transaction under it, and with
+// only the rest of the window left that commit can run out of time.
+func TestValidFoundLateGetsAFreshContext(t *testing.T) {
+	state := &stubState{}
+	m := fastManager(&mock.EVMClient{}, state, 300*time.Millisecond)
+	listener := &ctxRecordingListener{left: make(chan time.Duration, 1)}
+
+	require.NoError(t, m.AddListener(t.Context(), anchor(0x01), "anchor-1", listener))
+	time.Sleep(250 * time.Millisecond)
+	state.apply([]byte("tr-hash"))
+
+	select {
+	case left := <-listener.left:
+		assert.Equal(t, time.Duration(-1), left, "the listener's context must not carry the watch deadline")
+	case <-time.After(5 * time.Second):
+		t.Fatal("listener not notified")
+	}
+}
+
 // TestAddListenerTimesOutAsInvalid is the only failure signal available by anchor: nothing appeared
 // before the timeout, so the caller must stop waiting.
 func TestAddListenerTimesOutAsInvalid(t *testing.T) {
