@@ -65,6 +65,14 @@ parameters generated with the fork remain valid.
   value plus the order open the same commitment; the range check removes the ambiguity. The note commitment
   already pins the value, so this is defence in depth. It changes the spend constraint system, so spend keys of
   existing public parameters must be regenerated.
+- **Output public inputs.** `OutputCircuit`'s four public inputs (`CommitmentOut`, `ValueCommitOutX/Y`,
+  `TypeCommitment`) must be tagged `gnark:",public"`, with the leading comma. gnark reads the text before the
+  first comma as the field name, so `gnark:"public"` left them secret. The output verifying key then bound no
+  public input, and the validator's public-only witness (`publicWitnessForOutput`) was empty, so an output proof
+  verified against any commitment. The tag is fixed, which changes the output constraint system, so output keys
+  of existing public parameters must be regenerated (`setup.SetupAll`). `TestOutputCircuitPublicInputs`,
+  `TestOutputCircuitRejectsTamperedPublicWitness` (`nogh/v1/circuit`) and
+  `TestPublicWitnessForOutput_BindsAllPublicInputs` (`nogh/v1/validator`) pin the layout.
 - **Trailing bytes are rejected** for proving keys, verifying keys and proofs of every proof system
   (`backend.ErrTrailingBytes`); gnark's decoders alone stop at the end of the object and ignore the rest, which
   makes the encoding malleable.

@@ -23,10 +23,10 @@ import (
 //  4. TypeCommitment == MiMC(TokenType, TypeRandomness)
 type OutputCircuit struct {
 	// Public inputs
-	CommitmentOut   frontend.Variable `gnark:"public"`
-	ValueCommitOutX frontend.Variable `gnark:"public"`
-	ValueCommitOutY frontend.Variable `gnark:"public"`
-	TypeCommitment  frontend.Variable `gnark:"public"`
+	CommitmentOut   frontend.Variable `gnark:",public"`
+	ValueCommitOutX frontend.Variable `gnark:",public"`
+	ValueCommitOutY frontend.Variable `gnark:",public"`
+	TypeCommitment  frontend.Variable `gnark:",public"`
 
 	// Private inputs
 	Value          frontend.Variable
