@@ -304,7 +304,7 @@ func TestFixedGasStrategyIsValid(t *testing.T) {
 
 // TestFinalizedTagRequiresLongEnoughTimeout pins the fix for the bug where the shipped default paired
 // the finalized tag with a timeout shorter than real PoS finality: a deployment running on defaults
-// alone would time out and report every transaction Invalid, whether or not it actually succeeded.
+// alone would time out on every transaction, whether or not it actually succeeded.
 // The floor applies only to the finalized tag; safe and latest resolve on their own faster schedules,
 // so a short timeout there is a legitimate choice, not a misconfiguration Validate can detect.
 func TestFinalizedTagRequiresLongEnoughTimeout(t *testing.T) {
