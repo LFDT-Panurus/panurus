@@ -146,7 +146,7 @@ func (d *Driver) NewTokenService(tmsID driver.TMSID, publicParams []byte) (drive
 	deserializer := ws.Deserializer
 	ip := ws.IdentityProvider
 
-	authorization := newAuthorization(logger, ppm.PublicParams(), ws)
+	authorization := common.NewStandardAuthorization(logger, ppm.PublicParams(), ws)
 
 	baseParams, err := prepared.NewParams(ppp)
 	if err != nil {
@@ -212,15 +212,6 @@ func (d *Driver) NewTokenService(tmsID driver.TMSID, publicParams []byte) (drive
 	}
 
 	return service, err
-}
-
-// newAuthorization returns the ownership, issuance and auditor authorization
-// chain of the driver. It is the chain shared by every token driver: the
-// type-gated htlc, multisig and boolpolicy authorizations go before the
-// wallet-based one, which would otherwise claim escrow-typed tokens whose
-// composite identity is bound to a wallet under the wrong wallet id.
-func newAuthorization(logger logging.Logger, pp driver.PublicParameters, ws driver.WalletService) *common.AuthorizationMultiplexer {
-	return common.NewStandardAuthorization(logger, pp, ws)
 }
 
 // NewTokensServices builds the TokensService and the TokensUpgradeService of a
