@@ -2,6 +2,8 @@
 
 This document outlines how to run tests for Panurus.
 
+> **Note:** The repository currently has 64 unique fuzz targets, and the nightly CI workflow (`nightly-fuzz.yml`) runs every one of them. The "Available Fuzz Targets" table below is being updated to reflect the full list.
+
 ## Getting Started
 
 To work with Panurus and run tests, you first need to clone the repository and set up your environment.
