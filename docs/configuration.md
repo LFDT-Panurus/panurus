@@ -1103,7 +1103,7 @@ asynchronous finality listener. On a missing lookup whose producing transaction 
 still `Pending`, the gate waits `retryDelay` and retries up to `numRetries`
 attempts before failing, instead of spuriously rejecting a validly-audited,
 quickly-chained transaction. This mirrors the tolerance already applied on the
-sibling `Audit()` path. Applies to both the `fabtoken` and `dlog` drivers.
+sibling `Audit()` path. Applies to the `fabtoken`, `dlog` and `zkatsnark` drivers.
 
 If not specified, the default configuration is:
 

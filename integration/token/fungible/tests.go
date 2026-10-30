@@ -18,6 +18,7 @@ import (
 	"github.com/LFDT-Panurus/panurus/integration/nwo/runner/nwo"
 	"github.com/LFDT-Panurus/panurus/integration/nwo/token"
 	"github.com/LFDT-Panurus/panurus/integration/nwo/token/generators/crypto/zkatdlognoghv1"
+	gzkatsnarkv1 "github.com/LFDT-Panurus/panurus/integration/nwo/token/generators/crypto/zkatsnarkv1"
 	"github.com/LFDT-Panurus/panurus/integration/nwo/txgen/model"
 	token3 "github.com/LFDT-Panurus/panurus/integration/token"
 	common2 "github.com/LFDT-Panurus/panurus/integration/token/common"
@@ -956,10 +957,10 @@ func TestPublicParamsUpdate(network *integration.Infrastructure, newAuditorID st
 	if updateWithAppend {
 		IssueCash(network, "", "USD", 110, alice, newAuditor, true, issuer)
 	} else {
-		// The dlog auditor rejects an unrecognized issuer during audit, before the
+		// The dlog and zkatsnark auditors reject an unrecognized issuer during audit, before the
 		// transaction ever reaches the on-chain validator that returns ErrIssuerNotAuthorized.
 		expectedErr := validator.ErrIssuerNotAuthorized.Error()
-		if tms.Driver == zkatdlognoghv1.DriverIdentifier {
+		if tms.Driver == zkatdlognoghv1.DriverIdentifier || tms.Driver == gzkatsnarkv1.DriverIdentifier {
 			expectedErr = "is not a recognized issuer"
 		}
 		IssueCash(network, "", "USD", 110, alice, newAuditor, true, issuer, expectedErr)
