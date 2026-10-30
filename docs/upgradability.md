@@ -118,9 +118,13 @@ Panurus records the public parameters in two places, and both matter for this fl
 The ZKAT-SNARK driver upgrades cleartext fabtoken outputs with both mechanisms above: in place,
 inside an ordinary transfer, or by burn-and-re-issue through an issuer. Fabtoken formats are split
 between the two exactly as for ZKAT-DLOG, and the issuer path keeps the ZKAT-DLOG trust model: the
-issuer signature alone authorizes the burn on the ledger. The ZKAT-SNARK driver cannot yet upgrade ZKAT-DLOG
-outputs on either path. See [ZKAT-SNARK: Token Upgrades](drivers/zkatsnark.md#token-upgrades) for
-the protocols, the on-chain checks, and the status of the ZKAT-DLOG migration.
+issuer signature alone authorizes the burn on the ledger. ZKAT-DLOG outputs of a BLS12-381
+deployment are upgraded through the issuer only: the ZKAT-SNARK public parameters embed the
+ZKAT-DLOG public parameters, and every redeemed output carries a migration proof that its ledger
+commitment opens to the issued type and to a hidden value conserved by the binding signature (see
+[Upgrading ZKAT-DLOG tokens](drivers/zkatsnark.md#upgrading-zkat-dlog-tokens)). See
+[ZKAT-SNARK: Token Upgrades](drivers/zkatsnark.md#token-upgrades) for the protocols, the on-chain
+checks, and the follow-ups.
 
 ### Code Example: Identifying Unsupported Tokens
 
