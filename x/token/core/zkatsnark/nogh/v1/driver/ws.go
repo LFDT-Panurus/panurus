@@ -20,6 +20,7 @@ import (
 	"github.com/LFDT-Panurus/panurus/token/services/identity/wallet"
 	"github.com/LFDT-Panurus/panurus/token/services/identity/x509"
 	"github.com/LFDT-Panurus/panurus/token/services/logging"
+	"github.com/LFDT-Panurus/panurus/token/services/observability"
 	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/pp"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/services/metrics/disabled"
@@ -165,7 +166,7 @@ func (d *WalletServiceFactory) NewWalletService(tmsConfig driver.Configuration, 
 		return nil, errors.Errorf("invalid public parameters type [%T]", params)
 	}
 
-	return d.BaseWalletServiceFactory.NewWalletService(
+	ws, err := d.BaseWalletServiceFactory.NewWalletService(
 		tmsConfig,
 		&membership.NoBinder{},
 		d.storageProvider,
@@ -177,4 +178,14 @@ func (d *WalletServiceFactory) NewWalletService(tmsConfig driver.Configuration, 
 		true,
 		&disabled.Provider{},
 	)
+	if err != nil {
+		return nil, err
+	}
+
+	// Decorate with circuit breaker protection loaded from the TMS configuration.
+	// A disabled.Provider is passed because the standalone WalletServiceFactory does
+	// not have access to TMS-scoped metrics from the container.
+	cbConfig := observability.LoadCircuitBreakerConfig(tmsConfig)
+
+	return observability.NewWalletServiceDecoratorWithConfig(ws, &disabled.Provider{}, cbConfig), nil
 }

@@ -14,6 +14,7 @@ import (
 	"github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/crypto/upgrade"
 	"github.com/LFDT-Panurus/panurus/token/driver"
 	"github.com/LFDT-Panurus/panurus/token/services/logging"
+	"github.com/LFDT-Panurus/panurus/token/services/observability"
 	"github.com/LFDT-Panurus/panurus/token/services/utils"
 	zkatsnark "github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1"
 	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/pp"
@@ -35,9 +36,13 @@ type Driver struct {
 	endpointService  cdriver.NetworkBinderService
 	networkProvider  cdriver.NetworkProvider
 	vaultProvider    cdriver.VaultProvider
+
+	resourceLimitsProvider driver.ResourceLimitsProvider
 }
 
 // NewTokenDriver returns a new factory for the zkatsnark driver.
+// The validator resource limits are resolved per TMS from the passed resourceLimitsProvider
+// (configuration key token.validation.limits).
 func NewTokenDriver(
 	metricsProvider cdriver.MetricsProvider,
 	tracerProvider cdriver.TracerProvider,
@@ -47,6 +52,7 @@ func NewTokenDriver(
 	endpointService cdriver.NetworkBinderService,
 	networkProvider cdriver.NetworkProvider,
 	vaultProvider cdriver.VaultProvider,
+	resourceLimitsProvider driver.ResourceLimitsProvider,
 ) core.NamedFactory[driver.Driver] {
 	return core.NamedFactory[driver.Driver]{
 		Name: core.DriverIdentifier(driver.TokenDriverName("zkatsnark"), driver.TokenDriverVersion(1)),
@@ -59,6 +65,7 @@ func NewTokenDriver(
 			endpointService,
 			networkProvider,
 			vaultProvider,
+			resourceLimitsProvider,
 		),
 	}
 }
@@ -72,6 +79,7 @@ func newTokenDriver(
 	endpointService cdriver.NetworkBinderService,
 	networkProvider cdriver.NetworkProvider,
 	vaultProvider cdriver.VaultProvider,
+	resourceLimitsProvider driver.ResourceLimitsProvider,
 ) *Driver {
 	return &Driver{
 		metricsProvider:  metricsProvider,
@@ -82,6 +90,8 @@ func newTokenDriver(
 		endpointService:  endpointService,
 		networkProvider:  networkProvider,
 		vaultProvider:    vaultProvider,
+
+		resourceLimitsProvider: resourceLimitsProvider,
 	}
 }
 
@@ -145,8 +155,13 @@ func (d *Driver) NewTokenService(tmsID driver.TMSID, publicParams []byte) (drive
 	}
 	deserializer := ws.Deserializer
 	ip := ws.IdentityProvider
+	// Decorate WalletService with circuit breaker protection loaded from TMS configuration and TMS-scoped Prometheus metrics.
+	// Note: metricsProvider is scoped via metrics.NewTMSProvider with the TMS ID, which injects
+	// the required network, channel, and namespace labels.
+	cbConfig := observability.LoadCircuitBreakerConfig(tmsConfig)
+	decoratedWS := observability.NewWalletServiceDecoratorWithConfig(ws, metricsProvider, cbConfig)
 
-	authorization := common.NewStandardAuthorization(logger, ppm.PublicParams(), ws)
+	authorization := common.NewStandardAuthorization(logger, ppm.PublicParams(), decoratedWS)
 
 	baseParams, err := prepared.NewParams(ppp)
 	if err != nil {
@@ -163,7 +178,11 @@ func (d *Driver) NewTokenService(tmsID driver.TMSID, publicParams []byte) (drive
 		return nil, errors.Wrap(err, "failed to prepare public parameters for verification")
 	}
 
-	val, err := validator.NewValidator(verifierParams, deserializer, driver.ResourceLimits{}.WithDefaults())
+	limits, err := d.resourceLimitsProvider.ResourceLimits()
+	if err != nil {
+		return nil, errors.Wrapf(err, "failed resolving validator resource limits")
+	}
+	val, err := validator.NewValidator(verifierParams, deserializer, limits)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to instantiate validator")
 	}
@@ -177,11 +196,11 @@ func (d *Driver) NewTokenService(tmsID driver.TMSID, publicParams []byte) (drive
 		return nil, errors.WithMessagef(err, "failed to initialize token services for [%s:%s]", tmsID.Network, tmsID.Namespace)
 	}
 
-	issueService := zkatsnark.NewIssueService(logger, ppm, ws, deserializer, tokensService, tokensUpgradeService, orchestrator, val)
+	issueService := zkatsnark.NewIssueService(logger, ppm, decoratedWS, deserializer, tokensService, tokensUpgradeService, orchestrator, val)
 	transferService := zkatsnark.NewTransferService(
 		logger,
 		ppm,
-		ws,
+		decoratedWS,
 		common.NewVaultLedgerTokenAndMetadataLoader[[]byte, []byte](qe, &common.IdentityTokenAndMetadataDeserializer{}),
 		deserializer,
 		d.tracerProvider,
@@ -194,7 +213,7 @@ func (d *Driver) NewTokenService(tmsID driver.TMSID, publicParams []byte) (drive
 
 	service, err := zkatsnark.NewTokenService(
 		logger,
-		ws,
+		decoratedWS,
 		ppm,
 		ip,
 		deserializer,

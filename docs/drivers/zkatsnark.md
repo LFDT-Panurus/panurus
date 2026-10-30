@@ -1,6 +1,7 @@
 # ZKAT-SNARK Driver
 
-This page covers the [proof systems](#proof-systems) the driver supports and how it
+This page covers the [proof systems](#proof-systems) the driver supports, how the driver is
+[wired](#driver-wiring) into a token management service, and how it
 [upgrades tokens](#token-upgrades) created by other drivers.
 
 ## Proof Systems
@@ -53,6 +54,10 @@ parameters generated with the fork remain valid.
 - **Resource limits.** `driver.ResourceLimits.MaxProofBytes` defaults to 128 KiB and is enforced by the
   zkatdlog driver, not by zkatsnark. If you add such a check to zkatsnark, it must be per proof
   system, otherwise it rejects every `plonkfri` proof.
+  The request-level limits do apply to zkatsnark: a `plonkfri` transfer carries one ~841 KiB proof
+  per input and output, so operators must raise `maxRequestBytes` and `maxActionBytes` under
+  `token.validation.limits` (see [Driver wiring](#driver-wiring)); the defaults (256 KiB per action)
+  reject `plonkfri` requests.
 
 #### Parameter bounds and decoding hardening
 
@@ -102,6 +107,26 @@ p, err := setup.SetupAll(p)
 ## Ownership Authorization
 
 The driver decides whether a token is owned by a local wallet (`IsMine`), was issued by a local issuer (`Issued`), and whether this node is an auditor (`AmIAnAuditor`) through `common.NewStandardAuthorization` (`token/core/common/authorization.go`), the same chain fabtoken and zkatdlog use. The chain is first-match-wins. The type-gated htlc, multisig and boolpolicy authorizations run first and record escrow-typed tokens under prefixed ownership ids (`htlc.sender<wallet>`, `htlc.recipient<wallet>`, `escrow<wallet>`, `policy<wallet>`). The wallet-based authorization runs last as the catch-all for plain owners. If it ran first, it would claim an escrow token whose composite identity is bound to a wallet under that wallet id and drop its ownership entries. See [Identity Service](../services/identity.md) for how to add a new escrow type. The ordering is covered by `TestAuthorizationOrder_BoundPolicyIdentity` in `token/services/ttx/boolpolicy/auth_test.go`.
+
+## Driver Wiring
+
+`Driver.NewTokenService` (`x/token/core/zkatsnark/nogh/v1/driver/driver.go`) builds a TMS the same way
+the ZKAT-DLOG driver does:
+
+- **Resource limits.** `NewTokenDriver` takes the `driver.ResourceLimitsProvider` registered by
+  `token/sdk/dig` (backed by the `token.validation.limits` configuration key, see
+  [Validation Resource Limits](validation-resource-limits.md)). `NewTokenService` resolves it per TMS
+  and passes the limits to the validator, which stamps them onto every deserialized action. The same
+  limits bound the burn-and-re-issue split (`IssueService.maxOutputs`). Configured limits are
+  therefore enforced on the endorser side too, consistently with the standalone validator driver.
+- **Circuit breaker.** The wallet service is wrapped with
+  `observability.NewWalletServiceDecoratorWithConfig`, configured from the TMS `circuitBreaker` key
+  (disabled by default) and the TMS-scoped metrics provider. The decorated wallet service backs the
+  authorization, the issue and transfer services and the token service. The standalone
+  `WalletServiceFactory` applies the same decorator with a `disabled.Provider`.
+- **Policy identities.** `NewEIDRHDeserializer` registers `boolpolicy.NewAuditInfoDeserializer(d)`
+  with the parent multiplex, so a `boolpolicy` identity whose components share an enrollment ID
+  resolves to it, and malformed component audit info is reported as an error.
 
 ## Token Upgrades
 
@@ -293,8 +318,8 @@ or change the type.
    - It splits the total into `k = ⌈total / pp.MaxTokenValue()⌉` values (`splitUpgradeTotal`):
      `k − 1` values of `MaxTokenValue` and the remainder. Each value is in `[1, MaxTokenValue]`,
      and they sum to the total. If `k` exceeds the validator's `ResourceLimits.MaxOutputs`
-     (256 by default), the upgrade is refused before any proving, with an error stating `k` and
-     the limit.
+     (256 by default, configurable via `token.validation.limits`), the upgrade is refused before
+     any proving, with an error stating `k` and the limit.
    - It gets the issuer identity for the type from the issuer wallet.
    - `Orchestrator.BuildUpgradeIssueAction` builds an ordinary ZKAT-SNARK issue of the `k`
      outputs, all to the single recipient. It adds the redeemed tokens as `Inputs` and reveals the

@@ -81,7 +81,7 @@ token:
 
 The following metrics are exposed when the observability decorator is enabled.
 
-Exported metric names are assembled from the calling package. In production token driver paths (both FabToken and ZKAT-DLog), the decorator receives a TMS-scoped provider, so metrics are exported with the `panurus_core_common_metrics_` prefix (e.g., `panurus_core_common_metrics_wallet_requests_total`). If instantiated through the standalone `WalletServiceFactory` path with a container provider, they would be exported under `panurus_services_observability_` (e.g., `panurus_services_observability_wallet_requests_total`).
+Exported metric names are assembled from the calling package. In production token driver paths (FabToken, ZKAT-DLog and ZKAT-SNARK), the decorator receives a TMS-scoped provider, so metrics are exported with the `panurus_core_common_metrics_` prefix (e.g., `panurus_core_common_metrics_wallet_requests_total`). If instantiated through the standalone `WalletServiceFactory` path with a container provider, they would be exported under `panurus_services_observability_` (e.g., `panurus_services_observability_wallet_requests_total`).
 
 All metrics include `wallet_id` to prevent metric series collisions across wallets:
 
