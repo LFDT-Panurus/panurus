@@ -7,8 +7,10 @@ SPDX-License-Identifier: Apache-2.0
 package evm
 
 import (
+	"context"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 	"github.com/stretchr/testify/assert"
@@ -226,4 +228,159 @@ func TestNonceKeepsItsSequenceWhenTheChainDidNotTakeIt(t *testing.T) {
 		return nil
 	})
 	require.NoError(t, err)
+}
+
+// fakeClock is a settable time source for the gap checks.
+type fakeClock struct{ t time.Time }
+
+func (c *fakeClock) now() time.Time          { return c.t }
+func (c *fakeClock) advance(d time.Duration) { c.t = c.t.Add(d) }
+
+func gapTestManager(evm *mock.EVMClient) (*NonceManager, *fakeClock) {
+	clock := &fakeClock{t: time.Unix(1_000_000, 0)}
+	n := NewNonceManager(evm, client.Address{})
+	n.now = clock.now
+
+	return n, clock
+}
+
+func allocate(t *testing.T, n *NonceManager) uint64 {
+	t.Helper()
+	var got uint64
+	require.NoError(t, n.WithNonce(t.Context(), func(nonce uint64) error {
+		got = nonce
+
+		return nil
+	}))
+
+	return got
+}
+
+// TestNonceGapIsFilled is a transaction that left the node's pool unmined after a successful
+// broadcast. Every later nonce queues behind the hole, and nothing failed to make the manager re-read
+// the chain, so it used to keep handing out nonces that would never mine.
+func TestNonceGapIsFilled(t *testing.T) {
+	evm := &mock.EVMClient{}
+	evm.PendingNonceAtReturns(5, nil)
+	n, clock := gapTestManager(evm)
+	for want := uint64(5); want < 9; want++ {
+		require.Equal(t, want, allocate(t, n))
+	}
+
+	// nonce 5 is gone from the pool: the node keeps answering 5 while the local sequence is at 9
+	clock.advance(DefaultNonceGapCheckInterval)
+	assert.Equal(t, uint64(9), allocate(t, n), "one sighting is not enough to call it a gap")
+	clock.advance(DefaultNonceGapGrace)
+	assert.Equal(t, uint64(5), allocate(t, n), "the hole is filled once the gap has lasted the grace period")
+
+	// with 5 filled, 6..9 are minable again and the node's pending nonce moves past them
+	evm.PendingNonceAtReturns(10, nil)
+	assert.Equal(t, uint64(10), allocate(t, n), "after filling the hole the chain is re-read, not 6 reissued")
+}
+
+// TestNonceBriefLagIsNotAGap checks a node that answers below the local sequence once, and then
+// catches up, does not make the manager reuse a nonce: that would replace a live transaction.
+func TestNonceBriefLagIsNotAGap(t *testing.T) {
+	evm := &mock.EVMClient{}
+	evm.PendingNonceAtReturns(5, nil)
+	n, clock := gapTestManager(evm)
+	for want := uint64(5); want < 9; want++ {
+		require.Equal(t, want, allocate(t, n))
+	}
+
+	clock.advance(DefaultNonceGapCheckInterval)
+	assert.Equal(t, uint64(9), allocate(t, n))
+	evm.PendingNonceAtReturns(10, nil)
+	clock.advance(DefaultNonceGapGrace)
+	assert.Equal(t, uint64(10), allocate(t, n))
+	evm.PendingNonceAtReturns(5, nil)
+	clock.advance(DefaultNonceGapCheckInterval)
+	assert.Equal(t, uint64(11), allocate(t, n), "a new sighting starts the grace period over")
+}
+
+// TestNonceGapCheckIsThrottled checks the gap check costs at most one read per interval, and that a
+// failed read leaves the sequence alone.
+func TestNonceGapCheckIsThrottled(t *testing.T) {
+	evm := &mock.EVMClient{}
+	evm.PendingNonceAtReturns(5, nil)
+	n, clock := gapTestManager(evm)
+	for range 5 {
+		allocate(t, n)
+	}
+	assert.Equal(t, 1, evm.PendingNonceAtCallCount())
+
+	evm.PendingNonceAtReturns(0, errors.New("connection refused"))
+	clock.advance(DefaultNonceGapCheckInterval)
+	assert.Equal(t, uint64(10), allocate(t, n))
+	assert.Equal(t, uint64(11), allocate(t, n))
+	assert.Equal(t, 2, evm.PendingNonceAtCallCount())
+}
+
+// TestNonceReReadClearsAGapSighting checks a re-read starts the grace period over. A sighting kept
+// from before it would let a later sighting of the same value, from a lagging replica, move the
+// sequence back at once and replace a live transaction.
+func TestNonceReReadClearsAGapSighting(t *testing.T) {
+	evm := &mock.EVMClient{}
+	evm.PendingNonceAtReturns(5, nil)
+	n, clock := gapTestManager(evm)
+	for want := uint64(5); want < 9; want++ {
+		require.Equal(t, want, allocate(t, n))
+	}
+
+	// a first sighting of 5 below the local 9 starts the grace period
+	clock.advance(DefaultNonceGapCheckInterval)
+	assert.Equal(t, uint64(9), allocate(t, n))
+
+	// an ambiguous broadcast makes the next allocation re-read the chain, which has moved on
+	require.Error(t, n.WithNonce(t.Context(), func(uint64) error {
+		return errors.Wrapf(ErrNonceMayBeConsumed, "the reply was lost")
+	}))
+	evm.PendingNonceAtReturns(10, nil)
+	assert.Equal(t, uint64(10), allocate(t, n))
+
+	// past the old sighting's grace, a lagging replica answers 5 again: that is a new first sighting
+	evm.PendingNonceAtReturns(5, nil)
+	clock.advance(DefaultNonceGapGrace)
+	assert.Equal(t, uint64(11), allocate(t, n), "a sighting from before the re-read must not skip the grace period")
+}
+
+// hangingPendingNonce makes PendingNonceAt block until its context is done, like a node that never
+// answers.
+func hangingPendingNonce(evm *mock.EVMClient) {
+	evm.PendingNonceAtCalls(func(ctx context.Context, _ client.Address) (uint64, error) {
+		<-ctx.Done()
+
+		return 0, ctx.Err()
+	})
+}
+
+// TestNonceRecoveryReadIsBounded checks a node that never answers the first read fails the allocation
+// after the read timeout, instead of holding the lock and blocking every submitter on the account.
+func TestNonceRecoveryReadIsBounded(t *testing.T) {
+	evm := &mock.EVMClient{}
+	hangingPendingNonce(evm)
+	n := NewNonceManager(evm, client.Address{})
+	n.readTimeout = 20 * time.Millisecond
+
+	err := n.WithNonce(t.Context(), func(uint64) error {
+		t.Fatal("use must not run without a nonce")
+
+		return nil
+	})
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+}
+
+// TestNonceGapCheckReadIsBounded checks a gap check against a node that never answers gives up after
+// the read timeout and goes ahead with the cached nonce.
+func TestNonceGapCheckReadIsBounded(t *testing.T) {
+	evm := &mock.EVMClient{}
+	evm.PendingNonceAtReturns(5, nil)
+	n, clock := gapTestManager(evm)
+	n.readTimeout = 20 * time.Millisecond
+	require.Equal(t, uint64(5), allocate(t, n))
+
+	hangingPendingNonce(evm)
+	clock.advance(DefaultNonceGapCheckInterval)
+	assert.Equal(t, uint64(6), allocate(t, n))
+	assert.Equal(t, 2, evm.PendingNonceAtCallCount())
 }
