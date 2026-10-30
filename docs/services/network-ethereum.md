@@ -1023,6 +1023,7 @@ contracts build for `paris`; a `shanghai` build reverts every contract creation.
 
 - [Ethereum Driver Internals](./network-ethereum-internals.md) - Derivations, invariants and traps for implementers
 - [Ethereum Deployment Runbook](./network-ethereum-deployment.md) - Bootstrapping a TMS with the Approach-2 driver
+- [Ethereum Transaction Deadline](./network-ethereum-deadline-design.md) - Design for a signed `validUntil` deadline in the delta
 - [Network Service Overview](./network.md) - Generic network service concepts
 - [Fabric Implementation](./network-fabric.md) - Chaincode-based validation
 - [FabricX Implementation](./network-fabricx.md) - FSC endorser model
