@@ -17,9 +17,10 @@ import (
 )
 
 // TestGaussianSamplerLargeSigma checks the sampler for log2o >= 24, which
-// the presentation prover uses for its mask y4 (log2stdev4 = 30). lazer used
-// to reseed the rng with the same seed for every element of a vector, so a
-// vector of 64 elements took about 2 distinct values (lazer patch 0004).
+// the presentation prover uses for its mask y4 (log2stdev4 = 30): the
+// elements of a vector are drawn independently, so 64 samples take (almost)
+// 64 distinct values, and the samples have mean 0 and standard deviation
+// 1.55*2^log2o (lazer patch 0004).
 func TestGaussianSamplerLargeSigma(t *testing.T) {
 	for _, log2o := range []uint{12, 20, 23, 24, 30} {
 		const n = 4096
@@ -46,10 +47,10 @@ func TestGaussianSamplerLargeSigma(t *testing.T) {
 }
 
 // TestGaussianSamplerIsAFunctionOfItsSeed checks that a sample depends only
-// on its seed: lazer kept the sign bits of the sampler in a process-global
-// buffer, so a sample depended on what was sampled before, by any thread
-// (lazer patch 0004). Not parallel: before the fix, concurrent proving in
-// other tests perturbs the buffer.
+// on its seed and not on what was sampled before, by any thread: the same
+// seed gives the same samples with another sampling in between, including one
+// of an odd count (lazer patch 0004). Not parallel: the sampler must not see
+// concurrent proving of other tests between the two samplings.
 func TestGaussianSamplerIsAFunctionOfItsSeed(t *testing.T) {
 	for _, log2o := range []uint{12, 30} {
 		a1, err := gaussianSamples(64, log2o, [32]byte{1}, 3)

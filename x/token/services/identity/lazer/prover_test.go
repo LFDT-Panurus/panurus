@@ -8,6 +8,7 @@ package lazer
 
 import (
 	"context"
+	"runtime"
 	"sync"
 	"testing"
 	"time"
@@ -165,6 +166,32 @@ func TestKeyManagerCloseWaitsForPresentations(t *testing.T) {
 	require.Error(t, err, "identity after Close")
 	assert.Empty(t, km.limiter.slots, "limiter slots leaked")
 	km.Close()
+}
+
+// TestDefaultProverLimit checks that DefaultProverLimit is min(GOMAXPROCS, 4)
+// and that NewProverLimiter(n <= 0) uses it. Not parallel: it sets GOMAXPROCS.
+func TestDefaultProverLimit(t *testing.T) {
+	prev := runtime.GOMAXPROCS(0)
+	t.Cleanup(func() { runtime.GOMAXPROCS(prev) })
+	assert.Equal(t, 4, maxDefaultProvers)
+	for _, tc := range []struct {
+		procs, want int
+	}{
+		{1, 1},
+		{2, 2},
+		{3, 3},
+		{4, 4},
+		{5, 4},
+		{8, 4},
+		{64, 4},
+	} {
+		runtime.GOMAXPROCS(tc.procs)
+		assert.Equal(t, tc.want, DefaultProverLimit(), "GOMAXPROCS=%d", tc.procs)
+		for _, n := range []int{0, -1} {
+			assert.Equal(t, tc.want, cap(NewProverLimiter(n).slots), "GOMAXPROCS=%d, NewProverLimiter(%d)", tc.procs, n)
+		}
+		assert.Equal(t, 7, cap(NewProverLimiter(7).slots), "GOMAXPROCS=%d, NewProverLimiter(7)", tc.procs)
+	}
 }
 
 // BenchmarkKmIdentityParallel benchmarks identity generation from parallel

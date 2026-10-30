@@ -7,10 +7,12 @@ SPDX-License-Identifier: Apache-2.0
 package lazer
 
 import (
+	"bytes"
 	"context"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/LFDT-Panurus/panurus/token/driver"
 	"github.com/hyperledger-labs/fabric-smart-client/platform/view/services/metrics/disabled"
@@ -95,4 +97,63 @@ func TestKeyManagerProvider(t *testing.T) {
 	kmp5 := NewKeyManagerProvider(otherIPK, &memKeystore{}, store, mockConfig{}, 0, false, &disabled.Provider{})
 	_, err = kmp5.Get(ctx, &driver.IdentityConfiguration{ID: "alice", Raw: idConfig.Raw})
 	require.Error(t, err)
+}
+
+// TestKeyManagerProviderSharesOneLimiter checks that the key managers of one
+// provider share a single ProverLimiter of DefaultProverLimit: with all its
+// slots taken, an identity generation through the other key manager waits
+// until a slot is released.
+func TestKeyManagerProviderSharesOneLimiter(t *testing.T) {
+	w := newTestWallet(t, "alice")
+	raw, err := (&Config{Version: ProtocolVersionV1, Name: "alice", IPK: w.ipk, Signer: w.signer}).Marshal()
+	require.NoError(t, err)
+	kmp := NewKeyManagerProvider(w.ipk, &memKeystore{}, w.store, mockConfig{}, 0, true, &disabled.Provider{})
+	get := func() *WrappedKeyManager {
+		t.Helper()
+		km, err := kmp.Get(t.Context(), &driver.IdentityConfiguration{ID: "alice", Raw: bytes.Clone(raw)})
+		require.NoError(t, err)
+		wkm, ok := km.(*WrappedKeyManager)
+		require.True(t, ok)
+		t.Cleanup(wkm.Close)
+
+		return wkm
+	}
+	km1, km2 := get(), get()
+
+	limiter := km1.limiter
+	require.NotNil(t, limiter)
+	assert.Same(t, limiter, km2.limiter, "the key managers of a provider must share one limiter")
+	assert.Equal(t, DefaultProverLimit(), cap(limiter.slots))
+
+	// take every slot through the first key manager's limiter
+	for range cap(limiter.slots) {
+		require.NoError(t, limiter.acquire(t.Context(), nil))
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 200*time.Millisecond)
+	defer cancel()
+	_, err = km2.KeyManager.Identity(ctx, nil)
+	require.ErrorIs(t, err, context.DeadlineExceeded, "the shared limiter did not bound the second key manager")
+
+	// a waiting generation proceeds once a slot is released
+	res := make(chan error, 1)
+	go func() {
+		_, err := km2.KeyManager.Identity(t.Context(), nil)
+		res <- err
+	}()
+	select {
+	case err := <-res:
+		t.Fatalf("identity generated while the shared limiter was full: %v", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+	limiter.release()
+	select {
+	case err := <-res:
+		require.NoError(t, err)
+	case <-time.After(30 * time.Second):
+		t.Fatal("waiter not released by the shared limiter")
+	}
+	for range cap(limiter.slots) - 1 {
+		limiter.release()
+	}
+	assert.Empty(t, limiter.slots, "limiter slots leaked")
 }

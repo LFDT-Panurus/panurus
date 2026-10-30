@@ -463,3 +463,86 @@ func TestMalformedInputs(t *testing.T) {
 	_, err = DeserializeAuditInfo(raw)
 	require.Error(t, err)
 }
+
+// TestRevocationHandleIsBoundPerSignature checks that the revocation handle
+// travels with each signature and is attested by that signature's own
+// presentation, while an audit info attests the RH of the presentation it was
+// made with only.
+//
+// All the proofs are honest. The last part is a user who legitimately holds
+// two credentials of the issuer with the same enrollment id and different
+// revocation handles, and the opening of a nymEID made with the first one: it
+// signs under that nymEID with the second RH, and the signature verifies.
+// Only comparing nymRH of the signature with nym_rh of the audit info tells.
+func TestRevocationHandleIsBoundPerSignature(t *testing.T) {
+	ctx := t.Context()
+	w := newTestWallet(t, "alice")
+	km1 := w.km
+	d, err := km1.Identity(ctx, nil)
+	require.NoError(t, err)
+	ai, err := DeserializeAuditInfo(d.AuditInfo)
+	require.NoError(t, err)
+	rh1 := hashAttr(IdxRH, "rh-alice")
+
+	// the audit info attests the RH of its own presentation
+	require.NoError(t, km1.pv.verifyPres(ai.NymSK, d.Identity, ai.NymRH, ai.Pres))
+	assert.True(t, anoncreds.OpeningVerify(ai.NymRH, rh1, ai.OpeningRH))
+
+	// each signature carries nymRH, verified with its own presentation
+	for _, msg := range []string{"m1", "m2"} {
+		sigma, err := d.Signer.Sign([]byte(msg))
+		require.NoError(t, err)
+		require.NoError(t, d.Verifier.Verify([]byte(msg), sigma))
+		sig, err := unmarshalSignature(sigma)
+		require.NoError(t, err)
+		require.NoError(t, km1.pv.verifyPres(sig.NymSK, d.Identity, sig.NymRH, sig.Pres), msg)
+		// signed with the pseudonym of the audit info: same presentation, same RH
+		assert.Equal(t, ai.NymRH, sig.NymRH, msg)
+		assert.Equal(t, ai.Pres, sig.Pres, msg)
+	}
+
+	// a second credential with the same enrollment id and another RH
+	signer2, err := IssueSignerConfig(w.isk, w.ipk, "org1", "member", "alice", "rh-alice-2")
+	require.NoError(t, err)
+	km2, err := NewKeyManager(&Config{Version: ProtocolVersionV1, Name: "alice", IPK: w.ipk, Signer: signer2}, &memKeystore{}, &memIdentityStore{})
+	require.NoError(t, err)
+	t.Cleanup(km2.Close)
+	rh2 := km2.attrs[IdxRH]
+	require.NotEqual(t, rh1, rh2)
+
+	// the holder of the opening of nymEID and of the second credential
+	openingEID, err := openOpening(km1.aiKey, ai.auditOpeningAD(), ai.EncOpeningEID)
+	require.NoError(t, err)
+	comEID, err := anoncreds.CommitWithOpening(km2.attrs[IdxEID], openingEID)
+	require.NoError(t, err)
+	defer comEID.Clear()
+	require.Equal(t, []byte(d.Identity), comEID.Nym, "same enrollment id, same opening: the same nymEID")
+	comSK, err := anoncreds.Commit(km2.usk)
+	require.NoError(t, err)
+	defer comSK.Clear()
+	comRH, err := anoncreds.Commit(rh2)
+	require.NoError(t, err)
+	defer comRH.Clear()
+	pres, err := km2.present(ctx, []*anoncreds.Commitment{comSK, comEID, comRH})
+	require.NoError(t, err)
+	msg := []byte("m3")
+	sok, err := comSK.SokProve(signatureContext(msg), km2.usk)
+	require.NoError(t, err)
+	sigma, err := asn1.Marshal(Signature{NymSK: comSK.Nym, NymRH: comRH.Nym, Pres: pres, Sok: sok})
+	require.NoError(t, err)
+
+	// it verifies under the identity of the audit info, with the other RH
+	require.NoError(t, d.Verifier.Verify(msg, sigma))
+	des, err := NewDeserializer(w.ipk)
+	require.NoError(t, err)
+	t.Cleanup(des.Close)
+	v, err := des.DeserializeVerifier(ctx, d.Identity)
+	require.NoError(t, err)
+	require.NoError(t, v.Verify(msg, sigma))
+	// the audit info still matches the identity, and says nothing about this RH
+	require.NoError(t, des.MatchIdentity(ctx, d.Identity, d.AuditInfo))
+	sig, err := unmarshalSignature(sigma)
+	require.NoError(t, err)
+	assert.NotEqual(t, ai.NymRH, sig.NymRH, "the auditor's check: nymRH of the signature against nym_rh of the audit info")
+	assert.False(t, anoncreds.OpeningVerify(sig.NymRH, rh1, ai.OpeningRH))
+}

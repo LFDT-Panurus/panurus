@@ -18,7 +18,7 @@ import (
 // (see guard), so a decoder reading past its input crashes the target
 // instead of passing silently. The seeds are a valid input, the empty input,
 // truncated and bit-flipped variants and the crafted payloads of
-// regression_test.go that used to read out of bounds.
+// regression_test.go aimed at the decoders.
 
 // fuzzFixture is a credential with a presentation, built once per fuzz worker.
 type fuzzFixture struct {
