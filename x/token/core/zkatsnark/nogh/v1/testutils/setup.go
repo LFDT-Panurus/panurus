@@ -15,11 +15,13 @@ import (
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 
 	nbenchmark "github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/benchmark"
+	dlogsetup "github.com/LFDT-Panurus/panurus/token/core/zkatdlog/nogh/v1/setup"
 	"github.com/LFDT-Panurus/panurus/token/services/identity"
 	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/pp"
 	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/prepared"
 	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/prover"
 	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/setup"
+	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/testutils/dlogpp"
 )
 
 // Signer and OwnerIdentity are the generic x509/ECDSA and idemix(nym) identity
@@ -82,6 +84,9 @@ type SetupConfiguration struct {
 	Verifier            *prepared.Verifier
 	CurveID             ecc.ID
 	ProofSystem         string
+	// LegacyDLog are the embedded ZKAT-DLOG public parameters, nil unless
+	// SetupParams.LegacyDLog was set.
+	LegacyDLog *dlogsetup.PublicParams
 }
 
 // SetupConfigurations contains a set of named benchmark/test configurations,
@@ -107,6 +112,11 @@ type SetupParams struct {
 	// MaxBits overrides the range-check bit width the circuits are compiled
 	// with (pp.PublicParams.MaxBits). Zero keeps the default.
 	MaxBits int
+	// LegacyDLog embeds ZKAT-DLOG public parameters on dlogpp.DefaultCurve
+	// (BLS12_381_BBS_GURVY) and sets up the migration keys, so that ZKAT-DLOG
+	// outputs can be upgraded. BLS12-381 curves only; setting up the
+	// migration circuit takes about a minute.
+	LegacyDLog bool
 }
 
 // NewSetupConfigurations loads test data from the given idemixTestdataPath and
@@ -190,6 +200,18 @@ func newSetupConfigurationsWithParams(params SetupParams, registerIssuer bool) (
 			return nil, errors.Wrapf(err, "failed running trusted setup for curve [%s], proof system [%s]", curveID, proofSystem)
 		}
 
+		var legacyDLog *dlogsetup.PublicParams
+		if params.LegacyDLog {
+			legacyDLog, err = dlogpp.Embed(p, dlogpp.DefaultCurve)
+			if err != nil {
+				return nil, err
+			}
+			p, err = setup.SetupMigration(p)
+			if err != nil {
+				return nil, errors.Wrapf(err, "failed running migration setup for curve [%s], proof system [%s]", curveID, proofSystem)
+			}
+		}
+
 		if registerIssuer {
 			issuerID, err := issuerSigner.Serialize()
 			if err != nil {
@@ -233,6 +255,7 @@ func newSetupConfigurationsWithParams(params SetupParams, registerIssuer bool) (
 			Verifier:            verifierParams,
 			CurveID:             curveID,
 			ProofSystem:         proofSystem,
+			LegacyDLog:          legacyDLog,
 		}
 	}
 
@@ -250,8 +273,20 @@ func newOrchestrator(base *prepared.Params) (*prover.Orchestrator, error) {
 
 	spendProver := prover.NewSpendProver(proverParams)
 	outputProver := prover.NewOutputProver(proverParams)
+	orchestrator := prover.NewOrchestrator(spendProver, outputProver)
+	if proverParams.PKMigration() != nil {
+		withMigration, err := proverParams.WithMigration()
+		if err != nil {
+			return nil, errors.Wrap(err, "failed preparing the migration proving key")
+		}
+		migrationProver, err := prover.NewMigrationProver(withMigration)
+		if err != nil {
+			return nil, err
+		}
+		orchestrator.SetMigrationProver(migrationProver)
+	}
 
-	return prover.NewOrchestrator(spendProver, outputProver), nil
+	return orchestrator, nil
 }
 
 // GetSetupConfiguration returns the full SetupConfiguration for the provided

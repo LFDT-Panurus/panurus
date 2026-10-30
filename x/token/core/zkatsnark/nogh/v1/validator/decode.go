@@ -12,7 +12,6 @@ import (
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 
 	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/crypto/edwards"
-	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/crypto/legacy"
 	snarktoken "github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/token"
 )
 
@@ -45,19 +44,6 @@ type decodedOutput struct {
 	ValueCommitXBytes []byte
 	ValueCommitYBytes []byte
 	CommitmentBytes   []byte
-}
-
-// decodedMigration is the canonical decoding of a MigrationAction's public
-// bytes. PedersenX/Y are coordinates of a point on the legacy driver's
-// BLS12-381 G1 (a base-field element, not a scalar-field one); they are
-// wrapped into emulated elements only at witness construction (proof.go).
-type decodedMigration struct {
-	PedersenX      *big.Int
-	PedersenY      *big.Int
-	CommitmentMiMC *big.Int
-	ValueCommitX   *big.Int
-	ValueCommitY   *big.Int
-	TypeCommitment *big.Int
 }
 
 // decodeScalar decodes b as a canonical element of the scalar field of curve:
@@ -180,36 +166,6 @@ func decodeAllOutputs(outputs []snarktoken.OutputDescription, curve ecc.ID) ([]d
 			return nil, err
 		}
 		out[j] = do
-	}
-
-	return out, nil
-}
-
-// decodeMigrationAction decodes a MigrationAction's public bytes against curve,
-// confirming two DIFFERENT curve-membership properties that must not be
-// conflated: the Pedersen commitment must satisfy the legacy driver's
-// BLS12-381 G1 equation (base-field coordinates), and the value commitment must
-// satisfy the twisted Edwards equation embedded in curve's scalar field.
-func decodeMigrationAction(a *snarktoken.MigrationAction, curve ecc.ID) (decodedMigration, error) {
-	var out decodedMigration
-
-	if err := legacy.CheckPedersenPoint(a.CommitmentPedersenX, a.CommitmentPedersenY); err != nil {
-		return decodedMigration{}, errors.Wrapf(ErrInvalidEncoding, "%s", err)
-	}
-	out.PedersenX = new(big.Int).SetBytes(a.CommitmentPedersenX)
-	out.PedersenY = new(big.Int).SetBytes(a.CommitmentPedersenY)
-
-	if err := decodeFields(curve,
-		namedField{"CommitmentMiMC", a.CommitmentMiMC, &out.CommitmentMiMC},
-		namedField{"ValueCommitOutX", a.ValueCommitOutX, &out.ValueCommitX},
-		namedField{"ValueCommitOutY", a.ValueCommitOutY, &out.ValueCommitY},
-		namedField{"TypeCommitment", a.TypeCommitment, &out.TypeCommitment},
-	); err != nil {
-		return decodedMigration{}, err
-	}
-
-	if err := checkValueCommitPoint(curve, a.ValueCommitOutX, a.ValueCommitOutY); err != nil {
-		return decodedMigration{}, err
 	}
 
 	return out, nil

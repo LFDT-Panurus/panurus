@@ -6,170 +6,96 @@ SPDX-License-Identifier: Apache-2.0
 package prover
 
 import (
-	"crypto/sha256"
 	"math/big"
-	"strconv"
 
-	mathlib "github.com/IBM/mathlib"
-	bls12381 "github.com/consensys/gnark-crypto/ecc/bls12-381"
-	bls12381fr "github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
+	"github.com/consensys/gnark-crypto/ecc"
 	"github.com/consensys/gnark/frontend"
 	"github.com/consensys/gnark/std/math/emulated"
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 
 	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/circuit"
+	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/crypto/legacy"
 	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/pp"
 	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/prepared"
-	"github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/setup"
 	snarktoken "github.com/LFDT-Panurus/panurus/x/token/core/zkatsnark/nogh/v1/token"
 )
 
-// Default zkatdlog driver name and version for Pedersen generator derivation.
-// These must match the seeds used when the original zkatdlog tokens were created.
-const (
-	defaultZkatdlogDriverName    = "zkatdlognogh"
-	defaultZkatdlogDriverVersion = 1
-)
-
-// MigrationWitnessResult bundles a compiled MigrationCircuit assignment with
-// the newly created Note and the public data needed to assemble the wire
-// format. The caller must persist the Note, if it is dropped, the migrated
-// token becomes permanently unspendable.
+// MigrationWitnessResult bundles a MigrationCircuit assignment with the public
+// data of the redeemed ZKAT-DLOG token it proves, and the value-commitment
+// randomness the action's binding signature needs.
 type MigrationWitnessResult struct {
 	Assignment       *circuit.MigrationCircuit
-	Note             *snarktoken.Note
 	RCV              []byte // 32 bytes
-	Commitment       []byte // 32 bytes
 	ValueCommitmentX []byte // 32 bytes
 	ValueCommitmentY []byte // 32 bytes
-	TypeCommitment   []byte // 32 bytes
-	// PedersenCommitX/Y are the extracted affine coordinates of the
-	// original Pedersen commitment, for inclusion in the wire format.
-	PedersenCommitX [48]byte
-	PedersenCommitY [48]byte
+	// PedersenXY is the uncompressed Pedersen commitment X || Y of the
+	// redeemed token, 96 bytes. It stands for the input's Commitment in the
+	// action hash.
+	PedersenXY []byte
 }
 
-// BuildMigrationWitness constructs a MigrationCircuit assignment for
-// migrating an existing zkatdlog token into a new zkatsnark token.
-//
-// A fresh Note (with new MiMC randomness) is generated internally and
-// returned alongside the assignment, exactly like BuildOutputWitness does
-// for freshly issued tokens.
-//
-// typeRandomness is the per-action randomness used to compute the type
-// commitment.
-func BuildMigrationWitness(
-	opening snarktoken.PedersenOpening,
-	publicParams *pp.PublicParams,
-	typeRandomness []byte,
-) (*MigrationWitnessResult, error) {
-	if err := opening.Validate(); err != nil {
-		return nil, errors.Wrapf(err, "prover: invalid PedersenOpening")
+// BuildMigrationWitness constructs a MigrationCircuit assignment proving the
+// opening of a ZKAT-DLOG commitment, together with a fresh value commitment to
+// its value. It creates no note: the minted notes are ordinary outputs.
+func BuildMigrationWitness(opening *snarktoken.DLogOpening, publicParams *pp.PublicParams) (*MigrationWitnessResult, error) {
+	if opening == nil {
+		return nil, errors.New("prover: nil ZKAT-DLOG opening")
+	}
+	if publicParams.Curve != ecc.BLS12_381 {
+		return nil, errors.Errorf("prover: ZKAT-DLOG upgrades require curve %s, got %s", ecc.BLS12_381, publicParams.Curve)
+	}
+	if len(opening.Type) == 0 {
+		return nil, errors.New("prover: empty ZKAT-DLOG token type")
+	}
+	if opening.Value == 0 || opening.Value > publicParams.MaxTokenValue() {
+		return nil, errors.Errorf("prover: ZKAT-DLOG value [%d] out of range", opening.Value)
+	}
+	if len(opening.PedersenXY) != snarktoken.PedersenXYLen {
+		return nil, errors.Errorf("prover: ZKAT-DLOG commitment must be %d bytes, got %d", snarktoken.PedersenXYLen, len(opening.PedersenXY))
+	}
+	x, y := opening.PedersenXY[:legacy.PedersenCoordinateSize], opening.PedersenXY[legacy.PedersenCoordinateSize:]
+	if err := legacy.CheckPedersenPoint(x, y); err != nil {
+		return nil, errors.Wrap(err, "prover: invalid ZKAT-DLOG commitment")
 	}
 
 	cc, err := newCurveCtx(publicParams.Curve)
 	if err != nil {
 		return nil, err
 	}
-
-	note, err := snarktoken.NewRandomNote(opening.Value, opening.TokenType, cc.id)
+	bf, err := cc.canonical(opening.BlindingFactor)
 	if err != nil {
-		return nil, errors.Wrapf(err, "prover: migration note creation failed")
+		return nil, errors.Wrap(err, "prover: invalid Pedersen blinding factor")
 	}
-
-	cm, err := note.Commitment(cc.id)
+	rcv, err := cc.suite.RandomScalar()
 	if err != nil {
-		return nil, errors.Wrapf(err, "prover: migration commitment derivation failed")
+		return nil, errors.Wrap(err, "prover: migration RCV generation failed")
 	}
-
-	rcvBytes, err := cc.suite.RandomScalar()
+	cv, err := cc.suite.ValueCommit(opening.Value, rcv)
 	if err != nil {
-		return nil, errors.Wrapf(err, "prover: migration RCV generation failed")
-	}
-
-	cv, err := cc.suite.ValueCommit(note.Value, rcvBytes)
-	if err != nil {
-		return nil, errors.Wrapf(err, "prover: migration value commitment failed")
-	}
-
-	// The Pedersen side is the source zkatdlog commitment, which lives in
-	// BLS12-381 G1 regardless of the curve the new zkatsnark token uses.
-	// TokenTypePed = HashToZr(tokenType)
-	tokenTypePed := hashToZrBLS12381([]byte(opening.TokenType))
-
-	var blindingFactor bls12381fr.Element
-	if err := blindingFactor.SetBytesCanonical(opening.BlindingFactor); err != nil {
-		return nil, errors.Wrapf(err, "prover: invalid Pedersen blinding factor bytes")
-	}
-
-	var pedPoint bls12381.G1Affine
-	if _, err := pedPoint.SetBytes(opening.CommitmentBytes); err != nil {
-		return nil, errors.Wrapf(err, "prover: invalid Pedersen commitment bytes")
-	}
-
-	pedXBig := pedPoint.X.BigInt(new(big.Int))
-	pedYBig := pedPoint.Y.BigInt(new(big.Int))
-
-	pedXBytes := pedPoint.X.Bytes()
-	pedYBytes := pedPoint.Y.Bytes()
-
-	gens := DefaultPedersenGeneratorCoords()
-	tc, err := snarktoken.ComputeTypeCommitment(opening.TokenType, typeRandomness, cc.id)
-	if err != nil {
-		return nil, errors.Wrapf(err, "prover: migration type commitment failed")
-	}
-
-	cmField, err := cc.canonical(cm)
-	if err != nil {
-		return nil, errors.Wrapf(err, "prover: invalid commitment bytes")
-	}
-	tcField, err := cc.canonical(tc)
-	if err != nil {
-		return nil, errors.Wrapf(err, "prover: invalid type commitment bytes")
-	}
-	trField, err := cc.canonical(typeRandomness)
-	if err != nil {
-		return nil, errors.Wrapf(err, "prover: invalid type randomness bytes")
-	}
-	rField, err := cc.fromBytes(note.Randomness)
-	if err != nil {
-		return nil, errors.Wrapf(err, "prover: invalid note randomness bytes")
+		return nil, errors.Wrap(err, "prover: migration value commitment failed")
 	}
 
 	g := cc.generators()
-
 	assignment := &circuit.MigrationCircuit{
-		CommitmentPedersenX: emulated.ValueOf[emulated.BLS12381Fp](pedXBig),
-		CommitmentPedersenY: emulated.ValueOf[emulated.BLS12381Fp](pedYBig),
-		CommitmentMiMC:      cmField,
-		ValueCommitOutX:     new(big.Int).SetBytes(cv.X),
-		ValueCommitOutY:     new(big.Int).SetBytes(cv.Y),
-		TypeCommitment:      tcField,
+		CommitmentPedersenX: emulated.ValueOf[emulated.BLS12381Fp](new(big.Int).SetBytes(x)),
+		CommitmentPedersenY: emulated.ValueOf[emulated.BLS12381Fp](new(big.Int).SetBytes(y)),
+		TokenTypePed:        snarktoken.TokenTypePed(string(opening.Type)),
+		ValueCommitInX:      new(big.Int).SetBytes(cv.X),
+		ValueCommitInY:      new(big.Int).SetBytes(cv.Y),
 		Value:               new(big.Int).SetUint64(opening.Value),
-		TokenType:           cc.tokenType(opening.TokenType),
-		TokenTypePed:        tokenTypePed,
-		RandomnessPed:       blindingFactor,
-		RandomnessNew:       rField,
-		RCV:                 new(big.Int).SetBytes(rcvBytes),
-		TypeRandomness:      trField,
+		RandomnessPed:       bf,
+		RCV:                 new(big.Int).SetBytes(rcv),
 		MaxBits:             publicParams.MaxBits,
-		PedG0X:              gens.G0X, PedG0Y: gens.G0Y,
-		PedG1X: gens.G1X, PedG1Y: gens.G1Y,
-		PedG2X: gens.G2X, PedG2Y: gens.G2Y,
-		GenVX: g.VX, GenVY: g.VY,
+		GenVX:               g.VX, GenVY: g.VY,
 		GenRX: g.RX, GenRY: g.RY,
 	}
 
 	return &MigrationWitnessResult{
 		Assignment:       assignment,
-		Note:             note,
-		RCV:              rcvBytes,
-		Commitment:       cm,
+		RCV:              rcv,
 		ValueCommitmentX: cv.X,
 		ValueCommitmentY: cv.Y,
-		TypeCommitment:   tc,
-		PedersenCommitX:  pedXBytes,
-		PedersenCommitY:  pedYBytes,
+		PedersenXY:       append([]byte(nil), opening.PedersenXY...),
 	}, nil
 }
 
@@ -181,10 +107,10 @@ type MigrationProver struct {
 
 // NewMigrationProver creates a new MigrationProver over already-prepared
 // public parameters for a proving role. p must have been built via
-// (*prepared.Prover).WithMigration — i.e. p.PKMigration() must be non-nil —
-// otherwise an error is returned.
+// (*prepared.Prover).WithMigration, that is, p.PKMigration() and
+// p.MigrationCS() must be non-nil, otherwise an error is returned.
 func NewMigrationProver(p *prepared.Prover) (*MigrationProver, error) {
-	if p.PKMigration() == nil {
+	if p == nil || p.PKMigration() == nil || p.MigrationCS() == nil {
 		return nil, errors.New("migration prover: no migration proving key configured; call Prover.WithMigration first")
 	}
 
@@ -204,59 +130,4 @@ func (p *MigrationProver) Prove(assignment *circuit.MigrationCircuit) ([]byte, e
 	}
 
 	return proof, nil
-}
-
-// ── Helpers ────────────────────────────────────────────────────────────────────
-
-// hashToZrBLS12381 replicates IBM mathlib's HashToZr for BLS12-381:
-// SHA-256(data) → big.Int → mod r (scalar field order).
-func hashToZrBLS12381(data []byte) bls12381fr.Element {
-	digest := sha256.Sum256(data)
-	digestBig := new(big.Int).SetBytes(digest[:])
-	digestBig.Mod(digestBig, bls12381fr.Modulus())
-
-	var result bls12381fr.Element
-	result.SetBigInt(digestBig)
-
-	return result
-}
-
-// DefaultPedersenGeneratorCoords derives the Pedersen generator coordinates
-// using the same domain-separated HashToG1 seeds as the zkatdlog driver.
-func DefaultPedersenGeneratorCoords() setup.PedersenGeneratorCoords {
-	return PedersenGeneratorCoordsFrom(defaultZkatdlogDriverName, defaultZkatdlogDriverVersion)
-}
-
-// PedersenGeneratorCoordsFrom derives the three Pedersen generator
-// coordinates for the given zkatdlog driver name and version.
-func PedersenGeneratorCoordsFrom(driverName string, driverVersion int) setup.PedersenGeneratorCoords {
-	curve := mathlib.Curves[mathlib.BLS12_381]
-
-	gens := make([]*mathlib.G1, 3)
-	for i := range 3 {
-		seed := "lfdt-panurus." + driverName + "." + strconv.Itoa(driverVersion) + ".PedersenGenerators." + strconv.Itoa(i)
-		gens[i] = curve.HashToG1([]byte(seed))
-	}
-
-	// Extract affine coordinates via gnark-crypto's G1Affine.
-	// mathlib's G1.Bytes() returns RawBytes (uncompressed X||Y, 96 bytes).
-	coords := make([]struct{ X, Y *big.Int }, 3)
-	for i, g := range gens {
-		raw := g.Bytes()
-
-		var pt bls12381.G1Affine
-		// RawBytes format is always 96 bytes uncompressed
-		if _, err := pt.SetBytes(raw); err != nil {
-			panic("prover: failed to parse Pedersen generator " + strconv.Itoa(i) + ": " + err.Error())
-		}
-
-		coords[i].X = pt.X.BigInt(new(big.Int))
-		coords[i].Y = pt.Y.BigInt(new(big.Int))
-	}
-
-	return setup.PedersenGeneratorCoords{
-		G0X: coords[0].X, G0Y: coords[0].Y,
-		G1X: coords[1].X, G1Y: coords[1].Y,
-		G2X: coords[2].X, G2Y: coords[2].Y,
-	}
 }

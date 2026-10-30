@@ -60,6 +60,23 @@ message IssueActionInput {
   fabric_token_sdk.token.driver.v1.TokenID id = 1;
   // token is the consumed token exactly as stored on the ledger
   bytes token = 2;
+  // migration proves the opening of a consumed ZKAT-DLOG token; it is set if
+  // and only if token is a ZKAT-DLOG (commitment) output
+  MigrationDescription migration = 3;
+}
+
+// MigrationDescription proves that a redeemed ZKAT-DLOG Pedersen commitment
+// opens to the issue action's token type and to the value committed in
+// (value_commit_in_x, value_commit_in_y). The commitment itself is never
+// carried here: the validator reads it from the ledger token bytes.
+message MigrationDescription {
+  // value_commit_in_x is the X coordinate of the value commitment of the
+  // redeemed token (twisted Edwards curve embedded in the SNARK curve), 32 bytes
+  bytes value_commit_in_x = 1;
+  // value_commit_in_y is the Y coordinate of that value commitment, 32 bytes
+  bytes value_commit_in_y = 2;
+  // migration_proof is the zero-knowledge proof for the migration circuit
+  bytes migration_proof = 3;
 }
 
 // IssueAction represents the creation of one or more new tokens.
@@ -108,10 +125,15 @@ message TransferAction {
   map<string, bytes> metadata = 8;
 }
 
-// MigrationAction is the public wire-format record for a single token
-// migration from zkatdlog (Pedersen-committed, BLS12-381 G1) to zkatsnark
-// (MiMC-committed, Jubjub value commitment).
+// MigrationAction is the former, unbound wire-format record for a single
+// token migration from zkatdlog to zkatsnark.
+//
+// Deprecated: unbound and unused. ZKAT-DLOG tokens are upgraded through an
+// IssueAction whose inputs carry a MigrationDescription. Kept only so that
+// the protobuf schema stays backward compatible.
 message MigrationAction {
+  option deprecated = true;
+
   // commitment_pedersen_x is the X coordinate of the existing Pedersen
   // commitment (BLS12-381 G1 base field Fp, 48 bytes)
   bytes commitment_pedersen_x = 1;

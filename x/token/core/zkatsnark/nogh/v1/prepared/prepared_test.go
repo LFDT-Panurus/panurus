@@ -117,7 +117,7 @@ func TestVerifier_WithMigration_MissingKeyIsError(t *testing.T) {
 	require.NoError(t, err)
 	require.Nil(t, v.VKMigration())
 
-	_, err = v.WithMigration(setup.PedersenGeneratorCoords{})
+	_, err = v.WithMigration()
 	require.Error(t, err, "WithMigration must fail when no migration verifying key is configured")
 	require.ErrorIs(t, err, setup.ErrMissingKey)
 }
@@ -171,7 +171,7 @@ func TestProver_WithMigration_MissingKeyIsError(t *testing.T) {
 	require.NoError(t, err)
 	require.Nil(t, pr.PKMigration())
 
-	_, err = pr.WithMigration(setup.PedersenGeneratorCoords{})
+	_, err = pr.WithMigration()
 	require.Error(t, err, "WithMigration must fail when no migration proving key is configured")
 	require.ErrorIs(t, err, setup.ErrMissingKey)
 }

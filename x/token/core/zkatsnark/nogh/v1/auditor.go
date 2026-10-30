@@ -129,6 +129,9 @@ func checkUpgradeIssue(p *pp.PublicParams, action *snarktoken.IssueAction, md *d
 	if err := action.Validate(); err != nil {
 		return err
 	}
+	if action.IsDLogUpgrade() {
+		return checkDLogUpgradeIssue(p, action, md, auditTokens)
+	}
 	summary, err := snarktoken.SummarizeUpgradeInputs(action.Inputs, p.PrecisionValue)
 	if err != nil {
 		return err
