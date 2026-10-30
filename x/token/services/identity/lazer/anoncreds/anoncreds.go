@@ -32,6 +32,7 @@ package anoncreds
 import "C"
 import (
 	"runtime"
+	"sync"
 	"unsafe"
 
 	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
@@ -53,7 +54,16 @@ var ErrInvalid = errors.New("anoncreds: invalid input")
 var errCleared = errors.Wrap(ErrInvalid, "object was cleared")
 
 // User holds the state of a credential holder. It owns C memory, release it with Clear.
-type User struct{ c *C.cbdc_user_state_struct }
+//
+// PresGen and CredVerify only read the state, so they may run concurrently on one
+// User: each presentation sets up its own prover from public matrices shared by the
+// process. MaskAttrs, Import, Export and Clear are exclusive: they wait for the
+// presentations in progress, and those started after Clear fail.
+type User struct {
+	// mu is held for reading by PresGen and CredVerify, for writing by the others
+	mu sync.RWMutex
+	c  *C.cbdc_user_state_struct
+}
 
 // Issuer holds the state of a credential issuer. It owns C memory, release it with Clear.
 type Issuer struct{ c *C.cbdc_issuer_state_struct }
@@ -135,20 +145,87 @@ const (
 // malformed proofs.
 func proofHintOffset(system int) int { return int(C.cbdc_proof_hint_offset(C.int(system))) }
 
-// p2WitnessWiped reports whether the presentation prover of u holds no
-// witness. Tests use it to check that the witness is wiped after use.
-func p2WitnessWiped(u *User) (bool, error) {
-	if u == nil || u.c == nil {
-		return false, errCleared
+// commitArray returns coms as a C array, to be freed with the returned function.
+func commitArray(coms []*Commitment) (*C.cbdc_commit_ptr, func(), error) {
+	if len(coms) == 0 {
+		return nil, func() {}, nil
 	}
-	switch C.cbdc_test_p2_witness_wiped(u.c) {
-	case 1:
-		return true, nil
-	case 0:
-		return false, nil
-	default:
-		return false, errors.Wrapf(ErrInvalid, "no presentation prover")
+	mem := C.malloc(C.size_t(len(coms)) * C.size_t(unsafe.Sizeof(uintptr(0))))
+	if mem == nil {
+		return nil, nil, errors.New("anoncreds: out of memory")
 	}
+	carr := (*C.cbdc_commit_ptr)(mem)
+	s := unsafe.Slice(carr, len(coms))
+	for i, c := range coms {
+		if c == nil || c.c == nil {
+			C.free(mem)
+
+			return nil, nil, errCleared
+		}
+		s[i] = c.c
+	}
+
+	return carr, func() { C.free(mem) }, nil
+}
+
+// presGenCoins is PresGen (no revealed attributes) with the given prover coins,
+// with the process-wide public matrices (shared) or matrices private to the call.
+// Tests use it to check that sharing the matrices does not change the proofs.
+func (u *User) presGenCoins(cred []byte, coms []*Commitment, idxCom []uint32, ctx []byte, coins [32]byte, shared bool) ([]byte, error) {
+	u.mu.RLock()
+	defer u.mu.RUnlock()
+	if u.c == nil {
+		return nil, errCleared
+	}
+	carr, free, err := commitArray(coms)
+	if err != nil {
+		return nil, err
+	}
+	defer free()
+	out := make([]byte, C.cbdc_maxlen_pres())
+	var outl C.size_t
+	ic, ncom := idxptr(idxCom)
+	sh := C.int(0)
+	if shared {
+		sh = 1
+	}
+	if C.cbdc_test_presgen_coins(u.c, ptr(out), &outl, ptr(cred), C.size_t(len(cred)), carr, ic, ncom,
+		ptr(ctx), C.size_t(len(ctx)), (*C.uint8_t)(unsafe.Pointer(&coins[0])), sh) != 1 {
+		return nil, errors.Wrapf(ErrInvalid, "presentation")
+	}
+
+	return out[:outl], nil
+}
+
+// sokProveCoins is SokProve with the given prover coins, see presGenCoins.
+func (c *Commitment) sokProveCoins(ctx []byte, attr []byte, coins [32]byte, shared bool) ([]byte, error) {
+	if c == nil || c.c == nil {
+		return nil, errCleared
+	}
+	if len(attr) != AttrLen {
+		return nil, errors.Wrapf(ErrInvalid, "attribute length != %d", AttrLen)
+	}
+	proof := make([]byte, C.cbdc_maxlen_sok())
+	var proofl C.size_t
+	sh := C.int(0)
+	if shared {
+		sh = 1
+	}
+	if C.cbdc_test_sokprove_coins(ptr(proof), &proofl, c.c, ptr(ctx), C.size_t(len(ctx)), ptr(attr),
+		(*C.uint8_t)(unsafe.Pointer(&coins[0])), sh) != 1 {
+		return nil, errors.Wrapf(ErrInvalid, "sok")
+	}
+
+	return proof[:proofl], nil
+}
+
+// publicParamsDigest returns a digest of the raw representation of the public
+// matrices shared by the process. Tests use it to check that nothing writes them.
+func publicParamsDigest() [32]byte {
+	var d [32]byte
+	C.cbdc_test_pp_digest((*C.uint8_t)(unsafe.Pointer(&d[0])))
+
+	return d
 }
 
 // eqOpeningStatementOK reports whether the statement of the equality-of-opening
@@ -245,9 +322,15 @@ func NewUser(pubkey []byte) (*User, error) {
 	return &User{c: c}, nil
 }
 
-// Clear releases the C state. The User must not be used afterwards.
+// Clear releases the C state. It waits for the presentations in progress; the
+// methods called afterwards fail. It is idempotent.
 func (u *User) Clear() {
-	if u == nil || u.c == nil {
+	if u == nil {
+		return
+	}
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	if u.c == nil {
 		return
 	}
 	C.cbdc_user_clear(u.c)
@@ -260,7 +343,12 @@ func (u *User) Clear() {
 // attributes do not satisfy AttrsOK or an index is out of range; a previous
 // masking of the user is kept then.
 func (u *User) MaskAttrs(attrs [][]byte, idxRev []uint32) ([]byte, error) {
-	if u == nil || u.c == nil {
+	if u == nil {
+		return nil, errCleared
+	}
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	if u.c == nil {
 		return nil, errCleared
 	}
 	flat, err := checkAttrs(attrs)
@@ -285,7 +373,12 @@ func (u *User) MaskAttrs(attrs [][]byte, idxRev []uint32) ([]byte, error) {
 // with the attributes in Import. It returns ErrInvalid unless MaskAttrs or
 // Import succeeded before.
 func (u *User) Export() ([]byte, error) {
-	if u == nil || u.c == nil {
+	if u == nil {
+		return nil, errCleared
+	}
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	if u.c == nil {
 		return nil, errCleared
 	}
 	out := make([]byte, C.cbdc_maxlen_userstate())
@@ -300,7 +393,12 @@ func (u *User) Export() ([]byte, error) {
 // Import restores the state exported by Export; attrs are the attributes that
 // were masked.
 func (u *User) Import(state []byte, attrs [][]byte) error {
-	if u == nil || u.c == nil {
+	if u == nil {
+		return errCleared
+	}
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	if u.c == nil {
 		return errCleared
 	}
 	flat, err := checkAttrs(attrs)
@@ -316,77 +414,16 @@ func (u *User) Import(state []byte, attrs [][]byte) error {
 	return nil
 }
 
-// UserTemplate is the imported state of a credential holder from which
-// presentation-only Users are cloned. It never proves, so concurrent Clone
-// calls on the same template are safe; Clear must not run concurrently with
-// them. It owns C memory, release it with Clear.
-type UserTemplate struct{ c *C.cbdc_user_state_struct }
-
-// NewUserTemplate returns a template for the issuer public key pubkey holding
-// the state exported by User.Export; attrs are the attributes that were
-// masked. It returns ErrInvalid if pubkey or the state are malformed.
-func NewUserTemplate(pubkey []byte, state []byte, attrs [][]byte) (*UserTemplate, error) {
-	if len(pubkey) != PubKeyLen {
-		return nil, errors.Wrapf(ErrInvalid, "len(pubkey) != %d", PubKeyLen)
-	}
-	flat, err := checkAttrs(attrs)
-	if err != nil {
-		return nil, err
-	}
-	defer wipe(flat)
-	c := (*C.cbdc_user_state_struct)(C.calloc(1, C.sizeof_cbdc_user_state_struct))
-	if c == nil {
-		return nil, errors.New("anoncreds: out of memory")
-	}
-	if C.cbdc_user_template_init(c, ptr(pubkey)) != 1 {
-		C.free(unsafe.Pointer(c))
-
-		return nil, errors.Wrapf(ErrInvalid, "malformed issuer public key")
-	}
-	t := &UserTemplate{c: c}
-	if C.cbdc_user_import(c, ptr(state), C.size_t(len(state)), ptr(flat)) != 1 {
-		t.Clear()
-
-		return nil, errors.Wrapf(ErrInvalid, "user state")
-	}
-
-	return t, nil
-}
-
-// Clone returns a new User with the state of the template and its own
-// presentation prover. The User can CredVerify and PresGen, but not
-// MaskAttrs. It must be released with Clear.
-func (t *UserTemplate) Clone() (*User, error) {
-	if t == nil || t.c == nil {
-		return nil, errCleared
-	}
-	c := (*C.cbdc_user_state_struct)(C.calloc(1, C.sizeof_cbdc_user_state_struct))
-	if c == nil {
-		return nil, errors.New("anoncreds: out of memory")
-	}
-	if C.cbdc_user_clone(c, t.c) != 1 {
-		C.free(unsafe.Pointer(c))
-
-		return nil, errors.Wrapf(ErrInvalid, "template")
-	}
-
-	return &User{c: c}, nil
-}
-
-// Clear releases the C state. The template must not be used afterwards.
-func (t *UserTemplate) Clear() {
-	if t == nil || t.c == nil {
-		return
-	}
-	C.cbdc_user_clear(t.c)
-	C.free(unsafe.Pointer(t.c))
-	t.c = nil
-}
-
 // CredVerify checks the credential against the state of the user (after
-// MaskAttrs or Import) without running a proof.
+// MaskAttrs or Import) without running a proof. It may run concurrently with
+// PresGen and other CredVerify calls.
 func (u *User) CredVerify(cred []byte) error {
-	if u == nil || u.c == nil {
+	if u == nil {
+		return errCleared
+	}
+	u.mu.RLock()
+	defer u.mu.RUnlock()
+	if u.c == nil {
 		return errCleared
 	}
 	rc := C.cbdc_user_credverify(u.c, ptr(cred), C.size_t(len(cred)))
@@ -398,9 +435,16 @@ func (u *User) CredVerify(cred []byte) error {
 }
 
 // PresGen outputs a presentation bound to ctx. coms[i] is the commitment to
-// the attribute with index idxCom[i].
+// the attribute with index idxCom[i]. It may run concurrently with other
+// PresGen and CredVerify calls; a Commitment must not be shared by concurrent
+// calls.
 func (u *User) PresGen(cred []byte, idxRev []uint32, coms []*Commitment, idxCom []uint32, ctx []byte) ([]byte, error) {
-	if u == nil || u.c == nil {
+	if u == nil {
+		return nil, errCleared
+	}
+	u.mu.RLock()
+	defer u.mu.RUnlock()
+	if u.c == nil {
 		return nil, errCleared
 	}
 	if len(coms) != len(idxCom) || len(coms) > MaxCom {
@@ -414,19 +458,11 @@ func (u *User) PresGen(cred []byte, idxRev []uint32, coms []*Commitment, idxCom 
 	ir, nrev := idxptr(idxRev)
 	ic, ncom := idxptr(idxCom)
 
-	var carr *C.cbdc_commit_ptr
-	if len(coms) > 0 {
-		mem := C.malloc(C.size_t(len(coms)) * C.size_t(unsafe.Sizeof(uintptr(0))))
-		carr = (*C.cbdc_commit_ptr)(mem)
-		defer C.free(mem)
-		s := unsafe.Slice(carr, len(coms))
-		for i, c := range coms {
-			if c == nil || c.c == nil {
-				return nil, errCleared
-			}
-			s[i] = c.c
-		}
+	carr, free, err := commitArray(coms)
+	if err != nil {
+		return nil, err
 	}
+	defer free()
 	rc := C.cbdc_user_presgen(u.c, ptr(out), &outl, ptr(cred), C.size_t(len(cred)),
 		ir, nrev, carr, ic, ncom, ptr(ctx), C.size_t(len(ctx)))
 	if rc != 1 {

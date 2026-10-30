@@ -51,15 +51,12 @@ typedef struct
 {
   polymat_t B2; /* Falcon public key as 8x8 matrix over the 64-deg ring */
   polyvec_t c0; /* public non-zero target derived from the public key, 8 elems */
-  lin_prover_state_t p1;
-  lin_prover_state_t p2;
+  lin_prover_state_t p1; /* issuance prover, only alive inside cbdc_user_maskattrs */
   polyvec_t r; /* masking randomness, 16 elems */
   polyvec_t m; /* encoded attributes, 5 elems */
   int masked;  /* set once cbdc_user_maskattrs or cbdc_user_import has run */
-  int ready;   /* set by a successful cbdc_user_init or cbdc_user_template_init */
-  int p1_ready; /* p1 is initialized (cbdc_user_init) */
-  int p2_ready; /* p2 is initialized (cbdc_user_init, cbdc_user_clone) */
-  int template; /* set by cbdc_user_template_init: never proves, see there */
+  int ready;   /* set by a successful cbdc_user_init */
+  int p1_ready; /* p1 is initialized (inside cbdc_user_maskattrs only) */
 } cbdc_user_state_struct;
 typedef cbdc_user_state_struct cbdc_user_state_t[1];
 typedef cbdc_user_state_struct *cbdc_user_state_ptr;
@@ -146,9 +143,6 @@ int cbdc_user_credverify (cbdc_user_state_t state, const uint8_t *cred,
 int cbdc_user_export (cbdc_user_state_t state, uint8_t *out, size_t *outlen);
 int cbdc_user_import (cbdc_user_state_t state, const uint8_t *in, size_t inlen,
                       const uint8_t *attrs);
-int cbdc_user_template_init (cbdc_user_state_t state,
-                             const uint8_t pubkey[897]);
-int cbdc_user_clone (cbdc_user_state_t dst, const cbdc_user_state_struct *src);
 int cbdc_attrs_ok (const uint8_t *attrs);
 
 int cbdc_issuer_init (cbdc_issuer_state_t state, const uint8_t pubkey[897],
@@ -182,7 +176,17 @@ int cbdc_verifier_eqopenverify (const uint8_t *nym, size_t nymlen,
 size_t cbdc_proof_hint_offset (int which);
 int cbdc_test_grandom (int64_t *out, unsigned int n, unsigned int log2o,
                        const uint8_t seed[32], uint32_t dom);
-int cbdc_test_p2_witness_wiped (cbdc_user_state_t state);
+int cbdc_test_presgen_coins (cbdc_user_state_t state, uint8_t *pres,
+                             size_t *preslen, const uint8_t *cred,
+                             size_t credlen, cbdc_commit_ptr *coms,
+                             const unsigned int *idx_com, unsigned int ncom,
+                             const uint8_t *ctx, size_t ctxlen,
+                             const uint8_t coins[32], int shared);
+int cbdc_test_sokprove_coins (uint8_t *proof, size_t *proofl,
+                              cbdc_commit_t com, const uint8_t *ctx,
+                              size_t ctxlen, const uint8_t attr[32],
+                              const uint8_t coins[32], int shared);
+void cbdc_test_pp_digest (uint8_t out[32]);
 int cbdc_test_eqopen_statement_ok (cbdc_commit_t com, const uint8_t attr[32]);
 
 #endif

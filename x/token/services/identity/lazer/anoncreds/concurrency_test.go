@@ -9,8 +9,11 @@ package anoncreds
 import (
 	"math"
 	"slices"
+	"strconv"
 	"sync"
 	"testing"
+
+	"github.com/hyperledger-labs/fabric-smart-client/pkg/utils/errors"
 )
 
 // TestGaussianSamplerLargeSigma checks the sampler for log2o >= 24, which
@@ -67,151 +70,204 @@ func TestGaussianSamplerIsAFunctionOfItsSeed(t *testing.T) {
 	}
 }
 
-func templateOf(tb testing.TB, f *fixture) *UserTemplate {
+// importedUser returns a presentation User for f's wallet, imported from the
+// exported state as the key manager builds it.
+func importedUser(tb testing.TB, f *fixture) *User {
 	tb.Helper()
 	state, err := f.user.Export()
 	if err != nil {
 		tb.Fatal(err)
 	}
-	tmpl, err := NewUserTemplate(f.ipk, state, f.attrs)
+	u, err := NewUser(f.ipk)
 	if err != nil {
 		tb.Fatal(err)
 	}
-	tb.Cleanup(tmpl.Clear)
+	if err := u.Import(state, f.attrs); err != nil {
+		tb.Fatal(err)
+	}
+	tb.Cleanup(u.Clear)
 
-	return tmpl
+	return u
 }
 
-// exportClone returns the state of a fresh clone of tmpl, that is of tmpl.
-func exportClone(tb testing.TB, tmpl *UserTemplate) []byte {
+// fixedCoinCommitments returns commitments to the attributes idxCom of f with
+// fixed openings, so that two provers see the same statement.
+func fixedCoinCommitments(tb testing.TB, f *fixture, idxCom []uint32) []*Commitment {
 	tb.Helper()
-	u, err := tmpl.Clone()
-	if err != nil {
-		tb.Fatal(err)
-	}
-	defer u.Clear()
-	state, err := u.Export()
-	if err != nil {
-		tb.Fatal(err)
+	var coms []*Commitment
+	for _, i := range idxCom {
+		c0, err := Commit(f.attrs[i])
+		if err != nil {
+			tb.Fatal(err)
+		}
+		op, err := c0.Opening()
+		c0.Clear()
+		if err != nil {
+			tb.Fatal(err)
+		}
+		c, err := CommitWithOpening(f.attrs[i], op)
+		if err != nil {
+			tb.Fatal(err)
+		}
+		tb.Cleanup(c.Clear)
+		coms = append(coms, c)
 	}
 
-	return state
+	return coms
 }
 
-func TestUserTemplate(t *testing.T) {
+// TestSharedPublicParamsSameProofs checks that the public matrices shared by
+// the process (lazer patch 0011) give the same proofs as matrices expanded
+// for the call: with the same coins, presentations and signatures of
+// knowledge are byte-identical, and they verify.
+func TestSharedPublicParamsSameProofs(t *testing.T) {
 	f := setup(t)
-	tmpl := templateOf(t, f)
+	u := importedUser(t, f)
+	idxCom := []uint32{0, 2, 3}
+	coms := fixedCoinCommitments(t, f, idxCom)
+	var nyms [][]byte
+	for _, c := range coms {
+		nyms = append(nyms, c.Nym)
+	}
+	ctx := []byte("ctx")
+	for _, coins := range [][32]byte{{1}, {2, 3}} {
+		private, err := u.presGenCoins(f.cred, coms, idxCom, ctx, coins, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		shared, err := u.presGenCoins(f.cred, coms, idxCom, ctx, coins, true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !slices.Equal(private, shared) {
+			t.Fatal("presentations differ with shared public matrices")
+		}
+		if err := f.verifier.PresVer(revealed(f.attrs, nil), nil, nyms, idxCom, shared, ctx); err != nil {
+			t.Fatalf("presentation rejected: %v", err)
+		}
 
-	// the template itself never runs arithmetic on its state
-	if err := (&User{c: tmpl.c}).CredVerify(f.cred); err == nil {
-		t.Fatal("credverify on a template")
-	}
-	if _, err := (&User{c: tmpl.c}).PresGen(f.cred, nil, nil, nil, nil); err == nil {
-		t.Fatal("presgen on a template")
-	}
-	if _, err := (&User{c: tmpl.c}).Export(); err == nil {
-		t.Fatal("export of a template")
-	}
-	if _, err := (&User{c: tmpl.c}).MaskAttrs(f.attrs, f.idxRev); err == nil {
-		t.Fatal("maskattrs on a template")
-	}
-
-	u, err := tmpl.Clone()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer u.Clear()
-	if err := u.CredVerify(f.cred); err != nil {
-		t.Fatalf("clone rejects the credential: %v", err)
-	}
-	// a clone presents, but has no issuance prover
-	if _, err := u.MaskAttrs(f.attrs, f.idxRev); err == nil {
-		t.Fatal("maskattrs on a clone")
-	}
-	pres, err := u.PresGen(f.cred, f.idxRev, nil, nil, []byte("ctx"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := f.verifier.PresVer(revealed(f.attrs, f.idxRev), f.idxRev, nil, nil, pres, []byte("ctx")); err != nil {
-		t.Fatalf("presentation of a clone rejected: %v", err)
-	}
-
-	// the prover keeps no witness after a presentation (lazer patch 0005),
-	// whether it succeeds or not
-	if wiped, err := p2WitnessWiped(u); err != nil || !wiped {
-		t.Fatalf("witness kept after a presentation (%v)", err)
-	}
-	bad := append([]byte(nil), f.cred...)
-	bad[len(bad)/2] ^= 1
-	if _, err := u.PresGen(bad, f.idxRev, nil, nil, []byte("ctx")); err == nil {
-		t.Fatal("presentation with a corrupted credential")
-	}
-	if wiped, err := p2WitnessWiped(u); err != nil || !wiped {
-		t.Fatalf("witness kept after a failed presentation (%v)", err)
-	}
-
-	// malformed inputs
-	if _, err := NewUserTemplate(f.ipk[:10], nil, f.attrs); err == nil {
-		t.Fatal("short public key accepted")
-	}
-	if _, err := NewUserTemplate(f.ipk, []byte("short"), f.attrs); err == nil {
-		t.Fatal("malformed state accepted")
-	}
-	if _, err := NewUserTemplate(f.ipk, nil, f.attrs[:2]); err == nil {
-		t.Fatal("missing attributes accepted")
-	}
-	// cleared objects
-	c := templateOf(t, f)
-	c.Clear()
-	c.Clear()
-	if _, err := c.Clone(); err == nil {
-		t.Fatal("clone of a cleared template")
+		private, err = coms[0].sokProveCoins(ctx, f.attrs[0], coins, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		shared, err = coms[0].sokProveCoins(ctx, f.attrs[0], coins, true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !slices.Equal(private, shared) {
+			t.Fatal("signatures of knowledge differ with shared public matrices")
+		}
+		if err := SokVerify(coms[0].Nym, ctx, shared); err != nil {
+			t.Fatalf("signature of knowledge rejected: %v", err)
+		}
 	}
 }
 
-// TestUserTemplateConcurrentClones clones one template from several
-// goroutines and proves with every clone at the same time. The template is
-// only read by the clones; every presentation must verify.
-func TestUserTemplateConcurrentClones(t *testing.T) {
+// TestUserConcurrentUse runs presentations, credential checks, signatures of
+// knowledge, equality-of-opening proofs and their verifications on one User
+// and the shared public matrices at the same time. Every proof must verify and
+// the shared matrices must be unchanged afterwards (the race detector does not
+// see the C code, the digest does).
+func TestUserConcurrentUse(t *testing.T) {
 	f := setup(t)
-	tmpl := templateOf(t, f)
-	before := exportClone(t, tmpl)
+	u := importedUser(t, f)
+	before := publicParamsDigest()
 
-	const workers = 4
-	press := make([][]byte, workers)
+	const workers = 6
 	errs := make([]error, workers)
 	var wg sync.WaitGroup
 	for i := range workers {
 		wg.Go(func() {
-			u, err := tmpl.Clone()
+			idxCom := []uint32{0, 2, 3}
+			var coms []*Commitment
+			var nyms [][]byte
+			for _, j := range idxCom {
+				c, err := Commit(f.attrs[j])
+				if err != nil {
+					errs[i] = err
+
+					return
+				}
+				defer c.Clear()
+				coms = append(coms, c)
+				nyms = append(nyms, c.Nym)
+			}
+			// a Verifier is not for concurrent use: one per worker
+			v, err := NewVerifier(f.ipk)
 			if err != nil {
 				errs[i] = err
 
 				return
 			}
-			defer u.Clear()
-			press[i], errs[i] = u.PresGen(f.cred, f.idxRev, nil, nil, []byte("ctx"))
+			defer v.Clear()
+			ctx := []byte("ctx" + strconv.Itoa(i))
+			pres, err := u.PresGen(f.cred, nil, coms, idxCom, ctx)
+			if err == nil {
+				err = v.PresVer(revealed(f.attrs, nil), nil, nyms, idxCom, pres, ctx)
+			}
+			if err == nil {
+				err = u.CredVerify(f.cred)
+			}
+			var sok, eq []byte
+			if err == nil {
+				sok, err = coms[0].SokProve(ctx, f.attrs[0])
+			}
+			if err == nil {
+				err = SokVerify(coms[0].Nym, ctx, sok)
+			}
+			if err == nil {
+				eq, err = coms[1].EqOpeningProve(ctx, f.attrs[2])
+			}
+			if err == nil {
+				err = EqOpeningVerify(coms[1].Nym, f.attrs[2], ctx, eq)
+			}
+			errs[i] = err
 		})
 	}
 	wg.Wait()
+	for i, err := range errs {
+		if err != nil {
+			t.Fatalf("worker %d: %v", i, err)
+		}
+	}
+	if publicParamsDigest() != before {
+		t.Fatal("the shared public matrices changed")
+	}
+}
+
+// TestUserClearWaitsForPresentations clears a User while several
+// presentations are in progress: they complete, and calls after Clear fail.
+func TestUserClearWaitsForPresentations(t *testing.T) {
+	f := setup(t)
+	u := importedUser(t, f)
+
+	const workers = 4
+	start := make(chan struct{})
+	errs := make([]error, workers)
+	var wg sync.WaitGroup
 	for i := range workers {
-		if errs[i] != nil {
-			t.Fatal(errs[i])
+		wg.Go(func() {
+			<-start
+			_, errs[i] = u.PresGen(f.cred, f.idxRev, nil, nil, []byte("ctx"))
+		})
+	}
+	close(start)
+	u.Clear()
+	wg.Wait()
+	for _, err := range errs {
+		// a presentation either ran before Clear or saw the cleared state
+		if err != nil && !errors.Is(err, ErrInvalid) {
+			t.Fatal(err)
 		}
-		if err := f.verifier.PresVer(revealed(f.attrs, f.idxRev), f.idxRev, nil, nil, press[i], []byte("ctx")); err != nil {
-			t.Fatalf("presentation %d rejected: %v", i, err)
-		}
 	}
-	// the race detector does not see C: check that the template was only read
-	if after := exportClone(t, tmpl); !slices.Equal(before, after) {
-		t.Fatal("cloning changed the template")
+	if _, err := u.PresGen(f.cred, f.idxRev, nil, nil, []byte("ctx")); err == nil {
+		t.Fatal("presentation after Clear")
 	}
-	u, err := tmpl.Clone()
-	if err != nil {
-		t.Fatal(err)
+	if err := u.CredVerify(f.cred); err == nil {
+		t.Fatal("credverify after Clear")
 	}
-	defer u.Clear()
-	if err := u.CredVerify(f.cred); err != nil {
-		t.Fatalf("clone rejects the credential: %v", err)
+	if _, err := u.Export(); err == nil {
+		t.Fatal("export after Clear")
 	}
+	u.Clear()
 }

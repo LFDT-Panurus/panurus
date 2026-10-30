@@ -38,10 +38,9 @@ type KeyManagerProvider struct {
 // NewKeyManagerProvider returns a provider for the given issuer public key.
 // The key managers it creates share one ProverLimiter of DefaultProverLimit,
 // so the number of presentations generated at the same time, and the memory
-// of those in progress, does not grow with the number of wallets; each key
-// manager still keeps its idle prover states (see WithIdleProvers). opts are
+// they take while they run, does not grow with the number of wallets. opts are
 // applied to every key manager after that, e.g. WithProverLimiter to set
-// another limit or WithIdleProvers(0) to keep no prover state at rest.
+// another limit.
 func NewKeyManagerProvider(
 	issuerPublicKey []byte,
 	keystore idriver.Keystore,
@@ -136,8 +135,8 @@ type WrappedKeyManager struct {
 // Close only cancels it: an identity generation in progress completes or fails
 // with "key manager closed", after which the goroutine sees the cancellation
 // and exits. This is safe because Identity refuses to serve once closed, a
-// generation waiting for a prover fails on Close, and one in progress holds
-// its own prover state, which Close does not release.
+// generation waiting for the prover limiter fails on Close, and Close waits
+// for all the generations in progress before it releases the user state.
 func (k *WrappedKeyManager) Close() {
 	if k.identityCache != nil {
 		k.identityCache.Close()
