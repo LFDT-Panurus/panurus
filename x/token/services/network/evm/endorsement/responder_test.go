@@ -408,5 +408,46 @@ func TestResponderRejectsSetupWithNilSetupFactory(t *testing.T) {
 	assert.Empty(t, resp.Signature)
 }
 
+// TestResponderRejectsNilSetupFactoryFromResolver checks that a setupFactoryFor returning a nil
+// *SetupDeltaFactory with no error is refused rather than nil-dereferencing on Build: the typed nil
+// wraps into a non-nil deltaBuilder interface, so endorse must guard the concrete pointer.
+func TestResponderRejectsNilSetupFactoryFromResolver(t *testing.T) {
+	auth, err := NewAuthorizer([]view.Identity{view.Identity(testCaller)})
+	require.NoError(t, err)
+
+	r := NewResponder(
+		auth,
+		func(token2.TMSID) (*DeltaFactory, error) { return nil, errors.New("not a KindApproval test") },
+		func(token2.TMSID) (*SetupDeltaFactory, error) { return nil, nil },
+		newSigner(t, 1),
+		func(token2.TMSID) (eip712.Domain, error) { return testDomain(), nil },
+	)
+
+	resp := r.Handle(context.Background(), view.Identity(testCaller), validSetupRequest())
+	require.Error(t, resp.Error())
+	assert.Contains(t, resp.Error().Error(), "setup factory resolver returned nil")
+	assert.Empty(t, resp.Signature)
+}
+
+// TestResponderRejectsNilApprovalFactoryFromResolver is the approval-path counterpart: a factoryFor
+// returning a nil *DeltaFactory with no error must error rather than panic in Build.
+func TestResponderRejectsNilApprovalFactoryFromResolver(t *testing.T) {
+	auth, err := NewAuthorizer([]view.Identity{view.Identity(testCaller)})
+	require.NoError(t, err)
+
+	r := NewResponder(
+		auth,
+		func(token2.TMSID) (*DeltaFactory, error) { return nil, nil },
+		func(token2.TMSID) (*SetupDeltaFactory, error) { return nil, errors.New("not a KindSetup test") },
+		newSigner(t, 1),
+		func(token2.TMSID) (eip712.Domain, error) { return testDomain(), nil },
+	)
+
+	resp := r.Handle(context.Background(), view.Identity(testCaller), validRequest())
+	require.Error(t, resp.Error())
+	assert.Contains(t, resp.Error().Error(), "delta factory resolver returned nil")
+	assert.Empty(t, resp.Signature)
+}
+
 // compile-time check that the concrete signer satisfies the injected interface.
 var _ EndorserSigner = (*eip712.Signer)(nil)

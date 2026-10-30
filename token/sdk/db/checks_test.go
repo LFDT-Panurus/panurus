@@ -241,3 +241,37 @@ func TestSweeper_StartTracksTheManagerBeforeReturning(t *testing.T) {
 	assert.Empty(t, s.managers, "Stop must clear the tracked managers")
 	s.mu.Unlock()
 }
+
+// TestSweeper_StartDedupsRepeatedCheckServiceForSameStore is the regression test for the dedup:
+// CheckService is called once per TMS in the common case, but a TMS build that fails after
+// CheckService has run is retried, calling start() again for the same store. Without the (tmsID,
+// role) dedup every retry would start a second manager - a leaked goroutine and ticker, and on
+// sqlite a duplicated concurrent sweep. Two start() calls for the same TMS must leave exactly one
+// manager tracked.
+func TestSweeper_StartDedupsRepeatedCheckServiceForSameStore(t *testing.T) {
+	s := &sweeper{configuration: failingConfiguration{}}
+	tmsID := token.TMSID{Network: "n1", Channel: "c1", Namespace: "ns1"}
+
+	start := func() error {
+		return s.start(
+			&mock.TokenManagementServiceProvider{},
+			&mock.NetworkProvider{},
+			nil,
+			&checksmock.Storage{},
+			nil,
+			tmsID,
+			nil,
+			checks.RoleOwner,
+			0,
+		)
+	}
+
+	require.NoError(t, start())
+	require.NoError(t, start())
+
+	s.mu.Lock()
+	require.Len(t, s.managers, 1, "a repeated CheckService call for the same store must not start a second manager")
+	s.mu.Unlock()
+
+	require.NoError(t, s.Stop())
+}
