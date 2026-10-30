@@ -18,6 +18,7 @@ import (
 	"github.com/LFDT-Panurus/panurus/integration/nwo/runner/nwo"
 	"github.com/LFDT-Panurus/panurus/integration/nwo/token"
 	"github.com/LFDT-Panurus/panurus/integration/nwo/token/generators/crypto/zkatdlognoghv1"
+	gzkatsnarkv1 "github.com/LFDT-Panurus/panurus/integration/nwo/token/generators/crypto/zkatsnarkv1"
 	"github.com/LFDT-Panurus/panurus/integration/nwo/txgen/model"
 	token3 "github.com/LFDT-Panurus/panurus/integration/token"
 	common2 "github.com/LFDT-Panurus/panurus/integration/token/common"
@@ -47,7 +48,7 @@ const (
 
 	// transferTimeout is the maximum time to wait for a transfer operation to complete in tests.
 	// This generous timeout accounts for variable CI environment performance.
-	transferTimeout = 60 * time.Second
+	transferTimeout = 240 * time.Second
 )
 
 var AuditedTransactions = []TransactionRecord{
@@ -900,10 +901,17 @@ func TestPublicParamsUpdate(network *integration.Infrastructure, newAuditorID st
 	alice := sel.Get("alice")
 	manager := sel.Get("manager")
 	auditor := sel.Get("auditor")
+	endorser1 := sel.Get("endorser-1")
 	if issuerAsAuditor {
 		auditor = issuer
 	}
 	RegisterAuditor(network, auditor)
+	CheckPublicParams(network, issuer, auditor, alice)
+	if _, ok := (*sel)["endorser-1"]; ok {
+		CheckPublicParams(network, endorser1)
+	}
+	time.Sleep(10 * time.Second)
+
 	txId := IssueCash(network, "", "USD", 110, alice, auditor, true, issuer)
 	gomega.Expect(txId).NotTo(gomega.BeEmpty())
 	CheckBalanceAndHolding(network, alice, "", "USD", 110, auditor)
@@ -911,10 +919,13 @@ func TestPublicParamsUpdate(network *integration.Infrastructure, newAuditorID st
 	RegisterAuditor(network, newAuditor)
 	UpdatePublicParams(network, ppBytes, tms)
 
-	gomega.Eventually(GetPublicParams).WithArguments(network, newIssuer).WithTimeout(30 * time.Second).WithPolling(15 * time.Second).Should(gomega.Equal(ppBytes))
-	gomega.Eventually(GetPublicParams).WithArguments(network, issuer).WithTimeout(30 * time.Second).WithPolling(15 * time.Second).Should(gomega.Equal(ppBytes))
+	gomega.Eventually(GetPublicParams).WithArguments(network, newIssuer).WithTimeout(120 * time.Second).WithPolling(15 * time.Second).Should(gomega.Equal(ppBytes))
+	gomega.Eventually(GetPublicParams).WithArguments(network, issuer).WithTimeout(120 * time.Second).WithPolling(15 * time.Second).Should(gomega.Equal(ppBytes))
+	if _, ok := (*sel)["endorser-1"]; ok {
+		gomega.Eventually(GetPublicParams).WithArguments(network, endorser1).WithTimeout(120 * time.Second).WithPolling(15 * time.Second).Should(gomega.Equal(ppBytes))
+	}
 	if !issuerAsAuditor {
-		gomega.Eventually(GetPublicParams).WithArguments(network, newAuditor).WithTimeout(30 * time.Second).WithPolling(15 * time.Second).Should(gomega.Equal(ppBytes))
+		gomega.Eventually(GetPublicParams).WithArguments(network, newAuditor).WithTimeout(120 * time.Second).WithPolling(15 * time.Second).Should(gomega.Equal(ppBytes))
 	}
 	// give time to the issuer and the auditor to update their public parameters and reload their wallets
 	gomega.Eventually(DoesWalletExist).WithArguments(network, newIssuer, "", views.IssuerWallet).WithTimeout(1 * time.Minute).WithPolling(15 * time.Second).Should(gomega.BeTrue())
@@ -937,6 +948,8 @@ func TestPublicParamsUpdate(network *integration.Infrastructure, newAuditorID st
 		Restart(network, false, nil, refs...)
 	}
 
+	time.Sleep(1 * time.Minute)
+
 	txId = IssueCash(network, "", "USD", 110, alice, newAuditor, true, newIssuer)
 	gomega.Expect(txId).NotTo(gomega.BeEmpty())
 	CheckBalance(network, alice, "", "USD", 220)
@@ -944,10 +957,10 @@ func TestPublicParamsUpdate(network *integration.Infrastructure, newAuditorID st
 	if updateWithAppend {
 		IssueCash(network, "", "USD", 110, alice, newAuditor, true, issuer)
 	} else {
-		// The dlog auditor rejects an unrecognized issuer during audit, before the
+		// The dlog and zkatsnark auditors reject an unrecognized issuer during audit, before the
 		// transaction ever reaches the on-chain validator that returns ErrIssuerNotAuthorized.
 		expectedErr := validator.ErrIssuerNotAuthorized.Error()
-		if tms.Driver == zkatdlognoghv1.DriverIdentifier {
+		if tms.Driver == zkatdlognoghv1.DriverIdentifier || tms.Driver == gzkatsnarkv1.DriverIdentifier {
 			expectedErr = "is not a recognized issuer"
 		}
 		IssueCash(network, "", "USD", 110, alice, newAuditor, true, issuer, expectedErr)
@@ -991,6 +1004,15 @@ func TestRevokeIdentity(network *integration.Infrastructure, auditorId string, s
 	bob := sel.Get("bob")
 
 	RegisterAuditor(network, auditor)
+
+	// give some time to the nodes to get the public parameters
+	time.Sleep(10 * time.Second)
+	CheckPublicParams(network, issuer, auditor, alice, bob)
+	// give time to the issuer, auditor, alice, and bob to update their public parameters and reload their wallets
+	gomega.Eventually(DoesWalletExist).WithArguments(network, issuer, "", views.IssuerWallet).WithTimeout(1 * time.Minute).WithPolling(15 * time.Second).Should(gomega.BeTrue())
+	gomega.Eventually(DoesWalletExist).WithArguments(network, auditor, "", views.AuditorWallet).WithTimeout(1 * time.Minute).WithPolling(15 * time.Second).Should(gomega.BeTrue())
+	gomega.Eventually(DoesWalletExist).WithArguments(network, alice, "", views.OwnerWallet).WithTimeout(1 * time.Minute).WithPolling(15 * time.Second).Should(gomega.BeTrue())
+	gomega.Eventually(DoesWalletExist).WithArguments(network, bob, "", views.OwnerWallet).WithTimeout(1 * time.Minute).WithPolling(15 * time.Second).Should(gomega.BeTrue())
 
 	IssueCash(network, "", "USD", 110, alice, auditor, true, issuer)
 	CheckBalanceAndHolding(network, alice, "", "USD", 110, auditor)
@@ -1092,9 +1114,14 @@ func TestRemoteOwnerWalletWithWMP(network *integration.Infrastructure, wmp *Wall
 
 	// give some time to the nodes to get the public parameters
 	time.Sleep(10 * time.Second)
-
 	SetKVSEntry(network, issuer, "auditor", auditor.Id())
 	CheckPublicParams(network, issuer, auditor, alice, bob, charlie, manager)
+	// give time to the issuer, auditor, alice, and bob to update their public parameters and reload their wallets
+	gomega.Eventually(DoesWalletExist).WithArguments(network, issuer, "", views.IssuerWallet).WithTimeout(1 * time.Minute).WithPolling(15 * time.Second).Should(gomega.BeTrue())
+	gomega.Eventually(DoesWalletExist).WithArguments(network, auditor, "", views.AuditorWallet).WithTimeout(1 * time.Minute).WithPolling(15 * time.Second).Should(gomega.BeTrue())
+	gomega.Eventually(DoesWalletExist).WithArguments(network, alice, "", views.OwnerWallet).WithTimeout(1 * time.Minute).WithPolling(15 * time.Second).Should(gomega.BeTrue())
+	gomega.Eventually(DoesWalletExist).WithArguments(network, bob, "", views.OwnerWallet).WithTimeout(1 * time.Minute).WithPolling(15 * time.Second).Should(gomega.BeTrue())
+	gomega.Eventually(DoesWalletExist).WithArguments(network, charlie, "", views.OwnerWallet).WithTimeout(1 * time.Minute).WithPolling(15 * time.Second).Should(gomega.BeTrue())
 
 	Withdraw(network, wmp, websSocket, alice, "alice_remote", "USD", 10, auditor, issuer)
 	CheckBalanceAndHolding(network, alice, "alice_remote", "USD", 10, auditor)

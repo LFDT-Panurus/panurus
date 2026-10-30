@@ -265,6 +265,62 @@ jobs:
             dir: ./token/services/storage/db/kvs/hashicorp
             pkg: .
             func: FuzzNormalizeIDRoundTrip
+          - name: zkatsnark-action-deserializer
+            dir: ./x/token/core/zkatsnark
+            pkg: ./nogh/v1/validator
+            func: FuzzActionDeserializerNoPanic
+          - name: zkatsnark-transfer-action-validate
+            dir: ./x/token/core/zkatsnark
+            pkg: ./nogh/v1/validator
+            func: FuzzTransferActionValidateNoPanic
+          - name: zkatsnark-action-limits
+            dir: ./x/token/core/zkatsnark
+            pkg: ./nogh/v1/validator
+            func: FuzzActionResourceLimits
+          - name: zkatsnark-edwards-signature
+            dir: ./x/token/core/zkatsnark
+            pkg: ./nogh/v1/crypto/edwards
+            func: FuzzDeserializeSignature
+          - name: zkatsnark-backend-new-keys
+            dir: ./x/token/core/zkatsnark
+            pkg: ./nogh/v1/crypto/backend
+            func: FuzzNewKeysNoPanic
+          - name: zkatsnark-backend-plonkfri-verify
+            dir: ./x/token/core/zkatsnark
+            pkg: ./nogh/v1/crypto/backend
+            func: FuzzPlonkFRIVerifyNoPanic
+          - name: zkatsnark-plonkfri-bn254-read-from
+            dir: ./x/token/core/zkatsnark
+            pkg: ./nogh/v1/crypto/internal/plonkfri/bn254
+            func: FuzzReadFrom
+          - name: zkatsnark-public-params-deserialize
+            dir: ./x/token/core/zkatsnark
+            pkg: ./nogh/v1/pp
+            func: FuzzPublicParamsDeserializeNoPanic
+          - name: zkatsnark-note-deserialize
+            dir: ./x/token/core/zkatsnark
+            pkg: ./nogh/v1/token
+            func: FuzzNoteDeserializeNoPanic
+          - name: zkatsnark-output-description-deserialize
+            dir: ./x/token/core/zkatsnark
+            pkg: ./nogh/v1/token
+            func: FuzzOutputDescriptionDeserializeNoPanic
+          - name: zkatsnark-migration-action-deserialize
+            dir: ./x/token/core/zkatsnark
+            pkg: ./nogh/v1/token
+            func: FuzzMigrationActionDeserializeNoPanic
+          - name: zkatsnark-issue-action-with-inputs-deserialize
+            dir: ./x/token/core/zkatsnark
+            pkg: ./nogh/v1/token
+            func: FuzzIssueActionWithInputsDeserializeNoPanic
+          - name: zkatsnark-parse-fabtoken-output
+            dir: ./x/token/core/zkatsnark
+            pkg: ./nogh/v1/token
+            func: FuzzParseFabtokenOutputNoPanic
+          - name: zkatsnark-auditor-check
+            dir: ./x/token/core/zkatsnark
+            pkg: ./nogh/v1/audit
+            func: FuzzAuditorCheckNoPanic
 
     steps:
       - name: Checkout code

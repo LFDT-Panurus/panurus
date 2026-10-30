@@ -21,10 +21,13 @@ import (
 	"github.com/LFDT-Panurus/panurus/integration/nwo/token/generators"
 	"github.com/LFDT-Panurus/panurus/integration/nwo/token/generators/crypto/fabtokenv1"
 	"github.com/LFDT-Panurus/panurus/integration/nwo/token/generators/crypto/zkatdlognoghv1"
+	"github.com/LFDT-Panurus/panurus/integration/nwo/token/generators/crypto/zkatsnarkv1"
 	fabtokengen "github.com/LFDT-Panurus/panurus/integration/nwo/token/generators/pp/fabtokenv1"
 	zkatgen "github.com/LFDT-Panurus/panurus/integration/nwo/token/generators/pp/zkatdlognoghv1"
+	zkatsnarkgen "github.com/LFDT-Panurus/panurus/integration/nwo/token/generators/pp/zkatsnarkv1"
 	topology2 "github.com/LFDT-Panurus/panurus/integration/nwo/token/topology"
 	"github.com/LFDT-Panurus/panurus/token"
+	"github.com/LFDT-Panurus/panurus/token/driver"
 	"github.com/LFDT-Panurus/panurus/token/services/logging"
 	api2 "github.com/hyperledger-labs/fabric-smart-client/integration/nwo/api"
 	"github.com/hyperledger-labs/fabric-smart-client/integration/nwo/common"
@@ -88,6 +91,7 @@ func NewPlatform(ctx api2.Context, t api2.Topology, builder api2.Builder) *Platf
 	}
 	p.PublicParamsGenerators[fabtokenv1.DriverIdentifier] = fabtokengen.NewFabTokenPublicParamsGenerator(fabtokengen.DefaultDriverVersion)
 	p.PublicParamsGenerators[zkatdlognoghv1.DriverIdentifier] = zkatgen.NewDLogPublicParamsGenerator(math3.BN254, zkatgen.DefaultDriverVersion)
+	p.PublicParamsGenerators[zkatsnarkv1.DriverIdentifier] = zkatsnarkgen.NewZkatsnarkPublicParamsGenerator(driver.TokenDriverVersion(1))
 
 	return p
 }

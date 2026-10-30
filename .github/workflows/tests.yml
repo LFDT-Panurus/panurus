@@ -180,9 +180,43 @@ jobs:
         if: matrix.tests == 'unit-tests-race'
         run: make test-evm-contracts EVM_CONTRACTS_REQUIRED=1
 
+  # The zkatsnark driver is a separate Go module whose unit tests are slow under -race (proving dominates),
+  # so they run as parallel shards, one runner each. The shard definitions are in
+  # ci/scripts/zkatsnark-packages.sh; a package no named shard claims lands in "rest".
+  utest-zkatsnark:
+    needs: checks
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [validator, setup, crypto, prover, rest]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: "go.mod"
+          cache-dependency-path: "**/*.sum"
+
+      - name: Unit tests (race) with coverage, shard ${{ matrix.shard }}
+        run: |
+          make unit-tests-zkatsnark ZKATSNARK_SHARD=${{ matrix.shard }}
+          ./ci/scripts/filter-coverage.sh x/token/core/zkatsnark/profile.cov x/token/core/zkatsnark/profile.cov
+
+      - name: Send coverage to Coveralls
+        uses: coverallsapp/github-action@8d6379e14d29928660c4ba802d8e85393440b329 # v2.3.8
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          file: x/token/core/zkatsnark/profile.cov
+          flag-name: utest-zkatsnark-${{ matrix.shard }}
+          parallel: true
+          fail-on-error: false
+
   itest:
     needs: checks
-    if: github.ref == 'refs/heads/main' || github.base_ref == 'main'
     runs-on: ubuntu-latest
     # FSC's Go-chaincode packager (integration/nwo/fabric/packager/golang) only
     # detects the chaincode's Go module root when the checkout lives under a
@@ -255,6 +289,12 @@ jobs:
           fabricx-dlog-t16-websocket,
           fabricx-dlog-t16-libp2p,
           fabricx-dlog-t16-replicas,
+          fabricx-zkatsnark-t1,
+          fabricx-zkatsnark-t2,
+          fabricx-zkatsnark-t2.1,
+          fabricx-zkatsnark-t3,
+          fabricx-zkatsnark-t4,
+          fabricx-zkatsnark-t5,
           fabtoken-dlog-fabric,
           dloghsm-fabric-t1-websocket,
           dloghsm-fabric-t1-libp2p,
@@ -379,7 +419,7 @@ jobs:
           fail-on-error: false
 
   publish-coverage:
-    needs: [ utest, itest ]
+    needs: [ utest, utest-zkatsnark, itest ]
     runs-on: ubuntu-latest
     steps:
       - name: Finish coverage report
