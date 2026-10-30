@@ -399,3 +399,17 @@ func TestAuditLoggerNeverLogsIdentityBytes(t *testing.T) {
 		assert.True(t, strings.HasPrefix(line.text, "sig-audit op="), "records must stay greppable")
 	}
 }
+
+func TestAuditLoggerUnattributedPrincipalRendersNone(t *testing.T) {
+	for _, principal := range []string{"", "<empty>"} {
+		t.Run(principal, func(t *testing.T) {
+			log := &captureLog{}
+			sigobserve.NewAuditLogger(log).Observe(t.Context(), sigobserve.Event{
+				Op:        sigobserve.OpVerify,
+				Principal: principal,
+				Outcome:   sigobserve.OutcomeOK,
+			})
+			assert.Contains(t, log.one(t).text, "principal=none")
+		})
+	}
+}
