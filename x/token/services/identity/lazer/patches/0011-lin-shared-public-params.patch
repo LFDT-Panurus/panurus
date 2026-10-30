@@ -1,0 +1,227 @@
+From: Panurus maintainers
+Subject: [PATCH 11/11] lin: shared public parameters
+
+lin_prover_init and lin_verifier_init expand the public matrices A1,
+A2prime and Bprime from the parameter seed for every prover and verifier
+(about 15 ms and 10 MB for a large proof system), and the first proof
+converts them to the CRT domain in place, so a prover state cannot be shared.
+
+lin_pp_init expands them once and converts them to the CRT domain;
+lin_prover_init_pp and lin_verifier_init_pp set up a prover or verifier that
+borrows them, taking the parameters from the lin_pp_t, so that they cannot be
+mismatched. After the conversion the matrices are only the left operand of
+products, whose conversion is then a no-op, and nothing writes them: provers
+and verifiers that borrow one lin_pp_t may run concurrently. A borrowing state
+does not free the matrices; the lin_pp_t must outlive it and is released with
+lin_pp_clear. lin_prover_init and lin_verifier_init are unchanged. Proofs do
+not change.
+
+Panurus-local patch, applied by `make lazer-install` (lazer.mk).
+
+diff --git a/src/lazer-in2.h b/src/lazer-in2.h
+index 01c6acb..a0498bb 100644
+--- a/src/lazer-in2.h
++++ b/src/lazer-in2.h
+@@ -689,6 +689,8 @@ typedef struct
+   int statement_l2_set;
+   int statement_bin_set;
+   int statement_arp_set;
++  /* A1, A2prime, Bprime are borrowed from a lin_pp_t (panurus patch) */
++  int pp_borrowed;
+ } __lnp_state_struct;
+ typedef __lnp_state_struct __lnp_state_t[1];
+ typedef __lnp_state_struct *__lnp_state_ptr;
+@@ -1624,6 +1626,33 @@ int lin_prover_prove_ctx_bnd (lin_prover_state_t state, uint8_t *proof,
+                               size_t ctxlen);
+ void lin_prover_clear (lin_prover_state_t state);
+ void lin_prover_wipe_witness (lin_prover_state_t state);
++
++/*
++ * Public parameters of a proof system, expanded once and shared (panurus
++ * patch): the matrices A1, A2prime, Bprime expanded from ppseed and already
++ * converted to the CRT domain, so that the provers and verifiers that borrow
++ * them (lin_prover_init_pp, lin_verifier_init_pp) only read them and may run
++ * concurrently. A lin_pp_t must outlive its provers and verifiers, and must
++ * not be used by anything else that could write it.
++ */
++typedef struct
++{
++  lnp_tbox_params_srcptr tbox_params;
++  lin_params_srcptr params;
++  uint8_t ppseed[32];
++  polymat_t A1;
++  polymat_t A2prime;
++  polymat_t Bprime;
++} lin_pp_struct;
++typedef lin_pp_struct lin_pp_t[1];
++typedef lin_pp_struct *lin_pp_ptr;
++typedef const lin_pp_struct *lin_pp_srcptr;
++
++void lin_pp_init (lin_pp_t pp, const uint8_t ppseed[32],
++                  const lin_params_t params);
++void lin_pp_clear (lin_pp_t pp);
++void lin_prover_init_pp (lin_prover_state_t state, lin_pp_srcptr pp);
++void lin_verifier_init_pp (lin_verifier_state_t state, lin_pp_srcptr pp);
+ void lin_verifier_init (lin_verifier_state_t state, const uint8_t ppseed[32],
+                         const lin_params_t params);
+ void lin_verifier_set_statement_A (lin_verifier_state_t state, polymat_t A);
+diff --git a/src/lin-proofs.c b/src/lin-proofs.c
+index 7a182b8..b646437 100644
+--- a/src/lin-proofs.c
++++ b/src/lin-proofs.c
+@@ -3975,6 +3975,41 @@ __lnp_init (__lnp_state_t state, const uint8_t ppseed[32],
+   abdlop_keygen (state->A1, state->A2prime, state->Bprime, ppseed, tbox);
+ }
+ 
++/*
++ * As __lnp_init, but A1, A2prime, Bprime are shallow copies of the headers of
++ * pp's matrices, which stay owned by pp (panurus patch).
++ */
++static void
++__lnp_init_pp (__lnp_state_t state, lin_pp_srcptr pp)
++{
++  lnp_tbox_params_srcptr params = pp->tbox_params;
++  abdlop_params_srcptr tbox = params->tbox;
++  lnp_quad_eval_params_srcptr quade = params->quad_eval;
++  polyring_srcptr Rq = tbox->ring;
++  const unsigned int d = Rq->d;
++  const unsigned int kmsis = tbox->kmsis;
++
++  memset (state, 0, sizeof (__lnp_state_t));
++
++  state->params = params;
++  memcpy (state->ppseed, pp->ppseed, 32);
++
++  state->A1[0] = pp->A1[0];
++  state->A2prime[0] = pp->A2prime[0];
++  state->Bprime[0] = pp->Bprime[0];
++  state->pp_borrowed = 1;
++  polyvec_alloc (state->tA1, Rq, kmsis);
++  polyvec_alloc (state->tA2, Rq, kmsis);
++  polyvec_alloc (state->tB, Rq, tbox->l + tbox->lext);
++  polyvec_alloc (state->h, Rq, quade->lambda / 2);
++  polyvec_alloc (state->hint, Rq, kmsis);
++  polyvec_alloc (state->z1, Rq, tbox->m1);
++  polyvec_alloc (state->z21, Rq, tbox->m2 - kmsis);
++  polyvec_alloc (state->z3, Rq, 256 / d);
++  polyvec_alloc (state->z4, Rq, 256 / d);
++  poly_alloc (state->c, Rq);
++}
++
+ static void
+ _lnp_prover_init (_lnp_prover_state_t state, const uint8_t ppseed[32],
+                   const lnp_tbox_params_t params)
+@@ -4198,9 +4233,13 @@ _lnp_verifier_set_statement_arp (_lnp_verifier_state_t state, polymat_t Ds,
+ static void
+ __lnp_clear (__lnp_state_t state)
+ {
+-  polymat_free (state->A1);
+-  polymat_free (state->A2prime);
+-  polymat_free (state->Bprime);
++  /* borrowed matrices belong to their lin_pp_t (panurus patch) */
++  if (!state->pp_borrowed)
++    {
++      polymat_free (state->A1);
++      polymat_free (state->A2prime);
++      polymat_free (state->Bprime);
++    }
+   polyvec_free (state->tA1);
+   polyvec_free (state->tA2);
+   polyvec_free (state->tB);
+@@ -4881,6 +4920,70 @@ lin_prover_init (lin_prover_state_t state, const uint8_t ppseed[32],
+   DEBUG_PRINTF (DEBUG_PRINT_FUNCTION_RETURN, "%s end", __func__);
+ }
+ 
++/*
++ * Expand the public matrices of params from ppseed and convert them to the
++ * CRT domain once: the provers and verifiers only use them as the left
++ * operand of products, whose conversion is then a no-op, so nothing writes
++ * them afterwards (panurus patch).
++ */
++void
++lin_pp_init (lin_pp_t pp, const uint8_t ppseed[32], const lin_params_t params)
++{
++  lnp_tbox_params_srcptr tbox_params = params->tbox_params;
++  abdlop_params_srcptr tbox = tbox_params->tbox;
++  polyring_srcptr Rq = tbox->ring;
++  const unsigned int kmsis = tbox->kmsis;
++
++  memset (pp, 0, sizeof (pp[0]));
++  pp->tbox_params = tbox_params;
++  pp->params = params;
++  memcpy (pp->ppseed, ppseed, 32);
++
++  polymat_alloc (pp->A1, Rq, kmsis, tbox->m1);
++  polymat_alloc (pp->A2prime, Rq, kmsis, tbox->m2 - kmsis);
++  polymat_alloc (pp->Bprime, Rq, tbox->l + tbox->lext, tbox->m2 - kmsis);
++  abdlop_keygen (pp->A1, pp->A2prime, pp->Bprime, ppseed, tbox);
++  polymat_tocrt (pp->A1);
++  polymat_tocrt (pp->A2prime);
++  polymat_tocrt (pp->Bprime);
++}
++
++void
++lin_pp_clear (lin_pp_t pp)
++{
++  polymat_free (pp->A1);
++  polymat_free (pp->A2prime);
++  polymat_free (pp->Bprime);
++  memset (pp, 0, sizeof (pp[0]));
++}
++
++/*
++ * As lin_prover_init with the parameters and the public matrices of pp,
++ * which the prover borrows (panurus patch). Release it with
++ * lin_prover_clear, before pp.
++ */
++void
++lin_prover_init_pp (lin_prover_state_t state, lin_pp_srcptr pp)
++{
++  _lnp_prover_state_ptr __lnp_state = state->lnp_state;
++  _lin_state_ptr lin_state = state->state;
++  abdlop_params_srcptr tbox = pp->tbox_params->tbox;
++  polyring_srcptr Rq = tbox->ring;
++
++  DEBUG_START ();
++  DEBUG_PRINTF (DEBUG_PRINT_FUNCTION_ENTRY, "%s begin", __func__);
++
++  memset (state, 0, sizeof (state[0]));
++
++  _lin_init (lin_state, pp->params);
++  __lnp_init_pp (__lnp_state->state, pp);
++  polyvec_alloc (__lnp_state->s1, Rq, tbox->m1);
++  polyvec_alloc (__lnp_state->s2, Rq, tbox->m2);
++  polyvec_alloc (__lnp_state->m, Rq, tbox->l + tbox->lext);
++
++  DEBUG_PRINTF (DEBUG_PRINT_FUNCTION_RETURN, "%s end", __func__);
++}
++
+ void
+ lin_prover_set_statement_A (lin_prover_state_t state, polymat_t A)
+ {
+@@ -5077,6 +5180,25 @@ lin_verifier_init (lin_verifier_state_t state, const uint8_t ppseed[32],
+   DEBUG_PRINTF (DEBUG_PRINT_FUNCTION_RETURN, "%s end", __func__);
+ }
+ 
++/*
++ * As lin_verifier_init with the parameters and the public matrices of pp,
++ * which the verifier borrows (panurus patch). Release it with
++ * lin_verifier_clear, before pp.
++ */
++void
++lin_verifier_init_pp (lin_verifier_state_t state, lin_pp_srcptr pp)
++{
++  _lin_state_ptr lin_state = state->state;
++
++  DEBUG_PRINTF (DEBUG_PRINT_FUNCTION_ENTRY, "%s begin", __func__);
++  memset (state, 0, sizeof (state[0]));
++
++  _lin_init (lin_state, pp->params);
++  __lnp_init_pp (state->lnp_state->state, pp);
++
++  DEBUG_PRINTF (DEBUG_PRINT_FUNCTION_RETURN, "%s end", __func__);
++}
++
+ void
+ lin_verifier_set_statement_A (lin_verifier_state_t state, polymat_t A)
+ {

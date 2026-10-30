@@ -203,63 +203,55 @@ still in the cache are not served.
 
 ### Concurrent identity generation
 
-Generating an identity is mostly generating its presentation (about 120 ms). The C prover state of a
-user is mutated by every presentation (it holds the statement and the witness, and lazer converts
-operands to the CRT domain in place, even those it only reads), so it can serve one presentation at
-a time. The key manager therefore keeps a pool of prover states (`prover.go`):
+Generating an identity is mostly generating its presentation. lazer converts the operands of a product to
+the CRT domain in place, even those it only reads, and its prover states hold the statement and the
+witness, so a prover state, or anything a product reads, cannot be shared by concurrent proofs as is. The
+module therefore splits what is shared from what is per call:
 
-- At construction the wallet state is imported into a *template* (`anoncreds.UserTemplate`), which
-  holds the public key, the masking randomness and the attributes but no prover, and never proves:
-  `cbdc_user_credverify`, `presgen`, `export` and `maskattrs` reject it. Prover states are cloned from
-  it (`cbdc_user_clone`): the clone copies the template, which is only read, so clones can be made
-  concurrently, and sets up its own presentation prover (about 16 ms). Clones have no issuance prover.
-  The credential is checked once, on the first clone, which becomes the first idle state.
-- A `ProverLimiter` bounds the presentations generated at the same time, hence the prover states in use
-  (about 10 MB each, mostly public matrices expanded from the parameter seed). `KeyManagerProvider`
-  shares one limiter of `DefaultProverLimit()` (`min(GOMAXPROCS, 4)`) among all the key managers it
-  creates, so the memory of the presentations *in progress* does not grow with the number of wallets; a
-  key manager built directly with `NewKeyManager` has its own unless `WithProverLimiter` is passed.
-  GOMAXPROCS alone would not bound the work: a goroutine in a cgo call does not count against it.
-- Each key manager keeps up to `WithIdleProvers(n)` states between calls, 1 by default, plus its template
-  (small, no prover). At rest a node therefore holds about n x 10 MB per local wallet (before the pool a
-  wallet held a full user state with both provers, about 14 MB). With 0 a wallet holds no prover state at
-  rest, and every identity pays for setting up a prover (about 16 ms). States beyond n are set up for a
-  call and released after it: with the defaults, concurrent calls on one wallet beyond the first pay that
-  setup too. Pass `WithIdleProvers` to `NewKeyManagerProvider` to change it for every wallet.
-- `Identity` waits for a free slot; it fails if its context is done or the key manager is closed
-  first. Close clears the idle states and, once the clones in progress are done, the template; a state
-  in use is cleared when it is given back.
-- After each presentation the prover wipes its witness (lazer patch 0005), so pooled provers do not
-  keep copies of the credential and masking randomness. The issuance prover (P1) of a `User` keeps its
-  witness until `Clear`; it only exists in the short-lived user states of issuance (`issuer.go`).
+- The public matrices of each proof system (P1, P2, SoK/equality-of-opening) are expanded once per process
+  and converted to the CRT domain (`lin_pp_init`, lazer patch 0011). Every prover and verifier borrows them
+  (`lin_prover_init_pp`, `lin_verifier_init_pp`): after the conversion they are only the left operand of
+  products, so nothing writes them. They take about 20 MB per process.
+- The wallet state (`anoncreds.User`: the public key, the masking randomness and the attributes) is only
+  read by `PresGen` and `CredVerify`, which work on copies of what a product converts, so they may run
+  concurrently on one `User`. Each presentation sets up its own P2 prover from the shared matrices and
+  clears it, which wipes the witness. `MaskAttrs`, `Import`, `Export` and `Clear` are exclusive: they wait
+  for the presentations in progress. The issuance prover (P1) is set up and cleared inside `MaskAttrs`, so a user holds no
+  prover state between calls.
+- A `ProverLimiter` (`prover.go`) bounds the presentations generated at the same time. Each one needs a few
+  MB while it runs (its prover and its scratch space); a wallet holds no prover state between calls.
+  `KeyManagerProvider` shares one limiter of `DefaultProverLimit()` (`min(GOMAXPROCS, 4)`) among all the key
+  managers it creates, so this does not grow with the number of wallets; a key manager built directly with
+  `NewKeyManager` has its own unless `WithProverLimiter` is passed. GOMAXPROCS alone would not bound the
+  work: a goroutine in a cgo call does not count against it.
+- `Identity` waits for a free slot; it fails if its context is done or the key manager is closed first.
+  `Close` waits for all the presentations in progress before it releases the wallet state.
 
-Concurrent proofs, and hence this pool, rely on lazer patch 0004: before it the discrete gaussian
-sampler of lazer kept its sign bits in process-global variables.
+Concurrent proofs rely on lazer patch 0004 (the discrete gaussian sampler kept its sign bits in
+process-global variables) and on 0011. Go's race detector does not see the C code: the tests check that the
+shared matrices are unchanged after concurrent proving (`TestUserConcurrentUse`), and that proofs with fixed
+coins are the same with shared or private matrices (`TestSharedPublicParamsSameProofs`).
 
 ## Benchmarks
 
-`make lazer-bench` prints the sizes of identities, signatures, audit infos and signer infos, and
-the time of generating identities, signing and verifying. The `TestParallelBenchmarkLazer*` tests
-in `km_bench_test.go` measure throughput with concurrent workers:
+`make lazer-bench` prints the sizes of identities, signatures, audit infos and signer infos, and the time
+of generating identities, signing and verifying. The `TestParallelBenchmarkLazer*` tests in
+`km_bench_test.go` measure throughput with concurrent workers, and `BenchmarkKmIdentityParallel` generates
+identities with one key manager from parallel goroutines:
 
 ```bash
 cd x/token/services/identity/lazer
-go test -run 'TestParallelBenchmarkLazer' -v .
+go test -run 'TestParallelBenchmarkLazer' -v . -args -duration=60s -workers=1,10
 go test -run '^$' -bench 'BenchmarkKmIdentity' -cpu 1,2,4,8 .
+go test -run '^$' -bench '^BenchmarkLazer$' -benchtime=60s .
+go test -run '^$' -bench '^BenchmarkMatchIdentity$' -benchtime=700x -count=3 .
 ```
 
-`BenchmarkKmIdentityParallel` generates identities with one key manager from parallel goroutines. As
-an indication, on an Apple M1 Max it takes about 138, 69, 42 and 36 ms per identity with 1, 2, 4 and 8
-CPUs (the limiter allows 4 concurrent presentations), against about 115 ms whatever the number of CPUs
-before the prover pool.
-
-Verifiers do not cache presentation checks, so every verification and every audit match pays for the
-full presentation check. As an indication, on an Apple M-series laptop: generating an identity takes about
-160 ms (presentation and enrollment id proof), signing about 40 ms and verifying about 70 ms
-(`go test -bench BenchmarkLazer -benchtime=5x .`). Sizes: identity 225 B, signature about 53.4 KB, audit info
-about 75 KB, signer info about 51 KB (the last three base64 in JSON or DER, dominated by the presentation).
-`BenchmarkMatchIdentity` measures the audit matching, which verifies the presentation of the audit info
-in the same way. Numbers depend heavily on the machine and the build.
+Verifiers do not cache presentation checks, so every verification and every audit match pays for the full
+presentation check; `BenchmarkMatchIdentity` measures the audit matching. Run the benchmarks on an idle
+machine and compare runs of the same build only: the numbers depend heavily on the machine and the build.
+Sizes: identity 225 B, signature about 53.4 KB, audit info about 75 KB, signer info about 51 KB (the last
+three base64 in JSON or DER, dominated by the presentation).
 
 ## Building and testing
 
@@ -277,7 +269,7 @@ make lazer-install                     # fetch lazer (LAZER_REPO at LAZER_COMMIT
 make lazer-install LAZER_SRC=~/lazer   # or copy, patch and build a local checkout (it is not modified)
 make lazer-test                        # go test -race in the module
 make lazer-test-short                  # without the race detector
-make lazer-bench                       # sizes and timings
+make lazer-bench                       # sizes and benchmarks
 make lazer-clean                       # remove ./.lazer
 ```
 
@@ -330,6 +322,7 @@ cannot be silently skipped or misapplied.
 | `0008-tbox-accumulator-challenge-pairs.patch` | [lazer-crypto/lazer#24](https://github.com/lazer-crypto/lazer/issues/24): `___schwartz_zippel_accumulate2` gave all `lambda / 2` accumulator pairs the same challenges. It now draws a `lambda × M` matrix and pair `i` uses rows `2i` and `2i + 1`. |
 | `0009-quad-verify-bound-z21.patch` | [lazer-crypto/lazer#26](https://github.com/lazer-crypto/lazer/issues/26): `lnp_quad_verify` and `abdlop_verify` bounded only `z22`, not `z21`, while the parameters assume a bound on all of `z2`. They now check `‖z21‖² + ‖w − γ·w1‖² ≤ Bsqr`. Honest proofs and the transcript are unchanged. |
 | `0010-prover-zk-z2-rejection-beta-signs.patch` | [lazer-crypto/lazer#31](https://github.com/lazer-crypto/lazer/issues/31), prover-only: the `z2` rejection (`rej2 == 2`) used the bimodal test with `σ1²` and no sign; it now uses the one-time rejection Rej1 of Lyubashevsky–Nguyen–Seiler, "Shorter lattice-based zero-knowledge proofs via one-time commitments" (`rej_onetime`, `src/rejection.c`) with `σ2²`, which roughly doubles the expected `z2` attempts. The toolbox prover's β4 sign read an always-zero bit on every fourth attempt; it now reads the next unused bit, and the sign bits are wiped. |
+| `0011-lin-shared-public-params.patch` | `lin_pp_init` expands the public matrices of a proof system once and converts them to the CRT domain; `lin_prover_init_pp` / `lin_verifier_init_pp` set up provers and verifiers that borrow them (the parameters come from the `lin_pp_t`). After the conversion nothing writes the matrices, so provers and verifiers sharing them may run concurrently, and setting one up no longer expands the matrices. `lin_prover_init` / `lin_verifier_init` are unchanged; proofs do not change. See [Concurrent identity generation](#concurrent-identity-generation). |
 
 Patches 0006-0008 change `src/lin-proofs.c`, not `src/lnp-tbox.c`: `lin_prover_prove` and
 `lin_verifier_verify` run a private copy of the toolbox protocol in `lin-proofs.c`, so a fix to `lnp-tbox.c`
@@ -408,7 +401,7 @@ files and is the reference for the scheme, not part of this module.
 | `config.go` | configuration and on-disk layout |
 | `identity.go` | identity and signature encodings, verifier pool |
 | `km.go`, `kmp.go` | `KeyManager`, `KeyManagerProvider`, identity cache wrapper |
-| `prover.go` | prover state pool and `ProverLimiter`, see [Concurrent identity generation](#concurrent-identity-generation) |
+| `prover.go` | `ProverLimiter`, see [Concurrent identity generation](#concurrent-identity-generation) |
 | `deserializer.go`, `audit.go` | verifier/matcher deserializers, `AuditInfo` |
 | `strictjson.go` | strict and canonical JSON decoding of audit infos, signer infos and configurations |
 | `issuer.go`, `cmd/lazergen` | issuer key generation and wallet issuance for tools and tests |

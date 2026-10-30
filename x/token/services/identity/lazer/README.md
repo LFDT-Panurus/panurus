@@ -33,12 +33,13 @@ commitment `Acom*(H(EID),r)` to the enrollment id, 225 B, as in idemixnym.
   derived from the wallet secret, bound to the identity, `nym_rh` and `pres`.
 - Wallet secret `usk || user state` is moved to the `idriver.Keystore` by the
   KMP and removed from the stored configuration (only the SKI stays).
-- Concurrency: a presentation mutates its C prover state, so each key manager
-  clones prover states from a never-proving template and keeps them in a pool
-  (`prover.go`). A `ProverLimiter`, shared by all key managers of a
+- Concurrency: the public matrices of the proof systems are expanded once per
+  process and shared read-only by every prover and verifier (lazer patch 0011).
+  The wallet state (`anoncreds.User`) is only read by presentations, each of
+  which sets up its own prover, so they run concurrently on one key manager. A
+  `ProverLimiter` (`prover.go`), shared by all key managers of a
   `KeyManagerProvider` (default `min(GOMAXPROCS, 4)`), bounds the presentations
-  running at once, hence the prover states in use (about 10 MB each); each key
-  manager also keeps `WithIdleProvers` (default 1) of them between calls.
+  running at once.
 - Presentations generated before lazer patch 0004 may leak their witness: see
   the advisory in `docs/services/identity-lazer.md`, "Open issues". See
   `docs/services/identity-lazer.md`, "Concurrent identity generation".
@@ -52,7 +53,7 @@ tests in `km_bench_test.go` measure throughput with concurrent workers. See
 ## Layout
 
 `config.go` JSON config and on-disk layout (`msp/IssuerPublicKey`,
-`user/SignerConfig[Full]`), `km.go`, `kmp.go`, `prover.go` (prover pool and limiter), `deserializer.go`, `audit.go`, `strictjson.go`,
+`user/SignerConfig[Full]`), `km.go`, `kmp.go`, `prover.go` (presentation limiter), `deserializer.go`, `audit.go`, `strictjson.go`,
 `identity.go` (encodings, verifier pool), `issuer.go`
 (helpers used by `cmd/lazergen`).
 

@@ -83,9 +83,11 @@ func unmarshalSignature(raw []byte) (*Signature, error) {
 }
 
 // presVerifier verifies presentations and signatures under an issuer public
-// key. It is safe for concurrent use: the C verifier states are not, hence a
-// small pool of them is kept. Nothing is cached: every signature carries a
-// presentation, and every verification checks it.
+// key. It is safe for concurrent use: a C verifier state holds the statement
+// of the verification in progress, hence a small pool of them is kept (they
+// borrow the public matrices shared by the process, so each one is small).
+// Nothing is cached: every signature carries a presentation, and every
+// verification checks it.
 //
 // After Close the pool is empty and stays empty: verifications fail, and
 // verifier states still in use are released when they are given back.

@@ -266,7 +266,6 @@ sequenceDiagram
 | SokProve / SokVerify | user / anyone | nym, ctx → proof → ok | `cbdc_user_sokprove`, `cbdc_verifier_sokverify` |
 | PresGen | user | cred, $\mathsf{Rev}$, nyms+openings, $\mathsf{Com}$, ctx → $P_2$ | `cbdc_user_presgen` / `User.PresGen` |
 | PresVer | verifier | revealed attrs, nyms, $\mathsf{Com}$, $P_2$, ctx → ok | `cbdc_verifier_presver` / `Verifier.PresVer` |
-| Template / Clone | user | pk, exported state, attrs → template → presentation-only user state | `cbdc_user_template_init`, `cbdc_user_clone` / `NewUserTemplate`, `UserTemplate.Clone` |
 
 ---
 
@@ -666,18 +665,17 @@ attributes.
 ### 9.3 Concurrency
 
 Public parameters are read-only after the `pthread_once` initialization. Lazer functions that convert their
-operands in place (for example, into NTT form) always get a private copy (`cbdc_mat_copy`). A `Verifier` or
-`User` object holds mutable prover/verifier state and must not be used concurrently (Panurus keeps a pool of
-verifiers, and one of user states). The arithmetic on a user state converts even the operands it only reads
-($\mathbf{r}$, $\mathbf{m}$, $\mathbf{c}_0$) in place, so concurrent presentations need one state each.
+operands in place (for example, into NTT form) always get a private copy (`cbdc_mat_copy`), and so do the
+operands taken from a user state ($\mathbf{r}$, $\mathbf{m}$, $\mathbf{c}_0$, $\mathbf{B}_2$). The public
+matrices of the three proof systems are expanded once and converted to the CRT domain at initialization
+(`lin_pp_init`, local patch 0011); every prover and verifier borrows them (`lin_prover_init_pp`,
+`lin_verifier_init_pp`) and only uses them as the left operand of products, so nothing writes them.
 
-A `UserTemplate` (`cbdc_user_template_init` followed by `cbdc_user_import`) holds the public key, $\mathbf{r}$
-and the encoded attributes, but no prover, and every operation that would run arithmetic on it
-(`credverify`, `presgen`, `export`, `maskattrs`) rejects it. `cbdc_user_clone` copies it, reading it only
-(`polyvec_set`/`polymat_set` copy the representation of their source), into a state with its own $P_2$
-prover; several clones of one template can therefore be made concurrently. A clone has no $P_1$ prover and
-cannot mask attributes. After each presentation the $P_2$ prover wipes its witness
-(`lin_prover_wipe_witness`, local patch 0005).
+`cbdc_user_presgen` and `cbdc_user_credverify` therefore only read the user state, and may run concurrently
+on one state: each presentation sets up its own $P_2$ prover and clears it, which wipes the witness.
+`cbdc_user_maskattrs`, `cbdc_user_import`, `cbdc_user_export` and `cbdc_user_clear` write the state and are
+exclusive (the Go `User` enforces it with a read-write lock). A `Verifier` holds a verifier state with the
+statement and must not be used concurrently (Panurus keeps a pool of them).
 
 Concurrent proofs also need lazer's discrete Gaussian sampler to be free of global state, which it is with
 local patch 0004: before, its sign-bit buffer was process-global (see [the module

@@ -177,8 +177,12 @@ type KeyManager struct {
 	// aiKey is the key that encrypts the opening of nymEID in the audit infos
 	aiKey []byte
 
-	// provers generate the presentations, nil for a remote key manager
-	provers *proverPool
+	// user generates the presentations, nil for a remote key manager. It is
+	// safe for concurrent presentations, limiter bounds how many run at once.
+	user    *anoncreds.User
+	limiter *ProverLimiter
+	// done is closed by Close, releasing the calls waiting for the limiter
+	done chan struct{}
 
 	// mu protects closed
 	mu     sync.Mutex
@@ -191,8 +195,7 @@ type KeyManager struct {
 type KeyManagerOption func(*keyManagerOptions)
 
 type keyManagerOptions struct {
-	limiter     *ProverLimiter
-	idleProvers int
+	limiter *ProverLimiter
 }
 
 // WithProverLimiter makes the key manager share limiter with other key
@@ -202,20 +205,12 @@ func WithProverLimiter(limiter *ProverLimiter) KeyManagerOption {
 	return func(o *keyManagerOptions) { o.limiter = limiter }
 }
 
-// WithIdleProvers sets the number of prover states (about 10 MB each) the key
-// manager keeps between identity generations, 1 by default. With 0 no memory
-// is kept, but every identity generation pays the setup of a prover (about
-// 16 ms on top of about 120 ms).
-func WithIdleProvers(n int) KeyManagerOption {
-	return func(o *keyManagerOptions) { o.idleProvers = max(n, 0) }
-}
-
 // NewKeyManager creates a key manager from the configuration. The wallet secret
 // is taken from the configuration (and then stored in the keystore), or loaded
 // from the keystore through the SKI of the configuration. A configuration
 // without signer yields a remote key manager that can only verify.
 func NewKeyManager(conf *Config, keystore idriver.Keystore, identityStore IdentityStoreService, opts ...KeyManagerOption) (*KeyManager, error) {
-	options := keyManagerOptions{idleProvers: defaultIdleProvers}
+	options := keyManagerOptions{}
 	for _, opt := range opts {
 		opt(&options)
 	}
@@ -229,7 +224,7 @@ func NewKeyManager(conf *Config, keystore idriver.Keystore, identityStore Identi
 	if err != nil {
 		return nil, err
 	}
-	km := &KeyManager{Deserializer: des, conf: conf, identityStore: identityStore, remote: true}
+	km := &KeyManager{Deserializer: des, conf: conf, identityStore: identityStore, remote: true, done: make(chan struct{})}
 	ok := false
 	defer func() {
 		if !ok {
@@ -278,23 +273,25 @@ func NewKeyManager(conf *Config, keystore idriver.Keystore, identityStore Identi
 	if km.aiKey, err = auditKey(conf.IPK, secret); err != nil {
 		return nil, errors.Wrap(err, "failed to derive the audit info key")
 	}
-	tmpl, err := anoncreds.NewUserTemplate(conf.IPK, secret[anoncreds.AttrLen:], km.attrs)
+	user, err := anoncreds.NewUser(conf.IPK)
 	if err != nil {
+		return nil, err
+	}
+	if err := user.Import(secret[anoncreds.AttrLen:], km.attrs); err != nil {
+		user.Clear()
+
 		return nil, errors.Wrap(err, "failed to import the user state")
 	}
-	first, err := tmpl.Clone()
-	if err != nil {
-		tmpl.Clear()
-
-		return nil, errors.Wrap(err, "failed to create a prover state")
-	}
-	if err := first.CredVerify(conf.Signer.Cred); err != nil {
-		first.Clear()
-		tmpl.Clear()
+	if err := user.CredVerify(conf.Signer.Cred); err != nil {
+		user.Clear()
 
 		return nil, errors.Wrap(err, "credential is not cryptographically valid")
 	}
-	km.provers = newProverPool(tmpl, first, options.limiter, options.idleProvers)
+	km.user = user
+	km.limiter = options.limiter
+	if km.limiter == nil {
+		km.limiter = NewProverLimiter(0)
+	}
 	km.remote = false
 	ok = true
 
@@ -304,15 +301,19 @@ func NewKeyManager(conf *Config, keystore idriver.Keystore, identityStore Identi
 // Close releases the C state held by the key manager. It is idempotent and
 // safe to call concurrently with the other methods; afterwards Identity and
 // the signer deserializers fail, and so do verifications. Identity calls
-// waiting for a prover fail, those in progress complete. Signers already
-// returned keep working: they own no C state.
+// waiting for the limiter fail; Close waits for all the presentations in
+// progress to complete. Signers already returned keep working: they own no C
+// state.
 func (k *KeyManager) Close() {
 	k.mu.Lock()
+	first := !k.closed
 	k.closed = true
 	k.mu.Unlock()
-	if k.provers != nil {
-		k.provers.close()
+	if first && k.done != nil {
+		close(k.done)
 	}
+	// waits for the presentations in progress
+	k.user.Clear()
 	k.pv.Close()
 }
 
@@ -377,7 +378,7 @@ func (k *KeyManager) Identity(ctx context.Context, auditInfo []byte) (*idriver.I
 	}
 	defer comSK.Clear()
 
-	// the user states are mutated by every presentation: one per call, from the pool
+	// the wallet user is read-only: presentations run concurrently, bounded by the limiter
 	pres, err := k.present(ctx, []*anoncreds.Commitment{comSK, comEID, comRH})
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to generate the presentation")
@@ -492,17 +493,20 @@ func (k *KeyManager) eidRHCommitments(auditInfo []byte) (*anoncreds.Commitment, 
 	return comEID, comRH, nil
 }
 
-// present generates the presentation of the commitments coms with a prover
-// state of the pool, given back even if PresGen panics: the limiter may be
-// shared with other key managers.
+// present generates the presentation of the commitments coms. The limiter
+// slot is given back even if PresGen panics: the limiter may be shared with
+// other key managers.
 func (k *KeyManager) present(ctx context.Context, coms []*anoncreds.Commitment) ([]byte, error) {
-	user, err := k.provers.get(ctx)
-	if err != nil {
+	if err := k.limiter.acquire(ctx, k.done); err != nil {
 		return nil, err
 	}
-	defer k.provers.put(user)
+	defer k.limiter.release()
+	pres, err := k.user.PresGen(k.conf.Signer.Cred, nil, coms, idxCom, k.pv.ctx)
+	if err != nil && k.isClosed() {
+		return nil, errClosed
+	}
 
-	return user.PresGen(k.conf.Signer.Cred, nil, coms, idxCom, k.pv.ctx)
+	return pres, err
 }
 
 // DeserializeVerifier returns the verifier of the given pseudonym.

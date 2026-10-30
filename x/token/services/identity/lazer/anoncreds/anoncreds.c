@@ -66,7 +66,6 @@ static const polyring_t cbdc_falcon_ring
           cbdc_inv2 } };
 
 /* public parameters, expanded once from seeds */
-static int cbdc_pp_ready = 0;
 static uint8_t cbdc_blindsigpp[32];
 static uint8_t cbdc_p1pp[32];
 static uint8_t cbdc_p2pp[32];
@@ -75,6 +74,14 @@ static polymat_t cbdc_AR;   /* 8x16 */
 static polymat_t cbdc_AM;   /* 8x5 */
 static polymat_t cbdc_ATAU; /* 8x8 */
 static polymat_t cbdc_Acom; /* CBDC_COM_ROWSx11 commitment key */
+/*
+ * public matrices of the three proof systems, expanded once and in the CRT
+ * domain (lazer patch 0011): every prover and verifier borrows them and only
+ * reads them, so they are shared by all threads, for the process lifetime
+ */
+static lin_pp_t cbdc_p1lpp;
+static lin_pp_t cbdc_p2lpp;
+static lin_pp_t cbdc_popenlpp;
 
 static void
 cbdc_seed (uint8_t out[32], uint8_t b)
@@ -102,10 +109,13 @@ cbdc_urandom_mat (polymat_t M, unsigned int rows, unsigned int cols,
 static pthread_once_t cbdc_pp_once = PTHREAD_ONCE_INIT;
 
 /*
- * The public matrices below are read-only after initialization. Operations
- * that convert their operands in place (polyvec_mul, lin_*_set_statement)
- * must work on a private copy, see cbdc_mat_copy.
+ * The public matrices (cbdc_AR, cbdc_AM, cbdc_ATAU, cbdc_Acom and the shared
+ * lin_pp_t below) are read-only after initialization. Operations that convert
+ * their operands in place (polyvec_mul, lin_*_set_statement) must work on a
+ * private copy, see cbdc_mat_copy. The same holds for the state of a user,
+ * which is shared by concurrent presentations.
  */
+
 /*
  * Euclidean norm group i of params covers the n witness elements
  * start..start+n-1 and has the squared bound bnd.
@@ -229,7 +239,9 @@ cbdc_pp_do_init (void)
   cbdc_urandom_mat (cbdc_ATAU, 8, 8, cbdc_blindsigpp, 3);
   cbdc_urandom_mat (cbdc_Acom, CBDC_COM_ROWS, 11, cbdc_popenpp, 1);
 
-  cbdc_pp_ready = 1;
+  lin_pp_init (cbdc_p1lpp, cbdc_p1pp, p1_param);
+  lin_pp_init (cbdc_p2lpp, cbdc_p2pp, p2_param);
+  lin_pp_init (cbdc_popenlpp, cbdc_popenpp, popen_param);
 }
 
 static void
@@ -269,6 +281,24 @@ cbdc_prove (lin_prover_state_t prover, uint8_t *out, size_t cap, size_t *len,
     if (lin_prover_prove_ctx_bnd (prover, out, cap, len, NULL, ctx, ctxlen)
         == 1)
       return 1;
+  *len = 0;
+  return 0;
+}
+
+/*
+ * prove into at most cap bytes, with the given coins (tests) or fresh ones,
+ * retrying with fresh coins as cbdc_prove. Returns 1 on success.
+ */
+static int
+cbdc_prove_coins (lin_prover_state_t prover, uint8_t *out, size_t cap,
+                  size_t *len, const uint8_t *ctx, size_t ctxlen,
+                  const uint8_t *coins)
+{
+  if (coins == NULL)
+    return cbdc_prove (prover, out, cap, len, ctx, ctxlen);
+  if (lin_prover_prove_ctx_bnd (prover, out, cap, len, coins, ctx, ctxlen)
+      == 1)
+    return 1;
   *len = 0;
   return 0;
 }
@@ -686,68 +716,7 @@ cbdc_user_init (cbdc_user_state_t state, const uint8_t pubkey[897])
   if (!cbdc_decode_pk (state->B2, pubkey))
     return 0;
   cbdc_derive_c0 (state->c0, pubkey);
-  lin_prover_init (state->p1, cbdc_p1pp, p1_param);
-  lin_prover_init (state->p2, cbdc_p2pp, p2_param);
-  state->p1_ready = 1;
-  state->p2_ready = 1;
   state->ready = 1;
-  return 1;
-}
-
-/*
- * A template holds the public key and, after cbdc_user_import, the masking
- * randomness and the attributes, but no prover: it is only the source of
- * cbdc_user_clone. Operations that run arithmetic on r, m or c0 (credverify,
- * presgen, export, maskattrs) reject it: lazer converts the operands of a
- * multiplication to the CRT domain in place, so they would write the
- * template, and cloning concurrently from a template is safe only because
- * nothing writes it. Returns 1 on success, 0 if pubkey is not a valid
- * Falcon-512 public key, in which case state is zeroed and need not be
- * cleared.
- */
-int
-cbdc_user_template_init (cbdc_user_state_t state, const uint8_t pubkey[897])
-{
-  cbdc_pp_init ();
-
-  memset (state, 0, sizeof (cbdc_user_state_t));
-  if (!cbdc_decode_pk (state->B2, pubkey))
-    return 0;
-  cbdc_derive_c0 (state->c0, pubkey);
-  state->template = 1;
-  state->ready = 1;
-  return 1;
-}
-
-/*
- * Initialize dst as a copy of the imported template src with its own P2
- * prover, so that dst can present (but not mask attributes, it has no P1
- * prover). src is only read, hence concurrent clones of the same template
- * are safe as long as nothing else uses it. dst must be cleared. Returns 1
- * on success, 0 if src is not an imported template, in which case dst is
- * zeroed and need not be cleared.
- */
-int
-cbdc_user_clone (cbdc_user_state_t dst, const cbdc_user_state_struct *src)
-{
-  cbdc_pp_init ();
-
-  memset (dst, 0, sizeof (cbdc_user_state_t));
-  if (src == NULL || !src->ready || !src->template || !src->masked)
-    return 0;
-  /* *_set copy the representation of the source without converting it */
-  polymat_alloc (dst->B2, cbdc_ring, 8, 8);
-  polymat_set (dst->B2, (polymat_ptr)src->B2);
-  polyvec_alloc (dst->c0, cbdc_ring, 8);
-  polyvec_set (dst->c0, (polyvec_ptr)src->c0);
-  polyvec_alloc (dst->r, cbdc_ring, 16);
-  polyvec_set (dst->r, (polyvec_ptr)src->r);
-  polyvec_alloc (dst->m, cbdc_ring, CBDC_NATTRS);
-  polyvec_set (dst->m, (polyvec_ptr)src->m);
-  dst->masked = 1;
-  lin_prover_init (dst->p2, cbdc_p2pp, p2_param);
-  dst->p2_ready = 1;
-  dst->ready = 1;
   return 1;
 }
 
@@ -771,8 +740,6 @@ cbdc_user_clear (cbdc_user_state_t state)
     return;
   if (state->p1_ready)
     lin_prover_clear (state->p1);
-  if (state->p2_ready)
-    lin_prover_clear (state->p2);
   polymat_free (state->B2);
   polyvec_free (state->c0);
   cbdc_user_forget (state);
@@ -1078,9 +1045,10 @@ cbdc_com_ok (cbdc_commit_ptr com, poly_ptr mk)
  * commitment to attr (the prover is never run on a false statement) or the
  * proof does not fit.
  */
-int
-cbdc_user_sokprove (uint8_t *proof, size_t *proofl, cbdc_commit_t com,
-                    const uint8_t *ctx, size_t ctxlen, const uint8_t attr[32])
+static int
+cbdc_sokprove (uint8_t *proof, size_t *proofl, cbdc_commit_t com,
+               const uint8_t *ctx, size_t ctxlen, const uint8_t attr[32],
+               const uint8_t *coins, int shared)
 {
   lin_prover_state_t prover;
   polyvec_t a, s, t;
@@ -1108,10 +1076,15 @@ cbdc_user_sokprove (uint8_t *proof, size_t *proofl, cbdc_commit_t com,
   cbdc_put (s, 1, com->r);
   cbdc_sok_statement (t, com->nym);
 
-  lin_prover_init (prover, cbdc_popenpp, popen_param);
+  if (shared)
+    lin_prover_init_pp (prover, cbdc_popenlpp);
+  else
+    /* private matrices: only used by the shared == 0 test path */
+    lin_prover_init (prover, cbdc_popenpp, popen_param);
   lin_prover_set_statement (prover, Acom, t);
   lin_prover_set_witness (prover, s);
-  rv = cbdc_prove (prover, proof, cbdc_maxlen_sok (), proofl, ctx, ctxlen);
+  rv = cbdc_prove_coins (prover, proof, cbdc_maxlen_sok (), proofl, ctx,
+                         ctxlen, coins);
   lin_prover_clear (prover);
 
   cbdc_vec_free_secret (a);
@@ -1119,6 +1092,13 @@ cbdc_user_sokprove (uint8_t *proof, size_t *proofl, cbdc_commit_t com,
   polyvec_free (t);
   polymat_free (Acom);
   return rv == 1;
+}
+
+int
+cbdc_user_sokprove (uint8_t *proof, size_t *proofl, cbdc_commit_t com,
+                    const uint8_t *ctx, size_t ctxlen, const uint8_t attr[32])
+{
+  return cbdc_sokprove (proof, proofl, com, ctx, ctxlen, attr, NULL, 1);
 }
 
 /*
@@ -1183,7 +1163,7 @@ cbdc_user_eqopenprove (uint8_t *proof, size_t *proofl, cbdc_commit_t com,
   polyvec_set_zero (s);
   cbdc_put (s, 1, com->r);
 
-  lin_prover_init (prover, cbdc_popenpp, popen_param);
+  lin_prover_init_pp (prover, cbdc_popenlpp);
   lin_prover_set_statement (prover, A, t);
   lin_prover_set_witness (prover, s);
   rv = cbdc_prove (prover, proof, cbdc_maxlen_sok (), proofl, ctx, ctxlen);
@@ -1219,7 +1199,7 @@ cbdc_user_maskattrs (cbdc_user_state_t state, uint8_t *masked_attrs,
 
   cbdc_pp_init ();
 
-  if (!state->ready || !state->p1_ready || masked_attrs == NULL
+  if (!state->ready || masked_attrs == NULL
       || masked_attrslen == NULL || attrs == NULL || (nrev > 0 && idx_rev == NULL)
       || !cbdc_idx_valid (idx_rev, nrev) || !cbdc_attrs_ok (attrs))
     return 0;
@@ -1265,6 +1245,9 @@ cbdc_user_maskattrs (cbdc_user_state_t state, uint8_t *masked_attrs,
   cbdc_put (w, 0, r);
   cbdc_put (w, 16, mpriv);
 
+  /* the issuance prover only lives for this call */
+  lin_prover_init_pp (state->p1, cbdc_p1lpp);
+  state->p1_ready = 1;
   lin_prover_set_statement (state->p1, A, u);
   lin_prover_set_witness (state->p1, w);
 
@@ -1273,6 +1256,8 @@ cbdc_user_maskattrs (cbdc_user_state_t state, uint8_t *masked_attrs,
   rc = tlen > 0
        && cbdc_prove (state->p1, masked_attrs + tlen, cap - tlen, &plen, NULL,
                       0);
+  lin_prover_clear (state->p1);
+  state->p1_ready = 0;
 
   if (rc)
     {
@@ -1307,7 +1292,7 @@ static int
 cbdc_cred_ok (cbdc_user_state_t state, polyvec_t tau, polyvec_t s1,
               polyvec_t s2)
 {
-  polyvec_t acc, tmp, zero;
+  polyvec_t acc, tmp, zero, r, m, c0;
   polymat_t AR, ATAU, AM, B2;
   int rv;
   INT_T (l2sqr, 2);
@@ -1326,18 +1311,26 @@ cbdc_cred_ok (cbdc_user_state_t state, polyvec_t tau, polyvec_t s1,
   cbdc_mat_copy (ATAU, cbdc_ATAU);
   cbdc_mat_copy (AM, cbdc_AM);
   cbdc_mat_copy (B2, state->B2);
+  /* the state is shared by concurrent presentations and polyvec_mul converts
+     its operands in place: work on copies */
+  polyvec_alloc (r, cbdc_ring, 16);
+  polyvec_set (r, state->r);
+  polyvec_alloc (m, cbdc_ring, CBDC_NATTRS);
+  polyvec_set (m, state->m);
+  polyvec_alloc (c0, cbdc_ring, 8);
+  polyvec_set (c0, state->c0);
 
   polyvec_alloc (acc, cbdc_ring, 8);
   polyvec_alloc (tmp, cbdc_ring, 8);
   polyvec_alloc (zero, cbdc_ring, 8);
   polyvec_set_zero (zero);
 
-  polyvec_mul (acc, AR, state->r);
+  polyvec_mul (acc, AR, r);
   polyvec_mul (tmp, ATAU, tau);
   polyvec_add (acc, acc, tmp, 0);
-  polyvec_mul (tmp, AM, state->m);
+  polyvec_mul (tmp, AM, m);
   polyvec_add (acc, acc, tmp, 0);
-  polyvec_add (acc, acc, state->c0, 0);
+  polyvec_add (acc, acc, c0, 0);
   polyvec_sub (acc, acc, s1, 0);
   polyvec_mul (tmp, B2, s2);
   polyvec_sub (acc, acc, tmp, 0);
@@ -1346,6 +1339,9 @@ cbdc_cred_ok (cbdc_user_state_t state, polyvec_t tau, polyvec_t s1,
 
   cbdc_vec_free_secret (acc);
   cbdc_vec_free_secret (tmp);
+  cbdc_vec_free_secret (r);
+  cbdc_vec_free_secret (m);
+  polyvec_free (c0);
   polyvec_free (zero);
   polymat_free (AR);
   polymat_free (ATAU);
@@ -1376,26 +1372,30 @@ cbdc_com_valid (const unsigned int *idx_rev, unsigned int nrev,
 }
 
 /*
- * coms[i] is the commitment to attribute idx_com[i]. The presentation is
- * bound to ctx. Returns 1 on success.
+ * The presentation of cbdc_user_presgen. The state is only read, so
+ * presentations of one state may run concurrently: the statement and the
+ * witness are built from copies, and the P2 prover is set up for this call
+ * from the shared public matrices (or, for tests, with private ones,
+ * shared == 0) and cleared before returning, which wipes the witness.
  */
-int
-cbdc_user_presgen (cbdc_user_state_t state, uint8_t *pres, size_t *preslen,
-                   const uint8_t *cred, size_t credlen,
-                   const unsigned int *idx_rev, unsigned int nrev,
-                   cbdc_commit_ptr *coms, const unsigned int *idx_com,
-                   unsigned int ncom, const uint8_t *ctx, size_t ctxlen)
+static int
+cbdc_presgen (cbdc_user_state_t state, uint8_t *pres, size_t *preslen,
+              const uint8_t *cred, size_t credlen,
+              const unsigned int *idx_rev, unsigned int nrev,
+              cbdc_commit_ptr *coms, const unsigned int *idx_com,
+              unsigned int ncom, const uint8_t *ctx, size_t ctxlen,
+              const uint8_t *coins, int shared)
 {
-  polyvec_t tau, s1, s2, w, u;
+  lin_prover_state_t prover;
+  polyvec_t tau, s1, s2, w, u, m, c0;
   polyvec_t nyms[CBDC_MAXCOM];
-  polymat_t A;
+  polymat_t A, B2;
   unsigned int i;
   int rv = 0;
 
   cbdc_pp_init ();
 
-  if (!state->ready || !state->p2_ready || !state->masked || pres == NULL
-      || preslen == NULL
+  if (!state->ready || !state->masked || pres == NULL || preslen == NULL
       || (nrev > 0 && idx_rev == NULL) || (ncom > 0 && (idx_com == NULL || coms == NULL))
       || !cbdc_com_valid (idx_rev, nrev, idx_com, ncom))
     return 0;
@@ -1404,6 +1404,8 @@ cbdc_user_presgen (cbdc_user_state_t state, uint8_t *pres, size_t *preslen,
   polyvec_alloc (tau, cbdc_ring, 8);
   polyvec_alloc (s1, cbdc_ring, 8);
   polyvec_alloc (s2, cbdc_ring, 8);
+  polyvec_alloc (m, cbdc_ring, CBDC_NATTRS);
+  polyvec_set (m, state->m);
 
   /*
    * decode blindsig tau,s1,s2 and check the whole witness: the prover must
@@ -1414,19 +1416,25 @@ cbdc_user_presgen (cbdc_user_state_t state, uint8_t *pres, size_t *preslen,
     goto err_dec;
   for (i = 0; i < ncom; i++)
     if (!cbdc_commit_ready (coms[i])
-        || !cbdc_com_ok (coms[i], polyvec_get_elem (state->m, idx_com[i])))
+        || !cbdc_com_ok (coms[i], polyvec_get_elem (m, idx_com[i])))
       goto err_dec;
 
   for (i = 0; i < ncom; i++)
     nyms[i][0] = coms[i]->nym[0];
-  cbdc_p2_statement (A, u, state->B2, state->c0, state->m, idx_rev, nrev, nyms,
-                     idx_com, ncom);
+  /* B2 and c0 are in the coefficient domain, which poly_neg and polyvec_add
+     leave alone, but copy them as well: the state is shared */
+  cbdc_mat_copy (B2, state->B2);
+  polyvec_alloc (c0, cbdc_ring, 8);
+  polyvec_set (c0, state->c0);
+  cbdc_p2_statement (A, u, B2, c0, m, idx_rev, nrev, nyms, idx_com, ncom);
+  polyvec_free (c0);
+  polymat_free (B2);
 
   /* w = (r,tau,s1,s2,mpriv,rcom) */
   {
     polyvec_t mpub, mpriv;
 
-    cbdc_split (mpub, mpriv, state->m, idx_rev, nrev);
+    cbdc_split (mpub, mpriv, m, idx_rev, nrev);
     polyvec_alloc (w, cbdc_ring, 40 + 5 + 3 * 10);
     polyvec_set_zero (w);
     cbdc_put (w, 0, state->r);
@@ -1442,11 +1450,17 @@ cbdc_user_presgen (cbdc_user_state_t state, uint8_t *pres, size_t *preslen,
     cbdc_vec_free_secret (mpriv);
   }
 
-  lin_prover_set_statement (state->p2, A, u);
-  lin_prover_set_witness (state->p2, w);
-  rv = cbdc_prove (state->p2, pres, cbdc_maxlen_pres (), preslen, ctx, ctxlen);
-  /* the prover is kept for the next presentation, not its witness */
-  lin_prover_wipe_witness (state->p2);
+  if (shared)
+    lin_prover_init_pp (prover, cbdc_p2lpp);
+  else
+    /* private matrices: only used by the shared == 0 test path */
+    lin_prover_init (prover, cbdc_p2pp, p2_param);
+  lin_prover_set_statement (prover, A, u);
+  lin_prover_set_witness (prover, w);
+  rv = cbdc_prove_coins (prover, pres, cbdc_maxlen_pres (), preslen, ctx,
+                         ctxlen, coins);
+  /* also wipes the prover's copy of the witness */
+  lin_prover_clear (prover);
 
   cbdc_vec_free_secret (w);
   polyvec_free (u);
@@ -1455,7 +1469,25 @@ err_dec:
   cbdc_vec_free_secret (tau);
   cbdc_vec_free_secret (s1);
   cbdc_vec_free_secret (s2);
+  cbdc_vec_free_secret (m);
   return rv;
+}
+
+/*
+ * coms[i] is the commitment to attribute idx_com[i]. The presentation is
+ * bound to ctx. Returns 1 on success. The state is only read: presentations
+ * of one state may run concurrently, also with cbdc_user_credverify, but not
+ * with what writes it (maskattrs, import, clear).
+ */
+int
+cbdc_user_presgen (cbdc_user_state_t state, uint8_t *pres, size_t *preslen,
+                   const uint8_t *cred, size_t credlen,
+                   const unsigned int *idx_rev, unsigned int nrev,
+                   cbdc_commit_ptr *coms, const unsigned int *idx_com,
+                   unsigned int ncom, const uint8_t *ctx, size_t ctxlen)
+{
+  return cbdc_presgen (state, pres, preslen, cred, credlen, idx_rev, nrev,
+                       coms, idx_com, ncom, ctx, ctxlen, NULL, 1);
 }
 
 /*
@@ -1472,7 +1504,7 @@ cbdc_user_credverify (cbdc_user_state_t state, const uint8_t *cred,
 
   cbdc_pp_init ();
 
-  if (!state->ready || state->template || !state->masked)
+  if (!state->ready || !state->masked)
     return 0;
 
   polyvec_alloc (tau, cbdc_ring, 8);
@@ -1503,8 +1535,7 @@ cbdc_user_export (cbdc_user_state_t state, uint8_t *out, size_t *outlen)
   polyvec_t tmp;
   size_t len;
 
-  if (!state->ready || state->template || !state->masked || out == NULL
-      || outlen == NULL)
+  if (!state->ready || !state->masked || out == NULL || outlen == NULL)
     return 0;
   polyvec_alloc (tmp, cbdc_ring, 16);
   polyvec_set (tmp, state->r);
@@ -1590,7 +1621,7 @@ cbdc_issuer_init (cbdc_issuer_state_t state, const uint8_t pubkey[897],
     return 0;
   memcpy (state->sk, privkey, sizeof (state->sk));
   cbdc_derive_c0 (state->c0, pubkey);
-  lin_verifier_init (state->p1, cbdc_p1pp, p1_param);
+  lin_verifier_init_pp (state->p1, cbdc_p1lpp);
   state->ready = 1;
   return 1;
 }
@@ -1743,7 +1774,7 @@ cbdc_verifier_init (cbdc_verifier_state_t state, const uint8_t pubkey[897])
   if (!cbdc_decode_pk (state->B2, pubkey))
     return 0;
   cbdc_derive_c0 (state->c0, pubkey);
-  lin_verifier_init (state->p2, cbdc_p2pp, p2_param);
+  lin_verifier_init_pp (state->p2, cbdc_p2lpp);
   state->ready = 1;
   return 1;
 }
@@ -1842,7 +1873,7 @@ cbdc_verifier_sokverify (const uint8_t *nym, size_t nymlen,
   cbdc_sok_statement (t, nymv);
   cbdc_mat_copy (Acom, cbdc_Acom);
 
-  lin_verifier_init (verifier, cbdc_popenpp, popen_param);
+  lin_verifier_init_pp (verifier, cbdc_popenlpp);
   lin_verifier_set_statement (verifier, Acom, t);
   b = lin_verifier_verify_ctx_bnd (verifier, proof, proofl, &len, ctx, ctxlen);
   if (b == 1 && len != proofl)
@@ -1887,7 +1918,7 @@ cbdc_verifier_eqopenverify (const uint8_t *nym, size_t nymlen,
   cbdc_encattrs (a, attr, 1);
   cbdc_eqopen_statement (A, t, nymv, a);
 
-  lin_verifier_init (verifier, cbdc_popenpp, popen_param);
+  lin_verifier_init_pp (verifier, cbdc_popenlpp);
   lin_verifier_set_statement (verifier, A, t);
   b = lin_verifier_verify_ctx_bnd (verifier, proof, proofl, &len, ctx, ctxlen);
   if (b == 1 && len != proofl)
@@ -1964,50 +1995,89 @@ cbdc_test_grandom (int64_t *out, unsigned int n, unsigned int log2o,
 }
 
 /*
- * For tests only: 1 if the presentation prover of state holds no witness
- * (it is wiped after every presentation), 0 if it does, -1 if state has no
- * presentation prover.
+ * For tests only: cbdc_user_presgen with the given prover coins, with the
+ * shared public matrices (shared != 0) or private ones. Honest proofs: the
+ * same coins must give the same bytes either way.
  */
 int
-cbdc_test_p2_witness_wiped (cbdc_user_state_t state)
+cbdc_test_presgen_coins (cbdc_user_state_t state, uint8_t *pres,
+                         size_t *preslen, const uint8_t *cred, size_t credlen,
+                         cbdc_commit_ptr *coms, const unsigned int *idx_com,
+                         unsigned int ncom, const uint8_t *ctx, size_t ctxlen,
+                         const uint8_t coins[32], int shared)
 {
-  _lnp_prover_state_ptr p;
-  polyvec_ptr vs[3];
-  unsigned int i, j, k;
-
-  if (!state->ready || !state->p2_ready)
-    return -1;
-  p = state->p2->lnp_state;
-  if (p->witness_set)
+  if (coins == NULL)
     return 0;
-  vs[0] = p->s1;
-  vs[1] = p->s2;
-  vs[2] = p->m;
-  for (i = 0; i < 3; i++)
+  return cbdc_presgen (state, pres, preslen, cred, credlen, NULL, 0, coms,
+                       idx_com, ncom, ctx, ctxlen, coins, shared);
+}
+
+/* For tests only: cbdc_user_sokprove with the given coins, see above. */
+int
+cbdc_test_sokprove_coins (uint8_t *proof, size_t *proofl, cbdc_commit_t com,
+                          const uint8_t *ctx, size_t ctxlen,
+                          const uint8_t attr[32], const uint8_t coins[32],
+                          int shared)
+{
+  if (coins == NULL)
+    return 0;
+  return cbdc_sokprove (proof, proofl, com, ctx, ctxlen, attr, coins, shared);
+}
+
+/* absorb the raw representation of a matrix into h */
+static void
+cbdc_absorb_mat (shake128_state_t h, polymat_srcptr M)
+{
+  unsigned int i, j;
+
+  for (i = 0; i < M->nrows; i++)
+    for (j = 0; j < M->ncols; j++)
+      {
+        /* read the struct directly: poly_get_coeff and poly_get_coeffvec
+           convert from the CRT domain, which would write the matrix */
+        poly_srcptr p = M->elems + i * M->stride_row + j * M->stride_col;
+        intvec_srcptr c = p->coeffs;
+        uint8_t flag = (uint8_t)p->crt;
+
+        shake128_absorb (h, &flag, 1);
+        shake128_absorb (h, (const uint8_t *)c->bytes,
+                         c->nelems * _sizeof_int_data (c->nlimbs));
+        if (p->crt && p->crtrep != NULL)
+          shake128_absorb (h, (const uint8_t *)p->crtrep,
+                           sizeof (crtcoeff_t) * p->ring->d
+                               * p->ring->nmoduli);
+      }
+}
+
+/*
+ * For tests only: a digest of the shared public matrices (all proof systems)
+ * and of the scheme's matrices, from their raw representation, to check that
+ * nothing writes them.
+ */
+void
+cbdc_test_pp_digest (uint8_t out[32])
+{
+  shake128_state_t h;
+  const lin_pp_struct *pps[3];
+  unsigned int k;
+
+  cbdc_pp_init ();
+  pps[0] = cbdc_p1lpp;
+  pps[1] = cbdc_p2lpp;
+  pps[2] = cbdc_popenlpp;
+  shake128_init (h);
+  for (k = 0; k < 3; k++)
     {
-      if (vs[i]->elems == NULL)
-        continue;
-      for (j = 0; j < polyvec_get_nelems (vs[i]); j++)
-        {
-          poly_ptr e = polyvec_get_elem (vs[i], j);
-
-          /* poly_wipe zeroes both representations, it keeps the crt flag */
-          if (e->crtrep != NULL)
-            {
-              const uint8_t *b = (const uint8_t *)e->crtrep;
-              size_t n = sizeof (crtcoeff_t) * e->ring->d * e->ring->nmoduli;
-
-              while (n-- > 0)
-                if (b[n] != 0)
-                  return 0;
-            }
-          /* the limbs, not poly_get_coeff, which converts from crt */
-          for (k = 0; k < polyvec_get_ring (vs[i])->d; k++)
-            if (!int_eqzero (intvec_get_elem (e->coeffs, k)))
-              return 0;
-        }
+      cbdc_absorb_mat (h, pps[k]->A1);
+      cbdc_absorb_mat (h, pps[k]->A2prime);
+      cbdc_absorb_mat (h, pps[k]->Bprime);
     }
-  return 1;
+  cbdc_absorb_mat (h, cbdc_AR);
+  cbdc_absorb_mat (h, cbdc_AM);
+  cbdc_absorb_mat (h, cbdc_ATAU);
+  cbdc_absorb_mat (h, cbdc_Acom);
+  shake128_squeeze (h, out, 32);
+  shake128_clear (h);
 }
 
 /*
@@ -2018,7 +2088,7 @@ cbdc_test_p2_witness_wiped (cbdc_user_state_t state)
 int
 cbdc_test_eqopen_statement_ok (cbdc_commit_t com, const uint8_t attr[32])
 {
-  polymat_t A;
+  polymat_t A, Acom;
   polyvec_t a, a0, t, want;
   unsigned int i, j;
   int ok = 1;
@@ -2030,12 +2100,15 @@ cbdc_test_eqopen_statement_ok (cbdc_commit_t com, const uint8_t attr[32])
   polyvec_alloc (a, cbdc_ring, 1);
   cbdc_encattrs (a, attr, 1);
   cbdc_eqopen_statement (A, t, com->nym, a);
+  /* redc and polyvec_mul below write their operands: work on a copy of the
+     shared commitment key */
+  cbdc_mat_copy (Acom, cbdc_Acom);
 
   for (i = 0; i < CBDC_COM_ROWS; i++)
     for (j = 0; j < 11; j++)
       {
         poly_ptr e = polymat_get_elem (A, i, j);
-        poly_ptr f = polymat_get_elem (cbdc_Acom, i, j);
+        poly_ptr f = polymat_get_elem (Acom, i, j);
         poly_t zero;
 
         poly_alloc (zero, cbdc_ring);
@@ -2051,7 +2124,7 @@ cbdc_test_eqopen_statement_ok (cbdc_commit_t com, const uint8_t attr[32])
   polyvec_set_zero (a0);
   cbdc_put (a0, 0, a);
   polyvec_alloc (want, cbdc_ring, CBDC_COM_ROWS);
-  polyvec_mul (want, cbdc_Acom, a0);
+  polyvec_mul (want, Acom, a0);
   polyvec_sub (want, want, com->nym, 0);
   polyvec_redc (want, want);
   polyvec_redc (t, t);
@@ -2061,6 +2134,7 @@ cbdc_test_eqopen_statement_ok (cbdc_commit_t com, const uint8_t attr[32])
   polyvec_free (want);
   polyvec_free (a0);
   polyvec_free (t);
+  polymat_free (Acom);
   polymat_free (A);
   cbdc_vec_free_secret (a);
   return ok;
